@@ -20,6 +20,17 @@ to vacuum: eps = eps_r * eps_0 and mu = mu_r * mu_0. Conductivity is in S/m.
 
 import numpy as np
 
+from .dispersive import (  # noqa: F401
+    EV,
+    Debye,
+    DispersiveMaterial,
+    Drude,
+    Lorentz,
+    dispersive_lib,
+    eps_from_nk,
+    fit_poles,
+)
+
 # fmt: off
 material_lib = {
     'pec' : [np.inf, 1.],
