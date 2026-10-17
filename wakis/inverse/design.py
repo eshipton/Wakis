@@ -1,0 +1,207 @@
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2026.                   #
+# ########################################### #
+
+import numpy as np
+from scipy.constants import epsilon_0 as eps_0
+from scipy.sparse import coo_matrix, diags
+
+from ..field_monitors import _flat_index
+
+
+def _linear_weights(x, lo, hi, n):
+    """
+    Linear interpolation from n nodes spanning [lo, hi] to the points x.
+
+    Returns the left node index and the weight of the right node; points
+    outside [lo, hi] take the value of the nearest end node.
+    """
+    if n == 1:
+        return np.zeros(x.size, dtype=int), np.zeros(x.size)
+    u = np.clip((x - lo) / (hi - lo) * (n - 1), 0.0, n - 1)
+    i0 = np.minimum(np.floor(u).astype(int), n - 2)
+    return i0, u - i0
+
+
+class MaterialGrid:
+    def __init__(self, center, size, shape, eps_min=1.0, eps_max=4.0):
+        """
+        Design region whose relative permittivity is set by a density rho.
+
+        The density is defined on a regular design grid of `shape` nodes
+        spanning the box [center - size/2, center + size/2] (a single node
+        sits at the centre along axes with one node). Each E edge inside the
+        box receives eps_r = eps_min + (eps_max - eps_min) * (P rho), where P
+        is the sparse (tri)linear interpolation matrix from the design nodes
+        to the edge midpoints. The map is affine in rho, so its transpose
+        P^T, used by the adjoint, is exact.
+
+        Parameters
+        ----------
+        center, size : tuple of float
+            Centre and extent of the design box (x, y, z) [m]. A zero size
+            selects the single nearest layer of edges along that axis, as in
+            `GridFIT3D.region_indices`.
+        shape : tuple of int
+            Number of design nodes (nx, ny, nz); use 1 along zero-size axes.
+        eps_min, eps_max : float
+            Relative permittivity at rho = 0 and rho = 1.
+
+        Notes
+        -----
+        Only isotropic, non-dispersive, lossless dielectrics are designed;
+        permeability and conductivity in the region are left unchanged.
+        """
+        self.center = np.asarray(center, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        self.shape = tuple(int(n) for n in shape)
+        if len(self.shape) != 3 or min(self.shape) < 1:
+            raise ValueError("shape must contain three positive integers.")
+        if eps_min <= 0 or eps_max <= 0:
+            raise ValueError("eps_min and eps_max must be positive.")
+        self.eps_min = float(eps_min)
+        self.eps_max = float(eps_max)
+        self.P = None
+
+    def _build(self, solver):
+        """Select the design edges and assemble the interpolation matrix P."""
+        lo = self.center - self.size / 2
+        hi = self.center + self.size / 2
+        flat, rows, cols, vals = [], [], [], []
+        n_rows = 0
+        for comp in "xyz":
+            indices, coords = solver.grid.region_indices(
+                "E", comp, self.center, self.size
+            )
+            I, J, K = np.meshgrid(*indices, indexing="ij")
+            X = np.meshgrid(*coords, indexing="ij")
+            flat.append(_flat_index(solver, comp, I, J, K).ravel())
+            # Trilinear weights: product of the 1D linear weights along x, y, z
+            per_axis = [
+                _linear_weights(X[d].ravel(), lo[d], hi[d], self.shape[d])
+                for d in range(3)
+            ]
+            m = I.size
+            for corner in np.ndindex(2, 2, 2):
+                idx = np.zeros(m, dtype=int)
+                w = np.ones(m)
+                for d in range(3):
+                    i0, t = per_axis[d]
+                    if self.shape[d] == 1:
+                        w = w * (1.0 - corner[d])
+                        continue
+                    idx = idx * self.shape[d] + i0 + corner[d]
+                    w = w * (t if corner[d] else 1.0 - t)
+                keep = w != 0
+                rows.append(n_rows + np.flatnonzero(keep))
+                cols.append(idx[keep])
+                vals.append(w[keep])
+            n_rows += m
+        self.flat_idx = np.concatenate(flat)
+        self.P = coo_matrix(
+            (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+            shape=(n_rows, int(np.prod(self.shape))),
+        ).tocsr()
+
+    def _check(self, rho):
+        rho = np.asarray(rho, dtype=float)
+        if rho.shape != self.shape:
+            raise ValueError(f"rho has shape {rho.shape}, expected {self.shape}.")
+        return rho
+
+    def eps_r(self, rho):
+        """
+        Relative permittivity on the design edges for density rho.
+
+        Parameters
+        ----------
+        rho : ndarray
+            Density of shape `shape`, nominally in [0, 1].
+
+        Returns
+        -------
+        ndarray
+            eps_r on the design edges, ordered as `flat_idx`.
+        """
+        rho = self._check(rho)
+        return self.eps_min + (self.eps_max - self.eps_min) * (self.P @ rho.ravel())
+
+    def apply(self, solver, rho):
+        """
+        Write the permittivity of density rho into the solver's design edges.
+
+        Sets ``solver.ieps`` = 1 / (eps_0 eps_r) [m/F] on the design edges and,
+        for the standard (non-CPML) time step, rescales the matching rows of
+        the precomputed operator ``itDaiDepsDstC`` = diag(ieps) * K, which
+        would otherwise keep the old permittivity. ``update_tensors`` is not
+        used because it needs operators deleted after the first step and
+        disables the first-step initialization.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver that has not started time-stepping yet.
+        rho : ndarray
+            Density of shape `shape`.
+
+        Raises
+        ------
+        RuntimeError
+            If the solver has already taken a time step.
+        NotImplementedError
+            For GPU or MPI solvers.
+        """
+        if not solver.step_0:
+            raise RuntimeError("Apply the design before the first time step.")
+        if solver.use_gpu or solver.use_mpi:
+            raise NotImplementedError("MaterialGrid supports CPU, non-MPI solvers.")
+        if self.P is None:
+            # Built once: all solvers of one design problem share the mesh
+            self._build(solver)
+
+        ieps_old = solver.ieps.array[self.flat_idx]
+        if np.any(ieps_old == 0):
+            raise ValueError("Design region overlaps a PEC (ieps = 0) region.")
+        ieps_new = 1.0 / (eps_0 * self.eps_r(rho))
+        solver.ieps.array[self.flat_idx] = ieps_new
+
+        if not solver.activate_cpml:
+            # B = diag(ieps) K: only the rows of the design edges change
+            scale = np.ones(3 * solver.N)
+            scale[self.flat_idx] = ieps_new / ieps_old
+            B = solver.itDaiDepsDstC
+            fmt = getattr(B, "format", "csr")
+            B = (diags(scale) @ B).asformat(fmt)
+            if solver.imported_mkl:
+                from sparse_dot_mkl import csr_matrix as mkl_sparse_mat
+
+                B = mkl_sparse_mat(B)
+            solver.itDaiDepsDstC = B
+            if hasattr(solver, "iDeps"):
+                solver.iDeps = diags(solver.ieps.toarray(), dtype=solver.dtype)
+
+    def vjp(self, rho, grad_ieps):
+        """
+        Pull the gradient with respect to ieps on the design edges back to rho.
+
+        dF/drho = (eps_max - eps_min) P^T [dF/dieps * dieps/deps_r], with
+        ieps = 1/(eps_0 eps_r), so dieps/deps_r = -1/(eps_0 eps_r^2).
+
+        Parameters
+        ----------
+        rho : ndarray
+            Density at which the gradient was computed.
+        grad_ieps : ndarray
+            dF/dieps on the design edges, ordered as `flat_idx` [F/m * units
+            of F].
+
+        Returns
+        -------
+        ndarray
+            dF/drho with the shape of rho.
+        """
+        eps_r = self.eps_r(rho)
+        grad_eps = -np.asarray(grad_ieps) / (eps_0 * eps_r**2)
+        grad = (self.eps_max - self.eps_min) * (self.P.T @ grad_eps)
+        return grad.reshape(self.shape)

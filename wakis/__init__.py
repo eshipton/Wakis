@@ -9,6 +9,7 @@ from . import (
     field_monitors,
     geometry,
     gridFIT3D,
+    inverse,
     logger,
     materials,
     solverFIT3D,

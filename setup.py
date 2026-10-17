@@ -59,5 +59,6 @@ setup(
         "gpu": ["cupy"],
         "all": ["pyvista[jupyter]>=0.47.0", "jupyterlab", "ipympl", "bihc", "iddefix"],
         "test": ["pytest", "pytest-cov"],
+        "inverse": ["jax"],
     },
 )
