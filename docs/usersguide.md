@@ -348,6 +348,45 @@ P_rad = box.get_flux() / (2 * np.abs(S) ** 2)  # time-averaged power for |Il| = 
 
 Transmission and reflection spectra are obtained, as usual, by normalizing the flux to a reference run without the structure.
 
+#### Far-field patterns and antenna metrics
+
+`Near2FarMonitor` records the tangential fields on a closed box around the antenna and computes the far field, radiation intensity, directivity and gain at any angle after the run (CST's far-field monitor). The box must enclose all sources and scatterers and lie in a homogeneous region outside the CPML. The example below computes the pattern of a Hertzian dipole in free space (theory: $D = 1.5\sin^2\theta$, $D_{max} = 1.76$ dBi):
+
+```python
+import numpy as np
+import wakis
+from wakis.near2far import half_power_beamwidth, plot_pattern_cut
+from wakis.sources import CurrentSource, GaussianSource
+
+grid = wakis.GridFIT3D(-0.25, 0.25, -0.25, 0.25, -0.25, 0.25, 40, 40, 40)
+solver = wakis.SolverFIT3D(grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=10)
+
+src_time = GaussianSource(frequency=1e9, fwidth=0.3e9)
+dipole = CurrentSource(src_time, component="z", center=(0.0, 0.0, 0.0))
+freqs = np.array([0.9e9, 1.0e9, 1.1e9])
+feed = wakis.DFTMonitor(freqs, components=["Ez"])
+n2f = wakis.Near2FarMonitor(freqs, size=(0.15, 0.15, 0.15))
+
+solver.emsolve(int((src_time.end_time + 6e-9) / solver.dt), source=dipole, monitors=[feed, n2f])
+
+theta = np.linspace(0, np.pi, 181)
+D = n2f.directivity(theta, 0.0)            # shape (n_freq, n_theta), linear
+D_max, direction = n2f.max_directivity()   # ~1.5 at theta = 90 deg
+print(10 * np.log10(D_max), "dBi")
+print(np.degrees(half_power_beamwidth(theta, D[1])), "deg HPBW")  # ~90
+
+ff = n2f.get_farfield(theta, 0.0, r=10.0)  # E_theta, E_phi, H_theta, H_phi at 10 m
+# Gain and efficiency need the accepted power, here the work done by the source
+S = src_time.fourier_transform(freqs)
+P_in = -np.real(feed.get_field("Ez")[0].ravel() * np.conj(S))
+G = n2f.gain(theta, 0.0, P_in)
+print(n2f.radiation_efficiency(P_in))      # ~1 for this lossless antenna
+
+fig, ax = plot_pattern_cut(theta, D[1], label="E-plane, 1 GHz")
+```
+
+All outputs share the normalization of `FluxMonitor.get_flux`; for a harmonic source of complex amplitude $S(f)$ divide fields by $S(f)$ and powers by $2|S(f)|^2$. For an antenna on an infinite ground plane formed by a PEC domain boundary, place the corresponding box face on that boundary and pass e.g. `ground_plane="-z"`: the face is dropped, image currents are added and `radiated_power` integrates the upper half-space only. `wakis.near2far` also provides `ludwig3` (co-/cross-polarization), `axial_ratio` and `plot_pattern_3d`.
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:

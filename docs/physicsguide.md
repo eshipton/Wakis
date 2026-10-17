@@ -334,6 +334,74 @@ With MPI, each rank accumulates the samples in its own subdomain. `FluxMonitor.g
 References:
 - A. F. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos and S. G. Johnson, "MEEP: A flexible free-software package for electromagnetic simulations by the FDTD method", *Comput. Phys. Commun.* **181**, 687 (2010), [doi:10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008).
 
+### 🛰️ Near-to-far-field transformation: `Near2FarMonitor`
+
+**Surface equivalence.** If a closed surface $S$ encloses all sources and scatterers, the field outside $S$ equals the field radiated in the unbounded background medium by the equivalent surface currents [Balanis 2016, Sec. 12.2; Taflove & Hagness 2005, Ch. 8]
+
+$$
+\mathbf{J}_s = \hat{n}\times\mathbf{H}, \qquad \mathbf{M}_s = -\hat{n}\times\mathbf{E},
+$$
+
+with $\hat{n}$ the outward normal. `Near2FarMonitor` is a `FluxMonitor` on a closed box, so the tangential DFT samples, the half-cell averaging of $H$ onto the $E$ plane and the trapezoidal area weights are exactly those of the flux computation. For a face normal to $a$ the sample of $E_b$ carries the product $E_b H_c$; at this point the currents are $J_b\,\Delta A = -w\,H_c$ and $M_c\,\Delta A = -w\,E_b$, where $w = \pm\Delta A$ is the signed weight of that product in $\Phi(f)$ (and similarly for $E_c H_b$). No further interpolation is needed.
+
+**Radiation vectors.** With the $e^{+j\omega t}$ convention implied by the $e^{-2\pi i f t}$ DFT kernel, the far-field radiation vectors are [Balanis 2016, Sec. 12.3]
+
+$$
+\mathbf{N}(\hat{r}) = \sum_p \mathbf{J}_p\,\Delta A_p\, e^{+jk\,\mathbf{r}'_p\cdot\hat{r}}, \qquad
+\mathbf{L}(\hat{r}) = \sum_p \mathbf{M}_p\,\Delta A_p\, e^{+jk\,\mathbf{r}'_p\cdot\hat{r}},
+$$
+
+with $k = \omega\sqrt{\varepsilon_r\mu_r}/c$ and $\eta = \eta_0\sqrt{\mu_r/\varepsilon_r}$ of the background (default: the solver background). The far field is $\mathbf{E} = \mathbf{F}(\hat r)\,e^{-jkR}/R$ with
+
+$$
+\mathbf{F} = -\frac{jk}{4\pi}\left[\eta\,(\mathbf{N} - (\mathbf{N}\cdot\hat r)\hat r) + \mathbf{L}\times\hat r\right], \quad
+E_\theta = -\frac{jk e^{-jkR}}{4\pi R}(L_\phi + \eta N_\theta), \quad
+E_\phi = \frac{jk e^{-jkR}}{4\pi R}(L_\theta - \eta N_\phi),
+$$
+
+and $\mathbf{H} = \hat r\times\mathbf{E}/\eta$. The sums are vectorized over frequencies, surface points and directions, chunked to bound memory. The continuum $k$ is used in the phase; the mismatch with the discrete dispersion relation is $O((k\Delta)^2)$ per unit of electrical box size.
+
+**Ground planes.** For a box face lying on an infinite PEC plane (e.g. the $z_{min}$ boundary), the face is dropped and each remaining current element is accompanied by its image: tangential electric and normal magnetic currents are reversed [Balanis 2016, Sec. 4.7]. The result is valid in the half-space containing the box.
+
+**Antenna metrics** [Balanis 2016, Ch. 2; IEEE Std 145-2013]:
+- radiation intensity $U(\theta,\phi) = R^2|\mathbf{E}|^2/\eta = |\mathbf{F}|^2/\eta$;
+- radiated power $P_{rad} = \oint U\,d\Omega$, evaluated with Gauss–Legendre quadrature in $\cos\theta$ and the uniform rule in $\phi$ (exact for the band-limited patterns of a finite source; default order $\max(24, kR_{max}+16)$), over the physical half-space when a ground plane is set;
+- directivity $D = 4\pi U/P_{rad}$, gain $G = 4\pi U/P_{in}$ and radiation efficiency $e_{rad} = P_{rad}/P_{in} = G/D$, where the accepted power $P_{in}$ is supplied by the user, e.g. the source work $-\operatorname{Re}[E(f)I\ell^*(f)]$ or the flux through a box tightly around the feed;
+- co-/cross-polarization with Ludwig's third definition: $E_{co} = E_\theta\cos\phi - E_\phi\sin\phi$, $E_{cross} = E_\theta\sin\phi + E_\phi\cos\phi$ for an $x$ reference [Ludwig 1973];
+- circular components $E_{R,L} = (E_\theta \pm jE_\phi)/\sqrt2$ and axial ratio $AR = (|E_R|+|E_L|)/\big||E_R|-|E_L|\big|$;
+- half-power beamwidth from a pattern cut by linear interpolation of the $-3$ dB points.
+
+All quantities share the normalization of $\Phi(f)$ (no factor 1/2); ratios such as $D$, $G$ and $e_{rad}$ are normalization free.
+
+**Validation** (`tests/test_021_near2far.py`, 20–30 cells per wavelength, CPML):
+- Hertzian dipole: pattern $\propto\sin\theta$ to 0.6%, $D(90°)$ and $D_{max}$ equal to 1.5 within 1%, absolute $|E_\theta|$ to 1.2%, HPBW 90°, $P_{rad}$ equal to the box flux to 0.3%.
+- Dipole at height $h$ above a PEC ground plane: pattern equals the free-space pattern times $|2\cos(kh\cos\theta)|$ (vertical) or $|2\sin(kh\cos\theta)|$ (horizontal) to 0.6%; $P_{rad}$ equals the source work to 0.6% and follows the image-theory ratio below to 2%. Ludwig-3 components of the horizontal dipole are checked analytically.
+- The local density of states (source work, no near-to-far transformation) near the ground plane matches, for $u = 2kh$,
+
+$$
+\frac{P_\perp(h)}{P_0} = 1 + 3\left[\frac{\sin u}{u^3} - \frac{\cos u}{u^2}\right], \qquad
+\frac{P_\parallel(h)}{P_0} = 1 - \frac32\left[\frac{\sin u}{u} + \frac{\cos u}{u^2} - \frac{\sin u}{u^3}\right],
+$$
+
+which follow from adding the field of the image dipole at the source, $P = -\tfrac12\operatorname{Re}[(E_{self}+E_{image})\,I\ell^*]$, using the exact Hertzian dipole fields [Balanis 2016, Sec. 4.2] (cf. the ground effects of Balanis 2016, Sec. 4.7).
+- Purcell factor of a dipole midway between two PEC plates a gap $d$ apart. The images lie at distances $md$ ($m \neq 0$) with equal signs (perpendicular dipole) or signs $(-1)^m$ (parallel dipole). Summing the mutual terms above with the Fourier series of the Bernoulli polynomials, $\sum_m \cos(mx)/m^2 = \pi^2/6 - \pi x/2 + x^2/4$, $\sum_m \sin(mx)/m^3 = \pi^2x/6 - \pi x^2/4 + x^3/12$ and $\sum_m \sin(mx)/m = (\pi - x)/2$ for $0 < x < 2\pi$ [Abramowitz & Stegun 1964, Sec. 23.1], gives
+
+$$
+\frac{P_\perp}{P_0} = \frac{3\pi}{2kd}\quad (0<kd<2\pi), \qquad
+\frac{P_\parallel}{P_0} = \frac{3\pi}{2kd}\left[1 + \left(\frac{\pi}{kd}\right)^2\right]\quad (\pi<kd<3\pi),
+$$
+
+and $P_\parallel = 0$ for $kd<\pi$, the single-mode (TEM, resp. TE$_1$+TM$_1$) results of the waveguide mode sum. The simulation agrees to 0.03 at $kd/\pi = 1.15$–$1.75$. Note that a PEC on a *high* boundary lies on the last non-ghost node, one cell below $z_{max}$.
+
+**Differentiability.** The far field is linear in the recorded spectra: for each frequency, $\mathbf{F}(\hat r_i) = \sum_p G_{ip}\,[\,-w_p H_p,\ -w_p E_p\,]$ with $G_{ip}$ the dense kernel $-\tfrac{jk}{4\pi} e^{jk\mathbf{r}'_p\cdot\hat r_i}$ times the projections $\eta(\mathbb{1}-\hat r_i\hat r_i^T)\hat e_{J,p}$ and $\hat e_{M,p}\times\hat r_i$. `Near2FarMonitor.surface_currents()` returns the points, axes and current elements, so objectives such as $D(\hat r_0) = 4\pi|\mathbf F(\hat r_0)|^2 / \sum_i w_i|\mathbf F(\hat r_i)|^2$ can be written in JAX on top of the DFT data.
+
+References:
+- C. A. Balanis, *Antenna Theory: Analysis and Design*, 4th ed., Wiley (2016), Ch. 2, 4, 6 and 12.
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 8.
+- A. C. Ludwig, "The definition of cross polarization", *IEEE Trans. Antennas Propag.* **21**(1), 116–119 (1973).
+- IEEE Standard for Definitions of Terms for Antennas, IEEE Std 145-2013.
+- M. Abramowitz and I. A. Stegun, *Handbook of Mathematical Functions*, NBS (1964), Sec. 23.1.
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:
