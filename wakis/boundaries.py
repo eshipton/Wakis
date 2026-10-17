@@ -35,6 +35,10 @@ class BCsMixin:
         xlo, ylo, zlo = 1.0, 1.0, 1.0
         xhi, yhi, zhi = 1.0, 1.0, 1.0
 
+        # Bloch axes become periodic axes whose wrap-around couplings carry
+        # the phase factors self.bloch_phase.
+        self._setup_bloch()
+
         # Check BCs for internal MPI subdomains
         if self.use_mpi and self.grid.use_mpi:
             if (
@@ -71,10 +75,14 @@ class BCsMixin:
                 # Replace high-x rows: remove connections into the next y line.
                 high = indices[-1, :, :].ravel()
                 low = indices[0, :, :].ravel()
+                phase = self.bloch_phase[0]
+                if phase != 1:
+                    self.Px = self.Px.astype(self.dtype)
                 self.Px = self.Px.tolil()
                 self.Px[high, :] = 0
                 self.Px[high, high] = -1
-                self.Px[high, low] = 1 if self.Nx > 1 else 0
+                # f(x + L) = f(x) * phase; a single cell couples to itself
+                self.Px[high, low] = phase if self.Nx > 1 else phase - 1
                 self.Px = self.Px.tocsc()
 
                 self.tL[-1, :, :, "x"] = 0.5 * (
@@ -88,10 +96,14 @@ class BCsMixin:
                 # Replace high-y rows: remove connections into the next z plane.
                 high = indices[:, -1, :].ravel()
                 low = indices[:, 0, :].ravel()
+                phase = self.bloch_phase[1]
+                if phase != 1:
+                    self.Py = self.Py.astype(self.dtype)
                 self.Py = self.Py.tolil()
                 self.Py[high, :] = 0
                 self.Py[high, high] = -1
-                self.Py[high, low] = 1 if self.Ny > 1 else 0
+                # f(x + L) = f(x) * phase; a single cell couples to itself
+                self.Py[high, low] = phase if self.Ny > 1 else phase - 1
                 self.Py = self.Py.tocsc()
 
                 self.tL[:, -1, :, "y"] = 0.5 * (
@@ -105,10 +117,14 @@ class BCsMixin:
                 # Replace high-z rows with last-to-first plane differences.
                 high = indices[:, :, -1].ravel()
                 low = indices[:, :, 0].ravel()
+                phase = self.bloch_phase[2]
+                if phase != 1:
+                    self.Pz = self.Pz.astype(self.dtype)
                 self.Pz = self.Pz.tolil()
                 self.Pz[high, :] = 0
                 self.Pz[high, high] = -1
-                self.Pz[high, low] = 1 if self.Nz > 1 else 0
+                # f(x + L) = f(x) * phase; a single cell couples to itself
+                self.Pz[high, low] = phase if self.Nz > 1 else phase - 1
                 self.Pz = self.Pz.tocsc()
 
                 self.tL[:, :, -1, "z"] = 0.5 * (
@@ -148,7 +164,7 @@ class BCsMixin:
                     hstack([self.Pz, sparse_mat((N, N)), -self.Px]),
                     hstack([-self.Py, self.Px, sparse_mat((N, N))]),
                 ],
-                dtype=np.int8,
+                dtype=np.result_type(self.Px.dtype, self.Py.dtype, self.Pz.dtype),
             )
 
         # Dirichlet PEC: tangential E field = 0 at boundary
@@ -286,6 +302,51 @@ class BCsMixin:
             True for x in self.bc_high if x.lower() == "cpml"
         ):
             self.activate_cpml = True
+
+    def _setup_bloch(self):
+        """
+        Validate Bloch-periodic faces and compute their phase factors.
+
+        On an axis with ``'bloch'`` faces the fields satisfy the Floquet-Bloch
+        condition F(r + L e_a) = F(r) exp(1j * k_a * L), where L is the domain
+        length along that axis and k_a the component of ``k_bloch`` [rad/m].
+        The axis is then handled as a periodic axis (no ghost layer) whose
+        wrap-around coupling carries ``bloch_phase[a] = exp(1j * k_a * L)``.
+
+        Raises
+        ------
+        ValueError
+            If Bloch faces are unpaired, if ``k_bloch`` is nonzero on an axis
+            without Bloch faces, or if a non-trivial phase is requested with a
+            real field dtype.
+        """
+        self.bc_low = list(self.bc_low)
+        self.bc_high = list(self.bc_high)
+        nodes = (self.grid.x, self.grid.y, self.grid.z)
+        self.bloch_phase = [1, 1, 1]
+        for axis, direction in enumerate(["x", "y", "z"]):
+            is_bloch = self.bc_low[axis].lower() == "bloch"
+            if is_bloch != (self.bc_high[axis].lower() == "bloch"):
+                raise ValueError(f"Bloch {direction} boundaries must be paired.")
+            if not is_bloch:
+                if self.k_bloch[axis] != 0:
+                    raise ValueError(
+                        f"k_bloch has a nonzero {direction} component but the "
+                        f"{direction} boundaries are not 'bloch'."
+                    )
+                continue
+            self.bc_low[axis] = self.bc_high[axis] = "periodic"
+            if self.k_bloch[axis] != 0:
+                length = nodes[axis][-1] - nodes[axis][0]
+                self.bloch_phase[axis] = np.exp(1j * self.k_bloch[axis] * length)
+
+        if any(p != 1 for p in self.bloch_phase) and not np.issubdtype(
+            self.dtype, np.complexfloating
+        ):
+            raise ValueError(
+                "Bloch boundaries with nonzero k_bloch need complex fields: "
+                "pass dtype=np.complex128 (or np.complex64) to SolverFIT3D."
+            )
 
     def _initialize_PML(self):
         """
@@ -628,23 +689,25 @@ class BCsMixin:
         self.dzx = self.iAz * self.itkapx * self.Px * self.Dbc_y * self.Ly
         self.dzy = self.iAz * self.itkapy * self.Py * self.Dbc_x * self.Lx
 
+        # The dual curl is the Hermitian transpose of the primal curl: equal to
+        # the transpose for real operators, and it conjugates Bloch phases.
         self.dtxy = (
-            self.itAx * self.ikapy * self.Dbc_x * -self.Py.transpose() * self.tLz
+            self.itAx * self.ikapy * self.Dbc_x * -self.Py.conj().transpose() * self.tLz
         )
         self.dtxz = (
-            self.itAx * self.ikapz * self.Dbc_x * -self.Pz.transpose() * self.tLy
+            self.itAx * self.ikapz * self.Dbc_x * -self.Pz.conj().transpose() * self.tLy
         )
         self.dtyz = (
-            self.itAy * self.ikapz * self.Dbc_y * -self.Pz.transpose() * self.tLx
+            self.itAy * self.ikapz * self.Dbc_y * -self.Pz.conj().transpose() * self.tLx
         )
         self.dtyx = (
-            self.itAy * self.ikapx * self.Dbc_y * -self.Px.transpose() * self.tLz
+            self.itAy * self.ikapx * self.Dbc_y * -self.Px.conj().transpose() * self.tLz
         )
         self.dtzx = (
-            self.itAz * self.ikapx * self.Dbc_z * -self.Px.transpose() * self.tLy
+            self.itAz * self.ikapx * self.Dbc_z * -self.Px.conj().transpose() * self.tLy
         )
         self.dtzy = (
-            self.itAz * self.ikapy * self.Dbc_z * -self.Py.transpose() * self.tLx
+            self.itAz * self.ikapy * self.Dbc_z * -self.Py.conj().transpose() * self.tLx
         )
 
         del (
