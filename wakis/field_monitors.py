@@ -246,6 +246,9 @@ class FluxMonitor:
         Parseval's theorem the energy crossing the surface is
         2 * int_0^inf Phi(f) df [J]. For a time-harmonic excitation of complex
         amplitude S(f), the time-averaged power is P(f) = Phi(f) / (2 |S(f)|^2).
+        With complex fields (Bloch boundaries) Phi(f) and Phi(-f) are
+        independent, the energy is int_-inf^inf Phi(f) df, and each sign of f
+        is a separate physical wave (see the physics guide).
 
         The tangential E components are taken on the grid plane nearest to the
         requested position, and H, staggered half a cell away, is averaged from

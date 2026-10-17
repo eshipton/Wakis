@@ -411,6 +411,7 @@ Wakis supports several boundary condition (BC) types:
 - **ABC**: a first-order Mur radiation condition for selected domain faces.
 - **PML**: a finite, graded, electrically lossy layer terminated by the usual electric boundary mask.
 - **CPML**: a convolutional absorbing layer that adds auxiliary curl-correction fields.
+- **Bloch**: a periodic axis whose wrap-around coupling carries the phase $e^{ik_aL}$ of a prescribed Bloch wavevector (complex fields); see below.
 
 #### Mur ABC implementation
 
@@ -496,6 +497,60 @@ $$
 Here $\kappa \geq 1$ scales the coordinate stretch, $\sigma$ is the graded conductivity, and $\alpha$ is a non-negative frequency-shift parameter. Wakis constructs $\sigma$, $\kappa$, and $\alpha$ on both primal and dual field locations with a polynomial distance profile. It converts them into recursion coefficients and stores only the CPML auxiliary fields needed to correct curl terms inside each boundary layer.
 
 CPML is therefore distinct from the scalar `pml` path: it does not modify the bulk material conductivity tensor to absorb waves, and its auxiliary convolution fields make it the preferred absorbing boundary for the beam and TF/SF workflows. As with all finite layers, its practical reflection level still depends on the number of cells and the selected profile parameters.
+
+
+#### Bloch-periodic (Floquet) boundaries
+
+A structure that repeats with lattice vector $\mathbf{L}$ (a metasurface or grating unit cell, a photonic crystal) supports fields that repeat up to a phase, the Floquet-Bloch condition [Yeh, Yariv & Hong, 1977; Taflove & Hagness, 2005]:
+
+$$
+\mathbf{F}(\mathbf{r} + \mathbf{L}) = \mathbf{F}(\mathbf{r})\, e^{i\,\mathbf{k}\cdot\mathbf{L}} ,
+$$
+
+where $\mathbf{k}$ is the Bloch wavevector. A single unit cell then represents the infinite periodic structure for the chosen $\mathbf{k}$. In Wakis, `bc_low`/`bc_high = 'bloch'` on an axis together with `k_bloch=(kx, ky, kz)` [rad/m] applies this condition with $L$ the domain length along that axis. `k_bloch = 0` reduces to `'periodic'`.
+
+**Discretization.** A periodic axis has no ghost layer: the forward difference of the last sample wraps to the first one. For a Bloch axis the wrapped sample carries the phase $p = e^{ik_aL}$; e.g. for $x$,
+
+$$
+(\mathbf{P}_x f)_{N_x-1} = p\, f_0 - f_{N_x-1}
+$$
+
+(for $N_x = 1$ the cell couples to itself, $(p-1) f_0$). The primary curl $\mathbf{C}$ is assembled from these complex $\mathbf{P}_a$. The dual curl, which acts on $H$ and needs the sample *before* the first one, $f_{-1} = f_{N_x-1}\,e^{-ik_aL}$, is exactly the Hermitian transpose:
+
+$$
+\widetilde{\mathbf{C}} = \mathbf{C}^{H} \quad(=\mathbf{C}^{T} \text{ for real } \mathbf{C}).
+$$
+
+Wakis always builds the dual operators with $\mathbf{C}^H$ (also in the CPML derivative operators), so real simulations are unchanged. The leapfrog scheme with $\mathbf{C}$ and $\mathbf{C}^H$ conserves the same discrete energy as the real scheme and has the same CFL limit. Using $\mathbf{C}^T$ instead would be inconsistent and unstable. This is a direct transcription of the continuous Bloch condition onto the FIT stencil, i.e. the "direct field" periodic boundary of FDTD [Taflove & Hagness, 2005].
+
+**Complex fields.** For $\mathbf{k} \neq 0$ the phase is complex, so the fields must be complex: pass `dtype=np.complex128` (or `np.complex64`). Material tensors and $\Delta t$ keep the matching real precision. Complex fields cost about twice the memory and work of real ones. Real-field behaviour and performance are unchanged when Bloch faces are not used.
+
+**Which part is physical.** The update operator has complex coefficients only through the Bloch phase. Its complex conjugate solves the same problem with $-\mathbf{k}$. Hence $\operatorname{Re}\mathbf{F}(t) = (\mathbf{F}+\mathbf{F}^*)/2$ is a real, physical field: the superposition of the $+\mathbf{k}$ and $-\mathbf{k}$ Bloch solutions of the infinite structure. It is *not* itself Bloch-periodic with $\mathbf{k}$. The cleaner reading is in the frequency domain. Wakis' monitors use $F(f) = \int F(t)e^{-2\pi i f t}dt$, i.e. phasors with time dependence $e^{+2\pi i f t}$. Each spectral component $\mathbf{F}(\mathbf{r}, f)$ of a complex Bloch run is the phasor of a physical time-harmonic field $\operatorname{Re}[\mathbf{F}(\mathbf{r}, f)e^{2\pi i f t}]$ that satisfies the Bloch condition with $\mathbf{k}$. For $f>0$ its tangential phase varies as $e^{i(2\pi f t + \mathbf{k}\cdot\mathbf{r})}$, so its phase fronts travel along $-\mathbf{k}$. For $f<0$ they travel along $+\mathbf{k}$. A real source time profile (e.g. `GaussianSource`) excites both signs of $f$ with conjugate-symmetric spectra, as in Meep's complex-field mode [Oskooi et al., 2010]. Positive and negative frequencies are two independent mirror-image waves with the same angle $|\sin\theta|$. For mirror-symmetric structures (or quantities like band frequencies, which satisfy $\omega(\mathbf{k}) = \omega(-\mathbf{k})$ by time reversal) they give identical results. Wakis' convention is therefore: **report results at $f > 0$, and interpret them as waves with tangential wavevector $-\mathbf{k}_\text{bloch}$** (or equivalently pass $-\mathbf{k}$ to describe a wave travelling along $+\mathbf{k}$). With complex fields the flux spectra at $\pm f$ are independent and the energy is $\int_{-\infty}^{\infty}\Phi(f)\,df$.
+
+**Oblique incidence.** A plane wave hitting a periodic cell (normal $z$) at polar angle $\theta$ and azimuth $\phi$ has tangential wavevector $\mathbf{k}_\parallel = n k_0 \sin\theta\,(\cos\phi, \sin\phi, 0)$. It is launched by a sheet `CurrentSource` spanning the cell, with `amp_func = exp(1j k_par . r)`, in a complex simulation with `k_bloch = k_par` and absorbing (CPML) faces along $z$. Phase matching fixes $\mathbf{k}_\parallel$, not $\theta$. A broadband pulse therefore probes a different angle at each frequency:
+
+$$
+\theta(f) = \arcsin\frac{c\,|\mathbf{k}_\parallel|}{2\pi f n},
+$$
+
+and frequencies below the cutoff $f_c = c|\mathbf{k}_\parallel|/(2\pi n)$ are evanescent (`wakis.bloch.incidence_angle` and `k_parallel` implement these relations). Near $f_c$ the normal group velocity vanishes and these components linger in the cell. Use a source band that stays clear of $f_c$, or run long enough for them to decay; otherwise their truncation leaks into the DFT. Results at a fixed angle need one run per frequency, or interpolation over several $\mathbf{k}_\parallel$.
+
+**Validation** (`tests/test_024_bloch.py`):
+- A cell of length $L$ and a supercell of length $2L$ (phase $e^{2ikL}$) with Bloch-phased sources agree to round-off, with $\mathbf{F}(x+L) = \mathbf{F}(x)e^{ikL}$ (complex128: $10^{-12}$; complex64: $10^{-4}$). With $\mathbf{C}^T$ instead of $\mathbf{C}^H$ this fails.
+- The normal wavenumber of a Bloch-phased sheet wave matches the scheme's discrete dispersion relation to $10^{-3}$. Its angle matches $\theta(f)$ to $0.1^\circ$.
+- s- and p-polarized reflectance of an $n = 2$ half-space at $22^\circ$–$36^\circ$ (fixed $k_\parallel$) matches the Fresnel equations within 0.6% at $\geq 44$ cells per wavelength. The error is second order in the mesh size.
+- The bands of a 1D photonic crystal ($n = 1.5/3$ half-period layers, 80 cells per period) match the Yeh–Yariv–Hong dispersion relation
+$$\cos(kL) = \cos(k_1 d_1)\cos(k_2 d_2) - \tfrac12\left(\tfrac{n_1}{n_2}+\tfrac{n_2}{n_1}\right)\sin(k_1d_1)\sin(k_2d_2)$$
+within 0.2% for the first four bands.
+
+**Limitations.** Bloch faces along the MPI-decomposed $z$ axis are not supported (as for periodic). GPU and MKL backends receive complex sparse matrices but are untested. Plotting routines expect real fields: plot `np.real(...)` of the field arrays. The `'pml'` and Mur `'abc'` faces are not designed for oblique Bloch waves; use `'cpml'`.
+
+**Adjoint.** The Bloch step is linear, with update matrices $\mathbf{A}_H = \Delta t\,\mathbf{M}_\mu^{-1}\mathbf{C}$ (for $H$) and $\mathbf{A}_E = \Delta t\,\mathbf{M}_\varepsilon^{-1}\mathbf{C}^H$ (for $E$), where the metric/material matrices are real and diagonal. For a real objective of complex fields, the discrete adjoint runs backwards in time with the Hermitian transposes $\mathbf{A}_H^H = \Delta t\,\mathbf{C}^H\mathbf{M}_\mu^{-1}$ and $\mathbf{A}_E^H = \Delta t\,\mathbf{C}\,\mathbf{M}_\varepsilon^{-1}$. These are the same Bloch curls with the same $\mathbf{k}$: the adjoint $E$ is driven by $\mathbf{C}^H$ (the dual curl, which carries the conjugate phase $e^{-ikL}$ on the wrap-around) and the adjoint $H$ by $\mathbf{C}$ (phase $e^{+ikL}$), with the diagonal metrics applied before rather than after the curl. The plain transpose $\mathbf{A}^T = \overline{\mathbf{A}^H}$, used by holomorphic/JAX-style complex transposes, corresponds instead to the scheme with $-\mathbf{k}$.
+
+References:
+- P. Yeh, A. Yariv and C.-S. Hong, "Electromagnetic propagation in periodic stratified media. I. General theory", *J. Opt. Soc. Am.* **67**, 423–438 (1977), [doi:10.1364/JOSA.67.000423](https://doi.org/10.1364/JOSA.67.000423).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), chapter on periodic structures.
+- A. F. Oskooi et al., "MEEP: A flexible free-software package for electromagnetic simulations by the FDTD method", *Comput. Phys. Commun.* **181**, 687 (2010), [doi:10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008).
 
 
 ### 📥🗿 Geometry Importing & Embedded Boundaries

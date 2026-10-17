@@ -61,6 +61,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
         source_type="direct",
         bg=[1.0, 1.0, 0.0],
         verbose=2,
+        k_bloch=None,
     ):
         """
         3D time-domain electromagnetic solver based on the Finite Integration
@@ -85,6 +86,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             Explicit timestep. If provided, it overrides the CFL-based value.
         bc_low, bc_high : list of str, optional
             Boundary conditions for low/high faces in (x, y, z) order.
+            ``'bloch'`` faces (paired on an axis) impose the Floquet-Bloch
+            condition F(r + L) = F(r) exp(1j k_bloch L) with the domain length
+            L along that axis; see ``k_bloch``.
         use_stl : bool, optional
             If True, apply solids and materials provided in the ``grid`` object.
         use_conductors : bool, optional
@@ -101,7 +105,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
         use_mpi : bool, optional
             Enable MPI execution for a subdivided grid.
         dtype : numpy dtype, optional
-            Numeric dtype for solver arrays (default ``np.float64``).
+            Numeric dtype of the E, H and J fields (default ``np.float64``).
+            ``np.complex128`` or ``np.complex64`` select complex fields, needed
+            for Bloch boundaries with nonzero ``k_bloch``. Material tensors and
+            the timestep always use the matching real precision.
         n_pml : int, optional
             Number of PML cells for PML boundary regions.
         kappa_max : float, optional
@@ -120,6 +127,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             enabled.
         verbose : int or bool, optional
             Verbosity flag for initialization messages.
+        k_bloch : sequence of 3 float, optional
+            Bloch wavevector (kx, ky, kz) [rad/m] applied on axes with
+            ``'bloch'`` faces; components on other axes must be zero. A
+            nonzero component requires a complex ``dtype``. Default is zero.
 
         Attributes
         ----------
@@ -255,6 +266,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
         self.bc_low = bc_low
         self.bc_high = bc_high
         self.update_logger(["bc_low", "bc_high"])
+        self.k_bloch = np.zeros(3) if k_bloch is None else np.asarray(k_bloch, float)
+        if self.k_bloch.shape != (3,):
+            raise ValueError("k_bloch must have three components (kx, ky, kz).")
         self._apply_bc_to_C()
 
         # Materials
@@ -284,17 +298,19 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
         if self.verbose > 1:
             print(f"    * Max resolved conductivity without SIBC: {self.sigma_max} S/m")
 
+        # Materials and dt stay real for complex (Bloch) fields
+        real_dtype = np.finfo(self.dtype).dtype.type
         # fmt: off
         self.ieps = (
-            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=self.dtype)
+            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=real_dtype)
             * (1.0 / self.eps_bg)
         )
         self.imu = (
-            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=self.dtype)
+            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=real_dtype)
             * (1.0 / self.mu_bg)
         )
         self.sigma = (
-            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=self.dtype)
+            Field(self.Nx, self.Ny, self.Nz, use_ones=True, dtype=real_dtype)
             * self.sigma_bg
         )
         # fmt: on
@@ -360,7 +376,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             )
         else:
             self.dt = dt
-        self.dt = self.dtype(self.dt)
+        self.dt = real_dtype(self.dt)
         self.update_logger(["dt"])
 
         if self.use_conductivity:  # relaxation time criterion tau
@@ -401,7 +417,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             self._initialize_CPML_matrices()  # Calculate diagonal matrices for CPML update equations
         else:
             self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
-            self.itDaiDepsDstC = self.iDeps * self.itDa * self.C.transpose() * self.tDs
+            # Dual curl = C^H (C^T for real C; conjugates Bloch phases)
+            self.itDaiDepsDstC = (
+                self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
+            )
 
         if self.source_type.lower() == "tfsf":
             self.E_trans = Field(
@@ -622,7 +641,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
         if self.verbose:
             print("Re-Pre-computing ...")
         self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
-        self.itDaiDepsDstC = self.iDeps * self.itDa * self.C.transpose() * self.tDs
+        self.itDaiDepsDstC = (
+            self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
+        )
         self.step_0 = False
 
     def _apply_stl_materials(self):

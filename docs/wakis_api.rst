@@ -21,3 +21,4 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_plotting
    wakis_routines
    wakis_boundaries
+   wakis_bloch
