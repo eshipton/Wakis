@@ -16,6 +16,7 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_field_monitors
    wakis_sources
    wakis_materials
+   wakis_dispersive
    wakis_geometry
    wakis_logger
    wakis_plotting
