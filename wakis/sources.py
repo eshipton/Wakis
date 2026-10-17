@@ -1594,16 +1594,20 @@ class CurrentSource:
         size : tuple of float, optional
             Extent of the source region (sx, sy, sz) [m]. Zero means a single
             cell layer in that direction. Default is a point source.
-        amplitude : float, optional
+        amplitude : float or complex, optional
             Source amplitude, see units above. Default is 1.
         amp_func : callable, optional
-            Spatial profile amp_func(x, y, z) [m] multiplying `amplitude`.
+            Spatial profile amp_func(x, y, z) [m] multiplying `amplitude`. It
+            may be complex, e.g. exp(1j*(kx*x + ky*y)) for an oblique plane
+            wave in a Bloch-periodic cell.
 
         Notes
         -----
         J is evaluated at t + dt/2, the time at which it enters the E update. A
         point source snaps to the nearest edge of `component`. MPI and GPU
-        execution paths are supported but not covered by tests.
+        execution paths are supported but not covered by tests. Complex
+        amplitudes or profiles require a solver with complex fields
+        (``dtype=np.complex128``); the time profile s(t) stays real.
         """
         component = component[-1].lower()
         if component not in ("x", "y", "z"):
@@ -1631,7 +1635,9 @@ class CurrentSource:
         # length along the current and the dual widths transversally. For a point
         # source this is 1/(L_c * tA_c), the volume over which the E update
         # integrates J, so the current moment is mesh-independent.
-        weights = np.full(I.shape, float(self.amplitude))
+        weights = np.full(
+            I.shape, self.amplitude, dtype=np.result_type(float, self.amplitude)
+        )
         for d in range(3):
             if self.size[d] > 0:
                 continue
@@ -1642,6 +1648,11 @@ class CurrentSource:
             weights = weights / w
         if self.amp_func is not None:
             weights = weights * self.amp_func(X, Y, Z)
+        if np.iscomplexobj(weights) and not np.iscomplexobj(solver.J.array):
+            raise ValueError(
+                "Complex source amplitudes need complex fields: create the "
+                "solver with dtype=np.complex128."
+            )
 
         N = solver.Nx * solver.Ny * solver.Nz
         # Lexicographic index of Field.array (Fortran order, components stacked)
