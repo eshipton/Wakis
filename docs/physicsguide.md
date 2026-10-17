@@ -304,6 +304,36 @@ References:
 - A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions", in *Advances in FDTD Computational Electrodynamics*, Artech House (2013), [arXiv:1301.5366](https://arxiv.org/abs/1301.5366).
 - J. D. Jackson, *Classical Electrodynamics*, 3rd ed., Wiley (1999).
 
+### 📡 Frequency-domain monitors: `DFTMonitor` and `FluxMonitor`
+
+Frequency-domain quantities are obtained from a single broadband run by accumulating running discrete Fourier transforms of the time-domain fields [Taflove & Hagness, 2005; Oskooi et al., 2010]:
+
+$$
+\mathbf{F}(f) = \sum_n \mathbf{F}(t_n)\, e^{-2\pi i f t_n}\, \Delta t ,
+$$
+
+which approximates the continuous transform with the same convention as `GaussianSource.fourier_transform`, so spectra can be divided by the source spectrum directly. Each sample is transformed at its own position and time level: after the step starting at $t = n\Delta t$, the electric field (and $\mathbf{J}$) is known at $t_n = (n+1)\Delta t$ and the magnetic field at $t_n = (n+\tfrac12)\Delta t$. Because radiated power is the small real part of a large reactive near-field quantity, mis-centring by half a step introduces errors of order $\omega \Delta t$ times the reactive power.
+
+`DFTMonitor(frequencies, components, center, size)` stores the transform of any $E$, $H$ or $J$ component on a point, line, plane or volume, at the components' native staggered locations.
+
+`FluxMonitor(frequencies, center, size)` computes the Poynting flux spectrum through a plane (one zero `size` entry; positive along $+\hat{n}$) or out of a closed box (all entries non-zero; positive outwards):
+
+$$
+\Phi(f) = \operatorname{Re}\sum_{\text{faces}} \sum_{\text{samples}} \left[E_b(f)\, H_c^*(f) - E_c(f)\, H_b^*(f)\right] \Delta A ,
+$$
+
+for a face normal to $a$ with tangential directions $(b, c)$ in cyclic order. The tangential $E$ samples lie on the grid plane nearest to the requested position. The $H$ components, which share their in-plane position with the $E$ component they multiply but are staggered half a cell along the normal, are averaged from both sides onto that plane. The area element of each product is the primary edge length of the $E$ component times the dual width in the other tangential direction, the same metric used by the curl operators. On a closed box, samples on the edges shared by two faces receive half weight (trapezoidal rule); without this, the energy is over-counted by several percent for small boxes.
+
+By Parseval's theorem the energy crossing the surface is $2\int_0^\infty \Phi(f)\,df$. For a source with spectrum $S(f)$, the time-averaged power at frequency $f$ under harmonic excitation of unit amplitude is $P(f) = \Phi(f)/(2|S(f)|^2)$. The tests in `tests/test_018_flux_monitors.py` verify that:
+- the flux out of a box around a dipole equals the work done by the source, $-\operatorname{Re}[E(f)\,I\ell^*(f)]$, to 0.1% (discrete Poynting theorem), independently of the box size;
+- it matches the Hertzian dipole power to second order in the mesh size;
+- slab transmission and reflection follow the Airy formula with $R+T=1$ to $10^{-5}$.
+
+With MPI, each rank accumulates the samples in its own subdomain. `FluxMonitor.get_flux` sums over ranks, whereas `DFTMonitor.get_field` returns rank-local samples.
+
+References:
+- A. F. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos and S. G. Johnson, "MEEP: A flexible free-software package for electromagnetic simulations by the FDTD method", *Comput. Phys. Commun.* **181**, 687 (2010), [doi:10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:

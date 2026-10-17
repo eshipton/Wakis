@@ -321,6 +321,33 @@ solver.emsolve(Nt=2000, source=[dipole, sheet])
 
 `GaussianSource.fourier_transform(f)` returns the analytic source spectrum, so field spectra can be normalized by the excitation, e.g. to obtain the radiation resistance of an antenna.
 
+#### Frequency-domain monitors
+
+`DFTMonitor` and `FluxMonitor` accumulate Fourier transforms during the run, so a single broadband simulation gives fields and power flow at many frequencies. Pass them to `emsolve`, or call `monitor.update(solver, t)` after each `solver.one_step()` in a manual loop, with `t` the time at which the step started:
+
+```python
+import numpy as np
+import wakis
+
+freqs = np.linspace(0.8e9, 1.2e9, 41)
+
+# Fields at the feed point and on a plane
+feed = wakis.DFTMonitor(freqs, components=["Ez"], center=(0.0, 0.0, 0.0))
+plane = wakis.DFTMonitor(freqs, components=["Ex", "Hy"], center=(0.0, 0.0, 0.1), size=(0.2, 0.2, 0.0))
+
+# Power radiated out of a closed box and transmitted through a plane (+z)
+box = wakis.FluxMonitor(freqs, size=(0.1, 0.1, 0.1))
+transmitted = wakis.FluxMonitor(freqs, center=(0.0, 0.0, 0.2), size=(0.2, 0.2, 0.0))
+
+solver.emsolve(Nt, source=dipole, monitors=[feed, plane, box, transmitted])
+
+Ez_f, (x, y, z) = feed.get_field("Ez")  # shape (n_freq, nx, ny, nz)
+S = dipole.src_time.fourier_transform(freqs)
+P_rad = box.get_flux() / (2 * np.abs(S) ** 2)  # time-averaged power for |Il| = 1 A m [W]
+```
+
+Transmission and reflection spectra are obtained, as usual, by normalizing the flux to a reference run without the structure.
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:
