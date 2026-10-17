@@ -348,6 +348,51 @@ P_rad = box.get_flux() / (2 * np.abs(S) ** 2)  # time-averaged power for |Il| = 
 
 Transmission and reflection spectra are obtained, as usual, by normalizing the flux to a reference run without the structure.
 
+#### Inverse design with the adjoint method
+
+`wakis.inverse` computes the exact gradient of an objective of `DFTMonitor` fields with respect to the permittivity of a design region, with one forward and one adjoint run (see the physics guide). The NumPy core needs no extra dependency; the JAX binding needs `pip install wakis[inverse]`. Sources and monitors are templates, copied for every run, and `make_solver` must build a fresh solver each time:
+
+```python
+import jax
+import jax.numpy as jnp
+import numpy as np
+import wakis
+from wakis.inverse import AdjointSimulation, MaterialGrid, conic_filter, jax_simulation, tanh_projection
+from wakis.sources import CurrentSource, GaussianSource
+
+jax.config.update("jax_enable_x64", True)  # keep float64 gradients
+f0, dx = 3e9, 7.5e-3
+
+def make_solver():  # 2D TM domain: one periodic cell along z, CPML in x and y
+    grid = wakis.GridFIT3D(-0.15, 0.15, -0.15, 0.15, -dx / 2, dx / 2, 40, 40, 1, verbose=0)
+    return wakis.SolverFIT3D(grid, bc_low=["cpml", "cpml", "periodic"],
+                             bc_high=["cpml", "cpml", "periodic"], n_pml=8, verbose=0)
+
+source = CurrentSource(GaussianSource(f0, 1e9), component="z", center=(-0.06, 0, 0))
+probe = wakis.DFTMonitor([f0], components=["Ez"], center=(0.07, 0, 0))
+design = MaterialGrid(center=(0, 0, 0), size=(0.06, 0.06, 0), shape=(9, 9, 1), eps_min=1, eps_max=4)
+sim = AdjointSimulation(make_solver, [source], {"probe": probe}, design, Nt=400)
+
+# NumPy: F = |Ez(f0)|^2, G = dF/dRe(Ez) + 1j dF/dIm(Ez) = 2 Ez
+rho = np.full(design.shape, 0.5)
+Ez = sim.forward(rho)["probe"]["Ez"]
+grad = sim.vjp({"probe": {"Ez": 2 * Ez}})  # dF/drho, shape (9, 9, 1)
+
+# JAX: filters, projection and objective are differentiated automatically
+simulate = jax_simulation(sim)
+
+def objective(rho_raw, beta=8.0):
+    rho = tanh_projection(conic_filter(rho_raw, radius=2.0), beta)
+    return 1e20 * jnp.sum(jnp.abs(simulate(rho)["probe"]["Ez"]) ** 2)
+
+rho_raw = jnp.full(design.shape, 0.5)
+for it in range(20):  # plain normalized gradient ascent
+    value, g = jax.value_and_grad(objective)(rho_raw)
+    rho_raw = jnp.clip(rho_raw + 0.05 * g / jnp.abs(g).max(), 0, 1)
+```
+
+The adjoint supports CPU, non-MPI runs with PEC, PMC, periodic and CPML boundaries, ohmic loss and soft `CurrentSource` excitations; ABC, PML, TFSF, SIBC, GPU and MPI raise `NotImplementedError`. `AdjointSimulation(..., store_dtype=np.float32)` halves the memory of the stored E increments ($N_t \times N_\text{design}$ values).
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:

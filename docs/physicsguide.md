@@ -525,6 +525,67 @@ Wakis supports heterogeneous architecture computing thanks to open-source packag
 - Includes **CI/CD**, with end-to-end tests running nightly on GitHub actions, tagged **versioned releases**, and numerous **ready-to-run examples** in both Python scripts and notebooks, inluding a dedicated [playground](https://github.com/ImpedanCEI/CEI-logo) repository.
 ```
 
+### 🎯 Adjoint method and inverse design
+
+Inverse design optimizes many parameters, here the permittivity of every edge of a design region, to maximize an objective $F$ of the simulated fields [Molesky et al., 2018]. Finite differences would need one simulation per parameter; the adjoint method gives the full gradient $dF/d\boldsymbol\rho$ from one forward and one adjoint (backward-in-time) simulation [Giles & Pierce, 2000]. As in automatic-differentiation frameworks for Maxwell solvers [Hughes et al., 2019], the solver gradient is exposed as a vector-Jacobian product that composes with automatically differentiated parametrizations and objectives. Wakis differentiates the *discrete* time stepping itself (discretize-then-differentiate), so the gradient is exact for the simulated fields up to rounding, not an approximation of the continuous gradient. This is a Wakis implementation of the standard discrete adjoint of a linear explicit time integrator.
+
+**Forward step.** With the state $\mathbf x^n = (\widehat{\mathbf h}^{n-1/2}, \widehat{\mathbf e}^{n})$, $\mathbf A$ = `tDsiDmuiDaC`, $\mathbf B = \mathbf D_\varepsilon \mathbf K$ = `itDaiDepsDstC` ($\mathbf D_\varepsilon = \mathrm{diag}(\varepsilon^{-1})$ = `ieps`) and $\mathbf S = \mathrm{diag}(\Delta t\,\sigma\varepsilon^{-1})$ for ohmic loss, the leapfrog step of Section *Time-Stepping Routine* is
+
+$$
+\mathbf h' = \mathbf h - \Delta t\,\mathbf A\,\mathbf e, \qquad
+\mathbf e' = (\mathbf 1 - \mathbf S)\,\mathbf e + \Delta t\,\mathbf B\,\mathbf h' - \Delta t\,\mathbf D_\varepsilon \mathbf j_s ,
+$$
+
+i.e. $\mathbf x^{n+1} = \mathbf U \mathbf x^n + \mathbf b^n$ with $\mathbf U$ independent of time and of the sources.
+
+**Adjoint step.** For the Lagrangian $F - \sum_n \boldsymbol\lambda^{n+1}\cdot(\mathbf x^{n+1} - \mathbf U\mathbf x^n - \mathbf b^n)$, stationarity with respect to $\mathbf x^n$ gives $\boldsymbol\lambda^n = \mathbf U^T \boldsymbol\lambda^{n+1} + \partial F/\partial \mathbf x^n$, run backwards from $\boldsymbol\lambda^{N_t} = \partial F/\partial \mathbf x^{N_t}$. Transposing the two half steps in reverse order:
+
+$$
+\boldsymbol\lambda_h = \boldsymbol\lambda_h' + \Delta t\,\mathbf B^T \boldsymbol\lambda_e', \qquad
+\boldsymbol\lambda_e = (\mathbf 1 - \mathbf S)\,\boldsymbol\lambda_e' - \Delta t\,\mathbf A^T \boldsymbol\lambda_h .
+$$
+
+The objective sensitivities are added to $\boldsymbol\lambda'$ *before* the transposed step that consumes them: those of $\mathbf e$ sampled at $(n+1)\Delta t$ and of $\mathbf h$ sampled at $(n+\tfrac12)\Delta t$ belong to the state after step $n$.
+
+**Parameter gradient.** $\varepsilon^{-1}$ enters a step only as a factor of the electric increment, $\mathbf q^n = \mathbf e^{n+1} - \mathbf e^n = \Delta t\,\mathbf D_\varepsilon(\mathbf K \mathbf h' - \mathbf j_s - \sigma \mathbf e^n)$ (also with CPML, where the auxiliary terms are inside the same bracket). Hence, for each design edge $i$,
+
+$$
+\frac{dF}{d\varepsilon^{-1}_i} = \sum_{n=0}^{N_t-1} \lambda_{e,i}^{n+1}\, \frac{q_i^n}{\varepsilon^{-1}_i}.
+$$
+
+The forward run stores $q^n_i/\varepsilon^{-1}_i$ on the design edges only ($N_t \times N_\text{design}$ values, optionally in float32), which avoids storing or recomputing the whole field history.
+
+**DFT objectives.** A `DFTMonitor` sample is $X_k = \sum_n w_n F^n_k$ with $w_n = \Delta t\, e^{-2\pi i f t_n}$. For a real objective $F(X)$ with $G_k = \partial F/\partial \operatorname{Re}X_k + i\,\partial F/\partial \operatorname{Im}X_k$, the sensitivity to the time sample is $\partial F/\partial F^n_k = \operatorname{Re}(w_n G_k^*)$, summed over frequencies. JAX's cotangent of a complex output is $G^*$, which the JAX binding conjugates.
+
+**CPML.** The convolutional variables $\psi$ are part of the state. Each curl term of `_one_step_cpml` has the form $H_T \leftarrow H_T - \Delta t\,\mu_T^{-1} s\,(D E_S + \psi')$ with $\psi' = b\,\psi + c\,(D E_S)|_\text{face}$ (and analogously for $E$ with $\varepsilon^{-1}$ and the dual operators). With $\kappa = -\Delta t\,\mu^{-1}\boldsymbol\lambda_h$, the transposed term is
+
+$$
+\tilde\mu = \mu_\psi' + s\,\kappa_T|_\text{face}, \qquad
+\mu_\psi = b\,\tilde\mu, \qquad
+\boldsymbol\lambda_{e,S} \mathrel{+}= D^T\!\left(s\,\kappa_T + c\,\tilde\mu|^\text{scatter}_\text{face}\right),
+$$
+
+applied to the electric half step first (using $\nu = \Delta t\,\varepsilon^{-1}\boldsymbol\lambda_e'$) and then to the magnetic one.
+
+**Design parametrization.** `MaterialGrid` maps a density $\rho \in [0,1]$ on a regular design grid to $\varepsilon_r = \varepsilon_\text{min} + (\varepsilon_\text{max}-\varepsilon_\text{min})\,\mathbf P\rho$ on the design edges, with $\mathbf P$ the sparse trilinear interpolation matrix, so
+
+$$
+\frac{dF}{d\rho} = (\varepsilon_\text{max}-\varepsilon_\text{min})\,\mathbf P^T\!\left[\frac{dF}{d\varepsilon^{-1}} \cdot \left(-\frac{1}{\varepsilon_0\varepsilon_r^2}\right)\right].
+$$
+
+Filtering and projection are written in JAX: `conic_filter` [Bourdin, 2001], `gaussian_filter` and `tanh_projection` [Wang et al., 2011], so that jax.grad composes them with the simulation (`jax_simulation`, a `jax.custom_vjp` around the NumPy solver).
+
+**Validation** (`tests/test_020_adjoint.py`): the dot-product identity $\langle \mathbf U\mathbf x, \mathbf y\rangle = \langle \mathbf x, \mathbf U^T\mathbf y\rangle$ holds to $\sim 10^{-17}$ relative to $\sum|U x||y|$ for PEC, periodic, lossy and CPML steps; adjoint gradients match central finite differences to $10^{-8}$–$10^{-10}$ with $h=10^{-4}$, and the difference scales as $h^2$, i.e. it is the finite-difference truncation error.
+
+**Limitations.** The adjoint supports CPU, non-MPI runs with PEC/PMC/periodic/CPML boundaries, ohmic loss and soft current sources. ABC (Mur), PML, TFSF injection, SIBC, GPU and MPI raise `NotImplementedError`. Only isotropic $\varepsilon$ is designed, and $\Delta t$ must not depend on the design.
+
+References:
+- M. B. Giles and N. A. Pierce, "An introduction to the adjoint approach to design", *Flow, Turbulence and Combustion* **65**, 393–415 (2000).
+- S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković and A. W. Rodriguez, "Inverse design in nanophotonics", *Nat. Photonics* **12**, 659–670 (2018), [doi:10.1038/s41566-018-0246-9](https://doi.org/10.1038/s41566-018-0246-9).
+- T. W. Hughes, I. A. D. Williamson, M. Minkov and S. Fan, "Forward-mode differentiation of Maxwell's equations", *ACS Photonics* **6**, 3010–3016 (2019), [arXiv:1908.10507](https://arxiv.org/abs/1908.10507).
+- B. Bourdin, "Filters in topology optimization", *Int. J. Numer. Methods Eng.* **50**, 2143–2158 (2001), [doi:10.1002/nme.116](https://doi.org/10.1002/nme.116).
+- F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), [doi:10.1007/s00158-010-0602-y](https://doi.org/10.1007/s00158-010-0602-y).
+
 ## 4. Wake potential, impedance, and wake factors
 
 Wakis computes beam coupling impedance from time-domain electromagnetic field simulations by evaluating the wakefields generated by a moving charged particle (or bunch) as it traverses an accelerator structure.
