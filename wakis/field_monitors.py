@@ -303,7 +303,8 @@ class FluxMonitor:
                     # rule, half of their dual cell lies outside each face
                     lo = face_center - face_size / 2
                     hi = face_center + face_size / 2
-                    tol = 1e-6 * solver.grid.L[I, J, K, e_name].min()
+                    grid = solver.grid
+                    tol = 1e-6 * min(np.min(grid.dx), np.min(grid.dy), np.min(grid.dz))
                     for d in (b, c):
                         on_edge = (np.abs(coords[d] - lo[d]) < tol) | (
                             np.abs(coords[d] - hi[d]) < tol
