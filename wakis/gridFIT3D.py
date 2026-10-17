@@ -958,7 +958,8 @@ class GridFIT3D(PlotMixin):
                 # Pick the nearest sample on the global (uniform) z grid, so all
                 # ranks agree on it even at subdomain interfaces, then map it to
                 # the local index of the rank that owns it
-                z_global = self.ZMIN + self.dz * (np.arange(self.NZ) + 0.5 * at_mid)
+                dz = (self.ZMAX - self.ZMIN) / self.NZ
+                z_global = self.ZMIN + dz * (np.arange(self.NZ) + 0.5 * at_mid)
                 g = np.abs(z_global - center[d]).argmin()
                 local = g - self.rank * (self.NZ // self.size)
                 local += self.n_ghosts if self.rank > 0 else 0
