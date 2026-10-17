@@ -1621,43 +1621,9 @@ class CurrentSource:
     def _set_edges(self, solver):
         """Select the edges inside the source region and their current weights."""
         c = "xyz".index(self.component)
-        nodes = (solver.grid.x[:-1], solver.grid.y[:-1], solver.grid.z[:-1])
-        mids = (solver.x, solver.y, solver.z)
-        n_cells = (solver.Nx, solver.Ny, solver.Nz)
-
-        indices, coords = [], []
-        for d in range(3):
-            # E_c sits at the edge midpoint along c and on the nodes transversally
-            pos = mids[d] if d == c else nodes[d]
-            if d == 2 and solver.use_mpi:
-                # Exclude ghost layers so each edge is driven by one rank only
-                owned = np.zeros(n_cells[d], dtype=bool)
-                lo = solver.grid.n_ghosts if solver.grid.rank > 0 else 0
-                hi = n_cells[d] - (
-                    solver.grid.n_ghosts
-                    if solver.grid.rank < solver.grid.size - 1
-                    else 0
-                )
-                owned[lo:hi] = True
-            else:
-                owned = np.ones(n_cells[d], dtype=bool)
-
-            if self.size[d] == 0:
-                idx = np.array([np.abs(pos - self.center[d]).argmin()])
-            else:
-                lo_d = self.center[d] - self.size[d] / 2
-                hi_d = self.center[d] + self.size[d] / 2
-                tol = 1e-9 * (pos.max() - pos.min())
-                idx = np.flatnonzero((pos >= lo_d - tol) & (pos <= hi_d + tol))
-                if idx.size == 0 and not solver.use_mpi:
-                    raise ValueError(
-                        f"Source region contains no {self.component}-edges along "
-                        f"{'xyz'[d]}; increase size or refine the mesh."
-                    )
-            idx = idx[owned[idx]]
-            indices.append(idx)
-            coords.append(pos[idx])
-
+        indices, coords = solver.grid.region_indices(
+            "J", self.component, self.center, self.size
+        )
         I, J, K = np.meshgrid(*indices, indexing="ij")
         X, Y, Z = np.meshgrid(*coords, indexing="ij")
 
@@ -1669,7 +1635,7 @@ class CurrentSource:
         for d in range(3):
             if self.size[d] > 0:
                 continue
-            widths = solver.L if d == c else solver.tL
+            widths = solver.grid.L if d == c else solver.grid.tL
             w = widths[I, J, K, "xyz"[d]]
             if np.any(w <= 0):
                 raise ValueError("Source lies on a zero-width boundary cell.")

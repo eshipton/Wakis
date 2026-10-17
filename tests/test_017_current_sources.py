@@ -29,27 +29,29 @@ def test_gaussian_spectrum():
     assert abs(_dtft(src_time(t), t, [0.0])[0]) < 1e-5 * peak
 
 
-def _dipole_radiation_ratio(N, f):
+def _dipole_radiation_ratio(N, f, use_gpu=False):
     """Simulated over analytic radiation resistance of a point dipole in CPML."""
     L = 0.5
     grid = wakis.GridFIT3D(-L / 2, L / 2, -L / 2, L / 2, -L / 2, L / 2, N, N, N)
     solver = wakis.SolverFIT3D(
-        grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=10, verbose=0
+        grid,
+        use_gpu=use_gpu,
+        bc_low=["cpml"] * 3,
+        bc_high=["cpml"] * 3,
+        n_pml=10,
+        verbose=0,
     )
     src_time = GaussianSource(frequency=1e9, fwidth=0.3e9)
     dipole = CurrentSource(src_time, component="z", center=(0.0, 0.0, 0.0))
 
     Nt = int((src_time.end_time + 6e-9) / solver.dt)
-    Ez = np.zeros(Nt)
-    for n in range(Nt):
-        dipole.update(solver, n * solver.dt)
-        solver.one_step()
-        Ez[n] = solver.E.array[dipole.flat_idx[0]]
+    monitor = wakis.DFTMonitor(f, components=["Ez"], center=(0.0, 0.0, 0.0))
+    solver.emsolve(Nt, source=dipole, monitors=[monitor])
 
-    # E is known at (n+1)*dt after each step. The source spectrum needs no
-    # half-step correction: J samples s(t) itself at (n+1/2)*dt. A phase error
-    # here would leak the large reactive near field into the radiated power.
-    E_f = _dtft(Ez, (np.arange(Nt) + 1) * solver.dt, f)
+    # The monitor samples E at its own time level; the source spectrum needs no
+    # half-step correction since J samples s(t) itself at (n+1/2)*dt. A phase
+    # error here would leak the large reactive near field into the power.
+    E_f = monitor.get_field("Ez")[0].ravel()
     Il_f = src_time.fourier_transform(f)
 
     # P = -1/2 Re(E Il*) = eta k^2 |Il|^2 / (12 pi)  =>  -Re(E/Il) = eta k^2/(6 pi)
@@ -57,7 +59,7 @@ def _dipole_radiation_ratio(N, f):
     return -np.real(E_f / Il_f) / (Z0 * k**2 / (6 * np.pi))
 
 
-def test_dipole_radiated_power():
+def test_dipole_radiated_power(use_gpu):
     """
     A point current moment Il radiates P = eta k^2 |Il|^2 / (12 pi) into free
     space (Hertzian dipole). The power delivered by the source, -1/2 Re(E Il*)
@@ -65,8 +67,8 @@ def test_dipole_radiated_power():
     so the source normalization is mesh-independent.
     """
     f = np.linspace(0.8e9, 1.2e9, 5)
-    ratio_coarse = _dipole_radiation_ratio(30, f)  # 15-22 cells per wavelength
-    ratio_fine = _dipole_radiation_ratio(40, f)  # 20-30 cells per wavelength
+    ratio_coarse = _dipole_radiation_ratio(30, f, use_gpu)  # 15-22 cells per wavelength
+    ratio_fine = _dipole_radiation_ratio(40, f, use_gpu)  # 20-30 cells per wavelength
 
     np.testing.assert_allclose(ratio_coarse, 1.0, atol=0.03)
     np.testing.assert_allclose(ratio_fine, 1.0, atol=0.015)
@@ -75,7 +77,7 @@ def test_dipole_radiated_power():
     assert np.all(order_gain > 1.5)
 
 
-def test_sheet_source_plane_wave():
+def test_sheet_source_plane_wave(use_gpu):
     """
     A uniform sheet of surface current K launches plane waves of amplitude
     |E| = eta0 |K| / 2 in both directions, uniform over the transverse plane.
@@ -84,6 +86,7 @@ def test_sheet_source_plane_wave():
     grid = wakis.GridFIT3D(-0.02, 0.02, -0.02, 0.02, -0.6, 0.6, Nx, Ny, 120)
     solver = wakis.SolverFIT3D(
         grid,
+        use_gpu=use_gpu,
         bc_low=["periodic", "periodic", "cpml"],
         bc_high=["periodic", "periodic", "cpml"],
         n_pml=10,
@@ -115,7 +118,7 @@ def test_sheet_source_plane_wave():
     assert np.all(ratio.std(axis=(2, 3)) < 1e-10)
 
 
-def test_superposition_lossy_medium():
+def test_superposition_lossy_medium(use_gpu):
     """
     Soft sources only add a forcing term to Ampere's law, so fields are linear
     in the sources: two sources together give the sum of their individual
@@ -126,6 +129,7 @@ def test_superposition_lossy_medium():
         grid = wakis.GridFIT3D(-0.1, 0.1, -0.1, 0.1, -0.1, 0.1, 16, 16, 16)
         solver = wakis.SolverFIT3D(
             grid,
+            use_gpu=use_gpu,
             bc_low=["pec"] * 3,
             bc_high=["pec"] * 3,
             bg=[2.0, 1.0, 0.05],
@@ -133,7 +137,8 @@ def test_superposition_lossy_medium():
         )
         assert solver.use_conductivity
         solver.emsolve(300, source=sources)
-        return solver.E.array.copy()
+        E = solver.E.array
+        return E.get() if use_gpu else E.copy()
 
     src_time = GaussianSource(frequency=1.5e9, fwidth=0.5e9)
 

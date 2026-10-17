@@ -114,3 +114,265 @@ class FieldMonitor:
         """
 
         return {"Ex": self.Ex_acc, "Ey": self.Ey_acc, "Ez": self.Ez_acc}
+
+
+def _flat_index(solver, component, I, J, K):
+    """Lexicographic index into Field.array (Fortran order, components stacked)."""
+    N = solver.Nx * solver.Ny * solver.Nz
+    c = "xyz".index(component)
+    return c * N + I + solver.Nx * J + solver.Nx * solver.Ny * K
+
+
+class DFTMonitor:
+    def __init__(
+        self,
+        frequencies,
+        components=("Ex", "Ey", "Ez"),
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.0),
+    ):
+        """
+        Running discrete Fourier transform of field components in a region.
+
+        Each component is sampled at its native location on the staggered grid
+        and at its own time level: after the step started at time t, E (and J)
+        are known at t + dt and H at t + dt/2. The transform approximates the
+        continuous Fourier transform F(f) = int F(t) exp(-2j*pi*f*t) dt, with
+        the same convention as `GaussianSource.fourier_transform`, so field
+        spectra can be normalized directly by the source spectrum.
+
+        Parameters
+        ----------
+        frequencies : array_like
+            Frequencies to monitor [Hz].
+        components : sequence of str, optional
+            Field components, e.g. ('Ex', 'Hy', 'Jz'). Default is E.
+        center, size : tuple of float, optional
+            Centre and extent of the monitored region [m]. A zero size selects
+            the nearest sample along that direction. Default is a point at the
+            origin.
+
+        Notes
+        -----
+        Call `update(solver, t)` after every `solver.one_step()` with the time
+        t at which that step started, or pass the monitor to `solver.emsolve`.
+        """
+        for comp in components:
+            if len(comp) != 2 or comp[0] not in "EHJ" or comp[1] not in "xyz":
+                raise ValueError(f"Invalid component {comp!r}, expected e.g. 'Ex'.")
+        self.frequencies = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        self.components = tuple(components)
+        self.center = np.asarray(center, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        self.is_first_update = True
+
+    def _initialize(self, solver):
+        xp = solver.E.xp
+        self.xp = xp
+        self.coords, self.shape, self._flat, self._acc = {}, {}, {}, {}
+        for comp in self.components:
+            indices, coords = solver.grid.region_indices(
+                comp[0], comp[1], self.center, self.size
+            )
+            I, J, K = np.meshgrid(*indices, indexing="ij")
+            self.coords[comp] = coords
+            self.shape[comp] = I.shape
+            self._flat[comp] = xp.asarray(_flat_index(solver, comp[1], I, J, K).ravel())
+            self._acc[comp] = xp.zeros(
+                (self.frequencies.size, I.size), dtype=xp.complex128
+            )
+
+    def update(self, solver, t):
+        """
+        Accumulate the fields after the timestep that started at time t.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver object.
+        t : float
+            Time at the start of the step just taken [s].
+        """
+        if self.is_first_update:
+            self._initialize(solver)
+            self.is_first_update = False
+
+        times = {"E": t + solver.dt, "J": t + solver.dt, "H": t + solver.dt / 2}
+        kernels = {
+            f: self.xp.asarray(solver.dt * np.exp(-2j * np.pi * self.frequencies * tf))[
+                :, None
+            ]
+            for f, tf in times.items()
+        }
+        for comp in self.components:
+            values = getattr(solver, comp[0]).array[self._flat[comp]]
+            self._acc[comp] += kernels[comp[0]] * values[None, :]
+
+    def get_field(self, component):
+        """
+        Fourier-transformed field component in the monitored region.
+
+        Parameters
+        ----------
+        component : str
+            One of the monitored components, e.g. 'Ez'.
+
+        Returns
+        -------
+        field : ndarray of complex
+            Array of shape (n_freq, nx, ny, nz) [field units x s].
+        coords : list of 3 ndarray
+            Sample coordinates [m] along x, y and z.
+
+        Notes
+        -----
+        With MPI, each rank returns the samples inside its own subdomain.
+        """
+        acc = self._acc[component]
+        acc = acc.get() if hasattr(acc, "get") else acc
+        return acc.reshape(-1, *self.shape[component]), self.coords[component]
+
+
+class FluxMonitor:
+    def __init__(self, frequencies, center=(0.0, 0.0, 0.0), size=(0.0, 0.0, 0.0)):
+        """
+        Spectrum of the Poynting flux through a plane or out of a closed box.
+
+        The flux spectrum is Phi(f) = Re sum (E(f) x H(f)^*) . n dA, where E(f)
+        and H(f) are the Fourier transforms accumulated as in `DFTMonitor`. By
+        Parseval's theorem the energy crossing the surface is
+        2 * int_0^inf Phi(f) df [J]. For a time-harmonic excitation of complex
+        amplitude S(f), the time-averaged power is P(f) = Phi(f) / (2 |S(f)|^2).
+
+        The tangential E components are taken on the grid plane nearest to the
+        requested position, and H, staggered half a cell away, is averaged from
+        both sides onto that plane. The area elements are the primary edge
+        length of each E component times the dual width in the other direction.
+
+        Parameters
+        ----------
+        frequencies : array_like
+            Frequencies to monitor [Hz].
+        center : tuple of float, optional
+            Centre of the plane or box [m].
+        size : tuple of float, optional
+            Extent [m]. Exactly one zero entry defines a plane with normal along
+            that axis and flux counted positive in the +axis direction. No zero
+            entries define a box with flux counted positive outwards.
+        """
+        self.frequencies = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        self.center = np.asarray(center, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        zero_axes = np.flatnonzero(self.size == 0)
+        if zero_axes.size > 1:
+            raise ValueError("size must have at most one zero entry (plane or box).")
+
+        if zero_axes.size == 1:
+            self.faces = [(zero_axes[0], self.center, 1.0)]
+        else:
+            self.faces = []
+            for a in range(3):
+                for sign in (-1.0, 1.0):
+                    face_center = self.center.copy()
+                    face_center[a] += sign * self.size[a] / 2
+                    self.faces.append((a, face_center, sign))
+        self.is_first_update = True
+
+    def _initialize(self, solver):
+        xp = solver.E.xp
+        n_freq = self.frequencies.size
+        self._terms = []
+        for a, face_center, sign in self.faces:
+            face_size = self.size.copy()
+            face_size[a] = 0.0
+            b, c = (a + 1) % 3, (a + 2) % 3
+            # S_a = E_b H_c - E_c H_b; each pair is colocated within the plane
+            for e_comp, h_comp, term_sign in ((b, c, 1.0), (c, b, -1.0)):
+                e_name, h_name = "xyz"[e_comp], "xyz"[h_comp]
+                indices, coords = solver.grid.region_indices(
+                    "E", e_name, face_center, face_size
+                )
+                if indices[a].size and indices[a][0] == 0:
+                    raise ValueError("Flux plane cannot lie on the lower boundary.")
+                I, J, K = np.meshgrid(*indices, indexing="ij")
+                below = [I, J, K]
+                below[a] = below[a] - 1
+                dA = solver.grid.L[I, J, K, e_name] * solver.grid.tL[I, J, K, h_name]
+                if len(self.faces) == 6:
+                    # Samples on the box edges are shared by two faces: trapezoid
+                    # rule, half of their dual cell lies outside each face
+                    lo = face_center - face_size / 2
+                    hi = face_center + face_size / 2
+                    tol = 1e-6 * solver.grid.L[I, J, K, e_name].min()
+                    for d in (b, c):
+                        on_edge = (np.abs(coords[d] - lo[d]) < tol) | (
+                            np.abs(coords[d] - hi[d]) < tol
+                        )
+                        shape = [1, 1, 1]
+                        shape[d] = -1
+                        dA = dA * np.where(on_edge, 0.5, 1.0).reshape(shape)
+                dA = dA.ravel()
+                self._terms.append(
+                    {
+                        "E": xp.asarray(_flat_index(solver, e_name, I, J, K).ravel()),
+                        "H_above": xp.asarray(
+                            _flat_index(solver, h_name, I, J, K).ravel()
+                        ),
+                        "H_below": xp.asarray(
+                            _flat_index(solver, h_name, *below).ravel()
+                        ),
+                        "weight": sign * term_sign * dA,
+                        "E_acc": xp.zeros((n_freq, dA.size), dtype=xp.complex128),
+                        "H_acc": xp.zeros((n_freq, dA.size), dtype=xp.complex128),
+                    }
+                )
+        self.xp = xp
+        self.comm = solver.grid.comm if solver.use_mpi else None
+
+    def update(self, solver, t):
+        """
+        Accumulate the fields after the timestep that started at time t.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver object.
+        t : float
+            Time at the start of the step just taken [s].
+        """
+        if self.is_first_update:
+            self._initialize(solver)
+            self.is_first_update = False
+
+        kernel_E = self.xp.asarray(
+            solver.dt * np.exp(-2j * np.pi * self.frequencies * (t + solver.dt))
+        )[:, None]
+        kernel_H = self.xp.asarray(
+            solver.dt * np.exp(-2j * np.pi * self.frequencies * (t + solver.dt / 2))
+        )[:, None]
+        for term in self._terms:
+            E = solver.E.array[term["E"]]
+            H = 0.5 * (
+                solver.H.array[term["H_above"]] + solver.H.array[term["H_below"]]
+            )
+            term["E_acc"] += kernel_E * E[None, :]
+            term["H_acc"] += kernel_H * H[None, :]
+
+    def get_flux(self):
+        """
+        Flux spectrum through the monitored surface.
+
+        Returns
+        -------
+        ndarray
+            Phi(f) for each monitored frequency [J/Hz^2 = W s^2].
+        """
+        flux = np.zeros(self.frequencies.size)
+        for term in self._terms:
+            density = self.xp.real(term["E_acc"] * self.xp.conj(term["H_acc"]))
+            density = density.get() if hasattr(density, "get") else density
+            flux += density @ term["weight"]
+        if self.comm is not None:
+            # Each MPI rank holds the part of the surface in its subdomain
+            flux = self.comm.allreduce(flux)
+        return flux

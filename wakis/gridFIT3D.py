@@ -912,6 +912,66 @@ class GridFIT3D(PlotMixin):
         pl.add_legend()
         pl.show()
 
+    def region_indices(self, field, component, center, size):
+        """
+        Indices and coordinates of the field samples inside a box region.
+
+        E components sit at the edge midpoint along their own direction and on
+        the nodes transversally; H components sit on the node along their own
+        direction and at the cell midpoints transversally. Along directions of
+        zero `size` the single nearest sample is selected. With MPI, ghost
+        layers are excluded so that each sample belongs to exactly one rank.
+
+        Parameters
+        ----------
+        field : str
+            'E' or 'H'. 'J' samples are colocated with 'E'.
+        component : str
+            'x', 'y' or 'z'.
+        center, size : tuple of float
+            Centre and extent of the region (x, y, z) [m].
+
+        Returns
+        -------
+        indices : list of 3 ndarray of int
+            Selected indices along x, y and z (possibly empty along z on MPI
+            ranks that do not own the region).
+        coords : list of 3 ndarray of float
+            Coordinates [m] of the selected samples along x, y and z.
+        """
+        c = "xyz".index(component)
+        on_edge_mid = field.upper() in ("E", "J")
+        nodes = (self.x, self.y, self.z)
+        indices, coords = [], []
+        for d in range(3):
+            if (d == c) == on_edge_mid:
+                pos = (nodes[d][:-1] + nodes[d][1:]) / 2
+            else:
+                pos = nodes[d][:-1]
+
+            owned = np.ones(pos.size, dtype=bool)
+            if d == 2 and self.use_mpi:
+                if self.rank > 0:
+                    owned[: self.n_ghosts] = False
+                if self.rank < self.size - 1:
+                    owned[-self.n_ghosts :] = False
+
+            if size[d] == 0:
+                idx = np.array([np.abs(pos - center[d]).argmin()])
+            else:
+                tol = 1e-9 * (nodes[d][-1] - nodes[d][0])
+                lo, hi = center[d] - size[d] / 2 - tol, center[d] + size[d] / 2 + tol
+                idx = np.flatnonzero((pos >= lo) & (pos <= hi))
+                if idx.size == 0 and not self.use_mpi:
+                    raise ValueError(
+                        f"Region contains no {field}{component} samples along "
+                        f"{'xyz'[d]}; increase size or refine the mesh."
+                    )
+            idx = idx[owned[idx]]
+            indices.append(idx)
+            coords.append(pos[idx])
+        return indices, coords
+
     def refine_axis(self, xmin, xmax, Nx, x_snaps, method="insert", tol=1e-12):
         """
         Refine a grid axis using snap points and a chosen method.

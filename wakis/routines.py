@@ -34,6 +34,7 @@ class RoutinesMixin:
         plot_every=1,
         use_etd=False,
         plot3d=False,
+        monitors=None,
         **kwargs,
     ):
         """
@@ -49,6 +50,9 @@ class RoutinesMixin:
             Source object(s) from `sources.py` defining the time-dependent
             excitation. Each should have an update function
             `source.update(solver, t)`.
+        monitors : list of objects, optional
+            Frequency-domain monitors (e.g. `DFTMonitor`, `FluxMonitor`) updated
+            after every timestep with `monitor.update(solver, t)`.
         callback : callable, optional
             Function to call at each timestep as `callback(solver, t)`.
         save : bool, optional
@@ -159,6 +163,7 @@ class RoutinesMixin:
 
         sources = source if isinstance(source, (list, tuple)) else [source]
         sources = [src for src in sources if src is not None]
+        monitors = [] if monitors is None else list(monitors)
 
         # Time loop
         for n in tqdm(range(Nt)):
@@ -180,6 +185,9 @@ class RoutinesMixin:
 
             # Advance
             self.one_step()
+
+            for monitor in monitors:
+                monitor.update(self, n * self.dt)
 
             # Plot
             if plot and n % plot_every == 0:
