@@ -70,6 +70,10 @@ class AdjointStepper:
             raise NotImplementedError("The adjoint does not support PML; use CPML.")
         if solver.use_sibc:
             raise NotImplementedError("The adjoint does not support SIBC.")
+        if np.iscomplexobj(solver.E.array):
+            # Complex (Bloch) fields need Hermitian transposes and complex
+            # parameter sensitivities, not yet implemented
+            raise NotImplementedError("The adjoint does not support complex fields.")
         if solver.source_type == "tfsf" and not solver.injection_done:
             raise NotImplementedError("The adjoint does not support TFSF injection.")
 
