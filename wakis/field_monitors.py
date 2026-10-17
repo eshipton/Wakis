@@ -301,7 +301,7 @@ class FluxMonitor:
                 below = [I, J, K]
                 below[a] = below[a] - 1
                 dA = solver.grid.L[I, J, K, e_name] * solver.grid.tL[I, J, K, h_name]
-                if len(self.faces) == 6:
+                if len(self.faces) > 1:
                     # Samples on the box edges are shared by two faces: trapezoid
                     # rule, half of their dual cell lies outside each face
                     lo = face_center - face_size / 2
@@ -326,6 +326,8 @@ class FluxMonitor:
                             _flat_index(solver, h_name, *below).ravel()
                         ),
                         "weight": sign * term_sign * dA,
+                        "coords": coords,
+                        "axes": (e_comp, h_comp),
                         "E_acc": xp.zeros((n_freq, dA.size), dtype=xp.complex128),
                         "H_acc": xp.zeros((n_freq, dA.size), dtype=xp.complex128),
                     }
