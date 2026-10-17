@@ -181,6 +181,7 @@ The required parameters `bc_low` and `bc_high` allow to choose the 6 boundary co
 * `abc`: First-order Mur absorbing boundary condition (ABC)[^2], suited to waves approaching the boundary near normal incidence.
 * `pml`: Graded conductive absorbing layer. Its reflection depends on layer thickness and the conductivity profile; see the [physics guide](physicsguide.md).
 * `cpml`: Convolutional perfectly matched layer, the preferred absorbing boundary for broadband and oblique waves [^3].
+* `bloch`: Bloch-periodic (Floquet) boundary: like `periodic`, but the fields re-enter with the phase $e^{ik_aL}$ set by `k_bloch=(kx, ky, kz)` [rad/m]. Needs `dtype=np.complex128` for nonzero `k_bloch`; see the unit-cell example below.
 
 An example of the boundary conditions that are typically used for the pillbox cavity example are:
 
@@ -347,6 +348,49 @@ P_rad = box.get_flux() / (2 * np.abs(S) ** 2)  # time-averaged power for |Il| = 
 ```
 
 Transmission and reflection spectra are obtained, as usual, by normalizing the flux to a reference run without the structure.
+
+#### Periodic unit cells at oblique incidence (Bloch boundaries)
+
+Metasurfaces, gratings and photonic crystals are simulated with one unit cell and Bloch-periodic boundaries. These are CST's "unit cell" boundaries, or Meep's `k_point`. Put `'bloch'` on the periodic axes and pass the Bloch wavevector `k_bloch` [rad/m]. A nonzero `k_bloch` needs complex fields (`dtype=np.complex128`). An oblique plane wave is launched by a sheet current with the matching phase profile $e^{i\mathbf{k}_\parallel\cdot\mathbf{r}}$:
+
+```python
+import numpy as np
+import wakis
+from wakis.bloch import incidence_angle, k_parallel
+from wakis.sources import CurrentSource, GaussianSource
+
+px, py = 0.02, 0.02                      # unit-cell period [m]
+grid = wakis.GridFIT3D(0, px, 0, py, -0.3, 0.3, 20, 20, 240)  # add the cell's STL solids here
+k_par = k_parallel(10e9, np.radians(30.0), phi=0.0)  # 30 deg at 10 GHz, plane of incidence xz
+
+solver = wakis.SolverFIT3D(
+    grid,
+    bc_low=["bloch", "bloch", "cpml"],
+    bc_high=["bloch", "bloch", "cpml"],
+    k_bloch=k_par,
+    dtype=np.complex128,
+    use_stl=True,
+)
+
+src_time = GaussianSource(frequency=10e9, fwidth=1.5e9)
+sheet = CurrentSource(                   # s-polarized: current along y
+    src_time, component="y", center=(px / 2, py / 2, 0.2), size=(px, py, 0.0),
+    amp_func=lambda x, y, z: np.exp(1j * (k_par[0] * x + k_par[1] * y)),
+)
+freqs = np.linspace(8e9, 12e9, 41)
+trans = wakis.FluxMonitor(freqs, center=(px / 2, py / 2, -0.2), size=(px, py, 0.0))
+solver.emsolve(Nt, source=sheet, monitors=[trans])
+
+T = trans.get_flux() / flux_reference      # reference: same run without the structure
+theta = incidence_angle(k_par, freqs)      # the angle changes with frequency!
+```
+
+Points to keep in mind (details in the [physics guide](physicsguide.md)):
+* `k_par` is fixed, so each frequency is hit at a different angle $\theta(f) = \arcsin(c|k_\parallel|/2\pi f)$. Below the cutoff $c|k_\parallel|/2\pi$ the wave is evanescent. Keep the source band clear of the cutoff, where waves barely leave the cell.
+* Use frequencies $f>0$. With Wakis' Fourier convention, the $f>0$ wave has tangential wavevector $-\mathbf{k}_\parallel$ (its mirror image, at $-f$, is excited too). Reflectance, transmittance and band frequencies are the same for both.
+* The physical time-domain field is `np.real(solver.E.toarray())`. Plotting routines expect real arrays.
+* `tests/test_024_bloch.py` shows complete, validated set-ups: oblique Fresnel reflection, and photonic-crystal bands from a broadband pulse with spectral peak finding.
+
 
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
