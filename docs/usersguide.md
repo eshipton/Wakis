@@ -477,6 +477,10 @@ Points to keep in mind (details in the [physics guide](physicsguide.md)):
 
 Frequency-dependent materials (`DispersiveMaterial`: Drude, Lorentz and Debye poles plus conductivity, see the physics guide) are added to box regions with `solver.add_dispersive_material` or assigned to STL solids directly in `stl_materials`. `dispersive_lib` provides gold, silver, aluminium (Rakić Lorentz–Drude), fused silica, silicon (Sellmeier), FR-4 and RO4350B (Debye). The reflectance of an optically thick gold film at normal incidence, in a quasi-1D periodic cell, normalized by a run without the film:
 
+#### Waveguide modes and mode ports
+
+`solve_modes` computes the propagating modes of a waveguide cross-section with the solver's own grid, materials and boundaries. `ModeSource` launches one mode in one direction (an electric plus a `MagneticCurrentSource`-type sheet), and `ModeMonitor` measures forward/backward mode amplitudes, from which S-parameters follow. A port is a plane: `size` has one zero entry (the normal) and `np.inf` (or the domain size) transversally; a smaller transverse size puts electric walls on the port edges, e.g. to exclude CPML layers.
+
 ```python
 import numpy as np
 from scipy.constants import c
@@ -555,6 +559,54 @@ network = to_skrf_network(freqs, S)          # requires scikit-rf
 ```
 
 The lumped elements correct their edges after each step through `post_step(solver, t)`, which `emsolve` calls automatically; in a manual loop call `element.update(solver, t)` before and `element.post_step(solver, t)` after `solver.one_step()`.
+
+
+
+import wakis
+from wakis.mode_solver import ModeMonitor, ModeSource, solve_modes
+from wakis.sources import GaussianSource
+
+# WR-like PEC guide along z with CPML ends: 21 x 11 cells -> a = 20 mm, b = 10 mm
+# (PEC walls sit on the first and last field node: width = (N - 1) * dx)
+dx = 1e-3
+grid = wakis.GridFIT3D(0, 21 * dx, 0, 11 * dx, 0, 0.16, 21, 11, 160)
+solver = wakis.SolverFIT3D(grid, bc_low=["pec", "pec", "cpml"], bc_high=["pec", "pec", "cpml"])
+
+fc = c / (2 * 20 * dx)  # TE10 cutoff
+port = dict(size=(np.inf, np.inf, 0))
+te10 = solve_modes(solver, 1.5 * fc, center=(0, 0, 0.05), n_modes=2, **port)[0]
+print(te10.neff, te10.beta)  # te10.e / te10.h: unit-power transverse profiles
+
+pulse = GaussianSource(frequency=1.5 * fc, fwidth=0.15 * fc)
+source = ModeSource(pulse, center=(0, 0, 0.05), direction="+", mode_index=0, **port)
+freqs = np.linspace(1.3 * fc, 1.7 * fc, 21)
+port1 = ModeMonitor(freqs, center=(0, 0, 0.03), **port)   # behind the source
+port2 = ModeMonitor(freqs, center=(0, 0, 0.11), **port)   # downstream
+
+solver.emsolve(int((pulse.end_time + 3e-9) / solver.dt), source=source, monitors=[port1, port2])
+
+S = pulse.fourier_transform(freqs)
+a_fwd, a_bwd = port2.get_amplitudes(mode_index=0)  # [sqrt(W) s]
+P_mode = np.abs(a_fwd) ** 2 / np.abs(S) ** 2       # ~1 W: power launched for amplitude 1
+```
+
+With a device between the ports, $S_{21}(f) = a_+^{(2)}/(A\,S(f))$ and $S_{11}(f) = a_-^{(1)}/(A\,S(f))$ (or ratios to a reference run). The source is exactly unidirectional at its mode frequency; with broadband pulses in dispersive guides a small backward wave leaks away from it (a few % at $\pm 10\%$ of the frequency for TE10 at $1.5f_c$), so measure reflections with `ModeMonitor` rather than assuming a perfect launch.
+
+Magnetic current sources can also be used on their own, e.g. a Huygens plane-wave sheet radiating only along $+z$ (the magnetic sheet sits on the H plane half a cell behind the electric sheet, and the incident H is advanced by $\Delta z/2c$):
+
+```python
+from scipy.constants import epsilon_0, mu_0
+from wakis.sources import CurrentSource, CustomSource, MagneticCurrentSource
+
+eta0 = np.sqrt(mu_0 / epsilon_0)
+pulse = GaussianSource(frequency=1e9, fwidth=0.4e9)
+sheet = dict(size=(xmax - xmin, ymax - ymin, 0.0))
+K = CurrentSource(CustomSource(lambda t: pulse(t + dz / (2 * c))), component="x",
+                  center=(0, 0, 0), amplitude=-1 / eta0, **sheet)        # K = z x H_inc
+M = MagneticCurrentSource(pulse, component="y", center=(0, 0, -dz / 2),
+                          amplitude=-1.0, **sheet)                       # M = -z x E_inc
+solver.emsolve(Nt, source=[K, M])
+```
 
 Custom sources provide an `update(solver, t)` method. For example:
 ```python

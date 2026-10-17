@@ -521,6 +521,79 @@ References:
 - K. Kurokawa, "Power waves and the scattering matrix", *IEEE Trans. Microw. Theory Techn.* **13**(2), 194 (1965), [IEEE Xplore 1125964](https://ieeexplore.ieee.org/document/1125964).
 - Touchstone File Format Specification, Rev. 1.1, EIA/IBIS Open Forum (2002).
 
+### 🔀 Magnetic currents, waveguide modes and mode ports
+
+#### Magnetic current sources: `MagneticCurrentSource`
+
+An impressed magnetic current density $\mathbf{M}$ [V/m²] enters Faraday's law as the dual of $\mathbf{J}$ in Ampère's law [Harrington, 1961]:
+
+$$
+\mu\,\partial_t \mathbf{H} = -\nabla\times\mathbf{E} - \mathbf{M},
+\qquad
+\widehat{\mathbf{h}}^{\,n+1/2} = \widehat{\mathbf{h}}^{\,n-1/2} - \Delta t\, \mathbf{M}_{\mu}^{-1}\left(\mathbf{C}\,\widehat{\mathbf{e}}^{\,n} + \mathbf{m}_s^{\,n}\right).
+$$
+
+The leapfrog H update from $(n-\tfrac12)\Delta t$ to $(n+\tfrac12)\Delta t$ is centred at $n\Delta t$, so $\mathbf{M}$ is sampled at $t = n\Delta t$ (the time passed to `source.update`), whereas $\mathbf{J}$ is sampled at $t + \Delta t/2$. $\mathbf{M}$ lives on the H samples (on the node along its own direction, at cell midpoints transversally). `MagneticCurrentSource` mirrors `CurrentSource`: the amplitude is integrated over the zero-size directions with the dual edge length along the current and the primary widths transversally, so a point, line, sheet and volume source have units of V m, V, V/m and V/m². `solver.M` is allocated by the first magnetic source; otherwise the H update is unchanged.
+
+**Huygens sheets.** By the equivalence principle [Harrington, 1961; Taflove & Hagness, 2005, Ch. 5], the surface currents $\mathbf{K} = \hat{\mathbf{n}}\times\mathbf{H}_{inc}$ and $\mathbf{M}_s = -\hat{\mathbf{n}}\times\mathbf{E}_{inc}$ on a surface radiate the incident field on the side $\hat{\mathbf{n}}$ points to and cancel it on the other side. On the staggered grid this is exactly the total-field/scattered-field correction: $\mathbf{K}$ sits on the E plane $z_0$ and carries $\mathbf{H}_{inc}$ of the H plane $z_0 - \Delta z/2$ at time $t+\Delta t/2$, and $\mathbf{M}_s$ sits on that H plane and carries $\mathbf{E}_{inc}(z_0, t)$. For a plane wave $E_x = s(t - z/c)$ along $+z$ this gives $K_x(t) = -s(t + \Delta t/2 + \Delta z/2c)/\eta_0$ and $M_{s,y}(t) = -s(t)$. `tests/test_023_modes.py` checks that such a sheet radiates a broadband pulse with backward/forward flux below $10^{-3}$ (observed: $\sim10^{-11}$–$10^{-9}$ with CPML, $\le 3\times10^{-6}$ with Mur ABC, limited by the boundary reflection) for 35–170 cells per wavelength.
+
+#### Waveguide mode solver: `solve_modes`
+
+For a guide that is uniform along the normal $a$ of a grid plane (transverse axes $b, c$ with $\hat b\times\hat c = \hat a$), fields of the 3D scheme vary as $e^{i(\omega t - \beta a)}$. The forward difference of a sample on the $a$-nodes and the backward difference of a sample on the $a$-midpoints then both reduce to $-i\tilde\beta$, with
+
+$$
+\tilde\beta = \frac{2}{\Delta a}\sin\frac{\beta\Delta a}{2},\qquad
+\tilde\omega = \frac{2}{\Delta t}\sin\frac{\omega\Delta t}{2},
+$$
+
+when the half-cell phase is absorbed in the amplitudes of the midpoint samples ($E_a$, $H_b$, $H_c$), and the leapfrog time derivative reduces to $i\tilde\omega$ [Taflove & Hagness, 2005, Ch. 4]. With $U_b, U_c$ the primary forward differences (node to midpoint, divided by $L$) and $V_b, V_c$ the dual backward differences (divided by $\tilde L$), exactly as in the curl matrices $\mathbf{C}$ and $\widetilde{\mathbf{C}}$, eliminating $E_a = (V_b H_c - V_c H_b)/(i\tilde\omega\varepsilon_a)$ and $H_a = -(U_b E_c - U_c E_b)/(i\tilde\omega\mu_a)$ gives
+
+$$
+\tilde\beta\begin{pmatrix}H_b\\H_c\end{pmatrix} = Q\begin{pmatrix}E_b\\E_c\end{pmatrix},\quad
+Q = \frac{1}{\tilde\omega}\begin{pmatrix} V_b\mu_a^{-1}U_c & -\tilde\omega^2\varepsilon_c - V_b\mu_a^{-1}U_b\\ \tilde\omega^2\varepsilon_b + V_c\mu_a^{-1}U_c & -V_c\mu_a^{-1}U_b\end{pmatrix},
+$$
+
+$$
+\tilde\beta\begin{pmatrix}E_b\\E_c\end{pmatrix} = P\begin{pmatrix}H_b\\H_c\end{pmatrix},\quad
+P = \frac{1}{\tilde\omega}\begin{pmatrix} -U_b\varepsilon_a^{-1}V_c & \tilde\omega^2\mu_c + U_b\varepsilon_a^{-1}V_b\\ -\tilde\omega^2\mu_b - U_c\varepsilon_a^{-1}V_c & U_c\varepsilon_a^{-1}V_b\end{pmatrix},
+$$
+
+and the eigenproblem $\tilde\beta^2\,\mathbf{e} = PQ\,\mathbf{e}$ for the transverse E samples. This is the Yee-mesh finite-difference mode solver of Zhu & Brown [2002], here built from Wakis' own material tensors (`ieps`, `imu`), metric lengths ($L$, $\tilde L$) and boundary masks: PEC (and the PEC-terminated CPML/PML faces) removes the tangential E samples on the walls, PMC removes tangential H, periodic axes wrap, conductors with `ieps = 0` remove their E samples, and the ghost layer at the last index is excluded. A port `size` smaller than the domain puts electric walls on the port edges (e.g. to exclude CPML layers). The eigenvalues closest to $n_{max}^2\tilde\omega^2/c^2$ are found with shift-invert Arnoldi (`scipy.sparse.linalg.eigs`), and $\beta = (2/\Delta a)\arcsin(\tilde\beta\Delta a/2)$. Because the same discrete operators are used, a mode is an exact eigenmode of the 3D time stepping of a uniform guide: the TE10 propagation constant matches the discrete dispersion relation $(\tilde\omega/c)^2 = \tilde k_x^2 + \tilde\beta^2$ to $10^{-9}$ and the continuum $\sqrt{k^2-(\pi/a)^2}$ to grid-dispersion accuracy; the TE0 effective index of a dielectric slab converges at second order to the solution of $\tan(\kappa d/2) = \gamma/\kappa$ [Snyder & Love, 1983].
+
+**Power normalization.** The `FluxMonitor` (and the discrete Poynting theorem of the Yee scheme) pairs the E plane with H averaged from the two neighbouring H planes, which for a mode is $\bar{\mathbf{h}} = \mathbf{h}\cos(\beta\Delta a/2)$. Modes are normalized to unit time-averaged power,
+
+$$
+\tfrac12\operatorname{Re}\sum \left(e_b\,\bar h_c^* - e_c\,\bar h_b^*\right)\Delta A = 1\ \text{W},
+$$
+
+with the `FluxMonitor` area elements. Note that, because of the ghost layer, PEC walls on a non-periodic axis sit on the nodes $0$ and $N-1$: a guide meshed with $N$ cells has width $(N-1)\Delta$.
+
+Assumptions and limits: lossless isotropic materials uniform along $a$ within one cell of the plane, a locally uniform mesh along $a$, and serial (non-MPI) runs. Only propagating modes ($\tilde\beta^2 > 0$) are returned.
+
+#### Mode source and mode decomposition: `ModeSource`, `ModeMonitor`
+
+`ModeSource` is a Huygens sheet whose incident field is the mode $(\mathbf{e}, \mathbf{h})$ computed at the source frequency, with the time profile $s(t)$: $\mathbf{K} = \hat{\mathbf{a}}\times\mathbf{h}\,s(t + \Delta t/2 + \tau)$ on the E plane and $\mathbf{M}_s = -n\,\hat{\mathbf{a}}\times\mathbf{e}\,s(t)$ on the H plane behind it, with $n=\pm1$ the direction and $\tau = \beta\Delta a/(2\omega)$ the phase delay of the half cell between the planes [Oskooi & Johnson, 2013]. At the mode frequency the injection is exact to round-off; away from it the mode profile, the wave impedance and the phase velocity change, and a backward wave of relative amplitude $\sim |\Delta Z/2Z|$ leaks (e.g. TE10 with a mode at $1.5f_c$: $3\times10^{-5}$ at $1.5f_c$, $1.4\times10^{-2}$ at $1.45 f_c$, $8\times10^{-2}$ at $1.3f_c$). The launched transverse field is $\mathbf{E}_t = A\,s(t)\,\mathbf{e}$, so the forward mode amplitude is $a_+(f) = A\,S(f)$ and a time-harmonic source of amplitude $A$ [√W] carries $A^2$ W.
+
+`ModeMonitor` projects the Fourier-transformed transverse fields on a plane ($\mathbf{H}$ averaged as in `FluxMonitor`) on the modes solved at each monitored frequency, using the orthogonality relation of lossless guides $\tfrac12\int \mathbf{e}_m\times\bar{\mathbf{h}}_n^*\cdot\hat{\mathbf{a}}\,dA = \delta_{mn}$ [Snyder & Love, 1983; Pozar, 2012]:
+
+$$
+a_\pm = \frac14\sum\left[\left(\mathbf{E}\times\bar{\mathbf{h}}^*\right)\pm\left(\mathbf{e}^*\times\bar{\mathbf{H}}\right)\right]\cdot\hat{\mathbf{a}}\,\Delta A,
+$$
+
+so that $\mathbf{E}_t = \sum (a_+ + a_-)\,\mathbf{e}$ and $\bar{\mathbf{H}}_t = \sum (a_+ - a_-)\,\bar{\mathbf{h}}$. The amplitudes have units of √W·s; $|a_\pm|^2/|S|^2$ is the time-harmonic power in the mode and a single forward mode gives the `FluxMonitor` flux $\Phi = 2|a_+|^2$ exactly. S-parameters between ports and modes follow as ratios of amplitudes, e.g. $S_{21} = a_+^{(2)}/a_+^{(1)}$.
+
+Validation (`tests/test_023_modes.py`, PEC guide $a = 20\Delta$, CPML ends): downstream $|a_+|^2 = |S|^2$ within $0.7\%$ over $1.3$–$1.7 f_c$ ($5\times10^{-5}$ at the mode frequency), flux $= 2|a_+|^2$ to $10^{-8}$, residual backward amplitude (CPML reflection) $<1.3\times10^{-4}$; TE20 injection excites no TE10.
+
+**Differentiability.** All terms are linear in the fields: the M term transposes like the J term ($\mathbf{h} \mathrel{-}= \Delta t\,\mathbf{M}_\mu^{-1}\mathbf{m}$, adjoint source on the adjoint H update), and $a_\pm$ are linear functionals of the DFT fields with fixed weights $\tfrac14\bar{\mathbf{h}}^*\Delta A$ and $\tfrac14\mathbf{e}^*\Delta A$, so $\partial|a_\pm|^2/\partial\mathbf{E}^* $ and $\partial|a_\pm|^2/\partial\mathbf{H}^*$ give the adjoint DFT sources directly. The dependence of the mode profile on the permittivity of the port plane is not differentiated.
+
+References:
+- R. F. Harrington, *Time-Harmonic Electromagnetic Fields*, McGraw-Hill (1961).
+- Z. Zhu and T. G. Brown, "Full-vectorial finite-difference analysis of microstructured optical fibers", *Opt. Express* **10**, 853 (2002), [doi:10.1364/OE.10.000853](https://doi.org/10.1364/OE.10.000853).
+- A. W. Snyder and J. D. Love, *Optical Waveguide Theory*, Chapman & Hall (1983).
+- D. M. Pozar, *Microwave Engineering*, 4th ed., Wiley (2012).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4 (numerical dispersion) and Ch. 5 (incident wave source conditions, TF/SF).
+- A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions", arXiv:1301.5366 (2013).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:

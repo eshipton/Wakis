@@ -73,6 +73,10 @@ class AdjointStepper:
         if getattr(solver, "_dispersive_groups", None):
             # The ADE update needs its own transposed step (auxiliary state)
             raise NotImplementedError("The adjoint does not support dispersive media.")
+        if getattr(solver, "M", None) is not None:
+            raise NotImplementedError(
+                "The adjoint does not support magnetic currents (e.g. ModeSource)."
+            )
         if np.iscomplexobj(solver.E.array):
             # Complex (Bloch) fields need Hermitian transposes and complex
             # parameter sensitivities, not yet implemented

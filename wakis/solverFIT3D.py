@@ -223,6 +223,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.J = Field(
             self.Nx, self.Ny, self.Nz, use_gpu=self.use_gpu, dtype=self.dtype
         )
+        # Impressed magnetic current density [V/m^2], allocated by magnetic sources
+        self.M = None
 
         # MPI init
         if self.use_mpi:
@@ -751,6 +753,20 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self._one_step_backend()
         self._apply_abc()
 
+    def _add_magnetic_current(self):
+        """
+        Add the impressed magnetic current to the H update.
+
+        Faraday's law with magnetic current density M [V/m^2] reads
+        mu dH/dt = -curl E - M. M is sampled at time n*dt, the centre of the
+        leapfrog H update from (n-1/2)*dt to (n+1/2)*dt. The term is skipped
+        when no magnetic source has allocated `self.M`.
+        """
+        if self.M is None:
+            return
+        imu = self.M.xp.asarray(self.imu.toarray())
+        self.H.fromarray(self.H.toarray() - self.dt * imu * self.M.toarray())
+
     def _one_step(self):
         if self.step_0:
             self._set_ghosts_to_0()
@@ -762,6 +778,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.H.fromarray(
             self.H.toarray() - self.dt * self.tDsiDmuiDaC * self.E.toarray()
         )
+        self._add_magnetic_current()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
@@ -927,6 +944,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.dt * self.imu.field_y[self.idx_z_high] * self.psiHa_y_high
             )
 
+        self._add_magnetic_current()
+
         if self.use_mpi:
             self._mpi_communicate(self.H)
 
@@ -1083,6 +1102,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.H.toarray()
             - self.dt * dot_product_mkl(self.tDsiDmuiDaC, self.E.toarray())
         )
+        self._add_magnetic_current()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
@@ -1253,6 +1273,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.dt * self.imu.field_y[self.idx_z_high] * self.psiHa_y_high
             )
 
+        self._add_magnetic_current()
+
         if self.use_mpi:
             self._mpi_communicate(self.H)
 
@@ -1418,6 +1440,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.H.fromarray(
             self.H.toarray() - self.dt * self.tDsiDmuiDaC * self.E.toarray()
         )
+        self._add_magnetic_current()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
@@ -1468,6 +1491,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.H.toarray()
             - self.dt * dot_product_mkl(self.tDsiDmuiDaC, self.E.toarray())
         )
+        self._add_magnetic_current()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
