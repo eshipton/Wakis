@@ -5,6 +5,7 @@
 
 from . import (
     boundaries,
+    dispersive,
     field,
     field_monitors,
     geometry,

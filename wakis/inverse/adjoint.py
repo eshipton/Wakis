@@ -70,6 +70,9 @@ class AdjointStepper:
             raise NotImplementedError("The adjoint does not support PML; use CPML.")
         if solver.use_sibc:
             raise NotImplementedError("The adjoint does not support SIBC.")
+        if getattr(solver, "_dispersive_groups", None):
+            # The ADE update needs its own transposed step (auxiliary state)
+            raise NotImplementedError("The adjoint does not support dispersive media.")
         if np.iscomplexobj(solver.E.array):
             # Complex (Bloch) fields need Hermitian transposes and complex
             # parameter sensitivities, not yet implemented

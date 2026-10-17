@@ -14,6 +14,7 @@ from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
 from .boundaries import BCsMixin
+from .dispersive import DispersiveMixin
 from .field import Field
 from .logger import Logger
 from .materials import material_lib
@@ -37,7 +38,7 @@ except ImportError:
     imported_mkl = False
 
 
-class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
+class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
     def __init__(
         self,
         grid,
@@ -472,6 +473,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             self._initialize_abc()
             self._one_step_backend = self.one_step
             self.one_step = self._one_step_with_abc
+
+        if self.use_stl:  # ADE for solids with a DispersiveMaterial
+            self._apply_stl_dispersive()
 
         if verbose:
             print(f"Total solver initialization time: {time.time() - t0} s")
@@ -1936,6 +1940,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin):
             self.E[:, :, :, d] = 0.0
             self.H[:, :, :, d] = 0.0
             self.J[:, :, :, d] = 0.0
+        self.reset_dispersive_state()
 
     def update_logger(self, attrs):
         """

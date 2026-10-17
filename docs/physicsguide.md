@@ -402,6 +402,77 @@ References:
 - IEEE Standard for Definitions of Terms for Antennas, IEEE Std 145-2013.
 - M. Abramowitz and I. A. Stegun, *Handbook of Mathematical Functions*, NBS (1964), Sec. 23.1.
 
+### 🌈 Dispersive materials (auxiliary differential equations)
+
+Metals at optical frequencies, Lorentz dielectrics and lossy RF substrates have a frequency-dependent permittivity. `DispersiveMaterial` models it as a sum of poles plus a static conductivity:
+
+$$
+\varepsilon_r(\omega) = \varepsilon_\infty + \sum_p \chi_p(\omega) + \frac{\sigma}{i\omega\varepsilon_0},
+\qquad
+\chi^{\mathrm{L}}(\omega) = \frac{\Delta\varepsilon\,\omega_0^2}{\omega_0^2-\omega^2+i\gamma\omega},\quad
+\chi^{\mathrm{D}}(\omega) = -\frac{\omega_p^2}{\omega^2-i\gamma\omega},\quad
+\chi^{\mathrm{Deb}}(\omega) = \frac{\Delta\varepsilon}{1+i\omega\tau},
+$$
+
+for Lorentz (`Lorentz(delta_eps, omega_0, gamma)`), Drude (`Drude(omega_p, gamma)`, the Lorentz pole with $\omega_0 = 0$ and $\Delta\varepsilon\,\omega_0^2 \to \omega_p^2$) and Debye (`Debye(delta_eps, tau)`) poles. Angular frequencies are in rad/s (`wakis.materials.EV` converts eV to rad/s) and $\tau$ in s.
+
+**Sign convention.** Wakis transforms time signals with the kernel $e^{-i\omega t}$ (`DFTMonitor`, `GaussianSource.fourier_transform`), so phasors follow $x(t) = \operatorname{Re}[X e^{+i\omega t}]$ and a passive medium has $\operatorname{Im}\varepsilon_r \le 0$. Optical tables quoting $\tilde n = n + i k$ ($k \ge 0$) use the opposite convention; `eps_from_nk(n, k)` returns $(n - ik)^2$.
+
+**Time-domain model.** Each pole has a polarization $P_p$ obeying an auxiliary differential equation (ADE) [Taflove & Hagness, 2005, ch. 9],
+
+$$
+\ddot P_p + \gamma_p \dot P_p + \omega_{0,p}^2 P_p = \varepsilon_0 \Delta\varepsilon_p\,\omega_{0,p}^2 E \quad\text{(Lorentz/Drude)},\qquad
+\tau_p \dot P_p + P_p = \varepsilon_0 \Delta\varepsilon_p E \quad\text{(Debye)},
+$$
+
+and enters Ampère's law as a polarization current:
+
+$$
+\varepsilon_0\varepsilon_\infty \dot E = \nabla\times H - J - \sigma E - \sum_p \dot P_p .
+$$
+
+**Discretization.** The polarizations live on the same edges and integer time levels as $E$. Second-order poles use central differences at $t^n$, which gives the explicit update
+
+$$
+P^{n+1} = \alpha P^n + \xi P^{n-1} + \zeta E^n,\quad
+\alpha = \frac{2-\omega_0^2\Delta t^2}{1+\gamma\Delta t/2},\;
+\xi = \frac{\gamma\Delta t/2-1}{1+\gamma\Delta t/2},\;
+\zeta = \frac{\varepsilon_0\Delta\varepsilon\,\omega_0^2\Delta t^2}{1+\gamma\Delta t/2},
+$$
+
+the polarization form of the Lorentz ADE [Taflove & Hagness, 2005, ch. 9]. Debye poles and the conductivity use the trapezoidal (Crank–Nicolson) rule centred at $t^{n+1/2}$, $P^{n+1} = \kappa P^n + \beta(E^{n+1}+E^n)$ with $\kappa = (1-\Delta t/2\tau)/(1+\Delta t/2\tau)$ and $\beta = \varepsilon_0\Delta\varepsilon\,(\Delta t/2\tau)/(1+\Delta t/2\tau)$, so they impose no timestep restriction (unlike the explicit conductivity of non-dispersive materials, which requires $\Delta t < \varepsilon/\sigma$). Ampère's law at $t^{n+1/2}$,
+
+$$
+\varepsilon_0\varepsilon_\infty\frac{E^{n+1}-E^n}{\Delta t} = (\tilde C H)^{n+1/2} - J^n - \sigma\frac{E^{n+1}+E^n}{2} - \sum_p \frac{P_p^{n+1}-P_p^n}{\Delta t},
+$$
+
+is then solved locally for $E^{n+1}$ (a scalar division per edge). In Wakis this is implemented as a correction applied after the unchanged non-dispersive step (any backend: standard, CPML, MKL, GPU, MPI): from the provisional $E^\star$ computed with the solver's $\varepsilon_s$, the curl contribution is recovered exactly as $\Delta t(\tilde C H - J)/\varepsilon_0 = \varepsilon_{r,s}(E^\star - E^n)$, so CPML and TFSF terms are carried along. Only the dispersive edges are touched (index arrays and a few auxiliary arrays per pole); non-dispersive simulations are unaffected.
+
+**Interfaces and mixtures.** An edge with fill fraction $w$ gets the arithmetic mean $\varepsilon_r^{\mathrm{eff}} = (1-w)\varepsilon_{r,\mathrm{bg}} + w\,\varepsilon_r(\omega)$, which is again a pole model: $\varepsilon_\infty \to (1-w)\varepsilon_{r,\mathrm{bg}} + w\varepsilon_\infty$ and all pole strengths and $\sigma$ scaled by $w$. `add_dispersive_material` uses $w = 1/2$ for tangential edges lying on a box face (second-order interface treatment, as in the slab test of the flux monitors); STL solids use the subpixel volume fraction already used for `ieps`.
+
+**Discrete permittivity.** With $z = e^{i\omega\Delta t}$ the scheme behaves exactly like a Yee scheme with the vacuum operator $\tilde\Omega = 2\sin(\omega\Delta t/2)/\Delta t$ in a medium of permittivity
+
+$$
+\varepsilon_d(\omega) = \varepsilon_\infty + \sum_{\mathrm{L}} \frac{\Delta\varepsilon\,\omega_0^2}{\omega_0^2-\tilde\Omega^2+i\gamma\sin(\omega\Delta t)/\Delta t}
++ \sum_{\mathrm{Deb}} \frac{\Delta\varepsilon}{1+2i\tau\tan(\omega\Delta t/2)/\Delta t}
++ \frac{\sigma\cos(\omega\Delta t/2)}{i\tilde\Omega\varepsilon_0},
+$$
+
+returned by `DispersiveMaterial.epsilon_discrete(f, dt)`; $\varepsilon_d = \varepsilon_r + O(\Delta t^2)$.
+
+**Stability.** For a lossless Drude pole the coupled Yee–ADE scheme is stable iff $(\omega_p\Delta t/2)^2 + C^2 \le \varepsilon_\infty$, and for a lossless Lorentz pole iff $(\omega_0\Delta t/2)^2 \le (\varepsilon_\infty - C^2)/(\varepsilon_s - C^2)$, with $C = c\Delta t\sqrt{\sum_i \Delta x_i^{-2}} \le 1$ the vacuum Courant number and $\varepsilon_s = \varepsilon_\infty+\Delta\varepsilon$ (Wakis derivation from the discrete dispersion relation $\tilde\Omega^2\varepsilon_d = c^2\tilde K^2$, requiring all roots on the unit circle for $c^2\tilde K^2\Delta t^2/4 \in [0, C^2]$). Damping only helps. For general multi-pole models, `DispersiveMaterial.is_stable(dt, courant)` evaluates the spectral radius of the single-mode amplification matrix over all grid wavenumbers; `add_dispersive_material` raises if the solver's $\Delta t$ is unstable. In practice the poles must be time-resolved ($\omega_0\Delta t, \omega_p\Delta t \lesssim 1$), which is always the case for optical metals meshed at a few nm; the default `cfln=0.5` leaves margin for strong poles (e.g. silicon's 0.3 µm Sellmeier pole requires $\Delta t \lesssim 8\times10^{-17}$ s).
+
+**Material library and fitting.** `dispersive_lib` contains: gold, silver and aluminium with the Lorentz–Drude parameters of [Rakić et al., 1998] (valid 0.1–6 eV); lossless Sellmeier models of fused silica [Malitson, 1965] (0.21–6.7 µm) and silicon [Salzberg & Villa, 1957] (1.36–11 µm, transparent region only); and three-pole Debye fits (Wakis, 0.1–20 GHz) of Djordjevic–Sarkar wideband models [Djordjević et al., 2001] through nominal FR-4 ($\varepsilon' = 4.4$, $\tan\delta = 0.02$ at 1 GHz) and Rogers RO4350B ($\varepsilon' = 3.66$, $\tan\delta = 0.0037$ at 10 GHz) values. A Sellmeier term $B\lambda^2/(\lambda^2 - C^2)$ is a Lorentz pole with $\Delta\varepsilon = B$, $\omega_0 = 2\pi c/C$, $\gamma=0$. `fit_poles(f, eps, n_lorentz, n_drude, n_debye)` fits tabulated data by nonlinear least squares on the relative complex error; every parameter is optimized through its logarithm, so the fitted model is passive ($\operatorname{Im}\varepsilon_r\le 0$ for all $\omega$) and causal by construction.
+
+**Validation** (`tests/test_025_dispersive.py`): Lorentz, Drude (across the plasma edge) and conductive Debye slabs reproduce the analytic Fabry–Pérot reflectance and transmittance with $\varepsilon(\omega)$ to $<10^{-2}$ (Drude: $2\times10^{-3}$) with second-order convergence in the cell size; a spatially uniform field reproduces $\varepsilon_d(\omega)$ to $10^{-8}$; the stability check matches the closed-form limits; a lossless Lorentz medium stays bounded for $4\times10^4$ steps; fits recover generating parameters to $10^{-6}$.
+
+References:
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), ch. 9.
+- A. D. Rakić, A. B. Djurišić, J. M. Elazar and M. L. Majewski, "Optical properties of metallic films for vertical-cavity optoelectronic devices", *Appl. Opt.* **37**, 5271–5283 (1998), [doi:10.1364/AO.37.005271](https://doi.org/10.1364/AO.37.005271).
+- I. H. Malitson, "Interspecimen comparison of the refractive index of fused silica", *J. Opt. Soc. Am.* **55**, 1205–1208 (1965), [doi:10.1364/JOSA.55.001205](https://doi.org/10.1364/JOSA.55.001205).
+- C. D. Salzberg and J. J. Villa, "Infrared refractive indexes of silicon, germanium and modified selenium glass", *J. Opt. Soc. Am.* **47**, 244–246 (1957).
+- A. R. Djordjević, R. M. Biljić, V. D. Likar-Smiljanić and T. K. Sarkar, "Wideband frequency-domain characterization of FR-4 and time-domain causality", *IEEE Trans. Electromagn. Compat.* **43**, 662–667 (2001).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:

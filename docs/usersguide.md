@@ -473,6 +473,41 @@ Points to keep in mind (details in the [physics guide](physicsguide.md)):
 * `tests/test_024_bloch.py` shows complete, validated set-ups: oblique Fresnel reflection, and photonic-crystal bands from a broadband pulse with spectral peak finding.
 
 
+#### Dispersive materials: gold film reflectance
+
+Frequency-dependent materials (`DispersiveMaterial`: Drude, Lorentz and Debye poles plus conductivity, see the physics guide) are added to box regions with `solver.add_dispersive_material` or assigned to STL solids directly in `stl_materials`. `dispersive_lib` provides gold, silver, aluminium (Rakić Lorentz–Drude), fused silica, silicon (Sellmeier), FR-4 and RO4350B (Debye). The reflectance of an optically thick gold film at normal incidence, in a quasi-1D periodic cell, normalized by a run without the film:
+
+```python
+import numpy as np
+from scipy.constants import c
+import wakis
+from wakis.materials import dispersive_lib
+from wakis.sources import CurrentSource, GaussianSource
+
+gold = dispersive_lib["gold"]
+freqs = c / np.linspace(450e-9, 800e-9, 8)
+
+def reflected_flux(material=None, dz=2e-9, thickness=100e-9):
+    grid = wakis.GridFIT3D(-5e-9, 5e-9, -5e-9, 5e-9, -1e-6, 0.6e-6, 1, 1, int(1.6e-6 / dz))
+    solver = wakis.SolverFIT3D(grid, bc_low=["periodic", "periodic", "cpml"],
+                               bc_high=["periodic", "periodic", "cpml"], n_pml=20)
+    if material is not None:  # film between z = 0 and z = thickness
+        solver.add_dispersive_material(material, center=(0, 0, thickness / 2),
+                                       size=(1, 1, thickness))
+    pulse = GaussianSource(frequency=c / 600e-9, fwidth=0.6 * c / 600e-9)
+    sheet = CurrentSource(pulse, component="x", center=(0, 0, -0.6e-6), size=(10e-9, 10e-9, 0))
+    plane = wakis.FluxMonitor(freqs, center=(0, 0, -0.3e-6), size=(10e-9, 10e-9, 0))
+    solver.emsolve(int((pulse.end_time + 30e-15) / solver.dt), source=sheet, monitors=[plane])
+    return plane.get_flux()
+
+R = 1 - reflected_flux(gold) / reflected_flux()
+
+n = np.sqrt(gold.epsilon(freqs))         # exp(+iwt) convention: Im(eps) <= 0
+R_fresnel = np.abs((1 - n) / (1 + n)) ** 2  # agrees with R to < 1% (2 nm cells)
+```
+
+Tabulated data can be turned into a passive pole model with `fit_poles`, e.g. `fit_poles(f, eps_from_nk(n, k), n_lorentz=2, n_drude=1)`; `material.epsilon(f)` evaluates the model and `material.epsilon_discrete(f, solver.dt)` the permittivity actually realised by the time stepping.
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:
