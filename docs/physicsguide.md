@@ -268,6 +268,42 @@ $$E^t = E^s + E^i$$
 
 At the boundary, the curl operator is modified to add or subtract the incident fields, rendering the boundary transparent to field propagation. For ultrarelativistic beams, incident transverse electric fields are pre-calculated using a 2D Poisson solver and dynamically scaled by the instantaneous longitudinal current density during time integration.
 
+#### Soft current sources: `CurrentSource`
+
+Sources that overwrite a field value every timestep (*hard* sources, e.g. `Dipole`, `Pulse` or `PlaneWave` with `field='E'`) pin the field at the source cells. Any wave scattered back onto them is reflected as if by a small obstacle, which spoils antenna, scattering and resonance calculations. A *soft* source instead prescribes an impressed electric current density $\mathbf{J}_s$, which only adds a forcing term to Ampère's law [Taflove & Hagness, 2005; Oskooi & Johnson, 2013]:
+
+$$
+\widehat{\mathbf{e}}^{\,n+1} = \widehat{\mathbf{e}}^{\,n} + \Delta t\, \mathbf{M}_{\varepsilon}^{-1}\left(\widetilde{\mathbf{C}}\,\widehat{\mathbf{h}}^{\,n+1/2} - \mathbf{j}_s^{\,n+1/2}\right)
+$$
+
+The field equations stay linear in $\mathbf{J}_s$, so the source is transparent to incoming fields and the fields of several sources superpose. `CurrentSource` evaluates its time profile at $t + \Delta t/2$, the time level at which $\mathbf{j}$ enters the update. It adds only the change of its current since the previous step, so it coexists with the ohmic current $\sigma\mathbf{E}$ and with other sources sharing the same edges.
+
+**Normalization.** The amplitude is integrated over the directions in which the source has zero size. For a point source along $c$ on edge $i$, the current density is
+
+$$
+J_{s,c} = \frac{I\ell\; s(t)}{L_{c,i}\,\widetilde{A}_{c,i}},
+$$
+
+where $I\ell$ [A m] is the current moment of a Hertzian dipole, $L_{c,i}$ is the primary edge length and $\widetilde{A}_{c,i}$ the dual facet area pierced by the edge, both taken from the (possibly non-uniform) mesh. The radiated fields are therefore independent of the mesh. In free space such a dipole radiates [Jackson, 1999, Ch. 9]
+
+$$
+P = \frac{\eta_0 k^2 |I\ell|^2}{12\pi},
+$$
+
+which Wakis reproduces to second order in the mesh size; see `tests/test_017_current_sources.py`. Line, sheet and volume sources have amplitudes in A, A/m and A/m², respectively. An optional `amp_func(x, y, z)` shapes the spatial profile, e.g. a mode profile or a phase gradient.
+
+**Time profiles.**
+- `GaussianSource(frequency, fwidth)`: $s(t) = \frac{1}{\omega_0}\frac{d}{dt}\left[g(t)\sin\omega_0\tau\right]$ with $g(t)=e^{-\tau^2/2\sigma_t^2}$, $\sigma_t = 1/(2\pi f_w)$, $\tau = t - t_0$. Its spectrum is Gaussian with standard deviation $f_w$, and `fourier_transform(f)` returns it analytically for normalizing frequency-domain results. Taking the time derivative makes $\int s\,dt = 0$. A Gaussian-modulated cosine would deposit a small net charge, leaving a static dipole field that never decays and corrupts Fourier transforms of the fields.
+- `ContinuousSource(frequency, ramp_time)`: a sinusoid switched on with a $\sin^2$ ramp to avoid broadband transients.
+- `CustomSource(func)`: an arbitrary user-defined $s(t)$.
+
+`SolverFIT3D.emsolve` accepts a single source or a list of sources.
+
+References:
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005).
+- A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions", in *Advances in FDTD Computational Electrodynamics*, Artech House (2013), [arXiv:1301.5366](https://arxiv.org/abs/1301.5366).
+- J. D. Jackson, *Classical Electrodynamics*, 3rd ed., Wiley (1999).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:

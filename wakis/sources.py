@@ -1425,3 +1425,283 @@ class AngledWavePacket:
         solver.E[self.xs, self.ys, self.zs, "x"] = (
             self.amplitude * mu_0 * c_light * np.cos(carrier_phase) * gaussxy * gausst
         )
+
+
+class GaussianSource:
+    def __init__(self, frequency, fwidth, start_time=0.0, cutoff=5.0):
+        """
+        Gaussian pulse time profile for soft sources, with zero net charge.
+
+        The signal is the normalized time derivative of a Gaussian-modulated
+        sinusoid, s(t) = 1/(2*pi*frequency) * d/dt[g(t) sin(2*pi*frequency*tau)],
+        with tau = t - t0, g(t) = exp(-tau**2 / (2*sigma_t**2)),
+        sigma_t = 1/(2*pi*fwidth) and t0 = start_time + cutoff*sigma_t. Near
+        `frequency` it is a Gaussian-modulated cosine of unit amplitude.
+
+        Taking the derivative makes the time integral of the current vanish, so
+        the source deposits no net charge. A plain Gaussian-modulated cosine has
+        a small DC component that leaves a static dipole field behind, which
+        never radiates away and spoils Fourier transforms of the fields.
+
+        Parameters
+        ----------
+        frequency : float
+            Centre frequency [Hz].
+        fwidth : float
+            Standard deviation of the spectral Gaussian [Hz].
+        start_time : float, optional
+            Time before which the source is off [s]. Default is 0.
+        cutoff : float, optional
+            Number of sigma_t from switch-on to the peak, and from the peak to
+            switch-off. Default is 5 (truncation error ~exp(-12.5)).
+        """
+        if frequency <= 0 or fwidth <= 0:
+            raise ValueError("frequency and fwidth must be > 0.")
+        self.frequency = frequency
+        self.fwidth = fwidth
+        self.sigma_t = 1 / (2 * np.pi * fwidth)
+        self.t0 = start_time + cutoff * self.sigma_t
+        self.start_time = start_time
+        self.end_time = self.t0 + cutoff * self.sigma_t
+
+    def __call__(self, t):
+        tau = t - self.t0
+        w = 2 * np.pi * self.frequency
+        envelope = np.exp(-(tau**2) / (2 * self.sigma_t**2))
+        signal = envelope * (
+            np.cos(w * tau) - tau / (w * self.sigma_t**2) * np.sin(w * tau)
+        )
+        return np.where((t >= self.start_time) & (t <= self.end_time), signal, 0.0)
+
+    def fourier_transform(self, f):
+        """
+        Analytic Fourier transform S(f) = int s(t) exp(-2j*pi*f*t) dt of the
+        untruncated signal, used to normalize frequency-domain results.
+
+        Parameters
+        ----------
+        f : float or array_like
+            Frequency [Hz].
+
+        Returns
+        -------
+        complex or ndarray
+            Spectrum [s].
+        """
+        f = np.asarray(f, dtype=float)
+        # FT of g*sin is a pair of Gaussians at +/- frequency; d/dt adds 2j*pi*f
+        spectral = np.exp(-((f - self.frequency) ** 2) / (2 * self.fwidth**2))
+        spectral -= np.exp(-((f + self.frequency) ** 2) / (2 * self.fwidth**2))
+        return (
+            f
+            / self.frequency
+            * self.sigma_t
+            * np.sqrt(2 * np.pi)
+            / 2
+            * spectral
+            * np.exp(-2j * np.pi * f * self.t0)
+        )
+
+
+class ContinuousSource:
+    def __init__(self, frequency, ramp_time=None, start_time=0.0, end_time=np.inf):
+        """
+        Continuous-wave time profile with a smooth turn-on for soft sources.
+
+        The signal is s(t) = r(t) * sin(2*pi*frequency*(t - start_time)), where
+        r(t) = sin^2(pi/2 * (t - start_time)/ramp_time) rises from 0 to 1 during
+        `ramp_time`. The smooth ramp avoids exciting the broadband transients of
+        an abrupt switch-on.
+
+        Parameters
+        ----------
+        frequency : float
+            Frequency [Hz].
+        ramp_time : float, optional
+            Turn-on time [s]. Default is 3 periods.
+        start_time, end_time : float, optional
+            Time window in which the source is on [s].
+        """
+        if frequency <= 0:
+            raise ValueError("frequency must be > 0.")
+        self.frequency = frequency
+        self.ramp_time = 3 / frequency if ramp_time is None else ramp_time
+        self.start_time = start_time
+        self.end_time = end_time
+
+    def __call__(self, t):
+        tau = t - self.start_time
+        ramp = np.sin(0.5 * np.pi * np.clip(tau / self.ramp_time, 0.0, 1.0)) ** 2
+        signal = ramp * np.sin(2 * np.pi * self.frequency * tau)
+        return np.where((tau >= 0) & (t <= self.end_time), signal, 0.0)
+
+
+class CustomSource:
+    def __init__(self, func, start_time=0.0, end_time=np.inf):
+        """
+        User-defined time profile for soft sources.
+
+        Parameters
+        ----------
+        func : callable
+            Function s(t) of the time [s] returning a real value.
+        start_time, end_time : float, optional
+            Time window in which the source is on [s].
+        """
+        self.func = func
+        self.start_time = start_time
+        self.end_time = end_time
+
+    def __call__(self, t):
+        if t < self.start_time or t > self.end_time:
+            return 0.0
+        return self.func(t)
+
+
+class CurrentSource:
+    def __init__(
+        self,
+        src_time,
+        component="z",
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.0),
+        amplitude=1.0,
+        amp_func=None,
+    ):
+        """
+        Soft source: impressed electric current density J added to Ampere's law.
+
+        Unlike sources that overwrite E or H, the current only adds a forcing
+        term, dE/dt = eps^-1 (curl H - J), so fields scattered back onto the
+        source pass through it unperturbed. This is the appropriate source for
+        antennas, local density of states and scattering calculations.
+
+        The amplitude is integrated over the directions in which `size` is zero,
+        making the radiated fields independent of the mesh resolution:
+        a point source has units of current moment [A m] (I*l of a Hertzian
+        dipole), a line along `component` has units of current [A], a sheet has
+        units of surface current density [A/m] and a volume has units of [A/m^2].
+
+        Parameters
+        ----------
+        src_time : GaussianSource, ContinuousSource or CustomSource
+            Time profile s(t) of the source.
+        component : str, optional
+            Direction of the current: 'x', 'y' or 'z'. 'Jz'/'Ez' is accepted.
+            Default is 'z'.
+        center : tuple of float, optional
+            Centre of the source region (x, y, z) [m].
+        size : tuple of float, optional
+            Extent of the source region (sx, sy, sz) [m]. Zero means a single
+            cell layer in that direction. Default is a point source.
+        amplitude : float, optional
+            Source amplitude, see units above. Default is 1.
+        amp_func : callable, optional
+            Spatial profile amp_func(x, y, z) [m] multiplying `amplitude`.
+
+        Notes
+        -----
+        J is evaluated at t + dt/2, the time at which it enters the E update. A
+        point source snaps to the nearest edge of `component`. MPI and GPU
+        execution paths are supported but not covered by tests.
+        """
+        component = component[-1].lower()
+        if component not in ("x", "y", "z"):
+            raise ValueError(f"component must be 'x', 'y' or 'z', got {component!r}.")
+        if any(s < 0 for s in size):
+            raise ValueError("size must be non-negative.")
+        self.src_time = src_time
+        self.component = component
+        self.center = np.asarray(center, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        self.amplitude = amplitude
+        self.amp_func = amp_func
+        self.is_first_update = True
+
+    def _set_edges(self, solver):
+        """Select the edges inside the source region and their current weights."""
+        c = "xyz".index(self.component)
+        nodes = (solver.grid.x[:-1], solver.grid.y[:-1], solver.grid.z[:-1])
+        mids = (solver.x, solver.y, solver.z)
+        n_cells = (solver.Nx, solver.Ny, solver.Nz)
+
+        indices, coords = [], []
+        for d in range(3):
+            # E_c sits at the edge midpoint along c and on the nodes transversally
+            pos = mids[d] if d == c else nodes[d]
+            if d == 2 and solver.use_mpi:
+                # Exclude ghost layers so each edge is driven by one rank only
+                owned = np.zeros(n_cells[d], dtype=bool)
+                lo = solver.grid.n_ghosts if solver.grid.rank > 0 else 0
+                hi = n_cells[d] - (
+                    solver.grid.n_ghosts
+                    if solver.grid.rank < solver.grid.size - 1
+                    else 0
+                )
+                owned[lo:hi] = True
+            else:
+                owned = np.ones(n_cells[d], dtype=bool)
+
+            if self.size[d] == 0:
+                idx = np.array([np.abs(pos - self.center[d]).argmin()])
+            else:
+                lo_d = self.center[d] - self.size[d] / 2
+                hi_d = self.center[d] + self.size[d] / 2
+                tol = 1e-9 * (pos.max() - pos.min())
+                idx = np.flatnonzero((pos >= lo_d - tol) & (pos <= hi_d + tol))
+                if idx.size == 0 and not solver.use_mpi:
+                    raise ValueError(
+                        f"Source region contains no {self.component}-edges along "
+                        f"{'xyz'[d]}; increase size or refine the mesh."
+                    )
+            idx = idx[owned[idx]]
+            indices.append(idx)
+            coords.append(pos[idx])
+
+        I, J, K = np.meshgrid(*indices, indexing="ij")
+        X, Y, Z = np.meshgrid(*coords, indexing="ij")
+
+        # Divide by the cell widths of the zero-size directions: the primary edge
+        # length along the current and the dual widths transversally. For a point
+        # source this is 1/(L_c * tA_c), the volume over which the E update
+        # integrates J, so the current moment is mesh-independent.
+        weights = np.full(I.shape, float(self.amplitude))
+        for d in range(3):
+            if self.size[d] > 0:
+                continue
+            widths = solver.L if d == c else solver.tL
+            w = widths[I, J, K, "xyz"[d]]
+            if np.any(w <= 0):
+                raise ValueError("Source lies on a zero-width boundary cell.")
+            weights = weights / w
+        if self.amp_func is not None:
+            weights = weights * self.amp_func(X, Y, Z)
+
+        N = solver.Nx * solver.Ny * solver.Nz
+        # Lexicographic index of Field.array (Fortran order, components stacked)
+        flat = c * N + I + solver.Nx * J + solver.Nx * solver.Ny * K
+        self.flat_idx = solver.J.xp.asarray(flat.ravel())
+        self.weights = solver.J.xp.asarray(weights.ravel(), dtype=solver.J.dtype)
+        self.J_old = solver.J.xp.zeros_like(self.weights)
+
+    def update(self, solver, t):
+        """
+        Add the source current at time t + dt/2 to the solver's J.
+
+        Only the change since the previous call is added, so currents from
+        conductivity or other sources sharing the same edges are preserved.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver object.
+        t : float
+            Current simulation time [s].
+        """
+        if self.is_first_update:
+            self._set_edges(solver)
+            self.is_first_update = False
+
+        J_new = self.weights * float(self.src_time(t + solver.dt / 2))
+        solver.J.array[self.flat_idx] += J_new - self.J_old
+        self.J_old = J_new

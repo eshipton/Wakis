@@ -291,10 +291,39 @@ To add a time-dependent source, one can simply setup a time-loop and run the rou
 * `WavePacket`: a port source for a Gaussian wave packet travelling in +$z$, with configurable frequency or wavelength, longitudinal size, transverse size, and speed.
 * `Dipole`: Updates the user-defined field and component every timestep to introduce a dipole-like sinusoidal excitation
 * `Pulse`: Injects an electromagnetic pulse at the given source point (xs, ys, zs), with the selected shape {"Harris", "Gaussian", "Rectangular"}, length, and amplitude
+* `CurrentSource`: a *soft* point, line, sheet or volume source of impressed current $J$, placed in physical coordinates and driven by a `GaussianSource`, `ContinuousSource` or `CustomSource` time profile (see below).
+
+#### Soft sources for antennas and scattering
+
+Except for `Beam` and `CurrentSource`, the sources above are *hard*: they overwrite field values, so scattered waves reflect off the source cells. `CurrentSource` instead adds an impressed current to Ampère's law. It is transparent to incoming fields, superposes with other sources and with conduction currents, and is normalized to be independent of the mesh. A point source has amplitude in units of current moment $I\ell$ [A m]:
+
+```python
+from wakis.sources import ContinuousSource, CurrentSource, GaussianSource
+
+# Broadband Hertzian dipole along z at the origin, 1 GHz +/- 0.3 GHz
+dipole = CurrentSource(
+    GaussianSource(frequency=1e9, fwidth=0.3e9),
+    component="z",
+    center=(0.0, 0.0, 0.0),
+    amplitude=1.0,  # [A m]
+)
+
+# CW sheet of surface current Kx [A/m] at z = -0.1 m spanning the domain in x, y
+sheet = CurrentSource(
+    ContinuousSource(frequency=2e9),
+    component="x",
+    center=(0.0, 0.0, -0.1),
+    size=(xmax - xmin, ymax - ymin, 0.0),
+)
+
+solver.emsolve(Nt=2000, source=[dipole, sheet])
+```
+
+`GaussianSource.fourier_transform(f)` returns the analytic source spectrum, so field spectra can be normalized by the excitation, e.g. to obtain the radiation resistance of an antenna.
 
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
-class CustomSource:
+class MySource:
     def __init__(self, frequency):
         self.frequency = frequency
 
@@ -303,7 +332,7 @@ class CustomSource:
             2 * np.pi * self.frequency * t
         )
 
-solver.emsolve(Nt=100, source=CustomSource(frequency=1e9))
+solver.emsolve(Nt=100, source=MySource(frequency=1e9))
 ```
 
 Combining `wakis` sources, geometry capabilities and material tensors, many different physical phenomena can be simulated with `wakis`: laser pulses, interaction with plasma, waveguides... For particle accelerators, the `Beam` class was created but the profile and trajectory can be easily modified to simulate advanced impedance effects.

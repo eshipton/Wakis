@@ -45,9 +45,10 @@ class RoutinesMixin:
         ----------
         Nt : int
             Number of timesteps to run.
-        source : object, optional
-            Source object from `sources.py` defining the time-dependent source.
-            It should have an update function `source.update(solver, t)`.
+        source : object or list of objects, optional
+            Source object(s) from `sources.py` defining the time-dependent
+            excitation. Each should have an update function
+            `source.update(solver, t)`.
         callback : callable, optional
             Function to call at each timestep as `callback(solver, t)`.
         save : bool, optional
@@ -156,10 +157,13 @@ class RoutinesMixin:
 
             plotkw.update(kwargs)
 
+        sources = source if isinstance(source, (list, tuple)) else [source]
+        sources = [src for src in sources if src is not None]
+
         # Time loop
         for n in tqdm(range(Nt)):
-            if source is not None:
-                source.update(self, n * self.dt)
+            for src in sources:
+                src.update(self, n * self.dt)
 
             if save and n % save_every == 0:
                 for field in hfs.keys():
