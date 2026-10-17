@@ -20,5 +20,6 @@ from .field import Field
 from .field_monitors import DFTMonitor, FieldMonitor, FluxMonitor
 from .gridFIT3D import GridFIT3D
 from .logger import Logger
+from .mode_solver import ModeMonitor, ModeSource, solve_modes
 from .solverFIT3D import SolverFIT3D
 from .wakeSolver import WakeSolver
