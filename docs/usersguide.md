@@ -508,6 +508,54 @@ R_fresnel = np.abs((1 - n) / (1 + n)) ** 2  # agrees with R to < 1% (2 nm cells)
 
 Tabulated data can be turned into a passive pole model with `fit_poles`, e.g. `fit_poles(f, eps_from_nk(n, k), n_lorentz=2, n_drude=1)`; `material.epsilon(f)` evaluates the model and `material.epsilon_discrete(f, solver.dt)` the permittivity actually realised by the time stepping.
 
+#### Lumped ports, lumped elements and S-parameters
+
+A `LumpedPort` is a discrete port: a voltage source with internal impedance $Z_0$ (default 50 Ω) across a gap between two conductors, like the discrete port of CST. A `LumpedElement` is a resistor, inductor and/or capacitor across such a gap. Both are given by a box of edges in physical coordinates: along `component` the box must span the gap exactly, from one conductor to the other; transversally, a zero size gives a single line of edges and a finite size a sheet. The positive port terminal is at the high-coordinate end of the gap. Pass them to `emsolve` with the other sources.
+
+The example computes S11 and the input impedance of a parallel-plate line with a 10 mm gap and 40 mm width ($Z = \eta_0 d/w = 94$ Ω), fed in the middle (so the port sees $Z/2 = 47$ Ω) and loaded with a 50 Ω resistor 1 cm away, then exports a Touchstone file:
+```python
+import numpy as np
+import wakis
+from wakis.sources import GaussianSource
+from wakis.sparameters import write_touchstone
+
+# PEC plates at x = 0 and x = 10 mm (the high PEC wall sits on the last x node)
+grid = wakis.GridFIT3D(0, 12e-3, -20e-3, 20e-3, -0.06, 0.06, 6, 2, 60)
+solver = wakis.SolverFIT3D(grid, bc_low=["pec", "periodic", "cpml"],
+                           bc_high=["pec", "periodic", "cpml"])
+
+gap = dict(component="x", size=(10e-3, 40e-3, 0.0))  # full gap, full width
+port = wakis.LumpedPort(GaussianSource(3e9, 1.5e9), center=(5e-3, 0, 0), impedance=50, **gap)
+load = wakis.LumpedElement(center=(5e-3, 0, 0.01), R=50, **gap)
+
+# Stop when the field energy has decayed by 40 dB (at most 10000 steps)
+solver.emsolve(10000, source=[port, load], stop_when_energy_decayed=1e-4)
+
+freqs = np.linspace(1e9, 5e9, 41)
+s11 = port.s11(freqs)               # (Zin - Z0)/(Zin + Z0)
+z_in = port.impedance_in(freqs)     # V/I [Ohm]
+a, b = port.power_waves(freqs)      # incident/reflected power waves
+write_touchstone("line.s1p", freqs, s11, z0=50)
+```
+
+Use a Gaussian pulse whose spectrum covers the band of interest and at least about 20 cells per wavelength at the highest frequency. For a multi-port S-matrix, `wakis.sparameters.s_matrix` runs one simulation per port from a function that builds the solver, driving one port at a time and terminating the others in $Z_0$:
+```python
+from wakis.sparameters import s_matrix, to_skrf_network
+
+def make_solver():
+    return wakis.SolverFIT3D(grid, bc_low=["pec", "periodic", "cpml"],
+                             bc_high=["pec", "periodic", "cpml"], verbose=0)
+
+ports = [wakis.LumpedPort(center=(5e-3, 0, -0.01), **gap),
+         wakis.LumpedPort(center=(5e-3, 0, 0.01), **gap)]
+S = s_matrix(make_solver, ports, GaussianSource(3e9, 1.5e9), 10000, freqs,
+             stop_when_energy_decayed=1e-4)   # shape (n_freq, 2, 2)
+write_touchstone("line.s2p", freqs, S)
+network = to_skrf_network(freqs, S)          # requires scikit-rf
+```
+
+The lumped elements correct their edges after each step through `post_step(solver, t)`, which `emsolve` calls automatically; in a manual loop call `element.update(solver, t)` before and `element.post_step(solver, t)` after `solver.one_step()`.
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:

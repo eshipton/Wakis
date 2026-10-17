@@ -473,6 +473,54 @@ References:
 - C. D. Salzberg and J. J. Villa, "Infrared refractive indexes of silicon, germanium and modified selenium glass", *J. Opt. Soc. Am.* **47**, 244–246 (1957).
 - A. R. Djordjević, R. M. Biljić, V. D. Likar-Smiljanić and T. K. Sarkar, "Wideband frequency-domain characterization of FR-4 and time-domain causality", *IEEE Trans. Electromagn. Compat.* **43**, 662–667 (2001).
 
+### 🔋 Lumped elements, discrete ports and S-parameters
+
+**Lumped elements.** `LumpedElement(component, center, size, R, L, C)` places a resistor, inductor and/or capacitor (in parallel) across a gap between two conductors. It occupies a box of primary edges along `component`: edges along the axis are in series, edges side by side are in parallel. With $\ell$ the gap length and $A$ the cross-section of the box (so that $\ell A = \sum_e \Delta l_e \Delta \tilde A_e$ over the edges, with $\Delta l_e$ the primary edge length and $\Delta \tilde A_e$ the dual face area), the element is the uniform block material
+
+$$
+\sigma = \frac{\ell}{R A}, \qquad \varepsilon_C = \frac{C \ell}{A}, \qquad \frac{\partial J_L}{\partial t} = \Gamma E, \quad \Gamma = \frac{\ell}{L A},
+$$
+
+whose voltage $V = -\sum_e g_e E_e$, with $g_e = \Delta l_e \Delta \tilde A_e / A$, and current reproduce $I = V/R + \frac{1}{L}\int V dt + C\, dV/dt$ [Piket-May et al., 1994; Taflove & Hagness, 2005]. $V$ is the potential of the high-coordinate end of the gap minus the low end. On each element edge the update of Ampère's law becomes
+
+$$
+(\varepsilon + \varepsilon_C)\frac{E^{n+1} - E^n}{\Delta t} = (\tilde{C} H)^{n+1/2} - J^{n+1/2} - \sigma \frac{E^{n+1} + E^n}{2} - J_L^{n+1/2}, \qquad J_L^{n+1/2} = J_L^{n-1/2} + \Delta t\, \Gamma E^n .
+$$
+
+The resistive current is averaged in time (semi-implicit), which is stable for any $R$; the explicit form $\sigma E^n$ is unstable once $\sigma \Delta t / \varepsilon > 2$, which is reached by ordinary resistors in millimetre cells. Solving for $E^{n+1}$ and writing $E^* = E^n + \Delta t\,\varepsilon^{-1}(\tilde{C}H - J)$ for the result of the unmodified solver step:
+
+$$
+E^{n+1} = a\, E^n + b\,(E^* - E^n), \qquad \alpha = \frac{\sigma \Delta t}{2(\varepsilon + \varepsilon_C)}, \quad a = \frac{1-\alpha}{1+\alpha}, \quad b = \frac{\varepsilon}{(\varepsilon + \varepsilon_C)(1+\alpha)} .
+$$
+
+Wakis implements this as a local, linear correction applied by the element right after `one_step` (`post_step`), while $J_L$ and any source current enter the solver's `J` before the step (`update`). The step functions themselves are untouched, so the element works with every backend (standard, MKL, CPML, GPU). The inductor update is explicit, like a Drude current; it is stable while $\Delta t \sqrt{\Gamma/\varepsilon} \ll 2$, which holds for nanohenry inductors in millimetre cells. The parallel elements are an adaptation to the FIT edge formulation; series RLC branches are not implemented.
+
+**Discrete port.** `LumpedPort(src_time, component, center, size, impedance=Z0, amplitude=V_s)` is a resistor $Z_0$ in parallel with a soft current source $I_s(t) = V_s s(t)/Z_0$ (Norton form of a voltage source with internal impedance $Z_0$). The port records the time-centred voltage $\bar V^{n+1/2} = (V^n + V^{n+1})/2$ and the current delivered into the structure out of the positive terminal, $I^{n+1/2} = I_s^{n+1/2} - \bar V^{n+1/2}/Z_0$, both at $t_{n+1/2}$. These are the exact discrete charges flowing through the source and resistor, so charge is conserved and the displacement current of the gap cell is attributed to the structure; with this choice, the impedance of a uniform line seen from a port node is $Z/\cos(\beta\Delta z/2)$, i.e. second-order accurate. Their Fourier transforms $X(f) = \sum_n X^{n+1/2} e^{-2\pi i f t_{n+1/2}} \Delta t$ give
+
+$$
+Z_\text{in} = \frac{V}{I}, \qquad a = \frac{V + Z_0 I}{2\sqrt{Z_0}}, \qquad b = \frac{V - Z_0 I}{2\sqrt{Z_0}}, \qquad S_{11} = \frac{b}{a} = \frac{Z_\text{in} - Z_0}{Z_\text{in} + Z_0},
+$$
+
+the power waves of Kurokawa (1965) for a real reference impedance; $|a|^2 - |b|^2$ is the power delivered to the structure. By construction $a = \sqrt{Z_0}\, I_s / 2$, the wave launched by the source. For $N$ ports, `wakis.sparameters.s_matrix` runs $N$ simulations, each driving one port $j$ while the others are passive matched terminations, and returns $S_{ij} = b_i / a_j$. All quantities are plain arrays computed from the recorded time series by the formulas above.
+
+**Touchstone.** `write_touchstone` and `read_touchstone` store S-parameters in the Touchstone v1 `.sNp` format (frequency in Hz, real/imaginary pairs, two-port order $S_{11}, S_{21}, S_{12}, S_{22}$, one matrix row per line for more ports); `to_skrf_network` converts to a scikit-rf `Network` when scikit-rf is installed.
+
+**Energy-decay stopping criterion.** `emsolve(Nt, ..., stop_when_energy_decayed=1e-4)` stops once all sources have ended (`end_time`) and the field energy
+
+$$
+W = \frac12 \sum_e \varepsilon_e E_e^2 \Delta l_e \Delta\tilde A_e + \frac12 \sum_f \mu_f H_f^2 \Delta \tilde l_f \Delta A_f
+$$
+
+has decayed below the given fraction of its maximum (-40 dB here), as the steady-state energy criterion of commercial FIT solvers. Truncating the DFT then changes the spectra by a relative amount of order $\sqrt{W/W_\text{max}}$ or less.
+
+**Validation** (`tests/test_022_lumped_ports.py`): a port in the middle of a matched parallel-plate line ($Z = \eta_0 d/w$) measures $Z_\text{in} = Z/2$ to 0.5% at 30 cells per wavelength and the discrete-line value $Z/(2\cos(\beta\Delta z/2))$ to 0.2%; shunt resistors from $Z/1000$ to $10Z$ give $\Gamma = (R\|Z - Z)/(R\|Z + Z)$ to $1.3\times10^{-3}$; de-embedded inductors and capacitors match $j\omega L$ and $1/(j\omega C)$ to 1%; a parallel LC tank is transparent at $1/(2\pi\sqrt{LC})$; a two-port S-matrix matches the ABCD-matrix result and is reciprocal; the -40 dB criterion stops after 1/8 of the steps with a $3\times10^{-5}$ change in $Z_\text{in}$.
+
+References:
+- M. Piket-May, A. Taflove and J. Baron, "FD-TD modeling of digital signal propagation in 3-D circuits with passive and active loads", *IEEE Trans. Microw. Theory Techn.* **42**(8), 1514 (1994), [doi:10.1109/22.297814](https://doi.org/10.1109/22.297814).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005).
+- K. Kurokawa, "Power waves and the scattering matrix", *IEEE Trans. Microw. Theory Techn.* **13**(2), 194 (1965), [IEEE Xplore 1125964](https://ieeexplore.ieee.org/document/1125964).
+- Touchstone File Format Specification, Rev. 1.1, EIA/IBIS Open Forum (2002).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:

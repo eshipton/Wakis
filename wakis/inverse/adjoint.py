@@ -284,6 +284,10 @@ class AdjointSimulation:
             {monitor name: {component: complex ndarray (n_freq, nx, ny, nz)}},
             the `DFTMonitor.get_field` arrays [field units x s].
         """
+        if any(hasattr(src, "post_step") for src in self.sources):
+            # Lumped elements correct E after each step; their transpose is
+            # not implemented yet
+            raise NotImplementedError("The adjoint does not support lumped elements.")
         rho = np.array(rho, dtype=float)
         solver = self.make_solver()
         self.design.apply(solver, rho)

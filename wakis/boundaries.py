@@ -191,16 +191,18 @@ class BCsMixin:
             # Assemble matrix
             self.BC = Field(self.Nx, self.Ny, self.Nz, dtype=np.int8, use_ones=True)
 
+            # Multiply, so that a non-PEC face does not unmask the edge lines
+            # it shares with a PEC face
             for d in ["x", "y", "z"]:  # tangential to zero
                 if d != "x":
-                    self.BC[0, :, :, d] = xlo
-                    self.BC[-1, :, :, d] = xhi
+                    self.BC[0, :, :, d] *= int(xlo)
+                    self.BC[-1, :, :, d] *= int(xhi)
                 if d != "y":
-                    self.BC[:, 0, :, d] = ylo
-                    self.BC[:, -1, :, d] = yhi
+                    self.BC[:, 0, :, d] *= int(ylo)
+                    self.BC[:, -1, :, d] *= int(yhi)
                 if d != "z":
-                    self.BC[:, :, 0, d] = zlo
-                    self.BC[:, :, -1, d] = zhi
+                    self.BC[:, :, 0, d] *= int(zlo)
+                    self.BC[:, :, -1, d] *= int(zhi)
 
             self.Dbc = diags(
                 self.BC.toarray(),
