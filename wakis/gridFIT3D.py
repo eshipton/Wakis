@@ -24,6 +24,14 @@ except ImportError:
     imported_mpi = False
 
 
+def _nearest(positions, x):
+    """Index of the sample nearest to x; exact ties (up to rounding) go to the
+    lower index, so serial and MPI runs select the same sample."""
+    distance = np.abs(positions - x)
+    tol = 1e-9 * (positions.max() - positions.min())
+    return np.flatnonzero(distance <= distance.min() + tol)[0]
+
+
 class GridFIT3D(PlotMixin):
     """
     Class holding the grid information and
@@ -960,13 +968,13 @@ class GridFIT3D(PlotMixin):
                 # the local index of the rank that owns it
                 dz = (self.ZMAX - self.ZMIN) / self.NZ
                 z_global = self.ZMIN + dz * (np.arange(self.NZ) + 0.5 * at_mid)
-                g = np.abs(z_global - center[d]).argmin()
+                g = _nearest(z_global, center[d])
                 local = g - self.rank * (self.NZ // self.size)
                 local += self.n_ghosts if self.rank > 0 else 0
                 inside = 0 <= local < pos.size and owned[local]
                 idx = np.array([local] if inside else [], dtype=int)
             elif size[d] == 0:
-                idx = np.array([np.abs(pos - center[d]).argmin()])
+                idx = np.array([_nearest(pos, center[d])])
             else:
                 tol = 1e-9 * (nodes[d][-1] - nodes[d][0])
                 lo, hi = center[d] - size[d] / 2 - tol, center[d] + size[d] / 2 + tol
