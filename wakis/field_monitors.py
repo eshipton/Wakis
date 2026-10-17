@@ -230,7 +230,10 @@ class DFTMonitor:
         """
         acc = self._acc[component]
         acc = acc.get() if hasattr(acc, "get") else acc
-        return acc.reshape(-1, *self.shape[component]), self.coords[component]
+        return (
+            acc.reshape(self.frequencies.size, *self.shape[component]),
+            self.coords[component],
+        )
 
 
 class FluxMonitor:
