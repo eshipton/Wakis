@@ -944,10 +944,8 @@ class GridFIT3D(PlotMixin):
         nodes = (self.x, self.y, self.z)
         indices, coords = [], []
         for d in range(3):
-            if (d == c) == on_edge_mid:
-                pos = (nodes[d][:-1] + nodes[d][1:]) / 2
-            else:
-                pos = nodes[d][:-1]
+            at_mid = (d == c) == on_edge_mid
+            pos = (nodes[d][:-1] + nodes[d][1:]) / 2 if at_mid else nodes[d][:-1]
 
             owned = np.ones(pos.size, dtype=bool)
             if d == 2 and self.use_mpi:
@@ -956,20 +954,18 @@ class GridFIT3D(PlotMixin):
                 if self.rank < self.size - 1:
                     owned[-self.n_ghosts :] = False
 
-            if size[d] == 0:
+            if size[d] == 0 and d == 2 and self.use_mpi:
+                # Pick the nearest sample on the global (uniform) z grid, so all
+                # ranks agree on it even at subdomain interfaces, then map it to
+                # the local index of the rank that owns it
+                z_global = self.ZMIN + self.dz * (np.arange(self.NZ) + 0.5 * at_mid)
+                g = np.abs(z_global - center[d]).argmin()
+                local = g - self.rank * (self.NZ // self.size)
+                local += self.n_ghosts if self.rank > 0 else 0
+                inside = 0 <= local < pos.size and owned[local]
+                idx = np.array([local] if inside else [], dtype=int)
+            elif size[d] == 0:
                 idx = np.array([np.abs(pos - center[d]).argmin()])
-                if not owned.all():
-                    # The local nearest sample is the global one only if the
-                    # point lies in the interval of this rank's owned samples
-                    o_lo, o_hi = np.flatnonzero(owned)[[0, -1]]
-                    lo = (pos[o_lo - 1] + pos[o_lo]) / 2 if o_lo > 0 else -np.inf
-                    hi = (
-                        (pos[o_hi] + pos[o_hi + 1]) / 2
-                        if o_hi < pos.size - 1
-                        else np.inf
-                    )
-                    if not lo < center[d] <= hi:
-                        idx = idx[:0]
             else:
                 tol = 1e-9 * (nodes[d][-1] - nodes[d][0])
                 lo, hi = center[d] - size[d] / 2 - tol, center[d] + size[d] / 2 + tol
