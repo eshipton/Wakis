@@ -958,6 +958,18 @@ class GridFIT3D(PlotMixin):
 
             if size[d] == 0:
                 idx = np.array([np.abs(pos - center[d]).argmin()])
+                if not owned.all():
+                    # The local nearest sample is the global one only if the
+                    # point lies in the interval of this rank's owned samples
+                    o_lo, o_hi = np.flatnonzero(owned)[[0, -1]]
+                    lo = (pos[o_lo - 1] + pos[o_lo]) / 2 if o_lo > 0 else -np.inf
+                    hi = (
+                        (pos[o_hi] + pos[o_hi + 1]) / 2
+                        if o_hi < pos.size - 1
+                        else np.inf
+                    )
+                    if not lo < center[d] <= hi:
+                        idx = idx[:0]
             else:
                 tol = 1e-9 * (nodes[d][-1] - nodes[d][0])
                 lo, hi = center[d] - size[d] / 2 - tol, center[d] + size[d] / 2 + tol
