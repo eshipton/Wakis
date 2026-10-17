@@ -13,6 +13,14 @@ from wakis.plotting import PlotMixinSolver as PlotMixin
 from wakis.sources import Beam
 
 
+def _end_time(src):
+    """Time [s] after which a source injects nothing (inf if unknown)."""
+    end_time = getattr(src, "end_time", None)
+    if end_time is None:
+        end_time = getattr(getattr(src, "src_time", None), "end_time", np.inf)
+    return end_time
+
+
 class RoutinesMixin:
     """Run electromagnetic and wakefield simulations for ``SolverFIT3D``.
 
@@ -35,6 +43,7 @@ class RoutinesMixin:
         use_etd=False,
         plot3d=False,
         monitors=None,
+        stop_when_energy_decayed=None,
         **kwargs,
     ):
         """
@@ -53,6 +62,13 @@ class RoutinesMixin:
         monitors : list of objects, optional
             Frequency-domain monitors (e.g. `DFTMonitor`, `FluxMonitor`) updated
             after every timestep with `monitor.update(solver, t)`.
+        stop_when_energy_decayed : float or tuple (float, int), optional
+            Steady-state energy criterion: stop before `Nt` once all sources
+            have ended (their `end_time`) and the total field energy
+            (see `field_energy`) has fallen below this fraction of its maximum,
+            e.g. 1e-4 for -40 dB. The energy is checked every 50 timesteps, or
+            every `check_every` with `(fraction, check_every)`. `self.Nt` is set
+            to the number of timesteps run. Default is None (run `Nt` steps).
         callback : callable, optional
             Function to call at each timestep as `callback(solver, t)`.
         save : bool, optional
@@ -164,6 +180,15 @@ class RoutinesMixin:
         sources = source if isinstance(source, (list, tuple)) else [source]
         sources = [src for src in sources if src is not None]
         monitors = [] if monitors is None else list(monitors)
+        post_steps = [src.post_step for src in sources if hasattr(src, "post_step")]
+        if stop_when_energy_decayed is not None:
+            decay, check_every = (
+                (stop_when_energy_decayed, 50)
+                if np.isscalar(stop_when_energy_decayed)
+                else stop_when_energy_decayed
+            )
+            t_off = max([_end_time(src) for src in sources], default=0.0)
+            energy_max = 0.0
 
         # Time loop
         for n in tqdm(range(Nt)):
@@ -186,8 +211,19 @@ class RoutinesMixin:
             # Advance
             self.one_step()
 
+            # Lumped elements correct their edges right after the step
+            for post_step in post_steps:
+                post_step(self, n * self.dt)
+
             for monitor in monitors:
                 monitor.update(self, n * self.dt)
+
+            if stop_when_energy_decayed is not None and n % int(check_every) == 0:
+                energy = self.field_energy()
+                energy_max = max(energy_max, energy)
+                if n * self.dt > t_off and energy < decay * energy_max:
+                    self.Nt = n + 1
+                    break
 
             # Plot
             if plot and n % plot_every == 0:
@@ -204,6 +240,36 @@ class RoutinesMixin:
         if save:
             for hf in hfs.values():
                 hf.close()
+
+    def field_energy(self):
+        """
+        Total electromagnetic energy in the domain [J].
+
+        W = 1/2 sum(eps E^2 dl dA) + 1/2 sum(mu H^2 dl~ dA~), summed over the
+        primary edges (E) and dual edges (H) with their cell volumes. Edges
+        inside perfect conductors (ieps = 0) carry no energy.
+
+        Returns
+        -------
+        float
+            Field energy [J], summed over MPI ranks.
+        """
+        xp = self.E.xp
+        ieps = xp.asarray(self.ieps.toarray())
+        imu = xp.asarray(self.imu.toarray())
+        itA = self.grid.itA.toarray()
+        dA = np.divide(1.0, itA, out=np.zeros_like(itA), where=itA != 0)
+        vol_E = xp.asarray(self.grid.L.toarray() * dA)
+        vol_H = xp.asarray(self.grid.tL.toarray() / self.grid.iA.toarray())
+        eps = xp.where(ieps != 0, 1 / xp.where(ieps != 0, ieps, 1), 0)
+        mu = xp.where(imu != 0, 1 / xp.where(imu != 0, imu, 1), 0)
+        energy = 0.5 * float(
+            xp.sum(eps * vol_E * self.E.toarray() ** 2)
+            + xp.sum(mu * vol_H * self.H.toarray() ** 2)
+        )
+        if self.use_mpi:
+            energy = self.grid.comm.allreduce(energy)
+        return energy
 
     def wakesolve(
         self,

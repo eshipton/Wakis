@@ -10,9 +10,11 @@ from . import (
     geometry,
     gridFIT3D,
     logger,
+    lumped,
     materials,
     solverFIT3D,
     sources,
+    sparameters,
     wakeSolver,
 )
 from ._version import __version__
@@ -20,5 +22,6 @@ from .field import Field
 from .field_monitors import DFTMonitor, FieldMonitor, FluxMonitor
 from .gridFIT3D import GridFIT3D
 from .logger import Logger
+from .lumped import LumpedElement, LumpedPort
 from .solverFIT3D import SolverFIT3D
 from .wakeSolver import WakeSolver
