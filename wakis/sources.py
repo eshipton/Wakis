@@ -16,6 +16,8 @@ from scipy.constants import c as c_light
 from scipy.constants import epsilon_0, mu_0
 from scipy.sparse.linalg import spsolve
 
+from .field import Field
+
 Z0 = np.sqrt(mu_0 / epsilon_0)  # Wave impedance in free space [Ohms]
 
 
@@ -1559,6 +1561,8 @@ class CustomSource:
 
 
 class CurrentSource:
+    _field = "J"  # field whose samples carry the current: 'J' (E edges) or 'H'
+
     def __init__(
         self,
         src_time,
@@ -1622,7 +1626,7 @@ class CurrentSource:
         """Select the edges inside the source region and their current weights."""
         c = "xyz".index(self.component)
         indices, coords = solver.grid.region_indices(
-            "J", self.component, self.center, self.size
+            self._field, self.component, self.center, self.size
         )
         I, J, K = np.meshgrid(*indices, indexing="ij")
         X, Y, Z = np.meshgrid(*coords, indexing="ij")
@@ -1635,7 +1639,10 @@ class CurrentSource:
         for d in range(3):
             if self.size[d] > 0:
                 continue
-            widths = solver.grid.L if d == c else solver.grid.tL
+            # H samples swap primary and dual widths with respect to E/J
+            widths = (
+                solver.grid.L if (d == c) == (self._field == "J") else solver.grid.tL
+            )
             w = widths[I, J, K, "xyz"[d]]
             if np.any(w <= 0):
                 raise ValueError("Source lies on a zero-width boundary cell.")
@@ -1671,3 +1678,86 @@ class CurrentSource:
         J_new = self.weights * float(self.src_time(t + solver.dt / 2))
         solver.J.array[self.flat_idx] += J_new - self.J_old
         self.J_old = J_new
+
+
+class MagneticCurrentSource(CurrentSource):
+    _field = "H"
+
+    def __init__(
+        self,
+        src_time,
+        component="z",
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.0),
+        amplitude=1.0,
+        amp_func=None,
+    ):
+        """
+        Soft source: impressed magnetic current density M added to Faraday's law.
+
+        The H update becomes mu dH/dt = -curl E - M, the dual of how
+        `CurrentSource` enters Ampere's law. Together with an electric current
+        sheet it forms a Huygens (equivalence-principle) source radiating to one
+        side only: K = n x H_inc and M_s = -n x E_inc on the surface with unit
+        normal n pointing into the illuminated region.
+
+        The amplitude is integrated over the directions in which `size` is zero,
+        as for `CurrentSource`: a point source has units of magnetic moment
+        [V m], a line along `component` of magnetic current [V], a sheet of
+        surface magnetic current density [V/m] and a volume of [V/m^2].
+
+        Parameters
+        ----------
+        src_time : GaussianSource, ContinuousSource or CustomSource
+            Time profile s(t) of the source.
+        component : str, optional
+            Direction of the magnetic current: 'x', 'y' or 'z'. 'Mz'/'Hz' is
+            accepted. Default is 'z'.
+        center : tuple of float, optional
+            Centre of the source region (x, y, z) [m].
+        size : tuple of float, optional
+            Extent of the source region (sx, sy, sz) [m]. Zero means a single
+            cell layer in that direction. Default is a point source.
+        amplitude : float, optional
+            Source amplitude, see units above. Default is 1.
+        amp_func : callable, optional
+            Spatial profile amp_func(x, y, z) [m] multiplying `amplitude`.
+
+        Notes
+        -----
+        M lives on the H samples: on the node along `component` and at the cell
+        midpoints transversally, so a point source snaps to the nearest H edge
+        of the dual grid. M is evaluated at t, the centre of the leapfrog H
+        update from t - dt/2 to t + dt/2 (J is evaluated at t + dt/2). The
+        first update allocates `solver.M`; solvers without magnetic sources
+        skip the term. MPI and GPU execution paths are supported but not
+        covered by tests.
+        """
+        super().__init__(src_time, component, center, size, amplitude, amp_func)
+
+    def update(self, solver, t):
+        """
+        Add the source magnetic current at time t to the solver's M.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver object.
+        t : float
+            Current simulation time [s].
+        """
+        if solver.M is None:
+            solver.M = Field(
+                solver.Nx,
+                solver.Ny,
+                solver.Nz,
+                use_gpu=solver.use_gpu,
+                dtype=solver.dtype,
+            )
+        if self.is_first_update:
+            self._set_edges(solver)
+            self.is_first_update = False
+
+        M_new = self.weights * float(self.src_time(t))
+        solver.M.array[self.flat_idx] += M_new - self.J_old
+        self.J_old = M_new
