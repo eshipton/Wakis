@@ -394,10 +394,12 @@ class ConformalGeometry:
     background_pec : bool
         True when the solver background is PEC: everything outside the
         non-PEC solids is then conductor.
-    mode : {'pec', 'all'}
+    mode : {'pec', 'all', 'tensor'}
         'pec': conformal PEC and sheets only, dielectric edges take the
         material with the largest share of their dual cell (staircase);
-        'all': also the anisotropic averaging of dielectric solids.
+        'all': also the anisotropic averaging of dielectric solids;
+        'tensor': as 'all', plus the off-diagonal couplings of the full
+        averaged tensor (`wakis.tensor_averaging`).
     n_sub : int
         Midpoint samples per dual cell in the third direction for the volume
         fractions (the other two directions are exact).
@@ -534,7 +536,10 @@ class ConformalGeometry:
 def _material_tensors(solver, geo):
     """
     Inverse permittivity and conductivity per E edge from the volume
-    fractions of the non-PEC solids (Kottke averaging in mode 'all').
+    fractions of the non-PEC solids (Kottke averaging in modes 'all' and
+    'tensor'). In mode 'tensor' also returns, per component, the
+    anisotropy <1/eps> - 1/<eps> [m/F] and the full interface normal of
+    every edge (for the off-diagonal tensor couplings), else None.
     """
     grid = solver.grid
     materials = grid.stl_materials or {}
@@ -542,12 +547,13 @@ def _material_tensors(solver, geo):
     eps = np.array([materials[k][0] * eps_0 for k in keys])
     sig = np.array([materials[k][2] for k in keys])
     bg_pec = np.isinf(solver.eps_bg)
-    ieps, sigma = [], []
+    ieps, sigma, aniso, normal = [], [], [], []
     for c in range(3):
         # Solids listed later replace earlier ones where they overlap (as for
         # the cell masks): f_j <- f_j (1 - f_k) for j before k
         fs = np.zeros((len(keys), *geo.shape))
         n_c = np.zeros(geo.shape)
+        n_full = np.zeros((*geo.shape, 3))
         for i, key in enumerate(keys):
             f = np.clip(geo.fractions[key][c], 0.0, 1.0)
             fs[:i] *= 1.0 - f
@@ -555,6 +561,7 @@ def _material_tensors(solver, geo):
             # Interface normal of the last solid cutting the dual cell
             cut = (f > 1e-9) & (f < 1 - 1e-9)
             n_c = np.where(cut, geo.normals[key][c][..., c], n_c)
+            n_full = np.where(cut[..., None], geo.normals[key][c], n_full)
         total = fs.sum(axis=0)
         if bg_pec:
             # The non-PEC part of the dual cell holds only solids
@@ -564,12 +571,14 @@ def _material_tensors(solver, geo):
         else:
             f_bg = 1.0 - total
             eps_bg = solver.eps_bg
-        if geo.mode == "all":
+        if geo.mode in ("all", "tensor"):
             mean_eps = f_bg * eps_bg + np.tensordot(eps, fs, axes=1)
             mean_ieps = f_bg / eps_bg + np.tensordot(1.0 / eps, fs, axes=1)
             # Diagonal of P <1/eps> + (1 - P) <eps>^-1, P = n n^T [Kottke 2008]
             p = n_c**2
             ieps_c = p * mean_ieps + (1.0 - p) / mean_eps
+            aniso.append(np.clip(mean_ieps - 1.0 / mean_eps, 0.0, None))
+            normal.append(n_full)
         else:
             # Majority material (staircase dielectric)
             share = np.concatenate([f_bg[None], fs])
@@ -580,7 +589,9 @@ def _material_tensors(solver, geo):
         )
         ieps.append(ieps_c)
         sigma.append(sigma_c)
-    return ieps, sigma
+    if geo.mode != "tensor":
+        return ieps, sigma, None
+    return ieps, sigma, (aniso, normal)
 
 
 def _face_edges(lengths, w):
@@ -985,10 +996,12 @@ def apply_conformal_materials(solver):
     solver.conformal_face_ops = [op.astype(solver.dtype) for op in ops]
 
     if geo.fractions or np.isinf(solver.eps_bg):
-        ieps, sigma = _material_tensors(solver, geo)
+        ieps, sigma, tensor = _material_tensors(solver, geo)
         for c, d in enumerate("xyz"):
             setattr(solver.ieps, f"field_{d}", ieps[c].astype(real))
             setattr(solver.sigma, f"field_{d}", sigma[c].astype(real))
+        if tensor is not None:
+            _set_tensor_edges(solver, *tensor)
         if np.any(solver.sigma.toarray() > 0):
             solver.use_conductivity = True
     # E edges completely inside PEC carry no voltage; the sheet-edge factors
@@ -1000,6 +1013,18 @@ def apply_conformal_materials(solver):
     solver.conformal_ieps_factor = factor
     solver.ieps.fromarray(solver.ieps.toarray() * factor)
     solver.sigma.fromarray(np.where(closed, 0.0, solver.sigma.toarray()))
+
+
+def _set_tensor_edges(solver, aniso, normal):
+    """Store the anisotropic edges of mode 'tensor' in a `TensorOperator`."""
+    from .tensor_averaging import TensorOperator
+
+    a = np.concatenate([x.ravel(order="F") for x in aniso])
+    n = np.concatenate([x.reshape(-1, 3, order="F") for x in normal])
+    edges = np.flatnonzero(a > 0)
+    op = TensorOperator(solver)
+    op.set_edges(edges, a[edges], n[edges])
+    solver.tensor_operator = op
 
 
 def max_stable_dt(solver, tol=1e-3):
@@ -1042,7 +1067,20 @@ def apply_conformal_timestep(solver, dt_given):
     conformal operators (when dt was not given) or warn when the given dt
     exceeds the limit.
     """
-    dt_max = max_stable_dt(solver)
+    op = getattr(solver, "tensor_operator", None)
+    if op is not None:
+        from . import tensor_averaging
+
+        # Edges in PEC (open length 0) and ghost edges now have ieps = 0
+        op.assemble(solver)
+        dt_max = tensor_averaging.max_stable_dt(solver, op)
+    else:
+        dt_max = max_stable_dt(solver)
+    if solver.use_mpi and solver.grid.use_mpi:
+        # Every rank estimates its own slab: step with the smallest limit
+        from mpi4py import MPI
+
+        dt_max = solver.grid.comm.allreduce(dt_max, op=MPI.MIN)
     solver.conformal_dt_max = dt_max
     if dt_given:
         if solver.dt > dt_max:

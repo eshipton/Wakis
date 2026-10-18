@@ -20,6 +20,7 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_sparameters
    wakis_materials
    wakis_dispersive
+   wakis_tensor_averaging
    wakis_geometry
    wakis_logger
    wakis_plotting

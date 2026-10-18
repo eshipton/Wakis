@@ -156,15 +156,19 @@ class GridFIT3D(PlotMixin):
             meshes. Use False only to reproduce results obtained with earlier
             Wakis versions.
             See "Grid conventions" in the physics guide.
-        conformal : bool or {'pec', 'all'}, optional
+        conformal : bool or {'pec', 'all', 'tensor'}, optional
             Conformal FIT instead of staircased STL solids (applied by
             `SolverFIT3D`). 'pec': PEC solids (and a PEC background around
             the other solids) cut the primary edges and faces, which enter
             the update with their length/area outside the conductor;
             dielectric edges take the material occupying most of their dual
             cell. 'all' (or True): additionally anisotropic subpixel
-            averaging of the permittivity of dielectric solids. Default False
-            (staircase cell masks). See "Conformal FIT" in the physics guide.
+            averaging of the permittivity of dielectric solids. 'tensor':
+            as 'all', plus the off-diagonal couplings of the full averaged
+            inverse-permittivity tensor (more accurate when E crosses curved
+            or oblique dielectric interfaces; see "Tensor subpixel averaging"
+            in the physics guide). Default False (staircase cell masks). See
+            "Conformal FIT" in the physics guide.
         conformal_subsamples : int, optional
             Midpoint samples per dual cell along one axis for the dielectric
             volume fractions (the two other axes are integrated exactly).
@@ -272,8 +276,8 @@ class GridFIT3D(PlotMixin):
             self.update_logger(["stl_scale"])
 
         self.conformal = "all" if conformal is True else conformal
-        if self.conformal not in (False, "pec", "all"):
-            raise ValueError("conformal must be False, True, 'pec' or 'all'.")
+        if self.conformal not in (False, "pec", "all", "tensor"):
+            raise ValueError("conformal must be False, True, 'pec', 'all' or 'tensor'.")
         self.conformal_subsamples = int(conformal_subsamples)
         self.sheet_edge_correction = bool(sheet_edge_correction)
         self.sheets = {
