@@ -436,3 +436,70 @@ def test_design_overlap_raises():
     sim = AdjointSimulation(_line_solver, [port], {}, design, 5)
     with pytest.raises(NotImplementedError):
         sim.forward(np.full(design.shape, 0.5))
+
+
+def test_mode_coupler_ascent():
+    """
+    User-guide example: a design region between two offset slab waveguides
+    (eps_r = 6, 3 cells wide, 20 cells per vacuum wavelength) optimized for
+    the power transmitted into the fundamental mode of the output guide,
+    T = |a+|^2 / |S|^2 with the unit-power ModeSource. Normalized gradient
+    ascent through filter + tanh projection increases T at every one of the
+    first iterations, starting from T = 0.22 for the uniform density.
+    """
+    jax = pytest.importorskip("jax")
+    jax.config.update("jax_enable_x64", True)
+    jnp = jax.numpy
+    from wakis.inverse import (
+        conic_filter,
+        jax_simulation,
+        mode_amplitudes,
+        tanh_projection,
+    )
+
+    dx, eps_core, offset = 5e-3, 6.0, 0.02
+
+    def make_solver():
+        grid = wakis.GridFIT3D(
+            -0.15, 0.15, -0.1, 0.1, -dx / 2, dx / 2, 60, 40, 1, verbose=0
+        )
+        solver = wakis.SolverFIT3D(
+            grid,
+            bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"],
+            n_pml=10,
+            verbose=0,
+        )
+        for x0, y0 in ((-0.1, -offset), (0.1, offset)):
+            core = MaterialGrid(
+                center=(x0, y0, 0), size=(0.12, 3 * dx, 0), shape=(1, 1, 1),
+                eps_min=eps_core, eps_max=eps_core,
+            )  # fmt: skip
+            core.apply(solver, np.ones((1, 1, 1)))
+        return solver
+
+    window = (0, 0.12, np.inf)
+    source = ModeSource(SRC, center=(-0.1, -offset, 0), size=window)
+    monitors = {"out": ModeMonitor([F0], center=(0.1, offset, 0), size=window)}
+    design = MaterialGrid(
+        center=(0, 0, 0), size=(0.08, 0.08, 0), shape=(17, 17, 1),
+        eps_min=1.0, eps_max=eps_core,
+    )  # fmt: skip
+    sim = AdjointSimulation(make_solver, [source], monitors, design, Nt=1200)
+    simulate = jax_simulation(sim)
+    S = SRC.fourier_transform(F0)
+
+    def transmission(rho_raw):
+        rho = tanh_projection(conic_filter(rho_raw, radius=1.5), 4.0)
+        a_plus, _ = mode_amplitudes(simulate(rho)["out"], sim.readouts["out"])
+        return jnp.sum(jnp.abs(a_plus) ** 2) / jnp.abs(S) ** 2
+
+    rho = np.full(design.shape, 0.5)
+    values = []
+    for _ in range(4):
+        T, grad = jax.value_and_grad(transmission)(rho)
+        values.append(float(T))
+        rho = np.clip(rho + 0.1 * grad / np.abs(grad).max(), 0.0, 1.0)
+    print("transmission:", np.round(values, 3))
+    assert np.all(np.diff(values) > 0), values
+    assert 0.2 < values[0] < 0.25 and values[-1] > 0.8

@@ -392,7 +392,67 @@ for it in range(20):  # plain normalized gradient ascent
     rho_raw = jnp.clip(rho_raw + 0.05 * g / jnp.abs(g).max(), 0, 1)
 ```
 
-The adjoint supports CPU, non-MPI runs with PEC, PMC, periodic and CPML boundaries, ohmic loss and soft `CurrentSource` excitations; ABC, PML, TFSF, SIBC, GPU and MPI raise `NotImplementedError`. `AdjointSimulation(..., store_dtype=np.float32)` halves the memory of the stored E increments ($N_t \times N_\text{design}$ values).
+The adjoint supports CPU, non-MPI runs with PEC, PMC, periodic, Bloch (complex fields) and CPML boundaries, ohmic loss, dispersive materials, lumped elements and ports, and electric, magnetic and mode sources (`CurrentSource`, `MagneticCurrentSource`, `ModeSource`, `LumpedPort`); ABC, PML, TFSF, SIBC, GPU and MPI raise `NotImplementedError`. The design region must not share edges with lumped elements or dispersive materials. `AdjointSimulation(..., store_dtype=np.float32)` halves the memory of the stored E increments ($N_t \times N_\text{design}$ values).
+
+**Objectives on any monitor.** `forward` returns the *raw* DFT accumulators of each monitor, and the helpers of `wakis.inverse` turn them into physical quantities inside JAX, identical to the monitors' own post-processing:
+
+| Monitor | raw outputs | helper |
+|---|---|---|
+| `DFTMonitor` | one array per component | – |
+| `FluxMonitor` | `'E0'`, `'H0'`, ... per surface term | `flux(raw, sim.readouts[name])` = `get_flux()` |
+| `Near2FarMonitor` | as `FluxMonitor` | `farfield(raw, sim.readouts[name], theta, phi)` |
+| `ModeMonitor` | `'E'`, `'H'` on the port plane | `mode_amplitudes(raw, sim.readouts[name], mode_index)` = `get_amplitudes()` |
+| `LumpedReadout(element, freqs)` | `'V'`, `'I'` of a lumped element or port | `power_waves(V, I, z0)` |
+
+`sim.readouts` holds monitor copies initialized on a solver without the design (created by `jax_simulation` or `sim.output_shapes()`); mode profiles are computed there once and are not differentiated, so mode planes must lie outside the design region. A `LumpedReadout` refers to an element that is also passed in `sources`; for example $|S_{21}|^2$ of a two-port is `jnp.abs(b2 / a1) ** 2` with `a1, _ = power_waves(out["p1"]["V"], out["p1"]["I"], 50)` and `_, b2 = power_waves(out["p2"]["V"], out["p2"]["I"], 50)`. `MaterialGrid(..., material=disp)` designs the fill fraction of a `DispersiveMaterial` over the background `eps_min` instead of a permittivity.
+
+**Example: waveguide offset coupler.** Two parallel slab waveguides ($\varepsilon_r = 6$, three cells wide) are offset by 4 cm; an 8 × 8 cm design region between them is optimized to maximize the power transmitted into the fundamental mode of the output guide. `ModeSource` launches the unit-power mode with spectrum $S(f)$, so $T = |a_+|^2/|S|^2$ is the power transmission:
+
+```python
+import jax
+import jax.numpy as jnp
+import numpy as np
+import wakis
+from wakis.inverse import (AdjointSimulation, MaterialGrid, conic_filter, jax_simulation,
+                           mode_amplitudes, tanh_projection)
+from wakis.mode_solver import ModeMonitor, ModeSource
+from wakis.sources import GaussianSource
+
+jax.config.update("jax_enable_x64", True)
+f0, dx, eps_core, offset = 3e9, 5e-3, 6.0, 0.02  # 20 cells per vacuum wavelength
+
+def make_solver():  # 2D: 60 x 40 cells, one periodic cell along z
+    grid = wakis.GridFIT3D(-0.15, 0.15, -0.1, 0.1, -dx / 2, dx / 2, 60, 40, 1, verbose=0)
+    solver = wakis.SolverFIT3D(grid, bc_low=["cpml", "cpml", "periodic"],
+                               bc_high=["cpml", "cpml", "periodic"], n_pml=10, verbose=0)
+    for x0, y0 in ((-0.1, -offset), (0.1, offset)):  # fixed cores: MaterialGrid at rho = 1
+        core = MaterialGrid(center=(x0, y0, 0), size=(0.12, 3 * dx, 0), shape=(1, 1, 1),
+                            eps_min=eps_core, eps_max=eps_core)
+        core.apply(solver, np.ones((1, 1, 1)))
+    return solver
+
+window = (0, 0.12, np.inf)  # port planes, excluding the CPML layers
+source = ModeSource(GaussianSource(f0, 1e9), center=(-0.1, -offset, 0), size=window)
+monitors = {"out": ModeMonitor([f0], center=(0.1, offset, 0), size=window)}
+design = MaterialGrid(center=(0, 0, 0), size=(0.08, 0.08, 0), shape=(17, 17, 1),
+                      eps_min=1.0, eps_max=eps_core)
+sim = AdjointSimulation(make_solver, [source], monitors, design, Nt=1200)
+simulate = jax_simulation(sim)
+S = source.src_time.fourier_transform(f0)
+
+def transmission(rho_raw, beta=4.0):
+    rho = tanh_projection(conic_filter(rho_raw, radius=1.5), beta)
+    a_plus, _ = mode_amplitudes(simulate(rho)["out"], sim.readouts["out"])
+    return jnp.sum(jnp.abs(a_plus) ** 2) / jnp.abs(S) ** 2
+
+rho = np.full(design.shape, 0.5)
+for it in range(10):
+    T, g = jax.value_and_grad(transmission)(rho)
+    print(f"iteration {it}: T = {float(T):.3f}")
+    rho = np.clip(rho + 0.1 * g / np.abs(g).max(), 0, 1)
+```
+
+Each iteration (forward + adjoint, 2400 cells × 1200 steps) takes ~0.5 s on a laptop CPU. The transmission rises from $T = 0.22$ for the uniform start to $T = 0.95$ after 10 iterations (0.22, 0.50, 0.71, 0.84, 0.91, 0.91, 0.92, 0.94, 0.94, 0.95); the fixed normalized step causes small oscillations near the optimum. For a manufacturable design, continue with increasing projection steepness `beta` (e.g. 8, 16, 32).
 
 #### Far-field patterns and antenna metrics
 

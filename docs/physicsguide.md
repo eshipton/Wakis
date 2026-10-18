@@ -865,12 +865,18 @@ The objective sensitivities are added to $\boldsymbol\lambda'$ *before* the tran
 **Parameter gradient.** $\varepsilon^{-1}$ enters a step only as a factor of the electric increment, $\mathbf q^n = \mathbf e^{n+1} - \mathbf e^n = \Delta t\,\mathbf D_\varepsilon(\mathbf K \mathbf h' - \mathbf j_s - \sigma \mathbf e^n)$ (also with CPML, where the auxiliary terms are inside the same bracket). Hence, for each design edge $i$,
 
 $$
-\frac{dF}{d\varepsilon^{-1}_i} = \sum_{n=0}^{N_t-1} \lambda_{e,i}^{n+1}\, \frac{q_i^n}{\varepsilon^{-1}_i}.
+\frac{dF}{d\varepsilon^{-1}_i} = \operatorname{Re}\sum_{n=0}^{N_t-1} \overline{\lambda_{e^*,i}^{n+1}}\, \frac{q_i^n}{\varepsilon^{-1}_i},
 $$
 
-The forward run stores $q^n_i/\varepsilon^{-1}_i$ on the design edges only ($N_t \times N_\text{design}$ values, optionally in float32), which avoids storing or recomputing the whole field history.
+where $\boldsymbol\lambda_{e^*}$ is the adjoint of the electric field produced by the solver step itself, before the lumped and dispersive corrections below (it equals $\boldsymbol\lambda_e^{n+1}$ on edges without such corrections, which is always the case on design edges). The conjugate and real part are only active for complex fields. The forward run stores $q^n_i/\varepsilon^{-1}_i$ on the design edges only ($N_t \times N_\text{design}$ values, optionally in float32), which avoids storing or recomputing the whole field history.
 
-**DFT objectives.** A `DFTMonitor` sample is $X_k = \sum_n w_n F^n_k$ with $w_n = \Delta t\, e^{-2\pi i f t_n}$. For a real objective $F(X)$ with $G_k = \partial F/\partial \operatorname{Re}X_k + i\,\partial F/\partial \operatorname{Im}X_k$, the sensitivity to the time sample is $\partial F/\partial F^n_k = \operatorname{Re}(w_n G_k^*)$, summed over frequencies. JAX's cotangent of a complex output is $G^*$, which the JAX binding conjugates.
+**Monitor objectives.** Every frequency-domain output is a running DFT of a fixed sparse linear functional of the state after each step,
+
+$$
+X_m(f) = \sum_{n=0}^{N_t-1} w_n(f)\, (\mathbf W \mathbf x^{n+1})_m, \qquad w_n(f) = \Delta t\, e^{-2\pi i f (n\Delta t + \tau)},
+$$
+
+with $\tau = \Delta t$ for $\mathbf e$ and $\Delta t/2$ for $\mathbf h$. `AdjointSimulation.forward` returns these accumulators ("raw outputs") and the adjoint run adds $\mathbf W^H\big(\sum_f \overline{w_n(f)}\, G_m(f)\big)$ to $\boldsymbol\lambda^{n+1}$, where $G = \partial F/\partial\operatorname{Re}X + i\,\partial F/\partial\operatorname{Im}X$ (the real part for real fields: $\partial F/\partial x^n = \operatorname{Re}(w_n \bar G)$). The sampling matrices $\mathbf W$ are: a selection of samples (`DFTMonitor`, the tangential E of `FluxMonitor`, `Near2FarMonitor` and `ModeMonitor`); the average $\tfrac12(\mathbf h_\text{above} + \mathbf h_\text{below})$ of the two H planes around the surface (their H accumulators); for a lumped element, the row $-\tfrac12 g_e$ of the voltage $\bar V^{n+1/2} = -\sum_e g_e (E_e^n + E_e^{n+1})/2$ sampled at $\tau = \Delta t/2$, where the $E^n$ half is a functional of the state after step $n-1$ ($\tau = 3\Delta t/2$, not sampled after the last step, $E^0 = 0$), and the row $-(A/\ell)\, g_e$ of the inductor current $I_L$ on the state $J_L^{n+1/2}$. Flux $\Phi = \sum \operatorname{Re}(E\bar H)\,w$, mode amplitudes $a_\pm = \tfrac14\sum(E\times\bar{\mathbf h} \pm \bar{\mathbf e}\times H)\cdot\hat a\,\Delta A$, the far field (linear in the surface currents $-wH$, $-wE$) and the port current $I = I_s - V/Z_0$ (or $V/R + I_L + 2\pi i f C V$ for an element) are explicit functions of the raw outputs, written in JAX (`flux`, `mode_amplitudes`, `farfield`, `power_waves`), so automatic differentiation provides $G$ for objectives such as mode transmission, directivity or $|S_{21}|^2$. JAX's cotangent of a complex output is $\bar G$, which the JAX binding conjugates. Mode profiles are not differentiated (port planes must lie outside the design).
 
 **CPML.** The convolutional variables $\psi$ are part of the state. Each curl term of `_one_step_cpml` has the form $H_T \leftarrow H_T - \Delta t\,\mu_T^{-1} s\,(D E_S + \psi')$ with $\psi' = b\,\psi + c\,(D E_S)|_\text{face}$ (and analogously for $E$ with $\varepsilon^{-1}$ and the dual operators). With $\kappa = -\Delta t\,\mu^{-1}\boldsymbol\lambda_h$, the transposed term is
 
@@ -882,6 +888,39 @@ $$
 
 applied to the electric half step first (using $\nu = \Delta t\,\varepsilon^{-1}\boldsymbol\lambda_e'$) and then to the magnetic one.
 
+**Complex (Bloch) fields.** With complex states the step is complex-linear, $\mathbf x' = \mathbf U\mathbf x$ with $\mathbf U$ built from the Bloch curls $\mathbf C$ and $\mathbf C^H$ and real diagonal metrics. A real objective is a function of the real pair $(\operatorname{Re}\mathbf x, \operatorname{Im}\mathbf x)$; with the multiplier $\boldsymbol\lambda = \partial F/\partial\operatorname{Re}\mathbf x + i\,\partial F/\partial\operatorname{Im}\mathbf x$, the real transpose of the pair map is the Hermitian transpose, $\boldsymbol\lambda^n = \mathbf U^H\boldsymbol\lambda^{n+1}$: every sparse operator is replaced by its conjugate transpose (`A.conj().T`), the real coefficients ($\varepsilon^{-1}$, $\sigma$, CPML $b$, $c$, lumped and ADE coefficients) are unchanged, and the dot-product identity holds for the complex inner product $\langle\mathbf a,\mathbf b\rangle = \sum\bar a_k b_k$. Since $\varepsilon^{-1}$ is real, $dF/d\varepsilon^{-1} = \operatorname{Re}\sum_n \bar\lambda\, q/\varepsilon^{-1}$ (above). Positive and negative frequencies are independent outputs.
+
+**Impressed currents.** $\mathbf j_s$, the magnetic current $\mathbf m$ ($\mathbf h' = \mathbf h - \Delta t\,\mathbf A\mathbf e - \Delta t\,\mathbf D_\mu\mathbf m$) and the J/M sheets of `ModeSource` are in $\mathbf b^n$: they do not depend on the state and drop out of $\mathbf U^H$. Nothing design-dependent enters them as long as the mode-source plane lies outside the design region (the mode profile is solved once from the permittivity of that plane).
+
+**Lumped elements.** Each element modifies its edges $e$ after the solver step (Section *Lumped elements*): $J_L' = J_L + \Delta t\,\Gamma E_e$ enters $\mathbf j$ before the step, $E^*_e$ is the solver result and $E'_e = a E_e + b (E^*_e - E_e)$. The inductor current $J_L$ is part of the state. Transposing in reverse order, with $\lambda'$ the multipliers after the step:
+
+$$
+\lambda_{e^*,e} = b\,\lambda'_{E,e}, \qquad
+\lambda_{J_L} = \lambda'_{J_L} - \Delta t\,\varepsilon^{-1}_e\,\lambda_{e^*,e}, \qquad
+\lambda_{E,e} \mathrel{+}= (a-b)\,\lambda'_{E,e} + \Delta t\,\Gamma\,\lambda_{J_L},
+$$
+
+where the solver-step transpose is applied to $(\lambda'_H, \lambda_{e^*})$; the second relation is the transpose of the $-\Delta t\,\varepsilon^{-1}\mathbf j$ term. The port source current is in $\mathbf b^n$. `AdjointSimulation` runs the forward loop of `emsolve` (`update`, `one_step`, `post_step`, monitors).
+
+**Dispersive media.** On the edges of a dispersive group (Section *Dispersive materials*) the correction is $\mathrm{acc} = (E^*_e - E_n)\varepsilon_s + a_1 E_n - w\sum_L(p'_L - p_L) - w\sum_D(\kappa-1)p_D$, $p'_L = \alpha p_L + \xi p_{L,\text{old}} + \zeta E_n$, $p'_{L,\text{old}} = p_L$, $E'_e = \mathrm{acc}/d$, $p'_D = \kappa p_D + \beta(E'_e + E_n)$, with $E_n = E^n_e$ and the polarizations in the state. The transpose is
+
+$$
+\begin{aligned}
+\lambda_\text{acc} &= \Big(\lambda'_{E,e} + \sum_D \beta\lambda'_{p_D}\Big)/d, \qquad \lambda_{e^*,e} = \varepsilon_s\,\lambda_\text{acc},\\
+\lambda_{p_D} &= \kappa\lambda'_{p_D} - w(\kappa-1)\lambda_\text{acc}, \qquad \tilde\lambda_L = \lambda'_{p_L} - w\lambda_\text{acc},\\
+\lambda_{p_L} &= \alpha\tilde\lambda_L + \lambda'_{p_{L,\text{old}}} + w\lambda_\text{acc}, \qquad \lambda_{p_{L,\text{old}}} = \xi\tilde\lambda_L,\\
+\lambda_{E,e} &\mathrel{+}= (a_1 - \varepsilon_s)\lambda_\text{acc} + \sum_D\beta\lambda'_{p_D} + \sum_L\zeta\tilde\lambda_L .
+\end{aligned}
+$$
+
+**Dispersive design.** `MaterialGrid(..., material=disp)` makes the fill fraction $w = \mathbf P\rho$ of a dispersive material over the background $\varepsilon_\text{min}$ the design variable (as a partially filled edge of `add_dispersive_material`): $\varepsilon_e = (1-w)\varepsilon_\text{min} + w\varepsilon_\infty$, $a_1 = \varepsilon_e - w s$, $d = \varepsilon_e + w s$ with $s = \sigma\Delta t/(2\varepsilon_0) + \sum_D\beta$, and the pole terms scale with $w$. $w$ enters only the correction, so
+
+$$
+\frac{dF}{dw_i} = \operatorname{Re}\sum_n \overline{\lambda_{\text{acc},i}^{n+1}}\Big[(\Delta\varepsilon - s)E^n_i - \sum_L (p'_L - p'_{L,\text{old}})_i - \sum_D(\kappa-1)p_{D,i}^n - (\Delta\varepsilon + s)E^{n+1}_i\Big],
+$$
+
+$\Delta\varepsilon = \varepsilon_\infty - \varepsilon_\text{min}$ (derivative of acc minus $E' \partial d/\partial w$); the bracket is stored per step on the design edges, and $dF/d\rho = \mathbf P^T dF/dw$. Stability is checked for the pure material; intermediate $w$ mixes two stable media, which is stable in all tested cases but not proven.
+
 **Design parametrization.** `MaterialGrid` maps a density $\rho \in [0,1]$ on a regular design grid to $\varepsilon_r = \varepsilon_\text{min} + (\varepsilon_\text{max}-\varepsilon_\text{min})\,\mathbf P\rho$ on the design edges, with $\mathbf P$ the sparse trilinear interpolation matrix, so
 
 $$
@@ -890,9 +929,9 @@ $$
 
 Filtering and projection are written in JAX: `conic_filter` [Bourdin, 2001], `gaussian_filter` and `tanh_projection` [Wang et al., 2011], so that jax.grad composes them with the simulation (`jax_simulation`, a `jax.custom_vjp` around the NumPy solver).
 
-**Validation** (`tests/test_020_adjoint.py`): the dot-product identity $\langle \mathbf U\mathbf x, \mathbf y\rangle = \langle \mathbf x, \mathbf U^T\mathbf y\rangle$ holds to $\sim 10^{-17}$ relative to $\sum|U x||y|$ for PEC, periodic, lossy and CPML steps; adjoint gradients match central finite differences to $10^{-8}$–$10^{-10}$ with $h=10^{-4}$, and the difference scales as $h^2$, i.e. it is the finite-difference truncation error.
+**Validation** (`tests/test_020_adjoint.py`): the dot-product identity $\langle \mathbf U\mathbf x, \mathbf y\rangle = \langle \mathbf x, \mathbf U^T\mathbf y\rangle$ holds to $\sim 10^{-17}$ relative to $\sum|U x||y|$ for PEC, periodic, lossy and CPML steps; adjoint gradients match central finite differences to $10^{-8}$–$10^{-10}$ with $h=10^{-4}$, and the difference scales as $h^2$, i.e. it is the finite-difference truncation error. `tests/test_026_adjoint_features.py` repeats the dot-product test against the real time loop (element `update`, `one_step`, `post_step`), including the auxiliary states, for magnetic currents, lumped R/L/C elements and ports (PEC and CPML), Lorentz + Drude + Debye media with conductivity (PEC and CPML) and complex Bloch fields (PEC and CPML): $\le 1.4\times10^{-16}$ relative. Finite-difference checks ($h = 10^{-4}$) of jax.grad through flux, far-field intensity, mode amplitudes ($a_+$, $a_-$, with a `ModeSource`), DFT fields with a magnetic source, $|S_{21}|^2$ plus a lumped RLC current, a dispersive medium beside the design, a dispersive design material and Bloch fields (including $-f_0$) agree to $10^{-10}$–$2\times10^{-8}$ relative.
 
-**Limitations.** The adjoint supports CPU, non-MPI runs with PEC/PMC/periodic/CPML boundaries, ohmic loss and soft current sources. ABC (Mur), PML, TFSF injection, SIBC, GPU and MPI raise `NotImplementedError`. Only isotropic $\varepsilon$ is designed, and $\Delta t$ must not depend on the design.
+**Limitations.** The adjoint supports CPU, non-MPI runs with PEC/PMC/periodic/Bloch/CPML boundaries, ohmic loss, dispersive media, lumped elements and ports, and electric, magnetic and mode sources. ABC (Mur), PML, TFSF injection, SIBC, GPU and MPI raise `NotImplementedError`, as do `J` components of `DFTMonitor`, lumped elements sharing edges with each other or with dispersive media, and design regions overlapping lumped elements or (other) dispersive media. Only isotropic $\varepsilon$ (or the fill fraction of one dispersive material) is designed; mode profiles and $\Delta t$ must not depend on the design.
 
 References:
 - M. B. Giles and N. A. Pierce, "An introduction to the adjoint approach to design", *Flow, Turbulence and Combustion* **65**, 393–415 (2000).
