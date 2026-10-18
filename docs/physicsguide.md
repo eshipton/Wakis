@@ -1619,6 +1619,82 @@ the corresponding result is `None`. In asymmetric structures, a coherent or
 quadrupolar contribution may also be present; a single-offset division should
 then not be interpreted as a pure dipolar coefficient.
 
+### 🌀 Linear plasma wakefield in a plasma-filled pipe
+
+A rigid bunch that crosses a plasma displaces the plasma electrons, which then oscillate at the plasma frequency behind it: a plasma wakefield [Chen et al., 1985]. In the linear regime this is an ordinary dispersive-medium wakefield problem, so Wakis can compute it with the beam source of the wake solver and a Drude material (`wakis.plasma`, example `examples/007_linear_plasma_wakefield.py`, test `tests/test_037_plasma_wake.py`).
+
+**Plasma model.** A cold, collisionless, unmagnetized electron fluid with immobile ions, linearized around the uniform density $n_p$, carries the current $\partial_t \mathbf J_p = \varepsilon_0\omega_p^2\mathbf E - \nu \mathbf J_p$ with $\omega_p = \sqrt{n_p e^2/(\varepsilon_0 m_e)}$ (`plasma_frequency(n)`), i.e. the Drude permittivity $\varepsilon(\omega) = 1 - \omega_p^2/(\omega^2 - i\nu\omega)$ of Section *Dispersive materials*. `cold_plasma(omega_p, collision_rate=0)` returns this `DispersiveMaterial`; its ADE is exactly the linearized fluid momentum equation, integrated with the scheme and stability limit given there ($(\omega_p\Delta t/2)^2 + C^2 \le 1$).
+
+**Linear wake of a rigid bunch.** Let a bunch with line density $\lambda(\xi)$ (charge $q = \int\lambda\,d\xi$) move at $v = c$ along $z$ at the transverse position $\mathbf r_0$ inside a perfectly conducting circular pipe of radius $a$ filled with plasma; all fields depend on $\mathbf r_\perp$ and $\xi = z - ct$. With $e^{i(kz - \omega t)}$, $\omega = kc$, Maxwell's equations with $\nabla\cdot(\varepsilon\mathbf E) = \rho_b/\varepsilon_0$ give for $E_z$ (a short Wakis derivation of the result of [Keinigs & Jones, 1987], whose unbounded-plasma form is also reviewed in [Esarey et al., 2009])
+
+$$
+\left(\nabla_\perp^2 - k_p^2\right)\tilde E_z = \frac{i k\, k_p^2}{k^2 - k_p^2}\,\frac{\tilde\lambda(k)\,\delta(\mathbf r_\perp - \mathbf r_0)}{\varepsilon_0},
+\qquad k_p = \frac{\omega_p}{c},
+$$
+
+because $\partial_z^2 + \varepsilon\,\omega^2/c^2 = -k_p^2$ for every $k$ when $v = c$. The transverse Green function with $g = 0$ on the wall, $(\nabla_\perp^2 - k_p^2) g = -2\pi\delta(\mathbf r_\perp - \mathbf r_0)$, follows from Graf's addition theorem for $K_0$ [DLMF §10.44(ii)]:
+
+$$
+g(\mathbf r_\perp;\mathbf r_0) = K_0(k_p|\mathbf r_\perp - \mathbf r_0|) - \sum_{m\ge0} \epsilon_m \cos m(\phi-\phi_0)\, \frac{K_m(k_p a)}{I_m(k_p a)}\, I_m(k_p r_0)\, I_m(k_p r),
+\qquad \epsilon_0 = 1,\ \epsilon_{m>0} = 2
+$$
+
+(`pipe_green_function`; $g = K_0$ for $a\to\infty$). Inverting the Fourier transform with the causal prescription $\omega \to \omega + i0$ (poles at $k = \pm k_p$ below the real axis, so nothing ahead of the bunch) gives
+
+$$
+E_z(\mathbf r_\perp, \xi) = -\frac{k_p^2\, g}{2\pi\varepsilon_0}\int_\xi^\infty \lambda(\xi')\cos k_p(\xi - \xi')\,d\xi' ,
+$$
+
+and Faraday's law, $\partial_\xi(E_x - cB_y) = \partial_x E_z$ (Panofsky–Wenzel for $v=c$), gives the transverse force per unit charge on a test particle moving at $c$,
+
+$$
+\mathbf F_\perp = \mathbf E_\perp + c\,\hat{\mathbf z}\times\mathbf B = \frac{k_p\,\nabla_\perp g}{2\pi\varepsilon_0}\int_\xi^\infty \lambda(\xi')\sin k_p(\xi' - \xi)\,d\xi' .
+$$
+
+For a Gaussian bunch centred at $\xi = 0$ both integrals are closed-form, $\int_\xi^\infty\lambda e^{-ik_p\xi'}d\xi' = \tfrac q2 e^{-k_p^2\sigma_z^2/2}\operatorname{erfc}\!\big((\xi + ik_p\sigma_z^2)/\sqrt2\sigma_z\big)$ (`linear_wake`). Far behind the bunch the wake is an undamped cosine,
+
+$$
+E_z \to -\frac{q\,k_p^2\, g}{2\pi\varepsilon_0}\, e^{-k_p^2\sigma_z^2/2}\cos k_p\xi ,
+$$
+
+(`wake_amplitude`). For a given bunch length and a density scan at fixed $k_p a$, $k_p r$, the amplitude $\propto (k_p\sigma_z)^2 e^{-k_p^2\sigma_z^2/2}$ is maximal at $k_p\sigma_z = \sqrt2$ [Esarey et al., 2009]. A positive bunch is decelerated ($E_z<0$ at its centre). In impedance language the point-charge wake per unit length is that of an undamped resonator at $\omega_p$ (a Wakis restatement): $w'_\parallel(\xi) = (k_p^2 g/2\pi\varepsilon_0)\cos k_p\xi$ behind the charge, i.e. $R'/Q = Z_0 k_p g/(2\pi)$ per unit length, with $\operatorname{Re}Z_\parallel'(\omega)$ a delta function at $\omega_p$ for an infinitely long pipe.
+
+**Simulation setup and discretization.** `Beam` drives a line current $J_z$ in one column of grid nodes, so the simulated field is the response of the lattice transverse operator: it is singular on the beam line and differs from $K_0$ by $O(h^2/r^2)$ near it; compare at $r \gtrsim a/4$ or at fixed physical radii under refinement. The pipe is a vacuum STL cylinder in a PEC background (`bg='pec'`, `GridFIT3D(conformal='pec')` for cut-cell walls) and the plasma is added to every open edge with `solver.add_dispersive_material(cold_plasma(omega_p), center, size)` (box faces placed between E samples so that no edge is half-filled). Two transients must be kept out of the comparison window:
+* *entrance*: a bunch with $v=c$ emerging from the PEC end wall into vacuum does not radiate, but at the vacuum–plasma boundary its unscreened field reorganizes into the screened one and emits transition radiation in TM modes of the plasma-filled pipe (cut-off $\sqrt{\omega_p^2 + (c\,j_{0n}/a)^2}$). These travel with group velocity $<c$ and fall behind the bunch as it advances; at a distance $D$ from the entrance only frequencies $\omega \gtrsim \omega_c\sqrt{D/2|\xi|}$ arrive within $|\xi|$ of the bunch, and they are suppressed by the bunch spectrum. Short bunches have more spectrum above cut-off and are the worst case: for $k_p\sigma_z = 0.5$ and a window of $3\lambda_p$, a 12 $\lambda_p$ pipe shows 8–17 % RMS deviation, 24 and 36 $\lambda_p$ pipes about 2 %, and the residual is a chirped transient that starts at $\xi\approx-2\lambda_p$ (over $2\lambda_p$ behind the bunch the deviation is 0.4–0.6 % at 48 cells per $\lambda_p$, but 2.3 % at 32 cells per $\lambda_p$, where the transient reaches closer to the bunch; see `docs/img/plasma_wake_ez.png`). The tests use a vacuum entrance of one $\lambda_p$, $D \ge 15\lambda_p$ and windows of 2–3 $\lambda_p$. An adiabatic density up-ramp (2 $\lambda_p$) did not reduce the transient.
+* *exit*: stop when the bunch is about one $\lambda_p$ before the exit wall; nothing propagates ahead of a bunch moving at $c$.
+The field is then read along $z$ at one time, $\xi = z - z_\mathrm{bunch}(t)$ with $z_\mathrm{bunch} = z_\min + c(t - t_i)$ (`Beam.ti`), $E_z$ on the $z$ midpoints at $t^{n+1}$ and $H$ half a step earlier. The Drude ADE shifts the oscillation frequency to $2\arcsin(\omega_p\Delta t/2)/\Delta t$ and the grid dispersion changes the effective $k_p$ by $O((k_p h)^2)$; both are below $10^{-3}$ at 20 cells per $\lambda_p$.
+
+**Validation** (`tests/test_037_plasma_wake.py`, $k_p a = 2$, $\lambda_p = 1$ mm, cubic cells; slow cases run on an NVIDIA L4):
+
+Errors of $E_z(\xi)$ behind an on-axis bunch, $k_p\sigma_z = 1$, 24 $\lambda_p$ pipe, window $-3\lambda_p<\xi<-3\sigma_z$: relative error of the fitted amplitude of $A\cos(k\xi+\phi)$ (the wavenumber error is $\le 2\times10^{-4}$ in all runs, decreasing with $h$):
+
+| cells per $\lambda_p$ (per $a$) | staircase $r\approx a/2$ | staircase $r\approx 3a/4$ | conformal $r\approx a/4$ | conformal $r\approx a/2$ | conformal $r\approx 3a/4$ |
+|---|---|---|---|---|---|
+| 24 (7.6) | +4.9 % | +16.8 % | +2.1 % | +0.73 % | +0.26 % |
+| 32 (10.2) | +2.5 % | +10.1 % | +1.0 % | +0.40 % | +0.54 % |
+| 48 (15.3) | +2.3 % | +5.7 % | +0.47 % | +0.15 % | +0.11 % |
+| 64 (20.4) | +1.3 % | +4.5 % | +0.26 % | +0.08 % | +0.05 % |
+
+The staircased wall converges at first order (effective radius error $\sim h$, largest near the wall); with conformal PEC the error converges at second order and is dominated near the beam line by the lattice Green function ($r = a/4$ is only 2–5 cells). At 48 cells per $\lambda_p$ with conformal walls, $k_p\sigma_z = 0.5,\ \sqrt2,\ 2$ give amplitude errors of 0.1–0.7 % and RMS deviations of 0.1–0.6 % over two plasma periods; the wake is undamped as predicted. For an offset bunch ($x_0 = \lambda_p/8$), $F_x = E_x - cB_y$ at 6.5 cells on either side agrees to 0.8 % (48 cells per $\lambda_p$; at $\lambda_p/16$ from the beam: 5.4 %, 2.9 %, 1.6 % at 32, 48, 64 cells per $\lambda_p$). The CI test (20 cells per $\lambda_p$, < 15 s on a laptop CPU) checks 2.5 % in amplitude at $a/2$ and the staircase–conformal difference near the wall.
+
+![Linear plasma wake behind a Gaussian bunch, Wakis vs theory](img/plasma_wake_ez.png)
+
+![Wake amplitude vs bunch length and radius](img/plasma_wake_amplitude.png)
+
+**Limits.** The model is the *linear, cold, rigid-beam* response: (i) linear plasma response, valid when the perturbed density is small, $|\delta n| \ll n_p$ (for a narrow bunch this requires a bunch density well below $n_p$ over the plasma skin depth); the results scale linearly with $q$; (ii) cold plasma: no thermal pressure, so the wake does not propagate and has no Landau damping (add $\nu>0$ for collisional damping); (iii) immobile ions, valid for times short compared with the ion plasma period; (iv) a rigid bunch at exactly $v = c$ (`Beam(beta=1)`, the default; the formulas above assume $v=c$): no beam evolution, no self-modulation, hosing, or beam loading by a witness bunch (other than as an additional prescribed source). The nonlinear blowout regime ($n_b \gtrsim n_p$, electron cavitation, wave breaking) needs a particle-in-cell or quasi-static code [Esarey et al., 2009].
+
+**Relation to proton-driven (AWAKE-type) plasma wakefields.** Proton-driven plasma wakefield acceleration was proposed by [Caldwell et al., 2009]; the AWAKE experiment at CERN drives a wake with 400 GeV SPS proton bunches in a rubidium plasma about 10 m long and has accelerated externally injected electrons up to 2 GeV [Adli et al., 2018]. The linear formula above shows why the proton bunch cannot drive the wake directly: its length is many plasma wavelengths, $k_p\sigma_z \gg 1$, so $e^{-k_p^2\sigma_z^2/2}$ cancels the wake of the smooth bunch. AWAKE therefore relies on the seeded self-modulation of the long bunch into micro-bunches spaced by $\lambda_p$ that drive the wake resonantly [Kumar, Pukhov & Lotov, 2010]; the growth of the resulting transverse wakefields from a seed level below 15 MV/m to above 300 MV/m was observed at plasma densities of $2.1\times10^{14}$ and $7.7\times10^{14}\ \mathrm{cm^{-3}}$ [Turner et al., 2019]. Self-modulation is an instability of a *deformable* beam and is outside this rigid-beam model; Wakis can however compute the linear wake of any *prescribed* bunch train or truncated profile with the same setup (e.g. several `Beam` sources), which is the seed and the linear drive term of that process.
+
+References:
+- P. Chen, J. M. Dawson, R. W. Huff and T. Katsouleas, "Acceleration of electrons by the interaction of a bunched electron beam with a plasma", *Phys. Rev. Lett.* **54**, 693–696 (1985), [doi:10.1103/PhysRevLett.54.693](https://doi.org/10.1103/PhysRevLett.54.693).
+- R. Keinigs and M. E. Jones, "Two-dimensional dynamics of the plasma wakefield accelerator", *Phys. Fluids* **30**, 252–263 (1987).
+- E. Esarey, C. B. Schroeder and W. P. Leemans, "Physics of laser-driven plasma-based electron accelerators", *Rev. Mod. Phys.* **81**, 1229–1285 (2009), [doi:10.1103/RevModPhys.81.1229](https://doi.org/10.1103/RevModPhys.81.1229).
+- NIST Digital Library of Mathematical Functions, §10.44(ii), Addition theorems for modified Bessel functions, [dlmf.nist.gov/10.44](https://dlmf.nist.gov/10.44).
+- A. Caldwell, K. Lotov, A. Pukhov and F. Simon, "Proton-driven plasma-wakefield acceleration", *Nature Phys.* **5**, 363–367 (2009).
+- N. Kumar, A. Pukhov and K. Lotov, "Self-modulation instability of a long proton bunch in plasmas", *Phys. Rev. Lett.* **104**, 255003 (2010), [doi:10.1103/PhysRevLett.104.255003](https://doi.org/10.1103/PhysRevLett.104.255003).
+- E. Adli et al. (AWAKE Collaboration), "Acceleration of electrons in the plasma wakefield of a proton bunch", *Nature* **561**, 363–367 (2018), [doi:10.1038/s41586-018-0485-4](https://doi.org/10.1038/s41586-018-0485-4).
+- M. Turner et al. (AWAKE Collaboration), "Experimental observation of plasma wakefield growth driven by the seeded self-modulation of a proton bunch", *Phys. Rev. Lett.* **122**, 054801 (2019), [doi:10.1103/PhysRevLett.122.054801](https://doi.org/10.1103/PhysRevLett.122.054801).
+
 
 ```{admonition} Modularity
 
