@@ -976,6 +976,44 @@ plt.plot(wake.f, np.abs(wake.Zx)) #plot absolute of Zx
 plt.plot(wake.f, np.abs(wake.Zy)) #plot absolute of Zy
 ```
 
+### Linear plasma wakefield in a plasma-filled pipe
+
+A cold plasma is a Drude medium, so the linear plasma wakefield of a rigid bunch moving at $c$ can be computed with a `Beam` source and `wakis.plasma` (physics guide: *Linear plasma wakefield in a plasma-filled pipe*; full script: `examples/007_linear_plasma_wakefield.py`):
+
+```python
+import numpy as np
+import pyvista as pv
+from scipy.constants import c
+from wakis import GridFIT3D, SolverFIT3D
+from wakis.plasma import cold_plasma, linear_wake, plasma_frequency
+from wakis.sources import Beam
+
+omega_p = plasma_frequency(1.1e21)              # n_e [1/m^3] -> lambda_p ~ 1 mm
+k_p = omega_p / c
+a, L, h = 2 / k_p, 24 * 2 * np.pi / k_p, 2 * np.pi / k_p / 32
+n = int(np.ceil(a / h)) + 2
+pipe = pv.Cylinder(center=(0, 0, L / 2), direction=(0, 0, 1), radius=a,
+                   height=3 * L, resolution=720).triangulate()
+grid = GridFIT3D(-n * h, n * h, -n * h, n * h, 0, L, 2 * n, 2 * n, int(L / h),
+                 stl_solids={"pipe": pipe}, stl_materials={"pipe": "vacuum"},
+                 conformal="pec")                 # cut-cell pipe wall
+solver = SolverFIT3D(grid, bc_low=["pec"] * 3, bc_high=["pec"] * 3,
+                     bg="pec", use_stl=True)
+lam_p = 2 * np.pi / k_p
+solver.add_dispersive_material(cold_plasma(omega_p),   # plasma from z = lambda_p
+                               center=(0, 0, lam_p - h / 4 + 2 * L), size=(4 * L,) * 3)
+beam = Beam(q=1e-9, sigmaz=1 / k_p)
+Nt = int(((L - lam_p - solver.z.min()) / c + beam.ti) / solver.dt)
+solver.emsolve(Nt, source=[beam])
+
+xi = solver.z - (solver.z.min() + c * (Nt * solver.dt - beam.ti))  # z - z_bunch
+i0, di = np.argmin(abs(grid.x)), int(round(a / 2 / h))
+ez_wakis = solver.E[i0 + di, i0, :, "z"]
+ez_theory, _, _ = linear_wake(grid.x[i0 + di], 0.0, xi, k_p, 1 / k_p, q=1e-9, radius=a)
+```
+
+Compare behind the bunch, a few $\lambda_p$ long, far from the plasma entrance (its transition radiation trails the bunch), and at radii of several cells from the beam line.
+
 ## 📈 Extrapolate a partially decayed wake with [`IDDEFIX`](https://github.com/ImpedanCEI/IDDEFIX)
 IDDEFIX is a physics-informed evolutionary optimization framework that fits a resonator-based model (parameterized by R, f, Q) to wakefield simulation data. It leverages Differential Evolution to optimize these parameters, enabling efficient classification and extrapolation of electromagnetic wakefield behavior. This allows for reduced simulation time while maintaining long-term accuracy, akin to time-series forecasting in machine learning. Developed by Sebastien Joly and Malthe Raschke, it is part of the Wakis ecosystem of python packages developed at CERN, and available in the [ImpedanCEI](https://github.com/ImpedanCEI/) organization.
 
