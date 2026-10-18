@@ -39,7 +39,7 @@ small, focused contributions to upstream Wakis.
 - [x] Dispersive materials (Drude/Lorentz/Debye), materials library and pole fitting
 - [x] Bloch-periodic boundaries with complex fields; oblique plane waves in unit cells
 - [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
-- [ ] Full-tensor subpixel averaging for curved dielectrics (in progress)
+- [x] Full-tensor subpixel averaging for curved dielectrics (`conformal='tensor'`)
 - [ ] Unstructured triangular/tetrahedral FIT (in progress)
 - [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
 - [ ] Magnetic dispersion (ferrites)
@@ -47,7 +47,7 @@ small, focused contributions to upstream Wakis.
 **Inverse design**
 - [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`), covering all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
-- [ ] Differentiable subpixel smoothing for density designs (in progress)
+- [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
 - [ ] Differentiable layer thickness
 
 **Core fixes and performance**
