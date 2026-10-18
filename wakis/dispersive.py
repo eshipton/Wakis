@@ -552,6 +552,12 @@ class DispersiveMixin:
 
     def _apply_stl_dispersive(self):
         """Attach ADE updates to STL solids whose material is dispersive."""
+        if getattr(self.grid, "conformal", False) in ("all", "tensor"):
+            # Subpixel (Kottke) averaging of the dispersive solids
+            from .tensor_dispersive import apply_conformal_dispersive
+
+            if apply_conformal_dispersive(self):
+                return
         for key, material in self.grid.stl_materials.items():
             if not isinstance(material, DispersiveMaterial):
                 continue
@@ -638,6 +644,8 @@ class DispersiveMixin:
 
     def reset_dispersive_state(self):
         """Zero the auxiliary polarizations (call together with reset_fields)."""
+        if getattr(self, "dispersive_network", None) is not None:
+            self.dispersive_network.reset()
         for g in getattr(self, "_dispersive_groups", []):
             g["lorentz"] = [(a, x, z, 0 * p, 0 * q) for a, x, z, p, q in g["lorentz"]]
             g["debye"] = [(k, b, 0 * p) for k, b, p in g["debye"]]

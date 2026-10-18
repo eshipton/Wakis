@@ -548,6 +548,16 @@ def _material_tensors(solver, geo):
     sig = np.array([materials[k][2] for k in keys])
     bg_pec = np.isinf(solver.eps_bg)
     ieps, sigma, aniso, normal = [], [], [], []
+    # Per-edge mixture (fractions, background share, n_c^2), kept for the
+    # dispersive subpixel averaging of `wakis.tensor_dispersive`
+    mixture = {
+        "keys": keys,
+        "fs": [],
+        "f_bg": [],
+        "p": [],
+        "normal": [],
+        "eps_bg": None,
+    }
     for c in range(3):
         # Solids listed later replace earlier ones where they overlap (as for
         # the cell masks): f_j <- f_j (1 - f_k) for j before k
@@ -579,6 +589,11 @@ def _material_tensors(solver, geo):
             ieps_c = p * mean_ieps + (1.0 - p) / mean_eps
             aniso.append(np.clip(mean_ieps - 1.0 / mean_eps, 0.0, None))
             normal.append(n_full)
+            mixture["fs"].append(fs)
+            mixture["f_bg"].append(f_bg * np.ones(geo.shape))
+            mixture["p"].append(p)
+            mixture["normal"].append(n_full)
+            mixture["eps_bg"] = eps_bg
         else:
             # Majority material (staircase dielectric)
             share = np.concatenate([f_bg[None], fs])
@@ -589,6 +604,8 @@ def _material_tensors(solver, geo):
         )
         ieps.append(ieps_c)
         sigma.append(sigma_c)
+    if geo.mode in ("all", "tensor"):
+        solver._conformal_mixture = mixture
     if geo.mode != "tensor":
         return ieps, sigma, None
     return ieps, sigma, (aniso, normal)
