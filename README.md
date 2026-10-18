@@ -19,10 +19,30 @@
 ## About this fork
 
 This is a fork of [CERN's Wakis](https://github.com/ImpedanCEI/wakis) (Apache-2.0, © CERN) that extends it toward a general-purpose
-electromagnetic and optical design tool (RF, antennas, photonics, metasurfaces), comparable in scope to commercial FIT codes, with the whole
-pipeline differentiable for gradient-based inverse design. Every feature is validated against analytic results, conservation laws or
-independent solvers (Meep-inspired tests, RCWA, FDFD), on CPU, GPU and MPI. Bug fixes and broadly useful features are being prepared as
-small, focused contributions to upstream Wakis.
+electromagnetic and optical design tool (RF, antennas, photonics, metasurfaces, plasmonics), comparable in scope to commercial FIT codes, with
+the whole pipeline differentiable for gradient-based inverse design. Every feature is validated against analytic results, conservation laws or
+independent solvers (Meep-inspired tests, RCWA, FDFD) on CPU, GPU and MPI, and documented in the [physics guide](docs/physicsguide.md) with
+references. Bug fixes and broadly useful features are contributed back to upstream Wakis as small, focused pull requests.
+
+Install the fork (the `develop` and `main` branches are kept identical):
+```bash
+pip install "wakis @ git+https://github.com/eshipton/Wakis.git@main"            # solver
+pip install "wakis[inverse] @ git+https://github.com/eshipton/Wakis.git@main"   # + JAX for inverse design
+```
+
+### Highlights
+
+| | |
+|---|---|
+| **Linear plasma wakefield** in a plasma-filled pipe (`wakis.plasma`): Wakis vs linear theory, 0.1–0.7 % in amplitude at 48 cells per plasma wavelength with conformal walls. | <img src="docs/img/plasma_wake_ez.png" width="420"> |
+| **Curved dielectrics and metals.** Dielectric rod in a PEC cavity, TE modes (E crosses the interface): staircase and diagonal averaging are first order; tensor subpixel averaging (`conformal='tensor'`) and the unstructured triangular FIT (`wakis.unstructured`) converge at second order. For a plasmonic (Drude) rod the unstructured solver reaches 1.3e-5 where Cartesian meshes stall at ~3e-3. | <img src="docs/img/mesh_rod_convergence.png" width="420"> |
+| **Unstructured FIT** (phase 1): triangles and tetrahedra with a Voronoi dual, second order in both polarizations, Drude/Lorentz/Debye media, eigen and time-domain solvers. | <img src="docs/img/unstructured_meshes.png" width="420"> |
+| **Inverse design benchmarks** ([invrs-gym](https://github.com/invrs-io/gym) via [invrs-wakis](https://github.com/eshipton/invrs-wakis)), first round: waveguide bend and power splitter solved by the official gym scoring; Wakis predictions agree with the official ceviche evaluator to < 0.007; metalens 14.1 (leaderboard best 19.95). Round 2 (length-scale constraints, finer meshes, tensor smoothing) is in progress. | <img src="docs/img/invrs_round1_gallery.png" width="420"> |
+
+Other validated numbers: Hertzian-dipole radiated power and directivity 1.50 (theory 1.5); flux-box energy conservation 0.08 %;
+RCWA agreement of grating diffraction efficiencies 1.3e-3; TE10 propagation constant to 1e-12 of the discrete dispersion; Fresnel
+reflection at oblique incidence 0.15–0.55 %; exact discrete adjoint (dot-product tests ~1e-17, finite-difference gradients 1e-8–1e-10);
+MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream. See `docs/performance.md` and the test suite.
 
 ### Added features and roadmap
 
@@ -40,13 +60,13 @@ small, focused contributions to upstream Wakis.
 - [x] Bloch-periodic boundaries with complex fields; oblique plane waves in unit cells
 - [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
 - [x] Full-tensor subpixel averaging for curved dielectrics (`conformal='tensor'`)
-- [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`): 2nd order at curved and plasmonic interfaces
+- [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`)
 - [ ] Unstructured FIT phase 2: PML, ports, adjoint, GPU, MPI, CAD/gmsh workflow
 - [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
 - [ ] Magnetic dispersion (ferrites)
 
 **Inverse design**
-- [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`), covering all features above, on CPU, GPU and MPI
+- [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`) for all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
 - [ ] Differentiable layer thickness
@@ -57,16 +77,22 @@ small, focused contributions to upstream Wakis.
 - [x] Forward step ~2x faster on CPU and GPU; periodic setup 59 s → 0.02 s
 - [x] Memory and run-time estimator with preflight check (`wakis.estimate`)
 
-**Workflows and validation**
+**Physics and applications**
 - [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers
-- [x] ~30 Meep-inspired validation tests; mesh-comparison study (`studies/mesh-comparison`)
-- [x] [invrs-gym](https://github.com/invrs-io/gym) bridge for photonic inverse-design benchmarks ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
-- [x] Linear plasma wakefield in a plasma-filled pipe (`wakis.plasma`): matches linear theory to 0.1–0.7 %
+- [x] Linear plasma wakefields in a plasma-filled pipe (`wakis.plasma`)
+- [x] invrs-gym bridge and round-1 results ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
+- [ ] invrs-gym round 2 and the 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
 - [ ] Nonlinear plasma wakefields (blowout regime, PIC)
 
+**Validation and studies**
+- [x] ~30 Meep-inspired validation tests (Purcell factor, Fresnel, Bragg mirror, Poynting balance, CPML convergence, line source, ...)
+- [x] Mesh-comparison study: Cartesian, conformal, nonorthogonal, triangular and tensor-averaged FIT ([studies/mesh-comparison](studies/mesh-comparison))
+
 **Contributions to upstream Wakis**
-- [ ] Focused bug-fix and performance pull requests (in preparation)
-- [ ] Feature proposals via issues (soft sources, monitors, harmonic inversion, conformal PEC, ports, estimator, dispersive materials)
+- [x] [PR #109](https://github.com/ImpedanCEI/Wakis/pull/109): combine PEC/PMC face masks for mixed boundary types
+- [x] Analysis and tests offered on [PR #105](https://github.com/ImpedanCEI/Wakis/pull/105) (high-side PEC and dual-grid metrics)
+- [ ] Further fixes: CPML+MPI deadlock, `update_tensors`, periodic-setup and time-step performance, quiet `verbose=0`
+- [ ] Feature proposals via issues (harmonic inversion, conformal PEC, soft sources, monitors, ports, estimator, dispersive materials)
 
 ## About
 🚀 Some of `wakis` features:
