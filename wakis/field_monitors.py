@@ -169,6 +169,9 @@ class DFTMonitor:
     def _initialize(self, solver):
         xp = solver.E.xp
         self.xp = xp
+        # On the field device: the DFT kernels are then computed there,
+        # without a host-to-device copy (and GPU synchronization) per step
+        self._freqs = xp.asarray(self.frequencies)
         self.coords, self.shape, self._flat, self._acc = {}, {}, {}, {}
         for comp in self.components:
             indices, coords = solver.grid.region_indices(
@@ -199,10 +202,8 @@ class DFTMonitor:
 
         times = {"E": t + solver.dt, "J": t + solver.dt, "H": t + solver.dt / 2}
         kernels = {
-            f: self.xp.asarray(solver.dt * np.exp(-2j * np.pi * self.frequencies * tf))[
-                :, None
-            ]
-            for f, tf in times.items()
+            f: solver.dt * self.xp.exp(-2j * np.pi * self._freqs * times[f])[:, None]
+            for f in {comp[0] for comp in self.components}
         }
         for comp in self.components:
             values = getattr(solver, comp[0]).array[self._flat[comp]]
@@ -336,6 +337,7 @@ class FluxMonitor:
                     }
                 )
         self.xp = xp
+        self._freqs = xp.asarray(self.frequencies)  # see DFTMonitor._initialize
         self.comm = solver.grid.comm if solver.use_mpi else None
 
     def update(self, solver, t):
@@ -353,12 +355,9 @@ class FluxMonitor:
             self._initialize(solver)
             self.is_first_update = False
 
-        kernel_E = self.xp.asarray(
-            solver.dt * np.exp(-2j * np.pi * self.frequencies * (t + solver.dt))
-        )[:, None]
-        kernel_H = self.xp.asarray(
-            solver.dt * np.exp(-2j * np.pi * self.frequencies * (t + solver.dt / 2))
-        )[:, None]
+        phase = -2j * np.pi * self._freqs
+        kernel_E = solver.dt * self.xp.exp(phase * (t + solver.dt))[:, None]
+        kernel_H = solver.dt * self.xp.exp(phase * (t + solver.dt / 2))[:, None]
         for term in self._terms:
             E = solver.E.array[term["E"]]
             H = 0.5 * (

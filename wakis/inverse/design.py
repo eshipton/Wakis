@@ -11,6 +11,10 @@ from ..dispersive import _ade_coefficients
 from ..field_monitors import _flat_index
 
 
+def _host(array):
+    return np.asarray(array.get() if hasattr(array, "get") else array)
+
+
 def _linear_weights(x, lo, hi, n):
     """
     Linear interpolation from n nodes spanning [lo, hi] to the points x.
@@ -116,7 +120,7 @@ class MaterialGrid:
         ).tocsr()
         # E is held at zero on PEC edges (ieps = 0, e.g. walls at the domain
         # bounds), so their permittivity has no effect: leave them out
-        keep = solver.ieps.array[flat_idx] != 0
+        keep = _host(solver.ieps.array)[flat_idx] != 0
         self.flat_idx = flat_idx[keep]
         self.P = P[keep]
 
@@ -152,7 +156,8 @@ class MaterialGrid:
         the precomputed operator ``itDaiDepsDstC`` = diag(ieps) * K, which
         would otherwise keep the old permittivity. ``update_tensors`` is not
         used because it needs operators deleted after the first step and
-        disables the first-step initialization.
+        disables the first-step initialization. GPU solvers are updated on
+        the device; with MPI, each rank sets the design edges it owns.
 
         Parameters
         ----------
@@ -165,36 +170,36 @@ class MaterialGrid:
         ------
         RuntimeError
             If the solver has already taken a time step.
-        NotImplementedError
-            For GPU or MPI solvers.
         """
         if not solver.step_0:
             raise RuntimeError("Apply the design before the first time step.")
-        if solver.use_gpu or solver.use_mpi:
-            raise NotImplementedError("MaterialGrid supports CPU, non-MPI solvers.")
         if self.P is None:
             # Built once: all solvers of one design problem share the mesh
             self._build(solver)
 
-        ieps_old = solver.ieps.array[self.flat_idx]
+        xp = solver.E.xp
+        idx = xp.asarray(self.flat_idx)
+        ieps_old = solver.ieps.array[idx]
         eps_r = self.eps_r(rho) if self.material is None else self.eps_min
-        ieps_new = 1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size)
-        solver.ieps.array[self.flat_idx] = ieps_new
+        ieps_new = xp.asarray(1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size))
+        solver.ieps.array[idx] = ieps_new
 
         if not solver.activate_cpml:
-            # B = diag(ieps) K: only the rows of the design edges change
-            scale = np.ones(3 * solver.N)
-            scale[self.flat_idx] = ieps_new / ieps_old
+            # B = diag(ieps) K: only the rows of the design edges change.
+            # Scaling the stored entries keeps the operator's format and
+            # backend (SciPy, MKL or CuPy; CSR or CSC)
+            scale = xp.ones(3 * solver.N)
+            scale[idx] = ieps_new / ieps_old
             B = solver.itDaiDepsDstC
-            fmt = getattr(B, "format", "csr")
-            B = (diags(scale) @ B).asformat(fmt)
-            if solver.imported_mkl:
-                from sparse_dot_mkl import csr_matrix as mkl_sparse_mat
-
-                B = mkl_sparse_mat(B)
-            solver.itDaiDepsDstC = B
+            if getattr(B, "format", "csr") == "csc":
+                B.data *= scale[B.indices]
+            elif xp is np:  # CSR on CPU
+                B.data *= np.repeat(scale, np.diff(B.indptr))
+            else:  # CSR on GPU (cupy.repeat takes no array of counts)
+                rows = xp.searchsorted(B.indptr, xp.arange(B.nnz), side="right") - 1
+                B.data *= scale[rows]
             if hasattr(solver, "iDeps"):
-                solver.iDeps = diags(solver.ieps.toarray(), dtype=solver.dtype)
+                solver.iDeps = diags(_host(solver.ieps.toarray()), dtype=solver.dtype)
         if self.material is not None:
             self._apply_dispersive(solver, self.P @ rho.ravel())
 
@@ -234,7 +239,7 @@ class MaterialGrid:
 
     def ade_state(self, group, solver):
         """Debye term sum_D (kappa - 1) p_D on the design edges before a step."""
-        terms = np.zeros(self.flat_idx.size, dtype=solver.E.array.dtype)
+        terms = solver.E.xp.zeros(self.flat_idx.size, dtype=solver.E.array.dtype)
         for kappa, _, p in group["debye"]:
             terms = terms + (kappa - 1) * p
         return terms
@@ -246,7 +251,7 @@ class MaterialGrid:
         """
         d_eps = self.material.eps_inf - self.eps_min
         loss = self._ade_loss(solver.dt)
-        e_new = solver.E.array[self.flat_idx]
+        e_new = solver.E.array[group["idx"]]
         lorentz = sum((p - p_old) for _, _, _, p, p_old in group["lorentz"])
         return (d_eps - loss) * e_old - lorentz - debye_old - (d_eps + loss) * e_new
 
@@ -270,10 +275,11 @@ class MaterialGrid:
         ndarray
             dF/drho with the shape of rho.
         """
+        grad_ieps = _host(grad_ieps)
         if self.material is not None:
             # grad_ieps holds dF/dw for the fill fraction w = P rho
-            return (self.P.T @ np.asarray(grad_ieps)).reshape(self.shape)
+            return (self.P.T @ grad_ieps).reshape(self.shape)
         eps_r = self.eps_r(rho)
-        grad_eps = -np.asarray(grad_ieps) / (eps_0 * eps_r**2)
+        grad_eps = -grad_ieps / (eps_0 * eps_r**2)
         grad = (self.eps_max - self.eps_min) * (self.P.T @ grad_eps)
         return grad.reshape(self.shape)

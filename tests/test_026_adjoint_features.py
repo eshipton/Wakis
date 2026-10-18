@@ -39,7 +39,7 @@ def _small_solver(bc_low, bc_high, **kwargs):
     )
 
 
-def _feature_case(case):
+def _feature_case(case, use_gpu=False):
     """Solver and lumped elements of one dot-product test case."""
     elements = []
     if case.startswith("bloch"):
@@ -50,10 +50,11 @@ def _feature_case(case):
             k_bloch=(17.0, -9.0, 0.0),
             dtype=np.complex128,
             bg=[2.0, 1.0, 0.05],
+            use_gpu=use_gpu,
         )
     elif case.startswith("lumped"):
         bc = ["cpml" if case == "lumped-cpml" else "pec"] * 3
-        solver = _small_solver(bc, bc)
+        solver = _small_solver(bc, bc, use_gpu=use_gpu)
         gap = dict(component="z", size=(0.0, 0.0, 0.05))
         elements = [
             LumpedElement(center=(-0.03, 0.0, 0.0), R=50.0, L=2e-9, C=1e-12, **gap),
@@ -62,7 +63,7 @@ def _feature_case(case):
         ]
     elif case.startswith("dispersive"):
         bc = ["cpml"] * 3 if case == "dispersive-cpml" else ["pec"] * 3
-        solver = _small_solver(bc, bc, cfln=0.5)
+        solver = _small_solver(bc, bc, cfln=0.5, use_gpu=use_gpu)
         solver.add_dispersive_material(
             MATERIAL, center=(0.0, 0.0, 0.0), size=(0.07,) * 3
         )
@@ -73,7 +74,7 @@ def _feature_case(case):
         )
     else:  # magnetic current allocated by a magnetic source
         bc = ["cpml"] * 3
-        solver = _small_solver(bc, bc)
+        solver = _small_solver(bc, bc, use_gpu=use_gpu)
         src = MagneticCurrentSource(GaussianSource(F0, 1e9), component="z")
         src.update(solver, 0.0)
         assert solver.M is not None
@@ -101,7 +102,7 @@ def _forward_step(solver, elements, t=0.0):
         "bloch-cpml",
     ],
 )
-def test_transposed_step(case):
+def test_transposed_step(case, use_gpu):
     """
     Dot-product test <U x, y> = <x, U^H y> (complex inner product) of the
     transposed step against the real forward time loop (element `update`,
@@ -110,10 +111,12 @@ def test_transposed_step(case):
     polarizations and CPML psi. Exact up to float64 rounding (1e-13 relative
     to sum |Ux| |y|), also with x or y supported on the auxiliary variables
     only, so the small auxiliary terms cannot hide behind the field terms.
+    The GPU runs in float64 too, so the same tolerance applies there.
     """
-    solver, elements = _feature_case(case)
+    solver, elements = _feature_case(case, use_gpu)
     _forward_step(solver, elements)  # first-step initialization
     stepper = AdjointStepper(solver, elements)
+    xp = stepper.xp
     rng = np.random.default_rng(0)
     template = stepper.zero_state()
     keys = list(template)
@@ -126,7 +129,7 @@ def test_transposed_step(case):
             x = rng.standard_normal(v.shape)
             if np.iscomplexobj(v):
                 x = x + 1j * rng.standard_normal(v.shape)
-            state[k] = x * (k in support)
+            state[k] = xp.asarray(x * (k in support))
         return state
 
     supports = [(keys, keys)]
@@ -140,9 +143,10 @@ def test_transposed_step(case):
         y = random_state(y_support)
         Uty = stepper.step(y)
 
-        lhs = sum(np.vdot(Ux[k], y[k]) for k in keys)
-        rhs = sum(np.vdot(x[k], Uty[k]) for k in keys)
-        scale = sum(np.abs(Ux[k]) @ np.abs(y[k]) for k in keys)
+        lhs = stepper.inner(Ux, y)
+        rhs = stepper.inner(x, Uty)
+        scale = stepper.inner({k: abs(v) for k, v in Ux.items()},
+                              {k: abs(v) for k, v in y.items()}).real  # fmt: skip
         print(f"{case}: |<Ux,y> - <x,U^H y>| / scale = {abs(lhs - rhs) / scale:.1e}")
         assert abs(lhs - rhs) < 1e-13 * scale
 
@@ -155,7 +159,7 @@ DX_2D = L_2D / N_2D  # 7.5 mm: 13 cells per vacuum wavelength at F0
 SRC = GaussianSource(F0, 1e9)
 
 
-def _solver_2d(y_bc="cpml", **kwargs):
+def _solver_2d(y_bc="cpml", use_gpu=False, **kwargs):
     """TM-like 2D domain: one periodic cell along z, 40 x 40 cells in x, y."""
     grid = wakis.GridFIT3D(
         -L_2D / 2, L_2D / 2, -L_2D / 2, L_2D / 2, -DX_2D / 2, DX_2D / 2,
@@ -166,6 +170,7 @@ def _solver_2d(y_bc="cpml", **kwargs):
         bc_low=["cpml", y_bc, "periodic"],
         bc_high=["cpml", y_bc, "periodic"],
         n_pml=8,
+        use_gpu=use_gpu,
         verbose=0,
         **kwargs,
     )
@@ -183,9 +188,9 @@ def _line_source():
     return CurrentSource(SRC, component="z", center=(-0.06, 0.0, 0.0))
 
 
-def _guide_solver():
+def _guide_solver(use_gpu=False):
     """2D slab waveguide along x (eps_r = 6, two cells wide)."""
-    solver = _solver_2d()
+    solver = _solver_2d(use_gpu=use_gpu)
     core = MaterialGrid(
         center=(0, 0, 0), size=(1.0, 2 * DX_2D, 0.0), shape=(1, 1, 1),
         eps_min=6.0, eps_max=6.0,
@@ -194,9 +199,9 @@ def _guide_solver():
     return solver
 
 
-def _dispersive_solver():
+def _dispersive_solver(use_gpu=False):
     """2D domain with a dispersive block beside the design region."""
-    solver = _solver_2d(cfln=0.5)
+    solver = _solver_2d(cfln=0.5, use_gpu=use_gpu)
     solver.add_dispersive_material(
         MATERIAL, center=(0.0, 0.06, 0.0), size=(0.04, 0.03, 1.0)
     )
@@ -208,7 +213,7 @@ def _dispersive_solver():
 DZ, GAP, WIDTH = 2e-3, 10e-3, 40e-3
 
 
-def _line_solver():
+def _line_solver(use_gpu=False):
     grid = wakis.GridFIT3D(
         0, GAP + DZ, -WIDTH / 2, WIDTH / 2, -0.06, 0.06, 6, 2, 60, verbose=0
     )
@@ -217,6 +222,7 @@ def _line_solver():
         bc_low=["pec", "periodic", "cpml"],
         bc_high=["pec", "periodic", "cpml"],
         n_pml=10,
+        use_gpu=use_gpu,
         verbose=0,
     )
 
@@ -227,9 +233,16 @@ def _gap(z, **kwargs):
     )
 
 
-def _gradient_case(case, jnp):
+def _gradient_case(case, jnp, use_gpu=False):
     """AdjointSimulation, JAX objective and checked design nodes of a case."""
+    from functools import partial
+
     from wakis.inverse import farfield, flux, mode_amplitudes, power_waves
+
+    solver_2d = partial(_solver_2d, use_gpu=use_gpu)
+    guide_solver = partial(_guide_solver, use_gpu=use_gpu)
+    dispersive_solver = partial(_dispersive_solver, use_gpu=use_gpu)
+    line_solver = partial(_line_solver, use_gpu=use_gpu)
 
     nodes = [(0, 0, 0), (2, 2, 0), (4, 1, 0)]
     if case == "flux":
@@ -238,7 +251,7 @@ def _gradient_case(case, jnp):
                 [F0, 1.1 * F0], center=(0.07, 0, 0), size=(0, 0.1, DX_2D)
             )
         }
-        sim = AdjointSimulation(_solver_2d, [_line_source()], monitors, _design(), 400)
+        sim = AdjointSimulation(solver_2d, [_line_source()], monitors, _design(), 400)
 
         def objective(out):
             return 1e20 * jnp.sum(flux(out["flux"], sim.readouts["flux"]))
@@ -249,7 +262,7 @@ def _gradient_case(case, jnp):
                 [F0], center=(0.07, 0, 0), size=(0, 0.1, DX_2D)
             )
         }
-        sim = AdjointSimulation(_solver_2d, [_line_source()], monitors, _design(), 400)
+        sim = AdjointSimulation(solver_2d, [_line_source()], monitors, _design(), 400)
 
         def objective(out):
             # Radiation intensity in two directions of the x-y plane
@@ -266,7 +279,7 @@ def _gradient_case(case, jnp):
             "out": ModeMonitor([F0, 1.1 * F0], center=(0.08, 0, 0), size=window)
         }
         design = _design(eps_max=6.0)
-        sim = AdjointSimulation(_guide_solver, sources, monitors, design, 500)
+        sim = AdjointSimulation(guide_solver, sources, monitors, design, 500)
 
         def objective(out):
             a_plus, a_minus = mode_amplitudes(out["out"], sim.readouts["out"])
@@ -277,7 +290,7 @@ def _gradient_case(case, jnp):
         monitors = {
             "probe": wakis.DFTMonitor([F0], components=["Ez"], center=(0.07, 0.01, 0))
         }
-        sim = AdjointSimulation(_solver_2d, sources, monitors, _design(), 400)
+        sim = AdjointSimulation(solver_2d, sources, monitors, _design(), 400)
 
         def objective(out):
             return 1e18 * jnp.sum(jnp.abs(out["probe"]["Ez"]) ** 2)
@@ -297,7 +310,7 @@ def _gradient_case(case, jnp):
             center=(GAP / 2, 0, 0), size=(GAP, WIDTH, 0.02), shape=(1, 1, 5)
         )
         sim = AdjointSimulation(
-            _line_solver, [port1, port2, load], monitors, design, 700
+            line_solver, [port1, port2, load], monitors, design, 700
         )
         nodes = [(0, 0, 0), (0, 0, 2), (0, 0, 4)]
 
@@ -314,14 +327,14 @@ def _gradient_case(case, jnp):
             )
         }
         if case == "dispersive":
-            make_solver, design = _dispersive_solver, _design()
+            make_solver, design = dispersive_solver, _design()
         elif case == "dispersive-design":
             # rho interpolates vacuum -> MATERIAL (fill fraction of the poles)
             design = _design(material=MATERIAL)
-            make_solver = lambda: _solver_2d(cfln=0.5)  # noqa: E731
+            make_solver = lambda: solver_2d(cfln=0.5)  # noqa: E731
         else:
             design = _design()
-            make_solver = lambda: _solver_2d(  # noqa: E731
+            make_solver = lambda: solver_2d(  # noqa: E731
                 y_bc="bloch", k_bloch=(0.0, 12.0, 0.0), dtype=np.complex128
             )
             monitors["flux"] = wakis.FluxMonitor(
@@ -353,7 +366,7 @@ GRADIENT_CASES = [
 
 
 @pytest.mark.parametrize("case", GRADIENT_CASES)
-def test_adjoint_gradient(case):
+def test_adjoint_gradient(case, use_gpu):
     """
     jax.grad of an objective of the raw monitor outputs (flux, far field,
     mode amplitudes, |S21|^2 and element current, DFT fields) through
@@ -369,7 +382,7 @@ def test_adjoint_gradient(case):
     jax.config.update("jax_enable_x64", True)
     from wakis.inverse import jax_simulation
 
-    sim, objective, nodes = _gradient_case(case, jax.numpy)
+    sim, objective, nodes = _gradient_case(case, jax.numpy, use_gpu)
     simulate = jax_simulation(sim)
     rho = np.random.default_rng(1).uniform(0.2, 0.8, sim.design.shape)
     value, grad = jax.value_and_grad(lambda r: objective(simulate(r)))(rho)
@@ -388,7 +401,7 @@ def test_adjoint_gradient(case):
         assert error < 1e-6
 
 
-def test_readout_helpers():
+def test_readout_helpers(use_gpu):
     """
     The JAX helpers applied to the raw outputs reproduce the monitors' own
     post-processing (flux, far field, mode amplitudes, port power waves) to
@@ -400,7 +413,7 @@ def test_readout_helpers():
     from wakis.inverse import farfield, flux, mode_amplitudes, power_waves
 
     for case in ("flux", "near2far", "mode", "lumped"):
-        sim, _, _ = _gradient_case(case, jax.numpy)
+        sim, _, _ = _gradient_case(case, jax.numpy, use_gpu)
         sim.output_shapes()
         out = sim.forward(np.full(sim.design.shape, 0.5))
         for name, monitor in sim._monitors.items():

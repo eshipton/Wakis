@@ -394,7 +394,21 @@ for it in range(20):  # plain normalized gradient ascent
     rho_raw = jnp.clip(rho_raw + 0.05 * g / jnp.abs(g).max(), 0, 1)
 ```
 
-The adjoint supports CPU, non-MPI runs with PEC, PMC, periodic, Bloch (complex fields) and CPML boundaries, ohmic loss, dispersive materials, lumped elements and ports, and electric, magnetic and mode sources (`CurrentSource`, `MagneticCurrentSource`, `ModeSource`, `LumpedPort`); ABC, PML, TFSF, SIBC, GPU and MPI raise `NotImplementedError`. The design region must not share edges with lumped elements or dispersive materials. `AdjointSimulation(..., store_dtype=np.float32)` halves the memory of the stored E increments ($N_t \times N_\text{design}$ values).
+The adjoint supports PEC, PMC, periodic, Bloch (complex fields) and CPML boundaries, ohmic loss, dispersive materials, lumped elements and ports, and electric, magnetic and mode sources (`CurrentSource`, `MagneticCurrentSource`, `ModeSource`, `LumpedPort`); ABC, PML, TFSF and SIBC raise `NotImplementedError`. The design region must not share edges with lumped elements or dispersive materials. `AdjointSimulation(..., store_dtype=np.float32)` halves the memory of the stored E increments ($N_t \times N_\text{design}$ values).
+
+**GPU and MPI.** The adjoint runs wherever the forward solver runs: build the solver with `use_gpu=True` in `make_solver` and both runs, the stored increments and the gradient accumulation stay on the GPU (`store_on_host=True` keeps the increments in host memory for long runs on large designs; by default this happens when they would take more than half of the free GPU memory). For MPI, build grid and solver with `use_mpi=True` and launch the whole optimization script with `mpiexec -n 4 python design.py`: every rank receives the same gathered outputs and the same gradient, so the optimizer loop needs no MPI calls. Under MPI the adjoint supports the standard time step (no CPML, lumped elements or dispersive media) with `DFTMonitor` and `FluxMonitor` objectives:
+
+```python
+def make_solver():  # z split into slabs over the MPI ranks
+    grid = wakis.GridFIT3D(-0.1, 0.1, -0.1, 0.1, -0.15, 0.15, 64, 64, 96, use_mpi=True, verbose=0)
+    return wakis.SolverFIT3D(grid, bc_low=["pec"] * 3, bc_high=["pec"] * 3, use_mpi=True, verbose=0)
+
+sim = AdjointSimulation(make_solver, [source], {"flux": wakis.FluxMonitor([f0], size=(0.15, 0.15, 0))},
+                        MaterialGrid(center=(0, 0, 0), size=(0.06, 0.06, 0.18), shape=(7, 7, 21)), Nt=2000)
+sim.output_shapes()  # gathers the flux weights into sim.readouts (for wakis.inverse.flux)
+```
+
+See [Performance](performance.md) for forward and adjoint timings on CPU, GPU and MPI.
 
 **Objectives on any monitor.** `forward` returns the *raw* DFT accumulators of each monitor, and the helpers of `wakis.inverse` turn them into physical quantities inside JAX, identical to the monitors' own post-processing:
 

@@ -8,10 +8,16 @@ from wakis.sources import CurrentSource, GaussianSource
 F0 = 3e9  # Hz, 13 cells per wavelength on the 7.5 mm mesh below
 
 
-def _small_solver(bc_low, bc_high, bg=(1.0, 1.0, 0.0)):
+def _small_solver(bc_low, bc_high, bg=(1.0, 1.0, 0.0), use_gpu=False):
     grid = wakis.GridFIT3D(-0.1, 0.1, -0.1, 0.1, -0.1, 0.1, 14, 12, 12, verbose=0)
     return wakis.SolverFIT3D(
-        grid, bc_low=bc_low, bc_high=bc_high, bg=list(bg), n_pml=4, verbose=0
+        grid,
+        bc_low=bc_low,
+        bc_high=bc_high,
+        bg=list(bg),
+        n_pml=4,
+        use_gpu=use_gpu,
+        verbose=0,
     )
 
 
@@ -27,17 +33,19 @@ def _small_solver(bc_low, bc_high, bg=(1.0, 1.0, 0.0)):
     ],
     ids=["pec", "pec-lossy", "periodic", "cpml", "cpml-lossy", "cpml-mixed"],
 )
-def test_transposed_step(bc_low, bc_high, bg):
+def test_transposed_step(bc_low, bc_high, bg, use_gpu):
     """
     Dot-product test of the adjoint step: <U x, y> = <x, U^T y> for random
     states x, y including the CPML auxiliary variables psi, where U is the
-    solver's own source-free time step. Exact up to float64 rounding, which
-    also holds when x or y is supported on psi only, so the small psi terms
-    cannot hide behind the field terms.
+    solver's own source-free time step. Exact up to float64 rounding (also on
+    the GPU, which runs in float64 too), which also holds when x or y is
+    supported on psi only, so the small psi terms cannot hide behind the field
+    terms.
     """
-    solver = _small_solver(bc_low, bc_high, bg)
+    solver = _small_solver(bc_low, bc_high, bg, use_gpu)
     solver.one_step()  # first-step initialization (ghosts, operator cleanup)
     stepper = AdjointStepper(solver)
+    xp = stepper.xp
     rng = np.random.default_rng(0)
     keys = stepper.zero_state().keys()
     psi_keys = [k for k in keys if k.startswith("psi")]
@@ -45,7 +53,7 @@ def test_transposed_step(bc_low, bc_high, bg):
 
     def random_state(support):
         return {
-            k: rng.standard_normal(v.shape) * (k in support)
+            k: xp.asarray(rng.standard_normal(v.shape) * (k in support))
             for k, v in stepper.zero_state().items()
         }
 
@@ -54,18 +62,16 @@ def test_transposed_step(bc_low, bc_high, bg):
         supports += [(psi_keys, keys), (keys, psi_keys)]
     for x_support, y_support in supports:
         x = random_state(x_support)
-        stepper.set_state(x)
-        solver.J.fromarray(np.zeros(3 * solver.N))
-        if solver.use_conductivity:
-            solver.J_old = np.zeros(3 * solver.N)  # J = sigma E of this step
+        stepper.set_state(x)  # also zeroes J (and J_old: J = sigma E of this step)
         solver.one_step()
         Ux = stepper.get_state()
         y = random_state(y_support)
         Uty = stepper.step(y)
 
-        lhs = sum(np.dot(Ux[k], y[k]) for k in keys)
-        rhs = sum(np.dot(x[k], Uty[k]) for k in keys)
-        scale = sum(np.abs(Ux[k]) @ np.abs(y[k]) for k in keys)
+        lhs = stepper.inner(Ux, y)
+        rhs = stepper.inner(x, Uty)
+        scale = stepper.inner({k: abs(v) for k, v in Ux.items()},
+                              {k: abs(v) for k, v in y.items()}).real  # fmt: skip
         assert abs(lhs - rhs) < 1e-13 * scale
 
 
@@ -73,7 +79,7 @@ N_2D, L_2D = 40, 0.3
 DX_2D = L_2D / N_2D
 
 
-def _make_2d_solver(boundary="cpml", bg=(1.0, 1.0, 0.0)):
+def _make_2d_solver(boundary="cpml", bg=(1.0, 1.0, 0.0), use_gpu=False):
     """TM-like 2D domain: one periodic cell along z, 40 x 40 cells in x, y."""
     grid = wakis.GridFIT3D(
         -L_2D / 2,
@@ -93,6 +99,7 @@ def _make_2d_solver(boundary="cpml", bg=(1.0, 1.0, 0.0)):
         bc_high=[boundary, boundary, "periodic"],
         bg=list(bg),
         n_pml=8,
+        use_gpu=use_gpu,
         verbose=0,
     )
 
@@ -135,7 +142,7 @@ def _objective(out):
 
 
 @pytest.mark.parametrize("case", ["cpml", "pec-lossy", "cpml-float32"])
-def test_adjoint_gradient(case):
+def test_adjoint_gradient(case, use_gpu):
     """
     The adjoint gradient of a DFT objective with respect to the design density
     matches central finite differences. The adjoint is exact for the discrete
@@ -145,11 +152,15 @@ def test_adjoint_gradient(case):
     """
     if case == "pec-lossy":
         # Standard (non-CPML) step with ohmic loss in a closed PEC box
-        sim = _scattering_sim(lambda: _make_2d_solver("pec", bg=(1.0, 1.0, 0.01)))
+        sim = _scattering_sim(
+            lambda: _make_2d_solver("pec", bg=(1.0, 1.0, 0.01), use_gpu=use_gpu)
+        )
         tol = 1e-6
     else:
         store = np.float32 if case == "cpml-float32" else np.float64
-        sim = _scattering_sim(_make_2d_solver, store_dtype=store)
+        sim = _scattering_sim(
+            lambda: _make_2d_solver(use_gpu=use_gpu), store_dtype=store
+        )
         tol = 1e-5 if case == "cpml-float32" else 1e-6
 
     rho = np.random.default_rng(1).uniform(0.2, 0.8, sim.design.shape)
@@ -167,12 +178,12 @@ def test_adjoint_gradient(case):
         assert abs(grad[k] - fd) < tol * abs(fd), (k, grad[k], fd)
 
 
-def test_adjoint_ascent():
+def test_adjoint_ascent(use_gpu):
     """
     Small normalized gradient-ascent steps on |Ez(f0)|^2 at the probe increase
     the objective monotonically, starting from a uniform density.
     """
-    sim = _scattering_sim(_make_2d_solver)
+    sim = _scattering_sim(lambda: _make_2d_solver(use_gpu=use_gpu))
     rho = np.full(sim.design.shape, 0.5)
     values = []
     for _ in range(4):
@@ -183,7 +194,33 @@ def test_adjoint_ascent():
     assert np.all(np.diff(values) > 0), values
 
 
-def test_jax_simulation():
+@pytest.mark.parametrize("boundary", ["cpml", "pec"])
+def test_gpu_matches_cpu(boundary, use_gpu):
+    """
+    With --gpu: the GPU forward run (CSR operators, fused H/E update
+    kernels, DFT kernels computed on the device) and adjoint gradient equal
+    the CPU ones to float64 rounding (1e-10 relative after 400 steps), for
+    the standard (PEC, lossy) and the CPML time step.
+    """
+    if not use_gpu:
+        pytest.skip("needs --gpu")
+    bg = (1.0, 1.0, 0.01) if boundary == "pec" else (1.0, 1.0, 0.0)
+    rho = np.random.default_rng(4).uniform(0.2, 0.8, (5, 5, 1))
+    results = []
+    for gpu in (True, False):
+        sim = _scattering_sim(lambda: _make_2d_solver(boundary, bg, use_gpu=gpu))
+        out = sim.forward(rho)
+        F, G = _objective(out)
+        results.append((out["probe"], F, sim.vjp(G)))
+    (gpu_out, F_gpu, grad_gpu), (cpu_out, F_cpu, grad_cpu) = results
+    for key in cpu_out:
+        scale = np.abs(cpu_out[key]).max()
+        np.testing.assert_allclose(gpu_out[key], cpu_out[key], atol=1e-10 * scale)
+    assert abs(F_gpu - F_cpu) < 1e-10 * abs(F_cpu)
+    np.testing.assert_allclose(grad_gpu, grad_cpu, atol=1e-10 * np.abs(grad_cpu).max())
+
+
+def test_jax_simulation(use_gpu):
     """
     jax.grad through filter + projection + simulation + a JAX objective equals
     the NumPy adjoint gradient pulled back through filter and projection, so
@@ -194,7 +231,7 @@ def test_jax_simulation():
     jnp = jax.numpy
     from wakis.inverse import conic_filter, jax_simulation, tanh_projection
 
-    sim = _scattering_sim(_make_2d_solver, Nt=300)
+    sim = _scattering_sim(lambda: _make_2d_solver(use_gpu=use_gpu), Nt=300)
     simulate = jax_simulation(sim)
 
     def parametrize(rho_raw):

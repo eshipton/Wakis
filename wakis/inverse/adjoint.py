@@ -36,6 +36,23 @@ def _host(array):
     return np.asarray(array.get() if hasattr(array, "get") else array)
 
 
+def _hermitian(op, solver):
+    """
+    Hermitian transpose of a sparse solver operator, as CSR on the solver's
+    backend (CuPy on the GPU, MKL when the solver steps with MKL).
+    """
+    if solver.use_gpu:
+        from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+
+        return gpu_csr_matrix(op).conj().T.tocsr()
+    op_t = csr_matrix(op).conj().T.tocsr()
+    if solver.imported_mkl:
+        from sparse_dot_mkl import csr_matrix as mkl_csr_matrix
+
+        return mkl_csr_matrix(op_t)
+    return op_t
+
+
 class _LumpedTranspose:
     """
     Transposed update of one `LumpedElement` on its edges e.
@@ -50,9 +67,10 @@ class _LumpedTranspose:
     def __init__(self, element, key, dt, ieps):
         self.element = element
         self.key = key
-        self.idx = _host(element.flat_idx)
-        self.a = _host(element.coef_a)
-        self.b = _host(element.coef_b)
+        self.idx = element.flat_idx
+        self.idx_host = _host(element.flat_idx)
+        self.a = element.coef_a
+        self.b = element.coef_b
         self.gamma = element.gamma
         self.dt = dt
         self.dt_ieps = dt * ieps[self.idx]
@@ -63,13 +81,13 @@ class _LumpedTranspose:
 
     def get_state(self, state):
         for key in self.keys:
-            state[key] = _host(self.element.J_L).copy()
+            state[key] = self.element.J_L.copy()
 
-    def set_state(self, state):
+    def set_state(self, state, xp):
         for key in self.keys:
-            self.element.J_L = np.array(state[key])
+            self.element.J_L = xp.array(state[key])
         # The element current already in solver.J is reset together with J
-        self.element.J_old = np.zeros_like(self.element.J_old)
+        self.element.J_old = xp.zeros_like(self.element.J_old)
 
     def transpose_post(self, lam, lam_star, extra, out):
         lam_e = lam["E"][self.idx]
@@ -97,11 +115,12 @@ class _DispersiveTranspose:
 
     def __init__(self, group, gi):
         self.group = group
-        self.idx = group["idx_host"]
-        self.w = _host(group["weight"])
-        self.eps_s = _host(group["eps_s"])
-        self.a1 = _host(group["a1"])
-        self.den = _host(group["den"])
+        self.idx = group["idx"]
+        self.idx_host = group["idx_host"]
+        self.w = group["weight"]
+        self.eps_s = group["eps_s"]
+        self.a1 = group["a1"]
+        self.den = group["den"]
         self.lorentz = [cf[:3] for cf in group["lorentz"]]
         self.debye = [cf[:2] for cf in group["debye"]]
         self.lkeys = [
@@ -117,18 +136,18 @@ class _DispersiveTranspose:
     def get_state(self, state):
         g = self.group
         for (kp, ko), cf in zip(self.lkeys, g["lorentz"]):
-            state[kp], state[ko] = _host(cf[3]).copy(), _host(cf[4]).copy()
+            state[kp], state[ko] = cf[3].copy(), cf[4].copy()
         for kd, cf in zip(self.dkeys, g["debye"]):
-            state[kd] = _host(cf[2]).copy()
+            state[kd] = cf[2].copy()
 
-    def set_state(self, state):
+    def set_state(self, state, xp):
         g = self.group
         g["lorentz"] = [
-            (*cf[:3], np.array(state[kp]), np.array(state[ko]))
+            (*cf[:3], xp.array(state[kp]), xp.array(state[ko]))
             for (kp, ko), cf in zip(self.lkeys, g["lorentz"])
         ]
         g["debye"] = [
-            (*cf[:2], np.array(state[kd])) for kd, cf in zip(self.dkeys, g["debye"])
+            (*cf[:2], xp.array(state[kd])) for kd, cf in zip(self.dkeys, g["debye"])
         ]
 
     def transpose_post(self, lam, lam_star, extra, out):
@@ -176,6 +195,11 @@ class AdjointStepper:
         terms to lam_E and to the auxiliary multipliers. See the physics guide
         for all transposed updates.
 
+        The adjoint variables live on the solver's device (NumPy arrays on
+        CPU, CuPy arrays with ``use_gpu``). With MPI, each rank holds the
+        adjoint variables of its z-slab, and the ghost-layer exchanges of the
+        forward step are transposed in reverse order (see `step`).
+
         Parameters
         ----------
         solver : SolverFIT3D
@@ -187,8 +211,9 @@ class AdjointStepper:
         Raises
         ------
         NotImplementedError
-            For GPU, MPI, ABC, PML, SIBC, active TFSF injection, or lumped
-            elements sharing edges with each other or with dispersive media.
+            For ABC, PML, SIBC, active TFSF injection, lumped elements
+            sharing edges with each other or with dispersive media, and, with
+            MPI, for CPML, lumped elements and dispersive media.
 
         Notes
         -----
@@ -196,10 +221,6 @@ class AdjointStepper:
         `ModeSource`, the source of a `LumpedPort`) do not depend on the state
         and do not enter the transposed step.
         """
-        if solver.use_gpu:
-            raise NotImplementedError("The adjoint runs on CPU only.")
-        if solver.use_mpi:
-            raise NotImplementedError("The adjoint does not support MPI.")
         if solver.activate_abc:
             raise NotImplementedError("The adjoint does not support ABC (Mur).")
         if solver.activate_pml:
@@ -208,17 +229,25 @@ class AdjointStepper:
             raise NotImplementedError("The adjoint does not support SIBC.")
         if solver.source_type == "tfsf" and not solver.injection_done:
             raise NotImplementedError("The adjoint does not support TFSF injection.")
+        self.mpi = solver.use_mpi and solver.grid.use_mpi
+        dispersive = getattr(solver, "_dispersive_groups", [])
+        if self.mpi and (solver.activate_cpml or elements or dispersive):
+            raise NotImplementedError(
+                "With MPI, the adjoint supports the standard step only (no CPML, "
+                "lumped elements or dispersive media)."
+            )
 
         self.solver = solver
+        self.xp = xp = solver.E.xp
         self.N = solver.N
         self.dt = solver.dt
         self.cpml = solver.activate_cpml
         self.dtype = solver.E.array.dtype
-        self.ieps = solver.ieps.toarray().copy()
-        self.imu = solver.imu.toarray().copy()
+        self.ieps = xp.array(solver.ieps.toarray())
+        self.imu = xp.asarray(solver.imu.toarray())
         self.loss = None
         if solver.use_conductivity:
-            self.loss = 1.0 - self.dt * solver.sigma.toarray() * self.ieps
+            self.loss = 1.0 - self.dt * xp.asarray(solver.sigma.toarray()) * self.ieps
         self.lam_star = None
 
         self.lumped = [
@@ -226,10 +255,9 @@ class AdjointStepper:
             for i, el in enumerate(elements)
         ]
         self.dispersive = [
-            _DispersiveTranspose(g, gi)
-            for gi, g in enumerate(getattr(solver, "_dispersive_groups", []))
+            _DispersiveTranspose(g, gi) for gi, g in enumerate(dispersive)
         ]
-        corrected = [ext.idx for ext in self.lumped + self.dispersive]
+        corrected = [ext.idx_host for ext in self.lumped + self.dispersive]
         if corrected:
             joined = np.concatenate(corrected)
             if np.unique(joined).size != joined.size:
@@ -240,13 +268,13 @@ class AdjointStepper:
 
         if not self.cpml:
             # Hermitian transposes conjugate the Bloch phases of the curls
-            self.At = csr_matrix(solver.tDsiDmuiDaC).conj().T.tocsr()
-            self.Bt = csr_matrix(solver.itDaiDepsDstC).conj().T.tocsr()
+            self.At = _hermitian(solver.tDsiDmuiDaC, solver)
+            self.Bt = _hermitian(solver.itDaiDepsDstC, solver)
             self.psi_names = []
             return
 
         self.ops_t = {
-            term[4]: csr_matrix(getattr(solver, term[4])).conj().T.tocsr()
+            term[4]: _hermitian(getattr(solver, term[4]), solver)
             for term in _H_TERMS + _E_TERMS
         }
         # Faces (prefix suffix, b, c, idx) of each term, in forward order
@@ -260,9 +288,9 @@ class AdjointStepper:
                     faces.append(
                         (
                             f"{prefix}_{side}",
-                            getattr(solver, f"pml_b_{field}_{d}_{side}"),
-                            getattr(solver, f"pml_c_{field}_{d}_{side}"),
-                            getattr(solver, f"idx_{d}_{side}"),
+                            xp.asarray(getattr(solver, f"pml_b_{field}_{d}_{side}")),
+                            xp.asarray(getattr(solver, f"pml_c_{field}_{d}_{side}")),
+                            xp.asarray(getattr(solver, f"idx_{d}_{side}")),
                         )
                     )
                 self.faces[op] = faces
@@ -274,9 +302,9 @@ class AdjointStepper:
 
     def zero_state(self):
         """Zero adjoint state: dict with 'H', 'E', CPML psi and auxiliary arrays."""
-        state = {k: np.zeros_like(v) for k, v in self.get_state().items()}
-        state["H"] = np.zeros(3 * self.N, dtype=self.dtype)
-        state["E"] = np.zeros(3 * self.N, dtype=self.dtype)
+        state = {k: self.xp.zeros_like(v) for k, v in self.get_state().items()}
+        state["H"] = self.xp.zeros(3 * self.N, dtype=self.dtype)
+        state["E"] = self.xp.zeros(3 * self.N, dtype=self.dtype)
         return state
 
     def get_state(self):
@@ -297,20 +325,109 @@ class AdjointStepper:
 
         The impressed and conduction currents (solver.J, solver.M and their
         bookkeeping) are reset to zero, so that the next forward step applies
-        the homogeneous step U to `state`.
+        the homogeneous step U to `state`. With MPI, the ghost layers of E and
+        H are then filled from the neighbouring ranks, as after a forward step.
         """
-        solver = self.solver
-        solver.H.fromarray(state["H"])
-        solver.E.fromarray(state["E"])
-        solver.J.fromarray(np.zeros(3 * self.N, dtype=self.dtype))
+        solver, xp = self.solver, self.xp
+        solver.H.fromarray(xp.asarray(state["H"]))
+        solver.E.fromarray(xp.asarray(state["E"]))
+        solver.J.fromarray(xp.zeros(3 * self.N, dtype=self.dtype))
         if solver.M is not None:
-            solver.M.fromarray(np.zeros(3 * self.N, dtype=self.dtype))
+            solver.M.fromarray(xp.zeros(3 * self.N, dtype=self.dtype))
         if hasattr(solver, "J_old"):
-            solver.J_old = np.zeros(3 * self.N, dtype=self.dtype)
+            solver.J_old = xp.zeros(3 * self.N, dtype=self.dtype)
         for name in self.psi_names:
-            setattr(solver, name, state[name].copy())
+            setattr(solver, name, xp.array(state[name]))
         for ext in self.lumped + self.dispersive:
-            ext.set_state(state)
+            ext.set_state(state, xp)
+        if self.mpi:
+            solver._mpi_communicate(solver.E)
+            solver._mpi_communicate(solver.H)
+
+    def inner(self, x, y):
+        """
+        Inner product sum_k <x_k, y_k> of two states, conjugating x.
+
+        With MPI, the ghost layers are left out and the result is summed over
+        the ranks: it is the inner product of the global states.
+
+        Parameters
+        ----------
+        x, y : dict of ndarray
+            States with the keys of `zero_state`.
+
+        Returns
+        -------
+        complex
+        """
+        total = 0.0
+        for k in x:
+            a, b = x[k], y[k]
+            if self.mpi and k in ("E", "H"):
+                mask = self._owned_mask()
+                a, b = a[mask], b[mask]
+            total += complex(self.xp.vdot(a, b))
+        if self.mpi:
+            total = self.solver.grid.comm.allreduce(total)
+        return total
+
+    def _ghost_layers(self):
+        """Flat slices of the low and high MPI ghost z-layers of E and H."""
+        grid = self.solver.grid
+        nxy, nz = self.solver.Nx * self.solver.Ny, self.solver.Nz
+        low, high = [], []
+        for c in range(3):
+            base = c * self.N
+            if grid.rank > 0:
+                low.append(slice(base, base + nxy))
+            if grid.rank < grid.size - 1:
+                high.append(slice(base + (nz - 1) * nxy, base + nz * nxy))
+        return low, high
+
+    def _owned_mask(self):
+        mask = self.xp.ones(3 * self.N, dtype=bool)
+        low, high = self._ghost_layers()
+        for sl in low + high:
+            mask[sl] = False
+        return mask
+
+    def _fold_ghosts(self, arrays):
+        """
+        Transpose of the MPI ghost exchange, applied in place.
+
+        The forward exchange copies the first (last) owned z-layer of each
+        rank into the high (low) ghost layer of the rank below (above) and
+        discards the ghost values computed locally. Its transpose adds the
+        adjoint held on each ghost layer to the owned layer it was copied
+        from, and zeroes the ghost layer.
+        """
+        grid, xp = self.solver.grid, self.xp
+        comm, rank = grid.comm, grid.rank
+        nxy = self.solver.Nx * self.solver.Ny
+        low, high = self._ghost_layers()
+
+        def exchange(ghosts, neighbour, shift, tags):
+            send = _host(xp.stack([a[sl] for a in arrays for sl in ghosts]))
+            send = np.ascontiguousarray(send)
+            recv = np.empty_like(send)
+            comm.Sendrecv(send, dest=neighbour, sendtag=tags[0], recvbuf=recv,
+                          source=neighbour, recvtag=tags[1])  # fmt: skip
+            recv = xp.asarray(recv)
+            i = 0
+            for a in arrays:
+                for sl in ghosts:
+                    # The neighbour's ghost next to ours is our owned layer
+                    a[sl.start + shift : sl.stop + shift] += recv[i]
+                    i += 1
+
+        # Same pairing order as SolverFIT3D._mpi_communicate
+        if low:
+            exchange(low, rank - 1, nxy, (2, 3))
+        if high:
+            exchange(high, rank + 1, -nxy, (3, 2))
+        for a in arrays:
+            for sl in low + high:
+                a[sl] = 0
 
     def step(self, lam):
         """
@@ -320,35 +437,58 @@ class AdjointStepper:
         ----------
         lam : dict of ndarray
             Adjoint variables of the state after a step (keys as in
-            `zero_state`).
+            `zero_state`, arrays on the solver's device). With MPI, values on
+            ghost layers (e.g. adjoint sources of monitors reading ghost
+            samples) are first added to the rank that owns the sample.
 
         Returns
         -------
         dict of ndarray
-            Adjoint variables of the state before that step. The adjoint
-            variable of the E computed by the solver step itself (before
-            lumped and dispersive corrections) is kept in `lam_star`.
+            Adjoint variables of the state before that step (zero on MPI
+            ghost layers). The adjoint variable of the E computed by the
+            solver step itself (before lumped and dispersive corrections) is
+            kept in `lam_star`.
         """
-        lam_star = lam["E"].copy()
-        extra = np.zeros_like(lam_star)
+        if self.mpi:
+            lam = dict(lam, E=lam["E"].copy(), H=lam["H"].copy())
+            self._fold_ghosts([lam["E"], lam["H"]])
+        corrections = self.lumped + self.dispersive
         out = {}
-        for ext in self.lumped + self.dispersive:
+        if not corrections:
+            # The solver step is the whole step: lam_E* = lam_E'
+            lam_star = lam["E"]
+            out.update(self._base_step(lam, lam_star))
+            self.lam_star = lam_star
+            return out
+        lam_star = lam["E"].copy()
+        extra = self.xp.zeros_like(lam_star)
+        for ext in corrections:
             ext.transpose_post(lam, lam_star, extra, out)
         out.update(self._base_step(lam, lam_star))
         for ext in self.lumped:
             ext.transpose_pre(lam, lam_star, out)
-        if self.lumped or self.dispersive:
-            out["E"] = out["E"] + extra
+        out["E"] = out["E"] + extra
         self.lam_star = lam_star
         return out
 
     def _base_step(self, lam, lam_E):
         """Transpose of the solver step, given the adjoint lam_E of its E."""
         if not self.cpml:
-            lam_H = lam["H"] + self.dt * (self.Bt @ lam_E)
-            if self.loss is not None:
-                lam_E = self.loss * lam_E
-            return {"H": lam_H, "E": lam_E - self.dt * (self.At @ lam_H)}
+            # In place: lam_H = lam_H' + dt B^H lam_E, lam_E = (1 - S) lam_E - dt A^H lam_H
+            lam_H = self.Bt @ lam_E
+            lam_H *= self.dt
+            lam_H += lam["H"]
+            if self.mpi:
+                # Reverse of the H exchange between the two half steps
+                self._fold_ghosts([lam_H])
+            curl = self.At @ lam_H
+            curl *= self.dt
+            lam_E = lam_E.copy() if self.loss is None else self.loss * lam_E
+            lam_E -= curl
+            if self.mpi:
+                # Reverse of the E exchange that ends the forward step
+                self._fold_ghosts([lam_E])
+            return {"H": lam_H, "E": lam_E}
 
         out = {}
         # Reverse of the E half step: E' = (1 - S) E + dt ieps s (Dt H' + psiE')
@@ -381,7 +521,14 @@ class AdjointStepper:
 
 class AdjointSimulation:
     def __init__(
-        self, make_solver, sources, monitors, design, Nt, store_dtype=np.float64
+        self,
+        make_solver,
+        sources,
+        monitors,
+        design,
+        Nt,
+        store_dtype=np.float64,
+        store_on_host=None,
     ):
         """
         Forward and exact discrete adjoint runs for gradient-based design.
@@ -399,6 +546,11 @@ class AdjointSimulation:
         computed by the solver step. q^n/ieps is stored on those edges during
         the forward run.
 
+        Both runs use the solver's backend: CuPy arrays on the GPU with
+        ``use_gpu``, and the z-slab decomposition with ``use_mpi`` (run the
+        script under ``mpiexec``; every rank then returns the same global
+        outputs and gradient).
+
         Parameters
         ----------
         make_solver : callable
@@ -412,7 +564,8 @@ class AdjointSimulation:
         monitors : dict of str to monitor
             Named `DFTMonitor` (E/H components), `FluxMonitor`,
             `Near2FarMonitor`, `ModeMonitor` or `LumpedReadout`; see
-            `readouts.outputs` for the raw outputs of each.
+            `readouts.outputs` for the raw outputs of each. With MPI, only
+            `DFTMonitor` and `FluxMonitor`.
         design : MaterialGrid
             Design region. It must not share edges with lumped elements,
             dispersive media (other than its own), mode source planes or
@@ -423,6 +576,10 @@ class AdjointSimulation:
             Precision of the stored increments (Nt x N_design values; complex
             for complex fields). float32 halves the memory at ~1e-7 relative
             gradient error.
+        store_on_host : bool, optional
+            GPU only: keep the stored increments in host memory (one row is
+            copied per time step). By default this is done when they would
+            take more than half of the free GPU memory.
         """
         for name, monitor in monitors.items():
             readouts.check(name, monitor)
@@ -432,8 +589,21 @@ class AdjointSimulation:
         self.design = design
         self.Nt = int(Nt)
         self.store_dtype = store_dtype
+        self.store_on_host = store_on_host
         self.rho = None
         self.readouts = None
+
+    def _comm(self, solver):
+        """MPI communicator of a decomposed solver, or None."""
+        if not (solver.use_mpi and solver.grid.use_mpi):
+            return None
+        for name, monitor in self.monitors.items():
+            if type(monitor) not in (readouts.DFTMonitor, readouts.FluxMonitor):
+                raise NotImplementedError(
+                    f"Monitor {name!r}: with MPI the adjoint supports DFTMonitor "
+                    "and FluxMonitor only."
+                )
+        return solver.grid.comm
 
     def output_shapes(self):
         """
@@ -441,7 +611,9 @@ class AdjointSimulation:
 
         Also stores in `readouts` copies of the monitors initialized on a
         fresh solver (sample geometry and weights), for the helper functions
-        that turn raw outputs into flux, mode amplitudes or far fields.
+        that turn raw outputs into flux, mode amplitudes or far fields. With
+        MPI, the flux weights of all ranks are gathered in the order of the
+        gathered outputs.
 
         Returns
         -------
@@ -449,6 +621,7 @@ class AdjointSimulation:
             {monitor name: {output key: shape}}.
         """
         solver = self.make_solver()
+        comm = self._comm(solver)
         self.readouts = {}
         shapes = {}
         for name, template in self.monitors.items():
@@ -456,7 +629,22 @@ class AdjointSimulation:
             readouts.initialize(monitor, solver)
             self.readouts[name] = monitor
             shapes[name] = readouts.shapes(monitor)
+            if comm is None:
+                continue
+            for key, shape in shapes[name].items():
+                total = sum(comm.allgather(shape[-1]))
+                shapes[name][key] = (*shape[:-1], total)
+            for term in getattr(monitor, "_terms", []):
+                term["weight"] = np.concatenate(comm.allgather(term["weight"]))
         return shapes
+
+    def _store_on_host(self, solver, nbytes):
+        if not solver.use_gpu:
+            return False
+        if self.store_on_host is not None:
+            return bool(self.store_on_host)
+        free, _ = solver.E.xp.cuda.Device().mem_info
+        return nbytes > free / 2
 
     def forward(self, rho):
         """
@@ -475,10 +663,13 @@ class AdjointSimulation:
         dict
             {monitor name: {output key: complex ndarray}}, see
             `readouts.outputs`. A `DFTMonitor` gives its `get_field` arrays
-            [field units x s].
+            [field units x s]. With MPI, the samples of all ranks are
+            concatenated along the last axis in rank order (z for a
+            `DFTMonitor`), identically on every rank.
         """
         rho = np.array(rho, dtype=float)
         solver = self.make_solver()
+        comm = self._comm(solver)
         self.design.apply(solver, rho)
         sources, monitors = copy.deepcopy((self.sources, self.monitors))
         elements = [src for src in sources if hasattr(src, "post_step")]
@@ -488,31 +679,31 @@ class AdjointSimulation:
             ):
                 raise ValueError(f"The element of readout {name!r} is not a source.")
 
-        idx = self.design.flat_idx
+        xp = solver.E.xp
+        idx = xp.asarray(self.design.flat_idx)
         complex_fields = np.iscomplexobj(solver.E.array)
         store = np.result_type(self.store_dtype, np.complex64 if complex_fields else 1)
+        on_host = self._store_on_host(
+            solver, self.Nt * idx.size * np.dtype(store).itemsize
+        )
+        increments = (np if on_host else xp).empty((self.Nt, idx.size), dtype=store)
         ieps_d = solver.ieps.array[idx].copy()
-        increments = np.empty((self.Nt, idx.size), dtype=store)
         disp = self.design.dispersive_group(solver)
-        if disp is not None:
-            ade_terms = np.empty((self.Nt, idx.size), dtype=store)
         for n in range(self.Nt):
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
             e_old = solver.E.array[idx]
-            if disp is not None:
-                state_old = self.design.ade_state(disp, solver)
             if disp is None:
                 solver.one_step()
-                increments[n] = (solver.E.array[idx] - e_old) / ieps_d
+                row = (solver.E.array[idx] - e_old) / ieps_d
             else:
                 # The ADE overwrites the design edges: record the parameter
                 # sensitivity of the correction instead (see MaterialGrid)
+                state_old = self.design.ade_state(disp, solver)
                 solver.one_step()
-                ade_terms[n] = self.design.ade_sensitivity(
-                    disp, solver, e_old, state_old
-                )
+                row = self.design.ade_sensitivity(disp, solver, e_old, state_old)
+            increments[n] = _host(row) if on_host else row
             for el in elements:
                 el.post_step(solver, t)
             for monitor in monitors.values():
@@ -520,9 +711,28 @@ class AdjointSimulation:
 
         self._check_overlaps(solver, elements, monitors)
         self._solver, self._monitors, self._elements = solver, monitors, elements
-        self._increments = increments if disp is None else ade_terms
+        self._increments = increments
         self.rho = rho
-        return {name: readouts.outputs(m) for name, m in monitors.items()}
+        raw = {name: readouts.outputs(m) for name, m in monitors.items()}
+        if comm is not None:
+            raw = self._gather(raw, comm)
+        return raw
+
+    def _gather(self, raw, comm):
+        """
+        Concatenate the outputs of all ranks along their last (sample) axis,
+        recording the slice of each output held by this rank.
+        """
+        self._slices = {}
+        out = {}
+        for name, comps in raw.items():
+            out[name] = {}
+            for key, local in comps.items():
+                sizes = comm.allgather(local.shape[-1])
+                start = sum(sizes[: comm.Get_rank()])
+                self._slices[name, key] = slice(start, start + local.shape[-1])
+                out[name][key] = np.concatenate(comm.allgather(local), axis=-1)
+        return out
 
     def _check_overlaps(self, solver, elements, monitors):
         """Raise if the design shares edges with design-independent models."""
@@ -552,26 +762,36 @@ class AdjointSimulation:
         Returns
         -------
         ndarray
-            dF/drho with shape `design.shape`.
+            dF/drho with shape `design.shape` (summed over the MPI ranks).
         """
         if self.rho is None:
             raise RuntimeError("Call forward before vjp.")
         solver = self._solver
+        comm = self._comm(solver)
         stepper = AdjointStepper(solver, self._elements)
+        xp = stepper.xp
         dt = solver.dt
         complex_fields = np.iscomplexobj(solver.E.array)
 
         keys = {id(ext.element): ext.key for ext in stepper.lumped}
         taps = []
         for name, comps in cotangents.items():
+            if comm is not None:
+                # This rank's samples of the gathered outputs
+                comps = {
+                    key: np.asarray(G)[..., self._slices[name, key]]
+                    for key, G in comps.items()
+                }
             taps += readouts.taps(self._monitors[name], solver, comps, keys)
+        for tap in taps:
+            tap.to_device(xp)
 
-        idx = self.design.flat_idx
+        idx = xp.asarray(self.design.flat_idx)
         own = self.design.dispersive_group(solver)
         ade = None
         if own is not None:
             ade = next(ext for ext in stepper.dispersive if ext.group is own)
-        grad = np.zeros(idx.size)
+        grad = xp.zeros(idx.size)
         lam = stepper.zero_state()
         for n in reversed(range(self.Nt)):
             t = n * dt
@@ -579,10 +799,13 @@ class AdjointSimulation:
             for tap in taps:
                 if tap.skip_last and n == self.Nt - 1:
                     continue
-                w_conj = dt * np.exp(2j * np.pi * tap.freqs * (t + tap.offset))
+                w_conj = dt * xp.exp(2j * np.pi * tap.freqs * (t + tap.offset))
                 source = tap.WH @ (w_conj @ tap.G)
-                lam[tap.field] += source if complex_fields else source.real
+                lam[tap.field][tap.rows] += source if complex_fields else source.real
             lam = stepper.step(lam)
             sens = stepper.lam_star[idx] if ade is None else ade.lam_acc
-            grad += np.real(np.conj(sens) * self._increments[n])
-        return self.design.vjp(self.rho, grad)
+            grad += xp.real(xp.conj(sens) * xp.asarray(self._increments[n]))
+        grad = self.design.vjp(self.rho, _host(grad))
+        if comm is not None:
+            grad = comm.allreduce(grad)
+        return grad
