@@ -848,7 +848,7 @@ class PlotMixinSolver:
 
             if self.use_mpi:
                 zmin, zmax = self.grid.ZMIN, self.grid.ZMAX
-                Nz = self.grid.NZ
+                Nz = self.grid.NZ_samples
                 _z = self.grid.Z
 
             if type(field) is str:
@@ -1136,7 +1136,7 @@ class PlotMixinSolver:
 
         if self.use_mpi:
             zmin, zmax = self.grid.ZMIN, self.grid.ZMAX
-            Nz = self.grid.NZ
+            Nz = self.grid.NZ_samples
             _z = self.grid.Z
             if self.rank == 0:
                 fig, ax = plt.subplots(1, 1, figsize=figsize)

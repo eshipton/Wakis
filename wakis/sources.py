@@ -216,7 +216,8 @@ class Beam:
 
         # All MPI ranks use the same global high plane to end injection together.
         if solver.use_mpi:
-            global_stop = solver.NZ - high_offset
+            # Global sample count as in a serial run (boundary node included)
+            global_stop = solver.grid.NZ_samples - high_offset
             self.high_plane = solver.Z[global_stop]
         else:
             self.high_plane = solver.z[self.j_stop]

@@ -417,8 +417,9 @@ class RoutinesMixin:
         self.v = self.wake.v
         if self.use_mpi:
             z = self.Z  # use global coords
-            dz = np.full(self.NZ, (self.ZMAX - self.ZMIN) / self.NZ)
-            zz = slice(0, self.NZ)
+            # Same global z samples as a serial run (see GridFIT3D.NZ_samples)
+            dz = np.full(self.grid.NZ_samples, (self.ZMAX - self.ZMIN) / self.NZ)
+            zz = slice(0, self.grid.NZ_samples)
         else:
             z = self.z
             zz = slice(0, self.Nz)

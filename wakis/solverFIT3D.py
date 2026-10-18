@@ -1069,8 +1069,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
 
-            if self.use_mpi:
-                self._mpi_communicate(self.J)
+        # Exchange J on every rank, as `_mpi_one_step` does: interior ranks
+        # without CPML faces step with it, and the collective calls must match
+        if self.use_mpi:
+            self._mpi_communicate(self.J)
 
         # Compute the curl of H fields
         dtxyHz = self.dtxy * self.H.field_z
@@ -1398,8 +1400,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + self.dJ)
             self.J_old = Jtemp
 
-            if self.use_mpi:
-                self._mpi_communicate(self.J)
+        # Exchange J on every rank, as `_mpi_one_step` does: interior ranks
+        # without CPML faces step with it, and the collective calls must match
+        if self.use_mpi:
+            self._mpi_communicate(self.J)
 
         # Compute the curl of H fields using MKL dot products
         dtxyHz = dot_product_mkl(self.dtxy, self.H.field_z)
@@ -1732,7 +1736,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         if y is None:
             y = slice(0, self.Ny)
         if z is None:
-            z = slice(0, self.NZ)
+            z = slice(0, self.grid.NZ_samples)
 
         if type(field) is str:
             if len(field) == 2:  # support for e.g. field='Ex'
@@ -1759,91 +1763,40 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         buffer = self.comm.gather(local, root=0)
         _field = None
-        # The last rank also holds the domain-edge ghost layer beyond ZMAX
-        edge = int(self.grid.boundary_at_domain_edge)
 
         if self.rank == 0:
+            # Leading shape of the gathered slice (z is always the last axis)
             if type(x) is int and type(y) is int:  # 1d array at x=a, y=b
-                nz = self.NZ // self.size
-                _field = np.zeros((self.NZ))
-                for r in range(self.size):
-                    zz = np.s_[r * nz : (r + 1) * nz]
-                    if r == 0:
-                        _field[zz] = np.reshape(buffer[r], (nz + self.grid.n_ghosts))[
-                            :-1
-                        ]
-                    elif r == (self.size - 1):
-                        _field[zz] = np.reshape(
-                            buffer[r], (nz + self.grid.n_ghosts + edge)
-                        )[1 : nz + 1]
-                    else:
-                        _field[zz] = np.reshape(
-                            buffer[r], (nz + 2 * self.grid.n_ghosts)
-                        )[1:-1]
-                _field = _field[z]
-
+                shape = ()
             elif type(x) is int:  # 2d slice at x=a
-                ny = y.stop - y.start
-                nz = self.NZ // self.size
-                _field = np.zeros((ny, self.NZ))
-                for r in range(self.size):
-                    zz = np.s_[r * nz : (r + 1) * nz]
-                    if r == 0:
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (ny, nz + self.grid.n_ghosts)
-                        )[:, :-1]
-                    elif r == (self.size - 1):
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (ny, nz + self.grid.n_ghosts + edge)
-                        )[:, 1 : nz + 1]
-                    else:
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (ny, nz + 2 * self.grid.n_ghosts)
-                        )[:, 1:-1]
-                _field = _field[:, z]
-
+                shape = (y.stop - y.start,)
             elif type(y) is int:  # 2d slice at y=a
-                nx = x.stop - x.start
-                nz = self.NZ // self.size
-                _field = np.zeros((nx, self.NZ))
-                for r in range(self.size):
-                    zz = np.s_[r * nz : (r + 1) * nz]
-                    if r == 0:
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (nx, nz + self.grid.n_ghosts)
-                        )[:, :-1]
-                    elif r == (self.size - 1):
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (nx, nz + self.grid.n_ghosts + edge)
-                        )[:, 1 : nz + 1]
-                    else:
-                        _field[:, zz] = np.reshape(
-                            buffer[r], (nx, nz + 2 * self.grid.n_ghosts)
-                        )[:, 1:-1]
-                _field = _field[:, z]
-
+                shape = (x.stop - x.start,)
             else:  # both type slice -> 3d array
-                nx = x.stop - x.start
-                ny = y.stop - y.start
-                nz = self.NZ // self.size
-                _field = np.zeros((nx, ny, self.NZ))
-                for r in range(self.size):
-                    zz = np.s_[r * nz : (r + 1) * nz]
-                    if r == 0:
-                        _field[:, :, zz] = np.reshape(
-                            buffer[r], (nx, ny, nz + self.grid.n_ghosts)
-                        )[:, :, :-1]
-                    elif r == (self.size - 1):
-                        _field[:, :, zz] = np.reshape(
-                            buffer[r], (nx, ny, nz + self.grid.n_ghosts + edge)
-                        )[:, :, 1 : nz + 1]
-                    else:
-                        _field[:, :, zz] = np.reshape(
-                            buffer[r], (nx, ny, nz + 2 * self.grid.n_ghosts)
-                        )[:, :, 1:-1]
-                _field = _field[:, :, z]
+                shape = (x.stop - x.start, y.stop - y.start)
+            _field = np.zeros((*shape, self.grid.NZ_samples))
+            for r in range(self.size):
+                z_global, z_local = self._mpi_rank_z_slices(r)
+                _field[..., z_global] = np.reshape(buffer[r], (*shape, -1))[
+                    ..., z_local
+                ]
+            _field = _field[..., z]
 
         return _field
+
+    def _mpi_rank_z_slices(self, r):
+        """
+        Global and local z slices of the samples owned by rank `r`.
+
+        Every rank owns NZ / size cells; ranks > 0 start with one MPI ghost
+        layer, ranks < size - 1 end with one. The last rank also owns the
+        boundary node at ZMAX (domain-edge ghost cell), so the gathered arrays
+        have `grid.NZ_samples` samples along z, like the serial arrays.
+        """
+        nz = self.NZ // self.size
+        n_own = nz + (self.grid.NZ_samples - self.NZ if r == self.size - 1 else 0)
+        lo = self.grid.n_ghosts if r > 0 else 0
+        return np.s_[r * nz : r * nz + n_own], np.s_[lo : lo + n_own]
 
     def mpi_gather_asField(self, field):
         """
@@ -1865,9 +1818,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             ranks.
         """
 
-        _field = Field(self.Nx, self.Ny, self.NZ)
-        # The last rank also holds the domain-edge ghost layer beyond ZMAX
-        edge = int(self.grid.boundary_at_domain_edge)
+        _field = Field(self.Nx, self.Ny, self.grid.NZ_samples)
 
         for d in ["x", "y", "z"]:
             if type(field) is str:
@@ -1882,24 +1833,11 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
             buffer = self.comm.gather(local, root=0)
             if self.rank == 0:
-                nz = self.NZ // self.size
                 for r in range(self.size):
-                    zz = np.s_[r * nz : (r + 1) * nz]
-                    if r == 0:
-                        _field[:, :, zz, d] = np.reshape(
-                            buffer[r],
-                            (self.Nx, self.Ny, nz + self.grid.n_ghosts),
-                        )[:, :, :-1]
-                    elif r == (self.size - 1):
-                        _field[:, :, zz, d] = np.reshape(
-                            buffer[r],
-                            (self.Nx, self.Ny, nz + self.grid.n_ghosts + edge),
-                        )[:, :, 1 : nz + 1]
-                    else:
-                        _field[:, :, zz, d] = np.reshape(
-                            buffer[r],
-                            (self.Nx, self.Ny, nz + 2 * self.grid.n_ghosts),
-                        )[:, :, 1:-1]
+                    z_global, z_local = self._mpi_rank_z_slices(r)
+                    _field[:, :, z_global, d] = np.reshape(
+                        buffer[r], (self.Nx, self.Ny, -1)
+                    )[:, :, z_local]
 
         return _field
 
@@ -2040,28 +1978,25 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         """
 
         if self.use_mpi:  # TODO: test
+            state = None
             if self.rank == 0:
                 with h5py.File(filename, "r") as f:
                     state = {"E": f["E"][:], "H": f["H"][:], "J": f["J"][:]}
-                zz = np.s_[: self.Nz]
-            elif self.rank == self.size - 1:
-                state = None
-                zz = np.s_[(self.NZ - self.Nz) :]
-            else:
-                state = None
-                zlo = self.rank * self.Nz
-                zz = np.s_[zlo : zlo + self.Nz]
+            # Local slab in global z indices, MPI ghost layers included
+            nz = self.NZ // self.size
+            zlo = self.rank * nz - (self.grid.n_ghosts if self.rank > 0 else 0)
+            zz = np.s_[zlo : zlo + self.Nz]
 
             state = self.comm.bcast(state, root=0)
             for d in [0, 1, 2]:  # x,y,z
                 self.E[:, :, :, d] = state["E"].reshape(
-                    (self.Nx, self.Ny, self.NZ, 3), order="F"
+                    (self.Nx, self.Ny, self.grid.NZ_samples, 3), order="F"
                 )[:, :, zz, d]
                 self.H[:, :, :, d] = state["H"].reshape(
-                    (self.Nx, self.Ny, self.NZ, 3), order="F"
+                    (self.Nx, self.Ny, self.grid.NZ_samples, 3), order="F"
                 )[:, :, zz, d]
                 self.J[:, :, :, d] = state["J"].reshape(
-                    (self.Nx, self.Ny, self.NZ, 3), order="F"
+                    (self.Nx, self.Ny, self.grid.NZ_samples, 3), order="F"
                 )[:, :, zz, d]
 
         else:  # CPU/GPU loadstate

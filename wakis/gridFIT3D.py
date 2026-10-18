@@ -508,6 +508,12 @@ class GridFIT3D(PlotMixin):
         self.NZ = self.Nz - self.Nz % (self.size)  # ensure multiple of MPI size
         self.Z = np.linspace(self.ZMIN, self.ZMAX, self.NZ + 1)[:-1]
         self.Z += (self.ZMAX - self.ZMIN) / (2 * self.NZ)
+        # Global number of z samples, as in a serial run: with domain-edge
+        # ghosts the boundary node at ZMAX adds one (its edge midpoint lies
+        # beyond ZMAX)
+        self.NZ_samples = self.NZ + int(self.boundary_at_domain_edge)
+        if self.boundary_at_domain_edge:
+            self.Z = np.append(self.Z, self.Z[-1] + (self.ZMAX - self.ZMIN) / self.NZ)
 
         if self.verbose and self.rank == 0:
             print(f" * Global grid ZMIN={self.ZMIN}, ZMAX={self.ZMAX}, NZ={self.NZ}")
@@ -1130,7 +1136,7 @@ class GridFIT3D(PlotMixin):
                 # ranks agree on it even at subdomain interfaces, then map it to
                 # the local index of the rank that owns it
                 dz = (self.ZMAX - self.ZMIN) / self.NZ
-                z_global = self.ZMIN + dz * (np.arange(self.NZ) + 0.5 * at_mid)
+                z_global = self.ZMIN + dz * (np.arange(self.NZ_samples) + 0.5 * at_mid)
                 g = _nearest(z_global, center[d])
                 local = g - self.rank * (self.NZ // self.size)
                 local += self.n_ghosts if self.rank > 0 else 0
