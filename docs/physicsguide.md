@@ -940,6 +940,83 @@ References:
 - B. Bourdin, "Filters in topology optimization", *Int. J. Numer. Methods Eng.* **50**, 2143–2158 (2001), [doi:10.1002/nme.116](https://doi.org/10.1002/nme.116).
 - F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), [doi:10.1007/s00158-010-0602-y](https://doi.org/10.1007/s00158-010-0602-y).
 
+### 🧰 Design templates: setup rules and design formulas
+
+`wakis.templates` (user guide: [templates.md](templates.md)) builds complete simulations from a declarative description. It adds no new field update; this section documents the automatic setup rules, the material assignment on the FIT edges and the closed-form design formulas used to configure and validate the templates.
+
+**Setup rules.** The cell size in a material $(\varepsilon_r, \mu_r)$ is $\Delta \le c/(f_\text{max}\sqrt{\varepsilon_r\mu_r}\,N)$ with $N$ cells per wavelength; the leapfrog phase error per wavelength is $\approx(\pi/N)^2/6$ for small $\Delta$ [Taflove & Hagness, 2005, Ch. 4], 0.4 % for $N=20$. Mesh axes are piecewise uniform with nodes on all structure faces and lumped-port gaps (a tensor-product mesh): each interval between faces gets the size required by the densest material whose extent covers it, at least `min_cells_per_feature` cells, and the size field is limited to grow by a factor `grading` per cell. The distance to the CPML is $\lambda(f_\text{min})/4$ and the CPML has $\max(10, \lambda(f_\text{min})/(8\Delta))$ cells (polynomial grading of order 4, $R_0 = 10^{-8}$). The run stops with the energy criterion of `emsolve(stop_when_energy_decayed=...)`.
+
+**Material assignment.** Solids are written directly into the inverse-permittivity tensor at the staggered E-edge positions (E along its edge midpoint, on the nodes transversally). PEC removes every edge in the closed solid (`ieps = 0`), so a zero-thickness box is a metal sheet and a zero-radius cylinder a wire along one line of edges. Dielectric edges lying on a face get the arithmetic mean of the two permittivities (tangential $\mathbf E$ continuous), as in `add_dispersive_material`; on periodic axes faces on the cell boundary are matched with their periodic image. Dispersive boxes use the ADE update of `add_dispersive_material` on their interior edges, while their face edges keep the averaged permittivity at the band centre. The STL import of `GridFIT3D` is not used because its cell masks attach a cell to the three edges leaving its lower corner, which cannot represent zero-thickness metal.
+
+**Graded meshes (workaround).** The update of an E sample on node $i$ needs the dual edge length centred on that node, $\tilde L_i = (x_{i+1}-x_{i-1})/2$. `GridFIT3D` currently stores $\tilde L_i = (x_{i+2}-x_i)/2$, i.e. the dual length of node $i+1$, which is exact only on uniform meshes; on a graded mesh it acts as a local material error of the order of the grading ratio minus one. `Simulation.build` overwrites `grid.tL` and `grid.itA` with the node-centred values (unchanged on uniform meshes) and meshes periodic axes uniformly. With this correction a slab on a graded mesh reproduces the Airy transmittance to 0.016, as on a uniform mesh, instead of 0.059.
+
+**Metal sheet edges.** The field of a zero-thickness PEC sheet ending on a mesh node fringes as if the sheet extended about a third of a cell further. For a patch antenna this lowers the resonance at first order in the cell size (observed: $\delta \approx 0.37\Delta$ per edge from a two-mesh study). `patch_antenna` therefore meshes the patch smaller by $\Delta/3$ per edge (`edge_correction`); this empirical correction is a Wakis choice validated by the mesh study below, not a published method.
+
+**Patch antenna (transmission-line model)** [Balanis, 2016, Sec. 14.2]. For substrate permittivity $\varepsilon_r$ and height $h$, design frequency $f_r$:
+
+$$
+W = \frac{c}{2f_r}\sqrt{\frac{2}{\varepsilon_r+1}},\qquad
+\varepsilon_\text{eff} = \frac{\varepsilon_r+1}{2} + \frac{\varepsilon_r-1}{2}\left(1+12\frac{h}{W}\right)^{-1/2},
+$$
+
+$$
+\frac{\Delta L}{h} = 0.412\,\frac{(\varepsilon_\text{eff}+0.3)(W/h+0.264)}{(\varepsilon_\text{eff}-0.258)(W/h+0.8)},\qquad
+L = \frac{c}{2f_r\sqrt{\varepsilon_\text{eff}}} - 2\Delta L ,
+$$
+
+the fringing extension $\Delta L$ being Hammerstad's formula. The edge resistance is $R_\text{in}(0) = 1/(2(G_1+G_{12}))$ with
+
+$$
+G_1 = \frac{I_1}{120\pi^2},\quad I_1 = \int_0^\pi \left[\frac{\sin(\tfrac{k_0W}{2}\cos\theta)}{\cos\theta}\right]^2\sin^3\theta\,d\theta,\qquad
+G_{12} = \frac{1}{120\pi^2}\int_0^\pi \left[\frac{\sin(\tfrac{k_0W}{2}\cos\theta)}{\cos\theta}\right]^2 J_0(k_0L\sin\theta)\sin^3\theta\,d\theta,
+$$
+
+and a probe or inset feed at distance $y_0$ from the radiating edge sees $R_\text{in}(y_0) = R_\text{in}(0)\cos^2(\pi y_0/L)$. The two-slot directivity is $D = D_0\,2/(1+g_{12})$ with $D_0 = (k_0W)^2/I_1$ and $g_{12} = G_{12}/G_1$. These are engineering approximations: the TLM resonance is typically within a few percent of measurements, and the edge resistance is less accurate.
+
+**Dipole (induced EMF)** [Balanis, 2016, Sec. 8.5]. A centre-fed dipole of length $l$ and radius $a$ with sinusoidal current has $Z_\text{in} = (R_r + jX_m)/\sin^2(kl/2)$,
+
+$$
+R_r = \frac{\eta}{2\pi}\Big\{C + \ln kl - \text{Ci}(kl) + \tfrac12\sin kl\,[\text{Si}(2kl)-2\text{Si}(kl)] + \tfrac12\cos kl\,[C+\ln(kl/2)+\text{Ci}(2kl)-2\text{Ci}(kl)]\Big\},
+$$
+
+$$
+X_m = \frac{\eta}{4\pi}\Big\{2\text{Si}(kl) + \cos kl\,[2\text{Si}(kl)-\text{Si}(2kl)] - \sin kl\,[2\text{Ci}(kl)-\text{Ci}(2kl)-\text{Ci}(2ka^2/l)]\Big\},
+$$
+
+with $C$ Euler's constant; $l=\lambda/2$ gives $73.1+42.5j\,\Omega$, and the reactance vanishes at $l\approx0.47$–$0.48\lambda$ for thin wires.
+
+**Waveguides.** TE10 cutoff $f_c = c/(2a)$ and $\beta = \sqrt{k^2-(\pi/a)^2}$ [Pozar, 2012, Ch. 3]. A thin symmetric inductive diaphragm of opening $d$ is approximately a shunt susceptance $B/Y_0 = -(\lambda_g/a)\cot^2(\pi d/2a)$, so $S_{11} = -jb/(2+jb)$ [Marcuvitz, 1951; Pozar, 2012].
+
+**Thin films.** Normal-incidence $R$ and $T$ of a slab of index $n$ and thickness $d$ between media of index $n_0$ follow from the characteristic matrix $\begin{pmatrix}\cos\delta & j\sin\delta/n\\ jn\sin\delta & \cos\delta\end{pmatrix}$, $\delta = k_0nd$ [Born & Wolf, 1999, Sec. 1.6]; for a lossless slab in vacuum $T = 1/(1+\tfrac14(n-1/n)^2\sin^2\delta)$ (Airy).
+
+**Slab waveguide.** The fundamental TE mode of a symmetric slab solves $\tan(\kappa d/2) = \gamma/\kappa$, $\kappa = k_0\sqrt{n_1^2-n_\text{eff}^2}$, $\gamma = k_0\sqrt{n_\text{eff}^2-n_2^2}$ [Snyder & Love, 1983].
+
+**Validation** (`tests/test_027_templates.py`; fast tests < 25 s each):
+
+| Template | Mesh | Reference | Result |
+| --- | --- | --- | --- |
+| Dielectric slab cell ($\varepsilon_r=4$, 10 mm, 2–12 GHz) | 20 cells/λ, graded | Airy | $\lvert\Delta T\rvert, \lvert\Delta R\rvert < 0.017$, $\lvert R+T-1\rvert < 4\times10^{-3}$ |
+| PEC patch array (p = 15 mm, 12 mm patches) | 20 cells/λ | qualitative | $R = 0.20$ at $0.2c/p$, $R = 0.995$ at $0.95c/p$, $\lvert R+T-1\rvert < 4\times10^{-4}$ |
+| WR-90, empty, 1.25–1.9 $f_c$ | 20 cells across $a$ | $S_{21}=1$, TE10 $\beta$ | $\lvert\lvert S_{21}\rvert-1\rvert < 0.011$, $\lvert S_{11}\rvert < 3\times10^{-3}$, $\beta$ = discrete dispersion to $10^{-3}$ |
+| WR-90, 12 mm inductive iris | same | lossless, $B/Y_0$ model | $\lvert S_{11}\rvert^2+\lvert S_{21}\rvert^2 = 1 \pm 0.015$, $\lvert S_{11}\rvert$ within 0.05 of the model |
+| Si slab 220 nm in SiO2, 1395–1705 nm (Sellmeier Si) | 11 cells across the core | slab eigenvalue equation | $T = 1\pm1.3\times10^{-3}$, $n_\text{eff}$ within 0.25 % |
+| Half-wave dipole, zero-radius wire | 20/30 and 40/60 cells/λ | 0.47–0.48 λ, 73 Ω, 2.15 dBi | resonant $L/\lambda$ = 0.434/0.445 → 0.466 and 0.452/0.460 → 0.476 extrapolated; $R_\text{in} = 72.6$–$72.9\,\Omega$; $D = 2.10$–$2.20$ dBi |
+| Patch, $\varepsilon_r=2.2$, $h=3.2$ mm | 15 cells/λ, 2 across $h$ | TLM | resonance −3.1 %, $\lvert S_{11}\rvert = -12$ dB, $D = 8.0$ dBi |
+| Patch, FR-4 4.4, $h=1.6$ mm (slow) | 20 / 30 cells/λ, 3 / 4 across $h$ | TLM (resonance, 50 Ω feed), 6.0 dBi | resonance −2.5 % / −2.7 %, $\lvert S_{11}\rvert = -11.0$ dB, $D = 6.4$ / $6.5$ dBi |
+
+Without the edge correction the FR-4 patch resonates 7.3 % (20 cells/λ) and 6.0 % (30 cells/λ) below the TLM value, which extrapolates to −2.3 % for $\Delta\to0$, consistent with the corrected results.
+
+**Differentiability.** The templates only configure existing features; their outputs ($S$-parameters, flux ratios, mode amplitudes, far-field directivity) are the plain-array outputs of `LumpedPort`, `FluxMonitor`, `ModeMonitor` and `Near2FarMonitor`, whose adjoint sources are documented in their sections. The graded-mesh dual lengths enter the operators as fixed metric coefficients. The optimizer wrapper is gradient-free (`scipy.optimize`); gradient-based optimization of a template geometry would go through `wakis.inverse` with a `MaterialGrid` design region.
+
+References:
+- C. A. Balanis, *Antenna Theory: Analysis and Design*, 4th ed., Wiley (2016): Sec. 8.5 (induced-EMF dipole impedance), Sec. 14.2 (rectangular patch, transmission-line and cavity models).
+- E. O. Hammerstad, "Equations for microstrip circuit design", *Proc. 5th European Microwave Conference*, 268–272 (1975), [doi:10.1109/EUMA.1975.332206](https://doi.org/10.1109/EUMA.1975.332206).
+- D. M. Pozar, *Microwave Engineering*, 4th ed., Wiley (2012).
+- N. Marcuvitz, *Waveguide Handbook*, MIT Radiation Laboratory Series vol. 10, McGraw-Hill (1951).
+- M. Born and E. Wolf, *Principles of Optics*, 7th ed., Cambridge University Press (1999).
+- A. W. Snyder and J. D. Love, *Optical Waveguide Theory*, Chapman & Hall (1983).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005).
+
 ## 4. Wake potential, impedance, and wake factors
 
 Wakis computes beam coupling impedance from time-domain electromagnetic field simulations by evaluating the wakefields generated by a moving charged particle (or bunch) as it traverses an accelerator structure.

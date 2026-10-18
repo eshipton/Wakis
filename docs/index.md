@@ -37,6 +37,7 @@ The source code is available in the `wakis` [GitHub repository](https://github.c
 installation.md
 usersguide.md
 physicsguide.md
+templates.md
 releases.md
 wakis_api.rst
 ```
