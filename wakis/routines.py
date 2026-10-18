@@ -264,8 +264,8 @@ class RoutinesMixin:
         eps = xp.where(ieps != 0, 1 / xp.where(ieps != 0, ieps, 1), 0)
         mu = xp.where(imu != 0, 1 / xp.where(imu != 0, imu, 1), 0)
         energy = 0.5 * float(
-            xp.sum(eps * vol_E * self.E.toarray() ** 2)
-            + xp.sum(mu * vol_H * self.H.toarray() ** 2)
+            xp.sum(eps * vol_E * xp.abs(self.E.toarray()) ** 2)
+            + xp.sum(mu * vol_H * xp.abs(self.H.toarray()) ** 2)
         )
         if self.use_mpi:
             energy = self.grid.comm.allreduce(energy)
