@@ -9,6 +9,7 @@ import numpy as np
 from scipy.constants import c
 from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import mu_0
+from scipy.sparse import coo_matrix
 from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
@@ -78,12 +79,7 @@ class BCsMixin:
                 phase = self.bloch_phase[0]
                 if phase != 1:
                     self.Px = self.Px.astype(self.dtype)
-                self.Px = self.Px.tolil()
-                self.Px[high, :] = 0
-                self.Px[high, high] = -1
-                # f(x + L) = f(x) * phase; a single cell couples to itself
-                self.Px[high, low] = phase if self.Nx > 1 else phase - 1
-                self.Px = self.Px.tocsc()
+                self.Px = _wrap_rows(self.Px, high, low, phase, self.Nx)
 
                 if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
                     self.tL[0, :, :, "x"] = 0.5 * (
@@ -104,12 +100,7 @@ class BCsMixin:
                 phase = self.bloch_phase[1]
                 if phase != 1:
                     self.Py = self.Py.astype(self.dtype)
-                self.Py = self.Py.tolil()
-                self.Py[high, :] = 0
-                self.Py[high, high] = -1
-                # f(x + L) = f(x) * phase; a single cell couples to itself
-                self.Py[high, low] = phase if self.Ny > 1 else phase - 1
-                self.Py = self.Py.tocsc()
+                self.Py = _wrap_rows(self.Py, high, low, phase, self.Ny)
 
                 if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
                     self.tL[:, 0, :, "y"] = 0.5 * (
@@ -130,12 +121,7 @@ class BCsMixin:
                 phase = self.bloch_phase[2]
                 if phase != 1:
                     self.Pz = self.Pz.astype(self.dtype)
-                self.Pz = self.Pz.tolil()
-                self.Pz[high, :] = 0
-                self.Pz[high, high] = -1
-                # f(x + L) = f(x) * phase; a single cell couples to itself
-                self.Pz[high, low] = phase if self.Nz > 1 else phase - 1
-                self.Pz = self.Pz.tocsc()
+                self.Pz = _wrap_rows(self.Pz, high, low, phase, self.Nz)
 
                 if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
                     self.tL[:, :, 0, "z"] = 0.5 * (
@@ -1209,3 +1195,26 @@ class BCsMixin:
                     values[:, :, -1] = interior + self.abc_z_high_coeff * (
                         values[:, :, -2] - boundary
                     )
+
+
+def _wrap_rows(P, high, low, phase, n_axis):
+    """
+    Replace the forward-difference rows `high` of P by periodic wrap-arounds,
+    P[high] = -e_high + phase * e_low, i.e. f(x + L) = f(x) * phase. A single
+    cell couples to itself (phase - 1). Vectorized: row-wise assignment into a
+    LIL matrix is element-by-element and dominates setup on large planes.
+    """
+    keep = np.ones(P.shape[0], dtype=P.dtype)
+    keep[high] = 0
+    P = diags(keep, dtype=P.dtype) @ P.tocsr()
+    if n_axis > 1:
+        rows = np.concatenate([high, high])
+        cols = np.concatenate([high, low])
+        data = np.concatenate([-np.ones(high.size), np.full(high.size, phase)]).astype(
+            P.dtype
+        )
+    else:
+        rows, cols = high, low
+        data = np.full(high.size, phase - 1, dtype=P.dtype)
+    wrap = coo_matrix((data, (rows, cols)), shape=P.shape)
+    return (P + wrap).tocsc()
