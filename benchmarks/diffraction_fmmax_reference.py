@@ -1,6 +1,6 @@
 """Reference diffraction efficiencies of a lamellar grating computed with fmmax.
 
-Generates the reference numbers of `tests/test_032_diffraction.py` with the
+Generates the reference numbers of `tests/test_033_diffraction.py` with the
 independent RCWA (Fourier modal method) solver fmmax
 (https://github.com/facebookresearch/fmmax, MIT), as used by the invrs-gym
 diffract challenges. fmmax is NOT a Wakis dependency; run this script in an

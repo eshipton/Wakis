@@ -474,10 +474,6 @@ Each iteration (forward + adjoint, 2400 cells × 1200 steps) takes ~0.5 s on a l
 
 `Near2FarMonitor` records the tangential fields on a closed box around the antenna and computes the far field, radiation intensity, directivity and gain at any angle after the run (CST's far-field monitor). The box must enclose all sources and scatterers and lie in a homogeneous region outside the CPML. The example below computes the pattern of a Hertzian dipole in free space (theory: $D = 1.5\sin^2\theta$, $D_{max} = 1.76$ dBi):
 
-#### Periodic unit cells at oblique incidence (Bloch boundaries)
-
-Metasurfaces, gratings and photonic crystals are simulated with one unit cell and Bloch-periodic boundaries. These are CST's "unit cell" boundaries, or Meep's `k_point`. Put `'bloch'` on the periodic axes and pass the Bloch wavevector `k_bloch` [rad/m]. A nonzero `k_bloch` needs complex fields (`dtype=np.complex128`). An oblique plane wave is launched by a sheet current with the matching phase profile $e^{i\mathbf{k}_\parallel\cdot\mathbf{r}}$:
-
 ```python
 import numpy as np
 import wakis
@@ -513,6 +509,13 @@ fig, ax = plot_pattern_cut(theta, D[1], label="E-plane, 1 GHz")
 
 All outputs share the normalization of `FluxMonitor.get_flux`; for a harmonic source of complex amplitude $S(f)$ divide fields by $S(f)$ and powers by $2|S(f)|^2$. For an antenna on an infinite ground plane formed by a PEC domain boundary, place the corresponding box face on that boundary and pass e.g. `ground_plane="-z"`: the face is dropped, image currents are added and `radiated_power` integrates the upper half-space only. `wakis.near2far` also provides `ludwig3` (co-/cross-polarization), `axial_ratio` and `plot_pattern_3d`.
 
+#### Periodic unit cells at oblique incidence (Bloch boundaries)
+
+Metasurfaces, gratings and photonic crystals are simulated with one unit cell and Bloch-periodic boundaries. These are CST's "unit cell" boundaries, or Meep's `k_point`. Put `'bloch'` on the periodic axes and pass the Bloch wavevector `k_bloch` [rad/m]. A nonzero `k_bloch` needs complex fields (`dtype=np.complex128`). An oblique plane wave is launched by a sheet current with the matching phase profile $e^{i\mathbf{k}_\parallel\cdot\mathbf{r}}$:
+
+```python
+import numpy as np
+import wakis
 from wakis.bloch import incidence_angle, k_parallel
 from wakis.sources import CurrentSource, GaussianSource
 
@@ -573,7 +576,7 @@ def eps(x, z):                  # glass below z = 0, teeth for x < P/2, 0 < z < 
     return np.where(z < 0, 2.25, np.where(tooth, 4.0, 1.0))
 
 # Edge permittivity: mean of the media touching each edge (edges on nodes see
-# both sides), i.e. tests/test_032_diffraction.py::_set_grating
+# both sides), i.e. tests/test_033_diffraction.py::_set_grating
 xn, zn = grid.x[:-1], grid.z[:-1]
 xm, zm = xn + dx / 2, zn + np.diff(grid.z) / 2
 d = 1e-9
@@ -615,10 +618,6 @@ fmmax (RCWA) gives $R = \{0.0276, 0.1050, 0.2148\}$ and $T = \{0.1980, 0.1241\}$
 #### Dispersive materials: gold film reflectance
 
 Frequency-dependent materials (`DispersiveMaterial`: Drude, Lorentz and Debye poles plus conductivity, see the physics guide) are added to box regions with `solver.add_dispersive_material` or assigned to STL solids directly in `stl_materials`. `dispersive_lib` provides gold, silver, aluminium (Rakić Lorentz–Drude), fused silica, silicon (Sellmeier), FR-4 and RO4350B (Debye). The reflectance of an optically thick gold film at normal incidence, in a quasi-1D periodic cell, normalized by a run without the film:
-
-#### Waveguide modes and mode ports
-
-`solve_modes` computes the propagating modes of a waveguide cross-section with the solver's own grid, materials and boundaries. `ModeSource` launches one mode in one direction (an electric plus a `MagneticCurrentSource`-type sheet), and `ModeMonitor` measures forward/backward mode amplitudes, from which S-parameters follow. A port is a plane: `size` has one zero entry (the normal) and `np.inf` (or the domain size) transversally; a smaller transverse size puts electric walls on the port edges, e.g. to exclude CPML layers.
 
 ```python
 import numpy as np
@@ -699,7 +698,13 @@ network = to_skrf_network(freqs, S)          # requires scikit-rf
 
 The lumped elements correct their edges after each step through `post_step(solver, t)`, which `emsolve` calls automatically; in a manual loop call `element.update(solver, t)` before and `element.post_step(solver, t)` after `solver.one_step()`.
 
+#### Waveguide modes and mode ports
 
+`solve_modes` computes the propagating modes of a waveguide cross-section with the solver's own grid, materials and boundaries. `ModeSource` launches one mode in one direction (an electric plus a `MagneticCurrentSource`-type sheet), and `ModeMonitor` measures forward/backward mode amplitudes, from which S-parameters follow. A port is a plane: `size` has one zero entry (the normal) and `np.inf` (or the domain size) transversally; a smaller transverse size puts electric walls on the port edges, e.g. to exclude CPML layers.
+
+```python
+import numpy as np
+from scipy.constants import c
 
 import wakis
 from wakis.mode_solver import ModeMonitor, ModeSource, solve_modes
