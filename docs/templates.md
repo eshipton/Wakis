@@ -100,8 +100,10 @@ Reading the results (`patch_results`):
   error of the patch edges; see the `edge_correction` parameter). With
   `thin_sheet=True` the patch is a conformal `Sheet` of its physical size
   (edges between mesh nodes, knife-edge correction) and needs no
-  empirical correction; at 20 cells per wavelength the FR-4 patch then
-  resonates 2.4 % below the TLM value, the converged (Δ→0) result.
+  empirical correction. The FR-4 patch then resonates 2.4-3.4 % below
+  the TLM value at 15-30 cells per wavelength, within about 1 % of the
+  converged (Δ→0) result. The empirical correction is as accurate for
+  this patch, so `thin_sheet` is optional.
 - **Matching**: |S11| < -10 dB means more than 90 % of the available power is
   accepted. The TLM edge resistance is only approximate, so the dip may be
   shallower than designed; tune `feed_offset` (see the optimizer below).
