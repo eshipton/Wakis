@@ -149,6 +149,46 @@ class Cylinder:
         )
 
 
+class Sheet:
+    def __init__(self, center, size):
+        """
+        Zero-thickness rectangular PEC sheet with conformal edges.
+
+        Unlike a PEC `Box` of zero thickness, the sheet edges need not lie on
+        mesh nodes: the grid only gets a node plane at the sheet, and
+        `GridFIT3D(sheets=...)` covers the cut edges and faces partially and
+        corrects the knife-edge field (see "Thin PEC sheets" in the physics
+        guide), so the sheet acts at its physical size.
+
+        Parameters
+        ----------
+        center, size : tuple of float
+            Centre and extent (x, y, z) [m]; exactly one extent is zero (the
+            sheet normal).
+        """
+        self.center = np.asarray(center, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        if np.count_nonzero(self.size == 0) != 1 or np.any(self.size < 0):
+            raise ValueError("A Sheet needs exactly one zero extent (its normal).")
+        self.normal = int(np.flatnonzero(self.size == 0)[0])
+        self.material = "pec"
+
+    @property
+    def bounds(self):
+        """(lo, hi) corners [m], each an array of 3."""
+        return self.center - self.size / 2, self.center + self.size / 2
+
+    def faces(self, axis):
+        """Only the sheet plane is snapped to the mesh, not its edges."""
+        return [self.center[axis]] if axis == self.normal else []
+
+    def to_pyvista(self):
+        """Surface as `pyvista.PolyData` [m]."""
+        from ..conformal import rectangle_sheet
+
+        return rectangle_sheet(self.center, self.size)
+
+
 def resolve_material(material):
     """
     Normalize a material: 'pec', a float eps_r or a DispersiveMaterial
@@ -189,8 +229,9 @@ def assign_materials(solver, structures, frequency):
     ----------
     solver : SolverFIT3D
         Freshly built solver (before the first time step).
-    structures : list of Box or Cylinder
-        Solids in order of increasing priority.
+    structures : list of Box, Cylinder or Sheet
+        Solids in order of increasing priority. Sheets are skipped: they are
+        part of the grid (`GridFIT3D(sheets=...)`).
     frequency : float
         Frequency [Hz] at which the real permittivity of dispersive materials
         is written into `ieps`. The interior edges of dispersive boxes are
@@ -201,6 +242,12 @@ def assign_materials(solver, structures, frequency):
     nodes = (grid.x, grid.y, grid.z)
     tol = 1e-6 * min(np.min(grid.dx), np.min(grid.dy), np.min(grid.dz))
     ieps = np.asarray(_host(solver.ieps.toarray()), dtype=float).copy()
+    # Conformal sheets (grid.sheets) scale 1/eps on their edges: average the
+    # materials without that factor and apply it to the result
+    factor = getattr(solver, "conformal_ieps_factor", None)
+    if factor is not None:
+        ieps = np.where(factor > 0, ieps / np.where(factor > 0, factor, 1.0), 0.0)
+    structures = [s for s in structures if not isinstance(s, Sheet)]
     eps = np.where(ieps == 0, np.inf, 1 / np.where(ieps == 0, 1, ieps) / epsilon_0)
     N = solver.N
     # Periodic images: a face on one cell boundary is also on the opposite one
@@ -230,6 +277,8 @@ def assign_materials(solver, structures, frequency):
         eps[comp * N : (comp + 1) * N] = block.ravel(order="F")
 
     ieps = np.where(np.isinf(eps), 0.0, 1 / (epsilon_0 * eps))
+    if factor is not None:
+        ieps = ieps * factor
     solver.ieps.fromarray(solver.ieps.xp.asarray(ieps) if solver.use_gpu else ieps)
     if not solver.activate_cpml:
         # Without CPML the step uses operators precomputed from ieps
