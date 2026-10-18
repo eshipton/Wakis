@@ -85,7 +85,7 @@ class ParallelCSR:
 
     def __init__(self, matrix, n_threads=None, dtype=None):
         matrix = matrix.tocsr()
-        if dtype is not None:
+        if dtype is not None and matrix.dtype != dtype:
             matrix = matrix.astype(dtype)
         self.matrix = matrix
         self.shape = matrix.shape
@@ -149,6 +149,7 @@ def lanczos_max(
     maxiter=1000,
     seed=0,
     n_threads=None,
+    start=None,
 ):
     """
     Largest eigenvalue of P K, P and K Hermitian positive semi-definite,
@@ -172,6 +173,8 @@ def lanczos_max(
         Seed of the random start vector (the result is reproducible).
     n_threads : int, optional
         Threads for the vector operations (default `default_threads`).
+    start : ndarray, optional
+        Added to the random start vector.
 
     Returns
     -------
@@ -190,6 +193,8 @@ def lanczos_max(
     r = rng.standard_normal(n).astype(dtype)
     if np.iscomplexobj(r):
         r += 1j * rng.standard_normal(n)
+    if start is not None:
+        r += start
     # In-place level-1 BLAS (multi-threaded, no temporaries)
     axpy, scal = get_blas_funcs(("axpy", "scal"), (r,))
     dot = get_blas_funcs("dotc" if np.iscomplexobj(r) else "dot", (r,))
@@ -316,10 +321,6 @@ def stable_dt(
     G.data = G.data * tds[faces][np.repeat(np.arange(faces.size), np.diff(G.indptr))]
     G.data *= imu[faces][G.indices]
     CH = C.conj().T.tocsr()
-    # K = C^H (G C): two products per iteration (G is nearly diagonal, so
-    # G C has about the nonzeros of C)
-    GC = (G.astype(dtype) @ C.astype(dtype)).tocsr()
-    del G
     p_a = p[active]
     info = dict(edges=int(active.size), faces=int(faces.size))
     Kp = pos = None
@@ -333,20 +334,36 @@ def stable_dt(
         # Scaled couplings diag(ds) Kp diag(ieps itda) on the coupled rows
         Kp = diags(ds[rows]) @ op.Kp_host @ diags(ieps[rows] * itda[rows])
         info["coupled"] = int(rows.size)
+    # Start vector: random plus the grid's highest-frequency (Nyquist) mode,
+    # E_c ~ m_c (-1)^(i+j+k) with m transverse to (1, 1, 1), the top
+    # eigenvector of the uniform curl-curl operator: the top of the spectrum
+    # is reached in fewer iterations (the random part keeps an overlap with
+    # every eigenvector, e.g. modes localized at small cells)
+    ijk = [np.arange(m) for m in (solver.Nx, solver.Ny, solver.Nz)]
+    sign = 1.0 - 2.0 * ((ijk[0][:, None, None] + ijk[1][:, None] + ijk[2]) % 2)
+    sign = sign.ravel(order="F")
+    start = np.concatenate([m * sign for m in (1.0, -1.0, 0.3)])
+    start = start if active.size == start.size else start[active]
+    del sign
     if device == "auto":
         device = "gpu" if getattr(solver, "use_gpu", False) else "cpu"
     info["device"] = device
     if device == "gpu":
-        lam, iters = _stable_lambda_gpu(GC, CH, p_a, Kp, pos, dtype, tol, info, t0)
+        lam, iters = _stable_lambda_gpu(
+            C, G, CH, p_a, Kp, pos, dtype, tol, info, t0, start
+        )
     else:
-        GCop = ParallelCSR(GC, n_threads, dtype)
+        Cop = ParallelCSR(C, n_threads, dtype)
+        Gop = ParallelCSR(G, n_threads, dtype)
         CHop = ParallelCSR(CH, n_threads, dtype)
-        del C, GC, CH
+        del C, G, CH
         f1 = np.empty(faces.size, dtype)
+        f2 = np.empty(faces.size, dtype)
 
         def apply_K(x, out):
-            GCop.matvec(x, f1)
-            return CHop.matvec(f1, out)
+            Cop.matvec(x, f1)
+            Gop.matvec(f1, f2)
+            return CHop.matvec(f2, out)
 
         corr = None
         if Kp is not None:
@@ -357,7 +374,7 @@ def stable_dt(
 
         info["setup_s"] = time.perf_counter() - t0
         lam, iters = lanczos_max(
-            apply_K, p_a, corr, dtype=dtype, tol=tol, n_threads=n_threads
+            apply_K, p_a, corr, dtype=dtype, tol=tol, n_threads=n_threads, start=start
         )
     dt = 2.0 / np.sqrt(abs(lam) * (1.0 + 10 * tol))
     if return_info:
@@ -366,14 +383,14 @@ def stable_dt(
     return dt
 
 
-def _stable_lambda_gpu(GC, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
+def _stable_lambda_gpu(C, G, CH, p, Kp, pos, dtype, tol, info, t0, start, maxiter=1000):
     """`lanczos_max` with CuPy arrays (same recurrence and start vector)."""
     import time
 
     import cupy as cp
     from cupyx.scipy.sparse import csr_matrix
 
-    GCg, CHg = (csr_matrix(m.astype(dtype)) for m in (GC, CH))
+    Cg, Gg, CHg = (csr_matrix(m.astype(dtype)) for m in (C, G, CH))
     pg = cp.asarray(p)
     Kg = csr_matrix(Kp.astype(dtype)) if Kp is not None else None
     posg = cp.asarray(pos) if Kp is not None else None
@@ -383,7 +400,7 @@ def _stable_lambda_gpu(GC, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
     r = rng.standard_normal(n).astype(dtype)
     if np.iscomplexobj(r):
         r += 1j * rng.standard_normal(n)
-    r = cp.asarray(r)
+    r = cp.asarray(r + start)
 
     def apply_P(x):
         y = (pg * x).astype(dtype, copy=False)
@@ -401,7 +418,7 @@ def _stable_lambda_gpu(GC, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
     alphas, betas = [], []
     theta = 0.0
     for it in range(1, maxiter + 1):
-        w = CHg @ (GCg @ z)
+        w = CHg @ (Gg @ (Cg @ z))
         alpha = float(cp.vdot(z, w).real)
         w -= alpha * r
         if r_prev is not None:

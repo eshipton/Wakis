@@ -865,14 +865,14 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
         inv = np.where(a_hat > 0, 1.0 / np.where(a_hat > 0, a_hat, 1.0), 0.0)
         # G = T^T diag(inv) T = diag(inv) on kept faces + D E + (D E)^T
         # + E^T D E (E has kept rows and unstable columns)
-        idx = np.flatnonzero(keep)
         de = inv[e_rows] * e_vals
         E = coo_matrix((e_vals, (e_rows, e_cols)), shape=(n, n)).tocsr()
         ete = (E.T @ diags(inv) @ E).tocoo()
-        rows = np.concatenate([idx, e_rows, e_cols, ete.row])
-        cols = np.concatenate([idx, e_cols, e_rows, ete.col])
-        vals = np.concatenate([inv[idx], de, de, ete.data])
-        ops.append(coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr())
+        rows = np.concatenate([e_rows, e_cols, ete.row])
+        cols = np.concatenate([e_cols, e_rows, ete.col])
+        vals = np.concatenate([de, de, ete.data])
+        couple = coo_matrix((vals, (rows, cols)), shape=(n, n))
+        ops.append((diags(np.where(keep, inv, 0.0)) + couple).tocsr())
     return ops, n_unstable
 
 
