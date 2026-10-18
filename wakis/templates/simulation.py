@@ -187,18 +187,19 @@ class Simulation:
         n_pml = self.n_pml or meshing.pml_cells(self.f_min, h_bg)
         self.n_pml = n_pml
         if periodic:
-            # Uniform: the dual lengths across the periodic seam assume it
-            # (see `_correct_dual_lengths`); faces are staircased to the mesh
+            # Uniform across the periodic seam; faces are staircased to the mesh
             n = int(np.ceil((hi - lo) / min(sizes) - 1e-6))
             return np.linspace(lo, hi, n + 1)
         nodes = meshing.graded_axis(points, sizes, min_cells, self.grading)
         if lo_bc == "cpml":
             d = nodes[1] - nodes[0]
             nodes = np.concatenate([nodes[0] - d * np.arange(n_pml, 0, -1), nodes])
-        # High side: CPML cells and the ghost layer of non-periodic axes
+        # High side: CPML cells (GridFIT3D adds the ghost layer itself, so the
+        # wall of a non-periodic axis sits on the last node)
+        if hi_bc != "cpml":
+            return nodes
         d = nodes[-1] - nodes[-2]
-        n_extra = n_pml + 1 if hi_bc == "cpml" else 1
-        return np.concatenate([nodes, nodes[-1] + d * np.arange(1, n_extra + 1)])
+        return np.concatenate([nodes, nodes[-1] + d * np.arange(1, n_pml + 1)])
 
     def build(self):
         """
@@ -210,7 +211,6 @@ class Simulation:
         """
         x, y, z = (self._axis(a) for a in range(3))
         self.grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
-        _correct_dual_lengths(self.grid)
         self.solver = self._new_solver(with_structures=True)
         return self.solver
 
@@ -332,29 +332,3 @@ class Simulation:
         if hasattr(self.solver, "Nt"):
             info["steps"] = self.solver.Nt
         return info
-
-
-def _correct_dual_lengths(grid):
-    """
-    Workaround for graded meshes: set the dual edge lengths to the node-centred
-    values tL_i = (x_{i+1} - x_{i-1}) / 2 expected by the curl operators.
-
-    `GridFIT3D` builds tL_i = (x_{i+2} - x_i) / 2, the dual length of node
-    i + 1, which is exact on uniform meshes but makes the update of node i use
-    the cell sizes of its neighbour on graded ones (a local error of the order
-    of the grading ratio - 1). The first value (x_1 - x_0) and the zero ghost
-    value at the last index are kept as in `GridFIT3D`, so uniform meshes are
-    unchanged. Periodic axes are meshed uniformly by `Simulation`.
-    """
-    for axis, nodes in enumerate((grid.x, grid.y, grid.z)):
-        tl = np.zeros(nodes.size - 1)
-        tl[0] = nodes[1] - nodes[0]
-        tl[1:-1] = (nodes[2:-1] - nodes[:-3]) / 2
-        shape = [1, 1, 1]
-        shape[axis] = tl.size
-        values = np.broadcast_to(tl.reshape(shape), (grid.Nx, grid.Ny, grid.Nz))
-        setattr(grid.tL, "field_" + "xyz"[axis], values.copy())
-    for a, (b, c) in zip("xyz", (("y", "z"), ("x", "z"), ("x", "y"))):
-        aux = getattr(grid.tL, "field_" + b) * getattr(grid.tL, "field_" + c)
-        inverse = np.divide(1.0, aux, out=np.zeros_like(aux), where=aux != 0)
-        setattr(grid.itA, "field_" + a, inverse)

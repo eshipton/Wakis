@@ -109,11 +109,16 @@ class MaterialGrid:
                 cols.append(idx[keep])
                 vals.append(w[keep])
             n_rows += m
-        self.flat_idx = np.concatenate(flat)
-        self.P = coo_matrix(
+        flat_idx = np.concatenate(flat)
+        P = coo_matrix(
             (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
             shape=(n_rows, int(np.prod(self.shape))),
         ).tocsr()
+        # E is held at zero on PEC edges (ieps = 0, e.g. walls at the domain
+        # bounds), so their permittivity has no effect: leave them out
+        keep = solver.ieps.array[flat_idx] != 0
+        self.flat_idx = flat_idx[keep]
+        self.P = P[keep]
 
     def _check(self, rho):
         rho = np.asarray(rho, dtype=float)
@@ -172,8 +177,6 @@ class MaterialGrid:
             self._build(solver)
 
         ieps_old = solver.ieps.array[self.flat_idx]
-        if np.any(ieps_old == 0):
-            raise ValueError("Design region overlaps a PEC (ieps = 0) region.")
         eps_r = self.eps_r(rho) if self.material is None else self.eps_min
         ieps_new = 1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size)
         solver.ieps.array[self.flat_idx] = ieps_new
