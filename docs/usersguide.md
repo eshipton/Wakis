@@ -687,6 +687,48 @@ solver.emsolve(Nt=100, source=MySource(frequency=1e9))
 Combining `wakis` sources, geometry capabilities and material tensors, many different physical phenomena can be simulated with `wakis`: laser pulses, interaction with plasma, waveguides... For particle accelerators, the `Beam` class was created but the profile and trajectory can be easily modified to simulate advanced impedance effects.
 
 
+#### Conformal geometry: curved PEC, dielectric interfaces and thin metal sheets
+
+By default STL solids are staircased: each cell is inside or outside a solid, which costs first-order accuracy on curved or oblique boundaries. With `conformal=True` the solver instead uses the length of every primary edge and the area of every primary face that lie outside PEC (partially filled cells), and an anisotropic average of the permittivity on the edges cut by a dielectric interface. Sheets (`sheets=` or the STL material `'sheet'`) model zero-thickness metal, such as patches and strips, whose edges may lie between mesh nodes. The physics guide section "Conformal FIT" explains the method.
+
+Lowest TM mode of a spherical cavity (a vacuum sphere in a PEC background):
+
+```python
+import numpy as np
+import pyvista as pv
+from scipy.constants import c
+import wakis
+from wakis.sources import CurrentSource, GaussianSource
+
+a, N = 0.1, 24  # radius [m], cells across the diameter
+L = (N + 4) * 2 * a / N
+sphere = pv.Sphere(radius=a, theta_resolution=300, phi_resolution=300)
+grid = wakis.GridFIT3D(-L/2, L/2, -L/2, L/2, -L/2, L/2, N + 4, N + 4, N + 4,
+                       stl_solids={'cavity': sphere},
+                       stl_materials={'cavity': 'vacuum'},
+                       conformal=True)      # False: staircase
+solver = wakis.SolverFIT3D(grid, bc_low=['pec']*3, bc_high=['pec']*3,
+                           bg='pec', use_stl=True)
+f0 = 2.7437 * c / (2 * np.pi * a)           # TM11: zero of [x j1(x)]'
+pulse = GaussianSource(frequency=f0, fwidth=0.25 * f0)
+src = CurrentSource(pulse, component='z', center=(0.02, 0.01, 0.0))
+monitor = wakis.DFTMonitor(np.linspace(0.85, 1.1, 501) * f0, components=['Ez'],
+                           center=(-0.015, 0.025, 0.01))
+solver.emsolve(int((pulse.end_time + 40 / f0) / solver.dt), source=src,
+               monitors=[monitor])
+```
+
+The peak of `abs(monitor.get_field('Ez')[0])` lies within 0.1 % of `f0` at 24 cells across the diameter. The staircased sphere is about 10 % low. The solver chooses the time step from the Lanczos stability limit of the conformal operators (`solver.conformal_dt_max`; usually 0.85–1 times the Yee limit). A zero-thickness sheet:
+
+```python
+from wakis.conformal import rectangle_sheet
+
+grid = wakis.GridFIT3D(..., sheets={'patch': rectangle_sheet(center=(0, 0, 1.6e-3),
+                                                             size=(28.5e-3, 37e-3, 0))})
+```
+
+The sheet must lie on a grid plane normal to x, y or z. Its edges can be anywhere. A knife-edge correction (`sheet_edge_correction=True`) places the edge at its physical position. For the patch template use `patch_antenna(..., thin_sheet=True)`, which needs no empirical `edge_correction`.
+
 #### Design templates: ready-made antennas, waveguides and unit cells
 
 `wakis.templates` sets up complete simulations from a declarative description: it chooses the mesh from a target number of cells per wavelength in the densest material, the padding to the CPML, the CPML thickness and the run length (energy-decay criterion), and returns the usual engineering results. See the [templates tutorial](templates.md) for all templates and pitfalls.
