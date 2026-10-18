@@ -242,16 +242,25 @@ class TensorOperator:
         W = np.where(itA != 0, L / np.where(itA != 0, itA, 1.0), 0.0)
         return ieps, W
 
-    def _fingerprint(self, solver, ieps, W):
-        """Digest of everything the assembly depends on."""
-        import hashlib
-
-        h = hashlib.blake2b(digest_size=20)
-        for array in (ieps, W, self.edges, self.aniso, self.vec):
-            h.update(np.ascontiguousarray(array).tobytes())
-        h.update(repr((self.periodic, self.phase, bool(solver.use_gpu),
-                       str(solver.E.array.dtype))).encode())  # fmt: skip
-        return h.digest()
+    def _same_inputs(self, solver, ieps, W):
+        """True when ieps, W and the edge data equal those of the last assembly."""
+        last = getattr(self, "_assembled", None)
+        if last is None or self.Kp is None:
+            return False
+        state = (
+            self.periodic,
+            self.phase,
+            bool(solver.use_gpu),
+            str(solver.E.array.dtype),
+        )
+        return (
+            last["state"] == state
+            and np.array_equal(last["edges"], self.edges)
+            and np.array_equal(last["aniso"], self.aniso)
+            and np.array_equal(last["vec"], self.vec)
+            and np.array_equal(last["ieps"], ieps)
+            and np.array_equal(self.W, W)
+        )
 
     def assemble(self, solver, exclude=None):
         """
@@ -270,12 +279,16 @@ class TensorOperator:
             corrected by their own ADE update).
         """
         ieps, W = self._inputs(solver, exclude)
-        key = self._fingerprint(solver, ieps, W)
-        if self.Kp is not None and key == getattr(self, "_assembled_key", None):
+        if self._same_inputs(solver, ieps, W):
             return
-        self._assembled_key = None
+        self._assembled = None
         self._assemble(solver, ieps, W)
-        self._assembled_key = key
+        self._assembled = dict(
+            state=(self.periodic, self.phase, bool(solver.use_gpu),
+                   str(solver.E.array.dtype)),
+            edges=self.edges.copy(), aniso=self.aniso.copy(), vec=self.vec.copy(),
+            ieps=ieps,
+        )  # fmt: skip
 
     def _assemble(self, solver, ieps, W):
         d = [

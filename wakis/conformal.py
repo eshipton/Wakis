@@ -178,19 +178,95 @@ def _line_lengths(plane, p, q, n_planes, along, nodes, lines):
     s = np.where(tb < 0, 1.0, -1.0) if along == 0 else np.where(tb > 0, 1.0, -1.0)
     m = np.searchsorted(nodes, c, side="right")
     keep = m < len(nodes)
-    idx = (plane[seg][keep], line[keep], m[keep])
-    A = np.zeros((n_planes, len(lines), len(nodes)))
-    B = np.zeros_like(A)
-    np.add.at(A, idx, s[keep])
-    np.add.at(B, idx, (s * c)[keep])
-    F = np.cumsum(A, axis=2) * nodes - np.cumsum(B, axis=2)
-    return np.diff(F, axis=2)
+    out = np.zeros((n_planes, len(lines), len(nodes) - 1))
+    if not np.any(keep):
+        return out
+    # Only the crossed lines (rows) are accumulated; the others stay zero.
+    # bincount adds the weights in input order, like np.add.at.
+    nn = len(nodes)
+    rows, inv = np.unique(
+        plane[seg][keep] * len(lines) + line[keep], return_inverse=True
+    )
+    flat = inv.ravel() * nn + m[keep]
+    A = np.bincount(flat, weights=s[keep], minlength=rows.size * nn)
+    B = np.bincount(flat, weights=(s * c)[keep], minlength=rows.size * nn)
+    A, B = A.reshape(rows.size, nn), B.reshape(rows.size, nn)
+    F = np.cumsum(A, axis=1) * nodes - np.cumsum(B, axis=1)
+    out.reshape(-1, nn - 1)[rows] = np.diff(F, axis=1)
+    return out
+
+
+# Threads for the plane sections (None: `wakis._lanczos.default_threads`);
+# set to 1 by `ConformalGeometry` on MPI grids
+_THREADS = [None]
 
 
 def _section_areas(plane, p, q, n_planes, u_nodes, v_nodes):
     """
     Section area inside each rectangle [u_i, u_i+1] x [v_j, v_j+1] of every
     plane, exact for polygonal sections (Green's theorem).
+
+    The planes holding segments are processed in contiguous blocks (on
+    threads for large grids), each restricted to the node ranges covering
+    its segments (one node of margin). This gives the same values as the
+    whole grid at once: every sum involves segments of one plane only, in
+    their original order, lines outside the range are not crossed and
+    rectangles outside it are not covered.
+
+    Returns
+    -------
+    area, lu, lv : see `_section_areas_full`.
+    """
+    from ._lanczos import _pool, default_threads
+
+    nu, nv = len(u_nodes), len(v_nodes)
+    area = np.zeros((n_planes, nu - 1, nv - 1))
+    lu = np.zeros((n_planes, nv, nu - 1))
+    lv = np.zeros((n_planes, nu, nv - 1))
+    if len(plane) == 0 or nu < 2 or nv < 2:
+        return area, lu, lv
+    order = np.argsort(plane, kind="stable")
+    sorted_planes = plane[order]
+    k_min, k_max = int(sorted_planes[0]), int(sorted_planes[-1]) + 1
+    threads = _THREADS[0] or default_threads()
+    work = (k_max - k_min) * nu * nv
+    n_blocks = 1 if threads == 1 or work < 400_000 else min(4 * threads, k_max - k_min)
+    edges = np.linspace(k_min, k_max, n_blocks + 1).round().astype(int)
+
+    def run(block):
+        k0, k1 = int(edges[block]), int(edges[block + 1])
+        i0, i1 = np.searchsorted(sorted_planes, [k0, k1])
+        if i1 == i0:
+            return
+        sel = order[i0:i1]
+        pl, ps, qs = plane[sel], p[sel], q[sel]
+        pts = np.concatenate([ps, qs])
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        # Lines at or below the minimum and above the maximum are not crossed
+        iu0 = max(int(np.searchsorted(u_nodes, lo[0], side="right")) - 1, 0)
+        iu1 = min(int(np.searchsorted(u_nodes, hi[0], side="right")) + 1, nu)
+        iv0 = max(int(np.searchsorted(v_nodes, lo[1], side="right")) - 1, 0)
+        iv1 = min(int(np.searchsorted(v_nodes, hi[1], side="right")) + 1, nv)
+        if iu1 - iu0 < 2 or iv1 - iv0 < 2:
+            return
+        a, b, c = _section_areas_full(
+            pl - k0, ps, qs, k1 - k0, u_nodes[iu0:iu1], v_nodes[iv0:iv1]
+        )
+        area[k0:k1, iu0 : iu1 - 1, iv0 : iv1 - 1] = a
+        lu[k0:k1, iv0:iv1, iu0 : iu1 - 1] = b
+        lv[k0:k1, iu0:iu1, iv0 : iv1 - 1] = c
+
+    if n_blocks == 1:
+        run(0)
+    else:
+        list(_pool().map(run, range(n_blocks)))
+    return area, lu, lv
+
+
+def _section_areas_full(plane, p, q, n_planes, u_nodes, v_nodes):
+    """
+    Section area inside each rectangle [u_i, u_i+1] x [v_j, v_j+1] of every
+    plane, exact for polygonal sections (Green's theorem), on the whole grid.
 
     The boundary of (section ∩ rectangle) consists of the section contour
     inside the rectangle and the parts of the rectangle sides inside the
@@ -353,12 +429,18 @@ def _dual_fractions(tri, nodes, n_sub):
     """
     dual = [_dual_bounds(n) for n in nodes]
     out = []
+    sections = {}  # the x and y edges share the sample planes
     for c in range(3):
         u_nodes = nodes[0] if c == 0 else dual[0]
         v_nodes = nodes[1] if c == 1 else dual[1]
         bounds = nodes[2] if c == 2 else dual[2]
         samples = _sub_samples(bounds, n_sub)
-        seg = _plane_segments(tri, 2, samples)
+        if c == 2 or "dual" not in sections:
+            seg = _plane_segments(tri, 2, samples)
+            if c != 2:
+                sections["dual"] = seg
+        else:
+            seg = sections["dual"]
         area, _, _ = _section_areas(*seg, len(samples), u_nodes, v_nodes)
         area = area.reshape(len(bounds) - 1, n_sub, *area.shape[1:]).mean(axis=1)
         volume = area / (np.diff(u_nodes)[:, None] * np.diff(v_nodes)[None, :])
@@ -406,6 +488,15 @@ class ConformalGeometry:
     """
 
     def __init__(self, grid, background_pec=False, mode="all", n_sub=4):
+        threads = _THREADS[0]
+        if getattr(grid, "use_mpi", False):
+            _THREADS[0] = 1  # one thread per MPI rank
+        try:
+            self._build(grid, background_pec, mode, n_sub)
+        finally:
+            _THREADS[0] = threads
+
+    def _build(self, grid, background_pec, mode, n_sub):
         self.mode = mode
         self.n_sub = n_sub
         origin = np.array([grid.x[0], grid.y[0], grid.z[0]])
@@ -514,21 +605,27 @@ class ConformalGeometry:
 
     def _interface_normals(self, surface, grid, key):
         """Surface normals at the E edges cut by the interface of a solid."""
-        normals = []
         centres = (
             grid.x[:-1] + grid.dx / 2,
             grid.y[:-1] + grid.dy / 2,
             grid.z[:-1] + grid.dz / 2,
         )
         nodes = (grid.x[:-1], grid.y[:-1], grid.z[:-1])
+        indices, points = [], []
         for c in range(3):
             f = self.fractions[key][c]
             cut = (f > 1e-9) & (f < 1 - 1e-9)
             idx = np.nonzero(cut)
             coords = [centres[a] if a == c else nodes[a] for a in range(3)]
-            points = np.stack([coords[a][idx[a]] for a in range(3)], axis=1)
+            indices.append(idx)
+            points.append(np.stack([coords[a][idx[a]] for a in range(3)], axis=1))
+        # One closest-cell search for the three components
+        found = _surface_normals(surface, np.concatenate(points))
+        normals, start = [], 0
+        for idx, pts in zip(indices, points):
             n = np.zeros((*self.shape, 3))
-            n[idx] = _surface_normals(surface, points)
+            n[idx] = found[start : start + len(pts)]
+            start += len(pts)
             normals.append(n)
         return normals
 
@@ -639,7 +736,7 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
 
     shape = areas[0].shape
     n = int(np.prod(shape))
-    flat = np.arange(n).reshape(shape, order="F")
+    strides = (1, shape[0], shape[0] * shape[1])  # flat index, order "F"
     ops, n_unstable = [], 0
     for w in range(3):
         u, v = _CYCLIC[w]
@@ -658,76 +755,90 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
                 idx = [slice(None)] * 3
                 idx[axis] = -1
                 receiver[tuple(idx)] = False
+        receiver_f = receiver.ravel(order="F")
 
-        def neighbour(array, axis, step):
-            out = np.roll(array, -step, axis=axis)
-            edge = [slice(None)] * 3
-            edge[axis] = slice(-step, None) if step > 0 else slice(None, -step)
-            out[tuple(edge)] = False  # no wrap-around
-            return out
-
-        best = np.zeros(shape)
-        first = np.full(shape, -1)
-        second = np.full(shape, -1)
+        # Neighbour search on the unstable faces only (as on whole arrays:
+        # first direction with the best score wins, no wrap-around)
+        cand = np.flatnonzero(unstable.ravel(order="F"))
+        ijk = np.unravel_index(cand, shape, order="F")
+        best = np.zeros(cand.size)
+        first_c = np.full(cand.size, -1)
+        second_c = np.full(cand.size, -1)
         for axis, step, shared in (
             (u, 1, Lv1),
             (u, -1, Lv0),
             (v, 1, Lu1),
             (v, -1, Lu0),
         ):
-            ok1 = neighbour(receiver, axis, step)
-            ok2 = neighbour(receiver, axis, 2 * step)
-            # Prefer directions where both neighbours are stable
-            score = np.where(ok1, shared * (1.0 + 2.0 * ok2), 0.0)
-            take = unstable & (score > best)
+            pos1, pos2 = ijk[axis] + step, ijk[axis] + 2 * step
+            in1 = (pos1 >= 0) & (pos1 < shape[axis])
+            in2 = (pos2 >= 0) & (pos2 < shape[axis])
+            n1 = cand + step * strides[axis]
+            n2 = cand + 2 * step * strides[axis]
+            ok1 = in1 & receiver_f[np.where(in1, n1, 0)]
+            ok2 = in2 & receiver_f[np.where(in2, n2, 0)]
+            score = np.where(ok1, shared[ijk] * (1.0 + 2.0 * ok2), 0.0)
+            take = score > best
             best = np.where(take, score, best)
-            first = np.where(take, np.roll(flat, -step, axis=axis), first)
-            second = np.where(
-                take, np.where(ok2, np.roll(flat, -2 * step, axis=axis), -1), second
-            )
-        fixed = (first >= 0).ravel(order="F")
-        first, second = first.ravel(order="F"), second.ravel(order="F")
-        n_unstable += int(fixed.sum())
+            first_c = np.where(take, n1, first_c)
+            second_c = np.where(take, np.where(ok2, n2, -1), second_c)
+        fixed_c = first_c >= 0
+        n_unstable += int(fixed_c.sum())
         a = A.ravel(order="F")
         # Faces next to a sheet edge: one partner, weight from the edge field
-        alpha = np.ones(n)
-        sing = np.zeros(n, dtype=bool)
+        fx, fst, snd = cand[fixed_c], first_c[fixed_c], second_c[fixed_c]
+        alpha = np.ones(fx.size)
+        sing = np.zeros(fx.size, dtype=bool)
         if pattern is not None:
             field = pattern[0][w].ravel(order="F")
             segment = pattern[1][w].ravel(order="F")
-            partner = np.where(fixed, first, 0)
             sing = (
-                fixed
-                & np.isfinite(field)
-                & np.isfinite(field[partner])
-                & (segment == segment[partner])
+                np.isfinite(field[fx])
+                & np.isfinite(field[fst])
+                & (segment[fx] == segment[fst])
             )
-            alpha[sing] = field[sing] / field[partner][sing]
-        two = fixed & ~sing & (second >= 0)
-        one = fixed & (sing | (second < 0))
-        keep = ~fixed
-        idx = np.arange(n)
-        rows = np.concatenate([idx[keep], first[one], first[two], second[two]])
-        cols = np.concatenate([idx[keep], idx[one], idx[two], idx[two]])
-        vals = np.concatenate(
-            [
-                np.ones(keep.sum()),
-                alpha[one],
-                2 * np.ones(two.sum()),
-                -np.ones(two.sum()),
-            ]
+            alpha[sing] = field[fx][sing] / field[fst][sing]
+        two = ~sing & (snd >= 0)
+        one = sing | (snd < 0)
+        keep = np.ones(n, dtype=bool)
+        keep[fx] = False
+        # Redistribution matrix T restricted to the unstable columns, E:
+        # T = I on the kept faces + E; same entry order as the full T
+        e_rows = np.concatenate([fst[one], fst[two], snd[two]])
+        e_cols = np.concatenate([fx[one], fx[two], fx[two]])
+        e_vals = np.concatenate(
+            [alpha[one], 2 * np.ones(two.sum()), -np.ones(two.sum())]
         )
-        T = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
-        # Receiving area: reproduces H_u = alpha H_n, i.e. A_n + alpha^2 A_u
-        a_hat = T @ a
-        np.add.at(a_hat, first[sing], (alpha[sing] ** 2 - alpha[sing]) * a[sing])
+        # Receiving area a_hat = T a, rows summed in column order (as the
+        # CSR product with T); rows without donors are a_n
+        a_hat = np.where(keep, a, 0.0)
+        recv = np.unique(e_rows)
+        rows = np.concatenate([e_rows, recv])
+        cols = np.concatenate([e_cols, recv])
+        vals = np.concatenate([e_vals * a[e_cols], 1.0 * a[recv]])
+        order = np.lexsort((cols, rows))
+        a_hat[recv] = 0.0
+        np.add.at(a_hat, rows[order], vals[order])
+        # Reproduces H_u = alpha H_n, i.e. A_n + alpha^2 A_u
+        np.add.at(a_hat, fst[sing], (alpha[sing] ** 2 - alpha[sing]) * a[fx][sing])
         # Unstable faces without stable neighbours (e.g. the tip of a section
         # touching a grid plane) fall back to the stable area itself
-        clamp = (unstable.ravel(order="F") & ~fixed) * threshold * stab.ravel(order="F")
+        clamp = np.zeros(n)
+        lone = cand[~fixed_c]
+        clamp[lone] = threshold * stab.ravel(order="F")[lone]
         a_hat = np.maximum(a_hat, clamp)
         # Faces without open area and edges (inside PEC) keep H = 0
         inv = np.where(a_hat > 0, 1.0 / np.where(a_hat > 0, a_hat, 1.0), 0.0)
-        ops.append((T.T @ diags(inv) @ T).tocsr())
+        # G = T^T diag(inv) T = diag(inv) on kept faces + D E + (D E)^T
+        # + E^T D E (E has kept rows and unstable columns)
+        idx = np.flatnonzero(keep)
+        de = inv[e_rows] * e_vals
+        E = coo_matrix((e_vals, (e_rows, e_cols)), shape=(n, n)).tocsr()
+        ete = (E.T @ diags(inv) @ E).tocoo()
+        rows = np.concatenate([idx, e_rows, e_cols, ete.row])
+        cols = np.concatenate([idx, e_cols, e_rows, ete.col])
+        vals = np.concatenate([inv[idx], de, de, ete.data])
+        ops.append(coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr())
     return ops, n_unstable
 
 

@@ -252,7 +252,9 @@ def _host(array):
     return np.asarray(array.get() if hasattr(array, "get") else array)
 
 
-def stable_dt(solver, op=None, tol=1e-3, n_threads=None, return_info=False):
+def stable_dt(
+    solver, op=None, tol=1e-3, n_threads=None, device="auto", return_info=False
+):
     """
     Largest stable leapfrog time step 2 / sqrt(lambda_max(B A)) of a solver
     before its first step (conformal metrics, optional `TensorOperator`).
@@ -272,6 +274,8 @@ def stable_dt(solver, op=None, tol=1e-3, n_threads=None, return_info=False):
         10 tol on lambda_max (as for the ARPACK estimate it replaces).
     n_threads : int, optional
         Threads of the sparse products (default `default_threads`, 1 with MPI).
+    device : {'auto', 'cpu', 'gpu'}
+        'auto': on the GPU (CuPy) when ``solver.use_gpu``.
 
     Returns
     -------
@@ -295,25 +299,26 @@ def stable_dt(solver, op=None, tol=1e-3, n_threads=None, return_info=False):
     dtype = np.result_type(solver.dtype, solver.C.dtype, float)
     if op is not None and op.rows is not None and op.rows.size:
         dtype = np.result_type(dtype, op.Kp_host.dtype)
-    C = solver.C.tocsc()[:, active].tocsr()
-    faces = np.flatnonzero(np.diff(C.indptr))
-    C = C[faces]
-    G = diags(tds) @ solver.iDa.tocsr() @ diags(imu)
-    G = G.tocsr()[faces][:, faces]
-    Cop = ParallelCSR(C, n_threads, dtype)
-    Gop = ParallelCSR(G, n_threads, dtype)
-    CHop = ParallelCSR(C.conj().T.tocsr(), n_threads, dtype)
-    del C, G
+    if active.size < 0.8 * p.size:
+        # Lanczos vectors on the active edges only (e.g. PEC background):
+        # curl without the inactive edges and the faces they alone touch
+        C = solver.C.tocsc()[:, active].tocsr()
+        faces = np.flatnonzero(np.diff(C.indptr))
+        C = C[faces]
+    else:
+        # Few inactive edges (P = 0 there): keep the full operators
+        active = np.arange(p.size)
+        C = solver.C.tocsr()
+        faces = active
+    # tDs G imu on those faces, folded into the matrix entries
+    G = solver.iDa.tocsr()
+    G = G[faces][:, faces] if faces.size < G.shape[0] else G.copy()
+    G.data = G.data * tds[faces][np.repeat(np.arange(faces.size), np.diff(G.indptr))]
+    G.data *= imu[faces][G.indices]
+    CH = C.conj().T.tocsr()
     p_a = p[active]
     info = dict(edges=int(active.size), faces=int(faces.size))
-    f1 = np.empty(faces.size, dtype)
-    f2 = np.empty(faces.size, dtype)
-
-    def apply_K(x, out):
-        Cop.matvec(x, f1)
-        Gop.matvec(f1, f2)
-        return CHop.matvec(f2, out)
-
+    Kp = pos = None
     if op is not None and op.rows is not None and op.rows.size:
         rows = op.rows
         pos = np.searchsorted(active, rows)
@@ -323,21 +328,100 @@ def stable_dt(solver, op=None, tol=1e-3, n_threads=None, return_info=False):
             raise ValueError("Tensor-coupled edges must have a positive P diagonal.")
         # Scaled couplings diag(ds) Kp diag(ieps itda) on the coupled rows
         Kp = diags(ds[rows]) @ op.Kp_host @ diags(ieps[rows] * itda[rows])
-        Kop = ParallelCSR(Kp, n_threads, dtype)
         info["coupled"] = int(rows.size)
-
-        def corr(x):
-            return pos, Kop.matvec(x[pos])
-
+    if device == "auto":
+        device = "gpu" if getattr(solver, "use_gpu", False) else "cpu"
+    info["device"] = device
+    if device == "gpu":
+        lam, iters = _stable_lambda_gpu(C, G, CH, p_a, Kp, pos, dtype, tol, info, t0)
     else:
-        corr = None
+        Cop = ParallelCSR(C, n_threads, dtype)
+        Gop = ParallelCSR(G, n_threads, dtype)
+        CHop = ParallelCSR(CH, n_threads, dtype)
+        del C, G, CH
+        f1 = np.empty(faces.size, dtype)
+        f2 = np.empty(faces.size, dtype)
 
-    info["setup_s"] = time.perf_counter() - t0
-    lam, iters = lanczos_max(
-        apply_K, p_a, corr, dtype=dtype, tol=tol, n_threads=n_threads
-    )
+        def apply_K(x, out):
+            Cop.matvec(x, f1)
+            Gop.matvec(f1, f2)
+            return CHop.matvec(f2, out)
+
+        corr = None
+        if Kp is not None:
+            Kop = ParallelCSR(Kp, n_threads, dtype)
+
+            def corr(x):
+                return pos, Kop.matvec(x[pos])
+
+        info["setup_s"] = time.perf_counter() - t0
+        lam, iters = lanczos_max(
+            apply_K, p_a, corr, dtype=dtype, tol=tol, n_threads=n_threads
+        )
     dt = 2.0 / np.sqrt(abs(lam) * (1.0 + 10 * tol))
     if return_info:
         info["iterations"] = iters
         return dt, info
     return dt
+
+
+def _stable_lambda_gpu(C, G, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
+    """`lanczos_max` with CuPy arrays (same recurrence and start vector)."""
+    import time
+
+    import cupy as cp
+    from cupyx.scipy.sparse import csr_matrix
+
+    Cg, Gg, CHg = (csr_matrix(m.astype(dtype)) for m in (C, G, CH))
+    pg = cp.asarray(p)
+    Kg = csr_matrix(Kp.astype(dtype)) if Kp is not None else None
+    posg = cp.asarray(pos) if Kp is not None else None
+    info["setup_s"] = time.perf_counter() - t0
+    n = p.size
+    rng = np.random.default_rng(0)
+    r = rng.standard_normal(n).astype(dtype)
+    if np.iscomplexobj(r):
+        r += 1j * rng.standard_normal(n)
+    r = cp.asarray(r)
+
+    def apply_P(x):
+        y = (pg * x).astype(dtype, copy=False)
+        if Kg is not None:
+            y[posg] += Kg @ x[posg]
+        return y, float(cp.vdot(x, y).real)
+
+    z, bb = apply_P(r)
+    beta = np.sqrt(max(bb, 0.0))
+    if beta == 0:
+        return 0.0, 0
+    r /= beta
+    z /= beta
+    r_prev, beta_prev = None, 0.0
+    alphas, betas = [], []
+    theta = 0.0
+    for it in range(1, maxiter + 1):
+        w = CHg @ (Gg @ (Cg @ z))
+        alpha = float(cp.vdot(z, w).real)
+        w -= alpha * r
+        if r_prev is not None:
+            w -= beta_prev * r_prev
+        z_new, bb = apply_P(w)
+        beta = np.sqrt(max(bb, 0.0))
+        alphas.append(alpha)
+        if len(alphas) == 1:
+            theta, s_last = alphas[0], 1.0
+        else:
+            vals, vecs = eigh_tridiagonal(
+                np.array(alphas),
+                np.array(betas),
+                select="i",
+                select_range=(len(alphas) - 1, len(alphas) - 1),
+            )
+            theta, s_last = vals[0], vecs[-1, 0]
+        if beta * abs(s_last) <= tol * abs(theta) or beta == 0:
+            return float(theta), it
+        betas.append(beta)
+        r_prev, r = r, w / beta
+        z = z_new / beta
+        beta_prev = beta
+    return float(theta), maxiter

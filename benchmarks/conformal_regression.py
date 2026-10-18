@@ -96,6 +96,7 @@ def arrays(n):
         out[f"{name}/ieps_factor"] = solver.conformal_ieps_factor
         for c, op in enumerate(solver.conformal_face_ops):
             op = op.tocoo()
+            op.eliminate_zeros()
             order = np.lexsort((op.col, op.row))
             out[f"{name}/face_op{c}"] = np.stack(
                 [op.row[order], op.col[order], op.data[order]]
@@ -124,6 +125,8 @@ def compare(ref, new):
             worst = np.inf
             continue
         a, b = np.asarray(new[key], float), np.asarray(ref[key], float)
+        if "/face_op" in key:  # explicit zeros are not part of the operator
+            a, b = a[:, a[2] != 0], b[:, b[2] != 0]
         if a.shape != b.shape:
             lines.append(f"{key}: shape {a.shape} != {b.shape}")
             worst = np.inf

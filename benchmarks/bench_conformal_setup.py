@@ -62,6 +62,37 @@ def geometry(case):
     raise ValueError(case)
 
 kw, bg = geometry(case)
+
+# Wall time of the conformal phases (wrappers, also under cProfile)
+from wakis import conformal, tensor_averaging
+phases = {}
+
+def timed(owner, name, label):
+    fn = getattr(owner, name)
+    def wrapper(*args, **kwargs):
+        t = time.perf_counter()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            phases[label] = phases.get(label, 0.0) + time.perf_counter() - t
+    setattr(owner, name, wrapper)
+
+for owner, name in [
+    (conformal.ConformalGeometry, "__init__"), (conformal, "_dual_fractions"),
+    (conformal.ConformalGeometry, "_metrics"),
+    (conformal.ConformalGeometry, "_interface_normals"),
+    (conformal, "_redistribution"), (conformal, "_material_tensors"),
+    (conformal, "_sheet_edge_factors"), (conformal, "apply_conformal_materials"),
+    (conformal, "apply_conformal_timestep"), (tensor_averaging.TensorOperator, "assemble"),
+    (conformal, "max_stable_dt"), (tensor_averaging, "max_stable_dt"),
+]:
+    label = name if owner is not conformal.ConformalGeometry or name != "__init__" else "ConformalGeometry"
+    if owner is tensor_averaging and name == "max_stable_dt":
+        label = "max_stable_dt(tensor)"
+    timed(owner, name, label)
+import wakis.solverFIT3D as sf
+sf.conformal = conformal
+
 prof = cProfile.Profile()
 t0 = time.perf_counter()
 prof.enable()
@@ -79,26 +110,8 @@ for _ in range(steps):
     solver.one_step()
 step_s = (time.perf_counter() - t3) / max(steps, 1)
 st = pstats.Stats(prof)
-phases = {}
-names = {"ConformalGeometry.__init__": ("conformal.py", "__init__"),
-         "_dual_fractions": ("conformal.py", "_dual_fractions"),
-         "_metrics": ("conformal.py", "_metrics"),
-         "_interface_normals": ("conformal.py", "_interface_normals"),
-         "_redistribution": ("conformal.py", "_redistribution"),
-         "_material_tensors": ("conformal.py", "_material_tensors"),
-         "_sheet_edge_factors": ("conformal.py", "_sheet_edge_factors"),
-         "apply_conformal_materials": ("conformal.py", "apply_conformal_materials"),
-         "apply_conformal_timestep": ("conformal.py", "apply_conformal_timestep"),
-         "max_stable_dt(conformal)": ("conformal.py", "max_stable_dt"),
-         "max_stable_dt(tensor)": ("tensor_averaging.py", "max_stable_dt"),
-         "TensorOperator.assemble": ("tensor_averaging.py", "assemble"),
-         "_apply_stl_materials": ("solverFIT3D.py", "_apply_stl_materials")}
-for key, (fname, func) in names.items():
-    for (f, line, fn), stat in st.stats.items():
-        if f.endswith(fname) and fn == func:
-            if fname == "conformal.py" and func == "__init__" and line > 420:
-                continue
-            phases[key] = phases.get(key, 0.0) + stat[3]
+phases["conformal_total"] = phases.get("apply_conformal_materials", 0.0) + phases.get(
+    "apply_conformal_timestep", 0.0)
 if top:
     st.sort_stats("cumulative").print_stats(top)
     st.sort_stats("tottime").print_stats(top)
