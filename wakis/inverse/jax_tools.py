@@ -30,8 +30,9 @@ def jax_simulation(sim):
     callable
         Function rho -> {monitor: {output key: complex array}} with the
         structure of `sim.forward` (raw outputs; see `flux`,
-        `mode_amplitudes`, `farfield` and `power_waves`). Its reverse-mode derivative (jax.grad,
-        jax.vjp) runs `sim.vjp`; forward-mode (jax.jvp) is not defined.
+        `mode_amplitudes`, `farfield`, `power_waves` and `diffraction_orders`).
+        Its reverse-mode derivative (jax.grad, jax.vjp) runs `sim.vjp`;
+        forward-mode (jax.jvp) is not defined.
 
     Notes
     -----
@@ -324,3 +325,36 @@ def power_waves(V, I, z0):
     """
     root = 2 * np.sqrt(z0)
     return (V + z0 * I) / root, (V - z0 * I) / root
+
+
+def diffraction_orders(raw, monitor, polarization="linear"):
+    """
+    Diffraction-order amplitudes of a `DiffractionMonitor` from raw outputs,
+    as `DiffractionMonitor.get_amplitudes`.
+
+    Parameters
+    ----------
+    raw : dict
+        Raw outputs {'E0', 'H0', 'E1', 'H1'} of the monitor.
+    monitor : DiffractionMonitor
+        Initialized monitor, e.g. `AdjointSimulation.readouts[name]`.
+    polarization : {'linear', 'circular'}, optional
+        TE/TM ('up_s', 'up_p', 'down_s', 'down_p') or circular ('up_R',
+        'up_L', 'down_R', 'down_L') amplitudes. Default 'linear'.
+
+    Returns
+    -------
+    dict
+        Amplitudes [sqrt(W) s] of shape (n_freq, n_m, n_n), indexed as
+        `monitor.orders`; |a|^2 is the flux spectrum of the wave, so order
+        efficiencies are |a|^2 divided by the incident flux.
+    """
+    from ..diffraction import circular_amplitudes, decompose_orders
+
+    amps = decompose_orders(raw, monitor.geometry, jnp)
+    amps.pop("net")
+    if polarization == "circular":
+        return circular_amplitudes(amps, monitor.geometry)
+    if polarization != "linear":
+        raise ValueError("polarization must be 'linear' or 'circular'.")
+    return amps

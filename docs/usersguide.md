@@ -549,6 +549,69 @@ Points to keep in mind (details in the [physics guide](physicsguide.md)):
 * `tests/test_024_bloch.py` shows complete, validated set-ups: oblique Fresnel reflection, and photonic-crystal bands from a broadband pulse with spectral peak finding.
 
 
+#### Diffraction efficiencies of gratings and metasurfaces: `DiffractionMonitor`
+
+`DiffractionMonitor(frequencies, center, size)` decomposes the field on a plane of a periodic (or Bloch) unit cell into its diffraction orders: complex amplitudes and powers of each propagating order $(m, n)$, split into waves going up (along $+$normal) and down, and into TE/TM or circular polarizations. With a monitor between the source and the structure (incident wave = up $(0,0)$, reflected orders = down) and one beyond it (transmitted orders = up), one run gives all reflection and transmission efficiencies. A lamellar grating (period $1.5\lambda_0$, $\varepsilon = 4$ teeth on glass) lit from the substrate at normal incidence:
+
+```python
+import numpy as np
+from scipy.constants import c, epsilon_0
+import wakis
+from wakis.sources import CurrentSource, GaussianSource
+
+lam = 0.3                       # free-space wavelength at f0 [m]
+f0, P, H = c / lam, 1.5 * lam, 0.5 * lam
+N = 120                         # cells per period: 80 per wavelength
+dx = P / N
+nz = round(2.7 * lam / dx)
+grid = wakis.GridFIT3D(0, P, 0, dx, -1.1 * lam, -1.1 * lam + nz * dx, N, 1, nz)
+solver = wakis.SolverFIT3D(grid, bc_low=["periodic", "periodic", "cpml"],
+                           bc_high=["periodic", "periodic", "cpml"], n_pml=15)
+
+def eps(x, z):                  # glass below z = 0, teeth for x < P/2, 0 < z < H
+    tooth = (np.mod(x, P) < P / 2) & (z > 0) & (z < H)  # periodic in x
+    return np.where(z < 0, 2.25, np.where(tooth, 4.0, 1.0))
+
+# Edge permittivity: mean of the media touching each edge (edges on nodes see
+# both sides), i.e. tests/test_032_diffraction.py::_set_grating
+xn, zn = grid.x[:-1], grid.z[:-1]
+xm, zm = xn + dx / 2, zn + np.diff(grid.z) / 2
+d = 1e-9
+for comp, (x, z) in {"x": (xm, zn), "y": (xn, zn), "z": (xn, zm)}.items():
+    X, Z = np.meshgrid(x, z, indexing="ij")
+    ox = [0.0] if comp == "x" else [-d, d]
+    oz = [0.0] if comp == "z" else [-d, d]
+    e = np.mean([eps(X + a, Z + b) for a in ox for b in oz], axis=0)
+    solver.ieps[:, :, :, comp] = 1 / (epsilon_0 * e[:, None, :])
+
+src = GaussianSource(frequency=f0, fwidth=0.15 * f0)
+sheet = CurrentSource(src, component="y",            # TE: E along y ("x" for TM)
+                      center=(P / 2, dx / 2, -0.7 * lam), size=(P, dx, 0))
+refl = wakis.DiffractionMonitor([f0], center=(0, 0, -0.4 * lam), size=(P, dx, 0))
+trans = wakis.DiffractionMonitor([f0], center=(0, 0, lam), size=(P, dx, 0))
+solver.emsolve(int((src.end_time + 40 / f0) / solver.dt), source=sheet,
+               monitors=[refl, trans])
+
+i0 = list(refl.orders[0]).index(0)
+incident = refl.get_power()["up"][:, i0, 0]          # incident flux (0, 0)
+R = refl.get_power(incident)["down"][0, :, 0]        # efficiency per order m
+T = trans.get_power(incident)["up"][0, :, 0]
+print(dict(zip(refl.orders[0].tolist(), R.round(4).tolist())))   # {-2: 0.0278, -1: 0.1039, 0: 0.2161, ...}
+print(dict(zip(trans.orders[0].tolist(), T.round(4).tolist())))  # {-1: 0.1981, 0: 0.1241, 1: 0.1981}
+print(R.sum() + T.sum())                       # 1 - 2e-4
+theta, phi = trans.order_angles()              # diffraction angles [rad]
+amps = trans.get_amplitudes()                  # 'up_s', 'up_p', ... complex [sqrt(W) s]
+circ = trans.get_amplitudes("circular")        # 'up_R', 'up_L', ...
+```
+
+fmmax (RCWA) gives $R = \{0.0276, 0.1050, 0.2148\}$ and $T = \{0.1980, 0.1241\}$ for this grating; the error decreases at second order with the mesh (physics guide, 'Diffraction orders'). Things to know:
+* Order $(m,n)$ has the physical tangential wavevector $\mathbf{k}_\text{inc} + 2\pi(m/P_b, n/P_c)$, with $(b, c) = (x, y)$ for a $z$-normal plane. Arrays have shape `(n_freq, len(orders[0]), len(orders[1]))`; `propagating` flags the propagating orders (others are zero).
+* At normal incidence TE means $E_y$ and TM $E_x$ (as in invrs-gym); otherwise TE is perpendicular to each order's plane of incidence. `'R'`/`'L'` are negative/positive helicity (optics convention, as invrs-gym's meta-atom library).
+* Amplitude phases use Wakis' $e^{+2\pi i f t}$ phasors; conjugate them to compare with RCWA codes ($e^{-i\omega t}$), e.g. for meta-atom phase libraries.
+* At oblique incidence use complex Bloch fields as above; the $f>0$ spectrum describes incidence with tangential wavevector $-\mathbf{k}_\text{bloch}$, so pass `k_bloch = -k_par` (and the source profile $e^{i\mathbf{k}_\text{bloch}\cdot\mathbf{r}}$) to describe $+\mathbf{k}_\parallel$.
+* The medium at the monitor plane must be homogeneous and lossless, and the transverse mesh uniform.
+* For inverse design, use the monitor in an `AdjointSimulation` and `wakis.inverse.diffraction_orders(raw, sim.readouts[name])` in the JAX objective, e.g. `jnp.abs(diffraction_orders(out["trans"], mon)["up_s"][:, i1, 0])**2 / incident`.
+
 #### Dispersive materials: gold film reflectance
 
 Frequency-dependent materials (`DispersiveMaterial`: Drude, Lorentz and Debye poles plus conductivity, see the physics guide) are added to box regions with `solver.add_dispersive_material` or assigned to STL solids directly in `stl_materials`. `dispersive_lib` provides gold, silver, aluminium (Rakić Lorentz–Drude), fused silica, silicon (Sellmeier), FR-4 and RO4350B (Debye). The reflectance of an optically thick gold film at normal incidence, in a quasi-1D periodic cell, normalized by a run without the film:

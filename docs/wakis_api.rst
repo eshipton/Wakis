@@ -26,4 +26,5 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_routines
    wakis_boundaries
    wakis_bloch
+   wakis_diffraction
    wakis_templates
