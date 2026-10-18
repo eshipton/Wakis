@@ -170,6 +170,35 @@ class _DispersiveTranspose:
         self.lam_acc = lam_acc
 
 
+class _TensorTranspose:
+    """
+    Transposed tensor-averaging correction (`wakis.tensor_averaging`) on
+    the coupled edges R, with E* the solver step and E^n the old field::
+
+        E'_R = E*_R + K' (E*_R - E^n_R)
+        lam_E*_R = (I + K'^H) lam_E'_R,   lam_E^n_R += -K'^H lam_E'_R
+    """
+
+    def __init__(self, op, solver):
+        self.idx = op.rows_dev
+        self.idx_host = op.rows
+        self.KpH = _hermitian(op.Kp_host, solver)
+
+    keys = ()
+
+    def get_state(self, state):
+        pass
+
+    def set_state(self, state, xp):
+        pass
+
+    def transpose_post(self, lam, lam_star, extra, out):
+        lam_e = lam["E"][self.idx]
+        v = self.KpH @ lam_e
+        lam_star[self.idx] = lam_e + v
+        extra[self.idx] -= v
+
+
 class AdjointStepper:
     def __init__(self, solver, elements=()):
         """
@@ -189,8 +218,9 @@ class AdjointStepper:
             lam_H = lam_H' + dt B^H lam_E*,
             lam_E = (1 - S) lam_E* - dt A^H lam_H
 
-        CPML adds the psi variables to the state. Lumped elements and
-        dispersive groups then correct E on their own edges,
+        CPML adds the psi variables to the state. Lumped elements,
+        dispersive groups and the tensor averaging then correct E on their
+        own edges,
         E' = P(E*, E, aux); their transposes give lam_E* from lam_E' and add
         terms to lam_E and to the auxiliary multipliers. See the physics guide
         for all transposed updates.
@@ -231,10 +261,13 @@ class AdjointStepper:
             raise NotImplementedError("The adjoint does not support TFSF injection.")
         self.mpi = solver.use_mpi and solver.grid.use_mpi
         dispersive = getattr(solver, "_dispersive_groups", [])
-        if self.mpi and (solver.activate_cpml or elements or dispersive):
+        tensor = getattr(solver, "tensor_operator", None)
+        if tensor is not None and tensor.rows.size == 0:
+            tensor = None
+        if self.mpi and (solver.activate_cpml or elements or dispersive or tensor):
             raise NotImplementedError(
                 "With MPI, the adjoint supports the standard step only (no CPML, "
-                "lumped elements or dispersive media)."
+                "lumped elements, dispersive media or tensor averaging)."
             )
 
         self.solver = solver
@@ -257,13 +290,17 @@ class AdjointStepper:
         self.dispersive = [
             _DispersiveTranspose(g, gi) for gi, g in enumerate(dispersive)
         ]
-        corrected = [ext.idx_host for ext in self.lumped + self.dispersive]
+        self.tensor = [] if tensor is None else [_TensorTranspose(tensor, solver)]
+        corrected = [
+            ext.idx_host for ext in self.lumped + self.dispersive + self.tensor
+        ]
         if corrected:
             joined = np.concatenate(corrected)
             if np.unique(joined).size != joined.size:
                 raise NotImplementedError(
-                    "Lumped elements must not share edges with each other or "
-                    "with dispersive media in the adjoint."
+                    "Lumped elements must not share edges with each other, "
+                    "with dispersive media or with tensor-averaged edges in the "
+                    "adjoint."
                 )
 
         if not self.cpml:
@@ -452,7 +489,7 @@ class AdjointStepper:
         if self.mpi:
             lam = dict(lam, E=lam["E"].copy(), H=lam["H"].copy())
             self._fold_ghosts([lam["E"], lam["H"]])
-        corrections = self.lumped + self.dispersive
+        corrections = self.lumped + self.dispersive + self.tensor
         out = {}
         if not corrections:
             # The solver step is the whole step: lam_E* = lam_E'
@@ -680,7 +717,11 @@ class AdjointSimulation:
                 raise ValueError(f"The element of readout {name!r} is not a source.")
 
         xp = solver.E.xp
-        idx = xp.asarray(self.design.flat_idx)
+        disp = self.design.dispersive_group(solver)
+        self._tensor = self._tensor_tracking(solver, disp)
+        idx = xp.asarray(
+            self.design.flat_idx if self._tensor is None else self._tensor["track"]
+        )
         complex_fields = np.iscomplexobj(solver.E.array)
         store = np.result_type(self.store_dtype, np.complex64 if complex_fields else 1)
         on_host = self._store_on_host(
@@ -688,7 +729,6 @@ class AdjointSimulation:
         )
         increments = (np if on_host else xp).empty((self.Nt, idx.size), dtype=store)
         ieps_d = solver.ieps.array[idx].copy()
-        disp = self.design.dispersive_group(solver)
         for n in range(self.Nt):
             t = n * solver.dt
             for src in sources:
@@ -696,7 +736,11 @@ class AdjointSimulation:
             e_old = solver.E.array[idx]
             if disp is None:
                 solver.one_step()
-                row = (solver.E.array[idx] - e_old) / ieps_d
+                delta = solver.E.array[idx] - e_old
+                if self._tensor is not None:
+                    # Increment of the diagonal step (before the correction)
+                    delta[self._tensor["rows"]] = solver.tensor_operator.last_increment
+                row = delta / ieps_d
             else:
                 # The ADE overwrites the design edges: record the parameter
                 # sensitivity of the correction instead (see MaterialGrid)
@@ -717,6 +761,43 @@ class AdjointSimulation:
         if comm is not None:
             raw = self._gather(raw, comm)
         return raw
+
+    def _tensor_tracking(self, solver, disp):
+        """
+        Edges whose step increments the gradient needs with tensor averaging.
+
+        With N = diag(ieps) + K the step is E' = E + N g, g = dt (curl H - J)
+        the increment of D, so dF/dieps_a = sum_n lam'_a g_a and
+        dF/dS_ab = sum_n (lam'_a g_b / W_a + lam'_b g_a / W_b) for the
+        coupling S = W K, with lam' the adjoint of E'. g is recorded on the
+        design edges and on all coupled edges (`track`).
+        """
+        op = getattr(solver, "tensor_operator", None)
+        if op is None or op.rows.size == 0:
+            return None
+        if disp is not None:
+            raise NotImplementedError(
+                "Dispersive designs are not supported with tensor averaging."
+            )
+        design = self.design.flat_idx
+        track = np.union1d(design, op.rows)
+        xp = solver.E.xp
+        out = {
+            "track": track,
+            "rows": xp.asarray(np.searchsorted(track, op.rows)),
+            "design": xp.asarray(np.searchsorted(track, design)),
+            "pairs": None,
+        }
+        if self.design.smoothing == "tensor":
+            ea, eb = op.pair_a, op.pair_b
+            sel = np.isin(ea, design) | np.isin(eb, design)
+            ea, eb = ea[sel], eb[sel]
+            out["pairs"] = (ea, eb, np.real(op.pair_coef[sel]))
+            out["pa"] = xp.asarray(np.searchsorted(track, ea))
+            out["pb"] = xp.asarray(np.searchsorted(track, eb))
+            out["iWa"] = xp.asarray(1.0 / op.W[ea])
+            out["iWb"] = xp.asarray(1.0 / op.W[eb])
+        return out
 
     def _gather(self, raw, comm):
         """
@@ -791,7 +872,12 @@ class AdjointSimulation:
         ade = None
         if own is not None:
             ade = next(ext for ext in stepper.dispersive if ext.group is own)
+        tensor = self._tensor
         grad = xp.zeros(idx.size)
+        if tensor is not None:
+            track = xp.asarray(tensor["track"])
+            if tensor["pairs"] is not None:
+                grad_pairs = xp.zeros(len(tensor["pairs"][0]))
         lam = stepper.zero_state()
         for n in reversed(range(self.Nt)):
             t = n * dt
@@ -802,10 +888,31 @@ class AdjointSimulation:
                 w_conj = dt * xp.exp(2j * np.pi * tap.freqs * (t + tap.offset))
                 source = tap.WH @ (w_conj @ tap.G)
                 lam[tap.field][tap.rows] += source if complex_fields else source.real
+            if tensor is not None:
+                # Adjoint of the corrected E' = E + N g
+                lam_new = lam["E"][track]
+                g = xp.asarray(self._increments[n])
+                grad += xp.real(
+                    xp.conj(lam_new[tensor["design"]]) * g[tensor["design"]]
+                )
+                if tensor["pairs"] is not None:
+                    pa, pb = tensor["pa"], tensor["pb"]
+                    grad_pairs += xp.real(
+                        xp.conj(lam_new[pa]) * g[pb] * tensor["iWa"]
+                        + xp.conj(lam_new[pb]) * g[pa] * tensor["iWb"]
+                    )
+                lam = stepper.step(lam)
+                continue
             lam = stepper.step(lam)
             sens = stepper.lam_star[idx] if ade is None else ade.lam_acc
             grad += xp.real(xp.conj(sens) * xp.asarray(self._increments[n]))
-        grad = self.design.vjp(self.rho, _host(grad))
+        if tensor is not None and tensor["pairs"] is not None:
+            ea, eb, coef = tensor["pairs"]
+            grad = self.design.vjp(
+                self.rho, _host(grad), (ea, eb, coef * _host(grad_pairs))
+            )
+        else:
+            grad = self.design.vjp(self.rho, _host(grad))
         if comm is not None:
             grad = comm.allreduce(grad)
         return grad

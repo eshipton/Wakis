@@ -5,7 +5,7 @@
 
 import numpy as np
 from scipy.constants import epsilon_0 as eps_0
-from scipy.sparse import coo_matrix, diags
+from scipy.sparse import coo_matrix, diags, identity, kron
 
 from ..dispersive import _ade_coefficients
 from ..field_monitors import _flat_index
@@ -29,8 +29,34 @@ def _linear_weights(x, lo, hi, n):
     return i0, u - i0
 
 
+def _difference_matrix(n, spacing):
+    """Central differences (one-sided at the ends) on n nodes [1/m]."""
+    if n == 1:
+        return coo_matrix((1, 1))
+    rows = np.r_[0, 0, np.arange(1, n - 1).repeat(2), n - 1, n - 1]
+    cols = np.r_[0, 1, np.c_[np.arange(n - 2), np.arange(2, n)].ravel(), n - 2, n - 1]
+    vals = np.r_[-1, 1, np.tile([-0.5, 0.5], n - 2), -1, 1] / spacing
+    return coo_matrix((vals, (rows, cols)), shape=(n, n))
+
+
+# Regularization of the normal m = g / sqrt(|g|^2 + delta^2) of a density
+# gradient g: delta = _NORMAL_REG / (design node spacing). At an interface
+# |g| ~ 1 / spacing, so m is the unit normal to within 1e-4; in uniform
+# regions m -> 0 and the tensor becomes isotropic (and stays differentiable).
+_NORMAL_REG = 1e-2
+
+
 class MaterialGrid:
-    def __init__(self, center, size, shape, eps_min=1.0, eps_max=4.0, material=None):
+    def __init__(
+        self,
+        center,
+        size,
+        shape,
+        eps_min=1.0,
+        eps_max=4.0,
+        material=None,
+        smoothing=None,
+    ):
         """
         Design region whose relative permittivity is set by a density rho.
 
@@ -59,6 +85,25 @@ class MaterialGrid:
             filled edge of `SolverFIT3D.add_dispersive_material`
             (eps_inf, pole and conductivity contributions scaled by w).
             `eps_max` is then ignored.
+        smoothing : {None, 'tensor'}, optional
+            None (default): the isotropic interpolation above. 'tensor':
+            subpixel smoothing with the full averaged tensor. The
+            interpolated density f = P rho, clipped to [0, 1], is the fill
+            fraction of the eps_max material in the averaging pixel of each
+            edge and the gradient g of the interpolated nodal central
+            differences of rho gives the interface normal
+            m = g / sqrt(|g|^2 + delta^2). Each edge then gets the
+            inverse-permittivity tensor
+            T = I / <eps> + (<1/eps> - 1/<eps>) m m^T, with
+            <eps> = eps_min + (eps_max - eps_min) f and
+            <1/eps> = (1 - f) / eps_min + f / eps_max: its diagonal entry
+            on the edge and its off-diagonal entries through the corner
+            couplings of `wakis.tensor_averaging`. rho should be the
+            filtered (and projected) density; smooth level-set designs then
+            get boundaries that move continuously within the cells. The map
+            rho -> T is differentiable and `vjp` is exact (see "Tensor
+            subpixel averaging" in the physics guide). Not combined with
+            `material`; real fields only.
 
         Notes
         -----
@@ -77,6 +122,13 @@ class MaterialGrid:
         self.eps_min = float(eps_min)
         self.eps_max = float(eps_max)
         self.material = material
+        if smoothing not in (None, "tensor"):
+            raise ValueError("smoothing must be None or 'tensor'.")
+        if smoothing is not None and material is not None:
+            raise NotImplementedError(
+                "Tensor smoothing is not available for dispersive designs."
+            )
+        self.smoothing = smoothing
         self.P = None
 
     def _build(self, solver):
@@ -123,6 +175,23 @@ class MaterialGrid:
         keep = _host(solver.ieps.array)[flat_idx] != 0
         self.flat_idx = flat_idx[keep]
         self.P = P[keep]
+        self.N = solver.N
+        if self.smoothing is None:
+            return
+        # Gradient of the interpolated nodal central differences of rho
+        spacing = np.where(
+            np.array(self.shape) > 1,
+            self.size / np.maximum(np.array(self.shape) - 1, 1),
+            np.inf,
+        )
+        self.G = []
+        for d in range(3):
+            factors = [identity(n) for n in self.shape]
+            factors[d] = _difference_matrix(self.shape[d], spacing[d])
+            D = kron(kron(factors[0], factors[1]), factors[2]).tocsr()
+            self.G.append((self.P @ D).tocsr())
+        # (no gradient at all when every axis has a single node)
+        self.delta = max(_NORMAL_REG / np.min(spacing), 1e-30)
 
     def _check(self, rho):
         rho = np.asarray(rho, dtype=float)
@@ -180,8 +249,13 @@ class MaterialGrid:
         xp = solver.E.xp
         idx = xp.asarray(self.flat_idx)
         ieps_old = solver.ieps.array[idx]
-        eps_r = self.eps_r(rho) if self.material is None else self.eps_min
-        ieps_new = xp.asarray(1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size))
+        if self.smoothing == "tensor":
+            terms = self._tensor_terms(self._check(rho))
+            self._terms = terms
+            ieps_new = xp.asarray(terms["ieps"])
+        else:
+            eps_r = self.eps_r(rho) if self.material is None else self.eps_min
+            ieps_new = xp.asarray(1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size))
         solver.ieps.array[idx] = ieps_new
 
         if not solver.activate_cpml:
@@ -202,6 +276,57 @@ class MaterialGrid:
                 solver.iDeps = diags(_host(solver.ieps.toarray()), dtype=solver.dtype)
         if self.material is not None:
             self._apply_dispersive(solver, self.P @ rho.ravel())
+        op = getattr(solver, "tensor_operator", None)
+        if self.smoothing == "tensor":
+            self._apply_tensor(solver, op)
+        elif op is not None:
+            # K' = K diag(1/ieps) depends on the new diagonal
+            op.install(solver)
+
+    def _tensor_terms(self, rho):
+        """
+        Fill fraction, normal and tensor entries on the design edges.
+
+        Returns a dict with f (clipped P rho), inside (0 < P rho < 1), g
+        (density gradient [1/m]), q = |g|^2 + delta^2, m = g / sqrt(q), the
+        averages A = 1/<eps_r>, B = <1/eps_r>, aniso = B - A, comp (edge
+        component) and ieps = (A + aniso m_comp^2) / eps_0 [m/F].
+        """
+        r = rho.ravel()
+        raw = self.P @ r
+        f = np.clip(raw, 0.0, 1.0)
+        g = np.stack([G @ r for G in self.G], axis=1)
+        q = np.sum(g**2, axis=1) + self.delta**2
+        m = g / np.sqrt(q)[:, None]
+        A = 1.0 / (self.eps_min + (self.eps_max - self.eps_min) * f)
+        B = (1.0 - f) / self.eps_min + f / self.eps_max
+        aniso = np.clip(B - A, 0.0, None)
+        comp = self.flat_idx // self.N
+        n = np.arange(f.size)
+        ieps = (A + aniso * m[n, comp] ** 2) / eps_0
+        inside = (raw > 0) & (raw < 1)
+        return dict(f=f, inside=inside, g=g, q=q, m=m, A=A, B=B, aniso=aniso,
+                    comp=comp, ieps=ieps)  # fmt: skip
+
+    def _apply_tensor(self, solver, op):
+        """Write the off-diagonal tensor of the design edges and check dt."""
+        from .. import tensor_averaging as ta
+
+        if np.iscomplexobj(solver.E.array):
+            raise NotImplementedError("Tensor smoothing needs real fields.")
+        if op is None:
+            op = ta.TensorOperator(solver)
+            solver.tensor_operator = op
+        t = self._terms
+        op.set_edges(self.flat_idx, t["aniso"] / eps_0, t["m"])
+        op.install(solver)
+        dt_base = getattr(solver, "conformal_dt_max", None) or ta.yee_dt(solver)
+        dt_max = ta.bound_stable_dt(solver, op, dt_base)
+        if solver.dt > dt_max:
+            raise ValueError(
+                f"dt={solver.dt:.3e} s exceeds the stability bound {dt_max:.3e} s "
+                "of the tensor-smoothed design; use cfln <= 0.5."
+            )
 
     def _apply_dispersive(self, solver, w):
         """
@@ -255,12 +380,14 @@ class MaterialGrid:
         lorentz = sum((p - p_old) for _, _, _, p, p_old in group["lorentz"])
         return (d_eps - loss) * e_old - lorentz - debye_old - (d_eps + loss) * e_new
 
-    def vjp(self, rho, grad_ieps):
+    def vjp(self, rho, grad_ieps, pair_grad=None):
         """
         Pull the gradient with respect to ieps on the design edges back to rho.
 
         dF/drho = (eps_max - eps_min) P^T [dF/dieps * dieps/deps_r], with
-        ieps = 1/(eps_0 eps_r), so dieps/deps_r = -1/(eps_0 eps_r^2).
+        ieps = 1/(eps_0 eps_r), so dieps/deps_r = -1/(eps_0 eps_r^2). With
+        ``smoothing='tensor'`` the chain rule runs through the fill fraction
+        and the normal of every edge (see `_tensor_vjp`).
 
         Parameters
         ----------
@@ -270,12 +397,19 @@ class MaterialGrid:
             dF/dieps on the design edges, ordered as `flat_idx` [F/m * units
             of F].
 
+        pair_grad : tuple (ea, eb, w), optional
+            Tensor smoothing: coupled edge pairs (flat indices) and
+            dF/dT_ij of each pair, where T_ij(a) and T_ij(b) enter the
+            coupling S_ab = c_ab (T_ij(a) + T_ij(b)).
+
         Returns
         -------
         ndarray
             dF/drho with the shape of rho.
         """
         grad_ieps = _host(grad_ieps)
+        if self.smoothing == "tensor":
+            return self._tensor_vjp(rho, grad_ieps, pair_grad)
         if self.material is not None:
             # grad_ieps holds dF/dw for the fill fraction w = P rho
             return (self.P.T @ grad_ieps).reshape(self.shape)
@@ -283,3 +417,50 @@ class MaterialGrid:
         grad_eps = -grad_ieps / (eps_0 * eps_r**2)
         grad = (self.eps_max - self.eps_min) * (self.P.T @ grad_eps)
         return grad.reshape(self.shape)
+
+    def _tensor_vjp(self, rho, grad_ieps, pair_grad):
+        """
+        dF/drho through ieps_a = (A + a m_c^2) / eps_0 and the off-diagonal
+        entries T_cj(a) = a m_c m_j / eps_0 of every design edge (component
+        c), with A = 1/<eps>, a = <1/eps> - 1/<eps>, f = P rho and
+        m = g / sqrt(|g|^2 + delta^2), g = G rho.
+        """
+        t = self._tensor_terms(self._check(rho))
+        n_e = self.flat_idx.size
+        n = np.arange(n_e)
+        comp, m, aniso = t["comp"], t["m"], t["aniso"]
+        # dF/dT_cj(a) for the design edges (column j)
+        sT = np.zeros((n_e, 3))
+        if pair_grad is not None:
+            ea, eb, w = (np.asarray(x) for x in pair_grad)
+            order = np.argsort(self.flat_idx)
+            sorted_idx = self.flat_idx[order]
+            for e_own, e_other in ((ea, eb), (eb, ea)):
+                pos = np.minimum(np.searchsorted(sorted_idx, e_own), n_e - 1)
+                hit = sorted_idx[pos] == e_own
+                np.add.at(sT, (order[pos[hit]], e_other[hit] // self.N), w[hit])
+        sT[n, comp] = 0.0
+        s_d = grad_ieps / eps_0
+        sT = sT / eps_0
+        mc = m[n, comp]
+        off = np.einsum("ij,ij->i", sT, m)  # sum_j sT_j m_j
+        # aniso enters ieps (times m_c^2) and T_cj (times m_c m_j)
+        d_aniso = s_d * mc**2 + mc * off
+        d_A = s_d - d_aniso
+        d_B = d_aniso
+        de = self.eps_max - self.eps_min
+        d_f = d_A * (-de * t["A"] ** 2) + d_B * (1 / self.eps_max - 1 / self.eps_min)
+        d_f = np.where(t["inside"], d_f, 0.0)
+        # dF/dm_k: from ieps (2 a s_d m_c at k = c) and T_cj (a sT_j m_c, k = j;
+        # a sum_j sT_j m_j at k = c)
+        d_m = aniso[:, None] * sT * mc[:, None]
+        d_m[n, comp] += aniso * (2 * s_d * mc + off)
+        sq = np.sqrt(t["q"])
+        d_g = (
+            d_m / sq[:, None]
+            - (np.einsum("ij,ij->i", d_m, t["g"]) / sq**3)[:, None] * t["g"]
+        )
+        grad = self.P.T @ d_f
+        for k in range(3):
+            grad = grad + self.G[k].T @ d_g[:, k]
+        return np.asarray(grad).reshape(self.shape)
