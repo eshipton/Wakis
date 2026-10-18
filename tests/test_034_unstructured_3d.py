@@ -40,13 +40,14 @@ def sphere():
 
 class TestEigenmodes:
     def test_pec_sphere(self, sphere):
-        """TM_11 (k a = 2.744, 3-fold) and TE_11 (k a = 4.493 ... ) family:
-        first 10 modes within 1.2 % at h = a/4 (2.6k tetrahedra)."""
+        """First 10 modes (TM11 x3 at k a = 2.744, TM21 x5 at 3.870, TE11 at
+        4.493) at h = a/4 (2.4k tetrahedra): TM11 within 0.5 %, all within
+        2 % (TE11 has k h = 1.1, about 6 edges per wavelength)."""
         ref = analytic.sphere_in_cavity(1.0, 0.0, 1.0, "all", 10)
         s = UnstructuredFIT3D(sphere)
         f, e = s.eigenmodes(10, f_target=3.6 * c / (2 * np.pi))
         err = np.abs(k_of(f) / ref - 1)
-        assert err.max() < 1.2e-2
+        assert err.max() < 2e-2
         assert err[:3].max() < 5e-3
         assert np.allclose(e[s.fixed], 0)
 
@@ -71,16 +72,24 @@ class TestEigenmodes:
         assert np.abs(k[3:] / ref_te - 1).max() < 2.5e-2
 
     @pytest.mark.slow
-    def test_pec_sphere_convergence(self):
-        """2nd-order convergence of the TM_11 triplet (VM: h down to a/11)."""
-        ref = analytic.sphere_in_cavity(1.0, 0.0, 1.0, "all", 3)
+    @pytest.mark.parametrize("case", ["pec_te11", "dielectric_tm1"])
+    def test_convergence(self, case):
+        """Second-order convergence (VM, h = a/4 -> a/8, 2k -> 22k tets):
+        TE11 of the PEC sphere (k a = 4.493) and the TM1 triplet of the
+        eps = 4 sphere, whose E crosses the curved interface."""
+        if case == "pec_te11":
+            radii, mats = [1.0], {}
+            ref = analytic.sphere_in_cavity(1.0, 0.0, 1.0, "TE", 1)[0]
+        else:
+            radii, mats = [0.5, 1.0], {0: [4.0, 1.0]}
+            ref = analytic.sphere_in_cavity(1.0, 0.5, 4.0, "TM", 1)[0]
         errs = []
         hs = (0.25, 0.125)
         for h in hs:
-            s = UnstructuredFIT3D(ball_mesh([1.0], h))
-            f, _ = s.eigenmodes(3, f_target=0.95 * ref[0] * c / (2 * np.pi))
-            errs.append(np.abs(k_of(f) / ref - 1).mean())
-        assert np.log(errs[0] / errs[1]) / np.log(hs[0] / hs[1]) > 1.6
+            s = UnstructuredFIT3D(ball_mesh(radii, h), mats)
+            f, _ = s.eigenmodes(3, f_target=ref * c / (2 * np.pi))
+            errs.append(abs(np.mean(k_of(f)) / ref - 1))
+        assert np.log(errs[0] / errs[1]) / np.log(hs[0] / hs[1]) > 1.7, errs
 
 
 class TestTimeDomain:

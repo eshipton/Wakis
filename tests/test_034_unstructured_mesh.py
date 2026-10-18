@@ -91,8 +91,9 @@ class TestMeshers:
 
     def test_ball_mesh_conforming(self):
         """Shells conform (the material interface is made of mesh faces
-        with all nodes on r = b, an inscribed polyhedron) and the interior
-        dual measures of the Delaunay mesh are non-negative."""
+        with all nodes on one sphere, enlarged so that the polyhedron keeps
+        the volume of the r = b sphere) and the interior dual measures of
+        the Delaunay mesh are non-negative."""
         b = 0.5
         m = ball_mesh([b, 1.0], 0.3)
         inner_nodes = np.unique(m.cells[m.cell_tags == 0])
@@ -101,8 +102,11 @@ class TestMeshers:
         rs = np.linalg.norm(m.nodes[shared], axis=1)
         assert np.ptp(rs) < 1e-12  # interface nodes all on one sphere
         inner = m.cell_volume[m.cell_tags == 0].sum()
-        # inscribed polyhedron: O(h^2) volume deficit (h = 0.6 b here)
-        assert 0.8 < inner / (4 / 3 * np.pi * b**3) < 1
+        assert inner == pytest.approx(4 / 3 * np.pi * b**3, rel=1e-2)
+        # without the correction: inscribed polyhedron, O(h^2) deficit
+        m0 = ball_mesh([b, 1.0], 0.3, preserve_volume=False)
+        inner0 = m0.cell_volume[m0.cell_tags == 0].sum()
+        assert 0.8 < inner0 / (4 / 3 * np.pi * b**3) < 0.95
         rep = m.diagnostics()
         assert rep["negative_dual_area"] == 0
         assert rep["negative_dual_length"] == 0

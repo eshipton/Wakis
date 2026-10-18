@@ -20,7 +20,7 @@ and the mesh is exchanged through a file read with meshio.
 """
 
 import numpy as np
-from scipy.spatial import Delaunay
+from scipy.spatial import ConvexHull, Delaunay
 
 from .mesh import SimplexMesh
 
@@ -130,7 +130,47 @@ def _odt_step(nodes, on_shell, radii, gap):
     return new
 
 
-def ball_mesh(radii, h, clearance=0.55, smooth=8):
+def _protect_shells(nodes, on_shell):
+    """
+    Remove lattice nodes inside the diametral ball of any shell triangle.
+
+    A triangle with an empty circumscribing ball is a face of the Delaunay
+    tetrahedralization. The shell triangles are the faces of the convex hull
+    of each shell (no other shell node lies in their diametral balls, which
+    only cut the sphere along the triangle's circumcircle), so after this
+    step every shell is recovered exactly and the material interfaces are
+    unions of mesh faces.
+    """
+    from scipy.spatial import cKDTree
+
+    lattice = on_shell == 0
+    tree = cKDTree(nodes[lattice])
+    drop = np.zeros(lattice.sum(), bool)
+    for rk in np.unique(on_shell[~lattice]):
+        pts = nodes[on_shell == rk]
+        tri = pts[ConvexHull(pts).simplices]
+        cc = _circumcenter_3d(tri)
+        rho = np.linalg.norm(tri[:, 0] - cc, axis=1)
+        for idx in tree.query_ball_point(cc, rho * (1 + 1e-9)):
+            drop[idx] = True
+    keep = np.ones(len(nodes), bool)
+    keep[np.flatnonzero(lattice)[drop]] = False
+    return nodes[keep]
+
+
+def _circumcenter_3d(P):
+    """Circumcentres of triangles P (n, 3, 3) in 3D."""
+    a, b = P[:, 1] - P[:, 0], P[:, 2] - P[:, 0]
+    aa, bb, ab = (a * a).sum(1), (b * b).sum(1), (a * b).sum(1)
+    den = 2 * (aa * bb - ab**2)
+    return (
+        P[:, 0]
+        + (bb * (aa - ab) / den)[:, None] * a
+        + (aa * (bb - ab) / den)[:, None] * b
+    )
+
+
+def ball_mesh(radii, h, clearance=0.55, smooth=8, preserve_volume=True):
     """
     Delaunay tetrahedralization of concentric balls with conforming shells.
 
@@ -152,6 +192,11 @@ def ball_mesh(radii, h, clearance=0.55, smooth=8):
     smooth : int, optional
         Number of optimal-Delaunay (ODT) smoothing sweeps of the node set
         (Chen & Xu 2004), which removes most slivers.
+    preserve_volume : bool, optional
+        Move the nodes of every interior interface radially so that the
+        polyhedral interface encloses the exact volume of its sphere
+        (removes the leading geometric error of the inscribed polyhedron).
+        The outer boundary stays inscribed.
 
     Returns
     -------
@@ -160,20 +205,37 @@ def ball_mesh(radii, h, clearance=0.55, smooth=8):
     """
     radii = np.sort(np.atleast_1d(np.asarray(radii, dtype=float)))
     a = radii[-1]
+    # Node radius of every shell: interior interfaces are enlarged so that
+    # their triangulated surface encloses the volume of the sphere
+    r_node = radii.copy()
+    if preserve_volume:
+        for k, rk in enumerate(radii[:-1]):
+            v_hull = ConvexHull(_fibonacci_sphere(rk, h)).volume
+            r_node[k] = rk * (4 / 3 * np.pi * rk**3 / v_hull) ** (1 / 3)
     g = np.arange(-a, a + h, h)
     X, Y, Z = np.meshgrid(g, g, g, indexing="ij")
     cube = np.stack([X.ravel(), Y.ravel(), Z.ravel()], 1)
     pts = np.vstack([cube, cube + h / 2])
     r = np.linalg.norm(pts, axis=1)
     keep = r < a - clearance * h
-    for rk in radii[:-1]:
+    for rk in r_node[:-1]:
         keep &= np.abs(r - rk) > clearance * h
-    shells = [_fibonacci_sphere(rk, h) for rk in radii[::-1]]
-    on_shell = np.concatenate([np.full(len(s), r) for s, r in zip(shells, radii[::-1])])
+    shells = [_fibonacci_sphere(rk, h) for rk in r_node[::-1]]
+    on_shell = np.concatenate(
+        [np.full(len(s), r) for s, r in zip(shells, r_node[::-1])]
+    )
     nodes = np.vstack(shells + [pts[keep]])
     on_shell = np.r_[on_shell, np.zeros(keep.sum())]
     for _ in range(smooth):
-        nodes = _odt_step(nodes, on_shell, radii, clearance * h)
+        nodes = _odt_step(nodes, on_shell, r_node, clearance * h)
+    if preserve_volume:
+        # smoothing moved the shell nodes: restore the exact volumes
+        for rk, rn in zip(radii[:-1], r_node[:-1]):
+            sel = on_shell == rn
+            v_hull = ConvexHull(nodes[sel]).volume
+            nodes[sel] *= (4 / 3 * np.pi * rk**3 / v_hull) ** (1 / 3)
+            on_shell[sel] = np.linalg.norm(nodes[sel][0])
+    nodes = _protect_shells(nodes, on_shell)
     tet = Delaunay(nodes).simplices
     P = nodes[tet]
     vol = np.abs(np.linalg.det(P[:, 1:] - P[:, :1])) / 6

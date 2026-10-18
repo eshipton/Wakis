@@ -479,7 +479,7 @@ class SimplexMesh:
         """
         d = self.dim
         h = self.edge_length.mean()
-        rep = {"dim": d, "n_cells": self.n_cells, "h_mean": h}
+        rep = {"dim": d, "n_cells": self.n_cells, "h_mean": float(h)}
         rep["not_well_centered"] = int(np.sum(np.any(self.cell_dual_edge < 0, axis=1)))
         if d == 2:
             interior_e = np.setdiff1d(np.arange(self.n_edges), self.boundary_edges)
