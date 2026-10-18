@@ -7,6 +7,7 @@ import numpy as np
 from scipy.constants import epsilon_0 as eps_0
 from scipy.sparse import coo_matrix, diags
 
+from ..dispersive import _ade_coefficients
 from ..field_monitors import _flat_index
 
 
@@ -25,7 +26,7 @@ def _linear_weights(x, lo, hi, n):
 
 
 class MaterialGrid:
-    def __init__(self, center, size, shape, eps_min=1.0, eps_max=4.0):
+    def __init__(self, center, size, shape, eps_min=1.0, eps_max=4.0, material=None):
         """
         Design region whose relative permittivity is set by a density rho.
 
@@ -47,11 +48,20 @@ class MaterialGrid:
             Number of design nodes (nx, ny, nz); use 1 along zero-size axes.
         eps_min, eps_max : float
             Relative permittivity at rho = 0 and rho = 1.
+        material : DispersiveMaterial, optional
+            If given, rho interpolates between the background eps_min
+            (rho = 0) and this dispersive material (rho = 1): each design edge
+            gets the material with fill fraction w = P rho, as a partially
+            filled edge of `SolverFIT3D.add_dispersive_material`
+            (eps_inf, pole and conductivity contributions scaled by w).
+            `eps_max` is then ignored.
 
         Notes
         -----
-        Only isotropic, non-dispersive, lossless dielectrics are designed;
-        permeability and conductivity in the region are left unchanged.
+        Only isotropic dielectrics are designed; permeability and
+        conductivity in the region are left unchanged. With `material`, the
+        stability of the scheme is checked for the material itself (w = 1);
+        intermediate densities mix two stable media.
         """
         self.center = np.asarray(center, dtype=float)
         self.size = np.asarray(size, dtype=float)
@@ -62,6 +72,7 @@ class MaterialGrid:
             raise ValueError("eps_min and eps_max must be positive.")
         self.eps_min = float(eps_min)
         self.eps_max = float(eps_max)
+        self.material = material
         self.P = None
 
     def _build(self, solver):
@@ -163,7 +174,8 @@ class MaterialGrid:
         ieps_old = solver.ieps.array[self.flat_idx]
         if np.any(ieps_old == 0):
             raise ValueError("Design region overlaps a PEC (ieps = 0) region.")
-        ieps_new = 1.0 / (eps_0 * self.eps_r(rho))
+        eps_r = self.eps_r(rho) if self.material is None else self.eps_min
+        ieps_new = 1.0 / (eps_0 * eps_r) + np.zeros(self.flat_idx.size)
         solver.ieps.array[self.flat_idx] = ieps_new
 
         if not solver.activate_cpml:
@@ -180,6 +192,60 @@ class MaterialGrid:
             solver.itDaiDepsDstC = B
             if hasattr(solver, "iDeps"):
                 solver.iDeps = diags(solver.ieps.toarray(), dtype=solver.dtype)
+        if self.material is not None:
+            self._apply_dispersive(solver, self.P @ rho.ravel())
+
+    def _apply_dispersive(self, solver, w):
+        """
+        Register the design edges as a dispersive group with fill fraction w.
+
+        `_add_dispersive_edges` drops edges with zero fill and checks the
+        stability of the material, so the group is created with w = 1 and the
+        fill-dependent coefficients are then set as it would compute them:
+        eps_e = (1 - w) eps_min + w eps_inf, a1 = eps_e - w (s + b),
+        den = eps_e + w (s + b), with s = sigma dt / (2 eps_0) and b the sum
+        of the Debye beta coefficients.
+        """
+        solver._add_dispersive_edges(self.material, self.flat_idx, np.ones(w.size))
+        group = solver._dispersive_groups[-1]
+        if not np.array_equal(group["idx_host"], self.flat_idx):
+            raise ValueError("The design region overlaps a PEC region.")
+        eps_e = (1 - w) * self.eps_min + w * self.material.eps_inf
+        loss = self._ade_loss(solver.dt)
+        xp = solver.E.xp
+        group["weight"] = xp.asarray(w, dtype=solver.dtype)
+        group["a1"] = xp.asarray(eps_e - w * loss, dtype=solver.dtype)
+        group["den"] = xp.asarray(eps_e + w * loss, dtype=solver.dtype)
+        solver._material_grid_group = group
+
+    def _ade_loss(self, dt):
+        """sigma dt / (2 eps_0) + sum of the Debye beta coefficients."""
+        _, debye = _ade_coefficients(self.material, dt)
+        return self.material.sigma * dt / eps_0 / 2 + sum(b for _, b in debye)
+
+    def dispersive_group(self, solver):
+        """The dispersive group of this design in `solver`, or None."""
+        if self.material is None:
+            return None
+        return getattr(solver, "_material_grid_group", None)
+
+    def ade_state(self, group, solver):
+        """Debye term sum_D (kappa - 1) p_D on the design edges before a step."""
+        terms = np.zeros(self.flat_idx.size, dtype=solver.E.array.dtype)
+        for kappa, _, p in group["debye"]:
+            terms = terms + (kappa - 1) * p
+        return terms
+
+    def ade_sensitivity(self, group, solver, e_old, debye_old):
+        """
+        Derivative of the ADE accumulator with respect to the fill fraction,
+        d(acc)/dw - E^{n+1} d(den)/dw, after a step (see the physics guide).
+        """
+        d_eps = self.material.eps_inf - self.eps_min
+        loss = self._ade_loss(solver.dt)
+        e_new = solver.E.array[self.flat_idx]
+        lorentz = sum((p - p_old) for _, _, _, p, p_old in group["lorentz"])
+        return (d_eps - loss) * e_old - lorentz - debye_old - (d_eps + loss) * e_new
 
     def vjp(self, rho, grad_ieps):
         """
@@ -201,6 +267,9 @@ class MaterialGrid:
         ndarray
             dF/drho with the shape of rho.
         """
+        if self.material is not None:
+            # grad_ieps holds dF/dw for the fill fraction w = P rho
+            return (self.P.T @ np.asarray(grad_ieps)).reshape(self.shape)
         eps_r = self.eps_r(rho)
         grad_eps = -np.asarray(grad_ieps) / (eps_0 * eps_r**2)
         grad = (self.eps_max - self.eps_min) * (self.P.T @ grad_eps)
