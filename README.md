@@ -16,6 +16,56 @@
 
 `wakis` is a **3D Time-domain Electromagnetic solver** that solves the Integral form of Maxwell's equations using the Finite Integration Technique (FIT) numerical method. It computes the longitudinal and transverse **wake potential and beam-coupling impedance** from the simulated electric and magnetic fields. It is also a multi-purpose solver, capable of simulating planewaves interaction with nano-structures, optical diffraction, and much more!
 
+## About this fork
+
+This is a fork of [CERN's Wakis](https://github.com/ImpedanCEI/wakis) (Apache-2.0, © CERN) that extends it toward a general-purpose
+electromagnetic and optical design tool (RF, antennas, photonics, metasurfaces), comparable in scope to commercial FIT codes, with the whole
+pipeline differentiable for gradient-based inverse design. Every feature is validated against analytic results, conservation laws or
+independent solvers (Meep-inspired tests, RCWA, FDFD), on CPU, GPU and MPI. Bug fixes and broadly useful features are being prepared as
+small, focused contributions to upstream Wakis.
+
+### Added features and roadmap
+
+**Sources, monitors and post-processing**
+- [x] Soft current sources (`CurrentSource`) with Gaussian (zero-DC), continuous and custom time profiles
+- [x] Magnetic current sources and one-directional (Huygens) sources
+- [x] DFT and flux monitors; near-to-far transform and antenna metrics (directivity, gain, efficiency, axial ratio)
+- [x] Diffraction-order monitor (Floquet orders, TE/TM/circular polarization)
+- [x] Harmonic inversion for resonance frequencies and Q (`harminv`, `ResonanceMonitor`)
+
+**Ports, materials and boundaries**
+- [x] Lumped R/L/C elements, discrete ports, S-parameters, Touchstone export, energy-decay stopping
+- [x] 2D mode solver, mode ports and mode decomposition
+- [x] Dispersive materials (Drude/Lorentz/Debye), materials library and pole fitting
+- [x] Bloch-periodic boundaries with complex fields; oblique plane waves in unit cells
+- [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
+- [ ] Full-tensor subpixel averaging for curved dielectrics (in progress)
+- [ ] Unstructured triangular/tetrahedral FIT (in progress)
+- [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
+- [ ] Magnetic dispersion (ferrites)
+
+**Inverse design**
+- [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`), covering all features above, on CPU, GPU and MPI
+- [x] Material grids, filters and projections
+- [ ] Differentiable subpixel smoothing for density designs (in progress)
+- [ ] Differentiable layer thickness
+
+**Core fixes and performance**
+- [x] High-side boundaries on the domain edge and node-centred dual lengths (2nd order on non-uniform meshes)
+- [x] PEC/PMC masking, `update_tensors` initialization, MPI (CPML deadlock, grid edge, rank-boundary sources/monitors)
+- [x] Forward step ~2x faster on CPU and GPU; periodic setup 59 s → 0.02 s
+- [x] Memory and run-time estimator with preflight check (`wakis.estimate`)
+
+**Workflows and validation**
+- [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers
+- [x] ~30 Meep-inspired validation tests; mesh-comparison study (`studies/mesh-comparison`)
+- [x] [invrs-gym](https://github.com/invrs-io/gym) bridge for photonic inverse-design benchmarks ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
+- [ ] Linear plasma wakefield benchmark (in progress); nonlinear regime (PIC) planned
+
+**Contributions to upstream Wakis**
+- [ ] Focused bug-fix and performance pull requests (in preparation)
+- [ ] Feature proposals via issues (soft sources, monitors, harmonic inversion, conformal PEC, ports, estimator, dispersive materials)
+
 ## About
 🚀 Some of `wakis` features:
 * Wake potential and impedance calculations for particle beams with different relativistic $\beta$
