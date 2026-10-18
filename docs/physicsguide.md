@@ -1007,6 +1007,88 @@ References:
 - C. Kottke, A. Farjadpour and S. G. Johnson, "Perturbation theory for anisotropic dielectric interfaces, and application to subpixel smoothing of discretized numerical methods", *Phys. Rev. E* **77**, 036611 (2008), [doi:10.1103/PhysRevE.77.036611](https://doi.org/10.1103/PhysRevE.77.036611).
 - D. B. Shorthouse and C. J. Railton, "The incorporation of static field solutions into the finite difference time domain algorithm", *IEEE Trans. Microwave Theory Tech.* **40**(5), 986–994 (1992).
 
+### 🧊 Tensor subpixel averaging: `conformal='tensor'` and `MaterialGrid(smoothing='tensor')`
+
+The diagonal average of `conformal='all'` is first order whenever $\mathbf E$ crosses a curved or oblique dielectric interface, because it drops the off-diagonal entries of the averaged tensor. `conformal='tensor'` keeps them. It is opt-in; without it every code path, operator and regression result is unchanged. The implementation is in `wakis/tensor_averaging.py`.
+
+**Averaged tensor** [Farjadpour et al., 2006; Kottke et al., 2008]. For a pixel cut by a planar interface with unit normal $\mathbf n$ and fill fraction $f$, the effective inverse permittivity that makes the first-order perturbation of the eigenfrequencies vanish is
+
+$$
+\mathbf T = \langle\varepsilon^{-1}\rangle\,\mathbf n\mathbf n^T + \langle\varepsilon\rangle^{-1}(\mathbf I - \mathbf n\mathbf n^T)
+= \langle\varepsilon\rangle^{-1}\mathbf I + a\,\mathbf n\mathbf n^T,\qquad a = \langle\varepsilon^{-1}\rangle - \langle\varepsilon\rangle^{-1} \ge 0 .
+$$
+
+Every E edge $e$ (component $c$) has its own pixel, the dual cell of `conformal='all'`, with $f_e$, $\mathbf n_e$ and $a_e$. Its diagonal entry $T_{cc}(e)$ is exactly the 'all' value, kept in `solver.ieps`.
+
+**Symmetric corner (octant) operator (Wakis construction).** The off-diagonal entries couple $E_c$ to the other two D components, which live on other edges. Each primary cell is split into eight octants, one per corner. The octant at a corner contains one x, one y and one z edge: the three edges leaving that corner into the cell. With $\mathbf W = \operatorname{diag}(\ell\tilde A)$ the energy weights of the E edges (open length times dual area), the material operator is
+
+$$
+\mathbf E = \mathbf N\mathbf D,\qquad \mathbf N = \operatorname{diag}(\varepsilon^{-1}) + \mathbf W^{-1}\mathbf S,\qquad
+S_{ab} = \sum_{o\ni a,b} \frac{V_o}{8}\,s_o\,\tfrac12\big(T_{ij}(a) + T_{ij}(b)\big),
+$$
+
+for the edges $a$ (component $i$) and $b$ (component $j\ne i$) of each octant $o$ of a cell of volume $V_o$. For a uniform $T_{ij}$ this is $E_i \mathrel{+}= T_{ij}\,\overline{D_j}$, with $\overline{D_j}$ the average of the four $D_j$ around the $E_i$ edge. That is the off-diagonal interpolation of Meep [Farjadpour et al., 2006; Oskooi et al., 2010]. Averaging $T_{ij}$ over the two edges makes $\mathbf S$, and so $\mathbf W\mathbf N$, symmetric, as in the symmetric FDTD schemes for anisotropic dielectrics [Werner & Cary, 2007]. The pixel tensors come from the conformal geometry: $f_e$ is the exact dual-cell fraction and $\mathbf n_e$ the normal of the nearest surface triangle.
+
+**Positive definiteness and stability.** With the per-octant share $d_{o,e} = \varepsilon^{-1}_e W_e/\tilde V_e$ of the diagonal ($\tilde V_e = \sum_{o\ni e} V_o/8$),
+
+$$
+\mathbf W\mathbf N = \sum_o \frac{V_o}{8}\,\mathbf P_o^T\big(\mathbf D_o + s_o\mathbf t_o\big)\mathbf P_o + \operatorname{diag}\big(\mathbf W\varepsilon^{-1} - \textstyle\sum_o \tfrac{V_o}{8}\mathbf P_o^T\mathbf D_o\mathbf P_o\big),
+$$
+
+where $\mathbf P_o$ picks the three octant edges, $\mathbf D_o = \operatorname{diag}(d_o)$ and $\mathbf t_o$ is the off-diagonal $3\times3$ block. The last term is zero for edges inside the domain and non-negative at partial (conformal PEC) edges. The scale $s_o\le1$ is reduced only where $\lambda_\min(\mathbf D_o^{-1/2}\mathbf t_o\mathbf D_o^{-1/2}) < -0.99$, so every octant block is positive definite and $\mathbf W\mathbf N$ is SPD. Couplings to edges with $\varepsilon^{-1}=0$ (PEC, ghost cells) are dropped. In all tests $s_o = 1$ everywhere ($\lambda_\max \le 0.4$). Then the update $\mathbf H' = \mathbf H - \Delta t\mathbf A\mathbf E$, $\mathbf E' = \mathbf E + \Delta t\,\mathbf N\tilde{\mathbf A}^{-1}\mathbf C^H\tilde{\mathbf L}\mathbf H'$ conserves a discrete energy and is stable for $\Delta t < 2/\sqrt{\lambda_\max(\mathbf B\mathbf A)}$. $\mathbf B\mathbf A$ is similar to a Hermitian PSD matrix, so its eigenvalues are real; the largest is computed with Arnoldi iterations (`scipy.sparse.linalg.eigs`) and $\Delta t = \min(\Delta t_\text{default}, \texttt{cfln}\cdot 2/\sqrt{\lambda_\max})$ (`solver.conformal_dt_max`). A cheap a-priori bound also holds: each octant block is at most $(1+\mu_\max)\mathbf D_o$, $\mu_\max = \max_o \lambda_\max(s_o\mathbf D_o^{-1/2}\mathbf t_o\mathbf D_o^{-1/2}) < 2$, so the tensor step is stable at $\Delta t_\text{diag}/\sqrt{1+\mu_\max} > 0.57\,\Delta t_\text{diag}$. With the default `cfln = 0.5` the time step is therefore never reduced by the tensor; it was unchanged in all tests.
+
+**Time step (Wakis construction).** $\mathbf N$ differs from the diagonal only on the coupled edges $R$, so the step is the solver's own diagonal step followed by a local correction:
+
+$$
+\mathbf E^* = \mathbf E^n + \Delta t\,\varepsilon^{-1}(\mathbf C^H\ldots\mathbf H - \mathbf J),\qquad
+\mathbf E^{n+1}_R = \mathbf E^*_R + \mathbf K'(\mathbf E^*_R - \mathbf E^n_R),\qquad
+K'_{ab} = \frac{S_{ab}}{W_a\,\varepsilon^{-1}_b} .
+$$
+
+This works for every backend and step variant (NumPy/MKL, CuPy with `cupyx` sparse, CPML, TFSF, conductivity, Bloch phases on wrapped couplings), costs one sparse product on $|R|$ edges per step and keeps the step linear. With MPI the couplings reach one $z$ layer into the ghost layers; the E ghost layers are exchanged once more after the correction. Couplings to edges of dispersive (ADE) groups are dropped, so dispersive solids keep the diagonal average and the corrections act on disjoint edges.
+
+**Adjoint.** The correction is linear in $(\mathbf E^*, \mathbf E^n)$, so `AdjointStepper` adds its transpose:
+
+$$
+\boldsymbol\lambda_{E^*,R} = (\mathbf I + \mathbf K'^H)\boldsymbol\lambda_{E^{n+1},R},\qquad \boldsymbol\lambda_{E^n,R} \mathrel{+}= -\mathbf K'^H\boldsymbol\lambda_{E^{n+1},R} .
+$$
+
+The dot-product identity holds to $10^{-17}$ relative (PEC and CPML). For the gradient, the step is $\mathbf E^{n+1} = \mathbf E^n + \mathbf N\mathbf g^n$ with $\mathbf g^n = \Delta t(\ldots)$ the increment of $\mathbf D$, recorded on the design and coupled edges. Then $\partial F/\partial\varepsilon^{-1}_a = \sum_n \lambda^{n+1}_a g^n_a$ and $\partial F/\partial S_{ab} = \sum_n (\lambda^{n+1}_a g^n_b/W_a + \lambda^{n+1}_b g^n_a/W_b)$, with $\boldsymbol\lambda^{n+1}$ the adjoint of the corrected $\mathbf E^{n+1}$.
+
+**Density designs: `MaterialGrid(..., smoothing='tensor')` (Wakis adaptation).** For a density $\rho$ (normally filtered and projected) the design edges take, instead of the arithmetic interpolation, the averaged tensor of a pixel with fill fraction $f_e = \operatorname{clip}(\mathbf P\rho, 0, 1)$ and normal from the density gradient $\mathbf g_e = \mathbf G\rho$ (trilinear interpolation of nodal central differences):
+
+$$
+\mathbf T_e = \frac{\mathbf I}{\langle\varepsilon\rangle} + a\,\mathbf m\mathbf m^T,\quad
+\mathbf m = \frac{\mathbf g}{\sqrt{|\mathbf g|^2+\delta^2}},\quad
+\langle\varepsilon\rangle = \varepsilon_\min + \Delta\varepsilon f,\quad
+\langle\varepsilon^{-1}\rangle = \frac{1-f}{\varepsilon_\min} + \frac{f}{\varepsilon_\max},
+$$
+
+with $\delta = 10^{-2}/h_\text{design}$, so that $\mathbf m$ is the unit normal at an interface ($|\mathbf g|\sim 1/h$) and goes smoothly to zero (isotropic arithmetic mean) in uniform regions. Using the density as fill fraction and its gradient as normal is the idea of Meep's `MaterialGrid(do_averaging=True)` [Oskooi et al., 2010; Hammond et al., 2021]. The subpixel-smoothed projection of [Hammond et al., 2025] goes further and also derives the fill fraction from the filtered density and its gradient; it is not implemented here. $\mathbf T_e$ enters as above: diagonal in `ieps`, off-diagonals through the corner couplings. The map $\rho\mapsto(\varepsilon^{-1}, \mathbf S)$ is smooth, and `MaterialGrid.vjp` applies the exact chain rule through $f$ ($\partial\langle\varepsilon\rangle^{-1}/\partial f = -\Delta\varepsilon/\langle\varepsilon\rangle^2$, $\partial\langle\varepsilon^{-1}\rangle/\partial f = 1/\varepsilon_\max - 1/\varepsilon_\min$) and $\mathbf m$ ($\partial m_i/\partial g_k = \delta_{ik}/\sqrt q - g_ig_k/q^{3/2}$, $q = |\mathbf g|^2+\delta^2$). The octant scales $s_o$ are treated as constants, which is exact as long as no octant is clamped (`solver.tensor_operator.n_clamped == 0`). The finite-difference check agrees to $\le 10^{-6}$ relative. `apply` raises if $\Delta t$ exceeds the a-priori bound above (never with `cfln` $\le 0.5$).
+
+**Limitations.** One E component per edge remains: the D components of the corner reconstruction lie on both sides of the interface in a cut cell. Some modes therefore still converge at first order, but with a much smaller constant. The prototype study found the same for every Cartesian variant; only interface-conforming meshes remove it. Dispersive solids keep the diagonal average, and dispersive `MaterialGrid` designs cannot be tensor-smoothed (`NotImplementedError`). The MPI adjoint does not support the tensor correction. `field_energy` still uses the diagonal permittivity. The geometry (normals, fill fractions of STL solids) is not differentiated. Memory: $\mathbf K'$ has about 5.3 nonzeros per coupled edge and about 14 per primary cell touching an anisotropic edge (2.6 coupled edges per such cell; dielectric sphere at 16–32 cells across). In CSR that is about 0.2 kB per interface cell, plus one stored increment per coupled edge and step in an adjoint run.
+
+**Validation** (`tests/test_035_tensor_averaging.py`; leapfrog dispersion removed, eigenvalues of the discrete operators as a cross-check):
+
+| Case | Mesh | Reference | `'all'` (diagonal) | `'tensor'` |
+| --- | --- | --- | --- | --- |
+| 2D rod in a square PEC box, $\varepsilon_r=6$, TE dipole mode (eigenvalues) | 32/64/128/192 cells across | Delaunay FIT with interface nodes, Richardson | $2.7, 1.2, 0.43, 0.16\times10^{-3}$ | $1.3, 1.4, 0.48, 0.26\times10^{-4}$ |
+| same, TE $n=0$ mode ($\mathbf E$ tangential, oblique to the grid) | 32/64/128/192 | same | $6.6, 3.9, 2.0, 1.35\times10^{-3}$ (order 0.8) | $2.1, 0.50, 0.17, 0.089\times10^{-3}$ (order 1.6) |
+| same, TE mode 4 | 32/64/128/192 | same | $1.05, 0.53, 0.25, 0.16\times10^{-3}$ | $6.8, 2.4, 0.87, 0.47\times10^{-4}$ |
+| same, TM (E$_z$) | 32 | same | $5.7\times10^{-5}$ | identical time series |
+| 3D dielectric sphere ($\varepsilon_r=6$, radius $b/2$) in a PEC sphere, TM$_1$ (two probes, max) | 16/24/32/48/64 cells across $2b$ | Riccati–Bessel matching | $1.4, 0.96, 0.71, 0.48, 0.37\times10^{-2}$ (1st order) | $2.9, 0.82, 0.80, 0.39, 0.31\times10^{-4}$ (at the level of the PEC wall error and the grid splitting of the degenerate mode) |
+| same, TE$_1$ ($\mathbf E$ tangential to the sphere, oblique to the grid) | 16/24/32/48 | same | $7.3, 6.8, 5.9, 4.3\times10^{-3}$ (order 0.5) | $7.2, 3.3, 1.8, 0.81\times10^{-3}$ (order 2) |
+| Stability: dielectric ball and rod, PEC ball, sheet; 20 000 steps | 14×12×12 | bounded energy | — | no growth |
+| Adjoint dot product, PEC and CPML | 14×12×12 | $\langle U x,y\rangle = \langle x,U^Ty\rangle$ | — | $\sim10^{-17}$ |
+| `MaterialGrid(smoothing='tensor')` gradient vs central differences | 9×9 design, 2D TE | $h=10^{-5}$ | — | $\le 10^{-6}$ |
+
+References:
+- A. Oskooi, D. Roundy, M. Ibanescu, P. Bermel, J. D. Joannopoulos and S. G. Johnson, "Meep: A flexible free-software package for electromagnetic simulations by the FDTD method", *Comput. Phys. Commun.* **181**, 687–702 (2010), [doi:10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008).
+- G. R. Werner and J. R. Cary, "A stable FDTD algorithm for non-diagonal, anisotropic dielectrics", *J. Comput. Phys.* **226**(1), 1085–1101 (2007).
+- A. Hammond, A. Oskooi, S. G. Johnson and S. Ralph, "Photonic topology optimization with semiconductor-foundry design-rule constraints", *Opt. Express* **29**(15), 23916–23938 (2021), [doi:10.1364/OE.431188](https://doi.org/10.1364/OE.431188).
+- A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection", [arXiv:2503.20189](https://arxiv.org/abs/2503.20189) (2025).
+- Farjadpour et al. (2006) and Kottke et al. (2008): see "Conformal FIT" above.
+
 ### Surface impedance boundary condition (SIBC)
 
 When the metal walls are very good conductors and the skin depth is much smaller than the grid spacing, it becomes inefficient (and inaccurate) to resolve the fields inside the conductor volume. Instead of using a volumetric conductivity, Wakis can model such metals with a **Leontovich surface impedance boundary condition (SIBC)** applied only on the surface cells. This can be disabled in the solver by turning `use_sibc=False`

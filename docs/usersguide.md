@@ -839,6 +839,28 @@ grid = wakis.GridFIT3D(..., sheets={'patch': rectangle_sheet(center=(0, 0, 1.6e-
 
 The sheet must lie on a grid plane normal to x, y or z. Its edges can be anywhere. A knife-edge correction (`sheet_edge_correction=True`) places the edge at its physical position. For the patch template use `patch_antenna(..., thin_sheet=True)`, which needs no empirical `edge_correction`.
 
+`conformal='tensor'` also keeps the off-diagonal entries of the averaged permittivity tensor. Use it when the electric field crosses a curved or oblique dielectric interface: dielectric spheres and rods with E in the cross-section, photonic resonators, lenses, gratings. For the TM$_1$ mode of a dielectric sphere ($\varepsilon_r=6$) in a spherical cavity at 32 cells across, the error drops from $7\times10^{-3}$ ('all') to below $10^{-4}$, at the same time step and 10–20 % more run time:
+
+```python
+core = pv.Sphere(radius=a / 2, theta_resolution=300, phi_resolution=300)
+grid = wakis.GridFIT3D(-L/2, L/2, -L/2, L/2, -L/2, L/2, N + 4, N + 4, N + 4,
+                       stl_solids={'cavity': sphere, 'core': core},
+                       stl_materials={'cavity': 'vacuum', 'core': [6.0, 1.0, 0.0]},
+                       conformal='tensor')
+solver = wakis.SolverFIT3D(grid, bc_low=['pec']*3, bc_high=['pec']*3,
+                           bg='pec', use_stl=True)
+print(solver.tensor_operator.rows.size, 'coupled E edges')
+```
+
+The same smoothing is available for density-based inverse design: `MaterialGrid(..., smoothing='tensor')` uses the (filtered, projected) density as the fill fraction of each edge's pixel and its gradient as the interface normal. The boundaries of nearly binary designs then move continuously within the cells, and the gradient stays exact:
+
+```python
+design = MaterialGrid(center=(0, 0, 0), size=(0.06, 0.06, 0), shape=(31, 31, 1),
+                      eps_min=1.0, eps_max=12.0, smoothing='tensor')
+```
+
+Dispersive materials keep the diagonal average (no couplings are created on their edges). Keep the default `cfln=0.5` or smaller: the tensor step is then always stable. See "Tensor subpixel averaging" in the physics guide.
+
 #### Design templates: ready-made antennas, waveguides and unit cells
 
 `wakis.templates` sets up complete simulations from a declarative description: it chooses the mesh from a target number of cells per wavelength in the densest material, the padding to the CPML, the CPML thickness and the run length (energy-decay criterion), and returns the usual engineering results. See the [templates tutorial](templates.md) for all templates and pitfalls.
