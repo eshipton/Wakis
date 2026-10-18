@@ -38,6 +38,7 @@ installation.md
 usersguide.md
 physicsguide.md
 templates.md
+performance.md
 releases.md
 wakis_api.rst
 ```
