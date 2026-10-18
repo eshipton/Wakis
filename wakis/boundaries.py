@@ -689,6 +689,9 @@ class BCsMixin:
         self.iAx = diags(self.iA.field_x, shape=(N, N), dtype=self.dtype)
         self.iAy = diags(self.iA.field_y, shape=(N, N), dtype=self.dtype)
         self.iAz = diags(self.iA.field_z, shape=(N, N), dtype=self.dtype)
+        if getattr(self, "conformal_face_ops", None) is not None:
+            # Conformal FIT: stabilized (non-diagonal) inverse face areas
+            self.iAx, self.iAy, self.iAz = self.conformal_face_ops
         self.Lx = diags(self.L.field_x, shape=(N, N), dtype=self.dtype)
         self.Ly = diags(self.L.field_y, shape=(N, N), dtype=self.dtype)
         self.Lz = diags(self.L.field_z, shape=(N, N), dtype=self.dtype)

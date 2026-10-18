@@ -20,7 +20,7 @@ from ..lumped import LumpedElement, LumpedPort
 from ..solverFIT3D import SolverFIT3D
 from ..sources import GaussianSource
 from . import meshing
-from .shapes import assign_materials, material_eps
+from .shapes import Sheet, assign_materials, material_eps
 
 
 class Simulation:
@@ -150,6 +150,10 @@ class Simulation:
 
     def _bounding_box(self, axis):
         points = self._snap_points(axis)
+        # Sheet edges are not mesh nodes but belong to the structure extent
+        points += [
+            b[axis] for s in self.structures if isinstance(s, Sheet) for b in s.bounds
+        ]
         if not points:
             raise ValueError(
                 f"No structure or port along {'xyz'[axis]}: give `domain` explicitly."
@@ -209,14 +213,24 @@ class Simulation:
         -------
         solver : SolverFIT3D
         """
-        x, y, z = (self._axis(a) for a in range(3))
-        self.grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+        x, y, z = self._axes = [self._axis(a) for a in range(3)]
+        sheets = {
+            f"sheet{i}": shape.to_pyvista()
+            for i, shape in enumerate(self.structures)
+            if isinstance(shape, Sheet)
+        }
+        self.grid = GridFIT3D(x=x, y=y, z=z, sheets=sheets, verbose=0)
         self.solver = self._new_solver(with_structures=True)
         return self.solver
 
     def _new_solver(self, with_structures):
+        grid = self.grid
+        if not with_structures and self.grid.sheets:
+            # The empty reference domain without the sheets of the grid
+            x, y, z = self._axes
+            grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
         solver = SolverFIT3D(
-            self.grid,
+            grid,
             bc_low=self.bc_low,
             bc_high=self.bc_high,
             n_pml=self.n_pml,

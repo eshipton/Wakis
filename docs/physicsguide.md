@@ -848,6 +848,81 @@ Wakis integrates with [**PyVista**](https://docs.pyvista.org/) to import CAD geo
 
 Future versions aim to include a more advanced meshing algorithm for improved fidelity near corners and edges.
 
+### 🟢 Conformal FIT: partially filled cells, subpixel dielectrics and thin sheets
+
+Staircased cell masks move a curved or oblique boundary by up to a cell. The resulting error in resonant frequencies, phase and impedances is first order in the cell size $\Delta$. `GridFIT3D(conformal=...)` and `GridFIT3D(sheets=...)` instead keep the boundary inside the cells. They change only the metric and material coefficients of the FIT update, so the time step stays linear in the fields. All of it is opt-in, and the default staircase path and its regression data are unchanged. The implementation is in `wakis/conformal.py`.
+
+**Geometry.** For every STL solid (triangulated, oriented outwards) Wakis computes exact intersections with the grid for the polygonal surface:
+
+- the sections of the surface with the node planes $w=w_k$, as oriented segments with the solid on their left;
+- for each primary edge, the length inside the solid along its grid line. With the crossings $c_m$ of the line and $s_m=\pm1$ for entering or leaving, the inside length up to $x$ is $F(x)=\sum_m s_m (x-c_m)_+$, evaluated with cumulative sums;
+- for each primary face, the area inside the solid, from Green's theorem $A = \tfrac12\oint (u\,dv - v\,du)$ over the boundary of (section ∩ face). This boundary is the section contour split at the grid lines, plus the inside parts of the face sides, which contribute $\Delta u\,\ell_\text{right} + \Delta v\,\ell_\text{top}$ in face-local coordinates;
+- for each E edge, the volume fraction of the solid in its dual cell. It is integrated exactly in $x,y$ (section areas) and with `conformal_subsamples` midpoint planes along $z$, which is exact for geometry extruded along $z$.
+
+Degenerate positions, such as faces on node planes or vertices on grid lines, are resolved by evaluating the geometry with two opposite shifts of $10^{-7}\Delta$. The maximum of the two results (or the minimum, for holes in a PEC background) makes surfaces belong to the conductor. A 100³ grid with a sphere of $8\times10^4$ triangles takes about 1.3 s of geometry work plus 1.2 s for the stability estimate below.
+
+**Conformal PEC (Dey–Mittra / PBA type).** Faraday's law on a face is integrated only over its part outside the conductor. With $\ell_e$ the open part of the edge length $L_e$ and $A_f$ the open part of the face area,
+
+$$
+\mu A_f \frac{d H_f}{dt} = -\sum_{e\in\partial f} \pm\, \ell_e E_e ,
+$$
+
+that is, `solver.L` holds $\ell_e$ and `solver.iA` holds $1/A_f$, while the dual (E) update is unchanged. Edges with $\ell_e=0$ get `ieps = 0`. With a PEC background (`bg='pec'`) the conductor is everything outside the non-PEC solids, so an accelerator cavity given as a vacuum STL is conformal too. This is the locally conformal FDTD of Dey and Mittra [Dey & Mittra, 1997], written in FIT form as in the Perfect Boundary Approximation [Krietenstein et al., 1998]. Overlapping PEC solids are combined with the maximum of their covered lengths and areas, which is an approximation of the union.
+
+**Stability treatment (Wakis choice).** A small open area $A_f$ makes the face "stiff" and, with $\ell$ of order $\Delta$, reduces the stable time step without bound. The update can be written as $\mathbf H' = \mathbf H - \Delta t\,\mathbf A\mathbf E$, $\mathbf E' = \mathbf E + \Delta t\,\mathbf B\mathbf H'$ with $\mathbf B\mathbf A = \mathbf D_1\mathbf C^H\mathbf D_2\mathbf G\,\mathbf C\mathbf D_4$, where $\mathbf D_1 = \varepsilon^{-1}/\tilde A$, $\mathbf D_2 = \tilde L$, $\mathbf D_4 = \ell$ and $\mathbf G = \mu^{-1}\cdot$(inverse face areas). This product is similar to the Hermitian positive semi-definite $\mathbf R\mathbf C^H\mathbf D_2\mathbf G\mathbf C\mathbf R$, $\mathbf R=(\mathbf D_4\mathbf D_1)^{1/2}$, as long as $\mathbf D_2\mathbf G$ is symmetric positive semi-definite. The leapfrog is then stable for $\Delta t < 2/\sqrt{\lambda_\max}$, with a conserved discrete energy. Wakis keeps this structure and replaces $\operatorname{diag}(1/A_f)$ by
+
+$$
+\mathbf G = \mathbf T^T \operatorname{diag}(1/\hat A)\,\mathbf T,\qquad \hat A = \mathbf T A .
+$$
+
+Here a face is unstable when $A_f < \tfrac12\,\theta\,\max_e(\ell_e h_{\perp,e})$, with $h_{\perp,e}$ the face size perpendicular to edge $e$. This is the criterion of the legacy Wakis ECT solver, used here with $\theta=0.5$. An unstable face sends its flux to stable in-plane neighbours along its longest open edge, with weights $(2,-1)$ to the first and second neighbour. Its field is then the linear extrapolation $H_u = 2H_1 - H_2$, a uniform field is reproduced exactly, and the second-order convergence of Dey–Mittra is kept. Plain cell merging (weight 1) costs an $O(\Delta)$ error: the TE11 error of a circular cavity at 96 cells across went from $6\times10^{-5}$ to $1.2\times10^{-3}$. Faces without stable neighbours fall back to the area $\theta A_\text{stab}$.
+
+The time step is then $\Delta t = \min(\Delta t_\text{default}, \texttt{cfln}\cdot 2/\sqrt{\lambda_\max})$. $\lambda_\max$ is computed with Lanczos iterations (`scipy.sparse.linalg.eigsh`, with a 1 % margin) and stored in `solver.conformal_dt_max`. A user-given `dt` above the limit triggers a warning. In the tests the limit is 0.85–1.0 times the Yee limit for curved PEC (0.86 for the sphere, independent of resolution), so with the default `cfln=0.5` the step is reduced by at most about 15 %. For the patch template it is 0.67 times the Yee limit (thin substrate cells and the sheet-edge correction of faces next to the edge, see below).
+
+**Conformal dielectrics (`conformal=True` or `'all'`).** On each E edge the inverse permittivity is the diagonal of the anisotropic subpixel average [Farjadpour et al., 2006; Kottke et al., 2008]
+
+$$
+\varepsilon^{-1}_{cc} = n_c^2\,\langle\varepsilon^{-1}\rangle + (1-n_c^2)\,\langle\varepsilon\rangle^{-1},
+$$
+
+with $\langle\cdot\rangle$ the volume average over the dual cell of the edge and $\mathbf n$ the normal of the nearest surface triangle. Later solids replace earlier ones where they overlap: $f_j \leftarrow f_j(1-f_k)$. The conductivity is averaged arithmetically, and `imu` keeps the cell masks. FIT has one E component per edge, so the off-diagonal terms $n_xn_y(\langle\varepsilon^{-1}\rangle-\langle\varepsilon\rangle^{-1})$ are dropped. The method is therefore second order when $\mathbf E$ is parallel or normal to the interface (dielectric rod in a cavity, TM0: errors $1.2\times10^{-4}$, $3.5\times10^{-5}$, $3\times10^{-6}$ at 24/48/96 cells, against $2\times10^{-2}$, $5\times10^{-3}$, $1.6\times10^{-3}$ for the staircase). It is only first order for $\mathbf E$ crossing a curved interface obliquely: for the TE1 mode of the same cavity the error is $4.6\times10^{-3}$, $2.1\times10^{-3}$, $1.0\times10^{-3}$, comparable to the staircase. `conformal='pec'` keeps the conformal PEC and assigns each dielectric edge the material with the largest share of its dual cell.
+
+**Thin PEC sheets.** A sheet is a planar zero-thickness polygon (`sheets={name: PolyData}`, `rectangle_sheet`, or an STL solid with material `'sheet'`). It must lie on a node plane normal to x, y or z; oblique sheets are not supported. The open lengths and areas of the edges and faces in its plane are computed from the polygon outline as above, so a sheet edge between nodes cuts its edges and faces partially. This coverage alone still leaves the edge $0.15$–$0.37\,\Delta$ too far out, depending on its position between the nodes, because the field at a knife edge is singular, $\propto r^{-1/2}$. The empirical one-third-cell rule of `patch_antenna` comes from this offset.
+
+**Knife-edge correction (Wakis adaptation of the static-field corrections of [Shorthouse & Railton, 1992]).** Near a straight sheet edge along $t$, with $s$ pointing away from the metal and $w$ normal to the sheet, the static field is $F=\sqrt{\zeta}$, $\zeta = s + i w$, with the branch cut on the metal. $\operatorname{Re}F$ is the potential of the field with charge at the edge, and also $E_t$ of the field with current along the edge; $\operatorname{Im}F$ is its stream function. Every material coefficient within 1.5 cells of an axis-aligned sheet edge is scaled by the ratio of its exact voltage-to-flux relation for $F$ to the standard FIT one:
+
+| quantity | exact relation used | factor on |
+| --- | --- | --- |
+| $E_s$, $E_w$ (charge at the edge) | $e = \Delta\operatorname{Re}F$ along the edge, $d = \Delta\operatorname{Im}F$ across its dual face | `ieps` |
+| $E_t$ (current along the edge) | $e = \operatorname{Re}F$ at the node, $d = \iint_{\tilde A}\operatorname{Re}F$ (closed form) | `ieps` |
+| $H_s$, $H_w$ faces | $b = \Delta\operatorname{Re}F$ along the face, $h = \Delta\operatorname{Im}F$ along its dual edge | inverse face area |
+
+Dual faces and edges keep their FIT position. Where one crosses the sheet, the principal branch goes around the tip, so the discrete Gauss and Ampère laws exclude the charge and current on the sheet piece inside the dual cell. With this convention the static singular field solves the discrete equations exactly. Unstable faces next to the edge redistribute their flux with the ratio of the knife-edge fields instead of the linear extrapolation. Objects at the sheet corners (beyond the ends of an edge) are not corrected, except $E_t$ edges that reach beyond the corner: these are corrected on the part beside the sheet. The factors are kept in `solver.conformal_ieps_factor`, so that materials written later (templates) are corrected the same way. `sheet_edge_correction=False` disables the correction.
+
+In a PEC box with a fin, the effective edge position is within $0.004\Delta$ of the physical one for any position of the edge between nodes when the charge is at the edge, against $0.15$–$0.37\Delta$ without the correction. When the current runs along the edge it is within $0.02$–$0.04\Delta$, against $0.12$–$0.33\Delta$. The correction is exact only for the singular term. Regular fields near the edge, such as a uniform $E_w$ through a sheet that does not perturb it, see $O(\Delta^2)$ perturbations of the order of $10^{-3}$ at 15 cells across a cavity. At patch corners the field has a stronger singularity, which is not modelled. In a 3D air patch (2 mm cells, sweep of the patch width) the corrected resonance still moves by up to 1 % when a non-radiating edge approaches a node from below. The sweep of the length, where the radiating edges carry the charge, is smooth. This residual edge-position dependence is the main limitation of the sheet model.
+
+**Differentiability.** All conformal quantities are fixed coefficients: $\ell$ in `solver.Ds`, the non-diagonal $\mathbf G$ in `solver.iDa` (and in the CPML derivative operators), and the corrected `ieps`. The update stays linear. `AdjointStepper` transposes the solver's own operators, so the adjoint remains exact, including the non-diagonal redistribution (dot-product identity $\le 10^{-13}$ relative for PEC and CPML in `tests/test_028_conformal.py`). The geometry itself (STL, sheet outline) is not differentiated. A `MaterialGrid` design region overlapping conformal dielectrics or sheet edges would overwrite their `ieps`; keep design regions away from them.
+
+**Limitations.** `use_mpi` is untested; each rank computes its own geometry. GPU is untested. SIBC and PML are rejected (CPML works). `save_to_h5` and `mpi_gather_asGrid` do not carry `conformal`/`sheets`. The permeability is not averaged. Merged faces assume a uniform $\mu$. The ±shift convention makes edges and faces lying exactly on a PEC surface closed.
+
+**Validation** (`tests/test_028_conformal.py`, all in the time domain with a matrix-pencil fit of the ring-down and the leapfrog dispersion removed):
+
+| Case | Mesh | Reference | Staircase / plain | Conformal |
+| --- | --- | --- | --- | --- |
+| PEC sphere, TM11 ($x=2.7437$) | 16/24/32 cells across $2a$ | analytic | −12 %, −10 %, −8 % (1st order) | $3.1\times10^{-3}$, $9.2\times10^{-4}$, $4.8\times10^{-4}$ (order 2.6) |
+| PEC circular cavity TE11/TM01 (2D, eigenvalues) | 24/48/96 across $2.4b$ | analytic | 13 %, 6.6 %, 3.4 % | $1.1\times10^{-3}$, $2.5\times10^{-4}$, $6\times10^{-5}$ (order 2) |
+| Rod-loaded cavity TM0, $\varepsilon_r=4$ | 24/48/96 | Bessel matching | $2\times10^{-2}$ … $1.6\times10^{-3}$ ('pec') | $1.2\times10^{-4}$ … $3\times10^{-6}$ ('all') |
+| Fin in a PEC box, edge at 51 mm | 2 mm (edge mid-cell) / 1 mm (on node) | fine-mesh Richardson | $4.5$/$5.4\times10^{-3}$ and $2.1$/$3.0\times10^{-3}$ | $1.1\times10^{-4}$/$9\times10^{-6}$ and $6.2$/$1.9\times10^{-4}$ |
+| Patch template, FR-4, 15/20/30 cells/λ (slow) | edges between nodes | Δ→0 extrapolation −2.3 % vs TLM | −7.3/−6.0 % at 20/30 (no correction), −2.5/−2.7 % (empirical $\Delta/3$) | −3.4/−2.4/−3.1 % (`thin_sheet=True`, no correction) |
+| Stability: PEC ball + rod + sheet, 20 000 steps | 14×12×12 | bounded energy | — | no growth |
+
+References:
+- S. Dey and R. Mittra, "A locally conformal finite-difference time-domain (FDTD) algorithm for modeling three-dimensional perfectly conducting objects", *IEEE Microwave and Guided Wave Letters* **7**(9), 273–275 (1997).
+- B. Krietenstein, R. Schuhmann, P. Thoma and T. Weiland, "The Perfect Boundary Approximation technique facing the big challenge of high precision field computation", *Proc. LINAC'98*, Chicago, pp. 860–862 (1998), [JACoW TH4041](https://epaper.kek.jp/l98/PAPERS/TH4041.PDF).
+- A. Farjadpour, D. Roundy, A. Rodriguez, M. Ibanescu, P. Bermel, J. D. Joannopoulos, S. G. Johnson and G. W. Burr, "Improving accuracy by subpixel smoothing in the finite-difference time domain", *Opt. Lett.* **31**, 2972–2974 (2006), [doi:10.1364/OL.31.002972](https://doi.org/10.1364/OL.31.002972).
+- C. Kottke, A. Farjadpour and S. G. Johnson, "Perturbation theory for anisotropic dielectric interfaces, and application to subpixel smoothing of discretized numerical methods", *Phys. Rev. E* **77**, 036611 (2008), [doi:10.1103/PhysRevE.77.036611](https://doi.org/10.1103/PhysRevE.77.036611).
+- D. B. Shorthouse and C. J. Railton, "The incorporation of static field solutions into the finite difference time domain algorithm", *IEEE Trans. Microwave Theory Tech.* **40**(5), 986–994 (1992).
+
 ### Surface impedance boundary condition (SIBC)
 
 When the metal walls are very good conductors and the skin depth is much smaller than the grid spacing, it becomes inefficient (and inaccurate) to resolve the fields inside the conductor volume. Instead of using a volumetric conductivity, Wakis can model such metals with a **Leontovich surface impedance boundary condition (SIBC)** applied only on the surface cells. This can be disabled in the solver by turning `use_sibc=False`
@@ -1041,7 +1116,7 @@ References:
 
 **Graded meshes (workaround).** The update of an E sample on node $i$ needs the dual edge length centred on that node, $\tilde L_i = (x_{i+1}-x_{i-1})/2$. `GridFIT3D` currently stores $\tilde L_i = (x_{i+2}-x_i)/2$, i.e. the dual length of node $i+1$, which is exact only on uniform meshes; on a graded mesh it acts as a local material error of the order of the grading ratio minus one. `Simulation.build` overwrites `grid.tL` and `grid.itA` with the node-centred values (unchanged on uniform meshes) and meshes periodic axes uniformly. With this correction a slab on a graded mesh reproduces the Airy transmittance to 0.016, as on a uniform mesh, instead of 0.059.
 
-**Metal sheet edges.** The field of a zero-thickness PEC sheet ending on a mesh node fringes as if the sheet extended about a third of a cell further. For a patch antenna this lowers the resonance at first order in the cell size (observed: $\delta \approx 0.37\Delta$ per edge from a two-mesh study). `patch_antenna` therefore meshes the patch smaller by $\Delta/3$ per edge (`edge_correction`); this empirical correction is a Wakis choice validated by the mesh study below, not a published method.
+**Metal sheet edges.** The field of a zero-thickness PEC sheet ending on a mesh node fringes as if the sheet extended about a third of a cell further. For a patch antenna this lowers the resonance at first order in the cell size (observed: $\delta \approx 0.37\Delta$ per edge from a two-mesh study). `patch_antenna` therefore meshes the patch smaller by $\Delta/3$ per edge (`edge_correction`); this empirical correction is a Wakis choice validated by the mesh study below, not a published method. `patch_antenna(thin_sheet=True)` replaces it by a conformal sheet of the physical patch size with the knife-edge correction (see "Conformal FIT"), which needs no empirical parameter: −3.4 %, −2.4 % and −3.1 % vs TLM at 15, 20 and 30 cells/λ. This is within about 1 % of the Δ→0 extrapolation (−2.3 %), against −6 to −7 % for the uncorrected staircased patch, but not better than the empirical correction (−2.5 %, −2.7 %). The remaining scatter comes from the patch corners and from the edges carrying current along them (see "Conformal FIT"), so `thin_sheet` stays opt-in.
 
 **Patch antenna (transmission-line model)** [Balanis, 2016, Sec. 14.2]. For substrate permittivity $\varepsilon_r$ and height $h$, design frequency $f_r$:
 

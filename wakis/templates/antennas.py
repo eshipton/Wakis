@@ -13,7 +13,7 @@ from ..lumped import LumpedPort
 from ..near2far import Near2FarMonitor
 from . import formulas, meshing
 from .analysis import find_minimum, find_zero_crossings
-from .shapes import Box, Cylinder, material_eps, resolve_material
+from .shapes import Box, Cylinder, Sheet, material_eps, resolve_material
 from .simulation import Simulation
 
 
@@ -31,6 +31,7 @@ def patch_antenna(
     substrate_cells=3,
     n_far_field=11,
     edge_correction=1 / 3,
+    thin_sheet=False,
     **simulation_kwargs,
 ):
     """
@@ -75,6 +76,12 @@ def patch_antenna(
         behaves as if it extended about a third of a cell further (fringing
         field of the staircased edge); without the correction the resonance is
         lower by about 2 x 0.37 cells / L. Default 1/3, 0 disables it.
+        Ignored with `thin_sheet`.
+    thin_sheet : bool, optional
+        Model the patch as a conformal `Sheet` of its physical size (edges
+        between mesh nodes, knife-edge correction) instead of a staircased
+        zero-thickness PEC box; no empirical edge correction is needed.
+        Default False.
     **simulation_kwargs
         Passed to `Simulation`.
 
@@ -110,10 +117,14 @@ def patch_antenna(
         cell = min(cell, simulation_kwargs["max_cell"])
     trim = 2 * edge_correction * cell
     ground = (length + 2 * ground_margin, width + 2 * ground_margin)
+    if thin_sheet:
+        patch = Sheet((0, 0, height), (length, width, 0))
+    else:
+        patch = Box((0, 0, height), (length - trim, width - trim, 0), "pec")
     structures = [
         Box((0, 0, height / 2), (*ground, height), material),
         Box((0, 0, 0), (*ground, 0), "pec"),
-        Box((0, 0, height), (length - trim, width - trim, 0), "pec"),
+        patch,
     ]
     simulation_kwargs.setdefault("min_cells_per_feature", substrate_cells)
     sim = Simulation(

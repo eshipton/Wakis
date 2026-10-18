@@ -25,7 +25,7 @@ from .periodic import (
     reflection_transmission,
     unit_cell,
 )
-from .shapes import Box, Cylinder
+from .shapes import Box, Cylinder, Sheet
 from .simulation import Simulation
 from .sweeps import optimize, parameter_sweep
 from .waveguides import (
