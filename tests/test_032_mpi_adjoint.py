@@ -6,7 +6,7 @@ from wakis.inverse import AdjointSimulation, AdjointStepper, MaterialGrid
 from wakis.sources import CurrentSource, GaussianSource
 
 # Run with:
-# mpiexec -n 2 python -m pytest --color=yes -v tests/test_028_mpi_adjoint.py
+# mpiexec -n 2 python -m pytest --color=yes -v tests/test_032_mpi_adjoint.py
 # (also -n 4 and -n 8: 24 z-cells split evenly)
 
 MPI = pytest.importorskip("mpi4py.MPI")
