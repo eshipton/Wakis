@@ -204,6 +204,49 @@ Before time-stepping, these directional fields are assembled into the correspond
 
 Wakis also supports spatially varying media, embedded materials from CAD imports, and subpixel smoothing, ensuring accurate representation of complex geometries and composite structures.
 
+#### Grid conventions
+
+**Staggering.** The primary grid has nodes $x_0 < x_1 < \dots$ (`grid.x`, likewise $y$, $z$), primary edge lengths $L_i = x_{i+1}-x_i$ and edge midpoints $x_{i+1/2}$ (`solver.x`). The curl matrix $\mathbf{C}$ is built from forward differences (`Px`, `Py`, `Pz`), which fixes where the sample $(i,j,k)$ of each component lives:
+
+| sample $(i,j,k)$ | along $x$ | along $y$ | along $z$ |
+|---|---|---|---|
+| $E_x$, $J_x$ | $x_{i+1/2}$ | $y_j$ | $z_k$ |
+| $E_y$, $J_y$ | $x_i$ | $y_{j+1/2}$ | $z_k$ |
+| $E_z$, $J_z$ | $x_i$ | $y_j$ | $z_{k+1/2}$ |
+| $H_x$ | $x_i$ | $y_{j+1/2}$ | $z_{k+1/2}$ |
+| $H_y$ | $x_{i+1/2}$ | $y_j$ | $z_{k+1/2}$ |
+| $H_z$ | $x_{i+1/2}$ | $y_{j+1/2}$ | $z_k$ |
+
+i.e. $E_c$ sits at the edge midpoint along $c$ and on the nodes transversally, $H_c$ on the node along $c$ and at the midpoints transversally. Along one axis (here $x$, domain $[x_\text{min}, x_\text{max}]$ meshed with $N$ cells):
+
+```text
+ index i:     0         1               N-1         N      (ghost)
+ nodes:    x_0=xmin    x_1    ...    x_{N-1}    x_N=xmax    x_{N+1}
+             |----------|---- ... ------|----------|- - - - - -|
+ E_y,E_z,H_x o          o               o          o
+ E_x,H_y,H_z      *          *     ...       *           (*)
+ dual length  L_0/2   (L_0+L_1)/2  (L_{N-2}+L_{N-1})/2  L_{N-1}/2
+```
+
+**Dual lengths.** The dual edge through node $i$ joins the neighbouring midpoints, $\tilde L_i = (L_{i-1}+L_i)/2$ (`grid.tL`), and the dual areas are products of dual and primary lengths (`grid.itA` stores their inverse). The first and last node of an axis get half a cell, $L_0/2$ and $L_{N-1}/2$: their dual cells end on the boundary. These are the lengths in Ampère's law $\widetilde{\mathbf{C}}\widetilde{\mathbf{D}}_s\mathbf{h}$, in the source normalization of `CurrentSource` and in the `FluxMonitor` area elements [Weiland, 1977; Weiland, 1996].
+
+**Boundaries on the domain bounds.** By default (`GridFIT3D(..., boundary_at_domain_edge=True)`) one ghost cell is appended beyond $x_\text{max}$ on every axis, so the field arrays hold $N+1$ samples along each axis (`grid.Nx = N + 1`) and the last index is the boundary node $x_N = x_\text{max}$:
+- **PEC** (and the PEC-terminated PML/CPML) zeroes the tangential E on the nodes $x_0$ and $x_N$: a PEC box meshed with $N$ cells is exactly $N\Delta x$ wide.
+- **PMC** is the natural boundary of FIT and needs no masking: the tangential E on $x_0$ (or $x_N$) integrates H over the half dual cell $L/2$, and the tangential H just outside the domain is zero. This is exact by image symmetry ($H_\parallel$ odd about the wall), so the wall sits on $x_0$ (or $x_N$).
+- **ABC** (Mur) updates the tangential E on $x_0$ and $x_N$.
+- The ghost samples beyond $x_N$ ($E_x$, $H_y$, $H_z$ at $x_{N+1/2}$) have $1/\varepsilon = 1/\mu = 0$, so they stay zero and never couple to the domain; the forward difference of the last sample of a grid line does not wrap into the next line.
+- On a **periodic/Bloch** axis `SolverFIT3D` removes the ghost cell from the grid (in place, `GridFIT3D.remove_edge_ghost`), so the axis keeps $N$ samples; the forward difference of sample $N-1$ wraps to sample 0, the period is $x_\text{max}-x_\text{min}$ and $\tilde L_0 = (L_{N-1}+L_0)/2$. Such a grid cannot be reused with non-periodic faces on that axis.
+- With MPI only the last rank carries the $z$ ghost cell; `mpi_gather` returns the $N_z$ cell samples (the boundary node at $z_\text{max}$ is dropped).
+
+Verification (`tests/test_026_grid_conventions.py`): the TM$_{110}$ frequency of an empty PEC box matches the leapfrog dispersion relation $\frac{2}{c\Delta t}\sin\frac{\omega\Delta t}{2} = \sqrt{\sum_a \left(\frac{2}{\Delta_a}\sin\frac{\pi\Delta_a}{2\ell_a}\right)^2}$ with $\ell_a$ the *domain* lengths to $10^{-5}$, and the continuum error converges at second order; PEC/PMC quarter-wave resonators ($f=c/4d$) and a box with PEC $x$/PMC $y$ walls ($f=c/2a$) match their discrete relations to $10^{-5}$; on a mesh graded by a factor 3 the TM$_{110}$ error converges at second order (−0.65 %, −0.16 %, −0.04 % at 12, 24, 48 cells), and the discrete energy $\tfrac12\sum\varepsilon V_e (E^n)^2 + \tfrac12\sum \mu V_h H^{n-1/2}H^{n+1/2}$ of the closed cavity is constant to round-off.
+
+**Legacy convention** (`boundary_at_domain_edge=False`, used by the wake/meshing regression tests 001, 007, 013 and 014 and to reproduce results of earlier Wakis versions): $N$ samples per axis and the last index is a ghost layer, so the high-side PEC/ABC/CPML walls sit on $x_{N-1} = x_\text{max} - L_{N-1}$ (a PEC guide meshed with $N$ cells is $(N-1)\Delta x$ wide; a high-side PMC face also behaves as a PEC on $x_{N-1}$ because $\tilde L_{N-1} = 0$ freezes the tangential E there, and a low-side PMC sits on $x_{1/2}$); $\tilde L_i = (L_i + L_{i+1})/2$ is centred on node $i+1$, which makes the error of a graded mesh first order (+4.9 %, +2.5 %, +1.2 % for the case above). With MPI the legacy high $z$ wall sits on $z_\text{max}$ for one rank but one cell below it for several ranks. For the embedded-boundary cavity of test 001 (a 50 mm square box, $f_{110} = c/(\sqrt2\,a) = 4.240$ GHz without beam pipes) the dominant impedance peak moves from 4.333 GHz (legacy: the box is cut to 49 mm by the ghost layer, $c/(\sqrt2 \cdot 49\,\text{mm}) = 4.326$ GHz) to 4.268 GHz. Where the walls are embedded STL solids inside the domain (lossy cavity of tests 007/013) the domain-edge cell barely matters: $|Z|$ changes by 0.06 % and the wake potential by 3 % of its maximum.
+
+References:
+- T. Weiland, "A discretization method for the solution of Maxwell's equations for six-component fields", *Electronics and Communication (AEÜ)* **31**, 116–120 (1977).
+- T. Weiland, "Time domain electromagnetic field computation with finite difference methods", *Int. J. Numer. Model.* **9**, 295–319 (1996).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4 (numerical dispersion).
+
 ### 🕒 Time-Stepping Routine
 
 Wakis uses the **Leapfrog scheme**, a second-order accurate and explicit time integrator. This method updates the magnetic and electric fields in a staggered fashion:
@@ -391,7 +434,7 @@ $$
 \frac{P_\parallel}{P_0} = \frac{3\pi}{2kd}\left[1 + \left(\frac{\pi}{kd}\right)^2\right]\quad (\pi<kd<3\pi),
 $$
 
-and $P_\parallel = 0$ for $kd<\pi$, the single-mode (TEM, resp. TE$_1$+TM$_1$) results of the waveguide mode sum. The simulation agrees to 0.03 at $kd/\pi = 1.15$–$1.75$. Note that a PEC on a *high* boundary lies on the last non-ghost node, one cell below $z_{max}$.
+and $P_\parallel = 0$ for $kd<\pi$, the single-mode (TEM, resp. TE$_1$+TM$_1$) results of the waveguide mode sum. The simulation agrees to 0.03 at $kd/\pi = 1.15$–$1.75$. Both PEC plates lie on the domain bounds (see *Grid conventions*).
 
 **Differentiability.** The far field is linear in the recorded spectra: for each frequency, $\mathbf{F}(\hat r_i) = \sum_p G_{ip}\,[\,-w_p H_p,\ -w_p E_p\,]$ with $G_{ip}$ the dense kernel $-\tfrac{jk}{4\pi} e^{jk\mathbf{r}'_p\cdot\hat r_i}$ times the projections $\eta(\mathbb{1}-\hat r_i\hat r_i^T)\hat e_{J,p}$ and $\hat e_{M,p}\times\hat r_i$. `Near2FarMonitor.surface_currents()` returns the points, axes and current elements, so objectives such as $D(\hat r_0) = 4\pi|\mathbf F(\hat r_0)|^2 / \sum_i w_i|\mathbf F(\hat r_i)|^2$ can be written in JAX on top of the DFT data.
 
@@ -558,7 +601,7 @@ $$
 P = \frac{1}{\tilde\omega}\begin{pmatrix} -U_b\varepsilon_a^{-1}V_c & \tilde\omega^2\mu_c + U_b\varepsilon_a^{-1}V_b\\ -\tilde\omega^2\mu_b - U_c\varepsilon_a^{-1}V_c & U_c\varepsilon_a^{-1}V_b\end{pmatrix},
 $$
 
-and the eigenproblem $\tilde\beta^2\,\mathbf{e} = PQ\,\mathbf{e}$ for the transverse E samples. This is the Yee-mesh finite-difference mode solver of Zhu & Brown [2002], here built from Wakis' own material tensors (`ieps`, `imu`), metric lengths ($L$, $\tilde L$) and boundary masks: PEC (and the PEC-terminated CPML/PML faces) removes the tangential E samples on the walls, PMC removes tangential H, periodic axes wrap, conductors with `ieps = 0` remove their E samples, and the ghost layer at the last index is excluded. A port `size` smaller than the domain puts electric walls on the port edges (e.g. to exclude CPML layers). The eigenvalues closest to $n_{max}^2\tilde\omega^2/c^2$ are found with shift-invert Arnoldi (`scipy.sparse.linalg.eigs`), and $\beta = (2/\Delta a)\arcsin(\tilde\beta\Delta a/2)$. Because the same discrete operators are used, a mode is an exact eigenmode of the 3D time stepping of a uniform guide: the TE10 propagation constant matches the discrete dispersion relation $(\tilde\omega/c)^2 = \tilde k_x^2 + \tilde\beta^2$ to $10^{-9}$ and the continuum $\sqrt{k^2-(\pi/a)^2}$ to grid-dispersion accuracy; the TE0 effective index of a dielectric slab converges at second order to the solution of $\tan(\kappa d/2) = \gamma/\kappa$ [Snyder & Love, 1983].
+and the eigenproblem $\tilde\beta^2\,\mathbf{e} = PQ\,\mathbf{e}$ for the transverse E samples. This is the Yee-mesh finite-difference mode solver of Zhu & Brown [2002], here built from Wakis' own material tensors (`ieps`, `imu`), metric lengths ($L$, $\tilde L$) and boundary masks: PEC (and the PEC-terminated CPML/PML faces) removes the tangential E samples on the walls, PMC is the natural boundary (as in 3D, see *Grid conventions*), periodic axes wrap, conductors with `ieps = 0` remove their E samples, and the ghost samples beyond the last node are excluded. A port `size` smaller than the domain puts electric walls on the port edges (e.g. to exclude CPML layers). The eigenvalues closest to $n_{max}^2\tilde\omega^2/c^2$ are found with shift-invert Arnoldi (`scipy.sparse.linalg.eigs`), and $\beta = (2/\Delta a)\arcsin(\tilde\beta\Delta a/2)$. Because the same discrete operators are used, a mode is an exact eigenmode of the 3D time stepping of a uniform guide: the TE10 propagation constant matches the discrete dispersion relation $(\tilde\omega/c)^2 = \tilde k_x^2 + \tilde\beta^2$ to $10^{-9}$ and the continuum $\sqrt{k^2-(\pi/a)^2}$ to grid-dispersion accuracy; the TE0 effective index of a dielectric slab converges at second order to the solution of $\tan(\kappa d/2) = \gamma/\kappa$ [Snyder & Love, 1983].
 
 **Power normalization.** The `FluxMonitor` (and the discrete Poynting theorem of the Yee scheme) pairs the E plane with H averaged from the two neighbouring H planes, which for a mode is $\bar{\mathbf{h}} = \mathbf{h}\cos(\beta\Delta a/2)$. Modes are normalized to unit time-averaged power,
 
@@ -566,7 +609,7 @@ $$
 \tfrac12\operatorname{Re}\sum \left(e_b\,\bar h_c^* - e_c\,\bar h_b^*\right)\Delta A = 1\ \text{W},
 $$
 
-with the `FluxMonitor` area elements. Note that, because of the ghost layer, PEC walls on a non-periodic axis sit on the nodes $0$ and $N-1$: a guide meshed with $N$ cells has width $(N-1)\Delta$.
+with the `FluxMonitor` area elements. The PEC walls sit on the domain bounds: a guide meshed with $N$ cells has width $N\Delta$ (legacy grids, `boundary_at_domain_edge=False`: $(N-1)\Delta$).
 
 Assumptions and limits: lossless isotropic materials uniform along $a$ within one cell of the plane, a locally uniform mesh along $a$, and serial (non-MPI) runs. Only propagating modes ($\tilde\beta^2 > 0$) are returned.
 
@@ -597,8 +640,8 @@ References:
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:
-- **PEC (Perfect Electric Conductor)**: masks tangential electric-field degrees of freedom, enforcing $\vec{E}_{\parallel} = 0$ at the selected face.
-- **PMC (Perfect Magnetic Conductor)**: masks tangential magnetic-field degrees of freedom, enforcing $\vec{H}_{\parallel} = 0$.
+- **PEC (Perfect Electric Conductor)**: masks tangential electric-field degrees of freedom, enforcing $\vec{E}_{\parallel} = 0$ at the selected face. All non-periodic faces lie on the domain bounds.
+- **PMC (Perfect Magnetic Conductor)**: enforces $\vec{H}_{\parallel} = 0$ on the face. It is the natural boundary of FIT (half dual cell on the boundary node, zero H outside), so no masking is needed; legacy grids mask the tangential H samples instead (see *Grid conventions*).
 - **Periodic**: pairs the low and high faces of an axis and closes the corresponding FIT derivative stencil (`Px`, `Py`, or `Pz`) across that seam. The curl matrix is then rebuilt from the corrected derivative matrices and the periodic dual metrics are updated. A periodic face must be paired with the opposite face. Serial periodic boundaries are available in all three directions; longitudinal periodic MPI requires cyclic ghost exchange and is intentionally not enabled yet.
 - **ABC**: a first-order Mur radiation condition for selected domain faces.
 - **PML**: a finite, graded, electrically lossy layer terminated by the usual electric boundary mask.

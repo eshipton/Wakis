@@ -191,7 +191,7 @@ class RoutinesMixin:
             energy_max = 0.0
 
         # Time loop
-        for n in tqdm(range(Nt)):
+        for n in tqdm(range(Nt), disable=not self.verbose):
             for src in sources:
                 src.update(self, n * self.dt)
 
@@ -493,10 +493,11 @@ class RoutinesMixin:
         if plot_from is None:
             plot_from = int(self.ti / self.dt)
 
-        print("Running electromagnetic time-domain simulation...")
+        if self.verbose:
+            print("Running electromagnetic time-domain simulation...")
 
         t0 = time.time()
-        for n in tqdm(range(Nt)):
+        for n in tqdm(range(Nt), disable=not self.verbose):
             # Initial condition
             beam.update(self, n * self.dt)
 

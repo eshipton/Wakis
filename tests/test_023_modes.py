@@ -17,9 +17,8 @@ DX = 1e-3
 
 
 def _pec_guide(Na, Nb, length, axis="z", ends="cpml", use_gpu=False):
-    """Rectangular PEC waveguide along `axis` with CPML ends. The last index
-    along each non-periodic axis is a ghost layer, so the PEC walls sit on the
-    nodes 0 and N-1: the broad wall is a = (Na - 1) * DX."""
+    """Rectangular PEC waveguide along `axis` with CPML ends. The PEC walls
+    sit on the domain bounds: the broad wall is a = Na * DX."""
     a = "xyz".index(axis)
     n = [0, 0, 0]
     n[a], n[(a + 1) % 3], n[(a + 2) % 3] = length, Na, Nb
@@ -42,7 +41,7 @@ def test_te10_dispersion():
     (>= 20 cells per guide wavelength: < 0.5%). Ey follows sin(pi x/a) and the
     cutoff is c/(2a) to the same accuracy. TE20 is evanescent below 2 fc.
     """
-    _, solver = _pec_guide(21, 11, 10, ends="pec")
+    _, solver = _pec_guide(20, 10, 10, ends="pec")
     a = 20 * DX
     fc = c / (2 * a)
     plane = dict(center=(0, 0, 5 * DX), size=(np.inf, np.inf, 0))
@@ -195,7 +194,7 @@ def test_mode_source(axis, direction, use_gpu):
     """
     a = "xyz".index(axis)
     sign = 1 if direction == "+" else -1
-    grid, solver = _pec_guide(21, 11, 160, axis=axis, use_gpu=use_gpu)
+    grid, solver = _pec_guide(20, 10, 160, axis=axis, use_gpu=use_gpu)
     fc = c / (2 * 20 * DX)
     f0 = 1.5 * fc
     pulse = GaussianSource(frequency=f0, fwidth=0.1 * f0)
@@ -211,7 +210,7 @@ def test_mode_source(axis, direction, use_gpu):
     f = np.linspace(1.3 * fc, 1.7 * fc, 5)
     downstream = ModeMonitor(f, **plane(0.03))
     upstream = ModeMonitor(f, **plane(-0.05))
-    extent = np.array([grid.x[-1], grid.y[-1], grid.z[-1]])
+    extent = np.array([grid.xmax, grid.ymax, grid.zmax])
     flux_size, flux_center = extent.copy(), extent / 2
     flux_size[a], flux_center[a] = 0.0, plane(0.03)["center"][a]
     flux = wakis.FluxMonitor(f, center=flux_center, size=flux_size)
@@ -244,7 +243,7 @@ def test_mode_orthogonality(use_gpu):
     2.5 fc) excites no TE10: the ModeMonitor projection on TE10 is < 1e-6 of
     the TE20 amplitude, and TE20 carries the injected power within 1%.
     """
-    _, solver = _pec_guide(21, 9, 160, use_gpu=use_gpu)
+    _, solver = _pec_guide(20, 8, 160, use_gpu=use_gpu)
     fc = c / (2 * 20 * DX)
     f0 = 2.25 * fc
     pulse = GaussianSource(frequency=f0, fwidth=0.05 * f0)

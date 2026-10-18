@@ -196,6 +196,9 @@ class TestMPILossyCavity:
             stl_scale=1.0,
             stl_rotate=[0, 0, 0],
             stl_translate=[0, 0, 0],
+            # Reference data generated with the legacy grid convention (high
+            # walls one cell inside the domain); see "Grid conventions"
+            boundary_at_domain_edge=False,
             verbose=1,
         )
         if use_mpi:

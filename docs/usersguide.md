@@ -143,6 +143,8 @@ grid.inspect(
 
  ![Gif showing how the grid.inspect() method works](img/grid_inspect.gif)
 
+Non-periodic boundaries (PEC, PMC, ABC, CPML) sit on the domain bounds: a PEC box from `xmin` to `xmax` meshed with `Nx` cells is exactly `xmax - xmin` wide. For this, `GridFIT3D` appends one ghost cell beyond each max bound, so the field arrays hold `Nx + 1` samples per axis (`grid.Nx` is the number of samples) and index `-1` is the boundary node at `xmax`. Pass `boundary_at_domain_edge=False` to recover the legacy convention of earlier Wakis versions (high-side walls one cell inside the domain), e.g. to reproduce published wake results; see *Grid conventions* in the physics guide.
+
 The grid coordinates and cell sizes are available as attributes. For example, `grid.dx` contains the cell widths in $x$, while `grid.Nx * grid.Ny * grid.Nz` gives the total cell count.
 
 ```{tip}
@@ -583,8 +585,8 @@ import wakis
 from wakis.sources import GaussianSource
 from wakis.sparameters import write_touchstone
 
-# PEC plates at x = 0 and x = 10 mm (the high PEC wall sits on the last x node)
-grid = wakis.GridFIT3D(0, 12e-3, -20e-3, 20e-3, -0.06, 0.06, 6, 2, 60)
+# PEC plates at x = 0 and x = 10 mm (the domain bounds)
+grid = wakis.GridFIT3D(0, 10e-3, -20e-3, 20e-3, -0.06, 0.06, 5, 2, 60)
 solver = wakis.SolverFIT3D(grid, bc_low=["pec", "periodic", "cpml"],
                            bc_high=["pec", "periodic", "cpml"])
 
@@ -626,10 +628,10 @@ import wakis
 from wakis.mode_solver import ModeMonitor, ModeSource, solve_modes
 from wakis.sources import GaussianSource
 
-# WR-like PEC guide along z with CPML ends: 21 x 11 cells -> a = 20 mm, b = 10 mm
-# (PEC walls sit on the first and last field node: width = (N - 1) * dx)
+# WR-like PEC guide along z with CPML ends: 20 x 10 cells -> a = 20 mm, b = 10 mm
+# (PEC walls sit on the domain bounds)
 dx = 1e-3
-grid = wakis.GridFIT3D(0, 21 * dx, 0, 11 * dx, 0, 0.16, 21, 11, 160)
+grid = wakis.GridFIT3D(0, 20 * dx, 0, 10 * dx, 0, 0.16, 20, 10, 160)
 solver = wakis.SolverFIT3D(grid, bc_low=["pec", "pec", "cpml"], bc_high=["pec", "pec", "cpml"])
 
 fc = c / (2 * 20 * dx)  # TE10 cutoff

@@ -15,10 +15,12 @@ from wakis.sources import Beam
 
 @pytest.mark.parametrize(
     "low_z, high_z, source_type, expected_start, expected_stop",
+    # 24 cells: the high wall is the boundary node z = 1 (index 24); the stop
+    # plane sits 1 (+ n_pml) cells inside it
     [
-        ("pec", "pec", "tfsf", 1, 22),
-        ("pec", "pml", "direct", 1, 19),
-        ("pml", "pec", "direct", 4, 22),
+        ("pec", "pec", "tfsf", 1, 23),
+        ("pec", "pml", "direct", 1, 20),
+        ("pml", "pec", "direct", 4, 23),
     ],
 )
 def test_serial_tfsf_injection_and_lifecycle(
@@ -97,8 +99,8 @@ def test_serial_cpml_tfsf_injection():
     beam = Beam(sigmaz=0.04, ti=0.0)
     beam.update(solver, 0.0)
     assert solver.source_type == solver.logger.solver["source_type"] == "tfsf"
-    assert (beam.j_start, beam.j_stop) == (4, 19)
-    assert beam.high_plane == solver.z[19]
+    assert (beam.j_start, beam.j_stop) == (4, 20)
+    assert beam.high_plane == solver.z[20]
     solver.one_step()
     assert np.isfinite(solver.E.toarray()).all()
     assert np.any(solver.J.toarray())

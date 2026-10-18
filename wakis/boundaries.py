@@ -85,9 +85,14 @@ class BCsMixin:
                 self.Px[high, low] = phase if self.Nx > 1 else phase - 1
                 self.Px = self.Px.tocsc()
 
-                self.tL[-1, :, :, "x"] = 0.5 * (
-                    self.L[-1, :, :, "x"] + self.L[0, :, :, "x"]
-                )
+                if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
+                    self.tL[0, :, :, "x"] = 0.5 * (
+                        self.L[-1, :, :, "x"] + self.L[0, :, :, "x"]
+                    )
+                else:  # legacy: tL[i] is centred on node i+1
+                    self.tL[-1, :, :, "x"] = 0.5 * (
+                        self.L[-1, :, :, "x"] + self.L[0, :, :, "x"]
+                    )
 
             if (
                 self.bc_low[1].lower() == "periodic"
@@ -106,9 +111,14 @@ class BCsMixin:
                 self.Py[high, low] = phase if self.Ny > 1 else phase - 1
                 self.Py = self.Py.tocsc()
 
-                self.tL[:, -1, :, "y"] = 0.5 * (
-                    self.L[:, -1, :, "y"] + self.L[:, 0, :, "y"]
-                )
+                if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
+                    self.tL[:, 0, :, "y"] = 0.5 * (
+                        self.L[:, -1, :, "y"] + self.L[:, 0, :, "y"]
+                    )
+                else:  # legacy: tL[i] is centred on node i+1
+                    self.tL[:, -1, :, "y"] = 0.5 * (
+                        self.L[:, -1, :, "y"] + self.L[:, 0, :, "y"]
+                    )
 
             if (
                 self.bc_low[2].lower() == "periodic"
@@ -127,9 +137,14 @@ class BCsMixin:
                 self.Pz[high, low] = phase if self.Nz > 1 else phase - 1
                 self.Pz = self.Pz.tocsc()
 
-                self.tL[:, :, -1, "z"] = 0.5 * (
-                    self.L[:, :, -1, "z"] + self.L[:, :, 0, "z"]
-                )
+                if self.grid.boundary_at_domain_edge:  # node 0 is on the seam
+                    self.tL[:, :, 0, "z"] = 0.5 * (
+                        self.L[:, :, -1, "z"] + self.L[:, :, 0, "z"]
+                    )
+                else:  # legacy: tL[i] is centred on node i+1
+                    self.tL[:, :, -1, "z"] = 0.5 * (
+                        self.L[:, :, -1, "z"] + self.L[:, :, 0, "z"]
+                    )
 
             # Recompute dual areas after all periodic lengths, including corners.
             aux = self.tL.field_y * self.tL.field_z
@@ -228,36 +243,32 @@ class BCsMixin:
             # Update C (columns)
             self.C = self.C * self.Dbc
 
-        # Dirichlet PMC: tangential H field = 0 at boundary
-        if any(True for x in self.bc_low if x.lower() in ("magnetic", "pmc")) or any(
-            True for x in self.bc_high if x.lower() in ("magnetic", "pmc")
-        ):
-            if self.bc_low[0].lower() == "magnetic" or self.bc_low[0] == "pmc":
-                xlo = 0
-            if self.bc_low[1].lower() == "magnetic" or self.bc_low[1] == "pmc":
-                ylo = 0
-            if self.bc_low[2].lower() == "magnetic" or self.bc_low[2] == "pmc":
-                zlo = 0
-            if self.bc_high[0].lower() == "magnetic" or self.bc_high[0] == "pmc":
-                xhi = 0
-            if self.bc_high[1].lower() == "magnetic" or self.bc_high[1] == "pmc":
-                yhi = 0
-            if self.bc_high[2].lower() == "magnetic" or self.bc_high[2] == "pmc":
-                zhi = 0
+        # PMC: tangential H = 0 at the boundary. With domain-edge ghosts this
+        # is the natural boundary of FIT and needs no masking: the tangential
+        # E on the boundary node integrates H over a half dual cell, and the H
+        # just outside (index -1 below the domain, the inert ghost above it)
+        # is zero. Legacy grids zero the tangential H at the first and last
+        # index instead (walls half a cell inside the low face).
+        is_pmc_lo = [bc.lower() in ("magnetic", "pmc") for bc in self.bc_low]
+        is_pmc_hi = [bc.lower() in ("magnetic", "pmc") for bc in self.bc_high]
+        if not self.grid.boundary_at_domain_edge and any(is_pmc_lo + is_pmc_hi):
+            # Fresh factors: the PEC block above has zeroed those of PEC faces
+            xlo, ylo, zlo = (int(not pmc) for pmc in is_pmc_lo)
+            xhi, yhi, zhi = (int(not pmc) for pmc in is_pmc_hi)
 
             # Assemble matrix
             self.BC = Field(self.Nx, self.Ny, self.Nz, dtype=np.int8, use_ones=True)
 
             for d in ["x", "y", "z"]:  # tangential to zero
                 if d != "x":
-                    self.BC[0, :, :, d] = xlo
-                    self.BC[-1, :, :, d] = xhi
+                    self.BC[0, :, :, d] *= xlo
+                    self.BC[-1, :, :, d] *= xhi
                 if d != "y":
-                    self.BC[:, 0, :, d] = ylo
-                    self.BC[:, -1, :, d] = yhi
+                    self.BC[:, 0, :, d] *= ylo
+                    self.BC[:, -1, :, d] *= yhi
                 if d != "z":
-                    self.BC[:, :, 0, d] = zlo
-                    self.BC[:, :, -1, d] = zhi
+                    self.BC[:, :, 0, d] *= zlo
+                    self.BC[:, :, -1, d] *= zhi
 
             self.Dbc = diags(
                 self.BC.toarray(),
@@ -304,6 +315,27 @@ class BCsMixin:
             True for x in self.bc_high if x.lower() == "cpml"
         ):
             self.activate_cpml = True
+
+    def _isolate_edge_ghosts(self):
+        """
+        Decouple the domain-edge ghost samples by zeroing their material.
+
+        With ``GridFIT3D(boundary_at_domain_edge=True)`` the last index along
+        each axis is the boundary node at max; the samples at the edge
+        midpoints of the ghost cell beyond it (E_a, H_b, H_c along axis a)
+        lie outside the domain. Setting 1/eps and 1/mu to zero there keeps
+        these samples at zero for any current or curl, so they neither store
+        energy nor couple to the domain. (Periodic axes have no ghost cell.)
+        """
+        for axis, ghost in enumerate(self.grid.edge_ghosts):
+            if not ghost:
+                continue
+            last = [slice(None)] * 3
+            last[axis] = -1
+            last = tuple(last)
+            self.ieps[(*last, "xyz"[axis])] = 0.0
+            for d in "xyz".replace("xyz"[axis], ""):
+                self.imu[(*last, d)] = 0.0
 
     def _setup_bloch(self):
         """

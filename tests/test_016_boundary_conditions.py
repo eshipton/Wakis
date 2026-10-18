@@ -202,9 +202,9 @@ def test_nonuniform_periodic_metrics():
     solver = SolverFIT3D(grid, verbose=0)
     for axis, name in enumerate("xyz"):
         widths = getattr(grid, "d" + name)
-        expected = np.concatenate(
-            ((widths[:-1] + widths[1:]) / 2, [(widths[-1] + widths[0]) / 2])
-        )
+        # Dual length of node i spans the midpoints of cells i-1 and i; node 0
+        # straddles the periodic seam
+        expected = (np.roll(widths, 1) + widths) / 2
         shape = [1, 1, 1]
         shape[axis] = len(widths)
         np.testing.assert_allclose(
@@ -218,7 +218,13 @@ def test_nonuniform_periodic_metrics():
 
 @pytest.mark.parametrize("boundary", ["pec", "pmc"])
 def test_rebuilt_curl_preserves_conductor_masks(boundary):
-    solver = make_solver(["periodic", "periodic", boundary])
+    # PMC is only masked on legacy grids (it is the natural boundary when the
+    # walls sit on the domain edge)
+    grid = GridFIT3D(
+        0, 1, 0, 1, 0, 1, 4, 5, 6, boundary_at_domain_edge=boundary == "pec", verbose=0
+    )
+    bcs = ["periodic", "periodic", boundary]
+    solver = SolverFIT3D(grid, bc_low=bcs, bc_high=bcs.copy(), verbose=0)
     masked = np.flatnonzero(solver.BC.toarray() == 0)
     curl = solver.C.tocsr()
     selected = curl[:, masked] if boundary == "pec" else curl[masked, :]
