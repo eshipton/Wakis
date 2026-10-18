@@ -1027,7 +1027,7 @@ def _set_tensor_edges(solver, aniso, normal):
     solver.tensor_operator = op
 
 
-def max_stable_dt(solver, tol=1e-3):
+def max_stable_dt(solver, tol=1e-3, method="lanczos"):
     """
     Largest stable leapfrog time step of the solver's (conformal) operators.
 
@@ -1038,11 +1038,26 @@ def max_stable_dt(solver, tol=1e-3):
     semi-definite matrix R C^H D_2 G C R, R = (D_4 D_1)^{1/2}, whose largest
     eigenvalue is computed with Lanczos iterations.
 
+    Parameters
+    ----------
+    tol : float
+        Relative residual tolerance of the eigenvalue estimate.
+    method : {'lanczos', 'arpack'}
+        'lanczos' (default): `wakis._lanczos.stable_dt`, restricted to the
+        open edges, multi-threaded, few stored vectors; 'arpack': SciPy
+        `eigsh` on all edges (the original implementation, kept for
+        comparison). Both agree within their tolerance (~1e-6 relative at
+        tol=1e-3, to 1e-15 at tol=1e-8).
+
     Returns
     -------
     float
         2 / sqrt(lambda_max) [s].
     """
+    if method == "lanczos":
+        from ._lanczos import stable_dt
+
+        return stable_dt(solver, tol=tol)
     d1 = solver.ieps.toarray() * solver.itDa.diagonal()
     d2 = solver.tDs.diagonal()
     right = np.sqrt(np.abs(solver.Ds.diagonal() * d1))

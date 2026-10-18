@@ -64,6 +64,35 @@ def _host(array):
     return np.asarray(array.get() if hasattr(array, "get") else array)
 
 
+def _unique_rows(rows, return_inverse=False):
+    """
+    ``np.unique(rows, axis=0)`` for small non-negative or bounded integer
+    rows, via a 1D key that sorts in the same (lexicographic) order: same
+    output, several times faster.
+    """
+    rows = np.asarray(rows, dtype=np.int64)
+    if rows.size == 0:
+        out = rows.reshape(0, rows.shape[1] if rows.ndim == 2 else 0)
+        return (out, np.zeros(0, np.int64)) if return_inverse else out
+    lo = rows.min(axis=0)
+    span = rows.max(axis=0) - lo + 1
+    if np.prod(span.astype(float)) >= 2.0**62:  # key would overflow
+        return np.unique(rows, axis=0, return_inverse=return_inverse)
+    key = np.zeros(len(rows), dtype=np.int64)
+    for a in range(rows.shape[1]):
+        key = key * span[a] + (rows[:, a] - lo[a])
+    result = np.unique(key, return_inverse=return_inverse)
+    uniq = result[0] if return_inverse else result
+    out = np.empty((len(uniq), rows.shape[1]), dtype=np.int64)
+    rest = uniq
+    for a in range(rows.shape[1] - 1, -1, -1):
+        rest, out[:, a] = np.divmod(rest, span[a])
+        out[:, a] += lo[a]
+    if return_inverse:
+        return out, result[1].ravel()
+    return out
+
+
 class TensorOperator:
     def __init__(self, solver):
         """
@@ -155,7 +184,7 @@ class TensorOperator:
                     idx[u] += du
                     idx[v] += dv
                     cells.append(np.stack(idx, axis=1))
-        cells = np.unique(np.concatenate(cells or [np.zeros((0, 3), int)]), axis=0)
+        cells = _unique_rows(np.concatenate(cells or [np.zeros((0, 3), int)]))
         ok = np.ones(len(cells), dtype=bool)
         for a in range(3):
             n = self.shape[a]
@@ -164,7 +193,7 @@ class TensorOperator:
             else:
                 # Cell i spans nodes i and i+1; the last index is a ghost layer
                 ok &= (cells[:, a] >= 0) & (cells[:, a] <= n - 2)
-        return np.unique(cells[ok], axis=0)
+        return _unique_rows(cells[ok])
 
     def _wrap(self, idx, axis):
         """Index along `axis` with periodic wrap; returns (index, wrapped)."""
@@ -198,18 +227,8 @@ class TensorOperator:
         return total
 
     # -------------------------------------------------------------- assembly
-    def assemble(self, solver, exclude=None):
-        """
-        Assemble K' on the coupled edges from the stored edge data.
-
-        Parameters
-        ----------
-        solver : SolverFIT3D
-            Solver with final ieps, edge lengths and dual areas.
-        exclude : ndarray of int, optional
-            Flat E indices that must not be coupled (e.g. dispersive edges,
-            corrected by their own ADE update).
-        """
+    def _inputs(self, solver, exclude):
+        """Effective ieps (zero on `exclude`) and dual volumes W of the E edges."""
         ieps = _host(solver.ieps.array).astype(float)
         if exclude is not None and len(exclude):
             ieps = ieps.copy()
@@ -221,6 +240,44 @@ class TensorOperator:
         )
         itA = _host(solver.grid.itA.toarray())
         W = np.where(itA != 0, L / np.where(itA != 0, itA, 1.0), 0.0)
+        return ieps, W
+
+    def _fingerprint(self, solver, ieps, W):
+        """Digest of everything the assembly depends on."""
+        import hashlib
+
+        h = hashlib.blake2b(digest_size=20)
+        for array in (ieps, W, self.edges, self.aniso, self.vec):
+            h.update(np.ascontiguousarray(array).tobytes())
+        h.update(repr((self.periodic, self.phase, bool(solver.use_gpu),
+                       str(solver.E.array.dtype))).encode())  # fmt: skip
+        return h.digest()
+
+    def assemble(self, solver, exclude=None):
+        """
+        Assemble K' on the coupled edges from the stored edge data.
+
+        Repeated calls with unchanged inputs (ieps, edge lengths, edge data;
+        e.g. the time-step estimate and `install` during the solver setup)
+        reuse the previous assembly.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Solver with final ieps, edge lengths and dual areas.
+        exclude : ndarray of int, optional
+            Flat E indices that must not be coupled (e.g. dispersive edges,
+            corrected by their own ADE update).
+        """
+        ieps, W = self._inputs(solver, exclude)
+        key = self._fingerprint(solver, ieps, W)
+        if self.Kp is not None and key == getattr(self, "_assembled_key", None):
+            return
+        self._assembled_key = None
+        self._assemble(solver, ieps, W)
+        self._assembled_key = key
+
+    def _assemble(self, solver, ieps, W):
         d = [
             np.asarray(solver.grid.dx),
             np.asarray(solver.grid.dy),
@@ -303,8 +360,7 @@ class TensorOperator:
         eb = np.concatenate(recs_b)
         cw = np.concatenate(recs_w)
         # Aggregate octants sharing a pair: S_ab = c_ab (T(a) + T(b))
-        key = np.stack([ea, eb], 1)
-        uniq, inv = np.unique(key, axis=0, return_inverse=True)
+        uniq, inv = _unique_rows(np.stack([ea, eb], 1), return_inverse=True)
         coef = np.zeros(len(uniq), dtype=complex)
         np.add.at(coef, inv.ravel(), cw)
         if np.all(coef.imag == 0):
@@ -406,20 +462,35 @@ def one_step_tensor(solver):
         solver._mpi_communicate(solver.E)
 
 
-def max_stable_dt(solver, op, tol=1e-3):
+def max_stable_dt(solver, op, tol=1e-3, method="lanczos"):
     """
     Largest stable leapfrog time step with the tensor material operator.
 
     The source-free step is stable for dt < 2 / sqrt(lambda_max(B A)),
     B A = N itDa C^H tDs G C Ds. B A is similar to a Hermitian positive
     semi-definite matrix (W N is symmetric positive definite), so its
-    eigenvalues are real; the largest is computed with Arnoldi iterations.
+    eigenvalues are real.
+
+    Parameters
+    ----------
+    tol : float
+        Relative residual tolerance of the eigenvalue estimate.
+    method : {'lanczos', 'arpack'}
+        'lanczos' (default): symmetric Lanczos iterations for P K,
+        P = Ds N itDa = itDa (W ieps + S) itDa Hermitian
+        (`wakis._lanczos.stable_dt`); 'arpack': Arnoldi iterations
+        (SciPy `eigs`) on B A itself (the original implementation, kept for
+        comparison; about 1.3x more products and slower iterations).
 
     Returns
     -------
     float
         2 / sqrt(lambda_max) [s].
     """
+    if method == "lanczos":
+        from ._lanczos import stable_dt
+
+        return stable_dt(solver, op, tol=tol)
     ieps = _host(solver.ieps.toarray()).astype(float)
     itda = solver.itDa.diagonal()
     tds = solver.tDs.diagonal()
