@@ -1066,7 +1066,7 @@ $$
 
 with $\delta = 10^{-2}/h_\text{design}$, so that $\mathbf m$ is the unit normal at an interface ($|\mathbf g|\sim 1/h$) and goes smoothly to zero (isotropic arithmetic mean) in uniform regions. Using the density as fill fraction and its gradient as normal is the idea of Meep's `MaterialGrid(do_averaging=True)` [Oskooi et al., 2010; Hammond et al., 2021]. The subpixel-smoothed projection of [Hammond et al., 2025] goes further and also derives the fill fraction from the filtered density and its gradient; it is not implemented here. $\mathbf T_e$ enters as above: diagonal in `ieps`, off-diagonals through the corner couplings. The map $\rho\mapsto(\varepsilon^{-1}, \mathbf S)$ is smooth, and `MaterialGrid.vjp` applies the exact chain rule through $f$ ($\partial\langle\varepsilon\rangle^{-1}/\partial f = -\Delta\varepsilon/\langle\varepsilon\rangle^2$, $\partial\langle\varepsilon^{-1}\rangle/\partial f = 1/\varepsilon_\max - 1/\varepsilon_\min$) and $\mathbf m$ ($\partial m_i/\partial g_k = \delta_{ik}/\sqrt q - g_ig_k/q^{3/2}$, $q = |\mathbf g|^2+\delta^2$). The octant scales $s_o$ are treated as constants, which is exact as long as no octant is clamped (`solver.tensor_operator.n_clamped == 0`). The finite-difference check agrees to $\le 10^{-6}$ relative. `apply` raises if $\Delta t$ exceeds the a-priori bound above (never with `cfln` $\le 0.5$).
 
-**Limitations.** One E component per edge remains: the D components of the corner reconstruction lie on both sides of the interface in a cut cell. Some modes therefore still converge at first order, but with a much smaller constant. The prototype study found the same for every Cartesian variant; only interface-conforming meshes remove it. Dispersive solids keep the diagonal average, and dispersive `MaterialGrid` designs cannot be tensor-smoothed (`NotImplementedError`). The MPI adjoint does not support the tensor correction. `field_energy` still uses the diagonal permittivity. The geometry (normals, fill fractions of STL solids) is not differentiated. Memory: $\mathbf K'$ has about 5.3 nonzeros per coupled edge and about 14 per primary cell touching an anisotropic edge (2.6 coupled edges per such cell; dielectric sphere at 16–32 cells across). In CSR that is about 0.2 kB per interface cell, plus one stored increment per coupled edge and step in an adjoint run.
+**Limitations.** One E component per edge remains: the D components of the corner reconstruction lie on both sides of the interface in a cut cell. Some modes therefore still converge at first order, but with a much smaller constant. The prototype study found the same for every Cartesian variant; only interface-conforming meshes remove it. Dispersive pixels get the diagonal of the averaged tensor at every frequency, without couplings (see "Dispersive subpixel averaging" below for why). The MPI adjoint does not support the tensor correction. `field_energy` still uses the diagonal permittivity. The geometry (normals, fill fractions of STL solids) is not differentiated. Memory: $\mathbf K'$ has about 5.3 nonzeros per coupled edge and about 14 per primary cell touching an anisotropic edge (2.6 coupled edges per such cell; dielectric sphere at 16–32 cells across). In CSR that is about 0.2 kB per interface cell, plus one stored increment per coupled edge and step in an adjoint run.
 
 **Validation** (`tests/test_035_tensor_averaging.py`; leapfrog dispersion removed, eigenvalues of the discrete operators as a cross-check):
 
@@ -1088,6 +1088,140 @@ References:
 - A. Hammond, A. Oskooi, S. G. Johnson and S. Ralph, "Photonic topology optimization with semiconductor-foundry design-rule constraints", *Opt. Express* **29**(15), 23916–23938 (2021), [doi:10.1364/OE.431188](https://doi.org/10.1364/OE.431188).
 - A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection", [arXiv:2503.20189](https://arxiv.org/abs/2503.20189) (2025).
 - Farjadpour et al. (2006) and Kottke et al. (2008): see "Conformal FIT" above.
+
+### 🪙 Dispersive subpixel averaging: metals and dispersive dielectrics at interfaces
+
+Kottke averaging (sections above) is derived for frequency-independent media. A cell cut by the surface of a metal or of a Lorentz/Debye dielectric needs the averaged permittivity at every frequency. Before this section was implemented, conformal modes averaged only $\varepsilon_\infty$ and put the poles on the staircased cell mask. This is also what Meep does: "Meep only does subpixel averaging of the *instantaneous* (i.e., infinite frequency) part of $\varepsilon$ and $\mu$. The dispersive part is not averaged at all" (Meep documentation, *Subpixel Smoothing*, "What about Dispersive Materials?"). For a Drude metal with $\varepsilon_\infty=1$ in vacuum, that is the staircase. The implementation is in `wakis/tensor_dispersive.py`. It is used automatically for STL solids with a `DispersiveMaterial` when `conformal='all'` or `'tensor'`, and by `MaterialGrid(material=..., smoothing='tensor')`.
+
+**Averaged permittivity of a dispersive pixel.** A pixel with fill fractions $f_m$ (background included) and interface normal $\mathbf n$ is a laminate on the pixel scale. The tangential field sees the parallel combination and the normal field the series combination [Kottke et al., 2008]:
+
+$$
+\varepsilon_t(\omega) = \sum_m f_m\varepsilon_m(\omega),\qquad
+\frac{1}{\varepsilon_n(\omega)} = \sum_m \frac{f_m}{\varepsilon_m(\omega)},\qquad
+T_{cc}(\omega) = \frac{n_c^2}{\varepsilon_n(\omega)} + \frac{1-n_c^2}{\varepsilon_t(\omega)} .
+$$
+
+$\varepsilon_t$ is again a pole model, with the pole strengths scaled by $f_m$. $1/\varepsilon_n$ is not: its poles are the zeros of $\sum_m f_m/\varepsilon_m$, which depend on $f$. For a Drude metal ($\varepsilon_\infty$, $\omega_p$, $\gamma$) in a dielectric $\varepsilon_d$ it is a Lorentz pole (Wakis derivation):
+
+$$
+\varepsilon_n(\omega) = \frac{\varepsilon_d\varepsilon_\infty}{A} + \frac{f\,\varepsilon_d^2\omega_p^2/A^2}{\Omega^2-\omega^2+i\gamma\omega},\qquad
+A = f\varepsilon_d + (1-f)\varepsilon_\infty,\quad \Omega^2 = \frac{(1-f)\,\omega_p^2}{A} .
+$$
+
+Here $f$ is the metal fraction. Re-fitting such effective poles per cell is the route of the dispersive contour-path method [Mohammadi et al., 2008], which uses Z-transforms. For multi-pole metals (gold: one Drude and five Lorentz poles) it needs a root search per cell, and the effective numerators are no longer of Lorentz form.
+
+**Sub-capacitor network (Wakis construction).** Wakis instead realizes the series combination directly. This is the auxiliary-field idea of splitting the normal field per medium; Deinega and Valuev [2007] split $E$ into a parallel part and two normal parts, each driving its own polarization current (method as summarized by Hamm et al. [2014]). On edge $c$, $T_{cc}(\omega)$ is the elastance of capacitors in series that share the edge's displacement $D$:
+
+- one series capacitor per dispersive material $m$, weight $c_k = n_c^2 f_m$, with the material's own model;
+- one tangential capacitor, weight $c_k = 1-n_c^2$, with the mixed model $\varepsilon_t$ (static part $\sum_m f_m\varepsilon_{\infty,m}$, poles of material $m$ with multiplier $\mu = f_m$).
+
+Each capacitor has a voltage $u_k$ and polarizations $p$ driven by $u_k$ through the unchanged ADEs of `wakis.dispersive`, so the edge field is the sum of the capacitor voltages:
+
+$$
+\frac{D}{\varepsilon_0} = \varepsilon_{\infty,k}\,u_k + \sum_p \mu_{kp}\,p_{kp},\qquad
+E_c = \sum_k c_k u_k\ (+\ \text{static series terms of non-dispersive media}) .
+$$
+
+Inside a material ($f=1$, no normal) a single tangential capacitor remains, identical to the bulk ADE update. Series capacitors of non-dispersive media are static and stay in `ieps`. The instantaneous part $\sum_k c_k/\varepsilon_{\infty,k}$ is exactly the $\varepsilon_\infty$-averaged `ieps` that `wakis.conformal` already computes. The network therefore adds only the dynamic remainder, as a local correction after the unchanged solver step (any backend):
+
+$$
+\Delta Q_k = \sum_e b_{ke}\,\frac{D_e^{n+1}-D_e^n}{\varepsilon_0} = \sum_e b_{ke}\,\varepsilon_{r,s,e}(E^*_e-E^n_e),\qquad
+E^{n+1}_e = E^*_e + \sum_k c_{ek}\Big(u_k^{n+1}-u_k^n-\frac{\Delta Q_k}{\varepsilon_{\infty,k}}\Big).
+$$
+
+$u^{n+1}$ follows from the discretization of Section "Dispersive materials" applied to each capacitor. Lorentz and Drude poles are explicit, $p^{n+1} = \alpha p^n+\xi p^{n-1}+\zeta u^n$. Debye poles and the conductivity use the trapezoidal rule, which gives one scalar division per capacitor:
+
+$$
+u^{n+1} = \frac{(\varepsilon_\infty-\mu\beta-\mu\hat\sigma)\,u^n + \Delta Q - \sum_L\mu(p_L^{n+1}-p_L^n) - \sum_D\mu(\kappa-1)p_D^n}{\varepsilon_\infty+\mu\beta+\mu\hat\sigma} .
+$$
+
+The discrete edge permittivity is then the exact Kottke combination of the *discrete* bulk permittivities $\varepsilon_d(\omega)$ of `DispersiveMaterial.epsilon_discrete`. For lossless Drude and Lorentz media the whole scheme equals the continuous-time one at the frequency $2\sin(\omega\Delta t/2)/\Delta t$, which the validation below uses to remove the leapfrog error exactly. The update is linear in $(E^*, E^n, u, p)$. Its transpose, in `AdjointStepper` through `NetworkTranspose`, is
+
+$$
+\lambda_{u'} = \lambda_{u}^{\mathrm{ext}} + \mathbf C^T\lambda_{E'} + \textstyle\sum_D\beta\lambda_{p_D'},\quad
+\lambda_{\mathrm{acc}} = \lambda_{u'}/\mathrm{den},\quad
+\lambda_{E^*} \mathrel{+}= \varepsilon_{r,s}\mathbf B^T\big(\lambda_{\mathrm{acc}} - \mathbf C^T\lambda_{E'}/\varepsilon_\infty\big),
+$$
+
+with the pole multipliers transposed as in `_DispersiveTranspose`. Memory: 1.3–1.4 capacitors per edge with a dispersive share (sphere at 16–24 cells across). That is about 65 B per such edge for a one-pole material and 170 B for gold (6 poles), and the run time goes up by 15 % (Drude) to 40 % (gold) for a sphere filling 6 % of the box.
+
+**Passivity and stability (Wakis proof sketch).** Write the state as the displacements $\mathbf D$ (edges), $\mathbf H$, the capacitor polarizations $\mathbf P$ and velocities. The stored electric energy is
+
+$$
+U = \tfrac12\mathbf D^T\mathbf R\,\mathbf D + \sum_k \frac{V_k}{2}\Big[\frac{(q_k - \sum_p\mu_{kp}P_{kp})^2}{\varepsilon_0\varepsilon_{\infty,k}} + \sum_p\frac{\mu_{kp}\,\omega_{0,p}^2}{\varepsilon_0 S_p}P_{kp}^2\Big],\qquad q_k = \mathbf b_k\cdot\mathbf D,
+$$
+
+where $\mathbf R\succeq 0$ is the static elastance of the non-dispersive series parts (diagonal) and $V_k$ the capacitor's share of the dual volume. Every term is a positive semi-definite quadratic form, so the semi-discrete system is passive whenever every material is ($\gamma,\tau,\sigma\ge0$, $S_p = \Delta\varepsilon\,\omega_0^2$ or $\omega_p^2 \ge 0$). In the lossless case the update is exactly the leapfrog of $\ddot{\mathbf X} = -\mathbf M^{-1}\nabla^2U\,\mathbf X$ for $\mathbf X = (\mathbf D,\mathbf P)$: the D rows come from the curl–curl operator, and the P rows are the explicit central-difference ADEs. $\mathbf M^{-1} = \operatorname{diag}(\mathbf C^H\tilde{\mathbf D}\ldots\mathbf C,\ \varepsilon_0 S_p/\mu)$ is symmetric positive semi-definite, so $\mathbf M^{-1}\nabla^2 U$ has real non-negative eigenvalues. The step is stable iff $\Delta t^2\lambda_{\max}/4 \le 1$. A capacitor holds poles of total strength $\Omega_k^2 = \sum_p\mu_p S_p/\varepsilon_{\infty,k}$, and for the parallel mixture this is a weighted mediant bounded by the materials' bulk $\Omega_m^2 = \sum_p S_p/\varepsilon_{\infty,m}$. The bounds $(q-\sum P)^2 \le (1+\theta)q^2 + (1+\theta^{-1})(\sum\mu S)(\sum P^2/\mu S)$ split $U$ into a field part, which is at most $(1+\theta)$ times the static ($\varepsilon_\infty$-averaged) operator, and independent oscillators. Optimizing $\theta$ gives the sufficient condition
+
+$$
+r^2 + \frac{(\Delta t\,\Omega_{\max}/2)^2}{1-(\Delta t\,\omega_{0,\max}/2)^2} \le 1,\qquad r = \frac{\Delta t}{\Delta t_\text{static}},
+$$
+
+with $\Delta t_\text{static}$ the Lanczos/Arnoldi limit of the $\varepsilon_\infty$-averaged conformal operators (`solver.conformal_dt_max`). For a single lossless Drude pole in bulk this is exactly the sharp condition $(\omega_p\Delta t/2)^2 + C^2 \le \varepsilon_\infty$ of Section "Dispersive materials". The weights $c_k$ and fractions $f$ cancel, so subpixel averaging never tightens the time step beyond the bulk materials. `DispersiveNetwork.stability_bound` evaluates the condition, and the solver raises if it fails. Damping ($\gamma$, central differences) and the trapezoidal Debye and conductivity terms only remove energy. For Debye and $\sigma$ this is shown numerically (decay test below), not by the bound. The energy argument needs the network to be a sum of positive forms $\mathbf b_k\mathbf b_k^T$ ($\mathbf C = \mathbf W^{-1}\mathbf B^T\operatorname{diag}(V)$). The diagonal network has this form; the full tensor below does not.
+
+**Why dispersive pixels get no off-diagonal couplings (Wakis analysis).** The full averaged tensor is $\mathbf T(\omega) = z_t(\mathbf I-\mathbf n\mathbf n^T) + z_n\mathbf n\mathbf n^T$, with $z_t = 1/\varepsilon_t$ and $z_n = 1/\varepsilon_n$. For one pixel it is positive real. The Cartesian operator of `conformal='tensor'`, however, takes the diagonal of each edge from that edge's own pixel and the off-diagonal entries from averages over neighbouring pixels. In an octant block the elastance $z_t(f_a)$ of pixel $a$ then multiplies the coefficient matrix $\begin{pmatrix}1-n_a^2 & -n_an_b/2\\ -n_an_b/2 & 0\end{pmatrix}$, which is indefinite. Where $z_t(f_a)$ has a pole, the block is not positive real. That happens at the mixture's epsilon-near-zero frequency $(1-f_a)\varepsilon_1 + f_a\varepsilon_2(\omega)=0$, which exists in some cut cell at every frequency where a metal has $\operatorname{Re}\varepsilon<0$. Equivalently, the off-diagonal coefficient $a = z_n - z_t$ alone has $\operatorname{Im}a = -f\operatorname{Im}\varepsilon_2\,(|\varepsilon_2|^{-2}-|\varepsilon_t|^{-2}) < 0$ (active) whenever $|\varepsilon_t|<|\varepsilon_2|$.
+
+This was tested directly. `studies/tensor-dispersive/coupled.py` adds the dispersive off-diagonals $T_{ij}(\omega)$ to the corner couplings with the same capacitor engine (linear, exact transpose). On short runs it reproduces the static full-tensor accuracy for a Lorentz rod (second order: $-1.9\times10^{-3}$ at 32 cells to $-8.5\times10^{-5}$ at 192, against $+6.1\times10^{-3}$ to $+1.8\times10^{-3}$ for the diagonal). But in the 24–32 cell rod of the long-run tests, the field grows exponentially:
+
+| Medium | Growth of $\lVert E\rVert$ |
+| --- | --- |
+| Lossless Drude | $10^{32}$ in $2\times10^4$ steps |
+| Lossy Drude ($\gamma = 0.05\,\omega_p$) | $10^{56}$ in $5\times10^4$ steps |
+| Lossless Lorentz | $10^{39}$ in $5\times10^4$ steps |
+
+It is bounded for Debye and for a strongly damped Lorentz pole. Positive-real alternatives that share one tensor per octant are first order and less accurate than the diagonal. Two were tested on the frozen-$\varepsilon$ eigenvalues of the dielectric rod of `tests/test_035` (TE $n=0$): the exact octant fraction and normal ($1.0\times10^{-2}$, $6.4\times10^{-3}$, $3.5\times10^{-3}$, $1.7\times10^{-3}$ at 32–256 cells), and the average of the two edge tensors ($1.5\times10^{-2}$, $7.7\times10^{-3}$, $3.9\times10^{-3}$ at 32–128). The edge-pixel tensor gives $-2.1\times10^{-3}$ to $-5.8\times10^{-5}$ and the diagonal $6.7\times10^{-3}$ to $1.0\times10^{-3}$. The prototype reproduces the Wakis `'all'`/`'tensor'` numbers of `test_035` to two digits. A passive coupling needs the cross terms of the tangential part, $-z_t n_in_j$, to be carried by a positive form whose diagonal mixes the tangential elastances of pixels offset along the normal by half a cell. For a smooth field, full coupling forces a 50 % mixture, a series (harmonic) average across the interface instead of the parallel one, which is first order. Dispersive pixels therefore keep the provably passive diagonal, and non-dispersive pixels in `'tensor'` mode keep their full tensor.
+
+**Accuracy for metals.** Kottke averaging rests on first-order perturbation theory, and its error constant contains $1/\varepsilon_t$ and $\varepsilon_n$. For $\operatorname{Re}\varepsilon_m<0$ these diverge in cells whose fraction is near the mixture's ENZ ($\varepsilon_t = 0$) or series pole ($1/\varepsilon_n = 0$). Such cells are local resonators near the frequencies of interest. The plasmon error therefore converges only at first order and not monotonically with the mesh. For dielectric-like media (Debye, Lorentz below resonance) the network has the accuracy of the static diagonal average. Okada and Cole [2012] report the same shift of surface-plasmon resonances by interpolated effective permittivities. For second-order plasmonics, use the interface-conforming `wakis.unstructured` solver ($1.3\times10^{-5}$ on the Drude rod below).
+
+**Validation** (`tests/test_038_tensor_dispersive.py`; studies in `studies/tensor-dispersive/`, 2D on 8 CPU cores and 3D on the L4 GPU of the project VM). Frequencies are from harmonic inversion of the ring-down after a symmetric dipole pulse, with the leapfrog error removed. "Cells" means cells inside the cavity (rod) or in the box (sphere).
+
+| Case | Reference | Staircase | Previous `'all'` ($\varepsilon_\infty$ only, = Meep) | Dispersive diagonal (this) |
+| --- | --- | --- | --- | --- |
+| 2D lossless Drude rod, $k_pa=4$, $b=a/2$, PEC cavity, TE $n=1$ plasmon ($\varepsilon=-0.20$); cells 1.5k / 6.0k / 10.6k / 23.9k / 42.5k / 95.7k | Bessel matching | $+0.13$ (spurious dominant mode), $-5.2\times10^{-3}$, $+2.5\times10^{-3}$, $+9.7\times10^{-4}$, $+8.8\times10^{-4}$, $-1.5\times10^{-4}$ | $-1.5\times10^{-2}$, $+1.4\times10^{-2}$, $+1.5\times10^{-2}$, $+1.0\times10^{-2}$, $+7.7\times10^{-3}$, $+6.5\times10^{-3}$; spurious modes of comparable amplitude | $-1.0\times10^{-2}$, $-3.9\times10^{-3}$, $-2.9\times10^{-3}$, $-2.1\times10^{-3}$, $-1.7\times10^{-3}$, $-1.2\times10^{-3}$; one dominant mode |
+| 2D lossless Lorentz rod ($\varepsilon(\omega_\text{ref})=6$, test_035 geometry), TE $n=0$; 32/64/128/192 cells across | Delaunay FIT, Richardson | — | $-4.2\times10^{-2}$, $-2.1\times10^{-2}$, $-1.0\times10^{-2}$, $-6.7\times10^{-3}$ | $+6.1\times10^{-3}$, $+3.6\times10^{-3}$, $+1.8\times10^{-3}$, $+1.2\times10^{-3}$ (= static diagonal Kottke, order 1) |
+| Conductive Debye slab, faces 0.3 cells off the nodes, $R(f)$ 0.6–1.4 GHz | Fabry–Pérot | $1.6\times10^{-2}$ | — | $2.9\times10^{-3}$ |
+| 3D lossless Drude sphere ($b=a/2$, $k_pa=6$) in a PEC sphere; 16/24/32/48 cells across $2b$ (47k–1.2M cells), GPU | Riccati–Bessel matching | TM$_1$ ($ka=4.52995$): none at 16, $+9.2\times10^{-3}$ at 24, $-9.9\times10^{-3}$ at 48 (crowded spectrum, not run at 32) | TM$_1$: $-1.4\times10^{-3}$, —, $+1.4\times10^{-2}$, — (crowded) | TM$_1$ (weakly excited): $-1.7\times10^{-2}$, $-9.9\times10^{-4}$, $-6.0\times10^{-3}$, $+3.4\times10^{-4}$ (erratic); TM$_3$ ($ka=5.29458$, dominant): $-3.1\times10^{-3}$, $-1.8\times10^{-3}$, $-1.9\times10^{-3}$, $-8.5\times10^{-4}$ |
+| 3D isolated lossless Drude sphere ($k_p=4$ m$^{-1}$, $b=0.2$ m), dipole LSPR with CPML, 16/24/32 cells across $2b$ (1.7M/5.8M/13.8M cells), GPU | complex Mie pole of $a_1$, $kb = 0.4287+0.0110i$ (quasi-static $0.462$) | 24 cells: $\operatorname{Re}k$ $+1.8\times10^{-2}$, $\operatorname{Im}k$ 86 % low (previous `'all'` identical) | — | $\operatorname{Re}k$: $+5.6\times10^{-3}$, $-9.1\times10^{-4}$, $-1.7\times10^{-2}$ (not monotone); $\operatorname{Im}k$ (radiative damping) 45–62 % low, independently of the domain size (0.75/1.5 m), the CPML thickness (10/30 cells) and the mesh (unresolved, see limitations) |
+| Bulk (filled box), Drude + Lorentz + Debye + $\sigma$ | old ADE | — | — | identical to rounding |
+| Long runs, $5\times10^4$ steps: lossless Drude, Lorentz, Drude + Lorentz | bounded | — | — | max/min of $\lVert E\rVert$ < 3 |
+| Lossy (Drude, Lorentz, Debye, $\sigma$) | decaying | — | — | $<0.1$ of initial after $3\times10^4$ steps, never above |
+| Adjoint dot product, `'all'`/`'tensor'`, PEC/CPML, all pole types | $\langle Ux,y\rangle = \langle x,U^Ty\rangle$ | — | — | $\le 5\times10^{-17}$; $>10^{-8}$ with one transposed coefficient perturbed by $10^{-3}$ |
+| `MaterialGrid(material=Drude+Lorentz+Debye+σ, smoothing='tensor')`, 9×9 design, PEC/CPML | central differences, $h=10^{-5}$ | — | — | $2\times10^{-10}$ to $9\times10^{-9}$ |
+
+For the Drude rod, the time-domain staircase results here differ from the "Wakis staircase" column of the unstructured-FIT table ($2.8\times10^{-3}$ at 42.5k). That table used a different source and probe and picked the strongest mode in a crowded spectrum. With the dipole filter used here, the staircase spectrum is dominated by spurious modes up to 64 cells (strongest mode $+13$ %), and from 96 cells on it settles at $\sim9\times10^{-4}$. The new diagonal converges monotonically, but slowly (order 0.7–1 in $h$): at 42.5k and 95.7k cells it is 4.6 and 5.2 times more accurate than the previous `'all'`, but 2 and 8 times less accurate than the staircase. The staircase error changes sign and is not monotone. For a lossless plasmon, Kottke averaging does not beat a fine staircase; its benefits are a clean spectrum at coarse meshes, monotone convergence, and smooth dependence on the geometry, which matters for gradients.
+
+**`MaterialGrid(material=M, smoothing='tensor')`.** The design edges get the diagonal network of a pixel between `eps_min` and `M`, with fraction $f = \operatorname{clip}(\mathbf P\rho)$ and normal $\mathbf m$ from the density gradient (as in "Tensor subpixel averaging"). Each edge has a tangential capacitor ($c=1-m_c^2$, $\varepsilon_\infty = (1-f)\varepsilon_\min + f\varepsilon_{\infty,M}$, $\mu=f$) and a series capacitor ($c = m_c^2 f$). `ieps` holds the static Kottke value with $\varepsilon_{\infty,M}$. No off-diagonal couplings are created. The design parameters enter the step only through `ieps`, $c$, $\varepsilon_\infty$ and $\mu$, so `AdjointSimulation` records $\Delta Q$, $u^n$, $u^{n+1}$ and the pole sums $L=\sum_L(p'-p)$ and $D_s=\sum_D(\kappa-1)p$ per capacitor and step, and accumulates
+
+$$
+\frac{\partial F}{\partial c} = \sum_n\lambda_E\Big(u'-u-\frac{\Delta Q}{\varepsilon_\infty}\Big),\quad
+\frac{\partial F}{\partial\varepsilon_\infty} = \sum_n\Big[\lambda_{u'}\frac{u-u'}{\mathrm{den}} + \lambda_E\frac{c\,\Delta Q}{\varepsilon_\infty^2}\Big],\quad
+\frac{\partial F}{\partial\mu} = \sum_n\lambda_{u'}\frac{-L_s u - L - D_s - L_s u'}{\mathrm{den}},
+$$
+
+plus $\partial F/\partial\,\mathtt{ieps} = \sum_n\lambda_E\varepsilon_0\Delta Q$. Here $L_s = \sum_D\beta + \sigma\Delta t/2\varepsilon_0$ and $\lambda_{u'}$ is the total adjoint of the new capacitor voltage. The chain rule through $f$ and $\mathbf m$ follows `MaterialGrid._network_vjp`. The stored record takes $5\times2\times8$ B per design edge and step.
+
+**Limitations and failure modes.**
+
+- First order for metals, with a non-monotone error (resonant cut cells). No off-diagonal couplings on dispersive pixels (proved non-passive, observed unstable).
+- One normal per edge (the last solid cutting the dual cell); several dispersive solids in one cell are mixed with the conformal overlap rule.
+- Not covered:
+  - MPI: each rank builds the network of its slab, as the ADE groups do.
+  - The MPI adjoint.
+  - Bloch phases (the network is real).
+  - `field_energy`, which omits the capacitor energies.
+  - Gradients of STL geometry.
+- A dispersive tensor design cannot be combined with conformal dispersive solids in the same solver. Its design edges carry no couplings, even where $\rho$ selects the dielectric.
+- The radiative damping of the open Drude sphere comes out ~45 % below the Mie pole for every setting tried, while its real part agrees to $10^{-3}$. The cause is not identified (a check against a non-dispersive dielectric sphere is the next step); use the real parts only.
+- `conformal='pec'` and staircase grids keep the previous behaviour: poles on the cell mask, with the edges of the face weighted 1/2 by `add_dispersive_material`.
+
+References:
+- A. Deinega and I. Valuev, "Subpixel smoothing for conductive and dispersive media in the finite-difference time-domain method", *Opt. Lett.* **32**(23), 3429–3431 (2007), [doi:10.1364/OL.32.003429](https://doi.org/10.1364/OL.32.003429).
+- A. Mohammadi, H. Nadgaran and M. Agio, "Contour-path effective permittivities for the two-dimensional finite-difference time-domain method", *Opt. Express* **13**(25), 10367–10381 (2005), [doi:10.1364/OPEX.13.010367](https://doi.org/10.1364/OPEX.13.010367).
+- A. Mohammadi, T. Jalali and M. Agio, "Dispersive contour-path algorithm for the two-dimensional finite-difference time-domain method", *Opt. Express* **16**(10), 7397–7406 (2008), [doi:10.1364/OE.16.007397](https://doi.org/10.1364/OE.16.007397).
+- J. Hamm, F. Renn and O. Hess, "Dispersive media subcell averaging in the FDTD method using corrective surface currents", *IEEE Trans. Antennas Propag.* **62**(2), 832–838 (2014), [doi:10.1109/TAP.2013.2292073](https://doi.org/10.1109/TAP.2013.2292073), [arXiv:1303.1403](https://arxiv.org/abs/1303.1403).
+- A. Okada and D. Cole, "Effective permittivity for FDTD calculation of plasmonic materials", *Micromachines* **3**(1), 168–179 (2012), [doi:10.3390/mi3010168](https://doi.org/10.3390/mi3010168).
+- C. F. Bohren and D. R. Huffman, *Absorption and Scattering of Light by Small Particles*, Wiley (1983), ch. 4 (Mie coefficients of a sphere).
+- Kottke et al. (2008): see "Conformal FIT"; the ADE discretization: see "Dispersive materials".
 
 ### 🔺 Unstructured FIT: triangles, tetrahedra and the Voronoi dual
 
