@@ -23,11 +23,34 @@ from .routines import RoutinesMixin
 
 try:
     import cupy as cp
-    from cupyx.scipy.sparse import csc_matrix as gpu_sparse_mat
+
+    # CSR: cuSPARSE runs the (non-transposed) CSR SpMV faster than CSC
+    from cupyx.scipy.sparse import csr_matrix as gpu_sparse_mat
 
     imported_cupyx = True
 except ImportError:
     imported_cupyx = False
+
+_GPU_KERNELS = None
+
+
+def _gpu_kernels():
+    """Fused CuPy kernels of the standard H and E updates (built on first use)."""
+    global _GPU_KERNELS
+    if _GPU_KERNELS is None:
+        _GPU_KERNELS = (
+            cp.ElementwiseKernel(
+                "T curl, float64 dt", "T h", "h -= (T)dt * curl", "wakis_update_h"
+            ),
+            cp.ElementwiseKernel(
+                "T curl, R ieps, T j, float64 dt",
+                "T e",
+                "e += (T)dt * (curl - ieps * j)",
+                "wakis_update_e",
+            ),
+        )
+    return _GPU_KERNELS
+
 
 try:
     from sparse_dot_mkl import csr_matrix as mkl_sparse_mat
@@ -483,6 +506,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if imported_cupyx:
                 self.ieps.to_gpu()
                 self.sigma.to_gpu()
+                # Used by magnetic currents every step: avoid host-to-device copies
+                self.imu.to_gpu()
                 if self.activate_cpml:
                     self._move_CPML_to_gpu()
                 else:
@@ -817,6 +842,36 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         imu = self.M.xp.asarray(self.imu.toarray())
         self.H.fromarray(self.H.toarray() - self.dt * imu * self.M.toarray())
 
+    def _update_H(self):
+        """
+        H -= dt A E with A = ``tDsiDmuiDaC``, in place.
+
+        dt scales the curl vector rather than the matrix (``dt * A`` would
+        copy A every step); on the GPU the update is one fused kernel.
+        """
+        curl = self.tDsiDmuiDaC * self.E.toarray()
+        if self.use_gpu:
+            _gpu_kernels()[0](curl, self.dt, self.H.array)
+        else:
+            self.H.array -= self.dt * curl
+
+    def _update_E(self):
+        """
+        E += dt (B H - ieps J) with B = ``itDaiDepsDstC``, in place.
+
+        Same arithmetic as ``E + dt * (B H - ieps J)`` without full-size
+        temporaries; on the GPU the update is one fused kernel.
+        """
+        curl = self.itDaiDepsDstC * self.H.toarray()
+        if self.use_gpu:
+            _gpu_kernels()[1](
+                curl, self.ieps.toarray(), self.J.toarray(), self.dt, self.E.array
+            )
+            return
+        curl -= self.ieps.toarray() * self.J.toarray()
+        curl *= self.dt
+        self.E.array += curl
+
     def _one_step(self):
         if self.step_0:
             self._set_ghosts_to_0()
@@ -825,9 +880,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
-        self.H.fromarray(
-            self.H.toarray() - self.dt * self.tDsiDmuiDaC * self.E.toarray()
-        )
+        self._update_H()
         self._add_magnetic_current()
 
         if self.source_type == "tfsf":
@@ -846,14 +899,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
 
-        self.E.fromarray(
-            self.E.toarray()
-            + self.dt
-            * (
-                self.itDaiDepsDstC * self.H.toarray()
-                - self.ieps.toarray() * self.J.toarray()
-            )
-        )
+        self._update_E()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
@@ -1487,9 +1533,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
-        self.H.fromarray(
-            self.H.toarray() - self.dt * self.tDsiDmuiDaC * self.E.toarray()
-        )
+        self._update_H()
         self._add_magnetic_current()
 
         if self.source_type == "tfsf":
@@ -1509,14 +1553,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
         self._mpi_communicate(self.J)
-        self.E.fromarray(
-            self.E.toarray()
-            + self.dt
-            * (
-                self.itDaiDepsDstC * self.H.toarray()
-                - self.ieps.toarray() * self.J.toarray()
-            )
-        )
+        self._update_E()
 
         if self.source_type == "tfsf":
             if not self.injection_done:
@@ -1591,7 +1628,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
     def _mpi_communicate(self, field):
         if self.use_gpu:
-            field.from_gpu()
+            self._mpi_communicate_gpu(field)
+            return
 
         # ghosts lo
         if self.rank > 0:
@@ -1616,8 +1654,36 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     recvtag=0,
                 )
 
-        if self.use_gpu:
-            field.to_gpu()
+    def _mpi_communicate_gpu(self, field):
+        """
+        Ghost-layer exchange of a GPU field, as `_mpi_communicate`.
+
+        Only the exchanged z-layers (contiguous blocks of Nx*Ny samples per
+        component) are copied between device and host, not the whole field.
+        """
+        nxy = self.Nx * self.Ny
+
+        def layer(c, k):
+            k = k % self.Nz
+            return slice(c * self.N + k * nxy, c * self.N + (k + 1) * nxy)
+
+        for neighbour, send, recv, tags in (
+            (self.rank - 1, 1, 0, (0, 1)),  # ghosts lo
+            (self.rank + 1, -2, -1, (1, 0)),  # ghosts hi
+        ):
+            if not 0 <= neighbour < self.size:
+                continue
+            for c in range(3):
+                buffer = np.empty(nxy, dtype=field.array.dtype)
+                self.comm.Sendrecv(
+                    field.array[layer(c, send)].get(),
+                    recvbuf=buffer,
+                    dest=neighbour,
+                    sendtag=tags[0],
+                    source=neighbour,
+                    recvtag=tags[1],
+                )
+                field.array[layer(c, recv)] = cp.asarray(buffer)
 
     def mpi_gather(self, field, x=None, y=None, z=None, component=None):
         """

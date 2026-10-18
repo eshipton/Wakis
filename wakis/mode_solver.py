@@ -572,6 +572,7 @@ class ModeMonitor:
         self.plane = plane = _Plane(solver, self.center, self.size)
         xp = solver.E.xp
         self.xp = xp
+        self._freqs = xp.asarray(self.frequencies)
         n_f, n = self.frequencies.size, plane.n_b * plane.n_c
         self._idx = {"E": [], "H": []}
         for d in (plane.b, plane.c):
@@ -603,9 +604,8 @@ class ModeMonitor:
 
         n = self.plane.n_b * self.plane.n_c
         for f, tf in (("E", t + solver.dt), ("H", t + solver.dt / 2)):
-            kernel = self.xp.asarray(
-                solver.dt * np.exp(-2j * np.pi * self.frequencies * tf)
-            )[:, None]
+            # Computed on the field device (no per-step host-to-device copy)
+            kernel = solver.dt * self.xp.exp(-2j * np.pi * self._freqs * tf)[:, None]
             for d in range(2):
                 values = getattr(solver, f).array[self._idx[f][d]]
                 if f == "H":
