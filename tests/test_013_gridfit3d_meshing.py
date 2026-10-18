@@ -117,6 +117,9 @@ class TestGridFIT3DMeshing:
             stl_scale=1.0,
             stl_rotate=[0, 0, 0],
             stl_translate=[0, 0, 0],
+            # Reference data generated with the legacy grid convention (no
+            # ghost cell beyond max); see "Grid conventions"
+            boundary_at_domain_edge=False,
             verbose=1,
         )
 
@@ -181,6 +184,9 @@ class TestGridFIT3DMeshing:
             stl_scale=1.0,
             stl_rotate=[0, 0, 0],
             stl_translate=[0, 0, 0],
+            # Reference data generated with the legacy grid convention (no
+            # ghost cell beyond max); see "Grid conventions"
+            boundary_at_domain_edge=False,
             verbose=1,
         )
 

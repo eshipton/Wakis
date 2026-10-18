@@ -9,8 +9,8 @@ from wakis.sparameters import read_touchstone, s_matrix, write_touchstone
 
 ETA0 = np.sqrt(mu_0 / epsilon_0)
 
-# Parallel-plate TEM line along z: PEC plates at x = 0 and x = GAP (the last x
-# node is the high PEC wall), periodic in y with width WIDTH, CPML at both z
+# Parallel-plate TEM line along z: PEC plates at x = 0 and x = GAP (the domain
+# bounds), periodic in y with width WIDTH, CPML at both z
 # ends. Its characteristic impedance is Z = eta0 * GAP / WIDTH = 94.2 Ohm.
 DZ = 2e-3
 GAP, WIDTH = 10e-3, 40e-3
@@ -22,7 +22,7 @@ NT_MAX = 4000
 
 def _line_solver(use_gpu=False):
     grid = wakis.GridFIT3D(
-        0, GAP + DZ, -WIDTH / 2, WIDTH / 2, -0.06, 0.06, 6, 2, 60, verbose=0
+        0, GAP, -WIDTH / 2, WIDTH / 2, -0.06, 0.06, 5, 2, 60, verbose=0
     )
     return wakis.SolverFIT3D(
         grid,

@@ -45,8 +45,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         wake=None,
         cfln=0.5,
         dt=None,
-        bc_low=["Periodic", "Periodic", "Periodic"],
-        bc_high=["Periodic", "Periodic", "Periodic"],
+        bc_low=None,
+        bc_high=None,
         use_stl=False,
         use_conductors=False,
         use_gpu=False,
@@ -86,7 +86,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         dt : float, optional
             Explicit timestep. If provided, it overrides the CFL-based value.
         bc_low, bc_high : list of str, optional
-            Boundary conditions for low/high faces in (x, y, z) order.
+            Boundary conditions for low/high faces in (x, y, z) order. Default
+            is periodic on all faces. With the default
+            ``GridFIT3D(boundary_at_domain_edge=True)`` the non-periodic faces
+            lie on the domain bounds (xmin, xmax, ...).
             ``'bloch'`` faces (paired on an axis) impose the Floquet-Bloch
             condition F(r + L) = F(r) exp(1j k_bloch L) with the domain length
             L along that axis; see ``k_bloch``.
@@ -150,7 +153,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             CFL number used when computing dt from grid spacing.
         """
 
-        print("Initializing Electromagnetic solver...")
+        if verbose:
+            print("Initializing Electromagnetic solver...")
         self.verbose = verbose
         t0 = time.time()
         self.logger = Logger()
@@ -183,6 +187,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         # Grid
         self.grid = grid
+        if grid.boundary_at_domain_edge:
+            self._match_grid_to_periodic_axes(bc_low, bc_high)
         self.background = bg
         self.Nx = self.grid.Nx
         self.Ny = self.grid.Ny
@@ -244,6 +250,19 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.Px = diags([-1, 1], [0, 1], shape=(N, N), dtype=np.int8)
         self.Py = diags([-1, 1], [0, self.Nx], shape=(N, N), dtype=np.int8)
         self.Pz = diags([-1, 1], [0, self.Nx * self.Ny], shape=(N, N), dtype=np.int8)
+        if self.grid.boundary_at_domain_edge:
+            # The forward difference of the last sample of an x (y) line must
+            # not reach the first sample of the next line: beyond the last
+            # index the field is zero (periodic axes are rewired later)
+            flat = np.arange(N - 1)
+            last_x = flat % self.Nx == self.Nx - 1
+            self.Px = diags(
+                [-1, np.where(last_x, 0, 1)], [0, 1], shape=(N, N), dtype=np.int8
+            )
+            last_y = (flat[: N - self.Nx] // self.Nx) % self.Ny == self.Ny - 1
+            self.Py = diags(
+                [-1, np.where(last_y, 0, 1)], [0, self.Nx], shape=(N, N), dtype=np.int8
+            )
 
         # original grid
         self.Ds = diags(self.L.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
@@ -266,8 +285,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         # Boundaries
         if verbose:
             print("Applying boundary conditions...")
-        self.bc_low = bc_low
-        self.bc_high = bc_high
+        self.bc_low = ["Periodic"] * 3 if bc_low is None else bc_low
+        self.bc_high = ["Periodic"] * 3 if bc_high is None else bc_high
         self.update_logger(["bc_low", "bc_high"])
         self.k_bloch = np.zeros(3) if k_bloch is None else np.asarray(k_bloch, float)
         if self.k_bloch.shape != (3,):
@@ -329,9 +348,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.source_type = (
                     "tfsf"  # Force Total-Field/Scattered-Field injection for PML
                 )
-                print(
-                    "[!] PML works better with Total-Field/Scattered-Field injection, setting source_type='tfsf'"
-                )
+                if verbose:
+                    print(
+                        "[!] PML works better with Total-Field/Scattered-Field injection, setting source_type='tfsf'"
+                    )
                 self.update_logger(["source_type"])
             self.n_pml = n_pml
             self._initialize_PML()
@@ -348,9 +368,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.source_type = (
                     "tfsf"  # Force Total-Field/Scattered-Field injection for CPML
                 )
-                print(
-                    "[!] CPML requires Total-Field/Scattered-Field injection, setting source_type='tfsf'"
-                )
+                if verbose:
+                    print(
+                        "[!] CPML requires Total-Field/Scattered-Field injection, setting source_type='tfsf'"
+                    )
                 self.update_logger(["source_type"])
             self.n_pml = n_pml
             self.kappa_max = kappa_max
@@ -406,6 +427,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             print(
                 f"    * Total number of timesteps for wakelength={wakelength} m: Nt={int(tmax / self.dt)}"
             )
+
+        if self.grid.boundary_at_domain_edge:
+            self._isolate_edge_ghosts()
 
         # Pre-computing
         if verbose:
@@ -484,6 +508,32 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         self.solverInitializationTime = time.time() - t0
         self.update_logger(["solverInitializationTime"])
+
+    def _match_grid_to_periodic_axes(self, bc_low, bc_high):
+        """
+        Drop the domain-edge ghost cell of periodic (and Bloch) axes.
+
+        The period of such an axis is the domain length, so it needs one
+        sample per cell and no boundary node at max. The grid is trimmed in
+        place (see `GridFIT3D.remove_edge_ghost`); reusing it with a
+        non-periodic face on that axis is rejected.
+        """
+        bc_low = ["periodic"] * 3 if bc_low is None else bc_low
+        bc_high = ["periodic"] * 3 if bc_high is None else bc_high
+        for axis in range(3):
+            periodic = str(bc_low[axis]).lower() in ("periodic", "bloch") or str(
+                bc_high[axis]
+            ).lower() in ("periodic", "bloch")
+            if periodic:
+                self.grid.remove_edge_ghost(axis)
+            elif not self.grid.edge_ghosts[axis] and not (
+                axis == 2 and self.grid.use_mpi
+            ):
+                raise ValueError(
+                    f"The {'xyz'[axis]} axis of this grid was trimmed for a "
+                    "periodic solver; create a new GridFIT3D for non-periodic "
+                    f"{'xyz'[axis]} boundaries."
+                )
 
     def _move_CPML_to_mkl(self):
         self.dxy = mkl_sparse_mat(self.dxy)
@@ -1626,6 +1676,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         buffer = self.comm.gather(local, root=0)
         _field = None
+        # The last rank also holds the domain-edge ghost layer beyond ZMAX
+        edge = int(self.grid.boundary_at_domain_edge)
 
         if self.rank == 0:
             if type(x) is int and type(y) is int:  # 1d array at x=a, y=b
@@ -1638,9 +1690,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                             :-1
                         ]
                     elif r == (self.size - 1):
-                        _field[zz] = np.reshape(buffer[r], (nz + self.grid.n_ghosts))[
-                            1:
-                        ]
+                        _field[zz] = np.reshape(
+                            buffer[r], (nz + self.grid.n_ghosts + edge)
+                        )[1 : nz + 1]
                     else:
                         _field[zz] = np.reshape(
                             buffer[r], (nz + 2 * self.grid.n_ghosts)
@@ -1659,8 +1711,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                         )[:, :-1]
                     elif r == (self.size - 1):
                         _field[:, zz] = np.reshape(
-                            buffer[r], (ny, nz + self.grid.n_ghosts)
-                        )[:, 1:]
+                            buffer[r], (ny, nz + self.grid.n_ghosts + edge)
+                        )[:, 1 : nz + 1]
                     else:
                         _field[:, zz] = np.reshape(
                             buffer[r], (ny, nz + 2 * self.grid.n_ghosts)
@@ -1679,8 +1731,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                         )[:, :-1]
                     elif r == (self.size - 1):
                         _field[:, zz] = np.reshape(
-                            buffer[r], (nx, nz + self.grid.n_ghosts)
-                        )[:, 1:]
+                            buffer[r], (nx, nz + self.grid.n_ghosts + edge)
+                        )[:, 1 : nz + 1]
                     else:
                         _field[:, zz] = np.reshape(
                             buffer[r], (nx, nz + 2 * self.grid.n_ghosts)
@@ -1700,8 +1752,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                         )[:, :, :-1]
                     elif r == (self.size - 1):
                         _field[:, :, zz] = np.reshape(
-                            buffer[r], (nx, ny, nz + self.grid.n_ghosts)
-                        )[:, :, 1:]
+                            buffer[r], (nx, ny, nz + self.grid.n_ghosts + edge)
+                        )[:, :, 1 : nz + 1]
                     else:
                         _field[:, :, zz] = np.reshape(
                             buffer[r], (nx, ny, nz + 2 * self.grid.n_ghosts)
@@ -1731,6 +1783,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         """
 
         _field = Field(self.Nx, self.Ny, self.NZ)
+        # The last rank also holds the domain-edge ghost layer beyond ZMAX
+        edge = int(self.grid.boundary_at_domain_edge)
 
         for d in ["x", "y", "z"]:
             if type(field) is str:
@@ -1756,8 +1810,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     elif r == (self.size - 1):
                         _field[:, :, zz, d] = np.reshape(
                             buffer[r],
-                            (self.Nx, self.Ny, nz + self.grid.n_ghosts),
-                        )[:, :, 1:]
+                            (self.Nx, self.Ny, nz + self.grid.n_ghosts + edge),
+                        )[:, :, 1 : nz + 1]
                     else:
                         _field[:, :, zz, d] = np.reshape(
                             buffer[r],

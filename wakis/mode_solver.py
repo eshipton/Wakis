@@ -102,11 +102,15 @@ class _Plane:
         mEb, mEc, mEa = (np.ones(shape, dtype=bool) for _ in range(3))
         mHb, mHc, mHa = (np.ones(shape, dtype=bool) for _ in range(3))
 
-        # Ghost layer: the last index along a non-periodic axis
+        # Ghost layer: the edge midpoints of the last index along a
+        # non-periodic axis
         if not self.periodic_b:
             mEb[-1, :] = mHc[-1, :] = mHa[-1, :] = False
         if not self.periodic_c:
             mEc[:, -1] = mHb[:, -1] = mHa[:, -1] = False
+        # PMC is the natural FIT boundary when the walls sit on the domain
+        # edge (see `_apply_bc_to_C`); legacy grids zero the tangential H
+        pmc = () if solver.grid.boundary_at_domain_edge else _PMC_BC
 
         # PEC (and CPML/PML, terminated by PEC): tangential E on the walls is
         # zero; PMC: tangential H, as in `_apply_bc_to_C`
@@ -115,9 +119,9 @@ class _Plane:
                 mEc[side, :] = mEa[side, :] = False
             if bcs[c] in _PEC_BC:
                 mEb[:, side] = mEa[:, side] = False
-            if bcs[b] in _PMC_BC:
+            if bcs[b] in pmc:
                 mHc[side, :] = mHa[side, :] = False
-            if bcs[c] in _PMC_BC:
+            if bcs[c] in pmc:
                 mHb[:, side] = mHa[:, side] = False
 
         # Port window smaller than the domain: electric walls on its edges
@@ -125,7 +129,8 @@ class _Plane:
         for d, axis_masks in ((b, 0), (c, 1)):
             x = nodes[d]
             tol = 1e-9 * (x[-1] - x[0])
-            if lo[d] <= x[0] + tol and hi[d] >= x[-1] - tol:
+            x_max = x[-1 - solver.grid.edge_ghosts[d]]  # domain bound
+            if lo[d] <= x[0] + tol and hi[d] >= x_max - tol:
                 continue
             n = self.n_b if axis_masks == 0 else self.n_c
             node = x[:n]

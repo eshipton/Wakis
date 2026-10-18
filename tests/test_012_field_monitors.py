@@ -191,13 +191,15 @@ def test_field_monitor_integration_with_wakesolve():
     # After the run, the monitor should have been initialized and updated
     assert monitor.dt is not None
     assert monitor.time_index > 0
-    assert monitor.shape == (Nx, Ny, Nz)
+    # One sample per node along each axis: Nx cells -> grid.Nx = Nx + 1 samples
+    shape = (grid.Nx, grid.Ny, grid.Nz)
+    assert monitor.shape == shape
 
     for key in ("Ex", "Ey", "Ez"):
         arr = comps[key]
         assert arr is not None
         assert arr.shape[0] == 1  # one frequency
-        assert arr.shape[1:] == (Nx, Ny, Nz)
+        assert arr.shape[1:] == shape
 
     # The stored coordinates must describe the grid points used to select Ez.
     with h5py.File(ez_file, "r") as hf:

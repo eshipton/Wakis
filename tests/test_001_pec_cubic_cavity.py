@@ -100,6 +100,9 @@ class TestPecCubicCavity:
             Nz,
             stl_solids=stl_solids,
             stl_materials=stl_materials,
+            # Reference data generated with the legacy grid convention (high
+            # walls one cell inside the domain); see "Grid conventions"
+            boundary_at_domain_edge=False,
             verbose=2,
         )
 

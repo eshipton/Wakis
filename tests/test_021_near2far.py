@@ -197,14 +197,11 @@ def test_purcell_parallel_plates(component, use_gpu):
     (TEM mode only, 0 < kd < 2 pi) and 3 pi / (2 k d) (1 + (pi / k d)^2) for a
     parallel dipole (TE1 + TM1, pi < kd < 3 pi; zero below cutoff). Tested
     at kd / pi = 1.15 to 1.75, away from the cutoff steps, at >= 20 cells per
-    wavelength. Note: the PEC on the high-z boundary lies on the last
-    non-ghost node, one cell below zmax.
+    wavelength. Both PEC plates sit on the domain bounds z = 0 and z = d.
     """
     n_gap = 21 if component == "z" else 20  # dipole edge on the midplane
     d = n_gap * DX
-    grid = wakis.GridFIT3D(
-        -0.25, 0.25, -0.25, 0.25, 0.0, d + DX, 40, 40, n_gap + 1, verbose=0
-    )
+    grid = wakis.GridFIT3D(-0.25, 0.25, -0.25, 0.25, 0.0, d, 40, 40, n_gap, verbose=0)
     solver = wakis.SolverFIT3D(
         grid,
         use_gpu=use_gpu,

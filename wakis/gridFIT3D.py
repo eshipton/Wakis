@@ -72,6 +72,7 @@ class GridFIT3D(PlotMixin):
         subpixel_smoothing_threshold=0.3,
         subpixel_smoothing_bool=True,
         load_from_h5=None,
+        boundary_at_domain_edge=True,
         verbose=2,
     ):
         """
@@ -137,6 +138,20 @@ class GridFIT3D(PlotMixin):
             Default is True.
         load_from_h5 : str, optional
             Load grid from an h5 file previously saved with `save_to_h5`.
+        boundary_at_domain_edge : bool, optional
+            If True (default), a domain [min, max] meshed with N cells has its
+            non-periodic boundaries (PEC, PMC, ABC, CPML) on the planes min and
+            max: one ghost cell is appended beyond max along every axis, so
+            the field arrays hold N + 1 samples (``Nx = N + 1``) and the last
+            index is the boundary node at max. `SolverFIT3D` removes the ghost
+            cell again on periodic/Bloch axes. Dual lengths are centred on the
+            primary nodes. If False, the legacy convention is kept: N samples
+            per axis, the last index is a ghost layer and the high-side
+            boundaries sit on the node max - d_last (one cell inside the
+            domain), with dual lengths shifted by one node on non-uniform
+            meshes. Use False only to reproduce results obtained with earlier
+            Wakis versions.
+            See "Grid conventions" in the physics guide.
         verbose : int or bool, optional
             Enable verbose output on the terminal. Use `verbose=2` for more detail.
 
@@ -159,6 +174,9 @@ class GridFIT3D(PlotMixin):
         self.logger = Logger()
         self.verbose = verbose
         self.use_mpi = use_mpi
+        self.boundary_at_domain_edge = bool(boundary_at_domain_edge)
+        # 1 along an axis whose last sample index is a ghost cell beyond max
+        self.edge_ghosts = [0, 0, 0]
 
         # Grid data
         # generate from file
@@ -243,7 +261,8 @@ class GridFIT3D(PlotMixin):
                 self._compute_snap_points(snap_solids=snap_solids, snap_tol=snap_tol)
             self._refine_xyz_axis(method=refinement_method, tol=refinement_tol)
 
-        print(f"Generating grid with {self.Nx * self.Ny * self.Nz} mesh cells...")
+        if verbose:
+            print(f"Generating grid with {self.Nx * self.Ny * self.Nz} mesh cells...")
         if verbose > 1:
             print(
                 f"    * Simulation domain bounds: \n\
@@ -271,6 +290,10 @@ class GridFIT3D(PlotMixin):
                 raise ImportError(
                     "[!] mpi4py is required when use_mpi=True but was not found"
                 )
+
+        # Ghost cells beyond max: the boundary node max gets its own samples
+        if self.boundary_at_domain_edge:
+            self._add_edge_ghosts(axes="xy" if self.use_mpi else "xyz")
 
         # grid G and tilde grid ~G, lengths and inverse areas
         self._compute_grid()
@@ -314,7 +337,13 @@ class GridFIT3D(PlotMixin):
         self.iA.field_y = np.divide(1.0, self.L.field_x * self.L.field_z)
         self.iA.field_z = np.divide(1.0, self.L.field_x * self.L.field_y)
 
-        # tilde grid ~G
+        if self.boundary_at_domain_edge:
+            self._compute_dual_lengths()
+            return
+
+        # Legacy tilde grid ~G: tL[i] = tx[i+1] - tx[i] is centred on node
+        # i+1 (not on node i, where E_y, E_z and H_x sit) and is zero at the
+        # last index, which freezes the tangential E there
         self.tx = (self.x[1:] + self.x[:-1]) / 2
         self.ty = (self.y[1:] + self.y[:-1]) / 2
         self.tz = (self.z[1:] + self.z[:-1]) / 2
@@ -338,6 +367,84 @@ class GridFIT3D(PlotMixin):
         aux = self.tL.field_x * self.tL.field_y
         self.itA.field_z = np.divide(1.0, aux, out=np.zeros_like(aux), where=aux != 0)
         del aux
+
+    def _add_edge_ghosts(self, axes="xyz"):
+        """
+        Append one ghost cell beyond the max end of each axis in `axes`.
+
+        The appended cell copies the size of the last cell. The new last node
+        index is then the boundary node at max, and the samples at the edge
+        midpoints of the ghost cell are never coupled to the domain.
+        """
+        for a in axes:
+            nodes = getattr(self, a)
+            nodes = np.append(nodes, 2 * nodes[-1] - nodes[-2])
+            setattr(self, a, nodes)
+            setattr(self, "N" + a, len(nodes) - 1)
+            setattr(self, "d" + a, np.diff(nodes))
+            self.edge_ghosts["xyz".index(a)] = 1
+
+    def remove_edge_ghost(self, axis):
+        """
+        Remove the domain-edge ghost cell along a periodic axis.
+
+        Called by `SolverFIT3D` for periodic and Bloch axes, whose period is
+        exactly the domain length, so that their field arrays keep one sample
+        per cell. The axis arrays, metrics and the STL cell masks are trimmed
+        in place; the grid can then only be used with that axis periodic.
+
+        Parameters
+        ----------
+        axis : int
+            0, 1 or 2 for x, y or z.
+        """
+        if not self.edge_ghosts[axis]:
+            return
+        shape = (self.Nx, self.Ny, self.Nz)
+        cells = {}
+        for key in self.grid.cell_data.keys():
+            # Cell data are ordered with z fastest (C order over x, y, z)
+            data = np.reshape(np.asarray(self.grid.cell_data[key]), shape)
+            cells[key] = np.take(data, range(shape[axis] - 1), axis=axis).ravel()
+        a = "xyz"[axis]
+        nodes = getattr(self, a)[:-1]
+        setattr(self, a, nodes)
+        setattr(self, "N" + a, len(nodes) - 1)
+        setattr(self, "d" + a, np.diff(nodes))
+        self.edge_ghosts[axis] = 0
+        self._compute_grid()
+        for key, data in cells.items():
+            self.grid.cell_data[key] = data
+
+    def _compute_dual_lengths(self):
+        """
+        Dual lengths centred on the primary nodes and the inverse dual areas.
+
+        The dual edge through node i spans the midpoints of the primary cells
+        i-1 and i: tL[i] = (L[i-1] + L[i]) / 2. The first node and the
+        boundary node at max (before the ghost cell) get half a cell, L[0] / 2
+        and L[N-1] / 2: the dual cell of a boundary node ends on the boundary.
+        Periodic axes overwrite the first node with the length across the
+        seam (see `_apply_bc_to_C`).
+        """
+        tl = []
+        for nodes, ghost in zip((self.x, self.y, self.z), self.edge_ghosts):
+            L = np.diff(nodes)
+            prev = np.concatenate([[0.0], L[:-1]])
+            this = L.copy()
+            if ghost:  # the ghost cell lies outside the domain
+                this[-1] = 0.0
+            tl.append(0.5 * (prev + this))
+        shape = (self.Nx, self.Ny, self.Nz)
+        self.tL = Field(self.Nx, self.Ny, self.Nz)
+        self.tL.field_x = np.broadcast_to(tl[0][:, None, None], shape)
+        self.tL.field_y = np.broadcast_to(tl[1][None, :, None], shape)
+        self.tL.field_z = np.broadcast_to(tl[2][None, None, :], shape)
+
+        self.itA = Field(self.Nx, self.Ny, self.Nz)
+        self.itA.field_x = 1.0 / (self.tL.field_y * self.tL.field_z)
+        self.itA.field_y = 1.0 / (self.tL.field_x * self.tL.field_z)
+        self.itA.field_z = 1.0 / (self.tL.field_x * self.tL.field_y)
 
     def _mpi_initialize(self):
         """
@@ -387,8 +494,13 @@ class GridFIT3D(PlotMixin):
             self.zmax += self.n_ghosts * self.dz
             self.Nz += self.n_ghosts
 
-        # Support for single core
-        if self.rank == 0 and self.size == 1:
+        # Domain-edge ghost cell beyond ZMAX on the last rank (legacy: only
+        # for a single rank, so the wall position depended on the rank count)
+        if self.boundary_at_domain_edge and self.rank == self.size - 1:
+            self.zmax += self.dz
+            self.Nz += 1
+            self.edge_ghosts[2] = 1
+        elif not self.boundary_at_domain_edge and self.rank == 0 and self.size == 1:
             self.zmax += self.n_ghosts * self.dz
             self.Nz += self.n_ghosts
 
@@ -426,6 +538,7 @@ class GridFIT3D(PlotMixin):
                 stl_colors=self.stl_colors,
                 verbose=self.verbose,
                 stl_tol=self.stl_tol,
+                boundary_at_domain_edge=self.boundary_at_domain_edge,
             )
         return _grid
 
@@ -599,10 +712,11 @@ class GridFIT3D(PlotMixin):
                     )
 
             elif method.lower() == "voxelize_rectilinear":
+                # Extent of the node arrays (includes domain-edge ghost cells)
                 dx, dy, dz = (
-                    (self.xmax - self.xmin) / (self.Nx),
-                    (self.ymax - self.ymin) / (self.Ny),
-                    (self.zmax - self.zmin) / (self.Nz),
+                    (self.x[-1] - self.x[0]) / (self.Nx),
+                    (self.y[-1] - self.y[0]) / (self.Ny),
+                    (self.z[-1] - self.z[0]) / (self.Nz),
                 )
                 reference_vol = pv.ImageData(
                     dimensions=(self.Nx, self.Ny, self.Nz),
@@ -696,9 +810,10 @@ class GridFIT3D(PlotMixin):
 
         # Create a higher resolution reference volume for voxelization
         Nx, Ny, Nz = self.Nx * factor, self.Ny * factor, self.Nz * factor
-        dx = (self.xmax - self.xmin) / (Nx)
-        dy = (self.ymax - self.ymin) / (Ny)
-        dz = (self.zmax - self.zmin) / (Nz)
+        # Extent of the node arrays (includes domain-edge ghost cells)
+        dx = (self.x[-1] - self.x[0]) / (Nx)
+        dy = (self.y[-1] - self.y[0]) / (Ny)
+        dz = (self.z[-1] - self.z[0]) / (Nz)
 
         reference_vol = pv.ImageData(
             dimensions=(Nx, Ny, Nz),
@@ -1191,6 +1306,8 @@ class GridFIT3D(PlotMixin):
             hf.create_dataset("x", data=np.array(self.x))
             hf.create_dataset("y", data=np.array(self.y))
             hf.create_dataset("z", data=np.array(self.z))
+            hf.attrs["boundary_at_domain_edge"] = self.boundary_at_domain_edge
+            hf.attrs["edge_ghosts"] = np.array(self.edge_ghosts)
 
             # Save stl_ variables as groups
             for attr in [
@@ -1237,6 +1354,11 @@ class GridFIT3D(PlotMixin):
             self.x = hf["x"][()]
             self.y = hf["y"][()]
             self.z = hf["z"][()]
+            # Files written before the domain-edge convention hold legacy grids
+            self.boundary_at_domain_edge = bool(
+                hf.attrs.get("boundary_at_domain_edge", False)
+            )
+            self.edge_ghosts = [int(g) for g in hf.attrs.get("edge_ghosts", [0, 0, 0])]
 
             # Load stl_ variables from groups
             for attr in [
@@ -1264,9 +1386,10 @@ class GridFIT3D(PlotMixin):
         self.dx = np.diff(self.x)
         self.dy = np.diff(self.y)
         self.dz = np.diff(self.z)
-        self.xmin, self.xmax = self.x[0], self.x[-1]
-        self.ymin, self.ymax = self.y[0], self.y[-1]
-        self.zmin, self.zmax = self.z[0], self.z[-1]
+        gx, gy, gz = self.edge_ghosts
+        self.xmin, self.xmax = self.x[0], self.x[-1 - gx]
+        self.ymin, self.ymax = self.y[0], self.y[-1 - gy]
+        self.zmin, self.zmax = self.z[0], self.z[-1 - gz]
 
         # recommpute grid and L, iA, tL, itA
         self._compute_grid()
