@@ -40,7 +40,8 @@ small, focused contributions to upstream Wakis.
 - [x] Bloch-periodic boundaries with complex fields; oblique plane waves in unit cells
 - [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
 - [x] Full-tensor subpixel averaging for curved dielectrics (`conformal='tensor'`)
-- [ ] Unstructured triangular/tetrahedral FIT (in progress)
+- [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`): 2nd order at curved and plasmonic interfaces
+- [ ] Unstructured FIT phase 2: PML, ports, adjoint, GPU, MPI, CAD/gmsh workflow
 - [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
 - [ ] Magnetic dispersion (ferrites)
 
