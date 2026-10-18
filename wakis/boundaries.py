@@ -9,6 +9,7 @@ import numpy as np
 from scipy.constants import c
 from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import mu_0
+from scipy.sparse import coo_matrix
 from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
@@ -71,11 +72,7 @@ class BCsMixin:
                 # Replace high-x rows: remove connections into the next y line.
                 high = indices[-1, :, :].ravel()
                 low = indices[0, :, :].ravel()
-                self.Px = self.Px.tolil()
-                self.Px[high, :] = 0
-                self.Px[high, high] = -1
-                self.Px[high, low] = 1 if self.Nx > 1 else 0
-                self.Px = self.Px.tocsc()
+                self.Px = _wrap_rows(self.Px, high, low, self.Nx)
 
                 self.tL[-1, :, :, "x"] = 0.5 * (
                     self.L[-1, :, :, "x"] + self.L[0, :, :, "x"]
@@ -88,11 +85,7 @@ class BCsMixin:
                 # Replace high-y rows: remove connections into the next z plane.
                 high = indices[:, -1, :].ravel()
                 low = indices[:, 0, :].ravel()
-                self.Py = self.Py.tolil()
-                self.Py[high, :] = 0
-                self.Py[high, high] = -1
-                self.Py[high, low] = 1 if self.Ny > 1 else 0
-                self.Py = self.Py.tocsc()
+                self.Py = _wrap_rows(self.Py, high, low, self.Ny)
 
                 self.tL[:, -1, :, "y"] = 0.5 * (
                     self.L[:, -1, :, "y"] + self.L[:, 0, :, "y"]
@@ -105,11 +98,7 @@ class BCsMixin:
                 # Replace high-z rows with last-to-first plane differences.
                 high = indices[:, :, -1].ravel()
                 low = indices[:, :, 0].ravel()
-                self.Pz = self.Pz.tolil()
-                self.Pz[high, :] = 0
-                self.Pz[high, high] = -1
-                self.Pz[high, low] = 1 if self.Nz > 1 else 0
-                self.Pz = self.Pz.tocsc()
+                self.Pz = _wrap_rows(self.Pz, high, low, self.Nz)
 
                 self.tL[:, :, -1, "z"] = 0.5 * (
                     self.L[:, :, -1, "z"] + self.L[:, :, 0, "z"]
@@ -1112,3 +1101,22 @@ class BCsMixin:
                     values[:, :, -1] = interior + self.abc_z_high_coeff * (
                         values[:, :, -2] - boundary
                     )
+
+
+def _wrap_rows(P, high, low, n_axis):
+    """
+    Replace the forward-difference rows ``high`` of ``P`` by periodic
+    wrap-arounds, ``P[high] = e_low - e_high`` (zero for a single cell).
+
+    Built with sparse products instead of row-wise LIL assignment, which is
+    element by element and dominated the solver setup on large periodic faces.
+    """
+    keep = np.ones(P.shape[0], dtype=P.dtype)
+    keep[high] = 0
+    P = diags(keep, dtype=P.dtype) @ P.tocsr()
+    if n_axis > 1:
+        rows = np.concatenate([high, high])
+        cols = np.concatenate([high, low])
+        data = np.concatenate([-np.ones(high.size), np.ones(high.size)])
+        P = P + coo_matrix((data.astype(P.dtype), (rows, cols)), shape=P.shape)
+    return P.tocsc()
