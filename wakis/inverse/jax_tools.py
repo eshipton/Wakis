@@ -30,8 +30,9 @@ def jax_simulation(sim):
     callable
         Function rho -> {monitor: {output key: complex array}} with the
         structure of `sim.forward` (raw outputs; see `flux`,
-        `mode_amplitudes`, `farfield` and `power_waves`). Its reverse-mode derivative (jax.grad,
-        jax.vjp) runs `sim.vjp`; forward-mode (jax.jvp) is not defined.
+        `mode_amplitudes`, `farfield`, `power_waves` and `diffraction_orders`).
+        Its reverse-mode derivative (jax.grad, jax.vjp) runs `sim.vjp`;
+        forward-mode (jax.jvp) is not defined.
 
     Notes
     -----

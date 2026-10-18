@@ -836,6 +836,90 @@ References:
 - A. F. Oskooi et al., "MEEP: A flexible free-software package for electromagnetic simulations by the FDTD method", *Comput. Phys. Commun.* **181**, 687 (2010), [doi:10.1016/j.cpc.2009.11.008](https://doi.org/10.1016/j.cpc.2009.11.008).
 
 
+### 🌈 Diffraction orders of periodic structures: `DiffractionMonitor`
+
+**Floquet (Rayleigh) expansion.** In a homogeneous region above or below a structure that is periodic with periods $P_b, P_c$ along the transverse axes $(b, c)$ of a plane normal to $a$ ($x, y$ for a $z$-normal plane), the field of a Bloch-periodic solution is a discrete sum of plane waves, the diffraction orders [Petit 1980; Moharam & Gaylord 1981]:
+
+$$
+\mathbf{E}(\mathbf{r}) = \sum_{m,n} \left[\mathbf{E}^{\uparrow}_{mn} e^{i k_{a,mn} a} + \mathbf{E}^{\downarrow}_{mn} e^{-i k_{a,mn} a}\right] e^{i \mathbf{k}_{t,mn}\cdot\mathbf{r}}, \qquad
+\mathbf{k}_{t,mn} = \mathbf{k}_\text{inc} + 2\pi\left(\tfrac{m}{P_b}, \tfrac{n}{P_c}\right),
+$$
+
+with $k_{a,mn} = \sqrt{n^2 k_0^2 - |\mathbf{k}_{t,mn}|^2}$. Orders with real $k_{a,mn}$ propagate at the polar angle $\sin\theta_{mn} = |\mathbf{k}_{t,mn}|/(n k_0)$ (grating equation); the others are evanescent. Order labels refer to physical waves $e^{i(\mathbf{k}\cdot\mathbf{r}-\omega t)}$, as in RCWA codes such as fmmax and S4. For real periodic fields $\mathbf{k}_\text{inc} = 0$. For complex Bloch fields, following the Bloch convention above, the spectral component at $f>0$ is the wave with $\mathbf{k}_\text{inc} = -\mathbf{k}_\text{bloch}$, and the one at $f<0$ its mirror image with $+\mathbf{k}_\text{bloch}$. Since the DFT phasors of Wakis have time dependence $e^{+2\pi i f t}$, the order $(m, n)$ appears in the monitor data with the spatial phase $e^{i\mathbf{q}\cdot\mathbf{r}}$, $\mathbf{q} = -\operatorname{sign}(f)\,\mathbf{k}_t$. The complex amplitudes returned keep the $e^{+2\pi i f t}$ convention of the other monitors: conjugate them to compare phases with an $e^{-i\omega t}$ code.
+
+**Discrete transform and Parseval.** `DiffractionMonitor(frequencies, center, size)` is a `FluxMonitor` plane spanning the whole unit cell, so it accumulates the same samples: $E_b$ and $\bar H_c$ ($H_c$ averaged across the plane) at the $b$-edge midpoints, $E_c$ and $\bar H_b$ at the $c$-edge midpoints. Each sampled component $F$ is transformed at its own sample positions $\mathbf{r}_j$ (a uniform transverse mesh with $N_b \times N_c$ cells is required):
+
+$$
+\hat F_{mn} = \frac{1}{N_b N_c}\sum_j F(\mathbf{r}_j)\, e^{-i\mathbf{q}_{mn}\cdot\mathbf{r}_j}.
+$$
+
+The Bloch condition makes $F(\mathbf{r}_j)e^{-i\mathbf{q}_{00}\cdot\mathbf{r}_j}$ exactly periodic on the samples, so this is an exact DFT and the $N_bN_c$ orders of one DFT period represent the samples exactly. Because the area elements of `FluxMonitor` are uniform ($\Delta A = A/N_bN_c$, $A = P_bP_c$) and $E_b$, $\bar H_c$ share their positions, Parseval's theorem turns the monitor flux into a sum over orders,
+
+$$
+\Phi(f) = \sum_{m,n} \Phi_{mn}, \qquad \Phi_{mn} = A\,\operatorname{Re}\left[\hat E_{b}\hat{\bar H}_{c}^{*} - \hat E_{c}\hat{\bar H}_{b}^{*}\right]_{mn},
+$$
+
+exactly (`get_power()['net']`; verified to $10^{-15}$ relative).
+
+**Up/down and TE/TM split with the discrete plane waves.** Let $\hat{\mathbf{k}}$ be the unit vector of the physical tangential wavevector of the order (the $b$ axis at normal incidence) and $\hat{\mathbf{s}} = \hat{\mathbf{a}}\times\hat{\mathbf{k}}$, and project the tangential transforms on them: $E_k, E_s, \bar H_k, \bar H_s$. In the uniform FIT mesh, a plane wave $e^{i(\mathbf{q}\cdot\mathbf{r} + \omega t)}$ is an exact solution when the continuous wavenumbers are replaced by the discrete ones [Taflove & Hagness 2005, Ch. 4]
+
+$$
+\Omega = \frac{2}{\Delta t}\sin\frac{\omega\Delta t}{2},\quad K_d = \frac{2}{\Delta_d}\sin\frac{q_d\Delta_d}{2},\quad K_a^2 = \Omega^2\varepsilon\mu - K_b^2 - K_c^2 ,
+$$
+
+with $k_a = (2/\Delta_a)\arcsin(K_a\Delta_a/2)$, and the transverse fields of each polarization are tied by real admittances: for the wave travelling along $\pm\hat{\mathbf{a}}$ ("up"/"down"), TE ($\mathbf{E}\parallel\hat{\mathbf{s}}$) has $H_k = \mp Y_\text{TE}E_s$ and TM ($\mathbf{H}\parallel\hat{\mathbf{s}}$) has $H_s = \pm Y_\text{TM}E_k$, with
+
+$$
+Y_\text{TE} = \frac{K_a}{|\Omega|\mu},\qquad Y_\text{TM} = \frac{|\Omega|\varepsilon}{K_a},
+$$
+
+independently of the sign of $f$. The average of $H$ across the plane (half a cell on each side) multiplies it by $\gamma = \cos(k_a\Delta_a/2) = \sqrt{1 - (K_a\Delta_a/2)^2}$. Writing the sampled fields as the sum of an up and a down wave and solving the $2\times2$ systems gives the power-normalized amplitudes
+
+$$
+a^{\uparrow\downarrow}_{s} = \tfrac12\sqrt{A\gamma Y_\text{TE}}\left(E_s \mp \frac{\bar H_k}{\gamma Y_\text{TE}}\right),\qquad
+a^{\uparrow\downarrow}_{p} = \tfrac12\sqrt{A\gamma Y_\text{TM}}\left(E_k \pm \frac{\bar H_s}{\gamma Y_\text{TM}}\right).
+$$
+
+For a propagating order the cross terms between the up and down waves cancel because the admittances are real, so $\Phi_{mn} = |a^\uparrow_s|^2 + |a^\uparrow_p|^2 - |a^\downarrow_s|^2 - |a^\downarrow_p|^2$ exactly, and TE and TM carry orthogonal powers. The amplitudes are in √(W s²): $|a|^2$ is in the units of `FluxMonitor.get_flux` (for a harmonic source of amplitude $S(f)$, the time-averaged power is $|a|^2/2|S|^2$). Order efficiencies are ratios $|a|^2/\Phi_\text{inc}$, so the source spectrum cancels. Their phases are those of $E_s$ and of $E_k$ (the TM field along $\hat{\mathbf{p}}$, whose tangential part points along $+\hat{\mathbf{k}}$ for both directions), referred to the plane and to the transverse origin of the coordinates. Evanescent orders are not decomposed (zero amplitudes; their contribution remains in `'net'`). Orders are returned on the smallest box of $(m, n)$ containing every order propagating at some monitored frequency (`orders`, `propagating`); `order_angles()` gives $\theta_{mn}$ and the azimuth of $\mathbf{k}_t$ from the continuum relation.
+
+**Discrete or continuum $k_a$.** The identity $\sum\Phi_{mn} = \Phi$ and the power balance up − down = net hold for any real admittance, but only the discrete $K_a$, $\Omega$ and $\gamma$ make the split exact for the waves of the scheme. With the continuum $k_a$, $\omega$ and no $\gamma$, a single up-going wave leaks a spurious down-going wave of relative power $\sim(k\Delta)^4$: measured above the lamellar grating below, $3.9\times10^{-5}$ ($0$ order) and $1.6\times10^{-5}$ ($\pm1$) at 20 cells per wavelength, $2.4\times10^{-6}$ and $1.0\times10^{-6}$ at 40, against $\leq 8\times10^{-9}$ (the CPML reflection) with the discrete relations. Wakis uses the discrete relations.
+
+**Polarization conventions.** TE (s) has $\mathbf{E}\parallel\hat{\mathbf{s}} = \hat{\mathbf{a}}\times\hat{\mathbf{k}}$, perpendicular to the plane of incidence; TM (p) has $\mathbf{H}\parallel\hat{\mathbf{s}}$. At normal incidence the plane of incidence is degenerate and $\hat{\mathbf{k}} = \hat{\mathbf{b}}$ is used, so that for a $z$-normal plane TE is $E_y$ and TM is $E_x$, as in invrs-gym and fmmax at zero azimuth. (fmmax's "TE"/"TM" amplitudes are the $H_x$/$H_y$ components of each order. They coincide with s/p for planes of incidence containing $x$ and differ otherwise; invrs-gym's grating efficiencies sum the two output polarizations of each order, which is basis independent and equals `get_power()['up'/'down']`.) Circular amplitudes are
+
+$$
+a_L = \frac{a_p + i\,d\,\sigma\,a_s}{\sqrt2},\qquad a_R = \frac{a_p - i\,d\,\sigma\,a_s}{\sqrt2},
+$$
+
+with $d = +1$ (up) or $-1$ (down) and $\sigma = \operatorname{sign}(f)$ for the $e^{+2\pi i f t}$ phasors. $L$ is positive helicity (the field rotates counter-clockwise about the propagation direction, i.e. by the right-hand rule) and $R$ negative helicity: the optics convention [Born & Wolf 1999], which matches the RHCP/LHCP basis of the invrs-gym meta-atom library for its transmitted waves. $|a_L|^2 + |a_R|^2 = |a_s|^2 + |a_p|^2$.
+
+**Normalization.** The incident flux is most simply the up-going $(0,0)$ power on a second monitor between the source and the structure, which also measures the reflected orders as down-going waves in the same run; alternatively use the flux of a reference run without the structure. Powers are fluxes, so transmission into a medium different from the incidence medium needs no impedance factor (invrs-gym's library rescales its amplitudes by $\sqrt{n_\text{sub}/n_\text{amb}}$ for the same reason). A sheet `CurrentSource` spanning the cell launches the incident plane wave in both directions; give it the phase profile $e^{i\mathbf{k}_\text{bloch}\cdot\mathbf{r}}$ at oblique incidence.
+
+**Validation** (`tests/test_032_diffraction.py`; fmmax 1.7.1 references from `benchmarks/diffraction_fmmax_reference.py`, run in the invrs-gym environment, converged to $<6\times10^{-5}$ in the number of Fourier orders):
+- Dielectric slab ($n=1.5$) in a 3D periodic cell with the $(\pm1, 0)$ orders open: only $(0,0)$ carries power ($<10^{-20}$), it is TM for an $E_x$ sheet, $T$ matches the Airy formula within $1.7\times10^{-3}$ at $\geq17$ cells per wavelength in the slab, $R+T = 1$ within $5\times10^{-6}$, $\sum_{mn}\Phi_{mn} = \Phi$ to $10^{-15}$, and the down-going wave above the slab (CPML reflection) is $<10^{-10}$ of the incident.
+- Lamellar grating (period $1.5\lambda_0$, teeth $\varepsilon=4$, height $0.5\lambda_0$, fill 0.5, on $\varepsilon=2.25$, incidence from the substrate; 5 reflected and 3 transmitted orders at normal incidence). Maximum absolute efficiency error against fmmax at 20, 40, 80 cells per $\lambda_0$: TE $2.0\times10^{-2}$, $5.1\times10^{-3}$, $1.3\times10^{-3}$; TM $2.3\times10^{-2}$, $5.6\times10^{-3}$, $1.3\times10^{-3}$ (second order). At 80 cells/$\lambda_0$:
+
+| | fmmax | Wakis |
+|---|---|---|
+| TE, $R_0$, $R_{\pm1}$, $R_{\pm2}$ | 0.21484, 0.10495, 0.02761 | 0.21612, 0.10393, 0.02777 |
+| TE, $T_0$, $T_{\pm1}$ | 0.12414, 0.19795 | 0.12409, 0.19807 |
+| TM, $R_0$, $R_{\pm1}$, $R_{\pm2}$ | 0.02369, 0.04904, 0.04949 | 0.02398, 0.04899, 0.05030 |
+| TM, $T_0$, $T_{\pm1}$ | 0.07843, 0.35040 | 0.07709, 0.35012 |
+
+- Same grating at $15^\circ$ incidence in the substrate (complex Bloch fields, $\mathbf{k}_\text{bloch} = -\mathbf{k}_\parallel$; reflected orders $-2\ldots1$, transmitted $-2\ldots0$): maximum error $2.2\times10^{-2}$, $5.1\times10^{-3}$, $1.2\times10^{-3}$ (TE) and $1.8\times10^{-2}$, $4.5\times10^{-3}$, $1.1\times10^{-3}$ (TM) at 20, 40, 80 cells/$\lambda_0$; e.g. TE $T_{-1}$ = 0.44775 vs 0.44821, TM $R_1$ = 0.18890 vs 0.18981. The $f<0$ spectrum reproduces the mirror-image incidence ($\eta_m(-f) = \eta_{-m}(f)$ to $10^{-9}$), and the specular order leaves at $15^\circ$.
+- Half-wave plate ($n_x=1.5$, $n_y=1.2$): an $E_x - iE_y$ sheet in a complex run launches pure $L$ at $f>0$ and pure $R$ at $f<0$ ($<10^{-14}$ of the other handedness); the transmitted $L$/$R$ powers follow $|t_x \pm t_y|^2/4$ (Airy amplitudes) within $10^{-3}$, with 99.99 % conversion at the design frequency.
+
+**Adjoint.** The amplitudes are linear functionals of the DFT accumulators already returned by `FluxMonitor` as raw outputs (`'E0'`, `'H0'`, `'E1'`, `'H1'` = $E_b$, $\bar H_c$, $E_c$, $\bar H_b$), with fixed weights (DFT matrices, projections and admittances, which depend only on the homogeneous medium at the plane). No new transposed update is needed: the adjoint sources are those of `FluxMonitor` driven by the cotangents of these arrays. `wakis.inverse.diffraction_orders(raw, monitor, polarization)` evaluates the same formulas in JAX, so efficiency objectives such as $|a^\uparrow_{s,(1,0)}|^2/\Phi_\text{inc}$ are differentiated exactly; the gradient agrees with finite differences to $\sim10^{-8}$ for real periodic and complex Bloch fields.
+
+**Limitations.** The medium on and next to the plane must be homogeneous, isotropic and lossless (no dispersive material), the transverse mesh uniform and the mesh spacing along the normal equal on both sides of the plane. Place the plane far enough from the structure for the evanescent orders to decay if propagating-order sums are compared with the flux. With MPI only planes normal to $z$ are supported (untested), and the GPU path is untested.
+
+References:
+- R. Petit (ed.), *Electromagnetic Theory of Gratings*, Springer (1980).
+- M. G. Moharam and T. K. Gaylord, "Rigorous coupled-wave analysis of planar-grating diffraction", *J. Opt. Soc. Am.* **71**, 811–818 (1981), [doi:10.1364/JOSA.71.000811](https://doi.org/10.1364/JOSA.71.000811).
+- V. Liu and S. Fan, "S4: A free electromagnetic solver for layered periodic structures", *Comput. Phys. Commun.* **183**, 2233–2244 (2012), [doi:10.1016/j.cpc.2012.04.026](https://doi.org/10.1016/j.cpc.2012.04.026).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4 (numerical dispersion).
+- M. Born and E. Wolf, *Principles of Optics*, 7th ed., Cambridge University Press (1999).
+- fmmax (Fourier modal method in JAX, MIT), https://github.com/facebookresearch/fmmax; invrs-gym, https://github.com/invrs-io/gym.
+
 ### 📥🗿 Geometry Importing & Embedded Boundaries
 
 Wakis integrates with [**PyVista**](https://docs.pyvista.org/) to import CAD geometries in `.STL`, `.STEP`, or `.OBJ` formats. The mesh is overlaid onto the simulation domain and mapped onto the Cartesian grid using:
