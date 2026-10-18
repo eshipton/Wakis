@@ -231,3 +231,13 @@ def test_unpaired_periodic_rejected():
         SolverFIT3D(
             grid, bc_low=["pec"] * 3, bc_high=["pec", "pec", "periodic"], verbose=0
         )
+
+
+def test_verbose_zero_is_silent(capsys):
+    """verbose=0 keeps grid, solver setup and emsolve free of terminal output."""
+    grid = GridFIT3D(0, 1, 0, 1, 0, 1, 4, 4, 4, verbose=0)
+    solver = SolverFIT3D(grid, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0)
+    solver.emsolve(Nt=2)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

@@ -235,7 +235,8 @@ class GridFIT3D(PlotMixin):
                 self._compute_snap_points(snap_solids=snap_solids, snap_tol=snap_tol)
             self._refine_xyz_axis(method=refinement_method, tol=refinement_tol)
 
-        print(f"Generating grid with {self.Nx * self.Ny * self.Nz} mesh cells...")
+        if verbose:
+            print(f"Generating grid with {self.Nx * self.Ny * self.Nz} mesh cells...")
         if verbose > 1:
             print(
                 f"    * Simulation domain bounds: \n\
