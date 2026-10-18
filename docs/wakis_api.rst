@@ -28,3 +28,4 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_bloch
    wakis_diffraction
    wakis_templates
+   wakis_unstructured

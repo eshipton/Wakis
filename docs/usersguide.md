@@ -839,6 +839,48 @@ grid = wakis.GridFIT3D(..., sheets={'patch': rectangle_sheet(center=(0, 0, 1.6e-
 
 The sheet must lie on a grid plane normal to x, y or z. Its edges can be anywhere. A knife-edge correction (`sheet_edge_correction=True`) places the edge at its physical position. For the patch template use `patch_antenna(..., thin_sheet=True)`, which needs no empirical `edge_correction`.
 
+#### Unstructured meshes: curved dielectrics and metals with `wakis.unstructured`
+
+For curved interfaces where $\mathbf E$ crosses the surface (TE modes of rods and spheres, plasmonic particles), the tetrahedral/triangular FIT solver of `wakis.unstructured` uses a mesh that conforms to the interfaces and stays second order in both polarizations (physics guide, "Unstructured FIT"). The example meshes a dielectric sphere ($\varepsilon_r = 4$, radius 0.5 m) inside a spherical PEC cavity (radius 1 m), computes its resonances and compares them with the exact spherical-Bessel solution:
+```python
+import numpy as np
+from scipy.constants import c
+from wakis.unstructured import UnstructuredFIT3D, analytic, ball_mesh, estimate_memory
+
+a, b, eps = 1.0, 0.5, 4.0
+mesh = ball_mesh([b, a], h=0.15)        # tag 0: r < b, tag 1: b < r < a
+print(mesh.n_cells, "tetrahedra", mesh.diagnostics())
+print(f"~{estimate_memory(mesh, eigen=True) / 1e9:.2f} GB")
+
+solver = UnstructuredFIT3D(mesh, materials={0: [eps, 1.0]}, bc="pec")
+k_tm = analytic.sphere_in_cavity(a, b, eps, "TM", 3)   # E crosses the surface
+k_te = analytic.sphere_in_cavity(a, b, eps, "TE", 3)
+f, modes = solver.eigenmodes(6, f_target=2.65 * c / (2 * np.pi))
+print("k a =", np.round(2 * np.pi * f / c, 4))
+print("exact", np.round(np.r_[k_tm, k_te], 4))
+```
+The six modes are the TM and TE dipole triplets (relative errors about $3\times10^{-3}$ at $h = 0.15$, i.e. $1.2\times10^4$ tetrahedra, decreasing as $h^2$). `modes` holds the edge voltages; `mesh.edges_to_cell_vectors(modes[:, 0])` gives the field at the cell centres for plotting.
+
+The same solver runs in the time domain. The 2D example below excites a lossless Drude rod ($\omega_p = 4c/a$) in a PEC cavity with an in-plane dipole (TE, $H_z$ on the nodes) and finds its surface-plasmon resonance with harmonic inversion:
+```python
+from wakis.dispersive import DispersiveMaterial, Drude
+from wakis.resonances import harminv
+from wakis.unstructured import UnstructuredFIT2D, disk_mesh
+
+metal = DispersiveMaterial(1.0, [Drude(4.0 * c, 0.0)])
+solver = UnstructuredFIT2D(disk_mesh([0.5, 1.0], 0.05), {0: metal}, polarization="TE", bc="pec")
+f0 = 3.6469 * c / (2 * np.pi)             # exact n = 1 plasmon, k a = 3.6469
+s = 1 / (2 * np.pi * 0.4 * f0)
+pulse = lambda t: np.exp(-((t - 5 * s) / s) ** 2 / 2) * np.sin(2 * np.pi * f0 * (t - 5 * s))
+solver.add_point_source([0.6, 0.1], pulse, direction=[1, 0])
+probe = solver.add_probe([[0.27, -0.43]])
+solver.run(4000)
+signal = solver.probe_signal(probe)[1000:, 0]
+modes = harminv(signal, solver.dt, 0.9 * f0, 1.1 * f0, t0=1001 * solver.dt)
+print(2 * np.pi * modes.frequency / c)     # [3.6482, 3.7689]: n = 1 (error 3.5e-4) and n = 2 modes
+```
+`solver.dispersive_eigenmode(f0)` gives the same mode from the frequency domain. Meshes from other tools are loaded with `SimplexMesh.read("part.msh")` (any meshio format; material tags from the gmsh physical groups), and `wakis.unstructured.gmsh_mesh` drives gmsh if it is installed (it is an optional external tool, not a Wakis dependency). `bc="abc"` gives a first-order absorbing outer boundary; a PML is on the roadmap (`docs/unstructured_roadmap.md`).
+
 #### Design templates: ready-made antennas, waveguides and unit cells
 
 `wakis.templates` sets up complete simulations from a declarative description: it chooses the mesh from a target number of cells per wavelength in the densest material, the padding to the CPML, the CPML thickness and the run length (energy-decay criterion), and returns the usual engineering results. See the [templates tutorial](templates.md) for all templates and pitfalls.
