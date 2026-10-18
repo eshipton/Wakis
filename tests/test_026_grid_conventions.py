@@ -30,6 +30,11 @@ class _Probe:
         self.values.append(float(arr[(*self.idx, self.component)]))
 
 
+def _host(array):
+    """Copy of a field array on the host (NumPy) from a CPU or GPU solver."""
+    return array.get() if hasattr(array, "get") else array.copy()
+
+
 def _resonance(solver, f_guess, src_center, probe_center, component="z"):
     """
     Frequency of the resonance closest to `f_guess`, from the free ring-down
@@ -192,8 +197,8 @@ def test_energy_conservation_graded_mesh(use_gpu):
             self.prev, self.W = None, []
 
         def update(self, solver, t):
-            E = np.asarray(solver.E.toarray()).copy()
-            H = np.asarray(solver.H.toarray()).copy()
+            E = _host(solver.E.toarray())
+            H = _host(solver.H.toarray())
             if self.prev is not None:
                 E_n, H_old = self.prev  # E^n and H^(n-1/2); H is H^(n+1/2)
                 self.W.append(
