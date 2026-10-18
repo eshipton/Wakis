@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import pytest
 from scipy.constants import c, epsilon_0
-from scipy.optimize import curve_fit
+from scipy.optimize import brentq, curve_fit
 from scipy.special import h2vp, hankel2, jv, jvp
 
 import wakis
@@ -136,6 +136,72 @@ def test_cavity_modes(sigma, use_gpu):
         )
         omega = 2 * np.pi * res.frequency
         np.testing.assert_allclose(res.Q, omega * epsilon_0 / sigma, rtol=1e-3)
+
+
+def _loaded_cavity_error(N, average, a=0.1, t_slab=0.033, eps_r=4.0):
+    """
+    Relative error of the TE_101-like mode of a square PEC cavity (side a, Ey
+    only, 2D: one cell between PEC plates along y) loaded with a dielectric
+    slab 0 < z < t_slab. Exact: with kx = pi/a, k1^2 = eps_r k0^2 - kx^2 and
+    k2^2 = k0^2 - kx^2, continuity of Ey and dEy/dz at z = t_slab gives
+    k1 cos(k1 t) sin(k2 (a - t)) + k2 sin(k1 t) cos(k2 (a - t)) = 0.
+    """
+
+    def g(k0):
+        k1 = np.sqrt(complex(eps_r * k0**2 - (np.pi / a) ** 2))
+        k2 = np.sqrt(complex(k0**2 - (np.pi / a) ** 2))
+        return np.real(
+            k1 * np.cos(k1 * t_slab) * np.sin(k2 * (a - t_slab))
+            + k2 * np.sin(k1 * t_slab) * np.cos(k2 * (a - t_slab))
+        )
+
+    # Lowest root: first sign change above the slab cutoff kx / sqrt(eps_r)
+    k0 = np.linspace(1.0001 / np.sqrt(eps_r), 3, 2000) * np.pi / a
+    values = np.array([g(k) for k in k0])
+    i = np.flatnonzero(values[:-1] * values[1:] < 0)[0]
+    f_exact = brentq(g, k0[i], k0[i + 1]) * c / (2 * np.pi)
+
+    dx = a / N
+    grid = wakis.GridFIT3D(0, a, 0, dx, 0, a, N, 1, N, verbose=0)
+    solver = wakis.SolverFIT3D(grid, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0)
+    # Ey on the z nodes is tangential to the slab face: the arithmetic mean of
+    # eps over the dual cell is second-order accurate; staircasing takes the
+    # eps at the node
+    z = grid.z[: solver.Nz]
+    lo, hi = np.maximum(z - dx / 2, 0), np.minimum(z + dx / 2, a)
+    fill = np.clip(np.minimum(hi, t_slab) - lo, 0, None) / (hi - lo)
+    fill = fill if average else (z < t_slab).astype(float)
+    for k in range(solver.Nz):
+        solver.ieps[:, :, k, "y"] = 1 / (epsilon_0 * (1 + fill[k] * (eps_r - 1)))
+    solver.update_tensors("ieps")
+    solver.step_0 = True  # update_tensors skips the first-step initialization
+
+    src_time = GaussianSource(frequency=1.5e9, fwidth=0.7e9)
+    dipole = CurrentSource(src_time, component="y", center=(0.037, 0, 0.061))
+    probe = ResonanceMonitor("Ey", center=(0.061, 0, 0.021), t_start=src_time.end_time)
+    solver.emsolve(
+        int((src_time.end_time + 8e-9) / solver.dt), source=dipole, monitors=[probe]
+    )
+    res = probe.harminv(0.8 * f_exact, 1.2 * f_exact)
+    assert len(res) == 1
+    return res.frequency[0] / f_exact - 1
+
+
+def test_loaded_cavity_convergence():
+    """
+    Convergence order of a resonance with a dielectric interface between grid
+    nodes (Meep's 2D convergence test idea): with subcell averaging the error
+    of the slab-loaded cavity mode (f = 1.517 GHz) falls at second order,
+    -0.23 %, -0.060 %, -0.017 % at 15, 30, 60 cells (13-50 cells per
+    wavelength in the slab), whereas staircasing is first order and ten times
+    less accurate (+4.2 %, +1.9 %, +0.71 %).
+    """
+    averaged = np.abs([_loaded_cavity_error(N, True) for N in (15, 30, 60)])
+    staircase = np.abs([_loaded_cavity_error(N, False) for N in (15, 30, 60)])
+
+    assert averaged[-1] < 3e-4
+    assert np.all(averaged[:-1] / averaged[1:] > 3.0)  # 4 for second order
+    assert np.all(staircase > 10 * averaged)
 
 
 def _disk_resonance(m, n, x0):

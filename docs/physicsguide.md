@@ -372,6 +372,14 @@ By Parseval's theorem the energy crossing the surface is $2\int_0^\infty \Phi(f)
 - it matches the Hertzian dipole power to second order in the mesh size;
 - slab transmission and reflection follow the Airy formula with $R+T=1$ to $10^{-5}$.
 
+**Discrete Poynting theorem in the time domain.** Because the dual curl is the transpose of the primary curl, the leapfrog scheme conserves the energy $W^n = \tfrac12\sum \varepsilon V_e (E^n)^2 + \tfrac12\sum \mu V_h H^{n-1/2}H^{n+1/2}$ exactly. Restricted to a box (control volumes $V_e$, $V_h$ cut by the box faces, i.e. weights 1/2 on the faces and 1/4 on the edges), the balance per step is
+
+$$
+\frac{W^{n+1}-W^n}{\Delta t} + \Phi^{n+1/2} + \sum \sigma E^n \bar E\, V_e = -\sum J^{n+1/2}\bar E\, V_e, \qquad \bar E = \tfrac12(E^n + E^{n+1}),
+$$
+
+where $\Phi^{n+1/2}$ is exactly the surface sum used by `FluxMonitor` (tangential $\bar E$ on the face nodes times $H^{n+1/2}$ averaged across the face, trapezoidal weights on the box edges) and the ohmic term carries the explicit $\sigma E^n$ of the update. `tests/test_029_energy_balance.py` verifies the identity to $10^{-14}$ in a conducting medium where radiation and ohmic loss each take about half of the work done by a dipole, and the plane-wave attenuation $\alpha = -\operatorname{Im}k$, $k = \omega\sqrt{\mu_0\varepsilon_0(1 - i\sigma/\omega\varepsilon_0)}$, to 1 %.
+
 With MPI, each rank accumulates the samples in its own subdomain. `FluxMonitor.get_flux` sums over ranks, whereas `DFTMonitor.get_field` returns rank-local samples.
 
 References:
@@ -473,6 +481,7 @@ Modes outside $[f_\text{min}, f_\text{max}]$, with error above `max_rel_error` t
 - synthetic signals (two modes $0.3/T$ apart, i.e. below the Fourier resolution, plus a $Q=200$ mode): both methods recover $f$ to $10^{-10}$, $Q$ to $10^{-6}$ and the complex amplitudes to $10^{-8}$; with white noise of $10^{-5}$ of the peak the isolated mode keeps $f$ to $10^{-8}$ and $Q$ to $10^{-4}$, and the close pair stays separated;
 - PEC box $100\times80\times60$ mm, 5 mm cells: all 8 modes with $E_z \ne 0$ in 2–5 GHz match the leapfrog dispersion relation (including $\Delta t$) to $10^{-9}$ (observed $\sim 10^{-12}$), and $Q > 10^9$;
 - the same box filled with $\sigma = 10^{-3}$ S/m: each mode obeys the exact discrete relation $z^2 + (\Omega^2\Delta t^2 - 2 + s)z + 1 - s = 0$, $z = e^{2\pi i\tilde f\Delta t}$, $s = \sigma\Delta t/\varepsilon_0$, obtained by eliminating $H$ from the updates with the explicit loss term $\sigma E^n$ ($Q$ to $10^{-6}$), and the continuum $Q = \omega\varepsilon_0/\sigma$ to $O(s) = 5\cdot10^{-4}$;
+- a square PEC cavity loaded with a dielectric slab whose face lies between grid nodes (exact transcendental reference): with subcell averaging of $\varepsilon$ the error falls at second order ($-0.23\,\%, -0.060\,\%, -0.017\,\%$ at 15, 30, 60 cells), staircasing is first order and ten times larger;
 - radiation-limited TM$_{4}$ whispering-gallery mode of a 2D dielectric disk ($n=3$, $R = 100$ mm) against the exact complex root of $n J_4'(nkR)/J_4(nkR) = H_4^{(2)\prime}(kR)/H_4^{(2)}(kR)$ ($f = 0.9902$ GHz, $Q = 164.2$): with subcell averaging of $\varepsilon$ the errors are $-0.34\,\%, -0.13\,\%, -0.08\,\%$ in $f$ and $+2.6\,\%, +0.85\,\%, +0.5\,\%$ in $Q$ at 6, 4, 3 mm (second order), from a 60 ns record ($\approx$ one decay time); a Lorentzian fit to the spectrum of a 400 ns ring-down agrees with harminv to $5\cdot10^{-4}$ in $Q$.
 
 **Differentiability.** The extracted $\tilde f_k$ are smooth functions of the recorded samples away from mode crossings, but the eigen-decomposition is not part of the adjoint layer. For inverse design of resonances, use objectives on DFT data instead (e.g. $|E(f_0)|^2$ near the target frequency, or the ratio of field energy at $f_0$ to the source spectrum) and use `harminv` to analyse the optimized structure.
