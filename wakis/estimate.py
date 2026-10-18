@@ -7,36 +7,118 @@
 Resource estimates (peak memory, run time) for Wakis simulations, and a
 preflight check against the target machine before launching a run.
 
-The base cost per cell was measured with `benchmarks/calibrate_memory.py` on a
-GCP g2-standard-16 (NVIDIA L4) VM, 48 runs of 16^3 to 128^3 cells (peak RSS after
-setup and 10 steps, fresh process per point); it is linear in the cell count.
-Monitors, adjoint storage and dispersive auxiliary state are added analytically.
-A safety factor (default 1.25) covers setup temporaries not seen in calibration.
+All coefficients were measured with `benchmarks/calibrate_memory.py` on a GCP
+g2-standard-16 VM (8-core Xeon @ 2.2 GHz, NVIDIA L4), each point in a fresh
+process (peak RSS ``ru_maxrss`` after the setup and after 20 warmed-up steps):
+
+* plain grids: vacuum box, PEC or CPML walls, float64/float32, CPU and GPU,
+  32^3 to 160^3 cells;
+* conformal grids (``conformal='pec'``, ``'all'``, ``'tensor'``): a sphere in
+  a box, 32^3 to 160^3 cells; the setup (geometry, merged faces, Lanczos time
+  step) has its own peak, and the per-step cost grows with the number of
+  interface cells;
+* dispersive edges (Drude/Lorentz poles) and the unstructured tetrahedral
+  solver (`estimate_unstructured`).
+
+Held-out sizes (not used in the fits) are reproduced within the errors
+quoted in docs/performance.md. Monitors and adjoint storage are added
+analytically. A safety factor (default 1.25) is applied to the memory.
 """
 
 import argparse
 from dataclasses import dataclass, field
 
+import numpy as np
+
 # Peak bytes = fixed + per_cell * cells  (host RAM; GPU memory for use_gpu)
 _HOST = {  # (backend, cpml, dtype) -> (fixed bytes, bytes per cell)
-    ("cpu", False, "float64"): (393e6, 1105.0),
-    ("cpu", False, "float32"): (394e6, 809.0),
-    ("cpu", True, "float64"): (409e6, 969.0),
-    ("cpu", True, "float32"): (396e6, 624.0),
-    ("gpu", False, "float64"): (607e6, 1047.0),
-    ("gpu", False, "float32"): (580e6, 753.0),
-    ("gpu", True, "float64"): (574e6, 948.0),
-    ("gpu", True, "float32"): (561e6, 620.0),
+    ("cpu", False, "float64"): (392e6, 1109.0),
+    ("cpu", False, "float32"): (393e6, 813.0),
+    ("cpu", True, "float64"): (428e6, 953.0),
+    ("cpu", True, "float32"): (412e6, 601.0),
+    ("gpu", False, "float64"): (583e6, 1081.0),
+    ("gpu", False, "float32"): (538e6, 797.0),
+    ("gpu", True, "float64"): (587e6, 940.0),
+    ("gpu", True, "float32"): (566e6, 605.0),
 }
 _GPU = {
-    (False, "float64"): 935.0,
-    (False, "float32"): 712.0,
-    (True, "float64"): 738.0,
-    (True, "float32"): 458.0,
+    (False, "float64"): 938.0,
+    (False, "float32"): 714.0,
+    (True, "float64"): 736.0,
+    (True, "float32"): 457.0,
 }
-# Sustained throughput [cells * steps / s], conservative (docs/performance.md and
-# the calibration runs): one CPU core, 8-core MKL, NVIDIA L4
-_THROUGHPUT = {"cpu": 8e6, "mkl": 16e6, "gpu": 75e6}
+# Conformal grids (host RAM, float64; sphere in a box, 32^3 to 160^3 cells):
+#   setup peak: fixed + per_cell * cells + per_interface * interface_cells
+#   steady state: plain + per_cell * cells + per_interface * interface_cells
+# With 1 to 4 Mcells the setup peak (geometry, merged faces, Lanczos time
+# step) is the larger one.
+_CONFORMAL_SETUP = {  # mode -> (fixed, bytes per cell, bytes per interface cell)
+    "pec": (398e6, 1229.0, 9663.0),
+    "all": (420e6, 1339.0, 1500.0),
+    "tensor": (424e6, 1453.0, 0.0),
+}
+_CONFORMAL_RUN = {  # mode -> (bytes per cell, bytes per interface cell)
+    "pec": (111.0, 10910.0),
+    "all": (191.0, 4895.0),
+    "tensor": (311.0, 3137.0),
+}
+_CONFORMAL_GPU_HOST = 290.0  # host bytes per cell added to the setup peak (GPU)
+_CONFORMAL_GPU = {  # mode -> GPU bytes per cell on top of the plain solver
+    "pec": 142.0,  # as 'all' (not measured separately)
+    "all": 142.0,
+    "tensor": 154.0,
+}
+# Dispersive edges (ADE state and per-step copies): steady-state bytes per
+# edge, and the transient of `add_dispersive_material` on top of the steady
+# solver (about 0.7 x its setup peak), which sets the peak for large fills
+_DISPERSIVE_BYTES = 88.0
+_DISPERSIVE_TRANSIENT = 160.0
+_STEADY_FRACTION = 0.7
+
+# Sustained throughput [cells * steps / s] of warmed-up float64 runs versus
+# cell count, interpolated in log(cells) (constant beyond the ends). One CPU
+# core (SciPy sparse), NVIDIA L4; 'mkl' from docs/performance.md (8 cores,
+# not re-measured). Plain CPU grids slow down between 2.6 and 3 Mcells.
+_THROUGHPUT = {  # (backend, cpml) -> ((cells, Mcells/s), ...)
+    ("cpu", False): ((3.59e4, 25.5), (2.75e5, 19.4), (9.13e5, 16.1),
+                     (2.15e6, 14.7), (4.17e6, 8.3)),
+    ("cpu", True): ((3.59e4, 6.5), (2.75e5, 7.1), (9.13e5, 6.0),
+                    (2.15e6, 7.3), (4.17e6, 6.8)),
+    ("gpu", False): ((3.59e4, 204.0), (2.75e5, 738.0), (9.13e5, 418.0),
+                     (2.15e6, 333.0), (4.17e6, 328.0)),
+    ("gpu", True): ((2.15e6, 190.0), (4.17e6, 160.0)),
+    ("mkl", False): ((2.62e5, 29.6), (2.10e6, 17.1), (7.08e6, 16.3)),
+}  # fmt: skip
+_THROUGHPUT[("mkl", True)] = _THROUGHPUT[("cpu", True)]
+# Conformal grids on the CPU (sphere, all modes alike within the scatter)
+_THROUGHPUT_CONFORMAL = ((3.59e4, 20.8), (2.75e5, 18.1), (9.13e5, 15.3),
+                         (2.15e6, 13.7), (4.17e6, 13.5))  # fmt: skip
+_CONFORMAL_GPU_STEP = {"pec": 1.15, "all": 1.15, "tensor": 1.18}  # x plain GPU
+_FLOAT32_STEP = {"cpu": 0.62, "mkl": 0.62, "gpu": 0.60}  # time vs float64
+_GPU_CPML_FLOOR = 7.1e-3  # s per step: CPML kernel launches (up to ~1.4 Mcells)
+_DISPERSIVE_STEP = (12e-9, 25e-9)  # s per dispersive edge per step: a + b n_poles
+# Setup time [s] = a + b * cells + c * interface cells (grid with STL masks +
+# solver; the conformal setup runs on the host also for GPU runs; measured
+# with a 28 800-triangle sphere: the STL masks scale with the triangles)
+_SETUP = {
+    "plain": (0.0, 1.8e-6, 0.0),
+    "pec": (0.03, 7.2e-6, 0.0),
+    "all": (0.44, 4.3e-6, 2.2e-4),
+    "tensor": (0.51, 4.8e-6, 2.6e-4),
+}
+
+_SETUP_GPU = {  # use_gpu: the stable time step runs on the GPU
+    "plain": (0.05, 2.05e-6, 0.0),
+    "pec": (0.03, 7.2e-6, 0.0),  # not measured: as on the CPU
+    "all": (0.0, 3.7e-6, 1.8e-4),
+    "tensor": (0.0, 3.5e-6, 2.4e-4),
+}
+
+# Unstructured tetrahedral FIT: `import wakis` + mesh, solver and stepping
+# (ball_mesh + UnstructuredFIT3D, 2e4 to 4e5 tetrahedra)
+_UNSTRUCTURED_BASE = 396e6  # bytes
+_UNSTRUCTURED_PER_TET = 2523.0  # bytes
+_UNSTRUCTURED_STEP = 52e-9  # s per tetrahedron per step
 
 # Target machines: usable host RAM and GPU memory [bytes]
 MACHINES = {
@@ -53,11 +135,31 @@ _OS_RESERVE = 0.85  # fraction of RAM a job may use (OS, Python, page cache)
 
 @dataclass
 class Estimate:
+    """
+    Estimated resources of a simulation.
+
+    Attributes
+    ----------
+    cells : int
+        Grid cells (or tetrahedra).
+    host_bytes, gpu_bytes : float
+        Peak host RAM and GPU memory [bytes], including the safety factor.
+    seconds : float
+        Total wall time [s]: setup plus time stepping.
+    breakdown : dict
+        Memory contributions [bytes] (without the safety factor).
+    setup_seconds, step_seconds : float
+        Setup (grid, solver, conformal geometry and time step) and time per
+        step [s].
+    """
+
     cells: int
     host_bytes: float
     gpu_bytes: float
     seconds: float
     breakdown: dict = field(default_factory=dict)
+    setup_seconds: float = 0.0
+    step_seconds: float = 0.0
 
     def __str__(self):
         gb = 1e9
@@ -65,10 +167,42 @@ class Estimate:
             f"cells: {self.cells:,}",
             f"peak host RAM: {self.host_bytes / gb:.2f} GB",
             f"peak GPU memory: {self.gpu_bytes / gb:.2f} GB",
-            f"run time: {self.seconds / 60:.1f} min",
+            f"run time: {self.seconds / 60:.1f} min (setup {self.setup_seconds:.0f} s, "
+            f"{self.step_seconds * 1e3:.2f} ms/step)",
         ]
         lines += [f"  {k}: {v / gb:.3f} GB" for k, v in self.breakdown.items()]
         return "\n".join(lines)
+
+
+def interface_cells_from_area(area, cell_size, conformal="all"):
+    """
+    Typical number of interface cells of a conformal grid.
+
+    Parameters
+    ----------
+    area : float
+        Surface area of the solids [m^2].
+    cell_size : float
+        Cell size [m] (geometric mean of dx, dy, dz).
+    conformal : {'pec', 'all', 'tensor'}
+        Conformal mode.
+
+    Returns
+    -------
+    int
+        Cells holding an E edge whose length (PEC) or dual cell
+        (dielectric) is cut by a surface: 1.1 area / cell_size^2 for PEC
+        solids and 1.9 area / cell_size^2 for dielectrics (measured on
+        spheres of 10 to 50 cells radius).
+    """
+    factor = 1.1 if conformal == "pec" else 1.9
+    return int(factor * area / cell_size**2)
+
+
+def _rate(table, cells):
+    """Throughput [cells / s] interpolated in log(cells) from a table."""
+    table = np.array(table)
+    return np.interp(np.log(cells), np.log(table[:, 0]), table[:, 1]) * 1e6
 
 
 def estimate(
@@ -83,6 +217,8 @@ def estimate(
     n_poles=1,
     n_ranks=1,
     safety=1.25,
+    conformal=False,
+    interface_cells=None,
 ):
     """
     Estimate peak memory and run time of a Wakis simulation.
@@ -105,19 +241,34 @@ def estimate(
         {'design_edges': int, 'store_bytes': 4 or 8}: stored E increments of an
         AdjointSimulation (steps x design edges) plus the adjoint state.
     dispersive_edges, n_poles : int, optional
-        Edges with dispersive materials and poles per material.
+        E edges with dispersive materials (about 3 per cell inside the
+        material) and poles per material.
     n_ranks : int, optional
         MPI ranks: memory and time are per rank.
     safety : float, optional
         Multiplier on the memory estimate.
+    conformal : {False, True, 'pec', 'all', 'tensor'}, optional
+        Conformal mode of the grid (`GridFIT3D(conformal=...)`; True is
+        'all'). Adds the setup peak (geometry, merged faces, stable time
+        step) and the per-step cost of the interface cells.
+    interface_cells : int, optional
+        Interface cells (see `interface_cells_from_area`); default
+        ``2 * cells**(2/3)`` (a sphere of 0.6 times the domain width).
 
     Returns
     -------
     Estimate
     """
-    if not isinstance(cells, int):
+    if not isinstance(cells, (int, np.integer)):
         nx, ny, nz = cells
         cells = int(nx) * int(ny) * int(nz)
+    cells = int(cells)
+    mode = "all" if conformal is True else conformal
+    if mode not in (False, None, "pec", "all", "tensor"):
+        raise ValueError("conformal must be False, True, 'pec', 'all' or 'tensor'.")
+    if mode and interface_cells is None:
+        interface_cells = 2.0 * cells ** (2 / 3)
+    n_iface = float(interface_cells or 0) / n_ranks
     complex_fields = dtype.startswith("complex")
     base_dtype = {"complex128": "float64", "complex64": "float32"}.get(dtype, dtype)
     per_rank = cells / n_ranks
@@ -129,6 +280,18 @@ def estimate(
     gpu = (
         factor * _GPU[(bool(cpml), base_dtype)] * per_rank if backend == "gpu" else 0.0
     )
+    setup_peak = 0.0
+    if mode:
+        c_cell, c_iface = _CONFORMAL_RUN[mode]
+        breakdown["conformal (host)"] = factor * (c_cell * per_rank + c_iface * n_iface)
+        s_fixed, s_cell, s_iface = _CONFORMAL_SETUP[mode]
+        if backend == "gpu":
+            # Setup on the host, plus the CUDA runtime and host staging
+            s_fixed += fixed - _HOST[("cpu", bool(cpml), base_dtype)][0]
+            s_cell += _CONFORMAL_GPU_HOST
+        setup_peak = s_fixed + factor * (s_cell * per_rank + s_iface * n_iface)
+        if backend == "gpu":
+            gpu += factor * _CONFORMAL_GPU[mode] * per_rank
 
     mon = sum(16.0 * nf * ns * nc for nf, ns, nc in monitors) / n_ranks
     breakdown["monitors"] = mon
@@ -141,10 +304,19 @@ def estimate(
         )  # transposed operators + adjoint fields
         breakdown["adjoint stored increments"] = stored
         breakdown["adjoint state"] = state
-    disp = dispersive_edges * n_poles * 3 * 8.0 / n_ranks
+    edges = dispersive_edges / n_ranks
+    disp = _DISPERSIVE_BYTES * edges * factor
     breakdown["dispersive"] = disp
 
     host = sum(breakdown.values())
+    if setup_peak > host:
+        breakdown["conformal setup peak (host)"] = setup_peak
+    # Filling many dispersive edges peaks above the steady solver
+    disp_peak = (
+        _STEADY_FRACTION * breakdown["solver (host)"]
+        + _DISPERSIVE_TRANSIENT * edges * factor
+    )
+    host = max(host, setup_peak, disp_peak)
     if backend == "gpu":
         gpu += (
             mon
@@ -154,9 +326,72 @@ def estimate(
                 + breakdown.get("adjoint stored increments", 0)
             )
         )
+
+    # Run time: setup (on the host) + steps
+    work = per_rank * factor
+    table = _THROUGHPUT[(backend, bool(cpml))]
+    if mode and backend != "gpu" and not cpml:
+        table = _THROUGHPUT_CONFORMAL
+    step = work / _rate(table, work)
+    if mode and backend == "gpu":
+        step *= _CONFORMAL_GPU_STEP[mode]
+    if base_dtype == "float32":
+        step *= _FLOAT32_STEP[backend]
+    if backend == "gpu" and cpml:
+        step = max(step, _GPU_CPML_FLOOR)
+    da, db = _DISPERSIVE_STEP
+    step += edges * (da + db * n_poles) * factor
+    sa, sb, sc = (_SETUP_GPU if backend == "gpu" else _SETUP)[mode or "plain"]
+    setup = sa + sb * per_rank + sc * n_iface
     time_steps = steps * (2.2 if adjoint else 1.0)
-    seconds = time_steps * per_rank * factor / _THROUGHPUT[backend]
-    return Estimate(cells, host * safety, gpu * safety, seconds, breakdown)
+    seconds = setup + time_steps * step
+    return Estimate(cells, host * safety, gpu * safety, seconds, breakdown, setup, step)
+
+
+def estimate_unstructured(n_cells, steps=0, dim=3, eigen=False, safety=1.25):
+    """
+    Estimate peak memory and run time of an unstructured (simplex) FIT run.
+
+    Time domain: ``import wakis`` (0.40 GB) plus 2.5 kB per tetrahedron for
+    mesh, solver and stepping, and 52 ns per tetrahedron and step (measured,
+    see the module docstring); an eigen-solve adds the sparse-LU fill-in
+    ``EIG_COEF * n**EIG_EXP`` of `wakis.unstructured.estimate`. Triangles
+    (dim=2) use `wakis.unstructured.estimate_memory` and half the step cost.
+
+    Parameters
+    ----------
+    n_cells : int or SimplexMesh
+        Tetrahedra (triangles for dim=2), or the mesh.
+    steps : int, optional
+        Leapfrog steps.
+    dim : {2, 3}, optional
+    eigen : bool, optional
+        Include a shift-invert eigen-solve.
+    safety : float, optional
+        Multiplier on the memory estimate.
+
+    Returns
+    -------
+    Estimate
+        Without the mesh generation time (not modelled).
+    """
+    from .unstructured import estimate as unstructured
+
+    if hasattr(n_cells, "n_cells"):
+        dim = n_cells.dim
+        n = int(n_cells.n_cells)
+    else:
+        n = int(n_cells)
+    if dim == 2:
+        mem = unstructured.estimate_memory(n, dim=2, eigen=eigen)
+        step = 0.5 * _UNSTRUCTURED_STEP * n
+    else:
+        mem = _UNSTRUCTURED_BASE + _UNSTRUCTURED_PER_TET * n
+        if eigen:
+            mem += unstructured.EIG_COEF * n**unstructured.EIG_EXP
+        step = _UNSTRUCTURED_STEP * n
+    breakdown = {"unstructured (host)": mem}
+    return Estimate(n, mem * safety, 0.0, steps * step, breakdown, 0.0, step)
 
 
 def preflight(est, machine, raise_error=True):
@@ -193,6 +428,10 @@ def main():
     ap.add_argument("--dtype", default="float64")
     ap.add_argument("--backend", default="cpu", choices=["cpu", "mkl", "gpu"])
     ap.add_argument("--cpml", action="store_true")
+    ap.add_argument("--conformal", default=None, choices=["pec", "all", "tensor"])
+    ap.add_argument("--interface-cells", type=int, default=None)
+    ap.add_argument("--dispersive-edges", type=int, default=0)
+    ap.add_argument("--poles", type=int, default=1)
     ap.add_argument("--adjoint-design-edges", type=int, default=0)
     ap.add_argument("--ranks", type=int, default=1)
     ap.add_argument("--machine", default=None, help=", ".join(MACHINES))
@@ -205,7 +444,11 @@ def main():
         a.backend,
         a.cpml,
         adjoint=adj,
+        dispersive_edges=a.dispersive_edges,
+        n_poles=a.poles,
         n_ranks=a.ranks,
+        conformal=a.conformal or False,
+        interface_cells=a.interface_cells,
     )
     print(est)
     if a.machine:

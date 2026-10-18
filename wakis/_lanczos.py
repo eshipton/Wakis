@@ -61,6 +61,12 @@ def _pool():
     return _POOL[0]
 
 
+# A forked child (e.g. a multiprocessing sweep) has no copies of the
+# parent's worker threads: it creates its own pool
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_POOL.clear)
+
+
 try:  # in-place CSR product (no output allocation); private SciPy API
     from scipy.sparse._sparsetools import csr_matvec as _csr_matvec
 except ImportError:  # pragma: no cover
