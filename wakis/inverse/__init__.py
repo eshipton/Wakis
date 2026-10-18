@@ -23,6 +23,7 @@ _JAX_NAMES = (
     "mode_amplitudes",
     "farfield",
     "power_waves",
+    "diffraction_orders",
 )
 
 

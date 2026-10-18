@@ -5,6 +5,7 @@
 
 from . import (
     boundaries,
+    diffraction,
     dispersive,
     field,
     field_monitors,
@@ -22,6 +23,7 @@ from . import (
     wakeSolver,
 )
 from ._version import __version__
+from .diffraction import DiffractionMonitor
 from .field import Field
 from .field_monitors import DFTMonitor, FieldMonitor, FluxMonitor
 from .gridFIT3D import GridFIT3D
