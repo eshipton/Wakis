@@ -61,7 +61,8 @@ small, focused contributions to upstream Wakis.
 - [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers
 - [x] ~30 Meep-inspired validation tests; mesh-comparison study (`studies/mesh-comparison`)
 - [x] [invrs-gym](https://github.com/invrs-io/gym) bridge for photonic inverse-design benchmarks ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
-- [ ] Linear plasma wakefield benchmark (in progress); nonlinear regime (PIC) planned
+- [x] Linear plasma wakefield in a plasma-filled pipe (`wakis.plasma`): matches linear theory to 0.1–0.7 %
+- [ ] Nonlinear plasma wakefields (blowout regime, PIC)
 
 **Contributions to upstream Wakis**
 - [ ] Focused bug-fix and performance pull requests (in preparation)
