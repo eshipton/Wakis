@@ -1007,7 +1007,6 @@ References:
 - C. Kottke, A. Farjadpour and S. G. Johnson, "Perturbation theory for anisotropic dielectric interfaces, and application to subpixel smoothing of discretized numerical methods", *Phys. Rev. E* **77**, 036611 (2008), [doi:10.1103/PhysRevE.77.036611](https://doi.org/10.1103/PhysRevE.77.036611).
 - D. B. Shorthouse and C. J. Railton, "The incorporation of static field solutions into the finite difference time domain algorithm", *IEEE Trans. Microwave Theory Tech.* **40**(5), 986–994 (1992).
 
-<<<<<<< HEAD
 ### 🧊 Tensor subpixel averaging: `conformal='tensor'` and `MaterialGrid(smoothing='tensor')`
 
 The diagonal average of `conformal='all'` is first order whenever $\mathbf E$ crosses a curved or oblique dielectric interface, because it drops the off-diagonal entries of the averaged tensor. `conformal='tensor'` keeps them. It is opt-in; without it every code path, operator and regression result is unchanged. The implementation is in `wakis/tensor_averaging.py`.
@@ -1089,7 +1088,7 @@ References:
 - A. Hammond, A. Oskooi, S. G. Johnson and S. Ralph, "Photonic topology optimization with semiconductor-foundry design-rule constraints", *Opt. Express* **29**(15), 23916–23938 (2021), [doi:10.1364/OE.431188](https://doi.org/10.1364/OE.431188).
 - A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection", [arXiv:2503.20189](https://arxiv.org/abs/2503.20189) (2025).
 - Farjadpour et al. (2006) and Kottke et al. (2008): see "Conformal FIT" above.
-=======
+
 ### 🔺 Unstructured FIT: triangles, tetrahedra and the Voronoi dual
 
 The Cartesian solver represents a curved material interface either as a staircase (first order) or, with `conformal=True`, by partially filled cells. Its subpixel permittivity is diagonal, so it is only first order when $\mathbf E$ crosses a curved interface obliquely (TE modes of a dielectric rod, plasmonic surfaces). `wakis.unstructured` instead uses a mesh whose faces follow the interfaces: triangles in 2D and tetrahedra in 3D, each cell filled with one material. Body-fitted structured (nonorthogonal) FIT is the other route to curved boundaries [Schuhmann & Weiland, 2000; Cooke et al., 2006]; for curved interfaces a simplicial mesh keeps a diagonal material matrix and a Yee-like time step. `wakis.unstructured` is a separate solver core (`UnstructuredFIT2D`, `UnstructuredFIT3D`) and does not change `SolverFIT3D`.
@@ -1172,7 +1171,6 @@ References:
 - S. J. Cooke, R. Shtokhamer, A. A. Mondelli and B. Levush, "A finite integration method for conformal, structured-grid, electromagnetic simulation", *J. Comput. Phys.* **215**, 321–347 (2006).
 - L. Chen and J. Xu, "Optimal Delaunay triangulations", *J. Comput. Math.* **22**(2), 299–308 (2004).
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005).
->>>>>>> feature/unstructured-fit
 
 ### Surface impedance boundary condition (SIBC)
 

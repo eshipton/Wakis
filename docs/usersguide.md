@@ -839,7 +839,6 @@ grid = wakis.GridFIT3D(..., sheets={'patch': rectangle_sheet(center=(0, 0, 1.6e-
 
 The sheet must lie on a grid plane normal to x, y or z. Its edges can be anywhere. A knife-edge correction (`sheet_edge_correction=True`) places the edge at its physical position. For the patch template use `patch_antenna(..., thin_sheet=True)`, which needs no empirical `edge_correction`.
 
-<<<<<<< HEAD
 `conformal='tensor'` also keeps the off-diagonal entries of the averaged permittivity tensor. Use it when the electric field crosses a curved or oblique dielectric interface: dielectric spheres and rods with E in the cross-section, photonic resonators, lenses, gratings. For the TM$_1$ mode of a dielectric sphere ($\varepsilon_r=6$) in a spherical cavity at 32 cells across, the error drops from $7\times10^{-3}$ ('all') to below $10^{-4}$, at the same time step and 10–20 % more run time:
 
 ```python
@@ -861,7 +860,7 @@ design = MaterialGrid(center=(0, 0, 0), size=(0.06, 0.06, 0), shape=(31, 31, 1),
 ```
 
 Dispersive materials keep the diagonal average (no couplings are created on their edges). Keep the default `cfln=0.5` or smaller: the tensor step is then always stable. See "Tensor subpixel averaging" in the physics guide.
-=======
+
 #### Unstructured meshes: curved dielectrics and metals with `wakis.unstructured`
 
 For curved interfaces where $\mathbf E$ crosses the surface (TE modes of rods and spheres, plasmonic particles), the tetrahedral/triangular FIT solver of `wakis.unstructured` uses a mesh that conforms to the interfaces and stays second order in both polarizations (physics guide, "Unstructured FIT"). The example meshes a dielectric sphere ($\varepsilon_r = 4$, radius 0.5 m) inside a spherical PEC cavity (radius 1 m), computes its resonances and compares them with the exact spherical-Bessel solution:
@@ -903,7 +902,6 @@ modes = harminv(signal, solver.dt, 0.9 * f0, 1.1 * f0, t0=1001 * solver.dt)
 print(2 * np.pi * modes.frequency / c)     # [3.6482, 3.7689]: n = 1 (error 3.5e-4) and n = 2 modes
 ```
 `solver.dispersive_eigenmode(f0)` gives the same mode from the frequency domain. Meshes from other tools are loaded with `SimplexMesh.read("part.msh")` (any meshio format; material tags from the gmsh physical groups), and `wakis.unstructured.gmsh_mesh` drives gmsh if it is installed (it is an optional external tool, not a Wakis dependency). `bc="abc"` gives a first-order absorbing outer boundary; a PML is on the roadmap (`docs/unstructured_roadmap.md`).
->>>>>>> feature/unstructured-fit
 
 #### Design templates: ready-made antennas, waveguides and unit cells
 
