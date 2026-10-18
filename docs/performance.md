@@ -61,3 +61,28 @@ cProfile (CPU) and `cupyx.profiler.benchmark` (GPU) of the forward and adjoint l
 These changes are covered by the existing regression and validation tests (CERN reference data, analytic resonators, CPML, sources and monitors; all non-slow tests pass on CPU and the GPU-enabled ones with `--gpu`) and by `tests/test_020_adjoint.py::test_gpu_matches_cpu`, which checks that GPU outputs and gradients equal the CPU ones to $10^{-10}$ relative.
 
 **Subnormal numbers.** The CPU sparse product is ~15× slower when its input holds subnormal floats (91 ms vs 1.35 s at $128^3$ for an input filled with $10^{-310}$). Fields can decay into the subnormal range ahead of a wavefront or in long ring-downs; if a CPU run slows down for no other reason, this is a likely cause.
+
+
+## Estimating memory and run time before launching
+
+Simulations grow quickly with resolution (cells scale as the cube of the cells per wavelength in 3D),
+so estimate resources before launching, locally or in the cloud:
+
+```bash
+python -m wakis.estimate --shape 400,400,400 --steps 8000 --backend gpu --cpml --machine g2-standard-32
+# -> peak host RAM 76.6 GB, peak GPU memory 59.0 GB ... DOES NOT FIT: GPU memory > 90% of 24 GB
+```
+
+```python
+from wakis.estimate import estimate, preflight
+est = estimate((Nx, Ny, Nz), steps=Nt, backend="gpu", cpml=True,
+               monitors=[(n_freq, n_samples, n_components)],
+               adjoint={"design_edges": n_design, "store_bytes": 4})
+preflight(est, "g2-standard-16")   # raises MemoryError if it does not fit
+```
+
+The base cost was calibrated with `benchmarks/calibrate_memory.py` (48 runs, 16^3 to 128^3 cells, GCP
+g2-standard-16 with an NVIDIA L4): peak host RAM is about 0.4 GB + 1.1 kB/cell (CPU, float64), 0.8 kB/cell
+in float32; GPU memory about 0.9 kB/cell (float64). Held-out 160^3 runs agree within ~4 %; `estimate` adds a
+25 % safety margin. Monitors, adjoint storage (steps x design edges) and dispersive state are added
+analytically; complex (Bloch) fields are counted twice. Recalibrate after major solver changes.
