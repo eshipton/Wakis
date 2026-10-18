@@ -316,6 +316,10 @@ def stable_dt(
     G.data = G.data * tds[faces][np.repeat(np.arange(faces.size), np.diff(G.indptr))]
     G.data *= imu[faces][G.indices]
     CH = C.conj().T.tocsr()
+    # K = C^H (G C): two products per iteration (G is nearly diagonal, so
+    # G C has about the nonzeros of C)
+    GC = (G.astype(dtype) @ C.astype(dtype)).tocsr()
+    del G
     p_a = p[active]
     info = dict(edges=int(active.size), faces=int(faces.size))
     Kp = pos = None
@@ -333,19 +337,16 @@ def stable_dt(
         device = "gpu" if getattr(solver, "use_gpu", False) else "cpu"
     info["device"] = device
     if device == "gpu":
-        lam, iters = _stable_lambda_gpu(C, G, CH, p_a, Kp, pos, dtype, tol, info, t0)
+        lam, iters = _stable_lambda_gpu(GC, CH, p_a, Kp, pos, dtype, tol, info, t0)
     else:
-        Cop = ParallelCSR(C, n_threads, dtype)
-        Gop = ParallelCSR(G, n_threads, dtype)
+        GCop = ParallelCSR(GC, n_threads, dtype)
         CHop = ParallelCSR(CH, n_threads, dtype)
-        del C, G, CH
+        del C, GC, CH
         f1 = np.empty(faces.size, dtype)
-        f2 = np.empty(faces.size, dtype)
 
         def apply_K(x, out):
-            Cop.matvec(x, f1)
-            Gop.matvec(f1, f2)
-            return CHop.matvec(f2, out)
+            GCop.matvec(x, f1)
+            return CHop.matvec(f1, out)
 
         corr = None
         if Kp is not None:
@@ -365,14 +366,14 @@ def stable_dt(
     return dt
 
 
-def _stable_lambda_gpu(C, G, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
+def _stable_lambda_gpu(GC, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000):
     """`lanczos_max` with CuPy arrays (same recurrence and start vector)."""
     import time
 
     import cupy as cp
     from cupyx.scipy.sparse import csr_matrix
 
-    Cg, Gg, CHg = (csr_matrix(m.astype(dtype)) for m in (C, G, CH))
+    GCg, CHg = (csr_matrix(m.astype(dtype)) for m in (GC, CH))
     pg = cp.asarray(p)
     Kg = csr_matrix(Kp.astype(dtype)) if Kp is not None else None
     posg = cp.asarray(pos) if Kp is not None else None
@@ -400,7 +401,7 @@ def _stable_lambda_gpu(C, G, CH, p, Kp, pos, dtype, tol, info, t0, maxiter=1000)
     alphas, betas = [], []
     theta = 0.0
     for it in range(1, maxiter + 1):
-        w = CHg @ (Gg @ (Cg @ z))
+        w = CHg @ (GCg @ z)
         alpha = float(cp.vdot(z, w).real)
         w -= alpha * r
         if r_prev is not None:

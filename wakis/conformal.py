@@ -650,7 +650,7 @@ def _material_tensors(solver, geo):
         # the cell masks): f_j <- f_j (1 - f_k) for j before k
         fs = np.zeros((len(keys), *geo.shape))
         n_c = np.zeros(geo.shape)
-        n_full = np.zeros((*geo.shape, 3))
+        n_full = np.zeros((*geo.shape, 3)) if geo.mode == "tensor" else None
         for i, key in enumerate(keys):
             f = np.clip(geo.fractions[key][c], 0.0, 1.0)
             fs[:i] *= 1.0 - f
@@ -658,7 +658,8 @@ def _material_tensors(solver, geo):
             # Interface normal of the last solid cutting the dual cell
             cut = (f > 1e-9) & (f < 1 - 1e-9)
             n_c = np.where(cut, geo.normals[key][c][..., c], n_c)
-            n_full = np.where(cut[..., None], geo.normals[key][c], n_full)
+            if geo.mode == "tensor":
+                n_full = np.where(cut[..., None], geo.normals[key][c], n_full)
         total = fs.sum(axis=0)
         if bg_pec:
             # The non-PEC part of the dual cell holds only solids
@@ -736,48 +737,82 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
 
     shape = areas[0].shape
     n = int(np.prod(shape))
-    strides = (1, shape[0], shape[0] * shape[1])  # flat index, order "F"
     ops, n_unstable = [], 0
     for w in range(3):
         u, v = _CYCLIC[w]
-        Lu0, Lu1, Lv0, Lv1 = _face_edges(lengths, w)
+        Lu, Lv = lengths[u], lengths[v]
         A = areas[w]
-        active = (Lu0 + Lu1 + Lv0 + Lv1) > 0
-        stab = 0.5 * np.maximum(
-            np.maximum(Lu0, Lu1) * cell_lengths[v],
-            np.maximum(Lv0, Lv1) * cell_lengths[u],
+
+        def at(array, ijk, axis=None, step=0):
+            """array at the faces ijk shifted by step along axis (wrapping)."""
+            if axis is None:
+                return array[ijk]
+            idx = list(ijk)
+            idx[axis] = (idx[axis] + step) % shape[axis]
+            return array[tuple(idx)]
+
+        def stab_active(ijk):
+            # Open lengths of the four edges: u-edges at v and v+1, v-edges
+            # at u and u+1 (np.roll semantics, as `_face_edges`)
+            lu0, lu1 = at(Lu, ijk), at(Lu, ijk, v, 1)
+            lv0, lv1 = at(Lv, ijk), at(Lv, ijk, u, 1)
+            active = (lu0 + lu1 + lv0 + lv1) > 0
+            stab = 0.5 * np.maximum(
+                np.maximum(lu0, lu1) * at(cell_lengths[v], ijk),
+                np.maximum(lv0, lv1) * at(cell_lengths[u], ijk),
+            )
+            return active, stab
+
+        # A face is unstable when A < threshold * A_stab; since the open
+        # lengths do not exceed the cell lengths, A_stab <= A_full / 2, so
+        # only faces with A < threshold * A_full / 2 need the full test
+        small = A < threshold * (0.5 * (cell_lengths[u] * cell_lengths[v]))
+        # ... and an open edge (active face; shifts as in `_face_edges`)
+        open_u, open_v = Lu > 0, Lv > 0
+        small &= (
+            open_u | np.roll(open_u, -1, axis=v) | open_v | np.roll(open_v, -1, axis=u)
         )
-        unstable = active & (A < threshold * stab)
-        # Stable receivers inside the domain (not the ghost layer beyond max)
-        receiver = active & ~unstable
-        for axis in (u, v):
-            if ghosts[axis]:
-                idx = [slice(None)] * 3
-                idx[axis] = -1
-                receiver[tuple(idx)] = False
-        receiver_f = receiver.ravel(order="F")
+        cand = np.flatnonzero(small.ravel(order="F"))
+        ijk = np.unravel_index(cand, shape, order="F")
+        active_c, stab_c = stab_active(ijk)
+        unstable_c = active_c & (A[ijk] < threshold * stab_c)
+        unstable_full = np.zeros(shape, dtype=bool)
+        cand, stab_c = cand[unstable_c], stab_c[unstable_c]
+        ijk = tuple(x[unstable_c] for x in ijk)
+        unstable_full[ijk] = True
+
+        def receiver(nijk):
+            """Stable active faces inside the domain (not the ghost layer)."""
+            active, _ = stab_active(nijk)
+            ok = active & ~unstable_full[nijk]
+            for axis in (u, v):
+                if ghosts[axis]:
+                    ok &= nijk[axis] != shape[axis] - 1
+            return ok
 
         # Neighbour search on the unstable faces only (as on whole arrays:
         # first direction with the best score wins, no wrap-around)
-        cand = np.flatnonzero(unstable.ravel(order="F"))
-        ijk = np.unravel_index(cand, shape, order="F")
+        strides = (1, shape[0], shape[0] * shape[1])  # flat index, order "F"
         best = np.zeros(cand.size)
         first_c = np.full(cand.size, -1)
         second_c = np.full(cand.size, -1)
         for axis, step, shared in (
-            (u, 1, Lv1),
-            (u, -1, Lv0),
-            (v, 1, Lu1),
-            (v, -1, Lu0),
+            (u, 1, at(Lv, ijk, u, 1)),
+            (u, -1, at(Lv, ijk)),
+            (v, 1, at(Lu, ijk, v, 1)),
+            (v, -1, at(Lu, ijk)),
         ):
-            pos1, pos2 = ijk[axis] + step, ijk[axis] + 2 * step
-            in1 = (pos1 >= 0) & (pos1 < shape[axis])
-            in2 = (pos2 >= 0) & (pos2 < shape[axis])
+            ok = []
+            for k in (1, 2):
+                pos = ijk[axis] + k * step
+                inside = (pos >= 0) & (pos < shape[axis])
+                nijk = list(ijk)
+                nijk[axis] = np.where(inside, pos, 0)
+                ok.append(inside & receiver(tuple(nijk)))
+            ok1, ok2 = ok
             n1 = cand + step * strides[axis]
             n2 = cand + 2 * step * strides[axis]
-            ok1 = in1 & receiver_f[np.where(in1, n1, 0)]
-            ok2 = in2 & receiver_f[np.where(in2, n2, 0)]
-            score = np.where(ok1, shared[ijk] * (1.0 + 2.0 * ok2), 0.0)
+            score = np.where(ok1, shared * (1.0 + 2.0 * ok2), 0.0)
             take = score > best
             best = np.where(take, score, best)
             first_c = np.where(take, n1, first_c)
@@ -824,8 +859,7 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
         # Unstable faces without stable neighbours (e.g. the tip of a section
         # touching a grid plane) fall back to the stable area itself
         clamp = np.zeros(n)
-        lone = cand[~fixed_c]
-        clamp[lone] = threshold * stab.ravel(order="F")[lone]
+        clamp[cand[~fixed_c]] = threshold * stab_c[~fixed_c]
         a_hat = np.maximum(a_hat, clamp)
         # Faces without open area and edges (inside PEC) keep H = 0
         inv = np.where(a_hat > 0, 1.0 / np.where(a_hat > 0, a_hat, 1.0), 0.0)
