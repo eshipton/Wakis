@@ -5,7 +5,9 @@ probe on the axis, harmonic inversion of the ring-down, leapfrog error
 removed. Reference: complex Mie a_1 pole k = 2.1436 + 0.0549i 1/m
 (mie.mie_a1_pole); quasi-static k_p / sqrt(3) = 2.309 1/m.
 
-Usage: python open_lspr.py <n cells across 2b> <conformal> <half width [m]> [out.jsonl] [--gpu]
+Usage: python open_lspr.py <n cells across 2b> <conformal> <half width [m]> [out.jsonl] [--gpu] [--npml=N]
+The CPML must be a sizable fraction of the wavelength (2.9 m) thick: with
+10 cells (0.17 m) its reflection halves the apparent radiative damping.
 """
 
 import json
@@ -23,7 +25,7 @@ from wakis.resonances import harminv
 from wakis.sources import CurrentSource, GaussianSource
 
 
-def run(n, conformal, half, use_gpu=False, periods=25):
+def run(n, conformal, half, use_gpu=False, periods=25, n_pml=10):
     t0 = time.time()
     b, kp = 0.2, 4.0
     k_ref = mie.mie_a1_pole(b, kp)
@@ -36,7 +38,7 @@ def run(n, conformal, half, use_gpu=False, periods=25):
                            stl_materials={"ball": metal}, conformal=conformal,
                            verbose=0)  # fmt: skip
     solver = wakis.SolverFIT3D(grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3,
-                               n_pml=10, use_stl=True, use_gpu=use_gpu,
+                               n_pml=n_pml, use_stl=True, use_gpu=use_gpu,
                                verbose=0)  # fmt: skip
     f0 = kp / np.sqrt(3) * c / (2 * np.pi)
     pulse = GaussianSource(frequency=f0, fwidth=0.3 * f0)
@@ -58,7 +60,7 @@ def run(n, conformal, half, use_gpu=False, periods=25):
     amp = np.abs(res.amplitude)
     i = np.argmax(amp) if amp.size else None
     kk = [np.nan, np.nan] if i is None else [k[i].real, k[i].imag]
-    return dict(n=n, conformal=str(conformal), half=half, cells=m**3, Nt=Nt,
+    return dict(n=n, conformal=str(conformal), half=half, n_pml=n_pml, cells=m**3, Nt=Nt,
                 k=kk, k_ref=[k_ref.real, k_ref.imag],
                 err_re=kk[0] / k_ref.real - 1, err_im=kk[1] / k_ref.imag - 1,
                 modes=[[x.real, x.imag] for x in k],
@@ -67,9 +69,13 @@ def run(n, conformal, half, use_gpu=False, periods=25):
 
 if __name__ == "__main__":
     conf = False if sys.argv[2] == "False" else sys.argv[2]
-    out = run(int(sys.argv[1]), conf, float(sys.argv[3]), use_gpu="--gpu" in sys.argv)
+    opts = [a for a in sys.argv[4:] if a.startswith("--")]
+    files = [a for a in sys.argv[4:] if not a.startswith("--")]
+    n_pml = int(next((a.split("=")[1] for a in opts if a.startswith("--npml=")), 10))
+    out = run(
+        int(sys.argv[1]), conf, float(sys.argv[3]), use_gpu="--gpu" in opts, n_pml=n_pml
+    )
     print(json.dumps(out))
-    files = [a for a in sys.argv[4:] if a != "--gpu"]
     if files:
         with open(files[0], "a") as fh:
             fh.write(json.dumps(out) + "\n")

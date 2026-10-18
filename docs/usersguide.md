@@ -859,7 +859,49 @@ design = MaterialGrid(center=(0, 0, 0), size=(0.06, 0.06, 0), shape=(31, 31, 1),
                       eps_min=1.0, eps_max=12.0, smoothing='tensor')
 ```
 
-Dispersive materials keep the diagonal average (no couplings are created on their edges). Keep the default `cfln=0.5` or smaller: the tensor step is then always stable. See "Tensor subpixel averaging" in the physics guide.
+Dispersive materials keep the diagonal of the averaged tensor (see below); no couplings are created on their edges. Keep the default `cfln=0.5` or smaller: the tensor step is then always stable. See "Tensor subpixel averaging" in the physics guide.
+
+#### Plasmonic particles: dispersive subpixel averaging
+
+With `conformal='all'` or `'tensor'`, STL solids made of a `DispersiveMaterial` (Drude, Lorentz, Debye, `dispersive_lib['gold']`, ...) get the Kottke average at every frequency. Each cut edge sees the parallel (tangential) and series (normal) combination of the media in its cell. This is done by a small network of sub-capacitors on the cut edges, each running the materials' own pole equations. It is passive by construction, needs no change to the time step and has an exact adjoint (physics guide, "Dispersive subpixel averaging"). The localized surface-plasmon (dipole) resonance of a Drude sphere in vacuum, as a complex frequency from the ring-down:
+
+```python
+import numpy as np
+import pyvista as pv
+from scipy.constants import c
+import wakis
+from wakis.dispersive import DispersiveMaterial, Drude
+from wakis.resonances import harminv
+from wakis.sources import CurrentSource, GaussianSource
+
+b, kp = 0.2, 4.0                     # sphere radius [m], plasma wavenumber [1/m]
+metal = DispersiveMaterial(1.0, [Drude(kp * c, 0.0)])
+h = 2 * b / 24                       # 24 cells across the diameter
+m = int(np.ceil(1.5 / h))
+grid = wakis.GridFIT3D(*np.repeat([[-m * h / 2, m * h / 2]], 3, axis=0).ravel(), m, m, m,
+                       stl_solids={'ball': pv.Sphere(radius=b, theta_resolution=300,
+                                                     phi_resolution=300)},
+                       stl_materials={'ball': metal}, conformal='all')
+solver = wakis.SolverFIT3D(grid, bc_low=['cpml'] * 3, bc_high=['cpml'] * 3,
+                           n_pml=10, use_stl=True)          # use_gpu=True on a GPU
+f0 = kp / np.sqrt(3) * c / (2 * np.pi)                      # quasi-static (eps = -2)
+pulse = GaussianSource(frequency=f0, fwidth=0.3 * f0)
+src = CurrentSource(pulse, component='z', center=(0, 0, 1.3 * b))
+iz = (m // 2, m // 2, int(np.argmin(abs(solver.grid.z[:-1] + h / 2 + 1.3 * b))), 'z')
+trace = []
+
+class Probe:
+    def update(self, solver, t):
+        trace.append(float(solver.E[iz]))
+
+solver.emsolve(int((pulse.end_time + 25 / f0) / solver.dt), source=src, monitors=[Probe()])
+start = int(np.ceil(pulse.end_time / solver.dt))
+res = harminv(np.array(trace[start:]), solver.dt, 0.75 * f0, 1.0 * f0)
+F = 2 / solver.dt * np.sin(np.pi * res.complex_frequency * solver.dt) / (2 * np.pi)
+k = 2 * np.pi * F[np.argmax(abs(res.amplitude))] / c       # ~ (2.144 + 0.055i) / m
+```
+
+The exact Mie pole of the dipole coefficient $a_1$ is $k = 2.1436 + 0.0549i$ m$^{-1}$, against the quasi-static $k_p/\sqrt3 = 2.309$ m$^{-1}$. The difference is the dynamic depolarization; see `studies/tensor-dispersive/mie.py` for the reference and `sphere3d.py` for the convergence study. This example (24 cells across, 0.73M cells, 17k steps, 3 min on an L4 GPU) gives $k = 2.1419 + 0.029i$: the resonance is within $8\times10^{-4}$ (staircase: $+1.8$ % at the same mesh), but the radiative linewidth comes out about 45 % low for every mesh, domain and CPML tried, so only the real part should be trusted for now. For metals the averaging converges at first order and not always monotonically: it removes the spurious modes and the half-cell surface shift of the staircase, but a fine staircase can be as accurate. Use `wakis.unstructured` for high-accuracy plasmonics. `MaterialGrid(material=gold, eps_min=2.1, smoothing='tensor')` applies the same averaging to density designs between a dielectric and a dispersive material, with exact gradients.
 
 #### Unstructured meshes: curved dielectrics and metals with `wakis.unstructured`
 
