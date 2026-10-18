@@ -371,16 +371,20 @@ def stable_dt(
             Gop.matvec(f1, f2)
             return CHop.matvec(f2, out)
 
-        corr = None
-        if Kp is not None:
-            Kop = ParallelCSR(Kp, n_threads, dtype)
+        Kop = ParallelCSR(Kp, n_threads, dtype) if Kp is not None else None
 
-            def corr(x):
-                return pos, Kop.matvec(x[pos])
+        def corr(x):
+            return pos, Kop.matvec(x[pos])
 
         info["setup_s"] = time.perf_counter() - t0
         lam, iters = lanczos_max(
-            apply_K, p_a, corr, dtype=dtype, tol=tol, n_threads=n_threads, start=start
+            apply_K,
+            p_a,
+            corr if Kop is not None else None,
+            dtype=dtype,
+            tol=tol,
+            n_threads=n_threads,
+            start=start,
         )
     dt = 2.0 / np.sqrt(abs(lam) * (1.0 + 10 * tol))
     if return_info:

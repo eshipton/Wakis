@@ -692,16 +692,6 @@ def _material_tensors(solver, geo):
     return ieps, sigma, (aniso, normal)
 
 
-def _face_edges(lengths, w):
-    """
-    Open lengths of the four edges of every w-face (i, j, k), in-plane axes
-    (u, v): u-edges at v and v+1, v-edges at u and u+1.
-    """
-    u, v = _CYCLIC[w]
-    Lu, Lv = lengths[u], lengths[v]
-    return Lu, np.roll(Lu, -1, axis=v), Lv, np.roll(Lv, -1, axis=u)
-
-
 def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=None):
     """
     Stabilized inverse face-area operator G (H = G b / mu for face fluxes b)
@@ -753,7 +743,7 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
 
         def stab_active(ijk):
             # Open lengths of the four edges: u-edges at v and v+1, v-edges
-            # at u and u+1 (np.roll semantics, as `_face_edges`)
+            # at u and u+1 (index v+1 / u+1 wraps around, as np.roll)
             lu0, lu1 = at(Lu, ijk), at(Lu, ijk, v, 1)
             lv0, lv1 = at(Lv, ijk), at(Lv, ijk, u, 1)
             active = (lu0 + lu1 + lv0 + lv1) > 0
@@ -767,7 +757,7 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
         # lengths do not exceed the cell lengths, A_stab <= A_full / 2, so
         # only faces with A < threshold * A_full / 2 need the full test
         small = A < threshold * (0.5 * (cell_lengths[u] * cell_lengths[v]))
-        # ... and an open edge (active face; shifts as in `_face_edges`)
+        # ... and an open edge (active face; wrapping shifts, as above)
         open_u, open_v = Lu > 0, Lv > 0
         small &= (
             open_u | np.roll(open_u, -1, axis=v) | open_v | np.roll(open_v, -1, axis=u)
