@@ -71,7 +71,8 @@ def _selection(flat, size, weight=None, total=False):
     flat = np.asarray(flat.get() if hasattr(flat, "get") else flat).ravel()
     weight = np.ones(flat.size) if weight is None else weight
     rows = np.zeros(flat.size, dtype=int) if total else np.arange(flat.size)
-    return csr_matrix((weight, (rows, flat)), shape=(rows.max(initial=0) + 1, size))
+    n_rows = 1 if total else flat.size  # also for an empty selection (MPI)
+    return csr_matrix((weight, (rows, flat)), shape=(n_rows, size))
 
 
 def _host(array):
@@ -149,8 +150,11 @@ class Tap:
     ----------
     field : str
         State key ('E', 'H' or a lumped inductor key 'JL<i>').
+    rows : ndarray of int
+        State indices read by the functional (nonzero columns of W).
     WH : csr_matrix
-        Hermitian transpose of the sampling matrix W (state size x m).
+        Rows `rows` of the Hermitian transpose of the sampling matrix W
+        (len(rows) x m), so that adjoint sources cost O(m), not O(state size).
     offset : float
         Sample time within the step started at n dt is n dt + offset [s].
     skip_last : bool
@@ -163,11 +167,24 @@ class Tap:
 
     def __init__(self, field, W, offset, freqs, G, skip_last=False):
         self.field = field
-        self.WH = W.conj().T.tocsr()
+        WH = W.conj().T.tocsr()
+        self.rows = np.flatnonzero(np.diff(WH.indptr))
+        self.WH = WH[self.rows]
         self.offset = offset
         self.freqs = freqs
         self.G = np.asarray(G, dtype=complex).reshape(freqs.size, -1)
         self.skip_last = skip_last
+
+    def to_device(self, xp):
+        """Move rows, WH, G and freqs to the device of the array module xp."""
+        if xp is np:
+            return
+        from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+
+        self.rows = xp.asarray(self.rows)
+        self.WH = gpu_csr_matrix(self.WH)
+        self.G = xp.asarray(self.G)
+        self.freqs = xp.asarray(self.freqs)
 
 
 def taps(monitor, solver, cotangents, element_keys):
