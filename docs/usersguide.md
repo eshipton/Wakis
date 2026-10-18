@@ -625,6 +625,19 @@ solver.emsolve(Nt=100, source=MySource(frequency=1e9))
 Combining `wakis` sources, geometry capabilities and material tensors, many different physical phenomena can be simulated with `wakis`: laser pulses, interaction with plasma, waveguides... For particle accelerators, the `Beam` class was created but the profile and trajectory can be easily modified to simulate advanced impedance effects.
 
 
+#### Design templates: ready-made antennas, waveguides and unit cells
+
+`wakis.templates` sets up complete simulations from a declarative description: it chooses the mesh from a target number of cells per wavelength in the densest material, the padding to the CPML, the CPML thickness and the run length (energy-decay criterion), and returns the usual engineering results. See the [templates tutorial](templates.md) for all templates and pitfalls.
+
+```python
+from wakis.templates import patch_antenna, patch_results
+
+sim = patch_antenna(frequency=2.45e9, substrate=4.4, height=1.6e-3)
+sim.run(energy_decay=1e-4)
+res = patch_results(sim)  # resonance, |S11| dip, Zin, bandwidth, directivity
+print(res["resonance"] / 1e9, res["s11_min_db"], res["directivity_dbi"])
+```
+
 ## 🕹️ Using `wakis` as a Wakefield solver for beam-coupling impedance
 
 ### A few words about beam-coupling impedance and wakefields
