@@ -63,6 +63,46 @@ These changes are covered by the existing regression and validation tests (CERN 
 **Subnormal numbers.** The CPU sparse product is ~15× slower when its input holds subnormal floats (91 ms vs 1.35 s at $128^3$ for an input filled with $10^{-310}$). Fields can decay into the subnormal range ahead of a wavefront or in long ring-downs; if a CPU run slows down for no other reason, this is a likely cause.
 
 
+## Conformal setup
+
+The conformal geometry (`ConformalGeometry`: open edge lengths and face areas inside PEC, dual volume fractions, interface normals), the merged-face operators, the averaged materials, the tensor couplings and the stable time step are computed once when `SolverFIT3D` is built. Measured with `benchmarks/bench_conformal_setup.py` (fresh process per point, same g2-standard-16 VM, shared with other jobs, CPU only):
+
+```bash
+python benchmarks/bench_conformal_setup.py --sizes 64,100,128,160 [--profile 30]
+python benchmarks/conformal_regression.py --save ref.npz --n 24     # with the old code
+python benchmarks/conformal_regression.py --compare ref.npz --n 24  # with the new code
+```
+
+Cases in a 0.2 m box: `sphere_pec` (vacuum sphere cavity, radius 83 mm, in a PEC background, `conformal='all'`), `sphere_tensor` (eps_r = 4 sphere, radius 60 mm, `'tensor'`), `box` (rotated PEC box, `'pec'`), `mixed` (tilted dielectric cylinder, PEC ball and a thin sheet, `'all'`). "Conformal" is the time of `apply_conformal_materials` + `apply_conformal_timestep` (everything the conformal option adds), "solver" the whole `SolverFIT3D` construction; develop = c7a4c6d.
+
+| case | cells | conformal develop → now [s] | speed-up | solver develop → now [s] | `GridFIT3D` [s] | peak RSS develop → now [GB] |
+|---|---|---|---|---|---|---|
+| sphere_tensor | 0.27 M | 7.9 → 2.2 | 3.7× | 9.8 → 2.7 | 1.0 | 0.88 → 0.83 |
+| | 1.03 M | 29.0 → 5.5 | 5.3× | 33.9 → 7.4 | 3.5 | 2.06 → 1.91 |
+| | 2.15 M | 84.0 → 9.9 | 8.5× | 93.9 → 14.3 | 6.0 | 3.65 → 3.44 |
+| | 4.17 M | 156.5 → 16.2 | 9.7× | 173.7 → 25.2 | 12.0 | 6.71 → 6.32 |
+| sphere_pec | 1.03 M | 14.4 → 4.1 | 3.5× | 15.9 → 5.6 | 8.0 | 1.99 → 1.66 |
+| | 2.15 M | 27.3 → 6.6 | 4.1× | 30.7 → 10.1 | 14.4 | 3.63 → 2.88 |
+| | 4.17 M | 52.4 → 11.0 | 4.8× | 59.4 → 17.7 | 28.5 | 6.61 → 5.24 |
+| box | 1.03 M | 10.4 → 3.2 | 3.2× | 12.2 → 5.0 | 0.8 | 1.93 → 1.76 |
+| | 2.15 M | 22.3 → 5.3 | 4.2× | 26.3 → 9.4 | 1.7 | 3.58 → 3.13 |
+| | 4.17 M | 66.7 → 11.9 | 5.6× | 74.7 → 20.0 | 3.3 | 6.55 → 5.70 |
+| mixed | 1.03 M | 9.9 → 3.8 | 2.6× | 11.9 → 5.9 | 4.0 | 2.07 → 1.83 |
+| | 2.15 M | 15.6 → 6.6 | 2.4× | 20.3 → 11.3 | 7.4 | 3.78 → 3.32 |
+| | 4.17 M | 39.0 → 11.9 | 3.3× | 48.2 → 20.9 | 14.5 | 6.63 → 6.01 |
+
+All metric, material and operator arrays are bitwise identical to develop for the four cases at 14³, 24³ and 48³ (`tests/test_028_conformal_setup_regression.py` keeps the 14³ data). The stable time step is an iterative estimate (residual tolerance $10^{-3}$ plus a 1 % margin); it differs from develop by $<10^{-4}$ relative, the same order as the scatter of the previous ARPACK estimate between runs ($\sim4\times10^{-5}$).
+
+What changed (profiling with cProfile and wall-time wrappers):
+
+1. **Stable time step** (was 60–95 % of the conformal time). ARPACK (`eigsh`; Arnoldi `eigs` for `'tensor'`, ~120 products) on all $3N$ edges is replaced by a Lanczos recurrence for $\mathbf P\mathbf Q$ in the $\mathbf P$-inner product (physics guide, *Tensor subpixel averaging*), symmetric also with the tensor couplings, on the edges with $P_{ee} > 0$ only (e.g. outside a PEC background), with five stored vectors instead of a 20-vector Krylov basis, in-place multi-threaded CSR products (row blocks, same per-row summation order) and BLAS vector updates. The start vector adds the grid's Nyquist mode (top eigenvector of the uniform curl-curl operator) to the random vector: 36 instead of 102 iterations for `sphere_tensor` at 2.15 M cells. On the GPU (`use_gpu=True`) the iterations run with CuPy (2.5 s instead of 5.6 s for that case). Threads: `OMP_NUM_THREADS`, else the CPU count, at most 8; one per MPI rank.
+2. **Tensor assembly** was run three times per setup (time step, `install`, `install` after the dispersive edges); it is reused when its inputs are unchanged, and `np.unique(..., axis=0)` is replaced by a 1D key with the same order.
+3. **Plane sections** (`_section_areas`, used for the PEC metrics and the volume fractions): the planes are processed in blocks on threads, each restricted to the node range of its segments; only crossed grid lines are accumulated; the x and y edges share their sample planes.
+4. **Merged faces** (`_redistribution`): the stability test runs only on faces with $A_\text{open} < 0.25\,A_\text{full}$ and an open edge, and $\mathbf G = \mathbf T^T\mathbf D\mathbf T$ is assembled from its identity and unstable-column parts instead of two full-size sparse products.
+5. **Interface normals**: one closest-cell search for the three components.
+
+The remaining time is spread over the closest-cell search of the normals (VTK, one Python call per cut edge: 2.2 s for 2.3×10⁵ edges), the dual volume fractions and PEC metrics (1–2 s at 4 M cells), and the dense material and operator arrays. The STL cell masks of `GridFIT3D` (`select_interior_points`, not part of the conformal code) now take longer than the conformal setup for large solids (28 s for `sphere_pec` at 4.17 M cells); restricting them to the bounding box of each solid would not be bitwise identical (VTK's ray directions depend on the point index).
+
 ## Estimating memory and run time before launching
 
 Simulations grow quickly with resolution (cells scale as the cube of the cells per wavelength in 3D),
@@ -70,19 +110,61 @@ so estimate resources before launching, locally or in the cloud:
 
 ```bash
 python -m wakis.estimate --shape 400,400,400 --steps 8000 --backend gpu --cpml --machine g2-standard-32
-# -> peak host RAM 76.6 GB, peak GPU memory 59.0 GB ... DOES NOT FIT: GPU memory > 90% of 24 GB
+# -> peak host RAM 75.93 GB, peak GPU memory 58.88 GB, run time 55.5 min (setup 131 s, 400 ms/step)
+#    DOES NOT FIT: GPU memory 58.9 GB > 90% of 24 GB on g2-standard-32
+python -m wakis.estimate --shape 128,128,128 --steps 5000 --conformal tensor --machine g2-standard-16
+# -> peak host RAM 4.34 GB, run time 13.0 min (setup 19 s, 152.56 ms/step) ... FITS
 ```
 
 ```python
-from wakis.estimate import estimate, preflight
+from wakis.estimate import estimate, estimate_unstructured, interface_cells_from_area, preflight
 est = estimate((Nx, Ny, Nz), steps=Nt, backend="gpu", cpml=True,
                monitors=[(n_freq, n_samples, n_components)],
-               adjoint={"design_edges": n_design, "store_bytes": 4})
+               adjoint={"design_edges": n_design, "store_bytes": 4},
+               conformal="tensor",                      # or 'pec', 'all'
+               interface_cells=interface_cells_from_area(area_m2, h, "tensor"),
+               dispersive_edges=n_edges, n_poles=2)
+print(est)            # peak host / GPU memory, setup time, time per step, breakdown
 preflight(est, "g2-standard-16")   # raises MemoryError if it does not fit
+estimate_unstructured(n_tets, steps=Nt, eigen=False)     # tetrahedral FIT
 ```
 
-The base cost was calibrated with `benchmarks/calibrate_memory.py` (48 runs, 16^3 to 128^3 cells, GCP
-g2-standard-16 with an NVIDIA L4): peak host RAM is about 0.4 GB + 1.1 kB/cell (CPU, float64), 0.8 kB/cell
-in float32; GPU memory about 0.9 kB/cell (float64). Held-out 160^3 runs agree within ~4 %; `estimate` adds a
-25 % safety margin. Monitors, adjoint storage (steps x design edges) and dispersive state are added
-analytically; complex (Bloch) fields are counted twice. Recalibrate after major solver changes.
+**Model.** Peak host RAM = fixed + per-cell cost of the solver (CPU/GPU, PEC/CPML, float64/float32;
+complex fields twice), or for conformal grids the larger of that and the **setup peak**
+fixed + per cell + per interface cell (geometry, merged faces and Lanczos time step; it dominates up to
+at least 4 Mcells), plus monitors, adjoint storage and dispersive state; filling many dispersive edges
+adds a transient of 160 B per edge on top of the steady solver. Interface cells are the cells holding an
+E edge whose length (PEC) or dual cell (dielectric) is cut by a surface, about 1.1 (PEC) or 1.9
+(dielectric) times the surface area over $h^2$ (`interface_cells_from_area`). The time per step is
+interpolated in a measured throughput table per backend (one CPU core with SciPy, the L4 GPU; plain and
+conformal grids; CPML with a 7 ms launch floor on the GPU), plus 12 + 25 $n_\text{poles}$ ns per
+dispersive edge; the setup time is linear in cells and interface cells (it includes the STL masks of
+`GridFIT3D`, which scale with the triangle count; calibrated with a 28 800-triangle sphere). The
+unstructured solver costs 0.40 GB (`import wakis`) + 2.5 kB and 52 ns per tetrahedron and step, plus the
+sparse-LU fill-in of an eigen-solve (`wakis.unstructured.estimate`, not re-measured). `estimate` adds a
+25 % safety margin to the memory.
+
+**Calibration** (`benchmarks/calibrate_memory.py --suite plain|conformal|dispersive|unstructured`, fresh
+process per run, 20 warmed-up steps; g2-standard-16 VM shared with other jobs): fits on 32³, 64³, 96³,
+128³ and 160³ grids (unstructured: 2×10⁴–3.7×10⁵ tetrahedra), validated on held-out runs
+(48³, 80³, 112³, 136³, 144³, 176³, 200³; conformal 'pec'/'all'/'tensor' with a dielectric or PEC sphere,
+also on the GPU; Drude/Lorentz fills of 10–50 % with 1–3 poles) with `benchmarks/validate_estimate.py`:
+
+| quantity (78 held-out runs) | median error | max error | within 10 % | within 30 % |
+|---|---|---|---|---|
+| peak host RAM | 0.9 % | 9.9 % (dispersive, 50 % fill) | 78 | 78 |
+| peak GPU memory (30 runs) | 0.7 % | 6.1 % | 30 | 30 |
+| time per step | 8.1 % | 44 % | 47 | 72 |
+| setup time (76 runs) | 11.8 % | 52 % | 34 | 68 |
+
+The step-time outliers are single slow runs on the shared VM (a conformal 112³ run at 8 instead of
+14 Mcells/s between two normal neighbours), the CPML CPU rate beyond the calibrated range (4.4 Mcells/s
+at 5.5–8 Mcells, estimated 6.8: −35 %) and one GPU CPML run in the launch-bound regime. The previous
+model (one throughput per backend: 8, 16 and 75 Mcells/s) overestimated the time per step by 1.8× on the
+CPU and 2–4× on the GPU at 1–4 Mcells; its memory model (plain grids only) missed the conformal setup
+peak by 12–20 % at these sizes (more for large, finely triangulated STL solids, whose VTK masks are not
+modelled). Recalibrate after major solver changes.
+
+**Observation.** At 3–8 Mcells a plain-grid CPU step runs at 8.2 Mcells/s while a conformal grid with the
+same operators (same CSR layout and nonzeros) runs at 13–15 Mcells/s; the two sparse products take the same
+time (0.18 s each at 4.2 Mcells), so the difference lies in the rest of the plain step (not investigated).
