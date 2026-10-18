@@ -32,12 +32,57 @@ pip install "wakis[inverse] @ git+https://github.com/eshipton/Wakis.git@main"   
 
 ### Highlights
 
-| | |
-|---|---|
-| **Linear plasma wakefield** in a plasma-filled pipe (`wakis.plasma`): Wakis vs linear theory, 0.1–0.7 % in amplitude at 48 cells per plasma wavelength with conformal walls. | <img src="docs/img/plasma_wake_ez.png" width="420"> |
-| **Curved dielectrics and metals.** Dielectric rod in a PEC cavity, TE modes (E crosses the interface): staircase and diagonal averaging are first order; tensor subpixel averaging (`conformal='tensor'`) and the unstructured triangular FIT (`wakis.unstructured`) converge at second order. For a plasmonic (Drude) rod the unstructured solver reaches 1.3e-5 where Cartesian meshes stall at ~3e-3. | <img src="docs/img/mesh_rod_convergence.png" width="420"> |
-| **Unstructured FIT** (phase 1): triangles and tetrahedra with a Voronoi dual, second order in both polarizations, Drude/Lorentz/Debye media, eigen and time-domain solvers. | <img src="docs/img/unstructured_meshes.png" width="420"> |
-| **Inverse design benchmarks** ([invrs-gym](https://github.com/invrs-io/gym) via [invrs-wakis](https://github.com/eshipton/invrs-wakis)), first round: waveguide bend and power splitter solved by the official gym scoring; Wakis predictions agree with the official ceviche evaluator to < 0.007; metalens 14.1 (leaderboard best 19.95). Round 2 (length-scale constraints, finer meshes, tensor smoothing) is in progress. | <img src="docs/img/invrs_round1_gallery.png" width="420"> |
+#### Linear plasma wakefields in a plasma-filled pipe &nbsp;·&nbsp; `wakis.plasma`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/plasma_wake_ez.png" width="520" alt="On-axis-offset longitudinal wake Ez behind a Gaussian bunch in a plasma-filled pipe for three bunch lengths: Wakis and linear theory overlap"></td>
+<td>
+
+A relativistic Gaussian bunch drives a plasma wave in a metal pipe filled with cold plasma (a Drude medium with ω<sub>p</sub> = c k<sub>p</sub>). Wakis (blue) against closed-form linear theory (dashed) for three bunch lengths: **0.1–0.7 % in amplitude** and **wavelength to 2·10<sup>-4</sup>** at 48 cells per plasma wavelength. Conformal pipe walls converge at second order (0.05 % at 64 cells); staircased walls stay at 4.5 %. The wiggles at k<sub>p</sub>σ<sub>z</sub> = 0.5 are transition radiation from the plasma entrance, a real transient of the setup. Linear regime only: the blowout regime needs particle-in-cell.
+
+</td>
+</tr>
+</table>
+
+#### Curved dielectrics and metals: when E crosses the interface &nbsp;·&nbsp; `conformal='tensor'`, `wakis.unstructured`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/mesh_rod_convergence.png" width="520" alt="Relative frequency error versus cell count for TM and TE modes of a dielectric rod in a PEC cavity for staircase, conformal, O-grid and triangular meshes"></td>
+<td>
+
+Dielectric rod (ε<sub>r</sub> = 6) in a metal cavity, against the exact Bessel solution. With **E along the rod (TM)** every conformal method is excellent. With **E crossing the curved interface (TE)**, staircasing and diagonal subpixel averaging are only **first order**. Full-tensor averaging (`conformal='tensor'`) restores near second order on the Cartesian grid (50–600× better for a 3D dielectric sphere), and the unstructured triangular/tetrahedral solver is **second order in both polarizations**. For a plasmonic (Drude) rod it reaches **1.3·10<sup>-5</sup>** where Cartesian meshes stall near 3·10<sup>-3</sup>. Details: [studies/mesh-comparison](studies/mesh-comparison).
+
+</td>
+</tr>
+</table>
+
+#### Unstructured FIT on triangles and tetrahedra &nbsp;·&nbsp; `wakis.unstructured`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/unstructured_meshes.png" width="520" alt="Triangular and tetrahedral meshes conforming to circular and spherical material interfaces"></td>
+<td>
+
+FIT on a Delaunay mesh with its **Voronoi dual**: the dual edges are perpendicular to the primary edges, so the material matrices stay diagonal and the scheme keeps the exact discrete identities of FIT (div curl = 0 to round-off). Every cell holds one material, so curved interfaces are exact. Phase 1: 2D and 3D solvers, PEC/PMC/absorbing boundaries, Drude/Lorentz/Debye media, eigen and time-domain solvers, validated against exact Bessel and spherical-Bessel solutions. **Phase 2** (PML, ports, adjoint, GPU, MPI, CAD → gmsh) is on the roadmap.
+
+</td>
+</tr>
+</table>
+
+#### Photonic inverse design benchmarks &nbsp;·&nbsp; [invrs-wakis](https://github.com/eshipton/invrs-wakis)
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/invrs_round1_gallery.png" width="520" alt="Final designs and fields of the invrs-gym ceviche challenges optimized with Wakis"></td>
+<td>
+
+The [invrs-gym](https://github.com/invrs-io/gym) challenges optimized with Wakis's **exact adjoint + JAX**, then scored by the gym's own solvers. Round 1: **waveguide bend (+0.52) and power splitter (+0.067) solved**; Wakis's predictions agree with the official ceviche evaluator to **< 0.007** in every run; metalens **14.1** (leaderboard best 19.95). Not yet leaderboard-valid: most designs violate the 3-pixel length scale. Round 2 (length-scale constraints by construction, finer meshes, tensor smoothing, more seeds) is in progress.
+
+</td>
+</tr>
+</table>
 
 Other validated numbers: Hertzian-dipole radiated power and directivity 1.50 (theory 1.5); flux-box energy conservation 0.08 %;
 RCWA agreement of grating diffraction efficiencies 1.3e-3; TE10 propagation constant to 1e-12 of the discrete dispersion; Fresnel
