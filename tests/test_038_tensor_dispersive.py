@@ -175,6 +175,61 @@ def test_lorentz_rod_matches_static_average(use_gpu):
     assert abs(_lorentz_rod_error(32, "pec", use_gpu)) > 3e-2
 
 
+# ------------------------------------------- planar Debye slab (tangential)
+def _slab_reflectance(conformal, z0, thickness, dz, use_gpu=False):
+    """Reflectance of a conductive Debye slab (STL box between z0 and
+    z0 + thickness, faces between the nodes) at normal incidence."""
+    f = np.linspace(0.6e9, 1.4e9, 9)
+    mat = DispersiveMaterial(3.0, [Debye(6.0, 1 / (2 * np.pi * 1e9))], sigma=0.05)
+
+    def below(with_slab):
+        solids, mats = {}, {}
+        if with_slab:
+            solids = {"slab": pv.Box(bounds=(-1, 1, -1, 1, z0, z0 + thickness))}
+            mats = {"slab": mat}
+        grid = wakis.GridFIT3D(
+            -0.01, 0.01, -0.01, 0.01, -0.6, 0.6, 2, 2, int(round(1.2 / dz)),
+            stl_solids=solids or None, stl_materials=mats or None,
+            conformal=conformal if with_slab else False, verbose=0,
+        )  # fmt: skip
+        solver = wakis.SolverFIT3D(
+            grid, bc_low=["periodic", "periodic", "cpml"],
+            bc_high=["periodic", "periodic", "cpml"], n_pml=15,
+            use_stl=with_slab, use_gpu=use_gpu, verbose=0,
+        )  # fmt: skip
+        pulse = GaussianSource(frequency=1e9, fwidth=0.4e9)
+        sheet = CurrentSource(pulse, component="x", center=(0, 0, -0.3),
+                              size=(0.02, 0.02, 0.0))  # fmt: skip
+        plane = wakis.FluxMonitor(f, center=(0, 0, -0.15), size=(0.02, 0.02, 0.0))
+        solver.emsolve(int((pulse.end_time + 20e-9) / solver.dt), source=sheet,
+                       monitors=[plane])  # fmt: skip
+        return plane.get_flux()
+
+    R = 1 - below(True) / below(False)
+    n = np.sqrt(mat.epsilon(f).astype(complex))
+    n = np.where(n.imag > 0, -n, n)
+    r12 = (1 - n) / (1 + n)
+    phase = np.exp(-2j * 2 * np.pi * f / c * n * thickness)
+    r = r12 * (1 - phase) / (1 - r12**2 * phase)
+    return np.max(np.abs(R - np.abs(r) ** 2))
+
+
+def test_debye_slab_between_nodes(use_gpu):
+    """
+    E is tangential to a planar slab, so the parallel (arithmetic) branch of
+    the network is exact for the partially filled edges: a conductive Debye
+    slab whose faces lie 0.3 cells off the nodes (dz = 5 mm, >= 20
+    cells per wavelength in the slab) matches the analytic Fabry-Perot
+    reflectance to < 6e-3 (observed 2.9e-3), against 1.6e-2 for the
+    staircased slab.
+    """
+    dz = 5e-3
+    err = _slab_reflectance("all", 0.3 * dz, 0.1 + 0.3 * dz, dz, use_gpu)
+    stair = _slab_reflectance(False, 0.3 * dz, 0.1 + 0.3 * dz, dz, use_gpu)
+    assert err < 6e-3
+    assert stair > 4 * err
+
+
 # ------------------------------------------------------- bulk equivalence
 def _filled_solver(conformal, bc="pec", use_gpu=False):
     """2D box completely filled with a multi-pole dispersive solid."""

@@ -586,6 +586,11 @@ class DispersiveMixin:
                 "DispersiveMaterial.is_stable)."
             )
 
+        net = getattr(self, "dispersive_network", None)
+        if net is not None and np.any(np.isin(idx, net.rows)):
+            raise NotImplementedError(
+                "Dispersive regions must not overlap conformal dispersive solids."
+            )
         ieps = np.asarray(self.ieps.array.get() if self.use_gpu else self.ieps.array)
         keep = (weight > 0) & (ieps[idx] != 0)  # skip PEC edges
         idx, weight = idx[keep], weight[keep]
