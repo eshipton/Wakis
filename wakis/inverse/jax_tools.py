@@ -221,7 +221,7 @@ def mode_amplitudes(raw, monitor, mode_index=0):
 
     def weights(profile, d, dA):
         return np.stack(
-            [(np.conj(m.__dict__[profile][d]) * dA).ravel("F") for m in modes]
+            [(np.conj(getattr(m, profile)[d]) * dA).ravel("F") for m in modes]
         )
 
     E, H = raw["E"], raw["H"]
