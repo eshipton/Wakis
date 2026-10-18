@@ -445,6 +445,45 @@ References:
 - IEEE Standard for Definitions of Terms for Antennas, IEEE Std 145-2013.
 - M. Abramowitz and I. A. Stegun, *Handbook of Mathematical Functions*, NBS (1964), Sec. 23.1.
 
+### 🔔 Resonances by harmonic inversion: `harminv` and `ResonanceMonitor`
+
+After a broadband excitation has ended, a field probe in a resonator or open cavity rings down as a sum of damped exponentials, one per resonance in the band (the eigenmode content of CST, or Harminv in Meep):
+
+$$
+x(t) = \sum_k a_k\, e^{2\pi i \tilde f_k t}, \qquad \tilde f_k = f_k + i g_k, \qquad Q_k = \frac{f_k}{2 g_k} .
+$$
+
+The phasor convention is that of the rest of Wakis ($e^{+i\omega t}$), so decaying modes have $\operatorname{Im}\tilde f_k = g_k > 0$; the field decays as $e^{-2\pi g_k t}$ (`Resonances.decay_rate` $= 2\pi g_k$) and the stored energy as $e^{-\omega_k t/Q_k}$. A real signal contains each mode at $\pm f_k$; only $f_k$ inside the window is returned, and the real signal is $2\operatorname{Re}[a_k e^{2\pi i\tilde f_k t}]$. Fourier transforming the ring-down resolves $f_k$ only to $\sim 1/T$ for a record of length $T$ and gives $Q$ only through a Lorentzian fit to a record much longer than the decay time; harmonic inversion fits the model directly and reaches round-off precision for noiseless signals, independently of $T$ as long as the modes are resolved by the information content of the signal.
+
+**Filter diagonalization** (`method="fdm"`, default) [Wall & Neuhauser, 1995; Mandelshtam & Taylor, 1997]. With samples $c_n = x(t_0 + n\Delta t)$, $n = 0\dots 2M+2$, the signal is written as $c_n = \sum_k d_k u_k^n$, $u_k = e^{2\pi i\tilde f_k\Delta t}$, i.e. as an autocorrelation $c_n = (\Phi_0, \hat U^n \Phi_0)$ of a propagator $\hat U$ with eigenvalues $u_k$. In a basis of $K$ windowed Fourier vectors with $z_j = e^{2\pi i\varphi_j\Delta t}$, $\varphi_j$ uniform in the window (spacing $\approx 1/(1.1\,(M+1)\Delta t)$, a little finer than the Fourier resolution of the half record), the matrix elements
+
+$$
+U^{(p)}_{jj'} = \sum_{n,m=0}^{M} z_j^{-n} z_{j'}^{-m}\, c_{n+m+p}, \qquad p = 0, 1, 2,
+$$
+
+have closed forms costing $O(N)$ per basis vector [Mandelshtam & Taylor, 1997]. The generalized eigenproblem $U^{(1)}B_k = u_k U^{(0)}B_k$ gives the $u_k$; with $B_k^T U^{(0)} B_k = 1$ the amplitudes are $d_k = (\sum_j B_{jk} \sum_{n=0}^M c_n z_j^{-n})^2$, and the error estimate compares $u_k^2$ with $B_k^T U^{(2)} B_k$, reported as a frequency error $|B_k^TU^{(2)}B_k/u_k^2 - 1|/(4\pi\Delta t)$. $U^{(0)}$ is often near-singular (more basis vectors than modes), so Wakis solves the eigenproblem in the span of its singular vectors above `rcond` times the largest singular value (a regularization of the original method; set `rcond` near the relative noise level). The cost is $O(NK + K^3)$, so long, finely sampled FDTD records need no decimation. Modes outside the window leak into it; the basis extends 10 % beyond the window to keep modes near the edges accurate.
+
+**Matrix pencil** (`method="pencil"`) [Hua & Sarkar, 1990]: the Hankel matrix $Y_{jl} = c_{j+l}$ with $L+1$ columns ($L \approx 0.4N$) has rank equal to the number of exponentials; the right singular vectors $V$ (rank set by `rcond`) satisfy $V_{2} = V_{1}T^{-1}\operatorname{diag}(u)T$ for the blocks without the last/first row, so the $u_k$ are the eigenvalues of $V_1^+ V_2$ and the amplitudes follow from least squares. The cost is $O(N^3)$: use it for short (decimated) records or as an independent cross-check. Its error column is the Cramér–Rao bound of a single undamped tone [Rife & Boorstyn, 1974] with the fit residual as noise, a rough guide only.
+
+Modes outside $[f_\text{min}, f_\text{max}]$, with error above `max_rel_error` times the window width, or with amplitude below `min_rel_amplitude` times the largest are discarded (spurious fits of noise have large errors and small amplitudes).
+
+**Usage in simulations.** `ResonanceMonitor(component, center, size, t_start)` records one component (or the sum over a small region) at its native time level after every step for $t \ge t_\text{start}$; start after the source has ended so that the record is a free ring-down. Place the probe away from nodal lines of the modes of interest and excite with a source whose spectrum covers the band. For high-$Q$ modes a record of a few periods of the beat between neighbouring modes suffices; low-$Q$ modes need the record to start before they have decayed below the noise.
+
+**Validation** (`tests/test_028_resonances.py`):
+- synthetic signals (two modes $0.3/T$ apart, i.e. below the Fourier resolution, plus a $Q=200$ mode): both methods recover $f$ to $10^{-10}$, $Q$ to $10^{-6}$ and the complex amplitudes to $10^{-8}$; with white noise of $10^{-5}$ of the peak the isolated mode keeps $f$ to $10^{-8}$ and $Q$ to $10^{-4}$, and the close pair stays separated;
+- PEC box $100\times80\times60$ mm, 5 mm cells: all 8 modes with $E_z \ne 0$ in 2–5 GHz match the leapfrog dispersion relation (including $\Delta t$) to $10^{-9}$ (observed $\sim 10^{-12}$), and $Q > 10^9$;
+- the same box filled with $\sigma = 10^{-3}$ S/m: each mode obeys the exact discrete relation $z^2 + (\Omega^2\Delta t^2 - 2 + s)z + 1 - s = 0$, $z = e^{2\pi i\tilde f\Delta t}$, $s = \sigma\Delta t/\varepsilon_0$, obtained by eliminating $H$ from the updates with the explicit loss term $\sigma E^n$ ($Q$ to $10^{-6}$), and the continuum $Q = \omega\varepsilon_0/\sigma$ to $O(s) = 5\cdot10^{-4}$;
+- radiation-limited TM$_{4}$ whispering-gallery mode of a 2D dielectric disk ($n=3$, $R = 100$ mm) against the exact complex root of $n J_4'(nkR)/J_4(nkR) = H_4^{(2)\prime}(kR)/H_4^{(2)}(kR)$ ($f = 0.9902$ GHz, $Q = 164.2$): with subcell averaging of $\varepsilon$ the errors are $-0.34\,\%, -0.13\,\%, -0.08\,\%$ in $f$ and $+2.6\,\%, +0.85\,\%, +0.5\,\%$ in $Q$ at 6, 4, 3 mm (second order), from a 60 ns record ($\approx$ one decay time); a Lorentzian fit to the spectrum of a 400 ns ring-down agrees with harminv to $5\cdot10^{-4}$ in $Q$.
+
+**Differentiability.** The extracted $\tilde f_k$ are smooth functions of the recorded samples away from mode crossings, but the eigen-decomposition is not part of the adjoint layer. For inverse design of resonances, use objectives on DFT data instead (e.g. $|E(f_0)|^2$ near the target frequency, or the ratio of field energy at $f_0$ to the source spectrum) and use `harminv` to analyse the optimized structure.
+
+References:
+- M. R. Wall and D. Neuhauser, "Extraction, through filter-diagonalization, of general quantum eigenvalues or classical normal mode frequencies from a small number of residues or a short-time segment of a signal. I. Theory and application to a quantum-dynamics model", *J. Chem. Phys.* **102**, 8011–8022 (1995), [doi:10.1063/1.468999](https://doi.org/10.1063/1.468999).
+- V. A. Mandelshtam and H. S. Taylor, "Harmonic inversion of time signals and its applications", *J. Chem. Phys.* **107**, 6756–6769 (1997), [doi:10.1063/1.475324](https://doi.org/10.1063/1.475324).
+- Y. Hua and T. K. Sarkar, "Matrix pencil method for estimating parameters of exponentially damped/undamped sinusoids in noise", *IEEE Trans. Acoust., Speech, Signal Process.* **38**(5), 814–824 (1990), [doi:10.1109/29.56027](https://doi.org/10.1109/29.56027).
+- D. C. Rife and R. R. Boorstyn, "Single-tone parameter estimation from discrete-time observations", *IEEE Trans. Inf. Theory* **20**(5), 591–598 (1974), [doi:10.1109/TIT.1974.1055282](https://doi.org/10.1109/TIT.1974.1055282).
+- D. M. Pozar, *Microwave Engineering*, 4th ed., Wiley (2012), Sec. 6.3 (rectangular cavity modes and $Q$ of a lossy filling).
+
 ### 🌈 Dispersive materials (auxiliary differential equations)
 
 Metals at optical frequencies, Lorentz dielectrics and lossy RF substrates have a frequency-dependent permittivity. `DispersiveMaterial` models it as a sum of poles plus a static conductivity:

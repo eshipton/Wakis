@@ -15,6 +15,7 @@ from . import (
     lumped,
     materials,
     near2far,
+    resonances,
     solverFIT3D,
     sources,
     sparameters,
@@ -28,5 +29,6 @@ from .logger import Logger
 from .lumped import LumpedElement, LumpedPort
 from .mode_solver import ModeMonitor, ModeSource, solve_modes
 from .near2far import Near2FarMonitor
+from .resonances import ResonanceMonitor, harminv
 from .solverFIT3D import SolverFIT3D
 from .wakeSolver import WakeSolver

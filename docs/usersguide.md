@@ -670,6 +670,34 @@ M = MagneticCurrentSource(pulse, component="y", center=(0, 0, -dz / 2),
 solver.emsolve(Nt, source=[K, M])
 ```
 
+#### Resonant frequencies and Q factors: `ResonanceMonitor` and `harminv`
+
+Eigenmodes of a cavity are found from a single broadband run: excite with a pulse, record a field component after the pulse has ended, and fit the ring-down with harmonic inversion. The example computes the modes of a 100 × 80 × 60 mm box filled with a slightly conducting medium; each mode has $Q = \omega\varepsilon_0/\sigma$:
+```python
+import numpy as np
+from scipy.constants import epsilon_0
+import wakis
+from wakis.sources import CurrentSource, GaussianSource
+
+sigma = 1e-3  # S/m
+grid = wakis.GridFIT3D(0, 0.10, 0, 0.08, 0, 0.06, 20, 16, 12)
+solver = wakis.SolverFIT3D(grid, bc_low=["pec"] * 3, bc_high=["pec"] * 3,
+                           bg=[1.0, 1.0, sigma])
+
+pulse = GaussianSource(frequency=3.5e9, fwidth=1.5e9)
+dipole = CurrentSource(pulse, component="z", center=(0.031, 0.023, 0.017))
+# Probe at a generic point, recording only the free ring-down
+probe = wakis.ResonanceMonitor("Ez", center=(0.067, 0.051, 0.039), t_start=pulse.end_time)
+solver.emsolve(int((pulse.end_time + 30e-9) / solver.dt), source=dipole, monitors=[probe])
+
+modes = probe.harminv(2e9, 5e9)       # filter diagonalization in the 2-5 GHz window
+for f, Q, err in zip(modes.frequency, modes.Q, modes.error):
+    print(f"f = {f / 1e9:.6f} GHz  Q = {Q:.1f}  (omega eps0/sigma = "
+          f"{2 * np.pi * f * epsilon_0 / sigma:.1f}, error ~ {err:.1e} Hz)")
+```
+
+`modes.complex_frequency` holds $\tilde f = f + i g$ with $Q = f/(2g)$ and `modes.amplitude` the complex amplitudes of $x(t) = \sum_k a_k e^{2\pi i\tilde f_k t}$. For open resonators (radiation $Q$), surround the structure with CPML and record for at least a few periods; a probe away from nodal lines and a source whose spectrum covers the window are needed to see every mode. `wakis.harminv(signal, dt, fmin, fmax, method="fdm" | "pencil")` works on any uniformly sampled signal, e.g. a wake potential or a port voltage.
+
 Custom sources provide an `update(solver, t)` method. For example:
 ```python
 class MySource:

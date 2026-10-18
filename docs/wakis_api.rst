@@ -14,6 +14,7 @@ Overview of ``wakis`` classes and functions, generated from their docstrings.
    wakis_wakeSolver
    wakis_field
    wakis_field_monitors
+   wakis_resonances
    wakis_sources
    wakis_lumped
    wakis_sparameters
