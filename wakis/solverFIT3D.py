@@ -255,6 +255,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         )
         # Impressed magnetic current density [V/m^2], allocated by magnetic sources
         self.M = None
+        # Off-diagonal permittivity couplings (wakis.tensor_averaging)
+        self.tensor_operator = None
 
         # MPI init
         if self.use_mpi:
@@ -537,6 +539,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     "[!] cupyx could not be imported, please check CUDA installation"
                 )
 
+        if self.tensor_operator is not None:  # conformal='tensor'
+            self.tensor_operator.install(self)
+
         if self.activate_abc:
             self._initialize_abc()
             self._one_step_backend = self.one_step
@@ -544,6 +549,8 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         if self.use_stl:  # ADE for solids with a DispersiveMaterial
             self._apply_stl_dispersive()
+            if self.tensor_operator is not None:  # no couplings to ADE edges
+                self.tensor_operator.install(self)
 
         if verbose:
             print(f"Total solver initialization time: {time.time() - t0} s")
