@@ -73,6 +73,10 @@ class GridFIT3D(PlotMixin):
         subpixel_smoothing_bool=True,
         load_from_h5=None,
         boundary_at_domain_edge=True,
+        conformal=False,
+        conformal_subsamples=4,
+        sheets=None,
+        sheet_edge_correction=True,
         verbose=2,
     ):
         """
@@ -152,6 +156,30 @@ class GridFIT3D(PlotMixin):
             meshes. Use False only to reproduce results obtained with earlier
             Wakis versions.
             See "Grid conventions" in the physics guide.
+        conformal : bool or {'pec', 'all'}, optional
+            Conformal FIT instead of staircased STL solids (applied by
+            `SolverFIT3D`). 'pec': PEC solids (and a PEC background around
+            the other solids) cut the primary edges and faces, which enter
+            the update with their length/area outside the conductor;
+            dielectric edges take the material occupying most of their dual
+            cell. 'all' (or True): additionally anisotropic subpixel
+            averaging of the permittivity of dielectric solids. Default False
+            (staircase cell masks). See "Conformal FIT" in the physics guide.
+        conformal_subsamples : int, optional
+            Midpoint samples per dual cell along one axis for the dielectric
+            volume fractions (the two other axes are integrated exactly).
+            Default 4.
+        sheets : dict, optional
+            Zero-thickness PEC sheets {name: pyvista.PolyData or STL path},
+            in metres, planar and normal to x, y or z, lying on a grid
+            plane (see `wakis.conformal.rectangle_sheet`). An STL solid with
+            material 'sheet' is moved here. Sheets always use the conformal
+            edge/face coverage. Default None.
+        sheet_edge_correction : bool, optional
+            Correct the material matrices near axis-aligned sheet edges with
+            the static field of a knife edge, so that the edge is located at
+            its physical position for any position relative to the nodes
+            (see "Thin PEC sheets" in the physics guide). Default True.
         verbose : int or bool, optional
             Enable verbose output on the terminal. Use `verbose=2` for more detail.
 
@@ -243,8 +271,18 @@ class GridFIT3D(PlotMixin):
         if stl_scale != 1.0:
             self.update_logger(["stl_scale"])
 
+        self.conformal = "all" if conformal is True else conformal
+        if self.conformal not in (False, "pec", "all"):
+            raise ValueError("conformal must be False, True, 'pec' or 'all'.")
+        self.conformal_subsamples = int(conformal_subsamples)
+        self.sheet_edge_correction = bool(sheet_edge_correction)
+        self.sheets = {
+            k: pv.read(v) if isinstance(v, str) else v
+            for k, v in (sheets or {}).items()
+        }
         if stl_solids is not None:
             self._prepare_stl_dicts()
+            self._move_sheets_from_stl()
 
         # refine self.x, self.y, self.z using snap points
         self.use_mesh_refinement = use_mesh_refinement
@@ -608,7 +646,9 @@ class GridFIT3D(PlotMixin):
                 )
         # Material library lookup and conversion to [eps, mu, sigma] format
         for key in self.stl_solids.keys():
-            if type(self.stl_materials[key]) is str:
+            if str(self.stl_materials[key]).lower() == "sheet":
+                self.stl_materials[key] = "sheet"
+            elif type(self.stl_materials[key]) is str:
                 mat_key = self.stl_materials[key].lower()
                 mat = material_lib[mat_key]
                 self.stl_materials[key] = [
@@ -618,6 +658,12 @@ class GridFIT3D(PlotMixin):
                 ]
             elif len(self.stl_materials[key]) == 2:
                 self.stl_materials[key].append(0.0)
+
+    def _move_sheets_from_stl(self):
+        """Treat STL solids with material 'sheet' as zero-thickness PEC sheets."""
+        for key in [k for k, m in self.stl_materials.items() if isinstance(m, str)]:
+            self.sheets[key] = self.read_stl(key)
+            del self.stl_solids[key], self.stl_materials[key]
 
     def _mark_cells_in_stl(self, method):
         """
@@ -902,8 +948,10 @@ class GridFIT3D(PlotMixin):
         surf : pyvista.PolyData
             The transformed STL surface.
         """
-        # import stl
-        surf = pv.read(self.stl_solids[key])
+        # import stl (a file path, or a pyvista surface already in memory)
+        surf = self.stl_solids[key]
+        if not isinstance(surf, pv.PolyData):
+            surf = pv.read(surf)
 
         # rotate
         surf = surf.rotate_x(self.stl_rotate[key][0])

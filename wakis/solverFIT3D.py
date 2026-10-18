@@ -13,6 +13,7 @@ from scipy.constants import mu_0 as mu_0
 from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
+from . import conformal
 from .boundaries import BCsMixin
 from .dispersive import DispersiveMixin
 from .field import Field
@@ -340,6 +341,17 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         if self.use_stl:
             self._apply_stl_materials()
 
+        # Conformal FIT: open edge lengths and face areas, averaged materials
+        use_conformal = getattr(self.grid, "conformal", False) or getattr(
+            self.grid, "sheets", None
+        )
+        if use_conformal:
+            if self.activate_pml or self.use_sibc:
+                raise NotImplementedError(
+                    "Conformal FIT does not support PML or SIBC; use CPML."
+                )
+            conformal.apply_conformal_materials(self)
+
         # Fill PML BCs
         if self.activate_pml:
             if verbose:
@@ -430,6 +442,11 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         if self.grid.boundary_at_domain_edge:
             self._isolate_edge_ghosts()
+
+        if use_conformal:  # stable time step of the conformal operators
+            conformal.apply_conformal_timestep(self, dt_given=dt is not None)
+            if verbose > 1:
+                print(f"    * Conformal timestep: dt={self.dt:.3e} s")
 
         # Pre-computing
         if verbose:
