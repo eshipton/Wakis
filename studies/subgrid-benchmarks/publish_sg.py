@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--phase", required=True)
     ap.add_argument("--commit", required=True)
     ap.add_argument("--job", required=True)
+    ap.add_argument("--tag-suffix", default="", help="e.g. '-stencil' (tag = <h>nm<suffix>)")
     a = ap.parse_args()
     for f in sorted((HERE / "data" / a.phase).glob("*.json")):
         rec = json.loads(f.read_text())
@@ -34,7 +35,8 @@ def main():
         note = "wakis.subgrid 2:1 nested Cartesian, symmetric hanging-node interface"
         if "lts" in rec["arm"]:
             note += "; two-level LTS: steps are coarse steps, see cost.lts"
-        print(publish(rec, machine="n2-standard-2 (spot, 1 task/VM)", notes=note))
+        tag = f"{rec['resolution'] * 1e9:.4f}nm{a.tag_suffix}" if a.tag_suffix else None
+        print(publish(rec, tag=tag, machine="n2-standard-2 (spot, 1 task/VM)", notes=note))
 
 
 if __name__ == "__main__":
