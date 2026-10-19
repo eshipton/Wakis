@@ -333,6 +333,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 ### Added features and roadmap
 
 **Sources, monitors and post-processing**
+- [x] Dispersion-free (Cherenkov-free) wake computation: explicit TE/TM time stepping along the beam axis (`SolverFIT3D(scheme='tete')`, Dohlus & Zagorodnov 2009) with z-CPML/TFSF beam, conformal PEC, GPU, MPI and exact adjoint; smooth-pipe wake at round-off (Yee: 1–660 V/pC), 19x less work for 1 % loss-factor error at sigma_z = 0.8 mm ([studies/dispersion-free-wake](studies/dispersion-free-wake))
 - [x] Soft current sources (`CurrentSource`) with Gaussian (zero-DC), continuous and custom time profiles
 - [x] Magnetic current sources and one-directional (Huygens) sources
 - [x] Plane-wave total-field/scattered-field box source (`TFSFSource`): incident field from a 1D FIT line, leakage at round-off (1e-15), 2D and 3D, CPU/GPU; compared with continuum and Meep-style Huygens sheets ([studies/tfsf](studies/tfsf))
