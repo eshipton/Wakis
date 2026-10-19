@@ -146,7 +146,10 @@ def cost_to_target(records, metric, target, cost_keys=("unknowns", "work", "run_
     Returns
     -------
     dict
-        ``{cost_key: value or NaN}``.
+        ``{cost_key: value}``: NaN if the target is not reached and kept on
+        the ladder, negative (an upper bound: |value|) if the coarsest run
+        already meets it. Run times are interpolated along the same ladder
+        (ordered by unknowns) as the other costs.
     """
     good = [r for r in records if "metrics" in r and np.isfinite(r["metrics"][metric])]
     if not good:
@@ -160,5 +163,13 @@ def cost_to_target(records, metric, target, cost_keys=("unknowns", "work", "run_
             cost = [r["cost"][key] for r in good]
         # Errors need not be monotone: use the ladder in order of unknowns
         o = np.argsort([r["cost"]["unknowns"] for r in good])
-        out[key] = M.interp_to_target(np.asarray(cost)[o], np.asarray(err)[o], target)
+        u = np.asarray([r["cost"]["unknowns"] for r in good], float)[o]
+        v = M.interp_to_target(u, np.asarray(err)[o], target)
+        if key == "unknowns" or not np.isfinite(v):
+            out[key] = v
+        else:  # same crossing, interpolated in log(cost) vs log(unknowns)
+            c = np.asarray(cost, float)[o]
+            out[key] = (-1 if v < 0 else 1) * float(
+                np.exp(np.interp(np.log(abs(v)), np.log(u), np.log(c)))
+            )
     return out
