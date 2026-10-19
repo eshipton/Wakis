@@ -214,9 +214,6 @@ class SubgridFIT2D:
         Qk = np.zeros((ne, ns))
         np.add.at(Rk, ce, s["R"].reshape(-1, ns))
         np.add.at(Qk, ce, s["Q"].reshape(-1, ns))
-        eps_s = np.bincount(ce, s["eps"].ravel(), ne)
-        frac_s = np.stack([np.bincount(ce, s["frac"][:, :, j].ravel(), ne)
-                           for j in range(n_mat)], 1)  # fmt: skip
 
         G = m.gradient()
         P = m.P
