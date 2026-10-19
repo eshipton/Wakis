@@ -85,7 +85,7 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 </tr>
 <tr>
 <td width="50%"><img src="docs/img/tutorial01b_isosurfaces.png" width="440" alt="3D isosurfaces of |E| inside and behind the dielectric sphere (photonic nanojet)"></td>
-<td width="50%"><img src="docs/img/tutorial01b_far_field.png" width="440" alt="Far-field scattering pattern of the sphere from the near-to-far monitor against the Mie amplitudes S1 and S2"></td>
+<td width="50%"><img src="docs/img/tutorial01b_far_field.png" width="440" alt="Split polar far-field plot: left half E-plane (xz, |S2|^2), right half H-plane (yz, |S1|^2), Wakis against Mie"><br><sub>Split polar plot: left half E-plane (xz, |S<sub>2</sub>|²), right half H-plane (yz, |S<sub>1</sub>|²); the two planes differ physically (dipole null near 90° in the E-plane), and each is symmetric in ±θ.</sub></td>
 </tr>
 <tr>
 <td colspan="2">
