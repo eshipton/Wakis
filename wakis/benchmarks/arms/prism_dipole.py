@@ -55,7 +55,8 @@ def _z_levels(L, g, hz, h_out, z_end, n_pml, growth=1.2):
 
 class PrismDipoleArm(Arm):
     def __init__(self, ladder=None, n_pml=10, cfl=0.95, absorber=0.3, r_int=0.21,
-                 name=None):  # fmt: skip
+                 merge_tol=0.15, keep_quads=True, name=None):  # fmt: skip
+        self.merge_tol, self.keep_quads = merge_tol, keep_quads
         self.r_int = r_int
         self.ladder = ladder
         self.n_pml = n_pml
@@ -99,7 +100,7 @@ class PrismDipoleArm(Arm):
             # (layer mid-points; the gap planes and wire ends are levels)
             return np.where(wire, 1, 0)
 
-        pm = PrismMesh(m2, z, tags=tags, merge_tol=0.15)
+        pm = PrismMesh(m2, z, tags=tags, merge_tol=self.merge_tol, keep_quads=self.keep_quads)
         n_lo = self.n_pml
         s_max = 4 * c_light / (n_lo * (z[-1] - z[-2]))
         solver = PrismFIT3D(

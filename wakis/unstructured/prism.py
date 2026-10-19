@@ -75,7 +75,7 @@ class PolygonComplex2D:
     polygon) and ``edge_map`` (triangle-mesh edge -> kept edge, -1 removed).
     """
 
-    def __init__(self, m2, tags, merge_tol=0.0):
+    def __init__(self, m2, tags, merge_tol=0.0, keep_quads=True):
         nT, nE = m2.n_cells, m2.n_edges
         Hsum = np.asarray(m2.dual_edge_partial.sum(1)).ravel()
         bnd = np.zeros(nE, bool)
@@ -163,7 +163,7 @@ class PolygonComplex2D:
         # in-plane gradient only. This keeps the node (TM) Laplacian exact
         # (its cotangent weight h_e / L_e is not dropped); only the small
         # z-difference coupling of the removed e_h is lost.
-        rem = np.flatnonzero(drop)
+        rem = np.flatnonzero(drop) if keep_quads else np.array([], dtype=np.int64)
         qorder = np.r_[keep, rem]
         self.quad_edges = qorder  # triangle-mesh edge of every quad
         rows, cols, vals = [], [], []
@@ -240,7 +240,8 @@ class PrismMesh:
         Dual spacing at each level [m] (half sum of the adjacent layers).
     """
 
-    def __init__(self, mesh2d, z, tags=None, periodic_z=False, merge_tol=0.05):
+    def __init__(self, mesh2d, z, tags=None, periodic_z=False, merge_tol=0.05,
+                 keep_quads=True):  # fmt: skip
         if mesh2d.dim != 2:
             raise ValueError("PrismMesh extrudes a 2D triangular mesh")
         z = np.asarray(z, dtype=float)
@@ -266,7 +267,7 @@ class PrismMesh:
             tags = tags(mesh2d.cell_tags[:, None], self.z_mid[None, :])
         tags = np.broadcast_to(np.asarray(tags, dtype=np.int64), (nt, K)).copy()
         self.tri_tags = tags
-        self.c2 = PolygonComplex2D(mesh2d, tags, merge_tol)
+        self.c2 = PolygonComplex2D(mesh2d, tags, merge_tol, keep_quads)
         self.tags = tags[self.c2.first_tri]  # (n_cells2d, K)
 
         # Level-difference operators (K x L)

@@ -20,12 +20,16 @@ LADDER = [A_WIRE / q for q in (1, 1.5, 2, 3, 4)]
 VARIANTS = {
     "prism-graded": dict(),
     "prism-graded-bigdomain": dict(r_int=0.42, absorber=0.45),
+    "prism-graded-nomerge": dict(merge_tol=0.0),
+    "prism-graded-dropquads": dict(keep_quads=False),
 }
 
 
 def tasks():
     out = [("B4", "prism-graded", h) for h in LADDER]
     out += [("B4", "prism-graded-bigdomain", A_WIRE)]
+    out += [("B4", "prism-graded-nomerge", A_WIRE / q) for q in (1, 2)]
+    out += [("B4", "prism-graded-dropquads", A_WIRE / q) for q in (1, 2, 4)]
     return out
 
 
