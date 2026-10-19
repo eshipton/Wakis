@@ -153,7 +153,28 @@ class PolyMesh:
             raise ValueError("an edge is shared by more than two cells")
         if np.any(np.bincount(inv * 2 + (self.corner_sign > 0), minlength=2 * len(self.edges)) > 1):
             raise ValueError("inconsistent cell orientation (overlapping cells)")
-        self.boundary_edges = np.flatnonzero(cnt == 1)
+        single = np.flatnonzero(cnt == 1)
+        if single.size > 1:
+            A = self.nodes[self.edges[single, 0]]
+            V = self.nodes[self.edges[single, 1]] - A
+            L2 = np.einsum("ij,ij->i", V, V)
+            M = A + 0.5 * V
+            # T-junction (coarse/fine) sides: fine midpoint lies strictly inside coarse edge
+            D = M[:, None, :] - A[None, :, :]
+            proj = np.einsum("ijk,jk->ij", D, V)
+            cross = D[:, :, 0] * V[None, :, 1] - D[:, :, 1] * V[None, :, 0]
+            sub = (
+                (L2[:, None] < (1 - 1e-7) * L2[None, :])
+                & (proj > 1e-7 * L2[None, :])
+                & (proj < (1 - 1e-7) * L2[None, :])
+                & (cross**2 < 1e-14 * L2[None, :] ** 2)
+            )
+            t_junc = sub.any(1) | sub.any(0)
+            self.interface_edges = single[t_junc]
+            self.boundary_edges = single[~t_junc]
+        else:
+            self.interface_edges = np.empty(0, int)
+            self.boundary_edges = single
         bn = np.zeros(self.n_nodes, bool)
         bn[self.edges[self.boundary_edges].ravel()] = True
         self.boundary_nodes = np.flatnonzero(bn)

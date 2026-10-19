@@ -19,11 +19,14 @@ from .polymeshers import hybrid_circles_mesh, voronoi_disk_mesh
 from .polysolver2d import PolygonFIT2D
 from .solver2d import UnstructuredFIT2D
 from .solver3d import UnstructuredFIT3D
+from .subtri import SubTriFIT2D, subtri_circles_mesh
 
 __all__ = [
     "SimplexMesh",
     "PolyMesh",
     "PolygonFIT2D",
+    "SubTriFIT2D",
+    "subtri_circles_mesh",
     "hybrid_circles_mesh",
     "voronoi_disk_mesh",
     "UnstructuredFIT2D",
