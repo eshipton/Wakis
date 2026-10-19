@@ -9,6 +9,7 @@ Radial CFS-PML of `UnstructuredFIT2D` and the tabulated plane-wave source.
   the spoke/chord anisotropy swapped (reflection > 1e-2).
 * Stability: 4000 fs (10x the usual window), no late-time growth.
 * Mesh: a non-polar-aligned layer is rejected.
+* Dispersive (Drude) rod inside the PML domain: stable, fields decay.
 * Plane-wave table: the separable-delay table reproduces the direct
   evaluation of s(t - tau) to < 5e-4 (recorded 1.3e-4 TM, 8e-5 TE; a one-entry
   delay offset would give ~6e-3).
@@ -132,3 +133,22 @@ def test_plane_wave_table_matches_direct(pol):
     d = np.abs(out[0] - out[1]).max() / np.abs(out[0]).max()
     print(pol, "table vs direct", d)
     assert d < 5e-4
+
+
+@pytest.mark.parametrize("pol", ["TM", "TE"])
+def test_pml_with_dispersive_scatterer(pol):
+    """A lossy Drude rod inside the PML-terminated domain (dispersive ADEs
+    outside the layer): stable over 2000 fs and the fields decay."""
+    from wakis.dispersive import DispersiveMaterial, Drude
+
+    drude = DispersiveMaterial(1.0, [Drude(omega_p=3e15, gamma=1e14)])
+    s = _solver(pol, h=60e-9, materials={0: drude})
+    peaks = []
+    for i in range(int(2000e-15 / s.dt)):
+        s.one_step()
+        if i % 100 == 0:
+            peaks.append(np.abs(s.u).max())
+    peaks = np.array(peaks)
+    print(pol, "Drude rod + PML: peak", peaks.max(), "end", peaks[-1])
+    assert np.all(np.isfinite(peaks))
+    assert peaks[-1] < 1e-2 * peaks.max()

@@ -93,8 +93,9 @@ class UnstructuredFIT2D:
         rings with a common node count, isosceles-trapezoid cells), so that
         primal edges are radial (spokes) or azimuthal (chords) and the
         stretched, anisotropic material stays diagonal. See `_PML` for the
-        formulation. Requires ``bc='pec'`` or ``'pmc'`` behind the layer and a
-        lossless, non-dispersive domain.
+        formulation. Requires ``bc='pec'`` or ``'pmc'`` behind the layer; the
+        layer itself must be lossless, non-dispersive background, while
+        conductive or dispersive scatterers inside are allowed.
 
     Attributes
     ----------
@@ -226,8 +227,10 @@ class UnstructuredFIT2D:
             self._init_te_dispersive(He, L, live)
         self._pml = None
         if pml is not None:
-            if bc == "abc" or dispersive or np.any(sigma > 0) or absorber is not None:
-                raise ValueError("pml: use bc='pec'/'pmc', lossless media, no absorber")
+            if bc == "abc" or absorber is not None:
+                raise ValueError(
+                    "pml: use bc='pec'/'pmc' behind the layer, no absorber"
+                )
             self._pml = _PML(self, pml)
         self.sources = []
         self.plane_wave = None
@@ -805,33 +808,45 @@ class _PML:
 
     def reset(self):
         s = self.solver
-        self.q = s.mass * s.u if hasattr(s, "u") else np.zeros(s.free.size)
+        u = s.u if hasattr(s, "u") else np.zeros(s.free.size)
+        self.q = (s.mass * u)[self.nodes]  # D_z / B_z flux of the PML nodes
         for f in (self.fn1, self.fn2, self.fs, self.fc):
             f.reset()
 
-    def _edges(self, v):
-        w = v.copy()
-        w[self.spokes] = self.fs(v[self.spokes])
-        w[self.chords] = self.fc(v[self.chords])
-        return w
-
-    def _nodes(self):
-        s = self.solver
-        u = self.q / s.mass
-        u[self.nodes] = self.fn2(self.fn1(u[self.nodes]))
+    def _filter_nodes(self, u):
+        mass = self.solver.mass[self.nodes]
+        u[self.nodes] = self.fn2(self.fn1(self.q / mass))
         return u
 
     def step(self, node_src, edge_src):
+        """
+        One leapfrog step. Outside the layer the update is the solver's own
+        (capacitive update with conductivity / dispersive ADEs in TM, series
+        dispersive voltages in TE); inside it the node flux q is accumulated
+        and the field is the stretched-medium filter of q / M.
+        """
         s, dt = self.solver, self.solver.dt
+        sp, ch = self.spokes, self.chords
         if s.pol == "TM":
             s.v -= dt * (s.G @ s.u)
-            r = s.G.T @ (s.stiff * self._edges(s.v)) - node_src
-            self.q += dt * r
-            s.u = self._nodes()
+            h = s.stiff * s.v
+            h[sp] = s.stiff[sp] * self.fs(s.v[sp])
+            h[ch] = s.stiff[ch] * self.fc(s.v[ch])
+            r = s.G.T @ h - node_src
+            u = s._update.step(s.u, r)
+            self.q += dt * r[self.nodes]
+            s.u = self._filter_nodes(u)
         else:
-            vol = s.stiff * self._edges(s.v)
+            vol = s._te_voltage(s.v)
+            vol[sp] = s.stiff[sp] * self.fs(s.v[sp])
+            vol[ch] = s.stiff[ch] * self.fc(s.v[ch])
             if s.plane_wave is not None:
                 vol -= s._pw_values(s.n)
-            self.q -= dt * (s.G.T @ vol + node_src)
-            s.u = self._nodes()
+            r = -(s.G.T @ vol + node_src)
+            a = s.mass - s.loss * dt / 2
+            b = s.mass + s.loss * dt / 2
+            u = (a * s.u + dt * r) / b
+            self.q += dt * r[self.nodes]
+            s.u = self._filter_nodes(u)
             s.v += dt * (s.G @ s.u - edge_src)
+            s._te_ade_step(s.v)
