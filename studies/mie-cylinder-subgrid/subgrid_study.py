@@ -165,9 +165,12 @@ def main():
     ap.add_argument("--outdir", default=str(HERE / "data"))
     ap.add_argument("--t-run", type=float, default=1000.0, help="fs")
     ap.add_argument("--only", nargs="*", help="arm:pol:res tasks (local tests)")
+    ap.add_argument("--arms", nargs="*", help="restrict the task list to these arms")
     a = ap.parse_args()
     S.T_RUN = a.t_run * 1e-15
     tl = tasks()
+    if a.arms:
+        tl = [t for t in tl if t[0] in a.arms]
     if a.mode == "list":
         for i, t in enumerate(tl):
             print(i, *t)
