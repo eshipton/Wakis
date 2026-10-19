@@ -221,3 +221,34 @@ def test_mie_cylinder_res10():
     good = rms(2.0)
     assert good < 0.09
     assert rms(-1e9) > 2 * good  # mutation: no patch (coarse grid only)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("pol", ["TM", "TE"])
+def test_lorentz_cylinder_ade(pol):
+    """Lorentz-dispersive cylinder (ADE on nodes in TM, on edges in TE)."""
+    import sys
+    from pathlib import Path
+
+    from wakis.dispersive import DispersiveMaterial, Lorentz
+
+    here = Path(__file__).resolve().parents[1] / "studies"
+    sys.path.insert(0, str(here / "mie-cylinder-subgrid"))
+    sys.path.insert(0, str(here / "mie-cylinder-mesh"))
+    import subgrid_study as SS
+
+    SS.S.T_RUN = 1000e-15
+    TH = 2 * np.pi * 1e12
+    lor = DispersiveMaterial(2.0, [Lorentz(2.5, 900 * TH, 30 * TH)])
+
+    def rms(material):
+        out = SS.run_sg("compact", pol, 10, material=material)
+        q = np.array(out["q"]) / np.array(out["q_ref"]) - 1
+        return np.sqrt(np.mean(q**2))
+
+    good = rms(lor)
+    assert good < 0.12
+    # mutation: the pole dynamics switched off (eps_inf only) vs the same ref
+    no_pole = DispersiveMaterial(2.0, [])
+    no_pole.epsilon = lor.epsilon
+    assert rms(no_pole) > 3 * good

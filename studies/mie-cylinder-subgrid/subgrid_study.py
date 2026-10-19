@@ -68,7 +68,7 @@ def tasks():
     return out
 
 
-def build(geom, pol, res, lts=None, band=2.0, n_sub=8):
+def build(geom, pol, res, lts=None, band=2.0, n_sub=8, material=None):
     from wakis.subgrid import Circle, Geometry, QuadMesh, SubgridFIT2D
 
     g = GEOM[geom]
@@ -85,20 +85,20 @@ def build(geom, pol, res, lts=None, band=2.0, n_sub=8):
         return np.hypot(dx, dy) < r_ref
 
     mesh = QuadMesh(xc, xc.copy(), ratio=2, max_level=1, refine=refine)
-    geo = Geometry([Circle((0, 0), A, N_CYL**2)])
+    geo = Geometry([Circle((0, 0), A, N_CYL**2 if material is None else material)])
     box = (-m_in * H, m_in * H, -m_in * H, m_in * H)
     solver = SubgridFIT2D(mesh, geo, polarization=pol, pml=dict(box=box),
                           cfl=S.CFL, n_sub=n_sub, lts=lts)  # fmt: skip
     return mesh, solver, h
 
 
-def run_sg(geom, pol, res, lts=None):
+def run_sg(geom, pol, res, lts=None, material=None):
     from wakis.cylinder_harmonics import circle_points
 
     g = GEOM[geom]
     S.RADII = np.array(g["radii"])
     t0 = time.time()
-    mesh, solver, h = build(geom, pol, res, lts)
+    mesh, solver, h = build(geom, pol, res, lts, material=material)
     solver.add_plane_wave(S.pulse())
     pts = np.vstack([circle_points(r, S.M_PTS)[0] for r in S.RADII])
     P = solver.interpolation(pts)
@@ -117,6 +117,12 @@ def run_sg(geom, pol, res, lts=None):
     u_inc0 = solver.incident(np.zeros((1, 2)), times)[:, 0]
     u0 = (np.exp(-2j * np.pi * np.outer(S.FREQS, times)) @ u_inc0) * dt
     out = S.extract(acc, u0, pol)
+    if material is not None and hasattr(material, "epsilon"):
+        from wakis.analytic import cylinder_efficiencies
+
+        m_f = np.sqrt(material.epsilon(S.FREQS))
+        out["q_ref"] = [float(cylinder_efficiencies(m, x, pol)[1])
+                        for m, x in zip(m_f, S.X)]  # fmt: skip
     lc = mesh.level_counts()
     out.update(
         dt=dt, steps=n_max, nodes=int(solver.n_dof), dofs=int(solver.n_unknowns),
