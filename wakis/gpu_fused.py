@@ -1,0 +1,818 @@
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2026.                   #
+# ########################################### #
+"""
+Fused GPU time stepping (``SolverFIT3D(..., use_gpu=True, fused=True)``).
+
+The CuPy path of `SolverFIT3D` issues one kernel per array operation: the CPML
+step alone launches ~330 kernels per time step (6 + 6 sparse curls, gathers and
+scatters of the 24 auxiliary-variable faces, temporaries), and a DFT monitor
+~5 per component. For grids below a few million cells the GPU then waits on
+the host (Python + launch latency, ~10-20 us per operation), not on memory.
+
+This module performs the same arithmetic in a handful of hand-written kernels:
+
+* `FusedStep`: one kernel per half step. Each thread owns one edge: it forms
+  the curl from a merged CSR row (the two derivative terms of the component
+  kept apart for the CPML), updates the CPML auxiliary variables psi owned by
+  that edge, and updates the field (plus magnetic current M, conduction
+  current J = sigma E). Without CPML the solver's own curl operators are used.
+* `source_delta`: impressed-current sources (`CurrentSource`,
+  `MagneticCurrentSource`, `ModeSource`) add w (s^n - s^{n-1}) in one kernel.
+* `DFTBatch`: running DFTs of any number of `DFTMonitor`, `FluxMonitor` and
+  `ModeMonitor` terms, all frequencies, in one kernel per step; the
+  accumulators of the monitors become views into one buffer.
+* `AdjointKernels` (used by `wakis.inverse.adjoint`): the transposed step in
+  four kernels, the adjoint DFT sources and the gradient accumulation.
+* `GraphRunner`: replays a CUDA graph of K captured steps (no Python, no
+  launch overhead) when every per-step operation is device resident.
+
+The arithmetic is that of the unfused path up to the order of floating-point
+operations (round-off); sources and DFT accumulations reproduce it bit for
+bit (the kernels are compiled without FMA contraction). All buffers are
+allocated once, so the step is safe to capture in a CUDA graph.
+"""
+
+import numpy as np
+
+try:
+    import cupy as cp
+
+    _HAS_CUPY = True
+except ImportError:  # pragma: no cover - CPU-only installs
+    cp = None
+    _HAS_CUPY = False
+
+_THREADS = 256
+
+# Same term tables as `wakis.inverse.adjoint` (target T, derivative axis d,
+# source S, sign s, operator, psi prefix); a: s = +1, b: s = -1
+_H_TERMS = (
+    ("x", "y", "z", 1.0, "dxy", "psiHa_x"),
+    ("x", "z", "y", -1.0, "dxz", "psiHb_x"),
+    ("y", "z", "x", 1.0, "dyz", "psiHa_y"),
+    ("y", "x", "z", -1.0, "dyx", "psiHb_y"),
+    ("z", "x", "y", 1.0, "dzx", "psiHa_z"),
+    ("z", "y", "x", -1.0, "dzy", "psiHb_z"),
+)
+_E_TERMS = (
+    ("x", "y", "z", 1.0, "dtxy", "psiEa_x"),
+    ("x", "z", "y", -1.0, "dtxz", "psiEb_x"),
+    ("y", "z", "x", 1.0, "dtyz", "psiEa_y"),
+    ("y", "x", "z", -1.0, "dtyx", "psiEb_y"),
+    ("z", "x", "y", 1.0, "dtzx", "psiEa_z"),
+    ("z", "y", "x", -1.0, "dtzy", "psiEb_z"),
+)
+
+_SOURCE = r"""
+#include <cupy/complex.cuh>
+typedef complex<double> cplx;
+
+__device__ __forceinline__ double re_(double x) { return x; }
+__device__ __forceinline__ double re_(cplx x) { return x.real(); }
+__device__ __forceinline__ double conj_(double x) { return x; }
+__device__ __forceinline__ cplx conj_(cplx x) { return conj(x); }
+
+// Time of step n: the device step counter (graph replay) or the host value
+__device__ __forceinline__ double step_time(const long long* step, long long add,
+                                            double t_host, double dt) {
+    return step ? (double)(step[0] + add) * dt : t_host;
+}
+
+// ---------------------------------------------------------------- H half step
+// H_i -= dt s_i (p_a - p_b + psi_a - psi_b) - dt imu_i M_i, psi = b psi + c p
+// p_a, p_b: the two derivative terms of row i (CSR entries [ptr, split) and
+// [split, ptr+1)). Without CPML (split == NULL) p_a is the whole curl and s = 1.
+template<typename T, typename V>
+__global__ void fused_h(const int n, const int* __restrict__ ptr,
+        const int* __restrict__ split, const int* __restrict__ col,
+        const V* __restrict__ val, const T* __restrict__ E, T* __restrict__ H,
+        const double* __restrict__ scale, const double dt,
+        const int* __restrict__ slot_a, const int* __restrict__ slot_b,
+        T* __restrict__ psi, const T* __restrict__ pb, const T* __restrict__ pc,
+        const T* __restrict__ M, const double* __restrict__ imu) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= n) return;
+    int j0 = ptr[i], j1 = ptr[i + 1];
+    int js = split ? split[i] : j1;
+    T pa = T(0), pbv = T(0);
+    for (int j = j0; j < js; ++j) pa += val[j] * E[col[j]];
+    for (int j = js; j < j1; ++j) pbv += val[j] * E[col[j]];
+    T h = H[i];
+    if (split) {
+        double f = dt * scale[i];
+        h -= f * (pa - pbv);
+        int sa = slot_a[i];
+        if (sa >= 0) {
+            T p = pb[sa] * psi[sa] + pc[sa] * pa;
+            psi[sa] = p;
+            h -= f * p;
+        }
+        int sb = slot_b[i];
+        if (sb >= 0) {
+            T p = pb[sb] * psi[sb] + pc[sb] * pbv;
+            psi[sb] = p;
+            h -= f * (-p);
+        }
+    } else {
+        h -= dt * pa;
+    }
+    if (M) h = h - (dt * imu[i]) * M[i];
+    H[i] = h;
+}
+
+// ---------------------------------------------------------------- E half step
+// J += sigma E - J_old (conduction current); then
+// CPML: E += dt ieps (q_a - q_b) - dt ieps J, E += dt ieps (psi_a - psi_b)
+// else: E += dt (q - ieps J)   (ieps inside the curl operator)
+template<typename T, typename V>
+__global__ void fused_e(const int n, const int* __restrict__ ptr,
+        const int* __restrict__ split, const int* __restrict__ col,
+        const V* __restrict__ val, const T* __restrict__ H, T* __restrict__ E,
+        const double* __restrict__ ieps, const double dt,
+        const int* __restrict__ slot_a, const int* __restrict__ slot_b,
+        T* __restrict__ psi, const T* __restrict__ pb, const T* __restrict__ pc,
+        T* __restrict__ J, T* __restrict__ J_old, const double* __restrict__ sigma) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= n) return;
+    T e = E[i];
+    T j = J[i];
+    if (sigma) {
+        T jt = sigma[i] * e;
+        j = j + (jt - J_old[i]);
+        J[i] = j;
+        J_old[i] = jt;
+    }
+    int j0 = ptr[i], j1 = ptr[i + 1];
+    int js = split ? split[i] : j1;
+    T qa = T(0), qb = T(0);
+    for (int k = j0; k < js; ++k) qa += val[k] * H[col[k]];
+    for (int k = js; k < j1; ++k) qb += val[k] * H[col[k]];
+    if (split) {
+        double f = dt * ieps[i];
+        e += f * (qa - qb) - f * j;
+        int sa = slot_a[i];
+        if (sa >= 0) {
+            T p = pb[sa] * psi[sa] + pc[sa] * qa;
+            psi[sa] = p;
+            e += f * p;
+        }
+        int sb = slot_b[i];
+        if (sb >= 0) {
+            T p = pb[sb] * psi[sb] + pc[sb] * qb;
+            psi[sb] = p;
+            e += f * (-p);
+        }
+    } else {
+        e = e + dt * (qa - ieps[i] * j);
+    }
+    E[i] = e;
+}
+
+// ------------------------------------------------------------------ sources
+// arr[idx_k] += w_k a - old_k; old_k = w_k a   (a = s(t) on the host, or
+// amp[step] from a device table)
+template<typename T, typename W>
+__global__ void source_delta(const int n, const int* __restrict__ idx,
+        const W* __restrict__ w, const double a_host,
+        const double* __restrict__ amp, const long long* __restrict__ step,
+        const long long add, W* __restrict__ old, T* __restrict__ arr) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= n) return;
+    double a = amp ? amp[step[0] + add] : a_host;
+    W nw = w[k] * a;
+    arr[idx[k]] += (T)(nw - old[k]);
+    old[k] = nw;
+}
+
+// ------------------------------------------------------------- running DFT
+// Phasors ph[p] = dt exp(c1 f t_s) of each (segment s, frequency f) pair,
+// t_s = t + toff_s: same complex operations as the CuPy expressions of the
+// monitors, dt * exp(-2j * pi * freqs * t).
+__global__ void dft_phase(const int nph, const int* __restrict__ ph_seg,
+        const int* __restrict__ ph_f, const double* __restrict__ seg_toff,
+        const double* __restrict__ freqs, const double c1_re, const double c1_im,
+        const double dt, const double t_host, const long long* __restrict__ step,
+        const long long add, cplx* __restrict__ ph) {
+    int p = blockDim.x * blockIdx.x + threadIdx.x;
+    if (p >= nph) return;
+    double t = step_time(step, add, t_host, dt) + seg_toff[ph_seg[p]];
+    cplx z = cplx(c1_re, c1_im) * cplx(freqs[ph_f[p]], 0.0);
+    z = z * cplx(t, 0.0);
+    ph[p] = cplx(dt, 0.0) * exp(z);
+}
+
+// acc[g] += ph[s, f] v for the flat accumulator index g of segment (term) s,
+// f = g / m_s, sample k = g % m_s; v = F[a_k] or 0.5 (F[a_k] + F[b_k])
+template<typename T>
+__global__ void dft_acc(const long long total, const int nseg,
+        const long long* __restrict__ seg_start, const int* __restrict__ seg_m,
+        const int* __restrict__ seg_soff, const int* __restrict__ seg_poff,
+        const int* __restrict__ seg_field, const int* __restrict__ seg_avg,
+        const int* __restrict__ ia, const int* __restrict__ ib,
+        const cplx* __restrict__ ph, const T* __restrict__ E,
+        const T* __restrict__ H, const T* __restrict__ J, cplx* __restrict__ acc) {
+    long long g = (long long)blockDim.x * blockIdx.x + threadIdx.x;
+    if (g >= total) return;
+    int s = 0;
+    while (s + 1 < nseg && g >= seg_start[s + 1]) ++s;
+    long long loc = g - seg_start[s];
+    int m = seg_m[s];
+    int f = (int)(loc / m);
+    int k = (int)(loc - (long long)f * m);
+    const T* F = seg_field[s] == 0 ? E : (seg_field[s] == 1 ? H : J);
+    int o = seg_soff[s] + k;
+    T v = F[ia[o]];
+    if (seg_avg[s]) v = 0.5 * (v + F[ib[o]]);
+    acc[g] = acc[g] + ph[seg_poff[s] + f] * cplx(v);
+}
+
+// ------------------------------------------------------------- record rows
+// Adjoint forward: row_k = (E[idx_k] - e_old_k) / ieps_k into rec[step]
+template<typename T>
+__global__ void gather(const int n, const int* __restrict__ idx,
+                       const T* __restrict__ src, T* __restrict__ out) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k < n) out[k] = src[idx[k]];
+}
+
+template<typename T, typename R>
+__global__ void record_row(const int n, const int* __restrict__ idx,
+        const T* __restrict__ E, const T* __restrict__ e_old,
+        const double* __restrict__ ieps_d, R* __restrict__ rec,
+        const long long* __restrict__ step, const long long add,
+        const long long row_host) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= n) return;
+    long long r = step ? step[0] + add : row_host;
+    rec[r * n + k] = (R)((E[idx[k]] - e_old[k]) / ieps_d[k]);
+}
+
+__global__ void step_add(long long* step, const long long k) { step[0] += k; }
+
+// ----------------------------------------------------- transposed CPML step
+// Adjoint of the E half step, part 1 (per E row i, nu = dt ieps lam_E):
+// beta_a = nu + c_a mu_a, beta_b = -nu + c_b mu_b, out_psi = b mu,
+// mu_a = lam_psi_a + nu, mu_b = lam_psi_b - nu. Without CPML beta_a = nu.
+template<typename T>
+__global__ void adj_beta(const int n, const T* __restrict__ lam,
+        const double* __restrict__ coef, const double dt,
+        const int* __restrict__ slot_a, const int* __restrict__ slot_b,
+        const T* __restrict__ lpsi, T* __restrict__ opsi,
+        const T* __restrict__ pb, const T* __restrict__ pc,
+        T* __restrict__ beta) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= n) return;
+    T nu = (dt * coef[i]) * lam[i];
+    T ba = nu, bb = -nu;
+    if (slot_a) {
+        int sa = slot_a[i];
+        if (sa >= 0) {
+            T mu = lpsi[sa] + nu;
+            ba += conj_(pc[sa]) * mu;
+            opsi[sa] = conj_(pb[sa]) * mu;
+        }
+        int sb = slot_b[i];
+        if (sb >= 0) {
+            T mu = lpsi[sb] - nu;
+            bb += conj_(pc[sb]) * mu;
+            opsi[sb] = conj_(pb[sb]) * mu;
+        }
+        beta[n + i] = bb;
+    }
+    beta[i] = ba;
+}
+
+// out_i = d_i x_i + sum_j A^H_ij beta_j  (merged transposed CSR, 3N x 6N or 3N x 3N)
+template<typename T, typename V>
+__global__ void adj_spmv(const int n, const int* __restrict__ ptr,
+        const int* __restrict__ col, const V* __restrict__ val,
+        const T* __restrict__ beta, const T* __restrict__ x,
+        const double* __restrict__ d, T* __restrict__ out) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= n) return;
+    T s = T(0);
+    for (int j = ptr[i]; j < ptr[i + 1]; ++j) s += val[j] * beta[col[j]];
+    T base = d ? d[i] * x[i] : x[i];
+    out[i] = base + s;
+}
+
+// grad_k += Re(conj(lam[idx_k]) * rec[step, k])
+template<typename T, typename R>
+__global__ void grad_acc(const int n, const int* __restrict__ idx,
+        const T* __restrict__ lam, const R* __restrict__ rec,
+        const long long* __restrict__ step, const long long add,
+        const long long row_host, double* __restrict__ grad) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= n) return;
+    long long r = step ? step[0] + add : row_host;
+    grad[k] += re_(conj_(lam[idx[k]]) * (T)rec[r * n + k]);
+}
+
+// Adjoint DFT source, part 1: v_k = sum_f (dt exp(+2 pi i f t)) G[f, k]
+__global__ void tap_v(const int m, const int nf, const double* __restrict__ freqs,
+        const cplx* __restrict__ G, const double c1_im, const double dt,
+        const double toff, const double t_host,
+        const long long* __restrict__ step, const long long add,
+        cplx* __restrict__ v) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= m) return;
+    double t = step_time(step, add, t_host, dt) + toff;
+    cplx s = cplx(0.0, 0.0);
+    for (int f = 0; f < nf; ++f) {
+        cplx z = cplx(0.0, c1_im) * cplx(freqs[f], 0.0);
+        z = z * cplx(t, 0.0);
+        s += (cplx(dt, 0.0) * exp(z)) * G[(long long)f * m + k];
+    }
+    v[k] = s;
+}
+
+// part 2: lam[rows_r] += (Re) sum_j WH[r, j] v_j
+__device__ __forceinline__ void add_to(double& a, cplx s) { a += s.real(); }
+__device__ __forceinline__ void add_to(cplx& a, cplx s) { a += s; }
+
+template<typename T>
+__global__ void tap_add(const int nr, const int* __restrict__ rows,
+        const int* __restrict__ ptr, const int* __restrict__ col,
+        const cplx* __restrict__ val, const cplx* __restrict__ v,
+        T* __restrict__ lam) {
+    int r = blockDim.x * blockIdx.x + threadIdx.x;
+    if (r >= nr) return;
+    cplx s = cplx(0.0, 0.0);
+    for (int j = ptr[r]; j < ptr[r + 1]; ++j) s += val[j] * v[col[j]];
+    add_to(lam[rows[r]], s);
+}
+"""
+
+_TYPES = {np.dtype(np.float64): "double", np.dtype(np.complex128): "cplx"}
+_REC_TYPES = {
+    np.dtype(np.float64): "double",
+    np.dtype(np.float32): "float",
+    np.dtype(np.complex128): "cplx",
+    np.dtype(np.complex64): "complex<float>",
+}
+_MODULE = None
+
+
+def _names():
+    names = []
+    pairs = (("double", "double"), ("cplx", "double"), ("cplx", "cplx"))
+    for T, V in pairs:
+        names += [f"fused_h<{T},{V}>", f"fused_e<{T},{V}>"]
+        names += [f"source_delta<{T},{V}>", f"adj_spmv<{T},{V}>"]
+    recs = {"double": ("double", "float"), "cplx": ("cplx", "complex<float>")}
+    for T in ("double", "cplx"):
+        names += [f"dft_acc<{T}>", f"adj_beta<{T}>", f"tap_add<{T}>", f"gather<{T}>"]
+        for R in recs[T]:
+            names += [f"record_row<{T},{R}>", f"grad_acc<{T},{R}>"]
+    return names + ["step_add", "tap_v", "dft_phase"]
+
+
+def _module():
+    global _MODULE
+    if _MODULE is None:
+        _MODULE = cp.RawModule(
+            code=_SOURCE,
+            options=("--std=c++17", "--fmad=false"),
+            name_expressions=_names(),
+        )
+    return _MODULE
+
+
+def kernel(name):
+    """Compiled kernel by its template name, e.g. 'fused_h<double,double>'."""
+    return _module().get_function(name)
+
+
+def tname(dtype):
+    """Kernel type name of a NumPy/CuPy dtype (float64 or complex128)."""
+    return _TYPES[np.dtype(dtype)]
+
+
+def rname(dtype):
+    """Kernel type name of a stored-increment dtype."""
+    return _REC_TYPES[np.dtype(dtype)]
+
+
+def launch(name, n, *args):
+    """Launch kernel `name` over n threads (no-op for n == 0)."""
+    n = int(n)
+    if n <= 0:
+        return
+    kernel(name)(((n + _THREADS - 1) // _THREADS,), (_THREADS,), args)
+
+
+def _host(a):
+    return np.asarray(a.get() if hasattr(a, "get") else a)
+
+
+def _host_csr(op):
+    """SciPy CSR copy of a (CuPy or SciPy) sparse operator."""
+    import scipy.sparse as sp
+
+    if hasattr(op, "get"):
+        op = op.get()
+    return sp.csr_matrix(op)
+
+
+def merge_rows(A, B):
+    """
+    CSR (ptr, split, col, val) with row i = row i of A, then row i of B.
+
+    Entries [ptr[i], split[i]) belong to A, [split[i], ptr[i+1]) to B.
+    """
+    A, B = A.tocsr(), B.tocsr()
+    na, nb = np.diff(A.indptr), np.diff(B.indptr)
+    n = A.shape[0]
+    ptr = np.zeros(n + 1, dtype=np.int64)
+    np.cumsum(na + nb, out=ptr[1:])
+    split = ptr[:-1] + na
+    dtype = np.result_type(A.dtype, B.dtype)
+    col = np.empty(ptr[-1], dtype=np.int64)
+    val = np.empty(ptr[-1], dtype=dtype)
+    rows_a = np.repeat(np.arange(n), na)
+    pos_a = ptr[rows_a] + (np.arange(A.nnz) - A.indptr[rows_a])
+    rows_b = np.repeat(np.arange(n), nb)
+    pos_b = split[rows_b] + (np.arange(B.nnz) - B.indptr[rows_b])
+    col[pos_a], val[pos_a] = A.indices, A.data
+    col[pos_b], val[pos_b] = B.indices, B.data
+    if ptr[-1] >= 2**31:
+        raise ValueError("Operator too large for 32-bit fused kernels.")
+    return ptr.astype(np.int32), split.astype(np.int32), col.astype(np.int32), val
+
+
+def _block(ops, terms, sign):
+    """3N x 3N block matrix of the `sign` terms: block (T, S) = op."""
+    import scipy.sparse as sp
+
+    blocks = [[None] * 3 for _ in range(3)]
+    for T, d, S, s, op, prefix in terms:
+        if s == sign:
+            blocks["xyz".index(T)]["xyz".index(S)] = ops[op]
+    return sp.bmat(blocks, format="csr")
+
+
+class _Half:
+    """Device data of one CPML half step (merged curl rows, psi slots)."""
+
+    def __init__(self, solver, terms, field):
+        import scipy.sparse as sp
+
+        N = solver.N
+        ops = {t[4]: _host_csr(getattr(solver, t[4])) for t in terms}
+        A = _block(ops, terms, 1.0)
+        B = _block(ops, terms, -1.0)
+        ptr, split, col, val = merge_rows(A, B)
+        self.vdtype = val.dtype
+        self.ptr, self.split, self.col = (cp.asarray(a) for a in (ptr, split, col))
+        self.val = cp.asarray(val)
+        # Transposed rows for the adjoint: [A^H B^H] acting on [beta_a; beta_b]
+        AT = sp.hstack([A.conj().T, B.conj().T], format="csr")
+        AT.sort_indices()
+        self.t_ptr = cp.asarray(AT.indptr.astype(np.int32))
+        self.t_col = cp.asarray(AT.indices.astype(np.int32))
+        self.t_val = cp.asarray(AT.data)
+        self.t_vdtype = AT.data.dtype
+        # psi slots of each face, in a fixed order
+        slot_a = np.full(3 * N, -1, dtype=np.int64)
+        slot_b = np.full(3 * N, -1, dtype=np.int64)
+        names, sizes, bs, cs = [], [], [], []
+        off = 0
+        for T, d, S, s, op, prefix in terms:
+            for side, bcs in (("low", solver.bc_low), ("high", solver.bc_high)):
+                if bcs["xyz".index(d)].lower() != "cpml":
+                    continue
+                idx = _host(getattr(solver, f"idx_{d}_{side}")).astype(np.int64)
+                rows = "xyz".index(T) * N + idx
+                slots = slot_a if s > 0 else slot_b
+                if np.any(slots[rows] >= 0) or np.unique(rows).size != rows.size:
+                    raise NotImplementedError(
+                        "Overlapping CPML faces (domain thinner than 2 n_pml)."
+                    )
+                slots[rows] = off + np.arange(idx.size)
+                names.append(f"{prefix}_{side}")
+                sizes.append(idx.size)
+                bs.append(_host(getattr(solver, f"pml_b_{field}_{d}_{side}")))
+                cs.append(_host(getattr(solver, f"pml_c_{field}_{d}_{side}")))
+                off += idx.size
+        dtype = solver.E.array.dtype
+        self.names = names
+        self.offsets = np.concatenate([[0], np.cumsum(sizes)]).astype(int)
+        self.slot_a = cp.asarray(slot_a.astype(np.int32))
+        self.slot_b = cp.asarray(slot_b.astype(np.int32))
+        self.pb = cp.asarray(np.concatenate(bs) if bs else np.zeros(1), dtype=dtype)
+        self.pc = cp.asarray(np.concatenate(cs) if cs else np.zeros(1), dtype=dtype)
+        self.n_psi = int(off)
+
+
+class FusedStep:
+    """
+    Fused GPU time step of a `SolverFIT3D` (standard or CPML update).
+
+    Installed as ``solver.one_step`` by ``SolverFIT3D(..., fused=True)``;
+    wrappers (tensor averaging, ADE, ABC) call it as their base step.
+
+    The CPML auxiliary variables of the solver (``psiHa_x_low``, ...) become
+    views into one buffer per half step owned by this object; arrays assigned
+    to those attributes from outside are copied into the buffer at the next
+    step. Fields, materials and currents are read from the solver at every
+    step, so in-place changes (e.g. ``solver.ieps`` set by a design) take
+    effect.
+    """
+
+    def __init__(self, solver):
+        self.solver = solver
+        self.ready = False
+        self.cpml = solver.activate_cpml
+        self.views = {}
+
+    def _build(self):
+        s = self.solver
+        self.T = tname(s.E.array.dtype)
+        if self.cpml:
+            self.h = _Half(s, _H_TERMS, "H")
+            self.e = _Half(s, _E_TERMS, "E")
+            dtype = s.E.array.dtype
+            self.psi_h = cp.zeros(max(self.h.n_psi, 1), dtype=dtype)
+            self.psi_e = cp.zeros(max(self.e.n_psi, 1), dtype=dtype)
+            for half, buf in ((self.h, self.psi_h), (self.e, self.psi_e)):
+                o = half.offsets
+                for k, name in enumerate(half.names):
+                    view = buf[o[k] : o[k + 1]]
+                    view[...] = cp.asarray(getattr(s, name))
+                    setattr(s, name, view)
+                    self.views[name] = view
+        self.ready = True
+
+    def _sync_psi(self):
+        """Copy psi arrays rebound from outside into the buffer views."""
+        s = self.solver
+        for name, view in self.views.items():
+            cur = getattr(s, name)
+            if cur is not view:
+                view[...] = cp.asarray(cur)
+                setattr(s, name, view)
+
+    def __call__(self):
+        s = self.solver
+        if s.source_type == "tfsf" and not s.injection_done:
+            # Legacy TF/SF injection inside the step: unfused path
+            return (s._one_step_cpml if self.cpml else s._one_step)()
+        if s.step_0:
+            s._set_ghosts_to_0()
+            s.step_0 = False
+            s._attrcleanup()
+            if s.source_type == "direct" or s.use_conductivity:
+                s.J_old = cp.zeros_like(s.J.array)
+        if not self.ready:
+            self._build()
+        if self.cpml:
+            self._sync_psi()
+        self.launch_step()
+
+    def launch_step(self):
+        """Launch the two half-step kernels (no host synchronization)."""
+        s = self.solver
+        n = 3 * s.N
+        E, H, J = s.E.array, s.H.array, s.J.array
+        M = None if s.M is None else s.M.array
+        dt = np.float64(s.dt)
+        T = self.T
+        if s.use_conductivity:
+            J_old, sigma = s.J_old, s.sigma.array
+        else:
+            J_old = sigma = None
+        if self.cpml:
+            h, e = self.h, self.e
+            launch(
+                f"fused_h<{T},{tname(h.vdtype)}>", n, np.int32(n), h.ptr, h.split,
+                h.col, h.val, E, H, s.imu.array, dt, h.slot_a, h.slot_b,
+                self.psi_h, h.pb, h.pc, M, s.imu.array,
+            )  # fmt: skip
+            launch(
+                f"fused_e<{T},{tname(e.vdtype)}>", n, np.int32(n), e.ptr, e.split,
+                e.col, e.val, H, E, s.ieps.array, dt, e.slot_a, e.slot_b,
+                self.psi_e, e.pb, e.pc, J, J_old, sigma,
+            )  # fmt: skip
+            return
+        A, B = s.tDsiDmuiDaC, s.itDaiDepsDstC
+        launch(
+            f"fused_h<{T},{tname(A.data.dtype)}>", n, np.int32(n), A.indptr, None,
+            A.indices, A.data, E, H, None, dt, None, None, None, None, None, M,
+            s.imu.array,
+        )  # fmt: skip
+        launch(
+            f"fused_e<{T},{tname(B.data.dtype)}>", n, np.int32(n), B.indptr, None,
+            B.indices, B.data, H, E, s.ieps.array, dt, None, None, None, None,
+            None, J, J_old, sigma,
+        )  # fmt: skip
+
+    def arrays(self):
+        """Device arrays the kernels point to (CUDA graph validity check)."""
+        s = self.solver
+        out = [s.E.array, s.H.array, s.J.array, s.ieps.array, s.imu.array]
+        out.append(None if s.M is None else s.M.array)
+        if s.use_conductivity:
+            out += [s.J_old, s.sigma.array]
+        if not self.cpml:
+            out += [s.tDsiDmuiDaC.data, s.itDaiDepsDstC.data]
+        return out
+
+
+def eligible(solver):
+    """True if `solver` can use the fused step (GPU, no MPI, float64/complex128)."""
+    return (
+        _HAS_CUPY
+        and solver.use_gpu
+        and not (solver.use_mpi and getattr(solver.grid, "use_mpi", False))
+        and np.dtype(solver.E.array.dtype) in _TYPES
+    )
+
+
+def is_fused(solver):
+    """True if `solver` time-steps with `FusedStep`."""
+    return getattr(solver, "_fused_step", None) is not None
+
+
+# ------------------------------------------------------------------ sources
+
+
+def idx32(a):
+    """Contiguous int32 device copy of an index array."""
+    return cp.ascontiguousarray(cp.asarray(a), dtype=np.int32)
+
+
+def source_update(arr, idx, weights, a, old, step=None, amp=None, add=0):
+    """arr[idx] += weights * a - old; old[:] = weights * a (one kernel)."""
+    launch(
+        f"source_delta<{tname(arr.dtype)},{tname(weights.dtype)}>", idx.size,
+        np.int32(idx.size), idx, weights, np.float64(a), amp, step,
+        np.int64(add), old, arr,
+    )  # fmt: skip
+
+
+# ------------------------------------------------------------- running DFT
+
+_FIELD = {"E": 0, "H": 1, "J": 2}
+_C1 = -2j * np.pi  # the factor of the monitors' exp(-2j * pi * f * t)
+
+
+def monitor_terms(monitor, solver):
+    """
+    DFT terms of an initialized monitor, or None if it is not supported:
+    list of (field, idx_a, idx_b or None, time offset [s], (container, key, d)).
+
+    Each term accumulates acc[f, k] += dt exp(-2 pi i f (t + toff)) v_k with
+    v = F[idx_a] (or 0.5 (F[idx_a] + F[idx_b])); its accumulator is
+    container[key] (or container[key][d]).
+    """
+    from .field_monitors import DFTMonitor, FluxMonitor
+    from .mode_solver import ModeMonitor
+
+    dt = solver.dt
+    out = []
+    if type(monitor) is DFTMonitor:
+        times = {"E": dt, "J": dt, "H": dt / 2}
+        for comp in monitor.components:
+            out.append(
+                (comp[0], monitor._flat[comp], None, times[comp[0]],
+                 (monitor._acc, comp, None))
+            )  # fmt: skip
+    elif type(monitor) is FluxMonitor:
+        for term in monitor._terms:
+            out.append(("E", term["E"], None, dt, (term, "E_acc", None)))
+            out.append(
+                ("H", term["H_above"], term["H_below"], dt / 2, (term, "H_acc", None))
+            )
+    elif isinstance(monitor, ModeMonitor):
+        n = monitor.plane.n_b * monitor.plane.n_c
+        for f, toff in (("E", dt), ("H", dt / 2)):
+            for d in range(2):
+                idx = monitor._idx[f][d]
+                if f == "H":
+                    # values = 0.5 * (H[below] + H[above])
+                    out.append((f, idx[:n], idx[n:], toff, (monitor._acc, f, d)))
+                else:
+                    out.append((f, idx, None, toff, (monitor._acc, f, d)))
+    else:
+        return None
+    return out
+
+
+class DFTBatch:
+    """
+    One-kernel running DFT of several monitors (all terms, all frequencies).
+
+    The accumulators of the monitors are replaced by views into one buffer
+    (current values are copied), so `get_field`, `get_flux`, the mode
+    amplitudes and the adjoint readouts work unchanged.
+
+    Parameters
+    ----------
+    monitors : list
+        Initialized `DFTMonitor`, `FluxMonitor` or `ModeMonitor` objects.
+    solver : SolverFIT3D
+        GPU solver.
+    """
+
+    def __init__(self, monitors, solver):
+        self.monitors = list(monitors)
+        terms, freqs = [], []
+        f_off = 0
+        for mon in self.monitors:
+            mt = monitor_terms(mon, solver)
+            if mt is None:
+                raise TypeError(f"Unsupported monitor {type(mon).__name__}")
+            terms += [(*t, f_off, mon.frequencies.size) for t in mt]
+            freqs.append(np.asarray(mon.frequencies, dtype=float))
+            f_off += mon.frequencies.size
+        self.freqs = cp.asarray(np.concatenate(freqs) if freqs else np.zeros(1))
+        m = [int(t[1].size) for t in terms]
+        start = np.concatenate([[0], np.cumsum([mi * t[6] for mi, t in zip(m, terms)])])
+        start = start.astype(np.int64)
+        self.total = int(start[-1])
+        self.buf = cp.zeros(max(self.total, 1), dtype=np.complex128)
+        ia, ib = [], []
+        for k, t in enumerate(terms):
+            field, a, b, toff, (cont, key, d), fo, nf = t
+            view = self.buf[start[k] : start[k + 1]].reshape(nf, m[k])
+            if d is None:
+                view[...] = cont[key]
+                cont[key] = view
+            else:
+                view[...] = cont[key][d]
+            ia.append(idx32(a))
+            ib.append(idx32(a if b is None else b))
+        # (2, n_f, n) mode accumulators: one view over their two halves
+        for k, t in enumerate(terms):
+            field, a, b, toff, (cont, key, d), fo, nf = t
+            if d == 0:
+                k1 = k + 1
+                u = terms[k1][4]
+                if not (u[0] is cont and u[1] == key and u[2] == 1):
+                    raise RuntimeError("Mode accumulator halves not adjacent.")
+                cont[key] = self.buf[start[k] : start[k1 + 1]].reshape(2, nf, m[k])
+        self.ia = cp.concatenate(ia) if ia else cp.zeros(1, np.int32)
+        self.ib = cp.concatenate(ib) if ib else cp.zeros(1, np.int32)
+        soff = np.concatenate([[0], np.cumsum(m)])[:-1] if m else np.zeros(0)
+        nfs = [t[6] for t in terms]
+        poff = np.concatenate([[0], np.cumsum(nfs)])
+        self.nph = int(poff[-1])
+        self.ph = cp.zeros(max(self.nph, 1), dtype=np.complex128)
+        self.ph_seg = cp.asarray(np.repeat(np.arange(len(terms)), nfs).astype(np.int32))
+        self.ph_f = cp.asarray(
+            np.concatenate([t[5] + np.arange(t[6]) for t in terms]).astype(np.int32)
+            if terms
+            else np.zeros(1, np.int32)
+        )
+        self.nseg = len(terms)
+        self.seg_start = cp.asarray(start)
+        self.seg_m = cp.asarray(np.asarray(m, dtype=np.int32))
+        self.seg_soff = cp.asarray(np.asarray(soff, dtype=np.int32))
+        self.seg_poff = cp.asarray(poff[:-1].astype(np.int32))
+        self.seg_field = cp.asarray(
+            np.asarray([_FIELD[t[0]] for t in terms], dtype=np.int32)
+        )
+        self.seg_avg = cp.asarray(
+            np.asarray([t[2] is not None for t in terms], dtype=np.int32)
+        )
+        self.seg_toff = cp.asarray(np.asarray([t[3] for t in terms], dtype=float))
+        self.T = tname(solver.E.array.dtype)
+        for mon in self.monitors:
+            mon._dft_batch = self
+
+    def update(self, solver, t, step=None, add=0):
+        """Accumulate the fields after the step started at time t."""
+        if self.total == 0:
+            return
+        launch(
+            "dft_phase", self.nph, np.int32(self.nph), self.ph_seg, self.ph_f,
+            self.seg_toff, self.freqs, np.float64(_C1.real), np.float64(_C1.imag),
+            np.float64(solver.dt), np.float64(t), step, np.int64(add), self.ph,
+        )  # fmt: skip
+        launch(
+            f"dft_acc<{self.T}>", self.total, np.int64(self.total),
+            np.int32(self.nseg), self.seg_start, self.seg_m, self.seg_soff,
+            self.seg_poff, self.seg_field, self.seg_avg, self.ia, self.ib,
+            self.ph, solver.E.array, solver.H.array, solver.J.array, self.buf,
+        )  # fmt: skip
+
+
+def monitor_update(monitor, solver, t):
+    """
+    Fused `update` of a DFT, flux or mode monitor on a fused GPU solver.
+
+    Returns False if the monitor type is not supported (the caller then runs
+    its unfused update). A monitor that belongs to a multi-monitor batch is
+    updated by that batch's owner, not here.
+    """
+    batch = getattr(monitor, "_dft_batch", None)
+    if batch is None:
+        if monitor_terms(monitor, solver) is None:
+            return False
+        batch = DFTBatch([monitor], solver)
+    if len(batch.monitors) != 1:
+        raise RuntimeError("Monitor is part of a DFTBatch; update the batch.")
+    batch.update(solver, t)
+    return True
