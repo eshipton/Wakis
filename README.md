@@ -144,14 +144,14 @@ FIT on any polygon mesh with an orthogonal dual: squares in the bulk and triangl
 </tr>
 </table>
 
-#### In progress: Cartesian subgridding &nbsp;·&nbsp; `wakis.subgrid`
+#### Cartesian subgridding: provably stable nested patches, cheapest on dielectrics &nbsp;·&nbsp; `wakis.subgrid`
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/subgrid_cost_to_target.png" width="600" alt="Unknowns and work to reach 2 % and 1 % RMS error for graded Cartesian, graded triangle and subgrid arms, TM and TE"></td>
+<td width="55%"><img src="docs/img/subgrid_mesh.png" width="600" alt="Nested 2:1 Cartesian patches around the cylinder, with hanging nodes at the patch interfaces"></td>
 <td>
 
-Nested 2:1 Cartesian patches. The fine-to-coarse restriction is the exact transpose of the prolongation, so the scheme conserves energy (drift 2×10<sup>-15</sup> over 10<sup>5</sup> steps) and its interface reflection is second order. Mie cylinder at 1 % RMS (TM) and equal global Δt: the compact subgrid arm needs **2.1× fewer unknowns than graded Cartesian** in the same compact domain, and **1.38× fewer than the best triangle arm** (graded triangles + radial PML). TE at 1 % awaits the longer-window rerun. The exact adjoint covers the lossless core only (not yet PML, ADE or source). The plasmonic B2/B3 runs are in the shared results store; their write-up is pending. Branch `feature/subgridding`.
+Nested 2:1/3:1 Cartesian patches (auto-balanced quadtree). The fine-to-coarse restriction is the exact transpose of the prolongation with a row-sum-lumped mass, so energy is conserved exactly (drift ≤ 4e-15 over 10<sup>5</sup> steps), the scheme is stable iff dt < 2/√λ<sub>max</sub>, the interface reflection is second order, and the core step passes the dot-product adjoint test (1e-13). A non-transposed restriction blows up by 10<sup>12</sup>. **B1 Mie cylinder at 1 % RMS, equal global Δt: 175k (TM) / 164k (TE) unknowns vs 240k / 245k for graded triangles + PML and 362k / 347k for compact graded Cartesian** (1.5–1.7× and 2.3–2.4× less work). The local time stepping above plugs in unchanged. **Limits:** on curved metal in TE (B2) convergence drops to first order and triangles stay 4–5× cheaper; on B3 dimer gaps it does not reach 5 % (best 5.0–8.6 %); local time stepping with the Rakić Au/Ag poles fails the stability check at the coarse step. 2D only (3D octree plan in the physics guide). Code on `main`, [studies/mie-cylinder-subgrid](studies/mie-cylinder-subgrid), [studies/subgrid-benchmarks](studies/subgrid-benchmarks).
 
 </td>
 </tr>
