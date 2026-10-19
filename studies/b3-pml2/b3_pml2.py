@@ -36,9 +36,26 @@ FINAL = dict()  # filled after the diagnostic phase
 LADDER = [20 * NM / q for q in (5, 7, 10, 14, 20, 28, 40)]
 
 
+VARIANTS2 = {
+    "n10": dict(n_pml=10),
+    "n20": dict(n_pml=20),
+    "n40": dict(n_pml=40),
+    "n80": dict(n_pml=80),
+    "d80n20": dict(n_pml=20, pml_d=80 * NM),
+    "d120n30": dict(n_pml=30, pml_d=120 * NM),
+}
+VARIANTS.update(VARIANTS2)
+
+
 def tasks(phase):
+    if phase == "diag2":  # boundary influence on enh: |enh(variant) - enh(n80)|
+        return [("B3-g5", v, h) for h in (1e-9 / 1.4, 0.5 * NM) for v in VARIANTS2]
     if phase == "diag":
-        return [("B3-g5", v, h) for h in DIAG_H for v in VARIANTS]
+        return [
+            ("B3-g5", v, h)
+            for h in DIAG_H
+            for v in ("base", "pml20", "r200", "ppw40", "pml20-half")
+        ]
     out = []
     for case in ("B3-g5", "B3-g10", "B3-g2"):
         lad = LADDER if case != "B3-g2" else [h for h in LADDER if h <= 1.0e-9 + 1e-15]
@@ -60,7 +77,7 @@ def run_task(case_name, variant, h):
     case = get_case(case_name)
     arm = arm_for(variant)
     rec = dict(case=case_name, arm=arm.name, variant=variant, resolution=h,
-               config={k: getattr(arm, k) for k in ("n_pml", "pml_dr", "r_pml", "ppw_out", "pml", "ratio")})  # fmt: skip
+               config={k: getattr(arm, k) for k in ("n_pml", "pml_dr", "pml_d", "r_pml", "ppw_out", "pml", "ratio")})  # fmt: skip
     t0 = time.time()
     try:
         res = arm.run(case, h)

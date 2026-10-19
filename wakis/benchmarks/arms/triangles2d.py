@@ -54,12 +54,15 @@ class Triangles2DArm(Arm):
 
     def __init__(self, graded=True, growth=1.2, ppw_out=20, ratio=4.0, n_pml=10, cfl=0.95,
                  hodge="voronoi", ladder=None, name=None, lts=None, pml=None,
-                 pml_dr=1.0, r_pml=None, gap_patch=False):  # fmt: skip
+                 pml_dr=1.0, r_pml=None, gap_patch=False, pml_d=None):  # fmt: skip
         """
         pml : dict, optional
             Extra `UnstructuredFIT2D` PML options (order, R, kappa_max, alpha).
         pml_dr : float
             Radial spacing of the PML rings in units of h_out.
+        pml_d : float, optional
+            PML thickness [m] fixed in physical units (ring spacing pml_d /
+            n_pml, overrides pml_dr).
         r_pml : float, optional
             PML start radius [m] (default: the case's absorber radius).
         gap_patch : bool
@@ -72,6 +75,7 @@ class Triangles2DArm(Arm):
         self.pml_dr = pml_dr
         self.r_pml = r_pml
         self.gap_patch = gap_patch
+        self.pml_d = pml_d
         self.graded = graded
         self.growth = growth
         self.ppw_out = ppw_out
@@ -142,7 +146,7 @@ class Triangles2DArm(Arm):
             max(h, min(self.ratio * h, lam_host / self.ppw_out)) if self.graded else h
         )
         r0 = max(self.r_pml or case.r_absorber, max(case.circles) + 2 * h_out)
-        dr = self.pml_dr * h_out
+        dr = self.pml_d / self.n_pml if self.pml_d else self.pml_dr * h_out
         mesh = cluster_mesh(
             case.cylinders, h, h_out, r0, growth=self.growth,
             pml_layers=self.n_pml, pml_dr=dr,
