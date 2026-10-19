@@ -89,6 +89,11 @@ The values are log-log interpolations between runs. "Unknowns" counts free nodes
 
 The single-run spot timings scatter by about ±40 %, so treat the time ratios as indicative and the work ratios as the measurement.
 
+**DFT-window check (3000 fs).** A high-Q TE resonance near x ≈ 6.4 is not fully rung down within the shared 1000 fs window. That sets an error floor of about 0.87 % in TE and 0.14 % in TM; this was found by the high-order agent. The compact subgrid arms were therefore rerun with a 3000 fs window (`data/t3000/`):
+- TM is unchanged. The unknowns to 1 % are 176k vs 175k, and with LTS 88k vs 88k.
+- TE improves near and below 1 %. Res 40 goes from 0.61 % to 0.45 %, and with LTS from 0.50 % to 0.32 %. The unknowns to reach 1 % drop from 164k to 146k, and with LTS from 105k to 93k.
+- The baselines above were all run at 1000 fs and share the same floor. The TE ratios at 1 % are therefore comparisons at equal window. With converged windows the TE 1 % numbers of all arms would fall by roughly 10–15 %.
+
 **With local time stepping (p = 2).** The steps halve, and the error at equal mesh also halves (see the caveat below). At 1 %, sg-compact-lts needs 88k unknowns (TM) and 1.4×10⁹ unknown-steps, and runs in 16 s. That is 8× less work than tri-graded-pml at global Δt and 33× less wall time than cart-graded-compact. The fair LTS-to-LTS comparison uses the triangle LTS study (branch `feature/unstructured-lts`, res ≤ 20 only). At TM res 20 compact:
 - tri-graded-compact with LTS: 92k unknowns, 14 454 steps, 1.14 %, 32 s;
 - sg-compact-lts: 82k unknowns, 13 838 steps, 1.09 %, 14 s.
