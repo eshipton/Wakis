@@ -63,7 +63,7 @@ def tasks(phase):
     return out
 
 
-def run_tasks(mine, outdir):
+def run_tasks(mine, outdir, publish=False, machine=None):
     from wakis.benchmarks import get_case, run, save_record
 
     A = arms()
@@ -72,7 +72,13 @@ def run_tasks(mine, outdir):
         case = get_case(case_name)
         rec = run(case, A[arm_name], h)
         tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"
+        if os.environ.get("WAKIS_COMMIT"):
+            rec["commit"] = os.environ["WAKIS_COMMIT"]
         save_record(rec, Path(outdir) / f"{tag}.json")
+        if publish:
+            from wakis.benchmarks.results import publish as pub
+
+            pub(rec, machine=machine)
         m = rec.get("metrics", {})
         msg = rec.get("error") or " ".join(
             f"{k}={m[k]:.4g}"
@@ -92,6 +98,12 @@ def main():
     ap.add_argument("--nshards", type=int, default=1)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--only", nargs="*")
+    ap.add_argument(
+        "--publish",
+        action="store_true",
+        help="also upload every record to wakis.benchmarks.results.ROOT",
+    )
+    ap.add_argument("--machine", default=None)
     a = ap.parse_args()
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     tl = tasks(a.phase)
@@ -111,7 +123,7 @@ def main():
         ]
     else:
         mine = tl[a.shard :: a.nshards]
-    run_tasks(mine, a.outdir or DATA / a.phase)
+    run_tasks(mine, a.outdir or DATA / a.phase, a.publish, a.machine)
 
 
 if __name__ == "__main__":
