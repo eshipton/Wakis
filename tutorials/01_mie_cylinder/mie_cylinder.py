@@ -205,10 +205,10 @@ print(
 )
 
 
-def savefig(fig, name):
+def savefig(fig, name, dpi=None):
     """Save a figure in figures/ (small PNG) and return the path."""
     path = FIG_DIR / name
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", dpi=dpi)
     return path
 
 
@@ -848,7 +848,7 @@ DATA_DIR.mkdir(exist_ok=True)
 # at the box faces.
 
 # %%
-fig, axes = plt.subplots(4, 3, figsize=(13, 16))
+fig, axes = plt.subplots(4, 3, figsize=(13, 16), dpi=80)
 for r, pol in enumerate(("TM", "TE")):
     run = runs[pol]
     boxes = {"tfsf": run["src"].box_bounds(),
@@ -871,7 +871,7 @@ fig.suptitle(
     y=1.0,
 )
 fig.tight_layout()
-savefig(fig, "fields_xy.png")
+savefig(fig, "fields_xy.png", dpi=80)
 plt.show()
 
 # %% [markdown]
@@ -912,7 +912,7 @@ if "movie" in runs["TM"]:
     boxes = {"tfsf": run["src"].box_bounds()}
     gif = wv.save_animation(
         run["movie"], str(FIG_DIR / "cylinder_movie.gif"), boxes=boxes,
-        surface=((0, 0, 0), A_CYL), max_frames=80, fps=12, dpi=70,
+        surface=((0, 0, 0), A_CYL), max_frames=60, fps=10, dpi=60,
         title="TM: Ez(z=0)",
     )  # fmt: skip
     print("movie:", gif, f"{os.path.getsize(gif) / 1e6:.2f} MB")
@@ -1031,7 +1031,7 @@ if study:
                 if not rs:
                     continue
                 pts = np.array([band_error(r, x_hi) for r in rs])
-                ax.loglog(pts[:, 0], pts[:, 1], st["marker"] + "-", color=st["color"],
+                ax.loglog(pts[:, 0], pts[:, 1], marker=st["marker"], color=st["color"],
                           label=names[model], ms=5,
                           ls="--" if model == "tensor" else "-")  # fmt: skip
             cpw = np.array([3.0, 60.0])

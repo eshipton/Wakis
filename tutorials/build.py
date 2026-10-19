@@ -62,9 +62,14 @@ def _strip_outputs(nb):
                     "application/vnd.jupyter.widget-view+json", None
                 )
             elif o.get("output_type") == "stream":
-                # tqdm progress bars: keep the last line of carriage returns
+                # tqdm progress bars: keep the last line of carriage returns;
+                # drop VTK logger noise
                 text = o.get("text", "")
-                o["text"] = "\n".join(line.split("\r")[-1] for line in text.split("\n"))
+                lines = [line.split("\r")[-1] for line in text.split("\n")]
+                lines = [ln for ln in lines if "WARN|" not in ln]
+                o["text"] = "\n".join(lines)
+                if not o["text"].strip():
+                    continue
             kept.append(o)
         cell["outputs"] = kept
     return nb

@@ -179,6 +179,12 @@ def setup_rendering(notebook_backend="static", force_off_screen=None):
         notes.append(_start_xvfb())
     elif headless:
         notes.append("no display: VTK falls back to OSMesa/EGL if available")
+    try:  # VTK's C++ logger writes warnings (e.g. "Failed to load Xcursor") to stderr
+        from vtkmodules.vtkCommonCore import vtkLogger
+
+        vtkLogger.SetStderrVerbosity(vtkLogger.VERBOSITY_ERROR)
+    except Exception:  # pragma: no cover
+        pass
     off = force_off_screen
     if off is None:
         off = headless or _in_notebook() or bool(os.environ.get("WAKIS_OFF_SCREEN"))
