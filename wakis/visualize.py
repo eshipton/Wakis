@@ -48,6 +48,8 @@ __all__ = [
     "edge_permittivity",
     "field_slice",
     "plot_field_slice",
+    "plot_material_plane",
+    "plot_field_plane",
     "plot_isosurfaces",
     "SliceRecorder",
     "save_animation",
@@ -202,6 +204,8 @@ def plot_scene(
     show_grid=False,
     camera=None,
     off_screen=None,
+    azimuth=35.0,
+    elevation=25.0,
 ):
     """
     3D view of the simulation set-up: solids, boxes and planes.
@@ -216,8 +220,9 @@ def plot_scene(
         dict(color=..., label=...). Names matching a `BOX_STYLES` key use that
         style by default.
     planes : dict, optional
-        ``{name: (center, normal_axis, size)}`` drawn as opaque-ish rectangles
-        (e.g. the source entry plane).
+        ``{name: (center, normal_axis, (size_u, size_v))}`` drawn as
+        translucent rectangles (e.g. the source entry plane); the sizes are
+        along the two other axes in xyz order.
     cpml : tuple of 2 bounds, optional
         (outer, inner) bounds of the absorbing shell, drawn as a wireframe.
     solids : bool, optional
@@ -228,7 +233,9 @@ def plot_scene(
     show_grid : bool, optional
         Add the grid lines on the outer domain faces.
     camera : list or str, optional
-        PyVista camera position.
+        PyVista camera position (overrides azimuth/elevation).
+    azimuth, elevation : float, optional
+        Camera rotation from the default x-z view [deg].
     off_screen : bool, optional
         Default True (render to an image with `save_plotter`); False opens
         an interactive window with ``pl.show()``.
@@ -292,12 +299,11 @@ def plot_scene(
         normal = np.zeros(3)
         normal[a] = 1
         u, v = [i for i in range(3) if i != a]
-        rect = pv.Plane(
-            center=np.array(center) * scale,
-            direction=normal,
-            i_size=size[0] * scale,
-            j_size=size[1] * scale,
-        )
+        # size = extents along the two in-plane axes, in xyz order
+        b = np.repeat(np.array(center, float), 2).reshape(3, 2)
+        b[u] += np.array([-0.5, 0.5]) * size[0]
+        b[v] += np.array([-0.5, 0.5]) * size[1]
+        rect = pv.Box(bounds=tuple(b.ravel() * scale))
         pl.add_mesh(rect, color=style["color"], opacity=0.5)
         label_pts.append(np.array(center) * scale)
         labels.append(style.get("label", name))
@@ -323,8 +329,8 @@ def plot_scene(
         pl.camera_position = camera
     else:
         pl.camera_position = "xz"
-        pl.camera.azimuth = 35
-        pl.camera.elevation = 25
+        pl.camera.azimuth = azimuth
+        pl.camera.elevation = elevation
         pl.camera.zoom(1.1)
     return pl
 
@@ -409,9 +415,10 @@ def plot_material_slice(
     title=None,
     line_width=None,
     colorbar=True,
+    components="in-plane",
 ):
     """
-    Draw the in-plane E edges of a slice coloured by their permittivity.
+    Draw the E edges of a slice coloured by their permittivity.
 
     Each primary-grid edge in the plane is drawn as a coloured segment, so a
     staircased surface shows edges switching from vacuum to the solid, while
@@ -434,10 +441,14 @@ def plot_material_slice(
         Colour range of eps_r (default 1 to the maximum).
     line_width : float, optional
         Edge segment width in points (default scales with the zoom).
+    components : {'in-plane', 'normal', 'all'}
+        Which edges to draw: the two in-plane components as segments, the
+        component normal to the slice as squares on the nodes (e.g. E_z of a
+        2D TM simulation in the z = 0 plane), or both.
 
     Returns
     -------
-    matplotlib.collections.LineCollection
+    matplotlib.collections.Collection
         The coloured edges (use it for a shared colour bar).
     """
     scale = 1.0 / LENGTH_UNITS[length_unit]
@@ -448,7 +459,8 @@ def plot_material_slice(
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 5))
     segs, vals = [], []
-    for comp in (u, v):
+    in_plane = (u, v) if components in ("in-plane", "all") else ()
+    for comp in in_plane:
         eps_r, (cu, cv) = edge_permittivity(solver, _AXES[comp], axis, position)
         hu, hv = (
             (np.diff(nodes[u]).min() / 2, 0)
@@ -464,7 +476,19 @@ def plot_material_slice(
         p1 = np.stack([UU[ok] + hu, VV[ok] + hv], -1) * scale
         segs.append(np.stack([p0, p1], 1))
         vals.append(eps_r[ok])
-    segs, vals = np.concatenate(segs), np.concatenate(vals)
+    normal = None
+    if components in ("normal", "all"):
+        eps_n, (cu, cv) = edge_permittivity(solver, _AXES[a], axis, position)
+        UU, VV = np.meshgrid(cu, cv, indexing="ij")
+        ok = np.isfinite(eps_n)
+        if window is not None:
+            ok &= (UU >= window[0]) & (UU <= window[1])
+            ok &= (VV >= window[2]) & (VV <= window[3])
+        normal = (UU[ok] * scale, VV[ok] * scale, eps_n[ok])
+    if in_plane:
+        segs, vals = np.concatenate(segs), np.concatenate(vals)
+    else:
+        segs, vals = np.zeros((0, 2, 2)), normal[2]
     if vmax is None:
         vmax = max(np.nanmax(vals), vmin + 1e-9)
     if line_width is None:
@@ -491,9 +515,15 @@ def plot_material_slice(
             zorder=0,
         )
     lc = LineCollection(segs, cmap=cmap, linewidths=line_width, capstyle="butt")
-    lc.set_array(vals)
-    lc.set_clim(vmin, vmax)
-    ax.add_collection(lc)
+    if in_plane:
+        lc.set_array(vals)
+        lc.set_clim(vmin, vmax)
+        ax.add_collection(lc)
+    if normal is not None:
+        lc = ax.scatter(
+            normal[0], normal[1], c=normal[2], cmap=cmap, vmin=vmin, vmax=vmax,
+            marker="s", s=(1.6 * line_width) ** 2, edgecolors="none", zorder=2,
+        )  # fmt: skip
     if surface is not None:
         if isinstance(surface, str):
             surface = solver.grid.read_stl(surface)
@@ -692,6 +722,230 @@ def plot_field_slice(
         ax.set_title(title)
     plt.colorbar(im, ax=ax, label=colorbar_label or "", shrink=0.85)
     return im
+
+
+def _cell_bounds(centers):
+    """Cell boundaries around sorted sample centres (half spacing at the ends)."""
+    c = np.asarray(centers, float)
+    mid = 0.5 * (c[:-1] + c[1:])
+    return np.concatenate([[c[0] - (mid[0] - c[0])], mid, [c[-1] + (c[-1] - mid[-1])]])
+
+
+def plot_material_plane(
+    solver,
+    component="z",
+    axis="z",
+    position=0.0,
+    window=None,
+    surfaces=None,
+    vmin=1.0,
+    vmax=None,
+    cmap="viridis",
+    length_unit="um",
+    window_size=(800, 760),
+    title=None,
+    off_screen=None,
+):
+    """
+    PyVista top view of the permittivity seen by one E component on a grid
+    plane: each edge is drawn as the dual cell around it, with the primary
+    grid lines and the true surface section on top.
+
+    For a 2D TM simulation (E_z) use ``component='z', axis='z'``: every node
+    of the plane carries one E_z edge. For TE use 'x' or 'y'.
+
+    Parameters
+    ----------
+    solver : SolverFIT3D
+    component : {'x', 'y', 'z'}
+        E-edge direction.
+    axis, position : str, float
+        Normal and position of the plane [m].
+    window : tuple (umin, umax, vmin, vmax), optional
+        Zoom window [m].
+    surfaces : list of pyvista.PolyData, optional
+        Solids whose section is overlaid.
+
+    Returns
+    -------
+    pyvista.Plotter
+    """
+    scale = 1.0 / LENGTH_UNITS[length_unit]
+    a = _AXES.index(axis)
+    u, v = [i for i in range(3) if i != a]
+    eps, (cu, cv) = edge_permittivity(solver, component, axis, position)
+    ok_u, ok_v = np.isfinite(cu), np.isfinite(cv)
+    cu, cv, eps = cu[ok_u], cv[ok_v], eps[np.ix_(ok_u, ok_v)]
+    if window is not None:
+        su = (cu >= window[0]) & (cu <= window[1])
+        sv = (cv >= window[2]) & (cv <= window[3])
+        cu, cv, eps = cu[su], cv[sv], eps[np.ix_(su, sv)]
+    bu, bv = _cell_bounds(cu) * scale, _cell_bounds(cv) * scale
+    UU, VV = np.meshgrid(bu, bv, indexing="ij")
+    pts = [None, None, None]
+    pts[u], pts[v] = UU, VV
+    pts[a] = np.full_like(UU, position * scale)
+    cells = pv.StructuredGrid(*pts)
+    cells.cell_data["eps_r"] = eps.ravel(order="F")
+    off = True if off_screen is None else off_screen
+    pl = pv.Plotter(off_screen=off, window_size=list(window_size))
+    pl.set_background("white")
+    pl.add_mesh(
+        cells,
+        scalars="eps_r",
+        cmap=cmap,
+        clim=[vmin, vmax or float(np.nanmax(eps))],
+        scalar_bar_args=dict(title=f"eps_r of E{component} edges", color="black"),
+    )
+    # Primary grid lines inside the window
+    nodes = _nodes(solver)
+    nu, nv = nodes[u], nodes[v]
+    lo_u, hi_u = bu[0] / scale, bu[-1] / scale
+    lo_v, hi_v = bv[0] / scale, bv[-1] / scale
+    nu = nu[(nu >= lo_u) & (nu <= hi_u)]
+    nv = nv[(nv >= lo_v) & (nv <= hi_v)]
+    lift = np.zeros(3)
+    lift[a] = 1e-3 * (hi_u - lo_u) * scale
+    segs = []
+    for x in nu:
+        for y0, y1 in ((lo_v, hi_v),):
+            p0, p1 = np.zeros(3), np.zeros(3)
+            p0[u], p0[v], p1[u], p1[v] = x, y0, x, y1
+            segs += [p0, p1]
+    for y in nv:
+        p0, p1 = np.zeros(3), np.zeros(3)
+        p0[u], p0[v], p1[u], p1[v] = lo_u, y, hi_u, y
+        segs += [p0, p1]
+    if segs:
+        segs = np.array(segs) * scale
+        segs[:, a] = position * scale
+        pl.add_mesh(pv.line_segments_from_points(segs + lift), color="white",
+                    line_width=1, opacity=0.6)  # fmt: skip
+    normal = np.zeros(3)
+    normal[a] = 1.0
+    origin = np.zeros(3)
+    origin[a] = position * scale
+    for surf in surfaces or []:
+        cut = surf.scale(scale, inplace=False).slice(normal=normal, origin=origin)
+        if cut.n_points:
+            pl.add_mesh(
+                cut.translate(2 * lift, inplace=False), color="red", line_width=4
+            )
+    if title:
+        pl.add_text(title, font_size=14, color="black")
+    pl.view_vector(normal, viewup=np.eye(3)[v])
+    pl.reset_camera(bounds=cells.bounds)
+    return pl
+
+
+def plot_field_plane(
+    values,
+    coords,
+    axis="z",
+    position=0.0,
+    kind="real",
+    surfaces=None,
+    boxes=None,
+    cmap=None,
+    vmax=None,
+    warp=0.0,
+    length_unit="um",
+    window_size=(900, 760),
+    scalar_label="field",
+    off_screen=None,
+    camera=None,
+):
+    """
+    PyVista rendering of a 2D field slice as a coloured plane (optionally
+    warped into a relief), with the solids' sections and the set-up boxes.
+
+    Parameters
+    ----------
+    values : ndarray (nu, nv)
+        Complex or real samples (as returned by `field_slice`).
+    coords : tuple of 2 ndarray
+        Coordinates along the in-plane axes [m].
+    axis, position : str, float
+        Normal and position of the plane [m].
+    kind : {'real', 'abs'}
+        Re(F) with a diverging map, or |F| with a perceptual map.
+    surfaces : list of pyvista.PolyData, optional
+        Solids; their section with the plane is drawn as a black line.
+    boxes : dict, optional
+        As in `plot_scene`, drawn as outlines on the plane.
+    warp : float, optional
+        Relief height of the maximum value as a fraction of the plane
+        width (0: flat).
+    camera : list or str, optional
+        PyVista camera position (default: oblique for a relief, top view
+        otherwise).
+
+    Returns
+    -------
+    pyvista.Plotter
+    """
+    scale = 1.0 / LENGTH_UNITS[length_unit]
+    a = _AXES.index(axis)
+    u, v = [i for i in range(3) if i != a]
+    data = np.real(values) if kind == "real" else np.abs(values)
+    vmax = vmax or float(np.nanmax(np.abs(data)))
+    cu, cv = (np.asarray(c) * scale for c in coords)
+    UU, VV = np.meshgrid(cu, cv, indexing="ij")
+    pts = [None, None, None]
+    pts[u], pts[v] = UU, VV
+    pts[a] = np.full_like(UU, position * scale)
+    sg = pv.StructuredGrid(*pts)
+    sg.point_data[scalar_label] = data.ravel(order="F")
+    width = max(cu.max() - cu.min(), cv.max() - cv.min())
+    if warp:
+        normal = np.zeros(3)
+        normal[a] = 1.0
+        sg.point_data["_w"] = np.clip(data.ravel(order="F"), -vmax, vmax)
+        sg = sg.warp_by_scalar("_w", factor=warp * width / vmax, normal=normal)
+    off = True if off_screen is None else off_screen
+    pl = pv.Plotter(off_screen=off, window_size=list(window_size))
+    pl.set_background("white")
+    clim = [-vmax, vmax] if kind == "real" else [0, vmax]
+    pl.add_mesh(
+        sg,
+        scalars=scalar_label,
+        cmap=cmap or ("RdBu_r" if kind == "real" else "magma"),
+        clim=clim,
+        smooth_shading=True,
+        scalar_bar_args=dict(title=scalar_label, color="black", vertical=True),
+    )
+    origin = np.zeros(3)
+    origin[a] = position * scale
+    normal = np.zeros(3)
+    normal[a] = 1.0
+    lift = normal * (1e-3 * width + (warp * width if warp else 0))
+    for surf in surfaces or []:
+        cut = surf.scale(scale, inplace=False).slice(normal=normal, origin=origin)
+        if cut.n_points:
+            pl.add_mesh(cut.translate(lift, inplace=False), color="black", line_width=3)
+    for name, spec in (boxes or {}).items():
+        bounds, style = _split_spec(spec)
+        if style is None:
+            style = BOX_STYLES.get(name, dict(color="#CC79A7"))
+        elif isinstance(style, str):
+            style = BOX_STYLES[style]
+        b = np.array(bounds, float).reshape(3, 2) * scale
+        corners = []
+        for cu_, cv_ in ((0, 0), (1, 0), (1, 1), (0, 1), (0, 0)):
+            p = origin.copy()
+            p[u], p[v] = b[u, cu_], b[v, cv_]
+            corners.append(p + lift)
+        pl.add_mesh(pv.lines_from_points(np.array(corners)), color=style["color"],
+                    line_width=3)  # fmt: skip
+    if camera is not None:
+        pl.camera_position = camera
+    elif warp:  # oblique view from above the plane
+        pl.view_vector(normal - 1.3 * np.eye(3)[v] - 0.5 * np.eye(3)[u], viewup=normal)
+    else:
+        pl.view_vector(normal, viewup=np.eye(3)[v])
+        pl.camera.zoom(1.25)
+    pl.add_axes()
+    return pl
 
 
 def plot_isosurfaces(

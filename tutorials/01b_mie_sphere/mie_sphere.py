@@ -12,9 +12,9 @@
 # ---
 
 # %% [markdown]
-# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_scattering/mie_scattering.ipynb)
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)
 #
-# <h1 align="center"><b>Tutorial 01 &mdash; Mie scattering of a lossless dielectric sphere</b></h1>
+# <h1 align="center"><b>Tutorial 01b &mdash; Mie scattering of a lossless dielectric sphere</b></h1>
 # <h3 align="center">Total-field/scattered-field plane waves in the Finite Integration Technique</h3>
 # <p align="center"><i>Erik Shipton &middot; Wakis tutorial series (fork of CERN's Wakis)</i></p>
 #
@@ -86,8 +86,8 @@
 # (`uv pip install -e .` in the repository) and run this file as a script:
 #
 # ```bash
-# python tutorials/01_mie_scattering/mie_scattering.py --quick        # CPU, a few minutes
-# python tutorials/01_mie_scattering/mie_scattering.py --full --gpu   # GPU, accurate
+# python tutorials/01b_mie_sphere/mie_sphere.py --quick        # CPU, a few minutes
+# python tutorials/01b_mie_sphere/mie_sphere.py --full --gpu   # GPU, accurate
 # ```
 
 # %%
@@ -162,7 +162,9 @@ def gpu_name():
 
 
 IN_NOTEBOOK = "ipykernel" in sys.modules
-parser = argparse.ArgumentParser(description="Wakis tutorial 01: Mie scattering")
+parser = argparse.ArgumentParser(
+    description="Wakis tutorial 01b: Mie scattering by a sphere"
+)
 mode = parser.add_mutually_exclusive_group()
 mode.add_argument("--quick", action="store_true", help="CPU, ~0.5 Mcells, minutes")
 mode.add_argument("--full", action="store_true", help="GPU, ~6 Mcells, accurate")
@@ -912,7 +914,7 @@ plt.show()
 # $\lambda/n = 0.314$ µm), the hardest-resolved length in the problem, and
 # against the measured run time (an equal-cost comparison). The runs are
 # independent, so they are launched in parallel
-# (`tutorials/01_mie_scattering/convergence_study.py`); the notebook loads
+# (`tutorials/study.py`); the notebook loads
 # their committed summary from `data/convergence.json`.
 
 
@@ -925,7 +927,7 @@ def load_convergence():
         import urllib.request
 
         url = ("https://raw.githubusercontent.com/eshipton/Wakis/main/tutorials/"
-               "01_mie_scattering/data/convergence.json")  # fmt: skip
+               "01b_mie_sphere/data/convergence.json")  # fmt: skip
         with urllib.request.urlopen(url, timeout=20) as f:
             return json.loads(f.read())
     except Exception as err:
