@@ -1,0 +1,15 @@
+{
+ "tri-mesh UnstructuredFIT2D TM": 12.562568902501031,
+ "tri-mesh PolygonFIT2D TM": 10.835677372839909,
+ "hybrid-disk PolygonFIT2D TM": 9.800371704676667,
+ "hybrid PolygonFIT2D TM": 14.54639792640348,
+ "voronoi PolygonFIT2D TM": 7.232222450735324,
+ "tri-mesh UnstructuredFIT2D TE": 17.39913515238211,
+ "tri-mesh PolygonFIT2D TE": 15.076669008146535,
+ "hybrid-disk PolygonFIT2D TE": 12.795881266047372,
+ "hybrid PolygonFIT2D TE": 18.362510946328907,
+ "voronoi PolygonFIT2D TE": 10.345095386947365,
+ "squares stencil": 4.537402656249985,
+ "squares sparse": 6.300203374999924,
+ "cpu": "Intel(R) Xeon(R) CPU @ 2.80GHz"
+}

@@ -85,6 +85,17 @@ class UnstructuredFIT2D:
         radius) and on the primal-edge fluxes (edge-midpoint radius), both
         with semi-implicit (Crank-Nicolson) averaging. Combine with
         ``bc='abc'`` or ``'pec'`` at the outer boundary.
+    lts : int or dict, optional
+        Two-level local time stepping (`wakis.unstructured.lts`): ``p`` or
+        ``dict(p=2, nu=0.15, theta=1.0, rho_max=0.98, dt=None, fine=None)``.
+        The coarse step is at most ``dt`` (default p times the global step)
+        and the nodes whose local CFL limit is below it (F) take p
+        stabilized Chebyshev substeps. The partition is checked at setup:
+        the stability ratio ``rho = dt/2 sqrt(lambda_max)`` of the LTS
+        operator (Lanczos) must be below ``rho_max``; otherwise F grows or
+        dt shrinks (`wakis.unstructured.lts.build_lts`; see ``lts_info``).
+        Lorentz/Drude media allowed (poles frozen over the coarse step);
+        not for Debye poles, lossy fine nodes or fine nodes in the PML.
     pml : dict, optional
         Radial complex-coordinate-stretched CFS-PML on the annulus
         r0 < r < r1, ``dict(r0=..., r1=..., order=3, R=1e-8, sigma_max=None,
@@ -93,8 +104,9 @@ class UnstructuredFIT2D:
         rings with a common node count, isosceles-trapezoid cells), so that
         primal edges are radial (spokes) or azimuthal (chords) and the
         stretched, anisotropic material stays diagonal. See `_PML` for the
-        formulation. Requires ``bc='pec'`` or ``'pmc'`` behind the layer and a
-        lossless, non-dispersive domain.
+        formulation. Requires ``bc='pec'`` or ``'pmc'`` behind the layer; the
+        layer itself must be lossless, non-dispersive background, while
+        conductive or dispersive scatterers inside are allowed.
 
     Attributes
     ----------
@@ -114,6 +126,7 @@ class UnstructuredFIT2D:
         dt=None,
         cfl=0.95,
         absorber=None,
+        lts=None,
         pml=None,
     ):
         if mesh.dim != 2:
@@ -214,6 +227,9 @@ class UnstructuredFIT2D:
         self.dt = cfl * self.dt_max if dt is None else float(dt)
         h = mesh.edge_length.mean()
         self.courant = self.dt * np.sqrt(lam) / 2
+        self.lts = None
+        if lts is not None:
+            self._setup_lts(lts, lam)
         if dispersive:
             check_dispersive_stability(
                 [m for m, _ in dispersive], self.dt, self.courant
@@ -226,13 +242,61 @@ class UnstructuredFIT2D:
             self._init_te_dispersive(He, L, live)
         self._pml = None
         if pml is not None:
-            if bc == "abc" or np.any(sigma > 0) or absorber is not None:
-                raise ValueError("pml: use bc='pec'/'pmc', lossless media, no absorber")
+            if bc == "abc" or absorber is not None:
+                raise ValueError(
+                    "pml: use bc='pec'/'pmc' behind the layer, no absorber"
+                )
             self._pml = _PML(self, pml)
+            if self.lts is not None:
+                self._check_lts_pml()
         self.sources = []
         self.plane_wave = None
         self.recorder = Recorder()
         self.reset()
+
+    # ------------------------------------------------------------ LTS
+    def _setup_lts(self, opts, lam):
+        """Partition the nodes and build the stabilized two-level LTS."""
+        from .lts import build_lts
+
+        opts = {"p": opts} if np.isscalar(opts) else dict(opts)
+        if any(m.debye_poles for m, _ in self.dispersive):
+            # Debye poles change the instantaneous capacitance (beta terms)
+            raise NotImplementedError("LTS with Debye poles")
+        # Lorentz/Drude poles: the ADE polarization depends on past fields
+        # only, so it acts as a force frozen over the coarse step and the
+        # LTS operator is built from the eps_inf Hodge (self.K). Stability of
+        # the coupled system is verified numerically (tests), not proved.
+        p = int(opts.pop("p", 2))
+        dt_c = opts.pop("dt", None) or p * self.dt
+        lts, info = build_lts(self.K, self.mass, dt_c, p=p, lam=lam, **opts)
+        G_F = self.G[:, lts.F].tocsr()
+        if np.any(self.loss[lts.F] != 0) or np.any(
+            self.edge_rate[np.unique(G_F.nonzero()[0])] != 0
+        ):
+            raise ValueError("LTS: lossy fine nodes (ABC / absorber) unsupported")
+        self.lts, self.lts_info, self._G_F = lts, info, G_F
+        self.dt = info["dt"]
+        self.dt_fine = self.dt / p
+        self.courant = info["rho"]
+
+    def _check_lts_pml(self):
+        """F, its buffer and the edges they touch must lie outside the PML."""
+        pml, lts = self._pml, self.lts
+        near = np.r_[lts.F, lts.C]
+        edges = np.unique(self._G_F.nonzero()[0])
+        if (
+            np.isin(near, pml.nodes).any()
+            or np.isin(edges, np.r_[pml.spokes, pml.chords]).any()
+        ):
+            raise ValueError("LTS: fine nodes inside or next to the PML layer")
+
+    def _grad(self, u):
+        """``G r(X) u``: the flux-update gradient (``G u`` without LTS)."""
+        g = self.G @ u
+        if self.lts is not None:
+            g += self._G_F @ self.lts.correction(u)
+        return g
 
     # ------------------------------------------------------------ TE series ADE
     def _init_te_dispersive(self, He, L, live):
@@ -575,10 +639,10 @@ class UnstructuredFIT2D:
             return
         if self.pol == "TM":
             if self._absorber is None:
-                self.v -= dt * (self.G @ self.u)
+                self.v -= dt * self._grad(self.u)
             else:
                 ce = 0.5 * dt * self.edge_rate
-                self.v = ((1 - ce) * self.v - dt * (self.G @ self.u)) / (1 + ce)
+                self.v = ((1 - ce) * self.v - dt * self._grad(self.u)) / (1 + ce)
             r = self.G.T @ (self.stiff * self.v) - node_src
             self.u = self._update.step(self.u, r)
         else:
@@ -590,10 +654,10 @@ class UnstructuredFIT2D:
             b = self.mass + self.loss * dt / 2
             self.u = (a * self.u - dt * (self.G.T @ vol + node_src)) / b
             if self._absorber is None:
-                self.v += dt * (self.G @ self.u - edge_src)
+                self.v += dt * (self._grad(self.u) - edge_src)
             else:
                 ce = 0.5 * dt * self.edge_rate
-                self.v = ((1 - ce) * self.v + dt * (self.G @ self.u - edge_src)) / (
+                self.v = ((1 - ce) * self.v + dt * (self._grad(self.u) - edge_src)) / (
                     1 + ce
                 )
             self._te_ade_step(self.v)
@@ -811,38 +875,45 @@ class _PML:
 
     def reset(self):
         s = self.solver
-        self.q = s.mass * s.u if hasattr(s, "u") else np.zeros(s.free.size)
+        u = s.u if hasattr(s, "u") else np.zeros(s.free.size)
+        self.q = (s.mass * u)[self.nodes]  # D_z / B_z flux of the PML nodes
         for f in (self.fn1, self.fn2, self.fs, self.fc):
             f.reset()
 
-    def _edges(self, v):
-        w = v.copy()
-        w[self.spokes] = self.fs(v[self.spokes])
-        w[self.chords] = self.fc(v[self.chords])
-        return w
-
-    def _nodes(self):
-        s = self.solver
-        u = self.q / s.mass
-        u[self.nodes] = self.fn2(self.fn1(u[self.nodes]))
+    def _filter_nodes(self, u):
+        mass = self.solver.mass[self.nodes]
+        u[self.nodes] = self.fn2(self.fn1(self.q / mass))
         return u
 
     def step(self, node_src, edge_src):
+        """
+        One leapfrog step. Outside the layer the update is the solver's own
+        (capacitive update with conductivity / dispersive ADEs in TM, series
+        dispersive voltages in TE); inside it the node flux q is accumulated
+        and the field is the stretched-medium filter of q / M.
+        """
         s, dt = self.solver, self.solver.dt
+        sp, ch = self.spokes, self.chords
         if s.pol == "TM":
-            s.v -= dt * (s.G @ s.u)
-            r = s.G.T @ (s.stiff * self._edges(s.v)) - node_src
-            self.q += dt * r
-            u = self._nodes()
-            if s.dispersive:  # interior ADE nodes (the layer is non-dispersive)
-                u_in = s._update.step(s.u, r)
-                u[self.inner] = u_in[self.inner]
-            s.u = u
+            s.v -= dt * s._grad(s.u)  # G u, plus the LTS correction if any
+            h = s.stiff * s.v
+            h[sp] = s.stiff[sp] * self.fs(s.v[sp])
+            h[ch] = s.stiff[ch] * self.fc(s.v[ch])
+            r = s.G.T @ h - node_src
+            u = s._update.step(s.u, r)
+            self.q += dt * r[self.nodes]
+            s.u = self._filter_nodes(u)
         else:
-            vol = s._te_voltage(self._edges(s.v))
+            vol = s._te_voltage(s.v)
+            vol[sp] = s.stiff[sp] * self.fs(s.v[sp])
+            vol[ch] = s.stiff[ch] * self.fc(s.v[ch])
             if s.plane_wave is not None:
                 vol -= s._pw_values(s.n)
-            self.q -= dt * (s.G.T @ vol + node_src)
-            s.u = self._nodes()
-            s.v += dt * (s.G @ s.u - edge_src)
+            r = -(s.G.T @ vol + node_src)
+            a = s.mass - s.loss * dt / 2
+            b = s.mass + s.loss * dt / 2
+            u = (a * s.u + dt * r) / b
+            self.q += dt * r[self.nodes]
+            s.u = self._filter_nodes(u)
+            s.v += dt * (s._grad(s.u) - edge_src)  # G u, plus the LTS correction
             s._te_ade_step(s.v)

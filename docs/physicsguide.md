@@ -1493,6 +1493,155 @@ Checks (`tests/test_bench_thin_wire.py`):
 - **Metal–host averaging.** Subpixel averaging of a metal and its host produces mixed-cell permittivities that cross zero or have poles inside the band. Conformal Cartesian TE then converges non-monotonically: B2-Au-TE gives 2.3 %, 2.0 %, 2.9 % and 1.3 % Q_ext NRMS at h = 4, 2.9, 2 and 1.4 nm.
 - **Legacy STL staircase on wires.** The legacy staircase marks every cell touched by the solid (any of its 8 nodes inside) and zeroes the cell's lower-corner edges. This thickens a wire by up to a cell, biased towards −x/−y. At the coarsest B4 rung (h_t = a) the dipole resonance is 6.2 % low, against 1.2 % with edge-wise assignment (`conformal='edges'` in the B4 arm, as `wakis.templates`). Currently `conformal='pec'` with PEC-only STL solids keeps these legacy zeros in `ieps` (−6.0 %; fix pending on `fix/conformal-pec-legacy-mask`).
 
+### ⏱️ Local time stepping (LTS) for the unstructured leapfrog
+
+**Why.** An explicit leapfrog is stable for $\Delta t < 2/\sqrt{\lambda_\max(\mathbf M^{-1}\mathbf K)}$, and $\lambda_\max$ is set by the smallest (or most strongly coupled, or least massive) cells. On a graded mesh the whole domain then pays the time step of the finest region. In the graded Mie-cylinder meshes (`studies/mie-cylinder-graded`) the size field keeps equal cells per *local* wavelength: $h_\text{in}$ inside the $n=2$ cylinder, $h_\text{out}=2h_\text{in}$ in the far vacuum. Both regions have the same local step limit, about twice that of the thin vacuum band of size $h_\text{in}$ around the cylinder, which alone sets the global $\Delta t$. `UnstructuredFIT2D(..., lts=2)` lets that band take two half steps while everything else takes one step of $2\Delta t$.
+
+**Second-order form.** Eliminating the edge fluxes from the 2D leapfrog (TM: $\mathbf v^{n+1/2}=\mathbf v^{n-1/2}-\Delta t\,\mathbf G\mathbf y^n$, $\mathbf M(\mathbf y^{n+1}-\mathbf y^n)=\Delta t\,\mathbf G^T\mathbf S\mathbf v^{n+1/2}$; TE is the same with the roles of the half and integer levels swapped) gives
+
+$$
+\mathbf y^{n+1}-2\mathbf y^n+\mathbf y^{n-1} = -\Delta t^2\,\mathbf A\,\mathbf y^n,\qquad \mathbf A=\mathbf M^{-1}\mathbf K,\quad \mathbf K=\mathbf G^T\mathbf S\mathbf G,
+$$
+
+with $\mathbf y$ = $E_z$ (TM) or $H_z$ (TE) on the free nodes, $\mathbf M$ the diagonal node mass and $\mathbf S$ the diagonal edge stiffness (`solver.stiff`).
+
+**Diaz–Grote LTS** [Diaz & Grote, 2009]. Let $\mathbf P$ be the diagonal 0/1 projector on the fine nodes $F$. Exactly, $\mathbf y(t_n+\tau)+\mathbf y(t_n-\tau)$ is twice the even solution $\mathbf w(\tau)$ of $\mathbf w''=-\mathbf A\mathbf y$. Freeze the coarse part of the force at $t_n$ and keep the fine part live:
+
+$$
+\mathbf w''(\tau) = -\mathbf A(\mathbf I-\mathbf P)\,\mathbf y^n-\mathbf A\mathbf P\,\mathbf w(\tau),\qquad \mathbf w(0)=\mathbf y^n,\ \mathbf w'(0)=0,\qquad \mathbf y^{n+1}=-\mathbf y^{n-1}+2\mathbf w(\Delta t).
+$$
+
+Integrating $\mathbf w$ with $p$ leapfrog substeps of $\Delta t/p$ gives $\mathbf w(\Delta t)=\mathbf y^n-\tfrac{\Delta t^2}{2}\mathbf A\,r(\mathbf X)\,\mathbf y^n$ with $\mathbf X=\Delta t^2\mathbf P\mathbf A$, i.e.
+
+$$
+\boxed{\ \mathbf y^{n+1}-2\mathbf y^n+\mathbf y^{n-1}=-\Delta t^2\,\mathbf A\,r(\mathbf X)\,\mathbf y^n\ }
+$$
+
+with $r$ a polynomial of degree $p-1$, $r(0)=1$. The p-substep leapfrog for a scalar mode $\lambda$ inside $F$ gives $x\,r(x) = 2-2T_p(1-x/2p^2)$, $x=\Delta t^2\lambda$ ($T_p$ the Chebyshev polynomial). For $p=2$: $r(\mathbf X)=\mathbf I-\mathbf X/16$, one extra product with the rows of $\mathbf A$ on $F$ per coarse step.
+
+**Stabilization.** For $\nu=0$, $x\,r(x)$ reaches the stability bound 4 at interior points ($x=8$ for $p=2$): modes inside $F$ at mid-spectrum are marginal, and coupled modes near the interface can exceed the bound. This is the instability "at certain time steps" that Grote, Michel & Sauter [2021] remove with a stabilized LTS. Wakis uses the damped Chebyshev polynomial of leapfrog–Chebyshev schemes [Carle, Hochbruck & Sturm, 2020] (Wakis choice of the exact form; the form used in [Grote, Michel & Sauter, 2021] was not checked against it):
+
+$$
+x\,r(x) = 2-2\,\frac{T_p(\delta-\beta x)}{T_p(\delta)},\qquad \delta=1+\frac{\nu}{p^2},\quad \beta=\frac{T_p(\delta)}{2T_p'(\delta)} .
+$$
+
+$\beta$ gives $r(0)=1$ (consistency). For $\delta-\beta x\in[-1,\delta]$, $0\le x\,r(x)\le 2+2/T_p(\delta)<4$, so modes inside $F$ keep a margin; the range is $x\le 2(1+\delta)T_p'(\delta)/T_p(\delta)$ ($16\to 14.94$ for $p=2$, $\nu=0.15$, i.e. the fine substep may use 96.6 % of its own limit). Default $\nu=0.15$: $\max x\,r(x)=3.735$, $\rho\ge0.966$. $r(\mathbf X)\mathbf y$ is evaluated with the three-term recurrence of the divided difference $D_k(s)=(T_k(\delta)-T_k(s))/(\delta-s)$: $\mathbf d_{k+1}=2\delta\mathbf d_k-2\beta\mathbf X\mathbf d_k+2T_k(\delta)\mathbf y-\mathbf d_{k-1}$, $\mathbf d_0=0$, $\mathbf d_1=\mathbf y$, $r(\mathbf X)\mathbf y=2\beta\,\mathbf d_p/T_p(\delta)$. Off $F$, $\mathbf X\mathbf d=0$, so $\mathbf d_k=D_k(\delta)\mathbf y$ in closed form and only the rows of $\mathbf A$ on $F$ (columns: $F$ and its first neighbours, the implicit buffer) are touched: $p-1$ sparse products of size $\approx 7|F|$.
+
+**Energy and stability (proof).** $\mathbf K\,r(\mathbf X)=\sum_j c_j\Delta t^{2j}\mathbf K(\mathbf P\mathbf M^{-1}\mathbf K)^j$, and $\big(\mathbf K(\mathbf P\mathbf M^{-1}\mathbf K)^j\big)^T=(\mathbf K\mathbf M^{-1}\mathbf P)^j\mathbf K=\mathbf K(\mathbf P\mathbf M^{-1}\mathbf K)^j$ because $\mathbf P$ and $\mathbf M$ are diagonal. So $\mathbf K_p=\mathbf K\,r(\mathbf X)$ is symmetric, and the LTS is an ordinary leapfrog with the symmetric stiffness $\mathbf K_p$. Multiplying the scheme by $(\mathbf y^{n+1}-\mathbf y^{n-1})^T\mathbf M$ telescopes into the conserved quantity
+
+$$
+E^{n+1/2}=\tfrac12\Big[\mathbf w^T\big(\mathbf M-\tfrac{\Delta t^2}{4}\mathbf K_p\big)\mathbf w+\bar{\mathbf y}^T\mathbf K_p\bar{\mathbf y}\Big],\qquad \mathbf w=\frac{\mathbf y^{n+1}-\mathbf y^n}{\Delta t},\ \bar{\mathbf y}=\frac{\mathbf y^{n+1}+\mathbf y^n}{2}
+$$
+
+(`lts.modified_energy`; the energy of the time-differentiated field). It is a norm, and the scheme is stable, iff $\mathbf K_p\succeq0$ and $\rho=\tfrac{\Delta t}{2}\sqrt{\lambda_\max(\mathbf M^{-1}\mathbf K_p)}<1$. Wakis does not rely on an a-priori CFL bound: at setup it computes $\rho$ by Lanczos on the symmetric $\mathbf M^{-1/2}\mathbf K_p\mathbf M^{-1/2}$ (`lts.stability_ratio`) and accepts the partition only if $\rho\le\rho_\max=0.98$. Leapfrog dispersion then holds mode by mode, $\sin(\omega\Delta t/2)=\tfrac{\Delta t}2\sqrt{\lambda(\mathbf M^{-1}\mathbf K_p)}$, which is how the tests compare LTS and global eigenfrequencies.
+
+**First-order form.** The solver keeps its (node field, edge flux) state; only the flux update changes: TM $\mathbf v\mathrel{-}=\Delta t\,\mathbf G\,r(\mathbf X)\mathbf u$, TE $\mathbf v\mathrel{+}=\Delta t\,(\mathbf G\,r(\mathbf X)\mathbf u-\dots)$, implemented as $\mathbf G\mathbf u+\mathbf G_{:,F}\,\delta\mathbf u_F$ (`_grad`). Sources, the scattered-field plane wave, node losses and monitors are unchanged and run at the coarse step.
+
+**Partition.** Node rates $g_n=\sum_m|K_{nm}|/M_n$ (Gershgorin: $\max_n g_n\ge\lambda_\max$) are scaled so that $\max g_n=\lambda_\max$; node $n$ is fine if $\Delta t^2 g_n>4$. The node-local estimate cannot resolve a few % of CFL margin, so a repair loop follows: while $\rho>\rho_\max$, if the top Lanczos mode lives mostly on $F$ and its buffer, $F$ grows by one layer of neighbours; otherwise (a mode of the coarse region itself) $\Delta t$ shrinks by $0.995\,\rho_\max/\rho$. On the graded Mie meshes this gives $\Delta t=1.94$–$1.97\times$ the global step with 5–23 % of the nodes fine (`solver.lts_info`).
+
+**Adjoint.** The step is linear and $r(\mathbf X)^T=r(\mathbf X^T)$, $\mathbf X^T=\Delta t^2\mathbf K\mathbf M^{-1}\mathbf P$, evaluated with the same recurrence (`LocalTimeStepping.apply_T`). `lts.linear_step` / `lts.linear_step_T` are the source-free step and its exact transpose; the dot-product test holds to $10^{-15}$ (tests).
+
+**Cost.** Per coarse step: one full step plus $p-1$ products with $\mathbf A_{F,:}$ and one with $\mathbf G_{:,F}$. With fine fraction $f$ and $\Delta t_\text{LTS}=s\,\Delta t$, the work relative to global stepping is about $(1+c\,(p-1)f)/s$ with $c\approx0.5$.
+
+**Cartesian graded grids (`SolverFIT3D`, not implemented).** The same polynomial applies to $\mathbf e''=-\mathbf M_\varepsilon^{-1}\mathbf C^T\mathbf M_\nu\mathbf C\,\mathbf e$ with $\mathbf P$ on edges: $\mathbf h^{n+1/2}=\mathbf h^{n-1/2}-\Delta t\,\mathbf M_\mu^{-1}\mathbf C\,r(\mathbf X)\mathbf e^n$. Needed: the rows of $\mathbf M_\varepsilon^{-1}\mathbf C^T\mathbf M_\nu\mathbf C$ on $F$ as a sparse matrix (CuPy for GPU), the Lanczos check on the 3D operator, CPML and dispersive/conformal ADE edges kept outside $F$ (or stepped at the fine rate), and the MPI halo extended by one layer for the extra product. On a rectilinear grid the local limit depends on $1/\Delta x^2+1/\Delta y^2+1/\Delta z^2$, so every cell on a fine strip is fine: only ~22 % of the cells of the graded Mie grid are coarse in both directions, so LTS would save about 10 % there. The larger Cartesian use case is conformal small cells (cut cells with small $\tilde A_e$), which LTS would place in $F$ instead of reducing the global step.
+
+**Tetrahedra (`UnstructuredFIT3D`, not implemented).** With the diagonal Voronoi Hodge the construction is identical on edges ($\mathbf K=\mathbf C^T\mathbf M_\nu\mathbf C$). Two complications: the massless-edge Schur complement makes $\mathbf K$ non-local (each product needs the sparse LU solve), so $F$ must avoid edges coupled to massless edges or the Schur complement must be restricted to $F$; and the Whitney Hodge has a non-diagonal $\mathbf M_\varepsilon$, for which $\mathbf P\mathbf M^{-1}$ is not local and $\mathbf K_p$ loses its symmetry unless the mass is lumped on $F$.
+
+**Limits & failure modes.**
+- Two levels only: $p$ is any integer, but a single coarse/fine ratio. Meshes with a continuum of sizes would need the multi-level recursion [Diaz & Grote, 2015].
+- Dispersive media: Lorentz and Drude poles are allowed, Debye poles are refused. With these poles the polarization at $t^{n+1}$ depends only on past fields, so in the second-order form it is a force frozen over the coarse step, like a source. The LTS operator is built from the $\varepsilon_\infty$ Hodge. The poles are stepped at the coarse $\Delta t$, so $\omega_p\Delta t$ must pass the von Neumann check of `DispersiveMaterial.is_stable` at the LTS ratio $\rho$; the solver enforces this. For Rakić gold at $h = 4$ nm this allows $p = 2$ but not $p = 3$. There is no energy proof for the coupled system. It is checked numerically instead: the dense one-step amplification matrix (fields and ADE states) of a Drude rod inside $F$ has spectral radius $1 + O(10^{-7})$ (round-off, the same as global stepping) for TE and TM, lossless and lossy. Removing the fine substeps gives 1.8. A too-fast pole is refused.
+- Lossy nodes or edges in $F$ (ABC, absorber) are refused at setup, since the loss is not part of the energy proof. The radial CFS-PML is allowed only if $F$, its buffer and their edges lie outside the layer (checked); the PML layer itself steps at the coarse $\Delta t$.
+- Sources inside $F$ are sampled at the coarse step: second order, but a pulse with spectral content near the fine Nyquist rate is aliased. Monitors also record at the coarse rate.
+- The coarse step is $\le p\times$ the global step and the fine substep uses at most 96.6 % ($\nu=0.15$, $p=2$) of its limit; $\rho\ge0.966$ is the floor set by the damped polynomial.
+- The time error in the coarse region grows with the larger step (about $(\Delta t_\text{LTS}/\Delta t)^2\approx4\times$ the global time error in the cavity tests, still second order). Where the spatial error dominates (the Mie meshes) the total error is unchanged; where the time error dominates, LTS loses accuracy.
+- $\nu=0$ (the unstabilized Diaz–Grote polynomial) gives $\rho=1$ to Lanczos precision: the modified energy is still conserved, but it is no longer a norm and the field energy beats up to ~300× (study figure b).
+- The partition is node based. A 2D triangle mesh with a few slivers produces small isolated $F$ sets; the repair loop handles their interface modes but each Lanczos check costs a few hundred operator products at setup.
+
+References:
+- J. Diaz and M. J. Grote, "Energy conserving explicit local time stepping for second-order wave equations", *SIAM J. Sci. Comput.* **31**(3), 1985–2014 (2009), doi:10.1137/070709414.
+- M. J. Grote and T. Mitkova, "Explicit local time-stepping methods for Maxwell's equations", *J. Comput. Appl. Math.* **234**(12), 3283–3302 (2010), doi:10.1016/j.cam.2010.04.028.
+- M. J. Grote and T. Mitkova, "High-order explicit local time-stepping methods for damped wave equations", *J. Comput. Appl. Math.* **239**, 270–289 (2013), doi:10.1016/j.cam.2012.09.046.
+- J. Diaz and M. J. Grote, "Multi-level explicit local time-stepping methods for second-order wave equations", *Comput. Methods Appl. Mech. Engrg.* **291**, 240–265 (2015), doi:10.1016/j.cma.2015.03.027.
+- M. J. Grote, M. Mehlin and S. A. Sauter, "Convergence analysis of energy conserving explicit local time-stepping methods for the wave equation", *SIAM J. Numer. Anal.* **56**(2), 994–1021 (2018), doi:10.1137/17M1121925.
+- M. J. Grote, S. Michel and S. A. Sauter, "Stabilized leapfrog based local time-stepping method for the wave equation", *Math. Comp.* **90**(332), 2603–2643 (2021), doi:10.1090/mcom/3650.
+- C. Carle, M. Hochbruck and A. Sturm, "On leapfrog-Chebyshev schemes", *SIAM J. Numer. Anal.* **58**(4), 2404–2433 (2020), doi:10.1137/18M1209453.
+- Related lead (not read; authors per search result only): "Local time-integration for Friedrichs' systems", arXiv:2503.05282 (2025), leapfrog-based local integration with a scaled and shifted Chebyshev filter, covering Maxwell.
+- S. Piperno, "Symplectic local time-stepping in non-dissipative DGTD methods applied to wave propagation problems", *ESAIM: M2AN* **40**(5), 815–841 (2006), doi:10.1051/m2an:2006035.
+- E. Montseny, S. Pernet, X. Ferrières and G. Cohen, "Dissipative terms and local time-stepping improvements in a spatial high order Discontinuous Galerkin scheme for the time-domain Maxwell's equations", *J. Comput. Phys.* **227**(14), 6795–6820 (2008), doi:10.1016/j.jcp.2008.03.032.
+- R. A. Chilton and R. Lee, "Conservative and provably stable FDTD subgridding", *IEEE Trans. Antennas Propag.* **55**(9), 2537–2549 (2007), doi:10.1109/TAP.2007.904092.
+- J.-P. Bérenger, "A Huygens subgridding for the FDTD method", *IEEE Trans. Antennas Propag.* **54**(12), 3797–3804 (2006), doi:10.1109/TAP.2006.886519.
+
+### 🔷 Polygonal FIT: hybrid square/triangle meshes and Voronoi cells
+
+`wakis.unstructured.PolyMesh` and `PolygonFIT2D` extend the 2D unstructured FIT from triangles to cells that are arbitrary simple polygons: triangles, rectangles, Voronoi polygons, or any mix of them. In 2D every unknown lives on a node or an edge (TM: $E_z$ on nodes and $b_e$ through edges; TE: $H_z$ on nodes and $d_e$ through edges), so the topology needs only the edge–node incidence $\mathbf G$. Cells enter only through the Hodge (material) operators.
+
+**Dual geometry.** Each cell $C$ has a dual point $c_C$. The dual edge of primal edge $e$ inside $C$ is the segment from $c_C$ to its foot $x_{e,C}$ on the line of $e$, with signed length $h_{e,C}$ (positive when $c_C$ is on the cell side). The foot position $s_{e,C}$ is measured along $e$ from its first node. The dual cell of node $n$ inside $C$ is the quadrilateral $(n, x_{e_1,C}, c_C, x_{e_2,C})$, of area $A_{n,C}=\tfrac12\sum_{e\ni n} s^{(n)}_{e,C}\,h_{e,C}$. These pieces tile each cell exactly, for any choice of $c_C$.
+
+**Orthogonality.** The diagonal Hodge is consistent when the dual edge crosses $e$ as one straight segment perpendicular to it, i.e. when both cells of $e$ have the same foot ($s_{e,C_1}=s_{e,C_2}$). `PolyMesh.orthogonality_defect` $=|s_{e,C_1}-s_{e,C_2}|/L_e$ measures this. It is zero for:
+- Delaunay triangles with circumcentres (feet at the edge midpoints): `PolygonFIT2D` then reproduces `UnstructuredFIT2D` to round-off (test);
+- rectangles with their centres (midpoints);
+- **hybrids of the two**: the shared edges between a square and a triangle have midpoint feet on both sides. So a square bulk joined to a Delaunay triangle patch is orthogonal everywhere, with no special interface treatment;
+- **Voronoi polygons with their generators as dual points.** Neighbouring generators are mirror images across the shared Voronoi edge, so the dual edge is the Delaunay edge. Its foot is the midpoint of the generator pair, not of the Voronoi edge. Then $h_{e,C}=|p_i-p_j|/2>0$ and the node masses are Delaunay triangle areas, positive for every point set. The well-centredness condition of the triangle-primal mesh never arises.
+
+**Maxwell grid equations** (per unit length, $w_C=1/(\mu_0\mu_C)$ for TM and $1/(\varepsilon_0\varepsilon_C)$ for TE):
+
+$$
+\dot{\mathbf b}=-\mathbf G\mathbf e_z,\quad \mathbf M_\varepsilon\dot{\mathbf e}_z=\mathbf G^T\mathbf S\,\mathbf b-\mathbf i;\qquad
+\dot{\mathbf d}=\mathbf G\mathbf h_z-\mathbf i_e,\quad \mathbf M_\mu\dot{\mathbf h}_z=-\mathbf G^T\mathbf S\,\mathbf d-\mathbf k,
+$$
+
+with diagonal node masses $M_\varepsilon[n]=\varepsilon_0\sum_C\varepsilon_C A_{n,C}$ (and $M_\mu$ likewise). Only the node mass is inverted, so the edge Hodge $\mathbf S$ only needs to be symmetric positive (semi)definite, not diagonal:
+- `hodge="orthogonal"`: $S_{ee}=\sum_C w_C h_{e,C}/L_e$ (series average along the dual edge, the exact interface condition for the normal flux);
+- `hodge="mfd"` (any convex polygons): the mimetic inner product $\mathbf M_C=\mathbf R\mathbf R^T/|C|+\gamma(\mathbf I-\mathbf N(\mathbf N^T\mathbf N)^{-1}\mathbf N^T)$ per cell, with $N_e=L_e\mathbf n_e^T$, $R_e=(\mathbf m_e-\mathbf x_C)^T$ and $\gamma=\operatorname{tr}(\mathbf R\mathbf R^T)/(|C|\,n_C)$. Since $\mathbf R^T\mathbf N=|C|\mathbf I$ (divergence theorem), $\mathbf M_C\mathbf N=\mathbf R$: the matrix is exact for uniform fields and SPD [Brezzi, Lipnikov & Shashkov, 2005]. The node masses then use the median dual (centroid and edge midpoints). On triangles $\mathbf G\mathbf u$ is uniform in each cell, so the stability term never acts and the stiffness equals the cotangent one; only the masses differ (test). On randomly distorted quadrilaterals (where the diagonal Hodge is rejected as non-orthogonal) cavity modes converge at second order. This is the same family as the geometric/cell-method constitutive matrices of the Codecasa–Specogna–Trevisan group (see `notes/lit/fit_meshing_sota.md`); it is not new.
+
+The leapfrog is stable for $\Delta t<2/\sqrt{\lambda_\max(\mathbf M^{-1}\mathbf G^T\mathbf S\mathbf G)}$, with $\lambda_\max$ from Lanczos.
+
+**Hybrid meshes** (`hybrid_circles_mesh`). Axis-aligned squares fill the bulk ($h_\text{out}$) and the inside of every circular scatterer ($h_\text{in}$). Squares are removed where they come within the patch distance of an interface, leaving a staircase-bounded hole. The hole is filled with a Delaunay triangle patch built from the square nodes on the staircase (fixed), an area-preserving ring on each interface and staggered graded rings. Ring points stay outside the circumcircles of the squares, which keeps every staircase edge a Delaunay edge (verified by an exact area check). A few Laplacian sweeps then smooth the free points. Optionally (`gap_cells`), narrow gaps are refined: $h\le\max(h_\min,w/n_\text{gap})$ with $w$ the local gap width. With `outer_radius`, the domain is a disk with a thin $h_\text{out}$ triangle annulus at the boundary, so that a first-order ABC can be used on the same domain as the triangle arms. This is the mesh-level analogue of the hybrid FDTD/FETD methods [Rylander & Bondeson, 2000]. Here the junction needs no special treatment: the same FIT operators apply on both sides and the dual is orthogonal across the shared edges. A related FE construction that reduces to FIT on rectangles is [Egger & Radu, arXiv:2209.10432].
+
+**Voronoi-primal meshes** (`voronoi_disk_mesh`). The generators sit on staggered rings, which gives hexagonal cells, and on a hexagonal lattice in the core. Each interface circle is straddled by a mirrored pair of rings at $r_k\mp\delta$ with equal angles. The Voronoi edge of each pair lies on the circle's tangent, so the cells conform to the interface (tangent polygon, area-preserving radius $\rho=r\sqrt{\pi/(n\tan(\pi/n))}$). Mirrored seeding is the idea behind conforming Voronoi meshers such as VoroCrust [Abdelkader et al., 2020]. The outer boundary is a mirrored pair whose outer cells are discarded. Nearly cocircular generators produce very short Voronoi edges with a huge $h/L$, which set the global time step. Options:
+- `lloyd`: Lloyd sweeps of the free generators;
+- `collapse`: edges shorter than `collapse`$\cdot|p_i-p_j|$ are collapsed to a point. This is the $L\to0$ limit of their stiffness (equal node values). It moves the merged vertex by at most $L/2$ and leaves the neighbouring edges orthogonal only to $O$(`collapse`). The study uses `collapse=0.1`, `lloyd=10`; 6–17 % of the edges then have an orthogonality defect.
+
+**Absorbing boundaries.** First-order Silver–Müller on boundary nodes. On a square region of squares there is also a split-field (Berenger) PML: the node field splits as $u=u_x+u_y$, where $u_x$ collects the contributions of the $x$-directed edges ($G_x^T$) and is damped by $s_x(x)$, and the flux of an $x$-directed edge is damped by the same $s_x$ (matched, $\sigma/\varepsilon=\sigma^*/\mu$). The profile is cubic, with $s_\max=(m+1)\,c\ln(1/R_0)/(2d)$. On a point-source pulse, a 12-cell layer reflects 0.4 % of the direct signal; without the magnetic (edge) loss it reflects 24 % (test).
+
+**Plane-wave source** (scattered field, as `UnstructuredFIT2D.add_plane_wave`). TM uses the node current $(M_\varepsilon-\varepsilon_0\varepsilon_bA_n)\,\dot E_\text{inc}$. TE puts $-(1-\varepsilon_b/\varepsilon_C)\,\mathbf g_{e,C}\cdot\mathbf E_\text{inc}$ on each dual-edge segment of a scatterer cell. Here $\mathbf g_{e,C}$ is the segment vector, $c_C\to$ foot ($=h_{e,C}\mathbf n_e$, orthogonal Hodge) or centroid $\to$ midpoint (the vector that makes the mimetic matrix exact, $\mathbf M_C\mathbf N=\mathbf R$). **Dispersive and lossy scatterers** (new): the auxiliary equations must see the total field.
+- In TM the nodes touching such cells are advanced in total-field form ($u_\text{tot}=u_s+E_\text{inc}$, with the background current $\varepsilon_0\varepsilon_bA_n\dot E_\text{inc}$).
+- In TE each dispersive segment is driven by $D_n=d_e/L_e+\varepsilon_0\varepsilon_bE_\text{inc}\cdot\mathbf n_e$ and contributes $h_{e,C}(E_{e,C}-E_\text{inc}\cdot\mathbf n_e)$.
+
+A Drude cylinder ($\varepsilon_\infty=4$, $\omega_p=1.37\times10^{16}$ s⁻¹, $a=30$ nm) reproduces the series $Q_\text{sca}$ to 1.4 % RMS (TE, through the localized surface plasmon resonance (LSPR) at 320 nm) and 0.8 % (TM). Dropping the $\varepsilon_b E_\text{inc}$ term gives > 10 % error (test).
+
+**Interpolation.** Probes use mean-value coordinates [Floater, 2003], which reproduce linear fields on any polygon. Points within round-off of an edge use the 1D edge weights; this avoids a 0/0 that turned results into NaN on the cloud machines.
+
+**Numerical dispersion at equal unknowns** (`studies/mie-cylinder-polyfit/dispersion.py`, Bloch analysis, derived). The table gives the worst-angle phase-velocity error at 3000 unknowns per $\lambda^2$:
+
+| lattice (unknowns per area) | semi-discrete | leapfrog at 0.95 CFL | $c\Delta t/h$ |
+|---|---|---|---|
+| squares, $3/h^2$ | $1.6\times10^{-3}$ | $9.0\times10^{-4}$ | 0.672 |
+| equilateral triangles, $4.62/h^2$ | $1.9\times10^{-3}$ | $3.8\times10^{-4}$ | 0.776 |
+| regular hexagons (Voronoi primal), $1.92/h^2$ | $7.9\times10^{-4}$ | $3.2\times10^{-4}$ | 0.672 |
+
+At equal unknowns the honeycomb (hexagonal primal) has half the semi-discrete error of squares or triangles. In the leapfrog, the temporal error partly cancels the spatial one on triangles and hexagons, but less so on squares.
+
+**Mie benchmark** ($n=2$, $x=2$–10, results in `studies/mie-cylinder-polyfit/README.md`): at 1 % RMS Q_sca error, on the same domain (disk + ABC) as graded triangles, the hybrid needs 1.40×/1.34× fewer unknowns and 1.22×/1.13× less work (TM/TE). On the same square + PML domain as graded conformal Cartesian it needs 1.40×/1.25× fewer unknowns and 1.28×/1.06× less work. Its time per unknown-step is 0.73–0.84× that of the triangle solver on the same machine. Against the best triangle baseline (compact disk with radial CFS-PML) it is equal in TM work and 1.14× worse in TE, because the split PML forces a square domain. The Voronoi mesh needs 1.95× fewer unknowns and 1.87× less work than graded triangles in TM, but misses 1 % in TE (1.02 % at res 40). On the plasmonic cases (B2, B3; `studies/benchmark-polygon`) the hybrid matches graded triangles in TE and is cheapest to 0.1 % on the Au TM case. Its gap refinement reaches a 5 % gap-enhancement error on the 2 nm dimer with at least 2.6× fewer unknowns than the triangle baseline's first converged rung.
+
+#### Limits & Failure Modes
+- **Non-orthogonal meshes.** The diagonal Hodge is only consistent on orthogonal pairs, and the solver refuses meshes with defect > `ortho_tol`. The Voronoi arm deliberately overrides this (`ortho_tol=inf`) after edge collapse. The local $O$(`collapse`) inconsistency is the most likely cause of its slower convergence at fine resolution (see the study).
+- **Mimetic Hodge.** The constant $\gamma$ is a choice. On rectangles the mimetic matrix is about 1.7× less accurate than the diagonal Hodge (cavity test), so prefer `orthogonal` whenever the mesh allows it. Dispersive TE needs the orthogonal Hodge. Non-convex cells are not supported, and the median-dual masses can be negative on them.
+- **Global time step.** The hybrid inner squares have $h_\text{in}$, so $\Delta t$ equals that of the graded Cartesian grid. Gap refinement lowers $\Delta t$ for the whole mesh (local time stepping is a separate branch).
+- **PML.** Split-field only, and only on axis-aligned edges (the square bulk). It is not a CFS-PML, so evanescent and grazing waves at low frequency are absorbed less well (a 10-cell layer reflects ≈ 2 % at $x=2$ in the study). Use `bc='pec'` behind it; the ABC loss is not applied on PML nodes.
+- **Mesh generators** handle circles only (any number, including narrow gaps). The Voronoi generator handles concentric circles only. Edge collapse can degenerate a cell when `collapse` > 0.3 (it raises).
+- **Plane wave:** PEC and magnetic scatterers are not supported. Conductivity is supported in TM only (TE: use a Drude pole).
+- **Fast structured path:** not used. A NumPy stencil update on squares costs 3.3–4.5 ns per unknown-step against 4.9–6.3 ns for the sparse incidence update on the same grid (1.4–1.5×, three n2 machines; 1.5× on a laptop). It would apply only to the square part of a hybrid run, beside the source, DFT and PML costs, so the expected gain is ≈ 1.2×. That did not justify a second code path with interface bookkeeping (decision recorded).
+- **Gap refinement:** `gap_cells` fixes the cells across a gap, independent of the bulk h. A convergence ladder must scale it, otherwise the gap error stalls (B3, 2 nm gap: 1.1 % then 2.9 %).
+
+References:
+- T. Rylander and A. Bondeson, "Stable FEM-FDTD hybrid method for Maxwell's equations", *Comput. Phys. Commun.* **125**, 75–82 (2000).
+- H. Egger and B. Radu, "A Yee-like finite element scheme for Maxwell's equations on hybrid grids", arXiv:2209.10432 (2022).
+- F. Brezzi, K. Lipnikov and M. Shashkov, "Convergence of mimetic finite difference methods for diffusion problems on polyhedral meshes", *SIAM J. Numer. Anal.* (2005).
+- M. S. Floater, "Mean value coordinates", *Comput. Aided Geom. Des.* **20**(1), 19–27 (2003).
+- A. Abdelkader et al., "VoroCrust: Voronoi meshing without clipping", *ACM Trans. Graph.* **39**(3) (2020), arXiv:1902.08767.
+- J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
+
 ### Surface impedance boundary condition (SIBC)
 
 When the metal walls are very good conductors and the skin depth is much smaller than the grid spacing, it becomes inefficient (and inaccurate) to resolve the fields inside the conductor volume. Instead of using a volumetric conductivity, Wakis can model such metals with a **Leontovich surface impedance boundary condition (SIBC)** applied only on the surface cells. This can be disabled in the solver by turning `use_sibc=False`

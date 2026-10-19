@@ -28,3 +28,10 @@ wakis.egg-info/
 notes/*
 tmp/*
 *.stl
+
+# Study and docs figures are deliberate deliverables. On case-insensitive file systems (macOS)
+# "*.PNG" above also matches ".png", so re-include them explicitly.
+!studies/**/*.png
+!docs/img/*.png
+!tutorials/**/*.png
+.briefs/
