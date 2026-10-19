@@ -953,7 +953,7 @@ class PrismFIT3D:
         rh, rv = self.curl_t_h(hz, hq)
         r = xp.concatenate([rh.ravel(), rv.ravel()])
         for w, f in self.sources:
-            r -= w * f(t_half)
+            r -= w * float(f(t_half))
         for p in self.ports:
             if p["src"] is not None:
                 p["_vs"] = float(p["src"](t_half))

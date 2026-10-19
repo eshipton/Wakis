@@ -24,6 +24,7 @@ Prism FIT (`PrismMesh`, `PrismFIT3D`): a triangle mesh extruded in z.
   domain long enough that its end reflections arrive after the window;
   s_max = 0 (PEC ends, mutation) is > 10x worse.
 * Dispersive (Drude-filled) cavity: k^2 = k_c^2 + k_p^2 within 1.5 %.
+* GPU (CuPy, skipped without a device): identical probe signals.
 * Lumped port: a resistor closing a small parallel-plate gap; Z_in(f)
   equals R || 1/(i w C) of the plate capacitance within 5 %.
 """
@@ -283,3 +284,28 @@ def test_lumped_port_capacitor():
     assert np.allclose(Z, Zc, rtol=0.05)
     # mutation: the opposite source polarity gives the wrong sign of Z
     assert not np.allclose(-Z, Zc, rtol=0.5)
+
+
+def test_gpu_matches_cpu():
+    """CuPy time stepping (with lateral absorber and z PML) equals the CPU."""
+    pytest.importorskip("cupy")
+    import cupy as cp
+
+    try:
+        cp.cuda.runtime.getDeviceCount()
+    except Exception:  # noqa: BLE001
+        pytest.skip("no CUDA device")
+    m2 = disk_mesh([0.5, A], 0.12)
+    pm = PrismMesh(m2, np.linspace(-0.8, 0.8, 17))
+    sig = []
+    for gpu in (False, True):
+        s = PrismFIT3D(
+            pm, {0: [4.0, 1.0]}, bc_xy="abc", bc_z="pec", dt=2e-11, use_gpu=gpu,
+            absorber_xy=dict(r0=0.7, r1=A, s_max=3 * c / 0.3),
+            pml_z=dict(n_low=3, n_high=3, s_max=4 * c / 0.3),
+        )  # fmt: skip
+        _pulsed(s, 0.4 * c, pos=(0.13, -0.21, 0.07))
+        pr = s.add_probe([[0.2, 0.1, 0.1], [-0.3, 0.2, -0.2]], "y")
+        s.run(600)
+        sig.append(s.probe_signal(pr))
+    assert np.abs(sig[0] - sig[1]).max() < 1e-9 * np.abs(sig[0]).max()
