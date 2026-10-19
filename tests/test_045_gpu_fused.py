@@ -196,3 +196,215 @@ def test_fused_falls_back_without_gpu_support():
     grid = wakis.GridFIT3D(0, 1, 0, 1, 0, 1, 4, 4, 4, verbose=0)
     solver = wakis.SolverFIT3D(grid, fused=True, verbose=0)
     assert not solver.fused
+
+
+# ---------------------------------------------------------------------------
+# Adjoint: exact transpose of the fused step, unchanged gradients
+
+
+def _dot_test(solver, stepper, rng, supports=None):
+    """Relative error of <U x, y> = <x, U^H y> for random states."""
+    xp = stepper.xp
+    keys = list(stepper.zero_state().keys())
+    psi = [k for k in keys if k.startswith("psi")]
+    supports = supports or [(keys, keys)] + ([(psi, keys), (keys, psi)] if psi else [])
+    errs = []
+    for xs, ys in supports:
+
+        def rand(support):
+            out = {}
+            for k, v in stepper.zero_state().items():
+                a = rng.standard_normal(v.shape) * (k in support)
+                if np.iscomplexobj(v):
+                    a = a + 1j * rng.standard_normal(v.shape) * (k in support)
+                out[k] = xp.asarray(a)
+            return out
+
+        x = rand(xs)
+        stepper.set_state(x)
+        solver.one_step()
+        Ux = {k: v.copy() for k, v in stepper.get_state().items()}
+        y = rand(ys)
+        Uty = stepper.step(y)
+        lhs, rhs = stepper.inner(Ux, y), stepper.inner(x, Uty)
+        scale = stepper.inner({k: abs(v) for k, v in Ux.items()},
+                              {k: abs(v) for k, v in y.items()}).real  # fmt: skip
+        errs.append(abs(lhs - rhs) / scale)
+    return max(errs)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_fused_transposed_step(case, gpu_only):
+    """Dot-product test of the fused transposed step (GPU, float64): exact to
+    rounding, also with x or y supported on the CPML psi only."""
+    from wakis.inverse import AdjointStepper
+
+    solver = _solver(case, True)
+    solver.one_step()
+    stepper = AdjointStepper(solver)
+    assert stepper.fused
+    err = _dot_test(solver, stepper, np.random.default_rng(0))
+    assert err < 1e-12, err
+
+
+@pytest.mark.parametrize("target", ["t_val", "pc", "loss"])
+def test_fused_transpose_mutation_fails(target, gpu_only):
+    """A wrong entry of the transposed data breaks the dot-product test."""
+    from wakis.inverse import AdjointStepper
+
+    solver = _solver("cpml-lossy", True)
+    solver.one_step()
+    stepper = AdjointStepper(solver)
+    if target == "t_val":
+        stepper._halves["E"].t_val[7] *= 1.001
+    elif target == "pc":
+        # A copy read by the transposed step only (the forward keeps its own)
+        import copy
+
+        half = copy.copy(stepper._halves["H"])
+        half.pc = half.pc * (1 + 1e-3)
+        stepper._halves["H"] = half
+    else:
+        stepper.loss *= 1 + 1e-6
+    err = _dot_test(solver, stepper, np.random.default_rng(0))
+    assert err > 100 * 1e-12, err  # 100x the tolerance of the exact transpose
+
+
+def _adjoint_sim(fused, Nt=250):
+    from wakis.inverse import AdjointSimulation, MaterialGrid
+
+    def make_solver():
+        grid = wakis.GridFIT3D(-0.15, 0.15, -0.15, 0.15, -0.005, 0.005, 30, 30, 1,
+                               verbose=0)  # fmt: skip
+        return wakis.SolverFIT3D(
+            grid, bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"], n_pml=6, use_gpu=True,
+            fused=fused, verbose=0,
+        )  # fmt: skip
+
+    src = CurrentSource(GaussianSource(F0, 0.5 * F0), component="z",
+                        center=(-0.08, 0.0, 0.0))  # fmt: skip
+    f = np.linspace(2e9, 4e9, 4)
+    monitors = {
+        "probe": wakis.DFTMonitor(f, components=("Ez", "Hy"), center=(0.08, 0, 0),
+                                  size=(0.0, 0.1, 0.0)),  # fmt: skip
+        "flux": wakis.FluxMonitor(f, center=(0.1, 0, 0), size=(0.0, 0.2, np.inf)),
+    }
+    design = MaterialGrid((0.0, 0.0, 0.0), (0.1, 0.1, 0.0), (6, 6, 1), 1.0, 4.0)
+    return AdjointSimulation(make_solver, [src], monitors, design, Nt)
+
+
+def test_fused_adjoint_gradient_unchanged(gpu_only):
+    """Outputs and dF/drho of AdjointSimulation agree between the fused and the
+    CuPy path to round-off (1e-10 relative: ~250 steps of 1e-16 rounding
+    differences in the order of operations, propagated through forward and
+    adjoint runs), and the fused gradient matches a central finite
+    difference of the fused forward run."""
+    rng = np.random.default_rng(3)
+    res = {}
+    for fused in (False, True):
+        sim = _adjoint_sim(fused)
+        rho = np.random.default_rng(0).uniform(size=sim.design.shape)
+        out = sim.forward(rho)
+        G = {k: {c: rng.standard_normal(v.shape) + 1j * rng.standard_normal(v.shape)
+                 for c, v in d.items()} for k, d in out.items()}  # fmt: skip
+        rng = np.random.default_rng(3)
+        res[fused] = (out, sim.vjp(G), G, sim, rho)
+    (o0, g0, G, _, rho), (o1, g1, _, sim, _) = res[False], res[True]
+    for k in o0:
+        for c in o0[k]:
+            assert _close(o1[k][c], o0[k][c], 1e-10), (k, c)
+    assert _close(g1, g0, 1e-10)
+    assert np.max(np.abs(g0)) > 0
+
+    def F(r):
+        o = sim.forward(r)
+        return sum(np.sum(np.real(np.conj(G[k][c]) * o[k][c])) for k in o for c in o[k])
+
+    d = np.zeros_like(rho)
+    d.flat[7] = 1.0
+    h = 1e-4
+    fd = (F(rho + h * d) - F(rho - h * d)) / (2 * h)
+    assert abs(fd - g1.flat[7]) < 1e-5 * np.max(np.abs(g1))
+
+
+# ---------------------------------------------------------------------------
+# CUDA graph loops (emsolve and AdjointSimulation replay captured steps)
+
+
+def _emsolve_run(fused, graphs=True, stop=None, tfsf=False, Nt=260):
+    if tfsf:
+        dx, n = 50e-9, 48
+        h, hz = n / 2 * dx, 2 * dx
+        grid = wakis.GridFIT3D(-h, h, -h, h, -hz, hz, n, n, 4, verbose=0)
+        solver = wakis.SolverFIT3D(
+            grid, bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"], n_pml=8, use_gpu=True,
+            fused=fused, verbose=0,
+        )  # fmt: skip
+        pulse = GaussianSource(frequency=250e12, fwidth=100e12)
+        tf = 10 * dx
+        sources = [wakis.TFSFSource(pulse, center=(0, 0, 0), size=(2 * tf, 2 * tf, None),
+                                    direction="+x", polarization="z")]  # fmt: skip
+        f = np.linspace(150e12, 350e12, 11)
+        monitors = [wakis.FluxMonitor(f, size=(2 * tf + 6 * dx, 2 * tf + 6 * dx, 2 * dx))]
+    else:
+        solver = _solver("cpml-lossy", fused)
+        pulse = GaussianSource(F0, 0.5 * F0)
+        sources = [
+            CurrentSource(pulse, component="z", center=(0.01, -0.02, 0.0)),
+            MagneticCurrentSource(pulse, component="x", center=(-0.03, 0.02, 0.01)),
+        ]
+        f = np.linspace(2e9, 4e9, 7)
+        monitors = [
+            wakis.DFTMonitor(f, components=("Ex", "Hy"), size=(0.1, 0.1, 0.0)),
+            wakis.FluxMonitor(f, size=(0.08, 0.08, 0.08)),
+        ]
+    solver.use_graphs = graphs
+    solver.emsolve(Nt, source=sources, monitors=monitors,
+                   stop_when_energy_decayed=stop)  # fmt: skip
+    out = {"E": solver.E.array.get(), "H": solver.H.array.get()}
+    out["flux"] = monitors[-1].get_flux()
+    if tfsf:
+        out["series"] = sources[0]._series[:, : sources[0]._n_steps].get()
+    return out, solver
+
+
+@pytest.mark.parametrize("tfsf", [False, True], ids=["currents", "tfsf"])
+def test_emsolve_graphs_match(tfsf, gpu_only):
+    """emsolve with CUDA graphs (fused) = fused per-step loop = CuPy path."""
+    ref, _ = _emsolve_run(False, tfsf=tfsf)
+    per_step, _ = _emsolve_run(True, graphs=False, tfsf=tfsf)
+    graph, _ = _emsolve_run(True, graphs=True, tfsf=tfsf)
+    for key in ref:
+        assert _close(per_step[key], ref[key]), key
+        # Same kernels, same order: the graph replay is bitwise the per-step run
+        assert np.array_equal(graph[key], per_step[key]), key
+
+
+def test_emsolve_graphs_energy_stop(gpu_only):
+    """The energy-decay stop happens at the same step with graphs."""
+    _, s0 = _emsolve_run(False, stop=(1e-3, 50), Nt=4000)
+    _, s1 = _emsolve_run(True, stop=(1e-3, 50), Nt=4000)
+    assert s0.Nt == s1.Nt < 4000
+
+
+def test_adjoint_graphs_match_per_step(gpu_only):
+    """AdjointSimulation with CUDA graphs: forward outputs and gradient are
+    bitwise those of the fused per-step loops."""
+    rng = np.random.default_rng(5)
+    res = []
+    for graphs in (False, True):
+        sim = _adjoint_sim(True)
+        sim.use_graphs = graphs
+        rho = np.random.default_rng(0).uniform(size=sim.design.shape)
+        out = sim.forward(rho)
+        rng = np.random.default_rng(5)
+        G = {k: {c: rng.standard_normal(v.shape) + 0j for c, v in d.items()}
+             for k, d in out.items()}  # fmt: skip
+        res.append((out, sim.vjp(G)))
+    (o0, g0), (o1, g1) = res
+    for k in o0:
+        for c in o0[k]:
+            assert np.array_equal(o1[k][c], o0[k][c])
+    assert np.array_equal(g1, g0)

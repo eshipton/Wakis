@@ -512,6 +512,13 @@ class TFSFSource:
         if self.is_first_update:
             self._initialize(solver)
             self.is_first_update = False
+        if (
+            getattr(solver, "fused", False)
+            and not self._mutation_time_shift
+            and t >= self._t_last
+        ):
+            self._fused_update(solver, t)
+            return
         if t < self._t_last:  # a new run with the same source object
             self._e[:] = 0.0
             self._h[:] = 0.0
@@ -553,6 +560,92 @@ class TFSFSource:
         self._series[0, n] = self._e[m]
         self._series[1, n] = 0.5 * (self._h[m - 1] + self._h[m])
         self._n_steps = n + 1
+
+    # ------------------------------------------------- fused GPU time step
+    def _fused_scalars(self, t):
+        """Injection terms of the line at the step started at t (see update)."""
+        inj = self._inj
+        s_h = inj["h_coef"] * self._e_analytic(inj["e_pos"], t)
+        h_inc = self.h_factor * self._e_analytic(inj["h_pos"], t + self._dt / 2)
+        return s_h, inj["e_coef"] * h_inc
+
+    def _fused_prepare(self, solver):
+        from .gpu_fused import idx32
+
+        if getattr(self, "_fdev", None) is None:
+            self._fdev = {
+                "h_rows": idx32(self._h_rows),
+                "j_rows": idx32(self._j_rows),
+                "KH": (idx32(self._K_H.indptr), idx32(self._K_H.indices),
+                       self._K_H.data.astype(np.float64)),
+                "KJ": (idx32(self._K_J.indptr), idx32(self._K_J.indices),
+                       self._K_J.data.astype(np.float64)),
+            }  # fmt: skip
+        return self._fdev
+
+    def _fused_launch(self, solver, s_h=0.0, s_e=0.0, n=0, tables=None, step=None):
+        """The update as five kernels (host scalars, or tables + device step)."""
+        from .gpu_fused import launch, tname
+
+        d = self._fused_prepare(solver)
+        e, h, D = self._e, self._h, self._dev
+        T = tname(solver.H.array.dtype)
+        th, te = (None, None) if tables is None else tables
+        zero = np.int64(0)
+        if self._apply_corrections:
+            ptr, col, val = d["KH"]
+            nr = d["h_rows"].size
+            launch(f"csr_add<{T}>", nr, np.int32(nr), d["h_rows"], ptr, col, val,
+                   e, solver.H.array)  # fmt: skip
+        launch("line_h", h.size, np.int32(h.size), h, e, D["ch"], D["dh"],
+               np.int32(self._inj["h_idx"]), np.float64(s_h), th, step,
+               zero)  # fmt: skip
+        if self._apply_corrections:
+            ptr, col, val = d["KJ"]
+            nr = d["j_rows"].size
+            launch(f"csr_delta<{T}>", nr, np.int32(nr), d["j_rows"], ptr, col,
+                   val, h, self._J_old, solver.J.array)  # fmt: skip
+        launch("line_e", e.size, np.int32(e.size), e, h, D["ce"], D["de"],
+               np.int32(self._inj["e_idx"]), np.float64(s_e), te, step,
+               zero)  # fmt: skip
+        launch("line_series", 1, e, h, np.int32(self._m_entry), self._series,
+               np.int64(self._series.shape[1]), np.int64(n), step, zero)
+
+    def _fused_update(self, solver, t):
+        """`update` with fused kernels (fused GPU solvers)."""
+        self._t_last = t
+        n = self._n_steps
+        if n >= self._series.shape[1]:
+            self._grow_series(2 * self._series.shape[1])
+        s_h, s_e = self._fused_scalars(t)
+        self._fused_launch(solver, s_h, s_e, n)
+        self._n_steps = n + 1
+
+    def _grow_series(self, cap):
+        grown = self.xp.zeros((2, cap), dtype=self._series.dtype)
+        grown[:, : self._n_steps] = self._series[:, : self._n_steps]
+        self._series = grown
+
+    def fused_loop_op(self, solver, Nt):
+        """
+        (launch(step), finish(n1)) for `wakis.gpu_fused.FusedLoop`: the update
+        of every step n >= current, with the injection terms tabulated.
+        """
+        if self._mutation_time_shift or not self.xp.__name__.startswith("cupy"):
+            return None
+        if self._series.shape[1] < Nt:
+            self._grow_series(int(Nt))
+        sc = np.array([self._fused_scalars(n * solver.dt) for n in range(Nt)])
+        tables = (self.xp.asarray(sc[:, 0]), self.xp.asarray(sc[:, 1]))
+
+        def run(step):
+            self._fused_launch(solver, tables=tables, step=step)
+
+        def finish(n1):
+            self._n_steps = n1
+            self._t_last = (n1 - 1) * solver.dt
+
+        return run, finish
 
     # --------------------------------------------------------------- outputs
     def box_bounds(self):

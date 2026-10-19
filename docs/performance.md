@@ -63,6 +63,73 @@ These changes are covered by the existing regression and validation tests (CERN 
 **Subnormal numbers.** The CPU sparse product is ~15× slower when its input holds subnormal floats (91 ms vs 1.35 s at $128^3$ for an input filled with $10^{-310}$). Fields can decay into the subnormal range ahead of a wavefront or in long ring-downs; if a CPU run slows down for no other reason, this is a likely cause.
 
 
+## Fused GPU time stepping (`fused=True`)
+
+`SolverFIT3D(..., use_gpu=True, fused=True)` replaces the CuPy array expressions of the time loop by a handful of
+hand-written kernels (`wakis/gpu_fused.py`). It is opt-in while it is validated; the CPU path and the default GPU
+path are unchanged.
+
+**Why.** The CuPy path issues one kernel (plus Python dispatch, ~10–20 µs) per array operation. A CPML step is
+~330 launches (6 + 6 sparse curls, gathers/scatters of the 24 CPML faces, temporaries), a running DFT ~5 per
+monitor term, a TF/SF source ~25: below a few million cells the GPU waits on the host, not on memory
+(11–22 % utilization). Profiles and numbers: `studies/gpu-perf/README.md`.
+
+**What the kernels do.**
+
+- *Step* (two kernels, one per half step; one thread per edge $i$ of component $T$). The two derivative
+  terms of the curl of $T$ are stored as one merged CSR row, split in the $a$ ($s=+1$) and $b$ ($s=-1$) parts,
+  so the thread forms $p_a = (D_a E_{S_a})_i$, $p_b = (D_b E_{S_b})_i$, updates the CPML auxiliary variables
+  it owns, $\psi_a \leftarrow b\,\psi_a + c\,p_a$ (same for $b$; each $\psi$ entry belongs to exactly one edge),
+  and the field, $H_i \leftarrow H_i - \Delta t\,\mu_i^{-1}(p_a - p_b + \psi_a - \psi_b) - \Delta t\,\mu_i^{-1} M_i$.
+  The E kernel adds the conduction current ($J \mathrel{+}= \sigma E - J_\text{old}$) and
+  $E_i \leftarrow E_i + \Delta t\,\varepsilon_i^{-1}(q_a - q_b + \psi_a - \psi_b) - \Delta t\,\varepsilon_i^{-1} J_i$.
+  Without CPML the kernels read the solver's own curl operators $\mathbf A$, $\mathbf B$ and compute
+  $H \mathrel{-}= \Delta t\,\mathbf A E$, $E \mathrel{+}= \Delta t(\mathbf B H - \varepsilon^{-1} J)$ without the
+  temporary curl vector.
+- *Sources*: `CurrentSource`, `MagneticCurrentSource`, `ModeSource` add $w\,s(t) - J_\text{old}$ in one kernel each;
+  `TFSFSource` advances its auxiliary line and applies its corrections in five.
+- *Monitors*: `DFTMonitor`, `FluxMonitor`, `ModeMonitor` accumulate all terms and frequencies of a monitor in
+  two kernels (phasors $\Delta t\,e^{-2\pi i f t}$ of each term, then $\text{acc} \mathrel{+}= \text{phasor}\cdot v$);
+  their accumulators become views into one buffer, so `get_field`, `get_flux` and the adjoint readouts are
+  unchanged.
+- *Adjoint* (`AdjointStepper`, `AdjointSimulation` on a fused solver): the transposed step is four kernels
+  (per half step: $\nu = \Delta t\,\varepsilon^{-1}\lambda_e$, the transposed $\psi$ update and
+  $\beta = s\,\nu + c\,\tilde\mu$; then one product with the stored merged transpose
+  $[\mathbf D_a^H\;\mathbf D_b^H]$), each adjoint DFT source two, the gradient accumulation one, and the
+  forward design increments two (gather, scaled difference).
+- *CUDA graphs*: when every per-step operation is device resident (fused step without tensor/ADE/ABC wrappers,
+  the sources and monitors above, no lumped elements), `emsolve` and `AdjointSimulation` capture 64 steps into a
+  CUDA graph and replay it. Time-dependent scalars come from device tables (source amplitudes, TF/SF injection
+  terms indexed by a device step counter), so nothing changes between replays. `solver.use_graphs = False`
+  (or `AdjointSimulation.use_graphs`) keeps the per-step Python loop.
+
+**Exactness.** The fused step performs the same operations as the CuPy path except for the order of a few
+floating-point additions (curl rows summed in CSR order, CPML terms added in one expression): fields, DFT and
+flux spectra agree to $10^{-11}$ relative after a few hundred steps on PEC, lossy, periodic, CPML, mixed and
+Bloch (complex) cases. Source updates, the running DFT and the TF/SF line reproduce the CuPy expressions bit
+for bit (kernels compiled without FMA contraction), and the graph replay is bitwise the per-step fused loop.
+The fused transposed step is the exact transpose of the fused forward step: the dot-product test gives
+$<10^{-12}$ relative on all cases (also with states supported on $\psi$ only), fails for a 0.1 % change of one
+transposed entry, of the transposed $\psi$ coefficient or a $10^{-6}$ change of the loss factor, and gradients
+of `AdjointSimulation` agree with the CuPy path to $10^{-10}$ (round-off growth over 250 steps) and with central
+finite differences (`tests/test_045_gpu_fused.py`).
+
+**Limits & failure modes.**
+
+- Fused kernels: GPU, float64 or complex128 fields, no MPI (`fused=True` is ignored otherwise, with a
+  message). Legacy in-step TF/SF injection (`source_type='tfsf'` with an active `Beam`) falls back to the CuPy
+  step. Operators above $2^{31}$ nonzeros are rejected (32-bit indices).
+- Tensor averaging, ADE dispersive media and the Mur ABC still wrap the fused step with CuPy operations (fewer
+  kernels than before, since the base step is fused) and disable the CUDA graphs; so do lumped elements,
+  `Near2FarMonitor`, `SliceRecorder`, plotting, saving and callbacks in `emsolve`.
+- The CPML $\psi$ arrays of the solver are views into fused buffers: arrays assigned to `solver.psi*` are copied
+  in at the next step. `AdjointStepper.step` on a fused solver returns arrays from two alternating buffers,
+  overwritten two calls later (copy them to keep them).
+- CUDA graphs bake device pointers: reallocating solver arrays inside a graph loop is detected and raises.
+- The DFT accumulation is $O(N_f N_\text{samples})$ work per step like before; for very large monitors
+  (> ~10⁷ accumulator entries) the GPU time of the monitors, not the launches, dominates.
+
+
 ## Conformal setup
 
 The conformal geometry (`ConformalGeometry`: open edge lengths and face areas inside PEC, dual volume fractions, interface normals), the merged-face operators, the averaged materials, the tensor couplings and the stable time step are computed once when `SolverFIT3D` is built. Measured with `benchmarks/bench_conformal_setup.py` (fresh process per point, same g2-standard-16 VM, shared with other jobs, CPU only):

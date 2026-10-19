@@ -94,6 +94,9 @@ def loop(solver, sources, monitors, n0, n1, sync=None):
     return acc
 
 
+EMSOLVE = False
+
+
 def run_case(name, use_gpu, fused, steps, warmup, nsys):
     t0 = time.time()
     solver, sources, monitors = cases.CASES[name](use_gpu, fused)
@@ -106,13 +109,20 @@ def run_case(name, use_gpu, fused, steps, warmup, nsys):
         import cupy as cp
 
         cp.cuda.profiler.start()
-        loop(solver, sources, monitors, n, n + steps)
+        if EMSOLVE:
+            solver.emsolve(steps, source=sources, monitors=monitors)
+        else:
+            loop(solver, sources, monitors, n, n + steps)
         _sync(use_gpu)
         cp.cuda.profiler.stop()
         return {"case": name, "nsys_steps": steps}
     with _Util(use_gpu) as util:
         t0 = time.perf_counter()
-        loop(solver, sources, monitors, n, n + steps)
+        if EMSOLVE:
+            # emsolve restarts at t = 0; fused solvers replay CUDA graphs
+            solver.emsolve(steps, source=sources, monitors=monitors)
+        else:
+            loop(solver, sources, monitors, n, n + steps)
         _sync(use_gpu)
         wall = time.perf_counter() - t0
     n += steps
@@ -124,6 +134,7 @@ def run_case(name, use_gpu, fused, steps, warmup, nsys):
         "case": name,
         "backend": "gpu" if use_gpu else "cpu",
         "fused": fused,
+        "emsolve": EMSOLVE,
         "cells": int(solver.N),
         "steps": steps,
         "setup_s": setup,
@@ -180,7 +191,11 @@ def main():
     ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--nsys", action="store_true")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--emsolve", action="store_true",
+                    help="time solver.emsolve (CUDA graphs when fused)")
     a = ap.parse_args()
+    global EMSOLVE
+    EMSOLVE = a.emsolve
     fused = None if a.fused is None else bool(a.fused)
     if a.case == "adjoint2d":
         res = run_adjoint(a.gpu, fused, a.nsys)

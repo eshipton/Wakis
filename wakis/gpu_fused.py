@@ -249,6 +249,78 @@ __global__ void record_row(const int n, const int* __restrict__ idx,
     rec[r * n + k] = (R)((E[idx[k]] - e_old[k]) / ieps_d[k]);
 }
 
+
+// ---------------------------------------------------- TF/SF auxiliary line
+// F[rows_r] += sum_j K[r, j] x_j  (H correction of the TF/SF boundary)
+template<typename T>
+__global__ void csr_add(const int nr, const int* __restrict__ rows,
+        const int* __restrict__ ptr, const int* __restrict__ col,
+        const double* __restrict__ val, const double* __restrict__ x,
+        T* __restrict__ F) {
+    int r = blockDim.x * blockIdx.x + threadIdx.x;
+    if (r >= nr) return;
+    double s = 0.0;
+    for (int j = ptr[r]; j < ptr[r + 1]; ++j) s += val[j] * x[col[j]];
+    F[rows[r]] += s;
+}
+
+// jn = sum_j K[r, j] x_j; F[rows_r] += jn - old_r; old_r = jn
+template<typename T>
+__global__ void csr_delta(const int nr, const int* __restrict__ rows,
+        const int* __restrict__ ptr, const int* __restrict__ col,
+        const double* __restrict__ val, const double* __restrict__ x,
+        T* __restrict__ old, T* __restrict__ F) {
+    int r = blockDim.x * blockIdx.x + threadIdx.x;
+    if (r >= nr) return;
+    double s = 0.0;
+    for (int j = ptr[r]; j < ptr[r + 1]; ++j) s += val[j] * x[col[j]];
+    T jn = T(s);
+    F[rows[r]] += jn - old[r];
+    old[r] = jn;
+}
+
+// h = h ch - dh (e[i+1] - e[i]); h[hidx] += s (s = coefficient x incident value)
+__global__ void line_h(const int nh, double* __restrict__ h,
+        const double* __restrict__ e, const double* __restrict__ ch,
+        const double* __restrict__ dh, const int hidx, const double s_host,
+        const double* __restrict__ table, const long long* __restrict__ step,
+        const long long add) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= nh) return;
+    double v = h[i] * ch[i];
+    v = v - dh[i] * (e[i + 1] - e[i]);
+    if (i == hidx) v = v + (table ? table[step[0] + add] : s_host);
+    h[i] = v;
+}
+
+// e = e ce - de curl (curl = h[i] - h[i-1] inside); e[0] = e[-1] = 0;
+// e[eidx] += s
+__global__ void line_e(const int ne, double* __restrict__ e,
+        const double* __restrict__ h, const double* __restrict__ ce,
+        const double* __restrict__ de, const int eidx, const double s_host,
+        const double* __restrict__ table, const long long* __restrict__ step,
+        const long long add) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i >= ne) return;
+    double curl = (i >= 1 && i <= ne - 2) ? h[i] - h[i - 1] : 0.0;
+    double v = e[i] * ce[i];
+    v = v - de[i] * curl;
+    if (i == 0 || i == ne - 1) v = 0.0;
+    if (i == eidx) v = v + (table ? table[step[0] + add] : s_host);
+    e[i] = v;
+}
+
+// Entry-plane record: series[0, n] = e[m], series[1, n] = (h[m-1] + h[m]) / 2
+__global__ void line_series(const double* __restrict__ e,
+        const double* __restrict__ h, const int m, double* __restrict__ series,
+        const long long cap, const long long n_host,
+        const long long* __restrict__ step, const long long add) {
+    if (blockDim.x * blockIdx.x + threadIdx.x != 0) return;
+    long long n = step ? step[0] + add : n_host;
+    series[n] = e[m];
+    series[cap + n] = 0.5 * (h[m - 1] + h[m]);
+}
+
 __global__ void step_add(long long* step, const long long k) { step[0] += k; }
 
 // ----------------------------------------------------- transposed CPML step
@@ -364,9 +436,10 @@ def _names():
     recs = {"double": ("double", "float"), "cplx": ("cplx", "complex<float>")}
     for T in ("double", "cplx"):
         names += [f"dft_acc<{T}>", f"adj_beta<{T}>", f"tap_add<{T}>", f"gather<{T}>"]
+        names += [f"csr_add<{T}>", f"csr_delta<{T}>"]
         for R in recs[T]:
             names += [f"record_row<{T},{R}>", f"grad_acc<{T},{R}>"]
-    return names + ["step_add", "tap_v", "dft_phase"]
+    return names + ["step_add", "tap_v", "dft_phase", "line_h", "line_e", "line_series"]
 
 
 def _module():
@@ -596,7 +669,7 @@ class FusedStep:
                 self.psi_e, e.pb, e.pc, J, J_old, sigma,
             )  # fmt: skip
             return
-        A, B = s.tDsiDmuiDaC, s.itDaiDepsDstC
+        A, B = self._dev_op("tDsiDmuiDaC"), self._dev_op("itDaiDepsDstC")
         launch(
             f"fused_h<{T},{tname(A.data.dtype)}>", n, np.int32(n), A.indptr, None,
             A.indices, A.data, E, H, None, dt, None, None, None, None, None, M,
@@ -607,6 +680,16 @@ class FusedStep:
             B.indices, B.data, H, E, s.ieps.array, dt, None, None, None, None,
             None, J, J_old, sigma,
         )  # fmt: skip
+
+    def _dev_op(self, name):
+        """Solver operator as CuPy CSR (`update_tensors` rebuilds SciPy ones)."""
+        op = getattr(self.solver, name)
+        if not type(op).__module__.startswith("cupyx"):
+            from cupyx.scipy.sparse import csr_matrix
+
+            op = csr_matrix(_host_csr(op))
+            setattr(self.solver, name, op)
+        return op
 
     def arrays(self):
         """Device arrays the kernels point to (CUDA graph validity check)."""
@@ -698,6 +781,16 @@ def monitor_terms(monitor, solver):
     else:
         return None
     return out
+
+
+def monitor_supported(monitor):
+    """True for monitor types `monitor_terms` handles (initialized or not)."""
+    from .field_monitors import DFTMonitor, FluxMonitor
+    from .mode_solver import ModeMonitor
+
+    return type(monitor) in (DFTMonitor, FluxMonitor) or isinstance(
+        monitor, ModeMonitor
+    )
 
 
 class DFTBatch:
@@ -816,3 +909,215 @@ def monitor_update(monitor, solver, t):
         raise RuntimeError("Monitor is part of a DFTBatch; update the batch.")
     batch.update(solver, t)
     return True
+
+
+# ------------------------------------------------------------- CUDA graphs
+
+
+class GraphRunner:
+    """
+    Run a device-only step function many times through a CUDA graph.
+
+    `step_fn()` must only launch kernels on the current stream (no
+    allocations, host synchronizations or host-dependent arguments that
+    change between calls): it is captured `chunk` times into one graph,
+    which is then replayed. Python state changed by `step_fn` during the
+    capture (e.g. ping-pong buffer choices) must return to its initial value
+    after `chunk` calls (use an even `chunk` for two-buffer schemes), since
+    the capture does not execute anything.
+
+    Parameters
+    ----------
+    step_fn : callable
+        Launches the kernels of one step.
+    chunk : int
+        Steps per graph.
+    """
+
+    def __init__(self, step_fn, chunk=64):
+        self.step_fn = step_fn
+        self.chunk = int(chunk)
+        self.stream = cp.cuda.Stream(non_blocking=True)
+        self.graph = None
+
+    def _enter(self):
+        ev = cp.cuda.Event(disable_timing=True)
+        ev.record(cp.cuda.get_current_stream())
+        self.stream.wait_event(ev)
+
+    def _exit(self):
+        ev = cp.cuda.Event(disable_timing=True)
+        ev.record(self.stream)
+        cp.cuda.get_current_stream().wait_event(ev)
+
+    def run(self, n_steps):
+        """Run `n_steps` steps (graph replays plus direct launches)."""
+        n_steps = int(n_steps)
+        self._enter()
+        with self.stream:
+            if n_steps >= self.chunk:
+                if self.graph is None:
+                    self.stream.begin_capture()
+                    try:
+                        for _ in range(self.chunk):
+                            self.step_fn()
+                    finally:
+                        self.graph = self.stream.end_capture()
+                for _ in range(n_steps // self.chunk):
+                    self.graph.launch(self.stream)
+            for _ in range(n_steps % self.chunk):
+                self.step_fn()
+        self._exit()
+
+
+def _source_terms(src, solver, Nt):
+    """
+    (array, idx, weights, old, amplitude table) of an initialized source, or
+    None if the source is not supported by `FusedLoop`.
+    """
+    from .mode_solver import ModeSource
+    from .sources import CurrentSource, MagneticCurrentSource
+
+    dt = solver.dt
+    times = np.arange(Nt) * dt  # n * dt, as in the time loops
+    if type(src) in (CurrentSource, MagneticCurrentSource):
+        if type(src) is CurrentSource:
+            arr, amp = solver.J.array, [float(src.src_time(t + dt / 2)) for t in times]
+        else:
+            arr, amp = solver.M.array, [float(src.src_time(t)) for t in times]
+        if getattr(src, "_idx32", None) is None:
+            return None
+        return [(arr, src._idx32, src.weights, src.J_old, cp.asarray(amp))]
+    if isinstance(src, ModeSource):
+        out = []
+        for term in src.terms:
+            if "idx32" not in term:
+                return None
+            if term["field"] == "J":
+                amp = [float(src.src_time(t + dt / 2 + src.h_advance)) for t in times]
+            else:
+                amp = [float(src.src_time(t)) for t in times]
+            arr = getattr(solver, term["field"]).array
+            out.append((arr, term["idx32"], term["weights"], term["old"], cp.asarray(amp)))
+        return out
+    return None
+
+
+class FusedLoop:
+    """
+    Time loop of a fused solver with impressed sources and DFT monitors,
+    replayed as CUDA graphs: sources, step, monitors (and optionally the
+    adjoint design increments) of K steps per graph launch.
+
+    Call `supported(...)` first; step 0 must have run through the regular
+    loop (it initializes the sources, monitors and the fused step).
+
+    Parameters
+    ----------
+    solver : SolverFIT3D
+        Fused GPU solver whose `one_step` is the bare `FusedStep`.
+    sources : list
+        `CurrentSource`, `MagneticCurrentSource` or `ModeSource` objects.
+    monitors : list
+        `DFTMonitor`, `FluxMonitor` or `ModeMonitor` objects.
+    Nt : int
+        Total number of steps of the run (size of the amplitude tables).
+    record : tuple, optional
+        (idx, ieps_d, e_old, increments): record row n of the adjoint design
+        increments (E^{n+1} - E^n)[idx] / ieps_d.
+    chunk : int, optional
+        Steps per CUDA graph (default 64).
+    """
+
+    def __init__(self, solver, sources, monitors, Nt, record=None, chunk=64):
+        self.solver = solver
+        self.terms, self.ops, self.finish = [], [], []
+        for src in sources:
+            if hasattr(src, "fused_loop_op"):
+                op = src.fused_loop_op(solver, Nt)
+                if op is None:
+                    raise ValueError(f"{type(src).__name__} cannot run in a FusedLoop.")
+                self.ops.append(op[0])
+                self.finish.append(op[1])
+                continue
+            for term in _source_terms(src, solver, Nt):
+                self.terms.append(term)
+                self.ops.append(self._source_op(term))
+        self.monitors = list(monitors)
+        self.batch = DFTBatch(self.monitors, solver) if self.monitors else None
+        self.record = record
+        self.T = tname(solver.E.array.dtype)
+        self.counter = cp.zeros(1, dtype=np.int64)
+        self.runner = GraphRunner(self._one, chunk)
+        self.step = solver._fused_step
+        self._ptrs = self._pointers()
+
+    @staticmethod
+    def supported(solver, sources, monitors, elements=()):
+        """True if the loop can run as CUDA graphs (after step 0)."""
+        s = solver
+        if not is_fused(s) or s.one_step is not s._fused_step or elements:
+            return False
+        if s.source_type == "tfsf" and not s.injection_done:
+            return False
+        if any(_source_terms_ok(src) is False for src in sources):
+            return False
+        return all(monitor_supported(m) for m in monitors)
+
+    def _pointers(self):
+        arrs = self.step.arrays() + [t[0] for t in self.terms]
+        return [None if a is None else a.data.ptr for a in arrs]
+
+    @staticmethod
+    def _source_op(term):
+        arr, idx, w, old, amp = term
+
+        def op(c):
+            source_update(arr, idx, w, 0.0, old, step=c, amp=amp)
+
+        return op
+
+    def _one(self):
+        s = self.solver
+        c = self.counter
+        for op in self.ops:
+            op(c)
+        if self.record is not None:
+            idx, ieps_d, e_old, inc = self.record
+            m = np.int32(idx.size)
+            launch(f"gather<{self.T}>", m, m, idx, s.E.array, e_old)
+        self.step.launch_step()
+        if self.record is not None:
+            launch(f"record_row<{self.T},{rname(inc.dtype)}>", m, m, idx,
+                   s.E.array, e_old, ieps_d, inc, c, np.int64(0),
+                   np.int64(0))  # fmt: skip
+        if self.batch is not None:
+            self.batch.update(s, 0.0, step=c)
+        launch("step_add", 1, c, np.int64(1))
+
+    def run(self, n0, n1):
+        """Run steps n0 .. n1 - 1 (n0 >= 1)."""
+        if n1 <= n0:
+            return
+        if self._pointers() != self._ptrs:
+            raise RuntimeError("Solver arrays were reallocated during a fused loop.")
+        self.counter.fill(n0)
+        self.runner.run(n1 - n0)
+        for finish in self.finish:
+            finish(n1)
+
+    def close(self):
+        """Hand the monitors back to their own (per-monitor) fused updates."""
+        for m in self.monitors:
+            m._dft_batch = None
+
+
+def _source_terms_ok(src):
+    from .mode_solver import ModeSource
+    from .sources import CurrentSource, MagneticCurrentSource
+
+    if hasattr(src, "fused_loop_op"):  # TFSFSource
+        return not src._mutation_time_shift
+    return type(src) in (CurrentSource, MagneticCurrentSource) or isinstance(
+        src, ModeSource
+    )
