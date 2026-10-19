@@ -11,6 +11,7 @@ cd "$(dirname "$0")"
 mkdir -p results prof
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 FLAG=""; [ "$FUSED" != none ] && FLAG="--fused $FUSED"
+[ "${GRAPH:-0}" = 1 ] && FLAG="$FLAG --emsolve"
 for c in $CASES; do
   echo "== $TAG $c"
   if [ "${BENCH:-1}" = 1 ]; then

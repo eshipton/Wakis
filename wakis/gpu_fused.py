@@ -203,29 +203,35 @@ __global__ void dft_phase(const int nph, const int* __restrict__ ph_seg,
     ph[p] = cplx(dt, 0.0) * exp(z);
 }
 
-// acc[g] += ph[s, f] v for the flat accumulator index g of segment (term) s,
-// f = g / m_s, sample k = g % m_s; v = F[a_k] or 0.5 (F[a_k] + F[b_k])
+// acc[s, f, k] += ph[s, f] v_k for every sample k of segment (term) s and
+// its frequencies f (one thread per sample, looping over f: the sample is
+// gathered once); v = F[a_k] or 0.5 (F[a_k] + F[b_k])
 template<typename T>
 __global__ void dft_acc(const long long total, const int nseg,
         const long long* __restrict__ seg_start, const int* __restrict__ seg_m,
         const int* __restrict__ seg_soff, const int* __restrict__ seg_poff,
-        const int* __restrict__ seg_field, const int* __restrict__ seg_avg,
-        const int* __restrict__ ia, const int* __restrict__ ib,
-        const cplx* __restrict__ ph, const T* __restrict__ E,
-        const T* __restrict__ H, const T* __restrict__ J, cplx* __restrict__ acc) {
+        const int* __restrict__ seg_nf, const int* __restrict__ seg_field,
+        const int* __restrict__ seg_avg, const int* __restrict__ ia,
+        const int* __restrict__ ib, const cplx* __restrict__ ph,
+        const T* __restrict__ E, const T* __restrict__ H, const T* __restrict__ J,
+        cplx* __restrict__ acc) {
     long long g = (long long)blockDim.x * blockIdx.x + threadIdx.x;
-    if (g >= total) return;
+    if (g >= total) return;  // total = number of samples
     int s = 0;
-    while (s + 1 < nseg && g >= seg_start[s + 1]) ++s;
-    long long loc = g - seg_start[s];
+    while (s + 1 < nseg && g >= seg_soff[s + 1]) ++s;
+    int k = (int)(g - seg_soff[s]);
     int m = seg_m[s];
-    int f = (int)(loc / m);
-    int k = (int)(loc - (long long)f * m);
     const T* F = seg_field[s] == 0 ? E : (seg_field[s] == 1 ? H : J);
-    int o = seg_soff[s] + k;
-    T v = F[ia[o]];
-    if (seg_avg[s]) v = 0.5 * (v + F[ib[o]]);
-    acc[g] = acc[g] + ph[seg_poff[s] + f] * cplx(v);
+    T v = F[ia[g]];
+    if (seg_avg[s]) v = 0.5 * (v + F[ib[g]]);
+    cplx cv = cplx(v);
+    cplx* a = acc + seg_start[s] + k;
+    const cplx* p = ph + seg_poff[s];
+    int nf = seg_nf[s];
+    for (int f = 0; f < nf; ++f) {
+        long long o = (long long)f * m;
+        a[o] = a[o] + p[f] * cv;
+    }
 }
 
 // ------------------------------------------------------------- record rows
@@ -319,6 +325,60 @@ __global__ void line_series(const double* __restrict__ e,
     long long n = step ? step[0] + add : n_host;
     series[n] = e[m];
     series[cap + n] = 0.5 * (h[m - 1] + h[m]);
+}
+
+
+// Tensor averaging: delta = E[r] - e_old (kept as the step increment), then
+// E[r_i] += sum_j K'_ij delta_j
+template<typename T>
+__global__ void tensor_delta(const int n, const int* __restrict__ rows,
+        const T* __restrict__ E, const T* __restrict__ e_old,
+        T* __restrict__ delta) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k < n) delta[k] = E[rows[k]] - e_old[k];
+}
+
+template<typename T, typename V>
+__global__ void rows_spmv_add(const int nr, const int* __restrict__ rows,
+        const int* __restrict__ ptr, const int* __restrict__ col,
+        const V* __restrict__ val, const T* __restrict__ x, T* __restrict__ F) {
+    int r = blockDim.x * blockIdx.x + threadIdx.x;
+    if (r >= nr) return;
+    T s = T(0);
+    for (int j = ptr[r]; j < ptr[r + 1]; ++j) s += val[j] * x[col[j]];
+    F[rows[r]] += s;
+}
+
+
+// ADE correction of one dispersive group (see DispersiveMixin._one_step_dispersive)
+__global__ void ade_update(const int n, const int* __restrict__ idx,
+        double* __restrict__ E, const double* __restrict__ En,
+        const double* __restrict__ eps_s, const double* __restrict__ a1,
+        const double* __restrict__ den, const double* __restrict__ w,
+        const int nL, const double* __restrict__ cL, double* __restrict__ P,
+        double* __restrict__ Pold, const int nD, const double* __restrict__ cD,
+        double* __restrict__ D) {
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+    if (k >= n) return;
+    int e = idx[k];
+    double en = En[k];
+    double acc = (E[e] - en) * eps_s[k] + a1[k] * en;
+    for (int l = 0; l < nL; ++l) {
+        long long o = (long long)l * n + k;
+        double p = P[o];
+        double pnew = cL[3 * l] * p + cL[3 * l + 1] * Pold[o] + cL[3 * l + 2] * en;
+        acc -= w[k] * (pnew - p);
+        Pold[o] = p;
+        P[o] = pnew;
+    }
+    for (int d = 0; d < nD; ++d)
+        acc -= (w[k] * (cD[2 * d] - 1.0)) * D[(long long)d * n + k];
+    double enew = acc / den[k];
+    for (int d = 0; d < nD; ++d) {
+        long long o = (long long)d * n + k;
+        D[o] = cD[2 * d] * D[o] + cD[2 * d + 1] * (enew + en);
+    }
+    E[e] = enew;
 }
 
 __global__ void step_add(long long* step, const long long k) { step[0] += k; }
@@ -433,13 +493,15 @@ def _names():
     for T, V in pairs:
         names += [f"fused_h<{T},{V}>", f"fused_e<{T},{V}>"]
         names += [f"source_delta<{T},{V}>", f"adj_spmv<{T},{V}>"]
+        names += [f"rows_spmv_add<{T},{V}>"]
     recs = {"double": ("double", "float"), "cplx": ("cplx", "complex<float>")}
     for T in ("double", "cplx"):
         names += [f"dft_acc<{T}>", f"adj_beta<{T}>", f"tap_add<{T}>", f"gather<{T}>"]
-        names += [f"csr_add<{T}>", f"csr_delta<{T}>"]
+        names += [f"csr_add<{T}>", f"csr_delta<{T}>", f"tensor_delta<{T}>"]
         for R in recs[T]:
             names += [f"record_row<{T},{R}>", f"grad_acc<{T},{R}>"]
-    return names + ["step_add", "tap_v", "dft_phase", "line_h", "line_e", "line_series"]
+    return names + ["step_add", "tap_v", "dft_phase", "line_h", "line_e", "line_series",
+                    "ade_update"]
 
 
 def _module():
@@ -599,6 +661,7 @@ class FusedStep:
         self.ready = False
         self.cpml = solver.activate_cpml
         self.views = {}
+        self.pre, self.post = [], []  # device-only hooks around the step
 
     def _build(self):
         s = self.solver
@@ -631,7 +694,12 @@ class FusedStep:
         s = self.solver
         if s.source_type == "tfsf" and not s.injection_done:
             # Legacy TF/SF injection inside the step: unfused path
-            return (s._one_step_cpml if self.cpml else s._one_step)()
+            for hook in self.pre:
+                hook()
+            (s._one_step_cpml if self.cpml else s._one_step)()
+            for hook in self.post:
+                hook()
+            return
         if s.step_0:
             s._set_ghosts_to_0()
             s.step_0 = False
@@ -645,7 +713,15 @@ class FusedStep:
         self.launch_step()
 
     def launch_step(self):
-        """Launch the two half-step kernels (no host synchronization)."""
+        """Launch the step kernels and hooks (no host synchronization)."""
+        for hook in self.pre:
+            hook()
+        self._launch_halves()
+        for hook in self.post:
+            hook()
+
+    def _launch_halves(self):
+        """Launch the two half-step kernels."""
         s = self.solver
         n = 3 * s.N
         E, H, J = s.E.array, s.H.array, s.J.array
@@ -871,6 +947,8 @@ class DFTBatch:
             np.asarray([t[2] is not None for t in terms], dtype=np.int32)
         )
         self.seg_toff = cp.asarray(np.asarray([t[3] for t in terms], dtype=float))
+        self.seg_nf = cp.asarray(np.asarray(nfs, dtype=np.int32))
+        self.n_samples = int(sum(m))
         self.T = tname(solver.E.array.dtype)
         for mon in self.monitors:
             mon._dft_batch = self
@@ -885,10 +963,11 @@ class DFTBatch:
             np.float64(solver.dt), np.float64(t), step, np.int64(add), self.ph,
         )  # fmt: skip
         launch(
-            f"dft_acc<{self.T}>", self.total, np.int64(self.total),
+            f"dft_acc<{self.T}>", self.n_samples, np.int64(self.n_samples),
             np.int32(self.nseg), self.seg_start, self.seg_m, self.seg_soff,
-            self.seg_poff, self.seg_field, self.seg_avg, self.ia, self.ib,
-            self.ph, solver.E.array, solver.H.array, solver.J.array, self.buf,
+            self.seg_poff, self.seg_nf, self.seg_field, self.seg_avg, self.ia,
+            self.ib, self.ph, solver.E.array, solver.H.array, solver.J.array,
+            self.buf,
         )  # fmt: skip
 
 
@@ -1121,3 +1200,128 @@ def _source_terms_ok(src):
     return type(src) in (CurrentSource, MagneticCurrentSource) or isinstance(
         src, ModeSource
     )
+
+
+# ------------------------------------------------------- tensor averaging
+
+
+class TensorHooks:
+    """
+    Fused correction of `wakis.tensor_averaging.TensorOperator` (conformal
+    'tensor'): E <- E* + K'(E* - E) on the coupled edges, as three kernels
+    around the fused step (gather of E, increment, CSR product), with fixed
+    buffers so that the step stays capturable in a CUDA graph.
+    """
+
+    def __init__(self, op, solver):
+        self.op, self.solver = op, solver
+        self.key = None
+
+    def _buffers(self):
+        op = self.op
+        key = (id(op.Kp), int(op.rows.size))
+        if key != self.key:
+            self.rows = idx32(op.rows_dev)
+            self.e_old = cp.zeros(op.rows.size, dtype=self.solver.E.array.dtype)
+            self.delta = cp.zeros_like(self.e_old)
+            K = op.Kp
+            self.ptr, self.col = idx32(K.indptr), idx32(K.indices)
+            self.val = K.data
+            self.key = key
+
+    def pre(self):
+        if self.op.rows.size == 0:
+            return
+        self._buffers()
+        n = np.int32(self.rows.size)
+        launch(f"gather<{tname(self.e_old.dtype)}>", n, n, self.rows,
+               self.solver.E.array, self.e_old)  # fmt: skip
+
+    def post(self):
+        if self.op.rows.size == 0:
+            return
+        E = self.solver.E.array
+        T = tname(E.dtype)
+        n = np.int32(self.rows.size)
+        launch(f"tensor_delta<{T}>", n, n, self.rows, E, self.e_old, self.delta)
+        launch(f"rows_spmv_add<{T},{tname(self.val.dtype)}>", n, n, self.rows,
+               self.ptr, self.col, self.val, self.delta, E)  # fmt: skip
+        self.op.last_increment = self.delta
+
+
+# ------------------------------------------------------- dispersive (ADE)
+
+
+class ADEHooks:
+    """
+    Fused ADE correction of the dispersive groups of a real-field solver
+    (`DispersiveMixin._one_step_dispersive`): a gather of E^n per group before
+    the step and one kernel per group after it, bit for bit the CuPy
+    arithmetic. The pole polarizations of each group live in fixed buffers;
+    the arrays in ``group['lorentz']`` / ``group['debye']`` are views into
+    them, and arrays assigned there from outside are copied in before the
+    next step.
+    """
+
+    def __init__(self, solver):
+        self.solver = solver
+        self.state = {}
+
+    def _group_state(self, g):
+        st = self.state.get(id(g))
+        n = int(g["idx"].size)
+        nL, nD = len(g["lorentz"]), len(g["debye"])
+        if st is None or st["n"] != n or st["g"] is not g:
+            st = {
+                "g": g,
+                "n": n,
+                "idx": idx32(g["idx"]),
+                "En": cp.zeros(n),
+                "P": cp.zeros((max(nL, 1), n)),
+                "Pold": cp.zeros((max(nL, 1), n)),
+                "D": cp.zeros((max(nD, 1), n)),
+                "cL": cp.asarray(np.ravel([cf[:3] for cf in g["lorentz"]] or [0.0])),
+                "cD": cp.asarray(np.ravel([cf[:2] for cf in g["debye"]] or [0.0])),
+            }
+            for l, cf in enumerate(g["lorentz"]):
+                st["P"][l] = cf[3]
+                st["Pold"][l] = cf[4]
+            for d, cf in enumerate(g["debye"]):
+                st["D"][d] = cf[2]
+            g["lorentz"] = [(*cf[:3], st["P"][l], st["Pold"][l])
+                            for l, cf in enumerate(g["lorentz"])]  # fmt: skip
+            g["debye"] = [(*cf[:2], st["D"][d]) for d, cf in enumerate(g["debye"])]
+            st["views"] = ([(cf[3], cf[4]) for cf in g["lorentz"]],
+                           [cf[2] for cf in g["debye"]])  # fmt: skip
+            self.state[id(g)] = st
+            return st
+        # Arrays rebound from outside (adjoint set_state, reset): copy them in
+        lv, dv = st["views"]
+        for l, cf in enumerate(g["lorentz"]):
+            if cf[3] is not lv[l][0] or cf[4] is not lv[l][1]:
+                lv[l][0][...] = cf[3]
+                lv[l][1][...] = cf[4]
+                g["lorentz"][l] = (*cf[:3], lv[l][0], lv[l][1])
+        for d, cf in enumerate(g["debye"]):
+            if cf[2] is not dv[d]:
+                dv[d][...] = cf[2]
+                g["debye"][d] = (*cf[:2], dv[d])
+        return st
+
+    def pre(self):
+        E = self.solver.E.array
+        for g in self.solver._dispersive_groups:
+            st = self._group_state(g)
+            n = np.int32(st["n"])
+            launch("gather<double>", n, n, st["idx"], E, st["En"])
+
+    def post(self):
+        E = self.solver.E.array
+        for g in self.solver._dispersive_groups:
+            st = self.state[id(g)]
+            n = np.int32(st["n"])
+            launch(
+                "ade_update", n, n, st["idx"], E, st["En"], g["eps_s"], g["a1"],
+                g["den"], g["weight"], np.int32(len(g["lorentz"])), st["cL"],
+                st["P"], st["Pold"], np.int32(len(g["debye"])), st["cD"], st["D"],
+            )  # fmt: skip

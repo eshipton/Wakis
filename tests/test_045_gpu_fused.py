@@ -408,3 +408,82 @@ def test_adjoint_graphs_match_per_step(gpu_only):
         for c in o0[k]:
             assert np.array_equal(o1[k][c], o0[k][c])
     assert np.array_equal(g1, g0)
+
+
+def _tensor_rod(fused, n=40):
+    import pyvista as pv
+
+    r = 0.1
+    h = 2 * r / n
+    rod = pv.Cylinder(center=(0.0031, -0.0017, 0), direction=(0, 0, 1),
+                      radius=r / 2, height=20 * h, resolution=360).triangulate()  # fmt: skip
+    grid = wakis.GridFIT3D(-r, r, -r, r, -h / 2, h / 2, n, n, 1,
+                           stl_solids={"rod": rod},
+                           stl_materials={"rod": [6.0, 1.0, 0.0]},
+                           conformal="tensor", verbose=0)  # fmt: skip
+    return wakis.SolverFIT3D(grid, bc_low=["cpml", "cpml", "periodic"],
+                             bc_high=["cpml", "cpml", "periodic"], n_pml=6,
+                             use_stl=True, use_gpu=True, fused=fused, verbose=0)  # fmt: skip
+
+
+def test_tensor_averaging_fused(gpu_only):
+    """Conformal 'tensor' solver: fused hooks (and CUDA graphs) = CuPy path,
+    and the transposed step of the fused tensor solver is exact."""
+    from wakis.inverse import AdjointStepper
+
+    res = {}
+    for fused in (False, True):
+        solver = _tensor_rod(fused)
+        assert solver.tensor_operator.rows.size > 0
+        src = CurrentSource(GaussianSource(1e9, 0.5e9), component="z",
+                            center=(0.06, 0.05, 0.0))  # fmt: skip
+        mon = wakis.DFTMonitor([0.8e9, 1.2e9], components=("Ez",), size=(0.1, 0.1, 0))
+        solver.emsolve(300, source=src, monitors=[mon])
+        res[fused] = (solver.E.array.get(), mon.get_field("Ez")[0])
+    for a, b in zip(res[True], res[False]):
+        assert _close(a, b)
+    solver = _tensor_rod(True)
+    solver.one_step()
+    stepper = AdjointStepper(solver)
+    assert stepper.fused and stepper.tensor
+    assert _dot_test(solver, stepper, np.random.default_rng(2)) < 1e-12
+
+
+def test_ade_dispersive_fused(gpu_only):
+    """Lorentz + Drude + Debye + sigma block: fused ADE hooks reproduce the
+    CuPy ADE (fields and DFT to round-off), the transposed step of the fused
+    dispersive solver is exact, and the graph loop runs with them."""
+    from wakis.dispersive import Debye, DispersiveMaterial, Drude, Lorentz
+    from wakis.inverse import AdjointStepper
+
+    mat = DispersiveMaterial(
+        2.0,
+        [Lorentz(1.5, 2 * np.pi * 3.5e9, 2 * np.pi * 0.4e9),
+         Drude(2 * np.pi * 2e9, 2 * np.pi * 0.5e9), Debye(0.8, 1e-10)],
+        sigma=0.02,
+    )  # fmt: skip
+
+    def make(fused):
+        solver = _solver("cpml", fused)
+        solver.add_dispersive_material(mat, center=(0.03, 0, 0), size=(0.06, 0.1, 0.1))
+        return solver
+
+    res = {}
+    for fused in (False, True):
+        solver = make(fused)
+        src = CurrentSource(GaussianSource(F0, 0.5 * F0), component="z",
+                            center=(-0.04, 0.0, 0.0))  # fmt: skip
+        mon = wakis.DFTMonitor([2e9, 3e9], components=("Ez",), size=(0.1, 0.1, 0))
+        solver.emsolve(300, source=src, monitors=[mon])
+        g = solver._dispersive_groups[0]
+        res[fused] = (solver.E.array.get(), mon.get_field("Ez")[0],
+                      g["lorentz"][0][3].get(), g["debye"][0][2].get())  # fmt: skip
+        if fused:
+            assert solver.one_step is solver._fused_step  # hooks, no wrapper
+    for a, b in zip(res[True], res[False]):
+        assert _close(a, b)
+    solver = make(True)
+    solver.one_step()
+    stepper = AdjointStepper(solver)
+    assert stepper.fused and stepper.dispersive
+    assert _dot_test(solver, stepper, np.random.default_rng(4)) < 1e-12

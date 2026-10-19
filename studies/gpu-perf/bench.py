@@ -147,6 +147,7 @@ def run_case(name, use_gpu, fused, steps, warmup, nsys):
 
 def run_adjoint(use_gpu, fused, nsys):
     sim = cases.adjoint2d(use_gpu, fused)
+    sim.use_graphs = EMSOLVE  # CUDA graphs only for the 'graph' variant
     sim.output_shapes()
     rho = np.random.default_rng(0).uniform(size=sim.design.shape)
     out = sim.forward(rho)  # warm-up (kernel compilation)
