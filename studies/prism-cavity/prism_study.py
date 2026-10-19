@@ -203,30 +203,88 @@ def tet_solver(res, graded, workdir):
 
 # ----------------------------------------------------------------- extraction
 def extract(signals, dt, t0):
-    """Harminv every column of every signal; pooled frequencies [Hz]."""
+    """
+    Harminv every column of every signal.
+
+    Returns a list of (frequency [Hz], decay [Hz], |amplitude|, signal index)
+    for all fitted modes in the band.
+    """
     from wakis.resonances import harminv
 
     fmin, fmax = band()
     # decimate to ~8 samples per period of fmax (keeps FDM cheap)
     step = max(1, int(1 / (8 * fmax * dt)))
     found = []
+    k = 0
     for sig in signals:
         sig = np.asarray(sig)[::step]
         for j in range(sig.shape[1]):
             try:
                 r = harminv(sig[:, j], step * dt, fmin, fmax, t0=t0)
             except Exception:
+                k += 1
                 continue
-            found += list(r.frequency)
-    return np.sort(np.asarray(found))
+            a = np.abs(r.amplitude)
+            for F, amp in zip(r.complex_frequency, a / a.max()):
+                found.append((float(F.real), float(F.imag), float(amp), k))
+            k += 1
+    return found
+
+
+def clusters(found, rel=3e-5, min_support=3, min_amp=1e-3):
+    """
+    Robust mode list: fitted frequencies of all signals grouped within
+    `rel`; a mode needs fits in >= `min_support` signals with relative
+    amplitude >= `min_amp`; its frequency is the amplitude-weighted mean.
+    """
+    pts = sorted((f, a, k) for f, g, a, k in found if a >= min_amp)
+    groups, cur = [], []
+    for p in pts:
+        if cur and p[0] - cur[-1][0] > rel * p[0]:
+            groups.append(cur)
+            cur = []
+        cur.append(p)
+    if cur:
+        groups.append(cur)
+    out = []
+    for g in groups:
+        if len({k for _, _, k in g}) >= min_support:
+            f = np.array([p[0] for p in g])
+            w = np.array([p[1] for p in g])
+            out.append(float(np.average(f, weights=w)))
+    return np.array(out)
+
+
+def assign(f_ex, fc, dup_penalty=5e-3):
+    """
+    Optimal one-to-one matching (Hungarian) of the exact modes to the
+    extracted clusters minimizing the summed |relative error|. Every cluster
+    may also be used a second time at a cost `dup_penalty` (a degenerate pair
+    that the discretization or the extraction did not split), so a missing
+    partner does not force a match to a neighbouring mode.
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    cand = np.r_[fc, fc]
+    cost = np.abs(cand[None, :] / f_ex[:, None] - 1)
+    cost[:, fc.size :] += dup_penalty
+    rows, cols = linear_sum_assignment(cost)
+    near = np.empty_like(f_ex)
+    near[rows] = cand[cols]
+    return near
 
 
 def score(found, dt):
+    """
+    RMS relative error of the 20 exact modes (with multiplicity), matched to
+    the robust clusters of `clusters` by `assign`.
+    """
     k = exact_k()
     f_ex = k * c / (2 * np.pi)
-    if found.size == 0:
+    fc = clusters(found) if (len(found) and isinstance(found[0], tuple)) else np.asarray(found)
+    if fc.size == 0:
         return dict(rms=np.nan)
-    near = np.array([found[np.argmin(np.abs(found - f))] for f in f_ex])
+    near = assign(f_ex, fc)
     err = near / f_ex - 1
     # spatial (leapfrog-dispersion-free) frequency: sin(w dt / 2) = w_s dt / 2
     fs = 2 / (2 * np.pi * dt) * np.sin(np.pi * near * dt)
@@ -235,6 +293,7 @@ def score(found, dt):
         rms=float(np.sqrt(np.mean(err**2))), max=float(np.abs(err).max()),
         rms_spatial=float(np.sqrt(np.mean(err_s**2))),
         err=err.tolist(), f_exact=f_ex.tolist(), f_found=near.tolist(),
+        n_clusters=int(fc.size),
     )  # fmt: skip
 
 
@@ -255,6 +314,7 @@ def run_prism(res, graded):
     sig = [s.probe_signal(p)[start:] for p in probes]
     found = extract(sig, s.dt, (start + 1) * s.dt)
     out = score(found, s.dt)
+    out["found"] = found
     out.update(
         unknowns=int(s.n_unknowns), free_edges=int(s.free.size),
         cells=int(s.mesh.n_cells), cells2d=int(s.mesh.c2.n_cells),
@@ -298,6 +358,7 @@ def run_cart(res, graded):
     sig = np.asarray(samples)[start:]
     found = extract([sig], solver.dt, (start + 1) * solver.dt)
     out = score(found, solver.dt)
+    out["found"] = found
     Nx, Ny, Nz = len(x) - 1, len(y) - 1, len(z) - 1
     out.update(
         unknowns=int(6 * Nx * Ny * Nz), cells=int(Nx * Ny * Nz),
@@ -322,6 +383,7 @@ def run_tet(res, graded, workdir):
     sig = [s.probe_signal(p)[start:] for p in probes]
     found = extract(sig, s.dt, (start + 1) * s.dt)
     out = score(found, s.dt)
+    out["found"] = found
     m = s.mesh
     out.update(
         unknowns=int(m.n_edges + m.n_faces), free_edges=int(s.free.size),
@@ -348,9 +410,15 @@ def main(argv=None):
             print(i, *t)
         return
     if args.cmd == "eig":
-        s = prism_solver(args.res, False)
-        f, _ = s.eigenmodes(N_MODES + 4, f_target=0.8 * band()[0])
-        print(json.dumps(score(np.asarray(f), 1e-30)))
+        # discrete eigenfrequencies of the prism operator (no extraction)
+        s = prism_solver(args.res, (args.arm or "").endswith("graded"))
+        f, _ = s.eigenmodes(N_MODES + 6, f_target=0.8 * band()[0])
+        out = score(np.asarray(f), 1e-30)
+        out.update(arm=(args.arm or "prism") + "-eig", res=args.res, f_eig=f.tolist())
+        os.makedirs(args.outdir, exist_ok=True)
+        with open(os.path.join(args.outdir, f"eig_{args.arm or 'prism'}_{args.res:g}.json"), "w") as fh:
+            json.dump(out, fh, indent=1)
+        print(json.dumps({k: out[k] for k in ("rms", "max")}))
         return
     arm, res = (args.arm, args.res) if args.arm else tasks()[args.task]
     os.makedirs(args.outdir, exist_ok=True)
