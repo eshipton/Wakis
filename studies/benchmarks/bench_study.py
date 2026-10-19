@@ -63,6 +63,7 @@ PHASES = {
     "B4": ["B4"],
     "B4b": ["B4"],
     "WIN": [],
+    "REDO": [],
 }
 
 
@@ -85,6 +86,10 @@ def tasks(phase):
             for wf in (1, 3):
                 out.append((case, "tri-uniform", A_NANO / 28, wf))
                 out.append((case, "cart-conformal-all-graded", A_NANO / 40, wf))
+        return out
+    if phase == "REDO":  # B3 (gap stencil metric, sliver-free mesher) + B2 triangles
+        out = [t for t in tasks("B3")]
+        out += [t for t in tasks("B2") if t[1].startswith("tri")]
         return out
     if phase.startswith("B4"):
         return out
