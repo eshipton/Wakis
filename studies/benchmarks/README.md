@@ -138,7 +138,12 @@ The resolution label is h, the cell or edge size on the particles: a/5 … a/40,
    - the gap is modelled as a uniform axial field, whereas FIT solves flat-ended 0.5 mm cylinders with a real 1 mm gap between flat faces.
 2. **FIT.** A non-vanishing staircase/feed-model error that does not shrink with h_t or h_z.
 
-The MoM's own N-spread is 0.09 % / 0.06 %, so the offset is not MoM discretization. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
+The MoM's own N-spread is 0.09 % / 0.06 %, so the offset is not MoM discretization. Two cheap hypotheses were tested with the MoM, and neither closes the offset:
+- **Equivalent radius of the staircase wire.** At h_t = a/3 the PEC node set (29 nodes) is a staircased disk, not a square. Its outermost node lies at r = a, and the area-equivalent radius is 0.506 mm. Matching f_res would need a_eq ≈ 2a, and a thicker wire *raises* R_in (+1.5 % at a_eq = 1 mm) while FIT's R is lower.
+- **Flat end caps.** Adding a or 2a to the length explains −0.33 … −0.65 % of the f_res offset and none of the R_in offset.
+- **Feed width.** It matches: the FIT port spans exactly the 1 mm gap between the face planes, as in the MoM's uniform gap field.
+
+The R_in offset (−3.5 %) is therefore not geometric thickening. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
 Until then, the B4 targets are scored against the Hallén reference, and the offset is reported as part of the baseline.
 
 **Cost.**
