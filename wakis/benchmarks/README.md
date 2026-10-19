@@ -22,10 +22,10 @@ Baseline results, figures and cost-to-target tables are in `studies/benchmarks/`
 
 | case | what | reference | band | primary metrics |
 |---|---|---|---|---|
-| `B1-TM`, `B1-TE` | dielectric cylinder, n = 2, a = 1 µm (the earlier shared case) | Mie series (`wakis.analytic.mie_cylinder`) | x = k a = 2–10 (41 pts) | RMS relative error of Q_sca |
+| `B1-TM`, `B1-TE` | dielectric cylinder, n = 2, a = 1 µm (the earlier shared case; DFT window now 3000 fs, as 1000 fs leaves a 0.87 % TE / 0.14 % TM floor from a high-Q mode near x = 6.4) | Mie series (`wakis.analytic.mie_cylinder`) | x = k a = 2–10 (41 pts) | RMS relative error of Q_sca |
 | `B2-Au-TE/TM` | gold nanocylinder, a = 20 nm, in a host of n = 2.0 | complex-m cylinder series with the **same** Rakić (1998) Lorentz–Drude ε(ω) as the solver | 450–900 nm (91 pts) | Q_ext/Q_sca/Q_abs NRMS; LSPR wavelength, peak height, FWHM |
 | `B2-Ag-TE/TM` | silver nanocylinder, a = 20 nm, vacuum (sharp LSPR) | same | 300–500 nm (81 pts) | same |
-| `B3-g10`, `B3-g5`, `B3-g2` | gold dimer, a = 20 nm, gap 10/5/2 nm, host n = 2.0, TE with E along the dimer axis, incidence along +y | exact 2D multi-cylinder T-matrix (`wakis.analytic.multi_cylinder`) | 500–1000 nm (101 pts) | gap-centre \|E/E0\|² peak and its wavelength; Q_ext NRMS |
+| `B3-g10`, `B3-g5`, `B3-g2` | gold dimer, a = 20 nm, gap 10/5/2 nm, host n = 2.0, TE with E along the dimer axis, incidence along +y | exact 2D multi-cylinder T-matrix (`wakis.analytic.multi_cylinder`) | 500–1000 nm (101 pts) | gap \|E/E0\|² (mean over a 9-point stencil: centre + ring of radius g/4) peak and its wavelength; Q_ext NRMS |
 | `B4` | centre-fed PEC dipole, L = 150 mm, a = 0.5 mm, gap 1 mm, free space | Hallén thin-wire MoM with the same finite gap (`wakis.analytic.thin_wire`) | 0.7–1.2 GHz (51 pts) | resonance frequency (X_in = 0), R_in at resonance, Z_in NRMS, broadside directivity |
 | `B5-TM`, `B5-TE` | PEC cylinder, a = 1 µm | series in the PEC limit | x = 0.5–10 | Q_ext NRMS |
 
@@ -64,7 +64,7 @@ Baseline results, figures and cost-to-target tables are in `studies/benchmarks/`
 All defined in `wakis.benchmarks.metrics` and `case.evaluate`:
 - **NRMS** = sqrt(mean (y − y_ref)²) / max |y_ref| over the band. Unlike the relative RMS of B1, it stays meaningful where a metal's Q is small.
 - **Peak wavelength** (parabola through the three largest samples), **peak height**, **FWHM** (interpolated half-maximum crossings), as relative errors.
-- **B3**: `enh_peak` (relative error of the maximum |E/E0|² at the gap centre) and `enh_lam` (its wavelength).
+- **B3**: `enh_peak` (relative error of the maximum of the gap enhancement, the mean of |E/E0|² over `case.gap_points`: the gap centre plus 8 points at radius g/4) and `enh_lam` (its wavelength). `enh_centre_peak` is the pointwise centre value, a diagnostic only: it depends on where the point falls inside a cell.
 - **Diagnostics**: `boundary_reflection` (|incoming| / |outgoing| harmonic power on the extraction circles) and the fit residual.
 - **Cost to target**: `cost_to_target(records, metric, target)` interpolates (log-log) the unknowns, work (= unknowns × steps) and run time from which the error stays below the target on finer meshes. Default targets live in `case.targets` (e.g. B2: Q_ext NRMS 2/1/0.5 %, LSPR wavelength 0.5/0.2 %, height 2/1 %; B3: gap enhancement 5/2 %).
 
@@ -100,8 +100,8 @@ What a 2D scattering arm must deliver:
   - TF/SF arms: the circles must lie outside the total-field box.
   - Instead of samples, an arm may return `c_ext`, `c_sca` widths [m] (e.g. from a flux box).
 - **B3 gap field.**
-  - `e_gap`: the total in-plane E phasor at `case.gap_point`.
-  - `e0_gap`: the incident amplitude phasor at that point.
+  - `e_gap`: the total in-plane E phasors at `case.gap_points`, shape (n_freq, 9, 2).
+  - `e0_gap`: the incident amplitude phasor (n_freq,).
 - **Cost.**
   - `unknowns`: field degrees of freedom.
   - `steps`, and `run_s`: time-stepping wall time on one uncontended core.
@@ -118,7 +118,7 @@ What the B4 dipole arm must deliver:
 |---|---|---|
 | `cart-staircase-{uniform,graded}`, `cart-conformal-all-{uniform,graded}` | `cartesian2d.py` | `SolverFIT3D` on a one-cell periodic slab; TF/SF box; CPML; dispersive subpixel network for `'all'`; graded = h on the scatterers' bounding box + 2h, growth 1.2 to min(4h, λ_host/20) |
 | `tri-{uniform,graded}` | `triangles2d.py` | `UnstructuredFIT2D`, Voronoi Hodge, `meshing.cluster_mesh` (interface rings + greedy Poisson-disk fill + polar PML rings); scattered-field plane wave with the dispersive source of `wakis.unstructured.dispersive_planewave`; radial CFS-PML |
-| `cart-{staircase,conformal-pec}-graded` | `cartesian_dipole.py` | 3D dipole: graded transverse grid, h_z = min(g, 4 h_t), two PEC STL halves, `LumpedPort`, CPML, `Near2FarMonitor` |
+| `cart-staircase-edges-graded` (reference baseline), `cart-staircase-stl-graded`, `cart-conformal-pec-graded` | `cartesian_dipole.py` | 3D dipole: graded transverse grid, h_z = min(g, 4 h_t), `LumpedPort`, CPML, `Near2FarMonitor`. `edges`: an E edge is PEC when its midpoint is in the wire. `stl` and `conformal-pec` currently inherit the legacy STL cell masks (any node inside), which thicken the wire by up to a cell; the conformal-PEC records are marked as affected by this bug until `fix/conformal-pec-legacy-mask` lands. `BENCH_GPU=1` runs the arm on CuPy |
 
 ## Cost estimates (one core, uncontended n2-standard-2)
 
@@ -134,6 +134,7 @@ What the B4 dipole arm must deliver:
 - **Reference validity.**
   - The B2/B3 references solve the continuous ε(ω). The ADE's discrete ε differs at second order in ω dt (≈1e-5 here).
   - The B4 MoM uses the reduced kernel. It needs segment lengths ≳ a, and its reactance drifts by about 1 Ω between N = 150 and 300 (reported as `reference_uncertainty`).
+- **DFT window.** The window floor (1× vs 3× window) is ≤ 1e-5 on every B2/B3 metric (`studies/benchmarks/data/window_floor.md`).
 - **De-embedding.** The boundary-reflection de-embedding is exact only for a rotationally symmetric scatterer centred on the origin (B1, B2, B5). B3 uses the raw outgoing coefficients, so arms need a good absorber (`boundary_reflection` < ~1e-3).
 - **Weak lossless scatterers.** Their Q_ext − Q_sca is a small difference of large terms, set by phase errors. Use Q_sca or the volume absorption to check energy balance instead.
 - **Outer-mesh errors.** In TM the large metal-scattered field makes the coarse outer region the dominant error source. In B2 TM the graded arms are worse than the uniform ones at equal h; refine h_out with h.
