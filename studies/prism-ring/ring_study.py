@@ -65,8 +65,8 @@ PRB = [
 SYM = {"even": ("pmc", "pmc"), "odd": ("pmc", "pec")}
 
 ARMS = {
-    "prism": [20, 15, 12, 9, 7, 5],  # h_ring [nm] in the plane
-    "cart": [40, 30, 25, 20, 15, 12, 10],  # h [nm]
+    "prism": [30, 25, 20, 15, 12, 10],  # h_ring [nm] in the plane
+    "cart": [40, 30, 25, 20, 15, 12, 10],  # h [nm] (12 and 10 nm: GPU reference runs)
 }
 
 
