@@ -157,6 +157,25 @@ FIT on any polygon mesh with an orthogonal dual: squares in the bulk and triangl
 </tr>
 </table>
 
+#### Extruded prism FIT: 15× fewer unknowns on a Si micro-ring, 3–6× less work on a 3D cavity &nbsp;·&nbsp; `wakis.unstructured.PrismFIT3D`
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/prism_meshes.png" width="880" alt="Triangular prism meshes (graded body-fitted triangles extruded in z layers) of the dielectric rod cavity"></td>
+</tr>
+<tr>
+<td width="55%"><img src="docs/img/prism_cavity_error_vs_cost.png" width="600" alt="RMS error over the 20 lowest rod-cavity resonances versus unknowns, work and single-core time for prism, graded prism, Cartesian conformal, graded Cartesian and tetrahedral FIT"></td>
+<td>
+
+Body-fitted 2D triangles × independent z layers: a diagonal Voronoi Hodge, z PML and GPU support, with planar photonics (curved sidewalls, thin cores) as the target. **3D dielectric rod cavity, 20 lowest resonances against the exact hybrid-mode determinant, at 0.1 % RMS: graded prisms need 412k unknowns / 7.5e9 work, against 821k / 2.2e10 for graded conformal Cartesian (2.9× less work); at 0.05 %, 1.13 M / 3.4e10 against 4.08 M / 1.9e11 (5.6× less work).** Tetrahedra need fewer unknowns and less work but are ~28× slower in wall time than graded prisms. **220 nm Si micro-ring (TE<sub>0</sub>, m = 13–16) against a body-of-revolution reference, at about 2 nm accuracy: prisms at h = 30 nm (1.3 nm error, 0.90 M unknowns) against uniform conformal Cartesian at h = 20 nm (2.2 nm, 14 M): 15× fewer unknowns, 22× less work.** **Limits:** prisms plateau at a +0.04–0.07 % (~1 nm) offset on the ring whose cause has not been found yet (sub-nm needs Cartesian h = 10 nm); on the B4 dipole antenna the first-order lateral absorber makes prisms lose to the fixed conformal-PEC Cartesian arm (0.56 % / 2.2 % NRMS at 4.5 M unknowns vs 0.05 % / 1.3 % in 242 s). Code on `main`, [studies/prism-cavity](studies/prism-cavity), [studies/prism-ring](studies/prism-ring), [studies/prism-dipole](studies/prism-dipole).
+
+</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/prism_ring_error_vs_cost.png" width="880" alt="Maximum resonance-wavelength error of the Si micro-ring versus unknowns, work and run time for prism and Cartesian conformal FIT"></td>
+</tr>
+</table>
+
 #### Cartesian subgridding: provably stable nested patches, cheapest on dielectrics &nbsp;·&nbsp; `wakis.subgrid`
 
 <table>
