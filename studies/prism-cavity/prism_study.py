@@ -36,6 +36,7 @@ Usage::
 """
 
 import argparse
+import functools
 import json
 import os
 import sys
@@ -70,6 +71,7 @@ RES = {
 }
 
 
+@functools.lru_cache(maxsize=1)
 def exact_k():
     from wakis.unstructured.analytic import rod_cavity_hybrid
 
@@ -396,6 +398,7 @@ def run_tet(res, graded, workdir):
 # coarse resolutions added later (appended so that task indices stay stable)
 EXTRA = [(a, r) for a in ("prism", "prism-graded", "cart", "cart-graded") for r in (5, 6)]
 EXTRA += [(a, r) for a in ("tet", "tet-graded") for r in (4, 5, 6)]
+EXTRA += [(a, r) for a in ("prism", "prism-graded", "cart", "cart-graded") for r in (4,)]
 
 
 def tasks():
