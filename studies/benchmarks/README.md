@@ -119,7 +119,7 @@ Cost to target, as unknowns / work:
 - **The m2 metric removes the triangle plateau.** Graded triangles now converge to 1 % on all three gaps, where the previous metric left them stuck at about 1–2 %.
 - **Graded conformal Cartesian reaches only 5 %** on every gap, and is not reached at 2 % on the ladder (finest h = 0.5 nm).
 - **The triangle numbers at 5 % are higher than in the first table.** The patch fit is wider than the gap at coarse h, and the 40-ring PML adds unknowns.
-- **At 5 %, graded triangles still need 2.4–10× fewer unknowns and 4–34× less work** than graded conformal Cartesian.
+- **At 5 %, graded triangles still need 2.4–10× fewer unknowns and 4–49× less work** than graded conformal Cartesian.
 
 **Metric definition.** The metric is the mean over the gap stencil, not the pointwise centre value.
 - The first B3 ladder used the centre value, plus a mesher that let the two outer interface rings collide in the gap (a 2.8° sliver at h = 2.86 nm).
