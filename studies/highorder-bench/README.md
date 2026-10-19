@@ -224,6 +224,10 @@ Log-log interpolated cost from which the error stays at or below target (`≤` =
    - All curved DGTD arms (`dg2-pml`, `dg3-pml`, `dg4-pml`) already meet the $5\,\%$ and $2\,\%$ `enh_peak` targets and the $1\,\%$ `q_ext_nrms` target at the coarsest tested resolution $h = 10\,\mathrm{nm}$ ($\le 8,028$–$8,496$ unknowns for $p = 2$, $\le 13,380$–$14,160$ for $p = 3$, and $\le 20,070$–$21,240$ for $p = 4$).
    - At the $2\,\%$ `enh_peak` target, `dg2-pml` requires $\le 8,136$ unknowns vs $31,679$ (`tri-uniform`) or $39,938$ (`tri-graded`) on `B3-g10` (**$\ge 3.9\times$ fewer unknowns**), $\le 8,496$ vs $8,981$ (`tri-graded`) or $17,126$ (`hybrid-quadtri`) on `B3-g5`, and $\le 8,028$ vs $\le 34,756$ (`tri-graded`) on `B3-g2` (**$\ge 4.3\times$ fewer unknowns**, **$\ge 3.6\times$ fewer unknown-steps**).
 
+4. **Wall time (honest caveat)**: DG's unknown and work advantages do not carry over to wall time on these small, quasi-static cases. Graded triangle FIT reaches 5 % / 2 % `enh_peak` on B3-g5 in 11 s / 15 s, against ≤ 112 s for the coarsest DG run. On B2-Au-TE at 0.1 %, tri-uniform takes 64 s and dg2 75 s.
+   - The reasons are DG's 150–300 ns per unknown-step (5 RHS evaluations, numpy), and a time step set by $h/p^2$ and by the gap elements.
+   - DG wins on time only at tight tolerances that the second-order arms cannot reach in the measured ladders (e.g. 0.01 % Q_ext on B2: DG p = 3–4 at ≤ 13k unknowns).
+
 ## Limitations and Notes
 
 - **Curved-element geometric limit at $h = a$ ($20\,\mathrm{nm}$)**: The isoparametric curved-triangle mapping assumes at most one curved boundary face per triangle and explicitly rejects elements with two curved faces (`RuntimeError("element with two curved faces")`). On an $a = 20\,\mathrm{nm}$ cylinder, a coarse $h = 20\,\mathrm{nm}$ mesh produces triangles spanning two segments of the cylinder boundary and fails by design (the 8 $h = 20\,\mathrm{nm}$ B2c records are skipped during publication); the coarsest valid resolution is $h = 13.33\,\mathrm{nm}$ ($a / h = 1.5$).
