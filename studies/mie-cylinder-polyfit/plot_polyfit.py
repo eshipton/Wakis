@@ -32,6 +32,7 @@ STYLE = {
     "hybrid": dict(color="#E69F00", marker="D", ls="-", label="Wakis FIT (hybrid squares + triangles; square + PML)"),
     "hybrid-disk": dict(color="#009E73", marker="P", ls="-", label="Wakis FIT (hybrid squares + triangles; disk + ABC)"),
     "voronoi": dict(color="#CC79A7", marker="h", ls="-", label="Wakis FIT (Voronoi polygons; disk + ABC)"),
+    "tri-graded-pml": dict(color="#56B4E9", marker="o", ls="--", label="Wakis FIT (triangles graded, compact + radial PML; best baseline)"),
     "cart-graded-compact": dict(color="#D55E00", marker="s", ls=":", mfc="none", label="Wakis FIT (Cartesian graded, compact)"),
     "tri-graded-compact": dict(color="#0072B2", marker="o", ls=":", mfc="none", label="Wakis FIT (triangles graded, compact)"),
     "hybrid-compact": dict(color="#E69F00", marker="D", ls="-", mfc="none", label="Wakis FIT (hybrid, square + PML, compact)"),
@@ -203,7 +204,7 @@ def fig_qsca(acc, res=20):
     for ax, pol in zip(axs, ("TM", "TE")):
         q_ref, _ = S.series(pol, xs)
         ax.plot(xs, q_ref, "k-", lw=1, label="exact series")
-        for arm in ("hybrid-disk", "voronoi", "tri-graded"):
+        for arm in ("hybrid-disk", "voronoi", "tri-graded-pml"):
             d = acc.get((arm, pol, res))
             if d is None:
                 continue

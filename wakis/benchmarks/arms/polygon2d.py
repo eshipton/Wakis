@@ -20,7 +20,10 @@ Polygonal-FIT arms (`PolygonFIT2D`, diagonal/orthogonal Hodge).
 Both use the scattered-field plane wave of `PolygonFIT2D.add_plane_wave`
 (dispersive scatterers driven by the total field). Gap fields (TE) are
 reconstructed from the edge fluxes of the triangle that contains the gap
-point with the lowest-order Raviart-Thomas functions.
+point by a least-squares linear fit of the fluxes of the surrounding edges
+(``gap_lsq=True``; default: the single-triangle Raviart-Thomas value, as the
+triangle baseline; it is first order in the point position and noisy from
+one mesh to the next).
 
 The resolution label is h [m] on the scatterers (same ladder and h_out rule
 as the triangle baseline).
@@ -62,6 +65,38 @@ def _rt_matrix(mesh, point):
     return sp.csr_matrix((vals, (rows, cols)), shape=(2, mesh.n_edges))
 
 
+def _lsq_flux_matrix(mesh, point, rings=2):
+    """
+    (2, n_edges) map edge fluxes -> D at `point` by a least-squares linear fit.
+
+    D(x) = D0 + A (x - x0) is fitted to the fluxes d_e = L_e n_e . D(m_e) (exact
+    for linear D) of the edges of the cells within `rings` cell layers of the
+    point, restricted to the material of the cell that contains it. The
+    reconstruction is exact for linear fields (second order), whereas the
+    single-cell Raviart-Thomas value is first order in the point position.
+    """
+    c0 = int(mesh.locate([point])[0])
+    tag = mesh.cell_tags[c0]
+    cells = {c0}
+    for _ in range(rings):
+        nodes = set(np.concatenate([mesh.cell(c) for c in cells]).tolist())
+        sel = np.flatnonzero(np.isin(mesh.corner_node, list(nodes)))
+        cells |= set(mesh.corner_cell[sel].tolist())
+    cells = [c for c in cells if mesh.cell_tags[c] == tag]
+    edges = np.unique(mesh.corner_edge[np.isin(mesh.corner_cell, cells)])
+    L = mesh.edge_length[edges][:, None]
+    n = mesh.edge_normal[edges]
+    dx = mesh.edge_midpoint[edges] - np.asarray(point)
+    # unknowns: D0x, D0y, A11, A12, A21, A22
+    M = L * np.column_stack(
+        [n[:, 0], n[:, 1], n[:, 0] * dx[:, 0], n[:, 0] * dx[:, 1],
+         n[:, 1] * dx[:, 0], n[:, 1] * dx[:, 1]]
+    )  # fmt: skip
+    pinv = np.linalg.pinv(M)[:2]  # rows: D0x, D0y
+    rows = np.repeat([0, 1], len(edges))
+    return sp.csr_matrix((pinv.ravel(), (rows, np.tile(edges, 2))), shape=(2, mesh.n_edges))
+
+
 class PolygonArm(Arm):
     """
     Polygonal FIT arm for `Scattering2DCase`.
@@ -75,18 +110,22 @@ class PolygonArm(Arm):
     n_pml : int
     gap_cells : float
         Cells across narrow gaps (hybrid only, None: off).
+    gap_lsq : bool
+        Gap field by least-squares linear flux reconstruction (else
+        single-cell Raviart-Thomas).
     cfl : float
     ladder : sequence of float, optional
     """
 
     def __init__(self, kind="hybrid", growth=1.2, ratio=4.0, ppw_out=20, n_pml=10,
-                 gap_cells=4.0, cfl=0.95, ladder=None, name=None):  # fmt: skip
+                 gap_cells=4.0, cfl=0.95, ladder=None, name=None, gap_lsq=False):  # fmt: skip
         self.kind = kind
         self.growth = growth
         self.ratio = ratio
         self.ppw_out = ppw_out
         self.n_pml = n_pml
         self.gap_cells = gap_cells
+        self.gap_lsq = gap_lsq
         self.cfl = cfl
         self.ladder = ladder
         self.name = name or f"poly-{kind}"
@@ -180,7 +219,8 @@ class PolygonArm(Arm):
         if gap:
             if case.polarization != "TE":
                 raise NotImplementedError("gap field: TE only")
-            Pg = _rt_matrix(mesh, case.gap_point) / (eps_0 * case.n_background**2)
+            rec = _lsq_flux_matrix if self.gap_lsq else _rt_matrix
+            Pg = rec(mesh, case.gap_point) / (eps_0 * case.n_background**2)
         setup_s = time.time() - t0
         dt = solver.dt
         shift = 0.0 if case.polarization == "TM" else -0.5 * dt
