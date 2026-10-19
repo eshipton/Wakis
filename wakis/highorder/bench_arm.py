@@ -19,8 +19,9 @@ Benchmark-suite arm (`wakis.benchmarks.Arm`) for the high-order DGTD solver
   ``case.r_absorber``;
 * scattered-field plane wave (dispersive scatterers driven by the total
   field through their ADEs); all fields live at the same time levels (RK);
-* gap E for B3: polynomial evaluation of (Ex, Ey) = -(vx, vy) at the gap
-  point plus the analytic incident field.
+* gap E for B3: polynomial evaluation of (Ex, Ey) = -(vx, vy) at
+  ``case.gap_points`` (centre + 8 points on a circle of radius g/4) plus the
+  analytic incident field; ``e_gap`` has shape (n_freq, n_points, 2).
 
 The resolution label is h [m] on the scatterers; the arm's degree is p.
 """
@@ -119,7 +120,8 @@ class DGTD2DArm(Arm):
         P = solver.interp_matrix(pts)
         gap = case.gap_point is not None
         if gap:
-            Pg = solver.interp_matrix(np.atleast_2d(case.gap_point))
+            gpts = np.atleast_2d(getattr(case, "gap_points", case.gap_point))
+            Pg = solver.interp_matrix(gpts)
         setup_s = time.time() - t0
         dt = solver.dt
         freqs = case.freqs
@@ -127,7 +129,7 @@ class DGTD2DArm(Arm):
         times = (np.arange(n_steps) + 1) * dt
         kern = np.exp(-2j * np.pi * np.outer(times, freqs))
         acc = np.zeros((len(freqs), len(pts)), complex)
-        acc_e = np.zeros((len(freqs), 2), complex)
+        acc_e = None
         d = case.direction
         pvec = np.array([-np.sin(d), np.cos(d)])
         amp_e = 1.0  # incident E amplitude of add_plane_wave
@@ -138,10 +140,12 @@ class DGTD2DArm(Arm):
             if gap:
                 vx = solver._view(solver.X, "vx").ravel()
                 vy = solver._view(solver.X, "vy").ravel()
-                es = -np.array([(Pg @ vx)[0], (Pg @ vy)[0]])  # TE: v = -E
-                ui = solver.incident_field(np.atleast_2d(case.gap_point), times[n])[0, 0]
-                einc = ui * (amp_e / solver.plane_wave["amp"]) * pvec
-                acc_e += np.outer(kern[n], es + einc) * dt
+                es = -np.stack([Pg @ vx, Pg @ vy], 1)  # (n_gap, 2); TE: v = -E
+                ui = solver.incident_field(gpts, times[n])[0]  # (n_gap,)
+                e_tot = es + (ui * (amp_e / solver.plane_wave["amp"]))[:, None] * pvec
+                if acc_e is None:
+                    acc_e = np.zeros((len(freqs),) + e_tot.shape, complex)
+                acc_e += kern[n][:, None, None] * e_tot[None] * dt
             if n % 4000 == 0 and not np.all(np.isfinite(solver.X)):
                 raise FloatingPointError("unstable")
         run_s = time.time() - t1
