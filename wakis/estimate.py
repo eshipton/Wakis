@@ -249,6 +249,10 @@ def estimate(
     adjoint : dict, optional
         {'design_edges': int, 'store_bytes': 4 or 8}: stored E increments of an
         AdjointSimulation (steps x design edges) plus the adjoint state.
+        Optional 'memory': 'checkpoint' with 'budget_gb' (or 'checkpoints'
+        and 'block'): binomial checkpointing (`wakis.inverse.memory`) instead
+        of storing; the breakdown then holds the snapshots and one block of
+        rows, and the run time the recomputed steps (``adjoint_plan``).
     dispersive_edges, n_poles : int, optional
         E edges with dispersive materials (about 3 per cell inside the
         material) and poles per material.
@@ -310,10 +314,17 @@ def estimate(
 
     mon = sum(16.0 * nf * ns * nc for nf, ns, nc in monitors) / n_ranks
     breakdown["monitors"] = mon
+    recompute = 0
     if adjoint:
         stored = (
             steps * adjoint["design_edges"] * adjoint.get("store_bytes", 8) / n_ranks
         )
+        if adjoint.get("memory") == "checkpoint":
+            plan = adjoint_plan(cells // n_ranks, steps, adjoint["design_edges"] // n_ranks,
+                                adjoint.get("budget_gb"), dtype=dtype, cpml=cpml,
+                                checkpoints=adjoint.get("checkpoints"),
+                                block=adjoint.get("block"))  # fmt: skip
+            stored, recompute = plan["bytes"], plan["recompute_steps"]
         state = (
             factor * per_cell * per_rank * 0.6
         )  # transposed operators + adjoint fields
@@ -363,9 +374,51 @@ def estimate(
     step += edges * (da + db * n_poles) * factor
     sa, sb, sc = (_SETUP_GPU if backend == "gpu" else _SETUP)[mode or "plain"]
     setup = sa + sb * per_rank + sc * n_iface
-    time_steps = steps * (2.2 if adjoint else 1.0)
+    time_steps = steps * (2.2 if adjoint else 1.0) + recompute
     seconds = setup + time_steps * step
     return Estimate(cells, host * safety, gpu * safety, seconds, breakdown, setup, step)
+
+
+def adjoint_plan(cells, steps, design_edges, budget_gb=None, dtype="float64",
+                 cpml=True, checkpoints=None, block=None):  # fmt: skip
+    """
+    Checkpoint plan of an `AdjointSimulation` (memory='checkpoint').
+
+    A solver snapshot holds E, H and J (9 values per cell; complex fields
+    twice that) plus the CPML psi arrays (~10 % with CPML); a row holds one
+    float64 value per design edge (complex: two).
+
+    Parameters
+    ----------
+    cells, steps, design_edges : int
+    budget_gb : float, optional
+        Memory for snapshots and rows [GB]; the plan minimizes recomputation.
+    checkpoints, block : int, optional
+        Fixed settings instead of a budget.
+
+    Returns
+    -------
+    dict
+        mode, slots, block, bytes (snapshots + rows), recompute_steps,
+        state_bytes, row_bytes.
+    """
+    from .inverse import memory as mem
+
+    item = 16 if str(dtype).startswith("complex") else 8
+    state = int(9 * item * cells * (1.1 if cpml else 1.0))
+    row = item * int(design_edges)
+    if checkpoints:
+        if block is None:
+            block = max(1, -(-(steps - 1) // mem.beta(checkpoints, 2)))
+        n_blocks = -(-(steps - 1) // block)
+        plan = dict(mode="checkpoint", slots=checkpoints, block=block,
+                    bytes=checkpoints * state + (block + 1) * row,
+                    recompute_steps=mem.revolve_cost(n_blocks - 1, checkpoints) * block)  # fmt: skip
+    else:
+        if budget_gb is None:
+            raise ValueError("Give budget_gb or checkpoints.")
+        plan = mem.plan_checkpoints(steps, state, row, budget_gb * 1e9)
+    return dict(plan, state_bytes=state, row_bytes=row)
 
 
 def estimate_unstructured(n_cells, steps=0, dim=3, eigen=False, safety=1.25):
