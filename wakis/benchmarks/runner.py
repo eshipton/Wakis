@@ -77,7 +77,8 @@ def run(case, arm, resolution, catch=True):
     """
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     t0 = time.time()
-    rec = dict(case=case.name, arm=arm.name, resolution=resolution)
+    rec = dict(case=case.name, arm=arm.name, resolution=resolution,
+               t_run=getattr(case, "t_run", None))  # fmt: skip
     try:
         result = arm.run(case, resolution)
         rec["cost"] = {k: _plain(v) for k, v in result.get("cost", {}).items()}

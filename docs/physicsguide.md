@@ -1562,6 +1562,82 @@ References:
 - A. Abdelkader et al., "VoroCrust: Voronoi meshing without clipping", *ACM Trans. Graph.* **39**(3) (2020), arXiv:1902.08767.
 - J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
 
+### 🔲 Local Cartesian refinement (subgridding): `wakis.subgrid`
+
+A rectilinear grid that must resolve a small feature (a thin fin, a nanogap, a metal surface) carries the fine spacing along every row and column that crosses it. In the graded Mie study, 78 % of the cells of the graded grid were fine along at least one axis. Subgridding refines only the cells near the feature: a coarse Cartesian grid holds nested patches refined by an integer ratio $r$ (2 or 3), recursively (quadtree, `max_level` levels). `wakis.subgrid` is a 2D prototype (TM and TE). The 3D plan is at the end of this section.
+
+**Mesh** (`QuadMesh`). Every leaf cell is an axis-aligned rectangle. Its corners lie on the lattice that splits each coarse interval into $r^{L}$ parts, so the topology is exact integer arithmetic, and the coarse grid may itself be graded. Where a coarse leaf borders finer leaves, the fine corners inside a coarse side are *hanging nodes*. They are not unknowns. Each takes the linear interpolant of the two end nodes of that side, which is the trace of the coarse cell's bilinear field. This keeps the scalar field continuous. The constraints form the prolongation $\mathbf P$ (all nodes × free nodes, rows sum to 1, $\mathbf u_\text{all} = \mathbf P\mathbf u$). Edges are the sides of the leaf cells. Along an interface, the coarse side and the $r$ collinear fine sides are *different* edges, each belonging to its own cell. Balance (no side touches leaves two levels finer) is enforced by refining offending cells.
+
+**Grid equations.** Both polarizations use one scalar node field $u$ and one edge flux $f$ per unit length. In TM, $u=E_z$ and $f_e = L_e\mu(\mathbf H\times\hat{\mathbf t})_z$; the node mass comes from $\varepsilon$ and the edge Hodge from $\mu$. In TE, $u=H_z$ and $f_e = L_e\varepsilon(\hat{\mathbf t}\times\mathbf E)_z$; the node mass comes from $\mu$ and the edge Hodge from $\varepsilon$. With $\mathbf G$ the edge–node incidence of the composite mesh and $\mathbf K = \mathbf G\mathbf P$:
+
+$$
+\mathbf f^{n+1/2} = \mathbf f^{n-1/2} - \Delta t\,\mathbf K\mathbf u^n,\qquad
+\mathbf D(\mathbf u^{n+1}-\mathbf u^n) = \Delta t\,\mathbf K^T\mathbf W\mathbf f^{n+1/2},
+$$
+
+with $\mathbf D = \mathbf P^T\mathbf m$ and $\mathbf W$ diagonal. Here $\mathbf m$ holds the dual-cell masses of all nodes (a quarter of each adjacent cell), and $\mathbf D$ is the row-sum lumping of $\mathbf P^T\,\mathrm{diag}(\mathbf m)\,\mathbf P$, which uses $\mathbf P\mathbf 1 = \mathbf 1$. The edge Hodge is $W_e = L^*_e/(\mu L_e)$, with $L^*_e$ the sum of the half widths of the cells that own the edge. On a uniform grid this is exactly Yee/FIT. On the composite mesh it is the conforming bilinear ($Q_1$) finite-element scheme with trapezoidal lumping of mass and stiffness and hanging-node constraints. The coarse-to-fine map $\mathbf P$ and the fine-to-coarse map $\mathbf P^T$ are therefore exact transposes, a Galerkin interface operator in the spirit of [Venkatarayalu et al., 2007] and [Chilton & Lee, 2007]. Three properties follow:
+
+- **Stability.** $\mathbf D^{-1}\mathbf K^T\mathbf W\mathbf K$ is self-adjoint and positive semi-definite in the $\mathbf D$ inner product. The leapfrog conserves $\mathcal E = \tfrac12\mathbf f^{n+1/2}\cdot\mathbf W\mathbf f^{n+1/2}+\tfrac12\mathbf u^n\cdot\mathbf D\mathbf u^{n+1}$ exactly. It is stable iff $\Delta t < 2/\sqrt{\lambda_\max}$, and $\lambda_\max$ is computed at setup by Lanczos. Over $10^5$ steps on a 3-level mesh with dielectrics crossing both interfaces, $\mathcal E$ stays constant to $2\times10^{-15}$. Two mutations break it. A non-transposed restriction, where hanging nodes inject into the coarse update, grows by $10^{12}$ within 4 000 steps even at half the CFL limit. A time step 2 % above the computed limit also diverges.
+- **Second order.** Cavity eigenfrequencies with an off-centre patch converge at order 2.0, and their errors lie between those of the coarse and the fine grid. The interface reflection falls as $N^{-2}$ ($N$ = coarse cells per wavelength) at every angle, for both 2:1 and 3:1. At 2:1 it is 0.47 % at normal incidence, 0.19 % at 30° and 0.69 % at 60° for $N = 20$, and 5 % at 75°. The mutation in which a hanging node copies one neighbour instead of interpolating is first order: the reflection falls only as $N^{-1}$, and the eigenvalue convergence order drops below 1.
+- **Exact adjoint.** Every update is linear with fixed sparse matrices. `linear_step_T` is the exact transpose of a step and passes the dot-product test to $10^{-13}$; a transpose that omits $\mathbf P$ fails it.
+
+The reflection is measured in the frequency domain. The leapfrog steady state satisfies $(\mathbf K^H\mathbf W\mathbf K - \tilde\omega^2\mathbf D)\mathbf u = \mathbf b$ exactly, with $\tilde\omega = 2\sin(\omega\Delta t/2)/\Delta t$. A strip two coarse cells high with Bloch phase $e^{-ik_y L_y}$ represents an infinite straight interface (`wakis.subgrid.interface.bloch_reflection`). The fit uses the exact discrete wavenumber of the coarse grid, so the result contains no coarse-grid dispersion, and the floor of the measurement without an interface is below $10^{-5}$.
+
+**Materials (sub-pixel).** Cells cut by an interface are sampled with $n_\text{sub}\times n_\text{sub}$ points per quarter cell and per half strip. TM node masses average $\varepsilon$ arithmetically, because $E_z$ is tangential to every interface. For the TE edge Hodge, $D_n$ is continuous across a strip and $E_t$ along it. Each column $k$ across the edge therefore gives $R_k=\int dn/\varepsilon$ (series), and the columns combine in parallel: $W_e = 1/(\varepsilon_0 L_e\,\overline{R_k^{-1}})$. The background is a lossless dielectric $\varepsilon_b$ (vacuum by default).
+
+**Sources, PML, dispersion.** The plane wave enters in scattered-field form, so no TF/SF box is needed.
+- TM: $-\mathbf P^T[(\mathbf m-\mathbf m_b)\circ(\mathbf u_\text{inc}^{n+1}-\mathbf u_\text{inc}^n)]$, the discrete time derivative.
+- TE: the constitutive relation $E_s = D_s/\varepsilon - (1-\varepsilon_b/\varepsilon)E_\text{inc}$ integrated over each column, $g = W f - c_e E_{\text{inc},n}$.
+
+A Bérenger split-field PML (cubic grading) fills the coarse frame. Drude and Lorentz poles use the ADEs of `wakis.dispersive`, driven by the total field. In TM they sit on the nodes, mixed by the area fraction of the dual cell (exact, since $E_z$ is tangential). In TE they sit on the edges, with the series-per-column rule given in the limits below. A Lorentz cylinder reproduces the dispersive series to 9.5 % RMS at res 10 and 5 % at res 14 (`test_052`); without the pole dynamics the error is more than 3× larger.
+
+**Local time stepping.** The interface operator is symmetric, so the stabilized leapfrog–Chebyshev LTS of `wakis.unstructured.lts` (sibling branch `feature/unstructured-lts`; [Diaz & Grote, 2009], with damping) applies without change: `SubgridFIT2D(..., lts=p)` feeds the flux update with $r(\mathbf X)\mathbf u$. With $p=2$ on the Mie benchmark, only the fine *vacuum* band takes two sub-steps (4–11 % of the nodes). The dielectric (where $v=c/2$) and the coarse grid take the coarse step. The step count halves, and the stability ratio is 0.975–0.98 (computed by Lanczos at setup). The dielectric then runs at about twice its previous Courant number, and the leapfrog's temporal dispersion cancels more of the spatial dispersion. This *also* halves the Mie error. The effect is generic: the triangle LTS study sees the same, and global-$\Delta t$ runs at Courant 0.5, 0.7 and 0.95 give 2.36 %, 2.31 % and 2.20 %. It is not specific to subgridding.
+
+**Benchmark (B1, Mie cylinder n = 2, x = 2–10).** Global $\Delta t$, a 2:1 patch on the coarse cells within $a+2h_\text{in}$, and $h_\text{out}=2h_\text{in}$: the same fine band and coarse size as the graded arms. To reach 1 % RMS error in TM (TE), the compact subgrid needs:
+- 175k (164k) unknowns and $7.2\times10^9$ ($6.5\times10^9$) unknown-steps;
+- against graded triangles with the radial PML, 240k (245k) unknowns and $1.07\times10^{10}$ ($1.11\times10^{10}$): 1.4–1.5× fewer unknowns and 1.5–1.7× less work;
+- against the compact graded rectilinear grid, 362k (347k) unknowns and $1.67\times10^{10}$ ($1.56\times10^{10}$): 2.1× fewer unknowns and 2.3–2.4× less work.
+
+With LTS ($p=2$) the subgrid reaches 1 % with 88k (105k) unknowns and $1.4\times10^9$ ($1.8\times10^9$) unknown-steps, in 16 s (22 s) on one core. Tables, wall times and the LTS caveat are in `studies/mie-cylinder-subgrid`.
+
+**Plasmonic and gap benchmarks** (`studies/subgrid-benchmarks`, shared store arms `subgrid-2to1*`). Against graded conformal Cartesian, the subgrid needs:
+- 1.8–2× fewer unknowns for 1 % Q_ext error on the Au/Ag nanocylinder in TE (B2);
+- 1.5–3.8× fewer for a 10 % gap-enhancement error on the Au dimer (B3);
+- 16–52× fewer on a Si nanogap dimer with a 2–5 nm gap (S1), with LTS 50–200× less time.
+
+Against graded triangles it is on par on S1 at 5 % but 4–5× more expensive on B2/B3 TE. There E crosses curved metal surfaces, and the diagonal sub-pixel Hodge converges at first order in h.
+
+**Limits & failure modes.**
+- **Spurious interface reflection.** It is second order but not zero: 2 % at 10 coarse cells per wavelength at normal incidence, rising toward grazing incidence (14 % at 75° for $N=10$). Keep strong fields and resonant features at least a few fine cells away from level jumps, and keep at least about 10 coarse cells per local wavelength.
+- **Ratio.** Ratios above 3 were not tested; reflection grows mildly from 2:1 to 3:1 (+20 %). Multi-level meshes are balanced automatically; unbalanced meshes are resolved recursively but are not validated.
+- **Time step.** With global $\Delta t$ the smallest cell sets the step everywhere. Without LTS, subgridding reduces unknowns but not steps.
+- **LTS with dispersive media.** The ADE runs at the coarse step. With the Rakić Au/Ag models, whose Lorentz poles reach $\omega_0 \approx 2\times10^{16}$ rad/s, the coarse step of $p=4$ fails the ADE stability check or, in some runs, diverges, even though the Lanczos check of the lossless operator passes. LTS is therefore not usable for the plasmonic benchmarks until the ADE of the fine set is sub-stepped as well.
+- **Local time stepping.** The LTS is two-level (one ratio $p$). A deep multi-level patch puts all levels below the coarse CFL into $F$. Its stability proof covers the lossless, source-free system: the PML must stay outside $F$ and its buffer (checked), and with ADE media inside $F$ stability is only tested, not proven.
+- **Materials.** The TE Hodge is diagonal: the series/parallel strip rule is exact for interfaces aligned with the grid and first order for oblique ones, as with the diagonal conformal averaging of `SolverFIT3D`. For dispersive TE media every column of a cut edge carries its own metal-segment field and polarization, in series with the host: $E_m = ((g + b\,p/\varepsilon_\infty)/R - p)/\varepsilon_\infty$ and $g = Wf - W\varepsilon_0\sum_k w_k b_k p_k/(\varepsilon_\infty R_k) - c_e E_\text{inc}$. This is exact for a flat metal surface aligned with the grid and passive by construction. A setup guard checks $b_k/\varepsilon_\infty \le R_k$, because inconsistent column data made the semi-discrete system active during development. At curved metal surfaces the error is still first order. On B2-Au-TE the error falls from 5.1 % to 1.6 % as h goes from 4 nm to 1 nm, about as accurate per h as the conformal Cartesian arm, while body-fitted triangles reach 0.2 % at 1 nm.
+- **PML.** The split-field PML is not covered by the energy proof. It runs only on the coarse frame and is not included in `linear_step_T`, so its adjoint, and those of the ADE and the sources, remain to be written.
+- **Performance.** This is a SciPy-sparse prototype: about 15–25 ns per unknown-step on one core, including the per-step DFT on the extraction circles. There is no GPU or MPI path.
+
+**Extension to 3D (`SolverFIT3D`, plan).**
+- **Mesh.** `GridFIT3D` keeps its non-uniform coarse tensor grid and gains an octree of refined boxes, nested and balanced, of ratio 2 or 3.
+- **Unknowns.** In 3D, $\mathbf e$ lives on edges. Hanging *edges* on a coarse face take the Nédélec trace of the coarse face: fine edge voltages are fixed fractions of the parallel coarse edge, and of the coarse face's neighbouring edges for transverse fine edges inside the face. This yields $\mathbf P_e$ (all fine and coarse edges × free edges). The curl becomes $\mathbf C\mathbf P_e$, Ampère uses $\mathbf P_e^T$, and the masses are row-sum lumped, $\mathbf M_\varepsilon = \mathbf P_e^T\mathbf m_\varepsilon$.
+- **Properties.** The same proof gives energy conservation, CFL stability and an exact transpose, as in the hexahedral hanging-variable FETD of Venkatarayalu et al. $\mathbf D\mathbf b = 0$ holds for the fine faces because $\mathbf b$ is updated from $\mathbf C\mathbf P_e\mathbf e$.
+- **Data layout.** Keep each patch as a dense Cartesian block (one Yee update kernel per block) and apply $\mathbf P_e$ and $\mathbf P_e^T$ as thin sparse coupling operators on the block surfaces only. This keeps the GPU kernels and the existing conformal/tensor material code per block.
+- **MPI.** Assign whole blocks to ranks (the coarse slab decomposition plus patch ownership by centre). Only the surface couplings and the coarse halos are exchanged, and patches that straddle a slab boundary are split on coarse-cell lines.
+- **LTS.** Two-level Chebyshev LTS per patch level (substeps $p=r^\ell$) needs one extra product of the fine block operator per substep, which also maps onto block kernels.
+- **Cost.** The leading cost is the coarse-fine surface (about $6 r^2$ edges per coarse face).
+- **Validation.** Repeat the cavity energy, dot-product and Bloch-reflection tests of this section in 3D before any physics runs.
+
+References:
+- P. Thoma and T. Weiland, "A consistent subgridding scheme for the finite difference time domain method", *Int. J. Numer. Model.* **9**(5), 359–374 (1996).
+- W. Podebrad, M. Clemens and T. Weiland, "New flexible subgridding scheme for the finite integration technique", *IEEE Trans. Magn.* **39**(3), 1662–1665 (2003).
+- J.-P. Bérenger, "A Huygens subgridding for the FDTD method", *IEEE Trans. Antennas Propag.* **54**(12), 3797–3804 (2006).
+- R. A. Chilton and R. Lee, "Conservative and provably stable FDTD subgridding", *IEEE Trans. Antennas Propag.* **55**(9), 2537–2549 (2007).
+- N. V. Venkatarayalu, R. Lee, Y.-B. Gan and L.-W. Li, "A stable FDTD subgridding method based on finite element formulation with hanging variable", *IEEE Trans. Antennas Propag.* **55**(3), 907–915 (2007).
+- F. Collino, T. Fouquet and P. Joly, "Conservative space-time mesh refinement methods for the FDTD solution of Maxwell's equations", *J. Comput. Phys.* **211**(1), 9–35 (2006).
+- F. Bekmambetova, X. Zhang and P. Triverio, "A dissipative systems theory for FDTD with application to stability analysis and subgridding", *IEEE Trans. Antennas Propag.* **65**(2), 751–762 (2017); 3D: **66**(12), 7156–7170 (2018).
+- Y. Cheng et al., "A stable FDTD subgridding scheme with SBP-SAT for transient TM analysis", *J. Comput. Phys.* **494**, 112510 (2023).
+- J. Diaz and M. J. Grote, "Energy conserving explicit local time stepping for second-order wave equations", *SIAM J. Sci. Comput.* **31**(3), 1985–2014 (2009).
+
 
 ### Surface impedance boundary condition (SIBC)
 
