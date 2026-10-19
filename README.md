@@ -54,7 +54,43 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <tr>
 <td colspan="2">
 
-**B3, interim (86 of 102 runs; window check pending):** Au nanodimer with a 5 nm gap, error of the gap field enhancement against the multi-cylinder T-matrix (maps above). **Graded triangles: 15 %, 0.8 %, 0.4 % at h = 4, 2, 0.7 nm; conformal Cartesian: 84 %, 11 %, 5 %** (4 % at 0.5 nm). The staircase is erratic, between 15 % and 125 %. Caveat: the triangle gap metric is not monotone at the 1–9 % level, because it is a pointwise reconstruction at the gap centre.
+**B3** (Au nanodimers with 2, 5 and 10 nm gaps; error in the gap field enhancement against an exact multi-cylinder T-matrix, maps above): rerun in progress. The first interim ladder used a single centre-point metric and a mesh with a sliver in the 5 nm gap, so its numbers were withdrawn. The metric is now the mean |E/E<sub>0</sub>|² over 9 gap points, the mesher was fixed (minimum angle > 22°), and all B3 runs are being regenerated.
+
+</td>
+</tr>
+</table>
+
+#### Tutorials: Mie scattering in 2D and 3D with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/tutorial01_fields_relief_map.png" width="880" alt="Wakis FIT simulation of an n = 2 cylinder at size parameter 6: left, 3D relief of Re Ez for TM with the TF/SF box (orange), flux box (blue) and cylinder outline; right, Re Hz map for TE with the focused field behind the cylinder"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/img/tutorial01_movie.gif" width="440" alt="Animation of the time-domain field as the plane-wave pulse enters the TF/SF box, scatters off the cylinder and leaves through the PML"></td>
+<td width="50%"><img src="docs/img/tutorial01_triangles.png" width="440" alt="Conforming triangle mesh with its Voronoi dual at the cylinder surface"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/tutorial01_mesh_edges.png" width="880" alt="Permittivity seen by the TE edges near the cylinder surface for the staircase, conformal ('all') and tensor material models"></td>
+</tr>
+<tr>
+<td colspan="2">
+
+[Tutorial 01](tutorials/01_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_cylinder/mie_cylinder.ipynb)): a `TFSFSource` plane wave hits an n = 2 cylinder (a = 1 µm, x = 2&ndash;10, TM and TE). The scattered flux is compared with the exact series. Over 42 runs, conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, at second order. The staircase at the same resolution stays first order (3.9 % and 4.8 %). TE needs the full tensor (0.21 % vs 0.35 % diagonal at x &le; 5). A triangle-mesh section shows that conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45× the work on uniform meshes; graded meshes change that (see above).
+
+</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/tutorial01b_fields_xz.png" width="880" alt="Wakis FIT simulation of an n = 2 sphere: Re Ex and log10 |Ex| in the xz plane at size parameters 3, 6 and 9, total field inside the TF/SF box and scattered field outside"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/img/tutorial01b_isosurfaces.png" width="440" alt="3D isosurfaces of |E| inside and behind the dielectric sphere (photonic nanojet)"></td>
+<td width="50%"><img src="docs/img/tutorial01b_far_field.png" width="440" alt="Split polar far-field plot: left half E-plane (xz, |S2|^2), right half H-plane (yz, |S1|^2), Wakis against Mie"><br><sub>Split polar plot: left half E-plane (xz, |S<sub>2</sub>|²), right half H-plane (yz, |S<sub>1</sub>|²); the two planes differ physically (dipole null near 90° in the E-plane), and each is symmetric in ±θ.</sub></td>
+</tr>
+<tr>
+<td colspan="2">
+
+[Tutorial 01b](tutorials/01b_mie_sphere/mie_sphere.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)): the same set-up in 3D, an n = 2 sphere with r = 1 µm. It covers the Mie series, near fields, isosurfaces, a movie, and the far field (`Near2FarMonitor` against S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells and 11 min, with **Q<sub>sca</sub> within 3.4 % RMS of Mie** over x = 2&ndash;10 (conformal, 40 cells/µm). The 3D resolution study is still to do.
 
 </td>
 </tr>
@@ -175,26 +211,6 @@ A nodal discontinuous Galerkin time-domain solver on curved triangles: TM/TE, up
 </tr>
 </table>
 
-#### Tutorials: Mie scattering in 2D and 3D with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
-
-<table>
-<tr>
-<td width="55%"><img src="docs/img/tutorial01_convergence.png" width="560" alt="Relative RMS error of the scattering efficiency of an n = 2 cylinder versus cells per wavelength, for staircase, conformal and tensor material models, TM and TE"></td>
-<td>
-
-[Tutorial 01](tutorials/01_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_cylinder/mie_cylinder.ipynb)): a `TFSFSource` plane wave hits an n = 2 cylinder (a = 1 µm, x = 2&ndash;10, TM and TE). The scattered flux is compared with the exact series. Over 42 runs, conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, at second order. The staircase at the same resolution stays first order (3.9 % and 4.8 %). TE needs the full tensor (0.21 % vs 0.35 % diagonal at x &le; 5). A triangle-mesh section shows that conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45× the work on uniform meshes; graded meshes change that (see above).
-
-</td>
-</tr>
-<tr>
-<td width="55%"><img src="docs/img/tutorial01b_far_field.png" width="560" alt="Far-field scattering pattern of a dielectric sphere from the near-to-far monitor against the Mie amplitudes S1 and S2"></td>
-<td>
-
-[Tutorial 01b](tutorials/01b_mie_sphere/mie_sphere.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)): the same set-up in 3D, an n = 2 sphere with r = 1 µm. It covers the Mie series, near fields, isosurfaces, a movie, and the far field (`Near2FarMonitor` against S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells and 11 min, with **Q<sub>sca</sub> within 3.4 % RMS of Mie** over x = 2&ndash;10 (conformal, 40 cells/µm). The 3D resolution study is still to do.
-
-</td>
-</tr>
-</table>
 
 #### In progress: Cherenkov-free wakefields with the explicit TE/TM scheme &nbsp;·&nbsp; `SolverFIT3D(scheme='tete')`
 
