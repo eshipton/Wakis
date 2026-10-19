@@ -67,6 +67,7 @@
 # 6. Run the simulation
 # 7. Fields: total inside, scattered outside
 # 8. $Q_\mathrm{sca}(x)$ versus Mie theory, and the far field
+# 8b. Set-up check: is the PML far enough?
 # 9. Convergence: staircase versus conformal at equal cells per wavelength
 # 10. Limits and failure modes
 # 11. Exercises
@@ -1098,6 +1099,74 @@ savefig(fig, "far_field_vs_mie.png")
 plt.show()
 
 # %% [markdown]
+# ## 8b. Set-up check: is the PML far enough?
+#
+# In the 40 cells/µm run above, the CPML starts at $2.05$ µm ($1.05$ µm from
+# the sphere surface), which is only $0.33\,\lambda$ at $x = 2$, and the
+# far field still shows $\sim 1$ dB deviations from Mie at $x = 9$ E-plane
+# ($100\text{–}150°$) and $x = 6$ H-plane ($\sim 150°$). Could the CPML be
+# absorbing the sphere's reactive near field or reflecting grazing waves?
+# Rather than guessing, we test the set-up directly
+# (`studies/sphere-pml-gap/`): we switch on a complex-frequency-shifted
+# (CFS) CPML (`--alpha-max 1000`, $\alpha/\varepsilon_0 \approx
+# 0.2\,\omega_\mathrm{min}$), push the CPML from $1.05$ to $2.1$ and
+# $4.2$ µm on a graded grid (`--gap-um`, uniform 40 cells/µm out to the flux
+# box, cells growing $\le 1.15\times$ to 16 cells/µm in the vacuum gap), and
+# refine the uniform grid from 40 to 50 cells/µm.
+#
+# | run | cells | Q_sca RMS err x=2–10 | far field RMS dB x=3 E/H, 6 E/H, 9 E/H |
+# |---|---|---|---|
+# | uniform, gap 1.05 µm (tutorial, 40 cells/µm) | 6.3 M | 3.40 % | 0.07/0.19, 0.23/0.62, 1.17/1.36 |
+# | same, CFS CPML (alpha_max = 1000 S/m) | 6.3 M | 3.40 % | identical |
+# | graded, gap 1.05 µm | 4.3 M | 3.37 % | 0.07/0.19, 0.19/0.65, 1.18/1.37 |
+# | graded, gap 2.1 µm (≈1 λ at x=3) | 7.6 M | 3.37 % | same |
+# | graded, gap 4.2 µm (≈2 λ at x=3) | 18.6 M | 3.37 % | same |
+# | uniform, gap 1.05 µm, 50 cells/µm | 11.7 M | 2.92 % | 0.06/0.20, 0.21/0.47, 0.78/0.85 |
+#
+# * **Gap distance and CFS shift do not matter here.** Between the graded
+#   $1.05$ µm and $4.2$ µm gaps, $\max|\Delta Q_\mathrm{sca}| = 3.7\times
+#   10^{-4}$ (3.7e-4, absolute) and the max far-field difference is
+#   $0.010$ dB ($2.1$ vs $4.2$ µm: 3.2e-4 and $0.007$ dB). Adding CFS
+#   $\alpha_\mathrm{max} = 1000$ S/m produces no change at the printed
+#   digits. The small difference between the uniform and graded $1.05$ µm
+#   runs ($\max|\Delta Q| = 1.0\times 10^{-2}$, $0.43$ dB) comes from the
+#   coarser grid outside the flux box, not from the CPML position.
+# * **The remaining error is bulk discretization.** The hypothesis "PML
+#   absorbs the near field" is rejected: the CPML $1.05$ µm from the sphere
+#   does not affect $Q_\mathrm{sca}$ or the far field. Refining the uniform
+#   grid from 40 to 50 cells/µm shrinks the deviations from Mie ($1.17 \to
+#   0.78$ dB at $x = 9$ E-plane, $1.36 \to 0.85$ dB at $x = 9$ H-plane,
+#   $0.62 \to 0.47$ dB at $x = 6$ H-plane; $Q_\mathrm{sca}$ RMS error
+#   $3.40 \to 2.92\,\%$).
+# * **Why $1.05$ µm is enough, and what to take away.** The reactive
+#   near-field decay length is $\lambda / 2\pi = r / x$, which is at most
+#   $0.5$ µm across our band ($x \ge 2$), so at $1.05$ µm the CPML sees
+#   almost purely propagating scattered waves that it absorbs well.
+#   **Rule of thumb:** always test numerical set-up choices instead of
+#   assuming; keep the CPML at least $\sim\lambda / 2\pi$ beyond the near
+#   field of the scatterer (and further, or with CFS $\alpha_\mathrm{max}$,
+#   for strongly resonant or lossy/plasmonic near fields); and use a graded
+#   grid outside the monitor box to make a large vacuum buffer cheap.
+
+# %%
+pml_fig = (
+    HERE.parents[0].parent
+    / "studies"
+    / "sphere-pml-gap"
+    / "figures"
+    / "pml_gap_far_field.png"
+    if HERE.parents
+    else Path("pml_gap_far_field.png")
+)
+if not pml_fig.exists():
+    pml_fig = FIG_DIR / "pml_gap_far_field.png"
+if pml_fig.exists():
+    fig, ax = plt.subplots(figsize=(13, 6.5))
+    ax.imshow(plt.imread(pml_fig))
+    ax.axis("off")
+    plt.show()
+
+# %% [markdown]
 # ## 9. Convergence: staircase versus conformal at equal cells per wavelength
 #
 # How fast does the error fall as the grid is refined, and what does
@@ -1221,6 +1290,9 @@ if study:
 # 7. **Towards plasmonics** (the next tutorial). Make the sphere silver or
 #    gold with a Drude-Lorentz model from `wakis.dispersive`, sweep the radius
 #    from 10 nm to 1 µm, and use the inner flux box for $Q_\mathrm{abs}$.
+# 8. **CPML distance and CFS for plasmonics.** Move the CPML (`--gap-um`)
+#    and switch on CFS (`--alpha-max`) for a lossy (Drude) sphere near its
+#    plasmon resonance: does the conclusion still hold?
 
 # %% [markdown]
 # ## 12. References
