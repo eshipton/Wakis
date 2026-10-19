@@ -157,16 +157,17 @@ Nested 2:1 Cartesian patches. The fine-to-coarse restriction is the exact transp
 </tr>
 </table>
 
-#### In progress: curvilinear O-grid FIT (NFIT) &nbsp;·&nbsp; `CurvilinearFIT2D`
+#### Curvilinear O-grid FIT (NFIT): fewest unknowns on round dielectric and plasmonic scatterers &nbsp;·&nbsp; `wakis.curvilinear.CurvilinearFIT2D`
 
 <table>
 <tr>
 <td colspan="2"><img src="docs/img/nfit_ogrid_meshes.png" width="880" alt="Body-fitted O-grid meshes: single-block O-grid with radial PML, O-grid with transition to a Cartesian block, and radial-only refinement of a 20 nm coated cylinder"></td>
 </tr>
 <tr>
-<td colspan="2">
+<td width="55%"><img src="docs/img/nfit_error_vs_cost_3000fs.png" width="600" alt="RMS Q_sca error versus unknowns and work for the O-grid, graded triangles with PML and graded Cartesian, with a 3000 fs run window"></td>
+<td>
 
-Body-fitted polar grids with nonorthogonal corner-Hodge cells near the axis: a single-block O-grid with a radial PML, a multi-block O-grid joined to a Cartesian block, and a 20 nm coated cylinder resolved by refining only along the radius. Interim B1 numbers (`data/summary.md`; the study write-up is pending): to reach 1 % RMS in TM, the O-grid needs **156,559 unknowns**, against 240,255 for graded triangles with the radial PML. TE at 1 % awaits the longer-window rerun. Branch `feature/curvilinear-nfit`.
+Time-domain nonorthogonal FIT (Schuhmann & Weiland 2000) on body-fitted polar grids. A symmetric flux-to-voltage Hodge conserves energy (drift 7e-16), with a radial complex-stretching PML (reflection 5e-5). **B1 Mie cylinder at 1 % RMS (3000 fs window): O-grid 158k (TM) / 176k (TE) unknowns vs 244k / 215k for graded triangles + PML** (1.9× / 1.3× less work, 1.8× / 1.6× faster) and vs graded Cartesian (about 4× faster). **B2 Au-TE at 0.1 %: 19.6k unknowns vs 88k for uniform triangles** (settings tuned on B2; the untuned default needs 42k). **Limits:** on B3 dimer gaps it is 3–8× worse than graded triangles (a structured grid cannot refine only the gap). On a 20 nm coated cylinder it ties triangles, while Cartesian averaging stalls at 1.1 % (TM) / 3.4 % (TE). Best for round, coaxial and layered geometry, including beam pipes. Code on `main`, [studies/mie-cylinder-nfit](studies/mie-cylinder-nfit).
 
 </td>
 </tr>
@@ -342,8 +343,10 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Graded triangle meshes (`graded_disk_mesh`, `cluster_mesh`) and a radial CFS-PML for unstructured FIT (reflection 2–8e-4)
 - [x] Two-level local time stepping for unstructured FIT: energy-conserving, exact adjoint (`lts=2`)
 - [x] Polygonal FIT: hybrid square/triangle and Voronoi meshes (`PolygonFIT2D`)
-- [ ] Cartesian subgridding with 2:1 patches (`wakis.subgrid`) (in progress)
-- [ ] Curvilinear O-grid FIT (NFIT) and multi-block meshes (in progress)
+- [x] Cartesian subgridding with nested 2:1/3:1 patches (`wakis.subgrid`): symmetric hanging-node interface (energy-conserving, second order, exact transposed step), sub-pixel averaging, PML, scattered-field plane waves, Drude/Lorentz ADE, LTS; benchmark arm `subgrid-2to1` ([studies/mie-cylinder-subgrid](studies/mie-cylinder-subgrid), [studies/subgrid-benchmarks](studies/subgrid-benchmarks))
+- [ ] Cartesian subgridding in 3D (`SolverFIT3D` octree blocks; plan in the physics guide)
+- [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
+- [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
 - [ ] High-order schemes: DGTD on curved triangles and Cartesian (2,4) (in progress)
 - [ ] Extruded prism 3D FIT (cavity, ring, dipole studies) (in progress)
 - [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow
