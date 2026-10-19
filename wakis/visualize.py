@@ -80,21 +80,28 @@ def _in_notebook():
         return False
 
 
-def _start_xvfb(display=":99", screen="1920x1080x24"):
-    """Start an X virtual frame buffer and point DISPLAY at it."""
+def _start_xvfb(screen="1920x1080x24"):
+    """
+    Start a private X virtual frame buffer on a free display and point
+    DISPLAY at it. Displays already in use (lock files, possibly owned by
+    other users or `xvfb-run`) are skipped.
+    """
     import subprocess
     import time
 
-    lock = f"/tmp/.X{display.lstrip(':')}-lock"
-    if not os.path.exists(lock):
-        subprocess.Popen(
-            ["Xvfb", display, "-screen", "0", screen, "-nolisten", "tcp"],
+    for n in range(99, 200):
+        if os.path.exists(f"/tmp/.X{n}-lock") or os.path.exists(f"/tmp/.X11-unix/X{n}"):
+            continue
+        proc = subprocess.Popen(
+            ["Xvfb", f":{n}", "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         time.sleep(1.0)
-    os.environ["DISPLAY"] = display
-    return f"Xvfb on {display}"
+        if proc.poll() is None:  # still running: the server is up
+            os.environ["DISPLAY"] = f":{n}"
+            return f"Xvfb on :{n}"
+    return "Xvfb could not be started"
 
 
 def setup_rendering(notebook_backend="static", force_off_screen=None):
