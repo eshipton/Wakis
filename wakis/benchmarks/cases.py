@@ -374,7 +374,7 @@ def _b3(gap_nm):
         t_run=100e-15, norm_width=4 * a, gap_point=(0.0, 0.0), gap_width=g,
         deembed=False,
         targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.005, 0.002),
-                     enh_peak=(0.05, 0.02), enh_lam=(0.005, 0.002)),
+                     enh_peak=(0.05, 0.02, 0.01), enh_lam=(0.005, 0.002)),
         primary="enh_peak",
     )  # fmt: skip
 

@@ -93,7 +93,33 @@ The resolution label is h, the cell or edge size on the particles: a/5 … a/40,
 **Main result.** For the 5 % gap-enhancement target, graded triangles need 10–20× fewer unknowns and about 65× less work than graded conformal Cartesian (g = 5 nm: 7.2k vs 111k unknowns, 1.2e8 vs 8.0e9 work). Staircase never reaches 5 % on these ladders: its errors are 12–120 % and non-monotone.
 
 **Triangle floor at 1–2 %.** The triangle gap-enhancement error levels off at about 1–2 % (non-monotone), while Q_ext keeps converging. That is about twice the PML reflection the triangle arms report (3.5–5e-3 in field), and |E|² responds to it at first order. A better triangle absorber is needed for the 2 % target, and B3 uses only the raw outgoing coefficients (no de-embedding).
-> **Note (`m2` rerun pending):** The B3 tables and figures above come from the pre-`m2` runs (pointwise Raviart–Thomas gap reconstruction and 10-ring triangle PML); they will be replaced by the `--phase B3m2` rerun using the default `m2` metric (second-order 12-edge patch reconstruction on triangles, bilinear on Cartesian, and 40-ring triangle PML).
+### B3 with the m2 gap metric (current numbers; `data/summary_B3m2.md`, figures `b3_*_m2.png`)
+
+What changed relative to the tables above:
+- **Gap field:** second-order reconstruction, a 12-edge least-squares patch on triangles and bilinear interpolation of the staggered components on Cartesian grids. The old pointwise Raviart–Thomas value is kept as the `enh_rt_peak` diagnostic.
+- **Triangle PML:** 40 rings, from the triangle agent's B3-PML2 study.
+
+The 102 records are published with the tag suffix `_m2`; the old records are marked `superseded_by_metric_change`.
+
+Cost to target, as unknowns / work:
+
+| gap | enh_peak target | tri-graded | tri-uniform | cart-conformal-graded | staircase |
+|---|---|---|---|---|---|
+| 10 nm | 5 % | 14k / 2.4e8 | 48k | 141k / 1.2e10 | not reached |
+| 10 nm | 2 % | 17k / 2.9e8 | 70k | not reached | not reached |
+| 10 nm | 1 % | 18k / 3.5e8 | 88k | not reached | not reached |
+| 5 nm | 5 % | 22k / 4.8e8 | 95k | 111k / 8.0e9 | not reached |
+| 5 nm | 2 % | 31k / 9.0e8 | 145k | not reached | not reached |
+| 5 nm | 1 % | 41k / 1.5e9 | 203k | not reached | not reached |
+| 2 nm | 5 % | 59k / 2.9e9 | 305k | 143k / 1.2e10 | not reached |
+| 2 nm | 2 % | 78k / 4.7e9 | 426k | not reached | not reached |
+| 2 nm | 1 % | 107k / 7.8e9 | 617k | not reached | not reached |
+
+**Findings:**
+- **The m2 metric removes the triangle plateau.** Graded triangles now converge to 1 % on all three gaps, where the previous metric left them stuck at about 1–2 %.
+- **Graded conformal Cartesian reaches only 5 %** on every gap, and is not reached at 2 % on the ladder (finest h = 0.5 nm).
+- **The triangle numbers at 5 % are higher than in the first table.** The patch fit is wider than the gap at coarse h, and the 40-ring PML adds unknowns.
+- **At 5 %, graded triangles still need 2.4–10× fewer unknowns and 4–34× less work** than graded conformal Cartesian.
 
 **Metric definition.** The metric is the mean over the gap stencil, not the pointwise centre value.
 - The first B3 ladder used the centre value, plus a mesher that let the two outer interface rings collide in the gap (a 2.8° sliver at h = 2.86 nm).
