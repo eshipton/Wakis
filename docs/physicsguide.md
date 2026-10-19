@@ -685,6 +685,113 @@ References:
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4 (numerical dispersion) and Ch. 5 (incident wave source conditions, TF/SF).
 - A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions", arXiv:1301.5366 (2013).
 
+### 🎯 Total-field/scattered-field plane-wave source: `TFSFSource`
+
+`TFSFSource` launches an axis-aligned plane wave into a box. Inside the box the solver holds the total field $\psi = \psi^{inc} + \psi^{sca}$; outside it holds only the scattered field. The incident field is
+
+$$
+\mathbf{E}^{inc}(\mathbf{r},t) = A\, s\!\left(t - \frac{\hat{\mathbf{k}}\cdot(\mathbf{r}-\mathbf{r}_0)}{v}\right)\hat{\mathbf{p}},\qquad
+\mathbf{H}^{inc} = \frac{\hat{\mathbf{k}}\times\mathbf{E}^{inc}}{\eta},\qquad v = \frac{c}{\sqrt{\varepsilon_r}},\ \eta = \sqrt{\frac{\mu_0}{\varepsilon_0\varepsilon_r}},
+$$
+
+with $\mathbf{r}_0$ on the box face where the wave enters. A scatterer of any material (conformal, tensor-averaged, dispersive, lossy) inside the box sees the plane wave. A closed `FluxMonitor` outside the box measures the scattered power, and one inside measures the extinction minus scattering, i.e. minus the absorbed power. So $\sigma_{sca}(f) = \Phi_{sca}(f)/\Phi_{inc}(f)$, with $\Phi_{inc}$ from `incident_flux_density(f)`.
+
+```python
+src = wakis.TFSFSource(wakis.sources.GaussianSource(f0, df), size=(Lx, Ly, Lz),
+                       direction="+z", polarization="x")
+src.prepare(solver)                       # snaps the box to grid nodes
+(x0, x1), (y0, y1), (z0, z1) = src.box_bounds()
+scat = wakis.FluxMonitor(f, size=(x1 - x0 + 6 * h, ...))   # box in the SF region
+solver.emsolve(Nt, source=[src], monitors=[scat])
+sigma_sca = scat.get_flux() / src.incident_flux_density(f)  # [m^2]
+```
+
+**The equivalence principle, continuous and discrete.** Oskooi & Johnson [2013, §4.2.1] write Maxwell's equations as $\mathcal{M}\psi = \partial_t(\psi + \chi*\psi) + \xi$ for the six-vector $\psi = (\mathbf{E},\mathbf{H})$ and currents $\xi = (\mathbf{J},\mathbf{K})$. The field that equals $\psi^{inc}$ in a region $\Omega$ and vanishes outside solves the source-free equations away from $\partial\Omega$. On $\partial\Omega$ its jump creates a surface delta function in $\mathcal{M}\psi$, which the surface currents of their Eq. (4.4) cancel:
+
+$$
+\mathbf{J}_s = \hat{\mathbf{n}}\times\mathbf{H}^{inc},\qquad \mathbf{K}_s = -\hat{\mathbf{n}}\times\mathbf{E}^{inc}\qquad(\hat{\mathbf{n}}\ \text{the inward normal}).
+$$
+
+They also note: "Essentially the same derivation applied to the discretized curl operator, M, yields the source terms in the total-field/scattered field approach [1], with the source currents being a discrete or “Kronecker” delta function" (p. 68; [1] is Taflove & Hagness). Repeating that derivation on the FIT matrices gives the form Wakis implements.
+
+Write the solver step (see *Time-Stepping Routine*) as
+
+$$
+\mathbf{h}^{n+1/2} = \mathbf{h}^{n-1/2} - \Delta t\,\mathbf{A}\,\mathbf{e}^{n},\qquad
+\mathbf{e}^{n+1} = \mathbf{e}^{n} + \Delta t\,\mathbf{B}\,\mathbf{h}^{n+1/2} - \Delta t\,\mathbf{M}_\varepsilon^{-1}\mathbf{j}^{n+1/2},
+$$
+
+with $\mathbf{A} = \mathbf{D}_A^{-1}\mathbf{M}_\mu^{-1}\mathbf{C}\mathbf{D}_s$ and $\mathbf{B} = \mathbf{M}_\varepsilon^{-1}\tilde{\mathbf{D}}_A^{-1}\mathbf{C}^{T}\tilde{\mathbf{D}}_s$. Let $\mathbf{P}_e$ and $\mathbf{P}_h$ be the diagonal 0/1 matrices that select the total-field samples: an E or H sample belongs to the box if its position (edge midpoint or node, see *Grid conventions*) lies in the closed box. The stored state is
+
+$$
+\mathbf{u} = \mathbf{P}\,\psi^{tot} + (\mathbf{1}-\mathbf{P})\,\psi^{sca} = \psi^{tot} - (\mathbf{1}-\mathbf{P})\,\psi^{inc}.
+$$
+
+Two assumptions are made:
+1. $\psi^{tot}$ obeys the solver update everywhere.
+2. $\psi^{inc}$ obeys the background update $\mathbf{A}_0, \mathbf{B}_0$, which equals $\mathbf{A}, \mathbf{B}$ on every row that couples across $\partial\Omega$ (homogeneous background at the box surface).
+
+Then for H rows inside the box $\mathbf{u}$ must be updated with $\mathbf{A}\psi^{tot} = \mathbf{A}\mathbf{u} + \mathbf{A}(\mathbf{1}-\mathbf{P}_e)\psi^{inc}$. For rows outside, $\psi^{sca} = \psi^{tot}-\psi^{inc}$ gives $\mathbf{A}\mathbf{u} - \mathbf{A}\mathbf{P}_e\psi^{inc}$. Combining both cases:
+
+$$
+\boxed{\ \mathbf{h}^{n+1/2} \mathrel{+}= -\Delta t\,\big(\mathbf{P}_h\mathbf{A} - \mathbf{A}\mathbf{P}_e\big)\,\mathbf{e}^{inc,n},\qquad
+\mathbf{e}^{n+1} \mathrel{+}= \Delta t\,\big(\mathbf{P}_e\mathbf{B} - \mathbf{B}\mathbf{P}_h\big)\,\mathbf{h}^{inc,n+1/2}\ }
+$$
+
+These are the commutators of the curl operators with the region masks. They are nonzero only where $\mathbf{A}$ or $\mathbf{B}$ couples a sample inside the box to one outside, i.e. on the two sample layers at the box surface. They are the discrete equivalent currents: $-\Delta t\,\mathbf{M}_\mu^{-1}\mathbf{k}_s$ with $\mathbf{k}_s = \mathbf{D}_A^{-1}(\mathbf{P}_h\mathbf{C}-\mathbf{C}\mathbf{P}_e)\mathbf{D}_s\,\mathbf{e}^{inc}$, and $-\Delta t\,\mathbf{M}_\varepsilon^{-1}\mathbf{j}_s$ with $\mathbf{j}_s = -\tilde{\mathbf{D}}_A^{-1}(\mathbf{P}_e\mathbf{C}^T-\mathbf{C}^T\mathbf{P}_h)\tilde{\mathbf{D}}_s\,\mathbf{h}^{inc}$. For a single face these reduce to $\mathbf{K}_s = -\hat{\mathbf{n}}\times\mathbf{E}^{inc}$ on the H plane half a cell outside the face and $\mathbf{J}_s = \hat{\mathbf{n}}\times\mathbf{H}^{inc}$ on the E plane of the face. The box edges and corners need no special treatment, because the commutator handles any mask.
+
+**Exact discrete cancellation.** Substituting $\mathbf{u} = 0$ outside and $\mathbf{u} = \psi^{inc}$ inside shows that the scattered region stays exactly zero, and the total field stays exactly $\psi^{inc}$, provided $\psi^{inc}$ satisfies the discrete background update on the total-field rows. That is the condition Oskooi & Johnson state in §4.2.2: "even if the incident field ψ⁺ solves the exact Maxwell's equations, it will not solve the discretized Maxwell's equations without modification" (p. 69). `TFSFSource` therefore uses an auxiliary 1D FIT line (their "bootstrap" idea, done on the fly). Its construction:
+- It runs along the propagation axis $a$, with nodes at the 3D nodes and with $\Delta l_i = x_{i+1}-x_i$ and $\Delta\tilde l_i = (\Delta l_{i-1}+\Delta l_i)/2$, the same arrays as the 3D grid. Graded meshes along $a$ are therefore reproduced bit-for-bit.
+- It uses the 3D $\Delta t$ and the background $\varepsilon$, $\mu$.
+- Its time levels are those of the 3D step: e at $n\Delta t$, h at $(n+\tfrac12)\Delta t$.
+
+A field uniform in the transverse directions has zero transverse differences, so the 3D curl of $(E_p(a), H_q(a))$ reduces exactly to the 1D one:
+
+$$
+H_q^{n+1/2}\big|_{i+1/2} = H_q^{n-1/2}\big|_{i+1/2} - \frac{\Delta t\, s}{\mu\,\Delta l_i}\left(E_p^n|_{i+1} - E_p^n|_i\right),\qquad
+E_p^{n+1}\big|_i = E_p^{n}\big|_i - \frac{\Delta t\, s}{\varepsilon\,\Delta\tilde l_i}\left(H_q^{n+1/2}|_{i+1/2} - H_q^{n+1/2}|_{i-1/2}\right),
+$$
+
+with $s = \epsilon_{qap}$ (Levi-Civita) and $H_q = \pm s E_p/\eta$ for propagation along $\pm a$. The line is driven by its own 1D TF/SF boundary one cell upstream of the box entry plane, using the analytic $s(t)$. One cell is the closest position at which the sample $H_q|_{i_0-1/2}$, which the 3D E correction reads, is still an ordinary total-field sample of the line. Both ends end in 96-cell graded matched absorbers ($\sigma_m/\mu = \sigma_e/\varepsilon$, cubic grading).
+
+The corrections are precomputed as two sparse matrices, from line samples to the surface rows. They are built from the grid lengths, $\mathbf{C}$ and the solver's `imu`. Each step the source:
+1. adds $-\Delta t(\mathbf{P}_h\mathbf{A}-\mathbf{A}\mathbf{P}_e)\mathbf{e}^{inc,n}$ to H before the step. This term is independent of the fields, so adding it before the curl update is identical to adding it after.
+2. advances the line H to $n+\tfrac12$.
+3. writes the equivalent current $\mathbf{j}_s(\mathbf{h}^{inc,n+1/2})$ into `solver.J` (only the change since the previous step, as `CurrentSource` does).
+4. advances the line E to $n+1$.
+
+The H correction must use $\mathbf{e}^{inc}$ at $n\Delta t$ and the E correction $\mathbf{h}^{inc}$ at $(n+\tfrac12)\Delta t$. Using $\mathbf{e}^{inc,n+1}$ instead is the classic half-step TF/SF leakage bug, and the tests check that it fails loudly.
+
+**Outputs and normalization.** The entry-plane values are recorded every step: E at $(n+1)\Delta t$ on the entry node, and H at $(n+\tfrac12)\Delta t$ averaged from the two neighbouring dual samples, as `FluxMonitor` does. `incident_fields(f)` returns their DFTs with the monitor convention $F(f) = \sum_n F(t_n)e^{-2\pi i f t_n}\Delta t$. `incident_flux_density(f)` returns $\Phi_{inc} = \hat{\mathbf{k}}\cdot\operatorname{Re}(\mathbf{E}\times\mathbf{H}^*) = |E|^2\cos(k\Delta l/2)/\eta$ per m², in the units of `FluxMonitor.get_flux()` per m², so that cross-sections are plain ratios. The entry-plane spectrum differs from $A\,S(f)$ only by the grid dispersion over the one cell between injection and entry plane, $\sim(k\Delta l)^3/24$ rad. The 3D sees exactly the recorded field.
+
+**Validation** (`tests/test_039_tfsf_planewave.py`):
+- *Vacuum leakage.* In an empty domain, $\max|\psi_{SF}|/\max|\psi_{TF}|$ over the run (E and $\eta_0$H) is $6\times10^{-16}$–$1.2\times10^{-15}$ in float64. This holds for all six directions and both polarizations, on uniform grids and on grids graded along the axis (cell sizes $0.62$–$1.38\,h$). With CPML it is $2\times10^{-15}$ (float64) and $6\times10^{-7}$ (float32).
+- *Mutation tests.* These show the leakage test can fail. Using $\mathbf{e}^{inc,n+1}$ in the H correction (half-step error) gives leakage 0.31. Shifting $E^{inc}$ one cell against $H^{inc}$ gives 0.92. Shifting both by one cell on a graded grid gives 0.98. On a uniform grid a common shift is only a translated discrete plane wave, and its leakage stays at $10^{-15}$.
+- *Total field.* Inside the box the total field equals the line field to $10^{-12}$ relative.
+- *Energy, lossless.* For an $\varepsilon_r = 4$ sphere, the net flux through a closed box inside the TF region is $<3\times10^{-8}$ of the incident power on a box face.
+- *Energy, lossy.* For a lossy sphere ($\sigma = 0.05$ S/m), the absorbed power $-\Phi_{tot}$ equals the volume Ohmic loss $\sum\sigma|E(f)|^2\Delta V$ to $3\times10^{-4}$.
+- *Mie.* The cross-section of a conformal sphere approaches Mie theory: +6.5–7.5 % at 3.5 cells per radius, +4.8–5.4 % at 4.9 cells.
+- *Inverse design.* The adjoint gradient of the scattered flux with respect to a design block inside the box matches central finite differences to $10^{-10}$, because the source is an additive forcing independent of the fields.
+
+The study `studies/tfsf/` compares this with Huygens face sheets driven by the continuum incident field, as in hand-built Meep TF/SF sources. With the exact staggered registration (J on the face carries $H^{inc}$ half a cell outside, K there carries $E^{inc}$ of the face node), the only error left is the dispersion mismatch: the leaked power falls as $(kh)^4$, $1.4\times10^{-4}$ of the face power at 20 cells per wavelength. Referencing both sheets to the face plane adds the half-cell offset: the power then falls as $(kh)^2$, $5\times10^{-2}$ at 20 cells per wavelength. The same sheets driven by the 1D-line values leak at round-off, which shows that the commutator corrections are exactly the discrete equivalent currents.
+
+**Limits & Failure Modes.**
+- *Axis-aligned incidence only.* Oblique incidence needs a discrete plane wave with the 3D grid's anisotropic dispersion; Tan & Potter [2010] and Ch. 3 of Taflove, Oskooi & Johnson (eds.) [2013], cited in Oskooi & Johnson §4.2.2, describe the discrete plane-wave line for this. Not implemented.
+- *Homogeneous, lossless, non-magnetic background at the box surface.* Every sample in the correction stencil must carry the background `ieps`, `imu = 1/μ0` and `sigma = 0`; otherwise the source raises. Objects may cross the scattered-field region, but the incident field is not computed for them. For a layered background (substrate) or a waveguide, $\psi^{inc}$ is not a 1D plane wave.
+- *Box inside the non-PML region.* Each box face must be at least one node from the domain edge, or $n_{pml}+1$ nodes from a (C)PML face. Along a periodic axis transverse to the propagation, a box covering the whole period has no faces on that axis (normal incidence on periodic structures). The propagation axis cannot be periodic, and Bloch phases are not supported.
+- *Box snapping.* The faces snap to the nearest grid nodes; `box_bounds()` returns the faces used. Place flux monitors from these bounds, at least one node inside or outside. A monitor face that coincides with the TF/SF surface or cuts a staircased object gives meaningless net fluxes (observed: $2\times10^{-2}$ instead of $10^{-8}$).
+- *Source truncation.* A `GaussianSource` cut at $5\sigma_t$ has a small DC component that leaves a static field of $\sim3\times10^{-7}$ in the line and the total-field region. This is a property of the incident pulse, not leakage; use `cutoff=8` for cleaner spectra.
+- *Not supported.* MPI (raises `NotImplementedError`), complex Bloch fields with $k\neq0$, and the legacy beam TF/SF of `source_type='tfsf'` (independent).
+- *Cost.* Two sparse products on the surface rows (O(box surface)) and a 1D line of $(N_a + 200)$ samples per step: about 1 % per step on a $64^3$ CPML grid with a $32^3$ box on CPU.
+
+References:
+- A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions", Ch. 4 in A. Taflove, A. Oskooi and S. G. Johnson (eds.), *Advances in FDTD Computational Electrodynamics: Photonics and Nanotechnology*, Artech House (2013), [arXiv:1301.5366](https://arxiv.org/abs/1301.5366): Eq. (4.4) and §4.2.1 (equivalence principle), §4.2.2 (discretization and dispersion of equivalent currents).
+- D. E. Merewether, R. Fisher and F. W. Smith, "On implementing a numeric Huygens' source scheme in a finite difference program to illuminate scattering bodies", *IEEE Trans. Nucl. Sci.* **27**(6), 1829 (1980).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 5.
+- J. B. Schneider, "Plane waves in FDTD simulations and a nearly perfect total-field/scattered-field boundary", *IEEE Trans. Antennas Propag.* **52**(12), 3280 (2004).
+- T. Tan and M. Potter, "FDTD discrete planewave (FDTD-DPW) formulation for a perfectly matched source in TFSF simulations", *IEEE Trans. Antennas Propag.* **58**(8), 2641 (2010).
+- C. F. Bohren and D. R. Huffman, *Absorption and Scattering of Light by Small Particles*, Wiley (1983) (Mie coefficients used in the tests).
+
 ### 🧊🔚 Boundary Conditions
 
 Wakis supports several boundary condition (BC) types:
