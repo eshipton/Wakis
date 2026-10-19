@@ -32,6 +32,10 @@ PHASES = {
     "B1": ("B1-TE", "B1-TM"),
     "B2": ("B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"),
     "B3": ("B3-g10", "B3-g5", "B3-g2"),
+    # reruns of the B3 tasks whose gap points fell inside squares (RT diagnostic
+    # raised before the RT fallback); B1 without LTS (attribution)
+    "B3FIX": ("B3-g10", "B3-g5"),
+    "B1NOLTS": ("B1-TE", "B1-TM"),
 }
 
 
@@ -44,6 +48,7 @@ def arms():
         SubTriArm(ratio=4, ppw_out=20, lts=None, name="subtri-hybrid-nolts"),
         SubTriArm(ratio=2, ppw_out=None, lts="auto", name="subtri-hybrid-r2"),
         SubTriArm(ratio=4, ppw_out=None, lts="auto", name="subtri-hybrid-r4"),
+        SubTriArm(ratio=2, ppw_out=None, lts=None, name="subtri-hybrid-r2-nolts"),
     )
     return {a.name: a for a in out}
 
@@ -72,9 +77,10 @@ def tasks(phase, smoke=False):
         raise ValueError(f"Unknown phase {phase!r}; choose from {tuple(PHASES)}")
 
     out = []
-    if phase == "B1":
-        arm_names = ("subtri-hybrid-r2", "subtri-hybrid-r4")
-        for case_name in PHASES["B1"]:
+    if phase in ("B1", "B1NOLTS"):
+        arm_names = (("subtri-hybrid-r2", "subtri-hybrid-r4") if phase == "B1"
+                     else ("subtri-hybrid-r2-nolts",))  # fmt: skip
+        for case_name in PHASES[phase]:
             lad = _b1_ladder(case_name)
             if smoke:
                 lad = [max(lad)]
@@ -89,6 +95,9 @@ def tasks(phase, smoke=False):
                 for arm_name in arm_names:
                     out.append((case_name, arm_name, float(h)))
 
+    if phase == "B3FIX":
+        hmax = {"B3-g10": 1.43e-9, "B3-g5": 0.72e-9}
+        out = [t for t in out if t[2] <= hmax[t[0]]]
     out.sort(key=_expected_cost_key)
     return out
 

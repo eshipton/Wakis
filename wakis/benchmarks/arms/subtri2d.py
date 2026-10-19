@@ -271,11 +271,23 @@ class SubTriArm(Arm):
                 raise NotImplementedError("gap field: TE only")
             gpts = case.gap_points
             ng = len(gpts)
-            rts = [_rt_matrix(mesh, pt) for pt in gpts]
-            Pg = sp.vstack(
-                [*(r[0] for r in rts), *(r[1] for r in rts)], format="csr"
-            ) / (eps_0 * case.n_background**2)
             Pp = _patch_matrix(mesh, gpts, case)
+            # single-cell Raviart-Thomas diagnostic: defined on triangles only;
+            # gap points inside a square (wide gaps, fine rungs) reuse the
+            # patch rows (recorded in cost['gap_rt_fallback'])
+            rows_x, rows_y, n_fallback = [], [], 0
+            for i, pt in enumerate(gpts):
+                try:
+                    M = sp.csr_matrix(_rt_matrix(mesh, pt))
+                    s_ = 1.0 / (eps_0 * case.n_background**2)
+                    rows_x.append(M[0] * s_)
+                    rows_y.append(M[1] * s_)
+                except NotImplementedError:
+                    n_fallback += 1
+                    rows_x.append(Pp[i])
+                    rows_y.append(Pp[ng + i])
+            Pg = sp.vstack([*rows_x, *rows_y], format="csr")
+            self._gap_rt_fallback = n_fallback
             gpos = gpts @ solver.plane_wave["k"]
         setup_s = time.time() - t0
         dt = solver.dt
@@ -342,6 +354,7 @@ class SubTriArm(Arm):
                 lts_search=self._lts_search,
                 work=work,
                 gap_metric="patch",
+                gap_rt_fallback=int(getattr(self, "_gap_rt_fallback", 0)),
             ),
         )
         if gap:
