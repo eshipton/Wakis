@@ -186,6 +186,7 @@ def main_plot():
                "(* = extrapolated from the last two runs; baselines from ../mie-cylinder-graded)",
                "", table(runs, base)]  # fmt: skip
         (HERE / "data" / "summary.md").write_text("\n".join(txt) + "\n")
+        error_split(runs, FIG / "f_error_split.png", HERE / "data" / "error_split.md")
     large = load(HERE / "data_large")
     if large:
         fig_error(large, {}, FIG / "c_large_error_vs_cost.png",
@@ -200,3 +201,52 @@ def main_plot():
 
 if __name__ == "__main__":
     main_plot()
+
+
+def error_split(runs, out_png, out_md):
+    """Bulk-dispersion vs interface error of the Cartesian schemes.
+
+    fd22 and fd24rk share the grid, the sub-pixel averaging, the source and
+    the extraction; only the bulk stencil (and the time integrator) differ.
+    With signed per-frequency errors e = Q/Q_ref - 1, e(fd24rk) estimates the
+    interface (+ residual 4th-order bulk) error and e(fd22) - e(fd24rk) the
+    second-order bulk dispersion of Yee. RMS over x <= 6 and x > 6.
+    """
+    x = np.linspace(2, 10, 41)
+    lo, hi = x <= 6, x > 6
+    rows = ["| pol | res | RMS Yee total | RMS bulk (Yee - (2,4)RK) | RMS interface ((2,4)RK) | "
+            "bulk share x>6 | interface x>6 | bulk x<=6 | interface x<=6 |",
+            "|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4))
+    for j, pol in enumerate(("TM", "TE")):
+        a = {d["res"]: d for d in runs.get(("fd22", pol), [])}
+        b = {d["res"]: d for d in runs.get(("fd24rk", pol), [])}
+        rr, bulk, intf = [], [], []
+        for res in sorted(set(a) & set(b)):
+            e2 = np.array(a[res]["q"]) / np.array(a[res]["q_ref"]) - 1
+            e4 = np.array(b[res]["q"]) / np.array(b[res]["q_ref"]) - 1
+            eb = e2 - e4
+
+            def r(v, m=slice(None)):
+                return np.sqrt(np.mean(v[m] ** 2)) * 100
+
+            rows.append(f"| {pol} | {res:g} | {r(e2):.3f} % | {r(eb):.3f} % | {r(e4):.3f} % | "
+                        f"{r(eb, hi):.3f} % | {r(e4, hi):.3f} % | {r(eb, lo):.3f} % | {r(e4, lo):.3f} % |")  # fmt: skip
+            rr.append(res)
+            bulk.append(r(eb, hi))
+            intf.append(r(e4, hi))
+        if rr:
+            axs[j].loglog(rr, bulk, "o-", label="bulk dispersion of Yee (2,2), x > 6")
+            axs[j].loglog(rr, intf, "s-", label="interface + residual, (2,4) LSRK4, x > 6")
+            rr = np.array(rr, float)
+            axs[j].loglog(rr, bulk[0] * (rr / rr[0]) ** -2, "k:", lw=0.8, label="order 2")
+            axs[j].loglog(rr, intf[0] * (rr / rr[0]) ** -2, "k:", lw=0.8)
+        axs[j].set_xlabel("cells per dielectric wavelength (x = 10)")
+        axs[j].set_ylabel("RMS error of Q_sca [%]")
+        axs[j].set_title(f"{pol}: Wakis FD error split (same grid, averaging, source)")
+        axs[j].legend(fontsize=7)
+        axs[j].grid(True, which="both", alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=130)
+    plt.close(fig)
+    Path(out_md).write_text("\n".join(rows) + "\n")
