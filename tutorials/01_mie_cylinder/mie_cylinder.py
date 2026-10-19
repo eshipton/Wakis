@@ -603,11 +603,13 @@ plt.show()
 # %% [markdown]
 # **How big is the cylinder the solver sees?** For TM the polarizable area
 # is $\sum (\varepsilon_{r,e} - 1)/(\varepsilon_r - 1)\, \Delta x\Delta y$
-# over the $E_z$ edges. The staircase area jumps around $\pi a^2$ by several
-# percent from one resolution to the next, erratically (it depends on
-# where the circle falls between nodes), while the conformal area is right
-# to a fraction of a percent. A cylinder that is 3 % too large in area has a
-# radius 1.5 % too large, which shifts every resonance by 1.5 % in $x$:
+# over the $E_z$ edges. The staircase cylinder comes out too large, by
+# 9.5 % at 10 cells/µm down to 1.8 % at 60 cells/µm: every node inside the
+# circle carries a whole dual cell of dielectric, which moves the effective
+# surface outwards by about half a cell, a first-order error
+# ($\delta A/A \approx \Delta x / a$). The conformal area is exact to the
+# printed digits. A cylinder 3.6 % too large in area (30 cells/µm) has a
+# radius 1.8 % too large, which shifts every resonance by 1.8 % in $x$:
 # that is the staircase error we will see in section 10.
 
 # %%
@@ -924,10 +926,14 @@ if "movie" in runs["TM"]:
 #
 # Simulated $Q_\mathrm{sca}$ (markers) for both polarizations against the
 # series (line), their difference, and $Q_\mathrm{abs}$ from the inner box.
-# For a lossless cylinder $Q_\mathrm{abs}$ must vanish; what is left is the
-# discretization error of the flux integral (H is averaged from two dual
-# planes onto the E plane), which is largest at the sharp resonances where
-# the near field is strongest, and falls with resolution (section 10).
+# For a lossless cylinder $Q_\mathrm{abs}$ must vanish. It does, except for
+# isolated spikes at the sharpest resonances. Those are not absorption: the
+# time integral of the net inward flux equals the energy still stored inside
+# the box when the run stops, and a resonance with $Q \sim 10^3$ is still
+# ringing at the end of the window. Its stored energy shows up as a narrow
+# spike of width $\sim 1/T$ in the flux spectrum, which grows with the window
+# length $T$ and does not shrink with resolution (the study measures it).
+# The same truncation affects $Q_\mathrm{sca}$ at those few frequencies.
 # The 20 cells/µm quick run is deliberately under-resolved at the short-
 # wavelength end: about 6 cells per wavelength inside the cylinder at
 # $x = 10$, so the resonances there are shifted.
@@ -1076,8 +1082,8 @@ mesh_study = load_mesh_study()
 #   the $n = 2$ cylinder is 0.314 µm. Below ~10 cells per internal
 #   wavelength the numerical phase-velocity error shifts the resonances,
 #   visible as shifted peaks in $\Delta Q$.
-# * **Staircasing** changes the effective radius by an erratic fraction of a
-#   cell (section 4): first-order and non-monotonic convergence. Conformal
+# * **Staircasing** enlarges the effective radius by about half a cell
+#   (section 4): first-order convergence. Conformal
 #   averaging fixes the interface position; for TE (E crossing the curved
 #   interface) only the full tensor averaging restores second order.
 # * **Truncated ring-down.** High-order resonances ring for many periods.
