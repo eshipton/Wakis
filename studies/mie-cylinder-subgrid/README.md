@@ -49,11 +49,61 @@ h_in = λ_min,diel / res with res = 10, 14, 20, 28, 40.
 - cavity eigenfrequencies with a patch: order 2, between coarse and fine; the mutation is first order;
 - energy over 10⁵ steps: drift 2×10⁻¹⁵; the non-transposed (injection) restriction explodes.
 
-RESULTS_TABLE
+### Cost to reach a target accuracy (B1)
+
+The values are log-log interpolations between runs. "Unknowns" counts free nodes plus edges: 3 per Cartesian cell, about 2 per triangle. Times are for one uncontended n2-standard-2 core. Every number is in [`data/summary.md`](data/summary.md).
+
+| pol | arm | unknowns 2 % | unknowns 1 % | work 1 % | time 1 % [s] |
+|---|---|---|---|---|---|
+| TM | cart-graded | 266k | 518k | 2.44e10 | 674 |
+| TM | cart-graded-compact | 189k | 362k | 1.67e10 | 531 |
+| TM | tri-graded | 185k | 399k | 1.80e10 | 163 |
+| TM | tri-graded-compact | 99k | 226k | 1.01e10 | 234 |
+| TM | tri-graded-pml | 113k | 240k | 1.07e10 | 104 |
+| TM | **sg** | 168k | 334k | 1.43e10 | 224 |
+| TM | **sg-compact** | **90k** | **175k** | **7.2e9** | 136 |
+| TM | sg-lts | 92k | 174k | 2.8e9 | 31 |
+| TM | sg-compact-lts | 48k | 88k | 1.4e9 | 16 |
+| TE | cart-graded | 255k | 536k | 2.58e10 | 728 |
+| TE | cart-graded-compact | 169k | 347k | 1.56e10 | 433 |
+| TE | tri-graded | 206k | 410k | 1.89e10 | 342 |
+| TE | tri-graded-compact | 126k | not reached | — | — |
+| TE | tri-graded-pml | 121k | 245k | 1.11e10 | 185 |
+| TE | **sg** | 166k | 339k | 1.46e10 | 197 |
+| TE | **sg-compact** | **84k** | **164k** | **6.5e9** | **96** |
+| TE | sg-lts | 96k | 206k | 3.6e9 | 48 |
+| TE | sg-compact-lts | 49k | 105k | 1.8e9 | 22 |
+
+**Equal time step (global Δt), 1 % RMS.**
+
+| comparison | TM unknowns | TM work | TE unknowns | TE work |
+|---|---|---|---|---|
+| sg vs cart-graded (same domain) | 1.55× fewer | 1.7× less | 1.6× fewer | 1.8× less |
+| sg-compact vs cart-graded-compact | 2.1× fewer | 2.3× less | 2.1× fewer | 2.4× less |
+| sg-compact vs tri-graded-pml (the best triangle arm) | 1.38× fewer | 1.49× less | 1.49× fewer | 1.71× less |
+| sg vs tri-graded (same circles and r_out) | 1.19× fewer | 1.26× less | 1.21× fewer | 1.29× less |
+
+**Wall time.** Subgrid steps cost a median of 14.9 ns per unknown-step (10–25 over 40 spot machines). The triangle steps cost 18.2 ns and the Cartesian (3D slab) steps 29.2 ns. At 1 %:
+- against tri-graded-pml, sg-compact is 1.3× slower in TM and 1.9× faster in TE;
+- sg-compact is 3.9× (TM) and 4.5× (TE) faster than cart-graded-compact.
+
+The single-run spot timings scatter by about ±40 %, so treat the time ratios as indicative and the work ratios as the measurement.
+
+**With local time stepping (p = 2).** The steps halve, and the error at equal mesh also halves (see the caveat below). At 1 %, sg-compact-lts needs 88k unknowns (TM) and 1.4×10⁹ unknown-steps, and runs in 16 s. That is 8× less work than tri-graded-pml at global Δt and 33× less wall time than cart-graded-compact. The fair LTS-to-LTS comparison uses the triangle LTS study (branch `feature/unstructured-lts`, res ≤ 20 only). At TM res 20 compact:
+- tri-graded-compact with LTS: 92k unknowns, 14 454 steps, 1.14 %, 32 s;
+- sg-compact-lts: 82k unknowns, 13 838 steps, 1.09 %, 14 s.
+
+The two schemes are about equal in unknowns, and the subgrid is faster per step.
+
 
 ## Interpretation
 
-INTERPRETATION
+- **The rectilinear penalty is gone.** At equal global Δt the patch mesh needs about 2× fewer unknowns than the graded rectilinear grid in the same domain shape. Its fine cells cover only the cylinder and a 2 h band, not the cross-shaped strips.
+- **Squares beat triangles per area.** At equal accuracy the subgrid also needs 1.2–1.5× fewer unknowns than graded triangles. A square of side h carries 3 unknowns, 3/h², against about 4.6/h² for equilateral triangles of edge h. With sub-pixel averaging, the conformal Cartesian cell is about as accurate as the body-fitted triangle at equal h for this smooth n = 2 cylinder. Its TE averaging is first order at the curved interface, but at these resolutions that error stays below the dispersion error. For the plasmonic case, see `../subgrid-benchmarks`.
+- **The interface does not limit accuracy.** The 2:1 jump sits only 2 h_in outside the cylinder, and yet the subgrid follows the same error-vs-h curve as the graded meshes. Its error per unknown is the lowest of all arms without LTS. The reflection of the interface is O((kH)²): 0.2–0.7 % at 20 coarse cells per wavelength.
+- **Time steps are not reduced by subgridding alone.** With a global Δt the step is set by the fine vacuum band; the dielectric and the coarse grid would allow 2× larger steps. LTS (p = 2) recovers that factor with a fine set F of only 4–11 % of the nodes (ρ = 0.975, checked at setup).
+- **The size of the LTS gain is partly physics, not scheme.** With p = 2 the dielectric runs at twice its previous Courant number (0.95 instead of 0.475 of its local limit), where the leapfrog's temporal dispersion cancels more of the spatial dispersion. Along the axes the phase error falls by (1 − S₁²)/(1 − S₀²) ≈ 0.62, and more on the diagonals. Global-Δt runs at Courant 0.5/0.7/0.95 (res 20, compact, TM) give 2.36/2.31/2.20 %, consistent with this picture. Triangles with LTS show the same halving.
+
 
 ## Limits & caveats
 
