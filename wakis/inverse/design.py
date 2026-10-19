@@ -125,11 +125,11 @@ class MaterialGrid:
         if smoothing not in (None, "tensor"):
             raise ValueError("smoothing must be None or 'tensor'.")
         if smoothing is not None and material is not None:
-            raise NotImplementedError(
-                "Tensor smoothing is not available for dispersive designs."
-            )
+            # Dispersive subpixel averaging: the static tensor uses eps_inf
+            self.eps_max = float(material.eps_inf)
         self.smoothing = smoothing
         self.P = None
+        self.network = None
 
     def _build(self, solver):
         """Select the design edges and assemble the interpolation matrix P."""
@@ -274,9 +274,14 @@ class MaterialGrid:
                 B.data *= scale[rows]
             if hasattr(solver, "iDeps"):
                 solver.iDeps = diags(_host(solver.ieps.toarray()), dtype=solver.dtype)
+        op = getattr(solver, "tensor_operator", None)
+        if self.material is not None and self.smoothing == "tensor":
+            self._apply_network(solver)
+            if op is not None:  # couplings to the design edges are dropped
+                op.install(solver)
+            return
         if self.material is not None:
             self._apply_dispersive(solver, self.P @ rho.ravel())
-        op = getattr(solver, "tensor_operator", None)
         if self.smoothing == "tensor":
             self._apply_tensor(solver, op)
         elif op is not None:
@@ -327,6 +332,95 @@ class MaterialGrid:
                 f"dt={solver.dt:.3e} s exceeds the stability bound {dt_max:.3e} s "
                 "of the tensor-smoothed design; use cfln <= 0.5."
             )
+
+    def _network_params(self, t):
+        """
+        Sub-capacitor parameters of the dispersive diagonal average of the
+        design edges (tangential capacitors first, then the series ones of
+        the material), see `wakis.tensor_dispersive`.
+
+        Returns c (weights), eps_inf and mu (pole multipliers) of the 2 n_e
+        capacitors and p = m_c^2.
+        """
+        n = np.arange(t["f"].size)
+        p = t["m"][n, t["comp"]] ** 2
+        f = t["f"]
+        eps_t = (1 - f) * self.eps_min + f * self.eps_max
+        c = np.concatenate([1 - p, p * f])
+        eps_inf = np.concatenate([eps_t, np.full(f.size, self.eps_max)])
+        mu = np.concatenate([f, np.ones(f.size)])
+        return c, eps_inf, mu, p
+
+    def _apply_network(self, solver):
+        """
+        Dispersive subpixel averaging of the design edges: the diagonal of
+        the averaged tensor at every frequency, realized by a tangential
+        (parallel) and a series sub-capacitor per edge with the normal m of
+        the density gradient (no off-diagonal couplings).
+        """
+        from .. import tensor_averaging as ta
+        from .. import tensor_dispersive as td
+
+        if getattr(solver, "dispersive_network", None) is not None:
+            raise NotImplementedError(
+                "A dispersive tensor design cannot be combined with conformal "
+                "dispersive solids."
+            )
+        if np.iscomplexobj(solver.E.array):
+            raise NotImplementedError("Tensor smoothing needs real fields.")
+        c, eps_inf, mu, _ = self._network_params(self._terms)
+        n_e = self.flat_idx.size
+        edge = np.tile(np.arange(n_e), 2)
+        members = [(np.arange(2 * n_e), mu)]
+        net = td.network_from_edges(
+            solver, self.flat_idx, edge, c, eps_inf, [self.material], members
+        )
+        dt_base = getattr(solver, "conformal_dt_max", None) or ta.yee_dt(solver)
+        if net.stability_bound(dt_base) > 1:
+            raise ValueError(
+                f"dt={solver.dt:.3e} s violates the stability bound of the "
+                "dispersive tensor design; use a smaller cfln."
+            )
+        td.install(solver, net)
+        self.network = net
+
+    def network_of(self, solver):
+        """The dispersive sub-capacitor network of this design, or None."""
+        net = getattr(solver, "dispersive_network", None)
+        return net if net is not None and net is self.network else None
+
+    def _network_vjp(self, rho, g_ieps, g_c, g_eps, g_mu):
+        """
+        dF/drho for a dispersive tensor design from the gradients with
+        respect to ieps (per edge) and the capacitor parameters c, eps_inf
+        and mu (2 n_e each), through f = clip(P rho) and p = m_c^2.
+        """
+        t = self._tensor_terms(self._check(rho))
+        f, n_e = t["f"], t["f"].size
+        n = np.arange(n_e)
+        p = t["m"][n, t["comp"]] ** 2
+        e0, e1 = self.eps_min, self.eps_max
+        eps_t = (1 - f) * e0 + f * e1
+        gT, gS = (slice(0, n_e), slice(n_e, 2 * n_e))
+        # ieps = (p ((1 - f)/e0 + f/e1) + (1 - p)/eps_t) / eps_0
+        d_f = g_ieps * (p * (1 / e1 - 1 / e0) - (1 - p) * (e1 - e0) / eps_t**2) / eps_0
+        d_p = g_ieps * (((1 - f) / e0 + f / e1) - 1 / eps_t) / eps_0
+        # c_T = 1 - p, c_S = p f, eps_inf_T = eps_t, mu_T = f
+        d_p += -g_c[gT] + f * g_c[gS]
+        d_f += p * g_c[gS] + (e1 - e0) * g_eps[gT] + g_mu[gT]
+        d_f = np.where(t["inside"], d_f, 0.0)
+        mc = t["m"][n, t["comp"]]
+        d_m = np.zeros((n_e, 3))
+        d_m[n, t["comp"]] = 2 * mc * d_p
+        sq = np.sqrt(t["q"])
+        d_g = (
+            d_m / sq[:, None]
+            - (np.einsum("ij,ij->i", d_m, t["g"]) / sq**3)[:, None] * t["g"]
+        )
+        grad = self.P.T @ d_f
+        for k in range(3):
+            grad = grad + self.G[k].T @ d_g[:, k]
+        return np.asarray(grad).reshape(self.shape)
 
     def _apply_dispersive(self, solver, w):
         """

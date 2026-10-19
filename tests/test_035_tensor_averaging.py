@@ -415,8 +415,9 @@ def test_tensor_smoothing_gradient(bc, use_gpu):
 def test_tensor_smoothing_limits():
     """
     A uniform density has no interface normal: the smoothed tensor is the
-    isotropic arithmetic mean, identical to the plain MaterialGrid; a
-    dispersive design cannot be tensor-smoothed.
+    isotropic arithmetic mean, identical to the plain MaterialGrid.
+    (Dispersive designs are tensor-smoothed by the diagonal sub-capacitor
+    network, see test_038_tensor_dispersive.)
     """
     rho = np.full((5, 5, 1), 0.3)
     ieps = []
@@ -429,9 +430,6 @@ def test_tensor_smoothing_limits():
         design.apply(solver, rho)
         ieps.append(solver.ieps.toarray())
     np.testing.assert_allclose(ieps[0], ieps[1], rtol=1e-12)
-    with pytest.raises(NotImplementedError):
-        MaterialGrid((0, 0, 0), (0.1, 0.1, 0), (3, 3, 1), smoothing="tensor",
-                     material=wakis.dispersive.DispersiveMaterial(eps_inf=2.0))  # fmt: skip
 
 
 # ---------------------------------------------------------------------- MPI

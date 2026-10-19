@@ -40,6 +40,10 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 
 __all__ = [
+    "SIM_LABEL",
+    "THEORY_LABEL",
+    "MESH_STYLES",
+    "plot_sim_vs_theory",
     "setup_rendering",
     "box_bounds",
     "cpml_inner_bounds",
@@ -49,6 +53,7 @@ __all__ = [
     "field_slice",
     "plot_field_slice",
     "plot_material_plane",
+    "plot_triangle_mesh",
     "plot_field_plane",
     "plot_isosurfaces",
     "SliceRecorder",
@@ -59,6 +64,36 @@ __all__ = [
 LENGTH_UNITS = {"m": 1.0, "mm": 1e-3, "um": 1e-6, "nm": 1e-9}
 _UNIT_LABEL = {"m": "m", "mm": "mm", "um": "µm", "nm": "nm"}
 _AXES = "xyz"
+
+# Shared figure conventions (tutorials and studies): simulation = markers
+# (no line), theory/reference = lines (no markers), with these legend words
+SIM_LABEL = "Wakis (FIT)"
+THEORY_LABEL = "exact series"
+# Mesh / material-model colours and markers (Okabe-Ito, colour-blind safe)
+MESH_STYLES = {
+    "staircase": dict(color="#D55E00", marker="o", label="Cartesian, staircase"),
+    "all": dict(color="#0072B2", marker="s", label="Cartesian, conformal ('all')"),
+    "tensor": dict(color="#009E73", marker="^", label="Cartesian, tensor averaging"),
+    "triangles": dict(
+        color="#CC79A7", marker="D", label="triangles (unstructured FIT)"
+    ),
+}
+
+
+def plot_sim_vs_theory(ax, x_sim, y_sim, x_theory, y_theory, sim_label=None,
+                       theory_label=THEORY_LABEL, color="#D55E00", marker="o",
+                       ms=3.5, theory_color="k"):  # fmt: skip
+    """
+    Plot a simulated curve (markers only) over a theory curve (line only)
+    with unambiguous legend entries; returns the two artists.
+    """
+    th = ax.plot(
+        x_theory, y_theory, "-", color=theory_color, lw=1.1, label=theory_label
+    )
+    sim = ax.plot(x_sim, y_sim, ls="none", marker=marker, ms=ms, color=color,
+                  label=sim_label or SIM_LABEL)  # fmt: skip
+    return sim[0], th[0]
+
 
 # Colours of the standard tutorial boxes (colour-blind safe, Okabe-Ito)
 BOX_STYLES = {
@@ -80,28 +115,39 @@ def _in_notebook():
         return False
 
 
-def _start_xvfb(screen="1920x1080x24"):
+def _start_xvfb(screen="1920x1080x24", timeout=10.0):
     """
-    Start a private X virtual frame buffer on a free display and point
-    DISPLAY at it. Displays already in use (lock files, possibly owned by
-    other users or `xvfb-run`) are skipped.
-    """
-    import subprocess
-    import time
+    Start a private X virtual frame buffer and point DISPLAY at it.
 
-    for n in range(99, 200):
-        if os.path.exists(f"/tmp/.X{n}-lock") or os.path.exists(f"/tmp/.X11-unix/X{n}"):
-            continue
-        proc = subprocess.Popen(
-            ["Xvfb", f":{n}", "-screen", "0", screen, "-nolisten", "tcp"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(1.0)
-        if proc.poll() is None:  # still running: the server is up
-            os.environ["DISPLAY"] = f":{n}"
-            return f"Xvfb on :{n}"
-    return "Xvfb could not be started"
+    Xvfb chooses a free display itself (``-displayfd``), so processes started
+    at the same time cannot collide on one display, and displays owned by
+    other users (``xvfb-run``) are never reused. A small shell watchdog stops
+    the server once this Python process has fully exited (stopping it from
+    ``atexit`` would kill VTK's X connection before VTK shuts down).
+    """
+    import select
+    import subprocess
+
+    r, w = os.pipe()
+    watchdog = (
+        f"Xvfb -displayfd {w} -screen 0 {screen} -nolisten tcp >/dev/null 2>&1 & "
+        f"x=$!; while kill -0 {os.getpid()} 2>/dev/null; do sleep 2; done; kill $x"
+    )
+    proc = subprocess.Popen(
+        ["sh", "-c", watchdog],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        pass_fds=(w,),
+        start_new_session=True,
+    )
+    os.close(w)
+    ready, _, _ = select.select([r], [], [], timeout)
+    number = os.read(r, 32).decode().strip() if ready else ""
+    os.close(r)
+    if not number.isdigit() or proc.poll() is not None:
+        return "Xvfb could not be started"
+    os.environ["DISPLAY"] = f":{number}"
+    return f"Xvfb on :{number}"
 
 
 def setup_rendering(notebook_backend="static", force_off_screen=None):
@@ -134,6 +180,12 @@ def setup_rendering(notebook_backend="static", force_off_screen=None):
         notes.append(_start_xvfb())
     elif headless:
         notes.append("no display: VTK falls back to OSMesa/EGL if available")
+    try:  # VTK's C++ logger writes warnings (e.g. "Failed to load Xcursor") to stderr
+        from vtkmodules.vtkCommonCore import vtkLogger
+
+        vtkLogger.SetStderrVerbosity(vtkLogger.VERBOSITY_ERROR)
+    except Exception:  # pragma: no cover
+        pass
     off = force_off_screen
     if off is None:
         off = headless or _in_notebook() or bool(os.environ.get("WAKIS_OFF_SCREEN"))
@@ -845,6 +897,101 @@ def plot_material_plane(
     return pl
 
 
+def plot_triangle_mesh(
+    mesh,
+    window=None,
+    dual=True,
+    tag_colors=None,
+    surfaces=None,
+    length_unit="um",
+    window_size=(800, 760),
+    title=None,
+    off_screen=None,
+):
+    """
+    PyVista top view of a 2D simplex mesh (`wakis.unstructured.SimplexMesh`):
+    triangles coloured by material tag, their edges, and optionally the
+    Voronoi dual (circumcentres joined across every edge), the grid on which
+    FIT places the dual quantities.
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        Triangular mesh (dim 2).
+    window : tuple (xmin, xmax, ymin, ymax), optional
+        Zoom window [m]; cells with a vertex inside are drawn.
+    dual : bool
+        Draw the Voronoi dual edges (red).
+    tag_colors : dict, optional
+        {tag: colour}; default light blue for tag 0, white otherwise.
+    surfaces : list of pyvista.PolyData, optional
+        True surfaces, sliced at z = 0 and drawn in black.
+
+    Returns
+    -------
+    pyvista.Plotter
+    """
+    scale = 1.0 / LENGTH_UNITS[length_unit]
+    nodes, cells = np.asarray(mesh.nodes), np.asarray(mesh.cells)
+    keep = np.ones(len(cells), bool)
+    if window is not None:
+        P = nodes[cells]
+        inside = (
+            (P[..., 0] >= window[0]) & (P[..., 0] <= window[1])
+            & (P[..., 1] >= window[2]) & (P[..., 1] <= window[3])
+        )  # fmt: skip
+        keep = inside.any(1)
+    pts3 = np.column_stack([nodes * scale, np.zeros(len(nodes))])
+    faces = np.column_stack([np.full(keep.sum(), 3), cells[keep]]).ravel()
+    tri = pv.PolyData(pts3, faces)
+    tags = np.asarray(mesh.cell_tags)[keep]
+    colors = {0: "#56B4E9"} if tag_colors is None else tag_colors
+    off = True if off_screen is None else off_screen
+    pl = pv.Plotter(off_screen=off, window_size=list(window_size))
+    pl.set_background("white")
+    for tag in np.unique(tags):
+        sub = tri.extract_cells(np.flatnonzero(tags == tag))
+        try:  # PyVista >= 0.47 takes the algorithm explicitly
+            sub = sub.extract_surface(algorithm=None)
+        except TypeError:
+            sub = sub.extract_surface()
+        pl.add_mesh(sub, color=colors.get(int(tag), "white"), show_edges=True,
+                    edge_color="black", line_width=1)  # fmt: skip
+    if dual:
+        cc = np.asarray(mesh.cell_circumcenter)
+        ce = np.asarray(mesh.cell_edges)
+        owners = {}
+        for c in np.flatnonzero(keep):
+            for e in ce[c]:
+                owners.setdefault(int(e), []).append(c)
+        segs = []
+        for e, cs in owners.items():
+            a, b = mesh.edges[e]
+            mid = 0.5 * (nodes[a] + nodes[b])
+            ends = [cc[c] for c in cs] if len(cs) == 2 else [cc[cs[0]], mid]
+            segs += ends
+        segs = np.column_stack([np.array(segs) * scale, np.full(len(segs), 1e-4)])
+        pl.add_mesh(pv.line_segments_from_points(segs), color="#D55E00", line_width=2)
+    for surf in surfaces or []:
+        cut = surf.scale(scale, inplace=False).slice(normal="z", origin=(0, 0, 0))
+        if cut.n_points:
+            if window is not None:
+                b = np.array(window) * scale
+                cut = cut.clip_box([b[0], b[1], b[2], b[3], -1, 1], invert=False)
+            pl.add_mesh(cut.translate((0, 0, 2e-4), inplace=False), color="black",
+                        line_width=3)  # fmt: skip
+    if title:
+        pl.add_text(title, font_size=14, color="black")
+    b = np.array(window) * scale if window is not None else np.array(tri.bounds[:4])
+    cx, cy = 0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3])
+    pl.enable_parallel_projection()
+    pl.camera.focal_point = (cx, cy, 0.0)
+    pl.camera.position = (cx, cy, 10.0 * max(b[1] - b[0], b[3] - b[2]))
+    pl.camera.up = (0.0, 1.0, 0.0)
+    pl.camera.parallel_scale = 0.55 * max(b[1] - b[0], b[3] - b[2])
+    return pl
+
+
 def plot_field_plane(
     values,
     coords,
@@ -1034,9 +1181,11 @@ class SliceRecorder:
         Plane coordinate [m].
     every : int
         Record every `every` steps.
+    t_stop : float, optional
+        Stop recording after this time [s] (e.g. once the pulse has left).
     """
 
-    def __init__(self, component="Ex", axis="y", position=0.0, every=10):
+    def __init__(self, component="Ex", axis="y", position=0.0, every=10, t_stop=None):
         self.component = component
         self.axis = axis
         self.position = position
@@ -1044,8 +1193,11 @@ class SliceRecorder:
         self.frames, self.times = [], []
         self._n = 0
         self.coords = None
+        self.t_stop = t_stop
 
     def update(self, solver, t):
+        if self.t_stop is not None and t > self.t_stop:
+            return
         if self._n % self.every == 0:
             field = getattr(solver, self.component[0])
             values, coords = field_slice(
