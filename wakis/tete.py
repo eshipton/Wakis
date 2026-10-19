@@ -270,6 +270,51 @@ def build_operators(solver):
     return ops
 
 
+def stabilize_transverse(solver, ops, dt, which=("ez", "hz"), margin=1e-3):
+    """
+    Bound the transverse TE/TM operators by Gershgorin row sums (conformal).
+
+    Small open faces normal to x and y (not redistributed with
+    scheme='tete') make the TM operator K = B_Z A_T large on the e_z edges
+    next to them, and small z faces do the same for the TE operator
+    K = A_Z B_T on h_z. The rows of B_Z (A_Z) are scaled by
+    s = min(1, (2/dt)^2 (1 - margin) / r), with r the absolute row sum
+    bound |B_Z| |A_T| 1 (|A_Z| |B_T| 1), together with ieps_z (imu_z) of
+    those edges (faces). This raises the "mass" of e_z edges and h_z faces
+    only: both vanish in the self-field of a v = c bunch in a uniform pipe
+    (TEM, e_z = h_z = 0, A_Z e_xy = 0), which therefore stays an exact
+    discrete solution, and the longitudinal operator is not touched.
+    Gershgorin's theorem then gives lambda_max <= (2/dt)^2 (1 - margin).
+    `which` selects the e_z rows ('ez') and/or h_z rows ('hz'); the solver
+    scales 'hz' only when the TE limit is below dt (the z faces keep the
+    redistribution of the Yee path, whose absolute row sums overestimate
+    the eigenvalue).
+
+    Returns
+    -------
+    dict
+        Number of scaled e_z edges and h_z faces and the smallest factors.
+    """
+    budget = (2.0 / dt) ** 2 * (1.0 - margin)
+    N = solver.N
+    info = {}
+    for rows, other, field, label in (("ZE", "TH", solver.ieps, "ez"),
+                                      ("ZH", "TE", solver.imu, "hz")):  # fmt: skip
+        if label not in which:
+            continue
+        r = abs(ops[rows]) @ (abs(ops[other]) @ np.ones(ops[other].shape[1]))
+        scale = np.ones(N)
+        hot = r > budget
+        scale[hot] = budget / r[hot]
+        if hot.any():
+            ops[rows] = diags(scale) @ ops[rows]
+            ops[rows] = csr_matrix(ops[rows])
+            field.field_z = np.asarray(_host(field.field_z)) * scale
+        info[f"{label}_scaled"] = int(hot.sum())
+        info[f"{label}_min_factor"] = float(scale.min())
+    return info
+
+
 def _cpml_faces(solver):
     """z-CPML faces present on this solver (rank): (side, idx, bH, cH, bE, cE)."""
     faces = []

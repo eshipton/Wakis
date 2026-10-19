@@ -307,3 +307,50 @@ def test_smooth_pipe_no_cherenkov(tmp_path, long_tfsf, use_gpu):
 def test_smooth_pipe_mutation_fails(tmp_path, long_tfsf, block):
     """A 1e-3 error in one TE/TM coefficient block gives a visible wake."""
     assert _pipe_wake("tete", tmp_path, mutate=block) > 1e-5
+
+
+def _round_pipe_wake(scheme, tmp_path, template=None):
+    """Conformal round pipe (r = 6 mm, dx = dy = 2 dz = 1.6 mm), CPML + TFSF."""
+    import pyvista as pv
+
+    npml, dz, a, length = 6, 8e-4, 0.016, 0.03
+    nz = int(round(length / dz)) + 2 * npml
+    zmax = nz * dz
+    cyl = pv.Cylinder(center=(0, 0, zmax / 2), direction=(0, 0, 1), radius=0.006,
+                      height=2 * zmax, resolution=360).triangulate()  # fmt: skip
+    grid = wakis.GridFIT3D(-a / 2, a / 2, -a / 2, a / 2, 0, zmax, 10, 10, nz,
+                           stl_solids={"pipe": cyl},
+                           stl_materials={"pipe": "vacuum"}, conformal=True,
+                           verbose=0)  # fmt: skip
+    wake = wakis.WakeSolver(
+        q=1e-9, sigmaz=3.2e-3, beta=1.0, xsource=0, ysource=0, xtest=0, ytest=0,
+        skip_cells=npml + 2, results_folder=str(tmp_path / scheme) + "/",
+        Ez_file=str(tmp_path / f"rd_{scheme}_Ez.h5"), save=False, verbose=0,
+    )  # fmt: skip
+    s = wakis.SolverFIT3D(grid, wake, bc_low=["pec", "pec", "cpml"],
+                          bc_high=["pec", "pec", "cpml"], n_pml=npml, bg="pec",
+                          use_stl=True, verbose=0, scheme=scheme)  # fmt: skip
+    wakis.sources.Beam.tfsf_template = template
+    try:
+        s.wakesolve(wakelength=0.03, compute_plane="longitudinal")
+    finally:
+        wakis.sources.Beam.tfsf_template = None
+    return np.abs(wake.WP).max(), s
+
+
+def test_conformal_round_pipe_no_cherenkov(tmp_path, long_tfsf, monkeypatch):
+    """
+    Conformal round pipe at the magic step: the trapezoidal x/y face areas,
+    no x/y face merging and the e_z mass scaling keep the bunch self-field an
+    exact discrete solution (|W| ~ 1e-10 V/pC; Yee: ~0.5 V/pC). Merging the
+    small x/y faces as in the Yee path (threshold 0.5) couples (x, y) columns
+    and gives a visible wake.
+    """
+    tete, s = _round_pipe_wake("tete", tmp_path)
+    assert s.tete_dt_limits["longitudinal"] >= s.dt * (1 - 1e-6)
+    assert tete < 1e-8
+    yee, _ = _round_pipe_wake("yee", tmp_path)
+    assert yee > 0.1
+    monkeypatch.setattr(wakis.conformal, "TETE_XY_THRESHOLD", 0.5)
+    merged, _ = _round_pipe_wake("tete", tmp_path)
+    assert merged > 1e-5

@@ -33,6 +33,11 @@ _CYCLIC = {0: (1, 2), 1: (2, 0), 2: (0, 1)}
 
 # Faces with an open area below MERGE_THRESHOLD * A_stab are merged
 MERGE_THRESHOLD = 0.5
+# Faces normal to x and y with scheme='tete' are not redistributed: a merged
+# face couples two (x, y) columns and the bunch self-field is then no longer
+# an exact discrete travelling wave. Their small-face (transverse) stability
+# is restored by `wakis.tete.stabilize_transverse` instead.
+TETE_XY_THRESHOLD = 0.0
 
 # Relative size of the geometry shifts that remove degenerate intersections
 # (grid lines lying exactly on faces or through vertices of the surface)
@@ -739,10 +744,13 @@ def _redistribution(
     exactly (and the knife-edge field near sheet edges).
 
     Faces of the components in `merge_only` use weight 1 to the first
-    neighbour only (cell merging, no extrapolation). The TE/TM scheme uses
-    it for the faces normal to x and y: the (2, -1) extrapolation raises the
-    longitudinal operator above 4 c^2/dz^2 and breaks the magic time step,
-    merging keeps every row sum of that operator at 4 c^2/dz^2.
+    neighbour only (cell merging, no extrapolation). `threshold` may be a
+    sequence of three per-component values. The TE/TM scheme does not
+    redistribute the faces normal to x and y (`TETE_XY_THRESHOLD` = 0): the
+    (2, -1) extrapolation raises the longitudinal operator above
+    4 c^2/dz^2 and breaks the magic time step, and a merged face couples two
+    (x, y) columns so that the bunch self-field is no longer an exact
+    discrete travelling wave.
 
     Returns
     -------
@@ -753,7 +761,9 @@ def _redistribution(
     shape = areas[0].shape
     n = int(np.prod(shape))
     ops, n_unstable = [], 0
+    thresholds = np.broadcast_to(np.asarray(threshold, float), (3,))
     for w in range(3):
+        threshold = thresholds[w]
         u, v = _CYCLIC[w]
         Lu, Lv = lengths[u], lengths[v]
         A = areas[w]
@@ -1145,8 +1155,13 @@ def apply_conformal_materials(solver):
         # The corrected inverse area acts as an effective open area
         A_open = [A_open[c] / mu_factor[c] for c in range(3)]
     tete = getattr(solver, "scheme", "yee") == "tete"
+    threshold = (
+        (TETE_XY_THRESHOLD, TETE_XY_THRESHOLD, MERGE_THRESHOLD)
+        if tete
+        else MERGE_THRESHOLD
+    )
     ops, n_unstable = _redistribution(
-        L_open, A_open, L, grid.edge_ghosts, MERGE_THRESHOLD, pattern,
+        L_open, A_open, L, grid.edge_ghosts, threshold, pattern,
         merge_only=(0, 1) if tete else (),
     )  # fmt: skip
     solver.conformal_unstable_faces = n_unstable

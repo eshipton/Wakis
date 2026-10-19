@@ -892,17 +892,30 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         (an unstable run is never useful; pass a smaller ``dt`` explicitly).
         """
         ops = tete.build_operators(self)
-        tete.install(self, ops)
-        if not self.activate_cpml:  # free the Yee operators (blocks replace them)
-            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
         # Staircase operators obey the analytic bound (removing PEC edges
         # only lowers the largest eigenvalue); conformal faces need the
-        # numerical one
+        # numerical one, and their small faces the transverse stabilization
         numeric = bool(getattr(self.grid, "conformal", False)) or bool(
             getattr(self.grid, "sheets", None)
         )
+        self.tete_stabilization = {}
+        if numeric:
+            self.tete_stabilization = tete.stabilize_transverse(
+                self, ops, self.dt, which=("ez",)
+            )
+        tete.install(self, ops)
+        if not self.activate_cpml:  # free the Yee operators (blocks replace them)
+            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
         if numeric:
             limits = tete.stability_limits(self)
+            if limits["te"] < self.dt:
+                self.tete_stabilization.update(
+                    tete.stabilize_transverse(self, ops, self.dt, which=("hz",))
+                )
+                tete.install(self, ops)
+                limits = tete.stability_limits(self)
+            if self.verbose > 1:
+                print(f"    * TE/TM transverse stabilization: {self.tete_stabilization}")
             dt_max = min(limits.values())
         else:
             limits = {"analytic": tete.analytic_dt_limit(self)}
@@ -917,7 +930,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
         if self.verbose > 1:
             print(f"    * TE/TM stability limits [s]: {limits}")
-        if self.dt > dt_max * (1 + 1e-9):
+        # 1e-6: the Arnoldi estimate carries a 1e-7 safety margin, and the
+        # longitudinal operator meets its Gershgorin bound 4 c^2/dz^2 up to
+        # O(1/Nz^2) on long columns (the bound itself is stable)
+        if self.dt > dt_max * (1 + 1e-6):
             raise ValueError(
                 f"scheme='tete': dt={self.dt:.6e} s exceeds the stable limit "
                 f"{dt_max:.6e} s ({limits}). The magic step dz/c needs "

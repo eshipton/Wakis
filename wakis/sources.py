@@ -26,6 +26,12 @@ class Beam:
     #: downstream injection plane (the truncated tail, exp(-n^2/2) of the
     #: peak, is left as a small residual field)
     tfsf_truncation = 5.0
+    #: TEM template of the TFSF injection: 'staircase' (2D Poisson on the
+    #: full cell lengths, nodes next to PEC edges grounded) or 'operator'
+    #: (built from the solver's own curl and material operators, so that it
+    #: is the discrete TEM field of conformal grids too). None selects
+    #: 'operator' for ``scheme='tete'`` and 'staircase' otherwise.
+    tfsf_template = None
 
     def __init__(
         self, xsource=0.0, ysource=0.0, beta=1.0, q=1e-9, sigmaz=None, ti=None
@@ -255,6 +261,16 @@ class Beam:
             raise NotImplementedError(
                 "Only relativistic beta=1 is currently implemented."
             )
+        template = self.tfsf_template
+        if template is None:
+            tete = getattr(solver, "scheme", "yee") == "tete"
+            template = "operator" if tete else "staircase"
+        if template == "operator":
+            E2D_x, E2D_y, H2D_x, H2D_y = self._operator_template(solver, z_pos)
+            for name, val in (("E2D_x", E2D_x), ("E2D_y", E2D_y),
+                              ("H2D_x", H2D_x), ("H2D_y", H2D_y)):  # fmt: skip
+                setattr(self, f"{name}_{side}", val)
+            return
 
         def k(i, j):
             """Maps 2D grid coordinates to 1D flat index."""
@@ -343,6 +359,79 @@ class Beam:
             self.E2D_y_high = E2D_y
             self.H2D_x_high = H2D_x
             self.H2D_y_high = H2D_y
+
+    def _operator_template(self, solver, k):
+        """
+        Unit-current TEM template on the plane k from the solver's operators.
+
+        With A = iDa iDmu C Ds and B = iDeps itDa C^H tDs (the solver's FIT
+        operators, conformal metrics included), the self-field of a v = c
+        line current is E_xy = -D phi (D: transverse gradient over the open
+        edge lengths, so that A E has no h_z part), H_x = -(a_x dz / c) E_y,
+        H_y = (a_y dz / c) E_x with a the longitudinal coefficients of A
+        (H = z x E / Z0 on full cells), and phi solves the transverse
+        equation (B H)_z = ieps_z J_z for J_z = 1 A/m^2 on the source edge.
+        Nodes next to a closed edge (open length 0) are grounded. On
+        staircase grids this is the 'staircase' template; on conformal grids
+        it is the discrete TEM field the time step propagates.
+        """
+        Nx, Ny, N = solver.Nx, solver.Ny, solver.N
+        nxy = Nx * Ny
+        p = np.arange(nxy) + k * nxy  # flat indices of plane k
+        q = p + nxy  # plane k + 1
+        Ds = solver.Ds.diagonal()
+        lx, ly = Ds[p], Ds[N + p]
+        rows_h = np.concatenate([p, N + p])
+        A = (sp.csr_matrix(solver.iDa)[rows_h] @ solver.iDmu @ solver.C
+             @ solver.Ds).tocsr()  # fmt: skip
+        a_x = -np.asarray(A[np.arange(nxy), N + q]).ravel()
+        a_y = np.asarray(A[nxy + np.arange(nxy), q]).ravel()
+        B = (sp.csr_matrix(solver.iDeps)[2 * N + p] @ solver.itDa
+             @ solver.C.conj().transpose() @ solver.tDs).tocsr()  # fmt: skip
+        Bz = B[:, np.concatenate([p, N + p])]  # e_z <- (h_x, h_y) on plane k
+        dz = solver.grid.dz[min(k, len(solver.grid.dz) - 1)]
+
+        i, j = np.meshgrid(np.arange(Nx), np.arange(Ny), indexing="ij")
+        i, j = i.ravel(order="F"), j.ravel(order="F")
+        node = i + j * Nx
+        # Gradient over open lengths: e_x(i,j) = -(phi(i+1,j) - phi(i,j))/l_x
+        def grad(l, step, last):
+            ok = (l > 0) & ~last
+            r = np.flatnonzero(ok)
+            il = 1.0 / l[r]
+            return sp.csr_matrix(
+                (np.concatenate([il, -il]), (np.concatenate([r, r]),
+                 np.concatenate([node[r], node[r] + step]))), shape=(nxy, nxy),
+            )  # fmt: skip
+        Dx = grad(lx, 1, i == Nx - 1)
+        Dy = grad(ly, Nx, j == Ny - 1)
+        # Free nodes: interior, all four transverse edges open
+        free = (i > 0) & (i < Nx - 1) & (j > 0) & (j < Ny - 1)
+        free &= (lx > 0) & (ly > 0)
+        free &= np.roll(lx, 1) > 0
+        free &= np.roll(ly, Nx) > 0
+        f = np.flatnonzero(free)
+        # h_xy = R e_xy with e_xy = -[Dx; Dy] phi
+        R = sp.bmat([[None, sp.diags(-a_x * dz / c_light)],
+                     [sp.diags(a_y * dz / c_light), None]], format="csr")  # fmt: skip
+        G = -sp.vstack([Dx, Dy]).tocsr()
+        S = (Bz @ R @ G).tocsr()[f][:, f]
+        src = self.ixs + self.iys * Nx
+        rhs = np.zeros(f.size)
+        where = np.flatnonzero(f == src)
+        if where.size == 0:
+            raise ValueError("Beam source node is not inside the open beam pipe.")
+        ieps = solver.ieps.toarray()
+        ieps = ieps.get() if hasattr(ieps, "get") else np.asarray(ieps)
+        rhs[where[0]] = ieps[2 * N + p[src]]
+        phi = np.zeros(nxy)
+        phi[f] = spsolve(S.tocsc(), rhs)
+        e = G @ phi
+        h = R @ e
+        def plane(v):
+            return v.reshape((Nx, Ny), order="F").astype(solver.dtype)
+
+        return plane(e[:nxy]), plane(e[nxy:]), plane(h[:nxy]), plane(h[nxy:])
 
     def get_injected_2D_slice(self, solver, z_pos, t, side):
         """
