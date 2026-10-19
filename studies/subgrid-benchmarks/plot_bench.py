@@ -80,7 +80,7 @@ def fig_spectra():
         ax.plot(lam, c.reference[key], "k-", lw=1.2, label="exact series" if key == "q_ext"
                 else "exact T-matrix")  # fmt: skip
         by = load(case)
-        for arm, mk in (("subgrid-2to1", "P"), ("subgrid-2to1-gap4", "X"),
+        for arm, mk in (("subgrid-2to1", "P"), ("subgrid-2to1-zone2L1", "X"),
                         ("tri-graded", "o"), ("cart-conformal-all-graded", "s")):  # fmt: skip
             rr = by.get(arm)
             if not rr:
@@ -92,7 +92,9 @@ def fig_spectra():
                         color=style(arm)["color"],
                         label=f"Wakis FIT ({arm}), h = {r['resolution'] * 1e9:.2f} nm")  # fmt: skip
         ax.set_xlabel("vacuum wavelength [nm]")
-        ax.set_ylabel("Q_ext" if key == "q_ext" else "|E/E0|^2 at the gap centre")
+        ax.set_ylabel(
+            "Q_ext" if key == "q_ext" else "gap enhancement |E/E0|^2 (9-point mean)"
+        )
         ax.set_title(case)
         ax.legend(fontsize=6)
         ax.grid(alpha=0.25)
