@@ -366,6 +366,7 @@ class PolygonFIT2D:
         self.n = 0
         if getattr(self, "plane_wave", None) is not None:
             self.plane_wave["cache_n"] = None
+            self._pw_cache = None
         if self.pol == "TM":
             self._update.reset()
         for g in self._te_groups:
@@ -411,8 +412,9 @@ class PolygonFIT2D:
         self.sources.append(("node", w, amp_func))
 
     def add_plane_wave(
-        self, src_time, direction=(1.0, 0.0), amplitude=1.0, background_eps_r=1.0
-    ):
+        self, src_time, direction=(1.0, 0.0), amplitude=1.0, background_eps_r=1.0,
+        table_sub=8,
+    ):  # fmt: skip
         """
         Plane wave in the scattered-field formulation (as
         `UnstructuredFIT2D.add_plane_wave`).
@@ -440,6 +442,12 @@ class PolygonFIT2D:
 
         Non-magnetic, non-PEC scatterers in a lossless background that
         fills the outer boundary cells.
+
+        ``table_sub``: the non-dispersive source terms use the separable-delay
+        table of `UnstructuredFIT2D._build_pw_table` (s(t) sampled at
+        dt / table_sub, linear interpolation in the delay, error
+        ~ (omega dt / table_sub)^2 / 8), one sparse mat-vec per step instead
+        of evaluating s(t) on every target; None: direct evaluation.
         """
         mesh = self.mesh
         eps_b = float(background_eps_r)
@@ -503,6 +511,39 @@ class PolygonFIT2D:
             mid = 0.5 * (foot + c)
             pw.update(e=e[keep], coef=coef[keep], pos=(mid @ k)[keep])
         self.plane_wave = pw
+        self._pw_W = None
+        if table_sub and not pw.get("total", False):
+            self._build_pw_table(int(table_sub))
+
+    def _build_pw_table(self, sub):
+        """Separable-delay table (as `UnstructuredFIT2D._build_pw_table`)."""
+        pw = self.plane_wave
+        tau = np.maximum((pw["pos"] - pw["s0"]) / pw["v"] / self.dt * sub, 0.0)
+        j = np.floor(tau).astype(int)
+        f = tau - j
+        if self.pol == "TM":
+            rows, wgt, n_rows = pw["idx"], pw["w"] / self.dt, self.free.size
+        else:
+            rows, wgt, n_rows = pw["e"], pw["coef"], self.mesh.n_edges
+        r2 = np.concatenate([rows, rows])
+        c2 = np.concatenate([j, j + 1])
+        v2 = pw["amp"] * np.concatenate([wgt * (1 - f), wgt * f])
+        self._pw_W = sp.csr_matrix((v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1))
+        self._pw_sub = sub
+        self._pw_S = np.zeros(0)
+        self._pw_cache = None
+
+    def _pw_values(self, n):
+        """W @ [S[sub n - j]]_j: the weighted source term at step level n."""
+        pw, sub = self.plane_wave, self._pw_sub
+        nj = self._pw_W.shape[1]
+        top = sub * n
+        if self._pw_S.size <= top:
+            m = np.arange(max(2 * self._pw_S.size, top + 1 + 4096))
+            self._pw_S = np.asarray(pw["s"](m * self.dt / sub), dtype=float)
+        idx = top - np.arange(nj)
+        g = np.where(idx >= 0, self._pw_S[np.maximum(idx, 0)], 0.0)
+        return self._pw_W @ g
 
     def _incident_signal(self, pos, t):
         pw = self.plane_wave
@@ -559,7 +600,13 @@ class PolygonFIT2D:
             self._edge_update(-(self.G @ self.u))
             sv = self._apply_S(self.v)
             r = self.GT @ sv
-            if pw is not None:
+            if pw is not None and self._pw_W is not None:
+                v_new = self._pw_values(self.n + 1)
+                c = self._pw_cache
+                v_old = c[1] if c is not None and c[0] == self.n else self._pw_values(self.n)
+                self._pw_cache = (self.n + 1, v_new)
+                r -= v_new - v_old
+            elif pw is not None:
                 # cache E_inc^{n+1} for the next step (one evaluation per step)
                 e_new = self._incident_signal(pw["pos"], (self.n + 1) * dt)
                 if pw.get("cache_n") != self.n:
@@ -572,7 +619,7 @@ class PolygonFIT2D:
                     r[pw["idx"]] -= pw["w"] * (e_new - e_old) / dt
             if node_src is not None:
                 r -= node_src
-            if pw is not None and pw["total"]:
+            if pw is not None and pw["total"] and self._pw_W is None:
                 u = self.u.copy()
                 u[pw["idx"]] += e_old
                 self.u = self._update.step(u, r)
@@ -583,7 +630,9 @@ class PolygonFIT2D:
                 self._pml_nodes(sv, +1.0)
         else:
             vol = self._te_voltage(self.v, self.n * dt)
-            if pw is not None:
+            if pw is not None and self._pw_W is not None:
+                vol -= self._pw_values(self.n)
+            elif pw is not None:
                 einc = self._incident_signal(pw["pos"], self.n * dt)
                 vol -= np.bincount(pw["e"], pw["coef"] * einc, minlength=vol.size)
             r = self.GT @ vol

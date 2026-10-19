@@ -298,3 +298,22 @@ def test_mie_hybrid_disk_coarse():
     q, qr = np.array(out["q"]), np.array(out["q_ref"])
     rms = np.sqrt(np.mean((q / qr - 1) ** 2))
     assert rms < 0.10, rms
+
+
+# ---------------------------------------------------------------- source table
+@pytest.mark.parametrize("pol", ["TM", "TE"])
+def test_tabulated_plane_wave_matches_direct(pol):
+    """Separable-delay source table vs direct evaluation (recorded 7e-5 / 9e-5
+    at sub = 8); mutation: sub = 1 is > 10x worse (error ~ 1/sub^2)."""
+    m = PolyMesh.from_simplex(disk_mesh([1e-6, 2e-6], 0.1e-6))
+    src = GaussianSource(1.5e14, 0.5e14)
+    out = {}
+    for sub in (None, 8, 1):
+        s = PolygonFIT2D(m, {0: [4.0, 1.0]}, polarization=pol, bc="abc")
+        s.add_plane_wave(src, table_sub=sub)
+        s.run(600)
+        out[sub] = s.u
+    e8 = np.abs(out[8] - out[None]).max() / np.abs(out[None]).max()
+    e1 = np.abs(out[1] - out[None]).max() / np.abs(out[None]).max()
+    assert e8 < 3e-4, e8
+    assert e1 > 10 * e8, (e1, e8)
