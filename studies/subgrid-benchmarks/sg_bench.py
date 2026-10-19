@@ -10,7 +10,10 @@ Arms:
 * ``sg-lts4``      -- same mesh, two-level LTS with p = 4;
 * ``sg-gap4``      -- B3: plus up to 2 extra levels in the gap (4 cells
   across the local gap width);
-* ``sg-gap4-lts8`` -- same with LTS p = 8.
+* ``sg-gap4-lts8`` -- same with LTS p = 8;
+* phase ``B3z``: ``sg-zone2L1`` / ``sg-zone2L2`` -- the facing surfaces and
+  the gap (local gap width < 2 x the case gap) get 1 or 2 more levels than
+  the rest of the metal (global time step).
 
 Tasks are (case, arm, h); one task per Cloud Batch machine (uncontended
 timings). Records: `wakis.benchmarks.run` JSON in data/<phase>/.
@@ -32,12 +35,19 @@ LADDER = [A_NANO / q for q in (5, 7, 10, 14, 20, 28, 40)]  # 4 .. 0.5 nm
 PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
+    "B3z": ["B3-g5", "B3-g10", "B3-g2"],
 }
 
 
 def arms(phase):
     from wakis.benchmarks.arms.subgrid2d import Subgrid2DArm
 
+    if phase == "B3z":
+        out = [
+            Subgrid2DArm(gap_zone=2, gap_levels=1),
+            Subgrid2DArm(gap_zone=2, gap_levels=2),
+        ]
+        return {a.name: a for a in out}
     out = [Subgrid2DArm(), Subgrid2DArm(lts=4)]
     if phase == "B3":
         out += [Subgrid2DArm(gap_cells=4), Subgrid2DArm(gap_cells=4, lts=8)]
@@ -48,7 +58,7 @@ def tasks(phase):
     out = []
     for case in PHASES[phase]:
         ladder = LADDER
-        if case == "B3-g2":
+        if case == "B3-g2" and phase != "B3z":
             ladder = [h for h in LADDER if h <= 1.0e-9 + 1e-15]
         for h in ladder[::-1]:
             for arm in arms(phase):

@@ -50,6 +50,12 @@ class Subgrid2DArm(Arm):
         Cells across a gap between two cylinders (0: no gap refinement).
     gap_levels : int
         Extra levels allowed for the gap refinement.
+    gap_zone : float
+        If > 0 (instead of `gap_cells`): every cell whose local gap width
+        (sum of the distances to the two nearest surfaces) is below
+        ``gap_zone`` times the smallest gap of the case is refined to
+        h / 2**gap_levels: the facing surfaces and the gap get gap_levels
+        more levels than the rest of the metal.
     n_pml : int
     cfl : float
     lts : int, optional
@@ -59,18 +65,21 @@ class Subgrid2DArm(Arm):
     """
 
     def __init__(self, ppw_out=20, max_ratio=16, band=2.0, gap_cells=0, gap_levels=2,
+                 gap_zone=0.0,
                  n_pml=10, cfl=0.95, lts=None, n_sub=8, ladder=None, name=None):  # fmt: skip
         self.ppw_out = ppw_out
         self.max_ratio = int(max_ratio)
         self.band = band
         self.gap_cells = gap_cells
         self.gap_levels = int(gap_levels)
+        self.gap_zone = float(gap_zone)
         self.n_pml = n_pml
         self.cfl = cfl
         self.lts = lts
         self.n_sub = n_sub
         self.ladder = ladder
         self.name = name or ("sg" + (f"-gap{gap_cells:g}" if gap_cells else "")
+                             + (f"-zone{gap_zone:g}L{gap_levels}" if gap_zone else "")
                              + (f"-lts{lts}" if lts else ""))  # fmt: skip
 
     def supports(self, case):
@@ -106,7 +115,12 @@ class Subgrid2DArm(Arm):
         cyl = case.cylinders
         cen = np.array([c["center"] for c in cyl], float)
         rad = np.array([c["radius"] for c in cyl], float)
-        gap_lv = self.gap_levels if (self.gap_cells and len(cyl) > 1) else 0
+        multi = len(cyl) > 1
+        gap_lv = self.gap_levels if ((self.gap_cells or self.gap_zone) and multi) else 0
+        g_min = np.inf
+        for i in range(len(cyl)):
+            for j in range(i + 1, len(cyl)):
+                g_min = min(g_min, np.hypot(*(cen[i] - cen[j])) - rad[i] - rad[j])
         max_level = levels + gap_lv
 
         def surf_dist(xm, ym):
@@ -121,11 +135,16 @@ class Subgrid2DArm(Arm):
             near = (np.abs(d) < (hd + self.band * s)[..., None]).any(-1)
             inside = (d < 0).any(-1)
             out = (near | inside) & (s > h * (1 + 1e-9))
-            if gap_lv and len(cyl) > 1:
+            if gap_lv:
                 # local gap width: distances to the two nearest surfaces
                 ds = np.sort(np.maximum(np.abs(d) - hd[..., None], 0), -1)
-                need = (ds[..., 0] + ds[..., 1]) / self.gap_cells
-                out |= s > np.maximum(need, h / 2**gap_lv) * (1 + 1e-9)
+                width = ds[..., 0] + ds[..., 1]
+                h_gap = h / 2**gap_lv
+                if self.gap_zone:
+                    out |= (width < self.gap_zone * g_min) & (s > h_gap * (1 + 1e-9))
+                else:
+                    need = width / self.gap_cells
+                    out |= s > np.maximum(need, h_gap) * (1 + 1e-9)
             return out
 
         mesh = QuadMesh(xc, xc.copy(), ratio=2, max_level=max_level, refine=refine)
