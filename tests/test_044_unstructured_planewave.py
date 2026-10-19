@@ -45,8 +45,8 @@ N_MAX = 6
 X_TEST = np.array([0.1, 0.3, 1.5])
 
 
-def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10):
-    mesh = disk_mesh([A, 3.5 * A], h)
+def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10, mesh=None):
+    mesh = disk_mesh([A, 3.5 * A], h) if mesh is None else mesh
     solver = UnstructuredFIT2D(mesh, {0: [eps, 1.0]}, polarization=pol, bc="abc")
     f = X_TEST * C0 / (2 * np.pi * A)
     src = GaussianSource(0.9 * C0 / (2 * np.pi * A), 0.45 * C0 / (2 * np.pi * A))

@@ -74,6 +74,17 @@ class UnstructuredFIT2D:
         2 / sqrt(lambda_max(M^-1 K)).
     cfl : float, optional
         Fraction of the stability limit.
+    absorber : dict, optional
+        Matched lossy annulus in front of the outer boundary,
+        ``dict(r0=..., r1=..., s_max=..., order=2)``: an electric and a
+        magnetic loss with the same rate s(r) = s_max ((r - r0)/(r1 - r0))^order
+        [1/s] for r > r0 (sigma_e / eps = sigma_m / mu = s), which keeps the
+        layer impedance-matched to the background at every frequency
+        (attenuation exp(-int s dr / v), independent of frequency, for
+        radially outgoing waves). The loss rate acts on the nodes (node
+        radius) and on the primal-edge fluxes (edge-midpoint radius), both
+        with semi-implicit (Crank-Nicolson) averaging. Combine with
+        ``bc='abc'`` or ``'pec'`` at the outer boundary.
 
     Attributes
     ----------
@@ -92,6 +103,7 @@ class UnstructuredFIT2D:
         hodge="voronoi",
         dt=None,
         cfl=0.95,
+        absorber=None,
     ):
         if mesh.dim != 2:
             raise ValueError("UnstructuredFIT2D needs a triangular mesh")
@@ -100,6 +112,7 @@ class UnstructuredFIT2D:
         if bc not in ("pec", "pmc", "abc"):
             raise ValueError("bc must be 'pec', 'pmc' or 'abc'")
         self.mesh, self.pol, self.bc, self.hodge = mesh, polarization, bc, hodge
+        self._absorber = absorber
         eps_r, mu_r, sigma, pec, dispersive = cell_materials(mesh, materials)
         self.eps_r, self.mu_r, self.sigma, self.pec_cells = eps_r, mu_r, sigma, pec
         self.dispersive = dispersive
@@ -164,6 +177,17 @@ class UnstructuredFIT2D:
             groups = []
         self.mass = mass[self.free]
         self.stiff = stiff
+        self.edge_rate = np.zeros(mesh.n_edges)
+        if absorber is not None:
+            r0, r1 = absorber["r0"], absorber["r1"]
+            order = absorber.get("order", 2)
+
+            def rate(r):
+                xi = np.clip((r - r0) / (r1 - r0), 0, None)
+                return absorber["s_max"] * xi**order
+
+            loss = loss + mass * rate(np.hypot(*mesh.nodes.T))
+            self.edge_rate = rate(np.hypot(*mesh.edge_midpoint.T))
         self.loss = loss[self.free]
         if np.any(self.mass <= 0):
             raise ValueError(
@@ -479,7 +503,11 @@ class UnstructuredFIT2D:
             de -= self._incident_signal(pw["pos"], self.n * dt)
             node_src[pw["idx"]] += pw["w"] * de / dt
         if self.pol == "TM":
-            self.v -= dt * (self.G @ self.u)
+            if self._absorber is None:
+                self.v -= dt * (self.G @ self.u)
+            else:
+                ce = 0.5 * dt * self.edge_rate
+                self.v = ((1 - ce) * self.v - dt * (self.G @ self.u)) / (1 + ce)
             r = self.G.T @ (self.stiff * self.v) - node_src
             self.u = self._update.step(self.u, r)
         else:
@@ -491,7 +519,13 @@ class UnstructuredFIT2D:
             a = self.mass - self.loss * dt / 2
             b = self.mass + self.loss * dt / 2
             self.u = (a * self.u - dt * (self.G.T @ vol + node_src)) / b
-            self.v += dt * (self.G @ self.u - edge_src)
+            if self._absorber is None:
+                self.v += dt * (self.G @ self.u - edge_src)
+            else:
+                ce = 0.5 * dt * self.edge_rate
+                self.v = ((1 - ce) * self.v + dt * (self.G @ self.u - edge_src)) / (
+                    1 + ce
+                )
             self._te_ade_step(self.v)
         self.n += 1
         self.recorder.record(self.u, self.n * dt, dt)
