@@ -54,7 +54,7 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <tr>
 <td colspan="2">
 
-**B3**: Au nanodimers (a = 20 nm, n = 2 host) with 10, 5 and 2 nm gaps, E along the dimer axis, against an exact multi-cylinder T-matrix (maps above). Metric: the mean |E/E<sub>0</sub>|² over 9 gap points, reconstructed at second order (a patch fit on triangles, bilinear on the Cartesian grid). 98 uncontended runs; run window checked (< 1e-5). **Graded triangles converge to 1 % on every gap (g = 5 nm: 41k unknowns, 1.5e9 work), while graded conformal Cartesian reaches only 5 % (111k, 8.0e9) and never 2 %.** At 5 %, triangles need 2.4–10× fewer unknowns and 4–49× less work than conformal Cartesian; the staircase reaches none of the targets. An earlier first-order (Raviart–Thomas) single-cell gap reconstruction made sub-2 % comparisons mesh noise; it was replaced, and the triangle PML was raised to 40 rings (boundary effect ~1e-4).
+**B3**: Au nanodimers (a = 20 nm, n = 2 host) with 10, 5 and 2 nm gaps, E along the dimer axis, against an exact multi-cylinder T-matrix (maps above). Metric: the mean |E/E<sub>0</sub>|² over 9 gap points, reconstructed at second order (a patch fit on triangles, bilinear on the Cartesian grid). 98 uncontended runs; run window checked (< 1e-5). **Graded triangles converge to 1 % on every gap (g = 5 nm: 41k unknowns, 1.5e9 work), while graded conformal Cartesian reaches only 5 % (111k, 8.0e9) and never 2 %.** At 5 %, triangles need 2.4–10× fewer unknowns and 4–49× less work than conformal Cartesian; the staircase reaches none of the targets. An earlier first-order (Raviart–Thomas) single-cell gap reconstruction made sub-2 % comparisons mesh noise; it was replaced, and the triangle PML was raised to 40 rings (boundary effect ~1e-4). **B4** (3D λ/2 dipole, against our Hallén MoM, confirmed by NEC-2 to 0.04 %): conformal PEC reaches f<sub>res</sub> within 0.05–0.13 % and R<sub>in</sub> within ~1 % (after the conformal-PEC mask fix; it was −6 % before).
 
 </td>
 </tr>
@@ -109,7 +109,7 @@ GPU runs were limited by Python dispatch and kernel launches (up to ~500 launche
 </tr>
 </table>
 
-#### Graded triangles with a radial PML: 2.2× fewer unknowns than graded Cartesian &nbsp;·&nbsp; `wakis.unstructured`
+#### Graded triangles with a radial PML (and a correction) &nbsp;·&nbsp; `wakis.unstructured`
 
 <table>
 <tr>
@@ -119,7 +119,7 @@ GPU runs were limited by Python dispatch and kernel launches (up to ~500 launche
 <td width="55%"><img src="docs/img/unstructured_pml_reflection.png" width="600" alt="Outer-boundary reflection versus size parameter for the first-order ABC, a matched-loss absorber and radial PMLs of 5, 10 and 20 cells"></td>
 <td>
 
-Mie cylinder (B1: n = 2, a = 1 µm, x = 2–10) to 1 % RMS error in Q<sub>sca</sub>. Graded triangles keep h<sub>in</sub> only at the cylinder. The new **radial CFS-PML reflects 2–8e-4** over x = 2–10 (10 cells at h = 20 nm; the old first-order ABC reflected 6–17 %), and a tabulated plane-wave source costs one sparse mat-vec per step. In **TM**, against **graded conformal Cartesian**, the triangles need **2.2× fewer unknowns and 2.3× less work** (240k vs 518k unknowns). Against the compact Cartesian arm the gain is 1.5× in unknowns and 1.6× in work. **Correction:** the B1 errors have a floor from the 1000 fs DFT window, not from the mesh. Converged DGTD plateaus at 0.140 % (TM) and 0.866 % (TE), dominated by a high-Q TE resonance near x ≈ 6.4. With a 3000 fs window the floor drops to 0.012 %/0.036 %. B1 TE results at the 1 % target are therefore window-limited and are not quoted here. The benchmark default is now 3000 fs, and the reruns are pending. Code on `main`; studies: [studies/mie-cylinder-graded](studies/mie-cylinder-graded), [studies/unstructured-pml](studies/unstructured-pml).
+**Correction (2026-10-19):** an earlier version of this highlight claimed graded triangles need 2.2× fewer unknowns than graded Cartesian on the B1 dielectric cylinder. That comparison used a 1000 fs run window (error floor 0.14 % TM / 0.87 % TE) and a Cartesian arm whose outer cell size was capped at λ/20, which stops refining the region between the scatterer and the extraction circles. **With a 3000 fs window and no cap, the two families are equivalent on B1:** 521k (TM) / 506k (TE) unknowns for graded triangles vs 511k / 452k for graded conformal Cartesian at 1 %, both second order. The radial **CFS-PML reflects 2–8e-4** over x = 2–10 (10 cells at h = 20 nm; the old first-order ABC reflected 6–17 %), and a tabulated plane-wave source costs one sparse mat-vec per step. **Where triangles do win is curved metal** (plasmonic B2/B3, first highlight): ~10× fewer unknowns. Code on `main`, [studies/mie-cylinder-graded](studies/mie-cylinder-graded), [studies/unstructured-pml](studies/unstructured-pml), [studies/benchmarks](studies/benchmarks).
 
 </td>
 </tr>
