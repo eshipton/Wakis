@@ -200,3 +200,133 @@ class TestAdjoint:
         ua, va = L.linear_step_T(s, ub, vb)
         lts.apply_T = apply_T
         assert abs(lhs - (ua @ u + va @ v)) / scale > 1e-6
+
+
+# ------------------------------------------------------------------ dispersive
+def _state(s):
+    """Views of all state arrays (fields + ADE polarizations), TE and TM."""
+    arrs = [("u", None), ("v", None)]
+    if s.pol == "TE":
+        for gi, g in enumerate(s._te_groups):
+            arrs.append(("teE", gi))
+            for k in range(len(g["lorentz"])):
+                arrs += [("teP", (gi, k, 3)), ("teP", (gi, k, 4))]
+    else:
+        for gi, g in enumerate(s._update.groups):
+            for k in range(len(g["lorentz"])):
+                arrs += [("tmP", (gi, k, 3)), ("tmP", (gi, k, 4))]
+    return arrs
+
+
+def _get(s, key):
+    kind, i = key
+    if kind in ("u", "v"):
+        return getattr(s, kind)
+    if kind == "teE":
+        return s._te_groups[i]["E"]
+    gi, k, j = i
+    grp = s._te_groups if kind == "teP" else s._update.groups
+    return grp[gi]["lorentz"][k][j]
+
+
+def _set(s, key, x):
+    kind, i = key
+    if kind in ("u", "v"):
+        setattr(s, kind, x.copy())
+    elif kind == "teE":
+        s._te_groups[i]["E"] = x.copy()
+    else:
+        gi, k, j = i
+        grp = s._te_groups if kind == "teP" else s._update.groups
+        t = list(grp[gi]["lorentz"][k])
+        t[j] = x.copy()
+        grp[gi]["lorentz"][k] = tuple(t)
+
+
+def spectral_radius(s):
+    """max |eigenvalue| of the full one-step map (fields + ADE), dense.
+
+    A lossless leapfrog has its whole spectrum on the unit circle (Arnoldi
+    does not converge), so the map is assembled column by column (small
+    meshes only)."""
+    keys = _state(s)
+    sizes = [_get(s, key).size for key in keys]
+    n = sum(sizes)
+    T = np.zeros((n, n))
+    for col in range(n):
+        x = np.zeros(n)
+        x[col] = 1.0
+        o = 0
+        for key, m in zip(keys, sizes):
+            _set(s, key, x[o : o + m])
+            o += m
+        s.one_step()
+        T[:, col] = np.concatenate([_get(s, key) for key in keys])
+    # balance units: diagonal similarity does not change the eigenvalues
+    return np.abs(np.linalg.eigvals(T)).max()
+
+
+def drude_solver(pol, mesh, gamma, kp=4.0, **lts):
+    from wakis.dispersive import DispersiveMaterial, Drude
+
+    drude = DispersiveMaterial(1.0, [Drude(kp * c, gamma)])
+    return UnstructuredFIT2D(mesh, {0: drude}, polarization=pol, lts=lts or None)
+
+
+class TestDispersive:
+    """Lorentz/Drude cells inside F: the poles are a force frozen over the
+    coarse step. No proof; the one-step map (fields + ADE states) must have
+    spectral radius <= 1, and the plasmon resonance must match. The pole is
+    stepped at the coarse dt: omega_p dt_coarse must pass the von Neumann
+    check (`DispersiveMaterial.is_stable` at the LTS ratio rho), which the
+    solver enforces; omega_p dt_c = 0.8 at rho = 0.966 gives |lambda| = 1.8 (h = 0.16)."""
+
+    @pytest.fixture(scope="class")
+    def mesh16(self):
+        return graded_rod_mesh(0.16)  # ~1.4k state variables: dense map
+
+    @pytest.mark.parametrize("pol", ["TE", "TM"])
+    @pytest.mark.parametrize("gamma", [0.0, 0.3 * c])
+    def test_amplification_spectral_radius(self, mesh16, pol, gamma):
+        s = drude_solver(pol, mesh16, gamma, kp=2.0, p=2)  # omega_p dt_c = 0.4
+        # the metal rod (eps_inf = 1, h) is fine: it is the CFL bottleneck
+        r = np.hypot(*mesh16.nodes[s.free[s.lts.F]].T)
+        assert (r < B_ROD).sum() >= 5  # metal-interior nodes are fine
+        # round-off on the unit circle of a non-normal map: ~1e-7 (global too)
+        assert spectral_radius(s) < 1 + 2e-6
+
+    def test_mutation_no_fine_region_is_unstable(self, mesh16):
+        s = drude_solver("TE", mesh16, 0.0, kp=2.0, p=2)
+        s.lts.correction = lambda y: np.zeros(s.lts.F.size)  # no fine substeps
+        assert spectral_radius(s) > 1.01
+
+    def test_pole_too_fast_for_coarse_step_is_refused(self, mesh08):
+        with pytest.raises(ValueError, match="unstable"):
+            drude_solver("TE", mesh08, 0.0, kp=8.0, p=2)  # omega_p dt_c = 1.6
+
+    @pytest.mark.slow
+    def test_plasmon_matches_eigenmode(self):
+        from wakis.resonances import harminv
+
+        m = graded_rod_mesh(0.04)
+        s = drude_solver("TE", m, 0.0, p=2)  # omega_p dt_c = 0.2
+        f_sp = s.dispersive_eigenmode(analytic.drude_rod_in_cavity_te(
+            A_CAV, B_ROD, 4.0, n=1)[1] * c / (2 * np.pi))  # fmt: skip
+        f0 = f_sp
+        s0 = 1 / (2 * np.pi * 0.3 * f0)
+
+        def pulse(t):
+            return np.exp(-(((t - 5 * s0) / s0) ** 2) / 2) * np.sin(
+                2 * np.pi * f0 * (t - 5 * s0)
+            )
+
+        s.add_point_source([0.6, 0.1], pulse, [1, 0.3])
+        probe = s.add_probe([[0.55, -0.2]])
+        n = int(60 / f0 / s.dt)
+        s.run(n)
+        sig = s.probe_signal(probe)[:, 0]
+        i0 = n // 5
+        res = harminv(sig[i0:], s.dt, 0.97 * f0, 1.03 * f0, t0=(i0 + 1) * s.dt)
+        # leapfrog + LTS time error at 2x the global step: < 1e-3
+        assert np.min(np.abs(res.frequency / f_sp - 1)) < 1e-3
+        assert np.abs(sig[-n // 10 :]).max() < 2 * np.abs(sig[i0 : 2 * i0]).max()

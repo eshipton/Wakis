@@ -48,10 +48,12 @@ class Triangles2DArm(Arm):
     cfl : float
     hodge : {'voronoi', 'barycentric'}
     ladder : sequence of float, optional
+    lts : int or dict, optional
+        Local time stepping of `UnstructuredFIT2D` (e.g. 2).
     """
 
     def __init__(self, graded=True, growth=1.2, ppw_out=20, ratio=4.0, n_pml=10, cfl=0.95,
-                 hodge="voronoi", ladder=None, name=None):  # fmt: skip
+                 hodge="voronoi", ladder=None, name=None, lts=None):  # fmt: skip
         self.graded = graded
         self.growth = growth
         self.ppw_out = ppw_out
@@ -60,7 +62,10 @@ class Triangles2DArm(Arm):
         self.cfl = cfl
         self.hodge = hodge
         self.ladder = ladder
-        self.name = name or f"tri-{'graded' if graded else 'uniform'}"
+        self.lts = lts
+        self.name = name or f"tri-{'graded' if graded else 'uniform'}" + (
+            "-lts" if lts else ""
+        )
 
     def supports(self, case):
         return hasattr(case, "cylinders") and not any(
@@ -94,7 +99,7 @@ class Triangles2DArm(Arm):
             mats[j + 1] = case.materials[cy["material"]]
         solver = UnstructuredFIT2D(
             mesh, mats, polarization=case.polarization, bc="pec", hodge=self.hodge,
-            cfl=self.cfl,
+            cfl=self.cfl, lts=self.lts,
             pml=dict(r0=r0, r1=r0 + self.n_pml * h_out, kappa_max=1.0, alpha=0.0),
         )  # fmt: skip
         d = case.direction

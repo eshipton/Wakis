@@ -94,7 +94,8 @@ class UnstructuredFIT2D:
         the stability ratio ``rho = dt/2 sqrt(lambda_max)`` of the LTS
         operator (Lanczos) must be below ``rho_max``; otherwise F grows or
         dt shrinks (`wakis.unstructured.lts.build_lts`; see ``lts_info``).
-        Not for dispersive media or lossy fine nodes.
+        Lorentz/Drude media allowed (poles frozen over the coarse step);
+        not for Debye poles, lossy fine nodes or fine nodes in the PML.
     pml : dict, optional
         Radial complex-coordinate-stretched CFS-PML on the annulus
         r0 < r < r1, ``dict(r0=..., r1=..., order=3, R=1e-8, sigma_max=None,
@@ -240,13 +241,11 @@ class UnstructuredFIT2D:
             self._init_te_dispersive(He, L, live)
         self._pml = None
         if pml is not None:
-            if lts is not None:
-                raise NotImplementedError(
-                    "LTS with the PML (the PML step has its own flux update)"
-                )
             if bc == "abc" or np.any(sigma > 0) or absorber is not None:
                 raise ValueError("pml: use bc='pec'/'pmc', lossless media, no absorber")
             self._pml = _PML(self, pml)
+            if self.lts is not None:
+                self._check_lts_pml()
         self.sources = []
         self.plane_wave = None
         self.recorder = Recorder()
@@ -258,8 +257,13 @@ class UnstructuredFIT2D:
         from .lts import build_lts
 
         opts = {"p": opts} if np.isscalar(opts) else dict(opts)
-        if self.dispersive:
-            raise NotImplementedError("LTS with dispersive media")
+        if any(m.debye_poles for m, _ in self.dispersive):
+            # Debye poles change the instantaneous capacitance (beta terms)
+            raise NotImplementedError("LTS with Debye poles")
+        # Lorentz/Drude poles: the ADE polarization depends on past fields
+        # only, so it acts as a force frozen over the coarse step and the
+        # LTS operator is built from the eps_inf Hodge (self.K). Stability of
+        # the coupled system is verified numerically (tests), not proved.
         p = int(opts.pop("p", 2))
         dt_c = opts.pop("dt", None) or p * self.dt
         lts, info = build_lts(self.K, self.mass, dt_c, p=p, lam=lam, **opts)
@@ -272,6 +276,17 @@ class UnstructuredFIT2D:
         self.dt = info["dt"]
         self.dt_fine = self.dt / p
         self.courant = info["rho"]
+
+    def _check_lts_pml(self):
+        """F, its buffer and the edges they touch must lie outside the PML."""
+        pml, lts = self._pml, self.lts
+        near = np.r_[lts.F, lts.C]
+        edges = np.unique(self._G_F.nonzero()[0])
+        if (
+            np.isin(near, pml.nodes).any()
+            or np.isin(edges, np.r_[pml.spokes, pml.chords]).any()
+        ):
+            raise ValueError("LTS: fine nodes inside or next to the PML layer")
 
     def _grad(self, u):
         """``G r(X) u``: the flux-update gradient (``G u`` without LTS)."""
@@ -876,7 +891,7 @@ class _PML:
     def step(self, node_src, edge_src):
         s, dt = self.solver, self.solver.dt
         if s.pol == "TM":
-            s.v -= dt * (s.G @ s.u)
+            s.v -= dt * s._grad(s.u)
             r = s.G.T @ (s.stiff * self._edges(s.v)) - node_src
             self.q += dt * r
             u = self._nodes()
@@ -890,5 +905,5 @@ class _PML:
                 vol -= s._pw_values(s.n)
             self.q -= dt * (s.G.T @ vol + node_src)
             s.u = self._nodes()
-            s.v += dt * (s.G @ s.u - edge_src)
+            s.v += dt * (s._grad(s.u) - edge_src)
             s._te_ade_step(s.v)
