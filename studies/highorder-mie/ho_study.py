@@ -52,6 +52,9 @@ A, N_CYL = S.A, S.N_CYL
 GEOM = {
     "box": dict(radii=[1.4e-6, 1.6e-6, 1.8e-6], half=2.6e-6, pml=0.6e-6),
     "compact": dict(radii=[1.25e-6, 1.4e-6, 1.55e-6], r_out=1.7e-6),
+    # windowed references in the baselines' geometries (de-embedded ABC disk)
+    "std": dict(radii=[1.9e-6, 2.2e-6, 2.5e-6], r_out=2.7e-6),
+    "cc": dict(radii=[1.72e-6, 1.86e-6, 2.0e-6], r_out=2.12e-6),
 }
 DG_RES = {2: [3, 4, 6, 8, 11], 3: [2, 3, 4, 6, 8], 4: [1.5, 2, 3, 4, 6], 5: [1.2, 1.5, 2, 3, 4]}
 FD_RES = [10, 14, 20, 28, 40, 56]
@@ -66,6 +69,10 @@ def arm_spec(arm):
         curved = True
         if "compact" in parts:
             geom = "compact"
+        if "std" in parts:
+            geom = "std"
+        if "cc" in parts:
+            geom = "cc"
         if "straight" in parts:
             geom, curved = "compact", False
         return ("dg", p, geom, curved)
@@ -135,6 +142,9 @@ def dg_material():
 def tasks(name="main"):
     if name == "probe":
         return list(PROBE)
+    if name == "wref":  # converged windowed references (same geometry/window as baselines)
+        return [(f"dg5-{g}", pol, res) for g in ("std", "cc") for res in (3, 4)
+                for pol in ("TM", "TE")] + [("dg5", pol, 3) for pol in ("TM", "TE")]  # fmt: skip
     if name == "long":  # run-window (ring-down truncation) check, use --t-run 3000
         return [("dg4-compact", "TE", 3), ("dg4-compact", "TE", 4), ("dg4-compact", "TM", 3),
                 ("dg5-compact", "TE", 3), ("dg4-compact", "TE", 6), ("dg5-compact", "TM", 3)]
