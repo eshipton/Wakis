@@ -110,19 +110,25 @@ class Triangles2DArm(Arm):
         P = solver._interp(pts)
         gap = case.gap_point is not None
         if gap:
-            cell, W = mesh.whitney_edge([case.gap_point])
-            RT = np.stack([W[0, :, 1], -W[0, :, 0]], 1)  # (3 edges, 2)
-            edges = mesh.cell_edges[cell[0]]
-            Pg = sp.csr_matrix(
-                (RT.T.ravel(), (np.repeat([0, 1], 3), np.tile(edges, 2))),
-                shape=(2, mesh.n_edges),
-            ) / (eps_0 * case.n_background**2)
+            gpts = case.gap_points
+            ng = len(gpts)
+            cell, W = mesh.whitney_edge(gpts)
+            rows, cols, vals = [], [], []
+            for i in range(ng):  # Raviart-Thomas: W_e x z, rows (x_i, y_i)
+                edges = mesh.cell_edges[cell[i]]
+                rows += [i] * 3 + [ng + i] * 3
+                cols += list(edges) * 2
+                vals += list(W[i, :, 1]) + list(-W[i, :, 0])
+            Pg = sp.csr_matrix((vals, (rows, cols)), shape=(2 * ng, mesh.n_edges)) / (
+                eps_0 * case.n_background**2
+            )
+            gpos = gpts @ solver.plane_wave["k"]
         setup_s = time.time() - t0
         dt = solver.dt
         shift = 0.0 if case.polarization == "TM" else -0.5 * dt
         freqs = case.freqs
         acc = np.zeros((len(freqs), len(pts)), complex)
-        acc_e = np.zeros((len(freqs), 2), complex)
+        acc_e = np.zeros((len(freqs), 2 * len(case.gap_points) if gap else 2), complex)
         n_steps = int(case.t_run / dt)
         times = (np.arange(n_steps) + 1) * dt
         d = case.direction
@@ -136,14 +142,9 @@ class Triangles2DArm(Arm):
             )
             if gap:
                 es = Pg @ solver.v
-                einc = solver._incident_signal(
-                    np.atleast_1d(np.asarray(case.gap_point) @ solver.plane_wave["k"]),
-                    times[n],
-                )[0]
-                acc_e += (
-                    np.outer(np.exp(-2j * np.pi * freqs * times[n]), es + einc * pvec)
-                    * dt
-                )
+                einc = solver._incident_signal(gpos, times[n])
+                et = es + np.concatenate([einc * pvec[0], einc * pvec[1]])
+                acc_e += np.outer(np.exp(-2j * np.pi * freqs * times[n]), et) * dt
             if n % 4000 == 0 and not np.all(np.isfinite(solver.u)):
                 raise FloatingPointError("unstable")
         run_s = time.time() - t1
@@ -158,7 +159,7 @@ class Triangles2DArm(Arm):
                       h_max=h_out),
         )  # fmt: skip
         if gap:
-            out["e_gap"] = acc_e
+            out["e_gap"] = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
             ui = solver._incident_signal(np.zeros(1), times)  # amplitude s(t) at origin
             out["e0_gap"] = (np.exp(-2j * np.pi * np.outer(freqs, times)) @ ui) * dt
         return out

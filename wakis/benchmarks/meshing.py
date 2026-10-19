@@ -12,9 +12,11 @@ to the nearest cylinder surface and polar-aligned rings outside (optionally
 the polar PML rings of `UnstructuredFIT2D`):
 
 1. every cylinder gets its surface ring (area-preserving polygon) plus one
-   staggered ring just inside and one just outside (so the polygon edges are
+   staggered ring just inside (fixed) and one just outside (first in the
+   greedy pass, so that the rings of two cylinders facing each other across
+   a narrow gap cannot collide into slivers), so that the polygon edges are
    Delaunay edges and the interface strip is made of near-equilateral
-   triangles, as in `wakis.unstructured.graded_disk_mesh`), and concentric
+   triangles (as `wakis.unstructured.graded_disk_mesh`), and concentric
    staggered rings inwards with spacing sqrt(3)/2 h;
 2. outside the cluster, beyond the radius R_c where the size field reaches
    h_out, concentric staggered rings about the origin up to the outer
@@ -97,13 +99,22 @@ def cluster_mesh(cylinders, h_s, h_out, r_outer, growth=1.2, pml_layers=0,
         Tags: 0 host, j + 1 inside cylinder j, len(cylinders) + 1 PML.
     """
     size = size_field(cylinders, h_s, h_out, growth)
-    fixed, cand = [], []
+    fixed, cand, prio = [], [], []
     dr = np.sqrt(3) / 2 * h_s
     for cy in cylinders:
         c, a = np.asarray(cy["center"], float), float(cy["radius"])
         fixed.append(_ring(c, a, h_s, 0, preserve_area=True))
         fixed.append(_ring(c, a - dr, h_s, 1))
-        fixed.append(_ring(c, a + dr, h_s, 1))
+        # the ring just outside is a priority candidate, not fixed: in a gap
+        # narrower than ~2 dr the rings of the two cylinders would collide
+        # (slivers); the greedy pass keeps the compatible points
+        ring = _ring(c, a + dr, h_s, 1)
+        for other in cylinders:
+            if other is cy:
+                continue
+            d = np.hypot(*(ring - np.asarray(other["center"])).T) - other["radius"]
+            ring = ring[d > 0.6 * h_s]
+        prio.append(ring)
         r, k = a - 2 * dr, 0
         while r > 0.6 * h_s:
             fixed.append(_ring(c, r, h_s, k % 2))
@@ -158,6 +169,10 @@ def cluster_mesh(cylinders, h_s, h_out, r_outer, growth=1.2, pml_layers=0,
     hc = size(cand)
     order = np.argsort(hc, kind="stable")
     cand, hc = cand[order], hc[order]
+    if prio:
+        pr = np.vstack(prio)
+        cand = np.vstack([pr, cand])
+        hc = np.concatenate([np.full(len(pr), h_s), hc])
     # greedy Poisson-disk selection
     tree_fixed = cKDTree(fixed)
     dfix, _ = tree_fixed.query(cand)

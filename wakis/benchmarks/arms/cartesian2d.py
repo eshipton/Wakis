@@ -209,8 +209,9 @@ class Cartesian2DArm(Arm):
         P = bilinear(xs, ys, pts, Nx)
         gap = case.gap_point is not None
         if gap:
-            Px = bilinear(xm, gy[:Ny], [case.gap_point], Nx)
-            Py = bilinear(gx[:Nx], ym, [case.gap_point], Nx)
+            gpts = case.gap_points
+            Px = bilinear(xm, gy[:Ny], gpts, Nx)
+            Py = bilinear(gx[:Nx], ym, gpts, Nx)
         # incident line sample at the origin (on the propagation axis)
         axis = 0 if src.direction[1] == "x" else 1
         coords = gx if axis == 0 else gy
@@ -220,7 +221,7 @@ class Cartesian2DArm(Arm):
         shift = 0.0 if case.polarization == "TM" else -0.5 * dt
         freqs = case.freqs
         acc = np.zeros((len(freqs), len(pts)), complex)
-        acc_e = np.zeros((len(freqs), 2), complex)
+        acc_e = np.zeros((len(freqs), 2 * len(case.gap_points) if gap else 2), complex)
         line, times = [], []
         off = 2 * N
 
@@ -262,6 +263,7 @@ class Cartesian2DArm(Arm):
                       h_max=float(np.diff(xn).max())),
         )  # fmt: skip
         if gap:
-            out["e_gap"] = acc_e
+            ng = len(case.gap_points)
+            out["e_gap"] = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
             out["e0_gap"] = e0
         return out
