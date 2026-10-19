@@ -96,6 +96,19 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 </tr>
 </table>
 
+#### Fused GPU time step: 45× faster inverse-design iterations &nbsp;·&nbsp; `SolverFIT3D(..., use_gpu=True, fused=True)`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/gpu_fused_step_time.png" width="600" alt="Time per step on an NVIDIA L4 before and after kernel fusion for plain, CPML, tensor, dispersive, TF/SF and adjoint cases"></td>
+<td>
+
+GPU runs were limited by Python dispatch and kernel launches (up to ~500 launches per step), not by the GPU. The step, CPML, sources, DFT/flux/mode monitors, tensor averaging, dispersive ADE and the transposed adjoint step are now a few custom CUDA kernels, replayed 64 steps at a time with CUDA graphs. **invrs full ceviche bend: one forward + adjoint iteration from 753 s to 15–17 s on an L4 (45–49×)**, GPU utilization 11 % → 93 %, identical loss and gradients to 3e-11. Per step: CPML 3D 7.3 → 0.68 ms, TF/SF + 81-frequency flux 11.7 → 0.63 ms, adjoint 6.0 → 0.10 ms. Exactness: fields and monitors match the previous GPU path to ≤ 1e-11, the fused adjoint passes the dot-product test (< 1e-12), and graph replay is bitwise identical. **Limits:** opt-in for now; float64/complex128 and no MPI; ~60 % more GPU memory with CPML; plain 3D grids at ~300k cells are 7 % slower (bandwidth-bound). Code on `main`, [studies/gpu-perf](studies/gpu-perf), `docs/performance.md`.
+
+</td>
+</tr>
+</table>
+
 #### Graded triangles with a radial PML: 2.2× fewer unknowns than graded Cartesian &nbsp;·&nbsp; `wakis.unstructured`
 
 <table>
