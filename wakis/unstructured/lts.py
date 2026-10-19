@@ -196,11 +196,12 @@ class LocalTimeStepping:
         return self.C.size
 
 
-def stability_ratio(K, mass, lts, tol=1e-8):
+def stability_ratio(K, mass, lts, tol=1e-8, return_mode=False):
     """
     ``rho = dt/2 sqrt(lambda_max(M^-1 K r(X)))``; the LTS is stable iff rho < 1.
 
     Lanczos on the symmetric ``M^-1/2 K r(X) M^-1/2`` (``K r(X)`` is symmetric).
+    With `return_mode`, also the node-energy distribution of the top mode.
     """
     s = 1 / np.sqrt(mass)
     n = K.shape[0]
@@ -210,44 +211,52 @@ def stability_ratio(K, mass, lts, tol=1e-8):
         return s * (K @ lts.apply(s * z))
 
     op = LinearOperator((n, n), matvec=mv, dtype=float)
-    lam = eigsh(op, k=1, which="LA", return_eigenvectors=False, tol=tol)[0]
-    return 0.5 * lts.dt * np.sqrt(max(lam, 0.0))
+    lam, vec = eigsh(op, k=1, which="LA", tol=tol)
+    rho = 0.5 * lts.dt * np.sqrt(max(lam[0], 0.0))
+    return (rho, vec[:, 0] ** 2) if return_mode else rho
 
 
 def build_lts(K, mass, dt_coarse, p=2, nu=0.15, theta=1.0, rho_max=0.98, lam=None,
-              max_iter=12, fine=None):  # fmt: skip
+              max_iter=20, fine=None):  # fmt: skip
     """
     Partition the nodes and build a stable two-level LTS.
 
     Node n is fine if its normalized Gershgorin rate exceeds ``theta (2 /
-    dt_coarse)^2`` (the rates are scaled so that their maximum equals
-    ``lam = lambda_max(M^-1 K)``). The stability ratio of the resulting
-    operator is then computed by Lanczos; while it exceeds `rho_max`, theta
-    is lowered by 15 % (F grows).
+    dt)^2`` (the rates are scaled so that their maximum equals ``lam =
+    lambda_max(M^-1 K)``). The stability ratio rho of the resulting operator
+    is then computed by Lanczos. While rho > `rho_max`, the top mode decides
+    the repair:
+
+    * mostly (> 50 % of its energy) on F and its coupled neighbours: an
+      interface mode, F grows by one layer of neighbours;
+    * otherwise the coarse region itself is too fine for dt (the Gershgorin
+      rate cannot resolve a few % of CFL margin): dt shrinks by
+      ``0.995 rho_max / rho`` and F is recomputed.
 
     Parameters
     ----------
     K, mass : stiffness and node mass on the free nodes.
     dt_coarse : float
-        Coarse timestep [s].
+        Initial (maximum) coarse timestep [s].
     p : int
         Steps of F per coarse step.
     nu : float
         Chebyshev damping (see module docstring).
     theta : float
-        Initial partition threshold (1: node-local CFL limit).
+        Partition threshold (1: node-local CFL limit).
     rho_max : float
         Required stability ratio.
     lam : float, optional
         lambda_max(M^-1 K), for the normalization (Lanczos if None).
     fine : ndarray of bool, optional
-        Use this partition instead (no search); rho is still computed.
+        Use this partition and dt instead (no search); rho is still computed.
 
     Returns
     -------
     lts : LocalTimeStepping
     info : dict
-        ``rho``, ``theta``, ``fine_fraction``, ``buffer``, ``history``.
+        ``rho``, ``dt``, ``fine_fraction``, ``buffer``, ``layers``,
+        ``history`` [(dt, fine_fraction, rho, action)].
     """
     rate = gershgorin_rate(K, mass)
     if lam is None:
@@ -255,21 +264,32 @@ def build_lts(K, mass, dt_coarse, p=2, nu=0.15, theta=1.0, rho_max=0.98, lam=Non
 
         lam = max_eigenvalue(K, M_inv_sqrt=1 / np.sqrt(mass))
     rate = rate * lam / rate.max()
+    graph = (abs(K) > 0).astype(float).tocsr()
+    dt, layers = float(dt_coarse), 0
+    mask = fine if fine is not None else rate * dt**2 > 4 * theta
     history = []
     for _ in range(max_iter):
-        mask = fine if fine is not None else rate * dt_coarse**2 > 4 * theta
-        lts = LocalTimeStepping(K, mass, mask, p, nu, dt_coarse)
-        rho = stability_ratio(K, mass, lts)
-        history.append((theta, lts.fine_fraction, rho))
+        lts = LocalTimeStepping(K, mass, mask, p, nu, dt)
+        rho, mode = stability_ratio(K, mass, lts, return_mode=True)
         if rho <= rho_max or fine is not None:
+            history.append((dt, lts.fine_fraction, rho, "accept"))
             break
-        theta *= 0.85
-    info = dict(rho=rho, theta=theta, fine_fraction=lts.fine_fraction,
-                buffer=lts.buffer_size, history=history)  # fmt: skip
+        near = np.zeros(lts.n, bool)
+        near[lts.F] = near[lts.C] = True
+        if mode[near].sum() > 0.5:
+            mask = (graph @ mask.astype(float)) > 0
+            layers += 1
+            history.append((dt, lts.fine_fraction, rho, "grow F"))
+        else:
+            history.append((dt, lts.fine_fraction, rho, "shrink dt"))
+            dt *= 0.995 * rho_max / rho
+            mask = (rate * dt**2 > 4 * theta) | (mask if layers else False)
+    info = dict(rho=rho, dt=dt, fine_fraction=lts.fine_fraction,
+                buffer=lts.buffer_size, layers=layers, history=history)  # fmt: skip
     if rho > rho_max and fine is None:
         raise ValueError(
             f"LTS not stable: rho = {rho:.3f} > {rho_max} after {max_iter} "
-            "partitions; lower dt or raise p"
+            "repairs; lower dt or change p"
         )
     return lts, info
 

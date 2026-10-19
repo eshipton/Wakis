@@ -88,11 +88,13 @@ class UnstructuredFIT2D:
     lts : int or dict, optional
         Two-level local time stepping (`wakis.unstructured.lts`): ``p`` or
         ``dict(p=2, nu=0.15, theta=1.0, rho_max=0.98, dt=None, fine=None)``.
-        The coarse step is ``dt`` (default p times the global step) and the
-        nodes whose local CFL limit is below it (F) take p stabilized
-        Chebyshev substeps. The partition is checked at setup: the stability
-        ratio ``rho = dt/2 sqrt(lambda_max)`` of the LTS operator (Lanczos) must
-        be below ``rho_max``. Not for dispersive media or lossy fine nodes.
+        The coarse step is at most ``dt`` (default p times the global step)
+        and the nodes whose local CFL limit is below it (F) take p
+        stabilized Chebyshev substeps. The partition is checked at setup:
+        the stability ratio ``rho = dt/2 sqrt(lambda_max)`` of the LTS
+        operator (Lanczos) must be below ``rho_max``; otherwise F grows or
+        dt shrinks (`wakis.unstructured.lts.build_lts`; see ``lts_info``).
+        Not for dispersive media or lossy fine nodes.
 
     Attributes
     ----------
@@ -246,8 +248,8 @@ class UnstructuredFIT2D:
         ):
             raise ValueError("LTS: lossy fine nodes (ABC / absorber) unsupported")
         self.lts, self.lts_info, self._G_F = lts, info, G_F
-        self.dt_fine = dt_c / p
-        self.dt = dt_c
+        self.dt = info["dt"]
+        self.dt_fine = self.dt / p
         self.courant = info["rho"]
 
     def _grad(self, u):
