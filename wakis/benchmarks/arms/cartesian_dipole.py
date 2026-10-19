@@ -97,10 +97,14 @@ class CartesianDipoleArm(Arm):
         else:
             # STL solids. Legacy staircase masks mark a cell when any of its
             # 8 nodes is inside and zero its edges, which thickens the wire
-            # by up to a cell; both halves stop 0.01 h_z short of the gap
-            # planes so that the gap cells stay free.
+            # by up to a cell; there both halves stop 0.01 h_z short of the
+            # gap planes so that the gap cells stay free. Conformal PEC
+            # resolves that sliver as a real 0.01 h_z series gap (a few
+            # 100 Ohm capacitive), so there the halves end on the gap planes
+            # (node planes: the port edges stay open, the wire edges closed).
+            sliver = 0.0 if self.conformal else 0.01 * hz
             for s, name in ((1, "top"), (-1, "bottom")):
-                z_in = g / 2 + 0.01 * hz
+                z_in = g / 2 + sliver
                 zc = s * (z_in + (L / 2 - z_in) / 2)
                 cyl = pv.Cylinder(center=(0, 0, zc), radius=a, height=L / 2 - z_in,
                                   direction=(0, 0, 1), resolution=180)  # fmt: skip

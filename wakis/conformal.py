@@ -1176,15 +1176,21 @@ def apply_conformal_materials(solver):
     solver.iDa = block_diag(ops, format="csr", dtype=solver.dtype)
     solver.conformal_face_ops = [op.astype(solver.dtype) for op in ops]
 
-    if geo.fractions or np.isinf(solver.eps_bg):
-        ieps, sigma, tensor = _material_tensors(solver, geo)
-        for c, d in enumerate("xyz"):
-            setattr(solver.ieps, f"field_{d}", ieps[c].astype(real))
-            setattr(solver.sigma, f"field_{d}", sigma[c].astype(real))
-        if tensor is not None:
-            _set_tensor_edges(solver, *tensor)
-        if np.any(solver.sigma.toarray() > 0):
-            solver.use_conductivity = True
+    # Replace the cell-mask materials of `_apply_stl_materials` on every
+    # edge, also when only PEC solids are present: the legacy mask zeroes the
+    # lower-corner edges of every cell touching a PEC solid (thickened by up
+    # to a cell towards -x, -y, -z), while the conformal geometry already
+    # describes the PEC exactly through L_open (closed edges are zeroed by
+    # `factor` below). PEC solids are not in `geo.fractions`, so the edges
+    # outside the dielectric solids get the background material.
+    ieps, sigma, tensor = _material_tensors(solver, geo)
+    for c, d in enumerate("xyz"):
+        setattr(solver.ieps, f"field_{d}", ieps[c].astype(real))
+        setattr(solver.sigma, f"field_{d}", sigma[c].astype(real))
+    if tensor is not None and geo.fractions:
+        _set_tensor_edges(solver, *tensor)
+    if np.any(solver.sigma.toarray() > 0):
+        solver.use_conductivity = True
     # E edges completely inside PEC carry no voltage; the sheet-edge factors
     # are kept so that materials written later can be corrected the same way
     closed = np.concatenate([(L_open[c] == 0).ravel(order="F") for c in range(3)])

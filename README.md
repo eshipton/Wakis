@@ -54,7 +54,7 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <tr>
 <td colspan="2">
 
-**B3**: Au nanodimers (a = 20 nm, n = 2 host) with 10, 5 and 2 nm gaps, E along the dimer axis, against an exact multi-cylinder T-matrix (maps above). Metric: the mean |E/E<sub>0</sub>|² over 9 points in the gap. 102 uncontended runs; run window checked (< 1e-5). To reach **5 % error in the gap field enhancement at g = 5 nm, graded triangles need 7.2k unknowns and 1.2e8 work, against 111k and 8.0e9 for graded conformal Cartesian** (15× fewer unknowns, ~65× less work). At g = 10 nm and g = 2 nm the triangles already meet 5 % on their coarsest mesh (≤ 6k and ≤ 35k unknowns, vs 141k and 143k). At g = 2 nm conformal Cartesian never reaches 1 % in Q<sub>ext</sub> (1.7 % at h = 0.5 nm). The staircase never reaches 5 % (12–120 %, and at g = 5 nm the gap mode splits into a spurious red-shifted peak). Limit: the triangle gap error levels off at about 1–2 %, consistent with the 3.5–5e-3 field reflection of the triangle PML (B3 cannot be de-embedded); a better absorber is next.
+**B3**: Au nanodimers (a = 20 nm, n = 2 host) with 10, 5 and 2 nm gaps, E along the dimer axis, against an exact multi-cylinder T-matrix (maps above). Metric: the mean |E/E<sub>0</sub>|² over 9 gap points, reconstructed at second order (a patch fit on triangles, bilinear on the Cartesian grid). 98 uncontended runs; run window checked (< 1e-5). **Graded triangles converge to 1 % on every gap (g = 5 nm: 41k unknowns, 1.5e9 work), while graded conformal Cartesian reaches only 5 % (111k, 8.0e9) and never 2 %.** At 5 %, triangles need 2.4–10× fewer unknowns and 4–49× less work than conformal Cartesian; the staircase reaches none of the targets. An earlier first-order (Raviart–Thomas) single-cell gap reconstruction made sub-2 % comparisons mesh noise; it was replaced, and the triangle PML was raised to 40 rings (boundary effect ~1e-4).
 
 </td>
 </tr>
@@ -91,6 +91,19 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <td colspan="2">
 
 [Tutorial 01b](tutorials/01b_mie_sphere/mie_sphere.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)): the same set-up in 3D, an n = 2 sphere with r = 1 µm. It covers the Mie series, near fields, isosurfaces, a movie, and the far field (`Near2FarMonitor` against S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells and 11 min, with **Q<sub>sca</sub> within 3.4 % RMS of Mie** over x = 2&ndash;10 (conformal, 40 cells/µm). The 3D resolution study is still to do.
+
+</td>
+</tr>
+</table>
+
+#### Fused GPU time step: 45× faster inverse-design iterations &nbsp;·&nbsp; `SolverFIT3D(..., use_gpu=True, fused=True)`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/gpu_fused_step_time.png" width="600" alt="Time per step on an NVIDIA L4 before and after kernel fusion for plain, CPML, tensor, dispersive, TF/SF and adjoint cases"></td>
+<td>
+
+GPU runs were limited by Python dispatch and kernel launches (up to ~500 launches per step), not by the GPU. The step, CPML, sources, DFT/flux/mode monitors, tensor averaging, dispersive ADE and the transposed adjoint step are now a few custom CUDA kernels, replayed 64 steps at a time with CUDA graphs. **invrs full ceviche bend: one forward + adjoint iteration from 753 s to 15–17 s on an L4 (45–49×)**, GPU utilization 11 % → 93 %, identical loss and gradients to 3e-11. Per step: CPML 3D 7.3 → 0.68 ms, TF/SF + 81-frequency flux 11.7 → 0.63 ms, adjoint 6.0 → 0.10 ms. Exactness: fields and monitors match the previous GPU path to ≤ 1e-11, the fused adjoint passes the dot-product test (< 1e-12), and graph replay is bitwise identical. **Limits:** opt-in for now; float64/complex128 and no MPI; ~60 % more GPU memory with CPML; plain 3D grids at ~300k cells are 7 % slower (bandwidth-bound). Code on `main`, [studies/gpu-perf](studies/gpu-perf), `docs/performance.md`.
 
 </td>
 </tr>
@@ -173,14 +186,14 @@ Time-domain nonorthogonal FIT (Schuhmann & Weiland 2000) on body-fitted polar gr
 </tr>
 </table>
 
-#### In progress: high-order DGTD on curved triangles and a Cartesian (2,4) scheme
+#### High-order DGTD on curved triangles: 0.1 % with ~100× fewer unknowns &nbsp;·&nbsp; `wakis.highorder`
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/dgtd_curved_meshes.png" width="600" alt="Curved-face DGTD meshes: p = 4 Mie cylinder mesh with 637 triangles and a zoom on the 5 nm-gap Au dimer"></td>
+<td width="55%"><img src="docs/img/highorder_error_vs_cost.png" width="600" alt="Error versus unknowns and work for curved-element DGTD p = 1-5, the Cartesian (2,4) scheme and the best second-order FIT arms on the Mie cylinder"></td>
 <td>
 
-A nodal discontinuous Galerkin time-domain solver on curved triangles: TM/TE, upwind flux, CFS-PML, Drude/Lorentz/Debye ADE, scattered-field plane wave, and a probed sparse operator for exact adjoints. A Cartesian (2,4) scheme with LSRK4 is also included. Both run as arms of the B1–B3 benchmark suite, as a high-order reference and competitor for FIT. Numbers will follow when the study is written up. Branch `feature/high-order`.
+Nodal discontinuous Galerkin time domain (Hesthaven & Warburton 2008) on **curved** triangles, p = 1–5, with upwind flux, LSRK(5,4), CFS-PML, Drude/Lorentz/Debye ADE driven by the total field, and a probed sparse operator for exact adjoints (dot test 1e-12). A Cartesian (2,4) scheme with LSRK4 is also included. **B1 Mie cylinder, 0.1 % TM: DG p = 5 needs 17k unknowns and 91 s, against ~2.1M unknowns (~2600 s, extrapolated) for the best second-order arm** (graded triangles + PML); 0.01 % with 25k unknowns. Above x ≈ 6 the second-order error is 95–99 % bulk dispersion, which the high-order stencils remove. **B2 Au-TE, 0.1 %: p = 2 needs 6.0k unknowns vs 88k for uniform triangles** (equal wall time). Curved elements are essential: straight-sided p = 4 stalls at 1–5 %. **Limits:** at 1–2 % accuracy the (2,4) leapfrog scheme or graded triangle FIT is faster in seconds (DG costs 150–300 ns per unknown-step vs ~19 ns); the rectangular DG PML becomes unstable in long runs on fine meshes (unsolved, long windows use an absorbing disk). Code on `main`, [studies/highorder-mie](studies/highorder-mie), [studies/highorder-bench](studies/highorder-bench).
 
 </td>
 </tr>
@@ -356,6 +369,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Inverse design**
 - [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`) for all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
+- [x] Exact-gradient memory ladder (`AdjointSimulation(memory=...)`): binomial checkpointing (bitwise-equal gradients), time reversal with recorded CPML interface layers (lossless problems), opt-in approximate Nyquist storage ([study](studies/adjoint-memory/README.md))
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
 - [ ] Subpixel-smoothed projection (SSP) for binary designs with useful gradients (in progress)
 - [ ] Adjoint memory ladder: checkpointing, time-reversed leapfrog (in progress)
@@ -366,7 +380,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] PEC/PMC masking, `update_tensors` initialization, MPI (CPML deadlock, grid edge, rank-boundary sources/monitors)
 - [x] Forward step ~2x faster on CPU and GPU; periodic setup 59 s → 0.02 s
 - [x] Memory and run-time estimator with preflight check (`wakis.estimate`)
-- [ ] Fused GPU time step (`fused=True`: CPML step, sources and DFT monitors in a few kernels) (in progress)
+- [x] Fused GPU time stepping (`SolverFIT3D(use_gpu=True, fused=True)`): step, CPML, sources, DFT/flux/mode monitors, TF/SF, tensor averaging, ADE and the exact adjoint in a few kernels, replayed as CUDA graphs; invrs bend forward + adjoint 753 s → 15–17 s on an L4, 10–19× on CPML/monitor-heavy runs ([studies/gpu-perf](studies/gpu-perf/README.md)); opt-in until validated as default
 
 **Physics and applications**
 - [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers

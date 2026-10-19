@@ -1,0 +1,7 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+45.2,1479329,100,14793.3,14688.0,14240,15424,314.1,"void fused_e<double, double, (bool)0>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, const double *, double, const int *, const int *, T1 *, const T1 *, const T1 *, T1 *, T1 *, const double *)"
+34.0,1114272,100,11142.7,11104.0,10752,11808,212.4,"void fused_h<double, double, (bool)0>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, double, const int *, const int *, T1 *, const T1 *, const T1 *, const T1 *, const double *)"
+8.7,284160,100,2841.6,2848.0,2816,2880,17.6,"void rows_spmv_add<double, double>(int, const int *, const int *, const int *, const T2 *, const T1 *, T1 *)"
+4.1,134913,100,1349.1,1344.0,1312,1377,13.5,"void tensor_delta<double>(int, const int *, const T1 *, const T1 *, T1 *)"
+4.0,132608,100,1326.1,1312.0,1312,1504,23.8,"void source_delta<double, double>(int, const int *, const T2 *, double, const double *, const long long *, long long, T2 *, T1 *)"
+4.0,130944,100,1309.4,1312.0,1280,1504,23.5,"void gather<double>(int, const int *, const T1 *, T1 *)"

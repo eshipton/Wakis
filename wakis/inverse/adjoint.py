@@ -10,6 +10,7 @@ from scipy.constants import epsilon_0 as eps_0
 from scipy.sparse import csr_matrix
 
 from ..dispersive import _ade_coefficients
+from . import memory as mem
 from . import readouts
 
 # CPML curl terms (target component T, derivative axis d, source component S,
@@ -285,6 +286,7 @@ class AdjointStepper:
             self.cpml = solver.activate_cpml
             self.dtype = solver.E.array.dtype
             self.lam_star = None
+            self.fused = False
             self.lumped, self.dispersive, self.tensor = [], [], []
             self.psi_names = self.tete.psi_names
             return
@@ -337,6 +339,7 @@ class AdjointStepper:
             self.At = _hermitian(solver.tDsiDmuiDaC, solver)
             self.Bt = _hermitian(solver.itDaiDepsDstC, solver)
             self.psi_names = []
+            self._init_fused()
             return
 
         self.ops_t = {
@@ -361,6 +364,103 @@ class AdjointStepper:
                     )
                 self.faces[op] = faces
         self.psi_names = [f[0] for faces in self.faces.values() for f in faces]
+        self._init_fused()
+
+    def _init_fused(self):
+        """
+        Fused transposed step for solvers stepping with `wakis.gpu_fused`.
+
+        The transposed step then runs in four kernels (two per half step:
+        psi and multiplier update, then the merged transposed curl rows of
+        the forward kernels). Its outputs (E, H and psi multipliers) live in
+        two buffers used alternately: arrays returned by `step` are
+        overwritten two calls later (copy them to keep them).
+        """
+        from ..gpu_fused import is_fused, tname
+
+        self.fused = is_fused(self.solver) and not self.mpi
+        if not self.fused:
+            return
+        xp, s = self.xp, self.solver
+        fs = s._fused_step
+        if not fs.ready:
+            fs._build()
+        self._T = tname(self.dtype)
+        n = 3 * self.N
+        if self.cpml:
+            self._halves = {"E": fs.e.transpose(), "H": fs.h.transpose()}
+            if sorted(fs.e.names + fs.h.names) != sorted(self.psi_names):
+                raise RuntimeError("Fused and unfused CPML faces differ.")
+        else:
+            self._ones = xp.ones(n)
+        self._beta = xp.zeros(2 * n, dtype=self.dtype)
+        self._bufs = []
+        for _ in range(2):
+            buf = {"E": xp.zeros(n, self.dtype), "H": xp.zeros(n, self.dtype)}
+            views = {}
+            if self.cpml:
+                for key, half in self._halves.items():
+                    buf["psi" + key] = xp.zeros(max(half.n_psi, 1), self.dtype)
+                    o = half.offsets
+                    for k, name in enumerate(half.names):
+                        views[name] = buf["psi" + key][o[k] : o[k + 1]]
+            buf["views"] = views
+            self._bufs.append(buf)
+
+    def _fused_psi_in(self, lam, out_buf):
+        """Psi multiplier buffers holding lam's psi arrays (copied if needed)."""
+        for buf in self._bufs:
+            if buf is not out_buf and all(
+                lam[name] is v for name, v in buf["views"].items()
+            ):
+                return buf
+        scratch = self._bufs[0] if out_buf is self._bufs[1] else self._bufs[1]
+        for name, v in scratch["views"].items():
+            v[...] = lam[name]
+        return scratch
+
+    def _fused_base_step(self, lam, lam_E):
+        """`_base_step` with the fused kernels (see `_init_fused`)."""
+        from ..gpu_fused import launch, tname
+
+        n = 3 * self.N
+        T = self._T
+        dt = np.float64(self.dt)
+        out = self._bufs[1] if lam["H"] is self._bufs[0]["H"] else self._bufs[0]
+        if out["E"] is lam_E or out["E"] is lam["E"]:
+            raise RuntimeError("Adjoint state aliases the output buffer.")
+        if not self.cpml:
+            beta = self._beta
+            launch(f"adj_beta<{T}>", n, np.int32(n), lam_E, self._ones, dt,
+                   None, None, None, None, None, None, beta)  # fmt: skip
+            Bt = self.Bt
+            launch(f"adj_spmv<{T},{tname(Bt.data.dtype)}>", n, np.int32(n),
+                   Bt.indptr, Bt.indices, Bt.data, beta, lam["H"], None,
+                   out["H"])  # fmt: skip
+            launch(f"adj_beta<{T}>", n, np.int32(n), out["H"], self._ones, -dt,
+                   None, None, None, None, None, None, beta)  # fmt: skip
+            At = self.At
+            launch(f"adj_spmv<{T},{tname(At.data.dtype)}>", n, np.int32(n),
+                   At.indptr, At.indices, At.data, beta, lam_E, self.loss,
+                   out["E"])  # fmt: skip
+            return {"H": out["H"], "E": out["E"]}
+        src = self._fused_psi_in(lam, out)
+        he, hh = self._halves["E"], self._halves["H"]
+        beta = self._beta
+        # Reverse of the E half step
+        launch(f"adj_beta<{T}>", n, np.int32(n), lam_E, self.ieps, dt, he.slot_a,
+               he.slot_b, src["psiE"], out["psiE"], he.pb, he.pc, beta)  # fmt: skip
+        launch(f"adj_spmv<{T},{tname(he.t_vdtype)}>", n, np.int32(n), he.t_ptr,
+               he.t_col, he.t_val, beta, lam["H"], None, out["H"])  # fmt: skip
+        # Reverse of the H half step (kappa = -dt imu lam_H)
+        launch(f"adj_beta<{T}>", n, np.int32(n), out["H"], self.imu, -dt,
+               hh.slot_a, hh.slot_b, src["psiH"], out["psiH"], hh.pb, hh.pc,
+               beta)  # fmt: skip
+        launch(f"adj_spmv<{T},{tname(hh.t_vdtype)}>", n, np.int32(n), hh.t_ptr,
+               hh.t_col, hh.t_val, beta, lam_E, self.loss, out["E"])  # fmt: skip
+        res = {"H": out["H"], "E": out["E"]}
+        res.update(out["views"])
+        return res
 
     def _comp(self, array, c):
         i = "xyz".index(c)
@@ -403,7 +503,11 @@ class AdjointStepper:
         if hasattr(solver, "J_old"):
             solver.J_old = xp.zeros(3 * self.N, dtype=self.dtype)
         for name in self.psi_names:
-            setattr(solver, name, xp.array(state[name]))
+            if getattr(solver, "fused", False):
+                # In place: the fused step owns the psi buffers
+                getattr(solver, name)[...] = xp.asarray(state[name])
+            else:
+                setattr(solver, name, xp.array(state[name]))
         for ext in self.lumped + self.dispersive:
             ext.set_state(state, xp)
         if self.mpi:
@@ -541,6 +645,8 @@ class AdjointStepper:
         """Transpose of the solver step, given the adjoint lam_E of its E."""
         if self.tete is not None:
             return self.tete.step(dict(lam, E=lam_E))
+        if self.fused:
+            return self._fused_base_step(lam, lam_E)
         if not self.cpml:
             # In place: lam_H = lam_H' + dt B^H lam_E, lam_E = (1 - S) lam_E - dt A^H lam_H
             lam_H = self.Bt @ lam_E
@@ -597,6 +703,11 @@ class AdjointSimulation:
         Nt,
         store_dtype=np.float64,
         store_on_host=None,
+        memory="store",
+        checkpoints=None,
+        block=None,
+        memory_budget_gb=None,
+        decimation=None,
     ):
         """
         Forward and exact discrete adjoint runs for gradient-based design.
@@ -648,6 +759,31 @@ class AdjointSimulation:
             GPU only: keep the stored increments in host memory (one row is
             copied per time step). By default this is done when they would
             take more than half of the free GPU memory.
+        memory : {'store', 'checkpoint', 'reverse', 'auto', 'nyquist'}
+            How the backward sweep obtains the per-step design rows (see
+            `wakis.inverse.memory`). 'store' (default): keep all Nt rows.
+            'checkpoint': binomial checkpointing with replay, bitwise equal
+            gradients for all physics. 'reverse': time reversal of the
+            lossless leapfrog with recorded CPML interface layers (falls
+            back to 'checkpoint' with a warning when the problem has loss,
+            dispersion, lumped elements or tensor averaging); agrees with
+            'store' to round-off. 'auto': 'store' if the rows fit in
+            `memory_budget_gb`, else 'checkpoint' with slots and block
+            chosen by `plan_checkpoints`. 'nyquist': APPROXIMATE
+            decimated storage (requires `decimation`); never exact.
+        checkpoints : int, optional
+            'checkpoint': number of solver snapshots held at once (>= 1).
+        block : int, optional
+            'checkpoint': steps per block (rows of one block are held during
+            the backward sweep). With `checkpoints` and without `block`,
+            the steps are split into binom(checkpoints + 2, 2) blocks, so
+            that each step is recomputed at most twice.
+        memory_budget_gb : float, optional
+            'auto' and 'checkpoint' (without `checkpoints`): budget for the
+            snapshots and rows [GB]. Default: half of the free GPU memory
+            (GPU) or 25 % of the available host memory.
+        decimation : int, optional
+            'nyquist': keep every `decimation`-th row.
         """
         for name, monitor in monitors.items():
             readouts.check(name, monitor)
@@ -658,8 +794,21 @@ class AdjointSimulation:
         self.Nt = int(Nt)
         self.store_dtype = store_dtype
         self.store_on_host = store_on_host
+        if memory not in ("store", "checkpoint", "reverse", "auto", "nyquist"):
+            raise ValueError(f"Unknown memory mode {memory!r}.")
+        if memory == "nyquist" and not decimation:
+            raise ValueError("memory='nyquist' needs a decimation factor.")
+        self.memory = memory
+        self.checkpoints = checkpoints
+        self.block = block
+        self.memory_budget_gb = memory_budget_gb
+        self.decimation = decimation
+        self.memory_stats = None
         self.rho = None
         self.readouts = None
+        # Fused GPU solvers: replay the time loops as CUDA graphs when every
+        # per-step operation is device resident (see wakis.gpu_fused)
+        self.use_graphs = True
 
     def _comm(self, solver):
         """MPI communicator of a decomposed solver, or None."""
@@ -767,43 +916,189 @@ class AdjointSimulation:
         )
         complex_fields = np.iscomplexobj(solver.E.array)
         store = np.result_type(self.store_dtype, np.complex64 if complex_fields else 1)
-        on_host = self._store_on_host(
-            solver, self.Nt * idx.size * np.dtype(store).itemsize
-        )
-        increments = (np if on_host else xp).empty((self.Nt, idx.size), dtype=store)
         ieps_d = solver.ieps.array[idx].copy()
-        for n in range(self.Nt):
+        tensor = self._tensor
+
+        def advance(n, record, monitors=(), mid=None):
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
-            e_old = solver.E.array[idx]
-            if disp is None:
+            if mid is not None:
+                mid(n)
+            row = None
+            if not record:
+                solver.one_step()
+            elif disp is None:
+                e_old = solver.E.array[idx]
                 solver.one_step()
                 delta = solver.E.array[idx] - e_old
-                if self._tensor is not None:
+                if tensor is not None:
                     # Increment of the diagonal step (before the correction)
-                    delta[self._tensor["rows"]] = solver.tensor_operator.last_increment
+                    delta[tensor["rows"]] = solver.tensor_operator.last_increment
                 row = delta / ieps_d
             else:
                 # The ADE overwrites the design edges: record the parameter
                 # sensitivity of the correction instead (see MaterialGrid)
+                e_old = solver.E.array[idx]
                 state_old = self.design.ade_state(disp, solver)
                 solver.one_step()
                 row = self.design.ade_sensitivity(disp, solver, e_old, state_old)
-            increments[n] = _host(row) if on_host else row
             for el in elements:
                 el.post_step(solver, t)
-            for monitor in monitors.values():
+            for monitor in monitors:
                 monitor.update(solver, t)
+            return row
 
+        rung = self._make_rung(
+            solver, sources, advance, (idx.size,), store, idx, ieps_d, disp
+        )
+        if self._fused_store(solver, rung, disp):
+            # Fused GPU solver, all rows stored on the device: record them in
+            # the CUDA-graph time loop (wakis.gpu_fused)
+            self._fused_forward(solver, sources, monitors, elements, idx, rung.rows)
+            rung.finish()
+            self.memory_stats = rung.stats()
+        else:
+            self._run_forward(rung, advance, monitors)
+        increments = rung.rows if isinstance(rung, mem.StoreRung) else None
         self._check_overlaps(solver, elements, monitors)
         self._solver, self._monitors, self._elements = solver, monitors, elements
         self._increments = increments
+        self._rung = rung
         self.rho = rho
         raw = {name: readouts.outputs(m) for name, m in monitors.items()}
         if comm is not None:
             raw = self._gather(raw, comm)
         return raw
+
+    def _fused_forward(self, solver, sources, monitors, elements, idx, increments):
+        """
+        Time loop of `forward` on a fused GPU solver: the design increments
+        q^n / ieps = (E*^{n+1} - E^n) / ieps are recorded by two kernels per
+        step (gather of E^n, then the scaled difference into its row).
+        """
+        from ..gpu_fused import FusedLoop, idx32, launch, rname, tname
+
+        idx_d = idx32(idx)
+        ieps_d = solver.ieps.array[idx_d].astype(np.float64)
+        e_old = solver.E.xp.empty(idx_d.size, dtype=solver.E.array.dtype)
+        T, R = tname(solver.E.array.dtype), rname(increments.dtype)
+        m = np.int32(idx_d.size)
+        mons = list(monitors.values())
+        graph = self.use_graphs and FusedLoop.supported(solver, sources, mons, elements)
+        for n in range(self.Nt):
+            if graph and n == 1:
+                # Steps 1 .. Nt-1 as CUDA graph replays (step 0 initialized all)
+                loop = FusedLoop(solver, sources, mons, self.Nt,
+                                 record=(idx_d, ieps_d, e_old, increments))  # fmt: skip
+                loop.run(1, self.Nt)
+                loop.close()
+                break
+            t = n * solver.dt
+            for src in sources:
+                src.update(solver, t)
+            launch(f"gather<{T}>", m, m, idx_d, solver.E.array, e_old)
+            solver.one_step()
+            launch(f"record_row<{T},{R}>", m, m, idx_d, solver.E.array, e_old,
+                   ieps_d, increments, None, np.int64(0), np.int64(n))  # fmt: skip
+            for el in elements:
+                el.post_step(solver, t)
+            for monitor in mons:
+                monitor.update(solver, t)
+
+    def _budget_bytes(self, solver):
+        if self.memory_budget_gb is not None:
+            return self.memory_budget_gb * 1e9
+        if solver.use_gpu:
+            free, _ = solver.E.xp.cuda.Device().mem_info
+            return free / 2
+        try:
+            import psutil
+
+            return 0.25 * psutil.virtual_memory().available
+        except ImportError:  # pragma: no cover
+            import os
+
+            pages = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+            return 0.25 * pages
+
+    def _make_rung(self, solver, sources, advance, row_shape, dtype, idx, ieps_d,
+                   disp):  # fmt: skip
+        """Memory rung of this forward run (see `wakis.inverse.memory`)."""
+        from . import memory as mem
+
+        xp = solver.E.xp
+        mode = self.memory
+        row_bytes = int(np.prod(row_shape)) * np.dtype(dtype).itemsize
+        if mode == "reverse":
+            reason = None
+            if idx is None:
+                reason = "a dispersive tensor design"
+            else:
+                reason = mem.reverse_supported(solver, sources, self.design)
+            if reason is None:
+                return mem.ReverseRung(self.Nt, solver, sources, idx, ieps_d, dtype)
+            mem.warn_fallback(reason)
+            mode = "checkpoint"
+        if mode == "nyquist":
+            return mem.NyquistRung(self.Nt, self.decimation, row_shape, dtype, xp)
+        io = mem.SolverState(solver, sources)
+        slots, block = self.checkpoints, self.block
+        if mode == "auto" or (mode == "checkpoint" and slots is None):
+            # Snapshot size: fields, CPML psi and auxiliary arrays (sources
+            # are small); measured exactly when the first snapshot is taken
+            state_bytes = 2 * solver.E.array.nbytes + solver.J.array.nbytes
+            state_bytes += sum(
+                getattr(solver, k).nbytes for k in io.psi
+            ) + (0 if solver.M is None else solver.M.array.nbytes)
+            budget = self._budget_bytes(solver)
+            if mode == "checkpoint":
+                # Explicit checkpointing: at most a quarter of the stored rows
+                budget = min(budget, 0.25 * self.Nt * row_bytes)
+            try:
+                plan = mem.plan_checkpoints(self.Nt, state_bytes, row_bytes, budget)
+            except MemoryError:
+                if mode == "auto":
+                    raise
+                plan = dict(mode="checkpoint", slots=2, block=None)
+            if mode == "auto" and plan["mode"] == "store":
+                mode = "store"
+            else:
+                mode = "checkpoint"
+                slots = slots or plan["slots"]
+                block = block or plan["block"]
+        if mode == "store":
+            on_host = self._store_on_host(solver, self.Nt * row_bytes)
+            return mem.StoreRung(self.Nt, row_shape, dtype, xp, on_host)
+        if block is None:
+            n_blocks = mem.beta(slots, 2)
+            block = max(1, -(-(self.Nt - 1) // n_blocks))
+        return mem.CheckpointRung(self.Nt, slots, block, advance, io, dtype, xp,
+                                  verify=getattr(self, "verify_replay", False))  # fmt: skip
+
+    def _fused_store(self, solver, rung, disp):
+        """Whether the fused CUDA-graph loops apply: fused solver, no ADE or
+        tensor design, and the effective memory mode is 'store' on the device
+        (explicit, or 'auto' resolved to it). Other rungs use the generic
+        loop, whose `solver.one_step` is the fused step."""
+        return (
+            getattr(solver, "fused", False)
+            and disp is None
+            and self._tensor is None
+            and isinstance(rung, mem.StoreRung)
+            and not rung.on_host
+        )
+
+    def _run_forward(self, rung, advance, monitors):
+        """The forward time loop, feeding the memory rung."""
+        monitors = list(monitors.values())
+        mid = rung.mid_step
+        for n in range(self.Nt):
+            rung.before_step(n)
+            row = advance(n, rung.wants_row(n), monitors, mid)
+            rung.after_step(n, row)
+        rung.finish()
+        self.memory_stats = rung.stats()
 
     def _forward_network(self, rho, solver, net, sources, monitors, elements, comm):
         """
@@ -816,24 +1111,29 @@ class AdjointSimulation:
             raise NotImplementedError("Dispersive tensor designs do not support MPI.")
         net.record = True
         xp = solver.E.xp
-        K = net.n_caps
-        on_host = self._store_on_host(solver, self.Nt * 5 * K * 8)
-        rec = (np if on_host else xp).empty((self.Nt, 5, K), dtype=np.float64)
-        for n in range(self.Nt):
+
+        def advance(n, record, monitors=(), mid=None):
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
+            net.record = bool(record)
             solver.one_step()
-            row = xp.stack(net.last)
-            rec[n] = _host(row) if on_host else row
+            row = xp.stack(net.last) if record else None
             for el in elements:
                 el.post_step(solver, t)
-            for monitor in monitors.values():
+            for monitor in monitors:
                 monitor.update(solver, t)
+            return row
+
+        rung = self._make_rung(
+            solver, sources, advance, (5, net.n_caps), np.float64, None, None, None
+        )
+        self._run_forward(rung, advance, monitors)
+        self._rung = rung
         net.record = False
         self._check_overlaps(solver, elements, monitors)
         self._solver, self._monitors, self._elements = solver, monitors, elements
-        self._increments = rec
+        self._increments = getattr(rung, "rows", None)
         self._tensor = None
         self.rho = rho
         return {name: readouts.outputs(m) for name, m in monitors.items()}
@@ -868,6 +1168,7 @@ class AdjointSimulation:
         g_eps = xp.zeros(net.n_caps)
         g_mu = xp.zeros(net.n_caps)
         lam = stepper.zero_state()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             for tap in taps:
@@ -879,7 +1180,7 @@ class AdjointSimulation:
             lam_E = lam["E"][rows][cap_row]
             lam = stepper.step(lam)
             lam_u = ext.lam_unew
-            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in self._increments[n])
+            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in get_row(n))
             g_ieps += lam_E * eps_0 * dQ
             g_c += lam_E * (u1 - u - dQ / eps_inf)
             g_eps += lam_u * (u - u1) / den + lam_E * c * dQ / eps_inf**2
@@ -890,6 +1191,76 @@ class AdjointSimulation:
         return self.design._network_vjp(
             self.rho, g_ieps, _host(g_c), _host(g_eps), _host(g_mu)
         )
+
+    def _fused_vjp(self, stepper, taps, idx):
+        """
+        Backward loop of `vjp` with fused kernels: each adjoint DFT source
+        costs two kernels (phasor-weighted cotangent sum, then the W^H rows),
+        the transposed step four and the gradient accumulation one.
+        """
+        from ..gpu_fused import idx32, launch, rname, tname
+
+        xp = stepper.xp
+        dt = self._solver.dt
+        idx_d = idx32(idx)
+        m = np.int32(idx_d.size)
+        inc = self._increments
+        T, R = tname(stepper.dtype), rname(inc.dtype)
+        dev = []
+        for tap in taps:
+            WH = tap.WH
+            dev.append(
+                (
+                    tap,
+                    idx32(tap.rows),
+                    xp.ascontiguousarray(WH.data, dtype=np.complex128),
+                    xp.ascontiguousarray(tap.G, dtype=np.complex128),
+                    xp.empty(WH.shape[1], dtype=np.complex128),
+                    xp.asarray(tap.freqs, dtype=np.float64),
+                    WH,
+                )
+            )
+        c1_im = np.float64((2j * np.pi).imag)
+        grad = xp.zeros(idx_d.size)
+        holder = {"lam": stepper.zero_state()}
+        counter = xp.zeros(1, dtype=np.int64)
+
+        def one(n=None, last=False):
+            # Step n on the host (n given) or at the device counter (graph)
+            lam = holder["lam"]
+            c = None if n is not None else counter
+            t = np.float64(0.0 if n is None else n * dt)
+            row = np.int64(0 if n is None else n)
+            # A DFT sample X = sum_n w_n W x^{n+1} gives lam += W^H conj(w_n) G
+            for tap, rows, val, G, v, freqs, WH in dev:
+                if tap.skip_last and last:
+                    continue
+                k = np.int32(v.size)
+                launch("tap_v", k, k, np.int32(freqs.size), freqs, G, c1_im,
+                       np.float64(dt), np.float64(tap.offset), t, c, np.int64(0),
+                       v)  # fmt: skip
+                launch(f"tap_add<{tname(lam[tap.field].dtype)}>", rows.size,
+                       np.int32(rows.size), rows, WH.indptr, WH.indices, val, v,
+                       lam[tap.field])  # fmt: skip
+            lam = stepper.step(lam)
+            launch(f"grad_acc<{T},{R}>", m, m, idx_d, stepper.lam_star, inc, c,
+                   np.int64(0), row, grad)  # fmt: skip
+            if c is not None:
+                launch("step_add", 1, c, np.int64(-1))
+            holder["lam"] = lam
+
+        corrections = stepper.lumped + stepper.dispersive + stepper.tensor
+        graph = self.use_graphs and not corrections and self.Nt > 1
+        if not graph:
+            for n in reversed(range(self.Nt)):
+                one(n, last=n == self.Nt - 1)
+            return grad
+        from ..gpu_fused import GraphRunner
+
+        one(self.Nt - 1, last=True)
+        counter.fill(self.Nt - 2)
+        GraphRunner(one, chunk=64).run(self.Nt - 1)
+        return grad
 
     def _tensor_tracking(self, solver, disp):
         """
@@ -998,19 +1369,34 @@ class AdjointSimulation:
 
         net = self.design.network_of(solver)
         if net is not None:
-            return self._vjp_network(stepper, taps, net)
+            grad = self._vjp_network(stepper, taps, net)
+            self.memory_stats = self._rung.stats()
+            return grad
         idx = xp.asarray(self.design.flat_idx)
         own = self.design.dispersive_group(solver)
         ade = None
         if own is not None:
             ade = next(ext for ext in stepper.dispersive if ext.group is own)
         tensor = self._tensor
+        if (
+            stepper.fused
+            and tensor is None
+            and ade is None
+            and isinstance(self._rung, mem.StoreRung)
+            and not self._rung.on_host
+        ):
+            grad = self._fused_vjp(stepper, taps, idx)
+            grad = self.design.vjp(self.rho, _host(grad))
+            if comm is not None:
+                grad = comm.allreduce(grad)
+            return grad
         grad = xp.zeros(idx.size)
         if tensor is not None:
             track = xp.asarray(tensor["track"])
             if tensor["pairs"] is not None:
                 grad_pairs = xp.zeros(len(tensor["pairs"][0]))
         lam = stepper.zero_state()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             # A DFT sample X = sum_n w_n W x^{n+1} gives lam += W^H conj(w_n) G
@@ -1023,7 +1409,7 @@ class AdjointSimulation:
             if tensor is not None:
                 # Adjoint of the corrected E' = E + N g
                 lam_new = lam["E"][track]
-                g = xp.asarray(self._increments[n])
+                g = xp.asarray(get_row(n))
                 grad += xp.real(
                     xp.conj(lam_new[tensor["design"]]) * g[tensor["design"]]
                 )
@@ -1037,7 +1423,7 @@ class AdjointSimulation:
                 continue
             lam = stepper.step(lam)
             sens = stepper.lam_star[idx] if ade is None else ade.lam_acc
-            grad += xp.real(xp.conj(sens) * xp.asarray(self._increments[n]))
+            grad += xp.real(xp.conj(sens) * xp.asarray(get_row(n)))
         if tensor is not None and tensor["pairs"] is not None:
             ea, eb, coef = tensor["pairs"]
             grad = self.design.vjp(
@@ -1047,4 +1433,5 @@ class AdjointSimulation:
             grad = self.design.vjp(self.rho, _host(grad))
         if comm is not None:
             grad = comm.allreduce(grad)
+        self.memory_stats = self._rung.stats()
         return grad

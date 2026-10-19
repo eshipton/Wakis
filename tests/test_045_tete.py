@@ -385,3 +385,9 @@ def test_operator_template_staircase_stl(tmp_path):
     for r, o in zip(ref, op):
         assert np.abs(r).max() > 0
         assert np.abs(r - o).max() < 1e-10 * np.abs(r).max()
+
+
+def test_fused_tete_raises():
+    """The fused GPU step is Yee-only: scheme='tete' with fused=True raises."""
+    with pytest.raises(NotImplementedError, match="fused=True supports scheme='yee'"):
+        _box(4, 4, 6, *D, ["pec"] * 3, ["pec"] * 3, fused=True)

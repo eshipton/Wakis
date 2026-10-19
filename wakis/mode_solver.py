@@ -518,6 +518,16 @@ class ModeSource:
             self.is_first_update = False
 
         times = {"J": t + solver.dt / 2 + self.h_advance, "M": t}
+        if getattr(solver, "fused", False):
+            from .gpu_fused import idx32, source_update
+
+            for term in self.terms:
+                if "idx32" not in term:
+                    term["idx32"] = idx32(term["idx"])
+                a = float(self.src_time(times[term["field"]]))
+                arr = getattr(solver, term["field"]).array
+                source_update(arr, term["idx32"], term["weights"], a, term["old"])
+            return
         for term in self.terms:
             new = term["weights"] * float(self.src_time(times[term["field"]]))
             getattr(solver, term["field"]).array[term["idx"]] += new - term["old"]
@@ -602,6 +612,11 @@ class ModeMonitor:
             self._initialize(solver)
             self.is_first_update = False
 
+        if getattr(solver, "fused", False):
+            from .gpu_fused import monitor_update
+
+            if monitor_update(self, solver, t):
+                return
         n = self.plane.n_b * self.plane.n_c
         for f, tf in (("E", t + solver.dt), ("H", t + solver.dt / 2)):
             # Computed on the field device (no per-step host-to-device copy)

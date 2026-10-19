@@ -1,0 +1,84 @@
+{
+ "meta": {
+  "n": 313,
+  "design": 160,
+  "Nt": 5000,
+  "gpu": true,
+  "design_edges": 77120
+ },
+ "results": [
+  {
+   "mode": "store",
+   "settings": {
+    "on_host": "True"
+   },
+   "t_forward": 526.23241396,
+   "t_backward": 158.02391750300012,
+   "host_peak": 3117750201,
+   "gpu_peak": 64127488,
+   "rung_mode": "store",
+   "rung_peak_bytes": 3084800000,
+   "rung_recompute_steps": 0,
+   "grad_rel_err": 0.0,
+   "bitwise": true
+  },
+  {
+   "mode": "checkpoint",
+   "settings": {
+    "checkpoints": "4"
+   },
+   "t_forward": 480.8891383670002,
+   "t_backward": 939.8344086720003,
+   "host_peak": 88273991,
+   "gpu_peak": 336261632,
+   "rung_mode": "checkpoint",
+   "rung_peak_bytes": 237006752,
+   "rung_recompute_steps": 8016,
+   "grad_rel_err": 0.0,
+   "bitwise": true
+  },
+  {
+   "mode": "checkpoint",
+   "settings": {
+    "checkpoints": "16"
+   },
+   "t_forward": 490.0795944419997,
+   "t_backward": 1124.2229483,
+   "host_peak": 88274179,
+   "gpu_peak": 232131072,
+   "rung_mode": "checkpoint",
+   "rung_peak_bytes": 142277248,
+   "rung_recompute_steps": 9438,
+   "grad_rel_err": 0.0,
+   "bitwise": true
+  },
+  {
+   "mode": "reverse",
+   "settings": {},
+   "t_forward": 527.0087396630006,
+   "t_backward": 182.17883446499945,
+   "host_peak": 89324594,
+   "gpu_peak": 242796544,
+   "rung_mode": "reverse",
+   "rung_peak_bytes": 107037824,
+   "rung_recompute_steps": 0,
+   "grad_rel_err": 1.5405273734439412e-15,
+   "bitwise": false
+  },
+  {
+   "mode": "nyquist",
+   "settings": {
+    "decimation": "8"
+   },
+   "t_forward": 498.4128305739996,
+   "t_backward": 168.74937703599971,
+   "host_peak": 88273779,
+   "gpu_peak": 449110528,
+   "rung_mode": "nyquist",
+   "rung_peak_bytes": 385600000,
+   "rung_recompute_steps": 0,
+   "grad_rel_err": 0.00010297640167682853,
+   "bitwise": false
+  }
+ ]
+}

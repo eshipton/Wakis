@@ -96,6 +96,14 @@ _THROUGHPUT_CONFORMAL = ((3.59e4, 20.8), (2.75e5, 18.1), (9.13e5, 15.3),
 _CONFORMAL_GPU_STEP = {"pec": 1.15, "all": 1.15, "tensor": 1.18}  # x plain GPU
 _FLOAT32_STEP = {"cpu": 0.62, "mkl": 0.62, "gpu": 0.60}  # time vs float64
 _GPU_CPML_FLOOR = 7.1e-3  # s per step: CPML kernel launches (up to ~1.4 Mcells)
+# Fused GPU step (SolverFIT3D(fused=True), studies/gpu-perf, L4, float64,
+# 3D boxes): bandwidth-bound, no launch floor beyond ~20 us with CUDA graphs
+_THROUGHPUT_FUSED = {  # cpml -> ((cells, Mcells/s), ...)
+    False: ((2.75e5, 610.0), (2.15e6, 468.0)),
+    True: ((2.75e5, 404.0),),
+}
+_GPU_FUSED_FLOOR = 2e-5  # s per step
+_GPU_FUSED_CPML_BYTES = 380.0  # extra GPU bytes per cell (merged rows, psi)
 _DISPERSIVE_STEP = (12e-9, 25e-9)  # s per dispersive edge per step: a + b n_poles
 # Setup time [s] = a + b * cells + c * interface cells (grid with STL masks +
 # solver; the conformal setup runs on the host also for GPU runs; measured
@@ -219,6 +227,7 @@ def estimate(
     safety=1.25,
     conformal=False,
     interface_cells=None,
+    fused=False,
 ):
     """
     Estimate peak memory and run time of a Wakis simulation.
@@ -240,6 +249,10 @@ def estimate(
     adjoint : dict, optional
         {'design_edges': int, 'store_bytes': 4 or 8}: stored E increments of an
         AdjointSimulation (steps x design edges) plus the adjoint state.
+        Optional 'memory': 'checkpoint' with 'budget_gb' (or 'checkpoints'
+        and 'block'): binomial checkpointing (`wakis.inverse.memory`) instead
+        of storing; the breakdown then holds the snapshots and one block of
+        rows, and the run time the recomputed steps (``adjoint_plan``).
     dispersive_edges, n_poles : int, optional
         E edges with dispersive materials (about 3 per cell inside the
         material) and poles per material.
@@ -254,6 +267,10 @@ def estimate(
     interface_cells : int, optional
         Interface cells (see `interface_cells_from_area`); default
         ``2 * cells**(2/3)`` (a sphere of 0.6 times the domain width).
+    fused : bool, optional
+        GPU only: `SolverFIT3D(fused=True)` time step (measured throughput of
+        the fused kernels instead of the CuPy path, no CPML launch floor; the
+        CPML step keeps ~380 B per cell of extra GPU memory).
 
     Returns
     -------
@@ -280,6 +297,8 @@ def estimate(
     gpu = (
         factor * _GPU[(bool(cpml), base_dtype)] * per_rank if backend == "gpu" else 0.0
     )
+    if backend == "gpu" and fused and cpml and base_dtype == "float64":
+        gpu += factor * _GPU_FUSED_CPML_BYTES * per_rank
     setup_peak = 0.0
     if mode:
         c_cell, c_iface = _CONFORMAL_RUN[mode]
@@ -295,10 +314,17 @@ def estimate(
 
     mon = sum(16.0 * nf * ns * nc for nf, ns, nc in monitors) / n_ranks
     breakdown["monitors"] = mon
+    recompute = 0
     if adjoint:
         stored = (
             steps * adjoint["design_edges"] * adjoint.get("store_bytes", 8) / n_ranks
         )
+        if adjoint.get("memory") == "checkpoint":
+            plan = adjoint_plan(cells // n_ranks, steps, adjoint["design_edges"] // n_ranks,
+                                adjoint.get("budget_gb"), dtype=dtype, cpml=cpml,
+                                checkpoints=adjoint.get("checkpoints"),
+                                block=adjoint.get("block"))  # fmt: skip
+            stored, recompute = plan["bytes"], plan["recompute_steps"]
         state = (
             factor * per_cell * per_rank * 0.6
         )  # transposed operators + adjoint fields
@@ -337,15 +363,62 @@ def estimate(
         step *= _CONFORMAL_GPU_STEP[mode]
     if base_dtype == "float32":
         step *= _FLOAT32_STEP[backend]
-    if backend == "gpu" and cpml:
+    if backend == "gpu" and fused and base_dtype == "float64":
+        step = work / _rate(_THROUGHPUT_FUSED[bool(cpml)], work)
+        if mode:
+            step *= _CONFORMAL_GPU_STEP[mode]
+        step = max(step, _GPU_FUSED_FLOOR)
+    elif backend == "gpu" and cpml:
         step = max(step, _GPU_CPML_FLOOR)
     da, db = _DISPERSIVE_STEP
     step += edges * (da + db * n_poles) * factor
     sa, sb, sc = (_SETUP_GPU if backend == "gpu" else _SETUP)[mode or "plain"]
     setup = sa + sb * per_rank + sc * n_iface
-    time_steps = steps * (2.2 if adjoint else 1.0)
+    time_steps = steps * (2.2 if adjoint else 1.0) + recompute
     seconds = setup + time_steps * step
     return Estimate(cells, host * safety, gpu * safety, seconds, breakdown, setup, step)
+
+
+def adjoint_plan(cells, steps, design_edges, budget_gb=None, dtype="float64",
+                 cpml=True, checkpoints=None, block=None):  # fmt: skip
+    """
+    Checkpoint plan of an `AdjointSimulation` (memory='checkpoint').
+
+    A solver snapshot holds E, H and J (9 values per cell; complex fields
+    twice that) plus the CPML psi arrays (~10 % with CPML); a row holds one
+    float64 value per design edge (complex: two).
+
+    Parameters
+    ----------
+    cells, steps, design_edges : int
+    budget_gb : float, optional
+        Memory for snapshots and rows [GB]; the plan minimizes recomputation.
+    checkpoints, block : int, optional
+        Fixed settings instead of a budget.
+
+    Returns
+    -------
+    dict
+        mode, slots, block, bytes (snapshots + rows), recompute_steps,
+        state_bytes, row_bytes.
+    """
+    from .inverse import memory as mem
+
+    item = 16 if str(dtype).startswith("complex") else 8
+    state = int(9 * item * cells * (1.1 if cpml else 1.0))
+    row = item * int(design_edges)
+    if checkpoints:
+        if block is None:
+            block = max(1, -(-(steps - 1) // mem.beta(checkpoints, 2)))
+        n_blocks = -(-(steps - 1) // block)
+        plan = dict(mode="checkpoint", slots=checkpoints, block=block,
+                    bytes=checkpoints * state + (block + 1) * row,
+                    recompute_steps=mem.revolve_cost(n_blocks - 1, checkpoints) * block)  # fmt: skip
+    else:
+        if budget_gb is None:
+            raise ValueError("Give budget_gb or checkpoints.")
+        plan = mem.plan_checkpoints(steps, state, row, budget_gb * 1e9)
+    return dict(plan, state_bytes=state, row_bytes=row)
 
 
 def estimate_unstructured(n_cells, steps=0, dim=3, eigen=False, safety=1.25):
@@ -434,6 +507,7 @@ def main():
     ap.add_argument("--poles", type=int, default=1)
     ap.add_argument("--adjoint-design-edges", type=int, default=0)
     ap.add_argument("--ranks", type=int, default=1)
+    ap.add_argument("--fused", action="store_true", help="GPU fused step")
     ap.add_argument("--machine", default=None, help=", ".join(MACHINES))
     a = ap.parse_args()
     adj = {"design_edges": a.adjoint_design_edges} if a.adjoint_design_edges else None
@@ -449,6 +523,7 @@ def main():
         n_ranks=a.ranks,
         conformal=a.conformal or False,
         interface_cells=a.interface_cells,
+        fused=a.fused,
     )
     print(est)
     if a.machine:
