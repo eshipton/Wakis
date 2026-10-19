@@ -154,3 +154,173 @@ class Curvilinear2DArm(Arm):
                       setup_s=setup_s, h=h, h_max=h_out, n_theta=int(mesh.ring(case.circles[0])[0].size),
                       courant=float(solver.courant)),
         )  # fmt: skip
+
+
+class BoxedCurvilinear2DArm(Arm):
+    """
+    Multi-block curvilinear FIT for a row of equal cylinders on the x axis
+    (B3 dimers, also single cylinders): `boxed_cylinders_mesh` (core + polar
+    rings inside each cylinder, a circle-to-box transition block of ``m_tr``
+    layers, adjacent boxes tiling a rectangle, a graded rectilinear Cartesian
+    block outside with a Cartesian PML). Extraction circles are sampled by
+    bilinear interpolation on the Cartesian block; the gap field (TE) from
+    the corner reconstruction of D in the cells around the gap node.
+
+    The resolution label is h [m] (azimuthal spacing on the cylinders).
+    """
+
+    def __init__(self, radial=1.0, core=0.9, ratio=4.0, ppw_out=20, growth=1.2, n_pml=10,
+                 cfl=0.95, box=1.25, ladder=None, name=None):  # fmt: skip
+        self.radial, self.core, self.box = radial, core, box
+        self.ratio, self.ppw_out, self.growth = ratio, ppw_out, growth
+        self.n_pml, self.cfl, self.ladder = n_pml, cfl, ladder
+        self.name = name or "ogrid-boxed"
+
+    def supports(self, case):
+        cy = getattr(case, "cylinders", [])
+        if not cy or any(isinstance(m, str) for m in case.materials.values()):
+            return False
+        r = {c["radius"] for c in cy}
+        xs = sorted(c["center"][0] for c in cy)
+        return len(r) == 1 and all(c["center"][1] == 0 for c in cy) and np.allclose(xs, [-x for x in xs[::-1]])
+
+    def resolutions(self, case):
+        if self.ladder is not None:
+            return list(self.ladder)
+        a = case.cylinders[0]["radius"]
+        return [a / q for q in (5, 7, 10, 14, 20, 28, 40)]
+
+    def build(self, case, h):
+        from ...curvilinear import CurvilinearFIT2D, boxed_cylinders_mesh, radial_nodes
+
+        a = case.cylinders[0]["radius"]
+        xs_c = sorted(c["center"][0] for c in case.cylinders)
+        half = (xs_c[1] - xs_c[0]) / 2 if len(xs_c) > 1 else self.box * a
+        gap = half - a  # circle-to-box distance on the box mid-sides
+        lam_host = np.min(case.wavelengths) / case.n_background
+        h_out = max(h, min(self.ratio * h, lam_host / self.ppw_out))
+        hr = self.radial * h
+        nt = int(8 * np.ceil(2 * np.pi * a / h / 8))
+        radii_in = radial_nodes([self.core * a, a], lambda r: min(h, hr + 0.2 * max(a - 2 * h - r, 0)))
+        m_tr = max(2, int(np.ceil(gap / hr)))
+        hb = 2 * half / (nt // 4)
+        g = self.growth
+        r0 = max(case.r_absorber, max(case.circles) + 2 * h_out)
+        r1 = r0 + self.n_pml * h_out
+
+        def outer(start):
+            return radial_nodes([start, r0, r1], lambda r: h_out if r >= r0 - 1e-15
+                                else min(h_out, hb + (g - 1) * (r - start)))[1:]  # fmt: skip
+
+        X0 = xs_c[-1] + half
+        mesh = boxed_cylinders_mesh(xs_c, a, radii_in, nt, half, m_tr, outer(X0), outer(half))
+        nb2 = case.n_background**2
+        mats = {0: [nb2, 1.0], 1: case.materials[case.cylinders[0]["material"]]}
+        solver = CurvilinearFIT2D(
+            mesh, mats, polarization=case.polarization, bc="pec", cfl=self.cfl,
+            pml=dict(kind="cartesian", r0=r0, r1=r1, v=2.99792458e8 / case.n_background),
+        )  # fmt: skip
+        d = case.direction
+        solver.add_plane_wave(case.source(), direction=(np.cos(d), np.sin(d)),
+                              background_eps_r=nb2)  # fmt: skip
+        return mesh, solver, h_out
+
+    @staticmethod
+    def bilinear(mesh, free, points):
+        import scipy.sparse as sp
+
+        xs, ys = mesh.cartesian_axes
+        scale = np.abs(mesh.nodes).max()
+        key = {tuple(k): i for i, k in enumerate(np.round(mesh.nodes / (scale * 1e-10)).astype(np.int64))}
+        loc = -np.ones(mesh.n_nodes, np.int64)
+        loc[free] = np.arange(free.size)
+        rows, cols, vals = [], [], []
+        for p, (px, py) in enumerate(points):
+            i = np.searchsorted(xs, px) - 1
+            j = np.searchsorted(ys, py) - 1
+            tx = (px - xs[i]) / (xs[i + 1] - xs[i])
+            ty = (py - ys[j]) / (ys[j + 1] - ys[j])
+            for di, dj, w in ((0, 0, (1 - tx) * (1 - ty)), (1, 0, tx * (1 - ty)),
+                              (0, 1, (1 - tx) * ty), (1, 1, tx * ty)):  # fmt: skip
+                n = key[tuple(np.round(np.array([xs[i + di], ys[j + dj]]) / (scale * 1e-10)).astype(np.int64))]
+                if loc[n] < 0:
+                    raise ValueError("interpolation node is not free")
+                rows.append(p)
+                cols.append(loc[n])
+                vals.append(w)
+        return sp.csr_matrix((vals, (rows, cols)), shape=(len(points), free.size))
+
+    def run(self, case, h):
+        import scipy.sparse as sp
+        from scipy.constants import epsilon_0 as eps_0
+
+        from ...curvilinear import hodge_components
+        from ...cylinder_harmonics import circle_points
+
+        t0 = time.time()
+        mesh, solver, h_out = self.build(case, h)
+        pts = np.vstack([circle_points(r, case.n_points)[0] for r in case.circles])
+        P = self.bilinear(mesh, solver.free, pts)
+        gap = case.gap_point is not None
+        if gap:
+            if case.polarization != "TE":
+                raise NotImplementedError("gap field: TE only")
+            gp = np.asarray(case.gap_point)
+            node = int(np.argmin(np.hypot(*(mesh.nodes - gp).T)))
+            if np.hypot(*(mesh.nodes[node] - gp)) > 1e-6 * h:
+                raise ValueError("the gap point must be a mesh node")
+            hc = hodge_components(mesh)
+            cells = np.flatnonzero(np.any(mesh.cells == node, axis=1))
+            rows = []
+            for c in cells:
+                q = np.flatnonzero(hc["cell"] == c)
+                dq = np.hypot(*(hc["point"][q] - gp).T)
+                near = q[np.argsort(dq)[:2]]  # the corner's x and y components
+                near = near[np.argsort(np.argmax(hc["direction"][near], 1))]
+                rows.append(hc["R"][near])
+            Pg = sp.vstack(rows).tocsr()
+            Pg = (sp.csr_matrix(np.tile(np.eye(2), len(cells)) / len(cells)) @ Pg) / (
+                eps_0 * case.n_background**2)  # fmt: skip
+        setup_s = time.time() - t0
+        dt = solver.dt
+        shift = 0.0 if case.polarization == "TM" else -0.5 * dt
+        freqs = case.freqs
+        n_steps = int(case.t_run / dt)
+        times = (np.arange(n_steps) + 1) * dt
+        ker = np.exp(-2j * np.pi * np.outer(times + shift, freqs)) * dt
+        ker_e = np.exp(-2j * np.pi * np.outer(times, freqs)) * dt
+        acc = np.zeros((len(freqs), len(pts)), complex)
+        acc_e = np.zeros((len(freqs), 2), complex)
+        d = case.direction
+        pvec = np.array([-np.sin(d), np.cos(d)])
+        chunk = 256
+        buf = np.zeros((chunk, len(pts)))
+        bufe = np.zeros((chunk, 2))
+        t1 = time.time()
+        for n in range(n_steps):
+            solver.one_step()
+            buf[n % chunk] = P @ solver.u
+            if gap:
+                einc = solver._sig(np.atleast_1d(gp @ solver.plane_wave["k"]), times[n])[0]
+                bufe[n % chunk] = Pg @ solver.v + einc * pvec
+            if n % chunk == chunk - 1 or n == n_steps - 1:
+                n0 = n - n % chunk
+                acc += ker[n0 : n + 1].T @ buf[: n - n0 + 1]
+                acc_e += ker_e[n0 : n + 1].T @ bufe[: n - n0 + 1]
+            if n % 4000 == 0 and not np.all(np.isfinite(solver.u)):
+                raise FloatingPointError("unstable")
+        run_s = time.time() - t1
+        u_inc0 = solver.incident_field(np.zeros((1, 2)), times + shift)
+        u0 = (np.exp(-2j * np.pi * np.outer(freqs, times + shift)) @ u_inc0) * dt
+        out = dict(
+            samples=acc.reshape(len(freqs), len(case.circles), case.n_points), u0=u0,
+            radii=list(case.circles),
+            cost=dict(unknowns=solver.n_unknowns, nodes=int(solver.free.size),
+                      cells=int(mesh.n_cells), steps=n_steps, dt=dt, run_s=run_s,
+                      setup_s=setup_s, h=h, h_max=h_out, courant=float(solver.courant)),
+        )  # fmt: skip
+        if gap:
+            out["e_gap"] = acc_e
+            ui = solver._sig(np.zeros(1), times)
+            out["e0_gap"] = ker_e.T @ ui
+        return out

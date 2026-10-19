@@ -138,7 +138,8 @@ def hodge_components(mesh):
             w.append(L[k] * h[k])
             cell.append(pc)
             rr, tt = pts[k]
-            point.append(np.stack([rr * np.cos(tt), rr * np.sin(tt)], 1))
+            point.append(np.stack([rr * np.cos(tt), rr * np.sin(tt)], 1)
+                         + mesh.polar_center[pc])
             direc.append(Nhat[e])
             nrow += pc.size
     R = sp.csr_matrix(
