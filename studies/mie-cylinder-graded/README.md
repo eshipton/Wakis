@@ -4,6 +4,71 @@
 
 **Problem.** A dielectric cylinder with n = 2 and a = 1 µm, size parameter x = 2–10 (41 points), TM and TE. The extraction (`wakis.cylinder_harmonics`, with S-matrix de-embedding), the error metric (RMS relative error of Q_sca over the band) and the 1000 fs run window are all identical to the uniform study.
 
+## Update: radial PML and the tabulated plane-wave source (branch `feature/tri-fixes`)
+
+Two things held the triangles back in the first graded comparison below:
+
+- the 1st-order ABC, which reflects 6–17 % and stalls the compact TE arm at 1.1 %;
+- a plane-wave source that evaluated the analytic pulse on every target at every step (33 ns per unknown-step for graded TE).
+
+Both are now fixed:
+
+- **Radial CFS-PML** (`studies/unstructured-pml`): reflection 2–8e-4 over x = 2–10 with a 10-cell (λ_max/16) layer at h = 20 nm.
+- **Separable-delay source table**: the per-step source cost is now one sparse mat-vec.
+
+The new arm **tri-graded-pml** uses circles at 1.25/1.4/1.55 µm and a 10-ring PML (spacing h_out) from 1.65 µm, the same cell count as the 10-cell Cartesian CPML. The tri-graded runs were repeated with the new source. All 20 runs ran uncontended on Cloud Batch (one per n2-standard-2), and the Cartesian arms are the same runs as before.
+
+**Unknowns, work and time to reach 1 % RMS error in Q_sca** (log-log interpolation):
+
+| pol | arm | unknowns | cells | work (unknowns × steps) | 1-core time [s] |
+|---|---|---|---|---|---|
+| TM | cart-uniform | 982k | 327k | 4.49e10 | 1327 |
+| TM | cart-graded | 518k | 173k | 2.44e10 | 674 |
+| TM | cart-graded-compact | 362k | 121k | 1.67e10 | 531 |
+| TM | tri-graded (ABC, std domain) | 399k | 199k | 1.80e10 | 163 |
+| TM | **tri-graded-pml** | **240k** | 120k | **1.07e10** | **104** |
+| TE | cart-uniform | 864k | 288k | 3.70e10 | 1057 |
+| TE | cart-graded | 536k | 179k | 2.58e10 | 728 |
+| TE | cart-graded-compact | 347k | 116k | 1.56e10 | 433 |
+| TE | tri-graded (ABC, std domain) | 410k | 205k | 1.89e10 | 342 |
+| TE | **tri-graded-pml** | **245k** | 122k | **1.11e10** | **185** |
+
+The compact TE arm no longer stalls: tri-graded-pml TE reaches 0.71 % at res 40, where the ABC version stopped at 1.10 %.
+
+**Speed-up of tri-graded-pml at 1 %** (unknowns / work / uncontended time):
+
+| | vs cart-uniform | vs cart-graded | vs cart-graded-compact |
+|---|---|---|---|
+| TM | 4.1× / 4.2× / 12.8× | 2.2× / 2.3× / 6.5× | 1.5× / 1.6× / 5.1× |
+| TE | 3.5× / 3.3× / 5.7× | 2.2× / 2.3× / 3.9× | 1.4× / 1.4× / 2.3× |
+
+**How to read these numbers.**
+
+- **Work is the method comparison.** The time ratio is larger than the work ratio because a triangle update costs 10–18 ns per unknown-step, against 27–32 ns for the Cartesian arm. The Cartesian arm is the 3D `SolverFIT3D` on a one-cell slab: it updates six components plus CPML and TF/SF, while the triangle code is truly 2D. A 2D Cartesian code would narrow that factor of about 2.
+- **The compact comparison is not geometry-matched.** cart-graded-compact is limited by its TF/SF box (circles must sit outside it, from 1.72 µm). The scattered-field triangles can extract at 1.25 µm. That is a property of the source formulation, not of the mesh, and a scattered-field Cartesian source would close part of the gap.
+
+**TE source cost.** Per-update cost (ns per unknown-step) for the same tri-graded runs:
+
+| run | old (direct evaluation) | new (separable-delay table) |
+|---|---|---|
+| Batch n2-standard-2, res 40, TE | 33.1 | 17.5 |
+| Batch n2-standard-2, res 40, TM | 20.9 | 9.9 |
+| laptop, res 20, TE | 8.5 | 3.1 (no-source baseline 2.6) |
+| laptop, res 20, TM | 4.2 | 2.6 (baseline 2.25) |
+
+- The remaining source overhead is 0.3–0.5 ns, i.e. 12–20 % of a step (`te_source_timing.py`).
+- The table reproduces the direct evaluation to 1–2e-5 (`te_source_timing.py`, sub-step 1/8).
+- The old tri-graded JSONs are kept in `data/v1_direct_source/`.
+- tri-uniform and tri-graded-compact (ABC) were not re-run, so their times still include the old source cost. Use their work column.
+
+**Not done here.** Local time stepping is handled by a separate agent. The B2/B3 plasmonic benchmarks will be rerun on graded triangles with the PML once they land. The PML step is already compatible with dispersive cells (test `test_pml_with_dispersive_scatterer`).
+
+**Prior art.** The circumcentric/barycentric unstructured FIT used here is the "discrete geometric approach" / cell method of Codecasa, Specogna, Trevisan, Kapidani et al. (`notes/lit/fit_meshing_sota.md`, item 1). The radial PML follows Teixeira & Chew (1997, 1999).
+
+---
+
+# First graded comparison (ABC, direct source)
+
 ## Arms
 
 h_in = λ_min,diel/res with res = 10, 14, 20, 28, 40. Graded meshes keep h_in inside the cylinder and in a band 2 h_in wide around it. Beyond that band the size grows geometrically (×1.2 per cell) to h_out = n·h_in, which gives equal cells per *local* wavelength.

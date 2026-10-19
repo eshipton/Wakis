@@ -122,6 +122,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`)
 - [ ] Unstructured FIT phase 2: PML, ports, adjoint, GPU, MPI, CAD/gmsh workflow
 - [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
+- [x] Polygonal 2D FIT (`PolyMesh`, `PolygonFIT2D`): hybrid square/triangle meshes (squares in the bulk, conforming triangles at interfaces, gap refinement) and Voronoi-primal meshes; orthogonal or mimetic Hodge, split-field PML, dispersive plane wave. Mie n = 2: 1.4x fewer unknowns and 1.1-1.3x less work than graded triangles or graded Cartesian at 1 % ([studies/mie-cylinder-polyfit](studies/mie-cylinder-polyfit), [studies/benchmark-polygon](studies/benchmark-polygon))
 - [ ] Magnetic dispersion (ferrites)
 
 **Inverse design**
