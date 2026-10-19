@@ -11,7 +11,7 @@ import numpy as np  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 FIG = HERE / "figures"
-BASE = HERE.parent / "mie-cylinder-graded" / "data"
+BASE = HERE / "baseline"  # copied from feature/tri-fixes 75f603d
 BASE_ARMS = ["tri-graded-pml", "tri-graded-compact", "cart-graded-compact"]
 TARGETS = [0.02, 0.01, 0.001]
 
