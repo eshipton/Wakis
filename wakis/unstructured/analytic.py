@@ -215,3 +215,114 @@ def line_source_field(r, k, current=1.0):
 
     omega = k * c
     return -omega * mu_0 * current / 4 * hankel2(0, k * np.asarray(r))
+
+
+def _rod_guide_det(k, beta, n, a, b, eps):
+    """
+    Pole-free characteristic function of the hybrid modes of a dielectric rod
+    (radius b, eps) coaxial in a circular PEC guide (radius a) at axial
+    wavenumber beta, angular order n (see `rod_cavity_hybrid`).
+    """
+    from scipy.special import ivp, kv, kvp
+
+    def inner(kap2, r):
+        # f = J_n(kappa r) / kappa^n and d f / dr (entire in kappa^2)
+        if kap2 >= 0:
+            q = np.sqrt(kap2)
+            if q == 0:
+                q = 1e-300
+            return jv(n, q * r) / q**n, q * jvp(n, q * r) / q**n
+        q = np.sqrt(-kap2)
+        return iv(n, q * r) / q**n, q * ivp(n, q * r) / q**n
+
+    def outer(kap2, r):
+        # F = J(kr)Y(ka) - Y(kr)J(ka) (Ez = 0 at a), Gh = dF/da (dHz/dr = 0
+        # at a), both with their r-derivatives; continuous across kappa = 0
+        if kap2 >= 0:
+            q = max(np.sqrt(kap2), 1e-300)
+            F = jv(n, q * r) * yv(n, q * a) - yv(n, q * r) * jv(n, q * a)
+            dF = q * (jvp(n, q * r) * yv(n, q * a) - yvp(n, q * r) * jv(n, q * a))
+            Gh = q * (jv(n, q * r) * yvp(n, q * a) - yv(n, q * r) * jvp(n, q * a))
+            dGh = q * q * (jvp(n, q * r) * yvp(n, q * a) - yvp(n, q * r) * jvp(n, q * a))
+            return F, dF, Gh, dGh
+        q = np.sqrt(-kap2)
+        s = -2 / np.pi
+        F = s * (iv(n, q * r) * kv(n, q * a) - kv(n, q * r) * iv(n, q * a))
+        dF = s * q * (ivp(n, q * r) * kv(n, q * a) - kvp(n, q * r) * iv(n, q * a))
+        Gh = s * q * (iv(n, q * r) * kvp(n, q * a) - kv(n, q * r) * ivp(n, q * a))
+        dGh = s * q * q * (ivp(n, q * r) * kvp(n, q * a) - kvp(n, q * r) * ivp(n, q * a))
+        return F, dF, Gh, dGh
+
+    k1, k2 = eps * k**2 - beta**2, k**2 - beta**2
+    tiny = 1e-9 * k**2  # the functions are continuous through kappa = 0
+    k1 = k1 if abs(k1) > tiny else tiny
+    k2 = k2 if abs(k2) > tiny else tiny
+    f, df = inner(k1, b)
+    F, dF, G, dG = outer(k2, b)
+    t1 = (beta * n / b) ** 2 * (k2 - k1) ** 2 * f**2 * F * G
+    te = k2 * df * G - k1 * f * dG
+    tm = eps * k2 * df * F - k1 * f * dF
+    return t1 - k**2 * te * tm
+
+
+def rod_cavity_hybrid(a, b, eps, height, n_modes=10, kmax=None, p_max=3, n_max=8):
+    """
+    Wavenumbers of a closed cylindrical PEC cavity (radius a, height h) with a
+    coaxial dielectric rod (radius b, rel. permittivity eps) spanning its full
+    height.
+
+    The PEC end caps select standing waves with axial wavenumber
+    beta_p = p pi / h. For p = 0 only TM (Ez) modes exist and k follows from
+    `rod_in_cavity` (TM). For p >= 1 the rod couples Ez and Hz (hybrid
+    HE/EH modes): k solves the 2 x 2 continuity determinant of E_phi and
+    H_phi at r = b with Ez(a) = E_phi(a) = 0,
+
+        (beta n / b)^2 (1/k1^2 - 1/k2^2)^2
+            = k^2 (P/k1^2 - Q_H/k2^2)(eps P/k1^2 - Q_E/k2^2),
+
+    k1^2 = eps k^2 - beta^2, k2^2 = k^2 - beta^2, P the logarithmic
+    derivative of J_n(k1 r) at b and Q_E, Q_H those of the outer Ez and Hz
+    radial functions; it is evaluated in a pole-free form with Bessel
+    functions continued to modified Bessel functions for k^2 < 0. Note that
+    k^2 = k_t^2 + beta^2 holds only for a homogeneous filling.
+
+    Parameters
+    ----------
+    a, b : float
+        Cavity and rod radii [m].
+    eps : float
+        Rod permittivity.
+    height : float
+        Cavity height h [m].
+    n_modes : int
+        Number of modes returned (with degeneracy 2 for n >= 1).
+    kmax : float, optional
+        Upper search limit [1/m] (default 8 / a).
+    p_max : int
+        Largest axial index.
+
+    Returns
+    -------
+    k : ndarray
+        Vacuum wavenumbers [1/m], sorted, repeated by degeneracy.
+    """
+    kmax = kmax or 8 / a
+    roots = []
+    for k in rod_in_cavity(a, b, eps, "TM", n_modes=200, kmax=kmax, n_max=n_max):
+        roots.append(k)
+    for p in range(1, p_max + 1):
+        beta = p * np.pi / height
+        if beta >= kmax:
+            break
+        for n in range(n_max):
+            rs = _roots(
+                lambda k: _rod_guide_det(k, beta, n, a, b, eps), kmax,
+                n_scan=6000, kmin=beta / np.sqrt(eps) * (1 + 1e-9),
+            )  # fmt: skip
+            # discard the branch points kappa = 0 (k = beta, beta / sqrt(eps))
+            rs = [
+                r for r in rs
+                if min(abs(r - beta), abs(r - beta / np.sqrt(eps))) > 1e-7 * beta
+            ]  # fmt: skip
+            roots += rs * (1 if n == 0 else 2)
+    return np.sort(roots)[:n_modes]

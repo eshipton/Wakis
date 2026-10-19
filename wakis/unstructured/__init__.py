@@ -19,6 +19,7 @@ from .polymeshers import hybrid_circles_mesh, voronoi_disk_mesh
 from .polysolver2d import PolygonFIT2D
 from .solver2d import UnstructuredFIT2D
 from .solver3d import UnstructuredFIT3D
+from .prism import PrismFIT3D, PrismMesh
 
 __all__ = [
     "SimplexMesh",
@@ -28,6 +29,8 @@ __all__ = [
     "voronoi_disk_mesh",
     "UnstructuredFIT2D",
     "UnstructuredFIT3D",
+    "PrismMesh",
+    "PrismFIT3D",
     "estimate_memory",
     "ball_mesh",
     "disk_mesh",
