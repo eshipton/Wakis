@@ -90,8 +90,10 @@ CSR order, the CPML terms of a component added in one expression), ~1e-16 per st
 most linearly over a few hundred steps, so 1e-11 leaves a margin of ~10³ while a 10⁻⁶ change of any
 coefficient is detected.
 
-Full suites: see the commit message / report (GPU suite `xvfb-run -a pytest --gpu -m "not slow"`, CPU
-suite `pytest -m "not slow"`).
+Full suites on `cem-gpuperf` (commit 7346761): GPU `xvfb-run -a pytest --gpu -m "not slow"` 353 passed,
+16 skipped, 0 failed (59 min); CPU `pytest -m "not slow" -n 6` 322 passed, 47 skipped (the GPU-only
+tests), 0 failed. `wakis.estimate(fused=True)` (CPU-only code, added after) passes `test_036_estimate.py`
+and `test_045::test_estimate_fused_step` locally.
 
 ## CPU path (report only; unchanged)
 
