@@ -38,8 +38,28 @@ def arms():
         Cartesian2DArm(conformal=None, graded=True),
         Cartesian2DArm(conformal="all", graded=False),
         Cartesian2DArm(conformal="all", graded=True),
-        Triangles2DArm(graded=False),
-        Triangles2DArm(graded=True),
+        Triangles2DArm(graded=False, n_pml=40),
+        Triangles2DArm(graded=True, n_pml=40),
+        Cartesian2DArm(
+            conformal="all",
+            graded=True,
+            ppw_out=None,
+            ratio=2.0,
+            name="cart-conformal-all-graded-r2",
+        ),
+        Cartesian2DArm(
+            conformal="all",
+            graded=True,
+            ppw_out=None,
+            ratio=4.0,
+            name="cart-conformal-all-graded-r4",
+        ),
+        Triangles2DArm(
+            graded=True, n_pml=40, ppw_out=None, ratio=2.0, name="tri-graded-r2"
+        ),
+        Triangles2DArm(
+            graded=True, n_pml=40, ppw_out=None, ratio=4.0, name="tri-graded-r4"
+        ),
     ]
     from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
 
@@ -58,6 +78,9 @@ def arms():
                            name="cart-staircase-edges-graded-hz1.5ht"),
         CartesianDipoleArm(conformal="edges", hz_ratio=0.75, use_gpu=gpu,
                            name="cart-staircase-edges-graded-hz0.75ht"),
+        CartesianDipoleArm(conformal="edges", port="sheet", use_gpu=gpu),
+        CartesianDipoleArm(conformal="edges", ends="round", use_gpu=gpu),
+        CartesianDipoleArm(conformal="edges", port="sheet", ends="round", use_gpu=gpu),
     ]  # fmt: skip
     return {a.name: a for a in out}
 
@@ -65,11 +88,15 @@ def arms():
 PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
+    "B3m2": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
     "B4b": ["B4"],
     "B4gpu": ["B4"],
     "B4hz": ["B4"],
+    "B4feed": ["B4", "B4-g2", "B4-g4"],
     "WIN": [],
+    "B1tri": [],
+    "B1cart": [],
     "REDO": [],
 }
 
@@ -107,6 +134,29 @@ def tasks(phase):
     if phase == "B4hz":  # gap/axial cell study at h_t = a/3 (h_z = 0.25, 0.125 mm)
         out = [("B4", "cart-staircase-edges-graded-hz1.5ht", 0.5e-3 / 3),
                ("B4", "cart-staircase-edges-graded-hz0.75ht", 0.5e-3 / 3)]  # fmt: skip
+    if phase == "B4feed":  # feed-model and end-cap study at h_t = a/3
+        ht = 0.5e-3 / 3
+        base = "cart-staircase-edges-graded"
+        out = [
+            ("B4", f"{base}-sheet", ht),
+            ("B4-g2", base, ht),
+            ("B4-g4", base, ht),
+            ("B4-g4", f"{base}-sheet", ht),
+            ("B4", f"{base}-round", ht),
+            ("B4", f"{base}-sheet-round", ht),
+            ("B4-g2", f"{base}-sheet", ht),
+        ]
+    if phase in ("B1tri", "B1cart"):  # B1 (3000 fs), outer size without lambda/20 cap
+        from wakis.benchmarks import get_case
+
+        arm = arms()["tri-graded"]
+        names_b1 = (("tri-graded-r2", "tri-graded-r4") if phase == "B1tri" else
+                    ("cart-conformal-all-graded-r2", "cart-conformal-all-graded-r4"))  # fmt: skip
+        for case in ("B1-TM", "B1-TE"):
+            for h in arm.resolutions(get_case(case))[::-1]:
+                for name in names_b1:
+                    out.append((case, name, h))
+        return out
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
@@ -120,7 +170,7 @@ def tasks(phase):
     return out
 
 
-def run_tasks(mine, outdir, publish=False, machine=None):
+def run_tasks(mine, outdir, publish=False, machine=None, phase=None):
     from wakis.benchmarks import get_case, run, save_record
 
     A = arms()
@@ -135,14 +185,25 @@ def run_tasks(mine, outdir, publish=False, machine=None):
         tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"  # (B4: h in m * 1e9)
         if wf != 1:
             tag += f"_w{wf:g}"
+        if phase == "B3m2":
+            tag += "_m2"
+            rec["metric_version"] = (
+                "m2: stencil mean, second-order gap reconstruction "
+                "(tri patch, cart bilinear)"
+            )
         if os.environ.get("WAKIS_COMMIT"):
             rec["commit"] = os.environ["WAKIS_COMMIT"]
         save_record(rec, Path(outdir) / f"{tag}.json")
         if publish:
             from wakis.benchmarks.results import publish as pub
 
-            pub(rec, machine=machine,
-                tag=None if wf == 1 else f"{h * 1e9:.4f}nm_w{wf:g}")  # fmt: skip
+            if phase == "B3m2":
+                pub_tag = f"{h * 1e9:.4f}nm_m2"
+            elif wf != 1:
+                pub_tag = f"{h * 1e9:.4f}nm_w{wf:g}"
+            else:
+                pub_tag = None
+            pub(rec, machine=machine, tag=pub_tag)
         m = rec.get("metrics", {})
         msg = rec.get("error") or " ".join(
             f"{k}={m[k]:.4g}"
@@ -187,7 +248,7 @@ def main():
         ]
     else:
         mine = tl[a.shard :: a.nshards]
-    run_tasks(mine, a.outdir or DATA / a.phase, a.publish, a.machine)
+    run_tasks(mine, a.outdir or DATA / a.phase, a.publish, a.machine, phase=a.phase)
 
 
 if __name__ == "__main__":

@@ -50,16 +50,58 @@ def _axis_z(L, g, hz, h_out, r_out, n_pml, growth=1.2):
     return np.concatenate([-x[:0:-1], x])
 
 
+class HalfCapsule:
+    """
+    Half of a round-ended wire along z: a cylinder of radius `radius` from the
+    flat gap face `z_flat` to `z_tip - sign * radius`, closed by a hemisphere
+    of radius `radius` centred there so that the tip reaches `z_tip`.
+    """
+
+    def __init__(self, z_flat, z_tip, radius, material="pec"):
+        self.z_flat = float(z_flat)
+        self.z_tip = float(z_tip)
+        self.radius = float(radius)
+        self.material = material
+        lo_z, hi_z = sorted((self.z_flat, self.z_tip))
+        self.center = np.array([0.0, 0.0, 0.5 * (lo_z + hi_z)])
+        self.bounds = (
+            np.array([-self.radius, -self.radius, lo_z]),
+            np.array([self.radius, self.radius, hi_z]),
+        )
+
+    def weight(self, x, y, z, tol):
+        """
+        Fill weight at broadcast coordinates (x, y, z): 1 inside, 0.5 on the
+        surface within `tol`, 0 outside (same interface as `Cylinder`).
+        """
+        s = 1.0 if self.z_tip >= self.z_flat else -1.0
+        u = s * z
+        u_flat = s * self.z_flat
+        u_cap = s * self.z_tip - self.radius
+        rho = np.hypot(x, y)
+        r_eff = np.hypot(rho, np.maximum(u - u_cap, 0.0))
+        d = np.minimum(self.radius - r_eff, u - u_flat)
+        return np.where(d > tol, 1.0, np.where(d >= -tol, 0.5, 0.0))
+
+
 class CartesianDipoleArm(Arm):
     def __init__(self, conformal=False, ladder=None, n_pml=10, cfl=0.95,
                  n2f=True, pad_xy=0.21, pad_z=0.14, graded=True, hz_ratio=4.0, ppw_out=20,
-                 use_gpu=False,
+                 use_gpu=False, port="axis", ends="flat",
                  name=None):  # fmt: skip
+        if port not in ("axis", "sheet"):
+            raise ValueError(f"port must be 'axis' or 'sheet', got {port!r}.")
+        if ends not in ("flat", "round"):
+            raise ValueError(f"ends must be 'flat' or 'round', got {ends!r}.")
+        if ends == "round" and conformal != "edges":
+            raise ValueError("ends='round' requires conformal='edges'.")
         self.pad_xy, self.pad_z = pad_xy, pad_z
         self.graded = graded
         self.hz_ratio = hz_ratio
         self.ppw_out = ppw_out
         self.use_gpu = use_gpu
+        self.port = port
+        self.ends = ends
         self.conformal = conformal
         self.ladder = ladder
         self.n_pml = n_pml
@@ -68,10 +110,13 @@ class CartesianDipoleArm(Arm):
         kind = {False: "staircase-stl", "edges": "staircase-edges"}.get(
             conformal, f"conformal-{conformal}"
         )
-        self.name = name or f"cart-{kind}-{'graded' if graded else 'uniform'}"
+        suffix = ("-sheet" if port == "sheet" else "") + (
+            "-round" if ends == "round" else ""
+        )
+        self.name = name or f"cart-{kind}-{'graded' if graded else 'uniform'}{suffix}"
 
     def supports(self, case):
-        return case.name == "B4"
+        return case.name.startswith("B4")
 
     def resolutions(self, case):
         if self.ladder is not None:
@@ -119,14 +164,35 @@ class CartesianDipoleArm(Arm):
         if self.conformal == "edges":
             from ...templates.shapes import Cylinder, assign_materials
 
-            arm_len = L / 2 - g / 2
-            halves = [Cylinder((0, 0, s * (g / 2 + arm_len / 2)), a, arm_len, "pec")
-                      for s in (1, -1)]  # fmt: skip
+            if self.ends == "round":
+                halves = [HalfCapsule(s * g / 2, s * L / 2, a, "pec") for s in (1, -1)]
+            else:
+                arm_len = L / 2 - g / 2
+                halves = [Cylinder((0, 0, s * (g / 2 + arm_len / 2)), a, arm_len, "pec")
+                          for s in (1, -1)]  # fmt: skip
             assign_materials(solver, halves, case.freqs.mean())
+        if self.port == "sheet":
+            s = float(np.max(xn[xn <= a / np.sqrt(2) + 1e-12 * ht]))
+            port_size = (2 * s, 2 * s, g)
+        else:
+            s = 0.0
+            port_size = (0, 0, g)
         port = wakis.LumpedPort(
-            case.source(), component="z", center=(0, 0, 0), size=(0, 0, g),
+            case.source(), component="z", center=(0, 0, 0), size=port_size,
             impedance=case.z0,
         )  # fmt: skip
+        port._set_edges(solver)
+        (ix, iy, iz), (cx, cy, _) = grid.region_indices(
+            "E", "z", port.center, port.size
+        )
+        ie = solver.ieps.toarray()
+        ie = ie.get() if hasattr(ie, "get") else np.asarray(ie)
+        ie_z = ie[2 * solver.N : 3 * solver.N].reshape(
+            (solver.Nx, solver.Ny, solver.Nz), order="F"
+        )
+        assert np.all(ie_z[np.ix_(ix, iy, iz)] != 0)
+        assert np.all(np.hypot(cx[:, None], cy[None, :]) <= a + 1e-12)
+        assert np.all(ie_z[np.ix_(ix, iy, [iz[0] - 1, iz[-1] + 1])] == 0)
         mons = []
         if self.n2f:
             n2f_f = np.linspace(case.freqs.min(), case.freqs.max(), 11)
@@ -140,7 +206,13 @@ class CartesianDipoleArm(Arm):
                 ),
             )
             mons.append(mon)
-        return grid, solver, port, mons, dict(hz=hz, h_out=h_out)
+        return (
+            grid,
+            solver,
+            port,
+            mons,
+            dict(hz=hz, h_out=h_out, port=self.port, ends=self.ends, port_s=s),
+        )
 
     def run(self, case, ht):
         t0 = time.time()

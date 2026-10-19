@@ -16,7 +16,8 @@ Baseline arm: triangular FIT (`UnstructuredFIT2D`, Voronoi Hodge).
 * DFT of the scattered node field on the extraction circles (linear
   interpolation), incident phasor at the origin from the analytic incident
   wave at the same time levels (TE: H_z at the half steps), gap E from the
-  Raviart-Thomas reconstruction of the edge fluxes (TE).
+  second-order least-squares patch reconstruction of the edge fluxes (with the
+  pointwise Raviart-Thomas reconstruction kept as ``e_gap_rt``, TE).
 
 The resolution label is h [m] on the scatterers.
 """
@@ -43,7 +44,9 @@ class Triangles2DArm(Arm):
     ratio : float
         Largest graded size in units of h (h_out = min(ratio h,
         lambda_min,host / ppw_out)), so that the whole mesh refines with h.
-    ppw_out : float
+    ppw_out : float or None
+        Cap h_out at lambda_min,host / ppw_out; None: no cap (h_out = ratio h,
+        so the outer mesh keeps refining with h; needed for sub-1 % B1).
     n_pml : int
     cfl : float
     hodge : {'voronoi', 'barycentric'}
@@ -53,7 +56,29 @@ class Triangles2DArm(Arm):
     """
 
     def __init__(self, graded=True, growth=1.2, ppw_out=20, ratio=4.0, n_pml=10, cfl=0.95,
-                 hodge="voronoi", ladder=None, name=None, lts=None):  # fmt: skip
+                 hodge="voronoi", ladder=None, name=None, lts=None, pml=None,
+                 pml_dr=1.0, r_pml=None, gap_patch=True, pml_d=None):  # fmt: skip
+        """
+        pml : dict, optional
+            Extra `UnstructuredFIT2D` PML options (order, R, kappa_max, alpha).
+        pml_dr : float
+            Radial spacing of the PML rings in units of h_out.
+        pml_d : float, optional
+            PML thickness [m] fixed in physical units (ring spacing pml_d /
+            n_pml, overrides pml_dr).
+        r_pml : float, optional
+            PML start radius [m] (default: the case's absorber radius).
+        gap_patch : bool
+            When True (default), ``e_gap`` is the gap field from a
+            least-squares linear fit to the edge fluxes D.n of the 12 nearest
+            host edges (second order) and ``e_gap_rt`` is the pointwise
+            lowest-order Raviart-Thomas reconstruction (diagnostic).
+        """
+        self.pml = dict(pml or {})
+        self.pml_dr = pml_dr
+        self.r_pml = r_pml
+        self.gap_patch = gap_patch
+        self.pml_d = pml_d
         self.graded = graded
         self.growth = growth
         self.ppw_out = ppw_out
@@ -81,17 +106,60 @@ class Triangles2DArm(Arm):
         lam_in = np.min(case.wavelengths) / 2.0
         return [lam_in / r for r in (10, 14, 20, 28, 40)]
 
+    @staticmethod
+    def _patch_matrix(mesh, solver, gpts, case, k=12):
+        """
+        Sparse (2 ng x n_edges) map edge fluxes -> E at the gap points by a
+        least-squares linear fit E(x) = a + B (x - x0) to D.n / eps = d_e /
+        (L_e eps_0 eps_b) on the k nearest edges whose cells are all host.
+        """
+        ce = mesh.cell_edges
+        host_cell = mesh.cell_tags == 0
+        bad = np.zeros(mesh.n_edges, bool)
+        bad[ce[~host_cell].ravel()] = True
+        cand = np.flatnonzero(~bad)
+        mid = mesh.edge_midpoint[cand]
+        t = mesh.edge_tangent[cand]
+        n_e = np.stack([t[:, 1], -t[:, 0]], 1)  # flux normal t x z
+        scale = 1.0 / (mesh.edge_length[cand] * eps_0 * case.n_background**2)
+        ng = len(gpts)
+        rows, cols, vals = [], [], []
+        for i, x0 in enumerate(gpts):
+            j = np.argsort(np.hypot(*(mid - x0).T))[:k]
+            dx = mid[j] - x0
+            ell = np.abs(dx).max()  # scale: well-conditioned fit
+            dx = dx / ell
+            nx, ny = n_e[j, 0], n_e[j, 1]
+            # unknowns (ax, ay, bxx, bxy, byx, byy): E.n = nx (ax + bxx dx + bxy dy) + ny (ay + ...)
+            Amat = np.stack(
+                [nx, ny, nx * dx[:, 0], nx * dx[:, 1], ny * dx[:, 0], ny * dx[:, 1]], 1
+            )
+            pinv = np.linalg.pinv(Amat)  # (6, k)
+            for comp, row in ((0, i), (1, ng + i)):
+                rows += [row] * len(j)
+                cols += list(cand[j])
+                vals += list(pinv[comp] * scale[j])
+        return sp.csr_matrix((vals, (rows, cols)), shape=(2 * ng, mesh.n_edges))
+
     def build(self, case, h):
         from ...unstructured import UnstructuredFIT2D
 
         lam_host = np.min(case.wavelengths) / case.n_background
         h_out = (
-            max(h, min(self.ratio * h, lam_host / self.ppw_out)) if self.graded else h
+            max(
+                h,
+                min(
+                    self.ratio * h, lam_host / self.ppw_out if self.ppw_out else np.inf
+                ),
+            )
+            if self.graded
+            else h
         )
-        r0 = max(case.r_absorber, max(case.circles) + 2 * h_out)
+        r0 = max(self.r_pml or case.r_absorber, max(case.circles) + 2 * h_out)
+        dr = self.pml_d / self.n_pml if self.pml_d else self.pml_dr * h_out
         mesh = cluster_mesh(
             case.cylinders, h, h_out, r0, growth=self.growth,
-            pml_layers=self.n_pml, pml_dr=h_out,
+            pml_layers=self.n_pml, pml_dr=dr,
         )  # fmt: skip
         nb2 = case.n_background**2
         mats = {0: [nb2, 1.0], len(case.cylinders) + 1: [nb2, 1.0]}
@@ -100,7 +168,8 @@ class Triangles2DArm(Arm):
         solver = UnstructuredFIT2D(
             mesh, mats, polarization=case.polarization, bc="pec", hodge=self.hodge,
             cfl=self.cfl, lts=self.lts,
-            pml=dict(r0=r0, r1=r0 + self.n_pml * h_out, kappa_max=1.0, alpha=0.0),
+            pml=dict(dict(r0=r0, r1=r0 + self.n_pml * dr, kappa_max=1.0, alpha=0.0),
+                     **self.pml),
         )  # fmt: skip
         d = case.direction
         solver.add_plane_wave(
@@ -128,12 +197,15 @@ class Triangles2DArm(Arm):
                 eps_0 * case.n_background**2
             )
             gpos = gpts @ solver.plane_wave["k"]
+            if self.gap_patch:
+                Pp = self._patch_matrix(mesh, solver, gpts, case)
         setup_s = time.time() - t0
         dt = solver.dt
         shift = 0.0 if case.polarization == "TM" else -0.5 * dt
         freqs = case.freqs
         acc = np.zeros((len(freqs), len(pts)), complex)
         acc_e = np.zeros((len(freqs), 2 * len(case.gap_points) if gap else 2), complex)
+        acc_p = np.zeros_like(acc_e)
         n_steps = int(case.t_run / dt)
         times = (np.arange(n_steps) + 1) * dt
         d = case.direction
@@ -149,7 +221,13 @@ class Triangles2DArm(Arm):
                 es = Pg @ solver.v
                 einc = solver._incident_signal(gpos, times[n])
                 et = es + np.concatenate([einc * pvec[0], einc * pvec[1]])
-                acc_e += np.outer(np.exp(-2j * np.pi * freqs * times[n]), et) * dt
+                kern = np.exp(-2j * np.pi * freqs * times[n]) * dt
+                acc_e += np.outer(kern, et)
+                if self.gap_patch:
+                    ep = Pp @ solver.v + np.concatenate(
+                        [einc * pvec[0], einc * pvec[1]]
+                    )
+                    acc_p += np.outer(kern, ep)
             if n % 4000 == 0 and not np.all(np.isfinite(solver.u)):
                 raise FloatingPointError("unstable")
         run_s = time.time() - t1
@@ -161,10 +239,16 @@ class Triangles2DArm(Arm):
             cost=dict(unknowns=int(solver.free.size + mesh.n_edges),
                       nodes=int(solver.free.size), cells=int(mesh.n_cells),
                       steps=n_steps, dt=dt, run_s=run_s, setup_s=setup_s, h=h,
-                      h_max=h_out),
+                      h_max=h_out, n_pml=self.n_pml,
+                      gap_metric="patch" if self.gap_patch else "rt"),
         )  # fmt: skip
         if gap:
-            out["e_gap"] = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
+            rt = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
+            if self.gap_patch:
+                out["e_gap"] = np.stack([acc_p[:, :ng], acc_p[:, ng:]], 2)
+                out["e_gap_rt"] = rt
+            else:
+                out["e_gap"] = rt
             ui = solver._incident_signal(np.zeros(1), times)  # amplitude s(t) at origin
             out["e0_gap"] = (np.exp(-2j * np.pi * np.outer(freqs, times)) @ ui) * dt
         return out

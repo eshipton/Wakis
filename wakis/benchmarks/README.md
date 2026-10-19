@@ -64,7 +64,7 @@ Baseline results, figures and cost-to-target tables are in `studies/benchmarks/`
 All defined in `wakis.benchmarks.metrics` and `case.evaluate`:
 - **NRMS** = sqrt(mean (y − y_ref)²) / max |y_ref| over the band. Unlike the relative RMS of B1, it stays meaningful where a metal's Q is small.
 - **Peak wavelength** (parabola through the three largest samples), **peak height**, **FWHM** (interpolated half-maximum crossings), as relative errors.
-- **B3**: `enh_peak` (relative error of the maximum of the gap enhancement, the mean of |E/E0|² over `case.gap_points`: the gap centre plus 8 points at radius g/4) and `enh_lam` (its wavelength). `enh_centre_peak` is the pointwise centre value, a diagnostic only: it depends on where the point falls inside a cell.
+- **B3**: `enh_peak` (relative error of the maximum of the gap enhancement, the mean of |E/E0|² over `case.gap_points`: the gap centre plus 8 points at radius g/4) and `enh_lam` (its wavelength), evaluated from a second-order gap-field reconstruction (`m2`: least-squares linear patch fit to the 12 nearest host edge fluxes on triangles, bilinear interpolation of staggered E_x/E_y on Cartesian grids). `enh_centre_peak` (pointwise centre value) and `enh_rt_peak` (pointwise lowest-order Raviart–Thomas on triangles, from `e_gap_rt`) are diagnostics only: both suffer from first-order within-cell position error.
 - **Diagnostics**: `boundary_reflection` (|incoming| / |outgoing| harmonic power on the extraction circles) and the fit residual.
 - **Cost to target**: `cost_to_target(records, metric, target)` interpolates (log-log) the unknowns, work (= unknowns × steps) and run time from which the error stays below the target on finer meshes. Default targets live in `case.targets` (e.g. B2: Q_ext NRMS 2/1/0.5 %, LSPR wavelength 0.5/0.2 %, height 2/1 %; B3: gap enhancement 5/2 %).
 
@@ -116,8 +116,8 @@ What the B4 dipole arm must deliver:
 
 | arm | file | notes |
 |---|---|---|
-| `cart-staircase-{uniform,graded}`, `cart-conformal-all-{uniform,graded}` | `cartesian2d.py` | `SolverFIT3D` on a one-cell periodic slab; TF/SF box; CPML; dispersive subpixel network for `'all'`; graded = h on the scatterers' bounding box + 2h, growth 1.2 to min(4h, λ_host/20) |
-| `tri-{uniform,graded}` | `triangles2d.py` | `UnstructuredFIT2D`, Voronoi Hodge, `meshing.cluster_mesh` (interface rings + greedy Poisson-disk fill + polar PML rings); scattered-field plane wave with the dispersive source of `wakis.unstructured.dispersive_planewave`; radial CFS-PML |
+| `cart-staircase-{uniform,graded}`, `cart-conformal-all-{uniform,graded}` | `cartesian2d.py` | `SolverFIT3D` on a one-cell periodic slab; TF/SF box; CPML; dispersive subpixel network for `'all'`; bilinear interpolation for `e_gap` (`gap_metric='bilinear'`); graded = h on the scatterers' bounding box + 2h, growth 1.2 to min(4h, λ_host/20) |
+| `tri-{uniform,graded}` | `triangles2d.py` | `UnstructuredFIT2D`, Voronoi Hodge, `meshing.cluster_mesh` (interface rings + greedy Poisson-disk fill + polar PML rings); scattered-field plane wave with the dispersive source of `wakis.unstructured.dispersive_planewave`; radial CFS-PML (`n_pml=40` in `bench_study.py`); second-order 12-edge patch reconstruction for `e_gap` (`gap_metric='patch'`, with RT in `e_gap_rt`) |
 | `cart-staircase-edges-graded` (reference baseline), `cart-staircase-stl-graded`, `cart-conformal-pec-graded` | `cartesian_dipole.py` | 3D dipole: graded transverse grid, h_z = min(g, 4 h_t), `LumpedPort`, CPML, `Near2FarMonitor`. `edges`: an E edge is PEC when its midpoint is in the wire. `stl` and `conformal-pec` currently inherit the legacy STL cell masks (any node inside), which thicken the wire by up to a cell; the conformal-PEC records are marked as affected by this bug until `fix/conformal-pec-legacy-mask` lands. `BENCH_GPU=1` runs the arm on CuPy |
 
 ## Cost estimates (one core, uncontended n2-standard-2)
