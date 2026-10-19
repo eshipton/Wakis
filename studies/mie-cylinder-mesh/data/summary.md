@@ -44,14 +44,17 @@
 | tri-barycentric | TE | 14 | 22.4 | 210,457 | 33.7 | 29631 | 6.2e9 | 540 | 5.34 % | 21.88 % | 0.57 % | 6.14 % | 12.7 % | 0.053 / 0.0281 / 0.0334 |
 | tri-barycentric | TE | 20 | 15.7 | 429,224 | 23.7 | 42114 | 18.1e9 | 1748 | 2.58 % | 10.42 % | 0.28 % | 3.92 % | 7.0 % | 0.053 / 0.0278 / 0.0318 |
 | tri-barycentric | TE | 28 | 11.2 | 840,933 | 16.9 | 59209 | 49.8e9 | 4336 | 1.26 % | 5.01 % | 0.14 % | 3.11 % | 3.7 % | 0.053 / 0.0277 / 0.0321 |
-
-Pending (still running): tri-barycentric TE res 40
+| tri-barycentric | TE | 40 | 7.9 | 1,715,932 | 11.8 | 84871 | 145.6e9 | 8456 | 0.65 % | 2.84 % | 0.07 % | 2.85 % | 1.8 % | 0.053 / 0.0276 / 0.0327 |
 
 Flux-box cross-check (Cartesian, 4 cells along z):
 
 | arm | pol | res | RMS err harmonics | RMS err flux box | RMS (harm - flux)/series |
 |---|---|---|---|---|---|
 | conformal | TE | 10 | 8.73 % | 8.45 % | 1.210 % |
+| conformal | TE | 20 | 2.23 % | 2.11 % | 0.324 % |
 | staircase | TE | 10 | 15.37 % | 15.46 % | 1.275 % |
+| staircase | TE | 20 | 9.76 % | 9.75 % | 0.329 % |
 | conformal | TM | 10 | 7.23 % | 6.91 % | 1.301 % |
+| conformal | TM | 20 | 2.45 % | 2.45 % | 0.323 % |
 | staircase | TM | 10 | 16.14 % | 16.33 % | 1.402 % |
+| staircase | TM | 20 | 6.10 % | 6.03 % | 0.306 % |

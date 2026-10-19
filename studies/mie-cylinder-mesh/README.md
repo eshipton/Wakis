@@ -1,6 +1,6 @@
 # Mie cylinder: triangular FIT vs the Cartesian FIT grid
 
-> **Interim results.** One run is still pending (tri-barycentric TE at res 40), along with the res-20 flux-box cross-checks. Open markers in figure (d) show the pending runs. The numbers below will be updated when those runs finish.
+All 48 main runs and 8 flux cross-checks are complete. First comparison; not yet cross-checked by a second reviewer.
 
 **Problem.** A plane wave hits an infinite dielectric cylinder at normal incidence: n = 2, a = 1 µm, x = ka from 2 to 10 (41 points), TM (E_z) and TE (H_z). We compare Q_sca from Wakis FIT on five mesh arms with the exact series (`wakis.analytic.cylinder_efficiencies`, Bohren & Huffman ch. 8).
 
@@ -25,7 +25,7 @@ All arms share the target edge length h = λ_min,diel / res (λ_min,diel = 0.314
 | ![](figures/c_qsca.png) | **(c)** Q_sca vs x at res 20. The exact series is drawn as lines and the Wakis FIT runs as markers; the lower panels show the error vs the series. |
 | ![](figures/d_convergence.png) | **(d)** RMS relative error of Q_sca over x = 2 to 10 vs cells per λ, vs unknowns and vs work (unknowns × steps). The dotted lines are second-order guides. |
 
-## Numbers (interim)
+## Numbers
 
 The full table is in [`data/summary.md`](data/summary.md). Unknowns are 3 per cell for the Cartesian arms (E_z, H_x, H_y per z layer) and nodes + edges for the triangles. Both counts include the whole domain: the Cartesian square includes the CPML, while the triangle domain is a disk of radius 2.7 µm.
 
@@ -58,7 +58,7 @@ The barycentric Hodge stays within 5 % of the Voronoi error everywhere: the mesh
 - Without de-embedding, the triangle error saturates near 2.5–2.9 % (column "RMS err no de-embed"). With de-embedding it keeps converging.
 - Cartesian CPML (10 cells): 0.1–2.6 % at x = 2 and ≤ 0.04 % at x = 6.
 
-**Cross-check.** At res 10, the Cartesian flux-box Q_sca (separate runs with 4 z cells) agrees with the harmonic Q_sca of the same runs to 1.2–1.4 % RMS. Part of this gap comes from the extraction itself: the H_n(kr) basis uses the continuum k, not the grid's k. The res-20 cross-check is pending.
+**Cross-check.** The Cartesian flux-box Q_sca (separate runs with 4 z cells) agrees with the harmonic Q_sca of the same runs to 1.2–1.4 % RMS at res 10 and to 0.31–0.33 % RMS at res 20. The gap shrinks about 4× when h halves, as expected for an O(h²) extraction error: the H_n(kr) basis uses the continuum k, not the grid's k. That error is common to all arms and far below the error differences between them.
 
 ## Limits & caveats
 
