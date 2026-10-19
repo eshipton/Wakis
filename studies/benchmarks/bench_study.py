@@ -54,6 +54,10 @@ def arms():
                            name="cart-staircase-edges-graded-bigdomain"),
         CartesianDipoleArm(conformal="edges", ppw_out=40, use_gpu=gpu,
                            name="cart-staircase-edges-graded-ppw40"),
+        CartesianDipoleArm(conformal="edges", hz_ratio=1.5, use_gpu=gpu,
+                           name="cart-staircase-edges-graded-hz1.5ht"),
+        CartesianDipoleArm(conformal="edges", hz_ratio=0.75, use_gpu=gpu,
+                           name="cart-staircase-edges-graded-hz0.75ht"),
     ]  # fmt: skip
     return {a.name: a for a in out}
 
@@ -64,6 +68,7 @@ PHASES = {
     "B4": ["B4"],
     "B4b": ["B4"],
     "B4gpu": ["B4"],
+    "B4hz": ["B4"],
     "WIN": [],
     "REDO": [],
 }
@@ -99,6 +104,9 @@ def tasks(phase):
             out.append(("B4", "cart-staircase-edges-graded", a / q))
         out.append(("B4", "cart-staircase-edges-graded-bigdomain", a / 2))
         out.append(("B4", "cart-staircase-edges-graded-ppw40", a / 2))
+    if phase == "B4hz":  # gap/axial cell study at h_t = a/3 (h_z = 0.25, 0.125 mm)
+        out = [("B4", "cart-staircase-edges-graded-hz1.5ht", 0.5e-3 / 3),
+               ("B4", "cart-staircase-edges-graded-hz0.75ht", 0.5e-3 / 3)]  # fmt: skip
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
