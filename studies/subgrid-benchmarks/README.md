@@ -56,7 +56,7 @@ The full tables, with every arm in the store, are in [`data/summary_B2_B3.md`](d
 
 - The subgrid needs 1.5–3.8× fewer unknowns than graded Cartesian at 10 %, but 3–4× more than triangles or the hybrid, and it does not reach 5 % on the ladder.
 - Refining the gap zone by 1–2 extra levels (zone2L1/L2, gap4) does not lower the error at equal surface h. The error comes from the first-order TE metal-surface averaging on the whole facing surfaces, not from resolving the gap.
-- The stale-store caveat: the triangle and Cartesian B3 records are being regenerated (bench-redo-20261019-0741), so their B3 numbers here are from the store at the time of writing. The arms `subgrid-2to1-gap4`, `-gap4-lts8` and `-lts4` in the store still carry the old centre-point metric. `subgrid-2to1`, `-zone2L1` and `-zone2L2` were republished with the 9-point metric.
+- The stale-store caveat: the triangle and Cartesian B3 records are being regenerated (bench-redo-20261019-0741), so their B3 numbers here are from the store at the time of writing. In the store, the original `subgrid-2to1-gap4`, `-gap4-lts8` and `-lts4` B3 records (centre-point metric) carry `superseded_by_metric_change: true`, and each B3 prefix has a `README_superseded_subgrid.txt`. They were not deleted. Reruns with the 9-point metric (`data/B3s`, job subgrid-b3s-20261019-083629) are published beside them under tags `<h>nm-stencil`. Their best errors are 5.0–8.6 % at 0.5–0.71 nm, so the conclusions are unchanged. `subgrid-2to1`, `-zone2L1` and `-zone2L2` already use the 9-point metric.
 
 ### S1 (extra case): Si nanogap dimer, where local refinement should pay off
 
@@ -87,7 +87,7 @@ The full tables, with every arm in the store, are in [`data/summary_B2_B3.md`](d
 
 **Data folders.**
 - `data/B2`, `data/B2p`: B2.
-- `data/B3n`: B3 with the 9-point metric.
+- `data/B3n`, `data/B3s`: B3 with the 9-point metric.
 - `data/B3`, `data/B3z`: B3 with the superseded centre-point metric; not used above.
 - `data/S1`: S1 with the 9-point metric.
 - `data/S1_centre`: the first S1 sweep with the centre-point metric. The conclusions are the same: subgrid 4.3 % at 22k unknowns vs Cartesian 3.4 % at 677k for g2.
