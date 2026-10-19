@@ -231,7 +231,7 @@ def extract(signals, dt, t0):
     return found
 
 
-def clusters(found, rel=3e-5, min_support=3, min_amp=1e-3):
+def clusters(found, rel=1e-4, min_support=2, min_amp=1e-3):
     """
     Robust mode list: fitted frequencies of all signals grouped within
     `rel`; a mode needs fits in >= `min_support` signals with relative
@@ -393,8 +393,13 @@ def run_tet(res, graded, workdir):
     return out
 
 
+# coarse resolutions added later (appended so that task indices stay stable)
+EXTRA = [(a, r) for a in ("prism", "prism-graded", "cart", "cart-graded") for r in (5, 6)]
+EXTRA += [(a, r) for a in ("tet", "tet-graded") for r in (4, 5, 6)]
+
+
 def tasks():
-    return [(arm, r) for arm in ARMS for r in RES[arm]]
+    return [(arm, r) for arm in ARMS for r in RES[arm]] + EXTRA
 
 
 def main(argv=None):

@@ -64,8 +64,8 @@ class PrismDipoleArm(Arm):
         return [case.radius / q for q in (1, 1.5, 2, 3, 4)]
 
     def build(self, case, ht):
-        from ..unstructured import PrismFIT3D, PrismMesh, graded_disk_mesh
-        from ..unstructured.smoothing import odt_smooth, radial_region
+        from ...unstructured import PrismFIT3D, PrismMesh, graded_disk_mesh
+        from ...unstructured.smoothing import odt_smooth, radial_region
 
         L, a, g = case.length, case.radius, case.gap
         lam_min = c_light / case.freqs.max()

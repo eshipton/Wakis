@@ -25,9 +25,16 @@ TARGETS = [1e-2, 1e-3]
 
 
 def load():
+    import sys
+
+    sys.path.insert(0, HERE)
+    import prism_study as S
+
     rows = {}
     for fn in glob.glob(os.path.join(DATA, "*.json")):
         d = json.load(open(fn))
+        if "found" in d:  # re-score from the raw fits (current extraction)
+            d.update(S.score([tuple(x) for x in d["found"]], d["dt"]))
         if "arm" in d and np.isfinite(d.get("rms", np.nan)):
             rows.setdefault(d["arm"], []).append(d)
     for arm in rows:
