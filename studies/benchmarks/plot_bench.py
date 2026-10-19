@@ -201,8 +201,8 @@ def fig_b3_reference_map(fname="b3_reference_field_map.png"):
         case = get_case(f"B3-g{g}")
         p = M.peak(case.wavelengths, case.reference["enh"])
         cl = case.cluster(c0 / p["lam_peak"])
-        x = np.linspace(-70e-9, 70e-9, 281)
-        y = np.linspace(-45e-9, 45e-9, 181)
+        x = np.linspace(-70e-9, 70e-9, 141)
+        y = np.linspace(-45e-9, 45e-9, 91)
         X, Y = np.meshgrid(x, y)
         pts = np.stack([X.ravel(), Y.ravel()], 1)
         inside = np.zeros(len(pts), bool)
@@ -219,7 +219,7 @@ def fig_b3_reference_map(fname="b3_reference_field_map.png"):
                                     fill=False, color="w", lw=0.8))  # fmt: skip
         ax.set_aspect("equal")
         ax.set_title(
-            f"exact |E/E0|^2 (log10), gap {g} nm, lambda = {p['lam_peak'] * 1e9:.0f} nm"
+            f"exact log10|E/E0|^2, g = {g} nm, lambda = {p['lam_peak'] * 1e9:.0f} nm"
         )
         ax.set_xlabel("x [nm]")
         ax.set_ylabel("y [nm]")
@@ -237,7 +237,7 @@ def fig_b3_reference_map(fname="b3_reference_field_map.png"):
     axs[2].set_xlim(-130, 130)
     axs[2].set_ylim(-130, 130)
     axs[2].set_aspect("equal")
-    axs[2].set_title(f"tri-graded mesh, h = 2 nm (gap 5 nm): {mesh.n_nodes} nodes")
+    axs[2].set_title(f"tri-graded, h = 2 nm, g = 5 nm ({mesh.n_nodes} nodes)")
     axs[2].set_xlabel("x [nm]")
     FIG.mkdir(exist_ok=True)
     fig.savefig(FIG / fname, dpi=130)

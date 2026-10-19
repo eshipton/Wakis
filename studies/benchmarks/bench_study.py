@@ -62,6 +62,8 @@ PHASES = {
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
     "B4b": ["B4"],
+    "WIN": [],
+    "REDO": [],
 }
 
 
@@ -79,6 +81,16 @@ def tasks(phase):
             out.append(("B4", "cart-staircase-edges-graded", a / q))
         out.append(("B4", "cart-staircase-edges-graded-bigdomain", a / 2))
         out.append(("B4", "cart-staircase-edges-graded-ppw40", a / 2))
+    if phase == "WIN":  # DFT-window floor: finest arms at 1x and 3x t_run
+        for case in PHASES["B2"] + PHASES["B3"]:
+            for wf in (1, 3):
+                out.append((case, "tri-uniform", A_NANO / 28, wf))
+                out.append((case, "cart-conformal-all-graded", A_NANO / 40, wf))
+        return out
+    if phase == "REDO":  # B3 (gap stencil metric, sliver-free mesher) + B2 triangles
+        out = [t for t in tasks("B3")]
+        out += [t for t in tasks("B2") if t[1].startswith("tri")]
+        return out
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
@@ -97,17 +109,24 @@ def run_tasks(mine, outdir, publish=False, machine=None):
 
     A = arms()
     Path(outdir).mkdir(parents=True, exist_ok=True)
-    for case_name, arm_name, h in mine:
+    for task in mine:
+        case_name, arm_name, h = task[:3]
+        wf = task[3] if len(task) > 3 else 1
         case = get_case(case_name)
+        case.t_run *= wf
         rec = run(case, A[arm_name], h)
+        rec["window_factor"] = wf
         tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"  # (B4: h in m * 1e9)
+        if wf != 1:
+            tag += f"_w{wf:g}"
         if os.environ.get("WAKIS_COMMIT"):
             rec["commit"] = os.environ["WAKIS_COMMIT"]
         save_record(rec, Path(outdir) / f"{tag}.json")
         if publish:
             from wakis.benchmarks.results import publish as pub
 
-            pub(rec, machine=machine)
+            pub(rec, machine=machine,
+                tag=None if wf == 1 else f"{h * 1e9:.4f}nm_w{wf:g}")  # fmt: skip
         m = rec.get("metrics", {})
         msg = rec.get("error") or " ".join(
             f"{k}={m[k]:.4g}"
