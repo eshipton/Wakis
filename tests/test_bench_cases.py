@@ -130,3 +130,41 @@ def test_peak_metrics():
     assert np.isclose(M.interp_to_target([1, 10, 100], [0.1, 0.01, 0.001], 0.0316),
                       10 ** 0.5, rtol=1e-2)  # fmt: skip
     assert np.isnan(M.interp_to_target([1, 10], [0.1, 0.05], 0.01))
+    # a lucky coarse point does not count: the error must stay below target
+    assert np.isclose(M.interp_to_target([1, 10, 100], [0.005, 0.1, 0.001], 0.01),
+                      10 * 10 ** 0.5, rtol=1e-2)  # fmt: skip
+    assert M.interp_to_target([1, 10], [0.001, 0.0005], 0.01) == -1.0
+
+
+def test_cluster_mesh_has_no_gap_slivers():
+    # With the outer rings fixed, h = 2.857 nm in the 5 nm gap left 0.05 nm
+    # between the two rings and a 2.8 deg sliver (and a 6.5 % gap-field
+    # error); the greedy priority ring keeps every angle above 15 deg.
+    from wakis.benchmarks.meshing import cluster_mesh
+
+    case = get_case("B3-g5")
+    for h in (4e-9, 2.857e-9, 1.429e-9):
+        ho = min(4 * h, 12.5e-9)  # as Triangles2DArm
+        m = cluster_mesh(case.cylinders, h, ho, 110e-9, pml_layers=4, pml_dr=ho)
+        P = m.nodes[m.cells]
+        P = P[np.hypot(*P.mean(1).T) < 100e-9]
+        e = [
+            np.linalg.norm(P[:, i] - P[:, j], axis=1)
+            for i, j in ((1, 2), (0, 2), (0, 1))
+        ]
+        ang = [np.arccos(np.clip((e[(k + 1) % 3] ** 2 + e[(k + 2) % 3] ** 2 - e[k] ** 2)
+                                 / (2 * e[(k + 1) % 3] * e[(k + 2) % 3]), -1, 1))
+               for k in range(3)]  # fmt: skip
+        assert np.degrees(np.min(ang)) > 15, h
+        # the gap is meshed: nodes inside the 5 nm gap near y = 0 (h <= 2 nm)
+        gap = (np.abs(m.nodes[:, 0]) < 2.4e-9) & (np.abs(m.nodes[:, 1]) < h)
+        assert gap.sum() >= 1 or h > 2e-9
+
+
+def test_gap_stencil_reference():
+    case = get_case("B3-g5")
+    pts = case.gap_points
+    assert pts.shape == (9, 2) and np.allclose(np.hypot(*pts[1:].T), 1.25e-9)
+    ref = case.reference
+    # the stencil mean and the centre differ (the field is not uniform)
+    assert 0.001 < abs(ref["enh"].max() / ref["enh_centre"].max() - 1) < 0.2

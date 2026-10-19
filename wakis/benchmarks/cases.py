@@ -96,7 +96,12 @@ class Scattering2DCase:
     norm_width : float
         Width used for the efficiencies Q = C / norm_width [m].
     gap_point : tuple, optional
-        Point of the field-enhancement metric (TE only).
+        Centre of the field-enhancement metric (TE only).
+    gap_width : float
+        Gap g [m]; the enhancement ``enh`` is the mean of |E/E0|^2 over
+        `gap_points` (the centre and 8 points on a circle of radius g/4),
+        which is insensitive to where the centre falls inside a cell;
+        ``enh_centre`` is the pointwise centre value (diagnostic).
     deembed : bool
         Rotationally symmetric scatterer centred on the origin.
     targets : dict
@@ -119,6 +124,7 @@ class Scattering2DCase:
     t_run: float = 100e-15
     norm_width: float = 1.0
     gap_point: tuple = None
+    gap_width: float = 0.0
     deembed: bool = True
     targets: dict = field(default_factory=dict)
     primary: str = "q_ext_nrms"
@@ -145,6 +151,16 @@ class Scattering2DCase:
         return GaussianSource(0.5 * (f.min() + f.max()), 0.25 * (f.max() - f.min()))
 
     @property
+    def gap_points(self):
+        """Stencil of the gap metric: centre + 8 points at radius g/4 [m]."""
+        if self.gap_point is None:
+            return None
+        c = np.asarray(self.gap_point, float)
+        th = 2 * np.pi * np.arange(8) / 8
+        ring = c + 0.25 * self.gap_width * np.stack([np.cos(th), np.sin(th)], 1)
+        return np.vstack([c, ring])
+
+    @property
     def bounding_radius(self):
         return max(np.hypot(*cy["center"]) + cy["radius"] for cy in self.cylinders)
 
@@ -158,7 +174,7 @@ class Scattering2DCase:
         ``q_abs`` (= C / norm_width) and, with a gap point, ``enh``
         (|E / E0|^2 at the gap point, TE).
         """
-        out = {k: [] for k in ("c_ext", "c_sca", "c_abs", "enh")}
+        out = {k: [] for k in ("c_ext", "c_sca", "c_abs", "enh", "enh_centre")}
         for f, k in zip(self.freqs, self.k_background):
             if len(self.cylinders) == 1 and np.allclose(self.cylinders[0]["center"], 0):
                 cy = self.cylinders[0]
@@ -185,8 +201,9 @@ class Scattering2DCase:
             out["c_sca"].append(cs)
             out["c_abs"].append(ca)
             if self.gap_point is not None:
-                E = cl.in_plane_e([self.gap_point])[0]
-                out["enh"].append(float(np.sum(np.abs(E) ** 2)))
+                e2 = np.sum(np.abs(cl.in_plane_e(self.gap_points)) ** 2, 1)
+                out["enh"].append(float(e2.mean()))
+                out["enh_centre"].append(float(e2[0]))
         res = {k: np.asarray(v) for k, v in out.items() if v}
         for key in ("ext", "sca", "abs"):
             res["q_" + key] = res["c_" + key] / self.norm_width
@@ -214,8 +231,9 @@ class Scattering2DCase:
         `result` holds either ``samples`` (n_freq, n_radii, n_points)
         scattered-field phasors on circles of radii ``radii`` and ``u0`` (see
         `cross_sections_from_circles`), or the widths ``c_ext``, ``c_sca``
-        directly. Gap fields: ``e_gap`` (n_freq, 2) total in-plane E phasors
-        at `gap_point` and ``e0_gap`` (n_freq,) incident amplitude phasors.
+        directly. Gap fields: ``e_gap`` (n_freq, n_gap_points, 2) total
+        in-plane E phasors at `gap_points` and ``e0_gap`` (n_freq,) incident
+        amplitude phasors.
         """
         if "samples" in result:
             sp = cross_sections_from_circles(
@@ -232,7 +250,11 @@ class Scattering2DCase:
         if result.get("e_gap") is not None:
             e = np.asarray(result["e_gap"])
             e0 = np.asarray(result["e0_gap"])
-            sp["enh"] = np.sum(np.abs(e) ** 2, 1) / np.abs(e0) ** 2
+            if e.ndim == 2:  # legacy: centre only
+                e = e[:, None, :]
+            e2 = np.sum(np.abs(e) ** 2, 2) / np.abs(e0[:, None]) ** 2
+            sp["enh"] = e2.mean(1)
+            sp["enh_centre"] = e2[:, 0]
         return sp
 
     def evaluate(self, result):
@@ -262,12 +284,15 @@ class Scattering2DCase:
             pe = M.peak_errors(lam, sp["enh"], ref["enh"])
             out["enh_peak"] = pe["height"]
             out["enh_lam"] = pe["lam_peak"]
+            if "enh_centre" in sp:
+                pc = M.peak_errors(lam, sp["enh_centre"], ref["enh_centre"])
+                out["enh_centre_peak"] = pc["height"]
         if "refl" in sp:
             out["boundary_reflection"] = float(np.max(sp["refl"]))
         out["spectra"] = {
             k: np.asarray(v).tolist()
             for k, v in sp.items()
-            if k in ("q_ext", "q_sca", "q_abs", "enh", "refl")
+            if k in ("q_ext", "q_sca", "q_abs", "enh", "enh_centre", "refl")
         }
         return out
 
@@ -288,7 +313,10 @@ def _b1(pol):
         materials={"diel": [4.0, 1.0]},
         n_background=1.0, polarization=pol, direction=0.0, wavelengths=lam,
         circles=(1.9 * UM, 2.2 * UM, 2.5 * UM), n_points=256, r_absorber=2.7 * UM,
-        t_run=1000e-15, norm_width=2 * a, deembed=True,
+        # 3000 fs: a high-Q TE resonance near x = 6.4 leaves a 0.87 % (TE) /
+        # 0.14 % (TM) window floor at 1000 fs (converged DGTD, high-order
+        # agent); 0.036 % / 0.012 % at 3000 fs
+        t_run=3000e-15, norm_width=2 * a, deembed=True,
         targets=dict(q_sca_rms_rel=(0.02, 0.01)), primary="q_sca_rms_rel",
     )  # fmt: skip
 
@@ -311,8 +339,8 @@ def _b2(metal, pol):
         n_background=nb, polarization=pol, direction=0.0, wavelengths=lam,
         circles=(50 * NM, 60 * NM, 70 * NM), n_points=64, r_absorber=90 * NM,
         t_run=80e-15, norm_width=2 * a, deembed=True,
-        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.01, 0.005),
-                     q_ext_height=(0.05, 0.02), q_ext_fwhm=(0.05, 0.02)),
+        targets=dict(q_ext_nrms=(0.02, 0.01, 0.005), q_ext_lam_peak=(0.005, 0.002),
+                     q_ext_height=(0.02, 0.01), q_ext_fwhm=(0.05, 0.02)),
         primary="q_ext_nrms",
     )  # fmt: skip
 
@@ -333,9 +361,10 @@ def _b3(gap_nm):
         n_background=2.0, polarization="TE", direction=np.pi / 2,
         wavelengths=np.linspace(500, 1000, 101) * NM,
         circles=(65 * NM, 80 * NM, 95 * NM), n_points=64, r_absorber=110 * NM,
-        t_run=100e-15, norm_width=4 * a, gap_point=(0.0, 0.0), deembed=False,
-        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.01, 0.005),
-                     enh_peak=(0.05, 0.02), enh_lam=(0.01, 0.005)),
+        t_run=100e-15, norm_width=4 * a, gap_point=(0.0, 0.0), gap_width=g,
+        deembed=False,
+        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.005, 0.002),
+                     enh_peak=(0.05, 0.02), enh_lam=(0.005, 0.002)),
         primary="enh_peak",
     )  # fmt: skip
 
