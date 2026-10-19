@@ -12,6 +12,7 @@ projection) are imported lazily and need ``pip install wakis[inverse]``.
 
 from .adjoint import AdjointSimulation, AdjointStepper
 from .design import MaterialGrid
+from . import projection
 from .readouts import LumpedReadout
 
 _JAX_NAMES = (
@@ -19,6 +20,7 @@ _JAX_NAMES = (
     "conic_filter",
     "gaussian_filter",
     "tanh_projection",
+    "smoothed_projection",
     "flux",
     "mode_amplitudes",
     "farfield",

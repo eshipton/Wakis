@@ -166,6 +166,87 @@ def tanh_projection(rho, beta, eta=0.5):
     return num / (jnp.tanh(beta * eta) + jnp.tanh(beta * (1 - eta)))
 
 
+def _tanh_projection_any(rho, beta, eta):
+    if np.isinf(beta):
+        return jnp.where(rho > eta, 1.0, 0.0)
+    return tanh_projection(rho, beta, eta)
+
+
+def smoothed_projection(
+    rho_f, beta, eta=0.5, spacing=1.0, radius=None, periodic=False, grad_norm=None
+):
+    """
+    Subpixel-smoothed projection (SSP) of a filtered density (Hammond et
+    al., Opt. Express 33, 33620 (2025), Eqs. 7, 10-12).
+
+    Near the level set rho_f = eta, i.e. at signed distance
+    d = (eta - rho_f) / |grad rho_f| below the smoothing radius R, the output
+    is (1 - F) P(rho_f - R g F) + F P(rho_f + R g (1 - F)) with
+    g = |grad rho_f|, F = F_2(d / R) the C^2 fill fraction of the paper's
+    Eq. (10) and P the tanh projection; elsewhere it is P(rho_f). For
+    beta = inf the result is binary except within R of interfaces, where it
+    equals F(d), a smooth function of the interface position: the gradient
+    stays finite and nonzero at beta = inf (unlike `tanh_projection`). NumPy
+    twin with an explicit VJP: `wakis.inverse.projection`.
+
+    Parameters
+    ----------
+    rho_f : array
+        Filtered density on a regular grid.
+    beta : float
+        Projection steepness (> 0, may be inf).
+    eta : float, optional
+        Threshold. Default 0.5.
+    spacing : float or sequence of float, optional
+        Grid spacing per axis. Default 1 (pixels).
+    radius : float, optional
+        Smoothing radius R [units of spacing]. Default 0.55 times the
+        largest spacing of the non-singleton axes.
+    periodic : bool or sequence of bool, optional
+        Periodic axes (wrapped central differences). Default False.
+    grad_norm : array, optional
+        |grad rho_f| [1 / units of spacing] if computed by the caller (e.g.
+        from a filter evaluated beyond the grid); default: central
+        differences of rho_f (one-sided at non-periodic ends, as
+        jnp.gradient), axes of length 1 ignored.
+
+    Returns
+    -------
+    array
+        Projected density, same shape as rho_f.
+    """
+    from .projection import RADIUS_FACTOR
+
+    rho_f = jnp.asarray(rho_f)
+    nd = rho_f.ndim
+    spacing = np.broadcast_to(np.asarray(spacing, dtype=float), (nd,))
+    periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (nd,))
+    active = [a for a in range(nd) if rho_f.shape[a] > 1]
+    if radius is None:
+        radius = RADIUS_FACTOR * (max(spacing[a] for a in active) if active else 1.0)
+    if grad_norm is None:
+        q = jnp.zeros_like(rho_f)
+        for a in active:
+            if periodic[a]:
+                diff = 0.5 * (jnp.roll(rho_f, -1, a) - jnp.roll(rho_f, 1, a))
+            else:
+                diff = jnp.gradient(rho_f, axis=a)
+            q = q + (diff / spacing[a]) ** 2
+    else:
+        q = jnp.asarray(grad_norm) ** 2
+    nonzero = q > 0
+    g = jnp.where(nonzero, jnp.sqrt(jnp.where(nonzero, q, 1.0)), 1.0)
+    d = (eta - rho_f) / g
+    smooth = nonzero & (jnp.abs(d) < radius)
+    x = jnp.where(smooth, d / radius, 0.0)
+    F = 0.5 - 15 / 16 * x + 5 / 8 * x**3 - 3 / 16 * x**5
+    minus = _tanh_projection_any(rho_f - radius * g * F, beta, eta)
+    plus = _tanh_projection_any(rho_f + radius * g * (1 - F), beta, eta)
+    return jnp.where(
+        smooth, (1 - F) * minus + F * plus, _tanh_projection_any(rho_f, beta, eta)
+    )
+
+
 def flux(raw, monitor):
     """
     Flux spectrum of a `FluxMonitor` (or `Near2FarMonitor`) from raw outputs.

@@ -56,6 +56,9 @@ class MaterialGrid:
         eps_max=4.0,
         material=None,
         smoothing=None,
+        projection_beta=None,
+        projection_eta=0.5,
+        projection_radius=None,
     ):
         """
         Design region whose relative permittivity is set by a density rho.
@@ -104,6 +107,26 @@ class MaterialGrid:
             rho -> T is differentiable and `vjp` is exact (see "Tensor
             subpixel averaging" in the physics guide). Not combined with
             `material`; real fields only.
+        projection_beta : float, optional
+            If set (> 0, np.inf allowed), rho is the *filtered* density and
+            every design edge gets the subpixel-smoothed projection (SSP,
+            Hammond et al., Opt. Express 33, 33620 (2025)) of it, evaluated
+            at the edge itself: f = SSP(P rho, |G rho|) with the
+            interpolated density P rho, the interpolated gradient G rho and
+            the smoothing radius `projection_radius`. f replaces P rho as
+            the fill fraction (eps_r, `material` weight, or 'tensor' fill).
+            The design is then binary except within the radius of the level
+            set P rho = projection_eta, one mesh cell, even when the design
+            grid is coarser than the mesh, and it moves smoothly with the
+            level set at beta = inf. May be changed between optimization
+            stages (beta continuation). `vjp` includes the projection.
+        projection_eta : float, optional
+            Threshold of the projection. Default 0.5.
+        projection_radius : float, optional
+            Smoothing radius R [m]. Default: 0.55 times the largest mesh
+            step inside the box along the axes with more than one design
+            node (the radius must exceed half the sample spacing, otherwise
+            the gradient vanishes for some interface positions).
 
         Notes
         -----
@@ -128,6 +151,11 @@ class MaterialGrid:
             # Dispersive subpixel averaging: the static tensor uses eps_inf
             self.eps_max = float(material.eps_inf)
         self.smoothing = smoothing
+        if projection_beta is not None and projection_beta <= 0:
+            raise ValueError("projection_beta must be positive (or None).")
+        self.projection_beta = projection_beta
+        self.projection_eta = float(projection_eta)
+        self.projection_radius = projection_radius
         self.P = None
         self.network = None
 
@@ -176,8 +204,18 @@ class MaterialGrid:
         self.flat_idx = flat_idx[keep]
         self.P = P[keep]
         self.N = solver.N
-        if self.smoothing is None:
+        if self.smoothing is None and self.projection_beta is None:
             return
+        if self.projection_radius is None:
+            steps = []
+            for d, axis in enumerate("xyz"):
+                if self.shape[d] > 1:
+                    nodes = getattr(solver.grid, axis)
+                    inside = (nodes[1:] > lo[d]) & (nodes[:-1] < hi[d])
+                    steps.append(np.diff(nodes)[inside].max())
+            from .projection import RADIUS_FACTOR
+
+            self.projection_radius = RADIUS_FACTOR * max(steps) if steps else 0.0
         # Gradient of the interpolated nodal central differences of rho
         spacing = np.where(
             np.array(self.shape) > 1,
@@ -199,6 +237,48 @@ class MaterialGrid:
             raise ValueError(f"rho has shape {rho.shape}, expected {self.shape}.")
         return rho
 
+    def _fill(self, rho):
+        """
+        Fill fraction of the rho = 1 material on the design edges: P rho, or
+        its subpixel-smoothed projection when `projection_beta` is set.
+        """
+        r = np.asarray(rho, dtype=float).ravel()
+        if self.projection_beta is None:
+            return self.P @ r
+        from .projection import smoothed_projection_pointwise
+
+        g = np.stack([G @ r for G in self.G], axis=1)
+        out, _, _ = smoothed_projection_pointwise(
+            self.P @ r,
+            np.sqrt(np.sum(g**2, axis=1)),
+            self.projection_beta,
+            self.projection_eta,
+            self.projection_radius,
+        )
+        return out
+
+    def _fill_vjp(self, rho, d_f):
+        """dF/drho (flat) from dF/d(fill) on the design edges."""
+        if self.projection_beta is None:
+            return self.P.T @ d_f
+        from .projection import smoothed_projection_pointwise
+
+        r = np.asarray(rho, dtype=float).ravel()
+        g = np.stack([G @ r for G in self.G], axis=1)
+        norm = np.sqrt(np.sum(g**2, axis=1))
+        _, d_rho, d_g = smoothed_projection_pointwise(
+            self.P @ r,
+            norm,
+            self.projection_beta,
+            self.projection_eta,
+            self.projection_radius,
+        )
+        grad = self.P.T @ (d_f * d_rho)
+        scale = d_f * d_g / np.where(norm > 0, norm, 1.0)  # d|g|/dg_k = g_k/|g|
+        for k in range(3):
+            grad = grad + self.G[k].T @ (scale * g[:, k])
+        return grad
+
     def eps_r(self, rho):
         """
         Relative permittivity on the design edges for density rho.
@@ -214,7 +294,7 @@ class MaterialGrid:
             eps_r on the design edges, ordered as `flat_idx`.
         """
         rho = self._check(rho)
-        return self.eps_min + (self.eps_max - self.eps_min) * (self.P @ rho.ravel())
+        return self.eps_min + (self.eps_max - self.eps_min) * self._fill(rho)
 
     def apply(self, solver, rho):
         """
@@ -281,7 +361,7 @@ class MaterialGrid:
                 op.install(solver)
             return
         if self.material is not None:
-            self._apply_dispersive(solver, self.P @ rho.ravel())
+            self._apply_dispersive(solver, self._fill(self._check(rho)))
         if self.smoothing == "tensor":
             self._apply_tensor(solver, op)
         elif op is not None:
@@ -298,7 +378,7 @@ class MaterialGrid:
         component) and ieps = (A + aniso m_comp^2) / eps_0 [m/F].
         """
         r = rho.ravel()
-        raw = self.P @ r
+        raw = self._fill(rho)
         f = np.clip(raw, 0.0, 1.0)
         g = np.stack([G @ r for G in self.G], axis=1)
         q = np.sum(g**2, axis=1) + self.delta**2
@@ -417,7 +497,7 @@ class MaterialGrid:
             d_m / sq[:, None]
             - (np.einsum("ij,ij->i", d_m, t["g"]) / sq**3)[:, None] * t["g"]
         )
-        grad = self.P.T @ d_f
+        grad = self._fill_vjp(rho, d_f)
         for k in range(3):
             grad = grad + self.G[k].T @ d_g[:, k]
         return np.asarray(grad).reshape(self.shape)
@@ -505,12 +585,12 @@ class MaterialGrid:
         if self.smoothing == "tensor":
             return self._tensor_vjp(rho, grad_ieps, pair_grad)
         if self.material is not None:
-            # grad_ieps holds dF/dw for the fill fraction w = P rho
-            return (self.P.T @ grad_ieps).reshape(self.shape)
+            # grad_ieps holds dF/dw for the fill fraction w (P rho or SSP)
+            return self._fill_vjp(rho, grad_ieps).reshape(self.shape)
         eps_r = self.eps_r(rho)
         grad_eps = -grad_ieps / (eps_0 * eps_r**2)
-        grad = (self.eps_max - self.eps_min) * (self.P.T @ grad_eps)
-        return grad.reshape(self.shape)
+        grad = self._fill_vjp(rho, (self.eps_max - self.eps_min) * grad_eps)
+        return np.asarray(grad).reshape(self.shape)
 
     def _tensor_vjp(self, rho, grad_ieps, pair_grad):
         """
@@ -554,7 +634,7 @@ class MaterialGrid:
             d_m / sq[:, None]
             - (np.einsum("ij,ij->i", d_m, t["g"]) / sq**3)[:, None] * t["g"]
         )
-        grad = self.P.T @ d_f
+        grad = self._fill_vjp(rho, d_f)
         for k in range(3):
             grad = grad + self.G[k].T @ d_g[:, k]
         return np.asarray(grad).reshape(self.shape)
