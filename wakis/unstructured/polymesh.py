@@ -425,7 +425,9 @@ def _mean_value_weights(P, x):
     rn = np.roll(r, -1)
     cross = d[:, 0] * dn[:, 1] - d[:, 1] * dn[:, 0]
     dot = np.einsum("ij,ij->i", d, dn)
-    on_edge = np.flatnonzero((np.abs(cross) < 1e-12 * r * rn) & (dot < 0))
+    # on (or within round-off of) an edge: the angle is ~pi and the
+    # half-angle tangent below would overflow
+    on_edge = np.flatnonzero(r * rn + dot <= 1e-9 * r * rn)
     if on_edge.size:
         k = on_edge[0]
         k1 = (k + 1) % n
