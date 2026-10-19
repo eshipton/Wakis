@@ -120,6 +120,8 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
 - [x] Full-tensor subpixel averaging for curved dielectrics (`conformal='tensor'`)
 - [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`)
+- [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
+- [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
 - [ ] Unstructured FIT phase 2: PML, ports, adjoint, GPU, MPI, CAD/gmsh workflow
 - [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
 - [ ] Magnetic dispersion (ferrites)

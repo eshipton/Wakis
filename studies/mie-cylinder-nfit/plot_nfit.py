@@ -24,7 +24,8 @@ STYLE = {
     "ogrid": dict(color="#D62728", marker="o", ls="-", label="Wakis FIT (O-grid NFIT, radial PML)"),
     "ogrid-corner": dict(color="#FF9896", marker="x", ls="--", label="Wakis FIT (O-grid, corner Hodge everywhere)"),
     "ogrid-std": dict(color="#9467BD", marker="d", ls=":", label="Wakis FIT (O-grid, baseline domain r = 2.7 um)"),
-    "multiblock": dict(color="#8C564B", marker="P", ls="-.", label="Wakis FIT (O-grid + Cartesian multi-block)"),
+    "multiblock": dict(color="#8C564B", marker="P", ls="-.", label="Wakis FIT (O-grid + Cartesian multi-block, 2-layer transition)"),
+    "multiblock-resolved": dict(color="#BCBD22", marker="X", ls="-.", label="Wakis FIT (O-grid + Cartesian multi-block, resolved transition)"),
     "tri-graded-pml": dict(color="#000000", marker="*", ls="-", label="Wakis FIT (triangles graded, radial PML)"),
     "tri-graded": dict(color="#0072B2", marker="^", ls=":", label="Wakis FIT (triangles graded, ABC)"),
     "cart-graded-compact": dict(color="#CC79A7", marker="v", ls="-", label="Wakis FIT (Cartesian graded conformal, compact)"),
@@ -49,10 +50,12 @@ def _metrics(d):
     return d
 
 
-def load():
+def load(sub=None):
     acc = {}
-    for f in sorted([p for p in DATA.glob("*.json") if p.name != "targets.json"]
-                    + list((DATA / "baselines").glob("*.json"))):
+    files = (list((DATA / sub).glob("*.json")) if sub else
+             [p for p in DATA.glob("*.json") if p.name != "targets.json"]
+             + list((DATA / "baselines").glob("*.json")))  # fmt: skip
+    for f in sorted(files):
         d = json.loads(f.read_text())
         if "error" in d:
             print("FAILED", f.name, d["error"])
@@ -251,7 +254,7 @@ def runs_table(acc, arms):
 def main_plot():
     FIG.mkdir(exist_ok=True)
     acc = load()
-    main_arms = ["ogrid", "ogrid-corner", "ogrid-std", "multiblock", "tri-graded-pml",
+    main_arms = ["ogrid", "ogrid-corner", "ogrid-std", "multiblock", "multiblock-resolved", "tri-graded-pml",
                  "cart-graded-compact", "tri-graded", "cart-graded"]  # fmt: skip
     shell_arms = ["shell-ogrid", "shell-tri", "shell-cart"]
     fig_meshes()
@@ -267,6 +270,17 @@ def main_plot():
     out += t + ["", "## Coated cylinder (showcase)", ""]
     t2, rows2 = table(acc, shell_arms)
     out += t2 + ["", "## All runs", ""] + runs_table(acc, main_arms + shell_arms)
+    acc3 = load("t3000")
+    if acc3:
+        arms3 = ["ogrid", "tri-graded-pml", "cart-graded-compact"]
+        fig_error(acc3, arms3, "g_error_vs_cost_3000fs.png",
+                  "Mie cylinder, 3000 fs DFT window (no window floor): Q_sca RMS error vs cost")  # fmt: skip
+        fig_error(acc3, shell_arms, "h_shell_error_vs_cost_3000fs.png",
+                  "Coated cylinder, 3000 fs window: Q_sca RMS error vs cost")  # fmt: skip
+        t3, rows3 = table(acc3, arms3 + shell_arms)
+        out += ["", "## 3000 fs DFT window (B1 floor removed; ogrid, tri-graded-pml, cart-graded-compact, shell arms)", ""] + t3
+        out += ["", "### All 3000 fs runs", ""] + runs_table(acc3, arms3 + shell_arms)
+        rows.update({(a + "@3000fs", p): v for (a, p), v in rows3.items()})
     (DATA / "summary.md").write_text("\n".join(out) + "\n")
     (DATA / "targets.json").write_text(json.dumps(
         {f"{a}|{p}": v for (a, p), v in {**rows, **rows2}.items()}, indent=1))  # fmt: skip
