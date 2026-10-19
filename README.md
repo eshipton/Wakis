@@ -173,14 +173,14 @@ Time-domain nonorthogonal FIT (Schuhmann & Weiland 2000) on body-fitted polar gr
 </tr>
 </table>
 
-#### In progress: high-order DGTD on curved triangles and a Cartesian (2,4) scheme
+#### High-order DGTD on curved triangles: 0.1 % with ~100× fewer unknowns &nbsp;·&nbsp; `wakis.highorder`
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/dgtd_curved_meshes.png" width="600" alt="Curved-face DGTD meshes: p = 4 Mie cylinder mesh with 637 triangles and a zoom on the 5 nm-gap Au dimer"></td>
+<td width="55%"><img src="docs/img/highorder_error_vs_cost.png" width="600" alt="Error versus unknowns and work for curved-element DGTD p = 1-5, the Cartesian (2,4) scheme and the best second-order FIT arms on the Mie cylinder"></td>
 <td>
 
-A nodal discontinuous Galerkin time-domain solver on curved triangles: TM/TE, upwind flux, CFS-PML, Drude/Lorentz/Debye ADE, scattered-field plane wave, and a probed sparse operator for exact adjoints. A Cartesian (2,4) scheme with LSRK4 is also included. Both run as arms of the B1–B3 benchmark suite, as a high-order reference and competitor for FIT. Numbers will follow when the study is written up. Branch `feature/high-order`.
+Nodal discontinuous Galerkin time domain (Hesthaven & Warburton 2008) on **curved** triangles, p = 1–5, with upwind flux, LSRK(5,4), CFS-PML, Drude/Lorentz/Debye ADE driven by the total field, and a probed sparse operator for exact adjoints (dot test 1e-12). A Cartesian (2,4) scheme with LSRK4 is also included. **B1 Mie cylinder, 0.1 % TM: DG p = 5 needs 17k unknowns and 91 s, against ~2.1M unknowns (~2600 s, extrapolated) for the best second-order arm** (graded triangles + PML); 0.01 % with 25k unknowns. Above x ≈ 6 the second-order error is 95–99 % bulk dispersion, which the high-order stencils remove. **B2 Au-TE, 0.1 %: p = 2 needs 6.0k unknowns vs 88k for uniform triangles** (equal wall time). Curved elements are essential: straight-sided p = 4 stalls at 1–5 %. **Limits:** at 1–2 % accuracy the (2,4) leapfrog scheme or graded triangle FIT is faster in seconds (DG costs 150–300 ns per unknown-step vs ~19 ns); the rectangular DG PML becomes unstable in long runs on fine meshes (unsolved, long windows use an absorbing disk). Code on `main`, [studies/highorder-mie](studies/highorder-mie), [studies/highorder-bench](studies/highorder-bench).
 
 </td>
 </tr>
