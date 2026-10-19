@@ -107,6 +107,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Sources, monitors and post-processing**
 - [x] Soft current sources (`CurrentSource`) with Gaussian (zero-DC), continuous and custom time profiles
 - [x] Magnetic current sources and one-directional (Huygens) sources
+- [x] Plane-wave total-field/scattered-field box source (`TFSFSource`): incident field from a 1D FIT line, leakage at round-off (1e-15), 2D and 3D, CPU/GPU ([studies/tfsf](studies/tfsf))
 - [x] DFT and flux monitors; near-to-far transform and antenna metrics (directivity, gain, efficiency, axial ratio)
 - [x] Diffraction-order monitor (Floquet orders, TE/TM/circular polarization)
 - [x] Harmonic inversion for resonance frequencies and Q (`harminv`, `ResonanceMonitor`)

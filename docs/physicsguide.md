@@ -773,7 +773,7 @@ The H correction must use $\mathbf{e}^{inc}$ at $n\Delta t$ and the E correction
 - *Mie.* The cross-section of a conformal sphere approaches Mie theory: +6.5–7.5 % at 3.5 cells per radius, +4.8–5.4 % at 4.9 cells.
 - *Inverse design.* The adjoint gradient of the scattered flux with respect to a design block inside the box matches central finite differences to $10^{-10}$, because the source is an additive forcing independent of the fields.
 
-The study `studies/tfsf/` compares this with face sheets driven by the continuum incident field (as in the user's Meep notebook), whose leakage is set by the dispersion mismatch and the half-cell offset of the H sheet.
+The study `studies/tfsf/` compares this with Huygens face sheets driven by the continuum incident field, as in hand-built Meep TF/SF sources. With the exact staggered registration (J on the face carries $H^{inc}$ half a cell outside, K there carries $E^{inc}$ of the face node), the only error left is the dispersion mismatch: the leaked power falls as $(kh)^4$, $1.4\times10^{-4}$ of the face power at 20 cells per wavelength. Referencing both sheets to the face plane adds the half-cell offset: the power then falls as $(kh)^2$, $5\times10^{-2}$ at 20 cells per wavelength. The same sheets driven by the 1D-line values leak at round-off, which shows that the commutator corrections are exactly the discrete equivalent currents.
 
 **Limits & Failure Modes.**
 - *Axis-aligned incidence only.* Oblique incidence needs a discrete plane wave with the 3D grid's anisotropic dispersion; Tan & Potter [2010] and Ch. 3 of Taflove, Oskooi & Johnson (eds.) [2013], cited in Oskooi & Johnson §4.2.2, describe the discrete plane-wave line for this. Not implemented.
