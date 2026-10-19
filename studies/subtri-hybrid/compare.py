@@ -273,6 +273,12 @@ def dedup_latest(df):
         d = d[d["error"].isna() | (d["error"].astype(str).str.strip() == "")]
     if d.empty:
         return d
+    # diverged runs (e.g. unstable fine DGTD rungs with errors 1e3..1e33) are
+    # not converged results: drop rows whose relative errors exceed 1
+    mcols = [c for c in ("m.q_ext_nrms", "m.enh_peak", "m.q_sca_rms_rel") if c in d.columns]
+    if mcols:
+        bad = (d[mcols].apply(pd.to_numeric, errors="coerce") > 1.0).any(axis=1)
+        d = d[~bad]
     if "work" not in d.columns and "c.unknowns" in d.columns and "c.steps" in d.columns:
         d["work"] = d["c.unknowns"] * d["c.steps"]
     if "c.work" in d.columns:
@@ -448,9 +454,9 @@ def compare_all(data_dir=DATA, offline=False):
         header = (
             "| target | "
             + " | ".join(all_arms)
-            + " | best baseline (work) | ours / best (work) |"
+            + " | best baseline (work) | ours / best (work) | best baseline (time): ours / best |"
         )
-        sep = "|---|" + "---|" * len(all_arms) + "---|---|"
+        sep = "|---|" + "---|" * len(all_arms) + "---|---|---|"
         md_lines.append(header)
         md_lines.append(sep)
 
@@ -491,6 +497,22 @@ def compare_all(data_dir=DATA, offline=False):
                         best_our_arm = arm
                         best_our_work = w
 
+                # best baseline / ours by wall time (equal-cost check independent
+                # of the per-unknown cost of each method, e.g. DG blocks)
+                def _best(arms_, key):
+                    b, bv = None, np.nan
+                    for a_ in arms_:
+                        v_ = arm_res[a_].get(key, np.nan)
+                        if np.isfinite(v_) and (not np.isfinite(bv) or abs(v_) < abs(bv)):
+                            b, bv = a_, v_
+                    return b, bv
+
+                bt_arm, bt = _best(base_arms, "run_s")
+                ot_arm, ot = _best(our_arms, "run_s")
+                t_ratio = (abs(ot) / abs(bt)) if (np.isfinite(ot) and np.isfinite(bt)) else np.nan
+                t_str = (f"{bt_arm} ({abs(bt):.0f} s): {t_ratio:.2f}"
+                         if np.isfinite(t_ratio) else "—")
+
                 if best_base_arm is not None and np.isfinite(best_base_work):
                     best_base_str = f"{best_base_arm} ({fmt_work(best_base_work)})"
                 else:
@@ -507,12 +529,12 @@ def compare_all(data_dir=DATA, offline=False):
                 md_lines.append(
                     f"| {t_label} | "
                     + " | ".join(cells)
-                    + f" | {best_base_str} | {ratio_str} |"
+                    + f" | {best_base_str} | {ratio_str} | {t_str} |"
                 )
 
                 summary_parts.append(
                     f"{metric} {target * 100:g}%: "
-                    f"{best_base_arm or '—'} (ours/best={ratio_str})"
+                    f"{best_base_arm or '—'} (ours/best={ratio_str}; time {t_str})"
                 )
 
                 case_json["targets"].append(

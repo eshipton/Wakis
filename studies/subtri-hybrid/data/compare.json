@@ -1,0 +1,3043 @@
+{
+  "cases": {
+    "B1-TE": {
+      "ours": [
+        "subtri-hybrid-r2",
+        "subtri-hybrid-r4"
+      ],
+      "baselines": [
+        "tri-graded-r2",
+        "tri-graded-r4",
+        "cart-conformal-all-graded-r2",
+        "cart-conformal-all-graded-r4"
+      ],
+      "targets": [
+        {
+          "metric": "q_sca_rms_rel",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid-r2": {
+              "unknowns": 120970.77809743314,
+              "work": 5155821183.517973,
+              "run_s": 79.21551135677942
+            },
+            "subtri-hybrid-r4": {
+              "unknowns": 146551.26531815386,
+              "work": 9643293096.71825,
+              "run_s": 114.05804349186593
+            },
+            "tri-graded-r2": {
+              "unknowns": 303623.5743407442,
+              "work": 29761222069.321716,
+              "run_s": 764.3429419519873
+            },
+            "tri-graded-r4": {
+              "unknowns": 265143.1962118742,
+              "work": 34252004634.942535,
+              "run_s": 904.4865864276801
+            },
+            "cart-conformal-all-graded-r2": {
+              "unknowns": 246155.84120603662,
+              "work": 23357910391.951584,
+              "run_s": 506.3948525444339
+            },
+            "cart-conformal-all-graded-r4": {
+              "unknowns": 253417.2701811776,
+              "work": 30914199269.227272,
+              "run_s": 826.3654560800434
+            }
+          },
+          "best_baseline": {
+            "arm": "cart-conformal-all-graded-r2",
+            "work": 23357910391.951584
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid-r2",
+            "work": 5155821183.517973
+          },
+          "ours_over_best_work": 0.22073126820858557
+        },
+        {
+          "metric": "q_sca_rms_rel",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid-r2": {
+              "unknowns": 212639.72038598015,
+              "work": 12003429795.521837,
+              "run_s": 208.77082469367315
+            },
+            "subtri-hybrid-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-r2": {
+              "unknowns": 506054.7916490231,
+              "work": 67123210456.263374,
+              "run_s": 1647.24520681629
+            },
+            "tri-graded-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "cart-conformal-all-graded-r2": {
+              "unknowns": 451793.04463049123,
+              "work": 59401719512.75695,
+              "run_s": 1384.3198130660078
+            },
+            "cart-conformal-all-graded-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "cart-conformal-all-graded-r2",
+            "work": 59401719512.75695
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid-r2",
+            "work": 12003429795.521837
+          },
+          "ours_over_best_work": 0.20207209309730526
+        }
+      ]
+    },
+    "B1-TM": {
+      "ours": [
+        "subtri-hybrid-r2",
+        "subtri-hybrid-r4"
+      ],
+      "baselines": [
+        "tri-graded-r2",
+        "tri-graded-r4",
+        "cart-conformal-all-graded-r2",
+        "cart-conformal-all-graded-r4"
+      ],
+      "targets": [
+        {
+          "metric": "q_sca_rms_rel",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid-r2": {
+              "unknowns": 106847.91672347444,
+              "work": 4182131795.4241443,
+              "run_s": 52.43335019470651
+            },
+            "subtri-hybrid-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-r2": {
+              "unknowns": 275608.3846091935,
+              "work": 25378578595.75265,
+              "run_s": 494.9687256427271
+            },
+            "tri-graded-r4": {
+              "unknowns": 253691.6992254658,
+              "work": 31770688388.352818,
+              "run_s": 521.5084990887163
+            },
+            "cart-conformal-all-graded-r2": {
+              "unknowns": 262566.7146580358,
+              "work": 25793043253.625584,
+              "run_s": 686.8525094560024
+            },
+            "cart-conformal-all-graded-r4": {
+              "unknowns": 294302.0940901081,
+              "work": 39022483346.94992,
+              "run_s": 904.2461637704527
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-r2",
+            "work": 25378578595.75265
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid-r2",
+            "work": 4182131795.4241443
+          },
+          "ours_over_best_work": 0.16478983563421729
+        },
+        {
+          "metric": "q_sca_rms_rel",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid-r2": {
+              "unknowns": 196918.8073029678,
+              "work": 10730760484.794313,
+              "run_s": 147.71325676387082
+            },
+            "subtri-hybrid-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-r2": {
+              "unknowns": 521019.4043685147,
+              "work": 69939272530.03796,
+              "run_s": 1306.6941438356048
+            },
+            "tri-graded-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "cart-conformal-all-graded-r2": {
+              "unknowns": 511428.80566599756,
+              "work": 71883788025.05635,
+              "run_s": 1994.8268387741493
+            },
+            "cart-conformal-all-graded-r4": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-r2",
+            "work": 69939272530.03796
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid-r2",
+            "work": 10730760484.794313
+          },
+          "ours_over_best_work": 0.15342968401888363
+        }
+      ]
+    },
+    "B2-Au-TE": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "hybrid-quadtri",
+        "tri-graded",
+        "tri-graded-pml",
+        "tri-graded-pml-lts2",
+        "cart-conformal-all-graded",
+        "nfit-ogrid",
+        "dgtd-p2",
+        "dgtd-p3",
+        "subgrid-2to1",
+        "voronoi-poly"
+      ],
+      "targets": [
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7261.0,
+              "work": -62132377.0,
+              "run_s": -2.948267698287964
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7261.0,
+              "work": -62132377.0,
+              "run_s": -3.05135178565979
+            },
+            "hybrid-quadtri": {
+              "unknowns": -5597.0,
+              "work": -47893529.0,
+              "run_s": -2.9761455059051514
+            },
+            "tri-graded": {
+              "unknowns": -4321.0,
+              "work": -54526699.0,
+              "run_s": -5.548362493515015
+            },
+            "tri-graded-pml": {
+              "unknowns": -4321.0,
+              "work": -54526699.0,
+              "run_s": -4.617419719696045
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -4321.0,
+              "work": -27261189.0,
+              "run_s": -2.591367244720459
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 16532.54535699976,
+              "work": 346486692.4487864,
+              "run_s": 22.100412307382424
+            },
+            "nfit-ogrid": {
+              "unknowns": -2433.0,
+              "work": -42971646.0,
+              "run_s": -2.808225393295288
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -79999920.0,
+              "run_s": -47.213825941085815
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": 12499.226956893915,
+              "work": 346218686.9451138,
+              "run_s": 19.61518617656969
+            },
+            "voronoi-poly": {
+              "unknowns": 5497.32886094614,
+              "work": 214297768.7626863,
+              "run_s": 14.537061737517627
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -27261189.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -62132377.0
+          },
+          "ours_over_best_work": 2.2791513972483006
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 7683.871340884544,
+              "work": 63173389.46594055,
+              "run_s": 3.232763116998449
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 7742.697713317131,
+              "work": 74380971.32546236,
+              "run_s": 3.4733113366056974
+            },
+            "hybrid-quadtri": {
+              "unknowns": 5607.463155515923,
+              "work": 48316703.0973411,
+              "run_s": 2.998946544713078
+            },
+            "tri-graded": {
+              "unknowns": 4844.741040905849,
+              "work": 64701524.470325775,
+              "run_s": 7.3073350547003475
+            },
+            "tri-graded-pml": {
+              "unknowns": 4844.741040904231,
+              "work": 64701524.470293365,
+              "run_s": 5.105314072767636
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 4791.722267182243,
+              "work": 31820349.561359745,
+              "run_s": 3.4473619140155765
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 45782.75548717535,
+              "work": 2018575498.736912,
+              "run_s": 85.51874504842387
+            },
+            "nfit-ogrid": {
+              "unknowns": 2926.8642971606464,
+              "work": 56755149.107215814,
+              "run_s": 3.4227383693496662
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -79999920.0,
+              "run_s": -47.213825941085815
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": 24852.329004453928,
+              "work": 1555611018.0739136,
+              "run_s": 161.64827833407134
+            },
+            "voronoi-poly": {
+              "unknowns": 7711.087509089978,
+              "work": 376692316.67516166,
+              "run_s": 21.509205636693167
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 31820349.561359745
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 63173389.46594055
+          },
+          "ours_over_best_work": 1.9853141256076456
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 10737.314690182584,
+              "work": 101888634.2166083,
+              "run_s": 3.791965356174214
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 11380.447697465099,
+              "work": 225227858.25626394,
+              "run_s": 11.172055627809094
+            },
+            "hybrid-quadtri": {
+              "unknowns": 14025.439781119294,
+              "work": 387159841.32034594,
+              "run_s": 21.88653033341029
+            },
+            "tri-graded": {
+              "unknowns": 7905.89257071757,
+              "work": 141001575.4782104,
+              "run_s": 9.158219010317442
+            },
+            "tri-graded-pml": {
+              "unknowns": 7905.89274964245,
+              "work": 141001580.611077,
+              "run_s": 8.321923230922076
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 7681.824205237665,
+              "work": 67310796.19794339,
+              "run_s": 4.755924217693236
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-ogrid": {
+              "unknowns": 6597.183134414019,
+              "work": 221144574.64624742,
+              "run_s": 10.101679913818732
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -79999920.0,
+              "run_s": -47.213825941085815
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "voronoi-poly": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 67310796.19794339
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 101888634.2166083
+          },
+          "ours_over_best_work": 1.5137041896961159
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.001,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "hybrid-quadtri": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-pml": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-ogrid": {
+              "unknowns": 42175.797619356956,
+              "work": 4564430110.093467,
+              "run_s": 261.0804021840144
+            },
+            "dgtd-p2": {
+              "unknowns": 5958.979349831183,
+              "work": 92603191.01055542,
+              "run_s": 74.55311433907494
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "voronoi-poly": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p2",
+            "work": 92603191.01055542
+          },
+          "best_ours": {
+            "arm": null,
+            "work": null
+          },
+          "ours_over_best_work": null
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7261.0,
+              "work": -62132377.0,
+              "run_s": -2.948267698287964
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7261.0,
+              "work": -62132377.0,
+              "run_s": -3.05135178565979
+            },
+            "hybrid-quadtri": {
+              "unknowns": -5597.0,
+              "work": -47893529.0,
+              "run_s": -2.9761455059051514
+            },
+            "tri-graded": {
+              "unknowns": -4321.0,
+              "work": -54526699.0,
+              "run_s": -5.548362493515015
+            },
+            "tri-graded-pml": {
+              "unknowns": -4321.0,
+              "work": -54526699.0,
+              "run_s": -4.617419719696045
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -4321.0,
+              "work": -27261189.0,
+              "run_s": -2.591367244720459
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 12009.524901968758,
+              "work": 175006281.12468064,
+              "run_s": 11.593774827908904
+            },
+            "nfit-ogrid": {
+              "unknowns": -2433.0,
+              "work": -42971646.0,
+              "run_s": -2.808225393295288
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -79999920.0,
+              "run_s": -47.213825941085815
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": 10515.837208188796,
+              "work": 138758227.36044946,
+              "run_s": 5.097640505012366
+            },
+            "voronoi-poly": {
+              "unknowns": 5543.3841075516775,
+              "work": 217298699.804775,
+              "run_s": 14.678154817187332
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -27261189.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -62132377.0
+          },
+          "ours_over_best_work": 2.2791513972483006
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.002,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 8210.66514004001,
+              "work": 64675001.42322624,
+              "run_s": 3.3642851409241312
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 8312.16755572325,
+              "work": 95108129.84638007,
+              "run_s": 4.145637070309792
+            },
+            "hybrid-quadtri": {
+              "unknowns": 6098.7859095015265,
+              "work": 71764046.43674628,
+              "run_s": 4.226958702502898
+            },
+            "tri-graded": {
+              "unknowns": 4986.160212877374,
+              "work": 67546310.75087161,
+              "run_s": 7.597775208217033
+            },
+            "tri-graded-pml": {
+              "unknowns": 4986.160212846648,
+              "work": 67546310.75024913,
+              "run_s": 5.23592343098931
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 4936.474284105962,
+              "work": 33268635.073452413,
+              "run_s": 3.742522755744876
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 67037.48355423687,
+              "work": 5499312551.706479,
+              "run_s": 219.51387614724138
+            },
+            "nfit-ogrid": {
+              "unknowns": 3352.9401402664876,
+              "work": 69639908.7199325,
+              "run_s": 3.9589032936053217
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -79999920.0,
+              "run_s": -47.213825941085815
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -199080720.0,
+              "run_s": -109.89679527282716
+            },
+            "subgrid-2to1": {
+              "unknowns": 12223.859221286923,
+              "work": 304088994.6108523,
+              "run_s": 15.746235338758142
+            },
+            "voronoi-poly": {
+              "unknowns": 17386.505198667666,
+              "work": 1428401827.6024928,
+              "run_s": 104.48166757311866
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 33268635.073452413
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 64675001.42322624
+          },
+          "ours_over_best_work": 1.9440232904185288
+        }
+      ]
+    },
+    "B2-Au-TM": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "hybrid-quadtri",
+        "tri-graded",
+        "tri-graded-pml",
+        "tri-graded-pml-lts2",
+        "cart-conformal-all-graded",
+        "nfit-ogrid",
+        "dgtd-p2",
+        "dgtd-p3",
+        "subgrid-2to1",
+        "voronoi-poly"
+      ],
+      "targets": [
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.0282206535339355
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.062089204788208
+            },
+            "hybrid-quadtri": {
+              "unknowns": -5445.0,
+              "work": -46592865.0,
+              "run_s": -1.9612383842468264
+            },
+            "tri-graded": {
+              "unknowns": 5068.085647489726,
+              "work": 69564427.90997195,
+              "run_s": 7.26579014263803
+            },
+            "tri-graded-pml": {
+              "unknowns": 5068.085647444569,
+              "work": 69564427.90904838,
+              "run_s": 6.7136364281779555
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 5149.465692215743,
+              "work": 35615119.32393857,
+              "run_s": 3.5418744288891992
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -4.913784980773926
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42404061.0,
+              "run_s": -3.304396152496338
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": -5957.0,
+              "work": -52433514.0,
+              "run_s": -2.577329158782959
+            },
+            "voronoi-poly": {
+              "unknowns": 3444.916615440493,
+              "work": 87003014.0638436,
+              "run_s": 5.257879920736098
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 35615119.32393857
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -60626345.0
+          },
+          "ours_over_best_work": 1.702264267278482
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.0282206535339355
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.062089204788208
+            },
+            "hybrid-quadtri": {
+              "unknowns": 8847.988673094473,
+              "work": 166666303.65208152,
+              "run_s": 5.641300674785563
+            },
+            "tri-graded": {
+              "unknowns": 6904.787052458398,
+              "work": 113984684.74778236,
+              "run_s": 9.20944181179116
+            },
+            "tri-graded-pml": {
+              "unknowns": 6904.787072032548,
+              "work": 113984685.26640168,
+              "run_s": 6.84407416228158
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 6805.208270330343,
+              "work": 55677480.3558453,
+              "run_s": 3.740969678411427
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -4.913784980773926
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42404061.0,
+              "run_s": -3.304396152496338
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": -5957.0,
+              "work": -52433514.0,
+              "run_s": -2.577329158782959
+            },
+            "voronoi-poly": {
+              "unknowns": 4059.0667272370556,
+              "work": 120426433.46999656,
+              "run_s": 7.455027465282107
+            }
+          },
+          "best_baseline": {
+            "arm": "nfit-ogrid",
+            "work": -42404061.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -60626345.0
+          },
+          "ours_over_best_work": 1.4297296902765988
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.0282206535339355
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.062089204788208
+            },
+            "hybrid-quadtri": {
+              "unknowns": 10150.5361457484,
+              "work": 216844888.01778227,
+              "run_s": 6.9975631592336605
+            },
+            "tri-graded": {
+              "unknowns": 8647.331049576258,
+              "work": 166449818.28759626,
+              "run_s": 10.975699176735331
+            },
+            "tri-graded-pml": {
+              "unknowns": 8647.3310655387,
+              "work": 166449818.8438512,
+              "run_s": 7.592559003262761
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 8444.490469688786,
+              "work": 79723895.5805271,
+              "run_s": 4.143326886936545
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 12617.473143479405,
+              "work": 197267118.66721776,
+              "run_s": 14.477446414699003
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42404061.0,
+              "run_s": -3.304396152496338
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": -5957.0,
+              "work": -52433514.0,
+              "run_s": -2.577329158782959
+            },
+            "voronoi-poly": {
+              "unknowns": 4782.705805509363,
+              "work": 166689924.8761815,
+              "run_s": 10.570312625231997
+            }
+          },
+          "best_baseline": {
+            "arm": "nfit-ogrid",
+            "work": -42404061.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -60626345.0
+          },
+          "ours_over_best_work": 1.4297296902765988
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.001,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 9769.2123500732,
+              "work": 140457568.0152291,
+              "run_s": 2.807141658766246
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 14562.16005079858,
+              "work": 394800844.086515,
+              "run_s": 9.956126519020637
+            },
+            "hybrid-quadtri": {
+              "unknowns": 15593.990523095,
+              "work": 470847244.78316206,
+              "run_s": 12.510795306417041
+            },
+            "tri-graded": {
+              "unknowns": 27360.991818641505,
+              "work": 1197836662.4118335,
+              "run_s": 38.313385436648254
+            },
+            "tri-graded-pml": {
+              "unknowns": 27360.991997735313,
+              "work": 1197836674.4606524,
+              "run_s": 37.4258255904778
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 25950.412019560175,
+              "work": 552120923.3890326,
+              "run_s": 23.75886500899843
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 20943.861269033543,
+              "work": 538976248.029872,
+              "run_s": 28.70161299916214
+            },
+            "nfit-ogrid": {
+              "unknowns": 7003.7616761688905,
+              "work": 244298705.03928202,
+              "run_s": 8.764716270973178
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "voronoi-poly": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p2",
+            "work": -110338200.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 140457568.0152291
+          },
+          "ours_over_best_work": 1.272973168088922
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.0282206535339355
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.062089204788208
+            },
+            "hybrid-quadtri": {
+              "unknowns": -5445.0,
+              "work": -46592865.0,
+              "run_s": -1.9612383842468264
+            },
+            "tri-graded": {
+              "unknowns": -4269.0,
+              "work": -53870511.0,
+              "run_s": -4.86150050163269
+            },
+            "tri-graded-pml": {
+              "unknowns": -4269.0,
+              "work": -53870511.0,
+              "run_s": -5.9089109897613525
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -4269.0,
+              "work": -26933121.0,
+              "run_s": -2.6721208095550537
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -4.913784980773926
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42404061.0,
+              "run_s": -3.304396152496338
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": -5957.0,
+              "work": -52433514.0,
+              "run_s": -2.577329158782959
+            },
+            "voronoi-poly": {
+              "unknowns": -2142.0,
+              "work": -27871704.0,
+              "run_s": -3.2632691860198975
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -26933121.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -60626345.0
+          },
+          "ours_over_best_work": 2.2509959020345245
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.002,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.0282206535339355
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7085.0,
+              "work": -60626345.0,
+              "run_s": -2.062089204788208
+            },
+            "hybrid-quadtri": {
+              "unknowns": -5445.0,
+              "work": -46592865.0,
+              "run_s": -1.9612383842468264
+            },
+            "tri-graded": {
+              "unknowns": -4269.0,
+              "work": -53870511.0,
+              "run_s": -4.86150050163269
+            },
+            "tri-graded-pml": {
+              "unknowns": -4269.0,
+              "work": -53870511.0,
+              "run_s": -5.9089109897613525
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -4269.0,
+              "work": -26933121.0,
+              "run_s": -2.6721208095550537
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -4.913784980773926
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42404061.0,
+              "run_s": -3.304396152496338
+            },
+            "dgtd-p2": {
+              "unknowns": -6300.0,
+              "work": -110338200.0,
+              "run_s": -59.992443323135376
+            },
+            "dgtd-p3": {
+              "unknowns": -10500.0,
+              "work": -281935500.0,
+              "run_s": -109.81504130363464
+            },
+            "subgrid-2to1": {
+              "unknowns": -5957.0,
+              "work": -52433514.0,
+              "run_s": -2.577329158782959
+            },
+            "voronoi-poly": {
+              "unknowns": -2142.0,
+              "work": -27871704.0,
+              "run_s": -3.2632691860198975
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -26933121.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -60626345.0
+          },
+          "ours_over_best_work": 2.2509959020345245
+        }
+      ]
+    },
+    "B2-Ag-TE": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "hybrid-quadtri",
+        "tri-graded",
+        "tri-graded-pml",
+        "tri-graded-pml-lts2",
+        "cart-conformal-all-graded",
+        "nfit-ogrid",
+        "dgtd-p2",
+        "dgtd-p3",
+        "subgrid-2to1",
+        "voronoi-poly"
+      ],
+      "targets": [
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7021.0,
+              "work": -58006802.0,
+              "run_s": -2.736262798309326
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7021.0,
+              "work": -63591838.0,
+              "run_s": -2.9815585613250732
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4789.0,
+              "work": -40979473.0,
+              "run_s": -2.819246292114258
+            },
+            "tri-graded": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.630934476852417
+            },
+            "tri-graded-pml": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.286037445068359
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -3875.0,
+              "work": -24447375.0,
+              "run_s": -2.476400852203369
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 16095.522416752623,
+              "work": 329503577.4304832,
+              "run_s": 19.64605372725646
+            },
+            "nfit-ogrid": {
+              "unknowns": -2433.0,
+              "work": -42971646.0,
+              "run_s": -3.0151896476745605
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -88412832.0,
+              "run_s": -51.95424747467041
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": 8954.145393939403,
+              "work": 221525261.81508133,
+              "run_s": 15.68300791354926
+            },
+            "voronoi-poly": {
+              "unknowns": 5242.676205672749,
+              "work": 198007851.6206149,
+              "run_s": 12.875791055007861
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -24447375.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -58006802.0
+          },
+          "ours_over_best_work": 2.3727210794614964
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 7574.525834369202,
+              "work": 68603180.3833958,
+              "run_s": 2.912590023101428
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 7571.204046586177,
+              "work": 84387886.69844227,
+              "run_s": 4.412491272721823
+            },
+            "hybrid-quadtri": {
+              "unknowns": 5334.772677748608,
+              "work": 54683461.97949806,
+              "run_s": 4.339005001819962
+            },
+            "tri-graded": {
+              "unknowns": 4795.94017435562,
+              "work": 64746905.90078607,
+              "run_s": 6.496035806887417
+            },
+            "tri-graded-pml": {
+              "unknowns": 4795.940174377804,
+              "work": 64746905.901180565,
+              "run_s": 6.191146482686315
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 5043.260766221229,
+              "work": 36300260.04653291,
+              "run_s": 3.1607863949222375
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 42257.99553754903,
+              "work": 1765364798.7310321,
+              "run_s": 77.85058625651834
+            },
+            "nfit-ogrid": {
+              "unknowns": 2789.471846971403,
+              "work": 52792451.14689,
+              "run_s": 3.365599514721718
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -88412832.0,
+              "run_s": -51.95424747467041
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": 20898.162154874284,
+              "work": 1210008664.5452187,
+              "run_s": 188.14622107265558
+            },
+            "voronoi-poly": {
+              "unknowns": 7348.2961198727,
+              "work": 347616960.52824295,
+              "run_s": 26.281917586885182
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 36300260.04653291
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 68603180.3833958
+          },
+          "ours_over_best_work": 1.8898812376400098
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 10032.148862425975,
+              "work": 113484434.03756917,
+              "run_s": 3.688810965010107
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 9983.85799902094,
+              "work": 195411171.1090095,
+              "run_s": 9.722440081811698
+            },
+            "hybrid-quadtri": {
+              "unknowns": 12349.167588232714,
+              "work": 333440803.5738576,
+              "run_s": 17.84252621996617
+            },
+            "tri-graded": {
+              "unknowns": 7522.805269124131,
+              "work": 131206875.52259126,
+              "run_s": 11.326038480899689
+            },
+            "tri-graded-pml": {
+              "unknowns": 7522.805269201357,
+              "work": 131206875.52478538,
+              "run_s": 10.72915837343417
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 7656.908205738372,
+              "work": 67912726.42258689,
+              "run_s": 4.652888512059414
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-ogrid": {
+              "unknowns": 6660.492651804162,
+              "work": 224484458.0525107,
+              "run_s": 10.006755280308171
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -88412832.0,
+              "run_s": -51.95424747467041
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "voronoi-poly": {
+              "unknowns": 23548.268486279754,
+              "work": 2286574904.159117,
+              "run_s": 117.01042436162459
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 67912726.42258689
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 113484434.03756917
+          },
+          "ours_over_best_work": 1.6710333985328811
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.001,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "hybrid-quadtri": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-pml": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-ogrid": {
+              "unknowns": 37907.151471811245,
+              "work": 3845215025.5952,
+              "run_s": 160.2336837952061
+            },
+            "dgtd-p2": {
+              "unknowns": 5901.166419068316,
+              "work": 105277894.98668435,
+              "run_s": 72.31032723868302
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "voronoi-poly": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p2",
+            "work": 105277894.98668435
+          },
+          "best_ours": {
+            "arm": null,
+            "work": null
+          },
+          "ours_over_best_work": null
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7021.0,
+              "work": -58006802.0,
+              "run_s": -2.736262798309326
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7021.0,
+              "work": -63591838.0,
+              "run_s": -2.9815585613250732
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4789.0,
+              "work": -40979473.0,
+              "run_s": -2.819246292114258
+            },
+            "tri-graded": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.630934476852417
+            },
+            "tri-graded-pml": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.286037445068359
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -3875.0,
+              "work": -24447375.0,
+              "run_s": -2.476400852203369
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -5.326238393783569
+            },
+            "nfit-ogrid": {
+              "unknowns": -2433.0,
+              "work": -42971646.0,
+              "run_s": -3.0151896476745605
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -88412832.0,
+              "run_s": -51.95424747467041
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": -6185.0,
+              "work": -60637215.0,
+              "run_s": -2.9729273319244385
+            },
+            "voronoi-poly": {
+              "unknowns": 3172.3471791504667,
+              "work": 74336992.95458727,
+              "run_s": 6.556657410707514
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -24447375.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -58006802.0
+          },
+          "ours_over_best_work": 2.3727210794614964
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.002,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -7021.0,
+              "work": -58006802.0,
+              "run_s": -2.736262798309326
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -7021.0,
+              "work": -63591838.0,
+              "run_s": -2.9815585613250732
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4789.0,
+              "work": -40979473.0,
+              "run_s": -2.819246292114258
+            },
+            "tri-graded": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.630934476852417
+            },
+            "tri-graded-pml": {
+              "unknowns": -3875.0,
+              "work": -48898625.0,
+              "run_s": -4.286037445068359
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -3875.0,
+              "work": -24447375.0,
+              "run_s": -2.476400852203369
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 12139.00880077149,
+              "work": 179668088.8111388,
+              "run_s": 10.66018533645448
+            },
+            "nfit-ogrid": {
+              "unknowns": -2433.0,
+              "work": -42971646.0,
+              "run_s": -3.0151896476745605
+            },
+            "dgtd-p2": {
+              "unknowns": -5328.0,
+              "work": -88412832.0,
+              "run_s": -51.95424747467041
+            },
+            "dgtd-p3": {
+              "unknowns": -8880.0,
+              "work": -230382720.0,
+              "run_s": -97.85885882377625
+            },
+            "subgrid-2to1": {
+              "unknowns": 6526.270644363704,
+              "work": 120766621.94318151,
+              "run_s": 6.488394655908623
+            },
+            "voronoi-poly": {
+              "unknowns": 6235.340978539121,
+              "work": 264368286.68157747,
+              "run_s": 18.574697729210026
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": -24447375.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -58006802.0
+          },
+          "ours_over_best_work": 2.3727210794614964
+        }
+      ]
+    },
+    "B2-Ag-TM": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "hybrid-quadtri",
+        "tri-graded",
+        "tri-graded-pml",
+        "tri-graded-pml-lts2",
+        "cart-conformal-all-graded",
+        "nfit-ogrid",
+        "dgtd-p2",
+        "dgtd-p3",
+        "subgrid-2to1",
+        "voronoi-poly"
+      ],
+      "targets": [
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -6869.0,
+              "work": -57069418.0,
+              "run_s": -1.807891845703125
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -6869.0,
+              "work": -62050430.0,
+              "run_s": -2.112285852432251
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4653.0,
+              "work": -39815721.0,
+              "run_s": -1.8688013553619385
+            },
+            "tri-graded": {
+              "unknowns": 4106.193138388273,
+              "work": 52954537.6498479,
+              "run_s": 4.309968836138759
+            },
+            "tri-graded-pml": {
+              "unknowns": 4106.19313838885,
+              "work": 52954537.6498575,
+              "run_s": 4.000481448200643
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 4185.394284211579,
+              "work": 27589844.697801437,
+              "run_s": 2.6524022111315264
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -7.429219961166382
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42406462.0,
+              "run_s": -3.3009984493255615
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": -5881.0,
+              "work": -52987515.0,
+              "run_s": -2.466397523880005
+            },
+            "voronoi-poly": {
+              "unknowns": -1782.0,
+              "work": -23190948.0,
+              "run_s": -2.015965461730957
+            }
+          },
+          "best_baseline": {
+            "arm": "voronoi-poly",
+            "work": -23190948.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -57069418.0
+          },
+          "ours_over_best_work": 2.460848862237111
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -6869.0,
+              "work": -57069418.0,
+              "run_s": -1.807891845703125
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -6869.0,
+              "work": -62050430.0,
+              "run_s": -2.112285852432251
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4653.0,
+              "work": -39815721.0,
+              "run_s": -1.8688013553619385
+            },
+            "tri-graded": {
+              "unknowns": 5340.052952162836,
+              "work": 75548648.52884321,
+              "run_s": 5.101882896652927
+            },
+            "tri-graded-pml": {
+              "unknowns": 5340.052952151491,
+              "work": 75548648.52858205,
+              "run_s": 5.243055560246959
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 5585.894029288911,
+              "work": 42523731.24838903,
+              "run_s": 3.67343611545363
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -7.429219961166382
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42406462.0,
+              "run_s": -3.3009984493255615
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": -5881.0,
+              "work": -52987515.0,
+              "run_s": -2.466397523880005
+            },
+            "voronoi-poly": {
+              "unknowns": 3450.558461227211,
+              "work": 87306628.95090176,
+              "run_s": 7.100337678309594
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": -39815721.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -57069418.0
+          },
+          "ours_over_best_work": 1.4333388060459837
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 6967.273162460508,
+              "work": 59303078.50422054,
+              "run_s": 1.922862646518929
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 6960.659760991419,
+              "work": 99549175.51429963,
+              "run_s": 3.4604276857025247
+            },
+            "hybrid-quadtri": {
+              "unknowns": 9182.345923112545,
+              "work": 203247835.38324663,
+              "run_s": 8.370279250001776
+            },
+            "tri-graded": {
+              "unknowns": 7610.517999520608,
+              "work": 134467607.58862233,
+              "run_s": 9.585834222216826
+            },
+            "tri-graded-pml": {
+              "unknowns": 7610.517999333032,
+              "work": 134467607.5832293,
+              "run_s": 8.856494434575255
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 7455.023347298125,
+              "work": 65541061.904901564,
+              "run_s": 5.087513815848615
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -7.429219961166382
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42406462.0,
+              "run_s": -3.3009984493255615
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": -5881.0,
+              "work": -52987515.0,
+              "run_s": -2.466397523880005
+            },
+            "voronoi-poly": {
+              "unknowns": 4063.570689858353,
+              "work": 120717819.72349131,
+              "run_s": 7.124165070143822
+            }
+          },
+          "best_baseline": {
+            "arm": "nfit-ogrid",
+            "work": -42406462.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 59303078.50422054
+          },
+          "ours_over_best_work": 1.3984443810525984
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.001,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 11614.103380546958,
+              "work": 150580944.98789153,
+              "run_s": 2.649498325033447
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 8604.310049178219,
+              "work": 155964143.2075215,
+              "run_s": 4.771003071603569
+            },
+            "hybrid-quadtri": {
+              "unknowns": 13087.873294344141,
+              "work": 369227940.06310016,
+              "run_s": 10.427258328900962
+            },
+            "tri-graded": {
+              "unknowns": 10871.973115215733,
+              "work": 252782094.45401546,
+              "run_s": 11.174268214581723
+            },
+            "tri-graded-pml": {
+              "unknowns": 10871.973113459957,
+              "work": 252782094.38097423,
+              "run_s": 11.551329305653733
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": 10331.41454396153,
+              "work": 115363527.98456514,
+              "run_s": 7.684176535127423
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 16394.71251667099,
+              "work": 341242842.14728457,
+              "run_s": 15.756845061933324
+            },
+            "nfit-ogrid": {
+              "unknowns": 6301.382158964371,
+              "work": 207011728.43018788,
+              "run_s": 7.8320378072185814
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": 25898.809751532906,
+              "work": 1787352326.3506703,
+              "run_s": 55.39669964052064
+            },
+            "voronoi-poly": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml-lts2",
+            "work": 115363527.98456514
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 150580944.98789153
+          },
+          "ours_over_best_work": 1.3052734050231043
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.005,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -6869.0,
+              "work": -57069418.0,
+              "run_s": -1.807891845703125
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -6869.0,
+              "work": -62050430.0,
+              "run_s": -2.112285852432251
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4653.0,
+              "work": -39815721.0,
+              "run_s": -1.8688013553619385
+            },
+            "tri-graded": {
+              "unknowns": -3833.0,
+              "work": -48368627.0,
+              "run_s": -4.167078733444214
+            },
+            "tri-graded-pml": {
+              "unknowns": -3833.0,
+              "work": -48368627.0,
+              "run_s": -3.742234468460083
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -3833.0,
+              "work": -24182397.0,
+              "run_s": -2.40183424949646
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -7.429219961166382
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42406462.0,
+              "run_s": -3.3009984493255615
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": -5881.0,
+              "work": -52987515.0,
+              "run_s": -2.466397523880005
+            },
+            "voronoi-poly": {
+              "unknowns": -1782.0,
+              "work": -23190948.0,
+              "run_s": -2.015965461730957
+            }
+          },
+          "best_baseline": {
+            "arm": "voronoi-poly",
+            "work": -23190948.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -57069418.0
+          },
+          "ours_over_best_work": 2.460848862237111
+        },
+        {
+          "metric": "q_ext_lam_peak",
+          "target": 0.002,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -6869.0,
+              "work": -57069418.0,
+              "run_s": -1.807891845703125
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -6869.0,
+              "work": -62050430.0,
+              "run_s": -2.112285852432251
+            },
+            "hybrid-quadtri": {
+              "unknowns": -4653.0,
+              "work": -39815721.0,
+              "run_s": -1.8688013553619385
+            },
+            "tri-graded": {
+              "unknowns": -3833.0,
+              "work": -48368627.0,
+              "run_s": -4.167078733444214
+            },
+            "tri-graded-pml": {
+              "unknowns": -3833.0,
+              "work": -48368627.0,
+              "run_s": -3.742234468460083
+            },
+            "tri-graded-pml-lts2": {
+              "unknowns": -3833.0,
+              "work": -24182397.0,
+              "run_s": -2.40183424949646
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": -8112.0,
+              "work": -72578064.0,
+              "run_s": -7.429219961166382
+            },
+            "nfit-ogrid": {
+              "unknowns": -2401.0,
+              "work": -42406462.0,
+              "run_s": -3.3009984493255615
+            },
+            "dgtd-p2": {
+              "unknowns": -6408.0,
+              "work": -121098384.0,
+              "run_s": -90.88844990730286
+            },
+            "dgtd-p3": {
+              "unknowns": -10680.0,
+              "work": -311033640.0,
+              "run_s": -123.98592782020567
+            },
+            "subgrid-2to1": {
+              "unknowns": -5881.0,
+              "work": -52987515.0,
+              "run_s": -2.466397523880005
+            },
+            "voronoi-poly": {
+              "unknowns": -1782.0,
+              "work": -23190948.0,
+              "run_s": -2.015965461730957
+            }
+          },
+          "best_baseline": {
+            "arm": "voronoi-poly",
+            "work": -23190948.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -57069418.0
+          },
+          "ours_over_best_work": 2.460848862237111
+        }
+      ]
+    },
+    "B3-g10": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "tri-graded-pml2-patch",
+        "hybrid-quadtri",
+        "tri-graded",
+        "cart-conformal-all-graded",
+        "nfit-boxed",
+        "dgtd-p3",
+        "subgrid-2to1-gap4-lts8"
+      ],
+      "targets": [
+        {
+          "metric": "enh_peak",
+          "target": 0.05,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -9233.0,
+              "work": -85645368.0,
+              "run_s": -5.586058139801025
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -9233.0,
+              "work": -104452929.0,
+              "run_s": -6.214047431945801
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 14378.236587874402,
+              "work": 236423176.8082835,
+              "run_s": 17.18343334447665
+            },
+            "hybrid-quadtri": {
+              "unknowns": 8836.669601745312,
+              "work": 142794756.4696572,
+              "run_s": 15.349389807924338
+            },
+            "tri-graded": {
+              "unknowns": 14378.23658788375,
+              "work": 236423176.80852458,
+              "run_s": 12.978548581517378
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 140869.0469791941,
+              "work": 11473994021.344828,
+              "run_s": 731.0234420077124
+            },
+            "nfit-boxed": {
+              "unknowns": 13696.510824718665,
+              "work": 463263799.67209864,
+              "run_s": 18.65094351007691
+            },
+            "dgtd-p3": {
+              "unknowns": -13560.0,
+              "work": -459982320.0,
+              "run_s": -197.3275065422058
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 142794756.4696572
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -85645368.0
+          },
+          "ours_over_best_work": 0.5997795025351578
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 10261.28116160988,
+              "work": 124256461.48661043,
+              "run_s": 7.202116136739366
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 10563.406379267626,
+              "work": 179821129.72324216,
+              "run_s": 12.023533934824579
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 16469.582418527516,
+              "work": 294042743.0407251,
+              "run_s": 19.196053936661333
+            },
+            "hybrid-quadtri": {
+              "unknowns": 53241.26763187604,
+              "work": 3398965420.9309626,
+              "run_s": 186.12594342850997
+            },
+            "tri-graded": {
+              "unknowns": 16469.582469931313,
+              "work": 294042744.5873854,
+              "run_s": 33.0842180463882
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 46061.43039012911,
+              "work": 3799524974.0870256,
+              "run_s": 126.99491937908621
+            },
+            "dgtd-p3": {
+              "unknowns": -13560.0,
+              "work": -459982320.0,
+              "run_s": -197.3275065422058
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml2-patch",
+            "work": 294042743.0407251
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 124256461.48661043
+          },
+          "ours_over_best_work": 0.42257958894568204
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 13584.112656058576,
+              "work": 187055992.21285474,
+              "run_s": 9.836827130460023
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 14458.781282103802,
+              "work": 342202278.6668048,
+              "run_s": 20.83630788182947
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 18104.267241921243,
+              "work": 344883694.91951984,
+              "run_s": 20.87371426178656
+            },
+            "hybrid-quadtri": {
+              "unknowns": 66706.07832719486,
+              "work": 4904274259.541173,
+              "run_s": 324.1254996067134
+            },
+            "tri-graded": {
+              "unknowns": 18104.267425016104,
+              "work": 344883700.7976545,
+              "run_s": 40.28103843289168
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 65179.51554965911,
+              "work": 6724547089.816709,
+              "run_s": 236.40013843320386
+            },
+            "dgtd-p3": {
+              "unknowns": -13560.0,
+              "work": -459982320.0,
+              "run_s": -197.3275065422058
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "tri-graded-pml2-patch",
+            "work": 344883694.91951984
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 187055992.21285474
+          },
+          "ours_over_best_work": 0.54237412486695
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -9233.0,
+              "work": -85645368.0,
+              "run_s": -5.586058139801025
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -9233.0,
+              "work": -104452929.0,
+              "run_s": -6.214047431945801
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": -13368.0,
+              "work": -210866832.0,
+              "run_s": -14.980857610702516
+            },
+            "hybrid-quadtri": {
+              "unknowns": -6805.0,
+              "work": -76386125.0,
+              "run_s": -5.565746545791626
+            },
+            "tri-graded": {
+              "unknowns": -13368.0,
+              "work": -210866832.0,
+              "run_s": -11.897746801376345
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 18171.813513053195,
+              "work": 348776888.28323764,
+              "run_s": 28.54906838181245
+            },
+            "nfit-boxed": {
+              "unknowns": 13227.460897435545,
+              "work": 433380079.4992734,
+              "run_s": 16.93126080860227
+            },
+            "dgtd-p3": {
+              "unknowns": -13560.0,
+              "work": -459982320.0,
+              "run_s": -197.3275065422058
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": -29845.0,
+              "work": -232970070.0,
+              "run_s": -56.360525608062744
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": -76386125.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -85645368.0
+          },
+          "ours_over_best_work": 1.1212162941895534
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 9921.75368514224,
+              "work": 107573655.89920372,
+              "run_s": 6.401395981838654
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 10080.149701934546,
+              "work": 162735547.89020288,
+              "run_s": 11.033882573217205
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 14480.055625287721,
+              "work": 239057446.9629369,
+              "run_s": 21.327529053166003
+            },
+            "hybrid-quadtri": {
+              "unknowns": 9006.705194290133,
+              "work": 148586356.97601476,
+              "run_s": 15.596310537043033
+            },
+            "tri-graded": {
+              "unknowns": 14480.05562523957,
+              "work": 239057446.96168843,
+              "run_s": 18.032353439317326
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 63478.01791578367,
+              "work": 3186270315.931639,
+              "run_s": 169.7442921268522
+            },
+            "nfit-boxed": {
+              "unknowns": 20386.319833706053,
+              "work": 947847220.1821401,
+              "run_s": 35.473689813337764
+            },
+            "dgtd-p3": {
+              "unknowns": -13560.0,
+              "work": -459982320.0,
+              "run_s": -197.3275065422058
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": 50285.202234419434,
+              "work": 557053511.9621172,
+              "run_s": 96.54071214176084
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 148586356.97601476
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 107573655.89920372
+          },
+          "ours_over_best_work": 0.7239807078422992
+        }
+      ]
+    },
+    "B3-g5": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "tri-graded-pml2-patch",
+        "hybrid-quadtri",
+        "tri-graded",
+        "cart-conformal-all-graded",
+        "nfit-boxed",
+        "dgtd-p3",
+        "subgrid-2to1-gap4-lts8"
+      ],
+      "targets": [
+        {
+          "metric": "enh_peak",
+          "target": 0.05,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 10439.183663665408,
+              "work": 119036703.83448927,
+              "run_s": 5.60702058913825
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 10260.23791019889,
+              "work": 234348303.22511965,
+              "run_s": 15.243655684235927
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 21894.141946699772,
+              "work": 477663637.2500614,
+              "run_s": 22.099512271057915
+            },
+            "hybrid-quadtri": {
+              "unknowns": 12592.161888796145,
+              "work": 303227337.10427976,
+              "run_s": 29.368942339581185
+            },
+            "tri-graded": {
+              "unknowns": 21894.14196451988,
+              "work": 477663637.90523314,
+              "run_s": 31.130040413660833
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 111342.0290621552,
+              "work": 7995769623.781455,
+              "run_s": 448.1901947382448
+            },
+            "nfit-boxed": {
+              "unknowns": 23076.776509383326,
+              "work": 1167105378.438375,
+              "run_s": 53.720491831422315
+            },
+            "dgtd-p3": {
+              "unknowns": -14160.0,
+              "work": -533562960.0,
+              "run_s": -254.9406745433807
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 303227337.10427976
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 119036703.83448927
+          },
+          "ours_over_best_work": 0.39256587143906685
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 13563.292292885957,
+              "work": 199420551.21102482,
+              "run_s": 11.517672780151113
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 13379.231882100425,
+              "work": 312230992.175169,
+              "run_s": 19.263943258205895
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 30520.22883496455,
+              "work": 895956669.6730226,
+              "run_s": 41.62611421289129
+            },
+            "hybrid-quadtri": {
+              "unknowns": 17126.125802455605,
+              "work": 504870574.01712483,
+              "run_s": 45.09664581131867
+            },
+            "tri-graded": {
+              "unknowns": 30520.2288461379,
+              "work": 895956670.3044403,
+              "run_s": 57.361959337747564
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 34690.9919616218,
+              "work": 2340997678.224495,
+              "run_s": 89.83221292655878
+            },
+            "dgtd-p3": {
+              "unknowns": -14160.0,
+              "work": -533562960.0,
+              "run_s": -254.9406745433807
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 504870574.01712483
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 199420551.21102482
+          },
+          "ours_over_best_work": 0.3949934131123685
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 15505.47639873454,
+              "work": 246190602.71114212,
+              "run_s": 16.542367872138602
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 15046.658416091499,
+              "work": 380978162.81506926,
+              "run_s": 22.61207063866411
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 40468.7899322348,
+              "work": 1513373286.6248002,
+              "run_s": 70.57828545338921
+            },
+            "hybrid-quadtri": {
+              "unknowns": 25501.598018871242,
+              "work": 1003419620.9887393,
+              "run_s": 88.65297955669678
+            },
+            "tri-graded": {
+              "unknowns": 40468.78993002269,
+              "work": 1513373286.4754925,
+              "run_s": 84.3106323823107
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 92122.74659186485,
+              "work": 11887969059.130875,
+              "run_s": 715.582122318787
+            },
+            "dgtd-p3": {
+              "unknowns": -14160.0,
+              "work": -533562960.0,
+              "run_s": -254.9406745433807
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p3",
+            "work": -533562960.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 246190602.71114212
+          },
+          "ours_over_best_work": 0.4614087205587549
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -9365.0,
+              "work": -86874255.0,
+              "run_s": -4.808891296386719
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -9365.0,
+              "work": -212164075.0,
+              "run_s": -12.854851722717285
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 13945.726741049539,
+              "work": 225942623.71640417,
+              "run_s": 12.736897775709256
+            },
+            "hybrid-quadtri": {
+              "unknowns": -6969.0,
+              "work": -157980261.0,
+              "run_s": -12.056881666183472
+            },
+            "tri-graded": {
+              "unknowns": 13945.726741047854,
+              "work": 225942623.71636084,
+              "run_s": 13.094152548503045
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 17749.686437165652,
+              "work": 333325495.8631808,
+              "run_s": 28.5297964012976
+            },
+            "nfit-boxed": {
+              "unknowns": 14609.593058800729,
+              "work": 511263079.4594025,
+              "run_s": 20.357672433246112
+            },
+            "dgtd-p3": {
+              "unknowns": -14160.0,
+              "work": -533562960.0,
+              "run_s": -254.9406745433807
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": 25517.12844714714,
+              "work": 195595849.2326748,
+              "run_s": 26.966732256029804
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": -157980261.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -86874255.0
+          },
+          "ours_over_best_work": 0.5499057568970595
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": -9365.0,
+              "work": -86874255.0,
+              "run_s": -4.808891296386719
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": -9365.0,
+              "work": -212164075.0,
+              "run_s": -12.854851722717285
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 20035.84665888924,
+              "work": 411346678.37273854,
+              "run_s": 19.73181519009579
+            },
+            "hybrid-quadtri": {
+              "unknowns": -6969.0,
+              "work": -157980261.0,
+              "run_s": -12.056881666183472
+            },
+            "tri-graded": {
+              "unknowns": 20035.846562635415,
+              "work": 411346675.0425495,
+              "run_s": 25.81894747415027
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 109242.34274673584,
+              "work": 7755218966.54564,
+              "run_s": 431.4471248740319
+            },
+            "nfit-boxed": {
+              "unknowns": 31791.026373754103,
+              "work": 2019706372.1462696,
+              "run_s": 82.20172720071116
+            },
+            "dgtd-p3": {
+              "unknowns": -14160.0,
+              "work": -533562960.0,
+              "run_s": -254.9406745433807
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": -157980261.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": -86874255.0
+          },
+          "ours_over_best_work": 0.5499057568970595
+        }
+      ]
+    },
+    "B3-g2": {
+      "ours": [
+        "subtri-hybrid",
+        "subtri-hybrid-nolts"
+      ],
+      "baselines": [
+        "tri-graded-pml2-patch",
+        "hybrid-quadtri",
+        "tri-graded",
+        "cart-conformal-all-graded",
+        "nfit-boxed",
+        "dgtd-p3",
+        "subgrid-2to1-gap4-lts8"
+      ],
+      "targets": [
+        {
+          "metric": "enh_peak",
+          "target": 0.05,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 20810.081479209963,
+              "work": 556535847.8875023,
+              "run_s": 19.540794300237746
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 20469.520464165395,
+              "work": 1165048830.5995524,
+              "run_s": 62.81094417793656
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 58650.98709174768,
+              "work": 2941042132.058337,
+              "run_s": 131.84341514697513
+            },
+            "hybrid-quadtri": {
+              "unknowns": 13237.906107286142,
+              "work": 755222290.4415282,
+              "run_s": 52.481655884035256
+            },
+            "tri-graded": {
+              "unknowns": 58650.98709373782,
+              "work": 2941042132.218202,
+              "run_s": 118.03801942917205
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 142600.62089071923,
+              "work": 12008260468.202486,
+              "run_s": 570.0354019135281
+            },
+            "nfit-boxed": {
+              "unknowns": 56342.636571947754,
+              "work": 5263534033.035501,
+              "run_s": 252.16929768991605
+            },
+            "dgtd-p3": {
+              "unknowns": -13380.0,
+              "work": -1181975820.0,
+              "run_s": -550.5795555114746
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 755222290.4415282
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 556535847.8875023
+          },
+          "ours_over_best_work": 0.7369166071119707
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 34355.49692046838,
+              "work": 1170538846.24362,
+              "run_s": 41.055396016262904
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 33864.984894501984,
+              "work": 1960992807.7547524,
+              "run_s": 101.18743959370889
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 78243.6212793459,
+              "work": 4666730616.349887,
+              "run_s": 239.48497136630658
+            },
+            "hybrid-quadtri": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded": {
+              "unknowns": 78243.6212661563,
+              "work": 4666730615.089725,
+              "run_s": 197.93955433920084
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 148086.73381380312,
+              "work": 25699036362.62392,
+              "run_s": 1815.5352965197412
+            },
+            "dgtd-p3": {
+              "unknowns": -13380.0,
+              "work": -1181975820.0,
+              "run_s": -550.5795555114746
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p3",
+            "work": -1181975820.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 1170538846.24362
+          },
+          "ours_over_best_work": 0.9903238513319332
+        },
+        {
+          "metric": "enh_peak",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 44166.32390804429,
+              "work": 1637499098.4622884,
+              "run_s": 46.621794411795655
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 42309.17729035799,
+              "work": 2614898116.8195496,
+              "run_s": 135.7986579480967
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": 107226.44317996623,
+              "work": 7820048332.309935,
+              "run_s": 421.1575702173981
+            },
+            "hybrid-quadtri": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "tri-graded": {
+              "unknowns": 107226.44315280182,
+              "work": 7820048329.007608,
+              "run_s": 354.48916039345625
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "dgtd-p3": {
+              "unknowns": -13380.0,
+              "work": -1181975820.0,
+              "run_s": -550.5795555114746
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "dgtd-p3",
+            "work": -1181975820.0
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 1637499098.4622884
+          },
+          "ours_over_best_work": 1.3853913682111436
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.02,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 10139.56890021446,
+              "work": 185017549.58885726,
+              "run_s": 17.834624442638596
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 10069.540037749217,
+              "work": 577323193.1307282,
+              "run_s": 38.472313554440646
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": -55516.0,
+              "work": -2693303224.0,
+              "run_s": -117.666565656662
+            },
+            "hybrid-quadtri": {
+              "unknowns": 8731.648808869144,
+              "work": 500494339.5916485,
+              "run_s": 41.09109707421923
+            },
+            "tri-graded": {
+              "unknowns": -55516.0,
+              "work": -2693303224.0,
+              "run_s": -106.962575674057
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": 115444.80448628725,
+              "work": 8565880207.479201,
+              "run_s": 404.4507528041017
+            },
+            "nfit-boxed": {
+              "unknowns": 23337.631855750693,
+              "work": 1178076973.762971,
+              "run_s": 37.010525236578694
+            },
+            "dgtd-p3": {
+              "unknowns": -13380.0,
+              "work": -1181975820.0,
+              "run_s": -550.5795555114746
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": 47471.298269092404,
+              "work": 1011160310.5184149,
+              "run_s": 162.58643972390885
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 500494339.5916485
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 185017549.58885726
+          },
+          "ours_over_best_work": 0.3696696145251361
+        },
+        {
+          "metric": "q_ext_nrms",
+          "target": 0.01,
+          "arms": {
+            "subtri-hybrid": {
+              "unknowns": 14944.395507547864,
+              "work": 355767248.1029963,
+              "run_s": 18.039855142605767
+            },
+            "subtri-hybrid-nolts": {
+              "unknowns": 14738.930807662677,
+              "work": 842038639.6530675,
+              "run_s": 50.945010529072
+            },
+            "tri-graded-pml2-patch": {
+              "unknowns": -55516.0,
+              "work": -2693303224.0,
+              "run_s": -117.666565656662
+            },
+            "hybrid-quadtri": {
+              "unknowns": 12008.84062324405,
+              "work": 685711597.3276823,
+              "run_s": 48.1571474439205
+            },
+            "tri-graded": {
+              "unknowns": -55516.0,
+              "work": -2693303224.0,
+              "run_s": -106.962575674057
+            },
+            "cart-conformal-all-graded": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            },
+            "nfit-boxed": {
+              "unknowns": 116726.39322564036,
+              "work": 17489990092.389427,
+              "run_s": 944.8159760539852
+            },
+            "dgtd-p3": {
+              "unknowns": -13380.0,
+              "work": -1181975820.0,
+              "run_s": -550.5795555114746
+            },
+            "subgrid-2to1-gap4-lts8": {
+              "unknowns": null,
+              "work": null,
+              "run_s": null
+            }
+          },
+          "best_baseline": {
+            "arm": "hybrid-quadtri",
+            "work": 685711597.3276823
+          },
+          "best_ours": {
+            "arm": "subtri-hybrid",
+            "work": 355767248.1029963
+          },
+          "ours_over_best_work": 0.5188292709201259
+        }
+      ]
+    }
+  }
+}
