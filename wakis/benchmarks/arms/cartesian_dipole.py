@@ -53,11 +53,13 @@ def _axis_z(L, g, hz, h_out, r_out, n_pml, growth=1.2):
 class CartesianDipoleArm(Arm):
     def __init__(self, conformal=False, ladder=None, n_pml=10, cfl=0.95,
                  n2f=True, pad_xy=0.21, pad_z=0.14, graded=True, hz_ratio=4.0, ppw_out=20,
+                 use_gpu=False,
                  name=None):  # fmt: skip
         self.pad_xy, self.pad_z = pad_xy, pad_z
         self.graded = graded
         self.hz_ratio = hz_ratio
         self.ppw_out = ppw_out
+        self.use_gpu = use_gpu
         self.conformal = conformal
         self.ladder = ladder
         self.n_pml = n_pml
@@ -112,7 +114,7 @@ class CartesianDipoleArm(Arm):
             )  # fmt: skip
         solver = wakis.SolverFIT3D(
             grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=self.n_pml,
-            use_stl=bool(solids), cfln=self.cfl, verbose=0,
+            use_stl=bool(solids), cfln=self.cfl, use_gpu=self.use_gpu, verbose=0,
         )  # fmt: skip
         if self.conformal == "edges":
             from ...templates.shapes import Cylinder, assign_materials
@@ -156,5 +158,6 @@ class CartesianDipoleArm(Arm):
             out["d_freqs"] = np.asarray(m.frequencies)
         n = int(grid.Nx * grid.Ny * grid.Nz)
         out["cost"] = dict(unknowns=3 * n, cells=n, steps=n_steps, dt=solver.dt,
-                           run_s=run_s, setup_s=setup_s, h=ht, **info)  # fmt: skip
+                           run_s=run_s, setup_s=setup_s, h=ht,
+                           device="gpu" if self.use_gpu else "cpu", **info)  # fmt: skip
         return out

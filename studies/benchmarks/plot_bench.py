@@ -18,6 +18,7 @@ STYLE = {
     "tri-uniform": ("tab:blue", "^", ":"),
     "tri-graded": ("tab:blue", "^", "-"),
     "cart-staircase-graded@B4": ("tab:red", "s", "-"),
+    "cart-staircase-edges-graded": ("tab:blue", "^", "-"),
     "cart-conformal-pec-graded": ("tab:green", "o", "-"),
     "cart-conformal-pec-graded-bigdomain": ("tab:green", "x", "none"),
 }
@@ -28,7 +29,9 @@ LABEL = {
     "cart-conformal-all-graded": "Cartesian conformal, graded",
     "tri-uniform": "triangles, uniform",
     "tri-graded": "triangles, graded",
-    "cart-conformal-pec-graded": "Cartesian conformal PEC, graded",
+    "cart-conformal-pec-graded": "Cartesian conformal PEC (mask bug), graded",
+    "cart-staircase-edges-graded": "Cartesian edge-wise staircase, graded",
+    "cart-staircase-graded@B4": "Cartesian legacy STL staircase, graded",
     "cart-conformal-pec-graded-bigdomain": "conformal PEC, 2x domain",
 }
 
@@ -258,7 +261,9 @@ def fig_b4(recs, fname="b4_dipole_zin.png"):
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
     axs[0].plot(f, ref["z_in"].real, "k-", lw=2, label="R, Hallen MoM (reference)")
     axs[0].plot(f, ref["z_in"].imag, "k--", lw=2, label="X, Hallen MoM")
-    arms = by_arm(recs, "B4")
+    arms = {k: v for k, v in by_arm(recs, "B4").items()
+            if k in ("cart-staircase-edges-graded", "cart-staircase-graded",
+                     "cart-conformal-pec-graded")}  # fmt: skip
     for arm, rs in arms.items():
         col, mk, _ = STYLE.get(arm, ("gray", "o", "-"))
         r = rs[-1]  # finest
