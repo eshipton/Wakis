@@ -116,7 +116,10 @@ if IN_COLAB:
 import argparse
 import json
 import time
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", message="IProgress not found")  # tqdm in Jupyter
 
 import matplotlib
 import numpy as np
@@ -195,7 +198,8 @@ if ARGS.arm:  # study runs must not overwrite the tutorial figures
 DATA_DIR = HERE / "data"
 FIG_DIR.mkdir(exist_ok=True)
 print(
-    f"mode={'full' if FULL else 'quick'}  GPU={USE_GPU} ({gpu_name()})  "
+    f"mode={'full' if FULL else 'quick'}  GPU={USE_GPU}"
+    f"{' (' + str(gpu_name()) + ')' if USE_GPU else ''}  "
     f"resolution={RESOLUTION:g} cells/µm  conformal={CONFORMAL}"
 )
 

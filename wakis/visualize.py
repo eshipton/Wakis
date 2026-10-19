@@ -133,6 +133,9 @@ def _start_xvfb(screen="1920x1080x24"):
         )
         time.sleep(1.0)
         if proc.poll() is None:  # still running: the server is up
+            import atexit
+
+            atexit.register(proc.terminate)  # do not leave servers behind
             os.environ["DISPLAY"] = f":{n}"
             return f"Xvfb on :{n}"
     return "Xvfb could not be started"
