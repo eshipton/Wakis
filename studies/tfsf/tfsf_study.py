@@ -212,7 +212,8 @@ def _pos(nodes, idx, on_mid):
 # Part A: leakage
 # --------------------------------------------------------------------------
 def leakage_case(args):
-    cells_per_lambda, mode, record_map = args
+    cells_per_lambda, mode, record_map = args[:3]
+    dim = args[3] if len(args) > 3 else 3
     import wakis
     from wakis.sources import GaussianSource
 
@@ -223,16 +224,25 @@ def leakage_case(args):
     n_gap = 6
     n = n_box + 2 * n_gap + 2 * n_pml
     half = n * h / 2
-    grid = wakis.GridFIT3D(-half, half, -half, half, -half, half, n, n, n, verbose=0)
-    solver = wakis.SolverFIT3D(
-        grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=n_pml, verbose=0
-    )
+    if dim == 3:
+        grid = wakis.GridFIT3D(
+            -half, half, -half, half, -half, half, n, n, n, verbose=0
+        )
+        bc = ["cpml"] * 3
+        size = (n_box * h,) * 3
+    else:  # 3 cells along periodic z (a closed flux box needs two z faces)
+        x = np.linspace(-half, half, n + 1)
+        grid = wakis.GridFIT3D(x=x, y=x.copy(), z=h * np.arange(-1.5, 2.0), verbose=0)
+        bc = ["cpml", "cpml", "periodic"]
+        size = (n_box * h, n_box * h, None)
+    solver = wakis.SolverFIT3D(grid, bc_low=bc, bc_high=bc, n_pml=n_pml, verbose=0)
     st = GaussianSource(F0, 0.3 * F0, cutoff=8)
     src = wakis.TFSFSource(st, size=(n_box * h,) * 3, direction="+x", polarization="z")
     src.prepare(solver)
     b = src.box_bounds()[0][1]
     freqs = np.linspace(0.6, 1.4, 9) * F0
-    scat = wakis.FluxMonitor(freqs, size=(2 * (b + 3 * h),) * 3)
+    box = (2 * (b + 3 * h),) * 3 if dim == 3 else (2 * (b + 3 * h),) * 2 + (h,)
+    scat = wakis.FluxMonitor(freqs, size=box)
     driver = src if mode == "tfsf" else HuygensBox(src, mode.replace("sheets_", ""))
     Nt = int((st.end_time + 3 * n * h / C0) / solver.dt)
 
@@ -253,8 +263,10 @@ def leakage_case(args):
     t0 = time.time()
     solver.emsolve(Nt, source=[driver], monitors=[scat], callback=cb)
     wall = time.time() - t0
-    inc = src.incident_flux_density(freqs) * (n_box * h) ** 2
+    face = (n_box * h) ** 2 if dim == 3 else n_box * h * h
+    inc = src.incident_flux_density(freqs) * face
     out = {
+        "dim": dim,
         "cells_per_lambda": cells_per_lambda,
         "mode": mode,
         "n": n,
@@ -369,20 +381,16 @@ def mie_case(args):
 
 # --------------------------------------------------------------------------
 def run(quick, procs):
+    modes = ("tfsf", "sheets_discrete", "sheets_continuum", "sheets_face")
     if quick:
-        leak = [
-            (c, m, c == 10)
-            for c in (10, 14)
-            for m in ("tfsf", "sheets_discrete", "sheets_continuum", "sheets_face")
-        ]
+        leak = [(c, m, c == 10, 3) for c in (10, 14) for m in modes]
+        leak += [(c, m, False, 2) for c in (10, 20) for m in modes]
         mie = [(32, False), (32, True)]
     else:
-        res = (10, 14, 20, 28, 40, 56)
-        leak = [
-            (c, m, c == 20)
-            for c in res
-            for m in ("tfsf", "sheets_discrete", "sheets_continuum", "sheets_face")
-        ]
+        res3 = (10, 14, 20, 28, 40, 56)
+        res2 = (10, 14, 20, 28, 40, 56, 80, 113)
+        leak = [(c, m, c == 20, 3) for c in res3 for m in modes]
+        leak += [(c, m, False, 2) for c in res2 for m in modes]
         mie = [(n, conf) for n in (32, 48, 64, 80, 96, 128) for conf in (False, True)]
     jobs = [("leak", j) for j in leak] + [("mie", j) for j in mie]
     # largest first for load balance
@@ -399,7 +407,7 @@ def run(quick, procs):
         json.dump(out, fh)
     for r in out["leak"]:
         print(
-            f"leak {r['mode']:>17s} {r['cells_per_lambda']:3d} c/l: peak {r['leak_peak']:.2e} power@f0 {r['leak_power'][4]:.2e} ({r['wall_s']:.0f}s)"
+            f"leak {r['dim']}D {r['mode']:>17s} {r['cells_per_lambda']:3d} c/l: peak {r['leak_peak']:.2e} power@f0 {r['leak_power'][4]:.2e} ({r['wall_s']:.0f}s)"
         )
     for r in out["mie"]:
         print(f"mie n={r['n']} conformal={r['conformal']}: {r['wall_s']:.0f}s")
@@ -469,31 +477,36 @@ def plot(quick):
     # Figure 2: leakage vs resolution and frequency
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.6), constrained_layout=True)
     for mode in labels:
-        rows = sorted(
-            [r for r in res["leak"] if r["mode"] == mode],
-            key=lambda r: r["cells_per_lambda"],
-        )
-        if not rows:
-            continue
-        cpl = np.array([r["cells_per_lambda"] for r in rows])
-        p0 = np.array([max(abs(r["leak_power"][4]), floor) for r in rows])
-        pk = np.array([max(r["leak_peak"], 1e-17) for r in rows])
-        ax1.loglog(
-            cpl, p0, "o-", color=colors[mode], label=labels[mode] + " (power, f0)"
-        )
-        ax1.loglog(cpl, pk**2, "s:", color=colors[mode], alpha=0.6)
-        mid = [r for r in rows if r["cells_per_lambda"] == 20] or rows[:1]
-        f = np.array(mid[0]["freqs"]) / 1e9
-        ax2.semilogy(
-            f,
-            np.maximum(np.abs(mid[0]["leak_power"]), floor),
-            "o-",
-            color=colors[mode],
-            label=labels[mode],
-        )
+        for dim, mk, ls in ((3, "o", "-"), (2, "^", "--")):
+            rows = sorted(
+                [r for r in res["leak"] if r["mode"] == mode and r["dim"] == dim],
+                key=lambda r: r["cells_per_lambda"],
+            )
+            if not rows:
+                continue
+            cpl = np.array([r["cells_per_lambda"] for r in rows])
+            p0 = np.array([max(abs(r["leak_power"][4]), floor) for r in rows])
+            ax1.loglog(
+                cpl,
+                p0,
+                mk + ls,
+                color=colors[mode],
+                mfc=colors[mode] if dim == 3 else "none",
+                label=f"{labels[mode]} ({dim}D)",
+            )
+            if dim == 3:
+                mid = [r for r in rows if r["cells_per_lambda"] == 20] or rows[:1]
+                f = np.array(mid[0]["freqs"]) / 1e9
+                ax2.semilogy(
+                    f,
+                    np.maximum(np.abs(mid[0]["leak_power"]), floor),
+                    "o-",
+                    color=colors[mode],
+                    label=labels[mode],
+                )
     for mode, order_, ls in (("sheets_face", 2, "--"), ("sheets_continuum", 4, "-.")):
         rows = sorted(
-            [r for r in res["leak"] if r["mode"] == mode],
+            [r for r in res["leak"] if r["mode"] == mode and r["dim"] == 2],
             key=lambda r: r["cells_per_lambda"],
         )
         if rows:
@@ -509,19 +522,25 @@ def plot(quick):
                 lw=1,
                 label=f"slope -{order_}",
             )
-    ax1.axhspan(1e-34, 1e-28, color="0.9", zorder=0)
-    ax1.text(10.5, 3e-28, "float64 round-off", fontsize=7, color="0.4")
+    ax1.axhspan(1e-34, 1e-16, color="0.92", zorder=0)
+    ax1.text(
+        10.5,
+        3e-17,
+        "float64 round-off (2D: z faces of the flux box cross the TF region)",
+        fontsize=6.5,
+        color="0.4",
+    )
     ax1.set_xlabel("cells per wavelength at f0")
     ax1.set_ylabel("leaked power / incident power on a face")
     ax1.set_title(
-        "Leakage vs resolution (circles: power at f0; squares: (peak |E| ratio)$^2$)",
+        "Leaked power at f0 vs resolution (filled: 3D, open: 2D TM; slopes fitted to 2D)",
         fontsize=9,
     )
     ax1.legend(fontsize=6.5, loc="center right")
     ax1.grid(True, which="both", alpha=0.3)
     ax2.set_xlabel("frequency [GHz]")
     ax2.set_ylabel("leaked power / incident power on a face")
-    ax2.set_title("Leakage spectrum at 20 cells per wavelength (f0)", fontsize=9)
+    ax2.set_title("Leakage spectrum, 3D, 20 cells per wavelength at f0", fontsize=9)
     ax2.grid(True, which="both", alpha=0.3)
     fig.savefig(os.path.join(HERE, "tfsf_leakage_vs_resolution.png"), dpi=150)
     plt.close(fig)
