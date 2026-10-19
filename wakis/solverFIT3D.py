@@ -883,43 +883,36 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
     def _setup_tete(self, dt_given):
         """
-        Build the TE/TM operators (`wakis.tete`) and check the time step.
+        Build the TE/TM operators (`wakis.tete`) and certify the time step.
 
-        The stability limits of the three TE/TM sub-operators are computed
-        with Arnoldi iterations for conformal grids, non-vacuum materials or
-        an explicitly given dt; otherwise the analytic limit (eq. 25 of
-        Dohlus & Zagorodnov) is used. A dt above the limit raises ValueError
-        (an unstable run is never useful; pass a smaller ``dt`` explicitly).
+        The step is certified by Gershgorin bounds of the three TE/TM
+        sub-operators (`tete.gershgorin_limits`), which are tight on uniform
+        staircase grids (eq. 25 of Dohlus & Zagorodnov) and for the
+        longitudinal operator on conformal grids. On conformal grids the
+        small cut faces are first stabilized by scaling the e_z (and, if
+        needed, h_z) masses (`tete.stabilize_transverse`). A dt above the
+        bound raises ValueError (an unstable run is never useful).
         """
         ops = tete.build_operators(self)
-        # Staircase operators obey the analytic bound (removing PEC edges
-        # only lowers the largest eigenvalue); conformal faces need the
-        # numerical one, and their small faces the transverse stabilization
-        numeric = bool(getattr(self.grid, "conformal", False)) or bool(
+        conformal = bool(getattr(self.grid, "conformal", False)) or bool(
             getattr(self.grid, "sheets", None)
         )
         self.tete_stabilization = {}
-        if numeric:
+        if conformal:
             self.tete_stabilization = tete.stabilize_transverse(
                 self, ops, self.dt, which=("ez",)
             )
-        tete.install(self, ops)
-        if not self.activate_cpml:  # free the Yee operators (blocks replace them)
-            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
-        if numeric:
-            limits = tete.stability_limits(self)
-            if limits["te"] < self.dt:
+            if tete.gershgorin_limits(ops)["te"] < self.dt:
                 self.tete_stabilization.update(
                     tete.stabilize_transverse(self, ops, self.dt, which=("hz",))
                 )
-                tete.install(self, ops)
-                limits = tete.stability_limits(self)
             if self.verbose > 1:
                 print(f"    * TE/TM transverse stabilization: {self.tete_stabilization}")
-            dt_max = min(limits.values())
-        else:
-            limits = {"analytic": tete.analytic_dt_limit(self)}
-            dt_max = limits["analytic"]
+        limits = tete.gershgorin_limits(ops)
+        tete.install(self, ops)
+        if not self.activate_cpml:  # free the Yee operators (blocks replace them)
+            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
+        dt_max = min(limits.values())
         self.tete_dt_limits = limits
         magic = tete.magic_dt(self) if self.verbose else self.dt
         if not dt_given and self.verbose and abs(self.dt - magic) > 1e-12 * magic:
@@ -929,16 +922,14 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 "is then not zero."
             )
         if self.verbose > 1:
-            print(f"    * TE/TM stability limits [s]: {limits}")
-        # 1e-6: the Arnoldi estimate carries a 1e-7 safety margin, and the
-        # longitudinal operator meets its Gershgorin bound 4 c^2/dz^2 up to
-        # O(1/Nz^2) on long columns (the bound itself is stable)
-        if self.dt > dt_max * (1 + 1e-6):
+            print(f"    * TE/TM stability limits (Gershgorin) [s]: {limits}")
+        # 1e-9: the longitudinal bound equals dz/c up to round-off
+        if self.dt > dt_max * (1 + 1e-9):
             raise ValueError(
                 f"scheme='tete': dt={self.dt:.6e} s exceeds the stable limit "
                 f"{dt_max:.6e} s ({limits}). The magic step dz/c needs "
-                "dz <= (dx^-2 + dy^-2)^-1/2 and no conformal faces shorter in z; "
-                "pass a smaller dt explicitly to run (with dispersion along z)."
+                "dz <= (dx^-2 + dy^-2)^-1/2; pass a smaller dt explicitly to run "
+                "(with dispersion along z)."
             )
         self.update_logger(["scheme"])
 

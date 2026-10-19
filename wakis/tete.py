@@ -44,7 +44,8 @@ exactly c for all kz. The scheme is stable if (eq. 25)
 
 which for general (conformal, material) operators reads
 dt <= 2 / sqrt(lambda_max(K)) for the three operators K = B_L A_L,
-B_Z A_T and B_T A_Z (`stability_limits`).
+B_Z A_T and A_Z B_T; the solver certifies dt with Gershgorin row-sum
+bounds of these operators (`gershgorin_limits`).
 
 Every sub-update is linear with a transposable sparse operator, so the step
 has an exact Hermitian transpose (`TeteTranspose`, used by
@@ -120,21 +121,6 @@ def magic_dt(solver):
     return float(dz.min() / c_light)
 
 
-def analytic_dt_limit(solver):
-    """
-    Stability limit of eq. (25) for staircase operators [s].
-
-    min(dz_min, (dx_min^-2 + dy_min^-2)^-1/2) / c_max, with c_max the largest
-    wave speed of the materials (1/sqrt(eps mu) from ieps and imu).
-    """
-    g = solver.grid
-    ieps = np.asarray(_host(solver.ieps.toarray()))
-    imu = np.asarray(_host(solver.imu.toarray()))
-    c_max = np.sqrt(ieps.max() * imu.max()) if ieps.max() > 0 else c_light
-    trans = (1.0 / np.min(g.dx) ** 2 + 1.0 / np.min(g.dy) ** 2) ** -0.5
-    return float(min(np.min(g.dz), trans) / c_max)
-
-
 def _host(a):
     return a.get() if hasattr(a, "get") else a
 
@@ -164,7 +150,10 @@ def _lam_max(B, A, tol=1e-8):
 
 def stability_limits(solver, tol=1e-8):
     """
-    Largest stable dt [s] of each sub-operator, from Lanczos/Arnoldi eigenvalues.
+    Largest stable dt [s] of each sub-operator, from Arnoldi eigenvalues.
+
+    Diagnostic (tests, small grids): the solver certifies its time step with
+    the cheaper upper bounds of `gershgorin_limits`.
 
     Returns
     -------
@@ -187,6 +176,28 @@ def stability_limits(solver, tol=1e-8):
 
 
 _OP_NAMES = ("LH", "TH", "ZH", "LE", "TE", "ZE")
+
+# (name, rows of B or A, other factor) of the three sub-operators
+_PAIRS = {"longitudinal": ("LE", "LH"), "tm": ("ZE", "TH"), "te": ("ZH", "TE")}
+
+
+def gershgorin_limits(ops):
+    """
+    Certified stable dt [s] of each sub-operator from Gershgorin row sums.
+
+    lambda_max(K) <= max_i (|X| |Y| 1)_i for K = X Y (any induced norm
+    bounds the spectral radius), so dt <= 2 / sqrt(max row sum) is stable.
+    The bound is tight on uniform staircase grids (it reproduces eq. (25) of
+    Dohlus & Zagorodnov) and for the longitudinal operator with the
+    trapezoidal conformal face areas (rows sum to 4 c^2/dz^2).
+    """
+    lim = {}
+    for name, (x, y) in _PAIRS.items():
+        X, Y = abs(_host_sparse(ops[x])), abs(_host_sparse(ops[y]))
+        r = X @ (Y @ np.ones(Y.shape[1]))
+        rmax = float(r.max()) if r.size else 0.0
+        lim[name] = np.inf if rmax == 0 else 2.0 / np.sqrt(rmax)
+    return lim
 
 
 def _host_sparse(m):

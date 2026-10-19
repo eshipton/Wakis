@@ -347,7 +347,10 @@ def test_conformal_round_pipe_no_cherenkov(tmp_path, long_tfsf, monkeypatch):
     and gives a visible wake.
     """
     tete, s = _round_pipe_wake("tete", tmp_path)
-    assert s.tete_dt_limits["longitudinal"] >= s.dt * (1 - 1e-6)
+    assert s.tete_dt_limits["longitudinal"] >= s.dt * (1 - 1e-9)
+    # The Gershgorin certificate is an upper bound of the Arnoldi eigenvalues
+    arnoldi = wakis.tete.stability_limits(s)
+    assert all(arnoldi[k] >= s.tete_dt_limits[k] * (1 - 1e-6) for k in arnoldi)
     assert tete < 1e-8
     yee, _ = _round_pipe_wake("yee", tmp_path)
     assert yee > 0.1

@@ -83,7 +83,7 @@ def loss_factor(omega, kn, sigma):
     return float(np.sum(kn * np.exp(-((omega * sigma / c_light) ** 2))))
 
 
-def wake_potential(s, omega, kn, sigma, chunk=4096):
+def wake_potential(s, omega, kn, sigma, chunk=256):
     """Gaussian-bunch wake potential W(s) [V/C] (positive = energy loss)."""
     s = np.asarray(s, float)
     W = np.zeros_like(s)

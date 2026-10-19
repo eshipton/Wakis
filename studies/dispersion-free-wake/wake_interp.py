@@ -36,10 +36,12 @@ def wake_potential_interp(Ez_file, s, q, v, ti, skip_cells=0):
     if Ez.ndim > 2:  # 3x3 transverse block: centre column
         Ez = Ez[:, Ez.shape[1] // 2, Ez.shape[2] // 2, :]
     nt = Ez.shape[0]
+    # As in Wakis: the time reference uses zmin of the stored z range,
+    # before the skip_cells boundary layers are removed
+    zmin = np.min(np.asarray(z))
     zz = slice(skip_cells, -skip_cells) if skip_cells else slice(None)
     z, dzk, Ez = z[zz], (dz if np.ndim(dz) else np.full(z.size, dz))[zz], Ez[:, zz]
     dt = t[1] - t[0]
-    zmin = np.min(np.asarray(z))
     W = np.zeros(len(s))
     for k in range(z.size):
         ts = (z[k] + s) / v - zmin / v - t[0] + ti
