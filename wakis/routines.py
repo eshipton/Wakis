@@ -111,6 +111,11 @@ class RoutinesMixin:
         - First-order extrapolating ABC faces are applied within each field update.
         - If `callback` is provided, it is called as `callback(self, t)` at each step.
         - The plotting keyword arguments are merged with defaults for 2D/3D plotting.
+        - Fused GPU solvers (``SolverFIT3D(..., fused=True)``) run steps 1 to
+          Nt - 1 as CUDA-graph replays when the sources and monitors are fused
+          types and no plotting, saving or callback is requested (set
+          ``solver.use_graphs = False`` to keep the per-step loop); results are
+          identical to the per-step fused loop.
         """
         self.Nt = Nt
         if source is not None:
