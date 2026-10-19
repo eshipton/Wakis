@@ -226,14 +226,14 @@ Nodal discontinuous Galerkin time domain (Hesthaven & Warburton 2008) on **curve
 </table>
 
 
-#### In progress: Cherenkov-free wakefields with the explicit TE/TM scheme &nbsp;·&nbsp; `SolverFIT3D(scheme='tete')`
+#### Cherenkov-free wakefields with the explicit TE/TM scheme &nbsp;·&nbsp; `SolverFIT3D(scheme='tete')`
 
 <table>
 <tr>
 <td width="55%"><img src="docs/img/tete_pipe_spurious_wake.png" width="600" alt="Spurious wake and loss factor in a smooth PEC pipe versus pipe length for the TE/TM scheme and for Yee at Courant numbers 0.99 and 0.5"></td>
 <td>
 
-The explicit TE/TM scheme of Dohlus & Zagorodnov (2009) has no numerical dispersion along the beam axis at c&nbsp;dt = dz. A relativistic bunch in a smooth pipe therefore leaves no numerical Cherenkov wake. The figure shows the spurious wake and loss factor in a smooth PEC pipe, where the exact answer is zero. TE/TM is compared on the same grid with Yee at Courant 0.99 (best Yee) and at 0.5 (the Wakis default). Box-cavity and pillbox comparisons against an analytic modal wake are running; numbers will follow in the study write-up. Branch `feature/dispersion-free-wake`.
+Opt-in `SolverFIT3D(scheme="tete")`: the explicit TE/TM scheme of Dohlus & Zagorodnov (JCP 228, 2822, 2009), dispersion-free along the beam axis at c·dt = dz, with conformal PEC, the TF/SF beam, GPU, MPI and an exact transposed step. **Smooth pipe (exact wake 0): ≤ 3e-8 V/pC, against 1.2–660 V/pC of spurious Cherenkov wake for Yee, growing with length.** Closed box at σ<sub>z</sub>/dz = 1: loss-factor error 10 % vs 48 % for Yee (19× less work to reach 1 %); pillbox with pipes at σ<sub>z</sub>/dz = 2: 3.3 % vs 42 %. Long bunches: equal to Yee. Found along the way: Wakis wake post-processing samples E<sub>z</sub> at `int(t/dt)` (first order in dt), which raises the Yee loss-factor error from 1.5 % to 7.8 %; an upstream issue is drafted. **Limits:** 1.3–1.9× cost per simulated time; not yet fused for GPU; no x/y CPML, ADE or `AdjointSimulation`. Code on `main`, [studies/dispersion-free-wake](studies/dispersion-free-wake).
 
 </td>
 </tr>
