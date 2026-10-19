@@ -120,6 +120,8 @@ class Triangles2DArm(Arm):
         for i, x0 in enumerate(gpts):
             j = np.argsort(np.hypot(*(mid - x0).T))[:k]
             dx = mid[j] - x0
+            ell = np.abs(dx).max()  # scale: well-conditioned fit
+            dx = dx / ell
             nx, ny = n_e[j, 0], n_e[j, 1]
             # unknowns (ax, ay, bxx, bxy, byx, byy): E.n = nx (ax + bxx dx + bxy dy) + ny (ay + ...)
             Amat = np.stack(
