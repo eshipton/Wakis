@@ -310,9 +310,12 @@ class PrismFIT3D:
         ``{tag: material}``: ``[eps_r, mu_r]``, ``[eps_r, mu_r, sigma]``, a
         `wakis.dispersive.DispersiveMaterial` or ``"pec"``. Missing tags are
         vacuum.
-    bc_xy : {"pec", "pmc", "abc"}
+    bc_xy : {"pec", "pmc", "abc"} or callable
         Lateral boundary of the cross-section: PEC, PMC (natural) or the
-        first-order Silver-Mueller absorbing condition.
+        first-order Silver-Mueller absorbing condition; a callable maps the
+        (n, 2) midpoints of the boundary edges to one of these per edge
+        (e.g. symmetry planes plus an absorbing outer arc). A node is PEC
+        if any of its boundary edges is.
     bc_z : {"pec", "pmc", "periodic"} or (low, high)
         Boundaries at z[0] and z[-1] (pec: tangential E = 0, pmc: natural).
     absorber_xy : dict, optional
@@ -366,8 +369,8 @@ class PrismFIT3D:
         cfl=0.95,
         use_gpu=False,
     ):
-        if bc_xy not in ("pec", "pmc", "abc"):
-            raise ValueError("bc_xy must be 'pec', 'pmc' or 'abc'")
+        if not callable(bc_xy) and bc_xy not in ("pec", "pmc", "abc"):
+            raise ValueError("bc_xy must be 'pec', 'pmc', 'abc' or a callable")
         if isinstance(bc_z, str):
             bc_z = (bc_z, bc_z)
         bc_z = tuple(b.lower() for b in bc_z)
@@ -478,9 +481,18 @@ class PrismFIT3D:
         th_pec, tv_pec = touched(pec)
         fix_h = ~th_live | th_pec
         fix_v = ~tv_live | tv_pec
-        if bc_xy == "pec":
-            fix_h[m2.boundary_edges, :] = True
-            fix_v[m2.boundary_nodes, :] = True
+        # per-boundary-edge type (a callable maps edge midpoints to types)
+        be_all = m2.boundary_edges
+        if callable(bc_xy):
+            kind = np.asarray(bc_xy(m2.edge_midpoint[be_all]))
+            if not np.all(np.isin(kind, ("pec", "pmc", "abc"))):
+                raise ValueError("bc_xy(points) must return 'pec', 'pmc' or 'abc'")
+        else:
+            kind = np.full(be_all.size, bc_xy)
+        self.boundary_kind = kind
+        be_pec = be_all[kind == "pec"]
+        fix_h[be_pec, :] = True
+        fix_v[np.unique(m2.edges[be_pec].ravel()), :] = True
         if not mesh.periodic_z:
             if bc_z[0] == "pec":
                 fix_h[:, 0] = True
@@ -489,8 +501,8 @@ class PrismFIT3D:
         self.fix_h, self.fix_v = fix_h, fix_v
 
         # ---- lateral ABC (Silver-Mueller): G = l_surface / (eta L)
-        if bc_xy == "abc":
-            be = m2.boundary_edges
+        if np.any(kind == "abc"):
+            be = be_all[kind == "abc"]
             tb = CEa[be].indices  # the single cell of each boundary edge
             if tb.size != be.size:
                 raise RuntimeError("boundary edge with != 1 cell")
