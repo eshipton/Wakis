@@ -85,8 +85,11 @@ def main():
     ap.add_argument("--nshards", type=int, default=1)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--arms", nargs="*", help="restrict the task list to these arms")
     a = ap.parse_args()
     tl = tasks(a.phase)
+    if a.arms:
+        tl = [t for t in tl if t[1] in a.arms]
     if a.mode == "list":
         for i, t in enumerate(tl):
             print(i, *t)
