@@ -330,7 +330,7 @@ def fig_convergence(runs):
             ax.legend(fontsize=6.5, loc="lower left" if col else "upper right")
     axs[0, 0].legend(fontsize=6.5, loc="lower left")
     fig.suptitle(
-        "Error vs resolution, unknowns and work (unknowns × steps); open markers = pending runs"
+        "Error vs resolution, unknowns and work (unknowns × steps)"
     )
     fig.savefig(FIG / "d_convergence.png")
     plt.close(fig)
