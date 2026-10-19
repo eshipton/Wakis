@@ -135,6 +135,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] PEC/PMC masking, `update_tensors` initialization, MPI (CPML deadlock, grid edge, rank-boundary sources/monitors)
 - [x] Forward step ~2x faster on CPU and GPU; periodic setup 59 s → 0.02 s
 - [x] Memory and run-time estimator with preflight check (`wakis.estimate`)
+- [x] Fused GPU time stepping (`SolverFIT3D(use_gpu=True, fused=True)`): step, CPML, sources, DFT/flux/mode monitors, TF/SF, tensor averaging, ADE and the exact adjoint in a few kernels, replayed as CUDA graphs; invrs bend forward + adjoint 753 s → 15–17 s on an L4, 10–19× on CPML/monitor-heavy runs ([studies/gpu-perf](studies/gpu-perf/README.md)); opt-in until validated as default
 
 **Physics and applications**
 - [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers
