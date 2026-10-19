@@ -135,6 +135,9 @@ def dg_material():
 def tasks(name="main"):
     if name == "probe":
         return list(PROBE)
+    if name == "long":  # run-window (ring-down truncation) check, use --t-run 3000
+        return [("dg4-compact", "TE", 3), ("dg4-compact", "TE", 4), ("dg4-compact", "TM", 3),
+                ("dg5-compact", "TE", 3), ("dg4-compact", "TE", 6), ("dg5-compact", "TM", 3)]
     if name == "large":
         out = []
         for arm, rs in LARGE.items():
