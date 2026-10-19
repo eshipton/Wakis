@@ -19,6 +19,12 @@ ROOT = "gs://cloud-code-511302-autoresearch/bench-results"
 REASON = "m2 (second-order gap reconstruction, 40-ring triangle PML)"
 
 
+BASELINE_ARMS = {
+    "cart-conformal-all-graded", "cart-conformal-all-uniform",
+    "cart-staircase-graded", "cart-staircase-uniform", "tri-graded", "tri-uniform",
+}  # fmt: skip
+
+
 def mark_superseded(root=ROOT):
     pattern = f"{root.rstrip('/')}/B3-*/*/*.json"
     res = subprocess.run(
@@ -36,7 +42,9 @@ def mark_superseded(root=ROOT):
         tmp = Path(tmpdir) / "record.json"
         for uri in uris:
             tag = Path(uri).stem
-            if tag.endswith("_m2"):
+            arm = Path(uri).parent.name
+            # only this suite's baseline arms: other agents own their records
+            if tag.endswith("_m2") or arm not in BASELINE_ARMS:
                 continue
             subprocess.run(
                 ["gcloud", "storage", "cp", uri, str(tmp), "--quiet"],
