@@ -44,7 +44,9 @@ class Triangles2DArm(Arm):
     ratio : float
         Largest graded size in units of h (h_out = min(ratio h,
         lambda_min,host / ppw_out)), so that the whole mesh refines with h.
-    ppw_out : float
+    ppw_out : float or None
+        Cap h_out at lambda_min,host / ppw_out; None: no cap (h_out = ratio h,
+        so the outer mesh keeps refining with h; needed for sub-1 % B1).
     n_pml : int
     cfl : float
     hodge : {'voronoi', 'barycentric'}
@@ -144,7 +146,14 @@ class Triangles2DArm(Arm):
 
         lam_host = np.min(case.wavelengths) / case.n_background
         h_out = (
-            max(h, min(self.ratio * h, lam_host / self.ppw_out)) if self.graded else h
+            max(
+                h,
+                min(
+                    self.ratio * h, lam_host / self.ppw_out if self.ppw_out else np.inf
+                ),
+            )
+            if self.graded
+            else h
         )
         r0 = max(self.r_pml or case.r_absorber, max(case.circles) + 2 * h_out)
         dr = self.pml_d / self.n_pml if self.pml_d else self.pml_dr * h_out

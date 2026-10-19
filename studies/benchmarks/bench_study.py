@@ -40,6 +40,12 @@ def arms():
         Cartesian2DArm(conformal="all", graded=True),
         Triangles2DArm(graded=False, n_pml=40),
         Triangles2DArm(graded=True, n_pml=40),
+        Triangles2DArm(
+            graded=True, n_pml=40, ppw_out=None, ratio=2.0, name="tri-graded-r2"
+        ),
+        Triangles2DArm(
+            graded=True, n_pml=40, ppw_out=None, ratio=4.0, name="tri-graded-r4"
+        ),
     ]
     from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
 
@@ -125,13 +131,16 @@ def tasks(phase):
             ("B4", f"{base}-sheet-round", ht),
             ("B4-g2", f"{base}-sheet", ht),
         ]
-    if phase == "B1tri":  # B1 (3000 fs window) with the 40-ring triangle PML
+    if (
+        phase == "B1tri"
+    ):  # B1 (3000 fs) triangles, 40-ring PML, outer size without lambda/20 cap
         from wakis.benchmarks import get_case
 
         arm = arms()["tri-graded"]
         for case in ("B1-TM", "B1-TE"):
             for h in arm.resolutions(get_case(case))[::-1]:
-                out.append((case, "tri-graded", h))
+                for name in ("tri-graded-r2", "tri-graded-r4"):
+                    out.append((case, name, h))
         return out
     if phase.startswith("B4"):
         return out
