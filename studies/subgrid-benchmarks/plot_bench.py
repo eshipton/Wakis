@@ -26,7 +26,7 @@ CASES = {
         "q_ext_nrms",
         (0.01, 0.001),
     ),
-    "B3": (["B3-g10", "B3-g5", "B3-g2"], "enh_peak", (0.05, 0.02)),
+    "B3": (["B3-g10", "B3-g5", "B3-g2"], "enh_peak", (0.10, 0.05)),
 }
 plt.rcParams.update({"figure.dpi": 120, "savefig.dpi": 150, "font.size": 8})
 
