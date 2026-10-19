@@ -79,6 +79,10 @@ def test_cpml_bounds_slices_and_recorder(tmp_path):
     snap, _ = wv.field_slice(s.E, "y", 0.0, "x", solver=s)
     assert np.allclose(snap, rec.frames[-1], rtol=0, atol=0)  # last frame = final field
     assert rec.times[-1] == pytest.approx(41 * s.dt)
+    late = wv.SliceRecorder("Ex", axis="y", every=1, t_stop=10 * s.dt)
+    for n in range(20):
+        late.update(s, n * s.dt)
+    assert len(late.frames) == 11  # t = 0 ... 10 dt
     gif = wv.save_animation(rec, str(tmp_path / "m.gif"), max_frames=4, dpi=40)
     assert (tmp_path / "m.gif").stat().st_size > 1000 and gif.endswith(".gif")
 
