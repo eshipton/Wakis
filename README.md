@@ -54,7 +54,7 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <tr>
 <td colspan="2">
 
-**B3** (Au nanodimers with 2, 5 and 10 nm gaps; error in the gap field enhancement against an exact multi-cylinder T-matrix, maps above): rerun in progress. The first interim ladder used a single centre-point metric and a mesh with a sliver in the 5 nm gap, so its numbers were withdrawn. The metric is now the mean |E/E<sub>0</sub>|² over 9 gap points, the mesher was fixed (minimum angle > 22°), and all B3 runs are being regenerated.
+**B3**: Au nanodimers (a = 20 nm, n = 2 host) with 10, 5 and 2 nm gaps, E along the dimer axis, against an exact multi-cylinder T-matrix (maps above). Metric: the mean |E/E<sub>0</sub>|² over 9 points in the gap. 102 uncontended runs; run window checked (< 1e-5). To reach **5 % error in the gap field enhancement at g = 5 nm, graded triangles need 7.2k unknowns and 1.2e8 work, against 111k and 8.0e9 for graded conformal Cartesian** (15× fewer unknowns, ~65× less work). At g = 10 nm and g = 2 nm the triangles already meet 5 % on their coarsest mesh (≤ 6k and ≤ 35k unknowns, vs 141k and 143k). At g = 2 nm conformal Cartesian never reaches 1 % in Q<sub>ext</sub> (1.7 % at h = 0.5 nm). The staircase never reaches 5 % (12–120 %, and at g = 5 nm the gap mode splits into a spurious red-shifted peak). Limit: the triangle gap error levels off at about 1–2 %, consistent with the 3.5–5e-3 field reflection of the triangle PML (B3 cannot be de-embedded); a better absorber is next.
 
 </td>
 </tr>
