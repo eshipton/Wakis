@@ -950,7 +950,11 @@ def plot_triangle_mesh(
     pl = pv.Plotter(off_screen=off, window_size=list(window_size))
     pl.set_background("white")
     for tag in np.unique(tags):
-        sub = tri.extract_cells(np.flatnonzero(tags == tag)).extract_geometry()
+        sub = tri.extract_cells(np.flatnonzero(tags == tag))
+        try:  # PyVista >= 0.47 takes the algorithm explicitly
+            sub = sub.extract_surface(algorithm=None)
+        except TypeError:
+            sub = sub.extract_surface()
         pl.add_mesh(sub, color=colors.get(int(tag), "white"), show_edges=True,
                     edge_color="black", line_width=1)  # fmt: skip
     if dual:
