@@ -212,9 +212,9 @@ def savefig(fig, name, dpi=None):
     return path
 
 
-def show_png(path, title=None, figsize=(6, 5)):
-    """Display a rendered PyVista PNG through matplotlib (static output)."""
-    fig, ax = plt.subplots(figsize=figsize)
+def show_png(path, title=None, figsize=(6, 5), dpi=72):
+    """Display a saved PNG through matplotlib (static, compact output)."""
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     ax.imshow(plt.imread(path))
     ax.axis("off")
     if title:
@@ -422,7 +422,7 @@ draw_tfsf_diagram(ax)
 savefig(fig, "tfsf_diagram.png")
 plt.show()
 
-for name in ("tfsf_leakage_map.png", "tfsf_leakage_vs_resolution.png"):
+for name in ("tfsf_leakage_map.png",):
     png = HERE.parents[0].parent / "studies" / "tfsf" / name
     png = png if png.exists() else FIG_DIR / name
     if png.exists():
