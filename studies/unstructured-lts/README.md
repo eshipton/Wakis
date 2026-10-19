@@ -101,3 +101,13 @@ These are summarized here; the physics guide has the full list.
 - The coarse time error is about 4× larger (dt²). On problems dominated by temporal error, LTS loses accuracy.
 - One smooth scatterer and one grading. Meshes with slivers would create scattered small F sets.
 - The 3D tetrahedral and Cartesian versions are not implemented. The physics guide lists what they need.
+
+## B2/B3 plasmonic benchmarks: global vs LTS (Batch job unstr-lts-bench-20261019-0649)
+
+Graded triangles with the radial PML, the same mesh for both arms, one uncontended run per n2-standard-2. The full table is in `data/bench/summary.md`; the figure is `figures/d_bench.png`. Records are published to the shared store as `tri-graded-pml` (global) and `tri-graded-pml-lts2`.
+
+- **Steps:** LTS takes exactly half the steps on every case: 2:1, with 8–12 % of the nodes fine at h = 4 nm.
+- **Error:** unchanged. Q_ext NRMS (B2) and gap-enhancement NRMS (B3) agree between global and LTS to the reported digits; the largest difference is 0.0241 vs 0.0247 for B2-Ag-TM at 4 nm.
+- **Wall-time ratio:** 1.01–2.67×, median ≈ 1.75×. Spot-machine timing scatter is about 2×; the step ratio and the work ratio are the reliable measures. The fine-node overhead is not included in the step ratio, but it is small here (≤ 12 % of nodes).
+- **Failures:** B2-Ag-TE/TM at h = 2.857 nm failed for **both** arms at setup with a DispersiveMaterial stability error (dt = 1.15e-17 s rejected for the 6-pole Rakić silver). This happens before stepping and is not an LTS issue; the stability check vs the chosen dt at that h is an open item.
+- **B3-g2** was run only for h ≤ 1 nm by design (the 2 nm gap needs h ≤ 1 nm).
