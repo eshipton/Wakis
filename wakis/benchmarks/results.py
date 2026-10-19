@@ -134,7 +134,7 @@ def fetch(case, arm=None, root=ROOT):
     rows = []
     for r in fetch_records(case, arm, root):
         row = {k: r.get(k) for k in ("case", "arm", "resolution", "commit", "cpu",
-                                     "machine", "error")}  # fmt: skip
+                                     "machine", "published", "error")}  # fmt: skip
         for k, v in r.get("metrics", {}).items():
             if not isinstance(v, (dict, list)):
                 row[f"m.{k}"] = v

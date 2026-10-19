@@ -139,3 +139,133 @@ def test_b2_au_te_coarsest_and_results_fetch(tmp_path):
     df_fb = fetch("B2-Au-TE", root=str(tmp_path / "fallback"))
     assert int(df_fb.loc[0, "work"]) == cost["unknowns"] * cost["steps"]
     assert int(df_fb.loc[0, "work"]) != int(df.loc[0, "work"])
+
+
+def test_subtri_compare_and_plots(tmp_path):
+    """
+    Verify `studies/subtri-hybrid/compare.py` and `plot_subtri.py` offline
+    pipeline, including deduplication by latest `published` (with mutation
+    check), `work` fallback, target interpolation, and figure generation.
+    """
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    import pandas as pd
+    import pytest
+
+    study_dir = Path(__file__).resolve().parents[1] / "studies" / "subtri-hybrid"
+    spec_c = importlib.util.spec_from_file_location("compare", study_dir / "compare.py")
+    compare = importlib.util.module_from_spec(spec_c)
+    spec_c.loader.exec_module(compare)
+
+    spec_p = importlib.util.spec_from_file_location(
+        "plot_subtri", study_dir / "plot_subtri.py"
+    )
+    plot_subtri = importlib.util.module_from_spec(spec_p)
+    spec_p.loader.exec_module(plot_subtri)
+
+    data_dir = tmp_path / "data"
+    (data_dir / "b2").mkdir(parents=True)
+
+    # Older record at h = 4 nm has worse work (9e7) and error (0.015);
+    # newer record at h = 4 nm has better work (2e7) and error (0.004 < 1% target).
+    rec_old = {
+        "case": "B2-Au-TE",
+        "arm": "subtri-hybrid",
+        "resolution": 4e-9,
+        "published": "2026-10-18T10:00:00Z",
+        "metrics": {"q_ext_nrms": 0.015, "q_ext_lam_peak": 0.004},
+        "cost": {
+            "unknowns": 5000,
+            "steps": 18000,
+            "work": 90_000_000,
+            "run_s": 4.0,
+            "lts": {"p": 2, "fine_fraction": 0.25},
+        },
+    }
+    rec_new = {
+        "case": "B2-Au-TE",
+        "arm": "subtri-hybrid",
+        "resolution": 4e-9,
+        "published": "2026-10-19T10:00:00Z",
+        "metrics": {"q_ext_nrms": 0.004, "q_ext_lam_peak": 0.001},
+        "cost": {
+            "unknowns": 5000,
+            "steps": 4500,
+            "work": 20_000_000,
+            "run_s": 1.2,
+            "lts": {"p": 4, "fine_fraction": 0.15},
+        },
+    }
+    # Record without cost['work'] to verify fallback to unknowns * steps
+    rec_nolts = {
+        "case": "B2-Au-TE",
+        "arm": "subtri-hybrid-nolts",
+        "resolution": 4e-9,
+        "published": "2026-10-19T10:00:00Z",
+        "metrics": {"q_ext_nrms": 0.004, "q_ext_lam_peak": 0.001},
+        "cost": {"unknowns": 5000, "steps": 10000, "run_s": 2.5},
+    }
+
+    (data_dir / "b2" / "old.json").write_text(json.dumps(rec_old))
+    (data_dir / "b2" / "new.json").write_text(json.dumps(rec_new))
+    (data_dir / "b2" / "nolts.json").write_text(json.dumps(rec_nolts))
+
+    # Cached baseline for B2-Au-TE
+    base_df = pd.DataFrame(
+        [
+            {
+                "case": "B2-Au-TE",
+                "arm": "hybrid-quadtri",
+                "resolution": 4e-9,
+                "published": "2026-10-15T00:00:00Z",
+                "c.unknowns": 6000,
+                "c.steps": 8000,
+                "c.work": 48_000_000,
+                "c.run_s": 3.0,
+                "work": 48_000_000,
+                "m.q_ext_nrms": 0.005,
+                "m.q_ext_lam_peak": 0.0015,
+            }
+        ]
+    )
+    base_df.to_csv(data_dir / "baselines_B2-Au-TE.csv", index=False)
+
+    out = compare.compare_all(data_dir=data_dir, offline=True)
+    b2_targets = {
+        (t["metric"], t["target"]): t for t in out["cases"]["B2-Au-TE"]["targets"]
+    }
+    t_1pct = b2_targets[("q_ext_nrms", 0.01)]
+    # Latest published record is already <= 1% at coarsest rung -> negative upper bound -2e7
+    assert t_1pct["arms"]["subtri-hybrid"]["work"] == pytest.approx(-20_000_000.0)
+    # Fallback work for nolts = 5000 * 10000 = 5e7 -> upper bound -5e7
+    assert t_1pct["arms"]["subtri-hybrid-nolts"]["work"] == pytest.approx(-50_000_000.0)
+    assert t_1pct["best_baseline"]["arm"] == "hybrid-quadtri"
+    assert t_1pct["ours_over_best_work"] == pytest.approx(20_000_000.0 / 48_000_000.0)
+
+    md_text = (data_dir / "compare.md").read_text()
+    assert "≤5.0k / ≤2.0e7 / ≤1.2 s" in md_text
+
+    # Mutation check: if rec_old has a newer `published` timestamp than rec_new,
+    # deduplication selects rec_old (err=0.015 > 0.01), so 1% target is NOT reached (None).
+    rec_old_mut = dict(rec_old, published="2026-10-20T10:00:00Z")
+    (data_dir / "b2" / "old.json").write_text(json.dumps(rec_old_mut))
+    out_mut = compare.compare_all(data_dir=data_dir, offline=True)
+    t_1pct_mut = {
+        (t["metric"], t["target"]): t for t in out_mut["cases"]["B2-Au-TE"]["targets"]
+    }[("q_ext_nrms", 0.01)]
+    assert t_1pct_mut["arms"]["subtri-hybrid"]["work"] is None
+    assert t_1pct_mut["ours_over_best_work"] != pytest.approx(
+        t_1pct["ours_over_best_work"]
+    )
+
+    # Restore rec_old and verify plotting functions run headlessly and write PNGs
+    (data_dir / "b2" / "old.json").write_text(json.dumps(rec_old))
+    fig_dir = tmp_path / "figures"
+    p_err = plot_subtri.plot_error_vs_work(
+        data_dir=data_dir, fig_dir=fig_dir, offline=True
+    )
+    p_lts = plot_subtri.plot_lts_gain(data_dir=data_dir, fig_dir=fig_dir)
+    assert p_err.exists() and p_err.stat().st_size > 1000
+    assert p_lts.exists() and p_lts.stat().st_size > 1000
