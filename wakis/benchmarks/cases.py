@@ -288,7 +288,10 @@ def _b1(pol):
         materials={"diel": [4.0, 1.0]},
         n_background=1.0, polarization=pol, direction=0.0, wavelengths=lam,
         circles=(1.9 * UM, 2.2 * UM, 2.5 * UM), n_points=256, r_absorber=2.7 * UM,
-        t_run=1000e-15, norm_width=2 * a, deembed=True,
+        # 3000 fs: a high-Q TE resonance near x = 6.4 leaves a 0.87 % (TE) /
+        # 0.14 % (TM) window floor at 1000 fs (converged DGTD, high-order
+        # agent); 0.036 % / 0.012 % at 3000 fs
+        t_run=3000e-15, norm_width=2 * a, deembed=True,
         targets=dict(q_sca_rms_rel=(0.02, 0.01)), primary="q_sca_rms_rel",
     )  # fmt: skip
 
