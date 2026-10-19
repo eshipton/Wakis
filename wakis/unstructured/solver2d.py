@@ -226,7 +226,7 @@ class UnstructuredFIT2D:
             self._init_te_dispersive(He, L, live)
         self._pml = None
         if pml is not None:
-            if bc == "abc" or dispersive or np.any(sigma > 0) or absorber is not None:
+            if bc == "abc" or np.any(sigma > 0) or absorber is not None:
                 raise ValueError("pml: use bc='pec'/'pmc', lossless media, no absorber")
             self._pml = _PML(self, pml)
         self.sources = []
@@ -257,6 +257,7 @@ class UnstructuredFIT2D:
                 {
                     "e": e,
                     "h": h,
+                    "cells": Hc.col[keep],
                     "L": L[e],
                     "eps_inf": mat.eps_inf,
                     "beta": beta,
@@ -426,15 +427,14 @@ class UnstructuredFIT2D:
 
         Notes
         -----
-        Lossless, non-magnetic, non-dispersive scatterers only (other
-        materials need further equivalent sources and raise).
+        Lossless, non-magnetic scatterers; dispersive materials are driven
+        by the total field through `wakis.unstructured.dispersive_planewave`
+        (PEC and conductivity raise).
         """
         mesh = self.mesh
         eps_b = float(background_eps_r)
-        if np.any(self.pec_cells) or self.dispersive or np.any(self.sigma > 0):
-            raise NotImplementedError(
-                "plane wave: lossless non-dispersive dielectrics only"
-            )
+        if np.any(self.pec_cells) or np.any(self.sigma > 0):
+            raise NotImplementedError("plane wave: no PEC or conductivity")
         if np.any(self.mu_r != 1):
             raise NotImplementedError("plane wave: non-magnetic media only")
         ce = np.full(mesh.n_edges, -1)
@@ -443,7 +443,10 @@ class UnstructuredFIT2D:
             raise ValueError("the outer boundary cells must hold the background")
         k = np.asarray(direction, float)
         k = k / np.linalg.norm(k)
-        scat = ~np.isclose(self.eps_r, eps_b)
+        disp = np.zeros(mesh.n_cells, bool)
+        for _, sel in self.dispersive:
+            disp |= sel
+        scat = ~np.isclose(self.eps_r, eps_b) | disp
         if not np.any(scat):
             s0 = 0.0
         else:
@@ -459,10 +462,8 @@ class UnstructuredFIT2D:
             idx = np.flatnonzero(np.abs(w) > 1e-12 * np.abs(self.mass).max())
             pw.update(idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k)
         else:
-            if self._te_groups:
-                raise NotImplementedError("plane wave: non-dispersive TE only")
             Hc = mesh.dual_edge_partial.tocoo()
-            keep = scat[Hc.col] & (Hc.data != 0)
+            keep = scat[Hc.col] & ~disp[Hc.col] & (Hc.data != 0)
             e, T, h = Hc.row[keep], Hc.col[keep], Hc.data[keep]
             mid = 0.5 * (mesh.edge_midpoint[e] + mesh.cell_circumcenter[T])
             t = mesh.edge_tangent[e]
@@ -471,6 +472,10 @@ class UnstructuredFIT2D:
             coef = h * (1 - eps_b / self.eps_r[T]) * (n_e @ p)
             pw.update(e=e, coef=coef, pos=mid @ k)
         self.plane_wave = pw
+        if self.dispersive:
+            from .dispersive_planewave import attach_dispersive_plane_wave
+
+            attach_dispersive_plane_wave(self)
         self._build_pw_table()
 
     def _build_pw_table(self, sub=8):
@@ -776,6 +781,7 @@ class _PML:
         # nodes
         rn = np.hypot(*mesh.nodes[solver.free].T)
         self.nodes = np.flatnonzero(rn > r0 + tol)
+        self.inner = np.flatnonzero(rn <= r0 + tol)
         kr, sr, kt, st = params(rn[self.nodes])
         one, zero = np.ones_like(kr), np.zeros_like(kr)
         self.fn1 = _CFSRatio(one, zero, kt, st, alpha, dt)  # s_t y1 = x
@@ -827,11 +833,16 @@ class _PML:
             s.v -= dt * (s.G @ s.u)
             r = s.G.T @ (s.stiff * self._edges(s.v)) - node_src
             self.q += dt * r
-            s.u = self._nodes()
+            u = self._nodes()
+            if s.dispersive:  # interior ADE nodes (the layer is non-dispersive)
+                u_in = s._update.step(s.u, r)
+                u[self.inner] = u_in[self.inner]
+            s.u = u
         else:
-            vol = s.stiff * self._edges(s.v)
+            vol = s._te_voltage(self._edges(s.v))
             if s.plane_wave is not None:
                 vol -= s._pw_values(s.n)
             self.q -= dt * (s.G.T @ vol + node_src)
             s.u = self._nodes()
             s.v += dt * (s.G @ s.u - edge_src)
+            s._te_ade_step(s.v)
