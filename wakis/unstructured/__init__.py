@@ -16,11 +16,14 @@ from .mesh import SimplexMesh
 from .meshers import ball_mesh, disk_mesh, gmsh_ball_mesh, gmsh_mesh, graded_disk_mesh
 from .solver2d import UnstructuredFIT2D
 from .solver3d import UnstructuredFIT3D
+from .prism import PrismFIT3D, PrismMesh
 
 __all__ = [
     "SimplexMesh",
     "UnstructuredFIT2D",
     "UnstructuredFIT3D",
+    "PrismMesh",
+    "PrismFIT3D",
     "estimate_memory",
     "ball_mesh",
     "disk_mesh",
