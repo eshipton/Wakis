@@ -575,6 +575,11 @@ class AdjointSimulation:
         Nt,
         store_dtype=np.float64,
         store_on_host=None,
+        memory="store",
+        checkpoints=None,
+        block=None,
+        memory_budget_gb=None,
+        decimation=None,
     ):
         """
         Forward and exact discrete adjoint runs for gradient-based design.
@@ -626,6 +631,31 @@ class AdjointSimulation:
             GPU only: keep the stored increments in host memory (one row is
             copied per time step). By default this is done when they would
             take more than half of the free GPU memory.
+        memory : {'store', 'checkpoint', 'reverse', 'auto', 'nyquist'}
+            How the backward sweep obtains the per-step design rows (see
+            `wakis.inverse.memory`). 'store' (default): keep all Nt rows.
+            'checkpoint': binomial checkpointing with replay, bitwise equal
+            gradients for all physics. 'reverse': time reversal of the
+            lossless leapfrog with recorded CPML interface layers (falls
+            back to 'checkpoint' with a warning when the problem has loss,
+            dispersion, lumped elements or tensor averaging); agrees with
+            'store' to round-off. 'auto': 'store' if the rows fit in
+            `memory_budget_gb`, else 'checkpoint' with slots and block
+            chosen by `plan_checkpoints`. 'nyquist': APPROXIMATE
+            decimated storage (requires `decimation`); never exact.
+        checkpoints : int, optional
+            'checkpoint': number of solver snapshots held at once (>= 1).
+        block : int, optional
+            'checkpoint': steps per block (rows of one block are held during
+            the backward sweep). With `checkpoints` and without `block`,
+            the steps are split into binom(checkpoints + 2, 2) blocks, so
+            that each step is recomputed at most twice.
+        memory_budget_gb : float, optional
+            'auto' and 'checkpoint' (without `checkpoints`): budget for the
+            snapshots and rows [GB]. Default: half of the free GPU memory
+            (GPU) or 25 % of the available host memory.
+        decimation : int, optional
+            'nyquist': keep every `decimation`-th row.
         """
         for name, monitor in monitors.items():
             readouts.check(name, monitor)
@@ -636,6 +666,16 @@ class AdjointSimulation:
         self.Nt = int(Nt)
         self.store_dtype = store_dtype
         self.store_on_host = store_on_host
+        if memory not in ("store", "checkpoint", "reverse", "auto", "nyquist"):
+            raise ValueError(f"Unknown memory mode {memory!r}.")
+        if memory == "nyquist" and not decimation:
+            raise ValueError("memory='nyquist' needs a decimation factor.")
+        self.memory = memory
+        self.checkpoints = checkpoints
+        self.block = block
+        self.memory_budget_gb = memory_budget_gb
+        self.decimation = decimation
+        self.memory_stats = None
         self.rho = None
         self.readouts = None
 
@@ -738,43 +778,134 @@ class AdjointSimulation:
         )
         complex_fields = np.iscomplexobj(solver.E.array)
         store = np.result_type(self.store_dtype, np.complex64 if complex_fields else 1)
-        on_host = self._store_on_host(
-            solver, self.Nt * idx.size * np.dtype(store).itemsize
-        )
-        increments = (np if on_host else xp).empty((self.Nt, idx.size), dtype=store)
         ieps_d = solver.ieps.array[idx].copy()
-        for n in range(self.Nt):
+        tensor = self._tensor
+
+        def advance(n, record, monitors=(), mid=None):
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
-            e_old = solver.E.array[idx]
-            if disp is None:
+            if mid is not None:
+                mid(n)
+            row = None
+            if not record:
+                solver.one_step()
+            elif disp is None:
+                e_old = solver.E.array[idx]
                 solver.one_step()
                 delta = solver.E.array[idx] - e_old
-                if self._tensor is not None:
+                if tensor is not None:
                     # Increment of the diagonal step (before the correction)
-                    delta[self._tensor["rows"]] = solver.tensor_operator.last_increment
+                    delta[tensor["rows"]] = solver.tensor_operator.last_increment
                 row = delta / ieps_d
             else:
                 # The ADE overwrites the design edges: record the parameter
                 # sensitivity of the correction instead (see MaterialGrid)
+                e_old = solver.E.array[idx]
                 state_old = self.design.ade_state(disp, solver)
                 solver.one_step()
                 row = self.design.ade_sensitivity(disp, solver, e_old, state_old)
-            increments[n] = _host(row) if on_host else row
             for el in elements:
                 el.post_step(solver, t)
-            for monitor in monitors.values():
+            for monitor in monitors:
                 monitor.update(solver, t)
+            return row
 
+        rung = self._make_rung(
+            solver, sources, advance, (idx.size,), store, idx, ieps_d, disp
+        )
+        self._run_forward(rung, advance, monitors)
+        increments = getattr(rung, "rows", None)
         self._check_overlaps(solver, elements, monitors)
         self._solver, self._monitors, self._elements = solver, monitors, elements
         self._increments = increments
+        self._rung = rung
         self.rho = rho
         raw = {name: readouts.outputs(m) for name, m in monitors.items()}
         if comm is not None:
             raw = self._gather(raw, comm)
         return raw
+
+    def _budget_bytes(self, solver):
+        if self.memory_budget_gb is not None:
+            return self.memory_budget_gb * 1e9
+        if solver.use_gpu:
+            free, _ = solver.E.xp.cuda.Device().mem_info
+            return free / 2
+        try:
+            import psutil
+
+            return 0.25 * psutil.virtual_memory().available
+        except ImportError:  # pragma: no cover
+            import os
+
+            pages = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+            return 0.25 * pages
+
+    def _make_rung(self, solver, sources, advance, row_shape, dtype, idx, ieps_d,
+                   disp):  # fmt: skip
+        """Memory rung of this forward run (see `wakis.inverse.memory`)."""
+        from . import memory as mem
+
+        xp = solver.E.xp
+        mode = self.memory
+        row_bytes = int(np.prod(row_shape)) * np.dtype(dtype).itemsize
+        if mode == "reverse":
+            reason = None
+            if idx is None:
+                reason = "a dispersive tensor design"
+            else:
+                reason = mem.reverse_supported(solver, sources, self.design)
+            if reason is None:
+                return mem.ReverseRung(self.Nt, solver, sources, idx, ieps_d, dtype)
+            mem.warn_fallback(reason)
+            mode = "checkpoint"
+        if mode == "nyquist":
+            return mem.NyquistRung(self.Nt, self.decimation, row_shape, dtype, xp)
+        io = mem.SolverState(solver, sources)
+        slots, block = self.checkpoints, self.block
+        if mode == "auto" or (mode == "checkpoint" and slots is None):
+            # Snapshot size: fields, CPML psi and auxiliary arrays (sources
+            # are small); measured exactly when the first snapshot is taken
+            state_bytes = 2 * solver.E.array.nbytes + solver.J.array.nbytes
+            state_bytes += sum(
+                getattr(solver, k).nbytes for k in io.psi
+            ) + (0 if solver.M is None else solver.M.array.nbytes)
+            budget = self._budget_bytes(solver)
+            if mode == "checkpoint":
+                # Explicit checkpointing: at most a quarter of the stored rows
+                budget = min(budget, 0.25 * self.Nt * row_bytes)
+            try:
+                plan = mem.plan_checkpoints(self.Nt, state_bytes, row_bytes, budget)
+            except MemoryError:
+                if mode == "auto":
+                    raise
+                plan = dict(mode="checkpoint", slots=2, block=None)
+            if mode == "auto" and plan["mode"] == "store":
+                mode = "store"
+            else:
+                mode = "checkpoint"
+                slots = slots or plan["slots"]
+                block = block or plan["block"]
+        if mode == "store":
+            on_host = self._store_on_host(solver, self.Nt * row_bytes)
+            return mem.StoreRung(self.Nt, row_shape, dtype, xp, on_host)
+        if block is None:
+            n_blocks = mem.beta(slots, 2)
+            block = max(1, -(-(self.Nt - 1) // n_blocks))
+        return mem.CheckpointRung(self.Nt, slots, block, advance, io, dtype, xp,
+                                  verify=getattr(self, "verify_replay", False))  # fmt: skip
+
+    def _run_forward(self, rung, advance, monitors):
+        """The forward time loop, feeding the memory rung."""
+        monitors = list(monitors.values())
+        mid = rung.mid_step
+        for n in range(self.Nt):
+            rung.before_step(n)
+            row = advance(n, rung.wants_row(n), monitors, mid)
+            rung.after_step(n, row)
+        rung.finish()
+        self.memory_stats = rung.stats()
 
     def _forward_network(self, rho, solver, net, sources, monitors, elements, comm):
         """
@@ -787,24 +918,29 @@ class AdjointSimulation:
             raise NotImplementedError("Dispersive tensor designs do not support MPI.")
         net.record = True
         xp = solver.E.xp
-        K = net.n_caps
-        on_host = self._store_on_host(solver, self.Nt * 5 * K * 8)
-        rec = (np if on_host else xp).empty((self.Nt, 5, K), dtype=np.float64)
-        for n in range(self.Nt):
+
+        def advance(n, record, monitors=(), mid=None):
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
+            net.record = bool(record)
             solver.one_step()
-            row = xp.stack(net.last)
-            rec[n] = _host(row) if on_host else row
+            row = xp.stack(net.last) if record else None
             for el in elements:
                 el.post_step(solver, t)
-            for monitor in monitors.values():
+            for monitor in monitors:
                 monitor.update(solver, t)
+            return row
+
+        rung = self._make_rung(
+            solver, sources, advance, (5, net.n_caps), np.float64, None, None, None
+        )
+        self._run_forward(rung, advance, monitors)
+        self._rung = rung
         net.record = False
         self._check_overlaps(solver, elements, monitors)
         self._solver, self._monitors, self._elements = solver, monitors, elements
-        self._increments = rec
+        self._increments = getattr(rung, "rows", None)
         self._tensor = None
         self.rho = rho
         return {name: readouts.outputs(m) for name, m in monitors.items()}
@@ -839,6 +975,7 @@ class AdjointSimulation:
         g_eps = xp.zeros(net.n_caps)
         g_mu = xp.zeros(net.n_caps)
         lam = stepper.zero_state()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             for tap in taps:
@@ -850,7 +987,7 @@ class AdjointSimulation:
             lam_E = lam["E"][rows][cap_row]
             lam = stepper.step(lam)
             lam_u = ext.lam_unew
-            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in self._increments[n])
+            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in get_row(n))
             g_ieps += lam_E * eps_0 * dQ
             g_c += lam_E * (u1 - u - dQ / eps_inf)
             g_eps += lam_u * (u - u1) / den + lam_E * c * dQ / eps_inf**2
@@ -969,7 +1106,9 @@ class AdjointSimulation:
 
         net = self.design.network_of(solver)
         if net is not None:
-            return self._vjp_network(stepper, taps, net)
+            grad = self._vjp_network(stepper, taps, net)
+            self.memory_stats = self._rung.stats()
+            return grad
         idx = xp.asarray(self.design.flat_idx)
         own = self.design.dispersive_group(solver)
         ade = None
@@ -982,6 +1121,7 @@ class AdjointSimulation:
             if tensor["pairs"] is not None:
                 grad_pairs = xp.zeros(len(tensor["pairs"][0]))
         lam = stepper.zero_state()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             # A DFT sample X = sum_n w_n W x^{n+1} gives lam += W^H conj(w_n) G
@@ -994,7 +1134,7 @@ class AdjointSimulation:
             if tensor is not None:
                 # Adjoint of the corrected E' = E + N g
                 lam_new = lam["E"][track]
-                g = xp.asarray(self._increments[n])
+                g = xp.asarray(get_row(n))
                 grad += xp.real(
                     xp.conj(lam_new[tensor["design"]]) * g[tensor["design"]]
                 )
@@ -1008,7 +1148,7 @@ class AdjointSimulation:
                 continue
             lam = stepper.step(lam)
             sens = stepper.lam_star[idx] if ade is None else ade.lam_acc
-            grad += xp.real(xp.conj(sens) * xp.asarray(self._increments[n]))
+            grad += xp.real(xp.conj(sens) * xp.asarray(get_row(n)))
         if tensor is not None and tensor["pairs"] is not None:
             ea, eb, coef = tensor["pairs"]
             grad = self.design.vjp(
@@ -1018,4 +1158,5 @@ class AdjointSimulation:
             grad = self.design.vjp(self.rho, _host(grad))
         if comm is not None:
             grad = comm.allreduce(grad)
+        self.memory_stats = self._rung.stats()
         return grad
