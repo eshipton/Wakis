@@ -250,6 +250,53 @@ class BoxedCurvilinear2DArm(Arm):
                 vals.append(w)
         return sp.csr_matrix((vals, (rows, cols)), shape=(len(points), free.size))
 
+    @staticmethod
+    def gap_operator(mesh, points):
+        """Sparse (2 n_points, n_edges) map from edge fluxes to D_x (rows
+        0..n-1) and D_y (rows n..2n-1) at `points`: the corner
+        reconstructions of the containing (general) cell, blended with its
+        inverse bilinear coordinates."""
+        import scipy.sparse as sp
+
+        from ...curvilinear import hodge_components
+
+        hc = hodge_components(mesh)
+        gen = np.flatnonzero(~mesh.is_polar)
+        P = mesh.nodes[mesh.cells[gen]]
+        rows_x, rows_y = [], []
+        for p in points:
+            cand = np.argsort(np.hypot(*(P.mean(1) - p).T))[:12]
+            found = None
+            for c in cand:
+                X = P[c]
+                xi = np.array([0.5, 0.5])
+                for _ in range(30):  # Newton on the bilinear map
+                    a, b = xi
+                    f = ((1 - a) * (1 - b) * X[0] + a * (1 - b) * X[1] + a * b * X[2]
+                         + (1 - a) * b * X[3] - p)  # fmt: skip
+                    J = np.stack([(1 - b) * (X[1] - X[0]) + b * (X[2] - X[3]),
+                                  (1 - a) * (X[3] - X[0]) + a * (X[2] - X[1])], 1)  # fmt: skip
+                    xi = xi - np.linalg.solve(J, f)
+                if np.all(xi > -1e-9) and np.all(xi < 1 + 1e-9):
+                    found = (gen[c], xi)
+                    break
+            if found is None:
+                raise ValueError(f"gap point {p} not in a general cell")
+            cell, (a, b) = found
+            w = [(1 - a) * (1 - b), a * (1 - b), a * b, (1 - a) * b]
+            q = np.flatnonzero(hc["cell"] == cell)
+            rx, ry = 0, 0
+            for k in range(4):
+                corner = mesh.nodes[mesh.cells[cell, k]]
+                qk = q[np.argsort(np.hypot(*(hc["point"][q] - corner).T))[:2]]
+                qx = qk[np.argmax(hc["direction"][qk][:, 0])]
+                qy = qk[np.argmax(hc["direction"][qk][:, 1])]
+                rx = rx + w[k] * hc["R"][qx]
+                ry = ry + w[k] * hc["R"][qy]
+            rows_x.append(rx)
+            rows_y.append(ry)
+        return sp.vstack(rows_x + rows_y).tocsr()
+
     def run(self, case, h):
         import scipy.sparse as sp
         from scipy.constants import epsilon_0 as eps_0
@@ -265,22 +312,9 @@ class BoxedCurvilinear2DArm(Arm):
         if gap:
             if case.polarization != "TE":
                 raise NotImplementedError("gap field: TE only")
-            gp = np.asarray(case.gap_point)
-            node = int(np.argmin(np.hypot(*(mesh.nodes - gp).T)))
-            if np.hypot(*(mesh.nodes[node] - gp)) > 1e-6 * h:
-                raise ValueError("the gap point must be a mesh node")
-            hc = hodge_components(mesh)
-            cells = np.flatnonzero(np.any(mesh.cells == node, axis=1))
-            rows = []
-            for c in cells:
-                q = np.flatnonzero(hc["cell"] == c)
-                dq = np.hypot(*(hc["point"][q] - gp).T)
-                near = q[np.argsort(dq)[:2]]  # the corner's x and y components
-                near = near[np.argsort(np.argmax(hc["direction"][near], 1))]
-                rows.append(hc["R"][near])
-            Pg = sp.vstack(rows).tocsr()
-            Pg = (sp.csr_matrix(np.tile(np.eye(2), len(cells)) / len(cells)) @ Pg) / (
-                eps_0 * case.n_background**2)  # fmt: skip
+            gpts = np.atleast_2d(case.gap_points)
+            Pg = self.gap_operator(mesh, gpts) / (eps_0 * case.n_background**2)
+            ng = len(gpts)
         setup_s = time.time() - t0
         dt = solver.dt
         shift = 0.0 if case.polarization == "TM" else -0.5 * dt
@@ -290,19 +324,19 @@ class BoxedCurvilinear2DArm(Arm):
         ker = np.exp(-2j * np.pi * np.outer(times + shift, freqs)) * dt
         ker_e = np.exp(-2j * np.pi * np.outer(times, freqs)) * dt
         acc = np.zeros((len(freqs), len(pts)), complex)
-        acc_e = np.zeros((len(freqs), 2), complex)
+        acc_e = np.zeros((len(freqs), 2 * ng if gap else 2), complex)
         d = case.direction
         pvec = np.array([-np.sin(d), np.cos(d)])
         chunk = 256
         buf = np.zeros((chunk, len(pts)))
-        bufe = np.zeros((chunk, 2))
+        bufe = np.zeros((chunk, acc_e.shape[1]))
         t1 = time.time()
         for n in range(n_steps):
             solver.one_step()
             buf[n % chunk] = P @ solver.u
             if gap:
-                einc = solver._sig(np.atleast_1d(gp @ solver.plane_wave["k"]), times[n])[0]
-                bufe[n % chunk] = Pg @ solver.v + einc * pvec
+                einc = solver._sig(gpts @ solver.plane_wave["k"], times[n])
+                bufe[n % chunk] = Pg @ solver.v + np.concatenate([einc * pvec[0], einc * pvec[1]])
             if n % chunk == chunk - 1 or n == n_steps - 1:
                 n0 = n - n % chunk
                 acc += ker[n0 : n + 1].T @ buf[: n - n0 + 1]
@@ -320,7 +354,7 @@ class BoxedCurvilinear2DArm(Arm):
                       setup_s=setup_s, h=h, h_max=h_out, courant=float(solver.courant)),
         )  # fmt: skip
         if gap:
-            out["e_gap"] = acc_e
+            out["e_gap"] = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
             ui = solver._sig(np.zeros(1), times)
             out["e0_gap"] = ker_e.T @ ui
         return out
