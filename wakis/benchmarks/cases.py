@@ -404,9 +404,10 @@ def _registry():
         reg[f"B5-{pol}"] = lambda pol=pol: _b5(pol)
     for g in (2, 5, 10):
         reg[f"B3-g{g}"] = lambda g=g: _b3(g)
-    reg["B4"] = lambda: __import__(
-        "wakis.benchmarks.dipole", fromlist=["DipoleCase"]
-    ).DipoleCase()
+    for name, gap in (("B4", 1e-3), ("B4-g2", 2e-3), ("B4-g4", 4e-3)):
+        reg[name] = lambda name=name, gap=gap: __import__(
+            "wakis.benchmarks.dipole", fromlist=["DipoleCase"]
+        ).DipoleCase(name=name, gap=gap)
     return reg
 
 

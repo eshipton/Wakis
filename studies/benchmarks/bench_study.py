@@ -58,6 +58,9 @@ def arms():
                            name="cart-staircase-edges-graded-hz1.5ht"),
         CartesianDipoleArm(conformal="edges", hz_ratio=0.75, use_gpu=gpu,
                            name="cart-staircase-edges-graded-hz0.75ht"),
+        CartesianDipoleArm(conformal="edges", port="sheet", use_gpu=gpu),
+        CartesianDipoleArm(conformal="edges", ends="round", use_gpu=gpu),
+        CartesianDipoleArm(conformal="edges", port="sheet", ends="round", use_gpu=gpu),
     ]  # fmt: skip
     return {a.name: a for a in out}
 
@@ -70,6 +73,7 @@ PHASES = {
     "B4b": ["B4"],
     "B4gpu": ["B4"],
     "B4hz": ["B4"],
+    "B4feed": ["B4", "B4-g2", "B4-g4"],
     "WIN": [],
     "REDO": [],
 }
@@ -108,6 +112,18 @@ def tasks(phase):
     if phase == "B4hz":  # gap/axial cell study at h_t = a/3 (h_z = 0.25, 0.125 mm)
         out = [("B4", "cart-staircase-edges-graded-hz1.5ht", 0.5e-3 / 3),
                ("B4", "cart-staircase-edges-graded-hz0.75ht", 0.5e-3 / 3)]  # fmt: skip
+    if phase == "B4feed":  # feed-model and end-cap study at h_t = a/3
+        ht = 0.5e-3 / 3
+        base = "cart-staircase-edges-graded"
+        out = [
+            ("B4", f"{base}-sheet", ht),
+            ("B4-g2", base, ht),
+            ("B4-g4", base, ht),
+            ("B4-g4", f"{base}-sheet", ht),
+            ("B4", f"{base}-round", ht),
+            ("B4", f"{base}-sheet-round", ht),
+            ("B4-g2", f"{base}-sheet", ht),
+        ]
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
