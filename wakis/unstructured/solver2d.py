@@ -85,6 +85,14 @@ class UnstructuredFIT2D:
         radius) and on the primal-edge fluxes (edge-midpoint radius), both
         with semi-implicit (Crank-Nicolson) averaging. Combine with
         ``bc='abc'`` or ``'pec'`` at the outer boundary.
+    lts : int or dict, optional
+        Two-level local time stepping (`wakis.unstructured.lts`): ``p`` or
+        ``dict(p=2, nu=0.15, theta=1.0, rho_max=0.98, dt=None, fine=None)``.
+        The coarse step is ``dt`` (default p times the global step) and the
+        nodes whose local CFL limit is below it (F) take p stabilized
+        Chebyshev substeps. The partition is checked at setup: the stability
+        ratio ``rho = dt/2 sqrt(lambda_max)`` of the LTS operator (Lanczos) must
+        be below ``rho_max``. Not for dispersive media or lossy fine nodes.
 
     Attributes
     ----------
@@ -104,6 +112,7 @@ class UnstructuredFIT2D:
         dt=None,
         cfl=0.95,
         absorber=None,
+        lts=None,
     ):
         if mesh.dim != 2:
             raise ValueError("UnstructuredFIT2D needs a triangular mesh")
@@ -202,6 +211,9 @@ class UnstructuredFIT2D:
         self.dt = cfl * self.dt_max if dt is None else float(dt)
         h = mesh.edge_length.mean()
         self.courant = self.dt * np.sqrt(lam) / 2
+        self.lts = None
+        if lts is not None:
+            self._setup_lts(lts, lam)
         if dispersive:
             check_dispersive_stability(
                 [m for m, _ in dispersive], self.dt, self.courant
@@ -216,6 +228,34 @@ class UnstructuredFIT2D:
         self.plane_wave = None
         self.recorder = Recorder()
         self.reset()
+
+    # ------------------------------------------------------------ LTS
+    def _setup_lts(self, opts, lam):
+        """Partition the nodes and build the stabilized two-level LTS."""
+        from .lts import build_lts
+
+        opts = {"p": opts} if np.isscalar(opts) else dict(opts)
+        if self.dispersive:
+            raise NotImplementedError("LTS with dispersive media")
+        p = int(opts.pop("p", 2))
+        dt_c = opts.pop("dt", None) or p * self.dt
+        lts, info = build_lts(self.K, self.mass, dt_c, p=p, lam=lam, **opts)
+        G_F = self.G[:, lts.F].tocsr()
+        if np.any(self.loss[lts.F] != 0) or np.any(
+            self.edge_rate[np.unique(G_F.nonzero()[0])] != 0
+        ):
+            raise ValueError("LTS: lossy fine nodes (ABC / absorber) unsupported")
+        self.lts, self.lts_info, self._G_F = lts, info, G_F
+        self.dt_fine = dt_c / p
+        self.dt = dt_c
+        self.courant = info["rho"]
+
+    def _grad(self, u):
+        """``G r(X) u``: the flux-update gradient (``G u`` without LTS)."""
+        g = self.G @ u
+        if self.lts is not None:
+            g += self._G_F @ self.lts.correction(u)
+        return g
 
     # ------------------------------------------------------------ TE series ADE
     def _init_te_dispersive(self, He, L, live):
@@ -504,10 +544,10 @@ class UnstructuredFIT2D:
             node_src[pw["idx"]] += pw["w"] * de / dt
         if self.pol == "TM":
             if self._absorber is None:
-                self.v -= dt * (self.G @ self.u)
+                self.v -= dt * self._grad(self.u)
             else:
                 ce = 0.5 * dt * self.edge_rate
-                self.v = ((1 - ce) * self.v - dt * (self.G @ self.u)) / (1 + ce)
+                self.v = ((1 - ce) * self.v - dt * self._grad(self.u)) / (1 + ce)
             r = self.G.T @ (self.stiff * self.v) - node_src
             self.u = self._update.step(self.u, r)
         else:
@@ -520,10 +560,10 @@ class UnstructuredFIT2D:
             b = self.mass + self.loss * dt / 2
             self.u = (a * self.u - dt * (self.G.T @ vol + node_src)) / b
             if self._absorber is None:
-                self.v += dt * (self.G @ self.u - edge_src)
+                self.v += dt * (self._grad(self.u) - edge_src)
             else:
                 ce = 0.5 * dt * self.edge_rate
-                self.v = ((1 - ce) * self.v + dt * (self.G @ self.u - edge_src)) / (
+                self.v = ((1 - ce) * self.v + dt * (self._grad(self.u) - edge_src)) / (
                     1 + ce
                 )
             self._te_ade_step(self.v)
