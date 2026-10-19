@@ -13,7 +13,7 @@ from scipy.constants import mu_0 as mu_0
 from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
-from . import conformal
+from . import conformal, tete
 from .boundaries import BCsMixin
 from .dispersive import DispersiveMixin
 from .field import Field
@@ -87,6 +87,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         bg=[1.0, 1.0, 0.0],
         verbose=2,
         k_bloch=None,
+        scheme="yee",
     ):
         """
         3D time-domain electromagnetic solver based on the Finite Integration
@@ -159,6 +160,17 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             Bloch wavevector (kx, ky, kz) [rad/m] applied on axes with
             ``'bloch'`` faces; components on other axes must be zero. A
             nonzero component requires a complex ``dtype``. Default is zero.
+        scheme : {'yee', 'tete'}, optional
+            Time-stepping scheme. 'yee' (default) is the standard FIT/Yee
+            leapfrog. 'tete' is the explicit TE/TM scheme of Dohlus and
+            Zagorodnov (J. Comput. Phys. 228, 2822, 2009), dispersion-free
+            along z at the magic step dt = dz/c (used when ``dt`` is None;
+            ``cfln`` is ignored). It is stable for
+            c dt <= min(dz, (dx^-2 + dy^-2)^-1/2), so it needs
+            dz <= (dx^-2 + dy^-2)^-1/2 (e.g. dx = dy >= sqrt(2) dz) to run at
+            the magic step. Supports PEC/PMC/periodic/Bloch walls, CPML on the
+            z faces only, conformal PEC, conductivity, GPU and MPI; see
+            `wakis.tete` for the limits.
 
         Attributes
         ----------
@@ -204,6 +216,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.use_conductivity = False  # Will turn true with conductive material or pml
         self.imported_mkl = imported_mkl  # Use MKL backend when available
         self.one_step = self._one_step
+        self.scheme = str(scheme).lower()
+        if self.scheme not in ("yee", "tete"):
+            raise ValueError(f"Invalid scheme={scheme!r}; expected 'yee' or 'tete'.")
 
         if use_stl:
             self.use_conductors = False
@@ -426,7 +441,11 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         if verbose:
             print("Calculating maximal stable timestep...")
         self.cfln = cfln
-        if dt is None:
+        if self.scheme == "tete":
+            tete.check_supported(self)
+        if dt is None and self.scheme == "tete":
+            self.dt = tete.magic_dt(self)
+        elif dt is None:
             self.dt = cfln / (
                 c_light
                 * np.sqrt(
@@ -468,7 +487,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         if self.grid.boundary_at_domain_edge:
             self._isolate_edge_ghosts()
 
-        if use_conformal:  # stable time step of the conformal operators
+        if use_conformal and self.scheme == "yee":  # stable conformal time step
             conformal.apply_conformal_timestep(self, dt_given=dt is not None)
             if verbose > 1:
                 print(f"    * Conformal timestep: dt={self.dt:.3e} s")
@@ -503,7 +522,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.tdx = self.tL[:, 0, 0, "x"]
         self.tdy = self.tL[0, :, 0, "y"]
 
-        if imported_mkl and not self.use_gpu:  # MKL backend for CPU
+        if self.scheme == "tete":
+            self._setup_tete(dt_given=dt is not None)
+
+        if imported_mkl and not self.use_gpu and self.scheme == "yee":  # MKL (CPU)
             if verbose:
                 print("Using MKL backend for time-stepping...")
             if self.activate_cpml:
@@ -529,7 +551,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.imu.to_gpu()
                 if self.activate_cpml:
                     self._move_CPML_to_gpu()
-                else:
+                elif self.scheme == "yee":
                     self.tDsiDmuiDaC = gpu_sparse_mat(self.tDsiDmuiDaC)
                     self.itDaiDepsDstC = gpu_sparse_mat(self.itDaiDepsDstC)
                 if self.source_type == "tfsf":
@@ -554,6 +576,12 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         if verbose:
             print(f"Total solver initialization time: {time.time() - t0} s")
+
+        if self.scheme == "tete":
+            tete.check_supported_late(self)
+            if self.activate_abc:  # pragma: no cover - rejected earlier
+                raise NotImplementedError("scheme='tete' does not support ABC.")
+            self.one_step = self._one_step_tete
 
         self.solverInitializationTime = time.time() - t0
         self.update_logger(["solverInitializationTime"])
@@ -749,6 +777,13 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.itDaiDepsDstC = (
             self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
         )
+        if self.scheme == "tete":
+            if self.activate_cpml:
+                raise NotImplementedError(
+                    "update_tensors with scheme='tete' and CPML is not supported."
+                )
+            tete.install(self, tete.build_operators(self))
+            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
         self.step_0 = False
 
     def _apply_stl_materials(self):
@@ -845,6 +880,62 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         self.sigma += mask * sigma_eff
         self.ieps += self.ieps * (-1.0 * mask)
         self.ieps += mask * 1.0 / eps_eff
+
+    def _setup_tete(self, dt_given):
+        """
+        Build the TE/TM operators (`wakis.tete`) and certify the time step.
+
+        The step is certified by Gershgorin bounds of the three TE/TM
+        sub-operators (`tete.gershgorin_limits`), which are tight on uniform
+        staircase grids (eq. 25 of Dohlus & Zagorodnov) and for the
+        longitudinal operator on conformal grids. On conformal grids the
+        small cut faces are first stabilized by scaling the e_z (and, if
+        needed, h_z) masses (`tete.stabilize_transverse`). A dt above the
+        bound raises ValueError (an unstable run is never useful).
+        """
+        ops = tete.build_operators(self)
+        conformal = bool(getattr(self.grid, "conformal", False)) or bool(
+            getattr(self.grid, "sheets", None)
+        )
+        self.tete_stabilization = {}
+        if conformal:
+            self.tete_stabilization = tete.stabilize_transverse(
+                self, ops, self.dt, which=("ez",)
+            )
+            if tete.gershgorin_limits(ops)["te"] < self.dt:
+                self.tete_stabilization.update(
+                    tete.stabilize_transverse(self, ops, self.dt, which=("hz",))
+                )
+            if self.verbose > 1:
+                print(f"    * TE/TM transverse stabilization: {self.tete_stabilization}")
+        limits = tete.gershgorin_limits(ops)
+        tete.install(self, ops)
+        if not self.activate_cpml:  # free the Yee operators (blocks replace them)
+            self.tDsiDmuiDaC = self.itDaiDepsDstC = None
+        dt_max = min(limits.values())
+        self.tete_dt_limits = limits
+        magic = tete.magic_dt(self) if self.verbose else self.dt
+        if not dt_given and self.verbose and abs(self.dt - magic) > 1e-12 * magic:
+            print(
+                f"[!] scheme='tete': dt={self.dt:.6e} s differs from the magic step "
+                f"dz/c={magic:.6e} s (conductivity time constant); z dispersion "
+                "is then not zero."
+            )
+        if self.verbose > 1:
+            print(f"    * TE/TM stability limits (Gershgorin) [s]: {limits}")
+        # 1e-9: the longitudinal bound equals dz/c up to round-off
+        if self.dt > dt_max * (1 + 1e-9):
+            raise ValueError(
+                f"scheme='tete': dt={self.dt:.6e} s exceeds the stable limit "
+                f"{dt_max:.6e} s ({limits}). The magic step dz/c needs "
+                "dz <= (dx^-2 + dy^-2)^-1/2; pass a smaller dt explicitly to run "
+                "(with dispersion along z)."
+            )
+        self.update_logger(["scheme"])
+
+    def _one_step_tete(self):
+        """One explicit TE/TM step (`wakis.tete.one_step`)."""
+        tete.one_step(self)
 
     def _one_step_with_abc(self):
         """Wrap the selected backend timestep with the longitudinal Mur ABC."""
