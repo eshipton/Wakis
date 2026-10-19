@@ -293,6 +293,9 @@ class CurvilinearFIT2D:
 
         # ---------------- stability
         self.K = (self.G.T @ W_inst @ self.G).tocsr()
+        self._GW = (self.G.T @ self.W).tocsr()
+        if self._pml is not None:
+            self._pml["GeT"] = self.G[self._pml["e"]].T.tocsr()
         lam = max_eigenvalue(self.K, M_inv_sqrt=1 / np.sqrt(self.mass))
         self.lam_max = lam
         self.dt_max = 2 / np.sqrt(lam)
@@ -319,6 +322,7 @@ class CurvilinearFIT2D:
                 z = np.zeros(q.size)
                 self._te_groups.append(dict(
                     q=q, R=R[q], RT=(R[q].T @ sp.diags(hc["w"][q])).tocsr(),
+                    GRT=(self.G.T @ R[q].T @ sp.diags(hc["w"][q])).tocsr(),
                     eps_inf=mat.eps_inf, beta=sum(b for _, b in debye), E=z.copy(),
                     lorentz=[(*cf, z.copy(), z.copy()) for cf in lorentz],
                     debye=[(*cf, z.copy()) for cf in debye],
@@ -388,7 +392,7 @@ class CurvilinearFIT2D:
             g["E"][:] = 0
             g["lorentz"] = [(a, x, z, 0 * p, 0 * q) for a, x, z, p, q in g["lorentz"]]
             g["debye"] = [(k, b, 0 * p) for k, b, p in g["debye"]]
-        self.volt = np.zeros(self.mesh.n_edges)
+        self._curl_d = np.zeros(self.free.size)
 
     @property
     def node_field(self):
@@ -480,7 +484,38 @@ class CurvilinearFIT2D:
             for g in self._te_groups:
                 g["pw_proj"] = hc["direction"][g["q"]] @ p
                 g["pw_pos"] = hc["point"][g["q"]] @ k
+        # Tabulation: the incident wave depends on k.r only, so it is evaluated
+        # once per step on a 1D grid of spacing L_min / 16 along k and
+        # interpolated linearly (relative error ~ (omega dx / v)^2 / 8 < 1e-5
+        # at 10 cells per wavelength).
+        allpos = [pw["pos"]] + [g["pw_pos"] for g in self._te_groups]
+        allpos = np.concatenate(allpos) if len(allpos) else np.zeros(1)
+        L = np.linalg.norm(mesh.nodes[mesh.edges[:, 1]] - mesh.nodes[mesh.edges[:, 0]], axis=1)
+        dx = L.min() / 16
+        x0 = allpos.min() - dx
+        nx = int(np.ceil((allpos.max() + dx - x0) / dx)) + 1
+        pw["grid"] = x0 + dx * np.arange(nx)
+
+        def interp(pos):
+            f = (pos - x0) / dx
+            j = np.clip(np.floor(f).astype(int), 0, nx - 2)
+            t = f - j
+            rows = np.repeat(np.arange(pos.size), 2)
+            return sp.csr_matrix((np.stack([1 - t, t], 1).ravel(),
+                                  (rows, np.stack([j, j + 1], 1).ravel())),
+                                 shape=(pos.size, nx))  # fmt: skip
+
+        if self.pol == "TM":
+            pw["I"] = interp(pw["pos"])
+        else:
+            pw["GQ"] = (self.G.T @ pw["RT"] @ sp.diags(pw["coef"]) @ interp(pw["pos"])).tocsr()
+            for g in self._te_groups:
+                g["I"] = (sp.diags(g["pw_proj"]) @ interp(g["pw_pos"])).tocsr()
         self.plane_wave = pw
+
+    def _sig_grid(self, t):
+        pw = self.plane_wave
+        return self._sig(pw["grid"], t)
 
     def _sig(self, pos, t):
         pw = self.plane_wave
@@ -492,20 +527,21 @@ class CurvilinearFIT2D:
         e = self._sig(np.atleast_2d(points) @ pw["k"], t)
         return e if self.pol == "TM" else e / pw["eta"]
 
-    # ------------------------------------------------------------------ voltages
-    def _voltage(self, d, t):
-        """Dual-edge voltages W(d) incl. dispersive and incident parts (TE),
-        or the magnetic voltages (TM, no extras)."""
-        vol = self.W @ d
+    # ------------------------------------------------------------------ curl term
+    def _curl(self, d, t):
+        """G^T times the dual-edge voltages W(d): the metric Hodge, the
+        incident and dispersive parts (TE) and the PML auxiliary voltages."""
+        r = self._GW @ d
         pw = self.plane_wave
         if self.pol == "TE":
+            sg = self._sig_grid(t) if pw is not None else None
             if pw is not None:
-                vol += pw["RT"] @ (pw["coef"] * self._sig(pw["pos"], t))
+                r += pw["GQ"] @ sg
             for g in self._te_groups:
                 Dn = (g["R"] @ d) / eps_0
                 einc = 0.0
                 if pw is not None:
-                    einc = g["pw_proj"] * self._sig(g["pw_pos"], t)
+                    einc = g["I"] @ sg
                     Dn = Dn + pw["eps_b"] * einc
                 En = g["E"]
                 psum = np.zeros(En.size)
@@ -519,15 +555,16 @@ class CurvilinearFIT2D:
                 for j, (kappa, beta, p) in enumerate(g["debye"]):
                     g["debye"][j] = (kappa, beta, kappa * p + beta * (E_new + En))
                 g["E"] = E_new
-                vol += g["RT"] @ (E_new - einc)
+                r += g["GRT"] @ (E_new - einc)
         if self._pml is not None:
             P = self._pml
             e = P["e"]
             dt = self.dt
             a, b = 0.5 * dt * P["s_par"], 0.5 * dt * P["s_perp"]
-            P["h"] = ((1 - a) * P["h"] + P["c"] * ((1 + b) * d[e] - (1 - b) * self._d_prev[e])) / (1 + a)
-            vol[e] = P["h"]
-        return vol
+            de = d[e]
+            P["h"] = ((1 - a) * P["h"] + P["c"] * ((1 + b) * de - (1 - b) * self._d_prev[e])) / (1 + a)
+            r += P["GeT"] @ (P["h"] - P["c"] * de)
+        return r
 
     # ------------------------------------------------------------------ stepping
     def one_step(self):
@@ -541,8 +578,7 @@ class CurvilinearFIT2D:
             self.u_old = self.u
             self._d_prev = self.v
             self.v = self.v - dt * (self.G @ self.u)
-            vol = self._voltage(self.v, (n + 0.5) * dt)
-            r = self.G.T @ vol - src
+            r = self._curl(self.v, (n + 0.5) * dt) - src
             if self._psi_idx.size:
                 self.psi[self._psi_idx] += dt * self.u[self._psi_idx]
                 r -= self._psi_coef * self.psi
@@ -550,8 +586,8 @@ class CurvilinearFIT2D:
                 self.u = self._update.step(self.u, r)
             else:
                 i = pw["idx"]
-                e0 = self._sig(pw["pos"], n * dt)
-                e1 = self._sig(pw["pos"], (n + 1) * dt)
+                e0 = pw["I"] @ self._sig_grid(n * dt)
+                e1 = pw["I"] @ self._sig_grid((n + 1) * dt)
                 r[i] += pw["cb"] * (e1 - e0) / dt
                 u = self.u.copy()
                 u[i] += e0
@@ -561,8 +597,8 @@ class CurvilinearFIT2D:
         else:
             if n == 0:
                 self._d_prev = self.v
-                self.volt = self._voltage(self.v, 0.0)
-            r = -(self.G.T @ self.volt) - src
+                self._curl_d = self._curl(self.v, 0.0)
+            r = -self._curl_d - src
             if self._psi_idx.size:
                 self.psi[self._psi_idx] += dt * self.u[self._psi_idx]
                 r -= self._psi_coef * self.psi
@@ -570,7 +606,7 @@ class CurvilinearFIT2D:
             self.u = self._update.step(self.u, r)
             self._d_prev = self.v
             self.v = self.v + dt * (self.G @ self.u)
-            self.volt = self._voltage(self.v, (n + 1) * dt)
+            self._curl_d = self._curl(self.v, (n + 1) * dt)
         self.n += 1
 
     def run(self, n_steps):

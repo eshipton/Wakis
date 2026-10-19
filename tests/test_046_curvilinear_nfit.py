@@ -207,9 +207,9 @@ def test_dispersive_te_plane_wave_mie():
         f0, df = 0.5 * (freqs[0] + freqs[-1]), 0.3 * (freqs[-1] - freqs[0])
         s.add_plane_wave(GaussianSource(f0, df))
         if not use_source:
-            s.plane_wave["coef"] = 0 * s.plane_wave["coef"]
+            s.plane_wave["GQ"] = 0 * s.plane_wave["GQ"]
             for g in s._te_groups:
-                g["pw_proj"] = 0 * g["pw_proj"]
+                g["I"] = 0 * g["I"]
         locs, ths = zip(*[mesh.ring(r) for r in radii_x])
         locs = [np.searchsorted(s.free, i) for i in locs]
         n_steps = int(600e-15 / s.dt)
