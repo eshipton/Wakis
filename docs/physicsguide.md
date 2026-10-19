@@ -1612,6 +1612,73 @@ References:
 - B. Bourdin, "Filters in topology optimization", *Int. J. Numer. Methods Eng.* **50**, 2143–2158 (2001), [doi:10.1002/nme.116](https://doi.org/10.1002/nme.116).
 - F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), [doi:10.1007/s00158-010-0602-y](https://doi.org/10.1007/s00158-010-0602-y).
 
+### 🔲 Subpixel-smoothed projection (SSP)
+
+Density-based topology optimization maps the design variables $\rho$ to a filtered field $\tilde\rho = k * \rho$ and then to a projected density $\hat\rho = P_{\beta,\eta}(\tilde\rho)$, with the tanh projection $P_{\beta,\eta}(x) = [\tanh\beta\eta + \tanh\beta(x-\eta)]/[\tanh\beta\eta + \tanh\beta(1-\eta)]$ [Wang et al., 2011]. As $\beta\to\infty$ the design becomes binary, but $dP/d\tilde\rho$ goes to zero everywhere except on the level set $\tilde\rho=\eta$, where it diverges. The optimizer then gets either no gradient or an ill-conditioned one. This is why $\beta$ is raised in stages ("$\beta$-continuation") and why the last stages of our invrs-gym pipeline use a straight-through estimator (STE). The subpixel-smoothed projection of Hammond et al. [2025] removes the root cause. The binary design $\hat\rho$ is discontinuous in *space*, while the interface it describes moves smoothly with $\rho$. Smoothing $\hat\rho$ over a ball of radius $R \approx \Delta x/2$ around each sample therefore gives a density that is binary except within $R$ of interfaces and is a smooth function of the interface position, even at $\beta = \infty$.
+
+**Derivation.** $\tilde\rho$ varies on the filter scale $\tilde R \gg \Delta x$, so inside the smoothing ball it is linear, $\tilde\rho(\mathbf x') \approx \tilde\rho(\mathbf x) + \nabla\tilde\rho\cdot(\mathbf x'-\mathbf x)$. The level set $\tilde\rho = \eta$ is then a plane at signed distance
+
+$$
+d = \frac{\eta - \tilde\rho(\mathbf x)}{\|\nabla\tilde\rho(\mathbf x)\|}
+$$
+
+($d>0$ on the void side). For $\beta=\infty$ the convolution of the step $\hat\rho$ with a radial kernel $k(r)$ of support $R$ is the kernel-weighted fill of the half-space beyond that plane, a function $F(d)$ alone (Eq. 9 of the paper). Choosing the parabolic kernel $k \propto 1-(r/R)^2$: the kernel mass in a slab at height $s$ is $A(s) = 2\pi\int_s^R k(r)\,r\,dr \propto (R^2-s^2)^2$, so $F(d) = \int_d^R A / \int_{-R}^R A$, i.e.
+
+$$
+F(d) = \tfrac12 - \tfrac{15}{16}u + \tfrac58 u^3 - \tfrac{3}{16}u^5, \qquad u = d/R \in [-1,1],
+$$
+
+with $F = 1$ for $u\le-1$ and $0$ for $u\ge1$. $F' = -\tfrac{15}{16R}(1-u^2)^2$ and $F''$ vanish at $u=\pm1$, so $F$ is $C^2$ and $F(-d) = 1-F(d)$. (`tests/test_060` checks this kernel-to-$F$ identity by direct quadrature of Eq. 9 to $2\times10^{-4}$, and that a top-hat kernel gives a different $F$.) For finite $\beta$ the paper defines
+
+$$
+\hat{\tilde\rho} = \begin{cases}
+(1-F)\,P\big(\tilde\rho - R g F\big) + F\,P\big(\tilde\rho + R g (1-F)\big), & |d| < R,\\
+P(\tilde\rho), & \text{otherwise},
+\end{cases}\qquad g = \|\nabla\tilde\rho\|.
+$$
+
+Three properties follow by algebra and are what make it a drop-in projection:
+- $\beta\to0^+$ ($P$ is the identity): $\hat{\tilde\rho} = \tilde\rho - RgF(1-F) + RgF(1-F) = \tilde\rho$, so there is no projection.
+- $\beta=\infty$: the "minus" point has $\tilde\rho - RgF - \eta = -g\,(d + RF(d))$. Its derivative in $d$ is $1 - \tfrac{15}{16}(1-u^2)^2 \ge \tfrac1{16}$ and it vanishes at $d=-R$, so the minus point is always on the void side ($P=0$). Likewise the plus point is always on the solid side ($P=1$). Hence $\hat{\tilde\rho} = F(d)$: exactly the smoothed fill fraction, and exactly 0 or 1 farther than $R$ from the level set.
+- **Same threshold:** for $\eta=\tfrac12$, $\hat{\tilde\rho} > \tfrac12 \Leftrightarrow \tilde\rho > \tfrac12$ for every $\beta$ (at $d=0$, $F=\tfrac12$, and $P$ is antisymmetric about $\tfrac12$). Thresholding, length-scale repair and imageruler measurement therefore see the same binary design as with the tanh projection.
+
+**Sample spacing and the frozen gradient.** At $\beta=\infty$, a straight interface moving by $x_0$ through samples of spacing $\Delta x$ changes the material sum at the rate
+
+$$
+\frac{dM}{dx_0} = \sum_i \frac{15}{16R}\big(1-u_i^2\big)^2, \qquad u_i = \frac{x_i - x_0}{R},
+$$
+
+whose average over one cell is exactly 1 (the area rate of the true interface; Poisson summation of $\int F' = -1$). If $2R < \Delta x$, interface positions midway between samples have no sample within $R$ and the gradient is exactly zero: the paper's reason for $R = 0.55\,\Delta x$. The rate is not uniform, though. For $R = 0.55\,\Delta x$ it ripples between 0.10 (midway) and 1.70 (on a sample). With $R = 0.75\,\Delta x$ it ripples between 0.77 and 1.25, and with $R = \Delta x$ between 0.94 and 1.06 (figure (b) of `studies/ssp`). A larger $R$ trades a thicker gray layer for a more uniform shape derivative.
+
+**Implementation.**
+- `wakis.inverse.smoothed_projection` (JAX) and `wakis.inverse.projection.smoothed_projection` (NumPy, with the explicit vector-Jacobian product `smoothed_projection_vjp`) act on a regular grid. $\nabla\tilde\rho$ is taken by central differences (wrapped on periodic axes).
+- The VJP has two paths: the pointwise partials $\partial\hat{\tilde\rho}/\partial\tilde\rho$ and $\partial\hat{\tilde\rho}/\partial g$ (through $F$, $d$ and the two projected points), and the transpose of the difference stencil applied to $(\partial\hat{\tilde\rho}/\partial g)\, \nabla\tilde\rho/g$.
+- The zero-gradient case uses the double-`where` guard, so plateaus give finite gradients.
+- `MaterialGrid(..., projection_beta=β, projection_eta, projection_radius)` evaluates SSP at every E edge. The input `rho` is then the filtered density; $\tilde\rho$ is interpolated by $\mathbf P$, its gradient by the matrices $\mathbf G_k = \mathbf P\mathbf D_k$ of the tensor smoothing, and $R = 0.55$ times the largest mesh step of the design box.
+- The result $f$ replaces $\mathbf P\rho$ as the fill fraction (permittivity, dispersive weight, or the tensor fill with the normal $\mathbf G\rho/|\mathbf G\rho|$), and $dF/d\rho = \mathbf P^T(\partial_{\tilde\rho} f \odot dF/df) + \sum_k \mathbf G_k^T(\partial_g f\, (\mathbf G_k\rho)/g \odot dF/df)$.
+- The gray layer is therefore one *mesh* cell even when the design grid is coarser or finer than the mesh. For the out-of-plane field of 2D (Ez) problems, $\mathbf E$ is tangential to every interface, so the arithmetic mean $\varepsilon = \varepsilon_\text{min} + \Delta\varepsilon\, F$ of a gray edge is the correct effective medium of the sub-cell interface.
+- In the invrs-gym bridge (`invrs_wakis.lengthscale`, branch `ssp`) SSP acts on the gym pixel grid ($R = 0.55$ px). The gradient there comes from the filter evaluated one pixel beyond the design, so boundary pixels see the same padded surroundings as the filter.
+
+**Validation** (`tests/test_060_subpixel_projection.py`, invrs-wakis `tests/test_ssp.py`):
+- The hand-written NumPy VJP equals `jax.vjp` of the independent JAX version to $10^{-13}$ and central differences to $10^{-6}$ ($\beta = 4, 32, \infty$; periodic and anisotropic spacing). A $16/17$ error in $F'$ breaks the finite-difference match.
+- `MaterialGrid` SSP gradients from the exact adjoint match central differences of the full simulation to $<10^{-5}$ (measured $10^{-7}$–$10^{-9}$) for isotropic (Ez) and tensor-smoothed (TE) designs at $\beta = 8, 16, \infty$. Dropping the $\|\nabla\tilde\rho\|$ path of the VJP breaks the match.
+- latent → conic filter → SSP(∞) → `jax_simulation`: `jax.grad` equals the NumPy chain (adjoint → SSP VJP → filter pullback) to $10^{-10}$ and finite differences to $10^{-5}$.
+- A straight level set moved by a fraction of a cell at $\beta=\infty$ changes the simulated objective, and the adjoint $dF/dx_0$ matches its finite difference to $10^{-4}$. With the step projection ($R\to0$) the objective is constant within the cell and the gradient is exactly zero.
+- The interface-motion rate equals the analytic sum above to $10^{-12}$. With $R = 0.45$ px it vanishes for some positions.
+- Convergence to the binary design: for a disk on 32–512 px grids, the gray-pixel fraction and the $L^1$ distance to the binary indicator fall as $O(\Delta x)$ (fitted order $1\pm0.1$). With tanh at $\beta=32$, about 6 % of the pixels stay gray at every resolution.
+
+**Limits & failure modes.**
+- **Topology changes.** Where two interfaces approach within $\sim R$, or $\tilde\rho$ has a saddle or extremum on the level set, $g\to0$, $|d|\to\infty$ and SSP falls back to $P(\tilde\rho)$. At $\beta=\infty$ the fallback is the step, which is discontinuous and has zero gradient. So at $\beta=\infty$ SSP does shape optimization (fixed topology): holes cannot nucleate and merging features jump. The paper's schedule (a few finite-$\beta$ stages, then $\infty$) is needed.
+- **Non-uniform convergence in $\beta$.** At such saddle points $|\hat{\tilde\rho}_\beta - \hat{\tilde\rho}_\infty|$ stays $O(1)$ for every finite $\beta$. It converges in the mean, not uniformly (`test_limits_and_threshold`).
+- **Shape-derivative ripple.** With $R = 0.55\,\Delta x$ the gradient with respect to interface position varies 17× with the sub-cell position (see above). Optimizers see a modulated, not a uniform, shape gradient. $R \ge 0.75\,\Delta x$ reduces the ripple to ±25 %.
+- **Linearization error.** $F(d)$ assumes a planar interface within $R$. Curvature radius $\rho_c$ gives $O(R/\rho_c)$ errors in the fill. These are small when the filter radius is several $\Delta x$ (the usual case), large for 1–2 px features.
+- **The gray layer is real material.** The simulated design is $\varepsilon(F)$ on one cell per interface. A binary (thresholded) evaluation, such as the official invrs-gym evaluator or a staircased fabrication mask, differs from it by the staircasing error, $O(\Delta x)$ in the interface position. For the 2D Ez case the gray layer is the more accurate model of the smooth shape, but the score is computed on the staircase. Our pipeline closes this gap with a final STE stage that simulates the repaired binary design and back-propagates the SSP gradient.
+- **Not a length-scale constraint.** SSP does not impose minimum widths. The filter makes small features unlikely, and `repair` (imageruler morphology) guarantees them. SSP leaves both unchanged because it has the same threshold.
+
+References:
+- A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection", *Opt. Express* **33**, 33620 (2025), [arXiv:2503.20189](https://arxiv.org/abs/2503.20189) (Eqs. 7–12 and Appendix A verified against the arXiv v3 text; implemented from the equations).
+- F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011).
+
 ### 🧰 Design templates: setup rules and design formulas
 
 `wakis.templates` (user guide: [templates.md](templates.md)) builds complete simulations from a declarative description. It adds no new field update; this section documents the automatic setup rules, the material assignment on the FIT edges and the closed-form design formulas used to configure and validate the templates.

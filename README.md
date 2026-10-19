@@ -128,6 +128,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`) for all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
+- [x] Subpixel-smoothed projection (Hammond et al. 2025): differentiable at β = ∞, evaluated per E edge (`MaterialGrid(projection_beta=...)`, `smoothed_projection`) ([studies/ssp](studies/ssp))
 - [ ] Differentiable layer thickness
 
 **Core fixes and performance**
