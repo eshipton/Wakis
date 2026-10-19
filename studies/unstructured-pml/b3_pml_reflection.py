@@ -32,7 +32,27 @@ F = C0 / LAM
 RC = np.array([65.0, 80.0, 95.0]) * NM
 
 BASE = dict(h_out=12.5, n=10, dr=1.0, order=3, R=1e-8, kappa=1.0, alpha=0.0, buffer=0,
-            r0=110.0, pol="TE")  # fmt: skip
+            r0=110.0, pol="TE", d=0.0)  # fmt: skip
+# d > 0: PML thickness [nm] fixed in physical units, n rings of spacing d / n
+
+
+def variants_fine():
+    """Fine outer mesh (h_out = 2 nm, as B3 at h = 0.5 nm): thickness and profile."""
+    v = []
+    for h in (2.0, 4.0):
+        v.append(dict(h_out=h))  # current: 10 rings of h_out
+        v.append(dict(h_out=h, n=20))
+        for d, n in ((40, 8), (60, 10), (60, 15), (80, 12), (80, 20), (120, 16), (120, 24), (200, 25)):
+            v.append(dict(h_out=h, d=d, n=n))
+        for R in (1e-4, 1e-6, 1e-10, 1e-12):
+            v.append(dict(h_out=h, d=80, n=16, R=R))
+        for m in (2, 4, 5):
+            v.append(dict(h_out=h, d=80, n=16, order=m))
+        for al in (0.05, 0.2, 0.5):
+            v.append(dict(h_out=h, d=80, n=16, alpha=al))
+        v.append(dict(h_out=h, d=80, n=16, kappa=2.0))
+        v.append(dict(h_out=h, d=120, n=24, order=4, R=1e-10))
+    return [dict(BASE, **x) for x in v]
 
 
 def variants():
@@ -69,7 +89,7 @@ def run(var):
 
     h = var["h_out"] * NM
     r0 = var["r0"] * NM
-    dr = var["dr"] * h
+    dr = var["d"] * NM / var["n"] if var.get("d") else var["dr"] * h
     nb, nl = int(var["buffer"]), int(var["n"])
     t0 = time.time()
     m = graded_disk_mesh([40 * NM, r0], h, pml_layers=nb + nl, pml_dr=dr)
@@ -106,9 +126,10 @@ def main():
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--nshards", type=int, default=1)
     ap.add_argument("--outdir", default=str(Path(__file__).parent / "b3_reflection"))
+    ap.add_argument("--set", default="coarse", choices=["coarse", "fine"])
     a = ap.parse_args()
     if a.mode == "list":
-        for i, v in enumerate(variants()):
+        for i, v in enumerate(variants() if a.set == "coarse" else variants_fine()):
             print(i, v)
         return
     if a.mode == "one":
@@ -127,7 +148,7 @@ def main():
         )
         return
     Path(a.outdir).mkdir(parents=True, exist_ok=True)
-    vs = variants()
+    vs = variants() if a.set == "coarse" else variants_fine()
     for i in range(a.shard, len(vs), a.nshards):
         out = run(vs[i])
         (Path(a.outdir) / f"refl_{i:03d}.json").write_text(json.dumps(out))
