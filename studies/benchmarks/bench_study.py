@@ -40,6 +40,20 @@ def arms():
         Cartesian2DArm(conformal="all", graded=True),
         Triangles2DArm(graded=False, n_pml=40),
         Triangles2DArm(graded=True, n_pml=40),
+        Cartesian2DArm(
+            conformal="all",
+            graded=True,
+            ppw_out=None,
+            ratio=2.0,
+            name="cart-conformal-all-graded-r2",
+        ),
+        Cartesian2DArm(
+            conformal="all",
+            graded=True,
+            ppw_out=None,
+            ratio=4.0,
+            name="cart-conformal-all-graded-r4",
+        ),
         Triangles2DArm(
             graded=True, n_pml=40, ppw_out=None, ratio=2.0, name="tri-graded-r2"
         ),
@@ -82,6 +96,7 @@ PHASES = {
     "B4feed": ["B4", "B4-g2", "B4-g4"],
     "WIN": [],
     "B1tri": [],
+    "B1cart": [],
     "REDO": [],
 }
 
@@ -131,15 +146,15 @@ def tasks(phase):
             ("B4", f"{base}-sheet-round", ht),
             ("B4-g2", f"{base}-sheet", ht),
         ]
-    if (
-        phase == "B1tri"
-    ):  # B1 (3000 fs) triangles, 40-ring PML, outer size without lambda/20 cap
+    if phase in ("B1tri", "B1cart"):  # B1 (3000 fs), outer size without lambda/20 cap
         from wakis.benchmarks import get_case
 
         arm = arms()["tri-graded"]
+        names_b1 = (("tri-graded-r2", "tri-graded-r4") if phase == "B1tri" else
+                    ("cart-conformal-all-graded-r2", "cart-conformal-all-graded-r4"))  # fmt: skip
         for case in ("B1-TM", "B1-TE"):
             for h in arm.resolutions(get_case(case))[::-1]:
-                for name in ("tri-graded-r2", "tri-graded-r4"):
+                for name in names_b1:
                     out.append((case, name, h))
         return out
     if phase.startswith("B4"):

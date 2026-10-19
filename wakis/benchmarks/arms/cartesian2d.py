@@ -135,7 +135,9 @@ class Cartesian2DArm(Arm):
 
         nb2 = case.n_background**2
         lam_host = np.min(case.wavelengths) / case.n_background
-        h_out = max(h, min(self.ratio * h, lam_host / self.ppw_out))
+        h_out = max(
+            h, min(self.ratio * h, lam_host / self.ppw_out if self.ppw_out else np.inf)
+        )
         xmin = min(cy["center"][0] - cy["radius"] for cy in case.cylinders)
         xmax = max(cy["center"][0] + cy["radius"] for cy in case.cylinders)
         ymax = max(abs(cy["center"][1]) + cy["radius"] for cy in case.cylinders)
