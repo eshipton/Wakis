@@ -969,15 +969,17 @@ for pol in ("TM", "TE"):
 # %% [markdown]
 # ## 10. Convergence: staircase versus conformal at equal cells per wavelength
 #
-# The study runs the same simulation from 10 to 160 cells/µm for the three
-# material models and both polarizations: 2D runs are single-threaded and
-# independent, so `tutorials/study.py` packs them onto all CPU cores (the
-# largest go to the GPU). We plot the relative RMS error of $Q_\mathrm{sca}$
-# over the band against the cells per wavelength *inside the cylinder at the
-# shortest wavelength* ($x = 10$: $\lambda/n = 0.314$ µm), the hardest-
-# resolved length, with first- and second-order guides. The baseline is the
-# staircase model at the same resolution; the notebook loads the committed
-# summary `data/convergence.json`.
+# The study runs the same simulation from 10 to 80 cells/µm for the three
+# material models and both polarizations (48 runs). 2D runs are single-
+# threaded and independent, so `tutorials/study.py` packs them onto the CPU
+# cores (10-30 cells/µm) and runs four at a time on the GPU (40-80 cells/µm).
+# We plot the relative RMS error of $Q_\mathrm{sca}$ against the cells per
+# wavelength *inside the cylinder at the top of the band*, the hardest-
+# resolved length, with first- and second-order guides, for the whole band
+# ($x \le 10$, where numerical dispersion dominates at coarse grids) and for
+# $x \le 5$ (where the material model at the interface dominates). The
+# baseline is the staircase model at the same resolution. The notebook loads
+# the committed summary `data/convergence.json`.
 
 
 # %%
@@ -997,28 +999,43 @@ def load_convergence():
         return None
 
 
+def band_error(run, x_hi):
+    """Relative RMS error of Q_sca over x = 2 ... x_hi, and cells per internal
+    wavelength at x_hi."""
+    x = np.array(run["x"])
+    keep = x <= x_hi + 1e-9
+    q, ref = np.array(run["q_sca"])[keep], np.array(run["q_ref"])[keep]
+    dx = 1e-6 / run["resolution_per_um"]
+    cpw = 2 * np.pi * A_CYL / x_hi / N_CYL / dx
+    return cpw, np.sqrt(np.mean((q - ref) ** 2) / np.mean(ref**2))
+
+
 study = load_convergence()
 if study:
-    styles = {m: (st["marker"] + "-", st["color"]) for m, st in wv.MESH_STYLES.items()}
     names = {m: f"{wv.SIM_LABEL}, {st['label']}" for m, st in wv.MESH_STYLES.items()}
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.4), sharey=True)
-    for ax, pol in zip(axes, ("TM", "TE")):
-        for model, (mk, col) in styles.items():
-            rs = sorted((r for r in study["runs"]
-                         if r["conformal"] == model and r["pol"] == pol),
-                        key=lambda r: r["resolution_per_um"])  # fmt: skip
-            if rs:
-                ax.loglog([r["cells_per_wavelength_in_cylinder_at_xmax"] for r in rs],
-                          [r["rel_rms_error"] for r in rs], mk, color=col,
-                          label=names[model], ms=5)  # fmt: skip
-        cpw = np.array([3.0, 50.0])
-        for order, ls in ((1, ":"), (2, "-.")):
-            ax.loglog(cpw, 0.5 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
-                      label=f"guide: order {order}")  # fmt: skip
-        ax.set(title=pol, xlabel=r"cells per wavelength in the cylinder at $x = 10$")
-        ax.grid(True, which="both", alpha=0.3)
-    axes[0].set_ylabel(r"relative RMS error of $Q_\mathrm{sca}$, $x = 2\dots10$")
-    axes[0].legend(fontsize=8)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8.4), sharey="row")
+    for i, pol in enumerate(("TM", "TE")):
+        for j, x_hi in enumerate((X_MAX, 5.0)):
+            ax = axes[i, j]
+            for model, st in wv.MESH_STYLES.items():
+                rs = sorted((r for r in study["runs"]
+                             if r["conformal"] == model and r["pol"] == pol),
+                            key=lambda r: r["resolution_per_um"])  # fmt: skip
+                if not rs:
+                    continue
+                pts = np.array([band_error(r, x_hi) for r in rs])
+                ax.loglog(pts[:, 0], pts[:, 1], st["marker"] + "-", color=st["color"],
+                          label=names[model], ms=5,
+                          ls="--" if model == "tensor" else "-")  # fmt: skip
+            cpw = np.array([3.0, 60.0])
+            for order, ls in ((1, ":"), (2, "-.")):
+                ax.loglog(cpw, 0.4 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
+                          label=f"guide: order {order}")  # fmt: skip
+            ax.set(title=f"{pol}, error over x = 2 ... {x_hi:g}",
+                   xlabel=f"cells per wavelength in the cylinder at x = {x_hi:g}")  # fmt: skip
+            ax.grid(True, which="both", alpha=0.3)
+        axes[i, 0].set_ylabel(r"relative RMS error of $Q_\mathrm{sca}$")
+    axes[0, 0].legend(fontsize=8)
     fig.tight_layout()
     savefig(fig, "convergence.png")
     plt.show()
