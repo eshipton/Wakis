@@ -106,30 +106,35 @@ def peak_errors(lam, y, y_ref):
 
 def interp_to_target(cost, err, target):
     """
-    Cost at which the error first reaches `target` (log-log interpolation).
+    Cost from which the error stays at or below `target` (log-log
+    interpolation).
+
+    The ladder is ordered by cost; the crossing is taken after the *last*
+    point above the target, so a non-monotone ladder (an accidentally good
+    coarse point) does not count as converged.
 
     Parameters
     ----------
     cost, err : array_like
-        Cost (unknowns, work or time) and error of a resolution ladder, in
-        order of increasing cost.
+        Cost (unknowns, work or time) and error of a resolution ladder.
     target : float
 
     Returns
     -------
     float
-        Interpolated cost, ``cost[0]`` if already below target, NaN if never
-        reached.
+        Interpolated cost; ``-cost[0]`` (negative: an upper bound) if the
+        whole ladder is below target; NaN if the finest point is above it.
     """
     cost, err = np.asarray(cost, float), np.asarray(err, float)
     o = np.argsort(cost)
     cost, err = cost[o], err[o]
-    if not np.any(err <= target):
+    above = np.flatnonzero(~(err <= target))
+    if above.size == 0:
+        return -float(cost[0])
+    j = int(above[-1])
+    if j == len(cost) - 1:
         return np.nan
-    j = int(np.argmax(err <= target))
-    if j == 0:
-        return float(cost[0])
-    lc0, lc1 = np.log(cost[j - 1]), np.log(cost[j])
-    le0, le1 = np.log(err[j - 1]), np.log(err[j])
+    lc0, lc1 = np.log(cost[j]), np.log(cost[j + 1])
+    le0, le1 = np.log(err[j]), np.log(max(err[j + 1], 1e-300))
     t = (np.log(target) - le0) / (le1 - le0)
     return float(np.exp(lc0 + t * (lc1 - lc0)))

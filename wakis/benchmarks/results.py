@@ -21,6 +21,8 @@ resolution label) unless given. Record schema (all arms):
 * ``cost``: ``unknowns`` (field dofs), ``steps``, ``dt`` [s], ``run_s``
   (time-stepping wall time, one core, uncontended), ``setup_s``, plus
   arm-specific keys;
+* ``t_run`` (DFT window [s]); records run with a longer window than the
+  case default carry ``window_factor`` and the tag suffix ``_w<factor>``;
 * ``wall_s``, ``cpu`` (machine model string), ``commit`` (git commit of
   the code that produced it), ``machine`` (e.g. 'n2-standard-2'),
   ``published`` (UTC ISO time), optional ``notes``.
