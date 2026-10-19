@@ -463,7 +463,7 @@ def plot(quick):
         "sheets_continuum": "tab:blue",
         "sheets_face": "tab:red",
     }
-    floor = 1e-32
+    floor = 1e-18  # display floor: |values| below 1e-17 are round-off
 
     # Figure 1: leakage maps
     maps = [r for r in res["leak"] if "map" in r]
@@ -522,7 +522,7 @@ def plot(quick):
                 f = np.array(mid[0]["freqs"]) / 1e9
                 ax2.semilogy(
                     f,
-                    np.maximum(np.abs(mid[0]["leak_power"]), floor),
+                    np.maximum(np.abs(mid[0]["leak_power"]), 1e-34),
                     "o-",
                     color=colors[mode],
                     label=labels[mode],
@@ -545,24 +545,27 @@ def plot(quick):
                 lw=1,
                 label=f"slope -{order_}",
             )
-    ax1.axhspan(1e-34, 1e-16, color="0.92", zorder=0)
+    ax1.axhspan(1e-19, 1e-16, color="0.92", zorder=0)
     ax1.text(
-        10.5,
-        3e-17,
-        "float64 round-off (2D: z faces of the flux box cross the TF region)",
-        fontsize=6.5,
-        color="0.4",
+        10.3,
+        2.5e-16,
+        "grey: round-off, |leaked power| < 1e-16 (3D ~1e-32, drawn at 1e-18;\n"
+        "2D ~1e-17: the z faces of the flux box cross the TF region)",
+        fontsize=6,
+        color="0.35",
     )
+    ax1.set_ylim(1e-19, 3)
     ax1.set_xlabel("cells per wavelength at f0")
     ax1.set_ylabel("leaked power / incident power on a face")
     ax1.set_title(
         "Leaked power at f0 vs resolution (filled: 3D, open: 2D TM; slopes fitted to 2D)",
         fontsize=9,
     )
-    ax1.legend(fontsize=6.5, loc="center right")
+    ax1.legend(fontsize=6, loc="center left", bbox_to_anchor=(0.0, 0.42))
     ax1.grid(True, which="both", alpha=0.3)
     ax2.set_xlabel("frequency [GHz]")
     ax2.set_ylabel("leaked power / incident power on a face")
+    ax2.set_ylim(1e-34, 3)
     ax2.set_title("Leakage spectrum, 3D, 20 cells per wavelength at f0", fontsize=9)
     ax2.grid(True, which="both", alpha=0.3)
     fig.savefig(os.path.join(HERE, "tfsf_leakage_vs_resolution.png"), dpi=150)
