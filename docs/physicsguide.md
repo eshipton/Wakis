@@ -1644,7 +1644,7 @@ where $\mathbf h_c$ is the H correction that a `TFSFSource` adds before the step
   - Scaling one recorded H or E interface-layer step by 1.5 changes the gradient by $7\times10^{-3}$, and one source-current step by $3\times10^{-5}$.
   - Leaving the CPML $\psi$ or the source state out of the snapshot makes replayed rows differ.
   - Halving splits are measurably suboptimal.
-- Measured memory (tracemalloc, forward + `vjp`, 2D CPML, $N_t=1200$): checkpointing saves 6.77 MB, against the 6.80 MB predicted from `memory_stats`. A CuPy memory hook performs the same check on the GPU.
+- Measured memory (tracemalloc, forward + `vjp`, 2D CPML, $N_t=1200$): checkpointing saves 6.77 MB, against the 6.80 MB predicted from `memory_stats`; on the L4 the CuPy pool hook measures 6.74 MB. In the ceviche-bend-sized study, the measured peak is the prediction plus a constant 0.10 GB of solver arrays (`studies/adjoint-memory`). There, checkpointing cuts the gradient memory 12–60× for 1.5–1.9× the wall time, and `reverse` costs 1.22×. All suites pass on CPU and GPU: 40 tests, plus 47 adjoint regression tests on the GPU.
 
 **Round-off of the reversed leapfrog.** The gradient error relative to `'store'` stays at $(0.3$–$5)\times10^{-15}$ from $N_t=250$ to $64\,000$, both in the open CPML domain and in a closed lossless PEC cavity (`studies/adjoint-memory/roundoff.png`). That is below the random-walk estimate $\epsilon\sqrt{N_t}$. The reversed map is the inverse of a neutrally stable (unit-modulus) map, so local rounding errors are neither amplified nor damped, and they enter the gradient through a DFT-weighted sum.
 

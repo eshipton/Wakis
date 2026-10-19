@@ -26,8 +26,23 @@ def fig_bend(path, out):
         mem_gb = r["rung_peak_bytes"] / 1e9
         meas_gb = r[key] / 1e9
         t = (r["t_forward"] + r["t_backward"]) / t_ref
-        label = mode + (" " + ",".join(f"{k}={v}" for k, v in r["settings"].items()
-                                        if k != "on_host") if r["settings"] else "")  # fmt: skip
+        st = r["settings"]
+        short = {"checkpoint": "ck", "auto": "auto", "store": "store",
+                 "reverse": "reverse", "nyquist": "nyq"}[mode]  # fmt: skip
+        parts = []
+        if "checkpoints" in st:
+            parts.append(f"s={st['checkpoints']}")
+        if "block" in st:
+            parts.append(f"b={st['block']}")
+        if "budget_gb" in st:
+            parts.append(f"{st['budget_gb']} GB")
+        if "decimation" in st:
+            parts.append(f"d={st['decimation']}")
+        if "store_dtype" in st:
+            parts.append("f32")
+        if "on_host" in st:
+            parts.append("host rows")
+        label = short + (" " + ",".join(parts) if parts else "")
         marker = "s" if mode == "nyquist" else "o"
         axes[0].scatter(mem_gb, t, color=COLORS[mode], marker=marker, s=36)
         axes[0].annotate(label, (mem_gb, t), fontsize=6.5, xytext=(3, 3),
