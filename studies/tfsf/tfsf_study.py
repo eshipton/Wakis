@@ -393,14 +393,20 @@ def run(quick, procs):
         leak += [(c, m, False, 2) for c in res2 for m in modes]
         mie = [(n, conf) for n in (32, 48, 64, 80, 96, 128) for conf in (False, True)]
     jobs = [("leak", j) for j in leak] + [("mie", j) for j in mie]
+    # One JSON per case in cases/ (resumable: finished cases are skipped)
+    case_dir = os.path.join(HERE, "cases_quick" if quick else "cases")
+    os.makedirs(case_dir, exist_ok=True)
+    todo = [j for j in jobs if not os.path.exists(_case_path(case_dir, j))]
+    print(f"{len(jobs) - len(todo)} of {len(jobs)} cases done, running {len(todo)}")
     # largest first for load balance
-    jobs.sort(key=lambda j: -(j[1][0] if j[0] == "mie" else 2 * j[1][0]))
+    todo.sort(key=lambda j: -(j[1][0] if j[0] == "mie" else 2 * j[1][0] / j[1][3]))
     with Pool(procs) as pool:
-        results = pool.map(_dispatch, jobs, chunksize=1)
-    out = {
-        "leak": [r for k, r in results if k == "leak"],
-        "mie": [r for k, r in results if k == "mie"],
-    }
+        for _ in pool.imap_unordered(_dispatch, [(case_dir, j) for j in todo]):
+            pass
+    out = {"leak": [], "mie": []}
+    for j in jobs:
+        with open(_case_path(case_dir, j)) as fh:
+            out[j[0]].append(json.load(fh))
     with open(
         os.path.join(HERE, "results_quick.json" if quick else "results.json"), "w"
     ) as fh:
@@ -413,9 +419,26 @@ def run(quick, procs):
         print(f"mie n={r['n']} conformal={r['conformal']}: {r['wall_s']:.0f}s")
 
 
-def _dispatch(job):
+def _case_path(case_dir, job):
     kind, args = job
-    return kind, (leakage_case(args) if kind == "leak" else mie_case(args))
+    name = (
+        "_".join(str(a) for a in args[:2] + args[3:])
+        if kind == "leak"
+        else f"{args[0]}_{args[1]}"
+    )
+    return os.path.join(case_dir, f"{kind}_{name}.json")
+
+
+def _dispatch(item):
+    case_dir, job = item
+    kind, args = job
+    result = leakage_case(args) if kind == "leak" else mie_case(args)
+    path = _case_path(case_dir, job)
+    with open(path + ".tmp", "w") as fh:  # atomic: partial files never count
+        json.dump(result, fh)
+    os.replace(path + ".tmp", path)
+    print(f"done {os.path.basename(path)} ({result['wall_s']:.0f}s)", flush=True)
+    return kind
 
 
 def plot(quick):
