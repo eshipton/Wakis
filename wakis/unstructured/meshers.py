@@ -92,6 +92,103 @@ def disk_mesh(radii, h, clearance=0.5, preserve_area=True):
     return SimplexMesh(nodes, tri, _tags_by_radius(rc, radii[:-1]))
 
 
+def _ring_radii(r0, r1, size):
+    """Ring radii from r0 (excluded) to r1 (included), steps ~ sqrt(3)/2 h(r)."""
+    steps, r = [], r0
+    while r < r1:
+        dr = np.sqrt(3) / 2 * size(r)
+        steps.append(dr)
+        r += dr
+    steps = np.asarray(steps)
+    if steps.size > 1 and r - r1 > 0.5 * steps[-1]:
+        steps = steps[:-1]  # drop the overshooting ring, stretch the rest
+    steps *= (r1 - r0) / steps.sum()
+    return r0 + np.cumsum(steps)
+
+
+def graded_disk_mesh(
+    radii, size, clearance=0.5, preserve_area=True, pml_layers=0, pml_dr=None
+):
+    """
+    Interface-conforming Delaunay mesh of concentric disks with a radial size field.
+
+    The innermost disk is filled like `disk_mesh` (hexagonal lattice of
+    spacing ``size(0)`` plus a ring on its boundary). Outside it the mesh is
+    built from concentric rings: their radial spacing is sqrt(3)/2 h(r) and
+    their azimuthal spacing ~h(r), staggered by half a spacing from ring to
+    ring (nearly equilateral triangles), with a ring on every radius in
+    `radii`. A slowly varying h(r) (growth <= ~1.3 per ring) keeps the
+    triangulation Delaunay with positive Voronoi node masses.
+
+    Parameters
+    ----------
+    radii : sequence of float
+        Increasing interface radii [m]; the last one is the outer boundary.
+    size : callable or float
+        Target edge length h(r) [m] (vectorized not required).
+    clearance : float
+        Minimum lattice-to-ring distance inside the first disk, in units of h.
+    preserve_area : bool
+        Enlarge each interface ring so that its polygon encloses the circle
+        area (as `disk_mesh`).
+
+    pml_layers : int, optional
+        Number of polar-aligned rings appended outside radii[-1] (for the
+        radial PML of `UnstructuredFIT2D`): every ring repeats the angles of
+        the outer ring (no stagger), so the cells are isosceles trapezoids
+        split into two triangles with a common circumcentre (the diagonal
+        has a zero dual edge) and all coupling edges are radial or
+        azimuthal. The outer ring is then not area-corrected.
+    pml_dr : float, optional
+        Radial spacing of the PML rings [m] (default h(radii[-1])).
+
+    Returns
+    -------
+    SimplexMesh
+        Triangles tagged 0 (r < radii[0]), 1, ... as `disk_mesh`; PML cells
+        get the tag len(radii).
+    """
+    radii = np.sort(np.atleast_1d(np.asarray(radii, dtype=float)))
+    if not callable(size):
+        h0 = float(size)
+
+        def size(r):
+            return h0
+
+    a = radii[0]
+    h = size(0.0)
+    xs = np.arange(-a, a + h, h)
+    ys = np.arange(-a, a + h, h * np.sqrt(3) / 2)
+    X, Y = np.meshgrid(xs, ys, indexing="xy")
+    X = X + (np.arange(len(ys)) % 2)[:, None] * h / 2
+    pts = np.stack([X.ravel(), Y.ravel()], 1)
+    pts = pts[np.hypot(*pts.T) < a - clearance * size(a)]
+    rings = [_ring(a, size(a), preserve_area)]
+    k = 0
+    for r0, r1 in zip(radii[:-1], radii[1:]):
+        for j, r in enumerate(_ring_radii(r0, r1, size)):
+            k += 1
+            on_interface = j == len(_ring_radii(r0, r1, size)) - 1
+            last = on_interface and r1 == radii[-1]
+            ring = _ring(
+                r, size(r), preserve_area and on_interface and not (last and pml_layers)
+            )
+            n = len(ring)
+            rot = np.pi / n * (k % 2)  # stagger
+            c, s_ = np.cos(rot), np.sin(rot)
+            rings.append(ring @ np.array([[c, s_], [-s_, c]]))
+    if pml_layers:
+        outer = rings[-1]
+        R = np.hypot(*outer[0])
+        dr = size(radii[-1]) if pml_dr is None else pml_dr
+        for j in range(1, int(pml_layers) + 1):
+            rings.append(outer * (R + j * dr) / R)
+    nodes = np.vstack(rings + [pts])
+    tri = Delaunay(nodes).simplices
+    rc = np.hypot(*nodes[tri].mean(1).T)
+    return SimplexMesh(nodes, tri, _tags_by_radius(rc, radii))
+
+
 def _odt_step(nodes, on_shell, radii, gap):
     """
     One optimal-Delaunay-triangulation smoothing step (Chen & Xu 2004).

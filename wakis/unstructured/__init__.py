@@ -13,7 +13,7 @@ See the physics guide section "Unstructured FIT" and
 
 from .estimate import estimate_memory
 from .mesh import SimplexMesh
-from .meshers import ball_mesh, disk_mesh, gmsh_ball_mesh, gmsh_mesh
+from .meshers import ball_mesh, disk_mesh, gmsh_ball_mesh, gmsh_mesh, graded_disk_mesh
 from .solver2d import UnstructuredFIT2D
 from .solver3d import UnstructuredFIT3D
 
@@ -24,6 +24,7 @@ __all__ = [
     "estimate_memory",
     "ball_mesh",
     "disk_mesh",
+    "graded_disk_mesh",
     "gmsh_ball_mesh",
     "gmsh_mesh",
 ]

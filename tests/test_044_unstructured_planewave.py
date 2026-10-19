@@ -45,8 +45,8 @@ N_MAX = 6
 X_TEST = np.array([0.1, 0.3, 1.5])
 
 
-def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10):
-    mesh = disk_mesh([A, 3.5 * A], h)
+def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10, mesh=None):
+    mesh = disk_mesh([A, 3.5 * A], h) if mesh is None else mesh
     solver = UnstructuredFIT2D(mesh, {0: [eps, 1.0]}, polarization=pol, bc="abc")
     f = X_TEST * C0 / (2 * np.pi * A)
     src = GaussianSource(0.9 * C0 / (2 * np.pi * A), 0.45 * C0 / (2 * np.pi * A))
@@ -65,6 +65,8 @@ def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10):
     elif mutate == "tm_full_mass":
         # current weighted by eps_T instead of the contrast eps_T - eps_b
         pw["w"] = solver.mass[pw["idx"]]
+    if mutate is not None:
+        solver._build_pw_table()  # the source table folds coef / w in
     pts = np.vstack([circle_points(r, M_PTS)[0] for r in RADII])
     P = solver._interp(pts)
     dt = solver.dt
