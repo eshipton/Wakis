@@ -27,7 +27,15 @@ Before the fix, the conformal error (+) has the sign of a thicker wall (smaller 
 
 **Right:** z edges in a cross-section of a PEC STL cylinder of radius one cell (a = h = 0.5 mm), as in the reproducer `notes/bugs/repro_conformal_pec_legacy_mask.py`. The legacy mask zeroes 12 edges, with a centroid at (−h/2, −h/2). Before the fix, `'pec'` kept the same 12, and 7 of them are open (L > 0), e.g. (−1.0, −0.5) mm, 1.1 mm from the axis. After the fix, only the 5 edges at nodes inside or on the surface are closed, centred on the axis.
 
-**B4 dipole** (Hallén reference, coarsest rungs, `cart-conformal-pec-graded`): see the table in the task report / `claims_register.md` (rerun on Cloud Batch with the fix).
+**B4 dipole** (L = 150 mm, a = 0.5 mm, gap 1 mm; Hallén MoM reference, resonance stable to ~0.1 %), arm `cart-conformal-pec-graded`, Cloud Batch n2-highmem-2:
+
+| h_t | before fix (e941a59) | after fix (bb16f1e) | edge-wise staircase | legacy STL staircase |
+|---|---|---|---|---|
+| a | −6.0 % (R_res 7.7 %) | −0.048 % (R_res 0.79 %, Z NRMS 1.3 %) | −1.16 % | −6.2 % |
+| a/1.5 | — | −0.097 % (R_res 1.0 %) | −4.8 % | −5.2 % |
+| a/2 | −4.0 % | −0.13 % (R_res 1.2 %) | — | — |
+
+The first rerun after the fix gave no resonance at all (X_in ≈ −2 kΩ). The arm ends the STL halves 0.01 h_z short of the gap planes, to keep the gap cells free of the legacy mask, and conformal PEC resolves that 5–10 µm sliver as a series gap (open length 0.01 h_z on the axis edges). With the fix, conformal halves end on the gap planes (`cartesian_dipole.py`, commit bb16f1e). All three rungs (−0.05, −0.10, −0.13 %) lie at the ~0.1 % reference uncertainty and drift slightly with refinement, so this ladder shows no convergence order. The drift may come from the reduced-kernel MoM reference (open question).
 
 **Time step.** The revived open edges include short ones, so the conformal stable step of PEC-only geometries drops slightly. The ratio to the Yee limit goes from 0.96 to 0.86 (rotated box) and from 0.97 to 0.88 (sphere). This stays inside the 0.85–1.0 range quoted in the physics guide.
 
