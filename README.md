@@ -145,7 +145,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
 - [x] Tutorial 01: 2D Mie scattering by a dielectric cylinder (TF/SF, TM/TE, staircase vs conformal convergence)
-- [ ] Tutorial 01: triangular-mesh (unstructured FIT) comparison section
+- [x] Tutorial 01: triangular-mesh (unstructured FIT) section: conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45x the work ([studies/mie-cylinder-mesh](studies/mie-cylinder-mesh))
 - [ ] Tutorial 01b: 3D Mie sphere (script and notebook written; validation runs pending)
 - [ ] Tutorial 02: plasmonic Ag/Au spheres, 10 nm to 1 µm
 

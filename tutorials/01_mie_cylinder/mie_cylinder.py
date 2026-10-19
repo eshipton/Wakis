@@ -350,12 +350,29 @@ plt.show()
 # auxiliary line obeys the same discrete equations, the incident field
 # cancels outside the box to **round-off**, at every frequency.
 #
-# The sketch shows our layout. Below it, the leakage of the three
-# constructions in an empty domain, from the TF/SF study in
-# `studies/tfsf/tfsf_study.py` (quick run, 10 cells per wavelength):
-# continuum sheets with exact staggering leak $\sim 10^{-2}$ of the field,
-# sheets referenced to one plane (as in the hand-built Meep version)
-# $\sim 10^{-1}$, the discrete source $\sim 10^{-15}$.
+# **How well does each construction cancel?** The TF/SF study
+# (`studies/tfsf/tfsf_study.py`) drives the same box in an empty domain in
+# four ways and measures the power leaking out of a closed box in the
+# scattered-field region, relative to the incident power on one face:
+#
+# | construction | 10 cells/λ | 20 cells/λ | 56 cells/λ |
+# |---|---|---|---|
+# | `TFSFSource` (1D auxiliary FIT line) | 6e-32 | 8e-32 | 4e-32 (round-off) |
+# | face current sheets, values from the discrete auxiliary line | 6e-32 | 7e-32 | 4e-32 (round-off) |
+# | continuum sheets with exact half-cell E/H registration | 2.1e-3 | 9.6e-5 | 1.3e-6 (slope -4) |
+# | continuum sheets both referenced to the face plane (as in the hand-built Meep version) | 0.15 | 2.8e-2 | 3.0e-3 (slope -2) |
+#
+# Two lessons. First, the second row shows that the TF/SF correction terms
+# *are* the equivalent currents $\mathbf J_s$, $\mathbf K_s$ of the
+# equivalence principle, evaluated with the discrete incident field: written
+# as current sheets they cancel to round-off as well. Second, with continuum
+# fields the leakage falls as $h^4$ when the half-cell staggering is
+# respected (only numerical dispersion is left), but only as $h^2$ when both
+# sheets sit on the face plane, and it is still 0.3 % of the power at 56
+# cells per wavelength. The discrete source costs about 1 % extra per time
+# step.
+#
+# The sketch shows our layout; below it, the leakage maps of the study.
 
 
 # %%
@@ -405,10 +422,11 @@ draw_tfsf_diagram(ax)
 savefig(fig, "tfsf_diagram.png")
 plt.show()
 
-leak_png = HERE.parents[0].parent / "studies" / "tfsf" / "tfsf_leakage_map.png"
-leak_png = leak_png if leak_png.exists() else FIG_DIR / "tfsf_leakage_map.png"
-if leak_png.exists():
-    show_png(leak_png, figsize=(12, 4))
+for name in ("tfsf_leakage_map.png", "tfsf_leakage_vs_resolution.png"):
+    png = HERE.parents[0].parent / "studies" / "tfsf" / name
+    png = png if png.exists() else FIG_DIR / name
+    if png.exists():
+        show_png(png, figsize=(12, 4))
 
 # %% [markdown]
 # ## 3. Geometry: a 2D problem in a 3D solver
@@ -1054,29 +1072,188 @@ if study:
 # %% [markdown]
 # ## 11. Triangular mesh: FIT beyond the Cartesian grid
 #
-# FIT is not tied to a Cartesian grid: the same integral form of Maxwell's
-# equations (circulations on primary edges, fluxes through dual faces) works
-# on any primal-dual mesh pair. On a triangular (Delaunay) mesh with its
-# Voronoi dual, the mesh can follow the circle exactly, with nodes on the
-# interface, so there is no staircase and no averaging model at all
-# (`wakis.unstructured`). The companion study `studies/mie-cylinder-mesh/`
-# solves the same $n = 2$, $a = 1$ µm cylinder with triangle FIT and compares
-# it with the Cartesian staircase and conformal grids of section 10 at equal
-# cells per wavelength. Its summary is loaded below when present.
+# FIT does not need a Cartesian grid. Its unknowns are integrals of the
+# fields over the edges and faces of *any* primal mesh and of its dual mesh,
+# and Maxwell's equations become exact incidence relations between them; only
+# the material (Hodge) operators are approximations. On a triangular mesh the
+# natural dual is the **Voronoi** diagram: the dual nodes are the triangles'
+# circumcentres and every dual edge crosses its primal edge at a right angle,
+# so the Hodge operator stays diagonal. A Delaunay mesh can place its nodes
+# *on* the circle, so there is no staircase and no averaging model at all
+# (`wakis.unstructured`, truly 2D: three field components per node and edge).
+#
+# **Build the mesh.** `disk_mesh` puts nodes on a ring at the cylinder
+# radius (slightly enlarged so that the polygon has exactly the area of the
+# circle) and on a hexagonal lattice elsewhere, then triangulates. The outer
+# ring, at the radius where the Cartesian CPML starts, carries a first-order
+# absorbing boundary condition. Below: the triangles (blue inside the
+# cylinder), their Voronoi dual (orange) and the true circle (black), at the
+# same edge length $h$ as the Cartesian run above.
+
+# %%
+from matplotlib.tri import Triangulation
+from scipy.sparse import csr_matrix
+
+from wakis.cylinder_harmonics import (
+    circle_points,
+    fit_harmonics,
+    mie_coefficients_from_fit,
+    project_harmonics,
+    q_sca_from_coefficients,
+)
+from wakis.unstructured import UnstructuredFIT2D
+from wakis.unstructured.meshers import disk_mesh
+
+R_OUT = 2.7e-6  # absorbing boundary (= start of the Cartesian CPML) [m]
+H_TRI = layout(RESOLUTION)["dx"]  # same edge length as the Cartesian cells
+tri_mesh = disk_mesh([A_CYL, R_OUT], H_TRI)
+print(f"triangle mesh: {tri_mesh.n_nodes} nodes, {tri_mesh.n_edges} edges, "
+      f"{tri_mesh.n_cells} triangles (h = {H_TRI * 1e9:.0f} nm)")  # fmt: skip
+pl = wv.plot_triangle_mesh(
+    tri_mesh, window=(0.55e-6, 1.25e-6, -0.35e-6, 0.35e-6), surfaces=[cylinder],
+    tag_colors={0: "#56B4E9", 1: "#F0F0F0"}, title="triangles + Voronoi dual",
+)  # fmt: skip
+wv.save_plotter(pl, str(FIG_DIR / "mesh_triangles.png"))
+show_png(FIG_DIR / "mesh_triangles.png", "Conforming triangles and their Voronoi dual")
+
+# %% [markdown]
+# **Run it.** The triangle solver uses a *scattered-field* plane wave
+# (`add_plane_wave`): the analytic incident wave enters only through the
+# constitutive relation inside the cylinder, so there is no TF/SF box. With
+# no flux box either, $Q_\mathrm{sca}$ is extracted from the scattered field
+# on three circles (r = 1.9, 2.2, 2.5 µm): it is projected on the angular
+# harmonics $e^{in\theta}$, each harmonic is fitted as outgoing plus incoming
+# Hankel waves, and the incoming part (reflections of the absorbing
+# boundary, 3-6 % for this first-order ABC) is de-embedded through the
+# cylinder's scattering matrix (`wakis.cylinder_harmonics`). The same
+# extraction applied to the Cartesian runs agrees with their flux boxes to
+# 0.3 % RMS at 20 cells per internal wavelength.
 
 
 # %%
-def load_mesh_study():
-    root = HERE.parents[0].parent / "studies" / "mie-cylinder-mesh"
-    for name in ("summary.json", "results.json"):
-        if (root / name).exists():
-            return json.loads((root / name).read_text())
-    print("triangle-mesh study not available in this checkout "
-          "(studies/mie-cylinder-mesh/)")  # fmt: skip
-    return None
+def interpolation_matrix(mesh, points):
+    """Sparse linear (barycentric) interpolation from mesh nodes to points."""
+    nodes, cells = mesh.nodes, mesh.cells
+    tri = Triangulation(nodes[:, 0], nodes[:, 1], cells)
+    cell = tri.get_trifinder()(points[:, 0], points[:, 1])
+    if np.any(cell < 0):
+        raise ValueError("a sample point lies outside the mesh")
+    V = nodes[cells[cell]]  # (n_points, 3, 2)
+    T = np.stack([V[:, 1] - V[:, 0], V[:, 2] - V[:, 0]], axis=2)
+    lam12 = np.linalg.solve(T, (points - V[:, 0])[..., None])[..., 0]
+    lam = np.column_stack([1 - lam12.sum(1), lam12])
+    rows = np.repeat(np.arange(len(points)), 3)
+    return csr_matrix((lam.ravel(), (rows, cells[cell].ravel())),
+                      shape=(len(points), mesh.n_nodes))  # fmt: skip
 
 
-mesh_study = load_mesh_study()
+def run_triangles(h, pol, hodge="voronoi", radii=(1.9e-6, 2.2e-6, 2.5e-6),
+                  n_points=256, n_harm=30):  # fmt: skip
+    """Triangle FIT run with harmonic Q_sca extraction; returns a dict."""
+    t0 = time.time()
+    mesh = disk_mesh([A_CYL, R_OUT], h)
+    solver = UnstructuredFIT2D(mesh, {0: [N_CYL**2, 1.0]}, polarization=pol,
+                               bc="abc", hodge=hodge, cfl=0.95)  # fmt: skip
+    solver.add_plane_wave(GaussianSource(frequency=F_CENTER, fwidth=F_WIDTH))
+    pts = np.vstack([circle_points(r, n_points)[0] for r in radii])
+    P = interpolation_matrix(mesh, pts)[:, solver.free]
+    dt = solver.dt
+    n_steps = int(T_RUN / dt)
+    shift = 0.0 if pol == "TM" else -0.5 * dt  # H_z lives at half steps
+    times = (np.arange(n_steps) + 1) * dt + shift
+    acc = np.zeros((FREQS.size, len(pts)), complex)
+    t1 = time.time()
+    for n in range(n_steps):
+        solver.one_step()
+        acc += np.outer(np.exp(-2j * np.pi * FREQS * times[n]), P @ solver.u) * dt
+    t_run = time.time() - t1
+    u_inc0 = np.ravel(solver.incident_field(np.zeros((1, 2)), times))
+    u0 = (np.exp(-2j * np.pi * np.outer(FREQS, times)) @ u_inc0) * dt
+    F = project_harmonics(acc.reshape(FREQS.size, len(radii), n_points), n_harm)
+    alpha, gamma, _ = fit_harmonics(F, 2 * np.pi * FREQS / c0, np.array(radii), n_harm)
+    c_n = mie_coefficients_from_fit(alpha, gamma, np.conj(u0), n_harm)
+    n = np.arange(-n_harm, n_harm + 1)
+    n_stop = np.floor(X_SIM + 4 * X_SIM ** (1 / 3) + 2)[:, None] + 4
+    q_sca = q_sca_from_coefficients(
+        np.where(np.abs(n)[None, :] <= n_stop, c_n, 0), X_SIM
+    )
+    return dict(q_sca=q_sca, steps=n_steps, unknowns=int(solver.free.size + mesh.n_edges),
+                setup_s=t1 - t0, run_s=t_run, mesh=mesh)  # fmt: skip
+
+
+tri_runs = {pol: run_triangles(H_TRI, pol) for pol in ("TM", "TE")}
+fig, axes = plt.subplots(1, 2, figsize=(12, 3.9))
+for ax, (pol, col) in zip(axes, (("TM", "#D55E00"), ("TE", "#0072B2"))):
+    ref = cylinder_efficiencies(N_CYL, X_SIM, pol)[1]
+    ax.plot(x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1], "-", color="k",
+            lw=1.1, label=wv.THEORY_LABEL)  # fmt: skip
+    for q, st, name in (
+        (runs[pol]["q_sca"], wv.MESH_STYLES[CONFORMAL], "Cartesian"),
+        (tri_runs[pol]["q_sca"], wv.MESH_STYLES["triangles"], "triangles"),
+    ):
+        err = np.sqrt(np.mean((q - ref) ** 2) / np.mean(ref**2))
+        ax.plot(X_SIM, q, ls="none", marker=st["marker"], ms=3.5, color=st["color"],
+                label=f"{wv.SIM_LABEL}, {st['label']}: {err:.1%} RMS")  # fmt: skip
+    ax.set(title=f"{pol}, h = {H_TRI * 1e9:.0f} nm", xlabel=r"$x = 2\pi a/\lambda$",
+           ylabel=r"$Q_\mathrm{sca}$")  # fmt: skip
+    ax.legend(fontsize=7.5)
+fig.tight_layout()
+savefig(fig, "qsca_triangles_vs_cartesian.png")
+plt.show()
+for pol in ("TM", "TE"):
+    cart, tri = summary(runs[pol]), tri_runs[pol]
+    n_cart = 3 * (cart["cells"] // NZ)  # 2D unknowns: E_z, H_x, H_y (TM) per cell
+    print(f"{pol}: Cartesian {n_cart / 1e3:.0f} k unknowns x {cart['steps']} steps "
+          f"= {n_cart * cart['steps']:.2e};  triangles {tri['unknowns'] / 1e3:.0f} k "
+          f"unknowns x {tri['steps']} steps = {tri['unknowns'] * tri['steps']:.2e}")  # fmt: skip
+
+# %% [markdown]
+# The work printed above is *not* an equal-cost comparison: this tutorial's
+# Cartesian runs use the 3D solver on a 4-cell periodic slab, whose time
+# step is set by the 3D stability limit with $\Delta z = \Delta x$ and the
+# default Courant number 0.5, about twice as many steps as a 2D code needs.
+# The study below runs every arm at 0.95 of its own stability limit (and a
+# slab with $\Delta z = 10h$), and counts 3 unknowns per Cartesian cell.
+#
+# **The full comparison** (`studies/mie-cylinder-mesh/`, 48 runs from 10 to
+# 40 cells per internal wavelength, 1000 fs windows, the same harmonic
+# extraction for every arm). Below: the meshes at the interface, and the
+# error against cells per wavelength, unknowns and work (unknowns x steps).
+#
+# * **Equal accuracy at equal h.** Conformal Cartesian and conforming
+#   triangles are both second order and within ~10 % of each other: 0.62 %
+#   vs 0.71 % RMS (TM) and 0.64 % vs 0.63 % (TE) at 40 cells per internal
+#   wavelength.
+# * **Conformal Cartesian is ~1.45x cheaper at equal error.** At the same h
+#   the hexagonal triangle lattice has ~14 % more unknowns (three edges per
+#   node) and a 21 % smaller time step (CFL of the smallest dual edges):
+#   1.25e11 vs 0.86e11 unknowns x steps at 40 cells per wavelength.
+# * **The staircase is far behind**: 3.9 % (TM) and 6.2 % (TE) at the
+#   same resolution, converging at first order or worse.
+#
+# **Why?** For a smooth, moderate-contrast interface ($n = 2$, radius 1 µm,
+# many cells across), subpixel averaging already captures the interface to
+# second order, and over $x \le 10$ every second-order arm is limited by the
+# *bulk* numerical dispersion at the short-wavelength end, not by the
+# interface. The geometric advantage of a conforming mesh is real but not
+# needed here. Triangles should win where averaging fails: sharp corners and
+# wedges (field singularities), thin gaps and shells below a cell, metals and
+# plasmonic interfaces (sign-changing permittivity, where averaging breaks
+# down), and multiscale geometry that needs local refinement instead of a
+# uniformly fine grid. Note also that the triangle runs use a first-order
+# absorbing boundary that reflects 3-6 %: the de-embedding removes its
+# first-order effect, a PML for the unstructured solver is on the roadmap.
+
+# %%
+study_root = HERE.parents[0].parent / "studies" / "mie-cylinder-mesh" / "figures"
+for name, local, size in (
+    ("a_meshes", "tri_study_a_meshes.png", (13, 4.5)),
+    ("d_convergence", "tri_study_d_convergence.png", (13, 4.5)),
+):
+    png = study_root / f"{name}.png"
+    png = png if png.exists() else FIG_DIR / local
+    if png.exists():
+        show_png(png, figsize=size)
 
 # %% [markdown]
 # ## 12. Limits and failure modes
@@ -1138,7 +1315,13 @@ mesh_study = load_mesh_study()
 #    the flux box) and project it to the far field with the 2D Green's
 #    function; compare $dC/d\theta = 2|T(\theta)|^2/(\pi k)$ from
 #    `wakis.analytic.cylinder_amplitude`.
-# 7. **Towards plasmonics.** Make the cylinder a Drude metal
+# 7. **Where should triangles win?** Replace the cylinder by a square rod
+#    with sharp corners, a thin dielectric shell (thickness below one
+#    Cartesian cell), or a Drude-metal cylinder near its surface-plasmon
+#    resonance. Compare conformal Cartesian and `disk_mesh`-style conforming
+#    triangles at equal work (unknowns x steps), not equal h. Which arm wins,
+#    and does the answer change with local mesh refinement near the corner?
+# 8. **Towards plasmonics.** Make the cylinder a Drude metal
 #    (`wakis.dispersive`), use the inner flux box for $Q_\mathrm{abs}$, and
 #    compare with `cylinder_efficiencies` at complex $m$.
 

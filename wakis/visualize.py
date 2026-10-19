@@ -53,6 +53,7 @@ __all__ = [
     "field_slice",
     "plot_field_slice",
     "plot_material_plane",
+    "plot_triangle_mesh",
     "plot_field_plane",
     "plot_isosurfaces",
     "SliceRecorder",
@@ -893,6 +894,97 @@ def plot_material_plane(
         pl.add_text(title, font_size=14, color="black")
     pl.view_vector(normal, viewup=np.eye(3)[v])
     pl.reset_camera(bounds=cells.bounds)
+    return pl
+
+
+def plot_triangle_mesh(
+    mesh,
+    window=None,
+    dual=True,
+    tag_colors=None,
+    surfaces=None,
+    length_unit="um",
+    window_size=(800, 760),
+    title=None,
+    off_screen=None,
+):
+    """
+    PyVista top view of a 2D simplex mesh (`wakis.unstructured.SimplexMesh`):
+    triangles coloured by material tag, their edges, and optionally the
+    Voronoi dual (circumcentres joined across every edge), the grid on which
+    FIT places the dual quantities.
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        Triangular mesh (dim 2).
+    window : tuple (xmin, xmax, ymin, ymax), optional
+        Zoom window [m]; cells with a vertex inside are drawn.
+    dual : bool
+        Draw the Voronoi dual edges (red).
+    tag_colors : dict, optional
+        {tag: colour}; default light blue for tag 0, white otherwise.
+    surfaces : list of pyvista.PolyData, optional
+        True surfaces, sliced at z = 0 and drawn in black.
+
+    Returns
+    -------
+    pyvista.Plotter
+    """
+    scale = 1.0 / LENGTH_UNITS[length_unit]
+    nodes, cells = np.asarray(mesh.nodes), np.asarray(mesh.cells)
+    keep = np.ones(len(cells), bool)
+    if window is not None:
+        P = nodes[cells]
+        inside = (
+            (P[..., 0] >= window[0]) & (P[..., 0] <= window[1])
+            & (P[..., 1] >= window[2]) & (P[..., 1] <= window[3])
+        )  # fmt: skip
+        keep = inside.any(1)
+    pts3 = np.column_stack([nodes * scale, np.zeros(len(nodes))])
+    faces = np.column_stack([np.full(keep.sum(), 3), cells[keep]]).ravel()
+    tri = pv.PolyData(pts3, faces)
+    tags = np.asarray(mesh.cell_tags)[keep]
+    colors = {0: "#56B4E9"} if tag_colors is None else tag_colors
+    off = True if off_screen is None else off_screen
+    pl = pv.Plotter(off_screen=off, window_size=list(window_size))
+    pl.set_background("white")
+    for tag in np.unique(tags):
+        sub = tri.extract_cells(np.flatnonzero(tags == tag)).extract_geometry()
+        pl.add_mesh(sub, color=colors.get(int(tag), "white"), show_edges=True,
+                    edge_color="black", line_width=1)  # fmt: skip
+    if dual:
+        cc = np.asarray(mesh.cell_circumcenter)
+        ce = np.asarray(mesh.cell_edges)
+        owners = {}
+        for c in np.flatnonzero(keep):
+            for e in ce[c]:
+                owners.setdefault(int(e), []).append(c)
+        segs = []
+        for e, cs in owners.items():
+            a, b = mesh.edges[e]
+            mid = 0.5 * (nodes[a] + nodes[b])
+            ends = [cc[c] for c in cs] if len(cs) == 2 else [cc[cs[0]], mid]
+            segs += ends
+        segs = np.column_stack([np.array(segs) * scale, np.full(len(segs), 1e-4)])
+        pl.add_mesh(pv.line_segments_from_points(segs), color="#D55E00", line_width=2)
+    for surf in surfaces or []:
+        cut = surf.scale(scale, inplace=False).slice(normal="z", origin=(0, 0, 0))
+        if cut.n_points:
+            if window is not None:
+                b = np.array(window) * scale
+                cut = cut.clip_box([b[0], b[1], b[2], b[3], -1, 1], invert=False)
+            pl.add_mesh(cut.translate((0, 0, 2e-4), inplace=False), color="black",
+                        line_width=3)  # fmt: skip
+    if title:
+        pl.add_text(title, font_size=14, color="black")
+    b = np.array(window) * scale if window is not None else np.array(tri.bounds[:4])
+    cx, cy = 0.5 * (b[0] + b[1]), 0.5 * (b[2] + b[3])
+    pl.enable_parallel_projection()
+    pl.camera.focal_point = (cx, cy, 0.0)
+    pl.camera.position = (cx, cy, 10.0 * max(b[1] - b[0], b[3] - b[2]))
+    pl.camera.up = (0.0, 1.0, 0.0)
+    pl.camera.parallel_scale = 0.55 * max(b[1] - b[0], b[3] - b[2])
     return pl
 
 
