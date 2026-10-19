@@ -239,7 +239,7 @@ The explicit TE/TM scheme of Dohlus & Zagorodnov (2009) has no numerical dispers
 </tr>
 </table>
 
-#### In progress: exact adjoint gradients in less memory &nbsp;·&nbsp; `AdjointSimulation(memory=...)`
+#### Exact adjoint gradients in 30–60× less memory &nbsp;·&nbsp; `AdjointSimulation(memory=...)`
 
 <table>
 <tr>
@@ -252,7 +252,7 @@ A memory ladder for the backward sweep:
 - `reverse`: time-reversed leapfrog with recorded CPML layers, which agrees with `store` to 3e-16 to 2e-15, with round-off flat at (0.3–5)e-15 up to N<sub>t</sub> = 64 000;
 - `nyquist`: approximate and opt-in.
 
-Projection for the ceviche WDM at r = 1: **185 GB with `store` (float64), 2.9 GB with `reverse` at no recomputation**, or 4.3 GB with `checkpoint` at 2.4 extra forward passes. Measured CPU/L4 memory-vs-time results are pending. Branch `feature/adjoint-memory`.
+Measured on a bend-sized 2D case (313² cells, 20 000 steps): **`store` 12.3 GB, `checkpoint` 0.2–2.1 GB at 1.5–1.9× the time, `reverse` 0.39 GB at 1.22×**; measured memory matches the planner. Projected for the ceviche WDM at r = 1: 185 GB with `store` (float64), **2.9 GB with `reverse`**, or 4.3 GB with `checkpoint` at 2.4 extra forward passes. `memory="auto"` picks a mode from a budget. It works with the fused GPU step (checkpoint/reverse gradients ≤ 1e-12 from fused `store`). **Limits:** `reverse` needs lossless media and is validated in float64 only; for 3D TF/SF problems it records the face currents and loses to checkpointing. Code on `main`, [studies/adjoint-memory](studies/adjoint-memory).
 
 </td>
 </tr>
