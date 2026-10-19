@@ -538,7 +538,9 @@ class DGTD2D:
         u = self._view(X, "u")
         vx = self._view(X, "vx")
         vy = self._view(X, "vy")
-        res = np.zeros_like(X)
+        res = np.empty_like(X)
+        if self.n_state > 3 * Np * K:
+            res[3 * Np * K :] = 0.0
         du = self._view(res, "u")
         dvx = self._view(res, "vx")
         dvy = self._view(res, "vy")
@@ -648,9 +650,12 @@ class DGTD2D:
         dt = self.dt
         for a, b, c in zip(LSRK4["a"], LSRK4["b"], LSRK4["c"]):
             r = self._rhs(X, self.t + c * dt)
+            r *= dt
             k *= a
-            k += dt * r
-            X += b * k
+            k += r
+            r[:] = k
+            r *= b
+            X += r
         self.t += dt
         self.time_rhs += time.perf_counter() - t1
 
