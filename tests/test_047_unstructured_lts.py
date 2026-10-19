@@ -266,11 +266,13 @@ def spectral_radius(s):
     return np.abs(np.linalg.eigvals(T)).max()
 
 
-def drude_solver(pol, mesh, gamma, kp=4.0, **lts):
+def drude_solver(pol, mesh, gamma, kp=4.0, cfl=0.95, **lts):
     from wakis.dispersive import DispersiveMaterial, Drude
 
     drude = DispersiveMaterial(1.0, [Drude(kp * c, gamma)])
-    return UnstructuredFIT2D(mesh, {0: drude}, polarization=pol, lts=lts or None)
+    return UnstructuredFIT2D(
+        mesh, {0: drude}, polarization=pol, cfl=cfl, lts=lts or None
+    )
 
 
 class TestDispersive:
@@ -306,41 +308,53 @@ class TestDispersive:
 
     @pytest.mark.slow
     def test_plasmon_matches_eigenmode(self):
-        """Time-domain plasmon (TE Drude rod, k_p a = 4) with LTS vs global.
+        """Time-domain plasmon (TE Drude rod, k_p a = 4) with LTS vs global,
+        and temporal refinement of the LTS-global gap.
 
         The n = 1 plasmon is weak at the probe (|a| ~ 2e-3) next to a mode
-        at 1.033 f_sp (|a| ~ 2e-2): fit the whole record after the source
-        ends in 0.9-1.1 f_sp (a later start and a 0.97-1.03 window found no
-        mode, for global stepping too: studies/unstructured-lts,
-        plasmon_diag.py). Expected: leapfrog time error ~ dt^2, i.e. the
-        LTS shift from the eigenfrequency ~ 4x the global one."""
+        at 1.033 f_sp (|a| ~ 2e-2). The original test fitted from 1/5 of the
+        record and found no mode for global stepping either
+        (studies/unstructured-lts/plasmon_diag.py on Batch); the fit now
+        starts when the source ends. Frequencies are relative to the
+        semi-discrete eigenfrequency f_sp of the same mesh, so they measure
+        the time-discretization error only (f_sp / f_analytic - 1 = 2.7e-4).
+        At cfl 0.95: global +1e-5, LTS +8e-4 (coarse step 2x). If the gap is
+        time-discretization error it is O(dt^2): halving dt must divide it
+        by ~4; a dispersive-LTS inconsistency would not converge away."""
         from wakis.resonances import harminv
 
         m = graded_rod_mesh(0.04)
         f_an = analytic.drude_rod_in_cavity_te(A_CAV, B_ROD, 4.0, n=1)[1] * c
-        shifts = {}
-        for mode in ("global", "lts"):
-            s = drude_solver("TE", m, 0.0, **({"p": 2} if mode == "lts" else {}))
-            f_sp = s.dispersive_eigenmode(f_an / (2 * np.pi))
-            s0 = 1 / (2 * np.pi * 0.3 * f_sp)
+        shift = {}
+        for cfl in (0.95, 0.475):
+            for mode in ("global", "lts"):
+                lts = {"p": 2} if mode == "lts" else {}
+                s = drude_solver("TE", m, 0.0, cfl=cfl, **lts)
+                f_sp = s.dispersive_eigenmode(f_an / (2 * np.pi))
+                s0 = 1 / (2 * np.pi * 0.3 * f_sp)
 
-            def pulse(t, s0=s0, f0=f_sp):
-                return np.exp(-(((t - 5 * s0) / s0) ** 2) / 2) * np.sin(
-                    2 * np.pi * f0 * (t - 5 * s0)
+                def pulse(t, s0=s0, f0=f_sp):
+                    return np.exp(-(((t - 5 * s0) / s0) ** 2) / 2) * np.sin(
+                        2 * np.pi * f0 * (t - 5 * s0)
+                    )
+
+                s.add_point_source([0.6, 0.1], pulse, [1, 0.3])
+                probe = s.add_probe([[0.55, -0.2]])
+                n = int(60 / f_sp / s.dt)
+                s.run(n)
+                sig = s.probe_signal(probe)[:, 0]
+                i0 = int(10 * s0 / s.dt) + 1  # source off
+                res = harminv(
+                    sig[i0:], s.dt, 0.97 * f_sp, 1.03 * f_sp, t0=(i0 + 1) * s.dt
                 )
-
-            s.add_point_source([0.6, 0.1], pulse, [1, 0.3])
-            probe = s.add_probe([[0.55, -0.2]])
-            n = int(60 / f_sp / s.dt)
-            s.run(n)
-            sig = s.probe_signal(probe)[:, 0]
-            i0 = int(10 * s0 / s.dt) + 1  # source off
-            res = harminv(sig[i0:], s.dt, 0.9 * f_sp, 1.1 * f_sp, t0=(i0 + 1) * s.dt)
-            f = np.real(np.atleast_1d(res.frequency))
-            shifts[mode] = f[np.argmin(np.abs(f / f_sp - 1))] / f_sp - 1
-            # bounded (lossless cavity): no growth over 60 periods
-            assert np.abs(sig[-n // 10 :]).max() < 2 * np.abs(sig[i0 : 2 * i0]).max()
-        # observed: global +3.6e-4, LTS +1.2e-3 (h = 0.04)
-        assert abs(shifts["global"]) < 1e-3
-        assert abs(shifts["lts"]) < 2e-3
-        assert abs(shifts["lts"]) < 6 * abs(shifts["global"]) + 1e-4
+                f = np.real(np.atleast_1d(res.frequency))
+                assert f.size, (cfl, mode)
+                shift[cfl, mode] = f[np.argmin(np.abs(f / f_sp - 1))] / f_sp - 1
+                # lossless cavity: bounded over 60 periods
+                assert (
+                    np.abs(sig[-n // 10 :]).max() < 2 * np.abs(sig[i0 : 2 * i0]).max()
+                )
+        assert abs(shift[0.95, "global"]) < 1e-3
+        assert abs(shift[0.95, "lts"]) < 2e-3
+        gap = {k: shift[k, "lts"] - shift[k, "global"] for k in (0.95, 0.475)}
+        assert 3 < gap[0.95] / gap[0.475] < 5.5, (shift, gap)
