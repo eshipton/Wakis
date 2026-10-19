@@ -87,7 +87,7 @@ def revolve_cost(l, s):
     return r * l - comb(s + r, s + 1) + l
 
 
-def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=64):
+def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=256):
     """
     Choose the snapshot slots and block length that minimize recomputation
     within a memory budget.
@@ -108,16 +108,26 @@ def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=64):
     best = None
     for s in range(1, max_slots + 1):
         free = budget_bytes - s * state_bytes - row_bytes
-        block = int(free // row_bytes) if row_bytes else Nt
-        if block < 1:
+        max_block = min(int(free // row_bytes) if row_bytes else Nt, Nt - 1)
+        if max_block < 1:
             break
-        block = min(block, Nt - 1)
-        n_blocks = -(-(Nt - 1) // block)
-        cost = revolve_cost(n_blocks - 1, s) * block if n_blocks > 1 else 0
-        mem = s * state_bytes + (block + 1) * row_bytes
-        key = (cost, mem)
-        if best is None or key < best[0]:
-            best = (key, s, block, mem, cost)
+        # The cost drops in steps where the number of blocks (minus the
+        # one recorded by the forward run) reaches beta(s, r): try those
+        # block lengths and the longest one that fits
+        blocks = {max_block}
+        for r in range(0, 64):
+            b = -(-(Nt - 1) // (beta(s, r) + 1))
+            if b <= max_block:
+                blocks.add(b)
+            if b <= 1:
+                break
+        for block in blocks:
+            n_blocks = -(-(Nt - 1) // block)
+            cost = revolve_cost(n_blocks - 1, s) * block if n_blocks > 1 else 0
+            mem = s * state_bytes + (block + 1) * row_bytes
+            key = (cost, mem)
+            if best is None or key < best[0]:
+                best = (key, s, block, mem, cost)
     if best is None:
         raise MemoryError(
             f"A budget of {budget_bytes / 1e9:.3g} GB holds less than one solver "

@@ -127,6 +127,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Inverse design**
 - [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`) for all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
+- [x] Exact-gradient memory ladder (`AdjointSimulation(memory=...)`): binomial checkpointing (bitwise-equal gradients), time reversal with recorded CPML interface layers (lossless problems), opt-in approximate Nyquist storage ([study](studies/adjoint-memory/README.md))
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
 - [ ] Differentiable layer thickness
 

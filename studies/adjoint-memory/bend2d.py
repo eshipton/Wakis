@@ -142,13 +142,15 @@ def main():
     ap.add_argument("--nt", type=int, default=20000)
     ap.add_argument("--gpu", action="store_true")
     ap.add_argument("--out", default="bend.json")
+    ap.add_argument("--configs", default="", help="comma-separated CONFIGS indices")
     a = ap.parse_args()
     sim = make_problem(a.n, a.design, a.nt, a.gpu)
     rho = np.random.default_rng(0).uniform(0.3, 0.7, sim.design.shape)
     out = sim.forward(rho)
     G = {"probe": {"Ez": 2e20 * out["probe"]["Ez"]}}
     results, g_ref = [], None
-    for mode, kw in CONFIGS:
+    pick = [int(i) for i in a.configs.split(",")] if a.configs else range(len(CONFIGS))
+    for mode, kw in (CONFIGS[i] for i in pick):
         if a.gpu and mode == "store" and not kw:
             kw = dict(on_host=True)  # float64 rows on the host
         grad, rec = run(sim, rho, G, mode, a.gpu, **kw)

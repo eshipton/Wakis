@@ -88,8 +88,8 @@ def fig_projection(path, out):
             label, color, marker = style
             ax.scatter(lad[name]["bytes"] / 1e9, lad[name]["extra"] / Nt, color=color,
                        marker=marker, s=50, label=label, zorder=3)  # fmt: skip
-        ax.set(xscale="log", xlabel="memory for the gradient [GB]",
-               ylabel="recomputed forward steps / Nt",
+        ax.set(xscale="log", yscale="symlog", xlabel="memory for the gradient [GB]",
+               ylabel="forward steps recomputed in the backward sweep / Nt",
                title=f"{title}: {np.prod(p['cells']) / 1e6:.2f} Mcells, Nt={Nt}")  # fmt: skip
         ax.grid(True, which="both", alpha=0.3)
     axes[0].legend(fontsize=7)
