@@ -709,7 +709,9 @@ def _material_tensors(solver, geo):
     return ieps, sigma, (aniso, normal)
 
 
-def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=None):
+def _redistribution(
+    lengths, areas, cell_lengths, ghosts, threshold, pattern=None, merge_only=()
+):
     """
     Stabilized inverse face-area operator G (H = G b / mu for face fluxes b)
     per face component, replacing diag(1/A_open).
@@ -735,6 +737,12 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
     semi-definite and the faces of one plane share their dual length, so the
     update keeps a conserved discrete energy; a uniform H is reproduced
     exactly (and the knife-edge field near sheet edges).
+
+    Faces of the components in `merge_only` use weight 1 to the first
+    neighbour only (cell merging, no extrapolation). The TE/TM scheme uses
+    it for the faces normal to x and y: the (2, -1) extrapolation raises the
+    longitudinal operator above 4 c^2/dz^2 and breaks the magic time step,
+    merging keeps every row sum of that operator at 4 c^2/dz^2.
 
     Returns
     -------
@@ -829,6 +837,8 @@ def _redistribution(lengths, areas, cell_lengths, ghosts, threshold, pattern=Non
         a = A.ravel(order="F")
         # Faces next to a sheet edge: one partner, weight from the edge field
         fx, fst, snd = cand[fixed_c], first_c[fixed_c], second_c[fixed_c]
+        if w in merge_only:
+            snd = np.full_like(snd, -1)
         alpha = np.ones(fx.size)
         sing = np.zeros(fx.size, dtype=bool)
         if pattern is not None:
@@ -1122,6 +1132,8 @@ def apply_conformal_materials(solver):
     L_open = [np.where(L_open[c] < tol * L[c], 0.0, L_open[c]) for c in range(3)]
     A_open = [np.clip(A[c] - geo.pec_area[c], 0.0, None) for c in range(3)]
     A_open = [np.where(A_open[c] < tol**2 * A[c], 0.0, A_open[c]) for c in range(3)]
+    if getattr(solver, "scheme", "yee") == "tete":
+        A_open = _tete_face_areas(L_open, A_open, L)
     eps_factor, pattern = None, None
     if geo.sheet_outlines and grid.sheet_edge_correction:
         tl = [
@@ -1132,9 +1144,11 @@ def apply_conformal_materials(solver):
         eps_factor, mu_factor, pattern = _sheet_edge_factors(geo, L_open, A_open, L, tl)
         # The corrected inverse area acts as an effective open area
         A_open = [A_open[c] / mu_factor[c] for c in range(3)]
+    tete = getattr(solver, "scheme", "yee") == "tete"
     ops, n_unstable = _redistribution(
-        L_open, A_open, L, grid.edge_ghosts, MERGE_THRESHOLD, pattern
-    )
+        L_open, A_open, L, grid.edge_ghosts, MERGE_THRESHOLD, pattern,
+        merge_only=(0, 1) if tete else (),
+    )  # fmt: skip
     solver.conformal_unstable_faces = n_unstable
 
     solver.L = solver.L.copy()
@@ -1165,6 +1179,30 @@ def apply_conformal_materials(solver):
     solver.conformal_ieps_factor = factor
     solver.ieps.fromarray(solver.ieps.toarray() * factor)
     solver.sigma.fromarray(np.where(closed, 0.0, solver.sigma.toarray()))
+
+
+def _tete_face_areas(L_open, A_open, L):
+    """
+    Open areas of the faces normal to x and y for the TE/TM scheme.
+
+    The face normal to x between z_k and z_k+1 gets the trapezoidal area
+    dz (l_y,k + l_y,k+1) / 2 from the open lengths of its two y edges (and
+    likewise for y faces). It is exact for z-invariant walls (beam pipes) and
+    for walls linear in z, and it bounds the longitudinal operator of every
+    (x, y) column by Gershgorin's theorem: each row of B_L A_L sums to
+    (tl / (eps mu tA)) [(l_k+1 + l_k)/A_r + (l_k + l_k-1)/A_l] = 4 c^2/dz^2,
+    so the magic step c dt = dz stays stable on conformal grids. The
+    subsampled areas of the Yee path instead differ from the edge-length
+    trapezoid by several percent and lower the stable step below dz/c.
+    Faces normal to z (transverse only) keep their areas.
+    """
+    out = list(A_open)
+    dz = L[2]
+    for face, edge in ((0, 1), (1, 0)):
+        le = L_open[edge]
+        upper = np.concatenate([le[:, :, 1:], le[:, :, -1:]], axis=2)
+        out[face] = dz * 0.5 * (le + upper)
+    return out
 
 
 def _set_tensor_edges(solver, aniso, normal):

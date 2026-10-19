@@ -22,6 +22,11 @@ Z0 = np.sqrt(mu_0 / epsilon_0)  # Wave impedance in free space [Ohms]
 
 
 class Beam:
+    #: TFSF injection stops once the bunch centre is this many sigmaz past the
+    #: downstream injection plane (the truncated tail, exp(-n^2/2) of the
+    #: peak, is left as a small residual field)
+    tfsf_truncation = 5.0
+
     def __init__(
         self, xsource=0.0, ysource=0.0, beta=1.0, q=1e-9, sigmaz=None, ti=None
     ):
@@ -133,6 +138,23 @@ class Beam:
             / np.sqrt(2 * np.pi * self.sigmaz**2)
             * np.exp(-((s - s0) ** 2) / (2 * self.sigmaz**2))
         )
+        tete = getattr(solver, "scheme", "yee") == "tete"
+        if tete:
+            # TE/TM: the Ez update is driven by the average of the transverse
+            # H at times n and n+1, so the consistent current is the average
+            # of Jz at t and t + dt (trapezoidal); it makes the sampled
+            # ultrarelativistic self-field an exact discrete solution
+            # (`wakis.tete`, physics guide)
+            gauss = lambda ss: np.exp(-((ss - s0) ** 2) / (2 * self.sigmaz**2))  # noqa: E731
+            profile = (
+                0.5
+                * (gauss(solver.z - self.v * t) + gauss(solver.z - self.v * (t + solver.dt)))
+                / np.sqrt(2 * np.pi * self.sigmaz**2)
+            )
+        # TE/TM stores ex, ey at half-integer and hx, hy at integer times:
+        # the injected E (H) is sampled half a step later (earlier) than Yee
+        t_E = t + solver.dt / 2 if tete else t
+        t_H = t if tete else t + solver.dt / 2
         # update
         if solver.source_type == "tfsf":
             Jprofile = (
@@ -150,24 +172,24 @@ class Beam:
                 # Update the transverse E and H fields on the injection planes using the pre-calculated 2D templates
                 if self.at_low_boundary:
                     Einj_x, Einj_y, _, _ = self.get_injected_2D_slice(
-                        solver, solver.grid.z[self.j_start], t, side="low"
+                        solver, solver.grid.z[self.j_start], t_E, side="low"
                     )
                     solver.E_trans[:, :, self.j_start, "x"] = Einj_x
                     solver.E_trans[:, :, self.j_start, "y"] = Einj_y
                     _, _, Hinj_x, Hinj_y = self.get_injected_2D_slice(
-                        solver, solver.z[self.j_start], t + solver.dt / 2, side="low"
+                        solver, solver.z[self.j_start], t_H, side="low"
                     )
                     solver.H_trans[:, :, self.j_start, "x"] = -Hinj_x
                     solver.H_trans[:, :, self.j_start, "y"] = -Hinj_y
 
                 if self.at_high_boundary:
                     Einj_x, Einj_y, _, _ = self.get_injected_2D_slice(
-                        solver, solver.grid.z[self.j_stop], t, side="high"
+                        solver, solver.grid.z[self.j_stop], t_E, side="high"
                     )
                     solver.E_trans[:, :, self.j_stop, "x"] = -Einj_x
                     solver.E_trans[:, :, self.j_stop, "y"] = -Einj_y
                     _, _, Hinj_x, Hinj_y = self.get_injected_2D_slice(
-                        solver, solver.z[self.j_stop], t + solver.dt / 2, side="high"
+                        solver, solver.z[self.j_stop], t_H, side="high"
                     )
                     solver.H_trans[:, :, self.j_stop, "x"] = Hinj_x
                     solver.H_trans[:, :, self.j_stop, "y"] = Hinj_y
@@ -175,7 +197,7 @@ class Beam:
                 # Truncate the injection after the beam has passed the injection plane by 5 sigma
                 if (
                     s0 - (self.high_plane - self.v * (t + solver.dt / 2))
-                    > 5 * self.sigmaz
+                    > self.tfsf_truncation * self.sigmaz
                 ):
                     solver.injection_done = True
                     del solver.E_trans, solver.H_trans

@@ -268,6 +268,26 @@ class AdjointStepper:
             tensor = None
         network = getattr(solver, "dispersive_network", None)
         dispersive = dispersive or ([] if network is None else [network])
+        self.tete = None
+        if getattr(solver, "scheme", "yee") == "tete":
+            if elements or dispersive or tensor:
+                raise NotImplementedError(
+                    "The TE/TM adjoint step supports no lumped elements, "
+                    "dispersive media or tensor averaging."
+                )
+            from ..tete import TeteTranspose
+
+            self.tete = TeteTranspose(solver)  # raises with MPI
+            self.solver = solver
+            self.xp = solver.E.xp
+            self.N = solver.N
+            self.dt = solver.dt
+            self.cpml = solver.activate_cpml
+            self.dtype = solver.E.array.dtype
+            self.lam_star = None
+            self.lumped, self.dispersive, self.tensor = [], [], []
+            self.psi_names = self.tete.psi_names
+            return
         if self.mpi and (solver.activate_cpml or elements or dispersive or tensor):
             raise NotImplementedError(
                 "With MPI, the adjoint supports the standard step only (no CPML, "
@@ -519,6 +539,8 @@ class AdjointStepper:
 
     def _base_step(self, lam, lam_E):
         """Transpose of the solver step, given the adjoint lam_E of its E."""
+        if self.tete is not None:
+            return self.tete.step(dict(lam, E=lam_E))
         if not self.cpml:
             # In place: lam_H = lam_H' + dt B^H lam_E, lam_E = (1 - S) lam_E - dt A^H lam_H
             lam_H = self.Bt @ lam_E
@@ -667,6 +689,13 @@ class AdjointSimulation:
             {monitor name: {output key: shape}}.
         """
         solver = self.make_solver()
+        if getattr(solver, "scheme", "yee") == "tete":
+            # ieps enters each TE/TM step in three sub-updates (two half kicks
+            # of ex, ey): the single-increment gradient formula does not apply
+            raise NotImplementedError(
+                "AdjointSimulation (design gradients) does not support "
+                "scheme='tete'; AdjointStepper does."
+            )
         comm = self._comm(solver)
         self.readouts = {}
         shapes = {}
