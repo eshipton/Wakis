@@ -111,6 +111,11 @@ class RoutinesMixin:
         - First-order extrapolating ABC faces are applied within each field update.
         - If `callback` is provided, it is called as `callback(self, t)` at each step.
         - The plotting keyword arguments are merged with defaults for 2D/3D plotting.
+        - Fused GPU solvers (``SolverFIT3D(..., fused=True)``) run steps 1 to
+          Nt - 1 as CUDA-graph replays when the sources and monitors are fused
+          types and no plotting, saving or callback is requested (set
+          ``solver.use_graphs = False`` to keep the per-step loop); results are
+          identical to the per-step fused loop.
         """
         self.Nt = Nt
         if source is not None:
@@ -190,8 +195,43 @@ class RoutinesMixin:
             t_off = max([_end_time(src) for src in sources], default=0.0)
             energy_max = 0.0
 
+        # Fused GPU solvers: steps 1.. as CUDA graph replays when every
+        # per-step operation is device resident (wakis.gpu_fused.FusedLoop)
+        graph = (
+            getattr(self, "fused", False)
+            and getattr(self, "use_graphs", True)
+            and not (save or plot or plot3d or callback is not None)
+        )
+        if graph:
+            from .gpu_fused import FusedLoop
+
+            graph = FusedLoop.supported(self, sources, monitors, post_steps)
+
         # Time loop
         for n in tqdm(range(Nt), disable=not self.verbose):
+            if graph and n == 1:
+                loop = FusedLoop(self, sources, monitors, Nt)
+                n0 = 1
+                while n0 < Nt:
+                    if stop_when_energy_decayed is None:
+                        n1 = Nt
+                    else:  # next energy check after step n1 - 1
+                        ce = int(check_every)
+                        n1 = min(Nt, -(-n0 // ce) * ce + 1)
+                    loop.run(n0, n1)
+                    n0 = n1
+                    m = n1 - 1
+                    if (
+                        stop_when_energy_decayed is not None
+                        and m % int(check_every) == 0
+                    ):
+                        energy = self.field_energy()
+                        energy_max = max(energy_max, energy)
+                        if m * self.dt > t_off and energy < decay * energy_max:
+                            self.Nt = m + 1
+                            break
+                loop.close()
+                break
             for src in sources:
                 src.update(self, n * self.dt)
 
