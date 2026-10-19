@@ -173,28 +173,31 @@ class Subgrid2DArm(Arm):
         if gap:
             if case.polarization != "TE":
                 raise ValueError("gap field implemented for TE")
-            Mx, My = solver.edge_field_matrices([case.gap_point])
+            gp_case = getattr(case, "gap_points", None)
+            gpts = np.atleast_2d(gp_case if gp_case is not None else [case.gap_point])
+            Mx, My = solver.edge_field_matrices(gpts)
+            ng = len(gpts)
         setup_s = time.time() - t0
         dt = solver.dt
         freqs = case.freqs
         acc = np.zeros((len(freqs), len(pts)), complex)
-        acc_e = np.zeros((len(freqs), 2), complex)
+        acc_e = np.zeros((len(freqs), ng if gap else 1, 2), complex)
         n_steps = int(case.t_run / dt)
         times = (np.arange(n_steps) + 1) * dt
         d = case.direction
         pvec = np.array([-np.sin(d), np.cos(d)])  # z x k
-        gp = np.atleast_2d(case.gap_point) if gap else None
+        gp = gpts if gap else None
         t1 = time.time()
         for n in range(n_steps):
             solver.one_step()
             acc += np.outer(np.exp(-2j * np.pi * freqs * times[n]), P @ solver.u) * dt
             if gap:
                 th = times[n] - 0.5 * dt  # g lives at t^{n+1/2}
-                es = np.array([(Mx @ solver.g)[0], (My @ solver.g)[0]])
-                einc = solver.eta_b * solver.incident(gp, th)[0, 0]
-                acc_e += (
-                    np.outer(np.exp(-2j * np.pi * freqs * th), es + einc * pvec) * dt
-                )
+                es = np.stack([Mx @ solver.g, My @ solver.g], 1)  # (ng, 2)
+                einc = solver.eta_b * solver.incident(gp, th)[0]  # (ng,)
+                et = es + einc[:, None] * pvec
+                ph = np.exp(-2j * np.pi * freqs * th)
+                acc_e += ph[:, None, None] * et[None] * dt
             if n % 4000 == 0 and not np.all(np.isfinite(solver.u)):
                 raise FloatingPointError("unstable")
         run_s = time.time() - t1
@@ -215,7 +218,9 @@ class Subgrid2DArm(Arm):
         )  # fmt: skip
         if gap:
             th = times - 0.5 * dt
-            ui = solver.eta_b * solver.incident(gp, th)[:, 0]
+            ui = (
+                solver.eta_b * solver.incident(gp[:1], th)[:, 0]
+            )  # amplitude at the centre
             out["e_gap"] = acc_e
             out["e0_gap"] = (np.exp(-2j * np.pi * np.outer(freqs, th)) @ ui) * dt
         return out

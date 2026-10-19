@@ -37,6 +37,7 @@ PHASES = {
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
     "B3z": ["B3-g5", "B3-g10", "B3-g2"],
     "B2p": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
+    "B3n": ["B3-g5", "B3-g10", "B3-g2"],  # 9-point gap metric (commit 6771d3c)
 }
 
 
@@ -46,6 +47,10 @@ def arms(phase):
     if phase == "B2p":  # coarse grid at 40 cells per host wavelength
         a = Subgrid2DArm(ppw_out=40, name="sg-ppw40")
         return {a.name: a}
+    if phase == "B3n":
+        out = [Subgrid2DArm(), Subgrid2DArm(gap_zone=2, gap_levels=1),
+               Subgrid2DArm(gap_zone=2, gap_levels=2)]  # fmt: skip
+        return {a.name: a for a in out}
     if phase == "B3z":
         out = [
             Subgrid2DArm(gap_zone=2, gap_levels=1),
@@ -62,10 +67,12 @@ def tasks(phase):
     out = []
     for case in PHASES[phase]:
         ladder = LADDER
-        if case == "B3-g2" and phase != "B3z":
+        if case == "B3-g2" and phase not in ("B3z", "B3n"):
             ladder = [h for h in LADDER if h <= 1.0e-9 + 1e-15]
         for h in ladder[::-1]:
             for arm in arms(phase):
+                if phase == "B3n" and "zone" in arm and h < 0.7e-9:
+                    continue  # 0.125 nm gap cells: too many global steps
                 out.append((case, arm, h))
     return out
 

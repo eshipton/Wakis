@@ -27,6 +27,7 @@ CASES = {
         (0.01, 0.001),
     ),
     "B3": (["B3-g10", "B3-g5", "B3-g2"], "enh_peak", (0.10, 0.05)),
+    "S1": (["S1-Si-g5", "S1-Si-g2"], "enh_peak", (0.05, 0.02)),
 }
 plt.rcParams.update({"figure.dpi": 120, "savefig.dpi": 150, "font.size": 8})
 
@@ -57,7 +58,9 @@ def style(arm):
 
 def load(case):
     root = os.environ.get("BENCH_ROOT", ROOT)  # a local mirror of the store
-    recs = [r for r in fetch_records(case, root=root) if "metrics" in r and "error" not in r]
+    recs = [
+        r for r in fetch_records(case, root=root) if "metrics" in r and "error" not in r
+    ]
     by = {}
     for r in recs:
         r["cost"]["work_eff"] = work_eff(r)
