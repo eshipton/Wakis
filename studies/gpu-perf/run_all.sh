@@ -21,7 +21,8 @@ for c in $CASES; do
     $PY bench.py --case $c $FLAG --steps 100 --warmup 10 --out results/${TAG}_${c}_cpu.json > /dev/null || echo "FAILED cpu $c"
   fi
   if [ "${PROFILE:-1}" = 1 ]; then
-    $NSYS profile --capture-range=cudaProfilerApi --capture-range-end=stop -t cuda -f true \
+    TRACE=""; [ "${GRAPH:-0}" = 1 ] && TRACE="--cuda-graph-trace=node"
+    $NSYS profile --capture-range=cudaProfilerApi --capture-range-end=stop -t cuda $TRACE -f true \
       -o prof/${TAG}_${c} $PY bench.py --case $c --gpu $FLAG --steps 100 --nsys > /dev/null 2>&1
     $NSYS stats -q --report cuda_api_sum --report cuda_gpu_kern_sum --format csv,csv prof/${TAG}_${c}.nsys-rep --force-export=true -o prof/${TAG}_${c} > /dev/null 2>&1
     rm -f prof/${TAG}_${c}.sqlite

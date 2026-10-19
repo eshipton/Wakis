@@ -134,7 +134,7 @@ CASES = {
 # ------------------------------------------------------------ adjoint case
 
 
-def adjoint2d(use_gpu, fused=None, n=160, Nt=400):
+def adjoint2d(use_gpu, fused=None, n=160, Nt=2000):
     """AdjointSimulation of a 2D CPML problem (dipole, DFT probe, 2D design)."""
     from wakis.inverse import AdjointSimulation, MaterialGrid
 

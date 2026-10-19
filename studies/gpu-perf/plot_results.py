@@ -63,7 +63,7 @@ def launches(tag, case):
         return np.nan
     rows = list(csv.reader(p.open()))
     n = sum(int(r[2]) for r in rows[1:] if r and "Launch" in r[-1])
-    steps = 800 if case == "adjoint2d" else 100
+    steps = 4000 if case == "adjoint2d" else 100
     return n / steps
 
 

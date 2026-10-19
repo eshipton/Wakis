@@ -71,6 +71,15 @@ class _Util:
         return float(np.mean(s)) if s else None
 
 
+def _pool_gb(use_gpu):
+    """CuPy memory-pool bytes in use (solver, monitors, fused buffers) [GB]."""
+    if not use_gpu:
+        return None
+    import cupy as cp
+
+    return cp.get_default_memory_pool().used_bytes() / 1e9
+
+
 def loop(solver, sources, monitors, n0, n1, sync=None):
     """emsolve's loop body for steps n0..n1-1; with `sync`, time each part."""
     post = [s.post_step for s in sources if hasattr(s, "post_step")]
@@ -142,6 +151,7 @@ def run_case(name, use_gpu, fused, steps, warmup, nsys):
         "gpu_util_pct": util.mean(),
         "breakdown_ms": {k: 1e3 * v / nb for k, v in acc.items()},
         "checksum_E": float(np.sum(np.abs(E))),
+        "gpu_pool_GB": _pool_gb(use_gpu),
     }
 
 
