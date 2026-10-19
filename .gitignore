@@ -34,3 +34,4 @@ tmp/*
 !studies/**/*.png
 !docs/img/*.png
 !tutorials/**/*.png
+.briefs/
