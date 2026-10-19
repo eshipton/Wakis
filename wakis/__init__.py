@@ -20,6 +20,7 @@ from . import (
     solverFIT3D,
     sources,
     sparameters,
+    tfsf,
     wakeSolver,
 )
 from ._version import __version__
@@ -33,4 +34,5 @@ from .mode_solver import ModeMonitor, ModeSource, solve_modes
 from .near2far import Near2FarMonitor
 from .resonances import ResonanceMonitor, harminv
 from .solverFIT3D import SolverFIT3D
+from .tfsf import TFSFSource
 from .wakeSolver import WakeSolver
