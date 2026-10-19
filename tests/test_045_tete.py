@@ -357,3 +357,31 @@ def test_conformal_round_pipe_no_cherenkov(tmp_path, long_tfsf, monkeypatch):
     monkeypatch.setattr(wakis.conformal, "TETE_XY_THRESHOLD", 0.5)
     merged, _ = _round_pipe_wake("tete", tmp_path)
     assert merged > 1e-5
+
+
+def test_operator_template_staircase_stl(tmp_path):
+    """
+    The operator TEM template on a staircase STL pipe (PEC background,
+    edges in PEC have full length but ieps = 0) equals the staircase Poisson
+    template to 1e-10.
+    """
+    import pyvista as pv
+
+    a, dz, nz = 0.02, 1e-3, 30
+    grid = wakis.GridFIT3D(
+        -a / 2, a / 2, -a / 2, a / 2, 0, nz * dz, 10, 10, nz,
+        stl_solids={"pipe": pv.Box(bounds=(-a / 4, a / 4, -a / 4, a / 4, -1, 1))},
+        stl_materials={"pipe": "vacuum"}, verbose=0,
+    )  # fmt: skip
+    s = wakis.SolverFIT3D(grid, bc_low=["pec", "pec", "cpml"],
+                          bc_high=["pec", "pec", "cpml"], n_pml=5, bg="pec",
+                          use_stl=True, verbose=0, scheme="tete")  # fmt: skip
+    b = wakis.sources.Beam(q=1e-9, sigmaz=5e-3, beta=1.0)
+    b.ixs, b.iys = np.abs(s.grid.x).argmin(), np.abs(s.grid.y).argmin()
+    b.tfsf_template = "staircase"
+    b._calculate_injected_fields(s, 7, "low")
+    ref = [b.E2D_x_low, b.E2D_y_low, b.H2D_x_low, b.H2D_y_low]
+    op = b._operator_template(s, 7)
+    for r, o in zip(ref, op):
+        assert np.abs(r).max() > 0
+        assert np.abs(r - o).max() < 1e-10 * np.abs(r).max()
