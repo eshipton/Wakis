@@ -445,7 +445,11 @@ class TensorOperator:
         edges and commute.
         """
         groups = getattr(solver, "_dispersive_groups", [])
-        exclude = np.concatenate([g["idx_host"] for g in groups]) if groups else None
+        exclude = [g["idx_host"] for g in groups]
+        net = getattr(solver, "dispersive_network", None)
+        if net is not None:  # dispersive subpixel network (diagonal only)
+            exclude.append(net.rows)
+        exclude = np.concatenate(exclude) if exclude else None
         self.assemble(solver, exclude=exclude)
         if self.installed:
             return
