@@ -99,7 +99,8 @@ def publish(recs):
     for r in recs.values():
         if "error" in r:
             continue
-        rec = dict(r, arm=PUB[r["arm"]], commit=COMMIT)
+        rec = dict(r, arm=PUB[r["arm"]], commit=COMMIT,
+                   batch_job="unstr-lts-bench-20261019-0649")  # fmt: skip
         print(pub(rec, machine="n2-standard-2",
                   notes="feature/unstructured-lts; Batch unstr-lts-bench-20261019-0649"))  # fmt: skip
 
