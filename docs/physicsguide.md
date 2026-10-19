@@ -1565,6 +1565,235 @@ References:
 - A. Abdelkader et al., "VoroCrust: Voronoi meshing without clipping", *ACM Trans. Graph.* **39**(3) (2020), arXiv:1902.08767.
 - J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
 
+### 📐 Quadtree squares with a conforming triangle band (subtri)
+
+`wakis.unstructured.subtri` (`subtri_circles_mesh`, `SubTriFIT2D`) combines the 2:1-balanced quadtree Cartesian
+refinement of `wakis.subgrid.QuadMesh` with the orthogonal square/triangle hybrid of `PolygonFIT2D`
+[Rylander & Bondeson, 2000; Venkatarayalu et al., 2007]. In `hybrid_circles_mesh`, the uniform outer and inner square
+grids force the interface band to bridge $h_\text{out}$ to $h_\text{in}$ with graded triangles; in `wakis.subgrid`,
+hanging-node squares refine locally by powers of 2 in the bulk, but curved interfaces crossing squares require subpixel
+averaging that drops to first order when $\mathbf E$ crosses a curved metal boundary. The `subtri` construction uses
+each mesh where its Hodge operator is exact:
+
+- **Quadtree Cartesian squares** (2:1 balanced, refinement ratio 2 per level, $L \ge 0$ levels from coarse spacing
+  $H = 2^L h$ down to finest spacing $h$, graded with margin $\text{grade}\cdot s$, default $\text{grade} = 2$) fill
+  the background bulk and the scatterer interiors.
+- **Finest squares inside scatterers:** by default (`inner_fine=True`), all quadtree cells intersecting a scatterer
+  disk are refined to the finest level $h$, so dispersive metals and high-index interiors are resolved at spacing $h$.
+- **Conforming Delaunay triangle band:** only finest-level squares within $\pm\,\text{band}\cdot h$ (default
+  $\text{band} = 2$) of a circular material interface—together with finest-level squares in narrow inter-circle gaps
+  where the local target size $\max(h_\min, (d_1 + d_2)/\text{gap\_cells}) < h$ (default $h_\min = h/8$)—are removed
+  and replaced by a conforming Delaunay triangle band (`scipy.spatial.Delaunay` with 4 Laplacian smoothing sweeps on
+  free vertices) whose interface rings enclose the exact circle areas.
+- **Split-field PML on coarse squares:** outside the physical box $[-L_\text{in}, L_\text{in}]^2$, `pml_cells` layers
+  of unrefined coarse squares of size $H$ carry the Berenger split-field PML [Berenger, 1994], terminated by PEC
+  (`bc="pec"`).
+
+**Discretization and operator composition.** The primary scalar field $\mathbf u$ ($E_z$ in TM, $H_z$ in TE) is stored
+on the master (free) nodes (`solver.free`, excluding PEC-fixed and hanging nodes). Each hanging node $h$ on a
+coarse/fine quadtree side is constrained by linear interpolation of the master nodes along its side, with multi-level
+2:1 chains composed in `QuadMesh.P`:
+
+$$
+\tilde u_h = \sum_a P_{ha}\,u_a, \qquad \sum_a P_{ha} = 1, \quad P_{ha} \ge 0, \qquad \tilde{\mathbf u} = \mathbf P\,\mathbf u .
+$$
+
+Here $\mathbf P$ (`solver.Pf`, obtained by restricting the full $n_\text{nodes} \times n_\text{nodes}$ prolongation
+matrix to the free columns) maps the master-node vector $\mathbf u$ to the full nodal field $\tilde{\mathbf u}$
+(`solver.node_field`). Every leaf cell side is its own primal edge in `PolyMesh`: along a coarse/fine quadtree
+interface, the coarse side of length $2s$ (a single-cell edge in `mesh.interface_edges`) and the two collinear fine
+sides of length $s$ are distinct edges, each owned by its leaf cell.
+
+With $\mathbf G$ the integer edge–node incidence matrix of the composite `PolyMesh`, the restricted discrete gradient is
+
+$$
+\mathbf K = \mathbf G\,\mathbf P
+$$
+
+(stored as `solver.G`, with exact transpose `solver.GT` $= \mathbf K^T = \mathbf P^T \mathbf G^T$). The edge Hodge is
+diagonal (`hodge="orthogonal"`),
+
+$$
+\mathbf S = \operatorname{diag}(s_e), \qquad s_e = \sum_{C \ni e} w_C\,\frac{h_{e,C}}{L_e}, \qquad w_C = \begin{cases} (\mu_0\mu_C)^{-1} & \text{(TM)}, \\ (\varepsilon_0\varepsilon_C)^{-1} & \text{(TE)}, \end{cases}
+$$
+
+where $L_e$ is the length of edge $e$ and $h_{e,C}$ is the signed distance from the circumcentre of cell $C$ to $e$
+(half the side length on a square; the signed circumcentre-to-edge distance on a triangle). At every edge $e$ shared
+between a finest-level square and a band triangle, both the square centre and the triangle circumcentre project onto
+the midpoint of $e$ ($s_{e,C_1} = s_{e,C_2} = L_e/2$, `orthogonality_defect` $< 10^{-6}$). The dual edge is therefore
+orthogonal to $e$ and the diagonal Hodge $\mathbf S$ is exact across the square/triangle junction, exactly as in
+`hybrid_circles_mesh`.
+
+Let $m_i = \varepsilon_0 \sum_{C \ni i} \varepsilon_C A_{i,C}$ (TM) or $\mu_0 \sum_{C \ni i} \mu_C A_{i,C}$ (TE) denote
+the dual-area material integral on mesh node $i$. The master-node mass is lumped via `_lump` (`solver.mass`) as
+
+$$
+\mathbf d = \mathbf P^T \mathbf m, \qquad \mathbf D = \operatorname{diag}(\mathbf P^T \mathbf m) .
+$$
+
+Because $\mathbf m > 0$ on live cells, $\mathbf P \ge 0$, and every master node has $P_{aa} = 1$, the lumped mass
+matrix $\mathbf D$ is diagonal and strictly positive.
+
+The construction rule that makes the quadtree prolongation and the polygonal Hodge compose cleanly is enforced in
+`subtri_circles_mesh`: only finest-level ($L$) squares are removed to form the hole, every kept square touching the
+hole closure is at level $L$, and no hole-boundary vertex is a hanging node. Consequently, triangles only touch
+finest-level squares and no triangle vertex is a hanging node, so
+
+$$
+\mathbf P_\text{raw} = \begin{pmatrix} \mathbf P_q & \mathbf 0 \\ \mathbf 0 & \mathbf I_\text{tri} \end{pmatrix}, \qquad \mathbf P\big|_\text{band} = \mathbf I .
+$$
+
+Hanging-node constraints act exclusively between axis-aligned squares, while the Delaunay triangle band sees the
+identity prolongation $\mathbf P = \mathbf I$.
+
+**Stability theorem.** On a lossless, source-free mesh without PML (`linear_step`), the TM leapfrog updates the
+dual-edge magnetic flux $\mathbf v^{n+1/2}$ and the master-node electric field $\mathbf u^n$ by
+
+$$
+\mathbf v^{n+1/2} = \mathbf v^{n-1/2} - \Delta t\,\mathbf K\,\mathbf u^n, \qquad
+\mathbf D\,\mathbf u^{n+1} = \mathbf D\,\mathbf u^n + \Delta t\,\mathbf K^T \mathbf S\,\mathbf v^{n+1/2}
+$$
+
+(TE is analogous, $\mathbf D\,\mathbf u^{n+1} = \mathbf D\,\mathbf u^n - \Delta t\,\mathbf K^T \mathbf S\,\mathbf v^{n+1/2}$
+followed by $\mathbf v^{n+3/2} = \mathbf v^{n+1/2} + \Delta t\,\mathbf K\,\mathbf u^{n+1}$). Eliminating $\mathbf v$
+gives the second-order wave update
+
+$$
+\mathbf u^{n+1} - 2\mathbf u^n + \mathbf u^{n-1} = -\Delta t^2\,\mathbf A\,\mathbf u^n, \qquad
+\mathbf A = \mathbf D^{-1} \mathbf K^T \mathbf S\,\mathbf K .
+$$
+
+*Theorem.* For any prolongation matrix $\mathbf P \ge 0$ with $\mathbf D = \operatorname{diag}(\mathbf P^T \mathbf m) \succ 0$
+and any diagonal $\mathbf S \succ 0$, the operator $\mathbf A = \mathbf D^{-1}\mathbf K^T \mathbf S \mathbf K$ with
+$\mathbf K = \mathbf G \mathbf P$ is self-adjoint and positive semi-definite in the $\mathbf D$ inner product
+$\langle \mathbf x, \mathbf y \rangle_{\mathbf D} = \mathbf x^T \mathbf D \mathbf y$. The staggered quadratic form
+
+$$
+E^n = \frac{1}{2}(\mathbf u^n)^T \mathbf D\,\mathbf u^n + \frac{1}{2}(\mathbf v^{n-1/2})^T \mathbf S\,\mathbf v^{n+1/2}
+$$
+
+is an exact invariant of the leapfrog step ($E^{n+1} = E^n$), and is positive definite on $(\mathbf u^n, \mathbf v^{n+1/2})$
+if and only if $\Delta t^2 \lambda_\max(\mathbf A) < 4$.
+
+*Proof.* The stiffness matrix $\mathbf K_\text{stiff} = \mathbf K^T \mathbf S \mathbf K = \mathbf P^T \mathbf G^T \mathbf S \mathbf G \mathbf P$
+is symmetric and satisfies $\mathbf x^T \mathbf K_\text{stiff} \mathbf x = \|\mathbf S^{1/2}\mathbf K \mathbf x\|_2^2 \ge 0$.
+For any $\mathbf x, \mathbf y$,
+
+$$
+\langle \mathbf x, \mathbf A \mathbf y \rangle_{\mathbf D} = \mathbf x^T \mathbf D (\mathbf D^{-1} \mathbf K^T \mathbf S \mathbf K \mathbf y) = \mathbf x^T \mathbf K^T \mathbf S \mathbf K \mathbf y = \langle \mathbf A \mathbf x, \mathbf y \rangle_{\mathbf D},
+$$
+
+so $\mathbf A$ is self-adjoint and positive semi-definite in the $\mathbf D$ inner product, with real spectrum
+$\lambda(\mathbf A) = \lambda(\mathbf D^{-1/2}\mathbf K^T \mathbf S \mathbf K \mathbf D^{-1/2}) \ge 0$. Taking the
+Euclidean inner product of $\mathbf D(\mathbf u^{n+1} - \mathbf u^n) = \Delta t\,\mathbf K^T \mathbf S \mathbf v^{n+1/2}$
+with $\frac{1}{2}(\mathbf u^{n+1} + \mathbf u^n)$ and substituting
+$\mathbf K \mathbf u^n = -(\mathbf v^{n+1/2} - \mathbf v^{n-1/2})/\Delta t$ and
+$\mathbf K \mathbf u^{n+1} = -(\mathbf v^{n+3/2} - \mathbf v^{n+1/2})/\Delta t$ gives
+
+$$
+\frac{1}{2}(\mathbf u^{n+1})^T \mathbf D\,\mathbf u^{n+1} - \frac{1}{2}(\mathbf u^n)^T \mathbf D\,\mathbf u^n
+= \frac{\Delta t}{2}(\mathbf K \mathbf u^{n+1} + \mathbf K \mathbf u^n)^T \mathbf S\,\mathbf v^{n+1/2}
+= -\frac{1}{2}(\mathbf v^{n+3/2} - \mathbf v^{n-1/2})^T \mathbf S\,\mathbf v^{n+1/2} .
+$$
+
+Since $\mathbf S$ is symmetric, $(\mathbf v^{n+3/2})^T \mathbf S \mathbf v^{n+1/2} = (\mathbf v^{n+1/2})^T \mathbf S \mathbf v^{n+3/2}$,
+so rearranging yields $E^{n+1} = E^n$. Eliminating $\mathbf v^{n-1/2} = \mathbf v^{n+1/2} + \Delta t\,\mathbf K \mathbf u^n$
+and completing the square in $\mathbf v^{n+1/2}$ gives the algebraic identity
+
+$$
+E^n = \frac{1}{2}(\mathbf u^n)^T \!\left(\mathbf D - \frac{\Delta t^2}{4}\mathbf K^T \mathbf S \mathbf K\right)\! \mathbf u^n
++ \frac{1}{2}\!\left(\mathbf v^{n+1/2} + \frac{\Delta t}{2}\mathbf K \mathbf u^n\right)^{\!T} \mathbf S \!\left(\mathbf v^{n+1/2} + \frac{\Delta t}{2}\mathbf K \mathbf u^n\right) .
+$$
+
+Because $\mathbf S \succ 0$, the second term is non-negative and vanishes only on the subspace
+$\mathbf v^{n+1/2} = -\frac{\Delta t}{2}\mathbf K \mathbf u^n$. Thus $E^n$ is a positive-definite norm on the state if
+and only if $\mathbf D - \frac{\Delta t^2}{4}\mathbf K^T \mathbf S \mathbf K \succ 0$, which is equivalent to
+$\Delta t^2 \lambda_\max(\mathbf A) < 4$. $\square$
+
+Hence the leapfrog is unconditionally energy-conserving and stable up to the CFL limit
+$\Delta t_\max = 2/\sqrt{\lambda_\max(\mathbf A)}$ for *any* $\mathbf P \ge 0$ with the same $\mathbf P$ on both sides
+($\mathbf K = \mathbf G \mathbf P$ and $\mathbf K^T = \mathbf P^T \mathbf G^T$). It is the Galerkin symmetry between
+prolongation and restriction, not the interpolation weights, that gives stability; the linear interpolation weights
+$(1/2, 1/2)$ give consistency. A mutant that scales a hanging-node row of $\mathbf P$ to sum to $1.1$ violates
+partition of unity but preserves $\mathbf K^T = (\mathbf G \mathbf P)^T$, and still conserves $E^n$ to machine
+precision; a one-sided $(1, 0)$ injection mutant also remains stable, but drops to first-order accuracy.
+
+**Local time stepping.** Because $\mathbf K_\text{stiff} = \mathbf K^T \mathbf S \mathbf K$ is symmetric and $\mathbf D$
+is diagonal, the two-level stabilized leapfrog–Chebyshev scheme of the "Local time stepping (LTS) for the unstructured
+leapfrog" section (`wakis.unstructured.lts.build_lts`, [Diaz & Grote, 2009; Grote, Michel & Sauter, 2021]) applies
+directly (`SubTriFIT2D(..., lts=p)`). At setup (`_setup_lts`), the fine master-node set $F$ (`lts.F`) is selected from
+the scaled Gershgorin row rates $g_i = \sum_j |(K_\text{stiff})_{ij}| / D_i$ of $\mathbf A$ ($\Delta t_c^2 g_i > 4\theta$,
+followed by the Lanczos repair loop until $\rho \le \rho_\max = 0.98$). In `subtri` meshes, $F$ captures the narrow-gap
+triangles and the finest interface band, while the remaining master nodes advance with the coarse step
+$\Delta t = p\,\Delta t_\text{fine}$.
+
+In first-order form (`_grad`), the flux step replaces $\mathbf K \mathbf u$ by
+
+$$
+\mathbf K\,r(\mathbf X)\,\mathbf u = \mathbf K\,\mathbf u + \mathbf K_{:,F}\,\delta\mathbf u_F, \qquad
+\mathbf X = \Delta t^2 \mathbf P_F \mathbf D^{-1} \mathbf K_\text{stiff},
+$$
+
+where $\mathbf P_F$ is the $0/1$ diagonal projector onto $F$, $r(\mathbf X)$ is the damped Chebyshev polynomial of
+degree $p-1$, and $\mathbf K_{:,F}$ (`solver._G_F`) holds the columns of $\mathbf K$ in $F$. Exactly as in the LTS
+section, $\mathbf K_\text{stiff}\,r(\mathbf X) = \sum_j c_j \Delta t^{2j} \mathbf K_\text{stiff}(\mathbf P_F \mathbf D^{-1} \mathbf K_\text{stiff})^j$
+is symmetric because $\mathbf P_F$ and $\mathbf D$ are diagonal, so the modified energy (`lts.modified_energy`) is
+conserved whenever $\rho = \frac{\Delta t}{2}\sqrt{\lambda_\max(\mathbf D^{-1}\mathbf K_\text{stiff}\,r(\mathbf X))} < 1$.
+
+In the benchmark arm (`SubTriArm` with `lts="auto"`), the step ratio $p$ is chosen per mesh from $\{2, 3, 4\}$
+(compared against global stepping $p = 1$) by minimizing the unknown-weighted work rate (`lts_work_per_step() / dt`):
+
+$$
+\frac{W_\text{step}}{\Delta t} = \frac{N_\text{unknowns} + (p - 1)\big(|F| + |E_F|\big)}{\Delta t},
+$$
+
+where $N_\text{unknowns} = |\text{free}| + N_\text{edges}$ and $|E_F|$ is the number of edges incident to $F$
+(non-zero rows of $\mathbf K_{:,F}$). Each candidate $p$ is subject to `check_dispersive_stability` for the explicit
+ADE of any dispersive metal at the *coarse* time step $\Delta t$ and Courant ratio $\rho$ (since the auxiliary
+polarization poles are advanced once per coarse step); candidates that violate the ADE stability bound or push $F$ into
+the PML are skipped.
+
+**Exact adjoint.** On a lossless, non-dispersive solver without PML, the leapfrog step is a linear map
+$(\mathbf u, \mathbf v) \mapsto (\mathbf u_1, \mathbf v_1)$ implemented in pure functional form by `linear_step`. Its
+exact Euclidean transpose `linear_step_T` pulls back a co-state $(\bar{\mathbf u}_1, \bar{\mathbf v}_1) \mapsto (\bar{\mathbf u}, \bar{\mathbf v})$
+using $\mathbf K^T = (\mathbf G \mathbf P)^T$ (`solver.GT`) and $r(\mathbf X)^T = r(\mathbf X^T)$ (`solver.lts.apply_T`):
+
+$$
+\begin{aligned}
+\text{TM:}\quad \bar{\mathbf v} &= \bar{\mathbf v}_1 + \Delta t\,\mathbf S \mathbf K \mathbf D^{-1}\bar{\mathbf u}_1, &\qquad
+\bar{\mathbf u} &= \bar{\mathbf u}_1 - \Delta t\,r(\mathbf X)^T \mathbf K^T \bar{\mathbf v}, \\
+\text{TE:}\quad \bar{\mathbf u} &= \bar{\mathbf u}_1 + \Delta t\,r(\mathbf X)^T \mathbf K^T \bar{\mathbf v}_1, &\qquad
+\bar{\mathbf v} &= \bar{\mathbf v}_1 - \Delta t\,\mathbf S \mathbf K \mathbf D^{-1}\bar{\mathbf u} .
+\end{aligned}
+$$
+
+The discrete adjoint dot-product identity $\langle \mathcal A \mathbf x, \mathbf y \rangle = \langle \mathbf x, \mathcal A^T \mathbf y \rangle$
+holds to machine precision (relative residual $\sim 10^{-17}$).
+
+**Verification** (`tests/test_subtri.py`):
+- **Linear exactness:** $\mathbf G \mathbf P$ reproduces the exact edge differences of a linear field across all edges (including edges incident to hanging nodes) to $< 10^{-12}$ relative error; perturbing one hanging-node weight in $\mathbf P$ raises the error above $10^{-3}$.
+- **Energy conservation:** relative drift of the staggered leapfrog energy is $< 10^{-15}$ over $2\times 10^4$ `one_step()` calls ($3.7\times 10^{-16}$ in TM, $1.9\times 10^{-15}$ in TE) and $< 10^{-10}$ over $10^5$ steps; perturbing a single entry of $\mathbf G^T$ (`solver.GT`) by $1\%$ breaks $\mathbf K^T = (\mathbf G \mathbf P)^T$ symmetry and produces a relative energy drift of $\sim 3\text{–}6\times 10^{-4}$.
+- **PEC cavity with a virtual interface circle:** on $[-a, a]^2$ with a virtual circle of radius $0.45a$ ($L = 1$, $\text{band} = 2$), the maximum relative error of the 4 lowest TM eigenfrequencies at $h = a/6, a/12, a/24, a/48$ is $1.21\times 10^{-2}$, $5.36\times 10^{-3}$, $1.70\times 10^{-3}$, and $4.54\times 10^{-4}$ (observed convergence order $1.66$ from $a/12 \to a/24$, then $1.90$ from $a/24 \to a/48$); the $(1, 0)$ hanging-node injection mutant degrades the orders to $0.68$ and $1.09$.
+- **Spurious interface reflection:** for a point-source pulse in vacuum impinging on a two-level ($L = 2$, $h = H/4$) refinement patch and triangle band at coarse spacings $H = \lambda/8, \lambda/12, \lambda/16$, the peak reflected signal relative to the direct pulse is $R = 1.61\times 10^{-2}$, $5.91\times 10^{-3}$, and $3.73\times 10^{-3}$, with fitted log–log slope $2.14$; the $(1, 0)$ injection mutant gives slope $1.15$.
+- **Adjoint dot-product test:** $|\langle \mathcal A \mathbf x, \mathbf y \rangle - \langle \mathbf x, \mathcal A^T \mathbf y \rangle| / (\|\mathcal A \mathbf x\|\,\|\mathbf y\|) \le 1.3\times 10^{-17}$ across TM and TE, both with and without two-level LTS; mutants that omit $\mathbf P$ in the transpose or omit `lts.apply_T` fail with residuals of $5\times 10^{-4}$ to $9\times 10^{-3}$.
+
+#### Limits & Failure Modes
+- **Pre-asymptotic rates from moving coarse/fine boundaries.** The hanging-node interface is first-order consistent locally (truncation error $O(h)$ along the coarse/fine side). Although the global error is second order in the cavity and reflection tests above, pre-asymptotic rates below $2$ occur on refinement ladders where the quadtree level boundaries shift across the domain as $h$ decreases (e.g. $1.66$ before reaching $1.90$ in the cavity test).
+- **Piecewise-constant materials on squares (staircase).** Squares carry a single cell tag with no subpixel averaging: every curved material interface, dielectric as well as metallic, must sit inside the conforming triangle band. A mesh in which a curved material interface crosses squares is first order.
+- **Triangle quality and tiny dual edges.** The Delaunay band is smoothed by constrained Laplacian sweeps, but near-cocircular vertices in narrow inter-cylinder gaps can still produce near-degenerate Voronoi dual edges (down to $\sim 0.001\,h$). These shrink the global CFL step $\Delta t_\max$ and can make the least-squares edge-flux patch reconstruction ill-conditioned; `subtri_circles_mesh` emits a `RuntimeWarning` whenever the minimum dual-edge length falls below $0.05\,h$.
+- **Two-level LTS only.** The Chebyshev LTS partitioning has a single fine/coarse step ratio $p$, not one time-step level per quadtree refinement level. Intermediate quadtree levels either advance with the coarse step $\Delta t$ or are absorbed into the fine set $F$.
+- **Dispersive ADE stepped at the coarse $\Delta t$.** Auxiliary polarization poles are updated once per coarse step, so the admissible LTS ratio $p$ is constrained by the explicit ADE stability limit at $\Delta t = p\,\Delta t_\text{fine}$: for Rakić Au/Ag models this limits the usable $p$ (e.g. $p = 4$ is rejected on some B3 dimer meshes), and TM Debye poles are not supported with LTS (`NotImplementedError`).
+- **Split-field PML restricted to coarse squares.** The Berenger split-field PML requires axis-aligned coarse squares of size $H$: no hanging nodes, triangle edges, or LTS fine/buffer nodes may lie inside or touch the PML layer (`ValueError` at setup). All quadtree refinement and grading margins must fit strictly inside the inner PML box $[-L_\text{in}, L_\text{in}]^2$.
+- **2D circular interfaces only.** The mesher `subtri_circles_mesh` is 2D and supports non-overlapping circular interfaces only; general smooth curves require a signed-distance hole mask and a curve-arclength ring generator.
+- **LTS work accounting.** The cost metric `lts_work_per_step()` reports the unknown-weighted operation count $N_\text{unknowns} + (p - 1)(|F| + |E_F|)$ per coarse step rather than hardware FLOPs or memory traffic; wall-clock runtime (`run_s`, `setup_s`) is recorded separately.
+
+References:
+- J. Diaz and M. J. Grote, "Energy conserving explicit local time stepping for second-order wave equations", *SIAM J. Sci. Comput.* **31**(3), 1985–2014 (2009), doi:10.1137/070709414.
+- M. J. Grote, S. Michel and S. A. Sauter, "Stabilized leapfrog based local time-stepping method for the wave equation", *Math. Comp.* **90**(332), 2603–2643 (2021), doi:10.1090/mcom/3650.
+- T. Rylander and A. Bondeson, "Stable FEM-FDTD hybrid method for Maxwell's equations", *Comput. Phys. Commun.* **125**, 75–82 (2000).
+- N. V. Venkatarayalu, R. Lee, Y.-B. Gan and L.-W. Li, "A stable FDTD subgridding method based on finite element formulation with hanging variable", *IEEE Trans. Antennas Propag.* **55**(3), 907–915 (2007).
+- J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
+
 ### 🌀 Curvilinear FIT: body-fitted O-grids and multi-block meshes (time domain)
 
 `wakis.curvilinear` is a 2D time-domain FIT solver (`CurvilinearFIT2D`, TM and TE) on structured, body-fitted quadrilateral meshes: O-grids around round objects, optionally joined to a Cartesian outer block. It is the nonorthogonal FIT (NFIT) of [Holland, 1983; Schuhmann & Weiland, 2000] in matrix form: the topological operators are those of every FIT grid, and only the material (Hodge) matrix sees the metric.

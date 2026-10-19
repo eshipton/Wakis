@@ -153,7 +153,42 @@ class PolyMesh:
             raise ValueError("an edge is shared by more than two cells")
         if np.any(np.bincount(inv * 2 + (self.corner_sign > 0), minlength=2 * len(self.edges)) > 1):
             raise ValueError("inconsistent cell orientation (overlapping cells)")
-        self.boundary_edges = np.flatnonzero(cnt == 1)
+        single = np.flatnonzero(cnt == 1)
+        if single.size > 1:
+            # T-junction (coarse/fine) sides of non-conforming (quadtree) meshes:
+            # a single-cell edge that contains a node of another single-cell
+            # edge strictly inside it (the coarse side), and the sub-edges that
+            # end at such a node. KD-tree search: O(n log n) in the number of
+            # single-cell edges.
+            from scipy.spatial import cKDTree
+
+            A = self.nodes[self.edges[single, 0]]
+            V = self.nodes[self.edges[single, 1]] - A
+            L = np.sqrt(np.einsum("ij,ij->i", V, V))
+            M = A + 0.5 * V
+            sn = np.unique(self.edges[single])
+            tree = cKDTree(self.nodes[sn])
+            coarse = np.zeros(single.size, bool)
+            inner_nodes = []
+            for i, cand in enumerate(tree.query_ball_point(M, 0.5 * L * (1 - 1e-9))):
+                if not cand:
+                    continue
+                D = self.nodes[sn[cand]] - A[i]
+                t = D @ V[i] / L[i] ** 2
+                cr = D[:, 0] * V[i, 1] - D[:, 1] * V[i, 0]
+                ok = (t > 1e-7) & (t < 1 - 1e-7) & (np.abs(cr) < 1e-7 * L[i] ** 2)
+                if ok.any():
+                    coarse[i] = True
+                    inner_nodes.append(sn[np.asarray(cand)[ok]])
+            hang = np.zeros(self.n_nodes, bool)
+            if inner_nodes:
+                hang[np.concatenate(inner_nodes)] = True
+            t_junc = coarse | hang[self.edges[single]].any(1)
+            self.interface_edges = single[t_junc]
+            self.boundary_edges = single[~t_junc]
+        else:
+            self.interface_edges = np.empty(0, int)
+            self.boundary_edges = single
         bn = np.zeros(self.n_nodes, bool)
         bn[self.edges[self.boundary_edges].ravel()] = True
         self.boundary_nodes = np.flatnonzero(bn)
