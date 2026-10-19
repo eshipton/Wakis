@@ -47,7 +47,7 @@ from .polymesh import PolyMesh
 from .polymeshers import _graded_ring, _ring_pts
 from .polysolver2d import PolygonFIT2D
 
-__all__ = ["subtri_circles_mesh", "SubTriFIT2D"]
+__all__ = ["subtri_circles_mesh", "SubTriFIT2D", "linear_step", "linear_step_T"]
 
 
 def _box_circle_dist(x0, x1, y0, y1, ccx, ccy):
@@ -460,6 +460,88 @@ def subtri_circles_mesh(
     return mesh, P, info
 
 
+def _check_lossless(solver):
+    """Raise ``ValueError`` if ``solver`` has PML, conductivity loss, or dispersion."""
+    if (
+        solver._pml is not None
+        or solver._lossy_edges.size > 0
+        or bool(solver.dispersive)
+        or np.any(solver.loss != 0)
+    ):
+        raise ValueError(
+            "linear_step / linear_step_T require a lossless, non-dispersive solver without PML"
+        )
+
+
+def linear_step(solver, u, v):
+    """Pure functional lossless, source-free leapfrog step ``(u, v) -> (u1, v1)``.
+
+    Matches :meth:`PolygonFIT2D.one_step` on a lossless, non-dispersive
+    :class:`SubTriFIT2D` without PML (with or without two-level LTS).
+
+    Parameters
+    ----------
+    solver : SubTriFIT2D
+        Lossless, non-dispersive solver without PML.
+    u : ndarray, shape (n_unknowns,)
+        Primary nodal field on free nodes (``Ez`` [V/m] in TM, ``Hz`` [A/m] in TE).
+    v : ndarray, shape (n_edges,)
+        Staggered dual-edge flux (``b`` [Wb/m] in TM, ``d`` [C/m] in TE).
+
+    Returns
+    -------
+    u1, v1 : ndarray
+        Updated ``(u, v)`` after one leapfrog step of duration ``solver.dt`` [s].
+    """
+    _check_lossless(solver)
+    dt, mass, stiff = solver.dt, solver.mass, solver.stiff
+    if solver.pol == "TM":
+        v1 = v + dt * (-solver._grad(u))
+        u1 = (mass * u + dt * (solver.GT @ (stiff * v1))) / mass
+    else:
+        u1 = (mass * u - dt * (solver.GT @ (stiff * v))) / mass
+        v1 = v + dt * solver._grad(u1)
+    return u1, v1
+
+
+def linear_step_T(solver, ub, vb):
+    """Exact Euclidean transpose of :func:`linear_step`.
+
+    Satisfies ``ub @ u1 + vb @ v1 == ua @ u + va @ v`` to machine precision for
+    both TM and TE polarizations, with or without two-level LTS (using
+    ``solver.GT = (G P)^T`` and ``solver.lts.apply_T``).
+
+    Parameters
+    ----------
+    solver : SubTriFIT2D
+        Lossless, non-dispersive solver without PML.
+    ub : ndarray, shape (n_unknowns,)
+        Co-state for ``u1``.
+    vb : ndarray, shape (n_edges,)
+        Co-state for ``v1``.
+
+    Returns
+    -------
+    ua, va : ndarray
+        Pulled-back co-state ``(ua, va)``.
+    """
+    _check_lossless(solver)
+    dt, mass, stiff = solver.dt, solver.mass, solver.stiff
+    if solver.pol == "TM":
+        va = vb + dt * stiff * (solver.G @ (ub / mass))
+        z = solver.GT @ va
+        if solver.lts is not None:
+            z = solver.lts.apply_T(z)
+        ua = ub - dt * z
+    else:
+        z = solver.GT @ vb
+        if solver.lts is not None:
+            z = solver.lts.apply_T(z)
+        ua = ub + dt * z
+        va = vb - dt * stiff * (solver.G @ (ua / mass))
+    return ua, va
+
+
 class SubTriFIT2D(PolygonFIT2D):
     """
     2D FIT solver on a quadtree-square + conforming-triangle mesh (`subtri_circles_mesh`).
@@ -491,3 +573,6 @@ class SubTriFIT2D(PolygonFIT2D):
             prolongation=P,
             **kw,
         )
+
+    linear_step = linear_step
+    linear_step_T = linear_step_T
