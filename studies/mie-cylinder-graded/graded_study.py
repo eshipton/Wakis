@@ -56,10 +56,15 @@ GEOM = {
     "compact-cart": dict(
         radii=[1.72e-6, 1.86e-6, 2.0e-6], r_out=2.12e-6, tf_half=1.15e-6
     ),
+    # radial CFS-PML (10 polar rings of h_out, like the 10-cell Cartesian CPML)
+    "compact-pml": dict(
+        radii=[1.25e-6, 1.4e-6, 1.55e-6], r_out=1.65e-6, tf_half=None, pml=10
+    ),
 }
 ARMS = {
     "tri-graded": ("tri", True, "std"),
     "tri-graded-compact": ("tri", True, "compact-tri"),
+    "tri-graded-pml": ("tri", True, "compact-pml"),
     "cart-graded": ("cart", True, "std"),
     "cart-graded-compact": ("cart", True, "compact-cart"),
     "tri-uniform": ("tri", False, "std"),
@@ -67,7 +72,9 @@ ARMS = {
 }
 
 
-def tasks():
+def tasks(arms=None):
+    if arms:
+        return [(a, p, r) for r in RES[::-1] for a in arms for p in ("TM", "TE")]
     out = []
     for res in RES[::-1]:
         for arm in (
@@ -126,12 +133,18 @@ def run_tri(graded, geom, pol, res, hodge="voronoi"):
     S.RADII = np.array(g["radii"])
     t0 = time.time()
     h = S.LAM_MIN_DIEL / res
-    if graded:
+    kw = dict(bc="abc")
+    if g.get("pml"):
+        size = size_field(h, True)
+        dr = size(g["r_out"])
+        mesh = graded_disk_mesh([A, g["r_out"]], size, pml_layers=g["pml"], pml_dr=dr)
+        kw = dict(bc="pec", pml=dict(r0=g["r_out"], r1=g["r_out"] + g["pml"] * dr))
+    elif graded:
         mesh = graded_disk_mesh([A, g["r_out"]], size_field(h, True))
     else:
         mesh = disk_mesh([A, g["r_out"]], h)
     solver = UnstructuredFIT2D(
-        mesh, {0: [N_CYL**2, 1.0]}, polarization=pol, bc="abc", hodge=hodge, cfl=S.CFL
+        mesh, {0: [N_CYL**2, 1.0]}, polarization=pol, hodge=hodge, cfl=S.CFL, **kw
     )
     src = S.pulse()
     solver.add_plane_wave(src)
@@ -270,9 +283,10 @@ def main():
     ap.add_argument("--outdir", default=str(HERE / "data"))
     ap.add_argument("--t-run", type=float, default=1000.0, help="fs")
     ap.add_argument("--only", nargs="*", help="arm:pol:res tasks (local tests)")
+    ap.add_argument("--arms", nargs="*", help="restrict the task list to these arms")
     a = ap.parse_args()
     S.T_RUN = a.t_run * 1e-15
-    tl = tasks()
+    tl = tasks(a.arms)
     if a.mode == "list":
         for i, t in enumerate(tl):
             print(i, *t)

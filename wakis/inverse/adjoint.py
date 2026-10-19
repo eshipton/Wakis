@@ -6,8 +6,10 @@
 import copy
 
 import numpy as np
+from scipy.constants import epsilon_0 as eps_0
 from scipy.sparse import csr_matrix
 
+from ..dispersive import _ade_coefficients
 from . import readouts
 
 # CPML curl terms (target component T, derivative axis d, source component S,
@@ -264,6 +266,8 @@ class AdjointStepper:
         tensor = getattr(solver, "tensor_operator", None)
         if tensor is not None and tensor.rows.size == 0:
             tensor = None
+        network = getattr(solver, "dispersive_network", None)
+        dispersive = dispersive or ([] if network is None else [network])
         if self.mpi and (solver.activate_cpml or elements or dispersive or tensor):
             raise NotImplementedError(
                 "With MPI, the adjoint supports the standard step only (no CPML, "
@@ -288,8 +292,13 @@ class AdjointStepper:
             for i, el in enumerate(elements)
         ]
         self.dispersive = [
-            _DispersiveTranspose(g, gi) for gi, g in enumerate(dispersive)
+            _DispersiveTranspose(g, gi)
+            for gi, g in enumerate(getattr(solver, "_dispersive_groups", []))
         ]
+        if network is not None:  # dispersive subpixel averaging
+            from ..tensor_dispersive import NetworkTranspose
+
+            self.dispersive.append(NetworkTranspose(network))
         self.tensor = [] if tensor is None else [_TensorTranspose(tensor, solver)]
         corrected = [
             ext.idx_host for ext in self.lumped + self.dispersive + self.tensor
@@ -718,6 +727,11 @@ class AdjointSimulation:
 
         xp = solver.E.xp
         disp = self.design.dispersive_group(solver)
+        net = self.design.network_of(solver)
+        if net is not None:
+            return self._forward_network(
+                rho, solver, net, sources, monitors, elements, comm
+            )
         self._tensor = self._tensor_tracking(solver, disp)
         idx = xp.asarray(
             self.design.flat_idx if self._tensor is None else self._tensor["track"]
@@ -761,6 +775,92 @@ class AdjointSimulation:
         if comm is not None:
             raw = self._gather(raw, comm)
         return raw
+
+    def _forward_network(self, rho, solver, net, sources, monitors, elements, comm):
+        """
+        Time loop for a dispersive tensor design (`MaterialGrid` with
+        `material` and ``smoothing='tensor'``): records, per step, the terms
+        of the sub-capacitor update that depend on the design parameters
+        (dQ, u^n, u^{n+1} and the pole sums, see `_vjp_network`).
+        """
+        if comm is not None:
+            raise NotImplementedError("Dispersive tensor designs do not support MPI.")
+        net.record = True
+        xp = solver.E.xp
+        K = net.n_caps
+        on_host = self._store_on_host(solver, self.Nt * 5 * K * 8)
+        rec = (np if on_host else xp).empty((self.Nt, 5, K), dtype=np.float64)
+        for n in range(self.Nt):
+            t = n * solver.dt
+            for src in sources:
+                src.update(solver, t)
+            solver.one_step()
+            row = xp.stack(net.last)
+            rec[n] = _host(row) if on_host else row
+            for el in elements:
+                el.post_step(solver, t)
+            for monitor in monitors.values():
+                monitor.update(solver, t)
+        net.record = False
+        self._check_overlaps(solver, elements, monitors)
+        self._solver, self._monitors, self._elements = solver, monitors, elements
+        self._increments = rec
+        self._tensor = None
+        self.rho = rho
+        return {name: readouts.outputs(m) for name, m in monitors.items()}
+
+    def _vjp_network(self, stepper, taps, net):
+        """
+        Gradient of a dispersive tensor design. With the stored dQ, u, u', the
+        pole sums L = sum_L (p'_L - p_L) and Dsum = sum_D (kappa - 1) p_D of
+        each capacitor, lam_E the adjoint of E^{n+1} on its edge and lam_u the
+        total adjoint of u' (`NetworkTranspose.lam_unew`)::
+
+            dF/dieps  = sum_n lam_E eps_0 dQ
+            dF/dc     = sum_n lam_E (u' - u - dQ / eps_inf)
+            dF/deps_inf = sum_n [lam_u (u - u') / den + lam_E c dQ / eps_inf^2]
+            dF/dmu    = sum_n lam_u (-Ls u - L - Dsum - Ls u') / den
+
+        with Ls = sum_D beta + sigma dt / (2 eps_0) of the material.
+        """
+        solver = self._solver
+        xp = stepper.xp
+        dt = solver.dt
+        ext = next(e for e in stepper.dispersive if getattr(e, "net", None) is net)
+        rows = net.rows_dev
+        cap_row = xp.asarray(net.cap_row)
+        c = xp.asarray(net.c_host.sum(axis=0).A1)  # one edge per capacitor
+        eps_inf, den = net.eps_inf, net.den
+        mat = net.materials[0]
+        _, debye = _ade_coefficients(mat, dt)
+        Ls = sum(b for _, b in debye) + mat.sigma * dt / eps_0 / 2
+        g_ieps = xp.zeros(net.n_caps)
+        g_c = xp.zeros(net.n_caps)
+        g_eps = xp.zeros(net.n_caps)
+        g_mu = xp.zeros(net.n_caps)
+        lam = stepper.zero_state()
+        for n in reversed(range(self.Nt)):
+            t = n * dt
+            for tap in taps:
+                if tap.skip_last and n == self.Nt - 1:
+                    continue
+                w_conj = dt * xp.exp(2j * np.pi * tap.freqs * (t + tap.offset))
+                source = tap.WH @ (w_conj @ tap.G)
+                lam[tap.field][tap.rows] += source.real
+            lam_E = lam["E"][rows][cap_row]
+            lam = stepper.step(lam)
+            lam_u = ext.lam_unew
+            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in self._increments[n])
+            g_ieps += lam_E * eps_0 * dQ
+            g_c += lam_E * (u1 - u - dQ / eps_inf)
+            g_eps += lam_u * (u - u1) / den + lam_E * c * dQ / eps_inf**2
+            g_mu += lam_u * (-Ls * u - lsum - dsum - Ls * u1) / den
+        n_e = self.design.flat_idx.size
+        # ieps is per edge: both capacitors of an edge carry the same dQ and lam_E
+        g_ieps = _host(g_ieps)[:n_e]
+        return self.design._network_vjp(
+            self.rho, g_ieps, _host(g_c), _host(g_eps), _host(g_mu)
+        )
 
     def _tensor_tracking(self, solver, disp):
         """
@@ -867,6 +967,9 @@ class AdjointSimulation:
         for tap in taps:
             tap.to_device(xp)
 
+        net = self.design.network_of(solver)
+        if net is not None:
+            return self._vjp_network(stepper, taps, net)
         idx = xp.asarray(self.design.flat_idx)
         own = self.design.dispersive_group(solver)
         ade = None
