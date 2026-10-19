@@ -1,0 +1,8 @@
+# Generated at run time
+*.stl
+*/data/arms/*.log
+*/data/arms/
+.ipynb_checkpoints/
+# Committed figures (the root .gitignore ignores images)
+!*/figures/*.png
+!*/figures/*.gif
