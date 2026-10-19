@@ -54,7 +54,7 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 <tr>
 <td colspan="2">
 
-**B3, interim (86 of 102 runs; window check pending):** Au nanodimer with a 5 nm gap, error of the gap field enhancement against the multi-cylinder T-matrix (maps above). **Graded triangles: 15 %, 0.8 %, 0.4 % at h = 4, 2, 0.7 nm; conformal Cartesian: 84 %, 11 %, 5 %** (4 % at 0.5 nm). The staircase is erratic, between 15 % and 125 %. Caveat: the triangle gap metric is not monotone at the 1–9 % level, because it is a pointwise reconstruction at the gap centre.
+**B3** (Au nanodimers with 2, 5 and 10 nm gaps; error in the gap field enhancement against an exact multi-cylinder T-matrix, maps above): rerun in progress. The first interim ladder used a single centre-point metric and a mesh with a sliver in the 5 nm gap, so its numbers were withdrawn. The metric is now the mean |E/E<sub>0</sub>|² over 9 gap points, the mesher was fixed (minimum angle > 22°), and all B3 runs are being regenerated.
 
 </td>
 </tr>
