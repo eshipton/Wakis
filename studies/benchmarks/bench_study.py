@@ -66,9 +66,9 @@ def arms():
     gpu = os.environ.get("BENCH_GPU") == "1"
     out += [
         CartesianDipoleArm(conformal=False),  # legacy STL cell masks
-        CartesianDipoleArm(conformal="pec"),
+        CartesianDipoleArm(conformal="pec", use_gpu=gpu),
         CartesianDipoleArm(conformal="edges", use_gpu=gpu),
-        CartesianDipoleArm(conformal="pec", pad_xy=0.42, pad_z=0.28,
+        CartesianDipoleArm(conformal="pec", pad_xy=0.42, pad_z=0.28, use_gpu=gpu,
                            name="cart-conformal-pec-graded-bigdomain"),
         CartesianDipoleArm(conformal="edges", pad_xy=0.42, pad_z=0.28, use_gpu=gpu,
                            name="cart-staircase-edges-graded-bigdomain"),
@@ -91,6 +91,7 @@ PHASES = {
     "B3m2": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
     "B4b": ["B4"],
+    "B4conf": ["B4"],
     "B4gpu": ["B4"],
     "B4hz": ["B4"],
     "B4feed": ["B4", "B4-g2", "B4-g4"],
@@ -157,6 +158,10 @@ def tasks(phase):
                 for name in names_b1:
                     out.append((case, name, h))
         return out
+    if phase == "B4conf":  # conformal PEC after the mask fix (develop 8d58fec)
+        a = 0.5e-3
+        out = [("B4", "cart-conformal-pec-graded", a / q) for q in (1, 1.5, 2, 3)]
+        out.append(("B4", "cart-conformal-pec-graded-bigdomain", a / 2))
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
