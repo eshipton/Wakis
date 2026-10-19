@@ -101,9 +101,49 @@ The resolution label is h, the cell or edge size on the particles: a/5 … a/40,
 
 **DFT window.** The window floor is ≤ 8e-6 on every B2/B3 metric (`data/window_floor.md`: 1× vs 3× window, finest arms). The plasmon modes (Q ≈ 3–9) ring down within a few fs, unlike the high-Q TE mode that limits B1, whose window is now 3000 fs.
 
-## B4: dipole
+## B4: centre-fed dipole (Cartesian 3D)
 
-(see below)
+![](figures/b4_dipole_zin.png)
+**(a)** Z_in(f): Hallén MoM reference (lines) vs the finest run of each Cartesian arm (markers).
+**(b)** Relative errors of f_res and R_res vs the transverse cell h_t.
+- The axial cell is h_z = min(g, 4 h_t): 1 mm for h_t ≥ a/2 and 0.5 mm for a/3 and a/4.
+- Rungs h_t ≥ a/1.5 ran on n2-highmem-2 CPUs (50–120 min); the finer rungs ran on L4 GPUs (6–23 min).
+
+| arm | h_t | h_z | f_res err | R_res err | directivity err |
+|---|---|---|---|---|---|
+| edge-wise staircase | a (0.5 mm) | 1 mm | 1.16 % | 0.8 % | 0.10 % |
+| edge-wise staircase | a/1.5 | 1 mm | 4.8 % | 7.5 % | 0.25 % |
+| edge-wise staircase | a/2 | 1 mm | 3.6 % | 5.5 % | 0.17 % |
+| edge-wise staircase | a/3 | 0.5 mm | 1.74 % | 3.5 % | 0.00 % |
+| edge-wise staircase | a/4 | 0.5 mm | 1.79 % | 3.6 % | 0.03 % |
+| edge-wise staircase | a/3 | 0.25 mm | 1.69 % | 3.5 % | 0.04 % |
+| edge-wise staircase | a/3 | 0.125 mm | 1.67 % | 3.5 % | 0.03 % |
+| edge-wise, 2× domain / λ/40 outer mesh | a/2 | 1 mm | 3.59 % / 3.62 % | 5.5 % / 5.6 % | 6 % / 0.3 % |
+| legacy STL staircase | a, a/1.5 | 1 mm | 6.2 %, 5.2 % | 8.6 %, 7.7 % | 0.4 % |
+| conformal PEC (STL; **mask bug**) | a, a/1.5, a/2 | 1 mm | 6.0 %, 4.5 %, 4.0 % | 7.7 %, 5.8 %, 5.2 % | 0.3 % |
+
+**Reading the ladder:**
+- **The h_z dependence is first order down to 0.5 mm.** Halving the axial (gap) cell from 1 mm to 0.5 mm halves the error (3.6 % → 1.7 %). Below 0.5 mm the edge-wise staircase stops changing:
+  - h_z = 0.5, 0.25, 0.125 mm give 1.74 %, 1.69 %, 1.67 %;
+  - h_t = a/3 and a/4 give 1.74 % and 1.79 %.
+- **Converged result.** The edge-wise Cartesian FIT dipole converges to f_res 1.7 % below, and R_res 3.5 % below, the reduced-kernel Hallén reference. The broadside directivity agrees to 3e-4.
+- **The h_t = a point (1.16 %) is a lucky cancellation**, not convergence. The coarse cross-shaped PEC wire is effectively thicker, which pulls the error the other way. The cost-to-target rule ("stays below target") does not count it.
+- **The error is not from the domain.** Doubling the domain or the outer resolution changes f_res by less than 0.03 %. One exception: the near-to-far box of the 2× domain run gives a 6 % directivity error, which is unexplained (the box is still outside the CPML); Z_in is unaffected.
+- **The legacy STL staircase and the conformal-PEC arm are both thickened.** They carry the same thickened wire (physics guide; `problems_solutions.md`). The conformal-PEC records are flagged in the store until `fix/conformal-pec-legacy-mask` lands.
+
+**Open: the 1.7 % / 3.5 % converged offset.** Two candidates:
+1. **The reference.** Thin-wire theory differs from the solved geometry:
+   - the reduced kernel puts the current on the axis;
+   - the wire has no end caps;
+   - the gap is modelled as a uniform axial field, whereas FIT solves flat-ended 0.5 mm cylinders with a real 1 mm gap between flat faces.
+2. **FIT.** A non-vanishing staircase/feed-model error that does not shrink with h_t or h_z.
+
+The MoM's own N-spread is 0.09 % / 0.06 %, so the offset is not MoM discretization. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
+Until then, the B4 targets are scored against the Hallén reference, and the offset is reported as part of the baseline.
+
+**Cost.**
+- Converged rung (h_t = a/3, h_z = 0.5 mm): 2.4 M cells and about 55k steps. It took 15 min on an L4 GPU; on one CPU core it would be about 7 h, so the CPU rungs beyond a/2 timed out at 330 min.
+- h_t = a: 0.85 M cells, 19k steps, 49 min on n2-highmem-2.
 
 ## Limits & caveats
 
