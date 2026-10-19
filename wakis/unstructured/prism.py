@@ -93,6 +93,35 @@ class PolygonComplex2D:
         inter = cnt == 2
         same[inter] = np.all(tags[t1[inter]] == tags[t2[inter]], axis=1)
         drop = (~bnd) & inter & same & (Hsum <= merge_tol * m2.edge_length)
+        # Every removed edge needs a triangle whose two other edges are kept:
+        # its (virtual) voltage is then the path sum through that triangle,
+        # which keeps C G = 0 for the quad that the removed edge retains.
+        cells, cell_edges = m2.cells, m2.cell_edges
+        path = {}
+        for _ in range(10):
+            changed = False
+            path = {}
+            for e in np.flatnonzero(drop):
+                a, b = m2.edges[e]
+                for t in (t1[e], t2[e]):
+                    others = [x for x in cell_edges[t] if x != e]
+                    if not drop[others].any():
+                        cn = [n for n in cells[t] if n != a and n != b][0]
+                        terms = []
+                        for x in others:
+                            u, v = m2.edges[x]  # oriented u -> v (u < v)
+                            # path a -> c -> b: +1 if traversed along u -> v
+                            if {u, v} == {a, cn}:
+                                terms.append((x, 1.0 if u == a else -1.0))
+                            else:
+                                terms.append((x, 1.0 if v == b else -1.0))
+                        path[e] = terms
+                        break
+                else:
+                    drop[e] = False
+                    changed = True
+            if not changed:
+                break
         # union-find over triangles joined by dropped edges
         parent = np.arange(nT)
 
@@ -128,6 +157,28 @@ class PolygonComplex2D:
         self.dual_area_barycentric = (m2.dual_area_barycentric @ Mg.T).tocsr()
         self.cell_volume = Mg @ m2.cell_volume
         self.cell_centroid = (Mg @ (m2.cell_volume[:, None] * m2.nodes[m2.cells].mean(1))) / self.cell_volume[:, None]
+        # Quads (vertical faces) are kept for *all* 2D edges: a merged edge
+        # loses its horizontal voltage e_h (nearly massless) but keeps its
+        # vertical quad, whose flux couples the vertical edges through the
+        # in-plane gradient only. This keeps the node (TM) Laplacian exact
+        # (its cotangent weight h_e / L_e is not dropped); only the small
+        # z-difference coupling of the removed e_h is lost.
+        rem = np.flatnonzero(drop)
+        qorder = np.r_[keep, rem]
+        self.quad_edges = qorder  # triangle-mesh edge of every quad
+        rows, cols, vals = [], [], []
+        for i, e in enumerate(rem):
+            for x, sgn in path[e]:
+                rows.append(i)
+                cols.append(edge_map[x])
+                vals.append(sgn)
+        # virtual voltages of the removed edges from the kept ones (n_rem x nk)
+        self.P_removed = sp.csr_matrix((vals, (rows, cols)), shape=(rem.size, keep.size))
+        self.n_quads = qorder.size
+        self.G_quad = m2.G.tocsr()[qorder]
+        self.dual_edge_partial_quad = (m2.dual_edge_partial.tocsr()[qorder] @ Mg.T).tocsr()
+        self.edge_length_quad = m2.edge_length[qorder]
+        self.edge_midpoint_quad = m2.edge_midpoint[qorder]
         self.boundary_edges = edge_map[m2.boundary_edges]
         self.boundary_nodes = m2.boundary_nodes
         first_tri = np.zeros(nP, dtype=np.int64)
@@ -242,7 +293,7 @@ class PrismMesh:
 
     @property
     def n_faces(self):
-        return self.c2.n_cells * self.n_levels + self.c2.n_edges * self.K
+        return self.c2.n_cells * self.n_levels + self.c2.n_quads * self.K
 
     @property
     def n_cells(self):
@@ -256,8 +307,12 @@ class PrismMesh:
     def curl(self):
         """Global face-edge incidence C (faces: [b_z, b_q], edges: [e_h, e_v])."""
         m, L, K = self.c2, self.n_levels, self.K
-        top = sp.hstack([sp.kron(m.C, sp.eye(L)), sp.csr_matrix((m.n_cells * L, m.n_nodes * K))])
-        bot = sp.hstack([sp.kron(sp.eye(m.n_edges), self.S), sp.kron(m.G, sp.eye(K))])
+        nk = m.n_edges
+        top = sp.hstack(
+            [sp.kron(m.C, sp.eye(L)), sp.csr_matrix((m.n_cells * L, m.n_nodes * K))]
+        )
+        zs = sp.vstack([sp.kron(sp.eye(nk), self.S), sp.kron(m.P_removed, self.S)])
+        bot = sp.hstack([zs, sp.kron(m.G_quad, sp.eye(K))])
         return sp.vstack([top, bot]).tocsr()
 
     def grad(self):
@@ -269,10 +324,11 @@ class PrismMesh:
 
     def div(self):
         """Global cell-face incidence D (outward fluxes; D C = 0)."""
-        m, L = self.c2, self.n_levels
+        m = self.c2
+        Cq = sp.hstack([m.C, sp.csr_matrix((m.n_cells, m.n_quads - m.n_edges))])
         # b_z: +top level, -bottom level of each layer = -S
         return sp.hstack(
-            [sp.kron(sp.eye(m.n_cells), -self.S), sp.kron(m.C, sp.eye(self.K))]
+            [sp.kron(sp.eye(m.n_cells), -self.S), sp.kron(Cq, sp.eye(self.K))]
         ).tocsr()
 
     def edge_points(self):
@@ -386,7 +442,9 @@ class PrismFIT3D:
         self.mesh, self.bc_xy, self.bc_z, self.hodge = mesh, bc_xy, bc_z, hodge
         m2, K, Lv = mesh.c2, mesh.K, mesh.n_levels
         nT, nE, nN = m2.n_cells, m2.n_edges, m2.n_nodes
-        self._shape = dict(eh=(nE, Lv), ev=(nN, K), bz=(nT, Lv), bq=(nE, K))
+        nQ = m2.n_quads
+        self._nk = nE
+        self._shape = dict(eh=(nE, Lv), ev=(nN, K), bz=(nT, Lv), bq=(nQ, K))
 
         # ---- materials per prism
         eps_r, mu_r, sigma = np.ones((nT, K)), np.ones((nT, K)), np.zeros((nT, K))
@@ -442,7 +500,8 @@ class PrismFIT3D:
         cond_v = v_cap(sigma)
         nu = live / (mu_0 * mu_r)
         Mz = level_sum(nu * dz / 2) / At[:, None]
-        Mq = (He @ nu) / (Le[:, None] * dz[None, :])
+        Hq, Lq = m2.dual_edge_partial_quad, m2.edge_length_quad
+        Mq = (Hq @ nu) / (Lq[:, None] * dz[None, :])
         # Dual-edge floor: cocircular (h_e = 0) or locally non-Delaunay edges
         # (a circumcentre beyond the edge, possibly in the high-eps cell) give
         # non-positive Hodge entries, i.e. massless e_h or negative magnetic
@@ -456,9 +515,10 @@ class PrismFIT3D:
             cmin = eps_0 * eps_avg * dual_floor * mesh.dz_dual[None, :]
             low_h = (cap_h < cmin) & (wsum > 0)
             cap_h = np.where(low_h, cmin, cap_h)
-            nu_avg = (Ha @ nu) / np.maximum(Ha @ live.astype(float), 1e-300)
+            Hqa = abs(Hq)
+            nu_avg = (Hqa @ nu) / np.maximum(Hqa @ live.astype(float), 1e-300)
             qmin = nu_avg * dual_floor / dz[None, :]
-            low_q = (Mq < qmin) & ((Ha @ live.astype(float)) > 0)
+            low_q = (Mq < qmin) & ((Hqa @ live.astype(float)) > 0)
             Mq = np.where(low_q, qmin, Mq)
             self.n_floored = int(low_h.sum() + low_q.sum())
         else:
@@ -528,12 +588,13 @@ class PrismFIT3D:
                 return absorber_xy["s_max"] * np.clip((r - r0) / (r1 - r0), 0, None) ** order
 
             r_e = np.hypot(*m2.edge_midpoint.T)
+            r_q = np.hypot(*m2.edge_midpoint_quad.T)
             r_n = np.hypot(*m2.nodes.T)
             r_t = np.hypot(*m2.cell_centroid.T)
             cond_h = cond_h + cap_h * rate(r_e)[:, None]
             cond_v = cond_v + cap_v * rate(r_n)[:, None]
             self.rate_bz = np.repeat(rate(r_t)[:, None], Lv, 1)
-            self.rate_bq = np.repeat(rate(r_e)[:, None], K, 1)
+            self.rate_bq = np.repeat(rate(r_q)[:, None], K, 1)
 
         # ---- flatten (edge order [e_h, e_v])
         self.free = np.flatnonzero(~np.r_[fix_h.ravel(), fix_v.ravel()])
@@ -581,8 +642,10 @@ class PrismFIT3D:
         # ---- 2D operators for the layered update
         self.C2 = m2.C.tocsr()
         self.C2T = m2.C.T.tocsr()
-        self.G2 = m2.G.tocsr()
-        self.G2T = m2.G.T.tocsr()
+        self.G2 = m2.G_quad.tocsr()  # quad-node incidence (all 2D edges)
+        self.G2T = m2.G_quad.T.tocsr()
+        self.Prem = m2.P_removed.tocsr()  # virtual e_h of merged edges
+        self.PremT = m2.P_removed.T.tocsr()
         self.sources = []
         self.ports = []
         self.probes = []
@@ -650,7 +713,7 @@ class PrismFIT3D:
         if self._lossy and self._update.groups:
             raise NotImplementedError("use_gpu with dispersive materials")
         self.xp = cp
-        for name in ("C2", "C2T", "G2", "G2T"):
+        for name in ("C2", "C2T", "G2", "G2T", "Prem", "PremT"):
             setattr(self, name, csp.csr_matrix(getattr(self, name)))
         self._g = {
             "icap": cp.asarray(self.icap),
@@ -676,9 +739,9 @@ class PrismFIT3D:
             self._update.reset()
         if self.pml is not None:
             p = self.pml
-            nE = self._shape["eh"][0]
+            nE, nQ = self._shape["eh"][0], self._shape["bq"][0]
             p["eh_z"] = xp.zeros((nE, p["lev"].size))
-            p["bq_z"] = xp.zeros((nE, p["lay"].size))
+            p["bq_z"] = xp.zeros((nQ, p["lay"].size))
         for pr in self.probes:
             pr["samples"] = []
         for d in self.dfts:
@@ -698,20 +761,31 @@ class PrismFIT3D:
             dzv = eh - eh[:, self.mesh._up]
         else:
             dzv = eh[:, :-1] - eh[:, 1:]
-        cq = dzv + self.G2 @ ev
+        cq = self.G2 @ ev
+        cq[: self._nk] += dzv
+        if self._nk < cq.shape[0]:
+            cq[self._nk :] += self.Prem @ dzv
         return cz, cq
 
     def curl_t_h(self, hz, hq):
         """Transposed curl of face voltages: (C^T h) split into (e_h, e_v)."""
         rh = self.C2T @ hz
         K = self.mesh.K
-        rh[:, :K] += hq
+        hk = self._hk(hq)
+        rh[:, :K] += hk
         if self.mesh.periodic_z:
-            rh -= self.xp.roll(hq, 1, axis=1)
+            rh -= self.xp.roll(hk, 1, axis=1)
         else:
-            rh[:, 1:] -= hq
+            rh[:, 1:] -= hk
         rv = self.G2T @ hq
         return rh, rv
+
+    def _hk(self, hq):
+        """z-coupling seen by the kept horizontal edges (C^T restricted)."""
+        nk = self._nk
+        if nk == hq.shape[0]:
+            return hq
+        return hq[:nk] + self.PremT @ hq[nk:]
 
     def energy(self):
         """
@@ -734,7 +808,7 @@ class PrismFIT3D:
             dbz = self.bz[:, self.mesh._up] - self.bz
         else:
             dbz = self.bz[:, 1:] - self.bz[:, :-1]
-        return dbz + self.C2 @ self.bq
+        return dbz + self.C2 @ self.bq[: self._nk]
 
     # ------------------------------------------------------------ sources
     def _whitney(self, points):
@@ -928,7 +1002,11 @@ class PrismFIT3D:
             cqz = self.eh - self.eh[:, self.mesh._up]
         else:
             cqz = self.eh[:, :-1] - self.eh[:, 1:]
-        cq = cqz + self.G2 @ self.ev
+        cq = self.G2 @ self.ev
+        nk = self._nk
+        if nk < cq.shape[0]:
+            cqz = xp.concatenate([cqz, self.Prem @ cqz])
+        cq += cqz
         if self.rate_bz is None:
             if pml is not None:
                 lay = pml["lay"]
@@ -976,8 +1054,9 @@ class PrismFIT3D:
             lev, K = pml["lev"], self.mesh.K
             # z-derivative part of C^T h at the PML levels
             rz = xp.zeros(self.eh.shape)
-            rz[:, :K] += hq
-            rz[:, 1:] -= hq
+            hk = self._hk(hq)
+            rz[:, :K] += hk
+            rz[:, 1:] -= hk
             rz = rz[:, lev] * pml["free_lev"]
             old_z = pml["eh_z"]
         if self._lossy and self.use_gpu:

@@ -72,13 +72,40 @@ def _rms(x):
 
 
 def test_topology():
-    m2 = disk_mesh([A], 0.3)
+    m2 = disk_mesh([0.5, A], 0.1)
     for periodic in (False, True):
-        pm = PrismMesh(m2, [0, 0.2, 0.5, 0.6], periodic_z=periodic)
-        C, G, D = pm.curl(), pm.grad(), pm.div()
-        assert abs(C @ G).max() == 0
-        assert abs(D @ C).max() == 0
-        assert C.shape == (pm.n_faces, pm.n_edges)
+        for tol in (0.0, 0.3):  # with merged polygons (removed edges)
+            pm = PrismMesh(m2, [0, 0.2, 0.5, 0.6], periodic_z=periodic, merge_tol=tol)
+            C, G, D = pm.curl(), pm.grad(), pm.div()
+            assert abs(C @ G).max() == 0
+            assert abs(D @ C).max() == 0
+            assert C.shape == (pm.n_faces, pm.n_edges)
+    assert pm.c2.n_removed > 10
+
+
+def test_merging_keeps_second_order():
+    """
+    Merging near-cocircular triangles (merge_tol = 0.15) keeps the vertical
+    quads of the removed edges (with path-sum virtual voltages, so C G = 0),
+    so the node (TM) Laplacian is unchanged: the rod-cavity error is at most
+    1.15x the unmerged mesh's and converges at second order (no floor).
+    """
+    k_ex = rod_cavity_hybrid(A, 0.5, 4.0, H, n_modes=12)
+    errs = []
+    for h in (0.1, 0.07):
+        m2 = disk_mesh([0.5, A], h)
+        z = np.linspace(0, H, int(round(H / h)) + 1)
+        e = []
+        for tol in (0.0, 0.15):
+            pm = PrismMesh(m2, z, merge_tol=tol)
+            s = PrismFIT3D(pm, {0: [4.0, 1.0]}, dual_floor=1e-3)
+            e.append(_rms(_modes_k(s, 12) / k_ex - 1))
+        print("h", h, "rms unmerged/merged", e, "removed", pm.c2.n_removed)
+        errs.append(e)
+        assert e[1] <= 1.15 * e[0]
+    order = np.log(errs[0][1] / errs[1][1]) / np.log(0.1 / 0.07)
+    print("merged order", order)
+    assert order > 1.6
 
 
 def test_empty_cavity():
@@ -190,8 +217,9 @@ def test_energy_and_divergence():
     def wrong(hz, hq):
         rh, rv = orig(hz, hq)
         K = s.mesh.K
-        rh[:, :K] -= 2 * hq
-        rh[:, 1:] += 2 * hq
+        hk = s._hk(hq)
+        rh[:, :K] -= 2 * hk
+        rh[:, 1:] += 2 * hk
         return rh, rv
 
     s.curl_t_h = wrong
