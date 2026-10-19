@@ -1801,6 +1801,86 @@ References:
 - J. A. Roden and S. D. Gedney, "Convolution PML (CPML)", *Microw. Opt. Technol. Lett.* **27**, 334–339 (2000).
 - F. Rapetti and A. Bossavit, "Whitney forms of higher degree", *SIAM J. Numer. Anal.* **47**, 2369–2386 (2009), doi:10.1137/070705489 (the high-order FIT route, not implemented; see the study README).
 
+### 📏 Benchmark suite: plasmonic cylinders, a gap dimer and a dipole
+
+`wakis.benchmarks` collects cases that every mesh and scheme can be scored on with the same references, metrics and cost accounting. The cases, the arm interface and the baseline arms are described in `wakis/benchmarks/README.md`; baselines are in `studies/benchmarks/`. This section derives the three new pieces: the multi-cylinder reference, the dispersive scattered-field source on triangles, and the thin-wire reference.
+
+#### Multiple scattering by parallel cylinders (T-matrix with Graf's theorem)
+
+In the exp(−iωt) convention, around cylinder $j$ (centre $\mathbf r_j$, radius $a_j$) the exciting and scattered scalar fields ($E_z$ for TM, $H_z$ for TE) are
+
+$$u_{\mathrm{exc},j}=\sum_n a^j_n J_n(k\rho_j)e^{in\theta_j},\qquad u_{s,j}=\sum_n b^j_n H^{(1)}_n(k\rho_j)e^{in\theta_j},\qquad b^j_n=-c^j_n a^j_n,$$
+
+with $c_n$ the single-cylinder Mie coefficient. Graf's addition theorem (DLMF 10.23.7) re-expands the wave scattered by cylinder $l$ about $\mathbf r_j$ for $\rho_j<d_{jl}$:
+
+$$H_m(k\rho_l)e^{im\theta_l}=\sum_n H_{m-n}(kd_{jl})e^{i(m-n)\phi_{jl}}J_n(k\rho_j)e^{in\theta_j},$$
+
+where $(d_{jl},\phi_{jl})$ is the polar form of $\mathbf r_j-\mathbf r_l$. The plane wave $e^{ik(x\cos\phi+y\sin\phi)}$ gives $a^{j,\mathrm{inc}}_n=e^{i\mathbf k\cdot\mathbf r_j}i^ne^{-in\phi}$, and the coupled system is $b^j+C^j\sum_{l\ne j}T^{jl}b^l=-C^ja^{j,\mathrm{inc}}$.
+
+The raw coefficients span hundreds of orders of magnitude. $a_n$ grows like $(2/kd)^{|n|}$ and $b_n$ decays like $(ka/2)^{|n|}$, so the raw system loses all accuracy for $N\gtrsim20$ in a close dimer. Rescaling to surface amplitudes $\alpha_n=a_nJ_n(ka_j)$ and $\beta_n=b_nH_n(ka_j)$ gives $O(1)$ diagonal factors $c_nH_n/J_n$ and translation blocks of size $\sim(4a_ja_l/d^2)^{|n|}\le1$. The rescaled system is well conditioned up to $N=60$, the largest order before $H_{2N}$ overflows. The multipole series of two cylinders converges like $q^N$ with the bipolar ratio $q=(d/2-x_0)/(d/2+x_0)$, $x_0=\sqrt{d^2/4-a^2}$. For $a=20$ nm and $g=2$ nm this gives $q\approx0.57$, and the gap field converges to $10^{-6}$ at $N=60$.
+
+The cross sections follow from the far-field amplitude $f(\theta)=\sum_je^{-ik\hat r\cdot\mathbf r_j}\sum_nb^j_n(-i)^ne^{in\theta}$:
+- $C_\mathrm{sca}=\frac{2}{\pi k}\oint|f|^2d\theta$;
+- $C_\mathrm{ext}=-\frac4k\,\mathrm{Re}\,f(\phi)$ (optical theorem).
+
+The absorption of each cylinder follows independently from its local power balance, $C^j_\mathrm{abs}=-\frac4k\sum_n[\mathrm{Re}(\bar a^j_nb^j_n)+|b^j_n|^2]$.
+
+Tests (`tests/test_bench_multicylinder.py`):
+- Graf's identity holds to $10^{-12}$.
+- A single offset cylinder reproduces the series to $10^{-10}$.
+- Lossless clusters satisfy $C_\mathrm{ext}=C_\mathrm{sca}$, and lossy ones satisfy $\sum_jC^j_\mathrm{abs}=C_\mathrm{ext}-C_\mathrm{sca}$ to $10^{-9}$.
+- The solution is reciprocal, $f(\theta;\phi)=f(\phi+\pi;\theta+\pi)$.
+- The large-separation limit is recovered.
+- A mutated translation phase breaks the energy balance. Reciprocity alone does *not* catch it: the mirrored operator is still symmetric.
+
+#### Dispersive scatterers in the scattered-field formulation (triangles)
+
+The incident wave $(\mathbf E_i,\mathbf H_i)$ solves Maxwell's equations in the lossless host, $\partial_t(\varepsilon_0\varepsilon_b\mathbf E_i)=\nabla\times\mathbf H_i$. In a dispersive cell the total field obeys $\partial_t\mathbf D=\nabla\times\mathbf H$ with $\mathbf D=\varepsilon_0\varepsilon_\infty\mathbf E+\mathbf P[\mathbf E]$, and the poles are driven by the **total** field. Write $\mathbf E=\mathbf E_s+\mathbf E_i$, $\mathbf H=\mathbf H_s+\mathbf H_i$ and $\mathbf D_s=\mathbf D-\varepsilon_0\varepsilon_b\mathbf E_i$. Then
+
+$$\partial_t\mathbf D_s=\nabla\times\mathbf H_s,\qquad \mathbf D_s=\varepsilon_0\varepsilon_\infty\mathbf E_s+\varepsilon_0(\varepsilon_\infty-\varepsilon_b)\mathbf E_i+\mathbf P[\mathbf E_s+\mathbf E_i].$$
+
+The equivalent current is therefore $\mathbf J_\mathrm{eq}=\varepsilon_0(\varepsilon_\infty-\varepsilon_b)\partial_t\mathbf E_i+\partial_t\mathbf P[\mathbf E_s+\mathbf E_i]$. The incident field polarises the metal, and that polarisation current radiates the scattered field.
+
+**TM** ($E_z$ on nodes, tangential everywhere). The node update $C_0(u'-u)+c\sum_p(p'-p)=\Delta t\,r$ of the total field, with $u=u_s+E_i$, becomes the existing source $i_n=(C_0-\varepsilon_0\varepsilon_bA_n)(E_i^{n+1}-E_i^n)/\Delta t$. The only addition is that the ADEs are driven by $u_s^n+E_i^n$; Debye poles additionally use $u'+u$ at levels $n+1$ and $n$.
+
+**TE** (in-plane $E$, crossing interfaces). Each dual-edge segment $(e,T)$ of a dispersive triangle carries the total normal field $E_{e,T}$. The flux $d_e$ of $\mathbf D_s$ gives the total normal displacement $D_n/\varepsilon_0=d_e/(\varepsilon_0L_e)+\varepsilon_bE_{i,n}(m_{e,T})$. The segment ADE is then the total-field one, and the curl sees only the scattered voltage $v_e=\sum_Th_{e,T}(E_{e,T}-E_{i,n})$. Here $E_{i,n}=\mathbf E_i\cdot\mathbf n_e$ at the segment midpoint, evaluated at level $n$ for the voltage and $n+1$ for the segment update.
+
+The incident field at all targets comes from a tabulated pulse with linearly interpolated delays (`DelayTable`). Absorbed power is checked independently through $P_\mathrm{abs}=\frac{\omega\varepsilon_0}{2}\int(-\mathrm{Im}\,\varepsilon)|\mathbf E|^2dA$:
+- TM uses the dispersive node areas.
+- TE uses $\sum h_{e,T}L_e|E_{e,T}|^2$. For a uniform field this equals $\int|\mathbf E|^2dA$ on any triangle.
+
+On the Rakić gold cylinder this power equals the exact $C_\mathrm{abs}$ within 3 % at $h=a/5$. Driving the poles with the scattered field only (the mutation) gives errors above 30 % (`tests/test_bench_dispersive_planewave.py`).
+
+The radial CFS-PML of `UnstructuredFIT2D` now accepts dispersive interiors. Its explicit step routes the interior dispersive dofs through their ADE updates; the layer itself must stay non-dispersive.
+
+#### Thin-wire dipole reference (Hallén's equation)
+
+In the exp(+jωt) convention, $E_z=(\partial_z^2+k^2)A_z/(j\omega\mu\varepsilon)$, and the tangential field vanishes on the wire except across the feed. A uniform generator field $-V/g$ over $|z|<g/2$ gives
+
+$$\int_{-L/2}^{L/2}I(z')\frac{e^{-jkR}}{R}dz'=C\cos kz-j\frac{4\pi V}{\eta}\,G_g(z),\qquad R=\sqrt{(z-z')^2+a^2},$$
+
+with $G_g(z)=\sin k|z|\sin(kg/2)/(kg)$ outside the gap and $(1-\cos(kg/2)\cos kz)/(kg)$ inside. As $g\to0$ this tends to the delta-gap $\tfrac12\sin k|z|$.
+
+Discretization:
+- piecewise-linear current with $I=0$ at the ends;
+- matching at the interior nodes and one end;
+- the $1/R$ part integrated analytically ($\int T/R=\sqrt{u^2+a^2}+\dots\,\mathrm{asinh}(u/a)$), the remainder by Gauss quadrature.
+
+Checks (`tests/test_bench_thin_wire.py`):
+- The radiated power of the computed current equals $\mathrm{Re}(VI^*)/2$ to $2\times10^{-3}$.
+- The λ/2 impedance tends to the induced-EMF value $73.1+j42.5$ Ω as $a\to0$ (Balanis, *Antenna Theory*, sec. 4.6 and eqs. 8-60).
+- The B4 resonance is stable to $0.1$ % for $N=150$–$300$.
+
+#### Limits & Failure Modes
+
+- **Reduced-kernel MoM.** It is ill-posed for segments shorter than the radius: the reactance oscillates, as seen at $a=0.01\lambda$ with $N\ge100$. Keep $\Delta\gtrsim a$, or use the exact kernel. Even at $\Delta\approx1.5a$ the reactance drifts by about 1 Ω over $N=150$–$300$; B4 reports this spread.
+- **Delta-gap feed.** The input reactance does not converge, because the gap capacitance grows as $\Delta\to0$. Benchmark Z_in only with a finite gap, the same one in the reference and in the arm.
+- **Power balance is blind to reactive errors.** It tests the radiating part of the solution only. A wrong reactive kernel term still conserves power, as the mutation test shows. Reactive errors are caught by the induced-EMF limit and N-convergence tests instead.
+- **De-embedding needs symmetry.** Boundary-reflection de-embedding needs a diagonal S-matrix, i.e. a rotationally symmetric scatterer centred on the origin. For the dimer (B3), arms must absorb well; `boundary_reflection` reports the residual.
+- **Weak lossless scatterers.** Q_ext − Q_sca is a small difference of nearly equal terms, set by the phase error of the outer mesh. Use Q_sca or the volume absorption to check them.
+- **Metal–host averaging.** Subpixel averaging of a metal and its host produces mixed-cell permittivities that cross zero or have poles inside the band. Conformal Cartesian TE then converges non-monotonically: B2-Au-TE gives 2.3 %, 2.0 %, 2.9 % and 1.3 % Q_ext NRMS at h = 4, 2.9, 2 and 1.4 nm.
+- **Legacy STL staircase on wires.** The legacy staircase marks every cell touched by the solid (any of its 8 nodes inside) and zeroes the cell's lower-corner edges. This thickens a wire by up to a cell, biased towards −x/−y; the B4 dipole then resonates 6.2 % low at h_t = a. Use conformal PEC (fixed in 8d58fec; B4 f_res within 0.05–0.13 % of the MoM/NEC reference for h_z = 1 mm) or edge-wise assignment (`conformal='edges'` in the B4 arm, as `wakis.templates`; −1.2 … −1.7 %).
+
 ### Surface impedance boundary condition (SIBC)
 
 When the metal walls are very good conductors and the skin depth is much smaller than the grid spacing, it becomes inefficient (and inaccurate) to resolve the fields inside the conductor volume. Instead of using a volumetric conductivity, Wakis can model such metals with a **Leontovich surface impedance boundary condition (SIBC)** applied only on the surface cells. This can be disabled in the solver by turning `use_sibc=False`

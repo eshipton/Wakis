@@ -18,6 +18,7 @@ STYLE = {
     "tri-uniform": ("tab:blue", "^", ":"),
     "tri-graded": ("tab:blue", "^", "-"),
     "cart-staircase-graded@B4": ("tab:red", "s", "-"),
+    "cart-staircase-edges-graded": ("tab:blue", "^", "-"),
     "cart-conformal-pec-graded": ("tab:green", "o", "-"),
     "cart-conformal-pec-graded-bigdomain": ("tab:green", "x", "none"),
 }
@@ -28,7 +29,9 @@ LABEL = {
     "cart-conformal-all-graded": "Cartesian conformal, graded",
     "tri-uniform": "triangles, uniform",
     "tri-graded": "triangles, graded",
-    "cart-conformal-pec-graded": "Cartesian conformal PEC, graded",
+    "cart-conformal-pec-graded": "Cartesian conformal PEC (fixed), graded",
+    "cart-staircase-edges-graded": "Cartesian edge-wise staircase, graded",
+    "cart-staircase-graded@B4": "Cartesian legacy STL staircase, graded",
     "cart-conformal-pec-graded-bigdomain": "conformal PEC, 2x domain",
 }
 
@@ -258,7 +261,9 @@ def fig_b4(recs, fname="b4_dipole_zin.png"):
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
     axs[0].plot(f, ref["z_in"].real, "k-", lw=2, label="R, Hallen MoM (reference)")
     axs[0].plot(f, ref["z_in"].imag, "k--", lw=2, label="X, Hallen MoM")
-    arms = by_arm(recs, "B4")
+    arms = {k: v for k, v in by_arm(recs, "B4").items()
+            if k in ("cart-staircase-edges-graded", "cart-staircase-graded",
+                     "cart-conformal-pec-graded")}  # fmt: skip
     for arm, rs in arms.items():
         col, mk, _ = STYLE.get(arm, ("gray", "o", "-"))
         r = rs[-1]  # finest
@@ -306,17 +311,19 @@ def main_plot(phase):
         fig_convergence(recs, ["B2-Au-TE", "B2-Ag-TE"], [("q_ext_nrms", "Q_ext NRMS error")],
                         "b2_error_vs_time.png", xkey="run_s")  # fmt: skip
         summary_table(recs, ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"], "B2")
-    elif phase == "B3":
+    elif phase in ("B3", "B3m2"):
+        sfx = "_m2" if phase == "B3m2" else ""
         fig_spectra(recs, ["B3-g10", "B3-g5", "B3-g2"], "enh", "gap |E/E0|^2",
-                    "b3_gap_enhancement_spectra.png")  # fmt: skip
+                    f"b3_gap_enhancement_spectra{sfx}.png")  # fmt: skip
         fig_spectra(recs, ["B3-g10", "B3-g5", "B3-g2"], "q_ext", "Q_ext (per 4a)",
-                    "b3_qext_spectra.png")  # fmt: skip
+                    f"b3_qext_spectra{sfx}.png")  # fmt: skip
         fig_convergence(recs, ["B3-g10", "B3-g5", "B3-g2"],
                         [("enh_peak", "peak gap enhancement error"),
                          ("q_ext_nrms", "Q_ext NRMS error")],
-                        "b3_convergence.png")  # fmt: skip
-        fig_b3_reference_map()
-        summary_table(recs, ["B3-g10", "B3-g5", "B3-g2"], "B3")
+                        f"b3_convergence{sfx}.png")  # fmt: skip
+        if not sfx:
+            fig_b3_reference_map()
+        summary_table(recs, ["B3-g10", "B3-g5", "B3-g2"], phase)
     elif phase == "B4":
         fig_b4(recs)
         summary_table(recs, ["B4"], "B4")

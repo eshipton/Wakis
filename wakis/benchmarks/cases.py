@@ -255,6 +255,12 @@ class Scattering2DCase:
             e2 = np.sum(np.abs(e) ** 2, 2) / np.abs(e0[:, None]) ** 2
             sp["enh"] = e2.mean(1)
             sp["enh_centre"] = e2[:, 0]
+            if result.get("e_gap_rt") is not None:
+                ert = np.asarray(result["e_gap_rt"])
+                if ert.ndim == 2:
+                    ert = ert[:, None, :]
+                e2_rt = np.sum(np.abs(ert) ** 2, 2) / np.abs(e0[:, None]) ** 2
+                sp["enh_rt"] = e2_rt.mean(1)
         return sp
 
     def evaluate(self, result):
@@ -267,7 +273,8 @@ class Scattering2DCase:
             ``q_ext_nrms``, ``q_sca_nrms``, ``q_abs_nrms``, ``q_sca_rms_rel``,
             peak errors of Q_ext (``lam_peak``, ``height``, ``fwhm``) and,
             with a gap point, ``enh_nrms``, ``enh_peak`` (relative error of
-            the maximum enhancement), ``enh_lam`` (its wavelength error);
+            the maximum enhancement), ``enh_lam`` (its wavelength error),
+            plus ``enh_rt_peak`` when ``e_gap_rt`` is provided;
             plus the spectra themselves under ``spectra``.
         """
         ref = self.reference
@@ -287,12 +294,15 @@ class Scattering2DCase:
             if "enh_centre" in sp:
                 pc = M.peak_errors(lam, sp["enh_centre"], ref["enh_centre"])
                 out["enh_centre_peak"] = pc["height"]
+            if "enh_rt" in sp:
+                prt = M.peak_errors(lam, sp["enh_rt"], ref["enh"])
+                out["enh_rt_peak"] = prt["height"]
         if "refl" in sp:
             out["boundary_reflection"] = float(np.max(sp["refl"]))
         out["spectra"] = {
             k: np.asarray(v).tolist()
             for k, v in sp.items()
-            if k in ("q_ext", "q_sca", "q_abs", "enh", "enh_centre", "refl")
+            if k in ("q_ext", "q_sca", "q_abs", "enh", "enh_centre", "enh_rt", "refl")
         }
         return out
 
@@ -364,7 +374,7 @@ def _b3(gap_nm):
         t_run=100e-15, norm_width=4 * a, gap_point=(0.0, 0.0), gap_width=g,
         deembed=False,
         targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.005, 0.002),
-                     enh_peak=(0.05, 0.02), enh_lam=(0.005, 0.002)),
+                     enh_peak=(0.05, 0.02, 0.01), enh_lam=(0.005, 0.002)),
         primary="enh_peak",
     )  # fmt: skip
 
@@ -394,9 +404,10 @@ def _registry():
         reg[f"B5-{pol}"] = lambda pol=pol: _b5(pol)
     for g in (2, 5, 10):
         reg[f"B3-g{g}"] = lambda g=g: _b3(g)
-    reg["B4"] = lambda: __import__(
-        "wakis.benchmarks.dipole", fromlist=["DipoleCase"]
-    ).DipoleCase()
+    for name, gap in (("B4", 1e-3), ("B4-g2", 2e-3), ("B4-g4", 4e-3)):
+        reg[name] = lambda name=name, gap=gap: __import__(
+            "wakis.benchmarks.dipole", fromlist=["DipoleCase"]
+        ).DipoleCase(name=name, gap=gap)
     return reg
 
 
