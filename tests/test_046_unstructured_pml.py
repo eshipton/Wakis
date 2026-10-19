@@ -10,6 +10,8 @@ Radial CFS-PML of `UnstructuredFIT2D` and the tabulated plane-wave source.
 * Stability: 4000 fs (10x the usual window), no late-time growth.
 * Mesh: a non-polar-aligned layer is rejected.
 * Dispersive (Drude) rod inside the PML domain: stable, fields decay.
+* LTS (p = 2) + PML: reflection as with the global step, stable; fine
+  nodes inside the layer are refused.
 * Plane-wave table: the separable-delay table reproduces the direct
   evaluation of s(t - tau) to < 5e-4 (recorded 1.3e-4 TM, 8e-5 TE; a one-entry
   delay offset would give ~6e-3).
@@ -152,3 +154,51 @@ def test_pml_with_dispersive_scatterer(pol):
     print(pol, "Drude rod + PML: peak", peaks.max(), "end", peaks[-1])
     assert np.all(np.isfinite(peaks))
     assert peaks[-1] < 1e-2 * peaks.max()
+
+
+def _graded_pml_solver(pol, lts=None, h=40e-9, nl=10):
+    """Rod-graded mesh (h on and around an eps = 4 rod, 2h further out), so the
+    LTS fine region is the vacuum band around the rod, away from the PML."""
+
+    def size(r):
+        d = r - 0.5e-6 - 2 * h
+        return h if d <= 0 else min(2 * h, h * 1.2 ** (d / h))
+
+    m = graded_disk_mesh([0.5e-6, R0], size, pml_layers=nl, pml_dr=2 * h)
+    s = UnstructuredFIT2D(m, {0: [4.0, 1.0]}, polarization=pol, bc="pec", lts=lts,
+                          pml=dict(r0=R0, r1=R0 + nl * 2 * h))  # fmt: skip
+    s.add_point_source(
+        [0.9e-6, 0.1e-6], GaussianSource(F.mean(), 0.25 * (F[-1] - F[0]))
+    )
+    return s
+
+
+@pytest.mark.parametrize("pol", ["TM", "TE"])
+def test_pml_with_lts(pol):
+    """
+    LTS (p = 2) + PML: the fine region is the band around the rod (outside
+    the layer), the outgoing-wave reflection matches the global-step run
+    (within 2x of it; recorded LTS 0.2-0.8e-2 vs global 0.2-1.2e-2 on this
+    coarse 80 nm vacuum mesh), and the run is stable and decays over
+    2000 fs. Mutation: LTS fine nodes inside the layer are refused.
+    """
+    s_g = _graded_pml_solver(pol)
+    s_l = _graded_pml_solver(pol, lts=dict(p=2))
+    assert s_l.lts.F.size > 0
+    assert s_l.dt > 1.5 * s_g.dt
+    r_g, r_l = _reflection(s_g), _reflection(s_l)
+    print(pol, "global", r_g, "LTS", r_l, "dt ratio", s_l.dt / s_g.dt)
+    assert np.all(r_g < 2e-2)  # coarse vacuum (2h = 80 nm): discretization floor
+    assert np.all(r_l < 2 * r_g + 1e-4)
+    peaks = []
+    for i in range(int(1600e-15 / s_l.dt)):
+        s_l.one_step()
+        if i % 50 == 0:
+            peaks.append(np.abs(s_l.u).max())
+    assert np.all(np.isfinite(peaks)) and peaks[-1] < 1e-2 * max(peaks)
+    # mutation: force fine nodes into the layer
+    s = _graded_pml_solver(pol)
+    s.lts, s._G_F = s_l.lts, s_l._G_F
+    s.lts.F = np.r_[s.lts.F, s._pml.nodes[:3]]
+    with pytest.raises(ValueError, match="PML"):
+        s._check_lts_pml()
