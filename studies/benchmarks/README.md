@@ -144,7 +144,18 @@ The MoM's own N-spread is 0.09 % / 0.06 %, so the offset is not MoM discretizati
 - **Flat end caps.** Adding a or 2a to the length explains −0.33 … −0.65 % of the f_res offset and none of the R_in offset.
 - **Feed width.** It matches: the FIT port spans exactly the 1 mm gap between the face planes, as in the MoM's uniform gap field.
 
-The R_in offset (−3.5 %) is therefore not geometric thickening. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
+The R_in offset (−3.5 %) is therefore not geometric thickening.
+
+**Independent third reference: NEC-2 (`nec2c`, run as an external tool on Batch; `nec/nec_b4.py`, `nec/nec_b4.json`).** Same wire, centre-segment voltage source:
+
+| reference | f_res [GHz] | R_res [Ω] |
+|---|---|---|
+| Hallén MoM (this suite, finite 1 mm gap, N = 200) | 0.94281 | 72.35 |
+| NEC-2, extended kernel, 301 segments | 0.94247 (−0.04 %) | 72.35 (0.00 %) |
+| NEC-2, thin kernel, 201 segments | 0.94093 (−0.20 %) | 72.35 (0.00 %) |
+| Cartesian FIT, edge-wise staircase, converged (h_t = a/3, h_z ≤ 0.5 mm) | 0.927 (−1.7 %) | 69.8 (−3.5 %) |
+
+The two MoM codes agree to 0.04 % (extended kernel), so the offset lies on the FIT side. Flat end caps (absent in both MoM models) account for at most −0.65 % of f_res. The next suspects are the lumped-port feed model (gap-cell capacitance and inductance) and the staircased end and gap faces. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
 Until then, the B4 targets are scored against the Hallén reference, and the offset is reported as part of the baseline.
 
 **Cost.**
