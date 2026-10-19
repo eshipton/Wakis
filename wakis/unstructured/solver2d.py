@@ -85,6 +85,16 @@ class UnstructuredFIT2D:
         radius) and on the primal-edge fluxes (edge-midpoint radius), both
         with semi-implicit (Crank-Nicolson) averaging. Combine with
         ``bc='abc'`` or ``'pec'`` at the outer boundary.
+    pml : dict, optional
+        Radial complex-coordinate-stretched CFS-PML on the annulus
+        r0 < r < r1, ``dict(r0=..., r1=..., order=3, R=1e-8, sigma_max=None,
+        kappa_max=1.0, alpha=0.0)``. The layer must be meshed with
+        polar-aligned elements (`graded_disk_mesh(..., pml_layers=...)`:
+        rings with a common node count, isosceles-trapezoid cells), so that
+        primal edges are radial (spokes) or azimuthal (chords) and the
+        stretched, anisotropic material stays diagonal. See `_PML` for the
+        formulation. Requires ``bc='pec'`` or ``'pmc'`` behind the layer and a
+        lossless, non-dispersive domain.
 
     Attributes
     ----------
@@ -104,6 +114,7 @@ class UnstructuredFIT2D:
         dt=None,
         cfl=0.95,
         absorber=None,
+        pml=None,
     ):
         if mesh.dim != 2:
             raise ValueError("UnstructuredFIT2D needs a triangular mesh")
@@ -113,6 +124,7 @@ class UnstructuredFIT2D:
             raise ValueError("bc must be 'pec', 'pmc' or 'abc'")
         self.mesh, self.pol, self.bc, self.hodge = mesh, polarization, bc, hodge
         self._absorber = absorber
+        self._pml_cfg = pml
         eps_r, mu_r, sigma, pec, dispersive = cell_materials(mesh, materials)
         self.eps_r, self.mu_r, self.sigma, self.pec_cells = eps_r, mu_r, sigma, pec
         self.dispersive = dispersive
@@ -212,6 +224,11 @@ class UnstructuredFIT2D:
             self._update = CapacitiveUpdate(self.mass, self.loss, groups, self.dt)
         else:
             self._init_te_dispersive(He, L, live)
+        self._pml = None
+        if pml is not None:
+            if bc == "abc" or dispersive or np.any(sigma > 0) or absorber is not None:
+                raise ValueError("pml: use bc='pec'/'pmc', lossless media, no absorber")
+            self._pml = _PML(self, pml)
         self.sources = []
         self.plane_wave = None
         self.recorder = Recorder()
@@ -281,6 +298,8 @@ class UnstructuredFIT2D:
         self.n = 0
         if self.pol == "TM":
             self._update.reset()
+        if getattr(self, "_pml", None) is not None:
+            self._pml.reset()
         for g in getattr(self, "_te_groups", []):
             g["E"][:] = 0
             g["lorentz"] = [(a, x, z, 0 * p, 0 * q) for a, x, z, p, q in g["lorentz"]]
@@ -452,6 +471,50 @@ class UnstructuredFIT2D:
             coef = h * (1 - eps_b / self.eps_r[T]) * (n_e @ p)
             pw.update(e=e, coef=coef, pos=mid @ k)
         self.plane_wave = pw
+        self._build_pw_table()
+
+    def _build_pw_table(self, sub=8):
+        """
+        Separable-delay table of the plane-wave source.
+
+        E_inc(target, t_n) = A s(n dt - tau_target) with tau = (pos - s_0)/v.
+        With S[m] = s(m dt / sub), linear interpolation in the delay gives
+        E_inc = A [(1 - f) S[sub n - j] + f S[sub n - j - 1]], j = floor(sub
+        tau / dt), f its fraction. All target weights (TM: node masses / dt;
+        TE: dual-edge segment weights summed per edge) are folded into one
+        sparse matrix W (n_targets x n_delays), so each step costs one slice
+        of S and one sparse mat-vec instead of evaluating s(t) on every
+        target. Interpolation error ~ (omega dt / sub)^2 / 8.
+        """
+        pw = self.plane_wave
+        tau = (pw["pos"] - pw["s0"]) / pw["v"] / self.dt * sub
+        tau = np.maximum(tau, 0.0)
+        j = np.floor(tau).astype(int)
+        f = tau - j
+        if self.pol == "TM":
+            rows, wgt, n_rows = pw["idx"], pw["w"] / self.dt, self.free.size
+        else:
+            rows, wgt, n_rows = pw["e"], pw["coef"], self.mesh.n_edges
+        r2 = np.concatenate([rows, rows])
+        c2 = np.concatenate([j, j + 1])
+        v2 = pw["amp"] * np.concatenate([wgt * (1 - f), wgt * f])
+        self._pw_W = sp.csr_matrix(
+            (v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1)
+        )
+        self._pw_sub = sub
+        self._pw_S = np.zeros(0)
+
+    def _pw_values(self, n):
+        """W @ [S[sub n - j]]_j: the source term at step level n."""
+        pw, sub = self.plane_wave, self._pw_sub
+        nj = self._pw_W.shape[1]
+        top = sub * n
+        if self._pw_S.size <= top:
+            m = np.arange(max(2 * self._pw_S.size, top + 1 + 4096))
+            self._pw_S = np.asarray(pw["s"](m * self.dt / sub), dtype=float)
+        idx = top - np.arange(nj)
+        g = np.where(idx >= 0, self._pw_S[np.maximum(idx, 0)], 0.0)
+        return self._pw_W @ g
 
     def _incident_signal(self, pos, t):
         pw = self.plane_wave
@@ -499,9 +562,12 @@ class UnstructuredFIT2D:
                 edge_src += w * f(t_half)
         pw = self.plane_wave
         if pw is not None and self.pol == "TM":
-            de = self._incident_signal(pw["pos"], (self.n + 1) * dt)
-            de -= self._incident_signal(pw["pos"], self.n * dt)
-            node_src[pw["idx"]] += pw["w"] * de / dt
+            node_src += self._pw_values(self.n + 1) - self._pw_values(self.n)
+        if self._pml is not None:
+            self._pml.step(node_src, edge_src)
+            self.n += 1
+            self.recorder.record(self.u, self.n * dt, dt)
+            return
         if self.pol == "TM":
             if self._absorber is None:
                 self.v -= dt * (self.G @ self.u)
@@ -514,8 +580,7 @@ class UnstructuredFIT2D:
             # hz at n+1/2 from v^n, then d to n+1 (leapfrog with roles swapped)
             vol = self._te_voltage(self.v)
             if pw is not None:
-                einc = self._incident_signal(pw["pos"], self.n * dt)
-                vol -= np.bincount(pw["e"], pw["coef"] * einc, minlength=vol.size)
+                vol -= self._pw_values(self.n)
             a = self.mass - self.loss * dt / 2
             b = self.mass + self.loss * dt / 2
             self.u = (a * self.u - dt * (self.G.T @ vol + node_src)) / b
@@ -626,3 +691,147 @@ class UnstructuredFIT2D:
                 return f1
             f0, f1, g0 = f1, f1 - g1 * (f1 - f0) / (g1 - g0), g1
         raise RuntimeError("dispersive_eigenmode did not converge")
+
+
+class _CFSRatio:
+    """
+    Per-dof filter y = (s_n / s_d) x with s = kappa + sigma / (alpha + d/dt).
+
+    Solves kappa_d y + sigma_d P[y] = kappa_n x + sigma_n P[x] with
+    P' + alpha P = f discretized by the trapezoidal rule (bilinear
+    transform, passive for kappa >= 1, sigma >= 0, alpha >= 0):
+    P^n = c1 P^{n-1} + c2 (f^n + f^{n-1}).
+    """
+
+    def __init__(self, kn, sn, kd, sd, alpha, dt):
+        a = np.broadcast_to(alpha, np.shape(kn)).astype(float)
+        self.c1 = (1 - a * dt / 2) / (1 + a * dt / 2)
+        self.c2 = (dt / 2) / (1 + a * dt / 2)
+        self.kn, self.sn, self.kd, self.sd = kn, sn, kd, sd
+        self.reset()
+
+    def reset(self):
+        z = np.zeros(np.shape(self.kn))
+        self.Px, self.Py, self.x0, self.y0 = z.copy(), z.copy(), z.copy(), z.copy()
+
+    def __call__(self, x):
+        c1, c2 = self.c1, self.c2
+        self.Px = c1 * self.Px + c2 * (x + self.x0)
+        y = (
+            self.kn * x + self.sn * self.Px - self.sd * (c1 * self.Py + c2 * self.y0)
+        ) / (self.kd + self.sd * c2)
+        self.Py = c1 * self.Py + c2 * (y + self.y0)
+        self.x0, self.y0 = x.copy(), y
+        return y
+
+
+class _PML:
+    """
+    Radial CFS-PML for `UnstructuredFIT2D` (complex coordinate stretching).
+
+    With r~ = int_0^r s_r dr', s_r = kappa_r + sigma_r / (alpha + i w) and
+    s_t = r~ / r = kappa_t + sigma_t / (alpha + i w) (kappa_t = 1 + int (kappa_r
+    - 1) dr / r, sigma_t = int sigma_r dr / r from r0), Maxwell's equations in
+    the stretched polar coordinates equal those of an anisotropic medium
+    eps, mu * diag(s_t / s_r, s_r / s_t, s_r s_t) in (r, theta, z). On a
+    polar-aligned mesh the primal edges are radial (spokes: their flux is
+    normal to theta) or azimuthal (chords: flux normal to r), so the Hodge
+    stays diagonal:
+
+    * z-component on the nodes (E_z TM, H_z TE): the node keeps the flux
+      variable q (D_z or B_z, q' = curl) and u = q / (M s_r s_t), applied as
+      two cascaded first-order filters;
+    * spoke edges: field = (s_t / s_r) x flux / material; chords: (s_r / s_t).
+
+    Each filter is a bilinear-transform ADE (`_CFSRatio`), so the scheme stays
+    explicit and the FIT incidence structure (G, G^T) is untouched.
+    Parameters are evaluated at the node radius, at the spoke midpoint and at
+    the chord ring radius. The edges crossing the inner ring r0 see
+    s = 1 (sigma(r0) = 0).
+    """
+
+    def __init__(self, solver, cfg):
+        mesh, dt = solver.mesh, solver.dt
+        self.solver = solver
+        r0, r1 = float(cfg["r0"]), float(cfg["r1"])
+        m = float(cfg.get("order", 3))
+        d = r1 - r0
+        sig = cfg.get("sigma_max")
+        if sig is None:
+            v = 1 / np.sqrt(mu_0 * eps_0 * np.min(solver.eps_r))
+            sig = (m + 1) * v * np.log(1 / cfg.get("R", 1e-8)) / (2 * d)
+        kmax = float(cfg.get("kappa_max", 1.0))
+        alpha = float(cfg.get("alpha", 0.0))
+        self.sigma_max = sig
+
+        def params(r):
+            xi = np.clip((r - r0) / d, 0, None)
+            sr = sig * xi**m
+            kr = 1 + (kmax - 1) * xi**m
+            st = sig * d * xi ** (m + 1) / ((m + 1) * r)
+            kt = 1 + (kmax - 1) * d * xi ** (m + 1) / ((m + 1) * r)
+            return kr, sr, kt, st
+
+        tol = 1e-9 * r1
+        # nodes
+        rn = np.hypot(*mesh.nodes[solver.free].T)
+        self.nodes = np.flatnonzero(rn > r0 + tol)
+        kr, sr, kt, st = params(rn[self.nodes])
+        one, zero = np.ones_like(kr), np.zeros_like(kr)
+        self.fn1 = _CFSRatio(one, zero, kt, st, alpha, dt)  # s_t y1 = x
+        self.fn2 = _CFSRatio(one, zero, kr, sr, alpha, dt)  # s_r y = y1
+        # edges
+        X = mesh.nodes
+        ra, rb = np.hypot(*X[mesh.edges[:, 0]].T), np.hypot(*X[mesh.edges[:, 1]].T)
+        inside = (np.minimum(ra, rb) > r0 - tol) & (np.maximum(ra, rb) > r0 + tol)
+        mid = mesh.edge_midpoint
+        rhat = mid / np.hypot(*mid.T)[:, None]
+        cos = np.abs(np.einsum("ij,ij->i", mesh.edge_tangent, rhat))
+        self.spokes = np.flatnonzero(inside & (cos > 0.99))
+        self.chords = np.flatnonzero(inside & (cos < 0.2) & (np.abs(ra - rb) < tol))
+        other = np.flatnonzero(
+            inside & ~np.isin(np.arange(mesh.n_edges), np.r_[self.spokes, self.chords])
+        )
+        st_all = solver.stiff
+        if other.size and np.abs(st_all[other]).max() > 1e-6 * np.abs(st_all).max():
+            raise ValueError(
+                "pml: the layer mesh is not polar-aligned (diagonal edges couple)"
+            )
+        kr, sr, kt, st = params(np.hypot(*mid[self.spokes].T))
+        self.fs = _CFSRatio(kt, st, kr, sr, alpha, dt)  # s_r y = s_t x
+        kr, sr, kt, st = params(0.5 * (ra + rb)[self.chords])
+        self.fc = _CFSRatio(kr, sr, kt, st, alpha, dt)  # s_t y = s_r x
+        self.reset()
+
+    def reset(self):
+        s = self.solver
+        self.q = s.mass * s.u if hasattr(s, "u") else np.zeros(s.free.size)
+        for f in (self.fn1, self.fn2, self.fs, self.fc):
+            f.reset()
+
+    def _edges(self, v):
+        w = v.copy()
+        w[self.spokes] = self.fs(v[self.spokes])
+        w[self.chords] = self.fc(v[self.chords])
+        return w
+
+    def _nodes(self):
+        s = self.solver
+        u = self.q / s.mass
+        u[self.nodes] = self.fn2(self.fn1(u[self.nodes]))
+        return u
+
+    def step(self, node_src, edge_src):
+        s, dt = self.solver, self.solver.dt
+        if s.pol == "TM":
+            s.v -= dt * (s.G @ s.u)
+            r = s.G.T @ (s.stiff * self._edges(s.v)) - node_src
+            self.q += dt * r
+            s.u = self._nodes()
+        else:
+            vol = s.stiff * self._edges(s.v)
+            if s.plane_wave is not None:
+                vol -= s._pw_values(s.n)
+            self.q -= dt * (s.G.T @ vol + node_src)
+            s.u = self._nodes()
+            s.v += dt * (s.G @ s.u - edge_src)
