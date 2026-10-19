@@ -787,11 +787,16 @@ def far_field_errors(res, theta=np.linspace(0, np.pi, 181), floor_db=40.0):
     pattern nulls do not dominate. Also returns the patterns [dB re r^2].
     """
     out = {}
+    # one far-field evaluation per plane (all frequencies at once)
+    ffs = {
+        p: res["scat"].get_farfield(theta, phi)
+        for p, phi in (("E", 0.0), ("H", np.pi / 2))
+    }
     for xs in X_SNAP:
         j = int(np.argmin(np.abs(X_SIM - xs)))
         E_j, _ = res["src"].incident_fields(FREQS[j : j + 1])
         for plane, phi in (("E", 0.0), ("H", np.pi / 2)):
-            ff = res["scat"].get_farfield(theta, phi)
+            ff = ffs[plane]
             sim = (np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2) / abs(
                 E_j[0]
             ) ** 2
