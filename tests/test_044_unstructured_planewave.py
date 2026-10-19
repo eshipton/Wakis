@@ -65,6 +65,8 @@ def _run(pol, mutate=None, eps=N_CYL**2, h=A / 10, mesh=None):
     elif mutate == "tm_full_mass":
         # current weighted by eps_T instead of the contrast eps_T - eps_b
         pw["w"] = solver.mass[pw["idx"]]
+    if mutate is not None:
+        solver._build_pw_table()  # the source table folds coef / w in
     pts = np.vstack([circle_points(r, M_PTS)[0] for r in RADII])
     P = solver._interp(pts)
     dt = solver.dt
