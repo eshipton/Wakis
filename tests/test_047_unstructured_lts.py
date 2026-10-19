@@ -306,27 +306,41 @@ class TestDispersive:
 
     @pytest.mark.slow
     def test_plasmon_matches_eigenmode(self):
+        """Time-domain plasmon (TE Drude rod, k_p a = 4) with LTS vs global.
+
+        The n = 1 plasmon is weak at the probe (|a| ~ 2e-3) next to a mode
+        at 1.033 f_sp (|a| ~ 2e-2): fit the whole record after the source
+        ends in 0.9-1.1 f_sp (a later start and a 0.97-1.03 window found no
+        mode, for global stepping too: studies/unstructured-lts,
+        plasmon_diag.py). Expected: leapfrog time error ~ dt^2, i.e. the
+        LTS shift from the eigenfrequency ~ 4x the global one."""
         from wakis.resonances import harminv
 
         m = graded_rod_mesh(0.04)
-        s = drude_solver("TE", m, 0.0, p=2)  # omega_p dt_c = 0.2
-        f_sp = s.dispersive_eigenmode(analytic.drude_rod_in_cavity_te(
-            A_CAV, B_ROD, 4.0, n=1)[1] * c / (2 * np.pi))  # fmt: skip
-        f0 = f_sp
-        s0 = 1 / (2 * np.pi * 0.3 * f0)
+        f_an = analytic.drude_rod_in_cavity_te(A_CAV, B_ROD, 4.0, n=1)[1] * c
+        shifts = {}
+        for mode in ("global", "lts"):
+            s = drude_solver("TE", m, 0.0, **({"p": 2} if mode == "lts" else {}))
+            f_sp = s.dispersive_eigenmode(f_an / (2 * np.pi))
+            s0 = 1 / (2 * np.pi * 0.3 * f_sp)
 
-        def pulse(t):
-            return np.exp(-(((t - 5 * s0) / s0) ** 2) / 2) * np.sin(
-                2 * np.pi * f0 * (t - 5 * s0)
-            )
+            def pulse(t, s0=s0, f0=f_sp):
+                return np.exp(-(((t - 5 * s0) / s0) ** 2) / 2) * np.sin(
+                    2 * np.pi * f0 * (t - 5 * s0)
+                )
 
-        s.add_point_source([0.6, 0.1], pulse, [1, 0.3])
-        probe = s.add_probe([[0.55, -0.2]])
-        n = int(60 / f0 / s.dt)
-        s.run(n)
-        sig = s.probe_signal(probe)[:, 0]
-        i0 = n // 5
-        res = harminv(sig[i0:], s.dt, 0.97 * f0, 1.03 * f0, t0=(i0 + 1) * s.dt)
-        # leapfrog + LTS time error at 2x the global step: < 1e-3
-        assert np.min(np.abs(res.frequency / f_sp - 1)) < 1e-3
-        assert np.abs(sig[-n // 10 :]).max() < 2 * np.abs(sig[i0 : 2 * i0]).max()
+            s.add_point_source([0.6, 0.1], pulse, [1, 0.3])
+            probe = s.add_probe([[0.55, -0.2]])
+            n = int(60 / f_sp / s.dt)
+            s.run(n)
+            sig = s.probe_signal(probe)[:, 0]
+            i0 = int(10 * s0 / s.dt) + 1  # source off
+            res = harminv(sig[i0:], s.dt, 0.9 * f_sp, 1.1 * f_sp, t0=(i0 + 1) * s.dt)
+            f = np.real(np.atleast_1d(res.frequency))
+            shifts[mode] = f[np.argmin(np.abs(f / f_sp - 1))] / f_sp - 1
+            # bounded (lossless cavity): no growth over 60 periods
+            assert np.abs(sig[-n // 10 :]).max() < 2 * np.abs(sig[i0 : 2 * i0]).max()
+        # observed: global +3.6e-4, LTS +1.2e-3 (h = 0.04)
+        assert abs(shifts["global"]) < 1e-3
+        assert abs(shifts["lts"]) < 2e-3
+        assert abs(shifts["lts"]) < 6 * abs(shifts["global"]) + 1e-4
