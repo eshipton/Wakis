@@ -343,7 +343,8 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Two-level local time stepping for unstructured FIT: energy-conserving, exact adjoint (`lts=2`)
 - [x] Polygonal FIT: hybrid square/triangle and Voronoi meshes (`PolygonFIT2D`)
 - [ ] Cartesian subgridding with 2:1 patches (`wakis.subgrid`) (in progress)
-- [ ] Curvilinear O-grid FIT (NFIT) and multi-block meshes (in progress)
+- [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
+- [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
 - [ ] High-order schemes: DGTD on curved triangles and Cartesian (2,4) (in progress)
 - [ ] Extruded prism 3D FIT (cavity, ring, dipole studies) (in progress)
 - [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow

@@ -1562,6 +1562,80 @@ References:
 - A. Abdelkader et al., "VoroCrust: Voronoi meshing without clipping", *ACM Trans. Graph.* **39**(3) (2020), arXiv:1902.08767.
 - J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
 
+### 🌀 Curvilinear FIT: body-fitted O-grids and multi-block meshes (time domain)
+
+`wakis.curvilinear` is a 2D time-domain FIT solver (`CurvilinearFIT2D`, TM and TE) on structured, body-fitted quadrilateral meshes: O-grids around round objects, optionally joined to a Cartesian outer block. It is the nonorthogonal FIT (NFIT) of [Holland, 1983; Schuhmann & Weiland, 2000] in matrix form: the topological operators are those of every FIT grid, and only the material (Hodge) matrix sees the metric.
+
+**Unknowns and grid equations.** Per unit length in $z$, as in `UnstructuredFIT2D`: TM has $E_z$ on the nodes and the magnetic flux $b_e$ through every primal edge (times $\hat z$); TE has $H_z$ on the nodes and the electric flux $d_e$:
+
+$$
+\text{TM: } \dot{\mathbf b} = -\mathbf G\mathbf e,\quad \mathbf M\dot{\mathbf e} = \mathbf G^T\mathbf W\mathbf b;\qquad
+\text{TE: } \dot{\mathbf d} = \mathbf G\mathbf h,\quad \mathbf M\dot{\mathbf h} = -\mathbf G^T\mathbf W\mathbf d .
+$$
+
+$\mathbf G$ is the integer edge–node incidence. $\mathbf M$ is diagonal (lumped dual areas times $\varepsilon$ or $\mu$). $\mathbf W$ maps fluxes to dual-edge voltages. Because $\mathbf W$ is assembled in the flux→voltage direction, the explicit leapfrog never inverts a non-diagonal matrix: the only "inverse" in the scheme is the diagonal $\mathbf M^{-1}$. This is the observation of [Schuhmann & Weiland, 2000] that the NFIT interpolation formulas *are* the inverse material matrices.
+
+**The Hodge as a sum of field components.** Each cell contributes components $q$ with a reconstruction row $\mathbf r_q$ (one Cartesian or normal component of $\mathbf B$ or $\mathbf D$ from the fluxes of the cell's sides), a weight $w_q$ (area) and a material $p_q$ ($\mu$ for TM, $\varepsilon$ for TE):
+
+$$
+\mathbf W=\sum_q \frac{w_q}{p_q}\,\mathbf r_q^T\mathbf r_q,\qquad
+\tfrac12\mathbf b^T\mathbf W\mathbf b=\sum_q \frac{w_q}{2p_q}(\mathbf r_q\mathbf b)^2 \approx \int\frac{|\mathbf B|^2}{2\mu}\,dA .
+$$
+
+$\mathbf W$ is therefore symmetric positive semi-definite *by construction*, which is the stability property [Schuhmann & Weiland, 2000] attribute to the "symmetric evaluation" of the metric. Two cell types:
+
+- *General quadrilateral* (straight sides; core of the O-grid, circle-to-square transition block). At each of the 4 corners the in-plane vector is reconstructed from the fluxes of the two sides meeting there: with length-weighted side normals $\mathbf N_1,\mathbf N_2$, $\mathbf B_c = [\mathbf N_1\ \mathbf N_2]^{-T}(b_1, b_2)$, exact for a uniform field; weight $A/4$. $\mathbf W$ then couples the two edges at each corner: about 7 non-zeros per row (banded on a structured block). On rectangles the coupling vanishes and $\mathbf W$ is the diagonal standard-FIT matrix (tested).
+- *Polar sector* $r_0<r<r_1$, $\theta_0<\theta<\theta_1$ (exact arcs). The cell is orthogonal, so each side contributes one normal component $b_e/L_e$ on its half dual edge: diagonal, i.e. standard FIT in cylindrical coordinates with exact arc lengths and sector areas. Node areas are the exact quarter-sector shares.
+
+The flux through an edge depends only on its end points ($b_e = A_z(j)-A_z(i)$ in TM; likewise $d_e$ from $H_z$ in TE), so a chord in one cell and an arc in the neighbouring cell describe the same unknown. Polar and general cells can therefore be mixed freely. Material interfaces are rings of the mesh: a cell holds one material, normal $B$ ($D$) is continuous across the shared edge, and $1/p$ is averaged in series along the dual edge, which is the correct interface condition for TE where $\mathbf E$ crosses the interface (no subpixel averaging needed).
+
+**Time stepping and stability.** Standard leapfrog. With a symmetric $\mathbf W$ the quantity $\tfrac12\mathbf b^{n+1/2}\!\cdot\!\mathbf W\mathbf b^{n+1/2}+\tfrac12\mathbf e^{n+1}\!\cdot\!\mathbf M\mathbf e^{n}$ (TM; TE analogous) is conserved exactly; it is positive for $\Delta t<2/\sqrt{\lambda_\max}$ with $\lambda_\max$ of $\mathbf M^{-1}\mathbf G^T\mathbf W\mathbf G$ (Lanczos). Measured: relative drift $7\times10^{-16}$ over 1500 steps; with an asymmetric $\mathbf W$ (mutation) the energy drifts or the run blows up.
+
+**Mesh generation** (`ogrid_mesh`, `ogrid_cartesian_mesh`, `radial_nodes`). The O-grid has a "butterfly" core inside $r_t$: a square of $n_\theta/4\times n_\theta/4$ cells and four transition blocks (linear transfinite interpolation) to the circle $r_t$, then polar rings whose radii are graded and contain every interface, extraction circle and PML boundary exactly. The four singular nodes of the core (valence 3) have 135° corners. Laplacian smoothing moves them towards 120° but shrinks the nearby cells and *lowers* the time step (0.72 → 0.39 $c\Delta t/h$ at 300 sweeps), so it is off by default. The number of transition layers is chosen so that the layer thickness on the square's diagonal is about one core cell. For the Mie cylinder the core sits inside the dielectric ($r_t=0.9a$), where the wave is slower, so it does not limit $\Delta t$: $c\Delta t/h_\text{in}=0.68$–$0.71$ against the 2D Yee limit $0.95/\sqrt2=0.67$ of the Cartesian grid at the same $h_\text{in}$. In a vacuum core the core cells limit $\Delta t$ to about $0.4\,h/c$.
+
+The multi-block mesh adds a transition block from the outer polar circle to a square (straight-sided general cells) and a Cartesian frame of rectangles outside it, conforming node by node at the square.
+
+**Radial PML.** Complex coordinate stretching [Chew & Weedon, 1994] in polar coordinates, $\tilde r=r+\frac1{i\omega}\int_{r_0}^r\sigma\,dr'$, gives $s_r = 1+\sigma/(i\omega)$ along $r$ and $s_\varphi=\tilde r/r = 1+\bar\sigma/(i\omega)$, $\bar\sigma=\frac1r\int_{r_0}^r\sigma$, along $\varphi$ [Teixeira & Chew, 1997]. In FIT language stretching only rescales lengths, so on the diagonal (polar) cells of the layer a node mass gets the factor $s_r s_\varphi$ and an edge Hodge entry $s_\perp/s_\parallel$ ($s_\parallel$ along the edge). With $e^{+i\omega t}$ this gives local auxiliary updates: per PML edge $\dot h+\sigma_\parallel h = c_e(\dot b+\sigma_\perp b)$ (Crank–Nicolson), per PML node $M(\dot e + (\sigma_r+\bar\sigma)e + \sigma_r\bar\sigma\,\psi)=(\mathbf G^T\mathbf h)$ with $\dot\psi=e$. The Cartesian PML of the multi-block mesh is the same with $(s_x,s_y)$. Profile $\sigma=\sigma_\max\xi^3$, $\sigma_\max = 4c\ln(10^6)/(2d)$. PML edges must have diagonal Hodge rows (checked). Reflection of a point-source pulse against a large-domain reference: $2\times10^{-4}$ (10 cells of $\lambda/20$), $1.2\times10^{-5}$ (20 cells), $5\times10^{-5}$ (12 cells of $\lambda/12$, test); without the $s_\varphi$ factor (a Cartesian-style stretch on a curved layer) $6$–$7\times10^{-3}$.
+
+**Plane-wave source** (scattered field). The incident field enters only through the constitutive relation of non-background cells, $D_s = D-\varepsilon_0\varepsilon_bE_\text{inc}$. TM: the node update runs on the total field $e_s+E_\text{inc}$ at nodes touching the scatterer, with the source term $\varepsilon_0\varepsilon_bA_n\dot E_\text{inc}$. TE: every Hodge component $q$ in the scatterer computes $E_{\text{tot},q}$ from $D_{s,q}+\varepsilon_0\varepsilon_b\,\mathbf E_\text{inc}\cdot\hat{\mathbf n}_q$ at its quadrature point and contributes $E_{\text{tot},q}-\mathbf E_\text{inc}\cdot\hat{\mathbf n}_q$ to the voltages. Both forms hold unchanged for dispersive scatterers: the ADE simply acts on the total field.
+
+**Dispersive media.** Drude/Lorentz/Debye poles with the ADE coefficients of `wakis.dispersive`. TM: the node update `CapacitiveUpdate` with the exact dispersive fraction of each node area (as in `UnstructuredFIT2D`). TE: each Hodge component of a dispersive cell carries its own $E_q$ and polarization, $E_q^{n+1}=(D_q/\varepsilon_0-\sum p^{n+1})/\varepsilon_\infty$, and $\mathbf W$ for the stability estimate uses $\varepsilon_\infty$. Lorentz cylinder ($\varepsilon=4.05$–$6.73$, lossy, $x=2$–$10$): Q_sca RMS error 1.9 % / 0.9 % (TM, res 14/20) and 2.4 % / 1.1 % (TE) against the series with the same $\varepsilon(\omega)$.
+
+**Validation and cost** (`tests/test_046_curvilinear_nfit.py`, study `studies/mie-cylinder-nfit/`, one Batch run per n2-standard-2):
+
+| Case | Curvilinear FIT (O-grid) | Best baseline |
+| --- | --- | --- |
+| Rod ($\varepsilon_r=6$, $b=a/2$) in a PEC cavity, first 4 modes, TM/TE | RMS error $7.4\times10^{-4}$ / $9.1\times10^{-4}$ at $n_\theta=128$, $1.3\times10^{-4}$ / $1.5\times10^{-4}$ at 256 (orders 1.1 → 2.5, pre-asymptotic) | |
+| Empty square cavity on the multi-block mesh (O-grid + transition + Cartesian), TM | first 6 modes within 1 % at 708 cells | analytic |
+| Energy, 1500 steps, symmetric $\mathbf W$ / asymmetric mutant | drift $7\times10^{-16}$ / $>10^{-4}$ or blow-up | |
+| Radial PML, 10 cells of $\lambda/20$; 20 cells; no $s_\varphi$ | $2\times10^{-4}$; $1.2\times10^{-5}$; $6.3\times10^{-3}$ | |
+| B1 Mie cylinder $n=2$, x = 2–10, 1 % RMS Q_sca (3000 fs window), TM | 158k unknowns, $1.7\times10^{10}$ work, 319 s | graded triangles + PML: 244k, $3.3\times10^{10}$, 561 s; Cartesian graded conformal: 366k, $5.1\times10^{10}$, 1406 s |
+| same, TE | 176k, $2.0\times10^{10}$, 297 s | triangles: 215k, $2.7\times10^{10}$, 470 s; Cartesian: 307k, $3.9\times10^{10}$, 1138 s |
+| B2 Au nanocylinder TE (LSPR), 0.1 % Q_ext NRMS | 19.6k unknowns, $1.05\times10^{9}$ work, 31 s (radial $h/2$, outer $\le 2h$; tuned on B2) | uniform triangles: 88k, $2.6\times10^{9}$, 64–72 s |
+| B3 Au dimer, 5 % gap enhancement (9-point stencil) | 14k / 23k / 56k unknowns (g = 10/5/2 nm) | graded triangles: below 5 % from 6k / 7k / 35k |
+| Coated cylinder (20 nm, $n=3.5$ shell), 1 % RMS | TM 165k, TE 248k | triangles: TM 191k, TE 221k; Cartesian sub-cell: stalls at 1.1 % / 3.4 % |
+
+A structured body-fitted mesh wins where the geometry is radial: about 1.2–1.6× fewer unknowns and 1.3–1.9× less work than graded triangles on the dielectric cylinder, and 4.5× fewer unknowns with 2.5× less work than uniform triangles on the plasmonic cylinder. It loses where a feature needs local refinement in the angular direction (dimer gap: 3–8× worse than graded triangles), because refinement in a structured block runs along whole grid lines.
+
+![Curvilinear meshes](../studies/mie-cylinder-nfit/figures/a_meshes.png)
+![B1 cost to accuracy](../studies/mie-cylinder-nfit/figures/g_error_vs_cost_3000fs.png)
+
+**3D extension (not implemented).** Everything above carries over to curvilinear hexahedra: the topological curl and divergence of the structured block are unchanged; the edge and face Hodges are sums over the 8 corners of each hexahedron of $\mathbf r_q^T\mathbf r_q\,w_q/p_q$ with the field vector reconstructed from the 3 edges (or 3 faces) meeting at the corner (Schuhmann–Weiland's banded NFIT matrices, ~19 non-zeros per row); a hexahedron with orthogonal corners reduces to standard FIT. Directly relevant to Wakis's users: body-fitted O-grids of round beam pipes, tapers and elliptical cavity cells (accelerator cavities), where the staircase or cut-cell wall is the dominant wake-impedance error; extruding the 2D O-grid along $z$ (prisms of polar sectors and butterfly cores) gives a beam-pipe mesh whose $z$ lines stay orthogonal, so only the transverse Hodge is non-diagonal and a moving-window/wake solver needs no change in $z$. Open questions: the butterfly core on the beam axis (the beam passes through it; its 135° cells cost a factor ~2 in $\Delta t$ in vacuum unless the core is enlarged or the axis region uses smaller cells with local time stepping), conforming joins to the Cartesian Wakis grid (the multi-block construction above), and GPU kernels for the banded Hodge.
+
+**Limits & failure modes.**
+- *Geometry class.* An O-grid is natural for round (or smoothly star-shaped) bodies, coatings and concentric layers; clusters of round bodies need one box per body (B3 dimers: boxes must tile a rectangle, implemented for equal cylinders on a line). Corners, re-entrant shapes and arbitrary CAD need an unstructured mesher (triangles) or block decomposition by hand; there is no automatic multi-block mesher.
+- *Time step.* Cells shrink towards the core: a vacuum core limits $c\Delta t/h$ to about 0.4; Laplacian smoothing of the core makes it worse. Thin radial layers (a 20 nm shell, a 0.5 nm gap layer) reduce $\Delta t$ in proportion to their optical thickness. The azimuthal spacing grows with $r$ (fixed $n_\theta$), so a large outer O-grid is under-resolved azimuthally ($2.5\,h_\text{in}$ at $r = 2.5a$ in the baseline domain) — use a compact domain or the multi-block Cartesian outer block.
+- *Area bookkeeping.* A ring where exact arcs (polar cells) meet straight chords (core or transition cells) double-counts or misses the circular segments, $O((h/r)^2)$ relative (0.13 % of the cylinder area at $h=a/10$ in the dimer mesh). Second order is kept, but the constant can be lowered by giving those cells curved sides.
+- *Corner Hodge on skewed cells* is consistent (exact for uniform fields) but its error constant grows with skew; the rod-in-cavity convergence is pre-asymptotic (orders 1.1, 1.5, 2.5 from $n_\theta=32$ to 256).
+- *PML* only on diagonal-Hodge cells (polar rings or rectangles); the radial PML needs the $s_\varphi$ factor (without it the reflection is 100× larger). Evanescent fields are not absorbed (standard PML limit).
+- *Not implemented:* PEC objects with the plane-wave source, magnetic media with the plane wave, TE conductivity (use a Drude pole), local time stepping, GPU, adjoint (the update is linear with fixed sparse operators, so the transposed leapfrog applies as for `UnstructuredFIT2D`).
+
+References:
+- R. Holland, "Finite-difference solution of Maxwell's equations in generalized nonorthogonal coordinates", *IEEE Trans. Nucl. Sci.* **30**(6), 4589–4591 (1983).
+- R. Schuhmann and T. Weiland, "The nonorthogonal finite integration technique applied to 2D- and 3D-eigenvalue problems", *IEEE Trans. Magn.* **36**(4), 897–901 (2000).
+- S. J. Cooke, R. Shtokhamer, A. A. Mondelli and B. Levush, "A finite integration method for conformal, structured-grid, electromagnetic simulation", *J. Comput. Phys.* **215**, 321–347 (2006).
+- W. C. Chew and W. H. Weedon, "A 3D perfectly matched medium from modified Maxwell's equations with stretched coordinates", *Microw. Opt. Technol. Lett.* **7**(13), 599–604 (1994).
+- F. L. Teixeira and W. C. Chew, "Systematic derivation of anisotropic PML absorbing media in cylindrical and spherical coordinates", *IEEE Microw. Guided Wave Lett.* **7**(11), 371–373 (1997).
 
 ### Surface impedance boundary condition (SIBC)
 
