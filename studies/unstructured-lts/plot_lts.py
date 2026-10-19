@@ -41,12 +41,18 @@ def fig_partition():
     cls = np.zeros(mesh.n_nodes, int)  # 0 fixed/coarse
     cls[s.free[L.C]] = 1
     cls[s.free[L.F]] = 2
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.8), gridspec_kw=dict(width_ratios=[1.1, 1]))
+    fig, ax = plt.subplots(
+        1, 2, figsize=(11, 4.8), gridspec_kw=dict(width_ratios=[1.1, 1])
+    )
     xy = mesh.nodes * 1e6
     tri = mesh.cells
     q = (xy[tri].mean(1) > -0.05).all(1)
     ax[0].triplot(xy[:, 0], xy[:, 1], tri[q], lw=0.25, color="0.6")
-    names = ["coarse (dt)", "buffer: coarse, coupled to F", "fine F (2 substeps of dt/2)"]
+    names = [
+        "coarse (dt)",
+        "buffer: coarse, coupled to F",
+        "fine F (2 substeps of dt/2)",
+    ]
     cols = ["0.75", "C1", "C0"]
     for k in range(3):
         sel = (cls == k) & (xy > -0.05).all(1)
@@ -82,7 +88,9 @@ def fig_partition():
     ax[1].set_ylabel("local step limit / global limit (Gershgorin)")
     ax[1].set_ylim(0.8, 2.8)
     ax[1].legend(fontsize=8, loc="lower right", markerscale=4)
-    ax[1].set_title("(b) node-local CFL estimate: only the vacuum band is fine", fontsize=9)
+    ax[1].set_title(
+        "(b) node-local CFL estimate: only the vacuum band is fine", fontsize=9
+    )
     fig.tight_layout()
     fig.savefig(FIG / "a_partition.png", dpi=160)
 
@@ -111,7 +119,9 @@ def fig_energy():
     ax[0].legend(fontsize=7)
     ax[1].set_xlabel("time [µs]")
     ax[1].set_ylabel("physical energy ½uᵀMu + ½vᵀSv, relative")
-    ax[1].set_title("(b) ν = 0 is marginal (ρ = 1): field energy beats up to ~300×", fontsize=9)
+    ax[1].set_title(
+        "(b) ν = 0 is marginal (ρ = 1): field energy beats up to ~300×", fontsize=9
+    )
     ax[1].legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(FIG / "b_energy.png", dpi=160)
@@ -129,8 +139,19 @@ def fig_speedup(runs):
                 err = [rms(runs[k]) for k in ks]
                 tt = [runs[k]["run_s"] for k in ks]
                 lab = f"{pol} {arm} {mode}"
-                ax[0].loglog(dofs, err, LS[arm], marker=mk, color=COL[mode], ms=4, lw=1, label=lab)
-                ax[1].loglog(tt, err, LS[arm], marker=mk, color=COL[mode], ms=4, lw=1, label=lab)
+                ax[0].loglog(
+                    dofs,
+                    err,
+                    LS[arm],
+                    marker=mk,
+                    color=COL[mode],
+                    ms=4,
+                    lw=1,
+                    label=lab,
+                )
+                ax[1].loglog(
+                    tt, err, LS[arm], marker=mk, color=COL[mode], ms=4, lw=1, label=lab
+                )
             ks = sorted(k for k in runs if k[:2] == (arm, pol) and k[3] == "lts")
             sp, sps, res = [], [], []
             for k in ks:
@@ -139,7 +160,9 @@ def fig_speedup(runs):
                     res.append(k[2])
                     sp.append(g["run_s"] / runs[k]["run_s"])
                     sps.append(g["step_s"] / runs[k]["step_s"])
-            ax[2].plot(res, sp, LS[arm], marker=mk, color="C3", lw=1, label=f"{pol} {arm}: run")
+            ax[2].plot(
+                res, sp, LS[arm], marker=mk, color="C3", lw=1, label=f"{pol} {arm}: run"
+            )
             ax[2].plot(res, sps, LS[arm], marker=mk, color="C0", lw=1, mfc="none",
                        label=f"{pol} {arm}: field update only")  # fmt: skip
     ax[0].set_xlabel("field unknowns (nodes + edges)")
@@ -192,7 +215,10 @@ def summary(runs):
     for pol in ("TM", "TE"):
         for arm in LS:
             for res in (10, 14, 20, 28, 40):
-                g, s = runs.get((arm, pol, res, "global")), runs.get((arm, pol, res, "lts"))
+                g, s = (
+                    runs.get((arm, pol, res, "global")),
+                    runs.get((arm, pol, res, "lts")),
+                )
                 if not (g and s):
                     continue
                 lines.append(

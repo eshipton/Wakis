@@ -112,6 +112,7 @@ class TestOperator:
 
 
 class TestEnergy:
+    @pytest.mark.slow
     @pytest.mark.parametrize("pol", ["TM", "TE"])
     def test_conserved_1e5_steps(self, mesh08, pol):
         drift, growth = run_energy(solver(mesh08, pol), 100_000)
@@ -123,6 +124,7 @@ class TestEnergy:
         drift, _ = run_energy(solver(mesh08, "TM"), 20_000, mutate)
         assert drift > 1e-4
 
+    @pytest.mark.slow
     def test_unstabilized_is_marginal(self, mesh08):
         s = solver(mesh08, "TM", nu=0.0, rho_max=1.0)
         assert s.courant > 0.999
@@ -144,6 +146,7 @@ def k_modes(s, use_lts, semi=False, k=4):
 
 
 class TestEigenfrequency:
+    @pytest.mark.slow
     @pytest.mark.parametrize("pol", ["TM", "TE"])
     def test_second_order_like_global(self, pol):
         ref = analytic.rod_in_cavity(A_CAV, B_ROD, EPS, pol, 1)[0]
