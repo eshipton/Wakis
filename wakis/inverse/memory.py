@@ -92,7 +92,8 @@ def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=256):
     Choose the snapshot slots and block length that minimize recomputation
     within a memory budget.
 
-    Memory: slots x state_bytes + block x row_bytes (+ one row). Recompute:
+    Memory: slots x state_bytes + (block + 3) x row_bytes (row 0 and the
+    two working rows of a recording step). Recompute:
     ``revolve_cost(n_blocks - 1, slots) * block`` forward steps at most
     (the last block is recorded during the forward run).
 
@@ -107,7 +108,7 @@ def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=256):
                     recompute_steps=0)  # fmt: skip
     best = None
     for s in range(1, max_slots + 1):
-        free = budget_bytes - s * state_bytes - row_bytes
+        free = budget_bytes - s * state_bytes - 3 * row_bytes
         max_block = min(int(free // row_bytes) if row_bytes else Nt, Nt - 1)
         if max_block < 1:
             break
@@ -124,7 +125,7 @@ def plan_checkpoints(Nt, state_bytes, row_bytes, budget_bytes, max_slots=256):
         for block in blocks:
             n_blocks = -(-(Nt - 1) // block)
             cost = revolve_cost(n_blocks - 1, s) * block if n_blocks > 1 else 0
-            mem = s * state_bytes + (block + 1) * row_bytes
+            mem = s * state_bytes + (block + 3) * row_bytes
             key = (cost, mem)
             if best is None or key < best[0]:
                 best = (key, s, block, mem, cost)
@@ -222,7 +223,11 @@ class SolverState:
         if "J_old" in snap:
             s.J_old = snap["J_old"].copy()
         for name in self.psi:
-            setattr(s, name, snap[name].copy())
+            cur = getattr(s, name)
+            if getattr(cur, "shape", None) == snap[name].shape:
+                cur[...] = snap[name]
+            else:
+                setattr(s, name, snap[name].copy())
         for g, (lorentz, debye) in zip(
             getattr(s, "_dispersive_groups", []), snap["groups"]
         ):
@@ -268,6 +273,40 @@ class _Rung:
     def stats(self):
         return {"mode": self.name, "peak_bytes": int(self.peak_bytes),
                 "recompute_steps": int(self.recompute_steps)}  # fmt: skip
+
+
+class NullRung(_Rung):
+    """Objective-only forward run: nothing recorded (`forward(record=False)`)."""
+
+    name = "none"
+    peak_bytes = 0
+    recompute_steps = 0
+
+    def reader(self):
+        raise RuntimeError("forward(record=False) kept nothing for a gradient.")
+
+
+def available_host_bytes():
+    """Available host memory [bytes], portably (psutil, sysconf, sysctl)."""
+    try:
+        import psutil
+
+        return float(psutil.virtual_memory().available)
+    except ImportError:
+        pass
+    import os
+
+    try:
+        return float(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (ValueError, OSError, AttributeError):
+        pass
+    try:  # macOS: no SC_AVPHYS_PAGES; half the physical memory as available
+        import subprocess
+
+        total = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]))
+        return 0.5 * total
+    except Exception:
+        return 4e9  # conservative default
 
 
 class StoreRung(_Rung):
@@ -347,7 +386,8 @@ class CheckpointRung(_Rung):
     def _account(self, extra=0):
         rows = (0 if self.tail is None else len(self.tail)) + extra
         row_bytes = getattr(self, "_row_bytes", 0)
-        total = len(self.snaps) * self._snap_bytes + (rows + 1) * row_bytes
+        # + row 0 and the two working rows of a recording step (E^n, increment)
+        total = len(self.snaps) * self._snap_bytes + (rows + 3) * row_bytes
         self.peak_bytes = max(self.peak_bytes, total)
 
     # forward hooks
@@ -550,7 +590,13 @@ class ReverseRung(_Rung):
             from cupyx.scipy.sparse import csr_matrix as gcsr
 
             A, B = gcsr(A), gcsr(B)
+            for m in (A, B):  # canonical once: else every matvec copies m
+                m.sum_duplicates()
         self.A, self.B = A, B
+        # The interior operators are held by the rung for the whole run
+        self._op_bytes = sum(
+            int(m.data.nbytes + m.indices.nbytes + m.indptr.nbytes) for m in (A, B)
+        )
         self.I = xp.asarray(I)
         self.g_H, self.g_E = xp.asarray(g_H), xp.asarray(g_E)
         self.n3 = n3
@@ -586,7 +632,7 @@ class ReverseRung(_Rung):
         sizes = {"H_layer": self.g_H.size, "E_layer": self.g_E.size,
                  "J": sup["J"].size, "M": sup["M"].size, "Hc": sup["Hc"].size}  # fmt: skip
         self.rec = {k: xp.zeros((Nt, n), dtype=dtype) for k, n in sizes.items()}
-        self.peak_bytes = sum(r.nbytes for r in self.rec.values())
+        self.peak_bytes = sum(r.nbytes for r in self.rec.values()) + self._op_bytes
 
     def before_step(self, n):
         if n == 0:

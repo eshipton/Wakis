@@ -51,8 +51,8 @@ def jax_simulation(sim):
     }
     rho_shape = sim.design.shape
 
-    def _forward(rho):
-        result = sim.forward(np.asarray(rho, dtype=float))
+    def _forward(rho, record=True):
+        result = sim.forward(np.asarray(rho, dtype=float), record=record)
         return {
             name: {comp: np.asarray(v, dtype=cdtype) for comp, v in comps.items()}
             for name, comps in result.items()
@@ -60,7 +60,11 @@ def jax_simulation(sim):
 
     def _vjp(rho, cotangents):
         rho = np.asarray(rho, dtype=float)
-        if sim.rho is None or not np.array_equal(sim.rho, rho):
+        if (
+            sim.rho is None
+            or not np.array_equal(sim.rho, rho)
+            or not getattr(sim, "_recorded", True)
+        ):
             sim.forward(rho)
         # JAX cotangents of complex outputs are conj(dF/dRe + 1j dF/dIm)
         G = {
@@ -71,10 +75,12 @@ def jax_simulation(sim):
 
     @jax.custom_vjp
     def simulate(rho):
-        return jax.pure_callback(_forward, out_spec, rho)
+        # Primal evaluation without a gradient: record nothing
+        return jax.pure_callback(lambda r: _forward(r, record=False), out_spec, rho)
 
     def simulate_fwd(rho):
-        return simulate(rho), rho
+        # Forward pass of reverse mode: keep what `vjp` needs
+        return jax.pure_callback(_forward, out_spec, rho), rho
 
     def simulate_bwd(rho, cotangents):
         spec = jax.ShapeDtypeStruct(rho_shape, jnp.result_type(float))

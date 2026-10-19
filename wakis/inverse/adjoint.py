@@ -870,9 +870,13 @@ class AdjointSimulation:
         free, _ = solver.E.xp.cuda.Device().mem_info
         return nbytes > free / 2
 
-    def forward(self, rho):
+    def forward(self, rho, record=True):
         """
         Run the simulation for density rho.
+
+        With ``record=False`` nothing is kept for a gradient (no design rows,
+        snapshots or interface records): use it for objective-only
+        evaluations; `vjp` then raises until a recording forward run.
 
         The time loop is that of `SolverFIT3D.emsolve`: source and element
         updates, `one_step`, element `post_step`, monitor updates.
@@ -908,7 +912,7 @@ class AdjointSimulation:
         net = self.design.network_of(solver)
         if net is not None:
             return self._forward_network(
-                rho, solver, net, sources, monitors, elements, comm
+                rho, solver, net, sources, monitors, elements, comm, record
             )
         self._tensor = self._tensor_tracking(solver, disp)
         idx = xp.asarray(
@@ -949,10 +953,21 @@ class AdjointSimulation:
                 monitor.update(solver, t)
             return row
 
-        rung = self._make_rung(
-            solver, sources, advance, (idx.size,), store, idx, ieps_d, disp
+        if record:
+            rung = self._make_rung(
+                solver, sources, advance, (idx.size,), store, idx, ieps_d, disp
+            )
+        else:
+            rung = mem.NullRung()
+        fused_plain = getattr(solver, "fused", False) and disp is None and (
+            self._tensor is None
         )
-        if self._fused_store(solver, rung, disp):
+        if fused_plain and not record:
+            # Objective only: the CUDA-graph loop without any recording
+            self._fused_forward(solver, sources, monitors, elements, idx, None)
+            rung.finish()
+            self.memory_stats = rung.stats()
+        elif self._fused_store(solver, rung, disp):
             # Fused GPU solver, all rows stored on the device: record them in
             # the CUDA-graph time loop (wakis.gpu_fused)
             self._fused_forward(solver, sources, monitors, elements, idx, rung.rows)
@@ -965,6 +980,7 @@ class AdjointSimulation:
         self._solver, self._monitors, self._elements = solver, monitors, elements
         self._increments = increments
         self._rung = rung
+        self._recorded = bool(record)
         self.rho = rho
         raw = {name: readouts.outputs(m) for name, m in monitors.items()}
         if comm is not None:
@@ -979,10 +995,12 @@ class AdjointSimulation:
         """
         from ..gpu_fused import FusedLoop, idx32, launch, rname, tname
 
+        rec = increments is not None  # False: objective-only run
         idx_d = idx32(idx)
         ieps_d = solver.ieps.array[idx_d].astype(np.float64)
-        e_old = solver.E.xp.empty(idx_d.size, dtype=solver.E.array.dtype)
-        T, R = tname(solver.E.array.dtype), rname(increments.dtype)
+        e_old = solver.E.xp.empty(idx_d.size if rec else 0, dtype=solver.E.array.dtype)
+        T = tname(solver.E.array.dtype)
+        R = rname(increments.dtype) if rec else None
         m = np.int32(idx_d.size)
         mons = list(monitors.values())
         graph = self.use_graphs and FusedLoop.supported(solver, sources, mons, elements)
@@ -990,17 +1008,20 @@ class AdjointSimulation:
             if graph and n == 1:
                 # Steps 1 .. Nt-1 as CUDA graph replays (step 0 initialized all)
                 loop = FusedLoop(solver, sources, mons, self.Nt,
-                                 record=(idx_d, ieps_d, e_old, increments))  # fmt: skip
+                                 record=(idx_d, ieps_d, e_old, increments)
+                                 if rec else None)  # fmt: skip
                 loop.run(1, self.Nt)
                 loop.close()
                 break
             t = n * solver.dt
             for src in sources:
                 src.update(solver, t)
-            launch(f"gather<{T}>", m, m, idx_d, solver.E.array, e_old)
+            if rec:
+                launch(f"gather<{T}>", m, m, idx_d, solver.E.array, e_old)
             solver.one_step()
-            launch(f"record_row<{T},{R}>", m, m, idx_d, solver.E.array, e_old,
-                   ieps_d, increments, None, np.int64(0), np.int64(n))  # fmt: skip
+            if rec:
+                launch(f"record_row<{T},{R}>", m, m, idx_d, solver.E.array, e_old,
+                       ieps_d, increments, None, np.int64(0), np.int64(n))  # fmt: skip
             for el in elements:
                 el.post_step(solver, t)
             for monitor in mons:
@@ -1012,15 +1033,7 @@ class AdjointSimulation:
         if solver.use_gpu:
             free, _ = solver.E.xp.cuda.Device().mem_info
             return free / 2
-        try:
-            import psutil
-
-            return 0.25 * psutil.virtual_memory().available
-        except ImportError:  # pragma: no cover
-            import os
-
-            pages = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-            return 0.25 * pages
+        return 0.25 * mem.available_host_bytes()
 
     def _make_rung(self, solver, sources, advance, row_shape, dtype, idx, ieps_d,
                    disp):  # fmt: skip
@@ -1030,6 +1043,10 @@ class AdjointSimulation:
         xp = solver.E.xp
         mode = self.memory
         row_bytes = int(np.prod(row_shape)) * np.dtype(dtype).itemsize
+        # Rows held by the checkpoint rung (snapshot replays) keep the full
+        # precision of the step (float64 / complex128), whatever store_dtype
+        exact = np.result_type(solver.E.array.dtype, np.float64)
+        exact_row_bytes = int(np.prod(row_shape)) * np.dtype(exact).itemsize
         if mode == "reverse":
             reason = None
             if idx is None:
@@ -1054,9 +1071,14 @@ class AdjointSimulation:
             budget = self._budget_bytes(solver)
             if mode == "checkpoint":
                 # Explicit checkpointing: at most a quarter of the stored rows
-                budget = min(budget, 0.25 * self.Nt * row_bytes)
+                budget = min(budget, 0.25 * self.Nt * exact_row_bytes)
             try:
-                plan = mem.plan_checkpoints(self.Nt, state_bytes, row_bytes, budget)
+                if mode == "auto" and self.Nt * row_bytes <= budget:
+                    plan = dict(mode="store")  # stored rows (store_dtype) fit
+                else:
+                    plan = mem.plan_checkpoints(
+                        self.Nt, state_bytes, exact_row_bytes, budget
+                    )
             except MemoryError:
                 if mode == "auto":
                     raise
@@ -1073,6 +1095,10 @@ class AdjointSimulation:
         if block is None:
             n_blocks = mem.beta(slots, 2)
             block = max(1, -(-(self.Nt - 1) // n_blocks))
+            # ... but never more rows than the memory budget holds
+            state = 2 * solver.E.array.nbytes + solver.J.array.nbytes
+            fit = (self._budget_bytes(solver) - slots * state) // exact_row_bytes
+            block = int(max(1, min(block, fit)))
         return mem.CheckpointRung(self.Nt, slots, block, advance, io, dtype, xp,
                                   verify=getattr(self, "verify_replay", False))  # fmt: skip
 
@@ -1100,7 +1126,8 @@ class AdjointSimulation:
         rung.finish()
         self.memory_stats = rung.stats()
 
-    def _forward_network(self, rho, solver, net, sources, monitors, elements, comm):
+    def _forward_network(self, rho, solver, net, sources, monitors, elements, comm,
+                         record_rows=True):  # fmt: skip
         """
         Time loop for a dispersive tensor design (`MaterialGrid` with
         `material` and ``smoothing='tensor'``): records, per step, the terms
@@ -1125,10 +1152,14 @@ class AdjointSimulation:
                 monitor.update(solver, t)
             return row
 
-        rung = self._make_rung(
-            solver, sources, advance, (5, net.n_caps), np.float64, None, None, None
-        )
+        if record_rows:
+            rung = self._make_rung(
+                solver, sources, advance, (5, net.n_caps), np.float64, None, None, None
+            )
+        else:
+            rung = mem.NullRung()
         self._run_forward(rung, advance, monitors)
+        self._recorded = bool(record_rows)
         self._rung = rung
         net.record = False
         self._check_overlaps(solver, elements, monitors)
@@ -1347,6 +1378,8 @@ class AdjointSimulation:
         """
         if self.rho is None:
             raise RuntimeError("Call forward before vjp.")
+        if not getattr(self, "_recorded", True):
+            raise RuntimeError("The last forward ran with record=False; rerun it.")
         solver = self._solver
         comm = self._comm(solver)
         stepper = AdjointStepper(solver, self._elements)
