@@ -12,13 +12,14 @@ import re
 import sys
 
 import matplotlib
+import matplotlib.ticker
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analytic_box import box_modes, loss_factor, wake_potential  # noqa: E402
+from analytic_box import box_modes, long_range_wake, loss_factor  # noqa: E402
 
 LAB = {"tete0.99": "TE/TM (c dt = dz)", "yee0.99": "Yee, cfln 0.99",
        "yee0.5": "Yee, cfln 0.5 (Wakis default)"}  # fmt: skip
@@ -67,8 +68,11 @@ def pipe_figure(runs, summary):
                 ax[1].loglog(L, np.maximum(k, 1e-14), mk + ls, color=COL[sch], ms=4)
     for a_, t in zip(ax, ("max |W(s)| [V/pC]", "|loss factor| [V/pC]")):
         a_.set(xlabel="pipe length L [m]", ylabel=t)
+        a_.set_xticks([0.05, 0.1, 0.2, 0.4, 0.8])
+        a_.set_xticklabels(["0.05", "0.1", "0.2", "0.4", "0.8"])
+        a_.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         a_.grid(True, which="both", alpha=0.3)
-    ax[0].set_title("Smooth PEC pipe: spurious wake (exact: 0)")
+    ax[0].set_title("Smooth PEC pipe: spurious wake (exact: 0)\n" + r"$\Delta z$ = 0.4 mm, $\Delta x=\Delta y$ = 0.8 mm")
     ax[1].set_title("Spurious loss factor")
     ax[0].legend(fontsize=6.5, loc="center right")
     fig.tight_layout()
@@ -84,6 +88,9 @@ def box_figure(runs, summary):
     for sig, mk in zip(sigmas, "o^s"):
         om, kn = box_modes(a, a, d, a / 2, a / 2, sig)
         k_ref = loss_factor(om, kn, sig) * 1e-12
+        # analytic long-range wake on a fine grid (ds = sigma/40), interpolated
+        s_fine = np.arange(5 * sig, 0.31, sig / 40)
+        W_fine = long_range_wake(s_fine, om, kn, sig) * 1e-12
         out[f"s{sig}"] = {"k_analytic": k_ref}
         for sch in LAB:
             rs = [r for n, r in runs.items() if n.startswith("box_")
@@ -101,7 +108,7 @@ def box_figure(runs, summary):
                 s = np.asarray(r["s"])
                 W = -np.asarray(r["WP_interp"])
                 m = (s > 5 * sig) & (s < s.max() - 0.01)
-                Wa = wake_potential(s[m], om, kn, sig) * 1e-12
+                Wa = np.interp(s[m], s_fine, W_fine)
                 werr.append(float(np.sqrt(np.mean((W[m] - Wa) ** 2))
                                   / np.sqrt(np.mean(Wa**2))))  # fmt: skip
             wk = [work(r) for r in rs]

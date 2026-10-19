@@ -1,0 +1,2 @@
+{"scheme": "yee", "shape": [64, 64, 256], "cells": 1048576, "gpu": false, "cpml": false, "dt": 2.6963040381704085e-12, "t_step": 0.06728460550039017, "t_step_min": 0.06518311500258278}
+{"scheme": "tete", "shape": [64, 64, 256], "cells": 1048576, "gpu": false, "cpml": false, "dt": 3.335640951981431e-12, "t_step": 0.11714928949913883, "t_step_min": 0.11594638400129043}

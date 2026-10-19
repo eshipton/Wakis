@@ -78,6 +78,22 @@ def box_modes(a, b, d, x0, y0, sigma, n_sigma=9.0):
     return k * c_light, kn
 
 
+def long_range_wake(s, omega, kn, sigma, chunk=2048):
+    """
+    W(s) for s >= 5 sigma [V/C]: sum 2 k_n cos(k s) exp(-k^2 sigma^2/2).
+
+    The Faddeeva term of `wake_potential` is below exp(-s^2/2sigma^2)
+    <= 4e-6 of the peak there.
+    """
+    s = np.asarray(s, float)
+    W = np.zeros_like(s)
+    k_all = omega / c_light
+    amp = 2 * kn * np.exp(-0.5 * (k_all * sigma) ** 2)
+    for i in range(0, k_all.size, chunk):
+        W += amp[i : i + chunk] @ np.cos(np.outer(k_all[i : i + chunk], s))
+    return W
+
+
 def loss_factor(omega, kn, sigma):
     """k_loss = sum k_n exp(-(w sigma/c)^2) [V/C]."""
     return float(np.sum(kn * np.exp(-((omega * sigma / c_light) ** 2))))
