@@ -40,6 +40,10 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 
 __all__ = [
+    "SIM_LABEL",
+    "THEORY_LABEL",
+    "MESH_STYLES",
+    "plot_sim_vs_theory",
     "setup_rendering",
     "box_bounds",
     "cpml_inner_bounds",
@@ -59,6 +63,36 @@ __all__ = [
 LENGTH_UNITS = {"m": 1.0, "mm": 1e-3, "um": 1e-6, "nm": 1e-9}
 _UNIT_LABEL = {"m": "m", "mm": "mm", "um": "µm", "nm": "nm"}
 _AXES = "xyz"
+
+# Shared figure conventions (tutorials and studies): simulation = markers
+# (no line), theory/reference = lines (no markers), with these legend words
+SIM_LABEL = "Wakis (FIT)"
+THEORY_LABEL = "exact series"
+# Mesh / material-model colours and markers (Okabe-Ito, colour-blind safe)
+MESH_STYLES = {
+    "staircase": dict(color="#D55E00", marker="o", label="Cartesian, staircase"),
+    "all": dict(color="#0072B2", marker="s", label="Cartesian, conformal ('all')"),
+    "tensor": dict(color="#009E73", marker="^", label="Cartesian, tensor averaging"),
+    "triangles": dict(
+        color="#CC79A7", marker="D", label="triangles (unstructured FIT)"
+    ),
+}
+
+
+def plot_sim_vs_theory(ax, x_sim, y_sim, x_theory, y_theory, sim_label=None,
+                       theory_label=THEORY_LABEL, color="#D55E00", marker="o",
+                       ms=3.5, theory_color="k"):  # fmt: skip
+    """
+    Plot a simulated curve (markers only) over a theory curve (line only)
+    with unambiguous legend entries; returns the two artists.
+    """
+    th = ax.plot(
+        x_theory, y_theory, "-", color=theory_color, lw=1.1, label=theory_label
+    )
+    sim = ax.plot(x_sim, y_sim, ls="none", marker=marker, ms=ms, color=color,
+                  label=sim_label or SIM_LABEL)  # fmt: skip
+    return sim[0], th[0]
+
 
 # Colours of the standard tutorial boxes (colour-blind safe, Okabe-Ito)
 BOX_STYLES = {

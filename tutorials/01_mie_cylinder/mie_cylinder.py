@@ -66,14 +66,15 @@
 # 3. Geometry: a 2D problem in a 3D solver
 # 4. The mesh the solver sees: staircase versus conformal
 # 5. Preflight: estimate memory and run time
-# 6. Check the source: an empty TF/SF box
-# 7. Run both polarizations
+# 6. Sources, monitors and the per-length normalization
+# 7. Check the source (empty box), then run both polarizations
 # 8. Fields: total inside, scattered outside
 # 9. $Q_\mathrm{sca}(x)$ versus the exact series
 # 10. Convergence: staircase versus conformal at equal cells per wavelength
-# 11. Limits and failure modes
-# 12. Exercises
-# 13. References
+# 11. Triangular mesh: FIT beyond the Cartesian grid
+# 12. Limits and failure modes
+# 13. Exercises
+# 14. References
 
 # %% [markdown]
 # ## 0. Set-up
@@ -276,16 +277,17 @@ x_plot = np.geomspace(0.05, 12, 1500)
 fig, ax = plt.subplots(figsize=(6.6, 3.8))
 for pol, col in (("TM", "#D55E00"), ("TE", "#0072B2")):
     q_sca = cylinder_efficiencies(N_CYL, x_plot, pol)[1]
-    ax.loglog(x_plot, q_sca, color=col, lw=1.4, label=f"{pol} series")
+    ax.loglog(x_plot, q_sca, color=col, lw=1.4, label=f"{pol}: exact series")
     ax.loglog(x_plot, cylinder_rayleigh_efficiencies(N_CYL, x_plot, pol), "--",
-              color=col, lw=0.9, label=f"{pol} thin-cylinder limit")  # fmt: skip
-ax.axvspan(X_MIN, X_MAX, color="#E69F00", alpha=0.2, label="simulated band")
-ax.axhline(2, color="0.6", lw=0.8, ls=":")
+              color=col, lw=0.9, label=f"{pol}: thin-cylinder limit")  # fmt: skip
+ax.axvspan(X_MIN, X_MAX, color="#E69F00", alpha=0.2,
+           label="band covered by the simulation pulse")  # fmt: skip
+ax.axhline(2, color="0.5", lw=0.9, ls=":", label=r"large-cylinder limit, $Q \to 2$")
 ax.set(
     xlabel=r"size parameter $x = 2\pi a/\lambda$",
     ylabel=r"$Q_\mathrm{sca} = C_\mathrm{sca}/2a$",
     ylim=(1e-5, 10),
-    title=f"Infinite cylinder, n = {N_CYL:g}, normal incidence",
+    title=f"Analytic theory only (no simulation): cylinder, n = {N_CYL:g}",
 )
 ax.legend(fontsize=8, loc="lower right")
 savefig(fig, "cylinder_theory.png")
@@ -678,7 +680,7 @@ if problems:
     raise MemoryError("; ".join(problems))
 
 # %% [markdown]
-# ## 6. Run: sources, monitors and the per-length normalization
+# ## 6. Sources, monitors and the per-length normalization
 #
 # * **Time signal**: `GaussianSource` centred at $x = 6$, spectral width
 #   covering $x = 2\dots10$ (vacuum wavelengths 3.1 to 0.63 µm).
@@ -793,6 +795,8 @@ if ARGS.arm:  # study mode: one run, JSON out, no figures
     sys.exit(0)
 
 # %% [markdown]
+# ## 7. Check the source, then run both polarizations
+#
 # **First, check the source in an empty domain.** With no cylinder, the flux
 # out of the scattered-field box must vanish: anything left is leakage of
 # the incident wave, normalized here by the incident power through one face.
@@ -854,6 +858,11 @@ for r, pol in enumerate(("TM", "TE")):
         wv.plot_field_slice(f, co, kind="log", ax=axes[2 * r + 1, j], boxes=boxes,
                             axis="z", surface=((0, 0, 0), A_CYL), log_floor=1e-3,
                             title=f"{pol}: log$_{{10}}$|{lab}|, x = {xs:g}")  # fmt: skip
+fig.suptitle(
+    f"{wv.SIM_LABEL} simulation ({CONFORMAL}, {RESOLUTION:g} cells/µm): "
+    "total field inside the orange TF/SF box, scattered field outside",
+    y=1.0,
+)
 fig.tight_layout()
 savefig(fig, "fields_xy.png")
 plt.show()
@@ -879,8 +888,9 @@ fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
 for ax, img, pol in zip(axes, pngs, ("TM", "TE")):
     ax.imshow(img)
     ax.axis("off")
-    ax.set_title(f"{pol}, x = {X_SNAP[1]:g}")
+    ax.set_title(f"{wv.SIM_LABEL} simulation, {pol}, x = {X_SNAP[1]:g}")
 fig.tight_layout()
+savefig(fig, "fields_pyvista.png")
 plt.show()
 
 # %% [markdown]
@@ -907,9 +917,15 @@ if "movie" in runs["TM"]:
 # %% [markdown]
 # ## 9. $Q_\mathrm{sca}(x)$ versus the exact series
 #
-# Simulated $Q_\mathrm{sca}$ for both polarizations against the series, the
-# difference, and $Q_\mathrm{abs}$ from the inner box (zero for a lossless
-# cylinder, up to discretization error).
+# Simulated $Q_\mathrm{sca}$ (markers) for both polarizations against the
+# series (line), their difference, and $Q_\mathrm{abs}$ from the inner box.
+# For a lossless cylinder $Q_\mathrm{abs}$ must vanish; what is left is the
+# discretization error of the flux integral (H is averaged from two dual
+# planes onto the E plane), which is largest at the sharp resonances where
+# the near field is strongest, and falls with resolution (section 10).
+# The 20 cells/µm quick run is deliberately under-resolved at the short-
+# wavelength end: about 6 cells per wavelength inside the cylinder at
+# $x = 10$, so the resonances there are shifted.
 
 # %%
 x_fine = np.linspace(X_MIN, X_MAX, 1200)
@@ -919,21 +935,24 @@ for k, (pol, col) in enumerate((("TM", "#D55E00"), ("TE", "#0072B2"))):
     run = runs[pol]
     q_ref = cylinder_efficiencies(N_CYL, X_SIM, pol)[1]
     ax, ax2 = axes[0, k], axes[1, k]
-    ax.plot(x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1], "k", lw=1.1,
-            label="exact series")  # fmt: skip
-    ax.plot(X_SIM, run["q_sca"], "o", ms=3.5, color=col,
-            label=f"Wakis ({CONFORMAL}, {RESOLUTION:g} cells/µm)")  # fmt: skip
-    ax.plot(X_SIM, run["q_abs"], "s", ms=2.5, color="0.4",
-            label=r"$Q_\mathrm{abs}$ (should be 0)")  # fmt: skip
+    wv.plot_sim_vs_theory(
+        ax, X_SIM, run["q_sca"], x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1],
+        sim_label=f"{wv.SIM_LABEL}: $Q_\\mathrm{{sca}}$ ({CONFORMAL}, "
+                  f"{RESOLUTION:g} cells/µm)",
+        theory_label=f"{wv.THEORY_LABEL}: $Q_\\mathrm{{sca}}$", color=col,
+    )  # fmt: skip
+    ax.plot(X_SIM, run["q_abs"], ls="none", marker="s", ms=2.5, color="0.4",
+            label=f"{wv.SIM_LABEL}: " + r"$Q_\mathrm{abs}$ (exact: 0)")  # fmt: skip
     ax.set(
         ylabel=r"$Q_\mathrm{sca}$",
         title=f"{pol}: E {'along' if pol == 'TM' else 'across'} the axis",
     )
     ax.legend(fontsize=8)
-    ax2.plot(X_SIM, run["q_sca"] - q_ref, color=col)
+    ax2.plot(X_SIM, run["q_sca"] - q_ref, ls="none", marker="o", ms=2.5, color=col)
     ax2.axhline(0, color="k", lw=0.6)
     ax2.set(
-        xlabel=r"size parameter $x = 2\pi a/\lambda$", ylabel=r"$\Delta Q_\mathrm{sca}$"
+        xlabel=r"size parameter $x = 2\pi a/\lambda$",
+        ylabel=r"$\Delta Q_\mathrm{sca}$ (Wakis $-$ series)",
     )
 fig.tight_layout()
 savefig(fig, "qsca_vs_series.png")
@@ -976,10 +995,8 @@ def load_convergence():
 
 study = load_convergence()
 if study:
-    styles = {"staircase": ("o-", "#D55E00"), "all": ("s-", "#0072B2"),
-              "tensor": ("^--", "#009E73")}  # fmt: skip
-    names = {"staircase": "staircase", "all": "conformal ('all')",
-             "tensor": "tensor"}  # fmt: skip
+    styles = {m: (st["marker"] + "-", st["color"]) for m, st in wv.MESH_STYLES.items()}
+    names = {m: f"{wv.SIM_LABEL}, {st['label']}" for m, st in wv.MESH_STYLES.items()}
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.4), sharey=True)
     for ax, pol in zip(axes, ("TM", "TE")):
         for model, (mk, col) in styles.items():
@@ -993,7 +1010,7 @@ if study:
         cpw = np.array([3.0, 50.0])
         for order, ls in ((1, ":"), (2, "-.")):
             ax.loglog(cpw, 0.5 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
-                      label=f"order {order}")  # fmt: skip
+                      label=f"guide: order {order}")  # fmt: skip
         ax.set(title=pol, xlabel=r"cells per wavelength in the cylinder at $x = 10$")
         ax.grid(True, which="both", alpha=0.3)
     axes[0].set_ylabel(r"relative RMS error of $Q_\mathrm{sca}$, $x = 2\dots10$")
@@ -1004,7 +1021,34 @@ if study:
     print("machine:", study.get("machine", ""))
 
 # %% [markdown]
-# ## 11. Limits and failure modes
+# ## 11. Triangular mesh: FIT beyond the Cartesian grid
+#
+# FIT is not tied to a Cartesian grid: the same integral form of Maxwell's
+# equations (circulations on primary edges, fluxes through dual faces) works
+# on any primal-dual mesh pair. On a triangular (Delaunay) mesh with its
+# Voronoi dual, the mesh can follow the circle exactly, with nodes on the
+# interface, so there is no staircase and no averaging model at all
+# (`wakis.unstructured`). The companion study `studies/mie-cylinder-mesh/`
+# solves the same $n = 2$, $a = 1$ µm cylinder with triangle FIT and compares
+# it with the Cartesian staircase and conformal grids of section 10 at equal
+# cells per wavelength. Its summary is loaded below when present.
+
+
+# %%
+def load_mesh_study():
+    root = HERE.parents[0].parent / "studies" / "mie-cylinder-mesh"
+    for name in ("summary.json", "results.json"):
+        if (root / name).exists():
+            return json.loads((root / name).read_text())
+    print("triangle-mesh study not available in this checkout "
+          "(studies/mie-cylinder-mesh/)")  # fmt: skip
+    return None
+
+
+mesh_study = load_mesh_study()
+
+# %% [markdown]
+# ## 12. Limits and failure modes
 #
 # * **Resolution inside the scatterer.** At $x = 10$ the wavelength inside
 #   the $n = 2$ cylinder is 0.314 µm. Below ~10 cells per internal
@@ -1033,7 +1077,7 @@ if study:
 #   $Q_\mathrm{abs} = 0$ check test other parts of the pipeline.
 
 # %% [markdown]
-# ## 12. Exercises
+# ## 13. Exercises
 #
 # 1. **Resonances.** Change the index to $n = 1.5$ and $n = 3.5$. How do the
 #    resonance widths change, and how many cells per internal wavelength do
@@ -1064,7 +1108,7 @@ if study:
 #    compare with `cylinder_efficiencies` at complex $m$.
 
 # %% [markdown]
-# ## 13. References
+# ## 14. References
 #
 # 1. D. E. Merewether, R. Fisher and F. W. Smith, "On implementing a numeric
 #    Huygen's source scheme in a finite difference program to illuminate

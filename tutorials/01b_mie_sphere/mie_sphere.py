@@ -277,13 +277,19 @@ q_ray, _ = rayleigh_efficiencies(N_SPHERE, x_plot)
 fig, ax = plt.subplots(figsize=(6.4, 3.6))
 ax.loglog(x_plot, q_sca, color="k", lw=1.4, label=r"Mie $Q_\mathrm{sca}$")
 ax.loglog(x_plot, q_ray, "--", color="#0072B2", label=r"Rayleigh $\frac{8}{3}x^4|L|^2$")
-ax.axvspan(X_MIN, X_MAX, color="#E69F00", alpha=0.2, label="simulated band")
-ax.axhline(2, color="0.6", lw=0.8, ls=":")
+ax.axvspan(
+    X_MIN,
+    X_MAX,
+    color="#E69F00",
+    alpha=0.2,
+    label="band covered by the simulation pulse",
+)
+ax.axhline(2, color="0.5", lw=0.9, ls=":", label=r"large-sphere limit, $Q \to 2$")
 ax.set(
     xlabel=r"size parameter $x = 2\pi r/\lambda$",
     ylabel=r"$Q_\mathrm{sca} = \sigma_\mathrm{sca}/\pi r^2$",
     ylim=(1e-6, 10),
-    title=f"Lossless sphere, n = {N_SPHERE:g}",
+    title=f"Analytic theory only (no simulation): sphere, n = {N_SPHERE:g}",
 )
 ax.legend(loc="lower right")
 savefig(fig, "mie_theory.png")
@@ -829,9 +835,15 @@ q_mie = mie_efficiencies(N_SPHERE, X_SIM)[1]
 x_fine = np.linspace(X_MIN, X_MAX, 800)
 fig, (ax, ax2) = plt.subplots(2, 1, figsize=(7, 5.6), sharex=True,
                               gridspec_kw=dict(height_ratios=[3, 1.3]))  # fmt: skip
-ax.plot(x_fine, mie_efficiencies(N_SPHERE, x_fine)[1], "k", lw=1.2, label="Mie theory")
+ax.plot(
+    x_fine,
+    mie_efficiencies(N_SPHERE, x_fine)[1],
+    "k",
+    lw=1.2,
+    label="exact series (Mie)",
+)
 ax.plot(X_SIM, res["q_sca"], "o", ms=3.5, color="#D55E00",
-        label=f"Wakis FIT ({CONFORMAL}, {RESOLUTION:g} cells/µm)")  # fmt: skip
+        label=f"Wakis (FIT) ({CONFORMAL}, {RESOLUTION:g} cells/µm)")  # fmt: skip
 ax.plot(
     X_SIM,
     res["q_abs"],
@@ -888,9 +900,9 @@ for ax, xs in zip(axes, X_SNAP):
         db_sim = 10 * np.log10(dsig / R_SPHERE**2)
         top = max(top, db_mie.max())
         ax.plot(sgn * theta, db_mie, color=col, lw=2.2, alpha=0.55,
-                label=("E-plane" if sgn > 0 else "H-plane") + " Mie")  # fmt: skip
+                label=("E-plane" if sgn > 0 else "H-plane") + " exact series (Mie)")  # fmt: skip
         ax.plot(sgn * theta, db_sim, "--", color="k", lw=0.9,
-                label="Wakis" if sgn > 0 else None)  # fmt: skip
+                label="Wakis (FIT)" if sgn > 0 else None)  # fmt: skip
     ax.set_rlim(top - 40, top + 3)
     ax.set_rgrids(np.round(np.arange(top - 30, top + 1, 10)), fontsize=6, angle=200)
     ax.set_theta_zero_location("N")
