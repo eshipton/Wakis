@@ -28,11 +28,14 @@ def arms():
 
     from wakis.benchmarks.arms.curvilinear2d import BoxedCurvilinear2DArm
 
-    out = [Curvilinear2DArm(radial=1.0), Curvilinear2DArm(radial=0.5), BoxedCurvilinear2DArm()]
+    out = [Curvilinear2DArm(radial=1.0), Curvilinear2DArm(radial=0.5),
+           Curvilinear2DArm(radial=0.5, ratio=2.0, name="ogrid-r0.5-o2"), BoxedCurvilinear2DArm()]
     return {a.name: a for a in out}
 
 
 def tasks(phase="B2"):
+    if phase == "B2o2":
+        return [(c, "ogrid-r0.5-o2", h) for h in LADDER[::-1] for c in CASES]
     if phase == "B3":
         return [(c, "ogrid-boxed", h) for h in LADDER[::-1] for c in ("B3-g2", "B3-g5", "B3-g10")]
     return [(c, a, h) for h in LADDER[::-1] for c in CASES for a in ("ogrid", "ogrid-r0.5")]
