@@ -24,6 +24,25 @@ The resolution label is h, the cell or edge size on the particles: a/5 … a/40,
 - **Graded meshes** keep h on the particles plus a 2h band, then grow by 1.2 per cell up to min(4h, λ_host/20).
 - **Uniform meshes** use h everywhere.
 
+## B1: dielectric Mie cylinder at 3000 fs: graded arms with an uncapped outer mesh (40 runs)
+
+The original graded arms capped the outer element size at λ_min/20 (31 nm for B1). The outer region then stops refining while h does, and both families plateau. For example, tri-graded with the 40-ring PML stalls at 1.2 % (data/B1tri).
+
+These runs use h_out = r·h with no cap (`ppw_out=None`). Jobs: bench-b1tri2-20261019-1528 (triangles, 40-ring PML) and bench-b1cart-20261019-1529 (conformal Cartesian, CPML); data in `data/B1u`. Q_sca RMS error vs h:
+
+| arm | h = 31 | 22 | 16 | 11 | 7.9 nm | unknowns to 2 % / 1 % (TE) | unknowns to 2 % / 1 % (TM) |
+|---|---|---|---|---|---|---|---|
+| tri-graded-r2 (TE / TM) | 9.1 / 7.1 % | 5.3 / 3.5 % | 2.7 / 2.3 % | 1.24 / 1.27 % | 0.57 / 0.61 % | 304k / 506k | 276k / 521k |
+| cart-conformal-all-graded-r2 | 9.4 / 8.4 % | 5.2 / 4.4 % | 2.5 / 2.6 % | 1.22 / 1.40 % | 0.58 / 0.66 % | 246k / 452k | 263k / 511k |
+| tri-graded-r4 | 13.6 / 14.8 % | 9.4 / 8.8 % | 4.8 / 3.9 % | 2.3 / 2.1 % | 1.22 / 1.24 % | 265k / — | 254k / — |
+| cart-conformal-all-graded-r4 | 14.9 / 15.4 % | 8.6 / 8.8 % | 4.3 / 4.4 % | 2.1 / 2.4 % | 1.03 / 1.21 % | 253k / — | 294k / — |
+
+**Findings:**
+- **The plateau is gone.** Uncapped, both families converge at second order (r = 2: 1.24 → 0.57 %).
+- **The two families are equivalent here.** At equal outer ratio they agree within 10 % in unknowns to 1 % (TE 452k Cartesian vs 506k triangles; TM 511k vs 521k). On this smooth dielectric the mesh type matters less than the outer-mesh policy.
+- **r = 4 converges at the same order but costs about 2× the error** at equal h.
+- **Still far from the high-order agent's curved DG** (0.014–0.07 %) at these costs.
+
 ## B2: Au and Ag nanocylinders (168 runs)
 
 ![](figures/b2_qext_spectra.png)
