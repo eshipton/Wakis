@@ -38,8 +38,8 @@ def arms():
         Cartesian2DArm(conformal=None, graded=True),
         Cartesian2DArm(conformal="all", graded=False),
         Cartesian2DArm(conformal="all", graded=True),
-        Triangles2DArm(graded=False),
-        Triangles2DArm(graded=True),
+        Triangles2DArm(graded=False, n_pml=40),
+        Triangles2DArm(graded=True, n_pml=40),
     ]
     from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
 
@@ -65,6 +65,7 @@ def arms():
 PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
+    "B3m2": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
     "B4b": ["B4"],
     "B4gpu": ["B4"],
@@ -120,7 +121,7 @@ def tasks(phase):
     return out
 
 
-def run_tasks(mine, outdir, publish=False, machine=None):
+def run_tasks(mine, outdir, publish=False, machine=None, phase=None):
     from wakis.benchmarks import get_case, run, save_record
 
     A = arms()
@@ -135,14 +136,25 @@ def run_tasks(mine, outdir, publish=False, machine=None):
         tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"  # (B4: h in m * 1e9)
         if wf != 1:
             tag += f"_w{wf:g}"
+        if phase == "B3m2":
+            tag += "_m2"
+            rec["metric_version"] = (
+                "m2: stencil mean, second-order gap reconstruction "
+                "(tri patch, cart bilinear)"
+            )
         if os.environ.get("WAKIS_COMMIT"):
             rec["commit"] = os.environ["WAKIS_COMMIT"]
         save_record(rec, Path(outdir) / f"{tag}.json")
         if publish:
             from wakis.benchmarks.results import publish as pub
 
-            pub(rec, machine=machine,
-                tag=None if wf == 1 else f"{h * 1e9:.4f}nm_w{wf:g}")  # fmt: skip
+            if phase == "B3m2":
+                pub_tag = f"{h * 1e9:.4f}nm_m2"
+            elif wf != 1:
+                pub_tag = f"{h * 1e9:.4f}nm_w{wf:g}"
+            else:
+                pub_tag = None
+            pub(rec, machine=machine, tag=pub_tag)
         m = rec.get("metrics", {})
         msg = rec.get("error") or " ".join(
             f"{k}={m[k]:.4g}"
@@ -187,7 +199,7 @@ def main():
         ]
     else:
         mine = tl[a.shard :: a.nshards]
-    run_tasks(mine, a.outdir or DATA / a.phase, a.publish, a.machine)
+    run_tasks(mine, a.outdir or DATA / a.phase, a.publish, a.machine, phase=a.phase)
 
 
 if __name__ == "__main__":

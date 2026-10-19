@@ -56,3 +56,70 @@ def test_arm_pml_options():
         abs(cfg["r0"] - 150e-9) < 1e-15 and abs(cfg["r1"] - cfg["r0"] - 80e-9) < 1e-15
     )
     assert s._pml.spokes.size > 0 and s._pml.chords.size > 0
+
+
+def test_cartesian_bilinear_exact_for_linear_field_on_nonuniform_grid(monkeypatch):
+    """
+    `cartesian2d.bilinear` reproduces a linear field exactly at arbitrary
+    points on a non-uniform tensor grid; a nearest-neighbour mutation does not.
+    """
+    import scipy.sparse as sp
+
+    from wakis.benchmarks.arms import cartesian2d as c2d
+
+    xs = np.array([-3.2, -1.7, -0.5, 0.3, 1.4, 2.9]) * 1e-8
+    ys = np.array([-2.6, -1.1, 0.2, 1.5, 3.1]) * 1e-8
+    xx, yy = np.meshgrid(xs, ys, indexing="xy")  # flat index i + nx * j
+    c0, cx, cy = 1.3, 4e7, -2.5e7
+    f_grid = (c0 + cx * xx + cy * yy).ravel()
+    pts = np.array(
+        [[-2.1, -1.8], [-0.9, 0.7], [0.0, 0.0], [0.85, -0.45], [2.2, 2.3]]
+    ) * 1e-8
+    exact = c0 + cx * pts[:, 0] + cy * pts[:, 1]
+
+    P = c2d.bilinear(xs, ys, pts, len(xs))
+    err = np.max(np.abs(P @ f_grid - exact))
+    assert err < 1e-12
+
+    def nearest_neighbour(xs, ys, points, nx):
+        rows, cols, vals = [], [], []
+        for p, (px, py) in enumerate(np.atleast_2d(points)):
+            i = int(np.argmin(np.abs(xs - px)))
+            j = int(np.argmin(np.abs(ys - py)))
+            rows.append(p)
+            cols.append(i + nx * j)
+            vals.append(1.0)
+        return sp.csr_matrix((vals, (rows, cols)), shape=(len(rows), nx * len(ys)))
+
+    monkeypatch.setattr(c2d, "bilinear", nearest_neighbour)
+    P_mut = c2d.bilinear(xs, ys, pts, len(xs))
+    err_mut = np.max(np.abs(P_mut @ f_grid - exact))
+    assert err_mut > 1e-1
+
+
+def test_default_gap_patch_and_enh_rt_diagnostic():
+    """
+    Triangles2DArm defaults to gap_patch=True (e_gap = patch, e_gap_rt = RT,
+    cost.gap_metric = 'patch', cost.n_pml set), and Scattering2DCase.evaluate
+    reports enh_rt_peak and spectra['enh_rt'].
+    """
+    case = get_case("B3-g5")
+    case.t_run = 2e-15  # short smoke window
+    arm = Triangles2DArm(n_pml=6)
+    assert arm.gap_patch is True
+    res = arm.run(case, 4e-9)
+    assert res["cost"]["n_pml"] == 6
+    assert res["cost"]["gap_metric"] == "patch"
+    assert "e_gap" in res and "e_gap_rt" in res
+    assert not np.allclose(res["e_gap"], res["e_gap_rt"], atol=0, rtol=1e-3)
+
+    ev = case.evaluate(res)
+    assert "enh_rt_peak" in ev
+    assert "enh_rt" in ev["spectra"]
+    # Mutating e_gap_rt scales enh_rt by 4x and changes enh_rt_peak without affecting enh_peak
+    res_mut = dict(res, e_gap_rt=2.0 * res["e_gap_rt"])
+    ev_mut = case.evaluate(res_mut)
+    assert ev_mut["enh_peak"] == ev["enh_peak"]
+    assert np.allclose(ev_mut["spectra"]["enh_rt"], 4.0 * np.asarray(ev["spectra"]["enh_rt"]))
+    assert abs(ev_mut["enh_rt_peak"] - ev["enh_rt_peak"]) > 0.02
+

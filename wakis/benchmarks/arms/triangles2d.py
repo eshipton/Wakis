@@ -16,7 +16,8 @@ Baseline arm: triangular FIT (`UnstructuredFIT2D`, Voronoi Hodge).
 * DFT of the scattered node field on the extraction circles (linear
   interpolation), incident phasor at the origin from the analytic incident
   wave at the same time levels (TE: H_z at the half steps), gap E from the
-  Raviart-Thomas reconstruction of the edge fluxes (TE).
+  second-order least-squares patch reconstruction of the edge fluxes (with the
+  pointwise Raviart-Thomas reconstruction kept as ``e_gap_rt``, TE).
 
 The resolution label is h [m] on the scatterers.
 """
@@ -54,7 +55,7 @@ class Triangles2DArm(Arm):
 
     def __init__(self, graded=True, growth=1.2, ppw_out=20, ratio=4.0, n_pml=10, cfl=0.95,
                  hodge="voronoi", ladder=None, name=None, lts=None, pml=None,
-                 pml_dr=1.0, r_pml=None, gap_patch=False, pml_d=None):  # fmt: skip
+                 pml_dr=1.0, r_pml=None, gap_patch=True, pml_d=None):  # fmt: skip
         """
         pml : dict, optional
             Extra `UnstructuredFIT2D` PML options (order, R, kappa_max, alpha).
@@ -66,10 +67,10 @@ class Triangles2DArm(Arm):
         r_pml : float, optional
             PML start radius [m] (default: the case's absorber radius).
         gap_patch : bool
-            Also return ``e_gap_patch``: the gap field from a least-squares
-            linear fit to the edge fluxes D.n of the 12 nearest host edges
-            (second order, unlike the pointwise lowest-order Raviart-Thomas
-            reconstruction of ``e_gap``).
+            When True (default), ``e_gap`` is the gap field from a
+            least-squares linear fit to the edge fluxes D.n of the 12 nearest
+            host edges (second order) and ``e_gap_rt`` is the pointwise
+            lowest-order Raviart-Thomas reconstruction (diagnostic).
         """
         self.pml = dict(pml or {})
         self.pml_dr = pml_dr
@@ -229,12 +230,16 @@ class Triangles2DArm(Arm):
             cost=dict(unknowns=int(solver.free.size + mesh.n_edges),
                       nodes=int(solver.free.size), cells=int(mesh.n_cells),
                       steps=n_steps, dt=dt, run_s=run_s, setup_s=setup_s, h=h,
-                      h_max=h_out),
+                      h_max=h_out, n_pml=self.n_pml,
+                      gap_metric="patch" if self.gap_patch else "rt"),
         )  # fmt: skip
         if gap:
-            out["e_gap"] = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
+            rt = np.stack([acc_e[:, :ng], acc_e[:, ng:]], 2)
             if self.gap_patch:
-                out["e_gap_patch"] = np.stack([acc_p[:, :ng], acc_p[:, ng:]], 2)
+                out["e_gap"] = np.stack([acc_p[:, :ng], acc_p[:, ng:]], 2)
+                out["e_gap_rt"] = rt
+            else:
+                out["e_gap"] = rt
             ui = solver._incident_signal(np.zeros(1), times)  # amplitude s(t) at origin
             out["e0_gap"] = (np.exp(-2j * np.pi * np.outer(freqs, times)) @ ui) * dt
         return out

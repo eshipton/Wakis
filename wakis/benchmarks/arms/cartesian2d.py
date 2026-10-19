@@ -260,7 +260,7 @@ class Cartesian2DArm(Arm):
             u0=u0, radii=list(case.circles),
             cost=dict(unknowns=3 * n2d, cells=n2d, steps=n_steps, dt=dt,
                       run_s=run_s, setup_s=setup_s, h=h,
-                      h_max=float(np.diff(xn).max())),
+                      h_max=float(np.diff(xn).max()), gap_metric="bilinear"),
         )  # fmt: skip
         if gap:
             ng = len(case.gap_points)

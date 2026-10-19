@@ -255,6 +255,12 @@ class Scattering2DCase:
             e2 = np.sum(np.abs(e) ** 2, 2) / np.abs(e0[:, None]) ** 2
             sp["enh"] = e2.mean(1)
             sp["enh_centre"] = e2[:, 0]
+            if result.get("e_gap_rt") is not None:
+                ert = np.asarray(result["e_gap_rt"])
+                if ert.ndim == 2:
+                    ert = ert[:, None, :]
+                e2_rt = np.sum(np.abs(ert) ** 2, 2) / np.abs(e0[:, None]) ** 2
+                sp["enh_rt"] = e2_rt.mean(1)
         return sp
 
     def evaluate(self, result):
@@ -267,7 +273,8 @@ class Scattering2DCase:
             ``q_ext_nrms``, ``q_sca_nrms``, ``q_abs_nrms``, ``q_sca_rms_rel``,
             peak errors of Q_ext (``lam_peak``, ``height``, ``fwhm``) and,
             with a gap point, ``enh_nrms``, ``enh_peak`` (relative error of
-            the maximum enhancement), ``enh_lam`` (its wavelength error);
+            the maximum enhancement), ``enh_lam`` (its wavelength error),
+            plus ``enh_rt_peak`` when ``e_gap_rt`` is provided;
             plus the spectra themselves under ``spectra``.
         """
         ref = self.reference
@@ -287,12 +294,15 @@ class Scattering2DCase:
             if "enh_centre" in sp:
                 pc = M.peak_errors(lam, sp["enh_centre"], ref["enh_centre"])
                 out["enh_centre_peak"] = pc["height"]
+            if "enh_rt" in sp:
+                prt = M.peak_errors(lam, sp["enh_rt"], ref["enh"])
+                out["enh_rt_peak"] = prt["height"]
         if "refl" in sp:
             out["boundary_reflection"] = float(np.max(sp["refl"]))
         out["spectra"] = {
             k: np.asarray(v).tolist()
             for k, v in sp.items()
-            if k in ("q_ext", "q_sca", "q_abs", "enh", "enh_centre", "refl")
+            if k in ("q_ext", "q_sca", "q_abs", "enh", "enh_centre", "enh_rt", "refl")
         }
         return out
 

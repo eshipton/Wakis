@@ -93,11 +93,12 @@ The resolution label is h, the cell or edge size on the particles: a/5 … a/40,
 **Main result.** For the 5 % gap-enhancement target, graded triangles need 10–20× fewer unknowns and about 65× less work than graded conformal Cartesian (g = 5 nm: 7.2k vs 111k unknowns, 1.2e8 vs 8.0e9 work). Staircase never reaches 5 % on these ladders: its errors are 12–120 % and non-monotone.
 
 **Triangle floor at 1–2 %.** The triangle gap-enhancement error levels off at about 1–2 % (non-monotone), while Q_ext keeps converging. That is about twice the PML reflection the triangle arms report (3.5–5e-3 in field), and |E|² responds to it at first order. A better triangle absorber is needed for the 2 % target, and B3 uses only the raw outgoing coefficients (no de-embedding).
+> **Note (`m2` rerun pending):** The B3 tables and figures above come from the pre-`m2` runs (pointwise Raviart–Thomas gap reconstruction and 10-ring triangle PML); they will be replaced by the `--phase B3m2` rerun using the default `m2` metric (second-order 12-edge patch reconstruction on triangles, bilinear on Cartesian, and 40-ring triangle PML).
 
 **Metric definition.** The metric is the mean over the gap stencil, not the pointwise centre value.
 - The first B3 ladder used the centre value, plus a mesher that let the two outer interface rings collide in the gap (a 2.8° sliver at h = 2.86 nm).
 - That combination gave 1–9 % non-monotone errors.
-- The stencil (centre plus 8 points at g/4) and the priority-ring mesher remove the cell-position noise. The centre value is still reported (`enh_centre`).
+- The stencil (centre plus 8 points at g/4) and the priority-ring mesher remove the cell-position noise. On triangles, `e_gap` now uses a second-order least-squares linear patch fit over the 12 nearest host edges (`e_gap_rt` retains the pointwise Raviart–Thomas diagnostic, `enh_rt_peak`). The centre value is still reported (`enh_centre`).
 
 **DFT window.** The window floor is ≤ 8e-6 on every B2/B3 metric (`data/window_floor.md`: 1× vs 3× window, finest arms). The plasmon modes (Q ≈ 3–9) ring down within a few fs, unlike the high-Q TE mode that limits B1, whose window is now 3000 fs.
 
