@@ -371,7 +371,7 @@ class Beam:
         H_y = (a_y dz / c) E_x with a the longitudinal coefficients of A
         (H = z x E / Z0 on full cells), and phi solves the transverse
         equation (B H)_z = ieps_z J_z for J_z = 1 A/m^2 on the source edge.
-        Nodes next to a closed edge (open length 0) are grounded. On
+        Nodes next to a closed edge (open length 0 or ieps = 0) are grounded. On
         staircase grids this is the 'staircase' template; on conformal grids
         it is the discrete TEM field the time step propagates.
         """
@@ -379,8 +379,12 @@ class Beam:
         nxy = Nx * Ny
         p = np.arange(nxy) + k * nxy  # flat indices of plane k
         q = p + nxy  # plane k + 1
+        ieps = solver.ieps.toarray()
+        ieps = ieps.get() if hasattr(ieps, "get") else np.asarray(ieps)
         Ds = solver.Ds.diagonal()
-        lx, ly = Ds[p], Ds[N + p]
+        # Open lengths; edges in staircase PEC (ieps = 0) carry no voltage
+        lx = np.where(ieps[p] > 0, Ds[p], 0.0)
+        ly = np.where(ieps[N + p] > 0, Ds[N + p], 0.0)
         rows_h = np.concatenate([p, N + p])
         A = (sp.csr_matrix(solver.iDa)[rows_h] @ solver.iDmu @ solver.C
              @ solver.Ds).tocsr()  # fmt: skip
@@ -410,6 +414,7 @@ class Beam:
         free &= (lx > 0) & (ly > 0)
         free &= np.roll(lx, 1) > 0
         free &= np.roll(ly, Nx) > 0
+        free &= ieps[2 * N + p] > 0
         f = np.flatnonzero(free)
         # h_xy = R e_xy with e_xy = -[Dx; Dy] phi
         R = sp.bmat([[None, sp.diags(-a_x * dz / c_light)],
@@ -421,8 +426,6 @@ class Beam:
         where = np.flatnonzero(f == src)
         if where.size == 0:
             raise ValueError("Beam source node is not inside the open beam pipe.")
-        ieps = solver.ieps.toarray()
-        ieps = ieps.get() if hasattr(ieps, "get") else np.asarray(ieps)
         rhs[where[0]] = ieps[2 * N + p[src]]
         phi = np.zeros(nxy)
         phi[f] = spsolve(S.tocsc(), rhs)
