@@ -36,12 +36,16 @@ PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
     "B3z": ["B3-g5", "B3-g10", "B3-g2"],
+    "B2p": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
 }
 
 
 def arms(phase):
     from wakis.benchmarks.arms.subgrid2d import Subgrid2DArm
 
+    if phase == "B2p":  # coarse grid at 40 cells per host wavelength
+        a = Subgrid2DArm(ppw_out=40, name="sg-ppw40")
+        return {a.name: a}
     if phase == "B3z":
         out = [
             Subgrid2DArm(gap_zone=2, gap_levels=1),

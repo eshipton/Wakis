@@ -13,7 +13,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from wakis.benchmarks.results import fetch_records  # noqa: E402
+import os  # noqa: E402
+
+from wakis.benchmarks.results import ROOT, fetch_records  # noqa: E402
 from wakis.benchmarks.runner import cost_to_target  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -54,7 +56,8 @@ def style(arm):
 
 
 def load(case):
-    recs = [r for r in fetch_records(case) if "metrics" in r and "error" not in r]
+    root = os.environ.get("BENCH_ROOT", ROOT)  # a local mirror of the store
+    recs = [r for r in fetch_records(case, root=root) if "metrics" in r and "error" not in r]
     by = {}
     for r in recs:
         r["cost"]["work_eff"] = work_eff(r)
