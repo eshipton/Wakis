@@ -120,28 +120,31 @@ def _start_xvfb(screen="1920x1080x24", timeout=10.0):
 
     Xvfb chooses a free display itself (``-displayfd``), so processes started
     at the same time cannot collide on one display, and displays owned by
-    other users (``xvfb-run``) are never reused. The server is terminated
-    when Python exits.
+    other users (``xvfb-run``) are never reused. A small shell watchdog stops
+    the server once this Python process has fully exited (stopping it from
+    ``atexit`` would kill VTK's X connection before VTK shuts down).
     """
-    import atexit
     import select
     import subprocess
 
     r, w = os.pipe()
+    watchdog = (
+        f"Xvfb -displayfd {w} -screen 0 {screen} -nolisten tcp >/dev/null 2>&1 & "
+        f"x=$!; while kill -0 {os.getpid()} 2>/dev/null; do sleep 2; done; kill $x"
+    )
     proc = subprocess.Popen(
-        ["Xvfb", "-displayfd", str(w), "-screen", "0", screen, "-nolisten", "tcp"],
+        ["sh", "-c", watchdog],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         pass_fds=(w,),
+        start_new_session=True,
     )
     os.close(w)
     ready, _, _ = select.select([r], [], [], timeout)
     number = os.read(r, 32).decode().strip() if ready else ""
     os.close(r)
     if not number.isdigit() or proc.poll() is not None:
-        proc.kill()
         return "Xvfb could not be started"
-    atexit.register(proc.terminate)  # do not leave servers behind
     os.environ["DISPLAY"] = f":{number}"
     return f"Xvfb on :{number}"
 
