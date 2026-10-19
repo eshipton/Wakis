@@ -33,22 +33,30 @@ from ..runner import Arm
 
 
 def _z_levels(L, g, hz, h_out, z_end, n_pml, growth=1.2):
-    """Symmetric z levels: the gap is m whole layers, uniform hz along the wire."""
-    m = max(1, int(round(g / hz)))
-    hz = g / m
-    n = int(np.ceil((L / 2 + 5 * hz - g / 2) / hz))
-    zs = list(g / 2 + hz * np.arange(n + 1))
-    dz = hz
+    """
+    Symmetric z levels: the gap is m whole layers of g / m <= hz, each wire
+    half (g/2 .. L/2) n whole layers of (L - g) / (2 n) <= hz, so that both
+    the gap planes and the wire ends are levels; 5 more layers of the same
+    size beyond the ends, then x1.2 growth to h_out up to z_end, then the
+    PML layers.
+    """
+    m = max(1, int(np.ceil(g / hz - 1e-9)))
+    n = int(np.ceil((L - g) / 2 / hz - 1e-9))
+    hw = (L - g) / 2 / n
+    zs = list(g / 2 + hw * np.arange(n + 6))
+    dz = hw
     while zs[-1] < z_end:
         dz = min(h_out, dz * growth)
         zs.append(zs[-1] + dz)
     zs = np.r_[zs, zs[-1] + dz * np.arange(1, n_pml + 1)]
-    gap = -g / 2 + hz * np.arange(1, m)
-    return np.r_[-zs[::-1], gap, zs], hz
+    gap = -g / 2 + (g / m) * np.arange(1, m)
+    return np.r_[-zs[::-1], gap, zs], hw
 
 
 class PrismDipoleArm(Arm):
-    def __init__(self, ladder=None, n_pml=10, cfl=0.95, absorber=0.3, name=None):
+    def __init__(self, ladder=None, n_pml=10, cfl=0.95, absorber=0.3, r_int=0.21,
+                 name=None):  # fmt: skip
+        self.r_int = r_int
         self.ladder = ladder
         self.n_pml = n_pml
         self.cfl = cfl
@@ -71,7 +79,7 @@ class PrismDipoleArm(Arm):
         lam_min = c_light / case.freqs.max()
         lam_max = c_light / case.freqs.min()
         h_out = lam_min / 20
-        r_int = 0.21 * lam_max
+        r_int = self.r_int * lam_max
         d_abs = self.absorber * lam_max
         r_dom = r_int + d_abs
         h_ring = min(ht, 2 * np.pi * a / 8)
@@ -88,6 +96,7 @@ class PrismDipoleArm(Arm):
 
         def tags(tri, zm):
             wire = (tri == 0) & (np.abs(zm) > g / 2) & (np.abs(zm) < L / 2)
+            # (layer mid-points; the gap planes and wire ends are levels)
             return np.where(wire, 1, 0)
 
         pm = PrismMesh(m2, z, tags=tags, merge_tol=0.15)

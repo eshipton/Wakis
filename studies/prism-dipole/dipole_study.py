@@ -17,8 +17,16 @@ A_WIRE = 0.5e-3
 LADDER = [A_WIRE / q for q in (1, 1.5, 2, 3, 4)]
 
 
+VARIANTS = {
+    "prism-graded": dict(),
+    "prism-graded-bigdomain": dict(r_int=0.42, absorber=0.45),
+}
+
+
 def tasks():
-    return [("B4", "prism-graded", h) for h in LADDER]
+    out = [("B4", "prism-graded", h) for h in LADDER]
+    out += [("B4", "prism-graded-bigdomain", A_WIRE)]
+    return out
 
 
 def main(argv=None):
@@ -29,6 +37,7 @@ def main(argv=None):
     ap.add_argument("cmd", choices=["list", "run"])
     ap.add_argument("--task", type=int)
     ap.add_argument("--h", type=float)
+    ap.add_argument("--arm", default="prism-graded")
     ap.add_argument("--outdir", default="out")
     ap.add_argument("--publish", action="store_true")
     ap.add_argument("--machine", default=None)
@@ -37,9 +46,9 @@ def main(argv=None):
         for i, t in enumerate(tasks()):
             print(i, *t)
         return
-    case_name, arm_name, h = ("B4", "prism-graded", args.h) if args.h else tasks()[args.task]
+    case_name, arm_name, h = ("B4", args.arm, args.h) if args.h else tasks()[args.task]
     case = get_case(case_name)
-    rec = run(case, PrismDipoleArm(name=arm_name), h, catch=False)
+    rec = run(case, PrismDipoleArm(name=arm_name, **VARIANTS[arm_name]), h, catch=False)
     if os.environ.get("WAKIS_COMMIT"):
         rec["commit"] = os.environ["WAKIS_COMMIT"]
     os.makedirs(args.outdir, exist_ok=True)
