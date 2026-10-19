@@ -43,15 +43,16 @@ def arms():
     ]
     from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
 
+    gpu = os.environ.get("BENCH_GPU") == "1"
     out += [
         CartesianDipoleArm(conformal=False),  # legacy STL cell masks
         CartesianDipoleArm(conformal="pec"),
-        CartesianDipoleArm(conformal="edges"),
+        CartesianDipoleArm(conformal="edges", use_gpu=gpu),
         CartesianDipoleArm(conformal="pec", pad_xy=0.42, pad_z=0.28,
                            name="cart-conformal-pec-graded-bigdomain"),
-        CartesianDipoleArm(conformal="edges", pad_xy=0.42, pad_z=0.28,
+        CartesianDipoleArm(conformal="edges", pad_xy=0.42, pad_z=0.28, use_gpu=gpu,
                            name="cart-staircase-edges-graded-bigdomain"),
-        CartesianDipoleArm(conformal="edges", ppw_out=40,
+        CartesianDipoleArm(conformal="edges", ppw_out=40, use_gpu=gpu,
                            name="cart-staircase-edges-graded-ppw40"),
     ]  # fmt: skip
     return {a.name: a for a in out}
@@ -62,6 +63,7 @@ PHASES = {
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
     "B4b": ["B4"],
+    "B4gpu": ["B4"],
     "WIN": [],
     "REDO": [],
 }
@@ -91,6 +93,12 @@ def tasks(phase):
         out = [t for t in tasks("B3")]
         out += [t for t in tasks("B2") if t[1].startswith("tri")]
         return out
+    if phase == "B4gpu":  # fine edge-wise rungs on L4 GPUs (BENCH_GPU=1)
+        a = 0.5e-3
+        for q in (4, 3, 2):
+            out.append(("B4", "cart-staircase-edges-graded", a / q))
+        out.append(("B4", "cart-staircase-edges-graded-bigdomain", a / 2))
+        out.append(("B4", "cart-staircase-edges-graded-ppw40", a / 2))
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
