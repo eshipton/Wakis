@@ -151,6 +151,10 @@ class SubgridFIT2D:
         s_eps = (hw * Lside) * eps_tab[mid_c][:, None]  # int eps dA
         s_frac = np.zeros((nc, 4, n_mat))
         s_frac[np.arange(nc), :, mid_c] = hw * Lside
+        disp_ids = [j for j, _ in geo.dispersive]
+        Bd = {}  # per dispersive material: int 1_mat dn per column
+        for j in disp_ids:
+            Bd[j] = np.repeat((hw * (mid_c == j)[:, None])[:, :, None], ns, 2)
 
         k = np.flatnonzero(cut)
         for chunk in np.array_split(k, max(1, k.size // 20000 + 1)):
@@ -184,8 +188,10 @@ class SubgridFIT2D:
                     s_frac[chunk, s, j] = (
                         hw[chunk, s] * Lside[chunk, s] * (mid == j).mean((1, 2))
                     )
+                for j in disp_ids:
+                    Bd[j][chunk, s] = h * (mid == j).mean(2)
         self._q = dict(area=qa, eps=q_eps, frac=q_frac)
-        self._s = dict(hw=hw, R=R, Q=Q, eps=s_eps, frac=s_frac)
+        self._s = dict(hw=hw, R=R, Q=Q, eps=s_eps, frac=s_frac, B=Bd)
         self.cut_cells = int(cut.sum())
 
     # ============================================================= assembly
@@ -226,18 +232,16 @@ class SubgridFIT2D:
             m_all = MU0 * area
             m0_all = m_all
             mp_all = {}
+            # parallel (along the edge) of series (across it) columns; the
+            # dispersive metal enters with eps_inf, its poles per column
             inv_mean = (1 / Rk).mean(1)
             W = 1 / (EPS0 * L * inv_mean)
-            c_e = (Qk / Rk).sum(1) / (1 / Rk).sum(1)
-            # dispersive edges: arithmetic fill-fraction mixing (as SolverFIT3D)
-            fd = frac_s[:, disp_ids].sum(1) if disp_ids else np.zeros(ne)
-            de = fd > 0
-            minf = EPS0 * (L / Lst) * eps_s / (L * Lst)
-            m0 = EPS0 * self.geo.background_eps * L / Lst
-            W[de] = 1 / minf[de]
-            c_e[de] = Lst[de] * (minf[de] - m0[de]) / minf[de]
-            self._edge_disp = {k: EPS0 * (L / Lst) * frac_s[:, k] / (L * Lst)
-                               for k in disp_ids}  # fmt: skip
+            c_e = Lst - self.geo.background_eps * EPS0 * L * W
+            self._edge_disp = {}
+            for k in disp_ids:
+                Bk = np.zeros((ne, ns))
+                np.add.at(Bk, ce, s["B"][k].reshape(-1, ns))
+                self._edge_disp[k] = (Bk, Rk)
             self.c_e = c_e
             keep = np.ones(m.free.size, bool)
         self.dof = m.free[keep]  # mesh node index of each unknown
@@ -256,7 +260,9 @@ class SubgridFIT2D:
         self.m_all, self.m0_all, self.mp_all = m_all, m0_all, mp_all
         if self.pol == "TE":
             self.c_e = self.c_e[live]
-            self._edge_disp = {k: v[live] for k, v in self._edge_disp.items()}
+            self._edge_disp = {
+                k: (B[live], R[live]) for k, (B, R) in self._edge_disp.items()
+            }
         self.n_dof = int(K.shape[1])
         self.n_edges = int(K.shape[0])
         self.n_unknowns = self.n_dof + self.n_edges
@@ -353,9 +359,19 @@ class SubgridFIT2D:
                 idx = np.flatnonzero(mp > 0)
                 ratio = mp[idx] / self.D[idx]
             else:
-                mp = self._edge_disp[k]
-                idx = np.flatnonzero(mp > 0)
-                ratio = mp[idx]  # multiplied by W in the step
+                Bk, Rk = self._edge_disp[k]
+                idx = np.flatnonzero(Bk.max(1) > 0)
+                Bk, Rk = Bk[idx], Rk[idx]
+                ns = Bk.shape[1]
+                einf = mat.eps_inf
+                # passivity: the metal part of a column cannot exceed it
+                if np.any(Bk / einf > Rk * (1 + 1e-9)):
+                    raise RuntimeError("inconsistent dispersive column data")
+                # g -= sum_k beta_k p_k ; E_m,k = ((g_tot + b p / einf) / R - p) / einf
+                beta = (
+                    (self.W[idx] * EPS0 * self.L[idx] / ns)[:, None] * Bk / (einf * Rk)
+                )
+                ratio = dict(beta=beta, b=Bk, R=Rk, einf=einf)
             if not mat.is_stable(self.dt, courant=self.cfl):
                 raise ValueError(f"dt = {self.dt:.3e} unstable for {mat!r}")
             coef = _ade_coefficients(mat, self.dt)[0]
@@ -460,8 +476,10 @@ class SubgridFIT2D:
         self._ux = np.zeros(self.pml_nodes.size)
         self._uy = np.zeros(self.pml_nodes.size)
         for g in self.groups:
-            g["p"] = [np.zeros(g["idx"].size) for _ in g["coef"]]
-            g["p_old"] = [np.zeros(g["idx"].size) for _ in g["coef"]]
+            shape = g["ratio"]["b"].shape if self.pol == "TE" else g["idx"].shape
+            g["p"] = [np.zeros(shape) for _ in g["coef"]]
+            g["p_old"] = [np.zeros(shape) for _ in g["coef"]]
+            g["ptot"] = np.zeros(shape)
             g["x_prev"] = np.zeros(g["idx"].size)  # TE: g_tot^{n-1/2}
 
     def _r(self, u):
@@ -484,15 +502,19 @@ class SubgridFIT2D:
                 einc = self._src_kn * self._inc("src", th)
                 g[e] -= self._src_c * einc
             for gi, grp in enumerate(self.groups):  # ADE on edges (half levels)
-                idx = grp["idx"]
-                gt_old = grp["x_prev"]
-                dp = np.zeros(idx.size)
+                idx, cf = grp["idx"], grp["ratio"]
+                # metal-segment field of each column at t^{n-1/2} (series)
+                pt = grp["ptot"]
+                em = ((grp["x_prev"][:, None] + cf["b"] * pt / cf["einf"]) / cf["R"]
+                      - pt) / cf["einf"]  # fmt: skip
+                pt_new = np.zeros_like(pt)
                 for kk, (alpha, xi, zeta) in enumerate(grp["coef"]):
                     p, po = grp["p"][kk], grp["p_old"][kk]
-                    p_new = alpha * p + xi * po + zeta * gt_old
-                    dp += p_new
+                    p_new = alpha * p + xi * po + zeta * em
+                    pt_new += p_new
                     grp["p_old"][kk], grp["p"][kk] = p, p_new
-                g[idx] -= self.W[idx] * grp["ratio"] * dp
+                grp["ptot"] = pt_new
+                g[idx] -= (cf["beta"] * pt_new).sum(1)
                 gt = g[idx].copy()
                 if self.src is not None:
                     gt += (self.Lst[idx] * self._edge_kn[idx]
