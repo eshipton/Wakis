@@ -16,8 +16,13 @@ Arms (h_in = lambda_min,diel / res; n_theta = 4 ceil(2 pi a / (4 h_in))):
   cells inside the PML (straight chords instead of exact arcs): isolates
   the effect of the Hodge choice.
 * ``multiblock``   -- core + polar rings to 1.55 um, a circle-to-square
-  transition block (nonorthogonal), a Cartesian outer block (uniform cells)
-  with a Cartesian PML.
+  transition block (nonorthogonal, 2 layers to a square of half side
+  1.55 um + 2 h_out: coarse cells at the 45-degree corners, which reflect
+  up to ~50 % at x > 6; the S-matrix de-embedding removes their effect), a
+  Cartesian outer block (uniform cells) with a Cartesian PML.
+* ``multiblock-resolved`` -- square half side 1.15 x 1.55 um and transition
+  layers about one Cartesian cell thick on the diagonal (low reflection,
+  but thin layers at the mid-sides halve the time step).
 
 Extraction: the scattered field on the node rings (exact radii, uniform
 angles) is resampled to 256 angles by FFT (trigonometric interpolation) and
@@ -62,6 +67,7 @@ ARMS = {
     "ogrid-std": dict(geom="std", hodge="polar"),
     "ogrid-corner": dict(geom="compact", hodge="corner"),
     "multiblock": dict(geom="compact", hodge="multiblock"),
+    "multiblock-resolved": dict(geom="compact", hodge="multiblock", resolved=True),
 }
 
 
@@ -117,12 +123,18 @@ def build(arm, res, shell=None):
     if cfg["hodge"] == "multiblock":
         r_b = g["r_pml"]
         radii = radial_nodes(breaks + list(g["radii"]) + [r_b], size)
-        S_half = r_b + 2 * h_out
-        hc = 2 * S_half / (nt // 4)
+        if cfg.get("resolved"):  # transition layers ~hc thick on the diagonal
+            S_half = 1.15 * r_b
+            hc = 2 * S_half / (nt // 4)
+            m_tr = int(np.ceil((np.sqrt(2) * S_half - r_b) / hc))
+        else:  # thin square frame, 2 layers (coarse 45-degree corners)
+            S_half = r_b + 2 * h_out
+            hc = 2 * S_half / (nt // 4)
+            m_tr = 2
         n_mid = 4
         n_out = n_mid + N_PML
         x_outer = S_half + hc * np.arange(1, n_out + 1)
-        mesh = ogrid_cartesian_mesh(radii, nt, S_half, x_outer, m_tr_out=2,
+        mesh = ogrid_cartesian_mesh(radii, nt, S_half, x_outer, m_tr_out=m_tr,
                                     interfaces=interfaces)  # fmt: skip
         x0 = S_half + n_mid * hc
         pml = dict(kind="cartesian", r0=x0, r1=x_outer[-1])

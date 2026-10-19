@@ -51,7 +51,8 @@ def _metrics(d):
 
 def load():
     acc = {}
-    for f in sorted(list(DATA.glob("*.json")) + list((DATA / "baselines").glob("*.json"))):
+    for f in sorted([p for p in DATA.glob("*.json") if p.name != "targets.json"]
+                    + list((DATA / "baselines").glob("*.json"))):
         d = json.loads(f.read_text())
         if "error" in d:
             print("FAILED", f.name, d["error"])
@@ -98,7 +99,11 @@ def fig_meshes(res=10):
                            (axs[1], "multiblock", "O-grid + transition + Cartesian block")):  # fmt: skip
         mesh, pml, radii, h = NS.build(arm, res)
         _draw(ax, mesh)
-        gen = ~mesh.is_polar
+        Pq = mesh.nodes[mesh.cells]
+        ea, eb = np.roll(Pq, 1, 1) - Pq, np.roll(Pq, -1, 1) - Pq
+        cosang = np.abs(np.einsum("ijk,ijk->ij", ea, eb)) / (
+            np.linalg.norm(ea, axis=2) * np.linalg.norm(eb, axis=2))
+        gen = ~mesh.is_polar & (cosang.max(1) > 1e-6)  # non-rectangular general cells
         from matplotlib.collections import PolyCollection
 
         P = mesh.nodes[mesh.cells[gen]] * 1e6
@@ -156,8 +161,9 @@ def fig_error(acc, arms, name, title):
             ax.set_title(f"{pol}", fontsize=9)
             ax.grid(True, which="both", lw=0.3)
             x0 = np.array(ax.get_xlim())
-            ax.loglog(x0, 100 * 0.02 * (x0 / x0[0]) ** -1.0 * 3, color="0.7", lw=0.6, ls=":",
-                      label="2nd order (error ~ unknowns^-1)")  # fmt: skip
+            p_ord = -1.0 if key == "dofs" else -2.0 / 3.0
+            ax.loglog(x0, 100 * 0.06 * (x0 / x0[0]) ** p_ord, color="0.7", lw=0.6, ls=":",
+                      label="2nd order in h (error ~ unknowns^-1, work^-2/3)")  # fmt: skip
     axs[0, 0].legend(fontsize=7)
     fig.suptitle(title, fontsize=10)
     fig.savefig(FIG / name)
