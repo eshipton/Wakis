@@ -96,7 +96,7 @@ class PolygonFIT2D:
     pml : dict, optional
         Split-field (Berenger) PML on axis-aligned edges,
         ``dict(x=(x_min, x_max), y=(y_min, y_max), thickness=d, order=3,
-        R0=1e-6)``: inside the box the field is unchanged; outside it the
+        R0=1e-6, eps_r=1)`` (eps_r: background permittivity for s_max): inside the box the field is unchanged; outside it the
         rates s_x(x), s_y(y) of `pml_rate` act on the x- and y-parts of the
         node field and on the fluxes of x- and y-directed edges. All edges
         touching a lossy node must be axis-aligned (true on rectangles).
@@ -172,9 +172,18 @@ class PolygonFIT2D:
         if polarization == "TE" and dispersive:
             if hodge != "orthogonal":
                 raise NotImplementedError("dispersive TE needs hodge='orthogonal'")
+            # the stiffness of K (time step, eigenmodes) keeps the eps_inf of
+            # the dispersive cells; the stepping Hodge drops them (their
+            # segments carry their own field, see _te_voltage)
+            self.S, self.stiff = self._edge_hodge(w_cell)
+            K_S = self._apply_S_matrix()
             w_cell = w_cell * ~disp_cells
+        else:
+            K_S = None
         self._w_cell = w_cell
         self.S, self.stiff = self._edge_hodge(w_cell)
+        if K_S is None:
+            K_S = self._apply_S_matrix()
         if bc == "abc":
             bl = mesh.boundary_node_length(kind)
             ce = mesh.edge_cells[mesh.boundary_edges, 0]
@@ -194,7 +203,7 @@ class PolygonFIT2D:
         if pml is not None:
             self._init_pml(pml)
 
-        K = (self.GT @ self._apply_S_matrix() @ G).tocsr()
+        K = (self.GT @ K_S @ G).tocsr()
         self.K = K
         lam = max_eigenvalue(K, M_inv_sqrt=1 / np.sqrt(self.mass))
         self.dt_max = 2 / np.sqrt(lam)
@@ -267,8 +276,9 @@ class PolygonFIT2D:
         d = pml["thickness"]
         order = pml.get("order", 3)
         R0 = pml.get("R0", 1e-6)
-        rx = pml_rate(pml["x"], d, pml.get("s_max"), order, R0)
-        ry = pml_rate(pml["y"], d, pml.get("s_max"), order, R0)
+        er = pml.get("eps_r", 1.0)
+        rx = pml_rate(pml["x"], d, pml.get("s_max"), order, R0, er)
+        ry = pml_rate(pml["y"], d, pml.get("s_max"), order, R0, er)
         t = mesh.edge_tangent
         is_x = np.abs(t[:, 1]) < 1e-9
         is_y = np.abs(t[:, 0]) < 1e-9
