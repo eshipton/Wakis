@@ -13,8 +13,20 @@ from .mie import (
     mie_s1_s2,
     rayleigh_efficiencies,
 )
+from .mie_cylinder import (
+    cylinder_amplitude,
+    cylinder_coefficients,
+    cylinder_efficiencies,
+    cylinder_rayleigh_efficiencies,
+    cylinder_scattering_width,
+)
 
 __all__ = [
+    "cylinder_amplitude",
+    "cylinder_coefficients",
+    "cylinder_efficiencies",
+    "cylinder_rayleigh_efficiencies",
+    "cylinder_scattering_width",
     "mie_coefficients",
     "mie_cross_sections",
     "mie_differential_cross_section",
