@@ -24,7 +24,7 @@ STYLE = {
     "cart-graded": dict(color="#D55E00", marker="s", ls="-", label="Wakis FIT (Cartesian graded, conformal)"),
     "cart-graded-compact": dict(color="#CC79A7", marker="v", ls="-", label="Wakis FIT (Cartesian graded, compact domain)"),
     "tri-uniform": dict(color="#56B4E9", marker="o", ls="--", label="Wakis FIT (triangles uniform, Voronoi)"),
-    "tri-graded": dict(color="#0072B2", marker="o", ls="-", label="Wakis FIT (triangles graded, Voronoi)"),
+    "tri-graded": dict(color="#0072B2", marker="o", ls="-", label="Wakis FIT (triangles graded, Voronoi, ABC)"),
     "tri-graded-compact": dict(color="#009E73", marker="^", ls=":", label="Wakis FIT (triangles graded, compact, 1st-order ABC)"),
     "tri-graded-pml": dict(color="#000000", marker="*", ls="-", label="Wakis FIT (triangles graded, compact, radial CFS-PML)"),
 }  # fmt: skip
