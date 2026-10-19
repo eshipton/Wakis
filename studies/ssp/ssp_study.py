@@ -235,12 +235,65 @@ def collect_pilot(run_dir):
             "selected": s.get("selected_stage"), "selected_wakis": sel.get("score"),
             "opt_time_h": s.get("optimization_time_s", 0) / 3600,
             "errors": len(s.get("errors", [])),
+            "trace": [r["eval_metric"] for r in logs if "step" in r and "loss" in r],
+            "trace_stage": [r["stage"] for r in logs if "step" in r and "loss" in r],
             "dir": str(summ.parent.relative_to(run_dir)),
         })  # fmt: skip
     return rows
 
 
+def design_evolution(run_dir, challenge="ceviche_lightweight_waveguide_bend", seed=0):
+    """Figure: simulated density at the end of every stage (and a few steps
+    inside the beta = inf stage) for both arms of one (challenge, seed)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    run_dir = pathlib.Path(run_dir)
+    arms = {"round2": f"{challenge}_seed{seed}_robust", "ssp": f"{challenge}_seed{seed}_ssp"}
+    picks = {}
+    for arm, name in arms.items():
+        hits = list(run_dir.glob(f"shard_*/{name}/snapshots.npz"))
+        if not hits:
+            continue
+        z = np.load(hits[0])
+        stage = z["stage"].astype(str)
+        idx = [0]
+        for k in range(1, len(stage)):
+            if stage[k] != stage[k - 1]:
+                idx.append(k - 1)
+        idx.append(len(stage) - 1)
+        picks[arm] = [(int(i), stage[i], int(z["step"][i]), float(z["eval_metric"][i]),
+                       z["designs"][i].astype(float)) for i in idx]  # fmt: skip
+    if not picks:
+        return
+    ncol = max(len(v) for v in picks.values())
+    fig, ax = plt.subplots(len(picks), ncol, figsize=(2.3 * ncol, 3.0 * len(picks)), squeeze=False)
+    for r, (arm, items) in enumerate(picks.items()):
+        for c in range(ncol):
+            a = ax[r, c]
+            a.axis("off")
+            if c >= len(items):
+                continue
+            i, st, step, m, d = items[c]
+            lo, hi = d.min(), d.max()
+            a.imshow(((d - lo) / max(hi - lo, 1e-12)).T, origin="lower", cmap="gray_r",
+                     vmin=0, vmax=1)  # fmt: skip
+            gray = np.mean((d > lo + 1e-3 * (hi - lo)) & (d < hi - 1e-3 * (hi - lo)))
+            a.set_title(f"{arm}: it {i + 1}\n{st}:{step}\nWakis {m:+.3f}, gray {100 * gray:.0f} %",
+                        fontsize=7)  # fmt: skip
+    fig.suptitle(f"{challenge.replace('ceviche_lightweight_', '')}, seed {seed}: "
+                 "simulated design at the end of each stage", fontsize=9)  # fmt: skip
+    fig.tight_layout()
+    FIGS.mkdir(exist_ok=True)
+    fig.savefig(FIGS / f"c_design_evolution_{challenge.split('_')[-1]}_seed{seed}.png", dpi=150)
+    plt.close(fig)
+
+
 def pilot(run_dir):
+    for ch in ("ceviche_lightweight_waveguide_bend", "ceviche_lightweight_mode_converter"):
+        design_evolution(run_dir, ch, 0)
     rows = collect_pilot(run_dir)
     DATA.mkdir(exist_ok=True)
     (DATA / "pilot.json").write_text(json.dumps(rows, indent=1))
@@ -291,6 +344,27 @@ def plot_pilot(rows, plt):
             a.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(FIGS / "d_pilot_metrics.png", dpi=150)
+    plt.close(fig)
+    fig, ax = plt.subplots(1, len(chs), figsize=(6 * len(chs), 4), squeeze=False)
+    for i, ch in enumerate(chs):
+        a = ax[0, i]
+        for j, arm in enumerate(("round2", "ssp")):
+            for r in (r for r in rows if r["challenge"] == ch and r["arm"] == arm):
+                t = np.array(r["trace"], float)
+                a.plot(np.arange(1, t.size + 1), t, color=f"C{j}", alpha=0.35, lw=0.8)
+                a.plot(np.arange(1, t.size + 1), np.maximum.accumulate(t), color=f"C{j}", lw=1.6,
+                       label=("round-2" if arm == "round2" else "SSP") if r["seed"] == 0 else None)
+                st = r["trace_stage"]
+                for k in range(1, len(st)):
+                    if st[k] != st[k - 1] and r["seed"] == 0:
+                        a.axvline(k + 0.5, color=f"C{j}", ls=":", lw=0.8)
+        a.set(xlabel="iteration (simulated designs)", ylabel="Wakis r=1 eval metric",
+              title=f"{ch}: per-iteration (thin) and running best (thick)")
+        a.set_ylim(-1.0, 1.0)
+        a.grid(alpha=0.3)
+        a.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(FIGS / "e_pilot_convergence.png", dpi=150)
     plt.close(fig)
 
 

@@ -70,4 +70,28 @@ The paper's choice avoids frozen gradients but leaves a 17× modulation of the s
 
 Everything else is identical: the filter, the length-scale repair, candidate selection by the official backend, and the 10 nm re-check.
 
-Results: *pending* (see `data/pilot.md` once collected).
+**Results.** All 16 tasks succeeded, taking 1.2–2.9 h of optimization each. Per-seed numbers are in `data/pilot.md` and `data/pilot.json`; the raw outputs are in `invrs-wakis-results/ssp-pilot/`.
+
+| challenge | arm | official 40 nm, mean (min, max) | ceviche 10 nm, mean | length-scale pass | iterations to 95 % (median) |
+|---|---|---|---|---|---|
+| bend | round-2 | +0.522 (+0.362, +0.625) | **+0.364** | 4/4 | 13 |
+| bend | SSP | **+0.576** (+0.405, +0.790) | +0.219 | 4/4 | 18 |
+| mode converter | round-2 | +0.142 (−0.286, +0.327) | **+0.040** | 4/4 | 20 |
+| mode converter | SSP | **+0.160** (−0.050, +0.431) | −0.004 | 4/4 | 24 |
+
+![](figures/d_pilot_metrics.png)
+![](figures/e_pilot_convergence.png)
+![](figures/c_design_evolution_bend_seed0.png)
+
+**Reading.**
+- **Official metric:** SSP is ahead by +0.05 (bend) and +0.02 (mode converter) on average and has the single best design (bend seed 1: +0.790; the best round-2 design reaches +0.625). The paired per-seed differences, however, have both signs (bend +0.22, +0.17, +0.01, −0.18; mode converter −0.03, −0.24, +0.10, +0.24). With n = 4 this is **not significant**.
+- **10 nm robustness:** SSP is *worse* (bend −0.15, mode converter −0.04 on average). A plausible cause, not yet tested: the β = ∞ stage tunes interface positions inside the 40 nm pixels, and some of those sub-pixel gains do not transfer to the 10 nm grid.
+- **The dominant loss is the gray → feasible-binary step, for both arms.** The first STE iterate, which is the repaired binary design, is often far below the last gray-stage design, e.g. +0.50 → −0.39 (MC seed 0, SSP) and +0.52 → −1.33 (bend seed 2, round-2). SSP has the smaller drop in 4 of 8 pairs. The length-scale repair, not the projection, is the main perturbation.
+- **"Iterations to 95 %"** is the first iteration whose running-best Wakis r = 1 metric reaches 95 % of the run's improvement. It is dominated by the early gray stages, so both arms "converge" in 13–24 iterations. The metric does not resolve the late stages where SSP is supposed to help. A better measure would use feasible designs only.
+
+**Verdict.** SSP works end to end: it is differentiable at β = ∞, the designs are feasible, and it is competitive on the official metric. This pilot does not show a robust gain over the round-2 pipeline at equal iteration budget, so a full-ceviche GPU sweep is **not** recommended yet.
+
+**Next steps**, cheap and on CPU Batch:
+1. R = 0.75 px, to reduce the 17× shape-derivative ripple.
+2. Add the r = 2 robustness term to the SSP β = ∞ stage, not only to the STE stage.
+3. Run 8 seeds per arm to resolve differences of ≈ 0.05.
