@@ -81,9 +81,67 @@ PROBE = [("dg4", "TM", 2), ("dg4", "TE", 2), ("dg3", "TM", 2), ("dg4-compact", "
          ("dg4-straight", "TE", 2), ("dg3-compact", "TM", 3)]  # fmt: skip
 
 
+LARGE = dict(
+    dg3=[2, 3, 4, 6], dg4=[1.5, 2, 3, 4], dg5=[1.5, 2, 3],
+    fd22=[10, 14, 20, 28, 40], fd24=[8, 11, 16, 22, 32], fd24rk=[8, 11, 16, 22, 32],
+)  # fmt: skip
+
+# benchmark case: 'b1' (shared Mie benchmark) or 'large' (showcase: lossy
+# n = 2 cylinder, x = 20..30, sigma = 5000 S/m so that Im n ~ 0.02 and every
+# resonance has Q < ~50: the finite time window then converges and the
+# error measures the scheme, not the ring-down truncation)
+CASE = dict(name="b1", sigma=0.0)
+
+
+def set_case(name):
+    """Patch the shared-benchmark globals of `mie_mesh_study` for a case."""
+    CASE["name"] = name
+    if name != "large":
+        return
+    CASE["sigma"] = 5000.0
+    S.X = np.linspace(20.0, 30.0, 41)
+    S.FREQS = S.X * C0 / (2 * np.pi * A)
+    S.F_CENTER = 0.5 * (S.FREQS[0] + S.FREQS[-1])
+    S.F_WIDTH = 0.25 * (S.FREQS[-1] - S.FREQS[0])
+    S.N_MAX = 52
+    S.LAM_MIN_DIEL = 2 * np.pi * A / (S.X.max() * N_CYL)
+    GEOM["compact"] = dict(radii=[1.15e-6, 1.25e-6, 1.35e-6], r_out=1.45e-6)
+    GEOM["box"] = dict(radii=[1.15e-6, 1.25e-6, 1.35e-6], half=1.75e-6, pml=0.3e-6)
+
+    def series(pol, x=None):
+        from scipy.constants import epsilon_0
+
+        from wakis.analytic import cylinder_coefficients, cylinder_efficiencies
+
+        x = np.atleast_1d(S.X if x is None else x)
+        w = x * C0 / A
+        m = np.sqrt(N_CYL**2 - 1j * CASE["sigma"] / (w * epsilon_0))  # exp(+iwt)
+        q = np.array([cylinder_efficiencies(mm, xx, pol)[1] for mm, xx in zip(m, x)])
+        c = np.array([cylinder_coefficients(mm, xx, pol, n_terms=S.N_MAX)
+                      for mm, xx in zip(m, x)])  # fmt: skip
+        return q, c.conj()  # extraction works in exp(-iwt) (Bohren-Huffman)
+
+    S.series = series
+
+
+def dg_material():
+    if CASE["sigma"]:
+        from wakis.dispersive import DispersiveMaterial
+
+        return DispersiveMaterial(N_CYL**2, sigma=CASE["sigma"])
+    return N_CYL**2
+
+
 def tasks(name="main"):
     if name == "probe":
         return list(PROBE)
+    if name == "large":
+        out = []
+        for arm, rs in LARGE.items():
+            for res in rs:
+                for pol in ("TM", "TE"):
+                    out.append((arm + ("-compact" if arm.startswith("dg") else ""), pol, res))
+        return out
     out = []
     for p, rs in DG_RES.items():
         for res in rs:
@@ -121,13 +179,13 @@ def run_dg(p, geom, curved, pol, res, cfl=0.8):
         H = g["half"]
         mesh = circles_mesh([(0, 0, A)], dg_size(h), box=(-H, H, -H, H))
         solver = DGTD2D(
-            mesh, p, {1: N_CYL**2}, polarization=pol, bc="abc",
+            mesh, p, {1: dg_material()}, polarization=pol, bc="abc",
             pml=dict(thickness=g["pml"], R0=1e-6, order=3), curved=curved, cfl=cfl,
         )  # fmt: skip
     else:
         mesh = circles_mesh([(0, 0, A)], dg_size(h), outer_circle=(0, 0, g["r_out"]))
         solver = DGTD2D(
-            mesh, p, {1: N_CYL**2}, polarization=pol, bc="abc", curved=curved, cfl=cfl
+            mesh, p, {1: dg_material()}, polarization=pol, bc="abc", curved=curved, cfl=cfl
         )
     solver.add_plane_wave(S.pulse())
     pts = np.vstack([circle_points(r, S.M_PTS)[0] for r in S.RADII])
@@ -168,7 +226,7 @@ def run_fd(order, rk, pol, res, cfl=0.95):
     h = S.LAM_MIN_DIEL / res
     solver = FDTD24(
         h=h, half_width=g["half"] - g["pml"], n_pml=max(10, int(np.ceil(g["pml"] / h))),
-        cylinders=[(0.0, 0.0, A, N_CYL**2)], polarization=pol, order=order,
+        cylinders=[(0.0, 0.0, A, N_CYL**2, CASE["sigma"])], polarization=pol, order=order,
         time_scheme="lsrk4" if rk else "leapfrog", cfl=cfl,
     )  # fmt: skip
     solver.add_plane_wave(S.pulse())
@@ -236,6 +294,8 @@ def main():
     ap.add_argument("--tasklist", default="main")
     a = ap.parse_args()
     S.T_RUN = a.t_run * 1e-15
+    if a.tasklist == "large":
+        set_case("large")
     tl = tasks(a.tasklist)
     if a.mode == "list":
         for i, t in enumerate(tl):

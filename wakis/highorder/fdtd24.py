@@ -79,7 +79,9 @@ class FDTD24:
         Half width of the physical (non-PML) square [m].
     n_pml : int
         CPML cells on each side.
-    cylinders : list of (cx, cy, R, eps_r)
+    cylinders : list of (cx, cy, R, eps_r) or (cx, cy, R, eps_r, sigma)
+        Circular inclusions; sigma [S/m] is an optional static conductivity
+        (area-averaged, Crank-Nicolson in leapfrog).
     polarization : {'TM', 'TE'}
     order : {2, 4}
         Spatial order.
@@ -109,7 +111,8 @@ class FDTD24:
         self.xh = 0.5 * (self.xn[:-1] + self.xn[1:])  # half nodes
         self.n_cells = (N - 1) ** 2
         self.n_dofs = 3 * self.n_cells
-        self.cylinders = cylinders
+        # (cx, cy, R, eps_r[, sigma [S/m]])
+        self.cylinders = [tuple(c) + (0.0,) * (5 - len(c)) for c in cylinders]
         # stability: max |symbol| = c1 + |c2| (7/6 for (2,4)) per direction
         lim = h / (C0 * np.sqrt(2) * (abs(self.c1) + abs(self.c2)))
         if self.rk:
@@ -132,19 +135,25 @@ class FDTD24:
         o = (np.arange(ss) + 0.5) / ss - 0.5
         eps_m = np.zeros(xc.shape)
         inv_m = np.zeros(xc.shape)
+        sig_m = np.zeros(xc.shape)
         nxs = np.zeros(xc.shape)
         nys = np.zeros(xc.shape)
         for ox in o:
             for oy in o:
                 X, Y = xc + ox * h, yc + oy * h
                 e = np.ones(xc.shape)
-                for cx, cy, R, er in self.cylinders:
-                    e = np.where(np.hypot(X - cx, Y - cy) < R, er, e)
+                sg = np.zeros(xc.shape)
+                for cx, cy, R, er, sgm in self.cylinders:
+                    inside = np.hypot(X - cx, Y - cy) < R
+                    e = np.where(inside, er, e)
+                    sg = np.where(inside, sgm, sg)
                 eps_m += e
                 inv_m += 1 / e
+                sig_m += sg
         eps_m /= ss * ss
         inv_m /= ss * ss
-        for cx, cy, R, er in self.cylinders:
+        self._sig_tmp = sig_m / (ss * ss)
+        for cx, cy, R, er, _ in self.cylinders:
             r = np.hypot(xc - cx, yc - cy)
             near = np.abs(r - R) < h
             nxs = np.where(near, (xc - cx) / np.maximum(r, 1e-30), nxs)
@@ -157,6 +166,7 @@ class FDTD24:
             X, Y = np.meshgrid(xn, xn, indexing="ij")  # Ez nodes
             eps_m, _, _, _ = self._fractions(X, Y, ss)
             self.kz = 1 / eps_m  # kappa = eps_eff^-1
+            self.sig_z = self._sig_tmp  # area-averaged conductivity
         else:
             # Ex at (xh_i, xn_j), Ey at (xn_i, xh_j)
             for comp, (gx, gy) in (("x", (xh, xn)), ("y", (xn, xh))):
@@ -165,6 +175,7 @@ class FDTD24:
                 n2 = nx**2 if comp == "x" else ny**2
                 kap = n2 * inv_m + (1 - n2) / eps_m
                 setattr(self, "k" + comp, kap)
+                setattr(self, "sig_" + comp, self._sig_tmp)
 
     def _setup_pml(self, n_pml, R0):
         h, dt = self.h, self.dt
@@ -215,7 +226,7 @@ class FDTD24:
 
     def add_plane_wave(self, src_time, amplitude=1.0):
         """+x plane wave, scattered-field formulation (vacuum background)."""
-        s0 = min(cx - R for cx, cy, R, er in self.cylinders)
+        s0 = min(c[0] - c[2] for c in self.cylinders)
         self.plane_wave = dict(s=src_time, amp=amplitude, s0=s0)
 
     def _einc(self, x, t):
@@ -268,7 +279,16 @@ class FDTD24:
             self._cpml("hzx", dxEy, a[:, None], b[:, None], tau)
             self.Hz += tau / MU0 * (dyEx + self.psi["hzy"] - dxEy - self.psi["hzx"])
 
-    def _kick_D(self, tau):
+    def _lossy(self, D, inc, sig, kap, Ei0, Ei1, tau):
+        """Semi-implicit (Crank-Nicolson) conductive update of D' = D_s / eps0:
+        dD'/dt = curl / eps0 - sigma kappa (D' + E_inc) / eps0."""
+        if not np.any(sig):
+            D += inc
+            return
+        beta = tau * sig * kap / (2 * EPS0)
+        D[...] = (D * (1 - beta) + inc - beta * (Ei0 + Ei1)) / (1 + beta)
+
+    def _kick_D(self, tau, t=0.0):
         c1, c2, h = self.c1, self.c2, self.h
         a, b = self.pml_n
         if self.pol == "TM":
@@ -276,14 +296,21 @@ class FDTD24:
             dyH = _d_int(self.Hx, 1, c1, c2, h)
             self._cpml("ezx", dxH, a[:, None], b[:, None], tau)
             self._cpml("ezy", dyH, a[None, :], b[None, :], tau)
-            self.Dz += tau / EPS0 * (dxH + self.psi["ezx"] - dyH - self.psi["ezy"])
+            inc = tau / EPS0 * (dxH + self.psi["ezx"] - dyH - self.psi["ezy"])
+            ei0 = self._einc(self.xn[:, None], t) * np.ones((1, self.N))
+            ei1 = self._einc(self.xn[:, None], t + tau) * np.ones((1, self.N))
+            self._lossy(self.Dz, inc, self.sig_z, self.kz, ei0, ei1, tau)
         else:
             dyH = _d_int(self.Hz, 1, c1, c2, h)  # Ex (N-1, N)
             dxH = _d_int(self.Hz, 0, c1, c2, h)  # Ey (N, N-1)
             self._cpml("ex", dyH, a[None, :], b[None, :], tau)
             self._cpml("ey", dxH, a[:, None], b[:, None], tau)
-            self.Dx += tau / EPS0 * (dyH + self.psi["ex"])
-            self.Dy -= tau / EPS0 * (dxH + self.psi["ey"])
+            self._lossy(self.Dx, tau / EPS0 * (dyH + self.psi["ex"]), self.sig_x,
+                        self.kx, 0.0, 0.0, tau)  # fmt: skip
+            ei0 = self._einc(self.xn[:, None], t) * np.ones((1, self.N - 1))
+            ei1 = self._einc(self.xn[:, None], t + tau) * np.ones((1, self.N - 1))
+            self._lossy(self.Dy, -tau / EPS0 * (dxH + self.psi["ey"]), self.sig_y,
+                        self.ky, ei0, ei1, tau)  # fmt: skip
 
     def _cpml(self, key, deriv, a, b, tau):
         """psi = b psi + a deriv (CPML recursion for the leapfrog step)."""
@@ -295,7 +322,7 @@ class FDTD24:
             self._rk_step()
             return
         self._kick_H(dt, self.t)
-        self._kick_D(dt)
+        self._kick_D(dt, self.t)
         self.t += dt
 
     # ------------------------------------------------------------ Runge-Kutta
@@ -322,6 +349,9 @@ class FDTD24:
             dxH = _d_int(self.Hy, 0, c1, c2, h)
             dyH = _d_int(self.Hx, 1, c1, c2, h)
             d["Dz"] = (dxH + P["ezx"] - dyH - P["ezy"]) / EPS0
+            if np.any(self.sig_z):
+                ei = self._einc(self.xn[:, None], t)
+                d["Dz"] -= self.sig_z * self.kz * (self.Dz + ei) / EPS0
             d["ezx"] = -gn[:, None] * P["ezx"] - sn[:, None] * dxH
             d["ezy"] = -gn[None, :] * P["ezy"] - sn[None, :] * dyH
         else:
@@ -335,6 +365,10 @@ class FDTD24:
             dxH = _d_int(self.Hz, 0, c1, c2, h)
             d["Dx"] = (dyH + P["ex"]) / EPS0
             d["Dy"] = -(dxH + P["ey"]) / EPS0
+            if np.any(self.sig_x) or np.any(self.sig_y):
+                ei = self._einc(self.xn[:, None], t)
+                d["Dx"] -= self.sig_x * self.kx * self.Dx / EPS0
+                d["Dy"] -= self.sig_y * self.ky * (self.Dy + ei) / EPS0
             d["ex"] = -gn[None, :] * P["ex"] - sn[None, :] * dyH
             d["ey"] = -gn[:, None] * P["ey"] - sn[:, None] * dxH
         return d
