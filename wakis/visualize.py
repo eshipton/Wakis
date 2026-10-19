@@ -1079,9 +1079,11 @@ class SliceRecorder:
         Plane coordinate [m].
     every : int
         Record every `every` steps.
+    t_stop : float, optional
+        Stop recording after this time [s] (e.g. once the pulse has left).
     """
 
-    def __init__(self, component="Ex", axis="y", position=0.0, every=10):
+    def __init__(self, component="Ex", axis="y", position=0.0, every=10, t_stop=None):
         self.component = component
         self.axis = axis
         self.position = position
@@ -1089,8 +1091,11 @@ class SliceRecorder:
         self.frames, self.times = [], []
         self._n = 0
         self.coords = None
+        self.t_stop = t_stop
 
     def update(self, solver, t):
+        if self.t_stop is not None and t > self.t_stop:
+            return
         if self._n % self.every == 0:
             field = getattr(solver, self.component[0])
             values, coords = field_slice(

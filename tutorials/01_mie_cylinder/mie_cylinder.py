@@ -639,7 +639,7 @@ for res in (10, 15, 20, 30, 40, 60):
 
 # %%
 T_RUN = (
-    ARGS.t_run or 400
+    ARGS.t_run or 600
 ) * 1e-15  # max simulated time [s]; stops earlier once fields decay
 N_FREQ = 81
 X_SIM = np.linspace(X_MIN, X_MAX, N_FREQ)
@@ -742,7 +742,8 @@ def run_cylinder(resolution_per_um, conformal, pol, use_gpu=False, extras=True,
         out["plane"] = plane
         if movie:
             rec = wv.SliceRecorder(field, axis="z", position=0.0,
-                                   every=max(1, int(160e-15 / solver.dt / 120)))  # fmt: skip
+                                   every=max(1, int(160e-15 / solver.dt / 120)),
+                                   t_stop=160e-15)  # fmt: skip
             monitors.append(rec)
             out["movie"] = rec
     n_max = int(T_RUN / solver.dt)
@@ -1083,6 +1084,10 @@ mesh_study = load_mesh_study()
 #   If the run stops before the fields have decayed, the DFT is windowed and
 #   $Q(x)$ gets ripples and broadened peaks. The energy criterion and the
 #   maximum window `T_RUN` control this; check the "energy decayed" flag.
+#   Measured here: at 20 cells/µm, $Q_\mathrm{sca}$ from a 400 fs window
+#   differs from a 1600 fs window by 0.6 % RMS (max 0.06 at the sharpest
+#   peak); the tutorial and the study use 600 fs, so this floor lies below
+#   the discretization errors shown in section 10.
 # * **Box placement.** The TF/SF faces must not touch the scatterer or the
 #   CPML; the scattered flux box must lie at least one node outside the
 #   TF/SF surface and the inner box one node inside it. A face on the TF/SF
