@@ -24,6 +24,7 @@ DATA = HERE / "data"
 A_NANO = 20e-9
 LADDER = [A_NANO / q for q in (2, 3, 4, 6, 8)]
 PHASES = {
+    "B1": ["B1-TM", "B1-TE"],
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
 }
@@ -34,10 +35,24 @@ def arms():
 
     out = [DGTD2DArm(p=1), DGTD2DArm(p=2), DGTD2DArm(p=3), DGTD2DArm(p=4),
            DGTD2DArm(p=4, curved=False)]  # fmt: skip
+    from wakis.benchmarks.arms.triangles2d import Triangles2DArm
+
+    out += [DGTD2DArm(p=p, boundary="abc") for p in (3, 4, 5)]
+    out.append(Triangles2DArm(graded=True))
     return {a.name: a for a in out}
 
 
 def tasks(phase):
+    if phase == "B1":  # 3000 fs window: DG (de-embedded ABC disk) vs graded triangle FIT
+        from wakis.benchmarks import get_case
+
+        A = arms()
+        out = []
+        for c in PHASES["B1"]:
+            for name in ("tri-graded", "dg3-abc", "dg4-abc", "dg5-abc"):
+                for h in A[name].resolutions(get_case(c))[::-1]:
+                    out.append((c, name, h))
+        return out
     if phase == "B2c":  # coarse end of the ladder (one element across the radius)
         return [(c, f"dg{p}-pml", h) for c in ("B2-Au-TE", "B2-Ag-TE")
                 for h in (A_NANO, A_NANO / 1.5) for p in (1, 2, 3, 4)]  # fmt: skip
@@ -45,7 +60,7 @@ def tasks(phase):
     for case in PHASES[phase]:
         for h in LADDER[::-1]:
             for arm in arms():
-                if arm != "dg1-pml":
+                if arm.endswith("-pml") and arm != "dg1-pml" or arm == "dg4-pml-straight":
                     out.append((case, arm, h))
     return out
 
