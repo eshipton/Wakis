@@ -1,0 +1,1 @@
+{"case": "cpml3d", "backend": "cpu", "fused": null, "cells": 274625, "steps": 100, "setup_s": 0.4523587226867676, "ms_per_step": 36.4992071100005, "gpu_util_pct": null, "breakdown_ms": {"sources": 0.05752860001393856, "step": 36.170034400001896, "post": 0.0030227200068111415, "monitors": 0.001709000007394934}, "checksum_E": 529581277.7754914, "omp_threads": "1"}

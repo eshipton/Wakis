@@ -87,6 +87,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         bg=[1.0, 1.0, 0.0],
         verbose=2,
         k_bloch=None,
+        fused=False,
     ):
         """
         3D time-domain electromagnetic solver based on the Finite Integration
@@ -159,6 +160,12 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             Bloch wavevector (kx, ky, kz) [rad/m] applied on axes with
             ``'bloch'`` faces; components on other axes must be zero. A
             nonzero component requires a complex ``dtype``. Default is zero.
+        fused : bool, optional
+            GPU only (``use_gpu=True``, no MPI): time-step with the fused
+            kernels of `wakis.gpu_fused` (two kernels per step, also with
+            CPML; sources and DFT/flux/mode monitors in one kernel each)
+            instead of one CuPy operation per array expression. Same
+            arithmetic up to round-off. Default False.
 
         Attributes
         ----------
@@ -539,6 +546,11 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     "[!] cupyx could not be imported, please check CUDA installation"
                 )
 
+        self.fused = False
+        self._fused_step = None
+        if fused:
+            self._install_fused()
+
         if self.tensor_operator is not None:  # conformal='tensor'
             self.tensor_operator.install(self)
 
@@ -557,6 +569,22 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
 
         self.solverInitializationTime = time.time() - t0
         self.update_logger(["solverInitializationTime"])
+
+    def _install_fused(self):
+        """Replace the CuPy step by `wakis.gpu_fused.FusedStep` when possible."""
+        from .gpu_fused import FusedStep, eligible
+
+        base = self.one_step in (self._one_step, self._one_step_cpml)
+        if not (eligible(self) and base):
+            if self.verbose:
+                print(
+                    "[!] fused=True needs use_gpu=True without MPI and float64 or "
+                    "complex128 fields; using the standard step."
+                )
+            return
+        self._fused_step = FusedStep(self)
+        self.one_step = self._fused_step
+        self.fused = True
 
     def _match_grid_to_periodic_axes(self, bc_low, bc_high):
         """
