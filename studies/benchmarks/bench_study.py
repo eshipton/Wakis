@@ -41,18 +41,34 @@ def arms():
         Triangles2DArm(graded=False),
         Triangles2DArm(graded=True),
     ]
+    from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
+
+    out += [
+        CartesianDipoleArm(conformal=False),
+        CartesianDipoleArm(conformal="pec"),
+        CartesianDipoleArm(conformal="pec", pad_xy=0.42, pad_z=0.28,
+                           name="cart-conformal-pec-graded-bigdomain"),
+    ]  # fmt: skip
     return {a.name: a for a in out}
 
 
 PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
+    "B4": ["B4"],
 }
 
 
 def tasks(phase):
     out = []
-    names = list(arms())
+    if phase == "B4":
+        a = 0.5e-3
+        for q in (4, 3, 2, 1.5, 1):
+            for arm in ("cart-staircase-graded", "cart-conformal-pec-graded"):
+                out.append(("B4", arm, a / q))
+        out.append(("B4", "cart-conformal-pec-graded-bigdomain", a / 2))
+        return out
+    names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
     for case in PHASES[phase]:
         ladder = LADDER
         if case == "B3-g2":  # the gap needs h <= 1 nm
@@ -71,7 +87,7 @@ def run_tasks(mine, outdir, publish=False, machine=None):
     for case_name, arm_name, h in mine:
         case = get_case(case_name)
         rec = run(case, A[arm_name], h)
-        tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"
+        tag = f"{case_name}_{arm_name}_{h * 1e9:.3f}nm"  # (B4: h in m * 1e9)
         if os.environ.get("WAKIS_COMMIT"):
             rec["commit"] = os.environ["WAKIS_COMMIT"]
         save_record(rec, Path(outdir) / f"{tag}.json")
@@ -82,7 +98,7 @@ def run_tasks(mine, outdir, publish=False, machine=None):
         m = rec.get("metrics", {})
         msg = rec.get("error") or " ".join(
             f"{k}={m[k]:.4g}"
-            for k in ("q_ext_nrms", "q_ext_lam_peak", "enh_peak")
+            for k in ("q_ext_nrms", "q_ext_lam_peak", "enh_peak", "f_res", "r_res")
             if k in m
         )
         c = rec.get("cost", {})
