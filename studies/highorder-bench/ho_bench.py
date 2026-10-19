@@ -32,17 +32,21 @@ PHASES = {
 def arms():
     from wakis.highorder.bench_arm import DGTD2DArm
 
-    out = [DGTD2DArm(p=2), DGTD2DArm(p=3), DGTD2DArm(p=4),
+    out = [DGTD2DArm(p=1), DGTD2DArm(p=2), DGTD2DArm(p=3), DGTD2DArm(p=4),
            DGTD2DArm(p=4, curved=False)]  # fmt: skip
     return {a.name: a for a in out}
 
 
 def tasks(phase):
+    if phase == "B2c":  # coarse end of the ladder (one element across the radius)
+        return [(c, f"dg{p}-pml", h) for c in ("B2-Au-TE", "B2-Ag-TE")
+                for h in (A_NANO, A_NANO / 1.5) for p in (1, 2, 3, 4)]  # fmt: skip
     out = []
     for case in PHASES[phase]:
         for h in LADDER[::-1]:
             for arm in arms():
-                out.append((case, arm, h))
+                if arm != "dg1-pml":
+                    out.append((case, arm, h))
     return out
 
 
@@ -88,7 +92,7 @@ def main():
         mine = [(s.split(":")[0], s.split(":")[1], float(s.split(":")[2])) for s in a.only]
     else:
         mine = tl[a.shard :: a.nshards]
-    run_tasks(mine, a.outdir or DATA / a.phase)
+    run_tasks(mine, a.outdir or DATA / a.phase.rstrip("c"))
 
 
 if __name__ == "__main__":
