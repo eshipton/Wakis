@@ -1,0 +1,1 @@
+{"case": "ade3d", "backend": "gpu", "fused": null, "cells": 274625, "steps": 500, "setup_s": 0.7902145385742188, "ms_per_step": 7.863053287999946, "gpu_util_pct": 21.430051813471504, "breakdown_ms": {"sources": 0.19457324799986964, "step": 7.663731032002033, "post": 0.0038704959997630795, "monitors": 0.0025809600001593935}, "checksum_E": 60548318.48210433, "omp_threads": "1"}

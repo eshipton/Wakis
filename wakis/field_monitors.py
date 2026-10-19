@@ -200,6 +200,11 @@ class DFTMonitor:
             self._initialize(solver)
             self.is_first_update = False
 
+        if getattr(solver, "fused", False):
+            from .gpu_fused import monitor_update
+
+            if monitor_update(self, solver, t):
+                return
         times = {"E": t + solver.dt, "J": t + solver.dt, "H": t + solver.dt / 2}
         kernels = {
             f: solver.dt * self.xp.exp(-2j * np.pi * self._freqs * times[f])[:, None]
@@ -355,6 +360,11 @@ class FluxMonitor:
             self._initialize(solver)
             self.is_first_update = False
 
+        if getattr(solver, "fused", False):
+            from .gpu_fused import monitor_update
+
+            if monitor_update(self, solver, t):
+                return
         phase = -2j * np.pi * self._freqs
         kernel_E = solver.dt * self.xp.exp(phase * (t + solver.dt))[:, None]
         kernel_H = solver.dt * self.xp.exp(phase * (t + solver.dt / 2))[:, None]

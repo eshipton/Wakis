@@ -453,6 +453,16 @@ class TensorOperator:
         self.assemble(solver, exclude=exclude)
         if self.installed:
             return
+        fused = getattr(solver, "_fused_step", None)
+        if fused is not None and solver.one_step is fused:
+            # Fused GPU step: the correction runs as kernels around the step
+            from .gpu_fused import TensorHooks
+
+            hooks = TensorHooks(self, solver)
+            fused.pre.append(hooks.pre)
+            fused.post.append(hooks.post)
+            self.installed = True
+            return
         solver._one_step_untensored = solver.one_step
         solver.one_step = types.MethodType(one_step_tensor, solver)
         self.installed = True

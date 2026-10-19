@@ -1,0 +1,11 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+68.0,418756229,200,2093781.1,2089086.0,2072414,2120446,17779.1,"void cusparse::csrmv_v3_kernel<std::integral_constant<bool, (bool)0>, int, int, double, double, double, double, void>(cusparse::KernelCoeffs<T7>, const T3 *, const T2 *, const T3 *, const T4 *, T2, int, int, const T5 *, T6 *, T3 *, T7 *)"
+16.3,100260542,100,1002605.4,1002591.0,1001951,1003647,345.0,wakis_update_e
+9.1,55781512,100,557815.1,557903.5,551040,564895,2308.5,wakis_update_h
+4.2,25837321,200,129186.6,129120.0,127776,130912,634.3,"void cusparse::vector_scalar_multiply_kernel<(int)256, cusparse::AlignedVectorScalarMultiplyPolicy, int, double, double>(cusparse::KernelCoeff<T5>, T3, T4 *)"
+2.3,14232272,200,71161.4,71104.0,67200,74304,1257.3,"void cusparse::<unnamed>::csr_partition_kernel<int, int>(const T1 *, T2, T1, T1, T2, T2 *, T2)"
+0.0,200383,100,2003.8,1984.0,1952,2112,38.3,cupy_take
+0.0,192512,100,1925.1,1920.0,1696,2080,47.6,cupy_multiply__float64_float_float64
+0.0,161056,100,1610.6,1600.0,1600,1632,15.1,cupy_scatter_update
+0.0,145152,100,1451.5,1440.0,1408,1536,19.6,cupy_add__float64_float64_float64
+0.0,144928,100,1449.3,1440.0,1408,1600,26.2,cupy_subtract__float64_float64_float64

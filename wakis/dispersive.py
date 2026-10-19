@@ -596,8 +596,21 @@ class DispersiveMixin:
         idx, weight = idx[keep], weight[keep]
         if not hasattr(self, "_dispersive_groups"):
             self._dispersive_groups = []
-            self._one_step_nondispersive = self.one_step
-            self.one_step = self._one_step_dispersive
+            fused = getattr(self, "_fused_step", None)
+            if (
+                fused is not None
+                and self.one_step is fused
+                and np.dtype(self.dtype) == np.float64
+            ):
+                # Fused GPU step: the ADE runs as kernels around the step
+                from .gpu_fused import ADEHooks
+
+                hooks = ADEHooks(self)
+                fused.pre.append(hooks.pre)
+                fused.post.append(hooks.post)
+            else:
+                self._one_step_nondispersive = self.one_step
+                self.one_step = self._one_step_dispersive
         # Later assignments override earlier ones
         for group in self._dispersive_groups:
             old = ~np.isin(group["idx_host"], idx)
