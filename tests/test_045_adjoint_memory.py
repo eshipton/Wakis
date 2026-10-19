@@ -636,8 +636,14 @@ def _gpu_peak(fn):
             self.peak = max(self.peak, self.cur)
 
         def free_postprocess(self, device_id, mem_size, mem_ptr, pmem_id):
-            self.cur -= self.sizes.pop(mem_ptr, mem_size)
+            # Only frees of blocks allocated under the hook: freeing arrays
+            # of earlier runs (garbage collected meanwhile) must not lower
+            # the count, or the peak depends on what ran before
+            self.cur -= self.sizes.pop(mem_ptr, 0)
 
+    import gc
+
+    gc.collect()
     cp.get_default_memory_pool().free_all_blocks()
     hook = Peak()
     with hook:
