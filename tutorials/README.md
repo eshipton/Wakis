@@ -23,15 +23,17 @@ Runs in about a minute per polarization on a laptop CPU.
 </td>
 </tr>
 <tr>
-<td width="42%"><a href="01b_mie_sphere/mie_sphere.ipynb"><img src="01b_mie_sphere/figures/tfsf_diagram.png" width="100%"></a></td>
+<td width="42%"><a href="01b_mie_sphere/mie_sphere.ipynb"><img src="01b_mie_sphere/figures/far_field_vs_mie.png" width="100%"></a></td>
 <td>
 
 ### [01b &mdash; Mie scattering of a lossless dielectric sphere (3D)](01b_mie_sphere/mie_sphere.ipynb)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)
 
-The same set-up in 3D (n = 2, r = 1 µm): Mie series, near and far fields
-(`Near2FarMonitor` vs S<sub>1</sub>, S<sub>2</sub>), GPU run. *Validation
-runs pending; see the notebook status.*
+The same set-up in 3D (n = 2, r = 1 µm): Mie series, near fields,
+isosurfaces, a movie and the far field (`Near2FarMonitor` vs
+S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells,
+11 min, Q<sub>sca</sub> within 3.4 % RMS of Mie over x = 2&ndash;10
+(conformal, 40 cells/µm). Resolution study: to do.
 
 </td>
 </tr>
@@ -51,7 +53,7 @@ from the inner flux box, comparison with complex-index Mie theory.
 
 ```bash
 # local, from the repository root (virtual environment with `uv pip install -e .`)
-python tutorials/01_mie_cylinder/mie_cylinder.py --quick    # 2D, CPU, ~2 min
+python tutorials/01_mie_cylinder/mie_cylinder.py --quick    # 2D, CPU, ~3 min
 python tutorials/01_mie_cylinder/mie_cylinder.py --full     # 2D, converged
 python tutorials/01b_mie_sphere/mie_sphere.py --full --gpu  # 3D, GPU
 ```

@@ -106,7 +106,9 @@ def _ring_radii(r0, r1, size):
     return r0 + np.cumsum(steps)
 
 
-def graded_disk_mesh(radii, size, clearance=0.5, preserve_area=True):
+def graded_disk_mesh(
+    radii, size, clearance=0.5, preserve_area=True, pml_layers=0, pml_dr=None
+):
     """
     Interface-conforming Delaunay mesh of concentric disks with a radial size field.
 
@@ -130,10 +132,21 @@ def graded_disk_mesh(radii, size, clearance=0.5, preserve_area=True):
         Enlarge each interface ring so that its polygon encloses the circle
         area (as `disk_mesh`).
 
+    pml_layers : int, optional
+        Number of polar-aligned rings appended outside radii[-1] (for the
+        radial PML of `UnstructuredFIT2D`): every ring repeats the angles of
+        the outer ring (no stagger), so the cells are isosceles trapezoids
+        split into two triangles with a common circumcentre (the diagonal
+        has a zero dual edge) and all coupling edges are radial or
+        azimuthal. The outer ring is then not area-corrected.
+    pml_dr : float, optional
+        Radial spacing of the PML rings [m] (default h(radii[-1])).
+
     Returns
     -------
     SimplexMesh
-        Triangles tagged 0 (r < radii[0]), 1, ... as `disk_mesh`.
+        Triangles tagged 0 (r < radii[0]), 1, ... as `disk_mesh`; PML cells
+        get the tag len(radii).
     """
     radii = np.sort(np.atleast_1d(np.asarray(radii, dtype=float)))
     if not callable(size):
@@ -156,15 +169,24 @@ def graded_disk_mesh(radii, size, clearance=0.5, preserve_area=True):
         for j, r in enumerate(_ring_radii(r0, r1, size)):
             k += 1
             on_interface = j == len(_ring_radii(r0, r1, size)) - 1
-            ring = _ring(r, size(r), preserve_area and on_interface)
+            last = on_interface and r1 == radii[-1]
+            ring = _ring(
+                r, size(r), preserve_area and on_interface and not (last and pml_layers)
+            )
             n = len(ring)
             rot = np.pi / n * (k % 2)  # stagger
             c, s_ = np.cos(rot), np.sin(rot)
             rings.append(ring @ np.array([[c, s_], [-s_, c]]))
+    if pml_layers:
+        outer = rings[-1]
+        R = np.hypot(*outer[0])
+        dr = size(radii[-1]) if pml_dr is None else pml_dr
+        for j in range(1, int(pml_layers) + 1):
+            rings.append(outer * (R + j * dr) / R)
     nodes = np.vstack(rings + [pts])
     tri = Delaunay(nodes).simplices
     rc = np.hypot(*nodes[tri].mean(1).T)
-    return SimplexMesh(nodes, tri, _tags_by_radius(rc, radii[:-1]))
+    return SimplexMesh(nodes, tri, _tags_by_radius(rc, radii))
 
 
 def _odt_step(nodes, on_shell, radii, gap):

@@ -24,6 +24,7 @@ Requires ``jupytext`` (and ``nbclient``, ``ipykernel`` for ``--execute``).
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -47,10 +48,18 @@ def sources(selection):
     return out
 
 
+_PROGRESS = re.compile(r"\d+%\|.*\|\s*\d+/\d+")  # tqdm progress-bar lines
+
+
 def _strip_outputs(nb):
     for cell in nb.cells:
         if cell.cell_type != "code":
             continue
+        # tqdm without widgets writes one stream output per update: keep the last
+        outs = cell.get("outputs", [])
+        bars = [i for i, o in enumerate(outs)
+                if o.get("output_type") == "stream" and _PROGRESS.search(o.get("text", ""))]  # fmt: skip
+        cell["outputs"] = [o for i, o in enumerate(outs) if i not in bars[:-1]]
         kept = []
         for o in cell.get("outputs", []):
             if o.get("output_type") in ("display_data", "execute_result"):
@@ -62,9 +71,14 @@ def _strip_outputs(nb):
                     "application/vnd.jupyter.widget-view+json", None
                 )
             elif o.get("output_type") == "stream":
-                # tqdm progress bars: keep the last line of carriage returns
+                # tqdm progress bars: keep the last line of carriage returns;
+                # drop VTK logger noise
                 text = o.get("text", "")
-                o["text"] = "\n".join(line.split("\r")[-1] for line in text.split("\n"))
+                lines = [line.split("\r")[-1] for line in text.split("\n")]
+                lines = [ln for ln in lines if "WARN|" not in ln]
+                o["text"] = "\n".join(lines)
+                if not o["text"].strip():
+                    continue
             kept.append(o)
         cell["outputs"] = kept
     return nb
@@ -118,6 +132,15 @@ def check(py):
     return True
 
 
+def restrip(path):
+    """Apply the output hygiene of --execute to an executed notebook."""
+    import nbformat
+
+    nb = nbformat.read(path, as_version=4)
+    nbformat.write(_strip_outputs(nb), path)
+    print(f"{path}: {Path(path).stat().st_size / 1e6:.2f} MB")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("tutorials", nargs="*", help="folder prefixes, e.g. 01")
@@ -125,7 +148,10 @@ def main():
     ap.add_argument("--args", default="", help="options passed to the tutorial")
     ap.add_argument("--timeout", type=int, default=7200, help="per cell [s]")
     ap.add_argument("--check", action="store_true", help="verify notebooks in sync")
+    ap.add_argument("--restrip", metavar="IPYNB", help="clean outputs of a notebook")
     a = ap.parse_args()
+    if a.restrip:
+        return restrip(a.restrip)
     files = sources(a.tutorials)
     if a.check:
         sys.exit(0 if all(check(py) for py in files) else 1)
