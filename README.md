@@ -32,6 +32,19 @@ pip install "wakis[inverse] @ git+https://github.com/eshipton/Wakis.git@main"   
 
 ### Highlights
 
+#### Tutorials: 2D Mie scattering with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/tutorial01_convergence.png" width="520" alt="Relative RMS error of the scattering efficiency of an n = 2 cylinder versus cells per wavelength, for staircase, conformal and tensor material models, TM and TE"></td>
+<td>
+
+[Tutorial 01](tutorials/01_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_cylinder/mie_cylinder.ipynb)): a plane wave from the new `TFSFSource` hits an infinite n = 2 cylinder (radius 1 µm, x = 2&ndash;10, TM and TE) and a flux box in the scattered-field region gives Q<sub>sca</sub>(x) in one run, compared with the exact series (`wakis.analytic`). In 42 runs from 10 to 80 cells/µm (named baseline: the staircased cylinder at the same resolution), conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, with a fitted order of 1.9 between 40 and 80 cells/µm, while the staircase, half a cell too large, stays first order (3.9 % and 4.8 %, order 0.9). For TE, where E crosses the curved surface, the full tensor averaging is needed for second order (0.21 % vs 0.35 % for the diagonal model at x &le; 5). Built on reusable pieces for the series: PyVista scene, mesh and field views (`wakis.visualize`), Mie theory for spheres and cylinders, a memory preflight and a parallel study runner.
+
+</td>
+</tr>
+</table>
+
 #### Linear plasma wakefields in a plasma-filled pipe &nbsp;·&nbsp; `wakis.plasma`
 
 <table>
@@ -94,6 +107,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Sources, monitors and post-processing**
 - [x] Soft current sources (`CurrentSource`) with Gaussian (zero-DC), continuous and custom time profiles
 - [x] Magnetic current sources and one-directional (Huygens) sources
+- [x] Plane-wave total-field/scattered-field box source (`TFSFSource`): incident field from a 1D FIT line, leakage at round-off (1e-15), 2D and 3D, CPU/GPU ([studies/tfsf](studies/tfsf))
 - [x] DFT and flux monitors; near-to-far transform and antenna metrics (directivity, gain, efficiency, axial ratio)
 - [x] Diffraction-order monitor (Floquet orders, TE/TM/circular polarization)
 - [x] Harmonic inversion for resonance frequencies and Q (`harminv`, `ResonanceMonitor`)
@@ -128,6 +142,13 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] invrs-gym bridge and round-1 results ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
 - [ ] invrs-gym round 2 and the 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
 - [ ] Nonlinear plasma wakefields (blowout regime, PIC)
+
+**Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
+- [x] Tutorial 01: 2D Mie scattering by a dielectric cylinder (TF/SF, TM/TE, staircase vs conformal convergence)
+- [x] Tutorial 01: triangular-mesh (unstructured FIT) section: conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45x the work ([studies/mie-cylinder-mesh](studies/mie-cylinder-mesh))
+- [x] Tutorial 01b: 3D Mie sphere (TF/SF, near/far field vs Mie S1/S2; 3.4 % RMS at 40 cells/µm on an L4)
+- [ ] Tutorial 01b: 3D resolution study (staircase vs conformal vs tensor)
+- [ ] Tutorial 02: plasmonic Ag/Au spheres, 10 nm to 1 µm
 
 **Validation and studies**
 - [x] ~30 Meep-inspired validation tests (Purcell factor, Fresnel, Bragg mirror, Poynting balance, CPML convergence, line source, ...)
