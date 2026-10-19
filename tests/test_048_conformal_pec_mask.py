@@ -25,14 +25,14 @@ H = 0.5e-3
 
 def _edge_arrays(solver):
     """ieps and open length L per E edge, shape (3, Nx, Ny, Nz)."""
-    shape = (3, solver.Nx, solver.Ny, solver.Nz)
-    ieps = np.asarray(solver.ieps.toarray())
-    L = np.asarray(solver.L.toarray())
-    split = lambda a: np.stack(  # noqa: E731
-        [a[i * solver.N : (i + 1) * solver.N].reshape(shape[1:], order="F")
-         for i in range(3)]
-    )  # fmt: skip
-    return split(ieps), split(L)
+    shape = (solver.Nx, solver.Ny, solver.Nz)
+
+    def split(a):
+        a = np.asarray(a)
+        return np.stack([a[i * solver.N : (i + 1) * solver.N].reshape(shape, order="F")
+                         for i in range(3)])  # fmt: skip
+
+    return split(solver.ieps.toarray()), split(solver.L.toarray())
 
 
 def _wire_solver(conformal, dielectric=False, sheet=False):
@@ -171,7 +171,9 @@ def _tube_tm010_error(n, use_gpu=False):
     f0 = X01 * c / (2 * np.pi * TUBE_A)
     pulse = GaussianSource(frequency=f0, fwidth=0.25 * f0)
     src = CurrentSource(
-        pulse, component="z", center=(*(TUBE_CENTER + np.array([0.13, 0.07]) * TUBE_A), 0)
+        pulse,
+        component="z",
+        center=(*(TUBE_CENTER + np.array([0.13, 0.07]) * TUBE_A), 0),
     )
     probe = _Probe(solver, (*(TUBE_CENTER + np.array([-0.11, 0.17]) * TUBE_A), 0.0))
     Nt = int((pulse.end_time + 30 / f0) / solver.dt)

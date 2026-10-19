@@ -1096,6 +1096,8 @@ In a PEC box with a fin, the effective edge position is within $0.004\Delta$ of 
 
 **Limitations.** `use_mpi` is untested; each rank computes its own geometry. GPU is untested. SIBC and PML are rejected (CPML works). `save_to_h5` and `mpi_gather_asGrid` do not carry `conformal`/`sheets`. The permeability is not averaged. Merged faces assume a uniform $\mu$. The ±shift convention makes edges and faces lying exactly on a PEC surface closed.
 
+**Legacy cell masks (corrected 2026-10-19).** `_apply_stl_materials` first writes the legacy staircase: a cell with any of its 8 nodes inside a PEC solid gets `ieps = 0` on its lower-corner edges, which thickens the solid by up to a cell towards −x, −y, −z (upstream behaviour, issue #92). The conformal step then rewrites `ieps` and `sigma` on every edge from the conformal geometry (PEC solids enter only through $\ell$; edges with $\ell = 0$ get `ieps = 0`). Until 2026-10-19 this rewrite ran only when a dielectric solid was present or the background was PEC. With PEC-only STL solids in a non-PEC background (also with `sheets` only), the legacy zeros survived on edges with $\ell > 0$, and the conformal PEC was worse than the staircase and first order: TM010 of a PEC tube $+5.8$ %, $+2.8$ % at 8/16 cells per radius (staircase $+4.8$ %, $+2.2$ %); B4 dipole resonance −6.0 % at $h_t = a$. Fixed: $-2.3\times10^{-3}$, $-5.5\times10^{-4}$ (order 2.1), `tests/test_048_conformal_pec_mask.py`. Reviving the open edges lowers the stable step of PEC-only geometries slightly (rotated box: 0.96 → 0.86 of the Yee limit; sphere: 0.97 → 0.88), inside the 0.85–1.0 range quoted above.
+
 **Validation** (`tests/test_028_conformal.py`, all in the time domain with a matrix-pencil fit of the ring-down and the leapfrog dispersion removed):
 
 | Case | Mesh | Reference | Staircase / plain | Conformal |
@@ -1105,6 +1107,7 @@ In a PEC box with a fin, the effective edge position is within $0.004\Delta$ of 
 | Rod-loaded cavity TM0, $\varepsilon_r=4$ | 24/48/96 | Bessel matching | $2\times10^{-2}$ … $1.6\times10^{-3}$ ('pec') | $1.2\times10^{-4}$ … $3\times10^{-6}$ ('all') |
 | Fin in a PEC box, edge at 51 mm | 2 mm (edge mid-cell) / 1 mm (on node) | fine-mesh Richardson | $4.5$/$5.4\times10^{-3}$ and $2.1$/$3.0\times10^{-3}$ | $1.1\times10^{-4}$/$9\times10^{-6}$ and $6.2$/$1.9\times10^{-4}$ |
 | Patch template, FR-4, 15/20/30 cells/λ (slow) | edges between nodes | Δ→0 extrapolation −2.3 % vs TLM | −7.3/−6.0 % at 20/30 (no correction), −2.5/−2.7 % (empirical $\Delta/3$) | −3.4/−2.4/−3.1 % (`thin_sheet=True`, no correction) |
+| PEC STL tube in vacuum, TM010 (non-PEC background, PEC-only solids; `test_048`) | 8/16 cells per radius | analytic | $+4.8\times10^{-2}$, $+2.2\times10^{-2}$ | $-2.3\times10^{-3}$, $-5.5\times10^{-4}$ (order 2.1; before the 2026-10-19 fix $+5.8$/$+2.8\times10^{-2}$, order 1.05) |
 | Stability: PEC ball + rod + sheet, 20 000 steps | 14×12×12 | bounded energy | — | no growth |
 
 References:
