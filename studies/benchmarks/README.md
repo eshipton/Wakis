@@ -181,7 +181,25 @@ The R_in offset (−3.5 %) is therefore not geometric thickening.
 | NEC-2, thin kernel, 201 segments | 0.94093 (−0.20 %) | 72.35 (0.00 %) |
 | Cartesian FIT, edge-wise staircase, converged (h_t = a/3, h_z ≤ 0.5 mm) | 0.927 (−1.7 %) | 69.8 (−3.5 %) |
 
-The two MoM codes agree to 0.04 % (extended kernel), so the offset lies on the FIT side. Flat end caps (absent in both MoM models) account for at most −0.65 % of f_res. The next suspects are the lumped-port feed model (gap-cell capacitance and inductance) and the staircased end and gap faces. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
+The two MoM codes agree to 0.04 % (extended kernel), so the offset lies on the FIT side. Flat end caps (absent in both MoM models) account for at most −0.65 % of f_res. The next suspects are the lumped-port feed model (gap-cell capacitance and inductance) and the staircased end and gap faces.
+
+**Feed-model and end-cap tests** (h_t = a/3, h_z = 0.5 mm, L4 GPU; job bench-b4feed-20261019-1438). Each FIT run is compared with the Hallén MoM using the same gap; values are FIT − MoM:
+
+| gap g | port | ends | f_res | R_res |
+|---|---|---|---|---|
+| 1 mm | axis edge | flat | −1.74 % | −3.5 % |
+| 2 mm | axis edge | flat | −2.12 % | −4.5 % |
+| 4 mm | axis edge | flat | −3.17 % | −6.7 % |
+| 1 mm | sheet (inscribed square) | flat | −1.40 % | −2.3 % |
+| 2 mm | sheet | flat | −1.44 % | −2.3 % |
+| 4 mm | sheet | flat | −1.85 % | −2.4 % |
+| 1 mm | axis edge | round (hemispherical) | −1.53 % | −3.5 % |
+| 1 mm | sheet | round | −1.19 % | −2.3 % |
+
+**Findings:**
+- **The single-edge (axis) port adds a feed error that grows with the gap length.** The current is forced through one line of edges across the gap, which acts like a series probe inductance. With the sheet port the offset becomes almost independent of the gap (−1.4 … −1.85 %, R −2.3 … −2.4 %). At g = 1 mm the sheet port recovers 0.34 % of f_res and 1.2 % of R_in.
+- **Flat end caps account for 0.2 % of f_res and none of R_in.**
+- **About 1.2 % (f_res) and 2.3 % (R_in) remain unexplained** with the sheet port and round ends. Next suspects: the edge-wise staircase of the wire surface itself, or the gap faces of the inscribed-square sheet. Tests to resolve this: conformal PEC once `fix/conformal-pec-legacy-mask` lands, and a port sheet covering the whole gap disk. It is logged in `open_questions.md`. Two independent checks would settle it: an exact-kernel (or body-of-revolution) reference, and the conformal-PEC arm after the mask fix.
 Until then, the B4 targets are scored against the Hallén reference, and the offset is reported as part of the baseline.
 
 **Cost.**
