@@ -585,6 +585,10 @@ class ReverseRung(_Rung):
 
             A, B = gcsr(A), gcsr(B)
         self.A, self.B = A, B
+        # The interior operators are held by the rung for the whole run
+        self._op_bytes = sum(
+            int(m.data.nbytes + m.indices.nbytes + m.indptr.nbytes) for m in (A, B)
+        )
         self.I = xp.asarray(I)
         self.g_H, self.g_E = xp.asarray(g_H), xp.asarray(g_E)
         self.n3 = n3
@@ -620,7 +624,7 @@ class ReverseRung(_Rung):
         sizes = {"H_layer": self.g_H.size, "E_layer": self.g_E.size,
                  "J": sup["J"].size, "M": sup["M"].size, "Hc": sup["Hc"].size}  # fmt: skip
         self.rec = {k: xp.zeros((Nt, n), dtype=dtype) for k, n in sizes.items()}
-        self.peak_bytes = sum(r.nbytes for r in self.rec.values())
+        self.peak_bytes = sum(r.nbytes for r in self.rec.values()) + self._op_bytes
 
     def before_step(self, n):
         if n == 0:

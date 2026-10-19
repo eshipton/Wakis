@@ -648,10 +648,16 @@ def _gpu_peak(fn):
 @pytest.mark.parametrize("mode", ["auto", "checkpoint", "reverse"])
 def test_fused_gpu_memory_within_budget(mode, use_gpu):
     """
-    Fused GPU solver, float32 storage, many design edges: the measured GPU
-    pool peak of forward + vjp exceeds that of an objective-only forward by
-    at most the budget (+ the adjoint state); an objective-only forward
-    records nothing. Regression for the invrs WDM OOM (rows kept per step).
+    Fused GPU solver, float32 storage, many design edges. Everything a
+    forward + vjp allocates besides the memory rung (solver, monitors, taps,
+    transposed operators, adjoint buffers, per-step temporaries) does not
+    depend on Nt, so the baseline is the CuPy pool peak of the same forward
+    + vjp with Nt0 = 20 steps in 'store' mode (20 rows, < 0.3 MB). The extra
+    peak at Nt = 1500 is then the rung itself: it must stay within the
+    budget for 'auto'/'checkpoint' (5 % + 0.5 MB for pool rounding) and
+    within the predicted rung bytes for 'reverse' (whose records do not
+    depend on the budget). With the old float32 row accounting the
+    checkpoint rung held ~1.45x the budget, which this bound rejects.
     """
     if not use_gpu:
         pytest.skip("GPU only")
@@ -660,23 +666,30 @@ def test_fused_gpu_memory_within_budget(mode, use_gpu):
     out = sim.forward(rho)
     G = {"probe": {"Ez": 1e20 * out["probe"]["Ez"]}}
     rows32 = sim.memory_stats["peak_bytes"]
-    base = _gpu_peak(lambda: sim.forward(rho, record=False))
-    assert sim.memory_stats["peak_bytes"] == 0
     budget = 0.1 * rows32
-    sim.memory, sim.memory_budget_gb = mode, budget / 1e9
 
     def run():
         sim.forward(rho)
         sim.vjp(G)
 
+    Nt = sim.Nt
+    sim.Nt, sim.memory = 20, "store"
+    base = _gpu_peak(run)
+    sim.Nt, sim.memory, sim.memory_budget_gb = Nt, mode, budget / 1e9
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         peak = _gpu_peak(run)
     stats = sim.memory_stats
-    # adjoint state: a few field vectors (E, H, psi multipliers, buffers)
-    state = 12 * 3 * sim._solver.N * 8
-    print(f"{mode}: base {base / 1e6:.1f} MB, peak {peak / 1e6:.1f} MB, "
-          f"budget {budget / 1e6:.1f} MB, rung {stats['peak_bytes'] / 1e6:.1f} MB")  # fmt: skip
-    if mode != "reverse":
+    extra = peak - base
+    print(f"{mode}: base {base / 1e6:.2f} MB, peak {peak / 1e6:.2f} MB, extra "
+          f"{extra / 1e6:.2f} MB, budget {budget / 1e6:.2f} MB, rung "
+          f"{stats['peak_bytes'] / 1e6:.2f} MB")  # fmt: skip
+    slack = 0.5e6
+    if mode == "reverse":
+        assert stats["mode"] == "reverse"
+        assert extra <= 1.05 * stats["peak_bytes"] + slack
+    else:
         assert stats["peak_bytes"] <= budget
-    assert peak - base <= max(budget, stats["peak_bytes"]) + state
+        assert extra <= 1.05 * budget + slack
+    out = sim.forward(rho, record=False)
+    assert sim.memory_stats["peak_bytes"] == 0
