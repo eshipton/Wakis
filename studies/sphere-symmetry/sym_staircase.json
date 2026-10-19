@@ -1,0 +1,56 @@
+{
+ "resolution": 20.0,
+ "conformal": "staircase",
+ "cells": null,
+ "node_asym": 5.000000000000079e-08,
+ "material_asym_max_abs": {
+  "eps_x_mirror_x": 0.0,
+  "eps_x_mirror_y": 3.0,
+  "eps_y_mirror_x": 3.0,
+  "eps_y_mirror_y": 0.0,
+  "eps_z_mirror_x": 3.0,
+  "eps_z_mirror_y": 3.0
+ },
+ "run_s": 1028.3505704402924,
+ "field_asym": {
+  "Ex_mirror_x": 0.3869426905811832,
+  "Ex_mirror_y": 0.4594362927526854,
+  "Ex_shape": [
+   50,
+   51,
+   51
+  ],
+  "Ey_mirror_x": 0.8020690407675312,
+  "Ey_mirror_y": 0.8178065503910377,
+  "Ey_shape": [
+   51,
+   50,
+   51
+  ],
+  "Ez_mirror_x": 0.5431439557381722,
+  "Ez_mirror_y": 0.5918940035858135,
+  "Ez_shape": [
+   51,
+   51,
+   50
+  ]
+ },
+ "absE_old": {
+  "mirror_x": 0.14302551594277915,
+  "mirror_y": 0.1401501512783104,
+  "shape": [
+   50,
+   50,
+   50
+  ]
+ },
+ "absE_centres": {
+  "mirror_x": 0.14393875302700704,
+  "mirror_y": 0.20267995544733217,
+  "shape": [
+   50,
+   50,
+   50
+  ]
+ }
+}
