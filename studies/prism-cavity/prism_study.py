@@ -114,7 +114,7 @@ def prism_solver(res, graded):
     m2 = graded_disk_mesh(radii, size_field(h)) if graded else disk_mesh(radii, h)
     m2 = odt_smooth(m2, radial_region(radii), 30)
     nz = int(np.ceil(H_CAV / h))
-    pm = PrismMesh(m2, np.linspace(0, H_CAV, nz + 1), merge_tol=0.15)
+    pm = PrismMesh(m2, np.linspace(0, H_CAV, nz + 1), merge_tol=0.05)
     return PrismFIT3D(pm, {0: [EPS, 1.0]}, bc_xy="pec", bc_z="pec")
 
 

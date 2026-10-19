@@ -55,7 +55,7 @@ def _z_levels(L, g, hz, h_out, z_end, n_pml, growth=1.2):
 
 class PrismDipoleArm(Arm):
     def __init__(self, ladder=None, n_pml=10, cfl=0.95, absorber=0.3, r_int=0.21,
-                 merge_tol=0.15, keep_quads=True, name=None):  # fmt: skip
+                 merge_tol=0.05, keep_quads=True, name=None):  # fmt: skip
         self.merge_tol, self.keep_quads = merge_tol, keep_quads
         self.r_int = r_int
         self.ladder = ladder

@@ -21,7 +21,7 @@ STYLE = {
     "tet": ("C2", "D", "Wakis FIT (tetrahedra, uniform)"),
     "tet-graded": ("C2", "P", "Wakis FIT (tetrahedra, graded)"),
 }
-TARGETS = [1e-2, 1e-3]
+TARGETS = [1e-2, 1e-3, 5e-4]
 
 
 def load():
@@ -99,8 +99,8 @@ def main():
                 f"{vals['work'][i]:.3g} | {vals['run_s'][i]:.0f} |"
             )
         for ax, k in zip(axs, ("unknowns", "work", "run_s")):
-            x = np.arange(len(arms)) + 0.4 * j - 0.2
-            ax.bar(x, vals[k], 0.38, color=[STYLE[a][0] for a in arms], alpha=0.45 + 0.5 * j,
+            x = np.arange(len(arms)) + 0.27 * j - 0.27
+            ax.bar(x, vals[k], 0.26, color=[STYLE[a][0] for a in arms], alpha=0.35 + 0.3 * j,
                    label=f"{100 * t:g} %")
     for ax, k in zip(axs, ("unknowns", "work (unknowns x steps)", "uncontended time [s]")):
         ax.set_xticks(range(len(arms)))

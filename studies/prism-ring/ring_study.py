@@ -62,10 +62,11 @@ PRB = [
 
 # symmetry planes x = 0, y = 0 of the quarter domain: equal types select the
 # even azimuthal orders m (cos/sin partners are degenerate), mixed the odd m
+MERGE_TOL = 0.05
 SYM = {"even": ("pmc", "pmc"), "odd": ("pmc", "pec")}
 
 ARMS = {
-    "prism": [30, 25, 20, 15, 12, 10],  # h_ring [nm] in the plane
+    "prism": [30, 25, 20, 15, 12],  # h_ring [nm] in the plane
     "cart": [40, 30, 25, 20, 15, 12, 10],  # h [nm] (12 and 10 nm: GPU reference runs)
 }
 
@@ -156,14 +157,31 @@ def prism_solver(h_nm, use_gpu=False, sym="even"):
     def tags(tri, zm):
         return np.where((tri == 1) & (zm < T / 2), 1, 0)
 
-    pm = PrismMesh(m2, z, tags=tags, merge_tol=0.15)
+    var = os.environ.get("RING_VARIANT", "")  # diagnostics only
+    mt = MERGE_TOL
+    if "nomerge" in var:
+        mt = 0.0
+    for tok in var.split("_"):
+        if tok.startswith("mt"):
+            mt = float(tok[2:])
+    pm = PrismMesh(m2, z, tags=tags, merge_tol=mt)
     n_pml = int(np.sum(pm.z_mid > Z_TOP - D_ABS))
     v = c / np.sqrt(EPS_OX)
+    kw = dict(
+        absorber_xy=dict(r0=A_DOM - D_ABS, r1=A_DOM, s_max=3 * v / D_ABS, order=2),
+        pml_z=dict(n_low=0, n_high=n_pml, s_max=4 * v / D_ABS, order=3),
+    )
+    if "closed" in var:  # PEC box, no absorbers
+        kw = {}
+
+        def bc_xy(mid, _f=bc_xy):  # noqa: F811
+            k = _f(mid)
+            return np.where(k == "abc", "pec", k)
+
     return PrismFIT3D(
         pm, {0: [EPS_OX, 1.0], 1: [EPS_SI, 1.0]}, bc_xy=bc_xy,
         bc_z=("pmc", "pec"), use_gpu=use_gpu,
-        absorber_xy=dict(r0=A_DOM - D_ABS, r1=A_DOM, s_max=3 * v / D_ABS, order=2),
-        pml_z=dict(n_low=0, n_high=n_pml, s_max=4 * v / D_ABS, order=3),
+        dual_floor=1e-3 if "nomerge" in var else 0.05, **kw,
     )  # fmt: skip
 
 

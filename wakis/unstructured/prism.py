@@ -392,8 +392,9 @@ class PrismFIT3D:
         any mesh, first-order accurate). Horizontal edges always use the
         Voronoi dual edges (requires a Delaunay cross-section).
     dual_floor : float, optional
-        Lower bound of the dual-edge length of horizontal edges and vertical
-        quads, in units of the primal edge length (0 disables the clamp).
+        Lower bound of the dual-edge length of horizontal edges (their
+        capacitance must be positive), in units of the primal edge length
+        (0 disables the clamp). Negative quad reluctances are set to 0.
     dt, cfl : float, optional
         Timestep [s] or fraction of the leapfrog stability limit.
     use_gpu : bool, optional
@@ -516,11 +517,12 @@ class PrismFIT3D:
             cmin = eps_0 * eps_avg * dual_floor * mesh.dz_dual[None, :]
             low_h = (cap_h < cmin) & (wsum > 0)
             cap_h = np.where(low_h, cmin, cap_h)
-            Hqa = abs(Hq)
-            nu_avg = (Hqa @ nu) / np.maximum(Hqa @ live.astype(float), 1e-300)
-            qmin = nu_avg * dual_floor / dz[None, :]
-            low_q = (Mq < qmin) & ((Hqa @ live.astype(float)) > 0)
-            Mq = np.where(low_q, qmin, Mq)
+            # Quads: a non-positive reluctance (dual edge of length <= 0) is
+            # set to 0 (the face then stores no energy; stability needs only
+            # M_nu >= 0). No upward floor: a nearly cocircular (merged) edge
+            # has h_e ~ 0 and its quad must keep its (tiny) true stiffness.
+            low_q = Mq < 0
+            Mq = np.where(low_q, 0.0, Mq)
             self.n_floored = int(low_h.sum() + low_q.sum())
         else:
             self.n_floored = 0
