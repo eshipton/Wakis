@@ -148,6 +148,9 @@ def tasks(name="main"):
     if name == "long":  # run-window (ring-down truncation) check, use --t-run 3000
         return [("dg4-compact", "TE", 3), ("dg4-compact", "TE", 4), ("dg4-compact", "TM", 3),
                 ("dg5-compact", "TE", 3), ("dg4-compact", "TE", 6), ("dg5-compact", "TM", 3)]
+    if name == "large_timing":  # final-code timings of the showcase DG arms
+        return [(f"dg{p}-compact", pol, res) for p, res in ((4, 1.5), (4, 2), (5, 1.5))
+                for pol in ("TM", "TE")]  # fmt: skip
     if name == "large":
         out = []
         for arm, rs in LARGE.items():
@@ -311,7 +314,7 @@ def main():
     ap.add_argument("--tasklist", default="main")
     a = ap.parse_args()
     S.T_RUN = a.t_run * 1e-15
-    if a.tasklist == "large":
+    if a.tasklist.startswith("large"):
         set_case("large")
     tl = tasks(a.tasklist)
     if a.mode == "list":
