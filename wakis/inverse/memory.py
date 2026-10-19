@@ -270,6 +270,40 @@ class _Rung:
                 "recompute_steps": int(self.recompute_steps)}  # fmt: skip
 
 
+class NullRung(_Rung):
+    """Objective-only forward run: nothing recorded (`forward(record=False)`)."""
+
+    name = "none"
+    peak_bytes = 0
+    recompute_steps = 0
+
+    def reader(self):
+        raise RuntimeError("forward(record=False) kept nothing for a gradient.")
+
+
+def available_host_bytes():
+    """Available host memory [bytes], portably (psutil, sysconf, sysctl)."""
+    try:
+        import psutil
+
+        return float(psutil.virtual_memory().available)
+    except ImportError:
+        pass
+    import os
+
+    try:
+        return float(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (ValueError, OSError, AttributeError):
+        pass
+    try:  # macOS: no SC_AVPHYS_PAGES; half the physical memory as available
+        import subprocess
+
+        total = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]))
+        return 0.5 * total
+    except Exception:
+        return 4e9  # conservative default
+
+
 class StoreRung(_Rung):
     """All rows in one (Nt, n_row) array, on the device or on the host."""
 

@@ -546,3 +546,137 @@ def test_fused_solver_rungs(bc, use_gpu):
     err = np.max(np.abs(g - g_store)) / np.max(np.abs(g_store))
     print(f"fused {bc}: reverse rel. error {err:.1e}")
     assert err < 1e-12
+
+
+# --------------------------------------------------------------------------
+# Memory budgets with reduced-precision storage and objective-only runs
+# (regressions: replayed rows are float64 even with store_dtype=float32, and
+# a forward without gradient must not record anything)
+
+
+def _budget_sim(use_gpu, fused=False, Nt=1500):
+    import test_020_adjoint as t20
+
+    def make_solver():
+        grid = wakis.GridFIT3D(-0.15, 0.15, -0.15, 0.15, -0.0025, 0.0025, 120, 120,
+                               1, verbose=0)  # fmt: skip
+        kw = dict(fused=True) if fused else {}
+        return wakis.SolverFIT3D(
+            grid, bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"], n_pml=8, use_gpu=use_gpu,
+            verbose=0, **kw,
+        )  # fmt: skip
+
+    src = CurrentSource(GaussianSource(t20.F0, 1e9), component="z",
+                        center=(-0.1, 0.0, 0.0))  # fmt: skip
+    monitors = {"probe": wakis.DFTMonitor([t20.F0], components=["Ez"],
+                                          center=(0.1, 0.01, 0.0))}  # fmt: skip
+    design = MaterialGrid((0, 0, 0), (0.16, 0.16, 0.0), (9, 9, 1))
+    return wakis.inverse.AdjointSimulation(
+        make_solver, [src], monitors, design, Nt, store_dtype=np.float32,
+        store_on_host=False,
+    )  # fmt: skip
+
+
+def test_budget_respected_with_float32_store():
+    """
+    With store_dtype=float32 the planner must budget the float64 rows that
+    checkpoint replay holds: the rung peak stays within the budget for
+    'auto' and 'checkpoint' (it was ~2x over before the fix). Fails if the
+    planner uses the store itemsize.
+    """
+    sim = _budget_sim(False, Nt=600)
+    rho = np.full(sim.design.shape, 0.5)
+    sim.forward(rho)
+    rows32 = sim.memory_stats["peak_bytes"]  # Nt x N_design x 4
+    budget = 0.1 * rows32
+    for mode in ("auto", "checkpoint"):
+        sim.memory, sim.memory_budget_gb = mode, budget / 1e9
+        out = sim.forward(rho)
+        sim.vjp({"probe": {"Ez": 1e20 * out["probe"]["Ez"]}})
+        assert sim.memory_stats["mode"] == "checkpoint"
+        assert sim.memory_stats["peak_bytes"] <= budget, (mode, sim.memory_stats)
+
+
+def test_available_host_bytes():
+    """Portable host-memory query (macOS has no SC_AVPHYS_PAGES)."""
+    assert mem.available_host_bytes() > 1e8
+    sim = _budget_sim(False, Nt=20)
+    sim.memory = "checkpoint"  # budget from the host memory, no budget given
+    out = sim.forward(np.full(sim.design.shape, 0.5))
+    sim.vjp({"probe": {"Ez": out["probe"]["Ez"]}})
+
+
+def test_forward_without_record():
+    """forward(record=False) keeps no rows; vjp then refuses to run."""
+    sim = _budget_sim(False, Nt=50)
+    rho = np.full(sim.design.shape, 0.5)
+    out = sim.forward(rho, record=False)
+    assert sim.memory_stats["peak_bytes"] == 0
+    with pytest.raises(RuntimeError):
+        sim.vjp({"probe": {"Ez": out["probe"]["Ez"]}})
+    out2 = sim.forward(rho)
+    assert np.array_equal(out["probe"]["Ez"], out2["probe"]["Ez"])
+
+
+def _gpu_peak(fn):
+    import cupy as cp
+    from cupy.cuda import memory_hook
+
+    class Peak(memory_hook.MemoryHook):
+        name = "peak"
+
+        def __init__(self):
+            self.cur = self.peak = 0
+            self.sizes = {}
+
+        def malloc_postprocess(self, device_id, size, mem_size, mem_ptr, pmem_id):
+            self.sizes[mem_ptr] = mem_size
+            self.cur += mem_size
+            self.peak = max(self.peak, self.cur)
+
+        def free_postprocess(self, device_id, mem_size, mem_ptr, pmem_id):
+            self.cur -= self.sizes.pop(mem_ptr, mem_size)
+
+    cp.get_default_memory_pool().free_all_blocks()
+    hook = Peak()
+    with hook:
+        fn()
+    return hook.peak
+
+
+@pytest.mark.parametrize("mode", ["auto", "checkpoint", "reverse"])
+def test_fused_gpu_memory_within_budget(mode, use_gpu):
+    """
+    Fused GPU solver, float32 storage, many design edges: the measured GPU
+    pool peak of forward + vjp exceeds that of an objective-only forward by
+    at most the budget (+ the adjoint state); an objective-only forward
+    records nothing. Regression for the invrs WDM OOM (rows kept per step).
+    """
+    if not use_gpu:
+        pytest.skip("GPU only")
+    sim = _budget_sim(True, fused=True)
+    rho = np.full(sim.design.shape, 0.5)
+    out = sim.forward(rho)
+    G = {"probe": {"Ez": 1e20 * out["probe"]["Ez"]}}
+    rows32 = sim.memory_stats["peak_bytes"]
+    base = _gpu_peak(lambda: sim.forward(rho, record=False))
+    assert sim.memory_stats["peak_bytes"] == 0
+    budget = 0.1 * rows32
+    sim.memory, sim.memory_budget_gb = mode, budget / 1e9
+
+    def run():
+        sim.forward(rho)
+        sim.vjp(G)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        peak = _gpu_peak(run)
+    stats = sim.memory_stats
+    # adjoint state: a few field vectors (E, H, psi multipliers, buffers)
+    state = 12 * 3 * sim._solver.N * 8
+    print(f"{mode}: base {base / 1e6:.1f} MB, peak {peak / 1e6:.1f} MB, "
+          f"budget {budget / 1e6:.1f} MB, rung {stats['peak_bytes'] / 1e6:.1f} MB")  # fmt: skip
+    if mode != "reverse":
+        assert stats["peak_bytes"] <= budget
+    assert peak - base <= max(budget, stats["peak_bytes"]) + state
