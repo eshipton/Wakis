@@ -120,7 +120,7 @@ def fig_meshes(res=10):
     for kind in ("hybrid", "hybrid-disk", "voronoi"):
         m, info, kw, _ = P.build(kind, "std", res)
         panels.append((m, f"{kind} ({m.n_nodes + m.n_edges:,} unknowns)"))
-    fig, axs = plt.subplots(1, 4, figsize=(13, 3.6), sharey=True)
+    fig, axs = plt.subplots(1, 4, figsize=(13, 4.0), sharey=True)
     for ax, (m, t) in zip(axs, panels):
         polys = [m.nodes[m.cell(i)] for i in range(m.n_cells)]
         _draw(ax, m.nodes, polys, m.cell_tags, 2.0e-6, t)

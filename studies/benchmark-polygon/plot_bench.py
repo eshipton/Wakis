@@ -24,8 +24,8 @@ STYLE = {
     "poly-voronoi": dict(color="#CC79A7", marker="h", label="Wakis FIT (Voronoi polygons)"),
     "tri-graded": dict(color="#0072B2", marker="o", label="Wakis FIT (triangles graded)"),
     "tri-uniform": dict(color="#56B4E9", marker="o", label="Wakis FIT (triangles uniform)"),
-    "cart-conformal-graded": dict(color="#D55E00", marker="s", label="Wakis FIT (Cartesian conformal graded)"),
-    "cart-conformal-uniform": dict(color="#E69F00", marker="s", label="Wakis FIT (Cartesian conformal uniform)"),
+    "cart-conformal-all-graded": dict(color="#D55E00", marker="s", label="Wakis FIT (Cartesian conformal graded)"),
+    "cart-conformal-all-uniform": dict(color="#E69F00", marker="s", label="Wakis FIT (Cartesian conformal uniform)"),
     "cart-staircase-graded": dict(color="#999999", marker="x", label="Wakis FIT (Cartesian staircase graded)"),
 }  # fmt: skip
 CASES = ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM", "B3-g10", "B3-g5", "B3-g2"]
@@ -60,11 +60,18 @@ def series(recs, case, arm, metric):
 
 
 def to_target(cost, err, target):
-    for i in range(len(err) - 1):
-        if err[i] >= target >= err[i + 1] and err[i + 1] > 0:
-            s = (np.log(target) - np.log(err[i])) / (np.log(err[i + 1]) - np.log(err[i]))
-            return float(np.exp(np.log(cost[i]) + s * (np.log(cost[i + 1]) - np.log(cost[i]))))
-    return np.nan if not (len(err) and err[0] <= target) else float(cost[0])
+    """Cost where the error falls below `target` for good: log-log
+    interpolation between the last rung above the target and the next one
+    (robust to non-monotone ladders); the coarsest rung if all are below."""
+    cost, err = np.asarray(cost, float), np.asarray(err, float)
+    above = np.flatnonzero(err > target)
+    if not above.size:
+        return float(cost[0]) if err.size else np.nan
+    i = above[-1]
+    if i + 1 >= len(err):
+        return np.nan
+    s = (np.log(target) - np.log(err[i])) / (np.log(err[i + 1]) - np.log(err[i]))
+    return float(np.exp(np.log(cost[i]) + s * (np.log(cost[i + 1]) - np.log(cost[i]))))
 
 
 def main():
@@ -93,9 +100,9 @@ def main():
                     f"| {case} | {arm} | {r['resolution'] * 1e9:.2f} | {c['unknowns']:,} | {c['steps']} | {c['unknowns'] * c['steps']:.3g} | {c['run_s']:.0f} | "
                     f"{100 * m['q_ext_nrms']:.2f} % | {100 * abs(m.get('enh_peak', np.nan)):.2f} % | {100 * abs(m['q_ext_lam_peak']):.2f} % |"
                 )
-            targets = (0.05, 0.02) if case.startswith("B3") else (0.02, 0.01)
+            targets = (0.05, 0.02) if case.startswith("B3") else (0.01, 0.001)
             for T in targets:
-                tgt.append(f"| {case} | {arm} | {100 * T:.0f} % | {to_target(u, y, T):,.0f} | {to_target(w, y, T):.3g} | {to_target(t, y, T):,.0f} |")
+                tgt.append(f"| {case} | {arm} | {100 * T:g} % | {to_target(u, y, T):,.0f} | {to_target(w, y, T):.3g} | {to_target(t, y, T):,.0f} |")
         ax.set_title(f"{case}: {met}", fontsize=8)
         ax.set_xlabel("work = unknowns × steps")
         ax.set_ylabel("error [%]")
@@ -109,7 +116,7 @@ def main():
     # spectra at a mid resolution vs the exact reference
     from wakis.benchmarks import get_case
 
-    fig, axs = plt.subplots(1, 3, figsize=(14, 3.8))
+    fig, axs = plt.subplots(1, 3, figsize=(14, 6.2))
     for ax, case in zip(axs, ("B2-Au-TE", "B2-Ag-TE", "B3-g5")):
         c = get_case(case)
         lam = np.asarray(c.wavelengths) * 1e9
@@ -126,7 +133,7 @@ def main():
         ax.set_xlabel("wavelength [nm]")
         ax.set_ylabel("|E/E0|² at gap centre" if key == "enh" else "Q_ext")
         ax.set_title(case, fontsize=8)
-        ax.legend(fontsize=6)
+        ax.legend(fontsize=6, loc="upper center", bbox_to_anchor=(0.5, -0.16))
     fig.tight_layout()
     fig.savefig(HERE / "figures" / "b_spectra.png", dpi=150)
     plt.close(fig)

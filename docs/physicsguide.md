@@ -1413,6 +1413,78 @@ References:
 - L. Chen and J. Xu, "Optimal Delaunay triangulations", *J. Comput. Math.* **22**(2), 299–308 (2004).
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005).
 
+### 🔷 Polygonal FIT: hybrid square/triangle meshes and Voronoi cells
+
+`wakis.unstructured.PolyMesh` and `PolygonFIT2D` extend the 2D unstructured FIT from triangles to cells that are arbitrary simple polygons: triangles, rectangles, Voronoi polygons, or any mix of them. In 2D every unknown lives on a node or an edge (TM: $E_z$ on nodes and $b_e$ through edges; TE: $H_z$ on nodes and $d_e$ through edges), so the topology needs only the edge–node incidence $\mathbf G$. Cells enter only through the Hodge (material) operators.
+
+**Dual geometry.** Each cell $C$ has a dual point $c_C$. The dual edge of primal edge $e$ inside $C$ is the segment from $c_C$ to its foot $x_{e,C}$ on the line of $e$, with signed length $h_{e,C}$ (positive when $c_C$ is on the cell side). The foot position $s_{e,C}$ is measured along $e$ from its first node. The dual cell of node $n$ inside $C$ is the quadrilateral $(n, x_{e_1,C}, c_C, x_{e_2,C})$, of area $A_{n,C}=\tfrac12\sum_{e\ni n} s^{(n)}_{e,C}\,h_{e,C}$. These pieces tile each cell exactly, for any choice of $c_C$.
+
+**Orthogonality.** The diagonal Hodge is consistent when the dual edge crosses $e$ as one straight segment perpendicular to it, i.e. when both cells of $e$ have the same foot ($s_{e,C_1}=s_{e,C_2}$). `PolyMesh.orthogonality_defect` $=|s_{e,C_1}-s_{e,C_2}|/L_e$ measures this. It is zero for:
+- Delaunay triangles with circumcentres (feet at the edge midpoints): `PolygonFIT2D` then reproduces `UnstructuredFIT2D` to round-off (test);
+- rectangles with their centres (midpoints);
+- **hybrids of the two**: the shared edges between a square and a triangle have midpoint feet on both sides. So a square bulk joined to a Delaunay triangle patch is orthogonal everywhere, with no special interface treatment;
+- **Voronoi polygons with their generators as dual points.** Neighbouring generators are mirror images across the shared Voronoi edge, so the dual edge is the Delaunay edge. Its foot is the midpoint of the generator pair, not of the Voronoi edge. Then $h_{e,C}=|p_i-p_j|/2>0$ and the node masses are Delaunay triangle areas, positive for every point set. The well-centredness condition of the triangle-primal mesh never arises.
+
+**Maxwell grid equations** (per unit length, $w_C=1/(\mu_0\mu_C)$ for TM and $1/(\varepsilon_0\varepsilon_C)$ for TE):
+
+$$
+\dot{\mathbf b}=-\mathbf G\mathbf e_z,\quad \mathbf M_\varepsilon\dot{\mathbf e}_z=\mathbf G^T\mathbf S\,\mathbf b-\mathbf i;\qquad
+\dot{\mathbf d}=\mathbf G\mathbf h_z-\mathbf i_e,\quad \mathbf M_\mu\dot{\mathbf h}_z=-\mathbf G^T\mathbf S\,\mathbf d-\mathbf k,
+$$
+
+with diagonal node masses $M_\varepsilon[n]=\varepsilon_0\sum_C\varepsilon_C A_{n,C}$ (and $M_\mu$ likewise). Only the node mass is inverted, so the edge Hodge $\mathbf S$ only needs to be symmetric positive (semi)definite, not diagonal:
+- `hodge="orthogonal"`: $S_{ee}=\sum_C w_C h_{e,C}/L_e$ (series average along the dual edge, the exact interface condition for the normal flux);
+- `hodge="mfd"` (any convex polygons): the mimetic inner product $\mathbf M_C=\mathbf R\mathbf R^T/|C|+\gamma(\mathbf I-\mathbf N(\mathbf N^T\mathbf N)^{-1}\mathbf N^T)$ per cell, with $N_e=L_e\mathbf n_e^T$, $R_e=(\mathbf m_e-\mathbf x_C)^T$ and $\gamma=\operatorname{tr}(\mathbf R\mathbf R^T)/(|C|\,n_C)$. Since $\mathbf R^T\mathbf N=|C|\mathbf I$ (divergence theorem), $\mathbf M_C\mathbf N=\mathbf R$: the matrix is exact for uniform fields and SPD [Brezzi, Lipnikov & Shashkov, 2005]. The node masses then use the median dual (centroid and edge midpoints). On triangles $\mathbf G\mathbf u$ is uniform in each cell, so the stability term never acts and the stiffness equals the cotangent one; only the masses differ (test). On randomly distorted quadrilaterals (where the diagonal Hodge is rejected as non-orthogonal) cavity modes converge at second order. This is the same family as the geometric/cell-method constitutive matrices of the Codecasa–Specogna–Trevisan group (see `notes/lit/fit_meshing_sota.md`); it is not new.
+
+The leapfrog is stable for $\Delta t<2/\sqrt{\lambda_\max(\mathbf M^{-1}\mathbf G^T\mathbf S\mathbf G)}$, with $\lambda_\max$ from Lanczos.
+
+**Hybrid meshes** (`hybrid_circles_mesh`). Axis-aligned squares fill the bulk ($h_\text{out}$) and the inside of every circular scatterer ($h_\text{in}$). Squares are removed where they come within the patch distance of an interface, leaving a staircase-bounded hole. The hole is filled with a Delaunay triangle patch built from the square nodes on the staircase (fixed), an area-preserving ring on each interface and staggered graded rings. Ring points stay outside the circumcircles of the squares, which keeps every staircase edge a Delaunay edge (verified by an exact area check). A few Laplacian sweeps then smooth the free points. Optionally (`gap_cells`), narrow gaps are refined: $h\le\max(h_\min,w/n_\text{gap})$ with $w$ the local gap width. With `outer_radius`, the domain is a disk with a thin $h_\text{out}$ triangle annulus at the boundary, so that a first-order ABC can be used on the same domain as the triangle arms. This is the mesh-level analogue of the hybrid FDTD/FETD methods [Rylander & Bondeson, 2000]. Here the junction needs no special treatment: the same FIT operators apply on both sides and the dual is orthogonal across the shared edges. A related FE construction that reduces to FIT on rectangles is [Egger & Radu, arXiv:2209.10432].
+
+**Voronoi-primal meshes** (`voronoi_disk_mesh`). The generators sit on staggered rings, which gives hexagonal cells, and on a hexagonal lattice in the core. Each interface circle is straddled by a mirrored pair of rings at $r_k\mp\delta$ with equal angles. The Voronoi edge of each pair lies on the circle's tangent, so the cells conform to the interface (tangent polygon, area-preserving radius $\rho=r\sqrt{\pi/(n\tan(\pi/n))}$). Mirrored seeding is the idea behind conforming Voronoi meshers such as VoroCrust [Abdelkader et al., 2020]. The outer boundary is a mirrored pair whose outer cells are discarded. Nearly cocircular generators produce very short Voronoi edges with a huge $h/L$, which set the global time step. Options:
+- `lloyd`: Lloyd sweeps of the free generators;
+- `collapse`: edges shorter than `collapse`$\cdot|p_i-p_j|$ are collapsed to a point. This is the $L\to0$ limit of their stiffness (equal node values). It moves the merged vertex by at most $L/2$ and leaves the neighbouring edges orthogonal only to $O$(`collapse`). The study uses `collapse=0.1`, `lloyd=10`; 6–17 % of the edges then have an orthogonality defect.
+
+**Absorbing boundaries.** First-order Silver–Müller on boundary nodes. On a square region of squares there is also a split-field (Berenger) PML: the node field splits as $u=u_x+u_y$, where $u_x$ collects the contributions of the $x$-directed edges ($G_x^T$) and is damped by $s_x(x)$, and the flux of an $x$-directed edge is damped by the same $s_x$ (matched, $\sigma/\varepsilon=\sigma^*/\mu$). The profile is cubic, with $s_\max=(m+1)\,c\ln(1/R_0)/(2d)$. On a point-source pulse, a 12-cell layer reflects 0.4 % of the direct signal; without the magnetic (edge) loss it reflects 24 % (test).
+
+**Plane-wave source** (scattered field, as `UnstructuredFIT2D.add_plane_wave`). TM uses the node current $(M_\varepsilon-\varepsilon_0\varepsilon_bA_n)\,\dot E_\text{inc}$. TE puts $-(1-\varepsilon_b/\varepsilon_C)\,\mathbf g_{e,C}\cdot\mathbf E_\text{inc}$ on each dual-edge segment of a scatterer cell. Here $\mathbf g_{e,C}$ is the segment vector, $c_C\to$ foot ($=h_{e,C}\mathbf n_e$, orthogonal Hodge) or centroid $\to$ midpoint (the vector that makes the mimetic matrix exact, $\mathbf M_C\mathbf N=\mathbf R$). **Dispersive and lossy scatterers** (new): the auxiliary equations must see the total field.
+- In TM the nodes touching such cells are advanced in total-field form ($u_\text{tot}=u_s+E_\text{inc}$, with the background current $\varepsilon_0\varepsilon_bA_n\dot E_\text{inc}$).
+- In TE each dispersive segment is driven by $D_n=d_e/L_e+\varepsilon_0\varepsilon_bE_\text{inc}\cdot\mathbf n_e$ and contributes $h_{e,C}(E_{e,C}-E_\text{inc}\cdot\mathbf n_e)$.
+
+A Drude cylinder ($\varepsilon_\infty=4$, $\omega_p=1.37\times10^{16}$ s⁻¹, $a=30$ nm) reproduces the series $Q_\text{sca}$ to 1.4 % RMS (TE, through the localized surface plasmon resonance (LSPR) at 320 nm) and 0.8 % (TM). Dropping the $\varepsilon_b E_\text{inc}$ term gives > 10 % error (test).
+
+**Interpolation.** Probes use mean-value coordinates [Floater, 2003], which reproduce linear fields on any polygon. Points within round-off of an edge use the 1D edge weights; this avoids a 0/0 that turned results into NaN on the cloud machines.
+
+**Numerical dispersion at equal unknowns** (`studies/mie-cylinder-polyfit/dispersion.py`, Bloch analysis, derived). The table gives the worst-angle phase-velocity error at 3000 unknowns per $\lambda^2$:
+
+| lattice (unknowns per area) | semi-discrete | leapfrog at 0.95 CFL | $c\Delta t/h$ |
+|---|---|---|---|
+| squares, $3/h^2$ | $1.6\times10^{-3}$ | $9.0\times10^{-4}$ | 0.672 |
+| equilateral triangles, $4.62/h^2$ | $1.9\times10^{-3}$ | $3.8\times10^{-4}$ | 0.776 |
+| regular hexagons (Voronoi primal), $1.92/h^2$ | $7.9\times10^{-4}$ | $3.2\times10^{-4}$ | 0.672 |
+
+At equal unknowns the honeycomb (hexagonal primal) has half the semi-discrete error of squares or triangles. In the leapfrog, the temporal error partly cancels the spatial one on triangles and hexagons, but less so on squares.
+
+**Mie benchmark** ($n=2$, $x=2$–10, results in `studies/mie-cylinder-polyfit/README.md`): at 1 % RMS Q_sca error, on the same domain (disk + ABC) as graded triangles, the hybrid needs 1.40×/1.34× fewer unknowns and 1.22×/1.13× less work (TM/TE). On the same square + PML domain as graded conformal Cartesian it needs 1.40×/1.25× fewer unknowns and 1.28×/1.06× less work. Its time per unknown-step is 0.73–0.84× that of the triangle solver on the same machine. Against the best triangle baseline (compact disk with radial CFS-PML) it is equal in TM work and 1.14× worse in TE, because the split PML forces a square domain. The Voronoi mesh needs 1.95× fewer unknowns and 1.87× less work than graded triangles in TM, but misses 1 % in TE (1.02 % at res 40). On the plasmonic cases (B2, B3; `studies/benchmark-polygon`) the hybrid matches graded triangles in TE and is cheapest to 0.1 % on the Au TM case. Its gap refinement reaches a 5 % gap-enhancement error on the 2 nm dimer with at least 2.6× fewer unknowns than the triangle baseline's first converged rung.
+
+#### Limits & Failure Modes
+- **Non-orthogonal meshes.** The diagonal Hodge is only consistent on orthogonal pairs, and the solver refuses meshes with defect > `ortho_tol`. The Voronoi arm deliberately overrides this (`ortho_tol=inf`) after edge collapse. The local $O$(`collapse`) inconsistency is the most likely cause of its slower convergence at fine resolution (see the study).
+- **Mimetic Hodge.** The constant $\gamma$ is a choice. On rectangles the mimetic matrix is about 1.7× less accurate than the diagonal Hodge (cavity test), so prefer `orthogonal` whenever the mesh allows it. Dispersive TE needs the orthogonal Hodge. Non-convex cells are not supported, and the median-dual masses can be negative on them.
+- **Global time step.** The hybrid inner squares have $h_\text{in}$, so $\Delta t$ equals that of the graded Cartesian grid. Gap refinement lowers $\Delta t$ for the whole mesh (local time stepping is a separate branch).
+- **PML.** Split-field only, and only on axis-aligned edges (the square bulk). It is not a CFS-PML, so evanescent and grazing waves at low frequency are absorbed less well (a 10-cell layer reflects ≈ 2 % at $x=2$ in the study). Use `bc='pec'` behind it; the ABC loss is not applied on PML nodes.
+- **Mesh generators** handle circles only (any number, including narrow gaps). The Voronoi generator handles concentric circles only. Edge collapse can degenerate a cell when `collapse` > 0.3 (it raises).
+- **Plane wave:** PEC and magnetic scatterers are not supported. Conductivity is supported in TM only (TE: use a Drude pole).
+- **Fast structured path:** not used. A NumPy stencil update on squares costs 3.3–4.5 ns per unknown-step against 4.9–6.3 ns for the sparse incidence update on the same grid (1.4–1.5×, three n2 machines; 1.5× on a laptop). It would apply only to the square part of a hybrid run, beside the source, DFT and PML costs, so the expected gain is ≈ 1.2×. That did not justify a second code path with interface bookkeeping (decision recorded).
+- **Gap refinement:** `gap_cells` fixes the cells across a gap, independent of the bulk h. A convergence ladder must scale it, otherwise the gap error stalls (B3, 2 nm gap: 1.1 % then 2.9 %).
+
+References:
+- T. Rylander and A. Bondeson, "Stable FEM-FDTD hybrid method for Maxwell's equations", *Comput. Phys. Commun.* **125**, 75–82 (2000).
+- H. Egger and B. Radu, "A Yee-like finite element scheme for Maxwell's equations on hybrid grids", arXiv:2209.10432 (2022).
+- F. Brezzi, K. Lipnikov and M. Shashkov, "Convergence of mimetic finite difference methods for diffusion problems on polyhedral meshes", *SIAM J. Numer. Anal.* (2005).
+- M. S. Floater, "Mean value coordinates", *Comput. Aided Geom. Des.* **20**(1), 19–27 (2003).
+- A. Abdelkader et al., "VoroCrust: Voronoi meshing without clipping", *ACM Trans. Graph.* **39**(3) (2020), arXiv:1902.08767.
+- J.-P. Berenger, "A perfectly matched layer for the absorption of electromagnetic waves", *J. Comput. Phys.* **114**, 185–200 (1994).
+
+
 ### Surface impedance boundary condition (SIBC)
 
 When the metal walls are very good conductors and the skin depth is much smaller than the grid spacing, it becomes inefficient (and inaccurate) to resolve the fields inside the conductor volume. Instead of using a volumetric conductivity, Wakis can model such metals with a **Leontovich surface impedance boundary condition (SIBC)** applied only on the surface cells. This can be disabled in the solver by turning `use_sibc=False`

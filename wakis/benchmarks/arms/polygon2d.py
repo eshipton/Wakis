@@ -20,10 +20,10 @@ Polygonal-FIT arms (`PolygonFIT2D`, diagonal/orthogonal Hodge).
 Both use the scattered-field plane wave of `PolygonFIT2D.add_plane_wave`
 (dispersive scatterers driven by the total field). Gap fields (TE) are
 reconstructed from the edge fluxes of the triangle that contains the gap
-point by a least-squares linear fit of the fluxes of the surrounding edges
-(``gap_lsq=True``; default: the single-triangle Raviart-Thomas value, as the
-triangle baseline; it is first order in the point position and noisy from
-one mesh to the next).
+point with the lowest-order Raviart-Thomas functions, as in the triangle
+baseline (first order in the point position, so noisy from one mesh to the
+next); ``gap_lsq=True`` uses a least-squares linear fit over two rings of
+cells instead (not better on a smooth synthetic field; off by default).
 
 The resolution label is h [m] on the scatterers (same ladder and h_out rule
 as the triangle baseline).
