@@ -22,12 +22,15 @@ Usage: python run_case.py --case box --scheme tete --dz 4e-4 --sigma 1.6e-3
 import argparse
 import json
 import os
+import sys
 import time
 
 import numpy as np
 from scipy.constants import c as c_light
 
 import wakis
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def build(args):
@@ -153,6 +156,13 @@ def main():
     t_total = time.time() - t0
     ts = np.diff(steps["t"])
     k_loss = wake.calc_loss_factor(save=False)
+    # Same wake with linear time interpolation of Ez (see wake_interp.py)
+    from wake_interp import wake_potential_interp
+
+    WP_i = wake_potential_interp(tmp + "Ez.h5", np.asarray(wake.s), wake.q,
+                                 wake.v, wake.ti, skip_cells=skip)  # fmt: skip
+    lam = np.asarray(wake.lambdas)
+    k_loss_interp = float(np.trapezoid(WP_i * lam, wake.s) / np.trapezoid(lam, wake.s))
     res = dict(
         args=vars(args),
         cells=int(grid.Nx * grid.Ny * grid.Nz),
@@ -163,7 +173,9 @@ def main():
         t_step_median=float(np.median(ts)) if ts.size else None,
         t_loop=float(steps["t"][-1] - steps["t"][0]) if ts.size else None,
         k_loss=float(k_loss),
+        k_loss_interp=k_loss_interp,
         s=np.asarray(wake.s).tolist(), WP=np.asarray(wake.WP).tolist(),
+        WP_interp=WP_i.tolist(),
         tete_dt_limits={k: float(v) for k, v in
                         getattr(solver, "tete_dt_limits", {}).items()},  # fmt: skip
         conformal_unstable_faces=int(getattr(solver, "conformal_unstable_faces", 0)),

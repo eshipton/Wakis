@@ -58,8 +58,8 @@ def pipe_figure(runs, summary):
                     continue
                 rs.sort(key=lambda r: r["args"]["length"])
                 L = [r["args"]["length"] for r in rs]
-                W = [np.max(np.abs(r["WP"])) for r in rs]
-                k = [abs(r["k_loss"]) for r in rs]
+                W = [np.max(np.abs(r["WP_interp"])) for r in rs]
+                k = [abs(r["k_loss_interp"]) for r in rs]
                 out[f"{shape}_s{sig}_{sch}"] = dict(L=L, maxW=W, k=k)
                 lab = f"{LAB[sch]}, {'round' if shape == 'rd' else 'square'}, sigma={sig * 1e3:.1f} mm"
                 ax[0].loglog(L, np.maximum(W, 1e-14), mk + ls, color=COL[sch],
@@ -93,30 +93,33 @@ def box_figure(runs, summary):
             rs.sort(key=lambda r: -r["args"]["dz"])
             res = [sig / r["args"]["dz"] for r in rs]
             # Wakis: negative loss factor = energy loss; analytic: positive
-            err = [abs(-r["k_loss"] / k_ref - 1) for r in rs]
+            err = [abs(-r["k_loss_interp"] / k_ref - 1) for r in rs]
+            err_int = [abs(-r["k_loss"] / k_ref - 1) for r in rs]
             # long-range wake: RMS over s in [5 sigma, wakelength - 1 cm]
             werr = []
             for r in rs:
                 s = np.asarray(r["s"])
-                W = -np.asarray(r["WP"])
+                W = -np.asarray(r["WP_interp"])
                 m = (s > 5 * sig) & (s < s.max() - 0.01)
                 Wa = wake_potential(s[m], om, kn, sig) * 1e-12
                 werr.append(float(np.sqrt(np.mean((W[m] - Wa) ** 2))
                                   / np.sqrt(np.mean(Wa**2))))  # fmt: skip
             wk = [work(r) for r in rs]
             tl = [r["t_loop"] for r in rs]
-            out[f"s{sig}"][sch] = dict(sigma_over_dz=res, k_err=err, wake_rms_err=werr,
-                                       work=wk, t_loop=tl,
-                                       k=[-r["k_loss"] for r in rs])  # fmt: skip
+            out[f"s{sig}"][sch] = dict(sigma_over_dz=res, k_err=err, k_err_wakis_int=err_int,
+                                       wake_rms_err=werr, work=wk, t_loop=tl,
+                                       k=[-r["k_loss_interp"] for r in rs],
+                                       k_wakis_int=[-r["k_loss"] for r in rs])  # fmt: skip
             lab = f"{LAB[sch]}, sigma={sig * 1e3:.1f} mm"
             ax[0].loglog(res, err, mk + "-", color=COL[sch], label=lab, ms=4)
+            ax[0].loglog(res, err_int, mk + ":", color=COL[sch], ms=3, alpha=0.4)
             ax[1].loglog(res, werr, mk + "-", color=COL[sch], ms=4)
             ax[2].loglog(wk, err, mk + "-", color=COL[sch], ms=4)
     x = np.array([2.5, 30])
     ax[0].loglog(x, 0.3 * (x / 2.5) ** -2, "k:", lw=0.8, label="order 2")
     ax[0].set(xlabel=r"$\sigma_z/\Delta z$ ($\Delta x=\Delta y=2\Delta z$)",
               ylabel="|k_loss / k_analytic - 1|",
-              title="Closed box cavity: loss factor vs analytic")  # fmt: skip
+              title="Closed box: loss factor vs analytic\n(solid: time-interpolated W; dotted: Wakis int(t/dt))")  # fmt: skip
     ax[1].set(xlabel=r"$\sigma_z/\Delta z$", ylabel="RMS wake error / RMS wake",
               title=r"Long-range wake, $s\in[5\sigma_z, s_{max}]$")  # fmt: skip
     ax[2].set(xlabel="work = cells x time steps", ylabel="|k_loss / k_analytic - 1|",
@@ -139,7 +142,7 @@ def pillbox_figure(runs, summary):
         rs_all = [r for n, r in runs.items() if n.startswith("pillbox_")
                   and abs(r["args"]["sigma"] - sig) < 1e-9]  # fmt: skip
         dzmin = min(r["args"]["dz"] for r in rs_all)
-        refs = {key(r): -r["k_loss"] for r in rs_all if r["args"]["dz"] == dzmin}
+        refs = {key(r): -r["k_loss_interp"] for r in rs_all if r["args"]["dz"] == dzmin}
         if not refs:
             continue
         # Reference: finest TE/TM run (finest Yee shown for comparison)
@@ -151,9 +154,10 @@ def pillbox_figure(runs, summary):
             if not rs:
                 continue
             res = [sig / r["args"]["dz"] for r in rs]
-            err = [abs(-r["k_loss"] / k_ref - 1) for r in rs]
+            err = [abs(-r["k_loss_interp"] / k_ref - 1) for r in rs]
             out[f"s{sig}"][sch] = dict(sigma_over_dz=res, k_err=err,
-                                       k=[-r["k_loss"] for r in rs],
+                                       k=[-r["k_loss_interp"] for r in rs],
+                                       k_wakis_int=[-r["k_loss"] for r in rs],
                                        work=[work(r) for r in rs])  # fmt: skip
             ax[0].loglog(res, err, mk + "-", color=COL[sch], ms=4,
                          label=f"{LAB[sch]}, sigma={sig * 1e3:.1f} mm")  # fmt: skip
@@ -171,7 +175,7 @@ def pillbox_figure(runs, summary):
             continue
         s = np.asarray(r["s"]) * 1e3
         m = s < 60
-        ax[1].plot(s[m], -np.asarray(r["WP"])[m], color=COL[key(r)],
+        ax[1].plot(s[m], -np.asarray(r["WP_interp"])[m], color=COL[key(r)],
                    lw=1.4 if dz == 1e-4 else 0.8, ls="-" if dz == 1e-4 else "--",
                    label=f"{LAB[key(r)]}, dz={dz * 1e3:.1f} mm")  # fmt: skip
     ax[1].set(xlabel="s [mm]", ylabel="W(s) [V/pC] (positive = loss)",
