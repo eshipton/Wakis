@@ -8,8 +8,8 @@
 
 Each shape has a signed distance (negative inside) used to find the cells it
 cuts, and a point-membership test used to sample those cells. Shapes are
-painted in order: later shapes override earlier ones. The background is
-vacuum (material id 0).
+painted in order: later shapes override earlier ones. The background
+(material id 0) is a lossless dielectric, vacuum by default.
 """
 
 import numpy as np
@@ -55,12 +55,14 @@ class Geometry:
     Attributes
     ----------
     eps : ndarray (n_materials + 1,)
-        Instantaneous relative permittivity per material id (0 = vacuum).
+        Instantaneous relative permittivity per material id (0 = the
+        lossless background, `background_eps`, default vacuum).
     dispersive : list of (id, DispersiveMaterial)
     """
 
-    def __init__(self, shapes=()):
+    def __init__(self, shapes=(), background_eps=1.0):
         self.shapes = list(shapes)
+        self.background_eps = float(background_eps)
         mats = []
         self.shape_mat = []
         for s in self.shapes:
@@ -72,7 +74,7 @@ class Geometry:
                 mats.append(s.material)
                 self.shape_mat.append(len(mats))
         self.materials = mats
-        self.eps = np.array([1.0] + [_eps_inf(m) for m in mats])
+        self.eps = np.array([self.background_eps] + [_eps_inf(m) for m in mats])
         self.dispersive = [
             (k + 1, m) for k, m in enumerate(mats) if hasattr(m, "poles")
         ]

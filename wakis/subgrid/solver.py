@@ -95,6 +95,8 @@ class SubgridFIT2D:
         self.geo = geometry if geometry is not None else Geometry([])
         self.pol = polarization
         self.n_sub = int(n_sub)
+        self.v_b = C0 / np.sqrt(self.geo.background_eps)  # background speed
+        self.eta_b = ETA0 / np.sqrt(self.geo.background_eps)
         self._sample_materials()
         self._assemble()
         self.lam_max = self._lambda_max()
@@ -130,6 +132,7 @@ class SubgridFIT2D:
         cut = geo.cut(xm, ym, 0.5 * np.hypot(dx, dy))
         mid_c = geo.material_id(xm, ym)
         eps_tab = geo.eps
+        eb = geo.background_eps
         n_mat = len(eps_tab)
         nc = m.n_cells
         t = (np.arange(ns) + 0.5) / ns
@@ -144,7 +147,7 @@ class SubgridFIT2D:
         Lside = np.stack([dx, dx, dy, dy], 1)
         inv_e = 1 / eps_tab[mid_c]
         R = np.repeat((hw * inv_e[:, None])[:, :, None], ns, 2)  # int dn/eps
-        Q = np.repeat((hw * (1 - inv_e[:, None]))[:, :, None], ns, 2)
+        Q = np.repeat((hw * (1 - eb * inv_e[:, None]))[:, :, None], ns, 2)
         s_eps = (hw * Lside) * eps_tab[mid_c][:, None]  # int eps dA
         s_frac = np.zeros((nc, 4, n_mat))
         s_frac[np.arange(nc), :, mid_c] = hw * Lside
@@ -175,7 +178,7 @@ class SubgridFIT2D:
                 e = eps_tab[mid]  # (n, col, row)
                 h = hw[chunk, s][:, None]
                 R[chunk, s] = h * (1 / e).mean(2)
-                Q[chunk, s] = h * (1 - 1 / e).mean(2)
+                Q[chunk, s] = h * (1 - eb / e).mean(2)
                 s_eps[chunk, s] = hw[chunk, s] * Lside[chunk, s] * e.mean((1, 2))
                 for j in range(n_mat):
                     s_frac[chunk, s, j] = (
@@ -214,7 +217,7 @@ class SubgridFIT2D:
         disp_ids = [k for k, _ in self.geo.dispersive]
         if self.pol == "TM":
             m_all = EPS0 * eps_a
-            m0_all = EPS0 * area
+            m0_all = EPS0 * self.geo.background_eps * area
             mp_all = {k: EPS0 * frac_a[:, k] for k in disp_ids}
             W = Lst / (MU0 * L)
             boundary = self._boundary_nodes()
@@ -230,7 +233,7 @@ class SubgridFIT2D:
             fd = frac_s[:, disp_ids].sum(1) if disp_ids else np.zeros(ne)
             de = fd > 0
             minf = EPS0 * (L / Lst) * eps_s / (L * Lst)
-            m0 = EPS0 * L / Lst
+            m0 = EPS0 * self.geo.background_eps * L / Lst
             W[de] = 1 / minf[de]
             c_e[de] = Lst[de] * (minf[de] - m0[de]) / minf[de]
             self._edge_disp = {k: EPS0 * (L / Lst) * frac_s[:, k] / (L * Lst)
@@ -304,7 +307,7 @@ class SubgridFIT2D:
 
         def rate(v, lo, hi, vmin, vmax):
             T = min(lo - vmin, vmax - hi)
-            smax = (order + 1) * C0 * np.log(1 / R0) / (2 * T)
+            smax = (order + 1) * self.v_b * np.log(1 / R0) / (2 * T)
             d = np.maximum(lo - v, 0) + np.maximum(v - hi, 0)
             return smax * (d / T) ** order
 
@@ -362,18 +365,20 @@ class SubgridFIT2D:
     # =============================================================== source
     def add_plane_wave(self, src_time, direction=(1.0, 0.0), amplitude=1.0):
         """
-        Scattered-field plane wave in vacuum.
+        Scattered-field plane wave in the lossless background eps_b.
 
-        u_inc(r, t) = amplitude * s(t - (k.r - s_0) / c) with s_0 the smallest
-        k.r over the source locations (the scatterer). TM: E_z,inc = u_inc;
-        TE: H_z,inc = u_inc / eta_0... expressed so that `u` is H_z and
-        E_inc = eta_0 H_z,inc (z x k).
+        u_inc(r, t) = amplitude * s(t - (k.r - s_0) / v_b), v_b = c /
+        sqrt(eps_b), with s_0 the smallest k.r over the source locations (the
+        scatterer). TM: E_z,inc = u_inc. TE: H_z,inc = u_inc and E_inc =
+        eta_b u_inc (z x k), eta_b = eta_0 / sqrt(eps_b). After this call `u`
+        is the scattered field.
 
-        TM: the node equation gets -P^T[(m - m_0)(u_inc^{n+1} - u_inc^n)]
-        (the discrete time derivative of the leapfrog). TE: the constitutive
-        relation E_s = D_s / eps - (1 - 1/eps) E_inc integrated across each
-        edge strip gives g = W f - c_e E_inc,n with c_e from the sub-pixel
-        columns. Dispersive poles are driven by the total field.
+        TM: the node equation gets -P^T[(m - m_b)(u_inc^{n+1} - u_inc^n)]
+        (the discrete time derivative of the leapfrog; m_b the background
+        mass). TE: the constitutive relation E_s = D_s / eps - (1 - eps_b /
+        eps) E_inc integrated across each edge strip gives g = W f - c_e
+        E_inc,n with c_e from the sub-pixel columns. Dispersive poles are
+        driven by the total field.
         """
         k = np.asarray(direction, float)
         k = k / np.linalg.norm(k)
@@ -403,19 +408,45 @@ class SubgridFIT2D:
             self.src.update(s0=s0)
             self._src_e = e
             self._src_pos = em[e]
-            self._src_kn = np.where(edir[e] == 0, k[0], k[1]) * ETA0
+            self._src_kn = np.where(edir[e] == 0, k[0], k[1]) * self.eta_b
             self._src_c = self.c_e[e]
             self._src_B = (sp.diags(1 / self.D) @ self.K.T.tocsr()[:, e]).tocsr()
             # incident E_n * L* on dispersive edges (drives the ADE)
             self._edge_pos = em
-            self._edge_kn = np.where(edir == 0, k[0], k[1]) * ETA0
+            self._edge_kn = np.where(edir == 0, k[0], k[1]) * self.eta_b
+        self._inc_tab, self._inc_cache = {}, {}
+        self._register("src", self._src_pos)
+        for gi, grp in enumerate(self.groups):
+            pos = self._dof_pos if self.pol == "TM" else self._edge_pos
+            self._register(f"disp{gi}", pos[grp["idx"]])
         return self
+
+    def _register(self, name, points):
+        """Unique propagation delays of a point set (one pulse evaluation
+        per distinct k.r: on the lattice many points share it)."""
+        proj = np.atleast_2d(points) @ self.src["k"]
+        u, inv = np.unique(np.round(proj, 15), return_inverse=True)
+        self._inc_tab[name] = ((u - self.src["s0"]) / self.v_b, inv.ravel())
+        self._inc_cache[name] = {}
+
+    def _inc(self, name, t):
+        """u_inc on a registered point set at time t (cached, 2 levels)."""
+        cache = self._inc_cache[name]
+        if t in cache:
+            return cache[t]
+        tau, inv = self._inc_tab[name]
+        v = (self.src["amp"] * self.src["s"](t - tau))[inv]
+        if len(cache) >= 2:
+            cache.pop(next(iter(cache)))
+        cache[t] = v
+        return v
 
     def incident(self, points, t):
         """u_inc at points (n, 2) and times t (scalar or (nt,)) -> (nt, n)."""
         s = self.src
         tau = (
-            np.atleast_1d(t)[:, None] - (np.atleast_2d(points) @ s["k"] - s["s0"]) / C0
+            np.atleast_1d(t)[:, None]
+            - (np.atleast_2d(points) @ s["k"] - s["s0"]) / self.v_b
         )
         return s["amp"] * s["s"](tau)
 
@@ -450,9 +481,9 @@ class SubgridFIT2D:
         if self.pol == "TE":
             if self.src is not None:
                 e = self._src_e
-                einc = self._src_kn * self.incident(self._src_pos, th)[0]
+                einc = self._src_kn * self._inc("src", th)
                 g[e] -= self._src_c * einc
-            for grp in self.groups:  # ADE on edges (half-integer levels)
+            for gi, grp in enumerate(self.groups):  # ADE on edges (half levels)
                 idx = grp["idx"]
                 gt_old = grp["x_prev"]
                 dp = np.zeros(idx.size)
@@ -465,7 +496,7 @@ class SubgridFIT2D:
                 gt = g[idx].copy()
                 if self.src is not None:
                     gt += (self.Lst[idx] * self._edge_kn[idx]
-                           * self.incident(self._edge_pos[idx], th)[0])  # fmt: skip
+                           * self._inc(f"disp{gi}", th))  # fmt: skip
                 grp["x_prev"] = gt
         r = self.K.T @ g
         r /= self.D
@@ -479,13 +510,13 @@ class SubgridFIT2D:
             u_new[pn] = self._ux + self._uy
         if self.pol == "TM":
             if self.src is not None:
-                ui = self.incident(self._src_pos, [n * dt, (n + 1) * dt])
-                u_new -= self._src_S @ (ui[1] - ui[0])
-            for grp in self.groups:  # ADE on nodes (integer levels)
+                du = self._inc("src", (n + 1) * dt) - self._inc("src", n * dt)
+                u_new -= self._src_S @ du
+            for gi, grp in enumerate(self.groups):  # ADE on nodes (integer levels)
                 idx = grp["idx"]
                 ut = u[idx]
                 if self.src is not None:
-                    ut = ut + self.incident(self._dof_pos[idx], n * dt)[0]
+                    ut = ut + self._inc(f"disp{gi}", n * dt)
                 dp = np.zeros(idx.size)
                 for kk, (alpha, xi, zeta) in enumerate(grp["coef"]):
                     p, po = grp["p"][kk], grp["p_old"][kk]
