@@ -87,6 +87,24 @@ Values interpolate log-log between runs. `*` means extrapolated with the arm's l
 - **Time error matters for (2,4).** With leapfrog at CFL 0.95 it dominates: res 14 TM gives 0.74 % with leapfrog, 0.26 % at CFL 0.3 and 0.23 % with LSRK4. Yoshida's symplectic 4th-order composition is unstable with the CPML, because its negative sub-step amplifies inside the absorber.
 - **DG interface.** On DG the analogous split is curved vs straight-sided at equal p and h. Straight-sided p = 4 gives 2.9–5.4 % at λ_d/1.5–2, against 0.14–1.03 % (vs series) or 0.022–0.52 % (windowed) for curved.
 
+## B1 with the suite's 3000 fs window (benchmark-suite arms, `../highorder-bench/data/B1`)
+
+The arms run through `wakis.benchmarks`, all with the 3000 fs window: DG on a de-embedded ABC disk at the suite circles (1.9, 2.2 and 2.5 µm), and the suite's `tri-graded` (radial PML). Metric: `q_sca_rms_rel` against the exact series. The values are from 32 of the 40 runs; the 8 finest were still running when this was written.
+
+| pol | arm | unknowns | time [s] | RMS error |
+|---|---|---|---|---|
+| TM | tri-graded (finest, 40 cells/λ_d) | 368k | 679 | 1.24 % |
+| TM | DG p = 3, λ_d/2 | 22.6k | 259 | 0.83 % |
+| TM | DG p = 4, λ_d/2 | 37.2k | 544 | 0.066 % |
+| TM | DG p = 5, λ_d/1.5 | 40.1k | 536 | 0.016 % |
+| TE | tri-graded (finest) | 369k | 1062 | 1.22 % |
+| TE | DG p = 4, λ_d/2 | 37.2k | 443 | 0.044 % |
+| TE | DG p = 5, λ_d/1.5 | 40.1k | 471 | 0.014 % |
+
+- **DG floor.** DG flattens at about 0.012 %, which is the residual window floor at 3000 fs (compare `data_long/`).
+- **tri-graded does not reach 1 % at 3000 fs** in the suite configuration: it sits at 1.2 % with 368k unknowns. At 1000 fs the graded study's tri-graded-pml reached 1 % at 240k (different h_out cap and PML). This plateau is flagged to the suite owner.
+- **Headline at 3000 fs.** DG p = 4–5 reaches ≤ 0.07 % with about 40k unknowns in about 500 s, against 1.2 % for 368k unknowns in 680–1060 s for the suite's graded triangles. That is more than 17× lower error with 9× fewer unknowns, at about equal or lower time.
+
 ## B2 / B3: metals (benchmark suite, `../highorder-bench`)
 
 Arms `dgtd-p1…p4` (curved) and `dgtd-p4-straight`, box with CFS-PML, Rakić Drude–Lorentz Au/Ag through ADEs driven by the total field. The records are published in the shared store (`gs://…/bench-results/<case>/dgtd-*`).
