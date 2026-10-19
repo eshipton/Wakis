@@ -6,7 +6,7 @@
 - **Reference:** the 20 lowest resonances from the exact hybrid-mode Bessel determinant `wakis.unstructured.analytic.rod_cavity_hybrid` ($\text{TM}_0$ modes for $p = 0$ and hybrid $\text{HE}/\text{EH}$ modes for $p \ge 1$; the uncoupled formula $k^2 = k_t^2 + (p\pi/H)^2$ would be $> 2\text{ \%}$ off).
 - **Metric:** RMS relative error across the 20 resonances (with multiplicity).
 - **Extraction:** 3 broadband dipoles at fixed off-symmetry positions, 6 probes $\times$ 3 $E$ components, $1.33\ \text{ps}$ ($400\,b/c$) ring-down, harmonic inversion (`wakis.resonances.harminv`, FDM) of all 18 probe signals after the pulse, fits clustered across signals ($10^{-4}$), and Hungarian assignment to the exact mode list. The raw leapfrog frequencies are scored (including time dispersion, as a user gets); the dispersion-corrected spatial error is also recorded in `data/summary.md`.
-- **Extraction check:** against the prism shift-invert eigensolver (`python prism_study.py eig --res R`), time-domain extraction agrees mode by mode within the leapfrog dispersion shift ($2\text{--}3 \times 10^{-4}$) at $\text{res} = 8, 11, 16$ (RMS $0.62 / 0.39 / 0.18\text{ \%}$ eigensolver vs $0.57 / 0.33 / 0.14\text{ \%}$ time-domain including leapfrog dispersion).
+- **Extraction check:** against the prism shift-invert eigensolver (`python prism_study.py eig --res R`), time-domain extraction agrees mode by mode within the leapfrog dispersion shift ($2\text{--}3 \times 10^{-4}$) at $\text{res} = 8, 11, 16$ (checked on the earlier `merge_tol = 0.15` build: RMS $0.62 / 0.39 / 0.18\text{ \%}$ eigensolver vs $0.57 / 0.36 / 0.18\text{ \%}$ time domain, which includes the positive leapfrog shift).
 
 ## Arms
 
