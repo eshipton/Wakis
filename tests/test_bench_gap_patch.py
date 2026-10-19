@@ -40,3 +40,19 @@ def test_patch_reconstruction_is_exact_for_linear_fields():
     rt = np.array([[d[m.cell_edges[cell[i]]] @ W[i, :, 1], -(d[m.cell_edges[cell[i]]] @ W[i, :, 0])]
                    for i in range(ng)]) / (eps_0 * case.n_background**2)  # fmt: skip
     assert np.abs(rt - exact).max() > 1e3 * max(err, 1e-14)
+
+
+def test_arm_pml_options():
+    """n_pml / pml_dr / pml_d / r_pml reach the solver's PML layer."""
+    case = get_case("B3-g5")
+    h = 4e-9
+    _, s, h_out = Triangles2DArm(n_pml=40).build(case, h)
+    cfg = s._pml_cfg
+    assert abs(cfg["r0"] - max(case.r_absorber, max(case.circles) + 2 * h_out)) < 1e-15
+    assert abs((cfg["r1"] - cfg["r0"]) - 40 * h_out) < 1e-12 * h_out
+    _, s, _ = Triangles2DArm(n_pml=20, pml_d=80e-9, r_pml=150e-9).build(case, h)
+    cfg = s._pml_cfg
+    assert (
+        abs(cfg["r0"] - 150e-9) < 1e-15 and abs(cfg["r1"] - cfg["r0"] - 80e-9) < 1e-15
+    )
+    assert s._pml.spokes.size > 0 and s._pml.chords.size > 0
