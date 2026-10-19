@@ -155,21 +155,35 @@ class PolyMesh:
             raise ValueError("inconsistent cell orientation (overlapping cells)")
         single = np.flatnonzero(cnt == 1)
         if single.size > 1:
+            # T-junction (coarse/fine) sides of non-conforming (quadtree) meshes:
+            # a single-cell edge that contains a node of another single-cell
+            # edge strictly inside it (the coarse side), and the sub-edges that
+            # end at such a node. KD-tree search: O(n log n) in the number of
+            # single-cell edges.
+            from scipy.spatial import cKDTree
+
             A = self.nodes[self.edges[single, 0]]
             V = self.nodes[self.edges[single, 1]] - A
-            L2 = np.einsum("ij,ij->i", V, V)
+            L = np.sqrt(np.einsum("ij,ij->i", V, V))
             M = A + 0.5 * V
-            # T-junction (coarse/fine) sides: fine midpoint lies strictly inside coarse edge
-            D = M[:, None, :] - A[None, :, :]
-            proj = np.einsum("ijk,jk->ij", D, V)
-            cross = D[:, :, 0] * V[None, :, 1] - D[:, :, 1] * V[None, :, 0]
-            sub = (
-                (L2[:, None] < (1 - 1e-7) * L2[None, :])
-                & (proj > 1e-7 * L2[None, :])
-                & (proj < (1 - 1e-7) * L2[None, :])
-                & (cross**2 < 1e-14 * L2[None, :] ** 2)
-            )
-            t_junc = sub.any(1) | sub.any(0)
+            sn = np.unique(self.edges[single])
+            tree = cKDTree(self.nodes[sn])
+            coarse = np.zeros(single.size, bool)
+            inner_nodes = []
+            for i, cand in enumerate(tree.query_ball_point(M, 0.5 * L * (1 - 1e-9))):
+                if not cand:
+                    continue
+                D = self.nodes[sn[cand]] - A[i]
+                t = D @ V[i] / L[i] ** 2
+                cr = D[:, 0] * V[i, 1] - D[:, 1] * V[i, 0]
+                ok = (t > 1e-7) & (t < 1 - 1e-7) & (np.abs(cr) < 1e-7 * L[i] ** 2)
+                if ok.any():
+                    coarse[i] = True
+                    inner_nodes.append(sn[np.asarray(cand)[ok]])
+            hang = np.zeros(self.n_nodes, bool)
+            if inner_nodes:
+                hang[np.concatenate(inner_nodes)] = True
+            t_junc = coarse | hang[self.edges[single]].any(1)
             self.interface_edges = single[t_junc]
             self.boundary_edges = single[~t_junc]
         else:
