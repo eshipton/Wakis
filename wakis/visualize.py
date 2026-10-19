@@ -747,7 +747,7 @@ def plot_isosurfaces(
             scalar_bar_args=dict(title=scalar_label, color="black"),
         )
     for s in surfaces or []:
-        pl.add_mesh(s.scale(scale, inplace=False), color="#56B4E9", opacity=0.35)
+        pl.add_mesh(s.scale(scale, inplace=False), color="#56B4E9", opacity=0.2)
     pl.add_mesh(sg.outline(), color="black")
     pl.add_axes()
     pl.camera_position = "xz"

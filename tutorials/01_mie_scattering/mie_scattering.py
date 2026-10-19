@@ -577,7 +577,7 @@ del g, s
 # components).
 
 # %%
-T_RUN = 160e-15  # maximum simulated time [s] (stops earlier once fields decay)
+T_RUN = 300e-15  # maximum simulated time [s] (stops earlier once fields decay)
 N_FREQ = 81
 X_SIM = np.linspace(X_MIN, X_MAX, N_FREQ)
 FREQS = X_SIM * c0 / (2 * np.pi * R_SPHERE)  # [Hz]
@@ -690,7 +690,7 @@ def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
         x=X_SIM, q_sca=q_sca, q_abs=q_abs, steps=solver.Nt, dt=solver.dt,
         cells=int(grid.Nx * grid.Ny * grid.Nz), setup_s=t_setup, run_s=t_run,
         resolution=resolution_per_um, conformal=conformal,
-        gpu=gpu_name() if use_gpu else None,
+        gpu=gpu_name() if use_gpu else None, stopped_early=bool(solver.Nt < n_max),
     )  # fmt: skip
     return out
 
@@ -700,7 +700,8 @@ def summary(res):
     q_mie = mie_efficiencies(N_SPHERE, res["x"])[1]
     err = res["q_sca"] - q_mie
     return dict(
-        resolution_per_um=res["resolution"], conformal=res["conformal"],
+        resolution_per_um=res["resolution"],
+        stopped_early=res["stopped_early"], conformal=res["conformal"],
         cells=res["cells"], steps=int(res["steps"]), dt_s=res["dt"],
         setup_s=res["setup_s"], run_s=res["run_s"], gpu=res["gpu"],
         x=list(res["x"]), q_sca=list(map(float, res["q_sca"])),
@@ -777,7 +778,7 @@ shape = np.min([v[0].shape[1:] for v in comps], axis=0)
 mag = np.sqrt(sum(np.abs(v[0][0, : shape[0], : shape[1], : shape[2]]) ** 2
                   for v in comps)) / abs(E_inc[1])  # fmt: skip
 coords3 = [np.asarray(cc)[:n] for cc, n in zip(comps[0][1], shape)]
-levels = tuple(np.array([0.45, 0.65, 0.85]))  # fractions of the maximum
+levels = (0.35, 0.55, 0.75)  # fractions of the maximum
 pl = wv.plot_isosurfaces(mag, coords3, levels=levels, scalar_label="|E|/max",
                          surfaces=[res["grid"].read_stl("sphere")])  # fmt: skip
 wv.save_plotter(pl, str(FIG_DIR / "isosurfaces.png"))
@@ -797,7 +798,7 @@ plt.show()
 if "movie" in res:
     gif = wv.save_animation(
         res["movie"], str(FIG_DIR / "mie_movie.gif"), boxes=boxes,
-        surface=((0, 0, 0), R_SPHERE), max_frames=90, fps=12, dpi=70,
+        surface=((0, 0, 0), R_SPHERE), max_frames=72, fps=12, dpi=65,
         title="Ex(y=0)",
     )  # fmt: skip
     print("movie:", gif, f"{os.path.getsize(gif) / 1e6:.2f} MB")
@@ -872,25 +873,30 @@ fig, axes = plt.subplots(1, 3, figsize=(13, 3.8), subplot_kw=dict(projection="po
 for ax, xs in zip(axes, X_SNAP):
     j = int(np.argmin(np.abs(X_SIM - xs)))
     E_j, _ = res["src"].incident_fields(FREQS[j : j + 1])
-    for phi, col, name in (
-        (0.0, "#D55E00", "E-plane"),
-        (np.pi / 2, "#0072B2", "H-plane"),
-    ):
+    top = -np.inf
+    # Right half: E-plane (phi = 0); left half: H-plane (phi = 90 deg)
+    for phi, sgn, col in ((0.0, 1, "#D55E00"), (np.pi / 2, -1, "#0072B2")):
         ff = res["scat"].get_farfield(theta, phi)
-        dsig = (np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2) / abs(
-            E_j[0]
-        ) ** 2
+        dsig = np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2
+        dsig = dsig / abs(E_j[0]) ** 2
         mie = mie_differential_cross_section(
             N_SPHERE, R_SPHERE, c0 / FREQS[j], theta, phi
         )
-        for sgn in (1, -1):
-            ax.plot(sgn * theta, np.log10(mie / R_SPHERE**2), color=col, lw=1,
-                    label=f"{name} Mie" if sgn == 1 else None)  # fmt: skip
-            ax.plot(sgn * theta, np.log10(dsig / R_SPHERE**2), "--", color="k", lw=0.8,
-                    label="Wakis" if (sgn == 1 and phi == 0) else None)  # fmt: skip
+        db_mie = 10 * np.log10(mie / R_SPHERE**2)
+        db_sim = 10 * np.log10(dsig / R_SPHERE**2)
+        top = max(top, db_mie.max())
+        ax.plot(sgn * theta, db_mie, color=col, lw=2.2, alpha=0.55,
+                label=("E-plane" if sgn > 0 else "H-plane") + " Mie")  # fmt: skip
+        ax.plot(sgn * theta, db_sim, "--", color="k", lw=0.9,
+                label="Wakis" if sgn > 0 else None)  # fmt: skip
+    ax.set_rlim(top - 40, top + 3)
+    ax.set_rgrids(np.round(np.arange(top - 30, top + 1, 10)), fontsize=6, angle=200)
     ax.set_theta_zero_location("N")
-    ax.set_title(f"x = {X_SIM[j]:g}: log$_{{10}}$(dσ/dΩ / r²)", fontsize=9)
-axes[0].legend(fontsize=7, loc="lower left", bbox_to_anchor=(-0.25, -0.2))
+    ax.set_thetagrids(range(0, 360, 45))
+    ax.set_title(f"x = {X_SIM[j]:g}:  dσ/dΩ / r²  [dB]", fontsize=9)
+    ax.text(np.radians(60), top + 12, "E-plane", color="#D55E00", fontsize=8)
+    ax.text(np.radians(-80), top + 14, "H-plane", color="#0072B2", fontsize=8)
+axes[0].legend(fontsize=7, loc="lower left", bbox_to_anchor=(-0.3, -0.2))
 fig.tight_layout()
 savefig(fig, "far_field_vs_mie.png")
 plt.show()
