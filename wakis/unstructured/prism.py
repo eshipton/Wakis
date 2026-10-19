@@ -957,7 +957,8 @@ class PrismFIT3D:
         for p in self.ports:
             if p["src"] is not None:
                 p["_vs"] = float(p["src"](t_half))
-                r[p["edges"]] += p["inj"] * p["_vs"]  # Norton current along +z
+                # Norton current J = sigma V_s / l along +z: r = C^T h - j
+                r[p["edges"]] -= p["inj"] * p["_vs"]
             p["_vn"] = -float(p["wV"] @ self.e[p["edges"]])
         if pml is not None:
             lev, K = pml["lev"], self.mesh.K

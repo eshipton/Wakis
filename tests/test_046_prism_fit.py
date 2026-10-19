@@ -277,8 +277,9 @@ def test_lumped_port_capacitor():
     f = np.array([0.5, 1.0, 1.5]) * f_c
     Z = s.port_impedance(port, f)
     Cp = eps_0 * np.pi * r_p**2 / d
-    # with the e^{-i w t} DTFT kernel a capacitor is Z = 1 / (-i w C)... use
-    # the measured sign convention: |Z| and the phase magnitude
+    # exp(+i w t) phasors (DTFT kernel exp(-i w t)): Z_C = 1 / (i w C)
     Zc = 1 / (1j * 2 * np.pi * f * Cp)
     print("port Z", Z, "capacitor", Zc)
-    assert np.allclose(np.abs(Z), np.abs(Zc), rtol=0.05)
+    assert np.allclose(Z, Zc, rtol=0.05)
+    # mutation: the opposite source polarity gives the wrong sign of Z
+    assert not np.allclose(-Z, Zc, rtol=0.5)
