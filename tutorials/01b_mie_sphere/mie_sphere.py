@@ -195,6 +195,24 @@ parser.add_argument(
 )
 parser.add_argument("--n-pml", type=int, default=None, help="CPML layers")
 parser.add_argument("--t-run", type=float, default=None, help="max time [fs]")
+parser.add_argument(
+    "--gap-um",
+    type=float,
+    default=None,
+    help="sphere surface -> CPML distance [um] on a graded grid",
+)
+parser.add_argument(
+    "--coarse-per-um",
+    type=float,
+    default=16.0,
+    help="cells per um in the graded vacuum gap",
+)
+parser.add_argument(
+    "--grade-ratio",
+    type=float,
+    default=1.15,
+    help="max ratio of neighbouring cells on the graded grid",
+)
 # In a notebook, options come from the environment, e.g.
 # WAKIS_TUTORIAL_ARGS="--quick --cpu" (used by tutorials/build.py --execute)
 NB_ARGS = os.environ.get("WAKIS_TUTORIAL_ARGS", "").split()
@@ -474,10 +492,35 @@ def layout(resolution_per_um):
     # --pml-gap scales the distance sphere surface -> CPML (boxes stay put)
     i_pml += int(round((ARGS.pml_gap - 1.0) * (i_pml * dx - R_SPHERE) / dx))
     n_half = i_pml + N_PML
-    return dict(
+    lay = dict(
         dx=dx, n_cells=2 * n_half, half=n_half * dx,
-        inner=i_in * dx, tf=i_tf * dx, flux=i_flux * dx, pml=i_pml * dx,
+        inner=i_in * dx, tf=i_tf * dx, flux=i_flux * dx, pml=i_pml * dx, nodes=None,
     )  # fmt: skip
+    if ARGS.gap_um is not None:  # graded grid: fine region, grading, coarse gap
+        nodes = graded_nodes(dx, (i_flux + 2) * dx, 1e-6 / ARGS.coarse_per_um,
+                             ARGS.grade_ratio, R_SPHERE + ARGS.gap_um * 1e-6, N_PML)  # fmt: skip
+        lay.update(nodes=nodes, n_cells=nodes.size - 1, half=nodes[-1],
+                   pml=nodes[-1 - N_PML])  # fmt: skip
+    return lay
+
+
+def graded_nodes(dx, x_fine, dx_coarse, ratio, x_pml, n_pml):
+    """
+    Symmetric 1D node coordinates [m]: uniform dx up to x_fine (all boxes),
+    then cells growing by `ratio` up to dx_coarse, uniform dx_coarse up to
+    the CPML start (>= x_pml) and n_pml CPML cells of dx_coarse.
+    """
+    pos = list(np.arange(0, round(x_fine / dx) + 1) * dx)
+    h = dx
+    while h * ratio < dx_coarse:
+        h *= ratio
+        pos.append(pos[-1] + h)
+    while pos[-1] < x_pml - 1e-12:
+        pos.append(pos[-1] + dx_coarse)
+    for _ in range(n_pml):
+        pos.append(pos[-1] + dx_coarse)
+    half = np.array(pos)
+    return np.concatenate([-half[:0:-1], half])
 
 
 STL_FILE = str(HERE / "sphere.stl")
@@ -496,6 +539,15 @@ def make_grid(resolution_per_um, conformal, half_cells=None):
     h, n = lay["half"], lay["n_cells"]
     if half_cells is not None:
         h, n = half_cells * lay["dx"], 2 * half_cells
+    elif lay["nodes"] is not None:  # graded grid
+        q = lay["nodes"]
+        return wakis.GridFIT3D(
+            x=q, y=q, z=q,
+            stl_solids={"sphere": STL_FILE},
+            stl_materials={"sphere": [N_SPHERE**2, 1.0]},
+            conformal=False if conformal == "staircase" else conformal,
+            verbose=0,
+        ), lay  # fmt: skip
     return wakis.GridFIT3D(
         -h, h, -h, h, -h, h, n, n, n,
         stl_solids={"sphere": STL_FILE},
@@ -764,6 +816,7 @@ def summary(res):
     lay = res["lay"] if "lay" in res else layout(res["resolution"])
     return dict(
         pml_gap_scale=ARGS.pml_gap, pml_start_m=lay["pml"], n_pml=N_PML,
+        gap_um=ARGS.gap_um, graded=lay["nodes"] is not None,
         kappa_max=ARGS.kappa_max, alpha_max=ARGS.alpha_max,
         far_field=far_field_errors(res),
         resolution_per_um=res["resolution"],
