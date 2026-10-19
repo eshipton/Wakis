@@ -2003,12 +2003,68 @@ then $\boldsymbol\lambda_h \leftarrow \boldsymbol\lambda_h' + [\mathbf D_a^H\;\m
 
 **Limitations.** The adjoint supports CPU and GPU runs with PEC/PMC/periodic/Bloch/CPML boundaries, ohmic loss, dispersive media, lumped elements and ports, and electric, magnetic and mode sources. With MPI it supports the standard step (tested with PEC and periodic $x$, $y$ boundaries and ohmic loss) with `DFTMonitor` and `FluxMonitor` objectives; CPML, lumped elements, dispersive media, `ModeMonitor`, `Near2FarMonitor` and `LumpedReadout` raise `NotImplementedError` under MPI. ABC (Mur), PML, TFSF injection and SIBC raise `NotImplementedError`, as do `J` components of `DFTMonitor`, lumped elements sharing edges with each other or with dispersive media, and design regions overlapping lumped elements or (other) dispersive media. Only isotropic $\varepsilon$ (or the fill fraction of one dispersive material) is designed; mode profiles and $\Delta t$ must not depend on the design.
 
+#### Memory ladder: checkpointing and time reversal
+
+The gradient needs one design-edge *row* per step during the backward sweep: $q^n/\varepsilon^{-1}$ (or the ADE sensitivity, or the sub-capacitor terms of a dispersive tensor design), in decreasing $n$. Storing them costs $N_t N_\text{design}$ values. The ceviche WDM challenge at $r=1$ needs 92.7 GB in float32 (56 587 steps × 409 600 design edges). A 3D lens is in the same range. `AdjointSimulation(memory=...)` (module `wakis.inverse.memory`) offers four ways to obtain the rows. Only the first three are exact.
+
+| `memory` | Rows obtained by | Memory | Extra forward steps | Exact? |
+|---|---|---|---|---|
+| `'store'` (default) | stored in the forward run | $N_t N_d$ | 0 | yes |
+| `'checkpoint'` | replay from binomial snapshots | $s\,S + (b+1) N_d$ | $\le b\,t(\lceil N_t/b\rceil - 1, s)$ | yes, bitwise |
+| `'reverse'` | reversed leapfrog from the final state | $N_t \times$ (interface layers + source supports) $+\,3S$ | 0 | yes; round-off 1e-15 |
+| `'nyquist'` | every $d$-th row, Lanczos-sinc interpolation | $N_t N_d/d$ | 0 | **no** (approximate, opt-in) |
+
+Here $S$ is the size of one snapshot, $s$ the number of snapshot slots and $b$ the block length. `'auto'` stores the rows when they fit in `memory_budget_gb`; otherwise it picks `'checkpoint'` with the $(s, b)$ that `plan_checkpoints` finds for the budget.
+
+**Checkpointing.** Step $n$ is a deterministic function of the state $\mathbf x^n$. That state includes the fields, the CPML $\psi$, the conduction current bookkeeping $J$/$J_\text{old}$, the ADE polarizations, the sub-capacitor network, the lumped-element currents and recorded signals, and the internal state of each source: incremental $J_\text{old}$, the TF/SF incident line, and the mode-source terms. `SolverState` copies all of it. Replaying step $n$ from a restored $\mathbf x^n$ therefore performs the same floating-point operations in the same order and gives the same row bit for bit. The steps are grouped into blocks of $b$ steps. The rows of one block are recorded during replay and consumed in reverse order. The blocks are reversed by the binomial schedule of Griewank & Walther's `revolve` [Griewank & Walther, 2000]: with $s$ slots (counting the one that holds the start state), $l$ blocks are reversed with
+
+$$
+t(l,s) = r\,l - \binom{s+r}{s+1} + l,\qquad r = \min\{r : \tbinom{s+r}{s} \ge l\}
+$$
+
+forward block evaluations. This is revolve's `numforw` count plus the $l$ recording passes. The first advance is $\binom{s+r-2}{s}$, clipped to the feasible range $[\,l-\binom{s-1+r}{s-1},\ \binom{s+r-1}{s}\,]$. This rule and the closed form equal a brute-force dynamic-programming optimum for all $l<120$, $s\le 6$ (`tests/test_045`). A halving rule fails the same check. Step 0 initializes the sources (mode solves, TF/SF line), so its row is kept and the snapshots start at $\mathbf x^1$; that first snapshot is persistent, so `vjp` can run several times per forward. The forward run lays down the first descent of the schedule and records the last block, which the backward sweep needs first. Rows are kept in the solver's precision, so the gradient equals `'store'` with `store_dtype=float64` bitwise.
+
+**Time reversal.** Without loss, dispersion, lumped elements or tensor averaging, the step on the interior edges $I$ (those not in a CPML slab) is exactly invertible:
+
+$$
+\mathbf e^n_I = \mathbf e^{n+1}_I - \Delta t\,(\mathbf B\,\mathbf h^{n+1/2} - \varepsilon^{-1}\mathbf j^n)_I,\qquad
+\mathbf h^{n-1/2}_I = \mathbf h^{n+1/2}_I + \Delta t\,(\mathbf A\,\mathbf e^n + \mu^{-1}\mathbf m^n)_I - \mathbf h_c^n|_I ,
+$$
+
+where $\mathbf h_c$ is the H correction that a `TFSFSource` adds before the step. The CPML is dissipative and cannot be reversed. The rows of $\mathbf B$ on $I$ read $\mathbf h$ on $I$ and on the layer $G_H$ just outside it; $\mathbf A$ reads $\mathbf e$ on $I\cup G_E$. Each forward step therefore records $\mathbf h^{n+1/2}[G_H]$, $\mathbf e^n[G_E]$ and the impressed $\mathbf j^n$, $\mathbf m^n$, $\mathbf h_c^n$ on their supports. These are surfaces, not volumes. FDTDX [Mahlau et al., 2024/2026] records the same kind of data: the field values at the boundary between the PML and the inner volume. The idea was first demonstrated by Tang et al. (2023). TorchFDTD (arXiv 2609.30039 v1) offers both checkpoint replay and reversal for lossless problems. The backward sweep starts from the final state and steps each row out as $(\mathbf e^{n+1}-\mathbf e^n)_d/\varepsilon^{-1}_d$. No forward step is recomputed: each adjoint step is paired with one reversed step, which costs about as much as a forward step. If the problem has loss, dispersion, lumped elements, tensor averaging, an unknown source type or MPI, `'reverse'` warns and falls back to `'checkpoint'`.
+
+**Approximate storage.** `'nyquist'` (needs `decimation`) keeps every $d$-th row and interpolates the rest with a 6-lobe Lanczos-windowed sinc. Park, Miller & Chung (arXiv 2607.08159) store forward fields at Nyquist intervals for band-limited objectives and report more than 100× storage reduction. Lossy compression with error control is the corresponding approach in full-waveform inversion [Kukreja et al., 2022]: ZFP up to about 100× with minor effect on convergence. Neither is exact, so neither is a default, and claim C5 does not cover them.
+
+**Validation** (`tests/test_045_adjoint_memory.py`; CPU on an n2/g2 VM and GPU on an L4):
+- Checkpointing with three settings ($s=3$; $s=2, b=11$; $s=5, b=1$) and a repeated `vjp`, over 14 physics cases: CPML, PEC with loss, flux, near-to-far, mode source/monitor, magnetic current, lumped RLC and ports, dispersive medium, dispersive design, Bloch, tensor smoothing (PEC and CPML), dispersive tensor network, and TF/SF. Every replayed row equals the forward row bitwise (`verify_replay`), and the gradient equals `'store'` bitwise. The exception is the ModeSource case, whose forward run is not reproducible between runs because ARPACK starts from a random vector; there the gradient agrees to $<10^{-12}$ and the observed run-to-run spread is 2e-17.
+- Time reversal agrees with `'store'` to $3\times10^{-16}$ to $2\times10^{-15}$ relative (max over the design) on the lossless cases. These are CPML, flux, near-to-far, mode, magnetic current, Bloch and TF/SF.
+- Mutation checks:
+  - Scaling one recorded H or E interface-layer step by 1.5 changes the gradient by $7\times10^{-3}$, and one source-current step by $3\times10^{-5}$.
+  - Leaving the CPML $\psi$ or the source state out of the snapshot makes replayed rows differ.
+  - Halving splits are measurably suboptimal.
+- Measured memory (tracemalloc, forward + `vjp`, 2D CPML, $N_t=1200$): checkpointing saves 6.77 MB, against the 6.80 MB predicted from `memory_stats`; on the L4 the CuPy pool hook measures 6.74 MB. In the ceviche-bend-sized study, the measured peak is the prediction plus a constant 0.10 GB of solver arrays (`studies/adjoint-memory`). There, checkpointing cuts the gradient memory 12–60× for 1.5–1.9× the wall time, and `reverse` costs 1.22×. All suites pass on CPU and GPU: 40 tests, plus 47 adjoint regression tests on the GPU.
+
+**Round-off of the reversed leapfrog.** The gradient error relative to `'store'` stays at $(0.3$–$5)\times10^{-15}$ from $N_t=250$ to $64\,000$, both in the open CPML domain and in a closed lossless PEC cavity (`studies/adjoint-memory/roundoff.png`). That is below the random-walk estimate $\epsilon\sqrt{N_t}$. The reversed map is the inverse of a neutrally stable (unit-modulus) map, so local rounding errors are neither amplified nor damped, and they enter the gradient through a DFT-weighted sum.
+
+**Limits & Failure Modes.**
+- Checkpointing is bitwise only if the forward step is deterministic. Mode solves with random starts (ARPACK) or non-deterministic GPU reductions (atomics in CuPy sparse kernels, if any) make the forward itself irreproducible at the 1e-17 level; replay is then exact relative to *its own* run. State added to the solver or to a new source class must be visible to `SolverState`: array, container and scalar attributes of sources are captured generically, solver attributes by name. The `verify_replay` test detects omissions.
+- Time reversal is exact only for a lossless interior. Any $\sigma>0$ (including a lossy background), dispersive media, lumped elements, tensor averaging, PEC/CPML design overlap or MPI falls back. The records grow as $N_t \times$ surface area. For a 3D lens with a TF/SF box, the TF/SF face currents dominate (26 GB at $N_t=4000$ in the projection), so checkpointing is the better rung there. Recomputing the design-independent source terms by a source-only replay instead of recording them would remove that term (not implemented).
+- The reversal is tested in float64 only. In float32 the round-off floor rises to about 1e-7 and its growth with $N_t$ is untested.
+- `'nyquist'` aliases when the decimation is too coarse: with $d=40$ on the test case the gradient error exceeds 1e-2. It also has edge effects at the start and end of the run. Use it only as a labelled approximation.
+- `plan_checkpoints` minimizes recomputed steps, not wall time. Restoring a snapshot from host memory, or holding snapshots on the GPU, is not costed.
+
 References:
 - M. B. Giles and N. A. Pierce, "An introduction to the adjoint approach to design", *Flow, Turbulence and Combustion* **65**, 393–415 (2000).
 - S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković and A. W. Rodriguez, "Inverse design in nanophotonics", *Nat. Photonics* **12**, 659–670 (2018), [doi:10.1038/s41566-018-0246-9](https://doi.org/10.1038/s41566-018-0246-9).
 - T. W. Hughes, I. A. D. Williamson, M. Minkov and S. Fan, "Forward-mode differentiation of Maxwell's equations", *ACS Photonics* **6**, 3010–3016 (2019), [arXiv:1908.10507](https://arxiv.org/abs/1908.10507).
 - B. Bourdin, "Filters in topology optimization", *Int. J. Numer. Methods Eng.* **50**, 2143–2158 (2001), [doi:10.1002/nme.116](https://doi.org/10.1002/nme.116).
 - F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), [doi:10.1007/s00158-010-0602-y](https://doi.org/10.1007/s00158-010-0602-y).
+- A. Griewank and A. Walther, "Algorithm 799: revolve: an implementation of checkpointing for the reverse or adjoint mode of computational differentiation", *ACM Trans. Math. Softw.* **26**, 19–45 (2000), [doi:10.1145/347837.347846](https://doi.org/10.1145/347837.347846).
+- Y. Mahlau, F. Schubert, K. Bethmann et al., "A flexible framework for large-scale FDTD simulations: open-source inverse design for 3D nanostructures", [arXiv:2412.12360](https://arxiv.org/abs/2412.12360); Y. Mahlau, F. Schubert, L. Berg and B. Rosenhahn, "FDTDX: High-Performance Open-Source FDTD Simulation with Automatic Differentiation", *J. Open Source Softw.* (2026), [doi:10.21105/joss.08912](https://doi.org/10.21105/joss.08912).
+- R. Tang, J. Lim, M. Ossiander, X. Yin and F. Capasso, "Time Reversal Differentiation of FDTD for Photonic Inverse Design", *ACS Photonics* **10**, 4140–4150 (2023), [doi:10.1021/acsphotonics.3c00694](https://doi.org/10.1021/acsphotonics.3c00694).
+- H. Park, "TorchFDTD", [arXiv:2609.30039](https://arxiv.org/abs/2609.30039) (v1, 2026).
+- M. Park, O. D. Miller and H. Chung, "Nyquist-Sampled Time-Domain Adjoint FDTD for Memory-Efficient Broadband Nanophotonic Inverse Design", [arXiv:2607.08159](https://arxiv.org/abs/2607.08159) (2026).
+- N. Kukreja, J. Hückelheim, M. Louboutin, J. Washbourne, P. H. J. Kelly and G. J. Gorman, "Lossy checkpoint compression in full waveform inversion: a case study with ZFPv0.5.5 and the overthrust model", *Geosci. Model Dev.* **15**, 3815–3829 (2022), [doi:10.5194/gmd-15-3815-2022](https://doi.org/10.5194/gmd-15-3815-2022).
 
 ### 🧰 Design templates: setup rules and design formulas
 
