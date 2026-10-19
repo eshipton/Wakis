@@ -114,31 +114,36 @@ def _in_notebook():
         return False
 
 
-def _start_xvfb(screen="1920x1080x24"):
+def _start_xvfb(screen="1920x1080x24", timeout=10.0):
     """
-    Start a private X virtual frame buffer on a free display and point
-    DISPLAY at it. Displays already in use (lock files, possibly owned by
-    other users or `xvfb-run`) are skipped.
+    Start a private X virtual frame buffer and point DISPLAY at it.
+
+    Xvfb chooses a free display itself (``-displayfd``), so processes started
+    at the same time cannot collide on one display, and displays owned by
+    other users (``xvfb-run``) are never reused. The server is terminated
+    when Python exits.
     """
+    import atexit
+    import select
     import subprocess
-    import time
 
-    for n in range(99, 200):
-        if os.path.exists(f"/tmp/.X{n}-lock") or os.path.exists(f"/tmp/.X11-unix/X{n}"):
-            continue
-        proc = subprocess.Popen(
-            ["Xvfb", f":{n}", "-screen", "0", screen, "-nolisten", "tcp"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(1.0)
-        if proc.poll() is None:  # still running: the server is up
-            import atexit
-
-            atexit.register(proc.terminate)  # do not leave servers behind
-            os.environ["DISPLAY"] = f":{n}"
-            return f"Xvfb on :{n}"
-    return "Xvfb could not be started"
+    r, w = os.pipe()
+    proc = subprocess.Popen(
+        ["Xvfb", "-displayfd", str(w), "-screen", "0", screen, "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        pass_fds=(w,),
+    )
+    os.close(w)
+    ready, _, _ = select.select([r], [], [], timeout)
+    number = os.read(r, 32).decode().strip() if ready else ""
+    os.close(r)
+    if not number.isdigit() or proc.poll() is not None:
+        proc.kill()
+        return "Xvfb could not be started"
+    atexit.register(proc.terminate)  # do not leave servers behind
+    os.environ["DISPLAY"] = f":{number}"
+    return f"Xvfb on :{number}"
 
 
 def setup_rendering(notebook_backend="static", force_off_screen=None):
