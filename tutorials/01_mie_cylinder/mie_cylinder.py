@@ -1038,6 +1038,9 @@ if study:
             for order, ls in ((1, ":"), (2, "-.")):
                 ax.loglog(cpw, 0.4 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
                           label=f"guide: order {order}")  # fmt: skip
+            ax.set_xticks([3, 5, 10, 20, 50])
+            ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+            ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
             ax.set(title=f"{pol}, error over x = 2 ... {x_hi:g}",
                    xlabel=f"cells per wavelength in the cylinder at x = {x_hi:g}")  # fmt: skip
             ax.grid(True, which="both", alpha=0.3)
