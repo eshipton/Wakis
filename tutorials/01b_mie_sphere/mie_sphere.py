@@ -896,6 +896,9 @@ plt.show()
 # In three dimensions: isosurfaces of $|\mathbf E|$ (total field) inside the
 # TF/SF box at $x = 6$, normalized to the incident amplitude. The bright
 # lobes on the $+z$ side are the focus of the sphere acting as a ball lens.
+# The volume monitor covers only the TF/SF box, so the focus is cut flat
+# at the box's upper face. The three field components live on different
+# edges; they are averaged to the cell centres before $|\mathbf E|$ is formed.
 
 
 # %%
