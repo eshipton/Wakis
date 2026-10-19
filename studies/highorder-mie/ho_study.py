@@ -155,6 +155,10 @@ def tasks(name="main"):
         for res in FD_RES:
             for pol in ("TM", "TE"):
                 out.append((arm, pol, res))
+    for res in (14, 20, 28):  # temporal vs spatial error of the (2,4) leapfrog
+        for pol in ("TM", "TE"):
+            out.append(("fd24-c30", pol, res))
+    # longest first (Batch packs them evenly)
     return out
 
 

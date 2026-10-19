@@ -372,6 +372,25 @@ class DGTD2D:
         self.ZM = np.broadcast_to(self.Z, (3 * Nfp, K)).copy()
         self.ZP = np.where(self.bmask, self.ZM, self.Z[kP])
         self.YM, self.YP = 1 / self.ZM, 1 / self.ZP
+        self._precompute_flux()
+
+    def _precompute_flux(self):
+        """Flux coefficients and boundary exterior-state signs."""
+        al = self.alpha
+        self._cdH = self.ZP / (self.ZP + self.ZM)
+        self._cdU = al / (self.ZP + self.ZM)
+        self._ceU = self.YP / (self.YP + self.YM)
+        self._ceH = al / (self.YP + self.YM)
+        bm = self.bmask
+        if self.bc == "abc":  # zero exterior state
+            su, sh = 0.0, 0.0
+        elif (self.bc == "pec") == (self.pol == "TM"):  # u = 0 on the wall
+            su, sh = -1.0, 1.0
+        else:
+            su, sh = 1.0, -1.0
+        self._su = np.where(bm, su, 1.0)
+        self._sh = np.where(bm, sh, 1.0)
+        self._DrDs = np.vstack([self.ref.Dr, self.ref.Ds])
 
     def _setup_pml(self, pml):
         self.pml = None
@@ -472,6 +491,9 @@ class DGTD2D:
             vdir=np.array([k[1], -k[0]]) / Zg0,
             dt_fd=1e-3 / max(getattr(src_time, "frequency", C0 / 1e-6), 1.0),
         )  # fmt: skip
+        end = getattr(src_time, "end_time", None)
+        delay = (pos.max() - s0) / self.plane_wave["c"] if ks.size else 0.0
+        self.plane_wave["t_off"] = np.inf if end is None else end + delay + 1e-18
         # index of each dispersive element in the scatterer list
         loc = -np.ones(self.K, int)
         loc[ks] = np.arange(ks.size)
@@ -481,6 +503,8 @@ class DGTD2D:
     def _incident(self, t, deriv=False):
         """u_inc (or d/dt) at the scatterer nodes, (Np, Ks)."""
         pw = self.plane_wave
+        if t > pw["t_off"]:  # the pulse has passed every scatterer node
+            return np.zeros_like(pw["pos"])
         tau = t - (pw["pos"] - pw["s0"]) / pw["c"]
         if deriv:
             return pw["amp"] * _source_derivative(pw["s"], tau, pw["dt_fd"])
@@ -499,7 +523,9 @@ class DGTD2D:
         """Lift face values F (3 Nfp, K) (already multiplied by nothing):
         straight elements LIFT_ref (Fscale F), curved per-element LIFT."""
         nb = F.shape[1] // self.K
-        out = self.ref.LIFT @ (np.tile(self.Fscale, nb) * F)
+        if getattr(self, "_Fs3", None) is None or self._Fs3.shape[1] != F.shape[1]:
+            self._Fs3 = np.tile(self.Fscale, nb)
+        out = self.ref.LIFT @ (self._Fs3 * F)
         if self.n_curved:
             for q in range(nb):
                 ci = self.curved_idx + q * self.K
@@ -516,36 +542,26 @@ class DGTD2D:
         du = self._view(res, "u")
         dvx = self._view(res, "vx")
         dvy = self._view(res, "vy")
-        # volume derivatives
-        ur, us = T.Dr @ u, T.Ds @ u
-        vxr, vxs = T.Dr @ vx, T.Ds @ vx
-        vyr, vys = T.Dr @ vy, T.Ds @ vy
+        # volume derivatives: one batched GEMM [Dr; Ds] @ (u, vx, vy)
+        U3 = X[: 3 * Np * K].reshape(3, Np, K)
+        G = np.matmul(self._DrDs, U3)  # (3, 2 Np, K)
+        ur, us = G[0, :Np], G[0, Np:]
+        vxr, vxs = G[1, :Np], G[1, Np:]
+        vyr, vys = G[2, :Np], G[2, Np:]
         dxvy = self.rx * vyr + self.sx * vys
         dyvx = self.ry * vxr + self.sy * vxs
         dxu = self.rx * ur + self.sx * us
         dyu = self.ry * ur + self.sy * us
-        # faces
-        uf, vxf, vyf = u.ravel(), vx.ravel(), vy.ravel()
-        uM, uP = uf[self.idxM], uf[self.idxP]
+        # faces (boundary exterior states through precomputed sign arrays)
+        uf, vxf, vyf = U3[0].ravel(), U3[1].ravel(), U3[2].ravel()
         nx, ny = self.nx, self.ny
+        uM = uf[self.idxM]
         HtM = nx * vyf[self.idxM] - ny * vxf[self.idxM]
-        HtP = nx * vyf[self.idxP] - ny * vxf[self.idxP]
-        bm = self.bmask
-        if self.bc == "abc":
-            uP = np.where(bm, 0.0, uP)
-            HtP = np.where(bm, 0.0, HtP)
-        else:
-            pec_like = (self.bc == "pec") == (self.pol == "TM")
-            if pec_like:  # u = 0 on the wall
-                uP = np.where(bm, -uM, uP)
-                HtP = np.where(bm, HtM, HtP)
-            else:
-                uP = np.where(bm, uM, uP)
-                HtP = np.where(bm, -HtM, HtP)
+        uP = self._su * uf[self.idxP]
+        HtP = self._sh * (nx * vyf[self.idxP] - ny * vxf[self.idxP])
         dU, dH = uP - uM, HtP - HtM
-        al = self.alpha
-        d = (self.ZP * dH + al * dU) / (self.ZP + self.ZM)
-        e = (self.YP * dU + al * dH) / (self.YP + self.YM)
+        d = self._cdH * dH + self._cdU * dU
+        e = self._ceU * dU + self._ceH * dH
         L = self._lift(np.concatenate([d, -ny * e, nx * e], 1))
         Ld, Lvx, Lvy = L[:, :K], L[:, K : 2 * K], L[:, 2 * K :]
         du[:] = (dxvy - dyvx + Ld) / self.a
