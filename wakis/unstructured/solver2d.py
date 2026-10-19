@@ -189,6 +189,7 @@ class UnstructuredFIT2D:
         else:
             self._init_te_dispersive(He, L, live)
         self.sources = []
+        self.plane_wave = None
         self.recorder = Recorder()
         self.reset()
 
@@ -325,6 +326,128 @@ class UnstructuredFIT2D:
         w[self.mesh.cell_edges[cell[0]]] = RT @ d
         self.sources.append(("edge", w, amp_func))
 
+    def add_plane_wave(
+        self, src_time, direction=(1.0, 0.0), amplitude=1.0, background_eps_r=1.0
+    ):
+        """
+        Plane-wave incidence in the scattered-field formulation.
+
+        After this call the solver advances the *scattered* field
+        (`node_field` is Ez_s for TM, Hz_s for TE); the total field is the
+        scattered field plus `incident_field`. The incident wave lives in
+        the background (eps_b = `background_eps_r`, mu_r = 1) and enters
+        only where the permittivity differs from eps_b:
+
+            E_inc(r, t) = amplitude * s(t - (k.r - s_0) / v) * p,
+
+        with k the unit `direction`, v = c / sqrt(eps_b), s_0 the smallest
+        k.r over the nodes of non-background cells (the wave reaches the
+        scatterer when s(t) switches on) and p = z (TM) or z x k (TE, so
+        that H_inc = +z |E_inc| / eta_b).
+
+        Derivation (per unit length in z). Split D = D_s + eps_0 eps_b E_inc
+        and H = H_s + H_inc, where (E_inc, H_inc) solves Maxwell's equations
+        in the background. Then d_t D_s = curl H_s, d_t B_s = -curl E_s and
+
+            E_s = D_s / (eps_0 eps) - (1 - eps_b / eps) E_inc,
+
+        so the incident field enters through the constitutive relation only,
+        inside the scatterer.
+
+        * TM (E_z tangential to every interface): with the node masses
+          M_eps = eps_0 sum_T eps_T A_{n,T}, this is the equivalent current
+          i_n = (M_eps - eps_0 eps_b A_n) (E_inc^{n+1} - E_inc^n) / dt at the
+          node, at the half step (the discrete time derivative of the
+          leapfrog).
+        * TE (in-plane E crosses curved interfaces): the series Hodge keeps
+          the normal D_s continuous across the primal edge, and each
+          dual-edge segment of triangle T contributes
+          v_e -= h_{e,T} (1 - eps_b / eps_T) E_inc(m_{e,T}, t^n) . n_e,
+          with m_{e,T} the segment midpoint and n_e = t_e x z the edge
+          normal of the flux d_e. A current-density source
+          J = eps_0 (eps - eps_b) dE_inc/dt would instead put the jump of
+          the normal E_inc into the flux and break normal-D continuity.
+
+        Parameters
+        ----------
+        src_time : callable
+            t [s] -> s(t), e.g. `wakis.sources.GaussianSource`; it should
+            vanish for t <= 0.
+        direction : (2,) float
+            Propagation direction (normalized internally).
+        amplitude : float
+            Peak incident electric field [V/m].
+        background_eps_r : float
+            Relative permittivity of the lossless background; it must fill
+            the outer boundary cells.
+
+        Notes
+        -----
+        Lossless, non-magnetic, non-dispersive scatterers only (other
+        materials need further equivalent sources and raise).
+        """
+        mesh = self.mesh
+        eps_b = float(background_eps_r)
+        if np.any(self.pec_cells) or self.dispersive or np.any(self.sigma > 0):
+            raise NotImplementedError(
+                "plane wave: lossless non-dispersive dielectrics only"
+            )
+        if np.any(self.mu_r != 1):
+            raise NotImplementedError("plane wave: non-magnetic media only")
+        ce = np.full(mesh.n_edges, -1)
+        ce[mesh.cell_edges.ravel()] = np.repeat(np.arange(mesh.n_cells), 3)
+        if not np.allclose(self.eps_r[ce[mesh.boundary_edges]], eps_b):
+            raise ValueError("the outer boundary cells must hold the background")
+        k = np.asarray(direction, float)
+        k = k / np.linalg.norm(k)
+        scat = ~np.isclose(self.eps_r, eps_b)
+        if not np.any(scat):
+            s0 = 0.0
+        else:
+            s0 = float((mesh.nodes[mesh.cells[scat].ravel()] @ k).min())
+        pw = dict(
+            s=src_time, k=k, amp=float(amplitude), eps_b=eps_b, s0=s0,
+            v=1 / np.sqrt(mu_0 * eps_0 * eps_b),
+            eta=np.sqrt(mu_0 / (eps_0 * eps_b)),
+        )  # fmt: skip
+        if self.pol == "TM":
+            area = self._Pn @ (~self.pec_cells).astype(float)
+            w = self.mass - eps_0 * eps_b * area[self.free]
+            idx = np.flatnonzero(np.abs(w) > 1e-12 * np.abs(self.mass).max())
+            pw.update(idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k)
+        else:
+            if self._te_groups:
+                raise NotImplementedError("plane wave: non-dispersive TE only")
+            Hc = mesh.dual_edge_partial.tocoo()
+            keep = scat[Hc.col] & (Hc.data != 0)
+            e, T, h = Hc.row[keep], Hc.col[keep], Hc.data[keep]
+            mid = 0.5 * (mesh.edge_midpoint[e] + mesh.cell_circumcenter[T])
+            t = mesh.edge_tangent[e]
+            n_e = np.stack([t[:, 1], -t[:, 0]], 1)  # t x z
+            p = np.array([-k[1], k[0]])  # z x k
+            coef = h * (1 - eps_b / self.eps_r[T]) * (n_e @ p)
+            pw.update(e=e, coef=coef, pos=mid @ k)
+        self.plane_wave = pw
+
+    def _incident_signal(self, pos, t):
+        pw = self.plane_wave
+        return pw["amp"] * np.asarray(pw["s"](t - (pos - pw["s0"]) / pw["v"]))
+
+    def incident_field(self, points, t):
+        """
+        Incident Ez (TM) [V/m] or Hz (TE) [A/m] of `add_plane_wave`.
+
+        Parameters
+        ----------
+        points : array_like (n, 2)
+            Positions [m].
+        t : float
+            Time [s].
+        """
+        pw = self.plane_wave
+        e = self._incident_signal(np.atleast_2d(points) @ pw["k"], t)
+        return e if self.pol == "TM" else e / pw["eta"]
+
     # ------------------------------------------------------------ monitors
     def add_probe(self, points):
         """Record Ez (TM) / Hz (TE) at `points` every step; see `probe_signal`."""
@@ -350,6 +473,11 @@ class UnstructuredFIT2D:
                 node_src += w * f(t_half)
             else:
                 edge_src += w * f(t_half)
+        pw = self.plane_wave
+        if pw is not None and self.pol == "TM":
+            de = self._incident_signal(pw["pos"], (self.n + 1) * dt)
+            de -= self._incident_signal(pw["pos"], self.n * dt)
+            node_src[pw["idx"]] += pw["w"] * de / dt
         if self.pol == "TM":
             self.v -= dt * (self.G @ self.u)
             r = self.G.T @ (self.stiff * self.v) - node_src
@@ -357,6 +485,9 @@ class UnstructuredFIT2D:
         else:
             # hz at n+1/2 from v^n, then d to n+1 (leapfrog with roles swapped)
             vol = self._te_voltage(self.v)
+            if pw is not None:
+                einc = self._incident_signal(pw["pos"], self.n * dt)
+                vol -= np.bincount(pw["e"], pw["coef"] * einc, minlength=vol.size)
             a = self.mass - self.loss * dt / 2
             b = self.mass + self.loss * dt / 2
             self.u = (a * self.u - dt * (self.G.T @ vol + node_src)) / b
