@@ -262,8 +262,9 @@ def main():
     ap.add_argument("--outdir", default=str(HERE / "data"))
     ap.add_argument("--arms", nargs="*")
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--t-run", type=float, default=1000.0, help="fs")
     a = ap.parse_args()
-    S.T_RUN = 1000e-15
+    S.T_RUN = a.t_run * 1e-15
     tl = tasks(a.arms)
     if a.mode == "list":
         for i, t in enumerate(tl):

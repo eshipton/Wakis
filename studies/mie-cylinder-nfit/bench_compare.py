@@ -20,13 +20,14 @@ FIG = HERE / "figures"
 DATA = HERE / "data"
 RENAME = {"ogrid": "nfit-ogrid", "ogrid-r0.5": "nfit-ogrid-r0.5", "ogrid-boxed": "nfit-boxed",
           "ogrid-r0.5-o2": "nfit-ogrid-r0.5-o2"}
+ROOT = None  # local mirror of the store (set by --root)
 TARGETS = {
     "B2": ("q_ext_nrms", (0.01, 0.001)),
     "B3": ("enh_peak", (0.05, 0.02)),
 }
 
 
-def publish(d, job):
+def publish(d, job, commit=None):
     from wakis.benchmarks.results import publish as pub
 
     n = 0
@@ -34,6 +35,8 @@ def publish(d, job):
         rec = json.loads(f.read_text())
         rec["arm"] = RENAME.get(rec["arm"], rec["arm"])
         rec["batch_job"] = job
+        if commit:
+            rec["commit"] = commit
         if "error" in rec:
             print("ERROR", f.name, rec["error"])
             continue
@@ -68,7 +71,7 @@ def compare():
     fig, axs = plt.subplots(2, 4, figsize=(17, 7.5), constrained_layout=True)
     for ax, (case, ph) in zip(axs.ravel(), plots):
         metric, targets = TARGETS[ph]
-        df = fetch(case)
+        df = fetch(case, root=ROOT) if ROOT else fetch(case)
         if df is None or len(df) == 0:
             continue
         df = df[df["error"].isna()] if "error" in df else df
@@ -111,9 +114,12 @@ if __name__ == "__main__":
     ap.add_argument("mode", choices=["publish", "compare"])
     ap.add_argument("dir", nargs="?")
     ap.add_argument("--job")
+    ap.add_argument("--commit", help="commit of the code that ran")
+    ap.add_argument("--root", help="local mirror of the results store")
     a = ap.parse_args()
     sys.path.insert(0, str(HERE.parents[1]))
     if a.mode == "publish":
-        publish(a.dir, a.job)
+        publish(a.dir, a.job, a.commit)
     else:
+        ROOT = a.root
         compare()
