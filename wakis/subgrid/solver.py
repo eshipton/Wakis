@@ -498,6 +498,7 @@ class SubgridFIT2D:
                     gt += (self.Lst[idx] * self._edge_kn[idx]
                            * self._inc(f"disp{gi}", th))  # fmt: skip
                 grp["x_prev"] = gt
+        self.g = g  # dual-edge voltages at t^{n+1/2} (scattered)
         r = self.K.T @ g
         r /= self.D
         u_new = u + dt * r
@@ -559,6 +560,40 @@ class SubgridFIT2D:
         return ub, fb
 
     # ============================================================== analysis
+    def edge_field_matrices(self, points):
+        """
+        Sparse maps (Mx, My) from the dual-edge voltages `g` to the in-plane
+        field at `points`: (E_x, E_y) in TE, (H_y, -H_x)... in TM, i.e. the
+        field normal to each edge, E_n = g / L* with n = t x z.
+
+        In a leaf cell the x-component comes from its left/right sides
+        (y-directed edges, (t x E)_z = -E_x) and the y-component from its
+        bottom/top sides, each linear across the cell (lowest-order
+        edge-element reconstruction). Valid away from material interfaces.
+        """
+        m = self.mesh
+        points = np.atleast_2d(points)
+        k = m.locate(points)
+        c = m.cells
+        tx = (points[:, 0] - c["x0"][k]) / (c["x1"][k] - c["x0"][k])
+        ty = (points[:, 1] - c["y0"][k]) / (c["y1"][k] - c["y0"][k])
+        pos = -np.ones(m.n_edges, int)
+        pos[self.edge_idx] = np.arange(self.n_edges)
+        ce = pos[m.cell_edges[k]]  # bottom, top, left, right
+        n = len(points)
+        rows = np.repeat(np.arange(n), 2)
+        inv = 1 / self.Lst
+
+        def mat(cols, w):
+            ok = cols >= 0
+            return sp.csr_matrix((w[ok], (rows[ok], cols[ok])), shape=(n, self.n_edges))
+
+        lr = np.stack([ce[:, 2], ce[:, 3]], 1).ravel()
+        wx = -np.stack([1 - tx, tx], 1).ravel() * inv[np.maximum(lr, 0)]
+        bt = np.stack([ce[:, 0], ce[:, 1]], 1).ravel()
+        wy = np.stack([1 - ty, ty], 1).ravel() * inv[np.maximum(bt, 0)]
+        return mat(lr, wx), mat(bt, wy)
+
     def interpolation(self, points):
         """Sparse map from the unknowns to the field at `points`."""
         S = self.mesh.interpolation_matrix(points)

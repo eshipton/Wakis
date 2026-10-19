@@ -252,3 +252,18 @@ def test_lorentz_cylinder_ade(pol):
     no_pole = DispersiveMaterial(2.0, [])
     no_pole.epsilon = lor.epsilon
     assert rms(no_pole) > 3 * good
+
+
+def test_edge_field_reconstruction():
+    """A uniform field (E_x, E_y) = (1, 2) on the edges is reconstructed exactly
+    in coarse, fine and interface cells (mutation: swapped sign fails)."""
+    x = np.linspace(0, 1e-6, 9)
+    f = refine_near([lambda xm, ym, hd: np.hypot(xm - 0.5e-6, ym - 0.5e-6) < 0.3e-6])
+    m = QuadMesh(x, x.copy(), ratio=2, max_level=1, refine=f)
+    s = SubgridFIT2D(m, polarization="TE")
+    edir = m.edge_dir[s.edge_idx]
+    g = np.where(edir == 0, 2.0, -1.0) * s.Lst  # x-edges: E_y; y-edges: -E_x
+    pts = np.random.default_rng(0).uniform(0.05e-6, 0.95e-6, (50, 2))
+    Mx, My = s.edge_field_matrices(pts)
+    assert np.allclose(Mx @ g, 1.0) and np.allclose(My @ g, 2.0)
+    assert not np.allclose(Mx @ (-g), 1.0)
