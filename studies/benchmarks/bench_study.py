@@ -75,6 +75,7 @@ PHASES = {
     "B4hz": ["B4"],
     "B4feed": ["B4", "B4-g2", "B4-g4"],
     "WIN": [],
+    "B1tri": [],
     "REDO": [],
 }
 
@@ -124,6 +125,14 @@ def tasks(phase):
             ("B4", f"{base}-sheet-round", ht),
             ("B4-g2", f"{base}-sheet", ht),
         ]
+    if phase == "B1tri":  # B1 (3000 fs window) with the 40-ring triangle PML
+        from wakis.benchmarks import get_case
+
+        arm = arms()["tri-graded"]
+        for case in ("B1-TM", "B1-TE"):
+            for h in arm.resolutions(get_case(case))[::-1]:
+                out.append((case, "tri-graded", h))
+        return out
     if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
