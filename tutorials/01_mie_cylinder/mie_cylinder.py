@@ -175,6 +175,7 @@ parser.add_argument("--pol", default=None, help="TM | TE (study arms)")
 parser.add_argument("--arm", action="store_true", help="study arm: one run, JSON")
 parser.add_argument("--out", default=None, help="JSON output of --arm")
 parser.add_argument("--no-movie", action="store_true", help="skip the GIF")
+parser.add_argument("--t-run", type=float, default=None, help="max time [fs]")
 # In a notebook, options come from the environment, e.g.
 # WAKIS_TUTORIAL_ARGS="--full" (used by tutorials/build.py --execute)
 NB_ARGS = os.environ.get("WAKIS_TUTORIAL_ARGS", "").split()
@@ -631,7 +632,9 @@ for res in (10, 15, 20, 30, 40, 60):
 # **Make this a habit**: a 3D run at twice the resolution needs 8x the memory.
 
 # %%
-T_RUN = 400e-15  # maximum simulated time [s]; stops earlier once fields decay
+T_RUN = (
+    ARGS.t_run or 400
+) * 1e-15  # max simulated time [s]; stops earlier once fields decay
 N_FREQ = 81
 X_SIM = np.linspace(X_MIN, X_MAX, N_FREQ)
 FREQS = X_SIM * c0 / (2 * np.pi * A_CYL)  # [Hz]
@@ -765,7 +768,7 @@ def summary(res):
         resolution_per_um=res["resolution"], conformal=res["conformal"],
         pol=res["pol"], cells=res["cells"], steps=int(res["steps"]),
         dt_s=res["dt"], setup_s=res["setup_s"], run_s=res["run_s"],
-        gpu=res["gpu"], stopped_early=res["stopped_early"],
+        gpu=res["gpu"], stopped_early=res["stopped_early"], t_run_s=T_RUN,
         x=[round(v, 6) for v in res["x"]],
         q_sca=[round(float(v), 7) for v in res["q_sca"]],
         q_abs=[round(float(v), 7) for v in res["q_abs"]],
