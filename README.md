@@ -32,14 +32,225 @@ pip install "wakis[inverse] @ git+https://github.com/eshipton/Wakis.git@main"   
 
 ### Highlights
 
-#### Tutorials: 2D Mie scattering with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
+Each result names its baseline. Work is unknowns × time steps, which does not depend on the implementation. Results whose code is still on a feature branch name that branch; they are merged into `develop` after review. Items marked **In progress** report interim numbers only.
+
+#### Plasmonic nanoparticles: 10× fewer unknowns with body-fitted triangles &nbsp;·&nbsp; `wakis.unstructured`, `wakis.benchmarks`
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/tutorial01_convergence.png" width="520" alt="Relative RMS error of the scattering efficiency of an n = 2 cylinder versus cells per wavelength, for staircase, conformal and tensor material models, TM and TE"></td>
+<td colspan="2"><img src="docs/img/b2_plasmonic_qext_spectra.png" width="880" alt="Extinction efficiency spectra of Au and Ag nanocylinders at h = 1 nm: exact series against Wakis FIT with staircase, conformal Cartesian and triangle meshes"></td>
+</tr>
+<tr>
+<td width="55%"><img src="docs/img/b2_plasmonic_convergence.png" width="600" alt="Q_ext NRMS error and resonance-wavelength error versus field unknowns for six mesh arms on B2-Au-TE, B2-Ag-TE and B2-Au-TM"></td>
 <td>
 
-[Tutorial 01](tutorials/01_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_cylinder/mie_cylinder.ipynb)): a plane wave from the new `TFSFSource` hits an infinite n = 2 cylinder (radius 1 µm, x = 2&ndash;10, TM and TE) and a flux box in the scattered-field region gives Q<sub>sca</sub>(x) in one run, compared with the exact series (`wakis.analytic`). In 42 runs from 10 to 80 cells/µm (named baseline: the staircased cylinder at the same resolution), conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, with a fitted order of 1.9 between 40 and 80 cells/µm, while the staircase, half a cell too large, stays first order (3.9 % and 4.8 %, order 0.9). For TE, where E crosses the curved surface, the full tensor averaging is needed for second order (0.21 % vs 0.35 % for the diagonal model at x &le; 5). Built on reusable pieces for the series: PyVista scene, mesh and field views (`wakis.visualize`), Mie theory for spheres and cylinders, a memory preflight and a parallel study runner.
+Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20 nm, Rakić Drude–Lorentz ε(ω), against the exact series. 168 uncontended Cloud Batch runs, h = 4 → 0.5 nm. At **1 % Q<sub>ext</sub> NRMS on Au-TE, graded triangles need 4.8k unknowns and 6.5e7 work, against 46k and 2.0e9 for the best Cartesian arm (graded conformal)**: about **10× fewer unknowns and 30× less work**. The staircase never reaches 1 % (2.7 % at 0.5 nm). Conformal Cartesian TE is not monotone in h (2.3, 2.0, 2.9, 1.3, 1.4, 0.8, 0.6 %): averaging metal and host gives mixed cells whose ε(ω) crosses zero in the band. Triangles converge at second order. Limit: 2D only. *Run-window check pending* (see the note on B1 below). Branch `feature/benchmark-suite`, `studies/benchmarks`.
+
+</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/b3_dimer_gap_field.png" width="880" alt="Exact gap-field enhancement maps of Au nanodimers with 5 nm and 2 nm gaps, and the graded triangle mesh of the 5 nm dimer"></td>
+</tr>
+<tr>
+<td colspan="2">
+
+**B3, interim (86 of 102 runs; window check pending):** Au nanodimer with a 5 nm gap, error of the gap field enhancement against the multi-cylinder T-matrix (maps above). **Graded triangles: 15 %, 0.8 %, 0.4 % at h = 4, 2, 0.7 nm; conformal Cartesian: 84 %, 11 %, 5 %** (4 % at 0.5 nm). The staircase is erratic, between 15 % and 125 %. Caveat: the triangle gap metric is not monotone at the 1–9 % level, because it is a pointwise reconstruction at the gap centre.
+
+</td>
+</tr>
+</table>
+
+#### Graded triangles with a radial PML: 2.2× fewer unknowns than graded Cartesian &nbsp;·&nbsp; `wakis.unstructured`
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/graded_triangles_unknowns_to_target.png" width="880" alt="Bar chart of field unknowns needed to reach 2 % and 1 % RMS error in Q_sca for Cartesian and triangle arms, TM and TE"></td>
+</tr>
+<tr>
+<td width="55%"><img src="docs/img/unstructured_pml_reflection.png" width="600" alt="Outer-boundary reflection versus size parameter for the first-order ABC, a matched-loss absorber and radial PMLs of 5, 10 and 20 cells"></td>
+<td>
+
+Mie cylinder (B1: n = 2, a = 1 µm, x = 2–10) to 1 % RMS error in Q<sub>sca</sub>. Graded triangles keep h<sub>in</sub> only at the cylinder. The new **radial CFS-PML reflects 2–8e-4** over x = 2–10 (10 cells at h = 20 nm; the old first-order ABC reflected 6–17 %), and a tabulated plane-wave source costs one sparse mat-vec per step. In **TM**, against **graded conformal Cartesian**, the triangles need **2.2× fewer unknowns and 2.3× less work** (240k vs 518k unknowns). Against the compact Cartesian arm the gain is 1.5× in unknowns and 1.6× in work. **Correction:** the B1 errors have a floor from the 1000 fs DFT window, not from the mesh. Converged DGTD plateaus at 0.140 % (TM) and 0.866 % (TE), dominated by a high-Q TE resonance near x ≈ 6.4. With a 3000 fs window the floor drops to 0.012 %/0.036 %. B1 TE results at the 1 % target are therefore window-limited and are not quoted here. The benchmark default is now 3000 fs, and the reruns are pending. Branch `feature/tri-fixes`, `studies/mie-cylinder-graded`, `studies/unstructured-pml`.
+
+</td>
+</tr>
+</table>
+
+#### Local time stepping: 2× fewer steps at unchanged error, energy-conserving, exact adjoint &nbsp;·&nbsp; `UnstructuredFIT2D(lts=2)`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/lts_partition.png" width="600" alt="LTS levels on the graded Mie mesh: only a band of vacuum nodes around the cylinder is fine, and the node-local CFL limit versus radius"></td>
+<td>
+
+A leapfrog LTS (Diaz & Grote 2009), stabilized with a damped Chebyshev polynomial. Only the vacuum band next to the scatterer takes sub-steps (3–23 % of the nodes). The rest of the mesh, cylinder included, takes **1.94× the global step**. The scheme conserves an exact discrete energy (drift 2e-14 over 10<sup>5</sup> steps) and its transpose is an exact adjoint (dot product < 1e-14). Baseline: global leapfrog **on the same mesh**. Mie cylinder: **1.56–1.88× less work**. B2/B3 (Au/Ag nanocylinders, Au dimers with 2/5/10 nm gaps): **exactly 2× fewer steps with unchanged error** (largest difference 0.0241 vs 0.0247). Spot-machine wall-time ratio 1.01–2.67×, median ≈ 1.75×. Branch `feature/unstructured-lts`, `studies/unstructured-lts`.
+
+</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/lts_b2_b3_bench.png" width="880" alt="Error versus work and versus wall time for global and LTS runs on the B2 nanocylinder and B3 dimer benchmarks"></td>
+</tr>
+</table>
+
+#### Polygonal FIT: hybrid square/triangle and Voronoi meshes &nbsp;·&nbsp; `wakis.unstructured.PolygonFIT2D`
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/polyfit_meshes.png" width="880" alt="One quadrant of the graded triangle, hybrid, hybrid-disk and Voronoi meshes of the Mie cylinder at res 10, with whole-domain unknowns"></td>
+</tr>
+<tr>
+<td width="55%"><img src="docs/img/polyfit_dispersion.png" width="560" alt="Bloch-analysis numerical dispersion of square, triangle and honeycomb lattices at equal unknowns per area"></td>
+<td>
+
+FIT on any polygon mesh with an orthogonal dual: squares in the bulk and triangles only at the interface (hybrid), or mostly hexagonal Voronoi cells. Mie cylinder at 1 % RMS: **Voronoi needs 1.95× fewer unknowns and 1.87× less work than graded triangles** (TM, same disk domain). The Bloch analysis (left) explains why: the **honeycomb has half the dispersion error** of squares or triangles at equal unknowns. The hybrid needs 1.40× fewer unknowns than graded Cartesian (TM, same square domain and PML). On the **2 nm-gap Au dimer** (B3-g2), the hybrid refines only the gap and needs **≥ 2.6× fewer unknowns** for 5 % than the first converged graded-triangle rung. That is a bound, since coarser triangle rungs were not run. Limits: B1 TE at 1 % is limited by the 1000 fs run window (see above), and there is no polygon PML yet. Branch `feature/polygon-fit`, `studies/mie-cylinder-polyfit`, `studies/benchmark-polygon`.
+
+</td>
+</tr>
+</table>
+
+#### In progress: Cartesian subgridding &nbsp;·&nbsp; `wakis.subgrid`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/subgrid_cost_to_target.png" width="600" alt="Unknowns and work to reach 2 % and 1 % RMS error for graded Cartesian, graded triangle and subgrid arms, TM and TE"></td>
+<td>
+
+Nested 2:1 Cartesian patches. The fine-to-coarse restriction is the exact transpose of the prolongation, so the scheme conserves energy (drift 2×10<sup>-15</sup> over 10<sup>5</sup> steps) and its interface reflection is second order. Mie cylinder at 1 % RMS (TM) and equal global Δt: the compact subgrid arm needs **2.1× fewer unknowns than graded Cartesian** in the same compact domain, and **1.38× fewer than the best triangle arm** (graded triangles + radial PML). TE at 1 % awaits the longer-window rerun. The exact adjoint covers the lossless core only (not yet PML, ADE or source). The plasmonic B2/B3 runs are in the shared results store; their write-up is pending. Branch `feature/subgridding`.
+
+</td>
+</tr>
+</table>
+
+#### In progress: curvilinear O-grid FIT (NFIT) &nbsp;·&nbsp; `CurvilinearFIT2D`
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/nfit_ogrid_meshes.png" width="880" alt="Body-fitted O-grid meshes: single-block O-grid with radial PML, O-grid with transition to a Cartesian block, and radial-only refinement of a 20 nm coated cylinder"></td>
+</tr>
+<tr>
+<td colspan="2">
+
+Body-fitted polar grids with nonorthogonal corner-Hodge cells near the axis: a single-block O-grid with a radial PML, a multi-block O-grid joined to a Cartesian block, and a 20 nm coated cylinder resolved by refining only along the radius. Interim B1 numbers (`data/summary.md`; the study write-up is pending): to reach 1 % RMS in TM, the O-grid needs **156,559 unknowns**, against 240,255 for graded triangles with the radial PML. TE at 1 % awaits the longer-window rerun. Branch `feature/curvilinear-nfit`.
+
+</td>
+</tr>
+</table>
+
+#### In progress: high-order DGTD on curved triangles and a Cartesian (2,4) scheme
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/dgtd_curved_meshes.png" width="600" alt="Curved-face DGTD meshes: p = 4 Mie cylinder mesh with 637 triangles and a zoom on the 5 nm-gap Au dimer"></td>
+<td>
+
+A nodal discontinuous Galerkin time-domain solver on curved triangles: TM/TE, upwind flux, CFS-PML, Drude/Lorentz/Debye ADE, scattered-field plane wave, and a probed sparse operator for exact adjoints. A Cartesian (2,4) scheme with LSRK4 is also included. Both run as arms of the B1–B3 benchmark suite, as a high-order reference and competitor for FIT. Numbers will follow when the study is written up. Branch `feature/high-order`.
+
+</td>
+</tr>
+</table>
+
+#### Exact plane-wave source: TF/SF at round-off vs continuum Huygens sheets &nbsp;·&nbsp; `TFSFSource`, [studies/tfsf](studies/tfsf)
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/tfsf_leakage_vs_resolution.png" width="600" alt="Leaked power versus cells per wavelength for TFSFSource, discrete sheets, continuum sheets and Meep-style face-referenced sheets, in 2D and 3D"></td>
+<td>
+
+`TFSFSource` takes its incident field from a 1D FIT line, so it solves the discrete equations exactly: **the leaked power is round-off** ((3.7–7.9)e-32 of the face power in 3D) at every resolution. The same box driven by continuum equivalent-current (Huygens) sheets leaks as (kh)<sup>4</sup>, from the grid-dispersion mismatch. Meep-style sheets referenced to the face plane leak as (kh)<sup>2</sup>, from the half-cell offset: **5 % of the face power at 20 cells/λ, 300× more** than the exact-registration sheets. Discrete sheets that carry the 1D-line field reproduce `TFSFSource` to round-off: its commutator corrections *are* the discrete Huygens sheets.
+
+</td>
+</tr>
+</table>
+
+#### Photonic inverse design: invrs-gym round 2 &nbsp;·&nbsp; [invrs-wakis](https://github.com/eshipton/invrs-wakis)
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/invrs_round2_gallery.png" width="600" alt="Round-2 designs and fields for the waveguide bend, mode converter and power splitter, with official eval metrics and length scales"></td>
+<td>
+
+[invrs-gym](https://github.com/invrs-io/gym) challenges optimized with Wakis's **exact adjoint + JAX** and scored by the gym's own backends. In the round-2 pilot, the length-scale constraints are enforced by construction: **all 18 designs meet the 3/3-pixel length scale** (most round-1 designs violated it). Best official scores: **waveguide bend +0.675, mode converter +0.381, power splitter +0.052**. The 10 nm ceviche re-check gives +0.462, +0.315 and +0.045. These are the lightweight challenges, which are not on the leaderboard. The full-ceviche (leaderboard-eligible) and metalens GPU sweeps are running. In round 1, Wakis's predictions agreed with the official evaluator to < 0.007.
+
+</td>
+</tr>
+</table>
+
+#### Tutorials: Mie scattering in 2D and 3D with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/tutorial01_convergence.png" width="560" alt="Relative RMS error of the scattering efficiency of an n = 2 cylinder versus cells per wavelength, for staircase, conformal and tensor material models, TM and TE"></td>
+<td>
+
+[Tutorial 01](tutorials/01_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_mie_cylinder/mie_cylinder.ipynb)): a `TFSFSource` plane wave hits an n = 2 cylinder (a = 1 µm, x = 2&ndash;10, TM and TE). The scattered flux is compared with the exact series. Over 42 runs, conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, at second order. The staircase at the same resolution stays first order (3.9 % and 4.8 %). TE needs the full tensor (0.21 % vs 0.35 % diagonal at x &le; 5). A triangle-mesh section shows that conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45× the work on uniform meshes; graded meshes change that (see above).
+
+</td>
+</tr>
+<tr>
+<td width="55%"><img src="docs/img/tutorial01b_far_field.png" width="560" alt="Far-field scattering pattern of a dielectric sphere from the near-to-far monitor against the Mie amplitudes S1 and S2"></td>
+<td>
+
+[Tutorial 01b](tutorials/01b_mie_sphere/mie_sphere.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01b_mie_sphere/mie_sphere.ipynb)): the same set-up in 3D, an n = 2 sphere with r = 1 µm. It covers the Mie series, near fields, isosurfaces, a movie, and the far field (`Near2FarMonitor` against S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells and 11 min, with **Q<sub>sca</sub> within 3.4 % RMS of Mie** over x = 2&ndash;10 (conformal, 40 cells/µm). The 3D resolution study is still to do.
+
+</td>
+</tr>
+</table>
+
+#### In progress: Cherenkov-free wakefields with the explicit TE/TM scheme &nbsp;·&nbsp; `SolverFIT3D(scheme='tete')`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/tete_pipe_spurious_wake.png" width="600" alt="Spurious wake and loss factor in a smooth PEC pipe versus pipe length for the TE/TM scheme and for Yee at Courant numbers 0.99 and 0.5"></td>
+<td>
+
+The explicit TE/TM scheme of Dohlus & Zagorodnov (2009) has no numerical dispersion along the beam axis at c&nbsp;dt = dz. A relativistic bunch in a smooth pipe therefore leaves no numerical Cherenkov wake. The figure shows the spurious wake and loss factor in a smooth PEC pipe, where the exact answer is zero. TE/TM is compared on the same grid with Yee at Courant 0.99 (best Yee) and at 0.5 (the Wakis default). Box-cavity and pillbox comparisons against an analytic modal wake are running; numbers will follow in the study write-up. Branch `feature/dispersion-free-wake`.
+
+</td>
+</tr>
+</table>
+
+#### In progress: exact adjoint gradients in less memory &nbsp;·&nbsp; `AdjointSimulation(memory=...)`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/adjoint_memory_projection.png" width="600" alt="Projected gradient memory versus extra forward steps for store, checkpoint, reverse and nyquist on the ceviche bend, WDM and a 3D metalens-sized case"></td>
+<td>
+
+A memory ladder for the backward sweep:
+- `store`: keep every step;
+- binomial `checkpoint`: bitwise-equal gradients in 14 physics cases;
+- `reverse`: time-reversed leapfrog with recorded CPML layers, which agrees with `store` to 3e-16 to 2e-15, with round-off flat at (0.3–5)e-15 up to N<sub>t</sub> = 64 000;
+- `nyquist`: approximate and opt-in.
+
+Projection for the ceviche WDM at r = 1: **185 GB with `store` (float64), 2.9 GB with `reverse` at no recomputation**, or 4.3 GB with `checkpoint` at 2.4 extra forward passes. Measured CPU/L4 memory-vs-time results are pending. Branch `feature/adjoint-memory`.
+
+</td>
+</tr>
+</table>
+
+#### In progress: subpixel-smoothed projection for binary designs &nbsp;·&nbsp; `wakis.inverse.smoothed_projection`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/ssp_offset_gradient.png" width="600" alt="Objective and adjoint gradient versus sub-cell interface offset for SSP, step projection and tanh projection"></td>
+<td>
+
+SSP (Hammond et al. 2025), implemented from the paper's equations rather than from Meep's GPL code. At β = ∞ the objective stays smooth as a level set moves through a cell, and the **adjoint gradient matches finite differences to 2e-6–1e-4**. A step projection gives an exactly zero gradient. The paper's R = 0.55 Δx leaves a 17× modulation of the shape derivative with sub-pixel position; R = 0.75 Δx reduces it to 1.6×. The invrs-gym pilot (bend and mode converter, against the round-2 arm) is pending. Branch `feature/subpixel-projection`.
+
+</td>
+</tr>
+</table>
+
+#### Dispersive subpixel averaging: metals and dispersive dielectrics at interfaces &nbsp;·&nbsp; `conformal='all'/'tensor'`
+
+<table>
+<tr>
+<td colspan="2"><img src="docs/img/tensor_dispersive_convergence.png" width="880" alt="Convergence of resonance errors for dispersive rods and spheres with staircase, epsilon-infinity-only averaging and the dispersive diagonal network"></td>
+</tr>
+<tr>
+<td colspan="2">
+
+Cut metal and dispersive-dielectric cells now average the full ε(ω); Meep averages only ε<sub>∞</sub>. The averaging is a passive capacitor network, so the step stays stable and its adjoint exact (dot product ≤ 5e-17). **The result is mixed.** On a lossless Drude rod it converges monotonically and is 4.6–5.2× more accurate than ε<sub>∞</sub>-only averaging, but **2–8× less accurate than a fine staircase**. For a conductive Debye slab the error drops from 1.6e-2 to 2.9e-3. For metals, Kottke averaging is first order and not monotone (mixed cells near ε = 0). Use triangles (B2 above) for second-order plasmonics. Details: physics guide, "Dispersive subpixel averaging".
 
 </td>
 </tr>
@@ -78,20 +289,7 @@ Dielectric rod (ε<sub>r</sub> = 6) in a metal cavity, against the exact Bessel 
 <td width="55%"><img src="docs/img/unstructured_meshes.png" width="520" alt="Triangular and tetrahedral meshes conforming to circular and spherical material interfaces"></td>
 <td>
 
-FIT on a Delaunay mesh with its **Voronoi dual**: the dual edges are perpendicular to the primary edges, so the material matrices stay diagonal and the scheme keeps the exact discrete identities of FIT (div curl = 0 to round-off). Every cell holds one material, so curved interfaces are exact. Phase 1: 2D and 3D solvers, PEC/PMC/absorbing boundaries, Drude/Lorentz/Debye media, eigen and time-domain solvers, validated against exact Bessel and spherical-Bessel solutions. **Phase 2** (PML, ports, adjoint, GPU, MPI, CAD → gmsh) is on the roadmap.
-
-</td>
-</tr>
-</table>
-
-#### Photonic inverse design benchmarks &nbsp;·&nbsp; [invrs-wakis](https://github.com/eshipton/invrs-wakis)
-
-<table>
-<tr>
-<td width="55%"><img src="docs/img/invrs_round1_gallery.png" width="520" alt="Final designs and fields of the invrs-gym ceviche challenges optimized with Wakis"></td>
-<td>
-
-The [invrs-gym](https://github.com/invrs-io/gym) challenges optimized with Wakis's **exact adjoint + JAX**, then scored by the gym's own solvers. Round 1: **waveguide bend (+0.52) and power splitter (+0.067) solved**; Wakis's predictions agree with the official ceviche evaluator to **< 0.007** in every run; metalens **14.1** (leaderboard best 19.95). Not yet leaderboard-valid: most designs violate the 3-pixel length scale. Round 2 (length-scale constraints by construction, finer meshes, tensor smoothing, more seeds) is in progress.
+FIT on a Delaunay mesh with its **Voronoi dual**: the dual edges are perpendicular to the primary edges, so the material matrices stay diagonal and the scheme keeps the exact discrete identities of FIT (div curl = 0 to round-off). Every cell holds one material, so curved interfaces are exact. Phase 1: 2D and 3D solvers, PEC/PMC/absorbing boundaries, Drude/Lorentz/Debye media, eigen and time-domain solvers, validated against exact Bessel and spherical-Bessel solutions. Phase 2 has added graded meshes, the radial PML, local time stepping and polygonal cells (above); ports, GPU, MPI and the CAD → gmsh workflow are next.
 
 </td>
 </tr>
@@ -107,7 +305,8 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Sources, monitors and post-processing**
 - [x] Soft current sources (`CurrentSource`) with Gaussian (zero-DC), continuous and custom time profiles
 - [x] Magnetic current sources and one-directional (Huygens) sources
-- [x] Plane-wave total-field/scattered-field box source (`TFSFSource`): incident field from a 1D FIT line, leakage at round-off (1e-15), 2D and 3D, CPU/GPU ([studies/tfsf](studies/tfsf))
+- [x] Plane-wave total-field/scattered-field box source (`TFSFSource`): incident field from a 1D FIT line, leakage at round-off (1e-15), 2D and 3D, CPU/GPU; compared with continuum and Meep-style Huygens sheets ([studies/tfsf](studies/tfsf))
+- [x] Scattered-field plane-wave source for unstructured meshes with a tabulated separable delay (one sparse mat-vec per step)
 - [x] DFT and flux monitors; near-to-far transform and antenna metrics (directivity, gain, efficiency, axial ratio)
 - [x] Diffraction-order monitor (Floquet orders, TE/TM/circular polarization)
 - [x] Harmonic inversion for resonance frequencies and Q (`harminv`, `ResonanceMonitor`)
@@ -119,15 +318,27 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Bloch-periodic boundaries with complex fields; oblique plane waves in unit cells
 - [x] Conformal FIT: cut-cell PEC, averaged dielectrics, thin metal sheets
 - [x] Full-tensor subpixel averaging for curved dielectrics (`conformal='tensor'`)
-- [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`)
-- [ ] Unstructured FIT phase 2: PML, ports, adjoint, GPU, MPI, CAD/gmsh workflow
-- [ ] Subgridding, hybrid structured/unstructured meshes, adaptive refinement
+- [x] Dispersive subpixel averaging for metals and dispersive dielectrics (passive network, exact adjoint; first order for metals)
 - [ ] Magnetic dispersion (ferrites)
+
+**Meshes and time stepping**
+- [x] Unstructured triangular/tetrahedral FIT, phase 1 (`wakis.unstructured`)
+- [x] Graded triangle meshes (`graded_disk_mesh`, `cluster_mesh`) and a radial CFS-PML for unstructured FIT (reflection 2–8e-4)
+- [x] Two-level local time stepping for unstructured FIT: energy-conserving, exact adjoint (`lts=2`)
+- [x] Polygonal FIT: hybrid square/triangle and Voronoi meshes (`PolygonFIT2D`)
+- [ ] Cartesian subgridding with 2:1 patches (`wakis.subgrid`) (in progress)
+- [ ] Curvilinear O-grid FIT (NFIT) and multi-block meshes (in progress)
+- [ ] High-order schemes: DGTD on curved triangles and Cartesian (2,4) (in progress)
+- [ ] Extruded prism 3D FIT (cavity, ring, dipole studies) (in progress)
+- [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow
+- [ ] Adaptive refinement
 
 **Inverse design**
 - [x] Exact discrete adjoint with a JAX wrapper (`wakis.inverse`) for all features above, on CPU, GPU and MPI
 - [x] Material grids, filters and projections
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
+- [ ] Subpixel-smoothed projection (SSP) for binary designs with useful gradients (in progress)
+- [ ] Adjoint memory ladder: checkpointing, time-reversed leapfrog (in progress)
 - [ ] Differentiable layer thickness
 
 **Core fixes and performance**
@@ -135,12 +346,15 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] PEC/PMC masking, `update_tensors` initialization, MPI (CPML deadlock, grid edge, rank-boundary sources/monitors)
 - [x] Forward step ~2x faster on CPU and GPU; periodic setup 59 s → 0.02 s
 - [x] Memory and run-time estimator with preflight check (`wakis.estimate`)
+- [ ] Fused GPU time step (`fused=True`: CPML step, sources and DFT monitors in a few kernels) (in progress)
 
 **Physics and applications**
 - [x] Design templates: patch and dipole antennas, waveguides, metasurface cells, silicon photonics; sweeps and optimizers
 - [x] Linear plasma wakefields in a plasma-filled pipe (`wakis.plasma`)
 - [x] invrs-gym bridge and round-1 results ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
-- [ ] invrs-gym round 2 and the 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
+- [x] invrs-gym round-2 pilot on the lightweight ceviche challenges (all designs meet the length scale)
+- [ ] invrs-gym full-ceviche (leaderboard-eligible) and metalens sweeps (running); 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
+- [ ] Cherenkov-free wakefields with the explicit TE/TM scheme (`scheme='tete'`) (in progress)
 - [ ] Nonlinear plasma wakefields (blowout regime, PIC)
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
@@ -153,12 +367,18 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 **Validation and studies**
 - [x] ~30 Meep-inspired validation tests (Purcell factor, Fresnel, Bragg mirror, Poynting balance, CPML convergence, line source, ...)
 - [x] Mesh-comparison study: Cartesian, conformal, nonorthogonal, triangular and tensor-averaged FIT ([studies/mesh-comparison](studies/mesh-comparison))
+- [x] Benchmark suite B1–B3 (`wakis.benchmarks`): dielectric Mie cylinder, Au/Ag nanocylinders, Au dimer gaps (2/5/10 nm), exact references, shared results store
+- [ ] B1 reruns with the 3000 fs window (the 1000 fs window set a TE error floor near 0.9 %); B2/B3 window check (in progress)
+- [ ] Benchmark B4: wire dipole antenna against Hallén MoM (in progress)
 
 **Contributions to upstream Wakis**
 - [x] [PR #109](https://github.com/ImpedanCEI/Wakis/pull/109): combine PEC/PMC face masks for mixed boundary types
-- [x] Analysis and tests offered on [PR #105](https://github.com/ImpedanCEI/Wakis/pull/105) (high-side PEC and dual-grid metrics)
-- [ ] Further fixes: CPML+MPI deadlock, `update_tensors`, periodic-setup and time-step performance, quiet `verbose=0`
-- [ ] Feature proposals via issues (harmonic inversion, conformal PEC, soft sources, monitors, ports, estimator, dispersive materials)
+- [x] [PR #110](https://github.com/ImpedanCEI/Wakis/pull/110): fix a CPML + MPI deadlock
+- [x] [PR #111](https://github.com/ImpedanCEI/Wakis/pull/111): fix `update_tensors` initialization
+- [x] [PR #112](https://github.com/ImpedanCEI/Wakis/pull/112): fix the accumulator in the 3D wake-potential integration (`calc_long_WP_3d`)
+- [x] Analysis and tests offered on [PR #105](https://github.com/ImpedanCEI/Wakis/pull/105) (high-side PEC and dual-grid metrics) and [issue #62](https://github.com/ImpedanCEI/Wakis/issues/62) (wake integration)
+- [ ] Further fixes: periodic-setup and time-step performance, quiet `verbose=0`, plane-wave gradient on non-uniform meshes
+- [ ] Feature proposals via issues (harmonic inversion, conformal PEC, dispersion-free wake, soft sources, monitors, ports, estimator, dispersive materials)
 
 ## About
 🚀 Some of `wakis` features:
