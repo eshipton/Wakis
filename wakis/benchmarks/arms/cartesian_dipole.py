@@ -11,8 +11,11 @@ Baseline arm for B4: Cartesian FIT (`SolverFIT3D`) dipole with a lumped port.
 * rectilinear grid graded in x and y (h_t on |x|, |y| <= a + 2 h_t around the
   wire axis, which lies on a node line, growth 1.2 to lambda_min / 20) and
   uniform h_z = min(g, 4 h_t) along the wire (+5 cells), graded beyond;
-* the two wire halves as PEC STL cylinders, staircase (``conformal=False``)
-  or conformal PEC (``conformal='pec'``);
+* the two wire halves: ``conformal='edges'`` (recommended staircase: an E
+  edge is PEC when its midpoint is in the wire, as `wakis.templates`),
+  ``False`` (legacy STL cell masks: a cell touched by the wire becomes PEC,
+  which thickens and lengthens the wire by up to a cell; kept as a
+  documented failure mode) or ``'pec'`` (conformal PEC from the STL);
 * `LumpedPort` (Z0 = 50 Ohm) on the z edges of the axis across the gap;
 * CPML; `Near2FarMonitor` box for the broadside directivity.
 
@@ -60,7 +63,9 @@ class CartesianDipoleArm(Arm):
         self.n_pml = n_pml
         self.cfl = cfl
         self.n2f = n2f
-        kind = "staircase" if not conformal else f"conformal-{conformal}"
+        kind = {False: "staircase-stl", "edges": "staircase-edges"}.get(
+            conformal, f"conformal-{conformal}"
+        )
         self.name = name or f"cart-{kind}-{'graded' if graded else 'uniform'}"
 
     def supports(self, case):
@@ -85,25 +90,37 @@ class CartesianDipoleArm(Arm):
         xn = graded_axis(a + 2 * ht, ht, h_out, self.pad_xy * lam_max, self.n_pml)
         zn = _axis_z(L, g, hz, h_out, L / 2 + self.pad_z * lam_max, self.n_pml)
         solids, mats = {}, {}
-        # Staircase (legacy) masks mark a cell when any of its 8 nodes is
-        # inside the solid, and its edges become PEC: both halves stop
-        # 0.01 h_z short of the gap planes so that the gap cells stay free
-        # (the physical gap is still g up to 2 % of a cell).
-        for s, name in ((1, "top"), (-1, "bottom")):
-            z_in = g / 2 + 0.01 * hz
-            zc = s * (z_in + (L / 2 - z_in) / 2)
-            cyl = pv.Cylinder(center=(0, 0, zc), radius=a, height=L / 2 - z_in,
-                              direction=(0, 0, 1), resolution=180)  # fmt: skip
-            solids[name] = cyl.triangulate()
-            mats[name] = "pec"
-        grid = wakis.GridFIT3D(
-            x=xn, y=xn.copy(), z=zn, stl_solids=solids, stl_materials=mats,
-            conformal=self.conformal, verbose=0,
-        )  # fmt: skip
+        if self.conformal == "edges":
+            # Edge-wise staircase: an E edge is PEC when its midpoint lies in
+            # (or on) the wire (wakis.templates.shapes.assign_materials).
+            grid = wakis.GridFIT3D(x=xn, y=xn.copy(), z=zn, verbose=0)
+        else:
+            # STL solids. Legacy staircase masks mark a cell when any of its
+            # 8 nodes is inside and zero its edges, which thickens the wire
+            # by up to a cell; both halves stop 0.01 h_z short of the gap
+            # planes so that the gap cells stay free.
+            for s, name in ((1, "top"), (-1, "bottom")):
+                z_in = g / 2 + 0.01 * hz
+                zc = s * (z_in + (L / 2 - z_in) / 2)
+                cyl = pv.Cylinder(center=(0, 0, zc), radius=a, height=L / 2 - z_in,
+                                  direction=(0, 0, 1), resolution=180)  # fmt: skip
+                solids[name] = cyl.triangulate()
+                mats[name] = "pec"
+            grid = wakis.GridFIT3D(
+                x=xn, y=xn.copy(), z=zn, stl_solids=solids, stl_materials=mats,
+                conformal=self.conformal, verbose=0,
+            )  # fmt: skip
         solver = wakis.SolverFIT3D(
             grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=self.n_pml,
-            use_stl=True, cfln=self.cfl, verbose=0,
+            use_stl=bool(solids), cfln=self.cfl, verbose=0,
         )  # fmt: skip
+        if self.conformal == "edges":
+            from ...templates.shapes import Cylinder, assign_materials
+
+            arm_len = L / 2 - g / 2
+            halves = [Cylinder((0, 0, s * (g / 2 + arm_len / 2)), a, arm_len, "pec")
+                      for s in (1, -1)]  # fmt: skip
+            assign_materials(solver, halves, case.freqs.mean())
         port = wakis.LumpedPort(
             case.source(), component="z", center=(0, 0, 0), size=(0, 0, g),
             impedance=case.z0,

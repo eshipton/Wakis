@@ -44,10 +44,15 @@ def arms():
     from wakis.benchmarks.arms.cartesian_dipole import CartesianDipoleArm
 
     out += [
-        CartesianDipoleArm(conformal=False),
+        CartesianDipoleArm(conformal=False),  # legacy STL cell masks
         CartesianDipoleArm(conformal="pec"),
+        CartesianDipoleArm(conformal="edges"),
         CartesianDipoleArm(conformal="pec", pad_xy=0.42, pad_z=0.28,
                            name="cart-conformal-pec-graded-bigdomain"),
+        CartesianDipoleArm(conformal="edges", pad_xy=0.42, pad_z=0.28,
+                           name="cart-staircase-edges-graded-bigdomain"),
+        CartesianDipoleArm(conformal="edges", ppw_out=40,
+                           name="cart-staircase-edges-graded-ppw40"),
     ]  # fmt: skip
     return {a.name: a for a in out}
 
@@ -56,17 +61,25 @@ PHASES = {
     "B2": ["B2-Au-TE", "B2-Au-TM", "B2-Ag-TE", "B2-Ag-TM"],
     "B3": ["B3-g5", "B3-g10", "B3-g2"],
     "B4": ["B4"],
+    "B4b": ["B4"],
 }
 
 
 def tasks(phase):
     out = []
-    if phase == "B4":
+    if phase == "B4":  # first job (bench-b4-20261019-0701): stl + pec arms
         a = 0.5e-3
         for q in (4, 3, 2, 1.5, 1):
-            for arm in ("cart-staircase-graded", "cart-conformal-pec-graded"):
+            for arm in ("cart-staircase-stl-graded", "cart-conformal-pec-graded"):
                 out.append(("B4", arm, a / q))
         out.append(("B4", "cart-conformal-pec-graded-bigdomain", a / 2))
+    if phase == "B4b":  # edge-wise staircase ladder and its checks
+        a = 0.5e-3
+        for q in (4, 3, 2, 1.5, 1):
+            out.append(("B4", "cart-staircase-edges-graded", a / q))
+        out.append(("B4", "cart-staircase-edges-graded-bigdomain", a / 2))
+        out.append(("B4", "cart-staircase-edges-graded-ppw40", a / 2))
+    if phase.startswith("B4"):
         return out
     names = [n for n, a in arms().items() if not hasattr(a, "hz_ratio")]
     for case in PHASES[phase]:
