@@ -301,7 +301,7 @@ class CheckpointRung(_Rung):
 
     name = "checkpoint"
 
-    def __init__(self, Nt, slots, block, advance, io, dtype, xp):
+    def __init__(self, Nt, slots, block, advance, io, dtype, xp, verify=False):
         if slots < 1 or block < 1:
             raise ValueError("checkpoint slots and block length must be >= 1.")
         self.Nt, self.slots, self.block = int(Nt), int(slots), int(block)
@@ -322,6 +322,11 @@ class CheckpointRung(_Rung):
             self.chain.add(a)
             c -= 1
         self.tail_start = self._start(self.n_blocks - 1) if self.n_blocks else self.Nt
+        # verify: also keep every forward row and count replayed rows that
+        # differ from it in any bit (testing aid; costs the store memory)
+        self.verify = verify
+        self.forward_rows = {} if verify else None
+        self.mismatches = 0
 
     def _start(self, k):
         return 1 + k * self.block
@@ -337,7 +342,7 @@ class CheckpointRung(_Rung):
 
     # forward hooks
     def wants_row(self, n):
-        return n == 0 or n >= self.tail_start
+        return self.verify or n == 0 or n >= self.tail_start
 
     def before_step(self, n):
         if n >= 1 and (n - 1) % self.block == 0:
@@ -346,6 +351,10 @@ class CheckpointRung(_Rung):
                 self._save(k)
 
     def after_step(self, n, row):
+        if self.verify:
+            self.forward_rows[n] = row.copy()
+            if not (n == 0 or n >= self.tail_start):
+                return
         if n == 0:
             self.row0 = row.copy()
             self._row_bytes = _nbytes(row)
@@ -423,6 +432,10 @@ class CheckpointRung(_Rung):
             m, row = next(gen)
             if m != n:
                 raise RuntimeError(f"Row {m} served for step {n}.")
+            if self.verify and not bool(
+                self.xp.array_equal(row, self.forward_rows[n])
+            ):
+                self.mismatches += 1
             return row
 
         return get

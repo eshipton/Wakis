@@ -179,7 +179,7 @@ def _case(name, use_gpu):
             center=(0, 0, 0), size=(0.04, 0.04, 0.04), shape=(3, 3, 3)
         )
         sim = wakis.inverse.AdjointSimulation(
-            partial(t39._solver, n=16, length=0.16, bc="cpml", n_pml=4,
+            partial(t39._solver, n=24, length=0.24, bc="cpml", n_pml=6,
                     use_gpu=use_gpu),
             [src], monitors, design, 200,
         )  # fmt: skip
@@ -221,25 +221,40 @@ def _grad(sim, rho, G_of, memory, **kw):
     return sim.vjp(G), G
 
 
+# Cases whose forward run itself is not bitwise reproducible from run to
+# run (the mode solver of ModeSource/ModeMonitor starts ARPACK from a random
+# vector): there, replay exactness is checked row by row within one run and
+# the gradient against a separate store run to 1e-12.
+NONDETERMINISTIC = {"mode"}
+
+
 @pytest.mark.parametrize("case", CASES)
 def test_checkpoint_gradient_is_bitwise(case, use_gpu):
     """
     Checkpoint replay restores the complete step state (fields, CPML psi,
     conduction and source currents, ADE polarizations, network state,
-    lumped-element and TF/SF line state), so the gradient is bitwise equal
-    to the stored-increment one, with several slot/block settings, and a
-    second `vjp` after one forward run gives the same result.
+    lumped-element and TF/SF line state): every replayed row equals the
+    forward row in every bit (`verify_replay`), the gradient equals the
+    stored-increment gradient bitwise, for several slot/block settings, and
+    a second `vjp` after one forward run gives the same result.
     """
     sim, G_of, rho, _ = _case(case, use_gpu)
     g_store, _ = _grad(sim, rho, G_of, "store")
     assert np.max(np.abs(g_store)) > 0
+    sim.verify_replay = True
     for kw in (dict(checkpoints=3), dict(checkpoints=2, block=11),
                dict(checkpoints=5, block=1)):  # fmt: skip
         g, G = _grad(sim, rho, G_of, "checkpoint", **kw)
-        assert np.array_equal(g, g_store), (case, kw, np.max(np.abs(g - g_store)))
+        assert sim._rung.mismatches == 0, (case, kw, sim._rung.mismatches)
         assert sim.memory_stats["recompute_steps"] > 0
+        if case in NONDETERMINISTIC:
+            err = np.max(np.abs(g - g_store)) / np.max(np.abs(g_store))
+            assert err < 1e-12, (case, kw, err)
+        else:
+            assert np.array_equal(g, g_store), (case, kw, np.max(np.abs(g - g_store)))
         g2 = sim.vjp(G)
-        assert np.array_equal(g2, g_store), (case, kw, "second vjp")
+        assert sim._rung.mismatches == 0
+        assert np.array_equal(g2, g), (case, kw, "second vjp")
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -262,6 +277,8 @@ def test_reverse_gradient(case, use_gpu):
         err = np.max(np.abs(g - g_store)) / np.max(np.abs(g_store))
         print(f"{case}: reverse rel. error {err:.1e}")
         assert err < 1e-10
+    elif case in NONDETERMINISTIC:
+        assert np.max(np.abs(g - g_store)) / np.max(np.abs(g_store)) < 1e-12
     else:
         assert np.array_equal(g, g_store)
 
@@ -302,11 +319,30 @@ def test_checkpoint_missing_state_fails():
         self.psi = []
 
     mem.SolverState.__init__ = without_psi
+    sim.verify_replay = True
     try:
         g, _ = _grad(sim, rho, G_of, "checkpoint", checkpoints=3)
     finally:
         mem.SolverState.__init__ = original
+    assert sim._rung.mismatches > 0
     assert not np.allclose(g, g_store, rtol=1e-8, atol=0)
+
+
+def test_checkpoint_missing_source_state_fails():
+    """Mutation check: sources not snapshotted -> replayed rows differ."""
+    sim, G_of, rho, _ = _case("tfsf", False)
+    original = mem.SolverState.__init__
+
+    def without_sources(self, solver, sources):
+        original(self, solver, [])
+
+    mem.SolverState.__init__ = without_sources
+    sim.verify_replay = True
+    try:
+        _grad(sim, rho, G_of, "checkpoint", checkpoints=3)
+    finally:
+        mem.SolverState.__init__ = original
+    assert sim._rung.mismatches > 0
 
 
 def test_nyquist_is_approximate_and_not_default():

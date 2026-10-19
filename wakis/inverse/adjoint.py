@@ -871,9 +871,16 @@ class AdjointSimulation:
             state_bytes += sum(
                 getattr(solver, k).nbytes for k in io.psi
             ) + (0 if solver.M is None else solver.M.array.nbytes)
-            plan = mem.plan_checkpoints(
-                self.Nt, state_bytes, row_bytes, self._budget_bytes(solver)
-            )
+            budget = self._budget_bytes(solver)
+            if mode == "checkpoint":
+                # Explicit checkpointing: at most a quarter of the stored rows
+                budget = min(budget, 0.25 * self.Nt * row_bytes)
+            try:
+                plan = mem.plan_checkpoints(self.Nt, state_bytes, row_bytes, budget)
+            except MemoryError:
+                if mode == "auto":
+                    raise
+                plan = dict(mode="checkpoint", slots=2, block=None)
             if mode == "auto" and plan["mode"] == "store":
                 mode = "store"
             else:
@@ -886,7 +893,8 @@ class AdjointSimulation:
         if block is None:
             n_blocks = mem.beta(slots, 2)
             block = max(1, -(-(self.Nt - 1) // n_blocks))
-        return mem.CheckpointRung(self.Nt, slots, block, advance, io, dtype, xp)
+        return mem.CheckpointRung(self.Nt, slots, block, advance, io, dtype, xp,
+                                  verify=getattr(self, "verify_replay", False))  # fmt: skip
 
     def _run_forward(self, rung, advance, monitors):
         """The forward time loop, feeding the memory rung."""
@@ -967,7 +975,7 @@ class AdjointSimulation:
         g_eps = xp.zeros(net.n_caps)
         g_mu = xp.zeros(net.n_caps)
         lam = stepper.zero_state()
-        rows = self._rung.reader()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             for tap in taps:
@@ -979,7 +987,7 @@ class AdjointSimulation:
             lam_E = lam["E"][rows][cap_row]
             lam = stepper.step(lam)
             lam_u = ext.lam_unew
-            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in rows(n))
+            dQ, u, u1, lsum, dsum = (xp.asarray(a) for a in get_row(n))
             g_ieps += lam_E * eps_0 * dQ
             g_c += lam_E * (u1 - u - dQ / eps_inf)
             g_eps += lam_u * (u - u1) / den + lam_E * c * dQ / eps_inf**2
@@ -1113,7 +1121,7 @@ class AdjointSimulation:
             if tensor["pairs"] is not None:
                 grad_pairs = xp.zeros(len(tensor["pairs"][0]))
         lam = stepper.zero_state()
-        rows = self._rung.reader()
+        get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
             t = n * dt
             # A DFT sample X = sum_n w_n W x^{n+1} gives lam += W^H conj(w_n) G
@@ -1126,7 +1134,7 @@ class AdjointSimulation:
             if tensor is not None:
                 # Adjoint of the corrected E' = E + N g
                 lam_new = lam["E"][track]
-                g = xp.asarray(rows(n))
+                g = xp.asarray(get_row(n))
                 grad += xp.real(
                     xp.conj(lam_new[tensor["design"]]) * g[tensor["design"]]
                 )
@@ -1140,7 +1148,7 @@ class AdjointSimulation:
                 continue
             lam = stepper.step(lam)
             sens = stepper.lam_star[idx] if ade is None else ade.lam_acc
-            grad += xp.real(xp.conj(sens) * xp.asarray(rows(n)))
+            grad += xp.real(xp.conj(sens) * xp.asarray(get_row(n)))
         if tensor is not None and tensor["pairs"] is not None:
             ea, eb, coef = tensor["pairs"]
             grad = self.design.vjp(
