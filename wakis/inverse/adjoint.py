@@ -366,7 +366,7 @@ class AdjointStepper:
         self._T = tname(self.dtype)
         n = 3 * self.N
         if self.cpml:
-            self._halves = {"E": fs.e, "H": fs.h}
+            self._halves = {"E": fs.e.transpose(), "H": fs.h.transpose()}
             if sorted(fs.e.names + fs.h.names) != sorted(self.psi_names):
                 raise RuntimeError("Fused and unfused CPML faces differ.")
         else:

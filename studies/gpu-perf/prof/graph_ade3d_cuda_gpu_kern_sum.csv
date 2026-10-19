@@ -1,0 +1,8 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+48.8,35273366,100,352733.7,352704.0,351776,353888,474.5,"void fused_e<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, const double *, double, const int *, const int *, T1 *, const T1 *, const T1 *, T1 *, T1 *, const double *)"
+46.0,33310327,100,333103.3,333088.0,331968,334848,420.9,"void fused_h<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, double, const int *, const int *, T1 *, const T1 *, const T1 *, const T1 *, const double *)"
+4.4,3146655,100,31466.5,31392.0,30784,32992,411.1,"ade_update(int, const int *, double *, const double *, const double *, const double *, const double *, const double *, int, const double *, double *, double *, int, const double *, double *)"
+0.4,305888,100,3058.9,3008.0,2944,3520,96.2,"void gather<double>(int, const int *, const T1 *, T1 *)"
+0.2,164160,100,1641.6,1600.0,1536,2176,100.6,"void source_delta<double, double>(int, const int *, const T2 *, double, const double *, const long long *, long long, T2 *, T1 *)"
+0.2,134720,99,1360.8,1184.0,1152,1792,246.5,"step_add(long long *, long long)"
+0.0,1440,1,1440.0,1440.0,1440,1440,0.0,cupy_fill

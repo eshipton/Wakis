@@ -1,6 +1,6 @@
 """Compare loss and gradient of two bend_iteration.py results.
 
-  python compare_bend.py results/base_bend.json results/graph_bend.json
+python compare_bend.py results/base_bend.json results/graph_bend.json
 """
 
 import json

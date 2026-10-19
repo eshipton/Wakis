@@ -1,0 +1,1 @@
+{"case": "tensor2d", "backend": "gpu", "fused": null, "cells": 66049, "steps": 500, "setup_s": 3.3715834617614746, "ms_per_step": 0.725151674000017, "gpu_util_pct": 11.125, "breakdown_ms": {"sources": 0.1950536239937719, "step": 0.5583182800000941, "post": 0.003822560000116937, "monitors": 0.0025555199981681653}, "checksum_E": 18359868.06631348, "omp_threads": "1"}

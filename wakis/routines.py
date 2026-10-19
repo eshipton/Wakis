@@ -216,7 +216,10 @@ class RoutinesMixin:
                     loop.run(n0, n1)
                     n0 = n1
                     m = n1 - 1
-                    if stop_when_energy_decayed is not None and m % int(check_every) == 0:
+                    if (
+                        stop_when_energy_decayed is not None
+                        and m % int(check_every) == 0
+                    ):
                         energy = self.field_energy()
                         energy_max = max(energy_max, energy)
                         if m * self.dt > t_off and energy < decay * energy_max:

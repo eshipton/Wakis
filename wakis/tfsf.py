@@ -608,8 +608,18 @@ class TFSFSource:
         launch("line_e", e.size, np.int32(e.size), e, h, D["ce"], D["de"],
                np.int32(self._inj["e_idx"]), np.float64(s_e), te, step,
                zero)  # fmt: skip
-        launch("line_series", 1, e, h, np.int32(self._m_entry), self._series,
-               np.int64(self._series.shape[1]), np.int64(n), step, zero)
+        launch(
+            "line_series",
+            1,
+            e,
+            h,
+            np.int32(self._m_entry),
+            self._series,
+            np.int64(self._series.shape[1]),
+            np.int64(n),
+            step,
+            zero,
+        )
 
     def _fused_update(self, solver, t):
         """`update` with fused kernels (fused GPU solvers)."""

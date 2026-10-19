@@ -1,0 +1,42 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+17.5,51953904,35202,1475.9,1472.0,1439,1952,40.3,cupy_take
+16.2,48231128,36800,1310.6,1280.0,1216,2144,139.9,cupy_multiply__float64_float64_float64
+13.3,39622240,30000,1320.7,1248.0,1215,1664,122.4,cupy_add__float64_float64_float64
+11.4,33778086,6400,5277.8,5280.0,4288,6656,402.7,"void cusparse::csrmv_v3_kernel<std::integral_constant<bool, (bool)0>, int, int, double, double, double, double, void>(cusparse::KernelCoeffs<T7>, const T3 *, const T2 *, const T3 *, const T4 *, T2, int, int, const T5 *, T6 *, T3 *, T7 *)"
+9.6,28496718,22000,1295.3,1216.0,1183,1792,128.2,cupy_multiply__float_float64_float64
+7.6,22557991,14001,1611.2,1600.0,1567,2016,19.0,cupy_scatter_update
+7.5,22170220,7208,3075.8,3232.0,1599,3520,493.8,"void cusparse::<unnamed>::csr_partition_kernel<int, int>(const T1 *, T2, T1, T1, T2, T2 *, T2)"
+4.2,12553427,8800,1426.5,1536.0,1247,1600,147.3,cupy_subtract__float64_float64_float64
+3.1,9178456,6400,1434.1,1440.0,1376,2144,25.5,"void cusparse::vector_scalar_multiply_kernel<(int)256, cusparse::AlignedVectorScalarMultiplyPolicy, int, double, double>(cusparse::KernelCoeff<T5>, T3, T4 *)"
+1.3,3861597,3200,1206.7,1216.0,1183,1248,14.7,cupy_negative__float64_float64
+1.2,3688058,1600,2305.0,2304.0,2208,2624,46.4,cupy_exp__complex128_complex128
+1.2,3433530,800,4291.9,4288.0,4256,4640,21.0,"void cusparse::csrmv_v3_kernel<std::integral_constant<bool, (bool)0>, int, int, cusparse::Complex<double>, cusparse::Complex<double>, cusparse::Complex<double>, cusparse::Complex<double>, void>(cusparse::KernelCoeffs<T7>, const T3 *, const T2 *, const T3 *, const T4 *, T2, int, int, const T5 *, T6 *, T3 *, T7 *)"
+0.7,2093500,800,2616.9,2624.0,2560,2688,33.6,"void gemv2N_kernel<int, int, double2, double2, double2, double2, (int)128, (int)2, (int)4, (int)4, (int)1, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const double2>, cublasGemvTensorStridedBatched<const double2>, cublasGemvTensorStridedBatched<double2>, double2>>(T13)"
+0.7,2018175,1600,1261.4,1248.0,1248,1280,15.8,cupy_multiply__complex128_complex_complex128
+0.7,2017247,1600,1260.8,1248.0,1248,1312,15.7,cupy_multiply__complex_complex128_complex128
+0.7,1969180,1600,1230.7,1216.0,1215,1280,16.0,cupy_multiply__complex_float64_complex128
+0.6,1883999,1620,1163.0,1152.0,1119,2816,84.6,cupy_copy__int32_int32
+0.5,1369087,834,1641.6,1632.0,1152,4128,173.4,cupy_copy__float64_float64
+0.4,1239679,800,1549.6,1536.0,1536,1792,18.4,cupy_multiply__complex128_float64_complex128
+0.4,1055103,800,1318.9,1312.0,1280,1344,17.0,cupy_add__complex128_complex128_complex128
+0.3,986495,800,1233.1,1248.0,1216,1248,16.0,"void cusparse::vector_scalar_multiply_kernel<(int)256, cusparse::AlignedVectorScalarMultiplyPolicy, int, cusparse::Complex<double>, cusparse::Complex<double>>(cusparse::KernelCoeff<T5>, T3, T4 *)"
+0.3,960223,400,2400.6,2304.0,2272,2752,170.2,cupy_true_divide__float64_float64_float64
+0.3,922782,800,1153.5,1152.0,1120,1216,11.9,cupy_copy__float64_complex128
+0.2,498943,400,1247.4,1248.0,1216,1280,11.5,cupy_multiply__float64_float_float64
+0.2,490560,400,1226.4,1216.0,1216,1280,15.2,cupy_conjugate__float64_float64
+0.1,181727,16,11357.9,11296.0,9984,13984,1333.6,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortOnesweepKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortPolicy<int, int, int>::Policy900, (bool)0, int, int, int, int, int>(T7 *, T7 *, T5 *, const T5 *, T3 *, const T3 *, T4 *, const T4 *, T6, int, int)"
+0.0,35488,18,1971.6,1616.0,1184,2656,529.7,cupyx_scipy_sparse_has_canonical_format
+0.0,28352,8,3544.0,3488.0,3392,3840,152.8,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceReduceByKeyKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DispatchReduceByKey<const int *, int *, cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ConstantInputIterator<int, int>, int *, int *, cuda::std::__4::equal_to<void>, cuda::std::__4::plus<void>, int, int>::PtxReduceByKeyPolicy, const int *, int *, cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ConstantInputIterator<int, int>, int *, int *, cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ReduceByKeyScanTileState<int, int, (bool)1>, cuda::std::__4::equal_to<void>, cuda::std::__4::plus<void>, int, int>(T2, T3, T4, T5, T6, T7, int, T8, T9, T10)"
+0.0,24128,16,1508.0,1504.0,1472,1600,32.8,cupy_cub_all_pass1
+0.0,22432,16,1402.0,1408.0,1376,1440,17.4,cupy_cub_all_pass2
+0.0,21984,8,2748.0,2736.0,2720,2816,36.0,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortHistogramKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortPolicy<int, int, int>::Policy900, (bool)0, int, int>(T4 *, const T3 *, T4, int, int)"
+0.0,20320,8,2540.0,2544.0,2432,2656,70.4,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceScanKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceScanPolicy<int>::Policy600, const int *, int *, cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ScanTileState<int, (bool)1>, cuda::std::__4::plus<void>, cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::detail::InputValue<int, int *>, int, int>(T2, T3, T4, int, T5, T6, T7)"
+0.0,19456,8,2432.0,2432.0,2400,2528,41.9,"void cusparse::csr2csc_rows_expansion_kernel<(int)128, (int)8, int>(const T3 *, int, T3, const T3 *, T3 *)"
+0.0,16320,8,2040.0,2032.0,1888,2368,153.7,"void cusparse::gather_kernel<int, unsigned long, void>(T1, const T1 *, T2 *, const T2 *)"
+0.0,15232,8,1904.0,1808.0,1728,2240,191.2,"void cusparse::gather_kernel<int, unsigned int, void>(T1, const T1 *, T2 *, const T2 *)"
+0.0,11648,8,1456.0,1456.0,1408,1504,29.6,"void cusparse::scatter_kernel<int, unsigned int, void>(T1, const T1 *, const T2 *, T2 *)"
+0.0,10880,8,1360.0,1360.0,1344,1376,17.1,"void cusparse::iota_kernel<(int)128, int, int>(T2, T3 *)"
+0.0,10432,8,1304.0,1312.0,1280,1344,22.6,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortExclusiveSumKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceRadixSortPolicy<int, int, int>::Policy900, int>(T2 *)"
+0.0,8064,8,1008.0,1008.0,992,1024,17.1,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceScanInitKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ScanTileState<int, (bool)1>>(T1, int)"
+0.0,7968,8,996.0,992.0,992,1024,11.3,"void cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::DeviceCompactInitKernel<cub::CUB_200101_500_520_600_610_700_750_800_860_890_900_1000_1010_1030_1200_1210_NS::ReduceByKeyScanTileState<int, int, (bool)1>, int *>(T1, int, T2)"
+0.0,3520,2,1760.0,1760.0,1760,1760,0.0,cupy_all

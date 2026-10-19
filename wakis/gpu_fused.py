@@ -523,8 +523,15 @@ def _names():
         names += [f"csr_add<{T}>", f"csr_delta<{T}>", f"tensor_delta<{T}>"]
         for R in recs[T]:
             names += [f"record_row<{T},{R}>", f"grad_acc<{T},{R}>"]
-    return names + ["step_add", "tap_v", "dft_phase", "line_h", "line_e", "line_series",
-                    "ade_update"]
+    return names + [
+        "step_add",
+        "tap_v",
+        "dft_phase",
+        "line_h",
+        "line_e",
+        "line_series",
+        "ade_update",
+    ]
 
 
 def _module():
@@ -675,20 +682,12 @@ class _Half:
     """Device data of one CPML half step (merged curl rows, psi slots)."""
 
     def __init__(self, solver, terms, field):
-        import scipy.sparse as sp
-
         N = solver.N
         ops = {t[4]: _host_csr(getattr(solver, t[4])) for t in terms}
         A = _block(ops, terms, 1.0)
         B = _block(ops, terms, -1.0)
         self.rows = RowOp(*merge_rows(A, B))
-        # Transposed rows for the adjoint: [A^H B^H] acting on [beta_a; beta_b]
-        AT = sp.hstack([A.conj().T, B.conj().T], format="csr")
-        AT.sort_indices()
-        self.t_ptr = cp.asarray(AT.indptr.astype(np.int32))
-        self.t_col = cp.asarray(AT.indices.astype(np.int32))
-        self.t_val = cp.asarray(AT.data)
-        self.t_vdtype = AT.data.dtype
+        self._AB = (A, B)  # host copies, for the adjoint's transpose
         # psi slots of each face, in a fixed order
         slot_a = np.full(3 * N, -1, dtype=np.int64)
         slot_b = np.full(3 * N, -1, dtype=np.int64)
@@ -719,6 +718,20 @@ class _Half:
         self.pb = cp.asarray(np.concatenate(bs) if bs else np.zeros(1), dtype=dtype)
         self.pc = cp.asarray(np.concatenate(cs) if cs else np.zeros(1), dtype=dtype)
         self.n_psi = int(off)
+
+    def transpose(self):
+        """Build (once) the transposed rows [A^H B^H] for the adjoint step."""
+        if getattr(self, "t_val", None) is None:
+            import scipy.sparse as sp
+
+            A, B = self._AB
+            AT = sp.hstack([A.conj().T, B.conj().T], format="csr")
+            AT.sort_indices()
+            self.t_ptr = cp.asarray(AT.indptr.astype(np.int32))
+            self.t_col = cp.asarray(AT.indices.astype(np.int32))
+            self.t_val = cp.asarray(AT.data)
+            self.t_vdtype = AT.data.dtype
+        return self
 
 
 class FusedStep:
@@ -1157,7 +1170,9 @@ def _source_terms(src, solver, Nt):
             else:
                 amp = [float(src.src_time(t)) for t in times]
             arr = getattr(solver, term["field"]).array
-            out.append((arr, term["idx32"], term["weights"], term["old"], cp.asarray(amp)))
+            out.append(
+                (arr, term["idx32"], term["weights"], term["old"], cp.asarray(amp))
+            )
         return out
     return None
 

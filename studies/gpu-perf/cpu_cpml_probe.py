@@ -65,9 +65,7 @@ def main():
             if hasattr(s, f"idx_{d}_{side}"):
                 idx = np.asarray(getattr(s, f"idx_{d}_{side}"))
                 rows.append((mats[op][idx], "xyz".index(S)))
-    out["face_rows"] = timeit(
-        lambda: [R @ E[k * s.N : (k + 1) * s.N] for R, k in rows]
-    )
+    out["face_rows"] = timeit(lambda: [R @ E[k * s.N : (k + 1) * s.N] for R, k in rows])
     sp_, srcs2, _ = cases.plain3d(False, None, n=a.n)
     srcs2[0].update(sp_, 0.0)
     sp_.one_step()
@@ -80,7 +78,9 @@ def main():
     buf = io.StringIO()
     pstats.Stats(prof, stream=buf).sort_stats("tottime").print_stats(8)
     out["profile_tottime"] = buf.getvalue()[-2500:]
-    print(json.dumps({k: v for k, v in out.items() if k != "profile_tottime"}, indent=1))
+    print(
+        json.dumps({k: v for k, v in out.items() if k != "profile_tottime"}, indent=1)
+    )
     print(out["profile_tottime"])
 
 

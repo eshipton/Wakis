@@ -139,7 +139,9 @@ def test_mode_source_and_monitor(gpu_only):
     DX = 1e-3
     res = {}
     for fused in (False, True):
-        grid = wakis.GridFIT3D(0, 20 * DX, 0, 10 * DX, 0, 80 * DX, 20, 10, 80, verbose=0)
+        grid = wakis.GridFIT3D(
+            0, 20 * DX, 0, 10 * DX, 0, 80 * DX, 20, 10, 80, verbose=0
+        )
         bc = ["pec", "pec", "cpml"]
         solver = wakis.SolverFIT3D(
             grid, use_gpu=True, fused=fused, bc_low=bc, bc_high=bc, n_pml=10,
@@ -286,8 +288,9 @@ def _adjoint_sim(fused, Nt=250):
                         center=(-0.08, 0.0, 0.0))  # fmt: skip
     f = np.linspace(2e9, 4e9, 4)
     monitors = {
-        "probe": wakis.DFTMonitor(f, components=("Ez", "Hy"), center=(0.08, 0, 0),
-                                  size=(0.0, 0.1, 0.0)),  # fmt: skip
+        "probe": wakis.DFTMonitor(
+            f, components=("Ez", "Hy"), center=(0.08, 0, 0), size=(0.0, 0.1, 0.0)
+        ),  # fmt: skip
         "flux": wakis.FluxMonitor(f, center=(0.1, 0, 0), size=(0.0, 0.2, np.inf)),
     }
     design = MaterialGrid((0.0, 0.0, 0.0), (0.1, 0.1, 0.0), (6, 6, 1), 1.0, 4.0)
@@ -312,8 +315,8 @@ def test_fused_adjoint_gradient_unchanged(gpu_only):
         res[fused] = (out, sim.vjp(G), G, sim, rho)
     (o0, g0, G, _, rho), (o1, g1, _, sim, _) = res[False], res[True]
     for k in o0:
-        for c in o0[k]:
-            assert _close(o1[k][c], o0[k][c], 1e-10), (k, c)
+        for comp in o0[k]:
+            assert _close(o1[k][comp], o0[k][comp], 1e-10), (k, comp)
     assert _close(g1, g0, 1e-10)
     assert np.max(np.abs(g0)) > 0
 
@@ -347,7 +350,9 @@ def _emsolve_run(fused, graphs=True, stop=None, tfsf=False, Nt=260):
         sources = [wakis.TFSFSource(pulse, center=(0, 0, 0), size=(2 * tf, 2 * tf, None),
                                     direction="+x", polarization="z")]  # fmt: skip
         f = np.linspace(150e12, 350e12, 11)
-        monitors = [wakis.FluxMonitor(f, size=(2 * tf + 6 * dx, 2 * tf + 6 * dx, 2 * dx))]
+        monitors = [
+            wakis.FluxMonitor(f, size=(2 * tf + 6 * dx, 2 * tf + 6 * dx, 2 * dx))
+        ]
     else:
         solver = _solver("cpml-lossy", fused)
         pulse = GaussianSource(F0, 0.5 * F0)
@@ -405,8 +410,8 @@ def test_adjoint_graphs_match_per_step(gpu_only):
         res.append((out, sim.vjp(G)))
     (o0, g0), (o1, g1) = res
     for k in o0:
-        for c in o0[k]:
-            assert np.array_equal(o1[k][c], o0[k][c])
+        for comp in o0[k]:
+            assert np.array_equal(o1[k][comp], o0[k][comp])
     assert np.array_equal(g1, g0)
 
 
@@ -487,3 +492,18 @@ def test_ade_dispersive_fused(gpu_only):
     stepper = AdjointStepper(solver)
     assert stepper.fused and stepper.dispersive
     assert _dot_test(solver, stepper, np.random.default_rng(4)) < 1e-12
+
+
+def test_estimate_fused_step():
+    """wakis.estimate models the measured fused GPU steps (studies/gpu-perf:
+    0.45 ms plain and 0.68 ms CPML at 65^3 on an L4) and drops the CPML
+    launch floor (7.1 ms) of the CuPy path."""
+    from wakis.estimate import estimate
+
+    def step_ms(cpml, fused):
+        e = estimate((65, 65, 65), steps=1000, backend="gpu", cpml=cpml, fused=fused)
+        return 1e3 * e.step_seconds
+
+    assert abs(step_ms(False, True) - 0.45) < 0.05
+    assert abs(step_ms(True, True) - 0.68) < 0.07
+    assert step_ms(True, False) > 7.0

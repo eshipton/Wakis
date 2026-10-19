@@ -188,7 +188,9 @@ def run_adjoint(use_gpu, fused, nsys):
         "adjoint_ms_per_step": 1e3 * t_adj / sim.Nt,
         "gpu_util_pct_forward": uf.mean(),
         "gpu_util_pct_adjoint": ub.mean(),
-        "out_checksum": float(sum(np.abs(v).sum() for d in out.values() for v in d.values())),
+        "out_checksum": float(
+            sum(np.abs(v).sum() for d in out.values() for v in d.values())
+        ),
         "grad": np.asarray(grad).ravel().tolist(),
     }
 
@@ -202,8 +204,11 @@ def main():
     ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--nsys", action="store_true")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--emsolve", action="store_true",
-                    help="time solver.emsolve (CUDA graphs when fused)")
+    ap.add_argument(
+        "--emsolve",
+        action="store_true",
+        help="time solver.emsolve (CUDA graphs when fused)",
+    )
     a = ap.parse_args()
     global EMSOLVE
     EMSOLVE = a.emsolve
