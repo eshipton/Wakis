@@ -1,0 +1,1 @@
+{"case": "tfsf2d", "backend": "cpu", "fused": null, "cells": 44100, "steps": 100, "setup_s": 0.11981534957885742, "ms_per_step": 18.9469095000004, "gpu_util_pct": null, "breakdown_ms": {"sources": 0.15352532000179053, "step": 3.9939566799966997, "post": 0.0016773599963926245, "monitors": 14.8016630399934}, "checksum_E": 788.9664411087083, "omp_threads": "1"}

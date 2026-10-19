@@ -1,0 +1,10 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+78.4,48518508,300,161728.4,171360.0,4960,313313,124207.5,"void dft_acc<double>(long long, int, const long long *, const int *, const int *, const int *, const int *, const int *, const int *, const int *, const int *, const thrust::THRUST_300102_SM_890_NS::complex<double> *, const T1 *, const T1 *, const T1 *, thrust::THRUST_300102_SM_890_NS::complex<double> *)"
+9.6,5960354,100,59603.5,59568.0,56032,61376,518.6,"void fused_h<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, double, const int *, const int *, T1 *, const T1 *, const T1 *, const T1 *, const double *)"
+8.1,4984129,100,49841.3,49840.0,49248,50688,282.0,"void fused_e<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, const double *, double, const int *, const int *, T1 *, const T1 *, const T1 *, T1 *, T1 *, const double *)"
+2.2,1357793,300,4526.0,5344.0,2816,5472,1182.8,"dft_phase(int, const int *, const int *, const double *, const double *, double, double, double, double, const long long *, long long, thrust::THRUST_300102_SM_890_NS::complex<double> *)"
+0.5,321952,100,3219.5,3200.0,3104,3424,55.3,"void csr_add<double>(int, const int *, const int *, const int *, const double *, const double *, T1 *)"
+0.5,308832,100,3088.3,3072.0,2976,3232,49.1,"void csr_delta<double>(int, const int *, const int *, const int *, const double *, const double *, T1 *, T1 *)"
+0.3,166336,100,1663.4,1664.0,1632,1824,34.3,"line_h(int, double *, const double *, const double *, const double *, int, double, const double *, const long long *, long long)"
+0.3,161824,100,1618.2,1632.0,1600,1696,20.0,"line_e(int, double *, const double *, const double *, const double *, int, double, const double *, const long long *, long long)"
+0.2,119104,100,1191.0,1184.0,1184,1216,13.3,"line_series(const double *, const double *, int, double *, long long, long long, const long long *, long long)"

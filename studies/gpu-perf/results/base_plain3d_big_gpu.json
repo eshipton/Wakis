@@ -1,0 +1,1 @@
+{"case": "plain3d_big", "backend": "gpu", "fused": null, "cells": 2146689, "steps": 500, "setup_s": 4.223886013031006, "ms_per_step": 6.471891023999888, "gpu_util_pct": 99.18987341772151, "breakdown_ms": {"sources": 0.22458312800699787, "step": 6.514943927995773, "post": 0.004521287994975864, "monitors": 0.002482224000232236}, "checksum_E": 30858083576.857582, "omp_threads": "1"}

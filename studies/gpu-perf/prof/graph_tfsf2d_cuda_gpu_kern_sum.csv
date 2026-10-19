@@ -1,0 +1,27 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+75.9,46805353,102,458876.0,467968.0,5440,472160,56129.9,"void dft_acc<double>(long long, int, const long long *, const int *, const int *, const int *, const int *, const int *, const int *, const int *, const int *, const thrust::THRUST_300102_SM_890_NS::complex<double> *, const T1 *, const T1 *, const T1 *, thrust::THRUST_300102_SM_890_NS::complex<double> *)"
+11.4,7047936,100,70479.4,70656.0,55584,72160,1709.8,"void fused_h<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, double, const int *, const int *, T1 *, const T1 *, const T1 *, const T1 *, const double *)"
+9.4,5793091,100,57930.9,58016.0,48800,61120,1613.3,"void fused_e<double, double, (bool)1>(int, int, const int *, const int *, const int *, const T2 *, int, int, const T1 *, T1 *, const double *, double, const int *, const int *, T1 *, const T1 *, const T1 *, T1 *, T1 *, const double *)"
+0.9,537472,102,5269.3,5248.0,2944,5504,249.5,"dft_phase(int, const int *, const int *, const double *, const double *, double, double, double, double, const long long *, long long, thrust::THRUST_300102_SM_890_NS::complex<double> *)"
+0.5,336256,99,3396.5,3264.0,3104,3840,230.6,"void csr_add<double>(int, const int *, const int *, const int *, const double *, const double *, T1 *)"
+0.5,308416,99,3115.3,3104.0,2912,3296,77.8,"void csr_delta<double>(int, const int *, const int *, const int *, const double *, const double *, T1 *, T1 *)"
+0.3,201952,99,2039.9,2016.0,1952,2208,58.6,"line_e(int, double *, const double *, const double *, const double *, int, double, const double *, const long long *, long long)"
+0.3,198112,99,2001.1,2016.0,1856,2368,83.7,"line_h(int, double *, const double *, const double *, const double *, int, double, const double *, const long long *, long long)"
+0.3,154944,99,1565.1,1408.0,1312,2016,257.3,"step_add(long long *, long long)"
+0.2,135936,98,1387.1,1376.0,1120,2432,228.8,cupy_copy__int64_int32
+0.2,111008,99,1121.3,1088.0,1056,1344,65.3,"line_series(const double *, const double *, int, double *, long long, long long, const long long *, long long)"
+0.0,12128,2,6064.0,6064.0,5696,6432,520.4,cupy_concatenate
+0.0,9760,2,4880.0,4880.0,4512,5248,520.4,"void cusparse::csrmv_v3_kernel<std::integral_constant<bool, (bool)0>, int, int, double, double, double, double, void>(cusparse::KernelCoeffs<T7>, const T3 *, const T2 *, const T3 *, const T4 *, T2, int, int, const T5 *, T6 *, T3 *, T7 *)"
+0.0,6528,5,1305.6,1312.0,1216,1376,73.0,cupy_subtract__float64_float64_float64
+0.0,5920,4,1480.0,1472.0,1472,1504,16.0,cupy_multiply__float64_float64_float64
+0.0,4704,2,2352.0,2352.0,2336,2368,22.6,cupy_take
+0.0,4384,2,2192.0,2192.0,2144,2240,67.9,"void cusparse::<unnamed>::csr_partition_kernel<int, int>(const T1 *, T2, T1, T1, T2, T2 *, T2)"
+0.0,3840,3,1280.0,1280.0,1248,1312,32.0,cupy_add__float64_float64_float64
+0.0,3456,2,1728.0,1728.0,1728,1728,0.0,cupy_scatter_update
+0.0,3328,2,1664.0,1664.0,1632,1696,45.3,cupyx_scipy_sparse_has_canonical_format
+0.0,2912,2,1456.0,1456.0,1344,1568,158.4,cupy_cub_all_pass1
+0.0,2752,2,1376.0,1376.0,1280,1472,135.8,cupy_cub_all_pass2
+0.0,2464,2,1232.0,1232.0,1216,1248,22.6,cupy_add__float64_float_float64
+0.0,2432,2,1216.0,1216.0,1216,1216,0.0,"void cusparse::vector_scalar_multiply_kernel<(int)256, cusparse::AlignedVectorScalarMultiplyPolicy, int, double, double>(cusparse::KernelCoeff<T5>, T3, T4 *)"
+0.0,1248,1,1248.0,1248.0,1248,1248,0.0,cupy_multiply__float_float64_float64
+0.0,1088,1,1088.0,1088.0,1088,1088,0.0,cupy_fill

@@ -1561,6 +1561,16 @@ class CustomSource:
         return self.func(t)
 
 
+def _fused_source(src, arr, a):
+    """arr[idx] += w a - J_old, J_old = w a, in one GPU kernel (fused solvers)."""
+    from .gpu_fused import idx32, source_update
+
+    if getattr(src, "_idx32", None) is None:
+        src._idx32 = idx32(src.flat_idx)
+        src.J_old = src.J_old.astype(src.weights.dtype)
+    source_update(arr, src._idx32, src.weights, a, src.J_old)
+
+
 class CurrentSource:
     _field = "J"  # field whose samples carry the current: 'J' (E edges) or 'H'
 
@@ -1687,7 +1697,11 @@ class CurrentSource:
             self._set_edges(solver)
             self.is_first_update = False
 
-        J_new = self.weights * float(self.src_time(t + solver.dt / 2))
+        a = float(self.src_time(t + solver.dt / 2))
+        if getattr(solver, "fused", False):
+            _fused_source(self, solver.J.array, a)
+            return
+        J_new = self.weights * a
         solver.J.array[self.flat_idx] += J_new - self.J_old
         self.J_old = J_new
 
@@ -1770,6 +1784,10 @@ class MagneticCurrentSource(CurrentSource):
             self._set_edges(solver)
             self.is_first_update = False
 
-        M_new = self.weights * float(self.src_time(t))
+        a = float(self.src_time(t))
+        if getattr(solver, "fused", False):
+            _fused_source(self, solver.M.array, a)
+            return
+        M_new = self.weights * a
         solver.M.array[self.flat_idx] += M_new - self.J_old
         self.J_old = M_new
