@@ -180,6 +180,21 @@ parser.add_argument(
 parser.add_argument("--arm", action="store_true", help="study arm only: run + JSON")
 parser.add_argument("--out", default=None, help="JSON output of --arm")
 parser.add_argument("--no-movie", action="store_true", help="skip the GIF")
+parser.add_argument(
+    "--pml-gap",
+    type=float,
+    default=1.0,
+    help="scale of the sphere-surface-to-CPML distance (study)",
+)
+parser.add_argument("--kappa-max", type=float, default=None, help="CPML kappa_max")
+parser.add_argument(
+    "--alpha-max",
+    type=float,
+    default=None,
+    help="CPML alpha_max [S/m] (CFS shift; default: solver's)",
+)
+parser.add_argument("--n-pml", type=int, default=None, help="CPML layers")
+parser.add_argument("--t-run", type=float, default=None, help="max time [fs]")
 # In a notebook, options come from the environment, e.g.
 # WAKIS_TUTORIAL_ARGS="--quick --cpu" (used by tutorials/build.py --execute)
 NB_ARGS = os.environ.get("WAKIS_TUTORIAL_ARGS", "").split()
@@ -440,7 +455,7 @@ plt.show()
 # | CPML start | flux + $\approx$ 0.6 µm | absorbing layers ($n_\mathrm{pml}$ = 10 cells) |
 
 # %%
-N_PML = 10
+N_PML = ARGS.n_pml or 10
 
 
 def layout(resolution_per_um):
@@ -456,6 +471,8 @@ def layout(resolution_per_um):
     i_tf = max(i_in + 2, int(round(1.25e-6 / dx)))
     i_flux = i_tf + max(2, int(round(0.2e-6 / dx)))
     i_pml = i_flux + max(6, int(round(0.6e-6 / dx)))
+    # --pml-gap scales the distance sphere surface -> CPML (boxes stay put)
+    i_pml += int(round((ARGS.pml_gap - 1.0) * (i_pml * dx - R_SPHERE) / dx))
     n_half = i_pml + N_PML
     return dict(
         dx=dx, n_cells=2 * n_half, half=n_half * dx,
@@ -489,6 +506,8 @@ def make_grid(resolution_per_um, conformal, half_cells=None):
 
 
 def make_solver(grid, use_gpu=False):
+    cpml = {k: v for k, v in (("kappa_max", ARGS.kappa_max), ("alpha_max", ARGS.alpha_max))
+            if v is not None}  # fmt: skip
     return wakis.SolverFIT3D(
         grid,
         bc_low=["cpml"] * 3,
@@ -497,6 +516,7 @@ def make_solver(grid, use_gpu=False):
         use_stl=True,
         use_gpu=use_gpu,
         verbose=0,
+        **cpml,
     )
 
 
@@ -589,7 +609,7 @@ del g, s
 # components).
 
 # %%
-T_RUN = 300e-15  # maximum simulated time [s] (stops earlier once fields decay)
+T_RUN = (ARGS.t_run or 300) * 1e-15  # max simulated time [s]
 N_FREQ = 81
 X_SIM = np.linspace(X_MIN, X_MAX, N_FREQ)
 FREQS = X_SIM * c0 / (2 * np.pi * R_SPHERE)  # [Hz]
@@ -707,11 +727,45 @@ def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
     return out
 
 
+def far_field_errors(res, theta=np.linspace(0, np.pi, 181), floor_db=40.0):
+    """
+    Far-field pattern of the scattered-field box against Mie at X_SNAP:
+    RMS difference in dB of dsigma/dOmega per plane (E: phi = 0, H: phi =
+    90 deg), with both clipped at `floor_db` below the Mie maximum so that
+    pattern nulls do not dominate. Also returns the patterns [dB re r^2].
+    """
+    out = {}
+    for xs in X_SNAP:
+        j = int(np.argmin(np.abs(X_SIM - xs)))
+        E_j, _ = res["src"].incident_fields(FREQS[j : j + 1])
+        for plane, phi in (("E", 0.0), ("H", np.pi / 2)):
+            ff = res["scat"].get_farfield(theta, phi)
+            sim = (np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2) / abs(
+                E_j[0]
+            ) ** 2
+            mie = mie_differential_cross_section(
+                N_SPHERE, R_SPHERE, c0 / FREQS[j], theta, phi
+            )
+            db_s = 10 * np.log10(sim / R_SPHERE**2)
+            db_m = 10 * np.log10(mie / R_SPHERE**2)
+            lo = db_m.max() - floor_db
+            out[f"x{xs:g}_{plane}"] = dict(
+                rms_db=float(np.sqrt(np.mean((np.maximum(db_s, lo) - np.maximum(db_m, lo)) ** 2))),
+                rel_l2=float(np.linalg.norm(sim - mie) / np.linalg.norm(mie)),
+                db_sim=[round(float(v), 4) for v in db_s],
+            )  # fmt: skip
+    return out
+
+
 def summary(res):
     """JSON-serializable summary of a run (no field data)."""
     q_mie = mie_efficiencies(N_SPHERE, res["x"])[1]
     err = res["q_sca"] - q_mie
+    lay = res["lay"] if "lay" in res else layout(res["resolution"])
     return dict(
+        pml_gap_scale=ARGS.pml_gap, pml_start_m=lay["pml"], n_pml=N_PML,
+        kappa_max=ARGS.kappa_max, alpha_max=ARGS.alpha_max,
+        far_field=far_field_errors(res),
         resolution_per_um=res["resolution"],
         stopped_early=res["stopped_early"], conformal=res["conformal"],
         cells=res["cells"], steps=int(res["steps"]), dt_s=res["dt"],
@@ -784,12 +838,34 @@ plt.show()
 # TF/SF box at $x = 6$, normalized to the incident amplitude. The bright
 # lobes on the $+z$ side are the focus of the sphere acting as a ball lens.
 
+
 # %%
-comps = [res["vol"].get_field(cmp) for cmp in ("Ex", "Ey", "Ez")]
-shape = np.min([v[0].shape[1:] for v in comps], axis=0)
-mag = np.sqrt(sum(np.abs(v[0][0, : shape[0], : shape[1], : shape[2]]) ** 2
-                  for v in comps)) / abs(E_inc[1])  # fmt: skip
-coords3 = [np.asarray(cc)[:n] for cc, n in zip(comps[0][1], shape)]
+def to_cell_centres(values, comp):
+    """
+    Average one E component from its own edge positions to the cell centres.
+
+    E_x lives at (x_{i+1/2}, y_j, z_k): averaging the two neighbouring nodes
+    along y and along z moves it to (x_{i+1/2}, y_{j+1/2}, z_{k+1/2}), where
+    E_y and E_z are moved too. Combining components sampled at different
+    points (e.g. by trimming the arrays to a common shape) misaligns them by
+    half a cell and breaks the mirror symmetry of |E|.
+    """
+    a = "xyz".index(comp)
+    for d in range(3):
+        if d != a:
+            lo, hi = [slice(None)] * 3, [slice(None)] * 3
+            lo[d], hi[d] = slice(0, -1), slice(1, None)
+            values = 0.5 * (values[tuple(lo)] + values[tuple(hi)])
+    return values
+
+
+comps = {c: res["vol"].get_field("E" + c) for c in "xyz"}
+mag = np.sqrt(sum(np.abs(to_cell_centres(comps[c][0][0], c)) ** 2 for c in "xyz"))
+mag = mag / abs(E_inc[1])
+# Cell-centre coordinates: E_x samples sit at x midpoints already; its y, z
+# nodes are averaged
+coords3 = [np.asarray(comps["x"][1][0])]
+coords3 += [0.5 * (np.asarray(q)[:-1] + np.asarray(q)[1:]) for q in comps["x"][1][1:]]
 levels = (0.35, 0.55, 0.75)  # fractions of the maximum
 pl = wv.plot_isosurfaces(mag, coords3, levels=levels, scalar_label="|E|/max",
                          surfaces=[res["grid"].read_stl("sphere")])  # fmt: skip
@@ -799,6 +875,41 @@ ax.imshow(plt.imread(FIG_DIR / "isosurfaces.png"))
 ax.axis("off")
 ax.set_title(f"|E| isosurfaces at x = {X_SNAP[1]:g} (max {mag.max():.1f} |E_inc|)")
 plt.show()
+
+# %% [markdown]
+# **A symmetry check (always worth doing).** The sphere and the incidence
+# are symmetric under the mirrors $x \to -x$ and $y \to -y$, so the fields
+# must be too, with a parity per component: the incident field
+# $\hat x e^{-ikz}$ changes sign under the $x$ mirror and not under the $y$
+# mirror, which makes $E_x$ even in $x$ and $y$, $E_y$ odd in both, and
+# $E_z$ odd in $x$ and even in $y$. On a grid centred on the sphere every
+# component's own samples form a mirror-symmetric set, so the check can be
+# done on the raw data, $\|F(\mathbf r) - pF(M\mathbf r)\|/\|F\|$. Anything
+# well above the run's truncation level points at a set-up error
+# (off-centre grid or box, asymmetric mesh of the STL) or a post-processing
+# error, such as combining staggered components without interpolating them,
+# which here would give 10-20 % "asymmetry" of $|E|$.
+
+# %%
+parity = {
+    ("x", 0): 1,
+    ("y", 0): -1,
+    ("z", 0): -1,
+    ("x", 1): 1,
+    ("y", 1): -1,
+    ("z", 1): 1,
+}
+for c in "xyz":
+    F, co = comps[c][0][0], comps[c][1]
+    row = []
+    for ax_ in (0, 1):
+        assert np.allclose(co[ax_], -np.asarray(co[ax_])[::-1]), "samples not symmetric"
+        G = np.flip(F, axis=ax_)
+        row.append(np.linalg.norm(F - parity[(c, ax_)] * G) / np.linalg.norm(F))
+    print(f"E{c}: mirror x {row[0]:.1e}, mirror y {row[1]:.1e}")
+for ax_, name in ((0, "x"), (1, "y")):
+    print(f"|E| at the cell centres: mirror {name} "
+          f"{np.linalg.norm(mag - np.flip(mag, ax_)) / np.linalg.norm(mag):.1e}")  # fmt: skip
 
 # %% [markdown]
 # And the time domain: $E_x$ on the $y = 0$ plane as the pulse sweeps
@@ -883,7 +994,13 @@ print(f"relative RMS error {info['rel_rms_error']:.2%}, max |ΔQ| "
 #   \text{Mie: } \frac{|S_2|^2\cos^2\phi + |S_1|^2\sin^2\phi}{k^2},$$
 #
 # with $\mathbf F = r e^{ikr}\mathbf E_\mathrm{far}$ the pattern. We compare
-# the E-plane ($\phi = 0$, the $xz$ plane) and the H-plane ($\phi = 90°$).
+# the E-plane ($\phi = 0$, the $xz$ plane, $|S_2|^2$) and the H-plane
+# ($\phi = 90°$, the $yz$ plane, $|S_1|^2$). **How to read the polar plots:**
+# each panel is split, the left half shows the E-plane and the right half
+# the H-plane, both for $\theta = 0 \dots 180°$ from the forward direction
+# (top). The two halves differ because the two planes scatter differently
+# ($S_2 \ne S_1$ away from $\theta = 0, 180°$); each plane on its own is
+# symmetric in $\pm\theta$, so plotting it twice would add nothing.
 
 # %%
 theta = np.linspace(0, np.pi, 181)
@@ -915,6 +1032,9 @@ for ax, xs in zip(axes, X_SNAP):
     ax.text(np.radians(60), top + 12, "E-plane", color="#D55E00", fontsize=8)
     ax.text(np.radians(-80), top + 14, "H-plane", color="#0072B2", fontsize=8)
 axes[0].legend(fontsize=7, loc="lower left", bbox_to_anchor=(-0.3, -0.2))
+fig.suptitle("left half: E-plane (xz, $|S_2|^2$)   ·   right half: H-plane (yz, "
+             "$|S_1|^2$)   ·   each plane is symmetric in $\\pm\\theta$",
+             fontsize=10, y=1.02)  # fmt: skip
 fig.tight_layout()
 savefig(fig, "far_field_vs_mie.png")
 plt.show()
