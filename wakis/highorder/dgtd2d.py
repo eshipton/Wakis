@@ -89,6 +89,22 @@ def _ddt(f, t, dt):
     return (8 * (f(t + dt) - f(t - dt)) - (f(t + 2 * dt) - f(t - 2 * dt))) / (12 * dt)
 
 
+def _source_derivative(src, t, dt_fd):
+    """ds/dt: analytic for `wakis.sources.GaussianSource`, else a 4th-order
+    central difference."""
+    from wakis.sources import GaussianSource
+
+    if type(src) is GaussianSource:
+        tau = t - src.t0
+        w = 2 * np.pi * src.frequency
+        s2 = src.sigma_t**2
+        g = np.exp(-(tau**2) / (2 * s2))
+        d = g * (-2 * tau / s2 * np.cos(w * tau)
+                 + (tau**2 / (w * s2**2) - w - 1 / (w * s2)) * np.sin(w * tau))  # fmt: skip
+        return np.where((t >= src.start_time) & (t <= src.end_time), d, 0.0)
+    return _ddt(lambda q: np.asarray(src(q)), t, dt_fd)
+
+
 class DGTD2D:
     """
     Nodal DGTD solver on a `wakis.highorder.mesh2d.TriMesh`.
@@ -118,6 +134,9 @@ class DGTD2D:
         polygonal interfaces, for studies of the geometric error).
     cfl : float
         Fraction of the RK stability limit (from the spectral radius).
+    background_eps_r : float
+        Relative permittivity of the (lossless) background: tags missing from
+        `materials`, the medium of the incident wave and of the PML.
     """
 
     def __init__(
@@ -133,6 +152,7 @@ class DGTD2D:
         cfl=0.8,
         dt=None,
         verbose=False,
+        background_eps_r=1.0,
     ):
         t0 = time.time()
         self.mesh, self.p = mesh, int(p)
@@ -144,6 +164,7 @@ class DGTD2D:
         self.ref = T
         Np, Nfp, K = T.Np, T.Nfp, mesh.n_cells
         self.Np, self.Nfp, self.K = Np, Nfp, K
+        self.eps_b = float(background_eps_r)
         self._setup_materials(materials or {})
         self._setup_geometry()
         self._setup_connectivity()
@@ -169,7 +190,7 @@ class DGTD2D:
         from wakis.dispersive import DispersiveMaterial
 
         K = self.K
-        eps = np.ones(K)
+        eps = np.full(K, self.eps_b)
         mu = np.ones(K)
         self.disp_mats = {}
         for tag, m in materials.items():
@@ -185,10 +206,10 @@ class DGTD2D:
         self.eps_r, self.mu_r = eps, mu
         if self.pol == "TM":
             self.a, self.b = EPS0 * eps, MU0 * mu
-            self.a0, self.b0 = EPS0, MU0
+            self.a0, self.b0 = EPS0 * self.eps_b, MU0
         else:
             self.a, self.b = MU0 * mu, EPS0 * eps
-            self.a0, self.b0 = MU0, EPS0
+            self.a0, self.b0 = MU0, EPS0 * self.eps_b
         self.Z = np.sqrt(self.b / self.a)
         self.Y = 1 / self.Z
 
@@ -375,8 +396,8 @@ class DGTD2D:
         kp = np.flatnonzero((sx.max(0) > 0) | (sy.max(0) > 0))
         if np.any(self.curved[kp]):
             raise ValueError("curved elements inside the PML")
-        if np.any(self.eps_r[kp] != 1) or np.any(self.mu_r[kp] != 1):
-            raise ValueError("PML must be in vacuum background")
+        if np.any(self.eps_r[kp] != self.eps_b) or np.any(self.mu_r[kp] != 1):
+            raise ValueError("PML must be in the background medium")
         alpha = pml.get("alpha", 5e13)  # CFS shift [1/s]
         self.pml = dict(k=kp, sx=sx[:, kp], sy=sy[:, kp], d=d, smax=smax, alpha=alpha)
 
@@ -425,27 +446,28 @@ class DGTD2D:
     # ------------------------------------------------------------ sources
     def add_plane_wave(self, src_time, direction=(1.0, 0.0), amplitude=1.0):
         """
-        Plane wave in the scattered-field formulation (vacuum background).
+        Plane wave in the scattered-field formulation (background medium).
 
         u_inc = A s(t - (k.r - s0) / c) with s0 the smallest k.r over the
         nodes of non-background elements; A = amplitude (TM, Ez [V/m]) or
-        amplitude / eta0 (TE, Hz [A/m]). After this call the state holds the
+        amplitude / eta_b (TE, Hz [A/m]). After this call the state holds the
         scattered field.
         """
         k = np.asarray(direction, float)
         k = k / np.linalg.norm(k)
-        scat = (self.eps_r != 1) | (self.mu_r != 1)
+        scat = (self.eps_r != self.eps_b) | (self.mu_r != 1)
         for d in self.disp:
             scat[d["k"]] = True
         ks = np.flatnonzero(scat)
         pos = (self.x * k[0] + self.y * k[1])[:, ks]
         s0 = float(pos.min()) if ks.size else 0.0
-        amp = amplitude if self.pol == "TM" else amplitude / np.sqrt(MU0 / EPS0)
+        eta_b = np.sqrt(MU0 / (EPS0 * self.eps_b))
+        amp = amplitude if self.pol == "TM" else amplitude / eta_b
         Zg0 = np.sqrt(self.b0 / self.a0)
         ka = self.a[ks] - self.a0
         kb = self.b[ks] - self.b0
         self.plane_wave = dict(
-            s=src_time, k=k, s0=s0, amp=amp, ks=ks, pos=pos, c=C0,
+            s=src_time, k=k, s0=s0, amp=amp, ks=ks, pos=pos, c=C0 / np.sqrt(self.eps_b),
             ca=-(ka / self.a[ks]), cb=-(kb / self.b[ks]),
             vdir=np.array([k[1], -k[0]]) / Zg0,
             dt_fd=1e-3 / max(getattr(src_time, "frequency", C0 / 1e-6), 1.0),
@@ -461,7 +483,7 @@ class DGTD2D:
         pw = self.plane_wave
         tau = t - (pw["pos"] - pw["s0"]) / pw["c"]
         if deriv:
-            return pw["amp"] * _ddt(lambda q: np.asarray(pw["s"](q)), tau, pw["dt_fd"])
+            return pw["amp"] * _source_derivative(pw["s"], tau, pw["dt_fd"])
         return pw["amp"] * np.asarray(pw["s"](tau))
 
     def incident_field(self, points, t):

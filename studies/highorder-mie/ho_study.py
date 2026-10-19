@@ -74,7 +74,16 @@ def arm_spec(arm):
             float(cfl) / 100 if cfl else 0.95)
 
 
-def tasks():
+PROBE = [("dg4", "TM", 2), ("dg4", "TE", 2), ("dg3", "TM", 2), ("dg4-compact", "TE", 2),
+         ("dg4-compact", "TE", 3), ("dg5-compact", "TM", 1.5), ("dg2-compact", "TM", 4),
+         ("fd24", "TM", 14), ("fd24", "TM", 20), ("fd24", "TM", 28), ("fd24-c30", "TM", 20),
+         ("fd24rk", "TM", 14), ("fd24rk", "TE", 14), ("fd22", "TM", 20),
+         ("dg4-straight", "TE", 2), ("dg3-compact", "TM", 3)]  # fmt: skip
+
+
+def tasks(name="main"):
+    if name == "probe":
+        return list(PROBE)
     out = []
     for p, rs in DG_RES.items():
         for res in rs:
@@ -224,9 +233,10 @@ def main():
     ap.add_argument("--outdir", default=str(HERE / "data"))
     ap.add_argument("--t-run", type=float, default=1000.0, help="fs")
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--tasklist", default="main")
     a = ap.parse_args()
     S.T_RUN = a.t_run * 1e-15
-    tl = tasks()
+    tl = tasks(a.tasklist)
     if a.mode == "list":
         for i, t in enumerate(tl):
             print(i, *t)
