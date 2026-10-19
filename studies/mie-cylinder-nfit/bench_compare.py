@@ -20,6 +20,7 @@ FIG = HERE / "figures"
 DATA = HERE / "data"
 RENAME = {"ogrid": "nfit-ogrid", "ogrid-r0.5": "nfit-ogrid-r0.5", "ogrid-boxed": "nfit-boxed",
           "ogrid-r0.5-o2": "nfit-ogrid-r0.5-o2"}
+SHOW = ("tri-uniform", "tri-graded", "cart-conformal-all-graded", "cart-staircase-graded")
 ROOT = None  # local mirror of the store (set by --root)
 TARGETS = {
     "B2": ("q_ext_nrms", (0.01, 0.001)),
@@ -92,6 +93,8 @@ def compare():
             lines.append(f"| {arm} | " + " | ".join(fmt(v) for v in vals) + f" | {100 * e[ok].min():.3g} % |")
             o = np.argsort(u)
             mine = arm.startswith("nfit")
+            if not (mine or arm in SHOW):
+                continue
             ax.loglog(u[o], 100 * e[o], marker="o" if mine else ".", lw=1.8 if mine else 0.8,
                       label=f"Wakis FIT ({arm})")  # fmt: skip
         for t in targets:
@@ -103,7 +106,8 @@ def compare():
         ax.legend(fontsize=6)
         lines.append("")
     axs.ravel()[-1].axis("off")
-    fig.suptitle("Shared benchmark store: error vs unknowns (all arms; nfit-* = this work)", fontsize=10)
+    fig.suptitle("Shared benchmark store: error vs unknowns (nfit-* = this work; baselines: triangles, Cartesian; "
+             "all arms in data/benchmarks_summary.md)", fontsize=10)
     fig.savefig(FIG / "f_benchmarks_B2_B3.png")
     (DATA / "benchmarks_summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
