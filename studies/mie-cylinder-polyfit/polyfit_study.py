@@ -183,11 +183,11 @@ def main():
         for i, t in enumerate(tl):
             print(i, *t)
         return
-    mine = (
-        [(x.split(":")[0], x.split(":")[1], int(x.split(":")[2])) for x in a.only]
-        if a.only
-        else tl[a.shard :: a.nshards]
-    )
+    if a.only:
+        sel = [(x.split(":")[0], x.split(":")[1], int(x.split(":")[2])) for x in a.only]
+        mine = sel[a.shard :: a.nshards]
+    else:
+        mine = tl[a.shard :: a.nshards]
     Path(a.outdir).mkdir(parents=True, exist_ok=True)
     for arm, pol, res in mine:
         out = run_task(arm, pol, res, a.t_run * 1e-15)

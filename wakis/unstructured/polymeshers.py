@@ -67,6 +67,8 @@ def hybrid_circles_mesh(
     smooth=4,
     pml_cells=0,
     outer_radius=None,
+    gap_cells=None,
+    h_min=None,
 ):
     """
     Hybrid square/triangle mesh of circular scatterers in a square domain.
@@ -104,6 +106,13 @@ def hybrid_circles_mesh(
         squares stop about 1.5 h_out inside it and a thin conforming
         triangle annulus (size h_out) reaches the circular boundary (for
         ``bc='abc'``, the same domain as the triangle arms).
+    gap_cells : float, optional
+        Refine narrow gaps between scatterers: the size is limited to
+        max(h_min, w / gap_cells), with w the sum of the distances to the two
+        nearest interfaces (the local gap width). Rings are then graded along
+        their arc length and thinned to the local size.
+    h_min : float, optional
+        Smallest size of the gap refinement (default h_in / 8).
 
     Returns
     -------
@@ -124,6 +133,18 @@ def hybrid_circles_mesh(
         r = np.linalg.norm(P[:, None, :] - C[None], axis=2)
         d = np.abs(r - R[None])
         return d.min(1), d.argmin(1), r
+
+    gap = gap_cells is not None and len(R) > 1
+    h_min = h_in / 8 if h_min is None else h_min
+
+    def gap_size(P):
+        r = np.linalg.norm(P[:, None, :] - C[None], axis=2)
+        d = np.sort(np.abs(r - R[None]), axis=1)
+        return np.maximum(h_min, (d[:, 0] + d[:, 1]) / gap_cells)
+
+    def size_at(P):
+        h = size(iface_dist(P)[0])
+        return np.minimum(h, gap_size(P)) if gap else h
 
     # ---- outer squares
     L = h_out * np.ceil(half_width / h_out - 1e-9)
@@ -157,6 +178,9 @@ def hybrid_circles_mesh(
                 [np.hypot(gx + dx, gy + dy) for dx in (0, h_in) for dy in (0, h_in)], 1
             )
             ok = corners.max(1) < rr - inner_band
+            if gap:
+                cen_sq = np.stack([ccx + gx + h_in / 2, ccy + gy + h_in / 2], 1)
+                ok &= gap_size(cen_sq) >= h_in * growth**4
             inner.append((ccx + gx[ok], ccy + gy[ok]))
 
     # ---- assemble square nodes
@@ -200,6 +224,12 @@ def hybrid_circles_mesh(
     fixed = [sq_nodes]
     iface = []
     for (ccx, ccy), rr in zip(C, R):
+        if gap:
+            P = _graded_ring((ccx, ccy), rr, size_at, h_min)
+            x, y = (P - [ccx, ccy]).T
+            area = 0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
+            iface.append([ccx, ccy] + (P - [ccx, ccy]) * np.sqrt(np.pi * rr**2 / area))
+            continue
         n = max(8, int(np.ceil(2 * np.pi * rr / h_in)))
         rho = rr * np.sqrt(2 * np.pi / (n * np.sin(2 * np.pi / n)))  # area-preserving
         iface.append(_ring_pts((ccx, ccy), rho, n))
@@ -219,21 +249,28 @@ def hybrid_circles_mesh(
             r, k = rr, 0
             while True:
                 d = abs(r - rr)
-                step = np.sqrt(3) / 2 * float(size(d + 0.5 * size(d)))
+                if gap:
+                    ring = _ring_pts((ccx, ccy), r + sgn * 0.5 * size(d), 512)
+                    step = np.sqrt(3) / 2 * float(size_at(ring).min())
+                else:
+                    step = np.sqrt(3) / 2 * float(size(d + 0.5 * size(d)))
                 r = r + sgn * step
                 k += 1
                 if r <= 0.5 * h_in:
                     break
                 if abs(r - rr) > d_patch + 2 * h_out and (sgn > 0 or inner_squares):
                     break
-                h_loc = float(size(abs(r - rr)))
-                n = max(6, int(np.ceil(2 * np.pi * r / h_loc)))
-                P = _ring_pts((ccx, ccy), r, n, phase=0.5 * (k % 2))
+                if gap:
+                    P = _graded_ring((ccx, ccy), r, size_at, h_min, phase=0.5 * (k % 2))
+                else:
+                    h_loc = float(size(abs(r - rr)))
+                    n = max(6, int(np.ceil(2 * np.pi * r / h_loc)))
+                    P = _ring_pts((ccx, ccy), r, n, phase=0.5 * (k % 2))
                 dI, own, _ = iface_dist(P)
                 P = P[own == ci]
                 if len(P) == 0:
                     continue
-                hP = size(dI[own == ci])
+                hP = size_at(P) if gap else size(dI[own == ci])
                 # outside the circumcircles of the squares (keeps square edges Delaunay)
                 dd, jj = sq_tree.query(P)
                 ok = dd > 0.72 * sq_size[jj] + 0.3 * hP
@@ -298,7 +335,7 @@ def hybrid_circles_mesh(
             np.sign(dI_old[2] - R[None]) == np.sign(dI_new[2] - R[None]), axis=1
         )
         dd, jj = sq_tree.query(new)
-        ok = same_side & (dd > 0.72 * sq_size[jj] + 0.2 * size(dI_new[0]))
+        ok = same_side & (dd > 0.72 * sq_size[jj] + 0.2 * size_at(new))
         if outer_radius is not None:
             ok &= np.hypot(*new.T) < outer_radius - 0.3 * h_out
         pts[mv[ok]] = new[ok]
@@ -327,6 +364,19 @@ def hybrid_circles_mesh(
         n_square_nodes=int(n_sq_nodes),
     )
     return mesh, info
+
+
+def _graded_ring(center, r, size_at, h_min, phase=0.0):
+    """Points on a circle with arc-length spacing following size_at(P)."""
+    m = max(512, int(np.ceil(4 * np.pi * r / h_min)))
+    th = 2 * np.pi * np.arange(m) / m
+    P = np.asarray(center) + r * np.stack([np.cos(th), np.sin(th)], 1)
+    dens = 1 / size_at(P)
+    cum = np.concatenate([[0.0], np.cumsum(dens * 2 * np.pi * r / m)])
+    n = max(6, int(np.ceil(cum[-1])))
+    t = (np.arange(n) + phase) * cum[-1] / n
+    th_k = np.interp(t, cum, np.concatenate([th, [2 * np.pi]]))
+    return np.asarray(center) + r * np.stack([np.cos(th_k), np.sin(th_k)], 1)
 
 
 def _square_membership(nodes, cells, size):
