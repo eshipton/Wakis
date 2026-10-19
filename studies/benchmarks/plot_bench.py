@@ -29,7 +29,7 @@ LABEL = {
     "cart-conformal-all-graded": "Cartesian conformal, graded",
     "tri-uniform": "triangles, uniform",
     "tri-graded": "triangles, graded",
-    "cart-conformal-pec-graded": "Cartesian conformal PEC (mask bug), graded",
+    "cart-conformal-pec-graded": "Cartesian conformal PEC (fixed), graded",
     "cart-staircase-edges-graded": "Cartesian edge-wise staircase, graded",
     "cart-staircase-graded@B4": "Cartesian legacy STL staircase, graded",
     "cart-conformal-pec-graded-bigdomain": "conformal PEC, 2x domain",

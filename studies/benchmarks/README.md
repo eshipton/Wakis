@@ -149,6 +149,22 @@ Cost to target, as unknowns / work:
 
 ## B4: centre-fed dipole (Cartesian 3D)
 
+**Headline: conformal PEC, after the mask fix.** These runs use the B4 arm `cart-conformal-pec-graded`, merged with develop 8d58fec, on L4 GPUs (job bench-b4conf-20261019-1719, `data/B4conf`).
+
+| h_t | h_z | f_res | R_in | directivity | Z_in NRMS |
+|---|---|---|---|---|---|
+| a | 1 mm | −0.048 % | −0.79 % | 0.11 % | 1.3 % |
+| a/1.5 | 1 mm | −0.097 % | −1.00 % | 0.05 % | 1.3 % |
+| a/2 | 1 mm | −0.128 % | −1.17 % | 0.10 % | 1.3 % |
+| a/3 | 0.5 mm | −0.55 % | −1.41 % | 0.03 % | 1.6 % |
+
+- **The 1 % f_res target is met from the coarsest rung.** Conformal PEC agrees with the Hallén MoM and NEC-2 references (which agree with each other to 0.04 %) within 0.05–0.13 % at h_z = 1 mm.
+- **It does not converge yet.** The error drifts away as the mesh refines and reaches −0.55 % at h_t = a/3, where h_z = 0.5 mm puts two cells in the single-line port gap. The axis-port feed error measured below is the likely cause; conformal PEC with a sheet port is the next test.
+- **R_in is 0.8–1.4 % low.**
+
+The legacy-mask and edge-wise staircase results below are kept as failure modes and baselines; the pre-fix conformal row is superseded.
+
+
 ![](figures/b4_dipole_zin.png)
 **(a)** Z_in(f): Hallén MoM reference (lines) vs the finest run of each Cartesian arm (markers).
 **(b)** Relative errors of f_res and R_res vs the transverse cell h_t.
@@ -166,7 +182,7 @@ Cost to target, as unknowns / work:
 | edge-wise staircase | a/3 | 0.125 mm | 1.67 % | 3.5 % | 0.03 % |
 | edge-wise, 2× domain / λ/40 outer mesh | a/2 | 1 mm | 3.59 % / 3.62 % | 5.5 % / 5.6 % | 6 % / 0.3 % |
 | legacy STL staircase | a, a/1.5 | 1 mm | 6.2 %, 5.2 % | 8.6 %, 7.7 % | 0.4 % |
-| conformal PEC (STL; **mask bug**) | a, a/1.5, a/2 | 1 mm | 6.0 %, 4.5 %, 4.0 % | 7.7 %, 5.8 %, 5.2 % | 0.3 % |
+| conformal PEC, before the fix (superseded; see the headline table) | a, a/1.5, a/2 | 1 mm | 6.0 %, 4.5 %, 4.0 % | 7.7 %, 5.8 %, 5.2 % | 0.3 % |
 
 **Reading the ladder:**
 - **The h_z dependence is first order down to 0.5 mm.** Halving the axial (gap) cell from 1 mm to 0.5 mm halves the error (3.6 % → 1.7 %). Below 0.5 mm the edge-wise staircase stops changing:
