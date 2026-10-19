@@ -231,8 +231,6 @@ def subtri_circles_mesh(
         raise RuntimeError("degenerate hole/kept partition in subtri_circles_mesh")
 
     hole_nodes = np.unique(qmesh.cell_nodes[hole])
-    kept_nodes = np.unique(qmesh.cell_nodes[kept])
-    hole_bnd = np.intersect1d(hole_nodes, kept_nodes)
 
     # Assert no non-finest leaf touches the hole closure and no hole-boundary
     # node is a hanging node.
@@ -264,8 +262,11 @@ def subtri_circles_mesh(
     sq_size = x1[kept] - x0[kept]
     sq_tree = cKDTree(sq_centers)
 
-    # Triangle patch points: fixed hole-boundary nodes + fixed interface rings
-    bnd_pts = qmesh.nodes[hole_bnd]
+    # Triangle patch points: fixed boundary-square nodes + fixed interface rings.
+    # Including all 4 corners of every kept square touching the hole guarantees
+    # empty circumcircles on those squares so every hole-boundary edge is Delaunay.
+    bnd_nodes = np.unique(sq_cells[kept_touches_hole])
+    bnd_pts = qmesh.nodes[bnd_nodes]
     iface = []
     for (ccx, ccy), rr in zip(C, R):
         if gap:
@@ -333,8 +334,13 @@ def subtri_circles_mesh(
 
     def triangulate(pts_arr):
         tri_all = Delaunay(pts_arr).simplices
-        cen = pts_arr[tri_all].mean(axis=1)
-        return tri_all[in_hole(cen)]
+        v = pts_arr[tri_all]
+        area2 = np.abs(
+            (v[:, 1, 0] - v[:, 0, 0]) * (v[:, 2, 1] - v[:, 0, 1])
+            - (v[:, 1, 1] - v[:, 0, 1]) * (v[:, 2, 0] - v[:, 0, 0])
+        )
+        cen = v.mean(axis=1)
+        return tri_all[(area2 > 1e-12 * h_min**2) & in_hole(cen)]
 
     tri = triangulate(pts)
     for _ in range(smooth):
@@ -366,7 +372,7 @@ def subtri_circles_mesh(
     nodes_raw = np.vstack([qmesh.nodes, new_tri_pts])
 
     tri_map = np.empty(len(pts), dtype=np.int64)
-    tri_map[:n_bnd] = hole_bnd
+    tri_map[:n_bnd] = bnd_nodes
     tri_map[n_bnd:] = n_q + np.arange(n_tri_new, dtype=np.int64)
     tri_global = tri_map[tri]
 

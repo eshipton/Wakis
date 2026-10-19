@@ -239,7 +239,9 @@ class PolygonFIT2D:
         if lts is not None:
             self._setup_lts(lts, lam)
         if dispersive:
-            check_dispersive_stability([m for m, _ in dispersive], self.dt, self.courant)
+            check_dispersive_stability(
+                [m for m, _ in dispersive], self.dt, self.courant
+            )
 
         groups = []
         if polarization == "TM":
@@ -273,11 +275,14 @@ class PolygonFIT2D:
         """Return (S matrix or None, diagonal stiffness or None)."""
         mesh = self.mesh
         if self.hodge == "orthogonal":
-            stiff = np.bincount(
-                mesh.corner_edge,
-                mesh.corner_h * w_cell[mesh.corner_cell],
-                minlength=mesh.n_edges,
-            ) / mesh.edge_length
+            stiff = (
+                np.bincount(
+                    mesh.corner_edge,
+                    mesh.corner_h * w_cell[mesh.corner_cell],
+                    minlength=mesh.n_edges,
+                )
+                / mesh.edge_length
+            )
             return None, stiff
         rows, cols, vals = [], [], []
         for i, M in enumerate(mesh.mfd_local_matrices()):
@@ -352,13 +357,27 @@ class PolygonFIT2D:
     # ------------------------------------------------------------ LTS
     def _setup_lts(self, opts, lam):
         """Partition the nodes and build the stabilized two-level LTS."""
-        from .lts import build_lts
+        from .lts import build_lts, gershgorin_rate
 
         opts = {"p": opts} if np.isscalar(opts) else dict(opts)
         if any(m.debye_poles for m, _ in self.dispersive):
             raise NotImplementedError("LTS with Debye poles")
         p = int(opts.pop("p", 2))
         dt_c = opts.pop("dt", None) or p * self.dt
+        if opts.get("fine") is None and (
+            self._pml is not None or np.any(self.loss != 0)
+        ):
+            rate = gershgorin_rate(self.K, self.mass)
+            rate = rate * (lam / rate.max())
+            theta = opts.get("theta", 1.0)
+            if self._pml is not None and np.any(
+                rate[self._pml["idx"]] * dt_c**2 > 4 * theta
+            ):
+                raise ValueError("LTS: fine nodes inside or next to the PML layer")
+            if np.any(rate[self.loss != 0] * dt_c**2 > 4 * theta):
+                raise ValueError(
+                    "LTS: fine nodes or buffer cannot have loss or touch lossy edges"
+                )
         lts, info = build_lts(self.K, self.mass, dt_c, p=p, lam=lam, **opts)
         near = np.r_[lts.F, lts.C]
         G_F = self.G[:, lts.F].tocsr()
@@ -550,7 +569,9 @@ class PolygonFIT2D:
             disp |= sel_d
         scat = ~np.isclose(self.eps_r, eps_b) | disp | (self.sigma > 0)
         sel = scat[mesh.corner_cell]
-        s0 = float((mesh.nodes[mesh.corner_node[sel]] @ k).min()) if np.any(sel) else 0.0
+        s0 = (
+            float((mesh.nodes[mesh.corner_node[sel]] @ k).min()) if np.any(sel) else 0.0
+        )
         pw = dict(
             s=src_time, k=k, amp=float(amplitude), eps_b=eps_b, s0=s0,
             v=c_0 / np.sqrt(eps_b), eta=ETA_0 / np.sqrt(eps_b),
@@ -567,7 +588,9 @@ class PolygonFIT2D:
             else:
                 w = self.mass - eps_0 * eps_b * area_f
                 idx = np.flatnonzero(np.abs(w) > 1e-12 * np.abs(self.mass).max())
-                pw.update(total=False, idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k)
+                pw.update(
+                    total=False, idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k
+                )
         else:
             p_vec = np.array([-k[1], k[0]])
             for g_, (mat, sel_d) in zip(self._te_groups, self.dispersive):
@@ -582,7 +605,11 @@ class PolygonFIT2D:
                 g_["pos"] = (0.5 * (foot + mesh.dual_point[C])) @ k
                 g_["eps_b"] = eps_b
             sel = sel & ~disp[mesh.corner_cell]
-            e, C, sg = mesh.corner_edge[sel], mesh.corner_cell[sel], mesh.corner_sign[sel]
+            e, C, sg = (
+                mesh.corner_edge[sel],
+                mesh.corner_cell[sel],
+                mesh.corner_sign[sel],
+            )
             if self.hodge == "orthogonal":
                 c = mesh.dual_point[C]
                 X0 = mesh.nodes[mesh.edges[e, 0]]
@@ -614,7 +641,9 @@ class PolygonFIT2D:
         r2 = np.concatenate([rows, rows])
         c2 = np.concatenate([j, j + 1])
         v2 = pw["amp"] * np.concatenate([wgt * (1 - f), wgt * f])
-        self._pw_W = sp.csr_matrix((v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1))
+        self._pw_W = sp.csr_matrix(
+            (v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1)
+        )
         self._pw_sub = sub
         self._pw_S = np.zeros(0)
         self._pw_cache = None
@@ -689,7 +718,11 @@ class PolygonFIT2D:
             if pw is not None and self._pw_W is not None:
                 v_new = self._pw_values(self.n + 1)
                 c = self._pw_cache
-                v_old = c[1] if c is not None and c[0] == self.n else self._pw_values(self.n)
+                v_old = (
+                    c[1]
+                    if c is not None and c[0] == self.n
+                    else self._pw_values(self.n)
+                )
                 self._pw_cache = (self.n + 1, v_new)
                 r -= v_new - v_old
             elif pw is not None:
