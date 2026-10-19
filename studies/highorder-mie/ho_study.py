@@ -75,7 +75,9 @@ def arm_spec(arm):
             geom = "cc"
         if "straight" in parts:
             geom, curved = "compact", False
-        return ("dg", p, geom, curved)
+        cfl = next((int(q[1:]) / 100 for q in parts if q.startswith("c") and q[1:].isdigit()), 0.8)
+        pml = "nopml" not in parts
+        return ("dg", p, geom, curved, cfl, pml)
     base, _, cfl = arm.partition("-c")
     return ("fd", {"fd22": 2, "fd24": 4, "fd24rk": 4}[base], base == "fd24rk",
             float(cfl) / 100 if cfl else 0.95)
@@ -145,6 +147,9 @@ def tasks(name="main"):
     if name == "wref":  # converged windowed references (same geometry/window as baselines)
         return [(f"dg5-{g}", pol, res) for g in ("std", "cc") for res in (3, 4)
                 for pol in ("TM", "TE")] + [("dg5", pol, 3) for pol in ("TM", "TE")]  # fmt: skip
+    if name == "stab":  # late-time growth of fine box (PML) runs: dt or PML?
+        return [("dg4-c50", "TM", 4), ("dg4-nopml", "TM", 4), ("dg3-c50", "TM", 6),
+                ("dg3-nopml", "TM", 6), ("dg4-c65", "TM", 4)]  # fmt: skip
     if name == "long":  # run-window (ring-down truncation) check, use --t-run 3000
         return [("dg4-compact", "TE", 3), ("dg4-compact", "TE", 4), ("dg4-compact", "TM", 3),
                 ("dg5-compact", "TE", 3), ("dg4-compact", "TE", 6), ("dg5-compact", "TM", 3)]
@@ -187,7 +192,7 @@ def dg_size(h_in):
     return size
 
 
-def run_dg(p, geom, curved, pol, res, cfl=0.8):
+def run_dg(p, geom, curved, pol, res, cfl=0.8, use_pml=True):
     from wakis.cylinder_harmonics import circle_points
     from wakis.highorder import DGTD2D, circles_mesh
 
@@ -200,7 +205,8 @@ def run_dg(p, geom, curved, pol, res, cfl=0.8):
         mesh = circles_mesh([(0, 0, A)], dg_size(h), box=(-H, H, -H, H))
         solver = DGTD2D(
             mesh, p, {1: dg_material()}, polarization=pol, bc="abc",
-            pml=dict(thickness=g["pml"], R0=1e-6, order=3), curved=curved, cfl=cfl,
+            pml=dict(thickness=g["pml"], R0=1e-6, order=3) if use_pml else None,
+            curved=curved, cfl=cfl,
         )  # fmt: skip
     else:
         mesh = circles_mesh([(0, 0, A)], dg_size(h), outer_circle=(0, 0, g["r_out"]))
@@ -282,7 +288,7 @@ def run_task(arm, pol, res):
     t0 = time.time()
     try:
         if spec[0] == "dg":
-            out = run_dg(spec[1], spec[2], spec[3], pol, res)
+            out = run_dg(spec[1], spec[2], spec[3], pol, res, spec[4], spec[5])
         else:
             out = run_fd(spec[1], spec[2], pol, res, spec[3])
     except Exception as e:
