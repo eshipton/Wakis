@@ -130,3 +130,7 @@ def test_peak_metrics():
     assert np.isclose(M.interp_to_target([1, 10, 100], [0.1, 0.01, 0.001], 0.0316),
                       10 ** 0.5, rtol=1e-2)  # fmt: skip
     assert np.isnan(M.interp_to_target([1, 10], [0.1, 0.05], 0.01))
+    # a lucky coarse point does not count: the error must stay below target
+    assert np.isclose(M.interp_to_target([1, 10, 100], [0.005, 0.1, 0.001], 0.01),
+                      10 * 10 ** 0.5, rtol=1e-2)  # fmt: skip
+    assert M.interp_to_target([1, 10], [0.001, 0.0005], 0.01) == -1.0

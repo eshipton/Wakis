@@ -311,8 +311,8 @@ def _b2(metal, pol):
         n_background=nb, polarization=pol, direction=0.0, wavelengths=lam,
         circles=(50 * NM, 60 * NM, 70 * NM), n_points=64, r_absorber=90 * NM,
         t_run=80e-15, norm_width=2 * a, deembed=True,
-        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.01, 0.005),
-                     q_ext_height=(0.05, 0.02), q_ext_fwhm=(0.05, 0.02)),
+        targets=dict(q_ext_nrms=(0.02, 0.01, 0.005), q_ext_lam_peak=(0.005, 0.002),
+                     q_ext_height=(0.02, 0.01), q_ext_fwhm=(0.05, 0.02)),
         primary="q_ext_nrms",
     )  # fmt: skip
 
@@ -334,8 +334,8 @@ def _b3(gap_nm):
         wavelengths=np.linspace(500, 1000, 101) * NM,
         circles=(65 * NM, 80 * NM, 95 * NM), n_points=64, r_absorber=110 * NM,
         t_run=100e-15, norm_width=4 * a, gap_point=(0.0, 0.0), deembed=False,
-        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.01, 0.005),
-                     enh_peak=(0.05, 0.02), enh_lam=(0.01, 0.005)),
+        targets=dict(q_ext_nrms=(0.02, 0.01), q_ext_lam_peak=(0.005, 0.002),
+                     enh_peak=(0.05, 0.02), enh_lam=(0.005, 0.002)),
         primary="enh_peak",
     )  # fmt: skip
 
