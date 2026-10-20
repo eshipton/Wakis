@@ -1520,7 +1520,7 @@ print("B ok")
 ```
 
 - **Why normalize by `pulse.fourier_transform(freqs)`?**  
-  When you excite a linear structure with `pulse = GaussianSource(f0, df)` and record a spectrum $F(f)$ with any Wakis monitor, dividing $F(f)$ by $S(f) = \text{pulse.fourier\_transform}(f)$ (or dividing power spectra by $|S(f)|^2$) removes the source envelope and yields the **exact continuous-wave impulse response across the entire bandwidth in a single simulation**.
+  When you excite a linear structure with `pulse = GaussianSource(f0, df)` and record a spectrum $F(f)$ with any Wakis monitor, dividing $F(f)$ by $S(f)$ = `pulse.fourier_transform(f)` (or dividing power spectra by $|S(f)|^2$) removes the source envelope and yields the **exact continuous-wave impulse response across the entire bandwidth in a single simulation**.
 
 ---
 
