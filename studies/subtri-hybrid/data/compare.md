@@ -7,13 +7,13 @@ Cells report `unknowns / work / time` interpolated log-log to each target (`≤`
 | target | subtri-hybrid-r2 | subtri-hybrid-r4 | tri-graded-r2 | tri-graded-r4 | cart-conformal-all-graded-r2 | cart-conformal-all-graded-r4 | best baseline (work) | ours / best (work) | best baseline (time): ours / best |
 |---|---|---|---|---|---|---|---|---|---|
 | q_sca_rms_rel ≤ 2 % | 121k / 5.2e9 / 79 s | 147k / 9.6e9 / 114 s | 304k / 3.0e10 / 764 s | 265k / 3.4e10 / 904 s | 246k / 2.3e10 / 506 s | 253k / 3.1e10 / 826 s | cart-conformal-all-graded-r2 (2.3e10) | 0.22 | cart-conformal-all-graded-r2 (506 s): 0.16 |
-| q_sca_rms_rel ≤ 1 % | 213k / 1.2e10 / 209 s | — | 506k / 6.7e10 / 1647 s | — | 452k / 5.9e10 / 1384 s | — | cart-conformal-all-graded-r2 (5.9e10) | 0.20 | cart-conformal-all-graded-r2 (1384 s): 0.15 |
+| q_sca_rms_rel ≤ 1 % | 213k / 1.2e10 / 209 s | 263k / 2.3e10 / 366 s | 506k / 6.7e10 / 1647 s | — | 452k / 5.9e10 / 1384 s | — | cart-conformal-all-graded-r2 (5.9e10) | 0.20 | cart-conformal-all-graded-r2 (1384 s): 0.15 |
 
 ## B1-TM
 
 | target | subtri-hybrid-r2 | subtri-hybrid-r4 | tri-graded-r2 | tri-graded-r4 | cart-conformal-all-graded-r2 | cart-conformal-all-graded-r4 | best baseline (work) | ours / best (work) | best baseline (time): ours / best |
 |---|---|---|---|---|---|---|---|---|---|
-| q_sca_rms_rel ≤ 2 % | 107k / 4.2e9 / 52 s | — | 276k / 2.5e10 / 495 s | 254k / 3.2e10 / 522 s | 263k / 2.6e10 / 687 s | 294k / 3.9e10 / 904 s | tri-graded-r2 (2.5e10) | 0.16 | tri-graded-r2 (495 s): 0.11 |
+| q_sca_rms_rel ≤ 2 % | 107k / 4.2e9 / 52 s | 162k / 1.1e10 / 138 s | 276k / 2.5e10 / 495 s | 254k / 3.2e10 / 522 s | 263k / 2.6e10 / 687 s | 294k / 3.9e10 / 904 s | tri-graded-r2 (2.5e10) | 0.16 | tri-graded-r2 (495 s): 0.11 |
 | q_sca_rms_rel ≤ 1 % | 197k / 1.1e10 / 148 s | — | 521k / 7.0e10 / 1307 s | — | 511k / 7.2e10 / 1995 s | — | tri-graded-r2 (7.0e10) | 0.15 | tri-graded-r2 (1307 s): 0.11 |
 
 ## B2-Au-TE

@@ -16,7 +16,7 @@
 ## Runs
 
 Cloud Batch, one run per `n2-standard-2` SPOT machine:
-- `subtri-b1-20261019-210352` (18 of 20 tasks collected; the two `-r4` runs at $h = 7.854\text{ nm}$ did not finish before collection)
+- `subtri-b1-20261019-210352` (20 of 20 records collected, including the two `-r4` runs at $h = 7.854\text{ nm}$)
 - `subtri-b1nolts-20261019-212048`
 - `subtri-b2-20261019-210427`
 - `subtri-b3-20261019-210458` and `subtri-b3fix-20261019-212010` (12 B3 tasks rerun after a bug in the RT *diagnostic* for gap points that fall in squares; superseded records kept in `data/superseded_rt_error/`)
@@ -38,8 +38,8 @@ Full per-arm tables are in [`data/compare.md`](data/compare.md) (`unknowns / wor
 | case | target | ours (`subtri-hybrid` / `-r2`) | `subtri-hybrid-nolts` (or `-r4`) | best baseline (work) | ours / best (work) | best baseline (time): ours / best |
 |---|---|---|---|---|---|---|
 | B1-TE | `q_sca_rms_rel ≤ 2 %` | 121k / 5.2e9 / 79 s | 147k / 9.6e9 / 114 s (`-r4`) | cart-conformal-all-graded-r2 (2.3e10) | 0.22 | cart-conformal-all-graded-r2 (506 s): 0.16 |
-| B1-TE | `q_sca_rms_rel ≤ 1 %` | 213k / 1.2e10 / 209 s | — (`-r4`) | cart-conformal-all-graded-r2 (5.9e10) | 0.20 | cart-conformal-all-graded-r2 (1384 s): 0.15 |
-| B1-TM | `q_sca_rms_rel ≤ 2 %` | 107k / 4.2e9 / 52 s | — (`-r4`) | tri-graded-r2 (2.5e10) | 0.16 | tri-graded-r2 (495 s): 0.11 |
+| B1-TE | `q_sca_rms_rel ≤ 1 %` | 213k / 1.2e10 / 209 s | 263k / 2.3e10 / 366 s (`-r4`) | cart-conformal-all-graded-r2 (5.9e10) | 0.20 | cart-conformal-all-graded-r2 (1384 s): 0.15 |
+| B1-TM | `q_sca_rms_rel ≤ 2 %` | 107k / 4.2e9 / 52 s | 162k / 1.1e10 / 138 s (`-r4`) | tri-graded-r2 (2.5e10) | 0.16 | tri-graded-r2 (495 s): 0.11 |
 | B1-TM | `q_sca_rms_rel ≤ 1 %` | 197k / 1.1e10 / 148 s | — (`-r4`) | tri-graded-r2 (7.0e10) | 0.15 | tri-graded-r2 (1307 s): 0.11 |
 | B2-Au-TE | `q_ext_nrms ≤ 2 %` | ≤7.3k / ≤6.2e7 / ≤2.9 s | ≤7.3k / ≤6.2e7 / ≤3.1 s | tri-graded-pml-lts2 (≤2.7e7) | 2.28 | tri-graded-pml-lts2 (3 s): 1.14 |
 | B2-Au-TE | `q_ext_nrms ≤ 1 %` | 7.7k / 6.3e7 / 3.2 s | 7.7k / 7.4e7 / 3.5 s | tri-graded-pml-lts2 (3.2e7) | 1.99 | hybrid-quadtri (3 s): 1.08 |
@@ -92,7 +92,7 @@ Full per-arm tables are in [`data/compare.md`](data/compare.md) (`unknowns / wor
 
 - **DGTD/FIT work units differ:** DG unknowns are dearer per update, so read the wall-time column alongside the work column.
 - **B2 timings are noisy:** B2 runs take 2–10 s, so wall-time ratios have large scatter.
-- **Missing B1 `-r4` finest rung:** the two `subtri-hybrid-r4` runs at $h = 7.854\text{ nm}$ in job `subtri-b1-20261019-210352` did not finish before collection (18 of 20 tasks collected).
+- **B1 `-r4` finest rung:** B1 now has all 20 records in `data/B1` including the two `subtri-hybrid-r4` runs at $h = 7.854\text{ nm}$ from job `subtri-b1-20261019-210352` (B1-TM `-r4` reaches $1.12\%$ at $7.854\text{ nm}$, above the $1\%$ target).
 - **Coarsest-rung upper bounds (`≤`):** entries prefixed with `≤` indicate that the coarsest rung already meets the target.
 - **Two-level LTS only:** `lts='auto'` uses a single fine/coarse split ($p \in \{2,3,4\}$), not multi-tier subcycling across quadtree levels.
 - **B3 gap metric mismatch across store baselines:** `hybrid-quadtri` and `tri-graded` B3 records use the single-cell RT centre metric (`gap_metric` absent/`'rt'`), whereas `subtri-hybrid` and `tri-graded-pml2-patch` use the 9-point second-order 12-edge least-squares patch metric.
