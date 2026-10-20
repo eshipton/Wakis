@@ -23,6 +23,7 @@ electromagnetic and optical design tool (RF, antennas, photonics, metasurfaces, 
 the whole pipeline differentiable for gradient-based inverse design. Every feature is validated against analytic results, conservation laws or
 independent solvers (Meep-inspired tests, RCWA, FDFD) on CPU, GPU and MPI, and documented in the [physics guide](docs/physicsguide.md) with
 references. Bug fixes and broadly useful features are contributed back to upstream Wakis as small, focused pull requests.
+See the comprehensive [**User Manual & FIT Theory Guide (`user_manual.md`)**](user_manual.md) for quickstarts, FIT theory, full API reference, and benchmarks.
 
 Install the fork (the `develop` and `main` branches are kept identical):
 ```bash
