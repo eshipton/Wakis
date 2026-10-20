@@ -97,6 +97,22 @@ Benchmark **B2**: Au (in an n = 2 host) and Ag (in vacuum) nanocylinders, a = 20
 </tr>
 </table>
 
+#### Quadtree squares + body-fitted triangle band: 5–7× less work on the Mie benchmark &nbsp;·&nbsp; `wakis.unstructured.subtri`
+
+<table>
+<tr>
+<td width="55%"><img src="docs/img/subtri_mesh_dimer_gap.png" width="600" alt="Subtri mesh of the 5 nm Au dimer at h = 2 nm: 2:1 quadtree square levels coloured, hanging nodes black, conforming triangle band grey around the cylinders and in the gap"></td>
+<td>
+
+Cheap 2:1 quadtree squares fill the bulk. A conforming Delaunay triangle band of ±2h is used only at curved interfaces and in nanogaps, and the finest squares fill the metal. Hanging nodes are tied in by a linear prolongation P with K = G·P and a lumped mass D = Pᵀm, so the operator is symmetric, energy is conserved exactly (drift ≤ 2e-15 over 2e4 real steps), the scheme is stable iff dt²λ<sub>max</sub> < 4, and the adjoint dot-product test holds to 1e-17. Two-level local time stepping plugs in unchanged. **B1 Mie cylinder (3000 fs, uncapped) at 1 % RMS: 0.20× (TE) / 0.15× (TM) the work and 0.15× / 0.11× the wall time of the best existing arm** (graded conformal Cartesian in TE, graded triangles in TM). **B3 Au dimer gaps: 0.39–0.74× the work at the 5 % and 2 % gap-field targets for g = 10 / 5 nm and at 5 % for g = 2 nm, against the best FIT/FDTD arm (hybrid quad-tri or graded triangles + PML)**; at 1 % in the 2 nm gap, high-order DGTD p3 still needs less work. **Limits:** on the single Au/Ag cylinder (B2) it loses (1.3–2.5× the work; TE plateaus near 0.12 %; DGTD wins). Local time stepping also *halves* the error at equal h on B1, which looks too good: a dispersion study must confirm it before we rely on it. Two LTS levels only; circles only; squares carry piecewise-constant material, so every interface needs the band. Code on `main`, [studies/subtri-hybrid](studies/subtri-hybrid).
+
+</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/subtri_error_vs_work.png" width="880" alt="Error versus work for subtri-hybrid and all existing mesh arms on B1, B2 and B3"></td>
+</tr>
+</table>
+
 #### Fused GPU time step: 45× faster inverse-design iterations &nbsp;·&nbsp; `SolverFIT3D(..., use_gpu=True, fused=True)`
 
 <table>
@@ -383,6 +399,7 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
 - [ ] High-order schemes: DGTD on curved triangles and Cartesian (2,4) (in progress)
 - [x] Extruded prism 3D FIT (`PrismFIT3D`: triangles × z layers, diagonal Voronoi Hodge, z PML, GPU; `tests/test_050_prism_fit.py`; studies `prism-cavity` (2.9–5.6× less work than graded conformal Cartesian at 0.1–0.05 %), `prism-ring` (Si micro-ring vs a BOR reference), `prism-dipole` (B4, negative result))
+- [x] Quadtree squares + conforming triangle band (`wakis.unstructured.subtri`, two-level LTS; `tests/test_subtri*.py`; [studies/subtri-hybrid](studies/subtri-hybrid): B1 5–7× less work, B3 wins vs FIT/FDTD arms, B2 negative result)
 - [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow
 - [ ] Adaptive refinement
 

@@ -126,14 +126,15 @@ def fetch(case, arm=None, root=ROOT):
     """
     Records of `case` as a pandas DataFrame: columns ``case``, ``arm``,
     ``resolution``, ``commit``, ``cpu``, ``m.<metric>`` (scalars only),
-    ``c.<cost>`` and ``work`` (= unknowns x steps).
+    ``c.<cost>`` and ``work`` (= unknowns x steps; arms with local time
+    stepping report their own unknown-weighted work in ``cost['work']``).
     """
     import pandas as pd
 
     rows = []
     for r in fetch_records(case, arm, root):
         row = {k: r.get(k) for k in ("case", "arm", "resolution", "commit", "cpu",
-                                     "machine", "error")}  # fmt: skip
+                                     "machine", "published", "error")}  # fmt: skip
         for k, v in r.get("metrics", {}).items():
             if not isinstance(v, (dict, list)):
                 row[f"m.{k}"] = v
@@ -141,5 +142,7 @@ def fetch(case, arm=None, root=ROOT):
             row[f"c.{k}"] = v
         if "c.unknowns" in row and "c.steps" in row:
             row["work"] = row["c.unknowns"] * row["c.steps"]
+        if "c.work" in row:
+            row["work"] = row["c.work"]
         rows.append(row)
     return pd.DataFrame(rows)

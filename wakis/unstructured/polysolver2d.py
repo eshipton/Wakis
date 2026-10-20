@@ -105,6 +105,11 @@ class PolygonFIT2D:
         Timestep [s] (default ``cfl`` times the leapfrog limit).
     ortho_tol : float
         Orthogonality tolerance of ``hodge='orthogonal'``.
+    prolongation : sparse matrix (n_nodes, n_nodes), optional
+        Hanging-node prolongation ``P`` (identity on ordinary nodes, zero
+        column and master interpolation weights on hanging rows).
+    lts : int or dict, optional
+        Two-level stabilized leapfrog-Chebyshev local time stepping (`build_lts`).
     """
 
     def __init__(
@@ -118,12 +123,24 @@ class PolygonFIT2D:
         dt=None,
         cfl=0.95,
         ortho_tol=1e-6,
+        prolongation=None,
+        lts=None,
     ):
         if polarization not in ("TM", "TE"):
             raise ValueError("polarization must be 'TM' or 'TE'")
         if bc not in ("pec", "pmc", "abc"):
             raise ValueError("bc must be 'pec', 'pmc' or 'abc'")
-        defect = mesh.orthogonality_defect.max()
+        if prolongation is not None:
+            P = sp.csr_matrix(prolongation)
+            if P.shape != (mesh.n_nodes, mesh.n_nodes):
+                raise ValueError("prolongation must have shape (n_nodes, n_nodes)")
+            hanging = np.asarray(abs(P).sum(axis=0)).ravel() == 0
+            ortho_e = ~hanging[mesh.edges].any(1)
+            defect = float(mesh.orthogonality_defect[ortho_e].max(initial=0.0))
+        else:
+            P = None
+            hanging = np.zeros(mesh.n_nodes, bool)
+            defect = mesh.orthogonality_defect.max()
         if hodge == "auto":
             hodge = "orthogonal" if defect < ortho_tol else "mfd"
         if hodge == "orthogonal" and defect >= ortho_tol:
@@ -153,8 +170,15 @@ class PolygonFIT2D:
             if bc == "pec":
                 fixed[mesh.boundary_nodes] = True
         fixed |= ~used
+        fixed |= hanging
+        self._hanging = hanging
         self.free = np.flatnonzero(~fixed)
-        G = mesh.G[:, self.free].tocsr()
+        if P is None:
+            self.Pf = None
+            G = mesh.G[:, self.free].tocsr()
+        else:
+            self.Pf = P[:, self.free].tocsr()
+            G = (mesh.G @ self.Pf).tocsr()
         self.G, self.GT = G, G.T.tocsr()
 
         # Edge Hodge weights per cell
@@ -192,10 +216,10 @@ class PolygonFIT2D:
             eta_node[mesh.edges[mesh.boundary_edges, 0]] = eta_b
             eta_node[mesh.edges[mesh.boundary_edges, 1]] = eta_b
             loss = loss + (bl / eta_node if polarization == "TM" else bl * eta_node)
-        self.mass = mass[self.free]
+        self.mass = self._lump(mass)
         if np.any(self.mass <= 0):
             raise ValueError(f"{np.sum(self.mass <= 0)} non-positive node masses")
-        self.loss = loss[self.free]
+        self.loss = self._lump(loss)
 
         # PML
         self.edge_rate = np.zeros(mesh.n_edges)
@@ -209,15 +233,22 @@ class PolygonFIT2D:
         self.dt_max = 2 / np.sqrt(lam)
         self.dt = cfl * self.dt_max if dt is None else float(dt)
         self.courant = self.dt * np.sqrt(lam) / 2
+        self.lts = None
+        self.lts_info = None
+        self._G_F = None
+        if lts is not None:
+            self._setup_lts(lts, lam)
         if dispersive:
-            check_dispersive_stability([m for m, _ in dispersive], self.dt, self.courant)
+            check_dispersive_stability(
+                [m for m, _ in dispersive], self.dt, self.courant
+            )
 
         groups = []
         if polarization == "TM":
             for mat, sel in dispersive:
-                c = eps_0 * (Pn @ (sel & live).astype(float))
-                idx = np.flatnonzero(c[self.free] > 0)
-                groups.append((mat, idx, c[self.free][idx]))
+                c = self._lump(eps_0 * (Pn @ (sel & live).astype(float)))
+                idx = np.flatnonzero(c > 0)
+                groups.append((mat, idx, c[idx]))
             self._update = CapacitiveUpdate(self.mass, self.loss, groups, self.dt)
             self._te_groups = []
         else:
@@ -236,16 +267,22 @@ class PolygonFIT2D:
         self.recorder = Recorder()
         self.reset()
 
+    def _lump(self, x):
+        return x[self.free] if self.Pf is None else np.asarray(self.Pf.T @ x).ravel()
+
     # ------------------------------------------------------------ Hodge
     def _edge_hodge(self, w_cell):
         """Return (S matrix or None, diagonal stiffness or None)."""
         mesh = self.mesh
         if self.hodge == "orthogonal":
-            stiff = np.bincount(
-                mesh.corner_edge,
-                mesh.corner_h * w_cell[mesh.corner_cell],
-                minlength=mesh.n_edges,
-            ) / mesh.edge_length
+            stiff = (
+                np.bincount(
+                    mesh.corner_edge,
+                    mesh.corner_h * w_cell[mesh.corner_cell],
+                    minlength=mesh.n_edges,
+                )
+                / mesh.edge_length
+            )
             return None, stiff
         rows, cols, vals = [], [], []
         for i, M in enumerate(mesh.mfd_local_matrices()):
@@ -289,6 +326,16 @@ class PolygonFIT2D:
         lossy = np.flatnonzero((node_x > 0) | (node_y > 0))
         # nodes adjacent to lossy edges also need the split form
         lossy_e = np.flatnonzero(rate > 0)
+        if self.Pf is not None:
+            h_nodes = np.flatnonzero(self._hanging)
+            if h_nodes.size and (
+                np.any(rx(mesh.nodes[h_nodes, 0]) > 0)
+                or np.any(ry(mesh.nodes[h_nodes, 1]) > 0)
+                or np.any(self._hanging[mesh.edges[lossy_e].ravel()])
+            ):
+                raise ValueError(
+                    "PML: hanging nodes cannot lie in or touch the PML layer"
+                )
         adj = np.zeros(self.free.size, bool)
         adj[lossy] = True
         adj[np.unique(self.G[lossy_e].indices)] = True
@@ -306,6 +353,59 @@ class PolygonFIT2D:
             sx=node_x[idx],
             sy=node_y[idx],
         )
+
+    # ------------------------------------------------------------ LTS
+    def _setup_lts(self, opts, lam):
+        """Partition the nodes and build the stabilized two-level LTS."""
+        from .lts import build_lts, gershgorin_rate
+
+        opts = {"p": opts} if np.isscalar(opts) else dict(opts)
+        if any(m.debye_poles for m, _ in self.dispersive):
+            raise NotImplementedError("LTS with Debye poles")
+        p = int(opts.pop("p", 2))
+        dt_c = opts.pop("dt", None) or p * self.dt
+        if opts.get("fine") is None and (
+            self._pml is not None or np.any(self.loss != 0)
+        ):
+            rate = gershgorin_rate(self.K, self.mass)
+            rate = rate * (lam / rate.max())
+            theta = opts.get("theta", 1.0)
+            if self._pml is not None and np.any(
+                rate[self._pml["idx"]] * dt_c**2 > 4 * theta
+            ):
+                raise ValueError("LTS: fine nodes inside or next to the PML layer")
+            if np.any(rate[self.loss != 0] * dt_c**2 > 4 * theta):
+                raise ValueError(
+                    "LTS: fine nodes or buffer cannot have loss or touch lossy edges"
+                )
+        lts, info = build_lts(self.K, self.mass, dt_c, p=p, lam=lam, **opts)
+        near = np.r_[lts.F, lts.C]
+        G_F = self.G[:, lts.F].tocsr()
+        edges_near = np.unique(self.G[:, near].nonzero()[0])
+        if np.any(self.loss[near] != 0) or np.any(self.edge_rate[edges_near] != 0):
+            raise ValueError(
+                "LTS: fine nodes or buffer cannot have loss or touch lossy edges"
+            )
+        if self._pml is not None and np.isin(near, self._pml["idx"]).any():
+            raise ValueError("LTS: fine nodes inside or next to the PML layer")
+        self.lts, self.lts_info, self._G_F = lts, info, G_F
+        self.dt = info["dt"]
+        self.dt_fine = self.dt / p
+        self.courant = info["rho"]
+
+    def _grad(self, u):
+        """``G r(X) u``: the flux-update gradient (``G u`` without LTS)."""
+        g = self.G @ u
+        if self.lts is not None:
+            g = g + self._G_F @ self.lts.correction(u)
+        return g
+
+    def lts_work_per_step(self):
+        """Unknown-weighted cost of one coarse step (equals `n_unknowns` without LTS)."""
+        if self.lts is None:
+            return self.n_unknowns
+        n_ef = int(np.unique(self._G_F.nonzero()[0]).size)
+        return int(self.n_unknowns + (self.lts.p - 1) * (self.lts.F.size + n_ef))
 
     # ------------------------------------------------------------ TE dispersive
     def _init_te_dispersive(self, live):
@@ -385,6 +485,8 @@ class PolygonFIT2D:
     @property
     def node_field(self):
         """Ez (TM) or Hz (TE) on all mesh nodes (0 on fixed nodes)."""
+        if self.Pf is not None:
+            return np.asarray(self.Pf @ self.u).ravel()
         out = np.zeros(self.mesh.n_nodes)
         out[self.free] = self.u
         return out
@@ -400,7 +502,10 @@ class PolygonFIT2D:
 
     # ------------------------------------------------------------ sources
     def _interp(self, points):
-        return self.mesh.interpolation_matrix(points)[:, self.free].tocsr()
+        M = self.mesh.interpolation_matrix(points)
+        if self.Pf is not None:
+            return (M @ self.Pf).tocsr()
+        return M[:, self.free].tocsr()
 
     def add_point_source(self, position, amp_func):
         """
@@ -464,24 +569,28 @@ class PolygonFIT2D:
             disp |= sel_d
         scat = ~np.isclose(self.eps_r, eps_b) | disp | (self.sigma > 0)
         sel = scat[mesh.corner_cell]
-        s0 = float((mesh.nodes[mesh.corner_node[sel]] @ k).min()) if np.any(sel) else 0.0
+        s0 = (
+            float((mesh.nodes[mesh.corner_node[sel]] @ k).min()) if np.any(sel) else 0.0
+        )
         pw = dict(
             s=src_time, k=k, amp=float(amplitude), eps_b=eps_b, s0=s0,
             v=c_0 / np.sqrt(eps_b), eta=ETA_0 / np.sqrt(eps_b),
         )  # fmt: skip
         if self.pol == "TM":
-            area = self._Pn @ (~self.pec_cells).astype(float)
+            area_f = self._lump(self._Pn @ (~self.pec_cells).astype(float))
             if self.dispersive or np.any(self.sigma > 0):
-                touch = (self._Pn @ scat.astype(float))[self.free] > 0
+                touch = self._lump(self._Pn @ scat.astype(float)) > 0
                 idx = np.flatnonzero(touch)
                 pw.update(
-                    total=True, idx=idx, w=eps_0 * eps_b * area[self.free][idx],
+                    total=True, idx=idx, w=eps_0 * eps_b * area_f[idx],
                     pos=mesh.nodes[self.free[idx]] @ k,
                 )  # fmt: skip
             else:
-                w = self.mass - eps_0 * eps_b * area[self.free]
+                w = self.mass - eps_0 * eps_b * area_f
                 idx = np.flatnonzero(np.abs(w) > 1e-12 * np.abs(self.mass).max())
-                pw.update(total=False, idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k)
+                pw.update(
+                    total=False, idx=idx, w=w[idx], pos=mesh.nodes[self.free[idx]] @ k
+                )
         else:
             p_vec = np.array([-k[1], k[0]])
             for g_, (mat, sel_d) in zip(self._te_groups, self.dispersive):
@@ -496,7 +605,11 @@ class PolygonFIT2D:
                 g_["pos"] = (0.5 * (foot + mesh.dual_point[C])) @ k
                 g_["eps_b"] = eps_b
             sel = sel & ~disp[mesh.corner_cell]
-            e, C, sg = mesh.corner_edge[sel], mesh.corner_cell[sel], mesh.corner_sign[sel]
+            e, C, sg = (
+                mesh.corner_edge[sel],
+                mesh.corner_cell[sel],
+                mesh.corner_sign[sel],
+            )
             if self.hodge == "orthogonal":
                 c = mesh.dual_point[C]
                 X0 = mesh.nodes[mesh.edges[e, 0]]
@@ -528,7 +641,9 @@ class PolygonFIT2D:
         r2 = np.concatenate([rows, rows])
         c2 = np.concatenate([j, j + 1])
         v2 = pw["amp"] * np.concatenate([wgt * (1 - f), wgt * f])
-        self._pw_W = sp.csr_matrix((v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1))
+        self._pw_W = sp.csr_matrix(
+            (v2, (r2, c2)), shape=(n_rows, int(c2.max(initial=0)) + 1)
+        )
         self._pw_sub = sub
         self._pw_S = np.zeros(0)
         self._pw_cache = None
@@ -597,13 +712,17 @@ class PolygonFIT2D:
                 node_src += w * f(t_half)
         pw = self.plane_wave
         if self.pol == "TM":
-            self._edge_update(-(self.G @ self.u))
+            self._edge_update(-self._grad(self.u))
             sv = self._apply_S(self.v)
             r = self.GT @ sv
             if pw is not None and self._pw_W is not None:
                 v_new = self._pw_values(self.n + 1)
                 c = self._pw_cache
-                v_old = c[1] if c is not None and c[0] == self.n else self._pw_values(self.n)
+                v_old = (
+                    c[1]
+                    if c is not None and c[0] == self.n
+                    else self._pw_values(self.n)
+                )
                 self._pw_cache = (self.n + 1, v_new)
                 r -= v_new - v_old
             elif pw is not None:
@@ -643,7 +762,7 @@ class PolygonFIT2D:
             self.u = (a * self.u - dt * r) / b
             if self._pml is not None:
                 self._pml_nodes(vol, -1.0)
-            self._edge_update(self.G @ self.u)
+            self._edge_update(self._grad(self.u))
             self._te_ade_step(self.v, (self.n + 1) * dt)
         self.n += 1
         self.recorder.record(self.u, self.n * dt, dt)
