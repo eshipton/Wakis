@@ -7,27 +7,27 @@
 > Throughout this manual, every section, subsection, and feature-matrix row carries a status marker indicating whether the capability comes from upstream CERN Wakis or from this fork:
 > - *(no marker)* — **Upstream CERN Wakis** (`ImpedanCEI/wakis`, merged from `upstream/main`).
 > - 🆕 **New in this fork** — Implemented, merged into `develop`/`main` in this fork, and covered by automated tests in `tests/` and benchmark studies in `studies/`.
-> - 🧪 **In progress** — Implemented on an active branch or pilot study and currently under evaluation (e.g., `merge/subtri`, `feature/subpixel-projection`, or the external `invrs-wakis` bridge).
+> - 🧪 **In progress** — Implemented on an active branch or pilot study and currently under evaluation (e.g., `feature/subpixel-projection` or the external `invrs-wakis` bridge).
 > - 🗺️ **Planned** — Scheduled on the project roadmap (`README.md` checklists, `docs/unstructured_roadmap.md`, and the broader computational electromagnetics roadmap).
 
 ---
 
 ## Table of Contents
 
-1. [Title and Overview](#1-title-and-overview)
+- [1. Title and Overview](#1-title-and-overview)
    - [1.1 What Wakis Is](#11-what-wakis-is)
-   - [1.2 What This Fork Adds](#12-what-this-fork-adds)
+   - [1.2 What This Fork Adds](#12-what-this-fork-adds--new-in-this-fork)
    - [1.3 Complete Feature Matrix](#13-complete-feature-matrix)
-2. [Installation and Environment Setup](#2-installation-and-environment-setup)
+- [2. Installation and Environment Setup](#2-installation-and-environment-setup)
    - [2.1 Core Installation (`pip` and `uv`)](#21-core-installation-pip-and-uv)
    - [2.2 Optional Dependencies: GPU (CuPy), MPI (`mpi4py`), JAX, PyVista](#22-optional-dependencies-gpu-cupy-mpi-mpi4py-jax-pyvista)
    - [2.3 CPU Multithreading and BLAS/OpenMP Tuning](#23-cpu-multithreading-and-blasopenmp-tuning)
-   - [2.4 Running on Google Colab and Headless Servers](#24-running-on-google-colab-and-headless-servers)
-3. [Quick Start: Three Minimal Runnable Examples](#3-quick-start-three-minimal-runnable-examples)
-   - [3.1 (a) 3D PEC Rectangular Cavity Resonance](#31-a-3d-pec-rectangular-cavity-resonance)
-   - [3.2 (b) 2D Mie Scattering by a Dielectric Cylinder with a TF/SF Plane Wave](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave)
+   - [2.4 Running on Google Colab and Headless Servers](#24-running-on-google-colab-and-headless-servers--new-in-this-fork)
+- [3. Quick Start: Three Minimal Runnable Examples](#3-quick-start-three-minimal-runnable-examples)
+   - [3.1 (a) 3D PEC Rectangular Cavity Resonance](#31-a-3d-pec-rectangular-cavity-resonance--new-in-this-fork)
+   - [3.2 (b) 2D Mie Scattering by a Dielectric Cylinder with a TF/SF Plane Wave](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave--new-in-this-fork)
    - [3.3 (c) Wakefield and Beam-Coupling Impedance of a Cavity](#33-c-wakefield-and-beam-coupling-impedance-of-a-cavity)
-4. [The Finite Integration Technique (FIT): Theory and Method Comparison](#4-the-finite-integration-technique-fit-theory-and-method-comparison)
+- [4. The Finite Integration Technique (FIT): Theory and Method Comparison](#4-the-finite-integration-technique-fit-theory-and-method-comparison)
    - [4.1 Integral Maxwell Equations on Dual Cell Complexes](#41-integral-maxwell-equations-on-dual-cell-complexes)
    - [4.2 Maxwell Grid Equations (Weiland 1977) and Topological Identities](#42-maxwell-grid-equations-weiland-1977-and-topological-identities)
    - [4.3 Material (Hodge) Matrices: Where All Spatial Approximation Lives](#43-material-hodge-matrices-where-all-spatial-approximation-lives)
@@ -38,83 +38,92 @@
    - [4.8 Master Comparison Table of Computational Electromagnetics Methods](#48-master-comparison-table-of-computational-electromagnetics-methods)
    - [4.9 Decision Guide: When to Use Which Method](#49-decision-guide-when-to-use-which-method)
    - [4.10 Limits and Failure Modes of the Finite Integration Technique](#410-limits-and-failure-modes-of-the-finite-integration-technique)
-5. [Units, Conventions, and Time Stepping](#5-units-conventions-and-time-stepping)
+- [5. Units, Conventions, and Time Stepping](#5-units-conventions-and-time-stepping)
    - [5.1 SI Units vs. Nondimensional Units](#51-si-units-vs-nondimensional-units)
-   - [5.2 Phasor Convention: $\exp(+i\omega t)$ vs. $\exp(-i\omega t)$](#52-phasor-convention-expiomega-t-vs-exp-iomega-t)
-   - [5.3 Half-Step Temporal and Half-Cell Spatial Staggering of $\mathbf{E}$ and $\mathbf{H}$](#53-half-step-temporal-and-half-cell-spatial-staggering-of-mathbf-e-and-mathbf-h)
+   - [5.2 Phasor Convention: $\exp(+i\omega t)$ vs. $\exp(-i\omega t)$](#52-phasor-convention-expiomega-t-vs-exp-iomega-t--new-in-this-fork)
+   - [5.3 Half-Step Temporal and Half-Cell Spatial Staggering of $\mathbf{E}$ and $\mathbf{H}$](#53-half-step-temporal-and-half-cell-spatial-staggering-of-mathbfe-and-mathbfh--new-in-this-fork)
    - [5.4 CFL Time Step on Uniform, Nonuniform, Conformal, and Unstructured Grids](#54-cfl-time-step-on-uniform-nonuniform-conformal-and-unstructured-grids)
-6. [Grids, Geometry, Subpixel Smoothing, and Symmetry](#6-grids-geometry-subpixel-smoothing-and-symmetry)
-   - [6.1 `GridFIT3D` Domain-Edge Convention vs. Legacy Cell-Count Convention](#61-gridfit3d-domain-edge-convention-vs-legacy-cell-count-convention)
-   - [6.2 CAD / STL Import and Constructive Solid Geometry](#62-cad--stl-import-and-constructive-solid-geometry)
-   - [6.3 Graded and Nonuniform Cartesian Meshes](#63-graded-and-nonuniform-cartesian-meshes)
-   - [6.4 Conformal Cut Cells: Dey–Mittra PEC and Thin Conducting Sheets](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets)
-   - [6.5 Diagonal and Full-Tensor Kottke Subpixel Averaging](#65-diagonal-and-full-tensor-kottke-subpixel-averaging)
-   - [6.6 Exploiting Mirror Symmetry (`sym_x`, `sym_y`, `sym_z`)](#66-exploiting-mirror-symmetry-sym_x-sym_y-sym_z)
-   - [6.7 Declarative Geometry Templates (`wakis.templates`)](#67-declarative-geometry-templates-wakistemplates)
-7. [Materials and Dispersion](#7-materials-and-dispersion)
-   - [7.1 Isotropic and Diagonal Anisotropic $\varepsilon_r$, $\mu_r$, and $\sigma$](#71-isotropic-and-diagonal-anisotropic-varepsilon_r-mu_r-and-sigma)
-   - [7.2 Dispersive Materials via Auxiliary Differential Equations (Drude, Lorentz, Debye, Rakić Metals)](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals)
-   - [7.3 Tensor-Dispersive Subpixel Averaging at Metal–Dielectric Interfaces](#73-tensor-dispersive-subpixel-averaging-at-metaldielectric-interfaces)
-   - [7.4 Cold-Plasma Media (`wakis.plasma`)](#74-cold-plasma-media-wakisplasma)
-   - [7.5 Leontovich Surface Impedance Boundary Condition (SIBC)](#75-leontovich-surface-impedance-boundary-condition-sibc)
-8. [Sources and Excitations](#8-sources-and-excitations)
-   - [8.1 Relativistic Particle Beams (`Beam`)](#81-relativistic-particle-beams-beam)
-   - [8.2 Time Waveforms (`GaussianSource`, `ContinuousSource`, `CustomSource`) and Soft Dipoles (`CurrentSource`, `MagneticCurrentSource`)](#82-time-waveforms-gaussiansource-continuoussource-customsource-and-soft-dipoles-currentsource-magneticcurrentsource)
-   - [8.3 Exact Discrete Total-Field / Scattered-Field Plane Waves (`TFSFSource`)](#83-exact-discrete-total-field--scattered-field-plane-waves-tfsfsource)
-   - [8.4 Waveguide Eigenmode Sources (`solve_modes`, `ModeSource`)](#84-waveguide-eigenmode-sources-solve_modes-modesource)
-   - [8.5 Lumped Elements and Discrete Ports (`LumpedElement`, `LumpedPort`)](#85-lumped-elements-and-discrete-ports-lumpedelement-lumpedport)
-9. [Boundary Conditions and Absorbing Layers](#9-boundary-conditions-and-absorbing-layers)
-   - [9.1 Perfect Conductors (`pec`, `pmc`) and Periodic Boundaries (`periodic`)](#91-perfect-conductors-pec-pmc-and-periodic-boundaries-periodic)
-   - [9.2 Bloch-Periodic Boundaries (`bloch`) with Complex Fields](#92-bloch-periodic-boundaries-bloch-with-complex-fields)
-   - [9.3 Convolutional Perfectly Matched Layers (`cpml`) vs. Scalar `pml`](#93-convolutional-perfectly-matched-layers-cpml-vs-scalar-pml)
-   - [9.4 First-Order Absorbing Boundary Conditions (`abc` / Mur / Silver–Müller)](#94-first-order-absorbing-boundary-conditions-abc--mur--silvermüller)
-   - [9.5 Radial Complex-Frequency-Shifted PML (CFS-PML) on Unstructured Meshes](#95-radial-complex-frequency-shifted-pml-cfs-pml-on-unstructured-meshes)
-10. [Monitors, Post-Processing, and Physical Observables](#10-monitors-post-processing-and-physical-observables)
-    - [10.1 Time-Domain Field Snapshots (`FieldMonitor`, `SliceRecorder`)](#101-time-domain-field-snapshots-fieldmonitor-slicerecorder)
-    - [10.2 Running Discrete Fourier Transforms (`DFTMonitor`)](#102-running-discrete-fourier-transforms-dftmonitor)
-    - [10.3 Poynting Flux and Cross Sections (`FluxMonitor`)](#103-poynting-flux-and-cross-sections-fluxmonitor)
-    - [10.4 Near-to-Far-Field Transformation (`Near2FarMonitor`)](#104-near-to-far-field-transformation-near2farmonitor)
-    - [10.5 Rayleigh Diffraction Orders for Periodic Gratings (`DiffractionMonitor`)](#105-rayleigh-diffraction-orders-for-periodic-gratings-diffractionmonitor)
-    - [10.6 Waveguide Mode Decomposition (`ModeMonitor`) and Multi-Port S-Parameters (`wakis.sparameters`)](#106-waveguide-mode-decomposition-modemonitor-and-multi-port-s-parameters-wakissparameters)
-    - [10.7 Harmonic Inversion of Ring-Down Signals (`harminv`, `ResonanceMonitor`)](#107-harmonic-inversion-of-ring-down-signals-harminv-resonancemonitor)
-    - [10.8 Wake Potential and Beam-Coupling Impedance (`WakeSolver`)](#108-wake-potential-and-beam-coupling-impedance-wakesolver)
-11. [Unstructured, Hybrid, Curvilinear, and High-Order Solvers](#11-unstructured-hybrid-curvilinear-and-high-order-solvers)
-    - [11.1 2D Triangle FIT on Delaunay–Voronoi and Barycentric Duals (`UnstructuredFIT2D`)](#111-2d-triangle-fit-on-delaunayvoronoi-and-barycentric-duals-unstructuredfit2d)
-    - [11.2 Polygonal, Hybrid Quad/Tri, and Voronoi Dual FIT (`PolygonFIT2D`)](#112-polygonal-hybrid-quadtri-and-voronoi-dual-fit-polygonfit2d)
-    - [11.3 2D Nested Cartesian Subgridding (`SubgridFIT2D`)](#113-2d-nested-cartesian-subgridding-subgridfit2d)
-    - [11.4 Subgridded Quadtree Squares + Conforming Triangle Band (`subtri`)](#114-subgridded-quadtree-squares--conforming-triangle-band-subtri)
-    - [11.5 Curvilinear O-Grid Non-Orthogonal FIT (`CurvilinearFIT2D`)](#115-curvilinear-o-grid-non-orthogonal-fit-curvilinearfit2d)
-    - [11.6 Extruded 3D Triangular Prism FIT (`PrismFIT3D`)](#116-extruded-3d-triangular-prism-fit-prismfit3d)
-    - [11.7 3D Tetrahedral FIT (`UnstructuredFIT3D`)](#117-3d-tetrahedral-fit-unstructuredfit3d)
-    - [11.8 Local Time Stepping (LTS) on Graded Unstructured Meshes](#118-local-time-stepping-lts-on-graded-unstructured-meshes)
-    - [11.9 High-Order Nodal DGTD on Curved Triangles (`DGTD2D`) and Fourth-Order FDTD (`FDTD24`)](#119-high-order-nodal-dgtd-on-curved-triangles-dgtd2d-and-fourth-order-fdtd-fdtd24)
-12. [GPU Acceleration, Fused Kernels, and MPI Domain Decomposition](#12-gpu-acceleration-fused-kernels-and-mpi-domain-decomposition)
-    - [12.1 CuPy GPU Backend (`use_gpu=True`) and Fused Elementwise Kernels (`fused=True`)](#121-cupy-gpu-backend-use_gputrue-and-fused-elementwise-kernels-fusedtrue)
-    - [12.2 MPI Longitudinal Slab Decomposition (`use_mpi=True`) and Multi-GPU Execution](#122-mpi-longitudinal-slab-decomposition-use_mpitrue-and-multi-gpu-execution)
-13. [Inverse Design and Discrete Adjoint Sensitivity Analysis](#13-inverse-design-and-discrete-adjoint-sensitivity-analysis)
-    - [13.1 Exact Discrete Adjoint (`AdjointStepper`, `AdjointSimulation`) and the Dot-Product Test](#131-exact-discrete-adjoint-adjointstepper-adjointsimulation-and-the-dot-product-test)
-    - [13.2 End-to-End Differentiable Simulation with JAX (`jax_simulation`, `MaterialGrid`)](#132-end-to-end-differentiable-simulation-with-jax-jax_simulation-materialgrid)
-    - [13.3 The Adjoint Memory Ladder (`store`, `checkpoint`, `reverse`, `nyquist`, `auto`)](#133-the-adjoint-memory-ladder-store-checkpoint-reverse-nyquist-auto)
-    - [13.4 Subpixel-Smoothed Projection (SSP) for Binary Topology Optimization](#134-subpixel-smoothed-projection-ssp-for-binary-topology-optimization)
-    - [13.5 The `invrs-gym` Photonic Topology-Optimization Bridge (`invrs-wakis`)](#135-the-invrs-gym-photonic-topology-optimization-bridge-invrs-wakis)
-14. [Wakefield and Accelerator Physics Specifics](#14-wakefield-and-accelerator-physics-specifics)
-    - [14.1 Longitudinal and Transverse Wake Potential, Panofsky–Wenzel Theorem, and Impedance](#141-longitudinal-and-transverse-wake-potential-panofskywenzel-theorem-and-impedance)
-    - [14.2 Dispersion-Free TE/TM Wakefield Scheme (`scheme='tete'`)](#142-dispersion-free-tetm-wakefield-scheme-schemetete)
-    - [14.3 Linear Cold-Plasma Wakefield Benchmark (`wakis.plasma`)](#143-linear-cold-plasma-wakefield-benchmark-wakisplasma)
-    - [14.4 CERN Post-Processing Ecosystem (`IDDEFIX`, `neffint`, `BIHC`)](#144-cern-post-processing-ecosystem-iddefix-neffint-bihc)
-15. [Validation, Analytical References, and Benchmark Suite (`B1`–`B5`)](#15-validation-analytical-references-and-benchmark-suite-b1b5)
-    - [15.1 Exact Analytical Reference Module (`wakis.analytic`)](#151-exact-analytical-reference-module-wakisanalytic)
-    - [15.2 The `wakis.benchmarks` Suite (`B1`–`B5`), Shared Result Store, and Cost-to-Target Metric](#152-the-wakisbenchmarks-suite-b1b5-shared-result-store-and-cost-to-target-metric)
-    - [15.3 How to Implement and Register a New Benchmark Arm](#153-how-to-implement-and-register-a-new-benchmark-arm)
-    - [15.4 Index of Validation and Performance Studies (`studies/*`)](#154-index-of-validation-and-performance-studies-studies)
-16. [Performance Modeling and Memory Planning](#16-performance-modeling-and-memory-planning)
-    - [16.1 Pre-Run Memory and Runtime Estimation (`wakis.estimate` and `preflight`)](#161-pre-run-memory-and-runtime-estimation-wakisestimate-and-preflight)
-    - [16.2 Memory Breakdown per Cell and Why Time-Domain CEM Is Memory-Bandwidth Bound](#162-memory-breakdown-per-cell-and-why-time-domain-cem-is-memory-bandwidth-bound)
-17. [Roadmap and Sister Libraries](#17-roadmap-and-sister-libraries)
-    - [17.1 Wakis Fork Unstructured, GPU, and Inverse-Design Roadmap](#171-wakis-fork-unstructured-gpu-and-inverse-design-roadmap)
-    - [17.2 Broader Computational Electromagnetics Ecosystem and Sister Libraries](#172-broader-computational-electromagnetics-ecosystem-and-sister-libraries)
-18. [FAQ and Troubleshooting](#18-faq-and-troubleshooting)
-19. [References and Credits](#19-references-and-credits)
+- [6. Grids, Geometry, Subpixel Smoothing, and Symmetry](#6-grids-geometry-subpixel-smoothing-and-symmetry)
+   - [6.1 `GridFIT3D` and Exact Domain-Edge Boundaries (`boundary_at_domain_edge=True`)](#61-gridfit3d-and-exact-domain-edge-boundaries-boundary_at_domain_edgetrue--new-in-this-fork)
+   - [6.2 Importing CAD / STL Solids and Assigning Materials](#62-importing-cad--stl-solids-and-assigning-materials)
+   - [6.3 Nonuniform / Graded Cartesian Meshes and Automatic Feature Snapping](#63-nonuniform--graded-cartesian-meshes-and-automatic-feature-snapping)
+   - [6.4 Conformal Cut Cells: Dey–Mittra PEC and Thin Conducting Sheets](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets--new-in-this-fork)
+   - [6.5 Dielectric Subpixel Smoothing: Diagonal Harmonic/Arithmetic (`conformal='all'`) and Full Symmetric Kottke Tensor (`conformal='tensor'`)](#65-dielectric-subpixel-smoothing-diagonal-harmonicarithmetic-conformalall-and-full-symmetric-kottke-tensor-conformaltensor--new-in-this-fork)
+   - [6.6 Exploiting Mirror Symmetry Planes](#66-exploiting-mirror-symmetry-planes--new-in-this-fork)
+   - [6.7 High-Level Device Templates (`wakis.templates`)](#67-high-level-device-templates-wakistemplates--new-in-this-fork)
+- [7. Materials and Dispersion](#7-materials-and-dispersion)
+   - [7.1 Isotropic and Anisotropic Permittivity $\varepsilon$, Permeability $\mu$, and Conductivity $\sigma$](#71-isotropic-and-anisotropic-permittivity-varepsilon-permeability-mu-and-conductivity-sigma)
+   - [7.2 Dispersive Materials via Auxiliary Differential Equations (Drude, Lorentz, Debye, Rakić Metals)](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals--new-in-this-fork)
+   - [7.3 Subpixel Averaging at Dispersive Interfaces (`wakis.tensor_dispersive`)](#73-subpixel-averaging-at-dispersive-interfaces-wakistensor_dispersive--new-in-this-fork)
+   - [7.4 Cold Plasma Medium and Analytical Linear Plasma Wakefield (`wakis.plasma`)](#74-cold-plasma-medium-and-analytical-linear-plasma-wakefield-wakisplasma--new-in-this-fork)
+   - [7.5 Leontovich Surface Impedance Boundary Condition (`use_sibc=True`)](#75-leontovich-surface-impedance-boundary-condition-use_sibctrue)
+- [8. Sources and Excitations](#8-sources-and-excitations)
+   - [8.1 Relativistic and Sub-Relativistic Particle Beams (`Beam`, Direct vs. TF/SF Injection)](#81-relativistic-and-sub-relativistic-particle-beams-beam-direct-vs-tfsf-injection)
+   - [8.2 Dipoles, Line/Sheet Currents, Gaussian Pulses, and CW Harmonics (`CurrentSource`, `MagneticCurrentSource`, `GaussianSource`, `ContinuousSource`, `CustomSource`)](#82-dipoles-linesheet-currents-gaussian-pulses-and-cw-harmonics-currentsource-magneticcurrentsource-gaussiansource-continuoussource-customsource--new-in-this-fork)
+   - [8.3 Total-Field / Scattered-Field (TF/SF) Plane-Wave Box (`TFSFSource`)](#83-total-field--scattered-field-tfsf-plane-wave-box-tfsfsource--new-in-this-fork)
+   - [8.4 Waveguide Eigenmode Sources (`solve_modes`, `ModeSource`)](#84-waveguide-eigenmode-sources-solve_modes-modesource--new-in-this-fork)
+   - [8.5 Lumped Circuit Elements (`LumpedElement`) and Driven Lumped Ports (`LumpedPort`)](#85-lumped-circuit-elements-lumpedelement-and-driven-lumped-ports-lumpedport--new-in-this-fork)
+- [9. Boundary Conditions and Absorbing Layers](#9-boundary-conditions-and-absorbing-layers)
+   - [9.1 PEC, PMC, and Periodic Boundaries](#91-pec-pmc-and-periodic-boundaries)
+   - [9.2 Bloch-Periodic Boundaries (`'bloch'`) with Complex Fields](#92-bloch-periodic-boundaries-bloch-with-complex-fields--new-in-this-fork)
+   - [9.3 Convolutional Perfectly Matched Layer (`'cpml'`) vs. Legacy `'pml'`](#93-convolutional-perfectly-matched-layer-cpml-vs-legacy-pml--new-in-this-fork)
+   - [9.4 First-Order Absorbing Boundary Conditions (`'abc'` / `'mur'`)](#94-first-order-absorbing-boundary-conditions-abc--mur)
+   - [9.5 Radial Complex-Frequency-Shifted PML on Unstructured Meshes](#95-radial-complex-frequency-shifted-pml-on-unstructured-meshes--new-in-this-fork)
+- [10. Monitors, Post-Processing, and Physical Observables](#10-monitors-post-processing-and-physical-observables)
+   - [10.1 Time-Domain Field Snapshots, `FieldMonitor`, and `SliceRecorder`](#101-time-domain-field-snapshots-fieldmonitor-and-slicerecorder--new-in-this-fork)
+   - [10.2 On-the-Fly Discrete Fourier Transform Monitor (`DFTMonitor`)](#102-on-the-fly-discrete-fourier-transform-monitor-dftmonitor--new-in-this-fork)
+   - [10.3 Poynting Flux and Cross Sections (`FluxMonitor`)](#103-poynting-flux-and-cross-sections-fluxmonitor--new-in-this-fork)
+   - [10.4 Near-to-Far-Field Transformation and Antenna Metrics (`Near2FarMonitor`)](#104-near-to-far-field-transformation-and-antenna-metrics-near2farmonitor--new-in-this-fork)
+   - [10.5 Floquet Diffraction-Order Decomposition (`DiffractionMonitor`)](#105-floquet-diffraction-order-decomposition-diffractionmonitor--new-in-this-fork)
+   - [10.6 Waveguide Mode Monitors (`ModeMonitor`) and Multi-Port S-Matrices (`wakis.sparameters`)](#106-waveguide-mode-monitors-modemonitor-and-multi-port-s-matrices-wakissparameters--new-in-this-fork)
+   - [10.7 High-Resolution Resonance Extraction (`harminv`, `ResonanceMonitor`)](#107-high-resolution-resonance-extraction-harminv-resonancemonitor--new-in-this-fork)
+   - [10.8 Wake Potential and Beam-Coupling Impedance (`WakeSolver`)](#108-wake-potential-and-beam-coupling-impedance-wakesolver)
+- [11. Unstructured, Hybrid, Curvilinear, and High-Order Solvers](#11-unstructured-hybrid-curvilinear-and-high-order-solvers--new-in-this-fork)
+   - [11.1 2D Triangle FIT (`UnstructuredFIT2D`, Voronoi / Barycentric Dual)](#111-2d-triangle-fit-unstructuredfit2d-voronoi--barycentric-dual--new-in-this-fork)
+   - [11.2 2D Polygonal, Hybrid Square/Triangle, and Voronoi FIT (`PolygonFIT2D`)](#112-2d-polygonal-hybrid-squaretriangle-and-voronoi-fit-polygonfit2d--new-in-this-fork)
+   - [11.3 2D Cartesian Subgridding (`SubgridFIT2D`)](#113-2d-cartesian-subgridding-subgridfit2d--new-in-this-fork)
+   - [11.4 Hybrid Quadtree Subgrid + Body-Fitted Triangles (`subtri`)](#114-hybrid-quadtree-subgrid--body-fitted-triangles-subtri--new-in-this-fork)
+   - [11.5 2D Curvilinear O-Grid Non-Orthogonal FIT (`CurvilinearFIT2D`)](#115-2d-curvilinear-o-grid-non-orthogonal-fit-curvilinearfit2d--new-in-this-fork)
+   - [11.6 3D Extruded Prism FIT (`PrismFIT3D`)](#116-3d-extruded-prism-fit-prismfit3d--new-in-this-fork)
+   - [11.7 3D Tetrahedral FIT (`UnstructuredFIT3D`)](#117-3d-tetrahedral-fit-unstructuredfit3d--new-in-this-fork)
+   - [11.8 Stabilized Local Time Stepping (`UnstructuredFIT2D(lts=2)`, Leapfrog–Chebyshev)](#118-stabilized-local-time-stepping-unstructuredfit2dlts2-leapfrogchebyshev--new-in-this-fork)
+   - [11.9 High-Order Solvers: Curved Nodal `DGTD2D` ($p=1\text{–}5$) and Cartesian `(2,4)` `FDTD24`](#119-high-order-solvers-curved-nodal-dgtd2d-p1text5-and-cartesian-24-fdtd24--new-in-this-fork)
+   - [11.10 Summary Comparison of Mesh & Solver Arms (`README.md` Headline Benchmarks)](#1110-summary-comparison-of-mesh--solver-arms-readmemd-headline-benchmarks--new-in-this-fork)
+- [12. GPU Acceleration, Fused Kernels, and MPI Domain Decomposition](#12-gpu-acceleration-fused-kernels-and-mpi-domain-decomposition)
+   - [12.1 GPU Acceleration (`use_gpu=True`) and Fused CUDA Kernels (`fused=True`)](#121-gpu-acceleration-use_gputrue-and-fused-cuda-kernels-fusedtrue--new-in-this-fork)
+   - [12.2 MPI Domain Decomposition (`use_mpi=True`) and Multi-GPU Scaling](#122-mpi-domain-decomposition-use_mpitrue-and-multi-gpu-scaling)
+- [13. Inverse Design and Discrete Adjoint Sensitivity Analysis](#13-inverse-design-and-discrete-adjoint-sensitivity-analysis--new-in-this-fork)
+   - [13.1 Exact Discrete Adjoint Theory and the Dot-Product Test](#131-exact-discrete-adjoint-theory-and-the-dot-product-test--new-in-this-fork)
+   - [13.2 Parameterizing a Design Region (`MaterialGrid`) and Wrapping with JAX (`jax_simulation`)](#132-parameterizing-a-design-region-materialgrid-and-wrapping-with-jax-jax_simulation--new-in-this-fork)
+   - [13.3 The Adjoint Memory Ladder (`store`, `checkpoint`, `reverse`, `nyquist`, `auto`)](#133-the-adjoint-memory-ladder-store-checkpoint-reverse-nyquist-auto--new-in-this-fork)
+   - [13.4 Subpixel-Smoothed Projection (SSP) for High-Beta Topology Optimization](#134-subpixel-smoothed-projection-ssp-for-high-beta-topology-optimization--in-progress)
+   - [13.5 The `invrs-gym` Bridge (`invrs-wakis`) and Benchmark Results](#135-the-invrs-gym-bridge-invrs-wakis-and-benchmark-results--in-progress)
+- [14. Wakefield and Accelerator Physics Specifics](#14-wakefield-and-accelerator-physics-specifics)
+   - [14.1 Wake Potential, Panofsky–Wenzel Theorem, Beam-Coupling Impedance, and Loss Factors](#141-wake-potential-panofskywenzel-theorem-beam-coupling-impedance-and-loss-factors)
+   - [14.2 Dispersion-Free TE/TM Wake Time Stepping (`scheme='tete'`)](#142-dispersion-free-tetm-wake-time-stepping-schemetete--new-in-this-fork)
+   - [14.3 Linear Cold-Plasma Wakefield Simulation (`wakis.plasma`)](#143-linear-cold-plasma-wakefield-simulation-wakisplasma--new-in-this-fork)
+   - [14.4 Companion CERN ImpedanCEI Ecosystem Tools](#144-companion-cern-impedancei-ecosystem-tools)
+- [15. Validation, Analytical References, and Benchmark Suite (`B1`–`B5`)](#15-validation-analytical-references-and-benchmark-suite-b1b5--new-in-this-fork)
+   - [15.1 Built-in Exact Analytical Reference Solvers (`wakis.analytic`)](#151-built-in-exact-analytical-reference-solvers-wakisanalytic--new-in-this-fork)
+   - [15.2 The Shared Benchmark Suite (`B1`–`B5`), Result Store, and `cost_to_target` Metric](#152-the-shared-benchmark-suite-b1b5-result-store-and-cost_to_target-metric--new-in-this-fork)
+   - [15.3 How to Add and Benchmark a New Solver Arm](#153-how-to-add-and-benchmark-a-new-solver-arm--new-in-this-fork)
+   - [15.4 Index of Engineering Studies (`studies/*`)](#154-index-of-engineering-studies-studies--new-in-this-fork)
+- [16. Performance Modeling and Memory Planning](#16-performance-modeling-and-memory-planning--new-in-this-fork)
+   - [16.1 Using `wakis.estimate` and `preflight` Before Launching a Run](#161-using-wakisestimate-and-preflight-before-launching-a-run--new-in-this-fork)
+   - [16.2 Memory Breakdown per Grid Cell (`wakis/estimate.py`)](#162-memory-breakdown-per-grid-cell-wakisestimatepy--new-in-this-fork)
+   - [16.3 Why Time-Domain Electromagnetic Solvers Are Memory-Bandwidth Bound](#163-why-time-domain-electromagnetic-solvers-are-memory-bandwidth-bound)
+- [17. Roadmap and Sister Libraries](#17-roadmap-and-sister-libraries)
+   - [17.1 Wakis Fork Roadmap (`README.md`, `docs/unstructured_roadmap.md`)](#171-wakis-fork-roadmap-readmemd-docsunstructured_roadmapmd)
+   - [17.2 Sister Libraries in the Computational Electromagnetics Ecosystem (`plan.md`)](#172-sister-libraries-in-the-computational-electromagnetics-ecosystem-planmd--planned)
+- [18. FAQ and Troubleshooting](#18-faq-and-troubleshooting)
+   - [18.1 Why did my simulation blow up (`NaN` or `Inf` fields)?](#181-why-did-my-simulation-blow-up-nan-or-inf-fields)
+   - [18.2 Why is my CPU simulation suddenly running $5\times\text{–}10\times$ slower after the pulse passes?](#182-why-is-my-cpu-simulation-suddenly-running-5timestext10times-slower-after-the-pulse-passes)
+   - [18.3 How do I avoid Out-Of-Memory (OOM) errors on GPU or during Adjoint Runs?](#183-how-do-i-avoid-out-of-memory-oom-errors-on-gpu-or-during-adjoint-runs)
+   - [18.4 How do I fix staircase errors on curved PEC or high-contrast dielectric/plasmonic surfaces?](#184-how-do-i-fix-staircase-errors-on-curved-pec-or-high-contrast-dielectricplasmonic-surfaces)
+   - [18.5 Why do my complex phasors or S-parameters look conjugated compared to `Meep`, `fmmax`, or `ceviche`?](#185-why-do-my-complex-phasors-or-s-parameters-look-conjugated-compared-to-meep-fmmax-or-ceviche)
+- [19. References and Credits](#19-references-and-credits)
+   - [19.1 Verified Scientific References](#191-verified-scientific-references)
+   - [19.2 Credits and Acknowledgments](#192-credits-and-acknowledgments)
 
 ---
 
@@ -126,39 +135,39 @@
 
 At its core, Wakis discretizes Maxwell's equations in integral form on a staggered dual cell complex using Thomas Weiland's **Finite Integration Technique (FIT)** ([Weiland 1977](#19-references-and-credits); [Clemens & Weiland 2001](#19-references-and-credits)), advancing the electric voltages and magnetic fluxes in time with a second-order symplectic leapfrog integrator. Because it is written in pure Python on top of `numpy`, `scipy.sparse`, `cupy` (for GPU acceleration), `mpi4py` (for longitudinal domain decomposition), and `pyvista` (for 3D CAD geometry interrogation and visualization), Wakis is easy to inspect, extend, and embed in optimization or multiphysics workflows.
 
-![Wakis overview banner](docs/img/wakis-banner-2024.png)
+![Wakis logo](docs/img/wakis-logo-pink.png)
 *Figure 1.1 — Upstream Wakis architecture for 3D time-domain electromagnetic and wakefield simulation.*
 
 ### 1.2 What This Fork Adds 🆕 **New in this fork**
 
 This fork ([`github.com/eshipton/Wakis`](https://github.com/eshipton/Wakis)) preserves full backward compatibility with upstream Wakis's wakefield and impedance workflows while expanding Wakis into a **general-purpose computational electromagnetics (CEM) and photonic/RF inverse-design solver**, validated against exact analytical solutions (`wakis.analytic`) and external reference solvers (`meep`, `ceviche`, `fmmax`, `scikit-fem`, and `necpp`).
 
-The fork adds **86 new source modules, tests, tutorials, and benchmark harnesses** (`git diff --name-status upstream/main...HEAD -- wakis`), organized around six major themes:
+The fork adds **88 new files under `wakis/` (97 changed in total)** (`git diff --name-status upstream/main...HEAD -- wakis`), organized around six major themes:
 
 1. **General CEM Sources, Ports, Boundaries, and Monitors:**
-   - Exact discrete 3D Total-Field / Scattered-Field plane-wave excitation (`TFSFSource`, with $6\times 10^{-16}$ vacuum amplitude leakage).
+   - Exact discrete 3D Total-Field / Scattered-Field plane-wave excitation (`TFSFSource`; peak scattered-field leakage in vacuum $\approx 6\times 10^{-15}$–$10^{-14}$ of the total field in 3D, i.e. round-off; `studies/tfsf/`).
    - 2D waveguide vector eigenmode solver, modal launcher, and S-parameter decomposition (`solve_modes`, `ModeSource`, `ModeMonitor`).
    - Lumped RLC circuit elements, Norton discrete ports, and multi-port Touchstone/scikit-rf S-parameters (`LumpedElement`, `LumpedPort`, `wakis.sparameters`).
    - Bloch-periodic boundary conditions (`bc='bloch'`, `k_bloch`) and Rayleigh diffraction-order decomposition (`DiffractionMonitor`).
    - Frequency-domain field, Poynting flux, near-to-far-field Stratton–Chu radiation, and harmonic-inversion (`harminv`) resonance monitors (`DFTMonitor`, `FluxMonitor`, `Near2FarMonitor`, `ResonanceMonitor`).
 2. **Subcell Geometry Accuracy and Dispersive Media:**
-   - Dey–Mittra conformal PEC cut cells with $(2,-1)$ stabilizing flux extrapolation, Shorthouse–Railton thin conducting sheets (`conformal='pec'`), diagonal Kottke subpixel smoothing (`conformal='all'`), and full symmetric octant tensor averaging (`conformal='tensor'`).
+   - Dey–Mittra conformal PEC cut cells with a symmetric $(2,-1)$ small-face flux redistribution, zero-thickness PEC sheets with a knife-edge field correction (`conformal='pec'`), diagonal Kottke subpixel smoothing (`conformal='all'`), and full symmetric octant tensor averaging (`conformal='tensor'`).
    - Multi-pole Drude, Lorentz, and Debye dispersive materials via Auxiliary Differential Equations (`DispersiveMaterial`, `dispersive_lib` with Rakić Au, Ag, Al, Cu, $\text{SiO}_2$), plus a two-capacitor edge-network scheme (`wakis/tensor_dispersive.py`) for subpixel-averaged metal–dielectric interfaces.
-   - Mirror symmetry planes (`sym_x`, `sym_y`, `sym_z`) cutting domain memory and runtime by $2\times$ to $8\times$.
+   - Mirror symmetry by placing PEC/PMC boundaries exactly on a symmetry plane (`boundary_at_domain_edge=True`), cutting the cell count by $2\times$ to $8\times$.
 3. **Unstructured, Hybrid, Curvilinear, Prism, and High-Order Meshes:**
    - 2D and 3D simplex FIT on Delaunay–Voronoi and barycentric dual meshes (`UnstructuredFIT2D`, `UnstructuredFIT3D`) with radial CFS-PML, automatic $h$-grading, and integer-ratio Local Time Stepping (`lts=p`).
-   - 2D polygonal, hybrid quad/triangle, and centroidal Voronoi FIT (`PolygonFIT2D`), 2D nested Cartesian subgridding (`SubgridFIT2D`), subgridded quadtree squares with a conforming triangle band (`subtri`, 🧪 **In progress**), and curvilinear O-grid Non-Orthogonal FIT (`CurvilinearFIT2D`).
+   - 2D polygonal, hybrid quad/triangle, and centroidal Voronoi FIT (`PolygonFIT2D`), 2D nested Cartesian subgridding (`SubgridFIT2D`), subgridded quadtree squares with a conforming triangle band (`subtri`, 🆕 merged), and curvilinear O-grid Non-Orthogonal FIT (`CurvilinearFIT2D`).
    - 3D extruded triangular prism FIT (`PrismFIT3D`) for layered photonic, metasurface, and planar RF structures.
    - High-order nodal Discontinuous Galerkin Time Domain on curved isoparametric triangles (`DGTD2D`, $p=1\dots 6$) and fourth-order staggered Cartesian FDTD (`FDTD24`).
 4. **Wakefield Physics Extensions:**
-   - Dispersion-free longitudinal propagation for wakefields via the Dohlus–Zagorodnov TE/TM splitting (`SolverFIT3D(..., scheme='tete')`), reducing pillbox wake error vs. analytical modes by $4.6\times$.
+   - Dispersion-free longitudinal propagation for wakefields via the Dohlus–Zagorodnov TE/TM splitting (`SolverFIT3D(..., scheme='tete')`), giving a smooth-pipe spurious wake at round-off ($\le 3\times 10^{-8}$ V/pC, against 1.2–660 V/pC for Yee) and, in a closed box at $\sigma_z/\Delta z = 1$, a loss-factor error of 10 % against 48 % for Yee (19× less work to reach 1 %).
    - Self-consistent cold-plasma ADE response and linear plasma wakefield analytical benchmarks (`wakis.plasma`).
 5. **Exact Discrete Adjoint and Photonic/RF Inverse Design:**
    - Discretize-then-differentiate adjoint sensitivity analysis (`AdjointSimulation`, `AdjointStepper`) matching finite differences to $10^{-11}$ across dielectrics, CPML, Bloch boundaries, lumped ports, and dispersive media.
-   - Custom JAX primitive (`jax_simulation`), density filtering/projection (`MaterialGrid`, plus subpixel-smoothed projection 🧪 **In progress**), a 5-rung adjoint memory ladder (`store`, `checkpoint`, `reverse`, `nyquist`, `auto`) reducing peak memory by up to $150\times$, and an `invrs-gym` bridge (`invrs-wakis`).
+   - Custom JAX primitive (`jax_simulation`), density filtering/projection (`MaterialGrid`, plus subpixel-smoothed projection 🧪 **In progress**), a 5-rung adjoint memory ladder (`store`, `checkpoint`, `reverse`, `nyquist`, `auto`) with `reverse` using 30–60× less memory than `store` (12.3 GB → 0.39 GB measured on a 313² × 20 000-step case), and an `invrs-gym` bridge (`invrs-wakis`).
 6. **Performance Engineering and Reproducible Benchmarking:**
-   - Fused CuPy CUDA elementwise kernels (`use_gpu=True, fused=True`) delivering $110\text{–}313\text{ Mcell}\cdot\text{steps/s}$ on a single NVIDIA L4 GPU ($12\text{–}35\times$ faster than CPU).
-   - Pre-flight memory and runtime estimator (`wakis.estimate`, `preflight`), subnormal floating-point flush (`flush_subnormals=True`), and the `wakis.benchmarks` suite (`B1`–`B5`) with a shared JSONL result store.
+   - Fused CuPy CUDA elementwise kernels (`use_gpu=True, fused=True`) delivering $185\text{–}319$ Mcells/s on one NVIDIA L4 GPU for a plain PEC box of $64^3$–$192^3$ cells, i.e. $10\text{–}38\times$ one CPU core and $6\text{–}20\times$ eight MKL cores (`docs/performance.md`).
+   - Pre-flight memory and runtime estimator (`wakis.estimate`, `preflight`) and the `wakis.benchmarks` suite (`B1`–`B5`) with one JSON record per run.
 
 ---
 
@@ -168,53 +177,52 @@ Every row below carries one of the four status markers defined at the top of thi
 
 | Feature | Module / Public API | Status | Where Documented / Tested |
 | :--- | :--- | :--- | :--- |
-| **3D Cartesian FIT Grid & STL Import** | `wakis.GridFIT3D` (`wakis/gridFIT3D.py`) | *(upstream)* | [Sec. 6.1](#61-gridfit3d-domain-edge-convention-vs-legacy-cell-count-convention), [Sec. 6.2](#62-cad--stl-import-and-constructive-solid-geometry); `tests/test_001_grid_and_stl.py` |
-| **Domain-Edge Boundary Alignment** | `GridFIT3D(..., boundary_at_domain_edge=True)` | 🆕 **New in this fork** | [Sec. 6.1](#61-gridfit3d-domain-edge-convention-vs-legacy-cell-count-convention); `tests/test_012_grid_boundaries.py` |
-| **Nonuniform / Graded Cartesian Grids** | `GridFIT3D(..., x=..., y=..., z=...)`, `graded_axis` | *(upstream)* + 🆕 **New in this fork** | [Sec. 6.3](#63-graded-and-nonuniform-cartesian-meshes); `wakis/benchmarks/arms/cartesian2d.py` |
+| **3D Cartesian FIT Grid & STL Import** | `wakis.GridFIT3D` (`wakis/gridFIT3D.py`) | *(upstream)* | [Sec. 6.1](#61-gridfit3d-and-exact-domain-edge-boundaries-boundary_at_domain_edgetrue--new-in-this-fork), [Sec. 6.2](#62-importing-cad--stl-solids-and-assigning-materials); `tests/test_001_grid_and_stl.py` |
+| **Domain-Edge Boundary Alignment** | `GridFIT3D(..., boundary_at_domain_edge=True)` | 🆕 **New in this fork** | [Sec. 6.1](#61-gridfit3d-and-exact-domain-edge-boundaries-boundary_at_domain_edgetrue--new-in-this-fork); `tests/test_012_grid_boundaries.py` |
+| **Nonuniform / Graded Cartesian Grids** | `GridFIT3D(..., x=..., y=..., z=...)`, `wakis.templates.meshing.graded_axis` | *(upstream)* + 🆕 **New in this fork** | [Sec. 6.3](#63-nonuniform--graded-cartesian-meshes-and-automatic-feature-snapping); `wakis/benchmarks/arms/cartesian2d.py` |
 | **3D FIT Leapfrog Solver (`emsolve`, `wakesolve`)** | `wakis.SolverFIT3D` (`wakis/solverFIT3D.py`) | *(upstream)* | [Sec. 4](#4-the-finite-integration-technique-fit-theory-and-method-comparison), [Sec. 5](#5-units-conventions-and-time-stepping); `tests/test_002_solverFIT3D.py` |
-| **Energy-Decay Early Stopping** | `SolverFIT3D.emsolve(..., stop_when_energy_decayed=(tol, check_every))` | 🆕 **New in this fork** | [Sec. 3.2](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave), [Sec. 8.5](#85-lumped-elements-and-discrete-ports-lumpedelement-lumpedport); `tests/test_016_lumped_and_sparameters.py` |
-| **Subnormal Floating-Point Flush (FTZ/DAZ)** | `SolverFIT3D(..., flush_subnormals=True)` (`wakis/subnormals.py`) | 🆕 **New in this fork** | [Sec. 16.2](#162-memory-breakdown-per-cell-and-why-time-domain-cem-is-memory-bandwidth-bound), [Sec. 18](#18-faq-and-troubleshooting); `tests/test_011_subnormals.py` |
-| **Mirror Symmetry Planes (`pec` / `pmc`)** | `SolverFIT3D(..., sym_x=..., sym_y=..., sym_z=...)` | 🆕 **New in this fork** | [Sec. 6.6](#66-exploiting-mirror-symmetry-sym_x-sym_y-sym_z); `tests/test_023_symmetry.py` |
-| **Conformal Dey–Mittra PEC & Thin Sheets** | `GridFIT3D(..., conformal='pec', sheets=[...])` (`wakis/conformal.py`) | 🆕 **New in this fork** | [Sec. 6.4](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets); `tests/test_022_conformal.py`, `studies/conformal/` |
-| **Diagonal Kottke Subpixel Smoothing** | `GridFIT3D(..., conformal='all')` (`wakis/conformal.py`) | 🆕 **New in this fork** | [Sec. 6.5](#65-diagonal-and-full-tensor-kottke-subpixel-averaging); `tests/test_022_conformal.py`, `tutorials/01_mie_cylinder/` |
-| **Full-Tensor Kottke Subpixel Averaging** | `GridFIT3D(..., conformal='tensor')` (`wakis/tensor_averaging.py`) | 🆕 **New in this fork** | [Sec. 6.5](#65-diagonal-and-full-tensor-kottke-subpixel-averaging); `tests/test_027_tensor_averaging.py`, `studies/tensor-averaging/` |
-| **Declarative Device Templates** | `wakis.templates` (`rect_waveguide`, `microstrip`, `coax`, `pillbox`, `iris_line`, `patch_antenna`, `dipole_in_box`, `sphere_in_box`, `grating_2d`) | 🆕 **New in this fork** | [Sec. 6.7](#67-declarative-geometry-templates-wakistemplates), `docs/templates.md`; `tests/test_024_templates.py` |
-| **Anisotropic Diagonal $\varepsilon_r, \mu_r, \sigma$** | `SolverFIT3D.ieps`, `imu`, `sigma` (`wakis/field.py`, `wakis/materials.py`) | *(upstream)* | [Sec. 7.1](#71-isotropic-and-diagonal-anisotropic-varepsilon_r-mu_r-and-sigma); `tests/test_002_solverFIT3D.py` |
-| **Leontovich Surface Impedance (SIBC)** | `SolverFIT3D(..., use_conductors=True)` (`wakis/boundaries.py`) | *(upstream)* | [Sec. 7.5](#75-leontovich-surface-impedance-boundary-condition-sibc); `tests/test_005_boundaries.py` |
-| **Dispersive Materials (ADE: Drude, Lorentz, Debye, Rakić)** | `DispersiveMaterial`, `Drude`, `Lorentz`, `Debye`, `dispersive_lib`, `fit_poles`, `eps_from_nk` (`wakis/dispersive.py`) | 🆕 **New in this fork** | [Sec. 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals); `tests/test_019_dispersive.py`, `studies/dispersive/` |
-| **Tensor-Dispersive Two-Capacitor Subpixel Averaging** | `GridFIT3D(..., conformal='tensor')` with `DispersiveMaterial` (`wakis/tensor_dispersive.py`) | 🆕 **New in this fork** | [Sec. 7.3](#73-tensor-dispersive-subpixel-averaging-at-metaldielectric-interfaces); `tests/test_036_tensor_dispersive.py`, `studies/tensor-dispersive/` |
-| **Cold-Plasma Material & Linear Plasma Wake** | `wakis.plasma` (`cold_plasma`, `plasma_frequency`, `linear_wake`, `wake_amplitude`) | 🆕 **New in this fork** | [Sec. 7.4](#74-cold-plasma-media-wakisplasma), [Sec. 14.3](#143-linear-cold-plasma-wakefield-benchmark-wakisplasma); `tests/test_020_linear_plasma_wake.py`, `examples/007_linear_plasma_wakefield.py` |
-| **Relativistic Beam, Dipole, Laser, PlaneWave, Pulse** | `Beam`, `Dipole`, `Laser`, `PlaneWave`, `Pulse` (`wakis/sources.py`) | *(upstream)* | [Sec. 8.1](#81-relativistic-particle-beams-beam); `tests/test_004_sources.py` |
-| **Soft Electric/Magnetic Current Sources & Waveforms** | `CurrentSource`, `MagneticCurrentSource`, `GaussianSource`, `ContinuousSource`, `CustomSource` (`wakis/sources.py`) | 🆕 **New in this fork** | [Sec. 8.2](#82-time-waveforms-gaussiansource-continuoussource-customsource-and-soft-dipoles-currentsource-magneticcurrentsource); `tests/test_014_soft_sources.py` |
-| **Exact Discrete 3D TF/SF Plane-Wave Source** | `wakis.TFSFSource` (`wakis/tfsf.py`) | 🆕 **New in this fork** | [Sec. 8.3](#83-exact-discrete-total-field--scattered-field-plane-waves-tfsfsource); `tests/test_029_tfsf.py`, `studies/tfsf/` |
-| **Waveguide Eigenmode Solver, Launcher & Monitor** | `solve_modes`, `ModeSource`, `ModeMonitor` (`wakis/mode_solver.py`) | 🆕 **New in this fork** | [Sec. 8.4](#84-waveguide-eigenmode-sources-solve_modes-modesource), [Sec. 10.6](#106-waveguide-mode-decomposition-modemonitor-and-multi-port-s-parameters-wakissparameters); `tests/test_017_mode_ports.py`, `studies/mode_ports/` |
-| **Lumped RLC Elements, Ports & S-Parameters** | `LumpedElement`, `LumpedPort` (`wakis/lumped.py`), `s_matrix`, `write_touchstone`, `read_touchstone`, `to_skrf_network` (`wakis/sparameters.py`) | 🆕 **New in this fork** | [Sec. 8.5](#85-lumped-elements-and-discrete-ports-lumpedelement-lumpedport), [Sec. 10.6](#106-waveguide-mode-decomposition-modemonitor-and-multi-port-s-parameters-wakissparameters); `tests/test_016_lumped_and_sparameters.py`, `studies/lumped_sparam/` |
-| **PEC, PMC, Periodic, Mur ABC, Scalar PML, CPML** | `SolverFIT3D(..., bc_low=..., bc_high=...)` (`wakis/boundaries.py`, `wakis/cpml.py`) | *(upstream)* | [Sec. 9.1](#91-perfect-conductors-pec-pmc-and-periodic-boundaries-periodic), [Sec. 9.3](#93-convolutional-perfectly-matched-layers-cpml-vs-scalar-pml), [Sec. 9.4](#94-first-order-absorbing-boundary-conditions-abc--mur--silvermüller); `tests/test_005_boundaries.py`, `tests/test_008_cpml.py` |
-| **Bloch-Periodic Boundaries & Diffraction Orders** | `bc='bloch'`, `k_bloch` (`wakis/bloch.py`), `DiffractionMonitor` (`wakis/diffraction.py`) | 🆕 **New in this fork** | [Sec. 9.2](#92-bloch-periodic-boundaries-bloch-with-complex-fields), [Sec. 10.5](#105-rayleigh-diffraction-orders-for-periodic-gratings-diffractionmonitor); `tests/test_021_bloch.py`, `tests/test_030_diffraction.py`, `studies/diffraction/` |
-| **Time-Domain `FieldMonitor` & `SliceRecorder`** | `wakis.FieldMonitor` (`wakis/field_monitors.py`), `wakis.visualize.SliceRecorder` | *(upstream)* + 🆕 **New in this fork** | [Sec. 10.1](#101-time-domain-field-snapshots-fieldmonitor-slicerecorder); `examples/005_CPU_with_field_monitor.py` |
-| **Frequency-Domain `DFTMonitor` & `FluxMonitor`** | `wakis.DFTMonitor`, `wakis.FluxMonitor` (`wakis/field_monitors.py`) | 🆕 **New in this fork** | [Sec. 10.2](#102-running-discrete-fourier-transforms-dftmonitor), [Sec. 10.3](#103-poynting-flux-and-cross-sections-fluxmonitor); `tests/test_015_dft_and_flux_monitors.py` |
-| **Stratton–Chu Near-to-Far-Field Transformation** | `wakis.Near2FarMonitor` (`wakis/near2far.py`) | 🆕 **New in this fork** | [Sec. 10.4](#104-near-to-far-field-transformation-near2farmonitor); `tests/test_018_near2far.py`, `studies/near2far/` |
-| **Harmonic Inversion (`harminv`, `ResonanceMonitor`)** | `wakis.harminv`, `wakis.ResonanceMonitor` (`wakis/resonances.py`) | 🆕 **New in this fork** | [Sec. 10.7](#107-harmonic-inversion-of-ring-down-signals-harminv-resonancemonitor); `tests/test_025_resonances.py`, `studies/resonances/` |
-| **Wake Potential & Impedance (`WakeSolver`)** | `wakis.WakeSolver` (`wakis/wakeSolver.py`) | *(upstream)* | [Sec. 10.8](#108-wake-potential-and-beam-coupling-impedance-wakesolver), [Sec. 14.1](#141-longitudinal-and-transverse-wake-potential-panofskywenzel-theorem-and-impedance); `tests/test_003_wakeSolver.py` |
-| **Dispersion-Free TE/TM Wakefield Scheme** | `SolverFIT3D(..., scheme='tete')` (`wakis/tete.py`) | 🆕 **New in this fork** | [Sec. 14.2](#142-dispersion-free-tetm-wakefield-scheme-schemetete); `tests/test_044_tete_wake.py`, `studies/tete-wake/` |
-| **2D/3D Simplex FIT & Radial CFS-PML** | `SimplexMesh`, `UnstructuredFIT2D`, `UnstructuredFIT3D` (`wakis/unstructured/`) | 🆕 **New in this fork** | [Sec. 9.5](#95-radial-complex-frequency-shifted-pml-cfs-pml-on-unstructured-meshes), [Sec. 11.1](#111-2d-triangle-fit-on-delaunayvoronoi-and-barycentric-duals-unstructuredfit2d), [Sec. 11.7](#117-3d-tetrahedral-fit-unstructuredfit3d); `tests/test_028_unstructured_fit.py`, `studies/unstructured/` |
-| **Local Time Stepping (LTS) on Unstructured Meshes** | `UnstructuredFIT2D(..., lts=p)` (`wakis/unstructured/lts.py`) | 🆕 **New in this fork** | [Sec. 11.8](#118-local-time-stepping-lts-on-graded-unstructured-meshes); `tests/test_035_unstructured_lts.py`, `studies/unstructured-lts/` |
-| **Polygonal, Hybrid Quad/Tri & Voronoi FIT** | `PolyMesh`, `PolygonFIT2D`, `hybrid_circles_mesh`, `voronoi_disk_mesh` (`wakis/unstructured/polymesh*.py`) | 🆕 **New in this fork** | [Sec. 11.2](#112-polygonal-hybrid-quadtri-and-voronoi-dual-fit-polygonfit2d); `tests/test_037_polygon_fit.py`, `studies/polygon-fit/` |
-| **2D Nested Cartesian Subgridding** | `QuadMesh`, `SubgridFIT2D`, `circle_subgrid_mesh` (`wakis/subgrid/`) | 🆕 **New in this fork** | [Sec. 11.3](#113-2d-nested-cartesian-subgridding-subgridfit2d); `tests/test_038_subgridding.py`, `studies/subgridding/` |
-| **Subgridded Quadtree + Triangle Band (`subtri`)** | `subtri_circles_mesh`, `SubTriArm` (`wakis/unstructured/subtri.py` on `merge/subtri`) | 🧪 **In progress** | [Sec. 11.4](#114-subgridded-quadtree-squares--conforming-triangle-band-subtri); `studies/subtri-hybrid/` on branch `merge/subtri` |
-| **Curvilinear O-Grid Non-Orthogonal FIT (NFIT)** | `CurvilinearMesh2D`, `CurvilinearFIT2D`, `ogrid_mesh`, `ogrid_cartesian_mesh` (`wakis/curvilinear/`) | 🆕 **New in this fork** | [Sec. 11.5](#115-curvilinear-o-grid-non-orthogonal-fit-curvilinearfit2d); `tests/test_039_curvilinear_nfit.py`, `studies/curvilinear-nfit/` |
-| **Extruded 3D Triangular Prism FIT** | `PrismMesh`, `PrismFIT3D` (`wakis/unstructured/prism.py`) | 🆕 **New in this fork** | [Sec. 11.6](#116-extruded-3d-triangular-prism-fit-prismfit3d); `tests/test_046_prism_fit.py`, `studies/prism-cavity/`, `studies/prism-ring/`, `studies/prism-dipole/` |
-| **High-Order Nodal DGTD & Fourth-Order FDTD** | `DGTD2D`, `circles_mesh` (`wakis/highorder/dgtd2d.py`), `FDTD24` (`wakis/highorder/fdtd24.py`) | 🆕 **New in this fork** | [Sec. 11.9](#119-high-order-nodal-dgtd-on-curved-triangles-dgtd2d-and-fourth-order-fdtd-fdtd24); `tests/test_040_highorder.py`, `studies/high-order/` |
-| **GPU Acceleration (CuPy) & MPI z-Slab Decomposition** | `SolverFIT3D(..., use_gpu=True, use_mpi=True)` | *(upstream)* | [Sec. 12.1](#121-cupy-gpu-backend-use_gputrue-and-fused-elementwise-kernels-fusedtrue), [Sec. 12.2](#122-mpi-longitudinal-slab-decomposition-use_mpitrue-and-multi-gpu-execution); `tests/test_006_gpu.py`, `tests/test_007_mpi.py` |
-| **Fused CUDA/CuPy Elementwise Step Kernels** | `SolverFIT3D(..., use_gpu=True, fused=True)` (`wakis/gpu_fused.py`) | 🆕 **New in this fork** | [Sec. 12.1](#121-cupy-gpu-backend-use_gputrue-and-fused-elementwise-kernels-fusedtrue); `tests/test_041_gpu_fused.py`, `studies/gpu-fused/` |
-| **Exact Discrete Adjoint & JAX Custom VJP** | `AdjointStepper`, `AdjointSimulation`, `MaterialGrid`, `jax_simulation` (`wakis/inverse/`) | 🆕 **New in this fork** | [Sec. 13.1](#131-exact-discrete-adjoint-adjointstepper-adjointsimulation-and-the-dot-product-test), [Sec. 13.2](#132-end-to-end-differentiable-simulation-with-jax-jax_simulation-materialgrid); `tests/test_031_adjoint_core.py`, `tests/test_032_adjoint_coverage.py`, `tests/test_033_adjoint_gpu_mpi.py` |
-| **Adjoint Memory Ladder (`store`/`checkpoint`/`reverse`/`nyquist`/`auto`)** | `AdjointSimulation(..., memory='auto', memory_budget=...)` (`wakis/inverse/memory.py`) | 🆕 **New in this fork** | [Sec. 13.3](#133-the-adjoint-memory-ladder-store-checkpoint-reverse-nyquist-auto); `tests/test_045_adjoint_memory.py`, `studies/adjoint-memory/` |
-| **Subpixel-Smoothed Projection (SSP)** | `smoothed_projection`, `MaterialGrid(projection_beta=...)` (`feature/subpixel-projection`) | 🧪 **In progress** | [Sec. 13.4](#134-subpixel-smoothed-projection-ssp-for-binary-topology-optimization); `studies/ssp/` on branch `feature/subpixel-projection` |
-| **`invrs-gym` Photonic Optimization Bridge** | `invrs-wakis` (`github.com/eshipton/invrs-wakis`) | 🧪 **In progress** | [Sec. 13.5](#135-the-invrs-gym-photonic-topology-optimization-bridge-invrs-wakis); `studies/invrs-round2/` |
-| **Exact Analytical Reference Solutions** | `wakis.analytic` (`mie_sphere`, `mie_cylinder`, `fresnel_slab`, `fabry_perot`, `cavity_modes`, `pillbox_wake`) | 🆕 **New in this fork** | [Sec. 15.1](#151-exact-analytical-reference-module-wakisanalytic); `tests/test_013_analytic.py`, `tests/test_043_mie_cylinder_theory.py` |
-| **Cross-Method Benchmark Suite (`B1`–`B5`)** | `wakis.benchmarks` (`B1`–`B5`, `ResultStore`, `compare`) | 🆕 **New in this fork** | [Sec. 15.2](#152-the-wakisbenchmarks-suite-b1b5-shared-result-store-and-cost-to-target-metric), [Sec. 15.3](#153-how-to-implement-and-register-a-new-benchmark-arm); `tests/test_042_benchmarks.py`, `studies/benchmarks/` |
-| **Pre-Run Memory & Runtime Estimator** | `wakis.estimate.estimate`, `wakis.estimate.preflight` (`wakis/estimate.py`) | 🆕 **New in this fork** | [Sec. 16.1](#161-pre-run-memory-and-runtime-estimation-wakisestimate-and-preflight); `tests/test_026_estimate.py` |
-| **3D Octree Subgridding, 3D O-Grid NFIT, Unstructured Adjoints** | Roadmap items (`docs/unstructured_roadmap.md`) | 🗺️ **Planned** | [Sec. 17.1](#171-wakis-fork-unstructured-gpu-and-inverse-design-roadmap) |
+| **Energy-Decay Early Stopping** | `SolverFIT3D.emsolve(..., stop_when_energy_decayed=(tol, check_every))` | 🆕 **New in this fork** | [Sec. 3.2](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave--new-in-this-fork), [Sec. 8.5](#85-lumped-circuit-elements-lumpedelement-and-driven-lumped-ports-lumpedport--new-in-this-fork); `tests/test_016_lumped_and_sparameters.py` |
+| **Mirror Symmetry via Domain-Edge PEC/PMC Planes** | `GridFIT3D(..., boundary_at_domain_edge=True)` + `SolverFIT3D(bc_low=['pmc', ...])` (no dedicated symmetry API) | 🆕 **New in this fork** (domain-edge convention) | [Sec. 6.6](#66-exploiting-mirror-symmetry-planes--new-in-this-fork); `tests/test_023_symmetry.py` |
+| **Conformal Dey–Mittra PEC & Thin Sheets** | `GridFIT3D(..., conformal='pec', sheets={...})` (`wakis/conformal.py`) | 🆕 **New in this fork** | [Sec. 6.4](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets--new-in-this-fork); `tests/test_022_conformal.py`, `studies/conformal/` |
+| **Diagonal Kottke Subpixel Smoothing** | `GridFIT3D(..., conformal='all')` (`wakis/conformal.py`) | 🆕 **New in this fork** | [Sec. 6.5](#65-dielectric-subpixel-smoothing-diagonal-harmonicarithmetic-conformalall-and-full-symmetric-kottke-tensor-conformaltensor--new-in-this-fork); `tests/test_022_conformal.py`, `tutorials/01_mie_cylinder/` |
+| **Full-Tensor Kottke Subpixel Averaging** | `GridFIT3D(..., conformal='tensor')` (`wakis/tensor_averaging.py`) | 🆕 **New in this fork** | [Sec. 6.5](#65-dielectric-subpixel-smoothing-diagonal-harmonicarithmetic-conformalall-and-full-symmetric-kottke-tensor-conformaltensor--new-in-this-fork); `tests/test_027_tensor_averaging.py`, `studies/tensor-averaging/` |
+| **Declarative Device Templates** | `wakis.templates` (`Simulation`, `Box`, `Cylinder`, `Sheet`, `dipole_antenna`, `patch_antenna`, `rectangular_waveguide`, `slab_waveguide`, `unit_cell`, `parameter_sweep`) | 🆕 **New in this fork** | [Sec. 6.7](#67-high-level-device-templates-wakistemplates--new-in-this-fork), `docs/templates.md`; `tests/test_024_templates.py` |
+| **Anisotropic Diagonal $\varepsilon_r, \mu_r, \sigma$** | `SolverFIT3D.ieps`, `imu`, `sigma` (`wakis/field.py`, `wakis/materials.py`) | *(upstream)* | [Sec. 7.1](#71-isotropic-and-anisotropic-permittivity-varepsilon-permeability-mu-and-conductivity-sigma); `tests/test_002_solverFIT3D.py` |
+| **Leontovich Surface Impedance (SIBC)** | `SolverFIT3D(..., use_sibc=True)` | *(upstream)* | [Sec. 7.5](#75-leontovich-surface-impedance-boundary-condition-use_sibctrue); `tests/test_005_boundaries.py` |
+| **Dispersive Materials (ADE: Drude, Lorentz, Debye, Rakić)** | `DispersiveMaterial`, `Drude`, `Lorentz`, `Debye`, `dispersive_lib`, `fit_poles`, `eps_from_nk` (`wakis/dispersive.py`) | 🆕 **New in this fork** | [Sec. 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals--new-in-this-fork); `tests/test_019_dispersive.py`, `studies/dispersive/` |
+| **Tensor-Dispersive Two-Capacitor Subpixel Averaging** | `GridFIT3D(..., conformal='tensor')` with `DispersiveMaterial` (`wakis/tensor_dispersive.py`) | 🆕 **New in this fork** | [Sec. 7.3](#73-subpixel-averaging-at-dispersive-interfaces-wakistensor_dispersive--new-in-this-fork); `tests/test_036_tensor_dispersive.py`, `studies/tensor-dispersive/` |
+| **Cold-Plasma Material & Linear Plasma Wake** | `wakis.plasma` (`cold_plasma`, `plasma_frequency`, `linear_wake`, `wake_amplitude`) | 🆕 **New in this fork** | [Sec. 7.4](#74-cold-plasma-medium-and-analytical-linear-plasma-wakefield-wakisplasma--new-in-this-fork), [Sec. 14.3](#143-linear-cold-plasma-wakefield-simulation-wakisplasma--new-in-this-fork); `tests/test_020_linear_plasma_wake.py`, `examples/007_linear_plasma_wakefield.py` |
+| **Relativistic Beam, Dipole, PlaneWave, Pulse** | `Beam`, `Dipole`, `PlaneWave`, `Pulse` (`wakis/sources.py`) | *(upstream)* | [Sec. 8.1](#81-relativistic-and-sub-relativistic-particle-beams-beam-direct-vs-tfsf-injection); `tests/test_004_sources.py` |
+| **Soft Electric/Magnetic Current Sources & Waveforms** | `CurrentSource`, `MagneticCurrentSource`, `GaussianSource`, `ContinuousSource`, `CustomSource` (`wakis/sources.py`) | 🆕 **New in this fork** | [Sec. 8.2](#82-dipoles-linesheet-currents-gaussian-pulses-and-cw-harmonics-currentsource-magneticcurrentsource-gaussiansource-continuoussource-customsource--new-in-this-fork); `tests/test_014_soft_sources.py` |
+| **Exact Discrete 3D TF/SF Plane-Wave Source** | `wakis.TFSFSource` (`wakis/tfsf.py`) | 🆕 **New in this fork** | [Sec. 8.3](#83-total-field--scattered-field-tfsf-plane-wave-box-tfsfsource--new-in-this-fork); `tests/test_029_tfsf.py`, `studies/tfsf/` |
+| **Waveguide Eigenmode Solver, Launcher & Monitor** | `solve_modes`, `ModeSource`, `ModeMonitor` (`wakis/mode_solver.py`) | 🆕 **New in this fork** | [Sec. 8.4](#84-waveguide-eigenmode-sources-solve_modes-modesource--new-in-this-fork), [Sec. 10.6](#106-waveguide-mode-monitors-modemonitor-and-multi-port-s-matrices-wakissparameters--new-in-this-fork); `tests/test_017_mode_ports.py`, `studies/mode_ports/` |
+| **Lumped RLC Elements, Ports & S-Parameters** | `LumpedElement`, `LumpedPort` (`wakis/lumped.py`), `s_matrix`, `write_touchstone`, `read_touchstone`, `to_skrf_network` (`wakis/sparameters.py`) | 🆕 **New in this fork** | [Sec. 8.5](#85-lumped-circuit-elements-lumpedelement-and-driven-lumped-ports-lumpedport--new-in-this-fork), [Sec. 10.6](#106-waveguide-mode-monitors-modemonitor-and-multi-port-s-matrices-wakissparameters--new-in-this-fork); `tests/test_016_lumped_and_sparameters.py`, `studies/lumped_sparam/` |
+| **PEC, PMC, Periodic, Mur ABC, Scalar PML, CPML** | `SolverFIT3D(..., bc_low=..., bc_high=...)` (`wakis/boundaries.py`, `wakis/solverFIT3D.py`) | *(upstream)* | [Sec. 9.1](#91-pec-pmc-and-periodic-boundaries), [Sec. 9.3](#93-convolutional-perfectly-matched-layer-cpml-vs-legacy-pml--new-in-this-fork), [Sec. 9.4](#94-first-order-absorbing-boundary-conditions-abc--mur); `tests/test_005_boundaries.py`, `tests/test_008_cpml.py` |
+| **Bloch-Periodic Boundaries & Diffraction Orders** | `bc='bloch'`, `k_bloch` (`wakis/bloch.py`), `DiffractionMonitor` (`wakis/diffraction.py`) | 🆕 **New in this fork** | [Sec. 9.2](#92-bloch-periodic-boundaries-bloch-with-complex-fields--new-in-this-fork), [Sec. 10.5](#105-floquet-diffraction-order-decomposition-diffractionmonitor--new-in-this-fork); `tests/test_021_bloch.py`, `tests/test_030_diffraction.py`, `studies/diffraction/` |
+| **Time-Domain `FieldMonitor` & `SliceRecorder`** | `wakis.FieldMonitor` (`wakis/field_monitors.py`), `wakis.visualize.SliceRecorder` | *(upstream)* + 🆕 **New in this fork** | [Sec. 10.1](#101-time-domain-field-snapshots-fieldmonitor-and-slicerecorder--new-in-this-fork); `examples/005_CPU_with_field_monitor.py` |
+| **Frequency-Domain `DFTMonitor` & `FluxMonitor`** | `wakis.DFTMonitor`, `wakis.FluxMonitor` (`wakis/field_monitors.py`) | 🆕 **New in this fork** | [Sec. 10.2](#102-on-the-fly-discrete-fourier-transform-monitor-dftmonitor--new-in-this-fork), [Sec. 10.3](#103-poynting-flux-and-cross-sections-fluxmonitor--new-in-this-fork); `tests/test_015_dft_and_flux_monitors.py` |
+| **Stratton–Chu Near-to-Far-Field Transformation** | `wakis.Near2FarMonitor` (`wakis/near2far.py`) | 🆕 **New in this fork** | [Sec. 10.4](#104-near-to-far-field-transformation-and-antenna-metrics-near2farmonitor--new-in-this-fork); `tests/test_018_near2far.py`, `studies/near2far/` |
+| **Harmonic Inversion (`harminv`, `ResonanceMonitor`)** | `wakis.harminv`, `wakis.ResonanceMonitor` (`wakis/resonances.py`) | 🆕 **New in this fork** | [Sec. 10.7](#107-high-resolution-resonance-extraction-harminv-resonancemonitor--new-in-this-fork); `tests/test_025_resonances.py`, `studies/resonances/` |
+| **Wake Potential & Impedance (`WakeSolver`)** | `wakis.WakeSolver` (`wakis/wakeSolver.py`) | *(upstream)* | [Sec. 10.8](#108-wake-potential-and-beam-coupling-impedance-wakesolver), [Sec. 14.1](#141-wake-potential-panofskywenzel-theorem-beam-coupling-impedance-and-loss-factors); `tests/test_003_wakeSolver.py` |
+| **Dispersion-Free TE/TM Wakefield Scheme** | `SolverFIT3D(..., scheme='tete')` (`wakis/tete.py`) | 🆕 **New in this fork** | [Sec. 14.2](#142-dispersion-free-tetm-wake-time-stepping-schemetete--new-in-this-fork); `tests/test_044_tete_wake.py`, `studies/tete-wake/` |
+| **2D/3D Simplex FIT & Radial CFS-PML** | `SimplexMesh`, `UnstructuredFIT2D`, `UnstructuredFIT3D` (`wakis/unstructured/`) | 🆕 **New in this fork** | [Sec. 9.5](#95-radial-complex-frequency-shifted-pml-on-unstructured-meshes--new-in-this-fork), [Sec. 11.1](#111-2d-triangle-fit-unstructuredfit2d-voronoi--barycentric-dual--new-in-this-fork), [Sec. 11.7](#117-3d-tetrahedral-fit-unstructuredfit3d--new-in-this-fork); `tests/test_028_unstructured_fit.py`, `studies/unstructured/` |
+| **Local Time Stepping (LTS) on Unstructured Meshes** | `UnstructuredFIT2D(..., lts=p)` (`wakis/unstructured/lts.py`) | 🆕 **New in this fork** | [Sec. 11.8](#118-stabilized-local-time-stepping-unstructuredfit2dlts2-leapfrogchebyshev--new-in-this-fork); `tests/test_035_unstructured_lts.py`, `studies/unstructured-lts/` |
+| **Polygonal, Hybrid Quad/Tri & Voronoi FIT** | `PolyMesh`, `PolygonFIT2D`, `hybrid_circles_mesh`, `voronoi_disk_mesh` (`wakis/unstructured/polymesh*.py`) | 🆕 **New in this fork** | [Sec. 11.2](#112-2d-polygonal-hybrid-squaretriangle-and-voronoi-fit-polygonfit2d--new-in-this-fork); `tests/test_037_polygon_fit.py`, `studies/polygon-fit/` |
+| **2D Nested Cartesian Subgridding** | `QuadMesh`, `refine_near`, `Geometry`, `Circle`, `Rect`, `SubgridFIT2D` (`wakis/subgrid/`) | 🆕 **New in this fork** | [Sec. 11.3](#113-2d-cartesian-subgridding-subgridfit2d--new-in-this-fork); `tests/test_038_subgridding.py`, `studies/subgridding/` |
+| **Subgridded Quadtree + Triangle Band (`subtri`)** | `subtri_circles_mesh`, `SubTriFIT2D` (`wakis/unstructured/subtri.py`), benchmark arm `SubTriArm` (`wakis/benchmarks/arms/subtri2d.py`) | 🆕 **New in this fork** | [Sec. 11.4](#114-hybrid-quadtree-subgrid--body-fitted-triangles-subtri--new-in-this-fork); `studies/subtri-hybrid/` on branch `merge/subtri` |
+| **Curvilinear O-Grid Non-Orthogonal FIT (NFIT)** | `CurvilinearFIT2D`, `ogrid_mesh`, `ogrid_cartesian_mesh`, `radial_nodes` (`wakis/curvilinear/`) | 🆕 **New in this fork** | [Sec. 11.5](#115-2d-curvilinear-o-grid-non-orthogonal-fit-curvilinearfit2d--new-in-this-fork); `tests/test_039_curvilinear_nfit.py`, `studies/curvilinear-nfit/` |
+| **Extruded 3D Triangular Prism FIT** | `PrismMesh`, `PrismFIT3D` (`wakis/unstructured/prism.py`) | 🆕 **New in this fork** | [Sec. 11.6](#116-3d-extruded-prism-fit-prismfit3d--new-in-this-fork); `tests/test_046_prism_fit.py`, `studies/prism-cavity/`, `studies/prism-ring/`, `studies/prism-dipole/` |
+| **High-Order Nodal DGTD & Fourth-Order FDTD** | `DGTD2D`, `circles_mesh` (`wakis/highorder/dgtd2d.py`), `FDTD24` (`wakis/highorder/fdtd24.py`) | 🆕 **New in this fork** | [Sec. 11.9](#119-high-order-solvers-curved-nodal-dgtd2d-p1text5-and-cartesian-24-fdtd24--new-in-this-fork); `tests/test_040_highorder.py`, `studies/high-order/` |
+| **GPU Acceleration (CuPy) & MPI z-Slab Decomposition** | `SolverFIT3D(..., use_gpu=True, use_mpi=True)` | *(upstream)* | [Sec. 12.1](#121-gpu-acceleration-use_gputrue-and-fused-cuda-kernels-fusedtrue--new-in-this-fork), [Sec. 12.2](#122-mpi-domain-decomposition-use_mpitrue-and-multi-gpu-scaling); `tests/test_006_gpu.py`, `tests/test_007_mpi.py` |
+| **Fused CUDA/CuPy Elementwise Step Kernels** | `SolverFIT3D(..., use_gpu=True, fused=True)` (`wakis/gpu_fused.py`) | 🆕 **New in this fork** | [Sec. 12.1](#121-gpu-acceleration-use_gputrue-and-fused-cuda-kernels-fusedtrue--new-in-this-fork); `tests/test_041_gpu_fused.py`, `studies/gpu-fused/` |
+| **Exact Discrete Adjoint & JAX Custom VJP** | `AdjointStepper`, `AdjointSimulation`, `MaterialGrid`, `jax_simulation` (`wakis/inverse/`) | 🆕 **New in this fork** | [Sec. 13.1](#131-exact-discrete-adjoint-theory-and-the-dot-product-test--new-in-this-fork), [Sec. 13.2](#132-parameterizing-a-design-region-materialgrid-and-wrapping-with-jax-jax_simulation--new-in-this-fork); `tests/test_031_adjoint_core.py`, `tests/test_032_adjoint_coverage.py`, `tests/test_033_adjoint_gpu_mpi.py` |
+| **Adjoint Memory Ladder (`store`/`checkpoint`/`reverse`/`nyquist`/`auto`)** | `AdjointSimulation(..., memory='auto', memory_budget_gb=...)` (`wakis/inverse/memory.py`) | 🆕 **New in this fork** | [Sec. 13.3](#133-the-adjoint-memory-ladder-store-checkpoint-reverse-nyquist-auto--new-in-this-fork); `tests/test_045_adjoint_memory.py`, `studies/adjoint-memory/` |
+| **Subpixel-Smoothed Projection (SSP)** | `smoothed_projection`, `MaterialGrid(projection_beta=...)` (`feature/subpixel-projection`) | 🧪 **In progress** | [Sec. 13.4](#134-subpixel-smoothed-projection-ssp-for-high-beta-topology-optimization--in-progress); `studies/ssp/` on branch `feature/subpixel-projection` |
+| **`invrs-gym` Photonic Optimization Bridge** | `invrs-wakis` (`github.com/eshipton/invrs-wakis`) | 🧪 **In progress** | [Sec. 13.5](#135-the-invrs-gym-bridge-invrs-wakis-and-benchmark-results--in-progress); `studies/invrs-round2/` |
+| **Exact Analytical Reference Solutions** | `wakis.analytic` (`mie_efficiencies`, `mie_s1_s2`, `cylinder_efficiencies`, `coated_cylinder_efficiencies`, `CylinderCluster`, `hallen_dipole`) | 🆕 **New in this fork** | [Sec. 15.1](#151-built-in-exact-analytical-reference-solvers-wakisanalytic--new-in-this-fork); `tests/test_013_analytic.py`, `tests/test_043_mie_cylinder_theory.py` |
+| **Cross-Method Benchmark Suite (`B1`–`B5`)** | `wakis.benchmarks` (`CASES`, `get_case`, `Arm`, `run`, `cost_to_target`, `load_records`) | 🆕 **New in this fork** | [Sec. 15.2](#152-the-shared-benchmark-suite-b1b5-result-store-and-cost_to_target-metric--new-in-this-fork), [Sec. 15.3](#153-how-to-add-and-benchmark-a-new-solver-arm--new-in-this-fork); `tests/test_042_benchmarks.py`, `studies/benchmarks/` |
+| **Pre-Run Memory & Runtime Estimator** | `wakis.estimate.estimate`, `wakis.estimate.preflight` (`wakis/estimate.py`) | 🆕 **New in this fork** | [Sec. 16.1](#161-using-wakisestimate-and-preflight-before-launching-a-run--new-in-this-fork); `tests/test_026_estimate.py` |
+| **3D Octree Subgridding, 3D O-Grid NFIT, Unstructured Adjoints** | Roadmap items (`docs/unstructured_roadmap.md`) | 🗺️ **Planned** | [Sec. 17.1](#171-wakis-fork-roadmap-readmemd-docsunstructured_roadmapmd) |
 
 ---
 
@@ -317,13 +325,13 @@ if "google.colab" in sys.modules:
 ```
 
 2. **Headless rendering helper (`wakis.visualize.setup_rendering`):** Calling `wakis.visualize.setup_rendering()` automatically starts `pv.start_xvfb()` on headless Linux when `DISPLAY` is unset and configures static PNG rendering so notebooks remain lightweight and portable.
-3. **Local memory guard:** When running scripts locally on a shared workstation or laptop, wrap Python invocations with `memguard` (if present in your workspace) or call `wakis.estimate.preflight` ([Section 16.1](#161-pre-run-memory-and-runtime-estimation-wakisestimate-and-preflight)) to prevent accidental out-of-memory thrashing.
+3. **Local memory guard:** When running scripts locally on a shared workstation or laptop, wrap Python invocations with `memguard` (if present in your workspace) or call `wakis.estimate.preflight` ([Section 16.1](#161-using-wakisestimate-and-preflight-before-launching-a-run--new-in-this-fork)) to prevent accidental out-of-memory thrashing.
 
 ---
 
 ## 3. Quick Start: Three Minimal Runnable Examples
 
-The three self-contained scripts below reside in [`docs/manual_examples/`](docs/manual_examples/) and each run in **3 to 20 seconds** on a laptop CPU under a 2 GB memory cap. Together they demonstrate the three primary ways to use Wakis:
+The three self-contained scripts below reside in [`docs/manual_examples/`](docs/manual_examples/) and each run in **a few seconds to about a minute** on one laptop core under a 2 GB memory cap (quickstart (b) is the slowest, about 50 s). Together they demonstrate the three primary ways to use Wakis:
 - **(a) Eigenmode / resonance analysis** in a closed 3D cavity (`GridFIT3D` + `SolverFIT3D` + `CurrentSource` + `ResonanceMonitor` / `harminv`).
 - **(b) Open-region wave scattering** in the frequency domain from a single broadband time-domain run (`GridFIT3D(conformal='all')` + `TFSFSource` + `FluxMonitor` + `wakis.analytic`).
 - **(c) Relativistic particle-beam wakefields and impedance** in an accelerator structure (`GridFIT3D` + `WakeSolver` + `SolverFIT3D.wakesolve`).
@@ -336,7 +344,7 @@ A rectangular metallic cavity of dimensions $L_x \times L_y \times L_z = 10\text
 
 $$f_{mnp} = \frac{c}{2}\sqrt{\left(\frac{m}{L_x}\right)^2 + \left(\frac{n}{L_y}\right)^2 + \left(\frac{p}{L_z}\right)^2}.$$
 
-On a $20 \times 24 \times 16$ grid (cell size $\Delta x = \Delta y = \Delta z = 5\text{ mm}$), we inject a broadband $J_z$ Gaussian current pulse at an off-symmetry point, record the free ring-down after the pulse ends (`t_start=pulse.end_time`), and extract the resonant frequencies to sub-percent accuracy using the Filter Diagonalization Method (`harminv`) in **3 seconds**:
+On a $20 \times 24 \times 16$ grid (cell size $\Delta x = \Delta y = \Delta z = 5\text{ mm}$), we inject a broadband $J_z$ Gaussian current pulse at an off-symmetry point, record the free ring-down after the pulse ends (`t_start=pulse.end_time`), and extract the resonant frequencies to sub-percent accuracy using the Filter Diagonalization Method (`harminv`) in a few seconds:
 
 ```python
 # File: docs/manual_examples/quickstart_01_cavity.py
@@ -397,13 +405,13 @@ for f, amp, err in zip(res.frequency, np.abs(res.amplitude), res.error):
 **Output:**
 ```text
 Grid: 20x24x16 cells, dt = 4.815 ps
-Analytical TM_110, TM_111, TM_120, TM_210 [GHz]: 1.9512, 2.7089, 2.9135, 3.2478
+Analytical TM_110, TM_111, TM_120, TM_210 [GHz]: 1.9512, 2.7052, 2.9135, 3.2478
   Extracted f = 1.9497 GHz, |A| = 1.496e+04, err = 4.57e-08 MHz
   Extracted f = 2.7026 GHz, |A| = 2.237e+02, err = 2.59e-03 MHz
   Extracted f = 2.9075 GHz, |A| = 1.205e+04, err = 4.13e-04 MHz
   Extracted f = 3.2373 GHz, |A| = 1.973e+04, err = 1.81e-03 MHz
 ```
-Notice how `harminv` resolves all four cavity modes to within $0.08\%\text{–}0.32\%$ from a $7.2\text{ ns}$ time record—far finer than the Fourier resolution $1/T \approx 140\text{ MHz}$. The small downward shift ($-0.08\%$ on $\text{TM}_{110}$) is the exact second-order numerical dispersion of the 5 mm Yee/FIT grid ([Section 4.4](#44-leapfrog-time-integration-cfl-stability-discrete-energy-and-dispersion)).
+Notice how `harminv` resolves all four cavity modes to within $0.08\%\text{–}0.32\%$ from a $7.2\text{ ns}$ time record—far finer than the Fourier resolution $1/T \approx 140\text{ MHz}$. The small downward shift ($-0.08\%$ on $\text{TM}_{110}$) is consistent with the expected second-order numerical dispersion of the 5 mm Yee/FIT grid (Yee modes in a PEC box always lie below the exact frequencies) ([Section 4.4](#44-leapfrog-time-integration-cfl-stability-discrete-energy-and-dispersion)).
 
 ---
 
@@ -429,7 +437,7 @@ from wakis.sources import GaussianSource
 # 1. Cylinder parameters: radius a = 1 um, refractive index n = 2.0 (eps_r = 4.0)
 a_cyl = 1.0e-6
 n_cyl = 2.0
-res_per_um = 20.0  # 20 cells/um (same as tutorial 01 --quick)
+res_per_um = 34.0  # 34 cells/um: a coarse demo (~18 cells per wavelength inside the n = 2 cylinder at x = 6)
 dx = 1.0e-6 / res_per_um
 nz = 4
 n_pml = 10
@@ -509,15 +517,17 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
 **Output:**
 ```text
-Grid: 103x103x4, steps = 9390/9390
-TM Q_sca relative RMS error across x in [2, 6]: 6.21 %
-  x = 2.0: Q_sca(sim) = 4.2844, Q_sca(Mie) = 4.2932
-  x = 4.0: Q_sca(sim) = 1.5244, Q_sca(Mie) = 1.4451
-  x = 6.0: Q_sca(sim) = 2.0250, Q_sca(Mie) = 2.2026
+Grid: 139x139x4, steps = 15964/15964
+TM Q_sca relative RMS error across x in [2, 6]: 2.58 %
+  x = 2.0: Q_sca(sim) = 4.2853, Q_sca(Mie) = 4.2932
+  x = 4.0: Q_sca(sim) = 1.4697, Q_sca(Mie) = 1.4451
+  x = 6.0: Q_sca(sim) = 2.1410, Q_sca(Mie) = 2.2026
 ```
 
-![2D Mie cylinder setup and scattering efficiency](tutorials/01_mie_cylinder/figures/qsca_tm_te.png)
-*Figure 3.1 — Broadband TM and TE scattering efficiency $Q_{\text{sca}}(x)$ of an $n=2$ dielectric cylinder compared against the exact Bohren–Huffman Bessel/Hankel series (`tutorials/01_mie_cylinder`).*
+**This is a coarse demo, not a converged result.** It runs in about 50 s on one laptop core and reaches 2.6 % RMS error against the exact series over $x = 2$–$6$, with the largest error at the highest size parameter ($-2.8\%$ at $x = 6$, where there are only about 18 cells per wavelength inside the cylinder). The error falls at roughly second order with resolution: 6.2 % at 20 cells/µm, 3.6 % at 28 and 2.6 % at 34 (same script, `res_per_um` changed; a 3× longer run window and a larger box left the 20 cells/µm error unchanged, so it is discretization error, not truncation or PML reflection). For converged numbers see `studies/mie-cylinder-mesh/`: conformal Cartesian reaches 0.62 % (TM) RMS over $x = 2$–$10$ at 40 cells per shortest wavelength in the dielectric (about 127 cells/µm), against 3.9 % for staircasing.
+
+![2D Mie cylinder scattering efficiency against the exact series](tutorials/01_mie_cylinder/figures/qsca_vs_series.png)
+*Figure 3.1 — Scattering efficiency $Q_{\text{sca}}(x)$ of the $n=2$ dielectric cylinder from tutorial 01 (finer mesh than this quickstart) against the exact Bessel/Hankel series (`tutorials/01_mie_cylinder`).*
 
 ---
 
@@ -609,9 +619,6 @@ Min/Max longitudinal wake potential WP: [-0.14, 0.14] V/pC
 Peak |Z_longitudinal|: 618.39 Ohm at f = 0.536 GHz
 ```
 
-![Pillbox cavity wakefield animation](docs/img/001_Ez_sim.gif)
-*Figure 3.2 — Time evolution of $E_z(x=0, y, z, t)$ as a relativistic Gaussian bunch traverses the lossy pillbox cavity (`examples/001_CPU_wakefield_simulation.py`).*
-
 ---
 
 ## 4. The Finite Integration Technique (FIT): Theory and Method Comparison
@@ -620,12 +627,9 @@ The **Finite Integration Technique (FIT)**, introduced by Thomas Weiland in 1977
 
 This distinction has profound mathematical and practical consequences:
 1. **Topological vs. metric separation:** Faraday's law, Ampère's law, and the two Gauss laws become **exact algebraic matrix equations** with integer incidence entries $\{-1, 0, +1\}$ that hold on *any* cell complex (Cartesian, triangular, tetrahedral, polygonal, prismatic, or curvilinear) without approximation.
-2. **Exact discrete invariants:** Because the discrete curl and divergence operators obey $\mathbf{S}\mathbf{C} = \mathbf{0}$ and $\tilde{\mathbf{C}}\tilde{\mathbf{S}}^T = \mathbf{0}$ identically, magnetic flux conservation ($\nabla\cdot\mathbf{B}=0$) and electric charge continuity hold to machine precision at every time step, eliminating spurious static modes.
+2. **Exact discrete invariants:** Because the discrete curl and divergence operators obey $\mathbf{S}\mathbf{C} = \mathbf{0}$ and $\tilde{\mathbf{S}}\tilde{\mathbf{C}} = \mathbf{0}$ identically, magnetic flux conservation ($\nabla\cdot\mathbf{B}=0$) holds to round-off at every time step, and the discrete Gauss law $\tilde{\mathbf{S}}\widehat{\mathbf{d}} = \mathbf{q}$ is preserved whenever the impressed currents satisfy discrete charge continuity. (The static, gradient-type solutions $\widehat{\mathbf{e}} = \mathbf{G}\boldsymbol{\phi}$ remain in the null space of the curl-curl operator; they are physical electrostatic states, not propagating spurious modes, but a source that violates discrete continuity deposits charge that grows linearly in time.)
 3. **All spatial approximation is isolated in the material (Hodge) matrices:** Geometry, subcell interfaces, anisotropy, and mesh non-orthogonality enter *only* through the constitutive matrices $\mathbf{M}_\varepsilon, \mathbf{M}_\nu, \mathbf{M}_\sigma$ that map primary edge voltages to dual face fluxes and primary face fluxes to dual edge voltages.
-4. **Exact reciprocity and discrete adjoint:** Because the dual curl is the exact transpose of the primary curl ($\tilde{\mathbf{C}} = \mathbf{C}^T$), the spatial operator is manifestly self-adjoint under the energy inner product, guaranteeing unconditional energy conservation below the CFL limit and making the discrete adjoint operator exact.
-
-![FIT primary and dual grid allocation](docs/img/FIT.png)
-*Figure 4.1 — Allocation of integral electromagnetic state variables on the primary cell $G$ (left) and dual cell $\tilde{G}$ (right) in the Finite Integration Technique.*
+4. **Reciprocity, energy and the discrete adjoint:** Because the dual curl is the exact transpose of the primary curl ($\tilde{\mathbf{C}} = \mathbf{C}^T$) *and* the material matrices are symmetric positive definite, the semi-discrete operator is skew-adjoint in the energy inner product. This gives discrete reciprocity, conservation of a discrete energy for every time step below the CFL limit (Section 4.4), and an exactly transposable time step for adjoint gradients. If a material matrix is made non-symmetric (e.g. by a careless interpolation), all three properties are lost.
 
 ---
 
@@ -686,7 +690,7 @@ and because the boundary of a boundary of any cell is empty ($\partial\partial =
 
 $$\mathbf{S}\,\mathbf{C} = \mathbf{0} \quad (\text{discrete } \nabla\cdot(\nabla\times\mathbf{E}) = 0), \qquad \mathbf{C}\,\mathbf{G} = \mathbf{0} \quad (\text{discrete } \nabla\times(\nabla\phi) = \mathbf{0}),$$
 
-$$\tilde{\mathbf{S}}\,\tilde{\mathbf{C}} = (\mathbf{C}\,\mathbf{G})^T = \mathbf{0} \quad (\text{discrete } \nabla\cdot(\nabla\times\mathbf{H}) = 0).$$
+$$\tilde{\mathbf{S}}\,\tilde{\mathbf{C}} = -(\mathbf{C}\,\mathbf{G})^T = \mathbf{0} \quad (\text{discrete } \nabla\cdot(\nabla\times\mathbf{H}) = 0).$$
 
 From these purely combinatorial identities follow two fundamental conservation laws:
 1. **Exact absence of magnetic monopoles ($\mathbf{S}\widehat{\mathbf{b}}(t) = \mathbf{0}$):** Left-multiplying Faraday's grid equation by $\mathbf{S}$ gives
@@ -704,13 +708,13 @@ To close the Maxwell Grid Equations, we must relate the intensive voltage vector
 
 $$\widehat{\mathbf{d}} = \mathbf{M}_\varepsilon\,\widehat{\mathbf{e}}, \qquad \widehat{\mathbf{h}} = \mathbf{M}_\nu\,\widehat{\mathbf{b}} = \mathbf{M}_\mu^{-1}\,\widehat{\mathbf{b}}, \qquad \widehat{\mathbf{j}}_\sigma = \mathbf{M}_\sigma\,\widehat{\mathbf{e}}.$$
 
-**Every spatial approximation in FIT resides in the construction of $\mathbf{M}_\varepsilon$, $\mathbf{M}_\nu$, and $\mathbf{M}_\sigma$.** Depending on the grid and geometry, Wakis constructs these Hodge matrices at increasing levels of fidelity:
+**Every spatial approximation in FIT resides in the construction of $\mathbf{M}_\varepsilon$, $\mathbf{M}_\nu$, and $\mathbf{M}_\sigma$.** (The grid equations are exact for the integral unknowns; the Hodge matrices are where we must assume how the field varies across a cell. Time discretization (Section 4.4), the representation of the geometry by the mesh, and the discretization of sources and boundaries are separate approximations.) Depending on the grid and geometry, Wakis constructs these Hodge matrices at increasing levels of fidelity:
 
-1. **Orthogonal Dual Pairs (Diagonal Hodge, $O(h^2)$):**  
-   Whenever each primary edge $L_k$ is orthogonal to its dual face $\tilde{A}_k$ and each primary face $A_m$ is orthogonal to its dual edge $\tilde{L}_m$—which holds on **Cartesian grids** (`GridFIT3D`), **Delaunay–Voronoi triangle/tetrahedral meshes** (`UnstructuredFIT2D`, `UnstructuredFIT3D`), **Voronoi polygonal meshes** (`PolygonFIT2D`), and **extruded triangular prisms** (`PrismFIT3D`)—the Hodge matrices are **strictly diagonal**:
+1. **Orthogonal Dual Pairs (Diagonal Hodge; second order on uniform grids):**  
+   Whenever each primary edge $L_k$ is orthogonal to its dual face $\tilde{A}_k$ and each primary face $A_m$ is orthogonal to its dual edge $\tilde{L}_m$—which holds on **Cartesian grids** (`GridFIT3D`), **Delaunay–Voronoi triangle/tetrahedral meshes** (`UnstructuredFIT2D`, `UnstructuredFIT3D`), **Voronoi polygonal meshes** (`PolygonFIT2D`), and **extruded triangular prisms** (`PrismFIT3D`)—the Hodge matrices are **strictly diagonal**. On simplicial meshes the diagonal entries are positive only if the mesh is well centred (Delaunay with circumcentres inside, or at least non-negative dual lengths/areas); otherwise a different dual or Hodge is needed (Section 4.6):
    $$(\mathbf{M}_\varepsilon)_{kk} = \frac{\int_{\tilde{A}_k} \varepsilon\,d\tilde{A}}{|L_k|} = \bar{\varepsilon}_k \frac{|\tilde{A}_k|}{|L_k|}, \qquad (\mathbf{M}_\nu)_{mm} = \frac{\int_{\tilde{L}_m} \mu^{-1}\,d\tilde{\ell}}{|A_m|} = \overline{\mu^{-1}}_m \frac{|\tilde{L}_m|}{|A_m|}.$$
    In `SolverFIT3D`, Wakis stores the diagonal geometric-metric operators $\mathbf{D}_s = \mathrm{diag}(|L_k|)$, $\tilde{\mathbf{D}}_s = \mathrm{diag}(|\tilde{L}_m|)$, $\mathbf{D}_A = \mathrm{diag}(|A_m|)$, $\tilde{\mathbf{D}}_A = \mathrm{diag}(|\tilde{A}_k|)$ and works with the cell-averaged field vectors $\mathbf{e} = \mathbf{D}_s^{-1}\widehat{\mathbf{e}}$ $[\text{V/m}]$ and $\mathbf{h} = \tilde{\mathbf{D}}_s^{-1}\widehat{\mathbf{h}}$ $[\text{A/m}]$, so that
-   $$\mathbf{M}_\varepsilon = \tilde{\mathbf{D}}_A \mathbf{D}_\varepsilon \mathbf{D}_s^{-1}, \qquad \mathbf{M}_\nu = \tilde{\mathbf{D}}_s^{-1} \mathbf{D}_\mu^{-1} \mathbf{D}_A^{-1}.$$
+   $$\mathbf{M}_\varepsilon = \tilde{\mathbf{D}}_A \mathbf{D}_\varepsilon \mathbf{D}_s^{-1}, \qquad \mathbf{M}_\nu = \tilde{\mathbf{D}}_s \mathbf{D}_\mu^{-1} \mathbf{D}_A^{-1}.$$
    Because $\mathbf{M}_\varepsilon$ and $\mathbf{M}_\nu$ are diagonal and positive definite, $\mathbf{M}_\varepsilon^{-1}$ is trivial to invert, and the explicit time step requires **no linear solver**.
 
 2. **Conformal Cut Cells and Diagonal Subpixel Smoothing (`conformal='pec'` / `'all'`, 🆕 **New in this fork**):**  
@@ -718,10 +722,10 @@ $$\widehat{\mathbf{d}} = \mathbf{M}_\varepsilon\,\widehat{\mathbf{e}}, \qquad \w
    $$\mathbf{T} = \langle \varepsilon^{-1}\rangle\,\hat{\mathbf{n}}\hat{\mathbf{n}}^T + \langle\varepsilon\rangle^{-1}\left(\mathbf{I} - \hat{\mathbf{n}}\hat{\mathbf{n}}^T\right).$$
 
 3. **Full Symmetric Tensor Subpixel Averaging (`conformal='tensor'`, 🆕 **New in this fork**):**  
-   When an electric field crosses a tilted interface (`wakis/tensor_averaging.py`), the off-diagonal terms of $\mathbf{T}$ couple $E_x, E_y, E_z$. To preserve energy conservation ($\mathbf{M}_\varepsilon^{-1} = (\mathbf{M}_\varepsilon^{-1})^T \succ 0$) on the staggered Yee grid where $E_x, E_y, E_z$ live at different points, Wakis assembles $\mathbf{M}_\varepsilon^{-1}$ via a symmetric octant gathering/scattering operator $\mathbf{M}_\varepsilon^{-1} = \mathbf{D}_V^{-1}\sum_{c=1}^8 \mathbf{R}_c^T (\frac{1}{8} V \mathbf{T}_c) \mathbf{R}_c$, which stays explicitly evaluable in $O(N_{\text{cut}})$ time without any matrix inversion.
+   When an electric field crosses a tilted interface (`wakis/tensor_averaging.py`), the off-diagonal terms of $\mathbf{T}$ couple $E_x, E_y, E_z$. To preserve energy conservation ($\mathbf{M}_\varepsilon^{-1} = (\mathbf{M}_\varepsilon^{-1})^T \succ 0$) on the staggered Yee grid where $E_x, E_y, E_z$ live at different points, Wakis assembles the inverse permittivity directly as a sum of symmetric octant contributions (each cell octant gathers its three edge components, applies its local tensor $\mathbf{T}_c$ weighted by the octant volume, and scatters back with the transpose of the gather), so the operator is symmetric positive definite by construction and is applied explicitly with no matrix inversion; the extra cost is proportional to the number of cut cells.
 
 4. **Non-Orthogonal Curvilinear Grids (`CurvilinearFIT2D`, 🆕 **New in this fork**):**  
-   On body-fitted non-orthogonal structured grids, primary faces are not perpendicular to dual edges. Following [Schuhmann & Weiland (2000)](#19-references-and-credits), Wakis projects the contravariant fluxes onto the covariant voltages through a symmetric $2\times 2$ cell metric tensor built from the Jacobian $\mathbf{J}$ of the curvilinear mapping, keeping $\mathbf{M}_\varepsilon$ and $\mathbf{M}_\nu$ symmetric positive definite (SPD) so long-term time integration remains unconditionally stable below the CFL limit.
+   On body-fitted non-orthogonal structured grids, primary faces are not perpendicular to dual edges. Following [Schuhmann & Weiland (2000)](#19-references-and-credits), Wakis projects the contravariant fluxes onto the covariant voltages through a symmetric $2\times 2$ cell metric tensor built from the Jacobian $\mathbf{J}$ of the curvilinear mapping, keeping $\mathbf{M}_\varepsilon$ and $\mathbf{M}_\nu$ symmetric positive definite (SPD). Schuhmann & Weiland showed that non-symmetric interpolation choices give late-time instability; with SPD matrices the scheme is stable below its (now operator-dependent) CFL limit.
 
 ---
 
@@ -743,9 +747,11 @@ $$\begin{aligned}
 In `SolverFIT3D.one_step()` (written in terms of the scaled vectors $\mathbf{h}$ and $\mathbf{e}$, including conductivity $\boldsymbol{\sigma}$ and source current $\mathbf{j}_s$), the two half-steps are:
 
 $$\begin{aligned}
-\mathbf{h}^{n+1/2} &= \mathbf{h}^{n-1/2} - \Delta t\,\left(\tilde{\mathbf{D}}_s^{-1}\mathbf{D}_\mu^{-1}\mathbf{D}_A^{-1}\mathbf{C}\mathbf{D}_s\right)\mathbf{e}^n, \\
+\mathbf{h}^{n+1/2} &= \mathbf{h}^{n-1/2} - \Delta t\,\left(\mathbf{D}_\mu^{-1}\mathbf{D}_A^{-1}\mathbf{C}\mathbf{D}_s\right)\mathbf{e}^n, \\
 \mathbf{e}^{n+1} &= \left(\mathbf{I} - \Delta t\,\mathbf{D}_\varepsilon^{-1}\mathbf{D}_\sigma\right)\mathbf{e}^n + \Delta t\,\mathbf{D}_\varepsilon^{-1}\left(\tilde{\mathbf{D}}_A^{-1}\tilde{\mathbf{C}}\tilde{\mathbf{D}}_s\,\mathbf{h}^{n+1/2} - \mathbf{j}_s^{n+1/2}\right).
 \end{aligned}$$
+
+(In the code these operators are the sparse matrices `tDsiDmuiDaC` $= \mathbf{D}_\mu^{-1}\mathbf{D}_A^{-1}\mathbf{C}\mathbf{D}_s$ and `itDaiDepsDstC` $= \mathbf{D}_\varepsilon^{-1}\tilde{\mathbf{D}}_A^{-1}\mathbf{C}^H\tilde{\mathbf{D}}_s$; the conjugate transpose reduces to $\mathbf{C}^T$ for real $\mathbf{C}$ and carries the Bloch phases otherwise. The explicit conductivity term is first-order accurate in time and needs $\Delta t\,\sigma/\varepsilon < 2$.)
 
 #### Discrete Energy Conservation and the General CFL Stability Condition
 
@@ -755,7 +761,7 @@ Eliminating $\widehat{\mathbf{b}}$ between consecutive steps gives the second-or
 
 $$\widehat{\mathbf{e}}^{n+1} - \left(2\mathbf{I} - \Delta t^2\,\mathbf{A}_{\text{curl}}\right)\widehat{\mathbf{e}}^n + \widehat{\mathbf{e}}^{n-1} = \mathbf{0}.$$
 
-A harmonic trial solution $\widehat{\mathbf{e}}^n = \xi^n \mathbf{v}$ satisfies $\xi^2 - (2 - \Delta t^2\lambda)\xi + 1 = 0$, whose roots lie on the unit circle $|\xi| = 1$ for every mode if and only if $0 \le \Delta t^2\lambda_{\max} \le 4$. Thus the **exact general CFL stability condition for any FIT mesh** is:
+A harmonic trial solution $\widehat{\mathbf{e}}^n = \xi^n \mathbf{v}$ satisfies $\xi^2 - (2 - \Delta t^2\lambda)\xi + 1 = 0$, whose roots lie on the unit circle $|\xi| = 1$ and are distinct for every mode with $0 < \Delta t^2\lambda < 4$. At $\Delta t^2\lambda = 4$ the roots merge at $\xi = -1$ and the mode grows linearly, so the bound is strict. (The $\lambda = 0$ static modes have the double root $\xi = 1$; they stay constant unless a source violating charge continuity drives them.) Thus the **exact general CFL stability condition for any FIT mesh** is:
 
 $$\Delta t < \frac{2}{\sqrt{\lambda_{\max}\!\left(\mathbf{M}_\varepsilon^{-1}\mathbf{C}^T\mathbf{M}_\nu\mathbf{C}\right)}}.$$
 
@@ -763,9 +769,9 @@ Moreover, the quadratic form
 
 $$W^n = \frac{1}{2}(\widehat{\mathbf{e}}^n)^T \mathbf{M}_\varepsilon\,\widehat{\mathbf{e}}^n + \frac{1}{2}(\widehat{\mathbf{b}}^{n-1/2})^T \mathbf{M}_\nu\,\widehat{\mathbf{b}}^{n+1/2}$$
 
-is an **exact invariant** of the leapfrog step ($W^{n+1} = W^n$ to machine round-off for all $n$), and for $\Delta t < 2/\sqrt{\lambda_{\max}}$ this quadratic form is strictly positive definite ([Schuhmann & Weiland 2001](#19-references-and-credits); [Clemens & Weiland 2001](#19-references-and-credits)). Consequently, the discrete field norm is bounded for all $n \to \infty$: the scheme is free of late-time drift or dissipation.
+is an **exact invariant** of the leapfrog step ($W^{n+1} = W^n$ to machine round-off for all $n$), and for $\Delta t < 2/\sqrt{\lambda_{\max}}$ this quadratic form is strictly positive definite ([Clemens & Weiland 2001](#19-references-and-credits)). Consequently, the discrete field norm is bounded for all $n \to \infty$: the lossless scheme has no numerical dissipation and no late-time growth. Note that $W^n$ is a *modified* energy (it pairs $\widehat{\mathbf{b}}$ at two half-steps); the naive energy at a single time level oscillates by $O(\Delta t^2)$ but does not drift.
 
-On a **Cartesian grid** with cell dimensions $(\Delta x, \Delta y, \Delta z)$ and wave speed $c = 1/\sqrt{\varepsilon\mu}$, the maximum spatial eigenvalue occurs at the Nyquist wavevector $\mathbf{k} = (\pi/\Delta x, \pi/\Delta y, \pi/\Delta z)$, where $\lambda_{\max} = 4c^2(\Delta x^{-2} + \Delta y^{-2} + \Delta z^{-2})$, recovering the familiar **Courant–Friedrichs–Lewy (CFL) bound**:
+On a **Cartesian grid** with cell dimensions $(\Delta x, \Delta y, \Delta z)$ and wave speed $c = 1/\sqrt{\varepsilon\mu}$, the maximum spatial eigenvalue occurs at the Nyquist wavevector $\mathbf{k} = (\pi/\Delta x, \pi/\Delta y, \pi/\Delta z)$, where $\lambda_{\max} = 4c^2(\Delta x^{-2} + \Delta y^{-2} + \Delta z^{-2})$, recovering the familiar **Courant–Friedrichs–Lewy (CFL) bound** (the Nyquist mode exists only approximately on a finite grid, hence $\le$ here; Wakis multiplies this bound by a safety factor `cfln` < 1):
 
 $$\Delta t \le \frac{1}{c\sqrt{\dfrac{1}{\Delta x^2} + \dfrac{1}{\Delta y^2} + \dfrac{1}{\Delta z^2}}}.$$
 
@@ -782,7 +788,7 @@ $$\frac{v_p}{c} = 1 - \frac{(kh)^2}{24}\left(\alpha_x^4 + \alpha_y^4 + \alpha_z^
 Key physical takeaways:
 - The phase velocity error is **second order**, $O((h/\lambda)^2)$, and is **slower than $c$** ($v_p < c$) for all directions below the stability limit ($S \le 1/\sqrt{3}$ in 3D).
 - The dispersion is **anisotropic**: waves propagating along the grid axes ($\alpha_x^4 + \alpha_y^4 + \alpha_z^4 = 1$) slow down more than waves propagating along the body diagonal ($\alpha_x^4 + \alpha_y^4 + \alpha_z^4 = 1/3$).
-- At $N_\lambda = \lambda / h = 20$ cells per wavelength, the phase velocity error along a grid axis is $\approx 0.1\%$; over a propagation distance of $100\lambda$ (common in long wakefield structures), this accumulates to a $36^\circ$ phase error. For ultrarelativistic beams ($\beta = 1$) moving along $z$, this dispersion is why standard Yee/FIT exhibits numerical Cherenkov radiation unless mitigated by the **dispersion-free TE/TM wakefield scheme** (`scheme='tete'`, [Section 14.2](#142-dispersion-free-tetm-wakefield-scheme-schemetete)) or fourth-order stencils (`FDTD24`, [Section 11.9](#119-high-order-nodal-dgtd-on-curved-triangles-dgtd2d-and-fourth-order-fdtd-fdtd24)).
+- At $N_\lambda = \lambda / h = 20$ cells per wavelength, $(kh)^2/24 \approx 0.41\%$, so the phase velocity error along a grid axis is $\approx 0.27\%$ at the 3D stability limit $S = 1/\sqrt{3}$ and $\approx 0.38\%$ at $S = 0.29$ (half the limit); over a propagation distance of $100\lambda$ this accumulates to roughly $100^\circ$–$140^\circ$ of phase error. Halving $h$ divides it by four. For ultrarelativistic beams ($\beta = 1$) moving along $z$, this dispersion is why standard Yee/FIT exhibits numerical Cherenkov radiation unless mitigated by the **dispersion-free TE/TM wakefield scheme** (`scheme='tete'`, [Section 14.2](#142-dispersion-free-tetm-wake-time-stepping-schemetete--new-in-this-fork)) or fourth-order stencils (`FDTD24`, [Section 11.9](#119-high-order-solvers-curved-nodal-dgtd2d-p1text5-and-cartesian-24-fdtd24--new-in-this-fork)).
 
 ---
 
@@ -794,7 +800,9 @@ On a uniform or nonuniform orthogonal Cartesian grid with diagonal material matr
 
 $$\frac{E_{z,i,j+1,k} - E_{z,i,j,k}}{\Delta y_j} - \frac{E_{y,i,j,k+1} - E_{y,i,j,k}}{\Delta z_k} = -\mu_{x,i,j,k}\frac{H_{x,i,j,k}^{n+1/2} - H_{x,i,j,k}^{n-1/2}}{\Delta t},$$
 
-which is literally Yee's central-difference curl stencil.
+which is literally Yee's central-difference curl stencil. On graded Cartesian grids the same holds with the dual-cell lengths (averages of adjacent primary lengths) in the denominators of the Ampère update, which is the standard nonuniform Yee scheme.
+
+**In one paragraph: FIT vs FDTD vs FEM.** All three can produce the *same* lowest-order algebraic system $\mathbf{C}\widehat{\mathbf{e}} = -\dot{\widehat{\mathbf{b}}}$, $\mathbf{C}^T\widehat{\mathbf{h}} = \dot{\widehat{\mathbf{d}}} + \widehat{\mathbf{j}}$ with $\widehat{\mathbf{d}} = \mathbf{M}_\varepsilon\widehat{\mathbf{e}}$, $\widehat{\mathbf{h}} = \mathbf{M}_\nu\widehat{\mathbf{b}}$. They differ in how they *justify* it and in what they choose for the material matrices. FDTD reaches it on a Cartesian grid by Taylor-expanding derivatives at staggered points; the material matrices are diagonal and the derivation does not say how to leave the Cartesian grid. FIT reaches it from the integral equations on any primary/dual cell pair: the topology ($\mathbf{C}$, $\mathbf{S}$) is exact and integer, and all of the approximation is in $\mathbf{M}_\varepsilon$, $\mathbf{M}_\nu$, which are diagonal when the primary and dual cells are orthogonal. On a Cartesian grid FIT with leapfrog *is* Yee FDTD, operation for operation. Lowest-order edge-element (Whitney/Nédélec) FEM reaches it from a weak (Galerkin) form; its consistent mass matrices are non-diagonal, so explicit time stepping needs a linear solve per step unless the mass is lumped, and diagonal lumping on a circumcentric dual gives the FIT Hodge (Section 4.6). FEM's advantages are a systematic route to higher order and curved elements; FIT's are an explicit, matrix-free, diagonal-mass update with exact discrete conservation laws.
 
 #### Why the Integral Formulation (FIT) Matters Beyond Cartesian FDTD
 
@@ -802,7 +810,7 @@ Although FIT and FDTD coincide on a uniform Cartesian grid, viewing the scheme a
 1. **Unstructured & General Polyhedral Meshes:** Taylor differences require coordinate lines, whereas the integral incidence matrices $\mathbf{C}$ and $\tilde{\mathbf{C}} = \mathbf{C}^T$ are well-defined on arbitrary simplicial, polygonal, prismatic, or Voronoi cell complexes (`UnstructuredFIT2D`, `PolygonFIT2D`, `PrismFIT3D`, `UnstructuredFIT3D`).
 2. **Conformal Cut Cells, Subgridding, and Curvilinear NFIT:** In finite-difference language, a hanging node at a 2:1 subgrid interface or a cut PEC cell looks like an asymmetric stencil that risks late-time instability. In FIT language, stability reduces to one algebraic rule: keep $\tilde{\mathbf{C}} = \mathbf{C}^T$ (e.g., via $\mathbf{P}/\mathbf{P}^T$ interpolation at subgrid interfaces) and keep $\mathbf{M}_\varepsilon, \mathbf{M}_\nu$ symmetric positive definite ([Schuhmann & Weiland 2000](#19-references-and-credits)).
 3. **Exact Discrete Adjoint (`wakis.inverse`):** Because $\mathbf{C}$ and $\tilde{\mathbf{C}} = \mathbf{C}^T$ are explicit sparse matrices, the adjoint of the forward leapfrog step is obtained directly by transposing the two half-steps ($\mathbf{A}^T, \mathbf{B}^T$), giving machine-precision gradients without approximating continuous boundary integrals.
-4. **Connection to Discrete Exterior Calculus (DEC):** In differential geometry, the electric field $\mathcal{E} = \mathbf{E}\cdot d\mathbf{r}$ and magnetic field $\mathcal{H} = \mathbf{H}\cdot d\mathbf{r}$ are **1-forms** integrated over 1-chains (edges), the fluxes $\mathcal{B} = \mathbf{B}\cdot d\mathbf{A}$ and $\mathcal{D} = \mathbf{D}\cdot d\mathbf{A}$ are **2-forms** integrated over 2-chains (faces), and charge density $\rho\,dV$ is a **3-form** integrated over 3-chains (volumes). The matrices $\mathbf{G}, \mathbf{C}, \mathbf{S}$ are the discrete exterior derivatives $d_0, d_1, d_2$ satisfying $d_{k+1} d_k = 0$, and the material matrices $\mathbf{M}_\varepsilon, \mathbf{M}_\nu$ are discrete **Hodge star operators** $\star_\varepsilon, \star_\nu$ mapping primal $k$-cochains to dual $(3-k)$-cochains ([Bossavit 1998](#19-references-and-credits); [Bossavit & Kettunen 2000](#19-references-and-credits)).
+4. **Connection to Discrete Exterior Calculus (DEC):** In differential geometry, the electric field $\mathcal{E} = \mathbf{E}\cdot d\mathbf{r}$ and magnetic field $\mathcal{H} = \mathbf{H}\cdot d\mathbf{r}$ are **1-forms** integrated over 1-chains ($\mathcal{E}$ on primary edges, $\mathcal{H}$ on dual edges), the fluxes $\mathcal{B} = \mathbf{B}\cdot d\mathbf{A}$ and $\mathcal{D} = \mathbf{D}\cdot d\mathbf{A}$ are **2-forms** integrated over 2-chains ($\mathcal{B}$ on primary faces, $\mathcal{D}$ on dual faces; $\mathcal{H}$ and $\mathcal{D}$ are twisted forms), and charge density $\rho\,dV$ is a **3-form** integrated over 3-chains (volumes). The matrices $\mathbf{G}, \mathbf{C}, \mathbf{S}$ are the discrete exterior derivatives $d_0, d_1, d_2$ satisfying $d_{k+1} d_k = 0$, and the material matrices $\mathbf{M}_\varepsilon, \mathbf{M}_\nu$ are discrete **Hodge star operators** $\star_\varepsilon, \star_\nu$ mapping primal $k$-cochains to dual $(3-k)$-cochains ([Bossavit 1998](#19-references-and-credits); [Bossavit & Kettunen 2000](#19-references-and-credits)).
 
 ---
 
@@ -816,41 +824,41 @@ $$\mathbf{C}\,\widehat{\mathbf{e}} = -\frac{d\widehat{\mathbf{b}}}{dt}.$$
 
 The difference between mixed FEM and FIT lies exclusively in the **mass (Hodge) matrices**:
 - **Consistent Galerkin FEM Mass Matrices:** In Galerkin FEM, the permittivity and reluctance matrices are assembled from element inner products of Whitney forms:
-  $$(\mathbf{M}_\varepsilon^{\text{FEM}})_{kl} = \int_\Omega \varepsilon\,\mathbf{w}_k(\mathbf{r})\cdot\mathbf{w}_l(\mathbf{r})\,dV, \qquad (\mathbf{M}_\mu^{\text{FEM}})_{mn} = \int_\Omega \mu\,\mathbf{f}_m(\mathbf{r})\cdot\mathbf{f}_n(\mathbf{r})\,dV.$$
+  $$(\mathbf{M}_\varepsilon^{\text{FEM}})_{kl} = \int_\Omega \varepsilon\,\mathbf{w}_k(\mathbf{r})\cdot\mathbf{w}_l(\mathbf{r})\,dV, \qquad (\mathbf{M}_\nu^{\text{FEM}})_{mn} = \int_\Omega \mu^{-1}\,\mathbf{f}_m(\mathbf{r})\cdot\mathbf{f}_n(\mathbf{r})\,dV.$$
   These consistent mass matrices are **sparse but non-diagonal** (every edge couples to all other edges sharing a tetrahedron or triangle). Consequently, advancing the time-domain FEM equations requires **solving a sparse linear system $\mathbf{M}_\varepsilon^{\text{FEM}}\,\dot{\widehat{\mathbf{e}}} = \dots$ at every single time step**, or else applying **mass lumping** ([Cohen & Monk 1998](#19-references-and-credits); [Bossavit & Kettunen 1999](#19-references-and-credits)).
-- **Mass Lumping Recovers FIT:** As proved by [Bossavit & Kettunen (1999, 2000)](#19-references-and-credits), lumping the Whitney mass matrices onto the Circumcentric (Voronoi) dual grid yields the **diagonal FIT Hodge matrices** $\mathbf{M}_\varepsilon^{\text{FIT}}, \mathbf{M}_\nu^{\text{FIT}}$. When circumcentres fall outside obtuse elements (yielding negative dual lengths), replacing the Voronoi Hodge with the element-local symmetric positive-definite Whitney/barycentric mass matrix (`dual='barycentric'` in `UnstructuredFIT2D` and `UnstructuredFIT3D`, [Section 11.1](#111-2d-triangle-fit-on-delaunayvoronoi-and-barycentric-duals-unstructuredfit2d)) restores unconditional stability on arbitrary meshes!
+- **Mass Lumping Recovers FIT:** [Bossavit & Kettunen (1999)](#19-references-and-credits) showed that Yee-like schemes on tetrahedral meshes are obtained from Whitney elements with a *diagonal* (lumped) Hodge built on the circumcentric (Voronoi) dual, i.e. the diagonal FIT matrices $\mathbf{M}_\varepsilon^{\text{FIT}}, \mathbf{M}_\nu^{\text{FIT}}$. The lumped matrix is a consistent approximation of the Galerkin mass only on well-centred meshes; when circumcentres fall outside obtuse elements the dual lengths go negative and the diagonal Hodge becomes indefinite (unstable). Wakis offers two remedies: in 2D, `hodge='barycentric'` (`UnstructuredFIT2D`, [Section 11.1](#111-2d-triangle-fit-unstructuredfit2d-voronoi--barycentric-dual--new-in-this-fork)) uses positive barycentric dual areas (still diagonal, at reduced accuracy); in 3D, `hodge='whitney'` (`UnstructuredFIT3D`) uses the consistent SPD Whitney mass matrices with a sparse factorization per solve. Both keep the scheme stable below the CFL limit on meshes where the Voronoi Hodge fails; neither makes it unconditionally stable.
 - **Frequency-Domain FEM vs. Time-Domain FIT:** Frequency-domain FEM solvers (such as `femwell`, `scikit-fem`, COMSOL, or Ansys HFSS) assemble the Helmholtz operator $(\mathbf{C}^T\mathbf{M}_\nu^{\text{FEM}}\mathbf{C} - \omega^2\mathbf{M}_\varepsilon^{\text{FEM}})\widehat{\mathbf{e}} = -i\omega\widehat{\mathbf{j}}_s$ and solve a sparse linear system (or generalized eigenvalue problem) at each frequency $\omega$.
   - **Where Frequency-Domain FEM excels:** High-order polynomial basis functions ($p=2,3,\dots$), curved unstructured elements, direct waveguide/cavity eigenmode solves without time-stepping ring-down, and problems with only one or a few discrete frequencies or extreme multiscale aspect ratios (where tiny cells would crush a time-domain CFL step).
-  - **Where Time-Domain FIT excels:** Broadband spectra (hundreds of frequencies from a single time-domain run), large 3D domains ($10^6\text{–}10^9$ unknowns, where 3D LU factorization in FEM runs out of RAM because 3D sparse fill-in scales as $O(N^{4/3}\text{–}N^2)$), transient/nonlinear/moving-beam wakefields, and GPU streaming (only $O(N)$ memory and matrix-free updates).
+  - **Where Time-Domain FIT excels:** Broadband spectra (hundreds of frequencies from a single time-domain run), large 3D domains ($10^6\text{–}10^9$ unknowns, where 3D sparse direct factorization in FEM needs about $O(N^{4/3})$ memory and $O(N^2)$ operations even with nested-dissection ordering), transient/nonlinear/moving-beam wakefields, and GPU streaming (only $O(N)$ memory and matrix-free updates).
 
 ---
 
 ### 4.7 Relation to Other CEM Methods: FVTD, DGTD, FDFD, BEM/MoM, RCWA, Ray Tracing, and Fourier Optics
 
-To situate FIT within the complete landscape of computational electromagnetics—and across the modules in this repository and the sister libraries in our roadmap ([Section 17.2](#172-broader-computational-electromagnetics-ecosystem-and-sister-libraries))—here is how the major CEM families compare:
+To situate FIT within the complete landscape of computational electromagnetics—and across the modules in this repository and the sister libraries in our roadmap ([Section 17.2](#172-sister-libraries-in-the-computational-electromagnetics-ecosystem-planmd--planned))—here is how the major CEM families compare:
 
 1. **Finite-Volume Time-Domain (FVTD) and Discontinuous Galerkin Time-Domain (DGTD):**
    - **FVTD** stores cell-averaged fields inside each unstructured element and exchanges numerical fluxes across element faces using Riemann solvers (upwind or central). Classical first-order FVTD suffers from excessive numerical dissipation ($O(h)$) or high dispersion unless reconstructed to higher order.
-   - **Nodal DGTD** ([Hesthaven & Warburton 2002, 2008](#19-references-and-credits); implemented in `wakis.highorder.DGTD2D`, [Section 11.9](#119-high-order-nodal-dgtd-on-curved-triangles-dgtd2d-and-fourth-order-fdtd-fdtd24)) represents the fields inside each triangle or tetrahedron as a high-order nodal polynomial of degree $p$ ($N_p = (p+1)(p+2)/2$ nodes per triangle), allowing fields to be discontinuous across element interfaces and coupling elements through a tunable upwind numerical flux ($\alpha \in [0, 1]$). Because elements decouple, the mass matrix is **block-diagonal** ($N_p \times N_p$ per element) and inverted locally before time stepping. DGTD achieves $O(h^{p+1})$ convergence on curved isoparametric elements (`circles_mesh`), making it the most efficient time-domain method at sub-$0.1\%$ accuracy targets, at the cost of a smaller time step $\Delta t \propto h/p^2$ and higher work per degree of freedom (~150–300 ns/unknown-step vs. ~19 ns for triangle FIT).
+   - **Nodal DGTD** ([Hesthaven & Warburton 2002, 2008](#19-references-and-credits); implemented in `wakis.highorder.DGTD2D`, [Section 11.9](#119-high-order-solvers-curved-nodal-dgtd2d-p1text5-and-cartesian-24-fdtd24--new-in-this-fork)) represents the fields inside each triangle or tetrahedron as a high-order nodal polynomial of degree $p$ ($N_p = (p+1)(p+2)/2$ nodes per triangle), allowing fields to be discontinuous across element interfaces and coupling elements through a tunable upwind numerical flux ($\alpha \in [0, 1]$). Because elements decouple, the mass matrix is **block-diagonal** ($N_p \times N_p$ per element) and inverted locally before time stepping. DGTD achieves $O(h^{p+1})$ convergence on curved isoparametric elements (`circles_mesh`), which in our 2D benchmarks makes it the cheapest arm at tight (sub-0.1 %) accuracy targets on smooth curved geometry, at the cost of a smaller time step $\Delta t \propto h/p^2$ and higher work per degree of freedom (~150–300 ns/unknown-step vs. ~19 ns for triangle FIT).
 
 2. **Finite-Difference Frequency-Domain (FDFD):**
    - Solves the frequency-domain curl-curl equation $(\nabla\times\mu^{-1}\nabla\times - \omega^2\varepsilon)\mathbf{E} = -i\omega\mathbf{J}$ on a staggered Yee grid by direct or iterative sparse linear algebra (e.g., [`ceviche`](https://github.com/fancompute/ceviche), `tidy3d` FDFD).
-   - **Pros:** Extremely fast in **2D** (where sparse direct LU factorization takes milliseconds per frequency, and the discrete adjoint is a single transposed back-solve with zero time-stepping history memory), supports arbitrary complex $\varepsilon(\omega)$ at each frequency without fitting ADE poles.
-   - **Cons:** In **3D**, direct sparse LU factorization requires $O(N^{4/3})$ memory and $O(N^2)$ flops, hitting a hard memory wall around $10^6$ cells (~$100^3$ grid), whereas 3D iterative solvers struggle with the indefinite Helmholtz operator.
+   - **Pros:** Very fast in **2D** (where a sparse direct LU factorization of $10^4$–$10^5$ unknowns takes milliseconds to about a second per frequency, and the discrete adjoint is a single transposed back-solve with zero time-stepping history memory), supports arbitrary complex $\varepsilon(\omega)$ at each frequency without fitting ADE poles.
+   - **Cons:** In **3D**, direct sparse LU factorization requires about $O(N^{4/3})$ memory and $O(N^2)$ flops, which limits a workstation to a few million unknowns, while iterative solvers converge slowly on the indefinite Helmholtz operator without a good preconditioner.
 
 3. **Boundary Element Method (BEM) and Method of Moments (MoM):**
-   - Reformulates Maxwell's equations as surface or line integral equations (EFIE, MFIE, CFIE, Poggio–Miller–Chang–Harrington–Wu–Tsai, or Hallén's equation for thin wires) using the analytical Green's function $G(\mathbf{r},\mathbf{r}') = \frac{e^{-ik|\mathbf{r}-\mathbf{r}'|}}{4\pi|\mathbf{r}-\mathbf{r}'|}$ of piece-wise homogeneous regions (e.g., [`bempp-cl`](https://bempp.com/), [`necpp`](https://github.com/tmolteno/necpp), and Wakis's built-in Hallén MoM wire solver `wakis.benchmarks.thin_wire`, [Section 15.2](#152-the-wakisbenchmarks-suite-b1b5-shared-result-store-and-cost-to-target-metric)).
+   - Reformulates Maxwell's equations as surface or line integral equations (EFIE, MFIE, CFIE, Poggio–Miller–Chang–Harrington–Wu–Tsai, or Hallén's equation for thin wires) using the analytical Green's function $G(\mathbf{r},\mathbf{r}') = \frac{e^{-ik|\mathbf{r}-\mathbf{r}'|}}{4\pi|\mathbf{r}-\mathbf{r}'|}$ of piece-wise homogeneous regions (e.g., [`bempp-cl`](https://bempp.com/), [`necpp`](https://github.com/tmolteno/necpp), and Wakis's built-in Hallén MoM wire solver `wakis.benchmarks.thin_wire`, [Section 15.2](#152-the-shared-benchmark-suite-b1b5-result-store-and-cost_to_target-metric--new-in-this-fork)).
    - **Pros:** Discretizes **only the 2D surfaces (or 1D wire axes)** rather than the 3D volume; radiation to infinity is satisfied **analytically** by the Green's function without any PML or artificial truncation box; zero volumetric numerical dispersion across arbitrary distances.
    - **Cons:** Produces **dense, complex, frequency-dependent matrices** ($O(N_{\text{surf}}^2)$ memory and $O(N_{\text{surf}}^3)$ direct solve, or $O(N_{\text{surf}}\log N_{\text{surf}})$ with FMM/H-matrices), requires solving anew at every frequency, and cannot handle continuously varying inhomogeneous media ($\varepsilon(\mathbf{r})$).
 
 4. **Rigorous Coupled-Wave Analysis (RCWA) / Fourier Modal Method (FMM):**
    - Expands fields and permittivity $\varepsilon(x,y)$ in a truncated 2D Fourier basis $(m, n)$ within each $z$-invariant layer of a periodic stratified structure, finds the eigenmodes of each layer, and couples layers via stable scattering matrices (e.g., [`fmmax`](https://github.com/facebookresearch/fmmax), `torcwa`, `S4`, `grcwa`).
-   - **Pros:** Unbeatable speed and accuracy for periodic metasurfaces, diffraction gratings, and thin-film stacks with a modest number of Fourier harmonics; naturally handles arbitrary incidence angles, polarization, and tabulated dispersive $n(\lambda)+ik(\lambda)$.
-   - **Cons:** Dense eigendecomposition scales as $O(N_{\text{Fourier}}^3)$ per layer (where $N_{\text{Fourier}} = 2 N_x N_y$ in 3D); converges slowly for high-contrast 3D metallic features (Gibbs phenomenon) unless Li's factorization rules and adaptive spatial coordinates are used; restricted to periodic (or PML-wrapped) $z$-stratified geometries.
+   - **Pros:** Very high speed and accuracy for periodic metasurfaces, diffraction gratings, and thin-film stacks with a modest number of Fourier harmonics; naturally handles arbitrary incidence angles, polarization, and tabulated dispersive $n(\lambda)+ik(\lambda)$.
+   - **Cons:** Dense eigendecomposition scales as $O(N_{\text{harm}}^3)$ per layer (with $N_{\text{harm}} = N_x N_y$ retained harmonics and a $2N_{\text{harm}}\times 2N_{\text{harm}}$ eigenproblem for two polarizations); converges slowly for high-contrast 3D metallic features (Gibbs phenomenon) unless Li's factorization rules and adaptive spatial coordinates are used; restricted to periodic (or PML-wrapped) $z$-stratified geometries.
 
 5. **Asymptotic High-Frequency Methods: Ray Tracing (Geometrical Optics / GTD / UTD) and Fourier Optics (Angular Spectrum / Fresnel / Fraunhofer):**
    - **Ray Tracing** ($L \gg \lambda$, e.g., [`Sionna RT`](https://nvlabs.github.io/sionna/), `diffoptics`, Zemax): Approximates the wave equation in the eikonal limit $\lambda \to 0$, tracking ray paths, Snell refraction, Fresnel reflection, and Geometrical/Uniform Theory of Diffraction (GTD/UTD) edge wedges. Scales to kilometer-scale indoor/urban radio scenes or multi-element camera lenses where full-wave Maxwell solvers would need $10^{15}$ cells, but misses sub-wavelength resonances, guided-mode coupling, and near-field evanescent effects.
-   - **Fourier Optics / Scalar & Vectorial Wave Propagation** (e.g., [`Chromatix`](https://github.com/fmueller/chromatix), `diffractsim`, ` poppy`): Propagates a 2D transverse wavefront from plane $z_1$ to plane $z_2$ in a homogeneous medium in a single FFT step via the **Angular Spectrum Method** ($E(k_x, k_y, z_2) = E(k_x, k_y, z_1)\exp(-i k_z \Delta z)$ with $k_z = \sqrt{k^2 - k_x^2 - k_y^2}$) or Fresnel/Fraunhofer integrals. Often paired with a full-wave solver (FIT/FDTD/RCWA) that computes the near-field transmission of a metasurface unit cell before Fourier optics propagates the beam to a focal plane centimetres away.
+   - **Fourier Optics / Scalar & Vectorial Wave Propagation** (e.g., [`Chromatix`](https://github.com/chromatix-team/chromatix), `diffractsim`, `poppy`): Propagates a 2D transverse wavefront from plane $z_1$ to plane $z_2$ in a homogeneous medium in a single FFT step via the **Angular Spectrum Method** ($E(k_x, k_y, z_2) = E(k_x, k_y, z_1)\exp(-i k_z \Delta z)$ with $k_z = \sqrt{k^2 - k_x^2 - k_y^2}$) or Fresnel/Fraunhofer integrals. Often paired with a full-wave solver (FIT/FDTD/RCWA) that computes the near-field transmission of a metasurface unit cell before Fourier optics propagates the beam to a focal plane centimetres away.
 
 ---
 
@@ -860,15 +868,15 @@ To situate FIT within the complete landscape of computational electromagnetics�
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **FIT (Orthogonal / Conformal / Tensor)** | Time (or Freq. via MGE) | Dual staggered grids: Cartesian (`GridFIT3D`), Delaunay–Voronoi triangles/tets, Voronoi polygons, extruded prisms | Integral edge voltages $\widehat{\mathbf{e}}$ & face fluxes $\widehat{\mathbf{b}}$ ($O(N_{\text{vol}})$) | Sparse topological $\mathbf{C}, \mathbf{C}^T \in \{-1,0,1\}$; **diagonal** (or local SPD) Hodge $\mathbf{M}_\varepsilon, \mathbf{M}_\nu$; **matrix-free** explicit step | Exact $\nabla\cdot\mathbf{B}=0$ & charge conservation; $O(N)$ memory; broadband in 1 run; fast GPU streaming; exact discrete adjoint | Global CFL $\Delta t$ limited by smallest cell; $O(h^2)$ numerical dispersion; Cartesian staircase error without conformal/tensor treatment | **Wakis** (`SolverFIT3D`, `UnstructuredFIT2D/3D`, `PolygonFIT2D`, `PrismFIT3D`), CST Studio Suite |
 | **Yee FDTD** | Time | Uniform or graded Cartesian staggered grid | Point electric & magnetic field components ($O(N_{\text{vol}})$) | Stencil finite differences (algebraically identical to Cartesian FIT with diagonal Hodge) | Simple, fast $O(N)$ inner loop; mature subpixel smoothing & CPML; broadband | Staircasing on curved metals/dielectrics; CFL bound; $O(h^2)$ anisotropic dispersion | [`meep`](https://meep.readthedocs.io/), `openEMS`, `fdtdz`, `flaport/fdtd`, **Wakis** (`SolverFIT3D`, `FDTD24`) |
-| **Curvilinear NFIT** | Time | Body-fitted structured curvilinear grid (e.g., O-grid) | Integral voltages $\widehat{\mathbf{e}}$ & fluxes $\widehat{\mathbf{b}}$ ($O(N_{\text{vol}})$) | Sparse $\mathbf{C}, \mathbf{C}^T$; local $2\times 2$ SPD Jacobian metric Hodge ([Schuhmann & Weiland 2000](#19-references-and-credits)) | Body-fitted to smooth cylinders/pipes with structured indexing and $O(h^2)$ interface accuracy | Restricted to geometries admitting a smooth structured O-grid/C-grid map | **Wakis** (`CurvilinearFIT2D`) |
-| **Nodal DGTD** | Time | Unstructured triangles/tetrahedra (straight or curved isoparametric) | Element-local nodal polynomials of degree $p$ ($O(N_{\text{elem}} p^d)$) | **Block-diagonal** mass matrix (size $N_p \times N_p$ per element) + upwind face flux coupling | High-order $O(h^{p+1})$ accuracy on curved boundaries; naturally parallel; handles sub-nm gaps cleanly | $\Delta t \propto h/p^2$; ~10× higher cost per DOF-step than FIT; upwind flux slightly damps high-$Q$ modes | **Wakis** (`DGTD2D`), `agnes`, `maxwell-dg` |
-| **FEM (Frequency Domain)** | Frequency / Eigenmode | Unstructured triangles, quads, prisms, tetrahedra (Whitney / Nédélec $H(\text{curl})$ edge elements, order $p$) | Edge/face/interior polynomial DOFs ($O(N_{\text{vol}} p^d)$) | Large sparse symmetric (often indefinite) linear system $(\mathbf{K} - \omega^2\mathbf{M})\mathbf{x} = \mathbf{b}$ per frequency | High-order curved geometry; direct eigenmode solver; immune to small-cell CFL restriction; arbitrary $\varepsilon(\omega)$ | 3D direct LU fill-in scales as $O(N^{4/3}\text{–}N^2)$ RAM; must solve a new system per frequency | [`femwell`](https://helgegehring.github.io/femwell/), [`scikit-fem`](https://scikit-fem.readthedocs.io/), `NGSolve`, `FEniCSx`, `GetDP`, COMSOL, HFSS |
-| **FEM (Time Domain / FETD)** | Time | Unstructured tetrahedral/triangular mesh with Nédélec elements | Edge DOFs ($O(N_{\text{vol}})$) | Non-diagonal consistent mass $\mathbf{M}_\varepsilon^{\text{FEM}}$ (requires sparse CG solve per step unless mass-lumped to FIT) | Unconditional stability possible with Newmark-$\beta$ implicit stepping on multiscale meshes | Sparse linear solve at every time step unless mass-lumped (where $p=1$ lumping recovers FIT) | `MFEM`, `NGSolve`, **Wakis** (`UnstructuredFIT2D/3D` with `dual='barycentric'`) |
-| **FDFD** | Frequency | Staggered Cartesian Yee grid | Grid-edge electric or magnetic fields ($O(N_{\text{vol}})$) | Sparse complex non-Hermitian system $(\mathbf{C}_h\boldsymbol{\mu}^{-1}\mathbf{C}_e - \omega^2\boldsymbol{\varepsilon})\mathbf{e} = -i\omega\mathbf{j}$ | Millisecond 2D direct solves; trivial 2D adjoint (1 back-solve, $O(1)$ history memory); exact $\varepsilon(\omega)$ | Severe 3D memory bottleneck ($O(N^{4/3})$ LU fill-in); 1 solve per frequency | [`ceviche`](https://github.com/fancompute/ceviche), `spins-b`, `tidy3d` FDFD |
+| **Curvilinear NFIT** | Time | Body-fitted structured curvilinear grid (e.g., O-grid) | Integral voltages $\widehat{\mathbf{e}}$ & fluxes $\widehat{\mathbf{b}}$ ($O(N_{\text{vol}})$) | Sparse $\mathbf{C}, \mathbf{C}^T$; local $2\times 2$ SPD Jacobian metric Hodge ([Schuhmann & Weiland 2000](#19-references-and-credits)) | Body-fitted to smooth cylinders/pipes with structured indexing; no staircase error | Restricted to geometries admitting a smooth structured O-grid/C-grid map | **Wakis** (`CurvilinearFIT2D`) |
+| **Nodal DGTD** | Time | Unstructured triangles/tetrahedra (straight or curved isoparametric) | Element-local nodal polynomials of degree $p$ ($O(N_{\text{elem}} p^d)$) | **Block-diagonal** mass matrix (size $N_p \times N_p$ per element) + upwind face flux coupling | High-order $O(h^{p+1})$ accuracy on curved boundaries; naturally parallel; handles sub-nm gaps cleanly | $\Delta t \propto h/p^2$; ~10× higher cost per DOF-step than FIT; upwind flux slightly damps high-$Q$ modes | **Wakis** (`DGTD2D`), `grudge`, MFEM (DG) |
+| **FEM (Frequency Domain)** | Frequency / Eigenmode | Unstructured triangles, quads, prisms, tetrahedra (Whitney / Nédélec $H(\text{curl})$ edge elements, order $p$) | Edge/face/interior polynomial DOFs ($O(N_{\text{vol}} p^d)$) | Large sparse symmetric (often indefinite) linear system $(\mathbf{K} - \omega^2\mathbf{M})\mathbf{x} = \mathbf{b}$ per frequency | High-order curved geometry; direct eigenmode solver; immune to small-cell CFL restriction; arbitrary $\varepsilon(\omega)$ | 3D direct LU needs about $O(N^{4/3})$ memory and $O(N^2)$ flops; must solve a new system per frequency | [`femwell`](https://helgegehring.github.io/femwell/), [`scikit-fem`](https://scikit-fem.readthedocs.io/), `NGSolve`, `FEniCSx`, `GetDP`, COMSOL, HFSS |
+| **FEM (Time Domain / FETD)** | Time | Unstructured tetrahedral/triangular mesh with Nédélec elements | Edge DOFs ($O(N_{\text{vol}})$) | Non-diagonal consistent mass $\mathbf{M}_\varepsilon^{\text{FEM}}$ (requires sparse CG solve per step unless mass-lumped to FIT) | Unconditional stability possible with Newmark-$\beta$ implicit stepping on multiscale meshes | Sparse linear solve at every time step unless mass-lumped (lowest-order diagonal lumping on a circumcentric dual recovers FIT) | `MFEM`, `NGSolve`, **Wakis** (`UnstructuredFIT3D(hodge='whitney')`) |
+| **FDFD** | Frequency | Staggered Cartesian Yee grid | Grid-edge electric or magnetic fields ($O(N_{\text{vol}})$) | Sparse complex non-Hermitian system $(\mathbf{C}_h\boldsymbol{\mu}^{-1}\mathbf{C}_e - \omega^2\boldsymbol{\varepsilon})\mathbf{e} = -i\omega\mathbf{j}$ | Fast 2D direct solves; trivial 2D adjoint (1 back-solve, $O(1)$ history memory); exact $\varepsilon(\omega)$ | 3D memory bottleneck ($O(N^{4/3})$ LU fill-in); 1 solve per frequency | [`ceviche`](https://github.com/fancompute/ceviche), `spins-b`, `tidy3d` FDFD |
 | **BEM / MoM** | Frequency | 2D surface triangles or 1D wire segments (`thin_wire`) | Surface electric/magnetic currents $\mathbf{J}_s, \mathbf{M}_s$ ($O(N_{\text{surf}})$) | **Dense** complex matrix $\mathbf{Z}(\omega)\mathbf{I} = \mathbf{V}$ ($O(N_{\text{surf}}^2)$ RAM, $O(N_{\text{surf}}^3)$ direct or $O(N\log N)$ FMM) | Surface-only mesh; exact radiation condition at $\infty$ (no PML); zero volumetric dispersion | Dense matrices; 1 solve per frequency; restricted to piecewise-homogeneous media | [`bempp-cl`](https://bempp.com/), [`necpp`](https://github.com/tmolteno/necpp), `scuff-em`, **Wakis** (`wakis.benchmarks.thin_wire`) |
-| **RCWA / FMM** | Frequency | 2D Fourier modes $(m,n)$ in $(x,y)$ $\times$ analytical $z$-layers | Plane-wave harmonic amplitudes per layer ($N_{\text{harm}} = 2 N_x N_y$) | Dense $2N_{\text{harm}} \times 2N_{\text{harm}}$ eigenproblem per patterned layer + S-matrix recursion | Extremely fast for periodic layered metasurfaces & gratings; exact $z$-propagation | $O(N_{\text{harm}}^3)$ scaling; slow Fourier convergence on sharp 3D metals; periodic/layered only | [`fmmax`](https://github.com/facebookresearch/fmmax), `torcwa`, `S4`, `grcwa`, `inkstone` |
+| **RCWA / FMM** | Frequency | 2D Fourier modes $(m,n)$ in $(x,y)$ $\times$ analytical $z$-layers | Plane-wave harmonic amplitudes per layer ($N_{\text{harm}} = N_x N_y$, two polarizations each) | Dense $2N_{\text{harm}} \times 2N_{\text{harm}}$ eigenproblem per patterned layer + S-matrix recursion | Extremely fast for periodic layered metasurfaces & gratings; exact $z$-propagation | $O(N_{\text{harm}}^3)$ scaling; slow Fourier convergence on sharp 3D metals; periodic/layered only | [`fmmax`](https://github.com/facebookresearch/fmmax), `torcwa`, `S4`, `grcwa`, `inkstone` |
 | **Ray Tracing (GO / GTD / UTD)** | High-freq. asymptotic ($\lambda \to 0$) | Surface CAD facets / BVH acceleration structure | Ray trajectories, phase, polarization dyad | Ray-surface intersection tree (BVH) + local Fresnel/UTD coefficients | Scales to $10^3\text{–}10^9\,\lambda$ scenes (buildings, lenses); differentiable wrt surface normals/positions | Invalid when feature size $\lesssim \lambda$; misses guided modes, cavity resonances, and evanescent coupling | [`Sionna RT`](https://nvlabs.github.io/sionna/), `diffoptics`, `Mitsuba 3` |
-| **Fourier Optics (ASM / Fresnel)** | Frequency (paraxial or scalar/vector Helmholtz) | Uniform 2D transverse $(x,y)$ grid at discrete $z$-planes | Transverse field samples $E(x,y)$ ($N_x \times N_y$) | Diagonal transfer function $\exp(-i k_z \Delta z)$ in 2D FFT $(k_x, k_y)$ space ($O(N\log N)$) | Propagates across $10^4\,\lambda$ of free space in one 2D FFT; ideal for lenses, holograms, far-field imaging | Assumes homogeneous space between planes (no multiple reflections or thick 3D scatterers) | [`Chromatix`](https://github.com/fmueller/chromatix), `diffractsim`, `poppy`, `lightpipes` |
+| **Fourier Optics (ASM / Fresnel)** | Frequency (paraxial or scalar/vector Helmholtz) | Uniform 2D transverse $(x,y)$ grid at discrete $z$-planes | Transverse field samples $E(x,y)$ ($N_x \times N_y$) | Diagonal transfer function $\exp(-i k_z \Delta z)$ in 2D FFT $(k_x, k_y)$ space ($O(N\log N)$) | Propagates across $10^4\,\lambda$ of free space in one 2D FFT; ideal for lenses, holograms, far-field imaging | Assumes homogeneous space between planes (no multiple reflections or thick 3D scatterers) | [`Chromatix`](https://github.com/chromatix-team/chromatix), `diffractsim`, `poppy`, `lightpipes` |
 
 ---
 
@@ -877,20 +885,20 @@ To situate FIT within the complete landscape of computational electromagnetics�
 Use this practical checklist to pick the right solver (within Wakis or among its sister CEM libraries):
 
 1. **Relativistic particle beams, wake potentials, and accelerator cavity impedance in 3D CAD geometries:**
-   - $\rightarrow$ **Wakis Cartesian FIT (`SolverFIT3D` + `WakeSolver`)**, optionally with `conformal='pec'` for curved metallic walls and `scheme='tete'` ([Section 14.2](#142-dispersion-free-tetm-wakefield-scheme-schemetete)) for long structures where numerical Cherenkov dispersion matters.
+   - $\rightarrow$ **Wakis Cartesian FIT (`SolverFIT3D` + `WakeSolver`)**, optionally with `conformal='pec'` for curved metallic walls and `scheme='tete'` ([Section 14.2](#142-dispersion-free-tetm-wake-time-stepping-schemetete--new-in-this-fork)) for long structures where numerical Cherenkov dispersion matters.
 2. **Broadband 3D scattering, waveguide S-parameters, patch antennas, or multi-frequency inverse design ($> 10^6$ cells):**
-   - $\rightarrow$ **Wakis Cartesian FIT (`SolverFIT3D`, `use_gpu=True, fused=True`)** with `conformal='all'` or `'tensor'` for smooth dielectrics, or **`PrismFIT3D`** ([Section 11.6](#116-extruded-3d-triangular-prism-fit-prismfit3d)) if the geometry is a $z$-extruded planar photonic/RF circuit (e.g., ring resonator, directional coupler, microstrip filter, metasurface pillar).
+   - $\rightarrow$ **Wakis Cartesian FIT (`SolverFIT3D`, `use_gpu=True, fused=True`)** with `conformal='all'` or `'tensor'` for smooth dielectrics, or **`PrismFIT3D`** ([Section 11.6](#116-3d-extruded-prism-fit-prismfit3d--new-in-this-fork)) if the geometry is a $z$-extruded planar photonic/RF circuit (e.g., ring resonator, directional coupler, microstrip filter, metasurface pillar).
 3. **2D or 2.5D curved metallic/plasmonic scatterers and nanogap dimers:**
-   - **Moderate tolerance ($0.5\%\text{–}2\%$ error) or multiscale gaps:** $\rightarrow$ **Wakis Graded Triangle FIT with Local Time Stepping (`UnstructuredFIT2D(..., lts=2)`** or **`subtri`**, [Sections 11.1, 11.4, 11.8](#111-2d-triangle-fit-on-delaunayvoronoi-and-barycentric-duals-unstructuredfit2d)) or **Curvilinear O-Grid NFIT (`CurvilinearFIT2D`)** for smooth single cylinders.
-   - **Tight tolerance ($< 0.1\%$ error) or electrically large multi-wavelength domains:** $\rightarrow$ **Wakis High-Order Nodal DGTD on Curved Triangles (`DGTD2D(order=3 or 4)`)** ([Section 11.9](#119-high-order-nodal-dgtd-on-curved-triangles-dgtd2d-and-fourth-order-fdtd-fdtd24)).
+   - **Moderate tolerance ($0.5\%\text{–}2\%$ error) or multiscale gaps:** $\rightarrow$ **Wakis Graded Triangle FIT with Local Time Stepping (`UnstructuredFIT2D(..., lts=2)`** or **`subtri`**, [Sections 11.1, 11.4, 11.8](#111-2d-triangle-fit-unstructuredfit2d-voronoi--barycentric-dual--new-in-this-fork)) or **Curvilinear O-Grid NFIT (`CurvilinearFIT2D`)** for smooth single cylinders.
+   - **Tight tolerance ($< 0.1\%$ error) or electrically large multi-wavelength domains:** $\rightarrow$ **Wakis High-Order Nodal DGTD on Curved Triangles (`DGTD2D(order=3 or 4)`)** ([Section 11.9](#119-high-order-solvers-curved-nodal-dgtd2d-p1text5-and-cartesian-24-fdtd24--new-in-this-fork)).
 4. **2D waveguide cross-section eigenmodes ($\beta(\omega)$, effective index $n_{\text{eff}}$, dispersion, bent modes):**
-   - $\rightarrow$ **Wakis `solve_modes`** ([Section 8.4](#84-waveguide-eigenmode-sources-solve_modes-modesource)) when launching/monitoring modes directly on the FIT grid so the discrete mode profile matches the 3D time-stepping stencil; or **`femwell`** (high-order unstructured FEM) when computing standalone dispersion curves, thermo-optic shifts, or sub-nm slot waveguide modes.
+   - $\rightarrow$ **Wakis `solve_modes`** ([Section 8.4](#84-waveguide-eigenmode-sources-solve_modes-modesource--new-in-this-fork)) when launching/monitoring modes directly on the FIT grid so the discrete mode profile matches the 3D time-stepping stencil; or **`femwell`** (high-order unstructured FEM) when computing standalone dispersion curves, thermo-optic shifts, or sub-nm slot waveguide modes.
 5. **2D single-frequency topology optimization (e.g., 1–2 wavelengths, isotropic dielectric):**
-   - $\rightarrow$ **2D FDFD (`ceviche`)** is fastest when the problem is strictly 2D at 1–2 discrete frequencies; **Wakis 3D Adjoint (`wakis.inverse` + GPU)** is required once the device is 3D, broadband, time-windowed, or too large for 3D sparse LU factorization.
+   - $\rightarrow$ **2D FDFD (`ceviche`)** is fastest when the problem is strictly 2D at 1–2 discrete frequencies; **Wakis 3D Adjoint (`wakis.inverse` + GPU)** becomes preferable once the device is 3D, broadband, time-windowed, or too large for 3D sparse LU factorization.
 6. **Periodic layered metasurfaces and diffraction gratings at a few wavelengths:**
-   - $\rightarrow$ **RCWA (`fmmax`)** when the unit cell is $z$-stratified and smoothly resolved in Fourier space; **Wakis `SolverFIT3D` with `bc='bloch'` + `DiffractionMonitor`** ([Sections 9.2, 10.5](#92-bloch-periodic-boundaries-bloch-with-complex-fields)) when the grating has arbitrary 3D sloped sidewalls, broadband pulse excitation, or conformal/dispersive time-domain dynamics.
+   - $\rightarrow$ **RCWA (`fmmax`)** when the unit cell is $z$-stratified and smoothly resolved in Fourier space; **Wakis `SolverFIT3D` with `bc='bloch'` + `DiffractionMonitor`** ([Sections 9.2, 10.5](#92-bloch-periodic-boundaries-bloch-with-complex-fields--new-in-this-fork)) when the grating has arbitrary 3D sloped sidewalls, broadband pulse excitation, or conformal/dispersive time-domain dynamics.
 7. **Thin-wire antennas, Yagi/dipole arrays, or open-space PEC/dielectric scatterers in homogeneous background:**
-   - $\rightarrow$ **MoM / BEM (`necpp`, `bempp-cl`, or `wakis.benchmarks.thin_wire`)** when the wire radius $a \ll \lambda$ makes volumetric grids expensive; **Wakis `GridFIT3D(conformal='pec')` or `PrismFIT3D`** ([Section 6.4](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets), [Section 11.6](#116-extruded-3d-triangular-prism-fit-prismfit3d)) when the antenna is mounted on an inhomogeneous PCB substrate or finite housing.
+   - $\rightarrow$ **MoM / BEM (`necpp`, `bempp-cl`, or `wakis.benchmarks.thin_wire`)** when the wire radius $a \ll \lambda$ makes volumetric grids expensive; **Wakis `GridFIT3D(conformal='pec')` or `PrismFIT3D`** ([Section 6.4](#64-conformal-cut-cells-deymittra-pec-and-thin-conducting-sheets--new-in-this-fork), [Section 11.6](#116-3d-extruded-prism-fit-prismfit3d--new-in-this-fork)) when the antenna is mounted on an inhomogeneous PCB substrate or finite housing.
 8. **Macroscopic optical systems, LiDAR scenes, or indoor/urban RF propagation ($L \gg 100\lambda$):**
    - $\rightarrow$ **Ray Tracing (`Sionna RT`, `diffoptics`)** or **Fourier Optics (`Chromatix`)**, optionally using Wakis to characterize the sub-wavelength scatterer or metasurface phase mask first.
 
@@ -901,28 +909,28 @@ Use this practical checklist to pick the right solver (within Wakis or among its
 Every numerical method has boundary conditions where its assumptions break down. Understanding FIT's failure modes prevents wasted compute and subtle physics bugs:
 
 1. **Staircase Errors on Curved Boundaries ($O(h)$ Error Without Subcell Treatment):**
-   - *Mechanism:* With `conformal=False`, every grid edge is assigned the material at its midpoint (or via the legacy 8-node solid mask). On a curved PEC wall or high-contrast dielectric interface, the boundary becomes a jagged staircase of whole cells. As shown in [Section 3.2](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave) and `tutorials/01_mie_cylinder`, a staircased cylinder at 20 cells/$\mu$m has an effective polarizable area $4.5\%$ too large, shifting resonant peaks and reducing convergence from $O(h^2)$ to $O(h)$. Even worse, on a thin wire of radius $a = h$, the legacy 8-node cell mask thickens the wire by up to a full cell, shifting a half-wave dipole's resonance down by $-6.2\%$ (`studies/prism-dipole/`).
+   - *Mechanism:* With `conformal=False`, every grid edge is assigned the material at its midpoint (or via the legacy 8-node solid mask). On a curved PEC wall or high-contrast dielectric interface, the boundary becomes a jagged staircase of whole cells. As shown in [Section 3.2](#32-b-2d-mie-scattering-by-a-dielectric-cylinder-with-a-tfsf-plane-wave--new-in-this-fork) and `tutorials/01_mie_cylinder`, staircasing the $n = 2$, $a = 1\,\mu$m cylinder gives a $Q_{\text{sca}}$ RMS error over $x = 2$–$10$ of $6.1\%$ (TM) and $9.7\%$ (TE) at 20 cells/$\mu$m, against $2.4\%$ / $2.1\%$ with conformal averaging, and it falls only slowly and irregularly with $h$ ($3.9\%$ / $6.2\%$ at 40 cells/$\mu$m versus $0.62\%$ / $0.64\%$ conformal; `studies/mie-cylinder-mesh/`). On a thin wire of radius $a = h$, the legacy STL cell mask thickens the wire, shifting a half-wave dipole's resonance by $-6.2\%$ against a Hallén MoM reference, versus $-0.048\%$ with the fixed conformal PEC (`studies/conformal-pec-mask/`).
    - *Remedy:* Enable `conformal='pec'` for curved conductors, `conformal='all'` or `'tensor'` for curved dielectrics, or use body-fitted unstructured meshes (`UnstructuredFIT2D/3D`, `PrismFIT3D`, `CurvilinearFIT2D`).
 
 2. **Metal–Dielectric Subpixel Averaging Sign Changes (Localized Surface Modes):**
-   - *Mechanism:* At optical frequencies where a metal has $\text{Re}\,\varepsilon_{\text{metal}}(\omega) < 0$ and the host dielectric has $\varepsilon_{\text{host}} > 0$, harmonic or arithmetic subpixel averaging across a cut cell produces a mixed capacitance whose effective permittivity crosses zero ($\varepsilon_{\text{eff}}(\omega_0) = 0$) at some frequency $\omega_0$ in the band. For TE polarization ($E$ crossing the metal boundary), this creates spurious grid-scale plasmonic resonances on cut Cartesian cells (`B2-Au-TE` in `studies/benchmarks/` converges non-monotonically: $2.3\%, 2.0\%, 2.9\%, 1.3\%$ at $h = 4, 2.9, 2, 1.4\text{ nm}$).
+   - *Mechanism:* At optical frequencies where a metal has $\text{Re}\,\varepsilon_{\text{metal}}(\omega) < 0$ and the host dielectric has $\varepsilon_{\text{host}} > 0$, harmonic or arithmetic subpixel averaging across a cut cell produces a mixed capacitance whose effective permittivity crosses zero ($\varepsilon_{\text{eff}}(\omega_0) = 0$) at some frequency $\omega_0$ in the band. For TE polarization ($E$ crossing the metal boundary), this creates spurious grid-scale plasmonic resonances on cut Cartesian cells (`B2-Au-TE` in `studies/benchmarks/` converges non-monotonically: $2.3, 2.0, 2.9, 1.3, 1.4, 0.8, 0.6\%$ over the refinement ladder).
    - *Remedy:* Use body-fitted unstructured triangles (`UnstructuredFIT2D`), hybrid quad-triangle meshes (`PolygonFIT2D` / `subtri`), or `DGTD2D` where edges align with the metal interface so no edge is split across opposite-sign permittivities.
 
 3. **Global CFL Time Step Dictated by the Smallest Cell (or Smallest Dual Edge):**
-   - *Mechanism:* Because standard leapfrog advances the entire mesh with a single time step $\Delta t$, one tiny geometric feature (e.g., a $2\text{ nm}$ plasmonic dimer gap inside a $1200\text{ nm}$ domain) shrinks $\Delta t$ everywhere by $50\times$. On Delaunay triangle meshes, two nearly cocircular triangles have a Voronoi dual edge of length $h_e = \frac{1}{2}L_e(\cot\alpha_1 + \cot\alpha_2) \to 0$, which sends the local edge frequency $\omega^2 \sim L_e / (A_t h_e) \to \infty$ and collapses $\Delta t$.
-   - *Remedy:* Use **Local Time Stepping (`lts=p`)** ([Section 11.8](#118-local-time-stepping-lts-on-graded-unstructured-meshes)) to sub-step only the fine-cell cluster; use ODT smoothing (`odt_smooth`), `dual='barycentric'`, or cocircular triangle-pair merging (`PrismMesh(merge_tol=0.05)`) to eliminate vanishing Voronoi dual edges; and use the `(2,-1)` Dey–Mittra area threshold (`area_tol=0.05`) on conformal PEC cells.
+   - *Mechanism:* Because standard leapfrog advances the entire mesh with a single time step $\Delta t$, one tiny geometric feature (e.g., a $2\text{ nm}$ plasmonic dimer gap inside a $1200\text{ nm}$ domain) shrinks $\Delta t$ everywhere by roughly the ratio of the coarse to the finest cell size. On Delaunay triangle meshes, two nearly cocircular triangles have a Voronoi dual edge of length $h_e = \frac{1}{2}L_e(\cot\alpha_1 + \cot\alpha_2) \to 0$, which sends the local edge frequency $\omega^2 \sim L_e / (A_t h_e) \to \infty$ and collapses $\Delta t$.
+   - *Remedy:* Use **Local Time Stepping (`lts=p`)** ([Section 11.8](#118-stabilized-local-time-stepping-unstructuredfit2dlts2-leapfrogchebyshev--new-in-this-fork)) to sub-step only the fine-cell cluster; use ODT smoothing (`wakis.unstructured.smoothing.odt_smooth`), `hodge='barycentric'`, or cocircular triangle-pair merging (`PrismMesh(merge_tol=0.05)`) to eliminate vanishing Voronoi dual edges; on conformal PEC cells, small cut-cell fractions raise the local edge frequency in the same way and must be stabilized (Section 6.4).
 
 4. **Numerical Phase Dispersion ($O((h/\lambda)^2)$):**
    - *Mechanism:* At $10\text{–}20$ cells per wavelength, high-frequency components lag behind low-frequency components ($v_p < c$). For an ultrarelativistic bunch ($\beta = 1$) moving at $c$ along $z$, the bunch outruns its own high-frequency grid waves, radiating spurious numerical Cherenkov oscillations in the wake potential.
-   - *Remedy:* Use `SolverFIT3D(..., scheme='tete')` ([Section 14.2](#142-dispersion-free-tetm-wakefield-scheme-schemetete)), which integrates longitudinal propagation at the exact unit Courant step $c\Delta t = \Delta z$, or use `FDTD24` / `DGTD2D` for electrically large wave propagation.
+   - *Remedy:* Use `SolverFIT3D(..., scheme='tete')` ([Section 14.2](#142-dispersion-free-tetm-wake-time-stepping-schemetete--new-in-this-fork)), which integrates longitudinal propagation at the exact unit Courant step $c\Delta t = \Delta z$, or use `FDTD24` / `DGTD2D` for electrically large wave propagation.
 
 5. **Spurious Modes on Poorly Centered Dual Grids:**
-   - *Mechanism:* While $\mathbf{S}\mathbf{C} = \mathbf{0}$ prevents static irrotational spurious modes ($\omega = 0$), a non-orthogonal dual grid whose Hodge matrix $\mathbf{M}_\varepsilon$ or $\mathbf{M}_\nu$ is asymmetric or indefinite ($\mathbf{x}^T\mathbf{M}\mathbf{x} < 0$, e.g., unfiltered negative Voronoi dual edges on obtuse triangles) creates imaginary eigenfrequencies ($\omega^2 < 0$) that blow up exponentially in time.
+   - *Mechanism:* $\mathbf{S}\mathbf{C} = \mathbf{0}$ guarantees that the $\omega = 0$ null space consists of discrete gradients (physical static fields), so there are no spurious *propagating* modes at nonzero frequency from the topology. The danger is metric: a non-orthogonal dual grid whose Hodge matrix $\mathbf{M}_\varepsilon$ or $\mathbf{M}_\nu$ is asymmetric or indefinite ($\mathbf{x}^T\mathbf{M}\mathbf{x} < 0$, e.g., unfiltered negative Voronoi dual edges on obtuse triangles) creates complex or imaginary eigenfrequencies ($\omega^2 \notin [0,\infty)$) that grow exponentially in time.
    - *Remedy:* Always ensure $\mathbf{M}_\varepsilon = \mathbf{M}_\varepsilon^T \succ 0$ and $\mathbf{M}_\nu = \mathbf{M}_\nu^T \succ 0$ (via `dual_floor` clamping, ODT mesh smoothing, cocircular merging, or the SPD barycentric Whitney Hodge).
 
 6. **Auxiliary Differential Equation (ADE) Coupling at Large CFL or High Plasma Frequency:**
-   - *Mechanism:* In dispersive media ([Section 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals)), the polarization poles $\mathbf{P}_p(t)$ couple to $\mathbf{E}(t)$. If $\omega_p\Delta t \gtrsim 1$ (for instance, on a very coarse grid in a metal with a high plasma frequency $\omega_p \sim 1.3\times 10^{16}\text{ rad/s}$), the explicit leapfrog-ADE coupling can exceed its stability boundary even when the vacuum Courant condition is satisfied.
-   - *Remedy:* Check $\omega_p \Delta t$ and reduce `cfln` (e.g., `cfln=0.5` or `0.4`) when simulating metals on coarse grids, or use the Leontovich `SIBC` boundary condition ([Section 7.5](#75-leontovich-surface-impedance-boundary-condition-sibc)) at microwave/RF frequencies where the skin depth is sub-grid.
+   - *Mechanism:* In dispersive media ([Section 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals--new-in-this-fork)), the polarization poles $\mathbf{P}_p(t)$ couple to $\mathbf{E}(t)$. If $\omega_p\Delta t \gtrsim 1$ (for instance, on a very coarse grid in a metal with a high plasma frequency $\omega_p \sim 1.3\times 10^{16}\text{ rad/s}$), the explicit leapfrog-ADE coupling can exceed its stability boundary even when the vacuum Courant condition is satisfied.
+   - *Remedy:* Check $\omega_p \Delta t$ and reduce `cfln` (e.g., `cfln=0.5` or `0.4`) when simulating metals on coarse grids, or use the Leontovich `SIBC` boundary condition ([Section 7.5](#75-leontovich-surface-impedance-boundary-condition-use_sibctrue)) at microwave/RF frequencies where the skin depth is sub-grid.
 
 ---
 
@@ -1017,10 +1025,10 @@ $$\Delta t = \frac{\text{cfln}}{c_0 \sqrt{\dfrac{1}{\Delta x_{\min}^2} + \dfrac{
 where $\Delta x_{\min}, \Delta y_{\min}, \Delta z_{\min}$ are the minimum cell lengths along each axis (`grid.dx`, `grid.dy`, `grid.dz`).
 
 - **Why default `cfln=0.5`?** The theoretical stability limit in vacuum is $\text{cfln} \le 1.0$. Setting `cfln=0.5` provides a $2\times$ safety margin for graded grids, CPML boundaries, lumped elements, and dispersive ADE poles. For pure vacuum/dielectric runs without dispersive poles, you can safely pass `cfln=0.9` or `0.95` (or `cfln=1.0` when `scheme='tete'`).
-- **Conformal Dey–Mittra PEC (`conformal='pec'`):** Because Wakis stabilizes small cut primary faces ($0 < S_f/A_f < 0.5$) via the `(2,-1)` linear flux extrapolation $\widetilde{B}_f^n = 2 B_f^n - B_f^{n-1}$ (`wakis/conformal.py`) and snaps tiny cut slivers below `area_tol=0.05` to PEC, **conformal PEC runs at the standard Cartesian CFL (`cfln=0.5`–`0.7`) without time-step reduction**.
+- **Conformal Dey–Mittra PEC (`conformal='pec'`):** Small cut faces are stabilized by redistributing their flux to stable in-plane neighbours with a symmetric operator (Section 6.4), so conformal PEC needs only a modest time-step reduction: the measured stable step of PEC-only test geometries is 0.85–0.97 of the uncut Yee limit (`studies/conformal-pec-mask/`).
 - **Unstructured 2D/3D Simplex, Polygon, and Prism Solvers:**  
-  `UnstructuredFIT2D`, `PolygonFIT2D`, `PrismFIT3D`, and `UnstructuredFIT3D` compute the exact maximum eigenvalue $\lambda_{\max}$ of the spatial operator $\mathbf{M}_\varepsilon^{-1}\mathbf{C}^T\mathbf{M}_\nu\mathbf{C}$ via a few power-method iterations during initialization and set:
-  $$\Delta t = \text{cfl} \cdot \frac{2}{\sqrt{\lambda_{\max}}}, \qquad \text{default } \text{cfl} = 0.8\text{–}0.85.$$
+  `UnstructuredFIT2D`, `PolygonFIT2D`, `PrismFIT3D`, and `UnstructuredFIT3D` compute the maximum eigenvalue $\lambda_{\max}$ of the spatial operator $\mathbf{M}_\varepsilon^{-1}\mathbf{C}^T\mathbf{M}_\nu\mathbf{C}$ numerically during initialization and set:
+  $$\Delta t = \text{cfl} \cdot \frac{2}{\sqrt{\lambda_{\max}}}, \qquad \text{default } \text{cfl} = 0.95 \text{ (0.8 for } \texttt{DGTD2D}\text{, whose LSRK stability region differs)}.$$
 ---
 
 ## 6. Grids, Geometry, Subpixel Smoothing, and Symmetry
@@ -1108,7 +1116,7 @@ Each value in `stl_materials` (and the background `bg` in `SolverFIT3D`) can be:
    - `'mo'` (molybdenum): `[1.0, 1.0, 1.87e7]`
 2. **A 2-list or 3-list:** `[eps_r, mu_r]` or `[eps_r, mu_r, sigma]`, where `sigma` is the static conductivity in $\text{S/m}$.
 3. **An anisotropic 3-component list:** `[[eps_xx, eps_yy, eps_zz], [mu_xx, mu_yy, mu_zz], [sigma_xx, sigma_yy, sigma_zz]]`.
-4. **A `DispersiveMaterial` object** (`🆕 **New in this fork**`, [Section 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals)): e.g., `dispersive_lib['gold']`, `dispersive_lib['fr4']`, or a custom `DispersiveMaterial(eps_inf, poles, sigma)`.
+4. **A `DispersiveMaterial` object** (`🆕 **New in this fork**`, [Section 7.2](#72-dispersive-materials-via-auxiliary-differential-equations-drude-lorentz-debye-rakić-metals--new-in-this-fork)): e.g., `dispersive_lib['gold']`, `dispersive_lib['fr4']`, or a custom `DispersiveMaterial(eps_inf, poles, sigma)`.
 
 #### Overlap Priority When Multiple STL Solids Intersect
 
@@ -1161,7 +1169,7 @@ grid_refined = GridFIT3D(
 
 ### 6.4 Conformal Cut Cells: Dey–Mittra PEC and Thin Conducting Sheets 🆕 **New in this fork**
 
-When `conformal='pec'` (or `'all'` / `'tensor'`) is passed to `GridFIT3D`, Wakis (`wakis/conformal.py`) replaces the staircased PEC voxel mask with the **Dey–Mittra conformal cut-cell method** ([Dey & Mittra 1997](#19-references-and-credits)), stabilized by the **`(2, -1)` magnetic flux extrapolation** of [Dohlus & Zagorodnov (2005)](#19-references-and-credits).
+When `conformal='pec'` (or `'all'` / `'tensor'`) is passed to `GridFIT3D`, Wakis (`wakis/conformal.py`) replaces the staircased PEC voxel mask with the **Dey–Mittra conformal cut-cell method** ([Dey & Mittra 1997](#19-references-and-credits)), stabilized by a symmetric **`(2, -1)` redistribution of the flux of small cut faces** to their stable neighbours (in the spirit of the uniformly stable conformal schemes of Zagorodnov, Schuhmann & Weiland; see the references).
 
 #### Mathematical Formulation
 
@@ -1170,33 +1178,32 @@ On any primary cell cut by a PEC surface:
 2. **Fractional open face areas $S_f \in [0, |A_f|]$:** The magnetic flux $\widehat{b}_f = \iint_{S_f} \mathbf{B}\cdot d\mathbf{A}$ threads only the vacuum aperture $S_f$ of face $A_f$, so Faraday's law divides by $S_f$ (`iA_f = 1 / S_f`).
 3. **Why small cut faces normally crash CFL—and how Wakis stabilizes them:**  
    In naive Dey–Mittra, a face with a tiny open sliver ($0 < S_f / A_f \ll 1$) has a huge inverse area $S_f^{-1}$, shrinking the stable time step by $\sqrt{S_f / A_f}$. Wakis eliminates this CFL bottleneck in two stages:
-   - Faces with open fraction below `area_tol = 0.05` (and edges feeding no open face) are snapped to PEC ($S_f = 0, l_k = 0$).
-   - Faces with moderate open fraction $0.05 \le S_f / A_f < 0.5$ (`stabilize_ratio = 0.5`) have their magnetic update extrapolated linearly in time via the `(2, -1)` filter ([Zagorodnov & Weiland 2005](#19-references-and-credits)):
-     $$\widetilde{H}_f^{n+1/2} = 2 H_f^{n+1/2} - H_f^{n-1/2},$$
-     which raises the stability limit back to the full uncut Cartesian CFL step (`cfln=0.5`–`0.7`).
+   - A face is *unstable* when its open area is below `MERGE_THRESHOLD = 0.5` times $A_{\text{stab}} = \max_i(l_i h_i)/2$ (the largest product of an open edge length and the face size perpendicular to it, the criterion of the legacy Wakis ECT solver).
+   - The flux of an unstable face is redistributed to stable in-plane neighbours along its longest open edge, with weights $(2, -1)$ to the first and second neighbour (a *spatial* linear extrapolation, as in the uniformly stable conformal schemes of Zagorodnov, Schuhmann & Weiland), or weight 1 to the first neighbour when there is no second one (cell merging). With the redistribution matrix $\mathbf{T}$ and receiving areas $\hat{A}_n = A_n + \sum_u T_{nu}A_u$, the inverse-area operator becomes
+     $$\mathbf{G} = \mathbf{T}^T\,\mathrm{diag}(1/\hat{A})\,\mathbf{T},$$
+     which is symmetric positive semi-definite, so a discrete energy is still conserved and a uniform $H$ is reproduced exactly. The stable step stays close to the uncut Cartesian one (0.85–0.97 of the Yee limit on the PEC test geometries of `studies/conformal-pec-mask/`).
 
 #### Infinitely Thin Conducting Sheets (`sheets=[...]` and Singularity Correction)
 
 Planar metallic traces, patch antennas, and microstrip ground planes have physical thickness $t \sim 17\text{–}35\,\mu\text{m}$ that is much smaller than a millimeter-wave grid cell. Rather than meshing a $35\,\mu\text{m}$ layer (which would force $\Delta z = 35\,\mu\text{m}$), pass a list of `wakis.templates.Sheet` objects to `GridFIT3D(sheets=[...], sheet_edge_correction=True)`:
 
 ```python
-from wakis import GridFIT3D, SolverFIT3D
+from wakis import GridFIT3D
 from wakis.templates import Sheet
 
-patch = Sheet(
-    center=(0.0, 0.0, 1.5e-3),
-    size=(30e-3, 40e-3, 0.0),   # zero size along z -> z-normal PEC sheet
-)
+# 30 mm x 40 mm patch, 1.5 mm above the ground (a z-node plane: dz = 0.75 mm)
+patch = Sheet(center=(0.0, 0.0, 1.5e-3), size=(30e-3, 40e-3, 0.0))  # zero extent = normal
 
 grid = GridFIT3D(
     xmin=-30e-3, xmax=30e-3,
     ymin=-35e-3, ymax=35e-3,
-    zmin=0.0,    ymax_dummy=None, zmax=15e-3,
+    zmin=0.0, zmax=15e-3,
     Nx=40, Ny=46, Nz=20,
-    sheets=[patch],
-    sheet_edge_correction=True,  # scales mu_r on faces grazing the sharp PEC edge
+    sheets={"patch": patch.to_pyvista()},  # {name: PolyData or STL path}
+    sheet_edge_correction=True,           # knife-edge correction of the material matrices
     verbose=0,
 )
+print("A ok")
 ```
 
 When `sheet_edge_correction=True` (default), Wakis also applies the quasi-static Meixner $r^{-1/2}$ field-singularity correction on primary faces immediately outside the sharp edge of the sheet, reducing patch antenna resonant-frequency grid sensitivity without refining the mesh.
@@ -1241,10 +1248,12 @@ solver = SolverFIT3D(grid, use_stl=True, bc_low=["cpml"]*3, bc_high=["cpml"]*3, 
 
 When both the **geometry** and the **excitation** are symmetric (or antisymmetric) across the $x=0$, $y=0$, or $z=0$ plane, you can simulate **only half, a quarter, or an eighth of the domain** by placing the low domain boundary at $0$ (`xmin=0` and/or `ymin=0`) and selecting either a **PEC (`'pec'`)** or **PMC (`'pmc'`)** boundary on that face:
 
-| Symmetry of Desired Field | Tangential $\mathbf{E}$ on Plane | Tangential $\mathbf{H}$ on Plane | Boundary Condition to Set on `bc_low` | Example Excitation at $x=0, y=0$ |
-| :--- | :--- | :--- | :--- | :--- |
-| **Even electric / Odd magnetic (PEC mirror)** | $\hat{\mathbf{n}}\times\mathbf{E} = \mathbf{0}$ | $\hat{\mathbf{n}}\cdot\mathbf{B} = 0$ | `'pec'` | On-axis relativistic beam ($J_z$ at $x=0, y=0$) across a plane perpendicular to $\mathbf{E}_t$ |
-| **Odd electric / Even magnetic (PMC mirror)** | $\hat{\mathbf{n}}\cdot\mathbf{D} = 0$ | $\hat{\mathbf{n}}\times\mathbf{H} = \mathbf{0}$ | `'pmc'` | On-axis beam $J_z(0,0,z)$ has azimuthal $B_\phi$ tangential to $x=0$ and $y=0$ $\rightarrow$ use `bc_low=['pmc', 'pmc', ...]`! |
+| Boundary on the symmetry plane | Conditions | Use when | Example |
+| :--- | :--- | :--- | :--- |
+| **PEC (`'pec'`)** | $\hat{\mathbf{n}}\times\mathbf{E} = \mathbf{0}$, $\hat{\mathbf{n}}\cdot\mathbf{B} = 0$ | the tangential $\mathbf{E}$ is odd under the mirror (currents *normal* to the plane, or tangential currents that are antisymmetric) | a $z$-directed dipole cut by the plane $z = 0$ |
+| **PMC (`'pmc'`)** | $\hat{\mathbf{n}}\times\mathbf{H} = \mathbf{0}$, $\hat{\mathbf{n}}\cdot\mathbf{D} = 0$ | the tangential $\mathbf{E}$ is even (currents *tangential* to the plane and symmetric) | an on-axis beam $J_z(0,0,z)$ cut by the planes $x = 0$ and $y = 0$ |
+
+Wakis has no dedicated symmetry API: you place the domain edge on the plane (`boundary_at_domain_edge=True`, the default) and choose `'pec'` or `'pmc'` in `bc_low`. The excitation must have the same symmetry, otherwise the reduced run computes a different problem.
 
 #### Quarter-Domain Example: On-Axis Beam Wakefield with PMC Symmetry
 
@@ -1264,8 +1273,9 @@ grid_quarter = GridFIT3D(
     boundary_at_domain_edge=True,
     verbose=0,
 )
-# Note: in a quarter domain with the beam on the two PMC planes (x=0, y=0),
-# only 1/4 of the beam current threads the first quadrant (q_quarter = q / 4).
+# The beam now runs along the domain corner. Check how much of its current the
+# quarter domain carries (the physical problem has 1/4 of the charge per quadrant)
+# by comparing a short run against the full domain before trusting absolute values.
 ```
 
 Similarly, for a $z$-polarized plane wave ($\mathbf{E} = E_z\hat{\mathbf{z}}, \mathbf{H} = -H_y\hat{\mathbf{y}}$) propagating along $+x$ incident on a $y$-symmetric cylinder, the plane $y=0$ has $E_z \ne 0$ (tangential) and $H_x = H_z = 0$ (zero tangential $\mathbf{H}$), so $y=0$ is a **PMC symmetry plane** (`ymin=0, bc_low=['cpml', 'pmc', 'periodic']`), halving the grid.
@@ -1425,7 +1435,7 @@ plasma_mat = cold_plasma(omega_p, collision_rate=0.0)
 solver.add_dispersive_material(plasma_mat, center=(0, 0, 0), size=(0.04, 0.04, 0.20))
 ```
 
-See [Section 14.3](#143-linear-cold-plasma-wakefield-wakisplasma) for a complete comparison between 3D FIT plasma wakefield time-stepping and `wakis.plasma.linear_wake`.
+See [Section 14.3](#143-linear-cold-plasma-wakefield-simulation-wakisplasma--new-in-this-fork) for a complete comparison between 3D FIT plasma wakefield time-stepping and `wakis.plasma.linear_wake`.
 
 ---
 
@@ -1475,44 +1485,38 @@ For general antenna, photonic, scattering, and resonator simulations, combine a 
 
 ```python
 import numpy as np
-from wakis.sources import (
-    GaussianSource,
-    ContinuousSource,
-    CustomSource,
-    CurrentSource,
-    MagneticCurrentSource,
-)
+from wakis.sources import ContinuousSource, CurrentSource, GaussianSource
 
-# 1. Broadband phase-coherent Gaussian-modulated carrier pulse
+# 1. Gaussian-modulated carrier pulse
 pulse = GaussianSource(
     frequency=5e9,      # carrier frequency f0 [Hz]
-    fwidth=2e9,         # spectral width df [Hz] (sigma_t = 1 / (2 * pi * fwidth))
-    cutoff=5.0,         # peak at t0 = cutoff * sigma_t; zero for t > 2 * t0
-    amplitude=1.0,
-    phase=0.0,
+    fwidth=2e9,         # spectral width [Hz] (sigma_t = 1 / (2 pi fwidth))
+    cutoff=5.0,         # peak at t0 = start_time + cutoff * sigma_t
 )
 print(f"Pulse ends at t = {pulse.end_time*1e9:.2f} ns")
 
 # 2. Smoothly ramped continuous-wave (CW) source
-cw = ContinuousSource(frequency=5e9, fwidth=0.5e9, amplitude=1.0)
+cw = ContinuousSource(frequency=5e9, ramp_time=2e-9)
 
-# 3. Point dipole (size=(0,0,0)), line current, or 2D current sheet
+# 3. Point dipole: with all extents zero the amplitude is a current moment I*l [A m]
 dipole = CurrentSource(
-    component="Ez",
     src_time=pulse,
+    component="z",
     center=(0.0, 0.0, 0.0),
-    size=(0.0, 0.0, 0.0),      # point dipole at nearest Ez edge
-    is_integrated=True,        # amplitude is integrated current I*dl [A*m]
+    size=(0.0, 0.0, 0.0),
+    amplitude=1e-3,
 )
 
-# 4. Oblique sheet source with spatial phase profile amp_func(x, y, z)
+# 4. Sheet source (amplitude in A/m) with a spatial phase profile amp_func(x, y, z)
+kx = 2 * np.pi * 5e9 / 3e8 * np.sin(np.deg2rad(20))
 sheet_src = CurrentSource(
-    component="Ex",
     src_time=pulse,
-    center=(0.0, 0.0, -1e-6),
+    component="x",
+    center=(0.0, 0.0, -1e-2),
     size=(np.inf, np.inf, 0.0),
     amp_func=lambda x, y, z: np.exp(-1j * kx * x),
 )
+print("B ok")
 ```
 
 - **Why normalize by `pulse.fourier_transform(freqs)`?**  
@@ -1522,7 +1526,7 @@ sheet_src = CurrentSource(
 
 ### 8.3 Total-Field / Scattered-Field (TF/SF) Plane-Wave Box (`TFSFSource`) 🆕 **New in this fork**
 
-To illuminate an isolated scatterer in free space (or in a dielectric background `background_eps_r`) with a clean plane wave and measure only the scattered field outside a Huygens box, use `wakis.tfsf.TFSFSource`:
+To illuminate an isolated scatterer in free space (or in a dielectric background `background_eps_r`) with a clean plane wave and measure only the scattered field outside a Huygens box, use `wakis.tfsf.TFSFSource` (for the equivalence-principle background of TF/SF and current-sheet sources, see [Oskooi & Johnson 2013](#19-references-and-credits)):
 
 ```python
 from wakis.sources import GaussianSource
@@ -1591,19 +1595,20 @@ Because `solve_modes` uses the solver's own staggered grid lengths (`L_b, L_c, t
 For RF/microwave antennas, filters, and PCB traces driven across a small feed gap or loaded with passive $R, L, C$ components, `wakis.lumped` provides `LumpedElement` and `LumpedPort`:
 
 ```python
+import numpy as np
 from wakis.lumped import LumpedElement, LumpedPort
 from wakis.sources import GaussianSource
 
 pulse = GaussianSource(frequency=2.4e9, fwidth=1.0e9)
 
-# 50-Ohm driven Norton port across a z-directed antenna feed gap
+# 50-Ohm driven port across a z-directed 2 mm antenna feed gap
 port1 = LumpedPort(
+    src_time=pulse,          # None for a passive matched termination
     component="z",
     center=(0.0, 0.0, 0.0),
-    size=(0.0, 0.0, 2e-3),   # spans the 2 mm gap along z
-    Z0=50.0,                 # reference impedance [Ohm]
-    src_time=pulse,          # None for a passive matched termination port
-    amplitude=1.0,           # open-circuit incident wave scale [V]
+    size=(0.0, 0.0, 2e-3),   # spans the gap along z
+    impedance=50.0,          # reference impedance [Ohm]
+    amplitude=1.0,
 )
 
 # Passive parallel RLC load across another gap
@@ -1611,17 +1616,19 @@ load = LumpedElement(
     component="z",
     center=(0.02, 0.0, 0.0),
     size=(0.0, 0.0, 2e-3),
-    R=100.0,                 # [Ohm] (semi-implicit update, unconditionally stable)
-    C=1.5e-12,               # [F]   (added to local edge permittivity)
-    L=2.0e-9,                # [H]   (auxiliary inductive current J_L)
+    R=100.0,                 # [Ohm]
+    C=1.5e-12,               # [F]
+    L=2.0e-9,                # [H]
 )
 
-solver.emsolve(Nt=2000, source=[port1, load])
+# solver = SolverFIT3D(grid, ...)  # grid with the antenna and the two gaps
+# solver.emsolve(2000, source=[port1, load])
 
-# Extract port voltage V(f), current I(f), input impedance Z_in(f), and S11(f)
+# Input impedance and reflection coefficient of the driven port
 freqs = np.linspace(1.5e9, 3.5e9, 201)
-Z_in = port1.impedance(freqs)
-S11 = port1.s11(freqs)
+# Z_in = port1.impedance_in(freqs)
+# S11 = port1.s11(freqs)
+print("C ok")
 ```
 
 ---
@@ -1784,31 +1791,26 @@ For antennas and isolated scatterers, `wakis.near2far.Near2FarMonitor` records t
 
 ```python
 import numpy as np
-from wakis.near2far import (
-    Near2FarMonitor,
-    ludwig3,
-    axial_ratio,
-    half_power_beamwidth,
-)
+from wakis.near2far import Near2FarMonitor, ludwig3
 
 n2f = Near2FarMonitor(
     frequencies=[2.4e9, 5.0e9],
     center=(0.0, 0.0, 5e-3),
     size=(50e-3, 50e-3, 10e-3),
-    ground_plane="-z",  # optional: mirror currents in PEC ground plane at z_min of box
+    ground_plane="-z",  # lower box face on a PEC ground plane: image currents
 )
 
-solver.emsolve(Nt=3000, source=port1, monitors=[n2f])
+solver.emsolve(3000, source=[port1], monitors=[n2f])
 
-# Evaluate far-field pattern on a (theta, phi) spherical grid
+# Far-field pattern on a (theta, phi) grid (upper half-space only, because of the ground plane)
 theta = np.linspace(0, np.pi / 2, 91)
-phi   = np.linspace(0, 2 * np.pi, 181)
+phi = np.linspace(0, 2 * np.pi, 181)
 TH, PH = np.meshgrid(theta, phi, indexing="ij")
 
-ff = n2f.far_field(TH, PH)            # dict with E_theta, E_phi, U (radiation intensity)
-D_max = n2f.directivity(TH, PH)       # peak directivity (linear) at each frequency
-P_rad = n2f.radiated_power()          # total radiated power spectrum [W s^2]
-co, xp_pol = ludwig3(ff["E_theta"], ff["E_phi"], TH, PH, pol="x")
+ff = n2f.get_farfield(TH, PH)          # dict: 'Etheta', 'Ephi', 'Htheta', 'Hphi', shape (n_freq, 91, 181)
+D = n2f.directivity(TH, PH)            # linear directivity, shape (n_freq, 91, 181)
+P_rad = n2f.radiated_power()           # radiated power spectrum
+co, cross = ludwig3(ff["Etheta"], ff["Ephi"], PH, reference="x")
 ```
 
 ---
@@ -1849,18 +1851,20 @@ For waveguide and circuit S-parameter extraction, Wakis provides two complementa
    For structures with $N$ `LumpedPort` feeds, `s_matrix` runs $N$ simulations (exciting one port per run while terminating the other $N-1$ ports in their matched resistors $Z_0$), computes Kurokawa power waves $a_j = (V_j + Z_0 I_j)/(2\sqrt{Z_0}), b_i = (V_i - Z_0 I_i)/(2\sqrt{Z_0})$, and exports standard Touchstone `.sNp` files:
 
 ```python
-from wakis.sparameters import s_matrix, write_touchstone, read_touchstone, passivity_margin
+import numpy as np
+from wakis.sparameters import s_matrix, write_touchstone
 
 S = s_matrix(
-    solver_factory=lambda: SolverFIT3D(grid, bc_low=["cpml"]*3, bc_high=["cpml"]*3, verbose=0),
+    solver_factory=lambda: SolverFIT3D(grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, verbose=0),
     ports=[port1, port2],
     src_time=pulse,
     Nt=3000,
     freqs=freqs,
-    stop_when_energy_decayed=1e-4,  # auto-terminate once cavity energy rings down
+    stop_when_energy_decayed=1e-4,  # passed on to emsolve
 )
 write_touchstone("filter.s2p", freqs, S, z0=50.0, comment="2-port microstrip filter")
-print("Max singular value <= 1 (passive):", 1.0 - passivity_margin(S).min())
+# Passivity check: the largest singular value of S(f) must not exceed 1
+print("max singular value:", np.linalg.svd(S, compute_uv=False).max())  # S: (n_freq, N, N)
 ```
 
 ---
@@ -1873,7 +1877,7 @@ Standard FFT spectra have frequency resolution $\Delta f_{\text{FFT}} = 1 / T_{\
 
 $$x(t) = \sum_{k=1}^K a_k \exp\!\left(2\pi i (f_k + i g_k) t\right), \qquad Q_k = \frac{f_k}{2 g_k}$$
 
-using the **Filter Diagonalization Method (FDM)** of [Wall & Neuhauser (1995)](#19-references-and-credits) and [Mandelshtam & Taylor (1997)](#19-references-and-credits) (`method='fdm'`, default) or the **Matrix Pencil Method** of Hua & Sarkar (`method='pencil'`). As demonstrated in Quick Start 3.1 ([Section 3.1](#31-a-3d-pec-rectangular-cavity-resonance-with-harminv)), `harminv` extracts cavity resonant frequencies to $4\text{–}6$ significant digits and quality factors $Q > 10^6$ from just $500\text{–}1500$ time steps!
+using the **Filter Diagonalization Method (FDM)** of [Wall & Neuhauser (1995)](#19-references-and-credits) and [Mandelshtam & Taylor (1997)](#19-references-and-credits) (`method='fdm'`, default) or the **Matrix Pencil Method** of Hua & Sarkar (`method='pencil'`). As demonstrated in Quick Start 3.1 ([Section 3.1](#31-a-3d-pec-rectangular-cavity-resonance--new-in-this-fork)), `harminv` extracts cavity resonant frequencies to $4\text{–}6$ significant digits and quality factors $Q > 10^6$ from just $500\text{–}1500$ time steps!
 
 ---
 
@@ -1891,14 +1895,14 @@ See [Section 14](#14-wakefield-and-accelerator-physics-specifics) for the full t
 
 ## 11. Unstructured, Hybrid, Curvilinear, and High-Order Solvers 🆕 **New in this fork**
 
-While `SolverFIT3D` on a Cartesian grid (`GridFIT3D`) has the lowest per-cell memory and highest GPU throughput, curved interfaces and multi-scale geometries (such as $2\text{ nm}$ plasmonic dimer gaps inside a $1\,\mu\text{m}$ scattering box) motivate body-fitted unstructured, hybrid, locally refined, curvilinear, and high-order discretizations. Every solver in this section has been benchmarked head-to-head against a **named baseline** on the shared benchmark suite `B1`–`B5` ([Section 15](#15-validation-analytical-references-and-benchmark-suite-b1b5)), measuring **cost-to-target** (`unknowns`, `work = unknowns × steps`, and wall time required to reach a fixed physical accuracy target such as $1\%$, $2\%$, or $0.1\%$ RMS error).
+While `SolverFIT3D` on a Cartesian grid (`GridFIT3D`) has the lowest per-cell memory and highest GPU throughput, curved interfaces and multi-scale geometries (such as $2\text{ nm}$ plasmonic dimer gaps inside a $1\,\mu\text{m}$ scattering box) motivate body-fitted unstructured, hybrid, locally refined, curvilinear, and high-order discretizations. Every solver in this section has been benchmarked head-to-head against a **named baseline** on the shared benchmark suite `B1`–`B5` ([Section 15](#15-validation-analytical-references-and-benchmark-suite-b1b5--new-in-this-fork)), measuring **cost-to-target** (`unknowns`, `work = unknowns × steps`, and wall time required to reach a fixed physical accuracy target such as $1\%$, $2\%$, or $0.1\%$ RMS error).
 
 ---
 
 ### 11.1 2D Triangle FIT (`UnstructuredFIT2D`, Voronoi / Barycentric Dual) 🆕 **New in this fork**
 
 - **When to use:** 2D cylindrical waveguides, eigenmode cavities, dielectric/plasmonic scatterers (`B1`, `B2`), and multi-scale plasmonic dimers (`B3`) where curved boundaries and smooth spatial grading ($h_{\text{gap}} \ll h_{\text{outer}}$) are needed, especially when the electric field crosses a curved metal/dielectric interface (TE polarization).
-- **Formulation:** Primary Delaunay triangulation `SimplexMesh` (`graded_disk_mesh`, `cluster_mesh`, `disk_mesh`, `gmsh_mesh`) paired with either its orthogonal circumcentric (Voronoi) dual (`hodge='voronoi'`, diagonal node mass and cotangent edge stiffness, keeping $\text{div}\,\text{curl} = 0$ to round-off) or positive barycentric dual areas (`hodge='barycentric'`, unconditionally positive on obtuse triangles). Supports TM ($E_z$ on nodes) and TE ($H_z$ on nodes), Drude/Lorentz/Debye ADE dispersive media (`wakis.dispersive`), a tabulated separable-delay scattered-field plane-wave excitation (`add_plane_wave`, costing one sparse mat-vec per step), Silver–Müller ABC (`bc='abc'`), and an annular radial CFS-PML (`pml=dict(r0=..., r1=...)`, reflecting $2\text{–}8\times 10^{-4}$ over $x=2\text{–}10$ vs. $6\text{–}17\%$ for the first-order ABC).
+- **Formulation:** Primary Delaunay triangulation `SimplexMesh` (`graded_disk_mesh`, `disk_mesh`, `gmsh_mesh`, and `wakis.benchmarks.meshing.cluster_mesh`) paired with either its orthogonal circumcentric (Voronoi) dual (`hodge='voronoi'`, diagonal node mass and cotangent edge stiffness, keeping $\text{div}\,\text{curl} = 0$ to round-off) or positive barycentric dual areas (`hodge='barycentric'`, unconditionally positive on obtuse triangles). Supports TM ($E_z$ on nodes) and TE ($H_z$ on nodes), Drude/Lorentz/Debye ADE dispersive media (`wakis.dispersive`), a tabulated separable-delay scattered-field plane-wave excitation (`add_plane_wave`, costing one sparse mat-vec per step), Silver–Müller ABC (`bc='abc'`), and an annular radial CFS-PML (`pml=dict(r0=..., r1=...)`, reflecting $2\text{–}8\times 10^{-4}$ over $x=2\text{–}10$ vs. $6\text{–}17\%$ for the first-order ABC).
 - **Minimal snippet:**
 
 ```python
@@ -1906,29 +1910,22 @@ import numpy as np
 from wakis.unstructured import UnstructuredFIT2D, graded_disk_mesh
 from wakis.sources import GaussianSource
 
-# 2D graded Delaunay triangulation of a dielectric cylinder (r = 1 um, eps_r = 4)
-# surrounded by vacuum out to r = 2.0 um + 4 polar-aligned radial PML rings
-mesh = graded_disk_mesh(
-    radii=[1.0e-6, 2.0e-6],
-    tags=[1, 0],
-    h_inner=0.06e-6,
-    h_outer=0.12e-6,
-    pml_layers=4,
-    pml_thickness=0.5e-6,
-)
+# Graded Delaunay triangulation: cylinder r < 1 um (tag 0), vacuum to
+# r0 = 2 um (tag 1), then 6 polar-aligned PML rings of 0.1 um.
+h = 0.06e-6
+size = lambda r: h if r < 1.2e-6 else min(2 * h, h * 1.2 ** ((r - 1.2e-6) / h))
+mesh = graded_disk_mesh([1.0e-6, 2.0e-6], size, pml_layers=6, pml_dr=0.1e-6)
 
 solver = UnstructuredFIT2D(
     mesh,
-    materials={0: [1.0, 1.0], 1: [4.0, 1.0]},
+    materials={0: [4.0, 1.0]},          # unlisted tags are vacuum
     polarization="TE",
-    bc="pec",
     hodge="voronoi",
-    pml=dict(r0=2.0e-6, r1=2.5e-6, order=3, R=1e-8),
+    pml=dict(r0=2.0e-6, r1=2.6e-6),     # radial CFS-PML on the polar rings
 )
-
 pulse = GaussianSource(frequency=150e12, fwidth=100e12)
-solver.add_plane_wave(pulse, direction=(1.0, 0.0), tag_bg=0)
-solver.step(n_steps=600)
+solver.add_plane_wave(pulse, direction=(1.0, 0.0))
+solver.run(200)
 ```
 
 - **Accuracy & Cost vs. Named Baselines ([`studies/benchmarks`](studies/benchmarks), [`studies/mie-cylinder-graded`](studies/mie-cylinder-graded), [`studies/unstructured-pml`](studies/unstructured-pml), [`studies/mesh-comparison`](studies/mesh-comparison)):**
@@ -1952,26 +1949,22 @@ solver.step(n_steps=600)
 from wakis.unstructured import PolygonFIT2D, hybrid_circles_mesh
 from wakis.sources import GaussianSource
 
-# Cartesian background squares + body-fitted triangle transition ring around r = 1 um cylinder
-pmesh = hybrid_circles_mesh(
-    box=(-2.5e-6, 2.5e-6, -2.5e-6, 2.5e-6),
-    h=0.08e-6,
-    circles=[(0.0, 0.0, 1.0e-6, 1)],
-    tag_bg=0,
+# Squares outside, body-fitted triangles around the r = 1 um cylinder, 8 PML cells
+h = 0.08e-6
+pmesh, info = hybrid_circles_mesh(
+    [(0.0, 0.0, 1.0e-6)], h_in=h, h_out=2 * h, half_width=1.9e-6, pml_cells=8
 )
-
+L = info["half_width"]                  # PML starts here
 solver = PolygonFIT2D(
     pmesh,
-    materials={0: [1.0, 1.0], 1: [4.0, 1.0]},
+    materials={0: [4.0, 1.0]},          # tag i: inside circle i
     polarization="TE",
-    bc="pec",
-    hodge="auto",  # 'orthogonal' where orthogonal, 'mfd' on transition cells
-    pml=dict(x=(-1.9e-6, 1.9e-6), y=(-1.9e-6, 1.9e-6), thickness=0.6e-6),
+    hodge="auto",                       # diagonal where orthogonal, MFD on transition cells
+    pml=dict(x=(-L, L), y=(-L, L), thickness=info["half_width_pml"] - L),
 )
-
 pulse = GaussianSource(frequency=150e12, fwidth=100e12)
-solver.add_plane_wave(pulse, direction=(1.0, 0.0), tag_bg=0)
-solver.step(n_steps=500)
+solver.add_plane_wave(pulse, direction=(1.0, 0.0))
+solver.run(100)
 ```
 
 - **Accuracy & Cost vs. Named Baselines ([`studies/mie-cylinder-polyfit`](studies/mie-cylinder-polyfit), [`studies/benchmark-polygon`](studies/benchmark-polygon)):**
@@ -1992,21 +1985,22 @@ solver.step(n_steps=500)
 - **Minimal snippet:**
 
 ```python
+import numpy as np
 from wakis.subgrid import Circle, Geometry, QuadMesh, SubgridFIT2D, refine_near
-from wakis.sources import GaussianSource
 
-geo = Geometry([Circle(center=(0.0, 0.0), radius=1.0e-6, eps=4.0)], background_eps=1.0)
+geo = Geometry([Circle((0.0, 0.0), 1.0e-6, 4.0)])   # (center, radius, eps_r)
 
-# Coarse Cartesian grid refined by 2 nested 2:1 levels near the cylinder rim
-mesh = QuadMesh.from_box((-2.5e-6, 2.5e-6, -2.5e-6, 2.5e-6), nx=50, ny=50)
-mesh = refine_near(mesh, geo, levels=2, margin=0.15e-6)
+# 60 nm coarse grid, two nested 2:1 levels near the rim (|r - a| < 0.25 / 0.12 um)
+x = y = np.linspace(-2.5e-6, 2.5e-6, 84)
+rim = lambda d: (lambda xm, ym, hd: np.abs(np.hypot(xm, ym) - 1.0e-6) < d)
+mesh = QuadMesh(x, y, ratio=2, max_level=2, refine=refine_near([rim(0.25e-6), rim(0.12e-6)]))
 
 solver = SubgridFIT2D(
     mesh,
-    geometry=geo,
+    geo,
     polarization="TE",
     pml=dict(box=(-1.9e-6, 1.9e-6, -1.9e-6, 1.9e-6), R0=1e-8),
-    lts=2,  # optional 2-level Chebyshev local time stepping
+    lts=2,  # optional 2-level local time stepping
 )
 ```
 
@@ -2020,28 +2014,40 @@ solver = SubgridFIT2D(
 
 ---
 
-### 11.4 Hybrid Quadtree Subgrid + Body-Fitted Triangles (`subtri`) 🧪 **In progress**
+### 11.4 Hybrid Quadtree Subgrid + Body-Fitted Triangles (`subtri`) 🆕 **New in this fork**
 
-- **Status:** Implemented and under evaluation on branch `merge/subtri` (`fe0346b`, `wakis/unstructured/subtri.py`).
+- **Status:** Merged on `develop` (`wakis/unstructured/subtri.py`, tests `tests/test_subtri.py`, `tests/test_subtri_arm.py`, study `studies/subtri-hybrid/`).
 - **When to use:** Combines nested Cartesian quadtree subgridding in the bulk domain (`SubgridFIT2D`) with a narrow collar of body-fitted Delaunay triangles around curved metallic/dielectric interfaces and across narrow dimer gaps (`UnstructuredFIT2D` / `PolygonFIT2D`), eliminating the first-order mixed-cell limitation of pure Cartesian subgridding on curved metals (`B2`/`B3`).
-- **Formulation:** `subtri_circles_mesh` refines a background Cartesian grid via balanced quadtree levels and replaces leaf squares intersecting the curved interface collar with a conforming triangulation whose outer nodes match the quadtree hanging and corner nodes, stepped with `PolygonFIT2D` and optional Chebyshev LTS.
-- **Minimal snippet (on branch `merge/subtri`):**
+- **Formulation:** `subtri_circles_mesh` builds 2:1 quadtree squares (finest size $h$, coarse size $2^L h$) and removes a band of about $\pm 2h$ around each curved interface (and in narrow gaps), which is filled with a conforming Delaunay triangulation; the finest squares fill the inclusions. Hanging nodes are tied in by a linear prolongation $\mathbf{P}$, with stiffness $\mathbf{K} = \mathbf{G}\mathbf{P}$ and lumped mass $\mathbf{D} = \mathbf{P}^T\mathbf{m}$, so the operator stays symmetric: energy is conserved exactly (drift $\le 2\times 10^{-15}$ over $2\times 10^4$ steps), the scheme is stable iff $\Delta t^2\lambda_{\max} < 4$, and the adjoint dot-product test holds to $10^{-17}$. `SubTriFIT2D` is a thin `PolygonFIT2D` wrapper (`prolongation=P`, `hodge='orthogonal'`); two-level local time stepping plugs in unchanged.
+- **Benchmarks (from `README.md` and `studies/subtri-hybrid/`):**
+  - **`B1` Mie cylinder (3000 fs window) at 1 % RMS:** 0.20× (TE) / 0.15× (TM) the work and 0.15× / 0.11× the wall time of the best existing arm (graded conformal Cartesian in TE, graded triangles in TM), i.e. 5–7× less work.
+  - **`B3` Au dimer gaps:** 0.39–0.74× the work of the best FIT/FDTD arm (hybrid quad-tri or graded triangles + PML) at the 5 % and 2 % gap-field targets for g = 10 / 5 nm and at 5 % for g = 2 nm; at 1 % in the 2 nm gap, high-order DGTD p = 3 still needs less work.
+  - **`B2` single Au/Ag cylinder (negative result):** subtri loses (1.3–2.5× the work; TE plateaus near 0.12 %; DGTD wins).
+  - Local time stepping also halves the error at equal $h$ on B1. That looks too good and is not yet explained; treat it as unconfirmed until a dispersion study checks it.
+- **Minimal snippet:**
 
 ```python
-# Available on branch merge/subtri:
-from wakis.unstructured.subtri import subtri_circles_mesh
-from wakis.unstructured import PolygonFIT2D
+from wakis.unstructured.subtri import SubTriFIT2D, subtri_circles_mesh
+from wakis.sources import GaussianSource
 
-pmesh = subtri_circles_mesh(
-    box=(-160e-9, 160e-9, -160e-9, 160e-9),
-    h_coarse=10e-9,
-    levels=2,
-    circles=[(-21e-9, 0.0, 20e-9, 1), (21e-9, 0.0, 20e-9, 1)],
+# Quadtree squares (h = 10 nm finest, 2 levels -> 40 nm coarse) plus a conforming
+# triangle band around two n = 2 cylinders; 6 coarse PML layers outside.
+mesh, P, info = subtri_circles_mesh(
+    [(-0.25e-6, 0.0, 0.2e-6), (0.25e-6, 0.0, 0.2e-6)],
+    h=10e-9, levels=2, half_width=0.6e-6, pml_cells=6,
 )
-solver = PolygonFIT2D(pmesh, materials={0: [4.0, 1.0], 1: au}, polarization="TE")
+L = info["half_width"]
+solver = SubTriFIT2D(
+    mesh, P,
+    materials={0: [4.0, 1.0], 1: [4.0, 1.0]},   # tag i: inside circle i; background vacuum
+    polarization="TE",
+    pml=dict(x=(-L, L), y=(-L, L), thickness=info["half_width_pml"] - L),
+)
+solver.add_plane_wave(GaussianSource(frequency=300e12, fwidth=150e12), direction=(1.0, 0.0))
+solver.run(100)
 ```
 
-- **Limits:** Currently on branch `merge/subtri` pending merge into `develop`/`main`; 2D circular/polygonal inclusions only.
+- **Limits:** 2D only; circular inclusions only (`subtri_circles_mesh`); loses to DGTD and to simpler meshes on the single plasmonic cylinder (B2); the mesher warns when the minimum dual edge is below $0.05h$, which lowers the stable time step.
 
 ---
 
@@ -2052,31 +2058,24 @@ solver = PolygonFIT2D(pmesh, materials={0: [4.0, 1.0], 1: au}, polarization="TE"
 - **Minimal snippet:**
 
 ```python
-from wakis.curvilinear import CurvilinearFIT2D, ogrid_mesh
+import numpy as np
+from wakis.curvilinear import CurvilinearFIT2D, ogrid_mesh, radial_nodes
 from wakis.sources import GaussianSource
 
-# Body-fitted polar O-grid around a cylinder (r = 1 um, eps_r = 4) with radial PML
-qmesh = ogrid_mesh(
-    radii=[1.0e-6, 2.0e-6],
-    tags=[1, 0],
-    n_phi=128,
-    dr_inner=0.04e-6,
-    dr_outer=0.08e-6,
-    pml_layers=8,
-    pml_thickness=0.5e-6,
-)
+# Body-fitted O-grid around an r = 1 um cylinder: radial nodes 40 nm inside,
+# 80 nm outside, a radial PML from 2.0 to 2.6 um; 128 azimuthal cells.
+a, r0, r1 = 1.0e-6, 2.0e-6, 2.6e-6
+radii = radial_nodes([0.9 * a, a, r0, r1], lambda r: 0.04e-6 if r <= a else 0.08e-6)
+mesh = ogrid_mesh(radii, 128, interfaces=[a])
 
 solver = CurvilinearFIT2D(
-    qmesh,
-    materials={0: [1.0, 1.0], 1: [4.0, 1.0]},
+    mesh,
+    materials={1: [4.0, 1.0]},           # tag 1 inside the interface, 0 outside
     polarization="TE",
-    bc="pec",
-    pml=dict(r0=2.0e-6, r1=2.5e-6, order=3, R=1e-8),
+    pml=dict(kind="radial", r0=r0, r1=r1),
 )
-
-pulse = GaussianSource(frequency=150e12, fwidth=100e12)
-solver.add_plane_wave(pulse, direction=(1.0, 0.0), tag_bg=0)
-solver.step(n_steps=500)
+solver.add_plane_wave(GaussianSource(frequency=150e12, fwidth=100e12), direction=(1.0, 0.0))
+solver.run(100)
 ```
 
 - **Accuracy & Cost vs. Named Baselines ([`studies/mie-cylinder-nfit`](studies/mie-cylinder-nfit)):**
@@ -2097,22 +2096,16 @@ solver.step(n_steps=500)
 
 ```python
 import numpy as np
+from scipy.constants import c
 from wakis.unstructured import PrismFIT3D, PrismMesh, disk_mesh
 
-# 2D disk triangulation in (x, y) extruded along 20 z-layers
-m2d = disk_mesh(radius=0.10, h=0.015)
-z_levels = np.linspace(-0.05, 0.05, 21)
-pmesh = PrismMesh(m2d, z_levels)
+# Pillbox cavity: a disk triangulation (R = 0.1 m) extruded over 20 z layers
+m2d = disk_mesh([0.10], 0.015)
+pmesh = PrismMesh(m2d, np.linspace(-0.05, 0.05, 21), merge_tol=0.05)  # merges near-cocircular pairs
+solver = PrismFIT3D(pmesh, bc_xy="pec", bc_z="pec")
 
-solver = PrismFIT3D(
-    pmesh,
-    bc="pec",
-    merge_tol=0.15,  # merges short-dual-edge triangle pairs into quads
-)
-
-# Compute lowest 3D cavity eigenmodes directly from the curl-curl matrix:
-freqs_ghz = solver.eigenmodes(n_modes=4, f_target=1.2e9) / 1e9
-print("Lowest pillbox TM010 frequency [GHz]:", freqs_ghz[0])
+f, _ = solver.eigenmodes(n_modes=4, f_target=1.2e9)
+print("Lowest modes [GHz]:", np.sort(f) / 1e9, "TM010 exact:", 2.404826 * c / (2 * np.pi * 0.10) / 1e9)
 ```
 
 - **Accuracy & Cost vs. Named Baselines ([`studies/prism-cavity`](studies/prism-cavity), [`studies/prism-ring`](studies/prism-ring), [`studies/prism-dipole`](studies/prism-dipole)):**
@@ -2134,15 +2127,16 @@ print("Lowest pillbox TM010 frequency [GHz]:", freqs_ghz[0])
 - **Minimal snippet:**
 
 ```python
+import numpy as np
 from wakis.unstructured import UnstructuredFIT3D, ball_mesh
 
-# 3D tetrahedral mesh of a PEC sphere of radius a = 0.10 m
-mesh3d = ball_mesh(radius=0.10, h=0.025)
+# Tetrahedral mesh of a PEC spherical cavity, radius a = 0.10 m
+mesh3d = ball_mesh([0.10], 0.025)
 solver3d = UnstructuredFIT3D(mesh3d, bc="pec", hodge="voronoi")
 
-# Lowest spherical cavity resonance (analytic TE101 = 2.180 GHz for a = 0.10 m)
-freqs = solver3d.eigenmodes(n_modes=3, f_target=2.1e9)
-print("Spherical cavity modes [GHz]:", freqs / 1e9)
+# Lowest resonance: TM_101 at 2.744 c/(2 pi a) = 1.310 GHz for a = 0.10 m
+f, _ = solver3d.eigenmodes(n_modes=3, f_target=1.3e9)
+print("Spherical cavity modes [GHz]:", np.sort(f) / 1e9)
 ```
 
 - **Accuracy & Cost vs. Named Baselines (`docs/unstructured_validation.md`, [`studies/prism-cavity`](studies/prism-cavity)):**
@@ -2190,35 +2184,23 @@ print(solver.lts_info)
 - **Minimal snippet:**
 
 ```python
+import numpy as np
 from wakis.highorder import DGTD2D, circles_mesh
 from wakis.highorder.fdtd24 import FDTD24
 
-# 1. Curved p=5 nodal DGTD on a coarse triangle mesh (r = 1 um cylinder)
+# 1. Curved p = 5 nodal DGTD on a coarse triangle mesh (r = 1 um cylinder, eps_r = 4)
 tmesh = circles_mesh(
+    [(0.0, 0.0, 1.0e-6)],
+    size=lambda p: np.full(len(np.atleast_2d(p)), 0.4e-6),
     box=(-2.4e-6, 2.4e-6, -2.4e-6, 2.4e-6),
-    h=0.40e-6,
-    circles=[(0.0, 0.0, 1.0e-6, 1)],
-    tag_bg=0,
 )
-dg = DGTD2D(
-    tmesh,
-    p=5,
-    materials={0: 1.0, 1: 4.0},
-    polarization="TM",
-    bc="abc",
-    pml=dict(box=(-1.8e-6, 1.8e-6, -1.8e-6, 1.8e-6), R0=1e-6),
-)
+dg = DGTD2D(tmesh, p=5, materials={1: [4.0, 1.0]}, polarization="TM",
+            bc="abc", pml=dict(thickness=0.6e-6, R0=1e-6))
 
-# 2. Cartesian (2, 4) staggered solver with LSRK4 or leapfrog
-fd24 = FDTD24(
-    h=0.08e-6,
-    half_width=1.8e-6,
-    n_pml=8,
-    cylinders=[(0.0, 0.0, 1.0e-6, 4.0)],
-    polarization="TM",
-    order=4,
-    time_scheme="lsrk4",
-)
+# 2. Cartesian (2, 4) staggered solver, fourth order in space, LSRK4 in time
+fd24 = FDTD24(h=0.08e-6, half_width=1.8e-6, n_pml=8,
+              cylinders=[(0.0, 0.0, 1.0e-6, 4.0)], polarization="TM",
+              order=4, time_scheme="lsrk4")
 ```
 
 - **Accuracy & Cost vs. Named Baselines ([`studies/highorder-mie`](studies/highorder-mie), [`studies/highorder-bench`](studies/highorder-bench)):**
@@ -2354,8 +2336,8 @@ With `wakis.inverse.jax_simulation`, any `AdjointSimulation` becomes a native di
 import jax
 import jax.numpy as jnp
 import numpy as np
+import wakis
 from wakis import GridFIT3D, SolverFIT3D
-from wakis.field_monitors import FluxMonitor
 from wakis.inverse import (
     AdjointSimulation,
     MaterialGrid,
@@ -2368,42 +2350,38 @@ from wakis.sources import CurrentSource, GaussianSource
 
 jax.config.update("jax_enable_x64", True)
 
-grid = GridFIT3D(-1e-6, 1e-6, -1e-6, 1e-6, -0.1e-6, 0.1e-6, 40, 40, 2)
+grid = GridFIT3D(-1e-6, 1e-6, -1e-6, 1e-6, -0.1e-6, 0.1e-6, 40, 40, 2, verbose=0)
 design = MaterialGrid(
-    grid,
-    box=(-0.4e-6, 0.4e-6, -0.4e-6, 0.4e-6, -0.1e-6, 0.1e-6),
-    eps_min=1.0,          # SiO2 / air cladding
-    eps_max=12.0,         # Si core (or pass DispersiveMaterial endpoints!)
+    center=(0.0, 0.0, 0.0),
+    size=(0.8e-6, 0.8e-6, 0.2e-6),
     shape=(20, 20, 1),    # 2D extruded design pixels
-    symmetry=("y",),      # enforce mirror symmetry across y = 0
+    eps_min=1.0,          # air
+    eps_max=12.0,         # Si
 )
 
 pulse = GaussianSource(frequency=200e12, fwidth=60e12)
-src   = CurrentSource(component="Ez", xs=0, ys=0, zs=0,
-                       position=(-0.6e-6, 0.0, 0.0), profile=pulse)
-mon   = FluxMonitor(frequencies=[200e12], center=(0.6e-6, 0.0, 0.0),
-                    size=(0.0, 0.8e-6, 0.2e-6))
+src = CurrentSource(pulse, component="z", center=(-0.6e-6, 0.0, 0.0))
+mon = wakis.FluxMonitor([200e12], center=(0.6e-6, 0.0, 0.0), size=(0.0, 0.8e-6, 0.2e-6))
 
 sim = AdjointSimulation(
-    make_solver=lambda: SolverFIT3D(
+    lambda: SolverFIT3D(
         grid, bc_low=["cpml", "cpml", "periodic"],
-        bc_high=["cpml", "cpml", "periodic"], n_pml=8, verbose=0
+        bc_high=["cpml", "cpml", "periodic"], n_pml=8, verbose=0,
     ),
-    sources=[src],
-    monitors={"out": mon},
-    design=design,
+    [src],
+    {"out": mon},
+    design,
     Nt=400,
     memory="auto",
 )
-
+sim.output_shapes()
 simulate = jax_simulation(sim)
 
 def objective(rho_raw):
-    # Filter -> project -> simulate -> maximize outward x-flux at 200 THz
-    rho_filt = conic_filter(rho_raw, radius=2.0)
-    rho_proj = tanh_projection(rho_filt, beta=8.0, eta=0.5)
-    outputs  = simulate(rho_proj)
-    return -jnp.sum(flux(sim, "out", outputs["out"]))
+    # Filter -> project -> simulate -> outward x-flux through the monitor at 200 THz
+    rho_proj = tanh_projection(conic_filter(rho_raw, radius=2.0), beta=8.0, eta=0.5)
+    out = simulate(rho_proj)
+    return -jnp.sum(flux(out["out"], sim.readouts["out"]))
 
 val, grad_rho = jax.value_and_grad(objective)(jnp.full(design.shape, 0.5))
 print("Objective:", float(val), "Gradient norm:", float(jnp.linalg.norm(grad_rho)))
@@ -2429,9 +2407,9 @@ During the backward sweep, computing $\partial J / \partial (\text{ieps}_e)$ req
 
 ### 13.4 Subpixel-Smoothed Projection (SSP) for High-Beta Topology Optimization 🧪 **In progress**
 
-- **Status:** Implemented and tested on branch `feature/subpixel-projection` (`wakis/inverse/smoothed_projection.py`); not yet merged into `develop`.
+- **Status:** Implemented and tested on branch `feature/subpixel-projection` (`smoothed_projection` in `wakis/inverse/jax_tools.py`, with `wakis/inverse/projection.py`); not yet merged into `develop`.
 - **Physical motivation:** In density-based topology optimization, ramping the Heaviside projection sharpness $\beta \to \infty$ (`tanh_projection(rho_filt, beta, eta)`) to enforce a strictly binary design causes a step projection to have an **exactly zero gradient** everywhere except when a zero-crossing lands directly on a grid point, stalling gradient-based optimization.
-- **Formulation & Results ([Hammond et al., *Opt. Express* **33**, 33620, 2025](#19-references-and-credits)):** `subpixel_smoothed_projection` blends the projected field with the local signed distance $d = (\eta - \tilde{\rho}) / \|\nabla\tilde{\rho}\|$ inside the interface band. At $\beta = \infty$, the objective stays smooth as a level set moves through a cell, and the **adjoint gradient matches finite differences to $2\times 10^{-6}\text{–}10^{-4}$** (whereas a step projection gives an exactly zero gradient). Note that the paper's filter radius $R = 0.55\,\Delta x$ leaves a $17\times$ modulation of the shape derivative with sub-pixel position; increasing to **$R = 0.75\,\Delta x$ reduces the sub-pixel derivative modulation to $1.6\times$**.
+- **Formulation & Results ([Hammond et al., *Opt. Express* **33**, 33620, 2025](#19-references-and-credits)):** `smoothed_projection` blends the projected field with the local signed distance $d = (\eta - \tilde{\rho}) / \|\nabla\tilde{\rho}\|$ inside the interface band. At $\beta = \infty$, the objective stays smooth as a level set moves through a cell, and the **adjoint gradient matches finite differences to $2\times 10^{-6}\text{–}10^{-4}$** (whereas a step projection gives an exactly zero gradient). Note that the paper's filter radius $R = 0.55\,\Delta x$ leaves a $17\times$ modulation of the shape derivative with sub-pixel position; increasing to **$R = 0.75\,\Delta x$ reduces the sub-pixel derivative modulation to $1.6\times$**.
 
 ---
 
@@ -2529,20 +2507,17 @@ where $\xi = z - ct$ is the co-moving coordinate and $g(\mathbf{r}_\perp; \mathb
 
 ```python
 import numpy as np
-from wakis.plasma import cold_plasma, gaussian_bunch_wake, plasma_frequency
+from wakis.plasma import cold_plasma, linear_wake, plasma_frequency
+from scipy.constants import c
 
 n_e = 1.0e20                                # electron density [m^-3]
-wp  = plasma_frequency(n_e)                 # 5.64e11 rad/s (lambda_p = 3.34 mm)
+wp = plasma_frequency(n_e)                  # 5.64e11 rad/s (lambda_p = 3.34 mm)
 plasma_mat = cold_plasma(wp, collision_rate=0.0)
 
-# Analytic linear plasma wake Ez(r, xi) and F_perp(r, xi) of a Gaussian bunch
-xi = np.linspace(-6e-3, 2e-3, 401)          # co-moving coordinate xi = z - c*t [m]
-Ez_ana, Fx_ana, Fy_ana = gaussian_bunch_wake(
-    x=0.2e-3, y=0.0, xi=xi,
-    q=-1.0e-9, sigma_z=0.5e-3, omega_p=wp,
-    radius=2.0e-3, x0=0.0, y0=0.0,
-)
-# Register plasma_mat on a 3D SolverFIT3D via solver.add_dispersive_material(plasma_mat, ...)
+# Linear wake Ez and transverse force of a Gaussian bunch in a plasma-filled PEC pipe
+xi = np.linspace(-6e-3, 2e-3, 401)          # co-moving coordinate xi = z - c t [m]
+Ez, Fx, Fy = linear_wake(0.2e-3, 0.0, xi, k_p=wp / c, sigmaz=0.5e-3, q=-1.0e-9, radius=2.0e-3)
+print("O ok", wp, 2*np.pi*c/wp, np.abs(Ez).max())
 ```
 
 - **Accuracy (`tests/test_plasma.py`):** A relativistic Gaussian bunch in a metal pipe filled with cold plasma ($\omega_p = c k_p$) agrees with closed-form linear theory to **$0.1\text{–}0.7\%$ in amplitude and $2\times 10^{-4}$ in wavelength** at $48$ cells per plasma wavelength. Conformal pipe walls converge at second order (**$0.05\%$ at $64$ cells**), whereas staircased walls stay at $4.5\%$.
@@ -2590,7 +2565,7 @@ Every physics module and benchmark in this fork is validated against closed-form
 | **`B5-TM`**, **`B5-TE`** | 2D PEC circular cylinder ($a=1\,\mu\text{m}$ in vacuum) | $x = ka \in [0.5, 10]$ | RMS $Q_{\text{sca}}$ error $\le 5\%, 2\%, 1\%$ |
 
 #### What is `cost_to_target`?
-Comparing two solvers at an arbitrary grid spacing $h$ is meaningless when one uses triangles, another uses $p=3$ curved DG elements, and a third uses a 4-level quadtree. Instead, every solver arm runs across a **resolution ladder** (from coarse to fine), appends its measurements to the shared JSONL store ([`studies/benchmarks/results.jsonl`](studies/benchmarks/results.jsonl)), and `wakis.benchmarks.cost_to_target(records, metric="q_sca_rms", target=0.02)` interpolates log-linearly along the convergence curve to report the **minimum degrees of freedom (`unknowns`), element-steps (`work = unknowns * steps`), and single-core CPU wall time (`run_s`) required to achieve $\text{error} \le \text{target}$**.
+Comparing two solvers at an arbitrary grid spacing $h$ is meaningless when one uses triangles, another uses $p=3$ curved DG elements, and a third uses a 4-level quadtree. Instead, every solver arm runs across a **resolution ladder** (from coarse to fine), writes one JSON record per run (`wakis.benchmarks.save_record`; e.g. [`studies/benchmarks/data/B2/`](studies/benchmarks/data/B2/)), and `wakis.benchmarks.cost_to_target(records, metric="q_sca_rms_rel", target=0.02)` interpolates log-linearly along the convergence curve to report the **minimum degrees of freedom (`unknowns`), element-steps (`work = unknowns * steps`), and single-core CPU wall time (`run_s`) required to achieve $\text{error} \le \text{target}$**.
 
 ---
 
@@ -2635,21 +2610,21 @@ class MyCustomArm(Arm):
 case = get_case("B1-TE")
 arm = MyCustomArm()
 records = [run(case, arm, h) for h in arm.resolutions(case)]
-for rec in records:
-    save_record(rec, "my_records.jsonl")
+for i, rec in enumerate(records):
+    save_record(rec, f"my_record_{i}.json")
 
-print("Cost to reach <= 2% Q_sca error:", cost_to_target(records, "q_sca_rms", 0.02))
+print("Cost to reach <= 2% Q_sca error:", cost_to_target(records, "q_sca_rms_rel", 0.02))
 ```
 
 ---
 
 ### 15.4 Index of Engineering Studies (`studies/*`) 🆕 **New in this fork**
 
-All experimental sweeps, convergence plots, JSONL logs, and ablation writeups live in `studies/`:
+All experimental sweeps, convergence plots, JSON records, and ablation writeups live in `studies/`:
 
 | Study Directory | Topic & Key Artifacts |
 | :--- | :--- |
-| [`studies/benchmarks/`](studies/benchmarks/) | Master cross-solver comparison tables (`report.md`) and shared `results.jsonl` for `B1`–`B5` |
+| [`studies/benchmarks/`](studies/benchmarks/) | Cross-solver comparison (`README.md`, `data/summary_B*.md`) and per-phase results in `data/` for `B1`–`B4` |
 | [`studies/b3-pml2/`](studies/b3-pml2/) | Second-order radial PML (`pml_order=2`) on plasmonic dimer `B3` (`b3-g2-TE`, `b3-g5-TE`, `b3-g10-TE`) |
 | [`studies/mie-cylinder-mesh/`](studies/mie-cylinder-mesh/) & [`studies/mesh-comparison/`](studies/mesh-comparison/) | 2D/3D Delaunay–Voronoi & barycentric unstructured FIT vs. Cartesian conformal FIT |
 | [`studies/mie-cylinder-polyfit/`](studies/mie-cylinder-polyfit/) & [`studies/benchmark-polygon/`](studies/benchmark-polygon/) | `PolygonFIT2D` with `hybrid_circles_mesh`, `voronoi_disk_mesh`, and MFD Hodge |
@@ -2752,7 +2727,6 @@ Understanding why `SolverFIT3D(use_gpu=True, fused=True)` is so much faster than
 
 | Item | Status | Notes & Target |
 | :--- | :--- | :--- |
-| **Merge `merge/subtri` (`subtri_circles_mesh`) into `main`** | 🧪 **In progress** | Hybrid quadtree subgrid + body-fitted triangle collar (`studies/subtri/`) |
 | **Merge `feature/subpixel-projection` (`wakis.inverse.smoothed_projection`)** | 🧪 **In progress** | Hammond et al. (2025) Kottke-consistent subpixel-smoothed projection for high-$\beta$ topology optimization |
 | **`invrs-wakis` 3D fabrication-constrained challenges** | 🧪 **In progress** | Complete evaluation on 3D `invrs-gym` metagrating & splitter with minimum-feature-size constraints (`studies/invrs-round2/`) |
 | **Axisymmetric / 2.5D cylindrical $(r, z)$ modal solver (`BOR-FIT`)** | 🗺️ **Planned** | Exploit azimuthal $\exp(im\phi)$ decomposition for rotationally symmetric cavities, tapers, and wakefields at 2D cost |
@@ -2766,7 +2740,7 @@ Understanding why `SolverFIT3D(use_gpu=True, fused=True)` is so much faster than
 
 ### 17.2 Sister Libraries in the Computational Electromagnetics Ecosystem (`plan.md`) 🗺️ **Planned**
 
-As outlined in the broader project plan (`~/computational-electromagnetics/plan.md`), no single numerical method dominates all of computational electromagnetics ([Section 4.9](#49-when-to-use-which-method-a-practical-decision-guide)). Wakis serves as the **time-domain FIT / unstructured-FIT / DGTD pillar** alongside specialized sister libraries across the seven core CEM paradigms:
+As outlined in the broader project plan (`~/computational-electromagnetics/plan.md`), no single numerical method dominates all of computational electromagnetics ([Section 4.9](#49-decision-guide-when-to-use-which-method)). Wakis serves as the **time-domain FIT / unstructured-FIT / DGTD pillar** alongside specialized sister libraries across the seven core CEM paradigms:
 
 | CEM Paradigm | Sister Libraries & Upstream Ecosystem | How It Complements Wakis |
 | :--- | :--- | :--- |
@@ -2800,7 +2774,7 @@ Check the following five common causes in order:
 - **Subnormal (denormal) floating-point numbers on x86/ARM CPUs:** Once a Gaussian pulse rings down below $\sim 10^{-308}$ in double precision (or $\sim 10^{-38}$ in `float32`), tiny residuals in lossy or CPML cells can enter the IEEE-754 subnormal range, triggering microcode traps that slow CPU arithmetic by $10\times\text{–}50\times$.
 - **Fixes:**
   1. Use `stop_when_energy_decayed=1e-4` (in `s_matrix`) or choose `Nt` from the physical ring-down time (`wakis.estimate`).
-  2. When running on an NVIDIA GPU, pass **`use_gpu=True, fused=True`** — on grids below $1\text{ Mcell}$ with CPML, `fused=True` eliminates the $7.1\text{ ms/step}$ CuPy kernel-launch floor and speeds up CPML stepping by **$10\times\text{–}57\times$** ([Section 12.1](#121-gpu-acceleration-use_gputrue-and-fused-cuda-kernels-fusedtrue--new-in-this-fork)).
+  2. When running on an NVIDIA GPU, pass **`use_gpu=True, fused=True`** — on grids below $1\text{ Mcell}$ with CPML, `fused=True` removes the CuPy kernel-launch floor (CPML step $7.3 \to 0.68$ ms, about $11\times$ faster than the unfused GPU path and $57\times$ faster than one CPU core) ([Section 12.1](#121-gpu-acceleration-use_gputrue-and-fused-cuda-kernels-fusedtrue--new-in-this-fork)).
   3. On multi-core Intel/AMD CPUs, install `sparse_dot_mkl` (`pip install sparse-dot-mkl`) so `SolverFIT3D` automatically dispatches CSR curl products to multi-threaded Intel MKL.
 
 ---
@@ -2825,7 +2799,7 @@ Check the following five common causes in order:
 ### 18.5 Why do my complex phasors or S-parameters look conjugated compared to `Meep`, `fmmax`, or `ceviche`?
 - Wakis uses the electrical-engineering **$\exp(+i\omega t)$** time-harmonic convention (DFT kernel $\exp(-i\omega t)$), in which a passive lossy permittivity has $\text{Im}\,\varepsilon(\omega) < 0$ (`eps_r - 1j * sigma / (omega * eps_0)`) and forward wave propagation along $+z$ is $\exp(+i(\omega t - kz))$.
 - Physics-convention codes (`Meep`, `fmmax`, `ceviche`) use **$\exp(-i\omega t)$**, where passive loss has $\text{Im}\,\varepsilon(\omega) > 0$ and forward propagation is $\exp(-i\omega t + ikz)$.
-- **Conversion rule:** To compare any complex phasor, S-parameter $S_{ij}(\omega)$, or impedance $Z(\omega)$ between Wakis and an $\exp(-i\omega t)$ code, simply take the **complex conjugate** `np.conj(phasor)` ([Section 5.2](#52-phasor-sign-convention-expiomega-t-vs-exp-iomega-t)).
+- **Conversion rule:** To compare any complex phasor, S-parameter $S_{ij}(\omega)$, or impedance $Z(\omega)$ between Wakis and an $\exp(-i\omega t)$ code, simply take the **complex conjugate** `np.conj(phasor)` ([Section 5.2](#52-phasor-convention-expiomega-t-vs-exp-iomega-t--new-in-this-fork)).
 
 ---
 
@@ -2833,36 +2807,40 @@ Check the following five common causes in order:
 
 ### 19.1 Verified Scientific References
 
-Every citation below has been verified against its journal publication, DOI, ISBN, or arXiv identifier:
+DOIs and arXiv identifiers below were checked against Crossref, doi.org and the arXiv API (October 2026); entries without a DOI (Weiland 1977, the books) were checked against their standard bibliographic data. Weiland 1977 is in AEÜ, which has no DOIs:
 
 1. **Weiland (1977)** — T. Weiland, "A discretization method for the solution of Maxwell's equations for six-component fields," *Archiv für Elektronik und Übertragungstechnik (AEÜ / Electronics and Communications)* **31**(3), 116–120 (1977). [URL (ResearchGate reprint)](https://www.researchgate.net/publication/243769802_A_discretization_method_for_the_solution_of_Maxwell's_equations_for_six-component_fields) *(foundational paper introducing the Finite Integration Technique; pre-DOI journal volume)*.
 2. **Yee (1966)** — K. S. Yee, "Numerical solution of initial boundary value problems involving Maxwell's equations in isotropic media," *IEEE Transactions on Antennas and Propagation* **14**(3), 302–307 (1966). DOI: [`10.1109/TAP.1966.1138693`](https://doi.org/10.1109/TAP.1966.1138693).
 3. **Clemens & Weiland (2001)** — M. Clemens and T. Weiland, "Discrete electromagnetism with the Finite Integration Technique," *Progress In Electromagnetics Research (PIER)* **32**, 65–87 (2001). DOI: [`10.2528/PIER00080103`](https://doi.org/10.2528/PIER00080103).
-4. **Schuhmann & Weiland (2000)** — R. Schuhmann and T. Weiland, "Stability of the FDTD algorithm on nonorthogonal grids related to the spatial interpolation," *IEEE Transactions on Magnetics* **36**(4), 897–901 (2000). DOI: [`10.1109/20.877588`](https://doi.org/10.1109/20.877588).
+4. **Schuhmann & Weiland (2000)** — R. Schuhmann and T. Weiland, "The nonorthogonal finite integration technique applied to 2D- and 3D-eigenvalue problems," *IEEE Transactions on Magnetics* **36**(4), 897–901 (2000). DOI: [`10.1109/20.877588`](https://doi.org/10.1109/20.877588). (The stability of nonorthogonal interpolation is analysed in R. Schuhmann and T. Weiland, "Stability of the FDTD algorithm on nonorthogonal grids related to the spatial interpolation," *IEEE Trans. Magn.* **34**(5), 2751–2754 (1998).)
 5. **Schuhmann & Weiland (2001)** — R. Schuhmann and T. Weiland, "Conservation of discrete energy and related laws in the Finite Integration Technique," *Progress In Electromagnetics Research (PIER)* **32**, 301–316 (2001). DOI: [`10.2528/PIER00080112`](https://doi.org/10.2528/PIER00080112).
 6. **Bossavit & Kettunen (1999)** — A. Bossavit and L. Kettunen, "Yee-like schemes on a tetrahedral mesh, with diagonal lumping," *International Journal of Numerical Modelling: Electronic Networks, Devices and Fields* **12**(1–2), 129–142 (1999). DOI: [`10.1002/(SICI)1099-1204(199901/04)12:1/2<129::AID-JNM327>3.0.CO;2-G`](https://doi.org/10.1002/(SICI)1099-1204(199901/04)12:1/2%3C129::AID-JNM327%3E3.0.CO;2-G).
 7. **Bossavit & Kettunen (2000)** — A. Bossavit and L. Kettunen, "Yee-like schemes on staggered cellular grids: A synthesis between FIT and FEM approaches," *IEEE Transactions on Magnetics* **36**(4), 861–867 (2000). DOI: [`10.1109/20.877580`](https://doi.org/10.1109/20.877580).
-8. **Cohen & Monk (1998)** — G. Cohen and P. Monk, "Gauss point mass lumping schemes for Maxwell's equations," *Numerical Methods for Partial Differential Equations* **14**(1), 63–88 (1998). DOI: [`10.1002/(SICI)1098-2426(199801)14:1<63::AID-NUM4>3.0.CO;2-L`](https://doi.org/10.1002/(SICI)1098-2426(199801)14:1%3C63::AID-NUM4%3E3.0.CO;2-L).
+8. **Cohen & Monk (1998)** — G. Cohen and P. Monk, "Gauss point mass lumping schemes for Maxwell's equations," *Numerical Methods for Partial Differential Equations* **14**(1), 63–88 (1998). DOI: [`10.1002/(SICI)1098-2426(199801)14:1<63::AID-NUM4>3.0.CO;2-J`](https://doi.org/10.1002/(SICI)1098-2426(199801)14:1%3C63::AID-NUM4%3E3.0.CO;2-J).
 9. **Taflove & Hagness (2005)** — A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House, Norwood, MA (2005). ISBN: `978-1-58053-832-9`. [Publisher URL](https://us.artechhouse.com/Computational-Electrodynamics-The-Finite-Difference-Time-Domain-Method-Third-Edition-P1135.aspx).
-10. **Jin (2014)** — J.-M. Jin, *The Finite Element Method in Electromagnetics*, 3rd ed., Wiley-IEEE Press, Hoboken, NJ (2014). DOI: [`10.1002/9781118848999`](https://doi.org/10.1002/9781118848999).
+10. **Jin (2014)** — J.-M. Jin, *The Finite Element Method in Electromagnetics*, 3rd ed., Wiley-IEEE Press, Hoboken, NJ (2014).
 11. **Hesthaven & Warburton (2002)** — J. S. Hesthaven and T. Warburton, "Nodal high-order methods on unstructured grids: I. Time-domain solution of Maxwell's equations," *Journal of Computational Physics* **181**(1), 186–221 (2002). DOI: [`10.1006/jcph.2002.7118`](https://doi.org/10.1006/jcph.2002.7118).
 12. **Hesthaven & Warburton (2008)** — J. S. Hesthaven and T. Warburton, *Nodal Discontinuous Galerkin Methods: Algorithms, Analysis, and Applications*, Springer, New York (2008). DOI: [`10.1007/978-0-387-72067-8`](https://doi.org/10.1007/978-0-387-72067-8).
 13. **Dey & Mittra (1997)** — S. Dey and R. Mittra, "A locally conformal finite-difference time-domain (FDTD) algorithm for modeling three-dimensional perfectly conducting objects," *IEEE Microwave and Guided Wave Letters* **7**(9), 273–275 (1997). DOI: [`10.1109/75.622536`](https://doi.org/10.1109/75.622536).
 14. **Zagorodnov, Schuhmann & Weiland (2003)** — I. A. Zagorodnov, R. Schuhmann, and T. Weiland, "A uniformly stable conformal FDTD-method in Cartesian grids," *International Journal of Numerical Modelling: Electronic Networks, Devices and Fields* **16**(2), 127–141 (2003). DOI: [`10.1002/jnm.488`](https://doi.org/10.1002/jnm.488).
 15. **Zagorodnov & Weiland (2005)** — I. Zagorodnov and T. Weiland, "TE/TM field solver for particle beam simulations without numerical Cherenkov radiation," *Physical Review Special Topics – Accelerators and Beams* **8**, 042001 (2005). DOI: [`10.1103/PhysRevSTAB.8.042001`](https://doi.org/10.1103/PhysRevSTAB.8.042001).
-16. **Dohlus & Zagorodnov (2009)** — M. Dohlus and I. Zagorodnov, "TE/TM scheme for computation of electromagnetic fields in accelerator structures," *Journal of Computational Physics* **228**(8), 2822–2837 (2009). DOI: [`10.1016/j.jcp.2008.12.032`](https://doi.org/10.1016/j.jcp.2008.12.032); arXiv: [`0901.1053`](https://arxiv.org/abs/0901.1053).
-17. **Kottke, Farjadpour & Johnson (2008)** — C. Kottke, A. Farjadpour, and S. G. Johnson, "Perturbation theory for anisotropic dielectric interfaces, and application to subpixel smoothing of discretized numerical methods," *Physical Review E* **77**, 036611 (2008). DOI: [`10.1103/PhysRevE.77.036611`](https://doi.org/10.1103/PhysRevE.77.036611); arXiv: [`0709.4057`](https://arxiv.org/abs/0709.4057).
+16. **Dohlus & Zagorodnov (2009)** — M. Dohlus and I. Zagorodnov, "Explicit TE/TM scheme for particle beam simulations," *Journal of Computational Physics* **228**(8), 2822–2833 (2009). DOI: [`10.1016/j.jcp.2008.12.023`](https://doi.org/10.1016/j.jcp.2008.12.023); arXiv: [`0901.1053`](https://arxiv.org/abs/0901.1053).
+17. **Kottke, Farjadpour & Johnson (2008)** — C. Kottke, A. Farjadpour, and S. G. Johnson, "Perturbation theory for anisotropic dielectric interfaces, and application to subpixel smoothing of discretized numerical methods," *Physical Review E* **77**, 036611 (2008). DOI: [`10.1103/PhysRevE.77.036611`](https://doi.org/10.1103/PhysRevE.77.036611); arXiv: [`0708.1031`](https://arxiv.org/abs/0708.1031).
 18. **Oskooi, Kottke & Johnson (2009)** — A. F. Oskooi, C. Kottke, and S. G. Johnson, "Accurate finite-difference time-domain simulation of anisotropic media by subpixel smoothing," *Optics Letters* **34**(18), 2778–2780 (2009). DOI: [`10.1364/OL.34.002778`](https://doi.org/10.1364/OL.34.002778).
 19. **Rakić, Djurišić, Elazar & Majewski (1998)** — A. D. Rakić, A. B. Djurišić, J. M. Elazar, and M. L. Majewski, "Optical properties of metallic films for vertical-cavity optoelectronic devices," *Applied Optics* **37**(22), 5271–5283 (1998). DOI: [`10.1364/AO.37.005271`](https://doi.org/10.1364/AO.37.005271).
 20. **Roden & Gedney (2000)** — J. A. Roden and S. D. Gedney, "Convolutional PML (CPML): An efficient FDTD implementation of the CFS-PML for arbitrary media," *Microwave and Optical Technology Letters* **27**(5), 334–339 (2000). DOI: [`10.1002/1098-2760(20001205)27:5<334::AID-MOP14>3.0.CO;2-A`](https://doi.org/10.1002/1098-2760(20001205)27:5%3C334::AID-MOP14%3E3.0.CO;2-A).
 21. **Wall & Neuhauser (1995)** — M. R. Wall and D. Neuhauser, "Extraction, through filter-diagonalization, of general quantum eigenvalues or classical normal mode frequencies from a small number of residues or a short-time segment of a signal," *Journal of Chemical Physics* **102**(20), 8011–8022 (1995). DOI: [`10.1063/1.468999`](https://doi.org/10.1063/1.468999).
 22. **Mandelshtam & Taylor (1997)** — V. A. Mandelshtam and H. S. Taylor, "Harmonic inversion of time signals and its applications," *Journal of Chemical Physics* **107**(17), 6756–6769 (1997). DOI: [`10.1063/1.475324`](https://doi.org/10.1063/1.475324).
 23. **Griewank & Walther (2000)** — A. Griewank and A. Walther, "Algorithm 799: Revolve: An implementation of checkpointing for the reverse or adjoint mode of computational differentiation," *ACM Transactions on Mathematical Software* **26**(1), 19–45 (2000). DOI: [`10.1145/347837.347846`](https://doi.org/10.1145/347837.347846).
-24. **Hammond, Oskooi, Hogan,chen, Ralph & Johnson (2025)** — A. M. Hammond, A. F. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph, and S. G. Johnson, "Unifying finite-difference and finite-element topology optimization via subpixel-smoothed projection," *Optics Express* **33**(16), 33620–33642 (2025). DOI: [`10.1364/OE.567367`](https://doi.org/10.1364/OE.567367); arXiv: [`2503.20189`](https://arxiv.org/abs/2503.20189).
+24. **Hammond, Oskooi, Hammond, Chen, Ralph & Johnson (2025)** — A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph, and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection," *Optics Express* **33**, 33620 (2025). DOI: [`10.1364/OE.563512`](https://doi.org/10.1364/OE.563512); arXiv: [`2503.20189`](https://arxiv.org/abs/2503.20189).
 25. **Panofsky & Wenzel (1956)** — W. K. H. Panofsky and W. A. Wenzel, "Some considerations concerning the transverse deflection of charged particles in radio-frequency fields," *Review of Scientific Instruments* **27**(11), 967 (1956). DOI: [`10.1063/1.1715427`](https://doi.org/10.1063/1.1715427).
 26. **Bohren & Huffman (1983)** — C. F. Bohren and D. R. Huffman, *Absorption and Scattering of Light by Small Particles*, Wiley, New York (1983). DOI: [`10.1002/9783527618156`](https://doi.org/10.1002/9783527618156).
 27. **Balanis (2016)** — C. A. Balanis, *Antenna Theory: Analysis and Design*, 4th ed., Wiley, Hoboken, NJ (2016). ISBN: `978-1-118-64206-1`.
-28. **de la Fuente, Giacomel, Iadarola & Zannini (2023/2024)** — E. de la Fuente, L. Giacomel, G. Iadarola, and C. Zannini, "Wakis: Wake and Impedance Solver," CERN / IPAC'23 & ICAP'24 proceedings, Zenodo DOI: [`10.5281/zenodo.10997265`](https://doi.org/10.5281/zenodo.10997265).
+28. **de la Fuente, Giacomel, Iadarola & Zannini (2023/2024)** — E. de la Fuente, L. Giacomel, G. Iadarola, and C. Zannini, "Wakis: Wake and Impedance Solver," CERN / IPAC'23 & ICAP'24 proceedings, Zenodo DOI (from `CITATION.cff`): [`10.5281/zenodo.14988676`](https://doi.org/10.5281/zenodo.14988676).
+
+29. **Oskooi & Johnson (2013)** — A. Oskooi and S. G. Johnson, "Electromagnetic wave source conditions," in A. Taflove, A. Oskooi, and S. G. Johnson (eds.), *Advances in FDTD Computational Electrodynamics: Photonics and Nanotechnology*, Artech House (2013), ch. 4. arXiv: [`1301.5366`](https://arxiv.org/abs/1301.5366). *(Equivalence-principle and TF/SF source conditions; background for Section 8.3.)*
+30. **Bossavit (1998)** — A. Bossavit, *Computational Electromagnetism: Variational Formulations, Complementarity, Edge Elements*, Academic Press, San Diego (1998). DOI (Whitney-elements chapter): [`10.1016/B978-012118710-1/50006-4`](https://doi.org/10.1016/B978-012118710-1/50006-4).
+31. **Diaz & Grote (2009)** — J. Diaz and M. J. Grote, "Energy conserving explicit local time stepping for second-order wave equations," *SIAM Journal on Scientific Computing* **31**(3), 1985–2014 (2009). DOI: [`10.1137/070709414`](https://doi.org/10.1137/070709414).
 
 ---
 

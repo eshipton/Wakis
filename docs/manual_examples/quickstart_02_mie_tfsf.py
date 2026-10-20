@@ -14,7 +14,7 @@ from wakis.sources import GaussianSource
 # 1. Cylinder parameters: radius a = 1 um, refractive index n = 2.0 (eps_r = 4.0)
 a_cyl = 1.0e-6
 n_cyl = 2.0
-res_per_um = 20.0  # 20 cells/um (same as tutorial 01 --quick)
+res_per_um = 34.0  # 34 cells/um: a coarse demo (~18 cells per wavelength inside the n = 2 cylinder at x = 6)
 dx = 1.0e-6 / res_per_um
 nz = 4
 n_pml = 10
