@@ -175,3 +175,26 @@ texinfo_documents = [
 
 
 # -- Extension configuration -------------------------------------------------
+
+
+# -- GitHub-style math in Markdown --------------------------------------------
+# The Markdown docs use GitHub's markdown-safe math syntax, $`...`$ inline and ```math fences for
+# display equations, so that underscores and backslash escapes inside equations are not parsed as
+# Markdown on github.com. MyST's dollarmath expects $...$ and $$...$$; convert before parsing.
+import re as _re
+
+_GH_INLINE = _re.compile(r"\$`(.+?)`\$")
+_GH_DISPLAY = _re.compile(r"^([ \t]*)```math[ \t]*\n(.*?)^\1```[ \t]*$", _re.M | _re.S)
+
+
+def _github_math_to_myst(app, docname, source):
+    text = source[0]
+    if "$`" not in text and "```math" not in text:
+        return
+    text = _GH_DISPLAY.sub(lambda m: f"{m.group(1)}$$\n{m.group(2)}{m.group(1)}$$", text)
+    text = _GH_INLINE.sub(lambda m: f"${m.group(1)}$", text)
+    source[0] = text
+
+
+def setup(app):
+    app.connect("source-read", _github_math_to_myst)
