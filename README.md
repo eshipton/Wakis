@@ -23,9 +23,7 @@
 This is a fork of [CERN's Wakis](https://github.com/ImpedanCEI/wakis), the open-source wake and impedance solver, grown into a
 general-purpose electromagnetic and optical design tool. It covers RF and antennas, photonic integrated circuits, LEDs and
 microLEDs, metasurfaces, plasmonics and accelerator structures, and its whole pipeline is differentiable for gradient-based
-inverse design. It is the first library of an open series of computational-electromagnetics codes, one per numerical technique
-(Finite Integration first, then FDTD, FEM, RCWA, boundary elements, ray tracing and Fourier optics), which share conventions,
-monitors and validation problems so that the same device can be cross-checked between methods.
+inverse design.
 
 What this fork adds to Wakis:
 - **Meshes beyond the Cartesian staircase**: conformal and full-tensor subpixel averaging (including dispersive metals),
