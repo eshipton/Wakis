@@ -31,6 +31,31 @@ pip install "wakis @ git+https://github.com/eshipton/Wakis.git@main"            
 pip install "wakis[inverse] @ git+https://github.com/eshipton/Wakis.git@main"   # + JAX for inverse design
 ```
 
+### Status (21 October 2026)
+
+Everything under **Highlights** and every checked item under **Added features and roadmap** is merged on `develop` (identical to
+`main` on GitHub). The work below lives on local feature branches; it is not merged or pushed yet.
+
+| Branch | Contents | Status |
+|---|---|---|
+| `feature/pic-tutorials` | 11 photonic-integrated-circuit tutorials in 2D (effective-index method): Y-junction, waveguide-to-ring coupler, waveguide crossing, Euler bend, directional coupler, 1×4 MMI, 2×2 MMI, add-drop micro-ring, size converter, strip-to-slot converter, Bragg grating. Each one is a single-source script + notebook with 13–16 figures, tests that can fail, and a Kottke-vs-staircase convergence study against an independent fine reference. Also: mesh-override boxes in the templates (`Simulation(mesh_overrides=...)`, `PICSimulation(mesh_overrides=...)`) and a Cloud Batch study runner (`tutorials/pic/cloud/`). | Quick studies done and resolution-audited; full-resolution studies (162 Batch tasks) finished, figures being re-rendered from them |
+| `feature/emitter-tutorials` | 7 light-emitter tutorials: planar deep-UV LED vs Ryu 2014 (E01), dipole near a mirror / microcavity Purcell factor (E02), superluminescent-diode tilted facet vs Marcuse 1989 (E03), microLED with a graded-index micro-horn vs Luce 2026 (E04), RGB microLED array vs Chen 2025 (E05), partially coherent light in a double slit: van Cittert–Zernike and Gaussian Schell-model (E06), LED far field by reciprocity (E07) | Full studies done for E01–E03 and E05–E07, E04 running; text being updated from the full data |
+| `docs/examples-library` | `EXAMPLES.md`: a visual catalogue of 185 examples in 19 categories (built / in progress / planned), many inspired by the Tidy3D case studies (facts only, no code or text reused) | Draft |
+| `feature/subgrid-kit` | Subgridding (`wakis.subgrid`) as a backend for the photonics kit: polygon geometry, mode ports, DFT/flux monitors, S-parameters; then a cost comparison against the graded mesh on the Bragg grating at equal accuracy | Started |
+| (planned) | Vacuum-electronics series: slow-wave structure design, traveling-wave tubes, backward-wave oscillators, microwave amplifiers | Planning |
+
+**Resolution policy for every tutorial.** At least 10 cells per wavelength in the highest-index material (20 for the accurate
+runs), at least 4 cells across the smallest geometric feature (gaps, teeth, thin layers), and for metals a resolution study
+that refines until the metric stops changing, ending at no fewer than 4 cells per skin depth. Local refinement uses graded
+axes and mesh-override boxes; under-resolved runs are kept only as labelled demonstrations. Applying this policy changed
+several results, which the tutorials state plainly:
+- Size converter: TE0 transmission 82.3 % → 77.0 % once the 50 nm segment has 4–8 cells (was < 1).
+- Partially coherent double slit: the silver-vs-PEC transmission gain is +5.0 %, not +10.5 % (skin depth 0.58 → 8 cells).
+- Deep-UV LED: the 30–60 % gap to Ryu 2014 closes once the 25 nm absorbing p-GaN layer has 6 cells.
+- LED reciprocity: a staircase error that grew with refinement was the staircased grating geometry changing with the grid and
+  tuning a guided-mode resonance; with the geometry snapped to the grid, staircase converges.
+- Bragg grating: the Bragg wavelength converges (1564 → 1557.5 → 1554.9 nm) instead of drifting by > 36 nm.
+
 ### Highlights
 
 Each result names its baseline. Work is unknowns × time steps, which does not depend on the implementation. Results whose code is still on a feature branch name that branch; they are merged into `develop` after review. Items marked **In progress** report interim numbers only.
@@ -394,10 +419,13 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Two-level local time stepping for unstructured FIT: energy-conserving, exact adjoint (`lts=2`)
 - [x] Polygonal FIT: hybrid square/triangle and Voronoi meshes (`PolygonFIT2D`)
 - [x] Cartesian subgridding with nested 2:1/3:1 patches (`wakis.subgrid`): symmetric hanging-node interface (energy-conserving, second order, exact transposed step), sub-pixel averaging, PML, scattered-field plane waves, Drude/Lorentz ADE, LTS; benchmark arm `subgrid-2to1` ([studies/mie-cylinder-subgrid](studies/mie-cylinder-subgrid), [studies/subgrid-benchmarks](studies/subgrid-benchmarks))
+- [ ] Mesh-override boxes on graded tensor-product meshes (`Simulation(mesh_overrides=...)`; built on `feature/pic-tutorials`, not yet merged)
+- [ ] Subgridding backend for the photonics kit (mode ports, monitors) and graded-vs-subgrid cost study (`feature/subgrid-kit`, started)
 - [ ] Cartesian subgridding in 3D (`SolverFIT3D` octree blocks; plan in the physics guide)
 - [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
 - [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
-- [ ] High-order schemes: DGTD on curved triangles and Cartesian (2,4) (in progress)
+- [x] High-order DGTD on curved triangles (`wakis.highorder`, see Highlights)
+- [ ] High-order Cartesian (2,4) scheme
 - [x] Extruded prism 3D FIT (`PrismFIT3D`: triangles × z layers, diagonal Voronoi Hodge, z PML, GPU; `tests/test_050_prism_fit.py`; studies `prism-cavity` (2.9–5.6× less work than graded conformal Cartesian at 0.1–0.05 %), `prism-ring` (Si micro-ring vs a BOR reference), `prism-dipole` (B4, negative result))
 - [x] Quadtree squares + conforming triangle band (`wakis.unstructured.subtri`, two-level LTS; `tests/test_subtri*.py`; [studies/subtri-hybrid](studies/subtri-hybrid): B1 5–7× less work, B3 wins vs FIT/FDTD arms, B2 negative result)
 - [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow
@@ -409,7 +437,6 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Exact-gradient memory ladder (`AdjointSimulation(memory=...)`): binomial checkpointing (bitwise-equal gradients), time reversal with recorded CPML interface layers (lossless problems), opt-in approximate Nyquist storage ([study](studies/adjoint-memory/README.md))
 - [x] Differentiable subpixel smoothing for density designs (`MaterialGrid(smoothing='tensor')`)
 - [ ] Subpixel-smoothed projection (SSP) for binary designs with useful gradients (in progress)
-- [ ] Adjoint memory ladder: checkpointing, time-reversed leapfrog (in progress)
 - [ ] Differentiable layer thickness
 
 **Core fixes and performance**
@@ -425,7 +452,6 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] invrs-gym bridge and round-1 results ([invrs-wakis](https://github.com/eshipton/invrs-wakis))
 - [x] invrs-gym round-2 pilot on the lightweight ceviche challenges (all designs meet the length scale)
 - [ ] invrs-gym full-ceviche (leaderboard-eligible) and metalens sweeps (running); 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
-- [ ] Cherenkov-free wakefields with the explicit TE/TM scheme (`scheme='tete'`) (in progress)
 - [ ] Nonlinear plasma wakefields (blowout regime, PIC)
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
@@ -434,6 +460,10 @@ MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream
 - [x] Tutorial 01b: 3D Mie sphere (TF/SF, near/far field vs Mie S1/S2; 3.4 % RMS at 40 cells/µm on an L4)
 - [ ] Tutorial 01b: 3D resolution study (staircase vs conformal vs tensor)
 - [ ] Tutorial 02: plasmonic Ag/Au spheres, 10 nm to 1 µm
+- [ ] PIC tutorial series: 11 tutorials built (`feature/pic-tutorials`, full studies done, review before merge); grating couplers and further Tidy3D-inspired cases next
+- [ ] Light-emitter tutorial series: LEDs, microLEDs, SLED, partial coherence; 7 tutorials built (`feature/emitter-tutorials`, review before merge)
+- [ ] Visual examples library `EXAMPLES.md` (`docs/examples-library`, draft)
+- [ ] Vacuum-electronics series: slow-wave structures, TWT, BWO, microwave amplifiers (planned)
 
 **Validation and studies**
 - [x] ~30 Meep-inspired validation tests (Purcell factor, Fresnel, Bragg mirror, Poynting balance, CPML convergence, line source, ...)
