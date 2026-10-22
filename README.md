@@ -64,8 +64,11 @@ What you can do with it. Tutorials marked ![On a feature branch](https://img.shi
 Seven tutorials model light emitters with incoherent dipole ensembles, Drude silver mirrors, near-to-far transforms and
 reciprocity, each against a publication or exact theory and each with a resolution study (at least 10 cells per wavelength,
 4 cells across the thinnest layer and 4 per metal skin depth). Above: power flow in the microLED micro-horn collimators of
-Luce *et al.* (2026). Extraction into ±15° is 29.8 % for the SiO<sub>2</sub> horn (paper: 30.4 %) and 20.8 % for the air
-horn (23.1 %). Also: the deep-UV LED extraction of Ryu *et al.* (2014) versus p-GaN thickness (e.g. 1.72 % vs 1.70 % at
+Luce *et al.* (2026). With the paper's definition (equal polarization weights, normalized to the source power), extraction
+into ±15° is 29.8 % for the SiO<sub>2</sub> horn (paper, 2D: 30.4 %), but 20.8 % for the air horn (27.5 %), 32.7 % for the
+graded-index horn (37.7 %) and 9.0 % without a horn (14.9 %); the cause of these gaps is under investigation.
+*Correction (22 October 2026): an earlier version of this paragraph quoted 23.1 % as the paper's air-horn value; the paper
+gives 27.5 %.* Also: the deep-UV LED extraction of Ryu *et al.* (2014) versus p-GaN thickness (e.g. 1.72 % vs 1.70 % at
 50 nm), RGB microLED arrays (Chen *et al.* 2025), a dipole near a mirror and in a microcavity (Drexhage oscillation, Purcell
 factor), the tilted facet of a superluminescent diode (Marcuse 1989; an anti-reflection coating suppresses the facet
 reflection 81×), and LED far fields computed by reciprocity, which agree with the direct dipole sum to 0.07 %.
