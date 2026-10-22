@@ -2217,21 +2217,15 @@ Cells where $`\|\nabla \phi\| > 0`$ are marked as surface.
 
 To accurately model a conducting material volumetrically in FIT/FDTD, the **skin depth**
 
-```math
-\delta = \sqrt{\frac{2}{2\pi f_{\max}\,\mu_0\,\sigma}}
-```
+$`\displaystyle \delta = \sqrt{\frac{2}{2\pi f_{\max}\,\mu_0\,\sigma}}`$
 
 must be resolved by the grid. A common requirement is at least **3 cells per skin depth**, i.e.
 
-```math
-\delta \gtrsim 3\Delta_n
-```
+$`\displaystyle \delta \gtrsim 3\Delta_n`$
 
 where $`(\Delta_n)`$ is the grid spacing normal to the wall, considered as $`\sqrt{2}\cdot \text{min}(\Delta x, \Delta y, \Delta z)`$. Substituting the skin-depth expression and solving for $`\sigma`$ gives the maximum conductivity that can be volumetrically resolved at a target frequency $`f_{\max}`$:
 
-```math
-\sigma_{\max} = \frac{10}{\pi f_{\max}\,\mu \Delta_n^2}
-```
+$`\displaystyle \sigma_{\max} = \frac{10}{\pi f_{\max}\,\mu \Delta_n^2}`$
 
 Materials with $`\sigma > \sigma_{\max}`$ have a skin depth too small to be captured by the mesh and should be modeled using a **Leontovich (surface impedance) boundary condition** instead of volumetric conductivity.
 </details>
@@ -2242,22 +2236,16 @@ Materials with $`\sigma > \sigma_{\max}`$ have a skin depth too small to be capt
 
 For a good conductor, the Leontovich surface impedance has the form
 
-```math
-Z_s = (1+j)\sqrt{\dfrac{\omega\mu}{2\sigma}}
-```
+$`\displaystyle Z_s = (1+j)\sqrt{\dfrac{\omega\mu}{2\sigma}}`$
 
 meaning that the resistive and reactive parts are equal (a $`45^\circ`$ phase).
 In the SIBC implementation, we approximate $`Z_s`$ by its magnitude-based form
 
-```math
-Z_s \approx \sqrt{\pi f_{\max}\mu / \sigma}
-```
+$`\displaystyle Z_s \approx \sqrt{\pi f_{\max}\mu / \sigma}`$
 
 and define an equivalent **surface admittance**
 
-```math
-Y_s = 1/Z_s
-```
+$`\displaystyle Y_s = 1/Z_s`$
 
 To embed this into the time-domain FIT update, we convert $`Y_s`$ into effective
 surface parameters:
