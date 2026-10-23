@@ -64,11 +64,11 @@ What you can do with it. Tutorials marked ![On a feature branch](https://img.shi
 Seven tutorials model light emitters with incoherent dipole ensembles, Drude silver mirrors, near-to-far transforms and
 reciprocity, each against a publication or exact theory and each with a resolution study (at least 10 cells per wavelength,
 4 cells across the thinnest layer and 4 per metal skin depth). Above: power flow in the microLED micro-horn collimators of
-Luce *et al.* (2026). With the paper's definition (equal polarization weights, normalized to the source power), extraction
-into ±15° is 29.8 % for the SiO<sub>2</sub> horn (paper, 2D: 30.4 %), but 20.8 % for the air horn (27.5 %), 32.7 % for the
-graded-index horn (37.7 %) and 9.0 % without a horn (14.9 %); the cause of these gaps is under investigation.
-*Correction (22 October 2026): an earlier version of this paragraph quoted 23.1 % as the paper's air-horn value; the paper
-gives 27.5 %.* Also: the deep-UV LED extraction of Ryu *et al.* (2014) versus p-GaN thickness (e.g. 1.72 % vs 1.70 % at
+Luce *et al.* (2026). With the paper's definition (equal polarization weights, normalized to the source power) and a
+converged ensemble of 17 dipoles, extraction into ±15° with Johnson & Christy silver is 27.5 % for the air horn (paper, 2D:
+27.5 %), 31.1 % for the SiO<sub>2</sub> horn (30.4 %) and 37.6 % for the graded-index horn (37.7 %). Without a horn it is
+9.9 % (14.9 %), a gap that is still unexplained. The paper does not say which silver data it used; with Rakić silver all
+three horns come out 5.7–7.4 points lower. Also: the deep-UV LED extraction of Ryu *et al.* (2014) versus p-GaN thickness (e.g. 1.72 % vs 1.70 % at
 50 nm), RGB microLED arrays (Chen *et al.* 2025), a dipole near a mirror and in a microcavity (Drexhage oscillation, Purcell
 factor), the tilted facet of a superluminescent diode (Marcuse 1989; an anti-reflection coating suppresses the facet
 reflection 81×), and LED far fields computed by reciprocity, which agree with the direct dipole sum to 0.07 %.
@@ -494,7 +494,7 @@ lives on feature branches and will be merged after review.
 | Branch | Contents | Status |
 |---|---|---|
 | `feature/pic-tutorials` | 11 photonic-integrated-circuit tutorials in 2D (effective-index method): Y-junction, waveguide-to-ring coupler, waveguide crossing, Euler bend, directional coupler, 1×4 MMI, 2×2 MMI, add-drop micro-ring, size converter, strip-to-slot converter, Bragg grating. Each one is a single-source script + notebook with 13–16 figures, tests that can fail, and a Kottke-vs-staircase convergence study against an independent fine reference. Also: mesh-override boxes in the templates (`Simulation(mesh_overrides=...)`, `PICSimulation(mesh_overrides=...)`) and a Cloud Batch study runner (`tutorials/pic/cloud/`). | Quick studies done and resolution-audited; full-resolution studies (162 Batch tasks) finished, figures being re-rendered from them |
-| `feature/emitter-tutorials` | 7 light-emitter tutorials: planar deep-UV LED vs Ryu 2014 (E01), dipole near a mirror / microcavity Purcell factor (E02), superluminescent-diode tilted facet vs Marcuse 1989 (E03), microLED with a graded-index micro-horn vs Luce 2026 (E04), RGB microLED array vs Chen 2025 (E05), partially coherent light in a double slit: van Cittert–Zernike and Gaussian Schell-model (E06), LED far field by reciprocity (E07) | Full studies done for E01–E03 and E05–E07, E04 running; text being updated from the full data |
+| `feature/emitter-tutorials` | 7 light-emitter tutorials: planar deep-UV LED vs Ryu 2014 (E01), dipole near a mirror / microcavity Purcell factor (E02), superluminescent-diode tilted facet vs Marcuse 1989 (E03), microLED with a graded-index micro-horn vs Luce 2026 (E04), RGB microLED array vs Chen 2025 (E05), partially coherent light in a double slit: van Cittert–Zernike and Gaussian Schell-model (E06), LED far field by reciprocity (E07) | Full studies done for E01–E07 |
 | `docs/examples-library` | `EXAMPLES.md`: a visual catalogue of 185 examples in 19 categories (built / in progress / planned), many inspired by the Tidy3D case studies (facts only, no code or text reused) | Draft |
 | `feature/subgrid-kit` | Subgridding (`wakis.subgrid`) as a backend for the photonics kit: polygon geometry, mode ports, DFT/flux monitors, S-parameters; then a cost comparison against the graded mesh on the Bragg grating at equal accuracy | Started |
 | (planned) | Vacuum-electronics series: slow-wave structure design, traveling-wave tubes, backward-wave oscillators, microwave amplifiers | Planning |
@@ -551,7 +551,7 @@ study; in review) · 🚧 being built · 🗺️ planned. Every tutorial is a si
 | E01 | Planar deep-UV AlGaN LED: escape cone, TE vs TM extraction | Ryu *et al.* 2014 (Fig. 3, Fig. 7); analytic escape cone | 🔵 |
 | E02 | Dipole near a mirror and in a planar microcavity | Drexhage oscillation, Purcell factor, exact Sommerfeld integral for silver | 🔵 |
 | E03 | Superluminescent diode: tilted and AR-coated facet | Marcuse 1989; exact slab overlap | 🔵 |
-| E04 | MicroLED with a graded-index micro-horn collimator | Luce *et al.* 2026 | 🔵 (full study running) |
+| E04 | MicroLED with a graded-index micro-horn collimator | Luce *et al.* 2026 | 🔵 |
 | E05 | RGB microLED array: collimation and crosstalk | Chen *et al.* 2025 | 🔵 |
 | E06 | Partially coherent light in a double slit | van Cittert–Zernike, Gaussian Schell-model, temporal coherence | 🔵 |
 | E07 | LED far field by reciprocity, grating-textured LED on silver | Direct dipole sum (0.07 %), transfer matrix | 🔵 |
