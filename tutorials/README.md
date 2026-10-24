@@ -14,7 +14,8 @@ Worked examples organized as textbook chapters that teach computational electrom
 - **[Tutorial 2.1 · Where dispersion comes from](02_materials/02-01_dispersion_physics/dispersion_physics.ipynb)** ([`dispersion_physics.py`](02_materials/02-01_dispersion_physics/dispersion_physics.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-01_dispersion_physics/dispersion_physics.ipynb)
 - **[Tutorial 2.2 · Fitting Measured Material Data](02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb)** ([`fitting_measured_data.py`](02_materials/02-02_fitting_measured_data/fitting_measured_data.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb)
 - **[Tutorial 2.3 · Magnetic Materials](02_materials/02-03_magnetic_materials/magnetic_materials.ipynb)** ([`magnetic_materials.py`](02_materials/02-03_magnetic_materials/magnetic_materials.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb)
-- *In progress:* 2.4 EMI shielding and absorbing materials; 2.5 Time interfaces and photonic time crystals
+- **[Tutorial 2.4 · EMI Shielding and Absorbing Materials](02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb)** ([`emi_shielding_materials.py`](02_materials/02-04_emi_shielding_materials/emi_shielding_materials.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb)
+- **[Tutorial 2.5 · Time interfaces and photonic time crystals](02_materials/02-05_time_varying_media/time_varying_media.ipynb)** ([`time_varying_media.py`](02_materials/02-05_time_varying_media/time_varying_media.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-05_time_varying_media/time_varying_media.ipynb)
 
 ### [Chapter 3 · Diffraction and Scattering](03_diffraction_and_scattering/README.md)
 
@@ -50,7 +51,9 @@ Worked examples organized as textbook chapters that teach computational electrom
 
 - **[Tutorial 6.1 · Sidewall-corrugated waveguide Bragg grating](06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb)** ([`bragg_grating.py`](06_periodic_structures/06-01_bragg_grating/bragg_grating.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb)
 - **[Tutorial 6.2 · Slow-wave structure cold test: corrugated and glide-symmetric waveguides](06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb)** ([`sws_cold_test.py`](06_periodic_structures/06-02_sws_cold_test/sws_cold_test.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb)
-- *In progress:* 6.3 Quasi-BIC metasurface; 6.4 AR waveguide combiner; 6.5 Slanted grating in-coupler
+- **[Tutorial 6.3 · Quasi-bound states in the continuum: metasurface Q \propto \alpha^{-2}](06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb)** ([`quasi_bic_metasurface.py`](06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb)
+- **[Tutorial 6.4 · 6.4 AR Waveguide Combiner: k-Space Map and Grating Order Efficiencies](06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb)** ([`ar_waveguide_combiner.py`](06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb)
+- **[Tutorial 6.5 · 6.5 Slanted and Blazed In-Coupler Gratings: Unidirectional Coupling and Conformal Subpixel Meshing](06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb)** ([`slanted_grating_coupler.py`](06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb)
 - *Planned:* Diffraction grating with periodic boundary conditions (revisiting Tutorial 3.3 · N slits), photonic crystals, metasurfaces
 
 ### [Chapter 7 · Light Sources](07_light_sources/README.md)
@@ -60,73 +63,24 @@ Worked examples organized as textbook chapters that teach computational electrom
 - **[Tutorial 7.3 · MicroLED with a graded-index micro-horn collimator](07_light_sources/07-03_microled_horn/microled_horn.ipynb)** ([`microled_horn.py`](07_light_sources/07-03_microled_horn/microled_horn.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-03_microled_horn/microled_horn.ipynb)
 - **[Tutorial 7.4 · RGB microLED array: incoherent averaging, collimation and crosstalk](07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb)** ([`rgb_microled_array.py`](07_light_sources/07-04_rgb_microled_array/rgb_microled_array.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb)
 - **[Tutorial 7.5 · Partially coherent light through a double slit](07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb)** ([`partial_coherence_double_slit.py`](07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb)
-- **[Tutorial 7.6 · Thin-film LED emission by Lorentz reciprocity](07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb)** ([`led_reciprocity.py`](07_light_sources/07-06_led_reciprocity/led_reciprocity.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb)
+- **[Tutorial 7.6 · Thin-film LED: emission computed as absorption (Helmholtz reciprocity)](07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb)** ([`led_reciprocity.py`](07_light_sources/07-06_led_reciprocity/led_reciprocity.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb)
 - *In progress:* 7.x lasers (DFB, microdisk, PCSEL, BIC) after the gain-media feature
 
 ### [Chapter 8 · Vacuum Electronics](08_vacuum_electronics/README.md)
 
 - **[Tutorial 8.1 · Space-charge waves on a drifting electron beam](08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb)** ([`space_charge_waves.py`](08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb)
 - **[Tutorial 8.2 · Cherenkov Radiation and Vavilov–Cherenkov Cone](08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb)** ([`cherenkov_radiation.py`](08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb)
-- *In progress:* 8.3 Laser acceleration in vacuum (after Zolotorev); 8.4 Smith–Purcell radiation and the DLA grating
+- **[Tutorial 8.4 · Smith–Purcell Radiation and the Dielectric Laser Accelerator Grating](08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb)** ([`smith_purcell_dla.py`](08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb)
+- *In progress:* 8.3 Laser acceleration in vacuum (after Zolotorev)
 - *Planned:* Folded-waveguide and helix slow-wave structures, traveling-wave tube small-signal gain, backward-wave oscillator, klystron cavities, microwave amplifier circuit
 
 ### [Chapter 9 · Inverse Design](09_inverse_design/README.md)
 
-- *In progress:* 9.1 Adjoint gradients; 9.2 Waveguide bend (`invrs-gym`); 9.3 Power splitter and mode converter; 9.4 Metalens
+- **[Tutorial 9.1 · Adjoint Gradients for Time-Domain Maxwell Solvers](09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb)** ([`adjoint_gradients.py`](09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb)
+- **[Tutorial 9.2 · Inverse Design of a Compact 90° Waveguide Bend (`ceviche_waveguide_bend`)](09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb)** ([`waveguide_bend.py`](09_inverse_design/09-02_waveguide_bend/waveguide_bend.py)) · [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb)
+- *In progress:* 9.3 Power splitter and mode converter; 9.4 Metalens (round-2 run data already in each tutorial's `data/` folder)
+- *Results behind this chapter* (official invrs-gym evaluators, designs from [`invrs-wakis`](https://github.com/eshipton/invrs-wakis)): waveguide bend +0.643 vs leaderboard best −1.250; power splitter +0.068 vs +0.009; mode converter +0.312 vs 0.854 (behind); metalens enhancement 8.87 with guaranteed length scale. Related studies: [`studies/adjoint-memory`](../studies/adjoint-memory/), [`studies/ssp`](../studies/ssp/), [`studies/gpu-perf`](../studies/gpu-perf/).
 
----
-
-## Featured Examples
-
-<table>
-<tr>
-<td width="42%"><a href="03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb"><img src="03_diffraction_and_scattering/03-04_mie_cylinder/figures/qsca_vs_series.png" width="100%"></a></td>
-<td>
-
-### [Tutorial 3.4 · Mie scattering by a dielectric cylinder (2D)](03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb)
-
-Plane-wave scattering by an infinite cylinder ($n = 2$, $a = 1\;\mu\text{m}$, $x = 2\text{–}10$),
-TM and TE, with a total-field/scattered-field source: equivalence principle,
-a 2D problem in a 3D solver (periodic slab), PyVista geometry and edge-level
-mesh views (staircase vs conformal), memory preflight, near fields and a
-movie, $Q_{\text{sca}}$ against the exact series, and a resolution study.
-Runs in about a minute per polarization on a laptop CPU.
-
-</td>
-</tr>
-<tr>
-<td width="42%"><a href="03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb"><img src="03_diffraction_and_scattering/03-05_mie_sphere/figures/far_field_vs_mie.png" width="100%"></a></td>
-<td>
-
-### [Tutorial 3.5 · Mie scattering by a sphere (3D) and the near-to-far-field transform](03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb)
-
-The same set-up in 3D ($n = 2$, $r = 1\;\mu\text{m}$): Mie series, near fields,
-isosurfaces, a movie and the far field (`Near2FarMonitor` vs
-$S_1, S_2$). Full mode on an NVIDIA L4: 6.3 Mcells,
-11 min, $Q_{\text{sca}}$ within 3.4 % RMS of Mie over $x = 2\text{–}10$
-(conformal, 40 cells/µm).
-
-</td>
-</tr>
-<tr>
-<td width="42%"><a href="05_guided_waves/05-01_y_junction/y_junction.ipynb"><img src="05_guided_waves/05-01_y_junction/figures/07_field_intensity_1550.png" width="100%"></a></td>
-<td>
-
-### [Tutorial 5.1 · Y-junction power splitter](05_guided_waves/05-01_y_junction/y_junction.ipynb)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-01_y_junction/y_junction.ipynb)
-
-Particle-swarm-optimized $2\;\mu\text{m}$ SOI Y-junction splitter of Zhang
-*et al.* (2013) modeled with the 2D effective-index method (`Ex`, `Ey`, `Hz`),
-`PolySlab` Kottke subpixel smoothing, eigenmode ports, $3\times 3$ S-parameter
-extraction over $1500\text{–}1600\;\text{nm}$, 2D Poynting flux-box energy
-conservation, and 3-resolution Kottke-vs-staircase convergence. See
-[`tutorials/05_guided_waves/README.md`](05_guided_waves/README.md) for the full Chapter 5 series.
-
-</td>
-</tr>
-</table>
 
 ## Running a tutorial
 
