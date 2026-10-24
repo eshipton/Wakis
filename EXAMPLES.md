@@ -21,24 +21,24 @@
 
 ## About
 
-This page indexes all examples and validation studies in the repository, organized around the nine chapters of the [`tutorials/`](tutorials/README.md) textbook: **35 built tutorials** across Chapters 1–9 (2 in Chapter 1, 3 in Chapter 2, 6 in Chapter 3, 4 in Chapter 4, 10 in Chapter 5, 2 in Chapter 6, 6 in Chapter 7, 2 in Chapter 8, and 0 in Chapter 9), **14 tutorials in progress**, **157 planned tutorial entries** (7 in Chapter 2, 20 in Chapter 3, 4 in Chapter 4, 49 in Chapter 5, 31 in Chapter 6, 2 in Chapter 7, 1 in Chapter 8, 29 in Chapter 9, and 14 in the solver how-to appendix), **11 standalone scripts** in [`examples/`](examples/), **10 upstream notebooks** in [`notebooks/`](notebooks/), and **27 method studies** in [`studies/`](studies/). Each built tutorial is a single-source Jupytext script (`--quick`, `--full`, `--task`, `--plot`) paired with its executed notebook, setup schematic, convergence study, and quantitative comparison against analytical theory, reference solvers, or published measurements.
+This page indexes all examples and validation studies in the repository, organized around the nine chapters of the [`tutorials/`](tutorials/README.md) textbook: **43 built tutorials** across Chapters 1–9 (2 in Chapter 1, 5 in Chapter 2, 6 in Chapter 3, 4 in Chapter 4, 10 in Chapter 5, 5 in Chapter 6, 6 in Chapter 7, 3 in Chapter 8, 2 in Chapter 9), **6 tutorials in progress**, **157 planned tutorial entries** (7 in Chapter 2, 20 in Chapter 3, 4 in Chapter 4, 49 in Chapter 5, 31 in Chapter 6, 2 in Chapter 7, 1 in Chapter 8, 29 in Chapter 9, and 14 in the solver how-to appendix), **12 standalone scripts** in [`examples/`](examples/), **10 upstream notebooks** in [`notebooks/`](notebooks/), and **28 method studies** in [`studies/`](studies/). Each built tutorial is a single-source Jupytext script (`--quick`, `--full`, `--task`, `--plot`) paired with its executed notebook, setup schematic, convergence study, and quantitative comparison against analytical theory, reference solvers, or published measurements.
 
 | Section | Built | In progress | Planned |
 | :--- | :---: | :---: | :---: |
 | [Chapter 1 · Fields on a Grid](#chapter-1--fields-on-a-grid) | 2 | 0 | 0 |
-| [Chapter 2 · Materials](#chapter-2--materials) | 3 | 2 | 7 |
+| [Chapter 2 · Materials](#chapter-2--materials) | 5 | 0 | 7 |
 | [Chapter 3 · Diffraction and Scattering](#chapter-3--diffraction-and-scattering) | 6 | 0 | 20 |
 | [Chapter 4 · Radiation and Antennas](#chapter-4--radiation-and-antennas) | 4 | 2 | 4 |
 | [Chapter 5 · Guided Waves](#chapter-5--guided-waves) | 10 | 0 | 49 |
-| [Chapter 6 · Periodic Structures](#chapter-6--periodic-structures) | 2 | 3 | 31 |
+| [Chapter 6 · Periodic Structures](#chapter-6--periodic-structures) | 5 | 0 | 31 |
 | [Chapter 7 · Light Sources](#chapter-7--light-sources) | 6 | 1 | 2 |
-| [Chapter 8 · Vacuum Electronics](#chapter-8--vacuum-electronics) | 2 | 2 | 1 |
-| [Chapter 9 · Inverse Design](#chapter-9--inverse-design) | 0 | 4 | 29 |
+| [Chapter 8 · Vacuum Electronics](#chapter-8--vacuum-electronics) | 3 | 1 | 1 |
+| [Chapter 9 · Inverse Design](#chapter-9--inverse-design) | 2 | 2 | 29 |
 | [Appendix · Solver Features and How-Tos](#appendix--solver-features-and-how-tos) | — | — | 14 |
-| **Tutorial totals** | **35** | **14** | **157** |
-| [Standalone scripts (`examples/`)](#standalone-scripts) | 11 | — | — |
+| **Tutorial totals** | **43** | **6** | **157** |
+| [Standalone scripts (`examples/`)](#standalone-scripts) | 12 | — | — |
 | [Upstream Wakis notebooks (`notebooks/`)](#upstream-wakis-notebooks) | 10 | — | — |
-| [Method studies (`studies/`)](#method-studies) | 27 | — | — |
+| [Method studies (`studies/`)](#method-studies) | 28 | — | — |
 | [Why FIT?](#why-fit) · [Contributing an example](#contributing-an-example) | — | — | — |
 
 ---
@@ -73,11 +73,12 @@ This page indexes all examples and validation studies in the repository, organiz
 - **2.3 · Tutorial 2.3 · Magnetic Materials** ([notebook](tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb) · [script](tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.py)) — Landau–Lifshitz–Gilbert magnetization precession, Lorentz/Debye dispersive permeability $\mu(\omega)$ on dual FIT edges, Snoek's static-susceptibility/resonance-frequency product, Acher's integral sum rule, magnetic hesitivity $h_m$, and impedance-matched $\varepsilon(\omega)=\mu(\omega)$ Dallenbach absorbers.
   - *Validation target:* Snoek (1948) and Acher (2008) sum rules, measured ferrite parameters ($\text{CoZrNb}$, $\text{Co}_2\text{Z}$, $\text{NiZn}$), analytical transfer matrices, and 3D PEC cavity eigenfrequencies.
   - *Headline result:* Acher's integral bound holds to $<10^{-4}$ relative error, single-pole hesitivity is invariant to $<10^{-14}$ across $1\;\text{MHz}\text{–}20\;\text{GHz}$, and dual-edge magnetic ADE stepping matches `mu_discrete(f, dt)` to $<5\times 10^{-4}$.
-
-### In progress
-
-- **2.4 EMI shielding and absorbing materials**
-- **2.5 Time interfaces and photonic time crystals**
+- **2.4 · Tutorial 2.4 · EMI shielding and absorbing materials** ([notebook](tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb) · [script](tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.py)) — Commercial shielding and absorbing materials as dispersive models — a magnetic-particle silicone (Laird Eccosorb RF-LB, from its datasheet), a Sendust flake sheet, an $\varepsilon_r \approx 100$ ceramic, a CNT silicone above percolation, a Ni-graphite gasket and a copper film — with slab reflection/transmission, shielding effectiveness and metal-backed absorbers.
+  - *Validation target:* exact transfer-matrix slab response, Schelkunoff shielding-effectiveness decomposition, and the Laird RF-LB datasheet curves.
+  - *Headline result:* the RF-LB permeability fit reproduces the datasheet $\mu'(f), \mu''(f)$ within $0.36\%$; $\varepsilon' \approx 75$–$83$ is inferred from the attenuation curve; a graded mesh needs about $9$–$10\times$ fewer cells than a uniform one at the same accuracy.
+- **2.5 · Tutorial 2.5 · Time interfaces and photonic time crystals** ([notebook](tutorials/02_materials/02-05_time_varying_media/time_varying_media.ipynb) · [script](tutorials/02_materials/02-05_time_varying_media/time_varying_media.py)) — Time-varying permittivity, conductivity and plasma frequency: time refraction and time reflection at a temporal interface, frequency conversion, and the momentum band gap of a photonic time crystal.
+  - *Validation target:* Morgenthaler (1958) temporal Fresnel coefficients, Mendonça & Shukla (2002) frequency conversion, and Floquet/Mathieu theory of photonic time crystals (Lyubarov et al. 2022).
+  - *Headline result:* D stays continuous across the temporal interface to $3\times10^{-16}$; frequency conversion $0.75007$ vs $0.75$; time-crystal growth rate $\gamma/\Omega = 0.03175$ vs Floquet $0.03192$; second-order convergence.
 
 ### Planned
 
@@ -288,12 +289,15 @@ This page indexes all examples and validation studies in the repository, organiz
 - **6.2 · Tutorial 6.2 · Slow-wave structure cold test: corrugated and glide-symmetric waveguides** ([notebook](tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb) · [script](tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.py)) — Single-period Bloch-periodic eigenfrequency (`harminv`), Floquet space-harmonic decomposition, and Pierce interaction impedance $K_n$ of 2D mirror/glide-symmetric corrugated waveguides and a 3D V-band staggered-pillar slow-wave structure.
   - *Validation target:* McVey multimodal field-matching dispersion equation and exact Pierce interaction impedance integrals.
   - *Headline result:* Dey–Mittra conformal PEC converges monotonically at second order to $f_1=97.9918\;\text{GHz}$ (`Reference`, $-0.13\%$ vs slot-extrapolated McVey $98.120\;\text{GHz}$; Richardson limit $98.0670\;\text{GHz}$, $-0.05\%$) and on-axis Pierce impedance $K_{-1}(0)=1.7749\;\Omega$ ($+0.63\%$ vs McVey $1.7637\;\Omega$; Richardson $+0.25\%$), whereas staircase PEC remains $-3.24\%$ off in $f_1$ and $+23.2\%$ off in $K_{-1}(0)$.
-
-### In progress
-
-- **6.3 Quasi-BIC metasurface**
-- **6.4 AR waveguide combiner**
-- **6.5 Slanted grating in-coupler**
+- **6.3 · Tutorial 6.3 · Quasi-bound states in the continuum: metasurface Q vs asymmetry** ([notebook](tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb) · [script](tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.py)) — A symmetry-protected bound state in the continuum in a 2D periodic dielectric metasurface, opened into a quasi-BIC by an asymmetry $\alpha$; Fano spectra, ring-down Q, absorption saturation and angular dispersion.
+  - *Validation target:* the $Q_{\mathrm{rad}} \propto \alpha^{-2}$ scaling law of Koshelev et al., PRL 121, 193903 (2018), and an independent 1D RCWA reference.
+  - *Headline result:* fitted slope $-1.998$ (FIT) and $-2.005$ (RCWA) over $Q = 10^3$–$10^5$; Fano-fit Q within $1.7\%$ of the ring-down Q. The scaling law is reproduced; the paper's 3D device is not.
+- **6.4 · Tutorial 6.4 · AR waveguide combiner: k-space map and grating order efficiencies** ([notebook](tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb) · [script](tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.py)) — The k-space design of a diffractive waveguide combiner (in-coupler, pupil expander, out-coupler), the index-limited field of view, and full-wave order efficiencies vs angle at RGB wavelengths with constant-angle Floquet sweeps.
+  - *Validation target:* grating-vector closure, the field-of-view limit of the glass index (Kress & Chatterjee 2021), and RCWA order efficiencies.
+  - *Headline result:* in-coupler efficiencies agree with RCWA to $1.3\times10^{-3}$; out-coupler reflection to $2.9\times10^{-3}$.
+- **6.5 · Tutorial 6.5 · Slanted and blazed in-coupler gratings** ([notebook](tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb) · [script](tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.py)) — Slanted, blazed and binary in-coupler gratings: first-order efficiency into the guided direction vs slant angle, depth and fill, with subpixel vs staircase convergence of the slanted edges.
+  - *Validation target:* RCWA order efficiencies, the Bragg slant condition, and the slanted-grating designs of Wang & Ma (arXiv:2307.01600) and Levola & Laakkonen (2007).
+  - *Headline result:* at the $25^\circ$ slant, $T_{-1} = 82.3\%$ (Wakis) vs $81.9\%$ (RCWA); $-1/+1$ order selectivity $16\times$ slanted, $12.6\times$ blazed, $1\times$ binary.
 
 ### Planned
 
@@ -387,11 +391,13 @@ This page indexes all examples and validation studies in the repository, organiz
 - **8.2 · Tutorial 8.2 · Cherenkov Radiation from a Moving Charge** ([notebook](tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb) · [script](tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.py)) — 3D Cherenkov radiation from a relativistic Gaussian bunch (`Beam`) in non-dispersive and Lorentz-dispersive dielectrics, plus suppression of spurious vacuum numerical Cherenkov radiation using the dispersion-free `scheme="tete"` integrator.
   - *Validation target:* Cherenkov (1934) Mach cone angle $\cos\theta_c = 1/(\beta n)$, Frank & Tamm (1937) spectral energy loss $d^2W/(d\omega\,dz)$, and Dohlus & Zagorodnov (2009) dispersion-free TE/TM scheme.
   - *Headline result:* On the fine 3D grid ($\Delta x = 0.32\;\text{mm}$, $20.8\;\text{cells}/\lambda$ at $30\;\text{GHz}$ in $n=1.5$), the extracted Mach angle $\theta_c=42.87^\circ$ matches theory ($42.21^\circ$, $\cos\theta_c$ error $1.05\%$) with $2.81\%$ Frank–Tamm spectral $L_2$ error and $1.44\%$ integrated $dW/dz$ error over $12\text{–}30\;\text{GHz}$, while `scheme="tete"` eliminates the vacuum numerical Cherenkov wake to machine precision.
+- **8.4 · Tutorial 8.4 · Smith–Purcell radiation and the dielectric laser accelerator grating** ([notebook](tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb) · [script](tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.py)) — A relativistic charge over metallic and dielectric gratings (Smith–Purcell radiation), then the inverse process: a laser-driven fused-silica grating whose synchronous space harmonic accelerates electrons (DLA).
+  - *Validation target:* the Smith–Purcell dispersion relation, the evanescent impact-parameter decay, and Peralta et al., Nature 503, 91 (2013).
+  - *Headline result:* Smith–Purcell wavelengths follow $d(1/\beta - \cos\theta)$ for three $\beta$; DLA synchronism at $801.7$ nm vs $800$ nm; the gradient ratio between the $400$ and $800$ nm gaps is $1.98$ vs $2.04 \pm 0.24$ measured.
 
 ### In progress
 
 - **8.3 Laser acceleration in vacuum (after Zolotorev)**
-- **8.4 Smith–Purcell radiation and the DLA grating**
 
 ### Planned
 
@@ -405,14 +411,19 @@ This page indexes all examples and validation studies in the repository, organiz
 
 ### Built
 
-No tutorials are built in `tutorials/09_inverse_design/` yet. Prototype implementations of the six `invrs-gym` photonics challenges driven by Wakis's exact discrete time-domain FIT adjoint live in [`invrs-wakis`](https://github.com/eshipton/invrs-wakis), and the exact-adjoint checkpointing/time-reversal memory ladder is benchmarked in [`studies/adjoint-memory/`](studies/adjoint-memory/).
+- **9.1 · Tutorial 9.1 · Adjoint gradients for time-domain Maxwell solvers** ([notebook](tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb) · [script](tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.py)) — The exact discrete adjoint of the FIT time stepper: transpose step in reversed time, dot-product tests across physics regimes, adjoint vs finite differences, sensitivity maps, the memory ladder (stored, checkpointed, reversed, Nyquist) and a first density optimization.
+  - *Validation target:* the operator dot-product identity, central finite differences with a step-size sweep, and deliberately corrupted transposes that must fail.
+  - *Headline result:* time-reversed adjoint matches the forward operator to $2.5\times10^{-15}$, while a corrupted transpose fails at $3.4\times10^{-4}$; the memory ladder cuts stored state for the invrs-gym bend from $11.6$ GB to $0.25$–$1.1$ GB.
+- **9.2 · Tutorial 9.2 · Waveguide bend (invrs-gym)** ([notebook](tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb) · [script](tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.py)) — Our round-2 design for the invrs-gym `ceviche_waveguide_bend` challenge (10 nm grid, 6 wavelengths, 8 px minimum length scale): optimizer stages, length scale by construction, fields, spectrum vs target windows, and a Wakis re-simulation of the stored design.
+  - *Validation target:* the official invrs-gym evaluator (ceviche FDFD), the like-for-like re-score of the leaderboard solutions, and Wakis vs ceviche cross-validation.
+  - *Headline result:* official eval metric $+0.643$ at $8/8$ px vs the leaderboard best $-1.250$ at $9/7$ px; the Wakis re-simulation reproduces the stored spectrum within $1.3\times10^{-3}$ in $|S_{21}|^2$.
+
+**invrs-gym results behind this chapter** (scored with the gym's own evaluators; designs from [`invrs-wakis`](https://github.com/eshipton/invrs-wakis)): waveguide bend $+0.643$ (leaderboard best $-1.250$), power splitter $+0.068$ (leaderboard best $+0.009$), mode converter $+0.312$ (leaderboard $0.854$ at the same $8/8$ px length scale — behind), metalens enhancement $8.87$ with guaranteed length scale. Related studies: [`studies/adjoint-memory/`](studies/adjoint-memory/), [`studies/ssp/`](studies/ssp/) (subpixel-smoothed projection), [`studies/gpu-perf/`](studies/gpu-perf/) (fused GPU step, 45× faster iterations).
 
 ### In progress
 
-- **9.1 Adjoint gradients**
-- **9.2 Waveguide bend (invrs-gym)**
-- **9.3 Power splitter and mode converter**
-- **9.4 Metalens**
+- **9.3 Power splitter and mode converter** — the round-2 run data are already in the tutorial's `data/` folder.
+- **9.4 Metalens** — the round-2 run data are already in the tutorial's `data/` folder.
 
 ### Planned
 
@@ -484,6 +495,7 @@ Standalone Python scripts in [`examples/`](examples/) demonstrating wakefields, 
 - [`examples/009_material_library.py`](examples/009_material_library.py) — Plots complex refractive index $n-\mathrm{i}k$ of representative metals, dielectrics, semiconductors, and uniaxial crystals from `wakis.materials` against tabulated source data.
 - [`examples/010_thin_sheets_and_wires.py`](examples/010_thin_sheets_and_wires.py) — Subcell `solver.add_sheet` (Salisbury radar-absorbing screen and Drude graphene sheet vs transfer matrix) and Holland `solver.add_thin_wire` ($a=\Delta x/10, \Delta x/50$ half-wave dipole vs Hallén MoM).
 - [`examples/011_oblique_grating.py`](examples/011_oblique_grating.py) — Broadband constant-angle ($\theta=15^\circ$) diffraction-order efficiencies of a periodic dielectric grating via `wakis.floquet` (`FloquetCell`, `AngleSweep`) validated against 1D RCWA (`rcwa_1d_grating`).
+- [`examples/012_fabry_perot_laser.py`](examples/012_fabry_perot_laser.py) — A 1D Fabry–Pérot laser with a four-level atomic gain medium (`wakis.gain`): lasing threshold vs cavity loss, light-vs-pump curve, relaxation oscillations and the lasing frequency at the cavity mode.
 
 ---
 
@@ -528,6 +540,7 @@ Reproducible numerical-method studies in [`studies/`](studies/) (each containing
 - [`studies/prism-ring/`](studies/prism-ring/) — 3D silicon microring resonator ($R=1.5\;\mu\text{m}, 500\times 220\;\text{nm}$ core) on `PrismFIT3D` vs uniform conformal Cartesian against a body-of-revolution reference: `prism` reaches $1.29\;\text{nm}$ max resonance error at $h=30\;\text{nm}$ using $15\times$ fewer unknowns and $22\times$ less work than $h=20\;\text{nm}$ Cartesian ($2.16\;\text{nm}$), though `prism` plateaus near $\sim 1.0\;\text{nm}$ whereas $h=10\;\text{nm}$ GPU Cartesian reaches $0.39\;\text{nm}$.
 - [`studies/sphere-pml-gap/`](studies/sphere-pml-gap/) — Sensitivity of 3D Mie sphere $Q_{\text{sca}}$ and Stratton–Chu far-field patterns to CPML buffer distance ($1.05\text{–}4.2\;\mu\text{m}$) and CFS $\alpha_{\max}$: moving the CPML from $1.05\;\mu\text{m}$ to $4.2\;\mu\text{m}$ changes $Q_{\text{sca}}$ by $\le 3.7\times 10^{-4}$ and far fields by $\le 0.010\;\text{dB}$, confirming that residual deviations at $40\;\text{cells}/\mu\text{m}$ ($3.40\% \to 2.92\%$ at $50\;\text{cells}/\mu\text{m}$) are bulk discretization error.
 - [`studies/sphere-symmetry/`](studies/sphere-symmetry/) — Mirror-parity test ($x\to -x, y\to -y$) of the 3D Mie sphere (`conformal='all'`, $20\;\text{cells}/\mu\text{m}$): interpolating staggered DFT edge components to cell centres lowers $|\mathbf{E}|$ mirror asymmetry from $9.6\text{–}11.1\%$ (uninterpolated array trimming) to $5.6\text{–}5.7\times 10^{-5}$.
+- [`studies/ssp/`](studies/ssp/) — Subpixel-smoothed projection for topology optimization: designs stay differentiable at $\beta = \infty$; an invrs-gym pilot (2 challenges × 4 seeds) works end to end but shows no robust gain over the round-2 pipeline at equal iteration budget.
 - [`studies/subgrid-benchmarks/`](studies/subgrid-benchmarks/) — 2:1 quadtree subgridding (`Subgrid2DArm`) on `B2` plasmonic cylinders, `B3` Au dimers, and `S1` silicon nanogap dimers: cuts unknowns $16\text{–}52\times$ ($50\text{–}200\times$ faster with $p=8$ LTS) vs graded rectilinear grids on the `S1` dielectric nanogap, while body-fitted triangles remain $4\text{–}5\times$ cheaper on curved TE metals (`B2`/`B3`).
 - [`studies/subgrid-vs-graded-bragg/`](studies/subgrid-vs-graded-bragg/) — Fair equal-accuracy cost comparison on the 100-period SOI Bragg grating (Tutorial 6.1, `--full`) against a neutral $\mathcal{O}(h^2)$ Richardson reference ($\lambda_{B,\text{ref}}=1551.308\pm 0.110\;\text{nm}$): `subgrid_lts3` uses $3.61\times$ ($6.46\times$) less work than fair `graded_tuned` at $1.0\;\text{nm}$ ($0.5\;\text{nm}$) error, but shows no demonstrated work advantage over a plain uniform cut-cell mesh (`uniform_20nm` reaches $0.785\;\text{nm}$ at $2.01\times 10^{10}$ work vs $2.58\times 10^{10}$) because the grating fills $82\%$ of the narrow domain.
 - [`studies/subtri-hybrid/`](studies/subtri-hybrid/) — Quadtree squares with a conforming $\pm 2h$ Delaunay triangle interface band and two-level LTS (`subtri-hybrid`): achieves $0.15\text{–}0.22\times$ the work ($5\text{–}7\times$ reduction) of the best baseline on `B1` and $0.39\text{–}0.74\times$ the work on `B3` dimer gap enhancement, while losing ($1.3\text{–}2.5\times$ more work) on single-cylinder `B2` where curved DGTD wins.

@@ -106,6 +106,8 @@ def discover_built_tutorials(repo_root: Path) -> list[tuple[str, Path, Path, Pat
             rel_dir = tut_dir.relative_to(repo_root)
             ipynb_rel = rel_dir / f"{slug}.ipynb"
             py_rel = rel_dir / f"{slug}.py"
+            if not (repo_root / py_rel).is_file():
+                continue  # data or work in progress only: not built yet
             results.append((num_str, rel_dir, ipynb_rel, py_rel))
     return results
 
