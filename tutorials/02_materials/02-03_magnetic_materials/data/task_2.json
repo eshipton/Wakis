@@ -1,0 +1,16 @@
+{
+  "task": 2,
+  "name": "debye_mu_slab_simulation",
+  "quick": false,
+  "elapsed_s": 6.401908260999335,
+  "max_rss_mb": 196.9765625,
+  "thickness_mm": 40.0,
+  "dz_mm": 1.25,
+  "nt": 8484,
+  "cpw_mat": 32.465826922318485,
+  "cells_across": 32.0,
+  "rms_R_disc": 0.001940533717728412,
+  "rms_T_disc": 0.00020219661569960745,
+  "rms_R_cont": 0.0019391525691953876,
+  "rms_T_cont": 0.0001994188275398801
+}

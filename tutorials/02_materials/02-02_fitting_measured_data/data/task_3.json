@@ -1,0 +1,552 @@
+{
+  "task": 3,
+  "name": "gabriel_cole_cole_tissue_fits",
+  "quick": false,
+  "elapsed_s": 1.961232650999591,
+  "max_rss_mb": 196.0703125,
+  "fit_band_Hz": [
+    10000000.0,
+    10000000000.0
+  ],
+  "citation": "S. Gabriel, R. W. Lau, and C. Gabriel, 'The dielectric properties of biological tissues: III. Parametric models for the dielectric spectrum of tissues,' Phys. Med. Biol. 41(11), 2271-2293 (1996), doi:10.1088/0031-9155/41/11/003",
+  "tissues": {
+    "muscle": {
+      "label": "Muscle",
+      "gabriel_eps_inf": 4.0,
+      "gabriel_sigma_i_S_m": 0.2,
+      "fits_10MHz_to_10GHz": {
+        "N1": {
+          "n_debye": 1,
+          "eps_inf": 53.23201831264017,
+          "sigma_S_m": 0.2,
+          "rel_rms_error": 0.14969184870887553,
+          "pol_rel_rms_error": 0.156536799930354,
+          "stable_10ps": true,
+          "max_im_eps": -1.226990109253769,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 3098.9167517654923,
+              "tau_s": 5.6854718351126574e-08
+            }
+          ]
+        },
+        "N2": {
+          "n_debye": 2,
+          "eps_inf": 25.05458961693039,
+          "sigma_S_m": 0.2,
+          "rel_rms_error": 0.052110873558531674,
+          "pol_rel_rms_error": 0.06282050430340742,
+          "stable_10ps": true,
+          "max_im_eps": -12.484918258581114,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 3394.6579875347647,
+              "tau_s": 6.327701534363761e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 31.909580866291545,
+              "tau_s": 1.6682254833500948e-11
+            }
+          ]
+        },
+        "N3": {
+          "n_debye": 3,
+          "eps_inf": 25.05458961693039,
+          "sigma_S_m": 0.2,
+          "rel_rms_error": 0.052110873558531674,
+          "pol_rel_rms_error": 0.06282050430340742,
+          "stable_10ps": true,
+          "max_im_eps": -12.484918258581114,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 3394.6579875347647,
+              "tau_s": 6.327701534363761e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 31.909580866291545,
+              "tau_s": 1.6682254833500948e-11
+            }
+          ]
+        },
+        "N4": {
+          "n_debye": 4,
+          "eps_inf": 15.286471742832244,
+          "sigma_S_m": 0.2,
+          "rel_rms_error": 0.005968027968972884,
+          "pol_rel_rms_error": 0.006748816573689134,
+          "stable_10ps": true,
+          "max_im_eps": -12.323114814323798,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 7874.086744616011,
+              "tau_s": 1.6552079673810103e-07
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 42.39320174028929,
+              "tau_s": 4.223482420023457e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 6.151815865331653,
+              "tau_s": 3.468423172052573e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 38.262139748285726,
+              "tau_s": 1.0452662507723832e-11
+            }
+          ]
+        },
+        "N5": {
+          "n_debye": 5,
+          "eps_inf": 11.939370223681795,
+          "sigma_S_m": 0.2,
+          "rel_rms_error": 0.002180749356623152,
+          "pol_rel_rms_error": 0.0024975106031335246,
+          "stable_10ps": true,
+          "max_im_eps": -12.705573020914617,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 9837.33912752434,
+              "tau_s": 2.1289552053096743e-07
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 58.021738803617794,
+              "tau_s": 7.033544700415053e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 9.975876375705415,
+              "tau_s": 1.0188033375934247e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 3.470213749075767,
+              "tau_s": 9.270921834408382e-11
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 40.26714458810186,
+              "tau_s": 9.013113612550768e-12
+            }
+          ]
+        }
+      }
+    },
+    "skin_dry": {
+      "label": "Skin (Dry)",
+      "gabriel_eps_inf": 4.0,
+      "gabriel_sigma_i_S_m": 0.0002,
+      "fits_10MHz_to_10GHz": {
+        "N1": {
+          "n_debye": 1,
+          "eps_inf": 39.18510335357025,
+          "sigma_S_m": 0.0002,
+          "rel_rms_error": 0.20632127750675364,
+          "pol_rel_rms_error": 0.20634808058799514,
+          "stable_10ps": true,
+          "max_im_eps": -0.9139079682830283,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 526.3302935806588,
+              "tau_s": 9.16949879040507e-09
+            }
+          ]
+        },
+        "N2": {
+          "n_debye": 2,
+          "eps_inf": 26.12566252728128,
+          "sigma_S_m": 0.0002,
+          "rel_rms_error": 0.12665076811295373,
+          "pol_rel_rms_error": 0.12667855513299037,
+          "stable_10ps": true,
+          "max_im_eps": -7.730064535833678,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 559.967772975806,
+              "tau_s": 1.0439300631373548e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 19.75329301456676,
+              "tau_s": 3.927190677735434e-11
+            }
+          ]
+        },
+        "N3": {
+          "n_debye": 3,
+          "eps_inf": 14.417487944638804,
+          "sigma_S_m": 0.0002,
+          "rel_rms_error": 0.0352439093075346,
+          "pol_rel_rms_error": 0.035251637157426415,
+          "stable_10ps": true,
+          "max_im_eps": -10.036027828551001,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 685.0101859322375,
+              "tau_s": 1.7438935486488e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 50.57346264794951,
+              "tau_s": 1.2564730411278566e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 25.521947807983903,
+              "tau_s": 1.2942943265722605e-11
+            }
+          ]
+        },
+        "N4": {
+          "n_debye": 4,
+          "eps_inf": 8.947073101493663,
+          "sigma_S_m": 0.0002,
+          "rel_rms_error": 0.01051499136187408,
+          "pol_rel_rms_error": 0.01051723095048002,
+          "stable_10ps": true,
+          "max_im_eps": -10.091224493429902,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 730.5838408320564,
+              "tau_s": 2.3362460508187864e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 93.0068509240198,
+              "tau_s": 3.4581535430972923e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 14.930968471246045,
+              "tau_s": 3.949222944072458e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 29.361236385340852,
+              "tau_s": 9.38811362703244e-12
+            }
+          ]
+        },
+        "N5": {
+          "n_debye": 5,
+          "eps_inf": 8.947073101493663,
+          "sigma_S_m": 0.0002,
+          "rel_rms_error": 0.01051499136187408,
+          "pol_rel_rms_error": 0.01051723095048002,
+          "stable_10ps": true,
+          "max_im_eps": -10.091224493429902,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 730.5838408320564,
+              "tau_s": 2.3362460508187864e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 93.0068509240198,
+              "tau_s": 3.4581535430972923e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 14.930968471246045,
+              "tau_s": 3.949222944072458e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 29.361236385340852,
+              "tau_s": 9.38811362703244e-12
+            }
+          ]
+        }
+      }
+    },
+    "fat": {
+      "label": "Fat (Not Infiltrated)",
+      "gabriel_eps_inf": 2.5,
+      "gabriel_sigma_i_S_m": 0.01,
+      "fits_10MHz_to_10GHz": {
+        "N1": {
+          "n_debye": 1,
+          "eps_inf": 5.364032261950602,
+          "sigma_S_m": 0.01,
+          "rel_rms_error": 0.10269994991907318,
+          "pol_rel_rms_error": 0.10936769293997907,
+          "stable_10ps": true,
+          "max_im_eps": -0.06086822015984019,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 105.83561219850475,
+              "tau_s": 3.9270305843778754e-08
+            }
+          ]
+        },
+        "N2": {
+          "n_debye": 2,
+          "eps_inf": 3.9391402097554207,
+          "sigma_S_m": 0.01,
+          "rel_rms_error": 0.04659984923769928,
+          "pol_rel_rms_error": 0.056660196728170104,
+          "stable_10ps": true,
+          "max_im_eps": -0.7655478940852113,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 114.01767612689919,
+              "tau_s": 4.2889117678658086e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 1.6976467688166657,
+              "tau_s": 2.416247027934393e-11
+            }
+          ]
+        },
+        "N3": {
+          "n_debye": 3,
+          "eps_inf": 3.721907256042428,
+          "sigma_S_m": 0.01,
+          "rel_rms_error": 0.01552393781009434,
+          "pol_rel_rms_error": 0.016993917937805712,
+          "stable_10ps": true,
+          "max_im_eps": -0.7307640879203899,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 256.499524966283,
+              "tau_s": 1.1586534264670678e-07
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 4.07228022647992,
+              "tau_s": 4.6697235853194005e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 1.7883965806663602,
+              "tau_s": 1.856397008372419e-11
+            }
+          ]
+        },
+        "N4": {
+          "n_debye": 4,
+          "eps_inf": 3.4558305482058995,
+          "sigma_S_m": 0.01,
+          "rel_rms_error": 0.006129463228759236,
+          "pol_rel_rms_error": 0.006702902759618549,
+          "stable_10ps": true,
+          "max_im_eps": -0.7256625899283654,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 423.94447465130753,
+              "tau_s": 2.074393701440549e-07
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 6.586725676979798,
+              "tau_s": 7.561965177667757e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 0.3905529296929477,
+              "tau_s": 3.815581872042555e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 1.9172461601145943,
+              "tau_s": 1.4159507652691112e-11
+            }
+          ]
+        },
+        "N5": {
+          "n_debye": 5,
+          "eps_inf": 3.193374910614762,
+          "sigma_S_m": 0.01,
+          "rel_rms_error": 0.0019967472511110266,
+          "pol_rel_rms_error": 0.0022027345123586824,
+          "stable_10ps": true,
+          "max_im_eps": -0.7665023494127299,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 729.2983003166887,
+              "tau_s": 3.7973560333713285e-07
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 8.807064165875923,
+              "tau_s": 1.011762187565096e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 0.5751883606668601,
+              "tau_s": 1.3345851730892682e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 0.32987010476503,
+              "tau_s": 8.267933954761001e-11
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 2.0042231673328215,
+              "tau_s": 1.0779641927158116e-11
+            }
+          ]
+        }
+      }
+    },
+    "bone_cortical": {
+      "label": "Bone (Cortical)",
+      "gabriel_eps_inf": 2.5,
+      "gabriel_sigma_i_S_m": 0.02,
+      "fits_10MHz_to_10GHz": {
+        "N1": {
+          "n_debye": 1,
+          "eps_inf": 11.647956483939163,
+          "sigma_S_m": 0.02,
+          "rel_rms_error": 0.21236958304447343,
+          "pol_rel_rms_error": 0.22058154798888624,
+          "stable_10ps": true,
+          "max_im_eps": -0.10792700537066724,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 66.0528896850093,
+              "tau_s": 1.4605583570157042e-08
+            }
+          ]
+        },
+        "N2": {
+          "n_debye": 2,
+          "eps_inf": 6.4527219147625665,
+          "sigma_S_m": 0.02,
+          "rel_rms_error": 0.07284172691638174,
+          "pol_rel_rms_error": 0.08325888046069875,
+          "stable_10ps": true,
+          "max_im_eps": -2.3646294092400706,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 75.32089963324479,
+              "tau_s": 1.8123580508054785e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 6.949527431967393,
+              "tau_s": 3.230122674527206e-11
+            }
+          ]
+        },
+        "N3": {
+          "n_debye": 3,
+          "eps_inf": 5.512414323889979,
+          "sigma_S_m": 0.02,
+          "rel_rms_error": 0.025786856876573897,
+          "pol_rel_rms_error": 0.028324623927336697,
+          "stable_10ps": true,
+          "max_im_eps": -2.3715002088181594,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 100.92504034323863,
+              "tau_s": 3.022523848050392e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 5.50204093809289,
+              "tau_s": 1.5910362261167153e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 7.0060286474436655,
+              "tau_s": 2.289669168854136e-11
+            }
+          ]
+        },
+        "N4": {
+          "n_debye": 4,
+          "eps_inf": 4.71004076376663,
+          "sigma_S_m": 0.02,
+          "rel_rms_error": 0.009926846938425661,
+          "pol_rel_rms_error": 0.011025291479002252,
+          "stable_10ps": true,
+          "max_im_eps": -2.6255593190637216,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 114.75065274217336,
+              "tau_s": 3.864703978826052e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 7.773257481544596,
+              "tau_s": 3.532288381867218e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 1.929881216548776,
+              "tau_s": 2.3031761924418448e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 7.024675111400555,
+              "tau_s": 1.7324187424823576e-11
+            }
+          ]
+        },
+        "N5": {
+          "n_debye": 5,
+          "eps_inf": 4.128782251944607,
+          "sigma_S_m": 0.02,
+          "rel_rms_error": 0.0035363713477233527,
+          "pol_rel_rms_error": 0.003936990231855162,
+          "stable_10ps": true,
+          "max_im_eps": -2.7214366045230447,
+          "poles": [
+            {
+              "type": "Debye",
+              "delta_eps": 126.31966893255478,
+              "tau_s": 4.789661361626564e-08
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 10.599914878922062,
+              "tau_s": 6.210169288827217e-09
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 2.3436973752019723,
+              "tau_s": 9.058071947393446e-10
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 1.8725158623790323,
+              "tau_s": 7.886267492145787e-11
+            },
+            {
+              "type": "Debye",
+              "delta_eps": 6.754103836193518,
+              "tau_s": 1.375482412047858e-11
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "elapsed_s": 45.15,
+  "silver_library_name": "silver jc",
+  "eps_ag_450nm_real": -7.0756,
+  "eps_ag_450nm_imag": -0.2201,
+  "skin_depth_amp_nm": 26.92,
+  "skin_depth_pow_nm": 13.46,
+  "fig2_Q_pec_median_s": 75726.9,
+  "fig2_Q_pec_max_s": 400326.8,
+  "fig2_Q_ag_median_s": 4206.7,
+  "fig2_Q_ag_max_s": 11962.9,
+  "fig2_harminv_pec_Q": 177643.9,
+  "fig2_harminv_ag_Q": 6802.1,
+  "fig4_local_maxima": [
+    {
+      "t_nm": 450.0,
+      "d_nm": 240.0,
+      "F60_iso": 2.5096
+    },
+    {
+      "t_nm": 490.0,
+      "d_nm": 30.0,
+      "F60_iso": 3.435
+    },
+    {
+      "t_nm": 490.0,
+      "d_nm": 280.0,
+      "F60_iso": 2.8982
+    },
+    {
+      "t_nm": 500.0,
+      "d_nm": 80.0,
+      "F60_iso": 2.536
+    },
+    {
+      "t_nm": 500.0,
+      "d_nm": 190.0,
+      "F60_iso": 2.2
+    },
+    {
+      "t_nm": 500.0,
+      "d_nm": 310.0,
+      "F60_iso": 3.0309
+    },
+    {
+      "t_nm": 510.0,
+      "d_nm": 340.0,
+      "F60_iso": 3.5225
+    },
+    {
+      "t_nm": 590.0,
+      "d_nm": 50.0,
+      "F60_iso": 2.3
+    },
+    {
+      "t_nm": 590.0,
+      "d_nm": 90.0,
+      "F60_iso": 2.8017
+    },
+    {
+      "t_nm": 590.0,
+      "d_nm": 190.0,
+      "F60_iso": 2.9417
+    },
+    {
+      "t_nm": 590.0,
+      "d_nm": 290.0,
+      "F60_iso": 2.8026
+    },
+    {
+      "t_nm": 590.0,
+      "d_nm": 350.0,
+      "F60_iso": 2.8265
+    },
+    {
+      "t_nm": 620.0,
+      "d_nm": 120.0,
+      "F60_iso": 3.5058
+    },
+    {
+      "t_nm": 690.0,
+      "d_nm": 50.0,
+      "F60_iso": 2.3486
+    },
+    {
+      "t_nm": 690.0,
+      "d_nm": 180.0,
+      "F60_iso": 2.1071
+    },
+    {
+      "t_nm": 690.0,
+      "d_nm": 220.0,
+      "F60_iso": 2.6435
+    },
+    {
+      "t_nm": 690.0,
+      "d_nm": 300.0,
+      "F60_iso": 2.5868
+    },
+    {
+      "t_nm": 700.0,
+      "d_nm": 100.0,
+      "F60_iso": 4.0601
+    },
+    {
+      "t_nm": 750.0,
+      "d_nm": 350.0,
+      "F60_iso": 2.4559
+    },
+    {
+      "t_nm": 770.0,
+      "d_nm": 170.0,
+      "F60_iso": 2.9823
+    },
+    {
+      "t_nm": 780.0,
+      "d_nm": 280.0,
+      "F60_iso": 2.9896
+    },
+    {
+      "t_nm": 790.0,
+      "d_nm": 40.0,
+      "F60_iso": 2.5965
+    },
+    {
+      "t_nm": 800.0,
+      "d_nm": 350.0,
+      "F60_iso": 2.4868
+    }
+  ],
+  "fig4_best_60_iso": 4.0601,
+  "fig4_best_90_iso": 3.8726,
+  "fig4_enh_vs_flat_60": 2.44,
+  "fig4_enh_vs_flat_90": 2.682,
+  "gradient_check": {
+    "t0_nm": 650.0,
+    "d0_nm": 180.0,
+    "pitch_nm": 450.0,
+    "y_pos_nm": 100.0,
+    "theta_deg": 15.0,
+    "dlnF_dt_adj_per_m": 87161906.4355795,
+    "dlnF_dt_fd1_per_m": 87161393.03859822,
+    "dlnF_dt_fd2_per_m": 87161778.08884005,
+    "dlnF_dd_adj_per_m": -7580339.721044622,
+    "dlnF_dd_fd1_per_m": -7580293.809827279,
+    "dlnF_dd_fd2_per_m": -7580328.243117566,
+    "rel_err_dt_delta1": 5.890153190356934e-06,
+    "rel_err_dt_delta2": 1.4725095479183467e-06,
+    "rel_err_dd_delta1": 6.056617385577448e-06,
+    "rel_err_dd_delta2": 1.5141705356919626e-06,
+    "order_ratio_dt": 4.000078097071568,
+    "order_ratio_dd": 3.999957232564711,
+    "F_cone_0": 0.846303806537677,
+    "dF_dt_geo_delta1_per_m": -128400777.97769412,
+    "dF_dt_geo_delta2_per_m": -128382639.31881367,
+    "dF_dd_geo_delta1_per_m": 115417551.51172063,
+    "dF_dd_geo_delta2_per_m": 115403498.31643538,
+    "rel_diff_geo_dt": 0.00014128591666832306,
+    "rel_diff_geo_dd": 0.0001217744305004692
+  },
+  "fig5_y_opt_grat_450_nm": 120.0,
+  "fig5_y_opt_grat_360_nm": 120.0,
+  "fig5_y_opt_flat_nm": 115.0,
+  "fig6_best_pitch_ratio_60": 0.7,
+  "fig6_best_pitch_ratio_90": 0.7,
+  "headline_best_flat_t_nm": 487.5,
+  "headline_best_flat_y_nm": 115.0,
+  "headline_best_flat_60_iso": 2.3284,
+  "headline_best_flat_90_iso": 2.046,
+  "headline_best_grat_60_iso": 5.0248,
+  "headline_best_grat_90_iso": 4.1586,
+  "headline_enhancement_60_at_y100": 1.94,
+  "headline_enhancement_90_at_y100": 1.947,
+  "headline_enhancement_global_60": 2.158,
+  "headline_enhancement_global_90": 2.033
+}

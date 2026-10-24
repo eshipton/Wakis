@@ -1,0 +1,23 @@
+{
+  "task_index": 1,
+  "name": "lorentz_reststrahlen_slab",
+  "f_TO_THz": 16.788377648,
+  "f_LO_THz": 22.3645173668,
+  "eps_inf": 5.35,
+  "eps_st": 9.49413456632653,
+  "lst_ratio_sq": 1.7746045918367346,
+  "peak_R_reststrahlen": 0.8983607999322081,
+  "rms_R_disc": 0.0009954164367073225,
+  "rms_T_disc": 0.0003315007873758971,
+  "rms_R_cont": 0.0009954108466333567,
+  "rms_T_cont": 0.0003314718839442265,
+  "dx_background": 2.5e-08,
+  "dx_min": 2.5e-08,
+  "cells_across_feature": 100.00000000000001,
+  "cpw": 44.832507543619805,
+  "cpw_vacuum": 428.27494,
+  "n_cells": 2560,
+  "n_steps": 124386,
+  "elapsed_s": 57.15,
+  "peak_rss_mb": 465.49
+}

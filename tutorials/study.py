@@ -9,15 +9,15 @@ summary instead of the figures. This tool expands a grid of options into
 arms and runs them:
 
     # CPU: one process per core (independent 2D runs are single-threaded)
-    python tutorials/study.py run tutorials/01_mie_cylinder/mie_cylinder.py \\
+    python tutorials/study.py run tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.py \\
         --backend cpu --jobs 14 \\
         --grid resolution=10,15,20,30,40 conformal=staircase,all,tensor pol=TM,TE
     # GPU: one arm at a time by default (comparable wall times); small,
     # latency-bound arms can share the GPU with --jobs N
-    python tutorials/study.py run tutorials/01_mie_cylinder/mie_cylinder.py \\
+    python tutorials/study.py run tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.py \\
         --backend gpu --grid resolution=60,80 conformal=staircase,all,tensor pol=TM,TE
     # merge data/arms/*.json into data/convergence.json (read by the notebook)
-    python tutorials/study.py collect tutorials/01_mie_cylinder/mie_cylinder.py \\
+    python tutorials/study.py collect tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.py \\
         --machine "g2-standard-16 (8-core Xeon, NVIDIA L4)"
 
 Arms whose JSON exists are skipped, so an interrupted study resumes.

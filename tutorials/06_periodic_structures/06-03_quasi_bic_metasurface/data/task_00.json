@@ -1,0 +1,104 @@
+{
+  "task": 0,
+  "name": "fano_and_alpha_scaling",
+  "nx": 32,
+  "dx_nm": 21.25,
+  "dz_min_nm": 14.99999999999987,
+  "cpw_si_min": 21.28,
+  "cells_across_gap": 4.0,
+  "d_air_to_pml_nm": 757.4,
+  "lambda_bic_fit_nm": 1573.8847,
+  "Q_bic_fit": 1572905115.2,
+  "lambda_bic_rcwa_nm": 1575.7633,
+  "alphas": [
+    0.02,
+    0.04,
+    0.06,
+    0.08,
+    0.1,
+    0.14,
+    0.2
+  ],
+  "Q_fit": [
+    117598.14,
+    29406.17,
+    13073.24,
+    7356.63,
+    4710.65,
+    2406.67,
+    1182.7
+  ],
+  "Q_rcwa": [
+    116649.37,
+    29151.08,
+    12947.7,
+    7276.52,
+    4651.57,
+    2365.9,
+    1151.62
+  ],
+  "Q_alpha2_fit": [
+    47.0393,
+    47.0499,
+    47.0636,
+    47.0824,
+    47.1065,
+    47.1708,
+    47.3081
+  ],
+  "Q_alpha2_rcwa": [
+    46.6597,
+    46.6417,
+    46.6117,
+    46.5697,
+    46.5157,
+    46.3717,
+    46.0649
+  ],
+  "log_slope_fit": -1.99782,
+  "log_slope_rcwa": -2.00491,
+  "Q0_alpha_fit": 47.3873,
+  "Q0_alpha_half_fit": 11.8468,
+  "fano_alpha": 0.48,
+  "fano_Q_harminv": 194.63,
+  "fano_Q_fit": 191.31,
+  "fano_q_param": 1.1351,
+  "fano_rel_diff_Q": 0.0171,
+  "fano_contrast_alpha0": 0.01334,
+  "preflight_3d": {
+    "geometry": {
+      "period_m": 1.32e-06,
+      "semi_axis_a_m": 3.3e-07,
+      "semi_axis_b_m": 1.1e-07,
+      "height_m": 2e-07,
+      "inter_bar_d_m": 6.6e-07,
+      "eps_bg": 1.0,
+      "source": "Koshelev et al. (2018), Fig. 2 caption, p. 2"
+    },
+    "grid_shape": [
+      44,
+      44,
+      36
+    ],
+    "n_cells": 69696,
+    "n_steps": 1600,
+    "peak_ram_gb": 0.618,
+    "est_wall_seconds_cpu": 16.78,
+    "preflight_laptop_fits": true,
+    "preflight_workstation_fits": true,
+    "thetas_deg": [
+      0.0,
+      6.0,
+      9.0,
+      12.0
+    ],
+    "alphas_sin_theta": [
+      0.0,
+      0.10452846326765347,
+      0.15643446504023087,
+      0.20791169081775934
+    ],
+    "ran_3d_solver": false
+  },
+  "elapsed_s": 62.64
+}

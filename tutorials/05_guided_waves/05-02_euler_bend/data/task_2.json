@@ -1,0 +1,25 @@
+{
+  "task_index": 2,
+  "name": "kottke_L2",
+  "group": "convergence",
+  "level": "L2",
+  "bend_type": "euler",
+  "r_eff_um": 4.0,
+  "averaging": "kottke",
+  "cpw": 14,
+  "n_feature": 6,
+  "min_feature_nm": 400.0,
+  "dx_background_nm": 38.012,
+  "dx_min_nm": 38.012,
+  "cells_across_feature": 10.523,
+  "grid_shape": [
+    192,
+    192,
+    1
+  ],
+  "n_cells": 36864,
+  "n_steps": 8001,
+  "elapsed_s": 32.445,
+  "peak_rss_mb": 452.92,
+  "npz_bytes": 6789
+}

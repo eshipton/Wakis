@@ -1,0 +1,68 @@
+{
+  "task": 10,
+  "name": "ag_grating_resolution_study",
+  "demo": false,
+  "mirror": "ag",
+  "cpw": 20,
+  "dx_background_nm": 9.184,
+  "dx_min_nm": 2.577,
+  "min_feature_nm": 72.0,
+  "cells_across_feature": 8.0,
+  "skin_depth_nm": 26.908,
+  "power_skin_depth_nm": 13.454,
+  "cells_per_skin_depth": 10.0,
+  "cells_per_power_skin_depth": 5.0,
+  "n_cells": 33040,
+  "n_steps": 10505,
+  "elapsed_s": 4191.4,
+  "cpsd_meas": [
+    4.0,
+    6.0,
+    8.0,
+    10.0,
+    12.0
+  ],
+  "cpsd_pow_meas": [
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0
+  ],
+  "P_grat_unpol_rad": [
+    3.2858,
+    3.2562,
+    3.2447,
+    3.2333,
+    3.2294
+  ],
+  "P_grat_tm_rad": [
+    6.6295,
+    6.614,
+    6.6084,
+    6.5997,
+    6.5971
+  ],
+  "grating_enhancement_ag_unpol": [
+    2.0486,
+    2.0302,
+    2.023,
+    2.0158,
+    2.0134
+  ],
+  "grating_enhancement_ag_tm": [
+    2.1471,
+    2.1421,
+    2.1403,
+    2.1374,
+    2.1366
+  ],
+  "sw_l2_err": [
+    0.0446,
+    0.03008,
+    0.02077,
+    0.01622,
+    0.01365
+  ],
+  "rel_change_last_two_levels": 0.0012
+}

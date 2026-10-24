@@ -1,0 +1,18 @@
+{
+  "task_index": 6,
+  "name": "kottke_medium",
+  "kind": "convergence",
+  "averaging": "kottke",
+  "cpw": 24,
+  "dx_background_nm": 8.558,
+  "dx_min_nm": 7.845,
+  "min_feature_nm": 47.071,
+  "cells_across_feature": 6.0,
+  "skin_depth_nm": 24.41,
+  "cells_per_skin_depth": 6.102,
+  "n_cells": 19504,
+  "n_steps": 1251,
+  "elapsed_s": 3.835,
+  "peak_rss_mb": 231.5,
+  "npz_bytes": 7102
+}

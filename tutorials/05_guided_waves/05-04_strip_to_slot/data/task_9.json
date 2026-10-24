@@ -1,0 +1,28 @@
+{
+  "task_index": 9,
+  "name": "design2_sym_taper",
+  "design": "sym_taper",
+  "length_um": 8.0,
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "is_demo": false,
+  "min_feature_nm": 60.0,
+  "dx_background_nm": 25.56,
+  "dx_min_nm": 7.14,
+  "dy_nm": 7.14,
+  "cells_across_feature": 8.0,
+  "slot_cells": 14.0,
+  "min_feature_cells": 8.0,
+  "grid_shape": [
+    538,
+    191,
+    1
+  ],
+  "n_cells": 102758,
+  "n_steps": 28251,
+  "elapsed_s": 407.562,
+  "peak_rss_mb": 394.51,
+  "npz_bytes": 487396
+}

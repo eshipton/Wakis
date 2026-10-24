@@ -1,0 +1,19 @@
+{
+  "index": 11,
+  "name": "3d_marosi_mirror",
+  "kind": "3d_marosi",
+  "description": "3D V-band mirror-symmetric pillar SWS baseline (stopband opening at beta_n d = 3 pi)",
+  "dx_background": 25.000000000000064,
+  "dx_min": 12.499999999999924,
+  "cells_across_feature": 8.000000000000048,
+  "n_cells": 200704,
+  "n_steps": 2717909,
+  "nx": 56,
+  "ny": 64,
+  "nz": 56,
+  "conformal": "pec",
+  "glide_symmetric": false,
+  "wall_time_s": 85025.535178866,
+  "f_degen_ghz": 51.73737568759017,
+  "n_bn_shards": 12
+}

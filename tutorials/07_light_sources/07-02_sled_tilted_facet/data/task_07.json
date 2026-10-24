@@ -1,0 +1,24 @@
+{
+  "task": {
+    "index": 7,
+    "name": "staircase_cpw14",
+    "kind": "conv_point",
+    "averaging": "staircase",
+    "cpw": 14,
+    "theta_deg": 7.0,
+    "description": "Convergence point at theta_t=7 & 10 deg + AR 0 deg, averaging=staircase, cpw=14"
+  },
+  "dx_background_nm": 40.812249382821754,
+  "dx_min_nm": 30.93853820597917,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 7,
+  "n_cells": 71687,
+  "n_steps": 4047,
+  "cpw": 14,
+  "h_cell_nm": 30.938538205980063,
+  "r00_7deg": 0.003274644480556153,
+  "r00_10deg": 8.281252323255029e-06,
+  "r_ar_0deg": 0.004867982312952289,
+  "neff_0": 3.3536717339049185,
+  "runtime_s": 68.41858990699998
+}

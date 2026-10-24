@@ -1,0 +1,33 @@
+{
+  "task_index": 4,
+  "name": "kottke_L2",
+  "level": "L2",
+  "averaging": "kottke",
+  "cpw": 14,
+  "n_feature": 6,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 36.58,
+  "dx_min_nm": 8.33,
+  "dx_min_x_nm": 27.0,
+  "dy_min_nm": 8.33,
+  "cells_across_feature": 6.0,
+  "cells_across_tooth_x": 6.0,
+  "n_periods": 100,
+  "dw_nm": 50.0,
+  "shift_nm": 0.0,
+  "apodization": "uniform",
+  "grid_shape": [
+    1265,
+    86,
+    1
+  ],
+  "n_cells": 108790,
+  "n_steps": 81478,
+  "lambda_bragg_nm": 1557.4,
+  "stopband_width_nm": 31.71,
+  "R_max": 1.0,
+  "T_min": 0.0013,
+  "elapsed_s": 951.171,
+  "peak_rss_mb": 418.82,
+  "npz_bytes": 9349
+}

@@ -1,0 +1,27 @@
+{
+  "task": 1,
+  "name": "lorentz_mu_slab_simulation",
+  "quick": false,
+  "elapsed_s": 9.669507014001283,
+  "max_rss_mb": 196.9765625,
+  "thickness_mm": 50.0,
+  "f_r_GHz": 1.4,
+  "coarse": {
+    "dz_mm": 2.5,
+    "nt": 4496,
+    "cpw_mat": 13.29394431512649,
+    "cells_across": 20.0,
+    "rms_R_disc": 0.001464637510333895,
+    "rms_T_disc": 0.0004436470357335709,
+    "rms_R_cont": 0.0015098223369140254
+  },
+  "fine": {
+    "dz_mm": 1.25,
+    "nt": 8993,
+    "cpw_mat": 26.58788863025298,
+    "cells_across": 40.0,
+    "rms_R_disc": 0.0003663643807270819,
+    "rms_T_disc": 0.0001110705664735138,
+    "rms_R_cont": 0.0003776651458809406
+  }
+}

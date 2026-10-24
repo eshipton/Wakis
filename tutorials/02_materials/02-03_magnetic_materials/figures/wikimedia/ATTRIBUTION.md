@@ -1,0 +1,24 @@
+# Wikimedia Commons & Physics Diagram Attributions — Tutorial 2.3 (`02-03_magnetic_materials`)
+
+## 1. Audited Wikimedia Commons Candidate Files
+
+The following candidate figures on Wikimedia Commons (linked from the English Wikipedia articles [*Ferromagnetic resonance*](https://en.wikipedia.org/wiki/Ferromagnetic_resonance), [*Landau–Lifshitz–Gilbert equation*](https://en.wikipedia.org/wiki/Landau%E2%80%93Lifshitz%E2%80%93Gilbert_equation), [*Larmor precession*](https://en.wikipedia.org/wiki/Larmor_precession), [*Magnetic susceptibility*](https://en.wikipedia.org/wiki/Magnetic_susceptibility), and [*Permeability (electromagnetism)*](https://en.wikipedia.org/wiki/Permeability_(electromagnetism))) were inspected via their Commons file description pages:
+
+| Commons File | Title | Author / Uploader | Licence | Commons URL | Disposition in Tutorial 2.3 |
+|---|---|---|---|---|---|
+| `File:Damped_Magnetization_Precession.jpg` | *Damped Magnetization Precession* | CH. Becker (Physikalisch-Technische Bundesanstalt, PTB), uploaded by [User:Chakageorge](https://commons.wikimedia.org/wiki/User:Chakageorge) | **Public Domain** (`pd` / `PD ineligible`, [Public Domain](https://en.wikipedia.org/wiki/Public_domain)) | <https://commons.wikimedia.org/wiki/File:Damped_Magnetization_Precession.jpg> | **Redrawn from exact LLG ODE integration in `wakis.figstyle` (`fmr_precession_and_permeability_wakis.png`, Panel a)**: the Commons JPEG has compression artifacts (`Category:Images with inappropriate JPEG compression`) and lacks explicit torque labels. We integrate the 3D LLG equation directly and plot $\mathbf{M}(t)$, $\mathbf{H}_{\text{eff}}$, the Larmor torque $-\gamma_{\text{LL}}\mu_0(\mathbf{M}\times\mathbf{H}_{\text{eff}})$, and the Gilbert damping torque $\frac{\alpha_{\text{G}}}{M_s}(\mathbf{M}\times\dot{\mathbf{M}})$, credited as *"after File:Damped_Magnetization_Precession.jpg (CH. Becker, PTB, Public Domain)"*. |
+| `File:Precession_in_magnetic_field.svg` | *Precession in magnetic field* | [User:FbrG](https://commons.wikimedia.org/wiki/User_talk:FbrG) | **CC0 1.0 Universal** ([CC0 1.0 Public Domain Dedication](http://creativecommons.org/publicdomain/zero/1.0/deed.en)) | <https://commons.wikimedia.org/wiki/File:Precession_in_magnetic_field.svg> | **Combined into Panel (a) of `fmr_precession_and_permeability_wakis.png`**: provides the precession-cone geometry around $\mathbf{H}_{\text{eff}}$, credited as *"after File:Precession_in_magnetic_field.svg (User:FbrG, CC0 1.0)"*. |
+| `File:Permeability_of_ferromagnet_by_Zureks.svg` | *Permeability of ferromagnet by Zureks* | [User:Zureks](https://commons.wikimedia.org/wiki/User:Zureks) | **Public Domain** (`PD-self`, [Public Domain](https://en.wikipedia.org/wiki/Public_domain)) | <https://commons.wikimedia.org/wiki/File:Permeability_of_ferromagnet_by_Zureks.svg> | Inspected; depicts static $B$–$H$ permeability $\mu(H)$ rather than frequency-dependent $\mu'(f), \mu''(f)$. Panel (b) of `fmr_precession_and_permeability_wakis.png` plots the broadband frequency response $\mu'(f), \mu''(f)$ computed directly from Wakis `Material(mu_poles=[Debye(...), Lorentz(...)])` with the FMR resonance $f_r$ and Snoek's limit marked. |
+
+---
+
+## 2. Generated Figure in `figures/wikimedia/`
+
+- **File name**: `fmr_precession_and_permeability_wakis.png`
+- **Title**: *Landau–Lifshitz–Gilbert (LLG) damped spin precession and broadband magnetic permeability spectrum ($\mu'(f), \mu''(f)$) with domain-wall Debye relaxation, ferromagnetic resonance (FMR), and Snoek's limit*
+- **Author**: Wakis contributors (generated programmatically by `magnetic_materials.py` using `wakis.materials`, `wakis.dispersive`, and `wakis.figstyle`)
+- **Licence**: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) / CERN Wakis package licence
+- **Source & Attribution**:
+  - Panel (a) layout after [`File:Damped_Magnetization_Precession.jpg`](https://commons.wikimedia.org/wiki/File:Damped_Magnetization_Precession.jpg) (CH. Becker, Physikalisch-Technische Bundesanstalt, [Public Domain](https://en.wikipedia.org/wiki/Public_domain)) and [`File:Precession_in_magnetic_field.svg`](https://commons.wikimedia.org/wiki/File:Precession_in_magnetic_field.svg) (User:FbrG, [CC0 1.0](http://creativecommons.org/publicdomain/zero/1.0/deed.en)); trajectory computed from the Landau–Lifshitz–Gilbert equation (L. D. Landau and E. M. Lifshitz, *Phys. Z. Sowjetunion* **8**, 153–169, 1935; T. L. Gilbert, *IEEE Trans. Magn.* **40**(6), 3443–3449, 2004, doi:`10.1109/TMAG.2004.836740`).
+  - Panel (b) computed from Wakis `Material(mu_poles=[Debye(...), Lorentz(...)])` and Snoek's law, J. L. Snoek, *Physica* **14**(4), 207–217 (1948), doi:`10.1016/0031-8914(48)90038-X`, and D. M. Pozar, *Microwave Engineering*, 4th ed. (Wiley, 2011), ch. 9.
+- **Modifications**: Original numerical redraw in `wakis.figstyle` using Wakis's $\exp(+i\omega t)$ sign convention ($\mu = \mu' - i\mu''$, $\mu'' = -\operatorname{Im}\mu \ge 0$).

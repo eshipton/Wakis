@@ -1,0 +1,228 @@
+{
+  "kspace_and_rgb_incoupler_sweep": {
+    "index": 0,
+    "name": "kspace_and_rgb_incoupler_sweep",
+    "cpw": 22,
+    "kspace_vector_closure": 0.0,
+    "conv_common_fov_deg": 18.322298376511895,
+    "ach_common_fov_deg": 53.52852194516946,
+    "rgb_channels": {
+      "B": {
+        "wavelength_nm": 442.0,
+        "period_nm": 316.9056603773586,
+        "mesh": {
+          "nx": 32,
+          "nz": 118,
+          "n_cells_2d": 3776,
+          "dx_nm": 9.903301886792455,
+          "dz_nm": 10.0,
+          "n_max": 2.0,
+          "cpw_x": 22.315789473684205,
+          "cpw_z": 22.1,
+          "min_feature_nm": 158.4528301886793,
+          "cells_per_min_feature_x": 16.0,
+          "cells_per_grating_height_z": 16.0
+        },
+        "mean_guided_eff": 0.22938819075802405,
+        "uniformity_tian": 0.3703875733254861,
+        "max_abs_err_vs_rcwa": 0.001308624290473348,
+        "max_energy_residual": 0.00041145254172259005
+      },
+      "G": {
+        "wavelength_nm": 530.0,
+        "period_nm": 380.0,
+        "mesh": {
+          "nx": 32,
+          "nz": 122,
+          "n_cells_2d": 3904,
+          "dx_nm": 11.875,
+          "dz_nm": 11.428571428571429,
+          "n_max": 2.0,
+          "cpw_x": 22.31578947368421,
+          "cpw_z": 23.1875,
+          "min_feature_nm": 160.0,
+          "cells_per_min_feature_x": 16.0,
+          "cells_per_grating_height_z": 14.0
+        },
+        "mean_guided_eff": 0.23513794090425216,
+        "uniformity_tian": 0.47149776898281104,
+        "max_abs_err_vs_rcwa": 0.0010308454196854278,
+        "max_energy_residual": 0.0005590052166584147
+      },
+      "R": {
+        "wavelength_nm": 663.0,
+        "period_nm": 475.35849056603786,
+        "mesh": {
+          "nx": 32,
+          "nz": 117,
+          "n_cells_2d": 3744,
+          "dx_nm": 14.854952830188683,
+          "dz_nm": 14.545454545454545,
+          "n_max": 2.0,
+          "cpw_x": 22.31578947368421,
+          "cpw_z": 22.790625000000002,
+          "min_feature_nm": 160.0,
+          "cells_per_min_feature_x": 16.0,
+          "cells_per_grating_height_z": 11.0
+        },
+        "mean_guided_eff": 0.2168594906033814,
+        "uniformity_tian": 0.5257575695570418,
+        "max_abs_err_vs_rcwa": 0.0007349304309602345,
+        "max_energy_residual": 0.0005645954836259737
+      }
+    },
+    "elapsed_s": 22.2
+  },
+  "achromatic_supercell_incoupler": {
+    "index": 1,
+    "name": "achromatic_supercell_incoupler",
+    "cpw": 20,
+    "period_nm": 1900.0,
+    "rgb_angular_spread_deg": 0.046765063348317426,
+    "channels": {
+      "B": {
+        "order_m": 6,
+        "wavelength_nm": 442.0,
+        "mesh": {
+          "nx": 172,
+          "nz": 111,
+          "n_cells_2d": 19092,
+          "dx_nm": 11.046511627906977,
+          "dz_nm": 10.666666666666666,
+          "n_max": 2.0,
+          "cpw_x": 20.006315789473685,
+          "cpw_z": 20.71875,
+          "min_feature_nm": 131.67000000000004,
+          "cells_per_min_feature_x": 11.919600000000003,
+          "cells_per_grating_height_z": 15.000000000000002
+        },
+        "mean_eff_wakis": 0.16621981300260552,
+        "mean_eff_rcwa": 0.16670397722084462,
+        "uniformity_tian_wakis": 0.8822256411100686,
+        "uniformity_tian_rcwa": 0.8822990143434435,
+        "max_abs_err_vs_rcwa": 0.0019053635115944545,
+        "max_energy_residual": 0.09185074172590413,
+        "theta_wg_deg_at_0": 47.27562631147054
+      },
+      "G": {
+        "order_m": 5,
+        "wavelength_nm": 530.0,
+        "mesh": {
+          "nx": 144,
+          "nz": 113,
+          "n_cells_2d": 16272,
+          "dx_nm": 13.194444444444445,
+          "dz_nm": 12.307692307692308,
+          "n_max": 2.0,
+          "cpw_x": 20.08421052631579,
+          "cpw_z": 21.53125,
+          "min_feature_nm": 131.67000000000004,
+          "cells_per_min_feature_x": 9.979200000000004,
+          "cells_per_grating_height_z": 13.0
+        },
+        "mean_eff_wakis": 0.08063758779748521,
+        "mean_eff_rcwa": 0.0814364296488849,
+        "uniformity_tian_wakis": 0.937155018359747,
+        "uniformity_tian_rcwa": 0.937534303800081,
+        "max_abs_err_vs_rcwa": 0.001127639986900436,
+        "max_energy_residual": 0.03316476408751923,
+        "theta_wg_deg_at_0": 47.22886124812222
+      },
+      "R": {
+        "order_m": 4,
+        "wavelength_nm": 663.0,
+        "mesh": {
+          "nx": 115,
+          "nz": 106,
+          "n_cells_2d": 12190,
+          "dx_nm": 16.52173913043478,
+          "dz_nm": 16.0,
+          "n_max": 2.0,
+          "cpw_x": 20.06447368421053,
+          "cpw_z": 20.71875,
+          "min_feature_nm": 131.67000000000004,
+          "cells_per_min_feature_x": 7.969500000000003,
+          "cells_per_grating_height_z": 10.0
+        },
+        "mean_eff_wakis": 0.08883715666853625,
+        "mean_eff_rcwa": 0.08894673353774506,
+        "uniformity_tian_wakis": 0.8537949653725877,
+        "uniformity_tian_rcwa": 0.8475312601900675,
+        "max_abs_err_vs_rcwa": 0.0008805681573372526,
+        "max_energy_residual": 0.02928916239832735,
+        "theta_wg_deg_at_0": 47.27562631147054
+      }
+    },
+    "elapsed_s": 63.18
+  },
+  "outcoupler_tir_and_eyebox_uniformity": {
+    "index": 2,
+    "name": "outcoupler_tir_and_eyebox_uniformity",
+    "cpw": 22,
+    "mesh": {
+      "nx": 32,
+      "nz": 118,
+      "n_cells_2d": 3776,
+      "dx_nm": 11.875,
+      "dz_nm": 11.666666666666666,
+      "n_max": 2.0,
+      "cpw_x": 22.31578947368421,
+      "cpw_z": 22.714285714285715,
+      "min_feature_nm": 83.60000000000001,
+      "cells_per_min_feature_x": 7.04,
+      "cells_per_grating_height_z": 12.0
+    },
+    "tir_t0_all_nan": true,
+    "mean_r0_wakis": 0.5656033331591469,
+    "mean_r0_rcwa": 0.5680809099863787,
+    "r0_uniformity_tian": 0.5119136178460946,
+    "tm1_uniformity_tian": 0.4078104326287748,
+    "max_abs_err_r0": 0.00290542632163604,
+    "max_abs_err_tm1": 0.0010284574956628822,
+    "max_energy_residual": 0.002442667354211503,
+    "reciprocity_t_out": 0.26459357268541034,
+    "reciprocity_t_in_rcwa": 0.26400764285628137,
+    "reciprocity_abs_diff": 0.0005859298291289727,
+    "eyebox_constant_uniformity_tian": 0.23788023357900157,
+    "eyebox_graduated_uniformity_tian": 0.6553968031093218,
+    "eyebox_constant_wang_err": 0.9415536307046494,
+    "eyebox_graduated_wang_err": 0.3517012333829023,
+    "elapsed_s": 11.59
+  },
+  "nearfield_and_resolution_study": {
+    "index": 3,
+    "name": "nearfield_and_resolution_study",
+    "cpw_levels": [
+      16,
+      20,
+      26,
+      34
+    ],
+    "dx_nm": [
+      16.52173913043478,
+      13.10344827586207,
+      10.0,
+      7.755102040816327
+    ],
+    "err_rms": [
+      0.001737586737416575,
+      0.0011400338081998906,
+      0.0013789815456909163,
+      0.0005041935543972249
+    ],
+    "err_t_m1": [
+      0.0011774913318917668,
+      0.00015163843850773961,
+      0.0015364348799682959,
+      1.1647834061823126e-05
+    ],
+    "energy_res": [
+      0.00040149197031325023,
+      0.0003973417830793746,
+      0.00039372483291710836,
+      0.00039678289201461325
+    ],
+    "convergence_ratio_first_to_last": 3.4462692397841153,
+    "elapsed_s": 14.19
+  }
+}

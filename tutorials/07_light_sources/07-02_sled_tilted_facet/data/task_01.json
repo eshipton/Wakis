@@ -1,0 +1,33 @@
+{
+  "task": {
+    "index": 1,
+    "name": "ar_tilt_sweep",
+    "kind": "ar_sweep",
+    "cpw": 20,
+    "thetas": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      12.0
+    ],
+    "description": "Single-mode (w=1.75 um) single-layer AR coated facet sweep 0-12 deg & spectrum (cpw=20)"
+  },
+  "dx_background_nm": 28.56857456797523,
+  "dx_min_nm": 21.656976744185293,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 10,
+  "n_cells": 138431,
+  "n_steps": 5781,
+  "r00_ar_0deg": 0.0036083970368216275,
+  "r00_ar_7deg": 4.355420814457075e-05,
+  "r00_ar_10deg": 3.952999358442204e-06,
+  "runtime_s": 774.945733739
+}

@@ -1,0 +1,19 @@
+{
+  "task_index": 3,
+  "name": "debye_water_slab",
+  "f_peak_GHz": 17.11343474106402,
+  "tau_ps": 9.299999999999999,
+  "rms_R_disc": 0.0003233860349990606,
+  "rms_T_disc": 0.0003786087389248982,
+  "rms_R_cont": 0.0003233936529506815,
+  "rms_T_cont": 0.00037860865428671563,
+  "dx_background": 1e-05,
+  "dx_min": 1e-05,
+  "cells_across_feature": 50.0,
+  "cpw": 84.15100783977014,
+  "cpw_vacuum": 749.4811449999999,
+  "n_cells": 2400,
+  "n_steps": 61386,
+  "elapsed_s": 27.427,
+  "peak_rss_mb": 465.49
+}

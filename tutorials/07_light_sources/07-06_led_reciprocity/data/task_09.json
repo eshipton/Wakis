@@ -1,0 +1,47 @@
+{
+  "task": 9,
+  "name": "ag_grating_underresolved_demo",
+  "demo": true,
+  "mirror": "ag",
+  "cpw": 10,
+  "dx_background_nm": 18.367,
+  "dx_min_nm": 15.588,
+  "min_feature_nm": 72.0,
+  "cells_across_feature": 4.0,
+  "skin_depth_nm": 26.908,
+  "power_skin_depth_nm": 13.454,
+  "cells_per_skin_depth": 1.6,
+  "cells_per_power_skin_depth": 0.8,
+  "n_cells": 6556,
+  "n_steps": 2521,
+  "elapsed_s": 123.17,
+  "cpsd_meas": [
+    1.6,
+    2.6
+  ],
+  "cpsd_pow_meas": [
+    0.8,
+    1.3
+  ],
+  "P_grat_unpol_rad": [
+    3.5262,
+    3.3658
+  ],
+  "P_grat_tm_rad": [
+    6.9744,
+    6.7878
+  ],
+  "grating_enhancement_ag_unpol": [
+    2.1985,
+    2.0985
+  ],
+  "grating_enhancement_ag_tm": [
+    2.2588,
+    2.1984
+  ],
+  "sw_l2_err": [
+    0.12159,
+    0.06371
+  ],
+  "rel_change_last_two_levels": 0.04764
+}

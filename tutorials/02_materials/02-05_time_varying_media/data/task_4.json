@@ -1,0 +1,10 @@
+{
+  "index": 4,
+  "name": "resolution_and_cfl_convergence_study",
+  "cpw": 20.0,
+  "cells_across_feature": 5.0,
+  "empirical_convergence_order": 1.9993114471485045,
+  "err_omega_coarsest": 0.004043065982397671,
+  "err_omega_finest": 0.00025294265133790866,
+  "wall_seconds": 0.1236191489997509
+}

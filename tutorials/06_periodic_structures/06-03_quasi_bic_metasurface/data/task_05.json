@@ -1,0 +1,38 @@
+{
+  "task": 5,
+  "name": "koshelev_fig2_3d_tilted_bars",
+  "geometry": {
+    "period_m": 1.32e-06,
+    "semi_axis_a_m": 3.3e-07,
+    "semi_axis_b_m": 1.1e-07,
+    "height_m": 2e-07,
+    "inter_bar_d_m": 6.6e-07,
+    "eps_bg": 1.0,
+    "source": "Koshelev et al. (2018), Fig. 2 caption, p. 2"
+  },
+  "grid_shape": [
+    44,
+    44,
+    36
+  ],
+  "n_cells": 69696,
+  "n_steps": 1600,
+  "peak_ram_gb": 0.618,
+  "est_wall_seconds_cpu": 16.78,
+  "preflight_laptop_fits": true,
+  "preflight_workstation_fits": true,
+  "thetas_deg": [
+    0.0,
+    6.0,
+    9.0,
+    12.0
+  ],
+  "alphas_sin_theta": [
+    0.0,
+    0.10452846326765347,
+    0.15643446504023087,
+    0.20791169081775934
+  ],
+  "ran_3d_solver": false,
+  "elapsed_s": 0.0
+}

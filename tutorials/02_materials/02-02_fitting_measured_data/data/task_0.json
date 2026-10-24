@@ -1,0 +1,634 @@
+{
+  "task": 0,
+  "name": "noble_metal_pole_convergence_and_bands",
+  "quick": false,
+  "elapsed_s": 46.39643486500063,
+  "max_rss_mb": 188.5703125,
+  "au_pole_fits": {
+    "N1": {
+      "name": "au_jc_N1",
+      "n_poles": 1,
+      "eps_inf": 3.926303267890607,
+      "fit_error": 0.64206528887956,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.3180570286330918,
+      "max_im_eps": -9.698506594598496e-07,
+      "poles": [
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.2056762110654362e+16,
+          "gamma_rad_s": 1654954657383360.2
+        }
+      ]
+    },
+    "N2": {
+      "name": "au_jc_N2",
+      "n_poles": 2,
+      "eps_inf": 4.630845457302655,
+      "fit_error": 0.13563131004965578,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.21767548211063653,
+      "max_im_eps": -1.8768174252094795e-06,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 4.07241720603419,
+          "omega_0_rad_s": 5503799585180059.0,
+          "gamma_rad_s": 3773402756047290.5
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.3320238548803654e+16,
+          "gamma_rad_s": 0.4619280057765387
+        }
+      ]
+    },
+    "N3": {
+      "name": "au_jc_N3",
+      "n_poles": 3,
+      "eps_inf": 4.169303696221598,
+      "fit_error": 0.06136499397142111,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.20702049815574775,
+      "max_im_eps": -1.3631105764853422e-06,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.8352224314938784,
+          "omega_0_rad_s": 4336247984644865.0,
+          "gamma_rad_s": 1100519497003439.0
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.770410483349709,
+          "omega_0_rad_s": 6059938624712591.0,
+          "gamma_rad_s": 3153052433033120.5
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.3356544019040722e+16,
+          "gamma_rad_s": 7637755.441877208
+        }
+      ]
+    },
+    "N4": {
+      "name": "au_jc_N4",
+      "n_poles": 4,
+      "eps_inf": 4.684876251739866,
+      "fit_error": 0.13191419450890693,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.2183532479609069,
+      "max_im_eps": -1.8756372068487537e-06,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 1.0925153184912827e-06,
+          "omega_0_rad_s": 4937484881534194.0,
+          "gamma_rad_s": 16168.041419639536
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 4.698320127383387e-05,
+          "omega_0_rad_s": 3434669022481849.5,
+          "gamma_rad_s": 1.677281989712722e+20
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 4.0643043995969315,
+          "omega_0_rad_s": 5516155313410573.0,
+          "gamma_rad_s": 3761634949251875.0
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.3342429402788102e+16,
+          "gamma_rad_s": 381646.4997152378
+        }
+      ]
+    },
+    "N5": {
+      "name": "au_jc_N5",
+      "n_poles": 5,
+      "eps_inf": 3.994275964631478,
+      "fit_error": 0.056931802977137014,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.20409004984974594,
+      "max_im_eps": -1.2444553716420399e-06,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.35627346127780823,
+          "omega_0_rad_s": 1884229325167379.2,
+          "gamma_rad_s": 246752702781155.47
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.023721972527572657,
+          "omega_0_rad_s": 2439522127376525.5,
+          "gamma_rad_s": 42045283164849.24
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 1.0988010377611546,
+          "omega_0_rad_s": 4421619219130737.5,
+          "gamma_rad_s": 1310223905367075.8
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.4687646439459714,
+          "omega_0_rad_s": 6184004285593653.0,
+          "gamma_rad_s": 2967600561977966.0
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.320029580074568e+16,
+          "gamma_rad_s": 2942108.0860536858
+        }
+      ]
+    },
+    "N6": {
+      "name": "au_jc_N6",
+      "n_poles": 6,
+      "eps_inf": 3.5455735903137655,
+      "fit_error": 0.055890168618823385,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.19421469603892877,
+      "max_im_eps": -1.4319152570011115e-06,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 344.5768138691261,
+          "omega_0_rad_s": 620929219756081.9,
+          "gamma_rad_s": 532076956.399508
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.31557668600466743,
+          "omega_0_rad_s": 2002236628164755.5,
+          "gamma_rad_s": 302672114712671.44
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.010761894122564676,
+          "omega_0_rad_s": 2630945497831808.0,
+          "gamma_rad_s": 1.1583531089332892e+18
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 1.0725075045518595,
+          "omega_0_rad_s": 4425254916877964.5,
+          "gamma_rad_s": 1313086527484618.8
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.560448650318215,
+          "omega_0_rad_s": 6240579645974886.0,
+          "gamma_rad_s": 3084277419177882.0
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 5603733065550719.0,
+          "gamma_rad_s": 8830013870.503614
+        }
+      ]
+    }
+  },
+  "ag_pole_fits": {
+    "N1": {
+      "name": "ag_jc_N1",
+      "n_poles": 1,
+      "eps_inf": 7.018096427432332,
+      "fit_error": 0.31874902710564956,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.3346596001344366,
+      "max_im_eps": -2.651508991879306e-07,
+      "poles": [
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.5547479096754752e+16,
+          "gamma_rad_s": 272090154715559.28
+        }
+      ]
+    },
+    "N2": {
+      "name": "ag_jc_N2",
+      "n_poles": 2,
+      "eps_inf": 4.941364302793743,
+      "fit_error": 0.10971487121347084,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.2708644094502633,
+      "max_im_eps": -3.316559522513035e-08,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.25955607254304897,
+          "omega_0_rad_s": 6374071487517793.0,
+          "gamma_rad_s": 442330265486213.44
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.4641885414306106e+16,
+          "gamma_rad_s": 16611270389098.281
+        }
+      ]
+    },
+    "N3": {
+      "name": "ag_jc_N3",
+      "n_poles": 3,
+      "eps_inf": 4.941371464715779,
+      "fit_error": 0.10971487122917663,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.2708355786968006,
+      "max_im_eps": -3.317578363855107e-08,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.25955399444458155,
+          "omega_0_rad_s": 6374069554013355.0,
+          "gamma_rad_s": 442327226135903.44
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.12349700481267513,
+          "omega_0_rad_s": 3373726345344791.0,
+          "gamma_rad_s": 2.4468427399206958e+23
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.4641887217612878e+16,
+          "gamma_rad_s": 16612812814148.787
+        }
+      ]
+    },
+    "N4": {
+      "name": "ag_jc_N4",
+      "n_poles": 4,
+      "eps_inf": 5.220741607244524,
+      "fit_error": 0.10218294200977861,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.27565726660980133,
+      "max_im_eps": -3.2358806671403666e-08,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.2137210248464081,
+          "omega_0_rad_s": 51284172409709.305,
+          "gamma_rad_s": 49447665513.64754
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.33592234484386013,
+          "omega_0_rad_s": 3294492803738839.5,
+          "gamma_rad_s": 1064800372462992.8
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.23797826224380111,
+          "omega_0_rad_s": 6357550485737542.0,
+          "gamma_rad_s": 430754500241827.2
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.468475000007101e+16,
+          "gamma_rad_s": 336775.6073727009
+        }
+      ]
+    },
+    "N5": {
+      "name": "ag_jc_N5",
+      "n_poles": 5,
+      "eps_inf": 5.014216353026778,
+      "fit_error": 0.10802336221215438,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.2718996575174342,
+      "max_im_eps": -3.4820123710260115e-08,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 3.058424857795063e-06,
+          "omega_0_rad_s": 1914280656088809.8,
+          "gamma_rad_s": 325830.3197122865
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.023004754542652085,
+          "omega_0_rad_s": 539097680674583.25,
+          "gamma_rad_s": 1.095606657465416e+20
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.013853058324888786,
+          "omega_0_rad_s": 1104746978053424.2,
+          "gamma_rad_s": 8.018149900191175e+19
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.2556301700776754,
+          "omega_0_rad_s": 6370915446532146.0,
+          "gamma_rad_s": 441501921981860.06
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.4704281932049224e+16,
+          "gamma_rad_s": 18259502222659.69
+        }
+      ]
+    },
+    "N6": {
+      "name": "ag_jc_N6",
+      "n_poles": 6,
+      "eps_inf": 5.220722435851296,
+      "fit_error": 0.10218294185185127,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.27565694881876235,
+      "max_im_eps": -3.2359001480048414e-08,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.969116445104363e-21,
+          "omega_0_rad_s": 13464886348.291466,
+          "gamma_rad_s": 1937.14736143894
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.018660922849266213,
+          "omega_0_rad_s": 2204465461969728.5,
+          "gamma_rad_s": 9.532848666977075e+26
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.33592140713191815,
+          "omega_0_rad_s": 3294482117260320.0,
+          "gamma_rad_s": 1064816864610794.9
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.458820999161261e-05,
+          "omega_0_rad_s": 587907531331624.5,
+          "gamma_rad_s": 1.3028699590421655e+38
+        },
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.23797961641378174,
+          "omega_0_rad_s": 6357551691806384.0,
+          "gamma_rad_s": 430754409277562.0
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.4684757505153886e+16,
+          "gamma_rad_s": 2.0818971313613863
+        }
+      ]
+    }
+  },
+  "au_band_study": {
+    "narrow_red_nir": {
+      "lambda_range_um": [
+        0.55,
+        0.95
+      ],
+      "n_points": 7,
+      "in_band_rel_rms": 0.006307966757182263,
+      "out_of_band_rel_rms": 1.0918415661400924,
+      "full_table_rel_rms": 1.0108516793668954,
+      "max_im_eps_global": -8.823152257692927e-08,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.34155942312073945,
+      "eps_inf": 5.855876464689191,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.7853237487340422,
+          "omega_0_rad_s": 3737242926024296.5,
+          "gamma_rad_s": 496427585163266.44
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.3179523502333294e+16,
+          "gamma_rad_s": 94648034907365.81
+        }
+      ]
+    },
+    "visible_nir": {
+      "lambda_range_um": [
+        0.38,
+        0.9
+      ],
+      "n_points": 16,
+      "in_band_rel_rms": 0.07077722460929223,
+      "out_of_band_rel_rms": 1.043223872185941,
+      "full_table_rel_rms": 0.8570783334741329,
+      "max_im_eps_global": -4.4455192689568964e-07,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.3013929380860562,
+      "eps_inf": 7.1506642573532355,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 2.5067544454181125,
+          "omega_0_rad_s": 4681349091767875.0,
+          "gamma_rad_s": 2007078997249624.8
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 1.3946491474146002e+16,
+          "gamma_rad_s": 1420.8454954012502
+        }
+      ]
+    },
+    "full_uv_nir": {
+      "lambda_range_um": [
+        0.187,
+        1.94
+      ],
+      "n_points": 49,
+      "in_band_rel_rms": 0.6264460321888531,
+      "out_of_band_rel_rms": 0.6264460321888531,
+      "full_table_rel_rms": 0.6264460321888531,
+      "max_im_eps_global": -0.00010648038036066531,
+      "stable_50as": false,
+      "max_stable_dt_fs": 0.0,
+      "eps_inf": 1.5097396258938175e-05,
+      "poles": [
+        {
+          "type": "Lorentz",
+          "delta_eps": 0.04466852456254938,
+          "omega_0_rad_s": 3226255867967190.5,
+          "gamma_rad_s": 41803223.00184257
+        },
+        {
+          "type": "Drude",
+          "omega_p_rad_s": 2.8456520723664096e+16,
+          "gamma_rad_s": 3.2705493717783452e+16
+        }
+      ]
+    }
+  },
+  "material_library_category_counts": {
+    "metal": 17,
+    "dielectric": 9,
+    "semiconductor": 10,
+    "polymer": 4,
+    "uniaxial": 20,
+    "rf_substrate": 2
+  },
+  "material_library_total_canonical": 62,
+  "material_library_total_with_aliases": 160,
+  "material_library_featured": {
+    "gold": {
+      "category": "metal",
+      "model": "Lorentz-Drude (Rakic)",
+      "wavelength_range_um": [
+        0.2,
+        12.4
+      ],
+      "fit_error": null,
+      "stable_50as": false,
+      "max_stable_dt_s": 4.72e-17,
+      "reference": "A. D. Rakic, A. B. Djurisic, J. M. Elazar, and M. L. Majewski, Appl. Opt. 37, 5271-5283 (1998), doi:10.1364/AO.37.005271",
+      "doi": "10.1364/AO.37.005271"
+    },
+    "gold jc": {
+      "category": "metal",
+      "model": "Lorentz-Drude (fit)",
+      "wavelength_range_um": [
+        0.4,
+        0.8
+      ],
+      "fit_error": 0.0445,
+      "stable_50as": true,
+      "max_stable_dt_s": 3.4e-16,
+      "reference": "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370-4379 (1972), doi:10.1103/PhysRevB.6.4370",
+      "doi": "10.1103/PhysRevB.6.4370"
+    },
+    "gold jc wide": {
+      "category": "metal",
+      "model": "Lorentz-Drude (fit)",
+      "wavelength_range_um": [
+        0.25,
+        1.94
+      ],
+      "fit_error": 0.0795,
+      "stable_50as": true,
+      "max_stable_dt_s": 2.1e-16,
+      "reference": "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370-4379 (1972), doi:10.1103/PhysRevB.6.4370",
+      "doi": "10.1103/PhysRevB.6.4370"
+    },
+    "silver": {
+      "category": "metal",
+      "model": "Lorentz-Drude (Rakic)",
+      "wavelength_range_um": [
+        0.2,
+        12.4
+      ],
+      "fit_error": null,
+      "stable_50as": false,
+      "max_stable_dt_s": 3.87e-17,
+      "reference": "A. D. Rakic, A. B. Djurisic, J. M. Elazar, and M. L. Majewski, Appl. Opt. 37, 5271-5283 (1998), doi:10.1364/AO.37.005271",
+      "doi": "10.1364/AO.37.005271"
+    },
+    "silver jc": {
+      "category": "metal",
+      "model": "Lorentz-Drude (fit)",
+      "wavelength_range_um": [
+        0.4,
+        0.8
+      ],
+      "fit_error": 0.0095,
+      "stable_50as": true,
+      "max_stable_dt_s": 2.45e-16,
+      "reference": "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370-4379 (1972), doi:10.1103/PhysRevB.6.4370",
+      "doi": "10.1103/PhysRevB.6.4370"
+    },
+    "silver jc wide": {
+      "category": "metal",
+      "model": "Lorentz-Drude (fit)",
+      "wavelength_range_um": [
+        0.3,
+        1.94
+      ],
+      "fit_error": 0.0986,
+      "stable_50as": true,
+      "max_stable_dt_s": 2.68e-16,
+      "reference": "P. B. Johnson and R. W. Christy, Phys. Rev. B 6, 4370-4379 (1972), doi:10.1103/PhysRevB.6.4370",
+      "doi": "10.1103/PhysRevB.6.4370"
+    },
+    "fused silica": {
+      "category": "dielectric",
+      "model": "Sellmeier",
+      "wavelength_range_um": [
+        0.21,
+        6.7
+      ],
+      "fit_error": null,
+      "stable_50as": true,
+      "max_stable_dt_s": 5.12e-17,
+      "reference": "I. H. Malitson, J. Opt. Soc. Am. 55, 1205-1209 (1965), doi:10.1364/JOSA.55.001205",
+      "doi": "10.1364/JOSA.55.001205"
+    },
+    "silicon": {
+      "category": "semiconductor",
+      "model": "Sellmeier",
+      "wavelength_range_um": [
+        1.357,
+        11.04
+      ],
+      "fit_error": null,
+      "stable_50as": true,
+      "max_stable_dt_s": 7.21e-17,
+      "reference": "C. D. Salzberg and J. J. Villa, J. Opt. Soc. Am. 47, 244-246 (1957), doi:10.1364/JOSA.47.000244",
+      "doi": "10.1364/JOSA.47.000244"
+    },
+    "gan o": {
+      "category": "uniaxial",
+      "model": "Sellmeier",
+      "wavelength_range_um": [
+        0.35,
+        10.0
+      ],
+      "fit_error": null,
+      "stable_50as": true,
+      "max_stable_dt_s": 2.45e-16,
+      "reference": "A. S. Barker Jr. and M. Ilegems, Phys. Rev. B 7, 743-750 (1973), doi:10.1103/PhysRevB.7.743",
+      "doi": "10.1103/PhysRevB.7.743"
+    },
+    "sapphire o": {
+      "category": "uniaxial",
+      "model": "Sellmeier",
+      "wavelength_range_um": [
+        0.2,
+        5.0
+      ],
+      "fit_error": null,
+      "stable_50as": false,
+      "max_stable_dt_s": 4.34e-17,
+      "reference": "I. H. Malitson and M. J. Dodge, J. Opt. Soc. Am. 62, 1405 (1972)",
+      "doi": null
+    },
+    "fr4": {
+      "category": "rf_substrate",
+      "model": "Debye (fit)",
+      "wavelength_range_um": [
+        14989.6,
+        2997920.0
+      ],
+      "fit_error": 0.0013,
+      "stable_50as": true,
+      "max_stable_dt_s": 1e-09,
+      "reference": "A. R. Djordjevic, R. M. Biljic, V. D. Likar-Smiljanic, and T. K. Sarkar, IEEE Trans. Electromagn. Compat. 43, 662-667 (2001), doi:10.1109/15.974647",
+      "doi": "10.1109/15.974647"
+    },
+    "ro4350b": {
+      "category": "rf_substrate",
+      "model": "Debye (fit)",
+      "wavelength_range_um": [
+        14989.6,
+        2997920.0
+      ],
+      "fit_error": 0.0003,
+      "stable_50as": true,
+      "max_stable_dt_s": 1e-09,
+      "reference": "Rogers Corporation / A. R. Djordjevic et al., Rogers Corp. Technical Note / IEEE Trans. Electromagn. Compat. 43, 662 (2001), doi:10.1109/15.974647",
+      "doi": "10.1109/15.974647"
+    }
+  }
+}

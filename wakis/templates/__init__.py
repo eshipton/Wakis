@@ -12,7 +12,7 @@ functions return a configured `Simulation` for common devices; the `*_results`
 helpers extract the usual engineering quantities. See docs/templates.md.
 """
 
-from . import analysis, formulas, meshing
+from . import analysis, formulas, meshing, photonics
 from .antennas import (
     dipole_antenna,
     dipole_results,
@@ -25,6 +25,7 @@ from .periodic import (
     reflection_transmission,
     unit_cell,
 )
+from .photonics import PIC_MATERIALS, PICSimulation, PolySlab, Port, n_to_eps
 from .shapes import Box, Cylinder, Sheet
 from .simulation import Simulation
 from .sweeps import optimize, parameter_sweep

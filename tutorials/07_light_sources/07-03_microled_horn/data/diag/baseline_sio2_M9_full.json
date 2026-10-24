@@ -1,0 +1,129 @@
+{
+  "variant": "baseline",
+  "config": "sio2",
+  "mesh": "full",
+  "M": 9,
+  "ndip": 9,
+  "dipole_x_m": [
+    -2.4e-07,
+    -1.8e-07,
+    -1.2e-07,
+    -6e-08,
+    0.0,
+    6e-08,
+    1.2e-07,
+    1.8e-07,
+    2.4e-07
+  ],
+  "dipole_x_nm": [
+    -240.0,
+    -180.0,
+    -120.0,
+    -60.0,
+    0.0,
+    60.0,
+    120.0,
+    180.0,
+    240.0
+  ],
+  "folded_dipole_xs_m": [
+    0.0,
+    6e-08,
+    1.2e-07,
+    1.8e-07,
+    2.4e-07
+  ],
+  "folded_dipole_weights": [
+    1.0,
+    2.0,
+    2.0,
+    2.0,
+    2.0
+  ],
+  "lee15_eq_pct": 25.221,
+  "lee90_eq_pct": 52.7267,
+  "lee15_pct": 25.8019,
+  "lee90_pct": 54.7974,
+  "lee15_wrk_pct": 23.9507,
+  "lee90_wrk_pct": 50.866,
+  "lee15_pol_x": 23.6796,
+  "lee15_pol_y": 24.4392,
+  "lee15_pol_z": 27.5443,
+  "lee90_pol_x": 55.04,
+  "lee90_pol_y": 42.1305,
+  "lee90_pol_z": 61.0096,
+  "per_pol": {
+    "lee15_pct": {
+      "x": 23.6796,
+      "y": 24.4392,
+      "z": 27.5443
+    },
+    "lee90_pct": {
+      "x": 55.04,
+      "y": 42.1305,
+      "z": 61.0096
+    }
+  },
+  "lee15_xz_tangential_pct": 25.612,
+  "lee90_xz_tangential_pct": 58.0248,
+  "collimation_ratio_eq_pct": 47.8335,
+  "collimation_ratio_pct": 47.0859,
+  "purcell_factor": 1.0773,
+  "fwhm_deg": 51.0775,
+  "directivity_2d": 3.6592,
+  "paper_2d_lee15_pct": 30.4,
+  "paper_2d_lee90_pct": 65.1,
+  "gap_lee15_eq_pp": -5.179,
+  "gap_lee90_eq_pp": -12.3733,
+  "ag_eps_450nm_real": -5.4021,
+  "ag_eps_450nm_imag": -0.6338,
+  "ag_skin_depth_E_nm": 30.7616,
+  "ag_skin_depth_I_nm": 15.3808,
+  "dx_background_nm": 7.5,
+  "dx_min_nm": 3.0,
+  "cpw_gan": 24.4898,
+  "cpw_gan_min_wl": 23.1293,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 27.0,
+  "cells_per_skin_depth_I": 5.1269,
+  "cells_per_skin_depth_E": 10.2539,
+  "n_cells": 395455,
+  "n_steps": 8277,
+  "conv_ndip_full": [
+    1,
+    3,
+    5,
+    7,
+    9
+  ],
+  "conv_lee15_eq": [
+    31.4254,
+    21.8894,
+    27.2995,
+    25.786,
+    25.221
+  ],
+  "conv_lee90_eq": [
+    75.7185,
+    51.183,
+    56.1825,
+    53.939,
+    52.7267
+  ],
+  "conv_lee15": [
+    29.548,
+    21.0546,
+    27.2239,
+    25.7309,
+    25.8019
+  ],
+  "conv_lee90": [
+    79.1769,
+    52.1934,
+    58.4503,
+    55.5724,
+    54.7974
+  ],
+  "wall_time_s": 3175.274,
+  "elapsed_s": 3175.274
+}

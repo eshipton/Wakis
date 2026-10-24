@@ -1,0 +1,23 @@
+{
+  "task_index": 5,
+  "name": "staircase_L3",
+  "level": "L3",
+  "averaging": "staircase",
+  "gap_nm": 50,
+  "cpw": 20,
+  "cells_per_feature": 8,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 26.297,
+  "dx_min_nm": 6.238,
+  "cells_across_feature": 8.0,
+  "grid_shape": [
+    714,
+    369,
+    1
+  ],
+  "n_cells": 263466,
+  "n_steps": 46701,
+  "elapsed_s": 1437.323,
+  "peak_rss_mb": 860.55,
+  "npz_bytes": 10800
+}

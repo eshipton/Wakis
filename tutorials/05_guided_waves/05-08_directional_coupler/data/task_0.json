@@ -1,0 +1,25 @@
+{
+  "task_index": 0,
+  "name": "underresolved_kottke",
+  "kind": "underresolved_demo",
+  "level": "underresolved",
+  "averaging": "kottke",
+  "cpw": 10,
+  "n_cells_gap": null,
+  "L_c_um": 4.0,
+  "theta_sw_deg": 30.0,
+  "min_feature_nm": 207.02,
+  "dx_background_nm": 49.18,
+  "dx_min_nm": 49.15,
+  "cells_across_feature": 4.21,
+  "grid_shape": [
+    373,
+    143,
+    1
+  ],
+  "n_cells": 53339,
+  "n_steps": 9851,
+  "elapsed_s": 53.109,
+  "peak_rss_mb": 502.09,
+  "npz_bytes": 6919
+}

@@ -1,0 +1,25 @@
+{
+  "task_index": 3,
+  "name": "staircase_L1",
+  "kind": "resolution",
+  "level": "L1",
+  "averaging": "staircase",
+  "cpw": 10,
+  "n_cells_gap": 4,
+  "L_c_um": 4.0,
+  "theta_sw_deg": 30.0,
+  "min_feature_nm": 207.02,
+  "dx_background_nm": 49.06,
+  "dx_min_nm": 48.41,
+  "cells_across_feature": 4.28,
+  "grid_shape": [
+    374,
+    144,
+    1
+  ],
+  "n_cells": 53856,
+  "n_steps": 12801,
+  "elapsed_s": 82.562,
+  "peak_rss_mb": 505.64,
+  "npz_bytes": 6887
+}

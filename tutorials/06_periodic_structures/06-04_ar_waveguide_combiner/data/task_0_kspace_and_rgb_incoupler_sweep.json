@@ -1,0 +1,74 @@
+{
+  "index": 0,
+  "name": "kspace_and_rgb_incoupler_sweep",
+  "cpw": 22,
+  "kspace_vector_closure": 0.0,
+  "conv_common_fov_deg": 18.322298376511895,
+  "ach_common_fov_deg": 53.52852194516946,
+  "rgb_channels": {
+    "B": {
+      "wavelength_nm": 442.0,
+      "period_nm": 316.9056603773586,
+      "mesh": {
+        "nx": 32,
+        "nz": 118,
+        "n_cells_2d": 3776,
+        "dx_nm": 9.903301886792455,
+        "dz_nm": 10.0,
+        "n_max": 2.0,
+        "cpw_x": 22.315789473684205,
+        "cpw_z": 22.1,
+        "min_feature_nm": 158.4528301886793,
+        "cells_per_min_feature_x": 16.0,
+        "cells_per_grating_height_z": 16.0
+      },
+      "mean_guided_eff": 0.22938819075802405,
+      "uniformity_tian": 0.3703875733254861,
+      "max_abs_err_vs_rcwa": 0.001308624290473348,
+      "max_energy_residual": 0.00041145254172259005
+    },
+    "G": {
+      "wavelength_nm": 530.0,
+      "period_nm": 380.0,
+      "mesh": {
+        "nx": 32,
+        "nz": 122,
+        "n_cells_2d": 3904,
+        "dx_nm": 11.875,
+        "dz_nm": 11.428571428571429,
+        "n_max": 2.0,
+        "cpw_x": 22.31578947368421,
+        "cpw_z": 23.1875,
+        "min_feature_nm": 160.0,
+        "cells_per_min_feature_x": 16.0,
+        "cells_per_grating_height_z": 14.0
+      },
+      "mean_guided_eff": 0.23513794090425216,
+      "uniformity_tian": 0.47149776898281104,
+      "max_abs_err_vs_rcwa": 0.0010308454196854278,
+      "max_energy_residual": 0.0005590052166584147
+    },
+    "R": {
+      "wavelength_nm": 663.0,
+      "period_nm": 475.35849056603786,
+      "mesh": {
+        "nx": 32,
+        "nz": 117,
+        "n_cells_2d": 3744,
+        "dx_nm": 14.854952830188683,
+        "dz_nm": 14.545454545454545,
+        "n_max": 2.0,
+        "cpw_x": 22.31578947368421,
+        "cpw_z": 22.790625000000002,
+        "min_feature_nm": 160.0,
+        "cells_per_min_feature_x": 16.0,
+        "cells_per_grating_height_z": 11.0
+      },
+      "mean_guided_eff": 0.2168594906033814,
+      "uniformity_tian": 0.5257575695570418,
+      "max_abs_err_vs_rcwa": 0.0007349304309602345,
+      "max_energy_residual": 0.0005645954836259737
+    }
+  },
+  "elapsed_s": 22.2
+}

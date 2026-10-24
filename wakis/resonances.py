@@ -334,17 +334,65 @@ class ResonanceMonitor:
         self._values, self._t_first = [], None
         self._flat = None
 
-    def update(self, solver, t):
+    def update(self, solver, t=None):
         """
         Record the probe after the timestep that started at time t.
 
         Parameters
         ----------
-        solver : SolverFIT3D
+        solver : SolverFIT3D or SubgridFIT2D
             Solver object.
-        t : float
+        t : float, optional
             Time at the start of the step just taken [s].
         """
+        if t is None:
+            t = (solver.n - 1) * float(solver.dt)
+        if hasattr(solver, "interpolation") and hasattr(solver, "edge_field_matrices"):
+            if self._flat is None:
+                c = self.center[:2]
+                s = self.size[:2]
+                if np.all(s == 0):
+                    pts = c[None, :]
+                else:
+                    nx = 5 if s[0] > 0 else 1
+                    ny = 5 if s[1] > 0 else 1
+                    xs = np.linspace(c[0] - 0.5 * s[0], c[0] + 0.5 * s[0], nx)
+                    ys = np.linspace(c[1] - 0.5 * s[1], c[1] + 0.5 * s[1], ny)
+                    X, Y = np.meshgrid(xs, ys, indexing="ij")
+                    pts = np.column_stack([X.ravel(), Y.ravel()])
+                comp = self.component
+                if comp in ("Ez", "Hz"):
+                    S = solver.interpolation(pts)
+                    self._subgrid_w = np.asarray(S.sum(axis=0)).ravel()
+                    self._subgrid_kind = "u"
+                else:
+                    Mx, My = solver.edge_field_matrices(pts)
+                    if comp == "Ex":
+                        M = Mx
+                    elif comp == "Ey":
+                        M = My
+                    elif comp == "Hx":
+                        M = -Mx
+                    elif comp == "Hy":
+                        M = -My
+                    else:
+                        raise ValueError(f"Unsupported 2D component {comp!r}.")
+                    self._subgrid_w = np.asarray(M.sum(axis=0)).ravel()
+                    self._subgrid_kind = "g"
+                self._flat = True
+                self.dt = float(solver.dt)
+                self._comm = None
+            t_sample = t + (
+                solver.dt if self._subgrid_kind == "u" else 0.5 * solver.dt
+            )
+            if t_sample < self.t_start:
+                return
+            if self._t_first is None:
+                self._t_first = float(t_sample)
+            vec = solver.u if self._subgrid_kind == "u" else solver.g
+            self._values.append(self._subgrid_w @ vec)
+            return
+
         if self._flat is None:
             from wakis.field_monitors import _flat_index
 

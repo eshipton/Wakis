@@ -1,0 +1,18 @@
+{
+  "task_index": 2,
+  "name": "kottke_medium",
+  "kind": "resolution",
+  "averaging": "kottke",
+  "cpw": 14,
+  "l_mmi_um": 11.15,
+  "w_mmi_um": 4.9,
+  "grid_shape": [
+    611,
+    214,
+    1
+  ],
+  "n_cells": 130754,
+  "elapsed_s": 235.501,
+  "peak_rss_mb": 447.03,
+  "npz_bytes": 8091
+}

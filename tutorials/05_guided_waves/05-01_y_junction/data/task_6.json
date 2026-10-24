@@ -1,0 +1,15 @@
+{
+  "task_index": 6,
+  "name": "kottke_reference",
+  "averaging": "kottke",
+  "cpw": 56,
+  "grid_shape": [
+    659,
+    415,
+    1
+  ],
+  "n_cells": 273485,
+  "elapsed_s": 670.932,
+  "peak_rss_mb": 1115.3,
+  "npz_bytes": 5456
+}

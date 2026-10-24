@@ -1,0 +1,18 @@
+{
+  "task_index": 9,
+  "name": "staircase_fine",
+  "kind": "convergence",
+  "averaging": "staircase",
+  "cpw": 32,
+  "dx_background_nm": 8.558,
+  "dx_min_nm": 5.884,
+  "min_feature_nm": 47.071,
+  "cells_across_feature": 8.0,
+  "skin_depth_nm": null,
+  "cells_per_skin_depth": null,
+  "n_cells": 25864,
+  "n_steps": 1420,
+  "elapsed_s": 3.569,
+  "peak_rss_mb": 236.76,
+  "npz_bytes": 7155
+}

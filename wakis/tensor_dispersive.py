@@ -422,8 +422,12 @@ def conformal_caps(solver):
         return None
     materials_all = solver.grid.stl_materials or {}
     keys = mix["keys"]
-    disp = [i for i, k in enumerate(keys)
-            if isinstance(materials_all[k], DispersiveMaterial)]  # fmt: skip
+    disp = [
+        i
+        for i, k in enumerate(keys)
+        if isinstance(materials_all[k], DispersiveMaterial)
+        and (materials_all[k].poles or materials_all[k].sigma)
+    ]
     if not disp:
         return None
     static = [i for i in range(len(keys)) if i not in disp]

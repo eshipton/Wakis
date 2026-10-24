@@ -34,6 +34,7 @@ class Simulation:
         cells_per_wavelength=20,
         min_cells_per_feature=2,
         max_cell=None,
+        mesh_overrides=(),
         padding=None,
         n_pml=None,
         grading=1.4,
@@ -42,6 +43,7 @@ class Simulation:
         dtype=np.float64,
         k_bloch=None,
         use_gpu=False,
+        averaging="kottke",
     ):
         """
         Time-domain simulation over the band [f_min, f_max] with automatic setup.
@@ -73,6 +75,14 @@ class Simulation:
             (e.g. across a substrate). Default 2.
         max_cell : float, optional
             Upper bound on the cell size [m].
+        mesh_overrides : list of (lo, hi, max_cell), optional
+            Refinement boxes: `lo`, `hi` are (x, y, z) corners [m] (use
+            +-inf to span an axis) and `max_cell` [m] (a float, or one value
+            per axis) caps the cell size between them on each axis. The mesh is a tensor product, so a box
+            refines the full strip through the domain along each axis; the
+            cell sizes grade back out at `grading`. Use them to put several
+            cells across features narrower than lambda / cells_per_wavelength
+            (coupler gaps, slots, grating teeth).
         padding : float, optional
             Distance from the structures to the CPML [m]. Default lambda/4 at
             f_min.
@@ -90,6 +100,9 @@ class Simulation:
             Bloch wavevector [rad/m] (with 'bloch' boundaries).
         use_gpu : bool, optional
             Run on GPU (untested for templates).
+        averaging : {'kottke', 'arithmetic', 'staircase'}, optional
+            Subpixel permittivity averaging rule for shapes with `fill`.
+            Default 'kottke'.
         """
         if not 0 < f_min < f_max:
             raise ValueError("Require 0 < f_min < f_max.")
@@ -107,6 +120,14 @@ class Simulation:
         self.cells_per_wavelength = cells_per_wavelength
         self.min_cells_per_feature = min_cells_per_feature
         self.max_cell = max_cell
+        self.mesh_overrides = [
+            (
+                np.asarray(lo, float),
+                np.asarray(hi, float),
+                np.broadcast_to(np.asarray(h, float), 3),
+            )
+            for lo, hi, h in mesh_overrides
+        ]
         self.padding = meshing.padding(f_min) if padding is None else padding
         self.n_pml = n_pml
         self.grading = grading
@@ -114,6 +135,7 @@ class Simulation:
         self.dtype = dtype
         self.k_bloch = k_bloch
         self.use_gpu = use_gpu
+        self.averaging = averaging
         self.sources = []
         self.monitors = {}
         self.grid = None
@@ -150,9 +172,9 @@ class Simulation:
 
     def _bounding_box(self, axis):
         points = self._snap_points(axis)
-        # Sheet edges are not mesh nodes but belong to the structure extent
+        # Shapes with non-snapping edges (Sheet, PolySlab) still define the extent
         points += [
-            b[axis] for s in self.structures if isinstance(s, Sheet) for b in s.bounds
+            b[axis] for s in self.structures if not s.faces(axis) for b in s.bounds
         ]
         if not points:
             raise ValueError(
@@ -173,19 +195,49 @@ class Simulation:
             lo -= self.padding if lo_bc == "cpml" else 0.0
             hi += self.padding if hi_bc == "cpml" else 0.0
         points = [lo, hi] + [p for p in self._snap_points(axis) if lo <= p <= hi]
+        overrides = [
+            (max(o_lo[axis], lo), min(o_hi[axis], hi), h[axis])
+            for o_lo, o_hi, h in self.mesh_overrides
+            if o_lo[axis] < hi and o_hi[axis] > lo
+        ]
         points = meshing.merge_points(points, 1e-6 * h_bg)
 
-        sizes, min_cells = [], []
-        struct_lo, struct_hi = self._bounding_box(axis) if self.structures else (lo, hi)
-        for a, b in zip(points[:-1], points[1:]):
+        def material_size(a, b):
             mid = 0.5 * (a + b)
             eps = [1.0]
             for shape in self.structures:
                 s_lo, s_hi = shape.bounds
                 eps_s = material_eps(shape.material, self.f_max)
-                if s_lo[axis] <= mid <= s_hi[axis] and np.isfinite(eps_s):
+                overlaps = (
+                    s_lo[axis] <= mid <= s_hi[axis]
+                    if shape.faces(axis)
+                    else (s_lo[axis] < b and s_hi[axis] > a)
+                )
+                if overlaps and np.isfinite(eps_s):
                     eps.append(eps_s)
-            sizes.append(min(h_bg, h_bg / np.sqrt(max(eps))))
+            return min(h_bg, h_bg / np.sqrt(max(eps)))
+
+        # Material cell sizes come from the intervals between structure faces;
+        # override boxes only split those intervals and cap the size inside
+        # them, so they never coarsen the mesh elsewhere.
+        base_points = points
+        base_sizes = [material_size(a, b) for a, b in zip(points[:-1], points[1:])]
+        points = meshing.merge_points(
+            list(points) + [p for a, b, _ in overrides for p in (a, b)], 1e-6 * h_bg
+        )
+
+        sizes, min_cells = [], []
+        struct_lo, struct_hi = self._bounding_box(axis) if self.structures else (lo, hi)
+        for a, b in zip(points[:-1], points[1:]):
+            mid = 0.5 * (a + b)
+            parent = min(
+                int(np.searchsorted(base_points, mid)) - 1, len(base_sizes) - 1
+            )
+            size = base_sizes[max(parent, 0)]
+            for o_a, o_b, h in overrides:
+                if o_a <= mid <= o_b:
+                    size = min(size, h)
+            sizes.append(size)
             inside = struct_lo <= mid <= struct_hi
             min_cells.append(self.min_cells_per_feature if inside else 1)
         n_pml = self.n_pml or meshing.pml_cells(self.f_min, h_bg)
@@ -241,7 +293,9 @@ class Simulation:
             verbose=0,
         )
         if with_structures:
-            assign_materials(solver, self.structures, self.f_center)
+            assign_materials(
+                solver, self.structures, self.f_center, averaging=self.averaging
+            )
         return solver
 
     # -------------------------------------------------------------------- run

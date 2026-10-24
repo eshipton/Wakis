@@ -1,0 +1,17 @@
+{
+  "index": 4,
+  "name": "silver_dispersive",
+  "demo": false,
+  "description": "Dispersive Drude silver vs PEC screen resolved comparison (cpw_bg=20, cpsd_E=10.0)",
+  "elapsed_s": 535.17,
+  "dx_background_nm": 24.916,
+  "dx_min_nm": 2.857,
+  "min_feature_nm": 200.0,
+  "cells_across_feature": 67,
+  "n_cells": 258408,
+  "n_steps": 12051,
+  "skin_depth_nm": 28.77,
+  "cells_per_skin_depth": 10.07,
+  "skin_depth_power_nm": 14.39,
+  "cells_per_skin_depth_power": 5.04
+}

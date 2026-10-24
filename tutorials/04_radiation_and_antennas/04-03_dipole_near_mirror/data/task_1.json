@@ -1,0 +1,18 @@
+{
+  "task_index": 1,
+  "name": "silver_drude",
+  "kind": "silver_mirror",
+  "averaging": "kottke",
+  "cpw": 24,
+  "dx_background_nm": 24.444,
+  "dx_min_nm": 2.5,
+  "min_feature_nm": 20.0,
+  "cells_across_feature": 8.0,
+  "skin_depth_nm": 24.41,
+  "cells_per_skin_depth": 9.764,
+  "n_cells": 33288,
+  "n_steps": 2727,
+  "elapsed_s": 141.264,
+  "peak_rss_mb": 420.6,
+  "npz_bytes": 33015
+}

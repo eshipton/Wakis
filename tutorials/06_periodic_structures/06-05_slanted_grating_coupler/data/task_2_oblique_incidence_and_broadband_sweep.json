@@ -1,0 +1,28 @@
+{
+  "index": 2,
+  "name": "oblique_incidence_and_broadband_sweep",
+  "cpw": 21,
+  "profiles_oblique": {
+    "binary": {
+      "mean_t_m1_wakis": 0.23392484453206724,
+      "mean_t_m1_rcwa": 0.23854773563293413,
+      "max_abs_err_vs_rcwa": 0.01051769950602427,
+      "max_energy_residual": 0.0029166372201328006
+    },
+    "blazed": {
+      "mean_t_m1_wakis": 0.47937023965454545,
+      "mean_t_m1_rcwa": 0.47428407863663263,
+      "max_abs_err_vs_rcwa": 0.006656291363848821,
+      "max_energy_residual": 0.007837182447077762
+    },
+    "slanted": {
+      "mean_t_m1_wakis": 0.6670456725865593,
+      "mean_t_m1_rcwa": 0.6663932451741782,
+      "max_abs_err_vs_rcwa": 0.004447106701038761,
+      "max_energy_residual": 0.005698855132238112
+    }
+  },
+  "broadband_8deg_max_err": 0.004819409327677993,
+  "broadband_8deg_shifted_err": 0.05760226223774201,
+  "elapsed_s": 36.38
+}

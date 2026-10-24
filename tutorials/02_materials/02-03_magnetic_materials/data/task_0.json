@@ -1,0 +1,71 @@
+{
+  "task": 0,
+  "name": "llg_snoek_acher_and_hesitivity",
+  "quick": false,
+  "elapsed_s": 0.3296399579999161,
+  "max_rss_mb": 198.31640625,
+  "literature_models": {
+    "czn_eq881": {
+      "label": "CoZrNb Laminate (Yousefi Eq. 8-81)",
+      "model": "Lorentz",
+      "mu_s": 40.0,
+      "eps_r": 3.25,
+      "hm_published_Ohm_m": 346000.0,
+      "hm_analytic_Ohm_m": 346423.11443249724,
+      "hm_peak_sigma_m_Ohm_m": 346361.2862634638,
+      "h_eff_constancy_rel_std": 1.902838686793332e-16,
+      "verification_status": "unverified formula (Yousefi 2017 Eq. 8-81)",
+      "flag_note": "Eq. 8-81 single-Lorentz model parameters from dissertation notes (not verified in full text)."
+    },
+    "co2z_unaligned": {
+      "label": "Co2Z Hexaferrite Unaligned (Sebastian Table 5-2)",
+      "model": "Lorentz",
+      "mu_s": 12.0,
+      "eps_r": 12.0,
+      "hm_published_Ohm_m": 104200.0,
+      "hm_analytic_Ohm_m": 104200.0,
+      "hm_peak_sigma_m_Ohm_m": 104165.53206335528,
+      "h_eff_constancy_rel_std": 4.009423347762154e-16,
+      "verification_status": "unverified (Sebastian 2013 Table 5-2 & Fig. 5-13; Yousefi et al. TAP 2016 Table I)",
+      "flag_note": "Aligned Co2Z reaches h_m = 2.8e5 Ohm/m (TAP 2016 Table I)."
+    },
+    "ikonen_film": {
+      "label": "Ferromagnetic Film Substrate (Ikonen 2006 Eq. 17)",
+      "model": "Lorentz",
+      "mu_s": 1.48,
+      "eps_r": 2.0,
+      "hm_published_Ohm_m": 24636.631102403306,
+      "hm_analytic_Ohm_m": 24636.631102403306,
+      "hm_peak_sigma_m_Ohm_m": 24625.35852737998,
+      "h_eff_constancy_rel_std": 3.9221784862230677e-16,
+      "verification_status": "full-text verified (Ikonen et al., IEEE TAP 54, 3391, 2006, Eq. 17 & Fig. 4)",
+      "flag_note": "Gives mu'=1.461, tan_delta_m=0.0284 at 580 MHz patch operating frequency.",
+      "mu_real_580MHz": 1.480828785692446,
+      "tan_delta_m_580MHz": 0.029256614551347905
+    },
+    "nizn_debye": {
+      "label": "Sintered NiZn Spinel Ferrite Tile (Fair-Rite / TDK)",
+      "model": "Debye",
+      "mu_s": 2200.0,
+      "eps_r": 14.0,
+      "hm_published_Ohm_m": 55240.0,
+      "hm_analytic_Ohm_m": 52087.824180311894,
+      "hm_peak_sigma_m_Ohm_m": 52087.82300833588,
+      "h_eff_constancy_rel_std": 1.515773820495267e-16,
+      "verification_status": "unverified (Sebastian 2013 Table 5-2; Yousefi TAP 2016 Table I; McLean & Sutton 2012 Fig. 2)",
+      "flag_note": "Flagged discrepancy: sources quote h_m = 3.0e4 (TAP 2016 Table I), 3.5e4 (Yousefi Ch. 6), or 5.524e4 (Sebastian Table 5-2), while mu_s=2200, f_rel=3 MHz implies h_m = w0*mu0*dmu = 5.21e4 Ohm/m."
+    }
+  },
+  "acher_sum_rule_low_gamma": {
+    "numerical_integral_Hz2": 3.887720794356123e+19,
+    "exact_integral_Hz2": 3.887720908817369e+19,
+    "rel_err": 2.9441734148251582e-08
+  },
+  "acher_sum_rule_high_gamma": {
+    "numerical_integral_Hz2": 3.887720566142686e+19,
+    "exact_integral_Hz2": 3.887720908817369e+19,
+    "rel_err": 8.814281958820971e-08
+  },
+  "ade_lorentz_rel_err_disc": 0.0025984811387031286,
+  "ade_debye_rel_err_disc": 1.5489115812803546e-15
+}

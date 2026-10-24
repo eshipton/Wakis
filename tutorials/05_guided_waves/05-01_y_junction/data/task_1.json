@@ -1,0 +1,15 @@
+{
+  "task_index": 1,
+  "name": "staircase_coarse",
+  "averaging": "staircase",
+  "cpw": 14,
+  "grid_shape": [
+    181,
+    120,
+    1
+  ],
+  "n_cells": 21720,
+  "elapsed_s": 16.462,
+  "peak_rss_mb": 567.33,
+  "npz_bytes": 5467
+}

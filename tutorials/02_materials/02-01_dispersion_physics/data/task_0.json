@@ -1,0 +1,19 @@
+{
+  "task_index": 0,
+  "name": "bulk_ade_and_sum_rules",
+  "dx_background": 0.002,
+  "dx_min": 0.002,
+  "cells_across_feature": 10.0,
+  "cpw": 50.0,
+  "n_cells": 3,
+  "n_steps": 9600,
+  "lor_bulk_rel_err_disc": 8.645760326045731e-05,
+  "dru_bulk_rel_err_disc": 8.765886831553955e-07,
+  "deb_bulk_rel_err_disc": 3.036058565701148e-06,
+  "kk_re_rel_err": 0.004530094756782954,
+  "kk_im_rel_err": 0.0010843012309625288,
+  "fsum_rel_err_low_gamma": 4.839405817037908e-05,
+  "fsum_rel_err_high_gamma": 0.00012785105131097005,
+  "elapsed_s": 0.373,
+  "peak_rss_mb": 201.4
+}

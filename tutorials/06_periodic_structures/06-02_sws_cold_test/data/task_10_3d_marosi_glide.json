@@ -1,0 +1,19 @@
+{
+  "index": 10,
+  "name": "3d_marosi_glide",
+  "kind": "3d_marosi",
+  "description": "3D V-band glide-symmetric staggered-pillar SWS (Marosi et al. 2025, arXiv:2505.22927)",
+  "dx_background": 25.000000000000064,
+  "dx_min": 12.499999999999924,
+  "cells_across_feature": 8.000000000000048,
+  "n_cells": 200704,
+  "n_steps": 2646876,
+  "nx": 56,
+  "ny": 64,
+  "nz": 56,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 83975.682391935,
+  "f_degen_ghz": 60.856585120589436,
+  "n_bn_shards": 12
+}

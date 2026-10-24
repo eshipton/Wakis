@@ -1,0 +1,13 @@
+{
+  "index": 2,
+  "name": "gsm_modes_even",
+  "demo": false,
+  "description": "GSM Mercer even modes [0, 2, 4, 6, 8, 10] + broadband DFT (cpw=26)",
+  "elapsed_s": 372.626,
+  "dx_background_nm": 19.231,
+  "dx_min_nm": 18.182,
+  "min_feature_nm": 200.0,
+  "cells_across_feature": 11,
+  "n_cells": 233926,
+  "n_steps": 2823
+}

@@ -1,0 +1,319 @@
+{
+  "errors": [],
+  "challenge": "ceviche_waveguide_bend",
+  "seed": 1,
+  "args": {
+    "shard": 0,
+    "nshards": 2,
+    "outdir": "/work/out",
+    "challenges": [
+      "ceviche_lightweight_waveguide_bend",
+      "ceviche_lightweight_mode_converter",
+      "ceviche_lightweight_power_splitter",
+      "ceviche_lightweight_beam_splitter",
+      "ceviche_lightweight_wdm",
+      "metalens"
+    ],
+    "seeds": [
+      0
+    ],
+    "betas": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "density_steps": 40,
+    "levelset_steps": 80,
+    "penalty": 1.0,
+    "estimator": "ceviche",
+    "run_time": 4e-13,
+    "metalens_resolution": 1,
+    "no_render": false,
+    "config": "configs/round2.json",
+    "schedule": null,
+    "r2_weight": null,
+    "steps_scale": 1.0,
+    "candidates": null,
+    "candidates_10nm": false,
+    "smoothing": "none",
+    "machine": "g2-standard-8",
+    "gpu": true,
+    "fused": true,
+    "adjoint_memory": "store",
+    "adjoint_memory_budget": null,
+    "checkpoint_run": null,
+    "ignore_gpu_cap": false,
+    "preflight_only": false,
+    "arms": null,
+    "specs": [
+      "ceviche_waveguide_bend:1",
+      "ceviche_power_splitter:1"
+    ],
+    "jobs_per_task": null
+  },
+  "method": "feasible (conic filter + projection + length-scale repair, STE)",
+  "stages": [
+    {
+      "beta": 4,
+      "steps": 30,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 8,
+      "steps": 30,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 16,
+      "steps": 25,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 32,
+      "steps": 20,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 64,
+      "steps": 40,
+      "ste": true,
+      "optimizer": "adam",
+      "lr": 0.02,
+      "weights": {
+        "1": 1.0
+      }
+    }
+  ],
+  "preflight": {
+    "machine": "g2-standard-8",
+    "per_resolution": {
+      "1": {
+        "cells": 97969,
+        "host_GB": 0.91813908,
+        "forward_adjoint_s_est": 326.45891645000006
+      }
+    },
+    "total_host_GB": 3.33627816,
+    "total_gpu_GB": 5.66511797
+  },
+  "filter_radius_px": 8.0,
+  "target_min_width_spacing_px": [
+    8,
+    8
+  ],
+  "resolutions": [
+    1
+  ],
+  "optimization_time_s": 979.3958103656769,
+  "snapshots_time_s": 0.27875423431396484,
+  "candidate0_official_time_s": 10.836817502975464,
+  "candidates": [
+    {
+      "stage": "ste_beta64",
+      "step": 34,
+      "wakis_metrics": {
+        "1": 0.6412420796959741
+      },
+      "score": 0.6412420796959741,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6427273992133412
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 7,
+      "wakis_metrics": {
+        "1": 0.6223996254294627
+      },
+      "score": 0.6223996254294627,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6233249866564836
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 8,
+      "wakis_metrics": {
+        "1": 0.6221443185409613
+      },
+      "score": 0.6221443185409613,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6190796998779103
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 33,
+      "wakis_metrics": {
+        "1": 0.6025647912638117
+      },
+      "score": 0.6025647912638117,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6000038433843263
+    }
+  ],
+  "candidate1_official_time_s": 10.35634183883667,
+  "candidate2_official_time_s": 10.829247951507568,
+  "candidate3_official_time_s": 10.208789110183716,
+  "selected_candidate": 0,
+  "selected_stage": "ste_beta64:34",
+  "official_backend": "ceviche FDFD (invrs_gym component.response)",
+  "official_eval_metric": 0.6427273992133412,
+  "official_loss": 0.09858962166781629,
+  "official_S2": [
+    [
+      [
+        5.910620387919543e-06,
+        0.9611469292018733
+      ]
+    ],
+    [
+      [
+        1.467391882888086e-05,
+        0.9639301803758582
+      ]
+    ],
+    [
+      [
+        2.6933868923036684e-05,
+        0.9651772865990483
+      ]
+    ],
+    [
+      [
+        4.528153748414726e-05,
+        0.9643759748911915
+      ]
+    ],
+    [
+      [
+        4.054268737258382e-05,
+        0.9636555562448105
+      ]
+    ],
+    [
+      [
+        2.8666981216031562e-05,
+        0.9633084273242177
+      ]
+    ]
+  ],
+  "binarization_degree": 1.0,
+  "official_eval_time_s": 10.292477130889893,
+  "length_scale_leaderboard_px": [
+    8,
+    8
+  ],
+  "length_scale_solid_void_px": [
+    8,
+    8
+  ],
+  "length_scale_time_s": 0.1919569969177246,
+  "wakis_r1_ceviche_estimator_eval_metric": 0.641242079695972,
+  "wakis_r1_ceviche_estimator_S2": [
+    [
+      [
+        5.73520560911783e-06,
+        0.9609854020535862
+      ]
+    ],
+    [
+      [
+        1.448966681386699e-05,
+        0.9638312228789586
+      ]
+    ],
+    [
+      [
+        2.675132842324653e-05,
+        0.9651223310531895
+      ]
+    ],
+    [
+      [
+        4.529160751936588e-05,
+        0.9644687303413991
+      ]
+    ],
+    [
+      [
+        4.062880973094893e-05,
+        0.9638645875283668
+      ]
+    ],
+    [
+      [
+        2.898857926663225e-05,
+        0.9636856398357947
+      ]
+    ]
+  ],
+  "wakis_r1_ceviche_estimator_time_s": 2.99247670173645,
+  "wakis_r1_modal_eval_metric": 0.6413400632921505,
+  "wakis_r1_modal_S2": [
+    [
+      [
+        1.2000523299621036e-06,
+        0.9609960576806648
+      ]
+    ],
+    [
+      [
+        5.25185106922501e-06,
+        0.9638457493516955
+      ]
+    ],
+    [
+      [
+        1.272672288236071e-05,
+        0.9651411236907187
+      ]
+    ],
+    [
+      [
+        2.6349161829737827e-05,
+        0.9644935126243758
+      ]
+    ],
+    [
+      [
+        2.3458290611546903e-05,
+        0.9638890674163494
+      ]
+    ],
+    [
+      [
+        1.4835703840912584e-05,
+        0.9637085284669796
+      ]
+    ]
+  ],
+  "wakis_r1_modal_time_s": 3.3535282611846924,
+  "fields_time_s": 11.232940673828125,
+  "render_time_s": 15.806769132614136,
+  "rendered": {
+    "design.png": "ok",
+    "optimization.gif": "ok",
+    "fields.png": "ok",
+    "spectrum.png": "ok",
+    "wave.gif": "ok"
+  },
+  "total_time_s": 1067.1334056854248
+}

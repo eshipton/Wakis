@@ -1,0 +1,28 @@
+{
+  "task_index": 2,
+  "name": "kottke_L1",
+  "design": "mmi",
+  "length_um": 6.0,
+  "level": "L1",
+  "averaging": "kottke",
+  "cpw": 10,
+  "n_feature": 4,
+  "is_demo": false,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 50.85,
+  "dx_min_nm": 25.0,
+  "dy_nm": 25.0,
+  "cells_across_feature": 4.0,
+  "slot_cells": 4.0,
+  "min_feature_cells": 4.0,
+  "grid_shape": [
+    241,
+    83,
+    1
+  ],
+  "n_cells": 20003,
+  "n_steps": 8901,
+  "elapsed_s": 18.433,
+  "peak_rss_mb": 251.46,
+  "npz_bytes": 6967
+}

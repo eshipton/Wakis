@@ -36,6 +36,7 @@ The source code is available in the `wakis` [GitHub repository](https://github.c
 
 installation.md
 usersguide.md
+figures.md
 physicsguide.md
 templates.md
 unstructured_roadmap.md

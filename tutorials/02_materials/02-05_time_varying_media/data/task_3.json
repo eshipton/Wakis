@@ -1,0 +1,11 @@
+{
+  "index": 3,
+  "name": "ptc_growth_vs_modulation_and_moussa_tl",
+  "cpw": 40.0,
+  "cells_across_feature": 16.0,
+  "gamma_m0_mutation": 0.0,
+  "rms_gamma_vs_floquet": 8.726668462728017e-06,
+  "rms_slab_R_error": 0.0003897120742044609,
+  "rms_slab_T_error": 0.00038971207420427235,
+  "wall_seconds": 2.241247895000015
+}

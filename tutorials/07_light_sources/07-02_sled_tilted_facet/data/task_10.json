@@ -1,0 +1,24 @@
+{
+  "task": {
+    "index": 10,
+    "name": "kottke_reference",
+    "kind": "conv_point",
+    "averaging": "kottke",
+    "cpw": 40,
+    "theta_deg": 7.0,
+    "description": "Fine reference run at theta_t=7 & 10 deg + AR 0 deg, averaging=kottke, cpw=40"
+  },
+  "dx_background_nm": 14.284287283987615,
+  "dx_min_nm": 10.828488372092222,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 20,
+  "n_cells": 519681,
+  "n_steps": 11507,
+  "cpw": 40,
+  "h_cell_nm": 10.828488372093023,
+  "r00_7deg": 0.0036478361691499486,
+  "r00_10deg": 3.131138176280825e-08,
+  "r_ar_0deg": 0.003949040781839706,
+  "neff_0": 3.3306464710178574,
+  "runtime_s": 1477.013086995
+}

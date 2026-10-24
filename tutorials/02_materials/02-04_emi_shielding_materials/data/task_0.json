@@ -1,0 +1,21 @@
+{
+  "index": 0,
+  "name": "eccosorb_rf_lb_characterization",
+  "kind": "characterization",
+  "cpw": 24,
+  "cells_across_feature": 10.0,
+  "dx_min_mm": 0.1,
+  "min_feature_mm": 1.0,
+  "n_cells": 240,
+  "n_steps": 240,
+  "wall_time_s": 0.23526588799995807,
+  "rel_rms_1d1l": 0.0036003537663733707,
+  "rel_rms_2deb": 0.045275146768258466,
+  "rel_rms_2d1l": 0.039779806713456656,
+  "max_abs_dmu_real": 0.13748567909121512,
+  "max_abs_dmu_imag": 0.07495095951174591,
+  "eps_inferred_td001": 81.05639854610666,
+  "rms_att_full_1d1l": 10.077035861395814,
+  "rms_att_extrap_1d1l": 13.159492128979025,
+  "rms_att_extrap_2deb": 3.4202086710298394
+}

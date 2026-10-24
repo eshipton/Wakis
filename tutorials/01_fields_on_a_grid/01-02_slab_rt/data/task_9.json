@@ -1,0 +1,18 @@
+{
+  "index": 9,
+  "name": "staircase_cpw28",
+  "kind": "subpixel",
+  "cpw": 28,
+  "averaging": "staircase",
+  "dx_background_nm": 35.71428571428571,
+  "dx_min_nm": 17.857142857142854,
+  "min_feature_nm": 368.5,
+  "cells_across_feature": 20.636000000000003,
+  "n_cells": 178,
+  "n_steps": 8572,
+  "wall_time_s": 1.9685186149999936,
+  "level": "fine",
+  "rms_err": 0.024847925842236312,
+  "max_err": 0.04211897278842869,
+  "energy_err": 3.158946015879849e-08
+}

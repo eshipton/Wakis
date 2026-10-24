@@ -1,0 +1,13 @@
+{
+  "index": 6,
+  "name": "convergence_coarse",
+  "demo": false,
+  "description": "Grid convergence sweep cpw=[10, 14, 20]",
+  "elapsed_s": 77.508,
+  "dx_background_nm": 50.0,
+  "dx_min_nm": 25.0,
+  "min_feature_nm": 200.0,
+  "cells_across_feature": 4,
+  "n_cells": 140529,
+  "n_steps": 2101
+}

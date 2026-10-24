@@ -1,0 +1,19 @@
+{
+  "task_index": 2,
+  "name": "drude_enz_slab",
+  "f_ENZ_THz": 2.0,
+  "f_p_THz": 4.019950248448356,
+  "rms_R_disc": 5.066708916863308e-05,
+  "rms_T_disc": 3.610924115033739e-05,
+  "rms_R_cont": 5.115793767944299e-05,
+  "rms_T_cont": 3.762774372896669e-05,
+  "dx_background": 5e-07,
+  "dx_min": 5e-07,
+  "cells_across_feature": 80.00000000000001,
+  "cpw": 104.53437572360403,
+  "cpw_vacuum": 171.309976,
+  "n_cells": 2560,
+  "n_steps": 34788,
+  "elapsed_s": 15.936,
+  "peak_rss_mb": 465.49
+}

@@ -1,0 +1,22 @@
+{
+  "task_index": 4,
+  "name": "thickness_sweep",
+  "kind": "thickness_sweep_2d",
+  "grid_shape": [
+    24,
+    40,
+    1
+  ],
+  "dx_background": 0.0003997232773333334,
+  "dx_min": 0.0001,
+  "dx_background_mm": 0.3997,
+  "dx_min_mm": 0.1,
+  "min_feature_mm": 0.5,
+  "cells_across_feature": 5.0,
+  "cpw": 24.0,
+  "n_cells": 4800,
+  "n_steps": 68301,
+  "elapsed_s": 9.556,
+  "peak_rss_mb": 240.71,
+  "npz_bytes": 2895
+}

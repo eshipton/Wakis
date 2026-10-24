@@ -1,0 +1,158 @@
+{
+  "errors": [],
+  "challenge": "ceviche_lightweight_beam_splitter",
+  "seed": 1,
+  "args": {
+    "shard": 7,
+    "nshards": 10,
+    "outdir": "/work/out",
+    "challenges": [
+      "ceviche_lightweight_waveguide_bend",
+      "ceviche_lightweight_mode_converter",
+      "ceviche_lightweight_power_splitter",
+      "ceviche_lightweight_beam_splitter",
+      "ceviche_lightweight_wdm"
+    ],
+    "seeds": [
+      0,
+      1
+    ],
+    "betas": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "density_steps": 40,
+    "levelset_steps": 80,
+    "penalty": 1.0,
+    "estimator": "ceviche",
+    "run_time": 8e-13,
+    "metalens_resolution": 1,
+    "no_render": false
+  },
+  "optimization_time_s": 10753.159183979034,
+  "selected_stage": "density_beta2",
+  "snapshots_time_s": 0.045168161392211914,
+  "official_backend": "ceviche FDFD (invrs_gym component.response)",
+  "official_eval_metric": -3.8401090693184434,
+  "official_loss": 1606.7991831506572,
+  "official_S2": [
+    [
+      [
+        0.020306439695446314,
+        0.6341830845109665,
+        0.037201893017957566,
+        0.0212197124523595
+      ]
+    ],
+    [
+      [
+        0.033720252898814286,
+        0.6175279562117245,
+        0.06988801262514689,
+        0.011950423964470972
+      ]
+    ]
+  ],
+  "binarization_degree": 1.0,
+  "official_eval_time_s": 239.64554858207703,
+  "length_scale_solid_void_px": [
+    1,
+    4
+  ],
+  "target_min_width_spacing_px": [
+    3,
+    3
+  ],
+  "length_scale_time_s": 0.15688681602478027,
+  "wakis_r1_ceviche_estimator_eval_metric": -3.8394309258640305,
+  "wakis_r1_ceviche_estimator_S2": [
+    [
+      [
+        0.020301890499799052,
+        0.6344871625817892,
+        0.037274205372774455,
+        0.02115036991507428
+      ]
+    ],
+    [
+      [
+        0.033723376082914806,
+        0.617328937907078,
+        0.06992433810879758,
+        0.011979780835197996
+      ]
+    ]
+  ],
+  "wakis_r1_ceviche_estimator_time_s": 44.53960371017456,
+  "wakis_r1_modal_eval_metric": -3.8409733531992085,
+  "wakis_r1_modal_S2": [
+    [
+      [
+        0.02394401868841581,
+        0.6316332887964257,
+        0.03710973198294101,
+        0.021053262060140524
+      ]
+    ],
+    [
+      [
+        0.02697765133067801,
+        0.6211914750646447,
+        0.07036205389688165,
+        0.012053715444260996
+      ]
+    ]
+  ],
+  "wakis_r1_modal_time_s": 46.910258054733276,
+  "wakis_r2_modal_eval_metric": -3.517451367903138,
+  "wakis_r2_modal_S2": [
+    [
+      [
+        0.03350216103475646,
+        0.6407013667687581,
+        0.07160779642573303,
+        0.01446289940817268
+      ]
+    ],
+    [
+      [
+        0.012870323855134045,
+        0.5421927894404497,
+        0.07626804492056741,
+        0.006971837164102916
+      ]
+    ]
+  ],
+  "wakis_r2_modal_time_s": 417.5322587490082,
+  "ceviche_10nm_eval_metric": -3.4997812014823793,
+  "ceviche_10nm_S2": [
+    [
+      [
+        0.030374769917636192,
+        0.6278147037672055,
+        0.07349201625499849,
+        0.01460422588451904
+      ]
+    ],
+    [
+      [
+        0.010814847356745047,
+        0.5264775941342517,
+        0.07364575743433345,
+        0.004895114262637561
+      ]
+    ]
+  ],
+  "ceviche_10nm_time_s": 2563.2828047275543,
+  "fields_time_s": 33.93122863769531,
+  "render_time_s": 11.395792245864868,
+  "rendered": {
+    "design.png": "ok",
+    "optimization.gif": "ok",
+    "fields.png": "ok",
+    "spectrum.png": "ok",
+    "wave.gif": "ok"
+  },
+  "total_time_s": 14241.883559942245
+}

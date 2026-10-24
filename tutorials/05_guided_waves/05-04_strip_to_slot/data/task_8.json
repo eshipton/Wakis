@@ -1,0 +1,28 @@
+{
+  "task_index": 8,
+  "name": "kottke_reference",
+  "design": "mmi",
+  "length_um": 6.0,
+  "level": "reference",
+  "averaging": "kottke",
+  "cpw": 40,
+  "n_feature": 16,
+  "is_demo": false,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 12.78,
+  "dx_min_nm": 6.25,
+  "dy_nm": 6.25,
+  "cells_across_feature": 16.0,
+  "slot_cells": 16.0,
+  "min_feature_cells": 16.0,
+  "grid_shape": [
+    898,
+    263,
+    1
+  ],
+  "n_cells": 236174,
+  "n_steps": 34851,
+  "elapsed_s": 907.332,
+  "peak_rss_mb": 638.51,
+  "npz_bytes": 6992
+}

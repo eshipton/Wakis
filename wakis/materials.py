@@ -30,6 +30,28 @@ from .dispersive import (  # noqa: F401
     eps_from_nk,
     fit_poles,
 )
+from .gain import (  # noqa: F401
+    FourLevelGain,
+    GainMaterial,
+    SaturableGain,
+    amplified_intensity,
+    dbr_reflectance,
+    fabry_perot_laser_output,
+    fabry_perot_threshold_gain,
+)
+from .material_library import (  # noqa: F401
+    info,
+    list_materials,
+    uniaxial_crystal,
+)
+from .subcell import (  # noqa: F401
+    SheetMaterial,
+    graphene_sheet,
+    metal_sheet,
+    resistive_sheet,
+    salisbury_screen_reflection,
+    sheet_transmission_reflection,
+)
 
 # fmt: off
 material_lib = {

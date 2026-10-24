@@ -1,0 +1,15 @@
+REFERENCES: "1) G. Tamo\u0161auskas, G. Beresnevi\u010Dius, D. Gadonas, A. Dubietis.\n\
+  Transmittance and phase matching of BBO crystal in the 3\u22125 \u03BCm range and\
+  \ its application for the characterization of mid-infrared laser pulses.\n[*Opt.\
+  \ Mater. Express* **8**, 1410-1418 (2018)](https://doi.org/10.1364/OME.8.001410)<br>\n\
+  2) G. Tamo\u0161auskas. \u03B2-barium borate (BBO) absorption in the 0.188-6.22\
+  \ \u03BCm range.\n[arXiv:2111.01212 [physics.optics] (2021)](https://arxiv.org/abs/2111.01212)\n\
+  (Numerical data kindly provided by Gintaras Tamo\u0161auskas)\n"
+COMMENTS: "Beta barium borate (\xDF-BaB<sub>2</sub>O<sub>4</sub>, BBO). Ordinary optical\
+  \ constants (o).\n"
+CONDITIONS:
+  optical_component: o
+DATA:
+- type: formula 2
+  wavelength_range: 0.188 5.2
+  coefficients: 0 0.90291 0.003926 0.83155 0.018786 0.76536 60.01

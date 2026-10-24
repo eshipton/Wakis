@@ -1,0 +1,19 @@
+{
+  "index": 1,
+  "name": "under_resolved_conformal",
+  "kind": "2d_point",
+  "description": "Under-resolved 2D conformal PEC demo (n_feat=2, dy=50 um, 2 cells across 0.10 mm vane, 4 across 0.20 mm gap)",
+  "dx_background": 50.00000000000002,
+  "dx_min": 49.999999999999915,
+  "cells_across_feature": 2.0000000000000036,
+  "n_cells": 160,
+  "n_steps": 9872,
+  "nx": 1,
+  "ny": 16,
+  "nz": 10,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 0.8560603920000176,
+  "f1_mid_ghz": 97.61843316056817,
+  "km1_mid_ohm": 1.7649508094601052
+}

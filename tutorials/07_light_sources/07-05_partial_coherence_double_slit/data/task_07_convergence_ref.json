@@ -1,0 +1,13 @@
+{
+  "index": 7,
+  "name": "convergence_ref",
+  "demo": false,
+  "description": "Fine-grid convergence reference cpw=40",
+  "elapsed_s": 386.944,
+  "dx_background_nm": 12.5,
+  "dx_min_nm": 12.5,
+  "min_feature_nm": 200.0,
+  "cells_across_feature": 16,
+  "n_cells": 536769,
+  "n_steps": 4202
+}

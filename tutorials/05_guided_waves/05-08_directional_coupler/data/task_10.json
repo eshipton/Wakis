@@ -1,0 +1,25 @@
+{
+  "task_index": 10,
+  "name": "length_L0um",
+  "kind": "length_sweep",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_cells_gap": 8,
+  "L_c_um": 0.0,
+  "theta_sw_deg": 30.0,
+  "min_feature_nm": 207.02,
+  "dx_background_nm": 24.57,
+  "dx_min_nm": 24.2,
+  "cells_across_feature": 8.55,
+  "grid_shape": [
+    563,
+    267,
+    1
+  ],
+  "n_cells": 150321,
+  "n_steps": 10101,
+  "elapsed_s": 180.205,
+  "peak_rss_mb": 666.28,
+  "npz_bytes": 6875
+}

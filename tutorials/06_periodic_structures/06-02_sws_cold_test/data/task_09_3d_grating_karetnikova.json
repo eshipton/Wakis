@@ -1,0 +1,17 @@
+{
+  "index": 9,
+  "name": "3d_grating_karetnikova",
+  "kind": "3d_grating",
+  "description": "3D rectangular waveguide double-corrugated grating (Karetnikova 2018 Table I, b=0.85 mm, 2a=0.20 mm)",
+  "dx_background": 25.000000000000064,
+  "dx_min": 12.499999999999924,
+  "cells_across_feature": 8.000000000000048,
+  "n_cells": 87040,
+  "n_steps": 154000,
+  "nx": 34,
+  "ny": 64,
+  "nz": 40,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 1397.6712381409998
+}

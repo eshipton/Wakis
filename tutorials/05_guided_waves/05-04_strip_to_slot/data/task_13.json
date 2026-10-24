@@ -1,0 +1,28 @@
+{
+  "task_index": 13,
+  "name": "length_L3.0um",
+  "design": "mmi",
+  "length_um": 3.0,
+  "level": "sweep",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "is_demo": false,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 25.58,
+  "dx_min_nm": 12.5,
+  "dy_nm": 12.5,
+  "cells_across_feature": 8.0,
+  "slot_cells": 8.0,
+  "min_feature_cells": 8.0,
+  "grid_shape": [
+    342,
+    143,
+    1
+  ],
+  "n_cells": 48906,
+  "n_steps": 15701,
+  "elapsed_s": 44.396,
+  "peak_rss_mb": 298.8,
+  "npz_bytes": 6997
+}

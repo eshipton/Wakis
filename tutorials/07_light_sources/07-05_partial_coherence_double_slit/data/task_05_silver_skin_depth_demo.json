@@ -1,0 +1,17 @@
+{
+  "index": 5,
+  "name": "silver_skin_depth_demo",
+  "demo": true,
+  "description": "DEMO: under-resolved (0.58, 1.15 cpsd_E) vs graded skin-depth resolution ladder ['uniform_10', 'uniform_20', 2.0, 4.0, 6.0, 8.0]",
+  "elapsed_s": 907.359,
+  "dx_background_nm": 24.998,
+  "dx_min_nm": 50.0,
+  "min_feature_nm": 200.0,
+  "cells_across_feature": 4,
+  "n_cells": 224466,
+  "n_steps": 9641,
+  "skin_depth_nm": 28.77,
+  "cells_per_skin_depth": 0.58,
+  "skin_depth_power_nm": 14.39,
+  "cells_per_skin_depth_power": 0.29
+}

@@ -1,0 +1,25 @@
+{
+  "task_index": 1,
+  "name": "staircase_L1",
+  "group": "convergence",
+  "level": "L1",
+  "bend_type": "euler",
+  "r_eff_um": 4.0,
+  "averaging": "staircase",
+  "cpw": 10,
+  "n_feature": 4,
+  "min_feature_nm": 400.0,
+  "dx_background_nm": 53.279,
+  "dx_min_nm": 53.279,
+  "cells_across_feature": 7.508,
+  "grid_shape": [
+    143,
+    143,
+    1
+  ],
+  "n_cells": 20449,
+  "n_steps": 5951,
+  "elapsed_s": 13.384,
+  "peak_rss_mb": 383.88,
+  "npz_bytes": 6804
+}

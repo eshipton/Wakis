@@ -1,0 +1,24 @@
+{
+  "task_index": 9,
+  "name": "symmetry_4port",
+  "level": "L3",
+  "kind": "cosine",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature_min": 8,
+  "min_feature_nm": 350.0,
+  "dx_background_nm": 21.507,
+  "dx_min_nm": 21.507,
+  "cells_across_feature": 16.274,
+  "grid_shape": [
+    658,
+    658,
+    1
+  ],
+  "n_cells": 432964,
+  "n_steps": 67204,
+  "n_steps_per_drive": 16801,
+  "elapsed_s": 3257.517,
+  "peak_rss_mb": 1514.04,
+  "npz_bytes": 24960
+}

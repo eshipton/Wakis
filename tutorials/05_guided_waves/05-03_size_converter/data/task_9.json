@@ -1,0 +1,24 @@
+{
+  "task_index": 9,
+  "name": "luneburg_lens",
+  "kind": "luneburg",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "demo": false,
+  "min_feature_nm": 500.0,
+  "dx_background_nm": 23.878,
+  "dx_min_nm": 23.81,
+  "cells_across_feature": 21.0,
+  "grid_shape": [
+    578,
+    532,
+    1
+  ],
+  "n_cells": 307496,
+  "n_steps": 14925,
+  "elapsed_s": 665.144,
+  "peak_rss_mb": 534.73,
+  "npz_bytes": 922197
+}

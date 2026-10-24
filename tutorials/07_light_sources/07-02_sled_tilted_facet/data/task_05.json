@@ -1,0 +1,24 @@
+{
+  "task": {
+    "index": 5,
+    "name": "kottke_cpw20",
+    "kind": "conv_point",
+    "averaging": "kottke",
+    "cpw": 20,
+    "theta_deg": 7.0,
+    "description": "Convergence point at theta_t=7 & 10 deg + AR 0 deg, averaging=kottke, cpw=20"
+  },
+  "dx_background_nm": 28.56857456797523,
+  "dx_min_nm": 21.656976744185293,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 10,
+  "n_cells": 138431,
+  "n_steps": 5781,
+  "cpw": 20,
+  "h_cell_nm": 21.656976744186046,
+  "r00_7deg": 0.0035463360264887315,
+  "r00_10deg": 1.3862447314078122e-08,
+  "r_ar_0deg": 0.003608397036821615,
+  "neff_0": 3.3401827909923187,
+  "runtime_s": 183.08981673199997
+}

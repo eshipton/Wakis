@@ -1,0 +1,13 @@
+{
+  "task": "dispersive",
+  "quick": false,
+  "beta": 0.85,
+  "n_threshold": 1.1764705882352942,
+  "f0_ghz": 38.0,
+  "gamma_ghz": 1.5,
+  "eps_inf": 1.0,
+  "delta_eps": 1.25,
+  "passband_energy_J_m": 0.0003874437461413522,
+  "stopband_energy_J_m": 1.23113468511265e-06,
+  "stop_to_pass_ratio": 0.003177583061731732
+}

@@ -2,15 +2,15 @@
 Build the tutorial notebooks from their single source of truth.
 
 Each tutorial is written once, as a Jupytext "percent" script
-(``tutorials/NN_name/name.py``: ``# %%`` code cells and ``# %% [markdown]``
-text cells). The script runs headless from the command line, and this tool
-generates the Colab notebook ``name.ipynb`` next to it.
+(``tutorials/NN_<chapter>/NN-MM_<slug>/<slug>.py``: ``# %%`` code cells and
+``# %% [markdown]`` text cells). The script runs headless from the command
+line, and this tool generates the Colab notebook ``<slug>.ipynb`` next to it.
 
 Usage
 -----
-    python tutorials/build.py                 # regenerate all notebooks (no outputs)
+    python tutorials/build.py                 # regenerate all notebooks (preserving outputs)
     python tutorials/build.py --check         # fail if a notebook is out of sync
-    python tutorials/build.py 01 --execute \\
+    python tutorials/build.py 03-04 --execute \\
         --args "--quick --cpu" --timeout 7200 # run it and store the outputs
 
 ``--execute`` runs the notebook with nbclient in its own folder (figures are
@@ -36,15 +36,22 @@ KEEP_MIME = ("image/png", "image/gif", "text/plain", "text/markdown", "text/late
 def sources(selection):
     """Percent-format tutorial sources, optionally filtered by folder prefix."""
     out = []
-    for folder in sorted(
+    roots = [ROOT] + sorted(
         p for p in ROOT.iterdir() if p.is_dir() and p.name[:2].isdigit()
-    ):
-        if selection and not any(folder.name.startswith(s) for s in selection):
-            continue
-        for py in sorted(folder.glob("*.py")):
-            head = py.read_text().splitlines()[:12]
-            if any("format_name: percent" in line for line in head):
-                out.append(py)
+    )
+    for base in roots:
+        for folder in sorted(
+            p for p in base.iterdir() if p.is_dir() and p.name[:2].isdigit()
+        ):
+            rel = folder.relative_to(ROOT).as_posix()
+            if selection and not any(
+                folder.name.startswith(s) or rel.startswith(s) for s in selection
+            ):
+                continue
+            for py in sorted(folder.glob("*.py")):
+                head = py.read_text().splitlines()[:15]
+                if any("format_name: percent" in line for line in head):
+                    out.append(py)
     return out
 
 
@@ -103,8 +110,18 @@ def build(py, execute=False, args="", timeout=7200, kernel="python3"):
         client.execute()
         nb = _strip_outputs(nb)
     else:
-        for cell in nb.cells:
-            if cell.cell_type == "code":
+        old_code = (
+            [c for c in jupytext.read(target).cells if c.cell_type == "code"]
+            if target.exists()
+            else []
+        )
+        new_code = [c for c in nb.cells if c.cell_type == "code"]
+        if len(old_code) == len(new_code):
+            for cell, prev in zip(new_code, old_code):
+                cell["outputs"] = prev.get("outputs", [])
+                cell["execution_count"] = prev.get("execution_count", None)
+        else:
+            for cell in new_code:
                 cell["outputs"], cell["execution_count"] = [], None
     nb.metadata.setdefault("accelerator", "GPU")
     nb.metadata.setdefault("colab", {"provenance": [], "gpuType": "T4"})

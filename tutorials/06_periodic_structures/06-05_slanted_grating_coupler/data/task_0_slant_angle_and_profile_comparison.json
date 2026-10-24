@@ -1,0 +1,38 @@
+{
+  "index": 0,
+  "name": "slant_angle_and_profile_comparison",
+  "cpw": 24,
+  "bragg_slant_angle_deg": 24.482572830615823,
+  "binary_symmetry_diff_at_0": 6.245004513516506e-17,
+  "peak_slanted_t_m1_wakis": 0.8232870995037895,
+  "peak_slanted_t_m1_rcwa": 0.8227178026335566,
+  "max_slant_sweep_err_m1": 0.004370840346672011,
+  "max_energy_residual": 0.004291544622653465,
+  "profiles": {
+    "binary": {
+      "T_m1_wakis": 0.04626304018417464,
+      "T_m1_rcwa": 0.04908575816184518,
+      "T_p1_wakis": 0.0462630401841747,
+      "T_p1_rcwa": 0.04908575816184341,
+      "asymmetry_ratio_m1_over_p1": 0.9999999999999987,
+      "max_abs_err_vs_rcwa": 0.0030541283484495363
+    },
+    "blazed": {
+      "T_m1_wakis": 0.43179236384408437,
+      "T_m1_rcwa": 0.4279526896800319,
+      "T_p1_wakis": 0.034212734355523404,
+      "T_p1_rcwa": 0.03442321027207515,
+      "asymmetry_ratio_m1_over_p1": 12.620808362087976,
+      "max_abs_err_vs_rcwa": 0.0038396741640524534
+    },
+    "slanted": {
+      "T_m1_wakis": 0.8232870995037895,
+      "T_m1_rcwa": 0.8189162591571175,
+      "T_p1_wakis": 0.05037244966085881,
+      "T_p1_rcwa": 0.05016266465591683,
+      "asymmetry_ratio_m1_over_p1": 16.343995677135254,
+      "max_abs_err_vs_rcwa": 0.004370840346672011
+    }
+  },
+  "elapsed_s": 27.81
+}

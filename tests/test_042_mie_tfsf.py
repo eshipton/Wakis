@@ -1,5 +1,5 @@
 """
-End-to-end Mie validation (tutorial 01 set-up on a coarse grid): a plane wave
+End-to-end Mie validation (Tutorial 3.4/3.5 set-up on a coarse grid): a plane wave
 from a TF/SF box scatters off a dielectric sphere (n = 2, r = 1 um); the
 scattered flux box gives Q_sca, compared with wakis.analytic.mie.
 

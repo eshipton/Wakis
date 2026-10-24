@@ -1,0 +1,33 @@
+{
+  "task_index": 13,
+  "name": "depth_dw75nm",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "min_feature_nm": 75.0,
+  "dx_background_nm": 25.88,
+  "dx_min_nm": 9.37,
+  "dx_min_x_nm": 20.25,
+  "dy_min_nm": 9.37,
+  "cells_across_feature": 8.0,
+  "cells_across_tooth_x": 8.0,
+  "n_periods": 100,
+  "dw_nm": 75.0,
+  "shift_nm": 0.0,
+  "apodization": "uniform",
+  "grid_shape": [
+    1683,
+    102,
+    1
+  ],
+  "n_cells": 171666,
+  "n_steps": 78383,
+  "lambda_bragg_nm": 1563.23,
+  "stopband_width_nm": 33.07,
+  "R_max": 1.0,
+  "T_min": 0.0006,
+  "elapsed_s": 1400.666,
+  "peak_rss_mb": 522.94,
+  "npz_bytes": 9364
+}

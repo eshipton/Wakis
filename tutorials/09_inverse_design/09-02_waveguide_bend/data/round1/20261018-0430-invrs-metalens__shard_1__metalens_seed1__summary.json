@@ -1,0 +1,66 @@
+{
+  "errors": [],
+  "challenge": "metalens",
+  "seed": 1,
+  "args": {
+    "shard": 1,
+    "nshards": 2,
+    "outdir": "/work/out",
+    "challenges": [
+      "metalens"
+    ],
+    "seeds": [
+      0,
+      1
+    ],
+    "betas": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "density_steps": 40,
+    "levelset_steps": 80,
+    "penalty": 1.0,
+    "estimator": "ceviche",
+    "run_time": 8e-13,
+    "metalens_resolution": 1,
+    "no_render": false
+  },
+  "optimization_time_s": 37407.37539291382,
+  "selected_stage": "levelset",
+  "snapshots_time_s": 0.4256131649017334,
+  "official_backend": "fmmax FMM (invrs_gym component.response)",
+  "official_eval_metric": 7.779437569369018,
+  "official_enhancement_ex": [
+    7.779437569369018,
+    12.633027527196951,
+    10.853485229727513
+  ],
+  "binarization_degree": 1.0,
+  "official_eval_time_s": 1891.7321019172668,
+  "wakis_eval_metric": 6.2563880157144025,
+  "wakis_enhancement_ex": [
+    6.2563880157144025,
+    10.996925541608034,
+    8.823309843470165
+  ],
+  "wakis_eval_time_s": 119.76451373100281,
+  "length_scale_solid_void_px": [
+    2,
+    2
+  ],
+  "target_min_width_spacing_px": [
+    5,
+    5
+  ],
+  "length_scale_time_s": 0.20220327377319336,
+  "fields_time_s": 144.95821356773376,
+  "render_time_s": 13.820576190948486,
+  "rendered": {
+    "design.png": "ok",
+    "optimization.gif": "ok",
+    "fields.png": "ok",
+    "wave.gif": "ok"
+  },
+  "total_time_s": 40079.354717969894
+}

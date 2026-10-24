@@ -1,0 +1,17 @@
+{
+  "task": 3,
+  "name": "impedance_matched_magneto_dielectric_slab",
+  "quick": false,
+  "elapsed_s": 18.705945886000336,
+  "max_rss_mb": 201.515625,
+  "thickness_mm": 50.0,
+  "dz_mm": 1.0,
+  "cpw_mat": 17.010874905495392,
+  "cells_across": 50.0,
+  "max_R_cont_matched": 5.690695250396789e-33,
+  "max_R_fit_matched": 3.0733774227797994e-05,
+  "rms_R_fit_matched": 8.621387990418611e-06,
+  "rms_T_disc_matched": 0.00010145726504059399,
+  "peak_A_fit_matched": 0.999993482251058,
+  "max_R_fit_unmatched": 0.5487905817867952
+}

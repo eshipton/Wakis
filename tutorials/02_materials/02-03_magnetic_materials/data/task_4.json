@@ -1,0 +1,69 @@
+{
+  "task": 4,
+  "name": "dispersive_mu_cavity_mode_splitting",
+  "quick": false,
+  "elapsed_s": 6.6891781439990154,
+  "max_rss_mb": 484.6484375,
+  "cavity_dims_mm": [
+    120.0,
+    60.0,
+    120.0
+  ],
+  "grid_cells": [
+    16,
+    8,
+    16
+  ],
+  "f_vac_continuum_GHz": 1.7665440000031938,
+  "f_vac_grid_GHz": 1.763707624653902,
+  "f_vac_fit_GHz": 1.764,
+  "f_static_grid_GHz": 1.1758050831026012,
+  "f_static_fit_GHz": 1.176,
+  "polariton_sweep": [
+    {
+      "f_r_GHz": 1.2,
+      "f_minus_analytic_GHz": 0.8989920573580518,
+      "f_minus_fit_GHz": 0.899,
+      "f_minus_rel_err": 8.83505241588548e-06,
+      "f_plus_analytic_GHz": 2.354246772551562,
+      "f_plus_fit_GHz": 2.355,
+      "f_plus_rel_err": 0.0003199441355169974
+    },
+    {
+      "f_r_GHz": 1.5,
+      "f_minus_analytic_GHz": 0.9858569107031813,
+      "f_minus_fit_GHz": 0.986,
+      "f_minus_rel_err": 0.0001451420538470152,
+      "f_plus_analytic_GHz": 2.683514623936506,
+      "f_plus_fit_GHz": 2.685,
+      "f_plus_rel_err": 0.0005535189002677384
+    },
+    {
+      "f_r_GHz": 1.76,
+      "f_minus_analytic_GHz": 1.034079992001734,
+      "f_minus_fit_GHz": 1.034,
+      "f_minus_rel_err": 7.735571943452069e-05,
+      "f_plus_analytic_GHz": 3.0018233051603826,
+      "f_plus_fit_GHz": 3.004,
+      "f_plus_rel_err": 0.0007251242389501519
+    },
+    {
+      "f_r_GHz": 2.1,
+      "f_minus_analytic_GHz": 1.07465506038606,
+      "f_minus_fit_GHz": 1.075,
+      "f_minus_rel_err": 0.0003209770526889662,
+      "f_plus_analytic_GHz": 3.4464882252009716,
+      "f_plus_fit_GHz": 3.45,
+      "f_plus_rel_err": 0.0010189429267014594
+    },
+    {
+      "f_r_GHz": 2.5,
+      "f_minus_analytic_GHz": 1.1038843806013554,
+      "f_minus_fit_GHz": 1.104,
+      "f_minus_rel_err": 0.00010473868520696033,
+      "f_plus_analytic_GHz": 3.994321451701987,
+      "f_plus_fit_GHz": 4.0,
+      "f_plus_rel_err": 0.0014216553090871278
+    }
+  ]
+}

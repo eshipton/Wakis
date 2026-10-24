@@ -1,0 +1,24 @@
+{
+  "task_index": 11,
+  "name": "taper_linear_20um",
+  "kind": "taper_single",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "demo": false,
+  "min_feature_nm": 500.0,
+  "dx_background_nm": 33.786,
+  "dx_min_nm": 33.333,
+  "cells_across_feature": 15.0,
+  "grid_shape": [
+    684,
+    356,
+    1
+  ],
+  "n_cells": 243504,
+  "n_steps": 15946,
+  "elapsed_s": 495.909,
+  "peak_rss_mb": 463.23,
+  "npz_bytes": 764133
+}

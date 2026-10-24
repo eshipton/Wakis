@@ -1,0 +1,19 @@
+{
+  "index": 0,
+  "name": "under_resolved_staircase",
+  "kind": "2d_point",
+  "description": "Under-resolved 2D staircase demo (n_feat=2, dy=50 um, 2 cells across 0.10 mm vane, 4 across 0.20 mm gap)",
+  "dx_background": 50.00000000000002,
+  "dx_min": 49.999999999999915,
+  "cells_across_feature": 2.0000000000000036,
+  "n_cells": 160,
+  "n_steps": 9799,
+  "nx": 1,
+  "ny": 16,
+  "nz": 10,
+  "conformal": "False",
+  "glide_symmetric": true,
+  "wall_time_s": 0.6458990529999937,
+  "f1_mid_ghz": 77.58264296901095,
+  "km1_mid_ohm": 5.94095580042488
+}

@@ -95,10 +95,14 @@ def check_supported_late(solver):
     reasons = []
     if getattr(solver, "tensor_operator", None) is not None:
         reasons.append("tensor averaging (conformal='tensor')")
-    if getattr(solver, "_dispersive_groups", None) or getattr(
-        solver, "dispersive_network", None
+    if (
+        getattr(solver, "_dispersive_groups", None)
+        or getattr(solver, "_dispersive_h_groups", None)
+        or getattr(solver, "dispersive_network", None)
     ):
         reasons.append("dispersive (ADE) materials")
+    if getattr(solver, "_gain_groups", None):
+        reasons.append("gain (ADE) materials")
     if reasons:
         raise NotImplementedError(
             "scheme='tete' does not support: " + "; ".join(reasons)

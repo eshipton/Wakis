@@ -1,0 +1,25 @@
+{
+  "task": "smith_purcell",
+  "quick": true,
+  "period_um": 1.6700000000000002,
+  "depth_um": 0.39999999999999997,
+  "beta": 0.8,
+  "impact_um": 0.25,
+  "pec_lambda_mean_rel_err": 0.016566548946633772,
+  "pec_lambda_max_rel_err": 0.05121272326399466,
+  "diel_lambda_mean_rel_err": 0.01268851862367943,
+  "diel_lambda_max_rel_err": 0.021736270257976822,
+  "beta_sweep": [
+    0.68,
+    0.8,
+    0.92
+  ],
+  "beta_sweep_mean_rel_err": [
+    0.011263225973343546,
+    0.016566548946633772,
+    0.049071499543156545
+  ],
+  "flat_to_pec_power_ratio": 1.5055463458863337e-05,
+  "pec_wake_rad_loss_J": 3.5457850646158036e-06,
+  "diel_wake_rad_loss_J": -1.3563819557016661e-06
+}

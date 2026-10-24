@@ -1,0 +1,51 @@
+{
+  "task": 2,
+  "name": "sellmeier_sio2_fit_and_slab",
+  "quick": false,
+  "elapsed_s": 6.556372544000624,
+  "max_rss_mb": 196.0703125,
+  "malitson_wavelength_range_um": [
+    0.21,
+    6.7
+  ],
+  "lib_vs_yml_rel_diff": 8.369162646750178e-17,
+  "models": {
+    "malitson_3pole_exact": {
+      "eps_inf": 1.0,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.05079996365825036
+    },
+    "unconstrained_narrow_2pole": {
+      "eps_inf": 1.0259144117414857e-09,
+      "fit_error": 0.0004269901563512344,
+      "stable_50as": false,
+      "max_stable_dt_fs": 0.0
+    },
+    "constrained_1pole_eps1": {
+      "eps_inf": 1.0,
+      "fit_error": 0.0021254055743057253,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.0647719447306214
+    },
+    "constrained_2pole_folded": {
+      "eps_inf": 1.6961663,
+      "fit_error": 0.0005160595952470907,
+      "stable_50as": true,
+      "max_stable_dt_fs": 0.12634651753727058
+    }
+  },
+  "sio2_slab": {
+    "thickness_nm": 600.0,
+    "dz_nm": 5.0,
+    "nt": 4648,
+    "dt_as": 7.86218112249888,
+    "cells_across": 119.99999999999999,
+    "cpw_mat": 47.42309915909266,
+    "rms_R_tot_vs_measured": 0.0003193076078324316,
+    "rms_T_tot_vs_measured": 0.0003193580747239166,
+    "rms_R_pole_fit_err": 0.0002875691341720977,
+    "rms_T_pole_fit_err": 0.00028752415004284896,
+    "rms_R_disc_err": 0.0004115709221873729,
+    "rms_T_disc_err": 0.00041290230482228524
+  }
+}

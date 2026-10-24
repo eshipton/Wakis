@@ -1,0 +1,25 @@
+{
+  "task_index": 9,
+  "name": "sweep_circular_R3p0",
+  "group": "radius_sweep",
+  "level": "L3",
+  "bend_type": "circular",
+  "r_eff_um": 3.0,
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "min_feature_nm": 400.0,
+  "dx_background_nm": 26.57,
+  "dx_min_nm": 26.57,
+  "cells_across_feature": 15.055,
+  "grid_shape": [
+    228,
+    228,
+    1
+  ],
+  "n_cells": 51984,
+  "n_steps": 10601,
+  "elapsed_s": 62.015,
+  "peak_rss_mb": 478.73,
+  "npz_bytes": 6811
+}

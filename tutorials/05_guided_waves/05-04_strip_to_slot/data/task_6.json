@@ -1,0 +1,28 @@
+{
+  "task_index": 6,
+  "name": "kottke_L3",
+  "design": "mmi",
+  "length_um": 6.0,
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "is_demo": false,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 25.51,
+  "dx_min_nm": 12.5,
+  "dy_nm": 12.5,
+  "cells_across_feature": 8.0,
+  "slot_cells": 8.0,
+  "min_feature_cells": 8.0,
+  "grid_shape": [
+    460,
+    143,
+    1
+  ],
+  "n_cells": 65780,
+  "n_steps": 17501,
+  "elapsed_s": 146.501,
+  "peak_rss_mb": 329.35,
+  "npz_bytes": 488580
+}

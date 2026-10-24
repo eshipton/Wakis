@@ -27,11 +27,14 @@ physics guide ("Dispersive materials") for the discretization, its discrete
 permittivity and the stability limit.
 """
 
+import warnings
+
 import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import e as q_e
 from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import hbar
+from scipy.constants import mu_0
 from scipy.optimize import least_squares
 
 #: Angular frequency [rad/s] of a photon energy of 1 eV (hbar w = 1 eV).
@@ -146,24 +149,35 @@ class Debye:
 
 class DispersiveMaterial(list):
     """
-    Material with eps(w) = eps_inf + sum of Lorentz/Drude/Debye poles + sigma.
+    Material with dispersive permittivity eps(w) and/or permeability mu(w).
 
-    The object is also the static triple ``[eps_inf, 1.0, 0.0]`` (a list), so
+    The object is also the static triple ``[eps_inf, mu_inf, 0.0]`` (a list), so
     it can be used wherever Wakis expects a material ``[eps_r, mu_r, sigma]``,
     e.g. in ``GridFIT3D(stl_materials={...})``; `SolverFIT3D` then adds the
     pole dynamics to the cells of that solid automatically.
 
     Parameters
     ----------
-    eps_inf : float
+    eps_inf : float, optional
         High-frequency relative permittivity (>= 1 is recommended).
-    poles : list of Lorentz, Drude or Debye, optional
-        Dispersive poles.
+    poles : sequence of Lorentz, Drude or Debye, optional
+        Electric dispersive poles.
     sigma : float, optional
-        Static conductivity [S/m], integrated semi-implicitly (no timestep
-        restriction from the relaxation time eps/sigma).
+        Static electric conductivity [S/m], integrated semi-implicitly (no
+        timestep restriction from the relaxation time eps/sigma).
     name : str, optional
         Label used in representations.
+    mu_inf : float or 3-tuple of float, optional
+        High-frequency relative permeability (scalar for isotropic, or
+        ``(mu_x, mu_y, mu_z)`` for diagonal anisotropy).
+    mu_poles : sequence of poles or dict of {'x', 'y', 'z'} to sequence, optional
+        Magnetic dispersive poles (`Lorentz`, `Drude` or `Debye`, whose
+        ``delta_eps`` is the magnetic susceptibility strength ``delta_mu``). A
+        sequence applies to all three axes; a dict ``{'x': [...], 'y': [...],
+        'z': [...]}`` specifies diagonal anisotropy (missing keys default to
+        empty).
+    sigma_m : float or 3-tuple of float, optional
+        Static magnetic conductivity [Ohm/m], integrated semi-implicitly.
 
     Examples
     --------
@@ -171,8 +185,16 @@ class DispersiveMaterial(list):
     >>> eps = drude.epsilon(f=[1e14, 3e14])
     """
 
-    def __init__(self, eps_inf=1.0, poles=(), sigma=0.0, name=None):
-        super().__init__([float(eps_inf), 1.0, 0.0])
+    def __init__(
+        self,
+        eps_inf=1.0,
+        poles=(),
+        sigma=0.0,
+        name=None,
+        mu_inf=1.0,
+        mu_poles=(),
+        sigma_m=0.0,
+    ):
         self.eps_inf = float(eps_inf)
         self.poles = list(poles)
         self.sigma = float(sigma)
@@ -181,15 +203,83 @@ class DispersiveMaterial(list):
             if not isinstance(pole, (Lorentz, Debye)):
                 raise TypeError(f"Unknown pole type {type(pole).__name__}")
 
+        if np.isscalar(mu_inf):
+            self.mu_inf = float(mu_inf)
+            self._mu_inf_xyz = (self.mu_inf,) * 3
+        else:
+            vals = tuple(float(v) for v in mu_inf)
+            if len(vals) != 3:
+                raise ValueError("mu_inf must be a float or a 3-tuple of floats")
+            self.mu_inf = vals
+            self._mu_inf_xyz = vals
+
+        if np.isscalar(sigma_m):
+            self.sigma_m = float(sigma_m)
+            self._sigma_m_xyz = (self.sigma_m,) * 3
+        else:
+            svals = tuple(float(v) for v in sigma_m)
+            if len(svals) != 3:
+                raise ValueError("sigma_m must be a float or a 3-tuple of floats")
+            self.sigma_m = svals
+            self._sigma_m_xyz = svals
+
+        if isinstance(mu_poles, dict):
+            invalid = set(mu_poles) - {"x", "y", "z"}
+            if invalid:
+                raise ValueError(
+                    f"Unknown mu_poles keys {sorted(invalid)}; expected a subset "
+                    "of {'x', 'y', 'z'}"
+                )
+            self._mu_poles_xyz = {c: list(mu_poles.get(c, ())) for c in "xyz"}
+            self.mu_poles = {c: list(self._mu_poles_xyz[c]) for c in "xyz"}
+        else:
+            plist = list(mu_poles)
+            self._mu_poles_xyz = {c: list(plist) for c in "xyz"}
+            self.mu_poles = plist
+
+        for c in "xyz":
+            for pole in self._mu_poles_xyz[c]:
+                if not isinstance(pole, (Lorentz, Debye)):
+                    raise TypeError(f"Unknown pole type {type(pole).__name__}")
+
+        self.is_mu_anisotropic = (
+            (not np.isscalar(mu_inf))
+            or isinstance(mu_poles, dict)
+            or (not np.isscalar(sigma_m))
+        )
+        super().__init__([self.eps_inf, float(self._mu_inf_xyz[0]), 0.0])
+
+    @property
+    def has_electric(self):
+        """Whether the material has a non-vacuum electric response."""
+        return self.eps_inf != 1.0 or bool(self.poles) or self.sigma != 0.0
+
+    @property
+    def has_magnetic(self):
+        """Whether the material has a non-vacuum magnetic response."""
+        return (
+            any(m != 1.0 for m in self._mu_inf_xyz)
+            or any(bool(self._mu_poles_xyz[c]) for c in "xyz")
+            or any(s != 0.0 for s in self._sigma_m_xyz)
+        )
+
     @property
     def lorentz_poles(self):
-        """Second-order poles (Lorentz and Drude)."""
+        """Second-order electric poles (Lorentz and Drude)."""
         return [p for p in self.poles if isinstance(p, Lorentz)]
 
     @property
     def debye_poles(self):
-        """First-order (Debye) poles."""
+        """First-order (Debye) electric poles."""
         return [p for p in self.poles if isinstance(p, Debye)]
+
+    def mu_lorentz_poles(self, component="x"):
+        """Second-order magnetic poles (Lorentz and Drude) on `component`."""
+        return [p for p in self._mu_poles_xyz[component] if isinstance(p, Lorentz)]
+
+    def mu_debye_poles(self, component="x"):
+        """First-order (Debye) magnetic poles on `component`."""
+        return [p for p in self._mu_poles_xyz[component] if isinstance(p, Debye)]
 
     def epsilon(self, f):
         """
@@ -242,13 +332,87 @@ class DispersiveMaterial(list):
             eps = eps + self.sigma * np.cos(omega * dt / 2) / (1j * w_tilde * eps_0)
         return eps
 
+    def _mu_comp(self, f, component, dt=None):
+        idx = "xyz".index(component)
+        omega = 2 * np.pi * np.asarray(f, dtype=float)
+        mu_val = self._mu_inf_xyz[idx] + 0j * omega
+        for pole in self._mu_poles_xyz[component]:
+            mu_val = mu_val + (
+                pole.chi(omega) if dt is None else pole.chi_discrete(omega, dt)
+            )
+        sig_m = self._sigma_m_xyz[idx]
+        if sig_m:
+            if dt is None:
+                mu_val = mu_val + sig_m / (1j * omega * mu_0)
+            else:
+                w_tilde = 2 / dt * np.sin(omega * dt / 2)
+                mu_val = mu_val + (
+                    sig_m * np.cos(omega * dt / 2) / (1j * w_tilde * mu_0)
+                )
+        return mu_val
+
+    def mu(self, f, component=None):
+        """
+        Complex relative permeability in the exp(+i w t) convention.
+
+        Parameters
+        ----------
+        f : float or array_like
+            Frequency [Hz], > 0 if `sigma_m` or a Drude pole is present.
+        component : {'x', 'y', 'z'}, optional
+            Axis to evaluate. If None, returns a scalar/array of shape
+            ``np.shape(f)`` when isotropic, or ``(3, *np.shape(f))`` when
+            diagonally anisotropic.
+
+        Returns
+        -------
+        mu : complex ndarray
+            mu(f); ``Im mu <= 0`` for passive materials.
+        """
+        if component is not None:
+            return self._mu_comp(f, component)
+        if self.is_mu_anisotropic:
+            return np.stack([self._mu_comp(f, c) for c in "xyz"], axis=0)
+        return self._mu_comp(f, "x")
+
+    def mu_discrete(self, f, dt, component=None):
+        """
+        Permeability realised by the time-discrete ADE update with step `dt`.
+
+        Defined such that the discrete Faraday law reads
+        -curl E = i W mu_0 mu_d H with W = 2 sin(w dt / 2) / dt, i.e. the
+        scheme behaves as a Yee scheme in a medium of permeability mu_d. It
+        tends to `mu` with second-order accuracy in `dt`.
+
+        Parameters
+        ----------
+        f : float or array_like
+            Frequency [Hz].
+        dt : float
+            Timestep [s].
+        component : {'x', 'y', 'z'}, optional
+            Axis to evaluate. If None, returns a scalar/array of shape
+            ``np.shape(f)`` when isotropic, or ``(3, *np.shape(f))`` when
+            diagonally anisotropic.
+
+        Returns
+        -------
+        mu : complex ndarray
+        """
+        if component is not None:
+            return self._mu_comp(f, component, dt=dt)
+        if self.is_mu_anisotropic:
+            return np.stack([self._mu_comp(f, c, dt=dt) for c in "xyz"], axis=0)
+        return self._mu_comp(f, "x", dt=dt)
+
     def is_stable(self, dt, courant=1.0):
         """
         Check the von Neumann stability of the coupled Yee + ADE update.
 
         The spectral radius of the single-mode amplification matrix is
-        evaluated for all discrete wavenumbers allowed on the grid. The vacuum
-        Courant number is ``c dt sqrt(1/dx^2 + 1/dy^2 + 1/dz^2)`` (<= 1).
+        evaluated for all discrete wavenumbers allowed on the grid, accounting
+        jointly for the electric and magnetic poles. The vacuum Courant number
+        is ``c dt sqrt(1/dx^2 + 1/dy^2 + 1/dz^2)`` (<= 1).
 
         Parameters
         ----------
@@ -266,72 +430,123 @@ class DispersiveMaterial(list):
         -----
         For a single lossless Drude pole the condition reduces to
         (w_p dt / 2)^2 + courant^2 <= eps_inf, and for a lossless Lorentz pole
-        to (w_0 dt / 2)^2 <= (eps_inf - courant^2) / (eps_s - courant^2).
+        to (w_0 dt / 2)^2 <= (eps_inf - courant^2) / (eps_s - courant^2) (and
+        dually for a purely magnetic material).
         """
-        for q in np.linspace(0.0, 2 * courant, 101):
-            rho = np.max(np.abs(np.linalg.eigvals(_amplification_matrix(self, dt, q))))
-            if rho > 1 + 1e-6:
-                return False
+        comps = ("x", "y", "z") if self.is_mu_anisotropic else ("x",)
+        for comp in comps:
+            for q in np.linspace(0.0, 2 * courant, 101):
+                A = _amplification_matrix(self, dt, q, mu_comp=comp)
+                rho = np.max(np.abs(np.linalg.eigvals(A)))
+                if rho > 1 + 1e-6:
+                    return False
         return True
 
     def __repr__(self):
         label = f"{self.name}: " if self.name else ""
+        if not self.has_magnetic:
+            return (
+                f"DispersiveMaterial({label}eps_inf={self.eps_inf:.6g}, "
+                f"poles={self.poles}, sigma={self.sigma:.6g})"
+            )
         return (
             f"DispersiveMaterial({label}eps_inf={self.eps_inf:.6g}, "
-            f"poles={self.poles}, sigma={self.sigma:.6g})"
+            f"poles={self.poles}, sigma={self.sigma:.6g}, "
+            f"mu_inf={self.mu_inf}, mu_poles={self.mu_poles}, "
+            f"sigma_m={self.sigma_m})"
         )
 
 
-def _ade_coefficients(material, dt):
-    """Per-pole update coefficients (normalized polarization p = P / eps_0)."""
+def _ade_coefficients_poles(poles, dt):
+    """Per-pole update coefficients for a sequence of Lorentz/Drude/Debye poles."""
     lorentz = []
-    for pole in material.lorentz_poles:
-        d = 1 + pole.gamma * dt / 2
-        lorentz.append(
-            (
-                (2 - (pole.omega_0 * dt) ** 2) / d,  # alpha: p^n
-                (pole.gamma * dt / 2 - 1) / d,  # xi: p^(n-1)
-                pole.strength * dt**2 / d,  # zeta: E^n
-            )
-        )
     debye = []
-    for pole in material.debye_poles:
-        r = dt / (2 * pole.tau)
-        debye.append(((1 - r) / (1 + r), pole.delta_eps * r / (1 + r)))  # kappa, beta
+    for pole in poles:
+        if isinstance(pole, Lorentz):
+            d = 1 + pole.gamma * dt / 2
+            lorentz.append(
+                (
+                    (2 - (pole.omega_0 * dt) ** 2) / d,  # alpha: p^n
+                    (pole.gamma * dt / 2 - 1) / d,  # xi: p^(n-1)
+                    pole.strength * dt**2 / d,  # zeta: E^n
+                )
+            )
+        elif isinstance(pole, Debye):
+            r = dt / (2 * pole.tau)
+            debye.append(((1 - r) / (1 + r), pole.delta_eps * r / (1 + r)))  # kappa, beta
     return lorentz, debye
 
 
-def _amplification_matrix(material, dt, q):
+def _ade_coefficients(material, dt):
+    """Per-pole electric update coefficients (normalized polarization p = P / eps_0)."""
+    return _ade_coefficients_poles(material.poles, dt)
+
+
+def _ade_h_coefficients(material, dt, component="x"):
+    """Per-pole magnetic update coefficients (normalized magnetization m = M / mu_0)."""
+    return _ade_coefficients_poles(material._mu_poles_xyz[component], dt)
+
+
+def _amplification_matrix(material, dt, q, mu_comp="x"):
     """
     One-step amplification matrix of a plane wave in the dispersive medium.
 
-    State [E^n, h^(n-1/2), p_L^n, p_L^(n-1), ..., p_D^n] in units with
-    eps_0 = mu_0 = 1; `q` = c K dt in [0, 2 courant], K the discrete
-    wavenumber, so h' = h - q E and eps_inf (E' - E) = q h' - ...
+    State [E^n, h^(n-1/2), p_L^n, p_L^(n-1), ..., p_D^n, m_L^(n-1/2),
+    m_L^(n-3/2), ..., m_D^(n-1/2)] in units with eps_0 = mu_0 = 1;
+    `q` = c K dt in [0, 2 courant], K the discrete wavenumber, so
+    mu_inf (h' - h) = -q E - ... and eps_inf (E' - E) = q h' - ...
     """
-    lorentz, debye = _ade_coefficients(material, dt)
-    s_hat = material.sigma * dt / eps_0
-    beta_sum = sum(beta for _, beta in debye)
-    den = material.eps_inf + s_hat / 2 + beta_sum
-    a1 = material.eps_inf - s_hat / 2 - beta_sum
-    n = 2 + 2 * len(lorentz) + len(debye)
+    lorentz_e, debye_e = _ade_coefficients(material, dt)
+    s_hat_e = material.sigma * dt / eps_0
+    beta_sum_e = sum(beta for _, beta in debye_e)
+    den_e = material.eps_inf + s_hat_e / 2 + beta_sum_e
+    a1_e = material.eps_inf - s_hat_e / 2 - beta_sum_e
+
+    c_idx = "xyz".index(mu_comp)
+    mu_inf = material._mu_inf_xyz[c_idx]
+    sigma_m = material._sigma_m_xyz[c_idx]
+    lorentz_m, debye_m = _ade_h_coefficients(material, dt, mu_comp)
+    s_hat_m = sigma_m * dt / mu_0
+    beta_sum_m = sum(beta for _, beta in debye_m)
+    den_m = mu_inf + s_hat_m / 2 + beta_sum_m
+    a1_m = mu_inf - s_hat_m / 2 - beta_sum_m
+
+    n_e = 2 * len(lorentz_e) + len(debye_e)
+    n_m = 2 * len(lorentz_m) + len(debye_m)
+    n = 2 + n_e + n_m
 
     def step(x):
         E, h = x[0], x[1]
         y = np.zeros(n)
-        y[1] = h - q * E
-        acc = a1 * E + q * y[1]
-        for k, (alpha, xi, zeta) in enumerate(lorentz):
+
+        # Magnetic half-step + ADE: h^(n-1/2) -> h^(n+1/2)
+        acc_h = a1_m * h - q * E
+        off_m = 2 + n_e
+        for k, (alpha, xi, zeta) in enumerate(lorentz_m):
+            m, m_old = x[off_m + 2 * k], x[off_m + 2 * k + 1]
+            m_new = alpha * m + xi * m_old + zeta * h
+            acc_h -= m_new - m
+            y[off_m + 2 * k], y[off_m + 2 * k + 1] = m_new, m
+        off_md = off_m + 2 * len(lorentz_m)
+        for k, (kappa, _) in enumerate(debye_m):
+            acc_h -= (kappa - 1) * x[off_md + k]
+        y[1] = acc_h / den_m
+        for k, (kappa, beta) in enumerate(debye_m):
+            y[off_md + k] = kappa * x[off_md + k] + beta * (y[1] + h)
+
+        # Electric half-step + ADE: E^n -> E^(n+1)
+        acc_e = a1_e * E + q * y[1]
+        for k, (alpha, xi, zeta) in enumerate(lorentz_e):
             p, p_old = x[2 + 2 * k], x[3 + 2 * k]
             p_new = alpha * p + xi * p_old + zeta * E
-            acc -= p_new - p
+            acc_e -= p_new - p
             y[2 + 2 * k], y[3 + 2 * k] = p_new, p
-        off = 2 + 2 * len(lorentz)
-        for k, (kappa, _) in enumerate(debye):
-            acc -= (kappa - 1) * x[off + k]
-        y[0] = acc / den
-        for k, (kappa, beta) in enumerate(debye):
-            y[off + k] = kappa * x[off + k] + beta * (y[0] + E)
+        off_ed = 2 + 2 * len(lorentz_e)
+        for k, (kappa, _) in enumerate(debye_e):
+            acc_e -= (kappa - 1) * x[off_ed + k]
+        y[0] = acc_e / den_e
+        for k, (kappa, beta) in enumerate(debye_e):
+            y[off_ed + k] = kappa * x[off_ed + k] + beta * (y[0] + E)
         return y
 
     return np.column_stack([step(col) for col in np.eye(n)])
@@ -494,43 +709,35 @@ dispersive_lib = {
 
 class DispersiveMixin:
     """
-    `SolverFIT3D` methods for dispersive materials (ADE on selected E edges).
+    `SolverFIT3D` methods for dispersive materials (ADE on selected E and H edges).
 
-    The non-dispersive time step is run unchanged; afterwards the new E on the
-    dispersive edges is recomputed from the curl contribution of that step and
-    the auxiliary polarizations. The update is local, linear and explicit.
+    The non-dispersive H and E half-steps are run unchanged; after each half-step
+    the new field on the dispersive edges is recomputed from the curl
+    contribution of that half-step and the auxiliary polarizations or
+    magnetizations. The update is local, linear and explicit.
     """
 
-    def add_dispersive_material(
-        self, material, center=(0.0, 0.0, 0.0), size=(0.0, 0.0, 0.0)
-    ):
-        """
-        Fill a box with a dispersive material.
-
-        E edges strictly inside the box get the material; edges lying on a
-        face of the box get the arithmetic mean of material and background
-        permittivity (weight 1/2 per face, as for tangential E on a material
-        interface). Later calls override earlier ones on shared edges.
-
-        Parameters
-        ----------
-        material : DispersiveMaterial
-            Material model.
-        center, size : tuple of float
-            Centre and extent of the box (x, y, z) [m]. A zero size selects
-            the single nearest sample along that direction.
-
-        Raises
-        ------
-        ValueError
-            If the solver timestep is unstable for this material.
-        """
+    def _box_edges(self, center, size, dual=False):
+        """Flat indices and weights of E (`dual=False`) or H (`dual=True`) in a box."""
         flat, weights = [], []
         nodes = (self.grid.x, self.grid.y, self.grid.z)
-        for c, comp in enumerate("xyz"):
+        for c, _ in enumerate("xyz"):
             axis_idx, axis_w = [], []
             for d in range(3):
-                pos = (nodes[d][:-1] + nodes[d][1:]) / 2 if d == c else nodes[d][:-1]
+                if dual:
+                    # H components live on dual edges: nodes along their own axis,
+                    # cell midpoints along the two transverse axes
+                    pos = (
+                        nodes[d][:-1]
+                        if d == c
+                        else (nodes[d][:-1] + nodes[d][1:]) / 2
+                    )
+                else:
+                    pos = (
+                        (nodes[d][:-1] + nodes[d][1:]) / 2
+                        if d == c
+                        else nodes[d][:-1]
+                    )
                 if size[d] == 0:
                     i = np.array([np.argmin(np.abs(pos - center[d]))])
                     axis_idx.append(i)
@@ -546,20 +753,86 @@ class DispersiveMixin:
             n = ii + jj * self.Nx + kk * self.Nx * self.Ny + c * self.N
             flat.append(n.ravel())
             weights.append((wx * wy * wz).ravel())
-        self._add_dispersive_edges(
-            material, np.concatenate(flat), np.concatenate(weights)
-        )
+        return np.concatenate(flat), np.concatenate(weights)
+
+    def add_dispersive_material(
+        self, material, center=(0.0, 0.0, 0.0), size=(0.0, 0.0, 0.0)
+    ):
+        """
+        Fill a box with a dispersive material.
+
+        E and H edges strictly inside the box get the material; edges lying on
+        a face of the box get the arithmetic mean of material and background
+        (weight 1/2 per face, as for tangential fields on a material
+        interface). Later calls override earlier ones on shared edges.
+
+        Parameters
+        ----------
+        material : DispersiveMaterial
+            Material model.
+        center, size : tuple of float
+            Centre and extent of the box (x, y, z) [m]. A zero size selects
+            the single nearest sample along that direction.
+
+        Raises
+        ------
+        ValueError
+            If the solver timestep is unstable for this material.
+        """
+        if getattr(material, "is_gain", False):
+            return self.add_gain_material(material, center=center, size=size)
+        if not isinstance(material, DispersiveMaterial):
+            raise TypeError("material must be a DispersiveMaterial")
+        if getattr(self, "scheme", "yee") == "tete":
+            raise NotImplementedError(
+                "scheme='tete' does not support dispersive (ADE) materials."
+            )
+        if material.has_electric or not material.has_magnetic:
+            idx_e, w_e = self._box_edges(center, size, dual=False)
+            self._add_dispersive_edges(material, idx_e, w_e)
+        if material.has_magnetic:
+            idx_h, w_h = self._box_edges(center, size, dual=True)
+            self._add_dispersive_h_edges(material, idx_h, w_h)
 
     def _apply_stl_dispersive(self):
         """Attach ADE updates to STL solids whose material is dispersive."""
-        if getattr(self.grid, "conformal", False) in ("all", "tensor"):
-            # Subpixel (Kottke) averaging of the dispersive solids
+        conformal = getattr(self.grid, "conformal", False) in ("all", "tensor")
+        warned_mu = False
+        for key, material in self.grid.stl_materials.items():
+            if not isinstance(material, DispersiveMaterial):
+                continue
+            if not material.has_magnetic:
+                continue
+            if conformal and not warned_mu:
+                warnings.warn(
+                    "Subpixel averaging of dispersive permeability (mu) is not "
+                    "implemented; applying volume-fraction mapping on H.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                warned_mu = True
+            mask = np.reshape(self.grid.grid[key], (self.Nx, self.Ny, self.Nz))
+            fraction = np.reshape(mask, self.N, order="F").astype(float)
+            fraction = np.tile(fraction, 3)
+            idx = np.flatnonzero(fraction)
+            self._add_dispersive_h_edges(material, idx, fraction[idx], mu_bg=1.0)
+
+        if conformal:
+            # Subpixel (Kottke) averaging of the electric dispersive solids
             from .tensor_dispersive import apply_conformal_dispersive
 
             if apply_conformal_dispersive(self):
                 return
+            if not any(
+                isinstance(m, DispersiveMaterial) and m.has_electric
+                for m in self.grid.stl_materials.values()
+            ):
+                return
+
         for key, material in self.grid.stl_materials.items():
             if not isinstance(material, DispersiveMaterial):
+                continue
+            if not (material.has_electric or not material.has_magnetic):
                 continue
             # Same volume fraction on the three components and the same
             # (Nx, Ny, Nz) mapping as _apply_stl_materials uses for ieps
@@ -570,8 +843,7 @@ class DispersiveMixin:
             # _apply_stl_materials mixes eps with vacuum: eps_bg = 1
             self._add_dispersive_edges(material, idx, fraction[idx], eps_bg=1.0)
 
-    def _add_dispersive_edges(self, material, idx, weight, eps_bg=None):
-        """Register flat E indices `idx` with fill fractions `weight`."""
+    def _check_dispersive_stable(self, material):
         if not isinstance(material, DispersiveMaterial):
             raise TypeError("material must be a DispersiveMaterial")
         courant = (
@@ -585,6 +857,10 @@ class DispersiveMixin:
                 "smaller `dt` or `cfln` to SolverFIT3D (see "
                 "DispersiveMaterial.is_stable)."
             )
+
+    def _add_dispersive_edges(self, material, idx, weight, eps_bg=None):
+        """Register flat E indices `idx` with fill fractions `weight`."""
+        self._check_dispersive_stable(material)
 
         net = getattr(self, "dispersive_network", None)
         if net is not None and np.any(np.isin(idx, net.rows)):
@@ -608,6 +884,12 @@ class DispersiveMixin:
                 hooks = ADEHooks(self)
                 fused.pre.append(hooks.pre)
                 fused.post.append(hooks.post)
+            elif (
+                getattr(self, "activate_abc", False)
+                and self.one_step == self._one_step_with_abc
+            ):
+                self._one_step_nondispersive = self._one_step_backend
+                self._one_step_backend = self._one_step_dispersive
             else:
                 self._one_step_nondispersive = self.one_step
                 self.one_step = self._one_step_dispersive
@@ -616,6 +898,16 @@ class DispersiveMixin:
             old = ~np.isin(group["idx_host"], idx)
             if not old.all():
                 _restrict_group(group, old, self.E.xp)
+        if getattr(self, "_gain_groups", None):
+            from .gain import _restrict_gain_group
+
+            for group in self._gain_groups:
+                old = ~np.isin(group["idx_host"], idx)
+                if not old.all():
+                    _restrict_gain_group(group, old)
+            self._gain_groups = [
+                g for g in self._gain_groups if g["idx_host"].size > 0
+            ]
 
         eps_s = 1 / (eps_0 * ieps[idx])  # permittivity used by the solver step
         bg = eps_s if eps_bg is None else eps_bg
@@ -640,9 +932,97 @@ class DispersiveMixin:
             g for g in self._dispersive_groups if g["idx_host"].size
         ] + [group]
 
+    def _add_dispersive_h_edges(self, material, idx, weight, mu_bg=None):
+        """Register flat H indices `idx` with fill fractions `weight`."""
+        self._check_dispersive_stable(material)
+        fused = getattr(self, "_fused_step", None)
+        if getattr(self, "fused", False) or (
+            fused is not None and self.one_step is fused
+        ):
+            raise NotImplementedError(
+                "The fused GPU step does not support dispersive permeability "
+                "(mu) yet; use fused=False."
+            )
+        imu = np.asarray(self.imu.array.get() if self.use_gpu else self.imu.array)
+        keep = (weight > 0) & (imu[idx] != 0)
+        idx, weight = idx[keep], weight[keep]
+        if not hasattr(self, "_dispersive_h_groups"):
+            self._dispersive_h_groups = []
+        # Later assignments override earlier ones
+        for group in self._dispersive_h_groups:
+            old = ~np.isin(group["idx_host"], idx)
+            if not old.all():
+                _restrict_group(group, old, self.H.xp)
+
+        xp = self.H.xp
+        new_groups = []
+        comps = (
+            [(c, comp, (idx // self.N) == c) for c, comp in enumerate("xyz")]
+            if material.is_mu_anisotropic
+            else [(0, "x", np.ones(idx.size, dtype=bool))]
+        )
+        for c_idx, comp, mask_c in comps:
+            idx_c = idx[mask_c]
+            if idx_c.size == 0:
+                continue
+            w_c = weight[mask_c]
+            mu_s = 1 / (mu_0 * imu[idx_c])  # permeability used by the solver step
+            bg = mu_s if mu_bg is None else mu_bg
+            mu_inf_c = material._mu_inf_xyz[c_idx]
+            sigma_m_c = material._sigma_m_xyz[c_idx]
+            mu_e = (1 - w_c) * bg + w_c * mu_inf_c
+            lorentz, debye = _ade_h_coefficients(material, self.dt, comp)
+            beta_sum = w_c * sum(beta for _, beta in debye)
+            s_hat = w_c * sigma_m_c * self.dt / mu_0 / 2
+            zeros = xp.zeros(idx_c.size, dtype=self.dtype)
+            new_groups.append(
+                {
+                    "material": material,
+                    "comp": comp,
+                    "idx_host": idx_c,
+                    "idx": xp.asarray(idx_c),
+                    "weight": xp.asarray(w_c, dtype=self.dtype),
+                    "mu_s": xp.asarray(mu_s, dtype=self.dtype),
+                    "a1": xp.asarray(mu_e - s_hat - beta_sum, dtype=self.dtype),
+                    "den": xp.asarray(mu_e + s_hat + beta_sum, dtype=self.dtype),
+                    "lorentz": [(*cf, zeros.copy(), zeros.copy()) for cf in lorentz],
+                    "debye": [(*cf, zeros.copy()) for cf in debye],
+                }
+            )
+        self._dispersive_h_groups = [
+            g for g in self._dispersive_h_groups if g["idx_host"].size
+        ] + new_groups
+
+    def _capture_dispersive_H(self):
+        """Capture H^(n-1/2) on magnetic dispersive edges before the H update."""
+        groups = getattr(self, "_dispersive_h_groups", None)
+        if not groups:
+            return None
+        return [self.H.array[g["idx"]].copy() for g in groups]
+
+    def _update_dispersive_H(self, H_n):
+        """Apply the local ADE correction to H^(n+1/2) after the H update."""
+        if H_n is None:
+            return
+        H = self.H.array
+        for g, Hn in zip(self._dispersive_h_groups, H_n):
+            w = g["weight"]
+            # (H* - H^(n-1/2)) mu_s = -(dt / mu_0) (curl E + M + PML/TFSF terms)
+            acc = (H[g["idx"]] - Hn) * g["mu_s"] + g["a1"] * Hn
+            for k, (alpha, xi, zeta, m, m_old) in enumerate(g["lorentz"]):
+                m_new = alpha * m + xi * m_old + zeta * Hn
+                acc -= w * (m_new - m)
+                g["lorentz"][k] = (alpha, xi, zeta, m_new, m)
+            for kappa, _, m in g["debye"]:
+                acc -= w * (kappa - 1) * m
+            H_new = acc / g["den"]
+            for k, (kappa, beta, m) in enumerate(g["debye"]):
+                g["debye"][k] = (kappa, beta, kappa * m + beta * (H_new + Hn))
+            H[g["idx"]] = H_new
+
     def _one_step_dispersive(self):
         """Non-dispersive step followed by the local ADE correction of E."""
-        E_n = [self.E.array[g["idx"]] for g in self._dispersive_groups]
+        E_n = [self.E.array[g["idx"]].copy() for g in self._dispersive_groups]
         self._one_step_nondispersive()
         E = self.E.array
         for g, En in zip(self._dispersive_groups, E_n):
@@ -661,21 +1041,29 @@ class DispersiveMixin:
             E[g["idx"]] = E_new
 
     def reset_dispersive_state(self):
-        """Zero the auxiliary polarizations (call together with reset_fields)."""
+        """Zero the auxiliary polarizations and magnetizations."""
         if getattr(self, "dispersive_network", None) is not None:
             self.dispersive_network.reset()
         for g in getattr(self, "_dispersive_groups", []):
             g["lorentz"] = [(a, x, z, 0 * p, 0 * q) for a, x, z, p, q in g["lorentz"]]
             g["debye"] = [(k, b, 0 * p) for k, b, p in g["debye"]]
+        for g in getattr(self, "_dispersive_h_groups", []):
+            g["lorentz"] = [(a, x, z, 0 * m, 0 * q) for a, x, z, m, q in g["lorentz"]]
+            g["debye"] = [(k, b, 0 * m) for k, b, m in g["debye"]]
 
 
 def _restrict_group(group, keep, xp):
     """Drop the edges of a dispersive group where `keep` is False."""
     keep_dev = xp.asarray(keep)
     group["idx_host"] = group["idx_host"][keep]
-    for key in ("idx", "weight", "eps_s", "a1", "den"):
-        group[key] = group[key][keep_dev]
+    for key in ("idx", "weight", "eps_s", "mu_s", "a1", "den"):
+        if key in group:
+            group[key] = group[key][keep_dev]
     group["lorentz"] = [
         (a, x, z, p[keep_dev], q[keep_dev]) for a, x, z, p, q in group["lorentz"]
     ]
     group["debye"] = [(k, b, p[keep_dev]) for k, b, p in group["debye"]]
+
+
+from . import material_library as _material_library  # noqa: E402, F401
+

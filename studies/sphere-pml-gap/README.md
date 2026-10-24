@@ -1,10 +1,10 @@
-# Tutorial 01b set-up check: sphere-to-CPML distance and CFS shift
+# Tutorial 3.5 set-up check: sphere-to-CPML distance and CFS shift
 
-Does placing the 10-cell CPML 1.05 µm from the sphere surface in Tutorial 01b ($r = 1$ µm, $n = 2$, $x = 2\text{–}10$) distort $Q_\mathrm{sca}$ or the far-field pattern by absorbing evanescent near fields?
+Does placing the 10-cell CPML 1.05 µm from the sphere surface in Tutorial 3.5 ($r = 1$ µm, $n = 2$, $x = 2\text{–}10$) distort $Q_\mathrm{sca}$ or the far-field pattern by absorbing evanescent near fields?
 
 ## Problem and hypothesis
 
-In Tutorial 01b at 40 cells/µm (`conformal='all'`), the scattered-field flux and near-to-far box sits at half-width 1.45 µm and the CPML starts at 2.05 µm (1.05 µm from the sphere surface). At the longest wavelength in the band ($x = 2$, $\lambda = 3.14$ µm), a 1.05 µm gap is only $0.33\,\lambda$ (though still $\ge \lambda / 2\pi = 0.50$ µm, the reactive near-field scale $k^{-1}$). At $x = 9$ E-plane ($100\text{–}150°$) and $x = 6$ H-plane ($\sim 150°$), the simulated far field deviates by ~1 dB from the exact Mie series.
+In Tutorial 3.5 at 40 cells/µm (`conformal='all'`), the scattered-field flux and near-to-far box sits at half-width 1.45 µm and the CPML starts at 2.05 µm (1.05 µm from the sphere surface). At the longest wavelength in the band ($x = 2$, $\lambda = 3.14$ µm), a 1.05 µm gap is only $0.33\,\lambda$ (though still $\ge \lambda / 2\pi = 0.50$ µm, the reactive near-field scale $k^{-1}$). At $x = 9$ E-plane ($100\text{–}150°$) and $x = 6$ H-plane ($\sim 150°$), the simulated far field deviates by ~1 dB from the exact Mie series.
 
 We test two hypotheses:
 1. **Near-field absorption / CPML reflection**: the CPML is too close to the sphere or needs a complex-frequency-shifted (CFS) $\alpha_\mathrm{max}$ to attenuate evanescent waves and grazing-incidence fields.
@@ -12,7 +12,7 @@ We test two hypotheses:
 
 ## Runs and reproduction
 
-All runs use `tutorials/01b_mie_sphere/mie_sphere.py` in `--arm` mode (`conformal='all'`, 300 fs window, identical TF/SF box at 1.25 µm and near-to-far flux box at 1.45 µm). The script supports CPML and domain-grading options:
+All runs use `tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.py` in `--arm` mode (`conformal='all'`, 300 fs window, identical TF/SF box at 1.25 µm and near-to-far flux box at 1.45 µm). The script supports CPML and domain-grading options:
 - `--gap-um`: sphere-surface-to-CPML distance [µm] on a symmetric graded grid (uniform 40 cells/µm out to 2 cells past the flux box, then stretched to the CPML);
 - `--coarse-per-um`: coarse grid resolution in the outer vacuum gap (default `16.0` cells/µm);
 - `--grade-ratio`: maximum adjacent cell-size ratio in the grading zone (default `1.15`);
@@ -21,7 +21,7 @@ All runs use `tutorials/01b_mie_sphere/mie_sphere.py` in `--arm` mode (`conforma
 - `--kappa-max`: CPML coordinate-stretching parameter $\kappa_\mathrm{max}$;
 - `--n-pml`: number of CPML cells (default `10`).
 
-Example commands (`pmlgap.sh` on a GPU node, from `tutorials/01b_mie_sphere/`):
+Example commands (`pmlgap.sh` on a GPU node, from `tutorials/03_diffraction_and_scattering/03-05_mie_sphere/`):
 
 ```bash
 python mie_sphere.py --arm --gpu --resolution 40 --out uniform_gap1x.json

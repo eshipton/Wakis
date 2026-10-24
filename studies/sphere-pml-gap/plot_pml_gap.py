@@ -1,5 +1,5 @@
 """
-Tutorial 01b, numerical set-up check: does the distance between the sphere
+Tutorial 3.5, numerical set-up check: does the distance between the sphere
 and the CPML change Q_sca and the far field?
 
 Runs (all 40 cells/um around the sphere, conformal 'all', 300 fs, same

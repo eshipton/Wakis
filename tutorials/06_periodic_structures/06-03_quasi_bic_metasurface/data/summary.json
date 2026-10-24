@@ -1,0 +1,345 @@
+{
+  "tutorial": "06-03_quasi_bic_metasurface",
+  "paper": "Koshelev et al., Phys. Rev. Lett. 121, 193903 (2018)",
+  "doi": "10.1103/PhysRevLett.121.193903",
+  "arxiv": "1809.00330",
+  "mode": "quick",
+  "total_elapsed_s": 0.0,
+  "lambda_bic_fit_nm": 1573.8846574359811,
+  "Q_bic_fit": 1572905115.205341,
+  "lambda_bic_rcwa_nm": 1575.7633333333335,
+  "log_slope_fit": -1.9978191349285142,
+  "Q0_alpha_fit": 47.38726149083892,
+  "Q0_alpha_half_fit": 11.84681537270973,
+  "log_slope_rcwa": -2.004905541167539,
+  "Q0_alpha_rcwa": 45.89638564248631,
+  "Q0_alpha_half_rcwa": 11.474096410621577,
+  "fano_Q_fit": 191.30647727817103,
+  "fano_Q_harminv": 194.63183202037547,
+  "fano_q_param": 1.1351245771910308,
+  "fano_sym_contrast": 0.013342784584843392,
+  "gamma_conf_si": 0.9475531316098326,
+  "log_slope_sin_theta": -1.9846524610240512,
+  "Q0_sin_theta": 34.58947437187765,
+  "slope_staircase_nx32": -2.3221021922866282e-17,
+  "preflight_3d": {
+    "task": 5,
+    "name": "koshelev_fig2_3d_tilted_bars",
+    "geometry": {
+      "period_m": 1.32e-06,
+      "semi_axis_a_m": 3.3e-07,
+      "semi_axis_b_m": 1.1e-07,
+      "height_m": 2e-07,
+      "inter_bar_d_m": 6.6e-07,
+      "eps_bg": 1.0,
+      "source": "Koshelev et al. (2018), Fig. 2 caption, p. 2"
+    },
+    "grid_shape": [
+      44,
+      44,
+      36
+    ],
+    "n_cells": 69696,
+    "n_steps": 1600,
+    "peak_ram_gb": 0.618,
+    "est_wall_seconds_cpu": 16.78,
+    "preflight_laptop_fits": true,
+    "preflight_workstation_fits": true,
+    "thetas_deg": [
+      0.0,
+      6.0,
+      9.0,
+      12.0
+    ],
+    "alphas_sin_theta": [
+      0.0,
+      0.10452846326765347,
+      0.15643446504023087,
+      0.20791169081775934
+    ],
+    "ran_3d_solver": false,
+    "elapsed_s": 0.0
+  },
+  "tasks": [
+    {
+      "task": 0,
+      "name": "fano_and_alpha_scaling",
+      "nx": 32,
+      "dx_nm": 21.25,
+      "dz_min_nm": 14.99999999999987,
+      "cpw_si_min": 21.28,
+      "cells_across_gap": 4.0,
+      "d_air_to_pml_nm": 757.4,
+      "lambda_bic_fit_nm": 1573.8847,
+      "Q_bic_fit": 1572905115.2,
+      "lambda_bic_rcwa_nm": 1575.7633,
+      "alphas": [
+        0.02,
+        0.04,
+        0.06,
+        0.08,
+        0.1,
+        0.14,
+        0.2
+      ],
+      "Q_fit": [
+        117598.14,
+        29406.17,
+        13073.24,
+        7356.63,
+        4710.65,
+        2406.67,
+        1182.7
+      ],
+      "Q_rcwa": [
+        116649.37,
+        29151.08,
+        12947.7,
+        7276.52,
+        4651.57,
+        2365.9,
+        1151.62
+      ],
+      "Q_alpha2_fit": [
+        47.0393,
+        47.0499,
+        47.0636,
+        47.0824,
+        47.1065,
+        47.1708,
+        47.3081
+      ],
+      "Q_alpha2_rcwa": [
+        46.6597,
+        46.6417,
+        46.6117,
+        46.5697,
+        46.5157,
+        46.3717,
+        46.0649
+      ],
+      "log_slope_fit": -1.99782,
+      "log_slope_rcwa": -2.00491,
+      "Q0_alpha_fit": 47.3873,
+      "Q0_alpha_half_fit": 11.8468,
+      "fano_alpha": 0.48,
+      "fano_Q_harminv": 194.63,
+      "fano_Q_fit": 191.31,
+      "fano_q_param": 1.1351,
+      "fano_rel_diff_Q": 0.0171,
+      "fano_contrast_alpha0": 0.01334,
+      "preflight_3d": {
+        "geometry": {
+          "period_m": 1.32e-06,
+          "semi_axis_a_m": 3.3e-07,
+          "semi_axis_b_m": 1.1e-07,
+          "height_m": 2e-07,
+          "inter_bar_d_m": 6.6e-07,
+          "eps_bg": 1.0,
+          "source": "Koshelev et al. (2018), Fig. 2 caption, p. 2"
+        },
+        "grid_shape": [
+          44,
+          44,
+          36
+        ],
+        "n_cells": 69696,
+        "n_steps": 1600,
+        "peak_ram_gb": 0.618,
+        "est_wall_seconds_cpu": 16.78,
+        "preflight_laptop_fits": true,
+        "preflight_workstation_fits": true,
+        "thetas_deg": [
+          0.0,
+          6.0,
+          9.0,
+          12.0
+        ],
+        "alphas_sin_theta": [
+          0.0,
+          0.10452846326765347,
+          0.15643446504023087,
+          0.20791169081775934
+        ],
+        "ran_3d_solver": false
+      },
+      "elapsed_s": 62.64
+    },
+    {
+      "task": 1,
+      "name": "bic_near_fields_and_gif",
+      "alpha_bic": 0.0,
+      "alpha_qbic": 0.24,
+      "lambda_bic_nm": 1573.8847,
+      "lambda_qbic_nm": 1572.1518,
+      "Q_bic": 1572905115.2,
+      "Q_qbic": 823.4,
+      "n_gif_frames": 28,
+      "elapsed_s": 5.44
+    },
+    {
+      "task": 2,
+      "name": "absorption_saturation",
+      "gamma_confinement": 0.94755,
+      "q_abs_targets": [
+        100000.0,
+        20000.0,
+        5000.0
+      ],
+      "Q_tot_alpha0": [
+        111369.3,
+        22275.1,
+        5568.8
+      ],
+      "max_rel_err_Q_tot_pred": 0.00023,
+      "max_rel_err_Q_rad_recovered": 0.00028,
+      "elapsed_s": 98.77
+    },
+    {
+      "task": 3,
+      "name": "oblique_floquet_dispersion",
+      "thetas_deg": [
+        1.0,
+        2.0,
+        3.0,
+        5.0,
+        7.0,
+        10.0
+      ],
+      "lambda0_bloch_nm": [
+        1574.0202,
+        1574.4264,
+        1575.1027,
+        1577.2601,
+        1580.477,
+        1587.238
+      ],
+      "Q_bloch": [
+        107509.45,
+        26919.82,
+        11994.91,
+        4353.27,
+        2247.94,
+        1129.55
+      ],
+      "Q_sin2": [
+        32.7459,
+        32.7877,
+        32.8547,
+        33.068,
+        33.3867,
+        34.06
+      ],
+      "log_slope_sin_theta": -1.98465,
+      "Q0_sin_theta": 34.5895,
+      "elapsed_s": 62.04
+    },
+    {
+      "task": 4,
+      "name": "resolution_and_failure_study",
+      "nx_list": [
+        32,
+        48,
+        64,
+        96
+      ],
+      "dx_nm": [
+        21.25,
+        14.167,
+        10.625,
+        7.083
+      ],
+      "cpw_si": [
+        21.28,
+        31.92,
+        42.57,
+        63.85
+      ],
+      "cells_across_gap": [
+        4.0,
+        6.0,
+        8.0,
+        12.0
+      ],
+      "lambda_bic_nm": [
+        1573.8847,
+        1574.417,
+        1575.2147,
+        1575.3964
+      ],
+      "Q_alpha2_a10_subpixel": [
+        47.1065,
+        46.9077,
+        46.8388,
+        46.6802
+      ],
+      "Q_staircase_nx32": [
+        767.72,
+        767.72,
+        767.72,
+        767.72,
+        767.72,
+        767.72,
+        767.72
+      ],
+      "slope_staircase_nx32": -0.0,
+      "d_air_to_pml_nm": [
+        215.4,
+        355.9,
+        518.8,
+        757.4
+      ],
+      "Q_pml_bic": [
+        163869.3,
+        1920924.3,
+        23623149.3,
+        1572905115.2
+      ],
+      "Q_pml_alpha02": [
+        68468.0,
+        110828.0,
+        117004.3,
+        117598.1
+      ],
+      "elapsed_s": 202.66
+    },
+    {
+      "task": 5,
+      "name": "koshelev_fig2_3d_tilted_bars",
+      "geometry": {
+        "period_m": 1.32e-06,
+        "semi_axis_a_m": 3.3e-07,
+        "semi_axis_b_m": 1.1e-07,
+        "height_m": 2e-07,
+        "inter_bar_d_m": 6.6e-07,
+        "eps_bg": 1.0,
+        "source": "Koshelev et al. (2018), Fig. 2 caption, p. 2"
+      },
+      "grid_shape": [
+        44,
+        44,
+        36
+      ],
+      "n_cells": 69696,
+      "n_steps": 1600,
+      "peak_ram_gb": 0.618,
+      "est_wall_seconds_cpu": 16.78,
+      "preflight_laptop_fits": true,
+      "preflight_workstation_fits": true,
+      "thetas_deg": [
+        0.0,
+        6.0,
+        9.0,
+        12.0
+      ],
+      "alphas_sin_theta": [
+        0.0,
+        0.10452846326765347,
+        0.15643446504023087,
+        0.20791169081775934
+      ],
+      "ran_3d_solver": false,
+      "elapsed_s": 0.0
+    }
+  ]
+}

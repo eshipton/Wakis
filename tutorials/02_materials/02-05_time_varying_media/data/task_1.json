@@ -1,0 +1,14 @@
+{
+  "index": 1,
+  "name": "frequency_conversion_and_drude_ionization",
+  "cpw": 40.0,
+  "cells_across_feature": 20.0,
+  "redshift_omega_ratio_meas": 0.7372746398387666,
+  "redshift_omega_ratio_theo": 0.75,
+  "blueshift_omega_ratio_meas": 1.6852519048271162,
+  "blueshift_omega_ratio_theo": 1.6666666666666667,
+  "rms_drude_tau_E_error": 3.320920590328733e-05,
+  "rms_drude_rho_E_error": 4.048715907004154e-05,
+  "sigma_decay_rel_error": 0.017828068698244767,
+  "wall_seconds": 0.3507466499995644
+}

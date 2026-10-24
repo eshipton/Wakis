@@ -1,0 +1,25 @@
+{
+  "task_index": 9,
+  "name": "quadrature_dual_drive",
+  "kind": "quadrature",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_cells_gap": 8,
+  "L_c_um": 4.0,
+  "theta_sw_deg": 30.0,
+  "min_feature_nm": 207.02,
+  "dx_background_nm": 24.55,
+  "dx_min_nm": 24.2,
+  "cells_across_feature": 8.55,
+  "grid_shape": [
+    726,
+    267,
+    1
+  ],
+  "n_cells": 193842,
+  "n_steps": 12401,
+  "elapsed_s": 338.027,
+  "peak_rss_mb": 599.85,
+  "npz_bytes": 552380
+}

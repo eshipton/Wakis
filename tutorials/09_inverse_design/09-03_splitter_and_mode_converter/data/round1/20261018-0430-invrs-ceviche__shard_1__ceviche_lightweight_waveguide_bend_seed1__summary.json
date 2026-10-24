@@ -1,0 +1,138 @@
+{
+  "errors": [],
+  "challenge": "ceviche_lightweight_waveguide_bend",
+  "seed": 1,
+  "args": {
+    "shard": 1,
+    "nshards": 10,
+    "outdir": "/work/out",
+    "challenges": [
+      "ceviche_lightweight_waveguide_bend",
+      "ceviche_lightweight_mode_converter",
+      "ceviche_lightweight_power_splitter",
+      "ceviche_lightweight_beam_splitter",
+      "ceviche_lightweight_wdm"
+    ],
+    "seeds": [
+      0,
+      1
+    ],
+    "betas": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "density_steps": 40,
+    "levelset_steps": 80,
+    "penalty": 1.0,
+    "estimator": "ceviche",
+    "run_time": 8e-13,
+    "metalens_resolution": 1,
+    "no_render": false
+  },
+  "optimization_time_s": 7193.707323074341,
+  "selected_stage": "density_beta4",
+  "snapshots_time_s": 0.026389598846435547,
+  "official_backend": "ceviche FDFD (invrs_gym component.response)",
+  "official_eval_metric": 0.5207661323643237,
+  "official_loss": 0.14265489834973322,
+  "official_S2": [
+    [
+      [
+        0.0027827077148038903,
+        0.9478837522185823
+      ]
+    ],
+    [
+      [
+        0.001584526420042685,
+        0.9511108574189219
+      ]
+    ]
+  ],
+  "binarization_degree": 1.0,
+  "official_eval_time_s": 131.042494058609,
+  "length_scale_solid_void_px": [
+    2,
+    1
+  ],
+  "target_min_width_spacing_px": [
+    3,
+    3
+  ],
+  "length_scale_time_s": 0.1152501106262207,
+  "wakis_r1_ceviche_estimator_eval_metric": 0.5198229867071876,
+  "wakis_r1_ceviche_estimator_S2": [
+    [
+      [
+        0.002774993784998453,
+        0.9477811859850985
+      ]
+    ],
+    [
+      [
+        0.0015974482112427637,
+        0.9512033927041703
+      ]
+    ]
+  ],
+  "wakis_r1_ceviche_estimator_time_s": 28.05461287498474,
+  "wakis_r1_modal_eval_metric": 0.44297637673197865,
+  "wakis_r1_modal_S2": [
+    [
+      [
+        0.0055702361081757315,
+        0.9443810373011361
+      ]
+    ],
+    [
+      [
+        0.0044143078098953644,
+        0.9478212188929802
+      ]
+    ]
+  ],
+  "wakis_r1_modal_time_s": 28.890432596206665,
+  "wakis_r2_modal_eval_metric": 0.37445439569598743,
+  "wakis_r2_modal_S2": [
+    [
+      [
+        0.004383929592083104,
+        0.9467356915903459
+      ]
+    ],
+    [
+      [
+        0.003107594653401534,
+        0.9319724837617933
+      ]
+    ]
+  ],
+  "wakis_r2_modal_time_s": 339.5458290576935,
+  "ceviche_10nm_eval_metric": 0.3150157812315396,
+  "ceviche_10nm_S2": [
+    [
+      [
+        0.0038731137351340965,
+        0.9447994388965321
+      ]
+    ],
+    [
+      [
+        0.002722422123044495,
+        0.9255085884313233
+      ]
+    ]
+  ],
+  "ceviche_10nm_time_s": 3491.4864740371704,
+  "fields_time_s": 21.70244288444519,
+  "render_time_s": 8.317647218704224,
+  "rendered": {
+    "design.png": "ok",
+    "optimization.gif": "ok",
+    "fields.png": "ok",
+    "spectrum.png": "ok",
+    "wave.gif": "ok"
+  },
+  "total_time_s": 11331.389821052551
+}

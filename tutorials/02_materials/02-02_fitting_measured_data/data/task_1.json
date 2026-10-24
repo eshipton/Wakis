@@ -1,0 +1,43 @@
+{
+  "task": 1,
+  "name": "au_and_ag_slab_simulations",
+  "quick": false,
+  "elapsed_s": 24.208984178998435,
+  "max_rss_mb": 194.0703125,
+  "dz_nm": 1.0,
+  "au_slab": {
+    "thickness_nm": 40.0,
+    "nt": 11715,
+    "dt_as": 1.5724362244997834,
+    "cells_across": 40.0,
+    "n1_drude_only": {
+      "eps_fit_error": 0.5827179106823827,
+      "rms_R_tot_vs_measured": 0.1783977993885611,
+      "rms_T_tot_vs_measured": 0.12968681947034383,
+      "rms_R_pole_fit_err": 0.17838195174381657,
+      "rms_R_disc_err": 2.5904250990360705e-05
+    },
+    "n3_drude_2lorentz": {
+      "eps_fit_error": 0.041306395190017046,
+      "rms_R_tot_vs_measured": 0.012088560804564812,
+      "rms_T_tot_vs_measured": 0.0044442235304652305,
+      "rms_R_pole_fit_err": 0.012080594757485004,
+      "rms_T_pole_fit_err": 0.0044457579615416395,
+      "rms_R_disc_err": 5.70489911227879e-05,
+      "rms_T_disc_err": 1.6537461040233325e-05
+    }
+  },
+  "ag_slab": {
+    "thickness_nm": 36.0,
+    "nt": 11434,
+    "dt_as": 1.5724362244997834,
+    "cells_across": 35.99999999999999,
+    "eps_fit_error": 0.11034667980796664,
+    "rms_R_tot_vs_measured": 0.014513253004496513,
+    "rms_T_tot_vs_measured": 0.021375540892270936,
+    "rms_R_pole_fit_err": 0.014599104154597387,
+    "rms_T_pole_fit_err": 0.021374305175325483,
+    "rms_R_disc_err": 0.0003651324655998549,
+    "rms_T_disc_err": 0.000201302951003472
+  }
+}

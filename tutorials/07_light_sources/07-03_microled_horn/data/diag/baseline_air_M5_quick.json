@@ -1,0 +1,107 @@
+{
+  "variant": "baseline",
+  "config": "air",
+  "mesh": "quick",
+  "M": 5,
+  "ndip": 5,
+  "dipole_x_m": [
+    -2.4e-07,
+    -1.2e-07,
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "dipole_x_nm": [
+    -240.0,
+    -120.0,
+    0.0,
+    120.0,
+    240.0
+  ],
+  "folded_dipole_xs_m": [
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "folded_dipole_weights": [
+    1.0,
+    2.0,
+    2.0
+  ],
+  "lee15_eq_pct": 19.9071,
+  "lee90_eq_pct": 36.788,
+  "lee15_pct": 20.7869,
+  "lee90_pct": 37.3502,
+  "lee15_wrk_pct": 16.3566,
+  "lee90_wrk_pct": 29.3899,
+  "lee15_pol_x": 19.7042,
+  "lee15_pol_y": 16.5906,
+  "lee15_pol_z": 23.4264,
+  "lee90_pol_x": 37.3981,
+  "lee90_pol_y": 33.9293,
+  "lee90_pol_z": 39.0367,
+  "per_pol": {
+    "lee15_pct": {
+      "x": 19.7042,
+      "y": 16.5906,
+      "z": 23.4264
+    },
+    "lee90_pct": {
+      "x": 37.3981,
+      "y": 33.9293,
+      "z": 39.0367
+    }
+  },
+  "lee15_xz_tangential_pct": 21.5653,
+  "lee90_xz_tangential_pct": 38.2174,
+  "collimation_ratio_eq_pct": 54.1129,
+  "collimation_ratio_pct": 55.6541,
+  "purcell_factor": 1.2709,
+  "fwhm_deg": 46.8798,
+  "directivity_2d": 3.656,
+  "paper_2d_lee15_pct": 27.5,
+  "paper_2d_lee90_pct": 46.7,
+  "gap_lee15_eq_pp": -7.5929,
+  "gap_lee90_eq_pp": -9.912,
+  "ag_eps_450nm_real": -5.4021,
+  "ag_eps_450nm_imag": -0.6338,
+  "ag_skin_depth_E_nm": 30.7616,
+  "ag_skin_depth_I_nm": 15.3808,
+  "dx_background_nm": 15.0,
+  "dx_min_nm": 3.75,
+  "cpw_gan": 12.2449,
+  "cpw_gan_min_wl": 11.5646,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 18.0,
+  "cells_per_skin_depth_I": 4.1015,
+  "cells_per_skin_depth_E": 8.2031,
+  "n_cells": 103734,
+  "n_steps": 6622,
+  "conv_ndip_full": [
+    1,
+    3,
+    5
+  ],
+  "conv_lee15_eq": [
+    26.241,
+    22.475,
+    19.9071
+  ],
+  "conv_lee90_eq": [
+    42.0168,
+    39.2171,
+    36.788
+  ],
+  "conv_lee15": [
+    24.7587,
+    23.1616,
+    20.7869
+  ],
+  "conv_lee90": [
+    40.6202,
+    39.5735,
+    37.3502
+  ],
+  "wall_time_s": 380.818,
+  "elapsed_s": 380.817
+}

@@ -67,7 +67,9 @@ class Geometry:
         self.shape_mat = []
         for s in self.shapes:
             for k, m in enumerate(mats):
-                if m is s.material:
+                if m is s.material or (
+                    _is_pec(m) and _is_pec(s.material)
+                ):
                     self.shape_mat.append(k + 1)
                     break
             else:
@@ -75,8 +77,12 @@ class Geometry:
                 self.shape_mat.append(len(mats))
         self.materials = mats
         self.eps = np.array([self.background_eps] + [_eps_inf(m) for m in mats])
+        self.sigma = np.array([0.0] + [_sigma(m) for m in mats])
+        self.pec_ids = [k + 1 for k, m in enumerate(mats) if _is_pec(m)]
         self.dispersive = [
-            (k + 1, m) for k, m in enumerate(mats) if hasattr(m, "poles")
+            (k + 1, m)
+            for k, m in enumerate(mats)
+            if hasattr(m, "poles") and len(m.poles) > 0
         ]
 
     def material_id(self, x, y):
@@ -86,6 +92,19 @@ class Geometry:
             mid[s.sdf(x, y) < 0] = k
         return mid
 
+    def pec_at_points(self, x, y, tol=1e-12):
+        """Boolean mask of points `(x, y)` inside or on the boundary of a PEC shape."""
+        pec_set = set(self.pec_ids)
+        if not pec_set:
+            return np.zeros(np.shape(x), bool)
+        out = np.zeros(np.shape(x), bool)
+        for s, k in zip(self.shapes, self.shape_mat):
+            if k in pec_set:
+                out |= s.sdf(x, y) <= tol
+            else:
+                out &= ~(s.sdf(x, y) < -tol)
+        return out
+
     def cut(self, xm, ym, half_diag):
         """Cells (centre, half diagonal) that an interface may cross."""
         out = np.zeros(np.shape(xm), bool)
@@ -94,7 +113,27 @@ class Geometry:
         return out
 
 
+def _is_pec(m):
+    return isinstance(m, str) and m.strip().lower() == "pec"
+
+
 def _eps_inf(m):
+    if _is_pec(m):
+        return 1.0
     if hasattr(m, "eps_inf"):
         return float(m.eps_inf)
+    if isinstance(m, (tuple, list)) and len(m) >= 1:
+        return float(m[0])
     return float(m)
+
+
+def _sigma(m):
+    if _is_pec(m):
+        return 0.0
+    if hasattr(m, "sigma"):
+        return float(m.sigma)
+    if isinstance(m, (tuple, list)) and len(m) == 2:
+        return float(m[1])
+    if isinstance(m, (tuple, list)) and len(m) >= 3:
+        return float(m[2])
+    return 0.0

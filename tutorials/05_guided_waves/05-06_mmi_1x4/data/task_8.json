@@ -1,0 +1,18 @@
+{
+  "task_index": 8,
+  "name": "sweep_W4.80_L11.15",
+  "kind": "sweep",
+  "averaging": "kottke",
+  "cpw": 20,
+  "l_mmi_um": 11.15,
+  "w_mmi_um": 4.8,
+  "grid_shape": [
+    863,
+    292,
+    1
+  ],
+  "n_cells": 251996,
+  "elapsed_s": 743.191,
+  "peak_rss_mb": 667.68,
+  "npz_bytes": 8089
+}

@@ -1,0 +1,9 @@
+{
+  "index": 1,
+  "name": "depth_and_fill_factor_sweeps",
+  "cpw": 22,
+  "max_depth_sweep_err_m1": 0.0089348921512451,
+  "max_fill_sweep_err_m1": 0.011472705406884331,
+  "peak_2d_map_t_m1": 0.8778812436164154,
+  "elapsed_s": 28.75
+}

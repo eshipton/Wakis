@@ -1,0 +1,23 @@
+{
+  "index": 6,
+  "name": "conv_kottke_vs_staircase",
+  "kind": "convergence",
+  "description": "Ag skin-depth resolution ladder (1.03..4.10 cells/delta_I) & Kottke vs staircase on 60 deg sidewall",
+  "dx_background_nm": 7.5,
+  "dx_min_nm": 2.5,
+  "cpw_gan": 24.4898,
+  "cpw_gan_min_wl": 23.1293,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 30.0,
+  "skin_depth_nm": 15.3808,
+  "skin_depth_E_nm": 30.7616,
+  "skin_depth_I_nm": 15.3808,
+  "cells_per_skin_depth": 6.1523,
+  "cells_per_skin_depth_E": 12.3046,
+  "cells_per_skin_depth_I": 6.1523,
+  "n_cells": 444066,
+  "n_steps": 9933,
+  "elapsed_s": 4277.396,
+  "ref_lee15": 43.3483,
+  "ref_lee90": 99.9236
+}

@@ -1,0 +1,28 @@
+{
+  "task_index": 0,
+  "name": "underresolved_kottke",
+  "design": "mmi",
+  "length_um": 6.0,
+  "level": "underresolved",
+  "averaging": "kottke",
+  "cpw": 10,
+  "n_feature": 0,
+  "is_demo": true,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 51.14,
+  "dx_min_nm": 51.03,
+  "dy_nm": 51.03,
+  "cells_across_feature": 1.96,
+  "slot_cells": 1.96,
+  "min_feature_cells": 1.96,
+  "grid_shape": [
+    240,
+    79,
+    1
+  ],
+  "n_cells": 18960,
+  "n_steps": 6201,
+  "elapsed_s": 11.168,
+  "peak_rss_mb": 248.23,
+  "npz_bytes": 7028
+}

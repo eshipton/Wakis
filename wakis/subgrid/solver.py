@@ -88,13 +88,39 @@ class SubgridFIT2D:
     """
 
     def __init__(self, mesh, geometry=None, polarization="TM", pml=None, cfl=0.95,
-                 n_sub=8, dt=None, lts=None, lts_kw=None, bloch_phase=None):  # fmt: skip
+                 n_sub=8, dt=None, lts=None, lts_kw=None, bloch_phase=None,
+                 averaging="strip"):  # fmt: skip
         if polarization not in ("TM", "TE"):
             raise ValueError("polarization must be 'TM' or 'TE'")
+        if averaging not in ("strip", "kottke"):
+            raise ValueError("averaging must be 'strip' or 'kottke'")
         self.mesh = mesh
         self.geo = geometry if geometry is not None else Geometry([])
+        # Check every material: a purely magnetic dispersive material has no electric poles and is not in
+        # geo.dispersive, so it would otherwise be ignored silently.
+        for mat in getattr(self.geo, "materials", [m for _, m in self.geo.dispersive]):
+            if getattr(mat, "has_magnetic", False):
+                raise NotImplementedError(
+                    "SubgridFIT2D does not support dispersive permeability (mu) yet."
+                )
+            if getattr(mat, "is_gain", False):
+                raise NotImplementedError(
+                    "SubgridFIT2D does not support gain media yet."
+                )
         self.pol = polarization
+        self.averaging = averaging
         self.n_sub = int(n_sub)
+        self.bloch_phase = (
+            1.0
+            if bloch_phase is None
+            else (
+                complex(bloch_phase)
+                if np.iscomplexobj(bloch_phase)
+                else float(bloch_phase)
+            )
+        )
+        self._is_complex = bool(np.iscomplexobj(bloch_phase))
+        self._dtype = complex if self._is_complex else float
         self.v_b = C0 / np.sqrt(self.geo.background_eps)  # background speed
         self.eta_b = ETA0 / np.sqrt(self.geo.background_eps)
         self._sample_materials()
@@ -110,7 +136,8 @@ class SubgridFIT2D:
         if lts:
             from wakis.unstructured.lts import build_lts
 
-            K2 = (self.K.T @ sp.diags(self.W) @ self.K).tocsr()
+            W_op = sp.diags(self.W) if self.W_off is None else (sp.diags(self.W) + self.W_off)
+            K2 = (self.KH @ W_op @ self.K).tocsr()
             kw = dict(p=int(lts))
             kw.update(lts_kw or {})
             self.lts, self.lts_info = build_lts(K2, self.D, lts * self.dt,
@@ -119,6 +146,7 @@ class SubgridFIT2D:
         self._setup_pml(pml)
         self._setup_dispersive()
         self.src = None
+        self.currents = []
         self.reset()
 
     # ============================================================ materials
@@ -132,6 +160,10 @@ class SubgridFIT2D:
         cut = geo.cut(xm, ym, 0.5 * np.hypot(dx, dy))
         mid_c = geo.material_id(xm, ym)
         eps_tab = geo.eps
+        pec_ids = getattr(geo, "pec_ids", [])
+        is_pec_tab = np.zeros(len(eps_tab), bool)
+        if pec_ids:
+            is_pec_tab[pec_ids] = True
         eb = geo.background_eps
         n_mat = len(eps_tab)
         nc = m.n_cells
@@ -145,7 +177,7 @@ class SubgridFIT2D:
         # ---- edges: half strips (bottom, top, left, right), ns columns along
         hw = np.stack([dy / 2, dy / 2, dx / 2, dx / 2], 1)  # half widths
         Lside = np.stack([dx, dx, dy, dy], 1)
-        inv_e = 1 / eps_tab[mid_c]
+        inv_e = np.where(is_pec_tab[mid_c], 0.0, 1.0 / eps_tab[mid_c])
         R = np.repeat((hw * inv_e[:, None])[:, :, None], ns, 2)  # int dn/eps
         Q = np.repeat((hw * (1 - eb * inv_e[:, None]))[:, :, None], ns, 2)
         s_eps = (hw * Lside) * eps_tab[mid_c][:, None]  # int eps dA
@@ -155,6 +187,13 @@ class SubgridFIT2D:
         Bd = {}  # per dispersive material: int 1_mat dn per column
         for j in disp_ids:
             Bd[j] = np.repeat((hw * (mid_c == j)[:, None])[:, :, None], ns, 2)
+
+        # ---- Kottke quadrant inverse-permittivity tensor (for TE averaging='kottke')
+        use_kottke = self.pol == "TE" and self.averaging == "kottke"
+        if use_kottke:
+            q_eta_xx = np.repeat((inv_e / EPS0)[:, None], 4, 1)
+            q_eta_yy = np.repeat((inv_e / EPS0)[:, None], 4, 1)
+            q_eta_xy = np.zeros((nc, 4))
 
         k = np.flatnonzero(cut)
         for chunk in np.array_split(k, max(1, k.size // 20000 + 1)):
@@ -166,9 +205,28 @@ class SubgridFIT2D:
                 px = X0[:, None, None] + DX[:, None, None] * (ox + t[:, None]) / 2
                 py = Y0[:, None, None] + DY[:, None, None] * (oy + t[None, :]) / 2
                 mid = geo.material_id(*np.broadcast_arrays(px, py))
-                q_eps[chunk, q] = qa[chunk] * eps_tab[mid].mean((1, 2))
+                eq = eps_tab[mid]
+                q_eps[chunk, q] = qa[chunk] * eq.mean((1, 2))
                 for j in range(n_mat):
                     q_frac[chunk, q, j] = qa[chunk] * (mid == j).mean((1, 2))
+                if use_kottke:
+                    inv_eq = np.where(is_pec_tab[mid], 0.0, 1.0 / eq)
+                    eta_perp = inv_eq.mean((1, 2)) / EPS0
+                    eta_par = np.where(
+                        is_pec_tab[mid].all((1, 2)), 0.0, 1.0 / (EPS0 * eq.mean((1, 2)))
+                    )
+                    if ns > 1:
+                        gx = np.diff(eq, axis=1).mean((1, 2)) / (DX / (2 * ns))
+                        gy = np.diff(eq, axis=2).mean((1, 2)) / (DY / (2 * ns))
+                        gn = np.hypot(gx, gy)
+                        nx = np.where(gn > 1e-12, gx / np.where(gn > 1e-12, gn, 1.0), 1.0)
+                        ny = np.where(gn > 1e-12, gy / np.where(gn > 1e-12, gn, 1.0), 0.0)
+                    else:
+                        nx = np.ones(chunk.size)
+                        ny = np.zeros(chunk.size)
+                    q_eta_xx[chunk, q] = eta_par * ny**2 + eta_perp * nx**2
+                    q_eta_yy[chunk, q] = eta_par * nx**2 + eta_perp * ny**2
+                    q_eta_xy[chunk, q] = (eta_perp - eta_par) * nx * ny
             for s in range(4):
                 if s < 2:  # x-directed side: columns along x, rows across y
                     ya = Y0 if s == 0 else Y1 - DY / 2
@@ -180,9 +238,10 @@ class SubgridFIT2D:
                     px = xa[:, None, None] + (DX / 2)[:, None, None] * t[None, :]
                 mid = geo.material_id(*np.broadcast_arrays(px, py))
                 e = eps_tab[mid]  # (n, col, row)
+                inv_e_s = np.where(is_pec_tab[mid], 0.0, 1.0 / e)
                 h = hw[chunk, s][:, None]
-                R[chunk, s] = h * (1 / e).mean(2)
-                Q[chunk, s] = h * (1 - eb / e).mean(2)
+                R[chunk, s] = h * inv_e_s.mean(2)
+                Q[chunk, s] = h * (1 - eb * inv_e_s).mean(2)
                 s_eps[chunk, s] = hw[chunk, s] * Lside[chunk, s] * e.mean((1, 2))
                 for j in range(n_mat):
                     s_frac[chunk, s, j] = (
@@ -191,6 +250,8 @@ class SubgridFIT2D:
                 for j in disp_ids:
                     Bd[j][chunk, s] = h * (mid == j).mean(2)
         self._q = dict(area=qa, eps=q_eps, frac=q_frac)
+        if use_kottke:
+            self._q.update(eta_xx=q_eta_xx, eta_yy=q_eta_yy, eta_xy=q_eta_xy)
         self._s = dict(hw=hw, R=R, Q=Q, eps=s_eps, frac=s_frac, B=Bd)
         self.cut_cells = int(cut.sum())
 
@@ -200,12 +261,15 @@ class SubgridFIT2D:
         nn, ne = m.n_nodes, m.n_edges
         cn, ce = m.cell_nodes.ravel(), m.cell_edges.ravel()
         n_mat = len(self.geo.eps)
+        pec_ids = getattr(self.geo, "pec_ids", [])
+        sigma_tab = getattr(self.geo, "sigma", np.zeros(n_mat))
         q, s = self._q, self._s
         # node (dual-cell) integrals on all nodes
         area = np.bincount(cn, np.repeat(q["area"], 4), nn)
         eps_a = np.bincount(cn, q["eps"].ravel(), nn)
         frac_a = np.stack([np.bincount(cn, q["frac"][:, :, j].ravel(), nn)
                            for j in range(n_mat)], 1)  # fmt: skip
+        pec_area = frac_a[:, pec_ids].sum(1) if pec_ids else np.zeros(nn)
         # edge integrals
         Lst = np.bincount(ce, s["hw"].ravel(), ne)  # dual length L*
         L = m.edge_length
@@ -215,24 +279,55 @@ class SubgridFIT2D:
         np.add.at(Rk, ce, s["R"].reshape(-1, ns))
         np.add.at(Qk, ce, s["Q"].reshape(-1, ns))
 
-        G = m.gradient()
-        P = m.P
+        bp = self.bloch_phase
+        G = m.gradient(bp)
+        P = m.P if bp == 1.0 else m.prolongation(bp)
         disp_ids = [k for k, _ in self.geo.dispersive]
+        self.W_off = None
         if self.pol == "TM":
             m_all = EPS0 * eps_a
             m0_all = EPS0 * self.geo.background_eps * area
             mp_all = {k: EPS0 * frac_a[:, k] for k in disp_ids}
             W = Lst / (MU0 * L)
             boundary = self._boundary_nodes()
+            if pec_ids:
+                pec_pt = (
+                    self.geo.pec_at_points(m.nodes[:, 0], m.nodes[:, 1])
+                    if hasattr(self.geo, "pec_at_points")
+                    else np.zeros(nn, bool)
+                )
+                boundary = boundary | pec_pt | (pec_area >= 0.5 * area)
             keep = ~boundary[m.free]
         else:
-            m_all = MU0 * area
+            open_area = np.maximum(area - pec_area, 0.0)
+            if pec_ids:
+                open_area = np.where(open_area < 0.05 * area, 0.0, open_area)
+            m_all = MU0 * np.where(open_area > 0, open_area, area)
             m0_all = m_all
             mp_all = {}
             # parallel (along the edge) of series (across it) columns; the
             # dispersive metal enters with eps_inf, its poles per column
-            inv_mean = (1 / Rk).mean(1)
-            W = 1 / (EPS0 * L * inv_mean)
+            r_min = 0.05 * (Lst[:, None] / np.max(self.geo.eps))
+            inv_Rk = np.where(Rk > r_min, 1.0 / np.where(Rk > r_min, Rk, 1.0), 0.0)
+            inv_mean = inv_Rk.mean(1)
+            W = np.where(
+                inv_mean > 0,
+                1.0 / (EPS0 * L * np.where(inv_mean > 0, inv_mean, 1.0)),
+                0.0,
+            )
+            if pec_ids and hasattr(self.geo, "pec_at_points"):
+                # Thin PEC sheets/boundaries where the dual edge is inside PEC
+                em = m.edge_mid
+                edir = m.edge_dir
+                # Check midpoint and two dual-edge offsets
+                dn_x = np.where(edir == 1, 0.25 * Lst, 0.0)
+                dn_y = np.where(edir == 0, 0.25 * Lst, 0.0)
+                pec_dual = (
+                    self.geo.pec_at_points(em[:, 0], em[:, 1])
+                    & self.geo.pec_at_points(em[:, 0] + dn_x, em[:, 1] + dn_y)
+                    & self.geo.pec_at_points(em[:, 0] - dn_x, em[:, 1] - dn_y)
+                )
+                W = np.where(pec_dual, 0.0, W)
             c_e = Lst - self.geo.background_eps * EPS0 * L * W
             self._edge_disp = {}
             for k in disp_ids:
@@ -240,21 +335,65 @@ class SubgridFIT2D:
                 np.add.at(Bk, ce, s["B"][k].reshape(-1, ns))
                 self._edge_disp[k] = (Bk, Rk)
             self.c_e = c_e
-            keep = np.ones(m.free.size, bool)
+            keep = open_area[m.free] > 0
+        self._keep = keep
         self.dof = m.free[keep]  # mesh node index of each unknown
         Pk = P[:, keep]
+        Pk_abs = np.abs(Pk)
         K = (G @ Pk).tocsr()
-        live = np.diff(K.indptr) > 0  # drop edges with no unknown (PEC walls)
+        live = (np.diff(K.indptr) > 0) & (W > 0)  # drop edges with no unknown or PEC
         self.edge_idx = np.flatnonzero(live)
         K = K[live]
         self.K = K
+        self.KH = K.conj().T.tocsr()
         self.W = W[live]
         self.Lst = Lst[live]
         self.L = L[live]
-        self.D = Pk.T @ m_all
-        self.D0 = Pk.T @ m0_all
+        self.D = np.asarray(Pk_abs.T @ m_all, dtype=float)
+        self.D0 = np.asarray(Pk_abs.T @ m0_all, dtype=float)
         self.Pk = Pk
+        self._Pk_abs = Pk_abs
         self.m_all, self.m0_all, self.mp_all = m_all, m0_all, mp_all
+
+        # Assemble off-diagonal Kottke tensor Hodge on TE edges if requested
+        if self.pol == "TE" and self.averaging == "kottke":
+            ce_grid = m.cell_edges  # (n_cells, 4): bottom(0), top(1), left(2), right(3)
+            off_r, off_c, off_v = [], [], []
+            for q_idx, (ox, oy) in enumerate(((0, 0), (1, 0), (0, 1), (1, 1))):
+                e_bt = ce_grid[:, 0 if oy == 0 else 1]
+                e_lr = ce_grid[:, 2 if ox == 0 else 3]
+                w_xy = -0.25 * q["eta_xy"][:, q_idx]
+                nz = np.flatnonzero(np.abs(w_xy) > 1e-18)
+                if nz.size:
+                    off_r.append(np.concatenate([e_lr[nz], e_bt[nz]]))
+                    off_c.append(np.concatenate([e_bt[nz], e_lr[nz]]))
+                    off_v.append(np.concatenate([w_xy[nz], w_xy[nz]]))
+            if off_r:
+                W_off_all = sp.csr_matrix(
+                    (
+                        np.concatenate(off_v),
+                        (np.concatenate(off_r), np.concatenate(off_c)),
+                    ),
+                    shape=(ne, ne),
+                )
+                self.W_off = W_off_all[live][:, live].tocsr()
+
+        # Static conductivity damping rates
+        if np.any(sigma_tab > 0):
+            if self.pol == "TM":
+                sig_n = np.bincount(cn, (q["frac"] @ sigma_tab).ravel(), nn)
+                G_sig = np.asarray(Pk_abs.T @ sig_n, dtype=float)
+                self._sigma_node_rate = G_sig / self.D
+                self._sigma_edge_rate = np.zeros(int(K.shape[0]))
+            else:
+                sig_e = np.bincount(ce, (s["frac"] @ sigma_tab).ravel(), ne)[live]
+                eps_e = np.bincount(ce, s["eps"].ravel(), ne)[live]
+                self._sigma_edge_rate = sig_e / np.maximum(EPS0 * eps_e, 1e-30)
+                self._sigma_node_rate = np.zeros(int(K.shape[1]))
+        else:
+            self._sigma_node_rate = np.zeros(int(K.shape[1]))
+            self._sigma_edge_rate = np.zeros(int(K.shape[0]))
+
         if self.pol == "TE":
             self.c_e = self.c_e[live]
             self._edge_disp = {
@@ -263,6 +402,11 @@ class SubgridFIT2D:
         self.n_dof = int(K.shape[1])
         self.n_edges = int(K.shape[0])
         self.n_unknowns = self.n_dof + self.n_edges
+
+    def _apply_W(self, f):
+        if self.W_off is None:
+            return self.W * f
+        return self.W * f + self.W_off @ f
 
     def _boundary_nodes(self):
         m = self.mesh
@@ -274,16 +418,16 @@ class SubgridFIT2D:
 
     def _lambda_max(self, tol=1e-6):
         s = 1 / np.sqrt(self.D)
-        K, W = self.K, self.W
+        K, KH = self.K, self.KH
 
         def mv(z):
             z = np.asarray(z).ravel()
-            return s * (K.T @ (W * (K @ (s * z))))
+            return s * (KH @ self._apply_W(K @ (s * z)))
 
         n = self.n_dof
-        op = LinearOperator((n, n), matvec=mv, dtype=float)
+        op = LinearOperator((n, n), matvec=mv, dtype=self._dtype)
         lam = eigsh(op, k=1, which="LA", tol=tol, return_eigenvectors=False)[0]
-        return float(lam) * (1 + 10 * tol)
+        return float(np.real(lam)) * (1 + 10 * tol)
 
     def stiffness(self, bloch_phase=None):
         """(K^T W K, D) on the unknowns (optionally with a Bloch phase)."""
@@ -291,8 +435,10 @@ class SubgridFIT2D:
             K = self.K
         else:
             G = self.mesh.gradient(bloch_phase)
-            K = (G @ self.Pk).tocsr()[self.edge_idx]
-        return (K.conj().T @ sp.diags(self.W) @ K).tocsr(), self.D
+            P = self.mesh.prolongation(bloch_phase)[:, self._keep]
+            K = (G @ P).tocsr()[self.edge_idx]
+        W_op = sp.diags(self.W) if self.W_off is None else (sp.diags(self.W) + self.W_off)
+        return (K.conj().T @ W_op @ K).tocsr(), self.D
 
     # ================================================================== PML
     def _setup_pml(self, pml):
@@ -301,47 +447,80 @@ class SubgridFIT2D:
         em = m.edge_mid[self.edge_idx]
         edir = m.edge_dir[self.edge_idx]
         self.pml = pml
-        if not pml:
-            self.pml_nodes = np.array([], int)
-            self.pml_edges = np.array([], int)
-            return
-        xa, xb, ya, yb = pml["box"]
-        R0, order = pml.get("R0", 1e-8), pml.get("order", 3)
-
-        def rate(v, lo, hi, vmin, vmax):
-            T = min(lo - vmin, vmax - hi)
-            smax = (order + 1) * self.v_b * np.log(1 / R0) / (2 * T)
-            d = np.maximum(lo - v, 0) + np.maximum(v - hi, 0)
-            return smax * (d / T) ** order
-
-        sx_n = rate(xn, xa, xb, m.xc[0], m.xc[-1])
-        sy_n = rate(yn, ya, yb, m.yc[0], m.yc[-1])
-        sx_e = rate(em[:, 0], xa, xb, m.xc[0], m.xc[-1])
-        sy_e = rate(em[:, 1], ya, yb, m.yc[0], m.yc[-1])
         dt = self.dt
-        s_e = np.where(edir == 0, sx_e, sy_e)
+
+        def ab(sig):
+            x = sig * dt
+            a = np.exp(-x)
+            b = dt * np.where(
+                x > 1e-15, -np.expm1(-x) / np.where(x > 1e-15, x, 1.0), 1.0
+            )
+            return a, b
+
+        sx_n = np.zeros(self.n_dof)
+        sy_n = np.zeros(self.n_dof)
+        s_e = self._sigma_edge_rate.copy()
+        if pml:
+            xa, xb, ya, yb = pml["box"]
+            R0, order = pml.get("R0", 1e-8), pml.get("order", 3)
+
+            def rate(v, lo, hi, vmin, vmax):
+                out = np.zeros_like(v, dtype=float)
+                T_lo = lo - vmin
+                if T_lo > 1e-15:
+                    smax_lo = (order + 1) * self.v_b * np.log(1 / R0) / (2 * T_lo)
+                    d_lo = np.maximum(lo - v, 0.0)
+                    out += smax_lo * (d_lo / T_lo) ** order
+                T_hi = vmax - hi
+                if T_hi > 1e-15:
+                    smax_hi = (order + 1) * self.v_b * np.log(1 / R0) / (2 * T_hi)
+                    d_hi = np.maximum(v - hi, 0.0)
+                    out += smax_hi * (d_hi / T_hi) ** order
+                return out
+
+            sx_n = rate(xn, xa, xb, m.xc[0], m.xc[-1])
+            sy_n = rate(yn, ya, yb, m.yc[0], m.yc[-1])
+            sx_e = rate(em[:, 0], xa, xb, m.xc[0], m.xc[-1])
+            sy_e = rate(em[:, 1], ya, yb, m.yc[0], m.yc[-1])
+            s_e = s_e + np.where(edir == 0, sx_e, sy_e)
+
         pe = np.flatnonzero(s_e > 0)
         pn = np.flatnonzero((sx_n > 0) | (sy_n > 0))
         self.pml_edges, self.pml_nodes = pe, pn
 
-        def ab(sig):
-            a = np.exp(-sig * dt)
-            b = np.where(sig > 0, (1 - a) / np.where(sig > 0, sig, 1), dt)
-            return a, b
+        # Non-PML conductive nodes in TM mode
+        sig_n = self._sigma_node_rate.copy()
+        if pn.size:
+            sx_n[pn] += sig_n[pn]
+            sy_n[pn] += sig_n[pn]
+            sig_n[pn] = 0.0
+        self._sig_nodes = np.flatnonzero(sig_n > 0)
+        self._asn, self._bsn = ab(sig_n[self._sig_nodes])
 
         self._ae, self._be = ab(s_e[pe])
         self._axn, self._bxn = ab(sx_n[pn])
         self._ayn, self._byn = ab(sy_n[pn])
-        if self.lts is not None:
+        self._ae_full = np.ones(self.n_edges)
+        self._be_full = np.full(self.n_edges, dt)
+        if pe.size:
+            self._ae_full[pe] = self._ae
+            self._be_full[pe] = self._be
+        if self.lts is not None and pn.size:
             near = np.zeros(self.n_dof, bool)
             near[self.lts.F] = near[self.lts.C] = True
             if near[pn].any():
                 raise ValueError("LTS fine nodes reach the PML")
         # x-edge part of the node update on PML nodes
-        Kx = self.K[np.flatnonzero(edir == 0)]
         self._x_edges = np.flatnonzero(edir == 0)
-        self._BWx_p = (sp.diags(1 / self.D[pn]) @ Kx.T.tocsr()[pn]
-                       @ sp.diags(self.W[self._x_edges])).tocsr()  # fmt: skip
+        if pn.size:
+            Kx = self.K[self._x_edges]
+            self._BWx_p = (
+                sp.diags(1 / self.D[pn])
+                @ Kx.conj().T.tocsr()[pn]
+                @ sp.diags(self.W[self._x_edges])
+            ).tocsr()
+        else:
+            self._BWx_p = sp.csr_matrix((0, self._x_edges.size), dtype=self._dtype)
 
     # =========================================================== dispersive
     def _setup_dispersive(self):
@@ -349,10 +528,10 @@ class SubgridFIT2D:
 
         self.groups = []
         for k, mat in self.geo.dispersive:
-            if mat.debye_poles or mat.sigma:
+            if mat.debye_poles:
                 raise NotImplementedError("only Lorentz/Drude poles")
             if self.pol == "TM":
-                mp = self.Pk.T @ self.mp_all[k]
+                mp = np.asarray(self._Pk_abs.T @ self.mp_all[k], dtype=float)
                 idx = np.flatnonzero(mp > 0)
                 ratio = mp[idx] / self.D[idx]
             else:
@@ -406,7 +585,7 @@ class SubgridFIT2D:
             s0 = (pos_all @ k).min() if pos_all.size else 0.0
             self.src.update(s0=s0)
             self._src_pos = m.nodes[nodes]
-            S = sp.diags(1 / self.D) @ self.Pk.T[:, nodes] @ sp.diags(coef[nodes])
+            S = sp.diags(1 / self.D) @ self.Pk.conj().T[:, nodes] @ sp.diags(coef[nodes])
             self._src_S = S.tocsr()
             # incident at the unknowns driving the ADE
             self._dof_pos = m.nodes[self.dof]
@@ -423,7 +602,7 @@ class SubgridFIT2D:
             self._src_pos = em[e]
             self._src_kn = np.where(edir[e] == 0, k[0], k[1]) * self.eta_b
             self._src_c = self.c_e[e]
-            self._src_B = (sp.diags(1 / self.D) @ self.K.T.tocsr()[:, e]).tocsr()
+            self._src_B = (sp.diags(1 / self.D) @ self.KH[:, e]).tocsr()
             # incident E_n * L* on dispersive edges (drives the ADE)
             self._edge_pos = em
             self._edge_kn = np.where(edir == 0, k[0], k[1]) * self.eta_b
@@ -463,21 +642,116 @@ class SubgridFIT2D:
         )
         return s["amp"] * s["s"](tau)
 
+    def add_current(self, points_or_edges, weights, waveform=None, kind="auto",
+                    component=None, time_offset=0.0):  # fmt: skip
+        """
+        Register a soft current source entering `one_step`, `linear_step` and `linear_step_T`.
+
+        Parameters
+        ----------
+        points_or_edges : array_like
+            * `(n_pts, 2)` coordinates [m] when `kind='auto'` or `'points'`,
+              interpolated onto `u` via `interpolation` or onto `f` via
+              `edge_field_matrices`;
+            * 1D integer array of unknown node indices `0 .. n_dof - 1` when
+              `kind='node'` or `'u'`;
+            * 1D integer array of active edge indices `0 .. n_edges - 1` when
+              `kind='edge'` or `'f'`.
+        weights : array_like
+            Source weights matching `points_or_edges`. Nodal weights `b_u` add
+            `dt * (b_u / D) * q(t + dt/2)` to `u^{n+1}`; edge weights `b_f` add
+            `dt * b_f * q(t)` to `f^{n+1/2}`.
+        waveform : callable, optional
+            `waveform(t) -> float` time dependence [dimensionless].
+        kind : {'auto', 'points', 'node', 'u', 'edge', 'f'}, optional
+            Target unknown space. Default `'auto'`.
+        component : {'u', 'Hz', 'Ez', 'Ex', 'Ey', 'Hx', 'Hy'}, optional
+            Field component when `points_or_edges` are 2D point coordinates.
+        time_offset : float, optional
+            Time shift [s] added to the evaluation time of `waveform`.
+
+        Returns
+        -------
+        int
+            Index of the registered source in `self.currents`.
+        """
+        arr = np.asarray(points_or_edges)
+        if kind == "auto":
+            if arr.ndim == 2 and arr.shape[1] == 2 and np.issubdtype(arr.dtype, np.floating):
+                kind = "points"
+            elif component in ("edge", "f", "Ex", "Ey", "Hx", "Hy"):
+                kind = "edge"
+            else:
+                kind = "node"
+
+        w_raw = np.asarray(weights)
+        w_dtype = complex if (self._is_complex or np.iscomplexobj(w_raw)) else float
+        b_u, b_f = None, None
+        if kind in ("node", "u"):
+            idx = np.atleast_1d(np.asarray(points_or_edges, dtype=int)).ravel()
+            w = np.broadcast_to(np.asarray(weights, dtype=w_dtype), idx.shape)
+            b_u = np.zeros(self.n_dof, dtype=w_dtype)
+            np.add.at(b_u, idx, w)
+        elif kind in ("edge", "f"):
+            idx = np.atleast_1d(np.asarray(points_or_edges, dtype=int)).ravel()
+            w = np.broadcast_to(np.asarray(weights, dtype=w_dtype), idx.shape)
+            b_f = np.zeros(self.n_edges, dtype=w_dtype)
+            np.add.at(b_f, idx, w)
+        elif kind == "points":
+            pts = np.atleast_2d(np.asarray(points_or_edges, dtype=float))
+            w_arr = np.asarray(weights, dtype=w_dtype)
+            if component in ("Ex", "Ey", "Hx", "Hy") or (
+                w_arr.ndim == 2 and w_arr.shape == (len(pts), 2)
+            ):
+                Mx, My = self.edge_field_matrices(pts)
+                if component in ("Ex", "Hx"):
+                    w = np.broadcast_to(w_arr, (len(pts),))
+                    b_f = np.asarray(Mx.conj().T @ w, dtype=w_dtype).ravel()
+                elif component in ("Ey", "Hy"):
+                    w = np.broadcast_to(w_arr, (len(pts),))
+                    b_f = np.asarray(My.conj().T @ w, dtype=w_dtype).ravel()
+                else:
+                    b_f = np.asarray(
+                        Mx.conj().T @ w_arr[:, 0] + My.conj().T @ w_arr[:, 1],
+                        dtype=w_dtype,
+                    ).ravel()
+            else:
+                S = self.interpolation(pts)
+                w = np.broadcast_to(w_arr, (len(pts),))
+                b_u = np.asarray(S.conj().T @ w, dtype=w_dtype).ravel()
+        else:
+            raise ValueError(f"Unknown current kind {kind!r}.")
+
+        self.currents.append(
+            dict(
+                b_u=b_u,
+                b_f=b_f,
+                waveform=waveform,
+                time_offset=float(time_offset),
+            )
+        )
+        return len(self.currents) - 1
+
+    def clear_currents(self):
+        """Remove all soft current sources registered with `add_current`."""
+        self.currents.clear()
+
     # =============================================================== stepping
     def reset(self):
-        self.u = np.zeros(self.n_dof)
-        self.u_prev = np.zeros(self.n_dof)
-        self.f = np.zeros(self.n_edges)
-        self.f_prev = np.zeros(self.n_edges)
+        dt_type = self._dtype
+        self.u = np.zeros(self.n_dof, dtype=dt_type)
+        self.u_prev = np.zeros(self.n_dof, dtype=dt_type)
+        self.f = np.zeros(self.n_edges, dtype=dt_type)
+        self.f_prev = np.zeros(self.n_edges, dtype=dt_type)
         self.n = 0
-        self._ux = np.zeros(self.pml_nodes.size)
-        self._uy = np.zeros(self.pml_nodes.size)
+        self._ux = np.zeros(self.pml_nodes.size, dtype=dt_type)
+        self._uy = np.zeros(self.pml_nodes.size, dtype=dt_type)
         for g in self.groups:
             shape = g["ratio"]["b"].shape if self.pol == "TE" else g["idx"].shape
-            g["p"] = [np.zeros(shape) for _ in g["coef"]]
-            g["p_old"] = [np.zeros(shape) for _ in g["coef"]]
-            g["ptot"] = np.zeros(shape)
-            g["x_prev"] = np.zeros(g["idx"].size)  # TE: g_tot^{n-1/2}
+            g["p"] = [np.zeros(shape, dtype=dt_type) for _ in g["coef"]]
+            g["p_old"] = [np.zeros(shape, dtype=dt_type) for _ in g["coef"]]
+            g["ptot"] = np.zeros(shape, dtype=dt_type)
+            g["x_prev"] = np.zeros(g["idx"].size, dtype=dt_type)  # TE: g_tot^{n-1/2}
 
     def _r(self, u):
         return u if self.lts is None else self.lts.apply(u)
@@ -491,7 +765,13 @@ class SubgridFIT2D:
         pe = self.pml_edges
         if pe.size:
             f_new[pe] = self._ae * f[pe] - self._be * Ku[pe]
-        g = self.W * f_new
+        t_n = n * dt
+        for cur in self.currents:
+            if cur["b_f"] is not None and cur["waveform"] is not None:
+                qf = cur["waveform"](t_n + cur["time_offset"])
+                if qf != 0.0:
+                    f_new = f_new + (dt * qf) * cur["b_f"]
+        g = self._apply_W(f_new)
         th = (n + 0.5) * dt
         if self.pol == "TE":
             if self.src is not None:
@@ -518,9 +798,17 @@ class SubgridFIT2D:
                            * self._inc(f"disp{gi}", th))  # fmt: skip
                 grp["x_prev"] = gt
         self.g = g  # dual-edge voltages at t^{n+1/2} (scattered)
-        r = self.K.T @ g
+        r = self.KH @ g
+        for cur in self.currents:
+            if cur["b_u"] is not None and cur["waveform"] is not None:
+                qu = cur["waveform"](th + cur["time_offset"])
+                if qu != 0.0:
+                    r = r + qu * cur["b_u"]
         r /= self.D
         u_new = u + dt * r
+        sn = self._sig_nodes
+        if sn.size:
+            u_new[sn] = self._asn * u[sn] + self._bsn * r[sn]
         pn = self.pml_nodes
         if pn.size:
             rx = self._BWx_p @ f_new[self._x_edges]
@@ -537,7 +825,7 @@ class SubgridFIT2D:
                 ut = u[idx]
                 if self.src is not None:
                     ut = ut + self._inc(f"disp{gi}", n * dt)
-                dp = np.zeros(idx.size)
+                dp = np.zeros(idx.size, dtype=self._dtype)
                 for kk, (alpha, xi, zeta) in enumerate(grp["coef"]):
                     p, po = grp["p"][kk], grp["p_old"][kk]
                     p_new = alpha * p + xi * po + zeta * ut
@@ -557,26 +845,164 @@ class SubgridFIT2D:
         Exactly conserved by the lossless, source-free leapfrog (any mesh,
         any dt below the limit); positive definite iff dt < `dt_max`.
         """
-        return 0.5 * self.f @ (self.W * self.f) + 0.5 * self.u_prev @ (self.D * self.u)
+        return 0.5 * float(
+            np.real(
+                np.vdot(self.f, self._apply_W(self.f))
+                + np.vdot(self.u_prev, self.D * self.u)
+            )
+        )
 
     # ======================================================= linear (adjoint)
-    def linear_step(self, u, f):
+    def linear_step(self, u, f, q=None):
         """
-        Source-free, lossless step (u^n, f^{n-1/2}) -> (u^{n+1}, f^{n+1/2})
-        as a pure function (PML, ADE and sources excluded).
+        Lossless step (u^n, f^{n-1/2}[, q]) -> (u^{n+1}, f^{n+1/2})
+        as a pure function (PML and ADE excluded; optional soft-source drives
+        `q` for sources registered with `add_current`).
         """
         f1 = f - self.dt * (self.K @ self._r(u))
-        u1 = u + self.dt * (self.K.T @ (self.W * f1)) / self.D
+        if q is not None and self.currents:
+            q_arr = np.broadcast_to(
+                np.atleast_1d(np.asarray(q, dtype=self._dtype)), (len(self.currents),)
+            )
+            for cur, qk in zip(self.currents, q_arr):
+                if cur["b_f"] is not None:
+                    f1 = f1 + (self.dt * qk) * cur["b_f"]
+        r = self.KH @ self._apply_W(f1)
+        if q is not None and self.currents:
+            for cur, qk in zip(self.currents, q_arr):
+                if cur["b_u"] is not None:
+                    r = r + qk * cur["b_u"]
+        u1 = u + self.dt * r / self.D
         return u1, f1
 
-    def linear_step_T(self, ub1, fb1):
-        """Exact transpose of `linear_step` (reverse-mode adjoint of a step)."""
-        fb = fb1 + self.dt * self.W * (self.K @ (ub1 / self.D))
-        z = self.K.T @ fb
+    def linear_step_T(self, ub1, fb1, with_sources=False):
+        """
+        Exact transpose of `linear_step` (reverse-mode adjoint of a step).
+
+        When `with_sources=True`, also returns the adjoint sensitivity `qb`
+        with respect to the source drives `q` of `self.currents`.
+        """
+        u_scaled = ub1 / self.D
+        fb = fb1 + self.dt * self._apply_W(self.K @ u_scaled)
+        z = self.KH @ fb
         if self.lts is not None:
             z = self.lts.apply_T(z)
         ub = ub1 - self.dt * z
+        if with_sources:
+            qb = np.array(
+                [
+                    self.dt
+                    * (
+                        (np.vdot(cur["b_f"], fb) if cur["b_f"] is not None else 0.0)
+                        + (np.vdot(cur["b_u"], u_scaled) if cur["b_u"] is not None else 0.0)
+                    )
+                    for cur in self.currents
+                ],
+                dtype=self._dtype,
+            )
+            return ub, fb, qb
         return ub, fb
+
+    def step_pml(self, u, f, ux=None, uy=None, q=None):
+        """
+        Pure-function step `(u, f, ux, uy[, q]) -> (u1, f1, ux1, uy1)` including
+        Berenger split-field PML, static conductivity, Kottke tensor Hodge, and
+        registered soft sources `q`.
+        """
+        pn = self.pml_nodes
+        if ux is None:
+            ux = np.zeros(pn.size, dtype=self._dtype)
+        if uy is None:
+            uy = np.zeros(pn.size, dtype=self._dtype)
+        Ku = self.K @ self._r(u)
+        f1 = self._ae_full * f - self._be_full * Ku
+        if q is not None and self.currents:
+            q_arr = np.broadcast_to(
+                np.atleast_1d(np.asarray(q, dtype=self._dtype)), (len(self.currents),)
+            )
+            for cur, qk in zip(self.currents, q_arr):
+                if cur["b_f"] is not None:
+                    f1 = f1 + (self.dt * qk) * cur["b_f"]
+        g = self._apply_W(f1)
+        r0 = self.KH @ g
+        if q is not None and self.currents:
+            for cur, qk in zip(self.currents, q_arr):
+                if cur["b_u"] is not None:
+                    r0 = r0 + qk * cur["b_u"]
+        r = r0 / self.D
+        u1 = u + self.dt * r
+        sn = self._sig_nodes
+        if sn.size:
+            u1 = u1.copy()
+            u1[sn] = self._asn * u[sn] + self._bsn * r[sn]
+        if pn.size:
+            rx = self._BWx_p @ f1[self._x_edges]
+            ry = r[pn] - rx
+            ux1 = self._axn * ux + self._bxn * rx
+            uy1 = self._ayn * uy + self._byn * ry
+            u1 = u1.copy()
+            u1[pn] = ux1 + uy1
+        else:
+            ux1, uy1 = ux.copy(), uy.copy()
+        return u1, f1, ux1, uy1
+
+    def step_pml_T(self, ub1, fb1, uxb1=None, uyb1=None, with_sources=False):
+        """
+        Exact reverse-mode transpose of `step_pml`.
+
+        Parameters
+        ----------
+        ub1, fb1, uxb1, uyb1 : ndarray
+            Adjoint cotangents of `(u1, f1, ux1, uy1)`.
+        with_sources : bool, optional
+            If True, also return `qb` (cotangent w.r.t. `q`).
+        """
+        pn = self.pml_nodes
+        if uxb1 is None:
+            uxb1 = np.zeros(pn.size, dtype=self._dtype)
+        if uyb1 is None:
+            uyb1 = np.zeros(pn.size, dtype=self._dtype)
+        ub_p = np.array(ub1, dtype=self._dtype, copy=True)
+        fb_p = np.array(fb1, dtype=self._dtype, copy=True)
+        if pn.size:
+            uxb_tot = uxb1 + ub_p[pn]
+            uyb_tot = uyb1 + ub_p[pn]
+            ub_p[pn] = 0.0
+            uxb = self._axn * uxb_tot
+            uyb = self._ayn * uyb_tot
+            rxb = self._bxn * uxb_tot
+            ryb = self._byn * uyb_tot
+            rxb = rxb - ryb
+        else:
+            uxb, uyb = uxb1.copy(), uyb1.copy()
+        sn = self._sig_nodes
+        rb = self.dt * ub_p
+        ub = ub_p.copy()
+        if sn.size:
+            rb[sn] = self._bsn * ub_p[sn]
+            ub[sn] = self._asn * ub_p[sn]
+        if pn.size:
+            rb[pn] = ryb
+            fb_p[self._x_edges] = fb_p[self._x_edges] + (self._BWx_p.conj().T @ rxb)
+        r0b = rb / self.D
+        gb = self.K @ r0b
+        fb_p = fb_p + self._apply_W(gb)
+        fb = self._ae_full * fb_p
+        z = self.KH @ (self._be_full * fb_p)
+        if self.lts is not None:
+            z = self.lts.apply_T(z)
+        ub = ub - z
+        if with_sources:
+            qb = np.array(
+                [
+                    (self.dt * np.vdot(cur["b_f"], fb_p) if cur["b_f"] is not None else 0.0)
+                    + (np.vdot(cur["b_u"], r0b) if cur["b_u"] is not None else 0.0)
+                    for cur in self.currents
+                ],
+                dtype=self._dtype,
+            )
+            return ub, fb, uxb, uyb, qb
+        return ub, fb, uxb, uyb
 
     # ============================================================== analysis
     def edge_field_matrices(self, points):
@@ -605,17 +1031,22 @@ class SubgridFIT2D:
 
         def mat(cols, w):
             ok = cols >= 0
-            return sp.csr_matrix((w[ok], (rows[ok], cols[ok])), shape=(n, self.n_edges))
+            dtype = complex if np.iscomplexobj(w) else float
+            return sp.csr_matrix(
+                (w[ok].astype(dtype), (rows[ok], cols[ok])), shape=(n, self.n_edges)
+            )
 
         lr = np.stack([ce[:, 2], ce[:, 3]], 1).ravel()
         wx = -np.stack([1 - tx, tx], 1).ravel() * inv[np.maximum(lr, 0)]
+        top_wrap = m.periodic_y & ((c["j"][k] + c["n"][k]) == m.NJ)
+        bp = np.where(top_wrap, self.bloch_phase, 1.0)
         bt = np.stack([ce[:, 0], ce[:, 1]], 1).ravel()
-        wy = np.stack([1 - ty, ty], 1).ravel() * inv[np.maximum(bt, 0)]
+        wy = np.stack([1 - ty, ty * bp], 1).ravel() * inv[np.maximum(bt, 0)]
         return mat(lr, wx), mat(bt, wy)
 
     def interpolation(self, points):
         """Sparse map from the unknowns to the field at `points`."""
-        S = self.mesh.interpolation_matrix(points)
+        S = self.mesh.interpolation_matrix(points, self.bloch_phase)
         keep = np.zeros(self.mesh.n_nodes, bool)
         keep[self.dof] = True
         col = keep[self.mesh.free]

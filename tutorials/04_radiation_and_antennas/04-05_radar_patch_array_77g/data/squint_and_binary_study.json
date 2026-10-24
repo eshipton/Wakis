@@ -1,0 +1,435 @@
+{
+  "uniform_squint_study": {
+    "wall_s": 59.5,
+    "f_broadside_zero_squint_ghz": 76.0,
+    "scan": [
+      {
+        "f_ghz": 75.0,
+        "theta_peak_deg": -2.0,
+        "d_max_pec_dbi": 16.56,
+        "g_max_lossy_dbi": 15.53,
+        "sll_e_db": -8.73,
+        "hpbw_e_half_deg": 3.92,
+        "hpbw_e_full_deg": 7.83
+      },
+      {
+        "f_ghz": 75.5,
+        "theta_peak_deg": -1.0,
+        "d_max_pec_dbi": 16.43,
+        "g_max_lossy_dbi": 15.41,
+        "sll_e_db": -8.89,
+        "hpbw_e_half_deg": 3.89,
+        "hpbw_e_full_deg": 7.79
+      },
+      {
+        "f_ghz": 76.0,
+        "theta_peak_deg": 0.0,
+        "d_max_pec_dbi": 16.26,
+        "g_max_lossy_dbi": 15.24,
+        "sll_e_db": -9.04,
+        "hpbw_e_half_deg": 3.87,
+        "hpbw_e_full_deg": 7.74
+      },
+      {
+        "f_ghz": 76.5,
+        "theta_peak_deg": 0.5,
+        "d_max_pec_dbi": 16.11,
+        "g_max_lossy_dbi": 15.08,
+        "sll_e_db": -9.22,
+        "hpbw_e_half_deg": 3.82,
+        "hpbw_e_full_deg": 7.64
+      },
+      {
+        "f_ghz": 77.0,
+        "theta_peak_deg": 1.5,
+        "d_max_pec_dbi": 15.99,
+        "g_max_lossy_dbi": 14.97,
+        "sll_e_db": -9.32,
+        "hpbw_e_half_deg": 3.73,
+        "hpbw_e_full_deg": 7.47
+      },
+      {
+        "f_ghz": 77.5,
+        "theta_peak_deg": 2.5,
+        "d_max_pec_dbi": 15.94,
+        "g_max_lossy_dbi": 14.92,
+        "sll_e_db": -9.4,
+        "hpbw_e_half_deg": 3.63,
+        "hpbw_e_full_deg": 7.26
+      },
+      {
+        "f_ghz": 78.0,
+        "theta_peak_deg": 3.5,
+        "d_max_pec_dbi": 15.95,
+        "g_max_lossy_dbi": 14.92,
+        "sll_e_db": -9.47,
+        "hpbw_e_half_deg": 3.54,
+        "hpbw_e_full_deg": 7.09
+      }
+    ],
+    "resolution_study": {
+      "coarse": {
+        "name": "uniform_1260_qwt_coarse",
+        "code": "1111111111",
+        "level": "coarse",
+        "n_cells": 156780,
+        "wall_s": 73.3,
+        "f_res_ghz": 72.6,
+        "s11_min_db": -8.54,
+        "at_77ghz": {
+          "f_ghz": 77.0,
+          "theta_peak_deg": 1.5,
+          "d_max_pec_dbi": 16.02,
+          "g_max_lossy_dbi": 14.99,
+          "sll_e_db": -8.92,
+          "hpbw_e_half_deg": 3.74,
+          "hpbw_e_full_deg": 7.49
+        },
+        "at_76ghz": {
+          "f_ghz": 76.0,
+          "theta_peak_deg": 0.0,
+          "d_max_pec_dbi": 16.17,
+          "g_max_lossy_dbi": 15.14,
+          "sll_e_db": -8.61,
+          "hpbw_e_half_deg": 3.85,
+          "hpbw_e_full_deg": 7.71
+        },
+        "scan": {
+          "75.0": {
+            "f_ghz": 75.0,
+            "theta_peak_deg": -2.0,
+            "d_max_pec_dbi": 16.39,
+            "g_max_lossy_dbi": 15.36,
+            "sll_e_db": -8.41,
+            "hpbw_e_half_deg": 3.91,
+            "hpbw_e_full_deg": 7.82
+          },
+          "75.5": {
+            "f_ghz": 75.5,
+            "theta_peak_deg": -1.0,
+            "d_max_pec_dbi": 16.29,
+            "g_max_lossy_dbi": 15.26,
+            "sll_e_db": -8.51,
+            "hpbw_e_half_deg": 3.88,
+            "hpbw_e_full_deg": 7.76
+          },
+          "76.0": {
+            "f_ghz": 76.0,
+            "theta_peak_deg": 0.0,
+            "d_max_pec_dbi": 16.17,
+            "g_max_lossy_dbi": 15.14,
+            "sll_e_db": -8.61,
+            "hpbw_e_half_deg": 3.85,
+            "hpbw_e_full_deg": 7.71
+          },
+          "76.5": {
+            "f_ghz": 76.5,
+            "theta_peak_deg": 0.5,
+            "d_max_pec_dbi": 16.07,
+            "g_max_lossy_dbi": 15.04,
+            "sll_e_db": -8.77,
+            "hpbw_e_half_deg": 3.81,
+            "hpbw_e_full_deg": 7.62
+          },
+          "77.0": {
+            "f_ghz": 77.0,
+            "theta_peak_deg": 1.5,
+            "d_max_pec_dbi": 16.02,
+            "g_max_lossy_dbi": 14.99,
+            "sll_e_db": -8.92,
+            "hpbw_e_half_deg": 3.74,
+            "hpbw_e_full_deg": 7.49
+          },
+          "77.5": {
+            "f_ghz": 77.5,
+            "theta_peak_deg": 2.5,
+            "d_max_pec_dbi": 16.02,
+            "g_max_lossy_dbi": 14.99,
+            "sll_e_db": -9.09,
+            "hpbw_e_half_deg": 3.67,
+            "hpbw_e_full_deg": 7.33
+          },
+          "78.0": {
+            "f_ghz": 78.0,
+            "theta_peak_deg": 3.5,
+            "d_max_pec_dbi": 16.05,
+            "g_max_lossy_dbi": 15.02,
+            "sll_e_db": -9.28,
+            "hpbw_e_half_deg": 3.6,
+            "hpbw_e_full_deg": 7.2
+          }
+        },
+        "excitations_77ghz": {
+          "slot_ez": {
+            "amplitudes_norm": [
+              1.0,
+              0.8729,
+              0.1422,
+              0.0824,
+              0.6926,
+              0.812,
+              0.0773,
+              0.1078,
+              0.7596,
+              0.9209
+            ],
+            "phases_deg": [
+              -0.0,
+              -24.56,
+              -4.82,
+              -15.63,
+              -25.72,
+              -23.78,
+              22.77,
+              -98.37,
+              -43.2,
+              -44.96
+            ],
+            "sll_af_only_db": -3.84,
+            "sll_af_times_ef_db": -4.54,
+            "sll_af_times_ef_with_analytic_loss_db": -4.51,
+            "theta_peak_deg": 1.0
+          },
+          "patch_jx": {
+            "amplitudes_norm": [
+              1.0,
+              0.7284,
+              0.914,
+              0.7953,
+              0.5153,
+              0.8187,
+              0.71,
+              0.5281,
+              0.701,
+              0.8564
+            ],
+            "phases_deg": [
+              -0.0,
+              -15.22,
+              -14.2,
+              -7.69,
+              -26.22,
+              -15.03,
+              -7.38,
+              -39.36,
+              -40.3,
+              -20.84
+            ],
+            "sll_af_only_db": -11.51,
+            "sll_af_times_ef_db": -11.74,
+            "sll_af_times_ef_with_analytic_loss_db": -11.65,
+            "theta_peak_deg": 0.75
+          }
+        }
+      },
+      "medium": {
+        "name": "uniform_1260_qwt_medium",
+        "code": "1111111111",
+        "level": "medium",
+        "n_cells": 281996,
+        "wall_s": 142.6,
+        "f_res_ghz": 73.0,
+        "s11_min_db": -8.74,
+        "at_77ghz": {
+          "f_ghz": 77.0,
+          "theta_peak_deg": 1.5,
+          "d_max_pec_dbi": 16.31,
+          "g_max_lossy_dbi": 15.28,
+          "sll_e_db": -8.8,
+          "hpbw_e_half_deg": 3.61,
+          "hpbw_e_full_deg": 7.22
+        },
+        "at_76ghz": {
+          "f_ghz": 76.0,
+          "theta_peak_deg": 0.0,
+          "d_max_pec_dbi": 16.3,
+          "g_max_lossy_dbi": 15.27,
+          "sll_e_db": -8.42,
+          "hpbw_e_half_deg": 3.73,
+          "hpbw_e_full_deg": 7.46
+        },
+        "scan": {
+          "75.0": {
+            "f_ghz": 75.0,
+            "theta_peak_deg": -1.5,
+            "d_max_pec_dbi": 16.37,
+            "g_max_lossy_dbi": 15.35,
+            "sll_e_db": -8.08,
+            "hpbw_e_half_deg": 3.81,
+            "hpbw_e_full_deg": 7.63
+          },
+          "75.5": {
+            "f_ghz": 75.5,
+            "theta_peak_deg": -1.0,
+            "d_max_pec_dbi": 16.33,
+            "g_max_lossy_dbi": 15.3,
+            "sll_e_db": -8.25,
+            "hpbw_e_half_deg": 3.78,
+            "hpbw_e_full_deg": 7.55
+          },
+          "76.0": {
+            "f_ghz": 76.0,
+            "theta_peak_deg": 0.0,
+            "d_max_pec_dbi": 16.3,
+            "g_max_lossy_dbi": 15.27,
+            "sll_e_db": -8.42,
+            "hpbw_e_half_deg": 3.73,
+            "hpbw_e_full_deg": 7.46
+          },
+          "76.5": {
+            "f_ghz": 76.5,
+            "theta_peak_deg": 1.0,
+            "d_max_pec_dbi": 16.28,
+            "g_max_lossy_dbi": 15.25,
+            "sll_e_db": -8.58,
+            "hpbw_e_half_deg": 3.68,
+            "hpbw_e_full_deg": 7.36
+          },
+          "77.0": {
+            "f_ghz": 77.0,
+            "theta_peak_deg": 1.5,
+            "d_max_pec_dbi": 16.31,
+            "g_max_lossy_dbi": 15.28,
+            "sll_e_db": -8.8,
+            "hpbw_e_half_deg": 3.61,
+            "hpbw_e_full_deg": 7.22
+          },
+          "77.5": {
+            "f_ghz": 77.5,
+            "theta_peak_deg": 2.5,
+            "d_max_pec_dbi": 16.35,
+            "g_max_lossy_dbi": 15.32,
+            "sll_e_db": -9.0,
+            "hpbw_e_half_deg": 3.55,
+            "hpbw_e_full_deg": 7.1
+          },
+          "78.0": {
+            "f_ghz": 78.0,
+            "theta_peak_deg": 3.0,
+            "d_max_pec_dbi": 16.4,
+            "g_max_lossy_dbi": 15.38,
+            "sll_e_db": -9.16,
+            "hpbw_e_half_deg": 3.5,
+            "hpbw_e_full_deg": 7.0
+          }
+        },
+        "excitations_77ghz": null
+      },
+      "fine": {
+        "name": "uniform_1260_qwt_fine",
+        "code": "1111111111",
+        "level": "fine",
+        "n_cells": 433800,
+        "wall_s": 260.9,
+        "f_res_ghz": 73.1,
+        "s11_min_db": -9.02,
+        "at_77ghz": {
+          "f_ghz": 77.0,
+          "theta_peak_deg": 1.5,
+          "d_max_pec_dbi": 16.32,
+          "g_max_lossy_dbi": 15.3,
+          "sll_e_db": -8.87,
+          "hpbw_e_half_deg": 3.63,
+          "hpbw_e_full_deg": 7.25
+        },
+        "at_76ghz": {
+          "f_ghz": 76.0,
+          "theta_peak_deg": 0.0,
+          "d_max_pec_dbi": 16.3,
+          "g_max_lossy_dbi": 15.27,
+          "sll_e_db": -8.45,
+          "hpbw_e_half_deg": 3.74,
+          "hpbw_e_full_deg": 7.49
+        },
+        "scan": {
+          "75.0": {
+            "f_ghz": 75.0,
+            "theta_peak_deg": -2.0,
+            "d_max_pec_dbi": 16.37,
+            "g_max_lossy_dbi": 15.34,
+            "sll_e_db": -8.09,
+            "hpbw_e_half_deg": 3.82,
+            "hpbw_e_full_deg": 7.63
+          },
+          "75.5": {
+            "f_ghz": 75.5,
+            "theta_peak_deg": -1.0,
+            "d_max_pec_dbi": 16.33,
+            "g_max_lossy_dbi": 15.31,
+            "sll_e_db": -8.24,
+            "hpbw_e_half_deg": 3.78,
+            "hpbw_e_full_deg": 7.56
+          },
+          "76.0": {
+            "f_ghz": 76.0,
+            "theta_peak_deg": 0.0,
+            "d_max_pec_dbi": 16.3,
+            "g_max_lossy_dbi": 15.27,
+            "sll_e_db": -8.45,
+            "hpbw_e_half_deg": 3.74,
+            "hpbw_e_full_deg": 7.49
+          },
+          "76.5": {
+            "f_ghz": 76.5,
+            "theta_peak_deg": 0.5,
+            "d_max_pec_dbi": 16.3,
+            "g_max_lossy_dbi": 15.28,
+            "sll_e_db": -8.65,
+            "hpbw_e_half_deg": 3.69,
+            "hpbw_e_full_deg": 7.37
+          },
+          "77.0": {
+            "f_ghz": 77.0,
+            "theta_peak_deg": 1.5,
+            "d_max_pec_dbi": 16.32,
+            "g_max_lossy_dbi": 15.3,
+            "sll_e_db": -8.87,
+            "hpbw_e_half_deg": 3.63,
+            "hpbw_e_full_deg": 7.25
+          },
+          "77.5": {
+            "f_ghz": 77.5,
+            "theta_peak_deg": 2.0,
+            "d_max_pec_dbi": 16.36,
+            "g_max_lossy_dbi": 15.33,
+            "sll_e_db": -9.09,
+            "hpbw_e_half_deg": 3.57,
+            "hpbw_e_full_deg": 7.15
+          },
+          "78.0": {
+            "f_ghz": 78.0,
+            "theta_peak_deg": 3.0,
+            "d_max_pec_dbi": 16.42,
+            "g_max_lossy_dbi": 15.39,
+            "sll_e_db": -9.31,
+            "hpbw_e_half_deg": 3.52,
+            "hpbw_e_full_deg": 7.04
+          }
+        },
+        "excitations_77ghz": null
+      }
+    }
+  },
+  "pure_binary_1011111111": {
+    "description": "Paper binary on/off '1011111111' (9 uniform W1=1540 um patches, element #2 omitted, L3=718 um QWT, open end)",
+    "theta_peak_deg": 0.0,
+    "d_max_pec_dbi": 15.756524999586992,
+    "g_max_lossy_dbi": 14.732131109230968,
+    "sll_e_db": -10.472735314888961,
+    "hpbw_e_half_deg": 3.8846655326261734,
+    "hpbw_e_full_deg": 7.769331065252347,
+    "f_res_ghz": 74.6,
+    "s11_min_db": -22.236532253214936
+  },
+  "design_variation_width_taper": {
+    "description": "Our own design variation (not in Yang et al. 2020): raised-cosine patch width taper on '1011111111'",
+    "theta_peak_deg": -2.0,
+    "d_max_pec_dbi": 16.07569921701389,
+    "g_max_lossy_dbi": 15.051305326657868,
+    "sll_e_db": -15.619186693167137,
+    "hpbw_e_half_deg": 4.656266923300381,
+    "hpbw_e_full_deg": 9.312533846600761,
+    "f_res_ghz": 75.95,
+    "s11_min_db": -17.56289635134191
+  }
+}

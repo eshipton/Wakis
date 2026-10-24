@@ -342,6 +342,7 @@ class BCsMixin:
         """
         self.bc_low = list(self.bc_low)
         self.bc_high = list(self.bc_high)
+        self._bloch_axes = [bc.lower() == "bloch" for bc in self.bc_low]
         nodes = (self.grid.x, self.grid.y, self.grid.z)
         self.bloch_phase = [1, 1, 1]
         for axis, direction in enumerate(["x", "y", "z"]):

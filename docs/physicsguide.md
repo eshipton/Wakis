@@ -555,16 +555,186 @@ returned by `DispersiveMaterial.epsilon_discrete(f, dt)`; $`\varepsilon_d = \var
 
 **Stability.** For a lossless Drude pole the coupled Yee–ADE scheme is stable iff $`(\omega_p\Delta t/2)^2 + C^2 \le \varepsilon_\infty`$, and for a lossless Lorentz pole iff $`(\omega_0\Delta t/2)^2 \le (\varepsilon_\infty - C^2)/(\varepsilon_s - C^2)`$, with $`C = c\Delta t\sqrt{\sum_i \Delta x_i^{-2}} \le 1`$ the vacuum Courant number and $`\varepsilon_s = \varepsilon_\infty+\Delta\varepsilon`$ (Wakis derivation from the discrete dispersion relation $`\tilde\Omega^2\varepsilon_d = c^2\tilde K^2`$, requiring all roots on the unit circle for $`c^2\tilde K^2\Delta t^2/4 \in [0, C^2]`$). Damping only helps. For general multi-pole models, `DispersiveMaterial.is_stable(dt, courant)` evaluates the spectral radius of the single-mode amplification matrix over all grid wavenumbers; `add_dispersive_material` raises if the solver's $`\Delta t`$ is unstable. In practice the poles must be time-resolved ($`\omega_0\Delta t, \omega_p\Delta t \lesssim 1`$), which is always the case for optical metals meshed at a few nm; the default `cfln=0.5` leaves margin for strong poles (e.g. silicon's 0.3 µm Sellmeier pole requires $`\Delta t \lesssim 8\times10^{-17}`$ s).
 
-**Material library and fitting.** `dispersive_lib` contains: gold, silver and aluminium with the Lorentz–Drude parameters of [Rakić et al., 1998] (valid 0.1–6 eV); lossless Sellmeier models of fused silica [Malitson, 1965] (0.21–6.7 µm) and silicon [Salzberg & Villa, 1957] (1.36–11 µm, transparent region only); and three-pole Debye fits (Wakis, 0.1–20 GHz) of Djordjevic–Sarkar wideband models [Djordjević et al., 2001] through nominal FR-4 ($`\varepsilon' = 4.4`$, $`\tan\delta = 0.02`$ at 1 GHz) and Rogers RO4350B ($`\varepsilon' = 3.66`$, $`\tan\delta = 0.0037`$ at 10 GHz) values. A Sellmeier term $`B\lambda^2/(\lambda^2 - C^2)`$ is a Lorentz pole with $`\Delta\varepsilon = B`$, $`\omega_0 = 2\pi c/C`$, $`\gamma=0`$. `fit_poles(f, eps, n_lorentz, n_drude, n_debye)` fits tabulated data by nonlinear least squares on the relative complex error; every parameter is optimized through its logarithm, so the fitted model is passive ($`\operatorname{Im}\varepsilon_r\le 0`$ for all $`\omega`$) and causal by construction.
+**Material library and fitting** (`wakis/material_library.py`). `dispersive_lib` (populated by `wakis.material_library`) provides 62 canonical optical and RF dispersive materials (160 keys including lowercase chemical-formula and shorthand aliases). Metadata for any entry can be queried with `wakis.material_library.info(name)` (returning citation, model type, validity wavelength range in µm, relative RMS fit error if fitted, and ADE stability at the reference optical step $`\Delta t = 5\times10^{-17}`$ s / 50 as and Courant number $`C = 0.5`$), and all registered names can be listed with `wakis.material_library.list_materials(include_aliases=False, category=None)`. For uniaxial crystals (registered as `'<name> o'` and `'<name> e'`), `wakis.material_library.uniaxial_crystal(name, axis='z')` returns the $`(\varepsilon_x, \varepsilon_y, \varepsilon_z)`$ permutation of `(o, o, e)` for a crystal optic axis along `x`, `y`, or `z` (note that `SolverFIT3D.add_dispersive_material` and `wakis.tensor_dispersive` currently take a single scalar `DispersiveMaterial` per solid/box). A Sellmeier term $`B\lambda^2/(\lambda^2 - C^2)`$ is mapped to a lossless Lorentz pole with $`\Delta\varepsilon = B`$, $`\omega_0 = 2\pi c/C`$, $`\gamma=0`$. `fit_poles(f, eps, n_lorentz, n_drude, n_debye)` fits tabulated data from the CC0 `refractiveindex.info` database by nonlinear least squares on the relative complex error; every parameter is optimized through its logarithm, so the fitted model is passive ($`\operatorname{Im}\varepsilon_r\le 0`$ for all $`\omega`$) and causal by construction.
 
-**Validation** (`tests/test_025_dispersive.py`): Lorentz, Drude (across the plasma edge) and conductive Debye slabs reproduce the analytic Fabry–Pérot reflectance and transmittance with $`\varepsilon(\omega)`$ to $`<10^{-2}`$ (Drude: $`2\times10^{-3}`$) with second-order convergence in the cell size; a spatially uniform field reproduces $`\varepsilon_d(\omega)`$ to $`10^{-8}`$; the stability check matches the closed-form limits; a lossless Lorentz medium stays bounded for $`4\times10^4`$ steps; fits recover generating parameters to $`10^{-6}`$.
+![Dispersive metals library vs source data](img/008_material_library_metals.png)
+
+![Dispersive dielectrics and semiconductors library vs source data](img/008_material_library_dielectrics.png)
+
+| Material (`aliases`) | Model | Range [µm] | Source | Fit error | Stability (`dt = 50 as`, `C = 0.5`) |
+|---|---|---|---|---|---|
+| `alas` (`aluminium arsenide`, `aluminum arsenide`) | Sellmeier | 0.56–2.2 | Fern & Onton, *J. Appl. Phys.* **42**, 3499 (1971) | — (formula) | Stable ($\Delta t_{\max}\approx 122$ as) |
+| `aln e` (`aluminium nitride e`, `aluminum nitride e`) | Sellmeier | 0.22–5.0 | Pastrňák & Roskovcová, *Phys. Status Solidi* **14**, K5 (1966) | — (formula) | Stable ($\Delta t_{\max}\approx 158$ as) |
+| `aln o` (`aluminium nitride o`, `aluminum nitride o`) | Sellmeier | 0.22–5.0 | Pastrňák & Roskovcová, *Phys. Status Solidi* **14**, K5 (1966) | — (formula) | Stable ($\Delta t_{\max}\approx 168$ as) |
+| `aluminium` (`aluminum`, `al`, `aluminium rakic`, `al rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 88.5$ as) |
+| `bab2o4 e` (`bbo e`, `beta-bab2o4 e`) | Sellmeier | 0.188–5.2 | Tamošauskas et al., *Opt. Mater. Express* **8**, 1410 (2018) | — (formula) | Stable ($\Delta t_{\max}\approx 57.2$ as) |
+| `bab2o4 o` (`bbo o`, `beta-bab2o4 o`) | Sellmeier | 0.188–5.2 | Tamošauskas et al., *Opt. Mater. Express* **8**, 1410 (2018) | — (formula) | Unstable at 50 as (UV pole at 62.7 nm); stable for $\Delta t \le 43$ as |
+| `beryllium` (`be`, `beryllium rakic`, `be rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 65.5$ as) |
+| `bk7` (`nbk7`, `n-bk7`, `schott bk7`) | Sellmeier | 0.3–2.5 | SCHOTT Optical Glass Catalog (2017) | — (formula) | Stable ($\Delta t_{\max}\approx 57.2$ as) |
+| `c-si` (`crystalline silicon`, `si green`) | Lorentz (fit) | 0.4–1.0 | Green & Keevers, *Prog. Photovolt.* **3**, 189 (1995) | 0.0025 | Stable ($\Delta t_{\max}\approx 72.1$ as) |
+| `caco3 e` (`calcite e`) | Sellmeier | 0.204–2.172 | Ghosh, *Opt. Commun.* **163**, 95 (1999) | — (formula) | Stable ($\Delta t_{\max}\approx 81.2$ as) |
+| `caco3 o` (`calcite o`) | Sellmeier | 0.204–2.172 | Ghosh, *Opt. Commun.* **163**, 95 (1999) | — (formula) | Stable ($\Delta t_{\max}\approx 108$ as) |
+| `caf2` (`calcium fluoride`) | Sellmeier | 0.23–9.7 | Malitson, *Appl. Opt.* **2**, 1103 (1963) | — (formula) | Unstable at 50 as (UV pole at 50.3 nm); stable for $\Delta t \le 39$ as |
+| `cawo4 e` (`calcium tungstate e`) | Sellmeier | 0.45–4.0 | Bond, *J. Appl. Phys.* **36**, 1674 (1965) | — (formula) | Stable ($\Delta t_{\max}\approx 77.5$ as) |
+| `cawo4 o` (`calcium tungstate o`) | Sellmeier | 0.45–4.0 | Bond, *J. Appl. Phys.* **36**, 1674 (1965) | — (formula) | Stable ($\Delta t_{\max}\approx 76.5$ as) |
+| `cdte` (`cadmium telluride`) | Sellmeier | 0.86–2.5 | Marple, *J. Appl. Phys.* **35**, 539 (1964) | — (formula) | Stable ($\Delta t_{\max}\approx 565$ as) |
+| `cellulose` (—) | Sellmeier | 0.4368–1.052 | Sultanova et al., *Acta Phys. Pol. A* **116**, 585 (2009) | — (formula) | Stable ($\Delta t_{\max}\approx 66.5$ as) |
+| `chromium` (`cr`, `chromium rakic`, `cr rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 81.2$ as) |
+| `copper` (`cu`, `copper rakic`, `cu rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 88.5$ as) |
+| `copper jc` (`cu jc`) | Lorentz–Drude (fit) | 0.4–0.8 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.0850 | Stable ($\Delta t_{\max}\approx 345$ as) |
+| `copper jc wide` (`cu jc wide`) | Lorentz–Drude (fit) | 0.3–1.94 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.1179 | Stable ($\Delta t_{\max}\approx 225$ as) |
+| `diamond` (`c`) | Sellmeier | 0.226–0.76 | Peter, *Z. Phys.* **15**, 358 (1923) | — (formula) | Unstable at 50 as (UV pole at 106 nm); stable for $\Delta t \le 42$ as |
+| `fr4` (`fr-4`) | Debye (fit) | $1.50\times10^4$–$3.00\times10^6$ (0.1–20 GHz) | Djordjević et al., *IEEE Trans. EMC* **43**, 662 (2001) | 0.0013 | Unconditionally stable Crank–Nicolson Debye update ($C \le 1$) |
+| `fused silica` (`sio2`, `silica`) | Sellmeier | 0.21–6.7 | Malitson, *J. Opt. Soc. Am.* **55**, 1205 (1965) | — (formula) | Stable ($\Delta t_{\max}\approx 51.2$ as) |
+| `gaas` (`gallium arsenide`) | Sellmeier | 0.97–17.0 | Skauli et al., *J. Appl. Phys.* **94**, 6447 (2003) | — (formula) | Stable ($\Delta t_{\max}\approx 345$ as) |
+| `gan e` (`gallium nitride e`) | Sellmeier | 0.35–10.0 | Barker & Ilegems, *Phys. Rev. B* **7**, 743 (1973) | — (formula) | Stable ($\Delta t_{\max}\approx 10$ fs) |
+| `gan o` (`gallium nitride o`) | Sellmeier | 0.35–10.0 | Barker & Ilegems, *Phys. Rev. B* **7**, 743 (1973) | — (formula) | Stable ($\Delta t_{\max}\approx 245$ as) |
+| `gap` (`gallium phosphide`) | Lorentz (fit) | 0.54–4.0 | Bond, *J. Appl. Phys.* **36**, 1674 (1965) | 0.0053 | Stable ($\Delta t_{\max}\approx 88.5$ as) |
+| `germanium` (`ge`) | Sellmeier | 2.5–12.0 | Barnes & Piltch, *J. Opt. Soc. Am.* **69**, 178 (1979) | — (formula) | Stable ($\Delta t_{\max}\approx 455$ as) |
+| `gold` (`au`, `gold rakic`, `au rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Unstable at 50 as (UV pole at 13.32 eV); stable for $\Delta t \le 47$ as |
+| `gold jc` (`au jc`) | Lorentz–Drude (fit) | 0.4–0.8 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.0445 | Stable ($\Delta t_{\max}\approx 340$ as) |
+| `gold jc wide` (`au jc wide`) | Lorentz–Drude (fit) | 0.25–1.94 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.0795 | Stable ($\Delta t_{\max}\approx 210$ as) |
+| `inp` (`indium phosphide`) | Sellmeier | 0.95–10.0 | Pettit & Turner, *J. Appl. Phys.* **36**, 2081 (1965) | — (formula) | Stable ($\Delta t_{\max}\approx 585$ as) |
+| `linbo3 e` (`lithium niobate e`) | Sellmeier | 0.4–5.0 | Zelmon et al., *J. Opt. Soc. Am. B* **14**, 3319 (1997) | — (formula) | Stable ($\Delta t_{\max}\approx 68.5$ as) |
+| `linbo3 o` (`lithium niobate o`) | Sellmeier | 0.4–5.0 | Zelmon et al., *J. Opt. Soc. Am. B* **14**, 3319 (1997) | — (formula) | Stable ($\Delta t_{\max}\approx 65.5$ as) |
+| `mgf2 e` (`magnesium fluoride e`) | Sellmeier | 0.2–7.0 | Dodge, *Appl. Opt.* **23**, 1980 (1984) | — (formula) | Unstable at 50 as (UV pole at 36.8 nm); stable for $\Delta t \le 30$ as |
+| `mgf2 o` (`magnesium fluoride o`) | Sellmeier | 0.2–7.0 | Dodge, *Appl. Opt.* **23**, 1980 (1984) | — (formula) | Unstable at 50 as (UV pole at 43.4 nm); stable for $\Delta t \le 35$ as |
+| `nickel` (`ni`, `nickel rakic`, `ni rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 72.1$ as) |
+| `palladium` (`pd`, `palladium rakic`, `pd rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 108$ as) |
+| `platinum` (`pt`, `platinum rakic`, `pt rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Unstable at 50 as (UV pole at 9.249 eV); stable for $\Delta t \le 49$ as |
+| `pmma` (`polymethyl methacrylate`, `acrylic`) | Sellmeier | 0.4368–1.052 | Sultanova et al., *Acta Phys. Pol. A* **116**, 585 (2009) | — (formula) | Stable ($\Delta t_{\max}\approx 65.5$ as) |
+| `polycarbonate` (`pc`) | Sellmeier | 0.4368–1.052 | Sultanova et al., *Acta Phys. Pol. A* **116**, 585 (2009) | — (formula) | Stable ($\Delta t_{\max}\approx 81.2$ as) |
+| `polystyrene` (`ps`) | Sellmeier | 0.4368–1.052 | Sultanova et al., *Acta Phys. Pol. A* **116**, 585 (2009) | — (formula) | Stable ($\Delta t_{\max}\approx 78.5$ as) |
+| `quartz e` (`crystalline sio2 e`, `sio2 e`) | Sellmeier | 0.198–2.0531 | Ghosh, *Opt. Commun.* **163**, 95 (1999) | — (formula) | Stable ($\Delta t_{\max}\approx 74.5$ as) |
+| `quartz o` (`crystalline sio2 o`, `sio2 o`) | Sellmeier | 0.198–2.0531 | Ghosh, *Opt. Commun.* **163**, 95 (1999) | — (formula) | Stable ($\Delta t_{\max}\approx 74.5$ as) |
+| `ro4350b` (`rogers ro4350b`) | Debye (fit) | $1.50\times10^4$–$3.00\times10^6$ (0.1–20 GHz) | Rogers Corp. / Djordjević et al., *IEEE Trans. EMC* **43**, 662 (2001) | 0.0003 | Unconditionally stable Crank–Nicolson Debye update ($C \le 1$) |
+| `sapphire e` (`al2o3 e`) | Sellmeier | 0.2–5.0 | Malitson & Dodge, *J. Opt. Soc. Am.* **62**, 1405 (1972) | — (formula) | Unstable at 50 as (UV pole at 74.0 nm); stable for $\Delta t \le 43$ as |
+| `sapphire o` (`al2o3 o`) | Sellmeier | 0.2–5.0 | Malitson & Dodge, *J. Opt. Soc. Am.* **62**, 1405 (1972) | — (formula) | Unstable at 50 as (UV pole at 72.7 nm); stable for $\Delta t \le 43$ as |
+| `si3n4` (`silicon nitride`, `sin`, `si3n4 luke`) | Sellmeier | 0.31–5.504 | Luke et al., *Opt. Lett.* **40**, 4823 (2015) | — (formula) | Stable ($\Delta t_{\max}\approx 72.1$ as; IR pole at 1239.8 µm is benign) |
+| `si3n4 philipp` (`silicon nitride philipp`) | Sellmeier | 0.207–1.24 | Philipp, *J. Electrochem. Soc.* **120**, 295 (1973) | — (formula) | Stable ($\Delta t_{\max}\approx 76.5$ as) |
+| `silicon` (`si`) | Sellmeier | 1.357–11.04 | Salzberg & Villa, *J. Opt. Soc. Am.* **47**, 244 (1957) | — (formula) | Stable ($\Delta t_{\max}\approx 72.1$ as; IR pole at 1104 µm is benign) |
+| `silver` (`ag`, `silver rakic`, `ag rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Unstable at 50 as (UV pole at 20.29 eV); stable for $\Delta t \le 38$ as |
+| `silver jc` (`ag jc`) | Lorentz–Drude (fit) | 0.4–0.8 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.0095 | Stable ($\Delta t_{\max}\approx 245$ as) |
+| `silver jc wide` (`ag jc wide`) | Lorentz–Drude (fit) | 0.3–1.94 | Johnson & Christy, *Phys. Rev. B* **6**, 4370 (1972) | 0.0986 | Stable ($\Delta t_{\max}\approx 268$ as) |
+| `tio2 ald` (`titanium dioxide ald`) | Lorentz (fit) | 0.4–1.69 | Sarkar et al., *ACS Appl. Mater. Interfaces* **11**, 13752 (2019) | 0.0001 | Stable ($\Delta t_{\max}\approx 88.5$ as) |
+| `tio2 e` (`rutile e`) | Sellmeier | 0.43–1.53 | DeVore, *J. Opt. Soc. Am.* **41**, 416 (1951) | — (formula) | Stable ($\Delta t_{\max}\approx 315$ as) |
+| `tio2 o` (`rutile o`) | Sellmeier | 0.43–1.53 | DeVore, *J. Opt. Soc. Am.* **41**, 416 (1951) | — (formula) | Stable ($\Delta t_{\max}\approx 285$ as) |
+| `titanium` (`ti`, `titanium rakic`, `ti rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 65.5$ as) |
+| `tungsten` (`w`, `tungsten rakic`, `w rakic`) | Lorentz–Drude (Rakić) | 0.2–12.4 | Rakić et al., *Appl. Opt.* **37**, 5271 (1998) | — (formula) | Unstable at 50 as (UV pole at 7.498 eV); stable for $\Delta t \le 43$ as |
+| `y2o3` (`yttria`) | Sellmeier | 0.25–9.6 | Nigara, *Jpn. J. Appl. Phys.* **7**, 404 (1968) | — (formula) | Stable ($\Delta t_{\max}\approx 78.5$ as) |
+| `yag` (`y3al5o12`) | Sellmeier | 0.4–5.0 | Zelmon et al., *Appl. Opt.* **37**, 4933 (1998) | — (formula) | Stable ($\Delta t_{\max}\approx 54.5$ as) |
+| `zns` (`zinc sulfide`) | Sellmeier | 0.405–13.0 | Debenham, *Appl. Opt.* **23**, 2238 (1984) | — (formula) | Stable ($\Delta t_{\max}\approx 685$ as) |
+| `znse` (`zinc selenide`) | Sellmeier | 0.54–18.2 | Connolly et al., *Proc. SPIE* **0181**, 141 (1979) | — (formula) | Stable ($\Delta t_{\max}\approx 94.5$ as) |
+
+**Validation** (`tests/test_025_dispersive.py`, `tests/test_057_material_library.py`): Lorentz, Drude (across the plasma edge) and conductive Debye slabs reproduce the analytic Fabry–Pérot reflectance and transmittance with $`\varepsilon(\omega)`$ to $`<10^{-2}`$ (Drude: $`2\times10^{-3}`$) with second-order convergence in the cell size; a spatially uniform field reproduces $`\varepsilon_d(\omega)`$ to $`10^{-8}`$; the stability check matches the closed-form limits; a lossless Lorentz medium stays bounded for $`4\times10^4`$ steps; fits recover generating parameters to $`10^{-6}`$; all 62 library entries match their source formulas ($`\le 10^{-6}`$ relative in $`n`$) or source tabulated data ($`\le`$ stated fit error) at $`\ge 20`$ wavelengths across their validity ranges, fail under a 1% perturbation of their dominant pole coefficient, and satisfy passivity ($`\operatorname{Im}\varepsilon\le 0`$) everywhere.
 
 References:
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), ch. 9.
 - A. D. Rakić, A. B. Djurišić, J. M. Elazar and M. L. Majewski, "Optical properties of metallic films for vertical-cavity optoelectronic devices", *Appl. Opt.* **37**, 5271–5283 (1998), [doi:10.1364/AO.37.005271](https://doi.org/10.1364/AO.37.005271).
+- P. B. Johnson and R. W. Christy, "Optical constants of the noble metals", *Phys. Rev. B* **6**, 4370–4379 (1972), [doi:10.1103/PhysRevB.6.4370](https://doi.org/10.1103/PhysRevB.6.4370).
 - I. H. Malitson, "Interspecimen comparison of the refractive index of fused silica", *J. Opt. Soc. Am.* **55**, 1205–1208 (1965), [doi:10.1364/JOSA.55.001205](https://doi.org/10.1364/JOSA.55.001205).
 - C. D. Salzberg and J. J. Villa, "Infrared refractive indexes of silicon, germanium and modified selenium glass", *J. Opt. Soc. Am.* **47**, 244–246 (1957).
+- M. A. Green and M. J. Keevers, "Optical properties of intrinsic silicon at 300 K", *Prog. Photovolt.: Res. Appl.* **3**, 189–192 (1995).
+- T. Skauli et al., "Improved dispersion relations for GaAs and applications to nonlinear optics", *J. Appl. Phys.* **94**, 6447–6455 (2003).
+- K. Luke, Y. Okawachi, M. R. E. Lamont, A. L. Gaeta and M. Lipson, "Broadband mid-infrared frequency comb generation in a $\mathrm{Si_3N_4}$ microresonator", *Opt. Lett.* **40**, 4823–4826 (2015).
+- H. R. Philipp, "Optical properties of silicon nitride", *J. Electrochem. Soc.* **120**, 295–300 (1973).
+- N. Sultanova, S. Kasarova and I. Nikolov, "Dispersion properties of optical polymers", *Acta Phys. Pol. A* **116**, 585–587 (2009).
+- G. Tamošauskas, G. Beresnevičius, D. Gadonas and A. Dubietis, "Transmittance and phase matching of BBO crystal in the 3–5 µm range", *Opt. Mater. Express* **8**, 1410–1418 (2018).
+- D. E. Zelmon, D. L. Small and D. Jundt, "Infrared corrected Sellmeier coefficients for congruently grown lithium niobate", *J. Opt. Soc. Am. B* **14**, 3319–3322 (1997).
+- G. Ghosh, "Dispersion-equation coefficients for the refractive index and birefringence of calcite and quartz crystals", *Opt. Commun.* **163**, 95–102 (1999).
+- I. H. Malitson and M. J. Dodge, "Refractive index and birefringence of synthetic sapphire", *J. Opt. Soc. Am.* **62**, 1405 (1972).
 - A. R. Djordjević, R. M. Biljić, V. D. Likar-Smiljanić and T. K. Sarkar, "Wideband frequency-domain characterization of FR-4 and time-domain causality", *IEEE Trans. Electromagn. Compat.* **43**, 662–667 (2001).
+
+#### 🧲 Dispersive permeability
+
+Soft ferrites (NiZn, MnZn), magnetic metamaterials and RF absorbers exhibit a frequency-dependent, lossy and possibly anisotropic permeability $\mu(\omega)$. `DispersiveMaterial` models diagonal magnetic dispersion alongside (or independently of) electric dispersion via `mu_inf`, `mu_poles`, and `sigma_m`:
+
+```math
+\mu_r(\omega) = \mu_\infty + \sum_p \chi_{m,p}(\omega) + \frac{\sigma_m}{i\omega\mu_0},
+\qquad
+\chi_m^{\mathrm{L}}(\omega) = \frac{\Delta\mu\,\omega_0^2}{\omega_0^2-\omega^2+i\gamma\omega},\quad
+\chi_m^{\mathrm{D}}(\omega) = -\frac{\omega_p^2}{\omega^2-i\gamma\omega},\quad
+\chi_m^{\mathrm{Deb}}(\omega) = \frac{\Delta\mu}{1+i\omega\tau},
+```
+
+using the same pole classes (`Lorentz(delta_eps, omega_0, gamma)`, `Drude(omega_p, gamma)`, `Debye(delta_eps, tau)`), where `delta_eps` represents the magnetic susceptibility strength $\Delta\mu$ when passed in `mu_poles`, and $\sigma_m$ $[\Omega/\text{m}]$ is the magnetic conductivity.
+
+**Time-domain model and exact duality with the electric ADE.** Each magnetic pole introduces a reduced magnetization $m_p$ ($M_p = \mu_0 m_p$, with the same units $[\text{A/m}]$ as $H$) obeying
+
+```math
+\ddot m_p + \gamma_p \dot m_p + \omega_{0,p}^2 m_p = \Delta\mu_p\,\omega_{0,p}^2 H \quad\text{(Lorentz/Drude)},\qquad
+\tau_p \dot m_p + m_p = \Delta\mu_p H \quad\text{(Debye)},
+```
+
+which enters Faraday's law as a magnetization current:
+
+```math
+\mu_0\mu_\infty \dot H = -\nabla\times E - M_{\mathrm{src}} - \sigma_m H - \mu_0 \sum_p \dot m_p .
+```
+
+On the staggered Yee/FIT grid, $H$ and $m_p$ live on dual-grid edges and half-integer time levels $t^{n-1/2}$. Discretizing by exact duality with `_ade_coefficients` ($E^n \to H^{n-1/2}$, $\varepsilon_\infty \to \mu_\infty$, $\sigma/\varepsilon_0 \to \sigma_m/\mu_0$) — explicit central differences at $t^{n-1/2}$ for Lorentz/Drude poles and the Crank–Nicolson trapezoidal rule centred at $t^n$ for Debye poles and $\sigma_m$ — yields
+
+```math
+m^{n+1/2} = \alpha m^{n-1/2} + \xi m^{n-3/2} + \zeta H^{n-1/2},\qquad
+m_{\mathrm{Deb}}^{n+1/2} = \kappa m_{\mathrm{Deb}}^{n-1/2} + \beta\left(H^{n+1/2}+H^{n-1/2}\right),
+```
+
+with $\alpha = (2-\omega_0^2\Delta t^2)/(1+\gamma\Delta t/2)$, $\xi = (\gamma\Delta t/2-1)/(1+\gamma\Delta t/2)$, $\zeta = \Delta\mu\,\omega_0^2\Delta t^2/(1+\gamma\Delta t/2)$, $\kappa = (1-\Delta t/2\tau)/(1+\Delta t/2\tau)$, and $\beta = \Delta\mu(\Delta t/2\tau)/(1+\Delta t/2\tau)$. From the provisional $H^\star$ produced by the unmodified non-dispersive $H$ step (with solver inverse permeability $\mu_s^{-1}$, including any impressed magnetic current $M_{\mathrm{src}}$ and TFSF terms), the curl contribution is recovered locally as $-\Delta t(\nabla\times E + M_{\mathrm{src}})/\mu_0 = \mu_{r,s}(H^\star - H^{n-1/2})$ and corrected in place before the $E$ update (and before ` _mpi_communicate(self.H)` in MPI runs so halo exchanges carry the physical $H^{n+1/2}$).
+
+**Dual-grid registration and diagonal anisotropy.** Dual edges have their own staggered coordinates: $H_x$ at $(x_i, y_j+\Delta y_j/2, z_k+\Delta z_k/2)$, $H_y$ at $(x_i+\Delta x_i/2, y_j, z_k+\Delta z_k/2)$, and $H_z$ at $(x_i+\Delta x_i/2, y_j+\Delta y_j/2, z_k)$. `add_dispersive_material(material, center, size)` selects dual edges inside the box and assigns weight $w = 1/2$ to tangential $H$ edges lying on a box face. Diagonal anisotropy is specified by passing a 3-tuple `mu_inf=(mu_x, mu_y, mu_z)`, a dictionary `mu_poles={'x': [...], 'y': [...], 'z': [...]}`, and/or a 3-tuple `sigma_m=(sigma_mx, sigma_my, sigma_mz)`; each active $H$ component then forms its own ADE group.
+
+**Discrete permeability and conserved energy.** Substituting a harmonic plane wave $H^{n-1/2} \propto e^{i\omega(n-1/2)\Delta t}$ gives the exact discrete permeability (`DispersiveMaterial.mu_discrete(f, dt)`):
+
+```math
+\mu_d(\omega) = \mu_\infty + \sum_{\mathrm{L}} \frac{\Delta\mu\,\omega_0^2}{\omega_0^2-\tilde\Omega^2+i\gamma\sin(\omega\Delta t)/\Delta t}
++ \sum_{\mathrm{Deb}} \frac{\Delta\mu}{1+2i\tau\tan(\omega\Delta t/2)/\Delta t}
++ \frac{\sigma_m\cos(\omega\Delta t/2)}{i\tilde\Omega\mu_0},
+```
+
+which satisfies $\mu_d(\omega) = \mu_r(\omega) + O(\Delta t^2)$ and equals `epsilon_discrete(f, dt)` of the dual electric material to machine precision. In a closed PEC cavity with a Lorentz-$\mu$ medium, the exact discrete quadratic energy
+
+```math
+\mathcal{E}^n = \frac{1}{2}\langle E^n, M_E E^n\rangle + \frac{1}{2}\langle H^{n+1/2}, M_H\mu_\infty H^{n-1/2}\rangle
++ \frac{1}{2\Delta\mu\,\omega_0^2}\left\langle\frac{m^{n+1/2}-m^{n-1/2}}{\Delta t}, M_H\frac{m^{n+1/2}-m^{n-1/2}}{\Delta t}\right\rangle
++ \frac{1}{2\Delta\mu}\langle m^{n+1/2}, M_H m^{n-1/2}\rangle,
+```
+
+with $M_E = \operatorname{diag}(L\tilde A/\varepsilon)$ and $M_H = \operatorname{diag}(\mu_0 A\tilde L)$, satisfies the exact one-step energy balance
+
+```math
+\mathcal{E}^n - \mathcal{E}^{n-1} = -\frac{\gamma\Delta t}{\Delta\mu\,\omega_0^2}\left\langle \frac{m^{n+1/2}-m^{n-3/2}}{2\Delta t}, M_H \frac{m^{n+1/2}-m^{n-3/2}}{2\Delta t}\right\rangle \le 0,
+```
+
+conserving $\mathcal{E}^n$ to round-off ($\sim 10^{-14}$) when $\gamma = 0$ and decaying monotonically at every step when $\gamma > 0$.
+
+**Joint electric–magnetic stability.** In a medium with both electric and magnetic poles, `DispersiveMaterial.is_stable(dt, courant)` builds the companion amplification matrix of a plane wave at normalized grid wavenumber $s = c\Delta t|\tilde{\mathbf{K}}|/2 \in [0, C]$ coupling $(E, P_{\mathrm{L}}, P_{\mathrm{L}}^{\mathrm{old}}, P_{\mathrm{Deb}})$ and $(H, m_{\mathrm{L}}, m_{\mathrm{L}}^{\mathrm{old}}, m_{\mathrm{Deb}})$ across one full step $\mathbf{y}^{n+1} = \mathbf{M}_{\mathrm{E}}^{-1}\mathbf{N}_{\mathrm{E}}\mathbf{M}_{\mathrm{H}}^{-1}\mathbf{N}_{\mathrm{H}}\mathbf{y}^n$, checking all three polarization pairs $(E_a, H_b)$ when the medium is diagonally anisotropic. For a purely magnetic material this reduces to the exact dual of the electric stability condition.
+
+**Natural ferromagnetic resonance and Snoek's law.** In an unmagnetized polycrystalline ferrite (such as NiZn or MnZn ferrite tiles used in accelerator cavities and RF loads), internal anisotropy fields $H_a$ provide a restoring torque on the domain magnetization $M_s$. Small-signal precession around $H_a$ is governed by the linearized Landau–Lifshitz–Gilbert equation averaged over random grain orientations, which takes the Lorentz form above with resonance frequency $\omega_0 = \gamma_g\mu_0 H_a$ ($f_r = \omega_0/2\pi$) and static susceptibility $\Delta\mu = \mu_s - \mu_\infty = \frac{2}{3}M_s/H_a$. Eliminating the anisotropy field $H_a$ yields **Snoek's law** [Snoek, 1948]:
+
+```math
+(\mu_s - 1)\, f_r = \frac{2}{3}\frac{\gamma_g \mu_0 M_s}{2\pi},
+```
+
+where $\gamma_g/(2\pi) \approx 28\ \text{GHz/T}$ is the electron gyromagnetic ratio. Because saturation magnetization $\mu_0 M_s$ is bounded by material chemistry ($\sim 0.3\text{–}0.5\ \text{T}$ in spinels), increasing the low-frequency permeability $\mu_s$ through composition or sintering necessarily lowers the natural resonance frequency $f_r$ at which magnetic losses $-\mu''(f)$ peak. At lower frequencies where domain-wall relaxation dominates over spin precession, the overdamped limit ($\omega_0\to\infty$ with $\gamma/\omega_0^2 = \tau$) reduces to the Debye pole (`Debye(delta_mu, tau)`).
+
+| Lorentz ferrite $\mu'(f), -\mu''(f)$ and Snoek's limit | Ferrite slab $R(f), T(f)$ vs analytic transfer matrix |
+| --- | --- |
+| ![](img/dispersive_mu_lorentz_ferrite.png) | ![](img/dispersive_mu_slab_rt.png) |
+
+**Adjoint transposition.** Because the magnetic ADE correction is local, linear and explicit, its exact conjugate transpose (`_DispersiveTranspose(..., field="H", prefix="m", s_key="mu_s")`) is applied in `AdjointStepper._base_step` between the reversed $E$ half-step and the reversed $H$ half-step. The one-step dot-product identity $\langle U x, y\rangle = \langle x, U^H y\rangle$ holds to $\sim 10^{-14}$ across PEC, CPML and complex Bloch boundaries.
+
+**Limits & failure modes:**
+- **No gyrotropic (off-diagonal Polder tensor) response:** Biased ferrites under an external DC magnetic field $\mathbf{H}_0$ have a non-reciprocal, antisymmetric permeability tensor $\boldsymbol{\mu}(\omega)$ with off-diagonal $\pm i\kappa(\omega)$ coupling $H_x \leftrightarrow H_y$. `DispersiveMaterial` only supports diagonal tensors ($\mu_{xx}, \mu_{yy}, \mu_{zz}$).
+- **No saturation, hysteresis, or nonlinearity:** The ADE updates are strictly linear in $H$; B–H curve saturation, remanence, and power-dependent FMR linewidth broadening are not modelled.
+- **No subpixel (Kottke) averaging of $\mu$ yet:** For STL solids with `conformal='all'` or `'tensor'`, subcell harmonic/arithmetic tensor averaging is currently implemented for $\varepsilon$ only. When a solid has `material.has_magnetic`, Wakis emits a `UserWarning` and falls back to plain cell-volume-fraction weighting on $H$.
+- **Unsupported steppers in Milestone A:** `scheme='tete'`, `fused=True` (fused GPU kernels), and `SubgridFIT2D` raise `NotImplementedError` when a magnetic dispersive material is registered.
+
+**Validation** (`tests/test_056_dispersive_mu.py`, `examples/008_dispersive_mu_slab.py`): `mu_discrete` and `is_stable` agree with the dual electric material to $10^{-14}$; a spatially uniform magnetic current reproduces $\mu_d(\omega)$ to $10^{-8}$; Lorentz-$\mu$, Debye-$\mu$ (with $\sigma_m$), and mixed $(\varepsilon(\omega), \mu(\omega))$ slabs match the exact transfer-matrix reflectance and transmittance with second-order grid convergence; an impedance-matched $\varepsilon(\omega) = \mu(\omega)$ slab suppresses $|R|$ by orders of magnitude with $O(\Delta z)$ dual-grid interface convergence; a diagonal $\mu_{xx}(\omega)$ slab affects only the polarization with $H\parallel\hat{\mathbf{x}}$ while the orthogonal polarization matches vacuum to $10^{-14}$; a lossless Lorentz-$\mu$ PEC cavity conserves the discrete energy $\mathcal{E}^n$ to $<10^{-12}$ over $10^4$ steps and splits each bare cavity mode into two branches matching $k_{mnp}^2 = (\tilde\Omega/c)^2\mu_d(\omega)$ via `harminv` to $<10^{-4}$; adjoint dot-product tests reach $10^{-14}$ and design gradients match finite differences to $<10^{-5}$.
+
+References:
+- J. L. Snoek, "Dispersion and absorption in magnetic ferrites at frequencies above one Mc/s", *Physica* **14**(4), 207–217 (1948), [doi:10.1016/0031-8914(48)90038-X](https://doi.org/10.1016/0031-8914(48)90038-X).
+- D. M. Pozar, *Microwave Engineering*, 4th ed., Wiley (2012), Ch. 9 (ferrite materials and gyromagnetic resonance).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 9.
 
 ### 🔋 Lumped elements, discrete ports and S-parameters
 
@@ -1031,6 +1201,70 @@ References:
 - M. Born and E. Wolf, *Principles of Optics*, 7th ed., Cambridge University Press (1999).
 - fmmax (Fourier modal method in JAX, MIT), https://github.com/facebookresearch/fmmax; invrs-gym, https://github.com/invrs-io/gym.
 
+### 📐 Oblique incidence at constant angle and Floquet ports: `wakis.floquet`
+
+**The $`k_\parallel`$–$`\omega`$ picture.** A single time-domain Bloch simulation fixes the tangential Bloch wavevector $`\mathbf{k}_\parallel = k_\parallel(\cos\phi, \sin\phi, 0)`$ across the entire pulse bandwidth (the spectral-FDTD formulation of [Aminian & Rahmat-Samii, 2006]). In the $`(k_\parallel, f)`$ plane, one Bloch run samples a **vertical line** $`k_\parallel = \text{const}`$, along which the incidence angle in a medium of refractive index $`n`$ varies with frequency as
+
+```math
+\theta(f) = \arcsin\!\left(\frac{c\,k_\parallel}{2\pi f n}\right), \qquad \omega = \frac{c\,k_\parallel}{n\sin\theta}.
+```
+
+Conversely, a curve of **constant incidence angle** $`\theta`$ is a **slanted ray** through the origin, $`k_\parallel(f; \theta) = (2\pi f n / c)\sin\theta`$. To obtain broadband reflectance, transmittance, diffraction-order efficiencies, and Floquet-port S-parameters at one or more constant angles $`\theta \in [\theta_{\min}, \theta_{\max}]`$ over a frequency band $`[f_{\min}, f_{\max}]`$, `wakis.floquet` (`FloquetCell`, `AngleSweep`, `resample_constant_angle`) covers the target $`(\theta, f)`$ wedge with a uniform grid of $`N_k`$ vertical fixed-$`k_\parallel`$ lines:
+
+```math
+k_{\parallel,\min} = \frac{2\pi f_{\min} n}{c}\sin\theta_{\min}, \qquad
+k_{\parallel,\max} = \frac{2\pi f_{\max} n}{c}\sin\theta_{\max}, \qquad
+\Delta k_\parallel = \frac{k_{\parallel,\max} - k_{\parallel,\min}}{N_k - 1}.
+```
+
+| $`(k_\parallel, f)`$ sampling & constant-$`\theta`$ rays | Constant-$`\theta`$ grating efficiencies vs RCWA |
+| :---: | :---: |
+| ![](img/oblique_floquet_sampling.png) | ![](img/oblique_grating_efficiencies.png) |
+
+*Figures generated by `examples/011_oblique_grating.py` for a lossless lamellar dielectric grating ($`P = 1.5\lambda_0 = 0.45\text{ m}`$, $`h = 0.25\lambda_0 = 0.075\text{ m}`$, $`\varepsilon_\text{ridge} = 2.25`$ in air, TE incidence at $`\theta = 15^\circ`$, $`N_k = 7`$, `run_time_cycles = 120`). Summing over all propagating orders ($`m \in \{-2, -1, 0, +1, +2\}`$), the total energy $`\sum_m (R_m + T_m)`$ equals $`1.000000`$ for 1D RCWA (maximum residual $`7.8\times 10^{-15}`$) and lies in $`[0.9981, 1.0022]`$ for Wakis (maximum residual $`2.2\times 10^{-3}`$). Interpolated points adjacent to Rayleigh/Wood anomalies have larger per-order interpolation errors: across the $`m = -2`$ guided-mode resonance Fano step at $`\lambda \approx 0.297\text{ m}`$ and $`0.305\text{ m}`$ ($`|\Delta T_{-1}| = 1.3\times 10^{-2}`$ and $`8.1\times 10^{-3}`$, $`|\Delta T_{+1}| = 6.0\times 10^{-3}`$ at $`0.305\text{ m}`$) and on the $`m = +1`$ cutoff-straddling interval at $`\lambda \approx 0.330\text{ m}`$ ($`|\Delta T_{+1}| = 2.6\times 10^{-3}`$).*
+
+**Constant-angle resampling and cubic error bound.** Each $`k_\parallel`$ task is an independent standard Bloch simulation that records the complex order amplitudes and powers on `DiffractionMonitor` planes at the target frequencies $`f_j`$. Because the tasks share no state, `AngleSweep.run(processes=...)` executes them in parallel via `multiprocessing`, while `AngleSweep.cli()` provides `--list-tasks`, `--task <id> --output <file.npz>`, and `--collect <files...>` for cluster/batch array jobs. At each fixed frequency $`f_j`$ and target angle $`\theta`$, `resample_constant_angle` evaluates the target wavevector $`k_\text{target} = (2\pi f_j n / c)\sin\theta`$ by 4-point cubic Lagrange interpolation on the uniform $`k_\parallel`$ grid (with local phase-slope gauge alignment for complex amplitudes). For a smooth response $`g(k_\parallel)`$, the pointwise interpolation error is fourth-order in $`\Delta k_\parallel`$:
+
+```math
+\left|g(k_\text{target}) - P_3(k_\text{target})\right| \le C_4\,(\Delta k_\parallel)^4 \max_{k_\parallel}\left|\frac{\partial^4 g}{\partial k_\parallel^4}\right|, \qquad
+C_4 = \begin{cases} \tfrac{3}{128} & \text{(interior interval)}, \\[2pt] \tfrac{1}{24} & \text{(boundary interval)}. \end{cases}
+```
+
+`sampling_density` reports $`\Delta k_\parallel`$, the equivalent mid-band angular step $`\Delta\theta = \Delta k_\parallel / (n k_0 \cos\theta)`$, and the error factors $`C_4(\Delta k_\parallel)^4`$. Two strict invariants protect the resampling near cutoffs:
+1. **No extrapolation:** if $`k_\text{target} \notin [k_{\parallel,\min}, k_{\parallel,\max}]`$, `resample_constant_angle` returns `NaN` rather than extrapolating past the sampled $`k_\parallel`$ range.
+2. **Rayleigh-anomaly masking and cutoff-straddling interpolation:** diffraction orders turn from evanescent to propagating along the hyperbolic Rayleigh (Wood) cutoff curves $`|\mathbf{k}_\parallel + \mathbf{G}_{mn}| = n_\text{out} k_0`$, where $`k_{z,mn} = \sqrt{n_\text{out}^2 k_0^2 - |\mathbf{k}_\parallel + \mathbf{G}_{mn}|^2}`$ has a square-root branch point. `resample_constant_angle` masks non-propagating samples, returns `NaN` on any grid interval $`[k_i, k_{i+1}]`$ straddling an order appearance/disappearance, and shifts the 4-point cubic stencil inside the contiguous propagating segment away from the branch-point endpoint. In `AngleSweepResult.resample()`, when an order is propagating in the continuum at $`k_\text{target}`$ (`kz > 0`) inside a cutoff-straddling interval $`[k_i, k_{i+1}]`$, its efficiency is interpolated in the normal wavenumber $`q = k_{z,mn}(k_\parallel)`$ anchored by the exact threshold zero $`\eta_{mn}(q = 0) = 0`$ at the Rayleigh cutoff, and the interior orders' stencil sum is reconciled with the raw FDTD total energy at each $`k_\parallel`$ node.
+
+**Floquet ports and generalized S-matrix.** `FloquetPort` wraps a `DiffractionMonitor` in the homogeneous lower (`side="below"`, port 1) or upper (`side="above"`, port 2) half-space of a unit cell. Each propagating Floquet harmonic $`i = (\text{port}, m, n, \text{pol})`$ with $`\text{pol} \in \{\text{TE}, \text{TM}\}`$ (represented by `FloquetMode`) is normalized to unit time-averaged power across the unit-cell area $`A = P_x P_y`$ using the discrete FIT wave admittances of `DiffractionMonitor`, and its phase is de-embedded from the monitor plane $`z_\text{mon}`$ to a stated port reference plane $`z_\text{ref}`$ via the discrete normal wavenumber $`k_{a,mn} = (2/\Delta_a)\arcsin\!\sqrt{1 - \gamma_{mn}^2}`$:
+
+```math
+a_i(f) = w^\text{in}_i(f)\,e^{\mp i\,\operatorname{sign}(f)\,k_{a,mn}(z_\text{ref} - z_\text{mon})}, \qquad
+b_i(f) = w^\text{out}_i(f)\,e^{\pm i\,\operatorname{sign}(f)\,k_{a,mn}(z_\text{ref} - z_\text{mon})}.
+```
+
+Exciting the cell in incident mode $`j`$ with complex amplitude $`a_j(f)`$ yields the generalized scattering-matrix column $`S_{ij}(f) = b_i(f)/a_j(f)`$ (`s_parameters_from_ports`), and `floquet_s_matrix` assembles the full multi-mode matrix $`\mathbf{S}(f)`$. For a lossless reciprocal structure:
+- **Passivity / unitarity:** energy conservation gives $`\sum_i |S_{ij}(f)|^2 = 1`$ for every incident column $`j`$, and full orthogonality $`\mathbf{S}^\dagger(f)\mathbf{S}(f) = \mathbf{I}`$ across all propagating port modes.
+- **Lorentz reciprocity:** with the canonical unit-modulus basis sign factor on negative tangential wavevectors ($`\mathbf{k}_{t,\tilde{i}}(-\mathbf{k}_0) = -\mathbf{k}_{t,i}(+\mathbf{k}_0)`$, where $`\tilde{i} = (\text{port}_i, -m_i, -n_i, \text{pol}_i)`$), the scattering matrix obeys $`S_{ij}(+\mathbf{k}_0) = S_{\tilde{j}\tilde{i}}(-\mathbf{k}_0)`$ (`reciprocal_s_matrix`).
+
+**Design rationale vs split-field FDTD.** Broadband oblique incidence in FDTD can be approached in two ways:
+1. **Split-field / sine–cosine oblique FDTD** [Roden et al., 1998]: transforms Maxwell's equations into auxiliary field variables at a fixed angle $`\theta`$ so a single time-domain run covers a frequency band at constant $`\theta`$. However, the modified update equations introduce $`\sin\theta`$-dependent cross-derivatives that alter the time-stepping stencil, require specialized PML formulations, and degrade the Courant stability limit as $`\Delta t \propto \cos^2\theta / (1 + \sin\theta)`$ (vanishing at grazing incidence).
+2. **Fixed-$`k_\parallel`$ Bloch sweep + resampling (`wakis.floquet`):** reuses the standard, verified complex-field FIT Bloch solver (`SolverFIT3D` + `DiffractionMonitor`) completely unchanged. Each $`k_\parallel`$ run preserves the full 3D FIT Courant step $`\Delta t`$ regardless of angle, uses standard CPML absorbers, and is embarrassingly parallel across $`k_\parallel`$ tasks.
+
+**Limits & failure modes:**
+- **Cost scaling with $`N_k`$:** total work scales linearly with the number of $`k_\parallel`$ runs $`N_k`$. Narrow bands or small angular ranges need only $`N_k = 4\text{–}7`$ runs, whereas wide bands spanning large angular ranges require proportionally more $`k_\parallel`$ samples to maintain a target $`\Delta k_\parallel`$.
+- **Grazing angles ($`\theta \to 90^\circ`$):** near the light line $`k_\parallel \to n k_0`$, the angular Jacobian $`\partial\theta/\partial k_\parallel = 1/(n k_0 \cos\theta)`$ diverges so many $`k_\parallel`$ samples are required to resolve a given $`\Delta\theta`$. Simultaneously, the normal group velocity $`v_{gz} = (c/n)\cos\theta \to 0`$, requiring longer time integration and thicker CPML layers to absorb grazing waves.
+- **Rayleigh (Wood) anomalies and guided-mode resonances:** when a diffraction order grazes ($`k_{a,mn} = 0`$), its square-root branch point in $`k_\parallel`$ breaks $`C^4`$ smoothness and its vanishing normal group velocity (or coupling to leaky guided-mode resonances in the grating layer) causes long-lived ringing in the time domain. Sufficient integration time (`run_time_cycles`) is required so resonant fields decay before the DFT ends, and interpolated points adjacent to a Rayleigh cutoff or guided-mode resonance Fano step exhibit larger per-order errors (e.g. $`|\Delta T_{-1}| \approx 0.008\text{–}0.013`$ at $`\lambda \approx 0.305, 0.297\text{ m}`$ and $`|\Delta T_{+1}| \approx 0.003`$ at $`\lambda \approx 0.330\text{ m}`$ in `examples/011_oblique_grating.py` with $`N_k = 7`$) unless $`\Delta k_\parallel`$ is refined locally.
+
+**Validation** (`tests/test_061_oblique_floquet.py`):
+- Dielectric slab ($`\varepsilon_r = 2.25`$, $`d = 8\text{ cm}`$) over $`1.0\text{–}1.3\text{ GHz}`$ at constant $`\theta = 30^\circ`$ and $`60^\circ`$ (TE & TM, $`N_k = 7`$): $`R(f)`$, $`T(f)`$, and complex $`S_{11}(f)`$ match the analytical transfer matrix (`slab_rt`) within $`6\times10^{-3}`$; TM reflection vanishes at Brewster's angle $`\theta_B = \arctan(1.5) \approx 56.31^\circ`$ ($`R_\text{TM} < 10^{-3}`$); total internal reflection from $`n_1 = 1.5 \to n_2 = 1.0`$ at $`\theta = 52^\circ > \theta_c = 41.81^\circ`$ gives $`R = 1`$ within $`2\times10^{-3}`$ and `NaN`-masked transmission; shifting the resampling index by 1 (`index_shift=1`) fails as required.
+- Lossless sinusoidal and lamellar gratings: $`\sum_{m}(R_m + T_m) = 1`$ within $`6\times10^{-3}`$; order angles match the grating equation to $`10^{-12}\text{ rad}`$; first-order efficiencies of a shallow sinusoidal grating ($`a = 0.15\Delta z`$) match Rayleigh perturbation theory (`rayleigh_sinusoidal_grating`); broadband constant-angle efficiencies of a lamellar grating match 1D RCWA (`rcwa_1d_grating`, cross-checked against `fmmax` 1.7.1 to $`2\times10^{-4}`$) within $`4\times10^{-3}`$.
+- Cubic interpolation convergence: refining $`N_k = 5 \to 9 \to 17`$ reduces the constant-$`\theta`$ error by $`>14\times`$ per halving of $`\Delta k_\parallel`$ (fourth-order $`\mathcal{O}(\Delta k_\parallel^4)`$).
+- Generalized $`6\times6`$ Floquet S-matrix ($`m \in \{-1, 0, +1\}`$ on ports 1 & 2) of an asymmetric dielectric grating: at the coarse test grid $`(N_x=24, N_z=100)`$ ($`\Delta x \approx \lambda_0/14.5`$, $`\Delta z \approx \lambda_0/33`$, 6 cells across the grating thickness), unitarity holds to $`\|\mathbf{S}^\dagger\mathbf{S} - \mathbf{I}\|_\infty = 1.3\times10^{-3}`$ and Lorentz reciprocity to $`|S_{ij}(+k_{x0}) - S_{\tilde{j}\tilde{i}}(-k_{x0})| < 10^{-3}`$. The slight column-power deviation $`\sum_i |S_{ij}|^2 = 1.0013`$ ($`+1.3\times 10^{-3}`$) arises from second-order FIT spatial dispersion across the 6-cell grating thickness and finite DFT window ($`+8.8\times 10^{-4}`$ on the net monitor flux ratio) plus evanescent $`|m| \ge 2`$ near-field reactive cross-flux ($`-4.1\times 10^{-4}`$) at monitors placed $`0.31\lambda_0`$ from the grating faces when restricting $`\mathbf{S}`$ to propagating modes; doubling the grid resolution to $`(N_x=48, N_z=200)`$ reduces $`|\sum_i |S_{ij}|^2 - 1|`$ by more than $`3\times`$ to $`4.2\times 10^{-4}`$.
+
+References:
+- A. Aminian and Y. Rahmat-Samii, "Spectral FDTD: a novel computational technique for the analysis of periodic structures", *IEEE Trans. Antennas Propag.* **54**(6), 1818–1825 (2006), [doi:10.1109/TAP.2006.875484](https://doi.org/10.1109/TAP.2006.875484).
+- J. A. Roden, S. D. Gedney, M. P. Kesler, J. G. Maloney, and P. H. Harms, "Time-domain analysis of periodic structures at oblique incidence: orthogonal and nonorthogonal FDTD implementations", *IEEE Trans. Microw. Theory Tech.* **46**(4), 420–427 (1998), [doi:10.1109/22.664143](https://doi.org/10.1109/22.664143).
+- M. G. Moharam, E. B. Pommet, E. B. Grann, and T. K. Gaylord, "Stable implementation of the rigorous coupled-wave analysis for surface-relief gratings: enhanced transmittance matrix approach", *J. Opt. Soc. Am. A* **12**(5), 1077–1086 (1995), [doi:10.1364/JOSAA.12.001077](https://doi.org/10.1364/JOSAA.12.001077).
+
 ### 📥🗿 Geometry Importing & Embedded Boundaries
 
 Wakis integrates with [**PyVista**](https://docs.pyvista.org/) to import CAD geometries in `.STL`, `.STEP`, or `.OBJ` formats. The mesh is overlaid onto the simulation domain and mapped onto the Cartesian grid using:
@@ -1336,6 +1570,60 @@ References:
 - A. Okada and D. Cole, "Effective permittivity for FDTD calculation of plasmonic materials", *Micromachines* **3**(1), 168–179 (2012), [doi:10.3390/mi3010168](https://doi.org/10.3390/mi3010168).
 - C. F. Bohren and D. R. Huffman, *Absorption and Scattering of Light by Small Particles*, Wiley (1983), ch. 4 (Mie coefficients of a sphere).
 - Kottke et al. (2008): see "Conformal FIT"; the ADE discretization: see "Dispersive materials".
+
+#### ⏱️ Time-varying media and photonic time crystals: `wakis.time_varying`
+
+When material parameters change in time—at an abrupt temporal interface $\varepsilon_r(t) = \varepsilon_1 \to \varepsilon_2$, in a temporal slab ($\varepsilon_1 \to \varepsilon_2 \to \varepsilon_1$), under periodic modulation $\varepsilon_r(t) = \bar{\varepsilon}_r(1 + m\cos\Omega t)$ (a photonic time crystal, PTC), or during rapid plasma creation $\omega_p(t)$—spatial translation invariance in a homogeneous region preserves the wavevector $\mathbf{k}$ while breaking time-translation invariance (frequency conversion and non-conservation of electromagnetic energy) [Morgenthaler, 1958; Mendonça & Shukla, 2002; Galiffi et al., 2022].
+
+**Temporal boundary conditions ($\mathbf{D}$ and $\mathbf{B}$ continuity).** Integrating Ampère–Maxwell's and Faraday's laws over an infinitesimal interval $[t_0 - \delta t,\, t_0 + \delta t]$ across a temporal jump at $t_0$ in a source-free, finite-conductivity medium gives
+
+```math
+\mathbf{D}(t_0^+) - \mathbf{D}(t_0^-) = \lim_{\delta t\to 0}\int_{t_0-\delta t}^{t_0+\delta t}\bigl(\nabla\times\mathbf{H} - \sigma(t)\mathbf{E}\bigr)\,dt = \mathbf{0},\qquad
+\mathbf{B}(t_0^+) - \mathbf{B}(t_0^-) = -\lim_{\delta t\to 0}\int_{t_0-\delta t}^{t_0+\delta t}\nabla\times\mathbf{E}\,dt = \mathbf{0}.
+```
+
+Because bounded $\mathbf{E}$ and $\mathbf{H}$ have finite spatial curls, the fluxes $\mathbf{D} = \varepsilon_0\varepsilon_r(t)\mathbf{E} + \mathbf{P}$ and $\mathbf{B} = \mu_0\mu_r(t)\mathbf{H}$ are continuous across a temporal interface, whereas $\mathbf{E}$ and $\mathbf{H}$ jump instantaneously as $E(t_0^+) = (\varepsilon_1/\varepsilon_2)E(t_0^-)$ and $H(t_0^+) = (\mu_1/\mu_2)H(t_0^-)$.
+
+**Time-level centering and $\mathbf{D}$-conserving FIT update.** On the leapfrog grid:
+- $\mathbf{E}^n$, $\mathbf{D}^n = \varepsilon_0\varepsilon_{\text{eff}}(t^n)\mathbf{E}^n$, and Drude/Lorentz auxiliary polarizations $\mathbf{p}_k^n = \mathbf{P}_k^n/\varepsilon_0$ live at integer times $t^n = n\Delta t$.
+- $\mathbf{H}^{n+1/2}$, $\mathbf{B}^{n+1/2} = \mu_0\mu_{\text{eff}}(t^{n+1/2})\mathbf{H}^{n+1/2}$, and $\sigma(t^{n+1/2})$ live at half-integer times $t^{n+1/2} = (n + \tfrac{1}{2})\Delta t$.
+
+Let $E^\star$ be the provisional electric field returned by the underlying non-dispersive step with static reference permittivity $\varepsilon_s = 1/(\varepsilon_0\,\text{ieps})$, so $\Delta d_{\text{curl}} = \varepsilon_s(E^\star - E^n) = \frac{\Delta t}{\varepsilon_0}\bigl[(\widetilde{\mathbf{C}}\mathbf{H})^{n+1/2} - \mathbf{J}_{\text{src}}^{n+1/2}\bigr]$. Integrating $\partial_t\mathbf{D} + \sigma(t)\mathbf{E} = \nabla\times\mathbf{H} - \mathbf{J}_{\text{src}}$ over $[t^n, t^{n+1}]$ yields (`TimeVaryingMixin._one_step_time_varying`, Wakis adaptation of the conservative flux form to the `DispersiveMixin` post-step wrapper):
+
+```math
+\varepsilon_{\text{eff}}(t^{n+1})E^{n+1} - \varepsilon_{\text{eff}}(t^n)E^n + \hat{s}^{n+1/2}(E^{n+1} + E^n) + w\sum_k(p_k^{n+1} - p_k^n) = \Delta d_{\text{curl}},\qquad \hat{s}^{n+1/2} = \frac{w\,\sigma(t^{n+1/2})\Delta t}{2\varepsilon_0},
+```
+
+where $\varepsilon_{\text{eff}}(t) = (1 - w)\varepsilon_{\text{bg}} + w\,\varepsilon_r(t)$. Across a lossless dielectric switch ($\sigma = 0$, no poles), $D^{n+1} = D^n + \varepsilon_0\Delta d_{\text{curl}}$ holds to machine precision, and in the static limit ($\varepsilon_r, \sigma$ constant) the update reduces identically to `DispersiveMixin._one_step_dispersive`. For a `TimeVaryingDrude` pole, newborn electrons at an ionization front are created at rest ($\mathbf{J}_p$ continuous), governed by $\ddot{p}_k + \gamma(t)\dot{p}_k + \omega_0^2(t)p_k = \omega_p^2(t)E$ [Wilks et al., 1988; Mendonça, 2001].
+
+**Temporal Fresnel coefficients, energy, and wave action.** A forward wave $\propto e^{i(kz - \omega_1 t)}$ in $(\varepsilon_1, \mu_1)$ encountering an abrupt switch to $(\varepsilon_2, \mu_2)$ at $t_0$ converts to $\omega_2 = \omega_1(n_1/n_2)$ and splits into forward ($+k$, time-refracted) and backward ($-k$, time-reflected) waves (`temporal_fresnel_coefficients`) [Morgenthaler, 1958; Mendonça & Shukla, 2002; Galiffi et al., 2022]:
+
+```math
+\tau_D = \frac{D_+}{D_0} = \frac{1}{2}\!\left(1 + \frac{\eta_1}{\eta_2}\right),\quad
+\rho_D = \frac{D_-}{D_0} = \frac{1}{2}\!\left(1 - \frac{\eta_1}{\eta_2}\right),\quad
+\tau_E = \frac{\varepsilon_1}{\varepsilon_2}\tau_D,\quad
+\rho_E = \frac{\varepsilon_1}{\varepsilon_2}\rho_D,
+```
+
+with $\eta_i = \sqrt{\mu_i/\varepsilon_i}$ and $n_i = \sqrt{\varepsilon_i\mu_i}$. Total electromagnetic energy changes by $W_2/W_1 = \frac{1}{2}\bigl(\frac{\varepsilon_1}{\varepsilon_2} + \frac{\mu_1}{\mu_2}\bigr)$, whereas the wave action $(W_+ - W_-)/\omega_2 = W_1/\omega_1$ is conserved. A double temporal interface ($\varepsilon_1 \to \varepsilon_2 \to \varepsilon_1$ of duration $\Delta t_{\text{slab}}$) forms a temporal Fabry–Pérot cavity with phase $\phi = \omega_2\Delta t_{\text{slab}}$ (`temporal_slab_coefficients`) [Moussa et al., 2023].
+
+**Photonic time crystals (Floquet/Mathieu momentum gap).** Under periodic modulation $\varepsilon_r(t) = \bar{\varepsilon}_r(1 + m\cos\Omega t)$, eliminating $H^{n+1/2}$ from the $\mathbf{D}$-conserving FIT leapfrog yields the exact symplectic central difference of Hill's equation:
+
+```math
+\frac{D_k^{n+1} - 2D_k^n + D_k^{n-1}}{\Delta t^2} + \frac{c_0^2\tilde{K}^2}{\varepsilon_r(t^n)}D_k^n = 0,\qquad \tilde{K} = \frac{2}{\Delta z}\sin\!\left(\frac{k\Delta z}{2}\right).
+```
+
+Counter-propagating modes $\pm k$ couple parametrically around $\omega_0(k_c) \approx \Omega/2$, opening a momentum band gap of width $\Delta k / k_c = m/2 + \mathcal{O}(m^2)$ in which $\operatorname{Re}\omega_F(k) = \Omega/2$ is locked and $\gamma(k) = \operatorname{Im}\omega_F(k)$ reaches $\gamma_{\max} = m\Omega/8 + \mathcal{O}(m^3)$ (`ptc_floquet_bandstructure`, `ptc_mathieu_gap_analytic`) [Lyubarov et al., 2022; Galiffi et al., 2022].
+
+**Limitations:** Serial CPU only (`use_gpu=False`, `use_mpi=False`, `scheme='yee'`, `fused=False`); explicit Courant stability requires $\max_t\bigl(v_{\max}(t)\Delta t\sqrt{\Delta x^{-2}+\Delta y^{-2}+\Delta z^{-2}}\bigr) \le 1$ at all times $t$.
+
+References:
+- F. R. Morgenthaler, "Velocity modulation of electromagnetic waves", *IRE Trans. Microw. Theory Tech.* **6**(2), 167–172 (1958), [doi:10.1109/TMTT.1958.1124533](https://doi.org/10.1109/TMTT.1958.1124533).
+- J. T. Mendonça and P. K. Shukla, "Time refraction and time reflection: two basic concepts", *Phys. Scr.* **65**(2), 160–163 (2002), [doi:10.1238/Physica.Regular.065a00160](https://doi.org/10.1238/Physica.Regular.065a00160).
+- E. Galiffi, R. Tirole, S. Yin, H. Li, S. Vezzoli, P. A. Huidobro, M. G. Silveirinha, R. Sapienza, A. Alù and J. B. Pendry, "Photonics of time-varying media", *Adv. Photonics* **4**(1), 014002 (2022), [doi:10.1117/1.AP.4.1.014002](https://doi.org/10.1117/1.AP.4.1.014002), [arXiv:2111.08640](https://arxiv.org/abs/2111.08640).
+- M. Lyubarov, Y. Lumer, A. Dikopoltsev, E. Lustig, Y. Sharabi and M. Segev, "Amplified emission and lasing in photonic time crystals", *Science* **377**(6604), 425–428 (2022), [doi:10.1126/science.abo3324](https://doi.org/10.1126/science.abo3324), [arXiv:2201.12116](https://arxiv.org/abs/2201.12116).
+- H. Moussa, G. Xu, S. Yin, E. Galiffi, Y. Ra'di and A. Alù, "Observation of temporal reflection and broadband frequency translation at photonic time interfaces", *Nat. Phys.* **19**, 863–868 (2023), [doi:10.1038/s41567-023-01975-y](https://doi.org/10.1038/s41567-023-01975-y), [arXiv:2208.07236](https://arxiv.org/abs/2208.07236).
+- S. C. Wilks, J. M. Dawson and W. B. Mori, "Frequency up-conversion of electromagnetic radiation with use of an overdense plasma", *Phys. Rev. Lett.* **61**(3), 337–340 (1988), [doi:10.1103/PhysRevLett.61.337](https://doi.org/10.1103/PhysRevLett.61.337).
 
 ### 🔺 Unstructured FIT: triangles, tetrahedra and the Voronoi dual
 
@@ -1928,6 +2216,8 @@ Against graded triangles it is on par on S1 at 5 % but 4–5× more expensive on
 - **PML.** The split-field PML is not covered by the energy proof. It runs only on the coarse frame and is not included in `linear_step_T`, so its adjoint, and those of the ADE and the sources, remain to be written.
 - **Performance.** This is a SciPy-sparse prototype: about 15–25 ns per unknown-step on one core, including the per-step DFT on the extraction circles. There is no GPU or MPI path.
 
+**PIC geometry, mode ports, monitors and S-parameters (`SubgridPICSimulation`).** The 2D effective-index photonics kit (`wakis.templates.photonics`) maps to `polarization="TE"` in `SubgridFIT2D`: `PICSimulation(two_d=True)` sets $\varepsilon_z^{-1}=0$ on a single-layer periodic-$z$ grid, decoupling the in-plane electric / out-of-plane magnetic $(E_x, E_y, H_z)$ subsystem (`TE_z`), where the `SubgridFIT2D` node scalar is $u = H_z$ and the edge fluxes represent $D_y$ on $x$-edges ($g_x = L_y^* E_y$) and $-D_x$ on $y$-edges ($g_y = -L_x^* E_x$). `PolySlabGeometry` adapts `PolySlab` lists to the sub-pixel material sampler using vectorized point-in-polygon winding tests and signed distance to polygon edges (`refine_boxes`, `refine_near_polygons`, `choose_refinement`). Soft node and edge current sources (`SubgridFIT2D.add_current`) enter `one_step`, `linear_step` and `linear_step_T` identically with an exact transpose (`<u1, ub1> + <f1, fb1> + <q1, qb1> = <u, ub> + <f, fb> + <q, qb>`). `solve_port_modes_2d` solves the discrete 1D Yee waveguide eigenproblem on port cross-sections (handling coarse/fine transition nodes when a refinement patch runs along the waveguide core), `SubgridModeSource` injects a unidirectional mode via two staggered transverse sheets, and `SubgridModeMonitor`, `SubgridDFTMonitor` and `SubgridFluxMonitor` accumulate running DFTs to extract $a_\pm(\omega)$, Poynting flux and complex S-parameters in `SubgridPICSimulation.run_s_parameters` (also accessible via `PICSimulation(..., backend="subgrid")`, with `lts=p` passthrough).
+
 **Extension to 3D (`SolverFIT3D`, plan).**
 - **Mesh.** `GridFIT3D` keeps its non-uniform coarse tensor grid and gains an octree of refined boxes, nested and balanced, of ratio 2 or 3.
 - **Unknowns.** In 3D, $`\mathbf e`$ lives on edges. Hanging *edges* on a coarse face take the Nédélec trace of the coarse face: fine edge voltages are fixed fractions of the parallel coarse edge, and of the coarse face's neighbouring edges for transverse fine edges inside the face. This yields $`\mathbf P_e`$ (all fine and coarse edges × free edges). The curl becomes $`\mathbf C\mathbf P_e`$, Ampère uses $`\mathbf P_e^T`$, and the masses are row-sum lumped, $`\mathbf M_\varepsilon = \mathbf P_e^T\mathbf m_\varepsilon`$.
@@ -2457,6 +2747,73 @@ References:
 - H. Park, "TorchFDTD", [arXiv:2609.30039](https://arxiv.org/abs/2609.30039) (v1, 2026).
 - M. Park, O. D. Miller and H. Chung, "Nyquist-Sampled Time-Domain Adjoint FDTD for Memory-Efficient Broadband Nanophotonic Inverse Design", [arXiv:2607.08159](https://arxiv.org/abs/2607.08159) (2026).
 - N. Kukreja, J. Hückelheim, M. Louboutin, J. Washbourne, P. H. J. Kelly and G. J. Gorman, "Lossy checkpoint compression in full waveform inversion: a case study with ZFPv0.5.5 and the overthrust model", *Geosci. Model Dev.* **15**, 3815–3829 (2022), [doi:10.5194/gmd-15-3815-2022](https://doi.org/10.5194/gmd-15-3815-2022).
+
+### 🔲 Subpixel-smoothed projection (SSP)
+
+Density-based topology optimization maps the design variables $\rho$ to a filtered field $\tilde\rho = k * \rho$ and then to a projected density $\hat\rho = P_{\beta,\eta}(\tilde\rho)$, with the tanh projection $P_{\beta,\eta}(x) = [\tanh\beta\eta + \tanh\beta(x-\eta)]/[\tanh\beta\eta + \tanh\beta(1-\eta)]$ [Wang et al., 2011]. As $\beta\to\infty$ the design becomes binary, but $dP/d\tilde\rho$ goes to zero everywhere except on the level set $\tilde\rho=\eta$, where it diverges. The optimizer then gets either no gradient or an ill-conditioned one. This is why $\beta$ is raised in stages ("$\beta$-continuation") and why the last stages of our invrs-gym pipeline use a straight-through estimator (STE). The subpixel-smoothed projection of Hammond et al. [2025] removes the root cause. The binary design $\hat\rho$ is discontinuous in *space*, while the interface it describes moves smoothly with $\rho$. Smoothing $\hat\rho$ over a ball of radius $R \approx \Delta x/2$ around each sample therefore gives a density that is binary except within $R$ of interfaces and is a smooth function of the interface position, even at $\beta = \infty$.
+
+**Derivation.** $\tilde\rho$ varies on the filter scale $\tilde R \gg \Delta x$, so inside the smoothing ball it is linear, $\tilde\rho(\mathbf x') \approx \tilde\rho(\mathbf x) + \nabla\tilde\rho\cdot(\mathbf x'-\mathbf x)$. The level set $\tilde\rho = \eta$ is then a plane at signed distance
+
+$$
+d = \frac{\eta - \tilde\rho(\mathbf x)}{\|\nabla\tilde\rho(\mathbf x)\|}
+$$
+
+($d>0$ on the void side). For $\beta=\infty$ the convolution of the step $\hat\rho$ with a radial kernel $k(r)$ of support $R$ is the kernel-weighted fill of the half-space beyond that plane, a function $F(d)$ alone (Eq. 9 of the paper). Choosing the parabolic kernel $k \propto 1-(r/R)^2$: the kernel mass in a slab at height $s$ is $A(s) = 2\pi\int_s^R k(r)\,r\,dr \propto (R^2-s^2)^2$, so $F(d) = \int_d^R A / \int_{-R}^R A$, i.e.
+
+$$
+F(d) = \tfrac12 - \tfrac{15}{16}u + \tfrac58 u^3 - \tfrac{3}{16}u^5, \qquad u = d/R \in [-1,1],
+$$
+
+with $F = 1$ for $u\le-1$ and $0$ for $u\ge1$. $F' = -\tfrac{15}{16R}(1-u^2)^2$ and $F''$ vanish at $u=\pm1$, so $F$ is $C^2$ and $F(-d) = 1-F(d)$. (`tests/test_060` checks this kernel-to-$F$ identity by direct quadrature of Eq. 9 to $2\times10^{-4}$, and that a top-hat kernel gives a different $F$.) For finite $\beta$ the paper defines
+
+$$
+\hat{\tilde\rho} = \begin{cases}
+(1-F)\,P\big(\tilde\rho - R g F\big) + F\,P\big(\tilde\rho + R g (1-F)\big), & |d| < R,\\
+P(\tilde\rho), & \text{otherwise},
+\end{cases}\qquad g = \|\nabla\tilde\rho\|.
+$$
+
+Three properties follow by algebra and are what make it a drop-in projection:
+- $\beta\to0^+$ ($P$ is the identity): $\hat{\tilde\rho} = \tilde\rho - RgF(1-F) + RgF(1-F) = \tilde\rho$, so there is no projection.
+- $\beta=\infty$: the "minus" point has $\tilde\rho - RgF - \eta = -g\,(d + RF(d))$. Its derivative in $d$ is $1 - \tfrac{15}{16}(1-u^2)^2 \ge \tfrac1{16}$ and it vanishes at $d=-R$, so the minus point is always on the void side ($P=0$). Likewise the plus point is always on the solid side ($P=1$). Hence $\hat{\tilde\rho} = F(d)$: exactly the smoothed fill fraction, and exactly 0 or 1 farther than $R$ from the level set.
+- **Same threshold:** for $\eta=\tfrac12$, $\hat{\tilde\rho} > \tfrac12 \Leftrightarrow \tilde\rho > \tfrac12$ for every $\beta$ (at $d=0$, $F=\tfrac12$, and $P$ is antisymmetric about $\tfrac12$). Thresholding, length-scale repair and imageruler measurement therefore see the same binary design as with the tanh projection.
+
+**Sample spacing and the frozen gradient.** At $\beta=\infty$, a straight interface moving by $x_0$ through samples of spacing $\Delta x$ changes the material sum at the rate
+
+$$
+\frac{dM}{dx_0} = \sum_i \frac{15}{16R}\big(1-u_i^2\big)^2, \qquad u_i = \frac{x_i - x_0}{R},
+$$
+
+whose average over one cell is exactly 1 (the area rate of the true interface; Poisson summation of $\int F' = -1$). If $2R < \Delta x$, interface positions midway between samples have no sample within $R$ and the gradient is exactly zero: the paper's reason for $R = 0.55\,\Delta x$. The rate is not uniform, though. For $R = 0.55\,\Delta x$ it ripples between 0.10 (midway) and 1.70 (on a sample). With $R = 0.75\,\Delta x$ it ripples between 0.77 and 1.25, and with $R = \Delta x$ between 0.94 and 1.06 (figure (b) of `studies/ssp`). A larger $R$ trades a thicker gray layer for a more uniform shape derivative.
+
+**Implementation.**
+- `wakis.inverse.smoothed_projection` (JAX) and `wakis.inverse.projection.smoothed_projection` (NumPy, with the explicit vector-Jacobian product `smoothed_projection_vjp`) act on a regular grid. $\nabla\tilde\rho$ is taken by central differences (wrapped on periodic axes).
+- The VJP has two paths: the pointwise partials $\partial\hat{\tilde\rho}/\partial\tilde\rho$ and $\partial\hat{\tilde\rho}/\partial g$ (through $F$, $d$ and the two projected points), and the transpose of the difference stencil applied to $(\partial\hat{\tilde\rho}/\partial g)\, \nabla\tilde\rho/g$.
+- The zero-gradient case uses the double-`where` guard, so plateaus give finite gradients.
+- `MaterialGrid(..., projection_beta=β, projection_eta, projection_radius)` evaluates SSP at every E edge. The input `rho` is then the filtered density; $\tilde\rho$ is interpolated by $\mathbf P$, its gradient by the matrices $\mathbf G_k = \mathbf P\mathbf D_k$ of the tensor smoothing, and $R = 0.55$ times the largest mesh step of the design box.
+- The result $f$ replaces $\mathbf P\rho$ as the fill fraction (permittivity, dispersive weight, or the tensor fill with the normal $\mathbf G\rho/|\mathbf G\rho|$), and $dF/d\rho = \mathbf P^T(\partial_{\tilde\rho} f \odot dF/df) + \sum_k \mathbf G_k^T(\partial_g f\, (\mathbf G_k\rho)/g \odot dF/df)$.
+- The gray layer is therefore one *mesh* cell even when the design grid is coarser or finer than the mesh. For the out-of-plane field of 2D (Ez) problems, $\mathbf E$ is tangential to every interface, so the arithmetic mean $\varepsilon = \varepsilon_\text{min} + \Delta\varepsilon\, F$ of a gray edge is the correct effective medium of the sub-cell interface.
+- In the invrs-gym bridge (`invrs_wakis.lengthscale`, branch `ssp`) SSP acts on the gym pixel grid ($R = 0.55$ px). The gradient there comes from the filter evaluated one pixel beyond the design, so boundary pixels see the same padded surroundings as the filter.
+
+**Validation** (`tests/test_060_subpixel_projection.py`, invrs-wakis `tests/test_ssp.py`):
+- The hand-written NumPy VJP equals `jax.vjp` of the independent JAX version to $10^{-13}$ and central differences to $10^{-6}$ ($\beta = 4, 32, \infty$; periodic and anisotropic spacing). A $16/17$ error in $F'$ breaks the finite-difference match.
+- `MaterialGrid` SSP gradients from the exact adjoint match central differences of the full simulation to $<10^{-5}$ (measured $10^{-7}$–$10^{-9}$) for isotropic (Ez) and tensor-smoothed (TE) designs at $\beta = 8, 16, \infty$. Dropping the $\|\nabla\tilde\rho\|$ path of the VJP breaks the match.
+- latent → conic filter → SSP(∞) → `jax_simulation`: `jax.grad` equals the NumPy chain (adjoint → SSP VJP → filter pullback) to $10^{-10}$ and finite differences to $10^{-5}$.
+- A straight level set moved by a fraction of a cell at $\beta=\infty$ changes the simulated objective, and the adjoint $dF/dx_0$ matches its finite difference to $10^{-4}$. With the step projection ($R\to0$) the objective is constant within the cell and the gradient is exactly zero.
+- The interface-motion rate equals the analytic sum above to $10^{-12}$. With $R = 0.45$ px it vanishes for some positions.
+- Convergence to the binary design: for a disk on 32–512 px grids, the gray-pixel fraction and the $L^1$ distance to the binary indicator fall as $O(\Delta x)$ (fitted order $1\pm0.1$). With tanh at $\beta=32$, about 6 % of the pixels stay gray at every resolution.
+
+**Limits & failure modes.**
+- **Topology changes.** Where two interfaces approach within $\sim R$, or $\tilde\rho$ has a saddle or extremum on the level set, $g\to0$, $|d|\to\infty$ and SSP falls back to $P(\tilde\rho)$. At $\beta=\infty$ the fallback is the step, which is discontinuous and has zero gradient. So at $\beta=\infty$ SSP does shape optimization (fixed topology): holes cannot nucleate and merging features jump. The paper's schedule (a few finite-$\beta$ stages, then $\infty$) is needed.
+- **Non-uniform convergence in $\beta$.** At such saddle points $|\hat{\tilde\rho}_\beta - \hat{\tilde\rho}_\infty|$ stays $O(1)$ for every finite $\beta$. It converges in the mean, not uniformly (`test_limits_and_threshold`).
+- **Shape-derivative ripple.** With $R = 0.55\,\Delta x$ the gradient with respect to interface position varies 17× with the sub-cell position (see above). Optimizers see a modulated, not a uniform, shape gradient. $R \ge 0.75\,\Delta x$ reduces the ripple to ±25 %.
+- **Linearization error.** $F(d)$ assumes a planar interface within $R$. Curvature radius $\rho_c$ gives $O(R/\rho_c)$ errors in the fill. These are small when the filter radius is several $\Delta x$ (the usual case), large for 1–2 px features.
+- **The gray layer is real material.** The simulated design is $\varepsilon(F)$ on one cell per interface. A binary (thresholded) evaluation, such as the official invrs-gym evaluator or a staircased fabrication mask, differs from it by the staircasing error, $O(\Delta x)$ in the interface position. For the 2D Ez case the gray layer is the more accurate model of the smooth shape, but the score is computed on the staircase. Our pipeline closes this gap with a final STE stage that simulates the repaired binary design and back-propagates the SSP gradient.
+- **Not a length-scale constraint.** SSP does not impose minimum widths. The filter makes small features unlikely, and `repair` (imageruler morphology) guarantees them. SSP leaves both unchanged because it has the same threshold.
+
+References:
+- A. M. Hammond, A. Oskooi, I. M. Hammond, M. Chen, S. E. Ralph and S. G. Johnson, "Unifying and accelerating level-set and density-based topology optimization by subpixel-smoothed projection", *Opt. Express* **33**, 33620 (2025), [arXiv:2503.20189](https://arxiv.org/abs/2503.20189) (Eqs. 7–12 and Appendix A verified against the arXiv v3 text; implemented from the equations).
+- F. Wang, B. S. Lazarov and O. Sigmund, "On projection methods, convergence and robust formulations in topology optimization", *Struct. Multidiscip. Optim.* **43**, 767–784 (2011).
 
 ### 🧰 Design templates: setup rules and design formulas
 
@@ -3067,6 +3424,327 @@ References:
 - N. Kumar, A. Pukhov and K. Lotov, "Self-modulation instability of a long proton bunch in plasmas", *Phys. Rev. Lett.* **104**, 255003 (2010), [doi:10.1103/PhysRevLett.104.255003](https://doi.org/10.1103/PhysRevLett.104.255003).
 - E. Adli et al. (AWAKE Collaboration), "Acceleration of electrons in the plasma wakefield of a proton bunch", *Nature* **561**, 363–367 (2018), [doi:10.1038/s41586-018-0485-4](https://doi.org/10.1038/s41586-018-0485-4).
 - M. Turner et al. (AWAKE Collaboration), "Experimental observation of plasma wakefield growth driven by the seeded self-modulation of a proton bunch", *Phys. Rev. Lett.* **122**, 054801 (2019), [doi:10.1103/PhysRevLett.122.054801](https://doi.org/10.1103/PhysRevLett.122.054801).
+
+
+### Thin sheets (surface conductivity)
+
+A conducting or dispersive film of thickness $`t`$ much smaller than the grid spacing can be modelled as a zero-thickness surface carrying a tangential surface current density $`\mathbf{J}_s(\omega) = \sigma_s(\omega)\,\mathbf{E}_t`$ [A/m], across which the tangential electric field is continuous and the tangential magnetic field jumps by $`\hat{\mathbf{n}} \times (\mathbf{H}^+ - \mathbf{H}^-) = \mathbf{J}_s`$ (`wakis.subcell`, `solver.add_sheet`, `SheetMaterial`, `resistive_sheet`, `graphene_sheet`, `metal_sheet`, example `examples/010_thin_sheets_and_wires.py`, test `tests/test_058_thin_sheets_and_wires.py`).
+
+**FIT integral derivation.** Consider a sheet lying on an axis-aligned primary grid plane $`w = w_{k_0}`$ (for instance $`z = z_{k_0}`$, with tangential coordinates $`(u, v) = (x, y)`$). Every tangential primary electric edge $`e`$ on that plane (say an $`E_u`$ edge along $`\Delta u_i`$ at node $`(v_j, w_{k_0})`$) is pierced orthogonally by the dual facet $`\tilde{A}_e = \tilde{L}_{v,j}\,\tilde{L}_{w,k_0}`$. In the Finite Integration Technique, Ampère's law integrated over $`\tilde{A}_e`$ is
+
+```math
+\oint_{\partial \tilde{A}_e} \mathbf{H}\cdot d\tilde{\mathbf{s}}
+= \frac{d}{dt}\int_{\tilde{A}_e} \mathbf{D}\cdot d\tilde{\mathbf{A}}
++ \int_{\tilde{A}_e} \mathbf{J}_s\,\delta(w - w_{k_0})\cdot d\tilde{\mathbf{A}} .
+```
+
+The intersection of the sheet $`w = w_{k_0}`$ with the dual facet $`\tilde{A}_e`$ is the in-plane dual edge of length $`\tilde{L}_{\text{in-plane},e} = \tilde{L}_{v,j}`$ (weighted by the subcell coverage fraction $`f_e \in [0, 1]`$ when the sheet patch covers only a fraction of $`\Delta u_i \times \tilde{L}_{v,j}`$). Integrating the Dirac delta across the normal dual edge $`\tilde{L}_{w,k_0}`$ therefore yields the total sheet current through $`\tilde{A}_e`$:
+
+```math
+I_{s,e} = \sigma_s\,E_e\,\left(f_e\,\tilde{L}_{\text{in-plane},e}\right) .
+```
+
+Dividing Ampère's integral equation by the dual facet area $`\tilde{A}_e = \tilde{L}_{\text{in-plane},e}\,\tilde{L}_{\perp,e}`$ (which Wakis applies via the diagonal inverse dual area matrix `itDa`) gives the sheet current density term in the point-form $`E_e`$ update:
+
+```math
+\frac{I_{s,e}}{\tilde{A}_e}
+= \sigma_s\,E_e\,\underbrace{\left(f_e\,\tilde{L}_{\text{in-plane},e}\,\mathrm{itA}_e\right)}_{w_e = f_e / \tilde{L}_{\perp,e}} ,
+```
+
+where $`\tilde{L}_{\perp,e} = \tilde{L}_{w,k_0} = \tfrac{1}{2}(\Delta w_{k_0-1} + \Delta w_{k_0})`$ is the dual-edge length crossing the sheet. `solver.add_sheet` computes $`w_e = f_e\,\tilde{L}_{\text{in-plane},e}\,\mathrm{itA}_e`$ directly from `grid.tL` and `grid.itA` and registers the edges as a zero-thickness ADE group (`_register_sheet_group`) whose semi-implicit Crank–Nicolson update is unconditionally passive for any $`\sigma_s \ge 0`$ without reducing the Courant time step.
+
+**Equivalence with the $`\sigma = \sigma_s / \Delta`$ volume shortcut and where the shortcut fails.**
+- *When they coincide:* For a full tangential edge ($`f_e = 1`$) lying on a grid plane $`w = w_{k_0}`$ of a **uniform** grid ($`\Delta w_{k_0-1} = \Delta w_{k_0} = \Delta_\perp`$), the dual-edge length crossing the sheet is $`\tilde{L}_{\perp,e} = \Delta_\perp`$, so $`w_e\,\sigma_s = \sigma_s / \Delta_\perp`$ is algebraically identical to assigning a volumetric conductivity $`\sigma = \sigma_s / \Delta_\perp`$ to those tangential edges.
+- *Where the volume shortcut fails:*
+  1. **Non-uniform meshes:** When $`\Delta w_{k_0-1} \ne \Delta w_{k_0}`$, the dual facet area is $`\tilde{A}_e = \tilde{L}_{\text{in-plane},e}\,\tilde{L}_{w,k_0}`$ with $`\tilde{L}_{w,k_0} = \tfrac{1}{2}(\Delta w_{k_0-1} + \Delta w_{k_0})`$. Replacing $`1/\tilde{L}_{w,k_0}`$ by $`1/\Delta w_{k_0}`$ (single-cell volume thickness) introduces an $`O(\Delta w_{k_0} / \tilde{L}_{w,k_0} - 1)`$ error in the sheet conductance (`test_resistive_sheet_transmission_reflection`).
+  2. **Edges not in the sheet plane (normal $`E_\perp`$ edges):** A voxelized slab of thickness $`\Delta_\perp`$ and isotropic bulk conductivity $`\sigma = \sigma_s/\Delta_\perp`$ also damps the normal electric field components $`E_w`$ crossing the slab, whereas a physical zero-thickness sheet carries only tangential surface current $`\mathbf{J}_s = \sigma_s \mathbf{E}_t`$ and leaves $`E_w`$ unperturbed.
+  3. **Off-grid or tilted sheets:** If a sheet at $`w_0 \notin \{w_k\}`$ is distributed onto the two adjacent planes $`w_{k_0}`$ and $`w_{k_0+1}`$, those planes are separated by $`\Delta w_{k_0}`$ and form an artificial Fabry–Pérot interferometer with an $`O((k\Delta w)^2)`$ phase error (and staircasing dispersion if tilted across axes). Exactness requires that the sheet lie on a primary grid plane (use `GridFIT3D(..., snap_points=...)` to snap a grid plane to $`w_0`$, or use the unstructured/conformal solvers for curved surfaces).
+
+**Supported sheet models (`wakis.subcell`).**
+1. **Constant resistive sheet and PEC limit:** `resistive_sheet(sigma_s=..., R_s=...)` sets a constant sheet conductivity $`\sigma_s = 1/R_s`$ [S] ($`R_s`$ in $`\Omega/\text{sq}`$). Passing `sigma_s='pec'` or `sigma_s=np.inf` takes the $`\sigma_s \to \infty`$ limit by zeroing `ieps` and `E` on the tangential sheet edges and scaling the corresponding rows of `itDaiDepsDstC`, which reproduces an explicit PEC plate to machine precision (`test_pec_sheet_matches_pec_plate_to_roundoff`).
+2. **Dispersive $`\sigma_s(\omega)`$ and graphene intraband Drude model:** `SheetMaterial(poles, sigma_s, chi_s_inf)` represents any sum of `Drude`, `Lorentz`, and `Debye` surface susceptibility poles $`\chi_s(\omega) = \sigma_{s,\text{disp}}(\omega)/(j\omega\varepsilon_0)`$ [m] integrated via the surface ADE of `wakis.dispersive`. For doped monolayer graphene at chemical potential $`E_F`$ [eV], temperature $`T`$ [K], and relaxation time $`\tau = 1/\gamma`$ [s], the Kubo intraband weight is
+   ```math
+   D = \frac{2 e^2 k_B T}{\pi\hbar^2}\ln\!\left[2\cosh\!\left(\frac{|E_F|}{2 k_B T}\right)\right]
+   \xrightarrow{|E_F|\gg k_B T} \frac{e^2 |E_F|}{\pi\hbar^2},
+   ```
+   giving the Drude surface conductivity (`graphene_sheet(E_F, tau, T)`):
+   - in Wakis's engineering phasor convention $`\exp(+j\omega t)`$ ($`\partial_t \leftrightarrow +j\omega`$):
+     ```math
+     \sigma_s^{(+)}(\omega) = \frac{D}{\gamma + j\omega} = \frac{-j\,e^2 |E_F|}{\pi\hbar^2(\omega - j/\tau)} ,
+     ```
+   - in the physics convention $`\exp(-i\omega t)`$ ($`\partial_t \leftrightarrow -i\omega`$):
+     ```math
+     \sigma_s^{(-)}(\omega) = \frac{D}{\gamma - i\omega} = \frac{i\,e^2 |E_F|}{\pi\hbar^2(\omega + i/\tau)} = \left[\sigma_s^{(+)}(\omega)\right]^* .
+     ```
+   Both conventions satisfy passivity, $`\operatorname{Re}\sigma_s(\omega) \ge 0`$.
+3. **Thin metal traces ($`t \ll \delta`$ vs $`t \gg \delta`$):** `metal_sheet(sigma, thickness, mode='auto', f0=..., f_range=..., n_poles=3)` supports two physical regimes:
+   - *Electrically thin trace ($`t \ll \delta`$, `mode='thin'`):* uniform current across the thickness, constant sheet resistance $`R_s = 1/(\sigma t)`$ ($`\sigma_s = \sigma t`$).
+   - *Thick skin-effect regime ($`t \gg \delta`$, `mode='sibc'`):* Leontovich surface impedance
+     ```math
+     Z_s(\omega) = \frac{1 + j}{\sigma\,\delta(\omega)} = \sqrt{\frac{j\omega\mu_0\mu_r}{\sigma}},
+     \qquad \delta(\omega) = \sqrt{\frac{2}{\omega\mu_0\mu_r\sigma}},
+     \qquad \sigma_s(\omega) = \frac{1}{Z_s(\omega)} = \sqrt{\frac{\sigma}{j\omega\mu_0\mu_r}} .
+     ```
+     Because $`\sigma_s(\omega) \propto (j\omega)^{-1/2}`$ has a branch cut rather than a single rational pole, two passive Drude realizations are provided:
+     - **Narrowband (`n_poles=1` at centre frequency $`f_0`$):** a single Drude pole with $`\gamma = \omega_0 = 2\pi f_0`$ and $`\sigma_{s,0} = \sigma\,\delta(\omega_0)`$, which matches $`\sigma_s(\omega_0) = \tfrac{1}{2}(1-j)\sigma\delta(\omega_0)`$ and $`Z_s(\omega_0)`$ **exactly** at $`f_0`$ and remains within $`5\%`$ in $`|Z_s|`$ over the $`\approx 30\%`$ fractional band $`[0.85 f_0,\,1.15 f_0]`$.
+     - **Wideband (`n_poles=N` over `f_range=(fmin, fmax)`):** a Gauss–Legendre Stieltjes quadrature of the branch-cut integral $`(j\omega)^{-1/2} = \frac{2}{\pi}\int_0^\infty \frac{du}{u^2 + j\omega}`$ refined by non-negative log-least-squares over $`[f_{\min}, f_{\max}]`$. Every pole has $`\gamma_k > 0`$ and $`\omega_{p,k}^2 > 0`$ (strictly passive for all $`\omega`$), achieving $`< 2.5\%`$ relative error in $`Z_s(\omega)`$ across a $`3:1`$ frequency band with $`N = 3`$ poles (`test_metal_sheet_thin_and_sibc`).
+
+**Validation** (`tests/test_058_thin_sheets_and_wires.py`, `examples/010_thin_sheets_and_wires.py`):
+- *Free-space resistive sheet:* normal-incidence $`|t(f)|`$, $`T(f)`$, $`R(f)`$, and absorption $`A(f) = 1 - R - T`$ match $`t = 1/(1 + \eta_0\sigma_s/2)`$ and $`r = -(\eta_0\sigma_s/2)/(1 + \eta_0\sigma_s/2)`$ to $`< 0.8\%`$ in amplitude and $`< 1.5\%`$ in power for $`\eta_0\sigma_s \in \{0.5, 2, 4\}`$, including on a non-uniform mesh where $`\tilde{L}_{z,k_0} = 1.4\,\Delta z_0 \ne \Delta z_{k_0} = 1.7\,\Delta z_0`$ (where the naive uniform-grid shortcut $`\sigma_s/\Delta z_0`$ fails by $`> 25\%`$).
+- *Salisbury screen:* a $`R_s = \eta_0 = 376.73\ \Omega/\text{sq}`$ sheet placed $`d = \lambda_0/4`$ in front of a PEC wall gives $`R(f_0) = 1.37\times 10^{-4}`$ at $`f_0 = 3\text{ GHz}`$ and matches $`R_{\text{analytic}}(f) = |\cot(kd)/(\cot(kd) - 2j)|^2`$ across $`1.5`$–$`4.5\text{ GHz}`$ (`max |dR| = 2.7e-2`); mutating the dual-edge length factor by $`2\times`$ spoils the impedance match to $`R(f_0) = 0.111`$.
+- *Graphene Drude sheet:* time-domain FIT $`T(f)`$ and $`R(f)`$ match the analytic Drude sheet formulas to $`< 1.5\%`$ across the band while satisfying $`R(f) + T(f) < 1`$.
+
+![Salisbury screen reflectance and dispersive Drude graphene sheet spectra](img/thin_sheet_salisbury_reflection.png)
+
+**Limits & failure modes.**
+- *Axis-aligned grid plane required for zero-thickness exactness.* If `position` does not coincide with a primary grid node along the normal axis, `add_sheet` emits a `UserWarning` and snaps to the nearest grid plane $`w_{k_0}`$ ($`O(\Delta_\perp)`$ position shift). Use `GridFIT3D(..., snap_points=...)` to place a grid plane at the exact sheet coordinate.
+- *High-frequency Drude plasma stability.* While pure ohmic sheet conductivity $`\sigma_s`$ and Debye poles are unconditionally stable under Crank–Nicolson averaging, explicit second-order Drude/Lorentz poles require $`\omega_{p,\text{eff}}\Delta t = (\omega_{p,s}/\sqrt{\tilde{L}_\perp})\Delta t < 2\sqrt{1 - C^2}`$; `add_sheet` checks this via `_check_dispersive_stable` and raises `ValueError` if a smaller `dt` or `cfln` is needed.
+- *Skin-effect SIBC band of validity.* The 1-pole narrowband model (`n_poles=1`) has $`|Z_s| \propto \omega^{-1}`$ for $`\omega \gg \omega_0`$ and $`\text{const}`$ for $`\omega \ll \omega_0`$, so it is accurate to $`< 5\%`$ only within $`\approx \pm 15\%`$ of $`f_0`$; for broadband pulses use `f_range=(fmin, fmax)` with `n_poles >= 3`. Within the $`\mathbf{J}_s = \sigma_s \mathbf{E}_t`$ sheet topology, a thin metal trace carries the sum of the top and bottom surface currents (symmetric shunt admittance) without blocking direct transmission through the sheet plane; modelling an opaque finite-thickness shield requires either two sheets separated by a PEC core or `sigma_s='pec'`.
+
+
+### Thin wires
+
+A straight or bent wire of radius $`a \ll \Delta_\perp`$ running along primary grid edges has radial electric and azimuthal magnetic fields that vary as $`1/\rho`$ inside the four cells surrounding the wire:
+
+```math
+H_\phi(\rho) \simeq \frac{I}{2\pi\rho}, \qquad
+E_\rho(\rho) \simeq \frac{q'}{2\pi\varepsilon\,\rho}, \qquad
+a \le \rho \lesssim \Delta_\perp .
+```
+
+Simply setting $`E_z = 0`$ on the wire edges ignores the $`\ln(\Delta_\perp/a)`$ magnetic flux and radial electric voltage stored between $`\rho = a`$ and $`\rho = \Delta_\perp/2`$, making the simulated wire behave as if it had an effective radius $`a_{\text{eff}} \approx 0.20\,\Delta_\perp`$ independent of $`a`$ (`wakis.subcell`, `solver.add_thin_wire`, example `examples/010_thin_sheets_and_wires.py`, test `tests/test_058_thin_sheets_and_wires.py`).
+
+**Contour-path / in-cell inductance derivation and symmetric FIT Hodge form.** Consider a wire segment along the $`z`$ axis at transverse node $`(x_i, y_j)`$ with radius $`a < \tfrac{1}{2}\min(\Delta x, \Delta y)`$. Integrating Faraday's law over the primary face $`A_{y;i,j,k} = [x_i, x_{i+1}] \times [z_k, z_{k+1}]`$ with $`E_z(x_i, y_j, z) = 0`$ on the wire surface $`\rho = a`$ gives [Umashankar, Beker & Taflove, 1987; Taflove & Hagness, Ch. 10]:
+
+```math
+\mu\,\frac{\partial}{\partial t}\int_a^{\Delta x}\! H_y(\rho)\,\Delta z\,d\rho
+= \Delta z\,\big[E_z(\Delta x) - 0\big] + \int_a^{\Delta x}\!\big[E_x(z_k) - E_x(z_{k+1})\big]\,d\rho .
+```
+
+Substituting the quasi-static profile $`H_y(\rho) = H_y(\Delta x/2)\,\frac{\Delta x/2}{\rho}`$ into the flux integral yields
+
+```math
+\int_a^{\Delta x}\! H_y(\rho)\,d\rho
+= H_y(\Delta x/2)\,\frac{\Delta x}{2}\ln\!\left(\frac{\Delta x}{a}\right)
+= m_x\,\Delta x\,H_y(\Delta x/2),
+\qquad
+m_x = \frac{1}{2}\ln\!\left(\frac{\Delta x}{a}\right) .
+```
+
+In FIT operator language [Noda & Yokoyama, 2002], this contour-path integral is equivalent to multiplying the permeability on the four circulating magnetic faces around each wire segment ($`H_u(i, j, k)`$, $`H_u(i, j-1, k)`$, $`H_v(i, j, k)`$, $`H_v(i-1, j, k)`$) by $`m = \tfrac{1}{2}\ln(\Delta_\perp/a)`$, i.e. scaling their inverse permeability entries in `imu` (and the corresponding rows of `tDsiDmuiDaC`) by
+
+```math
+\mathrm{imu}_{\text{loop}} \;\leftarrow\; \frac{\mathrm{imu}_{\text{loop}}}{m},
+\qquad
+m = \frac{1}{2}\ln\!\left(\frac{\Delta_\perp}{a}\right) .
+```
+
+Similarly, integrating Gauss's law / the radial voltage $`\int_a^{\Delta_\perp} E_\rho(\rho)\,d\rho = m\,\Delta_\perp\,E_\rho(\Delta_\perp/2)`$ along the non-wire primary $`\mathbf{E}`$ edges incident to a wire node of degree $`d`$ ($`d = 2`$ at interior and $`90^\circ`$-bend nodes, $`d = 1`$ at wire ends where the axial fringe field enhances the tip capacitance by a factor of 2, and $`d \ge 3`$ at multi-wire junctions) scales their inverse permittivity `ieps` by [Noda & Yokoyama, 2002; Railton & Holland, 1990]
+
+```math
+\mathrm{ieps}_{\text{node}} \;\leftarrow\; w_{\text{node}}\,\mathrm{ieps}_{\text{node}},
+\qquad
+w_{\text{node}} = \frac{2}{d}\,m = \frac{1}{d}\ln\!\left(\frac{\Delta_\perp}{a}\right) .
+```
+
+To prevent the increased `ieps` at wire ends ($`d = 1`$, where $`w_{\text{node}} = 2m > m`$) from raising the local numerical wave speed above $`c_0`$ and violating the vacuum Courant limit, the four magnetic faces containing each scaled node edge have their `imu` bounded by $`\mathrm{imu} \leftarrow \min(\mathrm{imu},\,\mathrm{imu}_0 / w_{\text{node}})`$, so $`(\mu_{\text{eff}}\varepsilon_{\text{eff}})^{-1/2} \le c_0`$ everywhere and the standard solver time step $`\Delta t`$ stays stable without reduction.
+
+**Lossy wires and lumped/delta-gap feeds.**
+- *PEC vs lossy wire segments:* On active wire segments, `material='pec'` sets `ieps = 0` and `E = 0`. Passing `sigma` [S/m] or `R_per_m` [$`\Omega`$/m] (`R_per_m = 1 / (pi * a**2 * sigma)`) registers a semi-implicit conductive ADE update with weight $`\mathrm{itA}_e`$ and conductance per unit length $`G' = 1 / R_{\text{per\_m}}`$ [S$`\cdot`$m], which adds the wire resistance $`R\,\Delta z = R'\,\Delta z`$ in parallel with the cell capacitance while keeping the $`\ln(\Delta_\perp/a)`$ magnetic inductance around the wire.
+- *Delta-gap / lumped feeds (`wakis.lumped`):* A `LumpedPort` or `LumpedElement` placed on a wire segment (either passed via `gap=port` in `solver.add_thin_wire` or attached automatically when `port._set_edges(solver)` runs via `solver._reopen_thin_wire_edges`) leaves `ieps` at its background value on the gap edge while preserving the thin-wire magnetic Hodge scaling $`1/m`$ on the four circulating $`\mathbf{H}`$ faces around the gap.
+
+**Validation** (`tests/test_058_thin_sheets_and_wires.py`, `examples/010_thin_sheets_and_wires.py`):
+- *Half-wave dipole input impedance vs Hallén MoM (`wakis.analytic.thin_wire.hallen_dipole`):* For a dipole of length $`L = 0.48\,\lambda_0`$ at $`f_0 = 1\text{ GHz}`$ ($`N_{\text{seg}} = 15`$, $`\Delta x = \Delta y = \Delta z = L/15`$) at two subcell radii $`a = \Delta/10`$ ($`\Omega = 2\ln(L/a) = 10.02`$) and $`a = \Delta/50`$ ($`\Omega = 13.24`$):
+  - First resonance ($`\operatorname{Im}Z_{\text{in}} = 0`$): $`f_{\text{res}}(\Delta/10) = 0.9800\text{ GHz}`$ (Hallén MoM: $`0.9700\text{ GHz}`$, $`1.0\%`$ diff) and $`f_{\text{res}}(\Delta/50) = 0.9925\text{ GHz}`$ (Hallén MoM: $`0.9950\text{ GHz}`$, $`0.25\%`$ diff), capturing the upward resonance shift as the wire becomes thinner.
+  - Input impedance at $`f_0 = 1.0\text{ GHz}`$: $`Z_{\text{FIT}}(\Delta/50) = 78.7 + 5.9j\ \Omega`$ vs Hallén MoM $`73.2 + 5.9j\ \Omega`$; reactance slope $`dX_{\text{in}}/df`$ increases by $`1.49\times`$ from $`a = \Delta/10`$ to $`a = \Delta/50`$ (MoM: $`1.45\times`$).
+  - *Mutation check:* Setting `correction=False` (zeroing `ieps` on the wire without the $`\ln(\Delta/a)`$ Hodge correction) makes $`Z_{\text{in}}(f)`$ completely independent of $`a`$ ($`\|Z(\Delta/50) - Z(\Delta/10)\|_\infty = 0`$) and shifts the apparent resonance to $`0.925\text{ GHz}`$ (corresponding to the fat staircase radius $`a_{\text{eff}} \approx 0.20\,\Delta`$).
+  - *Grid convergence:* Refining a fixed physical wire ($`a = 0.5\text{ mm}`$, $`L = 0.48\,\lambda_0`$) from $`N_{\text{seg}} = 9`$ to $`N_{\text{seg}} = 15`$ reduces the relative $`L^2`$ error $`\|Z_{\text{FIT}} - Z_{\text{MoM}}\|_2 / \|Z_{\text{MoM}}\|_2`$ over $`0.88`$–$`1.12\text{ GHz}`$ from $`0.172`$ to $`0.123`$.
+- *Discrete energy and exact adjoint:* In a closed PEC cavity containing a lossless sheet and a PEC thin wire, the integer-time leapfrog energy invariant $`\widetilde{W}^n = \tfrac{1}{2}\langle \mathbf{E}^n, \boldsymbol{\varepsilon}\mathbf{E}^n\rangle + \tfrac{1}{2}\langle \mathbf{H}^{n-1/2}, \boldsymbol{\mu}\mathbf{H}^{n+1/2}\rangle`$ is conserved to $`< 10^{-14}`$ relative, and decays monotonically at every step when the sheet and wire are lossy (`test_energy_conservation_and_decay`). Because `add_sheet` and `add_thin_wire` modify only the linear Hodge diagonals (`ieps`, `imu`) and the linear `_dispersive_groups` ADE state, `AdjointStepper` satisfies the dot-product identity $`\langle \mathbf{U}\mathbf{x}, \mathbf{y}\rangle = \langle \mathbf{x}, \mathbf{U}^H\mathbf{y}\rangle`$ to $`\sim 10^{-15}`$ with a dispersive sheet, a thin wire, and a lumped RLC load on the wire all active simultaneously, and `AdjointSimulation.vjp` matches central finite differences ($`h = 10^{-4}`$) of a `DFTMonitor` objective with respect to a `MaterialGrid` design region next to a dispersive sheet to $`< 10^{-7}`$ relative (`test_adjoint_dot_product_and_fd_gradient`).
+
+![Thin-wire dipole input resistance and reactance vs Hallén MoM for two subcell radii](img/thin_wire_dipole_impedance.png)
+
+**Limits & failure modes.**
+- *Radius range $`0 < a < \Delta_\perp / 2`$ (recommended $`10^{-4}\Delta_\perp \lesssim a \lesssim 0.25\,\Delta_\perp`$).* At $`a = \Delta_\perp/e^2 \approx 0.135\,\Delta_\perp`$, $`m = \tfrac{1}{2}\ln(\Delta_\perp/a) = 1`$ (the uncorrected grid-edge wire). For $`a \ge 0.5\,\Delta_\perp`$ the logarithm $`\ln(\Delta_\perp/a)`$ is non-positive or smaller than the cell half-width and `add_thin_wire` raises `ValueError`; fat wires with $`a \gtrsim 0.3\,\Delta_\perp`$ should be modelled as resolved/conformal 3D conductors instead.
+- *Axis-aligned grid-edge segments only.* Each segment of `points` must lie along the $`x`$, $`y`$, or $`z`$ axis; oblique wires not aligned with grid lines require staircase approximation or an unstructured mesh.
+- *Single-cell delta-gap feed capacitance.* Driving a thin wire across one grid cell of length $`\Delta z`$ imposes a gap of width $`\Delta z`$; for very fine grids ($`\Delta z \to 0`$ at fixed $`a`$), the knife-edge gap capacitance $`C_{\text{gap}} \sim \varepsilon_0 a \ln(a/\Delta z)`$ grows slowly unless the excitation is distributed over a fixed physical gap length [Taflove & Hagness, §10.4].
+
+References:
+- K. R. Umashankar, B. Beker and A. Taflove, "Calculation and experimental validation of induced currents on coupled wires in an arbitrary shaped cavity", *IEEE Trans. Antennas Propag.* **35**, 1248–1257 (1987), [doi:10.1109/TAP.1987.1144000](https://doi.org/10.1109/TAP.1987.1144000).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House, Ch. 10 (2005).
+- T. Noda and S. Yokoyama, "Thin wire representation in finite difference time domain surge simulation", *IEEE Trans. Power Del.* **17**, 840–847 (2002), [doi:10.1109/TPWRD.2002.1022813](https://doi.org/10.1109/TPWRD.2002.1022813).
+- C. J. Railton and R. Holland, "The treatment of thin wires in the FDTD method", *IEEE Trans. Antennas Propag.* **38**, 1112–1119 (1990).
+- G. W. Hanson, "Dyadic Green's functions and guided surface waves for a surface conductivity model of graphene", *J. Appl. Phys.* **103**, 064302 (2008), [doi:10.1063/1.2891452](https://doi.org/10.1063/1.2891452).
+
+
+### Active gain media and four-level laser dynamics (`wakis.gain`)
+
+Active optical amplifiers and lasers require coupling Maxwell's equations in the time domain to the non-equilibrium population kinetics of the gain medium so that population inversion, gain saturation, mode competition, relaxation oscillations, and spatial hole burning emerge self-consistently without linear negative-conductance blow-up. `wakis.gain` (`FourLevelGain`, `SaturableGain`, `solver.add_gain_material`, example `examples/012_fabry_perot_laser.py`, test `tests/test_063_gain_media.py`) implements two auxiliary differential equation (ADE) models coupled to `SolverFIT3D` using the same capture-before / update-after electric-field hook architecture as `wakis.dispersive`.
+
+**Four-level two-electron atomic system (`FourLevelGain`).** Following S.-H. Chang and A. Taflove, *Opt. Express* **12**(16), 3827–3833 (2004), [doi:10.1364/OPEX.12.003827](https://doi.org/10.1364/OPEX.12.003827) [Eqs. (3)–(5); see also Nagra & York, 1998], each atom has four electronic energy levels $`E_0 < E_1 < E_2 < E_3`$ with level population densities $`N_0(\mathbf{r}, t), N_1(\mathbf{r}, t), N_2(\mathbf{r}, t), N_3(\mathbf{r}, t)`$ [m$`^{-3}`$]. Two dipole transitions are coupled to the macroscopic electric field $`\mathbf{E}(\mathbf{r}, t)`$: the lasing transition $`1 \leftrightarrow 2`$ at resonance angular frequency $`\omega_a = (E_2 - E_1)/\hbar`$ and homogeneous dephasing rate $`\gamma_a`$ [rad/s], and the optional pump transition $`0 \leftrightarrow 3`$ at $`\omega_b = (E_3 - E_0)/\hbar`$ and dephasing rate $`\gamma_b`$. Their macroscopic polarization densities $`\mathbf{P}_a`$ and $`\mathbf{P}_b`$ [C/m$`^2`$] satisfy damped harmonic oscillator equations driven by the instantaneous population differences $`(N_1 - N_2)`$ and $`(N_0 - N_3)`$:
+
+```math
+\frac{\partial^2 \mathbf{P}_a}{\partial t^2} + \gamma_a \frac{\partial \mathbf{P}_a}{\partial t} + \omega_a^2 \mathbf{P}_a = \kappa_a \big(N_1 - N_2\big)\,\mathbf{E}, \qquad
+\frac{\partial^2 \mathbf{P}_b}{\partial t^2} + \gamma_b \frac{\partial \mathbf{P}_b}{\partial t} + \omega_b^2 \mathbf{P}_b = \kappa_b \big(N_0 - N_3\big)\,\mathbf{E},
+```
+
+where the classical radiative oscillator coupling constants are
+
+```math
+\kappa_a = \frac{6\pi\varepsilon_0 c^3}{\omega_a^2 \tau_{21}}, \qquad
+\kappa_b = \frac{6\pi\varepsilon_0 c^3}{\omega_b^2 \tau_{30}} \qquad \left[\text{C}^2 / (\text{kg}\cdot\text{m}^3)\right].
+```
+
+The population densities evolve according to the coupled four-level rate equations with external pumping rate $`W_p`$ [s$`^{-1}`$] ($`0 \to 3`$), nonradiative/spontaneous decay lifetimes $`\tau_{32}, \tau_{30}, \tau_{21}, \tau_{10}`$ [s], and field-driven stimulated/absorption transition rates $`\frac{1}{\hbar\omega_a}\mathbf{E}\cdot\frac{\partial\mathbf{P}_a}{\partial t}`$ and $`\frac{1}{\hbar\omega_b}\mathbf{E}\cdot\frac{\partial\mathbf{P}_b}{\partial t}`$:
+
+```math
+\begin{aligned}
+\frac{\partial N_3}{\partial t} &= W_p N_0 - \left(\frac{1}{\tau_{32}} + \frac{1}{\tau_{30}}\right) N_3 + \frac{1}{\hbar\omega_b}\,\mathbf{E}\cdot\frac{\partial \mathbf{P}_b}{\partial t}, \\[4pt]
+\frac{\partial N_2}{\partial t} &= \frac{N_3}{\tau_{32}} - \frac{N_2}{\tau_{21}} + \frac{1}{\hbar\omega_a}\,\mathbf{E}\cdot\frac{\partial \mathbf{P}_a}{\partial t}, \\[4pt]
+\frac{\partial N_1}{\partial t} &= \frac{N_2}{\tau_{21}} - \frac{N_1}{\tau_{10}} - \frac{1}{\hbar\omega_a}\,\mathbf{E}\cdot\frac{\partial \mathbf{P}_a}{\partial t}, \\[4pt]
+\frac{\partial N_0}{\partial t} &= \frac{N_1}{\tau_{10}} + \frac{N_3}{\tau_{30}} - W_p N_0 - \frac{1}{\hbar\omega_b}\,\mathbf{E}\cdot\frac{\partial \mathbf{P}_b}{\partial t} .
+\end{aligned}
+```
+
+When `pauli_exclusion=True` [Chang & Taflove 2004, Eqs. (5a)–(5d)], each relaxation or pumping transition $`i \to j`$ is multiplied by the Pauli blocking factor $`(1 - N_j / N_{\text{site}})`$. Summing the four rate equations gives $`\frac{\partial}{\partial t}(N_0 + N_1 + N_2 + N_3) = 0`$ identically: total atomic density $`N_{\text{total}} = \sum_{i=0}^3 N_i`$ is an exact local invariant.
+
+**Susceptibility, sign convention, and steady-state gain saturation.** In Wakis's engineering phasor convention $`\exp(+i\omega t)`$ ($`\partial_t \leftrightarrow +i\omega`$), a frozen population state $`(N_0, N_1, N_2, N_3)`$ yields the complex relative permittivity
+
+```math
+\varepsilon_r(\omega) = \varepsilon_\infty + \chi_a(\omega) + \chi_b(\omega) + \frac{\sigma}{i\omega\varepsilon_0}, \qquad
+\chi_a(\omega) = \frac{(\kappa_a / \varepsilon_0)\,(N_1 - N_2)}{\omega_a^2 - \omega^2 + i\gamma_a\omega} .
+```
+
+- *Unpumped / normal population ($`N_1 > N_2`$):* $`\operatorname{Im}\chi_a(\omega) < 0`$, so $`\mathbf{E}\cdot\dot{\mathbf{P}}_a > 0`$ (the field loses energy to the medium while promoting atoms $`1 \to 2`$), matching a passive `wakis.dispersive.Lorentz` pole with $`\Delta\varepsilon_a = \kappa_a(N_1 - N_2)/(\varepsilon_0\omega_a^2) > 0`$.
+- *Population inversion ($`\Delta N_a \equiv N_2 - N_1 > 0`$):* $`\operatorname{Im}\chi_a(\omega) > 0`$, so $`\mathbf{E}\cdot\dot{\mathbf{P}}_a < 0`$ (stimulated emission amplifies the field while depleting $`N_2 \to N_1`$). At line centre $`\omega = \omega_a`$ ($`|\chi_a| \ll \varepsilon_\infty`$), the power gain coefficient $`g(\omega_a) = 2\operatorname{Im}k(\omega_a)`$ is
+
+```math
+g(\omega_a) = \sigma_{21}\,\Delta N_a, \qquad
+\sigma_{21} = \frac{\kappa_a}{\varepsilon_0 c \sqrt{\varepsilon_\infty}\,\gamma_a} = \frac{6\pi c^2}{\sqrt{\varepsilon_\infty}\,\omega_a^2 \tau_{21} \gamma_a} \quad [\text{m}^2].
+```
+
+Under continuous-wave illumination of cycle-averaged optical intensity $`I = \tfrac{1}{2}c\varepsilon_0\sqrt{\varepsilon_\infty}|\mathbf{E}_0|^2`$ [W/m$`^2`$] at $`\omega_a`$, the cycle-averaged stimulated transition rate is $`W_{\text{stim}} = \sigma_{21} I / (\hbar\omega_a)`$, and the steady state of the four-level rate equations gives homogeneous saturation (`FourLevelGain.steady_state_inversion`, `FourLevelGain.saturation_intensity`):
+
+```math
+\Delta N_a(W_p, I) = \frac{\Delta N_a(W_p, 0)}{1 + I / I_{\text{sat}}}, \qquad
+\Delta N_a(W_p, 0) = N_{\text{total}}\,\frac{W_p (\tau_3 / \tau_{32})(\tau_{21} - \tau_{10})}{1 + W_p\tau_3\big[1 + (\tau_{10} + \tau_{21})/\tau_{32}\big]},
+```
+
+with $`\tau_3^{-1} = \tau_{32}^{-1} + \tau_{30}^{-1}`$ and effective saturation intensity
+
+```math
+I_{\text{sat}} = \frac{\hbar\omega_a}{\sigma_{21}\,\tau_{\text{sat}}}, \qquad
+\tau_{\text{sat}} = \tau_{21}\,\frac{1 + W_p\tau_3(1 + \tau_{10}/\tau_{32})}{1 + W_p\tau_3\big[1 + (\tau_{10} + \tau_{21})/\tau_{32}\big]}
+\;\xrightarrow{\tau_{10},\tau_{32} \ll \tau_{21}}\; \frac{\tau_{21}}{1 + W_p\tau_{21}} .
+```
+
+Population inversion ($`\Delta N_a > 0`$) requires $`\tau_{21} > \tau_{10}`$ (upper lasing level lifetime longer than lower lasing level lifetime).
+
+**Saturable-gain Lorentz model (`SaturableGain`).** For teaching and reduced-order amplifier studies where full four-level population dynamics are not required, `SaturableGain(omega_0, gamma, g0, I_sat)` integrates a single Lorentz polarization whose oscillator strength saturates homogeneously with the local optical intensity $`I(\mathbf{r}, t)`$ [Siegman, 1986, Chs. 2, 7]:
+
+```math
+\frac{\partial^2 \mathbf{P}}{\partial t^2} + \gamma \frac{\partial \mathbf{P}}{\partial t} + \omega_0^2 \mathbf{P}
+= \varepsilon_0\,\frac{\Delta\varepsilon_0\,\omega_0^2}{1 + I / I_{\text{sat}}}\,\mathbf{E}, \qquad
+\Delta\varepsilon_0 = -\frac{c\sqrt{\varepsilon_\infty}\,\gamma\,g_0}{\omega_0^2},
+```
+
+coupled to the cycle-averaging low-pass intensity filter $`\tau_I \frac{\partial I}{\partial t} + I = c\varepsilon_0\sqrt{\varepsilon_\infty}|\mathbf{E}(\mathbf{r}, t)|^2`$ (default $`\tau_I = 5 \times 2\pi/\omega_0`$, suppressing $`2\omega_0`$ carrier-wave ripple). A monochromatic plane wave propagating along $`+z`$ through a homogeneous saturable slab of length $`L`$ obeys $`dI/dz = g_0 I / (1 + I/I_{\text{sat}})`$, whose exact integral is given in closed form by the principal Lambert $`W_0`$ branch (`amplified_intensity`):
+
+```math
+\ln\!\left(\frac{I_{\text{out}}}{I_{\text{in}}}\right) + \frac{I_{\text{out}} - I_{\text{in}}}{I_{\text{sat}}} = g_0 L
+\quad\Longleftrightarrow\quad
+I_{\text{out}} = I_{\text{sat}}\,W_0\!\left(\frac{I_{\text{in}}}{I_{\text{sat}}}\,\exp\!\left(\frac{I_{\text{in}}}{I_{\text{sat}}} + g_0 L\right)\right) .
+```
+
+**Time-level centering, half-step coupling, and $`O(\Delta t^2)`$ discretization.** On the Yee/FIT time grid, magnetic fluxes $`\mathbf{H}^{n-1/2}`$ live at half-integer times $`t^{n-1/2} = (n - \tfrac{1}{2})\Delta t`$, whereas electric voltages $`\mathbf{E}^n`$, normalized polarizations $`\mathbf{p}_{a,b}^n = \mathbf{P}_{a,b}^n / \varepsilon_0`$, populations $`\mathbf{N}^n = (N_0^n, N_1^n, N_2^n, N_3^n)^T`$, and filtered intensity $`I^n`$ are collocated at integer times $`t^n = n\Delta t`$. Within each solver step $`n \to n+1`$:
+
+1. *Faraday update centred at $`t^n`$:* $`\mathbf{H}^{n-1/2} \to \mathbf{H}^{n+1/2}`$ from $`\nabla \times \mathbf{E}^n`$.
+2. *Polarization update centred at $`t^n`$:* Using second-order central differences for $`\partial_t^2 \mathbf{p}`$ and $`\partial_t \mathbf{p}`$,
+   ```math
+   \mathbf{p}_a^{n+1} = \alpha_a \mathbf{p}_a^n + \xi_a \mathbf{p}_a^{n-1} + \zeta_{a,0}\big(N_1^n - N_2^n\big)\,\mathbf{E}^n,
+   ```
+   with
+   ```math
+   \alpha_a = \frac{2 - (\omega_a\Delta t)^2}{1 + \tfrac{1}{2}\gamma_a\Delta t}, \qquad
+   \xi_a = \frac{\tfrac{1}{2}\gamma_a\Delta t - 1}{1 + \tfrac{1}{2}\gamma_a\Delta t}, \qquad
+   \zeta_{a,0} = \frac{(\kappa_a / \varepsilon_0)\,\Delta t^2}{1 + \tfrac{1}{2}\gamma_a\Delta t},
+   ```
+   and identically for $`\mathbf{p}_b^{n+1}`$ (or $`\zeta_0 / (1 + I^n/I_{\text{sat}})`$ for `SaturableGain`). The discrete susceptibility realized by this stencil at frequency $`\omega`$ (`FourLevelGain.chi_discrete`, `SaturableGain.chi_discrete`) is
+   ```math
+   \chi_{a,d}(\omega, \Delta t) = \frac{(\kappa_a / \varepsilon_0)\,(N_1 - N_2)}{\omega_a^2 - \widetilde{\omega}^2 + i\gamma_a \frac{\sin(\omega\Delta t)}{\Delta t}}, \qquad
+   \widetilde{\omega} = \frac{2}{\Delta t}\sin\!\left(\frac{\omega\Delta t}{2}\right) = \omega + O(\Delta t^2) .
+   ```
+3. *Ampère update centred at the half-step $`t^{n+1/2}`$:* With edge fill fraction $`w_e \in (0, 1]`$, effective high-frequency permittivity $`\varepsilon_{e} = (1 - w_e)\varepsilon_{\text{bg}} + w_e\varepsilon_\infty`$, and semi-implicit conductivity $`\hat{\sigma}_e = \tfrac{1}{2}w_e\sigma\Delta t / \varepsilon_0`$, the non-dispersive step $`E_e^*`$ is corrected locally via
+   ```math
+   E_e^{n+1} = \frac{\varepsilon_{s,e}\big(E_e^* - E_e^n\big) + (\varepsilon_e - \hat{\sigma}_e)E_e^n - w_e\big(p_{a,e}^{n+1} - p_{a,e}^n\big) - w_e\big(p_{b,e}^{n+1} - p_{b,e}^n\big)}{\varepsilon_e + \hat{\sigma}_e} .
+   ```
+4. *Population rate update centred at the half-step $`t^{n+1/2}`$:* Evaluating the electric field and polarization current at $`t^{n+1/2}`$,
+   ```math
+   \mathbf{E}^{n+1/2} = \frac{\mathbf{E}^{n+1} + \mathbf{E}^n}{2}, \qquad
+   \left.\frac{\partial \mathbf{P}_a}{\partial t}\right|^{n+1/2} = \varepsilon_0\,\frac{\mathbf{p}_a^{n+1} - \mathbf{p}_a^n}{\Delta t}, \qquad
+   S_a^{n+1/2} = \frac{1}{\hbar\omega_a}\,\mathbf{E}^{n+1/2}\cdot\left.\frac{\partial \mathbf{P}_a}{\partial t}\right|^{n+1/2},
+   ```
+   the linear relaxation/pumping matrix $`\mathbf{M}`$ ($`\mathbf{1}^T\mathbf{M} = \mathbf{0}`$) is integrated by the second-order Crank–Nicolson trapezoidal rule:
+   ```math
+   \left(\mathbf{I} - \frac{\Delta t}{2}\mathbf{M}\right)\mathbf{N}^{n+1}
+   = \left(\mathbf{I} + \frac{\Delta t}{2}\mathbf{M}\right)\mathbf{N}^n + \Delta t\,\mathbf{S}^{n+1/2}, \qquad
+   \mathbf{S}^{n+1/2} = \begin{pmatrix} -S_b^{n+1/2} \\ -S_a^{n+1/2} \\ +S_a^{n+1/2} \\ +S_b^{n+1/2} \end{pmatrix} .
+   ```
+   Because $`\mathbf{1}^T\mathbf{M} = \mathbf{0}`$ and $`\mathbf{1}^T\mathbf{S}^{n+1/2} = 0`$, left-multiplying by $`\mathbf{1}^T`$ gives $`\mathbf{1}^T\mathbf{N}^{n+1} = \mathbf{1}^T\mathbf{N}^n = N_{\text{total}}`$ to machine precision at every step, and the precomputed $`4\times 4`$ propagators $`\mathbf{A}_{\text{rate}} = (\mathbf{I} - \tfrac{1}{2}\Delta t\mathbf{M})^{-1}(\mathbf{I} + \tfrac{1}{2}\Delta t\mathbf{M})`$ and $`\mathbf{B}_{\text{rate}} = \Delta t(\mathbf{I} - \tfrac{1}{2}\Delta t\mathbf{M})^{-1}`$ advance all gain cells in a single vectorized matrix product. In a closed PEC domain with $`\sigma = 0`$, the discrete leapfrog electromagnetic energy $`W_{\text{EM}}^n = \tfrac{1}{2}\sum\varepsilon_0\varepsilon_e (E^n)^2\Delta V_E + \tfrac{1}{2}\sum\mu_0\mu_r H^{n-1/2}H^{n+1/2}\Delta V_H`$ satisfies the exact per-step identity
+   ```math
+   \frac{W_{\text{EM}}^{n+1} - W_{\text{EM}}^n}{\Delta t}
+   + \sum_e w_e \Delta V_{E,e}\,\mathbf{E}_e^{n+1/2}\cdot\left.\frac{\partial \mathbf{P}_e}{\partial t}\right|^{n+1/2} = 0
+   ```
+   to machine round-off ($`\sim 10^{-15}`$).
+
+**1D Fabry–Pérot laser threshold, relaxation oscillations, and spatial hole burning.** In a Fabry–Pérot resonator of active length $`L_{\text{cav}}`$ bounded by mirrors of power reflectances $`R_1`$ and $`R_2`$ (such as quarter-wave distributed Bragg reflectors `dbr_reflectance`), round-trip amplitude balance $`\sqrt{R_1 R_2}\exp(g_{\text{th}} L_{\text{cav}}) = 1`$ sets the threshold power gain coefficient and threshold inversion (`fabry_perot_threshold_gain`, `FourLevelGain.threshold_pump_rate`):
+
+```math
+g_{\text{th}} = \frac{1}{2 L_{\text{cav}}}\ln\!\left(\frac{1}{R_1 R_2}\right) + \alpha_{\text{int}}, \qquad
+\Delta N_{\text{th}} = \frac{g_{\text{th}}}{\sigma_{21}} .
+```
+
+Above threshold ($`r \equiv \Delta N_0(W_p)/\Delta N_{\text{th}} > 1`$), stimulated emission clamps the modal gain at $`g_{\text{th}}`$ after a train of damped relaxation oscillations at angular frequency $`\omega_{\text{RO}} \simeq \sqrt{(r - 1)/(\tau_p \tau_{\text{sat}})}`$:
+- *Spatially homogenized saturation (`spatial_averaging=True`, fast carrier diffusion):* the inversion is uniform across the cavity and clamps at $`\Delta N_{\text{ss}} = \Delta N_{\text{th}}`$, giving normalized intracavity intensity $`s(r) = I_{\text{tot}}/I_{\text{sat}} = r - 1`$.
+- *Local standing-wave saturation (`spatial_averaging=False`, default):* the standing-wave mode profile $`I(z) = 2 I_{\text{tot}}\sin^2(kz)`$ burns periodic spatial holes at the field antinodes while leaving the nodes undepleted:
+  ```math
+  \Delta N(z) = \frac{\Delta N_0(W_p)}{1 + 2 s \sin^2(kz)}, \qquad
+  \Delta N_{\text{th}} = \frac{1}{\pi}\int_0^\pi \Delta N(z)\,2\sin^2\theta\,d\theta = \frac{\Delta N_0(W_p)}{s}\left(1 - \frac{1}{\sqrt{1 + 2s}}\right),
+  ```
+  which solves in closed form to (`fabry_perot_laser_output`, [Siegman, 1986, §8.3])
+  ```math
+  s(r) = \frac{4r - 1 - \sqrt{8r + 1}}{4}, \qquad
+  \frac{\langle\Delta N(z)\rangle_z}{\Delta N_{\text{th}}} = \frac{r}{\sqrt{1 + 2s(r)}} = \frac{1 + \sqrt{8r + 1}}{4} \quad (r \ge 1) .
+  ```
+  For a symmetric cavity ($`R_1 = R_2 = R`$), the single-side output intensity exiting each mirror is $`I_{\text{out}} = \tfrac{1}{2}\ln(1/R)\,s(r)\,I_{\text{sat}}`$.
+
+**Validation** (`tests/test_063_gain_media.py`, `examples/012_fabry_perot_laser.py`):
+1. *Unpumped ground-state absorption (`test_ground_state_passive_lorentz`):* With $`W_p = 0`$ and all atoms in the lower level of the active transition, `FourLevelGain` and `SaturableGain` match the continuous $`\varepsilon(\omega)`$ and discrete $`\varepsilon_d(\omega, \Delta t)`$ of `wakis.dispersive.Lorentz` to $`1.8\times 10^{-15}`$, produce identical 3D FIT slab reflectance/transmittance time series to machine precision ($`< 10^{-13}`$), and agree with the analytic Fabry–Pérot slab formulas to $`< 5\times 10^{-3}`$ in $`T(f)`$.
+2. *Small-signal single-pass amplification (`test_small_signal_gain_slab`):* In a pumped $`L = 4\ \mu\text{m}`$ slab at $`f_0 = 300\text{ THz}`$ ($`W_p = 5\times 10^8\text{ s}^{-1}`$, $`\Delta N_{\text{ss}} = 2.608\times 10^{22}\text{ m}^{-3}`$, $`g_0 = 2.198\times 10^5\text{ m}^{-1}`$, $`\exp(g_0 L) = 2.409`$), the 3D FIT single-pass power gain $`G_{\text{FIT}} = 2.412`$ and internal exponential growth rate $`g_{0,\text{FIT}} = 2.202\times 10^5\text{ m}^{-1}`$ agree with the analytic rate-equation inversion to $`0.15\%`$ ($`1.45\times 10^{-3}`$ relative error); setting $`W_p = 0`$ gives $`G = 1.000000`$.
+3. *Standalone rate equations (`test_rate_equations_conservation_and_steady_state`):* For both linear and Pauli-blocked kinetics, $`\sum_{i=0}^3 N_i(t) = N_{\text{total}}`$ is conserved to $`< 10^{-14}`$ relative over 1200 steps, populations converge to `steady_state_populations()` to $`< 10^{-9}`$, and the global truncation error scales at order $`p = 2.00`$ ($`O(\Delta t^2)`$).
+4. *Homogeneous saturation law (`test_saturation_law`):* Across two decades of input intensity $`I_{\text{in}}/I_{\text{sat}} \in [0.02, 5.0]`$, the steady-state 3D FIT output intensity of both `SaturableGain` and `FourLevelGain` matches the exact Lambert-$`W`$ curve `amplified_intensity` to $`0.01\%`$–$`0.49\%`$.
+5. *1D DBR Fabry–Pérot laser (`test_fabry_perot_laser`, `examples/012_fabry_perot_laser.py`):* For an $`L_{\text{cav}} = 1.2\ \mu\text{m}`$ cavity ($`\lambda_0 = 1.2\ \mu\text{m}`$, $`f_0 = 249.83\text{ THz}`$, $`\Delta z = 25\text{ nm} = \lambda_0/48`$) bounded by 3-layer $`(H L H)`$ quarter-wave DBR mirrors ($`n_H = 2.0`$, $`d_H = 6\Delta z`$; $`n_L = 1.0`$, $`d_L = 12\Delta z`$; $`R = (15/17)^2 = 0.77855`$, $`g_{\text{th}} = 2.086\times 10^5\text{ m}^{-1}`$, $`W_{p,\text{th}} = 1.578\times 10^8\text{ s}^{-1}`$):
+   - Cold-cavity ringdown gives $`f_{\text{cav}} = 249.46\text{ THz}`$ ($`0.15\%`$ from $`f_0`$) and $`Q_{\text{cold}} = 34.71`$.
+   - Below threshold ($`W_p / W_{p,\text{th}} \in \{0, 0.5, 0.9\}`$), the seed pulse decays to $`I_{\text{out}} < 10^{-10}\text{ W/m}^2`$.
+   - Above threshold ($`W_p / W_{p,\text{th}} \in \{1.5, 2.0, 2.5, 3.0\}`$), the cavity lases at $`f_{\text{lase}} = f_{\text{cav}}`$ after damped relaxation oscillations, clamping the homogenized inversion at $`\Delta N_{\text{ss}} / \Delta N_{\text{th}} \in [0.996, 1.019]`$ and matching `fabry_perot_laser_output` to $`< 5\%`$ in both the standing-wave spatial-hole-burning regime ($`R^2 > 0.999`$ linear L–I correlation) and the homogenized regime.
+6. *Discrete energy accounting (`test_energy_accounting`):* In a closed PEC cavity with gain off ($`N_{\text{total}} = 0`$ or $`g_0 = 0`$) and $`\sigma = 0`$, the leapfrog field energy $`W_{\text{EM}}^n`$ is conserved to $`4.0\times 10^{-16}`$ relative, and with active gain or absorption the per-step Poynting–polarization work balance closes to $`< 10^{-13}`$.
+
+![1D DBR Fabry–Pérot laser schematic, threshold inversion clamping, and L–I curve](img/fabry_perot_laser_schematic_and_li.png)
+
+![Laser turn-on relaxation oscillations, atomic population dynamics, and emission spectrum](img/fabry_perot_laser_dynamics_and_spectrum.png)
+
+**Limits & failure modes.**
+- *Stiff rate equations vs $`\Delta t`$ and oscillator Courant bound.* The central-difference polarization update requires $`\omega_{a,b}\Delta t < 2\sqrt{1 - C^2}`$ (`FourLevelGain.is_stable`); `add_gain_material` raises `ValueError` if $`\Delta t`$ does not resolve the atomic resonance. For the linear rate equations (`pauli_exclusion=False`), the Crank–Nicolson update $`\mathbf{A}_{\text{rate}} = (\mathbf{I} - \tfrac{1}{2}\Delta t\mathbf{M})^{-1}(\mathbf{I} + \tfrac{1}{2}\Delta t\mathbf{M})`$ is unconditionally A-stable and conserves $`\sum N_i = N_{\text{total}}`$ for any $`\Delta t`$, but remains guaranteed non-negative only when $`\Delta t \le 2 / \max_i |M_{ii}| \approx 2\min(\tau_{10}, \tau_{32}, \tau_{21}, W_p^{-1})`$. When fast nonradiative lifetimes $`\tau_{10}, \tau_{32}`$ are chosen comparable to $`\Delta t`$, or when `pauli_exclusion=True` (which uses the explicit second-order Heun predictor–corrector), $`\Delta t`$ must satisfy $`\Delta t < \min(\tau_{10}, \tau_{32})`$.
+- *Spatial hole burning resolution.* With `spatial_averaging=False` (default), population inversion is tracked independently in every grid cell and depleted proportional to the local standing-wave intensity $`\sin^2(kz)`$. Resolving the $`\lambda_0 / (2 n_{\text{bg}})`$ spatial-hole-burning grating requires $`\ge 20`$ cells per wavelength inside the gain host ($`\ge 10`$ cells per half-wave lobe). When physical carrier diffusion or atomic thermal motion washes out the standing-wave grating on sub-wavelength scales, pass `spatial_averaging=True` to homogenize the stimulated rate across the gain region.
+- *Homogeneous broadening only (inhomogeneous broadening not included).* Each transition is modelled by a single homogeneously broadened Lorentzian oscillator of linewidth $`\gamma_a`$. Doppler-broadened gas lasers or inhomogeneously broadened solid-state/quantum-dot ensembles (where spectral hole burning occurs across a Gaussian distribution of resonance frequencies $`\omega_a`$) are not captured by a single pole and require superimposing multiple detuned gain groups.
+- *No spontaneous emission noise unless added — seeding required for lasing.* Semiclassical Maxwell–Bloch / rate equations have $`\mathbf{P}_a = \mathbf{0}`$ as an exact fixed point when $`\mathbf{E} = \mathbf{0}`$, even when $`N_2 > N_1`$ above threshold: stochastic quantum spontaneous-emission Langevin noise is not injected automatically. To initiate laser oscillation in a cavity simulation, seed the cavity with a weak broadband `CurrentSource` (e.g. a short `GaussianSource` pulse overlapping the cavity mode); below threshold ($`W_p < W_{p,\text{th}}`$) the seed pulse rings down to zero, whereas above threshold ($`W_p > W_{p,\text{th}}`$) it amplifies into steady-state continuous-wave lasing whose final saturated intensity is independent of the seed amplitude.
+- *Supported solver backends.* `wakis.gain` is currently implemented for the CPU Yee/FIT stepper (standard, CPML, MKL, and MPI). Passing a gain material to `use_gpu=True`, `fused=True`, `scheme='tete'`, or `SubgridFIT2D` raises `NotImplementedError`.
+
+References:
+- S.-H. Chang and A. Taflove, "Finite-difference time-domain model of lasing action in a four-level two-electron atomic system", *Opt. Express* **12**(16), 3827–3833 (2004), [doi:10.1364/OPEX.12.003827](https://doi.org/10.1364/OPEX.12.003827).
+- A. S. Nagra and R. A. York, "FDTD analysis of wave propagation in nonlinear absorbing and gain media", *IEEE Trans. Antennas Propag.* **46**(3), 334–340 (1998), [doi:10.1109/8.662652](https://doi.org/10.1109/8.662652).
+- A. E. Siegman, *Lasers*, University Science Books, Mill Valley, CA, Chs. 2, 7, 8, 13 (1986).
+- W. W. Rigrod, "Saturation effects in high-gain lasers", *J. Appl. Phys.* **36**(8), 2487–2490 (1965), [doi:10.1063/1.1714517](https://doi.org/10.1063/1.1714517).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House, Ch. 9 (2005).
 
 
 ```{admonition} Modularity

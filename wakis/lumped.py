@@ -112,6 +112,8 @@ class LumpedElement:
         dl = grid.L.toarray()[flat]
         itA = grid.itA.toarray()[flat]
         dA = np.divide(1.0, itA, out=np.zeros_like(itA), where=itA != 0)
+        if hasattr(solver, "_reopen_thin_wire_edges"):
+            solver._reopen_thin_wire_edges(flat)
         ieps = solver.ieps.toarray()[flat]
         ieps = ieps.get() if hasattr(ieps, "get") else np.asarray(ieps)
         if np.any(ieps == 0) or np.any(dA == 0):

@@ -7,6 +7,8 @@ import time
 
 import h5py
 import numpy as np
+from scipy.constants import epsilon_0 as eps_0
+from scipy.constants import mu_0 as mu_0
 from tqdm import tqdm
 
 from wakis.plotting import PlotMixinSolver as PlotMixin
@@ -120,6 +122,8 @@ class RoutinesMixin:
         self.Nt = Nt
         if source is not None:
             self.source = source
+        if monitors is not None:
+            self.monitors = monitors
 
         if save:
             hfs = {}
@@ -303,6 +307,10 @@ class RoutinesMixin:
         vol_H = xp.asarray(self.grid.tL.toarray() / self.grid.iA.toarray())
         eps = xp.where(ieps != 0, 1 / xp.where(ieps != 0, ieps, 1), 0)
         mu = xp.where(imu != 0, 1 / xp.where(imu != 0, imu, 1), 0)
+        for g in getattr(self, "_time_varying_groups", ()):
+            eps[g["idx"]] = eps_0 * g["eps_eff_current"]
+        for g in getattr(self, "_time_varying_h_groups", ()):
+            mu[g["idx"]] = mu_0 * g["mu_eff_current"]
         energy = 0.5 * float(
             xp.sum(eps * vol_E * xp.abs(self.E.toarray()) ** 2)
             + xp.sum(mu * vol_H * xp.abs(self.H.toarray()) ** 2)

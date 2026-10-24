@@ -1,0 +1,23 @@
+{
+  "task_index": 12,
+  "name": "gap_250nm",
+  "level": "gap_sweep",
+  "averaging": "kottke",
+  "gap_nm": 250,
+  "cpw": 20,
+  "cells_per_feature": 8,
+  "min_feature_nm": 250.0,
+  "dx_background_nm": 26.292,
+  "dx_min_nm": 26.287,
+  "cells_across_feature": 9.51,
+  "grid_shape": [
+    466,
+    293,
+    1
+  ],
+  "n_cells": 136538,
+  "n_steps": 12601,
+  "elapsed_s": 219.625,
+  "peak_rss_mb": 671.06,
+  "npz_bytes": 10158
+}

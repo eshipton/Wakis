@@ -1,0 +1,19 @@
+{
+  "index": 0,
+  "name": "fabry_perot_and_oblique",
+  "kind": "fabry_perot",
+  "cpw": 28,
+  "averaging": "kottke",
+  "dx_background_nm": 35.71428571428571,
+  "dx_min_nm": 17.857142857142854,
+  "min_feature_nm": 187.5,
+  "cells_across_feature": 10.500000000000002,
+  "n_cells": 160,
+  "n_steps": 8448,
+  "wall_time_s": 41.901305024000976,
+  "fp_rms_err": 0.005387158219553329,
+  "fp_energy_err": 2.515111157119776e-07,
+  "brewster_Rp_sim": 0.0006363075948278007,
+  "brewster_Tp_sim": 0.9996266907285682,
+  "oblique_max_energy_err": 0.006029113637906702
+}

@@ -1,0 +1,18 @@
+{
+  "task_index": 2,
+  "name": "planar_cavity_pec",
+  "kind": "pec_cavity",
+  "averaging": "kottke",
+  "cpw": 20,
+  "dx_background_nm": 20.833,
+  "dx_min_nm": 20.833,
+  "min_feature_nm": 500.0,
+  "cells_across_feature": 24.0,
+  "skin_depth_nm": null,
+  "cells_per_skin_depth": null,
+  "n_cells": 28420,
+  "n_steps": 3498,
+  "elapsed_s": 132.258,
+  "peak_rss_mb": 321.92,
+  "npz_bytes": 100946
+}

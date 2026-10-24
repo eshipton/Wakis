@@ -1,0 +1,44 @@
+{
+  "tasks": [
+    {
+      "index": 0,
+      "name": "temporal_interface_pulse_and_gif",
+      "cpw": 29.979245799999998,
+      "cells_across_feature": 21.0,
+      "host_ram_mb": 535.5718,
+      "estimated_seconds": 6.0
+    },
+    {
+      "index": 1,
+      "name": "frequency_conversion_and_drude_ionization",
+      "cpw": 40.0,
+      "cells_across_feature": 20.0,
+      "host_ram_mb": 490.2218,
+      "estimated_seconds": 4.5
+    },
+    {
+      "index": 2,
+      "name": "ptc_momentum_band_structure",
+      "cpw": 28.57142857142857,
+      "cells_across_feature": 20.0,
+      "host_ram_mb": 490.27725,
+      "estimated_seconds": 4.5
+    },
+    {
+      "index": 3,
+      "name": "ptc_growth_vs_modulation_and_moussa_tl",
+      "cpw": 40.0,
+      "cells_across_feature": 16.0,
+      "host_ram_mb": 490.2218,
+      "estimated_seconds": 6.5
+    },
+    {
+      "index": 4,
+      "name": "resolution_and_cfl_convergence_study",
+      "cpw": 20.0,
+      "cells_across_feature": 5.0,
+      "host_ram_mb": 490.49905,
+      "estimated_seconds": 5.0
+    }
+  ]
+}

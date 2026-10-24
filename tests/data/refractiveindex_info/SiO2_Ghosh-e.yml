@@ -1,0 +1,18 @@
+# this file is part of refractiveindex.info database
+# refractiveindex.info database is in the public domain
+# copyright and related rights waived via CC0 1.0
+
+REFERENCES: |
+    G. Ghosh.
+    Dispersion-equation coefficients for the refractive index and birefringence of calcite and quartz crystals.
+    [*Opt. Commun.* **163**, 95-102 (1999)](https://doi.org/10.1016/S0030-4018(99)00091-7)
+COMMENTS: |
+    Extraordinary optical constants (e). Room temperature.
+CONDITIONS:
+    optical_component: e
+DATA:
+  - type: formula 2
+    wavelength_range: 0.198 2.0531
+    coefficients: 0.28851804 1.09509924 1.02101864e-2 1.15662475 100
+
+

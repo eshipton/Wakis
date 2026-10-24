@@ -1,0 +1,23 @@
+{
+  "task_index": 8,
+  "name": "underresolved_staircase",
+  "level": "underresolved",
+  "averaging": "staircase",
+  "gap_nm": 50,
+  "cpw": 10,
+  "cells_per_feature": 0,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 52.652,
+  "dx_min_nm": 52.466,
+  "cells_across_feature": 0.95,
+  "grid_shape": [
+    244,
+    153,
+    1
+  ],
+  "n_cells": 37332,
+  "n_steps": 9001,
+  "elapsed_s": 41.707,
+  "peak_rss_mb": 478.86,
+  "npz_bytes": 9149
+}

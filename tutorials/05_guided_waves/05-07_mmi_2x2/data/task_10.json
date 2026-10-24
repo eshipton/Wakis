@@ -1,0 +1,23 @@
+{
+  "task_index": 10,
+  "name": "length_3p80um",
+  "level": "sweep",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_cells_feature": 8,
+  "l_mmi_um": 3.8,
+  "min_feature_nm": 200.0,
+  "dx_background_nm": 26.21,
+  "dx_min_nm": 25.0,
+  "cells_across_feature": 8.0,
+  "grid_shape": [
+    550,
+    213,
+    1
+  ],
+  "n_cells": 117150,
+  "n_steps": 14401,
+  "elapsed_s": 215.015,
+  "peak_rss_mb": 784.02,
+  "npz_bytes": 9590
+}

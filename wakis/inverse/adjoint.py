@@ -107,8 +107,9 @@ class _LumpedTranspose:
 
 class _DispersiveTranspose:
     """
-    Transposed ADE correction of one dispersive group (`_one_step_dispersive`)
-    on its edges e, with E_n = E^n_e and E* the solver step::
+    Transposed ADE correction of one dispersive group (`_one_step_dispersive`
+    for E or `_update_dispersive_H` for H) on its edges e, with E_n = E^n_e
+    and E* the solver step::
 
         acc  = (E*_e - E_n) eps_s + a1 E_n - w sum_L (p'_L - p_L)
                - w sum_D (kappa - 1) p_D
@@ -116,20 +117,22 @@ class _DispersiveTranspose:
         E'_e = acc / den,   p'_D = kappa p_D + beta (E'_e + E_n)
     """
 
-    def __init__(self, group, gi):
+    def __init__(self, group, gi, field="E", prefix="p", s_key="eps_s"):
         self.group = group
+        self.field = field
         self.idx = group["idx"]
         self.idx_host = group["idx_host"]
         self.w = group["weight"]
-        self.eps_s = group["eps_s"]
+        self.eps_s = group[s_key]
         self.a1 = group["a1"]
         self.den = group["den"]
         self.lorentz = [cf[:3] for cf in group["lorentz"]]
         self.debye = [cf[:2] for cf in group["debye"]]
         self.lkeys = [
-            (f"pL{gi}_{k}", f"pLold{gi}_{k}") for k in range(len(self.lorentz))
+            (f"{prefix}L{gi}_{k}", f"{prefix}Lold{gi}_{k}")
+            for k in range(len(self.lorentz))
         ]
-        self.dkeys = [f"pD{gi}_{k}" for k in range(len(self.debye))]
+        self.dkeys = [f"{prefix}D{gi}_{k}" for k in range(len(self.debye))]
         self.lam_acc = None
 
     @property
@@ -154,8 +157,8 @@ class _DispersiveTranspose:
         ]
 
     def transpose_post(self, lam, lam_star, extra, out):
-        # E'_e feeds the new E and the new Debye polarizations
-        lam_new = lam["E"][self.idx]
+        # E'_e (or H'_e) feeds the new field and the new Debye auxiliaries
+        lam_new = lam[self.field][self.idx]
         for kd, (kappa, beta) in zip(self.dkeys, self.debye):
             lam_new = lam_new + beta * lam[kd]
         lam_acc = lam_new / self.den
@@ -264,17 +267,27 @@ class AdjointStepper:
             raise NotImplementedError("The adjoint does not support TFSF injection.")
         self.mpi = solver.use_mpi and solver.grid.use_mpi
         dispersive = getattr(solver, "_dispersive_groups", [])
+        dispersive_h = getattr(solver, "_dispersive_h_groups", [])
         tensor = getattr(solver, "tensor_operator", None)
         if tensor is not None and tensor.rows.size == 0:
             tensor = None
         network = getattr(solver, "dispersive_network", None)
         dispersive = dispersive or ([] if network is None else [network])
+        from ..beam_fluid import BeamTranspose, LinearizedBeam
+
+        lumped_elements = [
+            el for el in elements if not isinstance(el, LinearizedBeam)
+        ]
+        beam_objs = list(getattr(solver, "_beams", []))
+        for el in elements:
+            if isinstance(el, LinearizedBeam) and el not in beam_objs:
+                beam_objs.append(el)
         self.tete = None
         if getattr(solver, "scheme", "yee") == "tete":
-            if elements or dispersive or tensor:
+            if lumped_elements or dispersive or dispersive_h or tensor or beam_objs:
                 raise NotImplementedError(
                     "The TE/TM adjoint step supports no lumped elements, "
-                    "dispersive media or tensor averaging."
+                    "dispersive media, tensor averaging or linearized beams."
                 )
             from ..tete import TeteTranspose
 
@@ -287,13 +300,21 @@ class AdjointStepper:
             self.dtype = solver.E.array.dtype
             self.lam_star = None
             self.fused = False
-            self.lumped, self.dispersive, self.tensor = [], [], []
+            self.lumped, self.dispersive, self.tensor, self.beams = [], [], [], []
+            self.dispersive_h = []
             self.psi_names = self.tete.psi_names
             return
-        if self.mpi and (solver.activate_cpml or elements or dispersive or tensor):
+        if self.mpi and (
+            solver.activate_cpml
+            or lumped_elements
+            or dispersive
+            or dispersive_h
+            or tensor
+            or beam_objs
+        ):
             raise NotImplementedError(
                 "With MPI, the adjoint supports the standard step only (no CPML, "
-                "lumped elements, dispersive media or tensor averaging)."
+                "lumped elements, dispersive media, tensor averaging or beams)."
             )
 
         self.solver = solver
@@ -311,7 +332,7 @@ class AdjointStepper:
 
         self.lumped = [
             _LumpedTranspose(el, f"JL{i}", self.dt, self.ieps)
-            for i, el in enumerate(elements)
+            for i, el in enumerate(lumped_elements)
         ]
         self.dispersive = [
             _DispersiveTranspose(g, gi)
@@ -321,7 +342,15 @@ class AdjointStepper:
             from ..tensor_dispersive import NetworkTranspose
 
             self.dispersive.append(NetworkTranspose(network))
+        self.dispersive_h = [
+            _DispersiveTranspose(g, gi, field="H", prefix="m", s_key="mu_s")
+            for gi, g in enumerate(dispersive_h)
+        ]
         self.tensor = [] if tensor is None else [_TensorTranspose(tensor, solver)]
+        self.beams = [
+            BeamTranspose(b, f"beam{i}", self.dt, self.ieps)
+            for i, b in enumerate(beam_objs)
+        ]
         corrected = [
             ext.idx_host for ext in self.lumped + self.dispersive + self.tensor
         ]
@@ -332,6 +361,13 @@ class AdjointStepper:
                     "Lumped elements must not share edges with each other, "
                     "with dispersive media or with tensor-averaged edges in the "
                     "adjoint."
+                )
+        corrected_h = [ext.idx_host for ext in self.dispersive_h]
+        if corrected_h:
+            joined_h = np.concatenate(corrected_h)
+            if np.unique(joined_h).size != joined_h.size:
+                raise NotImplementedError(
+                    "Magnetic dispersive groups must not share edges in the adjoint."
                 )
 
         if not self.cpml:
@@ -378,7 +414,7 @@ class AdjointStepper:
         """
         from ..gpu_fused import is_fused, tname
 
-        self.fused = is_fused(self.solver) and not self.mpi
+        self.fused = is_fused(self.solver) and not self.mpi and not self.dispersive_h
         if not self.fused:
             return
         xp, s = self.xp, self.solver
@@ -481,7 +517,7 @@ class AdjointStepper:
         }
         for name in self.psi_names:
             state[name] = getattr(self.solver, name).copy()
-        for ext in self.lumped + self.dispersive:
+        for ext in self.lumped + self.dispersive + self.dispersive_h + self.beams:
             ext.get_state(state)
         return state
 
@@ -508,7 +544,7 @@ class AdjointStepper:
                 getattr(solver, name)[...] = xp.asarray(state[name])
             else:
                 setattr(solver, name, xp.array(state[name]))
-        for ext in self.lumped + self.dispersive:
+        for ext in self.lumped + self.dispersive + self.dispersive_h + self.beams:
             ext.set_state(state, xp)
         if self.mpi:
             solver._mpi_communicate(solver.E)
@@ -624,22 +660,34 @@ class AdjointStepper:
             self._fold_ghosts([lam["E"], lam["H"]])
         corrections = self.lumped + self.dispersive + self.tensor
         out = {}
-        if not corrections:
+        if not corrections and not self.beams:
             # The solver step is the whole step: lam_E* = lam_E'
             lam_star = lam["E"]
             out.update(self._base_step(lam, lam_star))
             self.lam_star = lam_star
             return out
-        lam_star = lam["E"].copy()
-        extra = self.xp.zeros_like(lam_star)
+        lam_star = lam["E"].copy() if corrections else lam["E"]
+        extra = self.xp.zeros_like(lam_star) if corrections else None
         for ext in corrections:
             ext.transpose_post(lam, lam_star, extra, out)
         out.update(self._base_step(lam, lam_star))
-        for ext in self.lumped:
+        for ext in self.lumped + self.beams:
             ext.transpose_pre(lam, lam_star, out)
-        out["E"] = out["E"] + extra
+        if extra is not None:
+            out["E"] = out["E"] + extra
         self.lam_star = lam_star
         return out
+
+    def _transpose_dispersive_h(self, lam, lam_H, out):
+        """Transpose of `_update_dispersive_H`: returns (lam_H_star, extra_H)."""
+        if not self.dispersive_h:
+            return lam_H, None
+        lam_H_star = lam_H.copy()
+        extra_H = self.xp.zeros_like(lam_H)
+        lam_h_in = dict(lam, H=lam_H)
+        for ext in self.dispersive_h:
+            ext.transpose_post(lam_h_in, lam_H_star, extra_H, out)
+        return lam_H_star, extra_H
 
     def _base_step(self, lam, lam_E):
         """Transpose of the solver step, given the adjoint lam_E of its E."""
@@ -647,24 +695,27 @@ class AdjointStepper:
             return self.tete.step(dict(lam, E=lam_E))
         if self.fused:
             return self._fused_base_step(lam, lam_E)
+        out = {}
         if not self.cpml:
-            # In place: lam_H = lam_H' + dt B^H lam_E, lam_E = (1 - S) lam_E - dt A^H lam_H
+            # In place: lam_H = lam_H' + dt B^H lam_E, lam_E = (1 - S) lam_E - dt A^H lam_H*
             lam_H = self.Bt @ lam_E
             lam_H *= self.dt
             lam_H += lam["H"]
             if self.mpi:
                 # Reverse of the H exchange between the two half steps
                 self._fold_ghosts([lam_H])
-            curl = self.At @ lam_H
+            lam_H_star, extra_H = self._transpose_dispersive_h(lam, lam_H, out)
+            curl = self.At @ lam_H_star
             curl *= self.dt
             lam_E = lam_E.copy() if self.loss is None else self.loss * lam_E
             lam_E -= curl
             if self.mpi:
                 # Reverse of the E exchange that ends the forward step
                 self._fold_ghosts([lam_E])
-            return {"H": lam_H, "E": lam_E}
+            out["H"] = lam_H if extra_H is None else lam_H_star + extra_H
+            out["E"] = lam_E
+            return out
 
-        out = {}
         # Reverse of the E half step: E' = (1 - S) E + dt ieps s (Dt H' + psiE')
         nu = self.dt * self.ieps * lam_E
         lam_H = lam["H"].copy()
@@ -678,8 +729,10 @@ class AdjointStepper:
             self._comp(lam_H, S)[:] += self.ops_t[op] @ beta
         lam_E = lam_E.copy() if self.loss is None else self.loss * lam_E
 
-        # Reverse of the H half step: H' = H - dt imu s (D E + psiH')
-        kappa = -self.dt * self.imu * lam_H
+        lam_H_star, extra_H = self._transpose_dispersive_h(lam, lam_H, out)
+
+        # Reverse of the H half step: H* = H - dt imu s (D E + psiH')
+        kappa = -self.dt * self.imu * lam_H_star
         for T, d, S, s, op, prefix in _H_TERMS:
             kappa_T = self._comp(kappa, T)
             alpha = s * kappa_T
@@ -688,7 +741,7 @@ class AdjointStepper:
                 alpha[idx] += c * mu
                 out[name] = b * mu
             self._comp(lam_E, S)[:] += self.ops_t[op] @ alpha
-        out["H"] = lam_H
+        out["H"] = lam_H if extra_H is None else lam_H_star + extra_H
         out["E"] = lam_E
         return out
 
@@ -1280,7 +1333,9 @@ class AdjointSimulation:
                 launch("step_add", 1, c, np.int64(-1))
             holder["lam"] = lam
 
-        corrections = stepper.lumped + stepper.dispersive + stepper.tensor
+        corrections = (
+            stepper.lumped + stepper.dispersive + stepper.tensor + stepper.beams
+        )
         graph = self.use_graphs and not corrections and self.Nt > 1
         if not graph:
             for n in reversed(range(self.Nt)):

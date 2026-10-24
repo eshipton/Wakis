@@ -1,0 +1,56 @@
+[
+  {
+    "label": "baseline_0p35mm_er4p28_gnd30x32_W2_0p46_gap0p66",
+    "wall_s": 110.1,
+    "f_res_ghz": 2.4075,
+    "s11_min_db": -14.81,
+    "bw_10db_mhz": 280.0,
+    "rin_ohm": 34.88,
+    "xin_ohm": -3.15
+  },
+  {
+    "label": "er_4p50_high_fr4",
+    "wall_s": 110.8,
+    "f_res_ghz": 2.39,
+    "s11_min_db": -14.07,
+    "bw_10db_mhz": 260.0,
+    "rin_ohm": 33.79,
+    "xin_ohm": -3.5
+  },
+  {
+    "label": "er_4p00_low_fr4",
+    "wall_s": 107.8,
+    "f_res_ghz": 2.445,
+    "s11_min_db": -16.78,
+    "bw_10db_mhz": 320.0,
+    "rin_ohm": 37.65,
+    "xin_ohm": -2.97
+  },
+  {
+    "label": "ground_37x45mm",
+    "wall_s": 111.8,
+    "f_res_ghz": 2.36,
+    "s11_min_db": -20.88,
+    "bw_10db_mhz": 367.5,
+    "rin_ohm": 42.8,
+    "xin_ohm": -4.32
+  },
+  {
+    "label": "unstepped_jog_W2_1p21mm",
+    "wall_s": 101.5,
+    "f_res_ghz": 2.405,
+    "s11_min_db": -15.53,
+    "bw_10db_mhz": 282.5,
+    "rin_ohm": 36.03,
+    "xin_ohm": -3.51
+  },
+  {
+    "label": "cpw_feed_gap_L8_0p45mm",
+    "wall_s": 107.8,
+    "f_res_ghz": 2.415,
+    "s11_min_db": -14.67,
+    "bw_10db_mhz": 285.0,
+    "rin_ohm": 34.58,
+    "xin_ohm": -2.58
+  }
+]

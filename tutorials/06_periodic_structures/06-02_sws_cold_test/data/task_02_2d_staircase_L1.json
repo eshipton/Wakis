@@ -1,0 +1,19 @@
+{
+  "index": 2,
+  "name": "2d_staircase_L1",
+  "kind": "2d_point",
+  "description": "2D staircase PEC level L1 (n_feat=4, dy=25.0 um)",
+  "dx_background": 25.000000000000064,
+  "dx_min": 24.999999999999957,
+  "cells_across_feature": 4.000000000000007,
+  "n_cells": 640,
+  "n_steps": 18041,
+  "nx": 1,
+  "ny": 32,
+  "nz": 20,
+  "conformal": "False",
+  "glide_symmetric": true,
+  "wall_time_s": 1.7762246239999513,
+  "f1_mid_ghz": 88.52634500287925,
+  "km1_mid_ohm": 3.2417576885338386
+}

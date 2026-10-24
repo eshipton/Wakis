@@ -1,0 +1,28 @@
+{
+  "task_index": 5,
+  "name": "staircase_L2",
+  "design": "mmi",
+  "length_um": 6.0,
+  "level": "L2",
+  "averaging": "staircase",
+  "cpw": 14,
+  "n_feature": 6,
+  "is_demo": false,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 36.46,
+  "dx_min_nm": 16.67,
+  "dy_nm": 16.67,
+  "cells_across_feature": 6.0,
+  "slot_cells": 6.0,
+  "min_feature_cells": 6.0,
+  "grid_shape": [
+    328,
+    107,
+    1
+  ],
+  "n_cells": 35096,
+  "n_steps": 13201,
+  "elapsed_s": 45.29,
+  "peak_rss_mb": 276.19,
+  "npz_bytes": 6992
+}

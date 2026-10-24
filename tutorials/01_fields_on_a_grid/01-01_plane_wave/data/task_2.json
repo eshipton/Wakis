@@ -1,0 +1,17 @@
+{
+  "task_index": 2,
+  "name": "dispersion_cpw10",
+  "kind": "dispersion",
+  "cpw": 10,
+  "dx_background_nm": 100.0,
+  "dx_min_nm": 100.0,
+  "min_feature_nm": 1000.0,
+  "cells_across_feature": 10.0,
+  "skin_depth_nm": null,
+  "cells_per_skin_depth": null,
+  "n_cells": 6561,
+  "n_steps": 889,
+  "elapsed_s": 0.511,
+  "peak_rss_mb": 204.93,
+  "npz_bytes": 7181
+}

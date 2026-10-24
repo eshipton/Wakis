@@ -1,0 +1,19 @@
+{
+  "index": 6,
+  "name": "2d_conformal_L2",
+  "kind": "2d_sweep",
+  "description": "2D conformal PEC level L2 full Brillouin, DFT & movie sweep (n_feat=8, dy=12.5 um)",
+  "dx_background": 12.500000000000032,
+  "dx_min": 12.499999999999924,
+  "cells_across_feature": 8.000000000000048,
+  "n_cells": 2560,
+  "n_steps": 1062450,
+  "nx": 1,
+  "ny": 64,
+  "nz": 40,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 305.9962329629998,
+  "f1_mid_ghz": 97.80323593763558,
+  "km1_mid_ohm": 1.7920505210690973
+}

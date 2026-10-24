@@ -1,0 +1,31 @@
+{
+  "task": 4,
+  "name": "muscle_tissue_slab_simulation",
+  "quick": false,
+  "elapsed_s": 18.589472940000633,
+  "max_rss_mb": 197.0703125,
+  "thickness_mm": 8.0,
+  "dz_mm": 0.1,
+  "nt": 13588,
+  "dt_ps": 0.15724362244997325,
+  "cells_across": 80.0,
+  "cpw_mat": 65.17978252124391,
+  "muscle_n1_debye": {
+    "eps_fit_error": 0.14969184870887553,
+    "rms_R_tot_vs_cole_cole": 0.14611140655309507,
+    "rms_T_tot_vs_cole_cole": 0.15821985654418577,
+    "rms_R_pole_fit_err": 0.14512638105206127,
+    "rms_T_pole_fit_err": 0.1387363172933249,
+    "rms_R_disc_err": 0.011464471856220113,
+    "rms_T_disc_err": 0.0750781623612709
+  },
+  "muscle_n4_debye": {
+    "eps_fit_error": 0.005968027968972884,
+    "rms_R_tot_vs_cole_cole": 0.008730635239385078,
+    "rms_T_tot_vs_cole_cole": 0.0036684911151617905,
+    "rms_R_pole_fit_err": 0.0034186705947200995,
+    "rms_T_pole_fit_err": 0.0022731587177062056,
+    "rms_R_disc_err": 0.007899211541622583,
+    "rms_T_disc_err": 0.0029645811268229666
+  }
+}

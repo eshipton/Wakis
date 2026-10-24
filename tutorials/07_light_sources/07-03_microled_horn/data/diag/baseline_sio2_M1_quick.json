@@ -1,0 +1,85 @@
+{
+  "variant": "baseline",
+  "config": "sio2",
+  "mesh": "quick",
+  "M": 1,
+  "ndip": 1,
+  "dipole_x_m": [
+    0.0
+  ],
+  "dipole_x_nm": [
+    0.0
+  ],
+  "folded_dipole_xs_m": [
+    0.0
+  ],
+  "folded_dipole_weights": [
+    1.0
+  ],
+  "lee15_eq_pct": 29.467,
+  "lee90_eq_pct": 71.9205,
+  "lee15_pct": 28.0722,
+  "lee90_pct": 75.8628,
+  "lee15_wrk_pct": 17.249,
+  "lee90_wrk_pct": 46.614,
+  "lee15_pol_x": 13.9529,
+  "lee15_pol_y": 50.5605,
+  "lee15_pol_z": 23.8876,
+  "lee90_pol_x": 51.3923,
+  "lee90_pol_y": 76.6798,
+  "lee90_pol_z": 87.6895,
+  "per_pol": {
+    "lee15_pct": {
+      "x": 13.9529,
+      "y": 50.5605,
+      "z": 23.8876
+    },
+    "lee90_pct": {
+      "x": 51.3923,
+      "y": 76.6798,
+      "z": 87.6895
+    }
+  },
+  "lee15_xz_tangential_pct": 18.9203,
+  "lee90_xz_tangential_pct": 69.5409,
+  "collimation_ratio_eq_pct": 40.9716,
+  "collimation_ratio_pct": 37.0039,
+  "purcell_factor": 1.6275,
+  "fwhm_deg": 53.8211,
+  "directivity_2d": 3.0143,
+  "paper_2d_lee15_pct": 30.4,
+  "paper_2d_lee90_pct": 65.1,
+  "gap_lee15_eq_pp": -0.933,
+  "gap_lee90_eq_pp": 6.8205,
+  "ag_eps_450nm_real": -5.4021,
+  "ag_eps_450nm_imag": -0.6338,
+  "ag_skin_depth_E_nm": 30.7616,
+  "ag_skin_depth_I_nm": 15.3808,
+  "dx_background_nm": 15.0,
+  "dx_min_nm": 3.75,
+  "cpw_gan": 12.2449,
+  "cpw_gan_min_wl": 11.5646,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 18.0,
+  "cells_per_skin_depth_I": 4.1015,
+  "cells_per_skin_depth_E": 8.2031,
+  "n_cells": 115974,
+  "n_steps": 6622,
+  "conv_ndip_full": [
+    1
+  ],
+  "conv_lee15_eq": [
+    29.467
+  ],
+  "conv_lee90_eq": [
+    71.9205
+  ],
+  "conv_lee15": [
+    28.0722
+  ],
+  "conv_lee90": [
+    75.8628
+  ],
+  "wall_time_s": 144.288,
+  "elapsed_s": 144.288
+}

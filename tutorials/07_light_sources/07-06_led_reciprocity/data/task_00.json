@@ -1,0 +1,39 @@
+{
+  "task": 0,
+  "name": "flat_slab_bloch_tmm",
+  "demo": false,
+  "cpw": 28,
+  "dx_background_nm": 5.506,
+  "dx_min_nm": 2.691,
+  "min_feature_nm": 72.0,
+  "cells_across_feature": 13.077,
+  "skin_depth_nm": 26.908,
+  "power_skin_depth_nm": 13.454,
+  "cells_per_skin_depth": 10.0,
+  "cells_per_power_skin_depth": 5.0,
+  "skin_depth_cells": 10.0,
+  "n_cells": 189,
+  "n_steps": 9171,
+  "elapsed_s": 106.42,
+  "l2_err_tm_pec25": 0.011521525015312443,
+  "l2_err_tex_pec25": 0.011625187729597215,
+  "l2_err_tey_pec25": 0.01280071459999066,
+  "l2_err_tm_ag0": 0.016220943411662664,
+  "l2_err_tm_ag25": 0.016115195730092045,
+  "ag_ladder_cpsd": [
+    1.59,
+    2.59,
+    4.47,
+    6.0,
+    8.0,
+    10.0
+  ],
+  "ag_ladder_err_tm0": [
+    0.12159,
+    0.06371,
+    0.0446,
+    0.03008,
+    0.02077,
+    0.01622
+  ]
+}

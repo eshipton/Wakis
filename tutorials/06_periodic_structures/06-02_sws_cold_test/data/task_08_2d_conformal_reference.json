@@ -1,0 +1,19 @@
+{
+  "index": 8,
+  "name": "2d_conformal_reference",
+  "kind": "2d_point",
+  "description": "2D conformal PEC high-resolution reference (n_feat=16, dy=6.25 um)",
+  "dx_background": 6.25000000000007,
+  "dx_min": 6.249999999999962,
+  "cells_across_feature": 16.000000000000096,
+  "n_cells": 10240,
+  "n_steps": 68550,
+  "nx": 1,
+  "ny": 128,
+  "nz": 80,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 58.645702692000214,
+  "f1_mid_ghz": 97.9918249546454,
+  "km1_mid_ohm": 1.7749306900232156
+}

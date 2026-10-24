@@ -1,0 +1,14 @@
+{
+  "index": 0,
+  "name": "temporal_interface_pulse_and_gif",
+  "cpw": 29.979245799999998,
+  "cells_across_feature": 21.0,
+  "rms_tau_E_error": 2.809702605429369e-05,
+  "rms_rho_E_error": 2.809702592698909e-05,
+  "rms_energy_ratio_error": 0.00038024014502757475,
+  "max_action_error": 4.127745968496299e-05,
+  "d_jump_residual": 2.7956112357579727e-16,
+  "d_switch_rel_err_conservative": 1.4220503719175892e-16,
+  "d_switch_rel_err_mutated": 1.25,
+  "wall_seconds": 0.6107654500001445
+}

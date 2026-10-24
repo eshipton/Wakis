@@ -1,0 +1,24 @@
+{
+  "task_index": 6,
+  "name": "kottke_reference",
+  "level": "R",
+  "kind": "cosine",
+  "averaging": "kottke",
+  "cpw": 40,
+  "n_feature_min": 16,
+  "min_feature_nm": 350.0,
+  "dx_background_nm": 10.754,
+  "dx_min_nm": 10.754,
+  "cells_across_feature": 32.547,
+  "grid_shape": [
+    1295,
+    1295,
+    1
+  ],
+  "n_cells": 1677025,
+  "n_steps": 33451,
+  "n_steps_per_drive": 33451,
+  "elapsed_s": 7077.201,
+  "peak_rss_mb": 3170.7,
+  "npz_bytes": 12476
+}

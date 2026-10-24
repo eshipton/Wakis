@@ -1,0 +1,23 @@
+{
+  "index": 2,
+  "name": "metal_backed_absorber_and_rozanov",
+  "kind": "metal_backed",
+  "cpw": 24,
+  "cells_across_feature": 13.0,
+  "dx_min_mm": 0.038461538461538464,
+  "min_feature_mm": 0.5,
+  "n_cells": 1716,
+  "n_steps": 276168,
+  "wall_time_s": 40.5089366469997,
+  "max_rms_RL_db": 0.026454801096459486,
+  "rms_RL_rf_db": [
+    0.005110770876342947,
+    0.006142310011799255,
+    0.026454801096459486
+  ],
+  "rms_RL_sd_db": [
+    0.0028966283826765468,
+    0.005018389009909259,
+    0.010795494819114756
+  ]
+}

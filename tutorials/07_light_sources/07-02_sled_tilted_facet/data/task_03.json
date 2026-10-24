@@ -1,0 +1,21 @@
+{
+  "task": {
+    "index": 3,
+    "name": "pml_and_incoherent_study",
+    "kind": "pml_incoherent",
+    "cpw": 20,
+    "description": "CPML parasitic floor vs n_pml (6..14) + incoherent 9-dipole ensemble in 2D FIT (cpw=20)"
+  },
+  "dx_background_nm": 28.56857456797523,
+  "dx_min_nm": 21.656976744185293,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 10,
+  "n_cells": 137061,
+  "n_steps": 5781,
+  "r_floor_npml6": 1.9064907963371283e-05,
+  "r_floor_npml10": 1.861737583056038e-12,
+  "r_floor_npml14": 6.254938494582178e-14,
+  "eta_te1_incoh": 0.4074061139379414,
+  "eta_te1_coh": 4.103299024886806e-06,
+  "runtime_s": 450.945719324
+}

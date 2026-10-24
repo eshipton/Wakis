@@ -1,0 +1,24 @@
+{
+  "task_index": 1,
+  "name": "staircase_underresolved",
+  "kind": "semilens",
+  "level": "underresolved",
+  "averaging": "staircase",
+  "cpw": 10,
+  "n_feature": 1,
+  "demo": true,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 50.622,
+  "dx_min_nm": 50.622,
+  "cells_across_feature": 0.988,
+  "grid_shape": [
+    262,
+    240,
+    1
+  ],
+  "n_cells": 62880,
+  "n_steps": 6811,
+  "elapsed_s": 40.891,
+  "peak_rss_mb": 535.27,
+  "npz_bytes": 12025
+}

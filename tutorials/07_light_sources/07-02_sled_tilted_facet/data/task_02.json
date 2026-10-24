@@ -1,0 +1,36 @@
+{
+  "task": {
+    "index": 2,
+    "name": "bimodal_tilt_sweep",
+    "kind": "bimodal_sweep",
+    "cpw": 20,
+    "thetas": [
+      0.0,
+      2.0,
+      4.0,
+      6.0,
+      7.0,
+      8.0,
+      10.0,
+      12.0
+    ],
+    "description": "Two-mode (w=2.80 um) bare facet R00 & R01 sweep + TE0/TE1 far-field at 7 deg (cpw=20)"
+  },
+  "dx_background_nm": 28.56857456797523,
+  "dx_min_nm": 21.656976744185293,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 10,
+  "n_cells": 140743,
+  "n_steps": 5747,
+  "neff_0_mm": 3.3444402125442676,
+  "neff_1_mm": 3.3303154495935194,
+  "r01_mm_2deg": 0.09168331033602582,
+  "r00_mm_7deg": 1.0291756412245872e-05,
+  "r01_mm_7deg": 0.0022677369184811304,
+  "r01_mm_max": 0.09168331033602582,
+  "te1_ff_lobes_deg": [
+    12.75,
+    35.5
+  ],
+  "runtime_s": 571.048993919
+}

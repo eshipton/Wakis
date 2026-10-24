@@ -1,0 +1,19 @@
+{
+  "index": 7,
+  "name": "2d_conformal_L3",
+  "kind": "2d_point",
+  "description": "2D conformal PEC level L3 convergence point (n_feat=12, dy=8.33 um)",
+  "dx_background": 8.33333333333339,
+  "dx_min": 8.333333333333282,
+  "cells_across_feature": 12.000000000000073,
+  "n_cells": 5760,
+  "n_steps": 52762,
+  "nx": 1,
+  "ny": 96,
+  "nz": 60,
+  "conformal": "pec",
+  "glide_symmetric": true,
+  "wall_time_s": 26.020301072000166,
+  "f1_mid_ghz": 97.93337649285778,
+  "km1_mid_ohm": 1.7802158579919196
+}

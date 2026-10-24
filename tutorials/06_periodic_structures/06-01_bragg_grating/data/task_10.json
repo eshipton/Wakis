@@ -1,0 +1,33 @@
+{
+  "task_index": 10,
+  "name": "periods_N25",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 25.88,
+  "dx_min_nm": 6.25,
+  "dx_min_x_nm": 20.25,
+  "dy_min_nm": 6.25,
+  "cells_across_feature": 8.0,
+  "cells_across_tooth_x": 8.0,
+  "n_periods": 25,
+  "dw_nm": 50.0,
+  "shift_nm": 0.0,
+  "apodization": "uniform",
+  "grid_shape": [
+    483,
+    108,
+    1
+  ],
+  "n_cells": 52164,
+  "n_steps": 24451,
+  "lambda_bragg_nm": 1555.42,
+  "stopband_width_nm": 50.32,
+  "R_max": 0.5087,
+  "T_min": 0.4783,
+  "elapsed_s": 134.641,
+  "peak_rss_mb": 304.85,
+  "npz_bytes": 9357
+}

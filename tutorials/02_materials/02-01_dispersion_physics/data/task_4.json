@@ -1,0 +1,18 @@
+{
+  "task_index": 4,
+  "name": "dt_convergence_and_stability",
+  "slope_eps_lor": 2.0009295431807863,
+  "slope_eps_dru": 2.000299922979465,
+  "slope_eps_deb": 2.0003760495719756,
+  "slope_slab_R": 1.8801866643389886,
+  "rms_R_cont_coarse": 0.002842310482085657,
+  "rms_R_cont_fine": 0.0002873104330837633,
+  "dx_background": 0.0032,
+  "dx_min": 0.001,
+  "cells_across_feature": 12.5,
+  "cpw": 10.899203909084122,
+  "n_cells": 5812,
+  "n_steps": 40210,
+  "elapsed_s": 15.203,
+  "peak_rss_mb": 216.15
+}

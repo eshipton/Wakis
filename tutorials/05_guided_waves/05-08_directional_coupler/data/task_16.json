@@ -1,0 +1,25 @@
+{
+  "task_index": 16,
+  "name": "sw_angle_10deg",
+  "kind": "sw_sweep",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_cells_gap": 8,
+  "L_c_um": 4.0,
+  "theta_sw_deg": 10.0,
+  "min_feature_nm": 118.79,
+  "dx_background_nm": 24.54,
+  "dx_min_nm": 14.68,
+  "cells_across_feature": 8.09,
+  "grid_shape": [
+    887,
+    300,
+    1
+  ],
+  "n_cells": 266100,
+  "n_steps": 17101,
+  "elapsed_s": 525.621,
+  "peak_rss_mb": 866.1,
+  "npz_bytes": 11468
+}

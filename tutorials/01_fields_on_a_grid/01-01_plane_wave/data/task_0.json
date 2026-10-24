@@ -1,0 +1,17 @@
+{
+  "task_index": 0,
+  "name": "soft_source_and_tfsf",
+  "kind": "source_tfsf",
+  "cpw": 28,
+  "dx_background_nm": 35.714,
+  "dx_min_nm": 35.714,
+  "min_feature_nm": 1000.0,
+  "cells_across_feature": 28.0,
+  "skin_depth_nm": null,
+  "cells_per_skin_depth": null,
+  "n_cells": 133,
+  "n_steps": 3172,
+  "elapsed_s": 0.705,
+  "peak_rss_mb": 194.13,
+  "npz_bytes": 252216
+}

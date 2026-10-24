@@ -203,6 +203,14 @@ class SolverState:
             (_snap(g["lorentz"]), _snap(g["debye"]))
             for g in getattr(s, "_dispersive_groups", [])
         ]
+        snap["beams"] = [
+            (b.v1.copy(), b.rho1.copy(), b.J_old.copy())
+            for b in getattr(s, "_beams", [])
+        ]
+        snap["h_groups"] = [
+            (_snap(g["lorentz"]), _snap(g["debye"]))
+            for g in getattr(s, "_dispersive_h_groups", [])
+        ]
         net = getattr(s, "dispersive_network", None)
         if net is not None:
             state = {}
@@ -230,6 +238,16 @@ class SolverState:
                 setattr(s, name, snap[name].copy())
         for g, (lorentz, debye) in zip(
             getattr(s, "_dispersive_groups", []), snap["groups"]
+        ):
+            g["lorentz"], g["debye"] = _snap(lorentz), _snap(debye)
+        for b, (v1, rho1, J_old) in zip(
+            getattr(s, "_beams", []), snap.get("beams", [])
+        ):
+            b.v1[...] = v1
+            b.rho1[...] = rho1
+            b.J_old[...] = J_old
+        for g, (lorentz, debye) in zip(
+            getattr(s, "_dispersive_h_groups", []), snap.get("h_groups", ())
         ):
             g["lorentz"], g["debye"] = _snap(lorentz), _snap(debye)
         if "net" in snap:
@@ -765,14 +783,20 @@ def reverse_supported(solver, sources, design):
         return "MPI"
     if solver.use_conductivity:
         return "conductivity (loss)"
-    if getattr(solver, "_dispersive_groups", []):
+    if getattr(solver, "_dispersive_groups", []) or getattr(
+        solver, "_dispersive_h_groups", []
+    ):
         return "dispersive media"
+    if getattr(solver, "_beams", []):
+        return "linearized electron beam"
     if getattr(solver, "dispersive_network", None) is not None:
         return "dispersive tensor network"
     op = getattr(solver, "tensor_operator", None)
     if op is not None and op.rows.size:
         return "tensor averaging"
     for src in sources:
+        if type(src).__name__ == "LinearizedBeam":
+            return "linearized electron beam"
         if hasattr(src, "post_step"):
             return "lumped elements"
         if type(src).__name__ not in (

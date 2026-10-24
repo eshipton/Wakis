@@ -1,0 +1,18 @@
+{
+  "index": 1,
+  "name": "cpml_reflection",
+  "kind": "cpml",
+  "cpw": 24,
+  "averaging": "kottke",
+  "dx_background_nm": 41.666666666666664,
+  "dx_min_nm": 41.666666666666664,
+  "min_feature_nm": 166.66666666666666,
+  "cells_across_feature": 4.0,
+  "n_cells": 360,
+  "n_steps": 7590,
+  "wall_time_s": 1.5342534549999982,
+  "r_db_pec_f0": -7.689941834403203e-05,
+  "r_db_abc_f0": -47.90978617626939,
+  "r_db_cpml10_f0": -70.89006556104775,
+  "r_db_cpml16_f0": -87.23723943785551
+}

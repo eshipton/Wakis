@@ -1,0 +1,23 @@
+{
+  "task_index": 9,
+  "name": "gap_100nm",
+  "level": "gap_sweep",
+  "averaging": "kottke",
+  "gap_nm": 100,
+  "cpw": 20,
+  "cells_per_feature": 8,
+  "min_feature_nm": 100.0,
+  "dx_background_nm": 26.274,
+  "dx_min_nm": 12.5,
+  "cells_across_feature": 8.0,
+  "grid_shape": [
+    585,
+    318,
+    1
+  ],
+  "n_cells": 186030,
+  "n_steps": 23651,
+  "elapsed_s": 504.744,
+  "peak_rss_mb": 754.11,
+  "npz_bytes": 11234
+}

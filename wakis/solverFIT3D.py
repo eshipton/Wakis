@@ -17,10 +17,13 @@ from . import conformal, tete
 from .boundaries import BCsMixin
 from .dispersive import DispersiveMixin
 from .field import Field
+from .gain import GainMixin
 from .logger import Logger
 from .materials import material_lib
 from .plotting import PlotMixinSolver as PlotMixin
 from .routines import RoutinesMixin
+from .subcell import SubcellMixin
+from .time_varying import TimeVaryingMixin
 
 try:
     import cupy as cp
@@ -62,7 +65,15 @@ except ImportError:
     imported_mkl = False
 
 
-class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
+class SolverFIT3D(
+    PlotMixin,
+    RoutinesMixin,
+    BCsMixin,
+    DispersiveMixin,
+    GainMixin,
+    SubcellMixin,
+    TimeVaryingMixin,
+):
     def __init__(
         self,
         grid,
@@ -586,8 +597,10 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self._one_step_backend = self.one_step
             self.one_step = self._one_step_with_abc
 
-        if self.use_stl:  # ADE for solids with a DispersiveMaterial
+        if self.use_stl:  # ADE for solids with a DispersiveMaterial, GainMaterial or TimeVaryingMaterial
             self._apply_stl_dispersive()
+            self._apply_stl_gain()
+            self._apply_stl_time_varying()
             if self.tensor_operator is not None:  # no couplings to ADE edges
                 self.tensor_operator.install(self)
 
@@ -817,6 +830,12 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 )
             tete.install(self, tete.build_operators(self))
             self.tDsiDmuiDaC = self.itDaiDepsDstC = None
+        elif imported_mkl and not self.use_gpu and not self.activate_cpml:
+            self.tDsiDmuiDaC = mkl_sparse_mat(self.tDsiDmuiDaC)
+            self.itDaiDepsDstC = mkl_sparse_mat(self.itDaiDepsDstC)
+        elif self.use_gpu and imported_cupyx and not self.activate_cpml:
+            self.tDsiDmuiDaC = gpu_sparse_mat(self.tDsiDmuiDaC)
+            self.itDaiDepsDstC = gpu_sparse_mat(self.itDaiDepsDstC)
         self.step_0 = False
 
     def _apply_stl_materials(self):
@@ -1028,6 +1047,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        H_n = self._capture_dispersive_H()
         self._update_H()
         self._add_magnetic_current()
 
@@ -1039,6 +1059,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.H.field_y -= (
                     self.dt * self.imu.field_y * -self.tf_dyz * self.E_trans.field_x
                 )
+        self._update_dispersive_H(H_n)
 
         # include current computation
         if self.use_conductivity:
@@ -1047,6 +1068,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
 
+        E_n = self._capture_gain_E()
         self._update_E()
 
         if self.source_type == "tfsf":
@@ -1057,6 +1079,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.E.field_y += (
                     self.dt * self.ieps.field_y * self.tf_dtyz * self.H_trans.field_x
                 )
+        self._update_gain_E(E_n)
 
     def _one_step_cpml(self):
         # Including the convolutional terms for the CPML update equations
@@ -1140,6 +1163,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         # Update the magnetic field components using the curl of E
+        H_n = self._capture_dispersive_H()
         self.H.field_x -= self.dt * self.imu.field_x * (dxyEz - dxzEy)
         self.H.field_y -= self.dt * self.imu.field_y * (dyzEx - dyxEz)
         self.H.field_z -= self.dt * self.imu.field_z * (dzxEy - dzyEx)
@@ -1189,6 +1213,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         self._add_magnetic_current()
+        self._update_dispersive_H(H_n)
 
         if self.use_mpi:
             self._mpi_communicate(self.H)
@@ -1276,6 +1301,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         # Update the electric field components using the curl of H and the current density
+        E_n = self._capture_gain_E()
         self.E.field_x += (
             self.dt * self.ieps.field_x * (dtxyHz - dtxzHy)
             - self.dt * self.ieps.field_x * self.J.field_x
@@ -1332,6 +1358,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.E.field_y[self.idx_z_high] += (
                 self.dt * self.ieps.field_y[self.idx_z_high] * self.psiEa_y_high
             )
+        self._update_gain_E(E_n)
 
         if self.use_mpi:
             self._mpi_communicate(self.E)
@@ -1344,6 +1371,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        H_n = self._capture_dispersive_H()
         self.H.fromarray(
             self.H.toarray()
             - self.dt * dot_product_mkl(self.tDsiDmuiDaC, self.E.toarray())
@@ -1362,6 +1390,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     * self.imu.field_y
                     * -dot_product_mkl(self.tf_dyz, self.E_trans.field_x)
                 )
+        self._update_dispersive_H(H_n)
 
         # include current computation
         if self.use_conductivity:
@@ -1370,6 +1399,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
 
+        E_n = self._capture_gain_E()
         self.E.fromarray(
             self.E.toarray()
             + self.dt
@@ -1391,6 +1421,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     * self.ieps.field_y
                     * dot_product_mkl(self.tf_dtyz, self.H_trans.field_x)
                 )
+        self._update_gain_E(E_n)
 
     def _one_step_cpml_mkl(self):
         if self.step_0:
@@ -1471,6 +1502,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         # Update the magnetic field components using the curl of E
+        H_n = self._capture_dispersive_H()
         self.H.field_x -= self.dt * self.imu.field_x * (dxyEz - dxzEy)
         self.H.field_y -= self.dt * self.imu.field_y * (dyzEx - dyxEz)
         self.H.field_z -= self.dt * self.imu.field_z * (dzxEy - dzyEx)
@@ -1520,6 +1552,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         self._add_magnetic_current()
+        self._update_dispersive_H(H_n)
 
         if self.use_mpi:
             self._mpi_communicate(self.H)
@@ -1607,6 +1640,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             )
 
         # Update the electric field components using the curl of H and the current density
+        E_n = self._capture_gain_E()
         self.E.field_x += (
             self.dt * self.ieps.field_x * (dtxyHz - dtxzHy)
             - self.dt * self.ieps.field_x * self.J.field_x
@@ -1663,6 +1697,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.E.field_y[self.idx_z_high] += (
                 self.dt * self.ieps.field_y[self.idx_z_high] * self.psiEa_y_high
             )
+        self._update_gain_E(E_n)
 
         if self.use_mpi:
             self._mpi_communicate(self.E)
@@ -1685,6 +1720,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        H_n = self._capture_dispersive_H()
         self._update_H()
         self._add_magnetic_current()
 
@@ -1696,6 +1732,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.H.field_y -= (
                     self.dt * self.imu.field_y * -self.tf_dyz * self.E_trans.field_x
                 )
+        self._update_dispersive_H(H_n)
 
         self._mpi_communicate(self.H)
         # include current computation
@@ -1705,6 +1742,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
         self._mpi_communicate(self.J)
+        E_n = self._capture_gain_E()
         self._update_E()
 
         if self.source_type == "tfsf":
@@ -1715,6 +1753,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                 self.E.field_y += (
                     self.dt * self.ieps.field_y * self.tf_dtyz * self.H_trans.field_x
                 )
+        self._update_gain_E(E_n)
 
         self._mpi_communicate(self.E)
 
@@ -1726,6 +1765,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        H_n = self._capture_dispersive_H()
         self.H.fromarray(
             self.H.toarray()
             - self.dt * dot_product_mkl(self.tDsiDmuiDaC, self.E.toarray())
@@ -1744,6 +1784,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     * self.imu.field_y
                     * -dot_product_mkl(self.tf_dyz, self.E_trans.field_x)
                 )
+        self._update_dispersive_H(H_n)
 
         self._mpi_communicate(self.H)
         # include current computation
@@ -1754,6 +1795,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.J_old = Jtemp
         self._mpi_communicate(self.J)
 
+        E_n = self._capture_gain_E()
         self.E.fromarray(
             self.E.toarray()
             + self.dt
@@ -1775,6 +1817,7 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
                     * self.ieps.field_y
                     * dot_product_mkl(self.tf_dtyz, self.H_trans.field_x)
                 )
+        self._update_gain_E(E_n)
 
         self._mpi_communicate(self.E)
 
@@ -2156,6 +2199,31 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
         """
         return h5py.File(filename, "r")
 
+    def add_beam(self, beam):
+        """
+        Install a linearized cold-fluid electron beam on the solver.
+
+        Wraps ``self.one_step`` so the beam perturbation state ``(v1, rho1)``
+        and small-signal current ``J1_s`` are advanced automatically before
+        every electromagnetic step.
+
+        Parameters
+        ----------
+        beam : LinearizedBeam
+            Beam instance to couple into the solver.
+
+        Returns
+        -------
+        LinearizedBeam
+            The installed ``beam`` instance.
+        """
+        return beam.install(self)
+
+    def reset_beam_state(self):
+        """Reset the perturbation state of any installed `LinearizedBeam`."""
+        for beam in getattr(self, "_beams", ()):
+            beam.reset_state()
+
     def reset_fields(self):
         """
         Reset dynamic field arrays (E, H, J) to zero across the simulation.
@@ -2168,6 +2236,9 @@ class SolverFIT3D(PlotMixin, RoutinesMixin, BCsMixin, DispersiveMixin):
             self.H[:, :, :, d] = 0.0
             self.J[:, :, :, d] = 0.0
         self.reset_dispersive_state()
+        self.reset_gain_state()
+        self.reset_time_varying_state()
+        self.reset_beam_state()
 
     def update_logger(self, attrs):
         """

@@ -1,0 +1,25 @@
+{
+  "task_index": 6,
+  "name": "kottke_reference",
+  "group": "convergence",
+  "level": "R",
+  "bend_type": "euler",
+  "r_eff_um": 4.0,
+  "averaging": "kottke",
+  "cpw": 40,
+  "n_feature": 16,
+  "min_feature_nm": 400.0,
+  "dx_background_nm": 13.32,
+  "dx_min_nm": 13.32,
+  "cells_across_feature": 30.031,
+  "grid_shape": [
+    509,
+    509,
+    1
+  ],
+  "n_cells": 259081,
+  "n_steps": 22551,
+  "elapsed_s": 700.736,
+  "peak_rss_mb": 828.61,
+  "npz_bytes": 6802
+}

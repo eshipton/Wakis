@@ -1,0 +1,18 @@
+{
+  "task_index": 1,
+  "name": "staircase_coarse",
+  "kind": "resolution",
+  "averaging": "staircase",
+  "cpw": 10,
+  "l_mmi_um": 11.15,
+  "w_mmi_um": 4.9,
+  "grid_shape": [
+    442,
+    159,
+    1
+  ],
+  "n_cells": 70278,
+  "elapsed_s": 116.29,
+  "peak_rss_mb": 342.38,
+  "npz_bytes": 8096
+}

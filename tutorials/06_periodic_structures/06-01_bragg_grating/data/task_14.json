@@ -1,0 +1,33 @@
+{
+  "task_index": 14,
+  "name": "apodized_gaussian",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 25.88,
+  "dx_min_nm": 6.25,
+  "dx_min_x_nm": 20.25,
+  "dy_min_nm": 6.25,
+  "cells_across_feature": 8.0,
+  "cells_across_tooth_x": 8.0,
+  "n_periods": 100,
+  "dw_nm": 50.0,
+  "shift_nm": 0.0,
+  "apodization": "gaussian",
+  "grid_shape": [
+    1683,
+    108,
+    1
+  ],
+  "n_cells": 181764,
+  "n_steps": 66201,
+  "lambda_bragg_nm": 1559.0,
+  "stopband_width_nm": 31.43,
+  "R_max": 0.8945,
+  "T_min": 0.1157,
+  "elapsed_s": 1239.593,
+  "peak_rss_mb": 538.19,
+  "npz_bytes": 9362
+}

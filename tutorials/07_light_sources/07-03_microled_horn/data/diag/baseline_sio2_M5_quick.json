@@ -1,0 +1,107 @@
+{
+  "variant": "baseline",
+  "config": "sio2",
+  "mesh": "quick",
+  "M": 5,
+  "ndip": 5,
+  "dipole_x_m": [
+    -2.4e-07,
+    -1.2e-07,
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "dipole_x_nm": [
+    -240.0,
+    -120.0,
+    0.0,
+    120.0,
+    240.0
+  ],
+  "folded_dipole_xs_m": [
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "folded_dipole_weights": [
+    1.0,
+    2.0,
+    2.0
+  ],
+  "lee15_eq_pct": 28.1735,
+  "lee90_eq_pct": 57.4698,
+  "lee15_pct": 29.7545,
+  "lee90_pct": 61.6632,
+  "lee15_wrk_pct": 25.1164,
+  "lee90_wrk_pct": 52.0512,
+  "lee15_pol_x": 21.2218,
+  "lee15_pol_y": 28.8007,
+  "lee15_pol_z": 34.4978,
+  "lee90_pol_x": 52.0408,
+  "lee90_pol_y": 46.1251,
+  "lee90_pol_z": 74.2433,
+  "per_pol": {
+    "lee15_pct": {
+      "x": 21.2218,
+      "y": 28.8007,
+      "z": 34.4978
+    },
+    "lee90_pct": {
+      "x": 52.0408,
+      "y": 46.1251,
+      "z": 74.2433
+    }
+  },
+  "lee15_xz_tangential_pct": 27.8598,
+  "lee90_xz_tangential_pct": 63.1421,
+  "collimation_ratio_eq_pct": 49.0231,
+  "collimation_ratio_pct": 48.2534,
+  "purcell_factor": 1.1847,
+  "fwhm_deg": 50.9916,
+  "directivity_2d": 4.039,
+  "paper_2d_lee15_pct": 30.4,
+  "paper_2d_lee90_pct": 65.1,
+  "gap_lee15_eq_pp": -2.2265,
+  "gap_lee90_eq_pp": -7.6302,
+  "ag_eps_450nm_real": -5.4021,
+  "ag_eps_450nm_imag": -0.6338,
+  "ag_skin_depth_E_nm": 30.7616,
+  "ag_skin_depth_I_nm": 15.3808,
+  "dx_background_nm": 15.0,
+  "dx_min_nm": 3.75,
+  "cpw_gan": 12.2449,
+  "cpw_gan_min_wl": 11.5646,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 18.0,
+  "cells_per_skin_depth_I": 4.1015,
+  "cells_per_skin_depth_E": 8.2031,
+  "n_cells": 115974,
+  "n_steps": 6622,
+  "conv_ndip_full": [
+    1,
+    3,
+    5
+  ],
+  "conv_lee15_eq": [
+    29.467,
+    31.9595,
+    28.1735
+  ],
+  "conv_lee90_eq": [
+    71.9205,
+    64.3262,
+    57.4698
+  ],
+  "conv_lee15": [
+    28.0722,
+    32.5753,
+    29.7545
+  ],
+  "conv_lee90": [
+    75.8628,
+    68.5906,
+    61.6632
+  ],
+  "wall_time_s": 437.694,
+  "elapsed_s": 437.694
+}

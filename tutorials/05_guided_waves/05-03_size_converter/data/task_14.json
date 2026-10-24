@@ -1,0 +1,24 @@
+{
+  "task_index": 14,
+  "name": "taper_profile_sweep",
+  "kind": "taper_sweep",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "demo": false,
+  "min_feature_nm": 500.0,
+  "dx_background_nm": 33.828,
+  "dx_min_nm": 33.333,
+  "cells_across_feature": 15.0,
+  "grid_shape": [
+    1570,
+    356,
+    1
+  ],
+  "n_cells": 558920,
+  "n_steps": 266702,
+  "elapsed_s": 8165.621,
+  "peak_rss_mb": 1728.7,
+  "npz_bytes": 43442
+}

@@ -221,7 +221,7 @@ def material_eps(material, frequency):
     return material
 
 
-def assign_materials(solver, structures, frequency):
+def assign_materials(solver, structures, frequency, averaging="kottke"):
     """
     Write the structures into `solver.ieps` and register dispersive boxes.
 
@@ -229,7 +229,7 @@ def assign_materials(solver, structures, frequency):
     ----------
     solver : SolverFIT3D
         Freshly built solver (before the first time step).
-    structures : list of Box, Cylinder or Sheet
+    structures : list of Box, Cylinder, Sheet or PolySlab
         Solids in order of increasing priority. Sheets are skipped: they are
         part of the grid (`GridFIT3D(sheets=...)`).
     frequency : float
@@ -237,7 +237,30 @@ def assign_materials(solver, structures, frequency):
         is written into `ieps`. The interior edges of dispersive boxes are
         then stepped with the ADE model (the `ieps` value only feeds the mode
         solver); their face edges stay non-dispersive at this frequency.
+    averaging : {'kottke', 'arithmetic', 'staircase'}, optional
+        Subpixel permittivity averaging rule for shapes that implement `fill`
+        (such as `PolySlab`). ``'kottke'`` (default) applies the diagonal part
+        of Kottke's anisotropic subpixel smoothing tensor [1]_ using the shape's
+        outward unit normal `n`:
+        ``1 / eps_eff,c = n_c^2 (w/eps_s + (1-w)/eps_b) + (1 - n_c^2) / (w eps_s + (1-w) eps_b)``.
+        ``'arithmetic'`` uses the linear volume blend ``w eps_s + (1-w) eps_b``,
+        and ``'staircase'`` rounds the fill fraction ``w`` to 0 or 1.
+        `Box` and `Cylinder` always use their exact face-point weights.
+
+    References
+    ----------
+    .. [1] C. Kottke, A. Farjadpour, and S. G. Johnson, "Perturbation theory
+       for anisotropic dielectric interfaces, and application to subpixel
+       smoothing of discretized numerical methods," Phys. Rev. E 77, 036611
+       (2008), DOI: 10.1103/PhysRevE.77.036611.
     """
+    if averaging not in ("kottke", "arithmetic", "staircase"):
+        raise ValueError(
+            f"Unknown averaging {averaging!r}: use 'kottke', 'arithmetic' or 'staircase'."
+        )
+    solver._assigned_structures = list(getattr(solver, "_assigned_structures", ())) + [
+        s for s in structures if not isinstance(s, Sheet)
+    ]
     grid = solver.grid
     nodes = (grid.x, grid.y, grid.z)
     tol = 1e-6 * min(np.min(grid.dx), np.min(grid.dy), np.min(grid.dz))
@@ -257,13 +280,50 @@ def assign_materials(solver, structures, frequency):
         else (0.0,)
         for d, n in enumerate(nodes)
     ]
+    has_fill = any(hasattr(s, "fill") for s in structures)
     for comp in range(3):
         pos = [
             (n[:-1] + n[1:]) / 2 if d == comp else n[:-1] for d, n in enumerate(nodes)
         ]
         X, Y, Z = np.meshgrid(*pos, indexing="ij")
+        if has_fill:
+            sizes_1d = [
+                (n[1:] - n[:-1]) if d == comp else _dual_step(n, len(shifts[d]) > 1)
+                for d, n in enumerate(nodes)
+            ]
+            Hx, Hy, Hz = np.meshgrid(*sizes_1d, indexing="ij")
         block = eps[comp * N : (comp + 1) * N].reshape(X.shape, order="F")
         for shape in structures:
+            if hasattr(shape, "fill"):
+                w = np.broadcast_to(
+                    _periodic_fill(shape, (X, Y, Z), (Hx, Hy, Hz), shifts, tol),
+                    X.shape,
+                )
+                if shape.material == "pec":
+                    block[w > 0] = np.inf
+                    continue
+                eps_shape = material_eps(shape.material, frequency)
+                if averaging == "staircase":
+                    w = np.where(w >= 0.5, 1.0, 0.0)
+                full = w >= 1.0 - 1e-12
+                part = (w > 1e-12) & (~full) & np.isfinite(block)
+                block[full] = eps_shape
+                if np.any(part):
+                    wp = w[part]
+                    eps_b = block[part]
+                    if averaging == "kottke" and hasattr(shape, "normal"):
+                        n_vec = _periodic_normal(
+                            shape, (X[part], Y[part], Z[part]), shifts, tol
+                        )
+                        nc2 = n_vec[:, comp] ** 2
+                        inv_eps = nc2 * (wp / eps_shape + (1.0 - wp) / eps_b) + (
+                            1.0 - nc2
+                        ) / (wp * eps_shape + (1.0 - wp) * eps_b)
+                        block[part] = 1.0 / inv_eps
+                    else:
+                        block[part] = (1.0 - wp) * eps_b + wp * eps_shape
+                continue
+
             w = np.broadcast_to(
                 _periodic_weight(shape, (X, Y, Z), shifts, tol), X.shape
             )
@@ -314,6 +374,15 @@ def _add_dispersive_interior(solver, box, shifts):
     solver.add_dispersive_material(box.material, box.center, size)
 
 
+def _dual_step(nodes, periodic):
+    """Dual cell widths at the primary nodes `nodes[:-1]`."""
+    dd = np.diff(nodes)
+    if dd.size == 1:
+        return dd.copy()
+    first = 0.5 * (dd[-1] + dd[0]) if periodic else dd[0]
+    return np.concatenate([[first], 0.5 * (dd[:-1] + dd[1:])])
+
+
 def _periodic_weight(shape, pos, shifts, tol):
     """
     Fill weight with periodic images: a solid spanning a whole period fills
@@ -325,7 +394,7 @@ def _periodic_weight(shape, pos, shifts, tol):
     for d, shift in enumerate(shifts):
         period = max(shift)
         if period > 0 and hi[d] - lo[d] >= period - tol:
-            pos[d] = shape.center[d]
+            pos[d] = 0.5 * (lo[d] + hi[d])
             shifts[d] = (0.0,)
     w = 0.0
     for sx in shifts[0]:
@@ -333,6 +402,45 @@ def _periodic_weight(shape, pos, shifts, tol):
             for sz in shifts[2]:
                 w = w + shape.weight(pos[0] + sx, pos[1] + sy, pos[2] + sz, tol)
     return np.minimum(w, 1.0)
+
+
+def _periodic_fill(shape, pos, sizes, shifts, tol):
+    """Subcell volume fill fraction with periodic images."""
+    pos, sizes, shifts = list(pos), list(sizes), list(shifts)
+    lo, hi = shape.bounds
+    for d, shift in enumerate(shifts):
+        period = max(shift)
+        if period > 0 and hi[d] - lo[d] >= period - tol:
+            if d == 2:
+                pos[d] = np.full_like(pos[d], 0.5 * (lo[d] + hi[d]))
+                sizes[d] = np.zeros_like(sizes[d])
+            shifts[d] = (0.0,)
+    w = 0.0
+    for sx in shifts[0]:
+        for sy in shifts[1]:
+            for sz in shifts[2]:
+                w = w + shape.fill(
+                    pos[0] + sx,
+                    pos[1] + sy,
+                    pos[2] + sz,
+                    sizes[0],
+                    sizes[1],
+                    sizes[2],
+                    n_sub=getattr(shape, "n_sub_assign", 16),
+                )
+    return np.minimum(w, 1.0)
+
+
+def _periodic_normal(shape, pos, shifts, tol):
+    """Outward unit normal at `pos`, suppressing faces along full-period axes."""
+    x, y, z = pos
+    lo, hi = shape.bounds
+    period_z = max(shifts[2])
+    if period_z > 0 and hi[2] - lo[2] >= period_z - tol:
+        if hasattr(shape, "_normal_xy"):
+            return shape._normal_xy(x, y)
+        z = np.full_like(x, 0.5 * (lo[2] + hi[2]))
+    return shape.normal(x, y, z)
 
 
 def _host(array):

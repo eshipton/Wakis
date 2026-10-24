@@ -1,0 +1,18 @@
+# this file is part of refractiveindex.info database
+# refractiveindex.info database is in the public domain
+# copyright and related rights waived via CC0 1.0
+
+REFERENCES: |
+    1) H. R. Philipp.
+    Optical properties of silicon nitride.
+    [*J. Electrochim. Soc.* **120**, 295-300 (1973)](https://doi.org/10.1149/1.2403440)<br>
+    2) T. Bååk.
+    Silicon oxynitride; a material for GRIN optics.
+    [*Appl. Opt.* **21**, 1069-1072 (1982)](https://doi.org/10.1364/AO.21.001069)<br>
+    * Ref.2 provides a dispersion formula based on data from Ref. 1
+DATA:
+  - type: formula 1
+    wavelength_range: 0.207 1.24
+    coefficients: 0 2.8939 0.13967
+
+

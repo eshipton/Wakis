@@ -1,0 +1,18 @@
+{
+  "task_index": 8,
+  "name": "kottke_fine",
+  "kind": "convergence",
+  "averaging": "kottke",
+  "cpw": 32,
+  "dx_background_nm": 8.558,
+  "dx_min_nm": 5.884,
+  "min_feature_nm": 47.071,
+  "cells_across_feature": 8.0,
+  "skin_depth_nm": 24.41,
+  "cells_per_skin_depth": 8.137,
+  "n_cells": 25864,
+  "n_steps": 1420,
+  "elapsed_s": 6.941,
+  "peak_rss_mb": 242.98,
+  "npz_bytes": 7244
+}

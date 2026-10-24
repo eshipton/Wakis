@@ -1,0 +1,2384 @@
+# ---
+# jupyter:
+#   jupytext:
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#   kernelspec:
+#     display_name: Python 3
+#     language: python
+#     name: python3
+# ---
+
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2024.                   #
+# ########################################### #
+
+# %% [markdown]
+# # Tutorial 5.2 · Euler waveguide bend
+#
+# **Abstract.** Compact $90^\circ$ waveguide bends are ubiquitous routing
+# elements in high-density silicon-on-insulator (SOI) photonic integrated
+# circuits (PICs). In a conventional constant-radius circular $90^\circ$ bend,
+# the curvature jumps discontinuously from $\kappa = 0$ in the straight
+# waveguide to $\kappa = 1/R_{\text{eff}}$ at the bend entrance and exit. This
+# step discontinuity shifts the guided mode centroid outward by
+# $\Delta u \propto R_{\text{eff}}^{-1}$, exciting unguided whispering-gallery
+# radiation modes, higher-order transverse modes, and parasitic Fresnel-like
+# back-reflections ($|S_{11}|^2$). Following **Fujisawa *et al.* (2017)** [1],
+# we replace the abrupt circular junctions with a **hybrid
+# Euler–circular–Euler $90^\circ$ bend** ($R_{\text{eff}} = 4.0\;\mu\text{m}$,
+# clothoid parameter $A = 2.4\;\mu\text{m}$) whose curvature ramps linearly with
+# arc length ($\kappa(s) = s/A^2$) up to a central circular arc of minimum
+# radius $R_{\min} \approx 2.99\;\mu\text{m}$. Using the **2D effective-index
+# method (EIM)** and **Kottke (2008) subpixel permittivity smoothing** in Wakis,
+# we extract broadband $2\times 2$ S-parameters across the
+# $1500\text{--}1600\;\text{nm}$ telecom band, verify energy conservation with a
+# 2D Poynting flux box, sweep the effective bend radius
+# $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$ for both circular and
+# hybrid Euler geometries against analytical mode-mismatch theory, and benchmark
+# Kottke subpixel smoothing against staircasing relative to an independent
+# $40\;\text{cpw}$ reference simulation.
+#
+# ---
+#
+# ## Learning goals
+#
+# By the end of this tutorial you will be able to:
+#
+# 1. Formulate the Fresnel-integral kinematics of clothoid (Euler) spirals and
+#    solve the $C^2$-continuous tangent- and curvature-matching conditions of a
+#    hybrid Euler–circular–Euler $90^\circ$ bend at fixed footprint
+#    $R_{\text{eff}} \times R_{\text{eff}}$.
+# 2. Reduce a $210\;\text{nm} \times 400\;\text{nm}$ SOI strip waveguide to its
+#    **2D effective-index (EIM)** FIT representation (`Ex`, `Ey`, `Hz`;
+#    $n_{\text{eff,slab}}(1550\;\text{nm}) = 2.8134$) and construct seamless
+#    single-polygon `PolySlab` bends with orthogonal $+x$ input and $+y$ output
+#    eigenmode `Port` planes.
+# 3. Quantify the suppression of straight-to-bent mode-mismatch loss and
+#    whispering-gallery radiation across effective radii
+#    $R_{\text{eff}} \in [2.5, 4.0]\;\mu\text{m}$, and compare 2D EIM predictions
+#    with conformal-mapping perturbation theory and 3D FDTD benchmarks.
+# 4. Audit subpixel convergence of **Kottke (2008)** tensor smoothing versus
+#    staircasing on continuously curving sidewalls using an independent
+#    high-resolution reference run $T_{\text{ref}}$.
+#
+# ## Contents
+#
+# 1. [Physical background & device specification](#1.-Physical-background-&-device-specification)
+# 2. [Effective-Index Method (EIM) reduction](#2.-Effective-Index-Method-(EIM)-reduction)
+# 3. [Parametric geometry construction](#3.-Parametric-geometry-construction)
+# 4. [Subpixel permittivity smoothing vs staircasing](#4.-Subpixel-permittivity-smoothing-vs-staircasing)
+# 5. [Study tasks & execution modes](#5.-Study-tasks-&-execution-modes)
+# 6. [Generating the complete figure suite](#6.-Generating-the-complete-figure-suite)
+# 7. [Quantitative results, convergence & when 2D EIM breaks down](#7.-Quantitative-results,-convergence-&-when-2D-EIM-breaks-down)
+# 8. [Exercises](#8.-Exercises)
+# 9. [References](#9.-References)
+
+# %% [markdown]
+# ## 1. Physical background & device specification
+#
+# Consider a single-mode silicon strip waveguide of width $w = 400\;\text{nm}$
+# and thickness $h_{\text{Si}} = 210\;\text{nm}$ routed around a $90^\circ$ turn
+# connecting an input waveguide along the $+x$ axis ($y = 0, x \le 0$) to an
+# orthogonal output waveguide along the $+y$ axis
+# ($x = R_{\text{eff}}, y \ge R_{\text{eff}}$).
+#
+# ### 1.1 Why constant-radius circular bends radiate at their junctions
+#
+# By conformal transformation of a curved waveguide of local radius of curvature
+# $R(s) = 1/\kappa(s)$ [3], the curved core in local transverse coordinate $u$
+# (measured outward from the centerline) is equivalent to a straight waveguide
+# with a radially tilted refractive index profile:
+#
+# $$n_{\text{eq}}(u, s) = n(u)\left(1 + \frac{u}{R(s)}\right) = n(u)\bigl(1 + \kappa(s)\,u\bigr).$$
+#
+# For a weakly perturbation-shifted fundamental Gaussian-like mode
+# $\psi_0(u) \propto \exp(-u^2 / 2\sigma_0^2)$ with modal half-width $\sigma_0$,
+# the linear index gradient $\partial n_{\text{eq}} / \partial u \approx n_{\text{eff}}\,\kappa(s)$
+# shifts the mode centroid outward toward the exterior sidewall by:
+#
+# $$\Delta u(\kappa) \approx k_0^2\,n_{\text{eff}}^2\,\sigma_0^4\,\kappa.$$
+#
+# In a **constant-radius circular $90^\circ$ bend** ($R(s) = R_{\text{eff}}$ for
+# $0 < s < \frac{\pi}{2}R_{\text{eff}}$), $\kappa(s)$ jumps abruptly by
+# $\Delta\kappa = 1/R_{\text{eff}}$ at both $s = 0$ and
+# $s = \frac{\pi}{2}R_{\text{eff}}$. At each junction the overlap integral
+# between the straight waveguide mode $\psi_0(u)$ and the laterally shifted bent
+# mode $\psi_R(u) \approx \psi_0(u - \Delta u)$ incurs a **mode-mismatch
+# transition loss**:
+#
+# $$\eta_{\text{mm}}(R_{\text{eff}}) = \left|\int_{-\infty}^{\infty} \psi_0^*(u)\,\psi_R(u)\,\mathrm{d}u\right|^2 \approx \exp\!\left(-\frac{\Delta u^2}{2\sigma_0^2}\right) \approx 1 - \frac{C_{\text{mm}}}{R_{\text{eff}}^2},$$
+#
+# and after two junctions (entrance and exit) the total transition loss scales as
+# $\text{IL}_{\text{circ}}(R_{\text{eff}}) \propto R_{\text{eff}}^{-2}$ (up to
+# coherent beating between the two junctions).
+#
+# ### 1.2 The hybrid Euler–circular–Euler bend of Fujisawa *et al.* (2017)
+#
+# A **clothoid (Euler spiral)** eliminates the curvature step discontinuity
+# ($\Delta\kappa = 0$) by ramping the curvature linearly with arc length $s$:
+#
+# $$\kappa(s) = \frac{\mathrm{d}\theta}{\mathrm{d}s} = \frac{s}{A^2}, \qquad \theta(s) = \int_0^s \kappa(s')\,\mathrm{d}s' = \frac{s^2}{2 A^2},$$
+#
+# where $A$ [m] is the clothoid constant. Integrating the unit tangent vector
+# $(\cos\theta(s), \sin\theta(s))$ from the origin $(0, 0)$ yields the Fresnel
+# parametric curve:
+#
+# $$x_1(s) = A \int_0^{s/A} \cos\!\left(\frac{\tau^2}{2}\right)\mathrm{d}\tau, \qquad y_1(s) = A \int_0^{s/A} \sin\!\left(\frac{\tau^2}{2}\right)\mathrm{d}\tau, \qquad 0 \le s \le L_{\max}.$$
+#
+# However, a *pure* $90^\circ$ Euler bend (where two clothoids meet at
+# $\theta = \pi/4$, Euler fraction $p = 1$) reaches a tight apex minimum radius
+# $R_{\min} \approx 0.675\,R_{\text{eff}}$, which can trigger exponential
+# whispering-gallery radiative tunneling when $R_{\text{eff}}$ is small.
+# **Fujisawa *et al.* (2017)** [1] resolved this trade-off with a **hybrid
+# Euler–circular–Euler bend**:
+#
+# 1. **Input clothoid** ($0 \le s \le L_{\max}$): curvature increases linearly
+#    from $0$ to $\kappa_{\max} = 1/R_{\min} = L_{\max}/A^2$, turning by angle
+#    $\theta_e = L_{\max}/(2 R_{\min}) = \frac{1}{4}\pi p$ to endpoint
+#    $(x_p, y_p) = \bigl(x_1(L_{\max}), y_1(L_{\max})\bigr)$.
+# 2. **Central circular arc** ($L_{\max} \le s \le L_{\max} + L_c$): constant
+#    radius $R_{\min}$ over angle $\theta_c = \frac{\pi}{2}(1 - p)$ with center
+#    $(a, b) = (x_p - R_{\min}\sin\theta_e,\; y_p + R_{\min}\cos\theta_e)$.
+#    Mirror symmetry across the diagonal $x + y = R_{\text{eff}}$ enforces
+#    $a + b = R_{\text{eff}}$.
+# 3. **Output clothoid**: mirror image of the input clothoid across
+#    $x + y = R_{\text{eff}}$, i.e.
+#    $(x_3(s), y_3(s)) = \bigl(R_{\text{eff}} - y_1(L_{\max} - s),\; R_{\text{eff}} - x_1(L_{\max} - s)\bigr)$,
+#    returning curvature smoothly to $\kappa = 0$ at $(R_{\text{eff}}, R_{\text{eff}})$
+#    with tangent along $+y$ ($\theta = \pi/2$).
+#
+# At the design footprint $R_{\text{eff}} = 4.0\;\mu\text{m}$ with clothoid
+# parameter $A = 0.6\,R_{\text{eff}} = 2.4\;\mu\text{m}$, solving the exact
+# $C^2$-continuous condition $a(L_{\max}) + b(L_{\max}) = R_{\text{eff}}$ yields
+# $L_{\max} = 1.9279\;\mu\text{m}$, $R_{\min} = 2.9878\;\mu\text{m}$,
+# $(x_p, y_p) = (1.9079, 0.2058)\;\mu\text{m}$, circle center
+# $(a, b) = (0.9606, 3.0394)\;\mu\text{m}$, and Euler angle fraction
+# $p = 2\theta_e / (\pi/2) = 0.4108$ (note that approximating the clothoid
+# terminal slope by a 50-point secant finite difference shifts these slightly to
+# $L_{\max} = 1.9541\;\mu\text{m}$ and $R_{\min} = 2.9476\;\mu\text{m}$, within
+# $1.3\%$).
+
+# %%
+import argparse
+import json
+import os
+from pathlib import Path
+import resource
+import shlex
+import sys
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.constants import c as c_light
+from scipy.integrate import cumulative_trapezoid, quad
+from scipy.optimize import brentq
+
+from wakis.templates.photonics import (
+    PIC_MATERIALS,
+    PICSimulation,
+    PolySlab,
+    Port,
+    arc,
+    euler_bend,
+    make_movie,
+    n_to_eps,
+    plot_eim_stack,
+    plot_field_map,
+    plot_layout,
+    plot_neff_dispersion,
+    plot_port_modes,
+    plot_spectra_db,
+    slab_neff,
+)
+
+HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from _helpers import (  # noqa: E402
+    RESOLUTION_LEVELS,
+    build_mesh_overrides,
+    measure_mesh_resolution,
+    plot_feature_mesh_zoom,
+)
+
+DATA_DIR = HERE / "data"
+FIG_DIR = HERE / "figures"
+
+# %% [markdown]
+# ### Device parameters from Fujisawa *et al.* (2017)
+#
+# All geometric dimensions are specified in metres (SI units):
+#
+# | Parameter | Symbol | Value |
+# |---|---|---|
+# | Silicon core refractive index ($1550\;\text{nm}$) | $n_{\text{Si}}$ | $3.476$ (Li 1980 [4]) |
+# | $\text{SiO}_2$ cladding refractive index ($1550\;\text{nm}$) | $n_{\text{SiO}_2}$ | $1.444$ (Malitson 1965 [5]) |
+# | Silicon wire thickness | $h_{\text{Si}}$ | $210\;\text{nm}$ ($z \in [0, 0.21]\;\mu\text{m}$) |
+# | Silicon wire width (smallest feature) | $w_{\text{wg}}$ | $400\;\text{nm}$ |
+# | Design effective bend radius | $R_{\text{eff}}$ | $4.0\;\mu\text{m}$ |
+# | Clothoid parameter at $R_{\text{eff}} = 4.0\;\mu\text{m}$ | $A = 0.6\,R_{\text{eff}}$ | $2.4\;\mu\text{m}$ |
+# | Minimum radius in hybrid Euler bend ($R_{\text{eff}} = 4\;\mu\text{m}$) | $R_{\min}$ | $2.9878\;\mu\text{m}$ ($C^2$ exact) |
+# | Clothoid transition arc length ($R_{\text{eff}} = 4\;\mu\text{m}$) | $L_{\max}$ | $1.9279\;\mu\text{m}$ ($p = 0.4108$) |
+# | Swept effective radii | $R_{\text{eff}}$ | $\{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$ |
+
+# %%
+# Material refractive indices at 1550 nm
+N_SI = PIC_MATERIALS["Si"]  # 3.476
+N_SIO2 = PIC_MATERIALS["SiO2"]  # 1.444
+H_SI = 210e-9  # 210 nm SOI thickness
+
+# Wavelength band: 1500 nm to 1600 nm
+WL_MIN = 1500e-9
+WL_MAX = 1600e-9
+WL_REF = 1550e-9
+N_FREQS = 51
+
+# Waveguide and default bend geometry [m]
+W_WG = 0.40e-6
+MIN_FEATURE = W_WG  # smallest geometric feature: 400 nm waveguide width
+R_EFF_DEFAULT = 4.00e-6
+A_RATIO_DEFAULT = 0.60  # A / R_eff = 2.4 um / 4.0 um = 0.60
+SWEEP_RADII_UM = (2.5, 3.0, 3.5, 4.0)
+
+# Distance from bend entrance/exit to port planes and domain edges [m]
+PORT_OFFSET = 1.00e-6
+DOMAIN_PAD = 1.25e-6
+STRAIGHT_EXT = 3.00e-6  # extends well past CPML
+
+
+# %% [markdown]
+# ## 2. Effective-Index Method (EIM) reduction
+#
+# In the **2D effective-index method (EIM)**, we factor the 3D quasi-$\text{TE}_0$
+# field of the $210\;\text{nm}$ silicon slab into its vertical slab profile
+# $\psi(z)$ and an in-plane field $(E_x, E_y, H_z)$ governed by the 1D vertical
+# slab eigenvalue equation along $z$:
+#
+# $$\frac{\mathrm{d}^2 \psi}{\mathrm{d} z^2} + k_0^2 \left[n^2(z) - n_{\text{eff,slab}}^2\right]\psi(z) = 0.$$
+#
+# For a symmetric $\text{SiO}_2 / \text{Si}(210\;\text{nm}) / \text{SiO}_2$ stack
+# at $\lambda_0 = 1550\;\text{nm}$, `slab_neff` yields:
+#
+# $$n_{\text{eff,slab}}(1550\;\text{nm}) = 2.8134,$$
+#
+# while the unetched oxide cladding retains $n_{\text{clad}} = 1.444$. Solving the
+# 1D transverse eigenmode of the $w_{\text{wg}} = 400\;\text{nm}$ strip on the
+# accepted `--full` grid (`L3 = (20, 8)`, $\Delta x = 26.64\;\text{nm}$,
+# $15.02$ cells across $w_{\text{wg}}$) gives a fundamental $\text{TE}_0$ channel
+# effective index $n_{\text{eff}}(1550\;\text{nm}) = 2.2888$ at both the $+x$
+# input port and the $+y$ output port (varying from $2.3182$ at $1500\;\text{nm}$
+# to $2.2593$ at $1600\;\text{nm}$) and a group index
+# $n_g(1550\;\text{nm}) = 3.2014$ ($3.1964\text{--}3.2047$ across
+# $1500\text{--}1600\;\text{nm}$; in `--quick` mode at `L2 = (14, 6)`,
+# $n_{\text{eff}}(1550\;\text{nm}) = 2.2965$). Because the waveguide rotates by
+# $90^\circ$ in the $x\text{--}y$ plane, the dominant transverse electric field
+# rotates smoothly from $E_y(y)$ at the $+x$ input port to $-E_x(x)$ at the $+y$
+# output port, while the magnetic field $H_z(x, y)$ remains purely vertical
+# throughout the entire bend.
+
+# %% [markdown]
+# ## 3. Parametric geometry construction
+#
+# Given an effective bend footprint $R_{\text{eff}}$ and dimensionless clothoid
+# constant $A / R_{\text{eff}} = 0.60$, `solve_hybrid_euler_params` solves the
+# exact $C^2$-continuous condition $a(L_{\max}) + b(L_{\max}) = R_{\text{eff}}$
+# via Brent root-finding (`scipy.optimize.brentq`) to obtain $(R_{\min}, p, L_{\max}, A)$.
+# We then pass $(R_{\min}, p)$ directly to `wakis.templates.photonics.euler_bend`
+# (or `arc` for the circular baseline) and join the outer and inner sidewall
+# chains with the straight input ($y = 0, x \le 0$) and output
+# ($x = R_{\text{eff}}, y \ge R_{\text{eff}}$) waveguides into a **single
+# closed counter-clockwise `PolySlab`**, avoiding any artificial internal
+# polygon seams at $x = 0$ or $y = R_{\text{eff}}$.
+
+
+# %%
+def solve_hybrid_euler_params(r_eff=R_EFF_DEFAULT, a_ratio=A_RATIO_DEFAULT):
+    """
+    Solve the exact $C^2$-continuous hybrid Euler-circular-Euler bend parameters
+    for a $90^\\circ$ bend of effective radius ``r_eff`` [m] and clothoid parameter
+    ``A = a_ratio * r_eff`` [m].
+
+    Parameters
+    ----------
+    r_eff : float, optional
+        Effective footprint radius $R_{\\text{eff}}$ [m].
+    a_ratio : float, optional
+        Dimensionless ratio $A / R_{\\text{eff}}$ (default ``0.60``, i.e.
+        $A = 2.4\\;\\mu\\text{m}$ at $R_{\\text{eff}} = 4.0\\;\\mu\\text{m}$).
+
+    Returns
+    -------
+    dict
+        Dictionary with keys ``r_eff``, ``A``, ``L_max``, ``r_min``, ``theta_e``,
+        ``p``, ``xp``, ``yp``, ``a``, ``b``, ``L_circ``, and ``L_tot`` in SI units [m, rad].
+    """
+    r_eff = float(r_eff)
+    A = float(a_ratio) * r_eff
+
+    def _footprint_residual(L_max):
+        r_min = A**2 / L_max
+        theta_e = L_max / (2.0 * r_min)
+        xp, _ = quad(lambda s: np.cos(0.5 * (s / A) ** 2), 0.0, L_max)
+        yp, _ = quad(lambda s: np.sin(0.5 * (s / A) ** 2), 0.0, L_max)
+        a = xp - r_min * np.sin(theta_e)
+        b = yp + r_min * np.cos(theta_e)
+        return (a + b) - r_eff
+
+    # Upper bound on L_max is where theta_e = pi/4 (pure Euler, p = 1): L_max = A * sqrt(pi/2)
+    L_upper = A * np.sqrt(0.5 * np.pi)
+    L_max = float(brentq(_footprint_residual, 0.02 * r_eff, L_upper))
+    r_min = A**2 / L_max
+    theta_e = L_max / (2.0 * r_min)
+    p = float(theta_e / (0.25 * np.pi))
+    xp, _ = quad(lambda s: np.cos(0.5 * (s / A) ** 2), 0.0, L_max)
+    yp, _ = quad(lambda s: np.sin(0.5 * (s / A) ** 2), 0.0, L_max)
+    a = float(xp - r_min * np.sin(theta_e))
+    b = float(yp + r_min * np.cos(theta_e))
+    L_circ = float(r_min * (0.5 * np.pi - 2.0 * theta_e))
+    L_tot = float(2.0 * L_max + L_circ)
+    return {
+        "r_eff": r_eff,
+        "A": A,
+        "L_max": L_max,
+        "r_min": r_min,
+        "theta_e": theta_e,
+        "p": p,
+        "xp": float(xp),
+        "yp": float(yp),
+        "a": a,
+        "b": b,
+        "L_circ": L_circ,
+        "L_tot": L_tot,
+    }
+
+
+def bend_centerline_and_curvature(
+    r_eff=R_EFF_DEFAULT, bend_type="euler", a_ratio=A_RATIO_DEFAULT, n=401
+):
+    """
+    Compute arc-length coordinates ``s`` [m], centerline ``(x, y)`` [m], tangent
+    angle ``theta`` [rad], and signed curvature ``kappa`` [1/m] for a $90^\\circ$
+    circular, hybrid Euler, or pure Euler ($p=1$) waveguide bend.
+    """
+    r_eff = float(r_eff)
+    if bend_type == "circular":
+        L_tot = 0.5 * np.pi * r_eff
+        s = np.linspace(0.0, L_tot, int(n))
+        theta = s / r_eff
+        phi = -0.5 * np.pi + theta
+        x = r_eff * np.cos(phi)
+        y = r_eff + r_eff * np.sin(phi)
+        kappa = np.full_like(s, 1.0 / r_eff)
+        return s, np.column_stack([x, y]), theta, kappa, {"r_min": r_eff, "p": 0.0}
+
+    if bend_type == "pure_euler":
+        # Pure clothoid (p = 1): R_eff = R_min * sqrt(pi) * (C(1) + S(1))
+        _, cl_unit = euler_bend(1.0, 90.0, width=0.1, p=1.0, n=int(n))
+        r_min = r_eff / float(cl_unit[-1, 0])
+        p = 1.0
+        L_e = 0.5 * np.pi * r_min
+        L_tot = 2.0 * L_e
+        info = {"r_min": r_min, "p": 1.0, "L_max": L_e, "L_tot": L_tot}
+    else:
+        info = solve_hybrid_euler_params(r_eff=r_eff, a_ratio=a_ratio)
+        r_min, p = info["r_min"], info["p"]
+        L_e = info["L_max"]
+        L_tot = info["L_tot"]
+
+    L_c = L_tot - 2.0 * L_e
+    s = np.linspace(0.0, L_tot, int(n))
+    kappa = np.empty_like(s)
+    theta = np.empty_like(s)
+    m1 = s <= L_e
+    m2 = (s > L_e) & (s <= L_e + L_c)
+    m3 = s > L_e + L_c
+    kappa[m1] = s[m1] / (r_min * L_e)
+    kappa[m2] = 1.0 / r_min
+    kappa[m3] = (L_tot - s[m3]) / (r_min * L_e)
+
+    theta_e = 0.25 * np.pi * p
+    theta[m1] = 0.5 * s[m1] ** 2 / (r_min * L_e)
+    theta[m2] = theta_e + (s[m2] - L_e) / r_min
+    theta[m3] = 0.5 * np.pi - 0.5 * (L_tot - s[m3]) ** 2 / (r_min * L_e)
+
+    x = cumulative_trapezoid(np.cos(theta), s, initial=0.0)
+    y = cumulative_trapezoid(np.sin(theta), s, initial=0.0)
+    return s, np.column_stack([x, y]), theta, kappa, info
+
+
+def build_bend_waveguide(
+    r_eff=R_EFF_DEFAULT,
+    bend_type="euler",
+    a_ratio=A_RATIO_DEFAULT,
+    width=W_WG,
+    n_bend=161,
+    port_offset=PORT_OFFSET,
+    domain_pad=DOMAIN_PAD,
+    straight_ext=STRAIGHT_EXT,
+):
+    """
+    Build a seamless $90^\\circ$ SOI waveguide bend (`circular` or hybrid `euler`)
+    as a single counter-clockwise `PolySlab` together with its orthogonal input
+    (`+x`) and output (`+y`) `Port` specifications and 2D simulation domain.
+    """
+    r_eff = float(r_eff)
+    hw = 0.5 * float(width)
+    x_in = -float(straight_ext)
+    y_out = r_eff + float(straight_ext)
+
+    if bend_type == "circular":
+        bend_poly = arc(
+            (0.0, r_eff),
+            radius=r_eff,
+            width=width,
+            theta0=-0.5 * np.pi,
+            theta1=0.0,
+            n=n_bend,
+        )
+        info = {
+            "bend_type": "circular",
+            "r_eff": r_eff,
+            "r_min": r_eff,
+            "p": 0.0,
+            "A": 0.0,
+            "L_max": 0.0,
+            "L_tot": 0.5 * np.pi * r_eff,
+        }
+    elif bend_type == "euler":
+        info = solve_hybrid_euler_params(r_eff=r_eff, a_ratio=a_ratio)
+        info["bend_type"] = "euler"
+        bend_poly, _ = euler_bend(
+            info["r_min"], 90.0, width=width, p=info["p"], n=n_bend
+        )
+    else:
+        raise ValueError(f"Unknown bend_type {bend_type!r}; expected 'euler' or 'circular'.")
+
+    bend_outer = bend_poly[:n_bend]
+    bend_inner = bend_poly[n_bend:]
+    verts = np.vstack(
+        [
+            [[x_in, -hw]],
+            bend_outer,
+            [[r_eff + hw, y_out], [r_eff - hw, y_out]],
+            bend_inner,
+            [[x_in, +hw]],
+        ]
+    )
+    slab = PolySlab(
+        verts,
+        z_min=0.0,
+        z_max=H_SI,
+        material=n_to_eps(N_SI),
+    )
+    z_mid = 0.5 * H_SI
+    port_offset = float(port_offset)
+    domain_pad = float(domain_pad)
+    ports = [
+        Port(
+            "in",
+            center=(-port_offset, 0.0, z_mid),
+            size=(0.0, 1.60e-6, 1.26e-6),
+            direction=+1,
+        ),
+        Port(
+            "out",
+            center=(r_eff, r_eff + port_offset, z_mid),
+            size=(1.60e-6, 0.0, 1.26e-6),
+            direction=+1,
+        ),
+    ]
+    domain = (
+        -domain_pad,
+        r_eff + domain_pad,
+        -domain_pad,
+        r_eff + domain_pad,
+    )
+    return [slab], ports, domain, info
+
+
+def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
+    """
+    Conformal-mapping Gaussian mode-mismatch estimate of the total two-junction
+    transition insertion loss [dB] of a $90^\\circ$ circular waveguide bend of
+    radius ``r_eff_m`` [m].
+
+    From Yariv & Yeh / Smit *et al.* conformal perturbation theory, a step
+    curvature change $\\Delta\\kappa = 1/R$ shifts the fundamental quasi-TE mode
+    centroid by $\\Delta u \\approx k_0^2 n_{\\text{eff}}^2 \\sigma_0^4 / R$,
+    giving a per-junction power overlap $\\eta_1 \\approx \\exp(-(\\Delta u / \\sigma_0)^2 / 2)$
+    and two-junction insertion loss $\\text{IL}_{\\text{dB}}(R) \\approx -20\\log_{10}(\\eta_1)$.
+    """
+    r_eff_m = np.asarray(r_eff_m, dtype=float)
+    k0 = 2.0 * np.pi / float(wl)
+    # Effective Gaussian modal half-width sigma_0 for a 400 nm high-contrast SOI strip
+    sigma_0 = 0.435 * float(w_wg)
+    delta_u = (k0 * float(n_eff)) ** 2 * (sigma_0**4) / r_eff_m
+    overlap_two_junc = np.exp(-((delta_u / sigma_0) ** 2))
+    return -10.0 * np.log10(np.maximum(overlap_two_junc, 1e-12))
+
+
+# %% [markdown]
+# ## 4. Subpixel permittivity smoothing vs staircasing
+#
+# Along a $90^\circ$ bend, the waveguide tangent angle $\theta(s)$ sweeps
+# continuously through all grid orientations from $0^\circ$ (aligned with $x$)
+# to $90^\circ$ (aligned with $y$). Without subpixel smoothing, rounding each
+# cell's fill fraction $w \in [0, 1]$ to $0$ or $1$ (`averaging="staircase"`)
+# replaces the smooth curved sidewalls with a staircase of right-angle steps
+# whose spacing varies chirped-grating-like along the arc. Those steps act as
+# distributed Bragg scatterers that cause first-order $\mathcal{O}(\Delta x)$
+# optical path-length (phase) errors, artificial scattering loss, and spurious
+# back-reflections $|S_{11}|^2$ that are orders of magnitude larger than the
+# physical bend reflection.
+#
+# Wakis applies the diagonal **Kottke, Farjadpour & Johnson (2008)** [2]
+# perturbation tensor on cut cells:
+#
+# $$\varepsilon_{\text{eff}, c}^{-1} = n_c^2 \left(\frac{w}{\varepsilon_s} + \frac{1 - w}{\varepsilon_b}\right) + \left(1 - n_c^2\right)\left(w\varepsilon_s + (1 - w)\varepsilon_b\right)^{-1}, \qquad c \in \{x, y, z\},$$
+#
+# where $w$ is the $6\times 6$ supersampled cell area fraction (`PolySlab.fill`)
+# and $\mathbf{n} = (n_x, n_y, n_z)$ is the exact unit outward normal to the
+# polygon segment (`PolySlab.normal`).
+#
+# ### 4.1 Resolution: cells per wavelength and cells across the smallest feature
+#
+# Every time-domain FIT/FDTD waveguide simulation in this series enforces two
+# mandatory resolution rules across all execution modes (`--quick`, `--full`,
+# and parameter sweeps):
+#
+# 1. **Wavelength resolution floor ($\text{cpw} \ge 10$)**: The grid spacing
+#    inside the highest-index material must never fall below $10$ cells per
+#    wavelength at $\lambda_{\min} = 1500\;\text{nm}$. In 2D EIM,
+#    `PICSimulation` counts `cells_per_wavelength` inside the vertical slab
+#    effective index $n_{\text{eff,slab}}(1550\;\text{nm}) = 2.8134$, giving a
+#    background core cell size
+#    $\Delta x_{\text{bg}} = \lambda_{\min} / (n_{\text{eff,slab}}\,\text{cpw}) \approx 533.2\;\text{nm} / \text{cpw}$.
+# 2. **Geometric feature resolution ($N \ge 4$ cells across `min_feature`)**:
+#    The mesh cell size across the smallest geometric feature of the device must
+#    satisfy $\Delta x_{\min} \le \text{min\_feature} / N$ with $N \ge 4$. A grid
+#    coarser than the feature cannot represent the physical field gradients or
+#    boundary geometry, even with subpixel averaging.
+#
+# When a device contains a sub-wavelength gap or grating tooth narrower than
+# $4\,\Delta x_{\text{bg}}$, we pass local refinement boxes
+# `mesh_overrides=[(lo, hi, max_cell), ...]` to `PICSimulation`, where `lo` and
+# `hi` are $(x, y, z)$ box corners in metres (`-np.inf`/`np.inf` spanning an
+# axis) and `max_cell = min_feature / N` caps the cell size across the feature
+# while the tensor-product mesh grades smoothly back to $\Delta x_{\text{bg}}$
+# at adjacent-cell ratio $\le 1.4$.
+#
+# For the Fujisawa *et al.* (2017) hybrid Euler bend, the smallest geometric
+# feature is the silicon wire width $w_{\text{wg}} = 400\;\text{nm}$. At our
+# coarsest level `L1 = (10, 4)`, the background core cell size is
+# $\Delta x_{\text{bg}} \approx 53.3\;\text{nm}$, which already places
+# $400\;\text{nm} / 53.3\;\text{nm} = 7.51 \ge 4$ cells across the waveguide
+# core (and $10.52$, $15.02$, and $30.03$ cells at `L2 = (14, 6)`,
+# `L3 = (20, 8)`, and `R = (40, 16)`). Our helper `build_mesh_overrides` checks
+# whether $w_{\text{wg}} / N < \Delta x_{\text{bg}}$ and automatically inserts a
+# refinement box whenever needed.
+
+# %% [markdown]
+# ## 5. Study tasks & execution modes
+#
+# Each resolution level is a pair $(\text{cpw}, N)$ specifying background
+# `cells_per_wavelength = cpw` and minimum target cells $N$ across
+# $w_{\text{wg}} = 400\;\text{nm}$:
+#
+# - **`L1 = (10, 4)`**: $\Delta x_{\text{bg}} = \Delta x_{\min} = 53.28\;\text{nm}$,
+#   $7.51$ cells across $w_{\text{wg}} = 400\;\text{nm}$.
+# - **`L2 = (14, 6)`**: $\Delta x_{\text{bg}} = \Delta x_{\min} = 38.01\;\text{nm}$,
+#   $10.52$ cells across $w_{\text{wg}} = 400\;\text{nm}$.
+# - **`L3 = (20, 8)`**: $\Delta x_{\text{bg}} = \Delta x_{\min} = 26.64\;\text{nm}$,
+#   $15.02$ cells across $w_{\text{wg}} = 400\;\text{nm}$.
+# - **`R = (40, 16)`**: $\Delta x_{\text{bg}} = \Delta x_{\min} = 13.32\;\text{nm}$,
+#   $30.03$ cells across $w_{\text{wg}} = 400\;\text{nm}$ (single-core runtime
+#   $700.74\;\text{s} \approx 11.7\;\text{min} \ll 6\;\text{h}$).
+#
+# The study runs in two modes:
+#
+# - **`--full` (15 tasks: `task_0`–`task_14`, default in `data/`)**:
+#   - Tasks `0`–`5`: Kottke and staircase on the $R_{\text{eff}} = 4.0\;\mu\text{m}$
+#     Euler bend at `L1 = (10, 4)`, `L2 = (14, 6)`, and `L3 = (20, 8)` with
+#     `n_pml = 10` and `energy_decay = 1e-4` (`kottke_L3` is the primary run and
+#     records DFT fields, 48-frame time-domain movie, and 2D Poynting flux box).
+#   - Task `6` (`kottke_reference`): Independent Kottke reference run at
+#     `R = (40, 16)` used as $T_{\text{ref}}$.
+#   - Tasks `7`–`14`: Radius sweep
+#     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
+#     at `L3 = (20, 8)` (`sweep_circular_R4p0` also records DFT fields and flux box).
+# - **`--quick` (13 tasks: `task_0`–`task_12`)**:
+#   - Tasks `0`–`3`: Kottke and staircase on the $R_{\text{eff}} = 4.0\;\mu\text{m}$
+#     Euler bend at `L1 = (10, 4)` and `L2 = (14, 6)` with `n_pml = 8` and
+#     `energy_decay = 2e-4` (`kottke_L2` records DFT fields, 32-frame movie, and
+#     2D Poynting flux box).
+#   - Task `4` (`kottke_reference`): Independent Kottke reference run at
+#     `L3 = (20, 8)` used as $T_{\text{ref}}$ in quick mode.
+#   - Tasks `5`–`12`: Radius sweep
+#     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
+#     at `L2 = (14, 6)` (`sweep_circular_R4p0` also records DFT fields).
+#
+# ### 5.1 Resolution & performance summary (`--full` measured study & `--quick` mode)
+#
+# Every run in both `--full` (15 tasks) and `--quick` (13 tasks) satisfies the
+# mandatory resolution floors ($\text{cpw} \ge 10$ inside $n_{\text{eff,slab}} = 2.8134$
+# and $\text{cells\_across\_feature} \ge 7.51 \ge 4$ across $w_{\text{wg}} = 400\;\text{nm}$,
+# with zero violations).
+#
+# Measured `--full` study (`data/task_0.json`–`data/task_14.json`):
+#
+# | Task (`--full`) | Level | cpw | $N$ | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across $w=400\;\text{nm}$ | Grid shape | `n_cells` | `n_steps` | Time [s] | Peak RSS [MB] |
+# |---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+# | `task_0` (`kottke_L1`) | `L1` | 10 | 4 | 53.28 | 53.28 | 7.51 | $143\times 143\times 1$ | 20,449 | 5,751 | 13.78 | 383.7 |
+# | `task_1` (`staircase_L1`) | `L1` | 10 | 4 | 53.28 | 53.28 | 7.51 | $143\times 143\times 1$ | 20,449 | 5,951 | 13.38 | 383.9 |
+# | `task_2` (`kottke_L2`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | $192\times 192\times 1$ | 36,864 | 8,001 | 32.45 | 452.9 |
+# | `task_3` (`staircase_L2`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | $192\times 192\times 1$ | 36,864 | 8,351 | 31.42 | 453.4 |
+# | `task_4` (`kottke_L3`, primary) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,401 | 105.12 | 509.3 |
+# | `task_5` (`staircase_L3`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,401 | 94.64 | 508.6 |
+# | `task_6` (`kottke_reference`) | `R` | 40 | 16 | 13.32 | 13.32 | 30.03 | $509\times 509\times 1$ | 259,081 | 22,551 | 700.74 | 828.6 |
+# | `task_7` (`sweep_circular_R2p5`) | `L3` | 20 | 8 | 26.60 | 26.60 | 15.04 | $209\times 209\times 1$ | 43,681 | 10,251 | 46.41 | 464.6 |
+# | `task_8` (`sweep_euler_R2p5`) | `L3` | 20 | 8 | 26.60 | 26.60 | 15.04 | $209\times 209\times 1$ | 43,681 | 10,351 | 47.34 | 464.7 |
+# | `task_9` (`sweep_circular_R3p0`) | `L3` | 20 | 8 | 26.57 | 26.57 | 15.05 | $228\times 228\times 1$ | 51,984 | 10,601 | 62.02 | 478.7 |
+# | `task_10` (`sweep_euler_R3p0`) | `L3` | 20 | 8 | 26.57 | 26.57 | 15.05 | $228\times 228\times 1$ | 51,984 | 10,701 | 64.74 | 477.9 |
+# | `task_11` (`sweep_circular_R3p5`) | `L3` | 20 | 8 | 26.55 | 26.55 | 15.07 | $247\times 247\times 1$ | 61,009 | 10,901 | 72.00 | 513.5 |
+# | `task_12` (`sweep_euler_R3p5`) | `L3` | 20 | 8 | 26.55 | 26.55 | 15.07 | $247\times 247\times 1$ | 61,009 | 11,051 | 78.25 | 512.5 |
+# | `task_13` (`sweep_circular_R4p0`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,201 | 125.17 | 509.9 |
+# | `task_14` (`sweep_euler_R4p0`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,401 | 95.33 | 508.7 |
+#
+# Measured `--quick` mode reference table (`13` tasks, `n_pml = 8`, `energy_decay = 2e-4`):
+#
+# | Task (`--quick`) | Level | cpw | $N$ | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across $w=400\;\text{nm}$ | `n_cells` | `n_steps` | Time [s] |
+# |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+# | `task_0` (`kottke_L1`) | `L1` | 10 | 4 | 53.28 | 53.28 | 7.51 | 19,321 | 5,701 | 12.38 |
+# | `task_1` (`staircase_L1`) | `L1` | 10 | 4 | 53.28 | 53.28 | 7.51 | 19,321 | 5,851 | 13.22 |
+# | `task_2` (`kottke_L2`, primary) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 7,901 | 44.33 |
+# | `task_3` (`staircase_L2`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 8,151 | 34.03 |
+# | `task_4` (`kottke_reference`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | 68,121 | 11,201 | 89.65 |
+# | `task_5` (`sweep_circular_R2p5`) | `L2` | 14 | 6 | 37.88 | 37.88 | 10.56 | 22,201 | 7,151 | 20.12 |
+# | `task_6` (`sweep_euler_R2p5`) | `L2` | 14 | 6 | 37.88 | 37.88 | 10.56 | 22,201 | 7,201 | 19.60 |
+# | `task_7` (`sweep_circular_R3p0`) | `L2` | 14 | 6 | 37.93 | 37.93 | 10.54 | 26,244 | 7,351 | 23.98 |
+# | `task_8` (`sweep_euler_R3p0`) | `L2` | 14 | 6 | 37.93 | 37.93 | 10.54 | 26,244 | 7,451 | 24.45 |
+# | `task_9` (`sweep_circular_R3p5`) | `L2` | 14 | 6 | 37.98 | 37.98 | 10.53 | 30,625 | 7,601 | 28.32 |
+# | `task_10` (`sweep_euler_R3p5`) | `L2` | 14 | 6 | 37.98 | 37.98 | 10.53 | 30,625 | 7,701 | 27.33 |
+# | `task_11` (`sweep_circular_R4p0`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 7,801 | 40.61 |
+# | `task_12` (`sweep_euler_R4p0`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 7,901 | 28.80 |
+
+
+# %%
+def get_task_table(quick=False):
+    """
+    Return the study task table for ``--quick`` (13 tasks: L1, L2 + L3 reference,
+    radius sweep at L2) or ``--full`` (15 tasks: L1, L2, L3 + R reference,
+    radius sweep at L3).
+    """
+    conv_levels = ("L1", "L2") if quick else ("L1", "L2", "L3")
+    primary_lvl = "L2" if quick else "L3"
+    ref_lvl = "L3" if quick else "R"
+    sweep_lvl = "L2" if quick else "L3"
+    n_pml = 8 if quick else 10
+    decay = 2e-4 if quick else 1e-4
+    tasks = []
+
+    for lvl in conv_levels:
+        cpw, n_feat = RESOLUTION_LEVELS[lvl]
+        for avg in ("kottke", "staircase"):
+            idx = len(tasks)
+            is_primary = lvl == primary_lvl and avg == "kottke"
+            tasks.append(
+                {
+                    "index": idx,
+                    "name": f"{avg}_{lvl}",
+                    "group": "convergence",
+                    "level": lvl,
+                    "bend_type": "euler",
+                    "r_eff": R_EFF_DEFAULT,
+                    "min_feature": MIN_FEATURE,
+                    "averaging": avg,
+                    "cpw": cpw,
+                    "n_feature": n_feat,
+                    "n_pml": n_pml,
+                    "energy_decay": decay,
+                    "collect_fields": is_primary,
+                    "record_movie": is_primary,
+                    "movie_frames": 32 if quick else 48,
+                    "description": (
+                        f"2D EIM Euler bend R=4.0um ({avg}, {lvl} grid, "
+                        f"cpw={cpw}, N={n_feat}"
+                        + (", DFT fields + movie + flux box)" if is_primary else ")")
+                    ),
+                }
+            )
+
+    ref_cpw, ref_n_feat = RESOLUTION_LEVELS[ref_lvl]
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_reference",
+            "group": "convergence",
+            "level": ref_lvl,
+            "bend_type": "euler",
+            "r_eff": R_EFF_DEFAULT,
+            "min_feature": MIN_FEATURE,
+            "averaging": "kottke",
+            "cpw": ref_cpw,
+            "n_feature": ref_n_feat,
+            "n_pml": n_pml,
+            "energy_decay": decay,
+            "collect_fields": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "description": (
+                f"2D EIM Euler bend R=4.0um (kottke, {ref_lvl} reference grid, "
+                f"cpw={ref_cpw}, N={ref_n_feat})"
+            ),
+        }
+    )
+
+    sweep_cpw, sweep_n_feat = RESOLUTION_LEVELS[sweep_lvl]
+    for r_um in SWEEP_RADII_UM:
+        for btype in ("circular", "euler"):
+            idx = len(tasks)
+            tag = f"{r_um:.1f}".replace(".", "p")
+            collect_circ_4 = btype == "circular" and np.isclose(r_um, 4.0)
+            tasks.append(
+                {
+                    "index": idx,
+                    "name": f"sweep_{btype}_R{tag}",
+                    "group": "radius_sweep",
+                    "level": sweep_lvl,
+                    "bend_type": btype,
+                    "r_eff": r_um * 1e-6,
+                    "min_feature": MIN_FEATURE,
+                    "averaging": "kottke",
+                    "cpw": sweep_cpw,
+                    "n_feature": sweep_n_feat,
+                    "n_pml": n_pml,
+                    "energy_decay": decay,
+                    "collect_fields": collect_circ_4,
+                    "record_movie": False,
+                    "movie_frames": 0,
+                    "description": (
+                        f"2D EIM {btype} bend radius sweep (R_eff={r_um:.1f}um, "
+                        f"kottke, {sweep_lvl}, cpw={sweep_cpw}, N={sweep_n_feat}"
+                        + (", DFT fields)" if collect_circ_4 else ")")
+                    ),
+                }
+            )
+
+    return tasks
+
+
+class _MeshOnlyPICSimulation(PICSimulation):
+    """
+    ``PICSimulation`` subclass that constructs the exact 2D/3D ``Simulation``
+    and ``GridFIT3D`` mesh without allocating ``SolverFIT3D`` or running
+    subpixel polygon supersampling.
+    """
+
+    def build(self):
+        from wakis.gridFIT3D import GridFIT3D
+        from wakis.templates.simulation import Simulation
+
+        if self.two_d:
+            structs, domain = self._build_2d_structures_and_domain()
+            boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+        else:
+            structs = list(self.structures_3d)
+            domain = self._domain_input
+            boundaries = "cpml"
+
+        self.sim = Simulation(
+            self.f_min,
+            self.f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=self.cells_per_wavelength,
+            padding=self.padding,
+            n_pml=self.n_pml,
+            n_freqs=self.n_freqs,
+            cfln=self.cfln,
+            mesh_overrides=self.mesh_overrides,
+            use_gpu=self.use_gpu,
+            averaging=self.averaging,
+        )
+        x, y, z = self.sim._axes = [self.sim._axis(a) for a in range(3)]
+        self.grid = self.sim.grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+        self.frequencies = self.sim.frequencies
+        self.wavelengths = c_light / self.frequencies
+        return None
+
+
+def build_task_simulation(task_cfg, mesh_only=False):
+    """
+    Build the geometry, mesh overrides, and ``PICSimulation`` object for a study
+    task without running the time-domain solver. When ``mesh_only=True``, only
+    ``GridFIT3D`` is constructed (skipping subpixel material assignment).
+    """
+    min_feature = float(task_cfg.get("min_feature", MIN_FEATURE))
+    structures, ports, domain, geom_info = build_bend_waveguide(
+        r_eff=task_cfg["r_eff"],
+        bend_type=task_cfg["bend_type"],
+        width=min_feature,
+    )
+    overrides = build_mesh_overrides(
+        r_eff=task_cfg["r_eff"],
+        width=min_feature,
+        cpw=task_cfg["cpw"],
+        n_feature=task_cfg["n_feature"],
+        wl_min=WL_MIN,
+        wl_ref=WL_REF,
+        h_si=H_SI,
+        port_offset=PORT_OFFSET,
+    )
+    use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
+    sim_cls = _MeshOnlyPICSimulation if mesh_only else PICSimulation
+    pic = sim_cls(
+        wavelength_min=WL_MIN,
+        wavelength_max=WL_MAX,
+        n_freqs=N_FREQS,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging=task_cfg["averaging"],
+        cells_per_wavelength=task_cfg["cpw"],
+        domain=domain,
+        n_pml=task_cfg["n_pml"],
+        mesh_overrides=overrides,
+        field_wavelengths=(WL_REF,),
+        record_movie=task_cfg["record_movie"],
+        movie_frames=task_cfg["movie_frames"],
+        use_gpu=use_gpu,
+    )
+    return pic, structures, ports, domain, geom_info
+
+
+def run_single_task(task_cfg, out_dir):
+    """
+    Execute one 2D EIM waveguide bend study task and write ``task_<I>.npz`` and
+    ``task_<I>.json`` into ``out_dir``.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    idx = task_cfg["index"]
+    t0 = time.perf_counter()
+
+    pic, _, _, _, geom_info = build_task_simulation(task_cfg)
+    s_mat = pic.run_s_parameters(
+        drive=["in"],
+        energy_decay=task_cfg["energy_decay"],
+        collect_fields=task_cfg["collect_fields"],
+    )
+    res_info = measure_mesh_resolution(
+        pic,
+        r_eff=task_cfg["r_eff"],
+        min_feature=task_cfg.get("min_feature", MIN_FEATURE),
+        port_offset=PORT_OFFSET,
+    )
+
+    payload = {
+        "task_index": np.int32(idx),
+        "name": np.array(task_cfg["name"]),
+        "group": np.array(task_cfg["group"]),
+        "level": np.array(task_cfg["level"]),
+        "bend_type": np.array(task_cfg["bend_type"]),
+        "r_eff": np.float64(task_cfg["r_eff"]),
+        "r_min": np.float64(geom_info["r_min"]),
+        "euler_p": np.float64(geom_info["p"]),
+        "averaging": np.array(task_cfg["averaging"]),
+        "cpw": np.float32(task_cfg["cpw"]),
+        "n_feature": np.int32(task_cfg["n_feature"]),
+        "min_feature_nm": np.float64(res_info["min_feature_nm"]),
+        "dx_background_nm": np.float64(res_info["dx_background_nm"]),
+        "dx_min_nm": np.float64(res_info["dx_min_nm"]),
+        "cells_across_feature": np.float64(res_info["cells_across_feature"]),
+        "n_cells": np.int32(res_info["n_cells"]),
+        "n_steps": np.int32(res_info["n_steps"]),
+        "n_eff_slab": np.float64(pic.n_eff_slab),
+        "frequencies": pic.frequencies.astype(np.float64),
+        "wavelengths": pic.wavelengths.astype(np.float64),
+        "S11": s_mat[("in", "in")].astype(np.complex128),
+        "S21": s_mat[("out", "in")].astype(np.complex128),
+    }
+
+    if task_cfg["collect_fields"]:
+        # Solve orthogonal port modes at 1550 nm:
+        # - Port "in" (axis=0, +x normal) has axes "xyz": transverse coord y = coords["Eb"][0], field Ey = e["b"][:, 0]
+        # - Port "out" (axis=1, +y normal) has axes "yzx": transverse coord x = coords["Ec"][1], field Ex = e["c"][0, :]
+        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = pic.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)
+        y_in = modes_in[0].coords["Eb"][0]
+        ey_in = modes_in[0].e["b"][:, 0]
+        m_in = np.abs(y_in) <= 0.85e-6
+
+        x_out = modes_out[0].coords["Ec"][1]
+        ex_out = modes_out[0].e["c"][0, :]
+        m_out = np.abs(x_out - task_cfg["r_eff"]) <= 0.85e-6
+
+        payload["port_y_in"] = y_in[m_in].astype(np.float32)
+        payload["port_ey_in"] = ey_in[m_in].astype(np.complex64)
+        payload["port_neff_in"] = np.float64(np.real(modes_in[0].neff))
+        payload["port_x_out"] = x_out[m_out].astype(np.float32)
+        payload["port_ex_out"] = ex_out[m_out].astype(np.complex64)
+        payload["port_neff_out"] = np.float64(np.real(modes_out[0].neff))
+
+        wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
+        f_disp = c_light / wl_disp
+        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
+        dneff_dl = np.gradient(neff_disp, wl_disp)
+        ng_disp = neff_disp - wl_disp * dneff_dl
+        payload["disp_wavelengths"] = wl_disp.astype(np.float64)
+        payload["disp_neff"] = neff_disp.astype(np.float64)
+        payload["disp_ng"] = ng_disp.astype(np.float64)
+
+        if WL_REF in pic.dft_fields:
+            fmap = pic.dft_fields[WL_REF]
+            payload["dft_x"] = fmap["x"]
+            payload["dft_y"] = fmap["y"]
+            payload["dft_Ex"] = fmap["Ex"]
+            payload["dft_Ey"] = fmap["Ey"]
+            payload["dft_E2"] = fmap["E2"]
+
+        if pic.movie_data is not None:
+            payload["movie_x"] = pic.movie_data["x"]
+            payload["movie_y"] = pic.movie_data["y"]
+            payload["movie_times"] = pic.movie_data["times"]
+            payload["movie_frames"] = pic.movie_data["frames"]
+            payload["movie_peak"] = pic.movie_data["peak"]
+
+        if pic.port_time_trace is not None:
+            payload["trace_t"] = pic.port_time_trace["t"]
+            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+
+        if pic.flux_balance is not None:
+            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+
+    npz_path = out_dir / f"task_{idx}.npz"
+    np.savez_compressed(npz_path, **payload)
+
+    elapsed = time.perf_counter() - t0
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    meta = {
+        "task_index": idx,
+        "name": task_cfg["name"],
+        "group": task_cfg["group"],
+        "level": task_cfg["level"],
+        "bend_type": task_cfg["bend_type"],
+        "r_eff_um": round(task_cfg["r_eff"] * 1e6, 3),
+        "averaging": task_cfg["averaging"],
+        "cpw": task_cfg["cpw"],
+        "n_feature": task_cfg["n_feature"],
+        "min_feature_nm": res_info["min_feature_nm"],
+        "dx_background_nm": res_info["dx_background_nm"],
+        "dx_min_nm": res_info["dx_min_nm"],
+        "cells_across_feature": res_info["cells_across_feature"],
+        "grid_shape": res_info["grid_shape"],
+        "n_cells": res_info["n_cells"],
+        "n_steps": res_info["n_steps"],
+        "elapsed_s": round(elapsed, 3),
+        "peak_rss_mb": round(rss_mb, 2),
+        "npz_bytes": int(npz_path.stat().st_size),
+    }
+    (out_dir / f"task_{idx}.json").write_text(json.dumps(meta, indent=2))
+    print(
+        f"[task_{idx} {task_cfg['name']}] cpw={meta['cpw']} N={meta['n_feature']} "
+        f"min_feature={meta['min_feature_nm']:.0f}nm "
+        f"dx_bg={meta['dx_background_nm']:.2f}nm dx_min={meta['dx_min_nm']:.2f}nm "
+        f"cells_across={meta['cells_across_feature']:.2f} "
+        f"n_cells={meta['n_cells']} n_steps={meta['n_steps']} "
+        f"time={elapsed:.2f}s rss={rss_mb:.1f}MB"
+    )
+    return meta
+
+
+# %% [markdown]
+# ## 6. Generating the complete figure suite
+#
+# When invoked with `--plot` (or at the end of `--quick` / `--full`),
+# `generate_all_figures` reads `data/task_*.npz` and writes 16 diagnostic and
+# validation figures to `figures/`:
+#
+# 1. `01_euler_bend_layout.png` — Annotated top-view layout of the $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid Euler $90^\circ$ bend with circular baseline centerline overlay.
+# 2. `02_eim_vertical_stack.png` — Vertical $210\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ slab mode profile, and $n_{\text{eff,slab}}(\lambda)$.
+# 3. `03_centerline_and_curvature_profile.png` — Centerline comparison $(x(s), y(s))$ and curvature profiles $\kappa(s) = 1/R(s)$ of circular, hybrid Euler, and pure Euler bends.
+# 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map and Yee mesh cell edges across the $w = 400\;\text{nm}$ feature at `L1` (`10 cpw`, staircase vs Kottke) and at the reference level (`20 cpw` in `--quick`, `40 cpw` in `--full`), with the $400\;\text{nm}$ feature width annotated.
+# 5. `05_port_mode_profiles.png` — Input port ($E_y(y)$) and orthogonal $+y$ output port ($E_x(x)$) fundamental $\text{TE}_0$ eigenmode profiles.
+# 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$ across $1500\text{--}1600\;\text{nm}$.
+# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ of the hybrid Euler bend at $1550\;\text{nm}$.
+# 8. `08_field_intensity_euler_vs_circular_1550.png` — Side-by-side logarithmic intensity comparison at $1550\;\text{nm}$: circular bend (junction radiation burst) vs hybrid Euler bend.
+# 9. `09_field_real_ex_ey_1550.png` — Two-panel steady-state wave-front maps $\mathrm{Re}(E_y)$ and $\mathrm{Re}(E_x)$ at $1550\;\text{nm}$ illustrating $90^\circ$ in-plane polarization rotation.
+# 10. `10_pulse_propagation.gif` — Time-domain pulse propagation movie through the $90^\circ$ hybrid Euler bend.
+# 11. `11_sparameter_spectra_linear_and_db.png` (and `11b_transmission_zoom_db.png`) — Broadband S-parameter spectra across $1505\text{--}1595\;\text{nm}$ in both linear power and dB scales for hybrid Euler vs circular bends.
+# 12. `12_bending_loss_and_flux_budget.png` — Broadband bending insertion loss (dB) of circular vs hybrid Euler bends and 2D Poynting flux-box conservation audit.
+# 13. `13_radius_sweep_euler_vs_circular.png` — Bend insertion loss and mode-mismatch return loss vs effective radius $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$ against conformal-mapping perturbation theory.
+# 14. `14_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke vs staircasing against the independent Kottke reference $T_{\text{ref}}$ (`L3 = 20 cpw` in `--quick`, `R = 40 cpw` in `--full`), annotated with cells across the $400\;\text{nm}$ waveguide feature and a dual x-axis, plus multi-resolution spectral overlay (`14b_resolution_spectra_comparison.png`).
+# 15. `15_port_time_trace.png` — Output port time-domain waveform and exponential ring-down audit.
+
+
+# %%
+def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
+    """Read ``data_dir/task_*.npz`` and render the complete figure suite into ``fig_dir``."""
+    from matplotlib.patches import Polygon as MplPolygon
+
+    data_dir = Path(data_dir)
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    t4_path = data_dir / "task_4.npz"
+    if quick is None:
+        is_quick_data = (
+            t4_path.exists()
+            and str(np.load(t4_path, allow_pickle=False)["name"]) == "kottke_reference"
+        )
+    else:
+        is_quick_data = bool(quick)
+    expected_tasks = get_task_table(quick=is_quick_data)
+
+    tasks_data = {}
+    for t_cfg in expected_tasks:
+        p = data_dir / f"task_{t_cfg['index']}.npz"
+        if p.exists():
+            d = dict(np.load(p, allow_pickle=False))
+            tasks_data[str(d["name"])] = d
+
+    primary_name = "kottke_L3" if "kottke_L3" in tasks_data else "kottke_L2"
+    if primary_name not in tasks_data:
+        raise FileNotFoundError(
+            f"Missing primary convergence task in {data_dir}. Run --quick or --full first."
+        )
+    primary = tasks_data[primary_name]
+    circ_primary = tasks_data.get("sweep_circular_R4p0", primary)
+    structures, ports, domain, euler_info = build_bend_waveguide(
+        r_eff=R_EFF_DEFAULT, bend_type="euler"
+    )
+    structs_circ, _, _, _ = build_bend_waveguide(
+        r_eff=R_EFF_DEFAULT, bend_type="circular"
+    )
+
+    # 1. Top-view device layout with circular vs Euler centerline overlay
+    annotations = [
+        {
+            "text": "Input WG (y = 0)\nw = 400 nm, h = 210 nm",
+            "xy": (-0.45, -0.20),
+            "xytext": (-0.35, -0.88),
+            "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
+        },
+        {
+            "text": (
+                f"Clothoid transitions (A = {euler_info['A'] * 1e6:.1f} µm)\n"
+                f"L_max = {euler_info['L_max'] * 1e6:.2f} µm, p = {euler_info['p']:.2f}"
+            ),
+            "xy": (euler_info["xp"] * 1e6, euler_info["yp"] * 1e6),
+            "xytext": (1.55, -0.82),
+            "arrowprops": dict(arrowstyle="->", color="#d95f02", lw=1.1),
+        },
+        {
+            "text": f"Central circular arc\nR_min = {euler_info['r_min'] * 1e6:.2f} µm",
+            "xy": (3.12, 1.35),
+            "xytext": (1.45, 2.15),
+            "arrowprops": dict(arrowstyle="->", color="#1b9e77", lw=1.1),
+        },
+        {
+            "text": "Output WG\n(x = R_eff = 4.0 µm)",
+            "xy": (3.80, 4.45),
+            "xytext": (2.05, 4.55),
+            "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
+        },
+    ]
+    fig, ax = plt.subplots(figsize=(7.2, 6.4), dpi=150)
+    plot_layout(
+        structures,
+        ports=ports,
+        domain=domain,
+        annotations=annotations,
+        title="Fujisawa et al. (2017) hybrid Euler 90° SOI waveguide bend (2D EIM)",
+        ax=ax,
+    )
+    _, cl_circ, _, _, _ = bend_centerline_and_curvature(
+        R_EFF_DEFAULT, bend_type="circular"
+    )
+    _, cl_eul, _, _, _ = bend_centerline_and_curvature(R_EFF_DEFAULT, bend_type="euler")
+    ax.plot(
+        cl_circ[:, 0] * 1e6,
+        cl_circ[:, 1] * 1e6,
+        "--",
+        color="#d95f02",
+        lw=1.6,
+        label="Circular centerline (R = 4.0 µm)",
+    )
+    ax.plot(
+        cl_eul[:, 0] * 1e6,
+        cl_eul[:, 1] * 1e6,
+        "-",
+        color="#ffffff",
+        lw=1.4,
+        label="Hybrid Euler centerline",
+    )
+    ax.plot(
+        [euler_info["xp"] * 1e6, (R_EFF_DEFAULT - euler_info["yp"]) * 1e6],
+        [euler_info["yp"] * 1e6, (R_EFF_DEFAULT - euler_info["xp"]) * 1e6],
+        "o",
+        color="#e7298a",
+        ms=5.5,
+        label="Clothoid–circle junctions",
+    )
+    ax.legend(loc="upper left", fontsize=8.0)
+    fig.tight_layout()
+    fig.savefig(fig_dir / "01_euler_bend_layout.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # 2. Effective-Index Method (EIM) vertical stack, TE0 slab mode, and dispersion
+    plot_eim_stack(
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        thickness=H_SI,
+        wavelength_ref=WL_REF,
+        wavelengths=np.linspace(WL_MIN, WL_MAX, 51),
+        out_path=fig_dir / "02_eim_vertical_stack.png",
+    )
+
+    # 3. Centerline comparison and curvature profile kappa(s) = 1/R(s)
+    s_c, cl_c, _, kap_c, _ = bend_centerline_and_curvature(
+        R_EFF_DEFAULT, bend_type="circular", n=401
+    )
+    s_h, cl_h, _, kap_h, info_h = bend_centerline_and_curvature(
+        R_EFF_DEFAULT, bend_type="euler", n=401
+    )
+    s_p, cl_p, _, kap_p, info_p = bend_centerline_and_curvature(
+        R_EFF_DEFAULT, bend_type="pure_euler", n=401
+    )
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.3), dpi=150)
+    ax0.plot(
+        cl_c[:, 0] * 1e6,
+        cl_c[:, 1] * 1e6,
+        "--",
+        color="#d95f02",
+        lw=2.0,
+        label=r"Circular ($R = 4.00\;\mu\mathrm{m}$)",
+    )
+    ax0.plot(
+        cl_h[:, 0] * 1e6,
+        cl_h[:, 1] * 1e6,
+        "-",
+        color="#1b9e77",
+        lw=2.3,
+        label=rf"Hybrid Euler ($A=2.4\;\mu\mathrm{{m}}, R_{{\min}}={info_h['r_min'] * 1e6:.2f}\;\mu\mathrm{{m}}$)",
+    )
+    ax0.plot(
+        cl_p[:, 0] * 1e6,
+        cl_p[:, 1] * 1e6,
+        ":",
+        color="#7570b3",
+        lw=1.9,
+        label=rf"Pure Euler ($p=1, R_{{\min}}={info_p['r_min'] * 1e6:.2f}\;\mu\mathrm{{m}}$)",
+    )
+    ax0.plot(
+        [info_h["xp"] * 1e6, (R_EFF_DEFAULT - info_h["yp"]) * 1e6],
+        [info_h["yp"] * 1e6, (R_EFF_DEFAULT - info_h["xp"]) * 1e6],
+        "o",
+        color="#1b9e77",
+        ms=6,
+        label="Clothoid–circle transitions",
+    )
+    ax0.set(
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title="(a) 90° bend centerlines at R_eff = 4.0 µm",
+    )
+    ax0.grid(True, ls=":", alpha=0.4)
+    ax0.legend(loc="upper left", fontsize=8.0)
+
+    # Include straight leads s in [-0.6, L_tot + 0.6] um to show the step jump of the circular bend
+    s_lead_c = np.concatenate([[-0.6e-6, 0.0], s_c, [s_c[-1], s_c[-1] + 0.6e-6]]) * 1e6
+    k_lead_c = np.concatenate([[0.0, 0.0], kap_c * 1e-6, [0.0, 0.0]])
+    s_lead_h = np.concatenate([[-0.6e-6], s_h, [s_h[-1] + 0.6e-6]]) * 1e6
+    k_lead_h = np.concatenate([[0.0], kap_h * 1e-6, [0.0]])
+    s_lead_p = np.concatenate([[-0.6e-6], s_p, [s_p[-1] + 0.6e-6]]) * 1e6
+    k_lead_p = np.concatenate([[0.0], kap_p * 1e-6, [0.0]])
+
+    ax1.plot(
+        s_lead_c,
+        k_lead_c,
+        "--",
+        color="#d95f02",
+        lw=2.0,
+        label="Circular (step discontinuity Δκ = 0.25 µm⁻¹)",
+    )
+    ax1.plot(
+        s_lead_h,
+        k_lead_h,
+        "-",
+        color="#1b9e77",
+        lw=2.3,
+        label="Hybrid Euler (linear ramp κ = s/A², plateau 1/R_min)",
+    )
+    ax1.plot(
+        s_lead_p,
+        k_lead_p,
+        ":",
+        color="#7570b3",
+        lw=1.9,
+        label="Pure Euler (triangular κ(s), p = 1)",
+    )
+    ax1.axvline(info_h["L_max"] * 1e6, color="#1b9e77", ls=":", alpha=0.6)
+    ax1.axvline(
+        (info_h["L_tot"] - info_h["L_max"]) * 1e6, color="#1b9e77", ls=":", alpha=0.6
+    )
+    ax1.set(
+        xlabel="Arc length s along bend [µm]",
+        ylabel="Curvature κ(s) = 1 / R(s) [µm⁻¹]",
+        ylim=(-0.03, 0.42),
+        title="(b) Curvature profile κ(s): continuous Euler vs step circular",
+    )
+    ax1.grid(True, ls=":", alpha=0.4)
+    ax1.legend(loc="upper right", fontsize=8.0)
+    fig.tight_layout()
+    fig.savefig(
+        fig_dir / "03_centerline_and_curvature_profile.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+    # 4. Zoomed permittivity map and mesh cell edges across the 400 nm waveguide feature at L1 and Reference
+    cpw_l1, n_l1 = RESOLUTION_LEVELS["L1"]
+    ref_d = tasks_data.get("kottke_reference", primary)
+    cpw_ref = int(ref_d["cpw"])
+    lvl_ref = str(ref_d.get("level", "L3"))
+    n_ref = int(ref_d.get("n_feature", RESOLUTION_LEVELS.get(lvl_ref, (cpw_ref, 8))[1]))
+    n_pml_zoom = 8 if is_quick_data else 10
+    pic_l1_stair = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="staircase",
+        cells_per_wavelength=cpw_l1,
+        domain=domain,
+        n_pml=n_pml_zoom,
+        mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_l1, n_l1),
+    )
+    pic_l1_kottke = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_l1,
+        domain=domain,
+        n_pml=n_pml_zoom,
+        mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_l1, n_l1),
+    )
+    pic_ref_kottke = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_ref,
+        domain=domain,
+        n_pml=n_pml_zoom,
+        mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_ref, n_ref),
+    )
+    plot_feature_mesh_zoom(
+        pic_l1_stair,
+        pic_l1_kottke,
+        pic_ref_kottke,
+        structures=structures,
+        min_feature_m=MIN_FEATURE,
+        ref_label=f"{lvl_ref} Ref Kottke ({cpw_ref} cpw, N={n_ref})",
+        out_path=fig_dir / "04_permittivity_mesh_zoom.png",
+    )
+
+    # 5. Port mode profiles at input (Ey vs y) and orthogonal output (Ex vs x - R_eff)
+    plot_port_modes(
+        primary["port_y_in"] * 1e6,
+        primary["port_ey_in"],
+        float(primary["port_neff_in"]),
+        (primary["port_x_out"] - R_EFF_DEFAULT) * 1e6,
+        primary["port_ex_out"],
+        float(primary["port_neff_out"]),
+        structures_outline_y=[(-0.5 * W_WG * 1e6, 0.5 * W_WG * 1e6)],
+        out_path=fig_dir / "05_port_mode_profiles.png",
+    )
+
+    # 6. Waveguide mode effective index and group index dispersion
+    plot_neff_dispersion(
+        primary["disp_wavelengths"] * 1e9,
+        primary["disp_neff"],
+        neff_slab=float(primary["n_eff_slab"]),
+        ng_2d=primary["disp_ng"],
+        out_path=fig_dir / "06_port_neff_dispersion.png",
+    )
+
+    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm (hybrid Euler)
+    plot_field_map(
+        primary["dft_x"],
+        primary["dft_y"],
+        primary["dft_E2"],
+        structures=structures,
+        kind="intensity_log",
+        title=r"Hybrid Euler bend modal intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
+        out_path=fig_dir / "07_field_intensity_1550.png",
+    )
+
+    # 8. Side-by-side logarithmic intensity comparison: Circular vs Hybrid Euler at 1550 nm
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 5.0), dpi=150, sharey=True)
+    db_floor = -35.0
+    for ax, d_map, structs_k, ttl in (
+        (
+            ax0,
+            circ_primary,
+            structs_circ,
+            "(a) Circular 90° bend (R = 4.0 µm): junction radiation",
+        ),
+        (
+            ax1,
+            primary,
+            structures,
+            "(b) Hybrid Euler 90° bend (R_eff = 4.0 µm, A = 2.4 µm)",
+        ),
+    ):
+        x_um = np.asarray(d_map["dft_x"]) * 1e6
+        y_um = np.asarray(d_map["dft_y"]) * 1e6
+        e2 = np.asarray(d_map["dft_E2"])
+        f_max = float(np.max(e2)) or 1.0
+        data_db = 10.0 * np.log10(np.maximum(e2 / f_max, 10.0 ** (db_floor / 10.0)))
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            data_db.T,
+            cmap="inferno",
+            vmin=db_floor,
+            vmax=0.0,
+            shading="auto",
+        )
+        for s in structs_k:
+            ax.add_patch(
+                MplPolygon(
+                    s.vertices * 1e6,
+                    closed=True,
+                    fill=False,
+                    edgecolor="white",
+                    lw=1.1,
+                    alpha=0.85,
+                )
+            )
+        ax.set(
+            aspect="equal",
+            xlim=(x_um.min(), x_um.max()),
+            ylim=(y_um.min(), y_um.max()),
+            xlabel="x [µm]",
+            title=ttl,
+        )
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+        cb.set_label(r"$10\log_{10}(|\mathbf{E}|^2 / |\mathbf{E}|_{\max}^2)$ [dB]")
+    ax0.set_ylabel("y [µm]")
+    fig.tight_layout()
+    fig.savefig(
+        fig_dir / "08_field_intensity_euler_vs_circular_1550.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+    # 9. Steady-state real field maps Re(Ey) and Re(Ex) showing 90-degree polarization rotation
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 5.0), dpi=150, sharey=True)
+    x_um = np.asarray(primary["dft_x"]) * 1e6
+    y_um = np.asarray(primary["dft_y"]) * 1e6
+    ey_f = np.asarray(primary["dft_Ey"])
+    ex_f = np.asarray(primary.get("dft_Ex", ey_f))
+    vmax = float(np.percentile(np.hypot(np.abs(ex_f), np.abs(ey_f)), 99.5)) or 1.0
+    for ax, fld, comp_lbl, ttl in (
+        (
+            ax0,
+            ey_f,
+            r"Normalized $\mathrm{Re}(E_y)$",
+            r"(a) $\mathrm{Re}(E_y)$ (transverse at $+x$ input port)",
+        ),
+        (
+            ax1,
+            ex_f,
+            r"Normalized $\mathrm{Re}(E_x)$",
+            r"(b) $\mathrm{Re}(E_x)$ (transverse at $+y$ output port)",
+        ),
+    ):
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            np.real(fld).T / vmax,
+            cmap="RdBu_r",
+            vmin=-1.0,
+            vmax=1.0,
+            shading="auto",
+        )
+        for s in structures:
+            ax.add_patch(
+                MplPolygon(
+                    s.vertices * 1e6,
+                    closed=True,
+                    fill=False,
+                    edgecolor="black",
+                    lw=1.1,
+                    alpha=0.85,
+                )
+            )
+        ax.set(
+            aspect="equal",
+            xlim=(x_um.min(), x_um.max()),
+            ylim=(y_um.min(), y_um.max()),
+            xlabel="x [µm]",
+            title=ttl,
+        )
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+        cb.set_label(comp_lbl)
+    ax0.set_ylabel("y [µm]")
+    fig.tight_layout()
+    fig.savefig(
+        fig_dir / "09_field_real_ex_ey_1550.png", dpi=150, bbox_inches="tight"
+    )
+    plt.close(fig)
+
+    # 10. Animated pulse propagation GIF
+    if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
+        make_movie(
+            primary["movie_x"],
+            primary["movie_y"],
+            primary["movie_frames"],
+            primary["movie_times"],
+            structures=structures,
+            out_path=fig_dir / "10_pulse_propagation.gif",
+            fps=12,
+        )
+
+    # Sort wavelengths ascending for spectral plots (interior of pulse band: 1505-1595 nm)
+    wl_nm_all = primary["wavelengths"] * 1e9
+    order = np.argsort(wl_nm_all)
+    wl_nm = wl_nm_all[order]
+    mask = (wl_nm >= 1505.0) & (wl_nm <= 1595.0)
+    wl_b = wl_nm[mask]
+
+    s11_e = primary["S11"][order][mask]
+    s21_e = primary["S21"][order][mask]
+    t_e = np.abs(s21_e) ** 2
+    r_e = np.abs(s11_e) ** 2
+
+    s11_c = circ_primary["S11"][order][mask]
+    s21_c = circ_primary["S21"][order][mask]
+    t_c = np.abs(s21_c) ** 2
+    r_c = np.abs(s11_c) ** 2
+
+    # 11. Broadband S-parameter spectra in linear power and dB
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    ax0.plot(
+        wl_b,
+        t_e,
+        color="#1b9e77",
+        lw=2.2,
+        label=r"Hybrid Euler $|S_{21}|^2$ ($R_{\mathrm{eff}} = 4.0\;\mu\mathrm{m}$)",
+    )
+    ax0.plot(
+        wl_b,
+        t_c,
+        "--",
+        color="#d95f02",
+        lw=2.0,
+        label=r"Circular $|S_{21}|^2$ ($R = 4.0\;\mu\mathrm{m}$)",
+    )
+    ax0.axhline(1.0, color="0.4", ls=":", lw=1.2, label="Lossless unity transmission")
+    ax0.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel=r"Linear modal power transmission $T = |S_{21}|^2$",
+        ylim=(0.975, 1.005),
+        title="(a) Linear transmission spectrum (1505–1595 nm)",
+    )
+    ax0.grid(True, ls=":", alpha=0.4)
+    ax0.legend(loc="lower right", fontsize=8.0)
+
+    ax1.plot(
+        wl_b,
+        10.0 * np.log10(np.maximum(t_e, 1e-12)),
+        color="#1b9e77",
+        lw=2.0,
+        label=r"Hybrid Euler $10\log_{10}|S_{21}|^2$",
+    )
+    ax1.plot(
+        wl_b,
+        10.0 * np.log10(np.maximum(t_c, 1e-12)),
+        "--",
+        color="#d95f02",
+        lw=1.9,
+        label=r"Circular $10\log_{10}|S_{21}|^2$",
+    )
+    ax1.plot(
+        wl_b,
+        10.0 * np.log10(np.maximum(r_e, 1e-12)),
+        "-.",
+        color="#2b5c8f",
+        lw=1.7,
+        label=r"Hybrid Euler return loss $10\log_{10}|S_{11}|^2$",
+    )
+    ax1.plot(
+        wl_b,
+        10.0 * np.log10(np.maximum(r_c, 1e-12)),
+        ":",
+        color="#7570b3",
+        lw=1.7,
+        label=r"Circular return loss $10\log_{10}|S_{11}|^2$",
+    )
+    ax1.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel="S-parameter magnitude [dB]",
+        title="(b) Broadband transmission and return loss [dB]",
+    )
+    ax1.grid(True, ls=":", alpha=0.4)
+    ax1.legend(loc="center right", fontsize=8.0)
+    fig.tight_layout()
+    fig.savefig(
+        fig_dir / "11_sparameter_spectra_linear_and_db.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+    # 12. Bending insertion loss (dB) vs Fujisawa et al. (2017) & 2D Poynting flux budget
+    loss_e_db = -10.0 * np.log10(np.maximum(t_e, 1e-12))
+    loss_c_db = -10.0 * np.log10(np.maximum(t_c, 1e-12))
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    ax0.plot(
+        wl_b,
+        loss_c_db,
+        "--",
+        color="#d95f02",
+        lw=2.1,
+        label=f"Circular 2D EIM (mean = {np.mean(loss_c_db):.4f} dB)",
+    )
+    ax0.plot(
+        wl_b,
+        loss_e_db,
+        "-",
+        color="#1b9e77",
+        lw=2.2,
+        label=f"Hybrid Euler 2D EIM (mean = {np.mean(loss_e_db):.4f} dB)",
+    )
+    ax0.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel=r"Bending insertion loss $-10\log_{10}|S_{21}|^2$ [dB]",
+        ylim=(-0.005, max(0.08, float(np.max(loss_c_db)) * 1.15)),
+        title="(a) 90° bend insertion loss: circular vs hybrid Euler",
+    )
+    ax0.grid(True, ls=":", alpha=0.4)
+    ax0.legend(loc="upper right", fontsize=8.0)
+
+    ax1.plot(
+        wl_b,
+        t_e,
+        color="#1b9e77",
+        lw=2.1,
+        label=r"Guided output mode $T = |S_{21}|^2$",
+    )
+    if "flux_total_box" in primary:
+        f_box = primary["flux_total_box"][order][mask]
+        f_rad = np.maximum(f_box - t_e - r_e, 0.0)
+        ax1.plot(
+            wl_b,
+            f_box,
+            "--",
+            color="#2b5c8f",
+            lw=1.9,
+            label=f"2D Poynting flux box total (mean = {np.mean(f_box):.4f})",
+        )
+        ax1.plot(
+            wl_b,
+            f_rad * 100.0,
+            ":",
+            color="#d95f02",
+            lw=1.7,
+            label=f"Unguided radiation ×100 (mean = {np.mean(f_rad) * 100:.2f}%)",
+        )
+    ax1.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel="Normalized power fraction",
+        ylim=(-0.02, 1.05),
+        title="(b) Energy conservation & 2D Poynting flux-box audit",
+    )
+    ax1.grid(True, ls=":", alpha=0.4)
+    ax1.legend(loc="center right", fontsize=8.0)
+    fig.tight_layout()
+    fig.savefig(
+        fig_dir / "12_bending_loss_and_flux_budget.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+
+    # 13. Radius sweep: bend loss and mode-mismatch reflection vs R_eff (4 radii x 2 bend types)
+    sweep_avail = all(
+        f"sweep_{bt}_R{f'{r:.1f}'.replace('.', 'p')}" in tasks_data
+        for r in SWEEP_RADII_UM
+        for bt in ("circular", "euler")
+    )
+    if sweep_avail:
+        radii_um = np.array(SWEEP_RADII_UM, dtype=float)
+        loss_circ_mean, loss_euler_mean = [], []
+        loss_circ_1550, loss_euler_1550 = [], []
+        refl_circ_db, refl_euler_db = [], []
+
+        for r in SWEEP_RADII_UM:
+            tag = f"{r:.1f}".replace(".", "p")
+            dc = tasks_data[f"sweep_circular_R{tag}"]
+            de = tasks_data[f"sweep_euler_R{tag}"]
+            wc = dc["wavelengths"] * 1e9
+            mc = (wc >= 1515.0) & (wc <= 1585.0)
+            i0 = int(np.argmin(np.abs(dc["wavelengths"] - WL_REF)))
+
+            tc_m = float(np.mean(np.abs(dc["S21"][mc]) ** 2))
+            te_m = float(np.mean(np.abs(de["S21"][mc]) ** 2))
+            loss_circ_mean.append(-10.0 * np.log10(max(tc_m, 1e-12)))
+            loss_euler_mean.append(-10.0 * np.log10(max(te_m, 1e-12)))
+            loss_circ_1550.append(
+                -10.0 * np.log10(max(float(np.abs(dc["S21"][i0]) ** 2), 1e-12))
+            )
+            loss_euler_1550.append(
+                -10.0 * np.log10(max(float(np.abs(de["S21"][i0]) ** 2), 1e-12))
+            )
+            refl_circ_db.append(
+                10.0 * np.log10(max(float(np.mean(np.abs(dc["S11"][mc]) ** 2)), 1e-12))
+            )
+            refl_euler_db.append(
+                10.0 * np.log10(max(float(np.mean(np.abs(de["S11"][mc]) ** 2)), 1e-12))
+            )
+
+        r_fine_um = np.linspace(2.3, 4.2, 100)
+        neff_ch = float(primary.get("port_neff_in", 2.31))
+        loss_analytic_db = analytical_circular_bend_loss_db(
+            r_fine_um * 1e-6, w_wg=W_WG, n_eff=neff_ch, wl=WL_REF
+        )
+
+        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.2), dpi=150)
+        ax0.plot(
+            radii_um,
+            loss_circ_mean,
+            "s-",
+            color="#d95f02",
+            lw=2.1,
+            ms=6.5,
+            label="Circular bend (band-mean loss)",
+        )
+        ax0.plot(
+            radii_um,
+            loss_euler_mean,
+            "o-",
+            color="#1b9e77",
+            lw=2.2,
+            ms=6.5,
+            label="Hybrid Euler bend (band-mean loss)",
+        )
+        ax0.plot(
+            radii_um,
+            loss_circ_1550,
+            "s--",
+            color="#d95f02",
+            alpha=0.65,
+            lw=1.5,
+            ms=5.0,
+            label="Circular bend (@ 1550 nm)",
+        )
+        ax0.plot(
+            radii_um,
+            loss_euler_1550,
+            "o--",
+            color="#1b9e77",
+            alpha=0.65,
+            lw=1.5,
+            ms=5.0,
+            label="Hybrid Euler bend (@ 1550 nm)",
+        )
+        ax0.plot(
+            r_fine_um,
+            loss_analytic_db,
+            ":",
+            color="#2b5c8f",
+            lw=1.8,
+            label=r"Conformal mode-mismatch theory ($\propto R_{\mathrm{eff}}^{-2}$)",
+        )
+        ax0.set(
+            xlabel=r"Effective bend radius $R_{\mathrm{eff}}$ [µm]",
+            ylabel="Bending insertion loss [dB / 90°]",
+            title=r"(a) Bending loss vs $R_{\mathrm{eff}}$: Euler vs circular",
+        )
+        ax0.grid(True, ls=":", alpha=0.4)
+        ax0.legend(loc="upper right", fontsize=8.0)
+
+        ratio = np.array(loss_circ_mean) / np.maximum(np.array(loss_euler_mean), 1e-6)
+        ax1_t = ax1.twinx()
+        l1 = ax1.plot(
+            radii_um,
+            refl_circ_db,
+            "s-",
+            color="#d95f02",
+            lw=1.9,
+            ms=6,
+            label=r"Circular $\langle |S_{11}|^2 \rangle$ [dB]",
+        )
+        l2 = ax1.plot(
+            radii_um,
+            refl_euler_db,
+            "o-",
+            color="#1b9e77",
+            lw=1.9,
+            ms=6,
+            label=r"Hybrid Euler $\langle |S_{11}|^2 \rangle$ [dB]",
+        )
+        l3 = ax1_t.plot(
+            radii_um,
+            ratio,
+            "^--",
+            color="#7570b3",
+            lw=2.0,
+            ms=6,
+            label="Loss reduction factor (Circular / Euler)",
+        )
+        ax1.set(
+            xlabel=r"Effective bend radius $R_{\mathrm{eff}}$ [µm]",
+            ylabel=r"Band-averaged return loss $10\log_{10}\langle|S_{11}|^2\rangle$ [dB]",
+            title=r"(b) Return loss & Euler loss-reduction factor vs $R_{\mathrm{eff}}$",
+        )
+        ax1_t.set_ylabel("Insertion-loss reduction factor [×]", color="#7570b3")
+        ax1.grid(True, ls=":", alpha=0.4)
+        lines = l1 + l2 + l3
+        labels = [ln.get_label() for ln in lines]
+        ax1.legend(lines, labels, loc="best", fontsize=8.0)
+        fig.tight_layout()
+        fig.savefig(
+            fig_dir / "13_radius_sweep_euler_vs_circular.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+        plt.close(fig)
+
+    # 14. Multi-resolution convergence (using independent kottke_reference as T_ref)
+    levels = [
+        lvl
+        for lvl in ("L1", "L2", "L3")
+        if f"kottke_{lvl}" in tasks_data and f"staircase_{lvl}" in tasks_data
+    ]
+    if levels:
+        cpws = [float(tasks_data[f"kottke_{lvl}"]["cpw"]) for lvl in levels]
+        cells_across = [
+            float(
+                tasks_data[f"kottke_{lvl}"].get(
+                    "cells_across_feature",
+                    float(tasks_data[f"kottke_{lvl}"]["cpw"]) * 0.7508,
+                )
+            )
+            for lvl in levels
+        ]
+
+        def _t_band_mean(d):
+            w = d["wavelengths"] * 1e9
+            m = (w >= 1515.0) & (w <= 1585.0)
+            return float(np.mean(np.abs(d["S21"][m]) ** 2))
+
+        def _r_band_mean(d):
+            w = d["wavelengths"] * 1e9
+            m = (w >= 1515.0) & (w <= 1585.0)
+            return float(np.mean(np.abs(d["S11"][m]) ** 2))
+
+        tk_vals = [_t_band_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
+        ts_vals = [_t_band_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
+        if "kottke_reference" in tasks_data:
+            ref_d = tasks_data["kottke_reference"]
+            t_ref = _t_band_mean(ref_d)
+            r_ref = _r_band_mean(ref_d)
+            ref_cpw_val = int(ref_d["cpw"])
+            ref_lvl_str = str(ref_d.get("level", "Ref"))
+            ref_cells_val = float(
+                ref_d.get("cells_across_feature", ref_cpw_val * 0.7508)
+            )
+        else:
+            raise KeyError(
+                "Missing 'kottke_reference' task required for independent T_ref."
+            )
+
+        err_k = [max(abs(v - t_ref), 1e-5) for v in tk_vals]
+        err_s = [max(abs(v - t_ref), 1e-5) for v in ts_vals]
+        rk_vals = [_r_band_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
+        rs_vals = [_r_band_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
+
+        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.5), dpi=150)
+        res = np.asarray(cpws, dtype=float)
+        feat_ratio = float(np.mean(np.asarray(cells_across) / res))
+
+        ax0.loglog(
+            res,
+            err_s,
+            "s-",
+            color="#d95f02",
+            lw=2.0,
+            ms=6.5,
+            label=rf"Staircase $|T - T_{{\mathrm{{ref}}}}|$ ($T_{{\mathrm{{ref}}}}$ @ {ref_lvl_str}={ref_cpw_val} cpw)",
+        )
+        ax0.loglog(
+            res,
+            err_k,
+            "o-",
+            color="#1b9e77",
+            lw=2.0,
+            ms=6.5,
+            label=rf"Kottke $|T - T_{{\mathrm{{ref}}}}|$ ($T_{{\mathrm{{ref}}}}$ @ {ref_lvl_str}={ref_cpw_val} cpw)",
+        )
+        ax0.loglog(
+            res,
+            err_s[0] * (res[0] / res) ** 1,
+            "--",
+            color="#d95f02",
+            alpha=0.55,
+            lw=1.2,
+            label=r"$\mathcal{O}(\Delta x^1)$ guide",
+        )
+        ax0.loglog(
+            res,
+            err_k[0] * (res[0] / res) ** 2,
+            ":",
+            color="#1b9e77",
+            alpha=0.65,
+            lw=1.4,
+            label=r"$\mathcal{O}(\Delta x^2)$ guide",
+        )
+        for lvl, x_c, n_f, ys_v, yk_v in zip(
+            levels, res, cells_across, err_s, err_k
+        ):
+            ax0.annotate(
+                f"{lvl} ({n_f:.1f} cells)",
+                xy=(x_c, ys_v),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7.5,
+                color="#b34800",
+            )
+            ax0.annotate(
+                f"{lvl} ({n_f:.1f} cells)",
+                xy=(x_c, yk_v),
+                xytext=(0, -11),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7.5,
+                color="#0f6e52",
+            )
+
+        from matplotlib.ticker import NullFormatter, ScalarFormatter
+
+        ax0.set(
+            xlabel="Background resolution [cells per wavelength]",
+            ylabel=r"Transmission error $|\langle T \rangle - T_{\mathrm{ref}}|$",
+            xlim=(res.min() * 0.85, res.max() * 1.20),
+            ylim=(min(err_k) * 0.35, max(err_s) * 2.5),
+            title=f"(a) Convergence vs {ref_lvl_str} ({ref_cpw_val} cpw, {ref_cells_val:.1f} cells)",
+        )
+        ax0.set_xticks([int(c) for c in res])
+        ax0.xaxis.set_major_formatter(ScalarFormatter())
+        ax0.xaxis.set_minor_formatter(NullFormatter())
+        sec0 = ax0.secondary_xaxis(
+            "top",
+            functions=(lambda c: c * feat_ratio, lambda nf: nf / feat_ratio),
+        )
+        sec0.set_xticks([round(nf, 1) for nf in cells_across])
+        sec0.xaxis.set_major_formatter(ScalarFormatter())
+        sec0.xaxis.set_minor_formatter(NullFormatter())
+        sec0.set_xlabel("Cells across 400 nm waveguide feature (w / Δx)", fontsize=8.5)
+        ax0.grid(True, which="both", ls=":", alpha=0.4)
+        ax0.legend(loc="best", fontsize=7.8)
+
+        ax1.loglog(
+            res,
+            rs_vals,
+            "s-",
+            color="#d95f02",
+            lw=2.0,
+            ms=6.5,
+            label=r"Staircase mean $|S_{11}|^2$",
+        )
+        ax1.loglog(
+            res,
+            rk_vals,
+            "o-",
+            color="#1b9e77",
+            lw=2.0,
+            ms=6.5,
+            label=r"Kottke mean $|S_{11}|^2$",
+        )
+        ax1.loglog(
+            [ref_cpw_val],
+            [r_ref],
+            "*",
+            color="#2b5c8f",
+            ms=9.0,
+            label=rf"Kottke {ref_lvl_str} ref ({ref_cpw_val} cpw, {ref_cells_val:.1f} cells)",
+        )
+        for lvl, x_c, n_f, ys_v, yk_v in zip(
+            levels, res, cells_across, rs_vals, rk_vals
+        ):
+            ax1.annotate(
+                f"{lvl} ({n_f:.1f} cells)",
+                xy=(x_c, ys_v),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7.5,
+                color="#b34800",
+            )
+            ax1.annotate(
+                f"{lvl} ({n_f:.1f} cells)",
+                xy=(x_c, yk_v),
+                xytext=(0, -11),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7.5,
+                color="#0f6e52",
+            )
+        ax1.annotate(
+            f"{ref_lvl_str} ({ref_cells_val:.1f} cells)",
+            xy=(ref_cpw_val, r_ref),
+            xytext=(-6, 8),
+            textcoords="offset points",
+            ha="right",
+            fontsize=7.5,
+            color="#2b5c8f",
+        )
+        ax1.set(
+            xlabel="Background resolution [cells per wavelength]",
+            ylabel=r"Band-averaged reflection $\langle |S_{11}|^2 \rangle$",
+            xlim=(res.min() * 0.85, ref_cpw_val * 1.15),
+            ylim=(min(min(rk_vals), r_ref) * 0.35, max(rs_vals) * 2.5),
+            title="(b) Spurious grid-step Bragg reflection vs resolution",
+        )
+        ticks_1 = sorted({int(c) for c in res} | {int(ref_cpw_val)})
+        ax1.set_xticks(ticks_1)
+        ax1.xaxis.set_major_formatter(ScalarFormatter())
+        ax1.xaxis.set_minor_formatter(NullFormatter())
+        sec1 = ax1.secondary_xaxis(
+            "top",
+            functions=(lambda c: c * feat_ratio, lambda nf: nf / feat_ratio),
+        )
+        sec1.set_xticks(
+            sorted({round(nf, 1) for nf in cells_across} | {round(ref_cells_val, 1)})
+        )
+        sec1.xaxis.set_major_formatter(ScalarFormatter())
+        sec1.xaxis.set_minor_formatter(NullFormatter())
+        sec1.set_xlabel("Cells across 400 nm waveguide feature (w / Δx)", fontsize=8.5)
+        ax1.grid(True, which="both", ls=":", alpha=0.4)
+        ax1.legend(loc="best", fontsize=7.8)
+        fig.tight_layout()
+        fig.savefig(
+            fig_dir / "14_kottke_vs_staircase_convergence.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+        plt.close(fig)
+
+        # 14b. Spectra across convergence levels + reference (Kottke vs Staircase)
+        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+        cols = {"L1": "#7570b3", "L2": "#d95f02", "L3": "#1b9e77"}
+        for lvl in levels:
+            for avg, ls in (("kottke", "-"), ("staircase", "--")):
+                d = tasks_data[f"{avg}_{lvl}"]
+                w = d["wavelengths"] * 1e9
+                idx_s = np.argsort(w)
+                w_s = w[idx_s]
+                m = (w_s >= 1505.0) & (w_s <= 1595.0)
+                t_db = 10.0 * np.log10(
+                    np.maximum(np.abs(d["S21"][idx_s][m]) ** 2, 1e-12)
+                )
+                r_db = 10.0 * np.log10(
+                    np.maximum(np.abs(d["S11"][idx_s][m]) ** 2, 1e-12)
+                )
+                n_f = float(d.get("cells_across_feature", float(d["cpw"]) * 0.7508))
+                lbl = f"{avg.capitalize()} {lvl} ({int(d['cpw'])} cpw, {n_f:.1f} cells)"
+                ax0.plot(w_s[m], t_db, color=cols.get(lvl, "#1b9e77"), ls=ls, lw=1.7, label=lbl)
+                ax1.plot(w_s[m], r_db, color=cols.get(lvl, "#1b9e77"), ls=ls, lw=1.7, label=lbl)
+
+        w_r = ref_d["wavelengths"] * 1e9
+        idx_r = np.argsort(w_r)
+        w_rs = w_r[idx_r]
+        mr = (w_rs >= 1505.0) & (w_rs <= 1595.0)
+        tr_db = 10.0 * np.log10(np.maximum(np.abs(ref_d["S21"][idx_r][mr]) ** 2, 1e-12))
+        rr_db = 10.0 * np.log10(np.maximum(np.abs(ref_d["S11"][idx_r][mr]) ** 2, 1e-12))
+        ref_lbl = f"Kottke {ref_lvl_str} ref ({ref_cpw_val} cpw, {ref_cells_val:.1f} cells)"
+        ax0.plot(w_rs[mr], tr_db, color="#2b5c8f", ls="-.", lw=2.0, label=ref_lbl)
+        ax1.plot(w_rs[mr], rr_db, color="#2b5c8f", ls="-.", lw=2.0, label=ref_lbl)
+
+        ax0.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel=r"Guided transmission $10\log_{10}|S_{21}|^2$ [dB]",
+            title="(a) Transmission spectra across resolution ladder",
+        )
+        ax0.grid(True, ls=":", alpha=0.4)
+        ax0.legend(loc="lower right", fontsize=7.2)
+        ax1.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel=r"Return loss $10\log_{10}|S_{11}|^2$ [dB]",
+            title="(b) Return loss across resolution ladder",
+        )
+        ax1.grid(True, ls=":", alpha=0.4)
+        ax1.legend(loc="upper right", fontsize=7.2)
+        fig.tight_layout()
+        fig.savefig(
+            fig_dir / "14b_resolution_spectra_comparison.png",
+            dpi=150,
+            bbox_inches="tight",
+        )
+        plt.close(fig)
+
+    # 15. Port time trace and energy decay
+    if "trace_t" in primary and primary["trace_t"].size > 0:
+        t_fs = primary["trace_t"] * 1e15
+        ey_tr = primary["trace_Ey"]
+        ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
+        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.6, 3.8), dpi=150)
+        ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
+        ax0.set(
+            xlabel="Time t [fs]",
+            ylabel=r"Normalized output port probe $E(t) / \max|E|$",
+            title="(a) Output port time-domain waveform",
+        )
+        ax0.grid(True, ls=":", alpha=0.4)
+
+        env = np.maximum(ey_norm**2, 1e-10)
+        decay_floor = 2e-4 if is_quick_data else 1e-4
+        ax1.semilogy(
+            t_fs, env, color="#d95f02", lw=1.4, label=r"$|E(t)|^2 / |E|_{\max}^2$"
+        )
+        ax1.axhline(
+            decay_floor,
+            color="0.4",
+            ls="--",
+            lw=1.2,
+            label=f"Energy decay termination floor ({decay_floor:.0e})",
+        )
+        ax1.set(
+            xlabel="Time t [fs]",
+            ylabel="Normalized instantaneous power (log scale)",
+            ylim=(1e-8, 2.0),
+            title="(b) Single-pass transit & ring-down audit",
+        )
+        ax1.grid(True, which="both", ls=":", alpha=0.4)
+        ax1.legend(loc="upper right", fontsize=8.5)
+        fig.tight_layout()
+        fig.savefig(fig_dir / "15_port_time_trace.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    # Render standalone spectra dB plot via kit helper for direct comparison
+    plot_spectra_db(
+        wl_b,
+        {
+            r"Hybrid Euler $10\log_{10}|S_{21}|^2$": 10.0
+            * np.log10(np.maximum(t_e, 1e-12)),
+            r"Circular $10\log_{10}|S_{21}|^2$": 10.0
+            * np.log10(np.maximum(t_c, 1e-12)),
+        },
+        title="90° bend transmission spectra (1505–1595 nm, 2D EIM Kottke)",
+        ylabel="Modal transmission [dB]",
+        out_path=fig_dir / "11b_transmission_zoom_db.png",
+    )
+
+    print(f"Rendered 16 figures in {fig_dir}")
+
+
+# %% [markdown]
+# ## 7. Quantitative results, convergence & when 2D EIM breaks down
+#
+# ### 7.1 Subpixel convergence study (`L1`, `L2`, `L3` vs `R = 40 cpw` reference)
+#
+# The `--full` convergence study (`task_0`–`task_6`) evaluates Kottke subpixel
+# smoothing against staircasing on the $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid
+# Euler bend across `L1 = (10, 4)`, `L2 = (14, 6)`, and `L3 = (20, 8)` relative
+# to the independent `R = (40, 16)` Kottke reference (`task_6`,
+# $\Delta x = 13.32\;\text{nm}$, $30.03$ cells across $w_{\text{wg}} = 400\;\text{nm}$):
+#
+# | Task (`--full`) | Averaging | Level (`cpw`, $N$) | Cells across $w$ | $\langle T \rangle_{1515\text{--}1585}$ | $\text{IL}_{\text{mean}}$ [dB] | $\text{IL}(1550\;\text{nm})$ [dB] | $|\langle T \rangle - T_{\text{ref}}|$ | $|\Delta\text{IL}|$ [dB] | $\langle|S_{11}|^2\rangle$ [dB] |
+# |---|---|---|---:|---:|---:|---:|---:|---:|---:|
+# | `task_0` (`kottke_L1`) | Kottke | `L1 = (10, 4)` | 7.51 | 0.997689 | 0.0100 | 0.0212 | $4.97\times 10^{-4}$ | 0.0022 | $-49.87$ ($1.03\times 10^{-5}$) |
+# | `task_1` (`staircase_L1`) | Staircase | `L1 = (10, 4)` | 7.51 | 0.976299 | 0.1042 | 0.0999 | $2.09\times 10^{-2}$ | 0.0920 | $-23.67$ ($4.30\times 10^{-3}$) |
+# | `task_2` (`kottke_L2`) | Kottke | `L2 = (14, 6)` | 10.52 | 0.997790 | 0.0096 | 0.0207 | $5.97\times 10^{-4}$ | 0.0026 | $-50.36$ ($9.20\times 10^{-6}$) |
+# | `task_3` (`staircase_L2`) | Staircase | `L2 = (14, 6)` | 10.52 | 0.988372 | 0.0508 | 0.0519 | $8.82\times 10^{-3}$ | 0.0386 | $-24.37$ ($3.66\times 10^{-3}$) |
+# | `task_4` (`kottke_L3`, primary) | Kottke | `L3 = (20, 8)` | 15.02 | 0.997810 | 0.0095 | 0.0206 | $6.18\times 10^{-4}$ | 0.0027 | $-47.21$ ($1.90\times 10^{-5}$) |
+# | `task_5` (`staircase_L3`) | Staircase | `L3 = (20, 8)` | 15.02 | 0.995069 | 0.0215 | 0.0326 | $2.12\times 10^{-3}$ | 0.0093 | $-44.84$ ($3.28\times 10^{-5}$) |
+# | `task_6` (`kottke_reference`) | Kottke | `R = (40, 16)` | 30.03 | 0.997192 | 0.0122 | 0.0262 | 0 (ref) | 0 (ref) | $-51.54$ ($7.02\times 10^{-6}$) |
+#
+# **Convergence verdict:**
+#
+# - **Kottke subpixel smoothing is converged at the accepted `L3 = (20, 8)` level**
+#   (and already within $0.0022\;\text{dB}$ at `L1 = (10, 4)`): between the last
+#   two ladder levels `L2 = (14, 6)` and `L3 = (20, 8)`, the band-averaged
+#   transmission changes by only
+#   $|\langle T \rangle_{L3} - \langle T \rangle_{L2}| / \langle T \rangle_{L3} = 2.10\times 10^{-5}$
+#   ($0.0021\%$, or $\Delta\text{IL} = 9.1\times 10^{-5}\;\text{dB}$, a $0.96\%$
+#   relative change in $\text{IL}_{\text{mean}}$). Relative to the $40\;\text{cpw}$
+#   reference `R = (40, 16)`, `kottke_L3` agrees to
+#   $|\langle T \rangle_{L3} - T_{\text{ref}}| / T_{\text{ref}} = 6.20\times 10^{-4}$
+#   ($0.062\%$, or $|\Delta\text{IL}| = 0.0027\;\text{dB}$).
+# - **Staircasing vs Kottke across `L1`–`L3`**: At `L1` ($10\;\text{cpw}$) and
+#   `L2` ($14\;\text{cpw}$), staircasing suffers $42.1\times$ and $14.8\times$
+#   larger transmission error ($|\langle T \rangle - T_{\text{ref}}| = 2.09\times 10^{-2}$
+#   and $8.82\times 10^{-3}$, or $\text{IL}_{\text{mean}} = 0.1042\;\text{dB}$ and
+#   $0.0508\;\text{dB}$) and $416\times$ and $397\times$ ($>26\;\text{dB}$) higher
+#   spurious Bragg back-reflection ($\langle|S_{11}|^2\rangle = -23.67\;\text{dB}$
+#   and $-24.37\;\text{dB}$ vs $-49.87\;\text{dB}$ and $-50.36\;\text{dB}$ for
+#   Kottke). In `--full`, extending the ladder to `L3 = (20, 8)` ($\Delta x = 26.64\;\text{nm}$,
+#   $15.02$ cells across $w_{\text{wg}}$) reveals that once the grid step shrinks
+#   to $\Delta x / w_{\text{wg}} = 6.7\%$, staircasing's coherent Bragg reflection
+#   drops to $-44.84\;\text{dB}$ ($1.72\times$ higher than `kottke_L3` at
+#   $-47.21\;\text{dB}$), but `staircase_L3` still has $3.43\times$ larger
+#   transmission error ($|\langle T \rangle - T_{\text{ref}}| = 2.12\times 10^{-3}$,
+#   $\text{IL}_{\text{mean}} = 0.0215\;\text{dB}$; relative change
+#   $|\langle T \rangle_{L3} - \langle T \rangle_{L2}| / \langle T \rangle_{L3} = 6.73\times 10^{-3}$
+#   or $0.67\%$ from `L2` to `L3`) than `kottke_L3` ($6.18\times 10^{-4}$) and
+#   $4.28\times$ larger error than `kottke_L1` at half the linear resolution
+#   ($10\;\text{cpw}$).
+#
+# ### 7.2 Circular vs Hybrid Euler radius sweep & comparison with publication / theory
+#
+# The table below compares the `--quick` (`L2 = 14 cpw`) results, the `--full`
+# (`L3 = 20 cpw`) results, and the published 3D FDTD / analytical conformal-mapping
+# references across all four swept effective radii
+# $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$:
+#
+# | Quantity / Metric | Old (`--quick`, `L2 = 14 cpw`) | New (`--full`, `L3 = 20 cpw`) | Reference (Fujisawa *et al.* 2017 [1] / Conformal theory [3]) |
+# |---|---|---|---|
+# | 1D vertical slab index $n_{\text{eff,slab}}(1550\;\text{nm})$ | $2.8134$ | $2.8134$ | $2.8134$ (exact 1D $\text{TE}_0$ slab) |
+# | 2D channel $n_{\text{eff}}(1550\;\text{nm})$ ($1500\text{--}1600\;\text{nm}$) | $2.2965$ ($2.2673\text{--}2.3257$) | $2.2888$ ($2.2593\text{--}2.3182$) | $\sim 2.29$ (2D EIM strip) |
+# | 2D channel group index $n_g(1550\;\text{nm})$ ($1500\text{--}1600\;\text{nm}$) | $3.1995$ ($3.1951\text{--}3.2028$) | $3.2014$ ($3.1964\text{--}3.2047$) | $\sim 3.20$ (2D EIM strip) |
+# | $R_{\text{eff}} = 2.5\;\mu\text{m}$ circular $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0916$ ($0.1073$) | $0.0905$ ($0.1045$) | $0.1429\;\text{dB}$ (conformal theory @ $n_{\text{eff}}=2.2888$) |
+# | $R_{\text{eff}} = 2.5\;\mu\text{m}$ hybrid Euler $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0799$ ($0.0956$) | $0.0785$ ($0.0913$) | $\text{IL}_{\text{Euler}} < \text{IL}_{\text{circ}}$ ($R_{\min} = 1.87\;\mu\text{m}$) |
+# | $R_{\text{eff}} = 2.5\;\mu\text{m}$ loss reduction $\text{IL}_{\text{circ}} / \text{IL}_{\text{Euler}}$ | $1.15\times$ ($1.12\times$ @ $1550\;\text{nm}$) | $1.15\times$ ($1.14\times$ @ $1550\;\text{nm}$) | Modest reduction (apex $R_{\min}=1.87\;\mu\text{m}$ radiates) |
+# | $R_{\text{eff}} = 3.0\;\mu\text{m}$ circular $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0769$ ($0.0940$) | $0.0658$ ($0.0784$) | $0.0992\;\text{dB}$ (conformal theory @ $n_{\text{eff}}=2.2888$) |
+# | $R_{\text{eff}} = 3.0\;\mu\text{m}$ hybrid Euler $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0316$ ($0.0461$) | $0.0309$ ($0.0436$) | $\text{IL}_{\text{Euler}} \ll \text{IL}_{\text{circ}}$ ($R_{\min} = 2.24\;\mu\text{m}$) |
+# | $R_{\text{eff}} = 3.0\;\mu\text{m}$ loss reduction $\text{IL}_{\text{circ}} / \text{IL}_{\text{Euler}}$ | $2.43\times$ ($2.04\times$ @ $1550\;\text{nm}$) | $2.13\times$ ($1.80\times$ @ $1550\;\text{nm}$) | $>2\times$ mode-mismatch suppression |
+# | $R_{\text{eff}} = 3.5\;\mu\text{m}$ circular $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0524$ ($0.0687$) | $0.0489$ ($0.0626$) | $0.0729\;\text{dB}$ (conformal theory @ $n_{\text{eff}}=2.2888$) |
+# | $R_{\text{eff}} = 3.5\;\mu\text{m}$ hybrid Euler $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0166$ ($0.0311$) | $0.0151$ ($0.0279$) | $\text{IL}_{\text{Euler}} \ll \text{IL}_{\text{circ}}$ ($R_{\min} = 2.61\;\mu\text{m}$) |
+# | $R_{\text{eff}} = 3.5\;\mu\text{m}$ loss reduction $\text{IL}_{\text{circ}} / \text{IL}_{\text{Euler}}$ | $3.15\times$ ($2.21\times$ @ $1550\;\text{nm}$) | $3.24\times$ ($2.25\times$ @ $1550\;\text{nm}$) | $\sim 3\times$ mode-mismatch suppression |
+# | $R_{\text{eff}} = 4.0\;\mu\text{m}$ circular $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0463$ ($0.0633$) | $0.0421$ ($0.0549$) | $0.0558\;\text{dB}$ (2D conformal theory @ $n_{\text{eff}}=2.2888$) |
+# | $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid Euler $\text{IL}_{\text{mean}}$ ($\text{IL}_{1550}$) [dB] | $0.0151$ ($0.0321$) | $0.0095$ ($0.0206$) | $0.002\;\text{dB}/90^\circ$ at $R = 4\;\mu\text{m}$ (Abstract of [1], $R_{\min}=2.99\;\mu\text{m}$) |
+# | $R_{\text{eff}} = 4.0\;\mu\text{m}$ loss reduction $\text{IL}_{\text{circ}} / \text{IL}_{\text{Euler}}$ | $3.06\times$ ($1.97\times$ @ $1550\;\text{nm}$) | $4.42\times$ ($2.67\times$ @ $1550\;\text{nm}$) | $90\%$ loss reduction vs normal bend at $R = 4\;\mu\text{m}$ (Abstract of [1]) |
+# | $R_{\text{eff}} = 4.0\;\mu\text{m}$ wide-band $\text{IL}_{1505\text{--}1595}$ (Circ vs Euler) | $0.0372\;\text{dB}$ vs $0.0063\;\text{dB}$ | $0.0356\;\text{dB}$ vs $0.0041\;\text{dB}$ | $\text{IL}_{\text{Euler}} \ll \text{IL}_{\text{circ}}$ across C-band [1] |
+# | 2D Poynting flux-box total $\langle \Phi_{\text{box}} \rangle_{1505\text{--}1595}$ (Euler / Circ) | $0.9989$ / $0.9986$ | $0.9996$ / $0.9993$ | $1.0000$ (lossless dielectric conservation) |
+# | Unguided radiation fraction $\langle \Phi_{\text{rad}} \rangle_{1505\text{--}1595}$ (Euler vs Circ) | $0.10\%$ vs $0.71\%$ | $0.10\%$ vs $0.74\%$ | Clothoid suppresses junction radiation burst by $\sim 7.6\times$ |
+#
+# **Note on parameter choice in analytical conformal mode-mismatch theory:**
+# In `analytical_circular_bend_loss_db`, the two-junction transition insertion
+# loss $\text{IL}_{\text{dB}}(R_{\text{eff}}) = -10\log_{10}\exp[-(\Delta u / \sigma_0)^2]$
+# with $\Delta u = k_0^2 n_{\text{eff}}^2 \sigma_0^4 / R_{\text{eff}}$ scales as
+# $\sigma_0^6\,n_{\text{eff}}^4\,R_{\text{eff}}^{-2}$. While the $R_{\text{eff}}^{-2}$
+# scaling law is parameter-free, the absolute dB prefactor depends strongly on the
+# sixth power of the Gaussian modal half-width $\sigma_0 = 0.435\,w_{\text{wg}}$
+# and the fourth power of $n_{\text{eff}}$ (yielding $0.0558\;\text{dB}$ at
+# $R_{\text{eff}} = 4.0\;\mu\text{m}$ with the `L3` channel index
+# $n_{\text{eff}} = 2.2888$, or $0.0579\;\text{dB}$ at $n_{\text{eff}} = 2.31$).
+# This parameter was not tuned to the full data.
+#
+# ### 7.3 What goes wrong when a feature or gap is resolved by only 1–2 cells
+#
+# A common pitfall in FDTD/FIT photonics is running "quick" exploratory grids
+# where a waveguide core, directional-coupler gap, microring coupling gap, or
+# Bragg grating tooth is spanned by only $1\text{--}2$ Yee cells:
+#
+# - **Staircased effective width and locked coupling/resonance**: When a gap or
+#   corrugation is $1\text{--}2$ cells wide, the evanescent decay profile and
+#   tangential/normal electric-field jumps across the two opposing interfaces
+#   share the same cell or adjacent cut cells. Consequently, the directional
+#   coupling length $L_\pi$, microring resonance wavelength $\lambda_{\text{res}}$,
+#   or Bragg stopband center $\lambda_B = 2 n_{\text{eff}} \Lambda$ becomes
+#   locked to the discrete staircased cell count rather than the true physical
+#   dimension.
+# - **Why subpixel averaging alone cannot rescue an under-resolved feature**:
+#   Kottke (2008) tensor averaging corrects the effective permittivity of a
+#   *single* dielectric interface cutting through a cell, assuming a locally
+#   linear field across that cell. It cannot reconstruct internal field curvature
+#   when two interfaces lie inside the same cell or within $1\text{--}2$ cells of
+#   each other: **you cannot resolve a geometry if the grid is coarser than the
+#   features you want to see**. Enforcing both $\text{cpw} \ge 10$ in the highest
+#   index and $N \ge 4$ cells across `min_feature` (via `mesh_overrides` where
+#   needed) avoids this regime.
+#
+# ### 7.4 Physical differences between 2D EIM and full 3D FDTD
+#
+# At the accepted `--full` resolution `L3 = (20, 8)` ($15.02$ cells across
+# $w_{\text{wg}} = 400\;\text{nm}$), Kottke subpixel smoothing yields a
+# band-averaged ($1515\text{--}1585\;\text{nm}$) insertion loss of
+# $0.0095\;\text{dB}$ ($\langle T \rangle = 0.997810$, or $0.0041\;\text{dB}$ over
+# $1505\text{--}1595\;\text{nm}$ and $0.0206\;\text{dB}$ at $1550\;\text{nm}$) for
+# the $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid Euler bend—within $0.0027\;\text{dB}$
+# ($|\langle T\rangle - T_{\text{ref}}| = 6.18\times 10^{-4}$) of the
+# `R = (40, 16)` Kottke reference ($0.0122\;\text{dB}$, $T_{\text{ref}} = 0.997192$)—compared
+# to $0.0421\;\text{dB}$ ($0.0549\;\text{dB}$ at $1550\;\text{nm}$) for the
+# circular bend ($4.42\times$ band-mean loss reduction, $2.67\times$ at
+# $1550\;\text{nm}$). Across all four radii $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$,
+# both circular and hybrid Euler bending losses decrease monotonically with
+# radius, and the hybrid Euler bend outperforms the circular bend at every
+# footprint (by $1.15\times$, $2.13\times$, $3.24\times$, and $4.42\times$ in
+# band-averaged insertion loss). Nevertheless, three physical effects distinguish
+# 2D EIM from full 3D FDTD ($0.002\;\text{dB}/90^\circ$ at $R = 4\;\mu\text{m}$,
+# a $90\%$ loss reduction vs normal bend in the Abstract of Fujisawa *et al.* [1]):
+#
+# 1. **TE/TM polarization conversion & vertical radiation**: In a 3D strip
+#    waveguide with tight bending radius ($R \lesssim 3\;\mu\text{m}$), radial
+#    asymmetry of the fringing electric field at the top and bottom silicon
+#    interfaces couples the fundamental quasi-$\text{TE}_0$ mode weakly to the
+#    quasi-$\text{TM}_0$ mode and to unguided vertical substrate/cladding waves.
+#    In 2D EIM (`ieps_z = 0`, periodic along $z$), $E_z$ is suppressed and all
+#    radiation is confined to in-plane cladding waves.
+# 2. **Lateral index-contrast overestimation**: Standard EIM uses the bulk oxide
+#    index $n_{\text{SiO}_2} = 1.444$ outside the core and
+#    $n_{\text{eff,slab}} = 2.8134$ inside. Variational EIM (Hammer & Ivanova
+#    2009 [6]) shows that projecting the 3D curl equations onto the vertical
+#    slab profile $\psi(z)$ slightly modifies the effective lateral index step,
+#    shifting the mode-mismatch constant $C_{\text{mm}}$ by $\mathcal{O}(10\text{--}30\%)$.
+# 3. **Fixed-frequency mode injection away from $\lambda_0 = 1550\;\text{nm}$**:
+#    Because time-domain `ModeSource` injects the spatial eigenmode solved at the
+#    band center $f_0 = c/\lambda_0$, waveguide dispersion across
+#    $1500\text{--}1600\;\text{nm}$ introduces a small frequency-dependent
+#    impedance mismatch at the band edges ($\sim -45\;\text{dB}$ return loss away
+#    from $\lambda_0$, compared to $<-60\;\text{dB}$ right at $\lambda_0$).
+#
+# ## 8. Exercises
+#
+# 1. **Optimum clothoid fraction $p$ at $R_{\text{eff}} = 2.0\;\mu\text{m}$**:
+#    Sweep the clothoid parameter ratio $A / R_{\text{eff}} \in \{0.35, 0.45, 0.55, 0.65\}$
+#    at a tight footprint $R_{\text{eff}} = 2.0\;\mu\text{m}$ to locate the
+#    minimum-loss trade-off between junction mode mismatch (small $A$) and apex
+#    whispering-gallery tunneling radiation (small $R_{\min}$ at large $A$).
+# 2. **Cascaded $180^\circ$ U-bend**: Connect two $90^\circ$ hybrid Euler bends
+#    back-to-back and verify whether eliminating the intermediate straight segment
+#    further reduces transition loss.
+# 3. **Multi-mode waveguide Euler bend ($w = 1.2\;\mu\text{m}$)**: Increase the
+#    waveguide width to $w = 1.2\;\mu\text{m}$ (supporting $\text{TE}_0$,
+#    $\text{TE}_1$, and $\text{TE}_2$) and compare inter-modal crosstalk
+#    $|S_{21}^{(\text{TE}_1 \leftarrow \text{TE}_0)}|^2$ in circular vs hybrid
+#    Euler bends.
+#
+# ## 9. References
+#
+# 1. T. Fujisawa, S. Makino, T. Sato, and K. Saitoh, "Low-loss, compact, and
+#    fabrication-tolerant Si-wire $90^\circ$ waveguide bend using clothoid and
+#    normal curves for large scale photonic integrated circuits," *Opt. Express*
+#    **25**(8), 9150–9159 (2017),
+#    DOI: [10.1364/OE.25.009150](https://doi.org/10.1364/OE.25.009150).
+# 2. C. Kottke, A. Farjadpour, and S. G. Johnson, "Perturbation theory for
+#    anisotropic dielectric interfaces, and application to subpixel smoothing
+#    of discretized numerical methods," *Phys. Rev. E* **77**, 036611 (2008),
+#    DOI: [10.1103/PhysRevE.77.036611](https://doi.org/10.1103/PhysRevE.77.036611).
+# 3. M. Heiblum and J. H. Harris, "Analysis of curved optical waveguides by
+#    conformal transformation," *IEEE J. Quantum Electron.* **11**(2), 75–83
+#    (1975), DOI: [10.1109/JQE.1975.1068563](https://doi.org/10.1109/JQE.1975.1068563).
+# 4. H. H. Li, "Refractive index of silicon and germanium and its wavelength
+#    and temperature derivatives," *J. Phys. Chem. Ref. Data* **9**, 561–658
+#    (1980), DOI: [10.1063/1.555624](https://doi.org/10.1063/1.555624).
+# 5. I. H. Malitson, "Interspecimen comparison of the refractive index of fused
+#    silica," *J. Opt. Soc. Am.* **55**, 1205–1209 (1965),
+#    DOI: [10.1364/JOSA.55.001205](https://doi.org/10.1364/JOSA.55.001205).
+# 6. M. Hammer and O. V. Ivanova, "Effective index approximations of photonic
+#    crystal slabs: a 2-to-1-D assessment," *Opt. Quantum Electron.* **41**(4),
+#    267–283 (2009),
+#    DOI: [10.1007/s11082-009-9349-3](https://doi.org/10.1007/s11082-009-9349-3).
+
+
+# %%
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(
+        description="04. Low-Loss Hybrid Euler 90-Degree Silicon Waveguide Bend (2D EIM)"
+    )
+    ap.add_argument(
+        "--quick",
+        action="store_true",
+        help="Run quick 2D study (L1/L2 + L3 ref, sweep at L2) and render figures",
+    )
+    ap.add_argument(
+        "--full",
+        action="store_true",
+        help="Run full 2D study (L1/L2/L3 + R ref, sweep at L3) and render figures",
+    )
+    ap.add_argument(
+        "--task",
+        type=int,
+        default=None,
+        help="Run a single study point I (0-indexed; uses --full unless --quick is set)",
+    )
+    ap.add_argument(
+        "--out",
+        type=Path,
+        default=DATA_DIR,
+        help="Output directory for --task (default: data/)",
+    )
+    ap.add_argument(
+        "--plot",
+        action="store_true",
+        help="Read data/task_*.npz and generate all figures in figures/",
+    )
+    ap.add_argument(
+        "--list-tasks",
+        action="store_true",
+        help="Print the study task table and exit",
+    )
+    if argv is None:
+        env_args = os.environ.get("WAKIS_TUTORIAL_ARGS")
+        argv = shlex.split(env_args) if env_args else sys.argv[1:]
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    if args.list_tasks:
+        tasks = get_task_table(quick=args.quick)
+        print(f"# Total tasks: {len(tasks)}")
+        for t in tasks:
+            print(f"{t['index']}\t{t['name']}\t{t['description']}")
+        return
+
+    if args.task is not None:
+        tasks = get_task_table(quick=args.quick)
+        if not (0 <= args.task < len(tasks)):
+            raise SystemExit(f"--task must be in 0..{len(tasks) - 1}")
+        run_single_task(tasks[args.task], args.out)
+        return
+
+    if args.plot:
+        plot_quick = True if args.quick else (False if args.full else None)
+        generate_all_figures(data_dir=args.out, fig_dir=FIG_DIR, quick=plot_quick)
+        return
+
+    # Default when invoked with no flags (e.g. notebook execution): --quick
+    quick = not args.full
+    tasks = get_task_table(quick=quick)
+    for t in tasks:
+        run_single_task(t, DATA_DIR)
+    generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=quick)
+
+
+if __name__ == "__main__":
+    main()

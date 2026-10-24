@@ -1,0 +1,38 @@
+{
+  "task": {
+    "index": 0,
+    "name": "bare_tilt_sweep",
+    "kind": "bare_sweep",
+    "cpw": 20,
+    "thetas": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      12.0
+    ],
+    "description": "Single-mode (w=1.75 um) bare facet sweep 0-12 deg, DFT fields, movie & far-field (cpw=20)"
+  },
+  "dx_background_nm": 28.56857456797523,
+  "dx_min_nm": 21.656976744185293,
+  "min_feature_nm": 216.56976744186048,
+  "cells_across_feature": 10,
+  "n_cells": 138431,
+  "n_steps": 5781,
+  "neff_0": 3.3401827909923187,
+  "r00_0deg": 0.2793023275825662,
+  "r00_4deg": 0.061460647745548914,
+  "r00_7deg": 0.003546324953110055,
+  "r00_10deg": 1.3862447314061424e-08,
+  "r00_12deg": 3.48664114880679e-05,
+  "ff_peak_0deg": 0.0,
+  "ff_peak_7deg": 23.75,
+  "runtime_s": 861.17936869
+}

@@ -1,0 +1,12 @@
+{
+  "index": 2,
+  "name": "ptc_momentum_band_structure",
+  "cpw": 28.57142857142857,
+  "cells_across_feature": 20.0,
+  "m_depth": 0.25,
+  "gamma_max_sim_over_omega": 0.03174944577598288,
+  "gamma_max_floquet_over_omega": 0.0319229047243787,
+  "gamma_max_mathieu_over_omega": 0.03125,
+  "rms_gamma_over_omega_error": 0.0030807380418905682,
+  "wall_seconds": 3.581446397000036
+}

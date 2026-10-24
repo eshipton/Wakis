@@ -1,0 +1,22 @@
+{
+  "task_index": 7,
+  "name": "chu_energy_and_slow_wave",
+  "kind": "chu_audit",
+  "grid_shape": [
+    48,
+    48,
+    1
+  ],
+  "dx_background": 0.0001998616386666667,
+  "dx_min": 8.333333333333333e-05,
+  "dx_background_mm": 0.1999,
+  "dx_min_mm": 0.0833,
+  "min_feature_mm": 0.5,
+  "cells_across_feature": 6.0,
+  "cpw": 48.0,
+  "n_cells": 2304,
+  "n_steps": 2400,
+  "elapsed_s": 0.598,
+  "peak_rss_mb": 216.62,
+  "npz_bytes": 77423
+}

@@ -1,0 +1,23 @@
+{
+  "task_index": 0,
+  "name": "kottke_L1",
+  "level": "L1",
+  "averaging": "kottke",
+  "cpw": 10,
+  "n_cells_feature": 4,
+  "l_mmi_um": 3.0,
+  "min_feature_nm": 200.0,
+  "dx_background_nm": 52.384,
+  "dx_min_nm": 50.0,
+  "cells_across_feature": 4.0,
+  "grid_shape": [
+    271,
+    117,
+    1
+  ],
+  "n_cells": 31707,
+  "n_steps": 7201,
+  "elapsed_s": 33.931,
+  "peak_rss_mb": 618.88,
+  "npz_bytes": 9187
+}

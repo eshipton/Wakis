@@ -1,0 +1,12 @@
+{
+  "task": 1,
+  "name": "bic_near_fields_and_gif",
+  "alpha_bic": 0.0,
+  "alpha_qbic": 0.24,
+  "lambda_bic_nm": 1573.8847,
+  "lambda_qbic_nm": 1572.1518,
+  "Q_bic": 1572905115.2,
+  "Q_qbic": 823.4,
+  "n_gif_frames": 28,
+  "elapsed_s": 5.44
+}

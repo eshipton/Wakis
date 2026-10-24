@@ -1,0 +1,25 @@
+{
+  "task_index": 6,
+  "name": "drift_tube_bunching",
+  "kind": "bunching_2d",
+  "grid_shape": [
+    360,
+    32,
+    1
+  ],
+  "dx_background": 0.00031944444444444446,
+  "dx_min": 0.000125,
+  "dx_background_mm": 0.3194,
+  "dx_min_mm": 0.125,
+  "min_feature_mm": 0.8,
+  "cells_across_feature": 4.0,
+  "cpw": 30.031,
+  "n_cells": 11520,
+  "n_steps": 21251,
+  "elapsed_s": 23.413,
+  "peak_rss_mb": 229.75,
+  "npz_bytes": 1624686,
+  "R_beat_fit": 0.56505,
+  "L_beat_fit_mm": 41.218,
+  "L_beat_th_mm": 42.491
+}

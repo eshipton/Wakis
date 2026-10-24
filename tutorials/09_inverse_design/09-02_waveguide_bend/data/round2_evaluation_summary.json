@@ -1,0 +1,456 @@
+{
+  "challenge": "ceviche_waveguide_bend",
+  "grid_spacing_nm": 10.0,
+  "domain_pixels": [
+    312,
+    312
+  ],
+  "ez_nodes": [
+    313,
+    313
+  ],
+  "design_region_pixels": [
+    160,
+    160
+  ],
+  "wavelengths_nm": [
+    1265.0,
+    1270.0,
+    1275.0,
+    1285.0,
+    1290.0,
+    1295.0
+  ],
+  "target_length_scale_px": [
+    8,
+    8
+  ],
+  "leaderboard_rescore": {
+    "wakis_round2_best": {
+      "source": "data/round2_bend/summary.json (ste_beta64:34)",
+      "eval_metric": 0.6427273992133412,
+      "wakis_r1_modal_eval_metric": 0.6413400632921505,
+      "wakis_r1_ceviche_eval_metric": 0.641242079695972,
+      "official_loss": 0.09858962166781629,
+      "min_width_px": 8,
+      "min_spacing_px": 8,
+      "feasible_8px": true,
+      "min_s21_db": -0.17210217259611937,
+      "max_s21_db": -0.1539290684278494,
+      "max_s11_db": -43.44078835584247,
+      "s2": [
+        [
+          5.910620387919543e-06,
+          0.9611469292018733
+        ],
+        [
+          1.467391882888086e-05,
+          0.9639301803758582
+        ],
+        [
+          2.6933868923036684e-05,
+          0.9651772865990483
+        ],
+        [
+          4.528153748414726e-05,
+          0.9643759748911915
+        ],
+        [
+          4.054268737258382e-05,
+          0.9636555562448105
+        ],
+        [
+          2.8666981216031562e-05,
+          0.9633084273242177
+        ]
+      ]
+    },
+    "wakis_round2_seed_a": {
+      "source": "data/leaderboard_rescore.json (ours_full_bend_seed1.npy)",
+      "eval_metric": 0.5793098618386266,
+      "min_width_px": 8,
+      "min_spacing_px": 8,
+      "feasible_8px": true,
+      "min_s21_db": -0.20337681363874677,
+      "max_s21_db": -0.18837030851907552,
+      "max_s11_db": -45.09675978428608,
+      "s2": [
+        [
+          3.092601922818417e-05,
+          0.9560826898402714
+        ],
+        [
+          2.9640695655784463e-05,
+          0.9575533260879684
+        ],
+        [
+          2.9069647013194295e-05,
+          0.9575173731952539
+        ],
+        [
+          2.7161943809868095e-05,
+          0.9551316559188977
+        ],
+        [
+          2.061529094272711e-05,
+          0.9543737430468432
+        ],
+        [
+          1.0116361004510374e-05,
+          0.954250329619265
+        ]
+      ]
+    },
+    "invrs_gym_leaderboard_best": {
+      "source": "data/leaderboard_rescore.json (240630_rahulkpadhy_waveguide_bend_Aadi_Rahul.csv)",
+      "eval_metric": -1.2504255057620077,
+      "published": -1.2504255057635416,
+      "min_width_px": 9,
+      "min_spacing_px": 7,
+      "feasible_8px": false,
+      "min_s21_db": -0.49985685262183954,
+      "max_s21_db": -0.3895420664563608,
+      "max_s11_db": -16.47735368336743,
+      "s2": [
+        [
+          0.02250425455461078,
+          0.8912803150526326
+        ],
+        [
+          0.011620325406657675,
+          0.9047335511180586
+        ],
+        [
+          0.006364746031015631,
+          0.9116033098728603
+        ],
+        [
+          0.003651347603780469,
+          0.9142096334815646
+        ],
+        [
+          0.004042168981574947,
+          0.9119656424470284
+        ],
+        [
+          0.005571378675407157,
+          0.9073383675273629
+        ]
+      ]
+    },
+    "wakis_round1_seed1": {
+      "source": "data/round1/...ceviche_lightweight_waveguide_bend_seed1__summary.json",
+      "eval_metric_40nm": 0.5207661323643237,
+      "eval_metric_10nm": 0.3150157812315396,
+      "min_width_40nm_px": 2,
+      "min_spacing_40nm_px": 1,
+      "target_40nm_px": [
+        3,
+        3
+      ],
+      "feasible": false
+    },
+    "wakis_round1_seed0": {
+      "source": "data/round1/...ceviche_lightweight_waveguide_bend_seed0__summary.json",
+      "eval_metric_40nm": 0.3801312516285097,
+      "eval_metric_10nm": -0.035472676778021454,
+      "min_width_40nm_px": 3,
+      "min_spacing_40nm_px": 4,
+      "target_40nm_px": [
+        3,
+        3
+      ],
+      "feasible": true
+    }
+  },
+  "claims_c55_spread": {
+    "seed_scores": [
+      0.5793098618386266,
+      0.6427273992133412
+    ],
+    "spread": 0.0634,
+    "mean": 0.611
+  },
+  "cross_validation_wakis_vs_ceviche_fdfd": {
+    "round2_10nm_max_abs_delta_s_sq_cev_est": 0.0003772125115769631,
+    "round2_10nm_mean_abs_delta_s_sq_cev_est": 8.294995284368588e-05,
+    "round2_10nm_max_abs_delta_s_sq_modal": 0.00040010114276189945,
+    "round1_40nm_seed0_max_abs_delta_s_sq": 0.0001348235174489787,
+    "round1_40nm_seed1_max_abs_delta_s_sq": 0.000102566233483814,
+    "ceviche_reflection_floor_db": -31.0
+  },
+  "candidates_round2": [
+    {
+      "stage": "ste_beta64",
+      "step": 34,
+      "wakis_metrics": {
+        "1": 0.6412420796959741
+      },
+      "score": 0.6412420796959741,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6427273992133412
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 7,
+      "wakis_metrics": {
+        "1": 0.6223996254294627
+      },
+      "score": 0.6223996254294627,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6233249866564836
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 8,
+      "wakis_metrics": {
+        "1": 0.6221443185409613
+      },
+      "score": 0.6221443185409613,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6190796998779103
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 33,
+      "wakis_metrics": {
+        "1": 0.6025647912638117
+      },
+      "score": 0.6025647912638117,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.6000038433843263
+    }
+  ],
+  "preflight_round2": {
+    "machine": "g2-standard-8",
+    "per_resolution": {
+      "1": {
+        "cells": 97969,
+        "host_GB": 0.91813908,
+        "forward_adjoint_s_est": 326.45891645000006
+      }
+    },
+    "total_host_GB": 3.33627816,
+    "total_gpu_GB": 5.66511797
+  },
+  "memory_projection_313x313_56587steps": {
+    "cells": [
+      313,
+      313,
+      1
+    ],
+    "Nt": 56587,
+    "design_edges": 25600,
+    "state_bytes": 7902752,
+    "layer_edges": 2192,
+    "ladder": {
+      "store_f64": {
+        "bytes": 11589017600,
+        "extra": 0
+      },
+      "store_f32": {
+        "bytes": 5794508800,
+        "extra": 0
+      },
+      "checkpoint_curve": [
+        {
+          "budget": 100000000.0,
+          "bytes": 99881216,
+          "slots": 8,
+          "block": 178,
+          "extra": 242970
+        },
+        {
+          "budget": 121899505.14819553,
+          "bytes": 121830720,
+          "slots": 10,
+          "block": 208,
+          "extra": 210080
+        },
+        {
+          "budget": 148594893.55374888,
+          "bytes": 148490624,
+          "slots": 12,
+          "block": 261,
+          "extra": 198099
+        },
+        {
+          "budget": 181136439.9175078,
+          "bytes": 181089728,
+          "slots": 14,
+          "block": 343,
+          "extra": 178360
+        },
+        {
+          "budget": 220804423.90249962,
+          "bytes": 212303776,
+          "slots": 13,
+          "block": 534,
+          "extra": 160200
+        },
+        {
+          "budget": 269159500.082471,
+          "bytes": 269033376,
+          "slots": 13,
+          "block": 811,
+          "extra": 155712
+        },
+        {
+          "budget": 328104098.6598891,
+          "bytes": 328087584,
+          "slots": 17,
+          "block": 945,
+          "extra": 149310
+        },
+        {
+          "budget": 399957272.63735044,
+          "bytes": 399923840,
+          "slots": 20,
+          "block": 1180,
+          "extra": 140420
+        },
+        {
+          "budget": 487545936.1491495,
+          "bytes": 487432608,
+          "slots": 29,
+          "block": 1260,
+          "extra": 127260
+        },
+        {
+          "budget": 594316083.5359482,
+          "bytes": 594084864,
+          "slots": 32,
+          "block": 1665,
+          "extra": 108225
+        },
+        {
+          "budget": 724468364.8464571,
+          "bytes": 722038336,
+          "slots": 18,
+          "block": 2830,
+          "extra": 104710
+        },
+        {
+          "budget": 883123351.7030514,
+          "bytes": 875650976,
+          "slots": 13,
+          "block": 3773,
+          "extra": 101871
+        },
+        {
+          "budget": 1076522995.5741782,
+          "bytes": 1045069120,
+          "slots": 10,
+          "block": 4716,
+          "extra": 99036
+        },
+        {
+          "budget": 1312276204.411454,
+          "bytes": 1222390016,
+          "slots": 8,
+          "block": 5659,
+          "extra": 96203
+        },
+        {
+          "budget": 1599658199.355079,
+          "bytes": 1496376512,
+          "slots": 6,
+          "block": 7074,
+          "extra": 91962
+        },
+        {
+          "budget": 1949975429.0763762,
+          "bytes": 1695321760,
+          "slots": 5,
+          "block": 8084,
+          "extra": 88924
+        },
+        {
+          "budget": 2377010398.5554957,
+          "bytes": 2341839456,
+          "slots": 3,
+          "block": 11318,
+          "extra": 79226
+        },
+        {
+          "budget": 2897563913.1602993,
+          "bytes": 2341839456,
+          "slots": 3,
+          "block": 11318,
+          "extra": 79226
+        },
+        {
+          "budget": 3532116071.495081,
+          "bytes": 2913315904,
+          "slots": 2,
+          "block": 14147,
+          "extra": 70735
+        },
+        {
+          "budget": 4305632012.412388,
+          "bytes": 3871045152,
+          "slots": 1,
+          "block": 18862,
+          "extra": 56586
+        },
+        {
+          "budget": 5248544116.632994,
+          "bytes": 3871045152,
+          "slots": 1,
+          "block": 18862,
+          "extra": 56586
+        },
+        {
+          "budget": 6397949305.660324,
+          "bytes": 5802513952,
+          "slots": 1,
+          "block": 28293,
+          "extra": 28293
+        },
+        {
+          "budget": 7799068543.232347,
+          "bytes": 5802513952,
+          "slots": 1,
+          "block": 28293,
+          "extra": 28293
+        },
+        {
+          "budget": 9507025960.368774,
+          "bytes": 5802513952,
+          "slots": 1,
+          "block": 28293,
+          "extra": 28293
+        },
+        {
+          "budget": 11589017600.0,
+          "bytes": 11589017600,
+          "slots": 0,
+          "block": 56587,
+          "extra": 0
+        }
+      ],
+      "reverse": {
+        "bytes": 1098654335,
+        "extra": 0,
+        "record_edges": 2192
+      },
+      "nyquist": {
+        "bytes": 246574842,
+        "extra": 0,
+        "decimation": 47
+      }
+    }
+  }
+}

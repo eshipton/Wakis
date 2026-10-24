@@ -1,0 +1,33 @@
+{
+  "task_index": 9,
+  "name": "misaligned_half_period",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 25.88,
+  "dx_min_nm": 6.25,
+  "dx_min_x_nm": 20.25,
+  "dy_min_nm": 6.25,
+  "cells_across_feature": 8.0,
+  "cells_across_tooth_x": 8.0,
+  "n_periods": 100,
+  "dw_nm": 50.0,
+  "shift_nm": 162.0,
+  "apodization": "uniform",
+  "grid_shape": [
+    1685,
+    108,
+    1
+  ],
+  "n_cells": 181980,
+  "n_steps": 49751,
+  "lambda_bragg_nm": 1511.19,
+  "stopband_width_nm": 6.53,
+  "R_max": 0.0003,
+  "T_min": 0.9931,
+  "elapsed_s": 1496.727,
+  "peak_rss_mb": 539.33,
+  "npz_bytes": 425478
+}

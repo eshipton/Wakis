@@ -64,6 +64,8 @@ Documentation is part of the feature, not a follow-up task.
 - Make examples portable, modest in runtime/data size, and executable from a clean environment. Ensure notebook-based documentation continues to build correctly where applicable.
 - Do not commit generated PDFs, large result files, caches, or other derived binary artifacts merely to show output. Use tracked Markdown/notebook sources and `.gitignore` entries as appropriate.
 
+Before pushing changes that add or modify scientific references, run `python tools/audit_citations.py --report` (or `python tools/audit_citations.py --files <path> --report` for specific files) to verify every DOI in tracked `.py` and `.md` files against Crossref and DataCite metadata. Review any `NOT_FOUND`, `MISMATCH`, or `WEAK` entries to confirm that each DOI resolves and that the cited authors, title, journal, volume, pages, and year match the surrounding text.
+
 ## AI-assisted development
 
 Generative AI coding assistants may be used to support development and contributions. When using these tools, follow the additional instructions in [AGENTS.md](AGENTS.md), which complement this contribution guide.

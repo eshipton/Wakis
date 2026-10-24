@@ -1,0 +1,18 @@
+{
+  "task": 2,
+  "name": "absorption_saturation",
+  "gamma_confinement": 0.94755,
+  "q_abs_targets": [
+    100000.0,
+    20000.0,
+    5000.0
+  ],
+  "Q_tot_alpha0": [
+    111369.3,
+    22275.1,
+    5568.8
+  ],
+  "max_rel_err_Q_tot_pred": 0.00023,
+  "max_rel_err_Q_rad_recovered": 0.00028,
+  "elapsed_s": 98.77
+}

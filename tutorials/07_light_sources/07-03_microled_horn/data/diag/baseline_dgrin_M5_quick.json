@@ -1,0 +1,107 @@
+{
+  "variant": "baseline",
+  "config": "dgrin",
+  "mesh": "quick",
+  "M": 5,
+  "ndip": 5,
+  "dipole_x_m": [
+    -2.4e-07,
+    -1.2e-07,
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "dipole_x_nm": [
+    -240.0,
+    -120.0,
+    0.0,
+    120.0,
+    240.0
+  ],
+  "folded_dipole_xs_m": [
+    0.0,
+    1.2e-07,
+    2.4e-07
+  ],
+  "folded_dipole_weights": [
+    1.0,
+    2.0,
+    2.0
+  ],
+  "lee15_eq_pct": 39.0432,
+  "lee90_eq_pct": 71.17,
+  "lee15_pct": 42.0649,
+  "lee90_pct": 76.2789,
+  "lee15_wrk_pct": 40.3477,
+  "lee90_wrk_pct": 73.1651,
+  "lee15_pol_x": 38.0093,
+  "lee15_pol_y": 27.9903,
+  "lee15_pol_z": 51.1301,
+  "lee90_pol_x": 68.6804,
+  "lee90_pol_y": 53.2235,
+  "lee90_pol_z": 91.6059,
+  "per_pol": {
+    "lee15_pct": {
+      "x": 38.0093,
+      "y": 27.9903,
+      "z": 51.1301
+    },
+    "lee90_pct": {
+      "x": 68.6804,
+      "y": 53.2235,
+      "z": 91.6059
+    }
+  },
+  "lee15_xz_tangential_pct": 44.5697,
+  "lee90_xz_tangential_pct": 80.1432,
+  "collimation_ratio_eq_pct": 54.8591,
+  "collimation_ratio_pct": 55.1462,
+  "purcell_factor": 1.0426,
+  "fwhm_deg": 18.0527,
+  "directivity_2d": 5.3249,
+  "paper_2d_lee15_pct": 37.7,
+  "paper_2d_lee90_pct": 75.3,
+  "gap_lee15_eq_pp": 1.3432,
+  "gap_lee90_eq_pp": -4.13,
+  "ag_eps_450nm_real": -5.4021,
+  "ag_eps_450nm_imag": -0.6338,
+  "ag_skin_depth_E_nm": 30.7616,
+  "ag_skin_depth_I_nm": 15.3808,
+  "dx_background_nm": 15.0,
+  "dx_min_nm": 3.75,
+  "cpw_gan": 12.2449,
+  "cpw_gan_min_wl": 11.5646,
+  "min_feature_nm": 150.0,
+  "cells_across_feature": 18.0,
+  "cells_per_skin_depth_I": 4.1015,
+  "cells_per_skin_depth_E": 8.2031,
+  "n_cells": 125550,
+  "n_steps": 6622,
+  "conv_ndip_full": [
+    1,
+    3,
+    5
+  ],
+  "conv_lee15_eq": [
+    37.0903,
+    36.6371,
+    39.0432
+  ],
+  "conv_lee90_eq": [
+    86.2757,
+    75.7011,
+    71.17
+  ],
+  "conv_lee15": [
+    41.6743,
+    40.0745,
+    42.0649
+  ],
+  "conv_lee90": [
+    96.7548,
+    83.0046,
+    76.2789
+  ],
+  "wall_time_s": 458.324,
+  "elapsed_s": 458.323
+}

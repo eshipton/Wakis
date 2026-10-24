@@ -340,7 +340,7 @@ class QuadMesh:
             raise ValueError("point outside the mesh")
         return out
 
-    def interpolation_matrix(self, points):
+    def interpolation_matrix(self, points, bloch_phase=1.0):
         """
         Sparse bilinear interpolation (n_points x n_free) of the nodal field.
 
@@ -352,11 +352,19 @@ class QuadMesh:
         c = self.cells
         tx = (points[:, 0] - c["x0"][k]) / (c["x1"][k] - c["x0"][k])
         ty = (points[:, 1] - c["y0"][k]) / (c["y1"][k] - c["y0"][k])
-        w = np.stack([(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty], 1)
+        top_wrap = self.periodic_y & ((c["j"][k] + c["n"][k]) == self.NJ)
+        bp = np.where(top_wrap, bloch_phase, 1.0)
+        w = np.stack(
+            [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty * bp, tx * ty * bp], 1
+        )
         rows = np.repeat(np.arange(len(points)), 4)
-        S = sp.csr_matrix((w.ravel(), (rows, self.cell_nodes[k].ravel())),
-                          shape=(len(points), self.n_nodes))  # fmt: skip
-        return (S @ self.P).tocsr()
+        dtype = complex if np.iscomplexobj(w) or np.iscomplexobj(bloch_phase) else float
+        S = sp.csr_matrix(
+            (w.ravel().astype(dtype), (rows, self.cell_nodes[k].ravel())),
+            shape=(len(points), self.n_nodes),
+        )
+        P = self.P if bloch_phase == 1.0 else self.prolongation(bloch_phase)
+        return (S @ P).tocsr()
 
     # -------------------------------------------------------------- summaries
     def level_counts(self):

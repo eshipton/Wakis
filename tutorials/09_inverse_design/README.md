@@ -1,0 +1,10 @@
+# Chapter 9 · Inverse Design
+
+Gradient-based electromagnetic topology and shape optimization using Wakis's exact discrete adjoint solver (`wakis.inverse`) and JAX integration (`jax_simulation`).
+
+## Tutorials
+
+- **[9.1 Adjoint gradients](09-01_adjoint_gradients/adjoint_gradients.ipynb)** ([`09-01_adjoint_gradients`](09-01_adjoint_gradients/adjoint_gradients.py)) — Exact discrete transpose of the leapfrog FIT time-stepper (`AdjointSimulation`, `AdjointStepper`), why discretize-then-differentiate is exact to round-off vs continuous-adjoint mismatch, `MaterialGrid` density parameterization with conic filtering, $\tanh$ projection ($\beta$-continuation) and subpixel-smoothed tensor averaging (`smoothing="tensor"`), operator dot-product and central finite-difference V-curve verification, the four-rung memory ladder (`store`, Griewank–Walther `checkpoint`, CPML-interface `reverse`, and `nyquist`), and a live 2D waveguide-bend topology optimization.
+- **[9.2 Waveguide bend](09-02_waveguide_bend/waveguide_bend.ipynb)** ([`09-02_waveguide_bend`](09-02_waveguide_bend/waveguide_bend.py)) — Topology optimization of the `invrs-gym` `ceviche_waveguide_bend` challenge (10 nm grid, $312\times 312$ pixels, $160\times 160$ design region, 6 wavelengths, 8 px minimum feature length scale), two-stage `FeasibleDensity` L-BFGS-B ($\beta=4..32$) + morphological brush STE ($\beta=64$) pipeline, broadband Wakis re-simulation vs stored `dense_S` and `ceviche` FDFD cross-validation ($\max|\Delta|S|^2| = 3.77\times 10^{-4}$ at $10\text{ nm}$), and like-for-like leaderboard comparison ($+0.6427$ and $+0.5793$ at $8/8\text{ px}$ vs $-1.2504$ at $9/7\text{ px}$).
+- **9.3 Power splitter and mode converter** (`09-03_splitter_and_mode_converter`) *(in progress)* — Multi-objective broadband S-parameter optimization of a $1\times 2$ power splitter (`ceviche_power_splitter`) and a $\text{TE}_0 \to \text{TE}_1$ waveguide mode converter (`ceviche_mode_converter`).
+- **9.4 Metalens** (`09-04_metalens`) *(in progress)* — 3D inverse design of a subwavelength dielectric metasurface lens (`meta_atom_library` / `metalens`) maximizing RGB focal-spot intensity.

@@ -1,0 +1,24 @@
+{
+  "task_index": 2,
+  "name": "kottke_L1",
+  "kind": "semilens",
+  "level": "L1",
+  "averaging": "kottke",
+  "cpw": 10,
+  "n_feature": 4,
+  "demo": false,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 50.378,
+  "dx_min_nm": 12.5,
+  "cells_across_feature": 4.0,
+  "grid_shape": [
+    269,
+    240,
+    1
+  ],
+  "n_cells": 64560,
+  "n_steps": 16896,
+  "elapsed_s": 118.595,
+  "peak_rss_mb": 538.13,
+  "npz_bytes": 11964
+}

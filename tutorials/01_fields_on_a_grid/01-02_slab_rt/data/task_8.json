@@ -1,0 +1,18 @@
+{
+  "index": 8,
+  "name": "kottke_cpw28",
+  "kind": "subpixel",
+  "cpw": 28,
+  "averaging": "kottke",
+  "dx_background_nm": 35.71428571428571,
+  "dx_min_nm": 17.857142857142854,
+  "min_feature_nm": 368.5,
+  "cells_across_feature": 20.636000000000003,
+  "n_cells": 178,
+  "n_steps": 8572,
+  "wall_time_s": 1.9479458579990023,
+  "level": "fine",
+  "rms_err": 0.0036697777396168195,
+  "max_err": 0.007794640098072486,
+  "energy_err": 3.12385153300454e-08
+}

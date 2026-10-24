@@ -1,0 +1,24 @@
+{
+  "task_index": 1,
+  "name": "disp_res_medium",
+  "kind": "bloch_2d",
+  "grid_shape": [
+    24,
+    48,
+    1
+  ],
+  "dx_background": 0.0003997232773333334,
+  "dx_min": 8.333333333333333e-05,
+  "dx_background_mm": 0.3997,
+  "dx_min_mm": 0.0833,
+  "min_feature_mm": 0.5,
+  "cells_across_feature": 6.0,
+  "cpw": 24.0,
+  "n_cells": 1152,
+  "n_steps": 14988,
+  "elapsed_s": 2.013,
+  "peak_rss_mb": 224.78,
+  "npz_bytes": 333427,
+  "R_fit": 0.46709,
+  "R_th": 0.46622
+}

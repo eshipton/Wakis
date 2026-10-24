@@ -1,0 +1,18 @@
+# this file is part of refractiveindex.info database
+# refractiveindex.info database is in the public domain
+# copyright and related rights waived via CC0 1.0
+
+REFERENCES: |
+    J. R. Devore.
+    Refractive indices of rutile and sphalerite.
+    [*J. Opt. Soc. Am.* **41**, 416-419 (1951)](https://doi.org/10.1364/JOSA.41.000416)
+COMMENTS: |
+    Extraordinary optical constants (e); Room temperature
+CONDITIONS:
+    optical_component: e
+DATA:
+  - type: formula 4
+    wavelength_range: 0.43 1.53
+    coefficients: 7.197 0.3322 0 0.0843 1 0 0 0 1
+
+

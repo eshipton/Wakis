@@ -1,0 +1,24 @@
+{
+  "task_index": 8,
+  "name": "linear_taper_crossing",
+  "level": "L3",
+  "kind": "linear",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature_min": 8,
+  "min_feature_nm": 350.0,
+  "dx_background_nm": 21.507,
+  "dx_min_nm": 21.507,
+  "cells_across_feature": 16.274,
+  "grid_shape": [
+    658,
+    658,
+    1
+  ],
+  "n_cells": 432964,
+  "n_steps": 13451,
+  "n_steps_per_drive": 13451,
+  "elapsed_s": 695.198,
+  "peak_rss_mb": 1319.45,
+  "npz_bytes": 12511
+}

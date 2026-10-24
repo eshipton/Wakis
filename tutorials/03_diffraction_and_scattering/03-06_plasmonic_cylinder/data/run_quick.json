@@ -1,0 +1,15 @@
+{
+ "metal": "Ag",
+ "poles": "N2",
+ "diameter_nm": 40.0,
+ "dx_nm": 4.0,
+ "conformal": "all",
+ "cells": 8836,
+ "steps": 4391,
+ "dt_s": 7.971278775379824e-18,
+ "run_s": 45.478,
+ "lam_peak_nm": 343.3162,
+ "q_peak": 4.4985,
+ "fwhm_nm": 22.6034,
+ "nrms_vs_mie_n2": 0.05462
+}

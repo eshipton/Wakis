@@ -1,0 +1,212 @@
+{
+  "errors": [],
+  "challenge": "metalens",
+  "seed": 0,
+  "args": {
+    "shard": 0,
+    "nshards": 6,
+    "outdir": "/work/out",
+    "challenges": [
+      "metalens"
+    ],
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "betas": [
+      2.0,
+      4.0,
+      8.0
+    ],
+    "density_steps": 40,
+    "levelset_steps": 80,
+    "penalty": 1.0,
+    "estimator": "ceviche",
+    "run_time": 4e-13,
+    "metalens_resolution": 1,
+    "no_render": false,
+    "config": "configs/round2.json",
+    "schedule": "v3",
+    "r2_weight": null,
+    "steps_scale": 1.0,
+    "candidates": null,
+    "candidates_10nm": false,
+    "smoothing": "none",
+    "machine": "g2-standard-16",
+    "gpu": true,
+    "fused": true,
+    "adjoint_memory": "store",
+    "adjoint_memory_budget": null,
+    "checkpoint_run": null,
+    "ignore_gpu_cap": false,
+    "preflight_only": false,
+    "arms": null,
+    "specs": null,
+    "jobs_per_task": null
+  },
+  "method": "feasible (conic filter + projection + length-scale repair, STE)",
+  "stages": [
+    {
+      "beta": 4,
+      "steps": 25,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 8,
+      "steps": 25,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 16,
+      "steps": 25,
+      "weights": {
+        "1": 1.0
+      }
+    },
+    {
+      "beta": 16,
+      "steps": 100,
+      "ste": true,
+      "optimizer": "adam",
+      "lr": 0.005,
+      "weights": {
+        "1": 1.0,
+        "2": 1.0
+      }
+    }
+  ],
+  "schedule": "v3",
+  "preflight": {
+    "machine": "g2-standard-16",
+    "per_resolution": {
+      "1": {
+        "cells": 256800,
+        "host_GB": 1.21653448,
+        "forward_adjoint_s_est": 54.82470000000001
+      },
+      "2": {
+        "cells": 1025600,
+        "host_GB": 13.77707848,
+        "forward_adjoint_s_est": 110.66462000000001
+      }
+    },
+    "total_host_GB": 17.71014744,
+    "total_gpu_GB": 5.27960144
+  },
+  "filter_radius_px": 5.0,
+  "target_min_width_spacing_px": [
+    5,
+    5
+  ],
+  "resolutions": [
+    1,
+    2
+  ],
+  "optimization_time_s": 6279.323333263397,
+  "snapshots_time_s": 0.25637316703796387,
+  "candidate0_official_time_s": 103.86757230758667,
+  "candidates": [
+    {
+      "stage": "ste_beta16",
+      "step": 100,
+      "wakis_metrics": {
+        "1": 8.432886304355437
+      },
+      "score": 8.432886304355437,
+      "length_scale_leaderboard_px": [
+        5,
+        5
+      ],
+      "official_eval_metric": 8.86517819331014
+    },
+    {
+      "stage": "ste_beta16",
+      "step": 54,
+      "wakis_metrics": {
+        "1": 8.189260002705431,
+        "2": 7.813847539528801
+      },
+      "score": 8.189260002705431,
+      "length_scale_leaderboard_px": [
+        5,
+        5
+      ],
+      "official_eval_metric": 7.712801430225626
+    },
+    {
+      "stage": "ste_beta16",
+      "step": 99,
+      "wakis_metrics": {
+        "1": 8.182074112362676,
+        "2": 8.466301920796242
+      },
+      "score": 8.182074112362676,
+      "length_scale_leaderboard_px": [
+        5,
+        5
+      ],
+      "official_eval_metric": 8.582015391549191
+    },
+    {
+      "stage": "ste_beta16",
+      "step": 55,
+      "wakis_metrics": {
+        "1": 8.175958769710526,
+        "2": 7.978602499622746
+      },
+      "score": 8.175958769710526,
+      "length_scale_leaderboard_px": [
+        5,
+        5
+      ],
+      "official_eval_metric": 7.854006156479896
+    }
+  ],
+  "candidate1_official_time_s": 90.81184077262878,
+  "candidate2_official_time_s": 92.8486545085907,
+  "candidate3_official_time_s": 91.6355652809143,
+  "selected_candidate": 0,
+  "selected_stage": "ste_beta16:100",
+  "official_backend": "fmmax FMM (invrs_gym component.response)",
+  "official_eval_metric": 8.86517819331014,
+  "official_enhancement_ex": [
+    11.459854930431701,
+    8.86517819331014,
+    9.535331361416123
+  ],
+  "binarization_degree": 1.0,
+  "official_eval_time_s": 92.8558144569397,
+  "wakis_eval_metric": 8.432886304355437,
+  "wakis_enhancement_ex": [
+    10.825318569991442,
+    8.432886304355437,
+    9.179046008762695
+  ],
+  "wakis_eval_time_s": 6.4732537269592285,
+  "length_scale_solid_void_px": [
+    5,
+    5
+  ],
+  "length_scale_leaderboard_px": [
+    5,
+    5
+  ],
+  "length_scale_time_s": 0.13224148750305176,
+  "fields_time_s": 3.8201258182525635,
+  "render_time_s": 14.906417608261108,
+  "rendered": {
+    "design.png": "ok",
+    "optimization.gif": "ok",
+    "fields.png": "ok",
+    "wave.gif": "ok"
+  },
+  "total_time_s": 1936.7531673908234
+}
