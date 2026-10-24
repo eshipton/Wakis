@@ -870,10 +870,6 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 00a & 00b: Setup schematic (Figure A) + Mesh & excitation (Figure B) + table
         # ------------------------------------------------------------------
-        old_p0 = fig_dir / "00_setup_schematic.png"
-        if old_p0.exists():
-            old_p0.unlink()
-
         d_slab_m = (float(t_fp["z_hi_um"]) - float(t_fp["z_lo_um"])) * 1e-6
         setup_res = schematic.save_setup_figures(
             solver,

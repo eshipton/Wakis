@@ -22,11 +22,19 @@ Checks:
 
 from __future__ import annotations
 
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.check_figure_refs import (  # noqa: E402
+    run_mutation_checks as run_figure_mutation_checks,
+    validate_all_tutorial_figures,
+)
+
 EXAMPLES_MD = REPO_ROOT / "EXAMPLES.md"
 
 REQUIRED_HEADINGS = [
@@ -231,6 +239,9 @@ def validate_markdown(text: str, repo_root: Path) -> list[str]:
         if rel_st not in linked_rel_paths:
             errors.append(f"Unlinked method study directory: {rel_st}")
 
+    # 7. Check that every figure/GIF referenced in tutorial scripts exists and is tracked by git
+    errors.extend(validate_all_tutorial_figures(repo_root))
+
     return errors
 
 
@@ -282,6 +293,9 @@ def run_mutation_checks(text: str, repo_root: Path) -> None:
     assert any("Legacy catalog ID" in e for e in err_legacy), (
         "Mutation check 5 failed: legacy ID W01 was not detected"
     )
+
+    # Mutation 6: tutorial script figure/GIF reference checks
+    run_figure_mutation_checks(repo_root)
 
 
 def main() -> int:
