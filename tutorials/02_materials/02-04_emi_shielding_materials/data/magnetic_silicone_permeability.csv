@@ -1,5 +1,5 @@
 # read from the datasheet plot, approximate
-# Source: Laird Performance Materials, "Eccosorb RF-LB EMI Noise Suppression Absorber Technical Datasheet," Doc. EM-ABS-DS-10132022 (2022), p. 2 ("Permeability VS Frequency", 10 MHz - 1000 MHz).
+# Source: manufacturer datasheet of a commercially available magnetic-particle-loaded silicone absorber (digitized curves in data/), p. 2 ("Permeability VS Frequency", 10 MHz - 1000 MHz).
 # Tabulated physical properties (p. 1): Volume resistivity = 7.45e11 Ohm*cm, density = 2.2 g/cm^3, hardness = 70 Shore A, standard thicknesses = 0.5, 1.0, 1.5, 2.0, 2.5, 3.0 mm.
 f_mhz,f_ghz,mu_real,mu_imag
 10.0,0.010,36.50,2.49

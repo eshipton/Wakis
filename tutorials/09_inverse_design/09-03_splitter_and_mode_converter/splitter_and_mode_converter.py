@@ -19,7 +19,14 @@
 #
 # This tutorial presents Wakis's full-scale inverse-design results on two multi-objective
 # integrated-photonics benchmark challenges from `invrs-gym` (Schubert et al.,
-# arXiv:`2410.24132`; Schubert et al., *ACS Photonics* 2022):
+# arXiv:`2410.24132`; Schubert et al., *ACS Photonics* 2022). Adjoint optimization of
+# compact waveguide splitters and mode-coupling devices builds on the electromagnetic
+# adjoint shape-optimization formulation of Lalau-Keraly, Bhargava, Miller & Yablonovitch
+# (*Opt. Express* **21**, 21693, 2013; [Yale Miller Group](https://millergroup.yale.edu)),
+# which showed that forward and adjoint Maxwell solves yield exact design sensitivities
+# for multi-port waveguide junctions in two simulations per iteration, and on the
+# community `photonics-opt-testbed` benchmark and `imageruler` length-scale validation
+# framework of Chen et al. (*J. Opt. Soc. Am. B* **41**, A161, 2024):
 #
 # 1. **`ceviche_power_splitter`**: a compact $1.6\,\mu\text{m}\times 1.6\,\mu\text{m}$
 #    $1\times 2$ symmetric $50/50$ waveguide power splitter ($\text{TM}_0 \to \text{TM}_0 + \text{TM}_0$
@@ -1491,7 +1498,10 @@ def plot_all() -> list[Path]:
 #    $1\%$ ceiling), whereas $6.60\%\text{--}7.48\%$ of the input power is lost to cladding radiation or unconverted
 #    $\mathrm{TE}_0$ power, with the worst bottleneck at $\lambda_1 = 1265\,\text{nm}$ ($|S_{21}|^2 = 0.9252$).
 #    Lookahead morphological penalties during Stage 1, cosine-decayed step sizes in Stage 2, and a 4–8 seed portfolio are
-#    concrete, testable hypotheses to close this gap.
+#    concrete, testable hypotheses to close this gap. Complementing empirical multi-start sweeps, Gertler, Kuang, Christie,
+#    Li & Miller (*Sci. Adv.* **11**, eadl3237, 2025) showed that differential-form photonic design problems—including
+#    waveguide mode converters and power splitters—can be formulated as sparse quadratically constrained quadratic programs
+#    (QCQPs) whose semidefinite relaxations yield rigorous upper bounds on maximum achievable conversion efficiency.
 # 2. **2D effective-index vs. 3D SOI radiation loss**:
 #    Both challenges use the 2D `ceviche` model ($\varepsilon_{\min} = 2.085$, $\varepsilon_{\max} = 12.110$). Out-of-plane
 #    scattering into the $\mathrm{SiO}_2$ cladding of a 3D $220\,\text{nm}$ SOI slab is not captured by a 2D simulation.
@@ -1504,17 +1514,22 @@ def plot_all() -> list[Path]:
 #
 # ## Verified References
 #
-# 1. M. F. Schubert et al., "invrs-gym: a toolkit for nanophotonic inverse design research," arXiv:`2410.24132` (2024).
-# 2. M. F. Schubert, A. K. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander, "Inverse design of photonic devices
+# 1. C. M. Lalau-Keraly, S. Bhargava, O. D. Miller and E. Yablonovitch, "Adjoint shape optimization applied to
+#    electromagnetic design", *Opt. Express* **21**, 21693 (2013), DOI: `10.1364/OE.21.021693`.
+# 2. M. F. Schubert et al., "invrs-gym: a toolkit for nanophotonic inverse design research," arXiv:`2410.24132` (2024).
+# 3. M. F. Schubert, A. K. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander, "Inverse design of photonic devices
 #    with strict foundry fabrication constraints," *ACS Photonics* **9**, 2327–2336 (2022), DOI: `10.1021/acsphotonics.2c00313`.
-# 3. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode differentiation of Maxwell's equations,"
+# 4. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode differentiation of Maxwell's equations,"
 #    *ACS Photonics* **6**, 3010–3016 (2019), arXiv:`1908.10507`, DOI: `10.1021/acsphotonics.9b01238`.
-# 4. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and robust formulations in topology
+# 5. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and robust formulations in topology
 #    optimization," *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), DOI: `10.1007/s00158-010-0602-y`.
-# 5. M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson et al., "Validation and characterization of
-#    algorithms and software for photonics inverse design," *J. Opt. Soc. Am. B* **41**, A161–A176 (2024),
+# 6. M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson, W. Ma, O. D. Miller, A. Oskooi,
+#    M. F. Schubert, F. Wang, I. A. D. Williamson, W. Xue and Y. Zhou, "Validation and characterization of algorithms and
+#    software for photonics inverse design", *J. Opt. Soc. Am. B* **41**, A161 (2024),
 #    DOI: `10.1364/JOSAB.506412`.
-# 6. A. M. Hammond, A. Oskooi, I. A. D. Williamson, and S. G. Johnson, "Subpixel-smoothed projection for topology
+# 7. L. Gertler, Z. Kuang, C. Christie, H. Li and O. D. Miller, "Many photonic design problems are sparse QCQPs",
+#    *Sci. Adv.* **11**, eadl3237 (2025), DOI: `10.1126/sciadv.adl3237`.
+# 8. A. M. Hammond, A. Oskooi, I. A. D. Williamson, and S. G. Johnson, "Subpixel-smoothed projection for topology
 #    optimization," *Opt. Express* **33**, 33620 (2025), arXiv:`2503.20189`.
 
 # %%

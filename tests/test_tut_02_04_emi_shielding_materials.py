@@ -20,7 +20,7 @@ import pytest
 
 from wakis.dispersive import DispersiveMaterial, dispersive_lib
 from wakis.material_library import (
-    ECCOSORB_RF_LB_SOURCE_DATA,
+    MAGNETIC_SILICONE_SOURCE_DATA,
     info as material_info,
     list_materials,
 )
@@ -68,10 +68,10 @@ def _assert_emi_resolution_rules(
 
 
 def test_datasheet_csvs_and_emi_material_library_models():
-    """Verify digitized Laird RF-LB CSVs, passivity, stability, and fit accuracy of all 6 EMI materials."""
+    """Verify digitized magnetic-particle silicone CSVs, passivity, stability, and fit accuracy of all 6 EMI materials."""
     # 1. Digitized CSV files and required header comments
-    perm_csv = TUTORIAL_DIR / "data" / "eccosorb_rf_lb_permeability.csv"
-    att_csv = TUTORIAL_DIR / "data" / "eccosorb_rf_lb_attenuation.csv"
+    perm_csv = TUTORIAL_DIR / "data" / "magnetic_silicone_permeability.csv"
+    att_csv = TUTORIAL_DIR / "data" / "magnetic_silicone_attenuation.csv"
     assert perm_csv.is_file(), f"Missing {perm_csv}"
     assert att_csv.is_file(), f"Missing {att_csv}"
 
@@ -79,14 +79,14 @@ def test_datasheet_csvs_and_emi_material_library_models():
     att_text = att_csv.read_text(encoding="utf-8")
     for txt in (perm_text, att_text):
         assert "read from the datasheet plot, approximate" in txt
-        assert "EM-ABS-DS-10132022" in txt
+        assert "manufacturer datasheet of a commercially available magnetic-particle-loaded silicone absorber" in txt
 
-    ds = hlp.load_eccosorb_rf_lb_csv(TUTORIAL_DIR / "data")
-    np.testing.assert_allclose(ds["f_mu_hz"], ECCOSORB_RF_LB_SOURCE_DATA["f_mu_hz"])
-    np.testing.assert_allclose(ds["mu_real"], ECCOSORB_RF_LB_SOURCE_DATA["mu_real"])
-    np.testing.assert_allclose(ds["mu_imag"], ECCOSORB_RF_LB_SOURCE_DATA["mu_imag"])
-    np.testing.assert_allclose(ds["f_att_hz"], ECCOSORB_RF_LB_SOURCE_DATA["f_att_hz"])
-    np.testing.assert_allclose(ds["atten_db_cm"], ECCOSORB_RF_LB_SOURCE_DATA["atten_db_cm"])
+    ds = hlp.load_magnetic_silicone_csv(TUTORIAL_DIR / "data")
+    np.testing.assert_allclose(ds["f_mu_hz"], MAGNETIC_SILICONE_SOURCE_DATA["f_mu_hz"])
+    np.testing.assert_allclose(ds["mu_real"], MAGNETIC_SILICONE_SOURCE_DATA["mu_real"])
+    np.testing.assert_allclose(ds["mu_imag"], MAGNETIC_SILICONE_SOURCE_DATA["mu_imag"])
+    np.testing.assert_allclose(ds["f_att_hz"], MAGNETIC_SILICONE_SOURCE_DATA["f_att_hz"])
+    np.testing.assert_allclose(ds["atten_db_cm"], MAGNETIC_SILICONE_SOURCE_DATA["atten_db_cm"])
 
     # 2. Check all 6 EMI material classes in wakis.material_library
     emi_list = list_materials(category="emi")
@@ -96,6 +96,7 @@ def test_datasheet_csvs_and_emi_material_library_models():
         meta = material_info(key)
         assert meta["category"] == "emi"
         assert "citation" in meta and "title" in meta["citation"]
+    assert material_info("magnetic particle silicone")["aliases"] == ()
 
     # 3. Passivity (Im eps <= 0, Im mu <= 0) and discrete ADE stability across all 6 classes
     f_check = np.geomspace(1.0e6, 20.0e9, 200)
@@ -107,21 +108,21 @@ def test_datasheet_csvs_and_emi_material_library_models():
         assert np.all(np.imag(mu_v) <= 1e-12), f"Non-passive mu in {key}"
         assert mat.is_stable(dt=0.25e-12, courant=0.8), f"Unstable ADE in {key}"
 
-    # 4. Fitted mu(f) of Eccosorb RF-LB reproduces digitized datasheet points within digitization uncertainty
-    rf_lb = dispersive_lib["eccosorb rf-lb"]
-    mu_fit = rf_lb.mu(ds["f_mu_hz"])
+    # 4. Fitted mu(f) of magnetic-particle silicone reproduces digitized datasheet points within digitization uncertainty
+    mag_silicone = dispersive_lib["magnetic particle silicone"]
+    mu_fit = mag_silicone.mu(ds["f_mu_hz"])
     mu_target = ds["mu_real"] - 1j * ds["mu_imag"]
     rel_rms = float(np.sqrt(np.mean(np.abs(mu_fit - mu_target) ** 2 / np.abs(mu_target) ** 2)))
     max_d_real = float(np.max(np.abs(np.real(mu_fit) - ds["mu_real"])))
     max_d_imag = float(np.max(np.abs(-np.imag(mu_fit) - ds["mu_imag"])))
-    assert rel_rms < 0.01, f"RF-LB mu fit relative RMS {rel_rms:.4f} exceeds 1%"
-    assert max_d_real < 1.0, f"RF-LB max |Delta mu'| = {max_d_real:.3f} exceeds digitization tolerance"
-    assert max_d_imag < 1.0, f"RF-LB max |Delta mu''| = {max_d_imag:.3f} exceeds digitization tolerance"
+    assert rel_rms < 0.01, f"Mag. silicone mu fit relative RMS {rel_rms:.4f} exceeds 1%"
+    assert max_d_real < 1.0, f"Mag. silicone max |Delta mu'| = {max_d_real:.3f} exceeds digitization tolerance"
+    assert max_d_imag < 1.0, f"Mag. silicone max |Delta mu''| = {max_d_imag:.3f} exceeds digitization tolerance"
 
     # 5. Inferred eps' over the 0.1 - 1.0 GHz overlap band
     mask_ov = ds["f_att_hz"] <= 1.001e9
     inf0 = hlp.infer_eps_real_from_attenuation(
-        ds["f_att_hz"][mask_ov], rf_lb.mu(ds["f_att_hz"][mask_ov]), ds["atten_db_cm"][mask_ov], tan_delta_e=0.0
+        ds["f_att_hz"][mask_ov], mag_silicone.mu(ds["f_att_hz"][mask_ov]), ds["atten_db_cm"][mask_ov], tan_delta_e=0.0
     )
     assert 78.0 < inf0["eps_real"] < 86.0
     assert inf0["rms_overlap_db_cm"] < 3.0
@@ -135,13 +136,23 @@ def test_committed_tasks_figures_and_fit_vs_transfer_matrix():
         assert jp.is_file(), f"Missing {jp}"
         assert npzp.is_file() and npzp.stat().st_size > 0, f"Missing {npzp}"
 
+    t0_json = json.loads((TUTORIAL_DIR / "data" / "task_0.json").read_text(encoding="utf-8"))
+    t1_json = json.loads((TUTORIAL_DIR / "data" / "task_1.json").read_text(encoding="utf-8"))
+    t3_json = json.loads((TUTORIAL_DIR / "data" / "task_3.json").read_text(encoding="utf-8"))
+    assert t0_json["name"] == "magnetic_silicone_characterization"
+    assert "magnetic particle silicone" in t1_json["rms_R_by_class"]
+    assert "magnetic particle silicone" in t1_json["rms_T_by_class"]
+    assert "rms_R_mag_silicone" in t3_json
+    assert "nz_graded_mag_silicone" in t3_json
+    assert "nz_uniform_mag_silicone" in t3_json
+
     # 1. Verify setup figures (00a..00d) and physics figures (01..08) exist and are within size bounds
     expected_figs = [
         "00a_free_space_slab_setup.png",
         "00b_free_space_slab_mesh_pulse.png",
         "00c_metal_backed_absorber_setup.png",
         "00d_metal_backed_absorber_mesh_pulse.png",
-        "01_eccosorb_rf_lb_fit_and_attenuation.png",
+        "01_magnetic_silicone_fit_and_attenuation.png",
         "02_six_material_classes_dispersion.png",
         "03_slab_rt_and_absorption_spectra.png",
         "04_schelkunoff_se_decomposition.png",
@@ -157,7 +168,7 @@ def test_committed_tasks_figures_and_fit_vs_transfer_matrix():
     gif_path = TUTORIAL_DIR / "figures" / "08_emi_slab_wave_propagation.gif"
     assert gif_path.stat().st_size < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"
 
-    # 2. Task 0: RF-LB in-band fit (1 Debye + 1 Lorentz < 0.5% vs 2 Debye ~ 4.5%) and 1-6 GHz extrapolation
+    # 2. Task 0: Mag. silicone in-band fit (1 Debye + 1 Lorentz < 0.5% vs 2 Debye ~ 4.5%) and 1-6 GHz extrapolation
     t0 = np.load(TUTORIAL_DIR / "data" / "task_0.npz")
     assert float(t0["rel_rms_1d1l"]) < 0.005
     assert float(t0["rel_rms_1d1l"]) < 0.10 * float(t0["rel_rms_2deb"])
@@ -190,9 +201,9 @@ def test_committed_tasks_figures_and_fit_vs_transfer_matrix():
     np.testing.assert_allclose(t1["SE_ex_table"][:5], se_sum[:5], atol=1e-12)
     np.testing.assert_allclose(t1["SE_ex_table"][5], se_sum[5], atol=2e-4)
 
-    # At d_index = 1 (2 mm for RF-LB and TiO2, 1 mm for CNT/Ni-C, 50 nm for Cu), near 2 GHz:
+    # At d_index = 1 (2 mm for Mag. silicone and TiO2, 1 mm for CNT/Ni-C, 50 nm for Cu), near 2 GHz:
     idx_2g = int(np.argmin(np.abs(t1["freqs"] - 2.0e9)))
-    # Magnetic absorber (RF-LB, class 0): absorption-dominated (SE_A > SE_R, A > 0.45)
+    # Magnetic absorber (Mag. silicone, class 0): absorption-dominated (SE_A > SE_R, A > 0.45)
     assert float(t1["SE_A_table"][0, 1, idx_2g]) > float(t1["SE_R_table"][0, 1, idx_2g])
     assert float(t1["A_fit_table"][0, 1, idx_2g]) > 0.45
     # High-eps ceramic (TiO2, class 2): reactive reflection only (A < 0.015 across whole band)
@@ -223,24 +234,24 @@ def test_committed_tasks_figures_and_fit_vs_transfer_matrix():
 
 def test_emi_mutations_provably_fail():
     """Mutation checks required by specification:
-    1. mu'' -> 0 makes the Eccosorb RF-LB absorption vanish (provably fails A > 0.40 and SE_A > SE_R).
+    1. mu'' -> 0 makes the magnetic-particle silicone absorption vanish (provably fails A > 0.40 and SE_A > SE_R).
     2. sigma -> 0 removes the CNT rubber shielding (provably fails SE > 12 dB).
     3. Active sign flip Im(mu) > 0 produces unphysical gain R + T > 1 (A < 0).
     4. Under-resolved cpw < 20 or cells_per_skin_depth < 4 provably fails _assert_emi_resolution_rules.
     """
     freqs = np.linspace(0.30e9, 2.50e9, 29)
     d_rf = 2.0e-3
-    rf_lb = dispersive_lib["eccosorb rf-lb"]
+    mag_silicone = dispersive_lib["magnetic particle silicone"]
 
-    # Baseline RF-LB has strong magnetic absorption (mean A > 0.45, SE_A > 10 dB at 2 GHz)
-    tm_rf = hlp.exact_slab_rt(freqs, rf_lb.epsilon(freqs), rf_lb.mu(freqs), d_rf)
-    sch_rf = hlp.schelkunoff_decomposition(freqs, rf_lb.epsilon(freqs), rf_lb.mu(freqs), d_rf)
+    # Baseline magnetic-particle silicone has strong magnetic absorption (mean A > 0.45, SE_A > 10 dB at 2 GHz)
+    tm_rf = hlp.exact_slab_rt(freqs, mag_silicone.epsilon(freqs), mag_silicone.mu(freqs), d_rf)
+    sch_rf = hlp.schelkunoff_decomposition(freqs, mag_silicone.epsilon(freqs), mag_silicone.mu(freqs), d_rf)
     assert float(np.mean(tm_rf["A"])) > 0.45
     assert float(sch_rf["SE_A_db"][-1]) > 10.0
 
-    # Mutation 1: Setting mu'' -> 0 (lossless positive real permeability |Re(mu)|) makes RF-LB absorption vanish identically
-    mu_lossless = np.maximum(np.real(rf_lb.mu(freqs)), 1.0) + 0.0j
-    eps_lossless = np.real(rf_lb.epsilon(freqs)) + 0.0j
+    # Mutation 1: Setting mu'' -> 0 (lossless positive real permeability |Re(mu)|) makes magnetic-particle silicone absorption vanish identically
+    mu_lossless = np.maximum(np.real(mag_silicone.mu(freqs)), 1.0) + 0.0j
+    eps_lossless = np.real(mag_silicone.epsilon(freqs)) + 0.0j
     tm_rf_mut = hlp.exact_slab_rt(freqs, eps_lossless, mu_lossless, d_rf)
     sch_rf_mut = hlp.schelkunoff_decomposition(freqs, eps_lossless, mu_lossless, d_rf)
     np.testing.assert_allclose(tm_rf_mut["A"], 0.0, atol=1e-14)
@@ -262,9 +273,9 @@ def test_emi_mutations_provably_fail():
         assert float(np.mean(sch_cnt_mut["SE_total_db"])) > 14.0
 
     # Mutation 3: Wrong sign convention mu' + i*mu'' (active medium) violates energy conservation (A < 0)
-    mu_active = np.conj(rf_lb.mu(freqs))
-    n_act = np.sqrt(rf_lb.epsilon(freqs) * mu_active)
-    z_act = np.sqrt(mu_active / rf_lb.epsilon(freqs))
+    mu_active = np.conj(mag_silicone.mu(freqs))
+    n_act = np.sqrt(mag_silicone.epsilon(freqs) * mu_active)
+    z_act = np.sqrt(mu_active / mag_silicone.epsilon(freqs))
     r12 = (z_act - 1.0) / (z_act + 1.0)
     P_gain = np.exp(-1j * (2.0 * np.pi * freqs / 299792458.0) * n_act * d_rf)
     t_gain = (1.0 - r12**2) * P_gain / (1.0 - (r12**2) * (P_gain**2))

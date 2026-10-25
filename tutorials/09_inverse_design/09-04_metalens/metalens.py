@@ -19,8 +19,22 @@
 #
 # This tutorial presents Wakis's time-domain FIT model, `fmmax` Fourier-modal-method (FMM/RCWA)
 # cross-validation, and Round-1 $\to$ Round-2 optimization results on the `invrs-gym`
-# **`metalens`** benchmark challenge (Schubert et al., arXiv:`2410.24132`; Chen et al.,
-# *J. Opt. Soc. Am. B* **41**, A161, 2024):
+# **`metalens`** benchmark challenge (Schubert et al., arXiv:`2410.24132`). The RGB-metalens
+# benchmark problem itself originates in the multi-group `photonics-opt-testbed` study on the
+# validation and characterization of algorithms and software for photonics inverse design
+# (M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson, W. Ma,
+# O. D. Miller, A. Oskooi, M. F. Schubert, F. Wang, I. A. D. Williamson, W. Xue and Y. Zhou,
+# *J. Opt. Soc. Am. B* **41**, A161, 2024, doi:`10.1364/JOSAB.506412`). It builds directly on
+# the inverse-designed metasurface and high-NA metalens work from Owen D. Miller's group at Yale
+# ([millergroup.yale.edu](https://millergroup.yale.edu)): high-NA achromatic metalenses by
+# inverse design over a minimax multi-wavelength focal-intensity objective analyzing the
+# trade-off between aperture diameter, numerical aperture, and dispersion engineering (Chung and
+# Miller, *Opt. Express* **28**, 6945, 2020, doi:`10.1364/OE.385440`); the inverse design of a
+# high-NA metalens for maskless lithography with experimentally fabricable feature scales (Chung,
+# Zhang, Li, Miller, and Smith, *Nanophotonics* **12**, 2371–2381, 2023,
+# doi:`10.1515/nanoph-2022-0761`); and tunable metasurface inverse design for high switching
+# efficiencies and wide-angle angular deflection (Chung and Miller, *ACS Photonics* **7**,
+# 2236–2243, 2020, doi:`10.1021/acsphotonics.0c00787`):
 #
 # - **Challenge geometry & materials**: a $10.0\,\mu\text{m}$-wide, $1.0\,\mu\text{m}$-thick
 #   $\text{TiO}_2$-like metasurface slab ($n_{\text{solid}} = 2.40$, $\varepsilon_{\max} = 5.76$;
@@ -1255,14 +1269,20 @@ def plot_all() -> list[Path]:
 # ## Limits & Failure Modes
 #
 # 1. **Physical trade-off between `5/5 px` ($100\,\text{nm}$) minimum feature size and RGB chromatic dispersion**:
-#    Without length-scale repair, Round-1 `seed 0` achieved an official `fmmax` worst-case enhancement of $14.07\times$
-#    ($18.23 / 14.07 / 16.80$), but relied on `2/1 px` ($40\,\text{nm}$ pillar / $20\,\text{nm}$ slot) sub-wavelength features
-#    to engineer independent group delays across $450\text{--}650\,\text{nm}$. Enforcing a strict $100\,\text{nm}$ (`5/5 px`)
-#    minimum width and spacing in Round-2 (`round2_metalens`, schedule `v3`, `seed 0`) removes those $20\,\text{nm}$ air slots
-#    and reduces the official worst-case enhancement to $8.87\times$ ($11.01 / 8.87 / 9.28$). Meanwhile, the published
-#    `Rasmus123nm` reference design achieves $14.30\times$ at $123\,\text{nm}$ length scale, showing that additional
-#    multi-start seeds and longer Stage-1 dispersion exploration before locking the binary topology in Stage 2 could recover
-#    significant focal intensity while keeping $100\,\text{nm}$ manufacturability.
+#    As analyzed for inverse-designed high-NA achromatic metalenses by Chung and Miller (*Opt. Express* **28**, 6945, 2020,
+#    doi:`10.1364/OE.385440`) and for ultraviolet maskless-lithography metalenses by Chung, Zhang, Li, Miller, and Smith
+#    (*Nanophotonics* **12**, 2371–2381, 2023, doi:`10.1515/nanoph-2022-0761`), simultaneous focusing across widely separated
+#    wavelengths in a $1\,\mu\text{m}$-thick slab relies on coupled waveguide-like resonances and narrow air slots to provide
+#    independent phase and group-delay dispersion. Without length-scale repair, Round-1 `seed 0` achieved an official `fmmax`
+#    worst-case enhancement of $14.07\times$ ($18.23 / 14.07 / 16.80$), but relied on `2/1 px` ($40\,\text{nm}$ pillar /
+#    $20\,\text{nm}$ slot) sub-wavelength features to engineer independent group delays across $450\text{--}650\,\text{nm}$.
+#    Enforcing a strict $100\,\text{nm}$ (`5/5 px`) minimum width and spacing in Round-2 (`round2_metalens`, schedule `v3`,
+#    `seed 0`) removes those $20\,\text{nm}$ air slots and reduces the official worst-case enhancement to $8.87\times$
+#    ($11.01 / 8.87 / 9.28$). Meanwhile, the published `Rasmus123nm` reference design from the `photonics-opt-testbed`
+#    validation and characterization benchmark (Chen et al., *J. Opt. Soc. Am. B* **41**, A161, 2024, doi:`10.1364/JOSAB.506412`)
+#    achieves $14.30\times$ at $123\,\text{nm}$ length scale, showing that additional multi-start seeds and longer Stage-1
+#    dispersion exploration before locking the binary topology in Stage 2 could recover significant focal intensity while
+#    keeping $100\,\text{nm}$ manufacturability.
 # 2. **Run-to-run seed variance**:
 #    Even in Round 1 without morphological repair, `seed 0` scored $14.07\times$ while `seed 1` scored $7.78\times$ (`2/2 px`),
 #    a $1.8\times$ spread across two random initializations. Because the $10\,\mu\text{m}$ aperture spans $\sim 22$ free-space
@@ -1277,12 +1297,18 @@ def plot_all() -> list[Path]:
 # ## Verified References
 #
 # 1. M. F. Schubert et al., "invrs-gym: a toolkit for nanophotonic inverse design research," arXiv:`2410.24132` (2024).
-# 2. M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson et al., "Validation and characterization of
-#    algorithms and software for photonics inverse design," *J. Opt. Soc. Am. B* **41**, A161–A176 (2024),
-#    DOI: `10.1364/JOSAB.506412`.
-# 3. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and robust formulations in topology
+# 2. M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson, W. Ma, O. D. Miller, A. Oskooi,
+#    M. F. Schubert, F. Wang, I. A. D. Williamson, W. Xue and Y. Zhou, "Validation and characterization of algorithms and
+#    software for photonics inverse design", *J. Opt. Soc. Am. B* **41**, A161 (2024), doi:`10.1364/JOSAB.506412`.
+# 3. H. Chung and O. D. Miller, "High-NA achromatic metalenses by inverse design", *Opt. Express* **28**, 6945 (2020),
+#    doi:`10.1364/OE.385440`.
+# 4. H. Chung, F. Zhang, H. Li, O. D. Miller and H. I. Smith, "Inverse design of high-NA metalens for maskless
+#    lithography", *Nanophotonics* **12**, 2371–2381 (2023), doi:`10.1515/nanoph-2022-0761`.
+# 5. H. Chung and O. D. Miller, "Tunable Metasurface Inverse Design for 80% Switching Efficiencies and 144° Angular
+#    Deflection", *ACS Photonics* **7**, 2236–2243 (2020), doi:`10.1021/acsphotonics.0c00787`.
+# 6. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and robust formulations in topology
 #    optimization," *Struct. Multidiscip. Optim.* **43**, 767–784 (2011), DOI: `10.1007/s00158-010-0602-y`.
-# 4. M. F. Schubert, A. K. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander, "Inverse design of photonic devices
+# 7. M. F. Schubert, A. K. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander, "Inverse design of photonic devices
 #    with strict foundry fabrication constraints," *ACS Photonics* **9**, 2327–2336 (2022), DOI: `10.1021/acsphotonics.2c00313`.
 
 # %%

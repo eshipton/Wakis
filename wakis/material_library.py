@@ -99,9 +99,9 @@ NIZN_FERRITE_SOURCE_DATA = {
 }
 
 #: Digitized permeability mu'(f), mu''(f) (10 MHz - 1 GHz) and attenuation alpha(f) [dB/cm] (0.1 - 6 GHz),
-#: read from the datasheet plots (approximate) in Laird Performance Materials, "Eccosorb RF-LB EMI Noise
-#: Suppression Absorber Technical Datasheet," Doc. EM-ABS-DS-10132022 (2022). Volume resistivity 7.45e11 Ohm*cm.
-ECCOSORB_RF_LB_SOURCE_DATA = {
+#: read from the manufacturer datasheet of a commercially available magnetic-particle-loaded silicone
+#: absorber (digitized curves in data/). Volume resistivity 7.45e11 Ohm*cm.
+MAGNETIC_SILICONE_SOURCE_DATA = {
     "f_mu_hz": np.array(
         [
             0.010e9,
@@ -1640,11 +1640,11 @@ def _build_library():
     # ------------------------------------------------------------------
     # 8. EMI Shielding and Absorbing Materials (Tutorial 2.4, 10 MHz - 6 GHz)
     # ------------------------------------------------------------------
-    # Class 1: Magnetic-particle-loaded silicone (Eccosorb RF-LB, Laird EM-ABS-DS-10132022)
+    # Class 1: Magnetic-particle-loaded silicone (commercially available absorber)
     # 1 Debye + 1 Lorentz passive magnetic fit to digitized mu'(f), mu''(f) over 10 MHz - 1 GHz,
     # with eps' = 82.67 (magnetic loss only, rho_v = 7.45e11 Ohm*cm) inferred from attenuation over 0.1 - 1 GHz.
     _register(
-        "eccosorb rf-lb",
+        "magnetic particle silicone",
         DispersiveMaterial(
             eps_inf=82.67,
             poles=[],
@@ -1654,16 +1654,16 @@ def _build_library():
                 Debye(15.63870068, 2.36923131e-9),
                 Lorentz(20.14228945, 1.15491234e10, 2.83645921e10),
             ],
-            name="eccosorb rf-lb",
+            name="magnetic particle silicone",
         ),
-        aliases=("rf-lb", "laird rf-lb"),
+        aliases=(),
         category="emi",
         model="Debye+Lorentz (magnetic fit + inferred permittivity)",
         wavelength_range_um=(4.99654e4, 2.99792e7),
         citation=_cite(
-            "Laird Performance Materials",
-            "Eccosorb RF-LB EMI Noise Suppression Absorber Technical Datasheet (Doc. EM-ABS-DS-10132022)",
-            "Laird Performance Materials Datasheet",
+            "Manufacturer datasheet",
+            "manufacturer datasheet of a commercially available magnetic-particle-loaded silicone absorber (digitized curves in data/)",
+            "Technical Datasheet",
             2022,
         ),
         fit_error=0.0036,

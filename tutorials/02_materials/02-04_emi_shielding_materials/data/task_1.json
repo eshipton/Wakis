@@ -12,7 +12,7 @@
   "max_rms_R": 0.00210422560692265,
   "max_rms_T": 0.0015547283791441519,
   "rms_R_by_class": {
-    "eccosorb rf-lb": [
+    "magnetic particle silicone": [
       0.0018379807052491528,
       0.0017207178337466465,
       0.00210422560692265
@@ -44,7 +44,7 @@
     ]
   },
   "rms_T_by_class": {
-    "eccosorb rf-lb": [
+    "magnetic particle silicone": [
       0.0011996357369117767,
       0.000900857139922439,
       0.000891264701102104

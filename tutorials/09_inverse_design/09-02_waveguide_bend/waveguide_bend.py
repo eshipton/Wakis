@@ -64,8 +64,18 @@
 #
 # ### 1. Multi-wavelength S-parameter objective and `invrs-gym` `eval_metric`
 #
-# In the `ceviche_waveguide_bend` challenge (Schubert et al., arXiv:`2410.24132`;
-# Hughes et al., *ACS Photonics* 2019), a silicon strip waveguide of width
+# Adjoint optimization of compact integrated-photonic waveguide routing components
+# dates back to Lalau-Keraly, Bhargava, Miller & Yablonovitch (*Opt. Express* **21**,
+# 21693, 2013; [Yale Miller Group](https://millergroup.yale.edu)), who showed that
+# shape and level-set sensitivities of electromagnetic waveguide devices can be
+# evaluated with a single forward and adjoint solve per iteration. To compare inverse-design
+# algorithms on a uniform footing, Chen et al. (*J. Opt. Soc. Am. B* **41**, A161, 2024)
+# introduced the community `photonics-opt-testbed` suite—pairing standardized test
+# problems with independent cross-solver evaluation and `imageruler` minimum-length-scale
+# verification—which `invrs-gym` (Schubert et al., arXiv:`2410.24132`; Hughes et al.,
+# *ACS Photonics* 2019) packages together with the `ceviche` integrated-photonics challenges.
+#
+# In the `ceviche_waveguide_bend` challenge, a silicon strip waveguide of width
 # $w_{\text{wg}} = 400\text{ nm}$ ($40\text{ px}$ at $\Delta l = 10\text{ nm}$, slab
 # permittivity $\varepsilon_{\text{slab}} = 12.25 = 3.5^2$ in $\text{SiO}_2$ cladding
 # $\varepsilon_{\text{clad}} = 2.25 = 1.5^2$) enters from Port 1 on the left
@@ -1889,13 +1899,18 @@ def plot_all(fig_dir: Path | None = None) -> list[Path]:
 #
 # ### Limits & Failure Modes
 #
-# 1. **Non-convex multi-seed spread (Claim C55)**:
+# 1. **Non-convex multi-seed spread (Claim C55) and global QCQP performance bounds**:
 #    Density-based photonic topology optimization is non-convex; different random
 #    initializations (`random_latent`) converge to distinct local minima on
 #    `ceviche_waveguide_bend` ($+0.5793$ for `ours_full_bend_seed1.npy` in
 #    `leaderboard_rescore.json` vs. $+0.6427$ in `round2_bend/summary.json`, a
 #    two-seed spread of $\Delta = 0.0634$). Differences smaller than $\sim 0.06$
-#    lie within run-to-run variance.
+#    lie within run-to-run variance. To assess how close a local optimum comes to the
+#    physical limit of a $1.6\,\mu\text{m}\times 1.6\,\mu\text{m}$ silicon design region,
+#    Gertler, Kuang, Christie, Li & Miller (*Sci. Adv.* **11**, eadl3237, 2025) showed
+#    that differential-equation formulations of photonic waveguide design problems can
+#    be cast as sparse quadratically constrained quadratic programs (QCQPs) whose
+#    semidefinite relaxations yield rigorous upper bounds on achievable transmission.
 # 2. **Stage-1 thresholding drop vs. Stage-2 morphological STE**:
 #    As recorded in `data/round2_bend/log.jsonl`, the continuous Stage-1 design
 #    reaches `eval_metric = +0.5585` at the end of `density_beta32` (step 19, iter 104),
@@ -1924,21 +1939,31 @@ def plot_all(fig_dir: Path | None = None) -> list[Path]:
 #
 # ### Verified References
 #
-# 1. M. F. Schubert, A. K. C. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander,
+# 1. C. M. Lalau-Keraly, S. Bhargava, O. D. Miller and E. Yablonovitch, "Adjoint shape optimization applied to
+#    electromagnetic design", *Opt. Express* **21**, 21693 (2013),
+#    DOI: [`10.1364/OE.21.021693`](https://doi.org/10.1364/OE.21.021693).
+# 2. M. Chen, R. E. Christiansen, J. A. Fan, G. Işiklar, J. Jiang, S. G. Johnson, W. Ma, O. D. Miller, A. Oskooi,
+#    M. F. Schubert, F. Wang, I. A. D. Williamson, W. Xue and Y. Zhou, "Validation and characterization of algorithms and
+#    software for photonics inverse design", *J. Opt. Soc. Am. B* **41**, A161 (2024),
+#    DOI: [`10.1364/JOSAB.506412`](https://doi.org/10.1364/JOSAB.506412).
+# 3. L. Gertler, Z. Kuang, C. Christie, H. Li and O. D. Miller, "Many photonic design problems are sparse QCQPs",
+#    *Sci. Adv.* **11**, eadl3237 (2025),
+#    DOI: [`10.1126/sciadv.adl3237`](https://doi.org/10.1126/sciadv.adl3237).
+# 4. M. F. Schubert, A. K. C. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander,
 #    "invrs-gym: a toolkit for nanophotonic inverse design research,"
 #    arXiv:[`2410.24132`](https://arxiv.org/abs/2410.24132) (2024).
-# 2. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode
+# 5. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode
 #    differentiation of Maxwell's equations," *ACS Photonics* **6**, 3010–3016 (2019),
 #    arXiv:[`1908.10507`](https://arxiv.org/abs/1908.10507),
 #    DOI: [`10.1021/acsphotonics.9b01238`](https://doi.org/10.1021/acsphotonics.9b01238).
-# 3. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and
+# 6. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and
 #    robust formulations in topology optimization," *Structural and Multidisciplinary
 #    Optimization* **43**, 767–784 (2011),
 #    DOI: [`10.1007/s00158-010-0602-y`](https://doi.org/10.1007/s00158-010-0602-y).
-# 4. B. Bourdin, "Filters in topology optimization," *International Journal for
+# 7. B. Bourdin, "Filters in topology optimization," *International Journal for
 #    Numerical Methods in Engineering* **50**, 2143–2158 (2001),
 #    DOI: [`10.1002/nme.116`](https://doi.org/10.1002/nme.116).
-# 5. S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković, and A. W. Rodriguez,
+# 8. S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković, and A. W. Rodriguez,
 #    "Inverse design in nanophotonics," *Nature Photonics* **12**, 659–670 (2018),
 #    DOI: [`10.1038/s41566-018-0246-9`](https://doi.org/10.1038/s41566-018-0246-9).
 

@@ -27,7 +27,7 @@ from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.dispersive import Debye, DispersiveMaterial, Lorentz, dispersive_lib
 from wakis.estimate import estimate, preflight
 from wakis.field_monitors import DFTMonitor, FluxMonitor
-from wakis.material_library import ECCOSORB_RF_LB_SOURCE_DATA, fit_mu_poles, info
+from wakis.material_library import MAGNETIC_SILICONE_SOURCE_DATA, fit_mu_poles, info
 from wakis.sources import CurrentSource, GaussianSource
 from wakis.subcell import metal_sheet, sheet_transmission_reflection
 
@@ -37,9 +37,9 @@ NP_TO_DB = float(20.0 / np.log(10.0))  # 8.685889638 dB/Np
 #: Canonical order and display metadata of the 6 EMI material classes
 EMI_CLASSES: list[dict] = [
     {
-        "key": "eccosorb rf-lb",
-        "short": "Eccosorb RF-LB",
-        "class_label": "Class 1 · Magnetic-particle silicone (Eccosorb RF-LB)",
+        "key": "magnetic particle silicone",
+        "short": "Mag. silicone",
+        "class_label": "Class 1 · Magnetic-particle silicone (commercial absorber)",
         "mechanism": "Magnetic + dielectric absorption (matched |Z|)",
         "thicknesses_mm": [1.0, 2.0, 3.0],
         "quick_thicknesses_mm": [1.0, 2.0],
@@ -111,14 +111,14 @@ class SlabBox:
         )
 
 
-def load_eccosorb_rf_lb_csv(data_dir: Path) -> dict[str, np.ndarray]:
-    """Load the digitized Eccosorb RF-LB permeability and attenuation CSV files from ``data_dir``.
+def load_magnetic_silicone_csv(data_dir: Path) -> dict[str, np.ndarray]:
+    """Load the digitized magnetic-particle silicone permeability and attenuation CSV files from ``data_dir``.
 
     Parameters
     ----------
     data_dir : Path
-        Directory containing ``eccosorb_rf_lb_permeability.csv`` and
-        ``eccosorb_rf_lb_attenuation.csv``.
+        Directory containing ``magnetic_silicone_permeability.csv`` and
+        ``magnetic_silicone_attenuation.csv``.
 
     Returns
     -------
@@ -127,17 +127,17 @@ def load_eccosorb_rf_lb_csv(data_dir: Path) -> dict[str, np.ndarray]:
         ``mu_imag``, ``f_att_hz``, ``f_att_ghz``, and ``atten_db_cm``.
     """
     data_dir = Path(data_dir)
-    perm_path = data_dir / "eccosorb_rf_lb_permeability.csv"
-    att_path = data_dir / "eccosorb_rf_lb_attenuation.csv"
+    perm_path = data_dir / "magnetic_silicone_permeability.csv"
+    att_path = data_dir / "magnetic_silicone_attenuation.csv"
     if not perm_path.is_file() or not att_path.is_file():
         return {
-            "f_mu_hz": ECCOSORB_RF_LB_SOURCE_DATA["f_mu_hz"].copy(),
-            "f_mu_ghz": ECCOSORB_RF_LB_SOURCE_DATA["f_mu_hz"] * 1e-9,
-            "mu_real": ECCOSORB_RF_LB_SOURCE_DATA["mu_real"].copy(),
-            "mu_imag": ECCOSORB_RF_LB_SOURCE_DATA["mu_imag"].copy(),
-            "f_att_hz": ECCOSORB_RF_LB_SOURCE_DATA["f_att_hz"].copy(),
-            "f_att_ghz": ECCOSORB_RF_LB_SOURCE_DATA["f_att_hz"] * 1e-9,
-            "atten_db_cm": ECCOSORB_RF_LB_SOURCE_DATA["atten_db_cm"].copy(),
+            "f_mu_hz": MAGNETIC_SILICONE_SOURCE_DATA["f_mu_hz"].copy(),
+            "f_mu_ghz": MAGNETIC_SILICONE_SOURCE_DATA["f_mu_hz"] * 1e-9,
+            "mu_real": MAGNETIC_SILICONE_SOURCE_DATA["mu_real"].copy(),
+            "mu_imag": MAGNETIC_SILICONE_SOURCE_DATA["mu_imag"].copy(),
+            "f_att_hz": MAGNETIC_SILICONE_SOURCE_DATA["f_att_hz"].copy(),
+            "f_att_ghz": MAGNETIC_SILICONE_SOURCE_DATA["f_att_hz"] * 1e-9,
+            "atten_db_cm": MAGNETIC_SILICONE_SOURCE_DATA["atten_db_cm"].copy(),
         }
 
     f_mu_ghz, mu_r, mu_i = [], [], []
@@ -1076,8 +1076,8 @@ def run_pec_backed_absorber_fit(
 
 
 def run_task_0(cfg: dict, data_dir: Path) -> dict:
-    """Task 0: Eccosorb RF-LB datasheet pole fitting, eps' inference, 1-6 GHz extrapolation, and 6-class spectra."""
-    ds = load_eccosorb_rf_lb_csv(data_dir)
+    """Task 0: Magnetic-particle silicone datasheet pole fitting, eps' inference, 1-6 GHz extrapolation, and 6-class spectra."""
+    ds = load_magnetic_silicone_csv(data_dir)
     f_mu = ds["f_mu_hz"]
     mu_target = ds["mu_real"] - 1j * ds["mu_imag"]
     f_att = ds["f_att_hz"]
@@ -1085,11 +1085,11 @@ def run_task_0(cfg: dict, data_dir: Path) -> dict:
 
     # 1. Fit candidate passive magnetic pole models over 10 MHz - 1 GHz
     fit_2deb = fit_mu_poles(
-        f_mu, mu_target, n_lorentz=0, n_debye=2, mu_inf=1.0, eps_inf=81.06, n_starts=8, name="rf_lb_2debye"
+        f_mu, mu_target, n_lorentz=0, n_debye=2, mu_inf=1.0, eps_inf=81.06, n_starts=8, name="mag_silicone_2debye"
     )
-    fit_1d1l = dispersive_lib["eccosorb rf-lb"]
+    fit_1d1l = dispersive_lib["magnetic particle silicone"]
     fit_2d1l = fit_mu_poles(
-        f_mu, mu_target, n_lorentz=1, n_debye=2, mu_inf=1.0, eps_inf=81.06, n_starts=8, name="rf_lb_2debye_1lorentz"
+        f_mu, mu_target, n_lorentz=1, n_debye=2, mu_inf=1.0, eps_inf=81.06, n_starts=8, name="mag_silicone_2debye_1lorentz"
     )
 
     mu_mod_1d1l = fit_1d1l.mu(f_mu)
@@ -1256,7 +1256,7 @@ def run_task_1(cfg: dict, data_dir: Path) -> dict:
     # Record field snapshots & GIF frames for 3 contrasting classes at d = 2.0 mm (or 1.0 mm)
     snap_runs = {}
     snap_targets = {
-        "eccosorb rf-lb": 2.0e-3,
+        "magnetic particle silicone": 2.0e-3,
         "tio2 ceramic": 2.0e-3,
         "cnt silicone": 1.0e-3,
     }
@@ -1364,9 +1364,9 @@ def run_task_1(cfg: dict, data_dir: Path) -> dict:
         "SE_vs_d_R": SE_vs_d_R,
         "SE_vs_d_A": SE_vs_d_A,
         "SE_vs_d_M": SE_vs_d_M,
-        "snap_rf_z_m": snap_runs["eccosorb rf-lb"]["z_nodes_m"],
-        "snap_rf_frames": snap_runs["eccosorb rf-lb"]["frames"],
-        "snap_rf_times": snap_runs["eccosorb rf-lb"]["frame_times"],
+        "snap_rf_z_m": snap_runs["magnetic particle silicone"]["z_nodes_m"],
+        "snap_rf_frames": snap_runs["magnetic particle silicone"]["frames"],
+        "snap_rf_times": snap_runs["magnetic particle silicone"]["frame_times"],
         "snap_tio2_z_m": snap_runs["tio2 ceramic"]["z_nodes_m"],
         "snap_tio2_frames": snap_runs["tio2 ceramic"]["frames"],
         "snap_tio2_times": snap_runs["tio2 ceramic"]["frame_times"],
@@ -1377,7 +1377,7 @@ def run_task_1(cfg: dict, data_dir: Path) -> dict:
 
 
 def run_task_2(cfg: dict, data_dir: Path) -> dict:
-    """Task 2: Metal-backed absorber (bc_high='pec') for Eccosorb RF-LB & Sendust flake sheet + Rozanov bound."""
+    """Task 2: Metal-backed absorber (bc_high='pec') for magnetic-particle silicone & Sendust flake sheet + Rozanov bound."""
     quick = bool(cfg.get("quick", False))
     cpw_target = float(cfg.get("cpw", 20 if quick else 24))
     freqs = np.linspace(0.30e9, 4.50e9, 25 if quick else 37)
@@ -1400,7 +1400,7 @@ def run_task_2(cfg: dict, data_dir: Path) -> dict:
     min_dx_mm = np.inf
 
     for idx_d, d_mm in enumerate(rf_thicks_mm):
-        res_rf = run_pec_backed_absorber_fit("eccosorb rf-lb", d_mm * 1e-3, freqs, cpw_target=cpw_target)
+        res_rf = run_pec_backed_absorber_fit("magnetic particle silicone", d_mm * 1e-3, freqs, cpw_target=cpw_target)
         RL_rf_fit[idx_d] = res_rf["RL_fit_db"]
         RL_rf_ex[idx_d] = res_rf["RL_ex_db"]
         rms_RL_rf[idx_d] = res_rf["rms_RL_db"]
@@ -1421,10 +1421,10 @@ def run_task_2(cfg: dict, data_dir: Path) -> dict:
         min_cells_across = min(min_cells_across, res_sd["cells_across_slab"])
         min_dx_mm = min(min_dx_mm, res_sd["dz_slab_m"] * 1e3)
 
-    # 2D map RL(f, d) for Eccosorb RF-LB + quarter-wave trajectory d_{lambda/4}(f)
+    # 2D map RL(f, d) for magnetic-particle silicone + quarter-wave trajectory d_{lambda/4}(f)
     f_map = np.linspace(0.20e9, 6.00e9, 120)
     d_map_mm = np.linspace(0.30, 3.50, 90)
-    mat_rf = dispersive_lib["eccosorb rf-lb"]
+    mat_rf = dispersive_lib["magnetic particle silicone"]
     eps_map = mat_rf.epsilon(f_map)
     mu_map = mat_rf.mu(f_map)
     n_map, _ = passive_refractive_index_and_impedance(eps_map, mu_map)
@@ -1501,7 +1501,7 @@ def run_task_3(cfg: dict, data_dir: Path) -> dict:
     freqs = np.linspace(0.30e9, 2.50e9, 21)
 
     study_classes = [
-        ("eccosorb rf-lb", 2.0e-3),
+        ("magnetic particle silicone", 2.0e-3),
         ("tio2 ceramic", 2.0e-3),
         ("cnt silicone", 1.0e-3),
         ("ni-graphite silicone", 1.0e-3),
@@ -1526,14 +1526,14 @@ def run_task_3(cfg: dict, data_dir: Path) -> dict:
             total_cells += r["n_cells"]
             total_steps += r["nt_ref"] + r["nt_slab"]
 
-    # Baseline comparison on Eccosorb RF-LB (d = 2.0 mm):
+    # Baseline comparison on magnetic-particle silicone (d = 2.0 mm):
     # Compare locally refined z-mesh vs uniform z-mesh at the same slab resolutions
     cpw_base = np.array([10, 14, 20] if quick else [10, 14, 20, 28], dtype=float)
     rms_R_uniform = np.zeros_like(cpw_base)
     nz_uniform = np.zeros(cpw_base.size, dtype=int)
     wall_uniform = np.zeros_like(cpw_base)
     for il, cpw_val in enumerate(cpw_base):
-        ru = run_slab_rt_fit("eccosorb rf-lb", 2.0e-3, freqs, cpw_target=float(cpw_val), graded=False)
+        ru = run_slab_rt_fit("magnetic particle silicone", 2.0e-3, freqs, cpw_target=float(cpw_val), graded=False)
         rms_R_uniform[il] = ru["rms_R"]
         nz_uniform[il] = ru["Nz"]
         wall_uniform[il] = ru["wall_s"]
@@ -1564,7 +1564,7 @@ def run_task_3(cfg: dict, data_dir: Path) -> dict:
 def _build_schematic_objects(pec_backed: bool = False):
     """Build representative live Wakis solver, source, monitor, and structure objects for setup schematics."""
     d = 2.0e-3
-    mat = dispersive_lib["eccosorb rf-lb"]
+    mat = dispersive_lib["magnetic particle silicone"]
     freqs = np.linspace(0.30e9, 2.50e9, 25)
     f0 = 1.40e9
     fwidth = 1.00e9
@@ -1615,7 +1615,7 @@ def _build_schematic_objects(pec_backed: bool = False):
     z_r = float(z_pec_nodes[int(np.argmin(np.abs(z_pec_nodes - (-0.006))))])
     src = CurrentSource(pulse, component="x", center=(0.0, 0.0, z_src), size=(2.0 * dxy, 2.0 * dxy, 0.0))
     mon_r = FluxMonitor(freqs, center=(0.0, 0.0, z_r), size=(2.0 * dxy, 2.0 * dxy, 0.0))
-    slab_box = SlabBox(0.0, d, dxy, "RF-LB slab", "RF-LB slab")
+    slab_box = SlabBox(0.0, d, dxy, "Mag. silicone slab", "Mag. silicone slab")
     return solver, [src], [mon_r], [slab_box], pulse, z_pec_nodes, dz_act
 
 
@@ -1773,7 +1773,7 @@ def _save_wave_propagation_gif(t1: dict, out_path: Path, fps: int = 10) -> None:
                 constrained_layout=True,
             )
             specs = [
-                (axes[0], z_rf, fr_rf[idx], 2.0, "(a) RF-LB", 0),
+                (axes[0], z_rf, fr_rf[idx], 2.0, "(a) Mag. silicone", 0),
                 (axes[1], z_ti, fr_ti[idx], 2.0, "(b) TiO2", 1),
                 (axes[2], z_cn, fr_cn[idx], 1.0, "(c) CNT", 2),
             ]
@@ -1832,7 +1832,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         tasks_data[str(d["name"])] = d
 
     required = (
-        "eccosorb_rf_lb_characterization",
+        "magnetic_silicone_characterization",
         "free_space_slab_6classes",
         "metal_backed_absorber_and_rozanov",
         "resolution_and_mesh_study",
@@ -1841,7 +1841,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         if req not in tasks_data:
             raise FileNotFoundError(f"Missing task {req!r} in {data_dir}. Run --quick or --full first.")
 
-    t0 = tasks_data["eccosorb_rf_lb_characterization"]
+    t0 = tasks_data["magnetic_silicone_characterization"]
     t1 = tasks_data["free_space_slab_6classes"]
     t2 = tasks_data["metal_backed_absorber_and_rozanov"]
     t3 = tasks_data["resolution_and_mesh_study"]
@@ -1872,7 +1872,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
 
     with figstyle.apply_style():
         # ------------------------------------------------------------------
-        # Fig 01: Eccosorb RF-LB permeability fit, eps' inference & 1-6 GHz extrapolation (3 panels)
+        # Fig 01: Magnetic-particle silicone permeability fit, eps' inference & 1-6 GHz extrapolation (3 panels)
         # ------------------------------------------------------------------
         fig1, (ax1a, ax1b, ax1c) = _new_three_panel_figure(height_in=5.8)
         f_mu_g = t0["f_mu_hz"] * 1e-9
@@ -1892,7 +1892,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         ax1a.set(
             xlabel="Frequency f [GHz]",
             ylabel=r"Permeability $\mu',\, \mu''$",
-            title=r"(a) RF-LB $\mu(f)$ fit",
+            title=r"(a) Mag. silicone $\mu(f)$ fit",
         )
         figstyle.spectrum_grid(ax1a)
         figstyle.place_legend_below(ax1a, ncol=2, y_offset=-0.26)
@@ -1927,7 +1927,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         figstyle.spectrum_grid(ax1c)
         figstyle.place_legend_below(ax1c, ncol=2, y_offset=-0.24)
 
-        p1 = fig_dir / "01_eccosorb_rf_lb_fit_and_attenuation.png"
+        p1 = fig_dir / "01_magnetic_silicone_fit_and_attenuation.png"
         figstyle.save(fig1, p1, close=True)
         written.append(p1)
 
@@ -1951,11 +1951,11 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         )
         figstyle.spectrum_grid(ax2a)
 
-        # Panel (b): Magnetic permeability of Class 1 (RF-LB) & Class 2 (Sendust flake)
+        # Panel (b): Magnetic permeability of Class 1 (Mag. silicone) & Class 2 (Sendust flake)
         st_rf = figstyle.series_style(0, with_marker=False)
         st_sd = figstyle.series_style(1, with_marker=False)
-        ax2b.semilogx(f_w_g, np.real(mu_6[0]), "-", color=st_rf["color"], lw=1.8, label=r"RF-LB $\mu'$")
-        ax2b.semilogx(f_w_g, -np.imag(mu_6[0]), "--", color=st_rf["color"], lw=1.6, label=r"RF-LB $\mu''$")
+        ax2b.semilogx(f_w_g, np.real(mu_6[0]), "-", color=st_rf["color"], lw=1.8, label=r"Mag. silicone $\mu'$")
+        ax2b.semilogx(f_w_g, -np.imag(mu_6[0]), "--", color=st_rf["color"], lw=1.6, label=r"Mag. silicone $\mu''$")
         ax2b.semilogx(f_w_g, np.real(mu_6[1]), "-", color=st_sd["color"], lw=1.8, label=r"Sendust $\mu'$")
         ax2b.semilogx(f_w_g, -np.imag(mu_6[1]), "--", color=st_sd["color"], lw=1.6, label=r"Sendust $\mu''$")
         ax2b.set(
@@ -2053,7 +2053,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # Fig 04: Schelkunoff SE = SE_R + SE_A + SE_M decomposition (3 panels)
         # ------------------------------------------------------------------
         fig4, (ax4a, ax4b, ax4c) = _new_three_panel_figure(height_in=5.9)
-        short_4a = ["RF-LB", "Sendust", "TiO2", "CNT", "Ni-graphite", "copper film, 50 nm"]
+        short_4a = ["Mag. silicone", "Sendust", "TiO2", "CNT", "Ni-graphite", "copper film, 50 nm"]
         for ic, cinfo in enumerate(EMI_CLASSES):
             st_line = figstyle.series_style(ic, with_marker=False)
             st_mk = figstyle.series_style(ic, with_marker=True)
@@ -2090,7 +2090,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         ax4b.axhline(0.0, color="#444444", lw=0.8)
         ax4b.set_xticks(x_pos)
         ax4b.set_xticklabels(
-            ["RF-LB", "Sendust", "TiO2", "CNT", "Ni-C", "Cu film"],
+            ["Mag. silicone", "Sendust", "TiO2", "CNT", "Ni-C", "Cu film"],
             rotation=30,
             ha="right",
         )
@@ -2222,7 +2222,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_m["color"],
                 marker=st_m["marker"],
                 ms=4.2,
-                label=f"RF-LB {d_mm:.1f} mm",
+                label=f"Mag. silicone {d_mm:.1f} mm",
             )
         for idx_d, d_mm in enumerate(t2["sd_thicks_mm"]):
             st_l = figstyle.series_style(idx_d + 3, with_marker=False)
@@ -2258,7 +2258,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             ylim=(float(d_m_mm[0]), float(d_m_mm[-1])),
             xlabel="Frequency f [GHz]",
             ylabel="Thickness d [mm]",
-            title=r"(b) RF-LB $\lambda/4$ locus",
+            title=r"(b) Mag. silicone $\lambda/4$ locus",
         )
         figstyle.place_legend_below(ax5b, ncol=1, y_offset=-0.26)
 
@@ -2266,8 +2266,8 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         d_rz = t2["d_roz_mm"]
         s_r0 = figstyle.series_style(0, with_marker=True)
         s_r1 = figstyle.series_style(1, with_marker=True)
-        ax5c.semilogy(d_rz, t2["roz_bound_rf_mm"], "--", color=s_r0["color"], lw=1.5, label=r"Bound $2\pi^2\mu_s d$ (RF-LB)")
-        ax5c.semilogy(d_rz, t2["roz_int_rf_mm"], color=s_r0["color"], marker="o", lw=1.8, label=r"Integral $\int|\ln|\Gamma||d\lambda$ (RF-LB)")
+        ax5c.semilogy(d_rz, t2["roz_bound_rf_mm"], "--", color=s_r0["color"], lw=1.5, label=r"Bound $2\pi^2\mu_s d$ (Mag. silicone)")
+        ax5c.semilogy(d_rz, t2["roz_int_rf_mm"], color=s_r0["color"], marker="o", lw=1.8, label=r"Integral $\int|\ln|\Gamma||d\lambda$ (Mag. silicone)")
         ax5c.semilogy(d_rz, t2["roz_bound_sd_mm"], "--", color=s_r1["color"], lw=1.5, label=r"Bound $2\pi^2\mu_s d$ (Sendust)")
         ax5c.semilogy(d_rz, t2["roz_int_sd_mm"], color=s_r1["color"], marker="s", lw=1.8, label=r"Integral $\int|\ln|\Gamma||d\lambda$ (Sendust)")
         ax5c.semilogy(d_rz, t2["roz_bound_nonmag_mm"], "k:", lw=1.3, label=r"Non-magnetic bound ($\mu_s=1$)")
@@ -2294,7 +2294,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             constrained_layout=True,
         )
         cpw_lv = t3["cpw_levels"]
-        conv_labels = ["RF-LB (2 mm)", "TiO2 (2 mm)", "CNT (1 mm)", "Ni-graphite (1 mm)"]
+        conv_labels = ["Mag. silicone (2 mm)", "TiO2 (2 mm)", "CNT (1 mm)", "Ni-graphite (1 mm)"]
         for ic, lbl in enumerate(conv_labels):
             st_c = figstyle.series_style(ic, with_marker=True)
             ax6a.loglog(cpw_lv, t3["rms_R_conv"][ic], label=lbl, **st_c)
@@ -2359,7 +2359,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 t1["snap_rf_frames"],
                 t1["snap_rf_times"] * 1e9,
                 2.0,
-                "(a) Eccosorb RF-LB (2 mm)",
+                "(a) Mag. silicone (2 mm)",
             ),
             (
                 ax7b,

@@ -352,7 +352,7 @@ if "google.colab" in sys.modules:
 # | `czn_eq881` | **CoZrNb (CZN) laminate** on $12\;\mu\text{m}$ polyimide | Lorentz | $1.0$ | $39.0$ ($40.0$) | $1.50\;\text{GHz}$ | $2.00\;\text{GHz}$ ($\alpha=1/0.75$) | $3.46\times 10^5$ | $3.25$ | **Yousefi (2017)** Eq. 8-81 [6] *(unverified formula; dissertation chapter not verified in full text)* |
 # | `co2z_unaligned` | **Unaligned $\text{Co}_2\text{Z}$ planar hexaferrite** ($\text{Ba}_3\text{Co}_2\text{Fe}_{24}\text{O}_{41}$) | Lorentz | $1.0$ | $11.0$ ($12.0$) | $1.00\;\text{GHz}$ | $0.833\;\text{GHz}$ | $1.042\times 10^5$ | $12.0$ | **Sebastian (2013)** Table 5-2 & Fig. 5-13 [5]; **Yousefi *et al.* (2016)** *IEEE TAP* Table I [4] *(unverified in full text; aligned $\text{Co}_2\text{Z}$ reaches $h_m = 2.8\times 10^5\;\Omega/\text{m}$)* |
 # | `ikonen_film` | **Laminated ferromagnetic film substrate** | Lorentz | $1.0$ | $0.48$ ($1.48$) | $5.87\;\text{GHz}$ | $5.301\;\text{GHz}$ ($\beta=0.903$) | $1.61\times 10^4$ | $2.0$ | **Ikonen *et al.* (2006)** *IEEE TAP* **54**, 3391, Eq. 17 & Fig. 4 [3] *(full-text verified; $\mu'=1.461, \tan\delta_m=0.0284$ at $580\;\text{MHz}$)* |
-# | `nizn_debye` | **Fair-Rite / TDK Sintered NiZn spinel ferrite tile** | Debye | $1.0$ | $2199.0$ ($2200.0$) | $3.00\;\text{MHz}$ ($\tau_m=53.05\;\text{ns}$) | — | $5.21\times 10^4$ | $14.0$ | **Sebastian (2013)** Table 5-2 & Fig. 3-13a [5]; **Yousefi *et al.* (2016)** Table I & Fig. 8a [4]; **McLean & Sutton (2012)** Fig. 2 [7] *(unverified in full text; **flagged:** literature tables quote $h_m = 3.0\times 10^4\text{–}5.524\times 10^4\;\Omega/\text{m}$ and 100 MHz plot readings vary between $\mu'\approx 2\text{–}3$ and $10\text{–}40$)* |
+# | `nizn_debye` | **Commercially available sintered NiZn ferrite tile** | Debye | $1.0$ | $2199.0$ ($2200.0$) | $3.00\;\text{MHz}$ ($\tau_m=53.05\;\text{ns}$) | — | $5.21\times 10^4$ | $14.0$ | **Sebastian (2013)** Table 5-2 & Fig. 3-13a [5]; **Yousefi *et al.* (2016)** Table I & Fig. 8a [4]; **McLean & Sutton (2012)** Fig. 2 [7] *(unverified in full text; **flagged:** literature tables quote $h_m = 3.0\times 10^4\text{–}5.524\times 10^4\;\Omega/\text{m}$ and 100 MHz plot readings vary between $\mu'\approx 2\text{–}3$ and $10\text{–}40$)* |
 
 # %%
 import argparse
@@ -443,7 +443,7 @@ VERIFIED_MAGNETIC_MATERIALS = {
         "flag_note": "Gives mu'=1.461, tan_delta_m=0.0284 at 580 MHz patch operating frequency.",
     },
     "nizn_debye": {
-        "label": "Sintered NiZn Spinel Ferrite Tile (Fair-Rite / TDK)",
+        "label": "Sintered NiZn Spinel Ferrite Tile (commercially available)",
         "model": "Debye",
         "mu_inf": 1.0,
         "delta_mu": 2199.0,
@@ -822,8 +822,8 @@ def analytic_cavity_polariton_branches(f_vac_Hz, mu_inf, delta_mu, f_r_Hz):
 def run_task_0(quick=False):
     """
     Task 0: Evaluate full-text verified literature models (CoZrNb Eq. 8-81,
-    unaligned Co2Z hexaferrite, Ikonen ferromagnetic film, Fair-Rite/TDK NiZn
-    Debye spinel), verify Snoek's law and Acher's integral sum rule, verify the
+    unaligned Co2Z hexaferrite, Ikonen ferromagnetic film, commercially available
+    sintered NiZn ferrite tile Debye spinel), verify Snoek's law and Acher's integral sum rule, verify the
     single-pole hesitivity identity -Im[1/(mu-1)] = w*mu0/h_m, and run the
     periodic FIT magnetic ADE verification against mu_discrete(f, dt).
     """
@@ -2801,8 +2801,8 @@ def plot_all():
 #    hexaferrite, and $\text{CoZrNb}$.)*
 # 5. **T. Sebastian**, *Magneto-Dielectric Wire Antennas: Theory and Design*,
 #    Ph.D. dissertation, Arizona State Univ., Tempe, AZ, 2013.
-#    *(Table 5-2 and Figs. 3-13a, 5-13: Debye and Lorentz models for Fair-Rite
-#    NiZn tiles, unaligned $\text{Co}_2\text{Z}$, and CZN laminates.)*
+#    *(Table 5-2 and Figs. 3-13a, 5-13: Debye and Lorentz models for commercially
+#    available sintered NiZn ferrite tiles, unaligned $\text{Co}_2\text{Z}$, and CZN laminates.)*
 # 6. **T. Yousefi**, *Next Generation of Magneto-Dielectric Antennas and Optimum
 #    Flux Channels*, Ph.D. dissertation, Arizona State Univ., Tempe, AZ, 2017,
 #    Eq. (8-81) ($\text{CoZrNb}$ laminate Lorentz model

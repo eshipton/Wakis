@@ -44,7 +44,7 @@
       "tan_delta_m_580MHz": 0.029256614551347905
     },
     "nizn_debye": {
-      "label": "Sintered NiZn Spinel Ferrite Tile (Fair-Rite / TDK)",
+      "label": "Sintered NiZn Spinel Ferrite Tile (commercially available)",
       "model": "Debye",
       "mu_s": 2200.0,
       "eps_r": 14.0,

@@ -29,8 +29,9 @@
 # and absorbing material classes** registered in `wakis.material_library` across
 # $10\;\text{MHz}\text{–}6\;\text{GHz}$:
 #
-# 1. **Magnetic-particle-loaded silicone (`eccosorb rf-lb`):** Laird *Eccosorb RF-LB*
-#    datasheet (`Doc. EM-ABS-DS-10132022`) [1] — an electrically insulating
+# 1. **Magnetic-particle-loaded silicone (`magnetic particle silicone`):** manufacturer
+#    datasheet of a commercially available magnetic-particle-loaded silicone
+#    absorber (digitized curves in `data/`) [1] — an electrically insulating
 #    ($\rho_v = 7.45 \times 10^{11}\;\Omega\cdot\text{cm}$) elastomer whose
 #    complex permeability $\mu'(f) - i\mu''(f)$ is digitized from $10\;\text{MHz}$
 #    to $1\;\text{GHz}$, fitted with passive magnetic Debye + Lorentz poles,
@@ -107,7 +108,8 @@ if "google.colab" in sys.modules:
 # By the end of this tutorial you will be able to:
 #
 # 1. **Fit passive magnetic poles and infer permittivity from datasheet curves:**
-#    fit digitized $\mu'(f), \mu''(f)$ of Laird *Eccosorb RF-LB* ($10\;\text{MHz}\text{–}1\;\text{GHz}$)
+#    fit digitized $\mu'(f), \mu''(f)$ of a commercially available magnetic-particle-loaded
+#    silicone absorber ($10\;\text{MHz}\text{–}1\;\text{GHz}$)
 #    with passive Debye and Lorentz magnetic poles (`fit_mu_poles`, `is_stable`),
 #    infer the unstated relative permittivity $\varepsilon'$ over the $0.1\text{–}1.0\;\text{GHz}$
 #    overlap band from $\alpha(f) = \frac{20}{\ln 10}\frac{\omega}{c_0}(-\operatorname{Im}\sqrt{\varepsilon\mu})\times 10^{-2}$,
@@ -127,7 +129,7 @@ if "google.colab" in sys.modules:
 #    waves inside the slab ($\text{SE}_A$), and why an $\varepsilon_r = 100$
 #    low-loss ceramic reflects strongly without absorbing.
 # 4. **Design metal-backed quarter-wave absorbers and evaluate Rozanov's bound:**
-#    simulate PEC-backed sheets (`bc_high = 'pec'`) of *Eccosorb RF-LB* and
+#    simulate PEC-backed sheets (`bc_high = 'pec'`) of magnetic-particle silicone and
 #    *Sendust* flake composite, trace the quarter-wave matching dip
 #    $d_{\lambda/4}(f) = \lambda_0 / (4\operatorname{Re}\sqrt{\varepsilon\mu})$,
 #    and verify the **Rozanov (2000)** thickness–bandwidth causality bound
@@ -158,24 +160,25 @@ if "google.colab" in sys.modules:
 #
 # | Class | Library key | Representative commercial / literature material | Constitutive parameters ($10\;\text{MHz}\text{–}6\;\text{GHz}$) | Primary EMI mechanism | Verified source |
 # | :---: | :--- | :--- | :--- | :--- | :--- |
-# | **1** | `'eccosorb rf-lb'` | Laird *Eccosorb RF-LB* magnetic silicone elastomer ($\rho_v = 7.45\times 10^{11}\;\Omega\cdot\text{cm}$) | $\mu_s = 36.8$ (1 Debye + 1 Lorentz fit), inferred $\varepsilon' \approx 81.1$ ($\tan\delta_e \approx 0.01$), $\sigma = 0$ | Broadband magnetic absorption ($\alpha = 27.8\text{–}81.8\;\text{dB/cm}$) | Laird Datasheet `EM-ABS-DS-10132022` (2022) [1] |
+# | **1** | `'magnetic particle silicone'` | Commercially available magnetic-particle-loaded silicone elastomer ($\rho_v = 7.45\times 10^{11}\;\Omega\cdot\text{cm}$) | $\mu_s = 36.8$ (1 Debye + 1 Lorentz fit), inferred $\varepsilon' \approx 81.1$ ($\tan\delta_e \approx 0.01$), $\sigma = 0$ | Broadband magnetic absorption ($\alpha = 27.8\text{–}81.8\;\text{dB/cm}$) | Manufacturer datasheet of a commercially available magnetic-particle-loaded silicone absorber (digitized curves in `data/`) [1] |
 # | **2** | `'sendust flake sheet'` | Aligned $\text{Fe}_{85}\text{Si}_{9.6}\text{Al}_{5.4}$ (Sendust) flake-filled polymer sheet | $\mu_s = 70.0$ (Debye DW + Lorentz FMR), $\varepsilon' \approx 116$ (inter-flake capacitance), $\sigma = 0$ | Sub-GHz to GHz magnetic noise suppression + $\lambda/4$ PEC absorber | Yoshida *et al.* (1999) [2]; Whalen *et al.* (2025) [3] |
 # | **3** | `'tio2 ceramic'` | Sintered polycrystalline rutile $\text{TiO}_2$ resonator ceramic | $\varepsilon' = 100.0$, $\tan\delta = 2.1\times 10^{-4}$ at $3\;\text{GHz}$ ($Q\times f \approx 14\,000\;\text{GHz}$), $\mu = 1$ | Pure reactive dielectric reflection (Fabry–Pérot etalon, $A \approx 0$) | Templeton *et al.* (2000) [5]; Tobar *et al.* (1998) [6] |
 # | **4** | `'cnt silicone'` | $3\;\text{wt}\%$ MWCNT/PDMS silicone rubber (above percolation) | $\sigma = 25\;\text{S/m}$, $\varepsilon_\infty = 14.0$, interfacial Debye $\Delta\varepsilon = 8.0$, $\mu = 1$ | Mixed conductive reflection ($\text{SE}_R$) + skin-depth absorption ($\text{SE}_A$) | Al-Saleh & Sundararaj (2009) [7]; Ananthasubramanian *et al.* (2025) [8] |
 # | **5** | `'ni-graphite silicone'` | Nickel-graphite filled silicone EMI gasket ($\rho_v = 0.50\;\Omega\cdot\text{cm}$) | $\sigma = 200\;\text{S/m}$, $\varepsilon_\infty = 12.0$, $\mu = 1$ ($\delta(4\;\text{GHz}) = 0.56\;\text{mm}$) | Reflection-dominated enclosure gasket + multi-skin-depth $\text{SE}_A$ | Ott (2009) [10]; Paul (2006) [13] |
 # | **6** | `'copper foil'` | Subcell **copper film, 50 nm** (`add_sheet`, $d < \Delta z$) & PCB copper foils ($18\;\mu\text{m}$, $35\;\mu\text{m}$) | $\sigma_{\text{Cu}} = 5.8\times 10^7\;\text{S/m}$, $\mu = 1$ ($\delta(1\;\text{GHz}) = 2.09\;\mu\text{m}$) | Classical Schelkunoff reflective + skin-depth shield ($\text{SE}_A = 8.686\,t/\delta$ for $t \gg \delta$) | Schelkunoff (1943) [11]; Ott (2009) [10] |
 #
-# ### 1.2 Eccosorb RF-LB: measured $\mu(f)$, inferred $\varepsilon'$, and $1\text{–}6\;\text{GHz}$ extrapolation
+# ### 1.2 Magnetic-particle silicone: measured $\mu(f)$, inferred $\varepsilon'$, and $1\text{–}6\;\text{GHz}$ extrapolation
 #
-# The Laird *Eccosorb RF-LB* technical datasheet (`Doc. EM-ABS-DS-10132022`) [1]
+# The manufacturer datasheet of a commercially available magnetic-particle-loaded
+# silicone absorber (digitized curves in `data/`) [1]
 # provides two plots and a physical-property table:
 #
 # * **Measured on the datasheet:**
 #   1. Complex permeability $\mu'(f), \mu''(f)$ from $10\;\text{MHz}$ to $1\;\text{GHz}$
-#      (digitized in `data/eccosorb_rf_lb_permeability.csv`: $\mu' / \mu'' \approx 36.5 / 2.5$
+#      (digitized in `data/magnetic_silicone_permeability.csv`: $\mu' / \mu'' \approx 36.5 / 2.5$
 #      at $10\;\text{MHz}$, $25.7 / 9.9$ at $100\;\text{MHz}$, and $7.4 / 12.9$ at $1\;\text{GHz}$).
 #   2. Plane-wave attenuation $\alpha(f)$ in $\text{dB/cm}$ from $0.1\;\text{GHz}$ to $6.0\;\text{GHz}$
-#      (digitized in `data/eccosorb_rf_lb_attenuation.csv`: $\alpha \approx 2.8\;\text{dB/cm}$
+#      (digitized in `data/magnetic_silicone_attenuation.csv`: $\alpha \approx 2.8\;\text{dB/cm}$
 #      at $0.1\;\text{GHz}$, $27.8\;\text{dB/cm}$ at $1\;\text{GHz}$, and $81.8\;\text{dB/cm}$ at $6\;\text{GHz}$).
 #   3. Volume resistivity $\rho_v = 7.45 \times 10^{11}\;\Omega\cdot\text{cm}$
 #      ($\sigma_{\text{dc}} = 1.34 \times 10^{-10}\;\text{S/m}$, so ohmic conduction loss is negligible).
@@ -187,10 +190,11 @@ if "google.colab" in sys.modules:
 #   $\tan\delta_e = \varepsilon''/\varepsilon' \in [0.00, 0.05]$. This yields
 #   $\varepsilon' = 82.7$ (for $\tan\delta_e = 0$), $\varepsilon' = 81.1$
 #   (for $\tan\delta_e = 0.01$), and $\varepsilon' = 74.9$ (for $\tan\delta_e = 0.05$).
-#   No independent measurement of $\varepsilon'$ for *Eccosorb RF-LB* is available
-#   in the cited Laird technical datasheet [1], though the inferred $\varepsilon' \approx 75\text{–}83$
-#   is of the same order of magnitude as the $\varepsilon' \approx 116$ reported
-#   for the cited Sendust magnetic-flake polymer composite [2, 3].
+#   No independent measurement of $\varepsilon'$ for this magnetic-particle-loaded
+#   silicone absorber is available in the cited manufacturer datasheet [1], though
+#   the inferred $\varepsilon' \approx 75\text{–}83$ is of the same order of
+#   magnitude as the $\varepsilon' \approx 116$ reported for the cited Sendust
+#   magnetic-flake polymer composite [2, 3].
 # * **Extrapolated from $1\;\text{GHz}$ to $6\;\text{GHz}$:**
 #   Fitting $\mu(f)$ over $10\;\text{MHz}\text{–}1\;\text{GHz}$ with **1 Debye
 #   (domain-wall relaxation) + 1 Lorentz (gyromagnetic spin resonance)** pole
@@ -270,7 +274,7 @@ if "google.colab" in sys.modules:
 #     $18\;\mu\text{m}$ and $35\;\mu\text{m}$ foils analytically via
 #     `evaluate_copper_film_and_foil_se` while running the subcell 3D FIT benchmark
 #     on the **copper film, 50 nm**.
-# * **Magnetic absorbers (`eccosorb rf-lb`, `sendust flake sheet`):**
+# * **Magnetic absorbers (`magnetic particle silicone`, `sendust flake sheet`):**
 #   Because $\mu(\omega)$ and $\varepsilon(\omega)$ are both large, the wave
 #   impedance $|z_{\text{rel}}| = |\sqrt{\mu/\varepsilon}|$ stays much closer to
 #   unity than in a conductor, reducing front-face reflection $\text{SE}_R$ while
@@ -312,7 +316,7 @@ if "google.colab" in sys.modules:
 # $$\left|\int_0^\infty \ln|\Gamma(\lambda)|\,d\lambda\right| \le 2\pi^2 \mu_s d.$$
 #
 # Because the right-hand side scales linearly with $\mu_s d$, a magnetic absorber
-# with $\mu_s \approx 37\text{–}70$ (`eccosorb rf-lb` or `sendust flake sheet`)
+# with $\mu_s \approx 37\text{–}70$ (`magnetic particle silicone` or `sendust flake sheet`)
 # possesses a **$37\times\text{–}70\times$ larger causal bandwidth–thickness
 # budget** than any non-magnetic dielectric/conductive absorber ($\mu_s = 1$) of
 # the same physical thickness $d$.
@@ -342,7 +346,7 @@ from _helpers import (  # noqa: E402
     exact_pec_backed_absorber,
     exact_slab_rt,
     infer_eps_real_from_attenuation,
-    load_eccosorb_rf_lb_csv,
+    load_magnetic_silicone_csv,
     render_all_figures,
     run_pec_backed_absorber_fit,
     run_slab_rt_fit,
@@ -397,12 +401,12 @@ _RUN_WALKTHROUGH = "ipykernel" in sys.modules or (
 # | :--- | :--- | :--- |
 # | **Domain extents** | $x, y \in [-d_{xy}, +d_{xy}]$ ($N_x = N_y = 2$), $z \in [-45\;\text{mm},\, d]$ | Absorber bonded directly to the $+z$ ground plane ($T(f) \equiv 0$) |
 # | **Boundary conditions** | `periodic` on $\pm x, \pm y$; 10-cell `cpml` on $-z$; `pec` at $z = d$ (`bc_high = ['periodic', 'periodic', 'pec']`) | Enforces tangential electric node $E_x(z = d) = 0$ on the metal backing |
-# | **Absorber region** | $z \in [0, d]$ (`eccosorb rf-lb` at $d \in \{1, 2, 3\}\;\text{mm}$; `sendust flake sheet` at $d \in \{0.5, 1.0, 1.5\}\;\text{mm}$) | Quarter-wave impedance matching over $0.3\text{–}4.5\;\text{GHz}$ |
+# | **Absorber region** | $z \in [0, d]$ (`magnetic particle silicone` at $d \in \{1, 2, 3\}\;\text{mm}$; `sendust flake sheet` at $d \in \{0.5, 1.0, 1.5\}\;\text{mm}$) | Quarter-wave impedance matching over $0.3\text{–}4.5\;\text{GHz}$ |
 # | **Monitor & observable** | `FluxMonitor` at $z_r \approx -6\;\text{mm}$ normalized by incident vacuum flux $\Phi_{r,\text{ref}}$ | Reflection loss $\text{RL}(f, d) = -10\log_{10}(1 - \Phi_r/\Phi_{r,\text{ref}})\;[\text{dB}]$ |
 #
 # ---
 #
-# ### Step 1 — Inspect the 6 EMI materials in `wakis.material_library` and fit `Eccosorb RF-LB`
+# ### Step 1 — Inspect the 6 EMI materials in `wakis.material_library` and fit the magnetic-particle silicone absorber
 
 # %%
 if _RUN_WALKTHROUGH:
@@ -415,12 +419,12 @@ if _RUN_WALKTHROUGH:
         e_1g = complex(mat.epsilon(1.0e9))
         m_1g = complex(mat.mu(1.0e9))
         print(
-            f"  {key:22s}: eps(1 GHz) = {e_1g.real:7.2f} - {abs(e_1g.imag):8.2e}j, "
+            f"  {key:26s}: eps(1 GHz) = {e_1g.real:7.2f} - {abs(e_1g.imag):8.2e}j, "
             f"mu(1 GHz) = {m_1g.real:5.2f} - {abs(m_1g.imag):5.2f}j | {meta['citation']['reference']}"
         )
 
-    ds_rf = load_eccosorb_rf_lb_csv(DATA_DIR)
-    mat_rf = dispersive_lib["eccosorb rf-lb"]
+    ds_rf = load_magnetic_silicone_csv(DATA_DIR)
+    mat_rf = dispersive_lib["magnetic particle silicone"]
     mask_ov = ds_rf["f_att_hz"] <= 1.001e9
     inf_001 = infer_eps_real_from_attenuation(
         ds_rf["f_att_hz"][mask_ov],
@@ -430,7 +434,7 @@ if _RUN_WALKTHROUGH:
     )
     att_6g_pred = float(attenuation_db_per_cm(6.0e9, mat_rf.epsilon(6.0e9), mat_rf.mu(6.0e9)))
     print(
-        f"Eccosorb RF-LB: inferred eps' = {inf_001['eps_real']:.2f} (tan_delta_e = 0.01, "
+        f"Magnetic-particle silicone: inferred eps' = {inf_001['eps_real']:.2f} (tan_delta_e = 0.01, "
         f"overlap RMS = {inf_001['rms_overlap_db_cm']:.2f} dB/cm), "
         f"extrapolated alpha(6 GHz) = {att_6g_pred:.1f} dB/cm (datasheet {ds_rf['atten_db_cm'][-1]:.1f} dB/cm)"
     )
@@ -479,19 +483,19 @@ if _RUN_WALKTHROUGH:
 # ### Step 3 — Live 3D FIT slab verification (bulk graded $z$-mesh & subcell `add_sheet`)
 #
 # Next we run two fast 3D FIT (`SolverFIT3D`) slab benchmarks: a $2.0\;\text{mm}$
-# *Eccosorb RF-LB* slab on the locally refined $z$-mesh and a **copper film, 50 nm**
+# magnetic-particle silicone slab on the locally refined $z$-mesh and a **copper film, 50 nm**
 # modeled via Wakis's F3 subcell zero-thickness sheet update
 # (`solver.add_sheet(..., mode="thin")`):
 
 # %%
 if _RUN_WALKTHROUGH:
     freqs_w = np.linspace(0.40e9, 2.20e9, 19)
-    res_rf_w = run_slab_rt_fit("eccosorb rf-lb", 2.0e-3, freqs_w, cpw_target=20.0, graded=True)
+    res_rf_w = run_slab_rt_fit("magnetic particle silicone", 2.0e-3, freqs_w, cpw_target=20.0, graded=True)
     res_cu_w = run_slab_rt_fit(
         "copper foil", 50.0e-9, freqs_w, cpw_target=20.0, graded=False, use_thin_sheet=True
     )
     print(
-        f"3D FIT Eccosorb RF-LB (2.0 mm): Nz={res_rf_w['Nz']}, cpw={res_rf_w['cpw_slab']:.1f}, "
+        f"3D FIT magnetic-particle silicone (2.0 mm): Nz={res_rf_w['Nz']}, cpw={res_rf_w['cpw_slab']:.1f}, "
         f"RMS(|R|^2) = {res_rf_w['rms_R']:.4f}, RMS(|T|^2) = {res_rf_w['rms_T']:.4f}"
     )
     print(
@@ -506,14 +510,14 @@ if _RUN_WALKTHROUGH:
 # %%
 if _RUN_WALKTHROUGH:
     f_roz_w = np.geomspace(1.0e7, 30.0e9, 400)
-    mat_rf_w = dispersive_lib["eccosorb rf-lb"]
+    mat_rf_w = dispersive_lib["magnetic particle silicone"]
     pec_rf_2mm = exact_pec_backed_absorber(
         f_roz_w, mat_rf_w.epsilon(f_roz_w), mat_rf_w.mu(f_roz_w), 2.0e-3
     )
     mu_s_rf_w = float(np.real(mat_rf_w.mu(1.0e5)))
     roz_2mm = evaluate_rozanov_bound(f_roz_w, pec_rf_2mm["gamma"], mu_s_rf_w, 2.0e-3)
     print(
-        f"PEC-backed RF-LB (2.0 mm): peak RL = {np.max(pec_rf_2mm['RL_db']):.2f} dB, "
+        f"PEC-backed Mag. silicone (2.0 mm): peak RL = {np.max(pec_rf_2mm['RL_db']):.2f} dB, "
         f"Rozanov integral = {roz_2mm['integral_m']*1e3:.1f} mm <= 2*pi^2*mu_s*d = "
         f"{roz_2mm['rozanov_bound_m']*1e3:.1f} mm (exceeds non-magnetic bound "
         f"2*pi^2*d = {roz_2mm['nonmag_bound_m']*1e3:.1f} mm: {roz_2mm['exceeds_nonmag_bound']})"
@@ -526,7 +530,7 @@ if _RUN_WALKTHROUGH:
 # The script defines four deterministic tasks covering every figure and table in
 # the tutorial:
 #
-# * `task_0` (`eccosorb_rf_lb_characterization`): digitized datasheet curve
+# * `task_0` (`magnetic_silicone_characterization`): digitized datasheet curve
 #   loading, passive magnetic pole fitting (`2 Debye`, `1 Debye + 1 Lorentz`,
 #   `2 Debye + 1 Lorentz`), overlap-band $\varepsilon'$ inference and sensitivity
 #   over $0.1\text{–}1.0\;\text{GHz}$, $1\text{–}6\;\text{GHz}$ attenuation
@@ -536,7 +540,7 @@ if _RUN_WALKTHROUGH:
 #   (`--full`, 2 in `--quick`), Schelkunoff $\text{SE} = \text{SE}_R + \text{SE}_A + \text{SE}_M$
 #   decomposition, and space-time pulse snapshots/GIF frames.
 # * `task_2` (`metal_backed_absorber_and_rozanov`): 3D FIT PEC-backed absorber
-#   simulations (`bc_high = ['periodic', 'periodic', 'pec']`) for `eccosorb rf-lb`
+#   simulations (`bc_high = ['periodic', 'periodic', 'pec']`) for `magnetic particle silicone`
 #   ($d \in \{1.0, 2.0, 3.0\}\;\text{mm}$) and `sendust flake sheet`
 #   ($d \in \{0.5, 1.0, 1.5\}\;\text{mm}$), 2D quarter-wave matching locus, and
 #   Rozanov causality bound evaluation.
@@ -552,7 +556,7 @@ def get_task_table(quick: bool = False) -> list[dict]:
     return [
         {
             "index": 0,
-            "name": "eccosorb_rf_lb_characterization",
+            "name": "magnetic_silicone_characterization",
             "kind": "characterization",
             "cpw": 24,
             "quick": quick,
@@ -647,9 +651,9 @@ def run_single_task(cfg: dict, data_dir: Path = DATA_DIR) -> dict:
         meta["rms_RL_sd_db"] = [float(x) for x in res["rms_RL_sd"]]
     elif kind == "resolution_study":
         meta["cpw_levels"] = [float(x) for x in res["cpw_levels"]]
-        meta["rms_R_rf_lb"] = [float(x) for x in res["rms_R_conv"][0]]
-        meta["nz_graded_rf_lb"] = [int(x) for x in res["nz_graded_conv"][0]]
-        meta["nz_uniform_rf_lb"] = [int(x) for x in res["nz_uniform"]]
+        meta["rms_R_mag_silicone"] = [float(x) for x in res["rms_R_conv"][0]]
+        meta["nz_graded_mag_silicone"] = [int(x) for x in res["nz_graded_conv"][0]]
+        meta["nz_uniform_mag_silicone"] = [int(x) for x in res["nz_uniform"]]
         meta["wall_graded_s"] = [float(x) for x in res["wall_graded_conv"][0]]
         meta["wall_uniform_s"] = [float(x) for x in res["wall_uniform"]]
 
@@ -670,16 +674,16 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 # renders the setup schematics (`00a`–`00d`), eight multi-panel diagnostic
 # figures (`01`–`07`, including `04b`), and the wave-propagation animation (`08`):
 #
-# ### 4.1 Eccosorb RF-LB pole fit, $\varepsilon'$ inference, and $1\text{–}6\;\text{GHz}$ attenuation check
+# ### 4.1 Magnetic-particle silicone pole fit, $\varepsilon'$ inference, and $1\text{–}6\;\text{GHz}$ attenuation check
 #
-# ![Eccosorb RF-LB permeability fit, permittivity inference, and 1-6 GHz attenuation prediction](figures/01_eccosorb_rf_lb_fit_and_attenuation.png)
+# ![Magnetic-particle silicone permeability fit, permittivity inference, and 1-6 GHz attenuation prediction](figures/01_magnetic_silicone_fit_and_attenuation.png)
 #
 # ![Constitutive dispersion spectra of the 6 EMI material classes](figures/02_six_material_classes_dispersion.png)
 #
 # | Model / Observable | Frequency band | Parameter / Result | Datasheet / Reference target | Residual / Physical interpretation |
 # | :--- | :---: | :---: | :---: | :--- |
-# | **RF-LB `1 Debye + 1 Lorentz` $\mu(f)$ fit** | $10\;\text{MHz}\text{–}1.0\;\text{GHz}$ (measured) | $\Delta\mu_D = 15.64, \tau_D = 2.37\;\text{ns}$; $\Delta\mu_L = 20.14, f_0 = 1.84\;\text{GHz}$ | Digitized $\mu'(f), \mu''(f)$ (21 pts) | $\text{rel\_rms} = 0.36\%$ ($\max|\Delta\mu'| = 0.14$) |
-# | **RF-LB `2 Debye` $\mu(f)$ fit** | $10\;\text{MHz}\text{–}1.0\;\text{GHz}$ (measured) | Two relaxation poles ($\mu_\infty = 1.0$) | Digitized $\mu'(f), \mu''(f)$ (21 pts) | $\text{rel\_rms} = 4.53\%$ (overdamped relaxation only) |
+# | **Mag. silicone `1 Debye + 1 Lorentz` $\mu(f)$ fit** | $10\;\text{MHz}\text{–}1.0\;\text{GHz}$ (measured) | $\Delta\mu_D = 15.64, \tau_D = 2.37\;\text{ns}$; $\Delta\mu_L = 20.14, f_0 = 1.84\;\text{GHz}$ | Digitized $\mu'(f), \mu''(f)$ (21 pts) | $\text{rel\_rms} = 0.36\%$ ($\max|\Delta\mu'| = 0.14$) |
+# | **Mag. silicone `2 Debye` $\mu(f)$ fit** | $10\;\text{MHz}\text{–}1.0\;\text{GHz}$ (measured) | Two relaxation poles ($\mu_\infty = 1.0$) | Digitized $\mu'(f), \mu''(f)$ (21 pts) | $\text{rel\_rms} = 4.53\%$ (overdamped relaxation only) |
 # | **Inferred $\varepsilon'$ ($\tan\delta_e = 0.00 / 0.01 / 0.05$)** | $0.1\text{–}1.0\;\text{GHz}$ (overlap) | $\varepsilon' = \{82.67,\, 81.06,\, 74.99\}$ | $\alpha(f) = 2.81\text{–}27.75\;\text{dB/cm}$ | Overlap RMS $= 2.86\;\text{dB/cm}$ ($\tan\delta_e = 0.01$) |
 # | **Extrapolated attenuation (`1 Debye + 1 Lorentz`)** | $1.0\text{–}6.0\;\text{GHz}$ (extrapolated) | $\alpha(6\;\text{GHz}) = 84.7\;\text{dB/cm}$ | Datasheet $81.77\;\text{dB/cm}$ at $6\;\text{GHz}$ | Extrapolation RMS $= 13.16\;\text{dB/cm}$ (unconstrained $f_0 = 1.84\;\text{GHz}$ peak) |
 # | **Extrapolated attenuation (`2 Debye`)** | $1.0\text{–}6.0\;\text{GHz}$ (extrapolated) | $\alpha(6\;\text{GHz}) = 89.1\;\text{dB/cm}$ | Datasheet $81.77\;\text{dB/cm}$ at $6\;\text{GHz}$ | Extrapolation RMS $= 3.42\;\text{dB/cm}$ (smooth monotonic rise) |
@@ -698,7 +702,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 #
 # | EMI Material Class ($d$ shown) | $\text{SE}_{\text{total}}$ at $2.03\;\text{GHz}$ [dB] | $\text{SE}_R$ [dB] | $\text{SE}_A$ [dB] | $\text{SE}_M$ [dB] | Absorbed fraction $A(2.03\;\text{GHz})$ | 3D FIT vs. Transfer Matrix $\text{RMS}(|R|^2)$ / $\text{RMS}(|T|^2)$ |
 # | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-# | **Class 1 · `eccosorb rf-lb` ($2.0\;\text{mm}$)** | $15.04\;\text{dB}$ | $1.93\;\text{dB}$ | $12.99\;\text{dB}$ | $+0.12\;\text{dB}$ | $0.518$ ($51.8\%$) | $1.72 \times 10^{-3}$ / $9.01 \times 10^{-4}$ |
+# | **Class 1 · `magnetic particle silicone` ($2.0\;\text{mm}$)** | $15.04\;\text{dB}$ | $1.93\;\text{dB}$ | $12.99\;\text{dB}$ | $+0.12\;\text{dB}$ | $0.518$ ($51.8\%$) | $1.72 \times 10^{-3}$ / $9.01 \times 10^{-4}$ |
 # | **Class 2 · `sendust flake sheet` ($1.0\;\text{mm}$)** | $11.76\;\text{dB}$ | $1.54\;\text{dB}$ | $10.57\;\text{dB}$ | $-0.34\;\text{dB}$ | $0.357$ ($35.7\%$) | $1.97 \times 10^{-3}$ / $7.75 \times 10^{-4}$ |
 # | **Class 3 · `tio2 ceramic` ($2.0\;\text{mm}$, $\varepsilon_r = 100$)** | $11.72\;\text{dB}$ | $9.62\;\text{dB}$ | $0.00\;\text{dB}$ | $+2.10\;\text{dB}$ | $0.000$ ($0.0\%$) | $6.82 \times 10^{-4}$ / $7.22 \times 10^{-4}$ |
 # | **Class 4 · `cnt silicone` ($1.0\;\text{mm}$, $\sigma = 25\;\text{S/m}$)** | $15.24\;\text{dB}$ | $12.34\;\text{dB}$ | $3.78\;\text{dB}$ | $-0.88\;\text{dB}$ | $0.287$ ($28.7\%$) | $9.34 \times 10^{-4}$ / $6.47 \times 10^{-5}$ |
@@ -739,12 +743,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 # both magnetic composites exhibit clear quarter-wave matching peaks where
 # $d \approx \lambda_0 / (4\operatorname{Re}\sqrt{\varepsilon\mu})$:
 #
-# * **Eccosorb RF-LB:** the matching peak shifts from $f_{\text{peak}} = 1.35\;\text{GHz}$
+# * **Magnetic-particle silicone:** the matching peak shifts from $f_{\text{peak}} = 1.35\;\text{GHz}$
 #   ($\text{RL} = 6.28\;\text{dB}$ at $d = 1.0\;\text{mm}$) to $0.88\;\text{GHz}$
 #   ($\text{RL} = 13.35\;\text{dB}$ at $d = 2.0\;\text{mm}$) and $0.53\;\text{GHz}$
 #   ($\text{RL} = 20.73\;\text{dB}$ at $d = 3.0\;\text{mm}$), with 3D FIT matching
 #   exact input-impedance theory to $\text{RMS}(\text{RL}) \le 0.026\;\text{dB}$.
-# * **Rozanov causality bound:** for a $2.0\;\text{mm}$ RF-LB sheet, the
+# * **Rozanov causality bound:** for a $2.0\;\text{mm}$ magnetic-particle silicone sheet, the
 #   wavelength-integrated reflection loss $\int |\ln|\Gamma(\lambda)||\,d\lambda = 1385.0\;\text{mm}$
 #   utilizes **$95.4\%$** of Rozanov's magnetic causal bound $2\pi^2 \mu_s d = 1452.1\;\text{mm}$
 #   ($\mu_s = 36.78$) and exceeds the maximum possible non-magnetic dielectric
@@ -760,7 +764,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 # EMI classes confirms second-order $\mathcal{O}(\Delta z^2)$ convergence of the
 # 3D FIT dispersive and conductive updates. Comparing the **locally refined
 # graded $z$-mesh** (`build_graded_z_grid`) against the **uniform $z$-mesh
-# baseline** (`graded=False`) on the $2.0\;\text{mm}$ *Eccosorb RF-LB* slab at
+# baseline** (`graded=False`) on the $2.0\;\text{mm}$ magnetic-particle silicone slab at
 # identical slab cell sizes $\Delta z_{\text{slab}}$ demonstrates why local
 # refinement is essential when a sub-millimeter high-index slab ($|n| \approx 30$)
 # sits inside a centimeter-scale vacuum domain:
@@ -818,10 +822,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 #
 # 1. **Two-layer Jaumann / graded-impedance absorber:** Stack a $1.0\;\text{mm}$
 #    front matching layer of `'cnt silicone'` or `'fr4'` in front of a
-#    $2.0\;\text{mm}$ PEC-backed `'eccosorb rf-lb'` layer and compute the
+#    $2.0\;\text{mm}$ PEC-backed `'magnetic particle silicone'` layer and compute the
 #    broadband reflection loss $\text{RL}(f)$ from $0.5\text{ to }6.0\;\text{GHz}$.
 #    Compare the $-10\;\text{dB}$ bandwidth and the Rozanov integral
-#    $\int |\ln|\Gamma(\lambda)||\,d\lambda$ against the single-layer RF-LB absorber.
+#    $\int |\ln|\Gamma(\lambda)||\,d\lambda$ against the single-layer magnetic-particle silicone absorber.
 # 2. **Percolation threshold sensitivity in CNT rubber:** Vary `sigma` in
 #    `dispersive_lib['cnt silicone']` across $\{0.1, 1.0, 10.0, 25.0, 100.0\}\;\text{S/m}$
 #    (spanning the insulator-to-conductor percolation transition) for a
@@ -837,8 +841,8 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 #
 # ## Verified References
 #
-# 1. Laird Performance Materials, *Eccosorb RF-LB EMI Noise Suppression Absorber
-#    Technical Datasheet*, Document `EM-ABS-DS-10132022` (2022).
+# 1. Manufacturer datasheet of a commercially available magnetic-particle-loaded
+#    silicone absorber (digitized curves in `data/`).
 # 2. S. Yoshida, M. Sato, E. Sugawara, and Y. Shimada, "Permeability and
 #    electromagnetic-interference characteristics of Fe–Si–Al alloy flakes–polymer
 #    composite," *J. Appl. Phys.* **85**(8), 4636–4638 (1999),

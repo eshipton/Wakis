@@ -26,6 +26,20 @@
 # parameters in **one forward run plus one backward (transpose) run**, at a cost
 # independent of $N_p$.
 #
+# In electromagnetics and nanophotonics, the adjoint inverse-design formalism builds
+# on optimal control and aerodynamic design (Giles & Pierce, 2000) and was established
+# for subwavelength photonic structures by Owen D. Miller and collaborators
+# ([millergroup.yale.edu](https://millergroup.yale.edu)): Miller's PhD thesis (Miller, 2012)
+# derived general shape and topology derivatives of Maxwell's equations by pairing the
+# forward field with an adjoint wavefield driven by the figure of merit; Lalau-Keraly,
+# Bhargava, Miller & Yablonovitch (2013) applied level-set and boundary-perturbation
+# adjoint shape optimization to dielectric waveguide splitters and couplers; Ganapati,
+# Miller & Yablonovitch (2014) used electromagnetic adjoint optimization to design
+# light-trapping surface textures for subwavelength-thick solar cells; and Miller &
+# Yablonovitch (2015) synthesized the general inverse optical design framework, later
+# reviewed across nanophotonics by Molesky et al. (2018) and cast in operator
+# automatic-differentiation form by Hughes et al. (2019).
+#
 # ### Learning goals
 #
 # 1. **Discretize-then-differentiate vs. continuous adjoint**: derive the exact
@@ -48,7 +62,7 @@
 #    bytes and wall-clock time across `store` (`float64`/`float32`), binomial
 #    `checkpoint` (Griewank & Walther's `revolve` dynamic program), lossless
 #    time-reversal with recorded 1-cell CPML interface strips (`reverse`), and
-#    band-limited `nyquist` decimation.
+#    band-limited `nyquist` decimation following Park, Miller & Chung (2026).
 # 5. **Live 2D topology optimization**: optimize a $90^\circ$ dielectric waveguide
 #    bend in under a minute using $\beta$-continuation ($\beta = 2 \to 4 \to 8$),
 #    tracking the objective trajectory, binarization, broadband transmission
@@ -150,6 +164,15 @@
 # | **2. Checkpoint** | `"checkpoint"` ($s$ slots, block $b$) | $s \times B_{\text{state}} + b \times N_{\text{design}} \times 8\text{ B}$ | $C(m, s)\,b$ via Griewank–Walther `revolve` DP | **Bitwise identical** ($0$) |
 # | **3. Reverse** | `"reverse"` (lossless interior + CPML strip) | $2 B_{\text{state}} + N_t \times N_{\text{interface}} \times 8\text{ B}$ | $0$ (1 reverse pass) | Round-off ($\sim 10^{-15}$) |
 # | **4. Nyquist** | `"nyquist"` (decimation $d$) | $\lceil N_t / d\rceil \times N_{\text{design}} \times 8\text{ B}$ | $0$ | Band-limited ($10^{-4}\text{--}10^{-3}$) |
+#
+# Rungs 1–3 are exact: `"checkpoint"` follows Griewank & Walther's (2000) optimal
+# binomial `revolve` schedule, and `"reverse"` steps the lossless interior backward
+# from the final state using recorded 1-cell CPML interface strips (Tang et al., 2023;
+# Mahlau et al., 2026). Rung 4 (`"nyquist"`) follows Park, Miller & Chung (2026), who
+# showed that for band-limited time-domain objectives, storing forward design-edge
+# fields at the Nyquist sampling interval of the excitation/monitor bandwidth and
+# reconstructing intermediate steps with windowed sinc interpolation reduces adjoint
+# FDTD memory by more than two orders of magnitude with controlled gradient error.
 
 # %%
 from __future__ import annotations
@@ -1974,6 +1997,32 @@ def plot_all(fig_dir: Path | None = None) -> list[Path]:
 #
 # ## Section 7 · Results, Limits & Failure Modes, and Verified References
 #
+# ### How Good Can a Design Be? Fundamental and Computational Bounds
+#
+# Because gradient-based topology optimization is non-convex and converges to local
+# optima, a natural question is **how close a discovered structure comes to the best
+# performance physically achievable** within a given design footprint and material
+# susceptibility $\chi = \varepsilon_r - 1$:
+#
+# - **Global conservation bounds in absorptive media**: Miller et al. (2016) derived
+#   shape-independent upper bounds on absorption, scattering, extinction, and near-field
+#   local density of states by enforcing optical-theorem energy conservation on the
+#   induced polarization currents.
+# - **Broadband Kramers–Kronig bounds**: Shim, Fan, Johnson & Miller (2019) used
+#   causality and passivity in the complex frequency plane to bound near-field optical
+#   response integrated over any finite bandwidth via a single complex-frequency
+#   evaluation.
+# - **Local conservation-law bounds**: Kuang & Miller (2020) generalized global optical
+#   theorems to an infinite family of spatially localized power-conservation constraints,
+#   yielding tighter computational upper bounds on light–matter interactions via
+#   Lagrangian duality.
+# - **Sparse QCQP relaxations of differential Maxwell equations**: Gertler, Kuang,
+#   Christie, Li & Miller (2025) showed that differential-equation formulations of
+#   photonic design problems (such as waveguide bends, splitters, and metasurfaces)
+#   are sparse quadratically constrained quadratic programs (QCQPs) whose semidefinite
+#   relaxations provide rigorous global performance upper bounds against which local
+#   adjoint-optimized designs can be benchmarked.
+#
 # ### Limits & Failure Modes
 #
 # 1. **High-$Q$ resonances and truncated DFT windows**:
@@ -1992,7 +2041,7 @@ def plot_all(fig_dir: Path | None = None) -> list[Path]:
 #    vanishes exponentially at large $\beta$ for $\tilde{\rho}$ away from $\eta$,
 #    starting at $\beta \ge 32$ stalls gradient ascent. Use a continuation
 #    schedule ($\beta = 2 \to 4 \to 8 \to 16 \to 32$).
-# 4. **Nyquist decimation (`memory="nyquist"`) on broadband transients**:
+# 4. **Nyquist decimation (`memory="nyquist"`, Park, Miller & Chung 2026) on broadband transients**:
 #    Decimation $d$ assumes $\Delta \mathbf{D}^{(n)}$ has negligible spectral
 #    content above $1 / (2 d \Delta t)$. Impulsive sources or high-frequency
 #    transients alias into $10^{-3}\text{--}10^{-1}$ gradient errors; use
@@ -2004,38 +2053,63 @@ def plot_all(fig_dir: Path | None = None) -> list[Path]:
 # 1. M. B. Giles and N. A. Pierce, "An introduction to the adjoint approach to design,"
 #    *Flow, Turbulence and Combustion* **65**, 393–415 (2000),
 #    DOI: [`10.1023/A:1011430410075`](https://doi.org/10.1023/A:1011430410075).
-# 2. S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković, and A. W. Rodriguez,
+# 2. O. D. Miller, "Photonic Design: From Fundamental Solar Cell Physics to Computational Inverse Design",
+#    PhD thesis, UC Berkeley (2012), arXiv:[`1308.0212`](https://arxiv.org/abs/1308.0212).
+# 3. C. M. Lalau-Keraly, S. Bhargava, O. D. Miller and E. Yablonovitch, "Adjoint shape optimization applied to
+#    electromagnetic design", *Opt. Express* **21**, 21693 (2013),
+#    DOI: [`10.1364/OE.21.021693`](https://doi.org/10.1364/OE.21.021693).
+# 4. V. Ganapati, O. D. Miller and E. Yablonovitch, "Light Trapping Textures Designed by Electromagnetic Optimization for
+#    Subwavelength Thick Solar Cells", *IEEE J. Photovoltaics* **4**, 175–182 (2014),
+#    DOI: [`10.1109/JPHOTOV.2013.2280340`](https://doi.org/10.1109/JPHOTOV.2013.2280340).
+# 5. O. D. Miller and E. Yablonovitch, "Inverse Optical Design", in *Encyclopedia of Applied and Computational
+#    Mathematics*, pp. 729–732 (Springer, 2015),
+#    DOI: [`10.1007/978-3-540-70529-1_45`](https://doi.org/10.1007/978-3-540-70529-1_45).
+# 6. S. Molesky, Z. Lin, A. Y. Piggott, W. Jin, J. Vučković, and A. W. Rodriguez,
 #    "Inverse design in nanophotonics," *Nature Photonics* **12**, 659–670 (2018),
 #    DOI: [`10.1038/s41566-018-0246-9`](https://doi.org/10.1038/s41566-018-0246-9).
-# 3. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode
+# 7. T. W. Hughes, I. A. D. Williamson, M. Minkov, and S. Fan, "Forward-mode
 #    differentiation of Maxwell's equations," *ACS Photonics* **6**, 3010–3016 (2019),
 #    arXiv:[`1908.10507`](https://arxiv.org/abs/1908.10507),
 #    DOI: [`10.1021/acsphotonics.9b01238`](https://doi.org/10.1021/acsphotonics.9b01238).
-# 4. B. Bourdin, "Filters in topology optimization," *International Journal for
+# 8. B. Bourdin, "Filters in topology optimization," *International Journal for
 #    Numerical Methods in Engineering* **50**, 2143–2158 (2001),
 #    DOI: [`10.1002/nme.116`](https://doi.org/10.1002/nme.116).
-# 5. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and
+# 9. F. Wang, B. S. Lazarov, and O. Sigmund, "On projection methods, convergence and
 #    robust formulations in topology optimization," *Structural and Multidisciplinary
 #    Optimization* **43**, 767–784 (2011),
 #    DOI: [`10.1007/s00158-010-0602-y`](https://doi.org/10.1007/s00158-010-0602-y).
-# 6. A. Farjadpour, D. Roundy, A. Rodriguez, M. Ibanescu, P. Bermel, J. D. Joannopoulos,
-#    S. G. Johnson, and G. W. Burr, "Improving accuracy by subpixel smoothing in the
-#    finite-difference time domain," *Optics Letters* **31**, 2972–2974 (2006),
-#    DOI: [`10.1364/OL.31.002972`](https://doi.org/10.1364/OL.31.002972).
-# 7. A. Griewank and A. Walther, "Algorithm 799: revolve: an implementation of
-#    checkpointing for the reverse or adjoint mode of computational differentiation,"
-#    *ACM Transactions on Mathematical Software* **26**, 19–45 (2000),
-#    DOI: [`10.1145/347837.347846`](https://doi.org/10.1145/347837.347846).
-# 8. R. Tang, J. Lim, M. Ossiander, X. Yin, and F. Capasso, "Time Reversal
-#    Differentiation of FDTD for Photonic Inverse Design," *ACS Photonics* **10**,
-#    4140–4150 (2023),
-#    DOI: [`10.1021/acsphotonics.3c00694`](https://doi.org/10.1021/acsphotonics.3c00694).
-# 9. Y. Mahlau, F. Schubert, K. Bethmann, R. Caspary, A. B. Fallahkhair, M. M.ermann,
-#    and B. Rosenhahn, "FDTDX: High-performance open-source FDTD in JAX,"
-#    arXiv:[`2412.12360`](https://arxiv.org/abs/2412.12360); *Journal of Open Source
-#    Software* **11**, 8912 (2026),
-#    DOI: [`10.21105/joss.08912`](https://doi.org/10.21105/joss.08912).
-# 10. M. F. Schubert, A. K. C. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander,
+# 10. A. Farjadpour, D. Roundy, A. Rodriguez, M. Ibanescu, P. Bermel, J. D. Joannopoulos,
+#     S. G. Johnson, and G. W. Burr, "Improving accuracy by subpixel smoothing in the
+#     finite-difference time domain," *Optics Letters* **31**, 2972–2974 (2006),
+#     DOI: [`10.1364/OL.31.002972`](https://doi.org/10.1364/OL.31.002972).
+# 11. A. Griewank and A. Walther, "Algorithm 799: revolve: an implementation of
+#     checkpointing for the reverse or adjoint mode of computational differentiation,"
+#     *ACM Transactions on Mathematical Software* **26**, 19–45 (2000),
+#     DOI: [`10.1145/347837.347846`](https://doi.org/10.1145/347837.347846).
+# 12. R. Tang, J. Lim, M. Ossiander, X. Yin, and F. Capasso, "Time Reversal
+#     Differentiation of FDTD for Photonic Inverse Design," *ACS Photonics* **10**,
+#     4140–4150 (2023),
+#     DOI: [`10.1021/acsphotonics.3c00694`](https://doi.org/10.1021/acsphotonics.3c00694).
+# 13. Y. Mahlau, F. Schubert, K. Bethmann, R. Caspary, A. B. Fallahkhair, M. M.ermann,
+#     and B. Rosenhahn, "FDTDX: High-performance open-source FDTD in JAX,"
+#     arXiv:[`2412.12360`](https://arxiv.org/abs/2412.12360); *Journal of Open Source
+#     Software* **11**, 8912 (2026),
+#     DOI: [`10.21105/joss.08912`](https://doi.org/10.21105/joss.08912).
+# 14. M. Park, O. D. Miller and H. Chung, "Nyquist-Sampled Time-Domain Adjoint FDTD for Memory-Efficient Broadband
+#     Nanophotonic Inverse Design", arXiv:[`2607.08159`](https://arxiv.org/abs/2607.08159) (2026).
+# 15. O. D. Miller, A. G. Polimeridis, M. T. Homer Reid, C. W. Hsu, B. G. DeLacy, J. D. Joannopoulos, M. Soljačić and
+#     S. G. Johnson, "Fundamental limits to optical response in absorptive systems", *Opt. Express* **24**, 3329 (2016),
+#     DOI: [`10.1364/OE.24.003329`](https://doi.org/10.1364/OE.24.003329).
+# 16. H. Shim, L. Fan, S. G. Johnson and O. D. Miller, "Fundamental Limits to Near-Field Optical Response over Any
+#     Bandwidth", *Phys. Rev. X* **9**, 011043 (2019),
+#     DOI: [`10.1103/PhysRevX.9.011043`](https://doi.org/10.1103/PhysRevX.9.011043).
+# 17. Z. Kuang and O. D. Miller, "Computational Bounds to Light–Matter Interactions via Local Conservation Laws",
+#     *Phys. Rev. Lett.* **125**, 263607 (2020),
+#     DOI: [`10.1103/PhysRevLett.125.263607`](https://doi.org/10.1103/PhysRevLett.125.263607).
+# 18. L. Gertler, Z. Kuang, C. Christie, H. Li and O. D. Miller, "Many photonic design problems are sparse QCQPs",
+#     *Sci. Adv.* **11**, eadl3237 (2025),
+#     DOI: [`10.1126/sciadv.adl3237`](https://doi.org/10.1126/sciadv.adl3237).
+# 19. M. F. Schubert, A. K. C. Cheung, I. A. D. Williamson, A. Spyra, and D. H. Alexander,
 #     "invrs-gym: a toolkit for nanophotonic inverse design research,"
 #     arXiv:[`2410.24132`](https://arxiv.org/abs/2410.24132) (2024).
 
