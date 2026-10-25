@@ -90,7 +90,7 @@ def test_mmi_2x2_resolution_ladder_and_mesh_overrides():
     mod = _load_tutorial_module()
     for quick in (True, False):
         tasks = mod.get_task_table(quick=quick)
-        assert len(tasks) == (9 if quick else 11)
+        assert len(tasks) == (10 if quick else 12)
         for task in tasks:
             cpw = float(task["cpw"])
             n_target = int(task["n_cells_feature"])
@@ -250,7 +250,7 @@ def test_mmi_2x2_full_study_data_and_convergence():
     mod = _load_tutorial_module()
     data_dir = mod.DATA_DIR
     expected_tasks = mod.get_task_table(quick=False)
-    assert len(expected_tasks) == 11
+    assert len(expected_tasks) == 12
 
     tasks_npz = {}
     for exp in expected_tasks:
@@ -375,4 +375,124 @@ def test_mmi_2x2_full_study_data_and_convergence():
 
     # Mutation check: swapping bar and cross ports breaks the self-imaging slope
     assert not np.all(np.diff([1.0 - b for b in bar_fracs]) > 0.0)
+
+
+def test_mmi_2x2_setup_schematic_and_nonuniform_mesh_upgrade():
+    """
+    Verify that the setup schematic figures (`00a_setup_geometry.png`,
+    `00b_setup_mesh_and_excitation.png`, `00_setup_table.md`), the mesh-upgrade
+    comparison (`04b_mesh_upgrade_comparison.png`), and the `< 5 MB` GIF exist,
+    that `NonUniformMMI2x2PIC` (`kottke_nonuniform`, `task_11`) achieves lower
+    cell count, lower wall time, zero MMI sidewall rounding error, and lower
+    broadband RMS error against `kottke_reference` than `kottke_L3`, and include
+    a mutation check on `build_mmi_2x2_graded_axes`.
+    """
+    import json
+
+    mod = _load_tutorial_module()
+    fig_dir = mod.FIG_DIR
+    data_dir = mod.DATA_DIR
+
+    for fname in (
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00_setup_table.md",
+        "04b_mesh_upgrade_comparison.png",
+        "07_field_intensity_1550.png",
+        "08_field_real_ey_1550.png",
+        "09_field_comparison_1550_vs_1580.png",
+        "10_pulse_propagation.gif",
+    ):
+        fpath = fig_dir / fname
+        assert fpath.is_file(), f"Missing required figure {fpath}"
+        assert fpath.stat().st_size > 500, f"Empty figure {fpath}"
+
+    gif_size_mb = (fig_dir / "10_pulse_propagation.gif").stat().st_size / (1024 * 1024)
+    assert gif_size_mb < 5.0, f"GIF size {gif_size_mb:.2f} MB exceeds 5 MB limit"
+
+    # Verify NonUniformMMI2x2PIC grid properties vs baseline kottke_L3
+    structures, ports, domain = mod.build_mmi_2x2(l_mmi=mod.L_MMI)
+    pic_nu = mod.NonUniformMMI2x2PIC(
+        mod.WL_MIN,
+        mod.WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=mod.N_SI,
+        n_clad=mod.N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=20,
+        domain=domain,
+        n_pml=10,
+        l_mmi=mod.L_MMI,
+        n_cells_feature=8,
+        min_feature=mod.GAP_MMI,
+    )
+    stats_nu = mod.measure_grid_resolution(
+        pic_nu.grid, n_pml=10, l_mmi=mod.L_MMI, min_feature=mod.GAP_MMI, w_mmi=mod.W_MMI
+    )
+    assert (pic_nu.grid.Nx, pic_nu.grid.Ny, pic_nu.grid.Nz) == (425, 171, 1)
+    assert stats_nu["n_cells"] == 72675
+    assert stats_nu["cells_across_feature"] == pytest.approx(8.0, abs=1e-3)
+    assert stats_nu["sidewall_err_nm"] == pytest.approx(0.0, abs=1e-3)
+    assert stats_nu["dx_min_nm"] == pytest.approx(25.0, abs=1e-2)
+    assert stats_nu["dx_max_nm"] > 35.0
+    assert stats_nu["dy_min_nm"] == pytest.approx(25.0, abs=1e-2)
+    assert stats_nu["dy_max_nm"] > 60.0
+
+    # Compare task_11 (kottke_nonuniform) vs task_4 (kottke_L3) and task_6 (kottke_reference)
+    meta_l3 = json.loads((data_dir / "task_4.json").read_text())
+    meta_nu = json.loads((data_dir / "task_11.json").read_text())
+    assert meta_nu["n_cells"] < 0.70 * meta_l3["n_cells"]
+    assert meta_nu["elapsed_s"] < 0.70 * meta_l3["elapsed_s"]
+
+    d_l3 = np.load(data_dir / "task_4.npz")
+    d_ref = np.load(data_dir / "task_6.npz")
+    d_nu = np.load(data_dir / "task_11.npz")
+    wl = d_ref["wavelengths"] * 1e9
+    ord_i = np.argsort(wl)
+    w_s = wl[ord_i]
+    m_conv = (w_s >= 1510.0) & (w_s <= 1590.0)
+
+    def _pair_and_tot(d):
+        t31 = np.abs(d["S31"][ord_i][m_conv]) ** 2
+        t41 = np.abs(d["S41"][ord_i][m_conv]) ** 2
+        return t31, t41, t31 + t41
+
+    t31_r, t41_r, ttot_r = _pair_and_tot(d_ref)
+    t31_3, t41_3, ttot_3 = _pair_and_tot(d_l3)
+    t31_n, t41_n, ttot_n = _pair_and_tot(d_nu)
+
+    rms_tot_l3 = float(np.sqrt(np.mean((ttot_3 - ttot_r) ** 2)))
+    rms_tot_nu = float(np.sqrt(np.mean((ttot_n - ttot_r) ** 2)))
+    rms_pair_l3 = float(np.sqrt(0.5 * np.mean((t31_3 - t31_r) ** 2 + (t41_3 - t41_r) ** 2)))
+    rms_pair_nu = float(np.sqrt(0.5 * np.mean((t31_n - t31_r) ** 2 + (t41_n - t41_r) ** 2)))
+
+    assert rms_tot_nu < rms_tot_l3
+    assert rms_pair_nu < rms_pair_l3
+
+    # Mutation check: setting n_cells_feature=2 in build_mmi_2x2_graded_axes drops cells_across_feature < 4.0
+    axes_mut = mod.build_mmi_2x2_graded_axes(
+        domain,
+        l_mmi=mod.L_MMI,
+        w_mmi=mod.W_MMI,
+        w_wg=mod.W_WG,
+        min_feature=mod.GAP_MMI,
+        y_port=mod.Y_PORT,
+        n_pml=10,
+        cpw=20,
+        n_cells_feature=2,
+    )
+    from wakis.gridFIT3D import GridFIT3D
+
+    grid_mut = GridFIT3D(x=axes_mut[0], y=axes_mut[1], z=axes_mut[2], verbose=0)
+    grid_mut.remove_edge_ghost(2)
+    stats_mut = mod.measure_grid_resolution(
+        grid_mut, n_pml=10, l_mmi=mod.L_MMI, min_feature=mod.GAP_MMI
+    )
+    assert stats_mut["cells_across_feature"] < 4.0, (
+        "Mutation check failed: expected n_cells_feature=2 to have < 4 cells across gap, "
+        f"got {stats_mut['cells_across_feature']}"
+    )
+
 

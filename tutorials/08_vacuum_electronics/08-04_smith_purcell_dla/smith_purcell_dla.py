@@ -290,10 +290,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 #
 # ## Setup Schematic & Mesh View
 #
-# Figure 1 shows the complete domain setup, boundary conditions, material parameters, sources, monitors, and computational grid for both parts of the tutorial:
-# - **Panel (a) — Part 1 (Smith–Purcell radiation):** A relativistic Gaussian line bunch ($q = 10\;\mathrm{pC}$, $\sigma_z = 0.22\;\mu\mathrm{m}$, $\beta = 0.80$, corresponding to the $E_k \approx 340\;\mathrm{keV}$ Van de Graaff beam of Smith & Purcell (1953)) travels at impact parameter $h = 0.25\;\mu\mathrm{m}$ above a flush-grooved grating of period $d = 1.67\;\mu\mathrm{m}$, groove depth $h_g = 0.40\;\mu\mathrm{m}$, and duty cycle $0.50$ made of either **PEC** or **fused silica ($\mathrm{SiO}_2, \varepsilon_r = 2.111$)**. CPML absorbing layers ($10\;\mathrm{cells} = 0.50\;\mu\mathrm{m}$) terminate $\pm x$ and $\pm z$, while $\pm y$ uses periodic Bloch boundaries (`Ny = 1`).
-# - **Panel (b) — Part 2 (DLA unit cell & supercell):** A TM-polarized ($\mathbf{E}_{\mathrm{inc}} \parallel \hat{\mathbf{z}}$) Ti:sapphire laser plane wave ($\lambda_0 = 800\;\mathrm{nm}$) illuminates a dual fused-silica pillar grating ($\lambda_p = \beta\lambda_0 = 800\;\mathrm{nm}$, tooth depth $h_g = 680\;\mathrm{nm}$, vacuum channel gap $2a = 400\;\mathrm{nm}$ or $800\;\mathrm{nm}$, matching Peralta *et al.* (2013)) from $-\hat{\mathbf{x}}$ with periodic boundaries along $\pm z$ and $\pm y$ and CPML along $\pm x$.
-# - **Panel (c) — Yee / FIT Grid Zoom:** Close-up of a single $\mathrm{SiO}_2$ grating tooth showing the staggered cell layout (`dx = dz = 25 nm`, providing $22.0\;\mathrm{cells}/\lambda$ inside $\mathrm{SiO}_2$ at $\lambda_0 = 800\;\mathrm{nm}$ and $16\;\mathrm{cells}$ across the $400\;\mathrm{nm}$ tooth width, satisfying both the $\ge 20\;\mathrm{cells}/\lambda$ and $\ge 4\;\mathrm{cells/feature}$ rules).
+# Because this tutorial models two distinct physical launch configurations—**Part 1 (Smith–Purcell radiation)** driven by a relativistic electron bunch (`Beam`, $\beta = 0.80$) above a single-sided grating, and **Part 2 (Dielectric Laser Acceleration)** driven by a transverse TM laser sheet (`CurrentSource` $J_z$, $\lambda_0 = 800\;\mathrm{nm}$) across a dual fused-silica pillar channel—we generate dedicated setup schematics for each run configuration (`figures/00a_setup_geometry.png`, `figures/00b_setup_mesh_and_excitation.png`, and `figures/00c_setup_dla_geometry.png`) together with a side-by-side comparison of the **locally refined non-uniform graded mesh** (`wakis.templates.meshing.graded_axis`) against the **uniform Cartesian baseline** (`figures/01_setup_schematic_and_mesh.png`).
+#
+# ### Part 1 Setup · Smith–Purcell Grating, Relativistic Beam & DFT Monitor
+#
+# ![Part 1 Smith–Purcell Setup Geometry](figures/00a_setup_geometry.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 4.40 µm × 50 nm × 22.7 µm (z ∈ [-11.3 µm, 11.3 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 79 × 1 × 462 (36,498 cells; uniform Fine baseline: 88 × 1 × 462 = 40,656 cells) |
+# | Discretization | Δz & resolution | Δ_min = 30.8 nm (46.7 cells/λ in SiO₂, 8.1 cells across 250 nm beam impact gap) |
+# | Boundary | -x face | CPML (10 cells, 600 nm) |
+# | Boundary | +x face | CPML (10 cells, 672 nm) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (10 cells, 491 nm) |
+# | Boundary | +z face | CPML (10 cells, 491 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC grating | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [-11.3 µm, 11.3 µm] (d = 22.7 µm) |
+# | Source | 1 · Beam | pos: x = 250 nm, y = 0 m, pol: J_z, pulse: f₀ = 143.6 THz, Δf = 78.99 THz |
+# | Monitor | 2 · DFTMonitor | DFTMonitor (z ∈ [-9.35 µm, 9.35 µm]), pos: z ∈ [-9.35 µm, 9.35 µm], freqs: 116 freqs in [73.1, 461.2] THz |
+# | Variation | Part 1 · Dielectric grating | SiO₂ grating (ε_r = 2.11, n = 1.453), adding internal Cherenkov leakage + guided slab modes |
+# | Variation | Part 1 · Uniform Fine baseline | Uniform Δx = Δz = 50.0 nm (88 × 462 = 40,656 cells) vs Graded 79 × 462 = 36,498 cells (−10.2%) |
+# | Variation | Part 2 · Inverse process (DLA) | Dual SiO₂ grating (λ_p = λ_0 = 800 nm, gap 2a = 400 nm, periodic ±z, ±x CPML, 7,600 graded vs 8,800 uniform cells) |
+#
+# ![Part 1 Locally Refined Graded Mesh and Bunch Spectrum](figures/00b_setup_mesh_and_excitation.png)
+#
+# ### Part 2 Setup · Inverse Process (DLA Dual Fused-Silica Grating)
+#
+# ![Part 2 DLA Setup Geometry](figures/00c_setup_dla_geometry.png)
+#
+# ### Locally Refined Non-Uniform Graded Mesh vs Uniform Cartesian Baseline
+#
+# Both processes are governed by evanescent surface coupling across sub-wavelength transverse gaps ($h = 250\;\mathrm{nm}$ and groove depth $h_g = 400\;\mathrm{nm}$ in Part 1; vacuum channel $2a = 400\;\mathrm{nm}$ and tooth depth $h_g = 680\;\mathrm{nm}$ in Part 2). Using `wakis.templates.meshing.graded_axis`, we snap the transverse grid nodes $x_i$ to every material interface and concentrate fine cells in the groove and beam-interaction corridor while smoothly grading (`grading <= 1.22`) into the outer substrate and radiation buffer:
+# - **Part 1 (Smith–Purcell):** The graded mesh resolves the grating grooves ($x \in [-0.40, 0]\;\mu\mathrm{m}$) and beam impact gap ($x \in [0, +0.25]\;\mu\mathrm{m}$) with $\Delta x_{\min} = 30.8\;\mathrm{nm}$ ($46.7\;\mathrm{cells}/\lambda_{\mathrm{SiO}_2}$, $1.62\times$ finer than the $50.0\;\mathrm{nm}$ uniform Fine baseline) while grading to $\Delta x_{\max} = 67.3\;\mathrm{nm}$ ($21.3\;\mathrm{cells}/\lambda_{\mathrm{SiO}_2} \ge 20$) in the outer domain, reducing the 2D cell count from $40{,}656$ to $36{,}498$ ($-10.2\%$) and lowering the mean dispersion error from $1.72\%$ to $1.71\%$.
+# - **Part 2 (DLA unit cell):** The graded mesh places $\Delta x_{\min} = 18.2\;\mathrm{nm}$ ($30.3\;\mathrm{cells}/\lambda_{\mathrm{SiO}_2}$, $22$ cells across the $400\;\mathrm{nm}$ gap) inside the vacuum channel and $\Delta x = 20.0\;\mathrm{nm}$ across the $\mathrm{SiO}_2$ teeth ($x \in \pm[0.20, 0.88]\;\mu\mathrm{m}$), grading to $\Delta x_{\max} = 27.1\;\mathrm{nm}$ ($20.3\;\mathrm{cells}/\lambda_{\mathrm{SiO}_2} \ge 20$) in the outer silica bulk, reducing the unit-cell count from $8{,}800$ (uniform Fine baseline, $\Delta x = 20.0\;\mathrm{nm}$) to $7{,}600$ ($-13.6\%$) while matching the accelerating structure factor within $0.18\%$ ($G/E_0 = 0.3354$ vs $0.3348$).
 
 # %%
 def ensure_data_and_figures(args: argparse.Namespace) -> dict[str, dict]:
@@ -344,6 +376,10 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
 # %%
+display(Image(filename=str(FIG_DIR / "00a_setup_geometry.png"), width=920))
+display(Markdown((FIG_DIR / "00_setup_table.md").read_text(encoding="utf-8")))
+display(Image(filename=str(FIG_DIR / "00b_setup_mesh_and_excitation.png"), width=920))
+display(Image(filename=str(FIG_DIR / "00c_setup_dla_geometry.png"), width=920))
 display(Image(filename=str(FIG_DIR / "01_setup_schematic_and_mesh.png"), width=980))
 
 # %% [markdown]
@@ -528,9 +564,9 @@ display(Image(filename=str(FIG_DIR / "06_dla_depth_duty_and_peralta2013.png"), w
 # %% [markdown]
 # ---
 #
-# ## Resolution & Convergence Study
+# ## Resolution & Convergence Study: Uniform Baseline vs Locally Refined Graded Mesh
 #
-# To verify that both the Smith–Purcell angular dispersion and the DLA synchronous structure factor are numerically converged and satisfy the project grid rules ($\ge 20\;\mathrm{cells}/\lambda$ in the highest-index material $\mathrm{SiO}_2$ with $n = 1.453$, and $\ge 4\;\mathrm{cells}$ across the smallest feature), we run a 3-level resolution study (**Coarse**, **Medium**, **Fine**) in Task 4 (`task_convergence`) and compute the second-order Richardson extrapolation $G_{\mathrm{Rich}} = G_{\mathrm{Fine}} + (G_{\mathrm{Fine}} - G_{\mathrm{Medium}}) / (r^2 - 1)$.
+# To verify that both the Smith–Purcell angular dispersion and the DLA synchronous structure factor are numerically converged and satisfy the project grid rules ($\ge 20\;\mathrm{cells}/\lambda$ in the highest-index material $\mathrm{SiO}_2$ with $n = 1.453$, and $\ge 4\;\mathrm{cells}$ across the smallest feature), Task 4 (`task_convergence`) benchmarks a 3-level **uniform Cartesian baseline** (**Coarse**, **Medium**, **Fine**) with second-order Richardson extrapolation $G_{\mathrm{Rich}} = G_{\mathrm{Fine}} + (G_{\mathrm{Fine}} - G_{\mathrm{Medium}}) / (r^2 - 1)$ alongside the **locally refined non-uniform graded mesh** (`graded_axis`).
 
 # %%
 conv_summary = json.loads((DATA_DIR / "task_convergence.json").read_text())
@@ -538,18 +574,32 @@ conv_summary = json.loads((DATA_DIR / "task_convergence.json").read_text())
 display(Image(filename=str(FIG_DIR / "07_resolution_convergence.png"), width=980))
 
 md_rows = [
-    "| Grid Level | SP $\\Delta x$ [nm] | SP $\\mathrm{cells}/\\lambda_{\\mathrm{SiO}_2}$ | SP Mean $|\\Delta\\lambda|/\\lambda$ [\\%] | DLA $\\Delta x$ [nm] | DLA $\\mathrm{cells}/\\lambda_{\\mathrm{SiO}_2}$ | DLA $G/E_0$ [-] | DLA Rel. Error vs Richardson [\\%] |",
-    "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+    "| Grid Level | SP $\\Delta x$ [nm] | SP Cells ($N_x \\times N_z$) | SP $\\mathrm{cells}/\\lambda_{\\mathrm{SiO}_2}$ | SP Mean $|\\Delta\\lambda|/\\lambda$ [\\%] | DLA $\\Delta x$ [nm] | DLA Cells ($N_x \\times N_z$) | DLA $\\mathrm{cells}/\\lambda_{\\mathrm{SiO}_2}$ | DLA $G/E_0$ [-] | DLA Rel. Error vs Richardson [\\%] |",
+    "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
 ]
 for i, lvl in enumerate(conv_summary["levels"]):
+    sp_c = conv_summary.get("sp_cells", [0, 0, 0])[i]
+    dla_c = conv_summary.get("dla_cells", [0, 0, 0])[i]
     md_rows.append(
-        f"| **{lvl}** | {conv_summary['dx_sp_nm'][i]:.1f} | {conv_summary['sp_ppw_sio2'][i]:.1f} | "
-        f"{conv_summary['sp_lambda_mean_rel_err'][i] * 100:.2f}% | {conv_summary['dx_dla_nm'][i]:.1f} | "
+        f"| **Uniform {lvl}** | {conv_summary['dx_sp_nm'][i]:.1f} | {sp_c:,} | {conv_summary['sp_ppw_sio2'][i]:.1f} | "
+        f"{conv_summary['sp_lambda_mean_rel_err'][i] * 100:.2f}% | {conv_summary['dx_dla_nm'][i]:.1f} | {dla_c:,} | "
         f"{conv_summary['dla_ppw_sio2'][i]:.1f} | {conv_summary['dla_g_over_e0'][i]:.4f} | "
         f"{conv_summary['dla_rel_err'][i] * 100:.2f}% |"
     )
+if "sp_graded_lambda_mean_rel_err" in conv_summary:
+    md_rows.append(
+        f"| **Locally Refined Graded** | {conv_summary['sp_graded_dx_min_nm']:.1f}–{conv_summary['sp_graded_dx_max_nm']:.1f} | "
+        f"**{conv_summary['sp_graded_cells']:,}** ($-10.2\\%$) | "
+        f"{conv_summary['sp_graded_ppw_max_sio2']:.1f} (min {conv_summary['sp_graded_ppw_min_sio2']:.1f}) | "
+        f"**{conv_summary['sp_graded_lambda_mean_rel_err'] * 100:.2f}%** | "
+        f"{conv_summary['dla_graded_dx_min_nm']:.1f}–{conv_summary['dla_graded_dx_max_nm']:.1f} | "
+        f"**{conv_summary['dla_graded_cells']:,}** ($-13.6\\%$) | "
+        f"{conv_summary['dla_graded_ppw_max_sio2']:.1f} (min {conv_summary['dla_graded_ppw_min_sio2']:.1f}) | "
+        f"**{conv_summary['dla_graded_g_over_e0']:.4f}** | "
+        f"**{conv_summary['dla_graded_rel_err'] * 100:.2f}%** |"
+    )
 md_rows.append(
-    f"| **Richardson Extrapolation** | — | $\\to\\infty$ | — | — | $\\to\\infty$ | "
+    f"| **Richardson Extrapolation** | — | — | $\\to\\infty$ | — | — | — | $\\to\\infty$ | "
     f"**{conv_summary['dla_g_richardson']:.4f}** | **0.00%** |"
 )
 display(Markdown("\n".join(md_rows)))

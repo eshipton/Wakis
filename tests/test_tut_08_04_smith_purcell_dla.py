@@ -345,6 +345,61 @@ def test_fit3d_dla_synchronism_peak_and_flat_mutation() -> None:
         )
 
 
+def test_graded_mesh_vs_uniform_baseline_and_mutation() -> None:
+    """Verify locally refined graded mesh interfaces, cell reduction vs uniform Fine baseline, and live DLA agreement."""
+    x_sp = hlp.build_sp_graded_x_nodes(depth_m=0.40e-6, impact_m=0.25e-6)
+    for iface in (-1.00e-6, -0.40e-6, 0.0, 0.25e-6, 3.40e-6):
+        assert np.min(np.abs(x_sp - iface)) < 1.0e-15, f"SP graded axis missed interface x = {iface}"
+    dx_sp = np.diff(x_sp)
+    assert float(np.min(dx_sp)) < 32.0e-9
+    assert float(np.max(dx_sp)) < 70.0e-9
+    assert len(dx_sp) < 88  # fewer transverse cells than 50 nm uniform Fine baseline (88 cells)
+
+    x_dla = hlp.build_dla_graded_x_nodes(gap_half_m=0.20e-6, depth_m=0.68e-6)
+    for iface in (-2.20e-6, -0.88e-6, -0.20e-6, 0.20e-6, 0.88e-6, 2.20e-6):
+        assert np.min(np.abs(x_dla - iface)) < 1.0e-15, f"DLA graded axis missed interface x = {iface}"
+    dx_dla = np.diff(x_dla)
+    assert float(np.min(dx_dla)) < 19.0e-9
+    assert len(dx_dla) < 220  # fewer transverse cells than 20 nm uniform Fine baseline (220 cells)
+
+    # Live 3D FIT comparison on DLA unit cell: Graded vs Uniform Fine baseline
+    res_graded = hlp.run_single_dla_unit_cell(
+        period_m=0.80e-6,
+        depth_m=0.68e-6,
+        duty_cycle=0.50,
+        beta=0.999964,
+        n_periods_eval=8,
+        dx_m=0.020e-6,
+        graded=True,
+    )
+    res_unif = hlp.run_single_dla_unit_cell(
+        period_m=0.80e-6,
+        depth_m=0.68e-6,
+        duty_cycle=0.50,
+        beta=0.999964,
+        n_periods_eval=8,
+        dx_m=0.020e-6,
+        graded=False,
+    )
+    res_flat_graded = hlp.run_single_dla_unit_cell(
+        period_m=0.80e-6,
+        depth_m=0.0,
+        duty_cycle=0.50,
+        beta=0.999964,
+        n_periods_eval=8,
+        dx_m=0.020e-6,
+        graded=True,
+    )
+    assert res_graded["nx"] * res_graded["nz"] < res_unif["nx"] * res_unif["nz"]
+    rel_diff = abs(res_graded["g_over_e0_cell"] - res_unif["g_over_e0_cell"]) / res_unif["g_over_e0_cell"]
+    assert rel_diff < 0.015, f"Graded vs uniform Fine DLA structure factor differed by {rel_diff:.4f}"
+    assert res_flat_graded["g_over_e0_cell"] < 1.0e-4
+
+    # Mutation check: asserting that the flat-surface graded result equals the toothed grating result must fail
+    with pytest.raises(AssertionError):
+        assert abs(res_flat_graded["g_over_e0_cell"] - res_unif["g_over_e0_cell"]) / res_unif["g_over_e0_cell"] < 0.015
+
+
 # ---------------------------------------------------------------------------
 # 3. Precomputed Data, Figures, GIFs (< 5 MB), and CLI Verification
 # ---------------------------------------------------------------------------
@@ -374,8 +429,18 @@ def test_precomputed_data_and_figures_integrity() -> None:
     assert abs(dla_json["fitted_peak_period_b075_nm"] - 600.0) < 10.0
     assert dla_json["g_over_e0_flat_mutation"] < 1.0e-6
     assert conv_json["dla_ppw_sio2"][-1] >= 20.0
+    assert conv_json["sp_graded_cells"] < conv_json["sp_cells"][-1]
+    assert conv_json["sp_graded_lambda_mean_rel_err"] <= conv_json["sp_lambda_mean_rel_err"][-1]
+    assert conv_json["dla_graded_cells"] < conv_json["dla_cells"][-1]
+    assert abs(conv_json["dla_graded_g_over_e0"] - conv_json["dla_g_over_e0"][-1]) / conv_json["dla_g_over_e0"][-1] < 0.01
+
+    setup_table_md = FIG_DIR / "00_setup_table.md"
+    assert setup_table_md.exists() and setup_table_md.stat().st_size > 200, f"Missing {setup_table_md}"
 
     expected_pngs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00c_setup_dla_geometry.png",
         "01_setup_schematic_and_mesh.png",
         "02_sp_field_maps.png",
         "03_sp_dispersion_and_angular_spectrum.png",

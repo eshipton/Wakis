@@ -317,7 +317,7 @@ def _style_rcparams() -> dict[str, Any]:
         "savefig.dpi": DEFAULT_DPI,
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.06,
-        "font.family": "sans-serif",
+        "font.family": font_stack,  # a list of names enables per-glyph fallback (e.g. Arial lacks ∈, ⁻)
         "font.sans-serif": font_stack,
         "mathtext.fontset": "dejavusans",
         "pdf.fonttype": 42,

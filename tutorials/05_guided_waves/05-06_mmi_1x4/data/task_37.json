@@ -1,0 +1,26 @@
+{
+  "task_index": 37,
+  "name": "kottke_nonuniform",
+  "kind": "nonuniform",
+  "averaging": "kottke",
+  "cpw": 20,
+  "nonuniform": true,
+  "l_mmi_um": 11.15,
+  "w_mmi_um": 4.9,
+  "grid_shape": [
+    732,
+    257,
+    1
+  ],
+  "n_cells": 188124,
+  "dx_min_nm": 23.529,
+  "dx_max_nm": 37.975,
+  "dy_min_nm": 20.0,
+  "dy_max_nm": 73.426,
+  "cells_across_w1": 17.6,
+  "cells_across_g2": 22.0,
+  "sidewall_err_nm": 0.0,
+  "elapsed_s": 589.106,
+  "peak_rss_mb": 544.1,
+  "npz_bytes": 8093
+}

@@ -1,6 +1,6 @@
 {
   "task": "convergence",
-  "quick": true,
+  "quick": false,
   "levels": [
     "Coarse",
     "Medium",
@@ -16,11 +16,22 @@
     22.99,
     28.73
   ],
+  "sp_cells": [
+    14416,
+    24780,
+    40656
+  ],
   "sp_lambda_mean_rel_err": [
     0.020806466781869024,
     0.02300217971179068,
     0.017213530024733095
   ],
+  "sp_graded_dx_min_nm": 30.77,
+  "sp_graded_dx_max_nm": 67.33,
+  "sp_graded_ppw_max_sio2": 46.69,
+  "sp_graded_ppw_min_sio2": 21.34,
+  "sp_graded_cells": 36498,
+  "sp_graded_lambda_mean_rel_err": 0.017053077826730885,
   "dx_dla_nm": [
     50.0,
     25.0,
@@ -30,6 +41,11 @@
     11.01,
     22.02,
     27.53
+  ],
+  "dla_cells": [
+    1408,
+    5632,
+    8800
   ],
   "dla_g_over_e0": [
     0.3452732421629092,
@@ -41,5 +57,12 @@
     0.06951529452437102,
     0.058106263883043206,
     0.03718800888514764
-  ]
+  ],
+  "dla_graded_dx_min_nm": 18.18,
+  "dla_graded_dx_max_nm": 27.07,
+  "dla_graded_ppw_max_sio2": 30.28,
+  "dla_graded_ppw_min_sio2": 20.34,
+  "dla_graded_cells": 7600,
+  "dla_graded_g_over_e0": 0.335436917381264,
+  "dla_graded_rel_err": 0.03904638320654881
 }

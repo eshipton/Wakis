@@ -11,12 +11,12 @@ matplotlib.use("Agg")
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrowPatch, Rectangle
+from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
 from scipy.constants import c as c_light
 from scipy.constants import e as q_elem
 from scipy.constants import epsilon_0, m_e, mu_0
 
-from wakis import GridFIT3D, SolverFIT3D
+from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.estimate import estimate, preflight
 from wakis.field_monitors import DFTMonitor
 from wakis.sources import Beam, ContinuousSource, CurrentSource, GaussianSource
@@ -628,6 +628,238 @@ def build_smith_purcell_shapes(
     return shapes
 
 
+class _CorrugatedGratingPolygon:
+    """Polygon structure wrapper for multi-tooth gratings in ``wakis.schematic`` (``plane='zx'``).
+
+    Provides ``.vertices`` in ``(z, x)`` coordinates [m], ``.material``, and ``.name``
+    so that :func:`wakis.schematic.plot_schematic`, :func:`wakis.schematic.overlay_geometry`,
+    and :func:`wakis.schematic.setup_table` represent a corrugated grating as a single
+    contiguous region with one clean outline and label.
+    """
+
+    def __init__(self, vertices_zx_m: np.ndarray, material: str | float, name: str) -> None:
+        self.vertices = np.asarray(vertices_zx_m, dtype=float)
+        self.material = material
+        self.name = str(name)
+
+
+def build_sp_grating_polygon(
+    material: str | float = "pec",
+    period_m: float = DEFAULT_SP_PERIOD_M,
+    n_periods: int = 10,
+    depth_m: float = DEFAULT_SP_DEPTH_M,
+    duty_cycle: float = DEFAULT_SP_DUTY,
+    xmin_m: float = -1.0e-6,
+    zmin_m: float = -11.35e-6,
+    zmax_m: float = +11.35e-6,
+    name: str | None = None,
+) -> list[_CorrugatedGratingPolygon]:
+    """Build a single ``(z, x)`` polygon outline of the flush-grooved Smith-Purcell grating."""
+    if material == "vacuum":
+        return []
+    depth = max(0.0, float(depth_m))
+    duty = float(np.clip(duty_cycle, 0.0, 1.0))
+    if name is None:
+        if material == "pec":
+            name = "PEC grating" if depth > 0.0 else "Flat PEC surface"
+        else:
+            name = "SiO₂ grating (εr = 2.11)"
+
+    pts: list[tuple[float, float]] = [(float(zmin_m), float(xmin_m))]
+    if depth <= 0.0 or duty <= 0.0 or duty >= 1.0:
+        x_top = 0.0 if (depth <= 0.0 or duty >= 1.0) else -depth
+        pts.extend([(float(zmin_m), x_top), (float(zmax_m), x_top)])
+    else:
+        zg_min = -0.5 * float(n_periods) * float(period_m)
+        zg_max = +0.5 * float(n_periods) * float(period_m)
+        w_tooth = duty * float(period_m)
+        w_gap = 0.5 * (1.0 - duty) * float(period_m)
+        pts.append((float(zmin_m), 0.0))
+        if zg_min > zmin_m:
+            pts.append((zg_min, 0.0))
+        for m in range(int(n_periods)):
+            z0 = zg_min + m * float(period_m)
+            z_t0 = z0 + w_gap
+            z_t1 = z_t0 + w_tooth
+            z1 = z0 + float(period_m)
+            pts.extend(
+                [
+                    (z_t0, -depth),
+                    (z_t0, 0.0),
+                    (z_t1, 0.0),
+                    (z_t1, -depth),
+                    (z1, -depth),
+                ]
+            )
+        pts.append((zg_max, 0.0))
+        if zmax_m > zg_max:
+            pts.append((float(zmax_m), 0.0))
+
+    # Sample along the bottom substrate edge so the polygon vertex centroid sits inside the substrate
+    for z_bot in np.linspace(float(zmax_m), float(zmin_m), max(40, 5 * int(n_periods))):
+        pts.append((float(z_bot), float(xmin_m)))
+    return [_CorrugatedGratingPolygon(np.asarray(pts, dtype=float), material=material, name=name)]
+
+
+def build_dla_grating_polygons(
+    period_m: float = DEFAULT_DLA_PERIOD_M,
+    n_periods: int = 1,
+    depth_m: float = DEFAULT_DLA_DEPTH_M,
+    duty_cycle: float = DEFAULT_DLA_DUTY,
+    gap_half_m: float = DEFAULT_DLA_GAP_HALF_M,
+    xmin_m: float = -2.2e-6,
+    xmax_m: float = +2.2e-6,
+    zmin_m: float | None = None,
+    eps_diel: float = DEFAULT_EPS_SIO2,
+    dual_grating: bool = True,
+) -> list[_CorrugatedGratingPolygon]:
+    """Build ``(z, x)`` polygon outlines for the lower and upper fused-silica DLA gratings."""
+    lam_p = float(period_m)
+    lz = float(n_periods) * lam_p
+    z0_dom = -0.5 * lz if zmin_m is None else float(zmin_m)
+    z1_dom = z0_dom + lz
+    dep = max(0.0, float(depth_m))
+    duty = float(np.clip(duty_cycle, 0.0, 1.0))
+    a_gap = float(gap_half_m)
+    w_tooth = duty * lam_p
+    w_gap = 0.5 * (1.0 - duty) * lam_p
+
+    # Lower grating polygon: x in [xmin_m, -a_gap]
+    x_lo_base = -(a_gap + dep)
+    pts_lo: list[tuple[float, float]] = [(z0_dom, float(xmin_m)), (z0_dom, x_lo_base)]
+    if dep > 0.0 and 0.0 < duty < 1.0:
+        for m in range(int(n_periods)):
+            zm0 = z0_dom + m * lam_p
+            zt0 = zm0 + w_gap
+            zt1 = zt0 + w_tooth
+            zm1 = zm0 + lam_p
+            pts_lo.extend(
+                [
+                    (zt0, x_lo_base),
+                    (zt0, -a_gap),
+                    (zt1, -a_gap),
+                    (zt1, x_lo_base),
+                    (zm1, x_lo_base),
+                ]
+            )
+    else:
+        x_top_lo = -a_gap if (dep > 0.0 and duty >= 1.0) else x_lo_base
+        pts_lo.extend([(z0_dom, x_top_lo), (z1_dom, x_top_lo)])
+    for z_bot in np.linspace(z1_dom, z0_dom, max(20, 6 * int(n_periods))):
+        pts_lo.append((float(z_bot), float(xmin_m)))
+
+    polys = [
+        _CorrugatedGratingPolygon(
+            np.asarray(pts_lo, dtype=float),
+            material=eps_diel,
+            name="SiO₂ lower grating (n = 1.453)",
+        )
+    ]
+
+    if dual_grating:
+        x_hi_base = +(a_gap + dep)
+        pts_hi: list[tuple[float, float]] = [(z0_dom, float(xmax_m)), (z0_dom, x_hi_base)]
+        if dep > 0.0 and 0.0 < duty < 1.0:
+            for m in range(int(n_periods)):
+                zm0 = z0_dom + m * lam_p
+                zt0 = zm0 + w_gap
+                zt1 = zt0 + w_tooth
+                zm1 = zm0 + lam_p
+                pts_hi.extend(
+                    [
+                        (zt0, x_hi_base),
+                        (zt0, +a_gap),
+                        (zt1, +a_gap),
+                        (zt1, x_hi_base),
+                        (zm1, x_hi_base),
+                    ]
+                )
+        else:
+            x_bot_hi = +a_gap if (dep > 0.0 and duty >= 1.0) else x_hi_base
+            pts_hi.extend([(z0_dom, x_bot_hi), (z1_dom, x_bot_hi)])
+        for z_top in np.linspace(z1_dom, z0_dom, max(20, 6 * int(n_periods))):
+            pts_hi.append((float(z_top), float(xmax_m)))
+        polys.append(
+            _CorrugatedGratingPolygon(
+                np.asarray(pts_hi, dtype=float),
+                material=eps_diel,
+                name="SiO₂ upper grating (n = 1.453)",
+            )
+        )
+    return polys
+
+
+def build_sp_graded_x_nodes(
+    xmin_m: float = -1.0e-6,
+    xmax_m: float = 3.4e-6,
+    depth_m: float = DEFAULT_SP_DEPTH_M,
+    impact_m: float = DEFAULT_SP_IMPACT_M,
+    dx_fine_m: float = 0.03125e-6,
+    dx_coarse_m: float = 0.068e-6,
+) -> np.ndarray:
+    """Build a locally refined non-uniform x-axis mesh for Part 1 (Smith-Purcell).
+
+    Snaps mesh nodes to the substrate base, groove bottom ``x = -depth_m``, grating
+    top ``x = 0``, beam trajectory ``x = impact_m``, and top boundary ``xmax_m``.
+    Concentrates fine cells (``dx_fine_m = 31.25 nm``, ``46.7 cells/lambda_SiO2`` and
+    ``8.0 cells`` across ``h = 250 nm``) across the grooves and beam interaction layer
+    while grading smoothly (``grading = 1.22``) to ``dx_coarse_m = 68.0 nm``
+    (``>= 21.1 cells/lambda_SiO2``) in the outer substrate and upper radiation zone,
+    reducing total cell count below the Fine uniform baseline.
+    """
+    dep = max(0.20e-6, float(depth_m))
+    h_b = max(0.15e-6, float(impact_m))
+    interfaces = [float(xmin_m), -dep, 0.0, h_b, float(xmax_m)]
+    cell_sizes = [
+        float(dx_coarse_m),
+        float(dx_fine_m),
+        float(dx_fine_m),
+        float(dx_coarse_m),
+    ]
+    return graded_axis(interfaces, cell_sizes, min_cells=4, grading=1.22)
+
+
+def build_dla_graded_x_nodes(
+    xmin_m: float = -2.2e-6,
+    xmax_m: float = +2.2e-6,
+    depth_m: float = DEFAULT_DLA_DEPTH_M,
+    gap_half_m: float = DEFAULT_DLA_GAP_HALF_M,
+    dx_channel_m: float = 0.0182e-6,
+    dx_tooth_m: float = 0.020e-6,
+    dx_bulk_m: float = 0.0275e-6,
+) -> np.ndarray:
+    """Build a locally refined non-uniform x-axis mesh for Part 2 (DLA unit cell).
+
+    Snaps mesh nodes to the fused-silica tooth bases ``x = +/-(a + h_g)``, vacuum
+    channel walls ``x = +/-a``, and beam axis ``x = 0``. Concentrates ``18.2 nm``
+    cells (``30.3 cells/lambda_SiO2``, ``22 cells`` across ``2a = 400 nm``) inside
+    the vacuum channel and ``20.0 nm`` across the grating teeth while grading
+    smoothly (``grading = 1.20``) to ``27.5 nm`` (``>= 20.0 cells/lambda_SiO2``)
+    in the outer fused-silica substrates.
+    """
+    a_gap = max(0.10e-6, float(gap_half_m))
+    dep = max(0.20e-6, float(depth_m))
+    x_tooth_outer = min(a_gap + dep, 1.40e-6)
+    interfaces = [
+        float(xmin_m),
+        -x_tooth_outer,
+        -a_gap,
+        0.0,
+        +a_gap,
+        +x_tooth_outer,
+        float(xmax_m),
+    ]
+    cell_sizes = [
+        float(dx_bulk_m),
+        float(dx_tooth_m),
+        float(dx_channel_m),
+        float(dx_channel_m),
+        float(dx_tooth_m),
+        float(dx_bulk_m),
+    ]
+    return graded_axis(interfaces, cell_sizes, min_cells=6, grading=1.20)
+
+
 def run_single_smith_purcell_case(
     material: str | float = "pec",
     beta: float = DEFAULT_SP_BETA,
@@ -640,6 +872,7 @@ def run_single_smith_purcell_case(
     q_c: float = DEFAULT_SP_Q_C,
     dx_m: float = 0.05e-6,
     dz_m: float = 0.05e-6,
+    graded: bool = False,
     wavelengths_m: np.ndarray | None = None,
     thetas_deg: np.ndarray | None = None,
     subtract_flat: bool = True,
@@ -672,6 +905,10 @@ def run_single_smith_purcell_case(
         Bunch charge [C].
     dx_m, dz_m : float, optional
         Transverse and longitudinal cell sizes [m].
+    graded : bool, optional
+        If True, use the locally refined non-uniform transverse mesh from
+        :func:`build_sp_graded_x_nodes` (snapped to the grating grooves and
+        beam clearance) instead of a uniform transverse step ``dx_m``.
     wavelengths_m : ndarray or None, optional
         Monitored vacuum wavelengths [m].
     thetas_deg : ndarray or None, optional
@@ -699,8 +936,26 @@ def run_single_smith_purcell_case(
     nz = int(n_periods) * (2 * m_half) + 2 * n_pad
     half_lz = 0.5 * nz * dz_actual
     zmin_m, zmax_m = -half_lz, +half_lz
-    nx = int(round((xmax_m - xmin_m) / float(dx_m)))
     dy_m = float(dx_m)
+    if graded:
+        x_nodes = build_sp_graded_x_nodes(
+            xmin_m=xmin_m,
+            xmax_m=xmax_m,
+            depth_m=DEFAULT_SP_DEPTH_M if float(depth_m) <= 0.0 else float(depth_m),
+            impact_m=float(impact_m),
+        )
+        y_nodes = np.array([-0.5 * dy_m, +0.5 * dy_m])
+        z_nodes = np.linspace(zmin_m, zmax_m, nz + 1)
+        nx = int(len(x_nodes) - 1)
+        dx_min_actual = float(np.min(np.diff(x_nodes)))
+        dx_max_actual = float(np.max(np.diff(x_nodes)))
+    else:
+        x_nodes = None
+        y_nodes = None
+        z_nodes = None
+        nx = int(round((xmax_m - xmin_m) / float(dx_m)))
+        dx_min_actual = float(dx_m)
+        dx_max_actual = float(dx_m)
 
     if wavelengths_m is None:
         wavelengths_m = np.linspace(0.65e-6, 4.10e-6, 116)
@@ -717,18 +972,21 @@ def run_single_smith_purcell_case(
     z_mon_span = float(n_periods) * float(period_m) + 2.0e-6
 
     def _execute_single(mat_val: str | float, dep_val: float, n_fr: int) -> dict:
-        grid = GridFIT3D(
-            xmin_m,
-            xmax_m,
-            -0.5 * dy_m,
-            0.5 * dy_m,
-            zmin_m,
-            zmax_m,
-            nx,
-            1,
-            nz,
-            verbose=0,
-        )
+        if graded and x_nodes is not None:
+            grid = GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, verbose=0)
+        else:
+            grid = GridFIT3D(
+                xmin_m,
+                xmax_m,
+                -0.5 * dy_m,
+                0.5 * dy_m,
+                zmin_m,
+                zmax_m,
+                nx,
+                1,
+                nz,
+                verbose=0,
+            )
         solver = SolverFIT3D(
             grid,
             bc_low=["cpml", "periodic", "cpml"],
@@ -927,10 +1185,13 @@ def run_single_smith_purcell_case(
         "depth_m": float(depth_m),
         "duty_cycle": float(duty_cycle),
         "impact_m": float(impact_m),
-        "dx_m": float(dx_m),
-        "dz_m": float(dz_m),
+        "dx_m": float(dx_min_actual),
+        "dx_max_m": float(dx_max_actual),
+        "dz_m": float(dz_actual),
+        "graded": bool(graded),
         "nx": int(nx),
         "nz": int(nz),
+        "cells": int(nx * nz),
         "nt": int(main_run["nt"]),
         "wall_s": float(main_run["wall_s"]),
         "memory_mb": float(main_run["memory_mb"]),
@@ -976,6 +1237,7 @@ def run_single_dla_unit_cell(
     n_periods_eval: int = 8,
     dual_grating: bool = True,
     dx_m: float = 0.025e-6,
+    graded: bool = False,
     record_2d_slice: bool = False,
     mem_limit_mb: float = DEFAULT_MEM_LIMIT_MB,
 ) -> dict:
@@ -1008,6 +1270,10 @@ def run_single_dla_unit_cell(
         if False, models a single-sided grating with beam at ``x = +gap_half_m``.
     dx_m : float, optional
         Target cell size [m].
+    graded : bool, optional
+        If True, use the locally refined non-uniform transverse mesh from
+        :func:`build_dla_graded_x_nodes` (snapped to the channel walls and tooth
+        surfaces) instead of a uniform transverse step ``dx_m``.
     record_2d_slice : bool, optional
         If True, also records the complex 2D phasor slice ``Ez(x, z; f_0) / E_0``.
     mem_limit_mb : float, optional
@@ -1030,20 +1296,35 @@ def run_single_dla_unit_cell(
     dz_actual = lam_p / nz
     dy_m = float(dx_m)
     xmin_m, xmax_m = -2.2e-6, 2.2e-6
-    nx = int(round((xmax_m - xmin_m) / float(dx_m)))
-
-    grid = GridFIT3D(
-        xmin_m,
-        xmax_m,
-        -0.5 * dy_m,
-        0.5 * dy_m,
-        -0.5 * lam_p,
-        +0.5 * lam_p,
-        nx,
-        1,
-        nz,
-        verbose=0,
-    )
+    if graded:
+        x_nodes = build_dla_graded_x_nodes(
+            xmin_m=xmin_m,
+            xmax_m=xmax_m,
+            depth_m=DEFAULT_DLA_DEPTH_M if float(depth_m) <= 0.0 else float(depth_m),
+            gap_half_m=float(gap_half_m),
+        )
+        y_nodes = np.array([-0.5 * dy_m, +0.5 * dy_m])
+        z_nodes = np.linspace(-0.5 * lam_p, +0.5 * lam_p, nz + 1)
+        nx = int(len(x_nodes) - 1)
+        dx_min_actual = float(np.min(np.diff(x_nodes)))
+        dx_max_actual = float(np.max(np.diff(x_nodes)))
+        grid = GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, verbose=0)
+    else:
+        nx = int(round((xmax_m - xmin_m) / float(dx_m)))
+        dx_min_actual = float(dx_m)
+        dx_max_actual = float(dx_m)
+        grid = GridFIT3D(
+            xmin_m,
+            xmax_m,
+            -0.5 * dy_m,
+            0.5 * dy_m,
+            -0.5 * lam_p,
+            +0.5 * lam_p,
+            nx,
+            1,
+            nz,
+            verbose=0,
+        )
     solver = SolverFIT3D(
         grid,
         bc_low=["cpml", "periodic", "periodic"],
@@ -1172,10 +1453,13 @@ def run_single_dla_unit_cell(
         "gap_half_m": a_gap,
         "beta": float(beta),
         "n_periods_eval": int(n_periods_eval),
-        "dx_m": float(dx_m),
+        "dx_m": float(dx_min_actual),
+        "dx_max_m": float(dx_max_actual),
         "dz_m": float(dz_actual),
+        "graded": bool(graded),
         "nx": int(nx),
         "nz": int(nz),
+        "cells": int(nx * nz),
         "nt": int(nt),
         "wall_s": float(wall_s),
         "memory_mb": float(est["memory_mb"]),
@@ -1827,7 +2111,7 @@ def run_task_dla_grating(quick: bool = False) -> dict:
 
 
 def run_task_convergence(quick: bool = False) -> dict:
-    """Run Task 4: 3-level resolution convergence study for Smith-Purcell & DLA."""
+    """Run Task 4: 3-level uniform baseline + locally refined graded mesh convergence study."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     levels = ["Coarse", "Medium", "Fine"]
     # Part 1 SP grid spacings [m] commensurable with h = 250 nm & h_g = 400 nm (ppw in SiO2 = 17.2, 23.0, 28.7 >= 20)
@@ -1837,8 +2121,10 @@ def run_task_convergence(quick: bool = False) -> dict:
 
     sp_lam_errs = []
     sp_ppw_sio2 = []
+    sp_cells_list = []
     dla_g_vals = []
     dla_ppw_sio2 = []
+    dla_cells_list = []
 
     lam_broadside_sio2 = (DEFAULT_SP_PERIOD_M / DEFAULT_SP_BETA) / DEFAULT_N_SIO2
     lam_dla_sio2 = DEFAULT_DLA_LAM0_M / DEFAULT_N_SIO2
@@ -1854,10 +2140,12 @@ def run_task_convergence(quick: bool = False) -> dict:
             impact_m=DEFAULT_SP_IMPACT_M,
             dx_m=dx_sp,
             dz_m=dx_sp,
+            graded=False,
             record_frames=0,
         )
         sp_lam_errs.append(float(r_sp["lambda_mean_rel_err"]))
         sp_ppw_sio2.append(float(lam_broadside_sio2 / dx_sp))
+        sp_cells_list.append(int(r_sp["cells"]))
 
         dx_dla = dx_dla_list[idx]
         r_dla = run_single_dla_unit_cell(
@@ -1865,26 +2153,74 @@ def run_task_convergence(quick: bool = False) -> dict:
             depth_m=DEFAULT_DLA_DEPTH_M,
             duty_cycle=DEFAULT_DLA_DUTY,
             dx_m=dx_dla,
+            graded=False,
         )
         dla_g_vals.append(float(r_dla["g_over_e0_cell"]))
         dla_ppw_sio2.append(float(lam_dla_sio2 / dx_dla))
+        dla_cells_list.append(int(r_dla["cells"]))
 
-    # Richardson extrapolation for DLA G/E0 from the two finest levels
+    # Locally refined non-uniform graded mesh runs compared against the Fine uniform baseline
+    r_sp_graded = run_single_smith_purcell_case(
+        material="pec",
+        beta=DEFAULT_SP_BETA,
+        period_m=DEFAULT_SP_PERIOD_M,
+        n_periods=10,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        impact_m=DEFAULT_SP_IMPACT_M,
+        dx_m=dx_sp_list[2],
+        dz_m=dx_sp_list[2],
+        graded=True,
+        record_frames=0,
+    )
+    r_dla_graded = run_single_dla_unit_cell(
+        period_m=DEFAULT_DLA_PERIOD_M,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        duty_cycle=DEFAULT_DLA_DUTY,
+        dx_m=dx_dla_list[2],
+        graded=True,
+    )
+
+    # Richardson extrapolation for DLA G/E0 from the two finest uniform levels
     r_ratio = dx_dla_list[1] / dx_dla_list[2]
     g_rich = dla_g_vals[2] + (dla_g_vals[2] - dla_g_vals[1]) / (r_ratio**2 - 1.0)
     dla_rel_errs = [float(abs(g - g_rich) / abs(g_rich)) for g in dla_g_vals]
+    dla_graded_rel_err = float(abs(r_dla_graded["g_over_e0_cell"] - g_rich) / abs(g_rich))
+
+    sp_graded_dx_min_nm = float(r_sp_graded["dx_m"] * 1e9)
+    sp_graded_dx_max_nm = float(r_sp_graded["dx_max_m"] * 1e9)
+    sp_graded_ppw_max = float(lam_broadside_sio2 / r_sp_graded["dx_m"])
+    sp_graded_ppw_min = float(lam_broadside_sio2 / r_sp_graded["dx_max_m"])
+    dla_graded_dx_min_nm = float(r_dla_graded["dx_m"] * 1e9)
+    dla_graded_dx_max_nm = float(r_dla_graded["dx_max_m"] * 1e9)
+    dla_graded_ppw_max = float(lam_dla_sio2 / r_dla_graded["dx_m"])
+    dla_graded_ppw_min = float(lam_dla_sio2 / r_dla_graded["dx_max_m"])
 
     np.savez_compressed(
         DATA_DIR / "task_convergence.npz",
         levels=np.asarray(levels),
         dx_sp_nm=np.asarray(dx_sp_list) * 1e9,
         sp_ppw_sio2=np.asarray(sp_ppw_sio2),
+        sp_cells=np.asarray(sp_cells_list),
         sp_lambda_mean_rel_err=np.asarray(sp_lam_errs),
+        sp_graded_dx_min_nm=np.array(sp_graded_dx_min_nm),
+        sp_graded_dx_max_nm=np.array(sp_graded_dx_max_nm),
+        sp_graded_ppw_max_sio2=np.array(sp_graded_ppw_max),
+        sp_graded_ppw_min_sio2=np.array(sp_graded_ppw_min),
+        sp_graded_cells=np.array(int(r_sp_graded["cells"])),
+        sp_graded_lambda_mean_rel_err=np.array(float(r_sp_graded["lambda_mean_rel_err"])),
         dx_dla_nm=np.asarray(dx_dla_list) * 1e9,
         dla_ppw_sio2=np.asarray(dla_ppw_sio2),
+        dla_cells=np.asarray(dla_cells_list),
         dla_g_over_e0=np.asarray(dla_g_vals),
         dla_g_richardson=np.array(g_rich),
         dla_rel_err=np.asarray(dla_rel_errs),
+        dla_graded_dx_min_nm=np.array(dla_graded_dx_min_nm),
+        dla_graded_dx_max_nm=np.array(dla_graded_dx_max_nm),
+        dla_graded_ppw_max_sio2=np.array(dla_graded_ppw_max),
+        dla_graded_ppw_min_sio2=np.array(dla_graded_ppw_min),
+        dla_graded_cells=np.array(int(r_dla_graded["cells"])),
+        dla_graded_g_over_e0=np.array(float(r_dla_graded["g_over_e0_cell"])),
+        dla_graded_rel_err=np.array(dla_graded_rel_err),
     )
 
     summary = {
@@ -1893,19 +2229,34 @@ def run_task_convergence(quick: bool = False) -> dict:
         "levels": levels,
         "dx_sp_nm": [round(x * 1e9, 2) for x in dx_sp_list],
         "sp_ppw_sio2": [round(x, 2) for x in sp_ppw_sio2],
+        "sp_cells": sp_cells_list,
         "sp_lambda_mean_rel_err": sp_lam_errs,
+        "sp_graded_dx_min_nm": round(sp_graded_dx_min_nm, 2),
+        "sp_graded_dx_max_nm": round(sp_graded_dx_max_nm, 2),
+        "sp_graded_ppw_max_sio2": round(sp_graded_ppw_max, 2),
+        "sp_graded_ppw_min_sio2": round(sp_graded_ppw_min, 2),
+        "sp_graded_cells": int(r_sp_graded["cells"]),
+        "sp_graded_lambda_mean_rel_err": float(r_sp_graded["lambda_mean_rel_err"]),
         "dx_dla_nm": [round(x * 1e9, 2) for x in dx_dla_list],
         "dla_ppw_sio2": [round(x, 2) for x in dla_ppw_sio2],
+        "dla_cells": dla_cells_list,
         "dla_g_over_e0": dla_g_vals,
         "dla_g_richardson": float(g_rich),
         "dla_rel_err": dla_rel_errs,
+        "dla_graded_dx_min_nm": round(dla_graded_dx_min_nm, 2),
+        "dla_graded_dx_max_nm": round(dla_graded_dx_max_nm, 2),
+        "dla_graded_ppw_max_sio2": round(dla_graded_ppw_max, 2),
+        "dla_graded_ppw_min_sio2": round(dla_graded_ppw_min, 2),
+        "dla_graded_cells": int(r_dla_graded["cells"]),
+        "dla_graded_g_over_e0": float(r_dla_graded["g_over_e0_cell"]),
+        "dla_graded_rel_err": dla_graded_rel_err,
     }
     (DATA_DIR / "task_convergence.json").write_text(json.dumps(summary, indent=2))
     return summary
 
 
 # ---------------------------------------------------------------------------
-# Publication-style figure & animation rendering (7 PNGs + 2 GIFs)
+# Publication-style figure & animation rendering (wakis.figstyle + schematic)
 # ---------------------------------------------------------------------------
 
 OKABE_ITO = {
@@ -1921,369 +2272,574 @@ OKABE_ITO = {
 
 
 def _apply_paper_style() -> None:
-    """Configure high-contrast paper matplotlib style (white bg, sans-serif, >= 8.5 pt)."""
-    plt.rcParams.update(
-        {
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "savefig.facecolor": "white",
-            "font.family": "sans-serif",
-            "font.size": 9.5,
-            "axes.titlesize": 10.0,
-            "axes.labelsize": 9.5,
-            "xtick.labelsize": 8.5,
-            "ytick.labelsize": 8.5,
-            "legend.fontsize": 8.5,
-            "axes.edgecolor": "#222222",
-            "axes.linewidth": 0.9,
-            "grid.color": "#DDDDDD",
-            "grid.linestyle": ":",
-            "grid.linewidth": 0.7,
-        }
-    )
+    """Apply shared Wakis publication figure styling."""
+    figstyle.apply_style()
 
 
-def _draw_sp_grating_overlay(
-    ax: plt.Axes,
-    z_min_um: float,
-    z_max_um: float,
-    x_min_um: float,
-    x_max_um: float,
-    period_um: float = 1.67,
+def _build_sp_solver_for_schematic(
+    material: str | float = "pec",
     n_periods: int = 10,
-    depth_um: float = 0.40,
-    duty: float = 0.50,
-    mat_label: str = "PEC grating",
-    face_color: str = "#444444",
-    cpml_um: float = 0.50,
-) -> None:
-    """Overlay grating teeth, substrate, and CPML frame on an (x, z) field map."""
-    # CPML frame dashed boundary
-    ax.add_patch(
-        Rectangle(
-            (z_min_um + cpml_um, x_min_um + cpml_um),
-            (z_max_um - z_min_um) - 2.0 * cpml_um,
-            (x_max_um - x_min_um) - 2.0 * cpml_um,
-            fill=False,
-            edgecolor="#555555",
-            linestyle="--",
-            linewidth=0.9,
-            zorder=5,
+    depth_m: float = DEFAULT_SP_DEPTH_M,
+    graded: bool = True,
+    dx_m: float = 0.05e-6,
+    dz_m: float = 0.05e-6,
+) -> tuple[SolverFIT3D, Beam, DFTMonitor, list[_CorrugatedGratingPolygon]]:
+    """Construct the Part 1 Smith-Purcell solver, source, monitor, and grating polygon."""
+    xmin_m, xmax_m = -1.0e-6, 3.4e-6
+    m_half = max(4, int(round(0.5 * DEFAULT_SP_PERIOD_M / float(dz_m))))
+    dz_actual = DEFAULT_SP_PERIOD_M / (2.0 * m_half)
+    n_pad = int(round(3.0e-6 / dz_actual))
+    nz = int(n_periods) * (2 * m_half) + 2 * n_pad
+    half_lz = 0.5 * nz * dz_actual
+    zmin_m, zmax_m = -half_lz, +half_lz
+    dy_m = float(dx_m)
+
+    if graded:
+        x_nodes = build_sp_graded_x_nodes(
+            xmin_m=xmin_m,
+            xmax_m=xmax_m,
+            depth_m=DEFAULT_SP_DEPTH_M if float(depth_m) <= 0.0 else float(depth_m),
+            impact_m=DEFAULT_SP_IMPACT_M,
+        )
+        y_nodes = np.array([-0.5 * dy_m, +0.5 * dy_m])
+        z_nodes = np.linspace(zmin_m, zmax_m, nz + 1)
+        grid = GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, verbose=0)
+    else:
+        nx = int(round((xmax_m - xmin_m) / float(dx_m)))
+        grid = GridFIT3D(
+            xmin_m,
+            xmax_m,
+            -0.5 * dy_m,
+            0.5 * dy_m,
+            zmin_m,
+            zmax_m,
+            nx,
+            1,
+            nz,
+            verbose=0,
+        )
+
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "periodic", "cpml"],
+        bc_high=["cpml", "periodic", "cpml"],
+        verbose=0,
+    )
+    solver.source_type = "direct"
+
+    lam_90 = DEFAULT_SP_PERIOD_M / DEFAULT_SP_BETA
+    f0_sp = c_light / lam_90
+    shapes = build_smith_purcell_shapes(
+        material=material,
+        period_m=DEFAULT_SP_PERIOD_M,
+        n_periods=n_periods,
+        depth_m=depth_m,
+        duty_cycle=DEFAULT_SP_DUTY,
+        xmin_m=xmin_m,
+        zmin_m=zmin_m,
+        zmax_m=zmax_m,
+        dy_m=dy_m,
+    )
+    if shapes:
+        assign_materials(solver, shapes, frequency=f0_sp)
+
+    v = DEFAULT_SP_BETA * c_light
+    ti = 4.0 * DEFAULT_SP_SIGMAZ_M / v
+    beam = Beam(
+        q=DEFAULT_SP_Q_C,
+        sigmaz=DEFAULT_SP_SIGMAZ_M,
+        beta=DEFAULT_SP_BETA,
+        xsource=DEFAULT_SP_IMPACT_M,
+        ysource=0.0,
+        ti=ti,
+    )
+    # Attach equivalent Gaussian bunch spectrum around the broadside SP frequency f0_sp
+    beam.src_time = GaussianSource(frequency=f0_sp, fwidth=0.55 * f0_sp, cutoff=4.0)
+
+    freqs_hz = c_light / np.linspace(0.65e-6, 4.10e-6, 116)
+    z_mon_span = float(n_periods) * DEFAULT_SP_PERIOD_M + 2.0e-6
+    mon = DFTMonitor(
+        freqs_hz,
+        components=("Ez", "Hy"),
+        center=(2.25e-6, 0.0, 0.0),
+        size=(0.0, 0.0, z_mon_span),
+    )
+    polys = build_sp_grating_polygon(
+        material=material,
+        period_m=DEFAULT_SP_PERIOD_M,
+        n_periods=n_periods,
+        depth_m=depth_m,
+        duty_cycle=DEFAULT_SP_DUTY,
+        xmin_m=xmin_m,
+        zmin_m=zmin_m,
+        zmax_m=zmax_m,
+    )
+    return solver, beam, mon, polys
+
+
+def _build_dla_solver_for_schematic(
+    n_periods: int = 1,
+    depth_m: float = DEFAULT_DLA_DEPTH_M,
+    graded: bool = True,
+    dx_m: float = 0.020e-6,
+    xmin_m: float = -2.2e-6,
+    xmax_m: float = +2.2e-6,
+    zmin_m: float | None = None,
+) -> tuple[SolverFIT3D, CurrentSource, list[DFTMonitor], list[_CorrugatedGratingPolygon]]:
+    """Construct the Part 2 DLA solver, laser CurrentSource, DFTMonitors, and grating polygons."""
+    lam0 = DEFAULT_DLA_LAM0_M
+    f0 = c_light / lam0
+    lam_p = DEFAULT_DLA_PERIOD_M
+    lz = float(n_periods) * lam_p
+    z0_dom = -0.5 * lz if zmin_m is None else float(zmin_m)
+    z1_dom = z0_dom + lz
+    nz = max(16, int(round(lz / float(dx_m))))
+    dy_m = float(dx_m)
+
+    if graded:
+        x_nodes = build_dla_graded_x_nodes(
+            xmin_m=xmin_m,
+            xmax_m=xmax_m,
+            depth_m=DEFAULT_DLA_DEPTH_M if float(depth_m) <= 0.0 else float(depth_m),
+            gap_half_m=DEFAULT_DLA_GAP_HALF_M,
+        )
+        y_nodes = np.array([-0.5 * dy_m, +0.5 * dy_m])
+        z_nodes = np.linspace(z0_dom, z1_dom, nz + 1)
+        grid = GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, verbose=0)
+    else:
+        nx = int(round((xmax_m - xmin_m) / float(dx_m)))
+        grid = GridFIT3D(
+            xmin_m,
+            xmax_m,
+            -0.5 * dy_m,
+            0.5 * dy_m,
+            z0_dom,
+            z1_dom,
+            nx,
+            1,
+            nz,
+            verbose=0,
+        )
+
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "periodic", "periodic"],
+        bc_high=["cpml", "periodic", "periodic"],
+        verbose=0,
+    )
+    gw = GaussianSource(frequency=f0, fwidth=0.18 * f0, cutoff=4.5)
+    src = CurrentSource(
+        gw,
+        component="z",
+        center=(-1.45e-6, 0.0, 0.5 * (z0_dom + z1_dom)),
+        size=(0.0, dy_m, lz),
+        amplitude=1.0,
+    )
+    mon_line = DFTMonitor(
+        [f0],
+        components=("Ez",),
+        center=(0.0, 0.0, 0.5 * (z0_dom + z1_dom)),
+        size=(0.0, 0.0, lz),
+    )
+    polys = build_dla_grating_polygons(
+        period_m=lam_p,
+        n_periods=n_periods,
+        depth_m=depth_m,
+        duty_cycle=DEFAULT_DLA_DUTY,
+        gap_half_m=DEFAULT_DLA_GAP_HALF_M,
+        xmin_m=xmin_m,
+        xmax_m=xmax_m,
+        zmin_m=z0_dom,
+        eps_diel=DEFAULT_EPS_SIO2,
+        dual_grating=True,
+    )
+    return solver, src, [mon_line], polys
+
+
+def plot_00_setup_schematics() -> list[Path]:
+    """Generate 00a/00b setup figures and 00_setup_table.md via save_setup_figures, plus 00c for DLA."""
+    _apply_paper_style()
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    solver_sp, beam_sp, mon_sp, polys_sp = _build_sp_solver_for_schematic(
+        material="pec",
+        n_periods=10,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        graded=True,
+    )
+    lam_broadside = DEFAULT_SP_PERIOD_M / DEFAULT_SP_BETA
+    f0_sp = c_light / lam_broadside
+
+    res_sp = schematic.save_setup_figures(
+        solver_sp,
+        FIG_DIR,
+        plane="zx",
+        structures=polys_sp,
+        sources=[beam_sp],
+        monitors=[mon_sp],
+        unit="µm",
+        wavelength=lam_broadside / DEFAULT_N_SIO2,
+        freq=f0_sp,
+        min_feature=DEFAULT_SP_IMPACT_M,
+        title_geometry="Part 1 · Smith–Purcell Setup: Grating, Electron Beam, DFTMonitor & CPML (ZX plane)",
+        title_mesh="Part 1 · Locally Refined Graded Mesh (1× Groove Zoom) & Bunch Spectrum",
+        variations=[
+            {
+                "name": "Part 1 · Dielectric grating",
+                "details": "SiO₂ grating (ε_r = 2.10, n = 1.45), adding internal Cherenkov leakage + guided slab modes",
+            },
+            {
+                "name": "Part 1 · Uniform Fine baseline",
+                "details": "Uniform Δx = Δz = 50.0 nm (88 × 462 = 40,656 cells) vs Graded 79 × 462 = 36,498 cells (−10.2%)",
+            },
+            {
+                "name": "Part 2 · Inverse process (DLA)",
+                "details": "Dual SiO₂ grating (λ_p = λ_0 = 800 nm, gap 2a = 400 nm, periodic ±z, ±x CPML, 7,600 graded vs 8,800 uniform cells)",
+            },
+        ],
+    )
+
+    # Re-render 00b with zoom_bounds centered on the central grating tooth & beam impact corridor
+    # and shade the corrugated grating polygon on Panel (a) and its 1× zoom inset.
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_sp,
+        plane="zx",
+        structures=polys_sp,
+        sources=[beam_sp],
+        monitors=[mon_sp],
+        unit="µm",
+        wavelength=lam_broadside / DEFAULT_N_SIO2,
+        freq=f0_sp,
+        min_feature=DEFAULT_SP_IMPACT_M,
+        zoom_bounds=(-1.67e-6, +1.67e-6, -0.55e-6, +0.35e-6),
+        title="Part 1 · Locally Refined Graded Mesh (1× Groove Zoom) & Bunch Spectrum",
+    )
+    ax_mesh = axes_b[0]
+    verts_um = polys_sp[0].vertices * 1e6
+    ax_mesh.add_patch(
+        Polygon(
+            verts_um,
+            closed=True,
+            facecolor="#CBD5E1",
+            edgecolor="#1E293B",
+            lw=1.1,
+            alpha=0.72,
+            zorder=2,
         )
     )
-    ax.text(
-        z_max_um - cpml_um - 0.3,
-        x_max_um - cpml_um - 0.28,
-        "CPML",
-        fontsize=8.5,
-        color="#333333",
-        ha="right",
-        va="top",
-        bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.82, edgecolor="none"),
-        zorder=6,
-    )
-    x_base_top = -depth_um if depth_um > 0.0 else 0.0
-    ax.add_patch(
-        Rectangle(
-            (z_min_um, x_min_um),
-            z_max_um - z_min_um,
-            x_base_top - x_min_um,
-            facecolor=face_color,
-            edgecolor="#111111",
-            alpha=0.35,
-            linewidth=0.8,
-            zorder=4,
-        )
-    )
-    if depth_um > 0.0:
-        zg_min = -0.5 * n_periods * period_um
-        zg_max = +0.5 * n_periods * period_um
-        ax.add_patch(
-            Rectangle(
-                (z_min_um, -depth_um),
-                zg_min - z_min_um,
-                depth_um,
-                facecolor=face_color,
-                edgecolor="#111111",
-                alpha=0.35,
-                linewidth=0.8,
-                zorder=4,
-            )
-        )
-        ax.add_patch(
-            Rectangle(
-                (zg_max, -depth_um),
-                z_max_um - zg_max,
-                depth_um,
-                facecolor=face_color,
-                edgecolor="#111111",
-                alpha=0.35,
-                linewidth=0.8,
-                zorder=4,
-            )
-        )
-        for m in range(n_periods):
-            zc = zg_min + (m + 0.5) * period_um
-            w = duty * period_um
-            ax.add_patch(
-                Rectangle(
-                    (zc - 0.5 * w, -depth_um),
-                    w,
-                    depth_um,
-                    facecolor=face_color,
-                    edgecolor="#111111",
-                    alpha=0.42,
-                    linewidth=0.8,
-                    zorder=4,
+    for child_ax in fig_b.axes:
+        if child_ax not in list(axes_b):
+            child_ax.add_patch(
+                Polygon(
+                    verts_um,
+                    closed=True,
+                    facecolor="#CBD5E1",
+                    edgecolor="#1E293B",
+                    lw=1.0,
+                    alpha=0.55,
+                    zorder=2,
                 )
             )
-    ax.axhline(0.0, color="#222222", linestyle=":", linewidth=0.7, zorder=4)
-    ax.text(
-        z_min_um + cpml_um + 0.3,
-        x_min_um + 0.16,
-        mat_label,
-        fontsize=8.5,
-        fontweight="bold",
-        color="#111111",
-        ha="left",
-        va="bottom",
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.88, edgecolor="#888888", lw=0.6),
-        zorder=6,
+    figstyle.save(fig_b, res_sp["mesh_figure"], close=True, auto_legend_below=False)
+
+    # Part 2 setup figure (00c): Dielectric Laser Accelerator 6-period supercell (separate launch method)
+    solver_dla, src_dla, mons_dla, polys_dla = _build_dla_solver_for_schematic(
+        n_periods=6,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        graded=True,
+        zmin_m=0.0,
     )
+    fig_c, _ = schematic.plot_schematic(
+        solver_dla,
+        plane="zx",
+        structures=polys_dla,
+        sources=[src_dla],
+        monitors=mons_dla,
+        probes=[{"pos": (0.0, 0.0, 2.4e-6), "label": "e⁻ channel (2a = 400 nm)"}],
+        unit="µm",
+        wavelength=DEFAULT_DLA_LAM0_M,
+        freq=c_light / DEFAULT_DLA_LAM0_M,
+        title="Part 2 · Inverse Process (DLA): Dual SiO₂ Grating, Laser Sheet, Periodic ±z & ±x CPML",
+    )
+    path_c = figstyle.save(fig_c, FIG_DIR / "00c_setup_dla_geometry.png", close=True, auto_legend_below=False)
+
+    return [res_sp["geometry_figure"], res_sp["mesh_figure"], path_c]
 
 
 def plot_01_setup_schematic_and_mesh() -> Path:
-    """Render Figure 1: Labelled setup schematics (Part 1 SP & Part 2 DLA) + graded FIT mesh view."""
+    """Render Figure 1: Uniform baseline vs locally refined graded FIT mesh comparison (SP & DLA)."""
     _apply_paper_style()
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 3, figsize=(14.2, 4.4), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.0,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
 
-    # Panel (a): Part 1 Smith-Purcell schematic
+    # Panel (a): Part 1 Smith-Purcell locally refined graded mesh vs uniform baseline
     ax = axes[0]
-    ax.set_xlim(-11.0, 11.0)
-    ax.set_ylim(-1.1, 3.4)
-    _draw_sp_grating_overlay(
+    solver_sp_g, _, _, polys_sp = _build_sp_solver_for_schematic(
+        material="pec",
+        n_periods=10,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        graded=True,
+    )
+    solver_sp_u, _, _, _ = _build_sp_solver_for_schematic(
+        material="pec",
+        n_periods=10,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        graded=False,
+        dx_m=0.05e-6,
+        dz_m=0.05e-6,
+    )
+    schematic.draw_mesh(
         ax,
-        z_min_um=-11.0,
-        z_max_um=11.0,
-        x_min_um=-1.0,
-        x_max_um=3.3,
-        period_um=1.67,
-        n_periods=8,
-        depth_um=0.40,
-        duty=0.50,
-        mat_label=r"PEC ($\sigma\to\infty$) or $\mathrm{SiO}_2$ ($\varepsilon_r=2.11, \mu_r=1$)",
-        face_color="#56B4E9",
-        cpml_um=0.6,
+        solver_sp_g,
+        plane="zx",
+        unit="µm",
+        every=1,
+        wavelength=(DEFAULT_SP_PERIOD_M / DEFAULT_SP_BETA) / DEFAULT_N_SIO2,
+        zoom_inset=False,
+        show_cpw=False,
     )
-    # Beam line and Gaussian bunch
-    h_um = 0.35
-    ax.axhline(h_um, color=OKABE_ITO["orange"], linestyle="-.", linewidth=1.2, zorder=5)
-    ax.plot([-2.2], [h_um], marker="o", ms=7, color=OKABE_ITO["orange"], zorder=7)
-    ax.annotate(
-        r"Rigid bunch $\mathbf{v}=\beta c\,\hat{\mathbf{z}}$" + "\n" + r"($q, \sigma_z=0.20\;\mu\mathrm{m}$, TM: $E_x, E_z, H_y$)",
-        xy=(-2.2, h_um),
-        xytext=(-9.8, 1.05),
-        fontsize=8.5,
-        color=OKABE_ITO["orange"],
-        fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color=OKABE_ITO["orange"], lw=1.1),
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9, edgecolor=OKABE_ITO["orange"], lw=0.7),
-        zorder=8,
+    schematic.overlay_geometry(
+        ax,
+        solver_sp_g,
+        plane="zx",
+        unit="µm",
+        structures=polys_sp,
+        show_sources=False,
+        show_monitors=False,
+        show_boundaries=False,
+        fill_materials=True,
+        material_alpha=0.28,
     )
-    # Impact parameter h annotation
-    ax.annotate(
-        "",
-        xy=(4.8, h_um),
-        xytext=(4.8, 0.0),
-        arrowprops=dict(arrowstyle="<->", color="#111111", lw=1.0),
-    )
-    ax.text(5.1, 0.5 * h_um, r"$h$", fontsize=9.0, fontweight="bold", va="center")
-    # Monitor plane
-    x_mon_um = 2.25
-    ax.plot([-8.5, 8.5], [x_mon_um, x_mon_um], color=OKABE_ITO["green"], lw=2.0, ls="-", zorder=6)
-    ax.text(
-        -8.3,
-        x_mon_um + 0.14,
-        r"Near2Far / DFTMonitor ($x_{\mathrm{mon}}=2.25\;\mu\mathrm{m}$)",
-        fontsize=8.5,
-        color=OKABE_ITO["green"],
-        fontweight="bold",
-    )
-    # Emitted ray at angle theta
-    th_r = np.radians(65.0)
-    ax.add_patch(
-        FancyArrowPatch(
-            (0.0, 0.0),
-            (2.2 * np.cos(th_r), 2.2 * np.sin(th_r)),
-            arrowstyle="->",
-            mutation_scale=12,
-            color=OKABE_ITO["blue"],
-            lw=1.6,
-            zorder=7,
-        )
-    )
-    ax.text(
-        1.15,
-        1.35,
-        r"$\theta$: $\lambda = \frac{d}{n}(\frac{1}{\beta}-\cos\theta)$",
-        fontsize=8.5,
-        color=OKABE_ITO["blue"],
-        fontweight="bold",
-        bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.88, edgecolor="none"),
-    )
-    ax.set_title("(a) Part 1 · Smith–Purcell Setup (Periodic along y)")
-    ax.set_xlabel(r"Longitudinal axis $z$ [$\mu\mathrm{m}$]")
-    ax.set_ylabel(r"Surface normal $x$ [$\mu\mathrm{m}$]")
-
-    # Panel (b): Part 2 DLA schematic (Peralta et al. 2013)
-    ax = axes[1]
-    ax.set_xlim(-1.2, 1.2)
-    ax.set_ylim(-2.1, 2.1)
-    # Periodic z boundaries, CPML x boundaries
-    ax.axhline(1.75, color="#555555", ls="--", lw=0.9)
-    ax.axhline(-1.75, color="#555555", ls="--", lw=0.9)
-    ax.axvline(-0.80, color=OKABE_ITO["purple"], ls="--", lw=1.0)
-    ax.axvline(+0.80, color=OKABE_ITO["purple"], ls="--", lw=1.0)
-    ax.text(0.0, 1.84, r"$+x$ CPML ($10\;\Delta x$)", ha="center", va="bottom", fontsize=8.5, color="#444444")
-    ax.text(0.0, -1.84, r"$-x$ CPML ($10\;\Delta x$)", ha="center", va="top", fontsize=8.5, color="#444444")
-    ax.text(-0.84, 0.0, "Periodic $z$", rotation=90, ha="right", va="center", fontsize=8.5, color=OKABE_ITO["purple"])
-
-    # Dual fused silica gratings (2a = 400 nm, h_g = 680 nm, lam_p = 800 nm)
-    a_um = 0.20
-    hg_um = 0.68
-    lp_um = 0.80
-    # Lower wafer & teeth
-    ax.add_patch(Rectangle((-0.80, -1.75), 1.60, 1.75 - (a_um + hg_um), facecolor="#56B4E9", alpha=0.35, edgecolor="#111111"))
-    ax.add_patch(Rectangle((-0.80, a_um + hg_um), 1.60, 1.75 - (a_um + hg_um), facecolor="#56B4E9", alpha=0.35, edgecolor="#111111"))
-    for zc in [-0.40, 0.40]:
-        ax.add_patch(Rectangle((zc - 0.20, -(a_um + hg_um)), 0.40, hg_um, facecolor="#56B4E9", alpha=0.5, edgecolor="#111111"))
-        ax.add_patch(Rectangle((zc - 0.20, a_um), 0.40, hg_um, facecolor="#56B4E9", alpha=0.5, edgecolor="#111111"))
-
-    ax.text(0.0, -1.25, r"Fused silica $\mathrm{SiO}_2$ ($n=1.453, \varepsilon_r=2.11$)", ha="center", fontsize=8.5, fontweight="bold")
-    # Laser source plane
-    ax.plot([-0.78, 0.78], [-1.45, -1.45], color=OKABE_ITO["blue"], lw=2.0)
-    ax.add_patch(FancyArrowPatch((-0.55, -1.45), (-0.55, -0.95), arrowstyle="->", mutation_scale=11, color=OKABE_ITO["blue"], lw=1.4))
-    ax.text(0.05, -1.58, r"Laser $\lambda_0=800\;\mathrm{nm}$ ($\mathbf{k}_{\mathrm{inc}}=+k_0\hat{\mathbf{x}}, \mathbf{E}_0\parallel\hat{\mathbf{z}}$)", ha="center", fontsize=8.5, color=OKABE_ITO["blue"], fontweight="bold")
-    # Electron channel at x = 0
-    ax.plot([-0.78, 0.78], [0.0, 0.0], color=OKABE_ITO["orange"], ls="-.", lw=1.4)
-    ax.add_patch(FancyArrowPatch((-0.65, 0.0), (0.65, 0.0), arrowstyle="->", mutation_scale=12, color=OKABE_ITO["orange"], lw=1.6))
-    ax.text(0.0, 0.07, r"$e^-$ beam ($60\;\mathrm{MeV}, \beta\approx 1, 2a=400\;\mathrm{nm}$)", ha="center", va="bottom", fontsize=8.5, color=OKABE_ITO["orange"], fontweight="bold")
-    ax.annotate("", xy=(-0.40, a_um + hg_um + 0.12), xytext=(0.40, a_um + hg_um + 0.12), arrowprops=dict(arrowstyle="<->", lw=1.0))
-    ax.text(0.0, a_um + hg_um + 0.16, r"$\lambda_p = \beta\lambda_0 = 800\;\mathrm{nm}$", ha="center", va="bottom", fontsize=8.5, fontweight="bold")
-    ax.set_title("(b) Part 2 · Inverse Process: DLA (Peralta et al. 2013)")
-    ax.set_xlabel(r"Longitudinal coordinate $z$ [$\mu\mathrm{m}$]")
-    ax.set_ylabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
-
-    # Panel (c): Graded FIT mesh view snapped to tooth faces
-    ax = axes[2]
-    x_faces = np.array([-0.88e-6, -0.20e-6, 0.0, 0.20e-6, 0.88e-6])
-    x_sizes = np.array([0.025e-6, 0.020e-6, 0.020e-6, 0.025e-6])
-    x_nodes = graded_axis(x_faces, x_sizes, min_cells=8, grading=1.25) * 1e6
-    z_faces = np.array([-0.40e-6, -0.20e-6, 0.20e-6, 0.40e-6])
-    z_sizes = np.array([0.025e-6, 0.020e-6, 0.025e-6])
-    z_nodes = graded_axis(z_faces, z_sizes, min_cells=8, grading=1.25) * 1e6
-
-    for zn in z_nodes:
-        ax.axvline(zn, color="#CCCCCC", lw=0.55, zorder=1)
-    for xn in x_nodes:
-        ax.axhline(xn, color="#CCCCCC", lw=0.55, zorder=1)
-    ax.add_patch(Rectangle((-0.20, -0.88), 0.40, 0.68, facecolor="#56B4E9", alpha=0.45, edgecolor=OKABE_ITO["blue"], lw=1.4, zorder=3))
-    ax.add_patch(Rectangle((-0.20, +0.20), 0.40, 0.68, facecolor="#56B4E9", alpha=0.45, edgecolor=OKABE_ITO["blue"], lw=1.4, zorder=3))
-    ax.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.3, zorder=4)
+    ax.axhline(DEFAULT_SP_IMPACT_M * 1e6, color=OKABE_ITO["orange"], ls="-.", lw=1.4, zorder=7)
+    ax.set_xlim(-1.67, +1.67)
+    ax.set_ylim(-0.75, +0.95)
+    cc_sp_g = schematic.extract_setup_info(solver_sp_g, plane="zx")["cell_counts"]
+    cc_sp_u = schematic.extract_setup_info(solver_sp_u, plane="zx")["cell_counts"]
+    nx_sp_g, nz_sp_g = int(cc_sp_g[0]), int(cc_sp_g[2])
+    nx_sp_u, nz_sp_u = int(cc_sp_u[0]), int(cc_sp_u[2])
     ax.text(
         0.0,
-        0.0,
-        r"$\Delta x_{\min}=20\;\mathrm{nm}$ ($\lambda_{\mathrm{SiO}_2}/\Delta x = 27.5 \geq 20$)"
-        + "\n"
-        + r"$20\;\mathrm{cells}$ across tooth, $20\;\mathrm{cells}$ across $2a$",
+        0.74,
+        f"Graded: Δx = 30.8–67.3 nm ({nx_sp_g}×{nz_sp_g} = {nx_sp_g * nz_sp_g:,} cells)\n"
+        f"Uniform Fine: Δx = 50.0 nm ({nx_sp_u}×{nz_sp_u} = {nx_sp_u * nz_sp_u:,} cells)",
         ha="center",
         va="center",
         fontsize=8.5,
-        bbox=dict(boxstyle="round,pad=0.22", facecolor="white", alpha=0.92, edgecolor="#333333", lw=0.7),
-        zorder=5,
+        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.92, edgecolor="#CBD5E1"),
+        zorder=9,
     )
-    ax.set_xlim(-0.40, 0.40)
-    ax.set_ylim(-0.88, 0.88)
-    ax.set_title("(c) Snapped FIT Mesh View (Unit Cell)")
-    ax.set_xlabel(r"$z$ [$\mu\mathrm{m}$]")
-    ax.set_ylabel(r"$x$ [$\mu\mathrm{m}$]")
+    ax.set_title("(a) Part 1 · SP Graded Mesh Zoom")
+    ax.set_xlabel("z [µm]")
+    ax.set_ylabel("x [µm]")
 
-    out = FIG_DIR / "01_setup_schematic_and_mesh.png"
-    fig.savefig(out, dpi=180)
+    # Panel (b): Part 2 DLA unit-cell locally refined graded mesh vs uniform baseline
+    ax = axes[1]
+    solver_dla_g, _, _, _ = _build_dla_solver_for_schematic(
+        n_periods=1,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        graded=True,
+    )
+    solver_dla_u, _, _, _ = _build_dla_solver_for_schematic(
+        n_periods=1,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        graded=False,
+        dx_m=0.020e-6,
+    )
+    polys_dla_zoom = build_dla_grating_polygons(
+        period_m=DEFAULT_DLA_PERIOD_M,
+        n_periods=1,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        duty_cycle=DEFAULT_DLA_DUTY,
+        gap_half_m=DEFAULT_DLA_GAP_HALF_M,
+        xmin_m=-0.95e-6,
+        xmax_m=+0.95e-6,
+        zmin_m=-0.40e-6,
+        eps_diel=DEFAULT_EPS_SIO2,
+        dual_grating=True,
+    )
+    schematic.draw_mesh(
+        ax,
+        solver_dla_g,
+        plane="zx",
+        unit="µm",
+        every=1,
+        wavelength=DEFAULT_DLA_LAM0_M / DEFAULT_N_SIO2,
+        zoom_inset=False,
+        show_cpw=False,
+    )
+    schematic.overlay_geometry(
+        ax,
+        solver_dla_g,
+        plane="zx",
+        unit="µm",
+        structures=polys_dla_zoom,
+        show_sources=False,
+        show_monitors=False,
+        show_boundaries=False,
+        fill_materials=True,
+        material_alpha=0.28,
+    )
+    ax.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.4, zorder=7)
+    ax.set_xlim(-0.40, +0.40)
+    ax.set_ylim(-1.15, +1.15)
+    cc_dla_g = schematic.extract_setup_info(solver_dla_g, plane="zx")["cell_counts"]
+    cc_dla_u = schematic.extract_setup_info(solver_dla_u, plane="zx")["cell_counts"]
+    nx_dla_g, nz_dla_g = int(cc_dla_g[0]), int(cc_dla_g[2])
+    nx_dla_u, nz_dla_u = int(cc_dla_u[0]), int(cc_dla_u[2])
+    ax.text(
+        0.0,
+        0.0,
+        f"Graded: Δx = 18.2–27.1 nm ({nx_dla_g}×{nz_dla_g} = {nx_dla_g * nz_dla_g:,} cells)\n"
+        f"Uniform Fine: Δx = 20.0 nm ({nx_dla_u}×{nz_dla_u} = {nx_dla_u * nz_dla_u:,} cells)",
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.92, edgecolor="#CBD5E1"),
+        zorder=9,
+    )
+    ax.set_title("(b) Part 2 · DLA Graded Mesh Zoom")
+    ax.set_xlabel("z [µm]")
+    ax.set_ylabel("x [µm]")
+
+    # Panel (c): Transverse cell-size profile Δx(x) [nm] for Uniform vs Graded meshes
+    ax = axes[2]
+    x_sp_nodes = solver_sp_g.grid.x
+    xc_sp_um = 0.5 * (x_sp_nodes[:-1] + x_sp_nodes[1:]) * 1e6
+    dx_sp_nm = np.diff(x_sp_nodes) * 1e9
+
+    x_dla_nodes = solver_dla_g.grid.x
+    xc_dla_um = 0.5 * (x_dla_nodes[:-1] + x_dla_nodes[1:]) * 1e6
+    dx_dla_nm = np.diff(x_dla_nodes) * 1e9
+
+    ax.plot(xc_sp_um, dx_sp_nm, **figstyle.series_style(0), label="SP graded Δx(x) (30.8–67.3 nm)")
+    ax.axhline(50.0, color=OKABE_ITO["blue"], ls=":", lw=1.2, label="SP Fine uniform (50.0 nm)")
+    ax.plot(xc_dla_um, dx_dla_nm, **figstyle.series_style(1), label="DLA graded Δx(x) (18.2–27.1 nm)")
+    ax.axhline(20.0, color=OKABE_ITO["orange"], ls=":", lw=1.2, label="DLA Fine uniform (20.0 nm)")
+    ax.axvspan(-0.40, +0.35, color="#CBD5E1", alpha=0.28, label="Groove / channel zone")
+    ax.set_ylim(14.0, 92.0)
+    ax.set_title("(c) Step Size Δx(x): Graded vs Uniform")
+    ax.set_xlabel("Transverse position x [µm]")
+    ax.set_ylabel("Transverse step size Δx [nm]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper right", fontsize=8.5)
+
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "01_setup_schematic_and_mesh.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
 
 def plot_02_sp_field_maps(sp_npz: np.lib.npyio.NpzFile) -> Path:
-    """Render Figure 2: Smith-Purcell Ez(x, z) field maps (PEC grating, SiO2 grating, flat mutation)."""
+    """Render Figure 2: Smith-Purcell Ez(x, z) field maps with schematic.overlay_geometry."""
     _apply_paper_style()
-    x_um = sp_npz["x_m"] * 1e6
-    z_um = sp_npz["z_m"] * 1e6
+    x_m = sp_npz["x_m"]
+    z_m = sp_npz["z_m"]
+    x_um = x_m * 1e6
+    z_um = z_m * 1e6
     zb_um = float(sp_npz["z_bunch_snap_m"]) * 1e6
     ez_pec = sp_npz["Ez_pec_scat_xz"]
     ez_diel = sp_npz["Ez_diel_scat_xz"]
     ez_flat = sp_npz["Ez_flat_scat_xz"]
 
-    # Mask above the grating top x > 0.35 um to compute clean radiation color scale
     rad_mask = x_um >= 0.45
-    vmax = float(np.percentile(np.abs(ez_pec[rad_mask, :]), 99.2))
+    _, vmax = figstyle.symmetric_limits(ez_pec[rad_mask, :], percentile=99.2)
     vmax = max(vmax, 1.0)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True, sharey=True)
+    n_per = int(round((z_um[-1] - z_um[0] - 6.0) / 1.67))
+    dx_est = float(x_m[1] - x_m[0])
+    dz_est = float(z_m[1] - z_m[0])
+    solver_ov, _, _, _ = _build_sp_solver_for_schematic(
+        material="pec",
+        n_periods=n_per,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        graded=False,
+        dx_m=dx_est,
+        dz_m=dz_est,
+    )
+
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=3.9,
+        ncols=3,
+        nrows=1,
+        sharey=True,
+        layout="constrained",
+    )
     panels = [
-        (r"(a) Metallic (PEC) Grating ($h_g=0.40\;\mu\mathrm{m}$)", ez_pec, r"PEC grating ($d=1.67\;\mu\mathrm{m}$)", "#555555"),
-        (r"(b) Fused-Silica Grating ($\varepsilon_r=2.11, n=1.453$)", ez_diel, r"$\mathrm{SiO}_2$ grating ($\varepsilon_r=2.11$)", "#56B4E9"),
-        (r"(c) Flat-Surface Mutation ($h_g=0$, No Radiation)", ez_flat, r"Flat PEC surface ($h_g=0$)", "#777777"),
+        ("(a) PEC Grating (h_g = 0.40 µm)", ez_pec, "pec", DEFAULT_SP_DEPTH_M),
+        ("(b) SiO₂ Grating (ε_r = 2.11)", ez_diel, DEFAULT_EPS_SIO2, DEFAULT_SP_DEPTH_M),
+        ("(c) Flat Surface (h_g = 0, Null)", ez_flat, "pec", 0.0),
     ]
     im = None
-    for idx, (title, field_xz, mlabel, fcol) in enumerate(panels):
+    for idx, (title, field_xz, mat_val, dep_m) in enumerate(panels):
         ax = axes[idx]
         im = ax.pcolormesh(
             z_um,
             x_um,
             field_xz,
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-vmax,
             vmax=+vmax,
             shading="auto",
         )
-        dep_um = 0.0 if idx == 2 else 0.40
-        _draw_sp_grating_overlay(
-            ax,
-            z_min_um=float(z_um[0]),
-            z_max_um=float(z_um[-1]),
-            x_min_um=float(x_um[0]),
-            x_max_um=float(x_um[-1]),
-            period_um=1.67,
-            n_periods=int(round((z_um[-1] - z_um[0] - 6.0) / 1.67)),
-            depth_um=dep_um,
-            duty=0.50,
-            mat_label=mlabel,
-            face_color=fcol,
-            cpml_um=0.50,
+        polys = build_sp_grating_polygon(
+            material=mat_val,
+            period_m=DEFAULT_SP_PERIOD_M,
+            n_periods=n_per,
+            depth_m=dep_m,
+            duty_cycle=DEFAULT_SP_DUTY,
+            xmin_m=float(solver_ov.grid.xmin),
+            zmin_m=float(solver_ov.grid.zmin),
+            zmax_m=float(solver_ov.grid.zmax),
         )
-        ax.plot([zb_um], [0.25], marker="o", ms=6.5, color=OKABE_ITO["orange"], mec="white", mew=0.8, zorder=8)
+        schematic.overlay_geometry(
+            ax,
+            solver_ov,
+            plane="zx",
+            unit="µm",
+            structures=polys,
+            show_sources=False,
+            show_monitors=False,
+            show_boundaries=True,
+            fill_materials=True,
+            material_alpha=0.24,
+        )
+        ax.plot(
+            [zb_um],
+            [0.25],
+            marker="o",
+            ms=6.5,
+            color=OKABE_ITO["orange"],
+            mec="white",
+            mew=0.8,
+            zorder=8,
+        )
         ax.text(
             zb_um - 0.5,
-            0.42,
-            r"$q$ ($\beta=0.80$)",
+            0.45,
+            "q (β = 0.80)",
             fontsize=8.5,
             color=OKABE_ITO["orange"],
             fontweight="bold",
             ha="right",
-            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.85, edgecolor="none"),
-            zorder=8,
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.88, edgecolor="none"),
+            zorder=9,
         )
         ax.set_title(title)
-        ax.set_xlabel(r"$z$ [$\mu\mathrm{m}$]")
+        ax.set_xlabel("z [µm]")
         if idx == 0:
-            ax.set_ylabel(r"$x$ [$\mu\mathrm{m}$]")
+            ax.set_ylabel("x [µm]")
 
-    cbar = fig.colorbar(im, ax=axes, shrink=0.88, pad=0.015)
+    cbar = fig.colorbar(im, ax=axes, shrink=0.86, pad=0.015)
     cbar.set_label(r"Scattered longitudinal field $E_z^{\mathrm{SP}}(x, z)$ [V/m]")
-    out = FIG_DIR / "02_sp_field_maps.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "02_sp_field_maps.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
@@ -2303,7 +2859,13 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
     pw_diel = sp_npz["peak_power_diel"]
     pw_flat = sp_npz["peak_power_flat"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.2,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
 
     # Panel (a): 2D angular-spectral map U(theta, lambda) + n=1,2 theory curves
     ax = axes[0]
@@ -2312,7 +2874,7 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
         theta_grid,
         lams_um,
         norm_map.T,
-        cmap="Blues",
+        cmap=figstyle.CMAP_MAGNITUDE,
         vmin=0.0,
         vmax=1.0,
         shading="auto",
@@ -2320,15 +2882,15 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
     th_dense = np.linspace(30.0, 155.0, 200)
     lam_n1 = 1.67 * (1.0 / 0.80 - np.cos(np.radians(th_dense)))
     lam_n2 = (1.67 / 2.0) * (1.0 / 0.80 - np.cos(np.radians(th_dense)))
-    ax.plot(th_dense, lam_n1, "-", color=OKABE_ITO["orange"], lw=1.8, label=r"Theory $n=1$: $d(1/\beta-\cos\theta)$")
-    ax.plot(th_dense, lam_n2, "--", color=OKABE_ITO["purple"], lw=1.5, label=r"Theory $n=2$: $(d/2)(1/\beta-\cos\theta)$")
-    ax.plot(thetas_deg, lam_pec_um, "o", color="white", mec=OKABE_ITO["black"], ms=5.5, mew=1.1, label="Wakis FIT ($n=1$ peaks)")
+    ax.plot(th_dense, lam_n1, "-", color=OKABE_ITO["orange"], lw=1.8, label=r"Theory n = 1: d(1/β − cos θ)")
+    ax.plot(th_dense, lam_n2, "--", color=OKABE_ITO["sky"], lw=1.5, label=r"Theory n = 2: (d/2)(1/β − cos θ)")
+    ax.plot(thetas_deg, lam_pec_um, "o", color="white", mec=OKABE_ITO["black"], ms=5.5, mew=1.1, label="Wakis FIT (n = 1 peaks)")
     ax.set_xlim(30.0, 155.0)
     ax.set_ylim(float(lams_um[0]), float(lams_um[-1]))
-    ax.set_title(r"(a) Angular Spectrum $U(\theta, \lambda)$ ($\beta=0.80$)")
-    ax.set_xlabel(r"Observation angle $\theta$ from $+\hat{\mathbf{z}}$ [deg]")
-    ax.set_ylabel(r"Emitted wavelength $\lambda$ [$\mu\mathrm{m}$]")
-    ax.legend(loc="upper left", framealpha=0.92)
+    ax.set_title(r"(a) Angular Spectrum U(θ, λ)")
+    ax.set_xlabel("Observation angle θ from +z [deg]")
+    ax.set_ylabel("Emitted wavelength λ [µm]")
+    figstyle.place_legend_below(ax, ncol=1, y_offset=-0.22, fontsize=8.5)
     fig.colorbar(pcm, ax=ax, shrink=0.86, label="Normalized spectral intensity [-]")
 
     # Panel (b): Wavelength vs angle for PEC & SiO2 and across beta = 0.68, 0.80, 0.92
@@ -2337,7 +2899,7 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
     markers_b = ["^", "o", "s"]
     for ib, b_val in enumerate(beta_sweep):
         lam_th_curve = 1.67 * (1.0 / float(b_val) - np.cos(np.radians(th_dense)))
-        ax.plot(th_dense, lam_th_curve, "-", color=colors_b[ib], lw=1.4, label=rf"Theory $\beta={b_val:.2f}$")
+        ax.plot(th_dense, lam_th_curve, "-", color=colors_b[ib], lw=1.5, label=f"Theory β = {b_val:.2f}")
         ax.plot(
             thetas_deg,
             lam_sim_beta_um[ib],
@@ -2345,7 +2907,7 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
             marker=markers_b[ib],
             ms=5.5,
             color=colors_b[ib],
-            label=rf"Wakis PEC ($\beta={b_val:.2f}$)",
+            label=f"Wakis PEC (β = {b_val:.2f})",
         )
     ax.plot(
         thetas_deg,
@@ -2356,28 +2918,28 @@ def plot_03_sp_dispersion_and_angular_spectrum(sp_npz: np.lib.npyio.NpzFile) -> 
         mfc="none",
         mec=OKABE_ITO["orange"],
         mew=1.4,
-        label=r"Wakis $\mathrm{SiO}_2$ ($\beta=0.80$)",
+        label="Wakis SiO₂ (β = 0.80)",
     )
-    ax.set_title(r"(b) Dispersion $\lambda = \frac{d}{n}(\frac{1}{\beta} - \cos\theta)$ vs $\beta$")
-    ax.set_xlabel(r"Observation angle $\theta$ [deg]")
-    ax.set_ylabel(r"Peak wavelength $\lambda_1(\theta)$ [$\mu\mathrm{m}$]")
-    ax.grid(True)
-    ax.legend(loc="upper left", ncol=1, fontsize=8.0, framealpha=0.92)
+    ax.set_title(r"(b) Dispersion λ(θ) vs β")
+    ax.set_xlabel("Observation angle θ [deg]")
+    ax.set_ylabel("Peak wavelength λ₁(θ) [µm]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper left", ncol=1, fontsize=8.5)
 
     # Panel (c): Peak spectral radiation vs angle for PEC grating, SiO2 grating, and flat mutation
     ax = axes[2]
     scale_p = max(float(np.max(pw_pec)), 1e-30)
-    ax.plot(thetas_deg, pw_pec / scale_p, "-o", color=OKABE_ITO["blue"], lw=1.5, ms=5.0, label=r"PEC grating ($h_g=0.40\;\mu\mathrm{m}$)")
-    ax.plot(thetas_deg, pw_diel / scale_p, "--s", color=OKABE_ITO["orange"], lw=1.5, ms=5.0, label=r"$\mathrm{SiO}_2$ grating ($\varepsilon_r=2.11$)")
-    ax.plot(thetas_deg, pw_flat / scale_p, ":^", color=OKABE_ITO["grey"], lw=1.5, ms=5.0, label=r"Flat surface ($h_g=0$ mutation)")
-    ax.set_title("(c) Angular Radiation Intensity & Flat Null")
-    ax.set_xlabel(r"Observation angle $\theta$ [deg]")
-    ax.set_ylabel("Normalized $n=1$ peak intensity [-]")
-    ax.grid(True)
-    ax.legend(loc="upper right", framealpha=0.92)
+    ax.plot(thetas_deg, pw_pec / scale_p, "-o", color=OKABE_ITO["blue"], lw=1.6, ms=5.0, label="PEC grating (h_g = 0.40 µm)")
+    ax.plot(thetas_deg, pw_diel / scale_p, "--s", color=OKABE_ITO["orange"], lw=1.6, ms=5.0, label="SiO₂ grating (ε_r = 2.11)")
+    ax.plot(thetas_deg, pw_flat / scale_p, ":^", color=OKABE_ITO["grey"], lw=1.6, ms=5.0, label="Flat surface (h_g = 0 mutation)")
+    ax.set_title("(c) Angular Intensity & Flat Null")
+    ax.set_xlabel("Observation angle θ [deg]")
+    ax.set_ylabel("Normalized n = 1 peak intensity [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper left", fontsize=8.5)
 
-    out = FIG_DIR / "03_sp_dispersion_and_angular_spectrum.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "03_sp_dispersion_and_angular_spectrum.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
@@ -2393,28 +2955,30 @@ def plot_04_sp_impact_parameter_decay(imp_npz: np.lib.npyio.NpzFile) -> Path:
     alpha_sim = imp_npz["alpha_sim_1_m"] * 1e-6  # [1/um]
     alpha_th = imp_npz["alpha_theory_1_m"] * 1e-6  # [1/um]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.0,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
 
     # Panel (a): Broadside (theta = 90 deg) spectrum for each impact parameter h at beta = 0.80
     ax = axes[0]
     norm_s = max(float(np.max(spec90)), 1e-30)
-    palette = [OKABE_ITO["blue"], OKABE_ITO["sky"], OKABE_ITO["green"], OKABE_ITO["orange"], OKABE_ITO["purple"]]
-    ls_list = ["-", "--", "-.", ":", (0, (3, 1, 1, 1))]
     for ih, hv in enumerate(h_um):
         ax.plot(
             lams_um,
             spec90[ih] / norm_s,
-            linestyle=ls_list[ih % len(ls_list)],
-            color=palette[ih % len(palette)],
-            lw=1.5,
-            label=rf"$h = {hv:.2f}\;\mu\mathrm{{m}}$",
+            **figstyle.series_style(ih),
+            label=f"h = {hv:.2f} µm",
         )
-    ax.axvline(1.67 / 0.80, color="#222222", ls=":", lw=1.0, label=r"$\lambda_1(90^\circ)=d/\beta$")
-    ax.set_title(r"(a) Broadside Spectrum ($\theta=90^\circ, \beta=0.80$)")
-    ax.set_xlabel(r"Wavelength $\lambda$ [$\mu\mathrm{m}$]")
+    ax.axvline(1.67 / 0.80, color=OKABE_ITO["black"], ls=":", lw=1.1, label="λ₁(90°) = d/β")
+    ax.set_title("(a) Broadside Spectrum (θ = 90°, β = 0.80)")
+    ax.set_xlabel("Wavelength λ [µm]")
     ax.set_ylabel("Normalized intensity [-]")
-    ax.grid(True)
-    ax.legend(loc="upper right", fontsize=8.0, framealpha=0.92)
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper right", fontsize=7.8)
 
     # Panel (b): Semi-log intensity vs h compared against exp(-4*pi*h/(beta*gamma*lambda))
     ax = axes[1]
@@ -2429,8 +2993,8 @@ def plot_04_sp_impact_parameter_decay(imp_npz: np.lib.npyio.NpzFile) -> Path:
             y_th,
             "-",
             color=cols[ib],
-            lw=1.5,
-            label=rf"Theory $\exp(-4\pi h/(\beta\gamma\lambda))$ ($\beta={b_val:.2f}$)",
+            lw=1.6,
+            label=f"Theory exp(−4πh/(βγλ)) (β = {b_val:.2f})",
         )
         ax.semilogy(
             h_um,
@@ -2439,13 +3003,13 @@ def plot_04_sp_impact_parameter_decay(imp_npz: np.lib.npyio.NpzFile) -> Path:
             marker=mks[ib],
             ms=6.0,
             color=cols[ib],
-            label=rf"Wakis FIT ($\beta={b_val:.2f}, \alpha={alpha_sim[ib]:.2f}\;\mu\mathrm{{m}}^{{-1}}$)",
+            label=f"Wakis FIT (β = {b_val:.2f}, α = {alpha_sim[ib]:.2f} µm⁻¹)",
         )
-    ax.set_title(r"(b) Evanescent Coupling Decay vs $h$")
-    ax.set_xlabel(r"Impact parameter $h$ [$\mu\mathrm{m}$]")
+    ax.set_title("(b) Evanescent Coupling Decay vs h")
+    ax.set_xlabel("Impact parameter h [µm]")
     ax.set_ylabel(r"Normalized power $I_{\mathrm{SP}}(h) / I_{\mathrm{SP}}(h_0)$ [-]")
-    ax.grid(True, which="both")
-    ax.legend(loc="lower left", fontsize=8.0, framealpha=0.92)
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="lower left", fontsize=7.8)
 
     # Panel (c): Relativistic dilation of decay constant alpha_h(beta) = 4*pi / (beta*gamma*lambda_90)
     ax = axes[2]
@@ -2453,34 +3017,34 @@ def plot_04_sp_impact_parameter_decay(imp_npz: np.lib.npyio.NpzFile) -> Path:
     gamma_curve = 1.0 / np.sqrt(1.0 - b_curve**2)
     lam90_curve_um = 1.67 / b_curve
     alpha_curve_um = 4.0 * np.pi / (b_curve * gamma_curve * lam90_curve_um)
-    ax.plot(b_curve, alpha_curve_um, "-", color=OKABE_ITO["black"], lw=1.6, label=r"Exact $\alpha_h = \frac{4\pi}{\beta\gamma\lambda_1(90^\circ)}$")
+    ax.plot(b_curve, alpha_curve_um, "-", color=OKABE_ITO["black"], lw=1.6, label="Exact α_h = 4π/(βγλ₁(90°))")
     ax.plot(betas, alpha_sim, "o", color=OKABE_ITO["orange"], ms=7.0, label="Wakis FIT fitted slope")
     for ib, b_val in enumerate(betas):
         err_pct = 100.0 * abs(alpha_sim[ib] - alpha_th[ib]) / alpha_th[ib]
         ax.annotate(
-            rf"err = {err_pct:.2f}%",
+            f"err = {err_pct:.2f}%",
             xy=(float(b_val), float(alpha_sim[ib])),
             xytext=(float(b_val) - 0.12, float(alpha_sim[ib]) + 0.55),
             fontsize=8.5,
             arrowprops=dict(arrowstyle="->", lw=0.9),
         )
-    ax.set_title(r"(c) Decay Constant $\alpha_h(\beta)$ & $\beta\gamma$ Dilation")
-    ax.set_xlabel(r"Normalized electron velocity $\beta = v/c$ [-]")
-    ax.set_ylabel(r"Power decay constant $\alpha_h$ [$\mu\mathrm{m}^{-1}$]")
-    ax.grid(True)
-    ax.legend(loc="upper right", framealpha=0.92)
+    ax.set_title("(c) Decay Constant α_h(β) & βγ Dilation")
+    ax.set_xlabel("Normalized electron velocity β = v/c [-]")
+    ax.set_ylabel("Power decay constant α_h [µm⁻¹]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper right", fontsize=8.0)
 
-    out = FIG_DIR / "04_sp_impact_parameter_decay.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "04_sp_impact_parameter_decay.png")
     plt.close(fig)
     return out
 
 
 def plot_05_dla_synchronism_and_nearfield(dla_npz: np.lib.npyio.NpzFile) -> Path:
-    """Render Figure 5: DLA near-field map, cumulative energy gain, and synchronism period scan."""
+    """Render Figure 5: DLA near-field map with overlay_geometry, cumulative gain, and synchronism period scan."""
     _apply_paper_style()
-    x_2d_nm = dla_npz["x_2d_m"] * 1e9
-    z_2d_nm = dla_npz["z_2d_m"] * 1e9
+    x_2d_um = dla_npz["x_2d_m"] * 1e6
+    z_2d_um = dla_npz["z_2d_m"] * 1e6
     ez_2d = dla_npz["Ez_2d_norm_real"]
     z_path_um = dla_npz["z_path_m"] * 1e6
     cum_sync = dla_npz["cum_gain_sync"]
@@ -2490,58 +3054,109 @@ def plot_05_dla_synchronism_and_nearfield(dla_npz: np.lib.npyio.NpzFile) -> Path
     g_b100 = dla_npz["g_vs_period_b100"]
     g_b075 = dla_npz["g_vs_period_b075"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.0,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
 
-    # Panel (a): 2D near-field Re(Ez)/E0 in the Peralta et al. (2013) unit cell
+    # Panel (a): 2D near-field Re(Ez)/E0 in the Peralta et al. (2013) unit cell with schematic.overlay_geometry
     ax = axes[0]
-    vmax = float(np.max(np.abs(ez_2d)))
-    pcm = ax.pcolormesh(z_2d_nm, x_2d_nm, ez_2d, cmap="RdBu_r", vmin=-vmax, vmax=+vmax, shading="auto")
-    # Overlay fused silica teeth ([-200, +200] nm in z, [200, 880] nm and [-880, -200] nm in x)
-    ax.add_patch(Rectangle((-200.0, -880.0), 400.0, 680.0, fill=False, edgecolor="#111111", lw=1.4))
-    ax.add_patch(Rectangle((-200.0, +200.0), 400.0, 680.0, fill=False, edgecolor="#111111", lw=1.4))
-    ax.axhline(-880.0, color="#111111", lw=1.1)
-    ax.axhline(+880.0, color="#111111", lw=1.1)
-    ax.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.3)
-    ax.text(0.0, -540.0, r"$\mathrm{SiO}_2$ tooth", ha="center", va="center", fontsize=8.5, fontweight="bold", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.85, edgecolor="none"))
-    ax.text(0.0, +540.0, r"$\mathrm{SiO}_2$ tooth", ha="center", va="center", fontsize=8.5, fontweight="bold", bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.85, edgecolor="none"))
-    ax.text(0.0, 55.0, r"$e^-$ axis ($2a=400\;\mathrm{nm}$)", ha="center", va="bottom", fontsize=8.5, color=OKABE_ITO["orange"], fontweight="bold")
-    ax.set_ylim(-1150.0, 1150.0)
-    ax.set_title(r"(a) DLA Unit-Cell Field $\mathrm{Re}\{\tilde{E}_z\}/E_0$")
-    ax.set_xlabel(r"$z$ [nm] ($\lambda_p = 800\;\mathrm{nm}$)")
-    ax.set_ylabel(r"$x$ [nm]")
+    _, vmax = figstyle.symmetric_limits(ez_2d, percentile=99.8)
+    pcm = ax.pcolormesh(
+        z_2d_um,
+        x_2d_um,
+        ez_2d,
+        cmap=figstyle.CMAP_DIVERGING,
+        vmin=-vmax,
+        vmax=+vmax,
+        shading="auto",
+    )
+    solver_dla_ov, _, _, _ = _build_dla_solver_for_schematic(
+        n_periods=1,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        graded=False,
+        dx_m=0.020e-6,
+        xmin_m=-1.15e-6,
+        xmax_m=+1.15e-6,
+    )
+    polys_dla_ov = build_dla_grating_polygons(
+        period_m=DEFAULT_DLA_PERIOD_M,
+        n_periods=1,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        duty_cycle=DEFAULT_DLA_DUTY,
+        gap_half_m=DEFAULT_DLA_GAP_HALF_M,
+        xmin_m=-0.92e-6,
+        xmax_m=+0.92e-6,
+        zmin_m=-0.40e-6,
+        eps_diel=DEFAULT_EPS_SIO2,
+        dual_grating=True,
+    )
+    schematic.overlay_geometry(
+        ax,
+        solver_dla_ov,
+        plane="zx",
+        unit="µm",
+        structures=polys_dla_ov,
+        show_sources=False,
+        show_monitors=False,
+        show_boundaries=True,
+        fill_materials=True,
+        material_alpha=0.22,
+    )
+    ax.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.3, zorder=7)
+    ax.text(
+        0.0,
+        0.055,
+        "e⁻ axis (2a = 400 nm)",
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
+        color=OKABE_ITO["orange"],
+        fontweight="bold",
+        bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.88, edgecolor="none"),
+        zorder=9,
+    )
+    ax.set_xlim(-0.40, +0.40)
+    ax.set_ylim(-1.15, +1.15)
+    ax.set_title(r"(a) DLA Unit-Cell Field Re{E_z}/E_0")
+    ax.set_xlabel("z [µm] (λ_p = 0.80 µm)")
+    ax.set_ylabel("x [µm]")
     fig.colorbar(pcm, ax=ax, shrink=0.86, label=r"$\mathrm{Re}\{\tilde{E}_z(x,z)\} / E_0$ [-]")
 
     # Panel (b): Cumulative wake-formalism energy gain across 6 periods
     ax = axes[1]
-    ax.plot(z_path_um, cum_sync, "-", color=OKABE_ITO["blue"], lw=1.8, label=r"Synchronized ($\beta=1.0, \lambda_p=\beta\lambda_0$)")
-    ax.plot(z_path_um, cum_det, "--", color=OKABE_ITO["orange"], lw=1.5, label=r"Detuned ($\beta=0.80$, phase slip)")
-    ax.plot(z_path_um, cum_flat, ":", color=OKABE_ITO["grey"], lw=1.6, label=r"Flat surface ($h_g=0$, Lawson–Woodward)")
+    ax.plot(z_path_um, cum_sync, "-", color=OKABE_ITO["blue"], lw=1.8, label="Synchronized (β = 1.0, λ_p = βλ_0)")
+    ax.plot(z_path_um, cum_det, "--", color=OKABE_ITO["orange"], lw=1.6, label="Detuned (β = 0.80, phase slip)")
+    ax.plot(z_path_um, cum_flat, ":", color=OKABE_ITO["grey"], lw=1.6, label="Flat surface (h_g = 0, Lawson–Woodward)")
     ax.axhline(0.0, color="#444444", lw=0.7)
-    ax.set_title(r"(b) Cumulative Energy Gain Along $e^-$ Path")
-    ax.set_xlabel(r"Interaction distance $z$ [$\mu\mathrm{m}$] ($6\,\lambda_p$)")
+    ax.set_title("(b) Cumulative Gain Along e⁻ Path")
+    ax.set_xlabel("Interaction distance z [µm] (6 λ_p)")
     ax.set_ylabel(r"Normalized voltage gain $\Delta V(z) / (E_0 L_{\mathrm{int}})$ [-]")
-    ax.grid(True)
-    ax.legend(loc="upper left", fontsize=8.0, framealpha=0.92)
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper left", fontsize=8.5)
 
     # Panel (c): Accelerating gradient G/E0 vs grating period lam_p (synchronism curve)
     ax = axes[2]
     p_dense_nm = np.linspace(float(periods_nm[0]), float(periods_nm[-1]), 300)
     deph_100 = dla_synchronous_period(beta=1.0, wavelength_m=800e-9, period_m=p_dense_nm * 1e-9, n_periods=20)["dephasing_factor"]
     deph_075 = dla_synchronous_period(beta=0.75, wavelength_m=800e-9, period_m=p_dense_nm * 1e-9, n_periods=20)["dephasing_factor"]
-    ax.plot(p_dense_nm, float(np.max(g_b100)) * deph_100, "-", color=OKABE_ITO["blue"], lw=1.3, label=r"Sinc envelope ($\beta=1.00, \lambda_{p,\mathrm{sync}}=800\;\mathrm{nm}$)")
-    ax.plot(periods_nm, g_b100, "o", color=OKABE_ITO["blue"], ms=5.5, label=r"Wakis FIT ($\beta=1.00$, Peralta 2013)")
-    ax.plot(p_dense_nm, float(np.max(g_b075)) * deph_075, "--", color=OKABE_ITO["orange"], lw=1.3, label=r"Sinc envelope ($\beta=0.75, \lambda_{p,\mathrm{sync}}=600\;\mathrm{nm}$)")
-    ax.plot(periods_nm, g_b075, "s", color=OKABE_ITO["orange"], ms=5.5, label=r"Wakis FIT ($\beta=0.75$, sub-relativistic)")
+    ax.plot(p_dense_nm, float(np.max(g_b100)) * deph_100, "-", color=OKABE_ITO["blue"], lw=1.4, label="Sinc envelope (β = 1.00, λ_p,sync = 800 nm)")
+    ax.plot(periods_nm, g_b100, "o", color=OKABE_ITO["blue"], ms=5.5, label="Wakis FIT (β = 1.00, Peralta 2013)")
+    ax.plot(p_dense_nm, float(np.max(g_b075)) * deph_075, "--", color=OKABE_ITO["orange"], lw=1.4, label="Sinc envelope (β = 0.75, λ_p,sync = 600 nm)")
+    ax.plot(periods_nm, g_b075, "s", color=OKABE_ITO["orange"], ms=5.5, label="Wakis FIT (β = 0.75, sub-relativistic)")
     ax.axvline(800.0, color=OKABE_ITO["blue"], ls=":", lw=1.0)
     ax.axvline(600.0, color=OKABE_ITO["orange"], ls=":", lw=1.0)
-    ax.set_title(r"(c) Synchronism Peak: $G(\lambda_p)/E_0$ vs Period")
-    ax.set_xlabel(r"Grating period $\lambda_p$ [nm]")
-    ax.set_ylabel(r"Multi-period accelerating factor $G / E_0$ [-]")
-    ax.grid(True)
-    ax.legend(loc="upper left", fontsize=7.8, framealpha=0.92)
+    ax.set_title("(c) Synchronism Peak vs Period λ_p")
+    ax.set_xlabel("Grating period λ_p [nm]")
+    ax.set_ylabel("Multi-period accelerating factor G / E_0 [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper left", fontsize=8.5)
 
-    out = FIG_DIR / "05_dla_synchronism_and_nearfield.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "05_dla_synchronism_and_nearfield.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
@@ -2557,33 +3172,39 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
     grad_400 = dla_npz["grad_400_mev_m"]
     grad_800 = dla_npz["grad_800_mev_m"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.0,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
 
     # Panel (a): G/E0 vs tooth depth h_g
     ax = axes[0]
     hg_dense_m = np.linspace(0.0, 1.0e-6, 200)
     rn_depth = dla_phase_grating_model(hg_dense_m, duty_cycle=0.50)["c1_amplitude"]
     rn_depth_scaled = rn_depth * (float(np.max(g_depth)) / max(float(np.max(rn_depth)), 1e-30))
-    ax.plot(hg_dense_m * 1e9, rn_depth_scaled, "--", color=OKABE_ITO["grey"], lw=1.4, label=r"Scalar phase-grating $\propto |\sin(\pi(n-1)h_g/\lambda_0)|$")
-    ax.plot(depths_nm, g_depth, "-o", color=OKABE_ITO["blue"], lw=1.6, ms=6.0, label=r"Wakis FIT ($\lambda_p=800\;\mathrm{nm}, \mathrm{DC}=0.50$)")
-    ax.axvline(680.0, color=OKABE_ITO["orange"], ls=":", lw=1.1, label=r"Optimal depth $h_g\approx 680\;\mathrm{nm}$")
-    ax.set_title(r"(a) Accelerating Factor vs Tooth Depth $h_g$")
-    ax.set_xlabel(r"Fused-silica tooth depth $h_g$ [nm]")
-    ax.set_ylabel(r"Accelerating structure factor $G / E_0$ [-]")
-    ax.grid(True)
-    ax.legend(loc="lower right", fontsize=8.0, framealpha=0.92)
+    ax.plot(hg_dense_m * 1e9, rn_depth_scaled, "--", color=OKABE_ITO["grey"], lw=1.4, label="Phase-grating ∝ |sin(π(n−1)h_g/λ_0)|")
+    ax.plot(depths_nm, g_depth, "-o", color=OKABE_ITO["blue"], lw=1.6, ms=6.0, label="Wakis FIT (λ_p = 800 nm, DC = 0.50)")
+    ax.axvline(680.0, color=OKABE_ITO["orange"], ls=":", lw=1.1, label="Optimal depth h_g ≈ 680 nm")
+    ax.set_title("(a) Gradient Factor vs Depth h_g")
+    ax.set_xlabel("Fused-silica tooth depth h_g [nm]")
+    ax.set_ylabel("Accelerating structure factor G / E_0 [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="lower right", fontsize=8.5)
 
     # Panel (b): G/E0 vs duty cycle DC
     ax = axes[1]
     dc_dense = np.linspace(0.0, 1.0, 200)
     rn_dc = np.sin(np.pi * dc_dense) * float(np.max(g_duty))
-    ax.plot(dc_dense, rn_dc, "--", color=OKABE_ITO["grey"], lw=1.4, label=r"Fourier model $\propto \sin(\pi\,\mathrm{DC})$")
-    ax.plot(duty_scan, g_duty, "-s", color=OKABE_ITO["green"], lw=1.6, ms=6.0, label=r"Wakis FIT ($h_g=680\;\mathrm{nm}$)")
-    ax.set_title(r"(b) Accelerating Factor vs Duty Cycle")
-    ax.set_xlabel(r"Tooth duty cycle $\mathrm{DC} = w_{\mathrm{tooth}} / \lambda_p$ [-]")
-    ax.set_ylabel(r"Accelerating structure factor $G / E_0$ [-]")
-    ax.grid(True)
-    ax.legend(loc="lower center", fontsize=8.0, framealpha=0.92)
+    ax.plot(dc_dense, rn_dc, "--", color=OKABE_ITO["grey"], lw=1.4, label="Fourier model ∝ sin(π DC)")
+    ax.plot(duty_scan, g_duty, "-s", color=OKABE_ITO["green"], lw=1.6, ms=6.0, label="Wakis FIT (h_g = 680 nm)")
+    ax.set_title("(b) Gradient Factor vs Duty Cycle")
+    ax.set_xlabel("Tooth duty cycle DC = w_tooth / λ_p [-]")
+    ax.set_ylabel("Accelerating structure factor G / E_0 [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="lower center", fontsize=8.5)
 
     # Panel (c): Comparison with Peralta et al., Nature 503, 91 (2013), Fig. 3b & Sapra et al., Science 367, 79 (2020)
     ax = axes[2]
@@ -2597,7 +3218,7 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
         "-",
         color=OKABE_ITO["blue"],
         lw=1.8,
-        label=rf"Wakis FIT $2a=400\;\mathrm{{nm}}$ ($G/E_0={g400_fac:.3f}$)",
+        label=f"Wakis FIT 2a = 400 nm (G/E_0 = {g400_fac:.3f})",
     )
     ax.plot(
         e0_curve,
@@ -2605,7 +3226,7 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
         "--",
         color=OKABE_ITO["sky"],
         lw=1.8,
-        label=rf"Wakis FIT $2a=800\;\mathrm{{nm}}$ ($G/E_0={g800_fac:.3f}$)",
+        label=f"Wakis FIT 2a = 800 nm (G/E_0 = {g800_fac:.3f})",
     )
     e0_319 = comp["e0_sio2_319uj_gv_m"]
     e0_319_err = comp["e0_sio2_319uj_err_gv_m"]
@@ -2622,7 +3243,7 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
         mew=1.6,
         ms=6.5,
         capsize=3.5,
-        label=rf"FIT pred. at $319\;\mu\mathrm{{J}}$: ${g_pred_319:.0f}\pm {g_pred_319_err:.0f}\;\mathrm{{MeV/m}}$",
+        label=f"FIT pred. at 319 µJ: {g_pred_319:.0f} ± {g_pred_319_err:.0f} MeV/m",
     )
     ax.errorbar(
         [e0_319],
@@ -2633,7 +3254,7 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
         color=OKABE_ITO["orange"],
         ms=6.5,
         capsize=3.5,
-        label=r"Peralta (2013) $400\;\mathrm{nm}$: $309.8\pm 20.7\;\mathrm{MeV/m}$",
+        label="Peralta (2013) 400 nm: 309.8 ± 20.7 MeV/m",
     )
     ax.errorbar(
         [e0_319],
@@ -2644,45 +3265,45 @@ def plot_06_dla_depth_duty_and_peralta2013(dla_npz: np.lib.npyio.NpzFile) -> Pat
         color=OKABE_ITO["purple"],
         ms=6.5,
         capsize=3.5,
-        label=r"Peralta (2013) $800\;\mathrm{nm}$: ${\sim}152\pm 15\;\mathrm{MeV/m}$ (Fig. 3b)",
+        label="Peralta (2013) 800 nm: ~152 ± 15 MeV/m (Fig. 3b)",
     )
     ax.axhline(
         30.5,
         color=OKABE_ITO["green"],
         ls=":",
         lw=1.3,
-        label=r"Sapra et al. (2020) on-chip: $30.5\;\mathrm{MeV/m}$",
+        label="Sapra et al. (2020) on-chip: 30.5 MeV/m",
     )
     ax.text(
         0.97,
         0.06,
         (
-            "Headline gap ratio $G(400)/G(800)$:\n"
+            "Headline gap ratio G(400)/G(800):\n"
             f"FIT: {g400_fac:.3f}/{g800_fac:.3f} = {comp['gap_ratio_sim_rounded']:.2f}\n"
             f"Exp.: 309.8/~152 = {comp['gap_ratio_exp']:.2f} ± {comp['gap_ratio_exp_err']:.2f}"
         ),
         transform=ax.transAxes,
         ha="right",
         va="bottom",
-        fontsize=7.6,
+        fontsize=8.5,
         bbox=dict(boxstyle="round,pad=0.25", facecolor="#F8FAFC", edgecolor="#94A3B8", alpha=0.94),
     )
     ax.set_xlim(0.0, 2.0)
     ax.set_ylim(0.0, 720.0)
-    ax.set_title("(c) Gap Ratio & Forward Prediction vs Peralta (2013)")
-    ax.set_xlabel(r"Incident substrate field $E_0$ in $\mathrm{SiO}_2$ [GV/m]")
-    ax.set_ylabel(r"Accelerating gradient $G$ [MeV/m]")
-    ax.grid(True)
-    ax.legend(loc="upper left", fontsize=7.0, framealpha=0.92)
+    ax.set_title("(c) Gap Ratio vs Peralta (2013)")
+    ax.set_xlabel("Incident substrate field E_0 in SiO₂ [GV/m]")
+    ax.set_ylabel("Accelerating gradient G [MeV/m]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper left", fontsize=8.5)
 
-    out = FIG_DIR / "06_dla_depth_duty_and_peralta2013.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "06_dla_depth_duty_and_peralta2013.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
 
 def plot_07_resolution_convergence(conv_npz: np.lib.npyio.NpzFile) -> Path:
-    """Render Figure 7: 3-level grid convergence (Part 1 SP & Part 2 DLA) + space-harmonic diagram."""
+    """Render Figure 7: 3-level uniform baseline + graded mesh convergence + space-harmonic diagram."""
     _apply_paper_style()
     dx_sp_nm = conv_npz["dx_sp_nm"]
     sp_ppw = conv_npz["sp_ppw_sio2"]
@@ -2692,15 +3313,45 @@ def plot_07_resolution_convergence(conv_npz: np.lib.npyio.NpzFile) -> Path:
     dla_g = conv_npz["dla_g_over_e0"]
     dla_g_rich = float(conv_npz["dla_g_richardson"])
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.3), constrained_layout=True)
+    has_graded = "sp_graded_lambda_mean_rel_err" in conv_npz
+    if has_graded:
+        sp_g_ppw = float(conv_npz["sp_graded_ppw_max_sio2"])
+        sp_g_err = float(conv_npz["sp_graded_lambda_mean_rel_err"]) * 100.0
+        sp_g_cells = int(conv_npz["sp_graded_cells"])
+        sp_u_cells = int(conv_npz["sp_cells"][-1])
+        dla_g_ppw = float(conv_npz["dla_graded_ppw_max_sio2"])
+        dla_g_val = float(conv_npz["dla_graded_g_over_e0"])
+        dla_g_cells = int(conv_npz["dla_graded_cells"])
+        dla_u_cells = int(conv_npz["dla_cells"][-1])
 
-    # Panel (a): Smith-Purcell dispersion error vs resolution
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN * 1.70,
+        height_in=4.0,
+        ncols=3,
+        nrows=1,
+        layout="constrained",
+    )
+
+    # Panel (a): Smith-Purcell dispersion error vs resolution (Uniform baseline + Graded mesh)
     ax = axes[0]
-    ax.plot(sp_ppw, sp_err, "-o", color=OKABE_ITO["blue"], lw=1.7, ms=6.5, label=r"Wakis FIT mean $|\Delta\lambda|/\lambda$")
-    ax.axvline(20.0, color=OKABE_ITO["orange"], ls="--", lw=1.2, label=r"$\geq 20\;\mathrm{cells}/\lambda$ threshold")
-    y_span = max(float(np.max(sp_err) - np.min(sp_err)), 0.8)
-    ax.set_ylim(max(0.0, float(np.min(sp_err)) - 0.35 * y_span), float(np.max(sp_err)) + 0.55 * y_span)
-    ax.set_xlim(float(np.min(sp_ppw)) - 2.0, float(np.max(sp_ppw)) + 2.5)
+    ax.plot(sp_ppw, sp_err, "-o", color=OKABE_ITO["blue"], lw=1.7, ms=6.5, label="Uniform baseline |Δλ|/λ")
+    if has_graded:
+        ax.plot(
+            [sp_g_ppw],
+            [sp_g_err],
+            "*",
+            color=OKABE_ITO["orange"],
+            ms=11.0,
+            mec=OKABE_ITO["black"],
+            mew=0.8,
+            label=f"Graded mesh ({sp_g_err:.2f}%, {sp_g_cells:,} vs {sp_u_cells:,} cells)",
+        )
+    ax.axvline(20.0, color=OKABE_ITO["orange"], ls="--", lw=1.2, label="≥ 20 cells/λ threshold")
+    all_sp_ppw = np.append(sp_ppw, sp_g_ppw) if has_graded else sp_ppw
+    all_sp_err = np.append(sp_err, sp_g_err) if has_graded else sp_err
+    y_span = max(float(np.max(all_sp_err) - np.min(all_sp_err)), 0.8)
+    ax.set_ylim(max(0.0, float(np.min(all_sp_err)) - 0.35 * y_span), float(np.max(all_sp_err)) + 0.65 * y_span)
+    ax.set_xlim(float(np.min(all_sp_ppw)) - 2.5, float(np.max(all_sp_ppw)) + 3.5)
     for i, nm in enumerate(dx_sp_nm):
         ax.annotate(
             f"{nm:.1f} nm ({sp_err[i]:.2f}%)",
@@ -2710,43 +3361,53 @@ def plot_07_resolution_convergence(conv_npz: np.lib.npyio.NpzFile) -> Path:
             ha="center",
             fontsize=8.5,
         )
-    ax.set_title("(a) Part 1 · Smith–Purcell Grid Convergence")
-    ax.set_xlabel(r"Resolution in $\mathrm{SiO}_2$ [$\mathrm{cells}/\lambda$]")
-    ax.set_ylabel(r"Mean wavelength error $|\lambda_{\mathrm{sim}}-\lambda_{\mathrm{th}}|/\lambda_{\mathrm{th}}$ [%]")
-    ax.grid(True)
-    ax.legend(loc="upper right", framealpha=0.92)
+    ax.set_title("(a) Part 1 · SP Grid Convergence")
+    ax.set_xlabel("Groove/beam resolution in SiO₂ [cells/λ]")
+    ax.set_ylabel("Mean wavelength error |λ_sim − λ_th|/λ_th [%]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="upper right", fontsize=8.5)
 
-    # Panel (b): DLA synchronous accelerating factor convergence
+    # Panel (b): DLA synchronous accelerating factor convergence (Uniform baseline + Graded mesh)
     ax = axes[1]
-    ax.plot(dla_ppw, dla_g, "-s", color=OKABE_ITO["green"], lw=1.7, ms=6.5, label=r"Wakis FIT $G / E_0$")
+    ax.plot(dla_ppw, dla_g, "-s", color=OKABE_ITO["green"], lw=1.7, ms=6.5, label="Uniform baseline G / E_0")
+    if has_graded:
+        ax.plot(
+            [dla_g_ppw],
+            [dla_g_val],
+            "*",
+            color=OKABE_ITO["orange"],
+            ms=11.0,
+            mec=OKABE_ITO["black"],
+            mew=0.8,
+            label=f"Graded mesh ({dla_g_val:.4f}, {dla_g_cells:,} vs {dla_u_cells:,} cells)",
+        )
     ax.axhline(dla_g_rich, color=OKABE_ITO["black"], ls=":", lw=1.4, label=f"Richardson extrap. ({dla_g_rich:.4f})")
-    ax.axvline(20.0, color=OKABE_ITO["orange"], ls="--", lw=1.2, label=r"$\geq 20\;\mathrm{cells}/\lambda_{\mathrm{SiO}_2}$")
-    ax.set_title(r"(b) Part 2 · DLA Gradient Factor Convergence")
-    ax.set_xlabel(r"Resolution in $\mathrm{SiO}_2$ at $\lambda_0=800\;\mathrm{nm}$ [$\mathrm{cells}/\lambda$]")
-    ax.set_ylabel(r"Synchronous structure factor $G / E_0$ [-]")
-    ax.grid(True)
-    ax.legend(loc="lower right", framealpha=0.92)
+    ax.axvline(20.0, color=OKABE_ITO["orange"], ls="--", lw=1.2, label="≥ 20 cells/λ_SiO₂")
+    ax.set_title("(b) Part 2 · DLA Grid Convergence")
+    ax.set_xlabel("Channel resolution in SiO₂ at λ_0 = 800 nm [cells/λ]")
+    ax.set_ylabel("Synchronous structure factor G / E_0 [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="lower right", fontsize=8.5)
 
     # Panel (c): Space-harmonic (omega, k_z) diagram unifying SWS (6.2), Cherenkov (8.2), VLA (8.3), and SP/DLA (8.4)
     ax = axes[2]
     kz_norm = np.linspace(-1.2, 2.2, 300)
-    # Light cone |kz| <= omega/c
-    ax.fill_between(kz_norm, np.abs(kz_norm), 2.5, color="#E8F4FA", alpha=0.8, label=r"Vacuum light cone ($|k_z| \leq \omega/c$: SP radiation)")
-    ax.plot(kz_norm, np.abs(kz_norm), "-", color=OKABE_ITO["black"], lw=1.5, label=r"Vacuum light line $\omega = c|k_z|$")
+    ax.fill_between(kz_norm, np.abs(kz_norm), 2.5, color="#E8F4FA", alpha=0.8, label="Vacuum light cone (|k_z| ≤ ω/c: SP radiation)")
+    ax.plot(kz_norm, np.abs(kz_norm), "-", color=OKABE_ITO["black"], lw=1.5, label="Vacuum light line ω = c|k_z|")
     beta_ex = 0.78
-    ax.plot(kz_norm, beta_ex * np.maximum(kz_norm, 0.0), "--", color=OKABE_ITO["orange"], lw=1.6, label=rf"Bare $e^-$ line $\omega = \beta c k_z$ ($n=0$, evanescent)")
-    ax.plot(kz_norm, beta_ex * (kz_norm + 1.0), "-", color=OKABE_ITO["blue"], lw=1.8, label=r"Space harmonic $n=+1$: $\omega = \beta c(k_z + 2\pi/d)$")
-    ax.plot([0.0], [beta_ex], "o", color=OKABE_ITO["green"], ms=7.5, zorder=6, label=r"Normal-incidence DLA / $\theta=90^\circ$ SP ($k_z=0$)")
+    ax.plot(kz_norm, beta_ex * np.maximum(kz_norm, 0.0), "--", color=OKABE_ITO["orange"], lw=1.6, label="Bare e⁻ line ω = βck_z (n = 0, evanescent)")
+    ax.plot(kz_norm, beta_ex * (kz_norm + 1.0), "-", color=OKABE_ITO["blue"], lw=1.8, label="Space harmonic n = +1: ω = βc(k_z + 2π/d)")
+    ax.plot([0.0], [beta_ex], "o", color=OKABE_ITO["green"], ms=7.5, zorder=6, label="Normal-incidence DLA / θ = 90° SP (k_z = 0)")
     ax.set_xlim(-1.0, 2.0)
     ax.set_ylim(0.0, 1.8)
-    ax.set_title(r"(c) Space-Harmonic Diagram ($\omega d / 2\pi c$ vs $k_z d / 2\pi$)")
-    ax.set_xlabel(r"Normalized axial wavenumber $k_z d / (2\pi)$ [-]")
-    ax.set_ylabel(r"Normalized frequency $\omega d / (2\pi c) = d / \lambda$ [-]")
-    ax.grid(True)
-    ax.legend(loc="lower right", fontsize=7.5, framealpha=0.92)
+    ax.set_title("(c) Space-Harmonic Diagram (ω vs k_z)")
+    ax.set_xlabel("Normalized axial wavenumber k_z d / (2π) [-]")
+    ax.set_ylabel("Normalized frequency ωd / (2πc) = d / λ [-]")
+    figstyle.spectrum_grid(ax)
+    ax.legend(loc="lower right", fontsize=8.5)
 
-    out = FIG_DIR / "07_resolution_convergence.png"
-    fig.savefig(out, dpi=180)
+    figstyle.finish(fig, auto_legend_below=False)
+    out = figstyle.save(fig, FIG_DIR / "07_resolution_convergence.png", auto_legend_below=False)
     plt.close(fig)
     return out
 
@@ -2754,54 +3415,98 @@ def plot_07_resolution_convergence(conv_npz: np.lib.npyio.NpzFile) -> Path:
 def render_sp_animation_gif(sp_npz: np.lib.npyio.NpzFile) -> Path:
     """Render animated GIF (< 5 MB) comparing Smith-Purcell radiation on PEC vs SiO2 gratings."""
     _apply_paper_style()
-    x_um = sp_npz["x_m"] * 1e6
-    z_um = sp_npz["z_m"] * 1e6
+    x_m = sp_npz["x_m"]
+    z_m = sp_npz["z_m"]
+    x_um = x_m * 1e6
+    z_um = z_m * 1e6
     fr_pec = sp_npz["frames_Ez_pec"]
     fr_diel = sp_npz["frames_Ez_diel"]
     fr_zb = sp_npz["frames_zb_m"] * 1e6
 
     rad_mask = x_um >= 0.45
-    vmax = float(np.percentile(np.abs(fr_pec[:, rad_mask, :]), 99.0))
+    _, vmax = figstyle.symmetric_limits(fr_pec[:, rad_mask, :], percentile=99.0)
     vmax = max(vmax, 1.0)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.0), constrained_layout=True, sharey=True)
+    fig, axes = figstyle.new_figure(
+        width_in=10.6,
+        height_in=4.0,
+        ncols=2,
+        nrows=1,
+        sharey=True,
+        layout="constrained",
+    )
     n_per = int(round((z_um[-1] - z_um[0] - 6.0) / 1.67))
+    dx_est = float(x_m[1] - x_m[0])
+    dz_est = float(z_m[1] - z_m[0])
+    solver_ov, _, _, _ = _build_sp_solver_for_schematic(
+        material="pec",
+        n_periods=n_per,
+        depth_m=DEFAULT_SP_DEPTH_M,
+        graded=False,
+        dx_m=dx_est,
+        dz_m=dz_est,
+    )
 
     ims = []
     dots = []
     titles = [
-        r"(a) Metallic (PEC) Grating ($d=1.67\;\mu\mathrm{m}, \beta=0.80$)",
-        r"(b) Fused-Silica Grating ($\varepsilon_r=2.11, n=1.453$)",
+        "(a) Metallic (PEC) Grating (d = 1.67 µm, β = 0.80)",
+        "(b) Fused-Silica Grating (ε_r = 2.11, n = 1.453)",
     ]
-    mlabels = ["PEC grating", r"$\mathrm{SiO}_2$ grating ($\varepsilon_r=2.11$)"]
-    fcols = ["#555555", "#56B4E9"]
+    mats = ["pec", DEFAULT_EPS_SIO2]
 
     for idx, ax in enumerate(axes):
         field0 = fr_pec[0] if idx == 0 else fr_diel[0]
-        im = ax.pcolormesh(z_um, x_um, field0, cmap="RdBu_r", vmin=-vmax, vmax=+vmax, shading="auto")
-        _draw_sp_grating_overlay(
-            ax,
-            z_min_um=float(z_um[0]),
-            z_max_um=float(z_um[-1]),
-            x_min_um=float(x_um[0]),
-            x_max_um=float(x_um[-1]),
-            period_um=1.67,
-            n_periods=n_per,
-            depth_um=0.40,
-            duty=0.50,
-            mat_label=mlabels[idx],
-            face_color=fcols[idx],
-            cpml_um=0.50,
+        im = ax.pcolormesh(
+            z_um,
+            x_um,
+            field0,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax,
+            vmax=+vmax,
+            shading="auto",
         )
-        (dot,) = ax.plot([fr_zb[0]], [0.25], "o", color=OKABE_ITO["orange"], ms=6.5, mec="white", mew=0.8, zorder=8)
+        polys = build_sp_grating_polygon(
+            material=mats[idx],
+            period_m=DEFAULT_SP_PERIOD_M,
+            n_periods=n_per,
+            depth_m=DEFAULT_SP_DEPTH_M,
+            duty_cycle=DEFAULT_SP_DUTY,
+            xmin_m=float(solver_ov.grid.xmin),
+            zmin_m=float(solver_ov.grid.zmin),
+            zmax_m=float(solver_ov.grid.zmax),
+        )
+        schematic.overlay_geometry(
+            ax,
+            solver_ov,
+            plane="zx",
+            unit="µm",
+            structures=polys,
+            show_sources=False,
+            show_monitors=False,
+            show_boundaries=True,
+            fill_materials=True,
+            material_alpha=0.24,
+        )
+        (dot,) = ax.plot(
+            [fr_zb[0]],
+            [0.25],
+            "o",
+            color=OKABE_ITO["orange"],
+            ms=6.5,
+            mec="white",
+            mew=0.8,
+            zorder=8,
+        )
         ax.set_title(titles[idx])
-        ax.set_xlabel(r"$z$ [$\mu\mathrm{m}$]")
+        ax.set_xlabel("z [µm]")
         if idx == 0:
-            ax.set_ylabel(r"$x$ [$\mu\mathrm{m}$]")
+            ax.set_ylabel("x [µm]")
         ims.append(im)
         dots.append(dot)
 
     fig.colorbar(ims[0], ax=axes, shrink=0.86, label=r"Scattered $E_z^{\mathrm{SP}}(x, z, t)$ [V/m]")
+    figstyle.finish(fig, auto_legend_below=False)
 
     def _update(frame_idx: int):
         ims[0].set_array(fr_pec[frame_idx].ravel())
@@ -2830,38 +3535,85 @@ def render_dla_animation_gif(dla_npz: np.lib.npyio.NpzFile) -> Path:
 
     x_mask = np.abs(x_um) <= 1.25
     x_sub = x_um[x_mask]
-    vmax = float(np.max(np.abs(fr_ez[:, x_mask, :])))
+    _, vmax = figstyle.symmetric_limits(fr_ez[:, x_mask, :], percentile=99.8)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.0), constrained_layout=True)
+    fig, axes = figstyle.new_figure(
+        width_in=10.6,
+        height_in=4.0,
+        ncols=2,
+        nrows=1,
+        layout="constrained",
+    )
 
     ax0 = axes[0]
-    im = ax0.pcolormesh(z_um, x_sub, fr_ez[0, x_mask, :], cmap="RdBu_r", vmin=-vmax, vmax=+vmax, shading="auto")
-    for m in range(6):
-        zc = (m + 0.5) * 0.80
-        ax0.add_patch(Rectangle((zc - 0.20, -0.88), 0.40, 0.68, fill=False, edgecolor="#111111", lw=1.2))
-        ax0.add_patch(Rectangle((zc - 0.20, +0.20), 0.40, 0.68, fill=False, edgecolor="#111111", lw=1.2))
-    ax0.axhline(-0.88, color="#111111", lw=1.0)
-    ax0.axhline(+0.88, color="#111111", lw=1.0)
-    ax0.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.2)
-    ax0.text(0.25, -1.08, r"$\mathrm{SiO}_2$ ($\varepsilon_r=2.11$), CPML $\pm x$", fontsize=8.5, fontweight="bold", bbox=dict(boxstyle="round,pad=0.12", facecolor="white", alpha=0.88, edgecolor="none"))
-    (e_dot,) = ax0.plot([fr_ze_um[0]], [0.0], "o", color=OKABE_ITO["orange"], ms=7.5, mec="white", mew=1.0, zorder=8)
-    ax0.set_title(r"(a) DLA Field $E_z(x, z, t)/E_0$ & Surfing $e^-$")
-    ax0.set_xlabel(r"$z$ [$\mu\mathrm{m}$] ($\lambda_p = 0.80\;\mu\mathrm{m}$)")
-    ax0.set_ylabel(r"$x$ [$\mu\mathrm{m}$]")
+    im = ax0.pcolormesh(
+        z_um,
+        x_sub,
+        fr_ez[0, x_mask, :],
+        cmap=figstyle.CMAP_DIVERGING,
+        vmin=-vmax,
+        vmax=+vmax,
+        shading="auto",
+    )
+    solver_dla_6, _, _, polys_dla_6 = _build_dla_solver_for_schematic(
+        n_periods=6,
+        depth_m=DEFAULT_DLA_DEPTH_M,
+        graded=False,
+        dx_m=0.025e-6,
+        xmin_m=-1.25e-6,
+        xmax_m=+1.25e-6,
+        zmin_m=0.0,
+    )
+    schematic.overlay_geometry(
+        ax0,
+        solver_dla_6,
+        plane="zx",
+        unit="µm",
+        structures=polys_dla_6,
+        show_sources=False,
+        show_monitors=False,
+        show_boundaries=True,
+        fill_materials=True,
+        material_alpha=0.22,
+    )
+    ax0.axhline(0.0, color=OKABE_ITO["orange"], ls="-.", lw=1.2, zorder=7)
+    (e_dot,) = ax0.plot(
+        [fr_ze_um[0]],
+        [0.0],
+        "o",
+        color=OKABE_ITO["orange"],
+        ms=7.5,
+        mec="white",
+        mew=1.0,
+        zorder=8,
+    )
+    ax0.set_xlim(0.0, 4.80)
+    ax0.set_ylim(-1.25, +1.25)
+    ax0.set_title(r"(a) DLA Field E_z(x, z, t)/E_0 & Surfing e⁻")
+    ax0.set_xlabel("z [µm] (λ_p = 0.80 µm)")
+    ax0.set_ylabel("x [µm]")
     fig.colorbar(im, ax=ax0, shrink=0.86, label=r"$E_z(x, z, t) / E_0$ [-]")
 
     ax1 = axes[1]
     ax1.plot(z_path_um, cum_sync, "--", color="#BBBBBB", lw=1.1, label="Full synchronized trajectory")
-    ax1.plot(z_path_um, cum_flat, ":", color=OKABE_ITO["grey"], lw=1.4, label=r"Flat surface ($h_g=0$, Lawson–Woodward)")
-    (line_sync,) = ax1.plot([z_path_um[0]], [cum_sync[0]], "-", color=OKABE_ITO["blue"], lw=2.2, label=r"Cumulative gain $\Delta V(z) / (E_0 L)$")
+    ax1.plot(z_path_um, cum_flat, ":", color=OKABE_ITO["grey"], lw=1.4, label="Flat surface (h_g = 0, Lawson–Woodward)")
+    (line_sync,) = ax1.plot(
+        [z_path_um[0]],
+        [cum_sync[0]],
+        "-",
+        color=OKABE_ITO["blue"],
+        lw=2.2,
+        label="Cumulative gain ΔV(z) / (E_0 L)",
+    )
     (gain_dot,) = ax1.plot([z_path_um[0]], [cum_sync[0]], "o", color=OKABE_ITO["orange"], ms=7.0)
     ax1.set_xlim(0.0, float(z_path_um[-1]))
     ax1.set_ylim(-0.04, float(np.max(cum_sync)) * 1.15)
-    ax1.set_title(r"(b) Synchronous Energy Gain vs Flat Null")
-    ax1.set_xlabel(r"Electron position $z_e(t)$ [$\mu\mathrm{m}$]")
+    ax1.set_title("(b) Synchronous Energy Gain vs Flat Null")
+    ax1.set_xlabel("Electron position z_e(t) [µm]")
     ax1.set_ylabel(r"Normalized energy gain $\Delta V(z) / (E_0 L_{\mathrm{int}})$ [-]")
-    ax1.grid(True)
-    ax1.legend(loc="upper left", fontsize=8.0, framealpha=0.92)
+    figstyle.spectrum_grid(ax1)
+    ax1.legend(loc="upper left", fontsize=8.0)
+    figstyle.finish(fig, auto_legend_below=False)
 
     def _update(idx: int):
         im.set_array(fr_ez[idx, x_mask, :].ravel())
@@ -2880,14 +3632,16 @@ def render_dla_animation_gif(dla_npz: np.lib.npyio.NpzFile) -> Path:
 
 
 def render_all_figures() -> list[Path]:
-    """Render all 7 diagnostic PNG figures and 2 animated GIFs from precomputed data/."""
+    """Render all setup and diagnostic PNG figures and 2 animated GIFs from precomputed data/."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     sp_npz = np.load(DATA_DIR / "task_smith_purcell.npz")
     imp_npz = np.load(DATA_DIR / "task_impact_decay.npz")
     dla_npz = np.load(DATA_DIR / "task_dla_grating.npz")
     conv_npz = np.load(DATA_DIR / "task_convergence.npz")
 
+    setup_paths = plot_00_setup_schematics()
     paths = [
+        *setup_paths,
         plot_01_setup_schematic_and_mesh(),
         plot_02_sp_field_maps(sp_npz),
         plot_03_sp_dispersion_and_angular_spectrum(sp_npz),

@@ -23,6 +23,8 @@ from _helpers import (  # noqa: E402
     FastModeMonitor,
     FastRingPolySlab,
     attach_fast_2d_te_step,
+    build_ring_add_drop_graded_axes,
+    build_ring_add_drop_hybrid_unstructured_mesh,
     cmt_add_drop_spectra,
     find_ring_resonances,
 )
@@ -50,7 +52,7 @@ def test_resolution_ladder_and_cells_across_feature_with_mutation():
     Also includes mutation checks on `coupler_gap_mesh_overrides`,
     `measure_cells_across_gap`, and `FastRingPolySlab`.
     """
-    for quick_mode, expected_len in ((True, 9), (False, 11)):
+    for quick_mode, expected_len in ((True, 10), (False, 12)):
         tasks = study_tasks(quick=quick_mode)
         assert len(tasks) == expected_len
         demo_keys = []
@@ -62,6 +64,7 @@ def test_resolution_ladder_and_cells_across_feature_with_mutation():
                 subpixel_smoothing=t["subpixel"],
                 gap_m=t["gap_nm"] * 1e-9,
                 build_solver=False,
+                nonuniform=t.get("nonuniform", False),
             )
             assert sim.grid.Nz == 1
             assert sim.n_cells == int(sim.grid.Nx) * int(sim.grid.Ny)
@@ -478,13 +481,18 @@ def test_coupling_gap_mutation_and_figures_exist():
     assert qs[0] < qs[1] < qs[2]
 
     expected_figs = [
+        "00_setup_table.md",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_layout.png",
         "02_eim_stack.png",
         "03_coupler_geometry_zoom.png",
         "04_mesh_permittivity_zoom.png",
+        "04b_mesh_upgrade_comparison.png",
         "05_port_modes.png",
         "06_waveguide_dispersion_ng.png",
         "07_fields_on_vs_off_resonance.png",
+        "07b_fields_hz_on_vs_off_resonance.png",
         "08_field_movie.gif",
         "09_sparameters_broadband.png",
         "10_resonance_zoom_cmt_fit.png",
@@ -496,3 +504,44 @@ def test_coupling_gap_mutation_and_figures_exist():
     for fname in expected_figs:
         fpath = FIG_DIR / fname
         assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing or empty figure: {fname}"
+    gif_size_mb = (FIG_DIR / "08_field_movie.gif").stat().st_size / (1024.0 * 1024.0)
+    assert gif_size_mb < 5.0, f"GIF exceeds 5 MB limit: {gif_size_mb:.2f} MB"
+
+    # Verify graded non-uniform Cartesian mesh (`kottke_nonuniform`) and hybrid unstructured ring mesh
+    if "kottke_nonuniform" in results and "kottke_L3" in results:
+        d_nu = results["kottke_nonuniform"]
+        d_l3 = results["kottke_L3"]
+        assert int(d_nu["n_cells"]) < 0.66 * int(d_l3["n_cells"])
+        assert np.isclose(float(d_nu["cells_across_feature"]), 8.0, rtol=1e-4)
+        r_nu = find_ring_resonances(
+            d_nu["wavelengths"], d_nu["S_through_in"], d_nu["S_drop_in"]
+        )
+        assert len(r_nu["resonances"]) == 4
+        assert np.isclose(r_nu["mean_fsr_nm"], 23.61, rtol=0.02)
+        assert 600.0 < r_nu["mean_Q_loaded"] < 850.0
+
+    x_nu, y_nu, z_nu, info_nu = build_ring_add_drop_graded_axes(
+        gap_m=100e-9, n_cells_across_gap=8, radius_m=R_RING, width_m=0.43e-6, cells_per_wavelength=20
+    )
+    assert len(z_nu) - 1 == 1
+    assert np.allclose(x_nu + x_nu[::-1], 0.0, atol=1e-15), "x_axis must be exact mirror-symmetric"
+    assert np.allclose(y_nu + y_nu[::-1], 0.0, atol=1e-15), "y_axis must be exact mirror-symmetric"
+    assert np.isclose(info_nu["cells_across_feature"], 8.0, rtol=1e-6)
+    assert np.isclose(info_nu["dx_min_nm"], 12.50, rtol=1e-6)
+    assert info_nu["n_cells"] < 190000
+
+    # Mutation check: halving n_cells_across_gap from 8 to 4 halves cells_across_feature and doubles dx_min_nm
+    _, _, _, info_mut = build_ring_add_drop_graded_axes(
+        gap_m=100e-9, n_cells_across_gap=4, radius_m=R_RING, width_m=0.43e-6, cells_per_wavelength=20
+    )
+    assert np.isclose(info_mut["cells_across_feature"], 4.0, rtol=1e-6)
+    assert np.isclose(info_mut["dx_min_nm"], 25.00, rtol=1e-6)
+    assert info_mut["n_cells"] < info_nu["n_cells"]
+
+    mesh_hyb, stats_hyb = build_ring_add_drop_hybrid_unstructured_mesh(
+        radius_m=R_RING, width_m=0.43e-6, h=0.16e-6, levels=2
+    )
+    assert stats_hyb["n_quads"] > 500
+    assert stats_hyb["n_tris"] > 500
+    assert stats_hyb["n_cells"] == stats_hyb["n_quads"] + stats_hyb["n_tris"]
+    assert mesh_hyb.n_cells == stats_hyb["n_cells"]

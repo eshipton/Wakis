@@ -39,7 +39,9 @@
 # $5 \times 6$ $(W_{\text{MMI}}, L_{\text{MMI}})$ design sweeps (bracketing the
 # 2D EIM minimum-excess-loss optimum $0.325\;\text{dB}$ at $(5.00, 11.20)\;\mu\text{m}$
 # and the global minimum inner/outer imbalance $0.0027$ at $(5.00, 11.30)\;\mu\text{m}$
-# strictly in the interior of the grid), and analyze Kottke vs staircase
+# strictly in the interior of the grid), and benchmark a **graded non-uniform,
+# non-square Cartesian mesh upgrade** (`kottke_nonuniform`, `task_37`,
+# $732 \times 257 \times 1 = 188{,}124$ cells) alongside Kottke vs staircase
 # convergence against an independent $40\;\text{cpw}$ reference run.
 #
 # ---
@@ -56,7 +58,8 @@
 # 2. Construct the 34-vertex $1 \times 4$ MMI polygon (input waveguide, input
 #    linear taper, multimode interference box, four output tapers, and four
 #    output waveguides) as a single seamless `PolySlab` with Kottke (2008) [3]
-#    subpixel smoothing.
+#    subpixel smoothing and a graded non-uniform, non-square Cartesian mesh that
+#    snaps grid nodes exactly to the MMI sidewalls ($y = \pm 2.45\;\mu\text{m}$).
 # 3. Predict the beat length $L_\pi = \frac{4 n_r W_e^2}{3 \lambda_0}$ and first
 #    4-fold symmetric self-imaging length $L_{\text{MMI}} = \frac{3 L_\pi}{16}$
 #    analytically and via 1D eigenmode expansion (EME), and explain why
@@ -64,19 +67,19 @@
 #    offset the 2D EIM optimum from the 3D lateral-TE dimensions.
 # 4. Quantify output uniformity, excess insertion loss, pairwise mirror
 #    symmetry ($T_1 = T_4$, $T_2 = T_3$), higher-order Mode 1 excitation at the
-#    outer ports, and subpixel vs staircase mesh convergence (both single-wavelength
-#    and band-averaged RMS) across the full-resolution study.
+#    outer ports, and subpixel, staircase, and graded non-uniform mesh convergence
+#    (both single-wavelength and band-averaged RMS) across the full-resolution study.
 #
 # ## Contents
 #
 # 1. [Physical background & self-imaging theory](#1.-Physical-background-&-self-imaging-theory)
 # 2. [5-layer vertical-slot Effective-Index Method (EIM)](#2.-5-layer-vertical-slot-Effective-Index-Method-(EIM))
 # 3. [Parametric 34-vertex MMI geometry construction](#3.-Parametric-34-vertex-MMI-geometry-construction)
-# 4. [Subpixel permittivity smoothing vs staircasing](#4.-Subpixel-permittivity-smoothing-vs-staircasing)
+# 4. [Subpixel permittivity smoothing, staircasing & graded non-uniform mesh upgrade](#4.-Subpixel-permittivity-smoothing,-staircasing-&-graded-non-uniform-mesh-upgrade)
 # 5. [Study tasks, resolution ladder & extended design sweep](#5.-Study-tasks,-resolution-ladder-&-extended-design-sweep)
-# 6. [Generating the complete 15-figure diagnostic suite](#6.-Generating-the-complete-15-figure-diagnostic-suite)
+# 6. [Generating the complete 18-figure setup and diagnostic suite](#6.-Generating-the-complete-18-figure-setup-and-diagnostic-suite)
 # 7. [Full-resolution results: spectra, symmetry, mode purity & parameter sweep](#7.-Full-resolution-results:-spectra,-symmetry,-mode-purity-&-parameter-sweep)
-# 8. [Resolution table & subpixel convergence analysis](#8.-Resolution-table-&-subpixel-convergence-analysis)
+# 8. [Resolution table & subpixel convergence analysis](#8.-Resolution table-&-subpixel-convergence-analysis)
 # 9. [Limits, failure modes & when 2D EIM breaks down](#9.-Limits,-failure-modes-&-when-2D-EIM-breaks-down)
 # 10. [Exercises](#10.-Exercises)
 # 11. [References](#11.-References)
@@ -133,6 +136,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 from scipy.constants import c as c_light
 
+from wakis import figstyle
 from wakis.templates.photonics import (
     PICSimulation,
     PolySlab,
@@ -151,11 +155,18 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
+    NonUniformMMI1x4PIC,
+    build_mmi_1x4_graded_axes,
     equivalent_3layer_core_index,
+    measure_mmi_1x4_mesh,
     mmi_analytic_estimates,
     mmi_discretization_diagnostics,
     mmi_eme_length_sweep,
+    plot_mesh_upgrade_comparison_mmi_1x4,
     plot_slot_eim_stack,
+    render_mmi_1x4_field_map_with_overlay,
+    render_mmi_1x4_movie_with_overlay,
+    save_mmi_1x4_setup_figures,
     slot_slab_neff,
 )
 
@@ -288,6 +299,57 @@ X_PORT_IN = -0.75e-6
 # overridden by `mmi_layer2` on $z \in [-0.05, +0.05]\;\mu\text{m}$ in
 # $\text{GaN}$). In 2D EIM (`two_d=True`), the single 34-vertex `PolySlab`
 # carries the 5-layer vertical-slot effective index $n_{\text{eff,slot}} = 2.9842$.
+#
+# ### Simulation setup schematic, boundary conditions & graded mesh (`00a`, `00b`)
+#
+# Before launching the time-domain solver, `save_mmi_1x4_setup_figures` calls
+# `wakis.schematic.save_setup_figures` on the graded non-uniform, non-square
+# simulation setup (`NonUniformMMI1x4PIC`) to render the labelled geometry
+# schematic (`figures/00a_setup_geometry.png`), the mesh-and-excitation overview
+# (`figures/00b_setup_mesh_and_excitation.png`), and the setup summary table
+# (`figures/00_setup_table.md`):
+#
+# ![Setup schematic: geometry, materials, ports, monitors, and CPML](figures/00a_setup_geometry.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 21.9 µm × 8.37 µm × 25.1 nm (z ∈ [-12.6 nm, 12.6 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 731 × 256 × 1 (187136 cells) |
+# | Discretization | Δx & resolution | Δ_min = 20 nm, 26.0 cells/λ (in n_max = 2.98), 20.0 cells across feature (400 nm) |
+# | Boundary | -x face | CPML (10 cells, 377 nm) |
+# | Boundary | +x face | CPML (10 cells, 380 nm) |
+# | Boundary | -y face | CPML (10 cells, 734 nm) |
+# | Boundary | +y face | CPML (10 cells, 734 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding (n = 1.444, ε_r = 2.09) (isotropic) |
+# | Material | Region 1: Si–GaN–Si slot EIM (n_eff = 2.98) | ε_r = 8.91, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-2.50 µm, 20.7 µm] (d = 23.1 µm) |
+# | Source | 1 · ModeSource | pos: —, pol: —, pulse: f₀ = 193.6 THz, Δf = 6.2 THz |
+# | Monitor | 2 · ModeMonitor | Port 'in' ModeMonitor (S₁₁), pos: —, freqs: time-domain |
+# | Monitor | 3 · ModeMonitor | Ports 'out1'–'out4' ModeMonitors (S₂₁..S₅₁), pos: —, freqs: time-domain |
+# | Monitor | 4 · FluxBox | 2D Poynting FluxBox, pos: —, freqs: time-domain |
+# | Variation | kottke_coarse..fine (tasks 0–5) | param=cpw ∈ {10, 14, 20}, averaging ∈ {kottke, staircase}, note=Uniform resolution ladder at (W_MMI, L_MMI) = (4.90, 11.15) µm |
+# | Variation | kottke_reference (task 6) | param=cpw = 40 (1705 × 571 × 1 = 973,555 cells), note=Independent 2× fine Kottke reference |
+# | Variation | sweep_W* (tasks 7–36) | param=W_MMI ∈ [4.80, 5.20] µm × L_MMI ∈ [11.10, 11.35] µm, note=30-point 5×6 design sweep at 20 cpw (min EL at 5.00×11.20, min imb at 5.00×11.30 µm) |
+# | Variation | kottke_nonuniform (task 37) | param=Graded non-square Cartesian mesh (731 × 256 × 1 = 187,136 cells), note=Exact sidewall nodes (y = ±2.45 µm), dy_min = 20.0 nm in gaps, dx_max = 38.0 nm in leads |
+#
+# ![Setup mesh and broadband excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# In `00a_setup_geometry.png`, the 34-vertex $\text{Si–GaN–Si}$ slot polygon
+# ($n_{\text{eff,slot}} = 2.9842$, $\varepsilon_r = 8.91$) is embedded in the
+# $\text{SiO}_2$ cladding ($n = 1.444$, $\varepsilon_r = 2.09$) and surrounded
+# by 10-cell CPML absorbers on all four in-plane faces ($\pm x$, $\pm y$). The
+# fundamental waveguide mode $|E_y(y)|$ is overlaid directly on the input mode
+# port plane `in` ($x = -0.75\;\mu\text{m}$), while four output `ModeMonitor`
+# planes (`out1`–`out4` at $x = 18.95\;\mu\text{m}$, $y_c = \pm 0.65, \pm 1.95\;\mu\text{m}$)
+# and a closed 2D Poynting `FluxBox` record all guided and radiated power. In
+# `00b_setup_mesh_and_excitation.png`, panel (a) displays the graded non-square
+# Yee mesh with a $1\times$ zoom inset at the MMI exit-face gap ($g_2 = 500\;\text{nm}$,
+# $\Delta y_{\min} = 20.0\;\text{nm}$, $25$ cells across $g_2$ and $20$ cells
+# across $W_1 = 400\;\text{nm}$), panel (b) shows the spatial Gaussian wave
+# packet ($\sigma_x = 8.21\;\mu\text{m}$, $\sim 16\lambda$ inside the core), and
+# panels (c–d) show the $f_0 = 193.6\;\text{THz}$ ($\lambda_0 = 1.55\;\mu\text{m}$,
+# $\Delta f = 6.2\;\text{THz}$) time-domain pulse and spectrum.
 
 
 # %%
@@ -425,7 +487,7 @@ def build_mmi_1x4(
 
 
 # %% [markdown]
-# ## 4. Subpixel permittivity smoothing vs staircasing
+# ## 4. Subpixel permittivity smoothing, staircasing & graded non-uniform mesh upgrade
 #
 # In a $1 \times 4$ MMI splitter, two geometric features are acutely sensitive
 # to Cartesian grid discretization:
@@ -454,12 +516,45 @@ def build_mmi_1x4(
 # (band RMS $6.80 \times 10^{-3}$), whereas Kottke restores the effective MMI
 # width to $4.8990\;\mu\text{m}$ and reaches $2.24 \times 10^{-3}$ (band RMS
 # $4.68 \times 10^{-3}$).
+#
+# ### Graded non-uniform, non-square Cartesian mesh upgrade (`kottke_nonuniform`, `04b`)
+#
+# Even with Kottke smoothing, the uniform $20\;\text{cpw}$ mesh (`kottke_fine`,
+# $863 \times 296 \times 1 = 255{,}448$ cells, $\Delta x = 25.12\;\text{nm}$,
+# $\Delta y = 25.09\;\text{nm}$) wastes cells in the outer $\text{SiO}_2$
+# cladding ($|y| > 2.45\;\mu\text{m}$) and along the straight/adiabatically
+# tapered leads while leaving the MMI sidewalls ($y = \pm 2.45\;\mu\text{m}$) at
+# a $3.6\;\text{nm}$ offset from the nearest grid node. In
+# `_helpers.build_mmi_1x4_graded_axes` and `NonUniformMMI1x4PIC` (`task_37`), we
+# upgrade the mesh to a **symmetric, piecewise-graded non-square Cartesian grid**
+# ($732 \times 257 \times 1 = 188{,}124$ cells including ghost cell):
+#
+# - **Transverse ($y$) grading**: Fine $\Delta y_{\min} = 20.0\;\text{nm}$ across
+#   the central waveguide/gap zone $|y| \le 0.45\;\mu\text{m}$ ($20$ interior
+#   cells across $W_1 = 0.40\;\mu\text{m}$, $22$ cells across $g_2 = 0.50\;\mu\text{m}$),
+#   $\Delta y = 25.0\;\text{nm}$ across $|y| \in [0.45, 2.45]\;\mu\text{m}$ with
+#   **exact grid nodes snapped to $y = \pm 2.45\;\mu\text{m}$** (`sidewall_err = 0.0 nm`),
+#   and cosine-stretched $\Delta y$ up to $73.4\;\text{nm}$ in the outer
+#   $\text{SiO}_2$ cladding $|y| \in [2.45, 3.45]\;\mu\text{m}$.
+# - **Axial ($x$) non-square grading**: Fine $\Delta x_{\min} = 23.5\;\text{nm}$
+#   across the multimode interference cavity and taper junctions
+#   $x \in [1.50, 13.70]\;\mu\text{m}$, and stretched non-square cells up to
+#   $\Delta x_{\max} = 38.0\;\text{nm}$ ($\Delta x / \Delta y_{\min} = 1.90$)
+#   along the input/output leads and gentle $L_2 = 5.0\;\mu\text{m}$ tapers.
+#
+# ![Mesh upgrade comparison: uniform vs graded non-uniform non-square mesh](figures/04b_mesh_upgrade_comparison.png)
+#
+# As shown in `04b_mesh_upgrade_comparison.png`, this graded non-square mesh cuts
+# the cell count by **$26.4\%$** ($188{,}124$ vs $255{,}448$ cells) and the wall
+# time by **$30.3\%$** ($589.1\;\text{s}$ vs $845.4\;\text{s}$) while reducing
+# the 1550 nm transmission error against the $40\;\text{cpw}$ reference by
+# **$2.5\times$** ($|T_{\text{nu}}(1550) - T_{\text{ref}}(1550)| = 8.98 \times 10^{-4}$
+# vs $2.24 \times 10^{-3}$).
 
 # %% [markdown]
 # ## 5. Study tasks, resolution ladder & extended design sweep
 #
-# The full-resolution study (`--full`, completed on Cloud Batch across all 37
-# tasks `task_0` through `task_36`) comprises:
+# The full-resolution study (`--full`, 38 tasks `task_0` through `task_37`) comprises:
 #
 # - **Tasks `0`–`5` (Resolution & subpixel study on the $(11.15, 4.90)\;\mu\text{m}$ MMI)**:
 #   `kottke` vs `staircase` at `coarse` ($10\;\text{cpw}$ in `--full`, $5\;\text{cpw}$ in `--quick`),
@@ -478,19 +573,20 @@ def build_mmi_1x4(
 #   (`sweep_W5.00_L11.20`, which also collects DFT fields, 2D flux-box budget,
 #   and Mode 0/1 power share).
 # - **Tasks `16`–`36` (Extended $5 \times 6$ parameter sweep in `--full`)**:
-#   Because the optimum of the initial $3 \times 3$ sweep (`task_15` at
-#   $W_{\text{MMI}} = 5.00\;\mu\text{m}$, $L_{\text{MMI}} = 11.20\;\mu\text{m}$:
-#   imbalance $0.0075$, excess loss $0.325\;\text{dB}$) lay at the upper-right
-#   corner of $[4.80, 5.00]\;\mu\text{m} \times [11.10, 11.20]\;\mu\text{m}$, we
-#   kept `task_7`–`task_15` at the exact same indices and names and appended 21
-#   tasks (`task_16`–`task_36`) spanning
-#   $W_{\text{MMI}} \in \{4.80, 4.90, 5.00, 5.10, 5.20\}\;\mu\text{m} \times L_{\text{MMI}} \in \{11.10, 11.15, 11.20, 11.25, 11.30, 11.35\}\;\mu\text{m}$.
-#   In the completed $5 \times 6$ grid, both the minimum-excess-loss point
-#   (`task_15` at $(5.00, 11.20)\;\mu\text{m}$, $\text{EL}(1550\;\text{nm}) = 0.325\;\text{dB}$,
+#   Appended 21 tasks spanning
+#   $W_{\text{MMI}} \in \{4.80, 4.90, 5.00, 5.10, 5.20\}\;\mu\text{m} \times L_{\text{MMI}} \in \{11.10, 11.15, 11.20, 11.25, 11.30, 11.35\}\;\mu\text{m}$
+#   so that both the minimum-excess-loss point (`task_15` at
+#   $(5.00, 11.20)\;\mu\text{m}$, $\text{EL}(1550\;\text{nm}) = 0.325\;\text{dB}$,
 #   $T_{\text{tot}} = 0.9279$) and the global minimum-imbalance point (`task_23`
 #   at $(5.00, 11.30)\;\mu\text{m}$, $|T_{\text{in}} - T_{\text{out}}| = 0.0027$,
 #   uniformity $0.050\;\text{dB}$, $\text{EL} = 0.366\;\text{dB}$, band
-#   $\langle \text{EL}\rangle = 0.401\;\text{dB}$) are strictly interior.
+#   $\langle \text{EL}\rangle = 0.401\;\text{dB}$) lie strictly in the interior
+#   of the sweep grid.
+# - **Task `37` (`kottke_nonuniform`, `task_16` in `--quick`)**: Graded
+#   non-uniform, non-square Cartesian mesh upgrade on the $(11.15, 4.90)\;\mu\text{m}$
+#   MMI (`NonUniformMMI1x4PIC`, $732 \times 257 \times 1 = 188{,}124$ cells in
+#   `--full`), benchmarked directly against `kottke_fine` (`task_4`) and
+#   `kottke_reference` (`task_6`).
 
 
 # %%
@@ -498,9 +594,11 @@ def get_task_table(quick=False):
     """
     Return the study task table: 6 resolution runs (`task_0`..`task_5`),
     1 independent reference (`task_6`), the initial 9-point 3x3 sweep
-    (`task_7`..`task_15`), and in `--full` (`quick=False`) 21 appended sweep
+    (`task_7`..`task_15`), in `--full` (`quick=False`) 21 appended sweep
     points (`task_16`..`task_36`) extending the sweep grid to 5x6
-    (`W_MMI` in 4.80..5.20 um x `L_MMI` in 11.10..11.35 um).
+    (`W_MMI` in 4.80..5.20 um x `L_MMI` in 11.10..11.35 um), and the graded
+    non-uniform, non-square mesh run `kottke_nonuniform` (`task_37` in `--full`,
+    `task_16` in `--quick`).
     """
     cpws = (5, 7, 10) if quick else (10, 14, 20)
     levels = ("coarse", "medium", "fine")
@@ -618,26 +716,42 @@ def get_task_table(quick=False):
                         ),
                     }
                 )
+
+    nu_cpw = 10 if quick else 20
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_nonuniform",
+            "kind": "nonuniform",
+            "level": "nonuniform",
+            "averaging": "kottke",
+            "cpw": nu_cpw,
+            "l_mmi": L_MMI_OPT,
+            "w_mmi": W_MMI_OPT,
+            "n_pml": 8 if quick else 10,
+            "energy_decay": 5e-3 if quick else 1e-4,
+            "collect_fields": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "include_mode1": False,
+            "nonuniform": True,
+            "description": (
+                f"2D EIM 1x4 MMI (kottke, graded non-uniform non-square mesh, cpw={nu_cpw}, "
+                f"L={L_MMI_OPT * 1e6:.2f}um, W={W_MMI_OPT * 1e6:.2f}um)"
+            ),
+        }
+    )
     return tasks
 
 
-def run_single_task(task_cfg, out_dir):
-    """
-    Execute one 2D EIM 1x4 MMI study task and write ``task_<I>.npz`` and
-    ``task_<I>.json`` into ``out_dir``.
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    idx = task_cfg["index"]
-    t0 = time.perf_counter()
-
+def build_task_simulation(task_cfg, use_gpu=False):
+    """Build and return ``(pic, structures, ports, domain)`` for ``task_cfg``."""
     structures, ports, domain = build_mmi_1x4(
         l_mmi=task_cfg["l_mmi"],
         w_mmi=task_cfg["w_mmi"],
         include_mode1_port=task_cfg.get("include_mode1", False),
     )
-    use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic = PICSimulation(
+    common_kw = dict(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=N_FREQS,
@@ -657,6 +771,32 @@ def run_single_task(task_cfg, out_dir):
         movie_frames=task_cfg["movie_frames"],
         use_gpu=use_gpu,
     )
+    if task_cfg.get("nonuniform", False):
+        pic = NonUniformMMI1x4PIC(
+            l1=L1,
+            l_mmi=task_cfg["l_mmi"],
+            w1=W1,
+            g2=PITCH - W2,
+            w_mmi=task_cfg["w_mmi"],
+            **common_kw,
+        )
+    else:
+        pic = PICSimulation(**common_kw)
+    return pic, structures, ports, domain
+
+
+def run_single_task(task_cfg, out_dir):
+    """
+    Execute one 2D EIM 1x4 MMI study task and write ``task_<I>.npz`` and
+    ``task_<I>.json`` into ``out_dir``.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    idx = task_cfg["index"]
+    t0 = time.perf_counter()
+
+    use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
+    pic, structures, ports, domain = build_task_simulation(task_cfg, use_gpu=use_gpu)
 
     s_mat = pic.run_s_parameters(
         drive=["in"],
@@ -743,16 +883,32 @@ def run_single_task(task_cfg, out_dir):
 
     elapsed = time.perf_counter() - t0
     rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    m_stats = measure_mmi_1x4_mesh(
+        pic.grid.x,
+        pic.grid.y,
+        w1=W1,
+        g2=PITCH - W2,
+        w_mmi=task_cfg["w_mmi"],
+        has_ghost=True,
+    )
     meta = {
         "task_index": idx,
         "name": task_cfg["name"],
         "kind": task_cfg["kind"],
         "averaging": task_cfg["averaging"],
         "cpw": task_cfg["cpw"],
+        "nonuniform": bool(task_cfg.get("nonuniform", False)),
         "l_mmi_um": round(task_cfg["l_mmi"] * 1e6, 3),
         "w_mmi_um": round(task_cfg["w_mmi"] * 1e6, 3),
         "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
         "n_cells": int(pic.grid.Nx * pic.grid.Ny * pic.grid.Nz),
+        "dx_min_nm": round(m_stats["dx_min_nm"], 3),
+        "dx_max_nm": round(m_stats["dx_max_nm"], 3),
+        "dy_min_nm": round(m_stats["dy_min_nm"], 3),
+        "dy_max_nm": round(m_stats["dy_max_nm"], 3),
+        "cells_across_w1": round(m_stats["cells_across_w1"], 3),
+        "cells_across_g2": round(m_stats["cells_across_g2"], 3),
+        "sidewall_err_nm": round(m_stats["sidewall_err_nm"], 3),
         "elapsed_s": round(elapsed, 3),
         "peak_rss_mb": round(rss_mb, 2),
         "npz_bytes": int(npz_path.stat().st_size),
@@ -766,39 +922,48 @@ def run_single_task(task_cfg, out_dir):
 
 
 # %% [markdown]
-# ## 6. Generating the complete 15-figure diagnostic suite
+# ## 6. Generating the complete 18-figure setup and diagnostic suite
 #
 # Invoking `--plot` (or completing `--quick` / `--full`) reads `data/task_*.npz`
-# and generates 15 figures in `figures/`:
+# and generates 18 setup and diagnostic figures (plus `00_setup_table.md`) in `figures/`:
 #
-# 1. `01_mmi_1x4_layout.png` — Annotated top-view layout of the 34-vertex $1 \times 4$ MMI splitter.
-# 2. `02_slot_eim_vertical_stack.png` — 5-layer $\text{Si–GaN–Si}$ vertical slot stack, 1D TM slot mode profile $|E_z(z)|$, and $n_{\text{eff}}(\lambda)$.
-# 3. `03_self_imaging_and_eme_length_sweep.png` — Analytical self-imaging beat length $L_\pi$, 1D EME interference carpet $I(x, y)$, and length sweep $T_{\text{tot}}(L_{\text{MMI}})$.
-# 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map with Yee mesh lines on the output tapers: staircase vs Kottke side by side.
-# 5. `05_port_mode_profiles.png` — Input ($y = 0$) and inner output ($y = +0.65\;\mu\text{m}$) port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
-# 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$.
-# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity map $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$ showing the 4-fold self-images.
-# 8. `08_field_real_ey_1550.png` — Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$.
-# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the $1 \times 4$ MMI splitter.
-# 10. `10_sparameter_spectra_linear_and_db.png` — Broadband linear and dB S-parameter spectra ($T_1..T_4$, $T_{\text{tot}}$, $R$).
-# 11. `11_uniformity_symmetry_and_energy_budget.png` — Output uniformity, excess insertion loss, pairwise mirror-symmetry audit ($|T_1 - T_4|$, $|T_2 - T_3|$), and 2D flux-box budget.
-# 12. `12_outer_port_mode_power_share.png` — Fundamental Mode 0 vs odd Mode 1 power share (%) at the outer output waveguide for $(5.00, 11.20)\;\mu\text{m}$ ($98.0\%$ Mode 0 at $1550\;\text{nm}$) and $(4.90, 11.15)\;\mu\text{m}$ ($96.7\%$ Mode 0 at $1550\;\text{nm}$).
-# 13. `13_parameter_sweep_3x3_heatmaps.png` — Parameter-sweep heatmaps of inner/outer imbalance $|T_{\text{inner}} - T_{\text{outer}}|$ and excess insertion loss over $(W_{\text{MMI}}, L_{\text{MMI}})$ (automatically expanding from the $3 \times 3$ grid to $5 \times 6$ as extended sweep data is added).
-# 14. `14_kottke_vs_staircase_convergence.png` — 3-panel multi-resolution convergence of Kottke vs staircasing against the $40\;\text{cpw}$ reference: (a) single-wavelength $|T(1550\;\text{nm}) - T_{\text{ref}}|$ and band-averaged $\mathrm{RMS}_\lambda(|T(\lambda) - T_{\text{ref}}(\lambda)|)$, (b) band-averaged excess-loss error $|\langle \text{EL}\rangle - \langle \text{EL}_{\text{ref}}\rangle|$ and $\mathrm{RMS}_\lambda(\text{EL} - \text{EL}_{\text{ref}})$, and (c) multi-resolution spectra.
-# 15. `15_port_time_trace.png` — Output port time-domain waveform $E_y(t)$ and exponential ring-down audit.
+# 1. `00a_setup_geometry.png` — Labelled simulation setup schematic: 34-vertex $\text{Si–GaN–Si}$ slot polygon ($n_{\text{eff,slot}} = 2.9842$) in $\text{SiO}_2$ cladding ($n = 1.444$), launched mode $|E_y(y)|$ at `in`, `out1`–`out4` `ModeMonitor` planes, `FluxBox`, and 10-cell CPML boundaries.
+# 2. `00b_setup_mesh_and_excitation.png` — Graded non-uniform, non-square Yee mesh with $1\times$ zoom inset at the $g_2 = 500\;\text{nm}$ gap ($\Delta y_{\min} = 20\;\text{nm}$), spatial Gaussian wave packet, and time-domain/spectral excitation ($f_0 = 193.6\;\text{THz}$, $\Delta f = 6.2\;\text{THz}$).
+# 3. `01_mmi_1x4_layout.png` — Annotated top-view layout of the 34-vertex $1 \times 4$ MMI splitter.
+# 4. `02_slot_eim_vertical_stack.png` — 5-layer $\text{Si–GaN–Si}$ vertical slot stack, 1D TM slot mode profile $|E_z(z)|$, and $n_{\text{eff}}(\lambda)$.
+# 5. `03_self_imaging_and_eme_length_sweep.png` — Analytical self-imaging beat length $L_\pi$, 1D EME interference carpet $I(x, y)$, and length sweep $T_{\text{tot}}(L_{\text{MMI}})$.
+# 6. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map with Yee mesh lines on the output tapers: staircase vs Kottke side by side.
+# 7. `04b_mesh_upgrade_comparison.png` — 3-panel mesh-upgrade benchmark: (a) uniform $20\;\text{cpw}$ mesh (`kottke_fine`, $863 \times 296$), (b) graded non-uniform, non-square mesh (`kottke_nonuniform`, $732 \times 257$, exact sidewall nodes $y = \pm 2.45\;\mu\text{m}$), and (c) broadband transmission agreement vs the $40\;\text{cpw}$ reference.
+# 8. `05_port_mode_profiles.png` — Input ($y = 0$) and inner output ($y = +0.65\;\mu\text{m}$) port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
+# 9. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$.
+# 10. `07_field_intensity_1550.png` — Steady-state logarithmic intensity map $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$ with `overlay_geometry` (material outlines, port planes, and CPML annotations).
+# 11. `08_field_real_ey_1550.png` — Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$ with `overlay_geometry`.
+# 12. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the $1 \times 4$ MMI splitter with `overlay_geometry` on every frame.
+# 13. `10_sparameter_spectra_linear_and_db.png` — Broadband linear and dB S-parameter spectra ($T_1..T_4$, $T_{\text{tot}}$, $R$).
+# 14. `11_uniformity_symmetry_and_energy_budget.png` — Output uniformity, excess insertion loss, pairwise mirror-symmetry audit ($|T_1 - T_4|$, $|T_2 - T_3|$), and 2D flux-box budget.
+# 15. `12_outer_port_mode_power_share.png` — Fundamental Mode 0 vs odd Mode 1 power share (%) at the outer output waveguide for $(5.00, 11.20)\;\mu\text{m}$ ($98.0\%$ Mode 0 at $1550\;\text{nm}$) and $(4.90, 11.15)\;\mu\text{m}$ ($96.7\%$ Mode 0 at $1550\;\text{nm}$).
+# 16. `13_parameter_sweep_3x3_heatmaps.png` — Parameter-sweep heatmaps of inner/outer imbalance $|T_{\text{inner}} - T_{\text{outer}}|$ and excess insertion loss over $(W_{\text{MMI}}, L_{\text{MMI}})$ (expanding from the $3 \times 3$ grid to $5 \times 6$ as extended sweep data is added).
+# 17. `14_kottke_vs_staircase_convergence.png` — 3-panel multi-resolution convergence of Kottke vs staircasing against the $40\;\text{cpw}$ reference: (a) single-wavelength $|T(1550\;\text{nm}) - T_{\text{ref}}|$ and band-averaged $\mathrm{RMS}_\lambda(|T(\lambda) - T_{\text{ref}}(\lambda)|)$, (b) band-averaged excess-loss error $|\langle \text{EL}\rangle - \langle \text{EL}_{\text{ref}}\rangle|$ and $\mathrm{RMS}_\lambda(\text{EL} - \text{EL}_{\text{ref}})$, and (c) multi-resolution spectra.
+# 18. `15_port_time_trace.png` — Output port time-domain waveform $E_y(t)$ and exponential ring-down audit.
 
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 15 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all setup and diagnostic figures into ``fig_dir``."""
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
 
     tasks_data = {}
     for p in sorted(data_dir.glob("task_*.npz")):
         d = dict(np.load(p, allow_pickle=False))
         tasks_data[str(d["name"])] = d
+
+    metas_by_name = {}
+    for jp in sorted(data_dir.glob("task_*.json")):
+        m_json = json.loads(jp.read_text())
+        metas_by_name[str(m_json["name"])] = m_json
 
     if "kottke_fine" not in tasks_data:
         raise FileNotFoundError(
@@ -807,6 +972,56 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     primary = tasks_data["kottke_fine"]
     init_task = tasks_data.get("sweep_W5.00_L11.20", primary)
     structures, ports, domain = build_mmi_1x4(L_MMI_OPT, W_MMI_OPT)
+
+    cpw_fine = float(primary["cpw"])
+    n_pml_fine = 10 if cpw_fine >= 15.0 else 8
+    pic_fine = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_CORE_EQ,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_fine,
+        domain=domain,
+        n_pml=n_pml_fine,
+    )
+    pic_nonuniform = NonUniformMMI1x4PIC(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_CORE_EQ,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_fine,
+        domain=domain,
+        n_pml=n_pml_fine,
+        l1=L1,
+        l_mmi=L_MMI_OPT,
+        w1=W1,
+        g2=PITCH - W2,
+        w_mmi=W_MMI_OPT,
+    )
+
+    # 0a & 0b. Setup schematic (00a_setup_geometry.png), mesh+excitation (00b_setup_mesh_and_excitation.png),
+    # and markdown setup table (00_setup_table.md)
+    save_mmi_1x4_setup_figures(
+        pic_nonuniform,
+        structures,
+        primary,
+        fig_dir,
+        w1=W1,
+        w2=W2,
+        l1=L1,
+        l2=L2,
+        l_mmi=L_MMI_OPT,
+        w_mmi=W_MMI_OPT,
+        pitch=PITCH,
+    )
 
     # 1. Top-view 34-vertex 1x4 MMI layout with dimensional annotations
     annotations = [
@@ -862,7 +1077,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_clad=N_SIO2,
         wavelength=WL_REF,
     )
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2)
     im = ax0.pcolormesh(
         eme["carpet_x"] * 1e6,
         eme["carpet_y"] * 1e6,
@@ -891,7 +1106,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylim=(-2.8, 2.8),
         title="(a) Multi-mode self-imaging carpet (1→2→4 images)",
     )
-    ax0.legend(loc="upper left", fontsize=8.0)
+    ax0.legend(loc="upper left", fontsize=8.5)
 
     l_um_arr = eme["lengths"] * 1e6
     ax1.plot(
@@ -938,14 +1153,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title=f"(b) Self-imaging length sweep (L_π = {est['l_pi_tm'] * 1e6:.1f} µm)",
     )
     ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower right", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(
+    ax1.legend(loc="lower right", fontsize=8.5)
+    figstyle.save(
+        fig,
         fig_dir / "03_self_imaging_and_eme_length_sweep.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 4. In-plane permittivity map with mesh lines zoomed on the MMI-to-output-taper junction
     cpw_mesh = float(tasks_data.get("kottke_medium", primary)["cpw"])
@@ -984,6 +1198,42 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         out_path=fig_dir / "04_permittivity_mesh_zoom.png",
     )
 
+    # 4b. Mesh upgrade comparison: uniform 20 cpw vs graded non-uniform non-square mesh
+    d_nu = tasks_data.get("kottke_nonuniform", primary)
+    d_ref_cmp = tasks_data.get("kottke_reference", primary)
+    meta_u = metas_by_name.get(
+        "kottke_fine",
+        {
+            "grid_shape": [int(pic_fine.grid.Nx), int(pic_fine.grid.Ny), 1],
+            "n_cells": int(pic_fine.grid.Nx * pic_fine.grid.Ny),
+            "elapsed_s": 845.4,
+        },
+    )
+    meta_nu = metas_by_name.get(
+        "kottke_nonuniform",
+        {
+            "grid_shape": [int(pic_nonuniform.grid.Nx), int(pic_nonuniform.grid.Ny), 1],
+            "n_cells": int(pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny),
+            "elapsed_s": 589.1,
+        },
+    )
+    meta_r = metas_by_name.get(
+        "kottke_reference",
+        {"grid_shape": [1705, 571, 1], "n_cells": 973555, "elapsed_s": 5709.3},
+    )
+    plot_mesh_upgrade_comparison_mmi_1x4(
+        pic_fine,
+        pic_nonuniform,
+        structures,
+        primary,
+        d_nu,
+        d_ref_cmp,
+        meta_u,
+        meta_nu,
+        meta_r,
+        out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+    )
+
     # 5. Port mode profiles at input (y = 0) and inner output arm (y = +0.65 um)
     plot_port_modes(
         primary["port_y_in"] * 1e6,
@@ -1005,36 +1255,39 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         out_path=fig_dir / "06_port_neff_dispersion.png",
     )
 
-    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm
-    plot_field_map(
+    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm with overlay_geometry
+    render_mmi_1x4_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        structures=structures,
+        pic_fine,
+        structures,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$ (1×4 self-imaging)",
         out_path=fig_dir / "07_field_intensity_1550.png",
     )
 
-    # 8. Steady-state real field map Re(Ey) at 1550 nm
-    plot_field_map(
+    # 8. Steady-state real field map Re(Ey) at 1550 nm with overlay_geometry
+    render_mmi_1x4_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        structures=structures,
+        pic_fine,
+        structures,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "08_field_real_ey_1550.png",
     )
 
-    # 9. Animated pulse propagation GIF
+    # 9. Animated pulse propagation GIF with overlay_geometry on every frame
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_mmi_1x4_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structures,
+            pic_fine,
+            structures,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -1061,7 +1314,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     r = np.abs(s11) ** 2
 
     # 10. Broadband S-parameter spectra: (a) linear transmissions, (b) dB spectra
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2)
     ax0.plot(
         wl_b, t2, "-", color="#1b9e77", lw=2.1, label=r"$T_2 = |S_{31}|^2$ (inner −)"
     )
@@ -1108,7 +1361,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(a) Linear per-port transmission spectra (T₁..T₄)",
     )
     ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower center", ncol=2, fontsize=7.5)
+    ax0.legend(loc="lower center", ncol=2, fontsize=8.5)
 
     ax1.plot(
         wl_b,
@@ -1151,17 +1404,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(b) Broadband S-parameter spectra in dB",
     )
     ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="center right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(
+    ax1.legend(loc="center right", fontsize=8.5)
+    figstyle.save(
+        fig,
         fig_dir / "10_sparameter_spectra_linear_and_db.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 11. Output uniformity, excess loss vs Malka (2016), pairwise symmetry & flux budget
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2)
     el_db = -10.0 * np.log10(np.maximum(t_tot, 1e-12))
     t_stack = np.vstack([t1, t2, t3, t4])
     unif_db = 10.0 * np.log10(
@@ -1237,7 +1489,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(a) Excess insertion loss, uniformity & flux budget",
     )
     ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=7.2)
+    ax0.legend(loc="upper right", fontsize=8.5)
 
     sym_outer = np.maximum(np.abs(t1 - t4), 1e-16)
     sym_inner = np.maximum(np.abs(t2 - t3), 1e-16)
@@ -1270,17 +1522,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(b) Pairwise mirror-symmetry audit & return loss",
     )
     ax1.grid(True, which="both", ls=":", alpha=0.4)
-    ax1.legend(loc="best", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
+    ax1.legend(loc="best", fontsize=8.5)
+    figstyle.save(
+        fig,
         fig_dir / "11_uniformity_symmetry_and_energy_budget.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 12. Mode 0 vs Mode 1 power share (%) at the outer output waveguide
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150, sharey=True)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.1, sharey=True)
     for ax, d_task, ttl in (
         (ax0, init_task, "(a) W=5.00 µm, L=11.20 µm (initial / 2D min-EL)"),
         (ax1, primary, "(b) W=4.90 µm, L=11.15 µm (primary task)"),
@@ -1321,13 +1572,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title=ttl,
         )
         ax.grid(True, ls=":", alpha=0.4)
-        ax.legend(loc="center right", fontsize=8.0)
+        ax.legend(loc="center right", fontsize=8.5)
     ax0.set_ylabel("Outer port modal power share [%]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_outer_port_mode_power_share.png", dpi=150, bbox_inches="tight"
+    figstyle.save(
+        fig,
+        fig_dir / "12_outer_port_mode_power_share.png",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 13. Parameter sweep heatmaps over available points in SWEEP_W_UM x SWEEP_L_UM
     imb_full = np.full((len(SWEEP_W_UM), len(SWEEP_L_UM)), np.nan)
@@ -1358,7 +1610,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     imb_grid = imb_full[np.ix_(active_w, active_l)]
     el_grid = el_full[np.ix_(active_w, active_l)]
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(13.2, 4.8), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=13.2, height=4.8)
     for ax, mat, cmap, ttl, cbl in (
         (
             ax0,
@@ -1395,7 +1647,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                         ha="center",
                         va="center",
                         color="black" if val < mid_val else "white",
-                        fontsize=7.6 if len(l_vals) > 3 else 8.5,
+                        fontsize=8.5,
                         fontweight="bold",
                     )
         if np.any(np.isfinite(mat)):
@@ -1414,11 +1666,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             ax.axvline(2.5, color="0.3", ls="--", lw=1.1, alpha=0.8)
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cb.set_label(cbl)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "13_parameter_sweep_3x3_heatmaps.png", dpi=150, bbox_inches="tight"
+    figstyle.save(
+        fig,
+        fig_dir / "13_parameter_sweep_3x3_heatmaps.png",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 14. Multi-resolution convergence (single-wavelength, band RMS, excess-loss error & spectra)
     levels = ["coarse", "medium", "fine"]
@@ -1486,7 +1739,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 max(float(np.sqrt(np.mean((els_b - el_ref_b) ** 2))), 1e-4)
             )
 
-        fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(14.4, 4.2), dpi=150)
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.4, height=4.3)
         ax0.loglog(
             res,
             err_s_1550,
@@ -1525,6 +1778,28 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             mfc="white",
             label="Kottke band $\\mathrm{RMS}(|T - T_{\\mathrm{ref}}|)$",
         )
+        if "kottke_nonuniform" in tasks_data:
+            tnu_s = _t_tot_sorted(tasks_data["kottke_nonuniform"])
+            cpw_nu = float(tasks_data["kottke_nonuniform"]["cpw"])
+            err_nu_1550 = max(abs(float(tnu_s[i_1550]) - t_ref_1550), 1e-5)
+            elnu_b = -10.0 * np.log10(np.maximum(tnu_s[m_band], 1e-12))
+            el_err_nu = max(abs(float(np.mean(elnu_b)) - mean_el_ref), 1e-4)
+            ax0.loglog(
+                [cpw_nu],
+                [err_nu_1550],
+                "*",
+                color="#0072B2",
+                ms=10,
+                label="Non-uniform $|T(1550) - T_{\\mathrm{ref}}|$",
+            )
+            ax1.loglog(
+                [cpw_nu],
+                [el_err_nu],
+                "*",
+                color="#0072B2",
+                ms=10,
+                label="Non-uniform $|\\langle\\mathrm{EL}\\rangle - \\langle\\mathrm{EL}_{\\mathrm{ref}}\\rangle|$",
+            )
         ax0.loglog(
             res,
             err_s_1550[0] * (res[0] / res) ** 1,
@@ -1549,7 +1824,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title=f"(a) 1550 nm & band-RMS error (ref={ref_cpw_val} cpw)",
         )
         ax0.grid(True, which="both", ls=":", alpha=0.4)
-        ax0.legend(loc="best", fontsize=7.0)
+        ax0.legend(loc="best", fontsize=8.5)
 
         ax1.loglog(
             res,
@@ -1595,7 +1870,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title="(b) Band-averaged excess-loss convergence",
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
-        ax1.legend(loc="best", fontsize=7.2)
+        ax1.legend(loc="best", fontsize=8.5)
 
         for ax in (ax0, ax1):
             ax.set_xticks(res)
@@ -1624,21 +1899,20 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title="(c) Broadband transmission across resolutions",
         )
         ax2.grid(True, ls=":", alpha=0.4)
-        ax2.legend(loc="best", fontsize=7.0)
-        fig.tight_layout()
-        fig.savefig(
+        ax2.legend(loc="best", fontsize=8.5)
+        figstyle.save(
+            fig,
             fig_dir / "14_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
+            close=True,
+            auto_legend_below=False,
         )
-        plt.close(fig)
 
     # 15. Port time trace and energy decay
     if "trace_t" in primary and primary["trace_t"].size > 0:
         t_fs = primary["trace_t"] * 1e15
         ey_tr = primary["trace_Ey"]
         ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.6, 3.8), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=3.9)
         ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
         ax0.set(
             xlabel="Time t [fs]",
@@ -1662,11 +1936,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
         ax1.legend(loc="upper right", fontsize=8.5)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "15_port_time_trace.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.save(
+            fig,
+            fig_dir / "15_port_time_trace.png",
+            close=True,
+            auto_legend_below=False,
+        )
 
-    print(f"Rendered 15 figures in {fig_dir}")
+    print(f"Rendered 18 setup and diagnostic figures in {fig_dir}")
 
 
 # %% [markdown]
@@ -1694,50 +1971,52 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # varies from $2.4966$ to $2.4350$ and the group index increases from
 # $n_g = 3.4104$ to $3.4328$, with $n_g(1550\;\text{nm}) = 3.4221$ (Fig. 6).
 #
-# ### 7.2 Broadband S-parameters, mirror symmetry, flux conservation, mode purity & comparison with theory (`task_4`, `task_6`, `task_15`, `task_23`, Figs. 7–12)
+# ### 7.2 Broadband S-parameters, mirror symmetry, flux conservation, mode purity & comparison with theory (`task_4`, `task_6`, `task_15`, `task_23`, `task_37`, Figs. 7–12)
 #
 # Full-resolution results across the $1505\text{--}1595\;\text{nm}$ interior
 # telecom band compare the baseline geometry
-# $(W_{\text{MMI}}, L_{\text{MMI}}) = (4.90, 11.15)\;\mu\text{m}$ (`task_4` at
-# $20\;\text{cpw}$ and `task_6` at $40\;\text{cpw}$), the initial geometry
+# $(W_{\text{MMI}}, L_{\text{MMI}}) = (4.90, 11.15)\;\mu\text{m}$ (`task_4`
+# uniform $20\;\text{cpw}$, `task_37` graded non-uniform mesh, and `task_6`
+# $40\;\text{cpw}$ reference), the initial geometry
 # $(5.00, 11.20)\;\mu\text{m}$ (`task_15` at $20\;\text{cpw}$, which is the
 # minimum-excess-loss point of the 2D sweep), the 2D minimum-imbalance interior
 # optimum $(5.00, 11.30)\;\mu\text{m}$ (`task_23` at $20\;\text{cpw}$), the
-# earlier `--quick` runs, and the analytical Soldano & Pennings [2] / 1D EME
-# references in a single table:
+# coarse `--quick` preview runs, and the analytical Soldano & Pennings [2] /
+# 1D EME references in a single table:
 #
-# | Metric | Old (`--quick`, $10\;\text{cpw}$ `task_4` / $7\;\text{cpw}$ `task_15`) | New `--full` $(4.90, 11.15)\;\mu\text{m}$ (`task_4`, $20\;\text{cpw}$ / `task_6`, $40\;\text{cpw}$) | New `--full` $(5.00, 11.20)\;\mu\text{m}$ (`task_15`, $20\;\text{cpw}$ min-EL) | New `--full` $(5.00, 11.30)\;\mu\text{m}$ (`task_23`, $20\;\text{cpw}$ min-imb) | Analytic / 1D EME Reference (Soldano & Pennings [2]) |
+# | Metric | `--quick` coarse preview ($10\;\text{cpw}$ `task_4` / $7\;\text{cpw}$ `task_15`) | `--full` $(4.90, 11.15)\;\mu\text{m}$ (`task_4` $20\;\text{cpw}$ / `task_37` non-uniform / `task_6` $40\;\text{cpw}$ ref) | `--full` $(5.00, 11.20)\;\mu\text{m}$ (`task_15`, $20\;\text{cpw}$ min-EL) | `--full` $(5.00, 11.30)\;\mu\text{m}$ (`task_23`, $20\;\text{cpw}$ min-imb) | Analytic / 1D EME Reference (Soldano & Pennings [2]) |
 # |---|---|---|---|---|---|
 # | 5-layer vertical-slot $n_{\text{eff,slot}}(1550\;\text{nm})$ | $2.9842$ ($\Gamma_{\text{slot}} = 38.3\%$) | $2.9842$ ($n_{\text{core,eq}} = 3.1108$) | $2.9842$ | $2.9842$ | Exact 5-layer TM transfer matrix: $2.9842$ |
 # | Analytic $L_\pi = \frac{4 n_r W_e^2}{3\lambda_0}$ / $L_{\text{MMI}} = \frac{3 L_\pi}{16}$ | $62.75 / 11.77\;\mu\text{m}$ ($W=4.90$) | $62.75 / 11.77\;\mu\text{m}$ (2D TM); $66.48 / 12.46\;\mu\text{m}$ (3D TE) | $65.32 / 12.25\;\mu\text{m}$ (2D TM) | $65.32 / 12.25\;\mu\text{m}$ (2D TM) | Soldano & Pennings [2]; 1D EME $L_{\text{opt}} = 11.09\;\mu\text{m}$ ($4.90$), $11.51\;\mu\text{m}$ ($5.00$) |
-# | Inner port $T_2 = T_3$ ($1550\;\text{nm}$) | $0.2334$ / $0.2253$ | $0.2471$ ($-6.07\;\text{dB}$) / $0.2468$ ($-6.08\;\text{dB}$) | $0.2282$ ($-6.42\;\text{dB}$) | $0.2311$ ($-6.36\;\text{dB}$) | Ideal lossless $1\times 4$: $0.2500$ ($-6.02\;\text{dB}$) |
-# | Outer port $T_1 = T_4$ ($1550\;\text{nm}$) | $0.1918$ / $0.2014$ | $0.2019$ ($-6.95\;\text{dB}$) / $0.2033$ ($-6.92\;\text{dB}$) | $0.2357$ ($-6.28\;\text{dB}$) | $0.2284$ ($-6.41\;\text{dB}$) | Ideal lossless $1\times 4$: $0.2500$ ($-6.02\;\text{dB}$) |
-# | Total guided $T_{\text{tot}}(1550\;\text{nm})$ | $0.8503$ / $0.8533$ | $0.8980$ / $0.9002$ | $0.9279$ | $0.9191$ | 1D EME: $0.965$ ($4.90$), $0.978$ ($5.00$) |
-# | Excess insertion loss $\text{EL}(1550\;\text{nm})$ | $0.704\;\text{dB}$ / $0.689\;\text{dB}$ | $0.467\;\text{dB}$ / $0.456\;\text{dB}$ | $0.325\;\text{dB}$ | $0.366\;\text{dB}$ | 1D EME: $0.155\;\text{dB}$ ($4.90$), $0.097\;\text{dB}$ ($5.00$) |
-# | Imbalance $|T_{\text{in}} - T_{\text{out}}|$ ($1550\;\text{nm}$) | $0.0416$ / $0.0239$ | $0.0451$ / $0.0435$ | $0.0075$ | $0.0027$ | Ideal symmetric self-image: $0$ |
-# | Output uniformity $10\log_{10}(\max T_i / \min T_i)$ ($1550\;\text{nm}$) | $0.853\;\text{dB}$ / $0.487\;\text{dB}$ | $0.876\;\text{dB}$ / $0.841\;\text{dB}$ | $0.141\;\text{dB}$ | $0.050\;\text{dB}$ | Ideal symmetric self-image: $0.00\;\text{dB}$ |
-# | Return loss $R = |S_{11}|^2$ ($1550\;\text{nm}$) | $-55.7\;\text{dB}$ / $-46.1\;\text{dB}$ | $-46.6\;\text{dB}$ / $-45.4\;\text{dB}$ | $-43.7\;\text{dB}$ | $-51.5\;\text{dB}$ | Adiabatic input taper ($R \ll -30\;\text{dB}$) |
-# | Band-averaged $\langle T_{\text{tot}}\rangle$ ($1505\text{--}1595\;\text{nm}$) | $0.8524$ / $0.8541$ | $0.8887$ / $0.8908$ | $0.9103$ | $0.9120$ | Passivity $\le 1.0$ |
-# | Band-averaged $\langle \text{EL}\rangle$ [min, max] ($1505\text{--}1595\;\text{nm}$) | $0.696\;\text{dB}$ / $0.687\;\text{dB}$ | $0.513\;\text{dB}$ [$0.403, 0.659$] / $0.503\;\text{dB}$ | $0.408\;\text{dB}$ [$0.308, 0.550$] | $0.401\;\text{dB}$ [$0.294, 0.519$] | Passivity $\ge 0.0\;\text{dB}$ |
-# | Max mirror asymmetry $\max(|T_1 - T_4|, |T_2 - T_3|)$ | $(8.1 \times 10^{-8}, 8.3 \times 10^{-8})$ | $(6.0 \times 10^{-8}, 1.0 \times 10^{-7})$ | $(4.6 \times 10^{-8}, 1.8 \times 10^{-7})$ | $(5.1 \times 10^{-8}, 2.1 \times 10^{-7})$ | Exact $y \mapsto -y$ symmetry: $0$ |
+# | Inner port $T_2 = T_3$ ($1550\;\text{nm}$) | $0.2334$ / $0.2253$ | $0.2471$ / $0.2469$ / $0.2468$ | $0.2282$ ($-6.42\;\text{dB}$) | $0.2311$ ($-6.36\;\text{dB}$) | Ideal lossless $1\times 4$: $0.2500$ ($-6.02\;\text{dB}$) |
+# | Outer port $T_1 = T_4$ ($1550\;\text{nm}$) | $0.1918$ / $0.2014$ | $0.2019$ / $0.2028$ / $0.2033$ | $0.2357$ ($-6.28\;\text{dB}$) | $0.2284$ ($-6.41\;\text{dB}$) | Ideal lossless $1\times 4$: $0.2500$ ($-6.02\;\text{dB}$) |
+# | Total guided $T_{\text{tot}}(1550\;\text{nm})$ | $0.8503$ / $0.8533$ | $0.8980$ / $0.8993$ / $0.9002$ | $0.9279$ | $0.9191$ | 1D EME: $0.965$ ($4.90$), $0.978$ ($5.00$) |
+# | Excess insertion loss $\text{EL}(1550\;\text{nm})$ | $0.704\;\text{dB}$ / $0.689\;\text{dB}$ | $0.467\;\text{dB}$ / $0.461\;\text{dB}$ / $0.456\;\text{dB}$ | $0.325\;\text{dB}$ | $0.366\;\text{dB}$ | 1D EME: $0.155\;\text{dB}$ ($4.90$), $0.097\;\text{dB}$ ($5.00$) |
+# | Imbalance $|T_{\text{in}} - T_{\text{out}}|$ ($1550\;\text{nm}$) | $0.0416$ / $0.0239$ | $0.0451$ / $0.0442$ / $0.0435$ | $0.0075$ | $0.0027$ | Ideal symmetric self-image: $0$ |
+# | Output uniformity $10\log_{10}(\max T_i / \min T_i)$ ($1550\;\text{nm}$) | $0.853\;\text{dB}$ / $0.487\;\text{dB}$ | $0.876\;\text{dB}$ / $0.856\;\text{dB}$ / $0.841\;\text{dB}$ | $0.141\;\text{dB}$ | $0.050\;\text{dB}$ | Ideal symmetric self-image: $0.00\;\text{dB}$ |
+# | Return loss $R = |S_{11}|^2$ ($1550\;\text{nm}$) | $-55.7\;\text{dB}$ / $-46.1\;\text{dB}$ | $-46.6\;\text{dB}$ / $-40.5\;\text{dB}$ / $-45.4\;\text{dB}$ | $-43.7\;\text{dB}$ | $-51.5\;\text{dB}$ | Adiabatic input taper ($R \ll -30\;\text{dB}$) |
+# | Band-averaged $\langle T_{\text{tot}}\rangle$ ($1505\text{--}1595\;\text{nm}$) | $0.8524$ / $0.8541$ | $0.8887$ / $0.8896$ / $0.8908$ | $0.9103$ | $0.9120$ | Passivity $\le 1.0$ |
+# | Band-averaged $\langle \text{EL}\rangle$ [min, max] ($1505\text{--}1595\;\text{nm}$) | $0.696\;\text{dB}$ / $0.687\;\text{dB}$ | $0.513\;\text{dB}$ / $0.509\;\text{dB}$ / $0.503\;\text{dB}$ | $0.408\;\text{dB}$ [$0.308, 0.550$] | $0.401\;\text{dB}$ [$0.294, 0.519$] | Passivity $\ge 0.0\;\text{dB}$ |
+# | Max mirror asymmetry $\max(|T_1 - T_4|, |T_2 - T_3|)$ | $(8.1 \times 10^{-8}, 8.3 \times 10^{-8})$ | $(6.0 \times 10^{-8}, 1.1 \times 10^{-7})$ | $(4.6 \times 10^{-8}, 1.8 \times 10^{-7})$ | $(5.1 \times 10^{-8}, 2.1 \times 10^{-7})$ | Exact $y \mapsto -y$ symmetry: $0$ |
 # | Outer port Mode 0 / Mode 1 share ($1550\;\text{nm}$) | $97.09\% / 2.91\%$ ($99.15\%$ init) | $96.71\% \; / \; 3.29\%$ | $97.98\% \; / \; 2.02\%$ | — | Fundamental mode operation ($\sim 98\%$ Mode 0) |
 # | Outer port Mode 0 share band mean [min, max] | $96.05\%$ ($98.37\%$ init) | $95.58\%$ [$93.31\%, 96.86\%$] | $98.29\%$ [$96.12\%, 99.39\%$] | — | Fundamental mode operation |
 # | 2D flux-box total $\langle \Phi_{\text{box}}\rangle$ (east / lateral / west) | $0.9999$ ($90.50\% / 9.15\% / 0.34\%$) | $1.0000$ ($94.06\% / 5.69\% / 0.25\%$) | $0.9999$ ($95.09\% / 4.62\% / 0.28\%$) | — | Lossless 2D Poynting conservation: $1.0000$ |
 #
-# Key physical takeaways and **conclusions that changed from `--quick` to `--full`**:
+# Key physical takeaways and **coarse (`--quick`) vs converged (`--full`) dispersion sensitivity**:
 #
 # 1. **Pairwise mirror symmetry and energy conservation**: Across the entire
 #    $1505\text{--}1595\;\text{nm}$ band, outer-pair ($|T_1 - T_4|$) and
 #    inner-pair ($|T_2 - T_3|$) asymmetries remain below $2.1 \times 10^{-7}$
-#    (Fig. 11b), confirming that the symmetric Yee grid and Kottke subpixel
+#    (Fig. 11b), confirming that both the uniform Yee grid (`task_4`) and the
+#    symmetric graded non-uniform grid (`task_37`) with Kottke subpixel
 #    averaging preserve $y \mapsto -y$ parity to floating-point precision. The
 #    closed 2D Poynting flux box accounts for $100.00\%$ of the injected power
 #    ($\langle \Phi_{\text{box}}\rangle = 1.0000$ in `task_4` and $0.9999$ in
 #    `task_15`, Fig. 11a): the power not coupled into the four fundamental
 #    output modes ($\approx 11.1\%$ in `task_4`, $\approx 9.0\%$ in `task_15`)
 #    is quantitatively accounted for by lateral cladding radiation ($5.69\%$ vs
-#    $4.62\%$, down from $9.15\%$ in the under-resolved $10\;\text{cpw}$
-#    `--quick` run) and unguided/higher-order forward power crossing the east
+#    $4.62\%$, compared to $9.15\%$ in the under-resolved $10\;\text{cpw}$
+#    `--quick` preview) and unguided/higher-order forward power crossing the east
 #    plane ($5.19\%$ vs $4.06\%$).
 # 2. **Why $(5.00, 11.20\text{--}11.30)\;\mu\text{m}$ outperforms $(4.90, 11.15)\;\mu\text{m}$ in 2D EIM (lateral-TM vs lateral-TE Goos–Hänchen shift)**:
 #    In the 3D vertical-slot geometry, the $E_z$-polarized slot mode is laterally
@@ -1759,15 +2038,15 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #    to $0.325\;\text{dB}$ at $(5.00, 11.20)\;\mu\text{m}$ (`task_15`), and
 #    reducing inner/outer imbalance seventeen-fold from $0.0451$ to $0.0027$
 #    ($0.050\;\text{dB}$ uniformity) at $(5.00, 11.30)\;\mu\text{m}$ (`task_23`).
-# 3. **How conclusions changed from `--quick` to `--full`**:
+# 3. **Coarse preview (`--quick`) vs converged (`--full`) dispersion sensitivity**:
 #    - In the `--quick` $3 \times 3$ sweep (run at $7\;\text{cpw}$), numerical
-#      dispersion ($\Delta L_{\text{disp}} \approx 0.35\;\mu\text{m}$) shifted
+#      dispersion ($\Delta L_{\text{disp}} \approx 0.35\;\mu\text{m}$) shifts
 #      the apparent self-image upstream so that transmission at
-#      $W_{\text{MMI}} = 5.00\;\mu\text{m}$ appeared to *decrease* with length
+#      $W_{\text{MMI}} = 5.00\;\mu\text{m}$ decreases with length
 #      from $L_{\text{MMI}} = 11.10\;\mu\text{m}$ ($T_{\text{tot}} = 0.8722$,
 #      $\text{EL} = 0.594\;\text{dB}$, `task_13`) to $11.20\;\mu\text{m}$
 #      ($0.8533$, $0.689\;\text{dB}$, `task_15`), and the lowest imbalance in
-#      `--quick` occurred at $(4.80, 11.10)\;\mu\text{m}$ (`task_7`,
+#      `--quick` occurs at $(4.80, 11.10)\;\mu\text{m}$ (`task_7`,
 #      $|T_{\text{in}} - T_{\text{out}}| = 0.0097$ but $\text{EL} = 1.620\;\text{dB}$).
 #      In `--full` ($20\;\text{cpw}$), suppressing numerical dispersion reverses
 #      that trend: along $W_{\text{MMI}} = 5.00\;\mu\text{m}$, $T_{\text{tot}}(1550\;\text{nm})$
@@ -1777,13 +2056,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #      $0.0027$ at $11.30\;\mu\text{m}$ (`task_23`).
 #    - In the `--quick` resolution ladder ($5, 7, 10\;\text{cpw}$ vs $20\;\text{cpw}$
 #      ref), `staircase_fine` at $10\;\text{cpw}$ ($T_{\text{tot}} = 0.8843$)
-#      appeared closer to the reference than `kottke_fine` at $10\;\text{cpw}$
+#      lies closer to the reference than `kottke_fine` at $10\;\text{cpw}$
 #      ($0.8503$). In `--full` ($10, 14, 20\;\text{cpw}$ vs $40\;\text{cpw}$ ref),
-#      extending the ladder to $14$ and $20\;\text{cpw}$ reverses that coarse-grid
+#      extending the ladder to $14$ and $20\;\text{cpw}$ resolves that coarse-grid
 #      cancellation: Kottke converges monotonically at $\mathcal{O}(\Delta x^2)$
 #      to $|T(1550) - T_{\text{ref}}| = 2.24 \times 10^{-3}$ (band RMS
-#      $4.68 \times 10^{-3}$), beating staircase ($4.06 \times 10^{-3}$, band
-#      RMS $6.80 \times 10^{-3}$).
+#      $4.68 \times 10^{-3}$) on the uniform grid and $8.98 \times 10^{-4}$ (band
+#      RMS $3.90 \times 10^{-3}$) on the graded non-uniform grid (`task_37`),
+#      beating staircase ($4.06 \times 10^{-3}$, band RMS $6.80 \times 10^{-3}$).
 #
 # ### 7.3 Extended $5 \times 6$ design sweep (`task_7`–`task_36`, Fig. 13), interior optima & analytic comparison
 #
@@ -1894,7 +2174,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #
 # ## 8. Resolution table & subpixel convergence analysis
 #
-# ### 8.1 Resolution per run (`task_0`–`task_15` and extended sweep `task_16`–`task_36`)
+# ### 8.1 Resolution per run (`task_0`–`task_15`, extended sweep `task_16`–`task_36`, and non-uniform mesh `task_37`)
 #
 # Across the full study, `cells_per_wavelength` (`cpw`) is defined inside the
 # high-index core at $\lambda_0 = 1550\;\text{nm}$. The smallest geometric
@@ -1919,14 +2199,17 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # | `task_22`–`24` | `sweep_W5.00_L11.25..35` | Kottke | $20$ | $25.12$ | $25.09$ | $15.94$ | $19.93$ | $(867\text{--}871) \times 300 \times 1$ | $260{,}100\text{--}261{,}300$ | $729.8\text{--}773.2$ |
 # | `task_25`–`30` | `sweep_W5.10_L11.10..35` | Kottke | $20$ | $25.12$ | $25.09$ | $15.94$ | $19.93$ | $(861\text{--}871) \times 304 \times 1$ | $261{,}744\text{--}264{,}784$ | $722.4\text{--}793.7$ |
 # | `task_31`–`36` | `sweep_W5.20_L11.10..35` | Kottke | $20$ | $25.12$ | $25.09$ | $15.94$ | $19.93$ | $(861\text{--}871) \times 308 \times 1$ | $265{,}188\text{--}268{,}268$ | $943.0\text{--}1012.2$ |
+# | **`task_37`** | **`kottke_nonuniform`** | **Kottke (graded)** | **$20$** | **$23.53\text{--}37.98$** | **$20.00\text{--}73.43$** | **$20.00$ ($17.6$ w/ ghost)** | **$22.00$** | **$732 \times 257 \times 1$** | **$188{,}124$ ($-26.4\%$)** | **$589.1$ ($-30.3\%$)** |
 #
-# ### 8.2 Explaining the convergence behavior (Fig. 14)
+# ### 8.2 Explaining the convergence behavior & graded mesh upgrade (Figs. 04b, 14)
 #
-# Comparing `task_0`–`task_5` against the independent $40\;\text{cpw}$ reference
-# (`task_6`, where $T_{\text{ref}}(1550\;\text{nm}) = 0.90023$,
+# Comparing `task_0`–`task_5` and `task_37` (`kottke_nonuniform`) against the
+# independent $40\;\text{cpw}$ reference (`task_6`, where
+# $T_{\text{ref}}(1550\;\text{nm}) = 0.90023$,
 # $\langle T_{\text{ref}}\rangle_{\text{band}} = 0.89081$, and
 # $\langle \text{EL}_{\text{ref}}\rangle_{\text{band}} = 0.5026\;\text{dB}$)
-# confirms that the accepted $20\;\text{cpw}$ Kottke resolution (`task_4`) is
+# confirms that both the accepted $20\;\text{cpw}$ Kottke resolution (`task_4`)
+# and the graded non-uniform, non-square Cartesian mesh (`task_37`) are
 # well converged: the relative change in $T_{\text{tot}}(1550\;\text{nm})$
 # between the last two resolution study levels (`medium` $14\;\text{cpw} \to$
 # `fine` $20\;\text{cpw}$) is **$1.037\%$** ($0.88869 \to 0.89800$, and
@@ -1934,7 +2217,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # $0.88444 \to 0.88870$), while the relative change from `fine` ($20\;\text{cpw}$)
 # to the independent $40\;\text{cpw}$ reference (`task_6`) is **$0.248\%$** at
 # $1550\;\text{nm}$ ($0.89800 \to 0.90023$) and **$0.237\%$** in band-averaged
-# $\langle T_{\text{tot}}\rangle$ ($0.88870 \to 0.89081$). Inspection of the
+# $\langle T_{\text{tot}}\rangle$ ($0.88870 \to 0.89081$). Furthermore, the
+# graded non-uniform mesh (`task_37`) reduces the difference against the
+# $40\;\text{cpw}$ reference to **$0.100\%$** at $1550\;\text{nm}$
+# ($0.89934 \to 0.90023$) and **$0.137\%$** in band-averaged
+# $\langle T_{\text{tot}}\rangle$ ($0.88959 \to 0.89081$) while cutting cell
+# count by $26.4\%$ and wall time by $30.3\%$. Inspection of the
 # single-wavelength curve (Fig. 14a, solid lines) also reveals two striking
 # features:
 #
@@ -1957,6 +2245,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # | $14$ (`medium`) | Staircase | $0.89678$ | $3.46 \times 10^{-3}$ | $1.03 \times 10^{-2}$ | $0.4805$ | $0.0221$ | $0.0502$ |
 # | $20$ (`fine`) | Kottke | $0.89800$ | $2.24 \times 10^{-3}$ | $4.68 \times 10^{-3}$ | $0.5131$ | $0.0105$ | $0.0230$ |
 # | $20$ (`fine`) | Staircase | $0.89618$ | $4.06 \times 10^{-3}$ | $6.80 \times 10^{-3}$ | $0.5283$ | $0.0257$ | $0.0336$ |
+# | **$20$ (`nonuniform`, `task_37`)** | **Kottke (graded non-square)** | **$0.89934$** | **$8.98 \times 10^{-4}$** | **$3.90 \times 10^{-3}$** | **$0.5086$** | **$0.0060$** | **$0.0191$** |
 # | $40$ (`reference`) | Kottke | $0.90023$ | — | — | $0.5026$ | — | — |
 #
 # | Resolution (`cpw`) | $\Delta x, \Delta y$ [nm] | Staircase $W_{\text{MMI}}(E_y)$ [$\mu\text{m}$] ($\Delta W_y$) | Staircase $W_{\text{MMI}}(E_x)$ [$\mu\text{m}$] ($\Delta W_x$) | $\Delta L_{\pi}(E_y), \Delta L_{\text{MMI}}(E_y)$ [$\mu\text{m}$] | $\Delta L_{\pi}(E_x), \Delta L_{\text{MMI}}(E_x)$ [$\mu\text{m}$] | $k\Delta x$ [rad] | Dispersion $\Delta\phi_{\text{disp}}$ [rad] | Axial shift $\Delta L_{\text{disp}}$ [$\mu\text{m}$] |
@@ -2156,12 +2445,12 @@ def parse_args(argv=None):
     ap.add_argument(
         "--quick",
         action="store_true",
-        help="Run coarse 2D study locally (2x scaled-down resolutions, 16 tasks) and render all 15 figures",
+        help="Run coarse 2D study locally (2x scaled-down resolutions, 17 tasks) and render all 18 figures",
     )
     ap.add_argument(
         "--full",
         action="store_true",
-        help="Run converged 2D study across all 37 tasks (including extended 5x6 sweep) and render all 15 figures",
+        help="Run converged 2D study across all 38 tasks (including extended 5x6 sweep and non-uniform mesh) and render all 18 figures",
     )
     ap.add_argument(
         "--task",
@@ -2178,7 +2467,7 @@ def parse_args(argv=None):
     ap.add_argument(
         "--plot",
         action="store_true",
-        help="Read data/task_*.npz and generate all 15 figures in figures/",
+        help="Read data/task_*.npz and generate all 18 figures in figures/",
     )
     ap.add_argument(
         "--list-tasks",

@@ -29,7 +29,9 @@ if str(TUTORIAL_DIR) not in sys.path:
     sys.path.insert(0, str(TUTORIAL_DIR))
 
 from _helpers import (  # noqa: E402
+    NonUniformCouplerPIC,
     PhasedGaussianSource,
+    build_coupler_graded_axes,
     coupler_mesh_overrides,
     extract_mesh_metrics_from_grid,
     find_crossing_wavelength,
@@ -580,7 +582,8 @@ def test_full_study_data_convergence_length_and_sidewall_sweeps():
 
     data_dir = TUTORIAL_DIR / "data"
     tasks_Full = get_task_table(quick=False)
-    assert len(tasks_Full) == 20
+    assert len(tasks_Full) == 21
+    assert len(get_task_table(quick=True)) == 19
 
     tasks_npz = {}
     for t in tasks_Full:
@@ -627,6 +630,13 @@ def test_full_study_data_convergence_length_and_sidewall_sweeps():
 
     _verify_coupler_length_and_sidewall_trends(tasks_npz)
 
+    # Verify graded non-uniform Cartesian mesh task (kottke_nonuniform, task_20)
+    nu = tasks_npz["kottke_nonuniform"]
+    l3 = tasks_npz["kottke_L3"]
+    assert float(nu["cells_across_feature"]) >= 8.0
+    assert int(nu["n_cells"]) < 0.70 * int(l3["n_cells"])
+    assert abs(float(nu["wl_cross"]) * 1e9 - wlc_ref) < 2.0
+
     # Mutation check: zeroing S-bend coupling L_sb_eff or swapping L0um/L8um must fail
     mutated = dict(tasks_npz)
     bad_primary = dict(mutated["kottke_L3"])
@@ -634,4 +644,88 @@ def test_full_study_data_convergence_length_and_sidewall_sweeps():
     mutated["kottke_L3"] = bad_primary
     with pytest.raises(AssertionError):
         _verify_coupler_length_and_sidewall_trends(mutated)
+
+
+def test_setup_figures_mesh_upgrade_and_mutation():
+    """
+    Verify that the setup schematics (00a, 00b, 00c, 00_setup_table.md),
+    mesh upgrade comparison figure (04b_mesh_upgrade_comparison.png), and
+    < 5 MB pulse propagation GIF exist, and that build_coupler_graded_axes
+    enforces exact mirror symmetry, non-square grading, and >= 4 gap cells
+    (with a mutation check on n_cells_gap).
+    """
+    fig_dir = TUTORIAL_DIR / "figures"
+    required_files = (
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00c_quadrature_setup_schematic.png",
+        "00_setup_table.md",
+        "04_permittivity_mesh_zoom.png",
+        "04b_mesh_upgrade_comparison.png",
+        "07_field_intensity_single_drive.png",
+        "08_field_real_ey_single_drive.png",
+        "09_pulse_propagation.gif",
+        "13_quadrature_dual_drive_routing.png",
+        "15_kottke_vs_staircase_convergence.png",
+    )
+    for fname in required_files:
+        fpath = fig_dir / fname
+        assert fpath.is_file() and fpath.stat().st_size > 0, (
+            f"Missing or empty figure/table file: {fpath}"
+        )
+    gif_size = (fig_dir / "09_pulse_propagation.gif").stat().st_size
+    assert gif_size < 5 * 1024 * 1024, (
+        f"GIF exceeds 5 MB limit: {gif_size} bytes"
+    )
+
+    structures, ports, domain, geom = build_directional_coupler(
+        L_c=4.0e-6, theta_sw_deg=30.0, four_ports=True
+    )
+    pic_nu = NonUniformCouplerPIC(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_WG,
+        n_clad=N_CLAD,
+        n_sub=N_SUB,
+        wavelength_ref=WL_0,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=20,
+        domain=domain,
+        n_pml=10,
+        L_c=4.0e-6,
+        gap_eff=geom["gap_eff"],
+        w_eff=geom["w_eff"],
+        n_cells_gap=8,
+    )
+    xa, ya, _, _ = build_coupler_graded_axes(
+        domain=domain,
+        L_c=4.0e-6,
+        gap_eff=geom["gap_eff"],
+        w_eff=geom["w_eff"],
+        cpw=20,
+        n_cells_gap=8,
+        n_pml=10,
+    )
+    np.testing.assert_allclose(xa + xa[::-1], 0.0, atol=1e-13)
+    np.testing.assert_allclose(ya + ya[::-1], 0.0, atol=1e-13)
+    xg = pic_nu.grid.x
+    yg = pic_nu.grid.y
+    np.testing.assert_allclose(yg[:-1] + yg[:-1][::-1], 0.0, atol=1e-13)
+    dx = np.diff(xg)
+    dy = np.diff(yg)
+    assert float(np.max(dx)) > float(np.min(dy))
+    assert float(np.max(dy)) > 1.8 * float(np.min(dy))
+    m_good = extract_mesh_metrics_from_grid(xg, yg, geom["gap_eff"], Nz=pic_nu.grid.Nz)
+    assert m_good["cells_across_feature"] >= 8.0
+
+    # Mutation check: n_cells_gap=2 without minimum-4 clamp would violate the >= 4 rule;
+    # mutating gap_eff to 0.3 * gap_eff on the fixed grid must fail the >= 4 cells check
+    m_mut = extract_mesh_metrics_from_grid(
+        xg, yg, 0.3 * geom["gap_eff"], Nz=pic_nu.grid.Nz
+    )
+    assert m_mut["cells_across_feature"] < 4.0
+
 

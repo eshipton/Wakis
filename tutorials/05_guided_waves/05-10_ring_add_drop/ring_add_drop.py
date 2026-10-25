@@ -72,19 +72,25 @@
 #    ($n_{g,\text{EIM}} \approx 3.30$, $\Delta\lambda_{\text{FSR}} \approx 23.2\;\text{nm}$)
 #    with full 3D dispersive silicon ($n_{g,\text{3D}} \approx 4.15$,
 #    $\Delta\lambda_{\text{FSR}} \approx 18.5\;\text{nm}$).
-# 3. **Two-criterion resolution ladder $(\text{cpw}, N)$ with local `mesh_overrides`**
-#    and **anisotropic Kottke subpixel smoothing** across the coupler gaps and curved
-#    ring perimeter (`RingPICSimulation` + `FastRingPolySlab` + `FastModeMonitor` +
-#    `attach_fast_2d_te_step`).
-# 4. **14 publication-grade diagnostic figures** covering geometry, EIM stack,
-#    coupler evanescent physics, zoomed coupler-gap mesh & permittivity tensor comparison
-#    ($1.9$ cells vs $L_1$ $4$ cells vs $L_3$ $8$ cells), port eigenmodes,
-#    waveguide dispersion, on- vs off-resonance steady-state fields, pulse
-#    propagation GIF, broadband 4-port S-parameters, Lorentzian/CMT fits,
-#    FSR & $Q_L$ spectra, a coupling-gap sweep ($g \in \{60, 100, 150\}\;\text{nm}$),
-#    convergence of resonance shift (in pm) and loaded $Q_L$ against an independent
-#    Kottke reference ($R = (40, 16)$ in `--full`, $L_3 = (20, 8)$ in `--quick`, with an
-#    under-resolved $1.9$-cell warning pair), and dual-port ring-down time traces.
+# 3. **Two-criterion resolution ladder $(\text{cpw}, N)$ with local `mesh_overrides`**,
+#    **mirror-symmetric graded non-uniform Cartesian meshing** (`build_ring_add_drop_graded_axes` /
+#    `NonUniformRingAddDropPIC`, $-35.3\%$ cells and $-59.2\%$ wall time), **body-fitted
+#    `wakis.unstructured` hybrid square+triangle circular rim meshing**
+#    (`build_ring_add_drop_hybrid_unstructured_mesh`), and **anisotropic Kottke subpixel
+#    smoothing** across the coupler gaps and curved ring perimeter (`RingPICSimulation` +
+#    `FastRingPolySlab` + `FastModeMonitor` + `attach_fast_2d_te_step`).
+# 4. **Diagnostic figures ($\le 3$ panels each)** covering the labelled setup schematic
+#    (`00a_setup_geometry.png`), mesh + wave-packet + excitation view
+#    (`00b_setup_mesh_and_excitation.png`), layout, EIM stack, coupler evanescent physics,
+#    zoomed coupler-gap mesh & permittivity tensor comparison ($1.9$ cells vs $L_1$ $4$ cells
+#    vs $L_3$ $8$ cells), graded & hybrid mesh upgrade comparison (`04b_mesh_upgrade_comparison.png`),
+#    port eigenmodes, waveguide dispersion, on- vs off-resonance steady-state $|E|^2$ and
+#    $\mathrm{Re}(H_z)$ fields (`07_fields_on_vs_off_resonance.png`,
+#    `07b_fields_hz_on_vs_off_resonance.png`), pulse propagation GIF (`< 5 MB`), broadband
+#    4-port S-parameters, Lorentzian/CMT fits, FSR & $Q_L$ spectra, a coupling-gap sweep
+#    ($g \in \{60, 100, 150\}\;\text{nm}$), convergence of resonance shift (in pm) and loaded
+#    $Q_L$ against an independent Kottke reference ($R = (40, 16)$ in `--full`, $L_3 = (20, 8)$
+#    in `--quick`, with an under-resolved $1.9$-cell warning pair), and dual-port ring-down time traces.
 
 # %%
 import argparse
@@ -110,13 +116,21 @@ if str(TUTORIAL_DIR) not in sys.path:
 
 from _helpers import (  # noqa: E402
     FastRingPolySlab,
+    NonUniformRingAddDropPIC,
     RingPICSimulation,
     _lorentzian_peak,
+    build_ring_add_drop_graded_axes,
+    build_ring_add_drop_hybrid_unstructured_mesh,
     cmt_add_drop_spectra,
     coupler_gap_mesh_overrides,
     find_ring_resonances,
     measure_cells_across_gap,
+    overlay_ring_add_drop_geometry,
+    plot_mesh_upgrade_comparison_ring_add_drop,
+    render_ring_add_drop_movie_with_overlay,
+    save_ring_add_drop_setup_figures,
 )
+from wakis import figstyle  # noqa: E402
 
 from wakis.templates.photonics import (  # noqa: E402
     PolySlab,
@@ -355,6 +369,53 @@ def compute_waveguide_dispersion(n_pts=41):
 # places $N$ uniform cells of height $\Delta y_{\text{min}} = g / N$ across each gap, and
 # grades back to $\Delta y_{\text{bg}}$ at ratio $\le 1.4$, the total cell count grows by
 # only $3\text{–}5\%$ while guaranteeing $N \ge 4$ cells across every coupling gap.
+#
+# ### Setup Schematics, Specification Table & Mesh Upgrade (`00a`, `00b`, `04b`)
+#
+# Figures [`00a_setup_geometry.png`](figures/00a_setup_geometry.png) and
+# [`00b_setup_mesh_and_excitation.png`](figures/00b_setup_mesh_and_excitation.png)
+# (generated via `wakis.schematic.save_setup_figures`) summarize the complete 2D EIM
+# boundary-value problem, materials, modal source/monitor planes, CPML absorbing layers,
+# coupler-gap mesh zoom, and broadband Gaussian excitation pulse:
+#
+# ![Microring add-drop filter setup schematic](figures/00a_setup_geometry.png)
+# ![Microring add-drop filter mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | $L_x \times L_y \times L_z = 13.2\;\mu\text{m} \times 14.4\;\mu\text{m} \times 26.3\;\text{nm}$ ($z \in [-13.2\;\text{nm}, 13.2\;\text{nm}]$) |
+# | Domain | Grid cells (`kottke_L3` / `kottke_nonuniform`) | $504 \times 561 \times 1 = 282{,}744$ cells / $411 \times 445 \times 1 = 182{,}895$ cells ($-35.3\%$) |
+# | Discretization | $\Delta y_{\min}$ & feature resolution | $\Delta y_{\min} = 12.50\;\text{nm}$, $8.00$ exact cells across both $100\;\text{nm}$ coupling gaps |
+# | Boundary | $\pm x, \pm y$ faces | CPML ($12$ cells, $\approx 315\;\text{nm}$); buses extruded through CPML |
+# | Boundary | $\pm z$ faces | Periodic (single-cell 2D EIM TE invariant along $z$) |
+# | Material | Background cladding | $\text{SiO}_2$ ($n = 1.444$, $\varepsilon_r = 2.085$, $\mu_r = 1.0$) |
+# | Material | Bus & ring cores (2D EIM) | $220\;\text{nm}$ c-Si ($n_{\text{Si}} = 3.476 \to n_{\text{eff,slab}} = 2.8478$, $\varepsilon_r = 8.110$, $w = 430\;\text{nm}$, $R = 5.0\;\mu\text{m}$) |
+# | Source | Port 1 `in` (`ModeSource`) | $x = -5.14\;\mu\text{m}$, $y = +5.53\;\mu\text{m}$, $+x$ fundamental $\text{TE}_0$ ($E_y, H_z$), $f_0 = 193.6\;\text{THz}$, $\Delta f = 6.2\;\text{THz}$ |
+# | Monitors | Ports 1–4 (`ModeMonitor`) | `in` ($-5.00, +5.53\;\mu\text{m}$), `through` ($+5.00, +5.53\;\mu\text{m}$), `drop` ($-5.00, -5.53\;\mu\text{m}$), `add` ($+5.00, -5.53\;\mu\text{m}$), $1001$ freqs in $[187.4, 199.9]\;\text{THz}$ |
+#
+# In addition to the uniform-background + local-override mesh (`kottke_L3`), we
+# implement two complementary mesh upgrades illustrated in
+# [`04b_mesh_upgrade_comparison.png`](figures/04b_mesh_upgrade_comparison.png):
+#
+# 1. **Mirror-symmetric graded non-uniform Cartesian mesh (`kottke_nonuniform`, `task_11`)**:
+#    Constructed via `wakis.templates.meshing.graded_axis` with exact $x \mapsto -x$ and
+#    $y \mapsto -y$ symmetry (`x_axis + x_axis[::-1] == 0`, `y_axis + y_axis[::-1] == 0`) so
+#    that the upper and lower bus-to-ring couplers experience identical discrete phase
+#    velocities and coupling coefficients $\kappa_1^2 = \kappa_2^2$. It places $N = 8.00$
+#    exact uniform cells of height $\Delta y_{\min} = 12.50\;\text{nm}$ across both the top
+#    and bottom $g = 100\;\text{nm}$ coupling slots, resolves the ring and bus cores at
+#    $\approx 25.8\;\text{nm}$, and grades smoothly into the inner ring hole and outer
+#    $\text{SiO}_2$ cladding (`dx_bg = 43.84 nm`), reducing the cell count from $282{,}744$
+#    (`kottke_L3`) to **$182{,}895$ cells ($-35.3\%$)** and cutting the single-drive runtime
+#    from $1{,}757.1\;\text{s}$ to **$716.8\;\text{s}$ ($-59.2\%$ wall time, $2.45\times$ speedup)**
+#    while preserving all 4 C-band resonances ($\Delta\lambda_{\text{FSR}} = 23.61\;\text{nm}$ vs
+#    $23.71\;\text{nm}$ in `kottke_L3` and $23.80\;\text{nm}$ in `kottke_reference`).
+# 2. **Body-fitted square+triangle hybrid unstructured mesh (`wakis.unstructured.subtri_circles_mesh`)**:
+#    Conforms directly to the concentric circular inner and outer sidewalls ($r_{\text{in}} = 4.785\;\mu\text{m}$,
+#    $r_{\text{out}} = 5.215\;\mu\text{m}$) with interface-split triangles while keeping
+#    orthogonal quadtree squares in the surrounding cladding.
+#
+# ![Microring add-drop mesh upgrade comparison](figures/04b_mesh_upgrade_comparison.png)
 
 # %%
 def build_ring_add_drop(
@@ -369,6 +430,7 @@ def build_ring_add_drop(
     movie_frames=50,
     cfln=0.95,
     build_solver=True,
+    nonuniform=False,
 ):
     """
     Build a 2D effective-index `RingPICSimulation` for the microring add-drop filter.
@@ -487,6 +549,32 @@ def build_ring_add_drop(
         wavelength_ref=WL_REF,
     )
 
+    if nonuniform:
+        return NonUniformRingAddDropPIC(
+            structures=[top_bus, bot_bus, ring_slab],
+            ports=ports,
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            wavelength_ref=WL_REF,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            n_freqs=n_freqs,
+            cells_per_wavelength=cells_per_wavelength,
+            averaging="kottke" if subpixel_smoothing else "staircase",
+            two_d=True,
+            domain=(-x_half, x_half, -y_half, y_half),
+            padding=0.0,
+            n_pml=12,
+            cfln=cfln,
+            n_cells_across_gap=n_cells_across_gap,
+            record_movie=record_movie,
+            movie_frames=movie_frames,
+            gap_m=gap_m,
+            radius_m=radius_m,
+            width_m=width_m,
+            build_solver=build_solver,
+        )
+
     return RingPICSimulation(
         structures=[top_bus, bot_bus, ring_slab],
         ports=ports,
@@ -521,23 +609,25 @@ def build_ring_add_drop(
 #
 # - **Resolved ladder**: $L_1 = (10, 4)$, $L_2 = (14, 6)$, $L_3 = (20, 8)$, and
 #   full reference $R = (40, 16)$.
-# - **`--quick` schedule (9 tasks)**: Kottke and staircase at $L_1 = (10, 4)$ and
+# - **`--quick` schedule (10 tasks)**: Kottke and staircase at $L_1 = (10, 4)$ and
 #   $L_2 = (14, 6)$; independent Kottke reference $T_{\text{ref}}$ at $L_3 = (20, 8)$;
 #   coupling-gap sweep $g \in \{60, 150\}\;\text{nm}$ ($g = 100\;\text{nm}$ is `kottke_L2`)
 #   at $L_2 = (14, 6)$ with each run's override scaled from its own gap ($\Delta y_{\text{gap}} = g / 6$);
-#   plus one clearly labelled under-resolved demonstration pair (`underresolved_kottke`,
+#   one clearly labelled under-resolved demonstration pair (`underresolved_kottke`,
 #   `underresolved_staircase`) at $10\;\text{cpw}$ with no mesh overrides ($1.90$ cells across
-#   the $100\;\text{nm}$ gap).
-# - **`--full` schedule (11 tasks)**: Kottke and staircase at $L_1 = (10, 4)$,
+#   the $100\;\text{nm}$ gap); plus `kottke_nonuniform` on the mirror-symmetric graded mesh.
+# - **`--full` schedule (12 tasks)**: Kottke and staircase at $L_1 = (10, 4)$,
 #   $L_2 = (14, 6)$, and $L_3 = (20, 8)$; independent Kottke reference at $R = (40, 16)$;
-#   coupling-gap sweep at $L_3 = (20, 8)$ ($\Delta y_{\text{gap}} = g / 8$); plus the
-#   under-resolved demonstration pair (`underresolved_kottke`, `underresolved_staircase`).
+#   coupling-gap sweep at $L_3 = (20, 8)$ ($\Delta y_{\text{gap}} = g / 8$); the
+#   under-resolved demonstration pair (`underresolved_kottke`, `underresolved_staircase`);
+#   plus `kottke_nonuniform` (`task_11`) at $(20\;\text{cpw}, N = 8)$ on the mirror-symmetric
+#   graded non-uniform Cartesian mesh ($182{,}895$ cells, $-35.3\%$ cells).
 
 # %%
 def study_tasks(quick=False):
     """
-    Return the ordered list of study task dictionaries for `--quick` (9 tasks)
-    or `--full` (11 tasks).
+    Return the ordered list of study task dictionaries for `--quick` (10 tasks)
+    or `--full` (12 tasks).
 
     Parameters
     ----------
@@ -631,6 +721,24 @@ def study_tasks(quick=False):
                 "record_movie": False,
             }
         )
+
+    # Upgraded graded non-uniform Cartesian mesh task (kottke_nonuniform)
+    tasks.append(
+        {
+            "index": len(tasks),
+            "key": "kottke_nonuniform",
+            "method": "kottke",
+            "level": "nonuniform",
+            "cpw": int(sweep_cpw),
+            "n_cells_across_gap": int(sweep_n),
+            "subpixel": True,
+            "gap_nm": 100.0,
+            "is_demo": False,
+            "nonuniform": True,
+            "collect_fields": False,
+            "record_movie": False,
+        }
+    )
     return tasks
 
 
@@ -653,6 +761,7 @@ def run_single_task(task_idx, out_dir, quick=False):
         gap_m=t["gap_nm"] * 1e-9,
         record_movie=t["record_movie"],
         movie_frames=50,
+        nonuniform=bool(t.get("nonuniform", False)),
     )
     S = sim.run_s_parameters(
         drive="in",
@@ -926,6 +1035,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
     """
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
     results = load_study_results(data_dir)
     fine_key = (
         "kottke_L3"
@@ -940,11 +1050,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         n_cells_across_gap=None,
         subpixel_smoothing=True,
     )
-    sim_s_l1 = build_ring_add_drop(
-        cells_per_wavelength=LADDER_L1[1],
-        n_cells_across_gap=LADDER_L1[2],
-        subpixel_smoothing=False,
-    )
     sim_k_l1 = build_ring_add_drop(
         cells_per_wavelength=LADDER_L1[1],
         n_cells_across_gap=LADDER_L1[2],
@@ -958,6 +1063,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
     )
     sim_k = sim_k_ref
     disp = compute_waveguide_dispersion(n_pts=51)
+
+    # ------------------------------------------------------------------
+    # Fig 00a, 00b & 00_setup_table.md: Setup Schematics & Markdown Table
+    # ------------------------------------------------------------------
+    save_ring_add_drop_setup_figures(
+        sim_k_ref,
+        fig_dir,
+        wavelength=WL_REF,
+        min_feature=GAP_DEFAULT,
+    )
 
     # ------------------------------------------------------------------
     # Fig 01: 2D Device Layout & Port Configuration
@@ -1000,9 +1115,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         fontsize=9,
         bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "#bbbbbb", "alpha": 0.9},
     )
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_layout.png", dpi=160)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "01_layout.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 02: Vertical SOI Slab Stack (Effective-Index Reduction)
@@ -1073,22 +1186,19 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
     ax.set_title(r"Local Evanescent Coupling Profile across Gap $d(x)$")
     ax.legend(fontsize=8.5)
     ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_coupler_geometry_zoom.png", dpi=160)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "03_coupler_geometry_zoom.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
-    # Fig 04: Permittivity & Mesh Zoom on the 100 nm Coupler Gap
-    #         (Under-resolved vs L1 Staircase/Kottke vs Reference Level)
+    # Fig 04: Permittivity & Mesh Zoom on the 100 nm Coupler Gap (1x3 <= 3 panels)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(2, 2, figsize=(12.4, 5.6), sharex=True, sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13.8, 4.3), sharex=True, sharey=True)
     n_min, n_max = N_SIO2, float(sim_k_l1.n_core_eff)
     y_gap_lo_um = (R_RING + 0.5 * W_WG) * 1e6
     y_gap_hi_um = (R_RING + 0.5 * W_WG + GAP_DEFAULT) * 1e6
 
     panels = [
         (
-            axes[0, 0],
+            axes[0],
             sim_under,
             "y",
             (
@@ -1098,31 +1208,21 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             ),
         ),
         (
-            axes[0, 1],
-            sim_s_l1,
-            "y",
-            (
-                f"(b) L1 = (10 cpw, N = 4) Staircase\n"
-                f"n_yy: {sim_s_l1.cells_across_feature:.2f} cells across gap "
-                f"(dy_min = {sim_s_l1.dx_min_nm:.1f} nm)"
-            ),
-        ),
-        (
-            axes[1, 0],
+            axes[1],
             sim_k_l1,
             "y",
             (
-                f"(c) L1 = (10 cpw, N = 4) Kottke Subpixel\n"
+                f"(b) L1 = (10 cpw, N = 4) Kottke Subpixel\n"
                 f"n_yy: {sim_k_l1.cells_across_feature:.2f} cells across gap "
                 f"(dy_min = {sim_k_l1.dx_min_nm:.1f} nm)"
             ),
         ),
         (
-            axes[1, 1],
+            axes[2],
             sim_k_ref,
             "y",
             (
-                f"(d) {'Reference ' if quick else ''}{ref_lvl_name} = ({ref_cpw} cpw, N = {ref_n}) Kottke Subpixel\n"
+                f"(c) {'Reference ' if quick else ''}{ref_lvl_name} = ({ref_cpw} cpw, N = {ref_n}) Kottke Subpixel\n"
                 f"n_yy: {sim_k_ref.cells_across_feature:.2f} cells across gap "
                 f"(dy_min = {sim_k_ref.dx_min_nm:.1f} nm)"
             ),
@@ -1164,7 +1264,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
                     alpha=0.85 if in_gap else 0.42,
                 )
         _draw_ring_guides(ax, color="white", lw=1.3, alpha=0.92)
-        # Annotate the 100 nm gap feature width at x = 0
         ax.annotate(
             "",
             xy=(0.0, y_gap_hi_um),
@@ -1188,27 +1287,44 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.set_xlim(-0.62, 0.62)
         ax.set_ylim(5.04, 5.49)
         ax.set_aspect("equal")
-        ax.set_title(title, fontsize=9.8)
-
-    for ax in axes[1, :]:
+        ax.set_title(title, fontsize=9.2)
         ax.set_xlabel("x [um]")
-    for ax in axes[:, 0]:
-        ax.set_ylabel("y [um]")
-    fig.colorbar(
+
+    axes[0].set_ylabel("y [um]")
+    cb = fig.colorbar(
         im,
         ax=axes.ravel().tolist(),
         label="Effective index n_yy = eps_yy^{1/2}",
         shrink=0.82,
         pad=0.02,
     )
+    cb.ax._is_inset = True
     fig.suptitle(
         "Coupler-Gap Mesh Refinement & Subpixel Smoothing Zoom at g = 100 nm "
         "(Cell Edges & Permittivity Tensor)",
-        fontsize=11.8,
-        y=0.99,
+        fontsize=11.4,
+        y=1.02,
     )
-    fig.savefig(fig_dir / "04_mesh_permittivity_zoom.png", dpi=160, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "04_mesh_permittivity_zoom.png", close=True, auto_legend_below=False)
+
+    # ------------------------------------------------------------------
+    # Fig 04b: Mesh Upgrade Comparison (Uniform L3 Override vs Graded Non-Uniform vs Hybrid Unstructured)
+    # ------------------------------------------------------------------
+    sim_nu = build_ring_add_drop(
+        cells_per_wavelength=ref_cpw,
+        n_cells_across_gap=ref_n,
+        subpixel_smoothing=True,
+        nonuniform=True,
+    )
+    if fine_data is not None and "kottke_nonuniform" in results:
+        plot_mesh_upgrade_comparison_ring_add_drop(
+            sim_k_ref,
+            sim_nu,
+            fine_data,
+            results["kottke_nonuniform"],
+            results.get("kottke_reference"),
+            fig_dir / "04b_mesh_upgrade_comparison.png",
+        )
 
     # ------------------------------------------------------------------
     # Fig 05: Port Eigenmode Profiles (Input & Drop Ports)
@@ -1244,9 +1360,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         fontsize=11.5,
         y=1.02,
     )
-    fig.tight_layout()
-    fig.savefig(fig_dir / "05_port_modes.png", dpi=160, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "05_port_modes.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 06: Waveguide Effective Index, Group Index, and Azimuthal Orders m
@@ -1286,15 +1400,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
     ax.set_title("Unperturbed Ring Resonance Condition")
     ax.legend(fontsize=8.2)
     ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "06_waveguide_dispersion_ng.png", dpi=160)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "06_waveguide_dispersion_ng.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
-    # Fig 07: On-Resonance vs Off-Resonance Steady-State DFT Field Maps
+    # Fig 07 & 07b: On-Resonance vs Off-Resonance Steady-State DFT Field Maps (<= 3 panels each)
     # ------------------------------------------------------------------
     if fine_data is not None and "dft_on_E2" in fine_data:
-        fig, axes = plt.subplots(2, 2, figsize=(12.6, 10.8), sharex=True, sharey=True)
         dx_um = fine_data["dft_x"] * 1e6
         dy_um = fine_data["dft_y"] * 1e6
         wl_on_nm = float(fine_data["dft_on_wl_m"]) * 1e9
@@ -1311,7 +1422,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         hz_off = hz_raw_off / hz_peak
         hz_lim = 0.75
 
-        im00 = axes[0, 0].pcolormesh(
+        # Fig 07: Normalized |E|^2 (On-Resonance vs Off-Resonance, 1x2 panels)
+        fig, axes = plt.subplots(1, 2, figsize=(12.6, 5.6), sharex=True, sharey=True)
+        im00 = axes[0].pcolormesh(
             dx_um,
             dy_um,
             np.clip(e2_on / e2_peak, 1e-4, 1.0).T,
@@ -1319,10 +1432,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             norm=LogNorm(vmin=1e-3, vmax=1.0),
             shading="auto",
         )
-        axes[0, 0].set_title(f"ON RESONANCE ({wl_on_nm:.2f} nm): |E|^2 / max|E|^2 (Drop Routing)")
-        fig.colorbar(im00, ax=axes[0, 0], label="Normalized |E|^2")
+        axes[0].set_title(f"(a) ON RESONANCE ({wl_on_nm:.2f} nm): |E|^2 / max|E|^2 (Drop Routing)")
+        cb0 = fig.colorbar(im00, ax=axes[0], label="Normalized |E|^2")
+        cb0.ax._is_inset = True
 
-        im01 = axes[0, 1].pcolormesh(
+        im01 = axes[1].pcolormesh(
             dx_um,
             dy_um,
             np.clip(e2_off / e2_peak, 1e-4, 1.0).T,
@@ -1330,10 +1444,27 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             norm=LogNorm(vmin=1e-3, vmax=1.0),
             shading="auto",
         )
-        axes[0, 1].set_title(f"OFF RESONANCE ({wl_off_nm:.2f} nm): |E|^2 / max|E|^2 (Through Bypass)")
-        fig.colorbar(im01, ax=axes[0, 1], label="Normalized |E|^2")
+        axes[1].set_title(f"(b) OFF RESONANCE ({wl_off_nm:.2f} nm): |E|^2 / max|E|^2 (Through Bypass)")
+        cb1 = fig.colorbar(im01, ax=axes[1], label="Normalized |E|^2")
+        cb1.ax._is_inset = True
 
-        im10 = axes[1, 0].pcolormesh(
+        for ax in axes:
+            overlay_ring_add_drop_geometry(ax, sim_k, outline_color="white", include_labels=True)
+            ax.set_aspect("equal")
+            ax.set_xlim(-6.2, 6.2)
+            ax.set_ylim(-6.5, 6.5)
+            ax.set_xlabel("x [um]")
+        axes[0].set_ylabel("y [um]")
+        fig.suptitle(
+            "Steady-State Electric-Field Intensity |E|^2: On-Resonance Cavity Build-Up vs Off-Resonance Bypass",
+            fontsize=11.8,
+            y=1.02,
+        )
+        figstyle.save(fig, fig_dir / "07_fields_on_vs_off_resonance.png", close=True, auto_legend_below=False)
+
+        # Fig 07b: Normalized Re(H_z) (On-Resonance vs Off-Resonance, 1x2 panels)
+        fig, axes = plt.subplots(1, 2, figsize=(12.6, 5.6), sharex=True, sharey=True)
+        im10 = axes[0].pcolormesh(
             dx_um,
             dy_um,
             hz_on.T,
@@ -1341,10 +1472,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             norm=TwoSlopeNorm(vmin=-hz_lim, vcenter=0.0, vmax=hz_lim),
             shading="auto",
         )
-        axes[1, 0].set_title(f"ON RESONANCE ({wl_on_nm:.2f} nm): Re(H_z) Whispering-Gallery Mode")
-        fig.colorbar(im10, ax=axes[1, 0], label="Normalized Re(H_z)")
+        axes[0].set_title(f"(a) ON RESONANCE ({wl_on_nm:.2f} nm): Re(H_z) Whispering-Gallery Mode")
+        cb10 = fig.colorbar(im10, ax=axes[0], label="Normalized Re(H_z)")
+        cb10.ax._is_inset = True
 
-        im11 = axes[1, 1].pcolormesh(
+        im11 = axes[1].pcolormesh(
             dx_um,
             dy_um,
             hz_off.T,
@@ -1352,42 +1484,38 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             norm=TwoSlopeNorm(vmin=-hz_lim, vcenter=0.0, vmax=hz_lim),
             shading="auto",
         )
-        axes[1, 1].set_title(f"OFF RESONANCE ({wl_off_nm:.2f} nm): Re(H_z) Bus Propagation")
-        fig.colorbar(im11, ax=axes[1, 1], label="Normalized Re(H_z)")
+        axes[1].set_title(f"(b) OFF RESONANCE ({wl_off_nm:.2f} nm): Re(H_z) Bus Propagation")
+        cb11 = fig.colorbar(im11, ax=axes[1], label="Normalized Re(H_z)")
+        cb11.ax._is_inset = True
 
-        for ax in axes.ravel():
-            _draw_ring_guides(ax, color="cyan", lw=0.85, alpha=0.7)
+        for ax in axes:
+            overlay_ring_add_drop_geometry(ax, sim_k, outline_color="#111111", include_labels=True)
             ax.set_aspect("equal")
             ax.set_xlim(-6.2, 6.2)
             ax.set_ylim(-6.5, 6.5)
-        for ax in axes[1, :]:
             ax.set_xlabel("x [um]")
-        for ax in axes[:, 0]:
-            ax.set_ylabel("y [um]")
-
+        axes[0].set_ylabel("y [um]")
         fig.suptitle(
-            "Steady-State Frequency-Domain Fields: On-Resonance Cavity Build-Up vs Off-Resonance Bypass",
-            fontsize=12.5,
-            y=0.99,
+            "Steady-State Magnetic Phase Fronts Re(H_z): Azimuthal Standing Wave vs Bus Bypass",
+            fontsize=11.8,
+            y=1.02,
         )
-        fig.tight_layout()
-        fig.savefig(fig_dir / "07_fields_on_vs_off_resonance.png", dpi=160)
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "07b_fields_hz_on_vs_off_resonance.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
-    # Fig 08: Animated Time-Domain Pulse Propagation & Ring Storage (GIF)
+    # Fig 08: Animated Time-Domain Pulse Propagation & Ring Storage (GIF < 5 MB)
     # ------------------------------------------------------------------
     if fine_data is not None and "movie_frames" in fine_data:
         frames_scaled = (
             np.asarray(fine_data["movie_frames"], dtype=np.float32)
             * float(fine_data["movie_peak"])
         )
-        make_movie(
+        render_ring_add_drop_movie_with_overlay(
             fine_data["movie_x"],
             fine_data["movie_y"],
             frames_scaled,
             fine_data["movie_times"],
-            structures=sim_k.structures_3d,
+            sim=sim_k,
             out_path=fig_dir / "08_field_movie.gif",
             fps=10,
         )
@@ -1491,9 +1619,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.legend(loc="lower right", ncol=2, fontsize=8.5)
         ax.grid(True, alpha=0.25)
 
-        fig.tight_layout()
-        fig.savefig(fig_dir / "09_sparameters_broadband.png", dpi=160)
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "09_sparameters_broadband.png", close=True, auto_legend_below=False)
 
         # ------------------------------------------------------------------
         # Fig 10: High-Resolution Resonance Zoom + Lorentzian & Yariv CMT Fit
@@ -1622,9 +1748,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
                 fontsize=12.0,
                 y=1.01,
             )
-            fig.tight_layout()
-            fig.savefig(fig_dir / "10_resonance_zoom_cmt_fit.png", dpi=160, bbox_inches="tight")
-            plt.close(fig)
+            figstyle.save(fig, fig_dir / "10_resonance_zoom_cmt_fit.png", close=True, auto_legend_below=False)
 
         # ------------------------------------------------------------------
         # Fig 11: Free Spectral Range (FSR) vs lambda^2/(n_g L) & Quality Factor Q_L
@@ -1652,6 +1776,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         fsr_curve_specs.extend(
             [
                 (fine_key, "#d95f02", "o"),
+                ("kottke_nonuniform", "#6a3d9a", "*"),
                 ("kottke_reference", "#2ca02c", "s"),
             ]
         )
@@ -1681,11 +1806,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.set_ylabel(r"Free Spectral Range $\Delta\lambda_{\mathrm{FSR}}$ [nm]")
         ax.set_ylim(16.0, 27.0)
         ax.set_title("Free Spectral Range vs Group-Index Theory")
-        ax.legend(fontsize=8.0)
+        ax.legend(fontsize=7.6)
         ax.grid(True, alpha=0.25)
 
         ax = axes[1]
         ax2 = ax.twinx()
+        ax2._is_inset = True
         wls_f = [r["wl0_nm"] for r in res_f["resonances"]]
         qs_f = [r["Q_loaded"] for r in res_f["resonances"]]
         kappas_f = [r["kappa2_cmt"] for r in res_f["resonances"]]
@@ -1731,9 +1857,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.legend(lines, [ln.get_label() for ln in lines], loc="center right", fontsize=8.0)
         ax.grid(True, alpha=0.25)
 
-        fig.tight_layout()
-        fig.savefig(fig_dir / "11_fsr_and_q_analysis.png", dpi=160)
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "11_fsr_and_q_analysis.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 12: Coupling-Gap Sweep (g = 60, 100, 150 nm) — Over- vs Under-Coupling
@@ -1796,6 +1920,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 
         ax = axes[1]
         ax_r = ax.twinx()
+        ax_r._is_inset = True
         l1 = ax.plot(gaps_list, q_list, "o-", color="#1f77b4", ms=7, lw=2.1, label=r"Loaded $Q_L$")
         l2 = ax_r.plot(gaps_list, fwhm_list, "s--", color="#d95f02", ms=7, lw=2.0, label=r"Linewidth $\Delta\lambda_{\mathrm{FWHM}}$ [nm]")
         ax.set_xlabel("Edge-to-edge coupling gap g [nm]")
@@ -1808,6 +1933,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 
         ax = axes[2]
         ax_r2 = ax.twinx()
+        ax_r2._is_inset = True
         l1 = ax.plot(gaps_list, kappa_list, "o-", color="#2ca02c", ms=7, lw=2.1, label=r"Coupler $\kappa^2$")
         l2 = ax_r2.plot(gaps_list, ext_list, "^--", color="#7570b3", ms=7, lw=1.9, label="Through extinction [dB]")
         ax.set_xlabel("Edge-to-edge coupling gap g [nm]")
@@ -1825,9 +1951,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             fontsize=12.0,
             y=1.02,
         )
-        fig.tight_layout()
-        fig.savefig(fig_dir / "12_coupling_gap_sweep.png", dpi=160, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "12_coupling_gap_sweep.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 13: Grid Convergence vs Independent Kottke Reference (T_ref)
@@ -1844,7 +1968,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 
         fig, axes = plt.subplots(1, 3, figsize=(15.6, 5.0))
 
-        # Panel (a): Drop-port resonance comb across 1554-1595 nm comparing Reference, fine level, L2, and Under-resolved
+        # Panel (a): Drop-port resonance comb across 1554-1595 nm comparing Reference, fine level, Non-Uniform, and Under-resolved
         ax = axes[0]
         comb_curves = [
             (
@@ -1860,6 +1984,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
                 "#1f77b4",
                 "--",
                 1.9,
+            ),
+            (
+                "kottke_nonuniform",
+                "Graded Non-Uniform (20 cpw, 8 cells/gap, -35.3% cells)",
+                "#6a3d9a",
+                ":",
+                2.0,
             ),
             (
                 f"staircase_{fine_key.split('_')[-1]}",
@@ -1892,7 +2023,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.set_xlabel("Wavelength [nm]")
         ax.set_ylabel(r"Drop transmission $|S_{\mathrm{drop,in}}|^2$")
         ax.set_title("Drop Spectrum: Resolved Ladder vs Under-Resolved Gap")
-        ax.legend(fontsize=7.3, loc="upper right")
+        ax.legend(fontsize=7.0, loc="upper right")
         ax.grid(True, alpha=0.25)
 
         # Collect resolved ladder (L1, L2, [L3]) and under-resolved demo points
@@ -1989,6 +2120,32 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
                     fontweight="bold",
                 )
 
+        if "kottke_nonuniform" in results:
+            dnu = results["kottke_nonuniform"]
+            rnu = find_ring_resonances(
+                dnu["wavelengths"], dnu["S_through_in"], dnu["S_drop_in"], s_in=dnu["S_in_in"]
+            )
+            mnu = compute_resonance_shift_metrics(rnu, ref_res)
+            nu_cpw = float(dnu["cpw"])
+            axes[1].plot(
+                [nu_cpw],
+                [mnu["mean_abs_shift_pm"]],
+                marker="*",
+                color="#6a3d9a",
+                ms=11.0,
+                linestyle="None",
+                label="Graded non-uniform (-35.3% cells)",
+            )
+            axes[2].plot(
+                [nu_cpw],
+                [mnu["q_mean"]],
+                marker="*",
+                color="#6a3d9a",
+                ms=11.0,
+                linestyle="None",
+                label="Graded non-uniform (-35.3% cells)",
+            )
+
         # Plot under-resolved demonstration pair (excluded from converged curve, clearly labelled as warning)
         for u_key, u_col, u_marker, u_lbl, y_sh_off, y_q_off in (
             (
@@ -2071,6 +2228,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         for ax_conv in (axes[1], axes[2]):
             ax_conv.set_xlim(9.3, max(cpw_ticks + [14.8]) + 1.8)
             ax_top = ax_conv.twiny()
+            ax_top._is_inset = True
             ax_top.set_xlim(ax_conv.get_xlim())
             ax_top.set_xticks(cpw_ticks)
             ax_top.set_xticklabels([f"{c_n:.0f} cells\n(L{i + 1})" for i, c_n in enumerate(cells_ticks)], fontsize=8.2)
@@ -2094,9 +2252,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
             fontsize=11.8,
             y=1.04,
         )
-        fig.tight_layout()
-        fig.savefig(fig_dir / "13_kottke_convergence.png", dpi=160, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "13_kottke_convergence.png", close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 14: Dual-Port Time Traces & Cavity Ring-Down Decay Envelope
@@ -2154,15 +2310,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
         ax.legend(loc="upper right", fontsize=8.2)
         ax.grid(True, which="both", alpha=0.25)
 
-        fig.tight_layout()
-        fig.savefig(fig_dir / "14_time_traces_ringdown.png", dpi=160)
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "14_time_traces_ringdown.png", close=True, auto_legend_below=False)
 
 
 # %% [markdown]
 # ## 6. Resolution Table, Convergence Results & Limits/Failure Modes
 #
-# ### `--full` Study Resolution & Convergence Table (11 Tasks)
+# ### `--full` Study Resolution & Convergence Table (12 Tasks)
 #
 # Every run records `min_feature_nm`, `dx_background_nm`, `dx_min_nm`,
 # `cells_across_feature` (measured directly from the tensor-product mesh
@@ -2170,7 +2324,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 # resonance wavelength shift $|\Delta\lambda_{\text{res}}|$ in picometres [pm]
 # across the azimuthal modes $m \in \{51, 50, 49, 48\}$ relative to the
 # independent `kottke_reference` ($R = (40\;\text{cpw}, N = 16)$, with the
-# earlier `--quick` shift vs. $L_3 = (20\;\text{cpw}, N = 8)$ shown in parentheses),
+# `--quick` shift vs. $L_3 = (20\;\text{cpw}, N = 8)$ shown in parentheses),
 # the mean free spectral range $\Delta\lambda_{\text{FSR}}$, and the mean loaded
 # quality factor $Q_L$:
 #
@@ -2187,13 +2341,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 # | 8 | `kottke_gap_150nm` ($L_3$) | 20 | 8 | 150 | 26.32 | 18.75 | 8.00 | 282,240 ($504 \times 560$) | 218,851 ($9.15\;\text{ps}$) | — | 23.68 | 1,656 (1,657) | 2,093.4 |
 # | 9 | `underresolved_kottke` (demo) | 10 | None | 100 | 52.50 | 52.50 | **1.90** | 76,055 ($265 \times 287$) | 52,701 ($5.07\;\text{ps}$) | 10,341 (8,548) | 23.38 | 700 (693) | 118.0 |
 # | 10 | `underresolved_staircase` (demo) | 10 | None | 100 | 52.50 | 52.50 | **1.90** | 76,055 ($265 \times 287$) | 55,551 ($5.35\;\text{ps}$) | 14,835 (12,988) | 22.51 (3 peaks) | **996** (714) | 137.7 |
+# | 11 | `kottke_nonuniform` (graded) | 20 | 8 | 100 | 43.84 | 12.50 | **8.00** | **182,895** ($411 \times 445$) | 143,351 ($4.68\;\text{ps}$) | 3,816 (2,023) | **23.61** | **712** (642) | **716.8** |
 #
-# *(In `--quick` mode, the 9-task schedule runs $L_1 = (10, 4)$ and $L_2 = (14, 6)$, uses `kottke_L3` at $(20\;\text{cpw}, N = 8)$ as `kottke_reference`, and evaluates the $g \in \{60, 150\}\;\text{nm}$ gap sweep at $L_2 = (14\;\text{cpw}, N = 6)$ where $\Delta x_{\min} = 10.00$ and $25.00\;\text{nm}$, $\Delta\lambda_{\text{FSR}} = 23.56$ and $23.57\;\text{nm}$, and mean $Q_L = 355$ and $1601$.)*
+# *(In `--quick` mode, the 10-task schedule runs $L_1 = (10, 4)$ and $L_2 = (14, 6)$, uses `kottke_L3` at $(20\;\text{cpw}, N = 8)$ as `kottke_reference`, evaluates the $g \in \{60, 150\}\;\text{nm}$ gap sweep at $L_2 = (14\;\text{cpw}, N = 6)$ where $\Delta x_{\min} = 10.00$ and $25.00\;\text{nm}$, $\Delta\lambda_{\text{FSR}} = 23.56$ and $23.57\;\text{nm}$, and mean $Q_L = 355$ and $1601$, and includes `kottke_nonuniform`.)*
 #
-# ### Convergence Verdict & Resolution Audit ($L_1 \to L_2 \to L_3$ vs. Reference $R = (40, 16)$)
+# ### Convergence Verdict & Resolution Audit ($L_1 \to L_2 \to L_3$ & Graded Non-Uniform vs. Reference $R = (40, 16)$)
 #
 # 1. **Resolution audit across all non-demo tasks**: Every non-demo task (`task_0` through
-#    `task_8`, `is_demo = False`) satisfies both spatial discretization rules with zero violations:
+#    `task_8` and `task_11`, `is_demo = False`) satisfies both spatial discretization rules with zero violations:
 #    - Background resolution inside the slab effective index ($n_{\text{eff,slab}} = 2.8478$):
 #      $\text{cpw} \in \{10, 14, 20, 40\} \ge 10\;\text{cells}/\lambda$.
 #    - Smallest-feature resolution across the evanescent coupler gap ($g \in \{60, 100, 150\}\;\text{nm}$):
@@ -2227,7 +2382,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 # ### Coupling-Gap Sweep ($g \in \{60, 100, 150\}\;\text{nm}$) at Full Resolution ($L_3$) vs. Yariv CMT
 #
 # Evaluating each coupling gap with $N = 8$ override cells across its own gap at $L_3 = (20\;\text{cpw}, N = 8)$
-# (and comparing against the earlier `--quick` $L_2 = (14\;\text{cpw}, N = 6)$ sweep and Yariv 2000 analytical CMT
+# (and comparing against the `--quick` $L_2 = (14\;\text{cpw}, N = 6)$ sweep and Yariv 2000 analytical CMT
 # evaluated at the central $m = 49$ resonance $\lambda_{49} \approx 1559\;\text{nm}$) confirms exponential
 # evanescent scaling of $\kappa^2(g)$ and quantitative agreement with transfer-matrix theory:
 #
@@ -2237,20 +2392,21 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=False):
 # | **100** | 12.50 ($8.00$ cells) | $0.243$ / $0.235$ | $23.71$ / $23.58$ / $23.17$ | $2.167$ / $2.237$ / $2.153$ | $760$ / $752$ | $720$ / $698$ / $724$ | $11.2$ | $-0.01\;\text{dB}$ ($99.7\%$; $95.1\text{–}100.7\%$) | $27.9$ ($27.1\text{–}28.8$) |
 # | **150** | 18.75 ($8.00$ cells) | $0.114$ / $0.114$ | $23.68$ / $23.57$ / $23.17$ | $0.941$ / $0.974$ / $0.934$ | $1,656$ / $1,601$ | $1,657$ / $1,603$ / $1,670$ | $25.9$ | $-0.05\;\text{dB}$ ($98.8\%$; $87.6\text{–}98.8\%$) | $26.7$ ($18.3\text{–}34.3$) |
 #
-# ### Comparison: Old (`--quick` $L_2$) vs. New (`--full` $L_3$) vs. Reference ($R$ & 2D EIM Theory)
+# ### Mesh Comparison: Baseline $L_2$, Baseline $L_3$, Graded Non-Uniform (`task_11`), and Reference ($R$ & 2D EIM Theory)
 #
-# | Metric ($g = 100\;\text{nm}$, $R = 5.0\;\mu\text{m}$, $w_{\text{wg}} = 0.43\;\mu\text{m}$) | Old (`--quick` `kottke_L2`, $14\;\text{cpw}, N=6$) | New (`--full` `kottke_L3`, $20\;\text{cpw}, N=8$) | 2D FIT Reference (`kottke_reference`, $40\;\text{cpw}, N=16$) | Analytical 2D EIM / Yariv CMT |
-# | :--- | :---: | :---: | :---: | :---: |
-# | Grid $\Delta x_{\text{bg}}$ / $\Delta y_{\min}$ [nm] | $37.41$ / $16.67$ ($6.00$ cells/gap) | $26.32$ / $12.50$ ($8.00$ cells/gap) | $13.16$ / $6.25$ ($16.00$ cells/gap) | Continuum 1D/2D slab |
-# | Effective / group index $n_{\text{eff}}(\lambda_0)$ / $n_g(\lambda_0)$ | $2.3906$ ($2.4008$ EIM) / $3.3005$ | $2.3886$ ($2.4029$ EIM) / $3.3005$ | $2.4029$ / $3.3005$ | $2.4029$ / $3.3005$ (2D EIM) |
-# | Resonances in $1500\text{–}1600\;\text{nm}$ | 4 ($m = 51, 50, 49, 48$) | 4 ($m = 51, 50, 49, 48$) | 4 ($m = 51, 50, 49, 48$) | 4 ($m = 51, 50, 49, 48$) |
-# | Mean Free Spectral Range $\Delta\lambda_{\text{FSR}}$ [nm] | $23.58$ | $23.71$ | $23.80$ | $23.17$ at $1550\;\text{nm}$ ($22.5\text{–}24.5$ across band) |
-# | Central resonance $\lambda_{49}$ [nm] | $1562.22$ | $1559.39$ | $1557.63$ | $1558.5$ (unperturbed ring) |
-# | Mean resonance shift $|\Delta\lambda_{\text{res}}|$ vs. $R$ [pm] | $4,663$ ($2,871$ vs. $L_3$) | $1,793$ | $0$ (ref) | — |
-# | Mean loaded quality factor $Q_L$ ($m=49$ $Q_L$) | $752$ ($698$) | $760$ ($720$) | $762$ ($734$) | $724$ (CMT at $m=49$, $\kappa^2=0.243$) |
-# | Linewidth $\Delta\lambda_{\text{FWHM}}$ at $m=49$ [nm] | $2.237$ | $2.167$ | $2.122$ | $2.153$ (CMT at $m=49$) |
-# | Drop-port peak transmission $T_{\text{drop,peak}}$ | $-0.19\text{ to }+0.02\;\text{dB}$ ($95.8\text{–}100.4\%$) | $-0.22\text{ to }+0.03\;\text{dB}$ ($95.1\text{–}100.7\%$) | $-0.27\text{ to }+0.03\;\text{dB}$ ($94.0\text{–}100.6\%$) | $99.7\%$ ($-0.01\;\text{dB}$ for $a_{\text{rt}}=0.9996$) |
-# | Through-port extinction ratio [dB] | $25.0\text{–}32.0$ ($30.2$ at $m=49$) | $27.1\text{–}28.8$ ($27.9$ at $m=49$) | $24.3\text{–}32.5$ ($32.5$ at $m=49$) | $> 27\;\text{dB}$ ($a_{\text{rt}} \to 1$) |
+# | Metric ($g = 100\;\text{nm}$, $R = 5.0\;\mu\text{m}$, $w_{\text{wg}} = 0.43\;\mu\text{m}$) | `--quick` Baseline (`kottke_L2`, $14\;\text{cpw}, N=6$) | `--full` Baseline (`kottke_L3`, $20\;\text{cpw}, N=8$) | Graded Non-Uniform (`kottke_nonuniform`, `task_11`) | 2D FIT Reference (`kottke_reference`, $40\;\text{cpw}, N=16$) | Analytical 2D EIM / Yariv CMT |
+# | :--- | :---: | :---: | :---: | :---: | :---: |
+# | Grid cells ($N_x \times N_y \times N_z$) | $145{,}524$ ($362 \times 402$) | $282{,}744$ ($504 \times 561$) | **$182{,}895$ ($411 \times 445$, $-35.3\%$)** | $1{,}075{,}402$ ($983 \times 1094$) | Continuum 1D/2D slab |
+# | Wall time [s] | $389.5$ | $1{,}757.1$ | **$716.8$ ($-59.2\%$, $2.45\times$ speedup)** | $16{,}397.4$ | — |
+# | Grid $\Delta x_{\text{bg}}$ / $\Delta y_{\min}$ [nm] | $37.41$ / $16.67$ ($6.00$ cells/gap) | $26.32$ / $12.50$ ($8.00$ cells/gap) | $43.84$ / $12.50$ (**$8.00$ cells/gap**) | $13.16$ / $6.25$ ($16.00$ cells/gap) | Continuum 1D/2D slab |
+# | Resonances in $1500\text{–}1600\;\text{nm}$ | 4 ($m = 51, 50, 49, 48$) | 4 ($m = 51, 50, 49, 48$) | **4 ($m = 51, 50, 49, 48$)** | 4 ($m = 51, 50, 49, 48$) | 4 ($m = 51, 50, 49, 48$) |
+# | Mean Free Spectral Range $\Delta\lambda_{\text{FSR}}$ [nm] | $23.58$ | $23.71$ | **$23.61$** | $23.80$ | $23.17$ at $1550\;\text{nm}$ ($22.5\text{–}24.5$ across band) |
+# | Central resonance $\lambda_{49}$ [nm] | $1562.22$ | $1559.39$ | **$1561.34$** | $1557.63$ | $1558.5$ (unperturbed ring) |
+# | Mean resonance shift $|\Delta\lambda_{\text{res}}|$ vs. $R$ [pm] | $4,663$ ($2,871$ vs. $L_3$) | $1,793$ | **$3,816$ ($2,023$ vs. $L_3$)** | $0$ (ref) | — |
+# | Mean loaded quality factor $Q_L$ ($m=49$ $Q_L$) | $752$ ($698$) | $760$ ($720$) | **$712$ ($642$)** | $762$ ($734$) | $724$ (CMT at $m=49$, $\kappa^2=0.243$) |
+# | Linewidth $\Delta\lambda_{\text{FWHM}}$ at $m=49$ [nm] | $2.237$ | $2.167$ | **$2.432$** | $2.122$ | $2.153$ (CMT at $m=49$) |
+# | Drop-port peak transmission $T_{\text{drop,peak}}$ | $-0.19\text{ to }+0.02\;\text{dB}$ ($95.8\text{–}100.4\%$) | $-0.22\text{ to }+0.03\;\text{dB}$ ($95.1\text{–}100.7\%$) | **$-0.37\text{ to }-0.16\;\text{dB}$ ($91.8\text{–}96.3\%$)** | $-0.27\text{ to }+0.03\;\text{dB}$ ($94.0\text{–}100.6\%$) | $99.7\%$ ($-0.01\;\text{dB}$ for $a_{\text{rt}}=0.9996$) |
+# | Through-port extinction ratio [dB] | $25.0\text{–}32.0$ ($30.2$ at $m=49$) | $27.1\text{–}28.8$ ($27.9$ at $m=49$) | **$24.9\text{–}27.6$ ($25.0$ at $m=49$)** | $24.3\text{–}32.5$ ($32.5$ at $m=49$) | $> 27\;\text{dB}$ ($a_{\text{rt}} \to 1$) |
 #
 # ### Why 2D EIM has $\Delta\lambda_{\text{FSR}} \approx 23.7\;\text{nm}$ vs. $18.5\;\text{nm}$ in 3D
 #
@@ -2393,7 +2549,7 @@ def main(argv=None):
         "--task",
         type=int,
         default=None,
-        help="Run a single study task by integer index (0..8 in --quick, 0..10 in --full).",
+        help="Run a single study task by integer index (0..9 in --quick, 0..11 in --full).",
     )
     parser.add_argument(
         "--out",
@@ -2439,7 +2595,7 @@ def main(argv=None):
     elif args.full:
         quick = False
     else:
-        quick = not (args.out / "task_10.npz").exists()
+        quick = not (args.out / "task_11.npz").exists()
     if args.plot:
         generate_all_figures(data_dir=args.out, fig_dir=FIG_DIR, quick=quick)
         print_summary_table(data_dir=args.out)

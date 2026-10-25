@@ -2529,7 +2529,8 @@ def _draw_schematic_panel(
                 arrowprops={"arrowstyle": "-|>", "color": src_color, "lw": 1.8, "ls": "-."},
                 zorder=7,
             )
-            tx, ty = h0 + 0.30 * dh, v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            # Tag sits on the beam line itself (a fixed lane can land next to another horizontal object).
+            tx, ty = h0 + 0.30 * dh, y_b + 0.07 * dv
             leg_handle = plt.Line2D([0], [0], color=src_color, lw=1.8, ls="-.")
         else:
             ax.plot([sh0, sh1], [sv0, sv1], color=src_color, lw=2.3, ls="-", marker="none", zorder=7)
@@ -2627,6 +2628,9 @@ def _draw_schematic_panel(
                 ax.plot([mh0, mh1], [mv0, mv1], color=mon_color, lw=1.9, ls="--", zorder=7)
                 tx = mh0
             ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            if yv_line is None and abs(mh1 - mh0) > 1e-9 * scale and abs(mv1 - mv0) < 1e-9 * scale:
+                # Horizontal line monitor: tag it at its own height, near the middle of the line.
+                tx, ty = 0.5 * (mh0 + mh1), mv0 + 0.07 * dv
             leg_handle = plt.Line2D([0], [0], color=mon_color, lw=1.9, ls="--")
 
         if m_idx < rem_slots:

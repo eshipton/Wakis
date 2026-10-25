@@ -25,6 +25,8 @@ if str(TUTORIAL_DIR) not in sys.path:
 
 from _helpers import (  # noqa: E402
     bent_waveguide_radial_mode,
+    build_ring_coupler_graded_axes,
+    build_ring_coupler_hybrid_unstructured_mesh,
     cmt_coupling_vs_gap,
     fit_exponential_decay,
     ring_resonator_metrics,
@@ -421,7 +423,7 @@ def test_full_study_data_convergence_and_gap_decay_audit():
 
     data_dir = TUTORIAL_DIR / "data"
     full_table = get_task_table(quick=False)
-    assert len(full_table) == 13
+    assert len(full_table) == 14
 
     tasks_npz = {}
     for cfg in full_table:
@@ -465,6 +467,14 @@ def test_full_study_data_convergence_and_gap_decay_audit():
     assert err_t_k3 < err_t_s3 / 3.0
     assert err_k_k3 < err_k_s3 / 3.0
     assert a_l3 < as_l3 / 3.0 and a_ref < a_l3
+    t_nu, k_nu, a_nu = _t2_k2_a2_1550(tasks_npz["kottke_nonuniform"])
+    err_t_nu = abs(t_nu - t_ref) / t_ref
+    err_k_nu = abs(k_nu - k_ref) / k_ref
+    assert int(tasks_npz["kottke_nonuniform"]["n_cells"]) < 0.65 * int(tasks_npz["kottke_L3"]["n_cells"])
+    assert float(tasks_npz["kottke_nonuniform"]["cells_across_feature"]) == pytest.approx(8.0, rel=1e-4)
+    assert err_t_nu < 3e-3 and err_k_nu < 1.2e-2
+    assert err_t_nu < err_t_s3 and err_k_nu < err_k_s3
+    assert a_nu < 2.0e-5
 
     # Passivity, reciprocity, and CPML extrusion on primary kottke_L3
     p = tasks_npz["kottke_L3"]
@@ -515,3 +525,60 @@ def test_full_study_data_convergence_and_gap_decay_audit():
     bad_fit = fit_exponential_decay(gaps_m, scrambled_k2)
     assert bad_fit["r_squared"] < 0.70
 
+
+
+def test_setup_figures_mesh_upgrade_and_mutation():
+    """
+    Verify:
+    1. Setup figures (`00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`,
+       `00_setup_table.md`), mesh comparison figure (`04b_mesh_upgrade_comparison.png`),
+       and pulse animation GIF (`09_pulse_propagation.gif` < 5 MB) exist in `figures/`.
+    2. `build_ring_coupler_graded_axes` produces an exact left-right mirror-symmetric
+       x-axis (`x + x[::-1] == 0`), exact `8.0` cells across the `50 nm` coupling slot,
+       and `< 65%` of `kottke_L3`'s cell count, with a mutation check when
+       `cells_per_feature` is changed from `8` to `4`.
+    3. `build_ring_coupler_hybrid_unstructured_mesh` generates a body-fitted
+       square+triangle `UnstructuredMesh2D` around the circular ring rim.
+    """
+    fig_dir = TUTORIAL_DIR / "figures"
+    for fname in (
+        "00_setup_table.md",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "04b_mesh_upgrade_comparison.png",
+        "09_pulse_propagation.gif",
+    ):
+        fpath = fig_dir / fname
+        assert fpath.is_file() and fpath.stat().st_size > 1000, f"Missing or empty figure: {fname}"
+    gif_size_mb = (fig_dir / "09_pulse_propagation.gif").stat().st_size / (1024.0 * 1024.0)
+    assert gif_size_mb < 5.0, f"GIF exceeds 5 MB limit: {gif_size_mb:.2f} MB"
+
+    _, _, domain = build_ring_coupler(gap=GAP_NOMINAL, extrude_into_pml=True)
+    x_nu, y_nu, z_nu, _ = build_ring_coupler_graded_axes(
+        domain=domain, gap=GAP_NOMINAL, cpw=20, cells_per_feature=8
+    )
+    assert len(z_nu) - 1 == 1
+    assert np.allclose(x_nu + x_nu[::-1], 0.0, atol=1e-15), "x_axis must be exact mirror-symmetric"
+    res_nu = measure_mesh_resolution(x_nu, y_nu, gap=GAP_NOMINAL)
+    assert res_nu["cells_across_feature"] == pytest.approx(8.0, rel=1e-6)
+    assert res_nu["dx_min_nm"] == pytest.approx(6.25, rel=1e-6)
+    assert res_nu["n_cells"] < 170000
+
+    # Mutation check: halving `cells_per_feature` from 8 to 4 halves cells across slot
+    # and doubles dx_min_nm from 6.25 nm to 12.50 nm
+    x_mut, y_mut, _, _ = build_ring_coupler_graded_axes(
+        domain=domain, gap=GAP_NOMINAL, cpw=20, cells_per_feature=4
+    )
+    res_mut = measure_mesh_resolution(x_mut, y_mut, gap=GAP_NOMINAL)
+    assert res_mut["cells_across_feature"] == pytest.approx(4.0, rel=1e-6)
+    assert res_mut["dx_min_nm"] == pytest.approx(12.50, rel=1e-6)
+    assert res_mut["n_cells"] < res_nu["n_cells"]
+
+    # Hybrid square+triangle unstructured mesh check on curved ring rim
+    mesh_hyb, _, info_hyb = build_ring_coupler_hybrid_unstructured_mesh(
+        gap=GAP_NOMINAL, radius=R_RING, width=W_WG, h=0.16e-6, levels=2
+    )
+    assert info_hyb["n_quads"] > 500
+    assert info_hyb["n_tris"] > 500
+    assert info_hyb["n_cells"] == info_hyb["n_quads"] + info_hyb["n_tris"]
+    assert mesh_hyb.n_cells == info_hyb["n_cells"]

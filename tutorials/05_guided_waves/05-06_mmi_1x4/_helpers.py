@@ -322,7 +322,10 @@ def plot_slot_eim_stack(
         ]
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(12.0, 4.0), dpi=150)
+    from wakis import figstyle
+
+    figstyle.apply_style()
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=12.2, height=4.0)
     z1_nm = 0.5 * h_slot * 1e9
     z2_nm = (0.5 * h_slot + h_rail) * 1e9
     ax0, ax1, ax2 = axes
@@ -353,7 +356,7 @@ def plot_slot_eim_stack(
         ylabel="Vertical coordinate z [nm]",
         title="(a) 5-layer Si–GaN–Si slot stack",
     )
-    ax0.legend(loc="upper right", fontsize=7.8)
+    ax0.legend(loc="upper right", fontsize=8.5)
 
     z_nm = vm["z"] * 1e9
     ax1.axvspan(-z2_nm, -z1_nm, color="#2b5c8f", alpha=0.14, label="Si rails")
@@ -390,7 +393,7 @@ def plot_slot_eim_stack(
         title=f"(b) Vertical slot mode (n_eff = {vm['neff']:.4f} @ 1550 nm)",
     )
     ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=7.5)
+    ax1.legend(loc="upper right", fontsize=8.5)
 
     wl_nm = np.asarray(wavelengths) * 1e9
     ax2.plot(
@@ -421,13 +424,10 @@ def plot_slot_eim_stack(
         title="(c) Slot & rail slab dispersion",
     )
     ax2.grid(True, ls=":", alpha=0.4)
-    ax2.legend(loc="center right", fontsize=7.8)
+    ax2.legend(loc="center right", fontsize=8.5)
 
-    fig.tight_layout()
     if out_path is not None:
-        FilePath(out_path).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return fig, axes
 
 
@@ -717,3 +717,904 @@ def mmi_eme_length_sweep(
         "carpet_y": y_sub,
         "carpet_I": carpet_i,
     }
+
+
+# ---------------------------------------------------------------------------
+# Graded non-uniform Cartesian mesh & schematic/overlay helpers (Tutorial 5.6)
+# ---------------------------------------------------------------------------
+
+from matplotlib.collections import LineCollection  # noqa: E402
+from matplotlib.patches import Polygon as MplPolygon, Rectangle  # noqa: E402
+from scipy.constants import c as c_light  # noqa: E402
+
+from wakis import figstyle, schematic  # noqa: E402
+from wakis.templates import Simulation, meshing  # noqa: E402
+from wakis.templates.photonics import PICSimulation, n_to_eps  # noqa: E402
+
+
+def build_mmi_1x4_graded_axes(
+    domain,
+    l1: float = 2.00e-6,
+    l_mmi: float = 11.15e-6,
+    w1: float = 0.40e-6,
+    g2: float = 0.50e-6,
+    w_mmi: float = 4.90e-6,
+    n_pml: int = 10,
+    cpw: float = 20.0,
+    dx_junc: float | None = None,
+    dx_mmi: float | None = None,
+    dx_lead: float | None = None,
+    dy_in: float | None = None,
+    dy_mmi: float | None = None,
+    dy_wall: float | None = None,
+    dy_clad: float | None = None,
+    grade_ratio: float = 1.22,
+):
+    """
+    Construct mirror-symmetric graded non-uniform, non-square Cartesian node
+    arrays ``(x, y, z)`` for the 1x4 Si-GaN-Si vertical-slot MMI splitter:
+
+    - Exact transverse grid nodes at ``y = +-0.5 * g2`` (central output taper gap)
+      and ``y = +-0.5 * w_mmi`` (MMI sidewalls), eliminating the ``-7.3 nm``
+      uniform-grid sidewall rounding error,
+    - Fine transverse spacing ``dy_in`` across the input waveguide and central
+      output gap ``|y| <= 0.5 * g2`` and ``dy_wall`` across the outer taper
+      shoulder and MMI sidewall ``|y| in [0.5 * w_mmi - 0.20 um, 0.5 * w_mmi]``,
+    - Standard ``>= 20 cpw`` spacing ``dy_mmi`` across the interior MMI core and
+      smoothly graded coarse cells ``dy_clad`` in the outer ``SiO2`` cladding
+      ``|y| > 0.5 * w_mmi``,
+    - Fine axial spacing ``dx_junc`` across the input-taper-to-MMI entrance
+      (``x ~ l1``) and 4-port MMI exit junction (``x ~ l1 + l_mmi``), paired
+      with ``dx_mmi`` inside the multimode cavity and stretched non-square axial
+      cells ``dx_lead > dy_in`` along the smooth input/output leads and tapers.
+    """
+    if len(domain) == 4:
+        xmin, xmax, ymin, ymax = domain
+        zmin_2d, zmax_2d = -0.5e-6, 0.5e-6
+    else:
+        xmin, xmax, ymin, ymax, zmin_2d, zmax_2d = domain
+
+    scale = 20.0 / max(float(cpw), 5.0)
+    x_in_junc = float(l1)
+    x_out_junc = float(l1) + float(l_mmi)
+    y_gap = 0.5 * max(float(g2), float(w1))
+    y_wall = 0.5 * float(w_mmi)
+    y_shoulder = max(y_gap + 0.10e-6, y_wall - 0.20e-6)
+
+    dx_j = float(24.0e-9 * scale if dx_junc is None else dx_junc)
+    dx_m = float(25.5e-9 * scale if dx_mmi is None else dx_mmi)
+    dx_ld = float(38.0e-9 * scale if dx_lead is None else dx_lead)
+
+    dy_i = float(22.73e-9 * scale if dy_in is None else dy_in)
+    dy_c = float(25.0e-9 * scale if dy_mmi is None else dy_mmi)
+    dy_w = float(22.22e-9 * scale if dy_wall is None else dy_wall)
+    dy_cl = float(75.0e-9 * scale if dy_clad is None else dy_clad)
+
+    x_int = meshing.graded_axis(
+        [
+            xmin,
+            x_in_junc - 0.20e-6,
+            x_in_junc + 0.20e-6,
+            x_out_junc - 0.20e-6,
+            x_out_junc + 0.25e-6,
+            xmax,
+        ],
+        [dx_ld, dx_j, dx_m, dx_j, dx_ld],
+        grading=grade_ratio,
+    )
+    y_pos = meshing.graded_axis(
+        [0.0, y_gap, y_shoulder, y_wall, ymax],
+        [dy_i, dy_c, dy_w, dy_cl],
+        grading=grade_ratio,
+    )
+    y_int = np.concatenate([-y_pos[:0:-1], y_pos])
+
+    n_pml = int(n_pml)
+
+    def _pad_pml(nodes: np.ndarray) -> np.ndarray:
+        lo_pml = nodes[0] - np.arange(n_pml, 0, -1) * (nodes[1] - nodes[0])
+        hi_pml = nodes[-1] + np.arange(1, n_pml + 1) * (nodes[-1] - nodes[-2])
+        return np.concatenate([lo_pml, nodes, hi_pml])
+
+    return (
+        _pad_pml(x_int),
+        _pad_pml(y_int),
+        np.array([zmin_2d, zmax_2d], dtype=float),
+    )
+
+
+def measure_mmi_1x4_mesh(
+    x_nodes: np.ndarray,
+    y_nodes: np.ndarray,
+    w1: float = 0.40e-6,
+    g2: float = 0.50e-6,
+    w_mmi: float = 4.90e-6,
+    has_ghost: bool = False,
+) -> dict:
+    """
+    Measure cell counts, min/max steps, feature cell counts across ``w1`` and
+    ``g2``, and sidewall node alignment error on ``(x_nodes, y_nodes)``.
+    """
+    xv = np.asarray(x_nodes[:-1] if has_ghost else x_nodes, dtype=float)
+    yv = np.asarray(y_nodes[:-1] if has_ghost else y_nodes, dtype=float)
+    dx = np.diff(xv)
+    dy = np.diff(yv)
+
+    def _count_span(nodes: np.ndarray, lo: float, hi: float) -> float:
+        ov = np.maximum(0.0, np.minimum(nodes[1:], hi) - np.maximum(nodes[:-1], lo))
+        return float(np.sum(ov / np.maximum(np.diff(nodes), 1e-30)))
+
+    cells_w1 = _count_span(yv, -0.5 * float(w1), +0.5 * float(w1))
+    cells_g2 = _count_span(yv, -0.5 * float(g2), +0.5 * float(g2))
+    sidewall_err_nm = float(np.min(np.abs(yv - 0.5 * float(w_mmi))) * 1e9)
+    return {
+        "nx": int(len(dx)),
+        "ny": int(len(dy)),
+        "n_cells": int(len(dx) * len(dy)),
+        "dx_min_nm": float(np.min(dx) * 1e9),
+        "dx_max_nm": float(np.max(dx) * 1e9),
+        "dy_min_nm": float(np.min(dy) * 1e9),
+        "dy_max_nm": float(np.max(dy) * 1e9),
+        "cells_across_w1": cells_w1,
+        "cells_across_g2": cells_g2,
+        "sidewall_err_nm": sidewall_err_nm,
+        "aspect_max": float(np.max(dx) / np.min(dy)),
+    }
+
+
+class NonUniformMMI1x4PIC(PICSimulation):
+    """
+    2D EIM ``PICSimulation`` subclass for the 1x4 MMI power splitter using
+    ``build_mmi_1x4_graded_axes`` (fine transverse cells across the waveguide
+    core, taper gaps, and exact MMI sidewalls; graded coarse cells in the outer
+    ``SiO2`` cladding; fine axial cells at the MMI entrance/exit throats and
+    stretched non-square axial cells along the input/output leads and tapers).
+    """
+
+    def __init__(
+        self,
+        *args,
+        l1: float = 2.00e-6,
+        l_mmi: float = 11.15e-6,
+        w1: float = 0.40e-6,
+        g2: float = 0.50e-6,
+        w_mmi: float = 4.90e-6,
+        grade_ratio: float = 1.22,
+        **kwargs,
+    ):
+        self.l1 = float(l1)
+        self.l_mmi = float(l_mmi)
+        self.w1 = float(w1)
+        self.g2 = float(g2)
+        self.w_mmi = float(w_mmi)
+        self.grade_ratio = float(grade_ratio)
+        kwargs["mesh_overrides"] = ()
+        super().__init__(*args, **kwargs)
+
+    def build(self):
+        structs, domain = self._build_2d_structures_and_domain()
+        boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+        self.sim = Simulation(
+            self.f_min,
+            self.f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=self.cells_per_wavelength,
+            padding=self.padding,
+            n_pml=self.n_pml,
+            n_freqs=self.n_freqs,
+            cfln=self.cfln,
+            mesh_overrides=[],
+            use_gpu=self.use_gpu,
+            averaging=self.averaging,
+        )
+        n_pml = int(self.n_pml or 10)
+        self.sim.n_pml = n_pml
+        axes_xyz = build_mmi_1x4_graded_axes(
+            domain,
+            l1=self.l1,
+            l_mmi=self.l_mmi,
+            w1=self.w1,
+            g2=self.g2,
+            w_mmi=self.w_mmi,
+            n_pml=n_pml,
+            cpw=self.cells_per_wavelength,
+            grade_ratio=self.grade_ratio,
+        )
+        self.sim._axis = lambda axis: axes_xyz[int(axis)]
+        self.solver = self.sim.build()
+        self.solver.ieps[:, :, :, "z"] = 0.0
+        self.grid = self.sim.grid
+        self.frequencies = self.sim.frequencies
+        self.wavelengths = c_light / self.frequencies
+        return self.solver
+
+
+class _PolygonSchematicProxy:
+    """
+    Lightweight polygon structure proxy exposing ``.vertices``, ``.material``,
+    and ``.name`` (without ``.bounds`` or ``.radius``) so ``wakis.schematic``
+    classifies a 2D ``PolySlab`` as ``kind='polygon'`` rather than a bounding-box
+    rectangle.
+    """
+
+    def __init__(self, slab, material_eps: float, name: str):
+        self.vertices = np.asarray(slab.vertices, dtype=float)
+        self.material = float(material_eps)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """
+    Lightweight proxy around ``SolverFIT3D`` that hides ``ieps`` from
+    ``wakis.schematic.extract_setup_info`` so explicit ``structures`` are used.
+    """
+
+    def __init__(self, solver, eps_clad: float):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 10)
+        self.bc_low = getattr(solver, "bc_low", ["pml", "pml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["pml", "pml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
+def _build_mmi_1x4_sources_and_monitors(pic, include_flux_box: bool = True):
+    """Build ``(sources, monitors)`` dicts for ``wakis.schematic`` from ``pic``."""
+    xmin, xmax = float(pic.grid.xmin), float(pic.grid.xmax)
+    ymin, ymax = float(pic.grid.ymin), float(pic.grid.ymax)
+    dx_bg = float(np.median(np.diff(pic.grid.x[:-1])))
+    dy_bg = float(np.median(np.diff(pic.grid.y[:-1])))
+    n_pml = int(getattr(pic.solver, "n_pml", 10))
+    pulse_obj = pic.sim.pulse
+    f0 = float(pulse_obj.frequency)
+    fwidth = float(pulse_obj.fwidth)
+
+    sources_s = []
+    monitors_s = []
+    out_ports = [pt for pt in pic.ports if pt.name.startswith("out") and "_m1" not in pt.name]
+
+    for pt in pic.ports:
+        if pt.name == "in":
+            cx = float(pt.center[0])
+            hy = 0.5 * float(pt.size[1])
+            x_src = cx - 0.15e-6
+            sources_s.append(
+                {
+                    "kind": "sheet",
+                    "type_name": "ModeSource",
+                    "short_word": "ModeSrc",
+                    "label": "Port 'in' ModeSource (TM₀ slot mode, +x)",
+                    "desc": f"Port 'in' ModeSource at x = {x_src * 1e6:.2f} µm (TE₀/EIM, +x)",
+                    "h_bounds": (x_src, x_src),
+                    "v_bounds": (-hy, +hy),
+                    "e_vec": (0.0, 1.0, 0.0),
+                    "k_vec": (1.0, 0.0, 0.0),
+                    "h_vec": (0.0, 0.0, 1.0),
+                    "pulse": {
+                        "f0": f0,
+                        "fwidth": fwidth,
+                        "t_peak": float(4.0 / (np.pi * fwidth)),
+                        "t_end": float(pulse_obj.end_time),
+                        "src_time": pulse_obj,
+                    },
+                }
+            )
+            monitors_s.append(
+                {
+                    "kind": "plane",
+                    "type_name": "ModeMonitor",
+                    "short_word": "in mon",
+                    "label": "Port 'in' ModeMonitor (S₁₁)",
+                    "desc": f"Port 'in' ModeMonitor at x = {cx * 1e6:.2f} µm (S₁₁)",
+                    "h_bounds": (cx, cx),
+                    "v_bounds": (-hy, +hy),
+                }
+            )
+
+    if out_ports:
+        cx_out = float(out_ports[0].center[0])
+        y_lo = float(min(pt.center[1] - 0.5 * pt.size[1] for pt in out_ports))
+        y_hi = float(max(pt.center[1] + 0.5 * pt.size[1] for pt in out_ports))
+        monitors_s.append(
+            {
+                "kind": "plane",
+                "type_name": "ModeMonitor",
+                "short_word": "out1–4",
+                "label": "Ports 'out1'–'out4' ModeMonitors (S₂₁..S₅₁)",
+                "desc": f"Ports 'out1'–'out4' ModeMonitors at x = {cx_out * 1e6:.2f} µm (y = ±0.65, ±1.95 µm)",
+                "h_bounds": (cx_out, cx_out),
+                "v_bounds": (y_lo, y_hi),
+            }
+        )
+
+    if include_flux_box:
+        pad_x = (n_pml + 2) * dx_bg
+        pad_y = (n_pml + 2) * dy_bg
+        monitors_s.append(
+            {
+                "kind": "box",
+                "type_name": "FluxBox",
+                "short_word": "FluxBox",
+                "label": "2D Poynting FluxBox",
+                "desc": "Closed 2D Poynting FluxBox (4 faces inside CPML)",
+                "h_bounds": (xmin + pad_x, xmax - pad_x),
+                "v_bounds": (ymin + pad_y, ymax - pad_y),
+            }
+        )
+    return sources_s, monitors_s
+
+
+def save_mmi_1x4_setup_figures(
+    pic,
+    structures,
+    primary_data: dict,
+    out_dir: str | FilePath,
+    *,
+    w1: float = 0.40e-6,
+    w2: float = 0.80e-6,
+    l1: float = 2.00e-6,
+    l2: float = 5.00e-6,
+    l_mmi: float = 11.15e-6,
+    w_mmi: float = 4.90e-6,
+    pitch: float = 1.30e-6,
+) -> dict:
+    """
+    Generate ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``,
+    and ``00_setup_table.md`` for Tutorial 5.6 using
+    ``wakis.schematic.save_setup_figures``, enhanced with the launched input
+    mode profile ``|E_y(y)|`` on the port plane and the 34-vertex polygon on the
+    mesh and 1x zoom inset.
+    """
+    out_path = FilePath(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    eps_clad = n_to_eps(pic.n_clad)
+    eps_slab = n_to_eps(pic.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    poly_proxy = _PolygonSchematicProxy(
+        structures[0],
+        material_eps=eps_slab,
+        name=f"Si–GaN–Si slot EIM (n_eff = {pic.n_eff_slab:.2f})",
+    )
+    mat_names = {
+        "background": f"SiO₂ cladding (n = {pic.n_clad:.3f}, ε_r = {eps_clad:.2f})",
+        "region_0": f"Si–GaN–Si slot EIM (n_eff = {pic.n_eff_slab:.2f}, ε_eff = {eps_slab:.2f})",
+    }
+    sources_s, monitors_s = _build_mmi_1x4_sources_and_monitors(pic, include_flux_box=True)
+    variations = [
+        {
+            "name": "kottke_coarse..fine (tasks 0–5)",
+            "param": "cpw ∈ {10, 14, 20}, averaging ∈ {kottke, staircase}",
+            "note": "Uniform resolution ladder at (W_MMI, L_MMI) = (4.90, 11.15) µm",
+        },
+        {
+            "name": "kottke_reference (task 6)",
+            "param": "cpw = 40 (1705 × 571 × 1 = 973,555 cells)",
+            "note": "Independent 2× fine Kottke reference",
+        },
+        {
+            "name": "sweep_W* (tasks 7–36)",
+            "param": "W_MMI ∈ [4.80, 5.20] µm × L_MMI ∈ [11.10, 11.35] µm",
+            "note": "30-point 5×6 design sweep at 20 cpw (min EL at 5.00×11.20, min imb at 5.00×11.30 µm)",
+        },
+        {
+            "name": "kottke_nonuniform (task 37)",
+            "param": "Graded non-square Cartesian mesh (731 × 256 × 1 = 187,136 cells)",
+            "note": "Exact sidewall nodes (y = ±2.45 µm), dy_min = 20.0 nm in gaps, dx_max = 38.0 nm in leads",
+        },
+    ]
+
+    res = schematic.save_setup_figures(
+        solver_proxy,
+        out_path,
+        prefix="00",
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=pic.wavelength_ref,
+        min_feature=w1,
+        title_geometry=(
+            "1×4 Si–GaN–Si Vertical-Slot MMI Power Splitter (2D EIM Setup Schematic)"
+        ),
+        title_mesh=(
+            "Discretization (Graded Non-Uniform Mesh & 1× Zoom) and Broadband Excitation"
+        ),
+        variations=variations,
+    )
+
+    # Enhance 00a_setup_geometry.png with top/bottom CPML shading and launched mode profile |Ey(y)|
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_proxy,
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=pic.wavelength_ref,
+        title="1×4 Si–GaN–Si Vertical-Slot MMI Power Splitter (2D EIM Setup Schematic)",
+        width_in=7.6,
+        height_in=4.6,
+    )
+    x0_um = float(pic.grid.xmin * 1e6)
+    x1_um = float(pic.grid.xmax * 1e6)
+    y0_um = float(pic.grid.ymin * 1e6)
+    y1_um = float(pic.grid.ymax * 1e6)
+    n_pml = int(getattr(pic.solver, "n_pml", 10))
+    th_y_low = float((pic.grid.y[n_pml] - pic.grid.y[0]) * 1e6)
+    th_y_high = float((pic.grid.y[-2] - pic.grid.y[-2 - n_pml]) * 1e6)
+    for yb_start, th_y in ((y0_um, th_y_low), (y1_um - th_y_high, th_y_high)):
+        ax_a.add_patch(
+            Rectangle(
+                (x0_um, yb_start),
+                x1_um - x0_um,
+                th_y,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="///",
+                alpha=0.36,
+                lw=0.8,
+                zorder=2,
+            )
+        )
+    if "port_y_in" in primary_data and "port_ey_in" in primary_data:
+        y_m = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
+        ey_m = np.abs(np.asarray(primary_data["port_ey_in"]))
+        ey_m = ey_m / max(float(np.max(ey_m)), 1e-30)
+        x_src_um = float(sources_s[0]["h_bounds"][0] * 1e6)
+        x_prof = x_src_um + 1.15 * ey_m
+        ax_a.fill_betweenx(
+            y_m, x_src_um, x_prof, color="#D55E00", alpha=0.28, zorder=7.5
+        )
+        ax_a.plot(
+            x_prof,
+            y_m,
+            color="#D55E00",
+            lw=1.8,
+            zorder=8,
+            label="Launched mode |Ey(y)|",
+        )
+    ax_a.text(
+        float((l1 + 0.5 * l_mmi) * 1e6),
+        0.0,
+        f"MMI cavity: L_MMI = {l_mmi * 1e6:.2f} µm, W_MMI = {w_mmi * 1e6:.2f} µm",
+        ha="center",
+        va="center",
+        fontsize=8.8,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox=dict(
+            boxstyle="round,pad=0.22",
+            facecolor="#FFFFFFE8",
+            edgecolor="#B0B8C2",
+            lw=0.6,
+        ),
+        zorder=9,
+    )
+    for k_port, yc_m in enumerate((-1.5 * pitch, -0.5 * pitch, 0.5 * pitch, 1.5 * pitch), start=1):
+        ax_a.text(
+            float((l1 + l_mmi + l2 + 0.95e-6) * 1e6),
+            float(yc_m * 1e6),
+            f"out{k_port}",
+            ha="left",
+            va="center",
+            fontsize=8.6,
+            fontweight="bold",
+            color="#006B4E",
+            zorder=9,
+        )
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with the 34-vertex polygon on ax_mesh and zoom inset
+    x_exit = float(l1 + l_mmi)
+    zoom_bounds = (x_exit - 0.35e-6, x_exit + 0.45e-6, -0.45e-6, +0.45e-6)
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_proxy,
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        mesh_every=8,
+        zoom_bounds=zoom_bounds,
+        wavelength=pic.wavelength_ref,
+        min_feature=w1,
+        title="Discretization (Graded Non-Uniform Mesh & 1× Zoom) and Broadband Excitation",
+        width_in=7.6,
+        height_in=5.6,
+    )
+    ax_mesh = axes_b[0]
+    verts_um = np.asarray(structures[0].vertices, dtype=float) * 1e6
+    ax_mesh.add_patch(
+        MplPolygon(
+            verts_um,
+            closed=True,
+            facecolor="#DCEAF7",
+            edgecolor="#1E293B",
+            lw=1.1,
+            alpha=0.80,
+            zorder=2,
+        )
+    )
+    for child_ax in fig_b.axes:
+        if getattr(child_ax, "_is_inset", False):
+            child_ax.add_patch(
+                MplPolygon(
+                    verts_um,
+                    closed=True,
+                    facecolor="#DCEAF7",
+                    edgecolor="#1E293B",
+                    lw=1.0,
+                    alpha=0.80,
+                    zorder=1.5,
+                )
+            )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
+
+
+def plot_mesh_upgrade_comparison_mmi_1x4(
+    pic_uniform,
+    pic_nonuniform,
+    structures,
+    d_uniform: dict,
+    d_nonuniform: dict,
+    d_reference: dict,
+    meta_uniform: dict,
+    meta_nonuniform: dict,
+    meta_reference: dict,
+    out_path: str | FilePath,
+    xlim_um: tuple[float, float] = (12.6, 15.0),
+    ylim_um: tuple[float, float] = (-2.65, 2.65),
+):
+    """
+    Render ``04b_mesh_upgrade_comparison.png`` (3 panels):
+    (a) Baseline uniform 20 cpw Kottke mesh zoomed on the 1x4 MMI exit junction,
+    (b) Upgraded graded non-uniform, non-square Cartesian Kottke mesh on the same
+        window showing fine cells across the gaps/sidewall and coarse cladding,
+    (c) Broadband total transmission and excess loss comparison against the
+        independent 40 cpw reference, with cell counts and wall time annotated.
+    """
+    figstyle.apply_style()
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=13.6, height=4.3)
+    verts_um = np.asarray(structures[0].vertices, dtype=float) * 1e6
+
+    for ax, pic_obj, meta, tag in (
+        (ax0, pic_uniform, meta_uniform, "(a) Baseline uniform 20 cpw Kottke"),
+        (ax1, pic_nonuniform, meta_nonuniform, "(b) Graded non-uniform Kottke"),
+    ):
+        g = pic_obj.grid
+        iz = pic_obj.solver.Nz // 2
+        ieps_y = np.asarray(pic_obj.solver.ieps[:, :, iz, "y"], dtype=float)
+        with np.errstate(divide="ignore"):
+            eps_y = np.where(ieps_y > 0.0, 1.0 / ieps_y, 1.0)
+        xu = np.asarray(g.x, dtype=float) * 1e6
+        yu = np.asarray(g.y, dtype=float) * 1e6
+        nx_c = len(xu) - 1
+        ny_c = len(yu) - 1
+        im = ax.pcolormesh(
+            xu,
+            yu,
+            eps_y[:nx_c, :ny_c].T,
+            cmap="Blues",
+            vmin=1.8,
+            vmax=9.5,
+            shading="flat",
+            alpha=0.88,
+        )
+        ax.plot(
+            np.append(verts_um[:, 0], verts_um[0, 0]),
+            np.append(verts_um[:, 1], verts_um[0, 1]),
+            color="#D55E00",
+            lw=1.35,
+            label="Exact 34-vertex polygon",
+        )
+        xs = xu[(xu >= xlim_um[0]) & (xu <= xlim_um[1])]
+        ys = yu[(yu >= ylim_um[0]) & (yu <= ylim_um[1])]
+        segs = [[(x, ylim_um[0]), (x, ylim_um[1])] for x in xs] + [
+            [(xlim_um[0], y), (xlim_um[1], y)] for y in ys
+        ]
+        ax.add_collection(
+            LineCollection(segs, colors="0.15", linewidths=0.42, alpha=0.62)
+        )
+        m_stats = measure_mmi_1x4_mesh(g.x, g.y, has_ghost=True)
+        ax.set(
+            xlim=xlim_um,
+            ylim=ylim_um,
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+            title=(
+                f"{tag}\n"
+                f"{meta['grid_shape'][0]}×{meta['grid_shape'][1]} = {meta['n_cells']:,} cells "
+                f"({meta['elapsed_s']:.1f} s)"
+            ),
+        )
+        ax.text(
+            0.03,
+            0.04,
+            (
+                f"Δx ∈ [{m_stats['dx_min_nm']:.1f}, {m_stats['dx_max_nm']:.1f}] nm\n"
+                f"Δy ∈ [{m_stats['dy_min_nm']:.1f}, {m_stats['dy_max_nm']:.1f}] nm\n"
+                f"sidewall node err = {m_stats['sidewall_err_nm']:.1f} nm"
+            ),
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8.5,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="0.7", alpha=0.92),
+        )
+        if ax is ax1:
+            cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+            cb.set_label(r"$\varepsilon_{yy} = (\mathbf{\varepsilon}^{-1})_{yy}^{-1}$")
+
+    def _tot_and_in_out(d):
+        w_nm = np.asarray(d["wavelengths"], dtype=float) * 1e9
+        o = np.argsort(w_nm)
+        wl_s = w_nm[o]
+        m = (wl_s >= 1505.0) & (wl_s <= 1595.0)
+        t_out = np.abs(d["S21"][o][m]) ** 2
+        t_in = np.abs(d["S31"][o][m]) ** 2
+        t_tot = (
+            t_out
+            + t_in
+            + np.abs(d["S41"][o][m]) ** 2
+            + np.abs(d["S51"][o][m]) ** 2
+        )
+        return wl_s[m], t_tot, t_in, t_out
+
+    wl_u, t_u, _, _ = _tot_and_in_out(d_uniform)
+    wl_nu, t_nu, _, _ = _tot_and_in_out(d_nonuniform)
+    wl_r, t_r, _, _ = _tot_and_in_out(d_reference)
+    i0 = int(np.argmin(np.abs(wl_r - 1550.0)))
+    rms_u = float(np.sqrt(np.mean((t_u - t_r) ** 2)))
+    rms_nu = float(np.sqrt(np.mean((t_nu - t_r) ** 2)))
+    cell_red = 100.0 * (1.0 - meta_nonuniform["n_cells"] / meta_uniform["n_cells"])
+    time_red = 100.0 * (1.0 - meta_nonuniform["elapsed_s"] / meta_uniform["elapsed_s"])
+
+    ax2.plot(
+        wl_r,
+        t_r,
+        ":",
+        color="black",
+        lw=2.1,
+        label=f"40 cpw ref ({meta_reference['n_cells']:,} cells, T={t_r[i0]:.4f})",
+    )
+    ax2.plot(
+        wl_u,
+        t_u,
+        "--",
+        color="#0072B2",
+        lw=1.9,
+        label=f"Uniform 20 cpw ({meta_uniform['n_cells']:,} cells, RMS={rms_u:.4f})",
+    )
+    ax2.plot(
+        wl_nu,
+        t_nu,
+        "-",
+        color="#009E73",
+        lw=2.0,
+        label=f"Graded non-uniform ({meta_nonuniform['n_cells']:,} cells, RMS={rms_nu:.4f})",
+    )
+    ax2.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel=r"Total guided transmission $T_{\mathrm{tot}} = \sum_{i=1}^4 T_i$",
+        ylim=(0.84, 0.93),
+        title=(
+            f"(c) Equal-accuracy validation (−{cell_red:.1f}% cells, −{time_red:.1f}% time)"
+        ),
+    )
+    ax2.grid(True, ls=":", alpha=0.4)
+    ax2.legend(loc="lower center", fontsize=8.5)
+    figstyle.save(fig, out_path, close=True, auto_legend_below=False)
+    return fig, (ax0, ax1, ax2)
+
+
+def render_mmi_1x4_field_map_with_overlay(
+    x: np.ndarray,
+    y: np.ndarray,
+    field_2d: np.ndarray,
+    pic,
+    structures,
+    *,
+    kind: str = "intensity_log",
+    title: str = "",
+    out_path: str | FilePath | None = None,
+):
+    """
+    Render a 2D steady-state field map (``intensity_log`` or ``real``) with
+    ``wakis.schematic.overlay_geometry`` (material outlines + labels, CPML
+    boundary bands + labels, and port monitors) and ``wakis.figstyle``.
+    """
+    figstyle.apply_style()
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=9.6, height=4.4)
+    x_um = np.asarray(x, dtype=float) * 1e6
+    y_um = np.asarray(y, dtype=float) * 1e6
+
+    if kind == "intensity_log":
+        mag2 = np.abs(np.asarray(field_2d))
+        peak = max(float(np.max(mag2)), 1e-30)
+        db = 10.0 * np.log10(np.maximum(mag2 / peak, 1e-4))
+        im = ax.pcolormesh(
+            x_um, y_um, db.T, cmap="inferno", vmin=-35.0, vmax=0.0, shading="auto"
+        )
+        cb_label = r"Normalized intensity $10\log_{10}(|E|^2 / |E|_{\max}^2)$ [dB]"
+        outline_col = "white"
+    else:
+        re_val = np.real(np.asarray(field_2d, dtype=complex))
+        vmax = max(float(np.percentile(np.abs(re_val), 99.2)), 1e-30)
+        im = ax.pcolormesh(
+            x_um, y_um, re_val.T, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto"
+        )
+        cb_label = r"$\mathrm{Re}(E_y)$ [arb. units]"
+        outline_col = "#1E293B"
+
+    cb = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.025)
+    cb.set_label(cb_label)
+
+    eps_clad = n_to_eps(pic.n_clad)
+    eps_slab = n_to_eps(pic.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    poly_proxy = _PolygonSchematicProxy(
+        structures[0],
+        material_eps=eps_slab,
+        name=f"Si–GaN–Si slot EIM (n={pic.n_eff_slab:.2f})",
+    )
+    sources_s, monitors_s = _build_mmi_1x4_sources_and_monitors(pic, include_flux_box=False)
+    schematic.overlay_geometry(
+        ax,
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=[poly_proxy],
+        material_names={
+            "background": f"SiO₂ (n={pic.n_clad:.3f})",
+            "region_0": f"Si–GaN–Si slot (n_eff={pic.n_eff_slab:.2f})",
+        },
+        sources=sources_s,
+        monitors=monitors_s,
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+        fill_materials=False,
+        outline_color=outline_col,
+        label_materials=True,
+    )
+    # Also shade top and bottom CPML strips
+    n_pml = int(getattr(pic.solver, "n_pml", 10))
+    y0_um, y1_um = float(pic.grid.ymin * 1e6), float(pic.grid.ymax * 1e6)
+    x0_um, x1_um = float(pic.grid.xmin * 1e6), float(pic.grid.xmax * 1e6)
+    th_y = float((pic.grid.y[n_pml] - pic.grid.y[0]) * 1e6)
+    for yb_s in (y0_um, y1_um - th_y):
+        ax.add_patch(
+            Rectangle(
+                (x0_um, yb_s),
+                x1_um - x0_um,
+                th_y,
+                facecolor="#94A3B8",
+                edgecolor="#475569",
+                hatch="///",
+                alpha=0.18,
+                lw=0.6,
+                zorder=5,
+            )
+        )
+    ax.set(
+        xlim=(float(x_um[0]), float(x_um[-1])),
+        ylim=(float(y_um[0]), float(y_um[-1])),
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title=title,
+    )
+    ax.set_aspect("equal", adjustable="box")
+    if out_path is not None:
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
+    return fig, ax
+
+
+def render_mmi_1x4_movie_with_overlay(
+    x: np.ndarray,
+    y: np.ndarray,
+    frames: np.ndarray,
+    times: np.ndarray,
+    pic,
+    structures,
+    out_path: str | FilePath,
+    *,
+    fps: int = 12,
+):
+    """
+    Render ``09_pulse_propagation.gif`` with ``wakis.schematic.overlay_geometry``
+    (34-vertex MMI polygon outline + material/CPML/source/monitor labels) on
+    every frame, keeping total GIF size well below 5 MB.
+    """
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    out_path = FilePath(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    x_um = np.asarray(x, dtype=float) * 1e6
+    y_um = np.asarray(y, dtype=float) * 1e6
+    f_arr = np.asarray(frames, dtype=np.float32)
+    t_fs = np.asarray(times, dtype=float) * 1e15
+    vmax = max(float(np.percentile(np.abs(f_arr), 99.5)), 1e-12)
+
+    figstyle.apply_style()
+    fig, ax = plt.subplots(figsize=(8.6, 3.8), dpi=110)
+    im = ax.pcolormesh(
+        x_um,
+        y_um,
+        f_arr[0].T,
+        cmap="RdBu_r",
+        vmin=-vmax,
+        vmax=vmax,
+        shading="auto",
+    )
+    cb = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.025)
+    cb.set_label(r"$E_y(x, y, t)$ [arb. units]")
+
+    eps_clad = n_to_eps(pic.n_clad)
+    eps_slab = n_to_eps(pic.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    poly_proxy = _PolygonSchematicProxy(
+        structures[0],
+        material_eps=eps_slab,
+        name=f"Si–GaN–Si slot (n_eff={pic.n_eff_slab:.2f})",
+    )
+    sources_s, monitors_s = _build_mmi_1x4_sources_and_monitors(pic, include_flux_box=False)
+    schematic.overlay_geometry(
+        ax,
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=[poly_proxy],
+        material_names={
+            "background": f"SiO₂ (n={pic.n_clad:.3f})",
+            "region_0": f"Si–GaN–Si slot (n_eff={pic.n_eff_slab:.2f})",
+        },
+        sources=sources_s,
+        monitors=monitors_s,
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+        fill_materials=False,
+        outline_color="#1E293B",
+        label_materials=True,
+    )
+    ax.set(
+        xlim=(float(x_um[0]), float(x_um[-1])),
+        ylim=(float(y_um[0]), float(y_um[-1])),
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+    )
+    ax.set_aspect("equal", adjustable="box")
+    title_obj = ax.set_title(
+        f"1×4 Si–GaN–Si MMI pulse propagation: t = {t_fs[0]:.1f} fs",
+        fontsize=10.5,
+        fontweight="bold",
+    )
+    fig.tight_layout()
+
+    def _update(frame_idx: int):
+        im.set_array(f_arr[frame_idx].T.ravel())
+        title_obj.set_text(
+            f"1×4 Si–GaN–Si MMI pulse propagation: t = {t_fs[frame_idx]:.1f} fs"
+        )
+        return (im, title_obj)
+
+    anim = FuncAnimation(fig, _update, frames=len(f_arr), interval=1000 // max(fps, 1), blit=False)
+    anim.save(out_path, writer=PillowWriter(fps=fps))
+    plt.close(fig)
+    return out_path
+

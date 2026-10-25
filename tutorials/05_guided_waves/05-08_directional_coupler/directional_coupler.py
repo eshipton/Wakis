@@ -154,6 +154,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c as c_light, epsilon_0
 
+from wakis import figstyle
 from wakis.templates.photonics import (
     PICSimulation,
     PolySlab,
@@ -174,12 +175,19 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
+    NonUniformCouplerPIC,
+    build_coupler_graded_axes,
     build_coupler_mesh_axes,
     coupler_mesh_overrides,
     extract_mesh_metrics_from_grid,
     find_crossing_wavelength,
+    overlay_coupler_geometry,
     plot_asymmetric_eim_stack,
+    plot_mesh_upgrade_comparison_coupler,
+    render_coupler_field_map_with_overlay,
+    render_coupler_movie_with_overlay,
     run_phased_dual_drive,
+    save_coupler_setup_figures,
     solve_coupler_supermodes,
     trapezoidal_effective_width,
 )
@@ -206,6 +214,52 @@ FIG_DIR = HERE / "figures"
 # | S-bend transition span | $\Delta x_{\text{sb}}, \Delta y_{\text{sb}}$ | $6.0\;\mu\text{m}, 1.725\;\mu\text{m}$ ($y_{\text{port}} = \pm 2.0\;\mu\text{m}$) |
 # | Input / output port axial coordinates | $x_{\text{in}}, x_{\text{out}}$ | $-8.15\;\mu\text{m}, +8.15\;\mu\text{m}$ |
 # | Wavelength band ($21$ linear frequencies) | $[\lambda_{\min}, \lambda_{\max}]$ | $[1.40, 1.70]\;\mu\text{m}$ ($\lambda_0 \approx 1.5355\;\mu\text{m}$) |
+#
+# ### Simulation setup schematics and configuration summary
+#
+# Before launching the time-domain solver, `save_coupler_setup_figures` calls
+# `wakis.schematic.save_setup_figures` on the configured 2D EIM solver to
+# generate the labelled setup schematics and Markdown configuration summary:
+#
+# - `figures/00a_setup_geometry.png` — Domain extents ($17.8\;\mu\text{m} \times 6.49\;\mu\text{m}$
+#   including $10$-cell CPML collars on $\pm x, \pm y$ and periodic $\pm z$),
+#   air/$\text{SiO}_2$ background ($n_{\text{clad}} = 1.00$, $n_{\text{sub}} = 1.45$)
+#   and 2D EIM silicon waveguide arms ($n_{\text{Si}} = 3.48$, $h_{\text{wg}} = 220\;\text{nm} \to n_{\text{eff,slab}} = 2.8424$,
+#   $\varepsilon_r = 8.08$, $w_{\text{eff}} = 343.0\;\text{nm}$, $g_{\text{eff}} = 207.02\;\text{nm}$),
+#   the fundamental $\text{TE}_0$ (`Ey`, `Hz`) `ModeSource` on port 1 (`in_bot`)
+#   with its transverse mode profile $|E_y(y)|$ and $+x$ launch arrow, the four
+#   port `ModeMonitor` planes (`in_bot` $S_{11}$, `in_top` $S_{21}$, `out_top`
+#   cross $S_{31}$, `out_bot` bar $S_{41}$), and the 4-wall Poynting `FluxMonitor`
+#   box.
+# - `figures/00b_setup_mesh_and_excitation.png` — Full-domain Yee grid overlay
+#   with a $1\times$ zoom inset on the $g_{\text{eff}} = 207.02\;\text{nm}$
+#   central coupling slot ($8.55\;\text{cells}$ across the gap at $L_3 = (20, 8)$,
+#   $10.00\;\text{cells}$ on the graded non-uniform mesh), propagating wave-packet
+#   cartoon, and the broadband Gaussian excitation pulse ($f_0 = 195.2\;\text{THz}$,
+#   $\Delta f = 18.89\;\text{THz}$, $\lambda \in [1.40, 1.70]\;\mu\text{m}$) in
+#   the time and frequency domains.
+# - `figures/00c_quadrature_setup_schematic.png` — Separate setup schematic for
+#   the dual-port $\pi/2$ phase-quadrature routing run (`task_9`,
+#   `quadrature_dual_drive`), where both `in_bot` ($\phi_1 = 0$) and `in_top`
+#   ($\phi_2 = -\pi/2$) are driven simultaneously by phase-locked
+#   `PhasedGaussianSource` eigenmodes.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | $L_x \times L_y \times L_z = 17.8\;\mu\text{m} \times 6.49\;\mu\text{m} \times 24.6\;\text{nm}$ ($z \in [97.7\;\text{nm}, 122.3\;\text{nm}]$) |
+# | Domain | Grid cells | $N_x \times N_y \times N_z = 725 \times 266 \times 1$ ($192{,}850\;\text{cells}$ baseline $L_3$; $567 \times 211 \times 1 = 119{,}637\;\text{cells}$ graded non-uniform $L_3$) |
+# | Discretization | $\Delta x$ & resolution | $\Delta_{\min} = 24.2\;\text{nm}$ ($20.3\;\text{nm}$ graded), $22.2\;\text{cells}/\lambda$ (in $n_{\max} = 2.84$), $8.6\;\text{cells}$ ($10.0\;\text{cells}$ graded) across feature ($207\;\text{nm}$) |
+# | Boundary | $-x, +x$ faces | CPML ($10\;\text{cells}$, $245.3\;\text{nm}$) |
+# | Boundary | $-y, +y$ faces | CPML ($10\;\text{cells}$, $244.4\;\text{nm}$) |
+# | Boundary | $-z, +z$ faces | Periodic ($1\;\text{cell}$, 2D EIM $\text{TE}_0$: $E_x, E_y, H_z$) |
+# | Material | Background | Air lateral/upper clad ($n = 1.00, \varepsilon_r = 1.00$; $\text{SiO}_2$ BOX $n_{\text{sub}} = 1.45$, isotropic) |
+# | Material | Regions 1 & 2 (upper & lower coupler arms) | Si EIM core ($n_{\text{Si}} = 3.48, h_{\text{wg}} = 220\;\text{nm} \to n_{\text{eff,slab}} = 2.8424, \varepsilon_r = 8.08, \mu_r = 1.00, w_{\text{eff}} = 343\;\text{nm}$) |
+# | Source | 1 · `ModeSource` | Port 1 `in_bot` ($x = -8.27\;\mu\text{m}, y = -2.00\;\mu\text{m}$), pol: $\text{TE}_0$ ($E_y, H_z$), pulse: $f_0 = 195.2\;\text{THz}, \Delta f = 18.89\;\text{THz}$ |
+# | Monitor | 2–5 · `ModeMonitor` | Port 1 `in_bot` ($S_{11}$), Port 3 `out_top` (Cross $S_{31}$), Port 4 `out_bot` (Bar $S_{41}$), Port 2 `in_top` ($S_{21}$) at $x = \mp 8.15\;\mu\text{m}, y = \pm 2.00\;\mu\text{m}$ |
+# | Monitor | 6 · `FluxMonitor` | 4-wall Poynting `FluxMonitor` box ($x \in [-8.85, 8.85]\;\mu\text{m}, y \in [-3.20, 3.20]\;\mu\text{m}$) |
+# | Variation | Dual-port quadrature routing (`task_9`) | Simultaneous `ModeSource` on `in_bot` ($\phi = 0$) and `in_top` ($\phi = -\pi/2$) via `PhasedGaussianSource` |
+# | Variation | Coupling-length & sidewall sweeps (`task_10`..`task_19`) | $L_c \in \{0, 2, 4, 6, 8\}\;\mu\text{m}$ at $\theta_{\text{sw}} = 30^\circ$; $\theta_{\text{sw}} \in \{0^\circ, 5^\circ, \dots, 30^\circ\}$ ($g_{\text{eff}} \in [80.0, 207.0]\;\text{nm}$) |
+# | Variation | Graded non-uniform Cartesian mesh (`task_20`) | Mirror-symmetric graded $\Delta y$ ($10.00\;\text{cells}$ across $g_{\text{eff}}$) & non-square $\Delta x > \Delta y_{\min}$ ($119{,}637\;\text{cells}$ vs $193{,}842$ at $L_3$, $-38.3\%$) |
 
 # %%
 # Material refractive indices (non-dispersive benchmark specification)
@@ -483,7 +537,7 @@ def build_directional_coupler(
 # > point $L_1$ ($\Delta x_{\text{bg}} = 49.06\;\text{nm}$) corresponds to
 # > $8.20\;\text{cpw}_{3\text{D}}$.
 #
-# ### `--full` task table and measured mesh / runtime metrics (`data/task_0`..`task_19`)
+# ### `--full` task table and measured mesh / runtime metrics (`data/task_0`..`task_20`)
 #
 # | Task | Name | Averaging | Level | $\text{cpw}$ | $N$ | $g_{\text{eff}}\;[\text{nm}]$ | $\Delta x_{\text{bg}}\;[\text{nm}]$ | $\Delta x_{\min}\;[\text{nm}]$ | Cells across gap | $N_{\text{cells}}$ | $N_{\text{steps}}$ | Time $[\text{s}]$ | $\lambda_{\text{cross}}\;[\text{nm}]$ |
 # |---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -507,8 +561,9 @@ def build_directional_coupler(
 # | `17` | `sw_angle_15deg` | Kottke | $L_3$ | $20$ | $8$ | $138.95$ | $24.58$ | $17.21$ | $8.07$ | $238{,}210$ | $15{,}251$ | $412.4$ | $1591.67$ |
 # | `18` | `sw_angle_20deg` | Kottke | $L_3$ | $20$ | $8$ | $160.07$ | $24.53$ | $19.95$ | $8.00$ | $218{,}508$ | $13{,}801$ | $330.4$ | $1570.60$ |
 # | `19` | `sw_angle_25deg` | Kottke | $L_3$ | $20$ | $8$ | $182.59$ | $24.59$ | $22.50$ | $8.11$ | $201{,}420$ | $12{,}851$ | $296.9$ | $1537.51$ |
+# | `20` | `kottke_nonuniform` | Kottke | $L_3$ (graded) | $20$ | $8$ | $207.02$ | $51.26$ | $20.31$ | $10.00$ | $119{,}637$ | $13{,}101$ | $162.9$ | $1495.81$ |
 #
-# **Note on `--quick` mode (`task_0`..`task_17`)**: Passing `--quick` omits
+# **Note on `--quick` mode (`task_0`..`task_18`)**: Passing `--quick` omits
 # `kottke_L3` / `staircase_L3` from the resolution ladder, uses `kottke_L2`
 # ($L_2 = (14, 6)$, $97{,}146$ cells with $n_{\text{pml}} = 8$,
 # $\text{energy\_decay} = 10^{-3}$, $\lambda_{\text{cross}} = 1496.44\;\text{nm}$)
@@ -678,6 +733,30 @@ def get_task_table(quick=False):
             }
         )
 
+    # Upgraded mirror-symmetric graded non-uniform Cartesian mesh (NonUniformCouplerPIC)
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_nonuniform",
+            "kind": "nonuniform",
+            "level": swp_lvl,
+            "averaging": "kottke",
+            "cpw": swp_cpw,
+            "n_cells_gap": swp_n_gap,
+            "nonuniform": True,
+            "L_c": L_COUPLED_BASE,
+            "theta_sw_deg": THETA_SW_BASE_DEG,
+            "n_pml": n_pml,
+            "energy_decay": ed,
+            "collect_fields": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "description": (
+                f"Graded non-uniform Cartesian mesh (kottke, {swp_lvl}=({swp_cpw},{swp_n_gap}), non-square Δx > Δy_min)"
+            ),
+        }
+    )
+
     return tasks
 
 
@@ -693,6 +772,20 @@ def measure_task_mesh(task_cfg):
         theta_sw_deg=task_cfg["theta_sw_deg"],
         four_ports=False,
     )
+    if task_cfg.get("nonuniform", False):
+        _, _, _, metrics = build_coupler_graded_axes(
+            domain=domain,
+            L_c=task_cfg["L_c"],
+            gap_eff=geom_info["gap_eff"],
+            w_eff=geom_info["w_eff"],
+            y_port=Y_PORT,
+            dx_sb=DX_SBEND,
+            dy_sb=DY_SBEND,
+            cpw=task_cfg["cpw"],
+            n_cells_gap=task_cfg.get("n_cells_gap", 8),
+            n_pml=task_cfg["n_pml"],
+        )
+        return metrics
     overrides = coupler_mesh_overrides(
         L_c=task_cfg["L_c"],
         gap_eff=geom_info["gap_eff"],
@@ -746,27 +839,56 @@ def run_single_task(task_cfg, out_dir):
         dy_sb=DY_SBEND,
     )
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic = PICSimulation(
-        wavelength_min=WL_MIN,
-        wavelength_max=WL_MAX,
-        n_freqs=N_FREQS,
-        structures=structures,
-        ports=ports,
-        n_core=N_WG,
-        n_clad=N_CLAD,
-        n_sub=N_SUB,
-        wavelength_ref=WL_0,
-        two_d=True,
-        averaging=task_cfg["averaging"],
-        cells_per_wavelength=task_cfg["cpw"],
-        domain=domain,
-        n_pml=task_cfg["n_pml"],
-        mesh_overrides=overrides,
-        field_wavelengths=(WL_DESIGN,),
-        record_movie=task_cfg["record_movie"],
-        movie_frames=task_cfg["movie_frames"],
-        use_gpu=use_gpu,
-    )
+    if task_cfg.get("nonuniform", False):
+        pic = NonUniformCouplerPIC(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            L_c=task_cfg["L_c"],
+            gap_eff=geom_info["gap_eff"],
+            w_eff=geom_info["w_eff"],
+            n_cells_gap=n_cells_gap if n_cells_gap is not None else 8,
+            y_port=Y_PORT,
+            dx_sb=DX_SBEND,
+            dy_sb=DY_SBEND,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_WG,
+            n_clad=N_CLAD,
+            n_sub=N_SUB,
+            wavelength_ref=WL_0,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=domain,
+            n_pml=task_cfg["n_pml"],
+            field_wavelengths=(WL_DESIGN,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+        )
+    else:
+        pic = PICSimulation(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_WG,
+            n_clad=N_CLAD,
+            n_sub=N_SUB,
+            wavelength_ref=WL_0,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=domain,
+            n_pml=task_cfg["n_pml"],
+            mesh_overrides=overrides,
+            field_wavelengths=(WL_DESIGN,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+        )
 
     mesh_metrics = extract_mesh_metrics_from_grid(
         pic.grid.x,
@@ -914,12 +1036,13 @@ def run_single_task(task_cfg, out_dir):
                 )
 
     n_steps = int(getattr(pic.solver, "Nt", 0))
+    elapsed = time.perf_counter() - t0
     payload["n_steps"] = np.int64(n_steps)
+    payload["elapsed_s"] = np.float64(elapsed)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
 
-    elapsed = time.perf_counter() - t0
     rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     meta = {
         "task_index": idx,
@@ -958,21 +1081,23 @@ def run_single_task(task_cfg, out_dir):
 
 
 # %% [markdown]
-# ## 6. Generating the 16-figure diagnostic suite
+# ## 6. Generating the diagnostic figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and renders 16 figures into
-# `figures/`:
+# `generate_all_figures` reads `data/task_*.npz` and renders the complete figure
+# suite into `figures/`:
 #
+# 0. `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, `00c_quadrature_setup_schematic.png` (plus `00_setup_table.md`) — Labelled setup schematics (domain bounds, CPML boundaries, $\text{Si}/\text{SiO}_2/\text{Air}$ materials, $\text{TE}_0$ mode source with launched profile, 4 port mode monitors and 4-wall Poynting flux box), mesh view with $1\times$ coupling-gap zoom and broadband excitation pulse/spectrum, and companion dual-port $\pi/2$ quadrature setup schematic.
 # 1. `01_directional_coupler_layout.png` — Annotated top-view layout of the 4-port SOI directional coupler.
 # 2. `02_eim_vertical_stack.png` — Asymmetric vertical SOI stack ($\text{SiO}_2 / \text{Si} / \text{Air}$), $\text{TE}_0$ slab mode, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_trapezoidal_sidewall_geometry.png` — Trapezoidal waveguide cross-section ($0^\circ$ vs $30^\circ$) and effective width/gap vs $\theta_{\text{sw}}$.
 # 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map with Yee cell edges across the $g_{\text{eff}} = 207.0\;\text{nm}$ coupling gap at $L_1 = (10, 4)$ ($4.28$ cells, $\Delta y_{\min} = 48.41\;\text{nm}$) and the reference level $R = (40, 16)$ ($16.95$ cells, $\Delta y_{\min} = 12.22\;\text{nm}$; $L_3 = (20, 8)$ with $8.55$ cells in `--quick`), plus 1D transverse sidewall subpixel cuts.
+# 4b. `04b_mesh_upgrade_comparison.png` — Split-half mesh view, 1D $\Delta y(y)$ and non-square $\Delta x(x)$ cell-spacing profiles, and broadband $T_{\text{cross}}(\lambda), T_{\text{bar}}(\lambda)$ comparison between the baseline `kottke_L3` mesh ($193{,}842\;\text{cells}$), the mirror-symmetric graded non-uniform Cartesian mesh `kottke_nonuniform` ($119{,}637\;\text{cells}$, $-38.3\%$ cells, $-53.0\%$ wall time), and `kottke_reference` $R = (40, 16)$.
 # 5. `05_port_mode_profiles.png` — Input (`in_bot`) and output (`out_top`) port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
 # 6. `06_supermode_profiles_and_dispersion.png` — Symmetric ($\text{TE}_{0,\text{even}}$) and antisymmetric ($\text{TE}_{0,\text{odd}}$) supermode profiles, $\Delta n_{\text{eff}}(\lambda)$, and $L_\pi(\lambda)$.
-# 7. `07_field_intensity_single_drive.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1.53\;\mu\text{m}$ for single-port excitation.
-# 8. `08_field_real_ey_single_drive.png` — Steady-state wave-front map $\mathrm{Re}(E_y)$ at $\lambda = 1.53\;\mu\text{m}$ showing the $\pi/2$ bar/cross phase shift.
-# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the directional coupler.
+# 7. `07_field_intensity_single_drive.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1.53\;\mu\text{m}$ with `overlay_geometry` material, boundary, source, and monitor labels.
+# 8. `08_field_real_ey_single_drive.png` — Steady-state wave-front map $\mathrm{Re}(E_y)$ at $\lambda = 1.53\;\mu\text{m}$ showing the $\pi/2$ bar/cross phase shift with `overlay_geometry`.
+# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the directional coupler with `overlay_geometry` on every frame.
 # 10. `10_sparameter_spectra_linear_and_db.png` — Broadband cross/bar/return-loss spectra in both linear scale (vs CMT and the under-resolved no-override warning pair) and dB scale.
 # 11. `11_coupling_length_sweep_cmt_vs_fit.png` — Cross/bar power vs interaction length $L_c \in [0, 8]\;\mu\text{m}$ and 2D $(L_c, \lambda)$ CMT map.
 # 12. `12_sidewall_angle_sweep.png` — 50:50 crossing wavelength $\lambda_{\text{cross}}(\theta_{\text{sw}})$ colored by total transmittance, plus $T_{\text{cross}}(\lambda)$ spectra over $0^\circ\text{--}30^\circ$.
@@ -984,7 +1109,8 @@ def run_single_task(task_cfg, out_dir):
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 16 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all diagnostic figures into ``fig_dir``."""
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -992,6 +1118,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     tasks_data = {}
     for p in sorted(data_dir.glob("task_*.npz")):
         d = dict(np.load(p, allow_pickle=False))
+        jp = p.with_suffix(".json")
+        if jp.exists():
+            meta_j = json.loads(jp.read_text())
+            for k_j in ("elapsed_s", "peak_rss_mb", "n_cells", "n_steps"):
+                if k_j in meta_j and k_j not in d:
+                    d[k_j] = meta_j[k_j]
         tasks_data[str(d["name"])] = d
 
     primary_name = "kottke_L3" if "kottke_L3" in tasks_data else "kottke_L2"
@@ -1001,6 +1133,38 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
     primary = tasks_data[primary_name]
     structures, ports, domain, geom_base = build_directional_coupler(four_ports=True)
+
+    # 0. Setup schematics (00a geometry, 00b mesh + excitation, 00c quadrature) + Markdown table
+    cpw_prim = float(primary["cpw"])
+    n_gap_prim = int(primary.get("n_cells_gap", 8)) or 8
+    n_pml_prim = 10 if primary_name == "kottke_L3" else 8
+    ov_prim = coupler_mesh_overrides(
+        L_COUPLED_BASE, geom_base["gap_eff"], geom_base["w_eff"], n_gap_prim
+    )
+    st_schem, ports_schem, dom_schem, _ = build_directional_coupler(four_ports=True)
+    pic_schem = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=st_schem,
+        ports=ports_schem,
+        n_core=N_WG,
+        n_clad=N_CLAD,
+        n_sub=N_SUB,
+        wavelength_ref=WL_0,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=dom_schem,
+        n_pml=n_pml_prim,
+        mesh_overrides=ov_prim,
+    )
+    save_coupler_setup_figures(
+        pic_schem,
+        primary,
+        fig_dir,
+        wavelength=WL_DESIGN,
+        min_feature=geom_base["gap_eff"],
+    )
 
     # 1. Top-view device layout with dimensional annotations
     annotations = [
@@ -1119,9 +1283,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="center left", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_trapezoidal_sidewall_geometry.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(
+        fig,
+        fig_dir / "03_trapezoidal_sidewall_geometry.png",
+        close=True,
+        auto_legend_below=False,
+    )
 
     # 4. Permittivity & Yee mesh zoomed on the smallest feature (coupling gap) at L1 and Reference
     ref_task = tasks_data.get("kottke_reference", primary)
@@ -1307,9 +1474,45 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax2.grid(True, ls=":", alpha=0.4)
     ax2.legend(loc="upper right", fontsize=7.3)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "04_permittivity_mesh_zoom.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(
+        fig,
+        fig_dir / "04_permittivity_mesh_zoom.png",
+        close=True,
+        auto_legend_below=False,
+    )
+
+    # 4b. Mesh upgrade comparison: baseline uniform-override vs graded non-uniform Cartesian mesh
+    if "kottke_nonuniform" in tasks_data:
+        nu_task = tasks_data["kottke_nonuniform"]
+        st_nu, ports_nu, dom_nu, _ = build_directional_coupler(four_ports=True)
+        pic_nu = NonUniformCouplerPIC(
+            WL_MIN,
+            WL_MAX,
+            structures=st_nu,
+            ports=ports_nu,
+            n_core=N_WG,
+            n_clad=N_CLAD,
+            n_sub=N_SUB,
+            wavelength_ref=WL_0,
+            two_d=True,
+            averaging="kottke",
+            cells_per_wavelength=float(nu_task["cpw"]),
+            domain=dom_nu,
+            n_pml=n_pml_prim,
+            L_c=L_COUPLED_BASE,
+            gap_eff=geom_base["gap_eff"],
+            w_eff=geom_base["w_eff"],
+            n_cells_gap=int(nu_task.get("n_cells_gap", n_gap_prim)) or n_gap_prim,
+        )
+        plot_mesh_upgrade_comparison_coupler(
+            pic_schem,
+            pic_nu,
+            primary,
+            nu_task,
+            ref_task,
+            geom_base,
+            out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+        )
 
     # 5. Port mode profiles at input (in_bot) and cross output (out_top)
     plot_port_modes(
@@ -1382,6 +1585,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ax1.set_ylabel(r"Supermode effective index $n_{\mathrm{eff}}$", color="#2b5c8f")
     ax1.grid(True, ls=":", alpha=0.4)
     ax1_r = ax1.twinx()
+    ax1_r._is_inset = True
     ax1_r.plot(
         wls_cmt_nm,
         primary["cmt_L_pi"] * 1e6,
@@ -1404,31 +1608,30 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     l2, lb2 = ax1_r.get_legend_handles_labels()
     ax1.legend(l1 + l2, lb1 + lb2, loc="upper right", fontsize=7.8)
     ax1.set_title("(b) Supermode dispersion & CMT crossover length Lπ(λ)")
-    fig.tight_layout()
-    fig.savefig(
+    figstyle.save(
+        fig,
         fig_dir / "06_supermode_profiles_and_dispersion.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1530 nm (single-port drive)
-    plot_field_map(
+    render_coupler_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        structures=structures,
+        pic=pic_schem,
         kind="intensity_log",
         title=r"Single-port drive (`in_bot`): modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1530\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_single_drive.png",
     )
 
     # 8. Steady-state real field map Re(Ey) at 1530 nm (single-port drive)
-    plot_field_map(
+    render_coupler_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        structures=structures,
+        pic=pic_schem,
         kind="real",
         title=r"Single-port drive (`in_bot`): wave-front phase $\mathrm{Re}(E_y)$ at $\lambda = 1530\;\mathrm{nm}$ ($\pi/2$ split)",
         out_path=fig_dir / "08_field_real_ey_single_drive.png",
@@ -1436,12 +1639,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 9. Animated pulse propagation GIF
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_coupler_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structures,
+            pic=pic_schem,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -1615,13 +1818,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="lower right", fontsize=7.2)
-    fig.tight_layout()
-    fig.savefig(
+    figstyle.save(
+        fig,
         fig_dir / "10_sparameter_spectra_linear_and_db.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 11. Coupling-length sweep: FIT vs CMT sin^2 / cos^2 and 2D (L_c, lambda) map
     len_tasks = {4.0: primary}
@@ -1724,13 +1926,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(b) CMT splitting map & 50:50 locus",
     )
     ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
+    figstyle.save(
+        fig,
         fig_dir / "11_coupling_length_sweep_cmt_vs_fit.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 12. Sidewall-angle sweep (0 deg to 30 deg): 50:50 crossing wavelength & spectra
     sw_records = []
@@ -1811,11 +2012,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         ax1.grid(True, ls=":", alpha=0.4)
         ax1.legend(loc="upper left", fontsize=7.4, ncol=2)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "12_sidewall_angle_sweep.png", dpi=150, bbox_inches="tight"
+        figstyle.save(
+            fig,
+            fig_dir / "12_sidewall_angle_sweep.png",
+            close=True,
+            auto_legend_below=False,
         )
-        plt.close(fig)
 
     # 13. Dual-port pi/2 quadrature excitation: field routing map & output spectra
     fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.1), dpi=150)
@@ -1829,14 +2031,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         im = ax0.pcolormesh(
             qx_um, qy_um, q_db.T, cmap="inferno", vmin=-35.0, vmax=0.0, shading="auto"
         )
-        for s in structures:
-            ax0.plot(
-                np.append(s.vertices[:, 0], s.vertices[0, 0]) * 1e6,
-                np.append(s.vertices[:, 1], s.vertices[0, 1]) * 1e6,
-                color="white",
-                lw=1.0,
-                alpha=0.85,
-            )
         cb = fig.colorbar(im, ax=ax0, fraction=0.046, pad=0.03)
         cb.set_label(r"Normalized intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ [dB]")
         ax0.set(
@@ -1846,6 +2040,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             xlabel="x [µm]",
             ylabel="y [µm]",
             title="(a) Dual-port quadrature (Δφ = −π/2): upper-arm routing",
+        )
+        overlay_coupler_geometry(
+            ax0, pic_schem, outline_color="white", quadrature=True
         )
 
     # Superposition prediction from single-port S31, S41 (by mirror symmetry S32=S41, S42=S31)
@@ -1905,11 +2102,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="center right", fontsize=7.4)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "13_quadrature_dual_drive_routing.png", dpi=150, bbox_inches="tight"
+    figstyle.save(
+        fig,
+        fig_dir / "13_quadrature_dual_drive_routing.png",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 14. Energy conservation budget & bar/cross quadrature phase audit
     fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
@@ -1970,13 +2168,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
+    figstyle.save(
+        fig,
         fig_dir / "14_energy_budget_and_quadrature_phase.png",
-        dpi=150,
-        bbox_inches="tight",
+        close=True,
+        auto_legend_below=False,
     )
-    plt.close(fig)
 
     # 15. Multi-resolution convergence: Kottke vs Staircase relative to kottke_reference
     levels = [
@@ -2076,6 +2273,31 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 color="#d95f02",
             )
 
+        if "kottke_nonuniform" in tasks_data:
+            nu_d = tasks_data["kottke_nonuniform"]
+            nu_cpw = float(nu_d["cpw"])
+            nu_caf = float(nu_d.get("cells_across_feature", 10.0))
+            nu_err_tc = max(abs(_tc_at_design(nu_d) - tc_ref), 1e-4)
+            nu_err_wl = max(abs(_wlc_nm(nu_d) - wlc_ref), 0.05)
+            ax0.loglog(
+                [nu_cpw],
+                [nu_err_tc],
+                "*",
+                color="#7570b3",
+                ms=10.0,
+                zorder=6,
+                label=f"Graded non-uniform Kottke ({nu_caf:.1f}c, −38% cells)",
+            )
+            ax1.loglog(
+                [nu_cpw],
+                [nu_err_wl],
+                "*",
+                color="#7570b3",
+                ms=10.0,
+                zorder=6,
+                label=f"Graded non-uniform Kottke ({nu_caf:.1f}c, −38% cells)",
+            )
+
         # Plot under-resolved demonstration pair (excluded from converged trend lines)
         if (
             "underresolved_kottke" in tasks_data
@@ -2161,6 +2383,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax0.legend(loc="center right", fontsize=6.8)
 
         ax0_top = ax0.twiny()
+        ax0_top._is_inset = True
         ax0_top.set_xscale("log")
         ax0_top.set_xlim(ax0.get_xlim())
         ax0_top.set_xticks(res)
@@ -2210,6 +2433,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             )
 
         ax1_r = ax1.twinx()
+        ax1_r._is_inset = True
         ax1_r.loglog(
             res,
             rs_vals,
@@ -2245,6 +2469,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax1.legend(l1 + l2, lb1 + lb2, loc="center right", fontsize=6.5)
 
         ax1_top = ax1.twiny()
+        ax1_top._is_inset = True
         ax1_top.set_xscale("log")
         ax1_top.set_xlim(ax1.get_xlim())
         ax1_top.set_xticks(res)
@@ -2252,13 +2477,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax1_top.xaxis.set_minor_formatter(plt.NullFormatter())
         ax1_top.set_xlabel("Cells across smallest feature (geff = 207.0 nm)", fontsize=8.2)
 
-        fig.tight_layout()
-        fig.savefig(
+        figstyle.save(
+            fig,
             fig_dir / "15_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
+            close=True,
+            auto_legend_below=False,
         )
-        plt.close(fig)
 
     # 16. Port time trace and energy decay
     if "trace_t" in primary and primary["trace_t"].size > 0:
@@ -2398,9 +2622,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
         ax1.legend(loc="lower left", fontsize=7.3)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "16_port_time_trace.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.save(
+            fig,
+            fig_dir / "16_port_time_trace.png",
+            close=True,
+            auto_legend_below=False,
+        )
 
     # Also plot port dispersion if available (updates port neff/ng check)
     if "disp_wavelengths" in primary:
@@ -2477,21 +2704,70 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # over-coupled $\theta = 3\pi/4$ branch (`11_coupling_length_sweep_cmt_vs_fit.png`,
 # panel b).
 #
-# ### Comparison: Old (`--quick`) vs New (`--full`) vs Analytic CMT
+# ### Resolution & mesh comparison: `--quick`, `--full` baseline, graded non-uniform mesh & CMT
 #
-# | Quantity ($L_c = 4\;\mu\text{m}, \theta_{\text{sw}} = 30^\circ$) | Old (`--quick` $L_2=(14,6)$) | New (`--full` $L_3=(20,8)$) | New Ref (`--full` $R=(40,16)$) | Analytic CMT / Theory |
-# |---|---:|---:|---:|---|
-# | Port mode index $n_{\text{eff}}(1530\;\text{nm})$ | $2.0084$ | $2.0032$ | — | $n_{\text{eff,slab}} = 2.8424$ (1D vertical slab) |
-# | Port group index $n_g(1530\;\text{nm})$ | $3.69$ | $3.668$ | — | $\sim 3.7\text{--}4.1$ (2D EIM vs 3D SOI [3]) |
-# | Supermode indices $n_{\text{even}}, n_{\text{odd}}(1530\;\text{nm})$ | $2.0569, 1.9805$ | $2.0417, 1.9657$ | — | $\Delta n_{\text{eff}} = 0.07605$ (2D FIT eigenmodes) |
-# | Crossover beat length $L_\pi(1530\;\text{nm})$ | $10.01\;\mu\text{m}$ | $10.08\;\mu\text{m}$ | — | $\lambda / (2\Delta n_{\text{eff}}) = 10.08\;\mu\text{m}$ (CMT [1, 2]) |
-# | S-bend effective length $L_{\text{sb,eff}}(1530\;\text{nm})$ | $1.38\;\mu\text{m}$ | $1.374\;\mu\text{m}$ | — | $2\int \Delta n_{\text{eff}}(s)\,\mathrm{d}s / \Delta n_{\text{eff}}(0) = 1.374\;\mu\text{m}$ |
-# | 50:50 wavelength $\lambda_{\text{cross}}$ | $1496.44\;\text{nm}$ | $1497.56\;\text{nm}$ | $1494.79\;\text{nm}$ | $1513.32\;\text{nm}$ (2D CMT) |
-# | Cross transmittance $T_{\text{cross}}(1530\;\text{nm})$ | $0.6119$ | $0.6069$ | $0.6164$ | $0.5522$ (2D CMT) |
-# | Total guided power $T_{\text{tot}}(\lambda_{\text{cross}})$ | $0.9995$ | $0.9968$ | $0.9966$ | $1.000$ ($0.00\;\text{dB}$ lossless CMT) |
-# | Band-averaged reflection $\langle |S_{11}|^2 \rangle$ | $0.086\%$ ($-30.7\;\text{dB}$) | $0.0444\%$ ($-33.5\;\text{dB}$) | $0.0414\%$ ($-33.8\;\text{dB}$) | $< -30\;\text{dB}$ (adiabatic cosine S-bends [3]) |
-# | Cross/bar phase $\arg(S_{31}S_{41}^*)(1530\;\text{nm})$ | $-90.34^\circ$ | $-90.30^\circ$ | $-90.31^\circ$ | $-90.00^\circ$ (lossless CMT transfer matrix [1, 2]) |
-# | Quadrature routing $P_{\text{up}}, P_{\text{down}}(\lambda_{\text{cross}})$ | $99.95\%, 0.044\%$ ($33.5\;\text{dB}$) | $99.65\%, 0.050\%$ ($33.0\;\text{dB}$) | — | $100\%, 0\%$ ($\infty\;\text{dB}$ ideal lossless CMT) |
+# | Quantity ($L_c = 4\;\mu\text{m}, \theta_{\text{sw}} = 30^\circ$) | `--quick` $L_2=(14,6)$ | `--full` Baseline $L_3=(20,8)$ | `--full` Graded Non-Uniform (`task_20`) | `--full` Reference $R=(40,16)$ | Analytic CMT / Theory |
+# |---|---:|---:|---:|---:|---|
+# | Grid dimensions ($N_x \times N_y \times N_z$) | $492 \times 203 \times 1$ | $726 \times 267 \times 1$ | $567 \times 211 \times 1$ | $1406 \times 518 \times 1$ | 2D EIM ($N_z = 1$) |
+# | Total Yee cells $N_{\text{cells}}$ | $99{,}974$ | $193{,}842$ | $119{,}637$ ($-38.3\%$ vs $L_3$) | $728{,}280$ | — |
+# | Gap resolution ($\Delta y_{\min}$, cells across $g_{\text{eff}}$) | $34.37\;\text{nm}$ ($6.02\;\text{cells}$) | $24.20\;\text{nm}$ ($8.55\;\text{cells}$) | $20.31\;\text{nm}$ ($10.00\;\text{cells}$) | $12.22\;\text{nm}$ ($16.95\;\text{cells}$) | $\ge 4\;\text{cells}$ across $207.02\;\text{nm}$ |
+# | Wall-clock runtime $[\text{s}]$ | $111.0\;\text{s}$ | $346.5\;\text{s}$ | $162.9\;\text{s}$ ($-53.0\%$ vs $L_3$) | $2011.3\;\text{s}$ | — |
+# | Port mode index $n_{\text{eff}}(1530\;\text{nm})$ | $2.0084$ | $2.0032$ | $2.0041$ | — | $n_{\text{eff,slab}} = 2.8424$ (1D vertical slab) |
+# | Port group index $n_g(1530\;\text{nm})$ | $3.69$ | $3.668$ | $3.671$ | — | $\sim 3.7\text{--}4.1$ (2D EIM vs 3D SOI [3]) |
+# | Supermode indices $n_{\text{even}}, n_{\text{odd}}(1530\;\text{nm})$ | $2.0569, 1.9805$ | $2.0417, 1.9657$ | — | — | $\Delta n_{\text{eff}} = 0.07605$ (2D FIT eigenmodes) |
+# | Crossover beat length $L_\pi(1530\;\text{nm})$ | $10.01\;\mu\text{m}$ | $10.08\;\mu\text{m}$ | — | — | $\lambda / (2\Delta n_{\text{eff}}) = 10.08\;\mu\text{m}$ (CMT [1, 2]) |
+# | S-bend effective length $L_{\text{sb,eff}}(1530\;\text{nm})$ | $1.38\;\mu\text{m}$ | $1.374\;\mu\text{m}$ | — | — | $2\int \Delta n_{\text{eff}}(s)\,\mathrm{d}s / \Delta n_{\text{eff}}(0) = 1.374\;\mu\text{m}$ |
+# | 50:50 wavelength $\lambda_{\text{cross}}$ | $1496.13\;\text{nm}$ | $1497.56\;\text{nm}$ | $1495.81\;\text{nm}$ ($+1.03\;\text{nm}$ vs $R$) | $1494.79\;\text{nm}$ | $1513.32\;\text{nm}$ (2D CMT) |
+# | Cross transmittance $T_{\text{cross}}(1530\;\text{nm})$ | $0.6097$ | $0.6069$ | $0.6123$ ($-0.67\%$ vs $R$) | $0.6164$ | $0.5522$ (2D CMT) |
+# | Bar transmittance $T_{\text{bar}}(1530\;\text{nm})$ | $0.3866$ | $0.3895$ | $0.3845$ | $0.3802$ | $0.4478$ (2D CMT) |
+# | Total guided power $T_{\text{tot}}(\lambda_{\text{cross}})$ | $0.9964$ | $0.9968$ | $0.9972$ ($0.012\;\text{dB}$ IL) | $0.9966$ | $1.000$ ($0.00\;\text{dB}$ lossless CMT) |
+# | Band-averaged reflection $\langle |S_{11}|^2 \rangle$ | $0.0575\%$ ($-32.4\;\text{dB}$) | $0.0444\%$ ($-33.5\;\text{dB}$) | $0.0457\%$ ($-33.4\;\text{dB}$) | $0.0414\%$ ($-33.8\;\text{dB}$) | $< -30\;\text{dB}$ (adiabatic cosine S-bends [3]) |
+# | Cross/bar phase $\arg(S_{31}S_{41}^*)(1530\;\text{nm})$ | $-90.34^\circ$ | $-90.30^\circ$ | $-90.30^\circ$ | $-90.31^\circ$ | $-90.00^\circ$ (lossless CMT transfer matrix [1, 2]) |
+# | Quadrature routing $P_{\text{up}}, P_{\text{down}}(\lambda_{\text{cross}})$ | $99.95\%, 0.044\%$ ($33.5\;\text{dB}$) | $99.65\%, 0.050\%$ ($33.0\;\text{dB}$) | — | — | $100\%, 0\%$ ($\infty\;\text{dB}$ ideal lossless CMT) |
+#
+# ### Graded non-uniform Cartesian mesh upgrade (`04b_mesh_upgrade_comparison.png`)
+#
+# Because `PolySlab` structures represent extruded 2D polygons whose axis-aligned
+# bounding boxes span the entire $17.3 \times 4.34\;\mu\text{m}^2$ waveguide
+# footprint, standard `PICSimulation` assigns the core cell size
+# $\Delta x_{\text{core}} \approx 24.5\;\text{nm}$ uniformly across the entire
+# S-bend and cladding envelope (`kottke_L3`, $726 \times 267 \times 1 = 193{,}842\;\text{cells}$).
+# In `04b_mesh_upgrade_comparison.png`, `NonUniformCouplerPIC`
+# (`build_coupler_graded_axes`, built with `wakis.templates.meshing.graded_axis`)
+# exploits the directional coupler's multi-scale physics while preserving exact
+# $x \mapsto -x$ and $y \mapsto -y$ grid mirror symmetry:
+#
+# 1. **Exact gap pinning & transverse grading ($\Delta y(y)$)**: In $y$, the mesh
+#    places $10.00$ exact cells across the $g_{\text{eff}} = 207.02\;\text{nm}$
+#    central coupling slot ($\Delta y_{\min} = 20.31\;\text{nm}$ at the slot edges,
+#    $\Delta y_{\text{gap}} = 20.70\;\text{nm}$), resolves the coupled cores and
+#    the input/output port arms ($|y \mp 2.0\;\mu\text{m}| \le w_{\text{eff}}$) at
+#    $\Delta y_{\text{core}} \approx 22\text{--}24\;\text{nm}$, uses an
+#    intermediate $35.0\;\text{nm}$ spacing across the S-bend transition corridor
+#    ($0.50\;\mu\text{m} \le |y| \le 1.66\;\mu\text{m}$), and grades smoothly out
+#    to $\Delta y_{\text{clad}} = 51.3\;\text{nm}$ in the outer air cladding
+#    ($|y| > 2.34\;\mu\text{m}$), reducing $N_y$ from $267$ to $211$.
+# 2. **Non-square axial grading ($\Delta x(x) > \Delta y_{\min}$)**: Because the
+#    guided supermodes vary along the propagation axis $x$ on the characteristic
+#    wavelength scale $\lambda_{\min}/n_{\text{eff,slab}} = 492.5\;\text{nm}$
+#    rather than the sub-wavelength transverse evanescent scale, `build_coupler_graded_axes`
+#    uses non-square cells with $\Delta x = 25.7\;\text{nm}$ inside the central
+#    coupling region ($|x| \le 2.5\;\mu\text{m}$) and $\Delta x = 36.9\;\text{nm}$
+#    along the adiabatic S-bends and port leads ($|x| > 2.5\;\mu\text{m}$),
+#    reducing $N_x$ from $726$ to $567$.
+# 3. **Equal-or-better accuracy at $-38.3\%$ cell count and $2.13\times$ speedup**:
+#    Compared to the baseline `kottke_L3` mesh ($193{,}842\;\text{cells}$,
+#    $346.5\;\text{s}$), `kottke_nonuniform` (`task_20`, $119{,}637\;\text{cells}$,
+#    $162.9\;\text{s}$) reduces the total cell count by **$38.3\%$** ($6.09\times$
+#    fewer cells than `kottke_reference`) and cuts wall-clock runtime by
+#    **$53.0\%$** ($2.13\times$ faster than `kottke_L3` and $12.35\times$ faster
+#    than `kottke_reference`). Simultaneously, because its $10.00$ exact gap cells
+#    pin the $y = \pm g_{\text{eff}}/2$ slot boundaries directly onto Yee grid
+#    nodes, `kottke_nonuniform` achieves $\lambda_{\text{cross}} = 1495.81\;\text{nm}$
+#    ($+1.03\;\text{nm}$ or $0.069\%$ vs the $R = (40, 16)$ reference
+#    $1494.79\;\text{nm}$, **$2.7\times$ closer to $R$ than `kottke_L3`'s
+#    $+2.78\;\text{nm}$ offset**) and $T_{\text{cross}}(1530\;\text{nm}) = 0.6123$
+#    ($-0.67\%$ vs $R$'s $0.6164$, vs $-1.54\%$ for `kottke_L3`).
 #
 # > **2D EIM vs 1D slice-quadrature CMT**: In the 2D EIM reduction, the 3D
 # > trapezoidal core ($w_{\text{bot}} = 470\;\text{nm}$,
@@ -2527,13 +2803,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #    $T_{\text{tot}}(\lambda_{\text{cross}})$, while the band-averaged return
 #    loss $\langle |S_{11}|^2 \rangle$ converges strictly monotonically from
 #    $0.0987\%$ ($L_1$) $\to 0.0575\%$ ($L_2$) $\to 0.0444\%$ ($L_3$) $\to 0.0414\%$ ($R$).
-#    *(Note on what changed from `--quick` to `--full`: in `--quick`, where $L_3$
-#    served as the reference, $L_1 \to L_2$ appeared to approach $L_3$
-#    monotonically from below; adding the $4\times$-finer $R = (40, 16)$
-#    reference reveals that $L_1, L_2, L_3,$ and $R$ all sit within a
-#    $\pm 1.4\;\text{nm}$ [$<0.2\%$] subpixel band where small non-monotonic
-#    shifts reflect how the graded grid lines align with the $y = \pm 103.51\;\text{nm}$
-#    gap edges and polygonal S-bend segments.)* By contrast, the unrefined
+#    Across the resolved ladder, $L_1, L_2, L_3,$ `kottke_nonuniform`, and $R$
+#    all sit within a $\pm 1.4\;\text{nm}$ ($<0.2\%$) subpixel band where small
+#    shifts reflect how the grid lines align with the $y = \pm 103.51\;\text{nm}$
+#    gap edges and polygonal S-bend segments. By contrast, the unrefined
 #    demonstration run `underresolved_kottke` ($10\;\text{cpw}$, no override box,
 #    $4.21$ unpinned cells) shifts $\lambda_{\text{cross}}$ to $1505.55\;\text{nm}$
 #    ($+10.77\;\text{nm}$ or $0.72\%$ error vs $R$, $|\Delta T_{\text{cross}}| = 3.79 \times 10^{-2}$

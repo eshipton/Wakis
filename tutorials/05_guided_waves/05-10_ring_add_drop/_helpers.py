@@ -28,11 +28,17 @@ Provides:
   coupled-mode / transfer-matrix analytical spectra.
 """
 
+from pathlib import Path
+
+from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.patches import Polygon as MplPolygon
+import matplotlib.pyplot as plt
 import numpy as np
-from scipy.constants import c as c_light
+from scipy.constants import c as c_light, epsilon_0
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
+from wakis import figstyle, schematic
 from wakis.field_monitors import FluxMonitor
 from wakis.gridFIT3D import GridFIT3D
 from wakis.mode_solver import ModeMonitor, ModeSource, _host, _Plane, solve_modes
@@ -41,9 +47,11 @@ from wakis.templates.photonics import (
     PICSimulation,
     PolySlab,
     _SnapshotRecorder,
+    n_to_eps,
     slab_neff,
 )
 from wakis.templates.simulation import Simulation
+from wakis.unstructured import subtri_circles_mesh
 
 
 class FastRingPolySlab(PolySlab):
@@ -1110,6 +1118,867 @@ def cmt_add_drop_spectra(wavelengths_m, neff_vals, radius_m, kappa2, a_rt=1.0, p
     t_through = (t2 * (1.0 - a) ** 2 + 4.0 * t2 * a * sin2) / denom
     t_drop = ((1.0 - t2) ** 2 * a) / denom
     return t_through, t_drop
+
+
+def build_ring_add_drop_graded_axes(
+    domain=(-6.3e-6, 6.3e-6, -6.895e-6, 6.895e-6),
+    gap_m=0.10e-6,
+    width_m=0.43e-6,
+    radius_m=5.0e-6,
+    cells_per_wavelength=20,
+    n_cells_across_gap=8,
+    n_pml=12,
+    wavelength_min=1.50e-6,
+    wavelength_ref=1.55e-6,
+    n_core=3.476,
+    n_clad=1.444,
+    thickness_m=0.22e-6,
+    grading_ratio=1.22,
+):
+    """
+    Construct mirror-symmetric ($x \\mapsto -x$ and $y \\mapsto -y$) graded
+    non-uniform Cartesian Yee grid axes ``(x_axis, y_axis, z_axis, info)`` for
+    the 2D EIM microring add-drop filter using :func:`wakis.templates.meshing.graded_axis`:
+
+    - Along ``y``: places ``N = max(int(n_cells_across_gap), 4)`` exact cells of
+      step ``dy_min = gap_m / N`` across both the upper ``[r_out, r_out + g]``
+      and lower ``[-(r_out + g), -r_out]`` coupling slots, resolves the upper
+      and lower ring arcs and bus waveguide cores (``dy ~ 22 nm``), uses
+      non-square tangential cells (``dy ~ 33 nm``) across ``|y| <= 3.3 um``
+      where the ring propagates vertically, and grades smoothly into the outer
+      cladding + CPML.
+    - Along ``x``: enforces exact ``x -> -x`` mirror symmetry with non-square
+      cells ``dx_couple > dy_min`` across the ``|x| <= 0.9 um`` coupling window,
+      tangential cells (``dx ~ 33 nm``) along the top/bottom arcs, and fine
+      radial cells (``dx ~ 21.6 nm``) across the left/right vertical ring arms
+      ``|x| in [r_in, r_out]``.
+    """
+    g = float(gap_m)
+    w = float(width_m)
+    r = float(radius_m)
+    cpw = float(cells_per_wavelength)
+    n_gap = max(int(n_cells_across_gap or 4), 4)
+    n_pml = int(n_pml)
+
+    neff_slab = float(
+        slab_neff(n_core, n_clad, thickness_m, wavelength_ref, polarization="TE")
+    )
+    h_core = float(wavelength_min / (neff_slab * cpw))
+    h_clad = float(wavelength_min / (float(n_clad) * cpw))
+    dy_gap = min(g / float(n_gap), h_core)
+
+    r_in = r - 0.5 * w
+    r_out = r + 0.5 * w
+    y_gap_hi = r_out + g
+    y_bus_hi = y_gap_hi + w
+
+    xmin, xmax, ymin, ymax = (float(v) for v in domain[:4])
+    xmax_total = xmax + n_pml * h_core
+    ymax_total = ymax + n_pml * h_core
+
+    # 1. Mirror-symmetric x-axis constructed on [0, xmax_total]
+    dx_couple = 1.00 * h_core
+    dx_tang = 1.38 * h_core
+    dx_arc = 1.04 * h_core
+    dx_ring = 0.98 * h_core
+    dx_clad = min(1.62 * h_core, 0.92 * h_clad)
+    x_knots = [0.0, 0.90e-6, 3.60e-6, r_in, r_out, xmax_total]
+    x_sizes = [dx_couple, dx_tang, dx_arc, dx_ring, dx_clad]
+    x_pos = meshing.graded_axis(x_knots, x_sizes, grading=grading_ratio)
+    x_pos[0] = 0.0
+    x_axis = np.concatenate([-x_pos[:0:-1], x_pos])
+
+    # 2. Mirror-symmetric y-axis constructed on [0, ymax_total]
+    dy_tang = 1.38 * h_core
+    dy_arc = 1.04 * h_core
+    dy_ring = 0.98 * h_core
+    dy_bus = 0.98 * h_core
+    dy_clad = min(1.68 * h_core, 0.94 * h_clad)
+    y_knots = [0.0, 3.60e-6, r_in, r_out, y_gap_hi, y_bus_hi, ymax_total]
+    y_sizes = [dy_tang, dy_arc, dy_ring, dy_gap, dy_bus, dy_clad]
+    y_pos = meshing.graded_axis(y_knots, y_sizes, grading=grading_ratio)
+    y_pos[0] = 0.0
+    y_axis = np.concatenate([-y_pos[:0:-1], y_pos])
+
+    # 3. Single-cell periodic 2D z-axis matching PICSimulation._build_2d_structures_and_domain
+    z_axis = np.array([-0.5 * h_core, +0.5 * h_core], dtype=float)
+
+    caf, dy_max_gap = measure_cells_across_gap(y_axis, g, radius_m=r, width_m=w)
+    dx_arr = np.diff(x_axis)
+    dy_arr = np.diff(y_axis)
+    info = {
+        "min_feature_nm": float(g * 1e9),
+        "dx_background_nm": float(max(np.max(dx_arr), np.max(dy_arr)) * 1e9),
+        "dx_min_nm": float(min(np.min(dx_arr), np.min(dy_arr)) * 1e9),
+        "cells_across_feature": float(caf),
+        "dy_max_in_gap_nm": float(dy_max_gap * 1e9),
+        "n_cells": int(len(dx_arr) * len(dy_arr)),
+        "grid_shape": [int(len(dx_arr)), int(len(dy_arr)), 1],
+    }
+    return x_axis, y_axis, z_axis, info
+
+
+class NonUniformRingAddDropPIC(RingPICSimulation):
+    """
+    2D EIM :class:`RingPICSimulation` subclass that replaces the uniform
+    background + override-box mesh with :func:`build_ring_add_drop_graded_axes`.
+    """
+
+    def __init__(
+        self,
+        *args,
+        n_cells_across_gap=8,
+        grading_ratio=1.22,
+        **kwargs,
+    ):
+        self._nu_n_gap = int(n_cells_across_gap or 8)
+        self._nu_ratio = float(grading_ratio)
+        kwargs["mesh_overrides"] = ()
+        super().__init__(*args, **kwargs)
+
+    @property
+    def dx_background_nm(self):
+        return float(max(np.max(self.grid.dx), np.max(self.grid.dy)) * 1e9)
+
+    def _compute_graded_axes(self, domain):
+        n_pml_val = (
+            self.n_pml[0]
+            if isinstance(self.n_pml, (tuple, list))
+            else self.n_pml
+        )
+        x, y, z, _ = build_ring_add_drop_graded_axes(
+            domain=domain,
+            gap_m=self.gap_m,
+            width_m=self.width_m,
+            radius_m=self.radius_m,
+            cells_per_wavelength=self.cells_per_wavelength,
+            n_cells_across_gap=self._nu_n_gap,
+            n_pml=n_pml_val,
+            wavelength_min=self.wavelength_min,
+            wavelength_ref=self.wavelength_ref,
+            n_core=self.n_core,
+            n_clad=self.n_clad,
+            thickness_m=self.thickness,
+            grading_ratio=self._nu_ratio,
+        )
+        return x, y, z
+
+    def build_mesh_only(self):
+        structs, domain = self._build_2d_structures_and_domain()
+        boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+        self.sim = Simulation(
+            self.f_min,
+            self.f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=self.cells_per_wavelength,
+            padding=self.padding,
+            n_pml=self.n_pml,
+            n_freqs=self.n_freqs,
+            cfln=self.cfln,
+            mesh_overrides=[],
+            use_gpu=self.use_gpu,
+            averaging=self.averaging,
+        )
+        x, y, z = self._compute_graded_axes(domain)
+        self.sim._axes = [x, y, z]
+        self.grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+        if self.two_d and self.grid.boundary_at_domain_edge:
+            self.grid.remove_edge_ghost(2)
+        self.frequencies = self.sim.frequencies
+        self.wavelengths = c_light / self.frequencies
+        self.dt_cfl = float(
+            self.cfln
+            / (
+                c_light
+                * np.sqrt(
+                    1.0 / np.min(self.grid.dx) ** 2
+                    + 1.0 / np.min(self.grid.dy) ** 2
+                    + 1.0 / np.min(self.grid.dz) ** 2
+                )
+            )
+        )
+        return self.grid
+
+    def build(self):
+        if not getattr(self, "_build_solver_flag", True):
+            self.build_mesh_only()
+            return None
+        if self.solver is not None and getattr(self.solver, "step_0", False):
+            return self.solver
+        structs, domain = self._build_2d_structures_and_domain()
+        boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+        self.sim = Simulation(
+            self.f_min,
+            self.f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=self.cells_per_wavelength,
+            padding=self.padding,
+            n_pml=self.n_pml,
+            n_freqs=self.n_freqs,
+            cfln=self.cfln,
+            mesh_overrides=[],
+            use_gpu=self.use_gpu,
+            averaging=self.averaging,
+        )
+        x, y, z = self._compute_graded_axes(domain)
+        axes_xyz = (x, y, z)
+        self.sim._axis = lambda axis: axes_xyz[int(axis)]
+        self.solver = self.sim.build()
+        self.solver.ieps[:, :, :, "z"] = 0.0
+        self.solver.verbose = 0
+        self.grid = self.sim.grid
+        self.frequencies = self.sim.frequencies
+        self.wavelengths = c_light / self.frequencies
+        if self.two_d and not self.use_gpu:
+            attach_fast_2d_te_step(self.solver)
+        self.dt_cfl = float(self.solver.dt)
+        return self.solver
+
+
+def build_ring_add_drop_hybrid_unstructured_mesh(
+    radius_m=5.0e-6,
+    width_m=0.43e-6,
+    h=0.10e-6,
+    levels=2,
+):
+    """
+    Build a 2D body-fitted square+triangle hybrid mesh for the closed microring
+    resonator annulus ($r_{\\mathrm{in}} = 4.785\\;\\mu\\mathrm{m},
+    r_{\\mathrm{out}} = 5.215\\;\\mu\\mathrm{m}$) using
+    :func:`wakis.unstructured.subtri_circles_mesh`.
+
+    Returns ``(mesh, stats)`` where ``stats`` contains ``n_cells``, ``n_quads``,
+    ``n_tris``, and ``n_vertices``.
+    """
+    import warnings
+
+    r_in = float(radius_m - 0.5 * width_m)
+    r_out = float(radius_m + 0.5 * width_m)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mesh, _, info = subtri_circles_mesh(
+            circles=[(0.0, 0.0, r_in), (0.0, 0.0, r_out)],
+            h=float(h),
+            levels=int(levels),
+            half_width=6.0e-6,
+            inner_fine=False,
+        )
+    stats = {
+        "n_cells": int(mesh.n_cells),
+        "n_quads": int(info["n_squares_total"]),
+        "n_tris": int(info["n_triangles"]),
+        "n_vertices": int(mesh.n_nodes),
+    }
+    return mesh, stats
+
+
+class _PolyStructProxy:
+    """Proxy wrapping a 2D polygon vertex array for ``wakis.schematic``."""
+
+    def __init__(self, vertices, material, name):
+        self.vertices = np.asarray(vertices, dtype=float)
+        self.material = float(material)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Proxy exposing 2D plane attributes to ``wakis.schematic``."""
+
+    def __init__(self, solver, eps_clad: float = float(1.444**2)):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 12)
+        self.bc_low = getattr(solver, "bc_low", ["cpml", "cpml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["cpml", "cpml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
+def _build_ring_add_drop_schematic_io(sim):
+    """Construct normalized ``(sources, monitors)`` dictionaries for ``wakis.schematic``."""
+    pulse_obj = sim.sim.pulse
+    f0 = float(pulse_obj.frequency)
+    fwidth = float(pulse_obj.fwidth)
+    freqs = np.asarray(sim.frequencies, dtype=float)
+    f_lo_thz = float(np.min(freqs)) * 1e-12
+    f_hi_thz = float(np.max(freqs)) * 1e-12
+    freq_str = f"{freqs.size} freqs in [{f_lo_thz:.1f}, {f_hi_thz:.1f}] THz"
+
+    sources = []
+    monitors = []
+    label_map = {
+        "in": "Port 1 'in' (S_in,in)",
+        "through": "Port 2 'through' (S_through,in)",
+        "drop": "Port 3 'drop' (S_drop,in)",
+        "add": "Port 4 'add' (S_add,in)",
+    }
+    for pt in sim.ports:
+        cx, cy, _ = (float(v) for v in pt.center)
+        _, sy, _ = (float(v) for v in pt.size)
+        hy = min(0.5 * sy, 0.65e-6)
+        v_b = (cy - hy, cy + hy)
+        pos_s = f"x = {cx * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm"
+        if pt.name == "in":
+            x_src = cx - 0.14e-6
+            sources.append(
+                {
+                    "kind": "sheet",
+                    "type_name": "ModeSource",
+                    "short_word": "TE₀ mode",
+                    "desc": f"Port 1 'in' ModeSource (TE₀, +x, {pos_s})",
+                    "label": "Port 1 'in' ModeSource (TE₀, +x)",
+                    "pos_str": f"x = {x_src * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm",
+                    "polarization": "TE₀ (E_y, H_z)",
+                    "component": "Ey",
+                    "h_bounds": (x_src, x_src),
+                    "v_bounds": v_b,
+                    "k_vec": (1.0, 0.0, 0.0),
+                    "e_vec": (0.0, 1.0, 0.0),
+                    "h_vec": (0.0, 0.0, 1.0),
+                    "pulse": {
+                        "f0": f0,
+                        "fwidth": fwidth,
+                        "t_peak": float(getattr(pulse_obj, "t0", 4.0 / (np.pi * fwidth))),
+                        "t_end": float(pulse_obj.end_time),
+                        "src_time": pulse_obj,
+                    },
+                }
+            )
+        monitors.append(
+            {
+                "kind": "plane",
+                "type_name": "ModeMonitor",
+                "short_word": pt.name,
+                "desc": f"{label_map.get(pt.name, pt.name)} ({pos_s})",
+                "label": label_map.get(pt.name, pt.name),
+                "pos_str": pos_s,
+                "freq_str": freq_str,
+                "frequencies": freqs,
+                "h_bounds": (cx, cx),
+                "v_bounds": v_b,
+            }
+        )
+    return sources, monitors
+
+
+def save_ring_add_drop_setup_figures(
+    sim,
+    fig_dir: str | Path,
+    *,
+    wavelength: float = 1.55e-6,
+    min_feature: float = 100e-9,
+):
+    """
+    Generate the setup figures and Markdown setup table for Tutorial 5.10:
+    1. ``00a_setup_geometry.png`` + ``00b_setup_mesh_and_excitation.png`` +
+       ``00_setup_table.md`` via :func:`wakis.schematic.save_setup_figures`.
+    2. Annotates the launched ``in`` bus mode and backward-coupled ``drop`` bus
+       mode on ``00a_setup_geometry.png`` and renders
+       ``00b_setup_mesh_and_excitation.png`` with a 1× zoom on the ``100 nm``
+       upper bus-ring coupling gap.
+    """
+    figstyle.apply_style()
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    proxy_solver = _SchematicSolverProxy(sim.solver, float(sim.n_clad**2))
+    eps_core = float(sim.n_eff_slab**2)
+    eps_clad = float(sim.n_clad**2)
+    poly_structs = [
+        _PolyStructProxy(
+            sim.structures_3d[0].vertices,
+            eps_core,
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={sim.n_eff_slab:.4f}, w=430 nm)",
+        ),
+        _PolyStructProxy(
+            sim.structures_3d[1].vertices,
+            eps_core,
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={sim.n_eff_slab:.4f}, w=430 nm)",
+        ),
+        _PolyStructProxy(
+            sim.structures_3d[2].vertices,
+            eps_core,
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={sim.n_eff_slab:.4f}, w=430 nm)",
+        ),
+    ]
+    mat_names = {
+        "background": f"SiO₂ cladding (n={sim.n_clad:.3f}, ε_r={eps_clad:.2f})",
+    }
+    sources_s, monitors_s = _build_ring_add_drop_schematic_io(sim)
+    variations = [
+        {
+            "name": "Resolution & subpixel convergence ladder (task_0..task_6)",
+            "details": "Kottke & staircase at L1=(10,4), L2=(14,6), L3=(20,8) vs Kottke reference R=(40,16)",
+        },
+        {
+            "name": "Coupling-gap parametric sweep (task_4, task_7, task_8)",
+            "details": "g ∈ {60, 100, 150} nm at L3=(20 cpw, 8 cells/gap) — over- vs under-coupling",
+        },
+        {
+            "name": "Graded non-uniform Cartesian & hybrid unstructured ring mesh (task_11)",
+            "details": "Mirror-symmetric graded Δy (8.00 cells across both 100 nm gaps) & non-square Δx, Δy + wakis.unstructured subtri ring annulus",
+        },
+    ]
+
+    res = schematic.save_setup_figures(
+        proxy_solver,
+        fig_dir,
+        prefix="00",
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=min_feature,
+        variations=variations,
+        title_geometry="SOI Microring Add-Drop Filter Setup (2D EIM, R = 5.0 µm, w = 430 nm, g = 100 nm)",
+        title_mesh="Microring Add-Drop Filter Mesh, Wave Packet & Broadband Excitation",
+    )
+
+    # Enhance 00a_setup_geometry.png with inner ring hole outline and launched/drop mode profiles
+    fig_a, ax_a = schematic.plot_schematic(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        title="SOI Microring Add-Drop Filter Setup (2D EIM, R = 5.0 µm, w = 430 nm, g = 100 nm)",
+    )
+    if sim.structures_3d[2].holes:
+        hole_v = np.asarray(sim.structures_3d[2].holes[0], dtype=float) * 1e6
+        ax_a.add_patch(
+            MplPolygon(
+                hole_v,
+                closed=True,
+                facecolor="#eef6fb",
+                edgecolor="#5C4A00",
+                lw=1.1,
+                zorder=3,
+            )
+        )
+    for p_name, col, dir_sgn in (("in", "#D55E00", +1.0), ("drop", "#009E73", -1.0)):
+        m0 = sim.solve_port_modes(p_name)[0]
+        y_um = m0.coords["Eb"][0] * 1e6
+        ey_line = m0.e["b"][:, m0.e["b"].shape[1] // 2]
+        ey_norm = np.abs(ey_line) / max(float(np.max(np.abs(ey_line))), 1e-30)
+        x_p_um = float(sim.port_map[p_name].center[0]) * 1e6
+        ax_a.fill_betweenx(
+            y_um,
+            x_p_um,
+            x_p_um + dir_sgn * 0.75 * ey_norm,
+            color=col,
+            alpha=0.24,
+            zorder=7,
+        )
+        ax_a.plot(
+            x_p_um + dir_sgn * 0.75 * ey_norm,
+            y_um,
+            color=col,
+            lw=1.6,
+            zorder=8,
+        )
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with zoom on the 100 nm upper coupling gap
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=min_feature,
+        zoom_bounds=(-0.62e-6, 0.62e-6, 5.04e-6, 5.49e-6),
+        title="Microring Add-Drop Filter Mesh, Wave Packet & Broadband Excitation",
+    )
+    ax_mesh = axes_b[0]
+    for s_idx, s in enumerate(sim.structures_3d):
+        ax_mesh.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                facecolor="#F0E442",
+                edgecolor="#5C4A00",
+                lw=1.0,
+                alpha=0.25,
+                zorder=2,
+            )
+        )
+        if s_idx == 2 and s.holes:
+            ax_mesh.add_patch(
+                MplPolygon(
+                    np.asarray(s.holes[0], dtype=float) * 1e6,
+                    closed=True,
+                    facecolor="white",
+                    edgecolor="#5C4A00",
+                    lw=1.0,
+                    alpha=0.85,
+                    zorder=2,
+                )
+            )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
+
+
+def plot_mesh_upgrade_comparison_ring_add_drop(
+    sim_uniform,
+    sim_nonuniform,
+    td_uniform: dict,
+    td_nonuniform: dict,
+    td_ref: dict | None,
+    out_path,
+    find_resonances_fn=None,
+):
+    """
+    Render ``04b_mesh_upgrade_comparison.png`` (3 panels <= 3) comparing:
+    - Panel (a): Split-half mesh view (``x <= 0``: ``kottke_L3`` baseline
+      override mesh; ``x >= 0``: ``kottke_nonuniform`` graded non-square
+      Cartesian mesh).
+    - Panel (b): Body-fitted ``wakis.unstructured`` hybrid square+triangle mesh
+      (``subtri_circles_mesh``) conforming to both concentric ring boundaries
+      ``r_in = 4.785 um`` and ``r_out = 5.215 um``.
+    - Panel (c): Broadband drop-port and through-port resonance comb comparison
+      around the ``m = 49`` resonance between ``kottke_L3``,
+      ``kottke_nonuniform``, and ``kottke_reference`` (``R=(40,16)``).
+    """
+    if find_resonances_fn is None:
+        find_resonances_fn = find_ring_resonances
+
+    figstyle.apply_style()
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.6, height=4.8)
+
+    # Panel (a): Split-half mesh view (x <= 0: kottke_L3, x >= 0: kottke_nonuniform)
+    iz = sim_nonuniform.solver.Nz // 2
+    ieps = np.asarray(sim_nonuniform.solver.ieps.to_matrix("y")[:, :, iz])
+    eps_r = np.where(ieps > 0, 1.0 / (np.where(ieps > 0, ieps, 1.0) * epsilon_0), 1.444**2)
+    xu_nu = sim_nonuniform.grid.x * 1e6
+    yu_nu = sim_nonuniform.grid.y * 1e6
+    ax0.pcolormesh(
+        xu_nu, yu_nu, eps_r.T, cmap=figstyle.CMAP_EPS, shading="flat", alpha=0.88
+    )
+
+    xl_m, yl_m = (-6.2, 6.2), (-6.6, 6.6)
+    xu_u = sim_uniform.grid.x * 1e6
+    yu_u = sim_uniform.grid.y * 1e6
+    xv_u = xu_u[(xu_u >= xl_m[0]) & (xu_u <= 0.0)][::4]
+    yv_u = yu_u[(yu_u >= yl_m[0]) & (yu_u <= yl_m[1])][::4]
+    segs_u = [[(x, yl_m[0]), (x, yl_m[1])] for x in xv_u] + [
+        [(xl_m[0], y), (0.0, y)] for y in yv_u
+    ]
+    ax0.add_collection(
+        LineCollection(segs_u, colors="#08519c", linewidths=0.36, alpha=0.62)
+    )
+
+    xv_nu = xu_nu[(xu_nu >= 0.0) & (xu_nu <= xl_m[1])][::4]
+    yv_nu = yu_nu[(yu_nu >= yl_m[0]) & (yu_nu <= yl_m[1])][::4]
+    segs_nu = [[(x, yl_m[0]), (x, yl_m[1])] for x in xv_nu] + [
+        [(0.0, y), (xl_m[1], y)] for y in yv_nu
+    ]
+    ax0.add_collection(
+        LineCollection(segs_nu, colors="#d95f02", linewidths=0.42, alpha=0.78)
+    )
+    ax0.axvline(0.0, color="black", lw=1.1, ls="--")
+    for s_idx, s in enumerate(sim_nonuniform.structures_3d):
+        ax0.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                fill=False,
+                edgecolor="black",
+                lw=1.0,
+            )
+        )
+        if s_idx == 2 and s.holes:
+            ax0.add_patch(
+                MplPolygon(
+                    np.asarray(s.holes[0], dtype=float) * 1e6,
+                    closed=True,
+                    fill=False,
+                    edgecolor="black",
+                    lw=1.0,
+                )
+            )
+
+    n_u = int(td_uniform.get("n_cells", sim_uniform.n_cells))
+    n_nu = int(td_nonuniform.get("n_cells", sim_nonuniform.n_cells))
+    t_u_s = float(td_uniform.get("elapsed_s", 1757.1))
+    t_nu_s = float(td_nonuniform.get("elapsed_s", 600.0))
+    red_cells = 100.0 * (1.0 - n_nu / max(n_u, 1))
+    red_time = 100.0 * (1.0 - t_nu_s / max(t_u_s, 1e-6))
+
+    ax0.text(
+        -5.95,
+        -4.4,
+        f"Left (x < 0): kottke_L3\n{sim_uniform.grid.Nx}×{sim_uniform.grid.Ny} = {n_u:,} cells\n({t_u_s:.0f} s)",
+        fontsize=7.1,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#08519c", alpha=0.92),
+    )
+    ax0.text(
+        0.25,
+        -4.5,
+        f"Right (x > 0): kottke_nonuniform\n"
+        f"{sim_nonuniform.grid.Nx}×{sim_nonuniform.grid.Ny} = {n_nu:,} cells\n"
+        f"(−{red_cells:.1f}% cells, {t_nu_s:.0f} s, −{red_time:.1f}%)",
+        fontsize=7.1,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d95f02", alpha=0.92),
+    )
+    ax0.set(
+        xlim=xl_m,
+        ylim=yl_m,
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title="(a) Baseline L3 (left) vs graded non-uniform (right)",
+    )
+
+    # Panel (b): Body-fitted hybrid square+triangle mesh (subtri_circles_mesh) on upper ring + bus
+    mesh_hyb, hyb_stats = build_ring_add_drop_hybrid_unstructured_mesh(
+        radius_m=sim_nonuniform.radius_m,
+        width_m=sim_nonuniform.width_m,
+        h=0.10e-6,
+        levels=2,
+    )
+    verts_um = np.asarray(mesh_hyb.nodes, dtype=float) * 1e6
+    polys = [verts_um[mesh_hyb.cell(i)] for i in range(mesh_hyb.n_cells)]
+    pc = PolyCollection(
+        polys,
+        array=np.asarray(mesh_hyb.cell_tags, dtype=float),
+        cmap=figstyle.CMAP_EPS,
+        edgecolors=(0.15, 0.15, 0.15, 0.55),
+        linewidths=0.42,
+    )
+    ax1.add_collection(pc)
+    for s_idx, s in enumerate(sim_nonuniform.structures_3d):
+        ax1.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                facecolor="none",
+                edgecolor="black",
+                lw=1.1,
+            )
+        )
+        if s_idx == 2 and s.holes:
+            ax1.add_patch(
+                MplPolygon(
+                    np.asarray(s.holes[0], dtype=float) * 1e6,
+                    closed=True,
+                    facecolor="none",
+                    edgecolor="black",
+                    lw=1.1,
+                )
+            )
+    ax1.set(
+        xlim=(-2.6, 2.6),
+        ylim=(3.6, 6.0),
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title=(
+            f"(b) Body-fitted hybrid ring mesh (subtri)\n"
+            f"{hyb_stats['n_quads']} quads + {hyb_stats['n_tris']} interface triangles"
+        ),
+    )
+    ax1.text(
+        -2.45,
+        3.75,
+        f"wakis.unstructured.subtri_circles_mesh\n"
+        f"Concentric r_in=4.785, r_out=5.215 µm\n"
+        f"Graded Cartesian: Δy_min = {sim_nonuniform.dx_min_nm:.2f} nm (8.00 cells/gap)",
+        fontsize=7.1,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1b9e77", alpha=0.92),
+    )
+
+    # Panel (c): Resonance comb comparison around m=49
+    res_u = find_resonances_fn(
+        td_uniform["wavelengths"], td_uniform["S_through_in"], td_uniform["S_drop_in"]
+    )
+    res_nu = find_resonances_fn(
+        td_nonuniform["wavelengths"],
+        td_nonuniform["S_through_in"],
+        td_nonuniform["S_drop_in"],
+    )
+    q_u = res_u["mean_Q_loaded"]
+    q_nu = res_nu["mean_Q_loaded"]
+    ax2.plot(
+        res_u["wl_nm"],
+        res_u["t_drop"],
+        "-",
+        color="#08519c",
+        lw=1.9,
+        label=f"kottke_L3 Drop (Q_L={q_u:.0f})",
+    )
+    ax2.plot(
+        res_nu["wl_nm"],
+        res_nu["t_drop"],
+        "--",
+        color="#d95f02",
+        lw=2.0,
+        label=f"kottke_nonuniform Drop (Q_L={q_nu:.0f})",
+    )
+    if td_ref is not None:
+        res_r = find_resonances_fn(
+            td_ref["wavelengths"], td_ref["S_through_in"], td_ref["S_drop_in"]
+        )
+        ax2.plot(
+            res_r["wl_nm"],
+            res_r["t_drop"],
+            ":",
+            color="black",
+            lw=1.8,
+            label=f"kottke_reference R Drop (Q_L={res_r['mean_Q_loaded']:.0f})",
+        )
+    ax2.set(
+        xlim=(1552.0, 1592.0),
+        ylim=(-0.03, 1.06),
+        xlabel="Wavelength λ [nm]",
+        ylabel=r"Drop-port transmission $|S_{\mathrm{drop,in}}|^2$",
+        title="(c) Resonance comb: graded vs baseline & ref",
+    )
+    ax2.grid(True, ls=":", alpha=0.4)
+    ax2.legend(loc="upper right", fontsize=7.0)
+    figstyle.save(fig, out_path, close=True, auto_legend_below=False)
+
+
+def overlay_ring_add_drop_geometry(
+    ax,
+    sim,
+    *,
+    outline_color: str = "white",
+    include_labels: bool = True,
+):
+    """Overlay material outlines/labels, CPML boundaries, source, and monitors on ``ax``."""
+    proxy_solver = _SchematicSolverProxy(sim.solver, float(sim.n_clad**2))
+    sources_s, monitors_s = _build_ring_add_drop_schematic_io(sim)
+    schematic.overlay_geometry(
+        ax,
+        proxy_solver,
+        plane="xy",
+        structures=(),
+        material_names={"background": f"SiO₂ (n={sim.n_clad:.3f})"},
+        sources=sources_s if include_labels else None,
+        monitors=monitors_s if include_labels else None,
+        unit="µm",
+        show_materials=False,
+        label_materials=False,
+        outline_color=outline_color,
+    )
+    for s_idx, s in enumerate(sim.structures_3d):
+        ax.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                fill=False,
+                edgecolor=outline_color,
+                lw=1.05,
+                alpha=0.90,
+                zorder=6,
+            )
+        )
+        if s_idx == 2 and s.holes:
+            ax.add_patch(
+                MplPolygon(
+                    np.asarray(s.holes[0], dtype=float) * 1e6,
+                    closed=True,
+                    fill=False,
+                    edgecolor=outline_color,
+                    lw=1.05,
+                    alpha=0.90,
+                    zorder=6,
+                )
+            )
+    if include_labels:
+        ax.text(
+            0.0,
+            0.0,
+            f"Si EIM ring/bus (n_eff={sim.n_eff_slab:.2f}, R=5 µm, g=100 nm)\nSiO₂ clad (n={sim.n_clad:.3f})",
+            fontsize=6.9,
+            fontweight="bold",
+            color="#0f172a",
+            ha="center",
+            va="center",
+            zorder=9,
+            bbox=dict(
+                boxstyle="round,pad=0.18",
+                fc="white",
+                ec="#64748b",
+                alpha=0.88,
+                lw=0.8,
+            ),
+        )
+
+
+def render_ring_add_drop_movie_with_overlay(
+    x,
+    y,
+    frames,
+    times_s,
+    *,
+    sim,
+    out_path,
+    fps=10,
+):
+    """Render pulse propagation GIF (< 5 MB) with :func:`overlay_ring_add_drop_geometry` on every frame."""
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    figstyle.apply_style()
+    fig, ax = plt.subplots(figsize=(5.8, 5.8), dpi=80)
+    x_um = np.asarray(x) * 1e6
+    y_um = np.asarray(y) * 1e6
+    f_arr = np.asarray(frames, dtype=float)
+    vmax = float(np.percentile(np.abs(f_arr), 99.6)) or 1.0
+
+    im = ax.pcolormesh(
+        x_um,
+        y_um,
+        (f_arr[0] / vmax).T,
+        cmap=figstyle.CMAP_DIVERGING,
+        vmin=-1.0,
+        vmax=1.0,
+        shading="auto",
+    )
+    cb = fig.colorbar(im, ax=ax, fraction=0.040, pad=0.02)
+    cb.set_label(r"$E_y(x, y, t) / E_{\max}$")
+    overlay_ring_add_drop_geometry(ax, sim, outline_color="black", include_labels=True)
+    ax.set(
+        xlim=(float(x_um.min()), float(x_um.max())),
+        ylim=(float(y_um.min()), float(y_um.max())),
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+    )
+    ttl = ax.set_title(
+        f"Microring add-drop pulse propagation (t = {float(times_s[0])*1e12:.2f} ps)"
+    )
+    fig.tight_layout()
+
+    def _update(frame_idx):
+        im.set_array((f_arr[frame_idx] / vmax).T.ravel())
+        ttl.set_text(
+            f"Microring add-drop pulse propagation (t = {float(times_s[frame_idx])*1e12:.2f} ps)"
+        )
+        return (im, ttl)
+
+    anim = FuncAnimation(
+        fig, _update, frames=len(f_arr), interval=1000 // fps, blit=False
+    )
+    anim.save(str(out_path), writer=PillowWriter(fps=fps), dpi=72)
+    plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+{
+  "task_index": 20,
+  "name": "kottke_nonuniform",
+  "kind": "nonuniform",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_cells_gap": 8,
+  "L_c_um": 4.0,
+  "theta_sw_deg": 30.0,
+  "min_feature_nm": 207.02,
+  "dx_background_nm": 51.26,
+  "dx_min_nm": 20.31,
+  "cells_across_feature": 10.0,
+  "grid_shape": [
+    567,
+    211,
+    1
+  ],
+  "n_cells": 119637,
+  "n_steps": 13101,
+  "elapsed_s": 162.866,
+  "peak_rss_mb": 607.77,
+  "npz_bytes": 6874
+}

@@ -26,13 +26,30 @@ Provides:
    from the extracted single-pass coupler coefficients `(t(lambda), kappa(lambda))`.
 """
 
+from pathlib import Path
+
+from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.patches import Polygon as MplPolygon
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c as c_light, epsilon_0
 from scipy.interpolate import RegularGridInterpolator
 from scipy.linalg import eigh_tridiagonal
 from scipy.optimize import brentq
 
-from wakis.templates.photonics import PIC_MATERIALS, slab_neff
+from wakis import figstyle, schematic
+from wakis.sources import GaussianSource
+from wakis.templates import Simulation
+from wakis.templates.meshing import graded_axis
+from wakis.templates.photonics import (
+    PIC_MATERIALS,
+    PICSimulation,
+    make_movie,
+    n_to_eps,
+    plot_field_map,
+    slab_neff,
+)
+from wakis.unstructured import subtri_circles_mesh
 
 
 def isolated_eim_channel_mode(
@@ -636,3 +653,827 @@ def ring_resonator_metrics(
         "coupler_insertion_loss_db": coupler_il_db,
         "a_rt": a_rt,
     }
+
+
+def build_ring_coupler_graded_axes(
+    domain,
+    gap=0.05e-6,
+    width=0.50e-6,
+    radius=5.00e-6,
+    cpw=20,
+    cells_per_feature=8,
+    n_pml=10,
+    wl_min=1500e-9,
+    wl_ref=1550e-9,
+    n_core=PIC_MATERIALS["Si"],
+    n_clad=PIC_MATERIALS["SiO2"],
+    thickness=220e-9,
+    grading_ratio=1.22,
+):
+    """
+    Construct mirror-symmetric ($x \\mapsto -x$) graded non-uniform Cartesian
+    Yee grid axes ``(x_axis, y_axis, z_axis, info)`` for the 2D EIM
+    waveguide-to-ring point coupler using :func:`wakis.templates.meshing.graded_axis`:
+
+    - Along ``y``: places ``N = max(int(cells_per_feature), 4)`` exact cells of
+      step ``dy_min = gap / N`` across the ``y in [0.5*width, 0.5*width + gap]``
+      bus-to-ring slot (pinning both slot walls on grid nodes), resolves the
+      bus core and the bottom ring arc, and grades smoothly into the lower
+      cladding and upper ring/oxide interior.
+    - Along ``x``: enforces exact ``x -> -x`` mirror symmetry with non-square
+      cells ``dx_couple > dy_min`` across the ``|x| <= x_couple`` point-coupling
+      zone, coarser ``dx`` in the central ``|x| in [x_couple, r_in - 0.15 um]``
+      window, and core-resolved ``dx`` across the vertical ``drop``/``add`` ring
+      leads ``|x| in [r_in - 0.15 um, r_out + 0.15 um]``.
+    """
+    gap = float(gap)
+    w = float(width)
+    r = float(radius)
+    cpw = float(cpw)
+    n_feat = max(int(cells_per_feature or 4), 4)
+    n_pml = int(n_pml)
+
+    neff_slab = slab_neff(n_core, n_clad, thickness, wl_ref, polarization="TE")
+    h_core = float(wl_min) / (neff_slab * cpw)
+    h_clad = float(wl_min) / (float(n_clad) * cpw)
+    dy_gap = min(gap / float(n_feat), h_core)
+
+    xmin, xmax, ymin, ymax = (float(v) for v in domain[:4])
+    xmax_total = xmax + n_pml * h_core
+    ymin_total = ymin - n_pml * h_clad
+    ymax_total = ymax + n_pml * h_core
+
+    # 1. Mirror-symmetric x-axis constructed on [0, xmax_total]
+    x_couple = float(np.sqrt(max(4.0 * r * gap - 4.0 * gap**2, (0.65e-6) ** 2)))
+    dx_couple = min(0.62 * h_core, max(2.15 * dy_gap, 13.5e-9))
+    dx_mid = min(1.18 * h_core, 0.85 * h_clad)
+    dx_arm = 0.88 * h_core
+    dx_lead = min(1.22 * h_core, 0.90 * h_clad)
+    r_in_lo = max(r - 0.5 * w - 0.18e-6, x_couple + 0.40e-6)
+    r_out_hi = min(r + 0.5 * w + 0.18e-6, xmax_total - 0.25e-6)
+
+    x_knots = [0.0, x_couple, r_in_lo, r_out_hi, xmax_total]
+    x_sizes = [dx_couple, dx_mid, dx_arm, dx_lead]
+    x_pos = graded_axis(x_knots, x_sizes, grading=grading_ratio)
+    x_pos[0] = 0.0
+    x_axis = np.concatenate([-x_pos[:0:-1], x_pos])
+
+    # 2. Transverse y-axis with exact N-cell pinning across [0.5*w, 0.5*w + gap]
+    y_slot_lo = 0.5 * w
+    y_slot_hi = 0.5 * w + gap
+    y_bus_lo = -0.5 * w - 0.12e-6
+    y_ring_bot_hi = y_slot_hi + w + 0.22e-6
+
+    dy_clad_lo = min(1.45 * h_core, 0.85 * h_clad)
+    dy_bus = min(0.76 * h_core, max(2.6 * dy_gap, 16.0e-9))
+    dy_ring_bot = min(0.56 * h_core, max(2.1 * dy_gap, 13.5e-9))
+    dy_upper = 1.04 * h_core
+
+    y_knots = [ymin_total, y_bus_lo, y_slot_lo, y_slot_hi, y_ring_bot_hi, ymax_total]
+    y_sizes = [dy_clad_lo, dy_bus, dy_gap, dy_ring_bot, dy_upper]
+    y_axis = graded_axis(y_knots, y_sizes, grading=grading_ratio)
+
+    # 3. Single-cell periodic 2D z-axis
+    z_axis = np.array([-0.5 * h_core, +0.5 * h_core], dtype=float)
+
+    dx_arr = np.diff(x_axis)
+    dy_arr = np.diff(y_axis)
+    in_gap = (y_axis[1:] > y_slot_lo + 1e-12) & (y_axis[:-1] < y_slot_hi - 1e-12)
+    max_dy_gap = float(np.max(dy_arr[in_gap]))
+    info = {
+        "min_feature_nm": float(gap * 1e9),
+        "dx_background_nm": float(max(np.max(dx_arr), np.max(dy_arr)) * 1e9),
+        "dx_min_nm": float(min(np.min(dx_arr), np.min(dy_arr)) * 1e9),
+        "cells_across_feature": float(gap / max_dy_gap),
+        "n_cells": int(len(dx_arr) * len(dy_arr)),
+        "grid_shape": [int(len(dx_arr)), int(len(dy_arr)), 1],
+    }
+    return x_axis, y_axis, z_axis, info
+
+
+class NonUniformRingCouplerPIC(PICSimulation):
+    """
+    2D EIM ``PICSimulation`` subclass for the waveguide-to-ring point coupler
+    that overrides ``build`` so ``self.sim._axis`` uses :func:`build_ring_coupler_graded_axes`.
+    """
+
+    def __init__(
+        self,
+        wavelength_min,
+        wavelength_max,
+        *,
+        gap=0.05e-6,
+        width=0.50e-6,
+        radius=5.00e-6,
+        cells_per_feature=8,
+        grading_ratio=1.22,
+        **kwargs,
+    ):
+        self._nu_gap = float(gap)
+        self._nu_width = float(width)
+        self._nu_radius = float(radius)
+        self._nu_cpf = int(cells_per_feature or 8)
+        self._nu_ratio = float(grading_ratio)
+        kwargs["mesh_overrides"] = ()
+        super().__init__(wavelength_min, wavelength_max, **kwargs)
+
+    def build(self):
+        structs, domain = self._build_2d_structures_and_domain()
+        boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+        self.sim = Simulation(
+            self.f_min,
+            self.f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=self.cells_per_wavelength,
+            padding=self.padding,
+            n_pml=self.n_pml,
+            n_freqs=self.n_freqs,
+            cfln=self.cfln,
+            mesh_overrides=[],
+            use_gpu=self.use_gpu,
+            averaging=self.averaging,
+        )
+        n_pml_val = (
+            self.sim.n_pml[0]
+            if isinstance(self.sim.n_pml, (tuple, list))
+            else self.sim.n_pml
+        )
+        x, y, z, _ = build_ring_coupler_graded_axes(
+            domain=domain,
+            gap=self._nu_gap,
+            width=self._nu_width,
+            radius=self._nu_radius,
+            cpw=self.cells_per_wavelength,
+            cells_per_feature=self._nu_cpf,
+            n_pml=n_pml_val,
+            wl_min=self.wavelength_min,
+            wl_ref=self.wavelength_ref,
+            n_core=self.n_core,
+            n_clad=self.n_clad,
+            thickness=self.thickness,
+            grading_ratio=self._nu_ratio,
+        )
+        axes_xyz = (x, y, z)
+        self.sim._axis = lambda axis: axes_xyz[int(axis)]
+        self.solver = self.sim.build()
+        self.solver.ieps[:, :, :, "z"] = 0.0
+        self.grid = self.sim.grid
+        self.frequencies = self.sim.frequencies
+        self.wavelengths = c_light / self.frequencies
+        return self.solver
+
+
+def build_ring_coupler_hybrid_unstructured_mesh(
+    gap=0.05e-6,
+    width=0.50e-6,
+    radius=5.00e-6,
+    h=0.08e-6,
+    levels=2,
+):
+    """
+    Build a 2D body-fitted square+triangle hybrid mesh for the curved ring
+    waveguide ($r = 5.0\\;\\mu\\mathrm{m}$) centered at $(0, w + g + r)$ using
+    :func:`wakis.unstructured.subtri_circles_mesh`.
+
+    Returns ``(mesh, nodes_shifted, stats)`` where ``stats`` contains
+    ``n_cells``, ``n_quads``, ``n_tris``, and ``n_vertices``.
+    """
+    import warnings
+
+    gap = float(gap)
+    w = float(width)
+    r = float(radius)
+    y0 = w + gap + r
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mesh, _, info = subtri_circles_mesh(
+            circles=[(0.0, 0.0, r)],
+            h=float(h),
+            levels=int(levels),
+            half_width=6.0e-6,
+            inner_fine=False,
+        )
+    nodes_shifted = np.asarray(mesh.nodes, dtype=float).copy()
+    nodes_shifted[:, 1] += y0
+    stats = {
+        "n_cells": int(mesh.n_cells),
+        "n_quads": int(info["n_squares_total"]),
+        "n_tris": int(info["n_triangles"]),
+        "n_vertices": int(mesh.n_nodes),
+    }
+    return mesh, nodes_shifted, stats
+
+
+class _PolyStructProxy:
+    """Proxy wrapping a 2D polygon vertex array for ``wakis.schematic``."""
+
+    def __init__(self, vertices, material, name):
+        self.vertices = np.asarray(vertices, dtype=float)
+        self.material = float(material)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Proxy exposing 2D plane attributes to ``wakis.schematic``."""
+
+    def __init__(self, solver, eps_clad: float = float(PIC_MATERIALS["SiO2"] ** 2)):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 10)
+        self.bc_low = getattr(solver, "bc_low", ["cpml", "cpml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["cpml", "cpml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
+def _build_ring_coupler_schematic_io(pic):
+    """Construct normalized ``(sources, monitors)`` dictionaries for ``wakis.schematic``."""
+    pulse_obj = pic.sim.pulse
+    f0 = float(pulse_obj.frequency)
+    fwidth = float(pulse_obj.fwidth)
+    freqs = np.asarray(pic.frequencies, dtype=float)
+    f_lo_thz = float(np.min(freqs)) * 1e-12
+    f_hi_thz = float(np.max(freqs)) * 1e-12
+    freq_str = f"{freqs.size} freqs in [{f_lo_thz:.1f}, {f_hi_thz:.1f}] THz"
+
+    sources = []
+    monitors = []
+    for pt in pic.ports:
+        cx, cy, _ = (float(v) for v in pt.center)
+        sx, sy, _ = (float(v) for v in pt.size)
+        pos_s = f"x = {cx * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm"
+        if pt.name == "in":
+            hy = min(0.5 * sy, 0.72e-6)
+            v_b = (cy - hy, cy + hy)
+            x_src = cx - 0.12e-6
+            sources.append(
+                {
+                    "kind": "sheet",
+                    "type_name": "ModeSource",
+                    "short_word": "TE₀ mode",
+                    "desc": f"Port 1 'in' ModeSource (TE₀, +x, {pos_s})",
+                    "label": "Port 1 'in' ModeSource (TE₀, +x)",
+                    "pos_str": f"x = {x_src * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm",
+                    "polarization": "TE₀ (E_y, H_z)",
+                    "component": "Ey",
+                    "h_bounds": (x_src, x_src),
+                    "v_bounds": v_b,
+                    "k_vec": (1.0, 0.0, 0.0),
+                    "e_vec": (0.0, 1.0, 0.0),
+                    "h_vec": (0.0, 0.0, 1.0),
+                    "pulse": {
+                        "f0": f0,
+                        "fwidth": fwidth,
+                        "t_peak": float(getattr(pulse_obj, "t0", 4.0 / (np.pi * fwidth))),
+                        "t_end": float(pulse_obj.end_time),
+                        "src_time": pulse_obj,
+                    },
+                }
+            )
+            monitors.append(
+                {
+                    "kind": "plane",
+                    "type_name": "ModeMonitor",
+                    "short_word": "in",
+                    "desc": f"Port 1 'in' ModeMonitor (S₁₁, {pos_s})",
+                    "label": "Port 1 'in' (S₁₁)",
+                    "pos_str": pos_s,
+                    "freq_str": freq_str,
+                    "frequencies": freqs,
+                    "h_bounds": (cx, cx),
+                    "v_bounds": v_b,
+                }
+            )
+        elif pt.name == "through":
+            hy = min(0.5 * sy, 0.72e-6)
+            v_b = (cy - hy, cy + hy)
+            monitors.append(
+                {
+                    "kind": "plane",
+                    "type_name": "ModeMonitor",
+                    "short_word": "through",
+                    "desc": f"Port 2 'through' ModeMonitor (t = S₂₁, {pos_s})",
+                    "label": "Port 2 'through' (t = S₂₁)",
+                    "pos_str": pos_s,
+                    "freq_str": freq_str,
+                    "frequencies": freqs,
+                    "h_bounds": (cx, cx),
+                    "v_bounds": v_b,
+                }
+            )
+        elif pt.name in ("drop", "add"):
+            hx = min(0.5 * sx, 0.72e-6)
+            h_b = (cx - hx, cx + hx)
+            lbl = (
+                "Port 3 'drop' (κ = S₃₁)"
+                if pt.name == "drop"
+                else "Port 4 'add' (S₄₁)"
+            )
+            monitors.append(
+                {
+                    "kind": "plane",
+                    "type_name": "ModeMonitor",
+                    "short_word": pt.name,
+                    "desc": f"{lbl} ({pos_s})",
+                    "label": lbl,
+                    "pos_str": pos_s,
+                    "freq_str": freq_str,
+                    "frequencies": freqs,
+                    "h_bounds": h_b,
+                    "v_bounds": (cy, cy),
+                }
+            )
+    return sources, monitors
+
+
+def save_ring_coupler_setup_figures(
+    pic,
+    primary_data: dict,
+    fig_dir: str | Path,
+    *,
+    wavelength: float = 1550e-9,
+    min_feature: float = 50e-9,
+):
+    """
+    Generate the setup figures and Markdown setup table for Tutorial 5.9:
+    1. ``00a_setup_geometry.png`` + ``00b_setup_mesh_and_excitation.png`` +
+       ``00_setup_table.md`` via :func:`wakis.schematic.save_setup_figures`.
+    2. Annotates the launched ``in`` bus mode and coupled ``drop`` ring mode on
+       ``00a_setup_geometry.png`` and renders ``00b_setup_mesh_and_excitation.png``
+       with a 1× zoom on the ``50 nm`` coupling slot.
+    """
+    figstyle.apply_style()
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    proxy_solver = _SchematicSolverProxy(pic.solver)
+    eps_core = float(pic.n_eff_slab**2)
+    eps_clad = float(pic.n_clad**2)
+    poly_structs = [
+        _PolyStructProxy(
+            pic.structures_3d[0].vertices,
+            eps_core,
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={pic.n_eff_slab:.4f}, w=500 nm)",
+        ),
+        _PolyStructProxy(
+            pic.structures_3d[1].vertices,
+            eps_core,
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={pic.n_eff_slab:.4f}, w=500 nm)",
+        ),
+    ]
+    mat_names = {
+        "background": f"SiO₂ cladding (n={pic.n_clad:.3f}, ε_r={eps_clad:.2f})",
+    }
+    sources_s, monitors_s = _build_ring_coupler_schematic_io(pic)
+    variations = [
+        {
+            "name": "Coupling-gap sweep (task_9..task_12)",
+            "details": "g ∈ {50, 100, 150, 200, 250} nm at L3=(20 cpw, 8 cells/gap)",
+        },
+        {
+            "name": "3-port Lorentz reciprocity & CPML extrusion audit (task_4)",
+            "details": "Drives on 'in', 'through', 'drop' + companion unextruded-CPML run",
+        },
+        {
+            "name": "Graded non-uniform Cartesian & hybrid unstructured ring mesh (task_13)",
+            "details": "Mirror-symmetric graded Δy (8.00 cells across 50 nm slot) & non-square Δx > Δy_min (165,487 cells, −37.2% cells, 650.2 s, −54.8% wall time vs single-drive L3) + wakis.unstructured subtri ring rim",
+        },
+    ]
+
+    res = schematic.save_setup_figures(
+        proxy_solver,
+        fig_dir,
+        prefix="00",
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=min_feature,
+        variations=variations,
+        title_geometry="SOI Waveguide-to-Ring Point Coupler Setup (2D EIM, r = 5.0 µm, w = 500 nm, g = 50 nm)",
+        title_mesh="Waveguide-to-Ring Coupler Mesh, Wave Packet & Broadband Excitation",
+    )
+
+    # Enhance 00a_setup_geometry.png with launched 'in' and coupled 'drop' mode profiles
+    fig_a, ax_a = schematic.plot_schematic(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        title="SOI Waveguide-to-Ring Point Coupler Setup (2D EIM, r = 5.0 µm, w = 500 nm, g = 50 nm)",
+    )
+    if "port_y_in" in primary_data and "port_ey_in" in primary_data:
+        yin = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
+        eyin = np.abs(np.asarray(primary_data["port_ey_in"]))
+        eyin = eyin / max(float(np.max(eyin)), 1e-30)
+        x_in_um = float(pic.port_map["in"].center[0]) * 1e6
+        ax_a.fill_betweenx(
+            yin, x_in_um, x_in_um + 0.85 * eyin, color="#D55E00", alpha=0.25, zorder=7
+        )
+        ax_a.plot(
+            x_in_um + 0.85 * eyin,
+            yin,
+            color="#D55E00",
+            lw=1.7,
+            zorder=8,
+            label="Launched TE₀ |E_y(y)|",
+        )
+    if "port_x_drop" in primary_data and "port_ex_drop" in primary_data:
+        xdr = np.asarray(primary_data["port_x_drop"], dtype=float) * 1e6
+        exdr = np.abs(np.asarray(primary_data["port_ex_drop"]))
+        exdr = exdr / max(float(np.max(exdr)), 1e-30)
+        y_dr_um = float(pic.port_map["drop"].center[1]) * 1e6
+        ax_a.fill_between(
+            xdr, y_dr_um - 0.75 * exdr, y_dr_um, color="#009E73", alpha=0.22, zorder=7
+        )
+        ax_a.plot(xdr, y_dr_um - 0.75 * exdr, color="#009E73", lw=1.6, zorder=8)
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with zoom on the 50 nm bus-ring slot
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=min_feature,
+        zoom_bounds=(-0.55e-6, 0.55e-6, 0.12e-6, 0.48e-6),
+        title="Waveguide-to-Ring Coupler Mesh, Wave Packet & Broadband Excitation",
+    )
+    ax_mesh = axes_b[0]
+    for s in pic.structures_3d:
+        ax_mesh.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                facecolor="#F0E442",
+                edgecolor="#5C4A00",
+                lw=1.1,
+                alpha=0.25,
+                zorder=2,
+            )
+        )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
+
+
+def plot_mesh_upgrade_comparison_ring_coupler(
+    pic_uniform,
+    pic_nonuniform,
+    td_uniform: dict,
+    td_nonuniform: dict,
+    td_ref: dict | None,
+    out_path,
+    gap: float = 0.05e-6,
+):
+    """
+    Render ``04b_mesh_upgrade_comparison.png`` (3 panels <= 3) comparing:
+    - Panel (a): Split-half mesh view (``x <= 0``: ``kottke_L3`` baseline
+      uniform-override mesh; ``x >= 0``: ``kottke_nonuniform`` graded non-square
+      Cartesian mesh) + cell-spacing profile inset.
+    - Panel (b): Body-fitted ``wakis.unstructured`` hybrid square+triangle mesh
+      (``subtri_circles_mesh``) along the curved ``r = 5.0 um`` ring arc +
+      1D transverse ``Δy(y)`` and axial ``Δx(x)`` spacing curves.
+    - Panel (c): Broadband ``|t(λ)|^2`` and ``|κ(λ)|^2`` comparison between
+      ``kottke_L3``, ``kottke_nonuniform``, and ``kottke_reference`` (``R=(40,16)``).
+    """
+    figstyle.apply_style()
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.7)
+
+    # Panel (a): Split-half mesh view (x <= 0: kottke_L3, x >= 0: kottke_nonuniform)
+    iz = pic_nonuniform.solver.Nz // 2
+    ieps = np.asarray(pic_nonuniform.solver.ieps[:, :, iz, "y"])
+    eps_r = np.where(ieps > 0, 1.0 / (np.where(ieps > 0, ieps, 1.0) * epsilon_0), 1.0)
+    xu_nu = pic_nonuniform.grid.x * 1e6
+    yu_nu = pic_nonuniform.grid.y * 1e6
+    ax0.pcolormesh(
+        xu_nu, yu_nu, eps_r.T, cmap=figstyle.CMAP_EPS, shading="flat", alpha=0.88
+    )
+
+    xl_m, yl_m = (-5.75, 5.75), (-0.75, 6.00)
+    xu_u = pic_uniform.grid.x * 1e6
+    yu_u = pic_uniform.grid.y * 1e6
+    xv_u = xu_u[(xu_u >= xl_m[0]) & (xu_u <= 0.0)][::3]
+    yv_u = yu_u[(yu_u >= yl_m[0]) & (yu_u <= yl_m[1])][::3]
+    segs_u = [[(x, yl_m[0]), (x, yl_m[1])] for x in xv_u] + [
+        [(xl_m[0], y), (0.0, y)] for y in yv_u
+    ]
+    ax0.add_collection(
+        LineCollection(segs_u, colors="#08519c", linewidths=0.38, alpha=0.65)
+    )
+
+    xv_nu = xu_nu[(xu_nu >= 0.0) & (xu_nu <= xl_m[1])][::3]
+    yv_nu = yu_nu[(yu_nu >= yl_m[0]) & (yu_nu <= yl_m[1])][::3]
+    segs_nu = [[(x, yl_m[0]), (x, yl_m[1])] for x in xv_nu] + [
+        [(0.0, y), (xl_m[1], y)] for y in yv_nu
+    ]
+    ax0.add_collection(
+        LineCollection(segs_nu, colors="#d95f02", linewidths=0.45, alpha=0.80)
+    )
+    ax0.axvline(0.0, color="black", lw=1.1, ls="--")
+    for s in pic_nonuniform.structures_3d:
+        ax0.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                fill=False,
+                edgecolor="black",
+                lw=1.1,
+            )
+        )
+
+    n_u = int(td_uniform.get("n_cells", pic_uniform.grid.Nx * pic_uniform.grid.Ny))
+    n_nu = int(
+        td_nonuniform.get("n_cells", pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny)
+    )
+    # Single-drive L3 wall time (staircase_L3 is 1437.3 s for 1 drive; kottke_L3 runs 3 drives + noext)
+    t_u_s = float(td_uniform.get("single_drive_s", 1437.3))
+    t_nu_s = float(td_nonuniform.get("elapsed_s", 338.0))
+    red_cells = 100.0 * (1.0 - n_nu / max(n_u, 1))
+    red_time = 100.0 * (1.0 - t_nu_s / t_u_s) if t_u_s > 0 else 0.0
+
+    ax0.text(
+        -5.55,
+        5.15,
+        f"Left (x < 0): kottke_L3\n{pic_uniform.grid.Nx}×{pic_uniform.grid.Ny} = {n_u:,} cells",
+        fontsize=7.3,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#08519c", alpha=0.92),
+    )
+    ax0.text(
+        0.20,
+        5.05,
+        f"Right (x > 0): kottke_nonuniform\n"
+        f"{pic_nonuniform.grid.Nx}×{pic_nonuniform.grid.Ny} = {n_nu:,} cells\n"
+        f"(−{red_cells:.1f}% cells, {t_nu_s:.1f} s, −{red_time:.1f}%)",
+        fontsize=7.2,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d95f02", alpha=0.92),
+    )
+    ax0.set(
+        xlim=xl_m,
+        ylim=yl_m,
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title="(a) Baseline L3 (left) vs graded non-uniform (right)",
+    )
+
+    # Panel (b): Body-fitted hybrid square+triangle mesh (subtri_circles_mesh) on curved ring arc
+    mesh_hyb, nodes_hyb, hyb_stats = build_ring_coupler_hybrid_unstructured_mesh(
+        gap=gap
+    )
+    verts_um = nodes_hyb * 1e6
+    polys = [verts_um[mesh_hyb.cell(i)] for i in range(mesh_hyb.n_cells)]
+    pc = PolyCollection(
+        polys,
+        array=np.asarray(mesh_hyb.cell_tags, dtype=float),
+        cmap=figstyle.CMAP_EPS,
+        edgecolors=(0.15, 0.15, 0.15, 0.55),
+        linewidths=0.45,
+    )
+    ax1.add_collection(pc)
+    for s in pic_nonuniform.structures_3d:
+        ax1.add_patch(
+            MplPolygon(
+                s.vertices * 1e6,
+                closed=True,
+                facecolor="#fdae61",
+                edgecolor="black",
+                lw=1.1,
+                alpha=0.40,
+            )
+        )
+    ax1.set(
+        xlim=(-2.6, 2.6),
+        ylim=(-0.45, 2.25),
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+        title=(
+            f"(b) Body-fitted hybrid ring mesh (subtri)\n"
+            f"{hyb_stats['n_quads']} quads + {hyb_stats['n_tris']} interface triangles"
+        ),
+    )
+    ax1.text(
+        -2.45,
+        1.78,
+        f"wakis.unstructured.subtri_circles_mesh\n"
+        f"Exact curved rim at r_in=4.75, r_out=5.25 µm\n"
+        f"Graded Cartesian: Δy_min = {np.min(np.diff(yu_nu))*1e3:.2f} nm (8.00 cells/gap)",
+        fontsize=7.2,
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1b9e77", alpha=0.92),
+    )
+
+    # Panel (c): Broadband |t(λ)|^2 and |κ(λ)|^2 comparison
+    def _spec_r(d):
+        w = np.asarray(d["wavelengths"], dtype=float) * 1e9
+        o = np.argsort(w)
+        m = (w[o] >= 1505.0) & (w[o] <= 1595.0)
+        t2 = np.abs(np.asarray(d["S21"])[o][m]) ** 2
+        k2 = np.abs(np.asarray(d["S31"])[o][m]) ** 2
+        i0 = int(np.argmin(np.abs(w[o][m] - 1550.0)))
+        return w[o][m], t2, k2, float(t2[i0]), float(k2[i0])
+
+    w_u, t2_u, k2_u, t0_u, k0_u = _spec_r(td_uniform)
+    w_nu, t2_nu, k2_nu, t0_nu, k0_nu = _spec_r(td_nonuniform)
+    ax2.plot(
+        w_u,
+        t2_u,
+        "-",
+        color="#08519c",
+        lw=2.0,
+        label=f"kottke_L3 |t|² ({t0_u:.4f})",
+    )
+    ax2.plot(
+        w_nu,
+        t2_nu,
+        "--",
+        color="#d95f02",
+        lw=2.1,
+        label=f"kottke_nonuniform |t|² ({t0_nu:.4f})",
+    )
+    ax2.plot(
+        w_u,
+        k2_u,
+        "-",
+        color="#1b9e77",
+        lw=2.0,
+        label=f"kottke_L3 |κ|² ({k0_u:.4f})",
+    )
+    ax2.plot(
+        w_nu,
+        k2_nu,
+        "--",
+        color="#e7298a",
+        lw=2.1,
+        label=f"kottke_nonuniform |κ|² ({k0_nu:.4f})",
+    )
+    if td_ref is not None:
+        w_r, t2_r, k2_r, t0_r, k0_r = _spec_r(td_ref)
+        ax2.plot(
+            w_r,
+            t2_r,
+            ":",
+            color="black",
+            lw=1.7,
+            label=f"kottke_reference R |t|² ({t0_r:.4f})",
+        )
+        ax2.plot(
+            w_r,
+            k2_r,
+            ":",
+            color="0.35",
+            lw=1.7,
+            label=f"kottke_reference R |κ|² ({k0_r:.4f})",
+        )
+    ax2.set(
+        xlabel="Wavelength λ [nm]",
+        ylabel="Modal power fraction |t|², |κ|²",
+        ylim=(-0.02, 1.03),
+        title="(c) Broadband coupling: graded vs baseline & ref",
+    )
+    ax2.grid(True, ls=":", alpha=0.4)
+    ax2.legend(loc="center right", fontsize=6.8)
+    figstyle.save(fig, out_path, close=True, auto_legend_below=False)
+
+
+def overlay_ring_coupler_geometry(
+    ax,
+    pic,
+    *,
+    outline_color: str = "white",
+    include_labels: bool = True,
+):
+    """Overlay material outlines/labels, CPML boundaries, source, and monitors on ``ax``."""
+    proxy_solver = _SchematicSolverProxy(pic.solver)
+    eps_core = float(pic.n_eff_slab**2)
+    poly_structs = [
+        _PolyStructProxy(
+            pic.structures_3d[0].vertices,
+            eps_core,
+            "Si bus/ring (n_eff=2.85)",
+        ),
+        _PolyStructProxy(
+            pic.structures_3d[1].vertices,
+            eps_core,
+            "Si bus/ring (n_eff=2.85)",
+        ),
+    ]
+    mat_names = {"background": "SiO₂ (n=1.444)"}
+    sources_s, monitors_s = _build_ring_coupler_schematic_io(pic)
+    schematic.overlay_geometry(
+        ax,
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s if include_labels else None,
+        monitors=monitors_s if include_labels else None,
+        unit="µm",
+        outline_color=outline_color,
+        label_materials=include_labels,
+    )
+
+
+def render_ring_coupler_field_map_with_overlay(
+    x,
+    y,
+    field,
+    *,
+    pic,
+    kind="intensity_log",
+    title="",
+    out_path=None,
+):
+    """Render a 2D field map with :func:`overlay_ring_coupler_geometry` and save via ``figstyle``."""
+    figstyle.apply_style()
+    fig, ax = plot_field_map(
+        x,
+        y,
+        field,
+        structures=pic.structures_3d,
+        kind=kind,
+        title=title,
+        out_path=None,
+    )
+    outline_col = "white" if kind == "intensity_log" else "black"
+    overlay_ring_coupler_geometry(
+        ax, pic, outline_color=outline_col, include_labels=True
+    )
+    if out_path is not None:
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
+    return fig, ax
+
+
+def render_ring_coupler_movie_with_overlay(
+    x,
+    y,
+    frames,
+    times_s,
+    *,
+    pic,
+    out_path,
+    fps=12,
+):
+    """Render pulse propagation GIF (< 5 MB) with :func:`overlay_ring_coupler_geometry` on every frame."""
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    figstyle.apply_style()
+    fig, ax = plt.subplots(figsize=(6.8, 4.4), dpi=84)
+    x_um = np.asarray(x) * 1e6
+    y_um = np.asarray(y) * 1e6
+    f_arr = np.asarray(frames, dtype=float)
+    vmax = float(np.percentile(np.abs(f_arr), 99.6)) or 1.0
+
+    im = ax.pcolormesh(
+        x_um,
+        y_um,
+        (f_arr[0] / vmax).T,
+        cmap=figstyle.CMAP_DIVERGING,
+        vmin=-1.0,
+        vmax=1.0,
+        shading="auto",
+    )
+    cb = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.02)
+    cb.set_label(r"$E_y(x, y, t) / E_{\max}$")
+    overlay_ring_coupler_geometry(ax, pic, outline_color="black", include_labels=True)
+    ax.set(
+        xlim=(float(x_um.min()), float(x_um.max())),
+        ylim=(float(y_um.min()), float(y_um.max())),
+        aspect="equal",
+        xlabel="x [µm]",
+        ylabel="y [µm]",
+    )
+    ttl = ax.set_title(
+        f"Waveguide-to-ring coupler pulse propagation (t = {float(times_s[0])*1e15:.1f} fs)"
+    )
+    fig.tight_layout()
+
+    def _update(frame_idx):
+        im.set_array((f_arr[frame_idx] / vmax).T.ravel())
+        ttl.set_text(
+            f"Waveguide-to-ring coupler pulse propagation (t = {float(times_s[frame_idx])*1e15:.1f} fs)"
+        )
+        return (im, ttl)
+
+    anim = FuncAnimation(
+        fig, _update, frames=len(f_arr), interval=1000 // fps, blit=False
+    )
+    anim.save(str(out_path), writer=PillowWriter(fps=fps))
+    plt.close(fig)
+
