@@ -21,21 +21,21 @@
 
 ## About
 
-This page indexes all examples and validation studies in the repository, organized around the nine chapters of the [`tutorials/`](tutorials/README.md) textbook: **43 built tutorials** across Chapters 1–9 (2 in Chapter 1, 5 in Chapter 2, 6 in Chapter 3, 4 in Chapter 4, 10 in Chapter 5, 5 in Chapter 6, 6 in Chapter 7, 3 in Chapter 8, 2 in Chapter 9), **6 tutorials in progress**, **157 planned tutorial entries** (7 in Chapter 2, 20 in Chapter 3, 4 in Chapter 4, 49 in Chapter 5, 31 in Chapter 6, 2 in Chapter 7, 1 in Chapter 8, 29 in Chapter 9, and 14 in the solver how-to appendix), **12 standalone scripts** in [`examples/`](examples/), **10 upstream notebooks** in [`notebooks/`](notebooks/), and **28 method studies** in [`studies/`](studies/). Each built tutorial is a single-source Jupytext script (`--quick`, `--full`, `--task`, `--plot`) paired with its executed notebook, setup schematic, convergence study, and quantitative comparison against analytical theory, reference solvers, or published measurements.
+This page indexes all examples and validation studies in the repository, organized around the nine chapters of the [`tutorials/`](tutorials/README.md) textbook: **48 built tutorials** across Chapters 1–9 (2 in Chapter 1, 5 in Chapter 2, 6 in Chapter 3, 6 in Chapter 4, 10 in Chapter 5, 5 in Chapter 6, 6 in Chapter 7, 4 in Chapter 8, 4 in Chapter 9), **1 tutorial in progress** (lasers), **157 planned tutorial entries** (7 in Chapter 2, 20 in Chapter 3, 4 in Chapter 4, 49 in Chapter 5, 31 in Chapter 6, 2 in Chapter 7, 1 in Chapter 8, 29 in Chapter 9, and 14 in the solver how-to appendix), **12 standalone scripts** in [`examples/`](examples/), **10 upstream notebooks** in [`notebooks/`](notebooks/), and **28 method studies** in [`studies/`](studies/). Each built tutorial is a single-source Jupytext script (`--quick`, `--full`, `--task`, `--plot`) paired with its executed notebook, setup schematic, convergence study, and quantitative comparison against analytical theory, reference solvers, or published measurements.
 
 | Section | Built | In progress | Planned |
 | :--- | :---: | :---: | :---: |
 | [Chapter 1 · Fields on a Grid](#chapter-1--fields-on-a-grid) | 2 | 0 | 0 |
 | [Chapter 2 · Materials](#chapter-2--materials) | 5 | 0 | 7 |
 | [Chapter 3 · Diffraction and Scattering](#chapter-3--diffraction-and-scattering) | 6 | 0 | 20 |
-| [Chapter 4 · Radiation and Antennas](#chapter-4--radiation-and-antennas) | 4 | 2 | 4 |
+| [Chapter 4 · Radiation and Antennas](#chapter-4--radiation-and-antennas) | 6 | 0 | 4 |
 | [Chapter 5 · Guided Waves](#chapter-5--guided-waves) | 10 | 0 | 49 |
 | [Chapter 6 · Periodic Structures](#chapter-6--periodic-structures) | 5 | 0 | 31 |
 | [Chapter 7 · Light Sources](#chapter-7--light-sources) | 6 | 1 | 2 |
-| [Chapter 8 · Vacuum Electronics](#chapter-8--vacuum-electronics) | 3 | 1 | 1 |
-| [Chapter 9 · Inverse Design](#chapter-9--inverse-design) | 2 | 2 | 29 |
+| [Chapter 8 · Vacuum Electronics](#chapter-8--vacuum-electronics) | 4 | 0 | 1 |
+| [Chapter 9 · Inverse Design](#chapter-9--inverse-design) | 4 | 0 | 29 |
 | [Appendix · Solver Features and How-Tos](#appendix--solver-features-and-how-tos) | — | — | 14 |
-| **Tutorial totals** | **43** | **6** | **157** |
+| **Tutorial totals** | **48** | **1** | **157** |
 | [Standalone scripts (`examples/`)](#standalone-scripts) | 12 | — | — |
 | [Upstream Wakis notebooks (`notebooks/`)](#upstream-wakis-notebooks) | 10 | — | — |
 | [Method studies (`studies/`)](#method-studies) | 28 | — | — |
@@ -148,6 +148,12 @@ This page indexes all examples and validation studies in the repository, organiz
 
 ### Built
 
+- **4.1 · Tutorial 4.1 · Point (Hertzian) Dipole in 3D Free Space** ([notebook](tutorials/04_radiation_and_antennas/04-01_point_dipole/point_dipole.ipynb) · [script](tutorials/04_radiation_and_antennas/04-01_point_dipole/point_dipole.py)) — A short current element on a locally refined 3D mesh: near, intermediate and far zones, radiated power, pattern and radiation resistance.
+  - *Validation target:* Exact Hertzian-dipole fields in all three zones, the $\sin^2\theta$ pattern, directivity $3/2$ and $R_{\text{rad}} = 80\pi^2 (l/\lambda)^2$.
+  - *Headline result:* Directivity $1.489$ (exact $1.5$), pattern $L_2$ error $0.6\%$, field-zone median errors $0.8\text{–}1.0\%$, and radiated power from the flux box and the near-to-far transform within $1\%$ of the analytic value; the graded mesh reaches the same accuracy with $21\%$ fewer cells.
+- **4.2 · Tutorial 4.2 · Half-Wave Dipole and Quarter-Wave Monopole Wire Antennas** ([notebook](tutorials/04_radiation_and_antennas/04-02_wire_dipoles/wire_dipoles.ipynb) · [script](tutorials/04_radiation_and_antennas/04-02_wire_dipoles/wire_dipoles.py)) — Center-fed $\lambda/2$ dipole and base-fed $\lambda/4$ monopole: current distribution, input impedance and length shortening, resolved wires vs the thin-wire subcell model, image theory and finite ground planes.
+  - *Validation target:* Balanis dipole directivity and impedance, image theory ($Z_{\text{mono}} = Z_{\text{dip}}/2$, $+3\;\text{dB}$ directivity).
+  - *Headline result:* Dipole directivity $1.646$ (analytic $1.641$); monopole impedance $44.4 + 19.9i\;\Omega$ vs half the dipole's $44.5 + 18.0i\;\Omega$ (image theory within $5\%$); monopole/dipole directivity ratio $3.04\;\text{dB}$ (theory $3.01\;\text{dB}$).
 - **4.3 · Tutorial 4.3 · Dipole near a mirror: image theory, Drexhage effect and Purcell factor** ([notebook](tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.ipynb) · [script](tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.py)) — 2D line dipoles above PEC and lossy Drude-silver mirrors and inside planar Fabry–Pérot and $\text{TiO}_2/\text{SiO}_2$ DBR microcavities, separating radiative outcoupling from non-radiative surface-plasmon quenching.
   - *Validation target:* Exact 2D Bessel image theory $1\mp J_0(2kh)$, 2D Chance–Prock–Silbey Sommerfeld integral, and Abram / Benisty planar cavity transfer-matrix formulas.
   - *Headline result:* PEC mirror Purcell factor matches $1-J_0(2kh)$ to $0.12\text{–}0.85\%$, Drude silver matches the exact 2D Sommerfeld integral to $0.23\%$ mean relative error across 7 heights ($0.08\%$ at $6.10\;\text{cells}/\delta_E$), and Kottke DBR subpixel smoothing reduces error $22\times$ vs staircasing ($0.11\%$ vs $2.50\%$ at $32\;\text{cpw}$).
@@ -160,11 +166,6 @@ This page indexes all examples and validation studies in the repository, organiz
 - **4.6 · Tutorial 4.6 · NFC reader and tag coils at 13.56 MHz (near-field inductive coupling)** ([notebook](tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb) · [script](tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.py)) — 3D quasi-magnetostatic inductive link between an ISO/IEC 14443 3-turn spiral reader coil and an ID-1 tag coil at $13.56\;\text{MHz}$, two-port impedance matrix extraction, resonant $LC$ tuning, and flexible NiZn ferrite sheet shielding over a metal battery backplane.
   - *Validation target:* Wheeler, Mohan current-sheet, and Grover self-inductance formulas, the exact 3D filamentary Neumann double integral for $M(d, \Delta x)$, and Schormans *et al.* (2018) link efficiency formulas.
   - *Headline result:* Refining the trace/gap cell size to $\Delta = 1.5\;\text{mm}$ ($2\;\text{cells}$ per trace and inter-turn gap) brings 3D FIT mutual inductance $M(d=18\;\text{mm})$ and coupling factor $k$ within $<5\%$ of the exact 3D Neumann integral while verifying thin-sheet $(\mu'-1)t$ ferrite equivalence.
-
-### In progress
-
-- **4.1 Point dipole**
-- **4.2 Half-wave dipole and quarter-wave monopole**
 
 ### Planned
 
@@ -391,13 +392,12 @@ This page indexes all examples and validation studies in the repository, organiz
 - **8.2 · Tutorial 8.2 · Cherenkov Radiation from a Moving Charge** ([notebook](tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb) · [script](tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.py)) — 3D Cherenkov radiation from a relativistic Gaussian bunch (`Beam`) in non-dispersive and Lorentz-dispersive dielectrics, plus suppression of spurious vacuum numerical Cherenkov radiation using the dispersion-free `scheme="tete"` integrator.
   - *Validation target:* Cherenkov (1934) Mach cone angle $\cos\theta_c = 1/(\beta n)$, Frank & Tamm (1937) spectral energy loss $d^2W/(d\omega\,dz)$, and Dohlus & Zagorodnov (2009) dispersion-free TE/TM scheme.
   - *Headline result:* On the fine 3D grid ($\Delta x = 0.32\;\text{mm}$, $20.8\;\text{cells}/\lambda$ at $30\;\text{GHz}$ in $n=1.5$), the extracted Mach angle $\theta_c=42.87^\circ$ matches theory ($42.21^\circ$, $\cos\theta_c$ error $1.05\%$) with $2.81\%$ Frank–Tamm spectral $L_2$ error and $1.44\%$ integrated $dW/dz$ error over $12\text{–}30\;\text{GHz}$, while `scheme="tete"` eliminates the vacuum numerical Cherenkov wake to machine precision.
+- **8.3 · Tutorial 8.3 · Laser Acceleration of Electrons in Vacuum — From Lawson–Woodward to Attosecond Bunches** ([notebook](tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb) · [script](tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.py)) — After Zolotorev and colleagues: an electron in a plane wave, the Lawson–Woodward theorem for a focused beam, breaking it with a reflecting screen (3D FIT), ponderomotive acceleration from rest with the two-mode crater trap, and the laser as an X-ray FEL wiggler.
+  - *Validation target:* Exact plane-wave orbits, the Lawson–Woodward theorem, Huang, Stupakov & Zolotorev (2004), Plettner et al. (2005), Stupakov & Zolotorev (2001) and Zolotorev (2002).
+  - *Headline result:* Plane-wave peak $\gamma = 4.124$ vs $1 + a^2/2 = 4.125$ with zero net gain; screen-terminated gain follows the $\cos\phi$ polarization law; the ponderomotive optimum lands at $Z_R = 1.006\,a^2 c\tau/2$; the crater-trapped bunch compresses to $\sigma_t = 49.6\;\text{as}$ (paper: $\approx 50\;\text{as}$).
 - **8.4 · Tutorial 8.4 · Smith–Purcell radiation and the dielectric laser accelerator grating** ([notebook](tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb) · [script](tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.py)) — A relativistic charge over metallic and dielectric gratings (Smith–Purcell radiation), then the inverse process: a laser-driven fused-silica grating whose synchronous space harmonic accelerates electrons (DLA).
   - *Validation target:* the Smith–Purcell dispersion relation, the evanescent impact-parameter decay, and Peralta et al., Nature 503, 91 (2013).
   - *Headline result:* Smith–Purcell wavelengths follow $d(1/\beta - \cos\theta)$ for three $\beta$; DLA synchronism at $801.7$ nm vs $800$ nm; the gradient ratio between the $400$ and $800$ nm gaps is $1.98$ vs $2.04 \pm 0.24$ measured.
-
-### In progress
-
-- **8.3 Laser acceleration in vacuum (after Zolotorev)**
 
 ### Planned
 
@@ -422,11 +422,12 @@ Electromagnetic inverse design and the adjoint method in this chapter build on f
 
 **invrs-gym results behind this chapter** (scored with the gym's own evaluators; designs from [`invrs-wakis`](https://github.com/eshipton/invrs-wakis)): waveguide bend $+0.643$ (leaderboard best $-1.250$), power splitter $+0.068$ (leaderboard best $+0.009$), mode converter $+0.312$ (leaderboard $0.854$ at the same $8/8$ px length scale — behind), metalens enhancement $8.87$ with guaranteed length scale. Related studies: [`studies/adjoint-memory/`](studies/adjoint-memory/), [`studies/ssp/`](studies/ssp/) (subpixel-smoothed projection), [`studies/gpu-perf/`](studies/gpu-perf/) (fused GPU step, 45× faster iterations).
 
-### In progress
-
-- **9.3 Power splitter and mode converter** — the round-2 run data are already in the tutorial's `data/` folder.
-- **9.4 Metalens** — the round-2 run data are already in the tutorial's `data/` folder.
-
+- **9.3 · Tutorial 9.3 · Multi-Objective Power Splitter and Mode Converter** ([notebook](tutorials/09_inverse_design/09-03_splitter_and_mode_converter/splitter_and_mode_converter.ipynb) · [script](tutorials/09_inverse_design/09-03_splitter_and_mode_converter/splitter_and_mode_converter.py)) — invrs-gym `ceviche_power_splitter` and `ceviche_mode_converter` designed with the exact Wakis adjoint, scored with the official evaluators.
+  - *Validation target:* Official invrs-gym evaluators and leaderboard; FDFD re-simulation.
+  - *Headline result:* Power splitter $+0.068$ vs leaderboard best $+0.009$; mode converter $+0.312$ vs $0.854$ (behind; the shortfall is the TE$_0$→TE$_1$ conversion at $1265\;\text{nm}$).
+- **9.4 · Tutorial 9.4 · Visible-Band RGB Achromatic Metalens** ([notebook](tutorials/09_inverse_design/09-04_metalens/metalens.ipynb) · [script](tutorials/09_inverse_design/09-04_metalens/metalens.py)) — invrs-gym `metalens`: a 2D achromatic metalens at 450/550/650 nm with a guaranteed minimum length scale.
+  - *Validation target:* fmmax on the reference lens; Chung & Miller (2020) high-NA achromatic metalenses; the RGB-metalens benchmark of Chen et al. (2024).
+  - *Headline result:* Wakis reproduces fmmax on the reference lens (enhancement $15.55/14.27/16.09$ vs $16.39/14.30/15.45$); our length-scale-feasible design reaches $8.87$.
 ### Planned
 
 - **Inverse design intro** — Introduces density-based parameterization $\rho(\mathbf{r}) \in [0,1]$, forward + adjoint field overlap $\mathbf{E}_{\mathrm{fwd}} \cdot \mathbf{E}_{\mathrm{adj}}$, and gradient-ascent updates ([Inverse design](https://en.wikipedia.org/wiki/Inverse_problem), [Adjoint state method](https://en.wikipedia.org/wiki/Adjoint_state_method)).
