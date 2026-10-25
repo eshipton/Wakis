@@ -164,7 +164,8 @@ def test_fitting_measured_data_artifacts_and_tables():
     assert t4["muscle_n4_debye"]["rms_R_tot_vs_cole_cole"] < 0.01
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_noble_metal_pole_convergence.png",
         "02_fit_band_extrapolation_and_library.png",
         "03_au_slab_fit_vs_measured.png",
@@ -179,6 +180,10 @@ def test_fitting_measured_data_artifacts_and_tables():
         assert (
             fpath.is_file() and fpath.stat().st_size > 1024
         ), f"Missing {fpath}"
+    table_md = FIG_DIR / "00_setup_table.md"
+    assert (
+        table_md.is_file() and table_md.stat().st_size > 128
+    ), f"Missing {table_md}"
 
 
 def test_fitting_measured_data_physics_and_mutations():

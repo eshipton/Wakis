@@ -1995,3 +1995,185 @@ def overlay_horn_geometry(
             )
         ax.text(-1.90, 1.65, f"Ag horn\nϑ={theta_deg:.0f}°", ha="center", va="center", fontsize=fontsize - 0.3, color="#0f172a", bbox=bbox_kw, zorder=9)
 
+
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+def save_horn_setup_figures(
+    fig_dir,
+    dx: float = 7.5e-9,
+    dx_skin: float = 3.0e-9,
+    n_pml: int = 8,
+) -> dict:
+    """Construct the 6-layer dGRIN microLED horn setup and save the standard setup figure pair.
+
+    Builds the primary 6-layer dGRIN micro-horn solver/grid/source/monitor objects
+    without time-stepping, displays 5 representative dipole positions across the
+    17-site quantum-well ensemble ($M = 17$, 3 polarizations) with the ensemble count
+    stated in the legend, and records the Bare ($h = 0$), Air ($\\vartheta = 72^\\circ$),
+    $\\text{SiO}_2$ ($\\vartheta = 64^\\circ$), and sweep variations in ``00_setup_table.md``.
+
+    Parameters
+    ----------
+    fig_dir : str or Path
+        Directory where ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``,
+        and ``00_setup_table.md`` are written.
+    dx : float, optional
+        Background cell size [m] inside GaN and dielectric layers. Default is 7.5e-9 m.
+    dx_skin : float, optional
+        Minimum cell size [m] across the Ag skin-depth collar. Default is 3.0e-9 m.
+    n_pml : int, optional
+        CPML thickness in cells [-]. Default is 8.
+
+    Returns
+    -------
+    paths : dict
+        Dictionary returned by :func:`wakis.schematic.save_setup_figures`.
+    """
+    from pathlib import Path
+    from types import SimpleNamespace
+    from wakis import schematic
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    grid, info = build_graded_horn_grid(
+        config="dgrin",
+        h_horn=3.0e-6,
+        theta_deg=60.0,
+        y_qw=Y_QW_DEFAULT,
+        dx=dx,
+        dx_skin=dx_skin,
+        y_above=0.78e-6,
+    )
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=int(n_pml),
+    )
+    raw_structs, y_top, _ = build_microled_horn_structures(
+        config="dgrin",
+        h_horn=3.0e-6,
+        theta_deg=60.0,
+        x_max=info["x_max"],
+        y_min=info["y_min"],
+        t_skin=None,
+    )
+    raw_structs[0].name = "Ag reflector & mesa"
+    raw_structs[1].name = "SiO₂ passivation (n = 1.46)"
+    raw_structs[2].name = "GaN active core (n = 2.45)"
+    structs = list(raw_structs[:3])
+    for idx_l, (m_nm, n_val) in enumerate(DGRIN_STACK[:-1]):
+        st = raw_structs[3 + idx_l]
+        structs.append(
+            SimpleNamespace(
+                vertices=st.vertices,
+                material=st.material,
+                name=f"dGRIN L{idx_l + 1}: {m_nm} (n = {n_val:.2f})",
+            )
+        )
+    for st in raw_structs[8:10]:
+        structs.append(
+            SimpleNamespace(
+                vertices=st.vertices,
+                material=st.material,
+                name="Ag tapered µHorn (ϑ = 60°)",
+            )
+        )
+
+    f0 = c_light / WL_0
+    pulse = GaussianSource(frequency=f0, fwidth=0.18 * f0)
+    dip_obj = CurrentSource(
+        pulse, component="z", center=(0.0, Y_QW_DEFAULT, 0.0), size=(0.0, 0.0, 0.0)
+    )
+    y_mon = y_top + 0.16e-6
+    w_mon = 2.0 * (info["x_max"] - (int(n_pml) + 2) * float(dx))
+    n2f_obj = Near2FarMonitor2D(
+        [f0], (0.0, y_mon), (w_mon, 0.0), info["dz"], eps_r=1.0, mu_r=1.0
+    )
+
+    info0 = schematic.extract_setup_info(
+        solver_stub,
+        plane="xy",
+        structures=structs,
+        sources=[dip_obj],
+        monitors=[n2f_obj],
+    )
+    dip_xs = np.linspace(-0.24e-6, 0.24e-6, 17)
+    x_rep = dip_xs[::4]
+    x_rep_ord = np.concatenate([[0.0], x_rep[x_rep != 0.0]])
+    y_rep_ord = np.full_like(x_rep_ord, Y_QW_DEFAULT)
+
+    src = dict(info0["sources"][0])
+    src["h_bounds"] = (_RepCoord(x_rep_ord), 0.0)
+    src["v_bounds"] = (_RepCoord(y_rep_ord), Y_QW_DEFAULT)
+    src["short_word"] = "QW dipoles (17×3)"
+    src["polarization"] = "TE (J_x, J_y) & TM (J_z)"
+    src["pos_str"] = "y = 150 nm, M = 17 sites in x ∈ [-240, +240] nm (5 shown)"
+    src["label"] = (
+        "InGaN QW incoherent ensemble: M = 17 sites × 3 pols (J_x, J_y, J_z) = 51 dipoles (5 shown)"
+    )
+    src["desc"] = src["label"]
+
+    w_mon_half = 0.5 * w_mon
+    mon = dict(info0["monitors"][0])
+    mon["kind"] = "plane"
+    mon["h_bounds"] = (-w_mon_half, w_mon_half)
+    mon["v_bounds"] = (y_mon, y_mon)
+    mon["short_word"] = "N2F top"
+    mon["pos_str"] = (
+        f"y = {y_mon * 1e6:.2f} µm, x ∈ [-{w_mon_half * 1e6:.2f}, +{w_mon_half * 1e6:.2f}] µm"
+    )
+    mon["label"] = (
+        f"Near2FarMonitor2D aperture plane (y = {y_mon * 1e6:.2f} µm, 21 freqs in 425–475 nm)"
+    )
+    mon["desc"] = mon["label"]
+
+    delta_i = ag_skin_depth(WL_0)[1]
+    variations = [
+        {
+            "name": "Task 0 — Bare reference pixel",
+            "notes": "h = 0, w_top = 1.00 µm, M = 9 incoherent QW dipoles (y_QW = 150 nm)",
+        },
+        {
+            "name": "Task 1 — Air-filled µHorn",
+            "notes": "h = 3.0 µm, ϑ = 72° (w_top = 2.95 µm), M = 17 incoherent QW dipoles",
+        },
+        {
+            "name": "Task 2 — SiO₂-filled µHorn",
+            "notes": "h = 3.0 µm, ϑ = 64° (w_top = 3.93 µm, n = 1.46), M = 17 incoherent QW dipoles",
+        },
+        {
+            "name": "Task 3 — 6-layer dGRIN µHorn (primary)",
+            "notes": "h = 3.0 µm, ϑ = 60° (w_top = 4.46 µm, Nb₂O₅/Si₃N₄/Al₂O₃/SiO₂/MgF₂/Air), M = 17 dipoles",
+        },
+        {
+            "name": "Tasks 4–6 — Angle/height, QW offset & skin-depth convergence",
+            "notes": "ϑ ∈ [50°, 78°], h ∈ [0.6, 3.0] µm, Δy_QW ∈ [-40, +40] nm, Δx_min ∈ {15, 7.5, 5.0, 3.75, 2.5} nm",
+        },
+    ]
+
+    return schematic.save_setup_figures(
+        solver_stub,
+        fig_dir,
+        plane="xy",
+        structures=structs,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src],
+        monitors=[mon],
+        wavelength=WL_0,
+        min_feature=delta_i,
+        title_geometry="GaN MicroLED with 6-Layer dGRIN Micro-Horn Collimator (Luce et al. 2026)",
+        title_mesh="GaN MicroLED + dGRIN Micro-Horn: Graded Ag Skin-Depth Mesh & Blue QW Excitation",
+        variations=variations,
+    )
+
+

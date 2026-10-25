@@ -391,9 +391,11 @@ def test_planar_led_cli_and_cached_data():
         )
         assert rel_diff < 0.01, f"Full relative change {rel_diff:.4f} >= 1% for {k_acc}"
 
-    # Check all figures (including 00_setup_schematic.png) exist and are non-empty
+    # Check all figures and setup table exist and are non-empty
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00_setup_table.md",
         "01_led_stack_geometry.png",
         "02_mesh_kottke_vs_staircase.png",
         "03_analytic_escape_cone_2d_vs_3d.png",
@@ -412,13 +414,19 @@ def test_planar_led_cli_and_cached_data():
     ]
     for fname in expected_figs:
         fpath = fig_dir / fname
-        assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing figure {fpath}"
+        min_bytes = 200 if fname.endswith(".md") else 1000
+        assert fpath.exists() and fpath.stat().st_size > min_bytes, f"Missing figure {fpath}"
 
 
 def test_setup_schematic_and_helpers():
-    """Verify setup schematic figure exists and schematic helper objects are well-formed."""
-    fig_path = TUTORIAL_DIR / "figures" / "00_setup_schematic.png"
-    assert fig_path.exists() and fig_path.stat().st_size > 10000
+    """Verify setup schematic figures and table exist and schematic helper objects are well-formed."""
+    for fname, min_sz in (
+        ("00a_setup_geometry.png", 10000),
+        ("00b_setup_mesh_and_excitation.png", 10000),
+        ("00_setup_table.md", 200),
+    ):
+        fig_path = TUTORIAL_DIR / "figures" / fname
+        assert fig_path.exists() and fig_path.stat().st_size > min_sz
     obj_semi = helpers.build_semi_infinite_schematic_objects()
     obj_ryu = helpers.build_ryu_schematic_objects()
     assert len(obj_semi["structures"]) >= 2

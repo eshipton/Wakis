@@ -181,22 +181,63 @@ FIG_DIR = TUTORIAL_DIR / "figures"
 # %% [markdown]
 # ## Simulation Setup Schematics & Preflight Budget
 #
-# Figure 0 (`figures/00_setup_schematic.png`, generated via `wakis.schematic.plot_schematic` and
-# `wakis.schematic.draw_mesh`) shows the two complementary 2D setups used in this tutorial along
-# with a zoomed mesh view of the grating bars:
-# - **Panel (a)** illustrates the **finite-$N$ grating setup** ($N = 6$) inside an open CPML-bounded
-#   domain (`bc_low=['cpml', 'cpml', 'periodic']`), with 7 PEC blocks at $y \in [-t/2, +t/2]$,
-#   an upstream full-width soft `CurrentSource`, and a downstream `Near2FarMonitor` + `FluxMonitor`
-#   contour.
-# - **Panel (b)** illustrates the **$N \to \infty$ periodic unit-cell setup** ($x \in [-d/2, +d/2]$
-#   with `bc_low=['periodic', 'cpml', 'periodic']`), where a single slit $[-a/2, +a/2]$ and two
-#   PEC half-bars represent an infinite grating and `wakis.diffraction.DiffractionMonitor` extracts
-#   exact Rayleigh–Floquet order efficiencies $T_m$.
-# - **Panel (c)** zooms into the snapped graded FIT mesh around a grating slit $a = 0.6\lambda$
-#   and adjacent PEC bar $b = d - a = 1.2\lambda$, verifying $\ge 4$ cells across every slit,
-#   bar, and screen thickness alongside $\ge 20$ cells/$\lambda$.
+# Calling `wakis.schematic.save_setup_figures` on the two 2D grating configurations produces the setup geometry schematics (`figures/00a_setup_geometry.png` and `figures/00a_setup_geometry_periodic.png`), discretization and excitation views (`figures/00b_setup_mesh_and_excitation.png` and `figures/00b_setup_mesh_and_excitation_periodic.png`), and setup specification tables (`figures/00_setup_table.md` and `figures/00_setup_table_periodic.md`).
 #
-# ![N-slit grating setup schematics and mesh zoom](figures/00_setup_schematic.png)
+# ### Finite-$N$ Grating Setup ($N = 6$, Open CPML Domain)
+#
+# ![Finite N = 6 grating setup geometry](figures/00a_setup_geometry.png)
+# ![Finite N = 6 grating mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 9.18 µm × 3.42 µm × 210 nm (z ∈ [-105 nm, 105 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 345 × 127 × 1 (43815 cells) |
+# | Discretization | Δx & resolution | Δ_min = 21 nm, 28.6 cells/λ (in n_max = 1.00), 4.0 cells across feature (84 nm) |
+# | Boundary | -x face | CPML (10 cells, 271.7 nm) |
+# | Boundary | +x face | CPML (10 cells, 271.7 nm) |
+# | Boundary | -y face | CPML (10 cells, 272 nm) |
+# | Boundary | +y face | CPML (10 cells, 272 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC outer jaw | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-4.59 µm, -2.88 µm] (d = 1.71 µm) |
+# | Material | Region 2: PEC grating bar | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-2.52 µm, -1.80 µm] (d = 720 nm) |
+# | Material | Region 3: PEC grating bar | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-1.44 µm, -720 nm] (d = 720 nm) |
+# | Material | Region 4: PEC grating bar | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-360 nm, 360 nm] (d = 720 nm) |
+# | Material | Region 5: PEC grating bar | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [720 nm, 1.44 µm] (d = 720 nm) |
+# | Material | Region 6: PEC grating bar | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [1.80 µm, 2.52 µm] (d = 720 nm) |
+# | Material | Region 7: PEC outer jaw | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [2.88 µm, 4.59 µm] (d = 1.71 µm) |
+# | Source | 1 · CurrentSource | pos: y = -510 nm, pol: J_x (E_x), pulse: f₀ = 499.7 THz, Δf = 224.8 THz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (y = 94.5 nm), pos: y = 94.5 nm, freqs: f = 499.7 THz |
+# | Monitor | 3 · Near2FarMonitor | Near2FarMonitor, pos: x ∈ [-4.59 µm, 4.59 µm], freqs: f = 499.7 THz |
+# | Variation | Slit count sweep (patterns task) | N ∈ {2, 3, 4, 6, 8}, a = 360 nm (0.6λ), d = 1.08 µm (1.8λ), t = 84 nm (0.14λ) |
+# | Variation | Rayleigh doublet (resolving_power task) | N = 6, order m = +1 (R = 6), broadband DFT at Δλ/λ ∈ {0.55/R, 1.00/R, 1.45/R} |
+# | Variation | Periodic unit cell (periodic_vs_finite task) | N → ∞ single period x ∈ [-d/2, +d/2] with periodic ±x BCs and DiffractionMonitor |
+# | Variation | Resolution sweep (resolution task) | N = 4, cpw ∈ {12, 16, 20, 28, 36} |
+#
+# ### $N \to \infty$ Periodic Unit-Cell Setup (`DiffractionMonitor`)
+#
+# In the periodic reference setup, a single grating period $x \in [-d/2, +d/2]$ with periodic $\pm x$ boundaries and CPML along $\pm y$ models an infinite array, while `wakis.diffraction.DiffractionMonitor` extracts the Rayleigh–Floquet order efficiencies $T_m$.
+#
+# ![Periodic unit-cell grating setup geometry](figures/00a_setup_geometry_periodic.png)
+# ![Periodic unit-cell grating mesh and excitation](figures/00b_setup_mesh_and_excitation_periodic.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 1.08 µm × 2.42 µm × 210 nm (z ∈ [-105 nm, 105 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 42 × 98 × 1 (4116 cells) |
+# | Discretization | Δy & resolution | Δ_min = 21 nm, 28.6 cells/λ (in n_max = 1.00), 4.0 cells across feature (84 nm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | CPML (10 cells, 249.7 nm) |
+# | Boundary | +y face | CPML (10 cells, 247.4 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC half-bar | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-42 nm, 42 nm] (d = 84 nm) |
+# | Material | Region 2: PEC half-bar | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-42 nm, 42 nm] (d = 84 nm) |
+# | Source | 1 · CurrentSource | pos: y = -630 nm, pol: J_x (E_x), pulse: f₀ = 499.7 THz, Δf = 224.8 THz |
+# | Monitor | 2 · DiffractionMonitor | Near2FarMonitor, pos: y ∈ [-1.09 µm, 1.33 µm], freqs: f = 499.7 THz |
 #
 # All simulations run in 2D ($N_z = 1$ with periodic $z$ boundaries and $p$-polarization
 # $\mathbf{E} \perp$ slit edges, where $H_z$ is the fundamental uniform TEM aperture mode):
@@ -375,10 +416,10 @@ def print_summary_tables() -> None:
 
 
 def generate_all_plots() -> None:
-    """Generate all four Tutorial 3.3 publication figures from saved data/."""
+    """Generate all Tutorial 3.3 publication figures from saved data/."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     plot_setup_schematic(
-        FIG_DIR / "00_setup_schematic.png",
+        FIG_DIR,
         wavelength=DEFAULT_WAVELENGTH,
     )
     pat_path = DATA_DIR / "n_slits_patterns.npz"

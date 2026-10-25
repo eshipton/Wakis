@@ -1365,14 +1365,14 @@ def _build_schematic_solver(
         center=(0.0, y_n2f, 0.0),
         size=(w_ref, 0.0, 2.0 * lz),
     )
-    y_nf1 = float(half_t + (slit_width**2) / (4.0 * wavelength * 1.0))
-    mon_nf1 = DFTMonitor(
+    y_nf = float(half_t + (slit_width**2) / (4.0 * wavelength * 0.5))
+    mon_nf = DFTMonitor(
         frequencies=freqs,
         components=("Ez",),
-        center=(0.0, y_nf1, 0.0),
-        size=(w_ref, 0.0, 0.0),
+        center=(0.0, y_nf, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
     )
-    return solver, grid_info, boxes, source, [flux_slit, n2f, mon_nf1]
+    return solver, grid_info, boxes, source, [flux_slit, n2f, mon_nf]
 
 
 def _fix_unit_spaces_in_texts(ax: plt.Axes) -> None:
@@ -1442,8 +1442,10 @@ def _reposition_xy_schematic_labels(
 def plot_setup_schematic(
     output_path: str | Path,
     wavelength: float = DEFAULT_WAVELENGTH,
-) -> None:
-    """Generate the 2-panel labelled setup schematic and slit mesh zoom (Figure 0)."""
+) -> dict:
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md``."""
+    out_p = Path(output_path)
+    out_dir = out_p.parent if out_p.suffix else out_p
     slit_width = 2.0 * wavelength
     screen_thickness = 0.15 * wavelength
     cpw = 24
@@ -1452,158 +1454,58 @@ def plot_setup_schematic(
         wavelength=wavelength,
         screen_thickness=screen_thickness,
         cpw=cpw,
+        y_upstream=1.4 * wavelength,
+        y_downstream=4.6 * wavelength,
     )
-    x_um = grid_info["x"] * 1e6
-    y_core_um = grid_info["y_core"] * 1e6
-    a_um = slit_width * 1e6
-    t_um = screen_thickness * 1e6
-    y_src_um = float(y_core_um[0] + 0.35 * wavelength * 1e6)
-    y_n2f_um = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
-    y_nf1_um = float(0.5 * t_um + ((slit_width**2) / (4.0 * wavelength * 1.0)) * 1e6)
-
-    with figstyle.apply_style():
-        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=5.0)
-
-        # Panel (a): Full 2D setup schematic
-        ax = axes[0]
-        schematic.plot_schematic(
-            solver,
-            ax=ax,
-            plane="xy",
-            unit="µm",
-            structures=boxes,
-            sources=[source],
-            monitors=monitors,
-            wavelength=wavelength,
-            show_mesh=False,
-            mesh_zoom=False,
-            show_wave_packet=False,
-            title=r"(a) 2D Single-Slit Diffraction Setup ($\lambda = 0.60\;\mu\mathrm{m}$, $a = 2\lambda$)",
-        )
-        _reposition_xy_schematic_labels(
-            ax,
-            x_left_jaw=0.5 * (float(x_um[0]) - 0.5 * a_um),
-            x_right_jaw=0.5 * (0.5 * a_um + float(x_um[-1])),
-            y_src=y_src_um,
-            y_n2f=y_n2f_um,
-            y_dft=y_nf1_um,
-        )
-        # Annotate slit width a
-        ax.annotate(
-            "",
-            xy=(0.5 * a_um, 0.0),
-            xytext=(-0.5 * a_um, 0.0),
-            arrowprops={"arrowstyle": "<->", "color": figstyle.INK, "lw": 1.2},
-            zorder=9,
-        )
-        ax.text(
-            0.0,
-            0.08,
-            rf"Slit $a = {a_um:.2f}\;\mu\mathrm{{m}}$ ($2\lambda$)",
-            ha="center",
-            va="bottom",
-            fontsize=8.6,
-            fontweight="bold",
-            color=figstyle.INK,
-            zorder=9,
-        )
-
-        # Panel (b): Zoomed graded FIT mesh around the slit opening and PEC screen jaws
-        ax_m = axes[1]
-        ax_m.set_facecolor("#F8FAFC")
-        schematic.draw_mesh(
-            ax_m,
-            solver,
-            plane="xy",
-            unit="µm",
-            every=1,
-            wavelength=wavelength,
-            zoom_inset=False,
-            show_cpw=True,
-            color="#334155",
-            alpha=0.55,
-            linewidth=0.6,
-        )
-        schematic.overlay_geometry(
-            ax_m,
-            solver,
-            plane="xy",
-            unit="µm",
-            structures=boxes,
-            show_boundaries=False,
-            show_materials=True,
-            fill_materials=True,
-            material_alpha=0.55,
-            outline_color=figstyle.INK,
-            label_materials=False,
-        )
-        ax_m.set_xlim(-1.05, 1.05)
-        ax_m.set_ylim(-0.32, 0.32)
-        ax_m.set_aspect("auto")
-        ax_m.set_xlabel("x [µm]")
-        ax_m.set_ylabel("y [µm]")
-        ax_m.set_title(
-            r"(b) Snapped Graded Mesh Zoom at Slit Jaws ($x = \pm a/2$, $y = \pm t/2$)"
-        )
-
-        # Label PEC jaws and cell counts in zoom view
-        for x_jaw in (-0.82, 0.82):
-            ax_m.text(
-                x_jaw,
-                0.0,
-                "PEC jaw\n($\\sigma \\to \\infty$)",
-                ha="center",
-                va="center",
-                fontsize=8.5,
-                fontweight="bold",
-                color=figstyle.INK,
-                bbox={
-                    "boxstyle": "round,pad=0.18",
-                    "facecolor": figstyle.PAPER,
-                    "edgecolor": "#94A3B8",
-                    "alpha": 0.9,
-                },
-                zorder=9,
-            )
-        ax_m.annotate(
-            "",
-            xy=(0.5 * a_um, 0.14),
-            xytext=(-0.5 * a_um, 0.14),
-            arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
-            zorder=9,
-        )
-        ax_m.text(
-            0.0,
-            0.16,
-            f"Slit opening $a = {a_um:.2f}$ µm ({grid_info['cells_across_slit']} cells $\\geq 4$)",
-            ha="center",
-            va="bottom",
-            fontsize=8.6,
-            fontweight="bold",
-            color="#0072B2",
-            zorder=9,
-        )
-        ax_m.annotate(
-            "",
-            xy=(-0.55 * a_um, 0.5 * t_um),
-            xytext=(-0.55 * a_um, -0.5 * t_um),
-            arrowprops={"arrowstyle": "<->", "color": "#D55E00", "lw": 1.3},
-            zorder=9,
-        )
-        ax_m.text(
-            -0.52 * a_um,
-            -0.13,
-            f"Screen thickness $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
-            ha="left",
-            va="top",
-            fontsize=8.5,
-            fontweight="bold",
-            color="#D55E00",
-            zorder=9,
-        )
-        _fix_unit_spaces_in_texts(ax_m)
-
-        figstyle.save(fig, output_path, close=True)
+    boxes[0].name = "PEC screen (left jaw)"
+    boxes[1].name = "PEC screen (right jaw)"
+    flux_slit, n2f, mon_nf = monitors
+    w_ref = float(n2f.size[0])
+    y_n2f = float(n2f.center[1])
+    f0 = float(n2f.frequencies[0])
+    n2f_plane = {
+        "kind": "plane",
+        "type_name": "Near2FarMonitor",
+        "short_word": "N2F",
+        "desc": f"near-to-far plane (Near2FarMonitor, y = {y_n2f * 1e9:.0f}\u2009nm)",
+        "label": f"Near2FarMonitor (y = {y_n2f * 1e9:.0f}\u2009nm)",
+        "pos_str": f"y = {y_n2f * 1e9:.0f}\u2009nm",
+        "freq_str": f"f = {f0 * 1e-12:.1f}\u2009THz",
+        "frequencies": n2f.frequencies,
+        "h_bounds": (y_n2f, y_n2f),
+        "v_bounds": (-0.5 * w_ref, 0.5 * w_ref),
+    }
+    return schematic.save_setup_figures(
+        solver,
+        out_dir,
+        plane="yx",
+        unit="µm",
+        structures=boxes,
+        sources=[source],
+        monitors=[flux_slit, n2f_plane, mon_nf],
+        wavelength=wavelength,
+        min_feature=screen_thickness,
+        title_geometry="2D single-slit diffraction setup: PEC screen, plane-wave source, monitors & CPML (YX plane)",
+        title_mesh="2D single-slit diffraction setup: graded mesh zoom at slit jaws, wave packet & pulse",
+        variations=[
+            {
+                "name": "Task 1 · Plane-wave source & Fresnel near-field sweep",
+                "details": "Full-width vs PML-truncated source benchmark + Fresnel line monitors at N_F ∈ {2.0, 1.0, 0.5, 0.25} (a = 2λ, E_z)",
+            },
+            {
+                "name": "Task 2 · Far-field angular patterns (Near2FarMonitor)",
+                "details": "Slit width sweep a/λ ∈ {4.0, 2.0, 1.0, 0.6} for both E_z (TM_z, RS-I) and H_z (TE_z, RS-II) polarizations",
+            },
+            {
+                "name": "Task 3 · Subwavelength transmission & waveguide cutoff",
+                "details": "Normalized transmission τ(a/λ) for a/λ ∈ [0.30, 2.00] comparing thick PEC screen (t = 0.20λ) vs zero-thickness sheet (t = 0)",
+            },
+            {
+                "name": "Task 4 · Mesh resolution convergence study",
+                "details": "Background resolution sweep cpw ∈ {12, 16, 20, 28, 36} cells/λ for a = 2λ, t = 0.15λ",
+            },
+        ],
+    )
 
 
 def plot_source_and_fresnel(

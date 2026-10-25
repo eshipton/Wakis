@@ -498,7 +498,8 @@ def test_full_study_data_convergence_and_topologies():
 
 def test_setup_schematic_and_nonuniform_mesh_upgrade():
     """
-    Verify that the setup schematic figures (``00_setup_schematic.png`` and
+    Verify that the setup schematic figures (``00a_setup_geometry.png``,
+    ``00b_setup_mesh_and_excitation.png``, ``00_setup_table.md``, and
     ``00b_taper_converters_schematic.png``), the mesh-upgrade comparison figure
     (``04b_mesh_upgrade_comparison.png``), all split 3-panel field figures, and
     the ``< 5 MB`` GIF exist, and verify ``build_mmi_graded_axes`` along with a
@@ -506,7 +507,8 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
     """
     fig_dir = TUTORIAL_DIR / "figures"
     required_figs = (
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "00b_taper_converters_schematic.png",
         "01_converter_topologies_layout.png",
         "02_eim_vertical_stack.png",
@@ -529,6 +531,11 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
     for fname in required_figs:
         fpath = fig_dir / fname
         assert fpath.is_file() and fpath.stat().st_size > 8_000, f"Missing/empty {fpath}"
+
+    table_path = fig_dir / "00_setup_table.md"
+    assert table_path.is_file() and table_path.stat().st_size > 200, (
+        f"Missing/empty {table_path}"
+    )
 
     gif_path = fig_dir / "09_pulse_propagation.gif"
     assert gif_path.is_file() and 0 < gif_path.stat().st_size < 5 * 1024 * 1024

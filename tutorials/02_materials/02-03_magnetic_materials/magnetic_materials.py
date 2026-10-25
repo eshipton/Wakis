@@ -117,9 +117,13 @@ if "google.colab" in sys.modules:
 #
 # ### Simulation setups & geometry overview
 #
-# All five tasks in this tutorial use three `SolverFIT3D` geometries shown in the
-# setup schematic below:
-# - **Panel (a) — Periodic $\mathbf{H}$-edge magnetic ADE testbench (`Task 0`):**
+# All five tasks in this tutorial use two primary `SolverFIT3D` geometries shown in the
+# setup figures below (`figures/00a_setup_geometry.png`,
+# `figures/00b_setup_mesh_and_excitation.png`,
+# `figures/00a_setup_geometry_cavity.png`, and
+# `figures/00b_setup_mesh_and_excitation_cavity.png`), together with the
+# doubly-periodic $2 \times 2 \times 16$ cell $\mathbf{H}$-edge ADE testbench in `Task 0`:
+# - **Periodic $\mathbf{H}$-edge magnetic ADE testbench (`Task 0`):**
 #   a doubly-periodic $2 \times 2 \times 16$ cell `GridFIT3D` ($\Delta z = c_0\Delta t / 0.25$,
 #   `bc_low=["periodic"]*3`, `bc_high=["periodic"]*3`) uniformly filled with a
 #   magnetic `DispersiveMaterial(mu_inf=..., mu_poles=[...])`. A localized dipole
@@ -127,7 +131,7 @@ if "google.colab" in sys.modules:
 #   so that dual $H_y$ edges advance through `_update_dispersive_H`, allowing the
 #   extracted ratio $\mu_{\text{FIT}}(f) = -(\nabla\times\mathbf{E})_y / (i\tilde{W}(f)\mu_0 H_y)$
 #   to be compared directly against `material.mu_discrete(f, dt)`.
-# - **Panel (b) — Quasi-1D magnetic & impedance-matched ($\varepsilon = \mu$) slab R/T setup (`Tasks 1–3`):**
+# - **Quasi-1D magnetic & impedance-matched ($\varepsilon = \mu$) slab R/T setup (`Tasks 1–3`):**
 #   a domain of length $L_z = 560\text{–}600\;\text{mm}$ terminated on $\pm z$ by
 #   15-cell CPML absorbers and periodic on $\pm x, \pm y$. A broadband
 #   $x$-polarized `CurrentSource` sheet at $z_{\text{src}} = -160\;\text{mm}$
@@ -136,7 +140,7 @@ if "google.colab" in sys.modules:
 #   inside the highest-index medium and $32\text{–}50$ cells across the slab),
 #   while reflection and transmission `FluxMonitor` planes at $z_r = -80\;\text{mm}$
 #   and $z_t = d + 60\;\text{mm}$ record the complex Poynting spectra.
-# - **Panel (c) — 3D PEC ferrite-loaded rectangular cavity (`Task 4`):**
+# - **3D PEC ferrite-loaded rectangular cavity (`Task 4`):**
 #   a closed metallic box of dimensions $L_x \times L_y \times L_z = 120 \times 60 \times 120\;\text{mm}^3$
 #   (`bc_low=["pec"]*3`, `bc_high=["pec"]*3`) filled with a Lorentz-$\mu$ ferrite
 #   ($\mu_\infty = 1.0, \Delta\mu = 1.25, \mu_s = 2.25$). Exciting the spatial
@@ -146,7 +150,56 @@ if "google.colab" in sys.modules:
 #   lower and upper hybridized cavity–magnon polariton branches $f_-(f_r)$ and
 #   $f_+(f_r)$ on either side of the negative-$\mu'$ stopband.
 #
-# ![Simulation setups for Tutorial 2.3: periodic H-edge magnetic ADE testbench, quasi-1D magnetic/matched slab R/T setup, and 3D PEC ferrite-loaded rectangular cavity](figures/00_setup_schematic.png)
+# ![Setup geometry and boundary conditions for the Tutorial 2.3 quasi-1D magnetic and matched slab R/T benchmark](figures/00a_setup_geometry.png)
+# ![Grid resolution, smallest-feature zoom, and broadband excitation for the Tutorial 2.3 magnetic slab setup](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the baseline Lorentz-$\mu$ ferrite slab reflection/transmission
+# setup and the variations across `Tasks 0–4`.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 10 mm × 10 mm × 600 mm (z ∈ [-270 mm, 330 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 2 × 2 × 480 (1920 cells) |
+# | Discretization | Δz & resolution | Δ_min = 1.25 mm, 171.3 cells/λ (in n_max = 1.00), 40.0 cells across feature (50 mm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (15 cells, 18.7 mm) |
+# | Boundary | +z face | CPML (15 cells, 18.7 mm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Lorentz-mu ferrite slab | ε_r = 1.00, μ_r = 1.00, model = DispersiveMaterial, z ∈ [0 m, 50 mm] (d = 50 mm) |
+# | Source | 1 · CurrentSource | pos: z = -160 mm, pol: J_x (E_x), pulse: f₀ = 1.4 GHz, Δf = 950.0 MHz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (z = -80 mm), pos: z = -80 mm, freqs: 37 freqs in [0.3, 2.7] GHz |
+# | Monitor | 3 · FluxMonitor | FluxMonitor (z = 110 mm), pos: z = 110 mm, freqs: 37 freqs in [0.3, 2.7] GHz |
+# | Variation | Task 0 · Literature ferrites & periodic H-edge ADE check | Analytic LLG / Snoek / Acher / hesitivity audit + periodic 2×2×16 GridFIT3D H-edge ADE check against mu_discrete(f, dt) |
+# | Variation | Task 2 · Debye-μ relaxation ferrite slab | Debye magnetic relaxation slab (μ_∞ = 1.0, Δμ = 4.0, f_rel = 1.0 GHz, ε_r = 1.5, d = 40 mm, Lz = 560 mm, Δz = 1.25 mm) |
+# | Variation | Task 3 · Impedance-matched magneto-dielectric slab (ε(ω) = μ(ω)) | Matched Lorentz ε(ω) = μ(ω) absorber slab (ε_∞ = μ_∞ = 1.0, Δε = Δμ = 2.5, f₀ = 1.50 GHz, γ/2π = 0.40 GHz, d = 50 mm, Δz = 1.0 mm) |
+# | Variation | Task 4 · 3D PEC ferrite-loaded rectangular cavity | Closed PEC cavity (120 × 60 × 120 mm³, 16 × 8 × 16 cells, Lorentz-μ ferrite μ_∞ = 1.0, Δμ = 1.25, f_r ∈ [1.20, 2.50] GHz) |
+#
+# ![Setup geometry and PEC walls for the Task 4 3D ferrite-loaded rectangular cavity](figures/00a_setup_geometry_cavity.png)
+# ![Grid resolution, wave packet extent, and broadband excitation for the Task 4 3D ferrite-loaded rectangular cavity](figures/00b_setup_mesh_and_excitation_cavity.png)
+#
+# The table below summarizes the 3D PEC ferrite-loaded rectangular cavity setup used in `Task 4` to observe cavity–magnon polariton mode splitting.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 120 mm × 60 mm × 120 mm (z ∈ [0 m, 120 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 16 × 8 × 16 (2048 cells) |
+# | Discretization | Δz & resolution | Δ_min = 7.50 mm, 22.6 cells/λ (in n_max = 1.00), 8.0 cells across feature (60 mm) |
+# | Boundary | -x face | PEC |
+# | Boundary | +x face | PEC |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | PEC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Lorentz-mu ferrite cavity fill | ε_r = 1.00, μ_r = 1.00, model = DispersiveMaterial, z ∈ [0 m, 120 mm] (d = 120 mm) |
+# | Source | 1 · CurrentSource | pos: z = 42 mm, x = 78 mm, pol: J_y (E_y), pulse: f₀ = 1.8 GHz, Δf = 1.5 GHz |
+# | Monitor | 2 · Probe | TE_101 mode ring-down probe (E_y), pos: z = 78 mm, freqs: time-domain |
+# | Variation | Vacuum reference cavity | Unloaded PEC cavity (μ = 1.0, bare TE_101 resonance at f_vac = 1.7665 GHz) |
+# | Variation | Static permeability reference | Non-dispersive ferrite cavity (μ = μ_s = 2.25, static resonance at f_vac / √μ_s = 1.1777 GHz) |
+# | Variation | Polariton avoided-crossing sweep | Lorentz-μ ferrite with f_r ∈ {1.20, 1.50, 1.76, 2.10, 2.50} GHz, γ_m/2π = 25 MHz |
 #
 # ---
 #
@@ -1461,74 +1514,26 @@ def _fix_schematic_units(ax):
 
 
 def _plot_setup_schematic(fig_dir):
-    """Render ``00_setup_schematic.png`` for the three Tutorial 2.3 simulation setups."""
-    fig, (ax_ade, ax_slab, ax_cav) = figstyle.new_figure(
-        nrows=1, ncols=3, width=15.6, height=4.8
-    )
-
-    # Panel (a): Periodic H-edge magnetic ADE verification (Task 0)
-    dt_ade = 1.2e-11
-    nz_ade = 16
-    dz_ade = c0 * dt_ade / 0.25
-    grid_ade = GridFIT3D(
-        -dz_ade, dz_ade, -dz_ade, dz_ade, 0.0, nz_ade * dz_ade, 2, 2, nz_ade, verbose=0
-    )
-    solver_ade = SolverFIT3D(
-        grid_ade,
-        cfln=0.25,
-        bc_low=["periodic", "periodic", "periodic"],
-        bc_high=["periodic", "periodic", "periodic"],
-        use_stl=False,
-        verbose=0,
-    )
-    mat_ade = DispersiveMaterial(
-        mu_inf=1.2,
-        mu_poles=[Lorentz(2.8, 2.0 * np.pi * 1.4e9, 2.0 * np.pi * 0.28e9)],
-        name="Lorentz / Debye mu(w)",
-    )
-    struct_ade = SimpleNamespace(
-        bounds=((-dz_ade, -dz_ade, 0.0), (dz_ade, dz_ade, nz_ade * dz_ade)),
-        name="Bulk magnetic cell (Lorentz / Debye mu)",
-        material=mat_ade,
-    )
-    src_ade = CurrentSource(
-        GaussianSource(frequency=1.50e9, fwidth=1.00e9),
-        component="x",
-        center=(0.0, 0.0, 4.0 * dz_ade),
-        size=(2.0 * dz_ade, 2.0 * dz_ade, 0.0),
-    )
-    schematic.plot_schematic(
-        solver_ade,
-        plane="zx",
-        ax=ax_ade,
-        structures=[struct_ade],
-        sources=[src_ade],
-        probes=[
-            {
-                "pos": (0.0, 0.0, 12.0 * dz_ade),
-                "label": r"Probe ($H_y, M_y(t), \nabla\times E$)",
-            }
-        ],
-        show_mesh=True,
-        mesh_every=2,
-        mesh_zoom=False,
-        freq=1.40e9,
-        title="(a) Periodic H-edge ADE check (Task 0)",
-    )
-    ax_ade.set_yticks([])
-    ax_ade.set_ylabel("Transverse x (periodic, 2 cells)")
-    _fix_schematic_units(ax_ade)
-
-    # Panel (b): Quasi-1D magnetic & impedance-matched (eps=mu) slab R/T setup (Tasks 1-3)
-    dz_slab = 2.5e-3
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md`` for Tutorial 2.3."""
+    # Setup 1 (primary): Quasi-1D magnetic & impedance-matched (eps=mu) slab R/T setup (Tasks 1-3)
+    dz_slab = 1.25e-3
     lz_slab = 0.60
     d_slab = 0.050
     nz_slab = int(round(lz_slab / dz_slab))
     zmin_slab = -0.45 * lz_slab
     zmax_slab = zmin_slab + nz_slab * dz_slab
-    dxy_slab = 30.0e-3
+    dxy_slab = 4.0 * dz_slab
     grid_slab = GridFIT3D(
-        -dxy_slab, dxy_slab, -dxy_slab, dxy_slab, zmin_slab, zmax_slab, 2, 2, nz_slab, verbose=0
+        -dxy_slab,
+        dxy_slab,
+        -dxy_slab,
+        dxy_slab,
+        zmin_slab,
+        zmax_slab,
+        2,
+        2,
+        nz_slab,
+        verbose=0,
     )
     solver_slab = SolverFIT3D(
         grid_slab,
@@ -1543,11 +1548,16 @@ def _plot_setup_schematic(fig_dir):
         eps_inf=1.0,
         mu_inf=1.0,
         mu_poles=[Lorentz(3.0, 2.0 * np.pi * 1.4e9, 2.0 * np.pi * 0.28e9)],
-        name="Ferrite / Matched slab",
+        name="Lorentz-mu ferrite slab",
+    )
+    solver_slab.add_dispersive_material(
+        mat_slab,
+        center=(0.0, 0.0, 0.5 * d_slab),
+        size=(10.0 * dxy_slab, 10.0 * dxy_slab, d_slab),
     )
     struct_slab = SimpleNamespace(
         bounds=((-dxy_slab, -dxy_slab, 0.0), (dxy_slab, dxy_slab, d_slab)),
-        name=r"Ferrite or $\varepsilon=\mu$ slab",
+        name="Lorentz-mu ferrite slab",
         material=mat_slab,
     )
     src_slab = CurrentSource(
@@ -1558,30 +1568,44 @@ def _plot_setup_schematic(fig_dir):
     )
     planes_slab = [
         FluxMonitor(
-            np.linspace(0.3e9, 2.7e9, 5),
+            np.linspace(0.3e9, 2.7e9, 37),
             center=(0.0, 0.0, z0),
             size=(2.0 * dxy_slab, 2.0 * dxy_slab, 0.0),
         )
         for z0 in (-0.08, d_slab + 0.06)
     ]
-    schematic.plot_schematic(
+    schematic.save_setup_figures(
         solver_slab,
+        fig_dir,
         plane="zx",
-        ax=ax_slab,
         structures=[struct_slab],
         sources=[src_slab],
         monitors=planes_slab,
-        show_mesh=True,
-        mesh_every=8,
-        mesh_zoom=True,
         freq=1.40e9,
-        title="(b) Magnetic / matched slab R/T (Tasks 1–3)",
+        min_feature=d_slab,
+        title_geometry="Quasi-1D magnetic & matched slab R/T setup: geometry, source, monitors & boundaries (ZX plane)",
+        title_mesh="Quasi-1D magnetic & matched slab setup: mesh resolution, wave packet & broadband pulse",
+        variations=[
+            {
+                "name": "Task 0 · Literature ferrites & periodic H-edge ADE check",
+                "details": "Analytic LLG / Snoek / Acher / hesitivity audit + periodic 2×2×16 GridFIT3D H-edge ADE check against mu_discrete(f, dt)",
+            },
+            {
+                "name": "Task 2 · Debye-μ relaxation ferrite slab",
+                "details": "Debye magnetic relaxation slab (μ_∞ = 1.0, Δμ = 4.0, f_rel = 1.0 GHz, ε_r = 1.5, d = 40 mm, Lz = 560 mm, Δz = 1.25 mm)",
+            },
+            {
+                "name": "Task 3 · Impedance-matched magneto-dielectric slab (ε(ω) = μ(ω))",
+                "details": "Matched Lorentz ε(ω) = μ(ω) absorber slab (ε_∞ = μ_∞ = 1.0, Δε = Δμ = 2.5, f₀ = 1.50 GHz, γ/2π = 0.40 GHz, d = 50 mm, Δz = 1.0 mm)",
+            },
+            {
+                "name": "Task 4 · 3D PEC ferrite-loaded rectangular cavity",
+                "details": "Closed PEC cavity (120 × 60 × 120 mm³, 16 × 8 × 16 cells, Lorentz-μ ferrite μ_∞ = 1.0, Δμ = 1.25, f_r ∈ [1.20, 2.50] GHz)",
+            },
+        ],
     )
-    ax_slab.set_yticks([])
-    ax_slab.set_ylabel("Transverse x (periodic, 2 cells)")
-    _fix_schematic_units(ax_slab)
 
-    # Panel (c): 3D PEC ferrite-loaded rectangular cavity (Task 4)
+    # Setup 2 (cavity): 3D PEC ferrite-loaded rectangular cavity (Task 4)
     lx_cav = lz_cav = 0.12
     ly_cav = 0.06
     nx_cav = nz_cav = 16
@@ -1603,40 +1627,55 @@ def _plot_setup_schematic(fig_dir):
         mu_poles=[Lorentz(1.25, 2.0 * np.pi * 1.76e9, 2.0 * np.pi * 0.025e9)],
         name="Lorentz-mu ferrite (mu_s=2.25)",
     )
+    solver_cav.add_dispersive_material(
+        mat_cav,
+        center=(0.5 * lx_cav, 0.5 * ly_cav, 0.5 * lz_cav),
+        size=(2.0 * lx_cav, 2.0 * ly_cav, 2.0 * lz_cav),
+    )
     struct_cav = SimpleNamespace(
         bounds=((0.0, 0.0, 0.0), (lx_cav, ly_cav, lz_cav)),
-        name=r"Lorentz-$\mu$ ferrite ($\mu_s = 2.25$)",
+        name="Lorentz-mu ferrite cavity fill",
         material=mat_cav,
     )
     src_cav = CurrentSource(
         GaussianSource(frequency=1.80e9, fwidth=1.45e9),
         component="y",
-        center=(0.5 * lx_cav, 0.5 * ly_cav, 0.5 * lz_cav),
+        center=(0.65 * lx_cav, 0.5 * ly_cav, 0.35 * lz_cav),
         size=(0.0, 0.0, 0.0),
     )
-    schematic.plot_schematic(
+    schematic.save_setup_figures(
         solver_cav,
+        fig_dir,
         plane="zx",
-        ax=ax_cav,
+        cut_coord=0.5 * ly_cav,
         structures=[struct_cav],
         sources=[src_cav],
         probes=[
             {
-                "pos": (0.04, 0.03, 0.04),
-                "label": r"$\mathrm{TE}_{101}$ probe ($E_y(t)$)",
+                "pos": (0.35 * lx_cav, 0.5 * ly_cav, 0.65 * lz_cav),
+                "label": "TE_101 mode ring-down probe (E_y)",
             }
         ],
-        show_mesh=True,
-        mesh_every=2,
-        mesh_zoom=False,
         freq=1.766e9,
-        title="(c) 3D PEC ferrite cavity (Task 4)",
+        min_feature=ly_cav,
+        suffix="_cavity",
+        title_geometry="3D PEC ferrite-loaded cavity setup: geometry, source, probe & PEC walls (ZX plane)",
+        title_mesh="3D PEC ferrite-loaded cavity setup: mesh resolution, wave packet & broadband pulse",
+        variations=[
+            {
+                "name": "Vacuum reference cavity",
+                "details": "Unloaded PEC cavity (μ = 1.0, bare TE_101 resonance at f_vac = 1.7665 GHz)",
+            },
+            {
+                "name": "Static permeability reference",
+                "details": "Non-dispersive ferrite cavity (μ = μ_s = 2.25, static resonance at f_vac / √μ_s = 1.1777 GHz)",
+            },
+            {
+                "name": "Polariton avoided-crossing sweep",
+                "details": "Lorentz-μ ferrite with f_r ∈ {1.20, 1.50, 1.76, 2.10, 2.50} GHz, γ_m/2π = 25 MHz",
+            },
+        ],
     )
-    ax_cav.set_yticks([0, 20, 40, 60, 80, 100, 120])
-    _fix_schematic_units(ax_cav)
-
-    figstyle.finish(fig)
-    figstyle.save(fig, fig_dir / "00_setup_schematic.png", close=True)
 
 
 def _plot_wikimedia_fmr_diagram(fig_dir):

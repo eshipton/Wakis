@@ -12,7 +12,7 @@ Luneburg Lens, and 6-Segment Semi-Lens Beam Expander).
 from pathlib import Path
 
 from matplotlib.collections import LineCollection
-from matplotlib.patches import Polygon as MplPolygon
+from matplotlib.patches import Polygon as MplPolygon, Rectangle
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c as c_light, epsilon_0
@@ -1188,6 +1188,33 @@ def run_converter_simulation(
     }
 
 
+class _PolygonSchematicProxy:
+    """Lightweight polygon structure proxy exposing `.vertices`, `.material`, and `.name`
+    (without `.bounds`) so `wakis.schematic` classifies a 2D `PolySlab` as `kind='polygon'`.
+    """
+
+    def __init__(self, vertices, eps: float, name: str):
+        self.vertices = np.asarray(vertices, dtype=float)
+        self.material = float(eps)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Lightweight solver proxy exposing a uniform background to `wakis.schematic`."""
+
+    def __init__(self, solver, eps_bg: float):
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = solver.n_pml
+        self.bc_low = list(solver.bc_low)
+        self.bc_high = list(solver.bc_high)
+        self.bg = [float(eps_bg), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
 def build_schematic_components_converter(
     domain_2d,
     ports,
@@ -1199,6 +1226,7 @@ def build_schematic_components_converter(
     y_grid=None,
     include_flux_box=True,
     out_label="Port 'out' ModeMonitor",
+    out_short="out",
 ):
     """
     Construct a lightweight 2D `SolverFIT3D`, source dict, monitor dicts, and
@@ -1248,6 +1276,8 @@ def build_schematic_components_converter(
     f0 = 0.5 * (f_min + f_max)
     fwidth = 1.25 * (f_max - f_min)
     pulse_obj = GaussianSource(frequency=f0, fwidth=fwidth, cutoff=4.2)
+    freqs = np.linspace(f_min, f_max, N_FREQS)
+    freq_str = f"{N_FREQS} freqs in [{f_min * 1e-12:.1f}, {f_max * 1e-12:.1f}] THz"
 
     sources_s = []
     monitors_s = []
@@ -1255,12 +1285,17 @@ def build_schematic_components_converter(
         cx = float(pt.center[0])
         hy = min(0.5 * float(pt.size[1]), 0.85 * abs(ymax))
         if pt.name == "in":
-            x_src = cx - 0.05e-6
+            x_src = cx - 0.08e-6
             sources_s.append(
                 {
                     "kind": "sheet",
                     "type_name": "ModeSource",
+                    "short_word": "TE₀ mode",
+                    "desc": f"Port 'in' ModeSource (TE₀, +x, x = {x_src * 1e6:.2f} µm)",
                     "label": "Port 'in' ModeSource (TE₀, +x)",
+                    "pos_str": f"x = {x_src * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, {hy * 1e6:.2f}] µm",
+                    "polarization": "TE₀ (E_y, H_z)",
+                    "component": "Ey",
                     "h_bounds": (x_src, x_src),
                     "v_bounds": (-hy, +hy),
                     "e_vec": (0.0, 1.0, 0.0),
@@ -1279,7 +1314,12 @@ def build_schematic_components_converter(
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
+                    "short_word": "in",
+                    "desc": f"Port 'in' ModeMonitor (S₁₁, x = {cx * 1e6:.2f} µm)",
                     "label": "Port 'in' ModeMonitor (S₁₁)",
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, {hy * 1e6:.2f}] µm",
+                    "freq_str": freq_str,
+                    "frequencies": freqs,
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
@@ -1289,23 +1329,36 @@ def build_schematic_components_converter(
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
+                    "short_word": out_short,
+                    "desc": f"{out_label.replace(chr(10), ' ')} (x = {cx * 1e6:.2f} µm)",
                     "label": out_label,
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, {hy * 1e6:.2f}] µm",
+                    "freq_str": freq_str,
+                    "frequencies": freqs,
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
             )
     if include_flux_box:
+        hb = (xmin + 0.22e-6, xmax - 0.15e-6)
+        vb = (ymin + 0.20e-6, ymax - 0.20e-6)
         monitors_s.append(
             {
                 "kind": "box",
                 "type_name": "FluxMonitor",
+                "short_word": "flux box",
+                "desc": "2D Poynting FluxMonitor box",
                 "label": "2D Poynting FluxMonitor box",
-                "h_bounds": (xmin + 0.22e-6, xmax - 0.15e-6),
-                "v_bounds": (ymin + 0.20e-6, ymax - 0.20e-6),
+                "pos_str": f"x ∈ [{hb[0] * 1e6:.2f}, {hb[1] * 1e6:.2f}] µm, y ∈ [{vb[0] * 1e6:.2f}, {vb[1] * 1e6:.2f}] µm",
+                "freq_str": freq_str,
+                "frequencies": freqs,
+                "h_bounds": hb,
+                "v_bounds": vb,
             }
         )
     clad_name = "Air cladding" if abs(n_clad - 1.0) < 0.05 else "SiO₂ cladding"
     material_names = {
+        "background": f"{clad_name} (n = {n_clad:.2f}, ε_r = {eps_clad:.2f}; SiO₂ BOX n_sub = 1.44)",
         round(float(eps_clad), 2): f"{clad_name} (n = {n_clad:.2f})",
     }
     return solver_s, sources_s, monitors_s, material_names
@@ -1433,91 +1486,170 @@ def plot_setup_schematic_semilens(
     out_path: Path,
 ):
     """
-    Render `00_setup_schematic.png` (FIRST figure of Tutorial 5.3, 2 panels):
-    - Panel (a): Labelled 2D EIM schematic of Design 3 (6-segment semi-lens beam
-      expander, 0.45 -> 9.00 um over L_tot = 9.50 um) with domain extents, 10-cell CPML,
-      Si/Air/SiO2 indices, Port `in` ModeSource + launched TE0 mode + pulse inset,
-      Port `out` multi-mode ModeMonitor (TE0..TE8) + expanded TE0 mode, and FluxMonitor box.
-    - Panel (b): 1x Yee mesh zoom on the 50 nm Segment 3 flare (`x in [4.53, 4.74] um`)
-      with cells across feature and cells per wavelength annotated.
+    Render the two-figure setup layout and Markdown setup table for Tutorial 5.3
+    via `wakis.schematic.save_setup_figures`:
+    - `00a_setup_geometry.png`: Labelled 2D EIM schematic of Design 3 (6-segment
+      semi-lens beam expander, 0.45 -> 9.00 um over L_tot = 9.50 um) with domain
+      extents, 10-cell CPML, Si/Air/SiO2 indices, Port `in` ModeSource + launched
+      TE0 mode, Port `out` multi-mode ModeMonitor (TE0..TE8) + expanded TE0 mode,
+      and 2D Poynting FluxMonitor box.
+    - `00b_setup_mesh_and_excitation.png`: 3-panel computational mesh (with 1x
+      zoom inset on the 50 nm Segment 3 flare `x in [4.53, 4.74] um`), spatial
+      wave packet, and Gaussian excitation pulse / spectrum.
+    - `00_setup_table.md`: Complete Markdown setup table (including Design 1
+      taper and Design 2 Luneburg lens variations).
     """
+    _ = pic_zoom
     figstyle.apply_style()
-    n_eff_slab = float(primary_data.get("n_eff_slab", 2.9545))
-    eps_slab = n_to_eps(n_eff_slab)
-    solver_s, sources_s, monitors_s, mat_names = build_schematic_components_converter(
+    fig_dir = Path(out_path).parent
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    cpw_v = float(primary_data.get("cpw", 20.0))
+    nf_v = int(round(float(primary_data.get("n_feature", 8))))
+    pic_full = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        n_freqs=N_FREQS,
+        structures=semi_structs,
+        ports=semi_ports,
+        n_core=N_SI,
+        n_clad=N_AIR,
+        n_sub=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_v,
+        domain=semi_dom,
+        n_pml=10,
+        mesh_overrides=semilens_mesh_overrides(nf_v),
+    )
+
+    n_eff_slab = float(primary_data.get("n_eff_slab", pic_full.n_eff_slab))
+    eps_slab = float(n_to_eps(n_eff_slab))
+    eps_clad = float(n_to_eps(N_AIR))
+    proxy_solver = _SchematicSolverProxy(pic_full.solver, eps_clad)
+    poly_structs = [
+        _PolygonSchematicProxy(
+            semi_structs[0].vertices,
+            eps_slab,
+            f"Si 6-segment semi-lens (t_Si = 260 nm, n_eff = {n_eff_slab:.4f}, ε_r = {eps_slab:.2f})",
+        )
+    ]
+    _, sources_s, monitors_s, mat_names = build_schematic_components_converter(
         semi_dom,
         semi_ports,
         n_clad=N_AIR,
         n_pml=10,
         include_flux_box=True,
-        out_label="Port 'out' ModeMonitor\n(TE₀,₂,₄,₆,₈ + FluxMonitor)",
+        out_label="Port 'out' ModeMonitor (TE₀,₂,₄,₆,₈ + FluxMonitor)",
+        out_short="out (TE₀..₈)",
     )
-    fig, (ax_main, ax_mesh) = figstyle.new_figure(
-        nrows=1,
-        ncols=2,
-        width=13.5,
-        height=5.5,
-        gridspec_kw={"width_ratios": [1.9, 1.05], "wspace": 0.30},
+    mat_names["region_0"] = (
+        f"Si 6-segment semi-lens (t_Si = 260 nm, n_eff,slab = {n_eff_slab:.4f}, ε_r = {eps_slab:.2f})"
     )
-    schematic.plot_schematic(
-        solver_s,
+    variations = [
+        {
+            "name": "Design 1: Linear & non-linear tapers (tasks 10–14)",
+            "param": "w_in = 10.0 µm → w_out = 0.50 µm (t_Si = 110 nm, n_eff,slab = 2.2166), L_t ∈ [0, 100] µm",
+            "note": "Linear, parabolic, exponential, and cosine tapers vs Milton–Burns adiabatic scaling & abrupt-step overlap",
+        },
+        {
+            "name": "Design 2: Graded-thickness Luneburg lens (task 9)",
+            "param": "D_lens = 11.0 µm (R = 5.5 µm, 60 CircularPolySlab shells, t(r) ∈ [110, 356.1] nm)",
+            "note": "n_eff(r) = n_edge √(2 − (r/R)²) ∈ [2.2166, 3.1348] calibrated via 1D SOI slab cubic polynomial fit",
+        },
+        {
+            "name": "Resolution & subpixel ladder (tasks 0–8)",
+            "param": "(cpw, N_feat) ∈ {(10, 1) demo, (10, 4) L1, (14, 6) L2, (20, 8) L3, (40, 16) R}",
+            "note": "Kottke subpixel smoothing vs staircasing across the L₃ = 50 nm Segment 3 flare",
+        },
+        {
+            "name": "Graded non-uniform Cartesian mesh (task 15)",
+            "param": "NonUniformSemilensPIC (424 × 407 × 1 = 172,568 cells vs 235,008 at L3)",
+            "note": "8.0 cells across L₃ = 50 nm (Δx_min = 6.25 nm), non-square lead cells (−26.6% cells, −33.2% time)",
+        },
+    ]
+
+    title_geom = "Design 3: 6-Segment Semi-Lens Beam Expander Setup (2D EIM, 0.45 → 9.00 µm over 9.50 µm)"
+    title_mesh = "Semi-Lens Discretization (50 nm Seg 3 Flare Zoom), Wave Packet & Broadband Excitation"
+
+    res = schematic.save_setup_figures(
+        proxy_solver,
+        fig_dir,
+        prefix="00",
         plane="xy",
-        ax=ax_main,
-        unit="µm",
-        structures=(),
+        structures=poly_structs,
         material_names=mat_names,
         sources=sources_s,
         monitors=monitors_s,
-        show_mesh=True,
-        mesh_zoom=False,
-        show_pulse_inset=True,
-        show_wave_packet=False,
+        unit="µm",
         wavelength=WL_REF,
-        title="(a) Design 3: 6-segment semi-lens expander setup & monitors",
+        min_feature=MIN_FEATURE_SEMILENS,
+        variations=variations,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
     )
-    draw_polyslab_regions(
-        ax_main,
-        semi_structs,
-        facecolor="#1d4ed8",
-        alpha=0.28,
-        edgecolor="#0f172a",
-        lw=1.4,
-        label=(
-            f"Si 6-segment semi-lens (t_Si = 260 nm on SiO₂)\n"
-            f"n_Si = {N_SI:.2f} → n_eff,slab = {n_eff_slab:.4f} (ε_r = {eps_slab:.2f})\n"
-            f"w₀ = 0.45 µm → w₆ = 9.00 µm over L_tot = 9.50 µm"
-        ),
-        label_xy=(6.65, 0.0),
+
+    # Enhance 00a_setup_geometry.png with mode profiles, Segment 3 callout, and non-overlapping tags
+    fig_a, ax_a = schematic.plot_schematic(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=WL_REF,
+        title=title_geom,
+        width_in=8.2,
+        height_in=5.4,
     )
-    ax_main.text(
-        1.85,
-        -4.20,
-        "Lateral cladding: Air (n = 1.00, ε_r = 1.00)\nLower substrate: SiO₂ (n = 1.44)",
-        fontsize=7.1,
-        color="#334155",
-        ha="center",
-        va="center",
-        zorder=7,
-        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="#94a3b8", alpha=0.90, lw=0.7),
-    )
-    ax_main.axvline(4.61, color="#e11d48", ls="--", lw=1.0, alpha=0.8)
-    ax_main.axvline(4.66, color="#e11d48", ls="--", lw=1.0, alpha=0.8)
-    ax_main.annotate(
+    if fig_a._suptitle is not None:
+        fig_a._suptitle.set_y(1.07)
+
+    xg_um = pic_full.grid.x * 1e6
+    yg_um = pic_full.grid.y * 1e6
+    x0_u, x1_u = float(xg_um[0]), float(xg_um[-1])
+    y0_u, y1_u = float(yg_um[0]), float(yg_um[-1])
+    dy_pml_low = float(yg_um[10] - yg_um[0])
+    dy_pml_high = float(yg_um[-1] - yg_um[-11])
+    for y_start, h_band in ((y0_u, dy_pml_low), (y1_u - dy_pml_high, dy_pml_high)):
+        ax_a.add_patch(
+            Rectangle(
+                (x0_u, y_start),
+                x1_u - x0_u,
+                h_band,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="///",
+                lw=0.8,
+                alpha=0.36,
+                zorder=2,
+            )
+        )
+
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+
+    ax_a.axvline(4.61, color="#e11d48", ls="--", lw=1.0, alpha=0.85, zorder=6)
+    ax_a.axvline(4.66, color="#e11d48", ls="--", lw=1.0, alpha=0.85, zorder=6)
+    ax_a.annotate(
         "Segment 3 flare\n(L₃ = 50 nm, w: 3.30 → 9.06 µm)",
         xy=(4.635, 3.30),
-        xytext=(1.75, 4.15),
-        fontsize=7.0,
+        xytext=(0.55, 4.15),
+        fontsize=6.9,
         fontweight="bold",
         color="#9f1239",
         arrowprops=dict(arrowstyle="->", color="#e11d48", lw=1.1),
-        bbox=dict(boxstyle="round,pad=0.18", fc="#fff1f2", ec="#e11d48", alpha=0.92, lw=0.7),
+        bbox=dict(boxstyle="round,pad=0.18", fc="#fff1f2", ec="#e11d48", alpha=0.92, lw=0.75),
         zorder=10,
     )
 
     if "port_y_in" in primary_data and "port_ey_in" in primary_data:
         draw_launched_mode_on_schematic(
-            ax_main,
-            x_port_um=-1.00,
+            ax_a,
+            x_port_um=-1.03,
             y_um=np.asarray(primary_data["port_y_in"]) * 1e6,
             ey=np.asarray(primary_data["port_ey_in"]),
             neff=float(primary_data.get("port_neff_in", 2.4719)),
@@ -1525,11 +1657,11 @@ def plot_setup_schematic_semilens(
             label_prefix="Launched TE₀",
             color_fill="#ef4444",
             color_line="#b91c1c",
-            text_offset=(0.20, -1.65),
+            text_offset=(0.20, -2.15),
         )
     if "port_y_out" in primary_data and "port_ey_out" in primary_data:
         draw_launched_mode_on_schematic(
-            ax_main,
+            ax_a,
             x_port_um=10.55,
             y_um=np.asarray(primary_data["port_y_out"]) * 1e6,
             ey=np.asarray(primary_data["port_ey_out"]),
@@ -1538,74 +1670,86 @@ def plot_setup_schematic_semilens(
             label_prefix="Expanded TE₀",
             color_fill="#0284c7",
             color_line="#0369a1",
-            text_offset=(-0.95, 3.85),
+            text_offset=(-1.05, 0.0),
         )
 
-    # Panel (b): 1x Yee mesh zoom on the 50 nm Segment 3 flare
-    slv = pic_zoom.solver
-    iz = slv.Nz // 2
-    ieps_y = slv.ieps.to_matrix("y")[:, :, iz]
-    if hasattr(ieps_y, "get"):
-        ieps_y = ieps_y.get()
-    ieps_arr = np.asarray(ieps_y, dtype=float)
-    eps_y = np.where(
-        ieps_arr > 0.0,
-        1.0 / (np.where(ieps_arr > 0.0, ieps_arr, 1.0) * epsilon_0),
-        1.0,
+    for txt in ax_a.texts:
+        s = txt.get_text()
+        if s == "" and hasattr(txt, "xyann"):
+            txt.xy = (-1.03 + 0.55, 0.0)
+            txt.xyann = (-1.03, 0.0)
+        elif s.startswith("1 ·"):
+            txt.set_position((-0.90, 2.05))
+            txt.set_ha("left")
+        elif s.startswith("2 ·"):
+            txt.set_position((-0.75, 0.85))
+            txt.set_ha("left")
+        elif s.startswith("3 ·"):
+            txt.set_position((10.35, -3.55))
+            txt.set_ha("right")
+        elif s.startswith("4 ·"):
+            txt.set_position((1.55, -4.65))
+            txt.set_ha("center")
+        elif "12.7" in s:
+            txt.set_position((4.85, 7.15))
+        elif s.startswith("Si 6-segment"):
+            txt.set_position((6.40, 2.25))
+
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with the Semi-Lens polygon and 50 nm Segment 3 flare zoom
+    zoom_bounds = (4.53e-6, 4.74e-6, 1.45e-6, 4.70e-6)
+    poly_structs_b = [
+        _PolygonSchematicProxy(
+            semi_structs[0].vertices,
+            eps_slab,
+            f"Si semi-lens (ε_r = {eps_slab:.2f})",
+        )
+    ]
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        proxy_solver,
+        plane="xy",
+        structures=poly_structs_b,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=WL_REF,
+        min_feature=MIN_FEATURE_SEMILENS,
+        zoom_bounds=zoom_bounds,
+        title=title_mesh,
     )
-    xe = slv.grid.x * 1e6
-    ye = slv.grid.y * 1e6
-    im_m = ax_mesh.pcolormesh(
-        xe,
-        ye,
-        eps_y[: slv.Nx, : slv.Ny].T,
-        cmap=figstyle.CMAP_EPS,
-        vmin=1.0,
-        vmax=float(eps_slab) * 1.02,
-        edgecolors="white",
-        linewidth=0.35,
+    ax_mesh = axes_b[0]
+    ax_mesh.add_patch(
+        MplPolygon(
+            semi_structs[0].vertices * 1e6,
+            closed=True,
+            facecolor="#3B82F6",
+            edgecolor="#1E293B",
+            lw=1.0,
+            alpha=0.45,
+            zorder=2.5,
+        )
     )
-    draw_polyslab_regions(
-        ax_mesh,
-        semi_structs,
-        facecolor=None,
-        edgecolor="#facc15",
-        lw=1.5,
-        ls="--",
-    )
-    ax_mesh.axvline(4.61, color="#facc15", ls=":", lw=1.2)
-    ax_mesh.axvline(4.66, color="#facc15", ls=":", lw=1.2)
-    nf_v = float(primary_data.get("cells_across_feature", 8.0))
-    dx_min_v = float(primary_data.get("dx_min_nm", 6.25))
-    cpw_v = int(round(float(primary_data.get("cpw", 20))))
-    ax_mesh.annotate(
-        "",
-        xy=(4.61, 4.15),
-        xytext=(4.66, 4.15),
-        arrowprops=dict(arrowstyle="<->", color="white", lw=1.6),
-    )
-    ax_mesh.text(
-        4.635,
-        4.26,
-        f"L₃ = 50 nm ({nf_v:.0f} cells, Δx_min = {dx_min_v:.2f} nm)\n{cpw_v} cells/λ in n_eff,slab",
-        color="white",
-        fontsize=7.1,
-        fontweight="bold",
-        ha="center",
-        va="bottom",
-        bbox=dict(boxstyle="round,pad=0.20", fc="#0f172a", ec="#facc15", alpha=0.86, lw=0.8),
-    )
-    ax_mesh.set(
-        xlim=(4.53, 4.74),
-        ylim=(1.45, 4.70),
-        xlabel="x [µm]",
-        ylabel="y [µm]",
-        title="(b) 1× Yee mesh zoom on 50 nm Seg 3 flare",
-    )
-    cb = fig.colorbar(im_m, ax=ax_mesh, fraction=0.046, pad=0.03)
-    cb.set_label(r"Subpixel $\varepsilon_{yy} / \varepsilon_0$ (Kottke)")
-    figstyle.save(fig, out_path)
-    plt.close(fig)
+    for child_ax in fig_b.axes:
+        if child_ax not in list(axes_b):
+            child_ax.add_patch(
+                MplPolygon(
+                    semi_structs[0].vertices * 1e6,
+                    closed=True,
+                    facecolor="#3B82F6",
+                    edgecolor="#DC2626",
+                    lw=1.35,
+                    alpha=0.45,
+                    zorder=2.5,
+                )
+            )
+            child_ax.axvline(4.61, color="#DC2626", ls="--", lw=1.0, zorder=5)
+            child_ax.axvline(4.66, color="#DC2626", ls="--", lw=1.0, zorder=5)
+            child_ax.set_xlim(zoom_bounds[0] * 1e6, zoom_bounds[1] * 1e6)
+            child_ax.set_ylim(zoom_bounds[2] * 1e6, zoom_bounds[3] * 1e6)
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
 
 
 def plot_taper_and_luneburg_schematics(out_path: Path):
@@ -1620,9 +1764,9 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
     fig, (ax0, ax1, ax2) = figstyle.new_figure(
         nrows=1,
         ncols=3,
-        width=14.0,
-        height=4.5,
-        gridspec_kw={"width_ratios": [1.05, 1.05, 0.95], "wspace": 0.30},
+        width=15.4,
+        height=4.8,
+        gridspec_kw={"width_ratios": [1.08, 1.05, 0.95], "wspace": 0.42},
     )
 
     # Panel (a): Design 1 Adiabatic Taper schematic
@@ -1635,7 +1779,8 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         dx_nom=33.8e-9,
         dy_nom=33.8e-9,
         include_flux_box=False,
-        out_label="Port 'out'\n(w = 0.50 µm, S₂₁)",
+        out_label="Port 'out' (w = 0.50 µm, S₂₁)",
+        out_short="out",
     )
     schematic.plot_schematic(
         slv_t,
@@ -1651,8 +1796,13 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         show_pulse_inset=False,
         show_wave_packet=False,
         wavelength=WL_REF,
-        title="(a) Design 1: Linear taper (10 → 0.5 µm)",
+        title="",
     )
+    ax0.set_aspect("auto")
+    ax0.set_title("(a) Design 1: Linear taper (10 → 0.5 µm)", fontsize=9.8, pad=10)
+    for ln in ax0.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
     draw_polyslab_regions(
         ax0,
         tap_s,
@@ -1661,23 +1811,39 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         edgecolor="#0f172a",
         lw=1.35,
         label="Si taper (t = 110 nm)\nn_eff,slab = 2.217",
-        label_xy=(8.0, 0.0),
+        label_xy=(9.5, 0.0),
     )
     ov = compute_abrupt_step_overlap()
     m_in = np.abs(ov["y"] * 1e6) <= 5.2
     draw_launched_mode_on_schematic(
         ax0,
-        x_port_um=-0.65,
+        x_port_um=-0.68,
         y_um=ov["y"][m_in] * 1e6,
         ey=ov["e_in"][m_in],
         neff=float(ov["neff_in"]),
         amp_um=2.2,
         label_prefix="Wide TE₀",
-        text_offset=(0.4, 3.6),
+        text_offset=(0.5, -3.8),
     )
+    for txt in list(ax0.texts):
+        s = txt.get_text()
+        if s == "" and hasattr(txt, "xyann"):
+            txt.xy = (-0.68 + 1.4, 0.0)
+            txt.xyann = (-0.68, 0.0)
+        elif s.startswith("1 ·"):
+            txt.set_position((0.35, 3.8))
+            txt.set_ha("left")
+        elif s.startswith("2 ·"):
+            txt.set_position((0.35, 2.3))
+            txt.set_ha("left")
+        elif s.startswith("3 ·"):
+            txt.set_position((19.8, 1.65))
+            txt.set_ha("right")
+        elif "µm" in s or "Δx" in s or s == "CPML":
+            txt.set_visible(False)
 
     # Panel (b): Design 2 Graded Luneburg Lens schematic
-    lun_s, lun_p, lun_d, cal = build_luneburg_converter(n_shells=28)
+    lun_s, lun_p, lun_d, _ = build_luneburg_converter(n_shells=28)
     slv_l, src_l, mon_l, mat_l = build_schematic_components_converter(
         lun_d,
         lun_p,
@@ -1686,7 +1852,8 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         dx_nom=23.9e-9,
         dy_nom=23.9e-9,
         include_flux_box=False,
-        out_label="Port 'out'\n(w = 0.50 µm, S₂₁)",
+        out_label="Port 'out' (w = 0.50 µm, S₂₁)",
+        out_short="out",
     )
     schematic.plot_schematic(
         slv_l,
@@ -1702,8 +1869,13 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         show_pulse_inset=False,
         show_wave_packet=False,
         wavelength=WL_REF,
-        title="(b) Design 2: Graded Luneburg lens (D = 11 µm)",
+        title="",
     )
+    ax1.set_aspect("auto")
+    ax1.set_title("(b) Design 2: Graded Luneburg lens (D = 11 µm)", fontsize=9.8, pad=10)
+    for ln in ax1.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
     draw_polyslab_regions(
         ax1,
         lun_s,
@@ -1712,18 +1884,41 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         edgecolor="#0f172a",
         lw=1.25,
         label="GRIN Luneburg dome\nt(r) = 110–356 nm\nn_eff(r) = 2.22–3.13",
-        label_xy=(0.0, 0.0),
+        label_xy=(0.2, 0.0),
     )
     draw_launched_mode_on_schematic(
         ax1,
-        x_port_um=-6.10,
+        x_port_um=-6.13,
         y_um=ov["y"][m_in] * 1e6,
         ey=ov["e_in"][m_in],
         neff=float(ov["neff_in"]),
         amp_um=1.35,
         label_prefix="Wide TE₀",
-        text_offset=(0.25, 3.8),
+        text_offset=(0.25, -3.9),
     )
+    for txt in list(ax1.texts):
+        s = txt.get_text()
+        if s == "" and hasattr(txt, "xyann"):
+            txt.xy = (-6.13 + 0.9, 0.0)
+            txt.xyann = (-6.13, 0.0)
+        elif s.startswith("1 ·"):
+            txt.set_position((-5.5, 4.1))
+            txt.set_ha("left")
+        elif s.startswith("2 ·"):
+            txt.set_position((-5.5, 2.7))
+            txt.set_ha("left")
+        elif s.startswith("3 ·"):
+            txt.set_position((5.85, 1.65))
+            txt.set_ha("right")
+        elif "µm" in s or "Δx" in s or s == "CPML":
+            txt.set_visible(False)
+
+    if ax0.get_legend() is not None:
+        ax0.get_legend().remove()
+    while len(fig.legends) > 1:
+        fig.legends.pop(0).remove()
+    if fig._suptitle is not None:
+        fig._suptitle.set_text("")
 
     # Panel (c): Body-fitted quadtree+Delaunay hybrid mesh (wakis.unstructured.subtri_circles_mesh)
     mesh_u, _, info_u = subtri_circles_mesh(
@@ -1776,8 +1971,7 @@ def plot_taper_and_luneburg_schematics(out_path: Path):
         title="(c) Body-fitted hybrid mesh (Luneburg rim)",
     )
     ax2.legend(loc="lower right", fontsize=6.9)
-    figstyle.save(fig, out_path)
-    plt.close(fig)
+    figstyle.save(fig, out_path, close=True, auto_legend_below=False)
 
 
 def plot_mesh_upgrade_comparison_semilens(

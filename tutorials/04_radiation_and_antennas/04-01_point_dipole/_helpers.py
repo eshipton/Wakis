@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Rectangle
 from PIL import Image
 from scipy.constants import c as C0
 from scipy.constants import epsilon_0 as EPS0
@@ -27,7 +27,7 @@ from scipy.integrate import quad
 from wakis import DFTMonitor, GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.estimate import estimate
 from wakis.near2far import Near2FarMonitor, half_power_beamwidth
-from wakis.sources import CurrentSource, GaussianSource
+from wakis.sources import ContinuousSource, CurrentSource, GaussianSource
 from wakis.templates import Box
 from wakis.templates.meshing import graded_axis
 
@@ -330,12 +330,132 @@ def preflight_point_dipole_configs() -> dict[str, dict[str, Any]]:
             "cpu_ram_mb": float(est.host_bytes / 1e6),
             "cpu_time_s": float(est.seconds),
         }
+
+    # Extended 3D domain for the far-field radiation movie (r_phys = 3.32*lambda_0, cpw = 20.5)
+    cpw_mov = 20.5
+    dx_mov = LAM0_M / cpw_mov
+    nx_mov, ny_mov, nz_mov = 148, 72, 149
+    dt_mov = dx_mov / (np.sqrt(3.0) * C0)
+    n_steps_mov = int(np.ceil(4.9 / (F0_HZ * dt_mov)))
+    est_mov = estimate(cells=(nx_mov, ny_mov, nz_mov), steps=n_steps_mov, cpml=True)
+    out["radiation_movie_3d"] = {
+        "nx": nx_mov,
+        "ny": ny_mov,
+        "nz": nz_mov,
+        "n_cells": int(est_mov.cells),
+        "dx_min_mm": dx_mov * 1e3,
+        "dx_max_mm": dx_mov * 1e3,
+        "cpw_f0_min": cpw_mov,
+        "cpw_f0_core": cpw_mov,
+        "n_steps": n_steps_mov,
+        "cpu_ram_mb": float(est_mov.host_bytes / 1e6),
+        "cpu_time_s": float(est_mov.seconds),
+    }
     return out
 
 
 # ---------------------------------------------------------------------------
 # Simulation task runners
 # ---------------------------------------------------------------------------
+def run_radiation_movie_cut(quick: bool = False) -> dict[str, np.ndarray]:
+    """Run an extended-domain 3D FIT point-dipole simulation for the radiation GIF.
+
+    Uses :math:`\\Delta x = \\Delta y = \\Delta z = \\lambda_0 / 20.5` (:math:`\\ge 20`
+    cells/:math:`\\lambda_0`) with a physical (non-CPML) half-width of
+    :math:`R_{\\mathrm{phys}} = 3.32\\,\\lambda_0` (:math:`> 3\\,\\lambda_0` beyond
+    the :math:`kr = 1` near-field boundary) and records a 2D :math:`xz`-plane cut
+    at :math:`y = 0` over 36 frames.
+
+    Parameters
+    ----------
+    quick : bool, optional
+        If True, use a slightly reduced transverse :math:`y` buffer while keeping
+        :math:`\\ge 20` cells/:math:`\\lambda_0` and :math:`R_{\\mathrm{phys}} > 3.2\\,\\lambda_0`.
+
+    Returns
+    -------
+    dict of str to np.ndarray
+        Time-domain 2D :math:`xz`-cut frames and coordinates cropped to the
+        physical non-CPML region.
+    """
+    cpw = 20.5
+    dx = LAM0_M / cpw
+    n_pml = 6
+    n_half_xz = 66 if quick else 68  # R_phys = 3.22*lam0 (quick) or 3.32*lam0 (full)
+    n_half_y = 24 if quick else 30
+    r_phys_m = n_half_xz * dx
+    r_total_m = (n_half_xz + n_pml) * dx
+    y_total_m = (n_half_y + n_pml) * dx
+
+    x_nodes = np.linspace(-r_total_m, r_total_m, 2 * (n_half_xz + n_pml) + 1)
+    y_nodes = np.linspace(-y_total_m, y_total_m, 2 * (n_half_y + n_pml) + 1)
+    z_pos = (np.arange(n_half_xz + n_pml) + 0.5) * dx
+    z_nodes = np.concatenate([-z_pos[::-1], z_pos])
+
+    grid = GridFIT3D(
+        float(x_nodes[0]),
+        float(x_nodes[-1]),
+        float(y_nodes[0]),
+        float(y_nodes[-1]),
+        float(z_nodes[0]),
+        float(z_nodes[-1]),
+        x=x_nodes,
+        y=y_nodes,
+        z=z_nodes,
+        verbose=0,
+    )
+    nx, ny, nz = int(grid.Nx - 1), int(grid.Ny - 1), int(grid.Nz - 1)
+    solver = SolverFIT3D(grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=n_pml, verbose=0)
+    n_periods = 4.9
+    n_steps = int(np.ceil(n_periods / (F0_HZ * solver.dt)))
+    _ = estimate(cells=(nx, ny, nz), steps=n_steps, cpml=True)
+
+    cw = ContinuousSource(frequency=F0_HZ, ramp_time=1.0 / F0_HZ)
+    src = CurrentSource(
+        cw,
+        component="z",
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.0),
+        amplitude=I0_L_AM,
+    )
+
+    step_start = int(1.30 / (F0_HZ * solver.dt))
+    step_end = n_steps - 1
+    frame_steps = set(np.linspace(step_start, step_end, 36, dtype=int).tolist())
+
+    jy_mid = int(np.argmin(np.abs(grid.y)))
+    x_all = np.asarray(grid.x[:-1], dtype=float)
+    z_all = np.asarray(0.5 * (grid.z[:-1] + grid.z[1:]), dtype=float)
+    ix_phys = np.where(np.abs(x_all) <= r_phys_m + 0.25 * dx)[0]
+    iz_phys = np.where(np.abs(z_all) <= r_phys_m + 0.25 * dx)[0]
+
+    td_frames: list[np.ndarray] = []
+    td_times_ns: list[float] = []
+    td_times_periods: list[float] = []
+
+    for step in range(n_steps):
+        t = step * solver.dt
+        src.update(solver, t)
+        solver.one_step()
+        if step in frame_steps:
+            t_after = (step + 1) * solver.dt
+            ez_full = np.asarray(solver.E.to_matrix("z")[:, jy_mid, :-1], dtype=np.float32)
+            ez_crop = ez_full[np.ix_(ix_phys, iz_phys)].copy()
+            td_frames.append(ez_crop)
+            td_times_ns.append(float(t_after * 1e9))
+            td_times_periods.append(float(t_after * F0_HZ))
+
+    return {
+        "td_frames": np.asarray(td_frames, dtype=np.float32),
+        "td_times_ns": np.asarray(td_times_ns, dtype=float),
+        "td_times_periods": np.asarray(td_times_periods, dtype=float),
+        "td_x_ez": x_all[ix_phys],
+        "td_z_ez": z_all[iz_phys],
+        "td_r_phys_m": np.array(float(r_phys_m)),
+        "td_r_total_m": np.array(float(r_total_m)),
+        "td_cpw": np.array(float(cpw)),
+        "td_n_pml": np.array(int(n_pml)),
+    }
 def run_radial_zones_and_near2far(quick: bool = False) -> dict[str, Any]:
     """Run Task 0: 3D Hertzian dipole on graded mesh with radial zones, DFT maps, GIF frames & Near2Far.
 
@@ -395,30 +515,19 @@ def run_radial_zones_and_near2far(quick: bool = False) -> dict[str, Any]:
     )
 
     n_steps = int(np.ceil((4.0 if quick else 4.4) / (F0_HZ * solver.dt)))
-    # Record 18 time-domain frames over the active wave-emission window
-    t_peak = pulse.t0
-    step_start = max(10, int((t_peak - 0.8 / F0_HZ) / solver.dt))
-    step_end = min(n_steps - 1, int((t_peak + 1.8 / F0_HZ) / solver.dt))
-    frame_steps = set(np.linspace(step_start, step_end, 16, dtype=int).tolist())
-    jy_mid = int(np.argmin(np.abs(grid.y)))
-    td_frames = []
-    td_times_ns = []
 
     t0_wall = time.perf_counter()
     for step in range(n_steps):
         t = step * solver.dt
         src.update(solver, t)
         solver.one_step()
-        t_after = (step + 1) * solver.dt
         n2f_f0.update(solver, t)
         n2f_band.update(solver, t)
         dft_xz.update(solver, t)
         dft_src_band.update(solver, t)
-        if step in frame_steps:
-            ez_slice = np.asarray(solver.E.to_matrix("z")[:, jy_mid, :-1], dtype=np.float32).copy()
-            td_frames.append(ez_slice)
-            td_times_ns.append(float(t_after * 1e9))
     wall_s = float(time.perf_counter() - t0_wall)
+
+    movie_data = run_radiation_movie_cut(quick=quick)
 
     # Extract xz plane DFT fields at f0
     ex_f, ex_coords = dft_xz.get_field("Ex")
@@ -511,8 +620,7 @@ def run_radial_zones_and_near2far(quick: bool = False) -> dict[str, Any]:
         "ez_xz_real": np.real(ez_xz),
         "ez_xz_abs": np.abs(ez_xz),
         "emag_xz": emag_xz,
-        "td_frames": np.asarray(td_frames, dtype=np.float32),
-        "td_times_ns": np.asarray(td_times_ns, dtype=float),
+        **movie_data,
         "r_eq_m": r_eq_ez,
         "kr_eq": ana_eq["kr"],
         "etheta_eq_fit_abs": np.abs(etheta_eq_fit),
@@ -908,103 +1016,92 @@ def run_task(task_name: str, data_dir: Path, quick: bool = False) -> Path:
 # Figure generation suite (wakis.figstyle + wakis.schematic, <= 3 panels/fig)
 # ---------------------------------------------------------------------------
 def _build_schematic_objects(d0: Any) -> tuple[SolverFIT3D, CurrentSource, Near2FarMonitor, Box, dict[int, str]]:
-    """Reconstruct lightweight solver + source + monitor + marker objects from stored grid nodes."""
-    x_nodes = np.asarray(d0["x_nodes"], dtype=float)
-    z_nodes = np.asarray(d0["z_nodes"], dtype=float)
+    """Reconstruct lightweight solver + source + monitor + marker objects from stored grid parameters."""
+    quick = bool(int(d0["quick"]))
     dx_fine = float(d0["dx_fine_m"])
+    dx_coarse = float(d0["dx_coarse_m"])
+    half_L = float(d0["half_L_m"])
     b_n2f = float(d0["b_n2f_m"])
     n_pml = int(d0["n_pml"])
+    inner_half = 0.0225 if quick else 0.0200
 
-    grid = GridFIT3D(
-        float(x_nodes[0]),
-        float(x_nodes[-1]),
-        float(x_nodes[0]),
-        float(x_nodes[-1]),
-        float(z_nodes[0]),
-        float(z_nodes[-1]),
-        x=x_nodes,
-        y=x_nodes,
-        z=z_nodes,
-        verbose=0,
+    grid = build_point_dipole_grid(
+        graded=True,
+        dx_fine_m=dx_fine,
+        dx_coarse_m=dx_coarse,
+        inner_half_m=inner_half,
+        domain_half_m=half_L,
+        grading=1.24,
     )
     solver = SolverFIT3D(grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=n_pml, verbose=0)
     pulse = GaussianSource(F0_HZ, 0.60 * F0_HZ)
     src = CurrentSource(pulse, component="z", center=(0.0, 0.0, 0.0), size=(0.0, 0.0, 0.0), amplitude=I0_L_AM)
     n2f = Near2FarMonitor(frequencies=[F0_HZ], center=(0.0, 0.0, 0.0), size=snap_monitor_box(grid, b_n2f))
+    n2f.faces = [n2f]
     dip_marker = Box((0.0, 0.0, 0.0), (2.0 * dx_fine, 2.0 * dx_fine, 3.0 * dx_fine), "pec")
     mat_names = {id(dip_marker): "Hertzian dipole (Il = 10 mA m)"}
     return solver, src, n2f, dip_marker, mat_names
 
 
 def plot_00_setup_schematic(d0: Any, fig_dir: Path) -> Path:
-    """Render Figure 00: Labelled setup schematic and locally refined graded FIT mesh."""
+    """Render Figures 00a/00b and setup table via :func:`wakis.schematic.save_setup_figures`."""
     figstyle.apply_style()
     solver, src, n2f, _, _ = _build_schematic_objects(d0)
-    fig, axes = figstyle.new_figure(width_in=10.0, height_in=4.6, ncols=2, nrows=1)
-    ax0, ax1 = axes
+    dx_fine = float(d0["dx_fine_m"])
+    variations = [
+        {"name": "Dipole length sweep", "details": r"$\ell / \lambda_0 \in [0.04, 0.50]$ ($N_{\mathrm{seg}} \in \{1, \dots, 25\}$)"},
+        {"name": "CPML clearance study", "details": r"$d_{\mathrm{PML}} / \lambda_0 \in [0.045, 0.420]$ ($kd_{\mathrm{PML}} \in [0.28, 2.64]$)"},
+        {"name": "Uniform mesh convergence", "details": r"$\lambda_0 / \Delta \in \{10, 14, 20, 26\}$ cells/$\lambda_0$"},
+        {"name": "Extended radiation movie", "details": r"$6.63\,\lambda_0 \times 2.93\,\lambda_0 \times 6.63\,\lambda_0$ at $20.5$ cells/$\lambda_0$ ($r_{\max} = 3.32\,\lambda_0$)"},
+    ]
+    res = schematic.save_setup_figures(
+        solver,
+        fig_dir,
+        plane="xz",
+        cut_coord=0.0,
+        unit="mm",
+        freq=F0_HZ,
+        min_feature=dx_fine,
+        sources=[src],
+        monitors=[n2f],
+        title_geometry="3D Hertzian Point Dipole Setup ($xz$ plane, $y = 0$)",
+        title_mesh="Locally Refined Graded FIT Mesh and Excitation",
+        variations=variations,
+    )
 
-    schematic.plot_schematic(
+    # Reposition the point-source tag right next to the origin star so it sits on its own object
+    fig_a, ax_a = schematic.plot_schematic(
         solver,
         plane="xz",
-        ax=ax0,
+        cut_coord=0.0,
+        unit="mm",
+        freq=F0_HZ,
         sources=[src],
         monitors=[n2f],
         show_mesh=False,
-        show_pulse_inset=True,
-        freq=F0_HZ,
-        unit="mm",
-        title="(a) Setup Schematic ($xz$ plane, $y = 0$)",
+        show_pulse_inset=False,
+        title="3D Hertzian Point Dipole Setup ($xz$ plane, $y = 0$)",
     )
-    r_kr1_mm = R_KR1_M * 1e3
-    circ = Circle(
-        (0.0, 0.0),
-        r_kr1_mm,
-        fill=False,
-        linestyle=":",
-        linewidth=1.3,
-        edgecolor=COLORS["orange"],
-        zorder=8,
-    )
-    ax0.add_patch(circ)
-    ax0.annotate(
-        f"$kr = 1$ ($r = {r_kr1_mm:.1f}$ mm)",
-        xy=(r_kr1_mm * np.cos(0.25 * np.pi), -r_kr1_mm * np.sin(0.25 * np.pi)),
-        xytext=(r_kr1_mm * 0.55, -r_kr1_mm * 1.95),
-        fontsize=8.5,
-        color=COLORS["orange"],
-        arrowprops=dict(arrowstyle="->", lw=0.9, color=COLORS["orange"]),
-        zorder=9,
-    )
+    for txt in ax_a.texts:
+        if "1 ·" in txt.get_text():
+            txt.set_position((24.0, 18.0))
+            txt.set_ha("left")
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
-    schematic.draw_mesh(
-        ax1,
+    # Center the 1x zoom inset on the 5 mm fine core region around the dipole origin
+    fig_b, _ = schematic.plot_mesh_and_excitation(
         solver,
         plane="xz",
+        cut_coord=0.0,
         unit="mm",
-        every=1,
         freq=F0_HZ,
-        zoom_inset=True,
-        zoom_bounds=(-45.0, -45.0, 90.0, 90.0),
-        show_cpw=True,
-    )
-    schematic.overlay_geometry(
-        ax1,
-        solver,
-        plane="xz",
-        unit="mm",
+        min_feature=dx_fine,
         sources=[src],
-        monitors=[n2f],
-        show_boundaries=True,
-        show_sources=True,
-        show_monitors=True,
+        zoom_bounds=(-0.040, 0.040, -0.040, 0.040),
+        title="Locally Refined Graded FIT Mesh and Excitation",
     )
-    ax1.set_aspect("equal")
-    ax1.set_xlabel("$x$ [mm]")
-    ax1.set_ylabel("$z$ [mm]")
-    ax1.set_title("(b) Locally Refined Graded FIT Mesh ($\\Delta_{\\min} = 5$ mm)", pad=12)
-
-    out = fig_dir / "00_setup_schematic.png"
-    return figstyle.save(fig, out, close=True, auto_legend_below=False)
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res["geometry_figure"]
 
 
 def plot_01_radial_field_zones_kr1(d0: Any, fig_dir: Path) -> Path:
@@ -1430,50 +1527,125 @@ def plot_05_resolution_and_cpml_study(d2: Any, d3: Any, fig_dir: Path) -> Path:
 
 
 def plot_06_dipole_radiation_gif(d0: Any, fig_dir: Path) -> Path:
-    """Render Figure 06: Animated time-domain GIF of the 3D point dipole wave with overlay_geometry."""
+    """Render Figure 06: Animated time-domain GIF of the 3D point-dipole wave over r <= 3.32*lambda_0."""
     figstyle.apply_style()
-    solver, src, n2f, dip_marker, mat_names = _build_schematic_objects(d0)
-    x_mm = np.asarray(d0["x_ez"], dtype=float) * 1e3
-    z_mm = np.asarray(d0["z_ez"], dtype=float) * 1e3
+    x_m = np.asarray(d0["td_x_ez"] if "td_x_ez" in d0 else d0["x_ez"], dtype=float)
+    z_m = np.asarray(d0["td_z_ez"] if "td_z_ez" in d0 else d0["z_ez"], dtype=float)
     frames = np.asarray(d0["td_frames"], dtype=float)
     times_ns = np.asarray(d0["td_times_ns"], dtype=float)
-    r_kr1_mm = R_KR1_M * 1e3
+    times_per = (
+        np.asarray(d0["td_times_periods"], dtype=float)
+        if "td_times_periods" in d0
+        else times_ns * 1e-9 * F0_HZ
+    )
+    r_phys_lam = float(d0["td_r_phys_m"]) / LAM0_M if "td_r_phys_m" in d0 else float(np.max(np.abs(x_m))) / LAM0_M
+    r_total_lam = float(d0["td_r_total_m"]) / LAM0_M if "td_r_total_m" in d0 else r_phys_lam * 1.09
+    cpw = float(d0["td_cpw"]) if "td_cpw" in d0 else 20.5
+    n_pml = int(d0["td_n_pml"]) if "td_n_pml" in d0 else 6
 
-    vmax = float(np.percentile(np.abs(frames), 98.5))
+    x_lam = x_m / LAM0_M
+    z_lam = z_m / LAM0_M
+    r_lam = np.sqrt(x_lam[:, None] ** 2 + z_lam[None, :] ** 2)
+    scaled_frames = frames[:, : len(x_lam), : len(z_lam)] * r_lam[None, :, :]
+
+    far_mask = r_lam >= 0.25
+    vmax = float(np.percentile(np.abs(scaled_frames[:, far_mask]), 99.0))
     if vmax <= 0.0:
         vmax = 1.0
 
+    r_kr1_lam = R_KR1_M / LAM0_M
+    pml_w = r_total_lam - r_phys_lam
+
     pil_images: list[Image.Image] = []
-    for idx in range(frames.shape[0]):
-        fig, ax = figstyle.new_figure(width_in=4.8, height_in=4.3, ncols=1, nrows=1)
+    for idx in range(scaled_frames.shape[0]):
+        fig, ax = figstyle.new_figure(width_in=5.1, height_in=4.5, ncols=1, nrows=1)
+        fig.set_dpi(160)
         im = ax.pcolormesh(
-            x_mm,
-            z_mm,
-            frames[idx, : len(x_mm), : len(z_mm)].T,
+            x_lam,
+            z_lam,
+            scaled_frames[idx].T,
             cmap=figstyle.CMAP_DIVERGING,
             vmin=-vmax,
             vmax=vmax,
             shading="auto",
         )
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$E_z(x, 0, z, t)$ [V/m]")
-        schematic.overlay_geometry(
-            ax,
-            solver,
-            plane="xz",
-            unit="mm",
-            structures=[dip_marker],
-            material_names=mat_names,
-            sources=[src],
-            monitors=[n2f],
-            show_sources=True,
-            show_monitors=True,
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$(r / \lambda_0)\,E_z(x, 0, z, t)$ [V/m]")
+
+        # Thin hatched CPML band at the 4 frame edges (cropped out of the field area)
+        pml_kw = dict(
+            facecolor="#F3E8E8",
+            edgecolor=COLORS["red"],
+            hatch="////",
+            linewidth=0.7,
+            zorder=7,
         )
-        circ = Circle((0.0, 0.0), r_kr1_mm, fill=False, ls="--", lw=1.1, edgecolor=COLORS["orange"], zorder=8)
-        ax.add_patch(circ)
+        ax.add_patch(Rectangle((-r_total_lam, r_phys_lam), 2.0 * r_total_lam, pml_w, **pml_kw))
+        ax.add_patch(Rectangle((-r_total_lam, -r_total_lam), 2.0 * r_total_lam, pml_w, **pml_kw))
+        ax.add_patch(Rectangle((-r_total_lam, -r_phys_lam), pml_w, 2.0 * r_phys_lam, **pml_kw))
+        ax.add_patch(Rectangle((r_phys_lam, -r_phys_lam), pml_w, 2.0 * r_phys_lam, **pml_kw))
+        ax.text(
+            0.0,
+            r_phys_lam + 0.5 * pml_w,
+            f"CPML ({n_pml} cells)",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            color=COLORS["red"],
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor=COLORS["red"], lw=0.5, alpha=0.92),
+            zorder=10,
+        )
+
+        # Near-field kr = 1 circle and 1, 2, 3 lambda_0 range rings
+        c_nf = Circle((0.0, 0.0), r_kr1_lam, fill=False, ls="--", lw=1.1, edgecolor=COLORS["orange"], zorder=8)
+        ax.add_patch(c_nf)
+        for m_ring in (1, 2, 3):
+            c_r = Circle((0.0, 0.0), float(m_ring), fill=False, ls=":", lw=0.65, edgecolor=COLORS["grey"], alpha=0.65, zorder=6)
+            ax.add_patch(c_r)
+            ang = 0.25 * np.pi
+            ax.text(
+                m_ring * np.cos(ang),
+                -m_ring * np.sin(ang),
+                f"${m_ring}\\lambda_0$",
+                fontsize=6.8,
+                color=COLORS["grey"],
+                ha="left",
+                va="top",
+                zorder=9,
+            )
+
+        # Labelled point dipole source at the origin
+        ax.plot(0.0, 0.0, marker="*", markersize=8.5, color=COLORS["red"], markeredgecolor="white", markeredgewidth=0.6, zorder=10)
+        ax.annotate(
+            r"Point dipole $J_z$",
+            xy=(0.0, 0.0),
+            xytext=(0.38, 0.42),
+            fontsize=7.5,
+            color=figstyle.INK,
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor=COLORS["red"], lw=0.6, alpha=0.90),
+            arrowprops=dict(arrowstyle="->", lw=0.75, color=COLORS["red"]),
+            zorder=11,
+        )
+        ax.annotate(
+            r"Near field ($kr=1$)",
+            xy=(-r_kr1_lam * 0.71, -r_kr1_lam * 0.71),
+            xytext=(-1.55, -0.68),
+            fontsize=7.0,
+            color=COLORS["orange"],
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor=COLORS["orange"], lw=0.5, alpha=0.88),
+            arrowprops=dict(arrowstyle="->", lw=0.7, color=COLORS["orange"]),
+            zorder=11,
+        )
+
+        ax.set_xlim(-r_total_lam, r_total_lam)
+        ax.set_ylim(-r_total_lam, r_total_lam)
+        ax.set_xticks([-3, -2, -1, 0, 1, 2, 3])
+        ax.set_yticks([-3, -2, -1, 0, 1, 2, 3])
         ax.set_aspect("equal")
-        ax.set_xlabel("$x$ [mm]")
-        ax.set_ylabel("$z$ [mm]")
-        ax.set_title(f"3D Hertzian Dipole Wave ($t = {times_ns[idx]:.2f}$ ns)")
+        ax.set_xlabel(r"$x / \lambda_0$ ($\lambda_0 = 300$ mm)")
+        ax.set_ylabel(r"$z / \lambda_0$")
+        ax.set_title(
+            f"3D Point Dipole Wave ($t = {times_per[idx]:.2f}\\,T_0$, {cpw:.1f} cells/$\\lambda_0$)"
+        )
         figstyle.finish(fig, max_panels=1, auto_legend_below=False)
 
         fig.canvas.draw()
@@ -1487,7 +1659,7 @@ def plot_06_dipole_radiation_gif(d0: Any, fig_dir: Path) -> Path:
         out,
         save_all=True,
         append_images=pil_images[1:],
-        duration=110,
+        duration=100,
         loop=0,
         optimize=True,
     )
@@ -1515,8 +1687,10 @@ def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
     d2 = np.load(data_dir / "task_cpml_distance_study.npz")
     d3 = np.load(data_dir / "task_resolution_and_mesh_study.npz")
 
+    fig00a = plot_00_setup_schematic(d0, fig_dir)
     return [
-        plot_00_setup_schematic(d0, fig_dir),
+        fig00a,
+        fig_dir / "00b_setup_mesh_and_excitation.png",
         plot_01_radial_field_zones_kr1(d0, fig_dir),
         plot_02_near_and_far_field_maps(d0, fig_dir),
         plot_03_far_field_pattern_and_power(d0, fig_dir),

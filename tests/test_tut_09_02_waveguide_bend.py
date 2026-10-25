@@ -179,6 +179,12 @@ def test_wakis_resimulation_vs_stored_spectrum_and_figures():
     assert lb["invrs_gym_leaderboard_best"]["min_spacing_px"] == 7
 
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_initial.png",
+        "00b_setup_mesh_and_excitation_initial.png",
+        "00a_setup_geometry_final.png",
+        "00b_setup_mesh_and_excitation_final.png",
         "01_bend_challenge_and_stack.png",
         "02_optimization_trace_beta_stages.png",
         "03_final_design_and_length_scale.png",
@@ -191,6 +197,9 @@ def test_wakis_resimulation_vs_stored_spectrum_and_figures():
     for fname in expected_figs:
         fpath = fig_dir / fname
         assert fpath.exists() and fpath.stat().st_size > 1024, f"Missing or empty figure {fname}"
+    for tname in ("00_setup_table.md", "00_setup_table_initial.md", "00_setup_table_final.md"):
+        tpath = fig_dir / tname
+        assert tpath.exists() and tpath.stat().st_size > 256, f"Missing or empty setup table {tname}"
     assert (fig_dir / "08_design_evolution.gif").stat().st_size < 5 * 1024 * 1024
 
     total_data_bytes = sum(p.stat().st_size for p in data_dir.rglob("*") if p.is_file())

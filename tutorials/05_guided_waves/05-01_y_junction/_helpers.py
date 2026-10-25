@@ -343,6 +343,36 @@ def draw_polyslab_regions(
         )
 
 
+class _PolygonSchematicProxy:
+    """Lightweight polygon structure proxy exposing `.vertices`, `.material`, and `.name`
+    (without `.bounds`) so `wakis.schematic` classifies a 2D `PolySlab` as `kind='polygon'`.
+    """
+
+    def __init__(self, slab: PolySlab, material_eps: float, name: str):
+        self.vertices = np.asarray(slab.vertices, dtype=float)
+        self.material = float(material_eps)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Lightweight proxy around `SolverFIT3D` that hides `ieps` from
+    `wakis.schematic.extract_setup_info` so explicit polygon `structures` are used.
+    """
+
+    def __init__(self, solver: SolverFIT3D, eps_clad: float):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 10)
+        self.bc_low = getattr(solver, "bc_low", ["cpml", "cpml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["cpml", "cpml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
 def build_schematic_components(
     grid: GridFIT3D,
     structures: list[PolySlab],
@@ -362,7 +392,7 @@ def build_schematic_components(
 
     Returns `(solver_schem, labeled_structs, material_names, sources_list, monitors_list)`.
     """
-    solver_schem = SolverFIT3D(
+    solver_raw = SolverFIT3D(
         grid,
         bc_low=["cpml", "cpml", "periodic"],
         bc_high=["cpml", "cpml", "periodic"],
@@ -371,13 +401,24 @@ def build_schematic_components(
         verbose=0,
     )
     eps_clad = n_to_eps(n_clad)
-    solver_schem.bg = [eps_clad, 1.0, 0.0]
+    neff_slab = slab_neff(n_core, n_clad, h_si, wl_ref, polarization="TE")
+    eps_slab = n_to_eps(neff_slab)
+    solver_raw.bg = [eps_clad, 1.0, 0.0]
     for comp in ("x", "y", "z"):
-        solver_schem.ieps[:, :, :, comp] = 1.0 / (eps_clad * epsilon_0)
+        solver_raw.ieps[:, :, :, comp] = 1.0 / (eps_clad * epsilon_0)
 
-    labeled_structs = []
+    solver_schem = _SchematicSolverProxy(solver_raw, eps_clad=eps_clad)
+    labeled_structs = [
+        _PolygonSchematicProxy(
+            st,
+            material_eps=eps_slab,
+            name=f"Si core (n = {n_core:.3f}, 2D EIM n_eff = {neff_slab:.3f})",
+        )
+        for st in structures
+    ]
     material_names = {
-        "background": f"SiO2 cladding (n = {n_clad:.3f})",
+        "background": f"SiO₂ cladding (n = {n_clad:.3f}, ε_r = {eps_clad:.2f})",
+        "region_0": f"Si core (n = {n_core:.3f}, 2D EIM n_eff = {neff_slab:.3f}, ε_eff = {eps_slab:.2f})",
     }
 
     f_min = c_light / wl_max
@@ -397,12 +438,16 @@ def build_schematic_components(
         vb = (cy - 0.5 * sy, cy + 0.5 * sy)
         if pt.name == drive_port:
             d_vec = (float(pt.direction), 0.0, 0.0) if axis == 0 else (0.0, float(pt.direction), 0.0)
+            x_src = cx - 0.14e-6 if axis == 0 else cx
+            hb_src = (x_src, x_src) if axis == 0 else hb
             sources_list.append(
                 {
                     "kind": "sheet",
                     "type_name": "ModeSource",
-                    "label": f"ModeSource '{pt.name}' (TE0)",
-                    "h_bounds": hb,
+                    "short_word": "ModeSrc",
+                    "label": f"Port '{pt.name}' ModeSource (TE₀, +x)",
+                    "desc": f"Port '{pt.name}' ModeSource at x = {cx * 1e6:.2f} µm (TE₀, +x)",
+                    "h_bounds": hb_src,
                     "v_bounds": vb,
                     "k_vec": d_vec,
                     "e_vec": (0.0, 1.0, 0.0) if axis == 0 else (1.0, 0.0, 0.0),
@@ -416,11 +461,14 @@ def build_schematic_components(
                     },
                 }
             )
+        s_tag = "S₁₁" if pt.name == "in" else ("S₂₁" if pt.name == "out1" else "S₃₁")
         monitors_list.append(
             {
                 "kind": "plane",
                 "type_name": "ModeMonitor",
-                "label": f"ModeMonitor '{pt.name}'",
+                "short_word": f"{pt.name} mon" if pt.name == "in" else pt.name,
+                "label": f"Port '{pt.name}' ModeMonitor ({s_tag})",
+                "desc": f"Port '{pt.name}' ModeMonitor at x = {cx * 1e6:.2f} µm ({s_tag})",
                 "h_bounds": hb,
                 "v_bounds": vb,
             }
@@ -436,7 +484,9 @@ def build_schematic_components(
             {
                 "kind": "box",
                 "type_name": "FluxMonitor",
+                "short_word": "FluxBox",
                 "label": "2D Poynting FluxMonitor box",
+                "desc": "Closed 2D Poynting FluxMonitor box (4 faces inside CPML)",
                 "h_bounds": (xw, xe),
                 "v_bounds": (ys, yn),
             }
@@ -487,99 +537,165 @@ def plot_setup_schematic_y_junction(
     port_ey_in: np.ndarray,
     out_path: Path,
     n_pml: int = 10,
-) -> Path:
-    """Render `00_setup_schematic.png` for Tutorial 5.1 using `wakis.schematic` and `wakis.figstyle`."""
+) -> dict:
+    """Render `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, and
+    `00_setup_table.md` for Tutorial 5.1 using `wakis.schematic.save_setup_figures`.
+    """
+    from matplotlib.patches import Polygon as MplPolygon, Rectangle
+
+    out_path = Path(out_path)
+    out_dir = out_path if (out_path.is_dir() or out_path.suffix == "") else out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     solver_s, structs_s, mat_names, srcs, mons = build_schematic_components(
         grid, structures, ports, n_pml=n_pml
     )
-    metrics = measure_y_junction_mesh(grid, min_feature_m=TIP_GAP)
-    with figstyle.apply_style():
-        fig, axes = figstyle.new_figure(
-            width_in=figstyle.FULL_WIDTH_IN,
-            height_in=4.2,
-            ncols=2,
-            nrows=1,
-            gridspec_kw={"width_ratios": [2.15, 1.0]},
-            constrained_layout=False,
-        )
-        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.20, top=0.84, wspace=0.22)
-        ax_main, ax_mesh = axes
-        schematic.plot_schematic(
-            solver_s,
-            plane="xy",
-            ax=ax_main,
-            unit="µm",
-            structures=structs_s,
-            material_names=mat_names,
-            sources=srcs,
-            monitors=mons,
-            show_mesh=True,
-            mesh_zoom=False,
-            show_pulse_inset=True,
-            show_wave_packet=False,
-            wavelength=WL_REF,
-            title="Tutorial 5.1 setup: 2D EIM SOI Y-junction splitter",
-        )
-        draw_polyslab_regions(
-            ax_main, structures, fill=True, label_Pos=(0.95, 0.0)
-        )
-        draw_launched_mode_on_schematic(
-            ax_main,
-            port_x_um=X_PORT_IN * 1e6,
-            port_y_um=port_y_in_um,
-            port_ey=port_ey_in,
-            scale_x_um=0.52,
-        )
+    variations = [
+        {
+            "name": "kottke_coarse..fine (tasks 0–5)",
+            "param": "cpw ∈ {14, 20, 28}, averaging ∈ {kottke, staircase}",
+            "note": "Uniform square-cell resolution ladder (14, 20, 28 cells/λ)",
+        },
+        {
+            "name": "kottke_reference (task 6)",
+            "param": "cpw = 56 (657 × 412 × 1 = 270,684 cells)",
+            "note": "Independent 2× fine Kottke reference",
+        },
+        {
+            "name": "kottke_nonuniform (task 7)",
+            "param": "Graded non-square Cartesian mesh (298 × 162 × 1 = 48,276 cells)",
+            "note": "12 cells across 200 nm tip gap (Δy_tip = 16.7 nm), Δx_lead = 24.5 nm, Δy_clad ≤ 50.4 nm (−34% cells)",
+        },
+    ]
+    title_geom = "Tutorial 5.1 Setup: 2D EIM SOI Y-Junction Power Splitter"
+    title_mesh = "Discretization (Graded Non-Square Mesh & 200 nm Tip-Gap Zoom) and Excitation"
 
-        # Right panel: 1x resolution mesh zoom around the 200 nm tip gap
-        schematic.draw_mesh(
-            ax_mesh,
-            solver_s,
-            plane="xy",
-            unit="µm",
-            every=1,
-            wavelength=WL_REF,
-            color="#334155",
-            alpha=0.55,
-            linewidth=0.55,
-            show_cpw=False,
+    res = schematic.save_setup_figures(
+        solver_s,
+        out_dir,
+        prefix="00",
+        plane="xy",
+        structures=structs_s,
+        material_names=mat_names,
+        sources=srcs,
+        monitors=mons,
+        unit="µm",
+        wavelength=WL_REF,
+        min_feature=TIP_GAP,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
+        variations=variations,
+    )
+
+    # Enhance 00a_setup_geometry.png with top/bottom CPML shading, launched mode profile, and clean port tags
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_s,
+        plane="xy",
+        structures=structs_s,
+        material_names=mat_names,
+        sources=srcs,
+        monitors=mons,
+        unit="µm",
+        wavelength=WL_REF,
+        title=title_geom,
+        width_in=7.6,
+        height_in=4.6,
+    )
+    x0_um, x1_um = float(grid.xmin * 1e6), float(grid.xmax * 1e6)
+    y0_um, y1_um = float(grid.ymin * 1e6), float(grid.ymax * 1e6)
+    th_y_low = float((grid.y[n_pml] - grid.y[0]) * 1e6)
+    th_y_high = float((grid.y[-2] - grid.y[-2 - n_pml]) * 1e6)
+    for yb_start, th_y in ((y0_um, th_y_low), (y1_um - th_y_high, th_y_high)):
+        ax_a.add_patch(
+            Rectangle(
+                (x0_um, yb_start),
+                x1_um - x0_um,
+                th_y,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="///",
+                alpha=0.36,
+                lw=0.8,
+                zorder=2,
+            )
         )
-        draw_polyslab_regions(
-            ax_mesh, structures, fill=True, alpha=0.45, label_Pos=None
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+
+    x_src_um = float(srcs[0]["h_bounds"][0] * 1e6)
+    draw_launched_mode_on_schematic(
+        ax_a,
+        port_x_um=x_src_um,
+        port_y_um=port_y_in_um,
+        port_ey=port_ey_in,
+        scale_x_um=0.42,
+    )
+
+    tag_Overrides = {
+        "1 ·": (-0.75, 1.15),
+        "2 ·": (-0.55, -1.15),
+        "3 ·": (3.85, 0.90),
+        "4 ·": (3.85, -0.90),
+        "5 ·": (1.85, 1.48),
+        "Si core": (1.05, 0.0),
+        "SiO₂ cladding": (0.75, -1.38),
+    }
+    for txt in ax_a.texts:
+        s = txt.get_text()
+        for prefix_key, pos in tag_Overrides.items():
+            if s.startswith(prefix_key):
+                txt.set_position(pos)
+                break
+
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with the Y-junction polygon on ax_mesh and 1x tip-gap zoom inset
+    zoom_bounds = (1.72e-6, 2.28e-6, -0.34e-6, 0.34e-6)
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_s,
+        plane="xy",
+        structures=structs_s,
+        material_names=mat_names,
+        sources=srcs,
+        monitors=mons,
+        unit="µm",
+        mesh_every=6,
+        zoom_bounds=zoom_bounds,
+        wavelength=WL_REF,
+        min_feature=TIP_GAP,
+        title=title_mesh,
+        width_in=7.6,
+        height_in=5.6,
+    )
+    ax_mesh = axes_b[0]
+    verts_um = np.asarray(structures[0].vertices, dtype=float) * 1e6
+    ax_mesh.add_patch(
+        MplPolygon(
+            verts_um,
+            closed=True,
+            facecolor="#DCEAF7",
+            edgecolor="#1E293B",
+            lw=1.1,
+            alpha=0.80,
+            zorder=2,
         )
-        ax_mesh.set(
-            aspect="equal",
-            xlim=(1.72, 2.28),
-            ylim=(-0.36, 0.36),
-            xlabel="x [µm]",
-            ylabel="y [µm]",
-            title="Mesh zoom: 200 nm tip gap (1× grid)",
-        )
-        ax_mesh.text(
-            0.03,
-            0.96,
-            (
-                f"Tip gap g = {metrics['min_feature_nm']:.0f} nm: "
-                f"{metrics['cells_across_feature']:.1f} cells\n"
-                f"Δy_tip = {metrics['dy_tip_nm']:.1f} nm, "
-                f"Δx_lead = {metrics['dx_background_nm']:.1f} nm\n"
-                f"Cladding Δy_max = {metrics['dy_clad_max_nm']:.1f} nm"
-            ),
-            transform=ax_mesh.transAxes,
-            ha="left",
-            va="top",
-            fontsize=7.8,
-            color=figstyle.INK,
-            bbox=dict(
-                boxstyle="round,pad=0.22",
-                facecolor="white",
-                edgecolor="#CBD5E1",
-                alpha=0.92,
-            ),
-            zorder=15,
-        )
-        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
-    return out_path
+    )
+    for child_ax in fig_b.axes:
+        if getattr(child_ax, "_is_inset", False):
+            child_ax.add_patch(
+                MplPolygon(
+                    verts_um,
+                    closed=True,
+                    facecolor="#DCEAF7",
+                    edgecolor="#1E293B",
+                    lw=1.0,
+                    alpha=0.80,
+                    zorder=1.5,
+                )
+            )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
 
 
 def render_field_map_with_overlay(
@@ -645,7 +761,7 @@ def render_field_map_with_overlay(
             solver_s,
             plane="xy",
             unit="µm",
-            structures=structs_s,
+            structures=[],
             material_names=mat_names,
             sources=srcs,
             monitors=mons,
@@ -794,14 +910,14 @@ def plot_mesh_upgrade_comparison(
 
     with figstyle.apply_style():
         fig, axes = figstyle.new_figure(
-            width_in=figstyle.FULL_WIDTH_IN,
-            height_in=3.5,
+            width_in=11.0,
+            height_in=4.2,
             ncols=3,
             nrows=1,
-            gridspec_kw={"width_ratios": [1.0, 1.0, 1.15]},
+            gridspec_kw={"width_ratios": [1.0, 1.0, 1.18]},
             constrained_layout=False,
         )
-        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.18, top=0.84, wspace=0.34)
+        fig.subplots_adjust(left=0.06, right=0.98, bottom=0.29, top=0.83, wspace=0.32)
         ax0, ax1, ax2 = axes
 
         for ax, slv, sts, mats in (
@@ -930,7 +1046,13 @@ def plot_mesh_upgrade_comparison(
             ylim=(0.30, 0.48),
             title="(c) Excess loss accuracy",
         )
-        ax2.legend(loc="upper right", fontsize=8.5)
+        ax2.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.22),
+            ncol=1,
+            frameon=True,
+            fontsize=8.2,
+        )
         figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 

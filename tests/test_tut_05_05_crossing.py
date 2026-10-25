@@ -491,7 +491,8 @@ def test_setup_schematic_and_graded_mesh_mutation():
     mod = _load_crossing_module()
     fig_dir = mod.FIG_DIR
     for fname in (
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "00b_crossing_geometries_schematic.png",
         "04_permittivity_mesh_zoom.png",
         "04b_mesh_upgrade_comparison.png",
@@ -504,6 +505,10 @@ def test_setup_schematic_and_graded_mesh_mutation():
     ):
         p = fig_dir / fname
         assert p.exists() and p.stat().st_size > 1000, f"Missing figure {p}"
+    table_path = fig_dir / "00_setup_table.md"
+    assert table_path.is_file() and table_path.stat().st_size > 200, (
+        f"Missing setup table {table_path}"
+    )
     assert (fig_dir / "09_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024
 
     xg, yg, zg = mod.build_crossing_graded_axes(cpw=20.0, n_feature_min=8)

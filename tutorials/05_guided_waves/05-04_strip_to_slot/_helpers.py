@@ -456,11 +456,22 @@ class NonUniformStripToSlotPIC(PICSimulation):
         return self.solver
 
 
+class _PolygonSchematicProxy:
+    """Lightweight structure proxy exposing 2D polygon vertices for ``wakis.schematic``."""
+
+    def __init__(self, structure, eps_val: float, name: str):
+        self.vertices = np.asarray(structure.vertices, dtype=float)
+        self.material = float(eps_val)
+        self.name = name
+        self.z_min = float(getattr(structure, "z_min", -0.125e-6))
+        self.z_max = float(getattr(structure, "z_max", 0.125e-6))
+
+
 class _SchematicSolverProxy:
     """Lightweight proxy around ``SolverFIT3D`` that hides ``ieps`` from ``wakis.schematic``
     so 2D ``PolySlab`` geometries can be drawn directly without bounding-box fallback rectangles."""
 
-    def __init__(self, solver, eps_clad: float):
+    def __init__(self, solver, eps_clad: float, structures=()):
         self._solver = solver
         self.grid = solver.grid
         self.Nx = solver.Nx
@@ -471,7 +482,7 @@ class _SchematicSolverProxy:
         self.bc_low = getattr(solver, "bc_low", ["pml", "pml", "periodic"])
         self.bc_high = getattr(solver, "bc_high", ["pml", "pml", "periodic"])
         self.bg = [float(eps_clad), 1.0, 0.0]
-        self._assigned_structures = ()
+        self._assigned_structures = tuple(structures)
 
 
 def _build_port_sources_and_monitors(pic, include_flux_box: bool = True):
@@ -483,6 +494,10 @@ def _build_port_sources_and_monitors(pic, include_flux_box: bool = True):
     pulse_obj = pic.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
+    freqs = np.asarray(getattr(pic, "frequencies", [f0]), dtype=float)
+    f_min_thz = float(np.min(freqs)) * 1e-12
+    f_max_thz = float(np.max(freqs)) * 1e-12
+    n_f = int(freqs.size)
 
     sources_s = []
     monitors_s = []
@@ -496,6 +511,11 @@ def _build_port_sources_and_monitors(pic, include_flux_box: bool = True):
                     "kind": "sheet",
                     "type_name": "ModeSource",
                     "label": "Port 'in' ModeSource (strip TE₀, +x)",
+                    "short_word": "ModeSrc",
+                    "desc": "Port 'in' ModeSource (strip TE₀, w = 400 nm, +x)",
+                    "pos_str": f"x = {x_src * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"f₀ = {f0 * 1e-12:.2f} THz (λ ∈ [1.50, 1.60] µm, N = {n_f})",
+                    "polarization": "TE₀ (Ey, Hz, +x)",
                     "h_bounds": (x_src, x_src),
                     "v_bounds": (-hy, +hy),
                     "e_vec": (0.0, 1.0, 0.0),
@@ -515,6 +535,12 @@ def _build_port_sources_and_monitors(pic, include_flux_box: bool = True):
                     "kind": "plane",
                     "type_name": "ModeMonitor",
                     "label": "Port 'in' ModeMonitor (S₁₁)",
+                    "short_word": "in",
+                    "desc": "Port 'in' ModeMonitor (strip TE₀ reflection S₁₁)",
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ey, Hz (mode overlap)",
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
@@ -525,18 +551,37 @@ def _build_port_sources_and_monitors(pic, include_flux_box: bool = True):
                     "kind": "plane",
                     "type_name": "ModeMonitor",
                     "label": "Port 'out' ModeMonitor (slot TE₀, S₂₁)",
+                    "short_word": "out",
+                    "desc": "Port 'out' ModeMonitor (slot TE₀ transmission S₂₁, g = 100 nm)",
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ey, Hz (mode overlap)",
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
             )
     if include_flux_box:
+        x_lo = xmin + 2.0 * dx_bg
+        x_hi = xmax - 2.0 * dx_bg
+        y_lo = ymin + 2.0 * dy_bg
+        y_hi = ymax - 2.0 * dy_bg
         monitors_s.append(
             {
                 "kind": "box",
                 "type_name": "FluxMonitor",
                 "label": "2D Poynting FluxMonitor box",
-                "h_bounds": (xmin + 2.0 * dx_bg, xmax - 2.0 * dx_bg),
-                "v_bounds": (ymin + 2.0 * dy_bg, ymax - 2.0 * dy_bg),
+                "short_word": "FluxBox",
+                "desc": "2D Poynting FluxMonitor box (4-wall energy budget)",
+                "pos_str": (
+                    f"x ∈ [{x_lo * 1e6:.2f}, {x_hi * 1e6:.2f}] µm, "
+                    f"y ∈ [{y_lo * 1e6:.2f}, {y_hi * 1e6:.2f}] µm"
+                ),
+                "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                "frequencies": freqs,
+                "component": "S · n (east + west + north + south)",
+                "h_bounds": (x_lo, x_hi),
+                "v_bounds": (y_lo, y_hi),
             }
         )
     return sources_s, monitors_s
@@ -566,6 +611,7 @@ def _draw_launched_and_slot_modes(
         yi,
         color="#d62728",
         lw=1.7,
+        marker="none",
         zorder=9,
         label=r"Launched strip $\mathrm{TE}_0$ $|E_y(y)|$",
     )
@@ -583,6 +629,7 @@ def _draw_launched_and_slot_modes(
         yo,
         color="#1b9e77",
         lw=1.7,
+        marker="none",
         zorder=9,
         label=r"Output slot $\mathrm{TE}_0$ $|E_y(y)|$ ($4.14\times$ jump)",
     )
@@ -636,44 +683,134 @@ def plot_setup_schematic(
     out_path: str | Path,
 ):
     """
-    Render ``00_setup_schematic.png`` (first figure of Tutorial 5.4):
-    - Panel (a): Labelled 2D setup schematic of Design 1 (Symmetric MMI
-      strip-to-slot mode converter, ``L = 6.0 um``) with domain extents, CPML
-      boundaries, Si/SiO2 indices, input strip ``ModeSource`` with launched
-      ``TE0`` profile, output slot ``ModeMonitor`` with discontinuous slot
-      ``TE0`` profile, and 2D Poynting ``FluxMonitor`` box.
-    - Panel (b): ``1x`` mesh view zoomed on the ``g = 100 nm`` oxide slot
-      opening (``x = 1.38 um``) showing ``8.0`` cells across the slot
-      (``dy_min = 12.5 nm``) and non-square cells along the rails.
+    Render the two-figure setup layout for Tutorial 5.4 via
+    ``wakis.schematic.save_setup_figures``:
+    - ``figures/00a_setup_geometry.png``: Labelled 2D setup schematic of Design 1
+      (Symmetric MMI strip-to-slot mode converter, ``L = 6.0 um``) with domain
+      extents, CPML boundaries, Si/SiO2 indices, input strip ``ModeSource`` with
+      launched ``TE0`` profile, output slot ``ModeMonitor`` with discontinuous
+      slot ``TE0`` profile, and 2D Poynting ``FluxMonitor`` box.
+    - ``figures/00b_setup_mesh_and_excitation.png``: ``1x`` mesh view zoomed on
+      the ``g = 100 nm`` oxide slot opening (``x = 1.38 um``) showing ``8.0``
+      cells across the slot (``dy_min = 12.5 nm``), wave-packet extent, and
+      broadband excitation pulse/spectrum.
+    - ``figures/00_setup_table.md``: Markdown setup summary table.
     """
-    figstyle.apply_style()
-    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=13.6, height=5.1)
+    out_path = Path(out_path)
+    fig_dir = out_path.parent if out_path.suffix else out_path
+    fig_dir.mkdir(parents=True, exist_ok=True)
 
     p_in, p_out = pic.ports[0], pic.ports[1]
     sources_s, monitors_s = _build_port_sources_and_monitors(pic, include_flux_box=True)
     neff_s = float(pic.n_eff_slab)
     eps_s = neff_s**2
     eps_clad = float(n_to_eps(pic.n_clad))
+    core_label = f"Si MMI core (ε_r = {eps_s:.2f})"
+    clad_label = f"SiO₂ cladding & 100 nm slot (ε_r = {eps_clad:.2f})"
     mat_names = {
-        "background": f"SiO₂ slot & clad (n={pic.n_clad:.2f}, ε_r={eps_clad:.2f})",
+        "background": clad_label,
+        eps_s: core_label,
     }
-    schematic.plot_schematic(
-        _SchematicSolverProxy(pic.solver, eps_clad),
+    struct_proxies = [
+        _PolygonSchematicProxy(s, eps_s, core_label) for s in pic.structures_3d
+    ]
+    solver_proxy = _SchematicSolverProxy(
+        pic.solver, eps_clad, structures=struct_proxies
+    )
+
+    variations = [
+        {
+            "name": "Design 2: Symmetric Tapered-Finger (Wang et al. 2009)",
+            "param": "L = 8.0 µm, d_finger = 60 nm, g_slot = 100 nm",
+            "note": "Three-PolySlab double-tip finger coupler; T(1550 nm) = 99.80%, N = 8 cells across 60 nm finger gap (Δy_min = 7.14 nm)",
+        },
+        {
+            "name": "Design 3: Asymmetric Lateral Taper (Feng et al. 2007)",
+            "param": "L = 20.0 µm, g_slot = 100 nm",
+            "note": "Two-PolySlab continuous upper rail + tapered lower rail; T(1550 nm) = 99.66%, N = 8 cells across 100 nm slot",
+        },
+        {
+            "name": "Design 1 MMI length sweep",
+            "param": "L ∈ {1.6, 2.2, 3.0, 4.5, 6.0} µm (L_mmi = 1.38 µm)",
+            "note": "Coupled-mode adiabatic saturation of slot-rail taper section L_taper = L - L_mmi",
+        },
+        {
+            "name": "Kottke vs staircase convergence ladder",
+            "param": "Under-resolved (10, 0), L1=(10, 4), L2=(14, 6), L3=(20, 8), R=(40, 16)",
+            "note": "Compares Kottke subpixel smoothing against staircase snapping across 100 nm oxide slot",
+        },
+        {
+            "name": "Graded non-uniform mesh upgrade (kottke_nonuniform)",
+            "param": "367 × 111 × 1 = 40,737 cells (-38.1% vs uniform L3)",
+            "note": "Δy = 12.5 nm (8 cells across 100 nm slot) with non-square Δx ≤ 34 nm along taper",
+        },
+    ]
+
+    title_geom = "Tutorial 5.4 — Strip-to-Slot Mode Converter (Design 1: Symmetric MMI, L = 6.0 µm)"
+    title_mesh = (
+        "Tutorial 5.4 — Strip-to-Slot Mode Converter (Design 1: Symmetric MMI, L = 6.0 µm)"
+        " — Mesh & Excitation"
+    )
+    saved_paths = schematic.save_setup_figures(
+        solver_proxy,
+        fig_dir,
         plane="xy",
-        ax=ax0,
         unit="µm",
-        structures=(),
+        structures=struct_proxies,
         material_names=mat_names,
         sources=sources_s,
         monitors=monitors_s,
-        show_mesh=True,
-        mesh_zoom=False,
-        show_pulse_inset=False,
-        show_wave_packet=False,
         wavelength=1550e-9,
-        title="(a) Design 1: Symmetric MMI strip-to-slot converter setup (L = 6.0 µm)",
+        min_feature=100e-9,
+        variations=variations,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
+    )
+
+    fig_a, ax0 = schematic.plot_schematic(
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=struct_proxies,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        wavelength=1550e-9,
+        title=title_geom,
+        width_in=8.4,
+        height_in=5.2,
     )
     ax0.set_aspect("auto")
+    if fig_a._suptitle is not None:
+        fig_a._suptitle.set_y(1.07)
+
+    # Draw top/bottom CPML bands when using non-uniform y spacing
+    yg = np.asarray(pic.grid.y, dtype=float) * 1e6
+    xg = np.asarray(pic.grid.x, dtype=float) * 1e6
+    n_pml = int(getattr(pic.solver, "n_pml", 10))
+    if n_pml > 0 and yg.size > 2 * n_pml:
+        x0, x1 = float(xg[0]), float(xg[-1])
+        ylo0, ylo1 = float(yg[0]), float(yg[n_pml])
+        yhi0, yhi1 = float(yg[-n_pml - 1]), float(yg[-1])
+        for y_a, y_b in ((ylo0, ylo1), (yhi0, yhi1)):
+            ax0.add_patch(
+                Rectangle(
+                    (x0, y_a),
+                    x1 - x0,
+                    y_b - y_a,
+                    facecolor="#cbd5e1",
+                    edgecolor="#475569",
+                    hatch="///",
+                    lw=0.8,
+                    alpha=0.35,
+                    zorder=2,
+                )
+            )
+
+    for ln in ax0.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+
     _draw_polyslab_polygons(
         ax0,
         pic.structures_3d,
@@ -681,12 +818,15 @@ def plot_setup_schematic(
         alpha=0.28,
         edgecolor="#0f172a",
         lw=1.35,
-        label=f"Si EIM core (h_Si=250 nm, n_Si=3.47)\nn_eff,slab={neff_s:.4f} (ε_r={eps_s:.2f})",
-        label_xy=(3.55, 0.78),
+        label=(
+            f"Si EIM core (h_Si=250 nm, n_Si=3.47)\n"
+            f"n_eff,slab={neff_s:.4f} (ε_r={eps_s:.2f})"
+        ),
+        label_xy=(4.05, 0.72),
     )
     ax0.text(
-        3.55,
-        -1.08,
+        5.15,
+        -1.10,
         "SiO₂ cladding & 100 nm slot (n = 1.44, ε_r = 2.07)",
         fontsize=7.2,
         color="#334155",
@@ -709,8 +849,8 @@ def plot_setup_schematic(
     ax0.annotate(
         "MMI box\n1.38 × 1.24 µm",
         xy=(0.69, 0.62),
-        xytext=(0.45, 1.18),
-        fontsize=7.8,
+        xytext=(0.69, 1.15),
+        fontsize=7.6,
         ha="center",
         arrowprops=dict(arrowstyle="->", color="0.25", lw=1.0),
         bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="0.7", alpha=0.92),
@@ -718,82 +858,95 @@ def plot_setup_schematic(
     ax0.annotate(
         "100 nm SiO₂ slot\nopens at x = 1.38 µm",
         xy=(1.50, 0.0),
-        xytext=(2.60, -0.68),
-        fontsize=7.6,
+        xytext=(2.75, -0.78),
+        fontsize=7.5,
         ha="center",
         arrowprops=dict(arrowstyle="->", color="#d95f02", lw=1.1),
         bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="#d95f02", alpha=0.92),
     )
-    ax0.legend(loc="lower left", fontsize=7.0, framealpha=0.92)
 
-    # Panel (b): 1x mesh zoom on the 100 nm slot opening at x = 1.38 um
-    xl_z, yl_z = (1.12, 1.98), (-0.38, 0.38)
-    ax0.add_patch(
-        Rectangle(
-            (xl_z[0], yl_z[0]),
-            xl_z[1] - xl_z[0],
-            yl_z[1] - yl_z[0],
-            fill=False,
-            ec="#d95f02",
-            lw=1.3,
-            ls="--",
-            zorder=10,
+    tag_positions = {
+        "1 · ModeSrc": (-2.45, 0.88, "left"),
+        "2 · in": (-1.38, -0.88, "left"),
+        "3 · out": (7.55, 0.96, "center"),
+        "4 · FluxBox": (4.05, 1.34, "center"),
+    }
+    for txt in list(ax0.texts):
+        s = txt.get_text().strip()
+        if s in tag_positions:
+            tx, ty, ha_val = tag_positions[s]
+            txt.set_position((tx, ty))
+            txt.set_ha(ha_val)
+
+    fig_a.savefig(fig_dir / "00a_setup_geometry.png", dpi=150, bbox_inches="tight")
+    plt.close(fig_a)
+
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=struct_proxies,
+        material_names=mat_names,
+        sources=sources_s,
+        wavelength=1550e-9,
+        min_feature=100e-9,
+        zoom_bounds=(1.12e-6, 1.98e-6, -0.38e-6, 0.38e-6),
+        title=title_mesh,
+    )
+    if len(axes_b) >= 1:
+        ax_zoom = axes_b[0]
+        dy_min_nm = float(np.min(np.diff(pic.grid.y))) * 1e9
+        dx_med_nm = float(np.median(np.diff(pic.grid.x))) * 1e9
+        ax_zoom.annotate(
+            f"Slot g = 100 nm\n8.0 cells (Δy = {dy_min_nm:.1f} nm, Δx_med = {dx_med_nm:.1f} nm)",
+            xy=(1.50, 0.0),
+            xytext=(1.85, -1.05),
+            color="#0f172a",
+            fontsize=7.2,
+            fontweight="bold",
+            ha="left",
+            va="center",
+            zorder=12,
+            arrowprops=dict(arrowstyle="->", color="#d95f02", lw=1.2),
+            bbox=dict(boxstyle="round,pad=0.20", fc="white", ec="#d95f02", alpha=0.92),
         )
+    fig_b.savefig(
+        fig_dir / "00b_setup_mesh_and_excitation.png", dpi=150, bbox_inches="tight"
     )
-    slv = pic.solver
-    iz = slv.Nz // 2
-    ieps_y = np.asarray(slv.ieps[:, :, iz, "y"], dtype=float)
-    eps_r = np.where(ieps_y > 0, 1.0 / (np.where(ieps_y > 0, ieps_y, 1.0) * epsilon_0), 1.0)
-    xe = slv.grid.x * 1e6
-    ye = slv.grid.y * 1e6
-    im_m = ax1.pcolormesh(
-        xe,
-        ye,
-        eps_r.T,
-        cmap=figstyle.CMAP_EPS,
-        shading="flat",
-        edgecolors="white",
-        linewidth=0.35,
-    )
-    _draw_polyslab_polygons(
-        ax1,
-        pic.structures_3d,
-        facecolor=None,
-        edgecolor="#facc15",
-        lw=1.4,
-        ls="--",
-    )
-    ax1.set(
-        xlim=xl_z,
-        ylim=yl_z,
-        xlabel="x [µm]",
-        ylabel="y [µm]",
-        title="(b) 1× mesh zoom on g = 100 nm slot opening (x = 1.38 µm)",
-    )
-    cb = fig.colorbar(im_m, ax=ax1, fraction=0.046, pad=0.03)
-    cb.set_label(r"Subpixel $\varepsilon_{yy} / \varepsilon_0$ (Kottke)")
-    dy_min_nm = float(np.min(np.diff(pic.grid.y))) * 1e9
-    dx_med_nm = float(np.median(np.diff(pic.grid.x))) * 1e9
-    cpw_eff = (1500.0 / neff_s) / dx_med_nm
-    ax1.annotate(
-        "",
-        xy=(1.50, -0.05),
-        xytext=(1.50, +0.05),
-        arrowprops=dict(arrowstyle="<->", color="white", lw=1.5),
-    )
-    ax1.text(
-        1.54,
-        0.0,
-        f"Slot g = 100 nm\n8.0 cells (Δy_min = {dy_min_nm:.1f} nm)\n"
-        f"Δx_lead = {dx_med_nm:.1f} nm ({cpw_eff:.0f} cells/λ)",
-        color="white",
-        fontsize=7.3,
+    plt.close(fig_b)
+    return saved_paths
+
+
+def _clean_subpanel_schematic_annotations(ax, x_lo: float, x_hi: float, y_lo: float, y_hi: float):
+    """Remove outside-of-axes dimension arrows and reposition CPML labels inside ``ax``."""
+    from matplotlib.text import Annotation
+
+    for child in list(ax.get_children()):
+        if isinstance(child, Annotation) and child.get_text().strip() == "":
+            xy = child.xy
+            if xy[0] < x_lo or xy[0] > x_hi or xy[1] < y_lo or xy[1] > y_hi:
+                child.remove()
+    for txt in list(ax.texts):
+        tx, ty = txt.get_position()
+        s = txt.get_text().strip()
+        if tx < x_lo or tx > x_hi or ty < y_lo or ty > y_hi or s.startswith("Δx ="):
+            txt.remove()
+    ax.spines["left"].set_position(("outward", 0))
+    ax.spines["bottom"].set_position(("outward", 0))
+    ax.set_title(ax.get_title(), pad=8, fontsize=9.5, fontweight="bold")
+    x_mid = 0.5 * (x_lo + x_hi)
+    ax.text(
+        x_mid,
+        y_hi - 0.14,
+        "10-cell CPML boundaries (all 4 in-plane faces)",
+        fontsize=6.8,
         fontweight="bold",
+        color="#334155",
+        ha="center",
         va="center",
-        bbox=dict(boxstyle="round,pad=0.22", fc="#0f172a", ec="#facc15", alpha=0.88),
+        zorder=8,
+        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#94a3b8", alpha=0.88),
     )
-    figstyle.save(fig, out_path)
-    plt.close(fig)
 
 
 def plot_taper_converters_schematic(
@@ -812,10 +965,11 @@ def plot_taper_converters_schematic(
       Converter, ``L = 20.0 um``, Feng et al. 2007).
     """
     figstyle.apply_style()
-    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.7)
+    fig, (ax0, ax1, ax2) = plt.subplots(
+        1, 3, figsize=(16.4, 4.8), gridspec_kw={"wspace": 0.36}
+    )
 
     neff_s = float(pic_sym.n_eff_slab)
-    eps_s = neff_s**2
     eps_clad = float(n_to_eps(pic_sym.n_clad))
     mat_names = {
         "background": f"SiO₂ clad/slot (n={pic_sym.n_clad:.2f}, ε_r={eps_clad:.2f})",
@@ -841,6 +995,18 @@ def plot_taper_converters_schematic(
         title="(a) Design 2: Symmetric Tapered-Finger (L = 8 µm)",
     )
     ax0.set_aspect("auto")
+    if ax0.get_legend() is not None:
+        ax0.get_legend().remove()
+    for ln in ax0.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+    _clean_subpanel_schematic_annotations(
+        ax0,
+        float(pic_sym.grid.xmin) * 1e6,
+        float(pic_sym.grid.xmax) * 1e6,
+        float(pic_sym.grid.ymin) * 1e6,
+        float(pic_sym.grid.ymax) * 1e6,
+    )
     _draw_polyslab_polygons(
         ax0,
         pic_sym.structures_3d,
@@ -849,7 +1015,7 @@ def plot_taper_converters_schematic(
         edgecolor="#0f172a",
         lw=1.25,
         label=f"Si fingers & taper (d=60 nm, g=100 nm)\nn_eff,slab={neff_s:.2f}",
-        label_xy=(4.0, 0.78),
+        label_xy=(4.2, 0.78),
     )
     if "port_y_in" in primary_data and "port_y_out" in primary_data:
         _draw_launched_and_slot_modes(
@@ -862,6 +1028,17 @@ def plot_taper_converters_schematic(
             ey_out=primary_data["port_ey_out"],
             amp_um=0.65,
         )
+    for txt in list(ax0.texts):
+        s = txt.get_text().strip()
+        if s == "1 · ModeSrc":
+            txt.set_position((-2.35, 1.12))
+            txt.set_ha("left")
+        elif s == "2 · in":
+            txt.set_position((-1.35, -1.12))
+            txt.set_ha("left")
+        elif s == "3 · out":
+            txt.set_position((9.55, 1.12))
+            txt.set_ha("center")
 
     # Panel (b): 1x mesh zoom on Design 2's d = 60 nm finger-to-strip gap
     xl_f, yl_f = (-0.15, 0.90), (0.12, 0.34)
@@ -934,6 +1111,18 @@ def plot_taper_converters_schematic(
         title="(c) Design 3: Asymmetric Lateral Taper (L = 20 µm)",
     )
     ax2.set_aspect("auto")
+    if ax2.get_legend() is not None:
+        ax2.get_legend().remove()
+    for ln in ax2.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+    _clean_subpanel_schematic_annotations(
+        ax2,
+        float(pic_asym.grid.xmin) * 1e6,
+        float(pic_asym.grid.xmax) * 1e6,
+        float(pic_asym.grid.ymin) * 1e6,
+        float(pic_asym.grid.ymax) * 1e6,
+    )
     _draw_polyslab_polygons(
         ax2,
         pic_asym.structures_3d,
@@ -942,7 +1131,7 @@ def plot_taper_converters_schematic(
         edgecolor="#0f172a",
         lw=1.25,
         label=f"Si asymmetric taper (L=20 µm)\nn_eff,slab={neff_s:.2f}",
-        label_xy=(10.0, 0.78),
+        label_xy=(10.2, 0.78),
     )
     if "port_y_in" in primary_data and "port_y_out" in primary_data:
         _draw_launched_and_slot_modes(
@@ -955,6 +1144,17 @@ def plot_taper_converters_schematic(
             ey_out=primary_data["port_ey_out"],
             amp_um=1.35,
         )
+    for txt in list(ax2.texts):
+        s = txt.get_text().strip()
+        if s == "1 · ModeSrc":
+            txt.set_position((-2.35, 1.12))
+            txt.set_ha("left")
+        elif s == "2 · in":
+            txt.set_position((-1.35, -1.12))
+            txt.set_ha("left")
+        elif s == "3 · out":
+            txt.set_position((21.2, 1.12))
+            txt.set_ha("center")
 
     figstyle.save(fig, out_path)
     plt.close(fig)

@@ -138,33 +138,32 @@
 #   canceling fundamental $\text{TE}_0 \leftrightarrow \text{TE}_0$ Bragg reflection
 #   so the incident wave transmits straight through the grating.
 #
-# ![Simulation setup schematic: 2D EIM domain, corrugated unit cell with Bloch phase advance, and graded non-uniform mesh zoom](figures/00_setup_schematic.png)
+# ![Simulation setup: geometry, sources, monitors, and boundaries](figures/00a_setup_geometry.png)
+# ![Simulation setup: graded non-uniform mesh with tooth zoom, wave packet, and excitation spectrum](figures/00b_setup_mesh_and_excitation.png)
 #
-# **Figure 0 (`00_setup_schematic.png`)** summarizes the complete 2D Effective-Index
-# Method (EIM) simulation setup generated directly from the live Wakis solver,
-# port, and geometry objects:
-# - **Panel (a)** shows the $34.0\;\mu\text{m} \times 1.44\;\mu\text{m}$ computational
-#   domain bounded by $10$-cell CPML absorbing layers on $\pm x$ ($529\;\text{nm}$)
-#   and $\pm y$ ($514\;\text{nm}$) and periodic boundary conditions along $z$, the
-#   corrugated silicon waveguide core ($\varepsilon_{r,\text{slab}} = n_{\text{eff,slab}}^2
-#   = 8.03$, $n_{\text{eff,slab}} = 2.8335$) in air lateral cladding ($\varepsilon_r = 1.0$),
-#   the fundamental $\text{TE}_0$ ($E_y$-polarized) `ModeSource` at Port `'in'`
-#   ($x = -16.6\;\mu\text{m}$, $+x$ injection, Gaussian pulse spanning
-#   $\lambda \in [1500, 1620]\;\text{nm}$), and the modal `ModeMonitor` planes at
-#   Ports `'in'` and `'out'` ($x = +16.6\;\mu\text{m}$).
-# - **Panel (b)** zooms into the unit cell of pitch $\Lambda = 324\;\text{nm}$ and
-#   tooth length $l_{\text{tooth}} = \Lambda/2 = 162\;\text{nm}$ ($50\%$ duty cycle),
-#   marking the periodic unit-cell planes $x_n$ and $x_n + \Lambda$ with the Bragg
-#   Bloch phase advance $\Delta\phi = \beta_B \Lambda = \pi$, the counter-propagating
-#   forward ($\tilde{A}^+$) and backward ($\tilde{A}^-$) coupled waves inside the
-#   $w_{\text{core}} = 450\;\text{nm}$ core ($w_{\text{avg}} = 500\;\text{nm}$,
-#   $w_{\max} = 550\;\text{nm}$), and the $\Delta x_{\text{shift}} = \Lambda/2$
-#   lower-sidewall phase offset that cancels $\kappa$.
-# - **Panel (c)** shows the non-uniform graded Cartesian mesh zoomed onto a single
-#   $50\;\text{nm} \times 162\;\text{nm}$ sidewall tooth, illustrating the local
-#   refinement ($\Delta y_{\text{tooth}} = 8.33\;\text{nm}$, $6\;\text{cells}$ across
-#   $\Delta w = 50\;\text{nm}$) and smooth geometric grading ($g = 1.35$) into the
-#   waveguide core and cladding.
+# The 2D Effective-Index Method (EIM) simulation setup (`00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png`) models the 100-period sidewall-corrugated silicon Bragg grating ($\Lambda = 324\;\text{nm}$, $\Delta w = 50\;\text{nm}$, Bloch phase advance $\Delta\phi = \beta_B\Lambda = \pi$ at resonance) with $\pm z$ periodic boundaries and 10-cell CPML absorbing layers on $\pm x$ and $\pm y$:
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 34.7 µm × 2.19 µm × 37.8 nm (z ∈ [91.1 nm, 129 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 1264 × 85 × 1 (107440 cells) |
+# | Discretization | Δx & resolution | Δ_min = 8.33 nm, 64.9 cells/λ (in n_max = 2.83), 6.0 cells across feature (50 nm) |
+# | Boundary | -x face | CPML (10 cells, 366 nm) |
+# | Boundary | +x face | CPML (10 cells, 366 nm) |
+# | Boundary | -y face | CPML (10 cells, 376 nm) |
+# | Boundary | +y face | CPML (10 cells, 376 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Air lateral/upper clad (n = 1.00, ε_r = 1.00; SiO₂ BOX n_sub = 1.44) (isotropic) |
+# | Material | Region 1: Si EIM core (n_eff,slab = 2.8335) | ε_r = 8.03, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-19.2 µm, 19.2 µm] (d = 38.4 µm) |
+# | Source | 1 · ModeSource | pos: x = -16.67 µm, y ∈ [-0.55, 0.55] µm, pol: TE₀ (in-plane E_y, H_z), pulse: f₀ = 192.5 THz, Δf = 7.4 THz |
+# | Monitor | 2 · ModeMonitor | Port 'in' ModeMonitor (S₁₁), pos: x = -16.60 µm, y ∈ [-0.55, 0.55] µm, freqs: 185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts) |
+# | Monitor | 3 · ModeMonitor | Port 'out' ModeMonitor (S₂₁), pos: x = 16.60 µm, y ∈ [-0.55, 0.55] µm, freqs: 185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts) |
+# | Monitor | 4 · FluxBox | 2D Poynting FluxBox, pos: x ∈ [-17.00, 17.00] µm, y ∈ [-0.72, 0.72] µm, freqs: 185.1–199.9 THz (81 pts) |
+# | Variation | Periodic unit cell & Bragg Bloch condition | Λ = 324 nm (D = 50%, l_tooth = 162 nm, w_core = 450 nm, Δw = 50 nm), Bloch phase Δφ = β_B Λ = π at λ_B; ±z faces: Periodic (2D EIM) |
+# | Variation | Sidewall phase offset (task_9) | Aligned (Δx_shift = 0 → κ = κ₀, R_max > 99.7%) vs half-period shifted (Δx_shift = Λ/2 = 162 nm → κ = 0, R_max = 0.0003) |
+# | Variation | Parametric sweeps (tasks 10–14) | Period count N ∈ {25, 50, 100}, tooth depth Δw ∈ {25, 50, 75} nm, Gaussian apodization (α = 4.0, −10.3 dB sidelobe reduction) |
+# | Variation | Resolution & averaging ladder (tasks 0–8) | Kottke vs staircase across L1 (10 cpw, 4/tooth), L2 (14 cpw, 6/tooth), L3 (20 cpw, 8/tooth), and reference R (40 cpw, 16/tooth) |
 
 # %%
 import argparse
@@ -1026,10 +1025,10 @@ def run_single_task(task_cfg, out_dir):
 # ## 6. Generating the complete diagnostic figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and renders 16 figures into
+# `generate_all_figures` reads `data/task_*.npz` and renders the setup figures and diagnostic suite into
 # `figures/`:
 #
-# 0. `00_setup_schematic.png` — Labelled setup schematic (domain extents, CPML boundaries, corrugated silicon waveguide $\varepsilon_{r,\text{slab}} = 8.03$, `ModeSource`, and port `ModeMonitor` planes), unit-cell schematic with Bloch phase advance $\beta_B\Lambda = \pi$ and $\Lambda/2$ sidewall shift, and zoomed non-uniform graded mesh view.
+# 0. `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png` & `00_setup_table.md` — Two-figure setup layout and setup specification table (`wakis.schematic.save_setup_figures`): domain extents, CPML and $\pm z$ periodic boundaries, corrugated silicon waveguide $\varepsilon_{r,\text{slab}} = 8.03$ with periodic unit cell ($\Lambda = 324\;\text{nm}$, Bloch phase $\Delta\phi = \beta_B\Lambda = \pi$), `ModeSource`, port `ModeMonitor` planes, 2D Poynting `FluxBox`, non-uniform graded mesh with $1\times$ tooth zoom, spatial wave packet, and excitation pulse/spectrum.
 # 1. `01_bragg_grating_layout.png` — Side-by-side dual waveguide layout (Waveguide 1 aligned at $y_1 = +0.766\;\mu\text{m}$, Waveguide 2 $\Lambda/2$-shifted at $y_2 = -0.766\;\mu\text{m}$) with zoomed insets of the in-phase vs half-period-shifted sidewall teeth.
 # 2. `02_eim_vertical_stack.png` — Asymmetric $220\;\text{nm}$ SOI stack ($\text{SiO}_2$ substrate, $\text{Si}$ core, air cladding), 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_corrugation_and_apodization_profiles.png` — Sidewall width modulation $w(x)$ for uniform, $\Lambda/2$-shifted, and Gaussian-apodized gratings, plus the CMT destructive-interference curve $\kappa(\Delta x_{\text{shift}}/\Lambda)$.
@@ -1049,7 +1048,7 @@ def run_single_task(task_cfg, out_dir):
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 16 figures (`00`..`15`) into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all setup and diagnostic figures into ``fig_dir``."""
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -1067,9 +1066,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
     primary = tasks_data[primary_name]
 
-    # 0. Setup schematic (domain, unit cell with Bloch phase advance, and graded mesh zoom)
+    # 0. Setup schematic (00a_setup_geometry.png, 00b_setup_mesh_and_excitation.png, 00_setup_table.md)
     plot_bragg_setup_schematic(
-        fig_dir / "00_setup_schematic.png",
+        fig_dir / "00a_setup_geometry.png",
         n_periods=100,
         pitch=PITCH,
         w_core=W_CORE,

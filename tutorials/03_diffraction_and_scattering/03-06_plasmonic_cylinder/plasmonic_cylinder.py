@@ -435,6 +435,60 @@ def _fix_cylinder_patch(ax, radius_nm=20.0, tol=6.0, fill=None):
 #   placing the resonance $97\text{ nm}$ too blue; reconstructing the broad
 #   structured $5d \to 6sp$ band across $300\text{--}550\text{ nm}$ requires
 #   **$N \ge 3\text{--}6$ poles**.
+#
+# ### 1.5 Simulation setups
+#
+# The two-figure setup layouts below show the Cartesian 2D `SolverFIT3D` TF/SF setup
+# (`figures/00a_setup_geometry.png`, `figures/00b_setup_mesh_and_excitation.png`)
+# and the body-fitted locally refined 2D `UnstructuredFIT2D` triangular-mesh setup
+# (`figures/00a_setup_geometry_unstructured.png`,
+# `figures/00b_setup_mesh_and_excitation_unstructured.png`):
+#
+# ![Cartesian 2D plasmonic cylinder setup geometry](figures/00a_setup_geometry.png)
+# ![Cartesian 2D plasmonic cylinder mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the Cartesian 2D `SolverFIT3D` plasmonic cylinder setup on the 4-cell periodic $z$ slab with Kottke subpixel averaging, a `TFSFSource` box ($\mathbf{E} \parallel y$, 2D TE), inner and outer `FluxMonitor` boxes, and 9-cell CPML boundaries.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 184 nm × 184 nm × 160 nm (z ∈ [-80 nm, 80 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 46 × 46 × 4 (8464 cells) |
+# | Discretization | Δx & resolution | Δ_min = 4 nm, 35.6 cells/λ (in n_max = 2.11), 5.6 cells across feature (22.5 nm) |
+# | Boundary | -x face | CPML (9 cells, 36 nm) |
+# | Boundary | +x face | CPML (9 cells, 36 nm) |
+# | Boundary | -y face | CPML (9 cells, 36 nm) |
+# | Boundary | +y face | CPML (9 cells, 36 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Ag cylinder (N = 2 Drude–Lorentz) | ε_r = 4.44, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-20 nm, 20 nm] (d = 40 nm) |
+# | Source | 1 · TFSFSource | pos: x ∈ [-36 nm, 36 nm], pol: E_y, pulse: f₀ = 666.2 THz, Δf = 166.6 THz |
+# | Monitor | 2 · FluxMonitor | Outer FluxMonitor (P'_sca), pos: x, y ∈ [-44, 44] nm, freqs: 241 freqs in [333.1, 999.3] THz (300–900 nm) |
+# | Monitor | 3 · FluxMonitor | Inner FluxMonitor (P'_abs), pos: x, y ∈ [-28, 28] nm, freqs: 241 freqs in [333.1, 999.3] THz (300–900 nm) |
+# | Variation | Metals & diameters | Ag (2a = 40 nm and 80 nm) and Au (2a = 40 nm) |
+# | Variation | Dispersive pole models | N = 1, 2, 3, 4, 6 fitted to CC0 Johnson & Christy (1972) + Rakić (1998) + constant-ε baseline |
+# | Variation | Resolutions & subpixel | h = 4 nm (quick) and h = 2 nm (full), Kottke subpixel averaging (wakis.tensor_dispersive) |
+#
+# ![Body-fitted triangular 2D plasmonic cylinder setup geometry](figures/00a_setup_geometry_unstructured.png)
+# ![Body-fitted triangular 2D plasmonic cylinder mesh and excitation](figures/00b_setup_mesh_and_excitation_unstructured.png)
+#
+# The table below summarizes the body-fitted locally refined 2D `UnstructuredFIT2D` triangular-mesh setup with Voronoi-dual Hodge operators, a scattered-field plane-wave drive, cylindrical harmonic rings, and a 10-layer radial CFS-PML.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly = 280 nm × 280 nm (x ∈ [-140 nm, 140 nm], y ∈ [-140 nm, 140 nm]) |
+# | Domain | Grid cells | Nx × Ny = 4448 × 4448 (19784704 cells) |
+# | Discretization | Δx & resolution | Δ_min = 1.61 nm, 88.7 cells/λ (in n_max = 2.11), 14.0 cells across feature (22.5 nm) |
+# | Boundary | -x face | PEC |
+# | Boundary | +x face | PEC |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Ag cylinder (N = 2 Drude–Lorentz) | ε_r = 4.44, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-20 nm, 20 nm] (d = 40 nm) |
+# | Source | 1 · PlaneWave | pos: r <= 20 nm (Ag cylinder interior), pol: TE (E_x, E_y in-plane, H_z axial), pulse: f₀ = 666.2 THz, Δf = 166.6 THz |
+# | Monitor | 2 · HarmonicRings | Cylindrical harmonic rings (r = 45, 55, 65 nm), pos: r = 45, 55, 65 nm (inside radial CFS-PML r ∈ [80, 140] nm), freqs: 241 freqs in [333.1, 999.3] THz (300–900 nm) |
+# | Variation | Radial CFS-PML | 10 annular layers in r ∈ [80, 140] nm with PEC outer termination |
+# | Variation | Local mesh refinement | h_s = 2.0 nm (4448 tris) and h_s = 1.25 nm (7097 tris) on r = 20 nm boundary |
 
 # %% [markdown]
 # ## 2. Pole fitting: $N = 1, 2, 3, 4, 6$ vs Johnson & Christy and Rakić
@@ -555,9 +609,8 @@ TRI_NPZ = np.load(DATA_DIR / "triangle_lspr_fields.npz")
 
 
 def plot_setup_schematic():
-    """Render the 3-panel setup schematic and side-by-side mesh zoom (`00_setup_schematic.png`)."""
-    from matplotlib.collections import LineCollection
-    from matplotlib.patches import Circle
+    """Render setup geometry, mesh/excitation, and setup tables via save_setup_figures."""
+    from types import SimpleNamespace
 
     dx_s = 4e-9
     r_m = 20e-9
@@ -606,10 +659,23 @@ def plot_setup_schematic():
         cfln=0.85,
         verbose=0,
     )
-    f_min, f_max = c0 / 900e-9, c0 / 300e-9
-    pulse = GaussianSource(
-        frequency=0.5 * (f_min + f_max), fwidth=0.25 * (f_max - f_min)
+    grid_c.stl_solids = {}
+    cyl_struct = SimpleNamespace(
+        name="Ag cylinder (N = 2 Drude–Lorentz)",
+        center=(0.0, 0.0, 0.0),
+        radius=r_m,
+        height=10.0 * hz_s,
+        axis=2,
+        material=mat_ag,
     )
+    solver_c._assigned_structures = [cyl_struct]
+
+    f_min, f_max = c0 / 900e-9, c0 / 300e-9
+    f0 = 0.5 * (f_min + f_max)
+    df = 0.25 * (f_max - f_min)
+    freqs_s = np.linspace(f_min, f_max, 241)
+    freq_str_s = f"241 freqs in [{f_min / 1e12:.1f}, {f_max / 1e12:.1f}] THz (300–900 nm)"
+    pulse = GaussianSource(frequency=f0, fwidth=df)
     src_c = wakis.TFSFSource(
         pulse,
         center=(0.0, 0.0, 0.0),
@@ -618,56 +684,64 @@ def plot_setup_schematic():
         polarization="y",
         amplitude=1.0,
     )
-    src_c.label = "TFSFSource ($\\mathbf{k}\\parallel +x,\\;\\mathbf{E}\\parallel y$)"
+    src_c.label = "TFSFSource (k || +x, E || y, 2D TE)"
     mon_c = [
         {
             "kind": "box",
             "type_name": "FluxMonitor",
-            "label": "Outer FluxMonitor ($P'_\\mathrm{sca}$)",
+            "short_word": "flux",
+            "desc": f"outer flux box (FluxMonitor, x, y ∈ [-{i_flux*dx_s*1e9:.0f}, {i_flux*dx_s*1e9:.0f}] nm)",
+            "label": "Outer FluxMonitor (P'_sca)",
+            "pos_str": f"x, y ∈ [-{i_flux*dx_s*1e9:.0f}, {i_flux*dx_s*1e9:.0f}] nm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-i_flux * dx_s, i_flux * dx_s),
             "v_bounds": (-i_flux * dx_s, i_flux * dx_s),
         },
         {
             "kind": "box",
             "type_name": "FluxMonitor",
-            "label": "Inner FluxMonitor ($P'_\\mathrm{abs}$)",
+            "short_word": "flux",
+            "desc": f"inner flux box (FluxMonitor, x, y ∈ [-{i_in*dx_s*1e9:.0f}, {i_in*dx_s*1e9:.0f}] nm)",
+            "label": "Inner FluxMonitor (P'_abs)",
+            "pos_str": f"x, y ∈ [-{i_in*dx_s*1e9:.0f}, {i_in*dx_s*1e9:.0f}] nm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-i_in * dx_s, i_in * dx_s),
             "v_bounds": (-i_in * dx_s, i_in * dx_s),
         },
     ]
 
-    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.8)
-
-    # Panel (a): Cartesian 2D setup
-    schematic.plot_schematic(
+    schematic.save_setup_figures(
         solver_c,
+        FIG_DIR,
         plane="xy",
-        ax=axes[0],
-        unit="nm",
-        material_names={"cylinder": "Ag ($N=2$ Drude–Lorentz)"},
+        structures=[cyl_struct],
+        material_names={"cylinder": "Ag cylinder (N = 2 Drude–Lorentz)"},
         sources=[src_c],
         monitors=mon_c,
-        show_mesh=False,
-        show_wave_packet=False,
+        unit="nm",
         wavelength=300e-9,
-        title="(a) Cartesian 2D setup (TF/SF + FluxMonitor)",
+        freq=f0,
+        min_feature=22.5e-9,
+        title_geometry="Cartesian 2D plasmonic cylinder setup (TF/SF + FluxMonitor, XY plane)",
+        title_mesh="Cartesian 2D mesh & broadband pulse (300–900 nm, skin depth δ_min = 22.5 nm)",
+        variations=[
+            {
+                "name": "Metals & diameters",
+                "details": "Ag (2a = 40 nm and 80 nm) and Au (2a = 40 nm)",
+            },
+            {
+                "name": "Dispersive pole models",
+                "details": "N = 1, 2, 3, 4, 6 fitted to CC0 Johnson & Christy (1972) + Rakić (1998) + constant-ε baseline",
+            },
+            {
+                "name": "Resolutions & subpixel",
+                "details": "h = 4 nm (quick) and h = 2 nm (full), Kottke subpixel averaging (wakis.tensor_dispersive)",
+            },
+        ],
     )
-    _fix_cylinder_patch(axes[0], 20.0, tol=6.0)
-    _fix_unit_spaces(axes[0])
-    L_half_nm = half_s * 1e9
-    for txt in list(axes[0].texts):
-        s_t = txt.get_text()
-        if "Out-of-plane" in s_t and "boundaries:" not in s_t:
-            txt.remove()
-        elif "boundaries: CPML" in s_t or "+y boundary" in s_t:
-            x0_t, _ = txt.get_position()
-            txt.set_text("$\\pm y$: CPML (9 cells)  |  $\\pm z$: Periodic")
-            txt.set_position((x0_t, L_half_nm + 7.5))
-    axes[0].set_ylim(-L_half_nm - 6.0, L_half_nm + 42.0)
-    if axes[0].get_legend() is not None:
-        axes[0].get_legend().remove()
 
-    # Panel (b): Body-fitted 2D triangular mesh setup (`UnstructuredFIT2D`)
     h_s_b, h_out_b, r_pml_b = 2.0e-9, 6.0e-9, 80.0e-9
     mesh_b = cluster_mesh(
         [dict(center=(0.0, 0.0), radius=r_m)],
@@ -687,155 +761,67 @@ def plot_setup_schematic():
         cfl=0.90,
         pml=dict(r0=r_pml_b, r1=r_pml_b + 10 * h_out_b, kappa_max=1.0, alpha=0.0),
     )
-    solver_b.add_plane_wave(pulse, direction=(1.0, 0.0), background_eps_r=1.0)
-    schematic.plot_schematic(
+    solver_b._assigned_structures = [cyl_struct]
+    tri_src = {
+        "kind": "sheet",
+        "type_name": "PlaneWave",
+        "short_word": "PW",
+        "desc": "PlaneWave drive (k || +x, E || y, scattered-field)",
+        "label": "Scattered-field plane-wave drive (k || +x, E || y)",
+        "pos_str": "r <= 20 nm (Ag cylinder interior)",
+        "polarization": "TE (E_x, E_y in-plane, H_z axial)",
+        "h_bounds": (-r_m, -r_m),
+        "v_bounds": (-0.7 * r_m, 0.7 * r_m),
+        "k_vec": (1.0, 0.0, 0.0),
+        "e_vec": (0.0, 1.0, 0.0),
+        "h_vec": (0.0, 0.0, 1.0),
+        "pulse": schematic._extract_pulse_metadata(pulse),
+    }
+    tri_mon = {
+        "kind": "box",
+        "type_name": "HarmonicRings",
+        "short_word": "rings",
+        "desc": "Harmonic rings (r = 45, 55, 65 nm)",
+        "label": "Cylindrical harmonic rings (r = 45, 55, 65 nm)",
+        "pos_str": "r = 45, 55, 65 nm (inside radial CFS-PML r ∈ [80, 140] nm)",
+        "freq_str": freq_str_s,
+        "frequencies": freqs_s,
+        "h_bounds": (-55e-9, 55e-9),
+        "v_bounds": (-55e-9, 55e-9),
+    }
+    schematic.save_setup_figures(
         solver_b,
+        FIG_DIR,
+        suffix="_unstructured",
         plane="xy",
-        ax=axes[1],
+        structures=[cyl_struct],
+        sources=[tri_src],
+        monitors=[tri_mon],
         unit="nm",
-        material_names={1: "Ag ($N=2$)"},
-        show_mesh=True,
-        show_wave_packet=False,
         wavelength=300e-9,
-        title="(b) Body-fitted triangular setup (radial CFS-PML)",
+        freq=f0,
+        min_feature=22.5e-9,
+        title_geometry="Body-fitted triangular 2D plasmonic cylinder setup (radial CFS-PML, XY plane)",
+        title_mesh="Body-fitted locally refined 2D triangular mesh & pulse (h_s = 2 nm)",
+        variations=[
+            {
+                "name": "Radial CFS-PML",
+                "details": "10 annular layers in r ∈ [80, 140] nm with PEC outer termination",
+            },
+            {
+                "name": "Local mesh refinement",
+                "details": "h_s = 2.0 nm (4448 tris) and h_s = 1.25 nm (7097 tris) on r = 20 nm boundary",
+            },
+        ],
     )
-    for r_ring_nm, lbl_r in ((45.0, None), (55.0, None), (65.0, "Harmonic rings")):
-        axes[1].add_patch(
-            Circle(
-                (0.0, 0.0),
-                r_ring_nm,
-                fill=False,
-                ec="#009E73",
-                ls=":",
-                lw=1.1,
-                zorder=6,
-            )
-        )
-        if lbl_r:
-            axes[1].text(
-                0.0,
-                r_ring_nm + 4.0,
-                lbl_r,
-                ha="center",
-                va="bottom",
-                fontsize=7.3,
-                fontweight="bold",
-                color="#009E73",
-                bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.82},
-                zorder=8,
-            )
-    axes[1].add_patch(
-        Circle((0.0, 0.0), 80.0, fill=False, ec="#64748B", ls="--", lw=1.0, zorder=6)
-    )
-    axes[1].text(
-        0.0,
-        -98.0,
-        "Radial CFS-PML ($r \\in [80, 140]$ nm)",
-        ha="center",
-        va="center",
-        fontsize=7.3,
-        fontweight="bold",
-        color="#334155",
-        bbox={"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.85},
-        zorder=8,
-    )
-    _fix_unit_spaces(axes[1])
-    if axes[1].get_legend() is not None:
-        axes[1].get_legend().remove()
-
-    # Panel (c): Side-by-side mesh zoom at the curved r = 20 nm Ag cylinder interface
-    ax_z = axes[2]
-    # Left half (x < 0): Cartesian grid (h = 2.0 nm)
-    xs_c = np.arange(-28.0, 0.1, 2.0)
-    ys_c = np.arange(-28.0, 28.1, 2.0)
-    segs_c = []
-    for xv in xs_c:
-        segs_c.append([(xv, -28.0), (xv, 28.0)])
-    for yv in ys_c:
-        segs_c.append([(-28.0, yv), (0.0, yv)])
-    ax_z.add_collection(
-        LineCollection(segs_c, colors="#64748B", linewidths=0.65, alpha=0.6, zorder=3)
-    )
-    # Right half (x >= 0): Body-fitted locally refined triangular mesh (h_s = 1.25 nm)
-    nodes_nm = TRI_NPZ["nodes_nm"]
-    cells_t = TRI_NPZ["cells"]
-    cent_nm = nodes_nm[cells_t].mean(axis=1)
-    right_mask = (cent_nm[:, 0] >= -1.0) & (np.abs(cent_nm[:, 1]) <= 29.0) & (cent_nm[:, 0] <= 29.0)
-    segs_t = []
-    for tri_c in cells_t[right_mask]:
-        p0, p1, p2 = nodes_nm[tri_c[0]], nodes_nm[tri_c[1]], nodes_nm[tri_c[2]]
-        for pa, pb in ((p0, p1), (p1, p2), (p2, p0)):
-            if pa[0] >= -0.5 and pb[0] >= -0.5:
-                segs_t.append([pa, pb])
-    ax_z.add_collection(
-        LineCollection(segs_t, colors="#0F766E", linewidths=0.65, alpha=0.65, zorder=3)
-    )
-    # Fill Ag cylinder and draw exact r = 20 nm circle + vertical split line x = 0
-    ax_z.add_patch(
-        Circle(
-            (0.0, 0.0),
-            20.0,
-            facecolor="#CBD5E1",
-            edgecolor="#0F172A",
-            lw=1.6,
-            alpha=0.38,
-            zorder=4,
-        )
-    )
-    ax_z.axvline(0.0, color="#0F172A", ls="--", lw=1.1, zorder=5)
-    # Skin depth ring at r = a - delta_min is near the center since a = 20 nm, delta_min = 22.5 nm
-    ax_z.text(
-        -14.0,
-        24.0,
-        "Cartesian\n($h = 2.0$ nm)\n$11.2\\;\\mathrm{cells}/\\delta_\\mathrm{min}$",
-        ha="center",
-        va="top",
-        fontsize=7.6,
-        fontweight="bold",
-        color="#334155",
-        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.92},
-        zorder=8,
-    )
-    ax_z.text(
-        14.0,
-        24.0,
-        "Body-fitted triangles\n($h_s = 1.25$ nm)\n$18.0\\;\\mathrm{elems}/\\delta_\\mathrm{min}$",
-        ha="center",
-        va="top",
-        fontsize=7.6,
-        fontweight="bold",
-        color="#0F766E",
-        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#0F766E", "alpha": 0.92},
-        zorder=8,
-    )
-    ax_z.text(
-        0.0,
-        -24.2,
-        "Ag ($2a = 40$ nm, $\\delta_\\mathrm{min} = 22.5$ nm, $\\delta(\\lambda_\\mathrm{res}) = 28.6$ nm)",
-        ha="center",
-        va="bottom",
-        fontsize=7.5,
-        color=figstyle.INK,
-        bbox={"boxstyle": "round,pad=0.2", "facecolor": "#FFF7ED", "edgecolor": "#FDBA74", "alpha": 0.95},
-        zorder=9,
-    )
-    ax_z.set_xlim(-27.5, 27.5)
-    ax_z.set_ylim(-27.5, 27.5)
-    ax_z.set_aspect("equal", adjustable="box")
-    ax_z.set_xlabel("$x$ [nm]")
-    ax_z.set_ylabel("$y$ [nm]")
-    ax_z.set_title("(c) Side-by-side mesh zoom ($r = 20$ nm Ag cylinder)")
-
-    fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.25)
-    savefig(fig, "00_setup_schematic.png")
-    plt.close(fig)
 
 
 plot_setup_schematic()
-fig_s, ax_s = plt.subplots(figsize=(14.6, 4.8))
-ax_s.imshow(plt.imread(FIG_DIR / "00_setup_schematic.png"))
-ax_s.axis("off")
-plt.show()
+for _fname in ("00a_setup_geometry.png", "00b_setup_mesh_and_excitation.png"):
+    fig_s, ax_s = plt.subplots(figsize=(8.0, 5.0))
+    ax_s.imshow(plt.imread(FIG_DIR / _fname))
+    ax_s.axis("off")
+    plt.show()
 
 if not PLOT_ONLY and ARGS.task in ("all", "fit"):
     demo_mat, demo_rms = fit_jc_poles("Ag", n_poles=2, n_starts=4)

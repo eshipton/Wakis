@@ -632,9 +632,12 @@ def test_gap_diagnostics_convergence_and_jc_ag():
         with pytest.raises(AssertionError):
             _assert_jc_matches_paper(d_jc_mut, paper_val, tol_pp=1.0)
 
-    # 4. Figure 00 (setup schematic) and all figures exist and are non-empty
+    # 4. Setup figures (00a, 00b), setup table (00_setup_table.md) and all figures exist and are non-empty
+    table_path = mh.FIG_DIR / "00_setup_table.md"
+    assert table_path.exists() and table_path.stat().st_size > 200, "Missing or empty 00_setup_table.md"
     expected_figs = (
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_microled_horn_schematics.png",
         "02_materials_and_tmm_reflectance.png",
         "03_sidewall_mesh_kottke_vs_staircase.png",

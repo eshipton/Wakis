@@ -2094,3 +2094,233 @@ def overlay_rgb_geometry(
         ax.text(0.0, -1.32, "Si (n+iκ) | CPML", ha="center", va="center", fontsize=fontsize - 0.6, color="#0f172a", bbox=bbox_kw, zorder=9)
 
 
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+class _LineStart(float):
+    """Scalar coordinate that plots at its true value but centers its text tag at x = 0."""
+
+    def __mul__(self, other):
+        return _LineStart(float(self) * float(other))
+
+    def __rmul__(self, other):
+        return _LineStart(float(other) * float(self))
+
+    def __add__(self, other):
+        return 0.0 if float(other) > 1e-6 else float(self) + float(other)
+
+
+def save_rgb_setup_figures(
+    fig_dir,
+    cpw: float = 20.0,
+) -> dict:
+    """Construct the forward 20-dipole and reciprocal color-routing RGB microLED setups and save both setup figure pairs.
+
+    Builds the live 3-pixel RGB microLED solver, graded mesh, structures, sources, and monitors
+    without time-stepping, and calls :func:`wakis.schematic.save_setup_figures` twice:
+    first for the forward 20-dipole incoherent emission setup (``suffix=""``, showing 5
+    representative dipole positions inside the Green MQW and stating the 5×4 = 20 ensemble
+    count in the legend), and second for the reciprocal plane-wave color-routing setup
+    (``suffix="_dual_routing"``).
+
+    Parameters
+    ----------
+    fig_dir : str or Path
+        Directory where ``00a_setup_geometry*.png``, ``00b_setup_mesh_and_excitation*.png``,
+        and ``00_setup_table*.md`` are written.
+    cpw : float, optional
+        Background cells per wavelength in GaN/MQW [-]. Default is 20.0.
+
+    Returns
+    -------
+    paths : dict
+        Dictionary with keys ``"forward"`` and ``"dual_routing"`` mapping to the outputs
+        of :func:`wakis.schematic.save_setup_figures`.
+    """
+    from pathlib import Path
+    from wakis import schematic
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    fwd = build_rgb_schematic_objects(mode="forward", channel="G", cpw=cpw)
+    meta = fwd["meta"]
+    f0 = meta["f0_hz"]
+    dz = meta["dz_m"]
+
+    struct_labels = [
+        "Si substrate (4.22 + 0.048i)",
+        "Polyimide trench (n = 1.50)",
+    ]
+    for ch in CHANNELS:
+        n_gan = RGB_MATERIALS[ch]["n_GaN"]
+        n_mqw = RGB_MATERIALS[ch]["n_MQW"]
+        lam_nm = RGB_MATERIALS[ch]["wavelength_m"] * 1e9
+        struct_labels.extend(
+            [
+                f"{ch} n-GaN (n = {n_gan:.2f})",
+                f"{ch} MQW (n = {n_mqw:.2f}, {lam_nm:.0f} nm)",
+                f"{ch} p-GaN (n = {n_gan:.2f})",
+            ]
+        )
+
+    structs_fwd = list(fwd["structures"])
+    for st, lbl in zip(structs_fwd, struct_labels):
+        st.name = lbl
+
+    src_time = GaussianSource(frequency=f0, fwidth=0.35 * f0, cutoff=4.0)
+    dip_obj = CurrentSource(
+        src_time, component="x", center=(0.0, -0.30e-6, 0.0), size=(0.0, 0.0, dz)
+    )
+    info0 = schematic.extract_setup_info(
+        fwd["solver"],
+        plane="xy",
+        structures=structs_fwd,
+        sources=[dip_obj],
+        monitors=fwd["monitors"],
+    )
+
+    dip_all = mqw_dipole_grid(channel="G", nx_dip=5, ny_dip=4)
+    rep_coords = np.array(
+        [
+            [0.0, -0.30e-6],
+            dip_all[0],
+            dip_all[3],
+            dip_all[16],
+            dip_all[19],
+        ]
+    )
+
+    src_ens = dict(info0["sources"][0])
+    src_ens["h_bounds"] = (_RepCoord(rep_coords[:, 0]), 0.0)
+    src_ens["v_bounds"] = (_RepCoord(rep_coords[:, 1]), -0.30e-6)
+    src_ens["short_word"] = "MQW dipoles (5×4)"
+    src_ens["polarization"] = "J_x (horizontal)"
+    src_ens["pos_str"] = (
+        "G MQW: x ∈ [-0.42, +0.42] µm, y ∈ [-0.38, -0.22] µm (5×4 = 20 dipoles, 5 shown)"
+    )
+    src_ens["label"] = (
+        "Green MQW incoherent ensemble: 5×4 = 20 horizontal J_x dipoles (5 rep. shown)"
+    )
+    src_ens["desc"] = src_ens["label"]
+
+    mon_n2f = dict(info0["monitors"][0])
+    mon_n2f["kind"] = "plane"
+    mon_n2f["h_bounds"] = (-2.60e-6, 2.60e-6)
+    mon_n2f["v_bounds"] = (0.25e-6, 0.25e-6)
+    mon_n2f["short_word"] = "N2F + W_B,G,R"
+    mon_n2f["pos_str"] = "y = +0.25 µm, x ∈ [-2.60, +2.60] µm"
+    mon_n2f["label"] = (
+        "Near2FarMonitor + subpixel exit windows W_B, W_G, W_R (y = +0.25 µm; normalized by MQW dipole box)"
+    )
+    mon_n2f["desc"] = mon_n2f["label"]
+
+    variations_fwd = [
+        {
+            "name": "Task 0 — Blue Method A (`method_a_B`)",
+            "notes": "Blue mesa active (λ_B = 457 nm, x_c = -1.50 µm); Method A exact 20-run incoherent dipole sum",
+        },
+        {
+            "name": "Task 1 — Green Method A (`method_a_G`)",
+            "notes": "Green mesa active (λ_G = 527 nm, x_c = 0.00 µm); Method A exact 20-run incoherent dipole sum",
+        },
+        {
+            "name": "Task 2 — Red Method A (`method_a_R`)",
+            "notes": "Red mesa active (λ_R = 611 nm, x_c = +1.50 µm); Method A exact 20-run incoherent dipole sum",
+        },
+        {
+            "name": "Task 3 — Green Method B (`method_b_G`)",
+            "notes": "Simultaneous 20-dipole random-phase realizations (K = 1, 2, 4, 8, 16) vs. exact Method A",
+        },
+        {
+            "name": "Tasks 5–9 — Grid & Si skin-depth convergence (`conv_cpw10..28`)",
+            "notes": "cpw ∈ {10, 12, 16, 20, 28} (56.9–449.9 cells/δ_P in absorbing Si substrate)",
+        },
+    ]
+
+    paths_fwd = schematic.save_setup_figures(
+        fwd["solver"],
+        fig_dir,
+        plane="xy",
+        structures=structs_fwd,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src_ens],
+        monitors=[mon_n2f],
+        wavelength=RGB_MATERIALS["G"]["wavelength_m"],
+        min_feature=0.20e-6,
+        title_geometry="3-Pixel RGB Micro-LED Array — Forward 20-Dipole Incoherent Emission Setup (Tasks 0–3, 5–9)",
+        title_mesh="3-Pixel RGB Micro-LED Array: Interface-Snapped Graded Mesh & Green MQW Excitation",
+        variations=variations_fwd,
+    )
+
+    rec = build_rgb_schematic_objects(mode="reciprocal", channel="G", cpw=cpw)
+    structs_rec = list(rec["structures"])
+    for st, lbl in zip(structs_rec, struct_labels):
+        st.name = lbl
+
+    info_rec = schematic.extract_setup_info(
+        rec["solver"],
+        plane="xy",
+        structures=structs_rec,
+        sources=rec["sources"],
+        monitors=rec["monitors"],
+    )
+
+    src_pw = dict(info_rec["sources"][0])
+    src_pw["h_bounds"] = (_LineStart(-2.45e-6), 2.45e-6)
+    src_pw["short_word"] = "Oblique PW (-y)"
+    src_pw["direction"] = "-y"
+    src_pw["k_vec"] = (0.0, -1.0, 0.0)
+    src_pw["polarization"] = "J_x (TE_x)"
+    src_pw["pos_str"] = "y = +0.35 µm, x ∈ [-2.45, +2.45] µm (θ_inc ∈ [-15°, +15°])"
+    src_pw["label"] = (
+        "Reciprocal plane-wave line source (y = +0.35 µm, θ_inc ∈ {-15°, -7.5°, 0°, +7.5°, +15°})"
+    )
+    src_pw["desc"] = src_pw["label"]
+
+    mons_rec = []
+    for idx_c, ch in enumerate(CHANNELS):
+        m_d = dict(info_rec["monitors"][idx_c])
+        x0_um = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+        m_d["short_word"] = f"Mon M_{ch}"
+        m_d["pos_str"] = f"y = -0.30 µm, x_c = {x0_um:+.2f} µm (W_ch = 1.05 µm)"
+        m_d["label"] = (
+            f"Planar MQW routing monitor M_{ch} (y = -0.30 µm, x_c = {x0_um:+.2f} µm; Eq. 4)"
+        )
+        m_d["desc"] = m_d["label"]
+        mons_rec.append(m_d)
+
+    variations_rec = [
+        {
+            "name": "Task 4 — Reciprocal color routing (`dual_routing`)",
+            "notes": "Plane waves at λ_B = 457 nm, λ_G = 527 nm, λ_R = 611 nm across 5 angles θ_inc ∈ [-15°, +15°]",
+        },
+    ]
+
+    paths_rec = schematic.save_setup_figures(
+        rec["solver"],
+        fig_dir,
+        plane="xy",
+        structures=structs_rec,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src_pw],
+        monitors=mons_rec,
+        wavelength=RGB_MATERIALS["G"]["wavelength_m"],
+        min_feature=0.20e-6,
+        title_geometry="3-Pixel RGB Micro-LED Array — Reciprocal Plane-Wave Color-Routing Setup (Task 4)",
+        title_mesh="3-Pixel RGB Micro-LED Array: Graded Mesh & Reciprocal Plane-Wave Excitation",
+        variations=variations_rec,
+        suffix="_dual_routing",
+    )
+
+    return {"forward": paths_fwd, "dual_routing": paths_rec}
+
+
+

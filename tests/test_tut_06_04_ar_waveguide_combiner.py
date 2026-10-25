@@ -247,8 +247,14 @@ def test_saved_tutorial_data_and_eyebox_uniformity():
     assert "outcoupler_tir_and_eyebox_uniformity" in summary
     assert "nearfield_and_resolution_study" in summary
 
-    # Check all 6 figures exist and GIF < 5 MB
+    # Check all setup and result figures exist and GIF < 5 MB
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_supercell.png",
+        "00b_setup_mesh_and_excitation_supercell.png",
+        "00a_setup_geometry_outcoupler.png",
+        "00b_setup_mesh_and_excitation_outcoupler.png",
         "01_combiner_and_unit_cell_schematic.png",
         "02_kspace_diagram_and_fov_limits.png",
         "03_incoupler_rgb_efficiency_vs_angle.png",
@@ -259,6 +265,13 @@ def test_saved_tutorial_data_and_eyebox_uniformity():
     for fn in expected_figs:
         fpath = fig_dir / fn
         assert fpath.is_file() and fpath.stat().st_size > 10_000
+    for tfn in (
+        "00_setup_table.md",
+        "00_setup_table_supercell.md",
+        "00_setup_table_outcoupler.md",
+    ):
+        tpath = fig_dir / tfn
+        assert tpath.is_file() and tpath.stat().st_size > 200
     assert (fig_dir / "06_incoupler_wavefront_movie.gif").stat().st_size < 5 * 1024 * 1024
 
     # Check RGB channels in Task 0

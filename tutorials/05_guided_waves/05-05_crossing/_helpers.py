@@ -949,11 +949,27 @@ class NonUniformCrossingPIC(PICSimulation):
         return self.solver
 
 
+class _PolygonSchematicProxy:
+    """Lightweight structure proxy exposing 2D polygon vertices (clipped to domain) for ``wakis.schematic``."""
+
+    def __init__(self, structure, eps_val: float, name: str, domain_bounds=None):
+        verts = np.asarray(structure.vertices, dtype=float).copy()
+        if domain_bounds is not None:
+            xmin, xmax, ymin, ymax = domain_bounds
+            verts[:, 0] = np.clip(verts[:, 0], xmin, xmax)
+            verts[:, 1] = np.clip(verts[:, 1], ymin, ymax)
+        self.vertices = verts
+        self.material = float(eps_val)
+        self.name = name
+        self.z_min = float(getattr(structure, "z_min", -0.0805e-6))
+        self.z_max = float(getattr(structure, "z_max", 0.0805e-6))
+
+
 class _SchematicSolverProxy:
     """Lightweight proxy around ``SolverFIT3D`` that hides ``ieps`` from ``wakis.schematic``
     so 2D ``PolySlab`` geometries can be drawn directly without bounding-box fallback rectangles."""
 
-    def __init__(self, solver, eps_clad: float):
+    def __init__(self, solver, eps_clad: float, structures=()):
         self._solver = solver
         self.grid = solver.grid
         self.Nx = solver.Nx
@@ -964,7 +980,7 @@ class _SchematicSolverProxy:
         self.bc_low = getattr(solver, "bc_low", ["pml", "pml", "periodic"])
         self.bc_high = getattr(solver, "bc_high", ["pml", "pml", "periodic"])
         self.bg = [float(eps_clad), 1.0, 0.0]
-        self._assigned_structures = ()
+        self._assigned_structures = tuple(structures)
 
 
 def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True):
@@ -976,6 +992,10 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
     pulse_obj = pic.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
+    freqs = np.asarray(getattr(pic, "frequencies", [f0]), dtype=float)
+    f_min_thz = float(np.min(freqs)) * 1e-12
+    f_max_thz = float(np.max(freqs)) * 1e-12
+    n_f = int(freqs.size)
 
     sources_s = []
     monitors_s = []
@@ -989,7 +1009,12 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
                 {
                     "kind": "sheet",
                     "type_name": "ModeSource",
-                    "label": "Port 'west' ModeSource\n(TE₀, +x, 1260–1360 nm)",
+                    "label": "Port 'west' ModeSource (TE₀, +x, 1260–1360 nm)",
+                    "short_word": "ModeSrc",
+                    "desc": "Port 'west' ModeSource (TE₀, w_in = 350 nm, +x)",
+                    "pos_str": f"x = {x_src * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"f₀ = {f0 * 1e-12:.2f} THz (λ ∈ [1.26, 1.36] µm, N = {n_f})",
+                    "polarization": "TE₀ (Ey, Hz, +x)",
                     "h_bounds": (x_src, x_src),
                     "v_bounds": (-hy, +hy),
                     "e_vec": (0.0, 1.0, 0.0),
@@ -1008,7 +1033,13 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
-                    "label": "West (S₁₁)",
+                    "label": "Port 'west' ModeMonitor (reflection S₁₁)",
+                    "short_word": "west",
+                    "desc": "Port 'west' ModeMonitor (TE₀ reflection S₁₁)",
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ey, Hz (mode overlap)",
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
@@ -1019,7 +1050,13 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
-                    "label": "Port 'east' ModeMonitor\n(Thru S₂₁)",
+                    "label": "Port 'east' ModeMonitor (thru S₂₁)",
+                    "short_word": "east",
+                    "desc": "Port 'east' ModeMonitor (TE₀ thru transmission S₂₁)",
+                    "pos_str": f"x = {cx * 1e6:.2f} µm, y ∈ [{-hy * 1e6:.2f}, +{hy * 1e6:.2f}] µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ey, Hz (mode overlap)",
                     "h_bounds": (cx, cx),
                     "v_bounds": (-hy, +hy),
                 }
@@ -1030,7 +1067,13 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
-                    "label": "Port 'north' (Cross S₃₁)",
+                    "label": "Port 'north' ModeMonitor (+y cross S₃₁)",
+                    "short_word": "north",
+                    "desc": "Port 'north' ModeMonitor (+y cross-port S₃₁)",
+                    "pos_str": f"x ∈ [{-hx * 1e6:.2f}, +{hx * 1e6:.2f}] µm, y = {cy * 1e6:.2f} µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ex, Hz (mode overlap)",
                     "h_bounds": (-hx, +hx),
                     "v_bounds": (cy, cy),
                 }
@@ -1041,19 +1084,38 @@ def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True
                 {
                     "kind": "plane",
                     "type_name": "ModeMonitor",
-                    "label": "Port 'south' (Cross S₄₁)",
+                    "label": "Port 'south' ModeMonitor (-y cross S₄₁)",
+                    "short_word": "south",
+                    "desc": "Port 'south' ModeMonitor (-y cross-port S₄₁)",
+                    "pos_str": f"x ∈ [{-hx * 1e6:.2f}, +{hx * 1e6:.2f}] µm, y = {cy * 1e6:.2f} µm",
+                    "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                    "frequencies": freqs,
+                    "component": "Ex, Hz (mode overlap)",
                     "h_bounds": (-hx, +hx),
                     "v_bounds": (cy, cy),
                 }
             )
     if include_flux_box:
+        x_lo = xmin + 2.0 * dx_bg
+        x_hi = xmax - 2.0 * dx_bg
+        y_lo = ymin + 2.0 * dy_bg
+        y_hi = ymax - 2.0 * dy_bg
         monitors_s.append(
             {
                 "kind": "box",
                 "type_name": "FluxMonitor",
                 "label": "4-wall Poynting FluxMonitor box",
-                "h_bounds": (xmin + 2.0 * dx_bg, xmax - 2.0 * dx_bg),
-                "v_bounds": (ymin + 2.0 * dy_bg, ymax - 2.0 * dy_bg),
+                "short_word": "FluxBox",
+                "desc": "4-wall Poynting FluxMonitor box (energy budget)",
+                "pos_str": (
+                    f"x ∈ [{x_lo * 1e6:.2f}, {x_hi * 1e6:.2f}] µm, "
+                    f"y ∈ [{y_lo * 1e6:.2f}, {y_hi * 1e6:.2f}] µm"
+                ),
+                "freq_str": f"{f_min_thz:.1f}–{f_max_thz:.1f} THz ({n_f} DFT pts)",
+                "frequencies": freqs,
+                "component": "S · n (east + west + north + south)",
+                "h_bounds": (x_lo, x_hi),
+                "v_bounds": (y_lo, y_hi),
             }
         )
     return sources_s, monitors_s
@@ -1070,11 +1132,18 @@ def _draw_crossing_polyslab(
     label: str | None = None,
     label_xy: tuple[float, float] | None = None,
     zorder: int = 5,
+    clip_bounds_um: tuple[float, float, float, float] | None = None,
 ):
     for s in structures:
+        v_um = np.asarray(s.vertices, dtype=float) * 1e6
+        if clip_bounds_um is not None:
+            x0, x1, y0, y1 = clip_bounds_um
+            v_um = v_um.copy()
+            v_um[:, 0] = np.clip(v_um[:, 0], x0, x1)
+            v_um[:, 1] = np.clip(v_um[:, 1], y0, y1)
         ax.add_patch(
             MplPolygon(
-                s.vertices * 1e6,
+                v_um,
                 closed=True,
                 fill=facecolor is not None,
                 facecolor=facecolor if facecolor is not None else "none",
@@ -1112,18 +1181,22 @@ def plot_setup_schematic_crossing(
     out_path: str | Path,
 ):
     """
-    Render ``00_setup_schematic.png`` (first figure of Tutorial 5.5, 2 panels):
-    - Panel (a): Labelled 2D EIM setup schematic of the $D_4$-symmetric 4-port
-      O-band cosine-tapered waveguide crossing with domain extents, 10-cell CPML,
-      periodic $\\pm z$, Si/SiO2 indices, West ``ModeSource`` + launched $\\mathrm{TE}_0$
-      mode profile, East/North/South ``ModeMonitor``s, and 4-wall Poynting
-      ``FluxMonitor`` box.
-    - Panel (b): ``1x`` Yee mesh zoom on the West access waveguide
-      (``w_in = 350 nm``) and cosine taper entrance showing ``16.3`` cells
-      across the waveguide width (``dy_min = 21.5 nm``).
+    Render the two-figure setup layout for Tutorial 5.5 via
+    ``wakis.schematic.save_setup_figures``:
+    - ``figures/00a_setup_geometry.png``: Labelled 2D EIM setup schematic of the
+      $D_4$-symmetric 4-port O-band cosine-tapered waveguide crossing with domain
+      extents, 10-cell CPML, periodic $\\pm z$, Si/SiO2 indices, West ``ModeSource``
+      + launched $\\mathrm{TE}_0$ mode profile, East/North/South ``ModeMonitor``s,
+      and 4-wall Poynting ``FluxMonitor`` box.
+    - ``figures/00b_setup_mesh_and_excitation.png``: Mesh view with ``1x`` zoom
+      on the West access waveguide (``w_in = 350 nm``) and cosine taper entrance
+      showing ``16.3`` cells across the waveguide width (``dy_min = 21.5 nm``),
+      wave-packet extent, and O-band excitation pulse/spectrum.
+    - ``figures/00_setup_table.md``: Markdown setup summary table.
     """
-    figstyle.apply_style()
-    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=13.6, height=5.8)
+    out_path = Path(out_path)
+    fig_dir = out_path.parent if out_path.suffix else out_path
+    fig_dir.mkdir(parents=True, exist_ok=True)
 
     sources_s, monitors_s = _build_crossing_port_sources_and_monitors(
         pic, include_flux_box=True
@@ -1131,25 +1204,96 @@ def plot_setup_schematic_crossing(
     neff_s = float(pic.n_eff_slab)
     eps_s = neff_s**2
     eps_clad = float(n_to_eps(pic.n_clad))
+    core_label = f"Si crossing core (ε_r = {eps_s:.2f})"
+    clad_label = f"SiO₂ cladding (ε_r = {eps_clad:.2f})"
     mat_names = {
-        "background": f"SiO₂ cladding (n={pic.n_clad:.2f}, ε_r={eps_clad:.2f})",
+        "background": clad_label,
+        eps_s: core_label,
     }
-    schematic.plot_schematic(
-        _SchematicSolverProxy(pic.solver, eps_clad),
+    dom_bounds = (
+        float(pic.grid.xmin),
+        float(pic.grid.xmax),
+        float(pic.grid.ymin),
+        float(pic.grid.ymax),
+    )
+    dom_bounds_um = tuple(v * 1e6 for v in dom_bounds)
+    struct_proxies = [
+        _PolygonSchematicProxy(s, eps_s, core_label, domain_bounds=dom_bounds)
+        for s in pic.structures_3d
+    ]
+    solver_proxy = _SchematicSolverProxy(
+        pic.solver, eps_clad, structures=struct_proxies
+    )
+
+    variations = [
+        {
+            "name": "Linear-tapered crossing (linear_taper_crossing)",
+            "param": "w_in = 0.35 µm → w_out = 1.10 µm, l_t = 5.30 µm",
+            "note": "Monotonic linear taper without TE₀+TE₂ self-imaging bulge; IL(1310 nm) = 0.65 dB, XT = -37.4 dB",
+        },
+        {
+            "name": "Plain untapered crossing (plain_crossing)",
+            "param": "w = 0.35 µm straight orthogonal intersection",
+            "note": "Unfocused diffraction into cross arms; IL(1310 nm) = 0.95 dB, XT = -14.9 dB",
+        },
+        {
+            "name": "4-port D₄ symmetry & reciprocity audit (symmetry_4port)",
+            "param": "Drives all 4 ports (west, east, north, south) at L3 = (20, 8)",
+            "note": "Verifies C₄ rotational invariance (5.6e-7), reciprocity (3.0e-7), and north/south mirror balance (1.1e-9)",
+        },
+        {
+            "name": "Kottke vs staircase convergence ladder",
+            "param": "L1=(10, 4), L2=(14, 6), L3=(20, 8), R=(40, 16)",
+            "note": "8.15 to 32.55 cells across w_in = 350 nm; Kottke converges at O(Δx^1.78) vs staircase O(Δx^0.82)",
+        },
+        {
+            "name": "D₄-graded non-uniform mesh upgrade (kottke_nonuniform)",
+            "param": "438 × 438 × 1 = 191,844 cells (-55.5% vs uniform L3)",
+            "note": "Δu = 21.0 nm in core/bulge graded to 42 nm in outer cladding (-65.9% runtime, IL = 0.087 dB)",
+        },
+    ]
+
+    title_geom = "Tutorial 5.5 — O-Band Cosine-Tapered Waveguide Crossing (D₄ Symmetry)"
+    title_mesh = (
+        "Tutorial 5.5 — O-Band Cosine-Tapered Waveguide Crossing — Mesh & Excitation"
+    )
+    saved_paths = schematic.save_setup_figures(
+        solver_proxy,
+        fig_dir,
         plane="xy",
-        ax=ax0,
         unit="µm",
-        structures=(),
+        structures=struct_proxies,
         material_names=mat_names,
         sources=sources_s,
         monitors=monitors_s,
-        show_mesh=True,
-        mesh_zoom=False,
-        show_pulse_inset=False,
-        show_wave_packet=False,
         wavelength=1310e-9,
-        title="(a) 4-port O-band cosine-tapered crossing setup (D₄ symmetry)",
+        min_feature=0.35e-6,
+        variations=variations,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
     )
+
+    fig_a, ax0 = schematic.plot_schematic(
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=struct_proxies,
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        wavelength=1310e-9,
+        title=title_geom,
+        width_in=8.2,
+        height_in=7.2,
+    )
+    if fig_a._suptitle is not None:
+        fig_a._suptitle.set_y(1.02)
+    ax0.set_title(title_geom, pad=76, fontsize=11.0, fontweight="bold")
+
+    for ln in ax0.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+
     _draw_crossing_polyslab(
         ax0,
         pic.structures_3d,
@@ -1160,13 +1304,14 @@ def plot_setup_schematic_crossing(
         label=(
             f"Si EIM core (h_Si=161 nm, n_Si=3.67)\n"
             f"n_eff,slab={neff_s:.4f} (ε_r={eps_s:.2f})\n"
-            "w_in=0.35 µm → 2w_m=1.50 µm → w_out=1.10 µm (l_t=5.30 µm)"
+            "w_in=0.35 → 2w_m=1.50 → w_out=1.10 µm"
         ),
-        label_xy=(3.3, 2.3),
+        label_xy=(3.55, -3.55),
+        clip_bounds_um=dom_bounds_um,
     )
     ax0.text(
-        -3.4,
-        -3.9,
+        -3.65,
+        3.65,
         "SiO₂ cladding (n = 1.45, ε_r = 2.10)",
         fontsize=7.2,
         color="#334155",
@@ -1192,8 +1337,8 @@ def plot_setup_schematic_crossing(
             yw,
             color="#d62728",
             lw=1.7,
+            marker="none",
             zorder=9,
-            label=r"Launched West $\mathrm{TE}_0$ $|E_y(y)|$",
         )
         ax0.fill_betweenx(yw, xe - 0.95 * ew, xe, color="#1b9e77", alpha=0.24, zorder=8)
         ax0.plot(
@@ -1201,86 +1346,83 @@ def plot_setup_schematic_crossing(
             yw,
             color="#1b9e77",
             lw=1.7,
+            marker="none",
             zorder=9,
-            label=r"Thru East $\mathrm{TE}_0$ $|E_y(y)|$ ($S_{21}$)",
-        )
-        ax0.legend(
-            loc="lower right",
-            bbox_to_anchor=(0.98, 0.14),
-            fontsize=7.0,
-            framealpha=0.92,
         )
 
-    # Panel (b): 1x mesh zoom on West access waveguide & cosine taper start
-    xl_z, yl_z = (-6.00, -4.60), (-0.52, 0.52)
-    ax0.add_patch(
-        Rectangle(
-            (xl_z[0], yl_z[0]),
-            xl_z[1] - xl_z[0],
-            yl_z[1] - yl_z[0],
-            fill=False,
-            ec="#d95f02",
-            lw=1.3,
-            ls="--",
-            zorder=10,
+    tag_positions = {
+        "1 · ModeSrc": (-6.42, 1.32, "left"),
+        "2 · west": (-6.25, -1.32, "left"),
+        "3 · east": (6.25, 1.32, "right"),
+        "4 · north": (1.10, 6.18, "left"),
+        "5 · south": (1.10, -6.18, "left"),
+        "6 · FluxBox": (-3.65, 6.22, "center"),
+    }
+    for txt in list(ax0.texts):
+        s = txt.get_text().strip()
+        if s in tag_positions:
+            tx, ty, ha_val = tag_positions[s]
+            txt.set_position((tx, ty))
+            txt.set_ha(ha_val)
+
+    fig_a.savefig(fig_dir / "00a_setup_geometry.png", dpi=150, bbox_inches="tight")
+    plt.close(fig_a)
+
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_proxy,
+        plane="xy",
+        unit="µm",
+        structures=struct_proxies,
+        material_names=mat_names,
+        sources=sources_s,
+        wavelength=1310e-9,
+        min_feature=0.35e-6,
+        zoom_bounds=(-6.00e-6, -4.60e-6, -0.52e-6, 0.52e-6),
+        title=title_mesh,
+    )
+    if len(axes_b) >= 1:
+        ax_zoom = axes_b[0]
+        _draw_crossing_polyslab(
+            ax_zoom,
+            pic.structures_3d,
+            facecolor="#DCEAF7",
+            alpha=0.72,
+            edgecolor="#1E293B",
+            lw=1.1,
+            clip_bounds_um=dom_bounds_um,
         )
+        for child_ax in fig_b.axes:
+            if getattr(child_ax, "_is_inset", False):
+                _draw_crossing_polyslab(
+                    child_ax,
+                    pic.structures_3d,
+                    facecolor="#DCEAF7",
+                    alpha=0.72,
+                    edgecolor="#1E293B",
+                    lw=1.0,
+                    clip_bounds_um=dom_bounds_um,
+                )
+        m_res = measure_grid_resolution(
+            pic.grid.x, pic.grid.y, min_feature=0.35e-6, has_ghost=True
+        )
+        ax_zoom.annotate(
+            f"Access w_in = 350 nm\n{m_res['cells_across_feature']:.1f} cells (Δy = {m_res['dx_min_nm']:.1f} nm)",
+            xy=(-5.75, 0.0),
+            xytext=(-5.85, -3.60),
+            color="#0f172a",
+            fontsize=7.2,
+            fontweight="bold",
+            ha="left",
+            va="center",
+            zorder=12,
+            arrowprops=dict(arrowstyle="->", color="#d95f02", lw=1.2),
+            bbox=dict(boxstyle="round,pad=0.20", fc="white", ec="#d95f02", alpha=0.92),
+        )
+    fig_b.savefig(
+        fig_dir / "00b_setup_mesh_and_excitation.png", dpi=150, bbox_inches="tight"
     )
-    slv = pic.solver
-    iz = slv.Nz // 2
-    ieps_y = np.asarray(slv.ieps[:, :, iz, "y"], dtype=float)
-    eps_r = np.where(
-        ieps_y > 0, 1.0 / (np.where(ieps_y > 0, ieps_y, 1.0) * epsilon_0), 1.0
-    )
-    xe = slv.grid.x * 1e6
-    ye = slv.grid.y * 1e6
-    im_m = ax1.pcolormesh(
-        xe,
-        ye,
-        eps_r.T,
-        cmap=figstyle.CMAP_EPS,
-        shading="flat",
-        edgecolors="white",
-        linewidth=0.35,
-    )
-    _draw_crossing_polyslab(
-        ax1,
-        pic.structures_3d,
-        facecolor=None,
-        edgecolor="#facc15",
-        lw=1.4,
-        ls="--",
-    )
-    ax1.set(
-        xlim=xl_z,
-        ylim=yl_z,
-        aspect="equal",
-        xlabel="x [µm]",
-        ylabel="y [µm]",
-        title="(b) 1× mesh zoom on w_in = 350 nm access & taper start",
-    )
-    cb = fig.colorbar(im_m, ax=ax1, fraction=0.046, pad=0.03)
-    cb.set_label(r"Subpixel $\varepsilon_{yy} / \varepsilon_0$ (Kottke)")
-    m_res = measure_grid_resolution(
-        pic.grid.x, pic.grid.y, min_feature=0.35e-6, has_ghost=True
-    )
-    ax1.annotate(
-        "",
-        xy=(-5.75, -0.175),
-        xytext=(-5.75, +0.175),
-        arrowprops=dict(arrowstyle="<->", color="white", lw=1.5),
-    )
-    ax1.text(
-        -5.65,
-        0.0,
-        f"w_in = 350 nm\n{m_res['cells_across_feature']:.1f} cells (Δy_min = {m_res['dx_min_nm']:.1f} nm)",
-        color="white",
-        fontsize=7.3,
-        fontweight="bold",
-        va="center",
-        bbox=dict(boxstyle="round,pad=0.22", fc="#0f172a", ec="#facc15", alpha=0.88),
-    )
-    figstyle.save(fig, out_path)
-    plt.close(fig)
+    plt.close(fig_b)
+    return saved_paths
 
 
 def plot_crossing_geometries_schematic(
@@ -1291,12 +1433,14 @@ def plot_crossing_geometries_schematic(
     """
     Render ``00b_crossing_geometries_schematic.png`` (2 panels <= 3) showing the
     labelled setup schematics of the two comparison crossing geometries:
-    - Panel (a): Linear-tapered 4-port crossing (``w_in = 0.35 -> w_cross = 1.45 um``,
-      ``L_t = 4.80 um``).
+    - Panel (a): Linear-tapered 4-port crossing (``w_in = 0.35 -> w_cross = 1.10 um``,
+      ``l_t = 5.30 um``).
     - Panel (b): Plain untapered 4-port waveguide crossing (``w = 0.35 um``).
     """
     figstyle.apply_style()
-    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=13.2, height=5.5)
+    fig, (ax0, ax1) = plt.subplots(
+        1, 2, figsize=(14.4, 5.9), gridspec_kw={"wspace": 0.44}
+    )
 
     neff_s = float(pic_linear.n_eff_slab)
     eps_clad = float(n_to_eps(pic_linear.n_clad))
@@ -1320,6 +1464,12 @@ def plot_crossing_geometries_schematic(
         src_i, mon_i = _build_crossing_port_sources_and_monitors(
             pic_i, include_flux_box=False
         )
+        dom_um = (
+            float(pic_i.grid.xmin) * 1e6,
+            float(pic_i.grid.xmax) * 1e6,
+            float(pic_i.grid.ymin) * 1e6,
+            float(pic_i.grid.ymax) * 1e6,
+        )
         schematic.plot_schematic(
             _SchematicSolverProxy(pic_i.solver, eps_clad),
             plane="xy",
@@ -1336,6 +1486,12 @@ def plot_crossing_geometries_schematic(
             wavelength=1310e-9,
             title=ttl_i,
         )
+        if ax_i.get_legend() is not None:
+            ax_i.get_legend().remove()
+        ax_i.set_title(ttl_i, pad=78, fontsize=9.8, fontweight="bold")
+        for ln in ax_i.lines:
+            if ln.get_linestyle() in ("--", ":"):
+                ln.set_marker("none")
         _draw_crossing_polyslab(
             ax_i,
             pic_i.structures_3d,
@@ -1344,8 +1500,24 @@ def plot_crossing_geometries_schematic(
             edgecolor="#0f172a",
             lw=1.3,
             label=lbl_i,
-            label_xy=(3.3, -3.5),
+            label_xy=(3.35, -3.50),
+            clip_bounds_um=dom_um,
         )
+        tag_pos_sub = {
+            "1 · ModeSrc": (-6.42, 1.32, "left"),
+            "2 · west": (-6.25, -1.32, "left"),
+            "3 · east": (6.25, 1.32, "right"),
+            "4 · north": (1.10, 6.18, "left"),
+            "5 · south": (1.10, -6.18, "left"),
+        }
+        for txt in list(ax_i.texts):
+            s = txt.get_text().strip()
+            if s.startswith("Δx ="):
+                txt.remove()
+            elif s in tag_pos_sub:
+                tx, ty, ha_val = tag_pos_sub[s]
+                txt.set_position((tx, ty))
+                txt.set_ha(ha_val)
 
     figstyle.save(fig, out_path)
     plt.close(fig)

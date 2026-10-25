@@ -59,6 +59,8 @@ def test_tutorial_artifacts_and_quantitative_benchmarks():
         assert (data_dir / f"task_{idx}.npz").is_file()
 
     expected_pngs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_time_varying_setup_schematic.png",
         "02_time_refraction_reflection_snapshots.png",
         "03_temporal_fresnel_and_continuity.png",
@@ -72,6 +74,9 @@ def test_tutorial_artifacts_and_quantitative_benchmarks():
         fpath = fig_dir / fname
         assert fpath.is_file(), f"Missing figure {fname}"
         assert fpath.stat().st_size > 20_000, f"Figure {fname} appears empty or too small"
+
+    table_md = fig_dir / "00_setup_table.md"
+    assert table_md.is_file() and table_md.stat().st_size > 128, "Missing 00_setup_table.md"
 
     gif_path = fig_dir / "02_time_refraction_reflection.gif"
     assert gif_path.is_file(), "Missing animated GIF 02_time_refraction_reflection.gif"

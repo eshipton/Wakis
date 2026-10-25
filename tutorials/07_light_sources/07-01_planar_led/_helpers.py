@@ -1669,3 +1669,158 @@ def overlay_ryu_stack(
         zorder=10,
     )
 
+
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots all representative ensemble markers while returning
+    its first scalar coordinate when converted to ``float`` for tag placement.
+    """
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+def save_planar_led_setup_figures(
+    fig_dir: Path,
+    mode: str = "full",
+) -> dict:
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and
+    ``00_setup_table.md`` for the Ryu (2014) planar AlGaN deep-UV LED stack via
+    `wakis.schematic.save_setup_figures`.
+    """
+    from wakis import schematic
+
+    cpw = 20.0 if mode == "full" else 12.0
+    dz_fine_nm = 3.125 if mode == "full" else 6.25
+    Lx = 3.6e-6 if mode == "full" else 2.8e-6
+
+    obj = build_ryu_schematic_objects(
+        t_pgan_nm=50.0,
+        cpw=cpw,
+        dz_fine_nm=dz_fine_nm,
+        Lx=Lx,
+        dipole_pol="x",
+        dipole_x_um=(0.0, 0.25, 0.50, 0.75, 1.05),
+    )
+    solver = obj["solver"]
+    structures = obj["structures"][:5]
+    layer_labels = [
+        "Sapphire (d_z = 300 nm, n = 1.80)",
+        "n-AlGaN (d_z = 450 nm, n = 2.60)",
+        "MQW active (d_z = 50 nm, n = 2.60, α = 10³ cm⁻¹)",
+        "p-AlGaN (d_z = 50 nm, n = 2.60)",
+        "p-GaN absorber (d_z = 50 nm, n = 2.90, α = 1.7×10⁵ cm⁻¹)",
+    ]
+    for st, lbl in zip(structures, layer_labels):
+        st.name = lbl
+
+    info0 = schematic.extract_setup_info(
+        solver,
+        plane="xz",
+        structures=structures,
+        sources=obj["sources"],
+        monitors=obj["monitors"],
+    )
+    src_base = info0["sources"][0]
+
+    rep_x = _RepCoord([0.0, -1.05e-6, -0.50e-6, 0.50e-6, 1.05e-6])
+    rep_z = _RepCoord([-0.075e-6] * 5)
+
+    src_ens = dict(src_base)
+    src_ens["h_bounds"] = (rep_x, 0.0)
+    src_ens["v_bounds"] = (rep_z, -0.075e-6)
+    src_ens["short_word"] = "dipoles (9×2)"
+    src_ens["label"] = (
+        "MQW dipole ensemble: 9 sites × 2 pols (TE J_x, TM J_z) = 18 dipoles"
+    )
+    src_ens["desc"] = (
+        "MQW dipole ensemble: 9 sites in [-1.05, 1.05] µm × 2 pols "
+        "(TE J_x, TM J_z) = 18 dipoles (z = -75 nm)"
+    )
+    src_ens["polarization"] = "TE (J_x) & TM (J_z)"
+    src_ens["pos_str"] = "z = -75 nm, 9 sites in x ∈ [-1.05, 1.05] µm (5 shown)"
+
+    z_ext_nm = obj["z_ext"] * 1e9
+    w_half_um = 0.5 * obj["w_ext"] * 1e6
+    z_bot_um = obj["z_bot"] * 1e6
+
+    mon_n2f = dict(info0["monitors"][0])
+    mon_n2f["kind"] = "plane"
+    mon_n2f["h_bounds"] = (-0.5 * obj["w_ext"], 0.5 * obj["w_ext"])
+    mon_n2f["v_bounds"] = (0.21e-6, 0.21e-6)
+    mon_n2f["short_word"] = "N2F top"
+    mon_n2f["label"] = f"Top Near2FarMonitor in air (z = +{z_ext_nm:.0f} nm)"
+    mon_n2f["desc"] = (
+        f"Top Near2FarMonitor in air (z = +{z_ext_nm:.0f} nm, "
+        f"x ∈ [-{w_half_um:.2f}, {w_half_um:.2f}] µm)"
+    )
+    mon_n2f["pos_str"] = (
+        f"z = +{z_ext_nm:.0f} nm, x ∈ [-{w_half_um:.2f}, {w_half_um:.2f}] µm"
+    )
+
+    mon_bot = dict(info0["monitors"][1])
+    mon_bot["kind"] = "plane"
+    mon_bot["short_word"] = "substrate flux"
+    mon_bot["label"] = (
+        f"Bottom + lateral Poynting FluxMonitors (z_bot = {z_bot_um:.2f} µm)"
+    )
+    mon_bot["desc"] = (
+        f"Bottom + lateral Poynting FluxMonitor box "
+        f"(z_bot = {z_bot_um:.2f} µm, x = ±{w_half_um:.2f} µm)"
+    )
+
+    variations = [
+        {
+            "name": "Task 0 — Semi-infinite dielectric slab validation",
+            "notes": (
+                "n_slab ∈ {1.50, 2.00, 2.60} → Air (n = 1.00), z_dip = -180 nm, "
+                "4-face FluxMonitor box vs exact 2D Fresnel integral"
+            ),
+        },
+        {
+            "name": "Task 1 — p-GaN thickness & AlGaN index sweeps (Ryu 2014 Figs. 3 & 7)",
+            "notes": (
+                "t_p-GaN ∈ {0, 25, 50, 100, 150, 200} nm (α = 1.7×10⁵ cm⁻¹, "
+                "δ = 58.82 nm), n_AlGaN ∈ {2.50, 2.60, 2.70}"
+            ),
+        },
+        {
+            "name": "Task 2 — Incoherent dipole ensemble & Near2Far pattern",
+            "notes": (
+                "N_pos = 5 lateral positions x_i ∈ {0.0, 0.25, 0.50, 0.75, 1.05} µm "
+                "(9 symmetric sites) × TE (J_x) / TM (J_z) = 18 dipoles"
+            ),
+        },
+        {
+            "name": "Tasks 3–6 — Kottke subpixel smoothing vs staircase convergence ladder",
+            "notes": (
+                "cpw ∈ {10 (demo, Δz = 25 nm), 14 (Δz = 4.17 nm), 20 (accepted, "
+                "Δz = 3.125 nm, 18.8 cells/δ), 28 (reference, Δz = 2.50 nm, 23.5 cells/δ)}"
+            ),
+        },
+    ]
+
+    return schematic.save_setup_figures(
+        solver,
+        out_dir=fig_dir,
+        plane="xz",
+        unit="um",
+        structures=structures,
+        material_names={"background": "Air superstrate"},
+        sources=[src_ens],
+        monitors=[mon_n2f, mon_bot],
+        wavelength=280e-9,
+        min_feature=25e-9,
+        title_geometry=(
+            "Planar AlGaN Deep-UV LED (Ryu 2014 Stack): "
+            "Geometry, Dipole Ensemble & Monitors"
+        ),
+        title_mesh=(
+            "Planar AlGaN Deep-UV LED: Graded Thin-Layer Mesh & UV Dipole Excitation"
+        ),
+        variations=variations,
+    )
+
+

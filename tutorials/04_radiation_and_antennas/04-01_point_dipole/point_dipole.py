@@ -39,12 +39,12 @@
 # ## Learning goals
 #
 # 1. **Setup schematic and locally graded 3D FIT meshing**: inspect the complete 3D simulation
-#    geometry (`figures/00_setup_schematic.png`)—domain extents, 6-face CPML absorbing boundaries,
-#    Huygens `Near2FarMonitor` / `FluxMonitor` surface, and $z$-polarized `CurrentSource`—and use a
-#    locally graded mesh ($\Delta_{\min} = 5.0\;\text{mm} \approx \lambda_0/60$ at the dipole origin
-#    grading to $\Delta_{\max} = 14.5\;\text{mm} \approx \lambda_0/20.7$ in the radiation zone) to
-#    resolve both the $kr \ll 1$ singular core and the $kr > 1$ far field in $3\times$ fewer cells
-#    than a uniform grid.
+#    geometry (`figures/00a_setup_geometry.png` and `figures/00b_setup_mesh_and_excitation.png`)—domain
+#    extents, 6-face CPML absorbing boundaries, Huygens `Near2FarMonitor` / `FluxMonitor` surface, and
+#    $z$-polarized `CurrentSource`—and use a locally graded mesh ($\Delta_{\min} = 5.0\;\text{mm} \approx \lambda_0/60$
+#    at the dipole origin grading to $\Delta_{\max} = 14.5\;\text{mm} \approx \lambda_0/20.7$ in the
+#    radiation zone) to resolve both the $kr \ll 1$ singular core and the $kr > 1$ far field in $3\times$
+#    fewer cells than a uniform grid.
 # 2. **The three radial field zones and the $kr = 1$ boundary**: extract $|E_\theta(r)|$,
 #    $|E_r(r)|$, and $\eta_0|H_\phi(r)|$ along the equatorial ($\theta = 90^\circ$) and axial
 #    ($\theta = 0^\circ$) directions, verify the $(kr)^{-3}$, $(kr)^{-2}$, and $(kr)^{-1}$ power
@@ -70,11 +70,11 @@
 # %% [markdown]
 # ## 1. Simulation setup schematic & governing physics
 #
-# ### 1.1 Labelled setup schematic (`figures/00_setup_schematic.png`)
+# ### 1.1 Labelled setup schematic (`figures/00a_setup_geometry.png` & `figures/00b_setup_mesh_and_excitation.png`)
 #
-# Figure 00 (`figures/00_setup_schematic.png`), rendered first by `wakis.schematic.plot_schematic`
-# with `show_mesh=True` and `mesh_zoom=True`, shows the $xz$-plane cross-section ($y = 0$) of the
-# 3D free-space simulation domain:
+# Figures 00a and 00b, produced by `wakis.schematic.save_setup_figures`, show the $xz$-plane
+# cross-section ($y = 0$) of the 3D free-space simulation domain, the locally graded FIT mesh with
+# a $1\times$ zoom on the $5\;\text{mm}$ core, and the broadband excitation spectrum:
 #
 # - **Domain & absorbing boundaries**: a cubic vacuum box ($\varepsilon_r = 1, \mu_r = 1$) spanning
 #   $x, y, z \in [-300, +300]\;\text{mm}$ ($2.0\,\lambda_0$ per side at $f_0 = 1.0\;\text{GHz}$),
@@ -85,8 +85,8 @@
 #   $\ell = 10\;\text{mm} = \lambda_0 / 30$) driven by a broadband `GaussianSource` centered at
 #   $f_0 = 1.0\;\text{GHz}$ ($\Delta f = 0.6\;\text{GHz}$).
 # - **Monitors & transition sphere**: a closed cubic `Near2FarMonitor` (which inherits from
-#   `FluxMonitor`) at $x, y, z = \pm 180\;\text{mm}$ ($0.60\,\lambda_0$, well outside the dotted
-#   orange $kr = 1$ transition circle at $r = \lambda_0/(2\pi) = 47.71\;\text{mm}$).
+#   `FluxMonitor`) at $x, y, z = \pm 175.3\;\text{mm}$ ($0.58\,\lambda_0$, well outside the
+#   $kr = 1$ transition sphere at $r = \lambda_0/(2\pi) = 47.71\;\text{mm}$).
 # - **Locally graded FIT mesh**: in FIT staggering, $E_z$ and $J_z$ sit on primary nodes $(x_i, y_j)$
 #   transversally and on edge midpoints $z_{k+1/2}$ longitudinally. The mesh places an exact node at
 #   $x = y = 0$ and a central $z$-edge spanning $[-\Delta_{\min}/2, +\Delta_{\min}/2]$ with
@@ -94,7 +94,29 @@
 #   $\lambda\hspace{-0.4em}\bar{}_0$), expanding smoothly with a $1.24$ grading ratio to
 #   $\Delta_{\max} = 14.5\;\text{mm}$ ($\approx 20.7\;\text{cells}/\lambda_0$) in the outer zone.
 #
-# ![Setup schematic and graded mesh](figures/00_setup_schematic.png)
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The 3D FIT setup places a $z$-directed Hertzian `CurrentSource` ($I_0\ell = 10\;\text{mA}\cdot\text{m}$) at the origin of a locally graded $600\;\text{mm} \times 600\;\text{mm} \times 600\;\text{mm}$ vacuum box enclosed by a 6-cell CPML and a $\pm 175.3\;\text{mm}$ Huygens `Near2FarMonitor` box.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 600 mm × 600 mm × 600 mm (z ∈ [-300 mm, 300 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 52 × 52 × 53 (143312 cells) |
+# | Discretization | Δx & resolution | Δ_min = 4.37 mm, 68.5 cells/λ (in n_max = 1.00), 1.1 cells across feature (5 mm) |
+# | Boundary | -x face | CPML (6 cells, 83.1 mm) |
+# | Boundary | +x face | CPML (6 cells, 83.1 mm) |
+# | Boundary | -y face | CPML (6 cells, 83.1 mm) |
+# | Boundary | +y face | CPML (6 cells, 83.1 mm) |
+# | Boundary | -z face | CPML (6 cells, 83.1 mm) |
+# | Boundary | +z face | CPML (6 cells, 83.1 mm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Source | 1 · CurrentSource | pos: x = 0 m, z = 0 m, pol: J_z (E_z), pulse: f₀ = 1 GHz, Δf = 600.0 MHz |
+# | Monitor | 2 · Near2FarMonitor | Near2FarMonitor, pos: x ∈ [-175.3 mm, 175.3 mm], freqs: f = 1 GHz |
+# | Variation | Dipole length sweep | $\ell / \lambda_0 \in [0.04, 0.50]$ ($N_{\mathrm{seg}} \in \{1, \dots, 25\}$) |
+# | Variation | CPML clearance study | $d_{\mathrm{PML}} / \lambda_0 \in [0.045, 0.420]$ ($kd_{\mathrm{PML}} \in [0.28, 2.64]$) |
+# | Variation | Uniform mesh convergence | $\lambda_0 / \Delta \in \{10, 14, 20, 26\}$ cells/$\lambda_0$ |
+# | Variation | Extended radiation movie | $6.63\,\lambda_0 \times 2.93\,\lambda_0 \times 6.63\,\lambda_0$ at $20.5$ cells/$\lambda_0$ ($r_{\max} = 3.32\,\lambda_0$) |
 #
 # ### 1.2 Exact 3D Hertzian dipole fields and the $kr = 1$ boundary
 #

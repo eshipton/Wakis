@@ -40,14 +40,15 @@ def _ensure_tutorial_data_and_figures() -> None:
     ]
     if missing_data:
         h.run_tasks(missing_data, DATA_DIR, quick=True)
-    if not (FIG_DIR / "00_setup_schematic.png").exists():
+    if not (FIG_DIR / "00a_setup_geometry.png").exists():
         h.generate_all_figures(DATA_DIR, FIG_DIR)
 
 
 def test_setup_schematic_and_figures_exist() -> None:
-    """Verify that the setup schematic and all 9 Tutorial 4.2 figures exist and are non-empty."""
+    """Verify that the setup figures (00a/00b + 00_setup_table.md) and all Tutorial 4.2 figures exist."""
     expected = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_geometry_and_graded_mesh.png",
         "02_current_distribution_wire.png",
         "03_impedance_s11_and_shortening.png",
@@ -64,6 +65,15 @@ def test_setup_schematic_and_figures_exist() -> None:
         assert size_bytes > 10_000, f"Figure {fname} is unexpectedly small ({size_bytes} B)"
         if fname.endswith(".gif"):
             assert size_bytes < 5 * 1024 * 1024, f"GIF exceeds 5 MB limit ({size_bytes} B)"
+
+    table_md = FIG_DIR / "00_setup_table.md"
+    assert table_md.exists() and table_md.stat().st_size > 200, f"Missing setup table: {table_md}"
+
+    from PIL import Image
+
+    with Image.open(FIG_DIR / "08_wire_antenna_radiation.gif") as im:
+        assert im.n_frames <= 60, f"Expected <= 60 GIF frames, got {im.n_frames}"
+        assert im.size[0] <= 900, f"Expected GIF width <= 900 px, got {im.size[0]}"
 
     est = h.preflight_estimates()
     for key in (

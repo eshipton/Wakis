@@ -28,7 +28,10 @@ class TestMieCylinderAnalyticalAndSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
-            "00_setup_schematic.png",
+            "00a_setup_geometry.png",
+            "00b_setup_mesh_and_excitation.png",
+            "00a_setup_geometry_unstructured.png",
+            "00b_setup_mesh_and_excitation_unstructured.png",
             "tfsf_diagram.png",
             "cylinder_theory.png",
             "mesh_te_staircase_vs_conformal.png",
@@ -41,6 +44,10 @@ class TestMieCylinderAnalyticalAndSavedBenchmarks:
         ):
             p = TUTORIAL_DIR / "figures" / fig_name
             assert p.is_file() and p.stat().st_size > 1000, f"Missing or empty {p}"
+
+        for md_name in ("00_setup_table.md", "00_setup_table_unstructured.md"):
+            p = TUTORIAL_DIR / "figures" / md_name
+            assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         gif_path = TUTORIAL_DIR / "figures" / "cylinder_movie.gif"
         assert gif_path.stat().st_size < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"

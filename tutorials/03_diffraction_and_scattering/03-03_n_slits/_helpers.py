@@ -1498,17 +1498,17 @@ def _clean_grating_schematic_labels(
 def plot_setup_schematic(
     output_path: str | Path,
     wavelength: float = DEFAULT_WAVELENGTH,
-) -> None:
-    """Generate the 3-panel labelled setup schematic for finite-N, periodic cell, and mesh zoom."""
+) -> dict[str, dict]:
+    """Generate setup figures (00a/00b) and setup tables for finite-N and periodic unit-cell gratings."""
+    out_p = Path(output_path)
+    fig_dir = out_p.parent if out_p.suffix else out_p
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
     slit_width = 0.6 * wavelength
     period = 1.8 * wavelength
     screen_thickness = 0.14 * wavelength
-    a_um = slit_width * 1e6
-    d_um = period * 1e6
-    b_um = (period - slit_width) * 1e6
-    t_um = screen_thickness * 1e6
 
-    solver_fin, grid_info, boxes_fin, src_fin, mons_fin = _build_finite_n_schematic_solver(
+    solver_fin, _, boxes_fin, src_fin, mons_fin = _build_finite_n_schematic_solver(
         n_slits=6,
         slit_width=slit_width,
         period=period,
@@ -1516,6 +1516,43 @@ def plot_setup_schematic(
         screen_thickness=screen_thickness,
         cpw=22,
     )
+    boxes_fin[0].name = "PEC outer jaw"
+    boxes_fin[-1].name = "PEC outer jaw"
+    for b in boxes_fin[1:-1]:
+        b.name = "PEC grating bar"
+
+    res_fin = schematic.save_setup_figures(
+        solver_fin,
+        fig_dir,
+        plane="xy",
+        structures=boxes_fin,
+        sources=[src_fin],
+        monitors=mons_fin,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=screen_thickness,
+        title_geometry="Finite N = 6 Grating Setup: PEC Screen, Plane-Wave Source & Near2FarMonitor (XY plane)",
+        title_mesh="Finite N = 6 Grating: Graded FIT Mesh (1× Screen Zoom) & Excitation Spectrum",
+        variations=[
+            {
+                "name": "Slit count sweep (patterns task)",
+                "details": "N ∈ {2, 3, 4, 6, 8}, a = 360 nm (0.6λ), d = 1.08 µm (1.8λ), t = 84 nm (0.14λ)",
+            },
+            {
+                "name": "Rayleigh doublet (resolving_power task)",
+                "details": "N = 6, order m = +1 (R = 6), broadband DFT at Δλ/λ ∈ {0.55/R, 1.00/R, 1.45/R}",
+            },
+            {
+                "name": "Periodic unit cell (periodic_vs_finite task)",
+                "details": "N → ∞ single period x ∈ [-d/2, +d/2] with periodic ±x BCs and DiffractionMonitor",
+            },
+            {
+                "name": "Resolution sweep (resolution task)",
+                "details": "N = 4, cpw ∈ {12, 16, 20, 28, 36}",
+            },
+        ],
+    )
+
     solver_per, boxes_per, src_per, mons_per = _build_periodic_cell_schematic_solver(
         slit_width=slit_width,
         period=period,
@@ -1523,148 +1560,24 @@ def plot_setup_schematic(
         screen_thickness=screen_thickness,
         cpw=24,
     )
+    for b in boxes_per:
+        b.name = "PEC half-bar"
 
-    with figstyle.apply_style():
-        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.9)
-
-        # Panel (a): Finite N = 6 grating setup in CPML domain
-        ax = axes[0]
-        schematic.plot_schematic(
-            solver_fin,
-            ax=ax,
-            plane="xy",
-            unit="µm",
-            structures=boxes_fin,
-            sources=[src_fin],
-            monitors=mons_fin,
-            wavelength=wavelength,
-            show_mesh=False,
-            mesh_zoom=False,
-            show_wave_packet=False,
-            title=r"(a) Finite $N = 6$ Grating Setup (CPML + Near2Far)",
-        )
-        y_src_fin = float(grid_info["y_core"][0] * 1e6 + 0.35 * wavelength * 1e6)
-        y_n2f_fin = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
-        _clean_grating_schematic_labels(
-            ax,
-            y_src=y_src_fin,
-            y_mon=y_n2f_fin,
-            mon_label="Near2FarMonitor + FluxMonitor",
-            bc_top_summary=r"$\pm y$: CPML (10 cells) $\mid$ $\pm z$: Periodic",
-        )
-        ax.set_aspect("auto")
-
-        # Panel (b): Periodic N -> infinity single unit cell [-d/2, +d/2] with DiffractionMonitor
-        ax_p = axes[1]
-        schematic.plot_schematic(
-            solver_per,
-            ax=ax_p,
-            plane="xy",
-            unit="µm",
-            structures=boxes_per,
-            sources=[src_per],
-            monitors=mons_per,
-            wavelength=wavelength,
-            show_mesh=False,
-            mesh_zoom=False,
-            show_wave_packet=False,
-            title=r"(b) $N \to \infty$ Unit Cell ($x \in [-d/2, d/2]$ + DiffractionMonitor)",
-        )
-        _clean_grating_schematic_labels(
-            ax_p,
-            y_src=-1.05 * wavelength * 1e6,
-            y_mon=0.65,
-            mon_label="DiffractionMonitor (Floquet orders)",
-            bc_top_summary=r"$\pm x$: Periodic $\mid$ $\pm y$: CPML (10 cells)",
-        )
-        ax_p.set_aspect("auto")
-
-        # Panel (c): Zoomed graded FIT mesh around a grating slit a and PEC bar b = d - a
-        ax_m = axes[2]
-        ax_m.set_facecolor("#F8FAFC")
-        schematic.draw_mesh(
-            ax_m,
-            solver_fin,
-            plane="xy",
-            unit="µm",
-            every=1,
-            wavelength=wavelength,
-            zoom_inset=False,
-            show_cpw=True,
-            color="#334155",
-            alpha=0.55,
-            linewidth=0.6,
-        )
-        schematic.overlay_geometry(
-            ax_m,
-            solver_fin,
-            plane="xy",
-            unit="µm",
-            structures=boxes_fin,
-            show_boundaries=False,
-            show_materials=True,
-            fill_materials=True,
-            material_alpha=0.55,
-            outline_color=figstyle.INK,
-            label_materials=False,
-        )
-        ax_m.set_xlim(-1.15, 1.15)
-        ax_m.set_ylim(-0.32, 0.32)
-        ax_m.set_aspect("auto")
-        ax_m.set_xlabel("x [µm]")
-        ax_m.set_ylabel("y [µm]")
-        ax_m.set_title(r"(c) Grating Mesh Zoom ($a = 0.6\lambda$, $b = 1.2\lambda$, $d = 1.8\lambda$)")
-
-        ax_m.text(
-            0.0,
-            0.0,
-            f"PEC bar $b = {b_um:.2f}$ µm\n({grid_info['cells_across_bridge']} cells $\\geq 4$)",
-            ha="center",
-            va="center",
-            fontsize=7.8,
-            fontweight="bold",
-            color=figstyle.INK,
-            bbox={
-                "boxstyle": "round,pad=0.15",
-                "facecolor": figstyle.PAPER,
-                "edgecolor": "#94A3B8",
-                "alpha": 0.92,
-            },
-            zorder=9,
-        )
-        for x_c in (-0.5 * d_um, 0.5 * d_um):
-            ax_m.annotate(
-                "",
-                xy=(x_c + 0.5 * a_um, 0.14),
-                xytext=(x_c - 0.5 * a_um, 0.14),
-                arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
-                zorder=9,
-            )
-            ax_m.text(
-                x_c,
-                0.16,
-                f"Slit $a = {a_um:.2f}$ µm\n({grid_info['cells_across_slit']} cells $\\geq 4$)",
-                ha="center",
-                va="bottom",
-                fontsize=7.8,
-                fontweight="bold",
-                color="#0072B2",
-                zorder=9,
-            )
-        ax_m.text(
-            -0.95,
-            -0.14,
-            f"Screen $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
-            ha="left",
-            va="top",
-            fontsize=8.0,
-            fontweight="bold",
-            color="#D55E00",
-            zorder=9,
-        )
-        _fix_unit_spaces_in_texts(ax_m)
-
-        figstyle.save(fig, output_path, close=True)
+    res_per = schematic.save_setup_figures(
+        solver_per,
+        fig_dir,
+        suffix="_periodic",
+        plane="yx",
+        structures=boxes_per,
+        sources=[src_per],
+        monitors=mons_per,
+        unit="µm",
+        wavelength=wavelength,
+        min_feature=screen_thickness,
+        title_geometry="N → ∞ Periodic Unit-Cell Setup: Single Period d, Periodic BCs & DiffractionMonitor (YX plane)",
+        title_mesh="N → ∞ Periodic Unit Cell: Graded Mesh (1× Screen Zoom) & Excitation Spectrum",
+    )
+    return {"finite": res_fin, "periodic": res_per}
 
 
 def plot_n_slit_patterns_and_nearfield(

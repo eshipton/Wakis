@@ -417,7 +417,8 @@ def test_semilens_beam_expander_and_mutation_check():
 def test_setup_schematic_and_nonuniform_mesh_upgrade():
     """
     Verify:
-    1. Setup schematic figures (`00_setup_schematic.png`,
+    1. Setup schematic figures (`00a_setup_geometry.png`,
+       `00b_setup_mesh_and_excitation.png`, `00_setup_table.md`,
        `00b_taper_and_luneburg_schematics.png`), mesh upgrade comparison
        (`04b_mesh_upgrade_comparison.png`), and split taper field figures
        (`08_taper_ey_field_comparison.png`, `08b_taper_ey_long_comparison.png`)
@@ -432,7 +433,8 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
     """
     fig_dir = TUTORIAL_DIR / "figures"
     for fname in (
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "00b_taper_and_luneburg_schematics.png",
         "04b_mesh_upgrade_comparison.png",
         "08_taper_ey_field_comparison.png",
@@ -440,6 +442,8 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
     ):
         fpath = fig_dir / fname
         assert fpath.exists() and fpath.stat().st_size > 10_000, f"Missing or empty {fname}"
+    table_path = fig_dir / "00_setup_table.md"
+    assert table_path.exists() and table_path.stat().st_size > 200, "Missing or empty 00_setup_table.md"
 
     gif_path = fig_dir / "15_pulse_propagation.gif"
     if gif_path.exists():

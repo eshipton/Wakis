@@ -88,28 +88,39 @@
 #
 # ### Simulation setups & geometry overview
 #
-# Two distinct `SolverFIT3D` geometries are exercised across the five benchmark
-# tasks (`figures/00_setup_schematic.png`):
+# Tasks 1–4 launch a broadband $E_x$-polarized plane wave (`CurrentSource` at
+# $z_{\text{src}}$) across a quasi-1D $2\times 2\times N_z$ `SolverFIT3D` domain
+# with `periodic` transverse boundaries ($\pm x, \pm y$), 15-cell `cpml`
+# absorbers on $\pm z$, a dispersive slab on $z \in [0, d]$, and reflected and
+# transmitted `FluxMonitor` planes at $z_r < 0$ and $z_t > d$, while Task 0
+# verifies the single-cell (`1 × 1 × 1` periodic, $k = 0$) ADE recurrence and
+# analytical Kramers–Kronig / TRK $f$-sum integrals (`figures/00a_setup_geometry.png`
+# and `figures/00b_setup_mesh_and_excitation.png`).
 #
-# - **Panel (a) — Bulk 1-cell periodic ADE testbench (`Task 0`):** A single 3D
-#   Yee/FIT cell ($N_x = N_y = N_z = 1$, $20\times 20\times 20\;\text{mm}^3$)
-#   with `periodic` boundary conditions on all six faces (`k = 0` spatially
-#   uniform mode), filled with a homogeneous `DispersiveMaterial` (`Lorentz`,
-#   `Drude`, or `Debye`) and driven by a broadband $E_x$-polarized volumetric
-#   current density $J_x(t)$ (`f0 = 2.0 GHz`). Co-located $E_x(t)$ and $P_x(t)$
-#   probes verify the ADE recursion directly against `epsilon_discrete(f, dt)`.
-# - **Panel (b) — Quasi-1D dispersive slab R/T testbench (`Tasks 1–4`):** A
-#   $2\times 2\times N_z$ grid with `periodic` transverse faces ($\pm x, \pm y$)
-#   and 15-cell `cpml` absorbers on $\pm z$. An $E_x$-polarized `CurrentSource`
-#   sheet at $z_{\text{src}}$ launches a plane-wave pulse toward a dispersive
-#   slab of thickness $d$ occupying $z \in [0, d]$ (wurtzite $\text{GaN}$
-#   Reststrahlen `Lorentz` slab with $d = 2.5\;\mu\text{m}$ in `Task 1`,
-#   free-carrier `Drude` ENZ slab with $d = 40\;\mu\text{m}$ in `Task 2`, and
-#   liquid-water `Debye` slab with $d = 0.5\;\text{mm}$ in `Task 3`).
-#   Reflection and transmission `FluxMonitor` planes at $z_r < 0$ and $z_t > d$
-#   measure $R(f)$, $T(f)$, and $A(f) = 1 - R(f) - T(f)$.
+# ![Quasi-1D dispersive slab R/T setup geometry](figures/00a_setup_geometry.png)
 #
-# ![Simulation setups for Tutorial 2.1: bulk 1-cell periodic ADE testbench and quasi-1D dispersive slab R/T setup](figures/00_setup_schematic.png)
+# ![Quasi-1D dispersive slab mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 200 nm × 200 nm × 16 µm (z ∈ [-7.20 µm, 8.80 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 2 × 2 × 640 (2560 cells) |
+# | Discretization | Δz & resolution | Δ_min = 25 nm, 272.9 cells/λ (in n_max = 2.31), 100.0 cells across feature (2.50 µm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (15 cells, 375 nm) |
+# | Boundary | +z face | CPML (15 cells, 375 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: GaN Lorentz slab | ε_r = 5.35, μ_r = 1.00, model = DispersiveMaterial, z ∈ [0 m, 2.50 µm] (d = 2.50 µm) |
+# | Source | 1 · CurrentSource | pos: z = -4.50 µm, pol: J_x (E_x), pulse: f₀ = 19.00 THz, Δf = 6.5 THz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (z = -2.20 µm), pos: z = -2.20 µm, freqs: 141 freqs in [10.0, 28.0] THz |
+# | Monitor | 3 · FluxMonitor | FluxMonitor (z = 4.70 µm), pos: z = 4.70 µm, freqs: 141 freqs in [10.0, 28.0] THz |
+# | Variation | Task 0 · Bulk 1-cell periodic ADE & KK/f-sum | 1 × 1 × 1 periodic cell (k = 0 ODE testbench, Δt = 10 ps) + analytical Kramers–Kronig & TRK f-sum integrals |
+# | Variation | Task 2 · Drude ENZ slab (drude_enz_slab) | Drude carrier slab (ε_∞ = 4.0, f_ENZ = 2.0 THz, d = 40 µm, Lz = 320 µm, Δz = 0.5 µm, f ∈ [0.8, 3.5] THz) |
+# | Variation | Task 3 · Debye liquid-water slab (debye_water_slab) | Debye orientational slab (ε_∞ = 4.9, Δε = 75.2, τ = 9.3 ps, d = 0.5 mm, Lz = 6.0 mm, Δz = 10 µm, f ∈ [2, 40] GHz) |
+# | Variation | Task 4 · Temporal O(Δt²) convergence (dt_convergence_and_stability) | Lorentz slab (d = 40 mm, Lz = 480 mm, Δz ∈ [1.0, 3.2] mm, f ∈ [0.5, 2.5] GHz) + ADE root locus (ω₀Δt < 2) |
 #
 # ---
 #
@@ -1730,74 +1741,15 @@ def run_single_task(task_cfg, out_dir=DATA_DIR):
 
 
 # %%
-def _fix_schematic_units(ax):
-    """Ensure a thin space separates numbers and units inside math-mode schematic labels."""
-    import re
-
-    for txt in ax.texts:
-        s = txt.get_text()
-        s_new = re.sub(
-            r"(\d)(mm|cm|nm|m|GHz|MHz|THz|kHz|ps|ns|fs)\b",
-            r"\1\\;\\mathrm{\2}",
-            s,
-        )
-        s_new = re.sub(r"(\d)\\mu m", r"\1\\;\\mu\\mathrm{m}", s_new)
-        if s_new != s:
-            txt.set_text(s_new)
-
-
 def _plot_setup_schematic(fig_dir):
-    """Render ``00_setup_schematic.png`` showing both Tutorial 2.1 setups."""
-    fig, (ax_bulk, ax_slab) = figstyle.new_figure(
-        nrows=1, ncols=2, width=12.8, height=4.8
-    )
-
-    # Panel (a): Bulk 1-cell periodic ADE testbench (Task 0)
-    grid_bulk = GridFIT3D(
-        -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, 1, 1, 1, verbose=0
-    )
-    solver_bulk = SolverFIT3D(
-        grid_bulk,
-        dt=10.0e-12,
-        bc_low=["periodic", "periodic", "periodic"],
-        bc_high=["periodic", "periodic", "periodic"],
-        verbose=0,
-    )
-    bulk_struct = SimpleNamespace(
-        bounds=((-0.01, -0.01, -0.01), (0.01, 0.01, 0.01)),
-        name="Homogeneous ADE cell",
-        material="DispersiveMaterial",
-    )
-    src_bulk = CurrentSource(
-        GaussianSource(frequency=2.0e9, fwidth=1.2e9),
-        component="x",
-        center=(0.0, 0.0, 0.0),
-        size=(0.02, 0.02, 0.0),
-    )
-    schematic.plot_schematic(
-        solver_bulk,
-        plane="zx",
-        ax=ax_bulk,
-        structures=[bulk_struct],
-        sources=[src_bulk],
-        probes=[{"pos": (0.0, 0.0, 0.0045), "label": "E_x, P_x(t) probe"}],
-        show_mesh=False,
-        show_wave_packet=False,
-        freq=2.0e9,
-        title="(a) Bulk 1-cell periodic ADE setup (Task 0)",
-    )
-    ax_bulk.set_yticks([])
-    ax_bulk.set_ylabel("Transverse x (periodic, 1 cell)")
-    _fix_schematic_units(ax_bulk)
-
-    # Panel (b): Quasi-1D dispersive slab R/T testbench (Tasks 1-4)
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md``."""
     dz = 0.025e-6
     lz = 16.0e-6
     thickness = 2.5e-6
     nz = int(round(lz / dz))
     zmin = -0.45 * lz
     zmax = zmin + nz * dz
-    dxy = 0.8e-6
+    dxy = 4.0 * dz
     grid_slab = GridFIT3D(
         -dxy, dxy, -dxy, dxy, zmin, zmax, 2, 2, nz, verbose=0
     )
@@ -1809,13 +1761,30 @@ def _plot_setup_schematic(fig_dir):
         n_pml=15,
         verbose=0,
     )
+    f_to = 560.0 * 100.0 * c0
+    f_lo = 746.0 * 100.0 * c0
+    f_gam = 17.0 * 100.0 * c0
+    eps_inf_gan = 5.35
+    delta_eps_gan = eps_inf_gan * ((f_lo / f_to) ** 2 - 1.0)
+    mat_gan = DispersiveMaterial(
+        eps_inf=eps_inf_gan,
+        poles=[
+            Lorentz(
+                delta_eps_gan,
+                2.0 * np.pi * f_to,
+                2.0 * np.pi * f_gam,
+            )
+        ],
+    )
+    solver_slab.add_dispersive_material(
+        mat_gan,
+        center=(0.0, 0.0, 0.5 * thickness),
+        size=(10.0 * dxy, 10.0 * dxy, thickness),
+    )
     slab_struct = SimpleNamespace(
         bounds=((-dxy, -dxy, 0.0), (dxy, dxy, thickness)),
         name="GaN Lorentz slab",
-        material=DispersiveMaterial(
-            eps_inf=5.35,
-            poles=[Lorentz(4.142, 2.0 * np.pi * 16.79e12, 2.0 * np.pi * 0.51e12)],
-        ),
+        material=mat_gan,
     )
     src_slab = CurrentSource(
         GaussianSource(frequency=19.0e12, fwidth=6.5e12),
@@ -1823,35 +1792,48 @@ def _plot_setup_schematic(fig_dir):
         center=(0.0, 0.0, -4.5e-6),
         size=(2.0 * dxy, 2.0 * dxy, 0.0),
     )
+    freqs_gan = np.linspace(10.0e12, 28.0e12, 141)
     mons_slab = [
         FluxMonitor(
-            np.linspace(10.0e12, 28.0e12, 5),
+            freqs_gan,
             center=(0.0, 0.0, -2.2e-6),
             size=(2.0 * dxy, 2.0 * dxy, 0.0),
         ),
         FluxMonitor(
-            np.linspace(10.0e12, 28.0e12, 5),
+            freqs_gan,
             center=(0.0, 0.0, thickness + 2.2e-6),
             size=(2.0 * dxy, 2.0 * dxy, 0.0),
         ),
     ]
-    schematic.plot_schematic(
+    return schematic.save_setup_figures(
         solver_slab,
+        fig_dir,
         plane="zx",
-        ax=ax_slab,
         structures=[slab_struct],
         sources=[src_slab],
         monitors=mons_slab,
-        show_mesh=True,
-        mesh_every=8,
-        mesh_zoom=True,
-        freq=28.0e12,
-        title="(b) Quasi-1D dispersive slab R/T setup (Tasks 1–4)",
+        min_feature=thickness,
+        title_geometry="Quasi-1D dispersive slab R/T setup: geometry, source, monitors & boundaries (ZX plane)",
+        title_mesh="Quasi-1D dispersive slab setup: mesh resolution, wave packet & broadband pulse",
+        variations=[
+            {
+                "name": "Task 0 · Bulk 1-cell periodic ADE & KK/f-sum",
+                "details": "1 × 1 × 1 periodic cell (k = 0 ODE testbench, Δt = 10 ps) + analytical Kramers–Kronig & TRK f-sum integrals",
+            },
+            {
+                "name": "Task 2 · Drude ENZ slab (drude_enz_slab)",
+                "details": "Drude carrier slab (ε_∞ = 4.0, f_ENZ = 2.0 THz, d = 40 µm, Lz = 320 µm, Δz = 0.5 µm, f ∈ [0.8, 3.5] THz)",
+            },
+            {
+                "name": "Task 3 · Debye liquid-water slab (debye_water_slab)",
+                "details": "Debye orientational slab (ε_∞ = 4.9, Δε = 75.2, τ = 9.3 ps, d = 0.5 mm, Lz = 6.0 mm, Δz = 10 µm, f ∈ [2, 40] GHz)",
+            },
+            {
+                "name": "Task 4 · Temporal O(Δt²) convergence (dt_convergence_and_stability)",
+                "details": "Lorentz slab (d = 40 mm, Lz = 480 mm, Δz ∈ [1.0, 3.2] mm, f ∈ [0.5, 2.5] GHz) + ADE root locus (ω₀Δt < 2)",
+            },
+        ],
     )
-    ax_slab.set_yticks([])
-    ax_slab.set_ylabel("Transverse x (periodic, 2 cells)")
-    _fix_schematic_units(ax_slab)
-    figstyle.save(fig, Path(fig_dir) / "00_setup_schematic.png")
 
 
 def _plot_wikimedia_dielectric_mechanisms(fig_dir):

@@ -916,7 +916,7 @@ def _build_ring_coupler_schematic_io(pic):
                 {
                     "kind": "sheet",
                     "type_name": "ModeSource",
-                    "short_word": "TE₀ mode",
+                    "short_word": "ModeSrc",
                     "desc": f"Port 1 'in' ModeSource (TE₀, +x, {pos_s})",
                     "label": "Port 1 'in' ModeSource (TE₀, +x)",
                     "pos_str": f"x = {x_src * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm",
@@ -1074,12 +1074,23 @@ def save_ring_coupler_setup_figures(
         unit="µm",
         wavelength=wavelength,
         title="SOI Waveguide-to-Ring Point Coupler Setup (2D EIM, r = 5.0 µm, w = 500 nm, g = 50 nm)",
+        width_in=8.8,
+        height_in=5.5,
     )
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+    x_in_um = float(pic.port_map["in"].center[0]) * 1e6
+    y_in_um = float(pic.port_map["in"].center[1]) * 1e6
+    for ann in ax_a.texts:
+        if ann.get_text() == "" and getattr(ann, "arrow_patch", None) is not None:
+            if abs(ann.xy[0] - x_in_um) < 1.5 and abs(ann.xy[1]) < 5.5:
+                ann.xy = (x_in_um + 0.80, y_in_um)
+                ann.set_position((x_in_um, y_in_um))
     if "port_y_in" in primary_data and "port_ey_in" in primary_data:
         yin = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
         eyin = np.abs(np.asarray(primary_data["port_ey_in"]))
         eyin = eyin / max(float(np.max(eyin)), 1e-30)
-        x_in_um = float(pic.port_map["in"].center[0]) * 1e6
         ax_a.fill_betweenx(
             yin, x_in_um, x_in_um + 0.85 * eyin, color="#D55E00", alpha=0.25, zorder=7
         )
@@ -1088,6 +1099,7 @@ def save_ring_coupler_setup_figures(
             yin,
             color="#D55E00",
             lw=1.7,
+            marker="none",
             zorder=8,
             label="Launched TE₀ |E_y(y)|",
         )
@@ -1099,7 +1111,33 @@ def save_ring_coupler_setup_figures(
         ax_a.fill_between(
             xdr, y_dr_um - 0.75 * exdr, y_dr_um, color="#009E73", alpha=0.22, zorder=7
         )
-        ax_a.plot(xdr, y_dr_um - 0.75 * exdr, color="#009E73", lw=1.6, zorder=8)
+        ax_a.plot(
+            xdr,
+            y_dr_um - 0.75 * exdr,
+            color="#009E73",
+            lw=1.6,
+            marker="none",
+            zorder=8,
+        )
+    ax_a.set_title(
+        "SOI Waveguide-to-Ring Point Coupler Setup (2D EIM, r = 5.0 µm, w = 500 nm, g = 50 nm)",
+        pad=68,
+        fontsize=11.0,
+        fontweight="bold",
+    )
+    tag_positions = {
+        "1 · ModeSrc": (-5.65, +1.05, "left"),
+        "2 · in": (-4.45, -0.60, "left"),
+        "3 · through": (+5.25, +0.92, "right"),
+        "4 · drop": (+4.05, +5.48, "right"),
+        "5 · add": (-4.05, +5.48, "left"),
+    }
+    for txt in list(ax_a.texts):
+        s = txt.get_text().strip()
+        if s in tag_positions:
+            tx, ty, ha_val = tag_positions[s]
+            txt.set_position((tx, ty))
+            txt.set_ha(ha_val)
     figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
     # Enhance 00b_setup_mesh_and_excitation.png with zoom on the 50 nm bus-ring slot

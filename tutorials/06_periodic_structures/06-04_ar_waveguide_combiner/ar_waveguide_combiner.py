@@ -245,17 +245,673 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 # %% [markdown]
-# ## 1. Combiner Architecture, Unit-Cell Setup, and FIT Mesh (Figure 1)
+# ## 1. Combiner Architecture, Unit-Cell Setup, and FIT Mesh (Figures 00a/00b & Figure 1)
 #
-# Our first figure presents:
+# Before launching the angle sweeps and field visualizations, we inspect the 2D `FloquetCell` / `SolverFIT3D` simulation setups generated directly from the live solver instances for the three periodic diffractive coupler stages in this tutorial (note: the $k$-space guided ring analysis in Section 2 and the 3-stage 1D RCWA pupil-expansion cascade in Section 5 are pure analytical / frequency-domain calculations and do not use a time-domain FIT grid):
+#
+# ### Primary Setup — Conventional 1st-Order $\text{Si}_3\text{N}_4$ In-Coupler ($\Lambda_0 = 380\;\text{nm}$)
+#
+# The primary setup models a single period ($\Lambda_0 = 380\;\text{nm}$, ridge height $h = 160\;\text{nm}$, duty cycle $f = 0.50$, $n_{\text{SiN}} = 2.00$) at the air ($n_{\text{inc}} = 1.00$) to high-index glass waveguide ($n_s = 1.90$, $\theta_c = 31.8^\circ$) interface under oblique TE ($E_y$) Floquet–Bloch illumination ($\theta_{\text{in}} = 10^\circ$) with Bloch boundaries on $\pm x$ and 14-cell CPML absorbers on $\pm z$.
+#
+# ![Primary In-Coupler Geometry and Boundaries](figures/00a_setup_geometry.png)
+#
+# ![Primary In-Coupler FIT Mesh and Excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 380 nm × 10.7 nm × 1.40 µm (z ∈ [-619 nm, 779 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 35 × 1 × 131 (4585 cells) |
+# | Discretization | Δz & resolution | Δ_min = 10.7 nm, 24.8 cells/λ (in n_max = 2.00), 15.0 cells across feature (160 nm) |
+# | Boundary | -x face | Bloch (k_x = -2.06e+06 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -2.06e+06 rad/m) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (14 cells, 149.3 nm) |
+# | Boundary | +z face | CPML (14 cells, 149.3 nm) |
+# | Material | Background | Air cladding / groove (n = 1.00, ε_r = 1.00) (isotropic) |
+# | Material | Region 1: High-index glass waveguide (n_s = 1.90, ε_r = 3.61, θ_c = 31.8°) | ε_r = 3.61, μ_r = 1.00, model = Isotropic dielectric, z ∈ [160 nm, 779 nm] (d = 619 nm) |
+# | Material | Region 2: Si₃N₄ in-coupler ridge (w = 190 nm, h = 160 nm, n_SiN = 2.00, ε_r = 4.00) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, z ∈ [0 m, 160 nm] (d = 160 nm) |
+# | Source | 1 · CurrentSource | pos: z = -378 nm (x ∈ [−190, +190] nm), pol: Ey (TE, θ_in = 10°), pulse: f₀ = 565.6 THz, Δf = 67.88 THz |
+# | Monitor | 2 · FloquetPort | Port 1 Reflected FloquetPort / DiffractionMonitor at z = -195 nm, pos: z = -195 nm (in air), freqs: λ_B = 442 nm, λ_G = 530 nm, λ_R = 663 nm |
+# | Monitor | 3 · FloquetPort | Port 2 Transmitted FloquetPort / DiffractionMonitor at z = +379 nm, pos: z = +379 nm (in glass waveguide), freqs: λ_B = 442 nm, λ_G = 530 nm, λ_R = 663 nm |
+# | Variation | RGB FOV AngleSweep (Task 0) | θ_in ∈ [−20°, +20°] across Blue (442 nm), Green (530 nm), Red (663 nm) vs 1D RCWA |
+# | Variation | Achromatic (4, 5, 6) supercell (Task 1) | Shared period Λ = 1900 nm with 6 Si₃N₄ ridges matching m_R λ_R ≈ m_G λ_G ≈ m_B λ_B — see *_supercell.png |
+# | Variation | Out-coupler TIR bounce sweep (Task 2) | Illumination from glass (n_s = 1.90) at θ_wg ∈ [35°, 55°] > θ_c = 31.8° — see *_outcoupler.png |
+# | Variation | 4-level FIT convergence study (Task 3) | cpw ∈ {16, 20, 26, 34} cells / λ_min,mat with 16×16 subpixel permittivity smoothing |
+#
+# ### Companion Setup 1 — Achromatic $(4, 5, 6)$ 6-Ridge $\text{Si}_3\text{N}_4$ Supercell In-Coupler ($\Lambda = 1900\;\text{nm}$)
+#
+# The achromatic supercell setup extends the lateral Floquet period to $\Lambda = 1900\;\text{nm}$ containing six $\text{Si}_3\text{N}_4$ ridges so that diffraction orders $(m_R, m_G, m_B) = (+4, +5, +6)$ launch Red ($663\;\text{nm}$), Green ($530\;\text{nm}$), and Blue ($442\;\text{nm}$) into a shared waveguide TIR bounce angle $\theta_{\text{wg}} \approx 47.3^\circ$.
+#
+# ![Achromatic Supercell Geometry and Boundaries](figures/00a_setup_geometry_supercell.png)
+#
+# ![Achromatic Supercell FIT Mesh and Excitation](figures/00b_setup_mesh_and_excitation_supercell.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 1.90 µm × 12.3 nm × 1.39 µm (z ∈ [-615 nm, 775 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 144 × 1 × 113 (16272 cells) |
+# | Discretization | Δx & resolution | Δ_min = 12.3 nm, 21.5 cells/λ (in n_max = 2.00), 10.7 cells across feature (131.7 nm) |
+# | Boundary | -x face | Bloch (k_x = -1.24e+06 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -1.24e+06 rad/m) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (14 cells, 172.3 nm) |
+# | Boundary | +z face | CPML (14 cells, 172.3 nm) |
+# | Material | Background | Air cladding / grooves (n = 1.00, ε_r = 1.00) (isotropic) |
+# | Material | Region 1: High-index glass waveguide (n_s = 1.90, ε_r = 3.61) | ε_r = 3.61, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-950 nm, 950 nm] (d = 1.90 µm) |
+# | Material | Region 2: Si₃N₄ 6-ridge achromatic supercell (Λ = 1900 nm, h = 160 nm, n_SiN = 2.00) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-950 nm, 950 nm] (d = 1.90 µm) |
+# | Source | 1 · CurrentSource | pos: z = -378 nm (x ∈ [−950, +950] nm), pol: Ey (TE, θ_in = 6°), pulse: f₀ = 565.6 THz, Δf = 67.88 THz |
+# | Monitor | 2 · FloquetPort | Port 1 Reflected FloquetPort at z = -195 nm, pos: z = -195 nm (in air), freqs: RGB orders (±4, ±5, ±6) |
+# | Monitor | 3 · FloquetPort | Port 2 Transmitted FloquetPort at z = +379 nm, pos: z = +379 nm (in glass waveguide), freqs: RGB orders (±4, ±5, ±6) |
+# | Variation | Achromatic RGB (4, 5, 6) AngleSweep (Task 1) | Λ = 1900 nm with m_R λ_R = 2652 nm, m_G λ_G = 2650 nm, m_B λ_B = 2652 nm (Δθ_wg < 0.08°) |
+#
+# ### Companion Setup 2 — Out-Coupler Under TIR Illumination from Glass ($\theta_{\text{wg}} = 45^\circ > \theta_c$)
+#
+# The out-coupler setup reverses the media so that the guided mode illuminates the shallow $\text{Si}_3\text{N}_4$ grating ($h_{\text{OC}} = 140\;\text{nm}$, $f_{\text{OC}} = 0.22$) from inside the $n_s = 1.90$ glass waveguide beyond the critical angle ($\theta_{\text{wg}} = 45^\circ > \theta_c = 31.8^\circ$), where 0th-order transmission into air is evanescent ($T_0 \equiv \text{NaN}$) and the $m = -1$ order extracts light toward the eye-box.
+#
+# ![Out-Coupler TIR Geometry and Boundaries](figures/00a_setup_geometry_outcoupler.png)
+#
+# ![Out-Coupler TIR FIT Mesh and Excitation](figures/00b_setup_mesh_and_excitation_outcoupler.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 380 nm × 11.7 nm × 1.38 µm (z ∈ [-618 nm, 758 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 32 × 1 × 118 (3776 cells) |
+# | Discretization | Δz & resolution | Δ_min = 11.7 nm, 22.7 cells/λ (in n_max = 2.00), 7.2 cells across feature (83.6 nm) |
+# | Boundary | -x face | Bloch (k_x = -1.59e+07 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -1.59e+07 rad/m) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (14 cells, 163.3 nm) |
+# | Boundary | +z face | CPML (14 cells, 163.3 nm) |
+# | Material | Background | Air cladding (eye-box extraction side, n = 1.00, ε_r = 1.00) (isotropic) |
+# | Material | Region 1: High-index glass waveguide (incident TIR side, n_s = 1.90, ε_r = 3.61) | ε_r = 3.61, μ_r = 1.00, model = Isotropic dielectric, z ∈ [-618 nm, 0 m] (d = 618 nm) |
+# | Material | Region 2: Si₃N₄ out-coupler tooth (w = 83.6 nm, h = 140 nm, f = 0.22, n_SiN = 2.00) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, z ∈ [0 m, 140 nm] (d = 140 nm) |
+# | Source | 1 · CurrentSource | pos: z = -378 nm (in glass waveguide), pol: Ey (TE, θ_wg = 45°), pulse: f₀ = 565.6 THz, Δf = 67.88 THz |
+# | Monitor | 2 · FloquetPort | Port 1 Reflected FloquetPort in glass at z = -195 nm (R₀ ≈ 80% TIR + R₋₁), pos: z = -195 nm (in glass waveguide), freqs: f₀ = 565.6 THz (λ_G = 530 nm) |
+# | Monitor | 3 · FloquetPort | Port 2 Transmitted FloquetPort in air at z = +359 nm (T₀ evanescent, T₋₁ to eye), pos: z = +359 nm (in air toward eye-box), freqs: f₀ = 565.6 THz (λ_G = 530 nm) |
+# | Variation | TIR bounce angle sweep (Task 2) | θ_wg ∈ {35°, 40°, 45°, 50°, 55°} (> θ_c = 31.8°; T₀ ≡ NaN evanescent in air, T₋₁ extracted) |
+# | Variation | Lorentz reciprocity verification (Task 2) | FloquetPort S-matrix reciprocity between air→glass in-coupling and glass→air out-coupling at θ_air = 8° |
+#
+# Figure 1 below additionally summarizes the full 3-stage AR combiner architecture Alongside the subpixel-smoothed permittivity map $\varepsilon_y(x, z)$:
 # - **Panel (a):** The complete diffractive AR waveguide combiner architecture showing the micro-display input cone ($\theta_{\text{in}} \in [-\frac{1}{2}\text{FOV}, +\frac{1}{2}\text{FOV}]$), the $\text{Si}_3\text{N}_4$ In-Coupler ($\mathbf{G}_{\text{IC}}$), the $1\;\text{mm}$ high-index glass slab ($n_s = 1.9$, $\theta_c = \arcsin(1/1.9) = 31.8^\circ$), the Eye-Pupil Expander ($\mathbf{G}_{\text{EPE}}$), and the graduated Out-Coupler ($\mathbf{G}_{\text{OC}}$) delivering replicated beams to the eye-box.
 # - **Panel (b):** The 2D `FloquetCell` simulation domain ($x \in [-\Lambda/2, +\Lambda/2]$ with Bloch-periodic boundaries $E(x+\Lambda) = e^{-i k_x \Lambda}E(x)$, $z \in [z_{\min}, z_{\max}]$ terminated by 14-cell CPML absorbers, tilted plane-wave current sheet at $z_{\text{src}}$, reflection/transmission `DiffractionMonitor` planes at $z_{\text{refl}}$ and $z_{\text{tran}}$, and $\text{Si}_3\text{N}_4$ ridge height $h = 160\;\text{nm}$).
 # - **Panel (c):** The actual `GridFIT3D` edge-level subpixel-smoothed permittivity map $\varepsilon_y(x, z)$ inside the grating tooth region, overlaid with every Yee grid line showing $\ge 22$ cells per minimum material wavelength and $\ge 8$ cells across the $160\;\text{nm}$ $\text{Si}_3\text{N}_4$ layer.
 
 
 # %%
+def plot_ar_combiner_setup_figures(fig_dir: Path) -> dict[str, Any]:
+    """
+    Generate the two-figure setup layout via ``wakis.schematic.save_setup_figures``
+    for the three distinct 2D Floquet–Bloch FIT setups in Tutorial 6.4:
+    1. Primary setup (``suffix=''``): Conventional 1st-order Si₃N₄ in-coupler
+       (``Λ₀ = 380 nm``, ``h = 160 nm``, ``f = 0.50``, air below → glass waveguide above).
+    2. Companion setup (``suffix='_supercell'``): Achromatic ``(m_R, m_G, m_B) = (4, 5, 6)``
+       6-ridge Si₃N₄ supercell in-coupler (``Λ = 1900 nm``, ``h = 160 nm``).
+    3. Companion setup (``suffix='_outcoupler'``): Out-coupler under TIR illumination
+       from inside the glass waveguide (``θ_wg = 45° > θ_c = 31.8°``, ``h_OC = 140 nm``,
+       ``f_OC = 0.22``).
+    """
+    from matplotlib.axes._base import _TransformedBoundsLocator
+    from scipy.constants import c as c_light
+    import wakis
+    from wakis import figstyle, schematic
+    from wakis.sources import GaussianSource
+    from wakis.templates.photonics import Box
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
+
+    wl_g = RGB_WAVELENGTHS_M["G"]
+    f0_g = c_light / wl_g
+    wf_g = GaussianSource(frequency=f0_g, fwidth=0.12 * f0_g)
+    pulse_g = {
+        "f0": f0_g,
+        "fwidth": 0.12 * f0_g,
+        "t_peak": float(4.0 / (np.pi * 0.12 * f0_g)),
+        "t_end": float(wf_g.end_time),
+        "src_time": wf_g,
+    }
+
+    # ------------------------------------------------------------------
+    # 1. Primary setup: Conventional 1st-order Si3N4 In-Coupler (Lambda_0 = 380 nm)
+    # ------------------------------------------------------------------
+    cell_ic, minfo_ic = build_coupler_floquet_cell(
+        period=PERIOD_GREEN_1ST_M,
+        height=H_SIN_M,
+        wavelength_min=wl_g,
+        fill_factor=0.50,
+        eps_ridge=N_SIN_TIAN**2,
+        eps_groove=1.0,
+        eps_below=1.0,
+        eps_above=N_WG_TIAN**2,
+        orders_x=(-2, -1, 0, 1, 2),
+        cpw=24,
+    )
+    grid_ic = wakis.GridFIT3D(
+        -0.5 * cell_ic.Lx,
+        0.5 * cell_ic.Lx,
+        -0.5 * cell_ic.Ly,
+        0.5 * cell_ic.Ly,
+        cell_ic.zmin,
+        cell_ic.zmax,
+        cell_ic.nx,
+        cell_ic.ny,
+        cell_ic.nz,
+        verbose=0,
+    )
+    kx_ic = (2.0 * np.pi / wl_g) * float(np.sin(np.deg2rad(10.0)))
+    solver_ic = wakis.SolverFIT3D(
+        grid_ic,
+        bc_low=["bloch", "periodic", "cpml"],
+        bc_high=["bloch", "periodic", "cpml"],
+        n_pml=cell_ic.n_pml,
+        k_bloch=(-kx_ic, 0.0, 0.0),
+        dtype=np.complex128,
+        cfln=cell_ic.cfl,
+        verbose=0,
+    )
+    cell_ic.material_callback(solver_ic)
+
+    wg_ic = Box(
+        center=(0.0, 0.0, 0.5 * (H_SIN_M + cell_ic.zmax)),
+        size=(cell_ic.Lx, cell_ic.Ly, cell_ic.zmax - H_SIN_M),
+        material=N_WG_TIAN**2,
+    )
+    wg_ic.name = "High-index glass waveguide (n_s = 1.90, ε_r = 3.61, θ_c = 31.8°)"
+    ridge_ic = Box(
+        center=(0.0, 0.0, 0.5 * H_SIN_M),
+        size=(0.50 * cell_ic.Lx, cell_ic.Ly, H_SIN_M),
+        material=N_SIN_TIAN**2,
+    )
+    ridge_ic.name = "Si₃N₄ in-coupler ridge (w = 190 nm, h = 160 nm, n_SiN = 2.00, ε_r = 4.00)"
+    solver_ic._assigned_structures = (wg_ic, ridge_ic)
+
+    mat_names_ic = {
+        "background": "Air cladding / groove (n = 1.00, ε_r = 1.00)",
+        "region_0": wg_ic.name,
+        "region_1": ridge_ic.name,
+    }
+    sources_ic = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "Bloch Jy (+z)",
+            "label": f"Oblique Floquet CurrentSource Jy at z = {cell_ic.z_source*1e9:.0f} nm (θ_in = 10°, +z)",
+            "desc": f"Oblique Floquet CurrentSource Jy at z = {cell_ic.z_source*1e9:.0f} nm (θ_in = 10°, Δφ_x = k_x Λ₀)",
+            "pos_str": f"z = {cell_ic.z_source*1e9:.0f} nm (x ∈ [−190, +190] nm)",
+            "polarization": "Ey (TE, θ_in = 10°)",
+            "direction": 1,
+            "h_bounds": (cell_ic.z_source, cell_ic.z_source),
+            "v_bounds": (-0.5 * cell_ic.Lx, +0.5 * cell_ic.Lx),
+            "pulse": pulse_g,
+        }
+    ]
+    monitors_ic = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 1 Refl.",
+            "label": f"Port 1 Reflected FloquetPort / DiffractionMonitor at z = {cell_ic.z_refl*1e9:.0f} nm",
+            "desc": f"Port 1 Reflected FloquetPort / DiffractionMonitor (R_m, m ∈ [-2..+2]) at z = {cell_ic.z_refl*1e9:.0f} nm",
+            "pos_str": f"z = {cell_ic.z_refl*1e9:.0f} nm (in air)",
+            "freq_str": "λ_B = 442 nm, λ_G = 530 nm, λ_R = 663 nm",
+            "frequencies": np.array([c_light / RGB_WAVELENGTHS_M["R"], f0_g, c_light / RGB_WAVELENGTHS_M["B"]]),
+            "h_bounds": (cell_ic.z_refl, cell_ic.z_refl),
+            "v_bounds": (-0.5 * cell_ic.Lx, +0.5 * cell_ic.Lx),
+        },
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 2 Tran.",
+            "label": f"Port 2 Transmitted FloquetPort / DiffractionMonitor at z = +{cell_ic.z_tran*1e9:.0f} nm",
+            "desc": f"Port 2 Transmitted FloquetPort / DiffractionMonitor (T_m in glass, m = −1 guided TIR) at z = +{cell_ic.z_tran*1e9:.0f} nm",
+            "pos_str": f"z = +{cell_ic.z_tran*1e9:.0f} nm (in glass waveguide)",
+            "freq_str": "λ_B = 442 nm, λ_G = 530 nm, λ_R = 663 nm",
+            "frequencies": np.array([c_light / RGB_WAVELENGTHS_M["R"], f0_g, c_light / RGB_WAVELENGTHS_M["B"]]),
+            "h_bounds": (cell_ic.z_tran, cell_ic.z_tran),
+            "v_bounds": (-0.5 * cell_ic.Lx, +0.5 * cell_ic.Lx),
+        },
+    ]
+    variations_ic = [
+        {
+            "name": "RGB FOV AngleSweep (Task 0)",
+            "details": "θ_in ∈ [−20°, +20°] across Blue (442 nm), Green (530 nm), Red (663 nm) vs 1D RCWA",
+        },
+        {
+            "name": "Achromatic (4, 5, 6) supercell (Task 1)",
+            "details": "Shared period Λ = 1900 nm with 6 Si₃N₄ ridges matching m_R λ_R ≈ m_G λ_G ≈ m_B λ_B — see *_supercell.png",
+        },
+        {
+            "name": "Out-coupler TIR bounce sweep (Task 2)",
+            "details": "Illumination from glass (n_s = 1.90) at θ_wg ∈ [35°, 55°] > θ_c = 31.8° — see *_outcoupler.png",
+        },
+        {
+            "name": "4-level FIT convergence study (Task 3)",
+            "details": "cpw ∈ {16, 20, 26, 34} cells / λ_min,mat with 16×16 subpixel permittivity smoothing",
+        },
+    ]
+
+    res_ic = schematic.save_setup_figures(
+        solver_ic,
+        fig_dir,
+        prefix="00",
+        plane="zx",
+        material_names=mat_names_ic,
+        sources=sources_ic,
+        monitors=monitors_ic,
+        unit="nm",
+        wavelength=wl_g,
+        min_feature=H_SIN_M,
+        variations=variations_ic,
+    )
+    fig_a_ic, ax_a_ic = schematic.plot_schematic(
+        solver_ic,
+        plane="zx",
+        material_names=mat_names_ic,
+        sources=sources_ic,
+        monitors=monitors_ic,
+        unit="nm",
+        wavelength=wl_g,
+    )
+    for txt in ax_a_ic.texts:
+        t_str = txt.get_text()
+        if "1 · Bloch" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_ic.z_source * 1e9, -140.0))
+        elif "2 · Port 1" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_ic.z_refl * 1e9 + 15.0, +140.0))
+        elif "3 · Port 2" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_ic.z_tran * 1e9, +140.0))
+    figstyle.save(fig_a_ic, res_ic["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_b_ic, axes_b_ic = schematic.plot_mesh_and_excitation(
+        solver_ic,
+        plane="zx",
+        material_names=mat_names_ic,
+        sources=sources_ic,
+        monitors=monitors_ic,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.06e-6, +0.22e-6, -0.14e-6, +0.14e-6),
+        wavelength=wl_g,
+        min_feature=H_SIN_M,
+    )
+    ax_mesh_ic = axes_b_ic[0]
+    for ch_ax in getattr(ax_mesh_ic, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.66, 0.10, 0.32, 0.80], ax_mesh_ic.transAxes)
+        )
+    figstyle.save(fig_b_ic, res_ic["mesh_figure"], close=True, auto_legend_below=False)
+
+    # ------------------------------------------------------------------
+    # 2. Companion setup (_supercell): Achromatic (4, 5, 6) 6-ridge Supercell (Lambda = 1900 nm)
+    # ------------------------------------------------------------------
+    cell_sc, minfo_sc = build_coupler_floquet_cell(
+        period=PERIOD_ACHROMATIC_M,
+        height=H_SIN_M,
+        wavelength_min=wl_g,
+        eps_ridge=N_SIN_TIAN**2,
+        eps_groove=1.0,
+        eps_below=1.0,
+        eps_above=N_WG_TIAN**2,
+        orders_x=(-6, -5, -4, 0, 4, 5, 6),
+        cpw=20,
+        ridges=ACHROMATIC_SUPERCELL_RIDGES,
+    )
+    grid_sc = wakis.GridFIT3D(
+        -0.5 * cell_sc.Lx,
+        0.5 * cell_sc.Lx,
+        -0.5 * cell_sc.Ly,
+        0.5 * cell_sc.Ly,
+        cell_sc.zmin,
+        cell_sc.zmax,
+        cell_sc.nx,
+        cell_sc.ny,
+        cell_sc.nz,
+        verbose=0,
+    )
+    kx_sc = (2.0 * np.pi / wl_g) * float(np.sin(np.deg2rad(6.0)))
+    solver_sc = wakis.SolverFIT3D(
+        grid_sc,
+        bc_low=["bloch", "periodic", "cpml"],
+        bc_high=["bloch", "periodic", "cpml"],
+        n_pml=cell_sc.n_pml,
+        k_bloch=(-kx_sc, 0.0, 0.0),
+        dtype=np.complex128,
+        cfln=cell_sc.cfl,
+        verbose=0,
+    )
+    cell_sc.material_callback(solver_sc)
+
+    class _RidgePoly:
+        def __init__(self, x0: float, x1: float, z0: float, z1: float, material: float, name: str):
+            self.vertices = np.array([[x0, z0], [x1, z0], [x1, z1], [x0, z1]], dtype=float)
+            self.material = material
+            self.name = name
+
+    wg_sc = Box(
+        center=(0.0, 0.0, 0.5 * (H_SIN_M + cell_sc.zmax)),
+        size=(cell_sc.Lx, cell_sc.Ly, cell_sc.zmax - H_SIN_M),
+        material=N_WG_TIAN**2,
+    )
+    wg_sc.name = "High-index glass waveguide (n_s = 1.90, ε_r = 3.61)"
+    sc_polys = [wg_sc]
+    ridge_lbl_sc = "Si₃N₄ 6-ridge achromatic supercell (Λ = 1900 nm, h = 160 nm, n_SiN = 2.00)"
+    for u0, u1 in ACHROMATIC_SUPERCELL_RIDGES:
+        x0_r = (u0 - 0.5) * PERIOD_ACHROMATIC_M
+        x1_r = (u1 - 0.5) * PERIOD_ACHROMATIC_M
+        sc_polys.append(_RidgePoly(x0_r, x1_r, 0.0, H_SIN_M, N_SIN_TIAN**2, ridge_lbl_sc))
+
+    # Attach 1 representative supercell grating layer Box for the setup table + mesh zoom
+    grating_layer_sc = Box(
+        center=(0.0, 0.0, 0.5 * H_SIN_M),
+        size=(cell_sc.Lx, cell_sc.Ly, H_SIN_M),
+        material=N_SIN_TIAN**2,
+    )
+    grating_layer_sc.name = ridge_lbl_sc
+    solver_sc._assigned_structures = (wg_sc, grating_layer_sc)
+    mat_names_sc = {
+        "background": "Air cladding / grooves (n = 1.00, ε_r = 1.00)",
+        "region_0": wg_sc.name,
+        "region_1": ridge_lbl_sc,
+    }
+    sources_sc = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "Bloch Jy (+z)",
+            "label": f"Achromatic supercell CurrentSource Jy at z = {cell_sc.z_source*1e9:.0f} nm (θ_in = 6°, +z)",
+            "desc": f"Oblique CurrentSource Jy at z = {cell_sc.z_source*1e9:.0f} nm (θ_in = 6°, orders m_R=4, m_G=5, m_B=6)",
+            "pos_str": f"z = {cell_sc.z_source*1e9:.0f} nm (x ∈ [−950, +950] nm)",
+            "polarization": "Ey (TE, θ_in = 6°)",
+            "direction": 1,
+            "h_bounds": (-0.5 * cell_sc.Lx, +0.5 * cell_sc.Lx),
+            "v_bounds": (cell_sc.z_source, cell_sc.z_source),
+            "pulse": pulse_g,
+        }
+    ]
+    monitors_sc = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 1 Refl.",
+            "label": f"Port 1 Reflected FloquetPort at z = {cell_sc.z_refl*1e9:.0f} nm",
+            "desc": f"Port 1 Reflected FloquetPort (R_m) at z = {cell_sc.z_refl*1e9:.0f} nm",
+            "pos_str": f"z = {cell_sc.z_refl*1e9:.0f} nm (in air)",
+            "freq_str": "RGB orders (±4, ±5, ±6)",
+            "frequencies": np.array([c_light / RGB_WAVELENGTHS_M["R"], f0_g, c_light / RGB_WAVELENGTHS_M["B"]]),
+            "h_bounds": (-0.5 * cell_sc.Lx, +0.5 * cell_sc.Lx),
+            "v_bounds": (cell_sc.z_refl, cell_sc.z_refl),
+        },
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 2 Tran.",
+            "label": f"Port 2 Transmitted FloquetPort at z = +{cell_sc.z_tran*1e9:.0f} nm",
+            "desc": f"Port 2 Transmitted FloquetPort (T_m, m_R=4, m_G=5, m_B=6 at θ_wg ≈ 47.3°) at z = +{cell_sc.z_tran*1e9:.0f} nm",
+            "pos_str": f"z = +{cell_sc.z_tran*1e9:.0f} nm (in glass waveguide)",
+            "freq_str": "RGB orders (±4, ±5, ±6)",
+            "frequencies": np.array([c_light / RGB_WAVELENGTHS_M["R"], f0_g, c_light / RGB_WAVELENGTHS_M["B"]]),
+            "h_bounds": (-0.5 * cell_sc.Lx, +0.5 * cell_sc.Lx),
+            "v_bounds": (cell_sc.z_tran, cell_sc.z_tran),
+        },
+    ]
+    res_sc = schematic.save_setup_figures(
+        solver_sc,
+        fig_dir,
+        prefix="00",
+        suffix="_supercell",
+        plane="xz",
+        material_names=mat_names_sc,
+        sources=sources_sc,
+        monitors=monitors_sc,
+        unit="nm",
+        wavelength=wl_g,
+        min_feature=minfo_sc["min_feature_nm"] * 1e-9,
+        variations=[
+            {
+                "name": "Achromatic RGB (4, 5, 6) AngleSweep (Task 1)",
+                "details": "Λ = 1900 nm with m_R λ_R = 2652 nm, m_G λ_G = 2650 nm, m_B λ_B = 2652 nm (Δθ_wg < 0.08°)",
+            },
+        ],
+    )
+    solver_sc._assigned_structures = tuple(sc_polys)
+    fig_a_sc, ax_a_sc = schematic.plot_schematic(
+        solver_sc,
+        plane="xz",
+        material_names=mat_names_sc,
+        sources=sources_sc,
+        monitors=monitors_sc,
+        unit="nm",
+        wavelength=wl_g,
+    )
+    # Give all 6 ridge Polygon patches the same warm sand fill color (#F5E4C8)
+    for p in ax_a_sc.patches:
+        if isinstance(p, Polygon):
+            p.set_facecolor("#F5E4C8")
+    for txt in ax_a_sc.texts:
+        t_str = txt.get_text()
+        if "1 · Bloch" in t_str:
+            txt.set_ha("center")
+            txt.set_position((-350.0, cell_sc.z_source * 1e9 + 62.0))
+        elif "2 · Port 1" in t_str:
+            txt.set_ha("center")
+            txt.set_position((+320.0, cell_sc.z_refl * 1e9 + 62.0))
+        elif "3 · Port 2" in t_str:
+            txt.set_ha("center")
+            txt.set_position((0.0, cell_sc.z_tran * 1e9 + 62.0))
+    figstyle.save(fig_a_sc, res_sc["geometry_figure"], close=True, auto_legend_below=False)
+
+    sc_boxes = [wg_sc]
+    for u0, u1 in ACHROMATIC_SUPERCELL_RIDGES:
+        x0_r = (u0 - 0.5) * PERIOD_ACHROMATIC_M
+        x1_r = (u1 - 0.5) * PERIOD_ACHROMATIC_M
+        rb = Box(
+            center=(0.5 * (x0_r + x1_r), 0.0, 0.5 * H_SIN_M),
+            size=(x1_r - x0_r, cell_sc.Ly, H_SIN_M),
+            material=N_SIN_TIAN**2,
+        )
+        rb.name = ridge_lbl_sc
+        sc_boxes.append(rb)
+    solver_sc._assigned_structures = tuple(sc_boxes)
+
+    fig_b_sc, axes_b_sc = schematic.plot_mesh_and_excitation(
+        solver_sc,
+        plane="xz",
+        material_names=mat_names_sc,
+        sources=sources_sc,
+        monitors=monitors_sc,
+        unit="nm",
+        mesh_every=3,
+        zoom_bounds=(-0.38e-6, +0.18e-6, -0.06e-6, +0.22e-6),
+        wavelength=wl_g,
+        min_feature=minfo_sc["min_feature_nm"] * 1e-9,
+    )
+    ax_mesh_sc = axes_b_sc[0]
+    for ch_ax in getattr(ax_mesh_sc, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.32, 0.42, 0.64, 0.38], ax_mesh_sc.transAxes)
+        )
+        for t in ch_ax.texts:
+            t.set_fontsize(6.0)
+    figstyle.save(fig_b_sc, res_sc["mesh_figure"], close=True, auto_legend_below=False)
+
+    # ------------------------------------------------------------------
+    # 3. Companion setup (_outcoupler): Out-Coupler TIR Bounce (theta_wg = 45 deg > theta_c)
+    # ------------------------------------------------------------------
+    h_oc = 140.0e-9
+    fill_oc = 0.22
+    cell_oc, minfo_oc = build_coupler_floquet_cell(
+        period=PERIOD_GREEN_1ST_M,
+        height=h_oc,
+        wavelength_min=wl_g,
+        fill_factor=fill_oc,
+        eps_ridge=N_SIN_TIAN**2,
+        eps_groove=1.0,
+        eps_below=N_WG_TIAN**2,
+        eps_above=1.0,
+        orders_x=(-2, -1, 0, 1),
+        cpw=22,
+    )
+    grid_oc = wakis.GridFIT3D(
+        -0.5 * cell_oc.Lx,
+        0.5 * cell_oc.Lx,
+        -0.5 * cell_oc.Ly,
+        0.5 * cell_oc.Ly,
+        cell_oc.zmin,
+        cell_oc.zmax,
+        cell_oc.nx,
+        cell_oc.ny,
+        cell_oc.nz,
+        verbose=0,
+    )
+    kx_oc = (2.0 * np.pi / wl_g) * N_WG_TIAN * float(np.sin(np.deg2rad(45.0)))
+    solver_oc = wakis.SolverFIT3D(
+        grid_oc,
+        bc_low=["bloch", "periodic", "cpml"],
+        bc_high=["bloch", "periodic", "cpml"],
+        n_pml=cell_oc.n_pml,
+        k_bloch=(-kx_oc, 0.0, 0.0),
+        dtype=np.complex128,
+        cfln=cell_oc.cfl,
+        verbose=0,
+    )
+    cell_oc.material_callback(solver_oc)
+
+    glass_oc = Box(
+        center=(0.0, 0.0, 0.5 * cell_oc.zmin),
+        size=(cell_oc.Lx, cell_oc.Ly, abs(cell_oc.zmin)),
+        material=N_WG_TIAN**2,
+    )
+    glass_oc.name = "High-index glass waveguide (incident TIR side, n_s = 1.90, ε_r = 3.61)"
+    tooth_oc = Box(
+        center=(0.0, 0.0, 0.5 * h_oc),
+        size=(fill_oc * cell_oc.Lx, cell_oc.Ly, h_oc),
+        material=N_SIN_TIAN**2,
+    )
+    tooth_oc.name = "Si₃N₄ out-coupler tooth (w = 83.6 nm, h = 140 nm, f = 0.22, n_SiN = 2.00)"
+    solver_oc._assigned_structures = (glass_oc, tooth_oc)
+    mat_names_oc = {
+        "background": "Air cladding (eye-box extraction side, n = 1.00, ε_r = 1.00)",
+        "region_0": glass_oc.name,
+        "region_1": tooth_oc.name,
+    }
+    sources_oc = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "TIR Jy (+z)",
+            "label": f"Guided TIR CurrentSource Jy in glass at z = {cell_oc.z_source*1e9:.0f} nm (θ_wg = 45° > θ_c = 31.8°)",
+            "desc": f"Guided TIR CurrentSource Jy in glass at z = {cell_oc.z_source*1e9:.0f} nm (θ_wg = 45° > θ_c = 31.8°)",
+            "pos_str": f"z = {cell_oc.z_source*1e9:.0f} nm (in glass waveguide)",
+            "polarization": "Ey (TE, θ_wg = 45°)",
+            "direction": 1,
+            "h_bounds": (cell_oc.z_source, cell_oc.z_source),
+            "v_bounds": (-0.5 * cell_oc.Lx, +0.5 * cell_oc.Lx),
+            "pulse": pulse_g,
+        }
+    ]
+    monitors_oc = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 1 TIR Rₘ",
+            "label": f"Port 1 Reflected FloquetPort in glass at z = {cell_oc.z_refl*1e9:.0f} nm (R₀ ≈ 80% TIR + R₋₁)",
+            "desc": f"Port 1 Reflected FloquetPort in glass at z = {cell_oc.z_refl*1e9:.0f} nm (R₀ ≈ 80% TIR bounce + R₋₁)",
+            "pos_str": f"z = {cell_oc.z_refl*1e9:.0f} nm (in glass waveguide)",
+            "freq_str": "f₀ = 565.6 THz (λ_G = 530 nm)",
+            "frequencies": np.array([f0_g]),
+            "h_bounds": (cell_oc.z_refl, cell_oc.z_refl),
+            "v_bounds": (-0.5 * cell_oc.Lx, +0.5 * cell_oc.Lx),
+        },
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 2 Eye T₋₁",
+            "label": f"Port 2 Transmitted FloquetPort in air at z = +{cell_oc.z_tran*1e9:.0f} nm (T₀ evanescent, T₋₁ to eye)",
+            "desc": f"Port 2 Transmitted FloquetPort in air at z = +{cell_oc.z_tran*1e9:.0f} nm (T₀ ≡ NaN evanescent, T₋₁ extracted to eye)",
+            "pos_str": f"z = +{cell_oc.z_tran*1e9:.0f} nm (in air toward eye-box)",
+            "freq_str": "f₀ = 565.6 THz (λ_G = 530 nm)",
+            "frequencies": np.array([f0_g]),
+            "h_bounds": (cell_oc.z_tran, cell_oc.z_tran),
+            "v_bounds": (-0.5 * cell_oc.Lx, +0.5 * cell_oc.Lx),
+        },
+    ]
+    res_oc = schematic.save_setup_figures(
+        solver_oc,
+        fig_dir,
+        prefix="00",
+        suffix="_outcoupler",
+        plane="zx",
+        material_names=mat_names_oc,
+        sources=sources_oc,
+        monitors=monitors_oc,
+        unit="nm",
+        wavelength=wl_g,
+        min_feature=minfo_oc["min_feature_nm"] * 1e-9,
+        variations=[
+            {
+                "name": "TIR bounce angle sweep (Task 2)",
+                "details": "θ_wg ∈ {35°, 40°, 45°, 50°, 55°} (> θ_c = 31.8°; T₀ ≡ NaN evanescent in air, T₋₁ extracted)",
+            },
+            {
+                "name": "Lorentz reciprocity verification (Task 2)",
+                "details": "FloquetPort S-matrix reciprocity between air→glass in-coupling and glass→air out-coupling at θ_air = 8°",
+            },
+        ],
+    )
+    fig_a_oc, ax_a_oc = schematic.plot_schematic(
+        solver_oc,
+        plane="zx",
+        material_names=mat_names_oc,
+        sources=sources_oc,
+        monitors=monitors_oc,
+        unit="nm",
+        wavelength=wl_g,
+    )
+    for txt in ax_a_oc.texts:
+        t_str = txt.get_text()
+        if "1 · TIR" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_oc.z_source * 1e9, -140.0))
+        elif "2 · Port 1" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_oc.z_refl * 1e9 + 10.0, +140.0))
+        elif "3 · Port 2" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_oc.z_tran * 1e9, +140.0))
+    figstyle.save(fig_a_oc, res_oc["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_b_oc, axes_b_oc = schematic.plot_mesh_and_excitation(
+        solver_oc,
+        plane="zx",
+        material_names=mat_names_oc,
+        sources=sources_oc,
+        monitors=monitors_oc,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.05e-6, +0.20e-6, -0.10e-6, +0.10e-6),
+        wavelength=wl_g,
+        min_feature=minfo_oc["min_feature_nm"] * 1e-9,
+    )
+    ax_mesh_oc = axes_b_oc[0]
+    for ch_ax in getattr(ax_mesh_oc, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.66, 0.10, 0.32, 0.80], ax_mesh_oc.transAxes)
+        )
+    figstyle.save(fig_b_oc, res_oc["mesh_figure"], close=True, auto_legend_below=False)
+
+    return {"incoupler": res_ic, "supercell": res_sc, "outcoupler": res_oc}
+
+
 def plot_fig1_schematic_and_mesh(fig_dir: Path, quick: bool = True) -> Path:
     """Generate Figure 1: Full AR combiner schematic, FloquetCell setup, and FIT mesh view."""
+    plot_ar_combiner_setup_figures(fig_dir)
     fig, axes = plt.subplots(1, 3, figsize=(14.6, 4.6), constrained_layout=True)
 
     # --- Panel (a): Whole AR Waveguide Combiner Architecture ---

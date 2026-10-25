@@ -3779,3 +3779,252 @@ def overlay_reciprocity_led_geometry(
             zorder=9,
         )
 
+
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+class _LineStart(float):
+    """Scalar coordinate that plots at its true value but centers its text tag at x = 0."""
+
+    def __mul__(self, other):
+        return _LineStart(float(self) * float(other))
+
+    def __rmul__(self, other):
+        return _LineStart(float(other) * float(self))
+
+    def __add__(self, other):
+        return 0.0 if float(other) > 1e-6 else float(self) + float(other)
+
+
+def save_reciprocity_setup_figures(
+    fig_dir: str | Path,
+) -> dict[str, dict[str, Path]]:
+    """Render both setup figure pairs (forward dipole ensemble & reciprocal plane-wave absorber) via ``save_setup_figures``.
+
+    Parameters
+    ----------
+    fig_dir : str or Path
+        Output directory for ``00a_setup_geometry*.png``, ``00b_setup_mesh_and_excitation*.png``,
+        and ``00_setup_table*.md``.
+
+    Returns
+    -------
+    dict
+        Mapping ``{"forward": paths_fwd, "reciprocal": paths_rec}``.
+    """
+    from types import SimpleNamespace
+    from wakis import schematic
+    from wakis.templates.shapes import Box
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    solver, meta = make_finite_led_solver(
+        cpw=20,
+        averaging="kottke",
+        mirror="ag",
+        cpsd_target=10.0,
+    )
+    lam0 = float(meta["lam0"])
+    f0 = float(meta["f0"])
+    dz = float(meta["dz"])
+    w_slab = float(meta["w_slab"])
+    w_mon = float(meta["w_mon"])
+    y_emit = float(meta["y_emit"])
+    y_mon = float(meta["y_mon"])
+    ag_mat, _, skin_depth = make_drude_silver(lam0)
+
+    y_min_grid = float(solver.grid.y[0])
+    ag_box = Box(
+        center=(0.0, 0.5 * y_min_grid, 0.5 * dz),
+        size=(w_slab, -y_min_grid, dz),
+        material=ag_mat,
+    )
+    ag_box.name = "Drude Ag back-reflector (δ_s = 26.9 nm)"
+
+    y_base = float(meta["d_slab"] - meta["h_grat"])
+    gan_base_box = Box(
+        center=(0.0, 0.5 * y_base, 0.5 * dz),
+        size=(w_slab, y_base, dz),
+        material=float(meta["n_slab"]) ** 2,
+    )
+    gan_base_box.name = "GaN unetched base slab (n = 2.45, y_base = 153 nm)"
+
+    verts_grat = np.array(meta["slab_poly"].vertices, dtype=float).copy()
+    verts_grat[0, 1] = y_base
+    verts_grat[1, 1] = y_base
+    slab_poly = SimpleNamespace(
+        vertices=verts_grat,
+        material=meta["slab_poly"].material,
+        name="GaN 7-period trapezoidal grating (n = 2.45, Λ = 270 nm, h_g = 72 nm)",
+    )
+    structures = [ag_box, gan_base_box, slab_poly]
+
+    waveform = GaussianSource(frequency=f0, fwidth=0.20 * f0)
+
+    # 1. Forward Setup: Direct Incoherent Dipole Ensemble (suffix="")
+    dip_obj = CurrentSource(
+        waveform,
+        component="z",
+        center=(0.0, y_emit, 0.5 * dz),
+        size=(0.0, 0.0, dz),
+    )
+    n2f_obj = Near2FarMonitor2D(
+        freqs=[f0],
+        center=(0.0, y_mon, 0.5 * dz),
+        size=(w_mon, 0.0, dz),
+    )
+    info_fwd = schematic.extract_setup_info(
+        solver,
+        plane="xy",
+        structures=structures,
+        sources=[dip_obj],
+        monitors=[n2f_obj],
+    )
+
+    xs_rep = np.array([0.0, -0.76e-6, -0.38e-6, 0.38e-6, 0.76e-6])
+    ys_rep = np.full_like(xs_rep, y_emit)
+    src_fwd = dict(info_fwd["sources"][0])
+    src_fwd["h_bounds"] = (_RepCoord(xs_rep), 0.0)
+    src_fwd["v_bounds"] = (_RepCoord(ys_rep), y_emit)
+    src_fwd["short_word"] = "QW dipoles (25×3=75)"
+    src_fwd["polarization"] = "J_x, J_y, J_z"
+    src_fwd["pos_str"] = (
+        f"y_0 = {y_emit * 1e9:.1f} nm, N_sites = 25 × 3 orientations = 75 dipoles in x ∈ [-0.81, +0.81] µm (5 shown)"
+    )
+    src_fwd["label"] = (
+        f"Active-QW dipole ensemble: N_sites = 25 × 3 orientations = 75 uncorrelated (J_x, J_y, J_z) runs at y_0 = {y_emit * 1e9:.1f} nm (5 rep. shown)"
+    )
+    src_fwd["desc"] = src_fwd["label"]
+
+    mon_fwd = dict(info_fwd["monitors"][0])
+    mon_fwd["kind"] = "plane"
+    mon_fwd["v_bounds"] = (y_mon, y_mon)
+    mon_fwd["short_word"] = "Near2Far2D"
+    mon_fwd["pos_str"] = (
+        f"y_mon = {y_mon * 1e9:.1f} nm, x ∈ [{-0.5 * w_mon * 1e6:.2f}, +{0.5 * w_mon * 1e6:.2f}] µm"
+    )
+    mon_fwd["label"] = (
+        f"Cylindrical far-field line Near2FarMonitor2D (y_mon = {y_mon * 1e9:.1f} nm; projects U_2D(θ) into air)"
+    )
+    mon_fwd["desc"] = mon_fwd["label"]
+
+    variations_fwd = [
+        {
+            "name": "Task 1 — Direct vs. reciprocal ensemble (`direct_vs_reciprocity_ensemble`)",
+            "notes": "N_pos = 25 dipole sites × 3 orientations (J_x, J_y, J_z) = 75 forward solves vs. 29 reciprocal angles (cpw = 20, L2 diff = 0.066%)",
+        },
+        {
+            "name": "Tasks 9–10 — Drude Ag skin-depth resolution ladder (`ag_grating_resolution_study`)",
+            "notes": "Graded Ag collar 4, 6, 8, 10, 12 cells/δ_s (accepted Δ_min = 2.69 nm, 10.0 cells/δ_s) vs. under-resolved demo (1.6, 2.6 cells/δ_s)",
+        },
+    ]
+
+    paths_fwd = schematic.save_setup_figures(
+        solver,
+        fig_dir,
+        plane="xy",
+        structures=structures,
+        material_names={"background": "Air cladding (n = 1.00)"},
+        sources=[src_fwd],
+        monitors=[mon_fwd],
+        wavelength=lam0,
+        min_feature=skin_depth,
+        title_geometry="Thin-Film GaN LED — Forward Setup: Direct Incoherent QW Dipole Ensemble (75 Runs)",
+        title_mesh="Thin-Film GaN LED (Forward): Graded Ag Skin-Depth Mesh & QW Dipole Excitation",
+        variations=variations_fwd,
+    )
+
+    # 2. Reciprocal Setup: Downward Huygens Plane Wave Absorber (suffix="_reciprocal")
+    pw_sources = make_huygens_planewave_2d(
+        waveform=waveform,
+        center_y=y_mon,
+        width_x=w_mon,
+        dz=dz,
+        dy=float(meta["dy"]),
+        theta_rad=np.deg2rad(25.0),
+        k0=float(meta["k0"]),
+        pol="both",
+        phase_center_x=0.0,
+    )
+    dft_qw_obj = DFTMonitor(
+        [f0],
+        components=("Ez", "Ex", "Ey"),
+        center=(0.0, y_emit, 0.5 * dz),
+        size=(w_slab, 0.0, 0.0),
+    )
+    info_rec = schematic.extract_setup_info(
+        solver,
+        plane="xy",
+        structures=structures,
+        sources=[pw_sources[0]],
+        monitors=[dft_qw_obj],
+    )
+
+    th_rad = np.deg2rad(25.0)
+    src_rec = dict(info_rec["sources"][0])
+    src_rec["h_bounds"] = (_LineStart(-0.5 * w_mon), 0.5 * w_mon)
+    src_rec["v_bounds"] = (y_mon, y_mon)
+    src_rec["short_word"] = "Huygens PW (-θ)"
+    src_rec["direction"] = "-y"
+    src_rec["k_vec"] = (-float(np.sin(th_rad)), -float(np.cos(th_rad)), 0.0)
+    src_rec["polarization"] = "s (TM) + p (TE)"
+    src_rec["pos_str"] = (
+        f"y = {y_mon * 1e9:.1f} nm, x ∈ [{-0.5 * w_mon * 1e6:.2f}, +{0.5 * w_mon * 1e6:.2f}] µm (θ ∈ [-70°, +70°])"
+    )
+    src_rec["label"] = (
+        f"Downward Huygens plane wave (`make_huygens_planewave_2d`, y = {y_mon * 1e9:.1f} nm, simultaneous s/TM + p/TE at -θ)"
+    )
+    src_rec["desc"] = src_rec["label"]
+
+    mon_rec = dict(info_rec["monitors"][0])
+    mon_rec["short_word"] = "Active-QW DFT"
+    mon_rec["pos_str"] = (
+        f"y_0 = {y_emit * 1e9:.1f} nm, x ∈ [{-0.5 * w_slab * 1e6:.2f}, +{0.5 * w_slab * 1e6:.2f}] µm (records E_x, E_y, E_z)"
+    )
+    mon_rec["label"] = (
+        f"Active-QW DFTMonitor (y_0 = {y_emit * 1e9:.1f} nm; integrates |E_rec(x, y_0; θ) / E_inc|² across 7 grating periods)"
+    )
+    mon_rec["desc"] = mon_rec["label"]
+
+    variations_rec = [
+        {
+            "name": "Task 0 — 1D Bloch flat-slab reciprocity vs. TMM (`flat_slab_bloch_tmm`)",
+            "notes": "Bloch unit cell on PEC & Drude Ag mirrors (cpw ∈ {10, 14, 20, 28, 40}, cpsd ∈ [1.6, 10.0])",
+        },
+        {
+            "name": "Tasks 2–8 — Kottke subpixel vs. snapped staircase convergence (`kottke_*`, `staircase_*`)",
+            "notes": "7-period GaN grating reciprocal angular sweep cpw ∈ {14, 20, 28} vs. cpw = 40 reference",
+        },
+        {
+            "name": "Section 5 — Janssen et al. (2010) unit-cell optimization & discrete adjoint",
+            "notes": "2D Bloch FIT + `ResonanceMonitor.harminv` + `AdjointSimulation` shape gradients on Ag (`silver jc`, ~2× extraction)",
+        },
+    ]
+
+    paths_rec = schematic.save_setup_figures(
+        solver,
+        fig_dir,
+        plane="xy",
+        structures=structures,
+        material_names={"background": "Air cladding (n = 1.00)"},
+        sources=[src_rec],
+        monitors=[mon_rec],
+        wavelength=lam0,
+        min_feature=skin_depth,
+        title_geometry="Thin-Film GaN LED — Reciprocal Setup: Downward Huygens Plane Wave (1 Run / Angle)",
+        title_mesh="Thin-Film GaN LED (Reciprocal): Graded Ag Skin-Depth Mesh & Plane-Wave Excitation",
+        variations=variations_rec,
+        suffix="_reciprocal",
+    )
+
+    return {"forward": paths_fwd, "reciprocal": paths_rec}
+
+

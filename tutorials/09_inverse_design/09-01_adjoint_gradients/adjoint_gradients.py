@@ -68,6 +68,41 @@
 #    tracking the objective trajectory, binarization, broadband transmission
 #    spectrum, steady-state wavefields, and design-evolution animation.
 #
+# ### Simulation setup
+#
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# **Initial ($\bar{\rho} = 0.50$) and final optimized ($\beta = 8$) design-region setup variants:**
+#
+# ![Initial setup geometry](figures/00a_setup_geometry_initial.png)
+# ![Initial setup mesh and excitation](figures/00b_setup_mesh_and_excitation_initial.png)
+# ![Final setup geometry](figures/00a_setup_geometry_final.png)
+# ![Final setup mesh and excitation](figures/00b_setup_mesh_and_excitation_final.png)
+#
+# A $15.7\text{ cm} \times 15.7\text{ cm}$ 2D $\text{TM}_z$ ($E_z, H_x, H_y$) domain with 8-cell CPML boundaries launches a broadband Gaussian $J_z$ line source ($f_0 = 3.00\text{ GHz}, \lambda_0 = 10.0\text{ cm}$) in the horizontal dielectric input waveguide ($\varepsilon_r = 6.00, w = 2.14\text{ cm}$) into a central $16\times 16$-cell hatched design region $\Omega_d$ ($5.71\text{ cm} \times 5.71\text{ cm}$, $\varepsilon_r(\bar{\rho}) \in [1.00, 6.00]$) to maximize guided transmission at the orthogonal output `DFTMonitor`.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 157 mm × 157 mm × 35.7 mm (z ∈ [-17.8 mm, 17.8 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 44 × 44 × 1 (1936 cells) |
+# | Discretization | Δx & resolution | Δ_min = 3.57 mm, 11.4 cells/λ (in n_max = 2.45), 6.0 cells across feature (21.4 mm) |
+# | Boundary | -x face | CPML (8 cells, 28.6 mm) |
+# | Boundary | +x face | CPML (8 cells, 28.6 mm) |
+# | Boundary | -y face | CPML (8 cells, 28.6 mm) |
+# | Boundary | +y face | CPML (8 cells, 28.6 mm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum cladding (ε = 1.00, n = 1.00) (isotropic) |
+# | Material | Region 1: Input waveguide (ε = 6.00, n = 2.45) | ε_r = 6.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-78.5 mm, -28.6 mm] (d = 50 mm) |
+# | Material | Region 2: Output waveguide (ε = 6.00, n = 2.45) | ε_r = 6.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-10.7 mm, 10.7 mm] (d = 21.4 mm) |
+# | Material | Region 3: Design region Ω_d (16×16 cells, ε ∈ [1.00, 6.00]) | ε_r = 6.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-28.6 mm, 28.6 mm] (d = 57.1 mm) |
+# | Source | 1 · CurrentSource | pos: x = -3.93 cm, y ∈ [-1.07, 1.07] cm, pol: E_z (TM_z, J_z), pulse: f₀ = 3 GHz, Δf = 2 GHz |
+# | Monitor | 2 · DFTMonitor | Objective DFTMonitor (guided output E_z), pos: x ∈ [-1.07, 1.07] cm, y = 3.93 cm, freqs: 2.55–3.45 GHz (11 freqs, f₀ = 3.00 GHz) |
+# | Variation | Initial design (_initial) | Uniform greyscale ρ = 0.50 (ε_r = 3.50) across 16 × 16 design box Ω_d (5.71 cm × 5.71 cm) |
+# | Variation | Final design (_final) | β-continuation optimized 90° bend (β = 2 → 4 → 8, ε_r ∈ [1.00, 6.00]) stored in data/task_4_optimization.npz |
+# | Variation | Memory ladder (task_3) | store (float64/float32), checkpoint (revolve DP), reverse (CPML strip recording), nyquist (decimation d ∈ {4, 8, 16}) |
+#
 # ---
 #
 # ## Physics & Numerical Method
@@ -1186,6 +1221,337 @@ def run_task_4_toy_optimization(cfg: dict) -> dict:
 # ## Section 6 · Visualization & Figure Generation
 
 # %%
+def _plot_00_setup_schematics(fig_dir: Path) -> None:
+    """Generate 00a/00b setup figures and 00_setup_table.md (base, _initial, _final) from stored data."""
+    from matplotlib.patches import Rectangle
+    from wakis import figstyle, schematic
+    from wakis.templates.shapes import Box
+
+    d4 = np.load(DATA_DIR / "task_4_optimization.npz")
+    rho_init = np.asarray(d4["rho_init"], dtype=np.float64)
+    rho_final = np.asarray(d4["rho_bar_fin"], dtype=np.float64)
+    freqs_spec = np.asarray(d4["freqs_spec"], dtype=np.float64)
+    n_design = int(rho_init.shape[0])
+    n_grid = int(d4["eps_plane_init"].shape[0] - 1)
+
+    sim, meta = make_bend_problem(
+        n_grid=n_grid,
+        n_design=n_design,
+        Nt=420,
+        n_pml=8,
+        cpl=28,
+        eps_wg=6.0,
+        include_plane_monitor=False,
+        freqs=freqs_spec,
+    )
+    L = float(meta["L"])
+    D = float(meta["D"])
+    w = float(meta["w"])
+    dx = float(meta["dx"])
+    dz = float(meta["dz"])
+    eps_wg = float(meta["eps_wg"])
+    x_src = float(meta["x_src"])
+    y_prb = float(meta["y_prb"])
+
+    pulse_obj = GaussianSource(F0, 0.65 * F0)
+    sources_s = [
+        {
+            "kind": "sheet",
+            "type_name": "CurrentSource",
+            "short_word": "J_z src",
+            "label": "Input J_z CurrentSource (TM_z E_z, +x)",
+            "desc": f"Input J_z line source at x = {x_src * 1e2:.2f} cm, y ∈ [{-0.5 * w * 1e2:.2f}, {0.5 * w * 1e2:.2f}] cm (+x)",
+            "pos_str": f"x = {x_src * 1e2:.2f} cm, y ∈ [{-0.5 * w * 1e2:.2f}, {0.5 * w * 1e2:.2f}] cm",
+            "polarization": "E_z (TM_z, J_z)",
+            "h_bounds": (x_src, x_src),
+            "v_bounds": (-0.5 * w, 0.5 * w),
+            "e_vec": (0.0, 0.0, 1.0),
+            "k_vec": (1.0, 0.0, 0.0),
+            "h_vec": (0.0, -1.0, 0.0),
+            "pulse": schematic._extract_pulse_metadata(pulse_obj),
+        }
+    ]
+    monitors_s = [
+        {
+            "kind": "plane",
+            "type_name": "DFTMonitor",
+            "short_word": "obj DFT",
+            "label": "Objective DFTMonitor (guided output E_z)",
+            "desc": f"Objective DFTMonitor (E_z) at y = {y_prb * 1e2:.2f} cm, x ∈ [{-0.5 * w * 1e2:.2f}, {0.5 * w * 1e2:.2f}] cm",
+            "pos_str": f"x ∈ [{-0.5 * w * 1e2:.2f}, {0.5 * w * 1e2:.2f}] cm, y = {y_prb * 1e2:.2f} cm",
+            "frequencies": freqs_spec,
+            "freq_str": f"{freqs_spec[0] * 1e-9:.2f}–{freqs_spec[-1] * 1e-9:.2f} GHz ({len(freqs_spec)} freqs, f₀ = 3.00 GHz)",
+            "h_bounds": (-0.5 * w, 0.5 * w),
+            "v_bounds": (y_prb, y_prb),
+        }
+    ]
+    variations = [
+        {
+            "name": "Initial design (_initial)",
+            "details": "Uniform greyscale ρ = 0.50 (ε_r = 3.50) across 16 × 16 design box Ω_d (5.71 cm × 5.71 cm)",
+        },
+        {
+            "name": "Final design (_final)",
+            "details": "β-continuation optimized 90° bend (β = 2 → 4 → 8, ε_r ∈ [1.00, 6.00]) stored in data/task_4_optimization.npz",
+        },
+        {
+            "name": "Memory ladder (task_3)",
+            "details": "store (float64/float32), checkpoint (revolve DP), reverse (CPML strip recording), nyquist (decimation d ∈ {4, 8, 16})",
+        },
+    ]
+
+    variants = [
+        (
+            "_initial",
+            rho_init,
+            3.50,
+            "Design region Ω_d (initial ρ = 0.50, ε = 3.50)",
+            "Design region Ω_d\n(initial ρ = 0.50)",
+            "2D 90° Waveguide Bend Adjoint Setup — Initial Design (ρ = 0.50)",
+            "Discretization & Excitation — Initial Design (ρ = 0.50)",
+        ),
+        (
+            "_final",
+            rho_final,
+            eps_wg,
+            "Design region Ω_d (final optimized, ε ∈ [1.00, 6.00])",
+            "Design region Ω_d\n(final optimized)",
+            "2D 90° Waveguide Bend Adjoint Setup — Final Optimized Design (β = 8)",
+            "Discretization & Excitation — Final Optimized Design (β = 8)",
+        ),
+        (
+            "",
+            rho_final,
+            eps_wg,
+            "Design region Ω_d (16×16 cells, ε ∈ [1.00, 6.00])",
+            "Design region Ω_d\n(hatched, 5.71 cm × 5.71 cm)",
+            "2D 90° Dielectric Waveguide Bend — Adjoint Inverse-Design Setup",
+            "Discretization (Uniform 28 cells/λ₀ Mesh & 1× Zoom) and Excitation",
+        ),
+    ]
+
+    zoom_bounds = (-0.5 * D - 2.0 * dx, -0.5 * D + 4.0 * dx, -0.5 * w - 1.5 * dx, 0.5 * w + 1.5 * dx)
+
+    for suffix, rho_2d, des_eps, des_struct_name, des_box_lbl, title_a, title_b in variants:
+        solver = sim.make_solver()
+        sim.design.apply(solver, rho_2d[:, :, None])
+        structs = [
+            Box(
+                center=(-0.25 * (L + D), 0.0, 0.0),
+                size=(0.5 * (L - D), w, dz),
+                material=eps_wg,
+            ),
+            Box(
+                center=(0.0, 0.25 * (L + D), 0.0),
+                size=(w, 0.5 * (L - D), dz),
+                material=eps_wg,
+            ),
+            Box(
+                center=(0.0, 0.0, 0.0),
+                size=(D, D, dz),
+                material=des_eps,
+            ),
+        ]
+        mat_names = {
+            "background": "Vacuum cladding (ε = 1.00, n = 1.00)",
+            "region_0": "Input waveguide (ε = 6.00, n = 2.45)",
+            "region_1": "Output waveguide (ε = 6.00, n = 2.45)",
+            "region_2": des_struct_name,
+        }
+        res = schematic.save_setup_figures(
+            solver,
+            fig_dir,
+            prefix="00",
+            suffix=suffix,
+            plane="xy",
+            structures=structs,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="cm",
+            wavelength=LAM0,
+            min_feature=w,
+            title_geometry=title_a,
+            title_mesh=title_b,
+            variations=variations,
+        )
+
+        # Enhance 00a: render design array inside hatched design box and place tags cleanly on their objects
+        fig_a, ax_a = schematic.plot_schematic(
+            solver,
+            plane="xy",
+            structures=structs[:2],
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="cm",
+            wavelength=LAM0,
+            title=title_a,
+            width_in=7.4,
+            height_in=4.8,
+        )
+        d_cm = D * 1e2
+        w_cm = w * 1e2
+        eps_des = 1.0 + (eps_wg - 1.0) * rho_2d.T
+        ax_a.imshow(
+            eps_des,
+            origin="lower",
+            extent=[-0.5 * d_cm, 0.5 * d_cm, -0.5 * d_cm, 0.5 * d_cm],
+            cmap="Blues",
+            vmin=1.0,
+            vmax=eps_wg,
+            alpha=0.82,
+            zorder=3.2,
+            interpolation="nearest",
+        )
+        ax_a.add_patch(
+            Rectangle(
+                (-0.5 * d_cm, -0.5 * d_cm),
+                d_cm,
+                d_cm,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.6,
+                ls="--",
+                zorder=5.4,
+            )
+        )
+        ax_a.text(
+            0.0,
+            -0.5 * d_cm - 0.95,
+            des_box_lbl,
+            ha="center",
+            va="top",
+            fontsize=8.6,
+            fontweight="bold",
+            color="#5B21B6",
+            bbox=dict(boxstyle="round,pad=0.20", facecolor="#F5F3FF", edgecolor="#6D28D9", lw=0.8, alpha=0.94),
+            zorder=9,
+        )
+        # Position numbered tags and bottom boundary tag cleanly without overlaps
+        for txt_obj in ax_a.texts:
+            t_str = txt_obj.get_text()
+            role = getattr(txt_obj, "_schematic_role", "")
+            if t_str.startswith("1 ·"):
+                txt_obj.set_position((-3.25, 0.5 * w_cm + 0.45))
+                txt_obj.set_ha("right")
+                txt_obj.set_va("bottom")
+            elif t_str.startswith("2 ·"):
+                txt_obj.set_position((0.5 * w_cm + 0.35, y_prb * 1e2))
+                txt_obj.set_ha("left")
+                txt_obj.set_va("center")
+            elif role == "boundary_bottom":
+                txt_obj.set_position((-3.2, -0.5 * L * 1e2 - 0.35))
+                txt_obj.set_ha("center")
+                txt_obj.set_va("top")
+        ax_a.spines["bottom"].set_position(("outward", 24))
+
+        leg = ax_a.get_legend()
+        if leg is not None:
+            handles = list(leg.legend_handles)
+            labels = [t.get_text() for t in leg.get_texts()]
+            handles.insert(
+                2,
+                Rectangle(
+                    (0, 0),
+                    1,
+                    1,
+                    facecolor="#DBEAFE",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.2,
+                    ls="--",
+                ),
+            )
+            labels.insert(2, f"{des_struct_name} (d = {d_cm:.2f} cm)")
+            ax_a.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.28),
+                ncol=2,
+                frameon=False,
+                fontsize=8.8,
+                handlelength=1.8,
+                columnspacing=1.2,
+            )
+        figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+        # Enhance 00b: overlay design array and hatched design region box on mesh panel & zoom inset
+        fig_b, axes_b = schematic.plot_mesh_and_excitation(
+            solver,
+            plane="xy",
+            structures=structs[:2],
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="cm",
+            zoom_bounds=zoom_bounds,
+            wavelength=LAM0,
+            min_feature=w,
+            title=title_b,
+            width_in=7.4,
+            height_in=5.6,
+        )
+        ax_mesh = axes_b[0]
+        ax_mesh.imshow(
+            eps_des,
+            origin="lower",
+            extent=[-0.5 * d_cm, 0.5 * d_cm, -0.5 * d_cm, 0.5 * d_cm],
+            cmap="Blues",
+            vmin=1.0,
+            vmax=eps_wg,
+            alpha=0.72,
+            zorder=2.1,
+            interpolation="nearest",
+        )
+        ax_mesh.add_patch(
+            Rectangle(
+                (-0.5 * d_cm, -0.5 * d_cm),
+                d_cm,
+                d_cm,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.3,
+                ls="--",
+                zorder=3.2,
+            )
+        )
+        for child_ax in ax_mesh.child_axes:
+            child_ax.set_axes_locator(None)
+            child_ax.set_position([0.68, 0.56, 0.24, 0.28])
+            child_ax.imshow(
+                eps_des,
+                origin="lower",
+                extent=[-0.5 * d_cm, 0.5 * d_cm, -0.5 * d_cm, 0.5 * d_cm],
+                cmap="Blues",
+                vmin=1.0,
+                vmax=eps_wg,
+                alpha=0.72,
+                zorder=1.6,
+                interpolation="nearest",
+            )
+            child_ax.add_patch(
+                Rectangle(
+                    (-0.5 * d_cm, -0.5 * d_cm),
+                    d_cm,
+                    d_cm,
+                    facecolor="none",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.1,
+                    ls="--",
+                    zorder=2.2,
+                )
+            )
+            for ins_txt in child_ax.texts:
+                ins_txt.set_fontsize(8.4)
+                ins_txt.set_position((0.5, 0.93))
+        figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+
+
 def _plot_01_schematic(fig_dir: Path) -> None:
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
@@ -1976,9 +2342,10 @@ def _plot_10_design_evolution_gif(fig_dir: Path) -> None:
 
 
 def plot_all(fig_dir: Path | None = None) -> list[Path]:
-    """Render all 10 tutorial figures from saved data in ``data/``."""
+    """Render all tutorial figures and setup schematics from saved data in ``data/``."""
     target_dir = FIG_DIR if fig_dir is None else Path(fig_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+    _plot_00_setup_schematics(target_dir)
     _plot_01_schematic(target_dir)
     _plot_02_dot_product(target_dir)
     _plot_03_fd_vcurve(target_dir)

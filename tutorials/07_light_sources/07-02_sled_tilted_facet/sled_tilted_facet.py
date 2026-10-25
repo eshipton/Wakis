@@ -616,18 +616,56 @@ def load_all_results(data_dir: Path, quick: bool | None = None) -> dict:
 # <a id="6-visualizing-fields"></a>
 # ## 6. Visualizing Geometry, Kottke Subpixel Mesh, Eigenmodes & Pulse Propagation
 #
-# Figure `00_setup_schematic.png` shows the complete simulation setup before examining any fields:
-# - **Panel (a)** depicts the 2D $(x, y)$ tilted-facet waveguide domain ($x \in [-4.2, 1.8]\;\mu\text{m}$, $y \in [-6.0, 6.0]\;\mu\text{m}$) with 10-cell CPML boundaries on $\pm x, \pm y$ and periodic BCs in $z$, the ridge core ($w_1 = 1.75\;\mu\text{m}$, $n_{\text{core}} = 3.337$) in cladding ($n_{\text{clad}} = 3.311$), the $\theta_t = 7^\circ$ angled facet coated with a quarter-wave $\text{Al}_2\text{O}_3/\text{SiO}_x\text{N}_y$ film ($t_{\text{AR}} = 216.6\;\text{nm}$, $n_{\text{AR}} = 1.72$), the `ModeSource` at $x = -3.3\;\mu\text{m}$, the upstream `ModeMonitor` at $x = -2.6\;\mu\text{m}$, and the `Near2FarMonitor` at $x = +0.85\;\mu\text{m}$ in air.
-# - **Panel (b)** shows the 9-dipole incoherent spontaneous-emission ensemble (`CurrentSource` $J_y$ at $x = -1.0\;\mu\text{m}$, $y_j \in [-0.42 w_2, +0.42 w_2]$) inside the bimodal waveguide ($w_2 = 2.80\;\mu\text{m}$) with the downstream two-mode `ModeMonitor` ($\text{TE}_0, \text{TE}_1$) at $x = +1.0\;\mu\text{m}$.
-# - **Panel (c)** zooms into the locally refined non-uniform mesh across the quarter-wave AR coating ($x \in [0, 216.6]\;\text{nm}$, resolved with $10$ cells at $\Delta x_{\min} = 21.66\;\text{nm}$, $20\;\text{cells}/\lambda$) and the core sidewalls $y = \pm w_1/2$.
+# Figures `00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png` show the primary tilted-facet SLED waveguide setup ($\theta_t = 7^\circ$, $w_1 = 1.75\;\mu\text{m}$, quarter-wave $\text{Al}_2\text{O}_3/\text{SiO}_x\text{N}_y$ AR coating $t_{\text{AR}} = 216.6\;\text{nm}$, $\text{TE}_0$ `ModeSource`, upstream `ModeMonitor`, and air `Near2FarMonitor`), followed by its simulation specification table:
 #
-# ![Setup schematic and thin-layer mesh](figures/00_setup_schematic.png)
+# ![Tilted-facet SLED setup geometry](figures/00a_setup_geometry.png)
+# ![Tilted-facet SLED setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 6.50 µm × 12.6 µm × 28.6 nm (z ∈ [-14.3 nm, 14.3 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 288 × 478 × 1 (137664 cells) |
+# | Discretization | Δx & resolution | Δ_min = 21.7 nm, 20.6 cells/λ (in n_max = 3.34), 10.0 cells across feature (216.6 nm) |
+# | Boundary | -x face | CPML (10 cells, 216.6 nm) |
+# | Boundary | +x face | CPML (10 cells, 283 nm) |
+# | Boundary | -y face | CPML (10 cells, 285 nm) |
+# | Boundary | +y face | CPML (10 cells, 285 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Air exterior, ε = 1.00 (isotropic) |
+# | Material | Region 1: InP/InGaAsP cladding (n = 3.311) | ε_r = 10.96, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-4.20 µm, 0 m] (d = 4.20 µm) |
+# | Material | Region 2: Ridge core (w₁ = 1.75 µm, n = 3.337) | ε_r = 11.14, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-4.20 µm, 0 m] (d = 4.20 µm) |
+# | Material | Region 3: λ/4 AR film (θ_t = 7°, n = 1.72) | ε_r = 2.96, μ_r = 1.00, model = Isotropic dielectric, x ∈ [0 m, 216.6 nm] (d = 216.6 nm) |
+# | Source | 1 · ModeSource | pos: x = -3.29 µm, pol: mode 0, pulse: f₀ = 201.2 THz, Δf = 44.26 THz |
+# | Monitor | 2 · ModeMonitor | Upstream ModeMonitor (x = -2.60 µm, TE₀/TE₁), pos: x = -2.60 µm, freqs: f = 201.2 THz |
+# | Monitor | 3 · Near2FarMonitor | Near2FarMonitor in air (x = +0.85 µm, Snell 24°), pos: x = +0.85 µm, y ∈ [-4.80, 4.80] µm, freqs: f = 201.2 THz |
+#
+# Figures `00a_setup_geometry_dipole_ensemble.png` and `00b_setup_mesh_and_excitation_dipole_ensemble.png` show the second simulation setup for the bimodal waveguide ($w_2 = 2.80\;\mu\text{m}$) excited by the 9-dipole incoherent spontaneous-emission ensemble (`CurrentSource` $J_y$ at $x = -1.00\;\mu\text{m}$, 5 representative dipole positions shown) and monitored by the downstream two-mode `ModeMonitor` ($\text{TE}_0, \text{TE}_1$ at $x = +1.00\;\mu\text{m}$):
+#
+# ![Bimodal dipole-ensemble setup geometry](figures/00a_setup_geometry_dipole_ensemble.png)
+# ![Bimodal dipole-ensemble setup mesh and excitation](figures/00b_setup_mesh_and_excitation_dipole_ensemble.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 7.97 µm × 10.5 µm × 28.6 nm (z ∈ [-14.3 nm, 14.3 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 368 × 412 × 1 (151616 cells) |
+# | Discretization | Δx & resolution | Δ_min = 21.7 nm, 20.6 cells/λ (in n_max = 3.34), 129.3 cells across feature (2.80 µm) |
+# | Boundary | -x face | CPML (8 cells, 173.3 nm) |
+# | Boundary | +x face | CPML (8 cells, 173.3 nm) |
+# | Boundary | -y face | CPML (8 cells, 228 nm) |
+# | Boundary | +y face | CPML (8 cells, 228 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | InP/InGaAsP cladding (n = 3.311), ε = 10.96 (isotropic) |
+# | Material | Region 1: Bimodal active core (w₂ = 2.80 µm, n = 3.337) | ε_r = 11.14, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-3.81 µm, 3.81 µm] (d = 7.62 µm) |
+# | Source | 1 · CurrentSource | pos: x = -1.00 µm, 9 sites in y ∈ [-1.18, +1.18] µm (5 shown), pol: TE (J_y, random φ_j), pulse: f₀ = 201.2 THz, Δf = 50.30 THz |
+# | Monitor | 2 · ModeMonitor | Downstream 2-mode ModeMonitor (x = +1.00 µm, TE₀ & TE₁), pos: x = 1 µm, freqs: f = 201.2 THz |
 #
 # We next compare staircase vs. Kottke subpixel permittivity averaging along the $\theta_t = 7^\circ$ inclined facet (`sled_schematic_and_mesh.png`), examine the exact vs. Wakis 2D FIT eigenmode profiles ($\text{TE}_0$ and $\text{TE}_1$), and visualize both steady-state frequency-domain fields and time-domain wavepacket reflection/refraction with full geometry overlays.
 
 # %%
 def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
-    """Generate Figures 0, 1, and 2: setup schematic, subpixel mesh, and eigenmodes."""
+    """Generate Figures 0, 1, and 2: setup schematics, subpixel mesh, and eigenmodes."""
     figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
@@ -636,75 +674,8 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
     cpw_val = int(round(1.49e-6 / (h.N_CORE * float(bare["dx_min_nm"]) * 1e-9)))
     cpw_val = max(14, cpw_val)
 
-    # --- Figure 0: 00_setup_schematic.png (Tilted facet + 9-dipole ensemble + AR mesh zoom) ---
-    fig0, axes0 = figstyle.new_figure(
-        nrows=1, ncols=3, width=13.5, height=4.4, gridspec_kw={"width_ratios": [1.1, 1.05, 0.95]}
-    )
-    sled_obj = h.build_sled_schematic_objects(theta_deg=7.0, width=h.WIDTH_SM, cpw=cpw_val, ar_coated=True)
-    schematic.plot_schematic(
-        sled_obj["solver"],
-        plane="xy",
-        ax=axes0[0],
-        unit="um",
-        structures=sled_obj["structures"],
-        sources=sled_obj["sources"],
-        monitors=sled_obj["monitors"],
-        show_mesh=False,
-        show_wave_packet=False,
-        title="(a) Tasks 0–2: Tilted Facet & AR Setup",
-    )
-    h.tidy_sled_schematic_axes(axes0[0], xlim=(-4.2, 1.8), ylim=(-6.0, 7.6), is_dipole=False, n_pml=10)
-
-    dip_obj = h.build_incoherent_dipole_schematic_objects(width=h.WIDTH_MM, cpw=cpw_val, n_unique_half=5)
-    schematic.plot_schematic(
-        dip_obj["solver"],
-        plane="xy",
-        ax=axes0[1],
-        unit="um",
-        structures=dip_obj["structures"],
-        sources=dip_obj["sources"],
-        monitors=dip_obj["monitors"],
-        show_mesh=False,
-        show_wave_packet=False,
-        title="(b) Task 3: 9-Dipole Incoherent Ensemble",
-    )
-    h.tidy_sled_schematic_axes(axes0[1], xlim=(-2.4, 2.4), ylim=(-5.0, 6.4), is_dipole=True, n_pml=8)
-
-    ax_m = axes0[2]
-    t_ar_um = h.T_AR_COAT * 1e6
-    w_half_um = 0.5 * h.WIDTH_SM * 1e6
-    ax_m.axvspan(-0.18, 0.0, facecolor="#9ecae1", alpha=0.55, zorder=1)
-    ax_m.axvspan(0.0, t_ar_um, facecolor="#fdae6b", alpha=0.65, zorder=1)
-    ax_m.axvspan(t_ar_um, 0.36, facecolor="#f7fbff", alpha=0.65, zorder=1)
-    schematic.draw_mesh(
-        ax_m,
-        sled_obj["grid"],
-        plane="xy",
-        unit="um",
-        every=1,
-        color="#222222",
-        alpha=0.55,
-        linewidth=0.45,
-        show_cpw=False,
-    )
-    ax_m.axvline(0.0, color="#111111", lw=1.2, zorder=5)
-    ax_m.axvline(t_ar_um, color="#111111", lw=1.2, zorder=5)
-    ax_m.axhline(w_half_um, color="#b30000", ls="--", lw=1.1, zorder=5)
-    ax_m.axhline(-w_half_um, color="#b30000", ls="--", lw=1.1, zorder=5)
-    ax_m.set_xlim(-0.14, 0.34)
-    ax_m.set_ylim(-1.05, 1.05)
-    n_ar_cells = int(sled_obj["mesh_info"]["cells_across_feature"])
-    dx_min_nm = float(sled_obj["mesh_info"]["dx_min_nm"])
-    bbox_z = {"boxstyle": "round,pad=0.14", "facecolor": "white", "edgecolor": "#444444", "lw": 0.5, "alpha": 0.90}
-    ax_m.text(0.5 * t_ar_um, 0.42, f"λ/4 AR film\n216.6 nm: {n_ar_cells} cells", ha="center", va="center", fontsize=8.0, bbox=bbox_z, zorder=7)
-    ax_m.text(-0.07, -0.42, "Core\n$n=3.337$", ha="center", va="center", fontsize=7.8, bbox=bbox_z, zorder=7)
-    ax_m.text(0.28, -0.42, "Air\n$n=1.00$", ha="center", va="center", fontsize=7.8, bbox=bbox_z, zorder=7)
-    ax_m.text(0.10, 0.90, f"$\\Delta x_{{\\min}} = {dx_min_nm:.1f}$ nm, {cpw_val} cells/$\\lambda$", ha="center", va="center", fontsize=8.0, bbox=bbox_z, zorder=7)
-    ax_m.set_xlabel("$x$ [$\\mu$m]")
-    ax_m.set_ylabel("$y$ [$\\mu$m]")
-    ax_m.set_title("(c) Local Mesh at AR Coating & Core")
-    figstyle.finish(fig0)
-    figstyle.save(fig0, fig_dir / "00_setup_schematic.png", close=True)
+    # --- Figure 0: 00a/00b setup figures & 00_setup_table.md (tilted facet + dipole ensemble) ---
+    h.save_sled_setup_figures(fig_dir, cpw=cpw_val)
 
     x_um = bare["x_coords"] * 1e6
     y_um = bare["y_coords"] * 1e6

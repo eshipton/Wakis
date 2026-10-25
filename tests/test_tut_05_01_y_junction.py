@@ -176,9 +176,10 @@ def test_committed_full_study_data_and_figures():
     el_ref_db = -10.0 * np.log10(t_ref)
     assert abs(el_nu_db - el_ref_db) < 0.002
 
-    # 4. All 16 figures exist (including setup schematic first and mesh upgrade comparison)
+    # 4. All 17 figures + setup table exist (including 00a/00b setup figures and mesh upgrade comparison)
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_y_junction_layout.png",
         "02_eim_vertical_stack.png",
         "03_junction_width_profile.png",
@@ -200,6 +201,10 @@ def test_committed_full_study_data_and_figures():
         assert fpath.is_file() and fpath.stat().st_size > 1000, (
             f"Missing or empty figure {fpath}"
         )
+    table_md = TUTORIAL_DIR / "figures" / "00_setup_table.md"
+    assert table_md.is_file() and table_md.stat().st_size > 200, (
+        f"Missing or empty setup table {table_md}"
+    )
     gif_size = (TUTORIAL_DIR / "figures" / "09_pulse_propagation.gif").stat().st_size
     assert gif_size < 5 * 1024 * 1024, f"GIF size {gif_size} >= 5 MB"
 

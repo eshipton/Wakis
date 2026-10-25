@@ -189,20 +189,42 @@ from _helpers import (  # noqa: E402
 # %% [markdown]
 # ## Simulation Setup Schematic & Preflight Check
 #
-# Figure 0 (`figures/00_setup_schematic.png`, generated via `wakis.schematic.plot_schematic` and
-# `wakis.schematic.draw_mesh`) illustrates the 2D Young's double-slit setup on the $(x, y)$ cut
-# plane:
-# - **Panel (a)** shows the full computational domain with 10-cell CPML boundaries on $\pm x$ and
-#   $\pm y$ (periodic along $z$), the three PEC blocks at $y \in [-t/2, +t/2]$ (left jaw, central
-#   PEC bridge $b = d - a$, and right jaw), the full-width soft `CurrentSource` upstream of the
-#   screen, the downstream `FluxMonitor` and `Near2FarMonitor` contour at $y = +t/2 + 2.5\Delta y$,
-#   and the transverse detector `DFTMonitor` at $L = 3.5\lambda$.
-# - **Panel (b)** zooms into the snapped graded FIT mesh around both slits $x = \pm d/2$ and the
-#   central PEC bridge $b = d - a$, verifying that every slit opening, the central bridge, and the
-#   screen thickness $t$ are resolved by $\ge 4$ cells alongside a background resolution above
-#   $20$ cells/$\lambda$.
+# Figures `00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png` (generated via
+# `wakis.schematic.save_setup_figures`) illustrate the 2D Young's double-slit setup on the $(y, x)$
+# cut plane along with the graded slit/bridge mesh and broadband Gaussian excitation:
 #
-# ![Double-slit setup schematic and mesh zoom](figures/00_setup_schematic.png)
+# ![2D double-slit diffraction geometry, boundaries, source, and monitors](figures/00a_setup_geometry.png)
+#
+# ![2D double-slit graded mesh zoom, wave packet, and excitation spectrum](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the domain dimensions, CPML and periodic boundary conditions, the
+# three PEC screen blocks (left jaw, central bridge $b = d - a$, and right jaw), the upstream
+# plane-wave `CurrentSource`, the downstream `FluxMonitor`, `Near2FarMonitor`, and detector
+# `DFTMonitor`, and the parameter variations across Tasks 1–4.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 7.15 µm × 3.66 µm × 225 nm (z ∈ [-112.5 nm, 112.5 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 262 × 136 × 1 (35632 cells) |
+# | Discretization | Δy & resolution | Δ_min = 22.5 nm, 26.7 cells/λ (in n_max = 1.00), 4.0 cells across feature (90 nm) |
+# | Boundary | -x face | CPML (10 cells, 272.7 nm) |
+# | Boundary | +x face | CPML (10 cells, 272.7 nm) |
+# | Boundary | -y face | CPML (10 cells, 270.5 nm) |
+# | Boundary | +y face | CPML (10 cells, 271 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC screen (left jaw) | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-45 nm, 45 nm] (d = 90 nm) |
+# | Material | Region 2: PEC central bridge (b = d - a) | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-45 nm, 45 nm] (d = 90 nm) |
+# | Material | Region 3: PEC screen (right jaw) | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-45 nm, 45 nm] (d = 90 nm) |
+# | Source | 1 · CurrentSource | pos: y = -510 nm, pol: J_x (E_x), pulse: f₀ = 499.7 THz, Δf = 249.8 THz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (y = 101.2 nm), pos: y = 101.2 nm, freqs: f = 499.7 THz |
+# | Monitor | 3 · Near2FarMonitor | Near2FarMonitor (y = 101 nm), pos: y = 101 nm, freqs: f = 499.7 THz |
+# | Monitor | 4 · DFTMonitor | DFTMonitor (y = 2.14 µm), pos: y = 2.14 µm, freqs: f = 499.7 THz |
+# | Variation | Task 1 (Missing orders & 2D near field) | a = 1.5λ₀ (900 nm), d/a ∈ {2, 3, 4} (d ∈ {1.80, 2.70, 3.60} µm), t = 0.14λ₀ (84 nm), E ⊥ slit edges (H_z, J_x source) |
+# | Variation | Task 2 (Fringe spacing scaling Δ(sin θ) = λ₀/d) | a = 0.8λ₀ (480 nm), d/λ₀ ∈ {1.8, 2.5, 3.2, 4.0}, t = 0.14λ₀ (84 nm), E ∥ slit edges (E_z, J_z source) |
+# | Variation | Task 3 (Inter-slit electromagnetic coupling) | a = 0.55λ₀ (330 nm), d/λ₀ ∈ [0.72, 2.25] (bridge b = d - a ∈ [0.17λ₀, 1.70λ₀]), t = 0.18λ₀ (108 nm), both E_z and H_z polarizations |
+# | Variation | Task 4 (Mesh convergence study) | a = 1.0λ₀ (600 nm), d = 3.0λ₀ (1.80 µm), t = 0.15λ₀ (90 nm), cpw ∈ {12, 16, 20, 28, 36} |
 #
 # We run `wakis.estimate.estimate` and `preflight` on the representative double-slit mesh
 # ($\lambda = 600\,\mathrm{nm}$, $a = 1.5\lambda$, $d = 4.5\lambda$, $t = 0.15\lambda$,
@@ -360,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     res_data = _load_npz(f_rs) if f_rs.exists() else None
 
     plot_setup_schematic(
-        fig_dir / "00_setup_schematic.png",
+        fig_dir,
         wavelength=DEFAULT_WAVELENGTH,
     )
 
@@ -393,14 +415,16 @@ if __name__ == "__main__":
 # %% [markdown]
 # ## Results & Validation Summary
 #
-# Running `double_slit.py --full` generates four figures (`00_setup_schematic.png` plus three
-# benchmark figures) and four datasets:
+# Running `double_slit.py --full` generates the two setup figures (`00a_setup_geometry.png`,
+# `00b_setup_mesh_and_excitation.png`, and `00_setup_table.md`) plus three benchmark figures and
+# four datasets:
 #
-# 0. **Setup Schematic & Mesh Zoom** (`figures/00_setup_schematic.png`):
+# 0. **Setup Geometry, Mesh Zoom & Excitation** (`figures/00a_setup_geometry.png`,
+#    `figures/00b_setup_mesh_and_excitation.png`, `figures/00_setup_table.md`):
 #    - Labels the computational domain extents, 10-cell CPML boundaries, the three PEC blocks
 #      (left jaw, central PEC bridge $b = d - a$, and right jaw), the soft `CurrentSource`, the
-#      downstream `FluxMonitor` and `Near2FarMonitor`, and the snapped graded mesh around both
-#      slits and the central bridge.
+#      downstream `FluxMonitor` and `Near2FarMonitor`, the snapped graded mesh around both
+#      slits and the central bridge, and the Gaussian pulse spectrum.
 # 1. **Interference $\times$ Diffraction Envelope & Missing Orders**
 #    (`figures/double_slit_envelope_and_missing_orders.png`):
 #    - Panel (a) shows the 2D near-field interference web downstream of two slits ($a = 1.5\lambda$,

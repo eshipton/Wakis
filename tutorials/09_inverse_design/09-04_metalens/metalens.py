@@ -97,6 +97,38 @@
 #    $I_{\text{diff}}(x) = \operatorname{sinc}^2(2\,\text{NA}\,x/\lambda)$ at
 #    $\text{NA} = 0.9015$ across all three RGB wavelengths.
 #
+# ### Simulation setup
+#
+# The setup figures below display the $16.0\,\mu\text{m}\times 6.40\,\mu\text{m}$ ($800\times 320$ cells at $\Delta x = 20\text{ nm}$, periodic on $\pm x$, 20-cell / $400\text{ nm}$ CPML on $\pm y$) Wakis 2D FIT domain, showing the fused-silica substrate ($n = 1.50$), the smoothed aperture `CurrentSource` ($J_z$ at $y = -1.00\,\mu\text{m}$), the focal-point objective and focal-plane line `DFTMonitor`s at $y_f = +3.40\,\mu\text{m}$ ($\text{NA} = 0.9015$), and the hatched $10.0\,\mu\text{m}\times 1.0\,\mu\text{m}$ ($500\times 50\text{ px}$) $\text{TiO}_2$ metasurface design region $\Omega_d$ for both the initial greyscale density (`_initial`) and the Round-2 STE binary design (`_final` / base).
+#
+# ![Initial setup geometry](figures/00a_setup_geometry_initial.png)
+# ![Initial mesh and excitation](figures/00b_setup_mesh_and_excitation_initial.png)
+# ![Final setup geometry](figures/00a_setup_geometry_final.png)
+# ![Final mesh and excitation](figures/00b_setup_mesh_and_excitation_final.png)
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 16 µm × 6.40 µm × 20 nm (z ∈ [-10 nm, 10 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 800 × 320 × 1 (256000 cells) |
+# | Discretization | Δx & resolution | Δ_min = 20 nm, 11.5 cells/λ (in n_max = 2.40), 5.0 cells across feature (100 nm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | CPML (20 cells, 400 nm) |
+# | Boundary | +y face | CPML (20 cells, 400 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Air superstrate (ε = 1.00, n = 1.00) (isotropic) |
+# | Material | Region 1: Fused-silica substrate (SiO₂, ε = 2.25, n = 1.50) | ε_r = 2.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-8 µm, 8 µm] (d = 16 µm) |
+# | Material | Region 2: TiO₂ metasurface design region Ω_d (500×50 px, 10.0 µm × 1.0 µm, ε ∈ {1.00, 5.76}) | ε_r = 5.76, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-5 µm, 5 µm] (d = 10 µm) |
+# | Source | 1 · CurrentSource | pos: x ∈ [-7.50, +7.50] µm, y = -1.00 µm, pol: TM (E_z), pulse: f₀ = 557.5 THz, Δf = 153.7 THz |
+# | Monitor | 2 · DFTMonitor | Focal-point Objective DFTMonitor (E_z, NA = 0.9015), pos: (x_f, y_f) = (0.00, +3.40) µm, freqs: 3 RGB channels λ ∈ {450, 550, 650} nm (blue, green, red) |
+# | Monitor | 3 · DFTMonitor | Focal-plane Line DFTMonitor (E_z lateral profile), pos: x ∈ [-7.50, +7.50] µm, y = +3.40 µm, freqs: 3 RGB channels λ ∈ {450, 550, 650} nm (blue, green, red) |
+# | Variation | Initial design (_initial) | Stage-1 iter 0 initial greyscale TiO₂ density (mean ρ ≈ 0.48) in 500 × 50 active design box Ω_d (10.0 µm × 1.0 µm) |
+# | Variation | Final Round-2 design (_final) | Stage-2 STE binary design (ste_beta64:14, 5/5 px = 100 nm, official fmmax = 8.87×, Wakis = 8.43×) from round2_metalens/design.npy |
+# | Variation | Cross-solver check (fmmax) | Non-FIT Fourier modal method (FMM/RCWA) reference evaluator (Rasmus123nm parity: Wakis 14.27× vs fmmax 14.30×) |
+#
 # ---
 #
 # ## Physics, Wakis Model & Round-1 vs. Round-2 Summary
@@ -887,9 +919,395 @@ def run_task_4_optional_invrs_gym() -> dict:
     return {"installed": True, "version": getattr(invrs_gym, "__version__", "unknown")}
 
 
-def plot_all() -> list[Path]:
-    """Generate all 8 tutorial figures and the design-evolution GIF in ``figures/``."""
+def _plot_00_setup_schematics() -> list[Path]:
+    """Build live Wakis 800x320 (20 nm) solvers from stored Round-2 metalens data and save 00a/00b/00_setup_table.md."""
+    from matplotlib.patches import Rectangle
+    from scipy.constants import epsilon_0 as EPS_0
+
+    from wakis import figstyle, schematic
+    from wakis.templates.shapes import Box
+
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    snaps = np.load(DATA_DIR / "round2_metalens" / "snapshots_thinned.npz")
+    des_final = np.load(DATA_DIR / "round2_metalens" / "design.npy").astype(np.float64)
+    if des_final.ndim == 3:
+        des_final = des_final[:, :, 0]
+    des_init = snaps["designs"][0].astype(np.float64)
+    if des_init.ndim == 3:
+        des_init = des_init[:, :, 0]
+
+    dx = 20e-9
+    nx, ny = 800, 320
+    xmin, xmax = -8.0e-6, 8.0e-6
+    ymin, ymax = -2.0e-6, 4.4e-6
+    npml = 20
+    j_sub_end = int(round((0.0 - ymin) / dx))  # 100
+    j_lens_end = j_sub_end + 50  # 150
+
+    freqs = C0 / (WAVELENGTHS_UM * 1e-6)
+    f0 = float(np.mean(freqs))
+    df = float(0.75 * np.ptp(freqs))
+    pulse_obj = GaussianSource(f0, df)
+    pulse_meta = schematic._extract_pulse_metadata(pulse_obj)
+
+    def _build_metalens_solver(des_2d: np.ndarray) -> wakis.SolverFIT3D:
+        grid = wakis.GridFIT3D(
+            xmin, xmax, ymin, ymax, -0.5 * dx, 0.5 * dx, nx, ny, 1, verbose=0
+        )
+        solver = wakis.SolverFIT3D(
+            grid,
+            bc_low=["periodic", "cpml", "periodic"],
+            bc_high=["periodic", "cpml", "periodic"],
+            bg=[1.0, 1.0, 0.0],
+            n_pml=npml,
+            verbose=0,
+        )
+        t_shape = solver.ieps.to_matrix("z").shape
+        inv_eps_cell = np.ones((nx, ny), dtype=np.float64)
+        inv_eps_cell[:, :j_sub_end] = 1.0 / 2.25
+        eps_lens = 1.0 + (5.76 - 1.0) * np.clip(des_2d, 0.0, 1.0)
+        inv_eps_cell[:, j_sub_end:j_lens_end] = 1.0 / eps_lens
+        inv_pad = np.pad(inv_eps_cell, ((1, 0), (1, 1)), mode="wrap")
+        inv_pad[:, 0] = inv_pad[:, 1]
+        inv_pad[:, -1] = inv_pad[:, -2]
+        ieps_node = 0.25 * (
+            inv_pad[:-1, :-1] + inv_pad[1:, :-1] + inv_pad[:-1, 1:] + inv_pad[1:, 1:]
+        )
+        ieps_full = np.pad(ieps_node, ((0, 1), (0, 0)), mode="wrap")
+        ieps_3d = np.broadcast_to(
+            (ieps_full[: t_shape[0], : t_shape[1], None] / EPS_0), t_shape
+        ).copy()
+        for c in ("x", "y", "z"):
+            solver.ieps.from_matrix(ieps_3d, c)
+        solver.update_tensors("ieps")
+        return solver
+
+    sources_s = [
+        {
+            "kind": "sheet",
+            "type_name": "CurrentSource",
+            "short_word": "Aperture J_z",
+            "label": "Smoothed aperture CurrentSource (J_z, +y, FWHM = 1.0 µm)",
+            "desc": "Smoothed aperture CurrentSource (J_z, +y, w = 15.0 µm) at y = -1.00 µm, x ∈ [-7.50, +7.50] µm",
+            "pos_str": "x ∈ [-7.50, +7.50] µm, y = -1.00 µm",
+            "polarization": "TM (E_z)",
+            "h_bounds": (-7.50e-6, 7.50e-6),
+            "v_bounds": (-1.00e-6, -1.00e-6),
+            "e_vec": (0.0, 0.0, 1.0),
+            "k_vec": (0.0, 1.0, 0.0),
+            "h_vec": (1.0, 0.0, 0.0),
+            "pulse": pulse_meta,
+        }
+    ]
+    monitors_s = [
+        {
+            "kind": "point",
+            "type_name": "DFTMonitor",
+            "short_word": "Focus obj",
+            "label": "Focal-point Objective DFTMonitor (E_z, NA = 0.9015)",
+            "desc": "Objective Focal-Point DFTMonitor (E_z) at (0.00, +3.40) µm (f = 2.40 µm above lens)",
+            "pos_str": "(x_f, y_f) = (0.00, +3.40) µm",
+            "frequencies": freqs,
+            "freq_str": "3 RGB channels λ ∈ {450, 550, 650} nm (blue, green, red)",
+            "h_bounds": (0.0, 0.0),
+            "v_bounds": (3.40e-6, 3.40e-6),
+        },
+        {
+            "kind": "plane",
+            "type_name": "DFTMonitor",
+            "short_word": "Focal line",
+            "label": "Focal-plane Line DFTMonitor (E_z lateral profile)",
+            "desc": "Focal-Plane Line DFTMonitor (E_z) at y = +3.40 µm, x ∈ [-7.50, +7.50] µm",
+            "pos_str": "x ∈ [-7.50, +7.50] µm, y = +3.40 µm",
+            "frequencies": freqs,
+            "freq_str": "3 RGB channels λ ∈ {450, 550, 650} nm (blue, green, red)",
+            "h_bounds": (-7.50e-6, 7.50e-6),
+            "v_bounds": (3.40e-6, 3.40e-6),
+        },
+    ]
+    variations = [
+        {
+            "name": "Initial design (_initial)",
+            "details": "Stage-1 iter 0 initial greyscale TiO₂ density (mean ρ ≈ 0.48) in 500 × 50 active design box Ω_d (10.0 µm × 1.0 µm)",
+        },
+        {
+            "name": "Final Round-2 design (_final)",
+            "details": "Stage-2 STE binary design (ste_beta64:14, 5/5 px = 100 nm, official fmmax = 8.87×, Wakis = 8.43×) from round2_metalens/design.npy",
+        },
+        {
+            "name": "Cross-solver check (fmmax)",
+            "details": "Non-FIT Fourier modal method (FMM/RCWA) reference evaluator (Rasmus123nm parity: Wakis 14.27× vs fmmax 14.30×)",
+        },
+    ]
+
+    variants = [
+        (
+            "_initial",
+            des_init,
+            "TiO₂ metasurface design region Ω_d (initial ρ ≈ 0.48, 10.0 µm × 1.0 µm)",
+            "Design region Ω_d (TiO₂, initial ρ ≈ 0.48, 10.0 µm × 1.0 µm)",
+            "RGB Achromatic Metalens Setup — Initial Design (Stage 1, iter 0)",
+            "Discretization (800×320 20 nm Mesh & 1× Zoom) and Visible RGB Excitation — Initial",
+        ),
+        (
+            "_final",
+            des_final,
+            "TiO₂ metasurface design region Ω_d (final 5/5 px = 100 nm, ε ∈ {1.00, 5.76})",
+            "Design region Ω_d (TiO₂ pillars, final 5/5 px = 100 nm)",
+            "RGB Achromatic Metalens Setup — Final Round-2 Design (8.87×, 5/5 px)",
+            "Discretization (800×320 20 nm Mesh & 1× Zoom) and Visible RGB Excitation — Final",
+        ),
+        (
+            "",
+            des_final,
+            "TiO₂ metasurface design region Ω_d (500×50 px, 10.0 µm × 1.0 µm, ε ∈ {1.00, 5.76})",
+            "Design region Ω_d (hatched, 10.0 µm × 1.0 µm, TiO₂ n = 2.40)",
+            "Visible-Band RGB Metalens — 2D Adjoint Inverse-Design Setup (20 nm Grid)",
+            "Discretization (800×320 20 nm Mesh & 1× Zoom) and Visible RGB Excitation",
+        ),
+    ]
+
+    zoom_bounds = (-1.00e-6, 1.00e-6, 0.0, 1.00e-6)
+    saved_paths: list[Path] = []
+
+    for suffix, des_2d, des_struct_name, des_box_lbl, title_a, title_b in variants:
+        solver = _build_metalens_solver(des_2d)
+        sub_box = Box(
+            center=(0.0, -1.00e-6, 0.0),
+            size=(16.0e-6, 2.00e-6, dx),
+            material=2.25,
+        )
+        des_box = Box(
+            center=(0.0, 0.50e-6, 0.0),
+            size=(10.0e-6, 1.00e-6, dx),
+            material=5.76,
+        )
+        structs = [sub_box, des_box]
+        mat_names = {
+            "background": "Air superstrate (ε = 1.00, n = 1.00)",
+            "region_0": "Fused-silica substrate (SiO₂, ε = 2.25, n = 1.50)",
+            "region_1": des_struct_name,
+        }
+
+        res = schematic.save_setup_figures(
+            solver,
+            FIG_DIR,
+            prefix="00",
+            suffix=suffix,
+            plane="xy",
+            structures=structs,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=550e-9,
+            min_feature=100e-9,
+            title_geometry=title_a,
+            title_mesh=title_b,
+            variations=variations,
+        )
+
+        # Enhance 00a: render TiO2 pillar array inside hatched design box and place tags cleanly
+        fig_a, ax_a = schematic.plot_schematic(
+            solver,
+            plane="xy",
+            structures=[sub_box],
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=550e-9,
+            title=title_a,
+            width_in=7.8,
+            height_in=4.8,
+        )
+        eps_active = 1.0 + (5.76 - 1.0) * des_2d[150:650, :].T
+        ax_a.imshow(
+            eps_active,
+            origin="lower",
+            extent=[-5.0, 5.0, 0.0, 1.0],
+            cmap="Blues",
+            vmin=1.0,
+            vmax=5.76,
+            alpha=0.86,
+            zorder=3.2,
+            interpolation="nearest",
+        )
+        ax_a.add_patch(
+            Rectangle(
+                (-5.0, 0.0),
+                10.0,
+                1.0,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.5,
+                ls="--",
+                zorder=5.4,
+            )
+        )
+        ax_a.text(
+            0.0,
+            1.18,
+            des_box_lbl,
+            ha="center",
+            va="bottom",
+            fontsize=8.0,
+            fontweight="bold",
+            color="#5B21B6",
+            bbox=dict(boxstyle="round,pad=0.16", facecolor="#F5F3FF", edgecolor="#6D28D9", lw=0.8, alpha=0.94),
+            zorder=9,
+        )
+        for txt_obj in ax_a.texts:
+            t_str = txt_obj.get_text()
+            role = getattr(txt_obj, "_schematic_role", "")
+            if t_str.startswith("1 ·"):
+                txt_obj.set_position((-4.20, -1.38))
+                txt_obj.set_fontsize(8.2)
+                txt_obj.set_ha("center")
+                txt_obj.set_va("top")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif t_str.startswith("2 ·"):
+                txt_obj.set_position((0.35, 3.52))
+                txt_obj.set_fontsize(8.2)
+                txt_obj.set_ha("left")
+                txt_obj.set_va("bottom")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif t_str.startswith("3 ·"):
+                txt_obj.set_position((-5.20, 3.52))
+                txt_obj.set_fontsize(8.2)
+                txt_obj.set_ha("center")
+                txt_obj.set_va("bottom")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif role == "boundary_bottom":
+                txt_obj.set_position((-4.50, -2.18))
+                txt_obj.set_ha("center")
+                txt_obj.set_va("top")
+            elif role == "boundary_left":
+                txt_obj.set_position((-8.20, 2.45))
+                txt_obj.set_ha("right")
+                txt_obj.set_va("center")
+        ax_a.spines["bottom"].set_position(("outward", 24))
+        ax_a.spines["left"].set_position(("outward", 42))
+
+        leg = ax_a.get_legend()
+        if leg is not None:
+            handles = list(leg.legend_handles)
+            labels = [t.get_text() for t in leg.get_texts()]
+            ins_idx = min(len(handles), 2)
+            handles.insert(
+                ins_idx,
+                Rectangle(
+                    (0, 0),
+                    1,
+                    1,
+                    facecolor="#DBEAFE",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.2,
+                    ls="--",
+                ),
+            )
+            labels.insert(ins_idx, f"{des_struct_name} (d = 1.00 µm)")
+            ax_a.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.30),
+                ncol=2,
+                frameon=False,
+                fontsize=8.3,
+                handlelength=1.8,
+                columnspacing=1.1,
+            )
+        figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+        # Enhance 00b: overlay TiO2 pillar array and hatched design region box on mesh panel & zoom inset
+        fig_b, axes_b = schematic.plot_mesh_and_excitation(
+            solver,
+            plane="xy",
+            structures=structs,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            mesh_every=10,
+            zoom_bounds=zoom_bounds,
+            wavelength=550e-9,
+            min_feature=100e-9,
+            title=title_b,
+            width_in=7.8,
+            height_in=5.6,
+        )
+        ax_mesh = axes_b[0]
+        m_pos = ax_mesh.get_position()
+        ax_mesh.set_position([0.08, m_pos.y0, 0.56, m_pos.height])
+        ax_mesh.imshow(
+            eps_active,
+            origin="lower",
+            extent=[-5.0, 5.0, 0.0, 1.0],
+            cmap="Blues",
+            vmin=1.0,
+            vmax=5.76,
+            alpha=0.78,
+            zorder=2.1,
+            interpolation="nearest",
+        )
+        ax_mesh.add_patch(
+            Rectangle(
+                (-5.0, 0.0),
+                10.0,
+                1.0,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.3,
+                ls="--",
+                zorder=3.2,
+            )
+        )
+        for child_ax in ax_mesh.child_axes:
+            child_ax.set_axes_locator(None)
+            child_ax.set_position([0.69, m_pos.y0 + 0.01, 0.26, m_pos.height - 0.02])
+            child_ax.imshow(
+                eps_active,
+                origin="lower",
+                extent=[-5.0, 5.0, 0.0, 1.0],
+                cmap="Blues",
+                vmin=1.0,
+                vmax=5.76,
+                alpha=0.78,
+                zorder=1.6,
+                interpolation="nearest",
+            )
+            child_ax.add_patch(
+                Rectangle(
+                    (-5.0, 0.0),
+                    10.0,
+                    1.0,
+                    facecolor="none",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.1,
+                    ls="--",
+                    zorder=2.2,
+                )
+            )
+            for ins_txt in child_ax.texts:
+                ins_txt.set_fontsize(8.4)
+                ins_txt.set_position((0.5, 0.92))
+        figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+        saved_paths.extend([res["geometry_figure"], res["mesh_figure"]])
+    return saved_paths
+
+
+def plot_all() -> list[Path]:
+    """Generate all tutorial figures and the design-evolution GIF in ``figures/``."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = _plot_00_setup_schematics()
     r2_summary = json.loads((DATA_DIR / "round2_metalens" / "summary.json").read_text())
     r1_s0 = json.loads(
         (DATA_DIR / "round1" / "20261018-0430-invrs-metalens__shard_0__metalens_seed0__summary.json").read_text()
@@ -903,8 +1321,6 @@ def plot_all() -> list[Path]:
     if design.ndim == 3:
         design = design[:, :, 0]
     resim = np.load(DATA_DIR / "wakis_resim_full.npz")
-
-    saved: list[Path] = []
 
     # --- Figure 1: Metalens binary profile, fill-fraction profile, and 5/5 px length-scale verification ---
     fig, axes = plt.subplots(3, 1, figsize=(12, 7.6), constrained_layout=True)

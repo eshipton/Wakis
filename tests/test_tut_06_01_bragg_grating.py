@@ -669,7 +669,8 @@ def test_setup_schematic_and_graded_mesh_comparison_with_mutation():
     """
     fig_dir = TUTORIAL_DIR / "figures"
     expected_figures = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_bragg_grating_layout.png",
         "02_eim_vertical_stack.png",
         "03_corrugation_and_apodization_profiles.png",
@@ -690,6 +691,9 @@ def test_setup_schematic_and_graded_mesh_comparison_with_mutation():
         fpath = fig_dir / fname
         assert fpath.is_file(), f"Missing expected figure {fpath}"
         assert fpath.stat().st_size > 10_000, f"Figure {fpath} is unexpectedly small"
+    table_md = fig_dir / "00_setup_table.md"
+    assert table_md.is_file(), f"Missing setup table {table_md}"
+    assert table_md.stat().st_size > 200
     assert (fig_dir / "09_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024
 
     cmp = compare_bragg_mesh_strategies(

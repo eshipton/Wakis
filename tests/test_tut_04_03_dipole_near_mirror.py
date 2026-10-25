@@ -524,10 +524,17 @@ def test_committed_full_study_data_and_convergence():
 
 
 def test_setup_schematic_and_all_figures_exist():
-    """Verify that 00_setup_schematic.png and all 14 diagnostic figures exist and are non-empty."""
+    """Verify that 00a/00b setup schematics, setup tables, and all 14 diagnostic figures exist and are non-empty."""
     fig_dir = TUTORIAL_DIR / "figures"
     expected_figures = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_silver.png",
+        "00b_setup_mesh_and_excitation_silver.png",
+        "00a_setup_geometry_cavity.png",
+        "00b_setup_mesh_and_excitation_cavity.png",
+        "00a_setup_geometry_rcled.png",
+        "00b_setup_mesh_and_excitation_rcled.png",
         "01_geometry_and_mesh_overview.png",
         "02_pec_mirror_drexhage_purcell.png",
         "03_pec_mirror_angular_patterns.png",
@@ -550,6 +557,16 @@ def test_setup_schematic_and_all_figures_exist():
         assert size_bytes > 10_000, f"Figure {p} is unexpectedly small ({size_bytes} bytes)"
         if fname.endswith(".gif"):
             assert size_bytes < 5 * 1024 * 1024, f"GIF {p} exceeds 5 MB limit ({size_bytes} bytes)"
+
+    for tname in (
+        "00_setup_table.md",
+        "00_setup_table_silver.md",
+        "00_setup_table_cavity.md",
+        "00_setup_table_rcled.md",
+    ):
+        tp = fig_dir / tname
+        assert tp.is_file(), f"Missing expected setup table: {tp}"
+        assert tp.stat().st_size > 200, f"Setup table {tp} is unexpectedly small"
 
     # Verify set_monitor_bounds helper and its mutation check
     fm = FluxMonitor([300.0e12], center=(1.0e-6, 2.0e-6, 3.0e-6), size=(0.4e-6, 0.2e-6, 0.8e-6))

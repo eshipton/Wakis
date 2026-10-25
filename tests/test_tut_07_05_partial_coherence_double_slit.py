@@ -481,10 +481,13 @@ def test_full_study_summary_metrics_and_convergence_audit():
 
 
 def test_setup_schematic_and_expected_figures_exist():
-    """Verify that 00_setup_schematic.png and all expected tutorial figures exist and are non-empty."""
+    """Verify that 00a/00b setup figures, 00_setup_table.md, and all expected tutorial figures exist and are non-empty."""
     fig_dir = os.path.join(TUTORIAL_DIR, "figures")
     expected = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_gsm_silver.png",
+        "00b_setup_mesh_and_excitation_gsm_silver.png",
         "01_double_slit_schematic.png",
         "02_grid_and_slit_zoom.png",
         "03_gsm_mercer_eigenmodes.png",
@@ -506,6 +509,10 @@ def test_setup_schematic_and_expected_figures_exist():
         fpath = os.path.join(fig_dir, fname)
         assert os.path.isfile(fpath), f"Missing figure: {fname}"
         assert os.path.getsize(fpath) > 1000, f"Empty/corrupt figure: {fname}"
+    for tname in ("00_setup_table.md", "00_setup_table_gsm_silver.md"):
+        tpath = os.path.join(fig_dir, tname)
+        assert os.path.isfile(tpath), f"Missing setup table: {tname}"
+        assert os.path.getsize(tpath) > 100, f"Empty/corrupt setup table: {tname}"
     gif_path = os.path.join(fig_dir, "07_double_slit_propagation.gif")
     assert os.path.getsize(gif_path) < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"
 

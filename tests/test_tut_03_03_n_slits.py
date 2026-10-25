@@ -115,13 +115,20 @@ class TestNSlitSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
-            "00_setup_schematic.png",
+            "00a_setup_geometry.png",
+            "00b_setup_mesh_and_excitation.png",
+            "00a_setup_geometry_periodic.png",
+            "00b_setup_mesh_and_excitation_periodic.png",
             "n_slits_patterns_and_secondary_maxima.png",
             "n_slits_resolving_power_and_width.png",
             "n_slits_periodic_vs_finite_and_cost.png",
         ):
             p = TUTORIAL_DIR / "figures" / fig_name
             assert p.is_file() and p.stat().st_size > 2000, f"Missing or empty {p}"
+
+        for tbl_name in ("00_setup_table.md", "00_setup_table_periodic.md"):
+            tp = TUTORIAL_DIR / "figures" / tbl_name
+            assert tp.is_file() and tp.stat().st_size > 100, f"Missing or empty {tp}"
 
     def test_patterns_secondary_maxima_and_width_scaling(self):
         """Verify L2 agreement, exact (N-2) secondary peak count, and 1/N width scaling."""

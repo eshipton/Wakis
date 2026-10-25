@@ -888,378 +888,391 @@ PALETTE = {
 
 def _plot_setup_schematic_and_mesh(d0: Any, fig_dir: Path) -> None:
     """
-    Generate Figure 0 (`00_setup_schematic_and_mesh.png`, 3 panels):
-    (a) Labelled 2D Bloch unit-cell setup schematic (domain box, boundary types
-        per face with CPML thickness, materials with eps/mu, sources with
-        polarisation/direction and Gaussian pulse, and monitors).
-    (b) Symmetry-breaking taxonomy (Koshelev et al. Fig. 1a & Fig. 1e / Fig. 2a):
-        tilted bar pair (alpha = sin theta) vs width-perturbed bar pair
-        (alpha = Delta_w / w_0) showing anti-parallel dipoles p_1, p_2.
-    (c) Graded mesh view showing dual-cell subpixel permittivity eps_yy(x, z)
-        with cell edges and >= 4 cells across the 85 nm inner gap.
+    Generate the two-figure setup layout via ``wakis.schematic.save_setup_figures``:
+    - ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and
+      ``00_setup_table.md`` for the primary 2D TE width-asymmetric silicon
+      bar-pair dimer metasurface (`make_dimer_solver(alpha=0.14, nx=32)`).
+    - ``00a_setup_geometry_oblique.png``, ``00b_setup_mesh_and_excitation_oblique.png``,
+      and ``00_setup_table_oblique.md`` (`suffix='_oblique'`) for the oblique-incidence
+      Floquet–Bloch symmetric dimer setup (`alpha = 0`, `bc_x = 'bloch'`,
+      `FloquetCell` / `AngleSweep`).
     """
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import FancyArrowPatch, Polygon, Rectangle
+    from matplotlib.axes._base import _TransformedBoundsLocator
+    from scipy.constants import c as c_light
+    from wakis import figstyle, schematic
+    from wakis.sources import GaussianSource
+    from wakis.templates.photonics import Box
 
-    fig, axes = plt.subplots(
-        1, 3, figsize=(15.0, 4.9), gridspec_kw={"width_ratios": [1.22, 1.05, 1.15]}
-    )
-
-    # ------------------------------------------------------------------
-    # Panel (a): Labelled 2D Unit-Cell Domain, Boundaries, Sources & Monitors
-    # ------------------------------------------------------------------
-    ax = axes[0]
-    ax.set_facecolor("white")
-    p_nm = PERIOD_P * 1e9  # 680 nm
-    z_max_um = 1.30
-    z_pml_inner_um = 0.547  # inner edge of 10-cell CPML in graded z mesh (~0.852 um)
-    geom_ex = dimer_bar_geometry(alpha=0.14)
-
-    # Background air region
-    ax.add_patch(
-        Rectangle(
-            (-0.5 * p_nm, -z_max_um),
-            p_nm,
-            2.0 * z_max_um,
-            facecolor="#F8FAFC",
-            edgecolor="black",
-            lw=1.3,
-        )
-    )
-    # Bottom and top 10-cell CPML layers (z- and z+)
-    z_pml_thick_um = 0.448
-    for z_bot, lbl in [
-        (-z_max_um, r"$z^-$ CPML (10 cells, $448\;\mathrm{nm}$)"),
-        (z_max_um - z_pml_thick_um, r"$z^+$ CPML (10 cells, $448\;\mathrm{nm}$)"),
-    ]:
-        ax.add_patch(
-            Rectangle(
-                (-0.5 * p_nm, z_bot),
-                p_nm,
-                z_pml_thick_um,
-                facecolor="#FDE0DD",
-                edgecolor="#C51B8A",
-                hatch="///",
-                alpha=0.55,
-                lw=1.0,
-            )
-        )
-        ax.text(
-            0.0,
-            z_bot + 0.5 * z_pml_thick_um,
-            lbl,
-            ha="center",
-            va="center",
-            fontsize=8.6,
-            fontweight="bold",
-            color="#7A0177",
-            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.9, edgecolor="#C51B8A"),
-        )
-
-    # Periodic / Bloch lateral boundaries (x- and x+)
-    ax.axvline(-0.5 * p_nm, color=PALETTE["green"], ls="--", lw=2.2)
-    ax.axvline(+0.5 * p_nm, color=PALETTE["green"], ls="--", lw=2.2)
-    ax.text(
-        -0.5 * p_nm + 14.0,
-        0.36,
-        r"$x^-$ Periodic / Bloch" "\n" r"($e^{-i k_x p}$, $y^\mp$ Periodic)",
-        rotation=90,
-        ha="left",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color=PALETTE["green"],
-    )
-    ax.text(
-        +0.5 * p_nm - 14.0,
-        0.36,
-        r"$x^+$ Periodic / Bloch" "\n" r"($x = \pm 340\;\mathrm{nm}$)",
-        rotation=90,
-        ha="right",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color=PALETTE["green"],
-    )
-
-    # Two Silicon Bars (Bar 1 width w1, Bar 2 width w2)
-    h_um = HEIGHT_H * 1e6
-    for x_min_m, w_m, bar_lbl in [
-        (geom_ex["x1_min"], geom_ex["w1"], r"Si Bar 1 ($w_1$)"),
-        (geom_ex["x2_min"], geom_ex["w2"], r"Si Bar 2 ($w_2$)"),
-    ]:
-        ax.add_patch(
-            Rectangle(
-                (x_min_m * 1e9, -0.5 * h_um),
-                w_m * 1e9,
-                h_um,
-                facecolor=PALETTE["blue"],
-                edgecolor="black",
-                alpha=0.82,
-                lw=1.3,
-            )
-        )
-        ax.text(
-            (x_min_m + 0.5 * w_m) * 1e9,
-            0.0,
-            bar_lbl,
-            ha="center",
-            va="center",
-            fontsize=8.5,
-            fontweight="bold",
-            color="white",
-        )
-
-    # Material labels
-    ax.text(
-        0.0,
-        0.21,
-        r"Si ($\varepsilon_{\mathrm{Si}}=12.11, \mu_r=1, h=190\;\mathrm{nm}$)"
-        "\n"
-        r"Air background ($\varepsilon_{\mathrm{bg}}=1.0, \mu_r=1.0$)",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color="#0B3C5D",
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.92, edgecolor=PALETTE["blue"]),
-    )
-
-    # Plane-wave current sheet & dipole source + DiffractionMonitors + ResonanceMonitor
-    z_src_um = -0.58
-    z_mon_r_um = -0.42
-    z_mon_t_um = +0.58
-    ax.axhline(z_src_um, color=PALETTE["vermilion"], lw=2.0, ls="-")
-    ax.add_patch(
-        FancyArrowPatch(
-            (0.0, z_src_um),
-            (0.0, z_src_um + 0.14),
-            arrowstyle="->",
-            mutation_scale=13,
-            color=PALETTE["vermilion"],
-            lw=2.0,
-        )
-    )
-    ax.text(
-        0.0,
-        z_src_um - 0.04,
-        r"Source: $J_y$ sheet ($\mathbf{E}\parallel\hat{\mathbf{y}}, +\hat{\mathbf{z}}$)"
-        r" + Gaussian pulse ($f_0=190.5\;\mathrm{THz}$)",
-        ha="center",
-        va="top",
-        fontsize=8.5,
-        fontweight="bold",
-        color=PALETTE["vermilion"],
-    )
-
-    ax.axhline(z_mon_r_um, color=PALETTE["purple"], lw=1.8, ls="-.")
-    ax.text(
-        10.0,
-        z_mon_r_um + 0.03,
-        r"Refl. `DiffractionMonitor` ($R_{00}$)",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color=PALETTE["purple"],
-    )
-    ax.axhline(z_mon_t_um, color=PALETTE["purple"], lw=1.8, ls="-.")
-    ax.text(
-        10.0,
-        z_mon_t_um + 0.03,
-        r"Tran. `DiffractionMonitor` ($T_{00}$)",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color=PALETTE["purple"],
-    )
-
-    # ResonanceMonitor probe + dipole inside Bar 1
-    x1_nm = geom_ex["x1_c"] * 1e9
-    ax.plot(x1_nm, -0.05, "*", color="gold", markeredgecolor="black", ms=11, zorder=6)
-    ax.text(
-        x1_nm + 15.0,
-        -0.19,
-        r"`ResonanceMonitor` ($E_y$)" "\n" r"& $J_y$ ring-down probe",
-        ha="left",
-        va="top",
-        fontsize=8.5,
-        fontweight="bold",
-        color="#5C4000",
-        bbox=dict(boxstyle="round,pad=0.14", facecolor="#FFFDE7", edgecolor="#D4A017", alpha=0.92),
-    )
-
-    ax.set_xlim(-0.5 * p_nm - 18.0, +0.5 * p_nm + 18.0)
-    ax.set_ylim(-z_max_um, +z_max_um)
-    ax.set_xlabel(r"Transverse coordinate $x$ [nm] ($p = 680\;\mathrm{nm}$)")
-    ax.set_ylabel(r"Propagation coordinate $z$ [$\mu\mathrm{m}$] ($L_z = 2.60\;\mu\mathrm{m}$)")
-    ax.set_title("(a) 2D Bloch Unit-Cell Setup Schematic")
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
 
     # ------------------------------------------------------------------
-    # Panel (b): Symmetry-Breaking Taxonomy (Koshelev et al. Fig. 1a & 1e)
+    # 1. Primary setup: Width-asymmetric dimer metasurface (alpha = 0.14, nx = 32, graded z)
     # ------------------------------------------------------------------
-    axb = axes[1]
-    axb.set_facecolor("white")
-    axb.set_xlim(-1.0, 1.0)
-    axb.set_ylim(-1.05, 1.05)
-    axb.axhline(0.0, color="#CCCCCC", lw=1.0, ls="--")
+    solver_asym, meta_asym = make_dimer_solver(alpha=0.14, nx=32)
+    geom_asym = meta_asym["geom"]
+    dx = PERIOD_P / 32.0
 
-    # Top half: 3D tilted bar pair (Koshelev Fig. 1a / Fig. 2a: alpha = sin theta)
-    th_vis = np.deg2rad(14.0)
-    for x_c, sgn, p_sgn in [(-0.42, +1.0, +1.0), (+0.42, -1.0, -1.0)]:
-        bw, bh = 0.22, 0.56
-        corners = np.array(
-            [[-0.5 * bw, -0.5 * bh], [0.5 * bw, -0.5 * bh], [0.5 * bw, 0.5 * bh], [-0.5 * bw, 0.5 * bh]]
-        )
-        ang = sgn * th_vis
-        rot = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
-        pts = corners @ rot.T + np.array([x_c, 0.52])
-        axb.add_patch(Polygon(pts, closed=True, facecolor=PALETTE["sky"], edgecolor="black", lw=1.2, alpha=0.85))
-        dp = np.array([0.0, 0.21 * p_sgn]) @ rot.T
-        axb.add_patch(
-            FancyArrowPatch(
-                (x_c - dp[0], 0.52 - dp[1]),
-                (x_c + dp[0], 0.52 + dp[1]),
-                arrowstyle="->",
-                mutation_scale=12,
-                color=PALETTE["vermilion"],
-                lw=2.0,
-            )
-        )
-    axb.text(
-        0.0,
-        0.93,
-        r"Koshelev Fig. 1(a)/2(a): Tilted Bars ($\alpha = \sin\theta$)"
-        "\n"
-        r"$p_{x,\mathrm{net}} = 2 p_0 \sin\theta \propto \alpha \Rightarrow Q_{\mathrm{rad}} \propto \alpha^{-2}$",
-        ha="center",
-        va="center",
-        fontsize=8.6,
-        fontweight="bold",
-        color="#111111",
+    bar1 = Box(
+        center=(geom_asym["x1_c"], 0.5 * dx, 0.0),
+        size=(geom_asym["w1"], dx, HEIGHT_H),
+        material=EPS_SI,
+    )
+    bar1.name = f"Si bar 1 (w₁ = {geom_asym['w1']*1e9:.1f} nm, h = 190 nm)"
+    bar2 = Box(
+        center=(geom_asym["x2_c"], 0.5 * dx, 0.0),
+        size=(geom_asym["w2"], dx, HEIGHT_H),
+        material=EPS_SI,
+    )
+    bar2.name = f"Si bar 2 (w₂ = {geom_asym['w2']*1e9:.1f} nm, h = 190 nm)"
+    structs_asym = [bar1, bar2]
+    solver_asym._assigned_structures = tuple(structs_asym)
+
+    mat_names_asym = {
+        "background": "Air / vacuum background (ε_bg = 1.00, n = 1.00)",
+        "region_0": f"Si bar 1 (w₁ = {geom_asym['w1']*1e9:.1f} nm, ε_Si = 12.11, n_Si = 3.48)",
+        "region_1": f"Si bar 2 (w₂ = {geom_asym['w2']*1e9:.1f} nm, ε_Si = 12.11, n_Si = 3.48)",
+    }
+
+    wf_asym = GaussianSource(frequency=F0_BIC_REF, fwidth=0.08 * F0_BIC_REF)
+    sources_asym = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "Jy sheet (+z)",
+            "label": "Normal-incidence Jy plane-wave sheet at z = −580 nm (+z, TE Ey)",
+            "desc": "Normal-incidence Jy sheet at z = −580 nm (+z propagation, TE Ey, f₀ = 190.5 THz)",
+            "pos_str": "z = −580 nm (full x ∈ [−340, +340] nm)",
+            "polarization": "Ey (TE, +z)",
+            "direction": 1,
+            "h_bounds": (-0.58e-6, -0.58e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+            "pulse": {
+                "f0": F0_BIC_REF,
+                "fwidth": 0.08 * F0_BIC_REF,
+                "t_peak": float(4.0 / (np.pi * 0.08 * F0_BIC_REF)),
+                "t_end": float(wf_asym.end_time),
+                "src_time": wf_asym,
+            },
+        },
+        {
+            "kind": "point",
+            "type_name": "CurrentSource",
+            "short_word": "Jy dipole",
+            "label": "Off-center Jy ring-down dipole at (x₁, z) = (−127.5, −25) nm",
+            "desc": "Off-center Jy ring-down dipole in Si bar 1 at (z, x) = (−25, −127.5) nm",
+            "pos_str": "(x, z) = (−127.5, −25) nm (inside Si bar 1)",
+            "polarization": "Jy (couples to C₂-odd BIC & quasi-BIC)",
+            "h_bounds": (-0.025e-6, -0.025e-6),
+            "v_bounds": (geom_asym["x1_c"], geom_asym["x1_c"]),
+            "pulse": {
+                "f0": F0_BIC_REF,
+                "fwidth": 0.08 * F0_BIC_REF,
+                "t_peak": float(4.0 / (np.pi * 0.08 * F0_BIC_REF)),
+                "t_end": float(wf_asym.end_time),
+                "src_time": wf_asym,
+            },
+        },
+    ]
+    monitors_asym = [
+        {
+            "kind": "plane",
+            "type_name": "DiffractionMonitor",
+            "short_word": "Refl. R₀₀",
+            "label": "Reflected DiffractionMonitor (R₀₀) at z = −420 nm",
+            "desc": "Reflected DiffractionMonitor (R₀₀ order) at z = −420 nm",
+            "pos_str": "z = −420 nm (x ∈ [−340, +340] nm)",
+            "freq_str": "λ ∈ [1520, 1578] nm (251 DFT frequencies)",
+            "frequencies": np.linspace(c_light / 1.578e-6, c_light / 1.520e-6, 251),
+            "h_bounds": (-0.42e-6, -0.42e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+        },
+        {
+            "kind": "plane",
+            "type_name": "DiffractionMonitor",
+            "short_word": "Tran. T₀₀",
+            "label": "Transmitted DiffractionMonitor (T₀₀) at z = +580 nm",
+            "desc": "Transmitted DiffractionMonitor (T₀₀ order) at z = +580 nm",
+            "pos_str": "z = +580 nm (x ∈ [−340, +340] nm)",
+            "freq_str": "λ ∈ [1520, 1578] nm (251 DFT frequencies)",
+            "frequencies": np.linspace(c_light / 1.578e-6, c_light / 1.520e-6, 251),
+            "h_bounds": (+0.58e-6, +0.58e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+        },
+        {
+            "kind": "probe",
+            "type_name": "ResonanceMonitor",
+            "short_word": "harminv Ey",
+            "label": "ResonanceMonitor (harminv Ey) at (x₁, z) = (−127.5, +25) nm",
+            "desc": "ResonanceMonitor (harminv Ey) in Si bar 1 at (z, x) = (+25, −127.5) nm",
+            "pos_str": "(x, z) = (−127.5, +25) nm",
+            "freq_str": "0.90 f₀ – 1.10 f₀ (38 optical cycles ring-down)",
+            "h_bounds": (+0.025e-6, +0.025e-6),
+            "v_bounds": (geom_asym["x1_c"], geom_asym["x1_c"]),
+        },
+    ]
+    variations_asym = [
+        {
+            "name": "Asymmetry sweep (Tasks 0–1)",
+            "details": "α = Δw / w₀ ∈ {0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.14, 0.20} (subpixel dual-cell averaging; Q_rad = Q₀ α⁻²)",
+        },
+        {
+            "name": "Absorption loss saturation (Task 2)",
+            "details": "Conductivity σ_Si inside bars giving Q_abs ∈ {5×10³, 1.5×10⁴, 5×10⁴, 10⁵} (Q_tot⁻¹ = Q_rad⁻¹ + Q_abs⁻¹)",
+        },
+        {
+            "name": "Oblique Floquet angle sweep (Task 3)",
+            "details": "Symmetric dimer (α = 0) with ±x Bloch BCs (k_x = k₀ sin θ_inc, θ_inc ∈ [1°, 12°]) — see 00a/00b_*_oblique.png",
+        },
+        {
+            "name": "Resolution & CPML proximity study (Task 4)",
+            "details": "n_x ∈ {16, 24, 32, 48, 64}, subpixel vs staircase quantization, and d_air ∈ [150, 850] nm",
+        },
+    ]
+
+    res_asym = schematic.save_setup_figures(
+        solver_asym,
+        fig_dir,
+        prefix="00",
+        plane="zx",
+        material_names=mat_names_asym,
+        sources=sources_asym,
+        monitors=monitors_asym,
+        unit="nm",
+        wavelength=LAMBDA_BIC_REF,
+        min_feature=geom_asym["gap_inner"],
+        variations=variations_asym,
     )
 
-    # Bottom half: Unequal width/length bar pair (Koshelev Fig. 1e / Fig. 3b: alpha = Delta_w / w_0)
-    for x_c, bw, p_len, sgn_lbl in [
-        (-0.38, 0.34, +0.24, r"$\mathbf{p}_1 = +p_0(1+c_1\alpha)\hat{\mathbf{y}}$"),
-        (+0.38, 0.20, -0.15, r"$\mathbf{p}_2 = -p_0(1-c_1\alpha)\hat{\mathbf{y}}$"),
-    ]:
-        bh = 0.44
-        axb.add_patch(
-            Rectangle(
-                (x_c - 0.5 * bw, -0.56 - 0.5 * bh),
-                bw,
-                bh,
-                facecolor=PALETTE["blue"],
-                edgecolor="black",
-                lw=1.2,
-                alpha=0.85,
-            )
-        )
-        axb.add_patch(
-            FancyArrowPatch(
-                (x_c, -0.56 - p_len),
-                (x_c, -0.56 + p_len),
-                arrowstyle="->",
-                mutation_scale=12,
-                color="gold",
-                lw=2.2,
-            )
-        )
-        axb.text(x_c, -0.86, sgn_lbl, ha="center", va="top", fontsize=8.5, color="#0B3C5D")
-
-    axb.text(
-        0.0,
-        -0.12,
-        r"Koshelev Fig. 1(e)/3(b): Dimer Bars ($\alpha = \Delta w / w_0$)"
-        "\n"
-        r"$p_{y,\mathrm{net}} = p_1 + p_2 = 2 c_1 p_0 \alpha \Rightarrow Q_{\mathrm{rad}} = Q_0 \alpha^{-2}$",
-        ha="center",
-        va="center",
-        fontsize=8.6,
-        fontweight="bold",
-        color="#111111",
+    # Adjust tag positions on 00a_setup_geometry.png for zero overlap
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_asym,
+        plane="zx",
+        material_names=mat_names_asym,
+        sources=sources_asym,
+        monitors=monitors_asym,
+        unit="nm",
+        wavelength=LAMBDA_BIC_REF,
     )
-    axb.set_xticks([])
-    axb.set_yticks([])
-    axb.set_title(r"(b) Symmetry-Breaking Mechanisms ($\mathcal{C}_2$ Broken)")
+    for txt in ax_a.texts:
+        t_str = txt.get_text()
+        if "1 · Jy sheet" in t_str:
+            txt.set_ha("center")
+            txt.set_position((-580.0, -260.0))
+        elif "2 · Jy dipole" in t_str:
+            txt.set_ha("right")
+            txt.set_position((-115.0, -128.0))
+        elif "3 · Refl." in t_str:
+            txt.set_ha("center")
+            txt.set_position((-420.0, +260.0))
+        elif "4 · Tran." in t_str:
+            txt.set_ha("center")
+            txt.set_position((+580.0, +260.0))
+        elif "5 · harminv" in t_str:
+            txt.set_ha("left")
+            txt.set_position((+115.0, -128.0))
+    figstyle.save(fig_a, res_asym["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Re-render 00b_setup_mesh_and_excitation.png with zoom_bounds around the 85 nm inner gap & Si bars
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_asym,
+        plane="zx",
+        material_names=mat_names_asym,
+        sources=sources_asym,
+        monitors=monitors_asym,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.14e-6, +0.14e-6, -0.24e-6, +0.24e-6),
+        wavelength=LAMBDA_BIC_REF,
+        min_feature=geom_asym["gap_inner"],
+    )
+    ax_mesh_b = axes_b[0]
+    for ch_ax in getattr(ax_mesh_b, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.66, 0.10, 0.32, 0.80], ax_mesh_b.transAxes)
+        )
+    figstyle.save(fig_b, res_asym["mesh_figure"], close=True, auto_legend_below=False)
 
     # ------------------------------------------------------------------
-    # Panel (c): Graded Mesh & Subpixel Permittivity View (Zoomed on Bars)
+    # 2. Companion setup (_oblique): Symmetric dimer (alpha = 0) under oblique Floquet–Bloch launch
     # ------------------------------------------------------------------
-    axc = axes[2]
-    x_um = np.asarray(d0["x_nodes_um"], dtype=float)
-    z_um = np.asarray(d0["z_nodes_um"], dtype=float)
-    eps_2d = np.asarray(d0["eps_r_bic_2d"], dtype=float)
-    dx_um = float(x_um[1] - x_um[0])
-    x_edges = np.concatenate([x_um - 0.5 * dx_um, [x_um[-1] + 0.5 * dx_um]])
-    z_mids = 0.5 * (z_um[:-1] + z_um[1:])
-    z_edges = np.concatenate([[z_um[0]], z_mids, [z_um[-1]]])
-
-    im = axc.pcolormesh(
-        x_edges * 1e3,
-        z_edges * 1e3,
-        eps_2d.T,
-        cmap="Blues",
-        vmin=1.0,
-        vmax=EPS_SI,
-        edgecolors="#B0BEC5",
-        linewidth=0.35,
-        shading="flat",
+    theta_obl_deg = 10.0
+    kx_obl = (2.0 * np.pi / LAMBDA_BIC_REF) * float(np.sin(np.deg2rad(theta_obl_deg)))
+    dz_obl = 0.019e-6
+    lz_obl = 64 * dz_obl
+    solver_obl, meta_obl = make_dimer_solver(
+        alpha=0.0,
+        nx=32,
+        kx=kx_obl,
+        z_max=0.5 * lz_obl,
+        uniform_z=True,
+        dz_uniform=dz_obl,
+        n_pml=10,
     )
-    cbar = fig.colorbar(im, ax=axc, pad=0.02)
-    cbar.set_label(r"Subpixel relative permittivity $\varepsilon_{yy}(x, z)$", fontsize=9.0)
+    geom_sym = meta_obl["geom"]
+    bar1_sym = Box(
+        center=(geom_sym["x1_c"], 0.5 * dx, 0.0),
+        size=(geom_sym["w1"], dx, HEIGHT_H),
+        material=EPS_SI,
+    )
+    bar1_sym.name = "Si bar 1 (w₁ = w₀ = 170.0 nm, h = 190 nm)"
+    bar2_sym = Box(
+        center=(geom_sym["x2_c"], 0.5 * dx, 0.0),
+        size=(geom_sym["w2"], dx, HEIGHT_H),
+        material=EPS_SI,
+    )
+    bar2_sym.name = "Si bar 2 (w₂ = w₀ = 170.0 nm, h = 190 nm)"
+    structs_sym = [bar1_sym, bar2_sym]
+    solver_obl._assigned_structures = tuple(structs_sym)
 
-    geom0 = dimer_bar_geometry(alpha=0.0)
-    for x_min_m, w_m in [(geom0["x1_min"], geom0["w1"]), (geom0["x2_min"], geom0["w2"])]:
-        axc.add_patch(
-            Rectangle(
-                (x_min_m * 1e9, -0.5 * HEIGHT_H * 1e9),
-                w_m * 1e9,
-                HEIGHT_H * 1e9,
-                fill=False,
-                edgecolor=PALETTE["vermilion"],
-                lw=1.8,
-                ls="--",
-            )
+    mat_names_sym = {
+        "background": "Air / vacuum background (ε_bg = 1.00, n = 1.00)",
+        "region_0": "Si bar 1 (w₁ = w₀ = 170.0 nm, ε_Si = 12.11, n_Si = 3.48)",
+        "region_1": "Si bar 2 (w₂ = w₀ = 170.0 nm, ε_Si = 12.11, n_Si = 3.48)",
+    }
+    sources_obl = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetCellSource",
+            "short_word": "Bloch Jy",
+            "label": "Oblique Floquet–Bloch Jy sheet at z = −320 nm (θ_inc = 10°, k_x = k₀ sin θ_inc)",
+            "desc": "Oblique Floquet–Bloch Jy sheet at z = −320 nm (θ_inc = 10°, Δφ_x = k_x p)",
+            "pos_str": "z = −320 nm (x ∈ [−340, +340] nm)",
+            "polarization": "Ey (TE, θ_inc = 10°)",
+            "direction": 1,
+            "h_bounds": (-0.32e-6, -0.32e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+            "pulse": {
+                "f0": F0_BIC_REF,
+                "fwidth": 0.08 * F0_BIC_REF,
+                "t_peak": float(4.0 / (np.pi * 0.08 * F0_BIC_REF)),
+                "t_end": float(wf_asym.end_time),
+                "src_time": wf_asym,
+            },
+        },
+        {
+            "kind": "point",
+            "type_name": "CurrentSource",
+            "short_word": "Jy dipole",
+            "label": "Bloch ring-down Jy dipole at (x₁, z) = (−127.5, −25) nm",
+            "desc": "Bloch ring-down Jy dipole in Si bar 1 at (z, x) = (−25, −127.5) nm",
+            "pos_str": "(x, z) = (−127.5, −25) nm",
+            "polarization": "Jy",
+            "h_bounds": (-0.025e-6, -0.025e-6),
+            "v_bounds": (geom_sym["x1_c"], geom_sym["x1_c"]),
+            "pulse": {
+                "f0": F0_BIC_REF,
+                "fwidth": 0.08 * F0_BIC_REF,
+                "t_peak": float(4.0 / (np.pi * 0.08 * F0_BIC_REF)),
+                "t_end": float(wf_asym.end_time),
+                "src_time": wf_asym,
+            },
+        },
+    ]
+    monitors_obl = [
+        {
+            "kind": "plane",
+            "type_name": "DiffractionMonitor",
+            "short_word": "Refl. R₀₀",
+            "label": "Reflected Floquet DiffractionMonitor at z = −220 nm",
+            "desc": "Reflected Floquet DiffractionMonitor (R₀₀(λ, θ)) at z = −220 nm",
+            "pos_str": "z = −220 nm (x ∈ [−340, +340] nm)",
+            "freq_str": "λ ∈ [1560, 1620] nm (AngleSweep resampling)",
+            "frequencies": np.linspace(c_light / 1.620e-6, c_light / 1.560e-6, 121),
+            "h_bounds": (-0.22e-6, -0.22e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+        },
+        {
+            "kind": "plane",
+            "type_name": "DiffractionMonitor",
+            "short_word": "Tran. T₀₀",
+            "label": "Transmitted Floquet DiffractionMonitor at z = +220 nm",
+            "desc": "Transmitted Floquet DiffractionMonitor (T₀₀(λ, θ)) at z = +220 nm",
+            "pos_str": "z = +220 nm (x ∈ [−340, +340] nm)",
+            "freq_str": "λ ∈ [1560, 1620] nm (AngleSweep resampling)",
+            "frequencies": np.linspace(c_light / 1.620e-6, c_light / 1.560e-6, 121),
+            "h_bounds": (+0.22e-6, +0.22e-6),
+            "v_bounds": (-0.5 * PERIOD_P, +0.5 * PERIOD_P),
+        },
+        {
+            "kind": "probe",
+            "type_name": "ResonanceMonitor",
+            "short_word": "harminv",
+            "label": "Bloch ResonanceMonitor (harminv Ey) at (x₁, z) = (−127.5, +25) nm",
+            "desc": "Bloch ResonanceMonitor (harminv Ey) at (z, x) = (+25, −127.5) nm",
+            "pos_str": "(x, z) = (−127.5, +25) nm",
+            "freq_str": "Q_rad(k_∥) ∝ sin⁻² θ_inc",
+            "h_bounds": (+0.025e-6, +0.025e-6),
+            "v_bounds": (geom_sym["x1_c"], geom_sym["x1_c"]),
+        },
+    ]
+
+    res_obl = schematic.save_setup_figures(
+        solver_obl,
+        fig_dir,
+        prefix="00",
+        suffix="_oblique",
+        plane="zx",
+        material_names=mat_names_sym,
+        sources=sources_obl,
+        monitors=monitors_obl,
+        unit="nm",
+        wavelength=LAMBDA_BIC_REF,
+        min_feature=geom_sym["gap_inner"],
+        variations=[
+            {
+                "name": "Oblique angle & Bloch wavenumber sweep (Task 3)",
+                "details": "θ_inc ∈ {1°, 2°, 3°, 5°, 7°, 10°} (harminv Q_rad(k_∥) ∝ k_∥⁻²) and AngleSweep θ_inc ∈ {0°, 6°, 9°, 12°}",
+            },
+        ],
+    )
+    fig_a_o, ax_a_o = schematic.plot_schematic(
+        solver_obl,
+        plane="zx",
+        material_names=mat_names_sym,
+        sources=sources_obl,
+        monitors=monitors_obl,
+        unit="nm",
+        wavelength=LAMBDA_BIC_REF,
+    )
+    for txt in ax_a_o.texts:
+        t_str = txt.get_text()
+        if "1 · Bloch" in t_str:
+            txt.set_ha("center")
+            txt.set_position((-270.0, -265.0))
+        elif "2 · Jy dipole" in t_str:
+            txt.set_ha("center")
+            txt.set_position((0.0, -10.0))
+        elif "3 · Refl." in t_str:
+            txt.set_ha("center")
+            txt.set_position((-220.0, +265.0))
+        elif "4 · Tran." in t_str:
+            txt.set_ha("center")
+            txt.set_position((+220.0, +265.0))
+        elif "5 · harminv" in t_str:
+            txt.set_ha("left")
+            txt.set_position((+110.0, -128.0))
+    figstyle.save(fig_a_o, res_obl["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_b_o, axes_b_o = schematic.plot_mesh_and_excitation(
+        solver_obl,
+        plane="zx",
+        material_names=mat_names_sym,
+        sources=sources_obl,
+        monitors=monitors_obl,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.14e-6, +0.14e-6, -0.24e-6, +0.24e-6),
+        wavelength=LAMBDA_BIC_REF,
+        min_feature=geom_sym["gap_inner"],
+    )
+    ax_mesh_bo = axes_b_o[0]
+    for ch_ax in getattr(ax_mesh_bo, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([1.06, 0.10, 0.56, 0.80], ax_mesh_bo.transAxes)
         )
-    # Annotate 4 cells across the 85 nm inner gap
-    axc.annotate(
-        "",
-        xy=(geom0["x2_min"] * 1e9, 0.0),
-        xytext=(geom0["x1_max"] * 1e9, 0.0),
-        arrowprops=dict(arrowstyle="<->", color=PALETTE["vermilion"], lw=1.8),
-    )
-    axc.text(
-        0.0,
-        18.0,
-        r"$g_{\mathrm{in}}=85\;\mathrm{nm}$" "\n" r"($4.0\;\Delta x$)",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        fontweight="bold",
-        color=PALETTE["vermilion"],
-        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor=PALETTE["vermilion"]),
-    )
-    axc.text(
-        0.0,
-        -220.0,
-        r"$\Delta x = 21.25\;\mathrm{nm}$ ($\mathrm{cpw}_{\mathrm{Si}}=21.3 \geq 20$)"
-        "\n"
-        r"Graded $\Delta z \in [15, 45]\;\mathrm{nm}$ ($N_{\mathrm{cells}}=2400$)",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color="#111111",
-        bbox=dict(boxstyle="round,pad=0.16", facecolor="white", alpha=0.92, edgecolor="#888888"),
-    )
-    axc.set_xlim(-340.0, 340.0)
-    axc.set_ylim(-250.0, 250.0)
-    axc.set_xlabel(r"$x$ [nm]")
-    axc.set_ylabel(r"$z$ [nm] (graded mesh zoom)")
-    axc.set_title(r"(c) Mesh View & Dual-Cell $\varepsilon_{yy}(x, z)$")
-
-    fig.tight_layout()
-    fig.savefig(fig_dir / "00_setup_schematic_and_mesh.png", dpi=160)
-    plt.close(fig)
+    figstyle.save(fig_b_o, res_obl["mesh_figure"], close=True, auto_legend_below=False)
 
 
 def plot_all(out_dir: Path, fig_dir: Path) -> None:
@@ -2207,15 +2220,69 @@ def plot_all(out_dir: Path, fig_dir: Path) -> None:
 #
 # ### 3.1 Setup Schematic, Symmetry Taxonomy, and Subpixel Graded Mesh
 #
-# Figure 0 illustrates the 2D Bloch unit-cell domain ($p = 680\;\text{nm}$,
-# $L_z = 2.60\;\mu\text{m}$), the two Koshelev *et al.* symmetry-breaking mechanisms
-# (tilted bars $\alpha = \sin\theta$ from Figs. 1a/2a and unequal bar pairs
-# $\alpha = \Delta w / w_0$ from Figs. 1e/3b), and the dual-cell subpixel permittivity
-# $\varepsilon_{yy}(x, z)$ on the graded FIT mesh ($\Delta x = 21.25\;\text{nm}$,
-# $\mathrm{cpw}_{\text{Si},x} = 21.28 \ge 20$, $4.0$ cells across the $85\;\text{nm}$
-# inner gap).
+# Figures 0a–0b and the accompanying setup tables summarize the primary 2D TE width-asymmetric
+# silicon bar-pair dimer metasurface setup ($p = 680\;\text{nm}$, $L_z = 2.60\;\mu\text{m}$,
+# periodic $\pm x$ boundaries, $10$-cell CPML on $\pm z$, dual-cell subpixel permittivity
+# $\varepsilon_{yy}(x, z)$ on the graded FIT mesh with $\Delta x = 21.25\;\text{nm}$ and
+# $\Delta z_{\min} = 15\;\text{nm}$ across the $h = 190\;\text{nm}$ silicon slab) alongside the
+# companion oblique-incidence Floquet–Bloch symmetric dimer setup ($\alpha = 0$,
+# $k_x = k_0 \sin\theta_{\text{inc}}$ on the $\pm x$ Bloch faces).
 #
-# ![Setup schematic, symmetry taxonomy, and mesh view](figures/00_setup_schematic_and_mesh.png)
+# ![Normal-incidence asymmetric dimer setup: geometry, sources, monitors, and boundaries](figures/00a_setup_geometry.png)
+# ![Normal-incidence asymmetric dimer setup: mesh, gap zoom, and Gaussian excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 680 nm × 21.2 nm × 2.60 µm (z ∈ [-1.30 µm, 1.30 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 32 × 1 × 74 (2368 cells) |
+# | Discretization | Δz & resolution | Δ_min = 15 nm, 30.2 cells/λ (in n_max = 3.48), 5.7 cells across feature (85 nm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (10 cells, 448 nm) |
+# | Boundary | +z face | CPML (10 cells, 448 nm) |
+# | Material | Background | Air / vacuum background (ε_bg = 1.00, n = 1.00) (isotropic) |
+# | Material | Region 1: Si bar 1 (w₁ = 181.9 nm, h = 190 nm) | ε_r = 12.11, μ_r = 1.00, model = Isotropic dielectric, z ∈ [-95 nm, 95 nm] (d = 190 nm) |
+# | Material | Region 2: Si bar 2 (w₂ = 158.1 nm, h = 190 nm) | ε_r = 12.11, μ_r = 1.00, model = Isotropic dielectric, z ∈ [-95 nm, 95 nm] (d = 190 nm) |
+# | Source | 1 · CurrentSource | pos: z = −580 nm (full x ∈ [−340, +340] nm), pol: Ey (TE, +z), pulse: f₀ = 190.5 THz, Δf = 15.24 THz |
+# | Source | 2 · CurrentSource | pos: (x, z) = (−127.5, −25) nm (inside Si bar 1), pol: Jy (couples to C₂-odd BIC & quasi-BIC), pulse: f₀ = 190.5 THz, Δf = 15.24 THz |
+# | Monitor | 3 · DiffractionMonitor | Reflected DiffractionMonitor (R₀₀) at z = −420 nm, pos: z = −420 nm (x ∈ [−340, +340] nm), freqs: λ ∈ [1520, 1578] nm (251 DFT frequencies) |
+# | Monitor | 4 · DiffractionMonitor | Transmitted DiffractionMonitor (T₀₀) at z = +580 nm, pos: z = +580 nm (x ∈ [−340, +340] nm), freqs: λ ∈ [1520, 1578] nm (251 DFT frequencies) |
+# | Monitor | 5 · ResonanceMonitor | ResonanceMonitor (harminv Ey) at (x₁, z) = (−127.5, +25) nm, pos: (x, z) = (−127.5, +25) nm, freqs: 0.90 f₀ – 1.10 f₀ (38 optical cycles ring-down) |
+# | Variation | Asymmetry sweep (Tasks 0–1) | α = Δw / w₀ ∈ {0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.14, 0.20} (subpixel dual-cell averaging; Q_rad = Q₀ α⁻²) |
+# | Variation | Absorption loss saturation (Task 2) | Conductivity σ_Si inside bars giving Q_abs ∈ {5×10³, 1.5×10⁴, 5×10⁴, 10⁵} (Q_tot⁻¹ = Q_rad⁻¹ + Q_abs⁻¹) |
+# | Variation | Oblique Floquet angle sweep (Task 3) | Symmetric dimer (α = 0) with ±x Bloch BCs (k_x = k₀ sin θ_inc, θ_inc ∈ [1°, 12°]) — see 00a/00b_*_oblique.png |
+# | Variation | Resolution & CPML proximity study (Task 4) | n_x ∈ {16, 24, 32, 48, 64}, subpixel vs staircase quantization, and d_air ∈ [150, 850] nm |
+#
+# For Task 3, the symmetric dimer ($\alpha = 0$, $w_1 = w_2 = 170\;\text{nm}$) is excited under
+# oblique Floquet–Bloch boundary conditions ($\pm x$ faces with $k_x = k_0 \sin\theta_{\text{inc}}$,
+# $\Delta\varphi_x = k_x p$) to break radiation symmetry via in-plane momentum rather than
+# structural asymmetry:
+#
+# ![Oblique-incidence Floquet–Bloch symmetric dimer setup: geometry, sources, monitors, and boundaries](figures/00a_setup_geometry_oblique.png)
+# ![Oblique-incidence Floquet–Bloch symmetric dimer setup: mesh, gap zoom, and excitation](figures/00b_setup_mesh_and_excitation_oblique.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 680 nm × 21.2 nm × 1.22 µm (z ∈ [-608 nm, 608 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 32 × 1 × 64 (2048 cells) |
+# | Discretization | Δz & resolution | Δ_min = 19 nm, 23.8 cells/λ (in n_max = 3.48), 4.5 cells across feature (85 nm) |
+# | Boundary | -x face | Bloch (k_x = -6.93e+05 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -6.93e+05 rad/m) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (10 cells, 190 nm) |
+# | Boundary | +z face | CPML (10 cells, 190 nm) |
+# | Material | Background | Air / vacuum background (ε_bg = 1.00, n = 1.00) (isotropic) |
+# | Material | Region 1: Si bar 1 (w₁ = w₀ = 170.0 nm, h = 190 nm) | ε_r = 12.11, μ_r = 1.00, model = Isotropic dielectric, z ∈ [-95 nm, 95 nm] (d = 190 nm) |
+# | Material | Region 2: Si bar 2 (w₂ = w₀ = 170.0 nm, h = 190 nm) | ε_r = 12.11, μ_r = 1.00, model = Isotropic dielectric, z ∈ [-95 nm, 95 nm] (d = 190 nm) |
+# | Source | 1 · FloquetCellSource | pos: z = −320 nm (x ∈ [−340, +340] nm), pol: Ey (TE, θ_inc = 10°), pulse: f₀ = 190.5 THz, Δf = 15.24 THz |
+# | Source | 2 · CurrentSource | pos: (x, z) = (−127.5, −25) nm, pol: Jy, pulse: f₀ = 190.5 THz, Δf = 15.24 THz |
+# | Monitor | 3 · DiffractionMonitor | Reflected Floquet DiffractionMonitor at z = −220 nm, pos: z = −220 nm (x ∈ [−340, +340] nm), freqs: λ ∈ [1560, 1620] nm (AngleSweep resampling) |
+# | Monitor | 4 · DiffractionMonitor | Transmitted Floquet DiffractionMonitor at z = +220 nm, pos: z = +220 nm (x ∈ [−340, +340] nm), freqs: λ ∈ [1560, 1620] nm (AngleSweep resampling) |
+# | Monitor | 5 · ResonanceMonitor | Bloch ResonanceMonitor (harminv Ey) at (x₁, z) = (−127.5, +25) nm, pos: (x, z) = (−127.5, +25) nm, freqs: Q_rad(k_∥) ∝ sin⁻² θ_inc |
+# | Variation | Oblique angle & Bloch wavenumber sweep (Task 3) | θ_inc ∈ {1°, 2°, 3°, 5°, 7°, 10°} (harminv Q_rad(k_∥) ∝ k_∥⁻²) and AngleSweep θ_inc ∈ {0°, 6°, 9°, 12°} |
 #
 # ---
 #

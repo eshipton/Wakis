@@ -82,48 +82,67 @@
 #   $t = 0.10\;\text{mm}$, pillar-beam clearance $g = 0.10\;\text{mm}$ around a
 #   $0.55\;\text{mm} \times 0.10\;\text{mm}$ sheet beam at $V_0 = 5.2\;\text{kV}$ ($u_0 = 0.1416\,c$).
 #
-# ### Simulation Setup Schematic & Graded Non-Uniform Meshing (`00_setup_schematic.png`)
+# ### Simulation Setup Schematics & Graded Non-Uniform Meshing (`00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`)
 #
-# ![Setup schematic: corrugated SWS unit cell, 3D staggered-pillar cut planes, and graded mesh zoom](figures/00_setup_schematic.png)
+# ![Double-corrugated grating SWS cold-test setup geometry, boundaries, sources, and monitors](figures/00a_setup_geometry.png)
+# ![Graded non-uniform SWS mesh with 1x vane-tip zoom, spatial wave packet, and excitation spectrum](figures/00b_setup_mesh_and_excitation.png)
 #
-# The setup schematic (`figures/00_setup_schematic.png`, generated from live `SolverFIT3D`,
-# `GridFIT3D`, `CurrentSource`, and `ResonanceMonitor` objects via `wakis.schematic` and styled
-# with `wakis.figstyle`) summarizes the cold-test computational domain, boundary conditions,
-# excitation, and mesh refinement across three panels:
+# The primary setup figures above summarize the 2D/3D double-corrugated rectangular waveguide grating
+# slow-wave structure (Karetnikova et al., *IEEE TED* 2018 [2]) over a single axial period
+# $z \in [0, d = 500\;\mu\text{m}]$ with complex Floquet–Bloch boundary conditions (`bc_z = 'bloch'`,
+# phase advance $\Delta\phi = \beta_0 d$), PEC top/bottom housing walls (`bc_y = 'pec'`), staggered PEC
+# vanes ($l = 100\;\mu\text{m}$, $h = 300\;\mu\text{m}$, groove $s = 400\;\mu\text{m}$, tunnel $2a = 200\;\mu\text{m}$),
+# off-axis dipole excitation (`CurrentSource`), and two-stage `ResonanceMonitor` / `HannDFTMonitor` diagnostics:
 #
-# - **Panel (a) — Double-Corrugated Grating Unit Cell ($\beta_0 d$ Bloch)**: Shows a single axial
-#   period $z \in [0, d = 500\;\mu\text{m}]$ and full waveguide height $y \in [-400, +400]\;\mu\text{m}$
-#   ($b_{\text{tot}} = 800\;\mu\text{m}$). The axial faces $z = 0, d$ enforce complex Floquet–Bloch
-#   periodicity $\mathbf{E}(x, y, d) = \mathbf{E}(x, y, 0)\,e^{-j\beta_0 d}$ (`bc_z = 'bloch'`),
-#   the top and bottom housing walls $y = \pm 400\;\mu\text{m}$ are PEC (`bc_y = 'pec'`), and the
-#   lateral faces $\pm x$ are periodic in 2D (`bc_x = 'periodic'`) or PEC at $x = 0, a = 850\;\mu\text{m}$
-#   in 3D (`Task 9`). Two staggered PEC vanes of axial tooth width $l = 100\;\mu\text{m}$ and depth
-#   $h = 300\;\mu\text{m}$ protrude from the bottom wall at $z_1 = d/4 = 125\;\mu\text{m}$ and from
-#   the top wall at $z_2 = 3d/4 = 375\;\mu\text{m}$ ($\delta z = d/2$ glide symmetry), leaving a
-#   $2a = 200\;\mu\text{m}$ beam tunnel ($y \in [-100, +100]\;\mu\text{m}$) that encloses the
-#   $20\;\text{kV}$ ($u_0 = 0.2719\,c$, $H_b = 150\;\mu\text{m}$) sheet electron beam. An off-axis
-#   dipole source $(J_z, J_y)$ at $(z, y) = (210, 25)\;\mu\text{m}$ (`GaussianSource`, $f_0 = 120\;\text{GHz}$)
-#   excites both even and odd Bloch branches, while an on-axis `ResonanceMonitor` (`harminv`) probe
-#   at $(z, y) = (70, 0)\;\mu\text{m}$ and a post-pulse volume `HannDFTMonitor` extract the eigenfrequencies
-#   $f_m(\beta_0)$ and complex Floquet space harmonics $\mathbf{E}_n(x, y)$.
-# - **Panel (b) — 3D Isometric View of the V-Band Staggered-Pillar SWS & Cut Planes**: Shows the
-#   3D rectangular PEC housing $a \times b \times d = 1.40 \times 0.80 \times 1.05\;\text{mm}^3$ of
-#   Marosi, Zuboraj & Capolino (`arXiv:2505.22927`, 2025 [1]) with Bloch boundaries at $z = 0, d$
-#   (phase advance $\beta_0 d$) and PEC walls at $x = \pm a/2$, $y = \pm b/2$. The $-x$ PEC pillar
-#   pair at $z_1 = d/4$ (blue) and the glide-shifted $+x$ PEC pillar pair at $z_2 = 3d/4$ (orange,
-#   lateral span $w = 1.08\;\text{mm}$, axial length $l = 0.27\;\text{mm}$, thickness $t = 0.10\;\text{mm}$)
-#   surround the $5.2\;\text{kV}$ ($u_0 = 0.1416\,c$, $0.55 \times 0.10\;\text{mm}^2$) sheet beam
-#   (red). The two diagnostic cut planes $x = 0$ (green, longitudinal $E_z(0, y, z)$ slice shown in
-#   Fig. 13b) and $y = 0$ (blue, horizontal beam midplane) intersect along the beam axis $(x, y) = (0, 0)$.
-# - **Panel (c) — Graded Non-Uniform Mesh Zoom at the Vane Tip & Slot Mouth**: Zooms into the bottom
-#   PEC vane tooth ($z \in [75, 175]\;\mu\text{m}$, $y \in [-400, -100]\;\mu\text{m}$) and tunnel
-#   aperture $y = -100\;\mu\text{m}$ for `Graded L2` (`build_2d_grating_graded_grid`, $n_{\text{feat}} = 8$).
-#   Fine cells $\Delta y_{\min} = \Delta z_{\min} = 12.5\;\mu\text{m}$ ($8$ cells across the $100\;\mu\text{m}$
-#   vane tooth and across the vane-tip / slot-mouth singular corner) grade smoothly to
-#   $\Delta y_{\max} = 30.0\;\mu\text{m}$ in the back of the $300\;\mu\text{m}$ slot and
-#   $\Delta z_{\max} = 22.0\;\mu\text{m}$ in the open groove ($\ge 45\;\text{cells}/\lambda$ everywhere at
-#   $f_{\max} = 235\;\text{GHz}$), reducing the 2D unit-cell mesh from $2{,}560$ cells (`Uniform L2`) to
-#   $1{,}584$ cells (`Graded L2`, $1.62\times$ fewer cells).
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 1 mm × 829 µm × 500 µm (z ∈ [0 m, 500 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 1 × 45 × 36 (1620 cells) |
+# | Discretization | Δz & resolution | Δ_min = 11.3 µm, 220.6 cells/λ (in n_max = 1.00), 8.8 cells across feature (100 µm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | Bloch (k_z = -3.14e+03 rad/m) |
+# | Boundary | +z face | Bloch (k_z = -3.14e+03 rad/m) |
+# | Material | Background | Vacuum interaction tunnel & groove slots (ε_r = 1.00, μ_r = 1.00) (isotropic) |
+# | Material | Region 1: Bottom PEC vane (z₁ = d/4 = 125 µm, l×h = 100×300 µm) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [75 µm, 175 µm] (d = 100 µm) |
+# | Material | Region 2: Top PEC vane (z₂ = 3d/4 = 375 µm, glide +d/2) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [325 µm, 425 µm] (d = 100 µm) |
+# | Source | 1 · CurrentSource | pos: (z, y) = (210, 25) µm (off-axis to excite even & odd Bloch branches), pol: Jz, Jy (TM / LSE₁₀), pulse: f₀ = 120.0 GHz, Δf = 70.00 GHz |
+# | Monitor | 2 · ResonanceMonitor | Stage-1 ResonanceMonitor (harminv) at (z, y) = (70, 0) µm, pos: (z, y) = (70, 0) µm (beam axis y = 0), freqs: 10–245 GHz (Stage-1 eigenfrequency & Q extraction) |
+# | Monitor | 3 · DFTMonitor | Stage-2 HannDFTMonitor (3D unit-cell volume), pos: z ∈ [0, 500] µm, y ∈ [−400, +400] µm (full unit cell), freqs: Stage-1 eigenfrequencies f_m(β₀) (free ring-down) |
+# | Variation | Floquet–Bloch phase & symmetry sweep (Tasks 3–8) | Δφ = β₀ d ∈ [0.05π, 0.95π] (k_z = −β₀, E(z+d) = E(z) e^{−jβ₀d}), mirror (δz = 0) vs glide (δz = d/2 = 250 µm) |
+# | Variation | Vane / groove & sheet-beam geometry (Karetnikova 2018) | Period d = 500 µm, vane l = 100 µm × h = 300 µm, groove s = 400 µm, tunnel 2a = 200 µm, 20 kV beam (H_b = 150 µm, u₀ = 0.272c) |
+# | Variation | 3D LSE₁₀ rectangular housing (Task 9) | PEC side walls at x = 0, b = 850 µm (f_{c,TE10} = 176.35 GHz, 87,040 uniform / 53,856 graded cells) |
+# | Variation | 3D V-Band Marosi staggered-pillar SWS (Tasks 10–11) | Housing 1.40 × 0.80 × 1.05 mm³, pillars w = 1.08 mm, l = 0.27 mm, t = 0.10 mm, 5.2 kV beam (u₀ = 0.1416c) — see 00a/00b_setup_*_marosi.png |
+#
+# ![3D V-Band staggered-pillar SWS setup geometry, boundaries, sources, and monitors](figures/00a_setup_geometry_marosi.png)
+# ![3D V-Band staggered-pillar SWS mesh, spatial wave packet, and excitation spectrum](figures/00b_setup_mesh_and_excitation_marosi.png)
+#
+# The companion setup pair above (`suffix='_marosi'`) shows the 3D V-Band staggered-pillar SWS
+# unit cell of Marosi, Zuboraj & Capolino (`arXiv:2505.22927`, 2025 [1]) on the $x = 0$ longitudinal
+# midplane cut (`Tasks 10–11`):
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 1.45 mm × 850 µm × 1.05 mm (z ∈ [0 m, 1.05 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 29 × 17 × 20 (9860 cells) |
+# | Discretization | Δz & resolution | Δ_min = 50 µm, 99.9 cells/λ (in n_max = 1.00), 2.0 cells across feature (100 µm) |
+# | Boundary | -x face | PEC |
+# | Boundary | +x face | PEC |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | Bloch (k_z = -1.5e+03 rad/m) |
+# | Boundary | +z face | Bloch (k_z = -1.5e+03 rad/m) |
+# | Material | Background | Vacuum waveguide & sheet-beam tunnel (ε_r = 1.00) (isotropic) |
+# | Material | Region 1: −x PEC pillar pair (z₁ = d/4 = 262.5 µm) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [127.5 µm, 397.5 µm] (d = 270 µm) |
+# | Material | Region 2: −x PEC pillar pair (z₁ = d/4 = 262.5 µm) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [127.5 µm, 397.5 µm] (d = 270 µm) |
+# | Material | Region 3: +x PEC pillar pair (z₂ = 3d/4 = 787.5 µm, glide +d/2) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [652 µm, 922 µm] (d = 270 µm) |
+# | Material | Region 4: +x PEC pillar pair (z₂ = 3d/4 = 787.5 µm, glide +d/2) | ε_r = inf, μ_r = 1.00, model = PEC, z ∈ [652 µm, 922 µm] (d = 270 µm) |
+# | Source | 1 · CurrentSource | pos: (x, y, z) = (40, 20, 420) µm, pol: Jz, Jy, pulse: f₀ = 60.00 GHz, Δf = 30.00 GHz |
+# | Monitor | 2 · ResonanceMonitor | ResonanceMonitor (harminv) at (x, y, z) = (0, 0, 150) µm, pos: (x, y, z) = (0, 0, 150) µm, freqs: 40–85 GHz (V-band passband) |
+# | Monitor | 3 · DFTMonitor | 3D HannDFTMonitor over V-band unit cell, pos: x ∈ [−0.70, +0.70] mm, y ∈ [−0.40, +0.40] mm, z ∈ [0, 1.05] mm, freqs: 49–74 GHz |
+# | Variation | Glide vs broken-glide symmetry (Tasks 10–11) | Glide-symmetric (+x pillars at z₂ = 3d/4, gapless at β_n d = 3π, f = 60.86 GHz) vs mirror control (17.81 GHz stopband) |
 #
 # ---
 #
@@ -1207,11 +1226,10 @@ def run_single_task(task: dict[str, Any], out_dir: Path = DATA_DIR) -> dict[str,
 #
 # `generate_all_figures` reads `data/task_*.npz` and `data/graded_mesh_comparison.json` and renders 16 figures into `figures/`:
 #
-# 0. `00_setup_schematic.png`: Three-panel setup schematic built from live solver objects via
-#    `wakis.schematic`, showing (a) the 2D/3D corrugated grating unit cell with Bloch phase advance
-#    $\beta_0 d$, PEC walls/vanes, $20\;\text{kV}$ sheet beam, dipole excitation, and harminv/DFT
-#    monitors; (b) a 3D isometric cut-plane view ($x=0$, $y=0$) of the V-band staggered-pillar SWS;
-#    and (c) a graded non-uniform vs. uniform mesh zoom at the vane tip and slot mouth.
+# 0. `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, `00_setup_table.md`
+#    (plus `00a_setup_geometry_marosi.png`, `00b_setup_mesh_and_excitation_marosi.png`, `00_setup_table_marosi.md`):
+#    Two-figure setup layout and Markdown setup tables produced by `wakis.schematic.save_setup_figures`
+#    for the 2D/3D double-corrugated grating SWS and the 3D V-band staggered-pillar SWS.
 # 1. `01_sws_2d_and_3d_geometry.png`: 2D mirror vs. glide double-corrugated grating and
 #    3D V-band staggered-pillar unit cell schematic with verified dimensions.
 # 2. `02_mesh_zoom_conformal_vs_staircase.png`: Three-panel mesh comparison showing (a) uniform
@@ -1325,14 +1343,15 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     u0_5k2v, _ = h.relativistic_beam_velocity(marosi_spec.beam_voltage_v)
 
     # ------------------------------------------------------------------
-    # Fig 00: Setup Schematic (unit cell, 3D cut planes, graded mesh zoom)
+    # Fig 00: Setup Schematics (00a/00b + _marosi pair)
     # ------------------------------------------------------------------
     p00 = h.plot_sws_setup_schematic(
-        fig_dir / "00_setup_schematic.png",
+        fig_dir / "00a_setup_geometry.png",
         grating_spec=grating_spec,
         marosi_spec=marosi_spec,
     )
     saved.append(p00)
+    saved.append(fig_dir / "00b_setup_mesh_and_excitation.png")
 
     primary_2d = tasks.get("2d_conformal_L2", tasks.get("2d_conformal_L1"))
 

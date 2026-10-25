@@ -179,7 +179,8 @@ def test_dispersion_physics_task_table_and_artifacts(capsys):
     assert t4["rms_R_cont_fine"] < t4["rms_R_cont_coarse"]
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "wikimedia/dielectric_responses_wakis.png",
         "01_microscopic_models_freq_and_time.png",
         "02_bound_electrons_and_reststrahlen.png",
@@ -193,6 +194,10 @@ def test_dispersion_physics_task_table_and_artifacts(capsys):
     for fname in expected_figs:
         fpath = FIG_DIR / fname
         assert fpath.is_file() and fpath.stat().st_size > 1024, f"Missing {fpath}"
+    setup_table_md = FIG_DIR / "00_setup_table.md"
+    assert setup_table_md.is_file() and setup_table_md.stat().st_size > 100, (
+        f"Missing {setup_table_md}"
+    )
     attr_md = FIG_DIR / "wikimedia" / "ATTRIBUTION.md"
     assert attr_md.is_file() and attr_md.stat().st_size > 200, f"Missing {attr_md}"
 

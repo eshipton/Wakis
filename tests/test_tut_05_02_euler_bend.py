@@ -370,10 +370,12 @@ def test_saved_quick_study_data_and_figures():
             tasks_data["kottke_L3"]["n_cells"]
         )
 
-    # Check all 18 figures (including 00_setup_schematic.png and 04b_mesh_upgrade_comparison.png) exist and are non-empty
+    # Check all 19 figures + setup table (including 00a/00b setup figures and 04b_mesh_upgrade_comparison.png) exist and are non-empty
     figs = list(fig_dir.glob("*.png")) + list(fig_dir.glob("*.gif"))
-    assert len(figs) >= 18, f"Expected >= 18 figures in {fig_dir}, found {len(figs)}"
-    assert (fig_dir / "00_setup_schematic.png").stat().st_size > 10_000
+    assert len(figs) >= 19, f"Expected >= 19 figures in {fig_dir}, found {len(figs)}"
+    assert (fig_dir / "00a_setup_geometry.png").stat().st_size > 10_000
+    assert (fig_dir / "00b_setup_mesh_and_excitation.png").stat().st_size > 10_000
+    assert (fig_dir / "00_setup_table.md").stat().st_size > 200
     assert (fig_dir / "04b_mesh_upgrade_comparison.png").stat().st_size > 10_000
     assert (fig_dir / "10_pulse_propagation.gif").stat().st_size > 1024
     assert (fig_dir / "10_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024

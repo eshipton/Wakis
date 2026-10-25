@@ -172,7 +172,8 @@ def test_committed_data_resolution_study_and_figures():
     assert hyp["ground_37x45mm"]["rin_ohm"] > hyp["baseline_0p35mm_er4p28_gnd30x32_W2_0p46_gap0p66"]["rin_ohm"]
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_geometry_3d_views.png",
         "02_mesh_and_cpw_views.png",
         "03_near_fields_and_currents.png",
@@ -186,6 +187,8 @@ def test_committed_data_resolution_study_and_figures():
         fpath = fig_dir / fname
         assert fpath.exists(), f"Missing figure {fname}"
         assert fpath.stat().st_size > 10_000
+    assert (fig_dir / "00_setup_table.md").exists(), "Missing 00_setup_table.md"
+    assert (fig_dir / "00_setup_table.md").stat().st_size > 200
     assert (fig_dir / "04_radiated_field_evolution.gif").stat().st_size < 5 * 1024 * 1024
 
 

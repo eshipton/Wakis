@@ -278,7 +278,10 @@ def test_absorption_saturation_oblique_floquet_and_artifacts():
     assert np.all(np.diff(lam_conv) > 0.0)
 
     expected_figs = [
-        "00_setup_schematic_and_mesh.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_oblique.png",
+        "00b_setup_mesh_and_excitation_oblique.png",
         "01_fano_transmission_spectra.png",
         "02_q_vs_alpha_scaling.png",
         "03_bic_vs_quasi_bic_fields.png",
@@ -294,6 +297,10 @@ def test_absorption_saturation_oblique_floquet_and_artifacts():
         assert size_bytes > 5_000, f"Figure {fname} is unexpectedly empty"
         if fname.endswith(".gif"):
             assert size_bytes < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"
+
+    for tname in ("00_setup_table.md", "00_setup_table_oblique.md"):
+        tpath = TUT_DIR / "figures" / tname
+        assert tpath.is_file() and tpath.stat().st_size > 100, f"Missing setup table {tname}"
 
     with open(TUT_DIR / "data" / "summary.json", encoding="utf-8") as fh:
         summary = json.load(fh)

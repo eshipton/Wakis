@@ -605,7 +605,10 @@ def test_janssen_optimization_study_and_resonances():
     data_dir = TUTORIAL_DIR / "data"
     fig_dir = TUTORIAL_DIR / "figures"
     for fname in (
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_reciprocal.png",
+        "00b_setup_mesh_and_excitation_reciprocal.png",
         "00_emitter_absorber_schematic.png",
         "01_geometry_mesh.png",
         "02_field_snapshots_and_movie.png",
@@ -631,6 +634,9 @@ def test_janssen_optimization_study_and_resonances():
     ):
         p_fig = fig_dir / fname
         assert p_fig.exists() and p_fig.stat().st_size > 10_000, f"Missing or empty figure {fname}"
+    for tname in ("00_setup_table.md", "00_setup_table_reciprocal.md"):
+        p_tab = fig_dir / tname
+        assert p_tab.exists() and p_tab.stat().st_size > 100, f"Missing or empty setup table {tname}"
     assert (fig_dir / "02_reciprocal_wave_movie.gif").stat().st_size < 5 * 1024 * 1024
 
     j_sum = json.loads((data_dir / "janssen_optimization.json").read_text())

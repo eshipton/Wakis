@@ -115,13 +115,17 @@ class TestSingleSlitSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
-            "00_setup_schematic.png",
+            "00a_setup_geometry.png",
+            "00b_setup_mesh_and_excitation.png",
             "single_slit_fresnel_and_source.png",
             "single_slit_farfield_patterns.png",
             "single_slit_transmission_and_convergence.png",
         ):
             p = TUTORIAL_DIR / "figures" / fig_name
             assert p.is_file() and p.stat().st_size > 2000, f"Missing or empty {p}"
+
+        table_md = TUTORIAL_DIR / "figures" / "00_setup_table.md"
+        assert table_md.is_file() and table_md.stat().st_size > 128, f"Missing {table_md}"
 
     def test_source_injection_and_parseval_identity(self):
         """Full-width plane-wave source has < 1% ripple vs > 15% for PML-truncated source."""

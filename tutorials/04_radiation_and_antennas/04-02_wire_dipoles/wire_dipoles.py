@@ -44,8 +44,9 @@
 #
 # ## Learning Goals
 #
-# 1. **Setup schematic and non-uniform mesh design**: Construct labeled setup schematics (`wakis.schematic.draw_setup`)
-#    and mesh views (`wakis.schematic.draw_mesh`) for three canonical wire-antenna geometries:
+# 1. **Setup schematic and non-uniform mesh design**: Construct labeled setup schematics
+#    (`figures/00a_setup_geometry.png` and `figures/00b_setup_mesh_and_excitation.png`) and mesh views
+#    (`figures/01_geometry_and_graded_mesh.png`) for canonical wire-antenna geometries:
 #    (a) a center-fed $\lambda_0 / 2$ dipole in 6-face CPML free space,
 #    (b) a base-fed $\lambda_0 / 4$ monopole over an infinite PEC ground plane (`bc_low=['cpml','cpml','pec']`,
 #    `Near2FarMonitor(..., ground_plane='-z')`), and
@@ -226,16 +227,42 @@ def _show_figure(path: Path) -> None:
 # - `uniform_resolved_4cell`: a uniform grid at $\Delta = 0.76\;\text{mm}$ across the $(0.49\;\text{m})^3$
 #   domain would require $(646)^3 \approx 2.70 \times 10^8$ cells and $\sim 65\;\text{GB}$ of RAM.
 #
-# Figure `00_setup_schematic.png` shows the three simulation setups side by side:
-# (a) the center-fed $\lambda_0/2$ dipole in 6-face CPML free space,
-# (b) the base-fed $\lambda_0/4$ monopole over an infinite PEC ground plane (`bc_low=['cpml','cpml','pec']`,
-# `Near2FarMonitor(..., ground_plane='-z')`), and
-# (c) the $\lambda_0/4$ monopole on a finite PEC ground sheet (`solver.add_sheet(..., sigma_s='pec')`)
-# in 6-face CPML. Figure `01_geometry_and_graded_mesh.png` shows the graded $xz$ mesh, the zoomed
-# $xy$ wire core comparing the $4\times 4$-cell resolved PEC cross-section against the subcell thin-wire
-# magnetic circulation loop, and the non-uniform cell-size profile $\Delta x(x)$.
+# Figures `00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png` show the primary
+# center-fed $\lambda_0/2$ dipole setup in 6-face CPML free space along with the locally graded
+# mesh, $1\times$ core zoom, and excitation spectrum; the setup table also summarizes the
+# base-fed $\lambda_0/4$ monopole over an infinite PEC ground plane (`bc_low=['cpml','cpml','pec']`,
+# `Near2FarMonitor(..., ground_plane='-z')`) and the $\lambda_0/4$ monopole on a finite PEC ground
+# sheet (`solver.add_sheet(..., sigma_s='pec')`) in 6-face CPML. Figure `01_geometry_and_graded_mesh.png`
+# shows the graded $xz$ mesh, the zoomed $xy$ wire core comparing the $4\times 4$-cell resolved PEC
+# cross-section against the subcell thin-wire magnetic circulation loop, and the non-uniform cell-size
+# profile $\Delta x(x)$.
 #
-# ![Setup schematics for free-space dipole, infinite-ground monopole, and finite-ground monopole](figures/00_setup_schematic.png)
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The primary 3D FIT setup places a center-fed $\lambda_0/2$ PEC thin-wire dipole ($L = 149.9\;\text{mm}$) driven by a $z$-directed `LumpedPort` at the origin of a locally graded vacuum domain enclosed by a 6-cell CPML and a closed `Near2FarMonitor` box.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 327.5 mm × 327.5 mm × 383.4 mm (z ∈ [-191.7 mm, 191.7 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 28 × 28 × 39 (30576 cells) |
+# | Discretization | Δx & resolution | Δ_min = 7.89 mm, 38.0 cells/λ (in n_max = 1.00), 1.0 cells across feature (7.89 mm) |
+# | Boundary | -x face | CPML (6 cells, 86.5 mm) |
+# | Boundary | +x face | CPML (6 cells, 86.5 mm) |
+# | Boundary | -y face | CPML (6 cells, 86.5 mm) |
+# | Boundary | +y face | CPML (6 cells, 86.5 mm) |
+# | Boundary | -z face | CPML (6 cells, 79.7 mm) |
+# | Boundary | +z face | CPML (6 cells, 79.7 mm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC dipole arm | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-2.50 mm, 2.50 mm] (d = 5 mm) |
+# | Material | Region 2: PEC dipole arm | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-2.50 mm, 2.50 mm] (d = 5 mm) |
+# | Source | 1 · LumpedPort | pos: x = 0 m, pol: E_z, pulse: f₀ = 1 GHz, Δf = 500.0 MHz |
+# | Monitor | 2 · Near2FarMonitor | Near2FarMonitor, pos: x ∈ [-54.5 mm, 54.5 mm], freqs: f = 1 GHz |
+# | Variation | Wire radius & shortening sweep | $a \in \{1.50, 0.50, 0.15\}\;\mathrm{mm}$ ($\Omega \in \{9.2, 11.4, 13.8\}$) and trimmed $L = 0.470\,\lambda_0$ |
+# | Variation | Resolved 4×4 PEC vs. subcell wire | $\Delta_{\perp,\mathrm{core}} = 0.76\;\mathrm{mm}$ ($4\times 4$ cells across $2w = 3.05\;\mathrm{mm}$) vs. subcell $m = \frac{1}{2}\ln(\Delta_\perp / a)$ |
+# | Variation | Quarter-wave monopole (infinite PEC) | $h = \lambda_0 / 4 = 75.0\;\mathrm{mm}$ on $z = 0$ PEC boundary (`ground_plane='-z'` in `Near2FarMonitor`) |
+# | Variation | Finite PEC ground plane sweep | Square PEC sheet $W_{\mathrm{gnd}} / \lambda_0 \in \{0.40, 0.80, 1.20\}$ in 6-face CPML |
+# | Variation | Extended radiation movie | $6.68\,\lambda_0 \times 2.55\,\lambda_0 \times 6.68\,\lambda_0$ at $22.0$ cells/$\lambda_0$ ($r_{\max} = 3.34\,\lambda_0$) |
 #
 # ![Graded xz mesh, zoomed xy wire core, and transverse cell grading profile](figures/01_geometry_and_graded_mesh.png)
 
@@ -245,9 +272,10 @@ if "ipykernel" in sys.modules:
     preflight_estimates()
     if not (DATA_DIR / "task_half_wave_thin_wire_radii.npz").exists():
         run_tasks(list(TASKS), DATA_DIR, quick=True)
-    if not (FIG_DIR / "00_setup_schematic.png").exists():
+    if not (FIG_DIR / "00a_setup_geometry.png").exists():
         generate_all_figures(DATA_DIR, FIG_DIR)
-    _show_figure(FIG_DIR / "00_setup_schematic.png")
+    _show_figure(FIG_DIR / "00a_setup_geometry.png")
+    _show_figure(FIG_DIR / "00b_setup_mesh_and_excitation.png")
     _show_figure(FIG_DIR / "01_geometry_and_graded_mesh.png")
 
 

@@ -48,7 +48,34 @@
 # $40\;\text{cpw}$ `kottke_reference`) with $38.1\%$ fewer cells ($40{,}737$ vs
 # $65{,}780$) and $58.6\%$ shorter runtime ($60.62\;\text{s}$ vs $146.50\;\text{s}$).
 #
-# ![Setup schematic and slot mesh zoom](figures/00_setup_schematic.png)
+# ![Setup geometry schematic](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The primary simulation setup models the Deng *et al.* (2014) symmetric MMI strip-to-slot converter ($L = 6.0\;\mu\text{m}$) on a 2D effective-index grid with 10-cell CPML boundaries, an input strip $\text{TE}_0$ mode source, input/output mode monitors, a 4-wall Poynting flux box, and 8 transverse cells across the $g = 100\;\text{nm}$ central oxide slot:
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 11.9 µm × 4.23 µm × 25.6 nm (z ∈ [-12.8 nm, 12.8 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 366 × 110 × 1 (40260 cells) |
+# | Discretization | Δx & resolution | Δ_min = 12.5 nm, 42.3 cells/λ (in n_max = 2.93), 8.0 cells across feature (100 nm) |
+# | Boundary | -x face | CPML (10 cells, 337.4 nm) |
+# | Boundary | +x face | CPML (10 cells, 338 nm) |
+# | Boundary | -y face | CPML (10 cells, 636 nm) |
+# | Boundary | +y face | CPML (10 cells, 636 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding & 100 nm slot (ε_r = 2.07) (isotropic) |
+# | Material | Region 1: Si MMI core (ε_r = 8.59) | ε_r = 8.59, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-3 µm, 9 µm] (d = 12 µm) |
+# | Source | 1 · ModeSource | pos: x = -1.60 µm, y ∈ [-0.90, +0.90] µm, pol: TE₀ (Ey, Hz, +x), pulse: f₀ = 193.6 THz, Δf = 6.2 THz |
+# | Monitor | 2 · ModeMonitor | Port 'in' ModeMonitor (S₁₁), pos: x = -1.55 µm, y ∈ [-0.90, +0.90] µm, freqs: 187.4–199.9 THz (51 DFT pts) |
+# | Monitor | 3 · ModeMonitor | Port 'out' ModeMonitor (slot TE₀, S₂₁), pos: x = 7.55 µm, y ∈ [-0.90, +0.90] µm, freqs: 187.4–199.9 THz (51 DFT pts) |
+# | Monitor | 4 · FluxMonitor | 2D Poynting FluxMonitor box, pos: x ∈ [-2.87, 8.87] µm, y ∈ [-2.07, 2.07] µm, freqs: 187.4–199.9 THz (51 DFT pts) |
+# | Variation | Design 2: Symmetric Tapered-Finger (Wang et al. 2009) | param=L = 8.0 µm, d_finger = 60 nm, g_slot = 100 nm, note=Three-PolySlab double-tip finger coupler; T(1550 nm) = 99.80%, N = 8 cells across 60 nm finger gap (Δy_min = 7.14 nm) |
+# | Variation | Design 3: Asymmetric Lateral Taper (Feng et al. 2007) | param=L = 20.0 µm, g_slot = 100 nm, note=Two-PolySlab continuous upper rail + tapered lower rail; T(1550 nm) = 99.66%, N = 8 cells across 100 nm slot |
+# | Variation | Design 1 MMI length sweep | param=L ∈ {1.6, 2.2, 3.0, 4.5, 6.0} µm (L_mmi = 1.38 µm), note=Coupled-mode adiabatic saturation of slot-rail taper section L_taper = L - L_mmi |
+# | Variation | Kottke vs staircase convergence ladder | param=Under-resolved (10, 0), L1=(10, 4), L2=(14, 6), L3=(20, 8), R=(40, 16), note=Compares Kottke subpixel smoothing against staircase snapping across 100 nm oxide slot |
+# | Variation | Graded non-uniform mesh upgrade (kottke_nonuniform) | param=367 × 111 × 1 = 40,737 cells (-38.1% vs uniform L3), note=Δy = 12.5 nm (8 cells across 100 nm slot) with non-square Δx ≤ 34 nm along taper |
+#
 # ![Taper converter setup schematics](figures/00b_taper_converters_schematic.png)
 #
 # ---
@@ -65,8 +92,8 @@
 # 2. Construct three distinct strip-to-slot converter topologies (`build_mmi_converter`,
 #    `build_symmetric_taper_converter`, `build_asymmetric_taper_converter`) using
 #    `PolySlab`, `straight`, and `asymmetric_taper`, and inspect their labelled
-#    2D EIM setup schematics (`00_setup_schematic.png`,
-#    `00b_taper_converters_schematic.png`).
+#    2D EIM setup schematics (`00a_setup_geometry.png`,
+#    `00b_setup_mesh_and_excitation.png`, `00b_taper_converters_schematic.png`).
 # 3. Run broadband 2D EIM time-domain FIT simulations (`PICSimulation`) with
 #    `ModeSource` and `ModeMonitor` ports that resolve the discontinuous
 #    transverse slot mode profile across the $1500\text{--}1600\;\text{nm}$ C-band.
@@ -1258,8 +1285,9 @@ def run_single_task(task_cfg, out_dir):
 # `figures/` (every figure $\le 3$ panels; every field map and GIF frame
 # includes `schematic.overlay_geometry`):
 #
-# 0. `00_setup_schematic.png` — Labelled 2-panel setup schematic of the Design 1 symmetric MMI strip-to-slot converter (domain, 10-cell CPML, periodic $\pm z$, $\text{Si}/\text{SiO}_2$ indices, input/output ports with overlaid $\text{TE}_0$ strip and slot mode profiles, and 2D Poynting flux box) plus a $1\times$ Yee mesh zoom on the $g = 100\;\text{nm}$ slot opening.
-# 0b. `00b_taper_converters_schematic.png` — Labelled 2-panel setup schematics of Design 2 (Symmetric Double-Tip Tapered-Finger Coupler, $L = 8.0\;\mu\text{m}$, $d = 60\;\text{nm}$) and Design 3 (Asymmetric Lateral Taper, $L = 20.0\;\mu\text{m}$).
+# 0a. `00a_setup_geometry.png` — Labelled setup schematic of the Design 1 symmetric MMI strip-to-slot converter (domain, 10-cell CPML, periodic $\pm z$, $\text{Si}/\text{SiO}_2$ indices, input/output ports with overlaid $\text{TE}_0$ strip and slot mode profiles, and 2D Poynting flux box).
+# 0b. `00b_setup_mesh_and_excitation.png` — Mesh view with $1\times$ zoom, cells per wavelength and across the $g = 100\;\text{nm}$ slot opening, wave-packet extent, and broadband excitation pulse/spectrum (`00_setup_table.md`).
+# 0c. `00b_taper_converters_schematic.png` — Labelled setup schematics of Design 2 (Symmetric Double-Tip Tapered-Finger Coupler, $L = 8.0\;\mu\text{m}$, $d = 60\;\text{nm}$) and Design 3 (Asymmetric Lateral Taper, $L = 20.0\;\mu\text{m}$).
 # 1. `01_converter_topologies_layout.png` — Annotated 3-panel top-view layout of Designs 1 (MMI), 2 (Symmetric Tapered-Finger Coupler), and 3 (Asymmetric Lateral Taper).
 # 2. `02_eim_vertical_stack.png` — Vertical $250\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ slab mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_slot_mode_physics_and_discontinuity.png` — Analytical 5-layer slot waveguide mode vs Wakis port mode showing the $(n_{\text{eff,slab}}/n_{\text{SiO}_2})^2 = 4.14$ normal $E_y$ jump and slot confinement vs gap width $g$.
@@ -1463,7 +1491,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     plot_setup_schematic(
         pic_mmi_nu,
         primary,
-        out_path=fig_dir / "00_setup_schematic.png",
+        out_path=fig_dir / "00a_setup_geometry.png",
     )
     plot_taper_converters_schematic(
         pic_sym,

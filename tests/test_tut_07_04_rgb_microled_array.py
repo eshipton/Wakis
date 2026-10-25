@@ -217,9 +217,19 @@ def test_method_a_vs_method_b_statistics_and_mutation():
 
 
 def test_setup_schematic_exists():
-    """Verify the first figure (00_setup_schematic.png) exists and is non-empty."""
-    setup_fig = TUTORIAL_DIR / "figures" / "00_setup_schematic.png"
-    assert setup_fig.is_file() and setup_fig.stat().st_size > 10_000
+    """Verify the setup figure pairs and setup tables exist and are non-empty."""
+    fig_dir = TUTORIAL_DIR / "figures"
+    for fname in (
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_dual_routing.png",
+        "00b_setup_mesh_and_excitation_dual_routing.png",
+    ):
+        setup_fig = fig_dir / fname
+        assert setup_fig.is_file() and setup_fig.stat().st_size > 10_000, f"Missing {fname}"
+    for tname in ("00_setup_table.md", "00_setup_table_dual_routing.md"):
+        setup_tbl = fig_dir / tname
+        assert setup_tbl.is_file() and setup_tbl.stat().st_size > 500, f"Missing {tname}"
 
 
 def test_saved_study_outputs_and_crosstalk_matrices():
@@ -228,7 +238,12 @@ def test_saved_study_outputs_and_crosstalk_matrices():
     fig_dir = TUTORIAL_DIR / "figures"
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00_setup_table.md",
+        "00a_setup_geometry_dual_routing.png",
+        "00b_setup_mesh_and_excitation_dual_routing.png",
+        "00_setup_table_dual_routing.md",
         "fig01_geometry_permittivity.png",
         "fig02_material_dispersion_skin_depth.png",
         "fig03_incoherent_rgb_intensity_maps.png",

@@ -2712,407 +2712,400 @@ def overlay_marosi_3d_yz_geometry(
     )
 
 
+class _SWSSchematicSolverProxy:
+    """Lightweight proxy around ``SolverFIT3D`` that uses a bare ``GridFIT3D`` without duplicate ``stl_solids``."""
+
+    def __init__(self, solver, grid_bare, structures=()):
+        self._solver = solver
+        self.grid = grid_bare
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 0)
+        self.bc_low = list(getattr(solver, "bc_low", ["periodic", "pec", "bloch"]))
+        self.bc_high = list(getattr(solver, "bc_high", ["periodic", "pec", "bloch"]))
+        self.k_bloch = getattr(solver, "k_bloch", (0.0, 0.0, 0.0))
+        self.bg = [1.0, 1.0, 0.0]
+        self._assigned_structures = tuple(structures)
+
+
 def plot_sws_setup_schematic(
     out_path,
     grating_spec: GratingSWSSpec = GratingSWSSpec(),
     marosi_spec: MarosiPillarSWSSpec = MarosiPillarSWSSpec(),
 ):
-    """Render ``00_setup_schematic.png`` for Tutorial 6.2 using ``wakis.figstyle`` and ``wakis.schematic``.
-
-    Produces a 3-panel setup schematic:
-    - Panel (a): 2D/3D Corrugated Grating SWS unit cell built from live
-      ``SolverFIT3D`` / ``GridFIT3D`` / ``CurrentSource`` / ``ResonanceMonitor``
-      objects via ``schematic.plot_schematic``, showing Bloch boundaries with
-      phase advance ``beta_0 d``, PEC walls & staggered corrugation vanes,
-      20 kV sheet electron beam, off-axis dipole excitation, and harminv/DFT monitors.
-    - Panel (b): 3D Isometric Cut-Plane View of the V-Band Staggered-Pillar SWS
-      (Marosi et al., 2025), showing the 3D rectangular PEC housing, staggered
-      ``-x`` and ``+x`` pillar pairs, 5.2 kV sheet beam, diagnostic cut planes
-      ``x = 0`` and ``y = 0``, and Bloch phase advance ``beta_0 d``.
-    - Panel (c): Graded Non-Uniform vs Uniform Mesh Zoom at the vane-tip /
-      slot-mouth corner using ``schematic.draw_mesh`` and ``schematic.overlay_geometry``,
-      annotating cells across the ``100 um`` vane tooth/tip and cell reduction.
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md``
+    (plus the ``_marosi`` 3D staggered-pillar SWS setup pair) for Tutorial 6.2 using ``wakis.schematic.save_setup_figures``.
     """
+    from pathlib import Path
     import matplotlib.patches as mpatches
     from wakis import figstyle, schematic
+    from wakis.templates.photonics import Box
+
+    out_p = Path(out_path)
+    out_dir = out_p if out_p.suffix == "" else out_p.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     figstyle.apply_style()
-    grid_g, solver_g, sources_g, monitors_g, structs_g = build_sws_setup_objects(
+    grid_g, solver_g, _, _, _ = build_sws_setup_objects(
         spec=grating_spec, n_feat=8, beta0_d_over_pi=0.5, graded=True
     )
-    grid_u, _, _, _, _ = build_sws_setup_objects(
-        spec=grating_spec, n_feat=8, beta0_d_over_pi=0.5, graded=False
-    )
-
-    fig, (ax0, ax1, ax2) = figstyle.new_figure(
-        nrows=1, ncols=3, width=13.8, height=4.4
-    )
-
-    # ------------------------------------------------------------------
-    # Panel (a): Unit-cell setup schematic from live solver objects
-    # ------------------------------------------------------------------
     grid_bare = GridFIT3D(
         x=np.asarray(grid_g.x),
         y=np.asarray(grid_g.y),
         z=np.asarray(grid_g.z),
         verbose=0,
     )
-    schematic.overlay_geometry(
-        ax0,
-        grid_bare,
+    solver_proxy = _SWSSchematicSolverProxy(solver_g, grid_bare)
+
+    d = grating_spec.period_m
+    b = grating_spec.total_height_m
+    g = grating_spec.tunnel_half_height_m
+    l_vane = grating_spec.vane_length_m
+    s_slot = grating_spec.slot_width_m
+    h_v = grating_spec.vane_height_m
+    hb = grating_spec.beam_half_thickness_m
+    beta0 = 0.5 * np.pi / d
+
+    bot_vane = Box(
+        center=(0.0, -g - 0.5 * h_v, 0.25 * d),
+        size=(1.0e-3, h_v, l_vane),
+        material="pec",
+    )
+    bot_vane.name = "Bottom PEC vane (z₁ = d/4 = 125 µm, l×h = 100×300 µm)"
+    top_vane = Box(
+        center=(0.0, +g + 0.5 * h_v, 0.75 * d),
+        size=(1.0e-3, h_v, l_vane),
+        material="pec",
+    )
+    top_vane.name = "Top PEC vane (z₂ = 3d/4 = 375 µm, glide +d/2)"
+    structs_2d = [bot_vane, top_vane]
+    solver_proxy._assigned_structures = tuple(structs_2d)
+    mat_names_2d = {
+        "background": "Vacuum interaction tunnel & groove slots (ε_r = 1.00, μ_r = 1.00)",
+        "region_0": "Bottom PEC vane (z₁ = d/4 = 125 µm, l = 100 µm, h = 300 µm)",
+        "region_1": "Top PEC vane (z₂ = 3d/4 = 375 µm, l = 100 µm, h = 300 µm, glide +d/2)",
+    }
+
+    pulse = GaussianSource(frequency=120e9, fwidth=70e9)
+    sources_s = [
+        {
+            "kind": "point",
+            "type_name": "CurrentSource",
+            "short_word": "dipole Jz,Jy",
+            "label": "Off-axis CurrentSource (Jz, Jy) at (z, y) = (210, 25) µm",
+            "desc": "Off-axis CurrentSource (Jz, Jy) at (z, y) = (210, 25) µm (Gaussian f₀ = 120 GHz)",
+            "pos_str": "(z, y) = (210, 25) µm (off-axis to excite even & odd Bloch branches)",
+            "polarization": "Jz, Jy (TM / LSE₁₀)",
+            "h_bounds": (0.21e-3, 0.21e-3),
+            "v_bounds": (0.025e-3, 0.025e-3),
+            "pulse": {
+                "f0": 120e9,
+                "fwidth": 70e9,
+                "t_peak": float(4.0 / (np.pi * 70e9)),
+                "t_end": float(pulse.end_time),
+                "src_time": pulse,
+            },
+        }
+    ]
+    monitors_s = [
+        {
+            "kind": "probe",
+            "type_name": "ResonanceMonitor",
+            "short_word": "harminv",
+            "label": "Stage-1 ResonanceMonitor (harminv) at (z, y) = (70, 0) µm",
+            "desc": "Stage-1 ResonanceMonitor (harminv Ez, Ey) at (z, y) = (70, 0) µm",
+            "pos_str": "(z, y) = (70, 0) µm (beam axis y = 0)",
+            "freq_str": "10–245 GHz (Stage-1 eigenfrequency & Q extraction)",
+            "h_bounds": (0.07e-3, 0.07e-3),
+            "v_bounds": (0.0, 0.0),
+        },
+        {
+            "kind": "box",
+            "type_name": "DFTMonitor",
+            "short_word": "DFT cell",
+            "label": "Stage-2 HannDFTMonitor (3D unit-cell volume)",
+            "desc": "Stage-2 HannDFTMonitor over unit cell (complex Bloch fields & E_zn harmonics)",
+            "pos_str": "z ∈ [0, 500] µm, y ∈ [−400, +400] µm (full unit cell)",
+            "freq_str": "Stage-1 eigenfrequencies f_m(β₀) (free ring-down)",
+            "h_bounds": (0.015e-3, d - 0.015e-3),
+            "v_bounds": (-0.5 * b + 0.02e-3, +0.5 * b - 0.02e-3),
+        },
+    ]
+    variations_2d = [
+        {
+            "name": "Floquet–Bloch phase & symmetry sweep (Tasks 3–8)",
+            "details": "Δφ = β₀ d ∈ [0.05π, 0.95π] (k_z = −β₀, E(z+d) = E(z) e^{−jβ₀d}), mirror (δz = 0) vs glide (δz = d/2 = 250 µm)",
+        },
+        {
+            "name": "Vane / groove & sheet-beam geometry (Karetnikova 2018)",
+            "details": f"Period d = {d*1e6:.0f} µm, vane l = {l_vane*1e6:.0f} µm × h = {h_v*1e6:.0f} µm, groove s = {s_slot*1e6:.0f} µm, tunnel 2a = {2*g*1e6:.0f} µm, 20 kV beam (H_b = {2*hb*1e6:.0f} µm, u₀ = 0.272c)",
+        },
+        {
+            "name": "3D LSE₁₀ rectangular housing (Task 9)",
+            "details": f"PEC side walls at x = 0, b = {grating_spec.waveguide_width_m*1e6:.0f} µm (f_{{c,TE10}} = 176.35 GHz, 87,040 uniform / 53,856 graded cells)",
+        },
+        {
+            "name": "3D V-Band Marosi staggered-pillar SWS (Tasks 10–11)",
+            "details": "Housing 1.40 × 0.80 × 1.05 mm³, pillars w = 1.08 mm, l = 0.27 mm, t = 0.10 mm, 5.2 kV beam (u₀ = 0.1416c) — see 00a/00b_setup_*_marosi.png",
+        },
+    ]
+
+    res = schematic.save_setup_figures(
+        solver_proxy,
+        out_dir,
+        prefix="00",
         plane="zy",
-        unit="um",
-        structures=[],
-        sources=sources_g,
-        monitors=monitors_g,
-        show_boundaries=False,
-        show_sources=False,
-        show_monitors=False,
-        label_materials=False,
-    )
-    d_um = grating_spec.period_m * 1e6
-    g_um = grating_spec.tunnel_half_height_m * 1e6
-    hb_um = grating_spec.beam_half_thickness_m * 1e6
-    h_um = grating_spec.vane_height_m * 1e6
-    l_um = grating_spec.vane_length_m * 1e6
-    b_um = grating_spec.total_height_m * 1e6
-
-    ax0.set_facecolor("#f8fafc")
-    # Sheet-beam & tunnel shading
-    ax0.axhspan(-g_um, +g_um, color="#fef3c7", alpha=0.50, zorder=1)
-    ax0.axhspan(-hb_um, +hb_um, color="#fca5a5", alpha=0.42, zorder=2)
-    ax0.axhline(-g_um, color="#b45309", ls="--", lw=1.0, zorder=4)
-    ax0.axhline(+g_um, color="#b45309", ls="--", lw=1.0, zorder=4)
-    ax0.annotate(
-        "",
-        xy=(465.0, 0.0),
-        xytext=(35.0, 0.0),
-        arrowprops={"arrowstyle": "->", "color": "#b91c1c", "lw": 1.6},
-        zorder=7,
-    )
-    ax0.text(
-        265.0,
-        -52.0,
-        r"$20\;\mathrm{kV}$ sheet beam ($H_b=150\;\mu\mathrm{m}$, $u_0=0.272c$)",
-        ha="center",
-        va="center",
-        fontsize=6.6,
-        fontweight="bold",
-        color="#991b1b",
-        bbox={"boxstyle": "round,pad=0.16", "fc": "#fffbeb", "ec": "#f59e0b", "alpha": 0.94},
-        zorder=8,
+        material_names=mat_names_2d,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        freq=120e9,
+        min_feature=l_vane,
+        variations=variations_2d,
     )
 
-    # Clear PEC vane fills and dimension labels
-    for zb, yb in [
-        (0.25 * d_um - 0.5 * l_um, -0.5 * b_um),
-        (0.75 * d_um - 0.5 * l_um, g_um),
-    ]:
-        ax0.add_patch(
-            mpatches.Rectangle(
-                (zb, yb),
-                l_um,
-                h_um,
-                facecolor="#334155",
-                edgecolor="#0f172a",
-                lw=1.4,
-                alpha=0.92,
-                zorder=5,
-            )
-        )
-        ax0.text(
-            zb + 0.5 * l_um,
-            yb + 0.5 * h_um,
-            "PEC\nvane\n$100\\times 300\\;\\mu$m",
-            ha="center",
-            va="center",
-            fontsize=6.6,
-            fontweight="bold",
-            color="white",
-            zorder=6,
-        )
-
-    # Top/bottom PEC wall lines and Bloch boundaries
-    ax0.axhline(-0.5 * b_um, color="#0f172a", lw=2.2, zorder=6)
-    ax0.axhline(+0.5 * b_um, color="#0f172a", lw=2.2, zorder=6)
-    for z_bc in (0.0, d_um):
-        ax0.axvline(z_bc, color=figstyle.PALETTE[0], ls="-.", lw=1.8, zorder=7)
-    ax0.text(
-        16.0,
-        245.0,
-        r"Bloch $z=0,d$" + "\n" + r"$\mathbf{E}(d)=\mathbf{E}(0)e^{-j\beta_0 d}$",
-        ha="left",
-        va="center",
-        fontsize=6.6,
-        color=figstyle.PALETTE[0],
-        fontweight="bold",
-        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": figstyle.PALETTE[0], "alpha": 0.94},
-        zorder=8,
-    )
-    ax0.text(
-        250.0,
-        378.0,
-        r"PEC wall ($y=+400\;\mu\mathrm{m}$) | $\pm x$: Periodic / PEC",
-        ha="center",
-        va="top",
-        fontsize=6.5,
-        color="#0f172a",
-        bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "0.75", "alpha": 0.92},
-        zorder=8,
-    )
-    ax0.text(
-        290.0,
-        -378.0,
-        r"PEC wall ($y=-400\;\mu\mathrm{m}$), period $d=500\;\mu\mathrm{m}$",
-        ha="center",
-        va="bottom",
-        fontsize=6.5,
-        color="#0f172a",
-        bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "0.75", "alpha": 0.92},
-        zorder=8,
-    )
-    ax0.plot(70.0, 0.0, "o", color=figstyle.PALETTE[2], ms=6.5, mec="white", mew=0.9, zorder=9)
-    ax0.text(
-        70.0,
-        22.0,
-        "Harminv\nprobe",
-        ha="center",
-        va="bottom",
-        fontsize=6.5,
-        fontweight="bold",
-        color=figstyle.PALETTE[2],
-        zorder=9,
-    )
-    ax0.plot(210.0, 25.0, "^", color=figstyle.PALETTE[1], ms=7.0, mec="white", mew=0.9, zorder=9)
-    ax0.text(
-        215.0,
-        42.0,
-        r"Dipole $J_z, J_y$" + "\n" + r"($f_0=120\;\mathrm{GHz}$)",
-        ha="left",
-        va="bottom",
-        fontsize=6.5,
-        fontweight="bold",
-        color=figstyle.PALETTE[1],
-        zorder=9,
-    )
-    ax0.set_xlim(-15.0, d_um + 15.0)
-    ax0.set_ylim(-0.5 * b_um - 25.0, 0.5 * b_um + 25.0)
-    ax0.set_aspect("auto")
-    ax0.set_xlabel(r"Axial coordinate $z$ [$\mu$m]")
-    ax0.set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
-    ax0.set_title(r"(a) Corrugated SWS unit cell ($\beta_0 d$ Bloch)")
-
-    # ------------------------------------------------------------------
-    # Panel (b): 3D Isometric Cut-Plane View (Marosi V-Band Staggered-Pillar SWS)
-    # ------------------------------------------------------------------
-    def _iso(z_mm, x_mm, y_mm):
-        # Clean isometric projection (z: axial right-down, x: transverse left-down, y: vertical up)
-        u = 0.88 * np.asarray(z_mm) - 0.52 * np.asarray(x_mm)
-        v = np.asarray(y_mm) + 0.24 * np.asarray(z_mm) + 0.30 * np.asarray(x_mm)
-        return u, v
-
-    def _draw_iso_box(ax, z_rng, x_rng, y_rng, fc, ec, alpha=0.72, lw=1.0, ls="-", zorder=3):
-        z0, z1_b = z_rng
-        x0, x1_b = x_rng
-        y0, y1_b = y_rng
-        faces = [
-            [(z0, x0, y0), (z1_b, x0, y0), (z1_b, x0, y1_b), (z0, x0, y1_b)],  # -x face
-            [(z0, x1_b, y0), (z1_b, x1_b, y0), (z1_b, x1_b, y1_b), (z0, x1_b, y1_b)],  # +x face
-            [(z0, x0, y1_b), (z1_b, x0, y1_b), (z1_b, x1_b, y1_b), (z0, x1_b, y1_b)],  # +y top
-            [(z1_b, x0, y0), (z1_b, x1_b, y0), (z1_b, x1_b, y1_b), (z1_b, x0, y1_b)],  # +z front
-        ]
-        for f_pts in faces:
-            uv = np.column_stack(_iso([p[0] for p in f_pts], [p[1] for p in f_pts], [p[2] for p in f_pts]))
-            ax.add_patch(
-                mpatches.Polygon(
-                    uv, closed=True, facecolor=fc, edgecolor=ec, alpha=alpha, lw=lw, linestyle=ls, zorder=zorder
-                )
-            )
-
-    a_m = marosi_spec.waveguide_width_m * 1e3
-    b_m = marosi_spec.waveguide_height_m * 1e3
-    d_m = marosi_spec.period_m * 1e3
-    w_m = marosi_spec.pillar_width_m * 1e3
-    l_m = marosi_spec.pillar_length_m * 1e3
-    yi_m = marosi_spec.pillar_y_inner_m * 1e3
-    yo_m = marosi_spec.pillar_y_outer_m * 1e3
-    wb_m = marosi_spec.beam_width_m * 1e3
-    tb_m = marosi_spec.beam_thickness_m * 1e3
-
-    # Outer PEC housing wireframe
-    _draw_iso_box(
-        ax1, (0.0, d_m), (-0.5 * a_m, 0.5 * a_m), (-0.5 * b_m, 0.5 * b_m),
-        fc="#f8fafc", ec="#64748b", alpha=0.22, lw=1.0, ls="--", zorder=1
-    )
-    # Cut plane y = 0 (horizontal beam mid-plane)
-    uv_y0 = np.column_stack(
-        _iso([0.0, d_m, d_m, 0.0], [-0.5 * a_m, -0.5 * a_m, 0.5 * a_m, 0.5 * a_m], [0.0, 0.0, 0.0, 0.0])
-    )
-    ax1.add_patch(
-        mpatches.Polygon(
-            uv_y0, closed=True, facecolor="#bae6fd", edgecolor="#0284c7", alpha=0.26, lw=1.1, linestyle=":", zorder=2
-        )
-    )
-    # Cut plane x = 0 (longitudinal Ez slice plane)
-    uv_x0 = np.column_stack(
-        _iso([0.0, d_m, d_m, 0.0], [0.0, 0.0, 0.0, 0.0], [-0.5 * b_m, -0.5 * b_m, 0.5 * b_m, 0.5 * b_m])
-    )
-    ax1.add_patch(
-        mpatches.Polygon(
-            uv_x0, closed=True, facecolor="#bbf7d0", edgecolor="#16a34a", alpha=0.24, lw=1.2, linestyle="-.", zorder=2
-        )
-    )
-
-    # -x pillar pair at z1 = d/4
-    z1_lo, z1_hi = 0.25 * d_m - 0.5 * l_m, 0.25 * d_m + 0.5 * l_m
-    _draw_iso_box(
-        ax1, (z1_lo, z1_hi), (-0.5 * a_m, -0.5 * a_m + w_m), (-yo_m, -yi_m),
-        fc="#1d4ed8", ec="#1e3a8a", alpha=0.80, lw=1.0, zorder=4
-    )
-    _draw_iso_box(
-        ax1, (z1_lo, z1_hi), (-0.5 * a_m, -0.5 * a_m + w_m), (yi_m, yo_m),
-        fc="#1d4ed8", ec="#1e3a8a", alpha=0.80, lw=1.0, zorder=4
-    )
-    # +x staggered pillar pair at z2 = 3d/4
-    z2_lo, z2_hi = 0.75 * d_m - 0.5 * l_m, 0.75 * d_m + 0.5 * l_m
-    _draw_iso_box(
-        ax1, (z2_lo, z2_hi), (0.5 * a_m - w_m, 0.5 * a_m), (-yo_m, -yi_m),
-        fc="#ea580c", ec="#7c2d12", alpha=0.82, lw=1.0, zorder=6
-    )
-    _draw_iso_box(
-        ax1, (z2_lo, z2_hi), (0.5 * a_m - w_m, 0.5 * a_m), (yi_m, yo_m),
-        fc="#ea580c", ec="#7c2d12", alpha=0.82, lw=1.0, zorder=6
-    )
-    # 5.2 kV sheet electron beam along z
-    _draw_iso_box(
-        ax1, (0.0, d_m), (-0.5 * wb_m, 0.5 * wb_m), (-0.5 * tb_m, 0.5 * tb_m),
-        fc="#ef4444", ec="#991b1b", alpha=0.65, lw=1.1, zorder=5
-    )
-
-    ax1.text(
-        0.03,
-        0.96,
-        r"PEC housing $a\times b\times d = 1.40\times 0.80\times 1.05\;\mathrm{mm}^3$"
-        + "\n"
-        + r"Bloch $z=0,d$ ($\beta_0 d$) | PEC walls $x=\pm a/2,\;y=\pm b/2$",
-        transform=ax1.transAxes,
-        ha="left",
-        va="top",
-        fontsize=6.6,
-        color="#0f172a",
-        bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "0.80", "alpha": 0.92},
-        zorder=10,
-    )
-    ax1.text(
-        0.03,
-        0.20,
-        r"$-x$ PEC pillars ($z_1=d/4$)",
-        transform=ax1.transAxes,
-        ha="left",
-        va="center",
-        fontsize=6.6,
-        fontweight="bold",
-        color="#1d4ed8",
-        zorder=10,
-    )
-    ax1.text(
-        0.03,
-        0.13,
-        r"$+x$ PEC pillars ($z_2=3d/4$, glide $+d/2$)",
-        transform=ax1.transAxes,
-        ha="left",
-        va="center",
-        fontsize=6.6,
-        fontweight="bold",
-        color="#c2410c",
-        zorder=10,
-    )
-    ax1.text(
-        0.03,
-        0.05,
-        r"Cuts: $x=0$ (green), $y=0$ (blue) | $5.2\;\mathrm{kV}$ beam (red)",
-        transform=ax1.transAxes,
-        ha="left",
-        va="center",
-        fontsize=6.4,
-        color="#0f172a",
-        bbox={"boxstyle": "round,pad=0.16", "fc": "#f8fafc", "ec": "0.80", "alpha": 0.92},
-        zorder=10,
-    )
-    ax1.set_xlim(-0.48, 1.42)
-    ax1.set_ylim(-0.68, 0.82)
-    ax1.set_xticks([])
-    ax1.set_yticks([])
-    ax1.set_xlabel(r"Isometric projection ($z$ axial, $x$ transverse, $y$ vertical)")
-    ax1.set_title("(b) 3D V-Band pillar SWS & cut planes")
-
-    # ------------------------------------------------------------------
-    # Panel (c): Graded Non-Uniform Mesh Zoom at Vane Tip & Slot Mouth
-    # ------------------------------------------------------------------
-    schematic.draw_mesh(
-        ax2,
-        grid_g,
+    # Enhance 00a_setup_geometry.png with vane/groove dimensions, sheet-beam sync region, and Floquet phase callout
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_proxy,
         plane="zy",
-        unit="um",
-        every=1,
-        color="#1d4ed8",
-        alpha=0.55,
+        material_names=mat_names_2d,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        freq=120e9,
     )
-    ax2.add_patch(
-        mpatches.Rectangle(
-            (75.0, -400.0),
-            100.0,
-            300.0,
-            facecolor="#334155",
-            edgecolor="#0f172a",
-            lw=1.5,
-            alpha=0.78,
-            zorder=4,
+    d_um = d * 1e6
+    g_um = g * 1e6
+    hb_um = hb * 1e6
+    h_um = h_v * 1e6
+    l_um = l_vane * 1e6
+    b_um = b * 1e6
+
+    # Shade beam tunnel and 20 kV sheet electron beam region
+    ax_a.axhspan(-g_um, +g_um, color="#FEF3C7", alpha=0.42, zorder=1.5)
+    ax_a.axhspan(-hb_um, +hb_um, color="#FCA5A5", alpha=0.36, zorder=1.8)
+    ax_a.axhline(-g_um, color="#B45309", ls="--", lw=0.95, zorder=4)
+    ax_a.axhline(+g_um, color="#B45309", ls="--", lw=0.95, zorder=4)
+
+    # Reposition source/monitor tags cleanly so each sits on its own object without overlap
+    for txt in ax_a.texts:
+        t_str = txt.get_text()
+        if "1 · dipole" in t_str:
+            txt.set_position((250.0, +68.0))
+        elif "2 · harminv" in t_str:
+            txt.set_position((165.0, -52.0))
+        elif "3 · DFT cell" in t_str:
+            txt.set_position((185.0, +330.0))
+
+    # Place vane/groove & Floquet callout in the open margin to the right of the unit cell
+    ax_a.text(
+        1.58,
+        0.52,
+        "SWS Cold-Test Unit Cell:\n"
+        "• Period d = 500 µm, groove s = 400 µm\n"
+        "• Staggered PEC vanes: l = 100 µm, h = 300 µm\n"
+        "  (bottom z₁ = d/4, top z₂ = 3d/4, glide +d/2)\n"
+        "• Beam tunnel 2a = 200 µm (20 kV beam, H_b = 150 µm)\n"
+        "• Floquet–Bloch ±z faces: Δφ = β₀d = 0.5π rad\n"
+        "• ±x faces: Periodic (2D) / PEC a = 850 µm (3D)",
+        transform=ax_a.transAxes,
+        ha="left",
+        va="center",
+        fontsize=7.6,
+        color="#1E293B",
+        bbox=dict(boxstyle="round,pad=0.28", facecolor="#F8FAFC", edgecolor="#94A3B8", lw=0.8),
+        clip_on=False,
+        zorder=9,
+    )
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Re-render 00b with zoom_bounds centered on the bottom PEC vane tip & slot mouth (z in [50, 200] um, y in [-220, -60] um)
+    from matplotlib.axes._base import _TransformedBoundsLocator
+
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_proxy,
+        plane="zy",
+        material_names=mat_names_2d,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        zoom_bounds=(0.05e-3, 0.20e-3, -0.22e-3, -0.06e-3),
+        freq=120e9,
+        min_feature=l_vane,
+    )
+    ax_mesh_b = axes_b[0]
+    for ch_ax in getattr(ax_mesh_b, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([1.14, 0.08, 1.24, 0.82], ax_mesh_b.transAxes)
         )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+
+    # Companion setup pair (_marosi) for the 3D V-Band Staggered-Pillar SWS (Tasks 10–11)
+    grid_m, _ = build_3d_marosi_pillar_grid(
+        spec=marosi_spec, nx=28, ny=16, nz=20, glide_symmetric=True, conformal="pec"
     )
-    ax2.axhline(-100.0, color="#d97706", ls="--", lw=1.3, zorder=6)
-    ax2.axhline(0.0, color="#dc2626", ls=":", lw=1.1, zorder=6)
+    beta0_m = 0.5 * np.pi / marosi_spec.period_m
+    solver_m = SolverFIT3D(
+        grid_m,
+        use_stl=True,
+        bc_low=["pec", "pec", "bloch"],
+        bc_high=["pec", "pec", "bloch"],
+        dtype=np.complex128,
+        k_bloch=(0.0, 0.0, -float(beta0_m)),
+        verbose=0,
+    )
+    grid_m_bare = GridFIT3D(
+        x=np.asarray(grid_m.x),
+        y=np.asarray(grid_m.y),
+        z=np.asarray(grid_m.z),
+        verbose=0,
+    )
+    solver_m_proxy = _SWSSchematicSolverProxy(solver_m, grid_m_bare)
+    d_m = marosi_spec.period_m
+    l_m = marosi_spec.pillar_length_m
+    t_m = marosi_spec.pillar_thickness_m
+    w_m = marosi_spec.pillar_width_m
+    a_m = marosi_spec.waveguide_width_m
+    yc_m = 0.5 * (marosi_spec.pillar_y_inner_m + marosi_spec.pillar_y_outer_m)
 
-    # Show uniform L2 grid tick marks along right spine for direct visual comparison
-    y_u_um = np.asarray(grid_u.y) * 1e6
-    for yu in y_u_um[(y_u_um >= -380.0) & (y_u_um <= 40.0)]:
-        ax2.plot([218.0, 225.0], [yu, yu], "-", color="#dc2626", lw=0.8, alpha=0.75, zorder=7)
+    structs_m = [
+        Box(center=(-0.5 * a_m + 0.5 * w_m, -yc_m, 0.25 * d_m), size=(w_m, t_m, l_m), material="pec"),
+        Box(center=(-0.5 * a_m + 0.5 * w_m, +yc_m, 0.25 * d_m), size=(w_m, t_m, l_m), material="pec"),
+        Box(center=(+0.5 * a_m - 0.5 * w_m, -yc_m, 0.75 * d_m), size=(w_m, t_m, l_m), material="pec"),
+        Box(center=(+0.5 * a_m - 0.5 * w_m, +yc_m, 0.75 * d_m), size=(w_m, t_m, l_m), material="pec"),
+    ]
+    structs_m[0].name = "−x PEC pillar pair (z₁ = d/4 = 262.5 µm)"
+    structs_m[1].name = "−x PEC pillar pair (z₁ = d/4 = 262.5 µm)"
+    structs_m[2].name = "+x PEC pillar pair (z₂ = 3d/4 = 787.5 µm, glide +d/2)"
+    structs_m[3].name = "+x PEC pillar pair (z₂ = 3d/4 = 787.5 µm, glide +d/2)"
+    solver_m_proxy._assigned_structures = tuple(structs_m)
 
-    ax2.annotate(
-        r"Vane-tip & tooth refinement"
-        + "\n"
-        + r"$\Delta y_{\min}=\Delta z_{\min}=12.5\;\mu\mathrm{m}$"
-        + "\n"
-        + r"($n_{\mathrm{feat}}=8$ cells / $100\;\mu\mathrm{m}$ tooth)",
-        xy=(125.0, -100.0),
-        xytext=(18.0, -42.0),
-        fontsize=6.5,
-        fontweight="bold",
-        color="#1e3a8a",
-        bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "#1d4ed8", "alpha": 0.94},
-        arrowprops={"arrowstyle": "->", "color": "#1d4ed8", "lw": 1.1},
+    pulse_m = GaussianSource(frequency=60e9, fwidth=30e9)
+    sources_m = [
+        {
+            "kind": "point",
+            "type_name": "CurrentSource",
+            "short_word": "dipole Jz,Jy",
+            "label": "CurrentSource (Jz, Jy) at (x, y, z) = (40, 20, 420) µm",
+            "desc": "CurrentSource (Jz, Jy) at (z, y) = (420, 20) µm (Gaussian f₀ = 60 GHz)",
+            "pos_str": "(x, y, z) = (40, 20, 420) µm",
+            "polarization": "Jz, Jy",
+            "h_bounds": (0.42e-3, 0.42e-3),
+            "v_bounds": (0.02e-3, 0.02e-3),
+            "pulse": {
+                "f0": 60e9,
+                "fwidth": 30e9,
+                "t_peak": float(4.0 / (np.pi * 30e9)),
+                "t_end": float(pulse_m.end_time),
+                "src_time": pulse_m,
+            },
+        }
+    ]
+    monitors_m = [
+        {
+            "kind": "probe",
+            "type_name": "ResonanceMonitor",
+            "short_word": "harminv",
+            "label": "ResonanceMonitor (harminv) at (x, y, z) = (0, 0, 150) µm",
+            "desc": "ResonanceMonitor (harminv Ez) at (z, y) = (150, 0) µm",
+            "pos_str": "(x, y, z) = (0, 0, 150) µm",
+            "freq_str": "40–85 GHz (V-band passband)",
+            "h_bounds": (0.15e-3, 0.15e-3),
+            "v_bounds": (0.0, 0.0),
+        },
+        {
+            "kind": "box",
+            "type_name": "DFTMonitor",
+            "short_word": "DFT cell",
+            "label": "3D HannDFTMonitor over V-band unit cell",
+            "desc": "3D HannDFTMonitor over unit cell (V-band space harmonics & Z_P)",
+            "pos_str": "x ∈ [−0.70, +0.70] mm, y ∈ [−0.40, +0.40] mm, z ∈ [0, 1.05] mm",
+            "freq_str": "49–74 GHz",
+            "h_bounds": (0.03e-3, d_m - 0.03e-3),
+            "v_bounds": (-0.37e-3, +0.37e-3),
+        },
+    ]
+    mat_names_m = {
+        "background": "Vacuum waveguide & sheet-beam tunnel (ε_r = 1.00)",
+    }
+    res_m = schematic.save_setup_figures(
+        solver_m_proxy,
+        out_dir,
+        prefix="00",
+        suffix="_marosi",
+        plane="zy",
+        cut_coord=0.0,
+        material_names=mat_names_m,
+        sources=sources_m,
+        monitors=monitors_m,
+        unit="µm",
+        freq=60e9,
+        min_feature=marosi_spec.min_feature_m,
+        variations=[
+            {
+                "name": "Glide vs broken-glide symmetry (Tasks 10–11)",
+                "details": "Glide-symmetric (+x pillars at z₂ = 3d/4, gapless at β_n d = 3π, f = 60.86 GHz) vs mirror control (17.81 GHz stopband)",
+            },
+        ],
+    )
+    fig_a_m, ax_a_m = schematic.plot_schematic(
+        solver_m_proxy,
+        plane="zy",
+        cut_coord=0.0,
+        material_names=mat_names_m,
+        sources=sources_m,
+        monitors=monitors_m,
+        unit="µm",
+        freq=60e9,
+    )
+    for txt in ax_a_m.texts:
+        t_str = txt.get_text()
+        if "1 · dipole" in t_str:
+            txt.set_position((620.0, +58.0))
+        elif "2 · harminv" in t_str:
+            txt.set_position((260.0, -78.0))
+        elif "3 · DFT cell" in t_str:
+            txt.set_position((525.0, +315.0))
+    ax_a_m.text(
+        1.34,
+        0.50,
+        "3D V-Band Staggered-Pillar SWS:\n"
+        "• Housing: 1.40 × 0.80 × 1.05 mm³ (PEC ±x, ±y)\n"
+        "• Pillars: w = 1.08 mm, l = 270 µm, t = 100 µm\n"
+        "  (−x pair at z₁ = d/4, +x pair at z₂ = 3d/4)\n"
+        "• Tunnel |y| ≤ 150 µm (5.2 kV sheet beam)\n"
+        "• Floquet–Bloch ±z faces: Δφ = β₀d",
+        transform=ax_a_m.transAxes,
+        ha="left",
+        va="center",
+        fontsize=7.4,
+        color="#1E293B",
+        bbox=dict(boxstyle="round,pad=0.26", facecolor="#F8FAFC", edgecolor="#94A3B8", lw=0.8),
+        clip_on=False,
         zorder=9,
     )
-    ax2.text(
-        117.5,
-        -382.0,
-        r"Slot depth: $\Delta y_{\max}=30\;\mu\mathrm{m}$ ($\geq 45\;\mathrm{cells}/\lambda$)"
-        + "\n"
-        + r"Graded L2: $1{,}584$ vs Uniform L2: $2{,}560$ cells ($1.62\times$ fewer)",
-        ha="center",
-        va="bottom",
-        fontsize=6.2,
-        color="#0f172a",
-        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.78", "alpha": 0.94},
-        zorder=9,
-    )
-    ax2.set_xlim(10.0, 225.0)
-    ax2.set_ylim(-395.0, 45.0)
-    ax2.set_aspect("auto")
-    ax2.set_xlabel(r"Axial coordinate $z$ [$\mu$m]")
-    ax2.set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
-    ax2.set_title("(c) Graded non-uniform mesh zoom at vane tip")
+    figstyle.save(fig_a_m, res_m["geometry_figure"], close=True, auto_legend_below=False)
 
-    figstyle.finish(fig)
-    figstyle.save(fig, out_path)
-    return out_path
+    # Also add a 1x zoom inset on 00b_setup_mesh_and_excitation_marosi.png around the bottom-left pillar
+    fig_b_m, axes_b_m = schematic.plot_mesh_and_excitation(
+        solver_m_proxy,
+        plane="zy",
+        cut_coord=0.0,
+        material_names=mat_names_m,
+        sources=sources_m,
+        monitors=monitors_m,
+        unit="µm",
+        mesh_every=2,
+        zoom_bounds=(0.08e-3, 0.44e-3, -0.30e-3, -0.10e-3),
+        freq=60e9,
+        min_feature=marosi_spec.min_feature_m,
+    )
+    ax_mesh_bm = axes_b_m[0]
+    for ch_ax in getattr(ax_mesh_bm, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([1.08, 0.08, 0.88, 0.82], ax_mesh_bm.transAxes)
+        )
+    figstyle.save(fig_b_m, res_m["mesh_figure"], close=True, auto_legend_below=False)
+    return res["geometry_figure"]

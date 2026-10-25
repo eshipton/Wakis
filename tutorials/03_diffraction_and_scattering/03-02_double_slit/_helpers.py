@@ -1162,77 +1162,13 @@ def _build_schematic_solver(
     return solver, grid_info, boxes, source, [flux_wide, n2f, mon_det]
 
 
-def _fix_unit_spaces_in_texts(ax: plt.Axes) -> None:
-    """Ensure a thin space precedes units inside math-mode substrings in schematic text labels."""
-    replacements = (
-        (" THz$", r"\;\mathrm{THz}$"),
-        (" GHz$", r"\;\mathrm{GHz}$"),
-        (" MHz$", r"\;\mathrm{MHz}$"),
-        (" nm$", r"\;\mathrm{nm}$"),
-        (" µm$", r"\;\mu\mathrm{m}$"),
-        (" mm$", r"\;\mathrm{mm}$"),
-    )
-    for txt in ax.texts:
-        s = txt.get_text()
-        new_s = s
-        for old, new in replacements:
-            new_s = new_s.replace(old, new)
-        if new_s != s:
-            txt.set_text(new_s)
-
-
-def _reposition_xy_schematic_labels(
-    ax: plt.Axes,
-    x_left_jaw: float,
-    x_right_jaw: float,
-    y_src: float,
-    y_n2f: float,
-    y_dft: float,
-) -> None:
-    """Reposition horizontal structure/source/monitor labels placed at vertical-slab defaults by schematic."""
-    leg = ax.get_legend()
-    if leg is not None:
-        leg.remove()
-    pec_count = 0
-    pec_positions = (x_left_jaw, 0.0, x_right_jaw)
-    pec_labels = (r"PEC ($\sigma \to \infty$)", "PEC bridge $b$", r"PEC ($\sigma \to \infty$)")
-    for txt in ax.texts:
-        s = txt.get_text()
-        if "$-y$ boundary:" in s or "-y boundary:" in s:
-            txt.set_text(
-                r"$\pm y$ boundaries: CPML (10 cells, $0.27\;\mu\mathrm{m}$) $\mid$ Out-of-plane ($\pm z$: Periodic)"
-            )
-        elif "PEC" in s:
-            idx = min(pec_count, 2)
-            txt.set_text(pec_labels[idx])
-            txt.set_position((pec_positions[idx], -0.15))
-            txt.set_ha("center")
-            txt.set_va("top")
-            pec_count += 1
-        elif "CurrentSource" in s:
-            txt.set_position((0.0, y_src - 0.12))
-            txt.set_ha("center")
-            txt.set_va("top")
-        elif "Near2Far" in s:
-            txt.set_text("Near2FarMonitor + FluxMonitor")
-            txt.set_position((0.0, y_n2f + 0.12))
-            txt.set_ha("center")
-            txt.set_va("bottom")
-        elif "FluxMonitor" in s:
-            txt.set_text("")
-        elif "DFTMonitor" in s:
-            txt.set_text(r"DFTMonitor ($L = 3.5\lambda$)")
-            txt.set_position((0.0, y_dft + 0.10))
-            txt.set_ha("center")
-            txt.set_va("bottom")
-    _fix_unit_spaces_in_texts(ax)
-
-
 def plot_setup_schematic(
     output_path: str | Path,
     wavelength: float = DEFAULT_WAVELENGTH,
-) -> None:
-    """Generate the 2-panel labelled setup schematic and double-slit mesh zoom (Figure 0)."""
+) -> dict[str, Path]:
+    """Generate the two-figure setup layout and Markdown setup table via ``save_setup_figures``."""
+    out_p = Path(output_path)
+    out_dir = out_p.parent if out_p.suffix else out_p
     slit_width = 1.0 * wavelength
     slit_sep = 3.0 * wavelength
     screen_thickness = 0.15 * wavelength
@@ -1244,158 +1180,65 @@ def plot_setup_schematic(
         screen_thickness=screen_thickness,
         cpw=cpw,
     )
-    x_um = grid_info["x"] * 1e6
-    y_core_um = grid_info["y_core"] * 1e6
-    a_um = slit_width * 1e6
-    d_um = slit_sep * 1e6
-    b_um = (slit_sep - slit_width) * 1e6
-    t_um = screen_thickness * 1e6
-    x_outer_um = 0.5 * (d_um + a_um)
-    y_src_um = float(y_core_um[0] + 0.35 * wavelength * 1e6)
-    y_n2f_um = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
-    y_det_um = float(0.5 * t_um + 3.5 * wavelength * 1e6)
-
-    with figstyle.apply_style():
-        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=5.0)
-
-        # Panel (a): Full 2D Young's double-slit setup schematic
-        ax = axes[0]
-        schematic.plot_schematic(
-            solver,
-            ax=ax,
-            plane="xy",
-            unit="µm",
-            structures=boxes,
-            sources=[source],
-            monitors=monitors,
-            wavelength=wavelength,
-            show_mesh=False,
-            mesh_zoom=False,
-            show_wave_packet=False,
-            title=r"(a) Young's Double-Slit Setup ($\lambda = 0.60\;\mu\mathrm{m}$, $a = \lambda$, $d = 3\lambda$)",
-        )
-        _reposition_xy_schematic_labels(
-            ax,
-            x_left_jaw=0.5 * (float(x_um[0]) - x_outer_um),
-            x_right_jaw=0.5 * (x_outer_um + float(x_um[-1])),
-            y_src=y_src_um,
-            y_n2f=y_n2f_um,
-            y_dft=y_det_um,
-        )
-        # Dimension arrow for center-to-center separation d
-        ax.annotate(
-            "",
-            xy=(0.5 * d_um, 0.90),
-            xytext=(-0.5 * d_um, 0.90),
-            arrowprops={"arrowstyle": "<->", "color": figstyle.INK, "lw": 1.2},
-            zorder=9,
-        )
-        ax.text(
-            0.0,
-            0.96,
-            rf"Slit pitch $d = {d_um:.2f}\;\mu\mathrm{{m}}$ ($3\lambda$)",
-            ha="center",
-            va="bottom",
-            fontsize=8.4,
-            fontweight="bold",
-            color=figstyle.INK,
-            zorder=9,
-        )
-
-        # Panel (b): Zoomed graded FIT mesh around both slits and the central PEC bridge
-        ax_m = axes[1]
-        ax_m.set_facecolor("#F8FAFC")
-        schematic.draw_mesh(
-            ax_m,
-            solver,
-            plane="xy",
-            unit="µm",
-            every=1,
-            wavelength=wavelength,
-            zoom_inset=False,
-            show_cpw=True,
-            color="#334155",
-            alpha=0.55,
-            linewidth=0.6,
-        )
-        schematic.overlay_geometry(
-            ax_m,
-            solver,
-            plane="xy",
-            unit="µm",
-            structures=boxes,
-            show_boundaries=False,
-            show_materials=True,
-            fill_materials=True,
-            material_alpha=0.55,
-            outline_color=figstyle.INK,
-            label_materials=False,
-        )
-        ax_m.set_xlim(-1.60, 1.60)
-        ax_m.set_ylim(-0.34, 0.34)
-        ax_m.set_aspect("auto")
-        ax_m.set_xlabel("x [µm]")
-        ax_m.set_ylabel("y [µm]")
-        ax_m.set_title(r"(b) Snapped Mesh Zoom at Slits ($\pm d/2$) and PEC Bridge ($b = d - a$)")
-
-        # Annotate central PEC bridge and slits
-        ax_m.text(
-            0.0,
-            0.0,
-            f"PEC bridge\n$b = {b_um:.2f}$ µm ({grid_info['cells_across_bridge']} cells $\\geq 4$)",
-            ha="center",
-            va="center",
-            fontsize=8.0,
-            fontweight="bold",
-            color=figstyle.INK,
-            bbox={
-                "boxstyle": "round,pad=0.16",
-                "facecolor": figstyle.PAPER,
-                "edgecolor": "#94A3B8",
-                "alpha": 0.92,
+    boxes[0].name = "PEC screen (left jaw)"
+    boxes[1].name = "PEC central bridge (b = d - a)"
+    boxes[2].name = "PEC screen (right jaw)"
+    flux_wide, n2f, mon_det = monitors
+    w_ref = float(n2f.size[0])
+    y_n2f = float(n2f.center[1])
+    f0 = float(n2f.frequencies[0])
+    n2f_plane = {
+        "kind": "plane",
+        "type_name": "Near2FarMonitor",
+        "short_word": "N2F",
+        "desc": f"near-to-far plane (Near2FarMonitor, y = {y_n2f * 1e9:.0f}\u2009nm)",
+        "label": f"Near2FarMonitor (y = {y_n2f * 1e9:.0f}\u2009nm)",
+        "pos_str": f"y = {y_n2f * 1e9:.0f}\u2009nm",
+        "freq_str": f"f = {f0 * 1e-12:.1f}\u2009THz",
+        "frequencies": n2f.frequencies,
+        "h_bounds": (y_n2f, y_n2f),
+        "v_bounds": (-0.5 * w_ref, 0.5 * w_ref),
+    }
+    return schematic.save_setup_figures(
+        solver,
+        out_dir,
+        plane="yx",
+        unit="µm",
+        structures=boxes,
+        sources=[source],
+        monitors=[flux_wide, n2f_plane, mon_det],
+        wavelength=wavelength,
+        min_feature=screen_thickness,
+        title_geometry="2D double-slit diffraction setup: PEC jaws & bridge, plane-wave source, monitors & CPML (YX plane)",
+        title_mesh="2D double-slit diffraction setup: graded mesh zoom at slits & PEC bridge, wave packet & pulse",
+        variations=[
+            {
+                "name": "Task 1 (Missing orders & 2D near field)",
+                "details": (
+                    "a = 1.5λ₀ (900 nm), d/a ∈ {2, 3, 4} (d ∈ {1.80, 2.70, 3.60} µm), "
+                    "t = 0.14λ₀ (84 nm), E ⊥ slit edges (H_z, J_x source)"
+                ),
             },
-            zorder=9,
-        )
-        for sign, x_c in ((-1, -0.5 * d_um), (1, 0.5 * d_um)):
-            ax_m.annotate(
-                "",
-                xy=(x_c + 0.5 * a_um, 0.14),
-                xytext=(x_c - 0.5 * a_um, 0.14),
-                arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
-                zorder=9,
-            )
-            ax_m.text(
-                x_c,
-                0.16,
-                f"$a = {a_um:.2f}$ µm\n({grid_info['cells_across_slit']} cells $\\geq 4$)",
-                ha="center",
-                va="bottom",
-                fontsize=8.0,
-                fontweight="bold",
-                color="#0072B2",
-                zorder=9,
-            )
-        ax_m.annotate(
-            "",
-            xy=(-1.32, 0.5 * t_um),
-            xytext=(-1.32, -0.5 * t_um),
-            arrowprops={"arrowstyle": "<->", "color": "#D55E00", "lw": 1.3},
-            zorder=9,
-        )
-        ax_m.text(
-            -1.32,
-            -0.14,
-            f"Screen $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
-            ha="left",
-            va="top",
-            fontsize=8.3,
-            fontweight="bold",
-            color="#D55E00",
-            zorder=9,
-        )
-        _fix_unit_spaces_in_texts(ax_m)
-
-        figstyle.save(fig, output_path, close=True)
+            {
+                "name": "Task 2 (Fringe spacing scaling Δ(sin θ) = λ₀/d)",
+                "details": (
+                    "a = 0.8λ₀ (480 nm), d/λ₀ ∈ {1.8, 2.5, 3.2, 4.0}, "
+                    "t = 0.14λ₀ (84 nm), E ∥ slit edges (E_z, J_z source)"
+                ),
+            },
+            {
+                "name": "Task 3 (Inter-slit electromagnetic coupling)",
+                "details": (
+                    "a = 0.55λ₀ (330 nm), d/λ₀ ∈ [0.72, 2.25] (bridge b = d - a ∈ [0.17λ₀, 1.70λ₀]), "
+                    "t = 0.18λ₀ (108 nm), both E_z and H_z polarizations"
+                ),
+            },
+            {
+                "name": "Task 4 (Mesh convergence study)",
+                "details": "a = 1.0λ₀ (600 nm), d = 3.0λ₀ (1.80 µm), t = 0.15λ₀ (90 nm), cpw ∈ {12, 16, 20, 28, 36}",
+            },
+        ],
+    )
 
 
 def plot_missing_orders_and_nearfield(

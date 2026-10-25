@@ -294,8 +294,12 @@ def test_live_3d_fit_single_vs_coupled_mutation_and_s_scaling():
 
 
 def test_tutorial_figures_and_cli_list_tasks(capsys):
-    """Verify all 11 figures (including < 5 MB GIF) exist and CLI --list-tasks works."""
+    """Verify setup figures/tables, all 11 result figures (including < 5 MB GIF), and CLI --list-tasks."""
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_top.png",
+        "00b_setup_mesh_and_excitation_top.png",
         "01_geometry_3d_views.png",
         "02_mesh_cross_sections.png",
         "03_inductance_coupling_vs_separation.png",
@@ -316,6 +320,11 @@ def test_tutorial_figures_and_cli_list_tasks(capsys):
         assert size_b > 5_000, f"Figure {fname} is unexpectedly small ({size_b} B)"
         if fname.endswith(".gif"):
             assert size_b < 5 * 1024 * 1024, f"GIF {fname} exceeds 5 MB ({size_b} B)"
+
+    for tname in ("00_setup_table.md", "00_setup_table_top.md"):
+        tpath = fig_dir / tname
+        assert tpath.is_file(), f"Missing setup table {tpath}"
+        assert "| Category | Component / Face | Specification |" in tpath.read_text()
 
     nfc.main(["--list-tasks"])
     out_quick = capsys.readouterr().out

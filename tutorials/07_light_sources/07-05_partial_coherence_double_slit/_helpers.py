@@ -9,6 +9,8 @@ light (van Cittert-Zernike extended incoherent sources, Gaussian Schell-model
 Mercer coherent-mode decomposition, and broadband temporal coherence in 2D FIT).
 """
 
+from pathlib import Path
+
 import numpy as np
 from scipy.constants import c as c_light
 from scipy.special import eval_hermite, factorial, hankel2
@@ -1303,6 +1305,276 @@ def overlay_double_slit_geometry(
                 bbox=bbox_kw,
                 zorder=9,
             )
+
+
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+class _LineStart(float):
+    """Scalar coordinate that plots at its true value but centers its text tag at x = 0."""
+
+    def __mul__(self, other):
+        return _LineStart(float(self) * float(other))
+
+    def __rmul__(self, other):
+        return _LineStart(float(other) * float(self))
+
+    def __add__(self, other):
+        return 0.0 if float(other) > 1e-6 else float(self) + float(other)
+
+
+class _MonY(float):
+    """Vertical coordinate that plots at its true value and places its tag just below the line."""
+
+    def __mul__(self, other):
+        return _MonY(float(self) * float(other))
+
+    def __rmul__(self, other):
+        return _MonY(float(other) * float(self))
+
+    def __add__(self, other):
+        return float(self) - float(other)
+
+
+def save_double_slit_setup_figures(
+    fig_dir: str | Path,
+) -> dict[str, dict[str, Path]]:
+    """Render both setup figure pairs (Method A VCZ strip & Methods B/C GSM + Drude Ag) via ``save_setup_figures``.
+
+    Parameters
+    ----------
+    fig_dir : str or Path
+        Output directory for ``00a_setup_geometry*.png``, ``00b_setup_mesh_and_excitation*.png``,
+        and ``00_setup_table*.md``.
+
+    Returns
+    -------
+    dict
+        Mapping ``{"vcz": paths_vcz, "gsm_silver": paths_ag}``.
+    """
+    from types import SimpleNamespace
+    from wakis import schematic
+    from wakis.field_monitors import DFTMonitor
+    from wakis.sources import CurrentSource, GaussianSource
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    wavelength = 0.50e-6
+    f0 = c_light / wavelength
+
+    # 1. Method A: Extended Incoherent Strip Source (van Cittert-Zernike, PEC screen)
+    _, grid_vcz, boxes_vcz = build_double_slit_solver(
+        x_bounds=(-5.0e-6, 5.0e-6),
+        y_bounds=(-8.5e-6, 6.4e-6),
+        wavelength=wavelength,
+        cpw=20,
+        n_pml=8,
+        slit_sep=2.00e-6,
+        slit_width=0.40e-6,
+        screen_thickness=0.20e-6,
+        screen_material="pec",
+        grid_only=True,
+    )
+    solver_vcz = SimpleNamespace(
+        grid=grid_vcz,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=8,
+    )
+    for b in boxes_vcz:
+        b.name = "PEC double-slit screen (t = 200 nm)"
+
+    dz_vcz = float(grid_vcz.z[-1] - grid_vcz.z[0])
+    pulse_vcz = GaussianSource(f0, 0.20 * f0)
+    dip_obj = CurrentSource(
+        pulse_vcz,
+        component="z",
+        center=(0.0, -8.0e-6, 0.0),
+        size=(0.0, 0.0, dz_vcz),
+    )
+    mons_vcz_objs = [
+        DFTMonitor([f0], components=("Ez",), center=(0.0, 0.0, 0.0), size=(9.2e-6, 0.0, 0.0)),
+        DFTMonitor([f0], components=("Ez",), center=(0.0, 6.0e-6, 0.0), size=(9.2e-6, 0.0, 0.0)),
+    ]
+    info_vcz = schematic.extract_setup_info(
+        solver_vcz,
+        plane="xy",
+        structures=boxes_vcz,
+        sources=[dip_obj],
+        monitors=mons_vcz_objs,
+    )
+
+    xs_rep = np.array([0.0, -1.8e-6, -0.9e-6, 0.9e-6, 1.8e-6])
+    ys_rep = np.full_like(xs_rep, -8.0e-6)
+    src_vcz = dict(info_vcz["sources"][0])
+    src_vcz["h_bounds"] = (_RepCoord(xs_rep), 0.0)
+    src_vcz["v_bounds"] = (_RepCoord(ys_rep), -8.0e-6)
+    src_vcz["short_word"] = "VCZ strip (37)"
+    src_vcz["polarization"] = "J_z (TM)"
+    src_vcz["pos_str"] = "y = -8.00 µm, N_s = 37 dipoles in x ∈ [-1.80, +1.80] µm (5 shown)"
+    src_vcz["label"] = (
+        "Extended incoherent strip source: N_s = 37 uncorrelated J_z line dipoles across D ≤ 3.60 µm (5 rep. shown)"
+    )
+    src_vcz["desc"] = src_vcz["label"]
+
+    mon_slit = dict(info_vcz["monitors"][0])
+    mon_slit["short_word"] = "Slit DFT"
+    mon_slit["pos_str"] = "y = 0.00 µm, x ∈ [-4.60, +4.60] µm (slits at x = ±1.00 µm, a = 0.40 µm)"
+    mon_slit["label"] = (
+        "Slit-plane DFTMonitor (y = 0.00 µm; records E_z at slits x = ±1.00 µm for μ_12)"
+    )
+    mon_slit["desc"] = mon_slit["label"]
+
+    mon_det = dict(info_vcz["monitors"][1])
+    mon_det["v_bounds"] = (_MonY(6.0e-6), 6.0e-6)
+    mon_det["short_word"] = "Detector DFT"
+    mon_det["pos_str"] = "y = +6.00 µm, x ∈ [-4.60, +4.60] µm (L_2 = 6.00 µm, Λ_f = 1.50 µm)"
+    mon_det["label"] = (
+        "Downstream detector DFTMonitor (y = +6.00 µm; records interference profile I(x))"
+    )
+    mon_det["desc"] = mon_det["label"]
+
+    variations_vcz = [
+        {
+            "name": "Tasks 0–1 — Method A VCZ strip (`vcz_batch_a`, `vcz_batch_b`)",
+            "notes": "N_s = 37 uncorrelated J_z line dipoles (19 symmetric runs at cpw = 20) spanning D ∈ [0, 3.60] µm (D_0 = 2.00 µm)",
+        },
+        {
+            "name": "Tasks 6–7 — Spatial mesh convergence (`convergence_coarse`, `convergence_ref`)",
+            "notes": "PEC double-slit mesh sweep cpw ∈ {10, 14, 20} vs. cpw = 40 reference",
+        },
+    ]
+
+    paths_vcz = schematic.save_setup_figures(
+        solver_vcz,
+        fig_dir,
+        plane="xy",
+        structures=boxes_vcz,
+        material_names={"background": "Vacuum / Air (n = 1.00)"},
+        sources=[src_vcz],
+        monitors=[mon_slit, mon_det],
+        wavelength=wavelength,
+        min_feature=0.20e-6,
+        title_geometry="Young's Double Slit — Method A: Extended Incoherent Strip Source (N_s = 37 Dipoles)",
+        title_mesh="Young's Double Slit (Method A): Interface-Snapped Mesh & TM Line-Dipole Excitation",
+        variations=variations_vcz,
+    )
+
+    # 2. Methods B & C: GSM Mercer Eigenmodes & Dispersive Drude Silver Screen
+    ag_mat, skin_e_m = silver_drude_material(wavelength)
+    _, grid_ag, boxes_ag = build_double_slit_solver(
+        x_bounds=(-4.5e-6, 4.5e-6),
+        y_bounds=(-1.5e-6, 6.3e-6),
+        wavelength=wavelength,
+        cpw=20,
+        n_pml=8,
+        slit_sep=2.00e-6,
+        slit_width=0.40e-6,
+        screen_thickness=0.20e-6,
+        screen_material="silver",
+        cells_per_skin_depth=10.0,
+        grid_only=True,
+    )
+    solver_ag = SimpleNamespace(
+        grid=grid_ag,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=8,
+    )
+    for b in boxes_ag:
+        b.material = ag_mat
+        b.name = "Drude Ag screen (δ_E = 28.8 nm)"
+
+    dz_ag = float(grid_ag.z[-1] - grid_ag.z[0])
+    pulse_bb = GaussianSource(f0, 0.22 * f0)
+    src_gsm_obj = CurrentSource(
+        pulse_bb,
+        component="z",
+        center=(0.0, -1.0e-6, 0.0),
+        size=(8.0e-6, 0.0, dz_ag),
+    )
+    src_gsm_obj.normal = 1
+    mons_ag_objs = [
+        DFTMonitor([f0], components=("Ez",), center=(0.0, 0.0, 0.0), size=(8.4e-6, 0.0, 0.0)),
+        DFTMonitor([f0], components=("Ez",), center=(0.0, 6.0e-6, 0.0), size=(8.4e-6, 0.0, 0.0)),
+    ]
+    info_ag = schematic.extract_setup_info(
+        solver_ag,
+        plane="xy",
+        structures=boxes_ag,
+        sources=[src_gsm_obj],
+        monitors=mons_ag_objs,
+    )
+
+    src_gsm = dict(info_ag["sources"][0])
+    src_gsm["h_bounds"] = (_LineStart(-4.0e-6), 4.0e-6)
+    src_gsm["short_word"] = "GSM modes (+y)"
+    src_gsm["direction"] = "+y"
+    src_gsm["k_vec"] = (0.0, 1.0, 0.0)
+    src_gsm["polarization"] = "J_z (TM)"
+    src_gsm["pos_str"] = "y = -1.00 µm, x ∈ [-4.00, +4.00] µm (Hermite-Gaussian w_m = 1.40 µm)"
+    src_gsm["label"] = (
+        "Hermite-Gaussian Mercer mode & broadband line source Φ_m(x) (y = -1.00 µm, M = 12 modes, w_m = 1.40 µm)"
+    )
+    src_gsm["desc"] = src_gsm["label"]
+
+    mon_slit_ag = dict(info_ag["monitors"][0])
+    mon_slit_ag["short_word"] = "Slit DFT"
+    mon_slit_ag["pos_str"] = "y = 0.00 µm, x ∈ [-4.20, +4.20] µm (81 broadband freqs in 0.72–1.28 f₀)"
+    mon_slit_ag["label"] = (
+        "Slit-plane DFTMonitor (y = 0.00 µm; modal amplitude & broadband transfer normalization)"
+    )
+    mon_slit_ag["desc"] = mon_slit_ag["label"]
+
+    mon_det_ag = dict(info_ag["monitors"][1])
+    mon_det_ag["v_bounds"] = (_MonY(6.0e-6), 6.0e-6)
+    mon_det_ag["short_word"] = "Detector DFT"
+    mon_det_ag["pos_str"] = "y = +6.00 µm, x ∈ [-4.20, +4.20] µm (81 broadband freqs in 0.72–1.28 f₀)"
+    mon_det_ag["label"] = (
+        "Downstream detector DFTMonitor (y = +6.00 µm; GSM modal & Wiener-Khinchin polychromatic fringes)"
+    )
+    mon_det_ag["desc"] = mon_det_ag["label"]
+
+    variations_ag = [
+        {
+            "name": "Tasks 2–3 — Method B & C GSM Mercer modes (`gsm_modes_even`, `gsm_modes_odd`)",
+            "notes": "M = 12 Hermite-Gaussian modes (m = 0..11, w_m = 1.40 µm) + 81-frequency broadband DFT at cpw = 26",
+        },
+        {
+            "name": "Task 4 — Dispersive Drude Ag screen (`silver_dispersive`)",
+            "notes": "Rakic Ag at 500 nm (ε = -7.632 - 0.731i, δ_E = 28.77 nm) with Δ_min = 2.86 nm (10.07 cells/δ_E)",
+        },
+        {
+            "name": "Task 5 — Ag skin-depth resolution ladder (`silver_skin_depth_demo`, demo=True)",
+            "notes": "Under-resolved uniform (0.58, 1.15 cells/δ_E) vs. graded collar (2, 4, 6, 8, 10 cells/δ_E)",
+        },
+    ]
+
+    paths_ag = schematic.save_setup_figures(
+        solver_ag,
+        fig_dir,
+        plane="xy",
+        structures=boxes_ag,
+        material_names={"background": "Vacuum / Air (n = 1.00)"},
+        sources=[src_gsm],
+        monitors=[mon_slit_ag, mon_det_ag],
+        wavelength=wavelength,
+        min_feature=skin_e_m,
+        title_geometry="Young's Double Slit — Methods B & C: GSM Mercer Eigenmodes & Drude Ag Screen",
+        title_mesh="Young's Double Slit (Methods B & C): Graded Ag Skin-Depth Mesh & Broadband Excitation",
+        variations=variations_ag,
+        suffix="_gsm_silver",
+    )
+
+    return {"vcz": paths_vcz, "gsm_silver": paths_ag}
+
 
 
 

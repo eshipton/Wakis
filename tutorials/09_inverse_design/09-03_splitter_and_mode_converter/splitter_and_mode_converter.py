@@ -83,6 +83,45 @@
 #    reproduces the stored modal S-parameters (`wakis_r1_modal_S2`) and dense 67-point
 #    spectra (`dense_S`).
 #
+# ### Simulation setup
+#
+# The setup figures below display the $3.44\,\mu\text{m}\times 2.80\,\mu\text{m}$ ($344\times 280$ cells at $\Delta x = 10\text{ nm}$, surrounded by 20-cell / $200\text{ nm}$ CPML on $\pm x, \pm y$) simulation domains for both `ceviche_power_splitter` ($1\times 2$ $\text{TM}_0$ power splitter with upper $S_{31}$ and lower $S_{21}$ objective monitors) and `ceviche_mode_converter` ($\text{TM}_0 \to \text{TM}_1$ spatial mode converter with mode-1 $S_{21}$ objective monitor), showing the hatched $1.60\,\mu\text{m}\times 1.60\,\mu\text{m}$ ($160\times 160\text{ px}$) design region $\Omega_d$ for the initial greyscale density (`_initial`) and Round-2 STE binary designs (`_final`).
+#
+# ![Splitter initial setup geometry](figures/00a_setup_geometry_initial.png)
+# ![Splitter initial mesh and excitation](figures/00b_setup_mesh_and_excitation_initial.png)
+# ![Splitter final setup geometry](figures/00a_setup_geometry_final.png)
+# ![Splitter final mesh and excitation](figures/00b_setup_mesh_and_excitation_final.png)
+# ![Mode converter initial setup geometry](figures/00a_setup_geometry_mode_converter_initial.png)
+# ![Mode converter initial mesh and excitation](figures/00b_setup_mesh_and_excitation_mode_converter_initial.png)
+# ![Mode converter final setup geometry](figures/00a_setup_geometry_mode_converter_final.png)
+# ![Mode converter final mesh and excitation](figures/00b_setup_mesh_and_excitation_mode_converter_final.png)
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 3.44 µm × 2.80 µm × 10 nm (z ∈ [-5 nm, 5 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 344 × 280 × 1 (96320 cells) |
+# | Discretization | Δx & resolution | Δ_min = 10 nm, 36.1 cells/λ (in n_max = 3.50), 8.0 cells across feature (80 nm) |
+# | Boundary | -x face | CPML (20 cells, 200 nm) |
+# | Boundary | +x face | CPML (20 cells, 200 nm) |
+# | Boundary | -y face | CPML (20 cells, 200 nm) |
+# | Boundary | +y face | CPML (20 cells, 200 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding (ε = 2.25, n = 1.50) (isotropic) |
+# | Material | Region 1: Input Si waveguide (ε = 12.25, n = 3.50, w = 400 nm) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [5 nm, 920 nm] (d = 915 nm) |
+# | Material | Region 2: Upper output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [2.52 µm, 3.44 µm] (d = 915 nm) |
+# | Material | Region 3: Lower output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [2.52 µm, 3.44 µm] (d = 915 nm) |
+# | Material | Region 4: Design region Ω_d (160×160 px, 1.60 µm × 1.60 µm, ε ∈ {2.25, 12.25}) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [920 nm, 2.52 µm] (d = 1.60 µm) |
+# | Source | 1 · PolarizedModeSource | pos: x = 0.30 µm, y ∈ [0.68, 2.12] µm, pol: TM₀ (E_z), pulse: f₀ = 234.2 THz, Δf = 14.05 THz |
+# | Monitor | 2 · PolarizedModeMonitor | Port 1 PolarizedModeMonitor (S₁₁ reflection, TM₀ E_z), pos: x = 0.25 µm, y ∈ [0.68, 2.12] µm, freqs: 6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm) |
+# | Monitor | 3 · PolarizedModeMonitor | Port 2 Lower-Arm Objective PolarizedModeMonitor (S₂₁ transmission, TM₀ E_z), pos: x = 3.21 µm, y ∈ [0.20, 1.60] µm, freqs: 6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm) |
+# | Monitor | 4 · PolarizedModeMonitor | Port 3 Upper-Arm Objective PolarizedModeMonitor (S₃₁ transmission, TM₀ E_z), pos: x = 3.21 µm, y ∈ [1.20, 2.60] µm, freqs: 6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm) |
+# | Variation | Splitter initial (_initial) | Stage-1 iter 0 initial density (mean ρ ≈ 0.49) in 160 × 160 design box Ω_d (1.60 µm × 1.60 µm) |
+# | Variation | Splitter final (_final) | Stage-2 STE binary design (ste_beta64:11, 8/8 px = 80 nm, official eval_metric = +0.0682) from round2_splitter/design.npy |
+# | Variation | Mode converter (_mode_converter_*) | TM₀ → TM₁ spatial mode converter (official eval_metric = +0.3122, 8/8 px = 80 nm) from round2_mode_converter/design.npy |
+#
 # ---
 #
 # ## Physics, Evaluation Metric & Round-1 $\to$ Round-2 Pipeline
@@ -506,6 +545,7 @@ def simulate_ceviche_challenge_wakis(
             grid,
             bc_low=["cpml", "cpml", "periodic"],
             bc_high=["cpml", "cpml", "periodic"],
+            bg=[2.25, 1.0, 0.0],
             n_pml=npml,
             verbose=0,
         )
@@ -980,9 +1020,517 @@ def run_task_4_optional_invrs_gym() -> dict:
     return {"installed": True, "version": getattr(invrs_gym, "__version__", "unknown")}
 
 
-def plot_all() -> list[Path]:
-    """Generate all 8 tutorial figures and the design-evolution GIF in ``figures/``."""
+def _plot_00_setup_schematics() -> list[Path]:
+    """Build live Wakis 344x280 (10 nm) solvers from stored Round-2 data and save 00a/00b/00_setup_table.md."""
+    from matplotlib.patches import Rectangle
+    from scipy.constants import epsilon_0 as EPS_0
+
+    from wakis import figstyle, schematic
+    from wakis.templates.shapes import Box
+
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    sp_fc = np.load(DATA_DIR / "round2_splitter" / "fields_compact.npz")
+    mc_fc = np.load(DATA_DIR / "round2_mode_converter" / "fields_compact.npz")
+    sp_snaps = np.load(DATA_DIR / "round2_splitter" / "snapshots_thinned.npz")
+    mc_snaps = np.load(DATA_DIR / "round2_mode_converter" / "snapshots_thinned.npz")
+    sp_des_final = np.load(DATA_DIR / "round2_splitter" / "design.npy").astype(np.float64)
+    if sp_des_final.ndim == 3:
+        sp_des_final = sp_des_final[:, :, 0]
+    mc_des_final = np.load(DATA_DIR / "round2_mode_converter" / "design.npy").astype(np.float64)
+    if mc_des_final.ndim == 3:
+        mc_des_final = mc_des_final[:, :, 0]
+    sp_des_init = sp_snaps["designs"][0].astype(np.float64)
+    mc_des_init = mc_snaps["designs"][0].astype(np.float64)
+
+    nx, ny = 344, 280
+    dx = 10e-9
+    lx, ly = nx * dx, ny * dx
+    npml = 20
+
+    eval_wl_um = np.array([1.265, 1.270, 1.275, 1.285, 1.290, 1.295], dtype=np.float64)
+    dense_wl_um = sp_fc["dense_wavelengths_nm"].astype(np.float64) * 1e-3
+    freqs = C0 / (eval_wl_um * 1e-6)
+    dense_freqs = C0 / (dense_wl_um * 1e-6)
+    all_freqs = np.concatenate([freqs, dense_freqs])
+    f0 = float(np.mean(freqs))
+    df = max(float(np.ptp(all_freqs)) * 0.75, 0.06 * f0)
+    pulse_obj = GaussianSource(f0, df)
+    pulse_meta = schematic._extract_pulse_metadata(pulse_obj)
+
+    def _build_solver_with_design(fc_npz, des_2d: np.ndarray) -> wakis.SolverFIT3D:
+        eps_raw = fc_npz["eps"].astype(np.float64) * float(fc_npz["eps_scale"])
+        eps_2d = eps_raw[:nx, :ny].copy()
+        eps_2d[92:252, 60:220] = 2.25 + (12.25 - 2.25) * np.clip(des_2d, 0.0, 1.0)
+        grid = wakis.GridFIT3D(0.0, lx, 0.0, ly, -0.5 * dx, 0.5 * dx, nx, ny, 1, verbose=0)
+        solver = wakis.SolverFIT3D(
+            grid,
+            bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"],
+            bg=[2.25, 1.0, 0.0],
+            n_pml=npml,
+            verbose=0,
+        )
+        eps_pad = np.pad(eps_2d, ((0, 1), (0, 1)), mode="edge")
+        target_shape = solver.ieps.to_matrix("z").shape
+        ieps = np.broadcast_to(
+            1.0 / (eps_pad[: target_shape[0], : target_shape[1], None] * EPS_0),
+            target_shape,
+        ).copy()
+        for c in ("x", "y", "z"):
+            solver.ieps.from_matrix(ieps, c)
+        solver.update_tensors("ieps")
+        return solver
+
+    variants = [
+        (
+            "",
+            "splitter",
+            sp_fc,
+            sp_des_final,
+            "Design region Ω_d (160×160 px, 1.60 µm × 1.60 µm, ε ∈ {2.25, 12.25})",
+            "Design region Ω_d\n(hatched, 1.60 µm × 1.60 µm)",
+            "ceviche_power_splitter — 2D Adjoint Inverse-Design Setup (10 nm Grid)",
+            "Discretization (344×280 10 nm Mesh & 1× Zoom) and O-Band Excitation",
+        ),
+        (
+            "_initial",
+            "splitter",
+            sp_fc,
+            sp_des_init,
+            "Design region Ω_d (initial ρ ≈ 0.49, 1.60 µm × 1.60 µm)",
+            "Design region Ω_d\n(initial ρ ≈ 0.49)",
+            "ceviche_power_splitter Setup — Initial Design (Stage 1, iter 0)",
+            "Discretization (10 nm Challenge Grid & 1× Zoom) and O-Band Excitation — Initial",
+        ),
+        (
+            "_final",
+            "splitter",
+            sp_fc,
+            sp_des_final,
+            "Design region Ω_d (final binary 8/8 px = 80 nm, ε ∈ {2.25, 12.25})",
+            "Design region Ω_d\n(final 8/8 px = 80 nm)",
+            "ceviche_power_splitter Setup — Final Round-2 Design (+0.0682, 8/8 px)",
+            "Discretization (10 nm Challenge Grid & 1× Zoom) and O-Band Excitation — Final",
+        ),
+        (
+            "_mode_converter_initial",
+            "modeconv",
+            mc_fc,
+            mc_des_init,
+            "Design region Ω_d (initial ρ ≈ 0.49, 1.60 µm × 1.60 µm)",
+            "Design region Ω_d\n(initial ρ ≈ 0.49)",
+            "ceviche_mode_converter Setup — Initial Design (Stage 1, iter 0)",
+            "Mode Converter Discretization (10 nm Mesh & 1× Zoom) and Excitation — Initial",
+        ),
+        (
+            "_mode_converter_final",
+            "modeconv",
+            mc_fc,
+            mc_des_final,
+            "Design region Ω_d (final binary 8/8 px = 80 nm, ε ∈ {2.25, 12.25})",
+            "Design region Ω_d\n(final 8/8 px = 80 nm)",
+            "ceviche_mode_converter Setup — Final Round-2 Design (+0.3122, 8/8 px)",
+            "Mode Converter Discretization (10 nm Mesh & 1× Zoom) and Excitation — Final",
+        ),
+    ]
+
+    saved_paths: list[Path] = []
+    zoom_bounds = (0.84e-6, 1.24e-6, 1.18e-6, 1.62e-6)
+
+    for suffix, dev_kind, fc_npz, des_2d, des_struct_name, des_box_lbl, title_a, title_b in variants:
+        solver = _build_solver_with_design(fc_npz, des_2d)
+        in_wg_box = Box(
+            center=(0.5 * (0.005e-6 + 0.92e-6), 1.40e-6, 0.0),
+            size=(0.92e-6 - 0.005e-6, 0.40e-6, dx),
+            material=12.25,
+        )
+        design_box_struct = Box(
+            center=(1.72e-6, 1.40e-6, 0.0),
+            size=(1.60e-6, 1.60e-6, dx),
+            material=12.25,
+        )
+        if dev_kind == "splitter":
+            out_upper_box = Box(
+                center=(0.5 * (2.52e-6 + 3.435e-6), 1.88e-6, 0.0),
+                size=(3.435e-6 - 2.52e-6, 0.40e-6, dx),
+                material=12.25,
+            )
+            out_lower_box = Box(
+                center=(0.5 * (2.52e-6 + 3.435e-6), 0.92e-6, 0.0),
+                size=(3.435e-6 - 2.52e-6, 0.40e-6, dx),
+                material=12.25,
+            )
+            structs = [in_wg_box, out_upper_box, out_lower_box, design_box_struct]
+            mat_names = {
+                "background": "SiO₂ cladding (ε = 2.25, n = 1.50)",
+                "region_0": "Input Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+                "region_1": "Upper output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+                "region_2": "Lower output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+                "region_3": des_struct_name,
+            }
+            sources_s = [
+                {
+                    "kind": "sheet",
+                    "type_name": "PolarizedModeSource",
+                    "short_word": "ModeSrc",
+                    "label": "Port 1 PolarizedModeSource (TM₀ E_z, +x)",
+                    "desc": "Port 1 PolarizedModeSource (TM₀ E_z, +x) at x = 0.30 µm, y ∈ [0.68, 2.12] µm",
+                    "pos_str": "x = 0.30 µm, y ∈ [0.68, 2.12] µm",
+                    "polarization": "TM₀ (E_z)",
+                    "h_bounds": (0.295e-6, 0.295e-6),
+                    "v_bounds": (0.68e-6, 2.12e-6),
+                    "e_vec": (0.0, 0.0, 1.0),
+                    "k_vec": (1.0, 0.0, 0.0),
+                    "h_vec": (0.0, -1.0, 0.0),
+                    "pulse": pulse_meta,
+                }
+            ]
+            monitors_s = [
+                {
+                    "kind": "plane",
+                    "type_name": "PolarizedModeMonitor",
+                    "short_word": "S₁₁ mon",
+                    "label": "Port 1 PolarizedModeMonitor (S₁₁ reflection, TM₀ E_z)",
+                    "desc": "Port 1 PolarizedModeMonitor (S₁₁) at x = 0.25 µm, y ∈ [0.68, 2.12] µm",
+                    "pos_str": "x = 0.25 µm, y ∈ [0.68, 2.12] µm",
+                    "frequencies": freqs,
+                    "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+                    "h_bounds": (0.245e-6, 0.245e-6),
+                    "v_bounds": (0.68e-6, 2.12e-6),
+                },
+                {
+                    "kind": "plane",
+                    "type_name": "PolarizedModeMonitor",
+                    "short_word": "S₂₁ obj",
+                    "label": "Port 2 Lower-Arm Objective PolarizedModeMonitor (S₂₁ transmission, TM₀ E_z)",
+                    "desc": "Port 2 Objective PolarizedModeMonitor (lower arm S₂₁) at x = 3.21 µm, y ∈ [0.20, 1.60] µm",
+                    "pos_str": "x = 3.21 µm, y ∈ [0.20, 1.60] µm",
+                    "frequencies": freqs,
+                    "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+                    "h_bounds": (3.205e-6, 3.205e-6),
+                    "v_bounds": (0.20e-6, 1.60e-6),
+                },
+                {
+                    "kind": "plane",
+                    "type_name": "PolarizedModeMonitor",
+                    "short_word": "S₃₁ obj",
+                    "label": "Port 3 Upper-Arm Objective PolarizedModeMonitor (S₃₁ transmission, TM₀ E_z)",
+                    "desc": "Port 3 Objective PolarizedModeMonitor (upper arm S₃₁) at x = 3.21 µm, y ∈ [1.20, 2.60] µm",
+                    "pos_str": "x = 3.21 µm, y ∈ [1.20, 2.60] µm",
+                    "frequencies": freqs,
+                    "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+                    "h_bounds": (3.205e-6, 3.205e-6),
+                    "v_bounds": (1.20e-6, 2.60e-6),
+                },
+            ]
+            variations = [
+                {
+                    "name": "Splitter initial (_initial)",
+                    "details": "Stage-1 iter 0 initial density (mean ρ ≈ 0.49) in 160 × 160 design box Ω_d (1.60 µm × 1.60 µm)",
+                },
+                {
+                    "name": "Splitter final (_final)",
+                    "details": "Stage-2 STE binary design (ste_beta64:11, 8/8 px = 80 nm, official eval_metric = +0.0682) from round2_splitter/design.npy",
+                },
+                {
+                    "name": "Mode converter (_mode_converter_*)",
+                    "details": "TM₀ → TM₁ spatial mode converter (official eval_metric = +0.3122, 8/8 px = 80 nm) from round2_mode_converter/design.npy",
+                },
+            ]
+        else:
+            out_wg_box = Box(
+                center=(0.5 * (2.52e-6 + 3.435e-6), 1.40e-6, 0.0),
+                size=(3.435e-6 - 2.52e-6, 0.40e-6, dx),
+                material=12.25,
+            )
+            structs = [in_wg_box, out_wg_box, design_box_struct]
+            mat_names = {
+                "background": "SiO₂ cladding (ε = 2.25, n = 1.50)",
+                "region_0": "Input Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+                "region_1": "Output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+                "region_2": des_struct_name,
+            }
+            sources_s = [
+                {
+                    "kind": "sheet",
+                    "type_name": "PolarizedModeSource",
+                    "short_word": "ModeSrc",
+                    "label": "Port 1 PolarizedModeSource (TM₀ E_z, +x)",
+                    "desc": "Port 1 PolarizedModeSource (TM₀ E_z, +x) at x = 0.30 µm, y ∈ [0.68, 2.12] µm",
+                    "pos_str": "x = 0.30 µm, y ∈ [0.68, 2.12] µm",
+                    "polarization": "TM₀ (E_z)",
+                    "h_bounds": (0.295e-6, 0.295e-6),
+                    "v_bounds": (0.68e-6, 2.12e-6),
+                    "e_vec": (0.0, 0.0, 1.0),
+                    "k_vec": (1.0, 0.0, 0.0),
+                    "h_vec": (0.0, -1.0, 0.0),
+                    "pulse": pulse_meta,
+                }
+            ]
+            monitors_s = [
+                {
+                    "kind": "plane",
+                    "type_name": "PolarizedModeMonitor",
+                    "short_word": "S₁₁ mon",
+                    "label": "Port 1 PolarizedModeMonitor (S₁₁ reflection, TM₀ E_z)",
+                    "desc": "Port 1 PolarizedModeMonitor (S₁₁) at x = 0.25 µm, y ∈ [0.68, 2.12] µm",
+                    "pos_str": "x = 0.25 µm, y ∈ [0.68, 2.12] µm",
+                    "frequencies": freqs,
+                    "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+                    "h_bounds": (0.245e-6, 0.245e-6),
+                    "v_bounds": (0.68e-6, 2.12e-6),
+                },
+                {
+                    "kind": "plane",
+                    "type_name": "PolarizedModeMonitor",
+                    "short_word": "TM₁ obj",
+                    "label": "Port 2 Objective PolarizedModeMonitor (S₂₁ TM₀ → TM₁ conversion, mode 1 E_z)",
+                    "desc": "Port 2 Objective PolarizedModeMonitor (TM₁ S₂₁) at x = 3.21 µm, y ∈ [0.68, 2.12] µm",
+                    "pos_str": "x = 3.21 µm, y ∈ [0.68, 2.12] µm",
+                    "frequencies": freqs,
+                    "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+                    "h_bounds": (3.205e-6, 3.205e-6),
+                    "v_bounds": (0.68e-6, 2.12e-6),
+                },
+            ]
+            variations = [
+                {
+                    "name": "Mode converter initial (_mode_converter_initial)",
+                    "details": "Stage-1 iter 0 initial density (mean ρ ≈ 0.49) in 160 × 160 design box Ω_d (1.60 µm × 1.60 µm)",
+                },
+                {
+                    "name": "Mode converter final (_mode_converter_final)",
+                    "details": "Stage-2 STE binary design (ste_beta64:2, 8/8 px = 80 nm, official eval_metric = +0.3122) from round2_mode_converter/design.npy",
+                },
+            ]
+
+        res = schematic.save_setup_figures(
+            solver,
+            FIG_DIR,
+            prefix="00",
+            suffix=suffix,
+            plane="xy",
+            structures=structs,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=1265e-9,
+            min_feature=80e-9,
+            title_geometry=title_a,
+            title_mesh=title_b,
+            variations=variations,
+        )
+
+        struct_subset = structs[:-1]
+        fig_a, ax_a = schematic.plot_schematic(
+            solver,
+            plane="xy",
+            structures=struct_subset,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=1265e-9,
+            title=title_a,
+            width_in=7.6,
+            height_in=4.9,
+        )
+        eps_des = 2.25 + (12.25 - 2.25) * des_2d.T
+        ax_a.imshow(
+            eps_des,
+            origin="lower",
+            extent=[0.92, 2.52, 0.60, 2.20],
+            cmap="Blues",
+            vmin=2.25,
+            vmax=12.25,
+            alpha=0.84,
+            zorder=3.2,
+            interpolation="nearest",
+        )
+        ax_a.add_patch(
+            Rectangle(
+                (0.92, 0.60),
+                1.60,
+                1.60,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.6,
+                ls="--",
+                zorder=5.4,
+            )
+        )
+        ax_a.text(
+            1.72,
+            2.26,
+            des_box_lbl,
+            ha="center",
+            va="bottom",
+            fontsize=7.8,
+            fontweight="bold",
+            color="#5B21B6",
+            bbox=dict(boxstyle="round,pad=0.16", facecolor="#F5F3FF", edgecolor="#6D28D9", lw=0.8, alpha=0.94),
+            zorder=9,
+        )
+        for txt_obj in ax_a.texts:
+            t_str = txt_obj.get_text()
+            role = getattr(txt_obj, "_schematic_role", "")
+            if t_str.startswith("1 ·"):
+                txt_obj.set_position((0.35, 1.92))
+                txt_obj.set_fontsize(8.0)
+                txt_obj.set_ha("left")
+                txt_obj.set_va("center")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif t_str.startswith("2 ·"):
+                txt_obj.set_position((0.35, 0.62))
+                txt_obj.set_fontsize(8.0)
+                txt_obj.set_ha("left")
+                txt_obj.set_va("top")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif t_str.startswith("3 ·"):
+                if dev_kind == "splitter":
+                    txt_obj.set_position((3.14, 0.42))
+                    txt_obj.set_fontsize(8.0)
+                    txt_obj.set_ha("right")
+                    txt_obj.set_va("center")
+                    txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                    txt_obj.set_zorder(9)
+                else:
+                    txt_obj.set_position((3.14, 1.92))
+                    txt_obj.set_fontsize(8.0)
+                    txt_obj.set_ha("right")
+                    txt_obj.set_va("center")
+                    txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                    txt_obj.set_zorder(9)
+            elif t_str.startswith("4 ·"):
+                txt_obj.set_position((3.14, 1.96))
+                txt_obj.set_fontsize(8.0)
+                txt_obj.set_ha("right")
+                txt_obj.set_va("center")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif role == "boundary_bottom":
+                txt_obj.set_position((0.85, -0.08))
+                txt_obj.set_ha("center")
+                txt_obj.set_va("top")
+        ax_a.spines["bottom"].set_position(("outward", 24))
+
+        leg = ax_a.get_legend()
+        if leg is not None:
+            handles = list(leg.legend_handles)
+            labels = [t.get_text() for t in leg.get_texts()]
+            ins_idx = min(len(handles), len(struct_subset) + 1)
+            handles.insert(
+                ins_idx,
+                Rectangle(
+                    (0, 0),
+                    1,
+                    1,
+                    facecolor="#DBEAFE",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.2,
+                    ls="--",
+                ),
+            )
+            labels.insert(ins_idx, f"{des_struct_name} (d = 1.60 µm)")
+            ax_a.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.28),
+                ncol=2,
+                frameon=False,
+                fontsize=8.4,
+                handlelength=1.8,
+                columnspacing=1.1,
+            )
+        figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+        # Enhance 00b: overlay design array and hatched design region box on mesh panel & zoom inset
+        fig_b, axes_b = schematic.plot_mesh_and_excitation(
+            solver,
+            plane="xy",
+            structures=struct_subset,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            mesh_every=8,
+            zoom_bounds=zoom_bounds,
+            wavelength=1265e-9,
+            min_feature=80e-9,
+            title=title_b,
+            width_in=7.6,
+            height_in=5.6,
+        )
+        ax_mesh = axes_b[0]
+        ax_mesh.imshow(
+            eps_des,
+            origin="lower",
+            extent=[0.92, 2.52, 0.60, 2.20],
+            cmap="Blues",
+            vmin=2.25,
+            vmax=12.25,
+            alpha=0.74,
+            zorder=2.1,
+            interpolation="nearest",
+        )
+        ax_mesh.add_patch(
+            Rectangle(
+                (0.92, 0.60),
+                1.60,
+                1.60,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.3,
+                ls="--",
+                zorder=3.2,
+            )
+        )
+        for child_ax in ax_mesh.child_axes:
+            child_ax.set_axes_locator(None)
+            child_ax.set_position([0.68, 0.56, 0.24, 0.28])
+            child_ax.imshow(
+                eps_des,
+                origin="lower",
+                extent=[0.92, 2.52, 0.60, 2.20],
+                cmap="Blues",
+                vmin=2.25,
+                vmax=12.25,
+                alpha=0.74,
+                zorder=1.6,
+                interpolation="nearest",
+            )
+            child_ax.add_patch(
+                Rectangle(
+                    (0.92, 0.60),
+                    1.60,
+                    1.60,
+                    facecolor="none",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.1,
+                    ls="--",
+                    zorder=2.2,
+                )
+            )
+            for ins_txt in child_ax.texts:
+                ins_txt.set_fontsize(8.4)
+                ins_txt.set_position((0.5, 0.93))
+        figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+        saved_paths.extend([res["geometry_figure"], res["mesh_figure"]])
+    return saved_paths
+
+
+def plot_all() -> list[Path]:
+    """Generate all tutorial figures and the design-evolution GIF in ``figures/``."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = _plot_00_setup_schematics()
     sp_summary = json.loads((DATA_DIR / "round2_splitter" / "summary.json").read_text())
     mc_summary = json.loads((DATA_DIR / "round2_mode_converter" / "summary.json").read_text())
     sp_fc = np.load(DATA_DIR / "round2_splitter" / "fields_compact.npz")
@@ -998,7 +1546,6 @@ def plot_all() -> list[Path]:
     resim = np.load(DATA_DIR / "wakis_resim_full.npz")
     lb_data = json.loads(LEADERBOARD_PATH.read_text())
 
-    saved: list[Path] = []
     eval_wl_nm = np.array([1265.0, 1270.0, 1275.0, 1285.0, 1290.0, 1295.0])
 
     # --- Figure 1: Final binary designs + morphological length-scale verification ---

@@ -50,6 +50,55 @@
 # 8. [Mesh resolution convergence study](#8.-Mesh-resolution-convergence-study)
 # 9. [Limits & failure modes](#9.-Limits-&-failure-modes)
 # 10. [References](#10.-References)
+#
+# ### Simulation setup
+#
+# ![Setup geometry (XZ side stackup)](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation (XZ side stackup)](figures/00b_setup_mesh_and_excitation.png)
+#
+# The 3D FIT coupled reader–tag setup (`xz` cross-section through $y = 0\;\text{mm}$) models the 3-turn $66 \times 66\;\text{mm}$ reader coil at $z = 0\;\text{mm}$ and the 3-turn $78 \times 48\;\text{mm}$ ID-1 card tag coil at $z = 18\;\text{mm}$ above a flexible NiZn ferrite sheet (`DispersiveMaterial`, $\mu'\cdot t = 30\;\text{mm}$) and PEC battery/chassis plate, excited and terminated by two $250\;\Omega$ `LumpedPort` feeds.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 236 mm × 223.8 mm × 190.8 mm (z ∈ [-87.9 mm, 102.9 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 38 × 34 × 23 (29716 cells) |
+# | Discretization | Δx & resolution | Δ_min = 3 mm, 7369.5 cells/λ (in n_max = 1.00), 1.0 cells across feature (3 mm) |
+# | Boundary | -x face | PEC |
+# | Boundary | +x face | PEC |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | PEC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC chassis plate | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-39 mm, 39 mm] (d = 78 mm) |
+# | Material | Region 2: NiZn ferrite (μ'·t = 30 mm) | ε_r = 1.00, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-39 mm, 39 mm] (d = 78 mm) |
+# | Material | Region 3: Reader coil (3-turn PEC) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-33 mm, 33 mm] (d = 66 mm) |
+# | Material | Region 4: ID-1 Tag coil (3-turn PEC) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-39 mm, 39 mm] (d = 78 mm) |
+# | Source | 1 · LumpedPort | pos: x = 0 m, pol: E_x, pulse: f₀ = 13.56 MHz, Δf = 10.00 MHz |
+# | Source | 2 · LumpedPort | pos: x = 0 m, pol: E_x, pulse: continuous / custom |
+#
+# ![Setup geometry (XY top view)](figures/00a_setup_geometry_top.png)
+# ![Setup mesh and excitation (XY top view)](figures/00b_setup_mesh_and_excitation_top.png)
+#
+# The horizontal top view (`xy` plane at $z = 0\;\text{mm}$) shows the three concentric rectangular turns of the planar spiral reader coil ($66 \times 66\;\text{mm}$ outer, $w = 3\;\text{mm}$ trace width, $s_{\text{gap}} = 3\;\text{mm}$ spacing) with a `LumpedPort` and parallel tuning `LumpedElement(C, R)` bridged across the $6\;\text{mm}$ port gap at $y = -31.5\;\text{mm}$.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 255 mm × 243 mm × 222 mm (z ∈ [-94.5 mm, 127.5 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 38 × 34 × 27 (34884 cells) |
+# | Discretization | Δx & resolution | Δ_min = 3 mm, 7369.5 cells/λ (in n_max = 1.00), 1.0 cells across feature (3 mm) |
+# | Boundary | -x face | PEC |
+# | Boundary | +x face | PEC |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | PEC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Reader turn 1 (outer 66×66 mm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-33 mm, 33 mm] (d = 66 mm) |
+# | Material | Region 2: Reader turn 2 (middle 54×54 mm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-27 mm, 27 mm] (d = 54 mm) |
+# | Material | Region 3: Reader turn 3 (inner 42×42 mm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-21 mm, 21 mm] (d = 42 mm) |
+# | Source | 1 · LumpedPort | pos: x = 0 m, pol: E_x, pulse: f₀ = 13.56 MHz, Δf = 10.00 MHz |
+# | Source | 2 · LumpedElement | pos: x = 0 m, pol: E_x, pulse: continuous / custom |
 
 # %% [markdown]
 # ## 1. Physics of near-field inductive links at 13.56 MHz
@@ -147,6 +196,7 @@ from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import mu_0
 
 import wakis
+from wakis import schematic
 from wakis.dispersive import DispersiveMaterial, Lorentz
 from wakis.estimate import estimate, preflight
 from wakis.lumped import LumpedElement, LumpedPort
@@ -2222,10 +2272,11 @@ def compute_all_study_data(quick=True, out_dir=DATA_DIR, selected_task=None):
 
 
 # %% [markdown]
-# ## 6. Generating the complete 11-figure & animation suite
+# ## 6. Generating the complete figure & animation suite
 #
-# The plotting pipeline below renders all 10 static figures and the animated magnetic-field oscillation GIF (`< 5 MB`) into `figures/` from the simulated dataset in `data/nfc_coils_results.npz`:
+# The plotting pipeline below renders the setup figures and tables (`00a`/`00b`/`00_setup_table.md`), all 10 static result figures, and the animated magnetic-field oscillation GIF (`< 5 MB`) into `figures/` from the simulated dataset in `data/nfc_coils_results.npz`:
 #
+# 0. `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, `00_setup_table.md` (and `_top` pair) — Setup schematics, discretization/excitation views, and Markdown setup tables for the $xz$ side stackup (coupled reader + ID-1 tag over flexible NiZn ferrite and PEC plate) and the $xy$ top view (3-turn planar spiral reader coil + parallel $LC$ resonant tank).
 # 1. `01_geometry_3d_views.png` — Multi-angle 3D renders (isometric, top $xy$ view with ID-1 card outline, side $xz$ stackup with ferrite & PEC plate, and port/capacitor detail).
 # 2. `02_mesh_cross_sections.png` — 3D FIT grid cross-sections in $xy$ and $xz$, highlighting exact node alignment across trace width $w$, inter-turn spacing $s_{\text{gap}}$, and port gap $g_{\text{port}}$.
 # 3. `03_inductance_coupling_vs_separation.png` — Self-inductances $L_1, L_2$, mutual inductance $M(d)$ (with single-coil mutation $M \approx 0$), coupling factor $k(d)$, and lateral offset $k(\Delta x)$ vs Wheeler, Mohan, Grover, and Neumann references.
@@ -2261,6 +2312,156 @@ def _draw_box_3d(ax, center, size, color, alpha=0.85, edgecolor="k", lw=0.4):
         verts, facecolor=color, edgecolor=edgecolor, linewidths=lw, alpha=alpha
     )
     ax.add_collection3d(poly)
+
+
+def plot_00_setup_figures(fig_dir=FIG_DIR):
+    """Render Figure 00a/00b and Markdown setup tables for the XZ stackup and XY coil top view."""
+    fig_dir = Path(fig_dir)
+    grid_fer = make_nfc_grid(
+        dx_core=0.003,
+        x_core=(-0.042, 0.042),
+        y_core=(-0.036, 0.036),
+        z_core=(-0.012, 0.027),
+        pad=0.050,
+        ratio=1.6,
+    )
+    dt0 = vacuum_courant_dt(grid_fer)
+    fer_30 = scaled_nizn_ferrite(30.0, 0.006)
+    boxes1, _ = build_spiral_coil(
+        READER_GEOM["x_out"],
+        READER_GEOM["y_out"],
+        READER_GEOM["n_turns"],
+        READER_GEOM["w"],
+        READER_GEOM["s_gap"],
+        z0=0.0,
+        gap_port=READER_GEOM["gap_port"],
+        via_dz=0.003,
+    )
+    boxes2, _ = build_spiral_coil(
+        TAG_GEOM["x_out"],
+        TAG_GEOM["y_out"],
+        TAG_GEOM["n_turns"],
+        TAG_GEOM["w"],
+        TAG_GEOM["s_gap"],
+        z0=0.018,
+        gap_port=TAG_GEOM["gap_port"],
+        via_dz=0.003,
+    )
+    metal_box = Box((0.0, 0.0, -0.0075), (0.078, 0.078, 0.003), "pec")
+    ferrite_box = Box((0.0, 0.0, -0.003), (0.078, 0.078, 0.006), fer_30)
+    reader_env = Box((0.0, 0.0, 0.0015), (0.066, 0.066, 0.003), "pec")
+    tag_env = Box((0.0, 0.0, 0.0195), (0.078, 0.048, 0.003), "pec")
+
+    sol_xz = wakis.SolverFIT3D(
+        grid_fer,
+        bg=[1.0, 1.0],
+        dt=dt0,
+        bc_low=["pec"] * 3,
+        bc_high=["pec"] * 3,
+        use_stl=False,
+        verbose=0,
+    )
+    assign_materials(sol_xz, boxes1 + boxes2 + [metal_box], frequency=F0_NFC)
+    sol_xz.add_dispersive_material(
+        fer_30, center=(0.0, 0.0, -0.003), size=(0.078, 0.078, 0.006)
+    )
+
+    src = GaussianSource(frequency=F0_NFC, fwidth=10e6, cutoff=3.2)
+    p1 = LumpedPort(
+        src,
+        component="x",
+        center=(0.0, -READER_GEOM["y_out"], 0.0),
+        size=(READER_GEOM["gap_port"], READER_GEOM["w"], 0.0),
+        impedance=250.0,
+    )
+    p2 = LumpedPort(
+        None,
+        component="x",
+        center=(0.0, -TAG_GEOM["y_out"], 0.018),
+        size=(TAG_GEOM["gap_port"], TAG_GEOM["w"], 0.0),
+        impedance=250.0,
+    )
+
+    structs_xz = [metal_box, ferrite_box, reader_env, tag_env]
+    mat_names_xz = {
+        "region_0": "PEC chassis plate",
+        "region_1": "NiZn ferrite (μ'·t = 30 mm)",
+        "region_2": "Reader coil (3-turn PEC)",
+        "region_3": "ID-1 Tag coil (3-turn PEC)",
+    }
+    res_xz = schematic.save_setup_figures(
+        sol_xz,
+        fig_dir,
+        plane="xz",
+        cut_coord=0.0,
+        structures=structs_xz,
+        material_names=mat_names_xz,
+        sources=[p1, p2],
+        unit="mm",
+        wavelength=LAMBDA0_NFC,
+        freq=F0_NFC,
+        min_feature=0.003,
+        title_geometry="13.56 MHz NFC coupled reader & ID-1 tag over NiZn ferrite/PEC (XZ cut)",
+    )
+
+    grid_3mm = make_nfc_grid(dx_core=0.003)
+    dt_3mm = np.sqrt(2.25) * vacuum_courant_dt(grid_3mm)
+    sol_xy = wakis.SolverFIT3D(
+        grid_3mm,
+        bg=[2.25, 1.0],
+        dt=dt_3mm,
+        bc_low=["pec"] * 3,
+        bc_high=["pec"] * 3,
+        use_stl=False,
+        verbose=0,
+    )
+    assign_materials(sol_xy, boxes1, frequency=F0_NFC)
+    c_tune = float(tuning_capacitance(617.0e-9, freq=F0_NFC))
+    port_xy = LumpedPort(
+        src,
+        component="x",
+        center=(0.0, -READER_GEOM["y_out"] - 0.5 * READER_GEOM["w"], 0.0),
+        size=(READER_GEOM["gap_port"], 0.0, 0.0),
+        impedance=250.0,
+    )
+    elem_xy = LumpedElement(
+        component="x",
+        center=(0.0, -READER_GEOM["y_out"] + 0.5 * READER_GEOM["w"], 0.0),
+        size=(READER_GEOM["gap_port"], 0.0, 0.0),
+        R=300.0,
+        C=c_tune,
+    )
+    turn_boxes_xy = [
+        Box((0.0, 0.0, 0.0), (0.066, 0.066, 0.003), "pec"),
+        Box((0.0, 0.0, 0.0), (0.054, 0.054, 0.003), "pec"),
+        Box((0.0, 0.0, 0.0), (0.042, 0.042, 0.003), "pec"),
+    ]
+    mat_names_xy = {
+        "region_0": "Reader turn 1 (outer 66×66 mm)",
+        "region_1": "Reader turn 2 (middle 54×54 mm)",
+        "region_2": "Reader turn 3 (inner 42×42 mm)",
+    }
+    res_xy = schematic.save_setup_figures(
+        sol_xy,
+        fig_dir,
+        suffix="_top",
+        plane="xy",
+        cut_coord=0.0,
+        structures=turn_boxes_xy,
+        material_names=mat_names_xy,
+        sources=[port_xy, elem_xy],
+        unit="mm",
+        wavelength=LAMBDA0_NFC,
+        freq=F0_NFC,
+        min_feature=0.003,
+        title_geometry="13.56 MHz 3-turn planar spiral NFC reader coil & LC tank (XY top view)",
+    )
+    return [
+        res_xz["geometry_figure"],
+        res_xz["mesh_figure"],
+        res_xy["geometry_figure"],
+        res_xy["mesh_figure"],
+    ]
 
 
 def plot_01_geometry_3d_views(fig_dir=FIG_DIR):
@@ -3259,12 +3460,13 @@ def plot_11_magnetic_field_oscillation_gif(data, fig_dir=FIG_DIR):
 
 
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Load `nfc_coils_results.npz` from `data_dir` and render all 11 figures into `fig_dir`."""
+    """Load `nfc_coils_results.npz` from `data_dir` and render setup and result figures into `fig_dir`."""
     npz_path = Path(data_dir) / "nfc_coils_results.npz"
     if not npz_path.exists():
         compute_all_study_data(quick=True, out_dir=data_dir)
+    setup_paths = plot_00_setup_figures(fig_dir=fig_dir)
     with np.load(npz_path, allow_pickle=False) as data:
-        paths = [
+        paths = setup_paths + [
             plot_01_geometry_3d_views(fig_dir=fig_dir),
             plot_02_mesh_cross_sections(fig_dir=fig_dir),
             plot_03_inductance_coupling_vs_separation(data, fig_dir=fig_dir),

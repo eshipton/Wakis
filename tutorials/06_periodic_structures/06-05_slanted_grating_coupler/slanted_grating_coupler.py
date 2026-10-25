@@ -241,17 +241,478 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 # %% [markdown]
-# ## 1. Unit-Cell Setup Schematic & Staircase vs Conformal Mesh Views (Figure 1)
+# ## 1. Unit-Cell Setup Schematics & Staircase vs Conformal Mesh Views (Figures 00a/00b & Figure 1)
 #
-# Our first figure compares:
+# Before running the parameter sweeps, we inspect the 2D `FloquetCell` / `SolverFIT3D` simulation setups generated directly from the live solver instances for the slanted-ridge and sawtooth-blazed in-coupler profiles (note: the multi-layer Fourier Modal Method reference in `rcwa_multilayer_1d` and the Bragg slant formula are pure frequency-domain / analytical calculations and do not use a time-domain FIT grid):
+#
+# ### Primary Setup — Slanted $\text{TiO}_2$ Ridge In-Coupler ($\alpha = 25^\circ \approx \alpha_{\text{Bragg}},\, f = 0.55,\, d = 320\;\text{nm}$)
+#
+# The primary setup models a single periodic unit cell ($\Lambda = 400\;\text{nm}$, depth $d = 320\;\text{nm}$, fill factor $f = 0.55$, slant angle $\alpha = 25^\circ$) separating air ($n = 1.00$) from the N-LAF2 glass waveguide substrate ($n_s = 1.74$, $\varepsilon_r = 3.03$) with Kottke conformal subpixel permittivity smoothing, periodic/Bloch boundaries on $\pm x$, and 14-cell CPML absorbers on $\pm z$.
+#
+# ![Slanted In-Coupler Geometry and Boundaries](figures/00a_setup_geometry.png)
+#
+# ![Slanted In-Coupler FIT Mesh and Excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 400 nm × 9.14 nm × 1.55 µm (z ∈ [-613 nm, 933 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 43 × 1 × 169 (7267 cells) |
+# | Discretization | Δz & resolution | Δ_min = 9.14 nm, 24.4 cells/λ (in n_max = 2.35), 19.7 cells across feature (180 nm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (14 cells, 128 nm) |
+# | Boundary | +z face | CPML (14 cells, 128 nm) |
+# | Material | Background | Air cladding / groove (n = 1.00, ε_r = 1.00) (isotropic) |
+# | Material | Region 1: N-LAF2 glass waveguide substrate (n_s = 1.74, ε_r = 3.03) | ε_r = 3.03, μ_r = 1.00, model = Isotropic dielectric, z ∈ [320 nm, 933 nm] (d = 613 nm) |
+# | Material | Region 2: Slanted TiO₂ ridge (α = 25° ≈ α_Bragg, f = 0.55, d = 320 nm, n = 2.35, ε_r = 5.52, Kottke subpixel) | ε_r = 5.52, μ_r = 1.00, model = Isotropic dielectric, z ∈ [0 m, 320 nm] (d = 320 nm) |
+# | Source | 1 · CurrentSource | pos: z = -374 nm (x ∈ [−200, +200] nm), pol: Ey (TE, θ_in = 0° normal & oblique AngleSweep), pulse: f₀ = 571.0 THz, Δf = 68.52 THz |
+# | Monitor | 2 · FloquetPort | Port 1 Reflected FloquetPort at z = -193 nm (R_m in air), pos: z = -193 nm (in air), freqs: f₀ = 571.0 THz (λ₀ = 525 nm) |
+# | Monitor | 3 · FloquetPort | Port 2 Transmitted FloquetPort at z = +537 nm (T₋₁ ≫ T₊₁ in glass), pos: z = +537 nm (in N-LAF2 glass), freqs: f₀ = 571.0 THz (λ₀ = 525 nm) |
+# | Variation | Slant angle & profile comparison (Task 0) | α ∈ [0°, 40°] (α_Bragg = 24.5°) and Binary (α = 0°) vs Sawtooth Blazed vs Slanted (α = 25°) |
+# | Variation | Groove depth & fill factor sweeps (Task 1) | d ∈ [100, 500] nm and f ∈ [0.25, 0.80] vs 28-slice multi-layer RCWA |
+# | Variation | Oblique FOV & broadband AngleSweep (Task 2) | θ_in ∈ [−20°, +20°] (Bloch ±x, TE & TM) and broadband λ ∈ [490, 565] nm at θ_in = 8° |
+# | Variation | Staircase vs Kottke conformal convergence (Task 3) | cpw ∈ {14, 18, 24, 32} cells/λ comparing staircase point-sampling vs 16×16 Kottke tensor smoothing |
+#
+# ### Companion Setup — Sawtooth Blazed $\text{TiO}_2$ In-Coupler under Oblique Floquet–Bloch Illumination ($\theta_{\text{in}} = 8^\circ$)
+#
+# The companion setup models the right-angled triangular sawtooth blazed tooth ($x_{\text{fill}}(z) = f(1 - z/d)$, $f = 0.85$, $d = 320\;\text{nm}$) under oblique Floquet–Bloch illumination ($\theta_{\text{in}} = 8^\circ$, $k_x = -k_0 \sin\theta_{\text{in}}$ on the $\pm x$ Bloch faces).
+#
+# ![Sawtooth Blazed Geometry and Boundaries](figures/00a_setup_geometry_blazed.png)
+#
+# ![Sawtooth Blazed FIT Mesh and Excitation](figures/00b_setup_mesh_and_excitation_blazed.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 400 nm × 9.14 nm × 1.55 µm (z ∈ [-613 nm, 933 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 43 × 1 × 169 (7267 cells) |
+# | Discretization | Δz & resolution | Δ_min = 9.14 nm, 24.4 cells/λ (in n_max = 2.35), 6.6 cells across feature (60 nm) |
+# | Boundary | -x face | Bloch (k_x = -1.67e+06 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -1.67e+06 rad/m) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (14 cells, 128 nm) |
+# | Boundary | +z face | CPML (14 cells, 128 nm) |
+# | Material | Background | Air cladding / groove (n = 1.00, ε_r = 1.00) (isotropic) |
+# | Material | Region 1: N-LAF2 glass waveguide substrate (n_s = 1.74, ε_r = 3.03) | ε_r = 3.03, μ_r = 1.00, model = Isotropic dielectric, z ∈ [320 nm, 933 nm] (d = 613 nm) |
+# | Material | Region 2: Sawtooth blazed TiO₂ tooth (f = 0.85, d = 320 nm, n = 2.35, ε_r = 5.52, Kottke subpixel) | ε_r = 5.52, μ_r = 1.00, model = Isotropic dielectric, z ∈ [0 m, 320 nm] (d = 320 nm) |
+# | Source | 1 · CurrentSource | pos: z = -374 nm (x ∈ [−200, +200] nm), pol: Ey (TE, θ_in = 8°), pulse: f₀ = 571.0 THz, Δf = 68.52 THz |
+# | Monitor | 2 · FloquetPort | Port 1 Reflected FloquetPort at z = -193 nm (R_m in air), pos: z = -193 nm (in air), freqs: f₀ = 571.0 THz (λ₀ = 525 nm) |
+# | Monitor | 3 · FloquetPort | Port 2 Transmitted FloquetPort at z = +537 nm (T₋₁ > T₊₁ in glass), pos: z = +537 nm (in N-LAF2 glass), freqs: f₀ = 571.0 THz (λ₀ = 525 nm) |
+# | Variation | Sawtooth blazed vs binary & slanted (Tasks 0 & 2) | Right-angled triangular tooth (x_fill(z) = f·(1 − z/d), f = 0.85) across θ_in ∈ [−20°, +20°] |
+#
+# Figure 1 below compares all three tooth profiles side-by-side along with the staircase vs Kottke conformal subpixel permittivity maps $\tilde{\varepsilon}_{xx}(x, z)$:
 # - **Panel (a):** The 2D `FloquetCell` domain geometry ($x \in [-\Lambda/2, +\Lambda/2]$ with Bloch boundaries, $z \in [z_{\min}, z_{\max}]$ with 14-cell CPML absorbers, tilted plane-wave source at $z_{\text{src}}$, reflection and transmission `DiffractionMonitor` ports, incident air medium $\varepsilon_{\text{below}}=1.0$, and N-LAF2 glass substrate $\varepsilon_{\text{above}}=1.74^2=3.03$) for **Binary** ($\alpha=0^\circ$), **Sawtooth Blazed**, and **Slanted** ($\alpha=25^\circ$) ridges.
 # - **Panel (b):** The **Staircase** Yee mesh (`averaging="staircase"`) for the $\alpha=25^\circ$ slanted ridge at 20 cells per wavelength, showing jagged cell-by-cell steps along the tilted sidewalls.
 # - **Panel (c):** The **Kottke Conformal** subpixel-smoothed Yee mesh (`averaging="kottke"`) on the **exact same grid**, showing smooth subcell volume fractions and sidewall normal vector $\hat{\mathbf{n}} = (\cos\alpha, 0, -\sin\alpha)$.
 
 
 # %%
+def plot_slanted_coupler_setup_figures(fig_dir: Path) -> dict[str, Path]:
+    """Generate the two-figure setup layout via ``wakis.schematic.save_setup_figures``
+    for the primary slanted ridge in-coupler (``suffix=''``) and companion sawtooth
+    blazed in-coupler (``suffix='_blazed'``).
+    """
+    from matplotlib.axes._base import _TransformedBoundsLocator
+    from scipy.constants import c as c_light
+    from wakis import figstyle, schematic
+    from wakis.sources import GaussianSource
+    from wakis.templates.photonics import Box
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
+
+    f0 = c_light / WL_DESIGN_M
+    wf = GaussianSource(frequency=f0, fwidth=0.12 * f0)
+    pulse_dict = {
+        "f0": f0,
+        "fwidth": 0.12 * f0,
+        "t_peak": float(4.0 / (np.pi * 0.12 * f0)),
+        "t_end": float(wf.end_time),
+        "src_time": wf,
+    }
+
+    class _ToothPoly:
+        def __init__(self, vertices: np.ndarray, material: float, name: str):
+            self.vertices = np.asarray(vertices, dtype=float)
+            self.material = material
+            self.name = name
+
+    # ------------------------------------------------------------------
+    # 1. Primary setup: Slanted TiO2 ridge in-coupler (alpha = 25 deg, f = 0.55)
+    # ------------------------------------------------------------------
+    cell_sl, minfo_sl = build_slanted_floquet_cell(
+        period=PERIOD_INCOUPLER_M,
+        height=DEFAULT_DEPTH_M,
+        wavelength_min=WL_DESIGN_M,
+        profile_type="slanted",
+        slant_deg=WANG_SLANT_DEG,
+        fill_factor=0.55,
+        averaging="kottke",
+        cpw=24,
+    )
+    grid_sl = wakis.GridFIT3D(
+        -0.5 * cell_sl.Lx,
+        0.5 * cell_sl.Lx,
+        -0.5 * cell_sl.Ly,
+        0.5 * cell_sl.Ly,
+        cell_sl.zmin,
+        cell_sl.zmax,
+        cell_sl.nx,
+        cell_sl.ny,
+        cell_sl.nz,
+        verbose=0,
+    )
+    solver_sl = wakis.SolverFIT3D(
+        grid_sl,
+        bc_low=["periodic", "periodic", "cpml"],
+        bc_high=["periodic", "periodic", "cpml"],
+        n_pml=cell_sl.n_pml,
+        dtype=np.complex128,
+        cfln=cell_sl.cfl,
+        verbose=0,
+    )
+    cell_sl.material_callback(solver_sl)
+
+    sub_sl = Box(
+        center=(0.0, 0.0, 0.5 * (DEFAULT_DEPTH_M + cell_sl.zmax)),
+        size=(cell_sl.Lx, cell_sl.Ly, cell_sl.zmax - DEFAULT_DEPTH_M),
+        material=N_SUBSTRATE**2,
+    )
+    sub_sl.name = "N-LAF2 glass waveguide substrate (n_s = 1.74, ε_r = 3.03)"
+    ridge_box_sl = Box(
+        center=(0.0, 0.0, 0.5 * DEFAULT_DEPTH_M),
+        size=(0.55 * cell_sl.Lx, cell_sl.Ly, DEFAULT_DEPTH_M),
+        material=N_RIDGE**2,
+    )
+    ridge_lbl_sl = (
+        "Slanted TiO₂ ridge (α = 25° ≈ α_Bragg, f = 0.55, d = 320 nm, n = 2.35, ε_r = 5.52, Kottke subpixel)"
+    )
+    ridge_box_sl.name = ridge_lbl_sl
+    solver_sl._assigned_structures = (sub_sl, ridge_box_sl)
+
+    mat_names_sl = {
+        "background": "Air cladding / groove (n = 1.00, ε_r = 1.00)",
+        "region_0": sub_sl.name,
+        "region_1": ridge_lbl_sl,
+    }
+    sources_sl = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "Plane Wave Jy",
+            "label": f"Floquet CurrentSource Jy at z = {cell_sl.z_source*1e9:.0f} nm (λ₀ = 525 nm, +z)",
+            "desc": f"Floquet CurrentSource Jy at z = {cell_sl.z_source*1e9:.0f} nm (TE / Ey, λ₀ = 525 nm, +z)",
+            "pos_str": f"z = {cell_sl.z_source*1e9:.0f} nm (x ∈ [−200, +200] nm)",
+            "polarization": "Ey (TE, θ_in = 0° normal & oblique AngleSweep)",
+            "direction": 1,
+            "h_bounds": (cell_sl.z_source, cell_sl.z_source),
+            "v_bounds": (-0.5 * cell_sl.Lx, +0.5 * cell_sl.Lx),
+            "pulse": pulse_dict,
+        }
+    ]
+    monitors_sl = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 1 Refl.",
+            "label": f"Port 1 Reflected FloquetPort at z = {cell_sl.z_refl*1e9:.0f} nm (R_m in air)",
+            "desc": f"Port 1 Reflected FloquetPort / DiffractionMonitor (R_m, m ∈ [-2..+2]) at z = {cell_sl.z_refl*1e9:.0f} nm",
+            "pos_str": f"z = {cell_sl.z_refl*1e9:.0f} nm (in air)",
+            "freq_str": "f₀ = 571.0 THz (λ₀ = 525 nm)",
+            "frequencies": np.array([f0]),
+            "h_bounds": (cell_sl.z_refl, cell_sl.z_refl),
+            "v_bounds": (-0.5 * cell_sl.Lx, +0.5 * cell_sl.Lx),
+        },
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 2 Tran.",
+            "label": f"Port 2 Transmitted FloquetPort at z = +{cell_sl.z_tran*1e9:.0f} nm (T₋₁ ≫ T₊₁ in glass)",
+            "desc": f"Port 2 Transmitted FloquetPort / DiffractionMonitor (T_m in glass, T₋₁ > 70%, T₋₁/T₊₁ > 10×) at z = +{cell_sl.z_tran*1e9:.0f} nm",
+            "pos_str": f"z = +{cell_sl.z_tran*1e9:.0f} nm (in N-LAF2 glass)",
+            "freq_str": "f₀ = 571.0 THz (λ₀ = 525 nm)",
+            "frequencies": np.array([f0]),
+            "h_bounds": (cell_sl.z_tran, cell_sl.z_tran),
+            "v_bounds": (-0.5 * cell_sl.Lx, +0.5 * cell_sl.Lx),
+        },
+    ]
+    variations_sl = [
+        {
+            "name": "Slant angle & profile comparison (Task 0)",
+            "details": "α ∈ [0°, 40°] (α_Bragg = 24.5°) and Binary (α = 0°) vs Sawtooth Blazed vs Slanted (α = 25°)",
+        },
+        {
+            "name": "Groove depth & fill factor sweeps (Task 1)",
+            "details": "d ∈ [100, 500] nm and f ∈ [0.25, 0.80] vs 28-slice multi-layer RCWA",
+        },
+        {
+            "name": "Oblique FOV & broadband AngleSweep (Task 2)",
+            "details": "θ_in ∈ [−20°, +20°] (Bloch ±x, TE & TM) and broadband λ ∈ [490, 565] nm at θ_in = 8°",
+        },
+        {
+            "name": "Staircase vs Kottke conformal convergence (Task 3)",
+            "details": "cpw ∈ {14, 18, 24, 32} cells/λ comparing staircase point-sampling vs 16×16 Kottke tensor smoothing",
+        },
+    ]
+
+    res_sl = schematic.save_setup_figures(
+        solver_sl,
+        fig_dir,
+        prefix="00",
+        plane="zx",
+        material_names=mat_names_sl,
+        sources=sources_sl,
+        monitors=monitors_sl,
+        unit="nm",
+        wavelength=WL_DESIGN_M,
+        min_feature=minfo_sl["min_feature_nm"] * 1e-9,
+        variations=variations_sl,
+    )
+
+    # Replace rectangular box on 00a with exact tilted parallelogram polygon in (z, x) coordinates
+    w_sl = 0.55 * PERIOD_INCOUPLER_M
+    shift_sl = DEFAULT_DEPTH_M * float(np.tan(np.deg2rad(WANG_SLANT_DEG)))
+    x_top_0 = -0.5 * (w_sl - shift_sl)
+    x_top_1 = x_top_0 + w_sl
+    verts_sl = np.array(
+        [
+            [0.0, x_top_0],
+            [DEFAULT_DEPTH_M, x_top_0 - shift_sl],
+            [DEFAULT_DEPTH_M, x_top_1 - shift_sl],
+            [0.0, x_top_1],
+        ],
+        dtype=float,
+    )
+    poly_sl = _ToothPoly(verts_sl, N_RIDGE**2, ridge_lbl_sl)
+    solver_sl._assigned_structures = (sub_sl, poly_sl)
+
+    fig_a_sl, ax_a_sl = schematic.plot_schematic(
+        solver_sl,
+        plane="zx",
+        material_names=mat_names_sl,
+        sources=sources_sl,
+        monitors=monitors_sl,
+        unit="nm",
+        wavelength=WL_DESIGN_M,
+    )
+    for txt in ax_a_sl.texts:
+        t_str = txt.get_text()
+        if "1 · Plane" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_sl.z_source * 1e9, -145.0))
+        elif "2 · Port 1" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_sl.z_refl * 1e9 + 18.0, +145.0))
+        elif "3 · Port 2" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_sl.z_tran * 1e9, +145.0))
+    figstyle.save(fig_a_sl, res_sl["geometry_figure"], close=True, auto_legend_below=False)
+
+    solver_sl._assigned_structures = (sub_sl, ridge_box_sl)
+    fig_b_sl, axes_b_sl = schematic.plot_mesh_and_excitation(
+        solver_sl,
+        plane="zx",
+        material_names=mat_names_sl,
+        sources=sources_sl,
+        monitors=monitors_sl,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.05e-6, +0.37e-6, -0.19e-6, +0.19e-6),
+        wavelength=WL_DESIGN_M,
+        min_feature=minfo_sl["min_feature_nm"] * 1e-9,
+    )
+    ax_mesh_sl = axes_b_sl[0]
+    for ch_ax in getattr(ax_mesh_sl, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.66, 0.10, 0.32, 0.80], ax_mesh_sl.transAxes)
+        )
+    figstyle.save(fig_b_sl, res_sl["mesh_figure"], close=True, auto_legend_below=False)
+
+    # ------------------------------------------------------------------
+    # 2. Companion setup (_blazed): Sawtooth blazed TiO2 in-coupler (f = 0.85, d = 320 nm)
+    # ------------------------------------------------------------------
+    cell_bl, minfo_bl = build_slanted_floquet_cell(
+        period=PERIOD_INCOUPLER_M,
+        height=DEFAULT_DEPTH_M,
+        wavelength_min=WL_DESIGN_M,
+        profile_type="blazed",
+        slant_deg=0.0,
+        fill_factor=0.85,
+        averaging="kottke",
+        cpw=24,
+    )
+    grid_bl = wakis.GridFIT3D(
+        -0.5 * cell_bl.Lx,
+        0.5 * cell_bl.Lx,
+        -0.5 * cell_bl.Ly,
+        0.5 * cell_bl.Ly,
+        cell_bl.zmin,
+        cell_bl.zmax,
+        cell_bl.nx,
+        cell_bl.ny,
+        cell_bl.nz,
+        verbose=0,
+    )
+    kx_bl = (2.0 * np.pi / WL_DESIGN_M) * float(np.sin(np.deg2rad(8.0)))
+    solver_bl = wakis.SolverFIT3D(
+        grid_bl,
+        bc_low=["bloch", "periodic", "cpml"],
+        bc_high=["bloch", "periodic", "cpml"],
+        n_pml=cell_bl.n_pml,
+        k_bloch=(-kx_bl, 0.0, 0.0),
+        dtype=np.complex128,
+        cfln=cell_bl.cfl,
+        verbose=0,
+    )
+    cell_bl.material_callback(solver_bl)
+
+    sub_bl = Box(
+        center=(0.0, 0.0, 0.5 * (DEFAULT_DEPTH_M + cell_bl.zmax)),
+        size=(cell_bl.Lx, cell_bl.Ly, cell_bl.zmax - DEFAULT_DEPTH_M),
+        material=N_SUBSTRATE**2,
+    )
+    sub_bl.name = "N-LAF2 glass waveguide substrate (n_s = 1.74, ε_r = 3.03)"
+    blazed_lbl = (
+        "Sawtooth blazed TiO₂ tooth (f = 0.85, d = 320 nm, n = 2.35, ε_r = 5.52, Kottke subpixel)"
+    )
+    blazed_box = Box(
+        center=(0.0, 0.0, 0.5 * DEFAULT_DEPTH_M),
+        size=(0.85 * cell_bl.Lx, cell_bl.Ly, DEFAULT_DEPTH_M),
+        material=N_RIDGE**2,
+    )
+    blazed_box.name = blazed_lbl
+    solver_bl._assigned_structures = (sub_bl, blazed_box)
+
+    mat_names_bl = {
+        "background": "Air cladding / groove (n = 1.00, ε_r = 1.00)",
+        "region_0": sub_bl.name,
+        "region_1": blazed_lbl,
+    }
+    sources_bl = [
+        {
+            "kind": "plane",
+            "type_name": "CurrentSource",
+            "short_word": "Bloch Jy (+z)",
+            "label": f"Oblique Floquet CurrentSource Jy at z = {cell_bl.z_source*1e9:.0f} nm (θ_in = 8°, +z)",
+            "desc": f"Oblique Floquet CurrentSource Jy at z = {cell_bl.z_source*1e9:.0f} nm (θ_in = 8°, Δφ_x = k_x Λ)",
+            "pos_str": f"z = {cell_bl.z_source*1e9:.0f} nm (x ∈ [−200, +200] nm)",
+            "polarization": "Ey (TE, θ_in = 8°)",
+            "direction": 1,
+            "h_bounds": (cell_bl.z_source, cell_bl.z_source),
+            "v_bounds": (-0.5 * cell_bl.Lx, +0.5 * cell_bl.Lx),
+            "pulse": pulse_dict,
+        }
+    ]
+    monitors_bl = [
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 1 Refl.",
+            "label": f"Port 1 Reflected FloquetPort at z = {cell_bl.z_refl*1e9:.0f} nm (R_m in air)",
+            "desc": f"Port 1 Reflected FloquetPort / DiffractionMonitor (R_m) at z = {cell_bl.z_refl*1e9:.0f} nm",
+            "pos_str": f"z = {cell_bl.z_refl*1e9:.0f} nm (in air)",
+            "freq_str": "f₀ = 571.0 THz (λ₀ = 525 nm)",
+            "frequencies": np.array([f0]),
+            "h_bounds": (cell_bl.z_refl, cell_bl.z_refl),
+            "v_bounds": (-0.5 * cell_bl.Lx, +0.5 * cell_bl.Lx),
+        },
+        {
+            "kind": "plane",
+            "type_name": "FloquetPort",
+            "short_word": "Port 2 Tran.",
+            "label": f"Port 2 Transmitted FloquetPort at z = +{cell_bl.z_tran*1e9:.0f} nm (T₋₁ > T₊₁ in glass)",
+            "desc": f"Port 2 Transmitted FloquetPort / DiffractionMonitor (T_m in glass, T₋₁/T₊₁ > 8×) at z = +{cell_bl.z_tran*1e9:.0f} nm",
+            "pos_str": f"z = +{cell_bl.z_tran*1e9:.0f} nm (in N-LAF2 glass)",
+            "freq_str": "f₀ = 571.0 THz (λ₀ = 525 nm)",
+            "frequencies": np.array([f0]),
+            "h_bounds": (cell_bl.z_tran, cell_bl.z_tran),
+            "v_bounds": (-0.5 * cell_bl.Lx, +0.5 * cell_bl.Lx),
+        },
+    ]
+
+    res_bl = schematic.save_setup_figures(
+        solver_bl,
+        fig_dir,
+        prefix="00",
+        suffix="_blazed",
+        plane="zx",
+        material_names=mat_names_bl,
+        sources=sources_bl,
+        monitors=monitors_bl,
+        unit="nm",
+        wavelength=WL_DESIGN_M,
+        min_feature=minfo_bl["min_feature_nm"] * 1e-9,
+        variations=[
+            {
+                "name": "Sawtooth blazed vs binary & slanted (Tasks 0 & 2)",
+                "details": "Right-angled triangular tooth (x_fill(z) = f·(1 − z/d), f = 0.85) across θ_in ∈ [−20°, +20°]",
+            },
+        ],
+    )
+
+    w_bl = 0.85 * PERIOD_INCOUPLER_M
+    verts_bl = np.array(
+        [
+            [0.0, -0.5 * w_bl],
+            [DEFAULT_DEPTH_M, -0.5 * w_bl],
+            [0.0, +0.5 * w_bl],
+        ],
+        dtype=float,
+    )
+    poly_bl = _ToothPoly(verts_bl, N_RIDGE**2, blazed_lbl)
+    solver_bl._assigned_structures = (sub_bl, poly_bl)
+
+    fig_a_bl, ax_a_bl = schematic.plot_schematic(
+        solver_bl,
+        plane="zx",
+        material_names=mat_names_bl,
+        sources=sources_bl,
+        monitors=monitors_bl,
+        unit="nm",
+        wavelength=WL_DESIGN_M,
+    )
+    for txt in ax_a_bl.texts:
+        t_str = txt.get_text()
+        if "1 · Bloch" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_bl.z_source * 1e9, -145.0))
+        elif "2 · Port 1" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_bl.z_refl * 1e9 + 18.0, +145.0))
+        elif "3 · Port 2" in t_str:
+            txt.set_ha("center")
+            txt.set_position((cell_bl.z_tran * 1e9, +145.0))
+    figstyle.save(fig_a_bl, res_bl["geometry_figure"], close=True, auto_legend_below=False)
+
+    solver_bl._assigned_structures = (sub_bl, blazed_box)
+    fig_b_bl, axes_b_bl = schematic.plot_mesh_and_excitation(
+        solver_bl,
+        plane="zx",
+        material_names=mat_names_bl,
+        sources=sources_bl,
+        monitors=monitors_bl,
+        unit="nm",
+        mesh_every=2,
+        zoom_bounds=(-0.05e-6, +0.37e-6, -0.19e-6, +0.19e-6),
+        wavelength=WL_DESIGN_M,
+        min_feature=minfo_bl["min_feature_nm"] * 1e-9,
+    )
+    ax_mesh_bl = axes_b_bl[0]
+    for ch_ax in getattr(ax_mesh_bl, "child_axes", []):
+        ch_ax.set_axes_locator(
+            _TransformedBoundsLocator([0.66, 0.10, 0.32, 0.80], ax_mesh_bl.transAxes)
+        )
+    figstyle.save(fig_b_bl, res_bl["mesh_figure"], close=True, auto_legend_below=False)
+
+    return {"slanted": res_sl, "blazed": res_bl}
+
+
 def plot_fig1_schematic_and_meshes(fig_dir: Path) -> Path:
     """Generate Figure 1: Setup schematic + Staircase vs Kottke Conformal mesh comparison."""
+    plot_slanted_coupler_setup_figures(fig_dir)
     fig, axes = plt.subplots(1, 3, figsize=(14.6, 4.6), constrained_layout=True)
 
     # --- Panel (a): Binary vs Blazed vs Slanted Unit-Cell Schematic ---

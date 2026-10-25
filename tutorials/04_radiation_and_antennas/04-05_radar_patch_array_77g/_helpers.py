@@ -38,7 +38,7 @@ from scipy.constants import epsilon_0, mu_0
 from scipy.signal import argrelmax
 
 import wakis.visualize as wv
-from wakis import GridFIT3D, SolverFIT3D
+from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.conformal import rectangle_sheet
 from wakis.estimate import estimate
 from wakis.field_monitors import DFTMonitor
@@ -1525,6 +1525,249 @@ def _add_array_scene_meshes(plotter, geom: dict, z_explode: float = 1.0) -> None
     plotter.add_mesh(port_box, color="#e63946", label="50 Ohm Lumped Port")
 
 
+def _build_schematic_bundle(level: str = "fine") -> dict:
+    """Build lightweight GridFIT3D, structure, source, and monitor descriptors for `wakis.schematic`."""
+    from types import SimpleNamespace
+
+    _, geom = build_array_structures("tapered")
+    x, y, z, mesh_info = build_array_axes(geom, level=level, n_pml=6)
+    grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+
+    h_sub = geom["h_sub"]
+    t_pec = geom["t_pec"]
+    g_xmin, g_xmax = geom["g_xmin"], geom["g_xmax"]
+    g_ymin, g_ymax = geom["g_ymin"], geom["g_ymax"]
+    x_min_arr, x_max_arr = geom["x_min_arr"], geom["x_max_arr"]
+    W1 = geom["W1"]
+
+    structures_schematic = [
+        Box(
+            (0.5 * (g_xmin + g_xmax), 0.0, 0.5 * h_sub),
+            (g_xmax - g_xmin, g_ymax - g_ymin, h_sub),
+            geom["eps_r"],
+        ),
+        Box(
+            (0.5 * (g_xmin + g_xmax), 0.0, 0.0),
+            (g_xmax - g_xmin, g_ymax - g_ymin, t_pec),
+            "pec",
+        ),
+        Box(
+            (0.5 * (x_min_arr + x_max_arr), 0.0, h_sub),
+            (x_max_arr - x_min_arr, W1, t_pec),
+            "pec",
+        ),
+    ]
+    material_names = {
+        "region_0": "254 µm Rogers 5880 substrate",
+        "region_1": "Copper ground plane",
+        "region_2": "10-element series-fed patch column",
+    }
+
+    pulse = GaussianSource(77.0e9, 6.0e9, cutoff=3.5)
+    port_src = LumpedPort(
+        pulse,
+        component="z",
+        center=(geom["x_port"], 0.0, 0.5 * h_sub),
+        size=(0.0, geom["w_port"], h_sub),
+        impedance=50.0,
+    )
+
+    n2f_m = mesh_info["n2f_margin_m"]
+    n2f_center = (0.5 * (g_xmin + g_xmax), 0.0, 0.5 * h_sub)
+    n2f_size = (
+        g_xmax - g_xmin + 2.0 * n2f_m,
+        g_ymax - g_ymin + 2.0 * n2f_m,
+        h_sub + 2.0 * n2f_m,
+    )
+    f_n2f = np.array([75.0, 75.5, 76.0, 76.5, 77.0, 77.5, 78.0], dtype=float) * 1e9
+    n2f_mon = Near2FarMonitor(f_n2f, center=n2f_center, size=n2f_size)
+    n2f_mon.faces = [n2f_mon]
+
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "cpml"],
+        bc_high=["cpml", "cpml", "cpml"],
+        n_pml=6,
+        cfln=0.85,
+        dt=mesh_info["dt_fs"] * 1e-15,
+    )
+    return {
+        "geom": geom,
+        "grid": grid,
+        "solver_stub": solver_stub,
+        "mesh_info": mesh_info,
+        "structures_schematic": structures_schematic,
+        "material_names": material_names,
+        "port_src": port_src,
+        "n2f_mon": n2f_mon,
+    }
+
+
+def plot_00_setup_schematic(fig_dir: Path = FIG_DIR) -> tuple[Path, Path, Path]:
+    """Generate `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, and `00_setup_table.md`."""
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
+    bundle = _build_schematic_bundle(level="fine")
+    geom = bundle["geom"]
+    solver_stub = bundle["solver_stub"]
+    port_src = bundle["port_src"]
+    n2f_mon = bundle["n2f_mon"]
+
+    variations = [
+        {
+            "name": "Array topologies",
+            "details": (
+                "Uniform '1111111111' (10 × W_1 = 1540 µm), binary GA '1011111111' "
+                "(element #2 omitted, 9 × W_1 = 1540 µm), and raised-cosine width-taper variation"
+            ),
+        },
+        {
+            "name": "4-level mesh convergence & SLL gap study",
+            "details": (
+                "coarse (157k cells), medium (282k), fine (434k, 20.8 cpw, 4 cells across h & W_2), "
+                "and gpu_superfine_32um (1.39M, 40.4 cpw, 8 cells across h & W_2); "
+                "lossy Rogers 5880 (σ_d = 0.00846 S/m) and feed/termination variants"
+            ),
+        },
+    ]
+
+    out = schematic.save_setup_figures(
+        solver_stub,
+        fig_dir,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[n2f_mon],
+        plane="xy",
+        cut_coord=geom["h_sub"],
+        unit="mm",
+        freq=77.0e9,
+        min_feature=geom["h_sub"],
+        title_geometry="77 GHz 10-Element Series-Fed Patch Array ('1011111111', XY Plan at z = 254 µm)",
+        title_mesh="Graded 3D FIT Mesh (241×60×30, Fine) & 77 GHz Port Excitation",
+        variations=variations,
+    )
+
+    # Enhance 00a with individual patch outlines and clean non-overlapping tag positions
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_stub,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[n2f_mon],
+        plane="xy",
+        cut_coord=geom["h_sub"],
+        unit="mm",
+        freq=77.0e9,
+        show_mesh=False,
+        show_pulse_inset=False,
+        show_wave_packet=False,
+        title="77 GHz 10-Element Series-Fed Patch Array ('1011111111', XY Plan at z = 254 µm)",
+    )
+    # Draw individual patch outlines and microstrip spine on ax_a (in mm)
+    w2_mm = geom["W2"] * 1e3
+    l3_mm = geom["L3"] * 1e3
+    w3_mm = geom["W3"] * 1e3
+    x_max_mm = geom["x_max_arr"] * 1e3
+    ax_a.add_patch(
+        mpatches.Rectangle(
+            (0.0, -0.5 * w2_mm),
+            x_max_mm,
+            w2_mm,
+            facecolor="#CBD5E1",
+            edgecolor="#334155",
+            lw=0.8,
+            zorder=5.5,
+        )
+    )
+    ax_a.add_patch(
+        mpatches.Rectangle(
+            (-l3_mm, -0.5 * w3_mm),
+            l3_mm,
+            w3_mm,
+            facecolor="#CBD5E1",
+            edgecolor="#334155",
+            lw=0.8,
+            zorder=5.5,
+        )
+    )
+    for x0_um, x1_um, w_um in geom["patch_boxes_um"]:
+        if w_um > 320.0:
+            ax_a.add_patch(
+                mpatches.Rectangle(
+                    (x0_um * 1e-3, -0.5 * w_um * 1e-3),
+                    (x1_um - x0_um) * 1e-3,
+                    w_um * 1e-3,
+                    facecolor="#94A3B8",
+                    edgecolor="#1E293B",
+                    lw=0.9,
+                    alpha=0.85,
+                    zorder=5.6,
+                )
+            )
+    for txt in ax_a.texts:
+        s = txt.get_text()
+        if "1 · port" in s:
+            txt.set_position((2.15, 0.0))
+            txt.set_bbox(
+                dict(
+                    boxstyle="round,pad=0.12",
+                    facecolor="white",
+                    edgecolor="#C2410C",
+                    lw=0.7,
+                    alpha=0.95,
+                )
+            )
+        elif "2 · N2F" in s:
+            txt.set_position((18.5, -2.08))
+            txt.set_bbox(
+                dict(
+                    boxstyle="round,pad=0.12",
+                    facecolor="white",
+                    edgecolor="#0F766E",
+                    lw=0.7,
+                    alpha=0.95,
+                )
+            )
+    figstyle.save(fig_a, out["geometry_figure"])
+    plt.close(fig_a)
+
+    # Enhance 00b with zoom_bounds on QWT + Patch #0 + omitted Patch #1 ('0') and clean inset label
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_stub,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[n2f_mon],
+        plane="xy",
+        cut_coord=geom["h_sub"],
+        unit="mm",
+        freq=77.0e9,
+        min_feature=geom["h_sub"],
+        zoom_bounds=(-0.0008, 0.0040, -0.0009, 0.0009),
+        title="Graded 3D FIT Mesh (241×60×30, Fine) & 77 GHz Port Excitation",
+    )
+    for ch_ax in getattr(axes_b[0], "child_axes", []):
+        for txt in ch_ax.texts:
+            if "zoom" in txt.get_text():
+                txt.set_text("1× zoom (Δy = 80 µm)")
+                txt.set_position((-0.06, 0.72))
+                txt.set_ha("right")
+                txt.set_va("center")
+                txt.set_bbox(
+                    dict(
+                        boxstyle="round,pad=0.14",
+                        facecolor="white",
+                        edgecolor="#CBD5E1",
+                        lw=0.7,
+                        alpha=0.95,
+                    )
+                )
+    figstyle.save(fig_b, out["mesh_figure"])
+    plt.close(fig_b)
+    return out["geometry_figure"], out["mesh_figure"], out["table_path"]
+
+
 def plot_01_geometry_3d_views() -> Path:
     """Generate `01_geometry_3d_views.png`: 4-angle PyVista render + annotated layout."""
     import pyvista as pv
@@ -2728,7 +2971,10 @@ def generate_all_figures() -> list[Path]:
     )
     anim_d = dict(np.load(DATA_DIR / "tapered_animation.npz"))
 
+    p00a, p00b, _ = plot_00_setup_schematic(FIG_DIR)
     paths = [
+        p00a,
+        p00b,
         plot_01_geometry_3d_views(),
         plot_02_mesh_and_cpw_views(summary["preflight"]),
         plot_03_near_fields_and_currents(tap_c, uni_c),

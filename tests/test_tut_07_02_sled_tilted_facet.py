@@ -315,10 +315,13 @@ def test_mutation_checks_detect_broken_physics():
 
 
 def test_setup_schematic_and_figures_exist():
-    """Verify 00_setup_schematic.png and all Tutorial 7.2 figures exist and are non-empty."""
+    """Verify 00a/00b setup figures, 00_setup_table.md, and all Tutorial 7.2 figures exist."""
     fig_dir = TUTORIAL_DIR / "figures"
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_dipole_ensemble.png",
+        "00b_setup_mesh_and_excitation_dipole_ensemble.png",
         "sled_schematic_and_mesh.png",
         "eigenmode_profiles.png",
         "steady_state_fields_0_vs_7deg.png",
@@ -338,6 +341,9 @@ def test_setup_schematic_and_figures_exist():
     for fname in expected_figs:
         fpath = fig_dir / fname
         assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing figure {fpath}"
+    for tname in ("00_setup_table.md", "00_setup_table_dipole_ensemble.md"):
+        tpath = fig_dir / tname
+        assert tpath.exists() and tpath.stat().st_size > 100, f"Missing setup table {tpath}"
     obj_sled = h.build_sled_schematic_objects()
     obj_dip = h.build_incoherent_dipole_schematic_objects()
     assert len(obj_sled["structures"]) == 4

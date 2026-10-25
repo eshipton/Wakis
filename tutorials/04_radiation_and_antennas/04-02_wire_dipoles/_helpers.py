@@ -57,7 +57,7 @@ from wakis.estimate import estimate
 from wakis.templates import Box
 from wakis.lumped import LumpedPort
 from wakis.near2far import Near2FarMonitor, half_power_beamwidth, plot_pattern_3d
-from wakis.sources import GaussianSource
+from wakis.sources import ContinuousSource, GaussianSource
 
 ETA0: float = float(np.sqrt(mu_0 / epsilon_0))
 F0_HZ: float = 1.0e9
@@ -485,6 +485,24 @@ def preflight_estimates() -> dict[str, dict[str, Any]]:
         },
     }
 
+    # Extended 3D domain for the far-field wire-dipole radiation movie (r_phys = 3.34*lam0, cpw = 22.0)
+    cpw_mov = 22.0
+    dx_mov = LAM0_M / cpw_mov
+    nx_mov, ny_mov, nz_mov = 160, 68, 159
+    dt_mov = dx_mov / (np.sqrt(3.0) * c0)
+    steps_mov = int(np.ceil((4.9 / F0_HZ) / dt_mov))
+    est_mov = estimate(cells=(nx_mov, ny_mov, nz_mov), steps=steps_mov, cpml=True)
+    out["radiation_movie_3d"] = {
+        "cells": int(est_mov.cells),
+        "nx": nx_mov,
+        "ny": ny_mov,
+        "nz": nz_mov,
+        "dx_min_mm": dx_mov * 1e3,
+        "dx_max_mm": dx_mov * 1e3,
+        "n_steps": steps_mov,
+        "ram_mb": float(est_mov.host_bytes / 1e6),
+    }
+
     print("\n=== wakis.estimate Preflight: Subcell vs. Resolved Wire & Graded vs. Uniform ===")
     print(f"{'Config':<24} {'Grid (Nx,Ny,Nz)':<18} {'Cells':>12} {'dx_min..max [mm]':>18} {'Steps':>8} {'RAM [MB]':>10}")
     print("-" * 96)
@@ -498,6 +516,98 @@ def preflight_estimates() -> dict[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Task 0: Center-Fed Half-Wave Thin-Wire Dipole (Radii, Current, Near/Far Field)
 # ---------------------------------------------------------------------------
+
+
+def run_wire_radiation_movie_cut(quick: bool = False) -> dict[str, np.ndarray]:
+    """Run an extended-domain 3D FIT center-fed $\\lambda_0/2$ thin-wire dipole simulation for the radiation GIF.
+
+    Uses :math:`\\Delta x = \\Delta y = \\Delta z = \\lambda_0 / 22.0` (:math:`22.0` cells/:math:`\\lambda_0 \\ge 20`,
+    11 axial segments along the :math:`L = \\lambda_0 / 2` wire) with a physical (non-CPML) half-width
+    :math:`R_{\\mathrm{phys}} = 3.34\\,\\lambda_0` (:math:`3.09\\,\\lambda_0 > 3\\,\\lambda_0` beyond the
+    :math:`\\pm \\lambda_0 / 4` dipole arm tips) and records 36 2D :math:`xz`-plane cut frames at :math:`y = 0`.
+    """
+    n_seg_wire = 11
+    cpw = 2.0 * float(n_seg_wire)  # 22.0 cells / lambda_0
+    dz = L_HALF_M / float(n_seg_wire)
+    n_pml = 6
+    n_half_z_phys = 71 if quick else 73  # 143 or 147 physical z cells -> R_phys = 3.25 or 3.34 lam0
+    n_half_x_phys = 72 if quick else 74
+    n_half_y_phys = 22 if quick else 28
+
+    r_phys_z_m = (n_half_z_phys + 0.5) * dz
+    r_phys_x_m = n_half_x_phys * dz
+    r_total_z_m = (n_half_z_phys + n_pml + 0.5) * dz
+    r_total_x_m = (n_half_x_phys + n_pml) * dz
+    y_total_m = (n_half_y_phys + n_pml) * dz
+
+    x_nodes = np.linspace(-r_total_x_m, r_total_x_m, 2 * (n_half_x_phys + n_pml) + 1)
+    y_nodes = np.linspace(-y_total_m, y_total_m, 2 * (n_half_y_phys + n_pml) + 1)
+    z_pos = (np.arange(n_half_z_phys + n_pml + 1) + 0.5) * dz
+    z_nodes = np.concatenate([-z_pos[::-1], z_pos])
+
+    grid = wakis.GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, use_mpi=False, verbose=0)
+    solver = wakis.SolverFIT3D(
+        grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=n_pml, verbose=0
+    )
+    n_periods = 4.9
+    n_steps = int(np.ceil(n_periods / (F0_HZ * solver.dt)))
+    _ = estimate(cells=(int(grid.Nx), int(grid.Ny), int(grid.Nz)), steps=n_steps, cpml=True)
+
+    cw = ContinuousSource(frequency=F0_HZ, ramp_time=1.0 / F0_HZ)
+    port = LumpedPort(
+        src_time=cw,
+        component="z",
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.5 * dz),
+        impedance=73.1,
+    )
+    solver.add_thin_wire(
+        [(0.0, 0.0, -0.5 * L_HALF_M), (0.0, 0.0, 0.5 * L_HALF_M)],
+        radius=0.5e-3,
+        gap=port,
+        correction=True,
+    )
+
+    step_start = int(1.35 / (F0_HZ * solver.dt))
+    step_end = n_steps - 1
+    frame_steps = set(np.linspace(step_start, step_end, 36, dtype=int).tolist())
+
+    iy0 = int(np.argmin(np.abs(grid.y)))
+    x_all = np.asarray(grid.x[:-1], dtype=float)
+    z_all = np.asarray(0.5 * (grid.z[:-1] + grid.z[1:]), dtype=float)
+    r_phys_m = min(r_phys_x_m, r_phys_z_m)
+    r_total_m = min(r_total_x_m, r_total_z_m)
+    ix_phys = np.where(np.abs(x_all) <= r_phys_m + 0.25 * dz)[0]
+    iz_phys = np.where(np.abs(z_all) <= r_phys_m + 0.25 * dz)[0]
+
+    td_frames: list[np.ndarray] = []
+    td_times_ns: list[float] = []
+    td_times_periods: list[float] = []
+
+    for step in range(n_steps):
+        t = step * solver.dt
+        port.update(solver, t)
+        solver.one_step()
+        port.post_step(solver, t)
+        if step in frame_steps:
+            t_after = (step + 1) * solver.dt
+            ez_full = np.asarray(solver.E[:, iy0, :, "z"], dtype=np.float32)
+            ez_crop = ez_full[np.ix_(ix_phys, iz_phys)].copy()
+            td_frames.append(ez_crop)
+            td_times_ns.append(float(t_after * 1e9))
+            td_times_periods.append(float(t_after * F0_HZ))
+
+    return {
+        "td_frames": np.asarray(td_frames, dtype=np.float32),
+        "td_times_ns": np.asarray(td_times_ns, dtype=float),
+        "td_times_periods": np.asarray(td_times_periods, dtype=float),
+        "td_x_ez": x_all[ix_phys],
+        "td_z_ez": z_all[iz_phys],
+        "td_r_phys_m": np.array(float(r_phys_m)),
+        "td_r_total_m": np.array(float(r_total_m)),
+        "td_cpw": np.array(float(cpw)),
+        "td_n_pml": np.array(int(n_pml)),
+    }
 
 
 def run_task_half_wave_thin_wire_radii(quick: bool = False) -> dict[str, Any]:
@@ -706,6 +816,7 @@ def run_task_half_wave_thin_wire_radii(quick: bool = False) -> dict[str, Any]:
     emag_xz = np.sqrt(np.abs(ex_xz_norm) ** 2 + np.abs(ez_xz_norm) ** 2)
     x_cell = 0.5 * (grid_base.x[:-1] + grid_base.x[1:])
     z_cell = 0.5 * (grid_base.z[:-1] + grid_base.z[1:])
+    movie_data = run_wire_radiation_movie_cut(quick=quick)
 
     return {
         "freqs_ghz": freqs * 1e-9,
@@ -759,8 +870,7 @@ def run_task_half_wave_thin_wire_radii(quick: bool = False) -> dict[str, Any]:
         "z_cell_m": z_cell,
         "ez_xz_real": ez_xz_norm.real,
         "emag_xz": emag_xz,
-        "td_frames": np.asarray(td_frames, dtype=np.float32),
-        "td_times_ns": np.asarray(td_times_ns, dtype=float),
+        **movie_data,
         "grid_x_m": np.asarray(grid_base.x, dtype=float),
         "grid_y_m": np.asarray(grid_base.y, dtype=float),
         "grid_z_m": np.asarray(grid_base.z, dtype=float),
@@ -1390,11 +1500,11 @@ def run_tasks(task_names: list[str], data_dir: Path, quick: bool = False) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _build_dipole_schematic_objects(d0: Any) -> tuple[Any, Any, Any, list[Any], dict[int, str]]:
+def _build_dipole_schematic_objects(d0: Any) -> tuple[Any, Any, Any, list[Any], dict[Any, str]]:
     """Build lightweight solver, port, Near2FarMonitor, and PEC arm markers for dipole schematics."""
-    gx = np.asarray(d0["grid_x_m"], dtype=float)
-    gy = np.asarray(d0["grid_y_m"], dtype=float)
-    gz = np.asarray(d0["grid_z_m"], dtype=float)
+    gx = np.asarray(d0["grid_x_m"], dtype=float)[:-1]
+    gy = np.asarray(d0["grid_y_m"], dtype=float)[:-1]
+    gz = np.asarray(d0["grid_z_m"], dtype=float)[:-1]
     grid = wakis.GridFIT3D(x=gx, y=gy, z=gz, use_mpi=False, verbose=0)
     solver = wakis.SolverFIT3D(
         grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=6, verbose=0
@@ -1417,21 +1527,27 @@ def _build_dipole_schematic_objects(d0: Any) -> tuple[Any, Any, Any, list[Any], 
         center=(0.0, 0.0, 0.0),
         size=(2.0 * bx, 2.0 * bx, 2.0 * bz),
     )
-    w_vis = 0.010
+    n2f.faces = [n2f]
+    w_vis = 0.005
     arm_len = 0.5 * L_HALF_M - 0.5 * dz_w
     z_arm_c = 0.5 * (0.5 * dz_w + 0.5 * L_HALF_M)
     arm_lo = Box((0.0, 0.0, -z_arm_c), (w_vis, w_vis, arm_len), "pec")
     arm_hi = Box((0.0, 0.0, z_arm_c), (w_vis, w_vis, arm_len), "pec")
-    mat_names = {id(arm_lo): "PEC dipole arm", id(arm_hi): "PEC dipole arm"}
+    mat_names: dict[Any, str] = {
+        "region_0": "PEC dipole arm",
+        "region_1": "PEC dipole arm",
+        id(arm_lo): "PEC dipole arm",
+        id(arm_hi): "PEC dipole arm",
+    }
     return solver, port, n2f, [arm_lo, arm_hi], mat_names
 
 
-def _build_monopole_schematic_objects(d2: Any, d3: Any, finite_gnd: bool = False) -> tuple[Any, Any, Any, list[Any], dict[int, str]]:
+def _build_monopole_schematic_objects(d2: Any, d3: Any, finite_gnd: bool = False) -> tuple[Any, Any, Any, list[Any], dict[Any, str]]:
     """Build lightweight solver, port, Near2FarMonitor, and PEC markers for monopole schematics."""
     if not finite_gnd:
-        gx = np.asarray(d2["grid_mono_x_m"], dtype=float)
-        gy = np.asarray(d2["grid_mono_y_m"], dtype=float)
-        gz = np.asarray(d2["grid_mono_z_m"], dtype=float)
+        gx = np.asarray(d2["grid_mono_x_m"], dtype=float)[:-1]
+        gy = np.asarray(d2["grid_mono_y_m"], dtype=float)[:-1]
+        gz = np.asarray(d2["grid_mono_z_m"], dtype=float)[:-1]
         grid = wakis.GridFIT3D(x=gx, y=gy, z=gz, use_mpi=False, verbose=0)
         solver = wakis.SolverFIT3D(
             grid,
@@ -1459,14 +1575,15 @@ def _build_monopole_schematic_objects(d2: Any, d3: Any, finite_gnd: bool = False
             size=(2.0 * bx, 2.0 * bx, bz),
             ground_plane="-z",
         )
-        w_vis = 0.010
+        n2f.faces = [n2f]
+        w_vis = 0.005
         arm_len = H_QUARTER_M - dz_w
         arm = Box((0.0, 0.0, dz_w + 0.5 * arm_len), (w_vis, w_vis, arm_len), "pec")
-        return solver, port, n2f, [arm], {id(arm): "PEC monopole (lambda/4)"}
+        return solver, port, n2f, [arm], {"region_0": "PEC monopole (λ₀/4)", id(arm): "PEC monopole (λ₀/4)"}
 
-    gx = np.asarray(d3["grid_fg_x_m"], dtype=float)
-    gy = np.asarray(d3["grid_fg_y_m"], dtype=float)
-    gz = np.asarray(d3["grid_fg_z_m"], dtype=float)
+    gx = np.asarray(d3["grid_fg_x_m"], dtype=float)[:-1]
+    gy = np.asarray(d3["grid_fg_y_m"], dtype=float)[:-1]
+    gz = np.asarray(d3["grid_fg_z_m"], dtype=float)[:-1]
     grid = wakis.GridFIT3D(x=gx, y=gy, z=gz, use_mpi=False, verbose=0)
     solver = wakis.SolverFIT3D(
         grid, bc_low=["cpml"] * 3, bc_high=["cpml"] * 3, n_pml=6, verbose=0
@@ -1487,71 +1604,102 @@ def _build_monopole_schematic_objects(d2: Any, d3: Any, finite_gnd: bool = False
         center=(0.0, 0.0, 0.0),
         size=(2.0 * bx, 2.0 * bx, 2.0 * bz),
     )
+    n2f.faces = [n2f]
     w_gnd = 0.80 * LAM0_M
-    w_vis = 0.010
+    w_vis = 0.005
     arm_len = H_QUARTER_M - dz_w
     arm = Box((0.0, 0.0, dz_w + 0.5 * arm_len), (w_vis, w_vis, arm_len), "pec")
     gnd_plate = Box((0.0, 0.0, -0.002), (w_gnd, w_gnd, 0.004), "pec")
-    mat_names = {id(arm): "PEC monopole (lambda/4)", id(gnd_plate): "Finite PEC ground (0.8 lambda0)"}
+    mat_names = {
+        "region_0": "PEC monopole (λ₀/4)",
+        "region_1": "Finite PEC ground (0.8 λ₀)",
+        id(arm): "PEC monopole (λ₀/4)",
+        id(gnd_plate): "Finite PEC ground (0.8 λ₀)",
+    }
     return solver, port, n2f, [arm, gnd_plate], mat_names
 
 
 def plot_00_setup_schematic(d0: Any, d2: Any, d3: Any, fig_dir: Path) -> Path:
-    """Render Figure 00: 3-panel setup schematic for the three wire-antenna simulation configurations."""
+    """Render Figures 00a/00b and setup table via :func:`wakis.schematic.save_setup_figures`."""
     figstyle.apply_style()
-    fig, axes = figstyle.new_figure(width_in=11.0, height_in=4.5, ncols=3, nrows=1)
-    ax_dip, ax_mono_inf, ax_mono_fin = axes
-
     s_dip, p_dip, n2f_dip, st_dip, names_dip = _build_dipole_schematic_objects(d0)
-    schematic.plot_schematic(
+    dz_w = L_HALF_M / 19.0
+    variations = [
+        {
+            "name": "Wire radius & shortening sweep",
+            "details": r"$a \in \{1.50, 0.50, 0.15\}\;\mathrm{mm}$ ($\Omega \in \{9.2, 11.4, 13.8\}$) and trimmed $L = 0.470\,\lambda_0$",
+        },
+        {
+            "name": "Resolved 4×4 PEC vs. subcell wire",
+            "details": r"$\Delta_{\perp,\mathrm{core}} = 0.76\;\mathrm{mm}$ ($4\times 4$ cells across $2w = 3.05\;\mathrm{mm}$) vs. subcell $m = \frac{1}{2}\ln(\Delta_\perp / a)$",
+        },
+        {
+            "name": "Quarter-wave monopole (infinite PEC)",
+            "details": r"$h = \lambda_0 / 4 = 75.0\;\mathrm{mm}$ on $z = 0$ PEC boundary (`ground_plane='-z'` in `Near2FarMonitor`)",
+        },
+        {
+            "name": "Finite PEC ground plane sweep",
+            "details": r"Square PEC sheet $W_{\mathrm{gnd}} / \lambda_0 \in \{0.40, 0.80, 1.20\}$ in 6-face CPML",
+        },
+        {
+            "name": "Extended radiation movie",
+            "details": r"$6.68\,\lambda_0 \times 2.55\,\lambda_0 \times 6.68\,\lambda_0$ at $22.0$ cells/$\lambda_0$ ($r_{\max} = 3.34\,\lambda_0$)",
+        },
+    ]
+    res = schematic.save_setup_figures(
+        s_dip,
+        fig_dir,
+        plane="xz",
+        cut_coord=0.0,
+        unit="mm",
+        freq=F0_HZ,
+        min_feature=dz_w,
+        structures=st_dip,
+        material_names=names_dip,
+        sources=[p_dip],
+        monitors=[n2f_dip],
+        title_geometry=r"Center-Fed $\lambda_0/2$ Wire Dipole Setup ($xz$ plane, $y = 0$)",
+        title_mesh=r"Locally Graded FIT Mesh and Excitation ($\lambda_0/2$ Dipole)",
+        variations=variations,
+    )
+
+    # Reposition the lumped-port tag next to the center feed gap at z = 0 so it does not overlap N2F
+    fig_a, ax_a = schematic.plot_schematic(
         s_dip,
         plane="xz",
-        ax=ax_dip,
+        cut_coord=0.0,
+        unit="mm",
+        freq=F0_HZ,
         structures=st_dip,
         material_names=names_dip,
         sources=[p_dip],
         monitors=[n2f_dip],
         show_mesh=False,
         show_pulse_inset=False,
-        freq=F0_HZ,
-        unit="mm",
-        title=r"(a) Free-Space $\lambda_0/2$ Dipole",
+        title=r"Center-Fed $\lambda_0/2$ Wire Dipole Setup ($xz$ plane, $y = 0$)",
     )
+    for txt in ax_a.texts:
+        if "1 ·" in txt.get_text():
+            txt.set_position((18.0, 0.0))
+            txt.set_ha("left")
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
-    s_mi, p_mi, n2f_mi, st_mi, names_mi = _build_monopole_schematic_objects(d2, d3, finite_gnd=False)
-    schematic.plot_schematic(
-        s_mi,
+    # Center the 1x zoom inset on the dipole feed gap and core mesh
+    fig_b, _ = schematic.plot_mesh_and_excitation(
+        s_dip,
         plane="xz",
-        ax=ax_mono_inf,
-        structures=st_mi,
-        material_names=names_mi,
-        sources=[p_mi],
-        monitors=[n2f_mi],
-        show_mesh=False,
-        show_pulse_inset=False,
-        freq=F0_HZ,
+        cut_coord=0.0,
         unit="mm",
-        title=r"(b) $\lambda_0/4$ Monopole (Infinite PEC)",
-    )
-
-    s_mf, p_mf, n2f_mf, st_mf, names_mf = _build_monopole_schematic_objects(d2, d3, finite_gnd=True)
-    schematic.plot_schematic(
-        s_mf,
-        plane="xz",
-        ax=ax_mono_fin,
-        structures=st_mf,
-        material_names=names_mf,
-        sources=[p_mf],
-        monitors=[n2f_mf],
-        show_mesh=False,
-        show_pulse_inset=False,
         freq=F0_HZ,
-        unit="mm",
-        title=r"(c) $\lambda_0/4$ Monopole (Finite PEC Sheet)",
+        min_feature=dz_w,
+        structures=st_dip,
+        material_names=names_dip,
+        sources=[p_dip],
+        zoom_bounds=(-0.035, 0.035, -0.045, 0.045),
+        title=r"Locally Graded FIT Mesh and Excitation ($\lambda_0/2$ Dipole)",
     )
-
-    out = fig_dir / "00_setup_schematic.png"
-    return figstyle.save(fig, out, close=True, auto_legend_below=False)
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res["geometry_figure"]
 
 
 def plot_01_geometry_and_graded_mesh(d0: Any, d1: Any, fig_dir: Path) -> Path:
@@ -2120,47 +2268,131 @@ def plot_07_far_field_3d_and_finite_ground(d0: Any, d2: Any, d3: Any, fig_dir: P
 
 
 def plot_08_wire_antenna_radiation_gif(d0: Any, fig_dir: Path) -> Path:
-    """Render Figure 08: Animated time-domain GIF of the center-fed half-wave dipole with overlay_geometry."""
+    """Render Figure 08: Animated time-domain GIF of the center-fed half-wave dipole over r <= 3.34*lambda_0."""
     figstyle.apply_style()
-    s_dip, p_dip, n2f_dip, st_dip, names_dip = _build_dipole_schematic_objects(d0)
-    x_mm = np.asarray(d0["x_cell_m"], dtype=float) * 1e3
-    z_mm = np.asarray(d0["z_cell_m"], dtype=float) * 1e3
+    x_m = np.asarray(d0["td_x_ez"] if "td_x_ez" in d0 else d0["x_cell_m"], dtype=float)
+    z_m = np.asarray(d0["td_z_ez"] if "td_z_ez" in d0 else d0["z_cell_m"], dtype=float)
     frames = np.asarray(d0["td_frames"], dtype=float)
     times_ns = np.asarray(d0["td_times_ns"], dtype=float)
+    times_per = (
+        np.asarray(d0["td_times_periods"], dtype=float)
+        if "td_times_periods" in d0
+        else times_ns * 1e-9 * F0_HZ
+    )
+    r_phys_lam = float(d0["td_r_phys_m"]) / LAM0_M if "td_r_phys_m" in d0 else float(np.max(np.abs(x_m))) / LAM0_M
+    r_total_lam = float(d0["td_r_total_m"]) / LAM0_M if "td_r_total_m" in d0 else r_phys_lam * 1.09
+    cpw = float(d0["td_cpw"]) if "td_cpw" in d0 else 22.0
+    n_pml = int(d0["td_n_pml"]) if "td_n_pml" in d0 else 6
 
-    vmax = float(np.percentile(np.abs(frames), 98.5))
+    x_lam = x_m / LAM0_M
+    z_lam = z_m / LAM0_M
+    r_lam = np.sqrt(x_lam[:, None] ** 2 + z_lam[None, :] ** 2)
+    scaled_frames = frames[:, : len(x_lam), : len(z_lam)] * r_lam[None, :, :]
+
+    far_mask = r_lam >= 0.25
+    vmax = float(np.percentile(np.abs(scaled_frames[:, far_mask]), 99.0))
     if vmax <= 0.0:
         vmax = 1.0
 
+    pml_w = r_total_lam - r_phys_lam
+    gap_half_lam = 0.5 / cpw
+    arm_tip_lam = 0.25
+
     pil_images: list[Image.Image] = []
-    for idx in range(frames.shape[0]):
-        fig, ax = figstyle.new_figure(width_in=4.8, height_in=4.3, ncols=1, nrows=1)
+    for idx in range(scaled_frames.shape[0]):
+        fig, ax = figstyle.new_figure(width_in=5.1, height_in=4.5, ncols=1, nrows=1)
+        fig.set_dpi(160)
         im = ax.pcolormesh(
-            x_mm,
-            z_mm,
-            frames[idx, : len(x_mm), : len(z_mm)].T,
+            x_lam,
+            z_lam,
+            scaled_frames[idx].T,
             cmap=figstyle.CMAP_DIVERGING,
             vmin=-vmax,
             vmax=vmax,
             shading="auto",
         )
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$E_z(x, 0, z, t)$ [V/m]")
-        schematic.overlay_geometry(
-            ax,
-            s_dip,
-            plane="xz",
-            unit="mm",
-            structures=st_dip,
-            material_names=names_dip,
-            sources=[p_dip],
-            monitors=[n2f_dip],
-            show_sources=True,
-            show_monitors=True,
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$(r / \lambda_0)\,E_z(x, 0, z, t)$ [V/m]")
+
+        # Thin hatched CPML band at the 4 frame edges (cropped out of the field area)
+        pml_kw = dict(
+            facecolor="#F3E8E8",
+            edgecolor=COLORS["red"],
+            hatch="////",
+            linewidth=0.7,
+            zorder=7,
         )
+        ax.add_patch(Rectangle((-r_total_lam, r_phys_lam), 2.0 * r_total_lam, pml_w, **pml_kw))
+        ax.add_patch(Rectangle((-r_total_lam, -r_total_lam), 2.0 * r_total_lam, pml_w, **pml_kw))
+        ax.add_patch(Rectangle((-r_total_lam, -r_phys_lam), pml_w, 2.0 * r_phys_lam, **pml_kw))
+        ax.add_patch(Rectangle((r_phys_lam, -r_phys_lam), pml_w, 2.0 * r_phys_lam, **pml_kw))
+        ax.text(
+            0.0,
+            r_phys_lam + 0.5 * pml_w,
+            f"CPML ({n_pml} cells)",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            color=COLORS["red"],
+            bbox=dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor=COLORS["red"], lw=0.5, alpha=0.92),
+            zorder=10,
+        )
+
+        # Near-field r = lambda_0/4 circle and 1, 2, 3 lambda_0 range rings
+        c_nf = Circle((0.0, 0.0), 0.25, fill=False, ls="--", lw=1.1, edgecolor=COLORS["orange"], zorder=8)
+        ax.add_patch(c_nf)
+        for m_ring in (1, 2, 3):
+            c_r = Circle((0.0, 0.0), float(m_ring), fill=False, ls=":", lw=0.65, edgecolor=COLORS["grey"], alpha=0.65, zorder=6)
+            ax.add_patch(c_r)
+            ang = 0.25 * np.pi
+            ax.text(
+                m_ring * np.cos(ang),
+                -m_ring * np.sin(ang),
+                f"${m_ring}\\lambda_0$",
+                fontsize=6.8,
+                color=COLORS["grey"],
+                ha="left",
+                va="top",
+                zorder=9,
+            )
+
+        # Upper and lower lambda_0 / 2 PEC dipole arms and center LumpedPort feed
+        ax.plot([0.0, 0.0], [gap_half_lam, arm_tip_lam], color="white", lw=3.8, solid_capstyle="butt", zorder=9)
+        ax.plot([0.0, 0.0], [-arm_tip_lam, -gap_half_lam], color="white", lw=3.8, solid_capstyle="butt", zorder=9)
+        ax.plot([0.0, 0.0], [gap_half_lam, arm_tip_lam], color=figstyle.INK, lw=2.3, solid_capstyle="butt", zorder=10)
+        ax.plot([0.0, 0.0], [-arm_tip_lam, -gap_half_lam], color=figstyle.INK, lw=2.3, solid_capstyle="butt", zorder=10)
+        ax.plot(0.0, 0.0, marker="s", markersize=5.8, color=COLORS["red"], markeredgecolor="white", markeredgewidth=0.6, zorder=11)
+
+        ax.annotate(
+            r"$\lambda_0/2$ PEC dipole arms",
+            xy=(0.0, 0.19),
+            xytext=(0.45, 0.65),
+            fontsize=7.3,
+            color=figstyle.INK,
+            bbox=dict(boxstyle="round,pad=0.14", facecolor="white", edgecolor=figstyle.INK, lw=0.6, alpha=0.90),
+            arrowprops=dict(arrowstyle="->", lw=0.75, color=figstyle.INK),
+            zorder=11,
+        )
+        ax.annotate(
+            r"Center LumpedPort",
+            xy=(0.0, 0.0),
+            xytext=(-1.95, 0.48),
+            fontsize=7.3,
+            color=COLORS["red"],
+            bbox=dict(boxstyle="round,pad=0.14", facecolor="white", edgecolor=COLORS["red"], lw=0.6, alpha=0.90),
+            arrowprops=dict(arrowstyle="->", lw=0.75, color=COLORS["red"]),
+            zorder=11,
+        )
+
+        ax.set_xlim(-r_total_lam, r_total_lam)
+        ax.set_ylim(-r_total_lam, r_total_lam)
+        ax.set_xticks([-3, -2, -1, 0, 1, 2, 3])
+        ax.set_yticks([-3, -2, -1, 0, 1, 2, 3])
         ax.set_aspect("equal")
-        ax.set_xlabel("$x$ [mm]")
-        ax.set_ylabel("$z$ [mm]")
-        ax.set_title(f"Center-Fed $\\lambda_0/2$ Dipole ($t = {times_ns[idx]:.2f}$ ns)")
+        ax.set_xlabel(r"$x / \lambda_0$ ($\lambda_0 = 300$ mm)")
+        ax.set_ylabel(r"$z / \lambda_0$")
+        ax.set_title(
+            f"Center-Fed $\\lambda_0/2$ Dipole ($t = {times_per[idx]:.2f}\\,T_0$, {cpw:.0f} cells/$\\lambda_0$)"
+        )
         figstyle.finish(fig, max_panels=1, auto_legend_below=False)
 
         fig.canvas.draw()
@@ -2174,7 +2406,7 @@ def plot_08_wire_antenna_radiation_gif(d0: Any, fig_dir: Path) -> Path:
         out,
         save_all=True,
         append_images=pil_images[1:],
-        duration=110,
+        duration=100,
         loop=0,
         optimize=True,
     )
@@ -2182,15 +2414,17 @@ def plot_08_wire_antenna_radiation_gif(d0: Any, fig_dir: Path) -> Path:
 
 
 def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
-    """Load ``data_dir/task_*.npz`` and render all 9 Tutorial 4.2 figures into ``fig_dir``."""
+    """Load ``data_dir/task_*.npz`` and render all Tutorial 4.2 figures into ``fig_dir``."""
     fig_dir.mkdir(parents=True, exist_ok=True)
     d0 = np.load(data_dir / "task_half_wave_thin_wire_radii.npz")
     d1 = np.load(data_dir / "task_resolved_wire_vs_subcell_mesh.npz")
     d2 = np.load(data_dir / "task_quarter_wave_monopole_infinite_gnd.npz")
     d3 = np.load(data_dir / "task_finite_ground_plane_sweep.npz")
 
+    fig00a = plot_00_setup_schematic(d0, d2, d3, fig_dir)
     return [
-        plot_00_setup_schematic(d0, d2, d3, fig_dir),
+        fig00a,
+        fig_dir / "00b_setup_mesh_and_excitation.png",
         plot_01_geometry_and_graded_mesh(d0, d1, fig_dir),
         plot_02_current_distribution_wire(d0, d2, fig_dir),
         plot_03_impedance_s11_and_shortening(d0, fig_dir),

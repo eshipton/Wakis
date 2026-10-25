@@ -58,6 +58,39 @@
 #    clearly labelled `"toy problem (not the challenge)"` optimization in Wakis so
 #    learners can execute the two-stage adjoint + morphological STE loop in seconds on CPU.
 #
+# ### Simulation setup
+#
+# The setup figures below display the $3.12\,\mu\text{m}\times 3.12\,\mu\text{m}$ ($312\times 312$ cells at $\Delta x = 10\text{ nm}$, surrounded by 20-cell / $200\text{ nm}$ CPML on $\pm x, \pm y$) `ceviche_waveguide_bend` domain, showing the Port 1 $\text{TM}_0$ `PolarizedModeSource` and $S_{11}$ `PolarizedModeMonitor`, the orthogonal Port 2 $S_{21}$ objective `PolarizedModeMonitor`, and the hatched $1.60\,\mu\text{m}\times 1.60\,\mu\text{m}$ ($160\times 160\text{ px}$) design region $\Omega_d$ for both the initial greyscale density (`_initial`) and the Round-2 STE binary design (`_final` / base).
+#
+# ![Initial setup geometry](figures/00a_setup_geometry_initial.png)
+# ![Initial mesh and excitation](figures/00b_setup_mesh_and_excitation_initial.png)
+# ![Final setup geometry](figures/00a_setup_geometry_final.png)
+# ![Final mesh and excitation](figures/00b_setup_mesh_and_excitation_final.png)
+# ![Setup geometry](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 3.12 µm × 3.12 µm × 10 nm (z ∈ [-5 nm, 5 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 312 × 312 × 1 (97344 cells) |
+# | Discretization | Δx & resolution | Δ_min = 10 nm, 36.1 cells/λ (in n_max = 3.50), 8.0 cells across feature (80 nm) |
+# | Boundary | -x face | CPML (20 cells, 200 nm) |
+# | Boundary | +x face | CPML (20 cells, 200 nm) |
+# | Boundary | -y face | CPML (20 cells, 200 nm) |
+# | Boundary | +y face | CPML (20 cells, 200 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding (ε = 2.25, n = 1.50) (isotropic) |
+# | Material | Region 1: Input Si waveguide (ε = 12.25, n = 3.50, w = 400 nm) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [5 nm, 920 nm] (d = 915 nm) |
+# | Material | Region 2: Output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [1.52 µm, 1.92 µm] (d = 400 nm) |
+# | Material | Region 3: Design region Ω_d (160×160 px, 1.60 µm × 1.60 µm, ε ∈ {2.25, 12.25}) | ε_r = 12.25, μ_r = 1.00, model = Isotropic dielectric, x ∈ [920 nm, 2.52 µm] (d = 1.60 µm) |
+# | Source | 1 · PolarizedModeSource | pos: x = 0.25 µm, y ∈ [1.00, 2.44] µm, pol: TM₀ (E_z), pulse: f₀ = 234.4 THz, Δf = 28.13 THz |
+# | Monitor | 2 · PolarizedModeMonitor | Port 1 PolarizedModeMonitor (S₁₁ reflection, TM₀ E_z), pos: x = 0.30 µm, y ∈ [1.00, 2.44] µm, freqs: 6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm) |
+# | Monitor | 3 · PolarizedModeMonitor | Port 2 Objective PolarizedModeMonitor (S₂₁ transmission, TM₀ E_z), pos: x ∈ [1.00, 2.44] µm, y = 0.30 µm, freqs: 6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm) |
+# | Variation | Initial design (_initial) | Stage-1 iter 0 initial greyscale density (mean ρ ≈ 0.49, β = 4) in 160 × 160 design box Ω_d (1.60 µm × 1.60 µm) |
+# | Variation | Final Round-2 design (_final) | Stage-2 STE binary design (ste_beta64:34, 8/8 px = 80 nm, official eval_metric = +0.6427) from data/round2_bend/design.npy |
+# | Variation | Quick re-simulation (task_1) | 2× coarsened 20 nm grid (156 × 156 × 1, 18.1 cells/λ_min) vs stored 10 nm reference |
+#
 # ---
 #
 # ## Physics, Evaluation Metric & Optimizer Stack
@@ -1194,6 +1227,370 @@ def run_task_4_optional_invrs_gym(cfg: dict) -> dict:
 # 8. `08_design_evolution.gif` — Animated GIF (< 5 MB) of the real Round-2 $160\times 160$ bend topology evolving inside the $3.12\,\mu\text{m}\times 3.12\,\mu\text{m}$ waveguide domain (`snapshots_thinned.npz` + `log.jsonl`).
 
 # %%
+def _plot_00_setup_schematics(fig_dir: Path) -> None:
+    """Generate 00a/00b setup figures and 00_setup_table.md (base, _initial, _final) from stored data."""
+    from matplotlib.patches import Rectangle
+    from wakis import figstyle, schematic
+    from wakis.templates.shapes import Box
+
+    art = load_round2_artifacts()
+    design_final = np.asarray(art["design"], dtype=np.float64)
+    design_init = np.asarray(art["snapshots"]["designs"][0], dtype=np.float64)
+    eps_full = art["eps_full"]
+    dense_wl_nm = art["dense_wavelengths_nm"]
+    wl_6_nm = art["wavelengths_nm"]
+    p0, p1 = art["ports"][0], art["ports"][1]
+
+    dl = 10e-9
+    nx, ny = 312, 312
+    n_pml = 20
+    dt = 0.95 * dl / (C0 * np.sqrt(2.0))
+    f_target = C0 / (dense_wl_nm * 1e-9)
+    f_sim = np.arcsin(np.pi * f_target * dt) / (np.pi * dt)
+    f_6 = C0 / (wl_6_nm * 1e-9)
+    fc_pulse = 0.5 * (float(f_sim.min()) + float(f_sim.max()))
+    pulse_obj = GaussianSource(fc_pulse, 0.12 * fc_pulse)
+
+    x_min_m = dl / 2
+    x_max_m = nx * dl + dl / 2
+    d0_m, d1_m = 0.92e-6, 2.52e-6
+    w_wg_m = 0.40e-6
+    yc_in_m = 1.72e-6
+    xc_out_m = 1.72e-6
+    offset_um = 0.05
+
+    sources_s = [
+        {
+            "kind": "sheet",
+            "type_name": "PolarizedModeSource",
+            "short_word": "ModeSrc",
+            "label": "Port 1 PolarizedModeSource (TM₀ E_z, +x)",
+            "desc": f"Port 1 PolarizedModeSource (TM₀ E_z, +x) at x = {p0[0]:.2f} µm, y ∈ [{p0[1] - 0.5 * p0[2]:.2f}, {p0[1] + 0.5 * p0[2]:.2f}] µm",
+            "pos_str": f"x = {p0[0]:.2f} µm, y ∈ [{p0[1] - 0.5 * p0[2]:.2f}, {p0[1] + 0.5 * p0[2]:.2f}] µm",
+            "polarization": "TM₀ (E_z)",
+            "h_bounds": (p0[0] * 1e-6, p0[0] * 1e-6),
+            "v_bounds": ((p0[1] - 0.5 * p0[2]) * 1e-6, (p0[1] + 0.5 * p0[2]) * 1e-6),
+            "e_vec": (0.0, 0.0, 1.0),
+            "k_vec": (1.0, 0.0, 0.0),
+            "h_vec": (0.0, -1.0, 0.0),
+            "pulse": schematic._extract_pulse_metadata(pulse_obj),
+        }
+    ]
+    monitors_s = [
+        {
+            "kind": "plane",
+            "type_name": "PolarizedModeMonitor",
+            "short_word": "S₁₁ mon",
+            "label": "Port 1 PolarizedModeMonitor (S₁₁ reflection, TM₀ E_z)",
+            "desc": f"Port 1 PolarizedModeMonitor (S₁₁) at x = {p0[0] + offset_um:.2f} µm, y ∈ [{p0[1] - 0.5 * p0[2]:.2f}, {p0[1] + 0.5 * p0[2]:.2f}] µm",
+            "pos_str": f"x = {p0[0] + offset_um:.2f} µm, y ∈ [{p0[1] - 0.5 * p0[2]:.2f}, {p0[1] + 0.5 * p0[2]:.2f}] µm",
+            "frequencies": f_6,
+            "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+            "h_bounds": ((p0[0] + offset_um) * 1e-6, (p0[0] + offset_um) * 1e-6),
+            "v_bounds": ((p0[1] - 0.5 * p0[2]) * 1e-6, (p0[1] + 0.5 * p0[2]) * 1e-6),
+        },
+        {
+            "kind": "plane",
+            "type_name": "PolarizedModeMonitor",
+            "short_word": "S₂₁ obj",
+            "label": "Port 2 Objective PolarizedModeMonitor (S₂₁ transmission, TM₀ E_z)",
+            "desc": f"Port 2 Objective PolarizedModeMonitor (S₂₁) at y = {p1[1] + offset_um:.2f} µm, x ∈ [{p1[0] - 0.5 * p1[2]:.2f}, {p1[0] + 0.5 * p1[2]:.2f}] µm",
+            "pos_str": f"x ∈ [{p1[0] - 0.5 * p1[2]:.2f}, {p1[0] + 0.5 * p1[2]:.2f}] µm, y = {p1[1] + offset_um:.2f} µm",
+            "frequencies": f_6,
+            "freq_str": "6 target channels λ ∈ {1265..1295} nm (67 dense λ ∈ [1245, 1315] nm)",
+            "h_bounds": ((p1[0] - 0.5 * p1[2]) * 1e-6, (p1[0] + 0.5 * p1[2]) * 1e-6),
+            "v_bounds": ((p1[1] + offset_um) * 1e-6, (p1[1] + offset_um) * 1e-6),
+        },
+    ]
+    variations = [
+        {
+            "name": "Initial design (_initial)",
+            "details": "Stage-1 iter 0 initial greyscale density (mean ρ ≈ 0.49, β = 4) in 160 × 160 design box Ω_d (1.60 µm × 1.60 µm)",
+        },
+        {
+            "name": "Final Round-2 design (_final)",
+            "details": "Stage-2 STE binary design (ste_beta64:34, 8/8 px = 80 nm, official eval_metric = +0.6427) from data/round2_bend/design.npy",
+        },
+        {
+            "name": "Quick re-simulation (task_1)",
+            "details": "2× coarsened 20 nm grid (156 × 156 × 1, 18.1 cells/λ_min) vs stored 10 nm reference",
+        },
+    ]
+
+    variants = [
+        (
+            "_initial",
+            design_init,
+            7.25,
+            "Design region Ω_d (initial ρ ≈ 0.49, 1.60 µm × 1.60 µm)",
+            "Design region Ω_d\n(initial ρ ≈ 0.49)",
+            "ceviche_waveguide_bend Setup — Initial Design (Stage 1, iter 0)",
+            "Discretization (10 nm Challenge Grid & 1× Zoom) and O-Band Excitation — Initial",
+        ),
+        (
+            "_final",
+            design_final,
+            12.25,
+            "Design region Ω_d (final binary 8/8 px = 80 nm, ε ∈ {2.25, 12.25})",
+            "Design region Ω_d\n(final 8/8 px = 80 nm)",
+            "ceviche_waveguide_bend Setup — Final Round-2 Design (+0.6427, 8/8 px)",
+            "Discretization (10 nm Challenge Grid & 1× Zoom) and O-Band Excitation — Final",
+        ),
+        (
+            "",
+            design_final,
+            12.25,
+            "Design region Ω_d (160×160 px, 1.60 µm × 1.60 µm, ε ∈ {2.25, 12.25})",
+            "Design region Ω_d\n(hatched, 1.60 µm × 1.60 µm)",
+            "ceviche_waveguide_bend — 2D Adjoint Inverse-Design Setup (10 nm Grid)",
+            "Discretization (312×312 10 nm Mesh & 1× Zoom) and O-Band Excitation",
+        ),
+    ]
+
+    zoom_bounds = (0.86e-6, 1.18e-6, 1.48e-6, 1.96e-6)
+
+    for suffix, des_2d, des_eps, des_struct_name, des_box_lbl, title_a, title_b in variants:
+        grid = wakis.GridFIT3D(
+            x_min_m, x_max_m, x_min_m, x_max_m, -dl / 2, dl / 2, nx, ny, 1, verbose=0
+        )
+        solver = wakis.SolverFIT3D(
+            grid,
+            bc_low=["cpml", "cpml", "periodic"],
+            bc_high=["cpml", "cpml", "periodic"],
+            bg=[2.25, 1.0, 0.0],
+            n_pml=n_pml,
+            dt=dt,
+            verbose=0,
+        )
+        eps_nodes = np.where(eps_full > 7.0, 12.25, 2.25)
+        eps_nodes[92:252, 92:252] = 2.25 + (12.25 - 2.25) * des_2d
+        for comp in "xyz":
+            solver.ieps[:, :, 0, comp] = 1.0 / (eps_nodes * EPS_0)
+
+        structs = [
+            Box(
+                center=(0.5 * (x_min_m + d0_m), yc_in_m, 0.0),
+                size=(d0_m - x_min_m, w_wg_m, dl),
+                material=12.25,
+            ),
+            Box(
+                center=(xc_out_m, 0.5 * (x_min_m + d0_m), 0.0),
+                size=(w_wg_m, d0_m - x_min_m, dl),
+                material=12.25,
+            ),
+            Box(
+                center=(0.5 * (d0_m + d1_m), 0.5 * (d0_m + d1_m), 0.0),
+                size=(d1_m - d0_m, d1_m - d0_m, dl),
+                material=des_eps,
+            ),
+        ]
+        mat_names = {
+            "background": "SiO₂ cladding (ε = 2.25, n = 1.50)",
+            "region_0": "Input Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+            "region_1": "Output Si waveguide (ε = 12.25, n = 3.50, w = 400 nm)",
+            "region_2": des_struct_name,
+        }
+        res = schematic.save_setup_figures(
+            solver,
+            fig_dir,
+            prefix="00",
+            suffix=suffix,
+            plane="xy",
+            structures=structs,
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=1265e-9,
+            min_feature=80e-9,
+            title_geometry=title_a,
+            title_mesh=title_b,
+            variations=variations,
+        )
+
+        # Enhance 00a: render design array inside hatched design box and place tags cleanly
+        fig_a, ax_a = schematic.plot_schematic(
+            solver,
+            plane="xy",
+            structures=structs[:2],
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            wavelength=1265e-9,
+            title=title_a,
+            width_in=7.6,
+            height_in=4.9,
+        )
+        eps_des = 2.25 + (12.25 - 2.25) * des_2d.T
+        ax_a.imshow(
+            eps_des,
+            origin="lower",
+            extent=[0.92, 2.52, 0.92, 2.52],
+            cmap="Blues",
+            vmin=2.25,
+            vmax=12.25,
+            alpha=0.84,
+            zorder=3.2,
+            interpolation="nearest",
+        )
+        ax_a.add_patch(
+            Rectangle(
+                (0.92, 0.92),
+                1.60,
+                1.60,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.6,
+                ls="--",
+                zorder=5.4,
+            )
+        )
+        ax_a.text(
+            1.72,
+            2.56,
+            des_box_lbl,
+            ha="center",
+            va="bottom",
+            fontsize=7.8,
+            fontweight="bold",
+            color="#5B21B6",
+            bbox=dict(boxstyle="round,pad=0.16", facecolor="#F5F3FF", edgecolor="#6D28D9", lw=0.8, alpha=0.94),
+            zorder=9,
+        )
+        for txt_obj in ax_a.texts:
+            t_str = txt_obj.get_text()
+            role = getattr(txt_obj, "_schematic_role", "")
+            if t_str.startswith("1 ·"):
+                txt_obj.set_position((0.34, 2.18))
+                txt_obj.set_fontsize(8.0)
+                txt_obj.set_ha("left")
+                txt_obj.set_va("center")
+                txt_obj.set_bbox(dict(boxstyle="round,pad=0.12", facecolor="white", edgecolor="none", alpha=0.88))
+                txt_obj.set_zorder(9)
+            elif t_str.startswith("2 ·"):
+                txt_obj.set_position((0.34, 0.94))
+                txt_obj.set_fontsize(8.2)
+                txt_obj.set_ha("left")
+                txt_obj.set_va("top")
+            elif t_str.startswith("3 ·"):
+                txt_obj.set_position((2.44, 0.40))
+                txt_obj.set_fontsize(8.2)
+                txt_obj.set_ha("right")
+                txt_obj.set_va("bottom")
+            elif role == "boundary_bottom":
+                txt_obj.set_position((0.85, -0.08))
+                txt_obj.set_ha("center")
+                txt_obj.set_va("top")
+        ax_a.spines["bottom"].set_position(("outward", 24))
+
+        leg = ax_a.get_legend()
+        if leg is not None:
+            handles = list(leg.legend_handles)
+            labels = [t.get_text() for t in leg.get_texts()]
+            handles.insert(
+                2,
+                Rectangle(
+                    (0, 0),
+                    1,
+                    1,
+                    facecolor="#DBEAFE",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.2,
+                    ls="--",
+                ),
+            )
+            labels.insert(2, f"{des_struct_name} (d = 1.60 µm)")
+            ax_a.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.28),
+                ncol=2,
+                frameon=False,
+                fontsize=8.6,
+                handlelength=1.8,
+                columnspacing=1.2,
+            )
+        figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+        # Enhance 00b: overlay design array and hatched design region box on mesh panel & zoom inset
+        fig_b, axes_b = schematic.plot_mesh_and_excitation(
+            solver,
+            plane="xy",
+            structures=structs[:2],
+            material_names=mat_names,
+            sources=sources_s,
+            monitors=monitors_s,
+            unit="µm",
+            mesh_every=8,
+            zoom_bounds=zoom_bounds,
+            wavelength=1265e-9,
+            min_feature=80e-9,
+            title=title_b,
+            width_in=7.6,
+            height_in=5.6,
+        )
+        ax_mesh = axes_b[0]
+        ax_mesh.imshow(
+            eps_des,
+            origin="lower",
+            extent=[0.92, 2.52, 0.92, 2.52],
+            cmap="Blues",
+            vmin=2.25,
+            vmax=12.25,
+            alpha=0.74,
+            zorder=2.1,
+            interpolation="nearest",
+        )
+        ax_mesh.add_patch(
+            Rectangle(
+                (0.92, 0.92),
+                1.60,
+                1.60,
+                facecolor="none",
+                edgecolor="#6D28D9",
+                hatch="xx",
+                lw=1.3,
+                ls="--",
+                zorder=3.2,
+            )
+        )
+        for child_ax in ax_mesh.child_axes:
+            child_ax.set_axes_locator(None)
+            child_ax.set_position([0.68, 0.56, 0.24, 0.28])
+            child_ax.imshow(
+                eps_des,
+                origin="lower",
+                extent=[0.92, 2.52, 0.92, 2.52],
+                cmap="Blues",
+                vmin=2.25,
+                vmax=12.25,
+                alpha=0.74,
+                zorder=1.6,
+                interpolation="nearest",
+            )
+            child_ax.add_patch(
+                Rectangle(
+                    (0.92, 0.92),
+                    1.60,
+                    1.60,
+                    facecolor="none",
+                    edgecolor="#6D28D9",
+                    hatch="xx",
+                    lw=1.1,
+                    ls="--",
+                    zorder=2.2,
+                )
+            )
+            for ins_txt in child_ax.texts:
+                ins_txt.set_fontsize(8.4)
+                ins_txt.set_position((0.5, 0.93))
+        figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+
+
 def _draw_round2_domain(ax, art: dict, design_2d: np.ndarray, title: str = "") -> None:
     from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.patches as mpatches
@@ -1878,9 +2275,10 @@ def _plot_08_design_evolution_gif(fig_dir: Path) -> None:
 
 
 def plot_all(fig_dir: Path | None = None) -> list[Path]:
-    """Render all 8 tutorial figures from ``data/round2_bend/`` and ``data/``."""
+    """Render all tutorial figures and setup schematics from ``data/round2_bend/`` and ``data/``."""
     target_dir = FIG_DIR if fig_dir is None else Path(fig_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+    _plot_00_setup_schematics(target_dir)
     _plot_01_challenge_and_stack(target_dir)
     _plot_02_optimization_trace(target_dir)
     _plot_03_final_design_and_length_scale(target_dir)

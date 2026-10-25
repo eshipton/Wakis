@@ -236,25 +236,75 @@
 #
 # ### 2.1 Simulation setup schematic & graded skin-depth mesh
 #
-# The first figure (`figures/00_setup_schematic.png`) is built directly from the live Wakis `GridFIT3D`,
-# `SolverFIT3D`, `Box` screen jaws, `CurrentSource` arrays, and `DFTMonitor` planes via
-# `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`:
+# The setup figures (`figures/00a_setup_geometry.png`, `figures/00b_setup_mesh_and_excitation.png`,
+# `figures/00a_setup_geometry_gsm_silver.png`, and `figures/00b_setup_mesh_and_excitation_gsm_silver.png`)
+# are built directly from the live Wakis `GridFIT3D`, `SolverFIT3D`, `Box` screen jaws, `CurrentSource` arrays,
+# and `DFTMonitor` planes via `wakis.schematic.save_setup_figures`:
 #
-# - **Panel (a) — Method A (Extended Incoherent Strip Source):** An upstream strip of width $D \in [0, 3.60\;\mu\text{m}]$
-#   at $y = -L_1 = -8.00\;\mu\text{m}$ sampled by $N_s = 37$ uncorrelated $J_z$ line dipoles (`--full`), illuminating
-#   the $200\;\text{nm}$-thick $\text{PEC}$ screen at $y = 0$ pierced by two slits of width $a = 0.40\;\mu\text{m}$
-#   separated by $d = 2.00\;\mu\text{m}$, with downstream `DFTMonitor` at $y = +L_2 = +6.00\;\mu\text{m}$ and
-#   8-cell CPML boundaries on $\pm x, \pm y$.
-# - **Panel (b) — Methods B & C (GSM Mercer Eigenmodes & Broadband Pulse):** Orthonormal Hermite–Gaussian Mercer modes
+# - **Method A (Extended Incoherent Strip Source):** An upstream strip of width $D \in [0, 3.60\;\mu\text{m}]$
+#   at $y = -L_1 = -8.00\;\mu\text{m}$ sampled by $N_s = 37$ uncorrelated $J_z$ line dipoles (`--full`, with 5 representative
+#   emitter positions shown), illuminating the $200\;\text{nm}$-thick $\text{PEC}$ screen at $y = 0$ pierced by two slits of
+#   width $a = 0.40\;\mu\text{m}$ separated by $d = 2.00\;\mu\text{m}$, with downstream `DFTMonitor` at $y = +L_2 = +6.00\;\mu\text{m}$
+#   and 8-cell CPML boundaries on $\pm x, \pm y$.
+# - **Methods B & C (GSM Mercer Eigenmodes, Broadband Pulse & Drude Ag Screen):** Orthonormal Hermite–Gaussian Mercer modes
 #   $\Phi_m(x)$ ($w_m = 1.40\;\mu\text{m}$) and broadband pulses injected at $y_{\text{GSM}} = -1.00\;\mu\text{m}$
-#   upstream of the $\text{PEC}$ / Drude $\text{Ag}$ double-slit screen.
-# - **Panel (c) — Graded Slit & Silver Skin-Depth Mesh Zoom:** Zoom around the upper slit aperture
-#   ($x \in [0.80, 1.20]\;\mu\text{m}$, $y \in [-0.10, +0.10]\;\mu\text{m}$), showing the interface-snapped graded
-#   collar (`--full`: $\Delta x_{\text{bg}} = 24.92\;\text{nm}$, $\Delta x_{\min} = 2.86\;\text{nm}$, $70$ cells across
+#   upstream of the $\text{PEC}$ / Drude $\text{Ag}$ double-slit screen, with an interface-snapped graded collar
+#   (`--full`: $\Delta x_{\text{bg}} = 24.92\;\text{nm}$, $\Delta x_{\min} = 2.86\;\text{nm}$, $70$ cells across
 #   the $200\;\text{nm}$ screen thickness, $67$ cells across the $400\;\text{nm}$ slit opening, and
 #   $10.07\;\text{cells}/\delta_E = 5.04\;\text{cells}/\delta_I$ across the $28.77\;\text{nm}$ $\text{Ag}$ skin depth).
 #
-# ![Setup Schematic](figures/00_setup_schematic.png)
+# ![Setup Geometry (Method A — VCZ Strip)](figures/00a_setup_geometry.png)
+# ![Setup Mesh and Excitation (Method A — VCZ Strip)](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the Method A extended incoherent strip-source double-slit setup, boundary conditions, materials, monitors, and task variations.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 10.4 µm × 15.3 µm × 250 nm (z ∈ [-125 nm, 125 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 416 × 612 × 1 (254592 cells) |
+# | Discretization | Δx & resolution | Δ_min = 25 nm, 20.0 cells/λ (in n_max = 1.00), 8.0 cells across feature (200 nm) |
+# | Boundary | -x face | CPML (8 cells, 200 nm) |
+# | Boundary | +x face | CPML (8 cells, 200 nm) |
+# | Boundary | -y face | CPML (8 cells, 200 nm) |
+# | Boundary | +y face | CPML (8 cells, 200 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum / Air (n = 1.00), ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC double-slit screen (t = 200 nm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-5.20 µm, -1.20 µm] (d = 4 µm) |
+# | Material | Region 2: PEC double-slit screen (t = 200 nm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-800 nm, 800 nm] (d = 1.60 µm) |
+# | Material | Region 3: PEC double-slit screen (t = 200 nm) | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [1.20 µm, 5.20 µm] (d = 4 µm) |
+# | Source | 1 · CurrentSource | pos: y = -8.00 µm, N_s = 37 dipoles in x ∈ [-1.80, +1.80] µm (5 shown), pol: J_z (TM), pulse: f₀ = 599.6 THz, Δf = 119.9 THz |
+# | Monitor | 2 · DFTMonitor | Slit-plane DFTMonitor (y = 0.00 µm; records E_z at slits x = ±1.00 µm for μ_12), pos: y = 0.00 µm, x ∈ [-4.60, +4.60] µm (slits at x = ±1.00 µm, a = 0.40 µm), freqs: f = 599.6 THz |
+# | Monitor | 3 · DFTMonitor | Downstream detector DFTMonitor (y = +6.00 µm; records interference profile I(x)), pos: y = +6.00 µm, x ∈ [-4.60, +4.60] µm (L_2 = 6.00 µm, Λ_f = 1.50 µm), freqs: f = 599.6 THz |
+# | Variation | Tasks 0–1 — Method A VCZ strip (`vcz_batch_a`, `vcz_batch_b`) | notes=N_s = 37 uncorrelated J_z line dipoles (19 symmetric runs at cpw = 20) spanning D ∈ [0, 3.60] µm (D_0 = 2.00 µm) |
+# | Variation | Tasks 6–7 — Spatial mesh convergence (`convergence_coarse`, `convergence_ref`) | notes=PEC double-slit mesh sweep cpw ∈ {10, 14, 20} vs. cpw = 40 reference |
+#
+# ![Setup Geometry (Methods B & C — GSM & Drude Ag Screen)](figures/00a_setup_geometry_gsm_silver.png)
+# ![Setup Mesh and Excitation (Methods B & C — GSM & Drude Ag Screen)](figures/00b_setup_mesh_and_excitation_gsm_silver.png)
+#
+# The table below summarizes the Methods B and C setup using Hermite–Gaussian Mercer eigenmodes, broadband pulse excitation, and the graded Drude silver screen.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 9.40 µm × 8.20 µm × 250 nm (z ∈ [-125 nm, 125 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 581 × 443 × 1 (257383 cells) |
+# | Discretization | Δx & resolution | Δ_min = 2.86 nm, 91.0 cells/λ (in n_max = 1.92), 10.1 cells across feature (28.8 nm) |
+# | Boundary | -x face | CPML (8 cells, 199.3 nm) |
+# | Boundary | +x face | CPML (8 cells, 199.3 nm) |
+# | Boundary | -y face | CPML (8 cells, 197.8 nm) |
+# | Boundary | +y face | CPML (8 cells, 199.3 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum / Air (n = 1.00), ε = 1.00 (isotropic) |
+# | Material | Region 1: Drude Ag screen (δ_E = 28.8 nm) | ε_r = 3.70, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-4.70 µm, -1.20 µm] (d = 3.50 µm) |
+# | Material | Region 2: Drude Ag screen (δ_E = 28.8 nm) | ε_r = 3.70, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-800 nm, 800 nm] (d = 1.60 µm) |
+# | Material | Region 3: Drude Ag screen (δ_E = 28.8 nm) | ε_r = 3.70, μ_r = 1.00, model = DispersiveMaterial, x ∈ [1.20 µm, 4.70 µm] (d = 3.50 µm) |
+# | Source | 1 · CurrentSource | pos: y = -1.00 µm, x ∈ [-4.00, +4.00] µm (Hermite-Gaussian w_m = 1.40 µm), pol: J_z (TM), pulse: f₀ = 599.6 THz, Δf = 131.9 THz |
+# | Monitor | 2 · DFTMonitor | Slit-plane DFTMonitor (y = 0.00 µm; modal amplitude & broadband transfer normalization), pos: y = 0.00 µm, x ∈ [-4.20, +4.20] µm (81 broadband freqs in 0.72–1.28 f₀), freqs: f = 599.6 THz |
+# | Monitor | 3 · DFTMonitor | Downstream detector DFTMonitor (y = +6.00 µm; GSM modal & Wiener-Khinchin polychromatic fringes), pos: y = +6.00 µm, x ∈ [-4.20, +4.20] µm (81 broadband freqs in 0.72–1.28 f₀), freqs: f = 599.6 THz |
+# | Variation | Tasks 2–3 — Method B & C GSM Mercer modes (`gsm_modes_even`, `gsm_modes_odd`) | notes=M = 12 Hermite-Gaussian modes (m = 0..11, w_m = 1.40 µm) + 81-frequency broadband DFT at cpw = 26 |
+# | Variation | Task 4 — Dispersive Drude Ag screen (`silver_dispersive`) | notes=Rakic Ag at 500 nm (ε = -7.632 - 0.731i, δ_E = 28.77 nm) with Δ_min = 2.86 nm (10.07 cells/δ_E) |
+# | Variation | Task 5 — Ag skin-depth resolution ladder (`silver_skin_depth_demo`, demo=True) | notes=Under-resolved uniform (0.58, 1.15 cells/δ_E) vs. graded collar (2, 4, 6, 8, 10 cells/δ_E) |
 
 # %%
 import argparse
@@ -1402,130 +1452,9 @@ def _reconstruct_gsm_bank(d_even, d_odd):
 
 
 def _plot_fig00_setup_schematic(fig_dir, d4):
-    """00: 3-panel labelled setup schematic using wakis.schematic (VCZ, GSM/Broadband, Graded Mesh)."""
-    dx_min_nm = float(d4["dx_min_nm"])
-    cpsd_e = float(d4["cells_per_skin_depth"])
-    cpsd_i = float(d4["cells_per_skin_depth_power"])
-
-    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.2, height=4.4)
-
-    # Panel (a): Method A — Extended incoherent strip (van Cittert-Zernike)
-    obj_a = h.build_double_slit_schematic_objects(mode="vcz", cpw=10, screen_material="pec")
-    schematic.plot_schematic(
-        obj_a["solver"],
-        plane="xy",
-        ax=axes[0],
-        unit="um",
-        structures=obj_a["structures"],
-        sources=obj_a["sources"],
-        monitors=obj_a["monitors"],
-        show_mesh=False,
-        show_wave_packet=False,
-        title=r"(a) Method A: Incoherent Strip ($N_s=37$)",
-    )
-    h.tidy_double_slit_schematic_axes(axes[0], mode="vcz")
-
-    # Panel (b): Methods B & C — Coherent-mode GSM & broadband polychromatic synthesis
-    obj_b = h.build_double_slit_schematic_objects(mode="gsm", cpw=10, screen_material="pec")
-    schematic.plot_schematic(
-        obj_b["solver"],
-        plane="xy",
-        ax=axes[1],
-        unit="um",
-        structures=obj_b["structures"],
-        sources=obj_b["sources"],
-        monitors=obj_b["monitors"],
-        show_mesh=False,
-        show_wave_packet=False,
-        title=r"(b) Methods B & C: GSM Mercer Modes & Broadband",
-    )
-    h.tidy_double_slit_schematic_axes(axes[1], mode="gsm")
-
-    # Panel (c): Graded mesh zoom around the upper slit and Drude Ag skin-depth collar
-    _, grid_ag, _ = h.build_double_slit_solver(
-        x_bounds=(-3.0e-6, 3.0e-6),
-        y_bounds=(-1.2e-6, 1.2e-6),
-        wavelength=WAVELENGTH_0,
-        cpw=int(d4["cpw"]) if "cpw" in d4 else 20,
-        screen_material="silver",
-        cells_per_skin_depth=round(cpsd_e),
-        grid_only=True,
-    )
-    ax_m = axes[2]
-    for x_lo, x_hi in [(-0.80, 0.80), (1.20, 3.00)]:
-        ax_m.add_patch(
-            mpatches.Rectangle(
-                (x_lo, -0.10),
-                x_hi - x_lo,
-                0.20,
-                facecolor="#cbd5e1",
-                edgecolor="#0f172a",
-                lw=1.2,
-                zorder=2,
-            )
-        )
-    schematic.draw_mesh(
-        ax_m,
-        grid_ag,
-        plane="xy",
-        unit="um",
-        color="#334155",
-        alpha=0.42,
-        linewidth=0.35,
-    )
-    _, skin_m = h.silver_drude_material(WAVELENGTH_0)
-    skin_um = skin_m * 1e6
-    for x_edge, sign in [(0.80, -1.0), (1.20, +1.0)]:
-        ax_m.axvline(
-            x_edge + sign * skin_um,
-            color="#e11d48",
-            ls="--",
-            lw=1.3,
-            zorder=6,
-        )
-    ax_m.set_xlim(0.62, 1.38)
-    ax_m.set_ylim(-0.22, 0.22)
-    ax_m.set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
-    ax_m.set_ylabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
-    ax_m.set_title(r"(c) Graded Slit & Ag Skin-Depth Mesh Zoom")
-    ax_m.text(
-        1.00,
-        0.0,
-        "Upper slit\n"
-        + r"$a=400\;\mathrm{nm}$"
-        + "\n67 cells",
-        fontsize=6.3,
-        fontweight="bold",
-        color="#1e3a8a",
-        ha="center",
-        va="center",
-        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", lw=0.65, alpha=0.92),
-        zorder=8,
-    )
-    ax_m.text(
-        1.00,
-        0.155,
-        rf"Screen $t=200\;\mathrm{{nm}}$: 70 cells ($\Delta x_{{\min}}={dx_min_nm:.2f}\;\mathrm{{nm}}$)",
-        fontsize=6.1,
-        color="#0f172a",
-        ha="center",
-        va="center",
-        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#475569", lw=0.6, alpha=0.92),
-        zorder=8,
-    )
-    ax_m.text(
-        1.00,
-        -0.155,
-        rf"Ag $\delta_E=28.8\;\mathrm{{nm}}$: {cpsd_e:.2f} cells/$\delta_E$ ({cpsd_i:.2f} cells/$\delta_I$)",
-        fontsize=6.1,
-        color="#9f1239",
-        ha="center",
-        va="center",
-        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#e11d48", lw=0.6, alpha=0.92),
-        zorder=8,
-    )
-
-    figstyle.save(fig, fig_dir / "00_setup_schematic.png")
+    """00a/00b: Setup geometry, mesh & excitation figures and tables via wakis.schematic.save_setup_figures."""
+    _ = d4
+    h.save_double_slit_setup_figures(fig_dir)
 
 
 def _plot_fig01_schematic(fig_dir):

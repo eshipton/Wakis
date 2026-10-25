@@ -47,6 +47,38 @@
 # $0.86\;\text{dB}$ in insertion loss and $28.6\;\text{dB}$ in crosstalk
 # suppression.
 #
+# ![Setup geometry schematic](figures/00a_setup_geometry.png)
+# ![Setup mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The primary simulation setup models the $D_4$-symmetric O-band cosine-tapered 4-port waveguide crossing ($w_{\text{in}} = 0.35\;\mu\text{m}$, $2w_m = 1.50\;\mu\text{m}$, $w_{\text{out}} = 1.10\;\mu\text{m}$, $l_t = 5.30\;\mu\text{m}$) on a 2D effective-index grid with 10-cell CPML boundaries, a West $\text{TE}_0$ mode source, four port mode monitors (`west`, `east`, `north`, `south`), and a 4-wall Poynting flux box:
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 14.1 µm × 14.1 µm × 21.5 nm (z ∈ [-10.8 nm, 10.8 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 657 × 657 × 1 (431649 cells) |
+# | Discretization | Δx & resolution | Δ_min = 21.5 nm, 20.8 cells/λ (in n_max = 2.93), 16.3 cells across feature (350 nm) |
+# | Boundary | -x face | CPML (10 cells, 215 nm) |
+# | Boundary | +x face | CPML (10 cells, 215 nm) |
+# | Boundary | -y face | CPML (10 cells, 215 nm) |
+# | Boundary | +y face | CPML (10 cells, 215 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding (ε_r = 2.10) (isotropic) |
+# | Material | Region 1: Si crossing core (ε_r = 8.57) | ε_r = 8.57, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-7.07 µm, 7.07 µm] (d = 14.1 µm) |
+# | Source | 1 · ModeSource | pos: x = -6.43 µm, y ∈ [-0.80, +0.80] µm, pol: TE₀ (Ey, Hz, +x), pulse: f₀ = 229.2 THz, Δf = 8.7 THz |
+# | Monitor | 2 · ModeMonitor | Port 'west' ModeMonitor (reflection S₁₁), pos: x = -6.35 µm, y ∈ [-0.80, +0.80] µm, freqs: 220.4–237.9 THz (51 DFT pts) |
+# | Monitor | 3 · ModeMonitor | Port 'east' ModeMonitor (thru S₂₁), pos: x = 6.35 µm, y ∈ [-0.80, +0.80] µm, freqs: 220.4–237.9 THz (51 DFT pts) |
+# | Monitor | 4 · ModeMonitor | Port 'north' ModeMonitor (+y cross S₃₁), pos: x ∈ [-0.80, +0.80] µm, y = 6.35 µm, freqs: 220.4–237.9 THz (51 DFT pts) |
+# | Monitor | 5 · ModeMonitor | Port 'south' ModeMonitor (-y cross S₄₁), pos: x ∈ [-0.80, +0.80] µm, y = -6.35 µm, freqs: 220.4–237.9 THz (51 DFT pts) |
+# | Monitor | 6 · FluxMonitor | 4-wall Poynting FluxMonitor box, pos: x ∈ [-7.02, 7.02] µm, y ∈ [-7.02, 7.02] µm, freqs: 220.4–237.9 THz (51 DFT pts) |
+# | Variation | Linear-tapered crossing (linear_taper_crossing) | param=w_in = 0.35 µm → w_out = 1.10 µm, l_t = 5.30 µm, note=Monotonic linear taper without TE₀+TE₂ self-imaging bulge; IL(1310 nm) = 0.65 dB, XT = -37.4 dB |
+# | Variation | Plain untapered crossing (plain_crossing) | param=w = 0.35 µm straight orthogonal intersection, note=Unfocused diffraction into cross arms; IL(1310 nm) = 0.95 dB, XT = -14.9 dB |
+# | Variation | 4-port D₄ symmetry & reciprocity audit (symmetry_4port) | param=Drives all 4 ports (west, east, north, south) at L3 = (20, 8), note=Verifies C₄ rotational invariance (5.6e-7), reciprocity (3.0e-7), and north/south mirror balance (1.1e-9) |
+# | Variation | Kottke vs staircase convergence ladder | param=L1=(10, 4), L2=(14, 6), L3=(20, 8), R=(40, 16), note=8.15 to 32.55 cells across w_in = 350 nm; Kottke converges at O(Δx^1.78) vs staircase O(Δx^0.82) |
+# | Variation | D₄-graded non-uniform mesh upgrade (kottke_nonuniform) | param=438 × 438 × 1 = 191,844 cells (-55.5% vs uniform L3), note=Δu = 21.0 nm in core/bulge graded to 42 nm in outer cladding (-65.9% runtime, IL = 0.087 dB) |
+#
+# ![Comparison crossing geometries](figures/00b_crossing_geometries_schematic.png)
+#
 # ---
 #
 # ## Learning goals
@@ -920,7 +952,7 @@ def run_single_task(task_cfg, out_dir):
 # `generate_all_figures` reads `data/task_*.npz` and writes 20 figures to
 # `figures/`:
 #
-# 0. `00_setup_schematic.png` & `00b_crossing_geometries_schematic.png` — Labelled 2D EIM setup schematics (`wakis.schematic`) of the cosine-tapered, linear-tapered, and plain untapered 4-port crossings with domain extents, 10-cell CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, West `ModeSource` + launched $\text{TE}_0$ mode profile, East/North/South `ModeMonitor`s, 4-wall Poynting `FluxMonitor` box, and $1\times$ Yee mesh zoom on the $w_{\text{in}} = 350\;\text{nm}$ access waveguide.
+# 0. `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png` (`00_setup_table.md`) & `00b_crossing_geometries_schematic.png` — Labelled 2D EIM setup schematics (`wakis.schematic`) of the cosine-tapered, linear-tapered, and plain untapered 4-port crossings with domain extents, 10-cell CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, West `ModeSource` + launched $\text{TE}_0$ mode profile, East/North/South `ModeMonitor`s, 4-wall Poynting `FluxMonitor` box, and $1\times$ Yee mesh zoom on the $w_{\text{in}} = 350\;\text{nm}$ access waveguide.
 # 1. `01_crossing_layout.png` — Annotated top-view layout of the Chandran *et al.* (2020) cosine-tapered waveguide crossing.
 # 2. `02_eim_vertical_stack.png` — Vertical $161\;\text{nm}$ O-band SOI stack, 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_cosine_taper_profile_and_mmi_phase.png` — Cosine taper width/slope profile, local $\text{TE}_0/\text{TE}_2$ mode dispersion, and analytical $\text{TE}_0\text{--}\text{TE}_2$ self-imaging phase integral (3 panels).
@@ -1021,11 +1053,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
     )
 
-    # 0. Labelled setup schematics (00_setup_schematic.png & 00b_crossing_geometries_schematic.png)
+    # 0. Labelled setup schematics (00a_setup_geometry.png, 00b_setup_mesh_and_excitation.png & 00b_crossing_geometries_schematic.png)
     plot_setup_schematic_crossing(
         pic_primary,
         primary,
-        out_path=fig_dir / "00_setup_schematic.png",
+        out_path=fig_dir / "00a_setup_geometry.png",
     )
     plot_crossing_geometries_schematic(
         pic_linear,

@@ -9,6 +9,7 @@ incoherent spontaneous-emission dipole ensembles.
 
 from __future__ import annotations
 
+from pathlib import Path
 import time
 import numpy as np
 from scipy.constants import c as C_LIGHT, epsilon_0 as EPS_0
@@ -17,6 +18,7 @@ from scipy.optimize import brentq
 from wakis.field_monitors import DFTMonitor
 from wakis.mode_solver import ModeMonitor, ModeSource
 from wakis.near2far import Near2FarMonitor
+from wakis import schematic
 from wakis.sources import CurrentSource, GaussianSource
 from wakis.templates import Box, Simulation
 from wakis.templates.photonics import PolySlab, n_to_eps, straight
@@ -1808,4 +1810,244 @@ def overlay_sled_geometry(
             arrowprops={"arrowstyle": "->", "color": "#d95f02", "lw": 1.1},
             zorder=9,
         )
+
+
+class _RepCoord(np.ndarray):
+    """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
+
+    def __new__(cls, vals):
+        return np.asarray(vals, dtype=float).view(cls)
+
+    def __float__(self) -> float:
+        return float(np.asarray(self).flat[0])
+
+
+def save_sled_setup_figures(
+    fig_dir: str | Path,
+    cpw: int = 20,
+) -> dict[str, dict[str, Path]]:
+    """Construct SLED tilted-facet and bimodal dipole-ensemble setups and save setup figure pairs.
+
+    Generates two setup pairs without running time-domain steps:
+    1. Primary setup (``suffix=""``): AR-coated tilted-facet waveguide
+       ($\\theta_t = 7^\\circ$, $w_1 = 1.75\\;\\mu\\text{m}$, $t_{\\text{AR}} = 216.6\\;\\text{nm}$)
+       with $\\text{TE}_0$ ``ModeSource``, upstream ``ModeMonitor``, and air ``Near2FarMonitor``.
+    2. Dipole-ensemble setup (``suffix="_dipole_ensemble"``): Bimodal waveguide
+       ($w_2 = 2.80\\;\\mu\\text{m}$) with the 9-dipole incoherent spontaneous-emission
+       ensemble (5 representative dipole markers shown) and downstream 2-mode ``ModeMonitor``.
+
+    Parameters
+    ----------
+    fig_dir : str or Path
+        Output directory for ``00a_setup_geometry*.png``,
+        ``00b_setup_mesh_and_excitation*.png``, and ``00_setup_table*.md``.
+    cpw : int, optional
+        Cells per wavelength inside the core index. Default is 20.
+
+    Returns
+    -------
+    outputs : dict of str to dict of str to Path
+        Mapping ``{"tilted_facet": paths_1, "dipole_ensemble": paths_2}``.
+    """
+    from types import SimpleNamespace
+    from wakis import GridFIT3D
+
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Tilted-facet waveguide setup (theta_t = 7 deg, AR coated)
+    objs1 = build_sled_schematic_objects(
+        theta_deg=7.0,
+        width=WIDTH_SM,
+        cpw=cpw,
+        ar_coated=True,
+        n_pml=10,
+    )
+    g1 = objs1["geom_info"]
+    f0 = FREQ_0
+    x_src = -3.3e-6
+    x_mon = -2.6e-6
+    x_n2f = 0.85e-6
+    y_n2f_half = 4.8e-6
+
+    info1 = schematic.extract_setup_info(
+        objs1["solver"],
+        plane="xy",
+        sources=objs1["sources"],
+        monitors=objs1["monitors"],
+    )
+    src1 = dict(info1["sources"][0])
+    src1["short_word"] = "TE₀"
+    src1["label"] = (
+        f"ModeSource TE₀ launch (x = {x_src*1e6:.2f} µm, λ₀ = 1.49 µm, f₀ = {f0*1e-12:.1f} THz)"
+    )
+    src1["desc"] = src1["label"]
+
+    mon1_mode = dict(info1["monitors"][0])
+    mon1_mode["short_word"] = "R_0m"
+    mon1_mode["label"] = f"Upstream ModeMonitor (x = {x_mon*1e6:.2f} µm, TE₀/TE₁)"
+    mon1_mode["desc"] = (
+        f"Upstream ModeMonitor (x = {x_mon*1e6:.2f} µm, modal reflection R_00, R_01)"
+    )
+
+    mon1_n2f = dict(info1["monitors"][1])
+    mon1_n2f["kind"] = "plane"
+    mon1_n2f["h_bounds"] = (x_n2f, x_n2f)
+    mon1_n2f["v_bounds"] = (-y_n2f_half, y_n2f_half)
+    mon1_n2f["short_word"] = "N2F"
+    mon1_n2f["pos_str"] = (
+        f"x = +{x_n2f*1e6:.2f} µm, y ∈ [-{y_n2f_half*1e6:.2f}, {y_n2f_half*1e6:.2f}] µm"
+    )
+    mon1_n2f["label"] = f"Near2FarMonitor in air (x = +{x_n2f*1e6:.2f} µm, Snell 24°)"
+    mon1_n2f["desc"] = (
+        f"Near2FarMonitor in air (x = +{x_n2f*1e6:.2f} µm, far-field Snell beam at 24°)"
+    )
+
+    lx1 = abs(g1["xmin"])
+    ly1 = g1["ymax"] - g1["ymin"]
+    lz1 = g1["zmax"] - g1["zmin"]
+    structs1 = [
+        Box(
+            (0.5 * g1["xmin"], 0.5 * (g1["ymin"] + g1["ymax"]), 0.0),
+            (lx1, ly1, lz1),
+            material=n_to_eps(N_CLAD),
+        ),
+        Box(
+            (0.5 * g1["xmin"], 0.0, 0.0),
+            (lx1, WIDTH_SM, lz1),
+            material=n_to_eps(N_CORE),
+        ),
+        Box(
+            (0.5 * T_AR_COAT, 0.5 * (g1["ymin"] + g1["ymax"]), 0.0),
+            (T_AR_COAT, ly1, lz1),
+            material=n_to_eps(N_AR_COAT),
+        ),
+    ]
+    mat_names1 = {
+        "background": "Air exterior",
+        "region_0": f"InP/InGaAsP cladding (n = {N_CLAD:.3f})",
+        "region_1": f"Ridge core (w₁ = {WIDTH_SM*1e6:.2f} µm, n = {N_CORE:.3f})",
+        "region_2": f"λ/4 AR film (θ_t = 7°, n = {N_AR_COAT:.2f})",
+    }
+    paths_1 = schematic.save_setup_figures(
+        objs1["solver"],
+        fig_dir,
+        plane="xy",
+        structures=structs1,
+        material_names=mat_names1,
+        sources=[src1],
+        monitors=[mon1_mode, mon1_n2f],
+        wavelength=WAVELENGTH_0,
+        freq=f0,
+        min_feature=T_AR_COAT,
+        title_geometry="SLED Tilted Waveguide Facet (θ_t = 7°, λ/4 AR): Geometry, Sources & Monitors",
+        title_mesh="SLED Tilted Waveguide Facet: Subpixel AR-Coating Mesh & 1.49 µm Excitation",
+    )
+
+    # 2. Bimodal waveguide 9-dipole incoherent spontaneous-emission ensemble setup
+    w2 = WIDTH_MM
+    n_pml = 8
+    sim2, g2 = create_tilted_facet_simulation(
+        theta_deg=0.0,
+        width=w2,
+        cpw=cpw,
+        ar_coated=False,
+        include_facet=False,
+        n_pml=n_pml,
+        xmin_nom=-3.8e-6,
+        xmax_nom=3.8e-6,
+        ymin=-5.0e-6,
+        ymax=5.0e-6,
+    )
+    x2 = np.asarray(sim2._axis(0), dtype=float)
+    y2 = np.asarray(sim2._axis(1), dtype=float)
+    z2 = np.asarray(sim2._axis(2), dtype=float)
+    grid2 = GridFIT3D(x=x2, y=y2, z=z2, verbose=0)
+    solver2 = SimpleNamespace(
+        grid=grid2,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=n_pml,
+        bg=[n_to_eps(N_CLAD), 1.0, 0.0],
+    )
+    xmin2, xmax2 = g2["xmin"], g2["xmax"]
+    zmin2, zmax2 = g2["zmin"], g2["zmax"]
+
+    core_box2 = Box(
+        (0.5 * (xmin2 + xmax2), 0.0, 0.0),
+        (xmax2 - xmin2, w2, zmax2 - zmin2),
+        material=n_to_eps(N_CORE),
+    )
+
+    n_dipoles = 9
+    y_dipoles = np.linspace(-0.42 * w2, 0.42 * w2, n_dipoles)
+    y_rep = y_dipoles[::2]  # 5 representative positions across core
+    y_rep_ordered = np.concatenate([[y_rep[-1]], y_rep[:-1]])
+    x_rep_ordered = np.full_like(y_rep_ordered, -1.0e-6)
+    pulse2 = GaussianSource(frequency=f0, fwidth=0.25 * f0)
+    dip_obj = CurrentSource(
+        pulse2,
+        component="y",
+        center=(-1.0e-6, float(y_rep[-1]), 0.0),
+        size=(0.0, 0.0, np.inf),
+    )
+    mon2_obj = ModeMonitor(
+        [f0],
+        center=(1.0e-6, 0.0, 0.0),
+        size=(0.0, 8.6e-6, np.inf),
+        n_modes=2,
+        mode_frequency=f0,
+    )
+    info2 = schematic.extract_setup_info(
+        solver2,
+        plane="xy",
+        sources=[dip_obj],
+        monitors=[mon2_obj],
+    )
+    src2 = dict(info2["sources"][0])
+    rep_x = _RepCoord(x_rep_ordered)
+    rep_y = _RepCoord(y_rep_ordered)
+    src2["h_bounds"] = (rep_x, rep_x)
+    src2["v_bounds"] = (rep_y, rep_y)
+    src2["short_word"] = f"dipoles (×{n_dipoles})"
+    src2["polarization"] = "TE (J_y, random φ_j)"
+    src2["pos_str"] = (
+        f"x = -1.00 µm, {n_dipoles} sites in y ∈ "
+        f"[{y_dipoles[0]*1e6:.2f}, +{y_dipoles[-1]*1e6:.2f}] µm ({len(y_rep)} shown)"
+    )
+    src2["label"] = (
+        f"Incoherent spontaneous-emission ensemble: {n_dipoles} × CurrentSource J_y "
+        f"across core (x = -1.00 µm, {len(y_rep)} shown)"
+    )
+    src2["desc"] = src2["label"]
+
+    mon2 = dict(info2["monitors"][0])
+    mon2["short_word"] = "TE₀/TE₁"
+    mon2["label"] = "Downstream 2-mode ModeMonitor (x = +1.00 µm, TE₀ & TE₁)"
+    mon2["desc"] = (
+        "Downstream 2-mode ModeMonitor (x = +1.00 µm, TE₀ & TE₁ modal power)"
+    )
+
+    mat_names2 = {
+        "background": f"InP/InGaAsP cladding (n = {N_CLAD:.3f})",
+        "region_0": f"Bimodal active core (w₂ = {w2*1e6:.2f} µm, n = {N_CORE:.3f})",
+    }
+    paths_2 = schematic.save_setup_figures(
+        solver2,
+        fig_dir,
+        plane="xy",
+        structures=[core_box2],
+        material_names=mat_names2,
+        sources=[src2],
+        monitors=[mon2],
+        wavelength=WAVELENGTH_0,
+        freq=f0,
+        min_feature=w2,
+        suffix="_dipole_ensemble",
+        title_geometry="SLED Bimodal Waveguide: 9-Dipole Incoherent Spontaneous-Emission Ensemble",
+        title_mesh="SLED Bimodal Waveguide: Core Mesh & Dipole Excitation Spectrum",
+    )
+
+    return {"tilted_facet": paths_1, "dipole_ensemble": paths_2}
+
 

@@ -254,26 +254,54 @@ from _helpers import (  # noqa: E402
 # %% [markdown]
 # ## Simulation Setup Schematic & Preflight Check
 #
-# Figure 0 (`figures/00_setup_schematic.png`) illustrates the 2D single-slit diffraction
-# geometry in the $xy$ plane ($\lambda = 600\,\mathrm{nm}$, $f_0 = 500\,\mathrm{THz}$,
-# slit width $a = 2\lambda = 1.20\,\mu\mathrm{m}$, PEC screen thickness
-# $t = 0.15\lambda = 90\,\mathrm{nm}$):
+# Figures `figures/00a_setup_geometry.png` and `figures/00b_setup_mesh_and_excitation.png`
+# illustrate the 2D single-slit diffraction geometry in the $yx$ plane
+# ($\lambda = 600\,\mathrm{nm}$, $f_0 = 500\,\mathrm{THz}$, slit width
+# $a = 2\lambda = 1.20\,\mu\mathrm{m}$, PEC screen thickness $t = 0.15\lambda = 90\,\mathrm{nm}$):
 #
-# - **Panel (a) — Domain, boundaries, source, and monitors**: The computational domain is
-#   terminated by 10-cell CPML absorbing layers on $\pm x$ and $\pm y$ (`bc=['cpml', 'cpml', 'periodic']`)
-#   and one periodic cell along $z$. Two PEC blocks ($\sigma \to \infty$) at $y \in [-t/2, +t/2]$
-#   define the slit aperture $x \in [-a/2, +a/2]$. A full-width soft `CurrentSource` sheet
-#   at $y_{\mathrm{src}}$ extends continuously into both lateral $\pm x$ CPMLs to launch a
-#   artifact-free $+y$-propagating plane wave (`GaussianSource`, $f_0 = 500\,\mathrm{THz}$,
-#   $\Delta f = 250\,\mathrm{THz}$). Downstream monitors include the aperture `FluxMonitor`,
-#   the `Near2FarMonitor` contour at $y_{\mathrm{n2f}} = t/2 + 2.5\,\Delta y_{\mathrm{screen}}$,
-#   and transverse Fresnel `DFTMonitor` lines at $L = a^2 / (4\lambda N_F)$.
-# - **Panel (b) — Graded FIT mesh zoom at the slit jaws**: The 2D Cartesian mesh uses a
-#   background resolution of $\mathrm{cpw} = 24\;\text{cells}/\lambda$ ($\Delta x = 25\,\mathrm{nm}$)
-#   and snaps exact grid nodes to the slit edges $x = \pm a/2$ ($48\;\text{cells} \ge 4$ across $a$)
-#   and screen faces $y = \pm t/2$ ($4\;\text{cells} \ge 4$ across $t$).
+# - **Domain, boundaries, source, and monitors (`figures/00a_setup_geometry.png`)**: The computational
+#   domain is terminated by 10-cell CPML absorbing layers on $\pm x$ and $\pm y$
+#   (`bc=['cpml', 'cpml', 'periodic']`) and one periodic cell along $z$. Two PEC blocks
+#   ($\sigma \to \infty$) at $y \in [-t/2, +t/2]$ define the slit aperture $x \in [-a/2, +a/2]$.
+#   A full-width soft `CurrentSource` sheet at $y_{\mathrm{src}}$ extends continuously into both
+#   lateral $\pm x$ CPMLs to launch an artifact-free $+y$-propagating plane wave (`GaussianSource`,
+#   $f_0 = 500\,\mathrm{THz}$, $\Delta f = 250\,\mathrm{THz}$). Downstream monitors include the
+#   aperture `FluxMonitor`, the `Near2FarMonitor` contour at
+#   $y_{\mathrm{n2f}} = t/2 + 2.5\,\Delta y_{\mathrm{screen}}$, and transverse Fresnel `DFTMonitor`
+#   lines at $L = a^2 / (4\lambda N_F)$.
+# - **Graded FIT mesh zoom and excitation (`figures/00b_setup_mesh_and_excitation.png`)**: The 2D
+#   Cartesian mesh uses a background resolution of $\mathrm{cpw} = 24\;\text{cells}/\lambda$
+#   ($\Delta x = 25\,\mathrm{nm}$) and snaps exact grid nodes to the slit edges $x = \pm a/2$
+#   ($48\;\text{cells} \ge 4$ across $a$) and screen faces $y = \pm t/2$ ($4\;\text{cells} \ge 4$
+#   across $t$).
 #
-# ![Single-slit setup schematic and mesh zoom](figures/00_setup_schematic.png)
+# ![Single-slit diffraction setup geometry, source, monitors, and CPML boundaries](figures/00a_setup_geometry.png)
+# ![Single-slit diffraction graded mesh zoom, wave packet, and pulse spectrum](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the baseline 2D single-slit diffraction setup and the parameter sweeps across `Tasks 1–4`.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 7.10 µm × 4.10 µm × 225 nm (z ∈ [-112.5 nm, 112.5 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 284 × 165 × 1 (46860 cells) |
+# | Discretization | Δy & resolution | Δ_min = 22.5 nm, 26.7 cells/λ (in n_max = 1.00), 4.0 cells across feature (90 nm) |
+# | Boundary | -x face | CPML (10 cells, 250 nm) |
+# | Boundary | +x face | CPML (10 cells, 250 nm) |
+# | Boundary | -y face | CPML (10 cells, 248.5 nm) |
+# | Boundary | +y face | CPML (10 cells, 249 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: PEC screen (left jaw) | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-45 nm, 45 nm] (d = 90 nm) |
+# | Material | Region 2: PEC screen (right jaw) | ε_r = inf, μ_r = 1.00, model = PEC, y ∈ [-45 nm, 45 nm] (d = 90 nm) |
+# | Source | 1 · CurrentSource | pos: y = -630 nm, pol: J_z (E_z), pulse: f₀ = 499.7 THz, Δf = 249.8 THz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (y = 0 m), pos: y = 0 m, freqs: f = 499.7 THz |
+# | Monitor | 3 · Near2FarMonitor | Near2FarMonitor (y = 101 nm), pos: y = 101 nm, freqs: f = 499.7 THz |
+# | Monitor | 4 · DFTMonitor | DFTMonitor (y = 1.24 µm), pos: y = 1.24 µm, freqs: f = 499.7 THz |
+# | Variation | Task 1 · Plane-wave source & Fresnel near-field sweep | Full-width vs PML-truncated source benchmark + Fresnel line monitors at N_F ∈ {2.0, 1.0, 0.5, 0.25} (a = 2λ, E_z) |
+# | Variation | Task 2 · Far-field angular patterns (Near2FarMonitor) | Slit width sweep a/λ ∈ {4.0, 2.0, 1.0, 0.6} for both E_z (TM_z, RS-I) and H_z (TE_z, RS-II) polarizations |
+# | Variation | Task 3 · Subwavelength transmission & waveguide cutoff | Normalized transmission τ(a/λ) for a/λ ∈ [0.30, 2.00] comparing thick PEC screen (t = 0.20λ) vs zero-thickness sheet (t = 0) |
+# | Variation | Task 4 · Mesh resolution convergence study | Background resolution sweep cpw ∈ {12, 16, 20, 28, 36} cells/λ for a = 2λ, t = 0.15λ |
 #
 # Before launching parameter sweeps, we run `wakis.estimate.estimate` and `preflight` on this
 # baseline 2D graded mesh.
@@ -459,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     res_data = _load_npz(f_res) if f_res.exists() else None
 
     plot_setup_schematic(
-        fig_dir / "00_setup_schematic.png",
+        fig_dir,
         wavelength=DEFAULT_WAVELENGTH,
     )
     if src_data is not None and fresnel_data is not None:

@@ -276,6 +276,10 @@ def test_saved_tutorial_data_and_conformal_vs_staircase_convergence():
     assert "staircase_vs_conformal_convergence" in summary
 
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_blazed.png",
+        "00b_setup_mesh_and_excitation_blazed.png",
         "01_slanted_binary_blazed_schematic_and_mesh.png",
         "02_efficiency_vs_slant_and_profile_comparison.png",
         "03_depth_and_fill_factor_maps.png",
@@ -286,6 +290,9 @@ def test_saved_tutorial_data_and_conformal_vs_staircase_convergence():
     for fn in expected_figs:
         fpath = fig_dir / fn
         assert fpath.is_file() and fpath.stat().st_size > 10_000
+    for tfn in ("00_setup_table.md", "00_setup_table_blazed.md"):
+        tpath = fig_dir / tfn
+        assert tpath.is_file() and tpath.stat().st_size > 200
     assert (fig_dir / "06_slanted_vs_binary_wavefront_movie.gif").stat().st_size < 5 * 1024 * 1024
 
     # Task 0 checks: binary symmetry vs slanted selectivity > 10x and Wakis vs RCWA agreement

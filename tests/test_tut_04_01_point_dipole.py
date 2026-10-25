@@ -30,9 +30,10 @@ def _load_helpers():
 
 
 def test_setup_schematic_and_figures_exist():
-    """Verify that the setup schematic (00_setup_schematic.png) and all diagnostic figures exist."""
+    """Verify that the setup figures (00a/00b + 00_setup_table.md) and all diagnostic figures exist."""
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_radial_field_zones_kr1.png",
         "02_near_and_far_field_maps.png",
         "03_far_field_pattern_and_power.png",
@@ -47,6 +48,15 @@ def test_setup_schematic_and_figures_exist():
         assert size_bytes > 5_000, f"Figure {fname} looks suspiciously small ({size_bytes} B)"
         if fname.endswith(".gif"):
             assert size_bytes < 5 * 1024 * 1024, f"GIF {fname} exceeds 5 MB limit ({size_bytes} B)"
+
+    table_md = FIG_DIR / "00_setup_table.md"
+    assert table_md.exists() and table_md.stat().st_size > 200, f"Missing setup table: {table_md}"
+
+    from PIL import Image
+
+    with Image.open(FIG_DIR / "06_dipole_radiation.gif") as im:
+        assert im.n_frames <= 60, f"Expected <= 60 GIF frames, got {im.n_frames}"
+        assert im.size[0] <= 900, f"Expected GIF width <= 900 px, got {im.size[0]}"
 
 
 def test_radial_zones_kr1_and_power_balance():

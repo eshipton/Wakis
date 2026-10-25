@@ -779,11 +779,20 @@ def save_mmi_2x2_setup_figures(
                 zorder=2,
             )
         )
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+    x_src_um = float(sources_s[0]["h_bounds"][0] * 1e6)
+    y_port_um = float(y_port * 1e6)
+    for ann in ax_a.texts:
+        if ann.get_text() == "" and getattr(ann, "arrow_patch", None) is not None:
+            if abs(ann.xy[1]) < 0.35 and abs(ann.xy[0] - x_src_um) < 1.5:
+                ann.xy = (x_src_um + 0.82, y_port_um)
+                ann.set_position((x_src_um, y_port_um))
     if "port_y_in" in primary_data and "port_ey_in" in primary_data:
         y_m = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
         ey_m = np.abs(np.asarray(primary_data["port_ey_in"]))
         ey_m = ey_m / max(float(np.max(ey_m)), 1e-30)
-        x_src_um = float(sources_s[0]["h_bounds"][0] * 1e6)
         x_prof = x_src_um + 0.90 * ey_m
         ax_a.fill_betweenx(
             y_m, x_src_um, x_prof, color="#D55E00", alpha=0.28, zorder=7.5
@@ -793,6 +802,7 @@ def save_mmi_2x2_setup_figures(
             y_m,
             color="#D55E00",
             lw=1.8,
+            marker="none",
             zorder=8,
             label="Launched mode |Ey(y)|",
         )
@@ -814,10 +824,10 @@ def save_mmi_2x2_setup_figures(
         zorder=9,
     )
     for lbl, xp_um, yp_um, ha_val in (
-        ("in1 (drive)", -3.85, +1.50, "center"),
-        ("in2 (idle)", -3.85, -1.55, "center"),
-        ("out1 (bar, S₃₁)", +3.85, +1.50, "center"),
-        ("out2 (cross, S₄₁)", +3.85, -1.55, "center"),
+        ("in1 (drive)", -3.35, +1.55, "center"),
+        ("in2 (idle)", -3.35, -1.62, "center"),
+        ("out1 (bar, S₃₁)", +3.35, +1.55, "center"),
+        ("out2 (cross, S₄₁)", +3.35, -1.62, "center"),
     ):
         ax_a.text(
             xp_um,
@@ -830,6 +840,18 @@ def save_mmi_2x2_setup_figures(
             color="#006B4E",
             zorder=9,
         )
+    tag_positions = {
+        "1 · ModeSrc": (-5.90, +2.06, "left"),
+        "2 · in1/in2": (-5.80, -0.35, "left"),
+        "3 · out1/out2": (+5.80, 0.00, "right"),
+        "4 · FluxBox": (0.00, +2.15, "center"),
+    }
+    for txt in list(ax_a.texts):
+        s = txt.get_text().strip()
+        if s in tag_positions:
+            tx, ty, ha_val = tag_positions[s]
+            txt.set_position((tx, ty))
+            txt.set_ha(ha_val)
     figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
     # Enhance 00b_setup_mesh_and_excitation.png with the 2x2 MMI polygon on ax_mesh and zoom inset

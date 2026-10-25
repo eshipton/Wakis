@@ -91,6 +91,35 @@
 # 7. [Limits & failure modes](#7.-Limits-&-failure-modes)
 # 8. [References](#8.-References)
 #
+# ### Simulation setup & geometry overview
+#
+# ![Setup geometry, wavepacket launch, probes, and CPML boundaries for Tutorial 2.5](figures/00a_setup_geometry.png)
+# ![Grid resolution, wavepacket extent, and broadband pulse spectrum for Tutorial 2.5](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the baseline quasi-1D `SolverFIT3D` temporal-interface wavepacket benchmark and the periodic single-mode, flash-ionized Drude plasma, and photonic time crystal (PTC) variations across `Tasks 0–4`.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 26.7 mm × 26.7 mm × 3.20 m (z ∈ [0 m, 3.20 m]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 1 × 1 × 480 (480 cells) |
+# | Discretization | Δz & resolution | Δ_min = 6.67 mm, 30.0 cells/λ (in n_max = 2.50), 21.0 cells across feature (140 mm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (16 cells, 106.7 mm) |
+# | Boundary | +z face | CPML (16 cells, 106.7 mm) |
+# | Material | Background | Pre-switch medium (ε₁ = 2.25) (isotropic) |
+# | Material | Region 1: Time-varying medium (ε₁=2.25 → ε₂=6.25) | ε_r = 6.25, μ_r = 1.00, model = Isotropic dielectric, z ∈ [106.7 mm, 3.09 m] (d = 2.99 m) |
+# | Source | 1 · CurrentSource | pos: z = 1.10 m, pol: J_x (E_x), pulse: f₀ = 600.0 MHz, Δf = 227.2 MHz |
+# | Monitor | 2 · Probe | Time-reflected probe M_R (z = 0.85 m), pos: z = 850 mm, freqs: time-domain |
+# | Monitor | 3 · Probe | Time-refracted probe M_T (z = 2.35 m), pos: z = 2.35 m, freqs: time-domain |
+# | Variation | Task 0b · Periodic single-mode Fresnel & D/B continuity sweep | 1D periodic SolverFIT3D (Lz = 4.0 m, Nz = 160, m = 4) sweeping ε₂/ε₁ ∈ [0.44, 3.60] vs Morgenthaler (1958) & Galiffi (2022) |
+# | Variation | Task 1 · Frequency conversion & flash-ionized TimeVaryingDrude plasma | Dielectric redshift (2.25 → 4.00) & blueshift (4.00 → 1.44), flash-ionized Drude plasma ω_p2/ω₁ ∈ [0, 1.4] (Wilks 1988), and σ(t) step |
+# | Variation | Task 2 · Photonic time crystal (PTC) momentum band structure | CosineModulation ε_r(t) = 2.25(1 + 0.25 cos Ωt) across 21 wavenumbers k/k_c ∈ [0.55, 1.45] vs Floquet monodromy & Mathieu theory (Lyubarov 2022) |
+# | Variation | Task 3 · PTC growth scaling vs m & Moussa et al. (2023) temporal slab | PTC peak growth γ_max/Ω vs m ∈ [0, 0.40] + temporal Fabry–Pérot slab ε₁ → ε₂ → ε₁ (SlabTimeProfile, Moussa et al. 2023) |
+# | Variation | Task 4 · Spatial & temporal O(Δz² + Δt²) convergence & dynamic CFL map | Resolution sweep cpw ∈ {20, 28, 40, 56, 80} in highest-index state confirming 2nd-order convergence & step-down CFL boundary |
+#
 # ---
 #
 # ## 1. Physics of temporal interfaces: $\mathbf{D},\mathbf{B}$ continuity & temporal Fresnel coefficients
@@ -428,6 +457,7 @@ from pathlib import Path
 import shlex
 import sys
 import time
+from types import SimpleNamespace
 
 import matplotlib
 
@@ -448,8 +478,10 @@ from wakis import (
     StepProfile,
     TimeVaryingDrude,
     TimeVaryingMaterial,
+    schematic,
 )
 from wakis.estimate import estimate as wakis_estimate
+from wakis.sources import CurrentSource, GaussianSource
 from wakis.time_varying import (
     plasma_ionization_fresnel,
     ptc_floquet_bandstructure,
@@ -1725,6 +1757,106 @@ def run_single_task(task_cfg, out_dir=DATA_DIR):
 
 
 # %%
+def _plot_00_setup_figures(fig_dir=FIG_DIR):
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md``."""
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    lz = 3.2
+    nz = 480
+    dz = lz / nz
+    n_pml = 16
+    eps1 = 2.25
+    eps2 = 6.25
+    f0 = 0.60e9
+    sigma_z = 0.14
+    v1 = c0 / np.sqrt(eps1)
+    fwidth = v1 / (2.0 * np.pi * sigma_z)
+
+    grid = GridFIT3D(
+        -2.0 * dz,
+        2.0 * dz,
+        -2.0 * dz,
+        2.0 * dz,
+        0.0,
+        lz,
+        1,
+        1,
+        nz,
+        verbose=0,
+    )
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["periodic", "periodic", "cpml"],
+        bc_high=["periodic", "periodic", "cpml"],
+        n_pml=n_pml,
+        bg=[eps1, 1.0],
+        cfln=0.35,
+        verbose=0,
+    )
+    dt = float(solver.dt)
+    n_switch = int(round((0.55 / v1) / dt))
+    t_switch = (n_switch + 0.5) * dt
+    mat = TimeVaryingMaterial(eps_r=StepProfile(eps1, eps2, t_switch=t_switch))
+    solver.add_time_varying_material(mat)
+
+    struct_tv = SimpleNamespace(
+        bounds=((-2.0 * dz, -2.0 * dz, n_pml * dz), (2.0 * dz, 2.0 * dz, lz - n_pml * dz)),
+        name="Time-varying medium (ε₁=2.25 → ε₂=6.25)",
+        material=eps2,
+    )
+    src_pkt = CurrentSource(
+        GaussianSource(frequency=f0, fwidth=fwidth),
+        component="x",
+        center=(0.0, 0.0, 1.10),
+        size=(4.0 * dz, 4.0 * dz, 0.0),
+    )
+    probes = [
+        {
+            "pos": (0.0, 0.0, 0.85),
+            "label": "Time-reflected probe M_R (z = 0.85 m)",
+        },
+        {
+            "pos": (0.0, 0.0, 2.35),
+            "label": "Time-refracted probe M_T (z = 2.35 m)",
+        },
+    ]
+    return schematic.save_setup_figures(
+        solver,
+        fig_dir,
+        plane="zx",
+        structures=[struct_tv],
+        material_names={"background": "Pre-switch medium (ε₁ = 2.25)"},
+        sources=[src_pkt],
+        probes=probes,
+        freq=f0,
+        min_feature=sigma_z,
+        title_geometry="Quasi-1D time-varying medium setup: geometry, wavepacket launch, probes & CPML (ZX plane)",
+        title_mesh="Quasi-1D time-varying medium setup: mesh resolution, wave packet & broadband pulse",
+        variations=[
+            {
+                "name": "Task 0b · Periodic single-mode Fresnel & D/B continuity sweep",
+                "details": "1D periodic SolverFIT3D (Lz = 4.0 m, Nz = 160, m = 4) sweeping ε₂/ε₁ ∈ [0.44, 3.60] vs Morgenthaler (1958) & Galiffi (2022)",
+            },
+            {
+                "name": "Task 1 · Frequency conversion & flash-ionized TimeVaryingDrude plasma",
+                "details": "Dielectric redshift (2.25 → 4.00) & blueshift (4.00 → 1.44), flash-ionized Drude plasma ω_p2/ω₁ ∈ [0, 1.4] (Wilks 1988), and σ(t) step",
+            },
+            {
+                "name": "Task 2 · Photonic time crystal (PTC) momentum band structure",
+                "details": "CosineModulation ε_r(t) = 2.25(1 + 0.25 cos Ωt) across 21 wavenumbers k/k_c ∈ [0.55, 1.45] vs Floquet monodromy & Mathieu theory (Lyubarov 2022)",
+            },
+            {
+                "name": "Task 3 · PTC growth scaling vs m & Moussa et al. (2023) temporal slab",
+                "details": "PTC peak growth γ_max/Ω vs m ∈ [0, 0.40] + temporal Fabry–Pérot slab ε₁ → ε₂ → ε₁ (SlabTimeProfile, Moussa et al. 2023)",
+            },
+            {
+                "name": "Task 4 · Spatial & temporal O(Δz² + Δt²) convergence & dynamic CFL map",
+                "details": "Resolution sweep cpw ∈ {20, 28, 40, 56, 80} in highest-index state confirming 2nd-order convergence & step-down CFL boundary",
+            },
+        ],
+    )
+
+
 def _plot_fig01_setup_schematic(fig_dir=FIG_DIR):
     """
     Figure 1 (owner's standing requirement): Labelled setup schematic (domain
@@ -1732,6 +1864,7 @@ def _plot_fig01_setup_schematic(fig_dir=FIG_DIR):
     eps_r(t)/sigma(t)/omega_p(t), source with polarization/direction and pulse,
     monitors, and inset showing eps_r(t)) + FIT space-time leapfrog mesh view.
     """
+    _plot_00_setup_figures(fig_dir)
     apply_paper_style()
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.9), gridspec_kw={"width_ratios": [1.35, 1.0]})
 

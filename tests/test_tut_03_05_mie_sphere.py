@@ -29,7 +29,8 @@ class TestMieSphereAnalyticalAndSavedBenchmarks:
         assert run_full_path.is_file() and run_full_path.stat().st_size > 100
 
         for fig_name in (
-            "00_setup_schematic.png",
+            "00a_setup_geometry.png",
+            "00b_setup_mesh_and_excitation.png",
             "tfsf_diagram.png",
             "mie_theory.png",
             "mesh_staircase_vs_conformal.png",
@@ -41,6 +42,9 @@ class TestMieSphereAnalyticalAndSavedBenchmarks:
         ):
             p = TUTORIAL_DIR / "figures" / fig_name
             assert p.is_file() and p.stat().st_size > 1000, f"Missing or empty {p}"
+
+        table_path = TUTORIAL_DIR / "figures" / "00_setup_table.md"
+        assert table_path.is_file() and table_path.stat().st_size > 100, f"Missing or empty {table_path}"
 
         gif_path = TUTORIAL_DIR / "figures" / "mie_movie.gif"
         assert gif_path.stat().st_size < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"

@@ -150,6 +150,12 @@ def test_pedagogical_toy_optimization_and_figures(tut_module):
     assert all(g > 0.0 for g in toy["grad_norm_history"])
 
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_initial.png",
+        "00b_setup_mesh_and_excitation_initial.png",
+        "00a_setup_geometry_final.png",
+        "00b_setup_mesh_and_excitation_final.png",
         "01_metalens_profile_and_length_scale.png",
         "02_optimization_trace_and_beta_schedule.png",
         "03_intensity_enhancement_maps_rgb.png",
@@ -168,6 +174,9 @@ def test_pedagogical_toy_optimization_and_figures(tut_module):
         assert size_bytes > 1024, f"Figure {fname} is unexpectedly small ({size_bytes} B)"
         if fname.endswith(".gif"):
             assert size_bytes < 5 * 1024 * 1024, f"GIF {fname} exceeds 5 MB limit ({size_bytes} B)"
+    for tname in ("00_setup_table.md", "00_setup_table_initial.md", "00_setup_table_final.md"):
+        tpath = FIG_DIR / tname
+        assert tpath.exists() and tpath.stat().st_size > 256, f"Missing or empty setup table {tname}"
 
 
 def test_optional_invrs_gym_rescore():

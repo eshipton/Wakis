@@ -101,13 +101,19 @@ class TestDoubleSlitSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
-            "00_setup_schematic.png",
+            "00a_setup_geometry.png",
+            "00b_setup_mesh_and_excitation.png",
             "double_slit_envelope_and_missing_orders.png",
             "double_slit_fringe_spacing.png",
             "double_slit_coupling_and_convergence.png",
         ):
             p = TUTORIAL_DIR / "figures" / fig_name
             assert p.is_file() and p.stat().st_size > 2000, f"Missing or empty {p}"
+
+        table_path = TUTORIAL_DIR / "figures" / "00_setup_table.md"
+        assert table_path.is_file() and table_path.stat().st_size > 100, (
+            f"Missing or empty {table_path}"
+        )
 
     def test_envelope_bounding_and_missing_orders(self):
         """Check L2 agreement, envelope bounding, and missing-order suppression."""

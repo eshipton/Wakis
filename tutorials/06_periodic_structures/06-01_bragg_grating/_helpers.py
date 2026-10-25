@@ -1140,6 +1140,32 @@ def build_bragg_setup_objects(
     return pic, src, monitors, structures_schematic
 
 
+class _PolygonSchematicProxy:
+    """Proxy exposing ``.vertices``, ``.material``, and ``.name`` without ``.bounds`` for ``wakis.schematic``."""
+
+    def __init__(self, slab, material_eps: float, name: str):
+        self.vertices = np.asarray(slab.vertices, dtype=float)
+        self.material = float(material_eps)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Proxy around ``SolverFIT3D`` that hides ``ieps`` so ``wakis.schematic`` uses explicit ``structures``."""
+
+    def __init__(self, solver, eps_clad: float = 1.0):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 10)
+        self.bc_low = getattr(solver, "bc_low", ["pml", "pml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["pml", "pml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
 def plot_bragg_setup_schematic(
     out_path,
     n_periods=100,
@@ -1148,22 +1174,14 @@ def plot_bragg_setup_schematic(
     dw=0.05e-6,
     duty_cycle=0.5,
 ):
-    """Render ``00_setup_schematic.png`` for Tutorial 6.1 using ``wakis.figstyle`` and ``wakis.schematic``.
-
-    Generates a 3-panel figure:
-    - Panel (a): Full 2D EIM computational domain showing CPML boundaries,
-      corrugated silicon waveguide (``eps_r = n_eff,slab^2 = 8.03``), ``ModeSource``
-      at Port ``'in'``, and ``ModeMonitor`` planes at Ports ``'in'`` and ``'out'``.
-    - Panel (b): Unit-cell & periodic/Bloch phase-advance schematic zoomed on 3
-      grating periods, showing ``Lambda = 324 nm``, ``Delta_w = 50 nm``, ``w_core =
-      450 nm``, Bloch phase advance ``beta_B * Lambda = pi``, counter-propagating
-      coupled waves ``A^+`` / ``A^-``, and the ``Lambda/2`` sidewall shift option.
-    - Panel (c): Graded non-uniform mesh view zoomed on a ``50 nm x 162 nm``
-      sidewall tooth using ``schematic.draw_mesh`` and ``schematic.overlay_geometry``,
-      annotating cells per tooth and cells per guided wavelength.
-    """
-    from matplotlib.patches import Polygon as MplPolygon
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md`` for Tutorial 6.1."""
+    from pathlib import Path
+    from matplotlib.patches import Polygon as MplPolygon, Rectangle
     from wakis import figstyle, schematic
+
+    out_p = Path(out_path)
+    out_dir = out_p if out_p.suffix == "" else out_p.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     pic_full, src_full, mons_full, structs_full = build_bragg_setup_objects(
         n_periods=n_periods,
@@ -1176,301 +1194,243 @@ def plot_bragg_setup_schematic(
         n_pml=10,
         tuned_graded=False,
     )
-    pic_zoom, _, _, structs_zoom = build_bragg_setup_objects(
-        n_periods=6,
-        pitch=pitch,
-        w_core=w_core,
-        dw=dw,
-        duty_cycle=duty_cycle,
-        cpw=14,
-        n_feature=6,
-        n_pml=6,
-        tuned_graded=True,
-    )
     neff_slab = float(pic_full.n_eff_slab)
     eps_slab = round(neff_slab**2, 2)
+    solver_proxy = _SchematicSolverProxy(pic_full.solver, eps_clad=1.0)
+    poly_proxy = _PolygonSchematicProxy(
+        structs_full[0],
+        material_eps=eps_slab,
+        name=f"Si EIM core (n_eff,slab = {neff_slab:.4f})",
+    )
+    mat_names = {
+        "background": "Air lateral/upper clad (n = 1.00, ε_r = 1.00; SiO₂ BOX n_sub = 1.44)",
+        "region_0": f"Si EIM core (n_Si = 3.47, h = 220 nm → n_eff,slab = {neff_slab:.4f}, ε_r = {eps_slab:.2f})",
+    }
 
-    with figstyle.apply_style():
-        fig, (ax0, ax1, ax2) = figstyle.new_figure(
-            nrows=1,
-            ncols=3,
-            width=15.6,
-            height=4.7,
-            gridspec_kw={"width_ratios": [1.22, 1.05, 1.05]},
-        )
+    xmin, xmax = float(pic_full.grid.xmin), float(pic_full.grid.xmax)
+    ymin, ymax = float(pic_full.grid.ymin), float(pic_full.grid.ymax)
+    n_pml = int(getattr(pic_full.solver, "n_pml", 10))
+    th_x_low = float(pic_full.grid.x[n_pml] - pic_full.grid.x[0])
+    th_x_high = float(pic_full.grid.x[-2] - pic_full.grid.x[-2 - n_pml])
+    th_y_low = float(pic_full.grid.y[n_pml] - pic_full.grid.y[0])
+    th_y_high = float(pic_full.grid.y[-2] - pic_full.grid.y[-2 - n_pml])
 
-        # Panel (a): Full 2D EIM simulation setup schematic
-        schematic.plot_schematic(
-            pic_full.solver,
-            ax=ax0,
-            plane="xy",
-            unit="µm",
-            structures=structs_full,
-            sources=[src_full],
-            monitors=mons_full,
-            show_mesh=False,
-            show_wave_packet=False,
-            title="(a) 2D EIM domain, CPML boundaries, ModeSource & ports",
-        )
-        v_full_um = structs_full[0].vertices * 1e6
-        ax0.plot(
-            np.append(v_full_um[:, 0], v_full_um[0, 0]),
-            np.append(v_full_um[:, 1], v_full_um[0, 1]),
-            color="#1e3a8a",
-            lw=0.9,
-            clip_on=True,
-            zorder=5,
-        )
-        ax0.set_aspect("auto")
-        ax0.text(
-            0.0,
-            -0.54,
-            f"Si slab EIM: n_eff,slab = {neff_slab:.3f} (ε_r = {eps_slab:.2f}), air clad (ε_r = 1.0)\n"
-            f"100 periods (L = {n_periods * pitch * 1e6:.2f} µm), Gaussian TE₀ pulse (185–200 THz)",
-            ha="center",
-            va="center",
-            fontsize=7.3,
-            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#94a3b8", alpha=0.92),
-            zorder=9,
-        )
+    pulse_obj = pic_full.sim.pulse
+    f0 = float(pulse_obj.frequency)
+    fwidth = float(pulse_obj.fwidth)
+    x_src = float(src_full.center[0])
+    hy_port = 0.5 * float(src_full.size[1])
+    x_in_mon = float(mons_full[0].center[0])
+    x_out_mon = float(mons_full[1].center[0])
 
-        # Panel (b): Unit-cell & periodic/Bloch phase-advance schematic (3 periods)
-        verts_al = bragg_grating(
-            n_periods=6, pitch=pitch, w_core=w_core, dw=dw, duty_cycle=duty_cycle, shift=0.0
-        ) * 1e6
-        verts_sh = bragg_grating(
-            n_periods=6,
-            pitch=pitch,
-            w_core=w_core,
-            dw=dw,
-            duty_cycle=duty_cycle,
-            shift=0.5 * pitch,
-        ) * 1e6
-        ax1.set_facecolor("#f8fafc")
-        ax1.add_patch(
-            MplPolygon(
-                verts_al,
-                closed=True,
-                facecolor="#bfdbfe",
-                edgecolor="#1d4ed8",
-                lw=1.5,
-                alpha=0.88,
-                label=f"Aligned Si tooth (Δx = 0, ε_r = {eps_slab:.2f})",
+    sources_s = [
+        {
+            "kind": "sheet",
+            "type_name": "ModeSource",
+            "short_word": "ModeSrc",
+            "label": f"Port 'in' ModeSource (TE₀, +x, x = {x_src * 1e6:.2f} µm)",
+            "desc": f"Port 'in' ModeSource at x = {x_src * 1e6:.2f} µm (TE₀/EIM E_y, +x)",
+            "pos_str": f"x = {x_src * 1e6:.2f} µm, y ∈ [{-hy_port * 1e6:.2f}, {+hy_port * 1e6:.2f}] µm",
+            "polarization": "TE₀ (in-plane E_y, H_z)",
+            "h_bounds": (x_src, x_src),
+            "v_bounds": (-hy_port, +hy_port),
+            "e_vec": (0.0, 1.0, 0.0),
+            "k_vec": (1.0, 0.0, 0.0),
+            "h_vec": (0.0, 0.0, 1.0),
+            "pulse": {
+                "f0": f0,
+                "fwidth": fwidth,
+                "t_peak": float(4.0 / (np.pi * fwidth)),
+                "t_end": float(pulse_obj.end_time),
+                "src_time": pulse_obj,
+            },
+        }
+    ]
+    monitors_s = [
+        {
+            "kind": "plane",
+            "type_name": "ModeMonitor",
+            "short_word": "in mon",
+            "label": "Port 'in' ModeMonitor (S₁₁)",
+            "desc": f"Port 'in' ModeMonitor at x = {x_in_mon * 1e6:.2f} µm (S₁₁ reflection)",
+            "pos_str": f"x = {x_in_mon * 1e6:.2f} µm, y ∈ [{-hy_port * 1e6:.2f}, {+hy_port * 1e6:.2f}] µm",
+            "freq_str": "185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts)",
+            "frequencies": pic_full.frequencies,
+            "h_bounds": (x_in_mon, x_in_mon),
+            "v_bounds": (-hy_port, +hy_port),
+        },
+        {
+            "kind": "plane",
+            "type_name": "ModeMonitor",
+            "short_word": "out mon",
+            "label": "Port 'out' ModeMonitor (S₂₁)",
+            "desc": f"Port 'out' ModeMonitor at x = {x_out_mon * 1e6:.2f} µm (S₂₁ transmission)",
+            "pos_str": f"x = {x_out_mon * 1e6:.2f} µm, y ∈ [{-hy_port * 1e6:.2f}, {+hy_port * 1e6:.2f}] µm",
+            "freq_str": "185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts)",
+            "frequencies": pic_full.frequencies,
+            "h_bounds": (x_out_mon, x_out_mon),
+            "v_bounds": (-hy_port, +hy_port),
+        },
+        {
+            "kind": "box",
+            "type_name": "FluxBox",
+            "short_word": "FluxBox",
+            "label": "2D Poynting FluxBox",
+            "desc": "Closed 2D Poynting FluxBox (4 faces inside CPML)",
+            "pos_str": f"x ∈ [{(xmin + th_x_low) * 1e6:.2f}, {(xmax - th_x_high) * 1e6:.2f}] µm, y ∈ [{(ymin + th_y_low) * 1e6:.2f}, {(ymax - th_y_high) * 1e6:.2f}] µm",
+            "freq_str": "185.1–199.9 THz (81 pts)",
+            "frequencies": pic_full.frequencies,
+            "h_bounds": (xmin + 1.15 * th_x_low, xmax - 1.15 * th_x_high),
+            "v_bounds": (ymin + 1.15 * th_y_low, ymax - 1.15 * th_y_high),
+        },
+    ]
+    variations = [
+        {
+            "name": "Periodic unit cell & Bragg Bloch condition",
+            "details": "Λ = 324 nm (D = 50%, l_tooth = 162 nm, w_core = 450 nm, Δw = 50 nm), Bloch phase Δφ = β_B Λ = π at λ_B; ±z faces: Periodic (2D EIM)",
+        },
+        {
+            "name": "Sidewall phase offset (task_9)",
+            "details": "Aligned (Δx_shift = 0 → κ = κ₀, R_max > 99.7%) vs half-period shifted (Δx_shift = Λ/2 = 162 nm → κ = 0, R_max = 0.0003)",
+        },
+        {
+            "name": "Parametric sweeps (tasks 10–14)",
+            "details": "Period count N ∈ {25, 50, 100}, tooth depth Δw ∈ {25, 50, 75} nm, Gaussian apodization (α = 4.0, −10.3 dB sidelobe reduction)",
+        },
+        {
+            "name": "Resolution & averaging ladder (tasks 0–8)",
+            "details": "Kottke vs staircase across L1 (10 cpw, 4/tooth), L2 (14 cpw, 6/tooth), L3 (20 cpw, 8/tooth), and reference R (40 cpw, 16/tooth)",
+        },
+    ]
+
+    title_geom = "Sidewall-Corrugated Silicon Waveguide Bragg Grating (2D EIM Setup, N = 100, Λ = 324 nm)"
+    title_mesh = "Graded Non-Uniform Mesh (1× Tooth Zoom), Spatial Wave Packet & Broadband Excitation"
+
+    res = schematic.save_setup_figures(
+        solver_proxy,
+        out_dir,
+        prefix="00",
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=1532e-9,
+        min_feature=dw,
+        variations=variations,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
+    )
+
+    # Re-render 00a with aspect='auto' so the 34.0 µm × 1.44 µm waveguide and Bloch/periodic annotations are clearly legible
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_proxy,
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        wavelength=1532e-9,
+        title=title_geom,
+        width_in=8.2,
+        height_in=4.2,
+    )
+    ax_a.set_aspect("auto")
+    x0_um, x1_um = xmin * 1e6, xmax * 1e6
+    y0_um, y1_um = ymin * 1e6, ymax * 1e6
+    dy_um = y1_um - y0_um
+    for txt in ax_a.texts:
+        t_str = txt.get_text()
+        if getattr(txt, "_schematic_role", None) == "dimension" and "34." in t_str:
+            txt.set_position((0.5 * (x0_um + x1_um), y1_um + 0.165 * dy_um))
+        elif "3 · out mon" in t_str:
+            txt.set_position((15.1, -0.52))
+        elif "2 · in mon" in t_str:
+            txt.set_position((-15.0, -0.52))
+        elif "1 · ModeSrc" in t_str:
+            txt.set_position((-14.9, +0.54))
+    ax_a.set_title(title_geom, pad=36, fontsize=11.0, fontweight="bold")
+    leg_a = ax_a.get_legend()
+    if leg_a is not None:
+        leg_a.set_bbox_to_anchor((0.5, -0.32))
+    for yb_s, th_y in ((y0_um, th_y_low * 1e6), (y1_um - th_y_high * 1e6, th_y_high * 1e6)):
+        ax_a.add_patch(
+            Rectangle(
+                (x0_um, yb_s),
+                x1_um - x0_um,
+                th_y,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="///",
+                alpha=0.36,
+                lw=0.8,
                 zorder=2,
             )
         )
-        ax1.plot(
-            verts_sh[:, 0],
-            verts_sh[:, 1],
-            color="#d97706",
-            ls="--",
-            lw=1.4,
-            label="Misaligned −y tooth (Δx = Λ/2 → κ = 0)",
-            zorder=3,
-        )
-        p_um = pitch * 1e6
-        for x_b, lbl_b in [
-            (-0.5 * p_um, r"Unit-cell face $x_n$"),
-            (+0.5 * p_um, r"Bloch face $x_n + \Lambda$" + "\n" + r"($\Delta\phi = \beta_B\Lambda = \pi$)"),
-        ]:
-            ax1.axvline(x_b, color="#7c3aed", ls="-.", lw=1.4, zorder=4)
-            ax1.text(
-                x_b,
-                0.355 if x_b < 0 else -0.365,
-                lbl_b,
-                color="#6d28d9",
-                fontsize=7.2,
-                fontweight="bold",
-                ha="center",
-                va="bottom" if x_b < 0 else "top",
-                bbox=dict(boxstyle="round,pad=0.16", fc="#f5f3ff", ec="#c4b5fd", alpha=0.94),
-                zorder=6,
-            )
-        # Forward and backward coupled waves inside core
-        ax1.annotate(
-            "",
-            xy=(0.24, 0.05),
-            xytext=(-0.24, 0.05),
-            arrowprops=dict(arrowstyle="->", color="#059669", lw=2.0),
-            zorder=5,
-        )
-        ax1.text(
-            0.0,
-            0.085,
-            r"Forward $\tilde{A}^+(x)\,e^{-j\beta_0 x}$",
-            color="#065f46",
-            fontsize=7.5,
-            fontweight="bold",
-            ha="center",
-            va="bottom",
-            zorder=6,
-        )
-        ax1.annotate(
-            "",
-            xy=(-0.24, -0.05),
-            xytext=(0.24, -0.05),
-            arrowprops=dict(arrowstyle="->", color="#dc2626", lw=2.0),
-            zorder=5,
-        )
-        ax1.text(
-            0.0,
-            -0.085,
-            r"Backward $\tilde{A}^-(x)\,e^{+j\beta_0 x}$ ($\kappa$)",
-            color="#991b1b",
-            fontsize=7.5,
-            fontweight="bold",
-            ha="center",
-            va="top",
-            zorder=6,
-        )
-        # Annotate period Lambda and core/tooth widths
-        ax1.annotate(
-            "",
-            xy=(0.5 * p_um, 0.305),
-            xytext=(-0.5 * p_um, 0.305),
-            arrowprops=dict(arrowstyle="<->", color="#1e293b", lw=1.3),
-            zorder=5,
-        )
-        ax1.text(
-            0.0,
-            0.315,
-            f"Λ = {pitch * 1e9:.0f} nm",
-            fontsize=7.5,
-            fontweight="bold",
-            ha="center",
-            va="bottom",
-            bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="none", alpha=0.88),
-            zorder=6,
-        )
-        ax1.set(
-            xlim=(-0.56, 0.56),
-            ylim=(-0.44, 0.44),
-            aspect="equal",
-            xlabel="x [µm]",
-            ylabel="y [µm]",
-            title="(b) Unit cell, Bloch phase (β_B Λ = π) & sidewall shift",
-        )
-        ax1.legend(loc="lower right", fontsize=6.9, framealpha=0.92)
+    ax_a.text(
+        0.0,
+        0.0,
+        f"Si EIM core (n_eff,slab = {neff_slab:.4f}, ε_r = {eps_slab:.2f}) | ±z faces: Periodic\n"
+        f"Periodic unit cell: Λ = {pitch * 1e9:.0f} nm (N = {n_periods}, Δw = {dw * 1e9:.0f} nm), Bloch phase Δφ = β_B Λ = π",
+        ha="center",
+        va="center",
+        fontsize=7.6,
+        fontweight="bold",
+        color="#1E293B",
+        bbox=dict(boxstyle="round,pad=0.18", facecolor="#FFFFFFEE", edgecolor="#94A3B8", lw=0.7),
+        zorder=9,
+    )
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
-        # Panel (c): Graded non-uniform mesh zoom on a 50 nm x 162 nm sidewall tooth
-        xlim_z = (-0.34, 0.34)
-        ylim_z = (0.16, 0.33)
-        ax2.set_facecolor("#f8fafc")
-        ax2.add_patch(
-            MplPolygon(
-                verts_al,
-                closed=True,
-                facecolor="#bfdbfe",
-                edgecolor="none",
-                alpha=0.65,
-                zorder=1,
+    # Re-render 00b with aspect='auto' on ax_mesh, polygon overlay, and 1x zoom on a 50 nm × 162 nm sidewall tooth
+    zoom_bounds = (-0.24e-6, +0.24e-6, +0.20e-6, +0.30e-6)
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_proxy,
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        mesh_every=18,
+        zoom_bounds=zoom_bounds,
+        wavelength=1532e-9,
+        min_feature=dw,
+        title=title_mesh,
+        width_in=8.2,
+        height_in=5.6,
+    )
+    ax_mesh = axes_b[0]
+    ax_mesh.set_aspect("auto")
+    verts_um = np.asarray(structs_full[0].vertices, dtype=float) * 1e6
+    ax_mesh.add_patch(
+        MplPolygon(
+            verts_um,
+            closed=True,
+            facecolor="#DCEAF7",
+            edgecolor="#1E293B",
+            lw=0.9,
+            alpha=0.82,
+            zorder=2,
+        )
+    )
+    for child_ax in list(fig_b.axes) + list(getattr(ax_mesh, "child_axes", [])):
+        if getattr(child_ax, "_is_inset", False):
+            child_ax.add_patch(
+                MplPolygon(
+                    verts_um,
+                    closed=True,
+                    facecolor="#93C5FD",
+                    edgecolor="#1D4ED8",
+                    lw=1.6,
+                    alpha=0.65,
+                    zorder=1.5,
+                )
             )
-        )
-        schematic.draw_mesh(
-            ax2,
-            pic_zoom.solver,
-            plane="xy",
-            unit="µm",
-            every=1,
-            color="#334155",
-            alpha=0.55,
-            linewidth=0.55,
-            show_cpw=False,
-        )
-        schematic.overlay_geometry(
-            ax2,
-            pic_zoom.solver,
-            plane="xy",
-            unit="µm",
-            structures=structs_zoom,
-            show_boundaries=False,
-            show_materials=True,
-            show_sources=False,
-            show_monitors=False,
-            label_materials=False,
-            outline_color="none",
-        )
-        ax2.plot(
-            np.append(verts_al[:, 0], verts_al[0, 0]),
-            np.append(verts_al[:, 1], verts_al[0, 1]),
-            color="#1d4ed8",
-            lw=1.6,
-            clip_on=True,
-            zorder=6,
-        )
-        ax2.text(
-            0.97,
-            0.93,
-            f"Air clad (ε_r = 1.00)\nSi EIM tooth (ε_r = {eps_slab:.2f})",
-            transform=ax2.transAxes,
-            fontsize=6.9,
-            fontweight="bold",
-            ha="right",
-            va="top",
-            bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="#94a3b8", alpha=0.92),
-            zorder=8,
-        )
-        ax2.annotate(
-            "",
-            xy=(-0.081, 0.275),
-            xytext=(-0.081, 0.225),
-            arrowprops=dict(arrowstyle="<->", color="#dc2626", lw=1.6),
-            zorder=7,
-        )
-        ax2.text(
-            -0.068,
-            0.250,
-            "Δw = 50 nm\n(6 cells, Δy = 8.33 nm)",
-            color="#991b1b",
-            fontsize=7.1,
-            fontweight="bold",
-            va="center",
-            bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="#fca5a5", alpha=0.92),
-            zorder=8,
-        )
-        ax2.annotate(
-            "",
-            xy=(0.0, 0.285),
-            xytext=(-0.162, 0.285),
-            arrowprops=dict(arrowstyle="<->", color="#0284c7", lw=1.5),
-            zorder=7,
-        )
-        ax2.text(
-            -0.081,
-            0.292,
-            "l_tooth = 162 nm",
-            color="#0369a1",
-            fontsize=7.1,
-            fontweight="bold",
-            ha="center",
-            va="bottom",
-            bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#7dd3fc", alpha=0.92),
-            zorder=8,
-        )
-        ax2.text(
-            0.03,
-            0.04,
-            "Graded mesh (g = 1.35):\nTooth: Δx=Δy = 8.33 nm (6/tooth)\nCore: Δy = 16.6 nm | Bg: ≥14 cpw",
-            transform=ax2.transAxes,
-            fontsize=6.9,
-            va="bottom",
-            ha="left",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#94a3b8", alpha=0.92),
-            zorder=8,
-        )
-        ax2.set(
-            xlim=xlim_z,
-            ylim=ylim_z,
-            aspect="auto",
-            xlabel="x [µm]",
-            ylabel="y [µm]",
-            title="(c) Graded non-uniform mesh at sidewall tooth",
-        )
-
-        figstyle.finish(fig)
-        if out_path is not None:
-            figstyle.save(fig, out_path)
-    return fig
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
 
 
 def render_bragg_pulse_gif(

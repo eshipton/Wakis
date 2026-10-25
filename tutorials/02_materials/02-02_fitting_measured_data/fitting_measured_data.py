@@ -122,30 +122,54 @@ if "google.colab" in sys.modules:
 # ### Simulation setups & geometry overview
 #
 # Four 3D `SolverFIT3D` slab benchmarks are executed across the optical and
-# biomedical RF regimes (`figures/00_setup_schematic.png`):
+# biomedical RF regimes (`figures/00a_setup_geometry.png` and
+# `figures/00b_setup_mesh_and_excitation.png`):
 #
-# - **Panel (a) — Optical thin-film & dielectric etalon R/T setup (`Tasks 1 & 2`):**
+# - **Optical thin-film & dielectric etalon R/T setup (`Tasks 1 & 2`):**
 #   A quasi-1D $2\times 2\times N_z$ `GridFIT3D` with `periodic` transverse
-#   boundaries ($\pm x, \pm y$) and 16-cell `cpml` absorbers on $\pm z$. An
+#   boundaries ($\pm x, \pm y$) and 15-cell `cpml` absorbers on $\pm z$. An
 #   $E_x$-polarized `CurrentSource` sheet at $z_{\text{src}} < 0$ illuminates a
 #   fitted dispersive slab on $z \in [0, d]$: Johnson & Christy noble-metal films
 #   ($\text{Au}$ $d = 40\;\text{nm}$ and $\text{Ag}$ $d = 36\;\text{nm}$ with
-#   $\Delta z = 2.0\;\text{nm}$, $20\;\text{cells}$ across $d$, and
-#   $67.6\;\text{cells}/\lambda_{\min}$ in `Task 1`) and a Malitson fused-silica
+#   $\Delta z = 1.0\;\text{nm}$ in `Task 1`) and a Malitson fused-silica
 #   ($\text{SiO}_2$) Fabry–Pérot etalon ($d = 600\;\text{nm}$, $\Delta z = 5.0\;\text{nm}$,
-#   $120\;\text{cells}$ across $d$, $40.6\;\text{cells}/\lambda_{\min}$ in `Task 2`).
-#   Reflection and transmission `FluxMonitor` planes at $z_r$ and $z_t$ record
-#   $R(\lambda)$ and $T(\lambda)$.
-# - **Panel (b) — Biomedical RF human muscle tissue R/T setup (`Task 4`):**
-#   A quasi-1D $2\times 2\times N_z$ `GridFIT3D` ($z \in [-32, 48]\;\text{mm}$,
-#   $\Delta z = 0.25\;\text{mm}$, 16-cell `cpml` on $\pm z$) containing an
-#   $8.0\;\text{mm}$ human muscle tissue layer ($z \in [0, 8.0]\;\text{mm}$,
-#   $32\;\text{cells}$ across $d$, $40.6\;\text{cells}/\lambda_{\min}$ inside
-#   muscle at $5\;\text{GHz}$) parameterized by a 4-pole `Debye` cascade plus
-#   static ionic conductivity $\sigma_i = 0.20\;\text{S/m}$ fit to the Gabriel
-#   *et al.* (1996) four-term Cole–Cole model [3].
+#   $120\;\text{cells}$ across $d$ in `Task 2`). Reflection and transmission
+#   `FluxMonitor` planes at $z_r$ and $z_t$ record $R(\lambda)$ and $T(\lambda)$.
+# - **Biomedical RF human muscle tissue R/T setup (`Task 4`):**
+#   A quasi-1D $2\times 2\times N_z$ `GridFIT3D` ($z \in [-12, 20]\;\text{mm}$,
+#   $\Delta z = 0.10\;\text{mm}$, 15-cell `cpml` on $\pm z$) containing an
+#   $8.0\;\text{mm}$ human muscle tissue layer ($z \in [0, 8.0]\;\text{mm}$)
+#   parameterized by a 4-pole `Debye` cascade plus static ionic conductivity
+#   $\sigma_i = 0.20\;\text{S/m}$ fit to the Gabriel *et al.* (1996) four-term
+#   Cole–Cole model [3].
 #
-# ![Simulation setups for Tutorial 2.2: optical thin-film/etalon slab R/T setup and RF human muscle tissue slab R/T setup](figures/00_setup_schematic.png)
+# ![Setup geometry and boundary conditions for the Tutorial 2.2 quasi-1D fitted-material slab benchmark](figures/00a_setup_geometry.png)
+# ![Grid resolution, smallest-feature zoom, and broadband excitation for Tutorial 2.2](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the baseline Johnson & Christy gold thin-film
+# reflection/transmission setup and the material/frequency variations across
+# the silver thin-film, fused-silica etalon, and human muscle tissue benchmarks.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 8 nm × 8 nm × 240 nm (z ∈ [-108 nm, 132 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 2 × 2 × 240 (960 cells) |
+# | Discretization | Δz & resolution | Δ_min = 1 nm, 188.3 cells/λ (in n_max = 2.84), 40.0 cells across feature (40 nm) |
+# | Boundary | -x face | Periodic |
+# | Boundary | +x face | Periodic |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (15 cells, 15 nm) |
+# | Boundary | +z face | CPML (15 cells, 15 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Au thin film (J&C fit) | ε_r = 8.08, μ_r = 1.00, model = DispersiveMaterial, z ∈ [0 m, 40 nm] (d = 40 nm) |
+# | Source | 1 · CurrentSource | pos: z = -50 nm, pol: J_x (E_x), pulse: f₀ = 560.0 THz, Δf = 360.0 THz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (z = -25 nm), pos: z = -25 nm, freqs: 17 freqs in [336.1, 814.9] THz |
+# | Monitor | 3 · FluxMonitor | FluxMonitor (z = 65 nm), pos: z = 65 nm, freqs: 17 freqs in [336.1, 814.9] THz |
+# | Variation | Task 0 & Task 3 · Pole fitting & library audit | Non-FIT nonlinear least-squares pole fitting (fit_poles N = 1..6 on J&C Au/Ag; N = 1..5 Debye on Gabriel 1996 tissues) |
+# | Variation | Task 1b · Silver thin film (Ag, J&C 1972) | Ag slab (1 Drude + 2 Lorentz fit, d = 36 nm, Lz = 240 nm, Δz = 1.0 nm, λ ∈ [310, 900] nm) |
+# | Variation | Task 2 · Fused-silica etalon (SiO₂, Malitson 1965) | SiO₂ Fabry–Pérot slab (2-pole folded Lorentz fit, ε_∞ = 1.696, d = 600 nm, Lz = 1.60 µm, Δz = 5.0 nm, λ ∈ [350, 950] nm) |
+# | Variation | Task 4 · Human muscle tissue slab (Gabriel 1996) | Muscle tissue slab (4-pole Debye + σ_i = 0.20 S/m fit, d = 8.0 mm, Lz = 32.0 mm, Δz = 0.10 mm, f ∈ [0.6, 6.0] GHz) |
 #
 # ---
 #
@@ -1756,45 +1780,18 @@ def run_task_4(quick=False):
 
 
 # %%
-def _fix_schematic_units(ax):
-    """Ensure a thin space and upright font separate numbers and units inside math-mode labels."""
-    import re
-
-    def _fix_math_block(match):
-        body = match.group(1)
-        body = re.sub(
-            r"(\d)\s*(?:µm|\\mu\s*m)\b",
-            r"\1\\;\\mu\\mathrm{m}",
-            body,
-        )
-        body = re.sub(
-            r"(\d)\s*(mm|cm|nm|m|GHz|MHz|THz|kHz|Hz|ps|ns|fs)\b",
-            r"\1\\;\\mathrm{\2}",
-            body,
-        )
-        return f"${body}$"
-
-    for txt in ax.texts:
-        s = txt.get_text()
-        s_new = re.sub(r"\$([^$]+)\$", _fix_math_block, s)
-        if s_new != s:
-            txt.set_text(s_new)
-
-
 def _plot_setup_schematic(fig_dir):
-    """Render ``00_setup_schematic.png`` for Tutorial 2.2 optical and RF slab setups."""
-    fig, (ax_opt, ax_rf) = figstyle.new_figure(
-        nrows=1, ncols=2, width=12.8, height=4.8
-    )
+    """Render ``00a_setup_geometry.png``, ``00b_setup_mesh_and_excitation.png``, and ``00_setup_table.md``."""
+    lam_au, f_au, _, _, _ = load_refractiveindex_nk(JC_AU_PATH)
+    f_eval_au = f_au[(lam_au >= 0.36) & (lam_au <= 0.90)]
 
-    # Panel (a): Optical thin-film & dielectric etalon R/T setup (Tasks 1 & 2)
-    dz_opt = 2.0e-9
-    lz_opt = 320.0e-9
+    dz_opt = 1.0e-9
+    lz_opt = 240.0e-9
     d_au = 40.0e-9
     nz_opt = int(round(lz_opt / dz_opt))
-    zmin_opt = -140.0e-9
+    zmin_opt = -0.45 * lz_opt
     zmax_opt = zmin_opt + nz_opt * dz_opt
-    dxy_opt = 16.0e-9
+    dxy_opt = 4.0 * dz_opt
     grid_opt = GridFIT3D(
         -dxy_opt,
         dxy_opt,
@@ -1812,122 +1809,67 @@ def _plot_setup_schematic(fig_dir):
         cfln=0.5,
         bc_low=["periodic", "periodic", "cpml"],
         bc_high=["periodic", "periodic", "cpml"],
-        n_pml=16,
+        n_pml=15,
         verbose=0,
+    )
+    mat_au = dispersive_lib["gold jc"]
+    solver_opt.add_dispersive_material(
+        mat_au,
+        center=(0.0, 0.0, 0.5 * d_au),
+        size=(10.0 * dxy_opt, 10.0 * dxy_opt, d_au),
     )
     opt_struct = SimpleNamespace(
         bounds=((-dxy_opt, -dxy_opt, 0.0), (dxy_opt, dxy_opt, d_au)),
-        name="Au / Ag / SiO2 slab",
-        material=dispersive_lib["au"],
+        name="Au thin film (J&C fit)",
+        material=mat_au,
     )
     src_opt = CurrentSource(
-        GaussianSource(frequency=500.0e12, fwidth=220.0e12),
+        GaussianSource(frequency=560.0e12, fwidth=360.0e12),
         component="x",
-        center=(0.0, 0.0, -80.0e-9),
+        center=(0.0, 0.0, -50.0e-9),
         size=(2.0 * dxy_opt, 2.0 * dxy_opt, 0.0),
     )
     mons_opt = [
         FluxMonitor(
-            np.linspace(300.0e12, 800.0e12, 5),
-            center=(0.0, 0.0, -40.0e-9),
+            f_eval_au,
+            center=(0.0, 0.0, -25.0e-9),
             size=(2.0 * dxy_opt, 2.0 * dxy_opt, 0.0),
         ),
         FluxMonitor(
-            np.linspace(300.0e12, 800.0e12, 5),
-            center=(0.0, 0.0, d_au + 40.0e-9),
+            f_eval_au,
+            center=(0.0, 0.0, d_au + 25.0e-9),
             size=(2.0 * dxy_opt, 2.0 * dxy_opt, 0.0),
         ),
     ]
-    schematic.plot_schematic(
+    return schematic.save_setup_figures(
         solver_opt,
+        fig_dir,
         plane="zx",
-        ax=ax_opt,
         structures=[opt_struct],
         sources=[src_opt],
         monitors=mons_opt,
-        show_mesh=True,
-        mesh_every=4,
-        mesh_zoom=True,
-        freq=750.0e12,
-        title="(a) Optical thin-film & etalon R/T setup (Tasks 1 & 2)",
+        min_feature=d_au,
+        title_geometry="Quasi-1D fitted-material slab R/T setup: geometry, source, monitors & boundaries (ZX plane)",
+        title_mesh="Quasi-1D fitted-material slab setup: mesh resolution, wave packet & broadband pulse",
+        variations=[
+            {
+                "name": "Task 0 & Task 3 · Pole fitting & library audit",
+                "details": "Non-FIT nonlinear least-squares pole fitting (fit_poles N = 1..6 on J&C Au/Ag; N = 1..5 Debye on Gabriel 1996 tissues)",
+            },
+            {
+                "name": "Task 1b · Silver thin film (Ag, J&C 1972)",
+                "details": "Ag slab (1 Drude + 2 Lorentz fit, d = 36 nm, Lz = 240 nm, Δz = 1.0 nm, λ ∈ [310, 900] nm)",
+            },
+            {
+                "name": "Task 2 · Fused-silica etalon (SiO₂, Malitson 1965)",
+                "details": "SiO₂ Fabry–Pérot slab (2-pole folded Lorentz fit, ε_∞ = 1.696, d = 600 nm, Lz = 1.60 µm, Δz = 5.0 nm, λ ∈ [350, 950] nm)",
+            },
+            {
+                "name": "Task 4 · Human muscle tissue slab (Gabriel 1996)",
+                "details": "Muscle tissue slab (4-pole Debye + σ_i = 0.20 S/m fit, d = 8.0 mm, Lz = 32.0 mm, Δz = 0.10 mm, f ∈ [0.6, 6.0] GHz)",
+            },
+        ],
     )
-    ax_opt.set_yticks([])
-    ax_opt.set_ylabel("Transverse x (periodic, 2 cells)")
-    _fix_schematic_units(ax_opt)
-
-    # Panel (b): Biomedical RF human muscle tissue R/T setup (Task 4)
-    dz_rf = 0.25e-3
-    lz_rf = 80.0e-3
-    d_mus = 8.0e-3
-    nz_rf = int(round(lz_rf / dz_rf))
-    zmin_rf = -32.0e-3
-    zmax_rf = zmin_rf + nz_rf * dz_rf
-    dxy_rf = 4.0e-3
-    grid_rf = GridFIT3D(
-        -dxy_rf,
-        dxy_rf,
-        -dxy_rf,
-        dxy_rf,
-        zmin_rf,
-        zmax_rf,
-        2,
-        2,
-        nz_rf,
-        verbose=0,
-    )
-    solver_rf = SolverFIT3D(
-        grid_rf,
-        cfln=0.5,
-        bc_low=["periodic", "periodic", "cpml"],
-        bc_high=["periodic", "periodic", "cpml"],
-        n_pml=16,
-        verbose=0,
-    )
-    rf_struct = SimpleNamespace(
-        bounds=((-dxy_rf, -dxy_rf, 0.0), (dxy_rf, dxy_rf, d_mus)),
-        name="Muscle layer (N=4 Debye + sigma_i)",
-        material=DispersiveMaterial(
-            eps_inf=4.0,
-            sigma=0.20,
-            poles=[Debye(50.0, 7.23e-12)],
-        ),
-    )
-    src_rf = CurrentSource(
-        GaussianSource(frequency=2.2e9, fwidth=1.6e9),
-        component="x",
-        center=(0.0, 0.0, -16.0e-3),
-        size=(2.0 * dxy_rf, 2.0 * dxy_rf, 0.0),
-    )
-    mons_rf = [
-        FluxMonitor(
-            np.linspace(0.5e9, 5.0e9, 5),
-            center=(0.0, 0.0, -8.0e-3),
-            size=(2.0 * dxy_rf, 2.0 * dxy_rf, 0.0),
-        ),
-        FluxMonitor(
-            np.linspace(0.5e9, 5.0e9, 5),
-            center=(0.0, 0.0, d_mus + 8.0e-3),
-            size=(2.0 * dxy_rf, 2.0 * dxy_rf, 0.0),
-        ),
-    ]
-    schematic.plot_schematic(
-        solver_rf,
-        plane="zx",
-        ax=ax_rf,
-        structures=[rf_struct],
-        sources=[src_rf],
-        monitors=mons_rf,
-        show_mesh=True,
-        mesh_every=4,
-        mesh_zoom=True,
-        freq=5.0e9,
-        title="(b) Biomedical RF muscle tissue R/T setup (Task 4)",
-    )
-    ax_rf.set_yticks([])
-    ax_rf.set_ylabel("Transverse x (periodic, 2 cells)")
-    _fix_schematic_units(ax_rf)
-
-    figstyle.save(fig, Path(fig_dir) / "00_setup_schematic.png")
 
 
 def plot_all():

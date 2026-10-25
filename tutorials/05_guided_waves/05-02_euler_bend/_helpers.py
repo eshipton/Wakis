@@ -284,6 +284,36 @@ def measure_mesh_resolution(
     }
 
 
+class _PolygonSchematicProxy:
+    """Lightweight polygon structure proxy exposing `.vertices`, `.material`, and `.name`
+    (without `.bounds`) so `wakis.schematic` classifies a 2D `PolySlab` as `kind='polygon'`.
+    """
+
+    def __init__(self, slab, material_eps: float, name: str):
+        self.vertices = np.asarray(slab.vertices, dtype=float)
+        self.material = float(material_eps)
+        self.name = str(name)
+
+
+class _SchematicSolverProxy:
+    """Lightweight proxy around `SolverFIT3D` that hides `ieps` from
+    `wakis.schematic.extract_setup_info` so explicit polygon `structures` are used.
+    """
+
+    def __init__(self, solver: SolverFIT3D, eps_clad: float):
+        self._solver = solver
+        self.grid = solver.grid
+        self.Nx = solver.Nx
+        self.Ny = solver.Ny
+        self.Nz = solver.Nz
+        self.dt = solver.dt
+        self.n_pml = getattr(solver, "n_pml", 10)
+        self.bc_low = getattr(solver, "bc_low", ["cpml", "cpml", "periodic"])
+        self.bc_high = getattr(solver, "bc_high", ["cpml", "cpml", "periodic"])
+        self.bg = [float(eps_clad), 1.0, 0.0]
+        self._assigned_structures = ()
+
+
 def build_schematic_components(
     structures,
     domain,
@@ -308,8 +338,8 @@ def build_schematic_components(
     dz = 50.0e-9
     if x_grid is None or y_grid is None:
         du = float(wl_min) / (float(n_eff_slab) * 20.0)
-        x_core = np.linspace(xmin, xmax, int( round((xmax - xmin) / du) ) + 1)
-        y_core = np.linspace(ymin, ymax, int( round((ymax - ymin) / du) ) + 1)
+        x_core = np.linspace(xmin, xmax, int(round((xmax - xmin) / du)) + 1)
+        y_core = np.linspace(ymin, ymax, int(round((ymax - ymin) / du)) + 1)
         pml_lo = np.arange(n_pml, 0, -1, dtype=float) * du
         pml_hi = np.arange(1, n_pml + 1, dtype=float) * du
         x_grid = np.concatenate([x_core[0] - pml_lo, x_core, x_core[-1] + pml_hi])
@@ -344,7 +374,9 @@ def build_schematic_components(
         {
             "kind": "sheet",
             "type_name": "ModeSource",
+            "short_word": "ModeSrc",
             "label": "Port 1 ModeSource (TE₀, +x)",
+            "desc": f"Port 1 ModeSource at x = {x_in_src * 1e6:.2f} µm (TE₀, +x)",
             "h_bounds": (x_in_src, x_in_src),
             "v_bounds": (-0.55e-6, +0.55e-6),
             "e_vec": (0.0, 1.0, 0.0),
@@ -363,14 +395,18 @@ def build_schematic_components(
         {
             "kind": "plane",
             "type_name": "ModeMonitor",
+            "short_word": "in mon",
             "label": "Port 1 ModeMonitor (S₁₁)",
+            "desc": f"Port 1 ModeMonitor at x = {x_in_mon * 1e6:.2f} µm (S₁₁)",
             "h_bounds": (x_in_mon, x_in_mon),
             "v_bounds": (-0.55e-6, +0.55e-6),
         },
         {
             "kind": "plane",
             "type_name": "ModeMonitor",
+            "short_word": "out mon",
             "label": "Port 2 ModeMonitor (S₂₁, +y)",
+            "desc": f"Port 2 ModeMonitor at y = {y_out_mon * 1e6:.2f} µm (S₂₁, +y)",
             "h_bounds": (float(r_eff) - 0.55e-6, float(r_eff) + 0.55e-6),
             "v_bounds": (y_out_mon, y_out_mon),
         },
@@ -380,7 +416,9 @@ def build_schematic_components(
             {
                 "kind": "box",
                 "type_name": "FluxMonitor",
+                "short_word": "FluxBox",
                 "label": "2D Poynting FluxMonitor box",
+                "desc": "Closed 2D Poynting FluxMonitor box (4 faces inside CPML)",
                 "h_bounds": (x_in_src - 0.08e-6, float(xmax) - 0.06e-6),
                 "v_bounds": (float(ymin) + 0.06e-6, float(ymax) - 0.06e-6),
             }
@@ -534,205 +572,227 @@ def plot_setup_schematic_euler_bend(
     out_path: Path,
     pic_mesh: PICSimulation | None = None,
 ):
+    """Render `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, and
+    `00_setup_table.md` for Tutorial 5.2 using `wakis.schematic.save_setup_figures`.
     """
-    Render ``00_setup_schematic.png`` (the FIRST figure of Tutorial 5.2):
-    - Panel (a): Labelled 2D EIM simulation schematic built via ``wakis.schematic.plot_schematic``
-      showing domain extents, 10-cell CPML boundaries (and periodic ±z), Si/SiO2 indices,
-      Port 1 ``ModeSource`` with the launched TE₀ mode profile overlaid, orthogonal Port 2
-      ``ModeMonitor`` with the rotated TE₀ mode profile, 2D Poynting ``FluxMonitor`` box,
-      and Gaussian pulse inset.
-    - Panel (b): Zoomed $1\\times$ Yee mesh view at the clothoid entrance ($x \\in [-0.30, 1.25]\\;\\mu\\text{m}$,
-      $y \\in [-0.42, 0.58]\\;\\mu\\text{m}$) showing Kottke subpixel permittivity and the
-      $w_{\\text{wg}} = 400\\;\\text{nm}$ waveguide feature spanned by $15.0$ cells.
-    """
+    from matplotlib.patches import Rectangle
+
     figstyle.apply_style()
+    out_path = Path(out_path)
+    out_dir = out_path if (out_path.is_dir() or out_path.suffix == "") else out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     n_eff_slab = float(primary_data.get("n_eff_slab", 2.8134))
     eps_slab = n_to_eps(n_eff_slab)
-    eps_clad = n_to_eps(PIC_MATERIALS["SiO2"])
+    n_clad = float(PIC_MATERIALS["SiO2"])
+    eps_clad = n_to_eps(n_clad)
     r_eff = float(primary_data.get("r_eff", 4.0e-6))
 
     x_g = pic_mesh.grid.x if pic_mesh is not None else None
     y_g = pic_mesh.grid.y if pic_mesh is not None else None
-    solver_s, sources_s, monitors_s, mat_names = build_schematic_components(
+    solver_raw, sources_s, monitors_s, _ = build_schematic_components(
         structures,
         domain,
         r_eff=r_eff,
         n_eff_slab=n_eff_slab,
-        n_clad=PIC_MATERIALS["SiO2"],
+        n_clad=n_clad,
         x_grid=x_g,
         y_grid=y_g,
         include_flux_box=True,
     )
-
-    fig, (ax_main, ax_mesh) = figstyle.new_figure(
-        nrows=1,
-        ncols=2,
-        width=13.2,
-        height=5.6,
-        gridspec_kw={"width_ratios": [1.85, 1.05], "wspace": 0.32},
+    solver_s = _SchematicSolverProxy(solver_raw, eps_clad=eps_clad)
+    poly_proxy = _PolygonSchematicProxy(
+        structures[0],
+        material_eps=eps_slab,
+        name=f"Si core (w = 400 nm, 2D EIM n_eff = {n_eff_slab:.3f})",
     )
-    schematic.plot_schematic(
+    mat_names = {
+        "background": f"SiO₂ cladding (n = {n_clad:.3f}, ε_r = {eps_clad:.2f})",
+        "region_0": f"Si core (w = 400 nm, 2D EIM n_eff = {n_eff_slab:.3f}, ε_eff = {eps_slab:.2f})",
+    }
+    variations = [
+        {
+            "name": "kottke_L1..L3, staircase_L1..L3 (tasks 0–5)",
+            "param": "cpw ∈ {10, 14, 20}, N_feat ∈ {4, 6, 8}, averaging ∈ {kottke, staircase}",
+            "note": "Uniform square-cell resolution ladder at R_eff = 4.0 µm",
+        },
+        {
+            "name": "kottke_reference (task 6)",
+            "param": "cpw = 40, N_feat = 16 (509 × 509 × 1 = 259,081 cells)",
+            "note": "Independent 2× fine Kottke reference",
+        },
+        {
+            "name": "sweep_circular_R*, sweep_euler_R* (tasks 7–14)",
+            "param": "R_eff ∈ {2.5, 3.0, 3.5, 4.0} µm × {circular, hybrid Euler}",
+            "note": "8-run radius sweep comparing circular vs hybrid Euler 90° bends",
+        },
+        {
+            "name": "kottke_nonuniform (task 15)",
+            "param": "Mirror-symmetric graded Cartesian mesh (238 × 238 × 1 = 56,644 cells)",
+            "note": "15.0 cells across w = 400 nm (Δu_core = 26.6 nm), Δu_lead = 32.0 nm, Δu_clad ≤ 68.0 nm (−19.3% cells, −43.5% time)",
+        },
+    ]
+    title_geom = "Tutorial 5.2 Setup: 2D EIM Hybrid Euler 90° Waveguide Bend"
+    title_mesh = "Discretization (Yee Mesh & w = 400 nm Clothoid Zoom) and Excitation"
+
+    res = schematic.save_setup_figures(
         solver_s,
+        out_dir,
+        prefix="00",
         plane="xy",
-        ax=ax_main,
-        unit="µm",
-        structures=(),
+        structures=[poly_proxy],
         material_names=mat_names,
         sources=sources_s,
         monitors=monitors_s,
-        show_mesh=True,
-        mesh_zoom=False,
-        show_pulse_inset=True,
-        show_wave_packet=False,
+        unit="µm",
         wavelength=1550e-9,
-        title="(a) 2D EIM hybrid Euler 90° bend setup & monitors",
-    )
-    draw_polyslab_regions(
-        ax_main,
-        structures,
-        facecolor="#1d4ed8",
-        alpha=0.30,
-        edgecolor="#0f172a",
-        lw=1.4,
-        label=(
-            f"Si core (w = 400 nm, h = 210 nm)\n"
-            f"n_Si = 3.476 → n_eff,slab = {n_eff_slab:.4f}\n"
-            f"Euler R_eff = {r_eff * 1e6:.1f} µm, A = {euler_info['A'] * 1e6:.1f} µm, R_min = {euler_info['r_min'] * 1e6:.2f} µm"
-        ),
-        label_xy=(1.50, 3.05),
-    )
-    ax_main.text(
-        1.95,
-        -0.88,
-        f"SiO₂ cladding: n_clad = {PIC_MATERIALS['SiO2']:.3f} (ε_r = {eps_clad:.2f})",
-        fontsize=7.4,
-        color="#334155",
-        ha="center",
-        va="center",
-        zorder=7,
-        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="#94a3b8", alpha=0.88, lw=0.7),
+        min_feature=0.40e-6,
+        title_geometry=title_geom,
+        title_mesh=title_mesh,
+        variations=variations,
     )
 
-    if "port_y_in" in primary_data and "port_ey_in" in primary_data:
-        draw_launched_mode_on_schematic(
-            ax_main,
-            x_port_um=-0.80,
-            y_um=np.asarray(primary_data["port_y_in"]) * 1e6,
-            ey=np.asarray(primary_data["port_ey_in"]),
-            neff=float(primary_data.get("port_neff_in", 2.2888)),
-            amp_um=0.45,
-            y_out_port_um=4.75,
-            x_out_um=np.asarray(primary_data["port_x_out"]) * 1e6
-            if "port_x_out" in primary_data
-            else None,
-            ex_out=np.asarray(primary_data["port_ex_out"])
-            if "port_ex_out" in primary_data
-            else None,
-            neff_out=float(primary_data.get("port_neff_out", 2.2888)),
-        )
-
-    # Mark clothoid-circle junctions
-    jx = [euler_info["xp"] * 1e6, (r_eff - euler_info["yp"]) * 1e6]
-    jy = [euler_info["yp"] * 1e6, (r_eff - euler_info["xp"]) * 1e6]
-    ax_main.plot(
-        jx,
-        jy,
-        "o",
-        color="#e11d48",
-        ms=5.5,
-        zorder=9,
-    )
-    ax_main.annotate(
-        f"Clothoid–circle C² junctions\n(p = {euler_info['p']:.2f}, L_max = {euler_info['L_max'] * 1e6:.2f} µm)",
-        xy=(jx[0], jy[0]),
-        xytext=(2.15, 0.25),
-        fontsize=7.0,
-        color="#9f1239",
-        fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color="#e11d48", lw=1.0),
-        bbox=dict(boxstyle="round,pad=0.18", fc="#fff1f2", ec="#e11d48", alpha=0.90, lw=0.7),
-        zorder=10,
-    )
-
-    # Zoomed 1x mesh panel on the right
-    xlim_z = (-0.30, 1.25)
-    ylim_z = (-0.42, 0.58)
-    if pic_mesh is not None and pic_mesh.solver is not None:
-        slv = pic_mesh.solver
-        iz = slv.Nz // 2
-        ieps = np.asarray(slv.ieps[:, :, iz, "y"], dtype=float)
-        with np.errstate(divide="ignore"):
-            eps_r = np.where(ieps > 0, 1.0 / (ieps * epsilon_0), eps_clad)
-        im_m = ax_mesh.pcolormesh(
-            slv.grid.x * 1e6,
-            slv.grid.y * 1e6,
-            eps_r.T,
-            cmap=figstyle.CMAP_EPS,
-            vmin=eps_clad * 0.96,
-            vmax=eps_slab * 1.03,
-            shading="flat",
-            zorder=1,
-        )
-        cb = fig.colorbar(im_m, ax=ax_mesh, fraction=0.046, pad=0.03)
-        cb.set_label(r"Subpixel $\varepsilon_{yy} / \varepsilon_0$ (Kottke)")
-
-    schematic.draw_mesh(
-        ax_mesh,
+    # Enhance 00a_setup_geometry.png with top/bottom CPML shading, mode profiles, C^2 junctions, and non-overlapping port tags
+    fig_a, ax_a = schematic.plot_schematic(
         solver_s,
         plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
         unit="µm",
-        every=1,
-        color="#ffffff" if (pic_mesh is not None and pic_mesh.solver is not None) else "#475569",
-        alpha=0.58,
-        linewidth=0.45,
-        show_cpw=False,
+        wavelength=1550e-9,
+        title=title_geom,
+        width_in=7.6,
+        height_in=5.4,
     )
-    draw_polyslab_regions(
-        ax_mesh,
-        structures,
-        facecolor=None,
-        edgecolor="#facc15",
-        lw=1.45,
-        ls="--",
+    grid_a = solver_raw.grid
+    n_pml = int(getattr(solver_raw, "n_pml", 10))
+    x0_um, x1_um = float(grid_a.xmin * 1e6), float(grid_a.xmax * 1e6)
+    y0_um, y1_um = float(grid_a.ymin * 1e6), float(grid_a.ymax * 1e6)
+    th_y_low = float((grid_a.y[n_pml] - grid_a.y[0]) * 1e6)
+    th_y_high = float((grid_a.y[-2] - grid_a.y[-2 - n_pml]) * 1e6)
+    for yb_start, th_y in ((y0_um, th_y_low), (y1_um - th_y_high, th_y_high)):
+        ax_a.add_patch(
+            Rectangle(
+                (x0_um, yb_start),
+                x1_um - x0_um,
+                th_y,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="///",
+                alpha=0.36,
+                lw=0.8,
+                zorder=2,
+            )
+        )
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+
+    if "port_y_in" in primary_data and "port_ey_in" in primary_data:
+        y_arr = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
+        env = np.abs(np.asarray(primary_data["port_ey_in"]))
+        env = env / max(float(np.max(env)), 1e-30)
+        x_port_um = -0.80
+        x_curve = x_port_um + 0.45 * env
+        ax_a.fill_betweenx(
+            y_arr, x_port_um, x_curve, color="#D55E00", alpha=0.25, zorder=7.5
+        )
+        ax_a.plot(
+            x_curve, y_arr, color="#D55E00", lw=1.7, marker="none", zorder=8
+        )
+    if "port_x_out" in primary_data and "port_ex_out" in primary_data:
+        x_o = np.asarray(primary_data["port_x_out"], dtype=float) * 1e6
+        env_o = np.abs(np.asarray(primary_data["port_ex_out"]))
+        env_o = env_o / max(float(np.max(env_o)), 1e-30)
+        y_port_um = 4.75
+        y_curve = y_port_um - 0.36 * env_o
+        ax_a.fill_between(
+            x_o, y_curve, y_port_um, color="#006B4E", alpha=0.22, zorder=7.5
+        )
+        ax_a.plot(
+            x_o, y_curve, color="#006B4E", lw=1.6, marker="none", zorder=8
+        )
+
+    jx = [euler_info["xp"] * 1e6, (r_eff - euler_info["yp"]) * 1e6]
+    jy = [euler_info["yp"] * 1e6, (r_eff - euler_info["xp"]) * 1e6]
+    ax_a.plot(jx, jy, "o", color="#e11d48", ms=5.0, zorder=9)
+
+    tag_Overrides = {
+        "1 ·": (-0.42, 0.88),
+        "2 ·": (-0.38, -0.78),
+        "3 ·": (2.95, 4.18),
+        "4 ·": (1.10, 4.75),
+        "Si core": (1.50, 2.35),
+        "SiO₂ cladding": (2.15, -0.75),
+    }
+    for txt in ax_a.texts:
+        s = txt.get_text()
+        if s == "" and hasattr(txt, "xyann"):
+            if abs(txt.xy[1] - 2.0) < 0.3 and txt.xy[0] < 0.0:
+                txt.xy = (-0.45, 0.0)
+                txt.set_position((-0.80, 0.0))
+            continue
+        if "µm" in s and txt.get_position()[1] > 6.0:
+            px, py = txt.get_position()
+            txt.set_position((px, 6.62))
+            continue
+        for prefix_key, pos in tag_Overrides.items():
+            if s.startswith(prefix_key):
+                txt.set_position(pos)
+                break
+    if getattr(fig_a, "_suptitle", None) is not None:
+        fig_a._suptitle.set_y(1.01)
+
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    # Enhance 00b_setup_mesh_and_excitation.png with the Euler bend polygon on ax_mesh and 1x clothoid zoom inset
+    zoom_bounds = (-0.30e-6, 1.25e-6, -0.42e-6, 0.58e-6)
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_s,
+        plane="xy",
+        structures=[poly_proxy],
+        material_names=mat_names,
+        sources=sources_s,
+        monitors=monitors_s,
+        unit="µm",
+        mesh_every=6,
+        zoom_bounds=zoom_bounds,
+        wavelength=1550e-9,
+        min_feature=0.40e-6,
+        title=title_mesh,
+        width_in=7.6,
+        height_in=5.6,
     )
-    res_m = (
-        measure_mesh_resolution(pic_mesh, r_eff=r_eff)
-        if pic_mesh is not None
-        else {
-            "cells_across_feature": float(primary_data.get("cells_across_feature", 15.02)),
-            "dx_min_nm": float(primary_data.get("dx_min_nm", 26.64)),
-        }
+    ax_mesh = axes_b[0]
+    verts_um = np.asarray(structures[0].vertices, dtype=float) * 1e6
+    ax_mesh.add_patch(
+        MplPolygon(
+            verts_um,
+            closed=True,
+            facecolor="#DCEAF7",
+            edgecolor="#1E293B",
+            lw=1.1,
+            alpha=0.80,
+            zorder=2,
+        )
     )
-    cpw_v = int(round(float(primary_data.get("cpw", 20))))
-    ax_mesh.annotate(
-        "",
-        xy=(-0.12, 0.20),
-        xytext=(-0.12, -0.20),
-        arrowprops=dict(arrowstyle="<->", color="#ffffff", lw=1.6),
-        zorder=10,
-    )
-    ax_mesh.text(
-        -0.06,
-        0.0,
-        f"w_wg = 400 nm\n({res_m['cells_across_feature']:.1f} cells, Δy = {res_m['dx_min_nm']:.1f} nm)\n{cpw_v} cells/λ in n_eff,slab",
-        fontsize=7.3,
-        fontweight="bold",
-        color="white",
-        va="center",
-        ha="left",
-        zorder=11,
-        bbox=dict(boxstyle="round,pad=0.22", fc="#0f172a", ec="#facc15", alpha=0.84, lw=0.9),
-    )
-    ax_mesh.set(
-        aspect="equal",
-        xlim=xlim_z,
-        ylim=ylim_z,
-        xlabel="x [µm]",
-        ylabel="y [µm]",
-        title="(b) 1× Yee mesh zoom (w = 400 nm)",
-    )
-    figstyle.save(fig, out_path)
-    plt.close(fig)
+    for child_ax in fig_b.axes:
+        if getattr(child_ax, "_is_inset", False):
+            child_ax.add_patch(
+                MplPolygon(
+                    verts_um,
+                    closed=True,
+                    facecolor="#DCEAF7",
+                    edgecolor="#1E293B",
+                    lw=1.0,
+                    alpha=0.80,
+                    zorder=1.5,
+                )
+            )
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
 
 
 def plot_mesh_upgrade_comparison_euler(

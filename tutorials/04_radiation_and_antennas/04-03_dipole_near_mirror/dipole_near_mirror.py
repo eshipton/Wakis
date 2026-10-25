@@ -88,6 +88,114 @@
 # 8. [Limits & failure modes](#8.-Limits-&-failure-modes)
 # 9. [Exercises](#9.-Exercises)
 # 10. [References](#10.-References)
+#
+# ---
+#
+# ## Simulation setup schematics & parameters
+#
+# The four 2D FIT configurations studied in this tutorial are rendered directly from the live `SolverFIT3D` objects via `wakis.schematic.save_setup_figures`:
+#
+# ### Part A setup · Line dipole above a PEC ground mirror (`00a`, `00b`)
+#
+# In Part A, a line dipole (`CurrentSource`, $\lambda_0 = 1.0\;\mu\text{m}$) at height $h$ above a PEC ground plane at $z = 0$ radiates into an 8-cell CPML upper half-space enclosed by a half-space `Near2FarMonitor` box (`ground_plane="-z"`).
+#
+# ![Part A setup geometry: line dipole above PEC mirror](figures/00a_setup_geometry.png)
+# ![Part A mesh and broadband excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 2.40 µm × 120 nm × 2.08 µm (z ∈ [0 m, 2.08 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 60 × 3 × 52 (9360 cells) |
+# | Discretization | Δx & resolution | Δ_min = 40 nm, 25.0 cells/λ (in n_max = 1.00), 6.0 cells across feature (240 nm) |
+# | Boundary | -x face | CPML (8 cells, 320 nm) |
+# | Boundary | +x face | CPML (8 cells, 320 nm) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | CPML (8 cells, 320 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Source | 1 · CurrentSource | pos: x = 0 m, z = 240 nm, pol: J_y (E_y), pulse: f₀ = 299.8 THz, Δf = 89.94 THz |
+# | Monitor | 2 · Near2FarMonitor | Near2FarMonitor box (ground_plane='-z'), pos: x ∈ [-0.28, 0.28] µm, z ∈ [0, 0.40] µm, freqs: f = 299.8 THz |
+# | Variation | Polarizations | param=component ∈ {'y' (TE_∥), 'x' (TM_∥), 'z' (TM_⊥)}, note=Exact 2D Bessel Purcell factors 1 - J₀(2kh), 1 - J₀(2kh) + J₂(2kh), 1 + J₀(2kh) + J₂(2kh) |
+# | Variation | Broadband & monochromatic kh sweep | param=kh ∈ [0.25, 9.5], h/λ₀ ∈ {0.24, 0.48, 0.76}, note=Local source work DFTMonitor at (0, y_mid, h) and Near2FarMonitor(ground_plane='-z') angular patterns |
+#
+# ### Part B setup · Line dipole above a dispersive Drude silver mirror (`00a_silver`, `00b_silver`)
+#
+# In Part B, a line dipole ($\lambda_0 = 600\;\text{nm}$) sits above a $150\;\text{nm}$ dispersive `Drude` silver slab ($\varepsilon_\infty = 3.7$, $\hbar\omega_p = 9.01\;\text{eV}$, $\hbar\gamma = 0.048\;\text{eV}$) on a locally graded mesh resolving the electric-field skin depth $\delta_E = 24.41\;\text{nm}$ with $\Delta z_{\text{Ag}} = 2.50\;\text{nm}$ ($9.8\;\text{cells}/\delta_E$).
+#
+# ![Part B setup geometry: line dipole above Drude silver mirror](figures/00a_setup_geometry_silver.png)
+# ![Part B skin-depth graded mesh and excitation](figures/00b_setup_mesh_and_excitation_silver.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 960 nm × 15 nm × 610 nm (z ∈ [-150 nm, 460 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 56 × 3 × 145 (24360 cells) |
+# | Discretization | Δx & resolution | Δ_min = 2.50 nm, 124.8 cells/λ (in n_max = 1.92), 9.8 cells across feature (24.4 nm) |
+# | Boundary | -x face | CPML (8 cells, 191 nm) |
+# | Boundary | +x face | CPML (8 cells, 191 nm) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | CPML (8 cells, 195.6 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Drude Ag mirror (δE = 24.4 nm) | ε_r = 3.70, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-480 nm, 480 nm] (d = 960 nm) |
+# | Source | 1 · CurrentSource | pos: x = 0 m, z = 47.5 nm, pol: J_y (E_y), pulse: f₀ = 499.7 THz, Δf = 209.9 THz |
+# | Monitor | 2 · FluxMonitor | Dipole FluxMonitor box (P_tot), pos: x ∈ [-10.0, 10.0] nm, z ∈ [42.5, 52.5] nm, freqs: f = 499.7 THz |
+# | Monitor | 3 · FluxMonitor | FluxMonitor (z = 2.50 nm), pos: z = 2.50 nm, freqs: f = 499.7 THz |
+# | Variation | Height & polarization sweep | param=h ∈ [20, 220] nm (kh ∈ [0.21, 2.30]), pol ∈ {'y', 'x', 'z'}, note=Benchmarked against 2D Chance–Prock–Silbey (CPS) Sommerfeld integral (F_tot, F_rad, F_nonrad, u_SPP = 1.0338) |
+# | Variation | Skin-depth resolution study | param=Δz_Ag ∈ [2.0, 24.0] nm (1.02 to 12.21 cells / δE), note=Electric-field skin depth δE = 24.41 nm, power skin depth δI = 12.21 nm at λ₀ = 600 nm |
+#
+# ### Part C setup · Planar PEC microcavity (`00a_cavity`, `00b_cavity`)
+#
+# In Part C, the line dipole is placed at the midplane $z = L_{\text{cav}} / 2 = 500\;\text{nm}$ of a planar dielectric microcavity ($n = 2.4$, $\varepsilon_r = 5.76$) bounded vertically by PEC mirrors at $z = 0$ and $z = 1.0\;\mu\text{m}$ and laterally by 8-cell CPML absorbers.
+#
+# ![Part C setup geometry: planar PEC microcavity](figures/00a_setup_geometry_cavity.png)
+# ![Part C mesh and band-limited cavity excitation](figures/00b_setup_mesh_and_excitation_cavity.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 3 µm × 62.5 nm × 1 µm (z ∈ [0 m, 1 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 144 × 3 × 48 (20736 cells) |
+# | Discretization | Δx & resolution | Δ_min = 20.8 nm, 50.5 cells/λ (in n_max = 2.40), 24.0 cells across feature (500 nm) |
+# | Boundary | -x face | CPML (8 cells, 166.7 nm) |
+# | Boundary | +x face | CPML (8 cells, 166.7 nm) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | PEC |
+# | Boundary | +z face | PEC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Dielectric | ε_r = 5.76, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1.50 µm, 1.50 µm] (d = 3 µm) |
+# | Source | 1 · CurrentSource | pos: x = 0 m, z = 500 nm, pol: J_y (E_y), pulse: f₀ = 118.7 THz, Δf = 23.73 THz |
+# | Monitor | 2 · DFTMonitor | DFTMonitor (x = 0 m), pos: x = 0 m, freqs: 15 freqs in [74.9, 169.9] THz |
+# | Variation | Band-limited optical thickness sweep | param=d = nL/λ₀ ∈ [0.22, 2.32] across 3 spectral windows, note=Avoids v_g = 0 Van Hove waveguide cutoffs (d = 0.5, 1.5 for J_y, J_x; d = 1.0, 2.0 for J_z) |
+#
+# ### Part D setup · Blue InGaN DBR micro-RCLED (`00a_rcled`, `00b_rcled`)
+#
+# In Part D, a quantum-well line emitter ($\lambda_0 = 450\;\text{nm}$) inside a $1\lambda$ $\text{GaN}$ spacer ($n = 2.39$) is sandwiched between a bottom $\text{NP-GaN/GaN}$ DBR ($n = 1.70/2.39$) and a top $\text{SiO}_2/\text{Ta}_2\text{O}_5$ DBR ($n = 1.46/2.15$) on an interface-snapped `graded_axis` mesh with a top `Near2FarMonitor` extraction aperture.
+#
+# ![Part D setup geometry: blue InGaN DBR micro-RCLED](figures/00a_setup_geometry_rcled.png)
+# ![Part D interface-snapped graded mesh and excitation](figures/00b_setup_mesh_and_excitation_rcled.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 2.26 µm × 28.2 nm × 1.20 µm (z ∈ [-547 nm, 657 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 240 × 3 × 109 (78480 cells) |
+# | Discretization | Δx & resolution | Δ_min = 8.69 nm, 21.7 cells/λ (in n_max = 2.39), 5.4 cells across feature (47.1 nm) |
+# | Boundary | -x face | CPML (8 cells, 75.2 nm) |
+# | Boundary | +x face | CPML (8 cells, 75.2 nm) |
+# | Boundary | -y face | Periodic |
+# | Boundary | +y face | Periodic |
+# | Boundary | -z face | CPML (8 cells, 75.3 nm) |
+# | Boundary | +z face | CPML (8 cells, 168.6 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Bottom NP-GaN/GaN DBR | ε_r = 2.89, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1.13 µm, 1.13 µm] (d = 2.26 µm) |
+# | Material | Region 2: 1λ GaN cavity | ε_r = 5.71, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1.13 µm, 1.13 µm] (d = 2.26 µm) |
+# | Material | Region 3: Top Ta₂O₅/SiO₂ DBR | ε_r = 4.62, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1.13 µm, 1.13 µm] (d = 2.26 µm) |
+# | Source | 1 · CurrentSource | pos: x = 0 m, z = 94.1 nm, pol: J_y (E_y), pulse: f₀ = 666.2 THz, Δf = 186.5 THz |
+# | Monitor | 2 · FluxMonitor | Dipole FluxMonitor box, pos: x ∈ [-18.8, 18.8] nm, z ∈ [56.5, 131.8] nm, freqs: f = 666.2 THz |
+# | Monitor | 3 · FluxMonitor | FluxMonitor (z = 477 nm), pos: z = 477 nm, freqs: f = 666.2 THz |
+# | Variation | Cavity detuning & angular beaming | param=d_opt ∈ {1.00 (tuned), 1.055 (red-detuned rabbit ears)}, note=Bottom NP-GaN/GaN DBR (n = 1.70/2.39) + GaN cavity + top SiO₂/Ta₂O₅ DBR (n = 1.46/2.15) |
+# | Variation | Incoherent quantum-well array | param=N_dip = 7 emitters across w_QW = 0.72 µm, N_real ∈ [1, 128], note=Deterministic power sum vs random-phase Monte Carlo O(N_real^-1/2) convergence |
 
 # %% [markdown]
 # ## 1. Physics of modified spontaneous emission: LDOS, Drexhage & CPS theory
@@ -2042,10 +2150,11 @@ def run_single_task(task_cfg: dict, out_dir: Path = DATA_DIR) -> dict:
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`), `generate_all_figures`
 # constructs the solver setups for schematic inspection, reads `data/task_*.npz`, and renders
-# the labelled setup schematic (`00_setup_schematic.png`) followed by the 14 diagnostic figures
-# into `figures/`, all styled with `wakis.figstyle` and `wakis.schematic`:
+# the two-figure setup schematics (`00a_setup_geometry*.png`, `00b_setup_mesh_and_excitation*.png`,
+# and `00_setup_table*.md`) followed by the 14 diagnostic figures into `figures/`, all styled
+# with `wakis.figstyle` and `wakis.schematic`:
 #
-# 0. `00_setup_schematic.png` — Three-panel labelled setup schematic generated directly from the `SolverFIT3D`, `CurrentSource`, `FluxMonitor`, and `Near2FarMonitor` objects via `wakis.schematic.plot_schematic`: (a) **Part A** — line dipole at height $h$ above a PEC ground mirror ($z = 0$ PEC, $\pm x, +z$ 8-cell CPML, $\pm y$ periodic, `Near2FarMonitor(..., ground_plane="-z")` Huygens box); (b) **Part B** — line dipole at $\lambda_0 = 600\;\text{nm}$ above a $150\;\text{nm}$ dispersive `Drude` silver mirror ($\varepsilon_\infty = 3.7$, $\hbar\omega_p = 9.01\;\text{eV}$, $\hbar\gamma = 0.048\;\text{eV}$, skin depth $\delta_E = 24.41\;\text{nm}$) with dipole and metal-surface `FluxMonitor` contours; (c) **Parts C & D** — planar microcavity and blue $\text{InGaN}$ DBR micro-RCLED ($\lambda_0 = 450\;\text{nm}$, bottom $\text{NP-GaN/GaN}$ DBR, $1\lambda$ $\text{GaN}$ spacer, top $\text{Ta}_2\text{O}_5/\text{SiO}_2$ DBR, midplane QW dipole, and top `Near2FarMonitor` extraction aperture).
+# 0. `00a_setup_geometry*.png`, `00b_setup_mesh_and_excitation*.png`, `00_setup_table*.md` — Two-figure setup layouts and setup tables generated directly from the `SolverFIT3D`, `CurrentSource`, `FluxMonitor`, `DFTMonitor`, and `Near2FarMonitor` objects via `wakis.schematic.save_setup_figures` for Part A (`00a`/`00b`, PEC mirror), Part B (`_silver`, dispersive `Drude` silver mirror with $\delta_E = 24.41\;\text{nm}$), Part C (`_cavity`, planar PEC microcavity), and Part D (`_rcled`, blue $\text{InGaN}$ DBR micro-RCLED).
 # 1. `01_geometry_and_mesh_overview.png` — Three-panel mesh & discretization view: (a) `wakis.schematic.draw_mesh` view of the locally graded Drude silver mesh ($\Delta z_{\text{Ag}} = 2.50\;\text{nm}$, $9.76\;\text{cells}/\delta_E$, $\Delta x_{\text{core}} = 5.0\;\text{nm}$) with a zoom inset on the $\text{Ag/air}$ interface and geometry overlays; (b) vertical grid-step profile $\Delta z(z)$ across the Drude silver skin-depth refinement zone and the interface-snapped RCLED DBR stack; (c) off-grid DBR permittivity profile $\varepsilon_r(z)$ comparing Kottke tensorial subpixel smoothing vs. staircasing.
 # 2. `02_pec_mirror_drexhage_purcell.png` — (a) Wakis 2D FIT Purcell factor $F_P(kh)$ (`FluxMonitor` box & local dipole work) vs. exact 2D Bessel analytical curves for $\text{TE}_\parallel$ ($J_y$), $\text{TM}_\parallel$ ($J_x$), and $\text{TM}_\perp$ ($J_z$); (b) 2D cylindrical Bessel decay $\mathcal{O}((kh)^{-1/2})$ vs. 3D Drexhage spherical decay $\mathcal{O}((kh)^{-1})$.
 # 3. `03_pec_mirror_angular_patterns.png` — Far-field angular radiation patterns $\frac{1}{P_0'}\frac{\mathrm{d}P'}{\mathrm{d}\theta}$ from `Near2FarMonitor(..., ground_plane="-z")` overlaid with exact 2D analytical curves at $h/\lambda_0 \in \{0.25, 0.50, 0.75\}$ for $J_y$, $J_x$, and $J_z$.
@@ -2146,7 +2255,39 @@ def _build_schematic_setups(cpw_pec: int = 25, cpw_ag: int = 24, dz_ag_nm: float
         label="Surface FluxMonitor (P_metal)",
     )
 
-    # 3. Parts C & D: Planar microcavity / Blue InGaN DBR micro-RCLED setup (lambda_0 = 450 nm)
+    # 3. Part C: Planar PEC microcavity setup (L_cav = 1.0 um, n_cav = 2.4)
+    m_cav = build_task_mesh({"kind": "pec_cavity", "cpw": cpw_rcled, "quick": False})
+    grid_cav = m_cav["grid"]
+    dz_cav_pec = float(grid_cav.dz[0])
+    y_mid_cav = 1.5 * dz_cav_pec
+    z_mid_cav = 0.5e-6
+    solver_cav = SolverFIT3D(
+        grid_cav,
+        bc_low=["cpml", "periodic", "pec"],
+        bc_high=["cpml", "periodic", "pec"],
+        bg=[N_CAV_ABRAM**2, 1.0],
+        n_pml=8,
+        use_stl=False,
+        verbose=0,
+    )
+    f0_cav = 0.95 * c0 / (N_CAV_ABRAM * 1.0e-6)
+    pulse_cav = GaussianSource(f0_cav, 0.20 * f0_cav, cutoff=4.2)
+    src_cav = CurrentSource(
+        pulse_cav,
+        component="y",
+        center=(0.0, y_mid_cav, z_mid_cav),
+        size=(0.0, 1.0, 0.0),
+        amplitude=1.0,
+    )
+    f_pts_cav = np.linspace(0.60, 1.36, 15) * c0 / (N_CAV_ABRAM * 1.0e-6)
+    dft_cav = DFTMonitor(
+        f_pts_cav,
+        ["Ey"],
+        center=(0.0, y_mid_cav, z_mid_cav),
+        size=(0.0, 0.0, 0.0),
+    )
+
+    # 4. Part D: Blue InGaN DBR micro-RCLED setup (lambda_0 = 450 nm)
     m_rc = build_task_mesh({"kind": "rcled", "cpw": cpw_rcled, "quick": False})
     grid_rc = m_rc["grid"]
     dx_rc = float(grid_rc.dx[0])
@@ -2232,6 +2373,9 @@ def _build_schematic_setups(cpw_pec: int = 25, cpw_ag: int = 24, dz_ag_nm: float
             "n2f": n2f_pec,
             "h_025": h_pec_025,
             "h_050": h_pec_050,
+            "dx": dx_pec,
+            "y_mid": y_mid_pec,
+            "z_top_box": z_top_box,
         },
         "ag": {
             "solver": solver_ag,
@@ -2241,6 +2385,19 @@ def _build_schematic_setups(cpw_pec: int = 25, cpw_ag: int = 24, dz_ag_nm: float
             "box": box_ag,
             "plane": plane_ag,
             "mesh_info": m_ag,
+            "dx_core": dx_core_ag,
+            "dz_ag": dz_ag,
+            "y_mid": y_mid_ag,
+            "h_ag": h_ag,
+        },
+        "cavity": {
+            "solver": solver_cav,
+            "src": src_cav,
+            "dft": dft_cav,
+            "mesh_info": m_cav,
+            "y_mid": y_mid_cav,
+            "z_mid": z_mid_cav,
+            "f0": f0_cav,
         },
         "rcled": {
             "solver": solver_rc,
@@ -2251,8 +2408,184 @@ def _build_schematic_setups(cpw_pec: int = 25, cpw_ag: int = 24, dz_ag_nm: float
             "box": box_rc,
             "stack": st_rc,
             "mesh_info": m_rc,
+            "dx": dx_rc,
+            "dz_cav": dz_cav,
+            "y_mid": y_mid_rc,
+            "z_dip": z_dip_rc,
         },
     }
+
+
+def plot_00_setup_schematics(fig_dir: Path = FIG_DIR, setups: dict | None = None) -> None:
+    """Render two-figure setup schematics and setup tables for all four FIT configurations."""
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    if setups is None:
+        setups = _build_schematic_setups()
+
+    pec_s = setups["pec"]
+    ag_s = setups["ag"]
+    cav_s = setups["cavity"]
+    rc_s = setups["rcled"]
+
+    # 1. Part A: Line dipole above PEC mirror (suffix="")
+    dx_pec = float(pec_s["dx"])
+    z_top_box = float(pec_s["z_top_box"])
+    f0_pec = c0 / LAM_PEC
+    n2f_pec_dict = {
+        "kind": "box",
+        "type_name": "Near2FarMonitor",
+        "short_word": "N2F",
+        "desc": f"Near2FarMonitor box (ground_plane='-z', x ∈ [-{7 * dx_pec * 1e6:.2f}, {7 * dx_pec * 1e6:.2f}] µm, z ∈ [0, {z_top_box * 1e6:.2f}] µm)",
+        "label": "Near2FarMonitor box (ground_plane='-z')",
+        "pos_str": f"x ∈ [-{7 * dx_pec * 1e6:.2f}, {7 * dx_pec * 1e6:.2f}] µm, z ∈ [0, {z_top_box * 1e6:.2f}] µm",
+        "freq_str": f"f = {f0_pec * 1e-12:.1f} THz",
+        "frequencies": [f0_pec],
+        "h_bounds": (-7.0 * dx_pec, 7.0 * dx_pec),
+        "v_bounds": (0.0, z_top_box),
+    }
+    schematic.save_setup_figures(
+        pec_s["solver"],
+        fig_dir,
+        plane="xz",
+        cut_coord=float(pec_s["y_mid"]),
+        unit="um",
+        sources=[pec_s["src_025"]],
+        monitors=[n2f_pec_dict],
+        wavelength=LAM_PEC,
+        freq=f0_pec,
+        min_feature=float(pec_s["h_025"]),
+        title_geometry="Part A · Line Dipole Above PEC Mirror (Drexhage Effect & Near2Far Box)",
+        variations=[
+            {
+                "name": "Polarizations",
+                "param": "component ∈ {'y' (TE_∥), 'x' (TM_∥), 'z' (TM_⊥)}",
+                "note": "Exact 2D Bessel Purcell factors 1 - J₀(2kh), 1 - J₀(2kh) + J₂(2kh), 1 + J₀(2kh) + J₂(2kh)",
+            },
+            {
+                "name": "Broadband & monochromatic kh sweep",
+                "param": "kh ∈ [0.25, 9.5], h/λ₀ ∈ {0.24, 0.48, 0.76}",
+                "note": "Local source work DFTMonitor at (0, y_mid, h) and Near2FarMonitor(ground_plane='-z') angular patterns",
+            },
+        ],
+    )
+
+    # 2. Part B: Line dipole above dispersive Drude silver mirror (suffix="_silver")
+    dx_core_ag = float(ag_s["dx_core"])
+    dz_ag = float(ag_s["dz_ag"])
+    h_ag = float(ag_s["h_ag"])
+    f0_ag = c0 / LAM_AG
+    box_ag_dict = {
+        "kind": "box",
+        "type_name": "FluxMonitor",
+        "short_word": "Flux",
+        "desc": f"Dipole FluxMonitor box (P_tot, 4Δx × 4Δz around z = {h_ag * 1e9:.1f} nm)",
+        "label": "Dipole FluxMonitor box (P_tot)",
+        "pos_str": f"x ∈ [-{2 * dx_core_ag * 1e9:.1f}, {2 * dx_core_ag * 1e9:.1f}] nm, z ∈ [{(h_ag - 2 * dz_ag) * 1e9:.1f}, {(h_ag + 2 * dz_ag) * 1e9:.1f}] nm",
+        "freq_str": f"f = {f0_ag * 1e-12:.1f} THz",
+        "frequencies": [f0_ag],
+        "h_bounds": (-2.0 * dx_core_ag, 2.0 * dx_core_ag),
+        "v_bounds": (h_ag - 2.0 * dz_ag, h_ag + 2.0 * dz_ag),
+    }
+    schematic.save_setup_figures(
+        ag_s["solver"],
+        fig_dir,
+        plane="xz",
+        cut_coord=float(ag_s["y_mid"]),
+        unit="nm",
+        structures=ag_s["structures"],
+        material_names=ag_s["material_names"],
+        sources=[ag_s["src"]],
+        monitors=[box_ag_dict, ag_s["plane"]],
+        wavelength=LAM_AG,
+        freq=f0_ag,
+        min_feature=float(ag_s["mesh_info"]["skin_depth_nm"]) * 1e-9,
+        suffix="_silver",
+        title_geometry="Part B · Line Dipole Above Dispersive Drude Silver Mirror (δE = 24.41 nm)",
+        variations=[
+            {
+                "name": "Height & polarization sweep",
+                "param": "h ∈ [20, 220] nm (kh ∈ [0.21, 2.30]), pol ∈ {'y', 'x', 'z'}",
+                "note": "Benchmarked against 2D Chance–Prock–Silbey (CPS) Sommerfeld integral (F_tot, F_rad, F_nonrad, u_SPP = 1.0338)",
+            },
+            {
+                "name": "Skin-depth resolution study",
+                "param": "Δz_Ag ∈ [2.0, 24.0] nm (1.02 to 12.21 cells / δE)",
+                "note": "Electric-field skin depth δE = 24.41 nm, power skin depth δI = 12.21 nm at λ₀ = 600 nm",
+            },
+        ],
+    )
+
+    # 3. Part C: Planar PEC microcavity (suffix="_cavity")
+    f0_cav = float(cav_s["f0"])
+    lam_cav_0 = c0 / f0_cav
+    schematic.save_setup_figures(
+        cav_s["solver"],
+        fig_dir,
+        plane="xz",
+        cut_coord=float(cav_s["y_mid"]),
+        unit="um",
+        sources=[cav_s["src"]],
+        monitors=[cav_s["dft"]],
+        wavelength=lam_cav_0,
+        freq=f0_cav,
+        min_feature=0.50e-6,
+        suffix="_cavity",
+        title_geometry="Part C · Line Dipole in Planar PEC Microcavity (n = 2.4, L = 1.0 µm)",
+        variations=[
+            {
+                "name": "Band-limited optical thickness sweep",
+                "param": "d = nL/λ₀ ∈ [0.22, 2.32] across 3 spectral windows",
+                "note": "Avoids v_g = 0 Van Hove waveguide cutoffs (d = 0.5, 1.5 for J_y, J_x; d = 1.0, 2.0 for J_z)",
+            },
+        ],
+    )
+
+    # 4. Part D: Blue InGaN DBR micro-RCLED (suffix="_rcled")
+    dx_rc = float(rc_s["dx"])
+    dz_cav = float(rc_s["dz_cav"])
+    z_dip_rc = float(rc_s["z_dip"])
+    f0_rc = c0 / LAM_RCLED
+    box_rc_dict = {
+        "kind": "box",
+        "type_name": "FluxMonitor",
+        "short_word": "Flux",
+        "desc": f"Dipole FluxMonitor box (4Δx × 4Δz_cav around z_dip = {z_dip_rc * 1e9:.1f} nm)",
+        "label": "Dipole FluxMonitor box",
+        "pos_str": f"x ∈ [-{2 * dx_rc * 1e9:.1f}, {2 * dx_rc * 1e9:.1f}] nm, z ∈ [{(z_dip_rc - 2 * dz_cav) * 1e9:.1f}, {(z_dip_rc + 2 * dz_cav) * 1e9:.1f}] nm",
+        "freq_str": f"f = {f0_rc * 1e-12:.1f} THz",
+        "frequencies": [f0_rc],
+        "h_bounds": (-2.0 * dx_rc, 2.0 * dx_rc),
+        "v_bounds": (z_dip_rc - 2.0 * dz_cav, z_dip_rc + 2.0 * dz_cav),
+    }
+    schematic.save_setup_figures(
+        rc_s["solver"],
+        fig_dir,
+        plane="xz",
+        cut_coord=float(rc_s["y_mid"]),
+        unit="nm",
+        structures=rc_s["macro_structs"],
+        material_names=rc_s["macro_names"],
+        sources=[rc_s["src"]],
+        monitors=[box_rc_dict, rc_s["n2f"]],
+        wavelength=LAM_RCLED,
+        freq=f0_rc,
+        min_feature=LAM_RCLED / (4.0 * N_GAN),
+        suffix="_rcled",
+        title_geometry="Part D · Blue InGaN DBR Micro-RCLED (λ₀ = 450 nm, Interface-Snapped Graded Mesh)",
+        variations=[
+            {
+                "name": "Cavity detuning & angular beaming",
+                "param": "d_opt ∈ {1.00 (tuned), 1.055 (red-detuned rabbit ears)}",
+                "note": "Bottom NP-GaN/GaN DBR (n = 1.70/2.39) + GaN cavity + top SiO₂/Ta₂O₅ DBR (n = 1.46/2.15)",
+            },
+            {
+                "name": "Incoherent quantum-well array",
+                "param": "N_dip = 7 emitters across w_QW = 0.72 µm, N_real ∈ [1, 128]",
+                "note": "Deterministic power sum vs random-phase Monte Carlo O(N_real^-1/2) convergence",
+            },
+        ],
+    )
 
 
 def _save_movie_gif(
@@ -2333,7 +2666,7 @@ def _save_movie_gif(
 
 
 def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> None:
-    """Read ``data_dir/task_*.npz`` and render ``00_setup_schematic.png`` plus all 14 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render ``00a``/``00b`` setup schematics plus all 14 figures into ``fig_dir``."""
     figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
@@ -2367,137 +2700,9 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     rc_s = setups["rcled"]
 
     # ------------------------------------------------------------------
-    # Fig 00: Setup Schematics for the 3 Configurations (PEC, Drude Ag, RCLED)
+    # Fig 00a/00b: Setup Schematics & Setup Tables for All 4 Configurations
     # ------------------------------------------------------------------
-    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.2, height=5.4)
-    schematic.plot_schematic(
-        pec_s["solver"],
-        plane="xz",
-        ax=ax0,
-        sources=[pec_s["src_025"]],
-        monitors=[pec_s["n2f"]],
-        unit="um",
-        show_mesh=True,
-        mesh_every=3,
-        mesh_zoom=False,
-        show_pulse_inset=True,
-        show_wave_packet=False,
-        wavelength=LAM_PEC,
-        freq=c0 / LAM_PEC,
-        title="(a) Part A: Line dipole above PEC mirror",
-    )
-    hlp.overlay_xz_boundaries_and_boxes(
-        ax0,
-        pec_s["solver"],
-        unit="um",
-        pec_z_label=None,
-        show_z_pml=False,
-    )
-    ax0.axhline(0.0, color="#0f172a", lw=2.2, zorder=6)
-    ax0.text(
-        -0.62,
-        0.26,
-        "z = 0: PEC mirror (image at −h)",
-        fontsize=7.0,
-        fontweight="bold",
-        color="#0f172a",
-        va="bottom",
-        ha="center",
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.88, edgecolor="#0f172a", lw=0.7),
-        zorder=7,
-    )
-    for t_obj in list(ax0.texts):
-        s_txt = t_obj.get_text()
-        if "Near2Far" in s_txt:
-            t_obj.set_position((0.55, 1.62))
-
-    schematic.plot_schematic(
-        ag_s["solver"],
-        plane="xz",
-        ax=ax1,
-        structures=ag_s["structures"],
-        material_names=ag_s["material_names"],
-        sources=[ag_s["src"]],
-        monitors=[ag_s["plane"]],
-        unit="nm",
-        show_mesh=True,
-        mesh_every=3,
-        mesh_zoom=False,
-        show_pulse_inset=False,
-        show_wave_packet=False,
-        wavelength=LAM_AG,
-        freq=c0 / LAM_AG,
-        title="(b) Part B: Drude Ag mirror (δE = 24.4 nm)",
-    )
-    hlp.overlay_xz_boundaries_and_boxes(
-        ax1,
-        ag_s["solver"],
-        unit="nm",
-        box_monitors=[(ag_s["box"], "Dipole FluxBox")],
-        pec_z_label="−z: PEC backing",
-        show_z_pml=False,
-    )
-    for t_obj in list(ax1.texts):
-        s_txt = t_obj.get_text()
-        if "Drude Ag" in s_txt:
-            t_obj.set_text("Drude Ag mirror (δE = 24.4 nm)")
-            t_obj.set_position((0.0, -70.0))
-        elif "Domain" in s_txt:
-            t_obj.set_position((0.0, 595.0))
-        elif "Out-of-plane" in s_txt:
-            t_obj.set_position((0.0, 492.0))
-        elif "FluxMonitor" in s_txt:
-            t_obj.set_position((-190.0, 22.0))
-    ax1.set_ylim(-185.0, 650.0)
-    ax1.set_title("(b) Part B: Drude Ag mirror (δE = 24.4 nm)", pad=14)
-
-    schematic.plot_schematic(
-        rc_s["solver"],
-        plane="xz",
-        ax=ax2,
-        structures=rc_s["macro_structs"],
-        material_names=rc_s["macro_names"],
-        sources=[rc_s["src"]],
-        monitors=[rc_s["n2f"]],
-        unit="nm",
-        show_mesh=True,
-        mesh_every=3,
-        mesh_zoom=False,
-        show_pulse_inset=False,
-        show_wave_packet=False,
-        wavelength=LAM_RCLED,
-        freq=c0 / LAM_RCLED,
-        title="(c) Parts C & D: Planar cavity / DBR RCLED",
-    )
-    hlp.overlay_xz_boundaries_and_boxes(
-        ax2,
-        rc_s["solver"],
-        unit="nm",
-        box_monitors=[(rc_s["box"], "QW FluxBox")],
-        pec_z_label=None,
-        show_z_pml=False,
-    )
-    for t_obj in list(ax2.texts):
-        s_txt = t_obj.get_text()
-        if "Bottom NP-GaN" in s_txt:
-            t_obj.set_text("Bottom NP-GaN/GaN DBR")
-            t_obj.set_position((0.0, -225.0))
-        elif "1λ GaN" in s_txt:
-            t_obj.set_text("1λ GaN cavity")
-            t_obj.set_position((-560.0, 94.0))
-        elif "Top Ta" in s_txt:
-            t_obj.set_text("Top Ta₂O₅/SiO₂ DBR")
-            t_obj.set_position((0.0, 324.0))
-        elif "Domain" in s_txt:
-            t_obj.set_position((0.0, 920.0))
-        elif "Out-of-plane" in s_txt:
-            t_obj.set_position((0.0, 725.0))
-        elif "FluxMonitor" in s_txt:
-            t_obj.set_position((0.0, 505.0))
-    ax2.set_ylim(-580.0, 1010.0)
-    ax2.set_title("(c) Parts C & D: Planar cavity / DBR RCLED", pad=14)
-    figstyle.finish(fig, auto_legend_below=False)
-    figstyle.save(fig, fig_dir / "00_setup_schematic.png", auto_legend_below=False)
+    plot_00_setup_schematics(fig_dir=fig_dir, setups=setups)
 
     # ------------------------------------------------------------------
     # Fig 01: Skin-Depth Refined Mesh View, Graded Step Profile & Kottke DBR

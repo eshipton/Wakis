@@ -268,6 +268,8 @@ def test_committed_data_and_figures():
     assert wt_var["sll_e_db"] < b_ga["sll_e_db"] - 5.0
 
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_geometry_3d_views.png",
         "02_mesh_and_cpw_views.png",
         "03_near_fields_and_currents.png",
@@ -281,6 +283,8 @@ def test_committed_data_and_figures():
         fpath = fig_dir / fname
         assert fpath.exists(), f"Missing figure {fname}"
         assert fpath.stat().st_size > 10_000
+    assert (fig_dir / "00_setup_table.md").exists(), "Missing 00_setup_table.md"
+    assert (fig_dir / "00_setup_table.md").stat().st_size > 200
     assert (fig_dir / "04_radiated_field_evolution.gif").stat().st_size < 5 * 1024 * 1024
 
 

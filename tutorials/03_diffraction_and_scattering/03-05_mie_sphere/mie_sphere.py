@@ -473,11 +473,25 @@ def _fix_sphere_patch(ax, radius_um=1.0, tol=0.35, fill=None):
 
 
 def plot_setup_schematic(resolution_per_um=15.0):
-    """Render the 2-panel setup schematic and zoomed mesh view (`00_setup_schematic.png`)."""
+    """Render setup geometry, mesh/excitation, and setup table via save_setup_figures."""
+    from types import SimpleNamespace
+
     grid_s, lay_s = make_grid(resolution_per_um, "all")
     solver_s = make_solver(grid_s, use_gpu=False)
+    grid_s.stl_solids = {}
+    sph_struct = SimpleNamespace(
+        name="Dielectric sphere (n = 2)",
+        center=(0.0, 0.0, 0.0),
+        radius=R_SPHERE,
+        height=2 * R_SPHERE,
+        axis=1,
+        material=[N_SPHERE**2, 1.0],
+    )
+    solver_s._assigned_structures = [sph_struct]
+
     f_min = X_MIN * c0 / (2 * np.pi * R_SPHERE)
     f_max = X_MAX * c0 / (2 * np.pi * R_SPHERE)
+    freqs_s = np.linspace(f_min, f_max, 81)
     f0 = 0.5 * (f_min + f_max)
     df = 0.25 * (f_max - f_min)
     pulse = GaussianSource(frequency=f0, fwidth=df)
@@ -489,131 +503,65 @@ def plot_setup_schematic(resolution_per_um=15.0):
         polarization="x",
         amplitude=1.0,
     )
-    src_s.label = "TFSFSource ($\\mathbf{k}\\parallel +z,\\;\\mathbf{E}\\parallel x$)"
+    src_s.label = "TFSFSource (k || +z, E || x)"
+    freq_str_s = f"{len(freqs_s)} freqs in [{f_min / 1e12:.1f}, {f_max / 1e12:.1f}] THz"
     mon_boxes = [
         {
             "kind": "box",
             "type_name": "Near2FarMonitor",
-            "label": "Near2FarMonitor ($P_\\mathrm{sca}$, far field)",
+            "short_word": "N2F",
+            "desc": f"near-to-far box (Near2FarMonitor, x, z ∈ [-{lay_s['flux']*1e6:.2f}, {lay_s['flux']*1e6:.2f}] µm)",
+            "label": "Near2FarMonitor (P_sca, far field)",
+            "pos_str": f"x, y, z ∈ [-{lay_s['flux']*1e6:.2f}, {lay_s['flux']*1e6:.2f}] µm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-lay_s["flux"], lay_s["flux"]),
             "v_bounds": (-lay_s["flux"], lay_s["flux"]),
         },
         {
             "kind": "box",
             "type_name": "FluxMonitor",
-            "label": "Inner FluxMonitor ($P_\\mathrm{abs}$)",
+            "short_word": "flux",
+            "desc": f"inner flux box (FluxMonitor, x, z ∈ [-{lay_s['inner']*1e6:.2f}, {lay_s['inner']*1e6:.2f}] µm)",
+            "label": "Inner FluxMonitor (P_abs)",
+            "pos_str": f"x, y, z ∈ [-{lay_s['inner']*1e6:.2f}, {lay_s['inner']*1e6:.2f}] µm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-lay_s["inner"], lay_s["inner"]),
             "v_bounds": (-lay_s["inner"], lay_s["inner"]),
         },
     ]
 
-    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=12.4, height_in=5.0)
-
-    # Panel (a): 3D setup in the xz plane (y = 0)
-    schematic.plot_schematic(
+    schematic.save_setup_figures(
         solver_s,
+        FIG_DIR,
         plane="xz",
-        ax=axes[0],
-        unit="µm",
-        material_names={"sphere": "Sphere"},
+        cut_coord=0.0,
+        structures=[sph_struct],
+        material_names={"sphere": "Dielectric sphere (n = 2)"},
         sources=[src_s],
         monitors=mon_boxes,
-        show_mesh=False,
-        show_wave_packet=False,
-        wavelength=2 * np.pi * R_SPHERE / (X_MAX * N_SPHERE),
-        title="(a) 3D setup ($xz$ cut at $y=0$, TF/SF + Near2Far)",
-    )
-    _fix_sphere_patch(axes[0], R_SPHERE * 1e6, tol=0.35)
-    _fix_unit_spaces(axes[0])
-    L_half = lay_s["half"] * 1e6
-    for txt in axes[0].texts:
-        if "boundaries: CPML" in txt.get_text():
-            x0_t, _ = txt.get_position()
-            txt.set_position((x0_t, L_half + 0.85))
-    axes[0].set_ylim(-L_half - 0.15, L_half + 1.55)
-    if axes[0].get_legend() is not None:
-        axes[0].get_legend().remove()
-
-    # Panel (b): Zoomed mesh view at the curved sphere surface
-    ax_z = axes[1]
-    lam_in_min = 2 * np.pi * R_SPHERE / (X_MAX * N_SPHERE)
-    schematic.draw_mesh(
-        ax_z,
-        solver_s,
-        plane="xz",
         unit="µm",
-        every=1,
         wavelength=2 * np.pi * R_SPHERE / X_MAX,
-        show_cpw=False,
-        color="#475569",
-        alpha=0.55,
-        linewidth=0.65,
+        freq=f0,
+        min_feature=2 * R_SPHERE,
+        title_geometry="3D Mie sphere setup (XZ cut at y = 0, TF/SF + Near2FarMonitor)",
+        title_mesh="3D Mie sphere mesh & broadband pulse (XZ cut at y = 0, x = 2..10)",
+        variations=[
+            {
+                "name": "Field monitors",
+                "details": "DFTMonitor y = 0 slice and 3D volume at x = 3, 6, 9; SliceRecorder (Ex, y = 0)",
+            },
+            {
+                "name": "Material models",
+                "details": "staircase (conformal=False), conformal ('all'), and tensor ('tensor')",
+            },
+            {
+                "name": "Resolution modes",
+                "details": "15 cells/µm (quick mode, ~0.5 Mcells) and 40 cells/µm (full mode, ~6 Mcells)",
+            },
+        ],
     )
-    schematic.overlay_geometry(
-        ax_z,
-        solver_s,
-        plane="xz",
-        unit="µm",
-        material_names={"sphere": "Sphere"},
-        show_boundaries=False,
-        fill_materials=True,
-        material_alpha=0.28,
-        label_materials=False,
-    )
-    _fix_sphere_patch(ax_z, R_SPHERE * 1e6, tol=0.35)
-    ax_z.text(
-        0.74,
-        0.0,
-        f"Sphere\n($n = {N_SPHERE:g},\\;\\varepsilon_r = {N_SPHERE**2:g}$)\n$r = 1.0\\;\\mu\\mathrm{{m}}$",
-        ha="center",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color=figstyle.INK,
-        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.9},
-        zorder=9,
-    )
-    ax_z.set_xlim(0.55, 1.25)
-    ax_z.set_ylim(-0.35, 0.35)
-    ax_z.set_aspect("equal", adjustable="box")
-    ax_z.set_xlabel("$x$ [µm]")
-    ax_z.set_ylabel("$z$ [µm]")
-    ax_z.set_title("(b) Mesh zoom at curved sphere surface ($y=0$)")
-
-    dx_full_nm = 1e3 / 40.0
-    cpw_full = (lam_in_min * 1e9) / dx_full_nm
-    dx_quick_nm = 1e3 / 15.0
-    cpw_quick = (lam_in_min * 1e9) / dx_quick_nm
-    badge_txt = (
-        f"Full ($40\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$): $\\Delta x = {dx_full_nm:.1f}\\;\\mathrm{{nm}}$\n"
-        f"$\\bullet\\;{cpw_full:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$ at $x_\\mathrm{{max}}=10$, "
-        f"$80\\;\\mathrm{{cells}}/2r$\n"
-        f"Quick ($15\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$ shown): $\\Delta x = {dx_quick_nm:.1f}\\;\\mathrm{{nm}}$ "
-        f"(${cpw_quick:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$)"
-    )
-    ax_z.text(
-        0.03,
-        0.03,
-        badge_txt,
-        transform=ax_z.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=7.6,
-        color=figstyle.INK,
-        bbox={
-            "boxstyle": "round,pad=0.24",
-            "facecolor": "#FFF7ED",
-            "edgecolor": "#FDBA74",
-            "alpha": 0.94,
-            "lw": 0.7,
-        },
-        zorder=10,
-    )
-
-    fig.subplots_adjust(left=0.07, right=0.98, bottom=0.14, top=0.88, wspace=0.26)
-    savefig(fig, "00_setup_schematic.png")
-    savefig(fig, "tfsf_diagram.png")
-    plt.close(fig)
 
 
 if not ARGS.arm:
@@ -701,17 +649,44 @@ plt.show()
 # box to **round-off**, at every frequency, independent of numerical
 # dispersion.
 #
-# The setup schematic (`figures/00_setup_schematic.png`) shows the $xz$ cut
-# ($y = 0$) of the 3D domain with the $r = 1\;\mu\mathrm{m}$ sphere
-# ($\varepsilon_r = 4$), the `TFSFSource` box, the inner `FluxMonitor` and
-# outer `Near2FarMonitor` boxes, the 10-cell CPML boundaries, and the zoomed
-# conformal mesh at the curved sphere surface.
+# The two-figure setup layout below (`figures/00a_setup_geometry.png`,
+# `figures/00b_setup_mesh_and_excitation.png`) shows the $xz$ cut ($y = 0$) of
+# the 3D domain with the $r = 1\;\mu\mathrm{m}$ sphere ($\varepsilon_r = 4$),
+# the `TFSFSource` box, the inner `FluxMonitor` and outer `Near2FarMonitor`
+# boxes, the 10-cell CPML boundaries, and the mesh discretization and broadband
+# excitation spectrum.
+#
+# ![3D Mie sphere setup geometry](figures/00a_setup_geometry.png)
+# ![3D Mie sphere mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the 3D `SolverFIT3D` Mie sphere simulation setup on the $y = 0$ ($xz$) cut plane.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 5.47 µm × 5.47 µm × 5.47 µm (z ∈ [-2.73 µm, 2.73 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 82 × 82 × 82 (551368 cells) |
+# | Discretization | Δx & resolution | Δ_min = 66.7 nm, 4.7 cells/λ (in n_max = 2.00), 30.0 cells across feature (2 µm) |
+# | Boundary | -x face | CPML (10 cells, 667 nm) |
+# | Boundary | +x face | CPML (10 cells, 667 nm) |
+# | Boundary | -y face | CPML (10 cells, 667 nm) |
+# | Boundary | +y face | CPML (10 cells, 667 nm) |
+# | Boundary | -z face | CPML (10 cells, 667 nm) |
+# | Boundary | +z face | CPML (10 cells, 667 nm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Dielectric sphere (n = 2) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1 µm, 1 µm] (d = 2 µm) |
+# | Source | 1 · TFSFSource | pos: x ∈ [-1.27 µm, 1.27 µm], pol: E_x, pulse: f₀ = 286.3 THz, Δf = 95.43 THz |
+# | Monitor | 2 · Near2FarMonitor | Near2FarMonitor (P_sca, far field), pos: x, y, z ∈ [-1.47, 1.47] µm, freqs: 81 freqs in [95.4, 477.1] THz |
+# | Monitor | 3 · FluxMonitor | Inner FluxMonitor (P_abs), pos: x, y, z ∈ [-1.07, 1.07] µm, freqs: 81 freqs in [95.4, 477.1] THz |
+# | Variation | Field monitors | DFTMonitor y = 0 slice and 3D volume at x = 3, 6, 9; SliceRecorder (Ex, y = 0) |
+# | Variation | Material models | staircase (conformal=False), conformal ('all'), and tensor ('tensor') |
+# | Variation | Resolution modes | 15 cells/µm (quick mode, ~0.5 Mcells) and 40 cells/µm (full mode, ~6 Mcells) |
 
 # %%
-fig, ax = plt.subplots(figsize=(12.4, 5.0))
-ax.imshow(plt.imread(FIG_DIR / "00_setup_schematic.png"))
-ax.axis("off")
-plt.show()
+for _fname in ("00a_setup_geometry.png", "00b_setup_mesh_and_excitation.png"):
+    fig, ax = plt.subplots(figsize=(8.0, 5.0))
+    ax.imshow(plt.imread(FIG_DIR / _fname))
+    ax.axis("off")
+    plt.show()
 
 # %% [markdown]
 # ## 3. Geometry: PyVista sphere &rarr; STL &rarr; `GridFIT3D`

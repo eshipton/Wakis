@@ -1432,7 +1432,7 @@ def _build_ring_add_drop_schematic_io(sim):
                 {
                     "kind": "sheet",
                     "type_name": "ModeSource",
-                    "short_word": "TE₀ mode",
+                    "short_word": "ModeSrc",
                     "desc": f"Port 1 'in' ModeSource (TE₀, +x, {pos_s})",
                     "label": "Port 1 'in' ModeSource (TE₀, +x)",
                     "pos_str": f"x = {x_src * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm",
@@ -1556,7 +1556,19 @@ def save_ring_add_drop_setup_figures(
         unit="µm",
         wavelength=wavelength,
         title="SOI Microring Add-Drop Filter Setup (2D EIM, R = 5.0 µm, w = 430 nm, g = 100 nm)",
+        width_in=8.2,
+        height_in=7.2,
     )
+    for ln in ax_a.lines:
+        if ln.get_linestyle() in ("--", ":"):
+            ln.set_marker("none")
+    x_in_um = float(sim.port_map["in"].center[0]) * 1e6
+    y_in_um = float(sim.port_map["in"].center[1]) * 1e6
+    for ann in ax_a.texts:
+        if ann.get_text() == "" and getattr(ann, "arrow_patch", None) is not None:
+            if abs(ann.xy[0] - x_in_um) < 1.5 and abs(ann.xy[1]) < 6.0:
+                ann.xy = (x_in_um + 0.72, y_in_um)
+                ann.set_position((x_in_um - 0.14, y_in_um))
     if sim.structures_3d[2].holes:
         hole_v = np.asarray(sim.structures_3d[2].holes[0], dtype=float) * 1e6
         ax_a.add_patch(
@@ -1571,10 +1583,14 @@ def save_ring_add_drop_setup_figures(
         )
     for p_name, col, dir_sgn in (("in", "#D55E00", +1.0), ("drop", "#009E73", -1.0)):
         m0 = sim.solve_port_modes(p_name)[0]
-        y_um = m0.coords["Eb"][0] * 1e6
+        y_um_all = m0.coords["Eb"][0] * 1e6
         ey_line = m0.e["b"][:, m0.e["b"].shape[1] // 2]
-        ey_norm = np.abs(ey_line) / max(float(np.max(np.abs(ey_line))), 1e-30)
+        ey_norm_all = np.abs(ey_line) / max(float(np.max(np.abs(ey_line))), 1e-30)
         x_p_um = float(sim.port_map[p_name].center[0]) * 1e6
+        y_p_um = float(sim.port_map[p_name].center[1]) * 1e6
+        mask_p = np.abs(y_um_all - y_p_um) <= 0.65
+        y_um = y_um_all[mask_p]
+        ey_norm = ey_norm_all[mask_p]
         ax_a.fill_betweenx(
             y_um,
             x_p_um,
@@ -1588,8 +1604,28 @@ def save_ring_add_drop_setup_figures(
             y_um,
             color=col,
             lw=1.6,
+            marker="none",
             zorder=8,
         )
+    ax_a.set_title(
+        "SOI Microring Add-Drop Filter Setup (2D EIM, R = 5.0 µm, w = 430 nm, g = 100 nm)",
+        pad=72,
+        fontsize=11.0,
+        fontweight="bold",
+    )
+    tag_positions = {
+        "1 · ModeSrc": (-5.85, +4.42, "left"),
+        "2 · in": (-3.80, +6.30, "left"),
+        "3 · through": (+3.80, +6.30, "right"),
+        "4 · drop": (-3.80, -6.35, "left"),
+        "5 · add": (+3.80, -6.35, "right"),
+    }
+    for txt in list(ax_a.texts):
+        s = txt.get_text().strip()
+        if s in tag_positions:
+            tx, ty, ha_val = tag_positions[s]
+            txt.set_position((tx, ty))
+            txt.set_ha(ha_val)
     figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
     # Enhance 00b_setup_mesh_and_excitation.png with zoom on the 100 nm upper coupling gap

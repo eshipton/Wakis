@@ -59,7 +59,31 @@
 #    setting $\Delta z_{\text{sub}} = 0.25\;\text{mm}$ across the $1.00\;\text{mm}$
 #    FR-4 substrate independently of $\Delta x, \Delta y$.
 #
-# ![Simulation setup schematic (XY plan, XZ elevation, and local non-cubic mesh zoom)](figures/00_setup_schematic.png)
+# ![2.4 GHz Printed Inverted-F PCB Antenna setup geometry](figures/00a_setup_geometry.png)
+#
+# ![Local non-cubic graded mesh and 2.44 GHz port excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The 3D FIT setup places the $25.58 \times 5.70\;\text{mm}^2$ meandered inverted-F trace and $29.58 \times 32.0\;\text{mm}^2$ copper ground plane on a $1.00\;\text{mm}$ dispersive FR-4 substrate inside a 6-cell CPML box, driven at the $50\;\Omega$ coplanar feed gap (`LumpedPort`) and enclosed by a 6-face `Near2FarMonitor` box on a locally refined non-cubic $72 \times 74 \times 36$ mesh.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 94.4 mm × 104.3 mm × 69.6 mm (z ∈ [-34.3 mm, 35.3 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 72 × 74 × 36 (191808 cells) |
+# | Discretization | Δx & resolution | Δ_min = 115 µm, 522.6 cells/λ (in n_max = 2.04), 4.0 cells across feature (460 µm) |
+# | Boundary | -x face | CPML (6 cells, 16.4 mm) |
+# | Boundary | +x face | CPML (6 cells, 16.4 mm) |
+# | Boundary | -y face | CPML (6 cells, 16.4 mm) |
+# | Boundary | +y face | CPML (6 cells, 16.4 mm) |
+# | Boundary | -z face | CPML (6 cells, 18.3 mm) |
+# | Boundary | +z face | CPML (6 cells, 18.3 mm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: 1.00 mm FR-4 substrate | ε_r = 4.18, μ_r = 1.00, model = DispersiveMaterial, x ∈ [-2 mm, 27.6 mm] (d = 29.6 mm) |
+# | Material | Region 2: Copper ground plane | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [-2 mm, 27.6 mm] (d = 29.6 mm) |
+# | Material | Region 3: IFA radiating arm | ε_r = inf, μ_r = 1.00, model = PEC, x ∈ [0 m, 25.6 mm] (d = 25.6 mm) |
+# | Source | 1 · LumpedPort | pos: x = 7.94 mm, pol: E_y, pulse: f₀ = 2.4 GHz, Δf = 850.0 MHz |
+# | Monitor | 2 · Near2FarMonitor | Near2FarMonitor, pos: x ∈ [-10 mm, 35.6 mm], freqs: 3 freqs in [2.4, 2.5] GHz |
+# | Variation | 5-level uniform trace convergence | Δ_trace ∈ {0.50, 0.35, 0.25, 0.18, 0.1125} mm (up to 98×81×36 = 285,768 cells); continuum Richardson extrapolation f_∞ = 2.401 GHz |
+# | Variation | Controlled hypothesis & parameter study | FR-4 ε'_r ∈ {4.00, 4.28, 4.50}, ground-plane length (20–45 mm), tap spacing L_4, open arm length L_2, CPW gap L_8, and jog width W_2 |
 
 # %% [markdown]
 # ## Physical & engineering theory
@@ -487,14 +511,15 @@ if __name__ == "__main__":
 # multi-panel diagnostic figures ($\le 3$ panels each) and one animated
 # time-domain GIF:
 #
-# 0. `figures/00_setup_schematic.png`: Three-panel simulation setup schematic
-#    generated via `wakis.schematic` showing (a) the XY plan setup at
-#    $z = h_{\text{sub}} = 1.00\;\text{mm}$ with domain extents, 6-cell CPML
-#    boundaries, FR-4 and PEC regions, $50\;\Omega$ `LumpedPort`, and
-#    `Near2FarMonitor` Huygens box; (b) the XZ elevation setup with pulse
-#    inset; and (c) the zoomed non-cubic locally refined mesh on the meander
-#    jog ($W_2 = 0.46\;\text{mm}$), feed gap ($H_5 = 0.66\;\text{mm}$), and
-#    shorting via ($L_6 = 1.00\;\text{mm}$).
+# 0. `figures/00a_setup_geometry.png`, `figures/00b_setup_mesh_and_excitation.png`,
+#    and `figures/00_setup_table.md`: Two-figure simulation setup schematic and
+#    setup table generated via `wakis.schematic.save_setup_figures` showing
+#    (a) the XY plan setup at $z = h_{\text{sub}} = 1.00\;\text{mm}$ with domain
+#    extents, 6-cell CPML boundaries, FR-4 and PEC regions, $50\;\Omega$
+#    `LumpedPort`, and `Near2FarMonitor` Huygens box; and (b) the locally refined
+#    non-cubic mesh ($72 \times 74 \times 36$) with a $1\times$ zoom inset on the
+#    meander jog ($W_2 = 0.46\;\text{mm}$, $\Delta y = 115\;\mu\text{m}$), spatial
+#    wave packet, and $2.44\;\text{GHz}$ port pulse spectrum.
 # 1. `figures/01_geometry_3d_views.png`: Three-panel 3D PyVista geometry render
 #    and CAD layout (isometric view, annotated top blueprint with SWRU120D
 #    Table 1-1 dimensions, and close-up of the stepped shorting tap, via, and

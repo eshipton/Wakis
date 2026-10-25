@@ -181,9 +181,11 @@ FIG_DIR = HERE / "figures"
 #
 # ### Simulation setup schematic and non-square graded mesh
 #
-# Figure `00_setup_schematic.png` (generated first by `generate_all_figures` using
-# `wakis.schematic.plot_schematic` and `wakis.figstyle`) summarizes the complete
-# 2D effective-index simulation domain:
+# Figures `00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png`
+# (generated first by `generate_all_figures` using
+# `wakis.schematic.save_setup_figures` and `wakis.figstyle`) together with the
+# setup specification table below summarize the complete 2D effective-index
+# simulation domain:
 #
 # - **Domain extents & boundary conditions**: Physical interior
 #   $x \in [-1.15, 4.85]\;\mu\text{m}$ ($6.00\;\mu\text{m}$ axial length) and
@@ -191,24 +193,49 @@ FIG_DIR = HERE / "figures"
 #   $\pm x$ and $\pm y$ by $N_{\text{PML}} = 10$ convolutional PML (CPML) cells and
 #   terminated by a single periodic cell along $z$ (`ieps_z = 0`).
 # - **Materials**: Silicon core ($n_{\text{Si}} = 3.476$, mapped to 2D EIM slab index
-#   $n_{\text{eff,slab}} = 2.8449$, $\varepsilon_r = 8.09$) embedded in $\text{SiO}_2$
+#   $n_{\text{eff,slab}} = 2.848$, $\varepsilon_r = 8.11$) embedded in $\text{SiO}_2$
 #   cladding ($n_{\text{SiO}_2} = 1.444$, $\varepsilon_r = 2.09$).
 # - **Excitation & monitors**: Fundamental $\text{TE}_0$ (`Ey`-polarized) `ModeSource`
 #   at port `'in'` ($x = -0.80\;\mu\text{m}$) with its transverse mode profile
-#   $|E_y(y)|$ overlaid on the port plane and broadband Gaussian pulse inset
+#   $|E_y(y)|$ overlaid on the port plane and broadband Gaussian pulse
 #   ($f_0 = 193.6\;\text{THz}$, $\lambda \in [1500, 1600]\;\text{nm}$), three
 #   `ModeMonitor` planes (`'in'` at $x = -0.80\;\mu\text{m}$, `'out1'` and `'out2'` at
 #   $x = 4.45\;\mu\text{m}, y = \pm 0.90\;\mu\text{m}$), and a closed 2D Poynting
 #   `FluxMonitor` box just inside the CPML.
-# - **Zoomed mesh view (`mesh_box` around the $200\;\text{nm}$ bifurcation tip gap at
-#   $x = 2.0\;\mu\text{m}$)**: Shows the upgraded graded non-square Cartesian mesh
-#   (`NonUniformYJunctionPIC`), which places $12.0$ transverse cells across the
-#   $200\;\text{nm}$ tip gap ($\Delta y_{\text{tip}} = 16.7\;\text{nm}$), stretches
-#   axial cells along the smooth leads ($\Delta x_{\text{lead}} = 24.5\;\text{nm}$,
-#   aspect ratio $1.47$), and grades $\Delta y$ up to $52.0\;\text{nm}$ in the outer
-#   $\text{SiO}_2$ cladding.
+# - **Discretization & zoomed mesh view (`00b_setup_mesh_and_excitation.png` around
+#   the $200\;\text{nm}$ bifurcation tip gap at $x = 2.0\;\mu\text{m}$)**: Shows the
+#   upgraded graded non-square Cartesian mesh (`NonUniformYJunctionPIC`), which places
+#   $12.0$ transverse cells across the $200\;\text{nm}$ tip gap
+#   ($\Delta y_{\text{tip}} = 16.7\;\text{nm}$), stretches axial cells along the smooth
+#   leads ($\Delta x_{\text{lead}} = 24.5\;\text{nm}$, aspect ratio $1.47$), and grades
+#   $\Delta y$ up to $50.4\;\text{nm}$ in the outer $\text{SiO}_2$ cladding.
 #
-# ![Simulation setup schematic and tip-gap mesh view](figures/00_setup_schematic.png)
+# ![Simulation setup geometry and ports](figures/00a_setup_geometry.png)
+# ![Simulation mesh, tip-gap zoom, and broadband excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the 2D EIM computational domain, CPML boundary conditions, materials, excitation, monitors, and study variations for the Y-junction splitter:
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 6.49 µm × 4.71 µm × 18.8 nm (z ∈ [-9.41 nm, 9.41 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 298 × 162 × 1 (48276 cells) |
+# | Discretization | Δx & resolution | Δ_min = 16.7 nm, 32.7 cells/λ (in n_max = 2.85), 12.0 cells across feature (200 nm) |
+# | Boundary | -x face | CPML (10 cells, 244.7 nm) |
+# | Boundary | +x face | CPML (10 cells, 243 nm) |
+# | Boundary | -y face | CPML (10 cells, 504 nm) |
+# | Boundary | +y face | CPML (10 cells, 504 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | SiO₂ cladding (n = 1.444, ε_r = 2.09) (isotropic) |
+# | Material | Region 1: Si core (n = 3.476, 2D EIM n_eff = 2.848) | ε_r = 8.11, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1.40 µm, 5.20 µm] (d = 6.60 µm) |
+# | Source | 1 · ModeSource | pos: —, pol: —, pulse: f₀ = 193.6 THz, Δf = 15.61 THz |
+# | Monitor | 2 · ModeMonitor | Port 'in' ModeMonitor (S₁₁), pos: —, freqs: time-domain |
+# | Monitor | 3 · ModeMonitor | Port 'out1' ModeMonitor (S₂₁), pos: —, freqs: time-domain |
+# | Monitor | 4 · ModeMonitor | Port 'out2' ModeMonitor (S₃₁), pos: —, freqs: time-domain |
+# | Monitor | 5 · FluxMonitor | 2D Poynting FluxMonitor box, pos: —, freqs: time-domain |
+# | Variation | kottke_coarse..fine (tasks 0–5) | param=cpw ∈ {14, 20, 28}, averaging ∈ {kottke, staircase}, note=Uniform square-cell resolution ladder (14, 20, 28 cells/λ) |
+# | Variation | kottke_reference (task 6) | param=cpw = 56 (657 × 412 × 1 = 270,684 cells), note=Independent 2× fine Kottke reference |
+# | Variation | kottke_nonuniform (task 7) | param=Graded non-square Cartesian mesh (298 × 162 × 1 = 48,276 cells), note=12 cells across 200 nm tip gap (Δy_tip = 16.7 nm), Δx_lead = 24.5 nm, Δy_clad ≤ 50.4 nm (−34% cells) |
 
 # %%
 # Material refractive indices at 1550 nm
@@ -624,7 +651,8 @@ def run_single_task(task_cfg, out_dir):
 # `generate_all_figures` reads `data/task_*.npz` and writes 16 diagnostic and
 # validation figures to `figures/`:
 #
-# 0. `00_setup_schematic.png` — Labelled simulation setup schematic (`wakis.schematic.plot_schematic`) with domain extents, CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, `ModeSource` with launched $\text{TE}_0$ mode profile and Gaussian pulse inset, `ModeMonitor`s, 2D `FluxMonitor` box, and zoomed mesh view on the $200\;\text{nm}$ bifurcation tip gap.
+# 0a. `00a_setup_geometry.png` — Labelled simulation setup schematic (`wakis.schematic.save_setup_figures`) with domain extents, CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, `ModeSource` with launched $\text{TE}_0$ mode profile, `ModeMonitor`s, and 2D `FluxMonitor` box.
+# 0b. `00b_setup_mesh_and_excitation.png` — Graded non-square mesh, $1\times$ zoom inset on the $200\;\text{nm}$ bifurcation tip gap, spatial wave-packet envelope, and Gaussian pulse spectrum.
 # 1. `01_y_junction_layout.png` — Annotated top-view layout of the Zhang *et al.* (2013) Y-junction.
 # 2. `02_eim_vertical_stack.png` — Vertical $220\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_junction_width_profile.png` — The 13 PSO spline width control knots $w(x)$ and slope $\mathrm{d}w/\mathrm{d}x$.
@@ -695,14 +723,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=n_pml_primary,
     )
 
-    # 0. Setup schematic + zoomed mesh view on the 200 nm tip gap (FIRST figure)
+    # 0. Setup geometry + mesh/excitation figures and setup table (FIRST figures)
     plot_setup_schematic_y_junction(
         pic_nonuniform.grid,
         structures,
         ports,
         primary["port_y_in"] * 1e6,
         primary["port_ey_in"],
-        out_path=fig_dir / "00_setup_schematic.png",
+        out_path=fig_dir,
         n_pml=n_pml_primary,
     )
 

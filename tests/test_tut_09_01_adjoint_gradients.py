@@ -154,8 +154,23 @@ def test_saved_data_and_figures():
     assert float(objs[-1]) > 3.0 * float(objs[0])
     assert float(d4["binarization"][-1]) > float(d4["binarization"][0])
 
-    # Figures existence and size budget
+    # Setup schematics, setup tables, and tutorial figures existence and size budget
+    expected_tables = [
+        "00_setup_table.md",
+        "00_setup_table_initial.md",
+        "00_setup_table_final.md",
+    ]
+    for tname in expected_tables:
+        tpath = fig_dir / tname
+        assert tpath.exists() and tpath.stat().st_size > 128, f"Missing or empty setup table {tname}"
+
     expected_figs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_initial.png",
+        "00b_setup_mesh_and_excitation_initial.png",
+        "00a_setup_geometry_final.png",
+        "00b_setup_mesh_and_excitation_final.png",
         "01_adjoint_pipeline_schematic.png",
         "02_dot_product_and_mutations.png",
         "03_fd_step_sweep_vcurve.png",

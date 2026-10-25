@@ -1649,7 +1649,13 @@ def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
 
     structures, geom = build_ifa_structures()
     saved = []
-    saved.append(_plot_00_setup_schematic(geom, fig_dir / "00_setup_schematic.png"))
+    _plot_00_setup_schematic(geom, fig_dir / "00a_setup_geometry.png")
+    saved.extend(
+        [
+            fig_dir / "00a_setup_geometry.png",
+            fig_dir / "00b_setup_mesh_and_excitation.png",
+        ]
+    )
     saved.append(_plot_01_geometry_views(structures, geom, fig_dir / "01_geometry_3d_views.png"))
     saved.append(
         _plot_02_mesh_views(
@@ -1771,9 +1777,9 @@ def _build_schematic_bundle(geom: dict[str, float]) -> dict[str, Any]:
         Box((0.5 * x_tip, H1 - 0.5 * H6, h_sub), (x_tip, H6, t_sheet), "pec"),
     ]
     material_names = {
-        "region_0": "1.00 mm FR-4 (ε'r=4.28)",
-        "region_1": "Copper ground (PEC)",
-        "region_2": "IFA arm (PEC)",
+        "region_0": "1.00 mm FR-4 substrate",
+        "region_1": "Copper ground plane",
+        "region_2": "IFA radiating arm",
     }
 
     pulse = GaussianSource(2.44e9, 0.85e9, cutoff=3.5)
@@ -1784,6 +1790,24 @@ def _build_schematic_bundle(geom: dict[str, float]) -> dict[str, Any]:
         size=(L5, H5, 0.0),
         impedance=50.0,
     )
+
+    n2f_margin = info["n2f_margin_m"]
+    n2f_center = (
+        0.5 * (gnd_xmin + gnd_xmax),
+        0.5 * (gnd_ymin + sub_ymax),
+        0.5 * h_sub,
+    )
+    n2f_size = (
+        gnd_xmax - gnd_xmin + 2.0 * n2f_margin,
+        sub_ymax - gnd_ymin + 2.0 * n2f_margin,
+        h_sub + 2.0 * n2f_margin,
+    )
+    n2f_mon = Near2FarMonitor(
+        np.array([2.40e9, 2.44e9, 2.48e9]),
+        center=n2f_center,
+        size=n2f_size,
+    )
+    n2f_mon.faces = [n2f_mon]
 
     pad = 8
     xn, yn, zn = grid.x, grid.y, grid.z
@@ -1806,6 +1830,8 @@ def _build_schematic_bundle(geom: dict[str, float]) -> dict[str, Any]:
         bc_low=["cpml", "cpml", "cpml"],
         bc_high=["cpml", "cpml", "cpml"],
         n_pml=6,
+        cfln=0.85,
+        dt=info["dt_ps"] * 1e-12,
     )
     return {
         "grid": grid,
@@ -1815,163 +1841,114 @@ def _build_schematic_bundle(geom: dict[str, float]) -> dict[str, Any]:
         "structures_schematic": structures_schematic,
         "material_names": material_names,
         "port_src": port_src,
+        "n2f_mon": n2f_mon,
         "n2f_xy": n2f_xy,
         "n2f_xz": n2f_xz,
     }
 
 
 def _plot_00_setup_schematic(geom: dict[str, float], out_path: Path) -> Path:
-    """Figure 0: Labelled simulation setup schematic (XY plan, XZ elevation, and non-cubic local mesh zoom)."""
+    """Generate two-figure setup schematic (`00a`, `00b`) and `00_setup_table.md` via `wakis.schematic`."""
+    fig_dir = out_path.parent if out_path.suffix else out_path
+    fig_dir.mkdir(parents=True, exist_ok=True)
     bundle = _build_schematic_bundle(geom)
-    grid = bundle["grid"]
     solver_stub = bundle["solver_stub"]
-    info = bundle["info"]
     port_src = bundle["port_src"]
+    n2f_mon = bundle["n2f_mon"]
 
-    fig, axes = figstyle.new_figure(
-        ncols=3,
-        nrows=1,
-        width=figstyle.FULL_WIDTH_IN * 1.72,
-        height=4.75,
-    )
+    variations = [
+        {
+            "name": "5-level uniform trace convergence",
+            "details": (
+                "Δ_trace ∈ {0.50, 0.35, 0.25, 0.18, 0.1125} mm "
+                "(up to 98×81×36 = 285,768 cells); continuum Richardson extrapolation f_∞ = 2.401 GHz"
+            ),
+        },
+        {
+            "name": "Controlled hypothesis & parameter study",
+            "details": (
+                "FR-4 ε'_r ∈ {4.00, 4.28, 4.50}, ground-plane length (20–45 mm), "
+                "tap spacing L_4, open arm length L_2, CPW gap L_8, and jog width W_2"
+            ),
+        },
+    ]
 
-    # (a) XY plan-view setup schematic at z = h_sub = 1.00 mm
-    schematic.plot_schematic(
+    out = schematic.save_setup_figures(
         solver_stub,
+        fig_dir,
         structures=bundle["structures_schematic"],
         material_names=bundle["material_names"],
         sources=[port_src],
-        monitors=[bundle["n2f_xy"]],
+        monitors=[n2f_mon],
         plane="xy",
         cut_coord=geom["h_sub"],
-        show_mesh=True,
-        mesh_every=3,
-        show_pulse_inset=False,
-        show_wave_packet=False,
-        title="(a) XY plan setup ($z = h_{\\mathrm{sub}} = 1.00$ mm)",
-        ax=axes[0],
+        unit="mm",
+        freq=2.44e9,
+        min_feature=geom["W2"],
+        title_geometry="2.4 GHz Printed Inverted-F PCB Antenna (SWRU120D, XY Plan at z = 1.00 mm)",
+        title_mesh="Local Non-Cubic Graded Mesh (72×74×36) & 2.44 GHz Port Pulse",
+        variations=variations,
     )
-    for t_obj in list(axes[0].texts):
-        s_txt = t_obj.get_text()
-        if "FR-4" in s_txt:
-            t_obj.set_text("1.0 mm FR-4 ($\\varepsilon'_r=4.28$)")
-            t_obj.set_position((13.0, 11.5))
-        elif "Copper ground" in s_txt:
-            t_obj.set_text("Copper ground (PEC)")
-            t_obj.set_position((13.0, -18.5))
-        elif "IFA arm" in s_txt:
-            t_obj.set_visible(False)
-        elif "boundaries:" in s_txt:
-            t_obj.set_position((13.0, 44.0))
-        elif "Domain" in s_txt:
-            t_obj.set_position((13.0, 62.0))
-        elif "Near2Far" in s_txt:
-            t_obj.set_position((41.0, -39.0))
-    axes[0].set_ylim(-70.0, 71.0)
 
-    # (b) XZ elevation setup schematic at y = H1 - 0.5 * H6
-    schematic.plot_schematic(
+    # Fine-tune tag positions on 00a so neither tag touches the Near2FarMonitor dotted box
+    fig_a, ax_a = schematic.plot_schematic(
         solver_stub,
         structures=bundle["structures_schematic"],
         material_names=bundle["material_names"],
         sources=[port_src],
-        monitors=[bundle["n2f_xz"]],
-        plane="xz",
-        cut_coord=geom["H1"] - 0.5 * geom["H6"],
-        show_mesh=True,
-        mesh_every=3,
-        show_pulse_inset=True,
-        show_wave_packet=False,
-        title="(b) XZ elevation ($h_{\\mathrm{sub}} = 1.00$ mm FR-4)",
-        ax=axes[1],
-    )
-    for t_obj in list(axes[1].texts):
-        s_txt = t_obj.get_text()
-        if "FR-4" in s_txt:
-            t_obj.set_text("1.0 mm FR-4 ($\\Delta z=0.25$ mm)")
-            t_obj.set_position((13.0, -17.5))
-        elif "Copper ground" in s_txt or "IFA arm" in s_txt:
-            t_obj.set_visible(False)
-        elif "boundaries:" in s_txt:
-            t_obj.set_position((13.0, 38.0))
-        elif "Domain" in s_txt:
-            t_obj.set_position((13.0, 53.5))
-        elif "Near2Far" in s_txt:
-            t_obj.set_position((41.0, 12.5))
-    axes[1].set_ylim(-39.0, 61.0)
-
-    # (c) Zoomed non-cubic locally refined mesh on meander jog W2, port gap H5, and shorting via L6
-    ax = axes[2]
-    _draw_annotated_top_blueprint(ax, geom, annotate=False)
-    schematic.draw_mesh(
-        ax,
-        grid,
+        monitors=[n2f_mon],
         plane="xy",
+        cut_coord=geom["h_sub"],
         unit="mm",
-        every=1,
-        color="#0d47a1",
-        alpha=0.55,
-        linewidth=0.65,
-        show_cpw=False,
+        freq=2.44e9,
+        show_mesh=False,
+        show_pulse_inset=False,
+        show_wave_packet=False,
+        title="2.4 GHz Printed Inverted-F PCB Antenna (SWRU120D, XY Plan at z = 1.00 mm)",
     )
-    ax.set_xlim(-0.8, 11.2)
-    ax.set_ylim(-1.6, 6.8)
-    ax.set_aspect("equal")
-    ax.set_xlabel("$x$ [mm]")
-    ax.set_ylabel("$y$ [mm]")
-    ax.set_title("(c) Local non-cubic mesh ($W_2, H_5, L_6$)")
-    ax.text(
-        0.5,
-        0.96,
-        f"Grid: {info['nx']}×{info['ny']}×{info['nz']} = {info['n_cells']:,} cells "
-        f"({info['min_cpw_fr4']:.1f} cells/$\\lambda_{{\\mathrm{{FR4}}}}$)",
-        transform=ax.transAxes,
-        ha="center",
-        va="top",
-        fontsize=8.5,
-        fontweight="bold",
-        color="#0d47a1",
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.92, edgecolor="#90caf9", lw=0.7),
-    )
-    ax.annotate(
-        f"$W_2 = 0.46$ mm ({int(info['cells_across_W2_0p46mm'])} cells)",
-        xy=(1.8, 3.31),
-        xytext=(3.55, 2.25),
-        ha="left",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color="#1a237e",
-        arrowprops=dict(arrowstyle="->", color="#1a237e", lw=0.9),
-        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#90caf9", lw=0.6),
-    )
-    ax.annotate(
-        f"Port $H_5 = 0.66$ mm ({int(info['cells_across_H5_0p66mm'])}×{int(info['cells_across_L5_1p00mm'])})",
-        xy=(8.43, 0.33),
-        xytext=(3.55, 0.55),
-        ha="left",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color="#b71c1c",
-        arrowprops=dict(arrowstyle="->", color="#b71c1c", lw=0.9),
-        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#ef9a9a", lw=0.6),
-    )
-    ax.annotate(
-        f"Via $L_6 = 1.0$ mm ({int(info['cells_across_L6_1p00mm'])} cells)",
-        xy=(0.50, 0.45),
-        xytext=(0.15, -1.15),
-        ha="left",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color="#263238",
-        arrowprops=dict(arrowstyle="->", color="#263238", lw=0.9),
-        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#b0bec5", lw=0.6),
-    )
+    for txt in ax_a.texts:
+        s = txt.get_text()
+        if "1 · port" in s:
+            txt.set_position((7.94, 21.5))
+        elif "2 · N2F" in s:
+            txt.set_position((13.0, -44.0))
+    figstyle.save(fig_a, out["geometry_figure"])
+    plt.close(fig_a)
 
-    figstyle.save(fig, out_path)
-    return out_path
+    # Set zoom_bounds on 00b to highlight the meander jog W2 (0.46 mm), via L6 (1.00 mm), and port gap H5 (0.66 mm)
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_stub,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[n2f_mon],
+        plane="xy",
+        cut_coord=geom["h_sub"],
+        unit="mm",
+        freq=2.44e9,
+        min_feature=geom["W2"],
+        zoom_bounds=(-0.0004, 0.0096, 0.0, 0.0056),
+        title="Local Non-Cubic Graded Mesh (72×74×36) & 2.44 GHz Port Pulse",
+    )
+    for ch_ax in getattr(axes_b[0], "child_axes", []):
+        for txt in ch_ax.texts:
+            if "zoom" in txt.get_text():
+                txt.set_text("1× zoom\n(Δy = 115 µm)")
+                txt.set_position((1.12, 0.50))
+                txt.set_ha("left")
+                txt.set_va("center")
+                txt.set_bbox(
+                    dict(
+                        boxstyle="round,pad=0.18",
+                        facecolor="white",
+                        edgecolor="#CBD5E1",
+                        lw=0.7,
+                        alpha=0.95,
+                    )
+                )
+    figstyle.save(fig_b, out["mesh_figure"])
+    plt.close(fig_b)
+    return out["geometry_figure"]
 
 
 def _add_ifa_actors_to_plotter(pl: pv.Plotter, geom: dict[str, float], scale_mm: bool = True) -> None:

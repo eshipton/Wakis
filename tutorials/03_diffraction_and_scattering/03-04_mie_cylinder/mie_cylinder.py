@@ -294,35 +294,57 @@ def show_png(path, title=None, figsize=(6, 5), dpi=72):
 # the information about the object and is often much weaker than the
 # incident wave, so we want the simulation to hand it to us separately.
 #
-# **Simulation setups (Figure 1).** Before evaluating the exact series, Figure 1
-# (`figures/00_setup_schematic.png`) shows the two 2D numerical setups compared
-# in this tutorial along with a zoomed view of the mesh at the curved cylinder
-# interface:
+# **Simulation setups.** Before evaluating the exact series, the two-figure
+# setup layouts below show the Cartesian 2D `SolverFIT3D` TF/SF setup
+# (`figures/00a_setup_geometry.png`, `figures/00b_setup_mesh_and_excitation.png`)
+# and the unstructured 2D `UnstructuredFIT2D` triangular-mesh setup
+# (`figures/00a_setup_geometry_unstructured.png`,
+# `figures/00b_setup_mesh_and_excitation_unstructured.png`):
 #
-# * **Panel (a) — Cartesian 2D setup (`SolverFIT3D` on a 4-cell periodic $z$ slab)**:
-#   the lossless dielectric cylinder (radius $a = 1.0\;\mu\text{m}$, refractive
-#   index $n = 2$, $\varepsilon_r = 4, \mu_r = 1$) sits at the origin inside a
-#   total-field/scattered-field (`TFSFSource`) box of half-width
-#   $1.25\;\mu\text{m}$ driven by a broadband `GaussianSource` ($\mathbf{k}\parallel +x$,
-#   covering size parameters $x = 2\pi a/\lambda \in [2, 10]$). An inner
-#   `FluxMonitor` box ($a + 2\Delta x$) in the total-field region checks that
-#   absorbed power vanishes ($Q_\mathrm{abs} = 0$), an outer `FluxMonitor` box
-#   ($\approx \pm 1.45\;\mu\text{m}$) in the scattered-field region measures the
-#   scattered power per unit length $P'_\mathrm{sca}$, and 10-cell CPML layers
-#   absorb outgoing waves on $\pm x, \pm y$ (periodic $\pm z$).
-# * **Panel (b) — Unstructured 2D triangular mesh setup (`UnstructuredFIT2D`)**:
-#   a body-fitted Delaunay triangulation with Voronoi dual places nodes directly
-#   on the circular boundary $r = a = 1.0\;\mu\text{m}$, eliminating staircasing
-#   without subcell averaging. It uses a scattered-field plane-wave drive inside
-#   the cylinder (`add_plane_wave`), extracts $Q_\mathrm{sca}$ from the scattered
-#   field on three concentric circles ($r = 1.9, 2.2, 2.5\;\mu\text{m}$) via
-#   cylindrical harmonic projection (`wakis.cylinder_harmonics`), and terminates
-#   at an outer circle $R_\mathrm{out} = 2.7\;\mu\text{m}$ with a first-order Mur ABC.
-# * **Panel (c) — Zoomed mesh view at $(x, y) \in [0.55, 1.25]\;\mu\text{m} \times [-0.35, 0.35]\;\mu\text{m}$**:
-#   shows the curved $r = a = 1.0\;\mu\text{m}$ cylinder boundary cutting across
-#   the Cartesian cells ($\Delta x = \Delta y = 16.7\;\text{nm}$ at $60\;\text{cells}/\mu\text{m}$,
-#   giving $18.8\;\text{cells}/\lambda_\mathrm{in}$ inside the $n = 2$ cylinder
-#   at $x_\mathrm{max} = 10$ and $120\;\text{cells}$ across the diameter $2a$).
+# ![Cartesian 2D Mie cylinder setup geometry](figures/00a_setup_geometry.png)
+# ![Cartesian 2D Mie cylinder mesh and excitation](figures/00b_setup_mesh_and_excitation.png)
+#
+# The table below summarizes the Cartesian 2D `SolverFIT3D` simulation setup on the 4-cell periodic $z$ slab with a `TFSFSource` box, inner and scattered `FluxMonitor` boxes, and 10-cell CPML boundaries.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 5.10 µm × 5.10 µm × 200 nm (z ∈ [-100 nm, 100 nm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 102 × 102 × 4 (41616 cells) |
+# | Discretization | Δx & resolution | Δ_min = 50 nm, 6.3 cells/λ (in n_max = 2.00), 40.0 cells across feature (2 µm) |
+# | Boundary | -x face | CPML (10 cells, 500 nm) |
+# | Boundary | +x face | CPML (10 cells, 500 nm) |
+# | Boundary | -y face | CPML (10 cells, 500 nm) |
+# | Boundary | +y face | CPML (10 cells, 500 nm) |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Dielectric cylinder (n = 2) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1 µm, 1 µm] (d = 2 µm) |
+# | Source | 1 · TFSFSource | pos: x ∈ [-1.25 µm, 1.25 µm], pol: E_z, pulse: f₀ = 286.3 THz, Δf = 95.43 THz |
+# | Monitor | 2 · FluxMonitor | Scattered FluxMonitor (P'_sca), pos: x, y ∈ [-1.45, 1.45] µm, freqs: 81 freqs in [95.4, 477.1] THz |
+# | Monitor | 3 · FluxMonitor | Inner FluxMonitor (P'_abs), pos: x, y ∈ [-1.10, 1.10] µm, freqs: 81 freqs in [95.4, 477.1] THz |
+# | Variation | Polarizations | TM (E_z along cylinder axis) and TE (E_y across axis, H_z along axis) |
+# | Variation | Material models | staircase (conformal=False), conformal ('all'), and tensor ('tensor') |
+# | Variation | Resolution sweep | 10–80 cells/µm (20 cells/µm quick mode, 60 cells/µm full mode) |
+#
+# ![Unstructured 2D Mie cylinder setup geometry](figures/00a_setup_geometry_unstructured.png)
+# ![Unstructured 2D Mie cylinder mesh and excitation](figures/00b_setup_mesh_and_excitation_unstructured.png)
+#
+# The table below summarizes the unstructured 2D `UnstructuredFIT2D` triangular-mesh setup with Voronoi-dual Hodge operators, a scattered-field plane-wave drive inside the cylinder, and cylindrical harmonic extraction rings inside a Mur ABC boundary.
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly = 5.40 µm × 5.40 µm (x ∈ [-2.70 µm, 2.70 µm], y ∈ [-2.70 µm, 2.70 µm]) |
+# | Domain | Grid cells | Nx × Ny = 1068 × 1068 (1140624 cells) |
+# | Discretization | Δx & resolution | Δ_min = 119.6 nm, 2.6 cells/λ (in n_max = 2.00), 16.7 cells across feature (2 µm) |
+# | Boundary | -x face | Mur ABC |
+# | Boundary | +x face | Mur ABC |
+# | Boundary | -y face | Mur ABC |
+# | Boundary | +y face | Mur ABC |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Dielectric cylinder (n = 2) | ε_r = 4.00, μ_r = 1.00, model = Isotropic dielectric, x ∈ [-1 µm, 1 µm] (d = 2 µm) |
+# | Source | 1 · PlaneWave | pos: r <= 1 µm (cylinder interior), pol: TM (E_z) / TE (H_z), pulse: f₀ = 286.3 THz, Δf = 95.43 THz |
+# | Monitor | 2 · HarmonicRings | Cylindrical harmonic rings (r = 1.9, 2.2, 2.5 µm), pos: r = 1.9, 2.2, 2.5 µm (256 pts/ring), freqs: 95.4–477.1 THz (81 freqs) |
+# | Variation | Harmonic extraction | Cylindrical harmonic projection on r = 1.9, 2.2, 2.5 µm with incoming-wave de-embedding |
 #
 # **Cross sections in 2D.** A plane wave of intensity
 # $I_\mathrm{inc} = |\mathbf E_\mathrm{inc}|^2/(2\eta)$ [W/m²] hits an
@@ -422,15 +444,27 @@ def make_solver(grid, use_gpu=False):
 
 
 def plot_setup_schematic(res_per_um=20.0):
-    """Render 3-panel setup schematic (Cartesian TF/SF, Unstructured 2D, and mesh zoom)."""
-    from matplotlib.patches import Circle
+    """Render setup geometry, mesh/excitation, and setup tables via save_setup_figures."""
+    from types import SimpleNamespace
     from wakis.unstructured import UnstructuredFIT2D
     from wakis.unstructured.meshers import disk_mesh
 
-    grid_s, lay_s = make_grid(res_per_um, "staircase")
+    grid_s, lay_s = make_grid(res_per_um, "all")
     solver_s = make_solver(grid_s, use_gpu=False)
+    grid_s.stl_solids = {}
+    cyl_struct = SimpleNamespace(
+        name="Dielectric cylinder (n = 2)",
+        center=(0.0, 0.0, 0.0),
+        radius=A_CYL,
+        height=10e-6,
+        axis=2,
+        material=[N_CYL**2, 1.0],
+    )
+    solver_s._assigned_structures = [cyl_struct]
+
     f_lo = X_MIN * c0 / (2 * np.pi * A_CYL)
     f_hi = X_MAX * c0 / (2 * np.pi * A_CYL)
+    freqs_s = np.linspace(f_lo, f_hi, 81)
     f0 = 0.5 * (f_lo + f_hi)
     df = 0.25 * (f_hi - f_lo)
     pulse = GaussianSource(frequency=f0, fwidth=df)
@@ -442,207 +476,119 @@ def plot_setup_schematic(res_per_um=20.0):
         polarization="z",
         amplitude=1.0,
     )
-    src.label = "TFSFSource ($\\mathbf{k}\\parallel +x$, TM $E_z$ / TE $E_y$)"
+    src.label = "TFSFSource (k || +x, TM E_z / TE E_y)"
+    freq_str_s = f"{len(freqs_s)} freqs in [{f_lo / 1e12:.1f}, {f_hi / 1e12:.1f}] THz"
     mon_boxes = [
         {
             "kind": "box",
             "type_name": "FluxMonitor",
-            "label": "Scattered FluxMonitor ($P'_\\mathrm{sca}$)",
+            "short_word": "flux",
+            "desc": f"scattered flux box (FluxMonitor, x, y ∈ [-{lay_s['flux']*1e6:.2f}, {lay_s['flux']*1e6:.2f}] µm)",
+            "label": "Scattered FluxMonitor (P'_sca)",
+            "pos_str": f"x, y ∈ [-{lay_s['flux']*1e6:.2f}, {lay_s['flux']*1e6:.2f}] µm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-lay_s["flux"], lay_s["flux"]),
             "v_bounds": (-lay_s["flux"], lay_s["flux"]),
         },
         {
             "kind": "box",
             "type_name": "FluxMonitor",
-            "label": "Inner FluxMonitor ($P'_\\mathrm{abs}$)",
+            "short_word": "flux",
+            "desc": f"inner flux box (FluxMonitor, x, y ∈ [-{lay_s['inner']*1e6:.2f}, {lay_s['inner']*1e6:.2f}] µm)",
+            "label": "Inner FluxMonitor (P'_abs)",
+            "pos_str": f"x, y ∈ [-{lay_s['inner']*1e6:.2f}, {lay_s['inner']*1e6:.2f}] µm",
+            "freq_str": freq_str_s,
+            "frequencies": freqs_s,
             "h_bounds": (-lay_s["inner"], lay_s["inner"]),
             "v_bounds": (-lay_s["inner"], lay_s["inner"]),
         },
     ]
+
+    schematic.save_setup_figures(
+        solver_s,
+        FIG_DIR,
+        plane="xy",
+        structures=[cyl_struct],
+        material_names={"cylinder": "Dielectric cylinder (n = 2)"},
+        sources=[src],
+        monitors=mon_boxes,
+        unit="µm",
+        wavelength=2 * np.pi * A_CYL / X_MAX,
+        freq=f0,
+        min_feature=2 * A_CYL,
+        title_geometry="Cartesian 2D Mie cylinder setup (TF/SF + FluxMonitor, XY plane)",
+        title_mesh="Cartesian 2D mesh & broadband pulse (x = 2..10)",
+        variations=[
+            {
+                "name": "Polarizations",
+                "details": "TM (E_z along cylinder axis) and TE (E_y across axis, H_z along axis)",
+            },
+            {
+                "name": "Material models",
+                "details": "staircase (conformal=False), conformal ('all'), and tensor ('tensor')",
+            },
+            {
+                "name": "Resolution sweep",
+                "details": "10–80 cells/µm (20 cells/µm quick mode, 60 cells/µm full mode)",
+            },
+        ],
+    )
 
     r_out = 2.7e-6
     tri_s = disk_mesh([A_CYL, r_out], 0.22e-6)
     solver_tri = UnstructuredFIT2D(
         tri_s, {0: [N_CYL**2, 1.0]}, polarization="TM", bc="abc", hodge="voronoi"
     )
-
-    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.4, height_in=4.8)
-
-    # Panel (a): Cartesian 2D setup (TF/SF + FluxMonitor boxes + CPML)
-    schematic.plot_schematic(
-        solver_s,
-        plane="xy",
-        ax=axes[0],
-        unit="µm",
-        material_names={"cylinder": "Cylinder"},
-        sources=[src],
-        monitors=mon_boxes,
-        show_mesh=False,
-        show_wave_packet=False,
-        title="(a) Cartesian 2D setup (TF/SF + FluxMonitor)",
-    )
-    _fix_cylinder_patch(axes[0], A_CYL * 1e6, tol=2 * lay_s["dx"] * 1e6)
-    _fix_unit_spaces(axes[0])
-    if axes[0].get_legend() is not None:
-        axes[0].get_legend().remove()
-
-    # Panel (b): Unstructured 2D triangular mesh setup
-    schematic.plot_schematic(
+    solver_tri._assigned_structures = [cyl_struct]
+    tri_src = {
+        "kind": "sheet",
+        "type_name": "PlaneWave",
+        "short_word": "PW",
+        "desc": "PlaneWave drive (k || +x, scattered-field)",
+        "label": "Scattered-field plane-wave drive (k || +x)",
+        "pos_str": "r <= 1 µm (cylinder interior)",
+        "polarization": "TM (E_z) / TE (H_z)",
+        "h_bounds": (-A_CYL, -A_CYL),
+        "v_bounds": (-0.7 * A_CYL, 0.7 * A_CYL),
+        "k_vec": (1.0, 0.0, 0.0),
+        "e_vec": (0.0, 0.0, 1.0),
+        "h_vec": (0.0, -1.0, 0.0),
+        "pulse": schematic._extract_pulse_metadata(pulse),
+    }
+    tri_mon = {
+        "kind": "box",
+        "type_name": "HarmonicRings",
+        "short_word": "rings",
+        "desc": "Harmonic rings (r = 1.9, 2.2, 2.5 µm)",
+        "label": "Cylindrical harmonic rings (r = 1.9, 2.2, 2.5 µm)",
+        "pos_str": "r = 1.9, 2.2, 2.5 µm (256 pts/ring)",
+        "freq_str": f"{f_lo / 1e12:.1f}–{f_hi / 1e12:.1f} THz (81 freqs)",
+        "frequencies": freqs_s,
+        "h_bounds": (-2.2e-6, 2.2e-6),
+        "v_bounds": (-2.2e-6, 2.2e-6),
+    }
+    schematic.save_setup_figures(
         solver_tri,
+        FIG_DIR,
+        suffix="_unstructured",
         plane="xy",
-        ax=axes[1],
+        structures=[cyl_struct],
+        sources=[tri_src],
+        monitors=[tri_mon],
         unit="µm",
-        sources=[
-            {
-                "kind": "sheet",
-                "type_name": "PlaneWave",
-                "label": "Scattered-field drive ($\\mathbf{k}\\parallel +x$)",
-                "h_bounds": (-A_CYL, -A_CYL),
-                "v_bounds": (-0.7 * A_CYL, 0.7 * A_CYL),
-                "k_vec": (1.0, 0.0, 0.0),
-                "e_vec": (0.0, 0.0, 1.0),
-                "h_vec": (0.0, -1.0, 0.0),
-                "pulse": {"f0": f0, "fwidth": df},
-            }
-        ],
-        show_mesh=True,
-        show_wave_packet=False,
-        wavelength=2 * np.pi * A_CYL / (X_MAX * N_CYL),
-        title="(b) Unstructured 2D setup (Voronoi-dual triangles)",
-    )
-    axes[1].add_patch(
-        Circle(
-            (0.0, 0.0),
-            A_CYL * 1e6,
-            facecolor="#DCE8F2",
-            edgecolor="#1E293B",
-            lw=1.3,
-            alpha=0.85,
-            zorder=3,
-        )
-    )
-    axes[1].text(
-        0.0,
-        0.0,
-        f"Cylinder\n($\\varepsilon_r = {N_CYL**2:g}$)",
-        ha="center",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color=figstyle.INK,
-        zorder=8,
-    )
-    for r_harm in (1.9, 2.2, 2.5):
-        axes[1].add_patch(
-            Circle(
-                (0.0, 0.0),
-                r_harm,
-                facecolor="none",
-                edgecolor="#009E73",
-                lw=1.1,
-                ls=":",
-                zorder=6,
-            )
-        )
-    for t in list(axes[1].texts):
-        if t.get_text().startswith("Mesh:"):
-            t.remove()
-    axes[1].text(
-        0.0,
-        -2.02,
-        "Harmonic rings ($r = 1.9, 2.2, 2.5\\;\\mu\\mathrm{m}$)",
-        ha="center",
-        va="center",
-        fontsize=7.8,
-        fontweight="bold",
-        color="#006B4E",
-        bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "#A7F3D0", "alpha": 0.9, "lw": 0.6},
-        zorder=9,
-    )
-    _fix_unit_spaces(axes[1])
-    if axes[1].get_legend() is not None:
-        axes[1].get_legend().remove()
-
-    # Panel (c): Mesh zoom at curved cylinder interface
-    ax_z = axes[2]
-    lam_in_min = 2 * np.pi * A_CYL / (X_MAX * N_CYL)
-    schematic.draw_mesh(
-        ax_z,
-        solver_s,
-        plane="xy",
-        unit="µm",
-        every=1,
         wavelength=2 * np.pi * A_CYL / X_MAX,
-        show_cpw=False,
-        color="#475569",
-        alpha=0.55,
-        linewidth=0.65,
+        freq=f0,
+        min_feature=2 * A_CYL,
+        title_geometry="Unstructured 2D Mie cylinder setup (Voronoi-dual triangles, XY plane)",
+        title_mesh="Unstructured 2D triangular mesh & broadband pulse (x = 2..10)",
+        variations=[
+            {
+                "name": "Harmonic extraction",
+                "details": "Cylindrical harmonic projection on r = 1.9, 2.2, 2.5 µm with incoming-wave de-embedding",
+            },
+        ],
     )
-    schematic.overlay_geometry(
-        ax_z,
-        solver_s,
-        plane="xy",
-        unit="µm",
-        material_names={"cylinder": "Cylinder"},
-        show_boundaries=False,
-        fill_materials=True,
-        material_alpha=0.28,
-        label_materials=False,
-    )
-    _fix_cylinder_patch(ax_z, A_CYL * 1e6, tol=2 * lay_s["dx"] * 1e6)
-    ax_z.text(
-        0.74,
-        0.0,
-        f"Cylinder\n($n = {N_CYL:g},\\;\\varepsilon_r = {N_CYL**2:g}$)\n$r = a = 1.0\\;\\mu\\mathrm{{m}}$",
-        ha="center",
-        va="center",
-        fontsize=8.5,
-        fontweight="bold",
-        color=figstyle.INK,
-        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.9},
-        zorder=9,
-    )
-    ax_z.set_xlim(0.55, 1.25)
-    ax_z.set_ylim(-0.35, 0.35)
-    ax_z.set_aspect("equal", adjustable="box")
-    ax_z.set_xlabel("$x$ [µm]")
-    ax_z.set_ylabel("$y$ [µm]")
-    ax_z.set_title("(c) Mesh zoom at curved interface")
-
-    dx_full_nm = 1e3 / 60.0
-    cpw_full = (lam_in_min * 1e9) / dx_full_nm
-    dx_quick_nm = 1e3 / 20.0
-    cpw_quick = (lam_in_min * 1e9) / dx_quick_nm
-    badge_txt = (
-        f"Full ($60\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$): $\\Delta x = {dx_full_nm:.1f}\\;\\mathrm{{nm}}$\n"
-        f"$\\bullet\\;{cpw_full:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$ at $x_\\mathrm{{max}}=10$, "
-        f"$120\\;\\mathrm{{cells}}/2a$\n"
-        f"Quick ($20\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$ shown): $\\Delta x = {dx_quick_nm:.0f}\\;\\mathrm{{nm}}$ "
-        f"(${cpw_quick:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$)"
-    )
-    ax_z.text(
-        0.03,
-        0.03,
-        badge_txt,
-        transform=ax_z.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=7.6,
-        color=figstyle.INK,
-        bbox={
-            "boxstyle": "round,pad=0.24",
-            "facecolor": "#FFF7ED",
-            "edgecolor": "#FDBA74",
-            "alpha": 0.94,
-            "lw": 0.7,
-        },
-        zorder=10,
-    )
-
-    fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.25)
-    savefig(fig, "00_setup_schematic.png")
-    savefig(fig, "tfsf_diagram.png")
-    plt.close(fig)
 
 
 if not ARGS.arm:
@@ -743,10 +689,12 @@ plt.show()
 # cells per wavelength. The discrete source costs about 1 % extra per time
 # step.
 #
-# Below, the setup schematic (`00_setup_schematic.png`) and the leakage maps of the study.
+# Below, the Cartesian TF/SF setup figures (`00a_setup_geometry.png`,
+# `00b_setup_mesh_and_excitation.png`) and the leakage maps of the study.
 
 # %%
-show_png(FIG_DIR / "00_setup_schematic.png", figsize=(13, 4.5))
+show_png(FIG_DIR / "00a_setup_geometry.png", figsize=(8, 4.5))
+show_png(FIG_DIR / "00b_setup_mesh_and_excitation.png", figsize=(8, 5.5))
 
 for name in ("tfsf_leakage_map.png",):
     png = HERE.parents[2] / "studies" / "tfsf" / name

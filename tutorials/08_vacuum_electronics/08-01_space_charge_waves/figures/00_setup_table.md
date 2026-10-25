@@ -11,7 +11,7 @@
 | Boundary | +z face | Periodic |
 | Material | Background | Vacuum, ε = 1.00 (isotropic) |
 | Material | Region 1: Drifting e⁻ sheet beam (b = 0.5 mm, u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz) | ε_r = 1.00, μ_r = 1.00, model = Custom, x ∈ [0 m, 9.59 mm] (d = 9.59 mm) |
-| Source | 1 · LinearizedBeam | pos: y ∈ [−0.50 mm, +0.50 mm], x ∈ [0 mm, 9.59 mm], pol: J_{1x}, E_x, pulse: f₀ = 5 GHz, Δf = 2.7 GHz |
+| Source | 1 · LinearizedBeam | pos: y ∈ [−0.50 mm, +0.50 mm], x ∈ [0 mm, 9.59 mm], pol: J₁ₓ, E_x, pulse: f₀ = 5 GHz, Δf = 2.7 GHz |
 | Monitor | 2 · EigenmodeSlice | TM₁₀ eigenmode slice (x = 2.40 mm), pos: x = 2.40 mm, y ∈ [−2.0 mm, +2.0 mm], freqs: 6 freqs in [1.5, 10.0] GHz |
 | Monitor | 3 · Probe | Doppler doublet FFT probe E_x(x_p, 0, t) (x_p = 2.40 mm), pos: x = 2.40 mm, freqs: time-domain |
 | Variation | Tasks 0–2: 2D Bloch dispersion & convergence (§5, §7–8) | 2D Bloch cell L_x = λ_e = 9.59 mm, 2a = 4.0 mm, PEC ±y walls, sheet e⁻ beam b = 0.5 mm (u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz); grids 16×32, 24×48, 64×128 |

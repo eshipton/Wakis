@@ -128,7 +128,10 @@ def test_magnetic_materials_artifacts_and_tables():
         assert rec["f_plus_fit_GHz"] > rec["f_r_GHz"]
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_cavity.png",
+        "00b_setup_mesh_and_excitation_cavity.png",
         "wikimedia/fmr_precession_and_permeability_wakis.png",
         "01_literature_ferrites_and_ade_check.png",
         "02_snoek_and_acher_limits.png",
@@ -144,6 +147,12 @@ def test_magnetic_materials_artifacts_and_tables():
         assert (
             fpath.is_file() and fpath.stat().st_size > 1024
         ), f"Missing {fpath}"
+
+    for tname in ("00_setup_table.md", "00_setup_table_cavity.md"):
+        tpath = FIG_DIR / tname
+        assert (
+            tpath.is_file() and tpath.stat().st_size > 128
+        ), f"Missing {tpath}"
 
     attr_path = FIG_DIR / "wikimedia" / "ATTRIBUTION.md"
     assert attr_path.is_file() and attr_path.stat().st_size > 256

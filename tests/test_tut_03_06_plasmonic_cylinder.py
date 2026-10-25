@@ -87,7 +87,10 @@ def test_notebook_and_figures_present():
     )
 
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_unstructured.png",
+        "00b_setup_mesh_and_excitation_unstructured.png",
         "eps_fits_ag_au.png",
         "qext_spectra_vs_mie.png",
         "error_decomposition_vs_poles.png",
@@ -98,6 +101,10 @@ def test_notebook_and_figures_present():
         fpath = FIG_DIR / fname
         assert fpath.exists(), f"Missing tutorial figure: {fpath}"
         assert fpath.stat().st_size > 10_000, f"Figure too small / empty: {fpath}"
+
+    for md_name in ("00_setup_table.md", "00_setup_table_unstructured.md"):
+        mpath = FIG_DIR / md_name
+        assert mpath.exists() and mpath.stat().st_size > 100, f"Missing or empty {mpath}"
 
 
 def test_fitted_models_passivity_stability_and_rms():

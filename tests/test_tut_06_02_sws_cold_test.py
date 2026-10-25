@@ -945,7 +945,10 @@ def test_setup_schematic_and_graded_nonuniform_mesh_upgrade():
        mesh resolution check catches.
     """
     expected_figs = [
-        "00_setup_schematic.png",
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
+        "00a_setup_geometry_marosi.png",
+        "00b_setup_mesh_and_excitation_marosi.png",
         "01_sws_2d_and_3d_geometry.png",
         "02_mesh_zoom_conformal_vs_staircase.png",
         "03_mcvey_harmonic_convergence.png",
@@ -965,6 +968,9 @@ def test_setup_schematic_and_graded_nonuniform_mesh_upgrade():
     for fname in expected_figs:
         fpath = FIG_DIR / fname
         assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing or empty figure: {fpath}"
+    for tname in ("00_setup_table.md", "00_setup_table_marosi.md"):
+        tpath = FIG_DIR / tname
+        assert tpath.exists() and tpath.stat().st_size > 100, f"Missing or empty setup table: {tpath}"
     gif_size_mb = (FIG_DIR / "09_bloch_mode_animation.gif").stat().st_size / (1024.0 * 1024.0)
     assert gif_size_mb < 5.0, f"GIF exceeds 5 MB limit: {gif_size_mb:.2f} MB"
 
