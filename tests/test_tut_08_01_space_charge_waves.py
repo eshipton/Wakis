@@ -177,6 +177,8 @@ def test_space_charge_waves_task_table_and_json_resolution_rules(capsys):
     assert abs(t6["L_beat_fit_mm"] - t6["L_beat_th_mm"]) / t6["L_beat_th_mm"] < 0.035
 
     expected_figures = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_drift_tube_geometry.png",
         "02_mesh_and_profile_zoom.png",
         "03_transverse_tm_eigenmodes.png",
@@ -197,6 +199,10 @@ def test_space_charge_waves_task_table_and_json_resolution_rules(capsys):
         assert fpath.is_file() and fpath.stat().st_size > 1024, (
             f"Missing or empty tutorial figure: {fpath}"
         )
+    table_path = FIG_DIR / "00_setup_table.md"
+    assert table_path.is_file() and table_path.stat().st_size > 128, (
+        f"Missing or empty setup table: {table_path}"
+    )
 
     # Verify --list-tasks CLI in both --quick and --full modes
     tutorial_main(["--list-tasks", "--quick"])

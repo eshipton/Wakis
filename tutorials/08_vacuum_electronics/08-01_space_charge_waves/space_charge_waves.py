@@ -79,6 +79,47 @@
 # %% [markdown]
 # ## 1. Physical background & linearized fluid equations
 #
+# ### 1.0 Simulation setup schematic
+#
+# Figure `00a_setup_geometry.png` and the setup specification table below
+# summarize the benchmark 2D Bloch space-charge wave cell (`task_0`–`task_4`:
+# $L_x = \lambda_e = 9.59\;\text{mm}$, PEC drift-tube walls at $y = \pm 2.0\;\text{mm}$,
+# drifting sheet electron beam of half-thickness $b = 0.5\;\text{mm}$ at
+# $u_0 = 0.16\,c$, $V_0 = 6.70\;\text{kV}$, $f_p = 1.35\;\text{GHz}$) together
+# with the study variations (`task_5` 3D square PEC tunnel, `task_6` open
+# klystron drift tube with RF velocity-modulating gap and CPML + 10-cell
+# collector density taper, and `task_7` Chu kinetic-power and coupled energy
+# conservation audit). Figure `00b_setup_mesh_and_excitation.png` displays the
+# $64 \times 128$ FIT mesh ($16$ cells across $b$, $64$ cells per electronic
+# wavelength $\lambda_e$) and the synchronous space-charge wave excitation
+# spectrum centered at $f_0 = 5.0\;\text{GHz}$.
+#
+# ![Simulation setup schematic: geometry, PEC drift-tube walls, Bloch boundaries, sheet electron beam, and monitors](figures/00a_setup_geometry.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 9.59 mm × 4 mm × 150 µm (z ∈ [-75 µm, 75 µm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 64 × 128 × 1 (8192 cells) |
+# | Discretization | Δx & resolution | Δ_min = 31.2 µm, 307.0 cells/λ (in n_max = 1.00), 16.0 cells across feature (500 µm) |
+# | Boundary | -x face | Bloch (k_x = -655 rad/m) |
+# | Boundary | +x face | Bloch (k_x = -655 rad/m) |
+# | Boundary | -y face | PEC |
+# | Boundary | +y face | PEC |
+# | Boundary | -z face | Periodic |
+# | Boundary | +z face | Periodic |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Drifting e⁻ sheet beam (b = 0.5 mm, u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz) | ε_r = 1.00, μ_r = 1.00, model = Custom, x ∈ [0 m, 9.59 mm] (d = 9.59 mm) |
+# | Source | 1 · LinearizedBeam | pos: y ∈ [−0.50 mm, +0.50 mm], x ∈ [0 mm, 9.59 mm], pol: J_{1x}, E_x, pulse: f₀ = 5 GHz, Δf = 2.7 GHz |
+# | Monitor | 2 · EigenmodeSlice | TM₁₀ eigenmode slice (x = 2.40 mm), pos: x = 2.40 mm, y ∈ [−2.0 mm, +2.0 mm], freqs: 6 freqs in [1.5, 10.0] GHz |
+# | Monitor | 3 · Probe | Doppler doublet FFT probe E_x(x_p, 0, t) (x_p = 2.40 mm), pos: x = 2.40 mm, freqs: time-domain |
+# | Variation | Tasks 0–2: 2D Bloch dispersion & convergence (§5, §7–8) | 2D Bloch cell L_x = λ_e = 9.59 mm, 2a = 4.0 mm, PEC ±y walls, sheet e⁻ beam b = 0.5 mm (u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz); grids 16×32, 24×48, 64×128 |
+# | Variation | Tasks 3–4: Frequency & filling-ratio sweeps (§7) | 2D Bloch cell (24×40); f₀ ∈ {1.5, 3.0, 5.0, 7.0, 8.5, 10.0} GHz and b/a ∈ {0.25, 0.375, 0.50, 0.75, 1.00} |
+# | Variation | Task 5: 3D square PEC drift tunnel (§7) | 3D domain 4.0 mm × 4.0 mm × 9.59 mm (40×40×24), PEC ±x, ±y walls, Bloch ±z, pencil beam b = 0.5 mm (f_p = 1.65 GHz) |
+# | Variation | Task 6: 2D klystron velocity-modulated drift tube (§7) | Open tube L_z = 115 mm × 4.0 mm (360×32), CPML ±z (N_pml = 6, 1.92 mm) + 10-cell ρ₀→0 taper, PEC ±y walls, RF gap V_m = 100 V at z_g = 3.51 mm, beam b = 0.8 mm |
+# | Variation | Task 7: Chu kinetic power & energy audit (§3, §7) | Periodic ±x, PEC ±y (48×48, 2400 steps); fast wave (P_k > 0) vs slow wave (P_k < 0) and coupled Chu–Poynting conservation |
+#
+# ![Discretization mesh and space-charge wave excitation spectrum](figures/00b_setup_mesh_and_excitation.png)
+#
 # Consider a continuous electron beam drifting at DC velocity
 # $\mathbf{u}_0 = u_0 \hat{\mathbf{s}}$ ($0 < |u_0| < c$, Lorentz factor
 # $\gamma_0 = (1 - u_0^2/c^2)^{-1/2}$) along a drift tunnel axis
@@ -659,9 +700,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # %% [markdown]
 # ## 7. Dispersion, reduction factor & klystron bunching results
 #
-# ### Old (`--quick`) vs. New (`--full`) vs. Analytic/Published Reference
+# ### Quick (`--quick`) vs. Full (`--full`) vs. Analytic/Published Reference
 #
-# | Study / Metric | Task | Old (`--quick`) | New (`--full`) | Analytic / Published Reference | `--full` Rel. Error |
+# | Study / Metric | Task | Quick (`--quick`) | Full (`--full`) | Analytic / Published Reference | `--full` Rel. Error |
 # |---|---|---|---|---|---|
 # | 2D Bloch $R$ ($5\;\text{GHz}$, $b/a=0.25$, coarse $16\times 32$) | `task_0` | $0.46576$ | $0.46576$ | $0.46622$ (2D Branch–Mihran [2]) | $-0.098\%$ |
 # | 2D Bloch $R$ ($5\;\text{GHz}$, $b/a=0.25$, medium $24\times 48$) | `task_1` | $0.46709$ | $0.46709$ | $0.46622$ (2D Branch–Mihran [2]) | $+0.186\%$ |
@@ -693,8 +734,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #   (`task_3`, $\tau b \in [0.097, 0.647]$) increases the 2D planar $R_{\text{FIT}}(f)$
 #   from $0.17226$ (analytic $0.17243$) to $0.65861$ (analytic $0.65835$, max error
 #   $0.10\%$) because shorter axial wavelengths confine the space-charge electric
-#   field more tightly within the beam core (correcting an earlier draft text that
-#   quoted the unbounded $a \to \infty$ values $0.289 \to 0.694$). In both figures,
+#   field more tightly within the beam core (compared with the unbounded $a \to \infty$
+#   limit $0.289 \to 0.694$). In both figures,
 #   the 2D sheet-beam results are contrasted with the 3D cylindrical pencil-beam
 #   curves of Mealy *et al.* (2022) [3] ($R_{\text{3D,cyl}} = 0.0680 \to 0.4789$
 #   across $1.5\text{--}10\;\text{GHz}$, $\approx 0.07 \to 0.48 \pm 0.01$ read from
@@ -771,10 +812,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #   Over $2400$ steps in `--full` ($48 \times 48$), the relative peak-to-peak
 #   variation $\big(\max U_{\text{tot}} - \min U_{\text{tot}}\big) / \langle U_{\text{tot}} \rangle$
 #   is **$4.21 \times 10^{-6}$ ($0.00042\%$)**, down from **$9.48 \times 10^{-6}$
-#   ($0.00095\%$)** over $1600$ steps in `--quick` ($32 \times 32$; previously
-#   quoted as a conservative upper bound `< 0.08%` / $\sim 7.9 \times 10^{-4}$,
-#   which is the un-centered leapfrog ripple when $|E^{n+1}|^2$ is not averaged
-#   with $|E^n|^2$). Why is $U_{\text{tot}}^{n+1/2}$ conserved to $O(\Delta t^2)$
+#   ($0.00095\%$)** over $1600$ steps in `--quick` ($32 \times 32$; by contrast,
+#   an un-centered leapfrog evaluation where $|E^{n+1}|^2$ is not averaged
+#   with $|E^n|^2$ exhibits a $\sim 7.9 \times 10^{-4}$ ripple). Why is $U_{\text{tot}}^{n+1/2}$ conserved to $O(\Delta t^2)$
 #   rather than machine precision ($\sim 10^{-15}$)?
 #   1. The arithmetic electric-energy average $\frac{1}{4}(|E^{n+1}|^2 + |E^n|^2)$
 #      differs from the exact staggered leapfrog bilinear invariant
@@ -813,7 +853,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # ($0.103\%$), and the agreement with the analytical Branch–Mihran root
 # $R_{\text{BM}} = 0.46622$ is $8.22 \times 10^{-4}$ ($0.082\%$).
 #
-# **What changed between `--quick` and `--full`**: In `--quick`, all three levels
+# **Spectral window comparison between `--quick` and `--full`**: In `--quick`, all three levels
 # used the same short FFT window ($N_{\text{beat}} = 1.85$), where Hann-window
 # mainlobe overlap between the fast and slow spectral peaks biased the
 # log-parabolic peak interpolation upward by $\approx +0.2\%$, making $R_{\text{FIT}}$

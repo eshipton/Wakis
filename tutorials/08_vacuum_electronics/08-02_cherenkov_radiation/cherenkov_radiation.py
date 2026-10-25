@@ -63,6 +63,48 @@
 #
 # ## Physical Background & Governing Equations
 #
+# ### 0. Simulation setup schematic
+#
+# The 3D reference domain ($22\;\text{mm} \times 22\;\text{mm} \times 42\;\text{mm}$,
+# $N_x \times N_y \times N_z = 68 \times 68 \times 131$ on the fine grid,
+# $\Delta x = \Delta y = \Delta z = 0.32\;\text{mm}$, $20.8\;\text{cells}/\lambda$
+# at $30\;\text{GHz}$ in $n = 1.50$) encloses a dielectric region
+# ($\varepsilon_r = 2.25$, $n = 1.50$) terminated on all six faces by 8-cell
+# ($2.59\;\text{mm}$) CPML absorbing collars. A relativistic Gaussian electron
+# bunch ($q = 1.0\;\text{nC}$, $\sigma_z = 1.5\;\text{mm}$, $\beta = 0.90$,
+# $E_{\text{kin}} = 661\;\text{keV}$) propagates along the $z$ axis through a
+# coaxial `FluxMonitor` box ($r = 3.2\;\text{mm}$, $z \in [15, 27]\;\text{mm}$)
+# and past an off-axis time-domain probe at $r = 3.5\;\text{mm}$. Task 3 replaces
+# the dielectric and transverse CPML with a smooth vacuum PEC drift pipe
+# ($16\;\text{mm} \times 16\;\text{mm} \times 60\;\text{mm}$, $\Delta x = \Delta y = 2\Delta z$)
+# to compare the standard Yee update against the dispersion-free explicit TE/TM
+# (`scheme="tete"`) update at $\beta = 0.999$.
+#
+# ![Setup schematic: relativistic bunch, dielectric fill, CPML and FluxMonitor](figures/00a_setup_geometry.png)
+#
+# | Category | Component / Face | Specification |
+# | :--- | :--- | :--- |
+# | Domain | Size & bounds | Lx × Ly × Lz = 22 mm × 22 mm × 42 mm (z ∈ [0 m, 42 mm]) |
+# | Domain | Grid cells | Nx × Ny × Nz = 68 × 68 × 131 (605744 cells) |
+# | Discretization | Δz & resolution | Δ_min = 320.6 µm, 20.8 cells/λ (in n_max = 1.50), 4.7 cells across feature (1.50 mm) |
+# | Boundary | -x face | CPML (8 cells, 2.59 mm) |
+# | Boundary | +x face | CPML (8 cells, 2.59 mm) |
+# | Boundary | -y face | CPML (8 cells, 2.59 mm) |
+# | Boundary | +y face | CPML (8 cells, 2.59 mm) |
+# | Boundary | -z face | CPML (8 cells, 2.56 mm) |
+# | Boundary | +z face | CPML (8 cells, 2.56 mm) |
+# | Material | Background | Vacuum, ε = 1.00 (isotropic) |
+# | Material | Region 1: Dielectric (n = 1.50) | ε_r = 2.25, μ_r = 1.00, model = Isotropic dielectric, z ∈ [2.60 mm, 39.4 mm] (d = 36.8 mm) |
+# | Source | 1 · Beam | pos: x = 0 mm, y = 0 mm, pol: J_z, pulse: f₀ = 25.00 GHz, Δf = 63.62 GHz |
+# | Monitor | 2 · FluxMonitor | FluxMonitor (r = 3.2 mm), pos: z ∈ [15.0, 27.0] mm, x ∈ [−3.2, +3.2] mm, freqs: 69 freqs in [12.0, 80.0] GHz |
+# | Monitor | 3 · Probe | Coulomb probe (r = 3.5 mm), pos: z = 21 mm, freqs: time-domain |
+# | Variation | Task 1: Dielectric Cherenkov vs Coulomb (§2, §4) | 3D homogeneous dielectric n = 1.50 (ε_r = 2.25), 22×22×42 mm, CPML (N_pml = 8) on all faces; super-threshold β = 0.90 (θ_c = 42.2°) vs sub-threshold β = 0.60, plus β ∈ [0.60, 0.96] sweep |
+# | Variation | Task 2: Dispersive Lorentz medium (§2.3, §4) | Single-pole Lorentz dielectric (ε_∞ = 1.0, Δε = 1.25, f₀ = 38 GHz, γ/2π = 1.5 GHz), β = 0.85; Cherenkov passband below f₀ vs Reststrahlen stopband above f₀ |
+# | Variation | Task 3: Vacuum numerical Cherenkov: Yee vs TETE (§2.4, §4) | Smooth PEC drift pipe 16×16×60 mm (PEC ±x, ±y, CPML ±z), vacuum (n = 1.00), ultra-relativistic bunch β = 0.999 (γ = 22.4, σ_z = 1.8 mm), Δx = Δy = 2Δz, magic step cΔt = Δz; scheme='yee' vs scheme='tete' |
+# | Variation | Task 4: 3D mesh convergence study (§4) | 3-level 3D grid refinement Δx = Δz ∈ {0.56, 0.42, 0.32} mm (11.9, 15.9, 20.8 cells/λ at 30 GHz in n = 1.50, σ_z = 1.2 mm) |
+#
+# ![3D FIT discretization and relativistic bunch spectrum](figures/00b_setup_mesh_and_excitation.png)
+#
 # ### 1. Rigid Gaussian bunch current in Wakis (`wakis/sources.py`)
 #
 # Wakis drives a moving rigid bunch of total charge $q$ [C], RMS longitudinal
@@ -408,17 +450,27 @@ def run_convergence_section(quick: bool = False) -> dict:
 # %% [markdown]
 # ## Results, Figures, and Animations
 #
-# All seven diagnostic PNG figures and three animated GIFs (`< 5 MB` each) are
-# rendered into `figures/`:
+# All two setup schematics, seven diagnostic PNG figures, and three animated
+# GIFs (`< 5 MB` each) are rendered into `figures/`:
 #
+# - `figures/00a_setup_geometry.png`: Labelled 2D meridian setup schematic
+#   showing the domain extents ($22\;\text{mm} \times 42\;\text{mm}$), 8-cell
+#   CPML collars, dielectric region ($n = 1.50$), relativistic Gaussian bunch,
+#   coaxial `FluxMonitor`, and off-axis probe.
+# - `figures/00b_setup_mesh_and_excitation.png`: 3D FIT mesh discretization
+#   ($\Delta_{\min} = 320.6\;\mu\text{m}$, $20.8\;\text{cells}/\lambda$ in
+#   $n_{\max} = 1.50$, $4.7\;\text{cells}$ across $\sigma_z = 1.50\;\text{mm}$),
+#   1× zoom inset, spatial bunch envelope, and spectrum.
 # - `figures/01_geometry_and_mesh.png`: 3D FIT mesh, CPML shell, coaxial
-#   `FluxMonitor`, and Huygens cone geometry ($\theta_c$ and $90^\circ - \theta_c$).
+#   `FluxMonitor`, Huygens cone geometry ($\theta_c$ and $90^\circ - \theta_c$),
+#   and Yee vs TE/TM (`tete`) grid stencil illustration.
 # - `figures/02_field_maps_cone_vs_coulomb.png`: Meridian $E_z(x, 0, z)$
 #   snapshots comparing $\beta = 0.90$ (Cherenkov cone) vs $\beta = 0.60$
-#   (contracted Coulomb field), wavefront ridge fit, and sub-threshold profile.
-# - `figures/03_cone_angle_vs_beta.png`: Measured $\theta_c(\beta)$,
-#   $90^\circ - \theta_c(\beta)$, and $\cos\theta_c(\beta)$ vs $1/(\beta n)$
-#   across the threshold $\beta_{\text{th}} = 1/n$.
+#   (contracted Coulomb field) and sub-threshold off-axis probe profile.
+# - `figures/03_cone_angle_vs_beta.png`: Wavefront ridge linear fit at
+#   $\beta = 0.90$, measured $\theta_c(\beta)$ and $90^\circ - \theta_c(\beta)$,
+#   and $\cos\theta_c(\beta)$ vs $1/(\beta n)$ across the threshold
+#   $\beta_{\text{th}} = 1/n$.
 # - `figures/04_frank_tamm_spectrum.png`: Coaxial `FluxMonitor` spectrum vs the
 #   analytical Frank–Tamm law and Gaussian bunch form factor $F(\omega)$.
 # - `figures/05_dispersive_cherenkov_band.png`: Dispersive Lorentz refractive
@@ -430,7 +482,7 @@ def run_convergence_section(quick: bool = False) -> dict:
 #   angle and Frank–Tamm spectrum.
 # - `figures/cherenkov_cone_beta09.gif`: Animated meridian $E_z$ field as the
 #   $\beta = 0.90$ bunch crosses the $n = 1.5$ dielectric with the analytic cone
-#   overlaid.
+#   and geometry overlaid.
 # - `figures/cherenkov_sub_vs_super_threshold.gif`: Side-by-side animation of
 #   $\beta = 0.60$ (no cone) vs $\beta = 0.90$ (Cherenkov cone).
 # - `figures/numerical_cherenkov_yee_vs_tete.gif`: Side-by-side vacuum

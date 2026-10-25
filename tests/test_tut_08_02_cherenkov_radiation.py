@@ -229,6 +229,8 @@ def test_precomputed_tutorial_data_and_figures():
     )
 
     expected_pngs = [
+        "00a_setup_geometry.png",
+        "00b_setup_mesh_and_excitation.png",
         "01_geometry_and_mesh.png",
         "02_field_maps_cone_vs_coulomb.png",
         "03_cone_angle_vs_beta.png",
@@ -241,6 +243,10 @@ def test_precomputed_tutorial_data_and_figures():
         fpath = TUT_DIR / "figures" / fname
         assert fpath.exists(), f"Missing figure {fname}"
         assert fpath.stat().st_size > 15_000
+
+    table_md = TUT_DIR / "figures" / "00_setup_table.md"
+    assert table_md.exists(), "Missing setup table 00_setup_table.md"
+    assert table_md.stat().st_size > 200
 
     expected_gifs = [
         "cherenkov_cone_beta09.gif",
@@ -277,5 +283,7 @@ def test_cli_list_tasks_and_plot(tmp_path):
         check=True,
     )
     assert "[figure]" in res_plot.stdout
+    assert (tmp_path / "00a_setup_geometry.png").exists()
+    assert (tmp_path / "00b_setup_mesh_and_excitation.png").exists()
     assert (tmp_path / "04_frank_tamm_spectrum.png").exists()
     assert (tmp_path / "cherenkov_cone_beta09.gif").exists()

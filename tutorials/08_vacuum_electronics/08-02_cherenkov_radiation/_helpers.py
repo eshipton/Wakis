@@ -17,7 +17,7 @@ from scipy.fft import dstn, idstn, irfft, rfft, rfftfreq
 from scipy.special import k0, k1
 
 import wakis
-from wakis import FluxMonitor, GridFIT3D, SolverFIT3D
+from wakis import FluxMonitor, GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.dispersive import DispersiveMaterial, Lorentz
 from wakis.estimate import estimate, preflight
 from wakis.sources import Beam
@@ -1495,139 +1495,462 @@ def run_task_convergence(quick: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def render_geometry_and_mesh_figure() -> Path:
-    """Render Figure 1: 3D setup/mesh view and Cherenkov cone geometry diagram."""
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    setup_rendering(force_off_screen=True)
+class _RegionBox:
+    """Lightweight 3D region box for wakis.schematic setup & overlay figures."""
 
+    def __init__(self, low, high, material=None, name: str = "Dielectric"):
+        self.bounds = (
+            np.asarray(low, dtype=float),
+            np.asarray(high, dtype=float),
+        )
+        self.material = [DEFAULT_N_DIEL**2, 1.0] if material is None else material
+        self.name = str(name)
+
+
+def _build_dielectric_setup():
+    """Construct the reference 3D dielectric Cherenkov setup for wakis.schematic."""
     l_xy_m = 11.0e-3
-    zmin_m, zmax_m = -8.0e-3, 18.0e-3
-    grid = GridFIT3D(-l_xy_m, l_xy_m, -l_xy_m, l_xy_m, zmin_m, zmax_m, 44, 44, 65, verbose=0)
+    zmin_m, zmax_m = 0.0, 42.0e-3
+    nx, ny, nz = 68, 68, 131
+    grid = GridFIT3D(-l_xy_m, l_xy_m, -l_xy_m, l_xy_m, zmin_m, zmax_m, nx, ny, nz, verbose=0)
     solver = SolverFIT3D(
         grid,
-        bc_low=["cpml"] * 3,
-        bc_high=["cpml"] * 3,
+        bc_low=["cpml", "cpml", "cpml"],
+        bc_high=["cpml", "cpml", "cpml"],
+        n_pml=8,
         bg=[DEFAULT_N_DIEL**2, 1.0],
         verbose=0,
     )
-    r_box = 4.5e-3
-    l_box = 8.0e-3
-    z_mid = 5.0e-3
-    flux_bounds = box_bounds((0.0, 0.0, z_mid), (2.0 * r_box, 2.0 * r_box, l_box))
-    beam_bounds = box_bounds((0.0, 0.0, 0.5 * (zmin_m + zmax_m)), (0.8e-3, 0.8e-3, zmax_m - zmin_m))
-    pl = plot_scene(
-        grid,
-        boxes={
-            "Coaxial FluxMonitor": (flux_bounds, dict(color="#0072B2", label="FluxMonitor box")),
-            "Beam axis (z)": (beam_bounds, dict(color="#D55E00", label="Beam trajectory (z)")),
+    diel_box = _RegionBox(
+        [-l_xy_m + 2.6e-3, -l_xy_m + 2.6e-3, zmin_m + 2.6e-3],
+        [l_xy_m - 2.6e-3, l_xy_m - 2.6e-3, zmax_m - 2.6e-3],
+        material=[DEFAULT_N_DIEL**2, 1.0],
+        name=f"Dielectric (n = {DEFAULT_N_DIEL:.2f})",
+    )
+    f0 = 25.0e9
+    fwidth = c_light / (np.pi * DEFAULT_SIGMAZ_M)
+    beam_src = {
+        "kind": "beam",
+        "type_name": "Beam",
+        "short_word": "e⁻ bunch",
+        "desc": "Relativistic e⁻ bunch (q = 1.0 nC, σ_z = 1.5 mm, β = 0.90, E_kin = 661 keV)",
+        "label": "Gaussian e⁻ bunch (q = 1.0 nC, σ_z = 1.5 mm, β = 0.90)",
+        "pos_str": "x = 0 mm, y = 0 mm",
+        "polarization": "J_z",
+        "h_bounds": (zmin_m + 3.0e-3, zmax_m - 3.0e-3),
+        "v_bounds": (0.0, 0.0),
+        "k_vec": (1.0, 0.0, 0.0),
+        "pulse": {
+            "f0": f0,
+            "fwidth": fwidth,
+            "t_peak": 25.0e-12,
+            "t_end": 80.0e-12,
+            "src_time": None,
         },
-        cpml=(grid.grid.bounds, cpml_inner_bounds(solver)),
-        solids=False,
-        show_grid=True,
-        length_unit="mm",
-        window_size=(900, 680),
-        off_screen=True,
+    }
+    freqs = np.linspace(12.0e9, 80.0e9, 69)
+    flux_mon = {
+        "kind": "box",
+        "type_name": "FluxMonitor",
+        "short_word": "FluxMonitor",
+        "desc": "Coaxial FluxMonitor box (r = 3.2 mm, L_z = 12.0 mm)",
+        "label": "FluxMonitor (r = 3.2 mm)",
+        "pos_str": "z ∈ [15.0, 27.0] mm, x ∈ [−3.2, +3.2] mm",
+        "freq_str": "69 freqs in [12.0, 80.0] GHz",
+        "frequencies": freqs,
+        "h_bounds": (15.0e-3, 27.0e-3),
+        "v_bounds": (-3.2e-3, 3.2e-3),
+    }
+    probes = [
+        {
+            "pos": (3.5e-3, 0.0, 21.0e-3),
+            "label": "Coulomb probe (r = 3.5 mm)",
+        }
+    ]
+    return solver, [diel_box], [beam_src], [flux_mon], probes
+
+
+def _build_vacuum_pipe_setup(scheme: str = "yee"):
+    """Construct the Task 3 vacuum PEC drift-pipe setup for wakis.schematic."""
+    a_pipe_m = 16.0e-3
+    zmin_m, zmax_m = -24.0e-3, 36.0e-3
+    nx, ny, nz = 10, 10, 75
+    grid = GridFIT3D(
+        -0.5 * a_pipe_m,
+        0.5 * a_pipe_m,
+        -0.5 * a_pipe_m,
+        0.5 * a_pipe_m,
+        zmin_m,
+        zmax_m,
+        nx,
+        ny,
+        nz,
+        verbose=0,
     )
-    scene_img = pl.screenshot(return_img=True)
-    pl.close()
-
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(13.2, 5.4), gridspec_kw={"width_ratios": [1.08, 1.0]})
-    ax0.imshow(scene_img)
-    ax0.set_axis_off()
-    ax0.set_title("(a) 3D FIT grid, CPML shell, and coaxial FluxMonitor", fontsize=11, fontweight="bold")
-
-    # (b) Meridian schematic of Huygens wavelets, cone angle theta_c, and shock half-angle 90 - theta_c
-    beta = 0.90
-    n_refr = DEFAULT_N_DIEL
-    cone = cherenkov_cone_angle(beta, n_refr)
-    theta_c_rad = float(cone["theta_c_rad"])
-    theta_c_deg = float(cone["theta_c_deg"])
-    alpha_deg = float(cone["shock_half_angle_deg"])
-
-    ax1.set_xlim(-6.5, 13.5)
-    ax1.set_ylim(-9.5, 9.5)
-    ax1.set_aspect("equal")
-    ax1.axhspan(-9.5, 9.5, color="#eef5fb", alpha=0.55, label=f"Dielectric (n = {n_refr:.2f})")
-
-    # CPML collar shading
-    pml_w = 2.2
-    ax1.axvspan(-6.5, -6.5 + pml_w, color="#999999", alpha=0.18, label="CPML absorbing layer")
-    ax1.axvspan(13.5 - pml_w, 13.5, color="#999999", alpha=0.18)
-    ax1.axhspan(9.5 - pml_w, 9.5, color="#999999", alpha=0.18)
-    ax1.axhspan(-9.5, -9.5 + pml_w, color="#999999", alpha=0.18)
-
-    # Coaxial FluxMonitor outline
-    rect = Rectangle(
-        (z_mid * 1e3 - 0.5 * l_box * 1e3, -r_box * 1e3),
-        l_box * 1e3,
-        2.0 * r_box * 1e3,
-        fill=False,
-        edgecolor="#0072B2",
-        linestyle="--",
-        linewidth=1.8,
-        label="Coaxial FluxMonitor",
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["pec", "pec", "cpml"],
+        bc_high=["pec", "pec", "cpml"],
+        n_pml=8,
+        bg=[1.0, 1.0],
+        scheme=scheme,
+        verbose=0,
     )
-    ax1.add_patch(rect)
-
-    # Huygens spherical wavelets and Mach cone
-    zb = 9.5
-    for dt_z in [3.0, 6.0, 9.0, 12.0]:
-        z_emit = zb - dt_z
-        r_wave = dt_z / (beta * n_refr)
-        circle = plt.Circle(
-            (z_emit, 0.0),
-            r_wave,
-            fill=False,
-            color="#56B4E9",
-            linestyle=":",
-            linewidth=1.1,
-        )
-        ax1.add_patch(circle)
-        ax1.plot(z_emit, 0.0, ".", color="#56B4E9", ms=4)
-
-    r_line = np.linspace(0.0, 7.6, 100)
-    z_shock = zb - r_line * np.tan(theta_c_rad)
-    ax1.plot(z_shock, +r_line, color="#D55E00", lw=2.3, label=f"Cherenkov shock front ($90^\\circ-\\theta_c={alpha_deg:.1f}^\\circ$)")
-    ax1.plot(z_shock, -r_line, color="#D55E00", lw=2.3)
-
-    # Wavevector k arrow normal to upper shock front
-    z_k0, x_k0 = zb - 3.6 * np.tan(theta_c_rad), 3.6
-    len_k = 3.2
-    arr_k = FancyArrowPatch(
-        (z_k0, x_k0),
-        (z_k0 + len_k * np.cos(theta_c_rad), x_k0 + len_k * np.sin(theta_c_rad)),
-        arrowstyle="->",
-        mutation_scale=13,
-        color="#009E73",
-        lw=2.0,
+    vac_box = _RegionBox(
+        [-0.5 * a_pipe_m, -0.5 * a_pipe_m, zmin_m + 6.4e-3],
+        [0.5 * a_pipe_m, 0.5 * a_pipe_m, zmax_m - 6.4e-3],
+        material=[1.0, 1.0],
+        name="Vacuum pipe (n = 1.00)",
     )
-    ax1.add_patch(arr_k)
-    ax1.text(
-        z_k0 + 0.55,
-        x_k0 + 2.35,
-        f"$\\mathbf{{k}}$ ($\\theta_c={theta_c_deg:.1f}^\\circ$)\n$\\cos\\theta_c = 1/(\\beta n)$",
-        color="#009E73",
-        fontsize=9.5,
+    return solver, [vac_box]
+
+
+def _add_pec_pipe_tags_2d(ax, label_top: str = "+x: PEC wall", label_bot: str = "−x: PEC wall"):
+    """Add high-contrast PEC drift-pipe wall tags with white stroke halos."""
+    halo = schematic._text_halo(2.5)
+    ax.text(
+        0.50,
+        0.05,
+        f"±x: PEC pipe walls (±8 mm)",
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
         fontweight="bold",
+        color=figstyle.INK,
+        path_effects=halo,
+        zorder=9,
     )
 
-    # Axis and moving bunch
-    ax1.axhline(0.0, color="k", lw=0.9, alpha=0.5)
-    ax1.plot(zb, 0.0, "o", color="#D55E00", ms=9, zorder=6, label="Gaussian bunch $q(z - \\beta ct)$")
-    ax1.set_xlabel("Axial coordinate $z$ [mm]")
-    ax1.set_ylabel("Transverse coordinate $x$ [mm]")
-    ax1.set_title(f"(b) Huygens construction ($\\beta={beta:.2f},\\;n={n_refr:.2f},\\;\\beta n={beta*n_refr:.2f}>1$)", fontsize=11, fontweight="bold")
-    ax1.legend(loc="lower left", fontsize=8.2, framealpha=0.92)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "01_geometry_and_mesh.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+def render_setup_figures() -> list[Path]:
+    """Render 00a_setup_geometry.png, 00b_setup_mesh_and_excitation.png, and 00_setup_table.md."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    solver, structs, srcs, mons, probes = _build_dielectric_setup()
+    lambda_vac_30ghz_m = c_light / ANALYSED_FMAX_HZ
+    with figstyle.apply_style():
+        schematic.save_setup_figures(
+            solver,
+            FIG_DIR,
+            plane="zx",
+            unit="mm",
+            structures=structs,
+            sources=srcs,
+            monitors=mons,
+            probes=probes,
+            wavelength=lambda_vac_30ghz_m,
+            freq=25.0e9,
+            min_feature=DEFAULT_SIGMAZ_M,
+            title_geometry="Tutorial 8.2 — Setup: relativistic bunch, dielectric fill, CPML & FluxMonitor",
+            title_mesh="Tutorial 8.2 — 3D FIT discretization and relativistic bunch spectrum",
+            variations=[
+                {
+                    "name": "Task 1: Dielectric Cherenkov vs Coulomb (§2, §4)",
+                    "details": (
+                        "3D homogeneous dielectric n = 1.50 (ε_r = 2.25), 22×22×42 mm, CPML (N_pml = 8) "
+                        "on all faces; super-threshold β = 0.90 (θ_c = 42.2°) vs sub-threshold β = 0.60, "
+                        "plus β ∈ [0.60, 0.96] sweep"
+                    ),
+                },
+                {
+                    "name": "Task 2: Dispersive Lorentz medium (§2.3, §4)",
+                    "details": (
+                        "Single-pole Lorentz dielectric (ε_∞ = 1.0, Δε = 1.25, f₀ = 38 GHz, γ/2π = 1.5 GHz), "
+                        "β = 0.85; Cherenkov passband below f₀ vs Reststrahlen stopband above f₀"
+                    ),
+                },
+                {
+                    "name": "Task 3: Vacuum numerical Cherenkov: Yee vs TETE (§2.4, §4)",
+                    "details": (
+                        "Smooth PEC drift pipe 16×16×60 mm (PEC ±x, ±y, CPML ±z), vacuum (n = 1.00), "
+                        "ultra-relativistic bunch β = 0.999 (γ = 22.4, σ_z = 1.8 mm), Δx = Δy = 2Δz, "
+                        "magic step cΔt = Δz; scheme='yee' vs scheme='tete'"
+                    ),
+                },
+                {
+                    "name": "Task 4: 3D mesh convergence study (§4)",
+                    "details": (
+                        "3-level 3D grid refinement Δx = Δz ∈ {0.56, 0.42, 0.32} mm "
+                        "(11.9, 15.9, 20.8 cells/λ at 30 GHz in n = 1.50, σ_z = 1.2 mm)"
+                    ),
+                },
+            ],
+        )
+    return [
+        FIG_DIR / "00a_setup_geometry.png",
+        FIG_DIR / "00b_setup_mesh_and_excitation.png",
+    ]
+
+
+def render_geometry_and_mesh_figure() -> Path:
+    """Render Figure 1: Transverse (x,y) mesh & FluxMonitor, meridian Huygens cone, and Yee vs TETE stencil."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    solver_diel, structs_diel, srcs_diel, mons_diel, probes_diel = _build_dielectric_setup()
+
+    r_box = 3.2e-3
+
+    with figstyle.apply_style():
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.7,
+            ncols=3,
+            nrows=1,
+            gridspec_kw={"width_ratios": [1.0, 1.15, 1.0]},
+            constrained_layout=False,
+        )
+        fig._wakis_custom_layout = True
+        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.25, top=0.86, wspace=0.42)
+
+        schematic.draw_mesh(
+            ax0,
+            solver_diel,
+            plane="xy",
+            unit="mm",
+            every=4,
+            show_cpw=False,
+        )
+        schematic.overlay_geometry(
+            ax0,
+            solver_diel,
+            plane="xy",
+            unit="mm",
+            structures=structs_diel,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax0.set_aspect("auto")
+        ax0.add_patch(
+            Rectangle(
+                (-r_box * 1e3, -r_box * 1e3),
+                2.0 * r_box * 1e3,
+                2.0 * r_box * 1e3,
+                fill=False,
+                edgecolor="#009E73",
+                ls=":",
+                lw=1.8,
+                label="FluxMonitor ($r=3.2$ mm)",
+                zorder=6,
+            )
+        )
+        ax0.plot(
+            0.0,
+            0.0,
+            "o",
+            color="#D55E00",
+            ms=6.5,
+            zorder=7,
+            label="Beam axis ($x=y=0$)",
+        )
+        ax0.set(
+            xlim=(-11.0, 11.0),
+            ylim=(-11.0, 11.0),
+            xlabel="Transverse x [mm]",
+            ylabel="Transverse y [mm]",
+            title="(a) Transverse (x, y)",
+        )
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.25)
+
+        # (b) Meridian schematic of Huygens wavelets, FIT mesh, and Cherenkov cone
+        beta = 0.90
+        n_refr = DEFAULT_N_DIEL
+        cone = cherenkov_cone_angle(beta, n_refr)
+        theta_c_rad = float(cone["theta_c_rad"])
+        theta_c_deg = float(cone["theta_c_deg"])
+        alpha_deg = float(cone["shock_half_angle_deg"])
+
+        ax1.set_xlim(0.0, 42.0)
+        ax1.set_ylim(-11.0, 11.0)
+        schematic.draw_mesh(
+            ax1,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            every=7,
+            show_cpw=False,
+        )
+        schematic.overlay_geometry(
+            ax1,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            monitors=mons_diel,
+            show_boundaries=True,
+            show_materials=False,
+            show_monitors=True,
+        )
+        ax1.set_aspect("auto")
+        zb = 30.0
+        for dt_z in [4.5, 9.0, 13.5, 18.0]:
+            z_emit = zb - dt_z
+            r_wave = dt_z / (beta * n_refr)
+            circle = plt.Circle(
+                (z_emit, 0.0),
+                r_wave,
+                fill=False,
+                color="#56B4E9",
+                linestyle=":",
+                linewidth=1.1,
+            )
+            ax1.add_patch(circle)
+            ax1.plot(z_emit, 0.0, ".", color="#56B4E9", ms=3.5)
+
+        r_line = np.linspace(0.0, 9.5, 100)
+        z_shock = zb - r_line * np.tan(theta_c_rad)
+        ax1.plot(
+            z_shock,
+            +r_line,
+            color="#D55E00",
+            lw=2.1,
+            marker="none",
+            label=f"Shock ($90^\\circ-\\theta_c={alpha_deg:.1f}^\\circ$)",
+        )
+        ax1.plot(z_shock, -r_line, color="#D55E00", lw=2.1, marker="none")
+
+        z_k0, x_k0 = zb - 4.5 * np.tan(theta_c_rad), 4.5
+        len_k = 4.5
+        arr_k = FancyArrowPatch(
+            (z_k0, x_k0),
+            (z_k0 + len_k * np.cos(theta_c_rad), x_k0 + len_k * np.sin(theta_c_rad)),
+            arrowstyle="->",
+            mutation_scale=12,
+            color="#009E73",
+            lw=1.8,
+        )
+        ax1.add_patch(arr_k)
+        ax1.text(
+            z_k0 + 0.5,
+            x_k0 + 2.8,
+            f"$\\mathbf{{k}}$ ($\\theta_c={theta_c_deg:.1f}^\\circ$)",
+            color="#009E73",
+            fontsize=8.6,
+            fontweight="bold",
+            path_effects=schematic._text_halo(2.4),
+        )
+        ax1.axhline(0.0, color=figstyle.INK, lw=0.8, alpha=0.5, marker="none")
+        ax1.plot(
+            zb,
+            0.0,
+            "o",
+            color="#D55E00",
+            ms=7.5,
+            zorder=6,
+            label=r"e⁻ bunch ($\beta=0.90$, $n=1.50$)",
+        )
+        ax1.set(
+            xlim=(0.0, 42.0),
+            ylim=(-11.0, 11.0),
+            xlabel="Axial z [mm]",
+            ylabel="Transverse x [mm]",
+            title=r"(b) Huygens cone ($\beta n=1.35$)",
+        )
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.25)
+
+        # (c) Yee vs TE/TM (TETE) grid stencil illustration (Task 3)
+        ax2.set_xlim(0.0, 2.0)
+        ax2.set_ylim(-1.15, 1.15)
+        ax2.set_aspect("equal")
+        # Top cell: Standard Yee cell (c dt < dz -> v_p,z < c)
+        ax2.add_patch(
+            Rectangle(
+                (0.15, 0.12),
+                0.72,
+                0.78,
+                facecolor="#FDE8E8",
+                edgecolor="#D55E00",
+                lw=1.6,
+                label=r"Yee ($v_{p,z}<c$, NCR wake)",
+            )
+        )
+        ax2.annotate(
+            "",
+            xy=(0.87, 0.51),
+            xytext=(0.15, 0.51),
+            arrowprops={"arrowstyle": "<->", "color": "#D55E00", "lw": 1.2},
+        )
+        ax2.text(
+            0.51,
+            0.55,
+            r"$c\Delta t < \Delta z$",
+            ha="center",
+            va="bottom",
+            fontsize=8.5,
+            fontweight="bold",
+            color="#D55E00",
+        )
+        ax2.text(
+            1.42,
+            0.52,
+            "Standard Yee\n$v_{p,z}(k_z) < c$\n$\\Rightarrow$ spurious cone",
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color=figstyle.INK,
+        )
+
+        # Bottom cell: Anisotropic TETE cell (dx = dy = 2 dz, magic step c dt = dz -> v_p,z = c)
+        ax2.add_patch(
+            Rectangle(
+                (0.15, -0.92),
+                0.36,
+                0.78,
+                facecolor="#E0F2FE",
+                edgecolor="#0072B2",
+                lw=1.6,
+                label=r"TETE ($\Delta x=2\Delta z$, $v_{p,z}\equiv c$)",
+            )
+        )
+        ax2.add_patch(
+            Rectangle(
+                (0.51, -0.92),
+                0.36,
+                0.78,
+                facecolor="#E0F2FE",
+                edgecolor="#0072B2",
+                lw=1.6,
+                ls="--",
+            )
+        )
+        ax2.annotate(
+            "",
+            xy=(0.51, -0.53),
+            xytext=(0.15, -0.53),
+            arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.2},
+        )
+        ax2.text(
+            0.51,
+            -0.46,
+            r"$c\Delta t = \Delta z$",
+            ha="center",
+            va="bottom",
+            fontsize=8.5,
+            fontweight="bold",
+            color="#0072B2",
+            path_effects=schematic._text_halo(2.2),
+        )
+        ax2.text(
+            1.42,
+            -0.52,
+            "TE/TM (`tete`)\n$\\Delta x = 2\\Delta z$\n$v_{p,z}(k_z) \\equiv c$",
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color=figstyle.INK,
+        )
+        ax2.set_xticks([])
+        ax2.set_yticks([])
+        for sp in ("top", "right", "bottom", "left"):
+            ax2.spines[sp].set_visible(False)
+        ax2.set_title("(c) Yee vs TETE stencil")
+        figstyle.place_legend_below(ax2, ncol=1, y_offset=-0.08)
+
+        out_path = FIG_DIR / "01_geometry_and_mesh.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
 def render_field_maps_figure() -> Path:
-    """Render Figure 2: Super-threshold Cherenkov cone (beta=0.9) vs sub-threshold Coulomb field (beta=0.6)."""
+    """Render Figure 2 (3 panels): Super-threshold cone vs sub-threshold Coulomb field and probe."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     d = np.load(DATA_DIR / "task_dielectric.npz")
     x_mm = d["x_m"] * 1e3
@@ -1639,152 +1962,310 @@ def render_field_maps_figure() -> Path:
     theta_sim = float(d["theta_c_sup_deg"])
     theta_th = float(d["theta_c_sup_theory_deg"])
 
-    fig, axes = plt.subplots(2, 2, figsize=(13.0, 8.6), gridspec_kw={"height_ratios": [1.15, 0.9]})
-    ax_sup, ax_sub = axes[0]
-    ax_ridge, ax_coul = axes[1]
+    solver_diel, structs_diel, _, mons_diel, probes_diel = _build_dielectric_setup()
 
-    vmax_sup = float(np.percentile(np.abs(ez_sup), 98.5))
-    im0 = ax_sup.pcolormesh(z_mm, x_mm, ez_sup * 1e-3, cmap="RdBu_r", vmin=-vmax_sup * 1e-3, vmax=vmax_sup * 1e-3, shading="auto")
-    fig.colorbar(im0, ax=ax_sup, label="$E_z(x, 0, z)$ [kV/m]")
-    r_line_mm = np.linspace(0.0, 9.0, 100)
-    z_cone_th = zb_sup_mm - r_line_mm * np.tan(np.radians(theta_th))
-    ax_sup.plot(z_cone_th, +r_line_mm, "k--", lw=1.8, label=f"Analytic cone $\\theta_c={theta_th:.1f}^\\circ$")
-    ax_sup.plot(z_cone_th, -r_line_mm, "k--", lw=1.8)
-    ax_sup.plot(d["z_ridge_sup_m"] * 1e3, d["r_fit_sup_m"] * 1e3, "o", color="#009E73", ms=4.5, label=f"Fitted ridge ($\\theta_c={theta_sim:.1f}^\\circ$)")
-    ax_sup.plot(zb_sup_mm, 0.0, "*", color="#F0E442", markeredgecolor="k", ms=12, label="Bunch centroid")
-    ax_sup.set_title("(a) Super-threshold ($\\beta = 0.90,\\;\\beta n = 1.35 > 1$): Cherenkov cone", fontsize=10.5, fontweight="bold")
-    ax_sup.set_xlabel("$z$ [mm]")
-    ax_sup.set_ylabel("$x$ [mm]")
-    ax_sup.legend(loc="upper left", fontsize=8.2)
+    with figstyle.apply_style():
+        fig = plt.figure(figsize=(figstyle.FULL_WIDTH_IN, 5.8))
+        gs = fig.add_gridspec(2, 2, height_ratios=[1.15, 0.95], hspace=0.68, wspace=0.46)
+        fig.subplots_adjust(left=0.08, right=0.95, bottom=0.14, top=0.92)
+        ax_sup = fig.add_subplot(gs[0, 0])
+        ax_sub = fig.add_subplot(gs[0, 1])
+        ax_coul = fig.add_subplot(gs[1, :])
 
-    vmax_sub = float(np.percentile(np.abs(ez_sub), 98.5))
-    im1 = ax_sub.pcolormesh(z_mm, x_mm, ez_sub * 1e-3, cmap="RdBu_r", vmin=-vmax_sub * 1e-3, vmax=vmax_sub * 1e-3, shading="auto")
-    fig.colorbar(im1, ax=ax_sub, label="$E_z(x, 0, z)$ [kV/m]")
-    ax_sub.plot(zb_sub_mm, 0.0, "*", color="#F0E442", markeredgecolor="k", ms=12, label="Bunch centroid")
-    ax_sub.axvline(zb_sub_mm, color="k", ls=":", lw=1.1, label="Symmetry plane $z = z_b$")
-    ax_sub.set_title("(b) Sub-threshold ($\\beta = 0.60,\\;\\beta n = 0.90 < 1$): Contracted Coulomb field", fontsize=10.5, fontweight="bold")
-    ax_sub.set_xlabel("$z$ [mm]")
-    ax_sub.set_ylabel("$x$ [mm]")
-    ax_sub.legend(loc="upper left", fontsize=8.2)
+        vmax_sup = float(np.percentile(np.abs(ez_sup), 98.5))
+        im0 = ax_sup.pcolormesh(
+            z_mm,
+            x_mm,
+            ez_sup * 1e-3,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax_sup * 1e-3,
+            vmax=vmax_sup * 1e-3,
+            shading="auto",
+        )
+        fig.colorbar(im0, ax=ax_sup, label=r"$E_z$ [kV/m]", pad=0.02)
+        schematic.overlay_geometry(
+            ax_sup,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            monitors=mons_diel,
+            show_boundaries=True,
+            show_materials=True,
+            show_monitors=True,
+        )
+        ax_sup.set_aspect("auto")
+        r_line_mm = np.linspace(0.0, 9.0, 100)
+        z_cone_th = zb_sup_mm - r_line_mm * np.tan(np.radians(theta_th))
+        ax_sup.plot(
+            z_cone_th,
+            +r_line_mm,
+            color=figstyle.INK,
+            ls="--",
+            lw=1.7,
+            marker="none",
+            label=f"Analytic $\\theta_c={theta_th:.1f}^\\circ$",
+        )
+        ax_sup.plot(z_cone_th, -r_line_mm, color=figstyle.INK, ls="--", lw=1.7, marker="none")
+        ax_sup.plot(
+            d["z_ridge_sup_m"] * 1e3,
+            d["r_fit_sup_m"] * 1e3,
+            "o",
+            color="#009E73",
+            ms=4.2,
+            linestyle="none",
+            label=f"FIT ridge ($\\theta_c={theta_sim:.1f}^\\circ$)",
+        )
+        ax_sup.plot(
+            zb_sup_mm,
+            0.0,
+            "*",
+            color="#F0E442",
+            markeredgecolor=figstyle.INK,
+            ms=10.5,
+            linestyle="none",
+            zorder=8,
+            label="Bunch",
+        )
+        ax_sup.set(
+            xlim=(z_mm.min(), z_mm.max()),
+            ylim=(x_mm.min(), x_mm.max()),
+            xlabel="Axial z [mm]",
+            ylabel="Transverse x [mm]",
+            title=r"(a) $\beta=0.90$ ($\beta n=1.35$): cone",
+        )
+        figstyle.place_legend_below(ax_sup, ncol=2, y_offset=-0.26)
 
-    # (c) Ridge linear fit z_b - z_ridge(r) vs r * tan(theta_c)
-    r_fit_mm = d["r_fit_sup_m"] * 1e3
-    lag_sim_mm = zb_sup_mm - d["z_ridge_sup_m"] * 1e3
-    slope_fit, intercept_fit = np.polyfit(r_fit_mm, lag_sim_mm, 1)
-    r_grid = np.linspace(r_fit_mm.min() - 0.4, r_fit_mm.max() + 0.4, 100)
-    ax_ridge.plot(
-        r_grid,
-        np.tan(np.radians(theta_th)) * r_grid + intercept_fit,
-        "k-",
-        lw=1.8,
-        label=f"Theory slope $\\tan\\theta_c = {np.tan(np.radians(theta_th)):.3f}$ ($\\theta_c={theta_th:.2f}^\\circ$)",
-    )
-    ax_ridge.plot(
-        r_fit_mm,
-        lag_sim_mm,
-        "o",
-        color="#D55E00",
-        ms=5.5,
-        label=f"Wakis (FIT) ridge ($\\theta_c={theta_sim:.2f}^\\circ,\\;\\cos\\theta_c={float(d['cos_theta_c_sup']):.4f}$)",
-    )
-    ax_ridge.set_xlabel("Transverse distance $r = |x|$ [mm]")
-    ax_ridge.set_ylabel("Axial shock lag $z_b - z_{\\mathrm{ridge}}(r)$ [mm]")
-    ax_ridge.set_title("(c) Wavefront cone-angle extraction at $\\beta = 0.90$", fontsize=10.5, fontweight="bold")
-    ax_ridge.grid(True, alpha=0.3)
-    ax_ridge.legend(loc="upper left", fontsize=8.5)
+        vmax_sub = float(np.percentile(np.abs(ez_sub), 98.5))
+        im1 = ax_sub.pcolormesh(
+            z_mm,
+            x_mm,
+            ez_sub * 1e-3,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax_sub * 1e-3,
+            vmax=vmax_sub * 1e-3,
+            shading="auto",
+        )
+        fig.colorbar(im1, ax=ax_sub, label=r"$E_z$ [kV/m]", pad=0.02)
+        schematic.overlay_geometry(
+            ax_sub,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            probes=probes_diel,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax_sub.set_aspect("auto")
+        ax_sub.plot(
+            zb_sub_mm,
+            0.0,
+            "*",
+            color="#F0E442",
+            markeredgecolor=figstyle.INK,
+            ms=10.5,
+            linestyle="none",
+            zorder=8,
+            label="Bunch",
+        )
+        ax_sub.axvline(
+            zb_sub_mm,
+            color=figstyle.INK,
+            ls=":",
+            lw=1.2,
+            marker="none",
+            label=r"Plane $z=z_b$",
+        )
+        ax_sub.set(
+            xlim=(z_mm.min(), z_mm.max()),
+            ylim=(x_mm.min(), x_mm.max()),
+            xlabel="Axial z [mm]",
+            ylabel="Transverse x [mm]",
+            title=r"(b) $\beta=0.60$ ($\beta n=0.90$): Coulomb",
+        )
+        figstyle.place_legend_below(ax_sub, ncol=2, y_offset=-0.26)
 
-    # (d) Sub-threshold off-axis probe at beta = 0.60 vs exact contracted Coulomb integral
-    zeta_mm = d["zeta_sub_m"] * 1e3
-    r_p_mm = float(d["r_probe_sub_m"]) * 1e3
-    mask_z = (zeta_mm >= -10.0) & (zeta_mm <= 10.0)
-    zeta_dense_mm = np.linspace(-10.0, 10.0, 300)
-    coul_dense = subthreshold_coulomb_field(
-        r_m=float(d["r_probe_sub_m"]),
-        zeta_m=zeta_dense_mm * 1e-3,
-        beta=0.60,
-        n_refr=DEFAULT_N_DIEL,
-        q_c=DEFAULT_Q_C,
-        sigmaz_m=DEFAULT_SIGMAZ_M,
-    )
-    ax_coul.plot(
-        zeta_dense_mm,
-        coul_dense["Ez"] * 1e-3,
-        "k-",
-        lw=1.8,
-        label=f"Contracted Coulomb theory ($r={r_p_mm:.1f}$ mm)",
-    )
-    ax_coul.plot(
-        zeta_mm[mask_z],
-        d["Ez_sub_probe_sim"][mask_z] * 1e-3,
-        "o",
-        color="#0072B2",
-        ms=4.2,
-        label="Wakis (FIT) off-axis probe",
-    )
-    ax_coul.axhline(0.0, color="grey", lw=0.8)
-    ax_coul.axvline(0.0, color="grey", ls=":", lw=0.9)
-    ax_coul.set_xlim(-10.2, 10.2)
-    ax_coul.set_xlabel("Comoving coordinate $\\zeta = z - vt$ [mm]")
-    ax_coul.set_ylabel("$E_z(r, \\zeta)$ [kV/m]")
-    ax_coul.set_title("(d) Evanescent antisymmetric Coulomb profile ($\\beta = 0.60$)", fontsize=10.5, fontweight="bold")
-    ax_coul.grid(True, alpha=0.3)
-    ax_coul.legend(loc="upper left", fontsize=8.5)
+        # (c) Sub-threshold off-axis probe at beta = 0.60 vs exact contracted Coulomb integral
+        zeta_mm = d["zeta_sub_m"] * 1e3
+        r_p_mm = float(d["r_probe_sub_m"]) * 1e3
+        mask_z = (zeta_mm >= -10.0) & (zeta_mm <= 10.0)
+        zeta_dense_mm = np.linspace(-10.0, 10.0, 300)
+        coul_dense = subthreshold_coulomb_field(
+            r_m=float(d["r_probe_sub_m"]),
+            zeta_m=zeta_dense_mm * 1e-3,
+            beta=0.60,
+            n_refr=DEFAULT_N_DIEL,
+            q_c=DEFAULT_Q_C,
+            sigmaz_m=DEFAULT_SIGMAZ_M,
+        )
+        ax_coul.plot(
+            zeta_dense_mm,
+            coul_dense["Ez"] * 1e-3,
+            label=f"Exact contracted Coulomb integral ($r={r_p_mm:.1f}$ mm)",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax_coul.plot(
+            zeta_mm[mask_z],
+            d["Ez_sub_probe_sim"][mask_z] * 1e-3,
+            label="Wakis 3D FIT sub-threshold off-axis probe",
+            **figstyle.series_style(1, with_line=False, ms=5.0),
+        )
+        ax_coul.axhline(0.0, color="#64748B", lw=0.8, marker="none")
+        ax_coul.axvline(0.0, color="#64748B", ls=":", lw=0.9, marker="none")
+        ax_coul.set(
+            xlim=(-10.2, 10.2),
+            xlabel=r"Comoving coordinate $\zeta = z - vt$ [mm]",
+            ylabel=r"$E_z(r, \zeta)$ [kV/m]",
+            title=r"(c) Sub-threshold off-axis probe ($\beta=0.60$, $n=1.50$) vs exact contracted Coulomb field",
+        )
+        figstyle.spectrum_grid(ax_coul)
+        figstyle.place_legend_below(ax_coul, ncol=2, y_offset=-0.26)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "02_field_maps_cone_vs_coulomb.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        out_path = FIG_DIR / "02_field_maps_cone_vs_coulomb.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
 def render_cone_angle_vs_beta_figure() -> Path:
-    """Render Figure 3: Cherenkov cone angle theta_c and cos(theta_c) vs beta with threshold."""
+    """Render Figure 3 (3 panels): Shock-lag ridge fit, cone angle theta_c, and cos(theta_c) vs beta."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     d = np.load(DATA_DIR / "task_dielectric.npz")
     beta_sw = d["beta_sweep"]
     theta_sim = d["theta_sweep_sim_deg"]
     cos_sim = d["cos_sweep_sim"]
     det = d["cone_detected_sweep"].astype(bool)
+    zb_sup_mm = float(d["z_bunch_sup_m"]) * 1e3
+    theta_sup_sim = float(d["theta_c_sup_deg"])
+    theta_sup_th = float(d["theta_c_sup_theory_deg"])
 
     n_refr = DEFAULT_N_DIEL
     beta_th = 1.0 / n_refr
     beta_dense = np.linspace(beta_th + 1e-4, 0.999, 300)
     th_dense = cherenkov_cone_angle(beta_dense, n_refr)
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.2, 4.8))
+    with figstyle.apply_style():
+        fig, (ax_r, ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.8,
+            ncols=3,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.31, top=0.86, wspace=0.36)
 
-    ax0.axvspan(0.52, beta_th, color="#999999", alpha=0.18, label=f"Below threshold ($\\beta < 1/n = {beta_th:.3f}$)")
-    ax0.axvline(beta_th, color="#D55E00", ls="--", lw=1.6)
-    ax0.plot(beta_dense, th_dense["theta_c_deg"], "k-", lw=2.0, label="Theory $\\theta_c = \\arccos(1/(\\beta n))$")
-    ax0.plot(beta_dense, th_dense["shock_half_angle_deg"], color="#0072B2", ls="-.", lw=1.7, label="Shock half-angle $90^\\circ - \\theta_c$")
-    ax0.plot(beta_sw[det], theta_sim[det], "o", color="#D55E00", ms=7, label="Wakis (FIT) $\\theta_c$")
-    ax0.plot(beta_sw[det], 90.0 - theta_sim[det], "s", color="#0072B2", ms=6.5, label="Wakis (FIT) $90^\\circ - \\theta_c$")
-    for b_sub in beta_sw[~det]:
-        ax0.plot(b_sub, 0.0, "x", color="#333333", ms=8, mew=2, label="No cone detected ($\\beta n < 1$)")
-    ax0.set_xlim(0.55, 1.0)
-    ax0.set_ylim(-3.0, 60.0)
-    ax0.set_xlabel("Normalized particle velocity $\\beta = v/c$ [-]")
-    ax0.set_ylabel("Angle [deg]")
-    ax0.set_title("(a) Wavevector angle $\\theta_c$ and Mach half-angle $90^\\circ - \\theta_c$", fontsize=10.5, fontweight="bold")
-    ax0.grid(True, alpha=0.3)
-    ax0.legend(loc="upper left", fontsize=8.3)
+        # (a) Ridge linear fit z_b - z_ridge(r) vs r * tan(theta_c) at beta = 0.90
+        r_fit_mm = d["r_fit_sup_m"] * 1e3
+        lag_sim_mm = zb_sup_mm - d["z_ridge_sup_m"] * 1e3
+        _, intercept_fit = np.polyfit(r_fit_mm, lag_sim_mm, 1)
+        r_grid = np.linspace(r_fit_mm.min() - 0.4, r_fit_mm.max() + 0.4, 100)
+        ax_r.plot(
+            r_grid,
+            np.tan(np.radians(theta_sup_th)) * r_grid + intercept_fit,
+            label=f"Theory $\\theta_c={theta_sup_th:.2f}^\\circ$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax_r.plot(
+            r_fit_mm,
+            lag_sim_mm,
+            label=f"FIT ridge ($\\theta_c={theta_sup_sim:.2f}^\\circ$)",
+            **figstyle.series_style(1, with_line=False, ms=5.2),
+        )
+        ax_r.set(
+            xlabel=r"Radial $r = |x|$ [mm]",
+            ylabel=r"Shock lag $z_b - z_{\mathrm{ridge}}$ [mm]",
+            title=r"(a) Ridge fit ($\beta=0.90$)",
+        )
+        figstyle.spectrum_grid(ax_r)
+        figstyle.place_legend_below(ax_r, ncol=1, y_offset=-0.25)
 
-    ax1.axvspan(0.52, beta_th, color="#999999", alpha=0.18, label="Sub-threshold (evanescent Coulomb)")
-    ax1.axvline(beta_th, color="#D55E00", ls="--", lw=1.6, label=f"Threshold $\\beta_{{\\mathrm{{th}}}} = 1/n = {beta_th:.3f}$")
-    ax1.plot(beta_dense, th_dense["cos_theta_c"], "k-", lw=2.0, label="Theory $\\cos\\theta_c = 1/(\\beta n)$")
-    ax1.plot(beta_sw[det], cos_sim[det], "o", color="#D55E00", ms=7, label="Wakis (FIT) $\\cos\\theta_c$")
-    ax1.set_xlim(0.55, 1.0)
-    ax1.set_ylim(0.60, 1.05)
-    ax1.set_xlabel("Normalized particle velocity $\\beta = v/c$ [-]")
-    ax1.set_ylabel("$\\cos\\theta_c$ [-]")
-    ax1.set_title("(b) Cherenkov coherence condition $\\cos\\theta_c = 1/(\\beta n)$", fontsize=10.5, fontweight="bold")
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc="upper right", fontsize=8.5)
+        # (b) Cone angle theta_c and Mach half-angle 90 - theta_c vs beta
+        ax0.axvspan(
+            0.52,
+            beta_th,
+            color="#CBD5E1",
+            alpha=0.45,
+            label=f"Sub-threshold ($\\beta < {beta_th:.3f}$)",
+        )
+        ax0.axvline(beta_th, color="#D55E00", ls="--", lw=1.4, marker="none")
+        ax0.plot(
+            beta_dense,
+            th_dense["theta_c_deg"],
+            label=r"Theory $\theta_c$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            beta_dense,
+            th_dense["shock_half_angle_deg"],
+            label=r"Mach $90^\circ - \theta_c$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            beta_sw[det],
+            theta_sim[det],
+            label=r"FIT $\theta_c$",
+            **figstyle.series_style(1, with_line=False, ms=5.8),
+        )
+        ax0.plot(
+            beta_sw[det],
+            90.0 - theta_sim[det],
+            label=r"FIT $90^\circ - \theta_c$",
+            **figstyle.series_style(2, with_line=False, ms=5.5),
+        )
+        for idx_sub, b_sub in enumerate(beta_sw[~det]):
+            ax0.plot(
+                b_sub,
+                0.0,
+                "x",
+                color=figstyle.INK,
+                ms=7,
+                mew=1.8,
+                label="No cone ($\\beta n < 1$)" if idx_sub == 0 else None,
+            )
+        ax0.set(
+            xlim=(0.55, 1.0),
+            ylim=(-3.0, 60.0),
+            xlabel=r"Normalized speed $\beta = v/c$",
+            ylabel="Angle [deg]",
+            title=r"(b) $\theta_c$ and $90^\circ - \theta_c$",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.25)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "03_cone_angle_vs_beta.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        # (c) cos(theta_c) = 1/(beta n)
+        ax1.axvspan(0.52, beta_th, color="#CBD5E1", alpha=0.45)
+        ax1.axvline(
+            beta_th,
+            color="#D55E00",
+            ls="--",
+            lw=1.4,
+            marker="none",
+            label=f"$\\beta_{{\\mathrm{{th}}}} = 1/n = {beta_th:.3f}$",
+        )
+        ax1.plot(
+            beta_dense,
+            th_dense["cos_theta_c"],
+            label=r"Theory $1/(\beta n)$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.plot(
+            beta_sw[det],
+            cos_sim[det],
+            label=r"Wakis FIT $\cos\theta_c$",
+            **figstyle.series_style(1, with_line=False, ms=5.8),
+        )
+        ax1.set(
+            xlim=(0.55, 1.0),
+            ylim=(0.60, 1.05),
+            xlabel=r"Normalized speed $\beta = v/c$",
+            ylabel=r"$\cos\theta_c$",
+            title=r"(c) Coherence $\cos\theta_c = 1/(\beta n)$",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.25)
+
+        out_path = FIG_DIR / "03_cone_angle_vs_beta.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
@@ -1799,69 +2280,108 @@ def render_frank_tamm_spectrum_figure() -> Path:
     d2w_sub_sim = d["d2W_sub_sim"]
     ff = d["form_factor_sup"]
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.6, 4.9))
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.92, bottom=0.25, top=0.86, wspace=0.34)
 
-    # (a) Log-scale spectral energy density per unit length
-    f_min_an = ANALYSED_FMIN_HZ * 1e-9
-    f_max_an = ANALYSED_FMAX_HZ * 1e-9
-    ax0.axvspan(f_min_an, f_max_an, color="#009E73", alpha=0.10, label=f"Analysed band {f_min_an:.0f}–{f_max_an:.0f} GHz ($\\geq 20\\;\\mathrm{{cells}}/\\lambda$)")
-    ax0.semilogy(f_ghz, d2w_sup_pt, "k--", lw=1.5, label="Point-charge Frank–Tamm $\\propto \\omega$")
-    ax0.semilogy(
-        f_ghz,
-        d2w_sup_th,
-        "k-",
-        lw=2.0,
-        label="Frank–Tamm $\\times\\;F(\\omega) = e^{-(\\omega\\sigma_z/v)^2}$ ($\\beta=0.90$)",
-    )
-    ax0.semilogy(
-        f_ghz[::2],
-        np.maximum(d2w_sup_sim[::2], 1e-21),
-        "o",
-        color="#D55E00",
-        ms=5.2,
-        label="Wakis (FIT) $\\beta = 0.90$ ($\\beta n = 1.35 > 1$)",
-    )
-    ax0.semilogy(
-        f_ghz[::2],
-        np.maximum(d2w_sub_sim[::2], 1e-21),
-        "s",
-        color="#0072B2",
-        ms=4.8,
-        label="Wakis (FIT) $\\beta = 0.60$ ($\\beta n = 0.90 < 1$, floor)",
-    )
-    f_cutoff_ghz = (0.90 * c_light / (2.0 * np.pi * DEFAULT_SIGMAZ_M)) * 1e-9
-    ax0.axvline(f_cutoff_ghz, color="#009E73", ls=":", lw=1.5, label=f"Bunch roll-off $v/(2\\pi\\sigma_z)={f_cutoff_ghz:.1f}$ GHz")
-    ax0.set_ylim(1e-21, 2e-14)
-    ax0.set_xlabel("Frequency $f = \\omega/(2\\pi)$ [GHz]")
-    ax0.set_ylabel("$d^2 W / (d\\omega\\,dz)$ [J$\\cdot$s/m]")
-    ax0.set_title("(a) Radiated spectrum vs Frank–Tamm (log scale)", fontsize=10.5, fontweight="bold")
-    ax0.grid(True, which="both", alpha=0.3)
-    ax0.legend(loc="lower left", fontsize=7.8)
+        f_min_an = ANALYSED_FMIN_HZ * 1e-9
+        f_max_an = ANALYSED_FMAX_HZ * 1e-9
+        ax0.axvspan(
+            f_min_an,
+            f_max_an,
+            color="#D1FAE5",
+            alpha=0.55,
+            label=f"Analysed band {f_min_an:.0f}–{f_max_an:.0f} GHz ($\\geq 20\\;\\mathrm{{cells}}/\\lambda$)",
+        )
+        ax0.semilogy(
+            f_ghz,
+            d2w_sup_pt,
+            label=r"Point-charge Frank–Tamm $\propto \omega$",
+            **figstyle.series_style(7, with_marker=False),
+        )
+        ax0.semilogy(
+            f_ghz,
+            d2w_sup_th,
+            label=r"Frank–Tamm $\times\;F(\omega)$ ($\beta=0.90$)",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.semilogy(
+            f_ghz[::2],
+            np.maximum(d2w_sup_sim[::2], 1e-21),
+            label=r"Wakis FIT $\beta = 0.90$ ($\beta n = 1.35 > 1$)",
+            **figstyle.series_style(1, with_line=False, ms=5.0),
+        )
+        ax0.semilogy(
+            f_ghz[::2],
+            np.maximum(d2w_sub_sim[::2], 1e-21),
+            label=r"Wakis FIT $\beta = 0.60$ ($\beta n = 0.90 < 1$)",
+            **figstyle.series_style(2, with_line=False, ms=4.8),
+        )
+        f_cutoff_ghz = (0.90 * c_light / (2.0 * np.pi * DEFAULT_SIGMAZ_M)) * 1e-9
+        ax0.axvline(
+            f_cutoff_ghz,
+            color="#009E73",
+            ls=":",
+            lw=1.4,
+            marker="none",
+            label=f"Roll-off $v/(2\\pi\\sigma_z)={f_cutoff_ghz:.1f}$ GHz",
+        )
+        ax0.set(
+            ylim=(1e-21, 2e-14),
+            xlabel="Frequency f [GHz]",
+            ylabel=r"$d^2 W / (d\omega\,dz)$ [J$\cdot$s/m]",
+            title="(a) Radiated spectrum vs Frank–Tamm (log)",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.24)
 
-    # (b) Linear scale + Gaussian bunch form factor on twin axis
-    ax1.axvspan(f_min_an, f_max_an, color="#009E73", alpha=0.10, label=f"Analysed band ({f_min_an:.0f}–{f_max_an:.0f} GHz)")
-    ax1.plot(f_ghz, d2w_sup_th * 1e15, "k-", lw=2.0, label="Frank–Tamm $\\times\\;F(\\omega)$ theory")
-    ax1.plot(f_ghz[::2], d2w_sup_sim[::2] * 1e15, "o", color="#D55E00", ms=5.2, label="Wakis (FIT) $\\beta = 0.90$")
-    ax1.plot(f_ghz[::2], d2w_sub_sim[::2] * 1e15, "s", color="#0072B2", ms=4.5, label="Wakis (FIT) $\\beta = 0.60$ (below threshold)")
-    ax1.set_xlabel("Frequency $f$ [GHz]")
-    ax1.set_ylabel("$d^2 W / (d\\omega\\,dz)$ [$10^{-15}$ J$\\cdot$s/m]")
-    ax1.set_title("(b) Linear spectrum and Gaussian bunch form factor $F(\\omega)$", fontsize=10.5, fontweight="bold")
-    ax1.grid(True, alpha=0.3)
+        ax1.axvspan(
+            f_min_an,
+            f_max_an,
+            color="#D1FAE5",
+            alpha=0.55,
+            label=f"Analysed band ({f_min_an:.0f}–{f_max_an:.0f} GHz)",
+        )
+        ax1.plot(
+            f_ghz,
+            d2w_sup_th * 1e15,
+            label=r"Frank–Tamm $\times\;F(\omega)$ theory",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.plot(
+            f_ghz[::2],
+            d2w_sup_sim[::2] * 1e15,
+            label=r"Wakis FIT $\beta = 0.90$",
+            **figstyle.series_style(1, with_line=False, ms=5.0),
+        )
+        ax1.plot(
+            f_ghz[::2],
+            d2w_sub_sim[::2] * 1e15,
+            label=r"Wakis FIT $\beta = 0.60$ (sub-threshold)",
+            **figstyle.series_style(2, with_line=False, ms=4.5),
+        )
+        ax1.plot(
+            f_ghz,
+            ff * float(np.max(d2w_sup_th * 1e15)),
+            label=r"Scaled form factor $F(\omega) = e^{-(\omega\sigma_z/v)^2}$",
+            **figstyle.series_style(4, with_marker=False),
+        )
+        ax1.set(
+            xlabel="Frequency f [GHz]",
+            ylabel=r"$d^2 W / (d\omega\,dz)$ [$10^{-15}$ J$\cdot$s/m]",
+            title=r"(b) Linear spectrum & bunch form factor $F(\omega)$",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.24)
 
-    ax1_r = ax1.twinx()
-    ax1_r.plot(f_ghz, ff, color="#009E73", ls="--", lw=1.6, label="Form factor $F(\\omega) = e^{-(\\omega\\sigma_z/v)^2}$")
-    ax1_r.set_ylabel("Bunch form factor $F(\\omega)$ [-]", color="#009E73")
-    ax1_r.tick_params(axis="y", labelcolor="#009E73")
-    ax1_r.set_ylim(-0.02, 1.08)
-
-    lines_l, labels_l = ax1.get_legend_handles_labels()
-    lines_r, labels_r = ax1_r.get_legend_handles_labels()
-    ax1.legend(lines_l + lines_r, labels_l + labels_r, loc="upper right", fontsize=8.2)
-
-    fig.tight_layout()
-    out_path = FIG_DIR / "04_frank_tamm_spectrum.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        out_path = FIG_DIR / "04_frank_tamm_spectrum.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
@@ -1879,47 +2399,125 @@ def render_dispersive_band_figure() -> Path:
     d2w_th_unatt = d["d2W_theory_unattenuated"]
     d2w_th_att = d["d2W_theory_attenuated"]
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.6, 4.9))
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.25, top=0.86, wspace=0.34)
 
-    # (a) Refractive index n(omega) vs threshold 1/beta
-    ax0.axvspan(f_ghz.min(), f0_ghz, color="#009E73", alpha=0.12, label="Cherenkov passband ($\\beta\\,\\mathrm{Re}\\,n(\\omega) > 1$)")
-    ax0.axvspan(f0_ghz, f_ghz.max(), color="#999999", alpha=0.18, label="Reststrahlen stopband ($\\beta\\,\\mathrm{Re}\\,n(\\omega) < 1$)")
-    ax0.plot(f_ghz, n_real, "k-", lw=2.0, label="$\\mathrm{Re}\\,n(\\omega)$")
-    ax0.plot(f_ghz, n_imag, color="#0072B2", ls="--", lw=1.7, label="$\\mathrm{Im}\\,n(\\omega)$ (extinction)")
-    ax0.axhline(n_th, color="#D55E00", ls="-.", lw=1.8, label=f"Threshold $1/\\beta = {n_th:.3f}$ ($\\beta={beta:.2f}$)")
-    ax0.axvline(f0_ghz, color="#CC79A7", ls=":", lw=1.6, label=f"Lorentz resonance $f_0 = {f0_ghz:.0f}$ GHz")
-    ax0.set_xlim(f_ghz.min(), f_ghz.max())
-    ax0.set_ylim(0.0, 5.2)
-    ax0.set_xlabel("Frequency $f$ [GHz]")
-    ax0.set_ylabel("Refractive index $n(\\omega)$ [-]")
-    ax0.set_title("(a) Lorentz medium dispersion and Cherenkov threshold", fontsize=10.5, fontweight="bold")
-    ax0.grid(True, alpha=0.3)
-    ax0.legend(loc="upper left", fontsize=8.0)
+        ax0.axvspan(
+            f_ghz.min(),
+            f0_ghz,
+            color="#D1FAE5",
+            alpha=0.50,
+            label=r"Passband ($\beta\,\mathrm{Re}\,n(\omega) > 1$)",
+        )
+        ax0.axvspan(
+            f0_ghz,
+            f_ghz.max(),
+            color="#CBD5E1",
+            alpha=0.45,
+            label=r"Reststrahlen stopband ($\beta\,\mathrm{Re}\,n(\omega) < 1$)",
+        )
+        ax0.plot(
+            f_ghz,
+            n_real,
+            label=r"$\mathrm{Re}\,n(\omega)$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            f_ghz,
+            n_imag,
+            label=r"$\mathrm{Im}\,n(\omega)$ (extinction)",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.axhline(
+            n_th,
+            color="#D55E00",
+            ls="-.",
+            lw=1.6,
+            marker="none",
+            label=f"Threshold $1/\\beta = {n_th:.3f}$ ($\\beta={beta:.2f}$)",
+        )
+        ax0.axvline(
+            f0_ghz,
+            color="#CC79A7",
+            ls=":",
+            lw=1.6,
+            marker="none",
+            label=f"Lorentz resonance $f_0 = {f0_ghz:.0f}$ GHz",
+        )
+        ax0.set(
+            xlim=(f_ghz.min(), f_ghz.max()),
+            ylim=(0.0, 5.2),
+            xlabel="Frequency f [GHz]",
+            ylabel=r"Refractive index $n(\omega)$",
+            title="(a) Lorentz dispersion & Cherenkov threshold",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.24)
 
-    # (b) Radiated spectrum showing band edge at f0
-    ax1.axvspan(f_ghz.min(), f0_ghz, color="#009E73", alpha=0.12, label="Passband ($\\beta\\,\\mathrm{Re}\\,n > 1$)")
-    ax1.axvspan(f0_ghz, f_ghz.max(), color="#999999", alpha=0.18, label="Stopband ($\\beta\\,\\mathrm{Re}\\,n < 1$)")
-    ax1.semilogy(f_ghz, np.maximum(d2w_th_unatt, 1e-20), "k--", lw=1.5, label="Lossless Frank–Tamm $\\times\\;F(\\omega)$")
-    ax1.semilogy(f_ghz, np.maximum(d2w_th_att, 1e-20), "k-", lw=2.0, label="Attenuated Frank–Tamm at $r_{\\mathrm{box}}$")
-    ax1.semilogy(f_ghz, np.maximum(d2w_sim, 1e-20), "o", color="#D55E00", ms=5.0, label="Wakis (FIT + ADE Lorentz)")
-    ax1.axvline(f0_ghz, color="#CC79A7", ls=":", lw=1.8, label=f"Band edge $f_0 = {f0_ghz:.0f}$ GHz")
-    ax1.set_xlim(f_ghz.min(), f_ghz.max())
-    ax1.set_ylim(1e-19, 1e-14)
-    ax1.set_xlabel("Frequency $f$ [GHz]")
-    ax1.set_ylabel("$d^2 W / (d\\omega\\,dz)$ [J$\\cdot$s/m]")
-    ax1.set_title("(b) Cherenkov spectrum cut off at the dispersive band edge", fontsize=10.5, fontweight="bold")
-    ax1.grid(True, which="both", alpha=0.3)
-    ax1.legend(loc="upper right", fontsize=8.0)
+        ax1.axvspan(
+            f_ghz.min(),
+            f0_ghz,
+            color="#D1FAE5",
+            alpha=0.50,
+            label=r"Passband ($\beta\,\mathrm{Re}\,n > 1$)",
+        )
+        ax1.axvspan(
+            f0_ghz,
+            f_ghz.max(),
+            color="#CBD5E1",
+            alpha=0.45,
+            label=r"Stopband ($\beta\,\mathrm{Re}\,n < 1$)",
+        )
+        ax1.semilogy(
+            f_ghz,
+            np.maximum(d2w_th_unatt, 1e-20),
+            label=r"Lossless Frank–Tamm $\times\;F(\omega)$",
+            **figstyle.series_style(7, with_marker=False),
+        )
+        ax1.semilogy(
+            f_ghz,
+            np.maximum(d2w_th_att, 1e-20),
+            label=r"Attenuated Frank–Tamm at $r_{\mathrm{box}}$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.semilogy(
+            f_ghz[::2],
+            np.maximum(d2w_sim[::2], 1e-20),
+            label="Wakis FIT + ADE Lorentz",
+            **figstyle.series_style(1, with_line=False, ms=5.0),
+        )
+        ax1.axvline(
+            f0_ghz,
+            color="#CC79A7",
+            ls=":",
+            lw=1.6,
+            marker="none",
+            label=f"Band edge $f_0 = {f0_ghz:.0f}$ GHz",
+        )
+        ax1.set(
+            xlim=(f_ghz.min(), f_ghz.max()),
+            ylim=(1e-19, 1e-14),
+            xlabel="Frequency f [GHz]",
+            ylabel=r"$d^2 W / (d\omega\,dz)$ [J$\cdot$s/m]",
+            title="(b) Spectrum cut off at dispersive band edge",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.24)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "05_dispersive_cherenkov_band.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        out_path = FIG_DIR / "05_dispersive_cherenkov_band.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
 def render_numerical_cherenkov_figure() -> Path:
-    """Render Figure 6: Vacuum beta=0.999 Yee vs TETE numerical Cherenkov comparison and scaling."""
+    """Render Figure 6 (3 panels): Vacuum beta=0.999 Yee vs TETE field maps and dispersion/wake scaling."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     d = np.load(DATA_DIR / "task_numerical_cherenkov.npz")
     x_mm = d["x_m"] * 1e3
@@ -1935,60 +2533,155 @@ def render_numerical_cherenkov_figure() -> Path:
     w_yee = d["W_wake_yee_J"]
     w_tete = d["W_wake_tete_J"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(13.0, 8.6))
-    ax_yee, ax_tete = axes[0]
-    ax_disp, ax_scale = axes[1]
+    solver_yee, structs_vac = _build_vacuum_pipe_setup("yee")
+    solver_tete, _ = _build_vacuum_pipe_setup("tete")
 
-    vmax = float(np.percentile(np.abs(ez_yee), 99.0))
-    im_y = ax_yee.pcolormesh(z_mm, x_mm, ez_yee * 1e-3, cmap="RdBu_r", vmin=-vmax * 1e-3, vmax=vmax * 1e-3, shading="auto")
-    fig.colorbar(im_y, ax=ax_yee, label="$E_z(x, 0, z)$ [kV/m]")
-    ax_yee.plot(zb_mm, 0.0, "*", color="#F0E442", markeredgecolor="k", ms=12, label="Bunch ($\\beta=0.999$)")
-    ax_yee.set_title("(a) Standard Yee scheme in vacuum: spurious numerical Cherenkov wake", fontsize=10.2, fontweight="bold")
-    ax_yee.set_xlabel("$z$ [mm]")
-    ax_yee.set_ylabel("$x$ [mm]")
-    ax_yee.legend(loc="upper left", fontsize=8.5)
+    with figstyle.apply_style():
+        fig = plt.figure(figsize=(figstyle.FULL_WIDTH_IN, 5.8))
+        gs = fig.add_gridspec(2, 2, height_ratios=[1.12, 0.98], hspace=0.68, wspace=0.46)
+        fig.subplots_adjust(left=0.08, right=0.95, bottom=0.14, top=0.92)
+        ax_yee = fig.add_subplot(gs[0, 0])
+        ax_tete = fig.add_subplot(gs[0, 1])
+        ax_disp = fig.add_subplot(gs[1, :])
 
-    im_t = ax_tete.pcolormesh(z_mm, x_mm, ez_tete * 1e-3, cmap="RdBu_r", vmin=-vmax * 1e-3, vmax=vmax * 1e-3, shading="auto")
-    fig.colorbar(im_t, ax=ax_tete, label="$E_z(x, 0, z)$ [kV/m]")
-    ax_tete.plot(zb_mm, 0.0, "*", color="#F0E442", markeredgecolor="k", ms=12, label="Bunch ($\\beta=0.999$)")
-    ax_tete.set_title("(b) Explicit TE/TM (`scheme='tete'`) in vacuum: no spurious cone", fontsize=10.2, fontweight="bold")
-    ax_tete.set_xlabel("$z$ [mm]")
-    ax_tete.set_ylabel("$x$ [mm]")
-    ax_tete.legend(loc="upper left", fontsize=8.5)
+        vmax = float(np.percentile(np.abs(ez_yee), 99.0))
+        im_y = ax_yee.pcolormesh(
+            z_mm,
+            x_mm,
+            ez_yee * 1e-3,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax * 1e-3,
+            vmax=vmax * 1e-3,
+            shading="auto",
+        )
+        fig.colorbar(im_y, ax=ax_yee, label=r"$E_z$ [kV/m]", pad=0.02)
+        schematic.overlay_geometry(
+            ax_yee,
+            solver_yee,
+            plane="zx",
+            unit="mm",
+            structures=structs_vac,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax_yee.set_aspect("auto")
+        _add_pec_pipe_tags_2d(ax_yee, "+x: PEC pipe wall", "−x: PEC pipe wall")
+        ax_yee.plot(
+            zb_mm,
+            0.0,
+            "*",
+            color="#F0E442",
+            markeredgecolor=figstyle.INK,
+            ms=10.5,
+            linestyle="none",
+            zorder=8,
+            label=r"Bunch ($\beta=0.999$, $\gamma=22.4$)",
+        )
+        ax_yee.set(
+            xlim=(z_mm.min(), z_mm.max()),
+            ylim=(x_mm.min(), x_mm.max()),
+            xlabel="Axial z [mm]",
+            ylabel="Transverse x [mm]",
+            title=r"(a) Yee ($\beta=0.999$): spurious wake",
+        )
+        figstyle.place_legend_below(ax_yee, ncol=1, y_offset=-0.26)
 
-    # (c) Numerical phase velocity along z vs k_z * dz
-    ax_disp.plot(kz_dz, vp_tete, color="#0072B2", lw=2.2, label="TE/TM (`scheme='tete'`, $c\\Delta t = \\Delta z$): $v_{p,z}/c \\equiv 1$")
-    ax_disp.plot(kz_dz, vp_yee, color="#D55E00", lw=2.2, label="Standard Yee (`scheme='yee'`): $v_{p,z}(k_z)/c < 1$")
-    ax_disp.axhline(beta, color="k", ls="--", lw=1.5, label=f"Beam velocity $\\beta = {beta:.3f}$")
-    ncr_mask = vp_yee <= beta
-    if np.any(ncr_mask):
-        kz_crit = float(kz_dz[np.argmax(ncr_mask)])
-        ax_disp.axvspan(kz_crit, kz_dz.max(), color="#D55E00", alpha=0.14, label="Spurious Cherenkov band ($v_{p,z}^{\\mathrm{Yee}} < \\beta c$)")
-    ax_disp.set_xlim(0.0, np.pi)
-    ax_disp.set_ylim(0.88, 1.015)
-    ax_disp.set_xlabel("Normalized longitudinal wavenumber $k_z \\Delta z$ [rad]")
-    ax_disp.set_ylabel("Numerical phase velocity $v_{p,z} / c$ [-]")
-    ax_disp.set_title("(c) Longitudinal numerical dispersion: Yee vs TE/TM", fontsize=10.2, fontweight="bold")
-    ax_disp.grid(True, alpha=0.3)
-    ax_disp.legend(loc="lower left", fontsize=8.0)
+        im_t = ax_tete.pcolormesh(
+            z_mm,
+            x_mm,
+            ez_tete * 1e-3,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax * 1e-3,
+            vmax=vmax * 1e-3,
+            shading="auto",
+        )
+        fig.colorbar(im_t, ax=ax_tete, label=r"$E_z$ [kV/m]", pad=0.02)
+        schematic.overlay_geometry(
+            ax_tete,
+            solver_tete,
+            plane="zx",
+            unit="mm",
+            structures=structs_vac,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax_tete.set_aspect("auto")
+        _add_pec_pipe_tags_2d(ax_tete, "+x: PEC pipe wall", "−x: PEC pipe wall")
+        ax_tete.plot(
+            zb_mm,
+            0.0,
+            "*",
+            color="#F0E442",
+            markeredgecolor=figstyle.INK,
+            ms=10.5,
+            linestyle="none",
+            zorder=8,
+            label=r"Bunch ($\beta=0.999$, $\gamma=22.4$)",
+        )
+        ax_tete.set(
+            xlim=(z_mm.min(), z_mm.max()),
+            ylim=(x_mm.min(), x_mm.max()),
+            xlabel="Axial z [mm]",
+            ylabel="Transverse x [mm]",
+            title=r"(b) TE/TM (`tete`): dispersion-free",
+        )
+        figstyle.place_legend_below(ax_tete, ncol=1, y_offset=-0.26)
 
-    # (d) Spurious trailing wake energy vs cells per characteristic wavelength 2*pi*sigma_z / dz
-    ax_scale.loglog(ppw, w_yee, "o-", color="#D55E00", lw=1.8, ms=6.5, label="Yee (`scheme='yee'`) trailing wake energy")
-    ax_scale.loglog(ppw, w_tete, "s-", color="#0072B2", lw=1.8, ms=6.5, label="TE/TM (`scheme='tete'`) residual floor")
-    ax_scale.set_xlim(10.8, 30.5)
-    ax_scale.set_xticks([12, 15, 20, 25, 30])
-    ax_scale.get_xaxis().set_major_formatter(ScalarFormatter())
-    ax_scale.get_xaxis().set_minor_formatter(NullFormatter())
-    ax_scale.set_xlabel("Cells per characteristic bunch wavelength $2\\pi\\sigma_z / \\Delta z$ [-]")
-    ax_scale.set_ylabel("Trailing wake electric energy $W_{\\mathrm{wake}}$ [J]")
-    ax_scale.set_title("(d) Spurious vacuum wake energy vs longitudinal resolution", fontsize=10.2, fontweight="bold")
-    ax_scale.grid(True, which="both", alpha=0.3)
-    ax_scale.legend(loc="upper right", fontsize=8.3)
+        # (c) Longitudinal numerical dispersion + inset of trailing wake energy vs resolution
+        ax_disp.plot(
+            kz_dz,
+            vp_tete,
+            label=r"TE/TM (`tete`, $c\Delta t=\Delta z$): $v_{p,z}/c\equiv 1$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax_disp.plot(
+            kz_dz,
+            vp_yee,
+            label=r"Standard Yee: $v_{p,z}(k_z)/c < 1$",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax_disp.axhline(
+            beta,
+            color=figstyle.INK,
+            ls="--",
+            lw=1.3,
+            marker="none",
+            label=f"Beam speed $\\beta = {beta:.3f}$",
+        )
+        ncr_mask = vp_yee <= beta
+        if np.any(ncr_mask):
+            kz_crit = float(kz_dz[np.argmax(ncr_mask)])
+            ax_disp.axvspan(
+                kz_crit,
+                kz_dz.max(),
+                color="#FDE8E8",
+                alpha=0.55,
+                label=r"Spurious NCR band ($v_{p,z}<\beta c$)",
+            )
+        ax_disp.set(
+            xlim=(0.0, np.pi),
+            ylim=(0.88, 1.018),
+            xlabel=r"Normalized longitudinal wavenumber $k_z \Delta z$ [rad]",
+            ylabel=r"Numerical phase velocity $v_{p,z} / c$",
+            title="(c) Longitudinal numerical dispersion & trailing wake energy scaling",
+        )
+        figstyle.spectrum_grid(ax_disp)
+        figstyle.place_legend_below(ax_disp, ncol=2, y_offset=-0.26)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "06_numerical_cherenkov_yee_vs_tete.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        ins = ax_disp.inset_axes([0.12, 0.14, 0.38, 0.40])
+        ins._is_inset = True
+        ins.set_in_layout(False)
+        ins.set_facecolor(figstyle.PAPER)
+        ins.loglog(ppw, w_yee, "o-", color="#D55E00", lw=1.3, ms=4.0)
+        ins.loglog(ppw, w_tete, "s-", color="#0072B2", lw=1.3, ms=4.0)
+        ins.set_xticks([12, 20, 28])
+        ins.get_xaxis().set_major_formatter(ScalarFormatter())
+        ins.get_xaxis().set_minor_formatter(NullFormatter())
+        ins.tick_params(labelsize=8.5)
+        ins.set_title(r"$W_{\mathrm{wake}}$ [J] vs $2\pi\sigma_z/\Delta z$", fontsize=8.5)
+
+        out_path = FIG_DIR / "06_numerical_cherenkov_yee_vs_tete.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
@@ -2007,58 +2700,100 @@ def render_resolution_convergence_figure() -> Path:
     f_min_an = ANALYSED_FMIN_HZ * 1e-9
     f_max_an = ANALYSED_FMAX_HZ * 1e-9
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.4, 4.8))
-
-    ax0.loglog(ppw, cos_err * 100.0, "o-", color="#D55E00", lw=1.9, ms=7, label="Cone-angle error $|\\cos\\theta_c - 1/(\\beta n)| / (1/(\\beta n))$")
-    ax0.loglog(ppw, spec_err * 100.0, "s-", color="#0072B2", lw=1.9, ms=6.5, label=f"Spectrum $L_2$ error ({f_min_an:.0f}–{f_max_an:.0f} GHz)")
-    ax0.loglog(ppw, dw_err * 100.0, "^-", color="#009E73", lw=1.9, ms=6.5, label=f"Integrated $dW/dz$ error ({f_min_an:.0f}–{f_max_an:.0f} GHz)")
-    # O(Delta x^2) reference slope
-    ref_line = cos_err[0] * 100.0 * (ppw[0] / ppw) ** 2
-    ax0.loglog(ppw, ref_line, "k--", lw=1.3, label="$\\mathcal{O}(\\Delta x^2)$ second-order reference")
-    ax0.axvline(20.0, color="#333333", ls=":", lw=1.3, label="20 cells/$\\lambda$ rule at 30 GHz")
-    ax0.set_xlim(11.0, 22.5)
-    ax0.set_xticks([12, 15, 20])
-    ax0.get_xaxis().set_major_formatter(ScalarFormatter())
-    ax0.get_xaxis().set_minor_formatter(NullFormatter())
-    ax0.set_yticks([0.6, 1, 2, 3, 5, 7])
-    ax0.get_yaxis().set_major_formatter(ScalarFormatter())
-    ax0.get_yaxis().set_minor_formatter(NullFormatter())
-    ax0.set_xlabel("Cells per wavelength at $30$ GHz in $n=1.5$ ($\\lambda_{30\\,\\mathrm{GHz}} / \\Delta x$) [-]")
-    ax0.set_ylabel("Relative error [%]")
-    ax0.set_title("(a) Convergence of cone angle and Frank–Tamm spectrum", fontsize=10.5, fontweight="bold")
-    ax0.grid(True, which="both", alpha=0.3)
-    ax0.legend(loc="lower left", fontsize=7.8)
-
-    colors = ["#E69F00", "#0072B2", "#D55E00"]
-    markers = ["^", "s", "o"]
-    ax1.axvspan(f_min_an, f_max_an, color="#009E73", alpha=0.10, label=f"Analysed band ({f_min_an:.0f}–{f_max_an:.0f} GHz)")
-    ax1.axvline(f_max_an, color="#009E73", ls=":", lw=1.4)
-    ax1.plot(f_ghz, spec_th * 1e15, "k-", lw=2.0, label="Analytical Frank–Tamm $\\times\\;F(\\omega)$")
-    for idx, label in enumerate(names):
-        ax1.plot(
-            f_ghz[::2],
-            spectra_sim[idx][::2] * 1e15,
-            marker=markers[idx % len(markers)],
-            linestyle="none",
-            color=colors[idx % len(colors)],
-            ms=5.0,
-            label=f"Wakis ({label}, $\\lambda_{{30\\,\\mathrm{{GHz}}}}/\\Delta x={ppw[idx]:.1f}$)",
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
         )
-    ax1.set_xlabel("Frequency $f$ [GHz]")
-    ax1.set_ylabel("$d^2 W / (d\\omega\\,dz)$ [$10^{-15}$ J$\\cdot$s/m]")
-    ax1.set_title("(b) Spectral convergence across 3D grid resolutions", fontsize=10.5, fontweight="bold")
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc="upper right", fontsize=8.0)
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.25, top=0.86, wspace=0.34)
 
-    fig.tight_layout()
-    out_path = FIG_DIR / "07_resolution_convergence.png"
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
+        ax0.loglog(
+            ppw,
+            cos_err * 100.0,
+            label=r"Cone error $|\cos\theta_c - 1/(\beta n)| / (1/(\beta n))$",
+            **figstyle.series_style(1, ms=5.8),
+        )
+        ax0.loglog(
+            ppw,
+            spec_err * 100.0,
+            label=f"Spectrum $L_2$ error ({f_min_an:.0f}–{f_max_an:.0f} GHz)",
+            **figstyle.series_style(0, ms=5.5),
+        )
+        ax0.loglog(
+            ppw,
+            dw_err * 100.0,
+            label=f"Integrated $dW/dz$ error ({f_min_an:.0f}–{f_max_an:.0f} GHz)",
+            **figstyle.series_style(2, ms=5.5),
+        )
+        ref_line = cos_err[0] * 100.0 * (ppw[0] / ppw) ** 2
+        ax0.loglog(
+            ppw,
+            ref_line,
+            label=r"$\mathcal{O}(\Delta x^2)$ reference",
+            **figstyle.series_style(7, with_marker=False),
+        )
+        ax0.axvline(
+            20.0,
+            color=figstyle.INK,
+            ls=":",
+            lw=1.3,
+            marker="none",
+            label=r"20 cells/$\lambda$ rule (30 GHz)",
+        )
+        ax0.set_xlim(11.0, 22.5)
+        ax0.set_xticks([12, 15, 20])
+        ax0.get_xaxis().set_major_formatter(ScalarFormatter())
+        ax0.get_xaxis().set_minor_formatter(NullFormatter())
+        ax0.set_yticks([0.6, 1, 2, 3, 5, 7])
+        ax0.get_yaxis().set_major_formatter(ScalarFormatter())
+        ax0.get_yaxis().set_minor_formatter(NullFormatter())
+        ax0.set(
+            xlabel=r"Cells per wavelength at 30 GHz ($\lambda_{30\,\mathrm{GHz}} / \Delta x$)",
+            ylabel="Relative error [%]",
+            title="(a) Convergence of cone angle & spectrum",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.24)
+
+        ax1.axvspan(
+            f_min_an,
+            f_max_an,
+            color="#D1FAE5",
+            alpha=0.55,
+            label=f"Analysed band ({f_min_an:.0f}–{f_max_an:.0f} GHz)",
+        )
+        ax1.axvline(f_max_an, color="#009E73", ls=":", lw=1.4, marker="none")
+        ax1.plot(
+            f_ghz,
+            spec_th * 1e15,
+            label=r"Analytic Frank–Tamm $\times\;F(\omega)$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        for idx, label in enumerate(names):
+            ax1.plot(
+                f_ghz[::2],
+                spectra_sim[idx][::2] * 1e15,
+                label=f"Wakis ({label}, $\\lambda/\\Delta x={ppw[idx]:.1f}$)",
+                **figstyle.series_style(idx + 1, with_line=False, ms=5.0),
+            )
+        ax1.set(
+            xlabel="Frequency f [GHz]",
+            ylabel=r"$d^2 W / (d\omega\,dz)$ [$10^{-15}$ J$\cdot$s/m]",
+            title="(b) Spectral convergence across 3D grids",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.24)
+
+        out_path = FIG_DIR / "07_resolution_convergence.png"
+        figstyle.save(fig, out_path, close=True, auto_legend_below=False)
     return out_path
 
 
 def render_animations() -> list[Path]:
-    """Render the 3 required animated GIFs (< 5 MB each)."""
+    """Render the 3 required animated GIFs (< 5 MB each) with geometry overlays."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     d_diel = np.load(DATA_DIR / "task_dielectric.npz")
     d_ncr = np.load(DATA_DIR / "task_numerical_cherenkov.npz")
@@ -2071,139 +2806,268 @@ def render_animations() -> list[Path]:
     zb_sub_mm = d_diel["frames_zb_sub_m"] * 1e3
     theta_th_rad = np.radians(float(d_diel["theta_c_sup_theory_deg"]))
 
-    # --- GIF 1: Single-panel dielectric Cherenkov cone at beta = 0.90 ---
-    gif1_path = FIG_DIR / "cherenkov_cone_beta09.gif"
-    vmax1 = float(np.percentile(np.abs(frames_sup), 99.0))
-    fig1, ax1 = plt.subplots(figsize=(7.0, 4.2), dpi=100)
-    im1 = ax1.pcolormesh(
-        z_mm,
-        x_mm,
-        frames_sup[0],
-        cmap="RdBu_r",
-        vmin=-vmax1,
-        vmax=vmax1,
-        shading="auto",
-    )
-    fig1.colorbar(im1, ax=ax1, label="$E_z(x, 0, z)$ [kV/m]")
-    r_line_mm = np.linspace(0.0, 9.2, 80)
-    (cone_up,) = ax1.plot([], [], "k--", lw=1.7, label="Analytic cone $\\cos\\theta_c = 1/(\\beta n)$")
-    (cone_dn,) = ax1.plot([], [], "k--", lw=1.7)
-    (bunch_pt,) = ax1.plot([], [], "*", color="#F0E442", markeredgecolor="k", ms=11, label="Bunch centroid")
-    ax1.set_xlim(z_mm.min(), z_mm.max())
-    ax1.set_ylim(x_mm.min(), x_mm.max())
-    ax1.set_xlabel("$z$ [mm]")
-    ax1.set_ylabel("$x$ [mm]")
-    ax1.legend(loc="upper left", fontsize=8.2)
+    solver_diel, structs_diel, _, mons_diel, _ = _build_dielectric_setup()
+    solver_yee, structs_vac = _build_vacuum_pipe_setup("yee")
+    solver_tete, _ = _build_vacuum_pipe_setup("tete")
 
-    def _update1(frame_idx: int):
-        im1.set_array(frames_sup[frame_idx].ravel())
-        zb = zb_sup_mm[frame_idx]
-        z_c = zb - r_line_mm * np.tan(theta_th_rad)
-        cone_up.set_data(z_c, +r_line_mm)
-        cone_dn.set_data(z_c, -r_line_mm)
-        bunch_pt.set_data([zb], [0.0])
-        ax1.set_title(
-            f"Cherenkov cone in dielectric ($n=1.5,\\;\\beta=0.90,\\;z_b={zb:5.1f}$ mm)",
-            fontsize=10,
-            fontweight="bold",
+    with figstyle.apply_style():
+        # --- GIF 1: Single-panel dielectric Cherenkov cone at beta = 0.90 ---
+        gif1_path = FIG_DIR / "cherenkov_cone_beta09.gif"
+        vmax1 = float(np.percentile(np.abs(frames_sup), 99.0))
+        fig1, ax1 = plt.subplots(figsize=(7.0, 4.2), dpi=100)
+        im1 = ax1.pcolormesh(
+            z_mm,
+            x_mm,
+            frames_sup[0],
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax1,
+            vmax=vmax1,
+            shading="auto",
         )
-        return im1, cone_up, cone_dn, bunch_pt
+        fig1.colorbar(im1, ax=ax1, label=r"$E_z(x, 0, z)$ [kV/m]")
+        schematic.overlay_geometry(
+            ax1,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            monitors=mons_diel,
+            show_boundaries=True,
+            show_materials=True,
+            show_monitors=True,
+        )
+        ax1.set_aspect("auto")
+        r_line_mm = np.linspace(0.0, 9.2, 80)
+        (cone_up,) = ax1.plot(
+            [],
+            [],
+            color=figstyle.INK,
+            ls="--",
+            lw=1.7,
+            marker="none",
+            zorder=7,
+            label=r"Analytic cone $\cos\theta_c = 1/(\beta n)$",
+        )
+        (cone_dn,) = ax1.plot([], [], color=figstyle.INK, ls="--", lw=1.7, marker="none", zorder=7)
+        (bunch_pt,) = ax1.plot(
+            [],
+            [],
+            "*",
+            color="#F0E442",
+            markeredgecolor=figstyle.INK,
+            ms=11,
+            linestyle="none",
+            zorder=8,
+            label="Bunch centroid",
+        )
+        ax1.set_xlim(z_mm.min(), z_mm.max())
+        ax1.set_ylim(x_mm.min(), x_mm.max())
+        ax1.set_xlabel("Axial z [mm]")
+        ax1.set_ylabel("Transverse x [mm]")
+        ax1.legend(loc="upper left", frameon=False, fontsize=8.5)
 
-    fig1.tight_layout()
-    ani1 = animation.FuncAnimation(fig1, _update1, frames=len(frames_sup), interval=90, blit=False)
-    ani1.save(gif1_path, writer=animation.PillowWriter(fps=11))
-    plt.close(fig1)
+        def _update1(frame_idx: int):
+            im1.set_array(frames_sup[frame_idx].ravel())
+            zb = zb_sup_mm[frame_idx]
+            z_c = zb - r_line_mm * np.tan(theta_th_rad)
+            cone_up.set_data(z_c, +r_line_mm)
+            cone_dn.set_data(z_c, -r_line_mm)
+            bunch_pt.set_data([zb], [0.0])
+            ax1.set_title(
+                f"Cherenkov cone in dielectric ($n=1.5,\\;\\beta=0.90,\\;z_b={zb:5.1f}$ mm)",
+                fontsize=10.0,
+                fontweight="bold",
+            )
+            return im1, cone_up, cone_dn, bunch_pt
 
-    # --- GIF 2: Side-by-side beta = 0.60 (no cone) vs beta = 0.90 (Cherenkov cone) ---
-    gif2_path = FIG_DIR / "cherenkov_sub_vs_super_threshold.gif"
-    n_f2 = min(len(frames_sub), len(frames_sup))
-    vmax_sub = float(np.percentile(np.abs(frames_sub), 99.0))
-    fig2, (ax2_l, ax2_r) = plt.subplots(1, 2, figsize=(10.5, 4.1), dpi=95)
-    im2_l = ax2_l.pcolormesh(z_mm, x_mm, frames_sub[0], cmap="RdBu_r", vmin=-vmax_sub, vmax=vmax_sub, shading="auto")
-    fig2.colorbar(im2_l, ax=ax2_l, label="$E_z$ [kV/m]")
-    (pt2_l,) = ax2_l.plot([], [], "*", color="#F0E442", markeredgecolor="k", ms=10)
-    ax2_l.set_xlabel("$z$ [mm]")
-    ax2_l.set_ylabel("$x$ [mm]")
+        fig1.tight_layout()
+        ani1 = animation.FuncAnimation(fig1, _update1, frames=len(frames_sup), interval=90, blit=False)
+        ani1.save(gif1_path, writer=animation.PillowWriter(fps=11))
+        plt.close(fig1)
 
-    im2_r = ax2_r.pcolormesh(z_mm, x_mm, frames_sup[0], cmap="RdBu_r", vmin=-vmax1, vmax=vmax1, shading="auto")
-    fig2.colorbar(im2_r, ax=ax2_r, label="$E_z$ [kV/m]")
-    (pt2_r,) = ax2_r.plot([], [], "*", color="#F0E442", markeredgecolor="k", ms=10)
-    (c2_up,) = ax2_r.plot([], [], "k--", lw=1.5)
-    (c2_dn,) = ax2_r.plot([], [], "k--", lw=1.5)
-    ax2_r.set_xlim(z_mm.min(), z_mm.max())
-    ax2_r.set_ylim(x_mm.min(), x_mm.max())
-    ax2_r.set_xlabel("$z$ [mm]")
-    ax2_r.set_ylabel("$x$ [mm]")
+        # --- GIF 2: Side-by-side beta = 0.60 (no cone) vs beta = 0.90 (Cherenkov cone) ---
+        gif2_path = FIG_DIR / "cherenkov_sub_vs_super_threshold.gif"
+        n_f2 = min(len(frames_sub), len(frames_sup))
+        vmax_sub = float(np.percentile(np.abs(frames_sub), 99.0))
+        fig2, (ax2_l, ax2_r) = plt.subplots(1, 2, figsize=(10.6, 4.1), dpi=95)
+        im2_l = ax2_l.pcolormesh(
+            z_mm,
+            x_mm,
+            frames_sub[0],
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax_sub,
+            vmax=vmax_sub,
+            shading="auto",
+        )
+        fig2.colorbar(im2_l, ax=ax2_l, label=r"$E_z$ [kV/m]")
+        schematic.overlay_geometry(
+            ax2_l,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax2_l.set_aspect("auto")
+        (pt2_l,) = ax2_l.plot(
+            [], [], "*", color="#F0E442", markeredgecolor=figstyle.INK, ms=10, linestyle="none", zorder=8
+        )
+        ax2_l.set_xlim(z_mm.min(), z_mm.max())
+        ax2_l.set_ylim(x_mm.min(), x_mm.max())
+        ax2_l.set_xlabel("Axial z [mm]")
+        ax2_l.set_ylabel("Transverse x [mm]")
 
-    def _update2(frame_idx: int):
-        im2_l.set_array(frames_sub[frame_idx].ravel())
-        im2_r.set_array(frames_sup[frame_idx].ravel())
-        zb_l = zb_sub_mm[frame_idx]
-        zb_r = zb_sup_mm[frame_idx]
-        pt2_l.set_data([zb_l], [0.0])
-        pt2_r.set_data([zb_r], [0.0])
-        z_c = zb_r - r_line_mm * np.tan(theta_th_rad)
-        c2_up.set_data(z_c, +r_line_mm)
-        c2_dn.set_data(z_c, -r_line_mm)
-        ax2_l.set_title(f"$\\beta=0.60$ ($\\beta n=0.90<1$): Coulomb field", fontsize=9.5, fontweight="bold")
-        ax2_r.set_title(f"$\\beta=0.90$ ($\\beta n=1.35>1$): Cherenkov cone", fontsize=9.5, fontweight="bold")
-        return im2_l, im2_r, pt2_l, pt2_r, c2_up, c2_dn
+        im2_r = ax2_r.pcolormesh(
+            z_mm,
+            x_mm,
+            frames_sup[0],
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax1,
+            vmax=vmax1,
+            shading="auto",
+        )
+        fig2.colorbar(im2_r, ax=ax2_r, label=r"$E_z$ [kV/m]")
+        schematic.overlay_geometry(
+            ax2_r,
+            solver_diel,
+            plane="zx",
+            unit="mm",
+            structures=structs_diel,
+            monitors=mons_diel,
+            show_boundaries=True,
+            show_materials=True,
+            show_monitors=True,
+        )
+        ax2_r.set_aspect("auto")
+        (pt2_r,) = ax2_r.plot(
+            [], [], "*", color="#F0E442", markeredgecolor=figstyle.INK, ms=10, linestyle="none", zorder=8
+        )
+        (c2_up,) = ax2_r.plot([], [], color=figstyle.INK, ls="--", lw=1.5, marker="none", zorder=7)
+        (c2_dn,) = ax2_r.plot([], [], color=figstyle.INK, ls="--", lw=1.5, marker="none", zorder=7)
+        ax2_r.set_xlim(z_mm.min(), z_mm.max())
+        ax2_r.set_ylim(x_mm.min(), x_mm.max())
+        ax2_r.set_xlabel("Axial z [mm]")
+        ax2_r.set_ylabel("Transverse x [mm]")
 
-    fig2.tight_layout()
-    ani2 = animation.FuncAnimation(fig2, _update2, frames=n_f2, interval=95, blit=False)
-    ani2.save(gif2_path, writer=animation.PillowWriter(fps=10))
-    plt.close(fig2)
+        def _update2(frame_idx: int):
+            im2_l.set_array(frames_sub[frame_idx].ravel())
+            im2_r.set_array(frames_sup[frame_idx].ravel())
+            zb_l = zb_sub_mm[frame_idx]
+            zb_r = zb_sup_mm[frame_idx]
+            pt2_l.set_data([zb_l], [0.0])
+            pt2_r.set_data([zb_r], [0.0])
+            z_c = zb_r - r_line_mm * np.tan(theta_th_rad)
+            c2_up.set_data(z_c, +r_line_mm)
+            c2_dn.set_data(z_c, -r_line_mm)
+            ax2_l.set_title(r"$\beta=0.60$ ($\beta n=0.90<1$): Coulomb field", fontsize=9.5, fontweight="bold")
+            ax2_r.set_title(r"$\beta=0.90$ ($\beta n=1.35>1$): Cherenkov cone", fontsize=9.5, fontweight="bold")
+            return im2_l, im2_r, pt2_l, pt2_r, c2_up, c2_dn
 
-    # --- GIF 3: Vacuum beta = 0.999 Yee vs TETE side-by-side ---
-    gif3_path = FIG_DIR / "numerical_cherenkov_yee_vs_tete.gif"
-    x_v_mm = d_ncr["x_m"] * 1e3
-    z_v_mm = d_ncr["z_m"] * 1e3
-    f_yee = d_ncr["frames_Ez_yee"] * 1e-3
-    f_tete = d_ncr["frames_Ez_tete"] * 1e-3
-    zb_v_mm = d_ncr["frames_zb_m"] * 1e3
-    vmax3 = float(np.percentile(np.abs(f_yee), 99.0))
+        fig2.tight_layout()
+        ani2 = animation.FuncAnimation(fig2, _update2, frames=n_f2, interval=95, blit=False)
+        ani2.save(gif2_path, writer=animation.PillowWriter(fps=10))
+        plt.close(fig2)
 
-    fig3, (ax3_l, ax3_r) = plt.subplots(1, 2, figsize=(10.5, 4.1), dpi=95)
-    im3_l = ax3_l.pcolormesh(z_v_mm, x_v_mm, f_yee[0], cmap="RdBu_r", vmin=-vmax3, vmax=vmax3, shading="auto")
-    fig3.colorbar(im3_l, ax=ax3_l, label="$E_z$ [kV/m]")
-    (pt3_l,) = ax3_l.plot([], [], "*", color="#F0E442", markeredgecolor="k", ms=10)
-    ax3_l.set_xlabel("$z$ [mm]")
-    ax3_l.set_ylabel("$x$ [mm]")
+        # --- GIF 3: Vacuum beta = 0.999 Yee vs TETE side-by-side ---
+        gif3_path = FIG_DIR / "numerical_cherenkov_yee_vs_tete.gif"
+        x_v_mm = d_ncr["x_m"] * 1e3
+        z_v_mm = d_ncr["z_m"] * 1e3
+        f_yee = d_ncr["frames_Ez_yee"] * 1e-3
+        f_tete = d_ncr["frames_Ez_tete"] * 1e-3
+        zb_v_mm = d_ncr["frames_zb_m"] * 1e3
+        vmax3 = float(np.percentile(np.abs(f_yee), 99.0))
 
-    im3_r = ax3_r.pcolormesh(z_v_mm, x_v_mm, f_tete[0], cmap="RdBu_r", vmin=-vmax3, vmax=vmax3, shading="auto")
-    fig3.colorbar(im3_r, ax=ax3_r, label="$E_z$ [kV/m]")
-    (pt3_r,) = ax3_r.plot([], [], "*", color="#F0E442", markeredgecolor="k", ms=10)
-    ax3_r.set_xlabel("$z$ [mm]")
-    ax3_r.set_ylabel("$x$ [mm]")
+        fig3, (ax3_l, ax3_r) = plt.subplots(1, 2, figsize=(10.6, 4.1), dpi=95)
+        im3_l = ax3_l.pcolormesh(
+            z_v_mm,
+            x_v_mm,
+            f_yee[0],
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax3,
+            vmax=vmax3,
+            shading="auto",
+        )
+        fig3.colorbar(im3_l, ax=ax3_l, label=r"$E_z$ [kV/m]")
+        schematic.overlay_geometry(
+            ax3_l,
+            solver_yee,
+            plane="zx",
+            unit="mm",
+            structures=structs_vac,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax3_l.set_aspect("auto")
+        _add_pec_pipe_tags_2d(ax3_l, "+x: PEC wall", "−x: PEC wall")
+        (pt3_l,) = ax3_l.plot(
+            [], [], "*", color="#F0E442", markeredgecolor=figstyle.INK, ms=10, linestyle="none", zorder=8
+        )
+        ax3_l.set_xlim(z_v_mm.min(), z_v_mm.max())
+        ax3_l.set_ylim(x_v_mm.min(), x_v_mm.max())
+        ax3_l.set_xlabel("Axial z [mm]")
+        ax3_l.set_ylabel("Transverse x [mm]")
 
-    def _update3(frame_idx: int):
-        im3_l.set_array(f_yee[frame_idx].ravel())
-        im3_r.set_array(f_tete[frame_idx].ravel())
-        zb = zb_v_mm[frame_idx]
-        pt3_l.set_data([zb], [0.0])
-        pt3_r.set_data([zb], [0.0])
-        ax3_l.set_title(f"Vacuum $\\beta=0.999$ Yee: numerical Cherenkov", fontsize=9.5, fontweight="bold")
-        ax3_r.set_title(f"Vacuum $\\beta=0.999$ TE/TM (`tete`): dispersion-free", fontsize=9.5, fontweight="bold")
-        return im3_l, im3_r, pt3_l, pt3_r
+        im3_r = ax3_r.pcolormesh(
+            z_v_mm,
+            x_v_mm,
+            f_tete[0],
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-vmax3,
+            vmax=vmax3,
+            shading="auto",
+        )
+        fig3.colorbar(im3_r, ax=ax3_r, label=r"$E_z$ [kV/m]")
+        schematic.overlay_geometry(
+            ax3_r,
+            solver_tete,
+            plane="zx",
+            unit="mm",
+            structures=structs_vac,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        ax3_r.set_aspect("auto")
+        _add_pec_pipe_tags_2d(ax3_r, "+x: PEC wall", "−x: PEC wall")
+        (pt3_r,) = ax3_r.plot(
+            [], [], "*", color="#F0E442", markeredgecolor=figstyle.INK, ms=10, linestyle="none", zorder=8
+        )
+        ax3_r.set_xlim(z_v_mm.min(), z_v_mm.max())
+        ax3_r.set_ylim(x_v_mm.min(), x_v_mm.max())
+        ax3_r.set_xlabel("Axial z [mm]")
+        ax3_r.set_ylabel("Transverse x [mm]")
 
-    fig3.tight_layout()
-    ani3 = animation.FuncAnimation(fig3, _update3, frames=len(f_yee), interval=95, blit=False)
-    ani3.save(gif3_path, writer=animation.PillowWriter(fps=10))
-    plt.close(fig3)
+        def _update3(frame_idx: int):
+            im3_l.set_array(f_yee[frame_idx].ravel())
+            im3_r.set_array(f_tete[frame_idx].ravel())
+            zb = zb_v_mm[frame_idx]
+            pt3_l.set_data([zb], [0.0])
+            pt3_r.set_data([zb], [0.0])
+            ax3_l.set_title(r"Vacuum $\beta=0.999$ Yee: numerical Cherenkov", fontsize=9.5, fontweight="bold")
+            ax3_r.set_title(r"Vacuum $\beta=0.999$ TE/TM (`tete`): dispersion-free", fontsize=9.5, fontweight="bold")
+            return im3_l, im3_r, pt3_l, pt3_r
+
+        fig3.tight_layout()
+        ani3 = animation.FuncAnimation(fig3, _update3, frames=len(f_yee), interval=95, blit=False)
+        ani3.save(gif3_path, writer=animation.PillowWriter(fps=10))
+        plt.close(fig3)
 
     return [gif1_path, gif2_path, gif3_path]
 
 
 def render_all_figures() -> list[Path]:
-    """Render all 7 static PNG figures and 3 animated GIFs from saved data/."""
-    paths = [
-        render_geometry_and_mesh_figure(),
-        render_field_maps_figure(),
-        render_cone_angle_vs_beta_figure(),
-        render_frank_tamm_spectrum_figure(),
-        render_dispersive_band_figure(),
-        render_numerical_cherenkov_figure(),
-        render_resolution_convergence_figure(),
-    ]
+    """Render setup schematics (00a, 00b), all 7 static PNG figures, and 3 animated GIFs."""
+    paths = list(render_setup_figures())
+    paths.extend(
+        [
+            render_geometry_and_mesh_figure(),
+            render_field_maps_figure(),
+            render_cone_angle_vs_beta_figure(),
+            render_frank_tamm_spectrum_figure(),
+            render_dispersive_band_figure(),
+            render_numerical_cherenkov_figure(),
+            render_resolution_convergence_figure(),
+        ]
+    )
     paths.extend(render_animations())
     return paths

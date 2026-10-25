@@ -10,16 +10,17 @@ Space-Charge Waves on a Drifting Electron Beam (`wakis.beam_fluid.LinearizedBeam
 
 from pathlib import Path
 
-import matplotlib.animation as animation
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+from PIL import Image
 from scipy.constants import c as c_light, e as q_e, epsilon_0 as eps_0, m_e
 from scipy.optimize import brentq
 from scipy.special import jn as bessel_jn
 
 import wakis
+from wakis import figstyle, schematic
 from wakis.beam_fluid import (
     LinearizedBeam,
     ballistic_bunching_analytic,
@@ -859,14 +860,275 @@ def run_chu_energy_and_slow_wave_audit(
 
 
 # ---------------------------------------------------------------------------
-# Figure generation suite (14 figures + animated GIF)
+# Schematic setup builders & figure generation suite (00a/00b + 14 figures)
 # ---------------------------------------------------------------------------
+
+
+class _RegionBox:
+    """Axis-aligned box region with ``bounds``, ``material``, and ``name`` for ``wakis.schematic``."""
+
+    def __init__(self, low, high, name: str, material="LinearizedBeam"):
+        self._low = np.asarray(low, dtype=float)
+        self._high = np.asarray(high, dtype=float)
+        self.name = str(name)
+        self.material = material
+
+    @property
+    def bounds(self):
+        return self._low, self._high
+
+
+def _build_bloch_2d_setup(primary: dict):
+    """Construct live SolverFIT3D, beam box, source, and probe records for the 2D Bloch setup."""
+    nx = int(primary.get("nx", 64))
+    ny = int(primary.get("ny", 128))
+    b_half = float(primary.get("b_half", B_BEAM_REF))
+    a_half = float(primary.get("a_half", A_TUNNEL_REF))
+    f0 = float(primary.get("f0", F0_REF))
+    u0 = float(primary.get("u0", U0_REF))
+    lx = u0 / f0
+    dx = lx / nx
+    beta = 2.0 * np.pi * f0 / u0
+
+    grid = wakis.GridFIT3D(
+        0.0,
+        lx,
+        -a_half,
+        a_half,
+        -0.5 * dx,
+        0.5 * dx,
+        nx,
+        ny,
+        1,
+        verbose=0,
+    )
+    solver = wakis.SolverFIT3D(
+        grid,
+        bc_low=["bloch", "pec", "periodic"],
+        bc_high=["bloch", "pec", "periodic"],
+        k_bloch=[-beta, 0.0, 0.0],
+        dtype=np.complex128,
+        cfln=0.75,
+        verbose=0,
+    )
+    beam_box = _RegionBox(
+        [0.0, -b_half, -0.5 * dx],
+        [lx, b_half, 0.5 * dx],
+        name="Drifting e⁻ sheet beam (b = 0.5 mm, u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz)",
+    )
+    src_rec = {
+        "kind": "beam",
+        "type_name": "LinearizedBeam",
+        "short_word": "e⁻ beam",
+        "desc": "LinearizedBeam (u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz, λ_e = 9.59 mm)",
+        "label": "LinearizedBeam (u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz)",
+        "pos_str": "y ∈ [−0.50 mm, +0.50 mm], x ∈ [0 mm, 9.59 mm]",
+        "polarization": "J_{1x}, E_x",
+        "h_bounds": (0.0, lx),
+        "v_bounds": (0.0, 0.0),
+        "k_vec": (1.0, 0.0, 0.0),
+        "pulse": {
+            "f0": f0,
+            "fwidth": 2.70e9,
+            "t_peak": 0.40e-9,
+            "t_end": 1.60e-9,
+            "src_time": None,
+        },
+    }
+    mon_slice = {
+        "kind": "plane",
+        "type_name": "EigenmodeSlice",
+        "short_word": "TM slice",
+        "desc": f"TM₁₀ mode slice E_x(y), E_y(y), J_{{1x}}(y) (x = {0.25 * lx * 1e3:.2f} mm)",
+        "label": f"TM₁₀ eigenmode slice (x = {0.25 * lx * 1e3:.2f} mm)",
+        "pos_str": f"x = {0.25 * lx * 1e3:.2f} mm, y ∈ [−2.0 mm, +2.0 mm]",
+        "freq_str": "6 freqs in [1.5, 10.0] GHz",
+        "frequencies": np.array([1.5e9, 3.0e9, 5.0e9, 7.0e9, 8.5e9, 10.0e9]),
+        "h_bounds": (0.25 * lx, 0.25 * lx),
+        "v_bounds": (-a_half, a_half),
+    }
+    probes = [
+        {
+            "pos": (0.25 * lx, 0.0, 0.0),
+            "label": f"Doppler doublet FFT probe E_x(x_p, 0, t) (x_p = {0.25 * lx * 1e3:.2f} mm)",
+        }
+    ]
+    return solver, [beam_box], [src_rec], [mon_slice], probes
+
+
+def _build_drift_tube_setup(bunch: dict):
+    """Construct live SolverFIT3D, structures, sources, and monitors for the 2D klystron drift tube."""
+    x_mm = np.asarray(bunch["x_coords"], dtype=float)
+    y_mm = np.asarray(bunch["y_coords"], dtype=float)
+    nx = len(x_mm)
+    ny = len(y_mm)
+    l_tube = 0.115
+    a_half = A_TUNNEL_REF
+    b_half = 0.8e-3
+    dx = l_tube / nx
+    n_pml = 6
+    ramp_cells = 10
+
+    grid = wakis.GridFIT3D(
+        0.0,
+        l_tube,
+        -a_half,
+        a_half,
+        -0.5 * dx,
+        0.5 * dx,
+        nx,
+        ny,
+        1,
+        verbose=0,
+    )
+    solver = wakis.SolverFIT3D(
+        grid,
+        bc_low=["cpml", "pec", "periodic"],
+        bc_high=["cpml", "pec", "periodic"],
+        n_pml=n_pml,
+        cfln=0.5,
+        verbose=0,
+    )
+    x_taper_start = l_tube - (n_pml + ramp_cells) * dx
+    x_pml_high = l_tube - n_pml * dx
+    x_pml_low = n_pml * dx
+    s_in = (n_pml + 3) * dx
+    d_gap = 4.0 * dx
+    s_gap = s_in + 0.5 * d_gap
+
+    beam_box = _RegionBox(
+        [x_pml_low, -b_half, -0.5 * dx],
+        [x_taper_start, b_half, 0.5 * dx],
+        name="Drifting e⁻ beam (|y| ≤ 0.8 mm, u₀ = 0.16c)",
+    )
+    taper_box = _RegionBox(
+        [x_taper_start, -b_half, -0.5 * dx],
+        [x_pml_high, b_half, 0.5 * dx],
+        name="ρ₀ → 0",
+    )
+    gap_src = {
+        "kind": "sheet",
+        "type_name": "RFModulatingGap",
+        "short_word": "RF gap",
+        "desc": f"RF modulating gap V_m = 100 V, f_mod = 5.0 GHz (z_g = {s_gap * 1e3:.2f} mm, d_g = {d_gap * 1e3:.2f} mm)",
+        "label": f"RF modulating gap (z_g = {s_gap * 1e3:.2f} mm)",
+        "pos_str": f"z = {s_gap * 1e3:.2f} mm",
+        "polarization": "v₁(t) = Δv sin(ωt)",
+        "h_bounds": (s_gap, s_gap),
+        "v_bounds": (-b_half, b_half),
+        "k_vec": (1.0, 0.0, 0.0),
+        "pulse": None,
+    }
+    l_beat_th = float(bunch["L_beat_th"])
+    z_q4 = s_gap + 0.5 * l_beat_th
+    z_q2 = s_gap + l_beat_th
+    monitors = [
+        {
+            "kind": "plane",
+            "type_name": "BunchingPeakMonitor",
+            "short_word": "λ_q/4 peak",
+            "desc": f"Klystron bunching peak λ_q/4 (z = {z_q4 * 1e3:.1f} mm)",
+            "label": f"λ_q/4 current peak (z = {z_q4 * 1e3:.1f} mm)",
+            "pos_str": f"z = {z_q4 * 1e3:.1f} mm",
+            "freq_str": "f = 5.0 GHz",
+            "frequencies": np.array([F0_REF]),
+            "h_bounds": (z_q4, z_q4),
+            "v_bounds": (-b_half, b_half),
+        },
+        {
+            "kind": "plane",
+            "type_name": "CurrentNodeMonitor",
+            "short_word": "λ_q/2 node",
+            "desc": f"First current node λ_q/2 (z = {z_q2 * 1e3:.1f} mm)",
+            "label": f"λ_q/2 current node (z = {z_q2 * 1e3:.1f} mm)",
+            "pos_str": f"z = {z_q2 * 1e3:.1f} mm",
+            "freq_str": "f = 5.0 GHz",
+            "frequencies": np.array([F0_REF]),
+            "h_bounds": (z_q2, z_q2),
+            "v_bounds": (-b_half, b_half),
+        },
+    ]
+    return solver, [beam_box, taper_box], [gap_src], monitors
+
+
+def _build_tunnel_3d_setup(beam3d: dict):
+    """Construct live SolverFIT3D and 3D beam box for the 3D square PEC tunnel."""
+    x_n = np.asarray(beam3d["x_nodes"], dtype=float)
+    y_n = np.asarray(beam3d["y_nodes"], dtype=float)
+    nx = len(x_n)
+    ny = len(y_n)
+    nz = max(16, int(round(float(beam3d["n_cells"]) / max(1, nx * ny))))
+    b_half = float(beam3d["b_half"])
+    a_half = float(beam3d["a_half"])
+    f0 = float(beam3d.get("f0", F0_REF))
+    lz = U0_REF / f0
+    beta = 2.0 * np.pi * f0 / U0_REF
+
+    grid = wakis.GridFIT3D(
+        -a_half,
+        a_half,
+        -a_half,
+        a_half,
+        0.0,
+        lz,
+        nx,
+        ny,
+        nz,
+        verbose=0,
+    )
+    solver = wakis.SolverFIT3D(
+        grid,
+        bc_low=["pec", "pec", "bloch"],
+        bc_high=["pec", "pec", "bloch"],
+        k_bloch=[0.0, 0.0, -beta],
+        dtype=np.complex128,
+        cfln=0.78,
+        verbose=0,
+    )
+    beam_box = _RegionBox(
+        [-b_half, -b_half, 0.0],
+        [b_half, b_half, lz],
+        name=f"3D e⁻ beam (b = {b_half * 1e3:.1f} mm)",
+    )
+    probe = [{"pos": (0.0, 0.0, 0.25 * lz), "label": "Axis probe E_z(0, 0)"}]
+    return solver, [beam_box], probe
+
+
+def _add_pec_wall_tags_2d(ax, label_top: str = "+y: PEC wall", label_bot: str = "−y: PEC wall"):
+    """Add high-contrast top/bottom PEC wall tags with white stroke halos on a 2D field map."""
+    halo = schematic._text_halo(2.5)
+    ax.text(
+        0.50,
+        0.96,
+        label_top,
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=8.8,
+        fontweight="bold",
+        color=figstyle.INK,
+        path_effects=halo,
+        zorder=9,
+    )
+    ax.text(
+        0.50,
+        0.04,
+        label_bot,
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=8.8,
+        fontweight="bold",
+        color=figstyle.INK,
+        path_effects=halo,
+        zorder=9,
+    )
 
 
 def render_all_figures(tasks_data, fig_dir):
     """
-    Render all 14 diagnostic and validation figures for Tutorial 8.1 into
-    ``fig_dir`` from the loaded ``tasks_data`` dictionary.
+    Render setup schematics (``00a``, ``00b``, ``00_setup_table.md``) and all 14
+    diagnostic and validation figures for Tutorial 8.1 into ``fig_dir``.
     """
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -878,1226 +1140,1357 @@ def render_all_figures(tasks_data, fig_dir):
     bunch = tasks_data["drift_tube_bunching"]
     chu = tasks_data["chu_energy_and_slow_wave"]
 
-    # ------------------------------------------------------------------
-    # Fig 01: Drift-tube & velocity-modulating gap schematic layout
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(
-        1, 2, figsize=(11.2, 3.9), dpi=150, gridspec_kw={"width_ratios": [1.85, 1.0]}
-    )
-    L_mm = 115.0
-    a_mm = A_TUNNEL_REF * 1e3
-    b_mm = 0.8
-    ax0.add_patch(
-        mpatches.Rectangle(
-            (0.0, -a_mm), L_mm, 2.0 * a_mm, facecolor="#f4f6f9", edgecolor="none"
+    s_bloch, structs_bloch, srcs_bloch, mons_bloch, probes_bloch = _build_bloch_2d_setup(primary)
+    s_bunch, structs_bunch, srcs_bunch, mons_bunch = _build_drift_tube_setup(bunch)
+    s_3d, structs_3d, probes_3d = _build_tunnel_3d_setup(beam3d)
+
+    with figstyle.apply_style():
+        # ------------------------------------------------------------------
+        # Fig 00a & 00b: Setup schematic (Figure A) + Mesh & excitation (Figure B) + table
+        # ------------------------------------------------------------------
+        schematic.save_setup_figures(
+            s_bloch,
+            fig_dir,
+            plane="xy",
+            unit="mm",
+            structures=structs_bloch,
+            sources=srcs_bloch,
+            monitors=mons_bloch,
+            probes=probes_bloch,
+            wavelength=LAMBDA_E_REF,
+            freq=F0_REF,
+            min_feature=float(primary.get("b_half", B_BEAM_REF)),
+            title_geometry="Tutorial 8.1 — Setup: sheet electron beam, PEC drift tube, Bloch cell & probes",
+            title_mesh="Tutorial 8.1 — Discretization and space-charge wave excitation",
+            variations=[
+                {
+                    "name": "Tasks 0–2: 2D Bloch dispersion & convergence (§5, §7–8)",
+                    "details": (
+                        "2D Bloch cell L_x = λ_e = 9.59 mm, 2a = 4.0 mm, PEC ±y walls, "
+                        "sheet e⁻ beam b = 0.5 mm (u₀ = 0.16c, V₀ = 6.70 kV, f_p = 1.35 GHz); "
+                        "grids 16×32, 24×48, 64×128"
+                    ),
+                },
+                {
+                    "name": "Tasks 3–4: Frequency & filling-ratio sweeps (§7)",
+                    "details": (
+                        "2D Bloch cell (24×40); f₀ ∈ {1.5, 3.0, 5.0, 7.0, 8.5, 10.0} GHz "
+                        "and b/a ∈ {0.25, 0.375, 0.50, 0.75, 1.00}"
+                    ),
+                },
+                {
+                    "name": "Task 5: 3D square PEC drift tunnel (§7)",
+                    "details": (
+                        "3D domain 4.0 mm × 4.0 mm × 9.59 mm (40×40×24), PEC ±x, ±y walls, "
+                        "Bloch ±z, pencil beam b = 0.5 mm (f_p = 1.65 GHz)"
+                    ),
+                },
+                {
+                    "name": "Task 6: 2D klystron velocity-modulated drift tube (§7)",
+                    "details": (
+                        "Open tube L_z = 115 mm × 4.0 mm (360×32), CPML ±z (N_pml = 6, 1.92 mm) "
+                        "+ 10-cell ρ₀→0 taper, PEC ±y walls, RF gap V_m = 100 V at z_g = 3.51 mm, beam b = 0.8 mm"
+                    ),
+                },
+                {
+                    "name": "Task 7: Chu kinetic power & energy audit (§3, §7)",
+                    "details": (
+                        "Periodic ±x, PEC ±y (48×48, 2400 steps); fast wave (P_k > 0) vs "
+                        "slow wave (P_k < 0) and coupled Chu–Poynting conservation"
+                    ),
+                },
+            ],
         )
-    )
-    ax0.add_patch(
-        mpatches.Rectangle(
-            (0.0, -b_mm),
-            L_mm - 8.0,
-            2.0 * b_mm,
-            facecolor="#2b5c8f",
-            alpha=0.28,
-            edgecolor="#2b5c8f",
-            lw=1.3,
-            label=r"Drifting electron beam ($|y|\leq b$, $\mathbf{u}_0 = u_0\hat{\mathbf{z}}$)",
+
+        # ------------------------------------------------------------------
+        # Fig 01: Drift-tube & velocity-modulating gap schematic + 2D/3D cross-section
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            gridspec_kw={"width_ratios": [1.65, 1.0]},
+            constrained_layout=False,
         )
-    )
-    # Inflow & outflow CPML slabs
-    ax0.axvspan(0.0, 3.0, color="#7570b3", alpha=0.22, label="Inflow / Outflow CPML")
-    ax0.axvspan(L_mm - 3.0, L_mm, color="#7570b3", alpha=0.22)
-    ax0.axvspan(
-        L_mm - 8.0,
-        L_mm - 3.0,
-        color="#e6ab02",
-        alpha=0.25,
-        label=r"Smooth $\rho_0(z)\to 0$ taper before CPML",
-    )
-    # Modulating grid gap
-    ax0.axvline(5.0, color="#d95f02", lw=2.0, ls="--", label="Modulating grid gap $d_g$")
-    ax0.axvline(6.8, color="#d95f02", lw=2.0, ls="--")
-    # PEC tunnel walls
-    ax0.axhline(+a_mm, color="0.15", lw=3.0, label=r"Grounded PEC drift tube ($|y|=a$)")
-    ax0.axhline(-a_mm, color="0.15", lw=3.0)
-    ax0.annotate(
-        r"$\mathbf{u}_0 = 0.16c$" + "\n" + r"($V_0 = 6.7\;\mathrm{kV}$)",
-        xy=(28.0, 0.0),
-        xytext=(14.0, 0.0),
-        arrowprops=dict(arrowstyle="->", lw=1.8, color="#1b9e77"),
-        fontsize=8.5,
-        va="center",
-        color="#1b9e77",
-        weight="bold",
-    )
-    ax0.annotate(
-        r"RF gap $V_m\sin(\omega t)$" + "\n" + r"($v_1 \neq 0,\;\rho_1 = 0$)",
-        xy=(6.0, b_mm),
-        xytext=(12.0, 1.45),
-        arrowprops=dict(arrowstyle="->", lw=1.2, color="#d95f02"),
-        fontsize=8.0,
-        color="#d95f02",
-    )
-    ax0.annotate(
-        r"Space-charge bunches $\lambda_q/2 = \pi/\beta_q$",
-        xy=(55.0, 0.45),
-        xytext=(42.0, 1.45),
-        arrowprops=dict(arrowstyle="->", lw=1.1, color="#2b5c8f"),
-        fontsize=8.0,
-        color="#2b5c8f",
-    )
-    ax0.set(
-        xlim=(0.0, L_mm),
-        ylim=(-a_mm * 1.18, a_mm * 1.18),
-        xlabel="Axial drift coordinate z [mm]",
-        ylabel="Transverse coordinate y [mm]",
-        title="(a) Longitudinal drift-tube schematic (Mealy et al. 2022)",
-    )
-    ax0.legend(loc="lower right", fontsize=7.3, ncol=2)
+        fig.subplots_adjust(left=0.08, right=0.98, bottom=0.18, top=0.86, wspace=0.28)
 
-    # Transverse cross section (2D slab vs 3D square/circular tunnel)
-    ax1.add_patch(
-        mpatches.Rectangle(
-            (-a_mm, -a_mm),
-            2.0 * a_mm,
-            2.0 * a_mm,
-            facecolor="#f4f6f9",
-            edgecolor="0.15",
-            lw=2.5,
-            label="3D square PEC tunnel ($2a \\times 2a$)",
-        )
-    )
-    circ_t = mpatches.Circle(
-        (0.0, 0.0),
-        a_mm,
-        fill=False,
-        edgecolor="0.45",
-        ls="--",
-        lw=1.5,
-        label="Circular tunnel ($R_t = a$)",
-    )
-    ax1.add_patch(circ_t)
-    ax1.add_patch(
-        mpatches.Rectangle(
-            (-a_mm, -0.5),
-            2.0 * a_mm,
-            1.0,
-            facecolor="#1b9e77",
-            alpha=0.18,
-            edgecolor="#1b9e77",
-            ls=":",
-            lw=1.4,
-            label="2D planar sheet beam ($|y|\\leq b$)",
-        )
-    )
-    circ_b = mpatches.Circle(
-        (0.0, 0.0),
-        0.5,
-        facecolor="#2b5c8f",
-        alpha=0.45,
-        edgecolor="#2b5c8f",
-        lw=1.6,
-        label="3D pencil beam ($R_b = 0.5$ mm)",
-    )
-    ax1.add_patch(circ_b)
-    ax1.set(
-        xlim=(-a_mm * 1.2, a_mm * 1.2),
-        ylim=(-a_mm * 1.2, a_mm * 1.2),
-        aspect="equal",
-        xlabel="Transverse x [mm]",
-        ylabel="Transverse y [mm]",
-        title="(b) Transverse cross-section ($a=2.0$ mm, $b=0.5$ mm)",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=7.2)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_drift_tube_geometry.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 02: Mesh zoom & transverse/axial profile weights
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 3.9), dpi=150)
-    for lvl, col, mk, ls in (
-        ("coarse", "#7570b3", "s", "--"),
-        ("medium", "#d95f02", "^", "-."),
-        ("fine", "#1b9e77", "o", "-"),
-    ):
-        d = tasks_data[f"disp_res_{lvl}"]
-        y_mm = d["y_nodes"] * 1e3
-        w_y = d["w_perp_y"]
-        ax0.plot(
-            y_mm,
-            w_y,
-            marker=mk,
-            ls=ls,
-            color=col,
-            lw=1.6,
-            ms=4.5,
-            label=f"{lvl.capitalize()} ($N_y={int(d['ny'])}$, $N_b={d['cells_across_feature']:.0f}$ cells/$b$)",
-        )
-    y_ref = np.linspace(-2.0, 2.0, 500)
-    ax0.plot(
-        y_ref,
-        (np.abs(y_ref) <= 0.5).astype(float),
-        color="0.2",
-        lw=1.2,
-        ls=":",
-        label="Exact top-hat $|y|\\leq 0.5$ mm",
-    )
-    ax0.set(
-        xlim=(-1.2, 1.2),
-        ylim=(-0.05, 1.12),
-        xlabel="Transverse coordinate y [mm]",
-        ylabel=r"Dual-cell overlap weight $w_\perp(y) = \rho_0(y)/\rho_{0,\mathrm{peak}}$",
-        title="(a) Subcell transverse beam weight across $|y|=b$",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=8.0)
-
-    s_mm = bunch["s_coords_mm"]
-    w_ax = bunch["w_axial"]
-    ax1.plot(
-        s_mm,
-        w_ax,
-        "o-",
-        color="#2b5c8f",
-        lw=1.8,
-        ms=3.2,
-        label=r"Axial beam weight $w_s(z)$ ($\sin(\pi\xi/2)$ ramp)",
-    )
-    ax1.axvspan(
-        s_mm[-1],
-        115.0,
-        color="#7570b3",
-        alpha=0.25,
-        label="Outflow CPML ($\\rho_0 = 0$ identically)",
-    )
-    ax1.axvspan(
-        s_mm[-10],
-        s_mm[-1],
-        color="#e6ab02",
-        alpha=0.22,
-        label="10-cell smooth density taper before CPML",
-    )
-    ax1.set(
-        xlim=(s_mm[-35], 115.0),
-        ylim=(-0.05, 1.12),
-        xlabel="Axial coordinate z near collector [mm]",
-        ylabel=r"Normalized DC density $\rho_0(z)/\rho_{0,\mathrm{peak}}$",
-        title="(b) Outflow density ramp preventing PML beam instability",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower left", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "02_mesh_and_profile_zoom.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 03: Transverse TM space-charge wave eigenmode profiles
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-    y_n_mm = primary["y_nodes"] * 1e3
-    y_e_mm = primary["y_edges"] * 1e3
-    y_dense = np.linspace(-A_TUNNEL_REF, A_TUNNEL_REF, 400)
-    Es_d, Ey_d, J1_d, _, _, _ = planar_tm_eigenmode(
-        y_dense, OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF
-    )
-
-    ax0.plot(
-        y_dense * 1e3,
-        Es_d,
-        color="#2b5c8f",
-        lw=2.2,
-        label=r"Analytic $E_z(y)$ ($\cos(Ty)$ / $\sinh(\tau(a-|y|))$)",
-    )
-    ax0.plot(
-        y_n_mm,
-        primary["Ex_fit"],
-        "o",
-        color="#d95f02",
-        ms=4.2,
-        label="Wakis 2D FIT $E_z(y)$",
-    )
-    ax0.plot(
-        y_dense * 1e3,
-        J1_d,
-        "--",
-        color="#1b9e77",
-        lw=1.8,
-        label=r"Analytic $J_{1z}(y)/J_{\max}$",
-    )
-    ax0.plot(
-        y_n_mm,
-        primary["J1_fit"],
-        "s",
-        color="#1b9e77",
-        ms=3.8,
-        alpha=0.8,
-        label="Wakis 2D FIT $J_{1z}(y)/J_{\\max}$",
-    )
-    ax0.axvspan(-0.5, 0.5, color="#2b5c8f", alpha=0.10, label="Beam core ($|y|\\leq 0.5$ mm)")
-    ax0.set(
-        xlabel="Transverse coordinate y [mm]",
-        ylabel="Normalized amplitude",
-        title=r"(a) Axial electric field $E_z(y)$ & beam current $J_{1z}(y)$",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=7.8)
-
-    ax1.plot(
-        y_dense * 1e3,
-        Ey_d,
-        color="#7570b3",
-        lw=2.2,
-        label=r"Analytic $E_y(y)/E_z(0)$",
-    )
-    ax1.plot(
-        y_e_mm,
-        primary["Ey_fit"],
-        "o",
-        color="#d95f02",
-        ms=4.2,
-        label="Wakis 2D FIT $E_y(y)/E_z(0)$",
-    )
-    ax1.axvspan(-0.5, 0.5, color="#2b5c8f", alpha=0.10, label="Beam core ($|y|\\leq 0.5$ mm)")
-    ax1.axhline(0.0, color="0.4", ls=":", lw=1.0)
-    ax1.set(
-        xlabel="Transverse coordinate y [mm]",
-        ylabel=r"Normalized transverse field $E_y(y)/E_z(0)$",
-        title=r"(b) Transverse fringing electric field $E_y(y)$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_transverse_tm_eigenmodes.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 04: Space-charge wave k-omega dispersion diagram
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
-    beta_dense = np.linspace(50.0, 1450.0, 300)
-    f_beam_dense = (beta_dense * U0_REF) / (2.0 * np.pi) * 1e-9
-    R_dense = reduction_factor_planar(
-        beta_dense * U0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF
-    )
-    w_fast_d, w_slow_d = space_charge_wave_dispersion(
-        beta_dense, U0_REF, WP_REF, R=R_dense
-    )
-    f_fast_d = w_fast_d / (2.0 * np.pi) * 1e-9
-    f_slow_d = w_slow_d / (2.0 * np.pi) * 1e-9
-    f_light_d = (beta_dense * c_light) / (2.0 * np.pi) * 1e-9
-
-    betas_fit = kw_task["betas"]
-    f_fast_fit = kw_task["omega_fast"] / (2.0 * np.pi) * 1e-9
-    f_slow_fit = kw_task["omega_slow"] / (2.0 * np.pi) * 1e-9
-
-    ax0.plot(
-        beta_dense,
-        f_beam_dense,
-        "--",
-        color="0.35",
-        lw=1.6,
-        label=r"Synchronous beam line $\omega = \beta u_0$",
-    )
-    ax0.plot(
-        beta_dense,
-        f_fast_d,
-        color="#1b9e77",
-        lw=2.1,
-        label=r"Fast space-charge wave $\omega_+ = \beta u_0 + \omega_q$ (Theory)",
-    )
-    ax0.plot(
-        beta_dense,
-        f_slow_d,
-        color="#d95f02",
-        lw=2.1,
-        label=r"Slow space-charge wave $\omega_- = \beta u_0 - \omega_q$ (Theory)",
-    )
-    ax0.plot(
-        betas_fit,
-        f_fast_fit,
-        "o",
-        color="#1b9e77",
-        ms=6.0,
-        label=r"Wakis Bloch FIT $\omega_+(\beta)$",
-    )
-    ax0.plot(
-        betas_fit,
-        f_slow_fit,
-        "s",
-        color="#d95f02",
-        ms=6.0,
-        label=r"Wakis Bloch FIT $\omega_-(\beta)$",
-    )
-    ax0.plot(
-        beta_dense,
-        f_light_d,
-        ":",
-        color="#7570b3",
-        lw=1.5,
-        label=r"Light line $\omega = c\beta$",
-    )
-    ax0.set(
-        xlim=(50.0, 1400.0),
-        ylim=(0.0, 11.5),
-        xlabel=r"Axial wavenumber $\beta$ [rad/m]",
-        ylabel="Frequency $f = \\omega / 2\\pi$ [GHz]",
-        title=r"(a) Space-charge wave $(\beta, \omega)$ dispersion diagram",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper left", fontsize=7.6)
-
-    # Beam-frame frequency shift (omega - beta u0) / (2 pi) vs beta
-    df_th = (w_fast_d - beta_dense * U0_REF) / (2.0 * np.pi) * 1e-3  # MHz
-    df_fast_fit = (kw_task["omega_fast"] - betas_fit * U0_REF) / (2.0 * np.pi) * 1e-3
-    df_slow_fit = (kw_task["omega_slow"] - betas_fit * U0_REF) / (2.0 * np.pi) * 1e-3
-    fp_rel_mhz = (WP_REF / (GAMMA0_REF**1.5)) / (2.0 * np.pi) * 1e-3
-
-    ax1.plot(
-        beta_dense,
-        +df_th,
-        color="#1b9e77",
-        lw=2.1,
-        label=r"$+\omega_q(\beta)/2\pi$ (Fast wave, Theory)",
-    )
-    ax1.plot(
-        beta_dense,
-        -df_th,
-        color="#d95f02",
-        lw=2.1,
-        label=r"$-\omega_q(\beta)/2\pi$ (Slow wave, Theory)",
-    )
-    ax1.plot(
-        betas_fit,
-        df_fast_fit,
-        "o",
-        color="#1b9e77",
-        ms=6.0,
-        label="Wakis FIT fast shift",
-    )
-    ax1.plot(
-        betas_fit,
-        df_slow_fit,
-        "s",
-        color="#d95f02",
-        ms=6.0,
-        label="Wakis FIT slow shift",
-    )
-    ax1.axhline(0.0, color="0.4", ls="--", lw=1.2)
-    ax1.axhline(
-        +fp_rel_mhz,
-        color="0.5",
-        ls=":",
-        lw=1.3,
-        label=r"1D unreduced limit $\pm \omega_p / (2\pi\gamma_0^{3/2})$",
-    )
-    ax1.axhline(-fp_rel_mhz, color="0.5", ls=":", lw=1.3)
-    ax1.set(
-        xlim=(50.0, 1400.0),
-        xlabel=r"Axial wavenumber $\beta$ [rad/m]",
-        ylabel=r"Doppler shift $(\omega_\pm - \beta u_0)/2\pi$ [MHz]",
-        title=r"(b) Co-moving frame splitting $\pm \omega_q(\beta) = \pm R(\beta)\omega_p/\gamma_0^{3/2}$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="best", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "04_kw_dispersion_diagram.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 05: Time-domain beating trace & Doppler doublet FFT spectrum
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 3.9), dpi=150)
-    t_ns = primary["trace_t"] * 1e9
-    ex_re = np.real(primary["trace_Ex"])
-    ex_env = np.abs(primary["trace_Ex"])
-    scale_e = max(float(np.max(ex_env)), 1e-30)
-    ax0.plot(
-        t_ns,
-        ex_re / scale_e,
-        color="#2b5c8f",
-        lw=0.9,
-        alpha=0.85,
-        label=r"$\mathrm{Re}[E_z(t)] / E_{\max}$",
-    )
-    ax0.plot(
-        t_ns,
-        ex_env / scale_e,
-        color="#d95f02",
-        lw=2.0,
-        label=r"Beating envelope $|E_z(t)| \propto |\sin(\omega_q t)|$",
-    )
-    ax0.plot(t_ns, -ex_env / scale_e, color="#d95f02", lw=2.0)
-    ax0.set(
-        xlabel="Time t [ns]",
-        ylabel="Normalized axial field",
-        title=r"(a) Fast/slow wave temporal beating at $f_0 = 5.0\;\mathrm{GHz}$",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=8.0)
-
-    f_ghz = primary["fft_freqs"] * 1e-9
-    spec_db = 20.0 * np.log10(np.maximum(primary["fft_spec"], 1e-6))
-    f_slow_th_ghz = primary["omega_slow_th"] / (2.0 * np.pi) * 1e-9
-    f_fast_th_ghz = primary["omega_fast_th"] / (2.0 * np.pi) * 1e-9
-
-    ax1.plot(
-        f_ghz, spec_db, color="#2b5c8f", lw=2.0, label="Wakis Bloch FIT spectrum"
-    )
-    ax1.axvline(
-        F0_REF * 1e-9,
-        color="0.4",
-        ls="--",
-        lw=1.4,
-        label=f"Beam carrier $f_0 = \\beta u_0 / 2\\pi = {F0_REF * 1e-9:.2f}$ GHz",
-    )
-    ax1.axvline(
-        f_slow_th_ghz,
-        color="#d95f02",
-        ls=":",
-        lw=1.8,
-        label=f"Slow wave $f_- = {f_slow_th_ghz:.3f}$ GHz (Theory)",
-    )
-    ax1.axvline(
-        f_fast_th_ghz,
-        color="#1b9e77",
-        ls=":",
-        lw=1.8,
-        label=f"Fast wave $f_+ = {f_fast_th_ghz:.3f}$ GHz (Theory)",
-    )
-    ax1.set(
-        xlim=(3.8, 6.2),
-        ylim=(-55.0, 3.0),
-        xlabel="Frequency f [GHz]",
-        ylabel="Normalized spectral magnitude [dB]",
-        title=r"(b) Space-charge wave Doppler doublet $\omega_\pm = \beta u_0 \pm \omega_q$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower center", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "05_doppler_splitting_spectra.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 06: Reduction factor R vs beam thickness / filling ratio b/a
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    fill_dense = np.linspace(0.05, 1.0, 200)
-    b_dense = fill_dense * A_TUNNEL_REF
-    R_2d_curve = np.array(
-        [
-            reduction_factor_planar(OMEGA0_REF, U0_REF, b_val, A_TUNNEL_REF)
-            for b_val in b_dense
-        ]
-    )
-    R_3d_rect_curve = np.array(
-        [
-            reduction_factor_rectangular(
-                OMEGA0_REF, U0_REF, b_val, b_val, A_TUNNEL_REF, A_TUNNEL_REF
+        l_mm = 115.0
+        a_mm = A_TUNNEL_REF * 1e3
+        b_mm = 0.8
+        ax0.add_patch(
+            mpatches.Rectangle(
+                (0.0, -a_mm), l_mm, 2.0 * a_mm, facecolor="#F8FAFC", edgecolor="none", zorder=1
             )
-            for b_val in b_dense
-        ]
-    )
-    R_3d_cyl_curve = np.array(
-        [
-            reduction_factor_cylindrical(OMEGA0_REF, U0_REF, b_val, A_TUNNEL_REF)
-            for b_val in b_dense
-        ]
-    )
-
-    ax0.plot(
-        fill_dense,
-        R_2d_curve,
-        color="#1b9e77",
-        lw=2.2,
-        label="2D planar sheet beam (Branch & Mihran 1955)",
-    )
-    ax0.plot(
-        thick_task["fill_ratios"],
-        thick_task["R_fit"],
-        "o",
-        color="#1b9e77",
-        ms=6.5,
-        label="Wakis 2D FIT ($N_z=1$, sheet beam)",
-    )
-    ax0.plot(
-        fill_dense,
-        R_3d_rect_curve,
-        "--",
-        color="#2b5c8f",
-        lw=2.0,
-        label="3D square beam in square tunnel (Theory)",
-    )
-    ax0.plot(
-        [beam3d["b_half"] / beam3d["a_half"]],
-        [beam3d["R_3d_fit"]],
-        "D",
-        color="#2b5c8f",
-        ms=7.0,
-        label="Wakis 3D FIT (square tunnel)",
-    )
-    ax0.plot(
-        fill_dense,
-        R_3d_cyl_curve,
-        "-.",
-        color="#d95f02",
-        lw=2.0,
-        label="3D pencil beam in circular tube (Mealy et al. 2022, Fig. 3b)",
-    )
-    ax0.set(
-        xlim=(0.0, 1.05),
-        ylim=(0.0, 0.85),
-        xlabel=r"Tunnel filling ratio $b / a$ ($a = 2.0\;\mathrm{mm}$, $f_0 = 5\;\mathrm{GHz}$)",
-        ylabel=r"Plasma-frequency reduction factor $R = \omega_q \gamma_0^{3/2} / \omega_p$",
-        title="(a) Reduction factor $R$ vs beam filling ratio $b / a$",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper left", fontsize=7.5)
-
-    # Universal planar Branch & Mihran (1955) curves vs normalized thickness tau * b
-    tau_b_grid = np.linspace(0.05, 4.0, 200)
-    u0_bm = U0_REF
-    b_bm = 1.0e-3
-    _, g_bm = relativistic_gamma(u0=u0_bm)
-    omega_bm = tau_b_grid * g_bm * u0_bm / b_bm
-    for ratio_ab, col, ls in (
-        (1.0, "#7570b3", ":"),
-        (1.5, "#d95f02", "-."),
-        (2.0, "#2b5c8f", "--"),
-        (4.0, "#1b9e77", "-"),
-        (np.inf, "0.2", "-"),
-    ):
-        R_bm = reduction_factor_planar(omega_bm, u0_bm, b_bm, a=ratio_ab * b_bm)
-        lbl = (
-            r"$a/b = \infty$ (free space)"
-            if np.isinf(ratio_ab)
-            else f"$a/b = {ratio_ab:g}$"
         )
-        ax1.plot(tau_b_grid, R_bm, color=col, ls=ls, lw=1.9, label=lbl)
-
-    # Overlay Wakis FIT points from frequency sweep (where a/b = 4.0)
-    tau_b_fit = (kw_task["betas"] / GAMMA0_REF) * B_BEAM_REF
-    ax1.plot(
-        tau_b_fit,
-        kw_task["R_fit"],
-        "o",
-        color="#1b9e77",
-        ms=6.0,
-        label="Wakis 2D FIT ($a/b = 4$)",
-    )
-    ax1.set(
-        xlim=(0.0, 4.0),
-        ylim=(0.0, 1.02),
-        xlabel=r"Normalized transverse wavenumber $\tau b = (\beta / \gamma_0) b$",
-        ylabel=r"Planar reduction factor $R_{\mathrm{2D}}(\tau b, a/b)$",
-        title="(b) Universal planar Branch & Mihran (1955) curves",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower right", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "06_reduction_factor_vs_thickness.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 07: Reduction factor R(f) and beta_q(f) vs frequency (1-10 GHz)
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    f_sweep_dense = np.linspace(0.5e9, 10.5e9, 200)
-    w_sweep_dense = 2.0 * np.pi * f_sweep_dense
-    R_2d_f = reduction_factor_planar(
-        w_sweep_dense, U0_REF, B_BEAM_REF, A_TUNNEL_REF
-    )
-    R_3d_cyl_f = reduction_factor_cylindrical(
-        w_sweep_dense, U0_REF, B_BEAM_REF, A_TUNNEL_REF
-    )
-    R_3d_rect_f = reduction_factor_rectangular(
-        w_sweep_dense, U0_REF, B_BEAM_REF, B_BEAM_REF, A_TUNNEL_REF, A_TUNNEL_REF
-    )
-
-    f_pts_ghz = kw_task["freqs"] * 1e-9
-    ax0.plot(
-        f_sweep_dense * 1e-9,
-        R_2d_f,
-        color="#1b9e77",
-        lw=2.2,
-        label="2D sheet beam exact (Branch & Mihran 1955)",
-    )
-    ax0.plot(
-        f_pts_ghz,
-        kw_task["R_fit"],
-        "o",
-        color="#1b9e77",
-        ms=6.5,
-        label="Wakis 2D Bloch FIT",
-    )
-    ax0.plot(
-        f_sweep_dense * 1e-9,
-        R_3d_rect_f,
-        "--",
-        color="#2b5c8f",
-        lw=1.8,
-        label="3D square beam in square tunnel (Theory)",
-    )
-    ax0.plot(
-        f_sweep_dense * 1e-9,
-        R_3d_cyl_f,
-        color="#d95f02",
-        lw=2.1,
-        label="3D cylindrical exact (Mealy et al. 2022, Fig. 3a)",
-    )
-    ax0.set(
-        xlim=(0.5, 10.5),
-        ylim=(0.0, 0.85),
-        xlabel="Modulation frequency f [GHz]",
-        ylabel=r"Reduction factor $R(f)$ ($b=0.5\;\mathrm{mm},\;a=2.0\;\mathrm{mm}$)",
-        title="(a) Reduction factor $R(f)$ across 1–10 GHz",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper left", fontsize=7.6)
-
-    bq_2d_f = R_2d_f * (WP_REF / (GAMMA0_REF**1.5)) / U0_REF
-    bq_fit = kw_task["omega_q"] / U0_REF
-    ax1.plot(
-        f_sweep_dense * 1e-9,
-        bq_2d_f,
-        color="#1b9e77",
-        lw=2.2,
-        label=r"Analytic $\beta_q(f) = R(f)\omega_p / (\gamma_0^{3/2} u_0)$",
-    )
-    ax1.plot(
-        f_pts_ghz,
-        bq_fit,
-        "o",
-        color="#d95f02",
-        ms=6.5,
-        label=r"Wakis 2D Bloch FIT $\beta_q(f)$",
-    )
-    ax1.set(
-        xlim=(0.5, 10.5),
-        xlabel="Modulation frequency f [GHz]",
-        ylabel=r"Reduced plasma wavenumber $\beta_q(f)$ [rad/m]",
-        title=r"(b) Reduced space-charge wavenumber $\beta_q(f)$ vs frequency",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper left", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "07_reduction_factor_vs_frequency.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 08: 2D vs 3D transverse electric field fringing comparison
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
-    x3 = beam3d["x_nodes"] * 1e3
-    y3 = beam3d["y_nodes"] * 1e3
-    ez_3d = beam3d["Ez_xy"]
-    ez_norm = ez_3d / max(float(np.max(np.abs(ez_3d))), 1e-30)
-
-    im0 = ax0.pcolormesh(
-        x3, y3, ez_norm.T, cmap="RdBu_r", vmin=-1.0, vmax=1.0, shading="gouraud"
-    )
-    fig.colorbar(im0, ax=ax0, label=r"Normalized $E_z(x, y) / E_{z,\max}$")
-    b3_mm = beam3d["b_half"] * 1e3
-    ax0.add_patch(
-        mpatches.Rectangle(
-            (-b3_mm, -b3_mm),
-            2.0 * b3_mm,
-            2.0 * b3_mm,
-            fill=False,
-            edgecolor="k",
-            ls="--",
-            lw=1.6,
-            label=f"3D beam boundary ($|x|,|y|\\leq {b3_mm:.1f}$ mm)",
+        ax0.add_patch(
+            mpatches.Rectangle(
+                (1.92, -b_mm),
+                l_mm - 5.12 - 1.92,
+                2.0 * b_mm,
+                facecolor="#DCE8F2",
+                edgecolor="#0072B2",
+                lw=1.3,
+                alpha=0.88,
+                zorder=2,
+                label=r"e⁻ beam ($|y|\leq 0.8\;\mathrm{mm},\;u_0=0.16c$)",
+            )
         )
-    )
-    # Quiver of transverse field (Ex, Ey) at cell centers
-    xc = 0.5 * (x3[:-1] + x3[1:])
-    yc = 0.5 * (y3[:-1] + y3[1:])
-    ex_c = 0.5 * (beam3d["Ex_xy"][:, :-1] + beam3d["Ex_xy"][:, 1:])
-    ey_c = 0.5 * (beam3d["Ey_xy"][:-1, :] + beam3d["Ey_xy"][1:, :])
-    step_q = max(1, len(xc) // 10)
-    XC, YC = np.meshgrid(xc[::step_q], yc[::step_q], indexing="ij")
-    ax0.quiver(
-        XC,
-        YC,
-        ex_c[::step_q, ::step_q],
-        ey_c[::step_q, ::step_q],
-        color="0.15",
-        alpha=0.75,
-    )
-    ax0.set(
-        aspect="equal",
-        xlabel="Transverse x [mm]",
-        ylabel="Transverse y [mm]",
-        title=r"(a) 3D tunnel $E_z(x,y)$ & radial $\mathbf{E}_\perp$ fringing",
-    )
-    ax0.legend(loc="upper right", fontsize=7.8)
-
-    # Bar / curve comparison of 1D vs 2D vs 3D reduction factors at b = 0.5 mm, a = 2.0 mm
-    labels_geom = [
-        "1D Infinite\nSlab ($R=1$)",
-        "2D Planar\nSheet Beam",
-        "3D Square\nBeam/Tunnel",
-        "3D Cylindrical\nPencil Beam",
-    ]
-    r_vals = [
-        1.0,
-        reduction_factor_planar(OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF),
-        reduction_factor_rectangular(
-            OMEGA0_REF, U0_REF, B_BEAM_REF, B_BEAM_REF, A_TUNNEL_REF, A_TUNNEL_REF
-        ),
-        reduction_factor_cylindrical(OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF),
-    ]
-    colors_bar = ["0.65", "#1b9e77", "#2b5c8f", "#d95f02"]
-    bars = ax1.bar(labels_geom, r_vals, color=colors_bar, width=0.52, edgecolor="0.2")
-    for bar, v in zip(bars, r_vals):
-        ax1.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            v + 0.025,
-            f"R = {v:.3f}",
+        ax0.add_patch(
+            mpatches.Rectangle(
+                (l_mm - 5.12, -b_mm),
+                3.20,
+                2.0 * b_mm,
+                facecolor="#F5E4C8",
+                edgecolor="#E69F00",
+                lw=1.1,
+                alpha=0.85,
+                zorder=2,
+                label=r"$\rho_0(z)\to 0$ taper (10 cells)",
+            )
+        )
+        schematic.overlay_geometry(
+            ax0,
+            s_bunch,
+            plane="xy",
+            unit="mm",
+            structures=structs_bunch,
+            sources=srcs_bunch,
+            monitors=mons_bunch,
+            show_boundaries=True,
+            show_materials=False,
+            show_sources=True,
+            show_monitors=True,
+        )
+        ax0.axhline(+a_mm, color=figstyle.INK, lw=2.8)
+        ax0.axhline(-a_mm, color=figstyle.INK, lw=2.8)
+        _add_pec_wall_tags_2d(ax0, "+y: PEC drift tube", "−y: PEC drift tube")
+        ax0.annotate(
+            r"$\mathbf{u}_0 = 0.16c$ ($6.7\;\mathrm{kV}$)",
+            xy=(36.0, 0.0),
+            xytext=(11.0, 0.0),
+            arrowprops={"arrowstyle": "-|>", "lw": 1.6, "color": "#0072B2"},
+            fontsize=8.8,
+            va="center",
+            color="#0072B2",
+            fontweight="bold",
+            path_effects=schematic._text_halo(2.5),
+            zorder=8,
+        )
+        ax0.text(
+            24.8,
+            1.22,
+            r"$\lambda_q/4$ peak",
             ha="center",
-            va="bottom",
-            fontsize=8.5,
-            weight="bold",
+            va="center",
+            fontsize=8.6,
+            fontweight="bold",
+            color="#009E73",
+            path_effects=schematic._text_halo(2.5),
+            zorder=8,
         )
-    ax1.set(
-        ylim=(0.0, 1.15),
-        ylabel=r"Reduction factor $R$ ($b=0.5\;\mathrm{mm},\;a=2.0\;\mathrm{mm},\;5\;\mathrm{GHz}$)",
-        title="(b) Dimensional wall-fringing reduction: 1D vs 2D vs 3D",
-    )
-    ax1.grid(True, axis="y", ls=":", alpha=0.4)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "08_2d_vs_3d_fringing_comparison.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 09: 2D spatial maps of rho1(z, y), J1z(z, y), and Ez(z, y)
-    # ------------------------------------------------------------------
-    fig, axes = plt.subplots(3, 1, figsize=(10.6, 6.8), dpi=150, sharex=True)
-    x_mm = bunch["x_coords"]
-    y_mm = bunch["y_coords"]
-    for ax, arr, lbl, title_str in (
-        (
-            axes[0],
-            bunch["rho1_2d"],
-            r"$\rho_1 / |\rho_1|_{\max}$",
-            r"(a) Instantaneous space-charge density perturbation $\rho_1(z, y, t)$",
-        ),
-        (
-            axes[1],
-            bunch["J1_2d"],
-            r"$J_{1z} / |J_{1z}|_{\max}$",
-            r"(b) Instantaneous small-signal axial beam current density $J_{1z}(z, y, t)$",
-        ),
-        (
-            axes[2],
-            bunch["Ex_2d"],
-            r"$E_z / |E_z|_{\max}$",
-            r"(c) Self-consistent space-charge axial electric field $E_z(z, y, t)$",
-        ),
-    ):
-        amax = max(float(np.max(np.abs(arr))), 1e-30)
-        im = ax.pcolormesh(
-            x_mm,
-            y_mm,
-            (arr / amax).T,
-            cmap="RdBu_r",
-            vmin=-1.0,
-            vmax=1.0,
-            shading="auto",
+        ax0.text(
+            46.0,
+            -1.22,
+            r"$\lambda_q/2$ node",
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            fontweight="bold",
+            color="#009E73",
+            path_effects=schematic._text_halo(2.5),
+            zorder=8,
         )
-        fig.colorbar(im, ax=ax, label=lbl, pad=0.015)
-        ax.axhline(+0.8, color="k", ls="--", lw=0.9, alpha=0.6)
-        ax.axhline(-0.8, color="k", ls="--", lw=0.9, alpha=0.6)
-        ax.set(ylabel="y [mm]", title=title_str)
-    axes[2].set_xlabel("Axial drift coordinate z [mm]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "09_modulated_beam_field_map.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 10: Klystron drift-space current & velocity standing-wave beat
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    z_mm = bunch["z_drift"] * 1e3
-    ax0.plot(
-        z_mm,
-        bunch["I1_th_norm"],
-        color="#1b9e77",
-        lw=2.2,
-        label=r"Analytic $|I_1(z)|/I_{\max} = |\sin(\beta_q z)|$ (Ramo 1939; Mealy et al. Fig. 1b)",
-    )
-    ax0.plot(
-        z_mm,
-        bunch["I1_norm"],
-        "o",
-        color="#d95f02",
-        ms=3.6,
-        alpha=0.85,
-        label=f"Wakis FIT $|I_1(z)|$ ($L_{{\\mathrm{{beat}}}}={bunch['L_beat_fit']*1e3:.2f}$ mm vs {bunch['L_beat_th']*1e3:.2f} mm)",
-    )
-    # Mark quarter-wavelength klystron bunching peak and half-wavelength node
-    l_q4_mm = 0.5 * bunch["L_beat_th"] * 1e3
-    l_q2_mm = bunch["L_beat_th"] * 1e3
-    ax0.axvline(
-        l_q4_mm,
-        color="#2b5c8f",
-        ls=":",
-        lw=1.5,
-        label=f"Optimum klystron bunching $\\lambda_q/4 = {l_q4_mm:.1f}$ mm",
-    )
-    ax0.axvline(
-        l_q2_mm,
-        color="0.4",
-        ls="--",
-        lw=1.4,
-        label=f"First current node $\\lambda_q/2 = {l_q2_mm:.1f}$ mm",
-    )
-    ax0.set(
-        xlabel="Distance downstream of modulating gap z [mm]",
-        ylabel=r"Normalized AC current envelope $|I_1(z)| / I_{1,\max}$",
-        ylim=(-0.03, 1.12),
-        title="(a) Modulated beam current beat (Mealy et al. 2022, Fig. 1b)",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=7.4)
-
-    ax1.plot(
-        z_mm,
-        bunch["I1_norm"],
-        color="#d95f02",
-        lw=2.0,
-        label=r"AC beam current envelope $|I_1(z)| \propto |\sin(\beta_q z)|$",
-    )
-    ax1.plot(
-        z_mm,
-        bunch["V1_norm"],
-        color="#2b5c8f",
-        lw=2.0,
-        ls="--",
-        label=r"Kinetic voltage envelope $|V_1(z)| \propto |\cos(\beta_q z)|$",
-    )
-    ax1.plot(
-        z_mm,
-        bunch["V1_th_norm"],
-        ":",
-        color="0.3",
-        lw=1.4,
-        label=r"Analytic $|\cos(\beta_q z)|$",
-    )
-    ax1.set(
-        xlabel="Distance downstream of modulating gap z [mm]",
-        ylabel="Normalized standing-wave envelope",
-        ylim=(-0.03, 1.12),
-        title=r"(b) $\pi/2$ spatial quadrature between $V_1(z)$ and $I_1(z)$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "10_klystron_bunching_beat.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # ------------------------------------------------------------------
-    # Fig 11: Animated time-domain space-charge wave propagation GIF
-    # ------------------------------------------------------------------
-    if "movie_rho" in bunch and len(bunch["movie_rho"]) > 0:
-        frames_rho = bunch["movie_rho"]
-        times_ns = bunch["movie_times"] * 1e9
-        rmax = max(float(np.max(np.abs(frames_rho))), 1e-30)
-
-        fig, ax = plt.subplots(figsize=(8.8, 3.2), dpi=110)
-        im = ax.pcolormesh(
-            x_mm,
-            y_mm,
-            (frames_rho[0] / rmax).T,
-            cmap="RdBu_r",
-            vmin=-1.0,
-            vmax=1.0,
-            shading="auto",
+        ax0.set(
+            xlim=(0.0, l_mm),
+            ylim=(-a_mm * 1.15, a_mm * 1.15),
+            xlabel="Axial drift coordinate z [mm]",
+            ylabel="Transverse y [mm]",
+            title="(a) Klystron drift tube (Task 6)",
         )
-        fig.colorbar(im, ax=ax, label=r"Normalized $\rho_1(z,y,t)/\rho_{1,\max}$")
-        ax.axhline(+0.8, color="k", ls="--", lw=0.9, alpha=0.6)
-        ax.axhline(-0.8, color="k", ls="--", lw=0.9, alpha=0.6)
-        title_obj = ax.set_title(
-            f"Space-charge wave bunching propagation (t = {times_ns[0]:.2f} ns)"
-        )
-        ax.set_xlabel("Axial drift coordinate z [mm]")
-        ax.set_ylabel("Transverse y [mm]")
-        fig.tight_layout()
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.22)
 
-        def _update_frame(k):
-            im.set_array((frames_rho[k] / rmax).T.ravel())
-            title_obj.set_text(
-                f"Space-charge wave bunching propagation (t = {times_ns[k]:.2f} ns)"
+        # Panel (b): Transverse cross-section (2D sheet vs 3D square vs 3D circular)
+        ax1.add_patch(
+            mpatches.Rectangle(
+                (-a_mm, -a_mm),
+                2.0 * a_mm,
+                2.0 * a_mm,
+                facecolor="#F8FAFC",
+                edgecolor=figstyle.INK,
+                lw=2.6,
+                label="3D square PEC tunnel",
             )
-            return (im, title_obj)
-
-        ani = animation.FuncAnimation(
-            fig, _update_frame, frames=len(frames_rho), interval=90, blit=False
         )
-        ani.save(
-            fig_dir / "11_space_charge_wave_propagation.gif",
-            writer="pillow",
-            fps=11,
+        schematic.draw_mesh(
+            ax1,
+            s_3d,
+            plane="xy",
+            unit="mm",
+            every=4,
+            show_cpw=False,
         )
-        plt.close(fig)
+        ax1.add_patch(
+            mpatches.Circle(
+                (0.0, 0.0),
+                a_mm,
+                fill=False,
+                edgecolor="#475569",
+                ls="--",
+                lw=1.5,
+                label="Circular tube ($R_t = 2$ mm)",
+            )
+        )
+        ax1.add_patch(
+            mpatches.Rectangle(
+                (-a_mm, -0.5),
+                2.0 * a_mm,
+                1.0,
+                facecolor="#D5ECE4",
+                alpha=0.55,
+                edgecolor="#009E73",
+                ls=":",
+                lw=1.5,
+                label="2D sheet beam ($|y|\\leq 0.5$ mm)",
+            )
+        )
+        ax1.add_patch(
+            mpatches.Circle(
+                (0.0, 0.0),
+                0.5,
+                facecolor="#DCE8F2",
+                alpha=0.85,
+                edgecolor="#0072B2",
+                lw=1.6,
+                label="3D beam ($R_b = 0.5$ mm)",
+            )
+        )
+        ax1.set(
+            xlim=(-a_mm * 1.15, a_mm * 1.15),
+            ylim=(-a_mm * 1.15, a_mm * 1.15),
+            aspect="equal",
+            xlabel="Transverse x [mm]",
+            ylabel="Transverse y [mm]",
+            title="(b) 2D / 3D cross-section",
+        )
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.22)
+        figstyle.save(fig, fig_dir / "01_drift_tube_geometry.png", close=True, auto_legend_below=False)
 
-    # ------------------------------------------------------------------
-    # Fig 12: Chu kinetic power sign (fast vs slow wave) & energy balance
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    s_chu = chu["s_mm"]
-    ax0.plot(
-        s_chu,
-        chu["Pk_fast_z"] * 1e3,
-        color="#1b9e77",
-        lw=2.2,
-        label=f"Fast wave ($\\omega_+ = \\beta u_0 + \\omega_q$): $\\langle P_k \\rangle = +{chu['Pk_fast_mean']*1e3:.3f}$ mW ($>0$)",
-    )
-    ax0.plot(
-        s_chu,
-        chu["Pk_slow_z"] * 1e3,
-        color="#d95f02",
-        lw=2.2,
-        label=f"Slow wave ($\\omega_- = \\beta u_0 - \\omega_q$): $\\langle P_k \\rangle = {chu['Pk_slow_mean']*1e3:.3f}$ mW ($<0$)",
-    )
-    ax0.fill_between(s_chu, 0.0, chu["Pk_fast_z"] * 1e3, color="#1b9e77", alpha=0.15)
-    ax0.fill_between(s_chu, 0.0, chu["Pk_slow_z"] * 1e3, color="#d95f02", alpha=0.15)
-    ax0.axhline(0.0, color="0.3", ls="--", lw=1.2)
-    ax0.set(
-        xlabel="Axial coordinate z across one wavelength [mm]",
-        ylabel=r"Instantaneous Chu kinetic power $P_k(z) = \int V_1 J_{1z}\,dA$ [mW]",
-        title="(a) Positive-energy fast wave vs negative-energy slow wave",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=7.6)
+        # ------------------------------------------------------------------
+        # Fig 02: Mesh zoom & transverse/axial profile weights (3 panels)
+        # ------------------------------------------------------------------
+        fig, (ax_m, ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.3,
+            ncols=3,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.19, top=0.86, wspace=0.38)
 
-    t_chu = chu["t_ns"]
-    u_tot0 = float(np.mean(chu["u_tot"]))
-    ax1.plot(
-        t_chu,
-        chu["u_kin"] / u_tot0,
-        color="#2b5c8f",
-        lw=1.8,
-        label=r"Chu kinetic energy $U_{\mathrm{kin}}(t) / U_{\mathrm{tot}}$",
-    )
-    ax1.plot(
-        t_chu,
-        chu["u_em"] / u_tot0,
-        color="#d95f02",
-        lw=1.8,
-        label=r"Electromagnetic energy $U_{\mathrm{EM}}(t) / U_{\mathrm{tot}}$",
-    )
-    ax1.plot(
-        t_chu,
-        chu["u_tot"] / u_tot0,
-        color="#1b9e77",
-        lw=2.2,
-        label=f"Total Chu-Poynting $U_{{\\mathrm{{tot}}}}(t)$ (drift = {chu['rel_energy_drift']*100:.4f}%)",
-    )
-    ax1.set(
-        xlabel="Time t [ns]",
-        ylabel="Normalized energy",
-        ylim=(-0.05, 1.15),
-        title="(b) Coupled EM + beam Chu–Poynting energy conservation",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="center right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_chu_kinetic_power_and_energy.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+        ax_m.add_patch(
+            mpatches.Rectangle(
+                (0.0, -2.0), 9.593, 4.0, facecolor="#F8FAFC", edgecolor=figstyle.INK, lw=1.4
+            )
+        )
+        ax_m.add_patch(
+            mpatches.Rectangle(
+                (0.0, -0.5),
+                9.593,
+                1.0,
+                facecolor="#DCE8F2",
+                edgecolor="#0072B2",
+                lw=1.2,
+                alpha=0.8,
+                label="Beam (|y| ≤ 0.5 mm)",
+            )
+        )
+        schematic.draw_mesh(
+            ax_m,
+            s_bloch,
+            plane="xy",
+            unit="mm",
+            every=4,
+            wavelength=LAMBDA_E_REF,
+            zoom_inset=False,
+            show_cpw=False,
+        )
+        ax_m.set(
+            xlim=(0.0, 9.593),
+            ylim=(-2.0, 2.0),
+            xlabel="Axial x [mm]",
+            ylabel="Transverse y [mm]",
+            title="(a) Bloch cell mesh",
+        )
 
-    # ------------------------------------------------------------------
-    # Fig 13: Mesh-refinement convergence study (coarse, medium, fine)
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-    levels = ["coarse", "medium", "fine"]
-    n_b_arr = np.array(
-        [float(tasks_data[f"disp_res_{lvl}"]["cells_across_feature"]) for lvl in levels]
-    )
-    r_fit_arr = np.array(
-        [float(tasks_data[f"disp_res_{lvl}"]["R_fit"]) for lvl in levels]
-    )
-    r_th_val = float(primary["R_th"])
-    # Second-order Richardson extrapolation from medium -> fine for the
-    # continuum full-Maxwell reference limit
-    ratio_sq = (n_b_arr[-1] / n_b_arr[-2]) ** 2
-    r_cont_ref = r_fit_arr[-1] + (r_fit_arr[-1] - r_fit_arr[-2]) / (ratio_sq - 1.0)
-    rel_err_arr = np.maximum(np.abs(r_fit_arr - r_cont_ref) / r_cont_ref, 1e-5)
-    rel_err_bm = np.maximum(np.abs(r_fit_arr - r_th_val) / r_th_val, 1e-5)
+        for idx_l, lvl in enumerate(("coarse", "medium", "fine")):
+            d = tasks_data[f"disp_res_{lvl}"]
+            y_mm = d["y_nodes"] * 1e3
+            w_y = d["w_perp_y"]
+            st_l = figstyle.series_style(idx_l, ms=4.2)
+            ax0.plot(
+                y_mm,
+                w_y,
+                label=f"{lvl.capitalize()} (N_b={d['cells_across_feature']:.0f})",
+                **st_l,
+            )
+        y_ref = np.linspace(-2.0, 2.0, 500)
+        ax0.plot(
+            y_ref,
+            (np.abs(y_ref) <= 0.5).astype(float),
+            color=figstyle.INK,
+            lw=1.2,
+            ls=":",
+            marker="none",
+            label="Exact |y| ≤ 0.5 mm",
+        )
+        ax0.set(
+            xlim=(-1.2, 1.2),
+            ylim=(-0.05, 1.12),
+            xlabel="Transverse y [mm]",
+            ylabel=r"Overlap weight $w_\perp(y)$",
+            title=r"(b) Beam weight $w_\perp(y)$",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.24)
 
-    ax0.loglog(
-        n_b_arr,
-        rel_err_arr,
-        "o-",
-        color="#1b9e77",
-        lw=2.2,
-        ms=7.0,
-        label=rf"Wakis FIT $|R_{{\mathrm{{FIT}}}} - R_\infty| / R_\infty$ ($R_\infty={r_cont_ref:.4f}$)",
-    )
-    ax0.loglog(
-        n_b_arr,
-        rel_err_bm,
-        "s:",
-        color="#2b5c8f",
-        lw=1.8,
-        ms=6.0,
-        label=rf"Wakis FIT $|R_{{\mathrm{{FIT}}}} - R_{{\mathrm{{BM}}}}| / R_{{\mathrm{{BM}}}}$ ($R_{{\mathrm{{BM}}}}={r_th_val:.4f}$)",
-    )
-    guide_2nd = rel_err_arr[0] * (n_b_arr[0] / n_b_arr) ** 2
-    ax0.loglog(
-        n_b_arr,
-        guide_2nd,
-        "--",
-        color="#d95f02",
-        lw=1.6,
-        label=r"Second-order $\mathcal{O}(\Delta x^2)$ reference slope",
-    )
-    ax0.set_xticks(n_b_arr)
-    ax0.xaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
-    ax0.xaxis.set_minor_formatter(mticker.NullFormatter())
-    ax0.set(
-        xlabel="Cells across beam half-thickness b",
-        ylabel="Relative error in reduction factor R",
-        title="(a) Mesh convergence of reduction factor $R$",
-    )
-    ax0.grid(True, which="both", ls=":", alpha=0.4)
-    ax0.legend(loc="lower left", fontsize=7.4)
-
-    for lvl, col, ls in (
-        ("coarse", "#7570b3", ":"),
-        ("medium", "#d95f02", "--"),
-        ("fine", "#1b9e77", "-"),
-    ):
-        d = tasks_data[f"disp_res_{lvl}"]
+        s_mm = bunch["s_coords_mm"]
+        w_ax = bunch["w_axial"]
         ax1.plot(
-            d["fft_freqs"] * 1e-9,
-            d["fft_spec"],
-            color=col,
-            ls=ls,
-            lw=1.8,
-            label=f"{lvl.capitalize()} ($N_b={d['cells_across_feature']:.0f}$, $R={d['R_fit']:.4f}$)",
+            s_mm,
+            w_ax,
+            label=r"Axial weight $w_s(z)$",
+            **figstyle.series_style(0, markevery=6),
         )
-    ax1.axvline(f_slow_th_ghz, color="0.3", ls="--", lw=1.2, label="Analytic $f_-, f_+$")
-    ax1.axvline(f_fast_th_ghz, color="0.3", ls="--", lw=1.2)
-    ax1.set(
-        xlim=(4.3, 5.7),
-        xlabel="Frequency f [GHz]",
-        ylabel="Normalized spectral magnitude",
-        title=f"(b) Spectral doublet across resolutions ($R_{{\\mathrm{{BM}}}}={r_th_val:.4f}$)",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper center", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "13_resolution_convergence.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+        ax1.axvspan(
+            s_mm[-1],
+            115.0,
+            facecolor="#CBD5E1",
+            edgecolor="#475569",
+            hatch="///",
+            alpha=0.45,
+            label="Outflow CPML (ρ₀ = 0)",
+        )
+        ax1.axvspan(
+            s_mm[-10],
+            s_mm[-1],
+            color="#F5E4C8",
+            alpha=0.65,
+            label="10-cell ρ₀ → 0 taper",
+        )
+        ax1.set(
+            xlim=(float(s_mm[-35]), 115.0),
+            ylim=(-0.05, 1.12),
+            xlabel="Axial z near collector [mm]",
+            ylabel=r"Normalized $\rho_0(z)/\rho_{0,\mathrm{peak}}$",
+            title="(c) Collector density ramp",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.26)
+        figstyle.save(fig, fig_dir / "02_mesh_and_profile_zoom.png", close=True, auto_legend_below=False)
 
-    # ------------------------------------------------------------------
-    # Fig 14: Linearized fluid validity limits vs nonlinear PIC/Bessel bunching
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    X_arr = chu["X_arr"]
-    ax0.plot(
-        X_arr,
-        chu["I1_linear"],
-        "--",
-        color="#2b5c8f",
-        lw=2.0,
-        label=r"Linearized cold fluid $|I_1|/I_0 = X$",
-    )
-    ax0.plot(
-        X_arr,
-        chu["I1_bessel"],
-        color="#1b9e77",
-        lw=2.2,
-        label=r"Nonlinear ballistic fundamental $|I_1|/I_0 = 2|J_1(X)|$",
-    )
-    ax0.plot(
-        X_arr,
-        chu["I2_bessel"],
-        color="#d95f02",
-        lw=1.8,
-        label=r"Second harmonic $|I_2|/I_0 = 2|J_2(2X)|$ (needs PIC)",
-    )
-    ax0.plot(
-        X_arr,
-        chu["I3_bessel"],
-        color="#7570b3",
-        lw=1.6,
-        ls="-.",
-        label=r"Third harmonic $|I_3|/I_0 = 2|J_3(3X)|$ (needs PIC)",
-    )
-    ax0.axvspan(
-        0.0,
-        0.5,
-        color="#1b9e77",
-        alpha=0.12,
-        label="Small-signal linear regime ($X \\lesssim 0.5$)",
-    )
-    ax0.axvline(
-        1.0,
-        color="#e7298a",
-        ls=":",
-        lw=1.7,
-        label="Trajectory overtaking / wave breaking ($X = 1.0$)",
-    )
-    ax0.axvline(
-        1.841,
-        color="0.35",
-        ls="--",
-        lw=1.3,
-        label="Bessel saturation peak ($X = 1.841$)",
-    )
-    ax0.set(
-        xlim=(0.0, 3.0),
-        ylim=(0.0, 1.55),
-        xlabel=r"Bunching parameter $X = (\beta_0 V_m M / 2V_0)\,\sin(\beta_q z)/(\beta_q z_0)$",
-        ylabel=r"Harmonic current ratio $|I_n(X)| / I_0$",
-        title="(a) Linear cold-fluid vs nonlinear Bessel harmonic bunching",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper left", fontsize=7.2)
+        # ------------------------------------------------------------------
+        # Fig 03: Transverse TM space-charge wave eigenmode profiles
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.3,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.32)
 
-    # Phase-space (omega t_0 vs arrival phasepsi = omega t - beta_0 z = omega t_0 - X sin(omega t_0))
-    phi0 = np.linspace(-np.pi, np.pi, 400)
-    for X_val, col, ls, lbl in (
-        (0.25, "#1b9e77", "-", "$X = 0.25$ (single-valued, linear fluid valid)"),
-        (1.00, "#d95f02", "--", "$X = 1.00$ (onset of trajectory crossing, $\\rho_1 \\to \\infty$)"),
-        (1.60, "#e7298a", "-.", "$X = 1.60$ (multi-streaming / overtaking, PIC required)"),
-    ):
-        psi = phi0 - X_val * np.sin(phi0)
-        v_norm = 1.0 + 0.15 * X_val * np.sin(phi0)
-        ax1.plot(psi / np.pi, v_norm, color=col, ls=ls, lw=2.0, label=lbl)
-    ax1.set(
-        xlim=(-1.05, 1.05),
-        xlabel=r"Normalized arrival phase $(\omega t - \beta_0 z)/\pi$",
-        ylabel=r"Normalized electron velocity $v_z / u_0$",
-        title=r"(b) Phase-space $(z, v_z)$ fold & multi-streaming at $X \geq 1$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper left", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "14_linear_vs_nonlinear_bunching_limits.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+        y_n_mm = primary["y_nodes"] * 1e3
+        y_e_mm = primary["y_edges"] * 1e3
+        y_dense = np.linspace(-A_TUNNEL_REF, A_TUNNEL_REF, 400)
+        Es_d, Ey_d, J1_d, _, _, _ = planar_tm_eigenmode(
+            y_dense, OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF
+        )
 
-    print(f"Rendered 14 figures in {fig_dir}")
+        ax0.plot(
+            y_dense * 1e3,
+            Es_d,
+            label=r"Analytic $E_z(y)$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            y_n_mm[::2],
+            primary["Ex_fit"][::2],
+            label="Wakis 2D FIT $E_z(y)$",
+            **figstyle.series_style(1, with_line=False, ms=4.5),
+        )
+        ax0.plot(
+            y_dense * 1e3,
+            J1_d,
+            label=r"Analytic $J_{1z}(y)/J_{\max}$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            y_n_mm[::2],
+            primary["J1_fit"][::2],
+            label="Wakis 2D FIT $J_{1z}(y)$",
+            **figstyle.series_style(2, with_line=False, ms=4.2),
+        )
+        ax0.axvspan(-0.5, 0.5, color="#DCE8F2", alpha=0.55, label="Beam (|y| ≤ 0.5 mm)")
+        ax0.set(
+            xlabel="Transverse y [mm]",
+            ylabel="Normalized amplitude",
+            title=r"(a) Axial $E_z(y)$ & current $J_{1z}(y)$",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.22)
+
+        ax1.plot(
+            y_dense * 1e3,
+            Ey_d,
+            label=r"Analytic $E_y(y)/E_z(0)$",
+            **figstyle.series_style(4, with_marker=False),
+        )
+        ax1.plot(
+            y_e_mm[::2],
+            primary["Ey_fit"][::2],
+            label="Wakis 2D FIT $E_y(y)/E_z(0)$",
+            **figstyle.series_style(1, with_line=False, ms=4.5),
+        )
+        ax1.axvspan(-0.5, 0.5, color="#DCE8F2", alpha=0.55, label="Beam (|y| ≤ 0.5 mm)")
+        ax1.axhline(0.0, color=figstyle.INK, ls=":", lw=1.0, marker="none")
+        ax1.set(
+            xlabel="Transverse y [mm]",
+            ylabel=r"Transverse field $E_y(y)/E_z(0)$",
+            title=r"(b) Transverse fringing $E_y(y)$",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.22)
+        figstyle.save(fig, fig_dir / "03_transverse_tm_eigenmodes.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 04: Space-charge wave k-omega dispersion diagram
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        beta_dense = np.linspace(50.0, 1450.0, 300)
+        f_beam_dense = (beta_dense * U0_REF) / (2.0 * np.pi) * 1e-9
+        R_dense = reduction_factor_planar(
+            beta_dense * U0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF
+        )
+        w_fast_d, w_slow_d = space_charge_wave_dispersion(
+            beta_dense, U0_REF, WP_REF, R=R_dense
+        )
+        f_fast_d = w_fast_d / (2.0 * np.pi) * 1e-9
+        f_slow_d = w_slow_d / (2.0 * np.pi) * 1e-9
+        f_light_d = (beta_dense * c_light) / (2.0 * np.pi) * 1e-9
+
+        betas_fit = kw_task["betas"]
+        f_fast_fit = kw_task["omega_fast"] / (2.0 * np.pi) * 1e-9
+        f_slow_fit = kw_task["omega_slow"] / (2.0 * np.pi) * 1e-9
+
+        ax0.plot(
+            beta_dense,
+            f_beam_dense,
+            label=r"Beam line $\omega = \beta u_0$",
+            **figstyle.series_style(7, with_marker=False),
+        )
+        ax0.plot(
+            beta_dense,
+            f_fast_d,
+            label=r"Fast $\omega_+ = \beta u_0 + \omega_q$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            beta_dense,
+            f_slow_d,
+            label=r"Slow $\omega_- = \beta u_0 - \omega_q$",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.plot(
+            betas_fit,
+            f_fast_fit,
+            label=r"FIT $\omega_+(\beta)$",
+            **figstyle.series_style(2, with_line=False, ms=5.8),
+        )
+        ax0.plot(
+            betas_fit,
+            f_slow_fit,
+            label=r"FIT $\omega_-(\beta)$",
+            **figstyle.series_style(1, with_line=False, ms=5.8),
+        )
+        ax0.plot(
+            beta_dense,
+            f_light_d,
+            label=r"Light line $\omega = c\beta$",
+            **figstyle.series_style(4, with_marker=False),
+        )
+        ax0.set(
+            xlim=(50.0, 1400.0),
+            ylim=(0.0, 11.5),
+            xlabel=r"Axial wavenumber $\beta$ [rad/m]",
+            ylabel="Frequency f [GHz]",
+            title=r"(a) $(\beta, \omega)$ dispersion diagram",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="upper left", frameon=False, fontsize=8.5)
+
+        df_th = (w_fast_d - beta_dense * U0_REF) / (2.0 * np.pi) * 1e-6  # MHz
+        df_fast_fit = (kw_task["omega_fast"] - betas_fit * U0_REF) / (2.0 * np.pi) * 1e-6
+        df_slow_fit = (kw_task["omega_slow"] - betas_fit * U0_REF) / (2.0 * np.pi) * 1e-6
+        fp_rel_mhz = (WP_REF / (GAMMA0_REF**1.5)) / (2.0 * np.pi) * 1e-6
+
+        ax1.plot(
+            beta_dense,
+            +df_th,
+            label=r"$+\omega_q(\beta)/2\pi$ (Fast)",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax1.plot(
+            beta_dense,
+            -df_th,
+            label=r"$-\omega_q(\beta)/2\pi$ (Slow)",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax1.plot(
+            betas_fit,
+            df_fast_fit,
+            label="FIT fast shift",
+            **figstyle.series_style(2, with_line=False, ms=5.8),
+        )
+        ax1.plot(
+            betas_fit,
+            df_slow_fit,
+            label="FIT slow shift",
+            **figstyle.series_style(1, with_line=False, ms=5.8),
+        )
+        ax1.axhline(0.0, color=figstyle.INK, ls="--", lw=1.0, marker="none")
+        ax1.axhline(
+            +fp_rel_mhz,
+            color="#475569",
+            ls=":",
+            lw=1.3,
+            marker="none",
+            label=r"1D limit $\pm \omega_p / (2\pi\gamma_0^{3/2})$",
+        )
+        ax1.axhline(-fp_rel_mhz, color="#475569", ls=":", lw=1.3, marker="none")
+        ax1.set(
+            xlim=(50.0, 1400.0),
+            xlabel=r"Axial wavenumber $\beta$ [rad/m]",
+            ylabel=r"Doppler shift $(\omega_\pm - \beta u_0)/2\pi$ [MHz]",
+            title=r"(b) Co-moving shift $\pm \omega_q(\beta)$",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="center right", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "04_kw_dispersion_diagram.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 05: Time-domain beating trace & Doppler doublet FFT spectrum
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.3,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        t_ns = primary["trace_t"] * 1e9
+        ex_re = np.real(primary["trace_Ex"])
+        ex_env = np.abs(primary["trace_Ex"])
+        scale_e = max(float(np.max(ex_env)), 1e-30)
+        ax0.plot(
+            t_ns,
+            ex_re / scale_e,
+            color=figstyle.PALETTE[0],
+            lw=0.9,
+            marker="none",
+            alpha=0.85,
+            label=r"$\mathrm{Re}[E_z(t)] / E_{\max}$",
+        )
+        ax0.plot(
+            t_ns,
+            ex_env / scale_e,
+            color=figstyle.PALETTE[1],
+            lw=2.0,
+            marker="none",
+            label=r"Envelope $|\sin(\omega_q t)|$",
+        )
+        ax0.plot(t_ns, -ex_env / scale_e, color=figstyle.PALETTE[1], lw=2.0, marker="none")
+        ax0.set(
+            xlabel="Time t [ns]",
+            ylabel="Normalized axial field",
+            title=r"(a) Temporal beat ($f_0 = 5.0\;\mathrm{GHz}$)",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="upper right", frameon=False, fontsize=8.5)
+
+        f_ghz = primary["fft_freqs"] * 1e-9
+        spec_db = 20.0 * np.log10(np.maximum(primary["fft_spec"], 1e-6))
+        f_slow_th_ghz = primary["omega_slow_th"] / (2.0 * np.pi) * 1e-9
+        f_fast_th_ghz = primary["omega_fast_th"] / (2.0 * np.pi) * 1e-9
+
+        ax1.plot(
+            f_ghz,
+            spec_db,
+            label="Wakis Bloch FIT spectrum",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.axvline(
+            F0_REF * 1e-9,
+            color=figstyle.INK,
+            ls="--",
+            lw=1.3,
+            marker="none",
+            label=f"Carrier f₀ = {F0_REF * 1e-9:.2f} GHz",
+        )
+        ax1.axvline(
+            f_slow_th_ghz,
+            color=figstyle.PALETTE[1],
+            ls=":",
+            lw=1.7,
+            marker="none",
+            label=f"Slow f₋ = {f_slow_th_ghz:.3f} GHz",
+        )
+        ax1.axvline(
+            f_fast_th_ghz,
+            color=figstyle.PALETTE[2],
+            ls=":",
+            lw=1.7,
+            marker="none",
+            label=f"Fast f₊ = {f_fast_th_ghz:.3f} GHz",
+        )
+        ax1.set(
+            xlim=(3.8, 6.2),
+            ylim=(-55.0, 4.0),
+            xlabel="Frequency f [GHz]",
+            ylabel="Spectral magnitude [dB]",
+            title=r"(b) Doppler doublet $\omega_\pm = \beta u_0 \pm \omega_q$",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="lower center", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "05_doppler_splitting_spectra.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 06: Reduction factor R vs beam thickness / filling ratio b/a
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        fill_dense = np.linspace(0.05, 1.0, 200)
+        b_dense = fill_dense * A_TUNNEL_REF
+        R_2d_curve = np.array(
+            [
+                reduction_factor_planar(OMEGA0_REF, U0_REF, b_val, A_TUNNEL_REF)
+                for b_val in b_dense
+            ]
+        )
+        R_3d_rect_curve = np.array(
+            [
+                reduction_factor_rectangular(
+                    OMEGA0_REF, U0_REF, b_val, b_val, A_TUNNEL_REF, A_TUNNEL_REF
+                )
+                for b_val in b_dense
+            ]
+        )
+        R_3d_cyl_curve = np.array(
+            [
+                reduction_factor_cylindrical(OMEGA0_REF, U0_REF, b_val, A_TUNNEL_REF)
+                for b_val in b_dense
+            ]
+        )
+
+        ax0.plot(
+            fill_dense,
+            R_2d_curve,
+            label="2D sheet (Branch–Mihran)",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            thick_task["fill_ratios"],
+            thick_task["R_fit"],
+            label="Wakis 2D FIT",
+            **figstyle.series_style(2, with_line=False, ms=6.0),
+        )
+        ax0.plot(
+            fill_dense,
+            R_3d_rect_curve,
+            label="3D square tunnel (Theory)",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            [beam3d["b_half"] / beam3d["a_half"]],
+            [beam3d["R_3d_fit"]],
+            label="Wakis 3D FIT",
+            **figstyle.series_style(0, with_line=False, ms=6.5),
+        )
+        ax0.plot(
+            fill_dense,
+            R_3d_cyl_curve,
+            label="3D circular (Mealy 2022)",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.set(
+            xlim=(0.0, 1.05),
+            ylim=(0.0, 0.85),
+            xlabel=r"Filling ratio $b / a$ ($a = 2.0\;\mathrm{mm}$)",
+            ylabel=r"Reduction factor $R$",
+            title=r"(a) $R$ vs filling ratio $b / a$",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="upper left", frameon=False, fontsize=8.5)
+
+        tau_b_grid = np.linspace(0.05, 4.0, 200)
+        u0_bm = U0_REF
+        b_bm = 1.0e-3
+        _, g_bm = relativistic_gamma(u0=u0_bm)
+        omega_bm = tau_b_grid * g_bm * u0_bm / b_bm
+        for idx_r, ratio_ab in enumerate((1.0, 1.5, 2.0, 4.0, np.inf)):
+            R_bm = reduction_factor_planar(omega_bm, u0_bm, b_bm, a=ratio_ab * b_bm)
+            lbl = r"$a/b = \infty$" if np.isinf(ratio_ab) else f"$a/b = {ratio_ab:g}$"
+            ax1.plot(
+                tau_b_grid,
+                R_bm,
+                label=lbl,
+                **figstyle.series_style(idx_r, with_marker=False),
+            )
+
+        tau_b_fit = (kw_task["betas"] / GAMMA0_REF) * B_BEAM_REF
+        ax1.plot(
+            tau_b_fit,
+            kw_task["R_fit"],
+            label="Wakis 2D FIT (a/b = 4)",
+            **figstyle.series_style(3, with_line=False, ms=5.8),
+        )
+        ax1.set(
+            xlim=(0.0, 4.0),
+            ylim=(0.0, 1.02),
+            xlabel=r"Normalized thickness $\tau b = (\beta / \gamma_0) b$",
+            ylabel=r"Planar reduction factor $R_{\mathrm{2D}}$",
+            title="(b) Universal Branch–Mihran curves",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="lower right", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "06_reduction_factor_vs_thickness.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 07: Reduction factor R(f) and beta_q(f) vs frequency (1-10 GHz)
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        f_sweep_dense = np.linspace(0.5e9, 10.5e9, 200)
+        w_sweep_dense = 2.0 * np.pi * f_sweep_dense
+        R_2d_f = reduction_factor_planar(
+            w_sweep_dense, U0_REF, B_BEAM_REF, A_TUNNEL_REF
+        )
+        R_3d_cyl_f = reduction_factor_cylindrical(
+            w_sweep_dense, U0_REF, B_BEAM_REF, A_TUNNEL_REF
+        )
+        R_3d_rect_f = reduction_factor_rectangular(
+            w_sweep_dense, U0_REF, B_BEAM_REF, B_BEAM_REF, A_TUNNEL_REF, A_TUNNEL_REF
+        )
+
+        f_pts_ghz = kw_task["freqs"] * 1e-9
+        ax0.plot(
+            f_sweep_dense * 1e-9,
+            R_2d_f,
+            label="2D sheet (Branch–Mihran)",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            f_pts_ghz,
+            kw_task["R_fit"],
+            label="Wakis 2D Bloch FIT",
+            **figstyle.series_style(2, with_line=False, ms=6.0),
+        )
+        ax0.plot(
+            f_sweep_dense * 1e-9,
+            R_3d_rect_f,
+            label="3D square tunnel (Theory)",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            f_sweep_dense * 1e-9,
+            R_3d_cyl_f,
+            label="3D circular (Mealy 2022)",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.set(
+            xlim=(0.5, 10.5),
+            ylim=(0.0, 0.85),
+            xlabel="Modulation frequency f [GHz]",
+            ylabel=r"Reduction factor $R(f)$",
+            title="(a) Reduction factor $R(f)$ (1–10 GHz)",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="upper left", frameon=False, fontsize=8.5)
+
+        bq_2d_f = R_2d_f * (WP_REF / (GAMMA0_REF**1.5)) / U0_REF
+        bq_fit = kw_task["omega_q"] / U0_REF
+        ax1.plot(
+            f_sweep_dense * 1e-9,
+            bq_2d_f,
+            label=r"Analytic $\beta_q(f)$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax1.plot(
+            f_pts_ghz,
+            bq_fit,
+            label=r"Wakis 2D Bloch FIT $\beta_q(f)$",
+            **figstyle.series_style(1, with_line=False, ms=6.0),
+        )
+        ax1.set(
+            xlim=(0.5, 10.5),
+            xlabel="Modulation frequency f [GHz]",
+            ylabel=r"Reduced wavenumber $\beta_q(f)$ [rad/m]",
+            title=r"(b) Reduced wavenumber $\beta_q(f)$",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="upper left", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "07_reduction_factor_vs_frequency.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 08: 2D vs 3D transverse electric field fringing comparison
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.5,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.08, right=0.98, bottom=0.19, top=0.88, wspace=0.36)
+
+        x3 = beam3d["x_nodes"] * 1e3
+        y3 = beam3d["y_nodes"] * 1e3
+        ez_3d = beam3d["Ez_xy"]
+        ez_norm = ez_3d / max(float(np.max(np.abs(ez_3d))), 1e-30)
+
+        im0 = ax0.pcolormesh(
+            x3,
+            y3,
+            ez_norm.T,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-1.0,
+            vmax=1.0,
+            shading="gouraud",
+        )
+        fig.colorbar(im0, ax=ax0, label=r"$E_z(x, y) / E_{z,\max}$")
+        schematic.overlay_geometry(
+            ax0,
+            s_3d,
+            plane="xy",
+            unit="mm",
+            structures=structs_3d,
+            probes=probes_3d,
+            show_boundaries=True,
+            show_materials=True,
+        )
+        _add_pec_wall_tags_2d(ax0, "+y: PEC", "−y: PEC")
+        xc = 0.5 * (x3[:-1] + x3[1:])
+        yc = 0.5 * (y3[:-1] + y3[1:])
+        ex_c = 0.5 * (beam3d["Ex_xy"][:, :-1] + beam3d["Ex_xy"][:, 1:])
+        ey_c = 0.5 * (beam3d["Ey_xy"][:-1, :] + beam3d["Ey_xy"][1:, :])
+        step_q = max(1, len(xc) // 10)
+        XC, YC = np.meshgrid(xc[::step_q], yc[::step_q], indexing="ij")
+        ax0.quiver(
+            XC,
+            YC,
+            ex_c[::step_q, ::step_q],
+            ey_c[::step_q, ::step_q],
+            color=figstyle.INK,
+            alpha=0.72,
+            zorder=7,
+        )
+        ax0.set(
+            aspect="equal",
+            xlabel="Transverse x [mm]",
+            ylabel="Transverse y [mm]",
+            title=r"(a) 3D tunnel $E_z(x,y)$ & $\mathbf{E}_\perp$",
+        )
+
+        labels_geom = [
+            "1D\nSlab",
+            "2D\nSheet",
+            "3D\nSquare",
+            "3D\nRound",
+        ]
+        r_vals = [
+            1.0,
+            reduction_factor_planar(OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF),
+            reduction_factor_rectangular(
+                OMEGA0_REF, U0_REF, B_BEAM_REF, B_BEAM_REF, A_TUNNEL_REF, A_TUNNEL_REF
+            ),
+            reduction_factor_cylindrical(OMEGA0_REF, U0_REF, B_BEAM_REF, A_TUNNEL_REF),
+        ]
+        colors_bar = [
+            "#94A3B8",
+            figstyle.PALETTE[2],
+            figstyle.PALETTE[0],
+            figstyle.PALETTE[1],
+        ]
+        bars = ax1.bar(labels_geom, r_vals, color=colors_bar, width=0.52, edgecolor=figstyle.INK)
+        for bar, v in zip(bars, r_vals):
+            ax1.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                v + 0.025,
+                f"R = {v:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8.6,
+                fontweight="bold",
+                color=figstyle.INK,
+            )
+        ax1.set(
+            ylim=(0.0, 1.16),
+            ylabel=r"Reduction factor $R$ ($b/a=0.25,\;5\;\mathrm{GHz}$)",
+            title="(b) Wall-fringing: 1D vs 2D vs 3D",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.save(fig, fig_dir / "08_2d_vs_3d_fringing_comparison.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 09: 2D spatial maps of rho1(z, y), J1z(z, y), and Ez(z, y)
+        # ------------------------------------------------------------------
+        fig, axes = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=5.8,
+            ncols=1,
+            nrows=3,
+            sharex=True,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.96, bottom=0.10, top=0.93, hspace=0.45)
+
+        x_mm = bunch["x_coords"]
+        y_mm = bunch["y_coords"]
+        for ax, arr, lbl, title_str in (
+            (
+                axes[0],
+                bunch["rho1_2d"],
+                r"$\rho_1 / |\rho_1|_{\max}$",
+                r"(a) Space-charge density perturbation $\rho_1(z, y, t)$",
+            ),
+            (
+                axes[1],
+                bunch["J1_2d"],
+                r"$J_{1z} / |J_{1z}|_{\max}$",
+                r"(b) Small-signal axial current density $J_{1z}(z, y, t)$",
+            ),
+            (
+                axes[2],
+                bunch["Ex_2d"],
+                r"$E_z / |E_z|_{\max}$",
+                r"(c) Space-charge axial electric field $E_z(z, y, t)$",
+            ),
+        ):
+            amax = max(float(np.max(np.abs(arr))), 1e-30)
+            im = ax.pcolormesh(
+                x_mm,
+                y_mm,
+                (arr / amax).T,
+                cmap=figstyle.CMAP_DIVERGING,
+                vmin=-1.0,
+                vmax=1.0,
+                shading="auto",
+            )
+            fig.colorbar(im, ax=ax, label=lbl, pad=0.015)
+            schematic.overlay_geometry(
+                ax,
+                s_bunch,
+                plane="xy",
+                unit="mm",
+                structures=structs_bunch,
+                sources=srcs_bunch,
+                monitors=mons_bunch,
+                show_boundaries=True,
+                show_materials=True,
+                show_sources=True,
+                show_monitors=True,
+            )
+            _add_pec_wall_tags_2d(ax, "+y: PEC wall", "−y: PEC wall")
+            ax.set(ylabel="y [mm]", title=title_str)
+        axes[2].set_xlabel("Axial drift coordinate z [mm]")
+        figstyle.save(fig, fig_dir / "09_modulated_beam_field_map.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 10: Klystron drift-space current & velocity standing-wave beat
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        z_mm = bunch["z_drift"] * 1e3
+        ax0.plot(
+            z_mm,
+            bunch["I1_th_norm"],
+            label=r"Analytic $|\sin(\beta_q z)|$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            z_mm[::3],
+            bunch["I1_norm"][::3],
+            label=f"FIT $|I_1|$ (L_beat={bunch['L_beat_fit']*1e3:.1f} mm)",
+            **figstyle.series_style(1, with_line=False, ms=4.2),
+        )
+        l_q4_mm = 0.5 * bunch["L_beat_th"] * 1e3
+        l_q2_mm = bunch["L_beat_th"] * 1e3
+        ax0.axvline(
+            l_q4_mm,
+            color=figstyle.PALETTE[0],
+            ls=":",
+            lw=1.5,
+            marker="none",
+            label=f"λ_q/4 = {l_q4_mm:.1f} mm",
+        )
+        ax0.axvline(
+            l_q2_mm,
+            color=figstyle.INK,
+            ls="--",
+            lw=1.3,
+            marker="none",
+            label=f"λ_q/2 = {l_q2_mm:.1f} mm",
+        )
+        ax0.set(
+            xlabel="Distance downstream of gap z [mm]",
+            ylabel=r"Normalized $|I_1(z)| / I_{1,\max}$",
+            ylim=(-0.03, 1.14),
+            title="(a) Klystron current beat",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=1, y_offset=-0.22)
+
+        ax1.plot(
+            z_mm,
+            bunch["I1_norm"],
+            label=r"Current $|I_1(z)| \propto |\sin(\beta_q z)|$",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax1.plot(
+            z_mm,
+            bunch["V1_norm"],
+            label=r"Voltage $|V_1(z)| \propto |\cos(\beta_q z)|$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.plot(
+            z_mm,
+            bunch["V1_th_norm"],
+            label=r"Analytic $|\cos(\beta_q z)|$",
+            **figstyle.series_style(7, with_marker=False),
+        )
+        ax1.set(
+            xlabel="Distance downstream of gap z [mm]",
+            ylabel="Normalized envelope",
+            ylim=(-0.03, 1.14),
+            title=r"(b) $\pi/2$ quadrature ($V_1$ vs $I_1$)",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.22)
+        figstyle.save(fig, fig_dir / "10_klystron_bunching_beat.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 11: Animated time-domain space-charge wave propagation GIF
+        # ------------------------------------------------------------------
+        if "movie_rho" in bunch and len(bunch["movie_rho"]) > 0:
+            frames_rho = bunch["movie_rho"]
+            times_ns = bunch["movie_times"] * 1e9
+            rmax = max(float(np.max(np.abs(frames_rho))), 1e-30)
+            pil_frames = []
+            for k in range(len(frames_rho)):
+                fig_g, ax_g = plt.subplots(figsize=(6.8, 3.0), dpi=130)
+                im_g = ax_g.pcolormesh(
+                    x_mm,
+                    y_mm,
+                    (frames_rho[k] / rmax).T,
+                    cmap=figstyle.CMAP_DIVERGING,
+                    vmin=-1.0,
+                    vmax=1.0,
+                    shading="auto",
+                )
+                fig_g.colorbar(im_g, ax=ax_g, label=r"$\rho_1(z,y,t)/\rho_{1,\max}$")
+                schematic.overlay_geometry(
+                    ax_g,
+                    s_bunch,
+                    plane="xy",
+                    unit="mm",
+                    structures=structs_bunch,
+                    sources=srcs_bunch,
+                    monitors=mons_bunch,
+                    show_boundaries=True,
+                    show_materials=True,
+                    show_sources=True,
+                    show_monitors=True,
+                )
+                _add_pec_wall_tags_2d(ax_g, "+y: PEC wall", "−y: PEC wall")
+                ax_g.set(
+                    xlabel="Axial drift coordinate z [mm]",
+                    ylabel="Transverse y [mm]",
+                    title=f"Space-charge wave bunching propagation (t = {times_ns[k]:.2f} ns)",
+                )
+                figstyle.finish(fig_g, auto_legend_below=False)
+                fig_g.canvas.draw()
+                rgba = np.asarray(fig_g.canvas.buffer_rgba())
+                pil_frames.append(Image.fromarray(rgba).convert("P", palette=Image.ADAPTIVE))
+                plt.close(fig_g)
+
+            if pil_frames:
+                pil_frames[0].save(
+                    fig_dir / "11_space_charge_wave_propagation.gif",
+                    save_all=True,
+                    append_images=pil_frames[1:],
+                    duration=90,
+                    loop=0,
+                )
+
+        # ------------------------------------------------------------------
+        # Fig 12: Chu kinetic power sign (fast vs slow wave) & energy balance
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        s_chu = chu["s_mm"]
+        ax0.plot(
+            s_chu,
+            chu["Pk_fast_z"] * 1e3,
+            label=f"Fast wave: ⟨P_k⟩ = +{chu['Pk_fast_mean']*1e3:.3f} mW",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            s_chu,
+            chu["Pk_slow_z"] * 1e3,
+            label=f"Slow wave: ⟨P_k⟩ = {chu['Pk_slow_mean']*1e3:.3f} mW",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.fill_between(s_chu, 0.0, chu["Pk_fast_z"] * 1e3, color=figstyle.PALETTE[2], alpha=0.15)
+        ax0.fill_between(s_chu, 0.0, chu["Pk_slow_z"] * 1e3, color=figstyle.PALETTE[1], alpha=0.15)
+        ax0.axhline(0.0, color=figstyle.INK, ls="--", lw=1.1, marker="none")
+        ax0.set(
+            xlabel="Axial coordinate z [mm]",
+            ylabel=r"Chu kinetic power $P_k(z)$ [mW]",
+            title="(a) Fast (P_k > 0) vs slow (P_k < 0)",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="upper right", frameon=False, fontsize=8.5)
+
+        t_chu = chu["t_ns"]
+        u_tot0 = float(np.mean(chu["u_tot"]))
+        ax1.plot(
+            t_chu,
+            chu["u_kin"] / u_tot0,
+            label=r"Kinetic $U_{\mathrm{kin}}(t) / U_{\mathrm{tot}}$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.plot(
+            t_chu,
+            chu["u_em"] / u_tot0,
+            label=r"EM $U_{\mathrm{EM}}(t) / U_{\mathrm{tot}}$",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax1.plot(
+            t_chu,
+            chu["u_tot"] / u_tot0,
+            label=f"Total U_tot (drift {chu['rel_energy_drift']*100:.4f}%)",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax1.set(
+            xlabel="Time t [ns]",
+            ylabel="Normalized energy",
+            ylim=(-0.05, 1.15),
+            title="(b) Chu–Poynting conservation",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="center right", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "12_chu_kinetic_power_and_energy.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 13: Mesh-refinement convergence study (coarse, medium, fine)
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        levels = ["coarse", "medium", "fine"]
+        n_b_arr = np.array(
+            [float(tasks_data[f"disp_res_{lvl}"]["cells_across_feature"]) for lvl in levels]
+        )
+        r_fit_arr = np.array(
+            [float(tasks_data[f"disp_res_{lvl}"]["R_fit"]) for lvl in levels]
+        )
+        r_th_val = float(primary["R_th"])
+        ratio_sq = (n_b_arr[-1] / n_b_arr[-2]) ** 2
+        r_cont_ref = r_fit_arr[-1] + (r_fit_arr[-1] - r_fit_arr[-2]) / (ratio_sq - 1.0)
+        rel_err_arr = np.maximum(np.abs(r_fit_arr - r_cont_ref) / r_cont_ref, 1e-5)
+        rel_err_bm = np.maximum(np.abs(r_fit_arr - r_th_val) / r_th_val, 1e-5)
+
+        ax0.loglog(
+            n_b_arr,
+            rel_err_arr,
+            label=rf"$|R_{{\mathrm{{FIT}}}} - R_\infty| / R_\infty$ ($R_\infty={r_cont_ref:.4f}$)",
+            **figstyle.series_style(2),
+        )
+        ax0.loglog(
+            n_b_arr,
+            rel_err_bm,
+            label=rf"$|R_{{\mathrm{{FIT}}}} - R_{{\mathrm{{BM}}}}| / R_{{\mathrm{{BM}}}}$ ($R_{{\mathrm{{BM}}}}={r_th_val:.4f}$)",
+            **figstyle.series_style(0),
+        )
+        guide_2nd = rel_err_arr[0] * (n_b_arr[0] / n_b_arr) ** 2
+        ax0.loglog(
+            n_b_arr,
+            guide_2nd,
+            label=r"$\mathcal{O}(\Delta x^2)$ slope",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.set_xticks(n_b_arr)
+        ax0.xaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
+        ax0.xaxis.set_minor_formatter(mticker.NullFormatter())
+        ax0.set(
+            xlabel="Cells across beam half-thickness b",
+            ylabel="Relative error in R",
+            title="(a) Mesh convergence of R",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="lower left", frameon=False, fontsize=8.5)
+
+        for idx_l, lvl in enumerate(levels):
+            d = tasks_data[f"disp_res_{lvl}"]
+            ax1.plot(
+                d["fft_freqs"] * 1e-9,
+                d["fft_spec"],
+                label=f"{lvl.capitalize()} (N_b={d['cells_across_feature']:.0f}, R={d['R_fit']:.4f})",
+                **figstyle.series_style(idx_l, with_marker=False),
+            )
+        ax1.axvline(f_slow_th_ghz, color=figstyle.INK, ls=":", lw=1.2, marker="none", label="Analytic f₋, f₊")
+        ax1.axvline(f_fast_th_ghz, color=figstyle.INK, ls=":", lw=1.2, marker="none")
+        ax1.set(
+            xlim=(4.3, 5.7),
+            xlabel="Frequency f [GHz]",
+            ylabel="Normalized |E(f)|",
+            title=f"(b) Spectral doublet (R_BM={r_th_val:.4f})",
+        )
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="upper center", frameon=False, fontsize=8.5)
+        figstyle.save(fig, fig_dir / "13_resolution_convergence.png", close=True, auto_legend_below=False)
+
+        # ------------------------------------------------------------------
+        # Fig 14: Linearized fluid validity limits vs nonlinear PIC/Bessel bunching
+        # ------------------------------------------------------------------
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.4,
+            ncols=2,
+            nrows=1,
+            constrained_layout=False,
+        )
+        fig.subplots_adjust(left=0.09, right=0.98, bottom=0.18, top=0.88, wspace=0.34)
+
+        X_arr = chu["X_arr"]
+        ax0.plot(
+            X_arr,
+            chu["I1_linear"],
+            label=r"Linear fluid $|I_1|/I_0 = X$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            X_arr,
+            chu["I1_bessel"],
+            label=r"Bessel $|I_1|/I_0 = 2|J_1(X)|$",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.plot(
+            X_arr,
+            chu["I2_bessel"],
+            label=r"2nd harm. $2|J_2(2X)|$ (PIC)",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.plot(
+            X_arr,
+            chu["I3_bessel"],
+            label=r"3rd harm. $2|J_3(3X)|$ (PIC)",
+            **figstyle.series_style(4, with_marker=False),
+        )
+        ax0.axvspan(
+            0.0,
+            0.5,
+            color="#D1FAE5",
+            alpha=0.55,
+            label="Linear regime (X ≤ 0.5)",
+        )
+        ax0.axvline(
+            1.0,
+            color=figstyle.INK,
+            ls=":",
+            lw=1.5,
+            marker="none",
+            label="Overtaking (X = 1.0)",
+        )
+        ax0.set(
+            xlim=(0.0, 3.0),
+            ylim=(0.0, 1.55),
+            xlabel=r"Bunching parameter $X$",
+            ylabel=r"Harmonic current $|I_n(X)| / I_0$",
+            title="(a) Linear vs Bessel bunching",
+        )
+        figstyle.spectrum_grid(ax0)
+        figstyle.place_legend_below(ax0, ncol=2, y_offset=-0.24)
+
+        phi0 = np.linspace(-np.pi, np.pi, 400)
+        for idx_x, (X_val, lbl) in enumerate(
+            (
+                (0.25, "X = 0.25 (linear fluid valid)"),
+                (1.00, "X = 1.00 (trajectory crossing)"),
+                (1.60, "X = 1.60 (multi-stream, PIC)"),
+            )
+        ):
+            psi = phi0 - X_val * np.sin(phi0)
+            v_norm = 1.0 + 0.15 * X_val * np.sin(phi0)
+            ax1.plot(
+                psi / np.pi,
+                v_norm,
+                label=lbl,
+                **figstyle.series_style(idx_x, with_marker=False),
+            )
+        ax1.set(
+            xlim=(-1.05, 1.05),
+            xlabel=r"Arrival phase $(\omega t - \beta_0 z)/\pi$",
+            ylabel=r"Velocity $v_z / u_0$",
+            title=r"(b) Phase-space fold at $X \geq 1$",
+        )
+        figstyle.spectrum_grid(ax1)
+        figstyle.place_legend_below(ax1, ncol=1, y_offset=-0.24)
+        figstyle.save(fig, fig_dir / "14_linear_vs_nonlinear_bunching_limits.png", close=True, auto_legend_below=False)
+
+    print(f"Rendered 00a, 00b, and 14 figures in {fig_dir}")
