@@ -10,6 +10,7 @@ NIM A 483, 445, 2002).
 
 from __future__ import annotations
 
+import gc
 import json
 import time
 from pathlib import Path
@@ -24,7 +25,7 @@ from scipy.constants import alpha as ALPHA_FINE
 from scipy.constants import c as c_light
 from scipy.constants import e as q_e
 from scipy.constants import epsilon_0, hbar, m_e, mu_0
-from scipy.integrate import solve_ivp
+from scipy.integrate import cumulative_trapezoid, solve_ivp
 from scipy.interpolate import RegularGridInterpolator
 
 from wakis import GridFIT3D, SolverFIT3D
@@ -45,7 +46,7 @@ Z0_VAC = float(np.sqrt(mu_0 / epsilon_0))
 M_E_JOULE = float(m_e * c_light**2)
 M_E_EV = float(M_E_JOULE / q_e)
 LAMBDA_C_BAR_M = float(hbar / (m_e * c_light))  # ~3.86159e-13 m
-DEFAULT_MEM_LIMIT_MB = 2000.0
+DEFAULT_MEM_LIMIT_MB = 3500.0
 DEFAULT_LAMBDA_L_M = 0.8e-6  # Ti:sapphire 800 nm (Plettner et al. 2005; Zolotorev 2002)
 
 
@@ -898,14 +899,18 @@ def build_graded_laser_grid(
     dz = float(lambda_m) / int(ppw_z)
     dx_core = float(lambda_m) / int(ppw_xy_core)
 
-    n_core_half = int(np.ceil(1.65 * float(w0_m) / dx_core))
+    n_core_half = int(np.ceil(1.25 * float(w0_m) / dx_core))
     x_core = np.arange(-n_core_half * dx_core, (n_core_half + 0.5) * dx_core, dx_core)
-    n_wing = max(11, int(n_pml) + 6)
-    ratios = 1.10 ** np.arange(1, n_wing + 1)
-    wing = np.cumsum(dx_core * ratios)
+    n_pre_pml = 4
+    n_wing = n_pre_pml + int(n_pml)
+    target_pre = max(2.30 * float(w0_m) - float(x_core[-1]), n_pre_pml * dx_core)
+    rs = np.linspace(1.02, 1.38, 361)
+    sums = [dx_core * np.sum(r ** np.arange(1, n_pre_pml + 1)) for r in rs]
+    r_opt = float(rs[np.argmin(np.abs(np.array(sums) - target_pre))])
+    wing = np.cumsum(dx_core * (r_opt ** np.arange(1, n_wing + 1)))
     x_nodes = np.concatenate([-x_core[-1] - wing[::-1], x_core, x_core[-1] + wing])
 
-    z_act = 1.10 * z_r
+    z_act = 1.05 * z_r
     nz_half = int(np.ceil(z_act / dz)) + int(n_pml)
     z_nodes = np.arange(-nz_half * dz, (nz_half + 0.5) * dz, dz)
 
@@ -948,8 +953,8 @@ def run_single_fit_gaussian_beam(
     w0_m: float | None = None,
     lambda_m: float = DEFAULT_LAMBDA_L_M,
     p_laser_w: float = 1.0e9,
-    ppw_z: int = 16,
-    ppw_xy_core: int = 14,
+    ppw_z: int = 20,
+    ppw_xy_core: int = 20,
     n_pml: int = 6,
     z_s_m: float | None = None,
     mode: str = "TEM00",
@@ -1015,6 +1020,7 @@ def run_single_fit_gaussian_beam(
     nx, ny, nz = solver.Nx, solver.Ny, solver.Nz
     dt = float(solver.dt)
     dz = float(meta["dz_m"])
+    dx_core = float(meta["dx_core_m"])
 
     iz_src = int(n_pml) + 2
     z_src = float(grid.z[iz_src])
@@ -1042,10 +1048,17 @@ def run_single_fit_gaussian_beam(
     x_edge = np.asarray(solver.x, dtype=float)
     z_edge = np.asarray(solver.z, dtype=float)
 
-    x_src, y_src = np.meshgrid(x_edge, y_node, indexing="ij")
-    src_fields = paraxial_gaussian_beam_fields(
-        x_src,
-        y_src,
+    # Pre-compensate the entrance sheet at z = z_src for the difference between
+    # the 3D discrete FIT axial wavenumber k_{z,FIT}(kx, ky) and the paraxial
+    # phase k_num - (kx^2 + ky^2)/(2*k0), so the beam focuses symmetrically at z = 0.
+    l_fft = 16.0 * w0
+    n_fft = 256
+    u_fft = np.linspace(-0.5 * l_fft, 0.5 * l_fft, n_fft, endpoint=False)
+    du_fft = float(u_fft[1] - u_fft[0])
+    u_grid, v_grid = np.meshgrid(u_fft, u_fft, indexing="ij")
+    src_fft_fields = paraxial_gaussian_beam_fields(
+        u_grid,
+        v_grid,
         z_src,
         w0_m=w0,
         lambda_m=lambda_m,
@@ -1053,8 +1066,28 @@ def run_single_fit_gaussian_beam(
         mode=mode,
         k_axial_rad_m=k_num,
     )
-    env_src = src_fields["Ex"]
-    e0 = float(src_fields["E0_v_m"])
+    e0 = float(src_fft_fields["E0_v_m"])
+    kx_fft = 2.0 * np.pi * np.fft.fftfreq(n_fft, d=du_fft)
+    kx_g, ky_g = np.meshgrid(kx_fft, kx_fft, indexing="ij")
+    rhs_disp = (np.sin(0.5 * omega0 * dt) / (0.5 * c_light * dt)) ** 2
+    sx2 = (np.sin(0.5 * kx_g * dx_core) / (0.5 * dx_core)) ** 2
+    sy2 = (np.sin(0.5 * ky_g * dx_core) / (0.5 * dx_core)) ** 2
+    sz2 = np.maximum(rhs_disp - sx2 - sy2, 0.0)
+    kz_fit = (2.0 / dz) * np.arcsin(np.clip(0.5 * dz * np.sqrt(sz2), 0.0, 0.999999))
+    dkz = kz_fit - (k_num - 0.5 * (kx_g**2 + ky_g**2) / k0)
+    prop_mask = (kx_g**2 + ky_g**2) < (0.85 * k0) ** 2
+    ex_src_corr = np.fft.ifft2(
+        np.fft.fft2(src_fft_fields["Ex"]) * np.where(prop_mask, np.exp(1j * dkz * z_src), 0.0)
+    )
+    interp_re = RegularGridInterpolator(
+        (u_fft, u_fft), np.real(ex_src_corr), bounds_error=False, fill_value=0.0
+    )
+    interp_im = RegularGridInterpolator(
+        (u_fft, u_fft), np.imag(ex_src_corr), bounds_error=False, fill_value=0.0
+    )
+    x_src, y_src = np.meshgrid(x_edge, y_node, indexing="ij")
+    pts_src = np.column_stack([x_src.ravel(), y_src.ravel()])
+    env_src = (interp_re(pts_src) + 1j * interp_im(pts_src)).reshape(x_src.shape)
 
     iy0 = ny // 2
     # Symmetric interior window around waist z = 0
@@ -1096,6 +1129,10 @@ def run_single_fit_gaussian_beam(
 
     ex_ph = (2.0 / max(count, 1)) * acc_ex
     ez_ph = (2.0 / max(count, 1)) * acc_ez
+    ex_snap = solver.E[:, iy0, iz_in:iz_out, "x"].copy()
+    ez_snap = solver.E[:, iy0, iz_in:iz_out, "z"].copy()
+    del solver, grid
+    gc.collect()
 
     return {
         "x_node_m": x_node,
@@ -1104,8 +1141,8 @@ def run_single_fit_gaussian_beam(
         "z_ez_m": z_ez,
         "Ex_phasor": ex_ph,
         "Ez_phasor": ez_ph,
-        "Ex_snapshot": solver.E[:, iy0, iz_in:iz_out, "x"].copy(),
-        "Ez_snapshot": solver.E[:, iy0, iz_in:iz_out, "z"].copy(),
+        "Ex_snapshot": ex_snap,
+        "Ez_snapshot": ez_snap,
         "frames_Ex": np.asarray(frames_ex) if record_frames else np.empty((0,)),
         "frames_Ez": np.asarray(frames_ez) if record_frames else np.empty((0,)),
         "frames_t_s": np.asarray(frames_t) if record_frames else np.empty((0,)),
@@ -1139,7 +1176,9 @@ def calibrate_fit_beam_phasors(
     """Build bilinear interpolators for calibrated 3D FIT phasors (Ex, Ez).
 
     Normalizes the discrete current-sheet impedance factor using the on-axis
-    waist field ``Ex(0, 0, 0) = E_0`` of the unbounded reference simulation.
+    waist field ``Ex(0, 0, 0) = E_0`` of the unbounded reference simulation,
+    and aligns ``Ez`` from staggered ``z``-edges onto ``z``-nodes by demodulating
+    the axial carrier ``exp(i * k_num * z)`` before interpolation.
     """
     ref = fit_res if ref_unbounded_res is None else ref_unbounded_res
     i_ex_ref = RegularGridInterpolator(
@@ -1151,15 +1190,26 @@ def calibrate_fit_beam_phasors(
     center_val = complex(i_ex_ref([[0.0, 0.0]])[0])
     cal = complex(ref["E0_v_m"]) / center_val if abs(center_val) > 0.0 else 1.0 + 0.0j
 
+    z_ex = np.asarray(fit_res["z_ex_m"], dtype=float)
+    z_ez = np.asarray(fit_res["z_ez_m"], dtype=float)
+    k_num = float(fit_res["k_num_rad_m"])
+
+    # Demodulate fast axial carrier on z_ez before shifting to z_ex nodes
+    ez_env_edge = fit_res["Ez_phasor"] * np.exp(-1j * k_num * z_ez[None, :])
+    ez_env_node = np.empty_like(ez_env_edge)
+    ez_env_node[:, 0] = ez_env_edge[:, 0]
+    ez_env_node[:, 1:] = 0.5 * (ez_env_edge[:, :-1] + ez_env_edge[:, 1:])
+    ez_aligned = ez_env_node * np.exp(1j * k_num * z_ex[None, :])
+
     i_ex = RegularGridInterpolator(
-        (fit_res["x_edge_m"], fit_res["z_ex_m"]),
+        (fit_res["x_edge_m"], z_ex),
         fit_res["Ex_phasor"] * cal,
         bounds_error=False,
         fill_value=0.0,
     )
     i_ez = RegularGridInterpolator(
-        (fit_res["x_node_m"], fit_res["z_ez_m"]),
-        fit_res["Ez_phasor"] * cal,
+        (fit_res["x_node_m"], z_ex),
+        ez_aligned * cal,
         bounds_error=False,
         fill_value=0.0,
     )
@@ -1180,6 +1230,9 @@ def evaluate_fit_trajectory_gain(
     multiplied by the synchronous relativistic electron phase factor
     ``exp(-i * (k_num + 0.5 * k_0 * theta_c^2) * z)`` along ``x_e(z) = -theta_c * z``.
 
+    Also evaluates the analytical integral over the exact same finite simulation path
+    ``[zeta_in, zeta_end]`` so finite-domain truncation is separated from discretization error.
+
     Parameters
     ----------
     fit_res : dict
@@ -1198,8 +1251,7 @@ def evaluate_fit_trajectory_gain(
     Returns
     -------
     out : dict of ndarray
-        Dictionary with ``z_m``, ``zeta``, ``E_sync_v_m``, ``dW_cum_max_ev``,
-        ``dW_cum_sin_ev``, ``dW_total_max_ev``, ``dW_total_sin_ev``, and ``dW_total_norm``.
+        Dictionary with finite-path and tail-completed cumulative and total energy gains.
     """
     i_ex, i_ez, _ = calibrate_fit_beam_phasors(fit_res, ref_unbounded_res=ref_unbounded_res)
     w0 = float(fit_res["w0_m"])
@@ -1207,7 +1259,6 @@ def evaluate_fit_trajectory_gain(
     k0 = float(fit_res["k0_rad_m"])
     k_num = float(fit_res["k_num_rad_m"])
     p_laser = float(fit_res["p_laser_w"])
-    dz = float(fit_res["dz_m"])
     scale_v = float(np.sqrt(Z0_VAC * p_laser))
 
     z_line = np.asarray(fit_res["z_ex_m"], dtype=float)
@@ -1219,9 +1270,37 @@ def evaluate_fit_trajectory_gain(
     pol_fac = float(np.cos(phi_pol_rad))
     e_sync = pol_fac * (-theta_c * i_ex(pts) + i_ez(pts)) * np.exp(-1j * k_sync * z_line)
 
-    # Tail contribution from (-inf, z_in]
+    # Exact trapezoidal integration over the finite FIT path [z_in, z_end]
+    cum_finite_ev = cumulative_trapezoid(e_sync, z_line, initial=0.0)
     zeta_in = float(zeta[0])
     zeta_out = float(zeta[-1])
+    z_scr = fit_res["z_screen_m"]
+    zeta_end = float(z_scr / z_r) if z_scr is not None else zeta_out
+    tot_raw_finite_ev = complex(cum_finite_ev[-1])
+
+    # When a normal-incidence PEC screen is present at z_scr, the backward-reflected
+    # wave exp(-i k_num z) beats at -2 k_num against the forward electron and contributes
+    # the boundary term e_sync(z_scr - pi / (2 k_num)) / (4 i k_num). Subtracting this
+    # counter-propagating harmonic isolates the forward-terminated synchronous integral.
+    refl_corr_ev = 0.0 + 0.0j
+    if z_scr is not None and np.isfinite(z_scr):
+        z_q = float(z_scr) - 0.5 * np.pi / k_num
+        e_zq = complex(
+            np.interp(z_q, z_line, np.real(e_sync))
+            + 1j * np.interp(z_q, z_line, np.imag(e_sync))
+        )
+        refl_corr_ev = e_zq / (4.0j * k_num)
+    tot_finite_ev = tot_raw_finite_ev - refl_corr_ev
+
+    th_finite = crossed_gaussian_energy_gain_theory(
+        zeta_s=zeta_end,
+        s_param=s_param,
+        p_laser_w=p_laser,
+        phi_pol_rad=phi_pol_rad,
+        zeta_in=zeta_in,
+    )
+
+    # Tail contribution from (-inf, z_in] and [z_out, +inf)
     tail_in_ev = 0.0 + 0.0j
     tail_out_ev = 0.0 + 0.0j
     if include_far_field_tails:
@@ -1233,7 +1312,7 @@ def evaluate_fit_trajectory_gain(
             zeta_in=-np.inf,
         )
         tail_in_ev = complex(th_in["complex_antideriv_diff"]) * scale_v
-        if fit_res["z_screen_m"] is None:
+        if z_scr is None:
             th_out = crossed_gaussian_energy_gain_theory(
                 zeta_s=np.inf,
                 s_param=s_param,
@@ -1243,8 +1322,8 @@ def evaluate_fit_trajectory_gain(
             )
             tail_out_ev = complex(th_out["complex_antideriv_diff"]) * scale_v
 
-    cum_complex_ev = tail_in_ev + np.cumsum(e_sync) * dz
-    tot_complex_ev = cum_complex_ev[-1] + tail_out_ev
+    cum_complex_ev = tail_in_ev + cum_finite_ev
+    tot_complex_ev = tail_in_ev + tot_finite_ev + tail_out_ev
 
     return {
         "z_m": z_line,
@@ -1252,6 +1331,12 @@ def evaluate_fit_trajectory_gain(
         "E_sync_v_m": e_sync,
         "dW_cum_max_ev": np.abs(cum_complex_ev),
         "dW_cum_sin_ev": np.real(1j * cum_complex_ev),
+        "dW_cum_finite_max_ev": np.abs(cum_finite_ev),
+        "dW_cum_finite_sin_ev": np.real(1j * cum_finite_ev),
+        "dW_finite_norm": np.array(abs(tot_finite_ev) / scale_v),
+        "dW_finite_sin_norm": np.array(float(np.real(1j * tot_finite_ev)) / scale_v),
+        "dW_finite_theory_norm": np.array(float(th_finite["dW_norm"])),
+        "dW_finite_theory_sin_norm": np.array(float(th_finite["dW_sin_norm"])),
         "dW_total_max_ev": np.array(abs(tot_complex_ev)),
         "dW_total_sin_ev": np.array(float(np.real(1j * tot_complex_ev))),
         "dW_total_norm": np.array(abs(tot_complex_ev) / scale_v),
@@ -1267,8 +1352,8 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
     lambda_m = DEFAULT_LAMBDA_L_M
     w0_m = 0.95 * lambda_m
     p_laser_w = 1.0e9
-    ppw_z = 13 if quick else 16
-    ppw_xy = 10 if quick else 12
+    ppw_z = 14 if quick else 20
+    ppw_xy = 14 if quick else 20
     n_pml = 6
 
     # 1. Unbounded 3D FIT focused beam (Part B: paraxial validation & Lawson-Woodward)
@@ -1301,6 +1386,8 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
     z_r_m = float(fit_unbounded["z_r_m"])
     zs_explicit_zetas = np.array([-0.5, 0.0, 0.5])
     dw_explicit_fit_norm = []
+    dw_explicit_finite_fit_norm = []
+    dw_explicit_finite_th_norm = []
     for zeta_val in zs_explicit_zetas:
         if abs(zeta_val) < 1e-12:
             res_z = fit_screen_waist
@@ -1324,10 +1411,12 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
             include_far_field_tails=True,
         )
         dw_explicit_fit_norm.append(float(tr_z["dW_total_norm"]))
+        dw_explicit_finite_fit_norm.append(float(tr_z["dW_finite_norm"]))
+        dw_explicit_finite_th_norm.append(float(tr_z["dW_finite_theory_norm"]))
 
     # Compare 3D FIT fields at the waist (z = 0) and along the z axis against paraxial formula
     i_ex_unb, i_ez_unb, cal_fac = calibrate_fit_beam_phasors(fit_unbounded)
-    x_waist = np.linspace(-1.6 * w0_m, 1.6 * w0_m, 101)
+    x_waist = np.linspace(-1.25 * w0_m, 1.25 * w0_m, 101)
     pts_waist = np.column_stack([x_waist, np.zeros_like(x_waist)])
     ex_waist_fit = i_ex_unb(pts_waist)
     ez_waist_fit = i_ez_unb(pts_waist)
@@ -1469,7 +1558,7 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
         frames_Ez_screen=fit_screen_waist["frames_Ez"] * abs(cal_fac),
         frames_t_s=fit_screen_waist["frames_t_s"],
         x_waist_m=x_waist,
-        Ex_waist_fit= np.abs(ex_waist_fit),
+        Ex_waist_fit=np.abs(ex_waist_fit),
         Ex_waist_th=np.abs(ex_waist_th),
         Ez_waist_fit=np.abs(ez_waist_fit),
         Ez_waist_th=np.abs(ez_waist_th),
@@ -1487,10 +1576,16 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
         dW_cum_th_sin_norm=th_curve_zeta["dW_sin_norm"],
         zs_explicit_zetas=zs_explicit_zetas,
         dW_explicit_fit_norm=np.asarray(dw_explicit_fit_norm),
+        dW_explicit_finite_fit_norm=np.asarray(dw_explicit_finite_fit_norm),
+        dW_explicit_finite_th_norm=np.asarray(dw_explicit_finite_th_norm),
         dW_unbounded_total_norm=traj_unbounded["dW_total_norm"],
         dW_unbounded_sin_norm=traj_unbounded["dW_total_sin_norm"],
+        dW_unbounded_finite_fit_norm=traj_unbounded["dW_finite_norm"],
+        dW_unbounded_finite_th_norm=traj_unbounded["dW_finite_theory_norm"],
         dW_screen_waist_norm=traj_screen_waist["dW_total_norm"],
         dW_screen_waist_th_norm=th_waist["dW_norm"],
+        dW_screen_waist_finite_fit_norm=traj_screen_waist["dW_finite_norm"],
+        dW_screen_waist_finite_th_norm=traj_screen_waist["dW_finite_theory_norm"],
         phi_pol_deg=phi_pol_deg,
         dW_pol_fit_norm=np.asarray(dw_pol_fit_norm),
         dW_pol_th_norm=np.asarray(dw_pol_th_norm),
@@ -1505,14 +1600,29 @@ def run_task_part_b_c_fit_screen(quick: bool = False) -> dict:
         plettner_m_avg_kev=plettner_ref["m_avg_kev"],
     )
 
+    dw_scr_fin_fit = float(traj_screen_waist["dW_finite_norm"])
+    dw_scr_fin_th = float(traj_screen_waist["dW_finite_theory_norm"])
+    dw_unb_fin_fit = float(traj_unbounded["dW_finite_norm"])
+    dw_unb_fin_th = float(traj_unbounded["dW_finite_theory_norm"])
+
     summary = {
         "task": "part_b_c_fit_screen",
         "quick": bool(quick),
+        "ppw_z": int(ppw_z),
+        "ppw_xy_core": int(ppw_xy),
         "grid_cells": [int(fit_unbounded["nx"]), int(fit_unbounded["ny"]), int(fit_unbounded["nz"])],
+        "zeta_in": float(traj_unbounded["zeta"][0]),
+        "zeta_out": float(traj_unbounded["zeta"][-1]),
         "ex_waist_l2_rel_err": ex_waist_l2_err,
         "ez_waist_l2_rel_err": ez_waist_l2_err,
         "dW_unbounded_sin_norm": float(abs(traj_unbounded["dW_total_sin_norm"])),
         "dW_unbounded_total_norm": float(traj_unbounded["dW_total_norm"]),
+        "dW_unbounded_finite_fit_norm": dw_unb_fin_fit,
+        "dW_unbounded_finite_theory_norm": dw_unb_fin_th,
+        "unbounded_finite_rel_err": float(abs(dw_unb_fin_fit - dw_unb_fin_th) / dw_unb_fin_th),
+        "dW_screen_waist_finite_fit_norm": dw_scr_fin_fit,
+        "dW_screen_waist_finite_theory_norm": dw_scr_fin_th,
+        "screen_waist_finite_rel_err": float(abs(dw_scr_fin_fit - dw_scr_fin_th) / dw_scr_fin_th),
         "dW_screen_waist_fit_norm": float(traj_screen_waist["dW_total_norm"]),
         "dW_screen_waist_theory_norm": float(th_waist["dW_norm"]),
         "screen_waist_rel_err": float(
@@ -2308,15 +2418,15 @@ def run_task_convergence(quick: bool = False) -> dict:
 
     if quick:
         levels = [
-            ("coarse", 12, 10),
-            ("medium", 15, 11),
-            ("fine", 18, 12),
+            ("coarse", 12, 12),
+            ("medium", 16, 16),
+            ("fine", 20, 18),
         ]
     else:
         levels = [
-            ("coarse", 12, 10),
-            ("medium", 16, 12),
-            ("fine", 20, 13),
+            ("coarse", 14, 14),
+            ("medium", 20, 20),
+            ("fine", 28, 22),
         ]
 
     level_names = []
@@ -2324,7 +2434,11 @@ def run_task_convergence(quick: bool = False) -> dict:
     ppw_xy_list = []
     ex_waist_err_list = []
     ez_waist_err_list = []
+    dw_screen_norm_list = []
     dw_screen_err_list = []
+    dw_screen_finite_norm_list = []
+    dw_screen_finite_th_list = []
+    dw_screen_finite_err_list = []
     dw_unbounded_sin_list = []
     wall_s_list = []
     mem_mb_list = []
@@ -2356,7 +2470,7 @@ def run_task_convergence(quick: bool = False) -> dict:
             record_frames=False,
         )
         i_ex, i_ez, _ = calibrate_fit_beam_phasors(res_unb)
-        x_w = np.linspace(-1.5 * w0_m, 1.5 * w0_m, 101)
+        x_w = np.linspace(-1.25 * w0_m, 1.25 * w0_m, 101)
         pts_w = np.column_stack([x_w, np.zeros_like(x_w)])
         par_w = paraxial_gaussian_beam_fields(
             x_w,
@@ -2378,9 +2492,12 @@ def run_task_convergence(quick: bool = False) -> dict:
         )
         dw_scr_norm = float(tr_scr["dW_total_norm"])
         dw_err = abs(dw_scr_norm - dw_th_norm) / dw_th_norm
+        dw_scr_fin = float(tr_scr["dW_finite_norm"])
+        dw_scr_fin_th = float(tr_scr["dW_finite_theory_norm"])
+        dw_fin_err = abs(dw_scr_fin - dw_scr_fin_th) / dw_scr_fin_th
 
         if zeta_ref is None:
-            zeta_ref = np.linspace(-1.1, 1.1, 121)
+            zeta_ref = np.linspace(-1.0, 1.0, 121)
         dw_cum_interp = np.interp(
             zeta_ref,
             tr_unb["zeta"],
@@ -2392,11 +2509,29 @@ def run_task_convergence(quick: bool = False) -> dict:
         ppw_xy_list.append(float(ppw_xy))
         ex_waist_err_list.append(ex_err)
         ez_waist_err_list.append(ez_err)
+        dw_screen_norm_list.append(dw_scr_norm)
         dw_screen_err_list.append(float(dw_err))
+        dw_screen_finite_norm_list.append(dw_scr_fin)
+        dw_screen_finite_th_list.append(dw_scr_fin_th)
+        dw_screen_finite_err_list.append(float(dw_fin_err))
         dw_unbounded_sin_list.append(float(abs(tr_unb["dW_total_sin_norm"])))
         wall_s_list.append(round(time.time() - t_lvl, 3))
         mem_mb_list.append(float(res_unb["estimate"]["memory_mb"]))
         dw_cum_curves.append(dw_cum_interp)
+
+    # Richardson extrapolation O(dz^2) using the two finest levels (medium, fine)
+    p_m, p_f = ppw_z_list[-2], ppw_z_list[-1]
+    dw_rich_norm = float(
+        (p_f**2 * dw_screen_norm_list[-1] - p_m**2 * dw_screen_norm_list[-2])
+        / (p_f**2 - p_m**2)
+    )
+    dw_rich_rel_err = float(abs(dw_rich_norm - dw_th_norm) / dw_th_norm)
+    dw_fin_rich_norm = float(
+        (p_f**2 * dw_screen_finite_norm_list[-1] - p_m**2 * dw_screen_finite_norm_list[-2])
+        / (p_f**2 - p_m**2)
+    )
+    dw_fin_th_ref = float(dw_screen_finite_th_list[-1])
+    dw_fin_rich_rel_err = float(abs(dw_fin_rich_norm - dw_fin_th_ref) / dw_fin_th_ref)
 
     th_zeta_ref = crossed_gaussian_energy_gain_theory(
         zeta_ref, s_param=s_opt, p_laser_w=p_laser_w
@@ -2408,7 +2543,13 @@ def run_task_convergence(quick: bool = False) -> dict:
         ppw_xy=np.asarray(ppw_xy_list),
         ex_waist_l2_err=np.asarray(ex_waist_err_list),
         ez_waist_l2_err=np.asarray(ez_waist_err_list),
+        dw_screen_norm=np.asarray(dw_screen_norm_list),
         dw_screen_rel_err=np.asarray(dw_screen_err_list),
+        dw_screen_finite_norm=np.asarray(dw_screen_finite_norm_list),
+        dw_screen_finite_theory_norm=np.asarray(dw_screen_finite_th_list),
+        dw_screen_finite_rel_err=np.asarray(dw_screen_finite_err_list),
+        dw_screen_richardson_norm=np.array(dw_rich_norm),
+        dw_screen_richardson_rel_err=np.array(dw_rich_rel_err),
         dw_unbounded_sin_norm=np.asarray(dw_unbounded_sin_list),
         wall_s=np.asarray(wall_s_list),
         memory_mb=np.asarray(mem_mb_list),
@@ -2425,7 +2566,16 @@ def run_task_convergence(quick: bool = False) -> dict:
         "ppw_xy": ppw_xy_list,
         "ex_waist_l2_err": ex_waist_err_list,
         "ez_waist_l2_err": ez_waist_err_list,
+        "dw_screen_norm": dw_screen_norm_list,
+        "dw_screen_theory_norm": dw_th_norm,
         "dw_screen_rel_err": dw_screen_err_list,
+        "dw_screen_finite_norm": dw_screen_finite_norm_list,
+        "dw_screen_finite_theory_norm": dw_screen_finite_th_list,
+        "dw_screen_finite_rel_err": dw_screen_finite_err_list,
+        "dw_screen_richardson_norm": dw_rich_norm,
+        "dw_screen_richardson_rel_err": dw_rich_rel_err,
+        "dw_screen_finite_richardson_norm": dw_fin_rich_norm,
+        "dw_screen_finite_richardson_rel_err": dw_fin_rich_rel_err,
         "dw_unbounded_sin_norm": dw_unbounded_sin_list,
         "wall_s": wall_s_list,
         "memory_mb": mem_mb_list,
@@ -3144,7 +3294,7 @@ def render_convergence_figure() -> Path:
     ref_line = ex_err[0] * ((ppw[0] / ppw) ** 2)
     ax0.loglog(ppw, ref_line, "k--", lw=1.4, label="$\\mathcal{O}(\\Delta z^2)$ second-order reference")
     ax0.axvline(20.0, color="#333333", ls=":", lw=1.4, label="$20\\;\\mathrm{cells}/\\lambda_L$ rule")
-    ax0.set_xticks([12, 15, 16, 18, 20])
+    ax0.set_xticks([int(p) for p in ppw])
     ax0.get_xaxis().set_major_formatter(ScalarFormatter())
     ax0.get_xaxis().set_minor_formatter(NullFormatter())
     ax0.set_xlabel("Axial resolution $\\lambda_L / \\Delta z$ [cells/$\\lambda_L$]")
@@ -3358,8 +3508,23 @@ def render_animations() -> list[Path]:
     return [gif1_path, gif2_path, gif3_path]
 
 
+from _maxwell_basics import (
+    render_part0_cavity_interference_figure,
+    render_part0_static_gap_figure,
+    render_part_a_maxwell_invariants_figure,
+    render_part_d_energetics_and_bunch_figure,
+    render_part_d_snowplow_scaling_figure,
+    run_task_part0_a_plane_wave,
+    run_task_part0_cavity,
+    run_task_part0_static_gap,
+    run_task_part_d_snowplow,
+)
+
+
 def render_all_figures() -> list[Path]:
-    """Render all 8 static PNG figures and 3 animated GIFs from saved data/."""
+    """Render all static PNG figures (01–08 and 20–24) and 3 animated GIFs from saved data/."""
+    import _maxwell_fit as _mf
+
     paths = [
         render_setup_and_mesh_figure(),
         render_part_a_plane_wave_figure(),
@@ -3369,7 +3534,14 @@ def render_all_figures() -> list[Path]:
         render_part_d_phase_space_figure(),
         render_part_e_wiggler_brightness_figure(),
         render_convergence_figure(),
+        render_part0_static_gap_figure(),
+        render_part0_cavity_interference_figure(),
+        render_part_a_maxwell_invariants_figure(),
+        render_part_d_snowplow_scaling_figure(),
+        render_part_d_energetics_and_bunch_figure(),
     ]
+    if all((DATA_DIR / f"task_{k}.npz").exists() for k in _mf.MAXWELL_TASKS):
+        paths.extend(_mf.render_maxwell_figures())
     paths.extend(render_animations())
     return paths
 
@@ -3378,18 +3550,37 @@ def render_all_figures() -> list[Path]:
 # Task registry and CLI runner
 # ---------------------------------------------------------------------------
 
+import _maxwell_fit as _mf_tasks  # noqa: E402
+
 TASKS: dict[str, tuple[Callable[[bool], dict], str]] = {
+    "part0_static_gap": (
+        run_task_part0_static_gap,
+        "Part 0.1: Static gap interference energy U_int = -e E0 d by 2D (r, z) quadrature and closed-loop battery remark",
+    ),
+    "part0_cavity": (
+        run_task_part0_cavity,
+        "Part 0.2: 3D Wakis FIT pillbox cavity with beam pipes — drive, beam wake, and interference -U_int = q V_d T cos(phi)",
+    ),
     "part_a_plane_wave": (
         run_task_part_a_plane_wave,
         "Part A: Relativistic plane-wave figure-of-eight orbit, zero net gain, and Boris/Vay O(dt^2) convergence",
+    ),
+    "part0_a_plane_wave": (
+        run_task_part0_a_plane_wave,
+        "Part A additions: Plane-wave drift beta_parallel, effective mass m*, transverse amplitude, and ponderomotive potential (gamma0=1,5)",
     ),
     "part_b_c_fit_screen": (
         run_task_part_b_c_fit_screen,
         "Parts B & C: 3D Wakis FIT focused Gaussian beam, Lawson-Woodward cancellation, and conformal PEC screen scans",
     ),
+    **_mf_tasks.MAXWELL_TASKS,
     "part_d_ponderomotive": (
         run_task_part_d_ponderomotive,
         "Part D: Relativistic ponderomotive acceleration from rest, crater focusing, and ~50 as bunching (Zolotorev 2002)",
+    ),
+    "part_d_snowplow": (
+        run_task_part_d_snowplow,
+        "Part D additions: Formation length L_f, snowplow scaling (gamma0 in 1..20), laser energetics ladder, and bunch stability",
     ),
     "part_e_wiggler_fel": (
         run_task_part_e_wiggler_fel,
@@ -3397,7 +3588,7 @@ TASKS: dict[str, tuple[Callable[[bool], dict], str]] = {
     ),
     "convergence": (
         run_task_convergence,
-        "3-level 3D FIT grid resolution convergence study up to 20 cells/lambda",
+        "3-level 3D FIT grid resolution convergence study up to 28 cells/lambda",
     ),
 }
 

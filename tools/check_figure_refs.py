@@ -50,9 +50,16 @@ def get_git_tracked_files(repo_root: Path = REPO_ROOT) -> set[str]:
     tracked : set of str
         Tracked file paths relative to ``repo_root`` using forward slashes.
     """
-    out = subprocess.check_output(
-        ["git", "ls-files"], cwd=repo_root, text=True
-    )
+    manifest = Path(repo_root) / ".git-tracked-files.txt"
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=repo_root, text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Cloud test runs use a copy without .git; bin/fast-suite/submit.py ships the tracked-file list.
+        if not manifest.is_file():
+            raise
+        out = manifest.read_text()
     return {line.strip() for line in out.splitlines() if line.strip()}
 
 

@@ -1,21 +1,31 @@
 {
   "task": "part_b_c_fit_screen",
   "quick": false,
+  "ppw_z": 20,
+  "ppw_xy_core": 20,
   "grid_cells": [
-    63,
-    63,
-    113
+    69,
+    69,
+    133
   ],
-  "ex_waist_l2_rel_err": 0.05992458258877273,
-  "ez_waist_l2_rel_err": 0.09227162233991462,
-  "dW_unbounded_sin_norm": 0.061776519606112607,
-  "dW_unbounded_total_norm": 0.06336977114351433,
-  "dW_screen_waist_fit_norm": 0.7519744880076538,
+  "zeta_in": -0.987554217523118,
+  "zeta_out": 0.9875542175231202,
+  "ex_waist_l2_rel_err": 0.03542513899089602,
+  "ez_waist_l2_rel_err": 0.04135613102364953,
+  "dW_unbounded_sin_norm": 0.0003140209150201378,
+  "dW_unbounded_total_norm": 0.0031915802964169195,
+  "dW_unbounded_finite_fit_norm": 0.6394305958202763,
+  "dW_unbounded_finite_theory_norm": 0.6362544243108124,
+  "unbounded_finite_rel_err": 0.004991983376625372,
+  "dW_screen_waist_finite_fit_norm": 0.6528956554137318,
+  "dW_screen_waist_finite_theory_norm": 0.651598341849595,
+  "screen_waist_finite_rel_err": 0.001990971248414138,
+  "dW_screen_waist_fit_norm": 0.717777357442197,
   "dW_screen_waist_theory_norm": 0.7201007642563675,
-  "screen_waist_rel_err": 0.04426286616179554,
-  "suppression_ratio_screen_over_unbounded": 12.172496812741262,
+  "screen_waist_rel_err": 0.003226502358416282,
+  "suppression_ratio_screen_over_unbounded": 2285.762900207353,
   "plettner_2005_dw_peak_kev_at_1p2mj": 12.0,
   "plettner_2005_m_avg_kev_at_1p2mj": 11.88,
-  "estimate_memory_mb": 1069.27205125,
-  "wall_s": 70.688
+  "estimate_memory_mb": 1289.31498625,
+  "wall_s": 131.455
 }

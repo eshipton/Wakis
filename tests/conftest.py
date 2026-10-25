@@ -74,12 +74,24 @@ _LOCAL_MODULES = ("_helpers",)
 _LOADED = {}
 
 
+# Tutorial tests that do not follow the test_tut_NN_MM_ naming: file name -> "NN-MM".
+_EXTRA_TUTORIAL_TESTS = {
+    "test_066_maxwell_perspective_acceleration.py": "08-03",
+    "test_067_maxwellian_laser_acceleration.py": "08-03",
+}
+
+
 def _tutorial_dir(path):
-    """Tutorial folder of a test file named test_tut_NN_MM_<slug>.py, or None."""
-    m = re.match(r"test_tut_(\d\d)_(\d\d)_", Path(str(path)).name)
-    if not m:
+    """Tutorial folder of a test file named test_tut_NN_MM_<slug>.py (or listed above), or None."""
+    name = Path(str(path)).name
+    m = re.match(r"test_tut_(\d\d)_(\d\d)_", name)
+    if m:
+        ch, num = m.groups()
+    elif name in _EXTRA_TUTORIAL_TESTS:
+        ch, num = _EXTRA_TUTORIAL_TESTS[name].split("-")
+    else:
         return None
-    hits = sorted(_TUTORIALS.glob(f"{m.group(1)}_*/{m.group(1)}-{m.group(2)}_*"))
+    hits = sorted(_TUTORIALS.glob(f"{ch}_*/{ch}-{num}_*"))
     return hits[0] if hits else None
 
 

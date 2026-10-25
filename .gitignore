@@ -37,3 +37,4 @@ tmp/*
 .briefs/
 tutorials/06_periodic_structures/06-02_sws_cold_test/shards_*/
 .ref/
+.git-tracked-files.txt

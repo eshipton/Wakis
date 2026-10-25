@@ -155,16 +155,19 @@ def max_eigenvalue(K, M_inv_sqrt=None, M_solve=None, n=None):
         x -> M^-1 x for a non-diagonal mass (generalized problem).
     """
     n = K.shape[0]
+    # Fixed Lanczos start vector: eigsh's default is random, which made dt (and so every sampled signal)
+    # differ by ~tol between otherwise identical runs.
+    v0 = np.random.default_rng(0).standard_normal(n)
     if M_inv_sqrt is not None:
         op = LinearOperator(
             (n, n), matvec=lambda x: M_inv_sqrt * (K @ (M_inv_sqrt * x)), dtype=float
         )
-        return eigsh(op, k=1, which="LA", return_eigenvectors=False, tol=1e-4)[0]
+        return eigsh(op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0)[0]
     op = LinearOperator((n, n), matvec=lambda x: M_solve(K @ x), dtype=float)
     from scipy.sparse.linalg import eigs
 
     return np.max(
-        np.real(eigs(op, k=1, which="LR", return_eigenvectors=False, tol=1e-4))
+        np.real(eigs(op, k=1, which="LR", return_eigenvectors=False, tol=1e-4, v0=v0))
     )
 
 

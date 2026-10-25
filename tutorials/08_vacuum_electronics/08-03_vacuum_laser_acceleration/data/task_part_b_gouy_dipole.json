@@ -1,0 +1,27 @@
+{
+  "task": "part_b_gouy_dipole",
+  "quick": false,
+  "ppw_z": 20,
+  "ppw_xy_core": 20,
+  "w0_over_lambda": 1.5,
+  "theta0_rad": 0.2122065907891938,
+  "farfield_phase_diff_axis_deg_fit": 86.0452509971052,
+  "farfield_phase_diff_axis_deg_theory": 90.0,
+  "farfield_phase_diff_rel_err": 0.04394165558772001,
+  "u_int_first_order_norm_fit": 0.03278492504500893,
+  "u_int_first_order_norm_theory": 0.0,
+  "u_int_if_in_phase_norm_fit": 0.6683901649205168,
+  "quadrature_suppression_ratio": 20.387118896959944,
+  "alpha_free_electron_real_si": -5.082888964565428e-39,
+  "sigma_ext_first_order_m2": 0.0,
+  "sigma_ext_radiation_reaction_m2": 6.652458705046401e-29,
+  "sigma_thomson_m2": 6.652458705046401e-29,
+  "optical_theorem_rr_rel_err": 0.0,
+  "grid_cells": [
+    61,
+    61,
+    81
+  ],
+  "estimate_memory_mb": 894.04394125,
+  "wall_s": 25.864
+}

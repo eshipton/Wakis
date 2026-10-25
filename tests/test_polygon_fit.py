@@ -201,13 +201,13 @@ def test_voronoi_mesh_conforms_and_converges():
 
 
 # ---------------------------------------------------------------- PML
-def _pml_run(n_in, n_pml, matched=True):
+def _pml_run(n_in, n_pml, matched=True, dt=None):
     h = 0.01
     L = n_in * h / 2
     x = h * np.arange(-n_in // 2 - n_pml, n_in // 2 + n_pml + 1)
     mesh = PolyMesh.rectilinear(x, x)
     pml = dict(x=(-L, L), y=(-L, L), thickness=n_pml * h) if n_pml else None
-    s = PolygonFIT2D(mesh, polarization="TM", bc="pec", pml=pml, cfl=0.9)
+    s = PolygonFIT2D(mesh, polarization="TM", bc="pec", pml=pml, cfl=0.9, dt=dt)
     if pml is not None and not matched:
         s.edge_rate[:] = 0
         s._ce[:] = 0
@@ -216,17 +216,18 @@ def _pml_run(n_in, n_pml, matched=True):
     s.add_point_source((0.0, 0.0), src)
     pr = s.add_probe(np.array([[0.26, 0.0], [0.26, 0.26]]))  # same points in all runs
     s.run(int(5e-9 / s.dt))
-    return s.probe_signal(pr)
+    return s.probe_signal(pr), s.dt
 
 
 def test_split_field_pml():
-    ref = _pml_run(240, 0)  # PEC walls 1.2 m away: no reflection within 5 ns
-    sig = _pml_run(60, 12)
-    bad = _pml_run(60, 12, matched=False)
+    # One dt for all three runs, so the probe samples are at the same times (compare sample by sample).
+    sig, dt = _pml_run(60, 12)
+    ref, _ = _pml_run(240, 0, dt=dt)  # PEC walls 1.2 m away: no reflection within 5 ns
+    bad, _ = _pml_run(60, 12, matched=False, dt=dt)
     n = min(len(ref), len(sig))
     r_ok = np.abs(sig[:n] - ref[:n]).max() / np.abs(ref[:n]).max()
     r_bad = np.abs(bad[:n] - ref[:n]).max() / np.abs(ref[:n]).max()
-    assert r_ok < 0.01, r_ok
+    assert r_ok < 1e-3, r_ok
     assert r_bad > 5 * r_ok, (r_ok, r_bad)
 
 
