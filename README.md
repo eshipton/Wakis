@@ -115,10 +115,12 @@ their baselines are under [Feature results in detail](#feature-results-in-detail
 <td valign="top">
 
 - **Exact discrete adjoint** (`wakis.inverse`): Gradients through the discrete time stepper to round-off (dot-product tests ~10⁻¹⁵), with a JAX wrapper, on CPU, GPU and MPI, for all features above.
-- **Adjoint memory options** (`AdjointSimulation(memory=…)`): Binomial checkpointing (bitwise-equal gradients), time reversal with recorded boundary layers, optional Nyquist storage: exact gradients in 30–60× less memory.
+- **Adjoint memory options** (`AdjointSimulation(memory=…)`): Binomial checkpointing (bitwise-equal gradients), time reversal with recorded boundary layers, optional Nyquist storage (after Park, Miller & Chung, [arXiv:2607.08159](https://arxiv.org/abs/2607.08159)): exact gradients in 30–60× less memory.
 - **Material grids, filters and projections**: Density parameterization, conic filters, tanh projection and differentiable subpixel smoothing (MaterialGrid(smoothing='tensor')).
 - **Subpixel-smoothed projection** (`wakis.inverse.smoothed_projection`): Binary designs that stay differentiable at β = ∞, evaluated per edge.
 - **invrs-gym bridge** (`github.com/eshipton/invrs-wakis`): Runs the invrs-gym photonic design challenges with Wakis and scores them with the official evaluators. Our waveguide-bend and power-splitter designs score above the published leaderboard best at the required feature size.
+
+This work builds on the adjoint inverse-design literature, and in particular on the work of Owen Miller's group at Yale ([millergroup.yale.edu](https://millergroup.yale.edu)): computational inverse design from fundamental physics ([Miller 2012](https://arxiv.org/abs/1308.0212)), adjoint shape optimization ([Lalau-Keraly et al. 2013](https://doi.org/10.1364/OE.21.021693)), inverse-designed high-NA achromatic metalenses ([Chung & Miller 2020](https://doi.org/10.1364/OE.385440)), computational bounds on what any design can reach ([Kuang & Miller 2020](https://doi.org/10.1103/PhysRevLett.125.263607)), the photonics inverse-design benchmarks that the invrs-gym metalens and metagrating challenges come from ([Chen et al. 2024](https://doi.org/10.1364/JOSAB.506412)), and memory-efficient Nyquist-sampled time-domain adjoints ([Park, Miller & Chung 2026](https://arxiv.org/abs/2607.08159)).
 
 </td></tr></table>
 
