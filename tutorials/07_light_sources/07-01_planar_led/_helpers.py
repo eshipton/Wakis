@@ -1107,3 +1107,565 @@ def incoherent_vs_coherent_combine(
         "I_coh": I_coh,
         "d_eta_incoh": d_eta_incoh,
     }
+
+
+# ---------------------------------------------------------------------------
+# 4. Schematic & Geometry Overlay Builders for `wakis.schematic`
+# ---------------------------------------------------------------------------
+def build_semi_infinite_schematic_objects(
+    n_slab: float = 2.60,
+    cpw: float = 20.0,
+    lam0: float = 280e-9,
+    lx: float = 3.6e-6,
+    zmin: float = -0.45e-6,
+    zmax: float = 0.35e-6,
+    z_dip: float = -0.18e-6,
+) -> dict:
+    """Build live Wakis solver, Box structures, dipole source, and FluxMonitors
+    for the Task 0 semi-infinite dielectric slab setup schematic.
+    """
+    f0 = C0 / lam0
+    freqs = np.array([f0])
+    mesh_info = build_semi_infinite_mesh_2d(
+        n_slab=n_slab, cpw=cpw, lam0=lam0, lx=lx, zmin=zmin, zmax=zmax, z_dip=z_dip
+    )
+    grid = mesh_info["grid"]
+    dx = mesh_info["dx"]
+    dy = mesh_info["dy"]
+    nx = mesh_info["nx"]
+    zmin_act = mesh_info["zmin_act"]
+    zmax_act = mesh_info["zmax_act"]
+
+    solver = wakis.SolverFIT3D(
+        grid,
+        bc_low=["cpml", "periodic", "cpml"],
+        bc_high=["cpml", "periodic", "cpml"],
+        n_pml=8,
+        verbose=0,
+    )
+    w_dom = nx * dx
+    slab = Box(
+        center=(0.0, 0.0, 0.5 * zmin_act),
+        size=(w_dom, dy, abs(zmin_act)),
+        material=n_slab**2,
+    )
+    slab.name = f"Dielectric slab (n = {n_slab:.2f})"
+    air = Box(
+        center=(0.0, 0.0, 0.5 * zmax_act),
+        size=(w_dom, dy, zmax_act),
+        material=1.0,
+    )
+    air.name = "Air superstrate (n = 1.00)"
+
+    src_time = GaussianSource(frequency=f0, fwidth=0.20 * f0)
+    dip = CurrentSource(src_time, component="x", center=(0.0, 0.0, z_dip))
+
+    z_ext = 2.0 * dx
+    z_bot = zmin_act + 9.0 * dx
+    w_ext = (nx - 18) * dx
+    h_box = z_ext - z_bot
+    z_mid = 0.5 * (z_ext + z_bot)
+
+    flux_top = FluxMonitor(freqs, center=(0.0, 0.0, z_ext), size=(w_ext, np.inf, 0.0))
+    flux_top.name = "Top extraction FluxMonitor"
+    flux_bot = FluxMonitor(freqs, center=(0.0, 0.0, z_bot), size=(w_ext, np.inf, 0.0))
+    flux_bot.name = "Bottom FluxMonitor"
+    flux_r = FluxMonitor(
+        freqs, center=(0.5 * w_ext, 0.0, z_mid), size=(0.0, np.inf, h_box)
+    )
+    flux_r.name = "Side FluxMonitor"
+    flux_l = FluxMonitor(
+        freqs, center=(-0.5 * w_ext, 0.0, z_mid), size=(0.0, np.inf, h_box)
+    )
+    flux_l.name = ""
+
+    return {
+        "solver": solver,
+        "grid": grid,
+        "mesh_info": mesh_info,
+        "structures": [slab, air],
+        "material_names": [slab.name, air.name],
+        "sources": [dip],
+        "monitors": [flux_top, flux_bot, flux_r, flux_l],
+    }
+
+
+def build_ryu_schematic_objects(
+    t_pgan_nm: float = 50.0,
+    cpw: float = 20.0,
+    dz_fine_nm: float = 3.125,
+    Lx: float = 3.6e-6,
+    lam0: float = 280e-9,
+    dipole_pol: Literal["x", "y", "z"] = "x",
+    dipole_x_um: tuple[float, ...] = (0.0,),
+) -> dict:
+    """Build live Wakis solver, Box layer structures, dipole sources, and
+    Near2Far / Flux monitors for the Ryu (2014) planar AlGaN UV LED stack.
+    """
+    f0 = C0 / lam0
+    freqs = np.array([f0])
+    layers, z_mqw = make_ryu_planar_layers(t_pgan_nm=t_pgan_nm)
+    mesh_info = build_planar_led_mesh_2d(
+        layers=layers,
+        z_dipole=z_mqw,
+        lam0=lam0,
+        cpw=cpw,
+        dz_fine_nm=dz_fine_nm,
+        Lx=Lx,
+    )
+    grid = mesh_info["grid"]
+    dx = mesh_info["dx_act"]
+    dy = mesh_info["dy"]
+    nx = mesh_info["nx"]
+    zmin_act = mesh_info["zmin_act"]
+    zmax_act = mesh_info["zmax_act"]
+    w_dom = nx * dx
+
+    solver = wakis.SolverFIT3D(
+        grid,
+        bc_low=["cpml", "periodic", "cpml"],
+        bc_high=["cpml", "periodic", "cpml"],
+        n_pml=8,
+        verbose=0,
+    )
+
+    label_map = {
+        "sapphire": "Sapphire (n = 1.80)",
+        "n_algan": "n-AlGaN (n = 2.60)",
+        "mqw": "MQW (50 nm, n = 2.60)",
+        "p_algan": "p-AlGaN (50 nm, n = 2.60)",
+        "p_gan": f"p-GaN ({int(round(t_pgan_nm))} nm, n = 2.90, α = 1.7e5/cm)",
+    }
+
+    structures: list[Box] = []
+    mat_names: list[str] = []
+    for i, lay in enumerate(layers):
+        z0 = zmin_act if i == 0 else lay.z_min
+        z1 = lay.z_max
+        if z1 <= z0:
+            continue
+        b = Box(
+            center=(0.0, 0.0, 0.5 * (z0 + z1)),
+            size=(w_dom, dy, z1 - z0),
+            material=lay.n**2,
+        )
+        b.name = label_map.get(lay.name, lay.name)
+        structures.append(b)
+        mat_names.append(b.name)
+
+    t_pgan_top = max([lay.z_max for lay in layers if lay.name == "p_gan"] + [0.0])
+    air_box = Box(
+        center=(0.0, 0.0, 0.5 * (t_pgan_top + zmax_act)),
+        size=(w_dom, dy, zmax_act - t_pgan_top),
+        material=1.0,
+    )
+    air_box.name = "Air (n = 1.00)"
+    structures.append(air_box)
+    mat_names.append(air_box.name)
+
+    src_time = GaussianSource(frequency=f0, fwidth=0.18 * f0)
+    sources = [
+        CurrentSource(
+            src_time, component=dipole_pol, center=(float(x_u) * 1e-6, 0.0, z_mqw)
+        )
+        for x_u in dipole_x_um
+    ]
+
+    z_ext = t_pgan_top + max(30e-9, 3.0 * dx)
+    dz_bot_pml = float(np.max(grid.dz[:10]))
+    z_bot = zmin_act + 10.0 * dz_bot_pml
+    w_ext = (nx - 20) * dx
+    h_box = z_ext - z_bot
+    z_mid = 0.5 * (z_ext + z_bot)
+
+    n2f_top = Near2FarMonitor(
+        freqs, center=(0.0, 0.0, z_ext), size=(w_ext, np.inf, 0.0), eps_r=1.0
+    )
+    n2f_top.name = "Top Near2FarMonitor"
+    flux_bot = FluxMonitor(
+        freqs, center=(0.0, 0.0, z_bot), size=(w_ext, np.inf, 0.0)
+    )
+    flux_bot.name = "Bottom FluxMonitor"
+    flux_r = FluxMonitor(
+        freqs, center=(0.5 * w_ext, 0.0, z_mid), size=(0.0, np.inf, h_box)
+    )
+    flux_r.name = "Side FluxMonitor"
+    flux_l = FluxMonitor(
+        freqs, center=(-0.5 * w_ext, 0.0, z_mid), size=(0.0, np.inf, h_box)
+    )
+    flux_l.name = ""
+
+    return {
+        "solver": solver,
+        "grid": grid,
+        "mesh_info": mesh_info,
+        "layers": layers,
+        "z_mqw": z_mqw,
+        "t_pgan_top": t_pgan_top,
+        "z_ext": z_ext,
+        "z_bot": z_bot,
+        "w_ext": w_ext,
+        "structures": structures,
+        "material_names": mat_names,
+        "sources": sources,
+        "monitors": [n2f_top, flux_bot, flux_r, flux_l],
+    }
+
+
+def tidy_schematic_axes(
+    ax,
+    x_dom_half_um: float = 1.8,
+    z_min_um: float = -0.88,
+    z_max_um: float = 0.68,
+    is_semi: bool = False,
+    fontsize: float = 8.0,
+) -> None:
+    """Expand vertical aspect ratio and declutter overlapping internal schematic text."""
+    ax.set_aspect("auto")
+    ax.set_ylim(z_min_um, z_max_um)
+    drop_keys = (
+        "FluxMonitor",
+        "boundary:",
+        "Out-of-plane",
+        "MQW",
+        "p-AlGaN",
+        "p-GaN",
+        "Air (",
+        "Sapphire",
+        "n-AlGaN",
+        "Dielectric slab",
+        "Air superstrate",
+    )
+    src_texts = []
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif "CurrentSource" in s:
+            src_texts.append(t_obj)
+    if len(src_texts) > 1:
+        for t_obj in src_texts[1:]:
+            t_obj.remove()
+        src_texts[0].set_text("Incoherent dipoles ($J_x$)")
+        src_texts[0].set_position((-0.05, -0.15))
+    bbox_kw = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "#555555",
+        "linewidth": 0.5,
+        "alpha": 0.88,
+    }
+    ax.text(
+        -0.94 * x_dom_half_um,
+        0.31 if is_semi else 0.35,
+        "±x, ±z: CPML (8 cells) | ±y: Periodic",
+        ha="left",
+        va="center",
+        fontsize=fontsize - 0.5,
+        color="#222222",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    if is_semi:
+        ax.text(
+            -0.92 * x_dom_half_um,
+            0.14,
+            "Air superstrate (n = 1.00)",
+            ha="left",
+            va="center",
+            fontsize=fontsize,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            -0.92 * x_dom_half_um,
+            -0.31,
+            "Dielectric slab (n = 2.60)",
+            ha="left",
+            va="center",
+            fontsize=fontsize,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            0.92 * x_dom_half_um,
+            -0.31,
+            "4-face FluxMonitor box",
+            ha="right",
+            va="center",
+            fontsize=fontsize - 0.3,
+            color="#0B6E4F",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+
+
+def annotate_thin_led_layers(
+    ax,
+    t_pgan_nm: float,
+    x_dom_half_um: float = 1.8,
+    text_color: str = "#111111",
+    box_alpha: float = 0.82,
+    fontsize: float = 6.8,
+    tidy_schematic: bool = False,
+) -> None:
+    """Place non-overlapping callout labels for the thin active/cladding/contact
+    layers (MQW, p-AlGaN, p-GaN) and thick regions (Sapphire, n-AlGaN, Air) on an
+    (x, z) plot in micrometres.
+    """
+    if tidy_schematic:
+        tidy_schematic_axes(
+            ax,
+            x_dom_half_um=x_dom_half_um,
+            z_min_um=-0.88,
+            z_max_um=0.68,
+            is_semi=False,
+            fontsize=fontsize,
+        )
+    bbox_kw = {
+        "boxstyle": "round,pad=0.16",
+        "facecolor": "white",
+        "edgecolor": "#555555",
+        "linewidth": 0.5,
+        "alpha": box_alpha,
+    }
+    x_left = -0.92 * x_dom_half_um
+    x_right = 0.92 * x_dom_half_um
+    t_um = max(0.0, float(t_pgan_nm)) * 1e-3
+
+    # Thick regions on left side, well clear of the central dipole beam and CPML labels
+    ax.text(
+        x_left,
+        0.26,
+        "Air (n = 1.00)",
+        ha="left",
+        va="center",
+        fontsize=fontsize,
+        color=text_color,
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        x_left,
+        -0.33,
+        "n-AlGaN (n = 2.60)",
+        ha="left",
+        va="center",
+        fontsize=fontsize,
+        color=text_color,
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        x_left,
+        -0.68,
+        "Sapphire (n = 1.80)",
+        ha="left",
+        va="center",
+        fontsize=fontsize,
+        color=text_color,
+        bbox=bbox_kw,
+        zorder=9,
+    )
+
+    # Thin layers staggered on the right side with short leader lines
+    thin_specs = [
+        (-0.075, -0.22, x_right, "MQW (50 nm, n=2.60)"),
+        (-0.025, -0.04, x_right, "p-AlGaN (50 nm)"),
+    ]
+    if t_pgan_nm > 0.0:
+        thin_specs.append(
+            (0.5 * t_um, max(0.14, t_um + 0.07), x_right, f"p-GaN ({int(round(t_pgan_nm))} nm, α=1.7e5/cm)")
+        )
+
+    for z_true, z_lbl, x_lbl, txt in thin_specs:
+        ax.annotate(
+            txt,
+            xy=(x_lbl - 0.35, z_true),
+            xytext=(x_lbl, z_lbl),
+            ha="right",
+            va="center",
+            fontsize=fontsize,
+            color=text_color,
+            bbox=bbox_kw,
+            arrowprops={
+                "arrowstyle": "->",
+                "color": text_color,
+                "lw": 0.75,
+                "shrinkA": 1,
+                "shrinkB": 1,
+            },
+            zorder=9,
+        )
+
+
+def overlay_ryu_stack(
+    ax,
+    t_pgan_nm: float = 50.0,
+    Lx_um: float = 3.6,
+    dipole_pol: Literal["x", "y", "z"] = "x",
+    dipole_x_um: tuple[float, ...] = (0.0,),
+    line_color: str = "white",
+    show_monitors: bool = True,
+    show_escape_cone: bool = False,
+    fontsize: float = 6.6,
+) -> None:
+    """Overlay full Ryu (2014) planar LED geometry on a 2D (x, z) field map or GIF frame.
+
+    Calls `wakis.schematic.overlay_geometry` to draw all layer boundaries and
+    CPML boundary shading/labels, then annotates the layer names (`Air`,
+    `p-GaN`, `p-AlGaN`, `MQW`, `n-AlGaN`, `Sapphire`), dipole positions and
+    orientation (`TE Jx` or `TM Jz`), and flux/Near2Far monitor lines.
+    """
+    from wakis import schematic
+
+    obj = build_ryu_schematic_objects(
+        t_pgan_nm=t_pgan_nm,
+        cpw=12.0,
+        dz_fine_nm=6.25,
+        Lx=Lx_um * 1e-6,
+        dipole_pol=dipole_pol,
+        dipole_x_um=dipole_x_um,
+    )
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xz",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=True,
+        outline_color=line_color,
+        label_materials=False,
+    )
+
+    x_half = 0.5 * Lx_um
+    annotate_thin_led_layers(
+        ax,
+        t_pgan_nm=t_pgan_nm,
+        x_dom_half_um=x_half,
+        text_color="#111111",
+        box_alpha=0.82,
+        fontsize=fontsize,
+    )
+
+    # Monitors
+    if show_monitors:
+        z_ext_um = obj["z_ext"] * 1e6
+        z_bot_um = obj["z_bot"] * 1e6
+        w_half_um = 0.5 * obj["w_ext"] * 1e6
+        ax.plot(
+            [-w_half_um, w_half_um],
+            [z_ext_um, z_ext_um],
+            ls="-.",
+            lw=1.1,
+            color="#2ca25f",
+            alpha=0.9,
+            zorder=8,
+        )
+        ax.text(
+            -w_half_um + 0.06,
+            z_ext_um + 0.035,
+            "Near2Far monitor",
+            fontsize=fontsize - 0.3,
+            color="#1b7837",
+            ha="left",
+            va="bottom",
+            bbox={
+                "boxstyle": "round,pad=0.12",
+                "facecolor": "white",
+                "edgecolor": "none",
+                "alpha": 0.78,
+            },
+            zorder=9,
+        )
+        ax.plot(
+            [-w_half_um, w_half_um],
+            [z_bot_um, z_bot_um],
+            ls=":",
+            lw=1.0,
+            color="#756bb1",
+            alpha=0.9,
+            zorder=8,
+        )
+
+    # Escape cone
+    if show_escape_cone:
+        tc_rad = escape_cone_angle(2.60, 1.0)
+        z_dip_um = -0.075
+        z_cone_top = 0.36
+        dx_cone = (z_cone_top - z_dip_um) * np.tan(tc_rad)
+        for sgn in (-1.0, 1.0):
+            ax.plot(
+                [0.0, sgn * dx_cone],
+                [z_dip_um, z_cone_top],
+                ls=":",
+                lw=1.2,
+                color="#ffd92f" if line_color == "white" else "#d95f02",
+                alpha=0.9,
+                zorder=8,
+            )
+        ax.text(
+            dx_cone + 0.04,
+            0.29,
+            f"θc = {np.degrees(tc_rad):.1f}°",
+            fontsize=fontsize - 0.2,
+            color="#111111",
+            ha="left",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.12",
+                "facecolor": "#fff7bc",
+                "edgecolor": "#d95f02",
+                "linewidth": 0.5,
+                "alpha": 0.85,
+            },
+            zorder=9,
+        )
+
+    # Dipole markers & polarization arrow
+    z_dip_um = -0.075
+    xs = [float(x) for x in dipole_x_um]
+    if len(xs) > 1:
+        # Mirror symmetric pairs for display if all non-negative
+        all_xs = sorted({round(v, 3) for x in xs for v in (-x, x)})
+    else:
+        all_xs = xs
+    ax.plot(
+        all_xs,
+        [z_dip_um] * len(all_xs),
+        "o",
+        color="#e41a1c",
+         markeredgecolor="white",
+        markeredgewidth=0.7,
+        ms=5.2 if len(all_xs) == 1 else 4.2,
+        zorder=10,
+    )
+    pol_lbl = (
+        "TE dipole Jx"
+        if dipole_pol == "x"
+        else ("TM dipole Jz" if dipole_pol == "z" else "Dipole Jy")
+    )
+    if len(all_xs) > 1:
+        pol_lbl = f"{len(all_xs)}× {pol_lbl}"
+    ax.text(
+        0.0,
+        z_dip_um - 0.085,
+        pol_lbl,
+        ha="center",
+        va="top",
+        fontsize=fontsize - 0.2,
+        fontweight="bold",
+        color="#b30000",
+        bbox={
+            "boxstyle": "round,pad=0.13",
+            "facecolor": "white",
+            "edgecolor": "#b30000",
+            "linewidth": 0.5,
+            "alpha": 0.85,
+        },
+        zorder=10,
+    )
+

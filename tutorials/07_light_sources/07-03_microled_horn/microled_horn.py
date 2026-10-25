@@ -79,6 +79,11 @@
 #   2. **Air-filled $\mu\text{Horn}$ ($n = 1.00$)**: optimal at $h = 3.0\;\mu\text{m}$, $\vartheta = 72^\circ$ ($w_{\text{top}} = 2.95\;\mu\text{m}$); published 2D $\text{LEE}_{15} = 27.5\%$ ($1.85\times$ bare, Sec. A.3 & Fig. 3a) and 2D $\text{LEE}_{90} \approx 46.7 \pm 1.0\%$ (read from Fig. 3d; $\eta_{15} \approx 58.9\%$).
 #   3. **$\text{SiO}_2$-filled $\mu\text{Horn}$ ($n = 1.46$)**: optimal at $h = 3.0\;\mu\text{m}$, $\vartheta = 64^\circ$ ($w_{\text{top}} = 3.93\;\mu\text{m}$); published 2D $\text{LEE}_{15} = 30.4\%$ ($2.04\times$ bare, Sec. A.3 & Fig. 3b) and 2D $\text{LEE}_{90} \approx 65.1 \pm 1.0\%$ (read from Fig. 3e; $\eta_{15} \approx 46.7\%$).
 #   4. **6-layer discrete GRIN ($\text{dGRIN}$) $\mu\text{Horn}$**: 6 equal-thickness ($h/6 = 500\;\text{nm}$) horizontal layers stepping down from $n_{\text{GaN}} = 2.45$ to air—$\text{Nb}_2\text{O}_5$ ($n = 2.37$), $\text{Si}_3\text{N}_4$ ($n = 2.05$), $\text{Al}_2\text{O}_3$ ($n = 1.77$), $\text{SiO}_2$ ($n = 1.46$), $\text{MgF}_2$ ($n = 1.38$), and $\text{Air}$ ($n = 1.00$)—optimal at $h = 3.0\;\mu\text{m}$, $\vartheta = 60^\circ$ ($w_{\text{top}} = 4.46\;\mu\text{m}$); published 2D $\text{LEE}_{15} = 37.7\%$ ($2.53\times$ bare, Sec. A.3 & Fig. 3c) and 2D $\text{LEE}_{90} \approx 75.3 \pm 1.0\%$ (read from Fig. 3f; $\eta_{15} \approx 50.1\%$).
+#
+# ![2D microLED + micro-horn setup schematic and local skin-depth mesh](figures/00_setup_schematic.png)
+# ![Three tapered micro-horn collimator configurations](figures/01_microled_horn_schematics.png)
+#
+# **Figures 00–01** display the solver setup schematics generated via `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`: Figure 00 contrasts the bare reference pixel ($h = 0$, $M = 9$ incoherent QW dipoles across $x_d \in [-240, +240]\;\text{nm}$ at $y_{\text{QW}} = 150\;\text{nm}$) with the 6-layer $\text{dGRIN}$ $\mu\text{Horn}$ ($h = 3.0\;\mu\text{m}$, $\vartheta = 60^\circ$, $M = 17$ incoherent QW dipoles) and zooms into the locally graded skin-depth collar ($\Delta x_{\min} = 3.0\;\text{nm}$, $5.13\;\text{cells}/\delta_I$, $10.25\;\text{cells}/\delta_E$; $\Delta x_{\text{bg}} = 7.5\;\text{nm}$, $24.5\;\text{cells}/\lambda$ in $\text{GaN}$, $20\;\text{cells}$ across the $150\;\text{nm}$ QW-to-mirror gap), while Figure 01 compares the three tapered $\mu\text{Horn}$ geometries (Air $72^\circ$, $\text{SiO}_2$ $64^\circ$, and 6-layer $\text{dGRIN}$ $60^\circ$).
 
 # %% [markdown]
 # ## 2. Analytical baselines: escape cone, TMM & 2D dipole power
@@ -152,15 +157,19 @@ from _helpers import (
     Y_QW_DEFAULT,
     ag_skin_depth,
     analytic_escape_cone_lee,
+    build_horn_schematic_objects,
     evaluate_horn_configuration,
     extract_2d_eps_map,
     fresnel_normal_transmission,
     lambertian_cone_fraction,
     led_gaussian_spectrum,
     make_ag_drude,
+    overlay_horn_geometry,
     snell_critical_angle_deg,
+    tidy_horn_schematic_axes,
     tmm_normal_reflectance,
 )
+from wakis import figstyle, schematic
 from wakis.dispersive import dispersive_lib
 
 DATA_DIR = TUTORIAL_DIR / "data"
@@ -762,18 +771,19 @@ def run_single_task(task, out_dir=DATA_DIR):
 
 
 # %% [markdown]
-# ## 5. Generating the complete 15-figure suite
+# ## 5. Generating the complete figure suite
 #
-# `generate_all_figures()` reads the saved `.npz` files in `data/` and the diagnostic JSON archives in `data/diag/` to render 15 publication-quality diagnostic plots (including a time-domain `.gif` animation and the gap-diagnostic summary figure `15_gap_diagnostics.png`) in `figures/`.
+# `generate_all_figures()` reads the saved `.npz` files in `data/` and the diagnostic JSON archives in `data/diag/` to render the complete diagnostic figure suite (including the setup schematic `00_setup_schematic.png`, the time-domain `.gif` animation `06_pulse_propagation_dgrin.gif`, and the gap-diagnostic summary figure `15_gap_diagnostics.png`) in `figures/`.
 #
 # ### Complete figure list, captions & silver-model / dipole-ensemble inventory
 #
 # Rakić (1998) 1-pole Drude silver (`make_ag_drude()`) is kept as the tutorial's default metallic reflector material across Tasks 0–6 (`data/task_00..06.npz`), while Johnson & Christy (1972) 1-pole Drude silver (`make_ag_drude_jc()` in `gap_diagnostics.py`) and the dipole-count convergence ladders ($M \in \{1, 5, 9, 17\}$) are stored in `data/diag/*.json` and compared side by side in Section 6, Section 8.2, Figure 08b, and Figure 15:
 #
-# 1. `figures/01_microled_horn_schematics.png`: 4-panel geometric cross-sections of the Bare ($h=0$), Air ($\vartheta=72^\circ$), $\text{SiO}_2$ ($\vartheta=64^\circ$), and 6-layer $\text{dGRIN}$ ($\vartheta=60^\circ$) configurations showing the $\text{Ag}$ reflector, $600\;\text{nm}$ $\text{GaN}$ core, $200\;\text{nm}$ $\text{SiO}_2$ lateral passivation barriers, $\text{InGaN}$ QW dipole plane ($y_{\text{QW}} = 150\;\text{nm}$), and `Near2FarMonitor2D` plane. *(Geometry schematic; independent of Ag dispersion fit.)*
+# 0. `figures/00_setup_schematic.png`: 3-panel setup schematic built from live solver/grid/source/monitor objects via `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`: (a) Bare reference pixel ($h=0$, $M=9$ incoherent QW dipoles at $y_{\text{QW}}=150\;\text{nm}$), (b) 6-layer $\text{dGRIN}$ $\mu\text{Horn}$ ($h=3.0\;\mu\text{m}$, $\vartheta=60^\circ$, $M=17$ incoherent QW dipoles), and (c) graded mesh zoom around the $\text{Ag}$ mirror/throat skin-depth collar ($\Delta x_{\min}=3.0\;\text{nm}$, $5.13\;\text{cells}/\delta_I$; $\Delta x_{\text{bg}}=7.5\;\text{nm}$, $24.5\;\text{cells}/\lambda$).
+# 1. `figures/01_microled_horn_schematics.png`: 3-panel geometric comparison of the three tapered $\mu\text{Horn}$ collimators—Air ($\vartheta=72^\circ$), $\text{SiO}_2$ ($\vartheta=64^\circ$), and 6-layer $\text{dGRIN}$ ($\vartheta=60^\circ$)—showing the $\text{Ag}$ reflector, $600\;\text{nm}$ $\text{GaN}$ core, $200\;\text{nm}$ $\text{SiO}_2$ lateral passivation barriers, $\text{InGaN}$ QW dipole ensemble ($y_{\text{QW}} = 150\;\text{nm}$), and `Near2FarMonitor2D` plane. *(Geometry schematic; independent of Ag dispersion fit.)*
 # 2. `figures/02_materials_and_tmm_reflectance.png`: (a) Calibrated 1-pole Drude $\varepsilon_{\text{Ag}}(\lambda)$ vs Rakić (1998) tabulated silver and field skin depth $\delta_E(\lambda)$; (b) vertical refractive-index step-down profile $n(y)$; (c) analytical $2\times 2$ TMM normal-incidence reflectance $R(\lambda)$ across $415\text{--}485\;\text{nm}$ overlaid with the $\text{InGaN}$ Gaussian spectrum $S(\lambda)$. *(Uses Rakić 1998 Ag in panel a.)*
 # 3. `figures/03_sidewall_mesh_kottke_vs_staircase.png`: Full 2D FIT domain and zoomed $60^\circ$ $\text{Ag}$ sidewall mesh comparing voxel staircasing against Kottke subpixel tensor smoothing at $\Delta x_{\text{bg}} = 7.5\;\text{nm}$. *(Uses Rakić 1998 Ag high-frequency core $\varepsilon_\infty = 4.0$.)*
-# 4. `figures/04_electric_field_wavefronts.png`: 4-panel steady-state $\operatorname{Re}(E_z)$ wavefronts at $\lambda_0 = 450\;\text{nm}$ for a single central $\text{TM}_z$ dipole ($x_d = 0$, $M = 1$, `--full` mesh) across all four configurations. *(Uses default Rakić 1998 Ag, $M = 1$ from `task_00..03.npz`.)*
+# 4. `figures/04_electric_field_wavefronts.png` and `figures/04b_electric_field_bare_vs_dgrin.png`: Steady-state $\operatorname{Re}(E_z)$ wavefronts at $\lambda_0 = 450\;\text{nm}$ for a single central $\text{TM}_z$ dipole ($x_d = 0$, $M = 1$, `--full` mesh) across the three $\mu\text{Horn}$ designs (`04`, 3 panels) and contrasting Bare vs 6-layer $\text{dGRIN}$ (`04b`, 2 panels) with `wakis.schematic.overlay_geometry`. *(Uses default Rakić 1998 Ag, $M = 1$ from `task_00..03.npz`.)*
 # 5. `figures/05_poynting_power_flow_maps.png`: 3-panel time-averaged Poynting vector magnitude $|\mathbf{S}|$ and unit flow quivers reproducing Luce *et al.* (2026) Fig. 3g–i for Air ($72^\circ$), $\text{SiO}_2$ ($64^\circ$), and 6-layer $\text{dGRIN}$ ($60^\circ$). *(Uses default Rakić 1998 Ag, central dipole $M = 1$ from `task_01..03.npz`.)*
 # 6. `figures/06_pulse_propagation_dgrin.gif`: Animated time-domain $E_z(x, y, t)$ pulse propagation through the 6-layer $\text{dGRIN}$ micro-horn ($t \in [2, 56]\;\text{fs}$). *(Uses default Rakić 1998 Ag, central dipole $M = 1$ from `task_03.npz`.)*
 # 7. `figures/07_farfield_polar_patterns.png`: Absolute and peak-normalized 2D polar far-field extraction densities $\rho_{\text{LEE}}(\theta)$ ($[\%/\text{deg}]$) vs analytical $\cos\theta$ Lambertian emission and the $\pm 15^\circ$ target acceptance cone. *(Uses default Rakić 1998 Ag angular profiles from `task_00..03.npz`.)*
@@ -822,8 +832,9 @@ def _load_converged_diag_pair(diag_dir, cfg):
 
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     """
-    Read `data/task_*.npz` and `data/diag/*.json` and generate all 15 figures in `figures/`.
+    Read `data/task_*.npz` and `data/diag/*.json` and generate all figures in `figures/`.
     """
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -849,10 +860,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             diag_base_map[c_key] = cfg_map[c_key]
             diag_jc_map[c_key] = None
     colors = {
-        "bare": "#475569",
-        "air": "#0284c7",
-        "sio2": "#d97706",
-        "dgrin": "#059669",
+        "bare": figstyle.PALETTE[7],
+        "air": figstyle.PALETTE[0],
+        "sio2": figstyle.PALETTE[1],
+        "dgrin": figstyle.PALETTE[2],
     }
     labels = {
         "bare": r"Bare reference ($h=0$)",
@@ -862,123 +873,107 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     }
 
     # ------------------------------------------------------------------
-    # Fig 01: 4-panel schematic cross-sections of the 4 designs
+    # Fig 00: Setup schematic (Bare + 6-layer dGRIN + skin-depth mesh zoom)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 4, figsize=(14.5, 4.3), dpi=150, sharey=True)
-    specs = [
-        ("bare", 0.0, 90.0, "(a) Bare reference pixel"),
-        ("air", 3.0, 72.0, r"(b) Air $\mu$Horn ($\vartheta=72^\circ$)"),
-        ("sio2", 3.0, 64.0, r"(c) SiO$_2$ $\mu$Horn ($\vartheta=64^\circ$)"),
-        ("dgrin", 3.0, 60.0, r"(d) 6-layer dGRIN $\mu$Horn ($\vartheta=60^\circ$)"),
+    fig0, axes0 = figstyle.new_figure(
+        nrows=1, ncols=3, width=13.6, height=4.4, gridspec_kw={"width_ratios": [1.0, 1.05, 0.95]}
+    )
+    bare_obj = build_horn_schematic_objects(config="bare", h_horn=0.0, theta_deg=90.0, dx=7.5e-9, dx_skin=3.0e-9, n_dip=9, n_pml=8)
+    schematic.plot_schematic(
+        bare_obj["solver"],
+        plane="xy",
+        ax=axes0[0],
+        unit="um",
+        structures=bare_obj["structures"],
+        sources=bare_obj["sources"],
+        monitors=bare_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(a) Task 0: Bare Reference Pixel (M = 9)",
+    )
+    tidy_horn_schematic_axes(axes0[0], config="bare", h_um=0.0, theta_deg=90.0, n_dip=9, n_pml=8, xlim=(-2.6, 2.6), ylim=(-0.30, 3.85))
+
+    dgrin_obj = build_horn_schematic_objects(config="dgrin", h_horn=3.0e-6, theta_deg=60.0, dx=7.5e-9, dx_skin=3.0e-9, n_dip=17, n_pml=8)
+    schematic.plot_schematic(
+        dgrin_obj["solver"],
+        plane="xy",
+        ax=axes0[1],
+        unit="um",
+        structures=dgrin_obj["structures"],
+        sources=dgrin_obj["sources"],
+        monitors=dgrin_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(b) Task 3: 6-Layer dGRIN µHorn (M = 17)",
+    )
+    tidy_horn_schematic_axes(axes0[1], config="dgrin", h_um=3.0, theta_deg=60.0, n_dip=17, n_pml=8, xlim=(-2.6, 2.6), ylim=(-0.30, 3.85))
+
+    ax_m = axes0[2]
+    ax_m.axhspan(-0.08, 0.0, facecolor="#94a3b8", alpha=0.65, zorder=1)
+    ax_m.fill_between([-0.65, -0.50], 0.0, 0.30, facecolor="#94a3b8", alpha=0.65, zorder=1)
+    ax_m.fill_between([-0.50, -0.30], 0.0, 0.30, facecolor="#7dd3fc", alpha=0.55, zorder=1)
+    ax_m.fill_between([-0.30, -0.18], 0.0, 0.30, facecolor="#fde68a", alpha=0.65, zorder=1)
+    ax_m.fill_between([-0.65, -0.18], 0.30, 0.44, facecolor="#fef3c7", alpha=0.55, zorder=1)
+    schematic.draw_mesh(
+        ax_m,
+        dgrin_obj["grid"],
+        plane="xy",
+        unit="um",
+        every=1,
+        color="#1e293b",
+        alpha=0.55,
+        linewidth=0.42,
+        show_cpw=False,
+    )
+    ax_m.axhline(0.0, color="#0f172a", lw=1.2, zorder=5)
+    ax_m.axhline(0.15, color="#d946ef", ls="--", lw=1.2, zorder=6)
+    ax_m.axhline(0.30, color="#0f172a", lw=1.2, zorder=5)
+    ax_m.axvline(-0.50, color="#0f172a", lw=1.2, zorder=5)
+    ax_m.axvline(-0.30, color="#0f172a", lw=1.1, zorder=5)
+    y_throat = np.linspace(0.30, 0.44, 40)
+    x_throat = -0.50 - (y_throat - 0.30) / np.tan(np.deg2rad(60.0))
+    ax_m.plot(x_throat, y_throat, color="#0f172a", lw=1.4, zorder=6)
+    ax_m.set_xlim(-0.60, -0.20)
+    ax_m.set_ylim(-0.05, 0.42)
+    bbox_z = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "#475569", "lw": 0.5, "alpha": 0.90}
+    ax_m.text(-0.52, 0.02, "Ag skin collar\nΔx_min = 3.0 nm\n5.13 c/δ_I (10.3 c/δ_E)", ha="center", va="bottom", fontsize=6.7, bbox=bbox_z, zorder=8)
+    ax_m.text(-0.40, 0.22, "SiO₂ pass.\n200 nm: 28 cells", ha="center", va="center", fontsize=6.7, bbox=bbox_z, zorder=8)
+    ax_m.text(-0.245, 0.08, "GaN core\nΔx_bg = 7.5 nm\n24.5 c/λ", ha="center", va="center", fontsize=6.7, bbox=bbox_z, zorder=8)
+    ax_m.text(-0.25, 0.165, "QW y=150 nm\n(27 cells)", ha="center", va="bottom", fontsize=6.6, color="#86198f", bbox=bbox_z, zorder=8)
+    ax_m.text(-0.36, 0.365, "Nb₂O₅ (n=2.37), 500 nm: 67 cells", ha="center", va="center", fontsize=6.7, bbox=bbox_z, zorder=8)
+    ax_m.set_xlabel(r"$x$ [$\mu$m]")
+    ax_m.set_ylabel(r"$y$ [$\mu$m]")
+    ax_m.set_title("(c) Graded Skin-Depth & Mesa Mesh Zoom")
+    figstyle.finish(fig0)
+    figstyle.save(fig0, fig_dir / "00_setup_schematic.png", close=True)
+
+    # ------------------------------------------------------------------
+    # Fig 01: 3-panel schematic comparison of the 3 tapered micro-horns
+    # ------------------------------------------------------------------
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.3, sharey=True)
+    horn_specs_01 = [
+        ("air", 3.0, 72.0, r"(a) Air $\mu$Horn ($\vartheta=72^\circ$, $M=17$)"),
+        ("sio2", 3.0, 64.0, r"(b) SiO$_2$ $\mu$Horn ($\vartheta=64^\circ$, $M=17$)"),
+        ("dgrin", 3.0, 60.0, r"(c) 6-layer dGRIN $\mu$Horn ($\vartheta=60^\circ$, $M=17$)"),
     ]
-    dgrin_colors = ["#fde68a", "#fcd34d", "#fbbf24", "#7dd3fc", "#bae6fd", "#f8fafc"]
-    for ax, (cfg, hh, th, title) in zip(axes, specs):
-        ax.set_facecolor("#f8fafc")
-        # Ag base reflector
-        ax.fill_between([-2.6, 2.6], -0.25, 0.30, color="#94a3b8", zorder=1)
-        # SiO2 passivation
-        ax.fill_between([-0.5, 0.5], 0.0, 0.30, color="#7dd3fc", zorder=2)
-        # GaN core
-        ax.fill_between([-0.3, 0.3], 0.0, 0.30, color="#fbbf24", zorder=3)
-        # QW dipoles
-        n_dip_show = (
-            int(t3_d["conv_ndip_full"][-1])
-            if cfg == "dgrin"
-            else int(t0_d["conv_ndip_full"][-1])
+    for ax, (cfg, hh, th, title) in zip(axes, horn_specs_01):
+        h_obj = build_horn_schematic_objects(config=cfg, h_horn=hh * 1e-6, theta_deg=th, dx=15e-9, dx_skin=7.5e-9, n_dip=17, n_pml=8)
+        schematic.plot_schematic(
+            h_obj["solver"],
+            plane="xy",
+            ax=ax,
+            unit="um",
+            structures=h_obj["structures"],
+            sources=h_obj["sources"],
+            monitors=h_obj["monitors"],
+            show_mesh=False,
+            show_wave_packet=False,
+            title=title,
         )
-        dip_span = 0.25 if n_dip_show > 5 else 0.24
-        dip_x = np.linspace(-dip_span, dip_span, n_dip_show)
-        ax.scatter(
-            dip_x,
-            np.full_like(dip_x, 0.15),
-            color="#a21caf",
-            s=18 if n_dip_show > 5 else 22,
-            zorder=6,
-            label="InGaN QW dipoles ($y=150$ nm)",
-        )
-        if hh > 0:
-            dx_h = hh / np.tan(np.deg2rad(th))
-            x_top = 0.5 + dx_h
-            y_top = 0.30 + hh
-            if cfg == "sio2":
-                poly = mpatches.Polygon(
-                    [(-0.5, 0.30), (0.5, 0.30), (x_top, y_top), (-x_top, y_top)],
-                    facecolor="#7dd3fc",
-                    edgecolor="#0284c7",
-                    lw=0.8,
-                    zorder=2,
-                )
-                ax.add_patch(poly)
-            elif cfg == "dgrin":
-                dh = hh / 6.0
-                for idx_l, ((m_name, n_val), fc) in enumerate(
-                    zip(DGRIN_STACK, dgrin_colors)
-                ):
-                    y0 = 0.30 + idx_l * dh
-                    y1 = 0.30 + (idx_l + 1) * dh
-                    xb0 = 0.5 + (idx_l * dh) / np.tan(np.deg2rad(th))
-                    xb1 = 0.5 + ((idx_l + 1) * dh) / np.tan(np.deg2rad(th))
-                    poly = mpatches.Polygon(
-                        [(-xb0, y0), (xb0, y0), (xb1, y1), (-xb1, y1)],
-                        facecolor=fc,
-                        edgecolor="#475569",
-                        lw=0.6,
-                        zorder=2,
-                    )
-                    ax.add_patch(poly)
-                    ax.text(
-                        0.0,
-                        0.5 * (y0 + y1),
-                        f"{m_name} ($n={n_val:.2f}$)",
-                        ha="center",
-                        va="center",
-                        fontsize=6.8,
-                        color="#0f172a",
-                        zorder=5,
-                    )
-            left_ag = mpatches.Polygon(
-                [(-2.6, 0.30), (-0.5, 0.30), (-x_top, y_top), (-2.6, y_top)],
-                facecolor="#94a3b8",
-                edgecolor="#334155",
-                lw=1.0,
-                zorder=4,
-            )
-            right_ag = mpatches.Polygon(
-                [(0.5, 0.30), (2.6, 0.30), (2.6, y_top), (x_top, y_top)],
-                facecolor="#94a3b8",
-                edgecolor="#334155",
-                lw=1.0,
-                zorder=4,
-            )
-            ax.add_patch(left_ag)
-            ax.add_patch(right_ag)
-        ax.axhline(
-            3.46 if hh > 0 else 0.46, color="#dc2626", ls="--", lw=1.1, zorder=6
-        )
-        ax.set_xlim(-2.5, 2.5)
-        ax.set_ylim(-0.25, 3.70)
-        ax.set_xlabel(r"Lateral coordinate $x$ [$\mu$m]")
-        ax.set_title(title, fontsize=9.5)
-        ax.grid(True, ls=":", alpha=0.35)
+        tidy_horn_schematic_axes(ax, config=cfg, h_um=hh, theta_deg=th, n_dip=17, n_pml=8, xlim=(-2.6, 2.6), ylim=(-0.30, 3.85))
     axes[0].set_ylabel(r"Vertical emission coordinate $y$ [$\mu$m]")
-    legend_patches = [
-        mpatches.Patch(color="#94a3b8", label="Ag reflector / horn"),
-        mpatches.Patch(color="#fbbf24", label="GaN core ($n=2.45$)"),
-        mpatches.Patch(color="#7dd3fc", label=r"SiO$_2$ ($n=1.46$)"),
-        mpatches.Patch(color="#a21caf", label="QW dipoles ($y=150$ nm)"),
-        mpatches.Patch(color="#dc2626", label="Near2Far monitor plane"),
-    ]
-    axes[0].legend(handles=legend_patches, loc="upper left", fontsize=7.0)
-    fig.suptitle(
-        r"Luce et al. (2026) 2D $\mu$LED + $\mu$Horn Collimator Configurations ($w_{\mathrm{GaN}}=0.6\;\mu\mathrm{m}$, $w_{\mathrm{pixel}}=1.0\;\mu\mathrm{m}$)",
-        fontsize=11,
-        y=1.02,
-    )
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "01_microled_horn_schematics.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "01_microled_horn_schematics.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 02: Material dispersion (Ag Drude vs Rakic), LED spectrum & TMM
@@ -1003,31 +998,28 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     S_led_plot = led_gaussian_spectrum(lams_m)
 
-    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(13.8, 4.0), dpi=150)
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.0)
     ax0.plot(lams_nm, eps_r.real, "k--", lw=1.4, label=r"Rakic Ag $\mathrm{Re}(\varepsilon)$")
-    ax0.plot(lams_nm, eps_d.real, color="#0284c7", lw=1.8, label=r"1-pole Drude $\mathrm{Re}(\varepsilon)$")
+    ax0.plot(lams_nm, eps_d.real, color=colors["air"], lw=1.8, label=r"1-pole Drude $\mathrm{Re}(\varepsilon)$")
     ax0.plot(lams_nm, eps_r.imag, "r:", lw=1.4, label=r"Rakic Ag $\mathrm{Im}(\varepsilon)$")
-    ax0.plot(lams_nm, eps_d.imag, color="#d97706", lw=1.8, label=r"1-pole Drude $\mathrm{Im}(\varepsilon)$")
+    ax0.plot(lams_nm, eps_d.imag, color=colors["sio2"], lw=1.8, label=r"1-pole Drude $\mathrm{Im}(\varepsilon)$")
+    ax0.plot(lams_nm, 0.1 * skin_e_nm, color=colors["dgrin"], ls="-.", lw=1.6, label=r"Skin depth $\delta_E / 10$ [nm]")
     ax0.axvline(450.0, color="0.4", ls="--", lw=1.0)
     ax0.set(
         xlabel=r"Wavelength $\lambda$ [nm]",
-        ylabel=r"Silver relative permittivity $\varepsilon_{\mathrm{Ag}}(\lambda)$",
+        ylabel=r"$\varepsilon_{\mathrm{Ag}}(\lambda)$ and $\delta_E / 10$ [nm]",
         title=r"(a) Silver Drude fit vs Rakic (1998) & skin depth",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower left", fontsize=7.5)
-    ax0_t = ax0.twinx()
-    ax0_t.plot(lams_nm, skin_e_nm, color="#059669", ls="-.", lw=1.4)
-    ax0_t.set_ylabel(r"Field skin depth $\delta_E$ [nm]", color="#059669")
+    ax0.legend(loc="lower left", fontsize=7.0)
 
     steps_y = [0.0, 0.3, 0.8, 1.3, 1.8, 2.3, 2.8, 3.3]
     steps_n = [N_GAN, 2.37, 2.05, 1.77, 1.46, 1.38, 1.00, 1.00]
-    ax1.step(steps_y, steps_n, where="post", color="#059669", lw=2.2, label="6-layer dGRIN profile")
+    ax1.step(steps_y, steps_n, where="post", color=colors["dgrin"], lw=2.2, label="6-layer dGRIN profile")
     ax1.step(
-        [0.0, 0.3, 3.3], [N_GAN, N_SIO2, 1.0], where="post", color="#d97706", ls="--", lw=1.6, label=r"Homogeneous SiO$_2$"
+        [0.0, 0.3, 3.3], [N_GAN, N_SIO2, 1.0], where="post", color=colors["sio2"], ls="--", lw=1.6, label=r"Homogeneous SiO$_2$"
     )
     ax1.step(
-        [0.0, 0.3, 3.3], [N_GAN, 1.0, 1.0], where="post", color="#0284c7", ls=":", lw=1.6, label="Unfilled Air"
+        [0.0, 0.3, 3.3], [N_GAN, 1.0, 1.0], where="post", color=colors["air"], ls=":", lw=1.6, label="Unfilled Air"
     )
     ax1.set(
         xlabel=r"Vertical coordinate $y$ [$\mu$m]",
@@ -1035,12 +1027,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylim=(0.85, 2.65),
         title=r"(b) Refractive-index step-down along $+y$",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.0)
 
-    ax2.plot(lams_nm, 100.0 * R_bare, color="#475569", lw=1.8, label=f"Bare GaN/Air ({100*R_bare[0]:.1f}%)")
-    ax2.plot(lams_nm, 100.0 * R_sio2, color="#d97706", lw=1.3, alpha=0.85, label=r"3 $\mu$m SiO$_2$ slab")
-    ax2.plot(lams_nm, 100.0 * R_dgrin, color="#059669", lw=1.6, label="6-layer dGRIN stack")
+    ax2.plot(lams_nm, 100.0 * R_bare, color=colors["bare"], lw=1.8, label=f"Bare GaN/Air ({100*R_bare[0]:.1f}%)")
+    ax2.plot(lams_nm, 100.0 * R_sio2, color=colors["sio2"], lw=1.4, alpha=0.85, label=r"3 $\mu$m SiO$_2$ slab")
+    ax2.plot(lams_nm, 100.0 * R_dgrin, color=colors["dgrin"], lw=1.8, label="6-layer dGRIN stack")
     ax2.fill_between(
         lams_nm,
         0,
@@ -1056,13 +1047,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylim=(0, 26),
         title=r"(c) Analytical 1D TMM normal reflectance",
     )
-    ax2.grid(True, ls=":", alpha=0.4)
     ax2.legend(loc="upper right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "02_materials_and_tmm_reflectance.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "02_materials_and_tmm_reflectance.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 03: Sidewall mesh zoom: Kottke vs Staircase on 60 deg sidewall
@@ -1076,30 +1063,30 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         "dgrin", h_horn=3.0e-6, theta_deg=60.0, dx=dx_bg_m_fig, averaging="staircase"
     )
 
-    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(13.8, 4.1), dpi=150)
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.1)
     xc_um = m_kot["x_centers"] * 1e6
     yc_um = m_kot["y_centers"] * 1e6
 
-    # Map display: dielectric eps_x with Ag mask overlaid
     disp_full = np.where(m_kot["f_ag"] > 0.5, -2.0, m_kot["eps_x"])
     im0 = ax0.pcolormesh(
-        xc_um, yc_um, disp_full.T, cmap="viridis", vmin=-2.0, vmax=6.2, shading="auto"
+        xc_um, yc_um, disp_full.T, cmap=figstyle.CMAP_EPS, vmin=-2.0, vmax=6.2, shading="auto"
     )
-    _draw_horn_outline(ax0, "dgrin", 3.0, 60.0, color="white", lw=1.0)
+    overlay_horn_geometry(ax0, config="dgrin", h_um=3.0, theta_deg=60.0, line_color="white", fontsize=5.8)
     ax0.add_patch(
         mpatches.Rectangle(
-            (0.72, 0.65), 0.30, 0.30, fill=False, edgecolor="#f43f5e", lw=1.6
+            (0.72, 0.65), 0.30, 0.30, fill=False, edgecolor="#f43f5e", lw=1.6, zorder=10
         )
     )
     ax0.set(
         xlabel=r"$x$ [$\mu$m]",
         ylabel=r"$y$ [$\mu$m]",
         xlim=(-2.5, 2.5),
-        ylim=(-0.2, 3.5),
+        ylim=(-0.2, 3.65),
         title=f"(a) Full 2D FIT domain ($\\Delta x_{{\\mathrm{{bg}}}} = {dx_bg_nm_fig:.1f}$ nm)",
     )
     fig.colorbar(im0, ax=ax0, label=r"Effective $\varepsilon_x$ (Ag shown at $-2$)")
 
+    bbox_sub = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "#475569", "lw": 0.45, "alpha": 0.86}
     for ax, m_dat, tag in [
         (ax1, m_st, r"(b) Staircase sidewall ($\vartheta=60^\circ$)"),
         (ax2, m_kot, r"(c) Kottke subpixel sidewall ($\vartheta=60^\circ$)"),
@@ -1109,7 +1096,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             xc_um,
             yc_um,
             disp_z.T,
-            cmap="magma",
+            cmap=figstyle.CMAP_MAGNITUDE,
             vmin=1.5,
             vmax=6.0,
             shading="auto",
@@ -1120,6 +1107,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_line = 0.50 + (y_line - 0.30) / np.tan(np.deg2rad(60.0))
         ax.plot(x_line, y_line, color="#38bdf8", lw=2.0, label=r"Exact $60^\circ$ Ag sidewall")
         ax.axhline(0.80, color="white", ls="--", lw=1.1, label=r"Nb$_2$O$_5$/Si$_3$N$_4$ interface")
+        ax.text(0.76, 0.72, "Nb₂O₅\n(n=2.37)", ha="center", va="center", fontsize=6.6, bbox=bbox_sub, zorder=8)
+        ax.text(0.78, 0.89, "Si₃N₄\n(n=2.05)", ha="center", va="center", fontsize=6.6, bbox=bbox_sub, zorder=8)
+        ax.text(0.95, 0.72, "Ag horn\n(ε_∞=4.0)", ha="center", va="center", fontsize=6.6, bbox=bbox_sub, zorder=8)
         ax.set(
             xlabel=r"$x$ [$\mu$m]",
             ylabel=r"$y$ [$\mu$m]",
@@ -1127,53 +1117,76 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             ylim=(0.65, 0.95),
             title=tag,
         )
-        ax.legend(loc="upper left", fontsize=7.5)
+        ax.legend(loc="upper left", fontsize=7.0)
         fig.colorbar(im, ax=ax, label=r"High-freq cell $\varepsilon_{\infty,\mathrm{eff},x}$")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_sidewall_mesh_kottke_vs_staircase.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "03_sidewall_mesh_kottke_vs_staircase.png", close=True)
 
     # ------------------------------------------------------------------
-    # Fig 04: 4-panel steady-state Re(E_z) wavefronts at lambda_0 = 450 nm
+    # Fig 04: 3-panel steady-state Re(E_z) wavefronts across the 3 micro-horns
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 4, figsize=(14.5, 4.2), dpi=150, sharey=True)
-    for ax, (cfg, hh, th, title) in zip(axes, specs):
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.3, sharey=True)
+    horn_wave_specs = [
+        ("air", 3.0, 72.0, r"(a) Air $\mu$Horn ($\vartheta=72^\circ$)"),
+        ("sio2", 3.0, 64.0, r"(b) SiO$_2$ $\mu$Horn ($\vartheta=64^\circ$)"),
+        ("dgrin", 3.0, 60.0, r"(c) 6-layer dGRIN $\mu$Horn ($\vartheta=60^\circ$)"),
+    ]
+    for ax, (cfg, hh, th, title) in zip(axes, horn_wave_specs):
         d = cfg_map[cfg]
         x_u = d["dft_x"] * 1e6
         y_u = d["dft_y"] * 1e6
         ez = d["dft_Ez_real"]
         vmax = 0.35 * float(np.percentile(np.abs(ez), 99.2))
         im = ax.pcolormesh(
-            x_u, y_u, ez.T, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto"
+            x_u, y_u, ez.T, cmap=figstyle.CMAP_DIVERGING, vmin=-vmax, vmax=vmax, shading="auto"
         )
-        _draw_horn_outline(ax, cfg, hh, th, color="black", lw=1.1)
+        overlay_horn_geometry(ax, config=cfg, h_um=hh, theta_deg=th, line_color="black", fontsize=5.8)
         ax.set(
             xlabel=r"$x$ [$\mu$m]",
             xlim=(-2.4, 2.4),
-            ylim=(-0.15, 3.60),
+            ylim=(-0.15, 3.65),
             title=title,
         )
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$\mathrm{Re}(E_z)$ [arb.]")
     axes[0].set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
-    fig.suptitle(
-        r"Steady-State $\mathrm{Re}(E_z)$ Wavefronts at $\lambda_0 = 450$ nm (Central Dipole $x_d = 0$, $y_{\mathrm{QW}} = 150$ nm)",
-        fontsize=11,
-        y=1.02,
-    )
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "04_electric_field_wavefronts.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "04_electric_field_wavefronts.png", close=True)
+
+    # ------------------------------------------------------------------
+    # Fig 04b: 2-panel Re(E_z) wavefront comparison (Bare vs 6-layer dGRIN)
+    # ------------------------------------------------------------------
+    fig_b, axes_b = figstyle.new_figure(nrows=1, ncols=2, width=10.2, height=4.2, sharey=True)
+    for ax, (cfg, hh, th, title) in zip(
+        axes_b,
+        [
+            ("bare", 0.0, 90.0, r"(a) Bare reference pixel ($h=0$, TIR trapped)"),
+            ("dgrin", 3.0, 60.0, r"(b) 6-layer dGRIN $\mu$Horn ($h=3.0\;\mu$m, $\vartheta=60^\circ$)"),
+        ],
+    ):
+        d = cfg_map[cfg]
+        x_u = d["dft_x"] * 1e6
+        y_u = d["dft_y"] * 1e6
+        ez = d["dft_Ez_real"]
+        vmax = 0.35 * float(np.percentile(np.abs(ez), 99.2))
+        im = ax.pcolormesh(
+            x_u, y_u, ez.T, cmap=figstyle.CMAP_DIVERGING, vmin=-vmax, vmax=vmax, shading="auto"
+        )
+        overlay_horn_geometry(ax, config=cfg, h_um=hh, theta_deg=th, line_color="black", fontsize=6.0)
+        ax.set(
+            xlabel=r"$x$ [$\mu$m]",
+            xlim=(-2.4, 2.4),
+            ylim=(-0.15, 3.65),
+            title=title,
+        )
+        fig_b.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label=r"$\mathrm{Re}(E_z)$ [arb.]")
+    axes_b[0].set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
+    figstyle.finish(fig_b)
+    figstyle.save(fig_b, fig_dir / "04b_electric_field_bare_vs_dgrin.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 05: 3-panel Poynting vector power-flow maps (reproducing Fig. 3g-i)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(13.8, 4.4), dpi=150, sharey=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.4, sharey=True)
     horn_specs = [
         ("air", 3.0, 72.0, r"(a) Air $\mu$Horn ($\vartheta=72^\circ$, Fig. 3g)"),
         ("sio2", 3.0, 64.0, r"(b) SiO$_2$ $\mu$Horn ($\vartheta=64^\circ$, Fig. 3h)"),
@@ -1190,9 +1203,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         log_s = np.log10(np.clip(s_norm, 1e-4, 1.0))
 
         im = ax.pcolormesh(
-            x_u, y_u, log_s.T, cmap="inferno", vmin=-3.5, vmax=0.0, shading="auto"
+            x_u, y_u, log_s.T, cmap=figstyle.CMAP_MAGNITUDE, vmin=-3.5, vmax=0.0, shading="auto"
         )
-        _draw_horn_outline(ax, cfg, hh, th, color="cyan", lw=1.2)
+        overlay_horn_geometry(ax, config=cfg, h_um=hh, theta_deg=th, line_color="cyan", fontsize=5.8)
 
         step_x = max(1, len(x_u) // 22)
         step_y = max(1, len(y_u) // 22)
@@ -1212,27 +1225,20 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             alpha=0.82,
             scale=24,
             width=0.004,
+            zorder=8,
         )
         ax.set(
             xlabel=r"Lateral coordinate $x$ [$\mu$m]",
             xlim=(-2.4, 2.4),
-            ylim=(-0.15, 3.60),
+            ylim=(-0.15, 3.65),
             title=title,
         )
         fig.colorbar(
             im, ax=ax, fraction=0.046, pad=0.03, label=r"$\log_{10}(|\mathbf{S}| / S_{\max})$"
         )
     axes[0].set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
-    fig.suptitle(
-        r"Time-Averaged Poynting Vector Power Flow $\mathbf{S} = \mathrm{Re}(\mathbf{E}\times\mathbf{H}^*)$ Reproducing Luce et al. (2026) Fig. 3g–i",
-        fontsize=11,
-        y=1.02,
-    )
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "05_poynting_power_flow_maps.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "05_poynting_power_flow_maps.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 06: Time-domain pulse propagation GIF through 6-layer dGRIN horn
@@ -1241,32 +1247,31 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         mx = t3_d["movie_x"] * 1e6
         my = t3_d["movie_y"] * 1e6
         mtimes = t3_d["movie_times_fs"]
-        # stored normalized (float16) with a movie_frames_scale factor to keep the committed data small
         mframes = np.asarray(t3_d["movie_frames"], dtype=float) * (float(t3_d["movie_frames_scale"]) if "movie_frames_scale" in t3_d else 1.0)
         vmax_m = 0.25 * float(np.max(np.abs(mframes)))
 
-        fig_m, ax_m = plt.subplots(figsize=(5.6, 4.6), dpi=110)
+        fig_m, ax_m = figstyle.new_figure(nrows=1, ncols=1, width=6.2, height=5.0)
         im_m = ax_m.pcolormesh(
             mx,
             my,
             mframes[0].T,
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-vmax_m,
             vmax=vmax_m,
             shading="auto",
         )
-        _draw_horn_outline(ax_m, "dgrin", 3.0, 60.0, color="black", lw=1.2)
+        overlay_horn_geometry(ax_m, config="dgrin", h_um=3.0, theta_deg=60.0, line_color="black", fontsize=6.4)
         ax_m.set(
             xlabel=r"Lateral coordinate $x$ [$\mu$m]",
             ylabel=r"Vertical coordinate $y$ [$\mu$m]",
             xlim=(-2.4, 2.4),
-            ylim=(-0.15, 3.60),
+            ylim=(-0.15, 3.65),
         )
         title_m = ax_m.set_title(
             f"6-layer dGRIN $\\mu$Horn pulse propagation: $t = {mtimes[0]:.1f}$ fs"
         )
         fig_m.colorbar(im_m, ax=ax_m, label=r"$E_z(x, y, t)$ [arb.]")
-        fig_m.tight_layout()
+        figstyle.finish(fig_m)
 
         def _update_frame(k):
             im_m.set_array(mframes[k].T.ravel())
@@ -1281,13 +1286,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         anim.save(
             fig_dir / "06_pulse_propagation_dgrin.gif",
             writer=PillowWriter(fps=9),
+            dpi=100,
         )
         plt.close(fig_m)
 
     # ------------------------------------------------------------------
     # Fig 07: Polar radiation patterns rho_LEE(theta) vs 2D Lambertian
     # ------------------------------------------------------------------
-    fig = plt.figure(figsize=(11.5, 4.8), dpi=150)
+    from matplotlib.collections import PolyCollection
+
+    fig = plt.figure(figsize=(11.5, 4.8))
     ax0 = fig.add_subplot(121, projection="polar")
     ax1 = fig.add_subplot(122, projection="polar")
 
@@ -1326,18 +1334,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             alpha=0.22,
             label=r"$\pm 15^\circ$ target cone",
         )
+        ax.add_collection(PolyCollection([[(0.0, 0.0), (0.0, 0.0)]], alpha=0.0))
         ax.set_title(ttl, pad=14, fontsize=10)
     ax1.legend(loc="lower center", bbox_to_anchor=(0.5, -0.28), ncol=2, fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "07_farfield_polar_patterns.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "07_farfield_polar_patterns.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 08: Cartesian angular LEE density + comparison vs Luce et al. (2026)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.2, 4.3), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.4, height=4.3)
     ang_deg = t3_d["angles_deg"]
     ax0.axvspan(-15.0, 15.0, color="#fef08a", alpha=0.45, label=r"$\Gamma = \pm 15^\circ$ cone")
     for cfg in ("bare", "air", "sio2", "dgrin"):
@@ -1355,7 +1361,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         xlim=(-90, 90),
         title=r"(a) Incoherent far-field extraction density $\rho_{\mathrm{LEE}}(\theta)$",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.6)
 
     x_idx = np.arange(4)
@@ -1378,7 +1383,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx - 1.5 * w_bar,
         our_15_eq,
         width=w_bar,
-        color="#059669",
+        color=colors["dgrin"],
         label=r"Rakić Ag $\mathrm{LEE}_{15,\mathrm{eq}}$ ($M=17$; Bare $M=9$)",
     )
     ax1.bar(
@@ -1401,7 +1406,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx + 1.5 * w_bar,
         our_90_eq,
         width=w_bar,
-        color="#0284c7",
+        color=colors["air"],
         alpha=0.80,
         label=r"Rakić Ag $\mathrm{LEE}_{90,\mathrm{eq}}$ ($w_{\mathrm{pol}}=1/3$)",
     )
@@ -1448,20 +1453,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylim=(0, 88),
         title=r"(b) Converged 2D FIT (Rakić & J&C Ag) vs Luce et al. (2026)",
     )
-    ax1.grid(True, axis="y", ls=":", alpha=0.4)
     ax1.legend(loc="upper left", fontsize=6.5)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "08_farfield_cartesian_and_paper_refs.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "08_farfield_cartesian_and_paper_refs.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 09: On-axis (N_dip=1) sidewall angle & horn height sweeps (cf. Fig. 3a-f)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.0, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.0, height=4.2)
     sw_angles = t4_d["angles_deg"]
     sw_heights = t4_d["heights_um"]
     for cfg in ("air", "sio2", "dgrin"):
@@ -1506,7 +1505,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel=r"On-axis ($N_{\mathrm{dip}}=1$) $\mathrm{LEE}_{15}$ [%]",
         title=r"(a) On-axis ($N_{\mathrm{dip}}=1$) angle sweep at $h = 3.0\;\mu\mathrm{m}$ (cf. Fig. 3a–c)",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="best", fontsize=7.3, ncol=2)
 
     ax1.set(
@@ -1514,18 +1512,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel=r"On-axis ($N_{\mathrm{dip}}=1$) $\mathrm{LEE}_{15},\;\mathrm{LEE}_{90}$ [%]",
         title=r"(b) On-axis ($N_{\mathrm{dip}}=1$) height sweep at paper $\vartheta_{\mathrm{opt}}$ (cf. Fig. 3a–f)",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=7.5, ncol=2)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "09_horn_angle_and_height_sweep.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "09_horn_angle_and_height_sweep.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 10: 2D on-axis (N_dip=1) QW vertical offset sensitivity (2D dGRIN vs 2D bare)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.8, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.1)
     dy_nm = t5_d["dy_nm"]
     ax0.plot(
         dy_nm,
@@ -1575,7 +1569,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel=r"Hom.-normalized extraction $F_P \cdot \mathrm{LEE}_{\mathrm{wrk}}$ [%]",
         title=r"(a) 2D on-axis ($N_{\mathrm{dip}}=1$) $\mathrm{LEE}_{15}$ & $\mathrm{LEE}_{90}$ vs $\Delta y_{\mathrm{QW}}$",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="best", fontsize=7.0)
 
     ax1.plot(
@@ -1598,23 +1591,19 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel=r"Forward enhancement factor $\mathrm{LEE}_{15}^{\mathrm{dGRIN}} / \mathrm{LEE}_{15}^{\mathrm{bare}}$",
         title=r"(b) 2D dGRIN / 2D bare $\mathrm{LEE}_{15}$ ratio across 80 nm QW window",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "10_qw_position_sensitivity.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "10_qw_position_sensitivity.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 11: Incoherent dipole count convergence & coherent vs incoherent
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.8, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.1)
     ndip = t3_d["conv_ndip_full"]
     c15 = t3_d["conv_lee15"]
     c90 = t3_d["conv_lee90"]
     ax0.plot(ndip, c15, "o-", color=colors["dgrin"], lw=2.0, label=r"dGRIN $\mathrm{LEE}_{15}(N_{\mathrm{dip}})$")
-    ax0.plot(ndip, c90, "s--", color="#0284c7", lw=1.8, label=r"dGRIN $\mathrm{LEE}_{90}(N_{\mathrm{dip}})$")
+    ax0.plot(ndip, c90, "s--", color=colors["air"], lw=1.8, label=r"dGRIN $\mathrm{LEE}_{90}(N_{\mathrm{dip}})$")
     ax0.axhline(c15[-1], color=colors["dgrin"], ls=":", lw=1.1)
     ax0.set(
         xlabel=r"Total QW dipole positions across active width $N_{\mathrm{dip}}$",
@@ -1622,7 +1611,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         xticks=ndip,
         title=r"(a) Convergence of incoherent power average with $N_{\mathrm{dip}}$",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="best", fontsize=8.5)
 
     ax1.plot(
@@ -1647,18 +1635,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         xlim=(-90, 90),
         title="(b) Why spontaneous emission requires incoherent power averaging",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "11_incoherent_dipole_convergence.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "11_incoherent_dipole_convergence.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 12: Per-polarization breakdown (TE_x, TE_y, TM_z) & spectral LEE(lambda)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.0, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.0, height=4.1)
     px = [float(diag_base_map[c]["lee15_pol_x"]) for c in cfg_order]
     py = [float(diag_base_map[c]["lee15_pol_y"]) for c in cfg_order]
     pz = [float(diag_base_map[c]["lee15_pol_z"]) for c in cfg_order]
@@ -1667,17 +1651,17 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx - w_p,
         px,
         width=w_p,
-        color="#0284c7",
+        color=colors["air"],
         label=r"In-plane horizontal $J_x$ ($\mathrm{TE}_x$)",
     )
     ax0.bar(
-        x_idx, py, width=w_p, color="#d97706", label=r"Vertical $J_y$ ($\mathrm{TE}_y$)"
+        x_idx, py, width=w_p, color=colors["sio2"], label=r"Vertical $J_y$ ($\mathrm{TE}_y$)"
     )
     ax0.bar(
         x_idx + w_p,
         pz,
         width=w_p,
-        color="#059669",
+        color=colors["dgrin"],
         label=r"Out-of-plane $J_z$ ($\mathrm{TM}_z$)",
     )
     ax0.set_xticks(x_idx)
@@ -1693,7 +1677,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel=r"Forward cone extraction $\mathrm{LEE}_{15}$ [%]",
         title=r"(a) Polarization breakdown of $\mathrm{LEE}_{15}$ (Rakić Ag, converged $M$)",
     )
-    ax0.grid(True, axis="y", ls=":", alpha=0.4)
     ax0.legend(loc="upper left", fontsize=8.0)
 
     for cfg in cfg_order:
@@ -1723,20 +1706,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         xlim=(425, 475),
         title=r"(b) Broadband $\mathrm{LEE}_{15}(\lambda)$ across 425–475 nm (Rakić Ag)",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper left", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_polarization_and_spectral_breakdown.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "12_polarization_and_spectral_breakdown.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 13: Metal skin-depth resolution study & Kottke vs Staircase
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.6, 4.3), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.6, height=4.3)
     c_skin_i = (
         t6_d["cells_per_skin_depth_arr"]
         if "cells_per_skin_depth_arr" in t6_d
@@ -1759,7 +1736,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         c_skin_i,
         k15,
         "o-",
-        color="#059669",
+        color=colors["dgrin"],
         lw=2.1,
         label=r"Kottke $\mathrm{LEE}_{15}$",
     )
@@ -1775,7 +1752,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         c_skin_i,
         k90,
         "^-",
-        color="#0284c7",
+        color=colors["air"],
         lw=2.0,
         alpha=0.9,
         label=r"Kottke $\mathrm{LEE}_{90}$",
@@ -1784,14 +1761,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         c_skin_i,
         s90,
         "v--",
-        color="#d97706",
+        color=colors["sio2"],
         lw=1.8,
         alpha=0.9,
         label=r"Staircase $\mathrm{LEE}_{90}$",
     )
     ax0.axvline(
         float(c_skin_i[-1]),
-        color="#059669",
+        color=colors["dgrin"],
         ls="-.",
         lw=1.5,
         label=(
@@ -1804,7 +1781,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         [k15[0], k15[-1]],
         marker="*",
         s=130,
-        color=["#f59e0b", "#059669"],
+        color=["#f59e0b", colors["dgrin"]],
         edgecolor="black",
         zorder=7,
     )
@@ -1827,7 +1804,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         r"Cells per Ag field skin depth $\delta_E = \lambda_0 / (2\pi\kappa) = 30.76$ nm",
         fontsize=8.5,
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="center right", fontsize=7.0)
 
     rel15 = (
@@ -1845,7 +1821,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         c_skin_i[1:],
         rel15[1:],
         "o-",
-        color="#059669",
+        color=colors["dgrin"],
         lw=2.0,
         label=r"Kottke step-to-step $|\Delta\mathrm{LEE}_{15}|/\mathrm{LEE}_{15}$ [%]",
     )
@@ -1853,7 +1829,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         c_skin_i[1:],
         rel90[1:],
         "^-",
-        color="#0284c7",
+        color=colors["air"],
         lw=1.8,
         label=r"Kottke step-to-step $|\Delta\mathrm{LEE}_{90}|/\mathrm{LEE}_{90}$ [%]",
     )
@@ -1867,12 +1843,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.axhline(
         1.0,
-        color="#059669",
+        color=colors["dgrin"],
         ls=":",
         lw=1.4,
         label=r"1% relative convergence threshold",
     )
-    ax1.axvline(float(c_skin_i[-1]), color="#059669", ls="-.", lw=1.3)
+    ax1.axvline(float(c_skin_i[-1]), color=colors["dgrin"], ls="-.", lw=1.3)
     for ci, dx_n, ce, r15 in zip(c_skin_i[1:], dxs_min[1:], c_skin_e[1:], rel15[1:]):
         ax1.annotate(
             f"{dx_n:.2g} nm\n({r15:.2f}%)",
@@ -1887,20 +1863,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel="Relative step change [%] / Staircase RMS error [pp]",
         title=r"(b) Step-to-step convergence (~1% at 6.15 c/$\delta_I$) & staircase error",
     )
-    ax1.grid(True, which="both", ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=7.2)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "13_kottke_vs_staircase_convergence.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "13_kottke_vs_staircase_convergence.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 14: Purcell factor F_P and normalization audit across designs
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.8, 4.0), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.0)
     fp_vals = [float(diag_base_map[c]["purcell_factor"]) for c in cfg_order]
     dir_vals = [float(diag_base_map[c]["directivity_2d"]) for c in cfg_order]
     ratio_eq_vals = [
@@ -1922,7 +1892,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx + 0.18,
         dir_vals,
         width=0.34,
-        color="#0284c7",
+        color=colors["air"],
         label=r"2D half-space directivity $D_{2\mathrm{D}}$",
     )
     ax0.axhline(1.0, color="0.4", ls="--", lw=1.0)
@@ -1939,7 +1909,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylabel="Dimensionless factor",
         title=r"(a) Cavity Purcell factor $F_P$ & 2D directivity $D_{2\mathrm{D}}$ (Rakić Ag)",
     )
-    ax0.grid(True, axis="y", ls=":", alpha=0.4)
     ax0.legend(loc="upper left", fontsize=8.0)
 
     pub_ratio_2d = [PAPER_2D_REFS[c]["ratio_pct"] for c in cfg_order]
@@ -1948,7 +1917,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx - w_r,
         ratio_eq_vals,
         width=w_r,
-        color="#059669",
+        color=colors["dgrin"],
         label=r"Rakić Ag $\eta_{15,\mathrm{eq}} = \mathrm{LEE}_{15,\mathrm{eq}}/\mathrm{LEE}_{90,\mathrm{eq}}$",
     )
     ax1.bar(
@@ -1963,7 +1932,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         x_idx + w_r,
         pub_ratio_2d,
         width=w_r,
-        color="#d97706",
+        color=colors["sio2"],
         alpha=0.85,
         label=r"Luce et al. (2026) 2D $\eta_{15}$ (Fig. 3 / App. A.2–A.3)",
     )
@@ -1988,15 +1957,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ylim=(0, 70),
         title=r"(b) 2D collimation fraction $\eta_{15}$ vs Luce et al. (2026) 2D",
     )
-    ax1.grid(True, axis="y", ls=":", alpha=0.4)
     ax1.legend(loc="upper left", fontsize=7.2)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "14_purcell_and_normalization_audit.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "14_purcell_and_normalization_audit.png", close=True)
 
     # ------------------------------------------------------------------
     # Fig 15: Dipole ensemble convergence & Rakic vs J&C Ag vs Paper
@@ -2008,7 +1971,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             diag_dir=diag_dir, fig_path=fig_dir / "15_gap_diagnostics.png"
         )
 
-    print(f"Rendered 15 figures in {fig_dir}", flush=True)
+    print(f"Rendered 17 figures in {fig_dir}", flush=True)
 
 
 # %% [markdown]

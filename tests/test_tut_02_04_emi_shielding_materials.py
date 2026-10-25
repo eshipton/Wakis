@@ -145,6 +145,7 @@ def test_committed_tasks_figures_and_fit_vs_transfer_matrix():
         "02_six_material_classes_dispersion.png",
         "03_slab_rt_and_absorption_spectra.png",
         "04_schelkunoff_se_decomposition.png",
+        "04b_copper_film_vs_foil_se.png",
         "05_metal_backed_absorber_and_rozanov.png",
         "06_resolution_convergence_study.png",
         "07_pulse_slab_interaction_snapshots.png",
@@ -280,3 +281,43 @@ def test_emi_mutations_provably_fail():
         _assert_emi_resolution_rules(cpw=24.0, cells_across=2.5, cells_per_skin=5.0, min_cpw=20.0)
     with pytest.raises(AssertionError, match="Skin-depth rule"):
         _assert_emi_resolution_rules(cpw=24.0, cells_across=8.0, cells_per_skin=2.0, min_cpw=20.0)
+
+
+def test_copper_film_and_pcb_foil_schelkunoff():
+    """Verify 'copper film, 50 nm' relabelling and 18 um / 35 um PCB copper foil SE (thin-sheet vs Schelkunoff)."""
+    assert hlp.EMI_CLASSES[5]["short"] == "copper film, 50 nm"
+    for src_path in (TUTORIAL_DIR / "_helpers.py", TUTORIAL_DIR / "emi_shielding_materials.py"):
+        src_text = src_path.read_text(encoding="utf-8")
+        assert "Copper foil (50 nm)" not in src_text
+        assert "copper film, 50 nm" in src_text
+
+    f_hz = np.array([1.0e9, 2.0e9])
+    res = hlp.evaluate_copper_film_and_foil_se(f_hz, thicknesses_m=(50.0e-9, 18.0e-6, 35.0e-6))
+
+    # 1. 50 nm copper film (t << delta): thin-sheet and full Schelkunoff agree within 0.02 dB
+    assert np.all(res["t_over_delta"][0] < 0.05)
+    np.testing.assert_allclose(res["SE_thin_sheet_db"][0], res["SE_total_db"][0], atol=0.02)
+    assert np.all((res["SE_total_db"][0] > 54.5) & (res["SE_total_db"][0] < 55.0))
+
+    # 2. 18 um and 35 um PCB copper foils (t >> delta): SE_A = 8.686 * t / delta, and SE > 100 dB in both models
+    for idx_foil in (1, 2):
+        assert np.all(res["t_over_delta"][idx_foil] > 8.0)
+        np.testing.assert_allclose(
+            res["SE_A_db"][idx_foil], res["SE_A_asymptotic_db"][idx_foil], rtol=1e-3, atol=0.05
+        )
+        np.testing.assert_allclose(res["SE_M_db"][idx_foil], 0.0, atol=1e-4)
+        assert np.all(res["SE_thin_sheet_db"][idx_foil] > 100.0)
+        assert np.all(res["SE_total_db"][idx_foil] > 150.0)
+
+    # 35 um foil has nearly double the absorption loss SE_A of 18 um foil
+    np.testing.assert_allclose(res["SE_A_db"][2] / res["SE_A_db"][1], 35.0 / 18.0, rtol=1e-4)
+
+    # 3. Mutation check: omitting the Schelkunoff absorption term SE_A = 8.686*t/delta on 18 um / 35 um foils
+    # (or using the thin-sheet approximation alone) underpredicts full Schelkunoff SE by > 45 dB and fails SE > 150 dB
+    for idx_foil in (1, 2):
+        se_without_absorption = res["SE_R_db"][idx_foil] + res["SE_M_db"][idx_foil]
+        assert np.all(res["SE_total_db"][idx_foil] - res["SE_thin_sheet_db"][idx_foil] > 45.0)
+        with pytest.raises(AssertionError):
+            assert np.all(se_without_absorption > 150.0)
+        with pytest.raises(AssertionError):
+            assert np.all(res["SE_thin_sheet_db"][idx_foil] > 150.0)

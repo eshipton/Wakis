@@ -132,7 +132,7 @@ import pyvista as pv
 from scipy.constants import c as c0
 
 import wakis
-from wakis import visualize as wv
+from wakis import figstyle, schematic, visualize as wv
 from wakis.analytic import (
     mie_differential_cross_section,
     mie_efficiencies,
@@ -142,7 +142,7 @@ from wakis.estimate import estimate, interface_cells_from_area, preflight
 from wakis.sources import GaussianSource
 
 print(wv.setup_rendering())
-plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110, "font.size": 10})
+figstyle.apply_style()
 
 
 def gpu_available():
@@ -172,6 +172,11 @@ parser = argparse.ArgumentParser(
 mode = parser.add_mutually_exclusive_group()
 mode.add_argument("--quick", action="store_true", help="CPU, ~0.5 Mcells, minutes")
 mode.add_argument("--full", action="store_true", help="GPU, ~6 Mcells, accurate")
+mode.add_argument(
+    "--plot",
+    action="store_true",
+    help="Re-render figures from stored data/run_full.json + fast field-snapshot pass",
+)
 parser.add_argument("--gpu", action="store_true", help="force the GPU")
 parser.add_argument("--cpu", action="store_true", help="force the CPU")
 parser.add_argument("--resolution", type=float, default=None, help="cells per µm")
@@ -220,7 +225,8 @@ NB_ARGS = os.environ.get("WAKIS_TUTORIAL_ARGS", "").split()
 ARGS, _ = parser.parse_known_args(NB_ARGS if IN_NOTEBOOK else None)
 
 USE_GPU = (ARGS.gpu or gpu_available()) and not ARGS.cpu
-FULL = ARGS.full or (not ARGS.quick and USE_GPU and IN_NOTEBOOK)
+PLOT_ONLY = bool(ARGS.plot)
+FULL = ARGS.full or PLOT_ONLY or (not ARGS.quick and USE_GPU and IN_NOTEBOOK)
 RESOLUTION = ARGS.resolution or (40.0 if FULL else 15.0)  # cells per µm
 CONFORMAL = ARGS.conformal or "all"
 HERE = Path(__file__).parent if "__file__" in globals() else Path.cwd()
@@ -232,16 +238,25 @@ if ARGS.arm:  # study runs must not overwrite the tutorial figures
 DATA_DIR = HERE / "data"
 FIG_DIR.mkdir(exist_ok=True)
 print(
-    f"mode={'full' if FULL else 'quick'}  GPU={USE_GPU}"
+    f"mode={'plot' if PLOT_ONLY else ('full' if FULL else 'quick')}  GPU={USE_GPU}"
     f"{' (' + str(gpu_name()) + ')' if USE_GPU else ''}  "
     f"resolution={RESOLUTION:g} cells/µm  conformal={CONFORMAL}"
 )
 
 
 def savefig(fig, name):
-    """Save a figure in figures/ (small PNG) and return the path."""
+    """Save a figure in figures/ with wakis.figstyle and return the path."""
     path = FIG_DIR / name
-    fig.savefig(path, bbox_inches="tight")
+    if any(getattr(ax, "name", "") == "polar" for ax in fig.axes):
+        fig.savefig(
+            path,
+            dpi=180,
+            facecolor=figstyle.PAPER,
+            edgecolor=figstyle.PAPER,
+            bbox_inches="tight",
+        )
+    else:
+        figstyle.save(fig, path)
     return path
 
 
@@ -308,172 +323,6 @@ def savefig(fig, name):
 R_SPHERE = 1.0e-6  # sphere radius [m]
 N_SPHERE = 2.0  # refractive index (lossless)
 X_MIN, X_MAX = 2.0, 10.0  # size-parameter band of the pulse
-x_plot = np.geomspace(0.05, 12, 1500)
-q_ext, q_sca, q_abs, q_back = mie_efficiencies(N_SPHERE, x_plot)
-q_ray, _ = rayleigh_efficiencies(N_SPHERE, x_plot)
-
-fig, ax = plt.subplots(figsize=(6.4, 3.6))
-ax.loglog(x_plot, q_sca, color="k", lw=1.4, label=r"Mie $Q_\mathrm{sca}$")
-ax.loglog(x_plot, q_ray, "--", color="#0072B2", label=r"Rayleigh $\frac{8}{3}x^4|L|^2$")
-ax.axvspan(
-    X_MIN,
-    X_MAX,
-    color="#E69F00",
-    alpha=0.2,
-    label="band covered by the simulation pulse",
-)
-ax.axhline(2, color="0.5", lw=0.9, ls=":", label=r"large-sphere limit, $Q \to 2$")
-ax.set(
-    xlabel=r"size parameter $x = 2\pi r/\lambda$",
-    ylabel=r"$Q_\mathrm{sca} = \sigma_\mathrm{sca}/\pi r^2$",
-    ylim=(1e-6, 10),
-    title=f"Analytic theory only (no simulation): sphere, n = {N_SPHERE:g}",
-)
-ax.legend(loc="lower right")
-savefig(fig, "mie_theory.png")
-plt.show()
-
-# %% [markdown]
-# ## 2. The TF/SF source: equivalence principle on a grid
-#
-# **The problem.** We want a plane wave to hit the sphere, and we want to
-# read off the scattered field alone. We cannot simply impose the plane-wave
-# field on a plane of the grid: such a *hard* source would also reflect the
-# waves scattered back onto it.
-#
-# **The equivalence principle** (Oskooi & Johnson 2013, sec. 4.2.1 and
-# fig. 4.1). Take the incident wave $\psi_\mathrm{inc} = (\mathbf
-# E_\mathrm{inc}, \mathbf H_\mathrm{inc})$, which solves the source-free
-# Maxwell equations in the *background* medium everywhere. Draw an imaginary
-# closed surface $\partial\Omega$ around the region of interest $\Omega$ and
-# define a new field that equals $\psi_\mathrm{inc}$ inside and is *zero*
-# outside. It satisfies Maxwell's equations everywhere except on
-# $\partial\Omega$, where it jumps. A jump in a curl equation is a surface
-# current, so the discontinuous field is the exact solution of Maxwell's
-# equations driven by the surface currents (with $\hat n$ the unit normal
-# pointing *into* $\Omega$; eq. 4.4 of Oskooi & Johnson)
-#
-# $$\mathbf J_s = \hat n \times \mathbf H_\mathrm{inc},\qquad
-#   \mathbf K_s = -\hat n \times \mathbf E_\mathrm{inc}.$$
-#
-# These *equivalent currents* radiate the incident wave into $\Omega$ and
-# exactly nothing outside. Because Maxwell's equations are linear, adding a
-# scatterer inside $\Omega$ does not change what the currents radiate: the
-# field inside is the **total field** (incident + scattered), the field
-# outside is only the **scattered field**, and the currents are transparent
-# to the scattered waves crossing them. This is the TF/SF method, first used
-# in finite differences by Merewether, Fisher & Smith (1980) as a "numeric
-# Huygens source", and described in Taflove & Hagness (2005, ch. 5).
-#
-# **Doing it by hand.** In the companion Meep notebook (*Total-Field /
-# Scattered-Field Technique with Meep FDTD*) the currents are placed on the
-# faces of a box with the analytic plane-wave phase $e^{-i\mathbf k\cdot
-# \mathbf r}$, one electric and one magnetic source per face. This works,
-# but the cancellation outside the box is only approximate: the analytic
-# wave travels at $c$ while the grid wave travels at the slightly smaller,
-# direction-dependent numerical phase velocity, and on a staggered grid
-# $\mathbf E$ and $\mathbf H$ sit half a cell and half a time step apart, so
-# currents evaluated from continuum fields do not match the discrete jump.
-# The mismatch radiates a weak "leakage" wave into the scattered-field
-# region, which grows with frequency and pollutes exactly the quantity we
-# want to measure.
-#
-# **Doing it on the grid** (`wakis.TFSFSource`). Oskooi & Johnson point out
-# that applying the same derivation to the *discretized* curl operators
-# gives the TF/SF source terms, and that the incident field must then solve
-# the *discrete* equations (sec. 4.2.2). For axis-aligned incidence the
-# incident wave is uniform across the beam, so it is computed on a 1D
-# auxiliary FIT line with the grid's own cell lengths, time step and time
-# levels (its far end is absorbing). The 3D update is then corrected only on
-# the edges that straddle the box surface. Since the auxiliary field obeys
-# the very same discrete equations, the incident field cancels outside the
-# box to **round-off**, at every frequency, independent of numerical
-# dispersion.
-#
-# The sketch below shows the layout we will use (not to scale).
-
-
-# %%
-def draw_tfsf_diagram(ax):
-    """Schematic x-z cut of the TF/SF set-up (own drawing)."""
-    from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
-
-    ax.set_xlim(-3.2, 3.6)
-    ax.set_ylim(-3.2, 3.2)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    # CPML frame and scattered-field region
-    ax.add_patch(Rectangle((-3, -3), 6, 6, fc="0.85", ec="0.5"))
-    ax.add_patch(Rectangle((-2.4, -2.4), 4.8, 4.8, fc="white", ec="0.5"))
-    ax.text(0, -2.75, "CPML (absorbing layers)", ha="center", va="center", fontsize=8)
-    # Scattered waves outside the box
-    for rad in (1.75, 2.05, 2.3):
-        ax.add_patch(Circle((0, 0), rad, fill=False, ec="#0072B2", lw=0.6, alpha=0.6))
-    # Total-field box with incident wavefronts
-    ax.add_patch(Rectangle((-1.3, -1.3), 2.6, 2.6, fc="#E69F00", alpha=0.10, ec="none"))
-    for zf in np.linspace(-1.2, 1.2, 9):
-        ax.plot([-1.3, 1.3], [zf, zf], color="#E69F00", lw=0.8, alpha=0.7)
-    ax.add_patch(Rectangle((-1.3, -1.3), 2.6, 2.6, fill=False, ec="#E69F00", lw=2))
-    ax.add_patch(Circle((0, 0), 0.9, fc="#56B4E9", ec="k", lw=1))
-    ax.text(0, 0, "sphere\n$n=2$", ha="center", va="center", fontsize=9)
-    ax.text(-1.2, 1.12, "total field\n(inc. + scat.)", fontsize=7.5, va="top")
-    ax.text(-2.3, 2.15, "scattered field only", fontsize=7.5, color="#0072B2")
-    # Flux box
-    ax.add_patch(
-        Rectangle((-1.65, -1.65), 3.3, 3.3, fill=False, ec="#0072B2", lw=1.3, ls="--")
-    )
-    ax.text(1.68, -1.6, r"flux box $\to P_\mathrm{sca}$", fontsize=7.5,
-            color="#0072B2", rotation=90, va="bottom")  # fmt: skip
-    # Inward normal and equivalent currents on the bottom (entry) face
-    ax.add_patch(FancyArrowPatch((0.55, -1.3), (0.55, -0.85), arrowstyle="-|>",
-                                 mutation_scale=10, color="k"))  # fmt: skip
-    ax.text(0.62, -1.15, r"$\hat n$", fontsize=9)
-    ax.text(-1.25, -2.0, r"$\mathbf{J}_s=\hat n\times\mathbf{H}_\mathrm{inc}$, "
-            r"$\mathbf{K}_s=-\hat n\times\mathbf{E}_\mathrm{inc}$",
-            fontsize=8, color="#D55E00")  # fmt: skip
-    # Incident direction and polarization
-    ax.add_patch(FancyArrowPatch((-1.95, -2.35), (-1.95, -1.75), arrowstyle="-|>",
-                                 mutation_scale=12, color="#D55E00", lw=1.5))  # fmt: skip
-    ax.text(-1.85, -2.33, r"$\mathbf{k}\parallel+z$, $\mathbf{E}\parallel x$",
-            fontsize=8, color="#D55E00")  # fmt: skip
-    # 1D auxiliary line feeding the box
-    ax.plot([3.25, 3.25], [-2.6, 2.6], color="#009E73", lw=3)
-    ax.text(3.35, 0, "1D auxiliary FIT line\n(discrete $E_\\mathrm{inc}, H_\\mathrm{inc}$)",
-            rotation=90, va="center", fontsize=7.5, color="#009E73")  # fmt: skip
-    ax.add_patch(FancyArrowPatch((3.15, -1.3), (1.35, -1.3), arrowstyle="-|>",
-                                 mutation_scale=8, color="#009E73", ls="--"))  # fmt: skip
-    ax.add_patch(FancyArrowPatch((3.15, 1.3), (1.35, 1.3), arrowstyle="-|>",
-                                 mutation_scale=8, color="#009E73", ls="--"))  # fmt: skip
-    ax.text(-3.0, 2.85, "x-z cut (y = 0)", fontsize=7.5, color="0.3")
-
-
-fig, ax = plt.subplots(figsize=(5.6, 5.0))
-draw_tfsf_diagram(ax)
-savefig(fig, "tfsf_diagram.png")
-plt.show()
-
-# %% [markdown]
-# ## 3. Geometry: PyVista sphere &rarr; STL &rarr; `GridFIT3D`
-#
-# Wakis meshes solids given as closed triangulated surfaces (STL files or
-# PyVista meshes). We make a finely faceted sphere (the facet sagitta,
-# $r(1-\cos(\pi/n_\theta))\approx 0.15$ nm here, must be far below the cell
-# size) and write it to an STL file, which is how CAD geometry would arrive.
-#
-# **Layout.** All boxes are placed on grid nodes, with a margin of a few
-# cells between neighbours (the TF/SF faces must not cut the sphere, the
-# flux box must lie in the scattered-field region, and the CPML must start
-# well outside the flux box). From the inside out:
-#
-# | region | half-width | purpose |
-# |---|---|---|
-# | sphere | 1.0 µm | scatterer, $\varepsilon_r = 4$ |
-# | inner flux box | $\ge r + \Delta$ | total field: $-$absorbed power (0 here) |
-# | TF/SF box | $\approx$ 1.25 µm | plane wave inside, scattered field outside |
-# | scattered flux box | TF + $\approx$ 0.2 µm | $P_\mathrm{sca}$ and near-to-far field |
-# | CPML start | flux + $\approx$ 0.6 µm | absorbing layers ($n_\mathrm{pml}$ = 10 cells) |
-
-# %%
 N_PML = ARGS.n_pml or 10
 
 
@@ -573,6 +422,319 @@ def make_solver(grid, use_gpu=False):
     )
 
 
+def _fix_unit_spaces(ax):
+    """Ensure thin spaces before units in schematic text labels and avoid CPML text overlap."""
+    import re
+
+    for txt in ax.texts:
+        s = txt.get_text()
+        s_new = s.replace(r"\mu m", r"\,\mu\mathrm{m}")
+        s_new = re.sub(r"(\d)\\text\{(THz|GHz|MHz|nm|mm|ps|fs)\}", r"\1\\;\\text{\2}", s_new)
+        s_new = re.sub(r"(\d)(THz|GHz|MHz)", r"\1\,\\mathrm{\2}", s_new)
+        s_new = re.sub(r"(\d)(µm|nm|mm|ps|fs)\b", r"\1 \2", s_new)
+        s_new = re.sub(r"\(10 cells,\s*[^)]+\)", "(10 cells)", s_new)
+        if s_new != s:
+            txt.set_text(s_new)
+
+
+def _fix_sphere_patch(ax, radius_um=1.0, tol=0.35, fill=None):
+    """Replace the STL bounding-box Rectangle at (-r, -r, 2r, 2r) with a Circle."""
+    from matplotlib.patches import Circle, Rectangle
+
+    for p in list(ax.patches):
+        if isinstance(p, Rectangle):
+            x0, y0 = p.get_xy()
+            w, h = p.get_width(), p.get_height()
+            if (
+                abs(x0 + radius_um) < tol
+                and abs(y0 + radius_um) < tol
+                and abs(w - 2 * radius_um) < 2 * tol
+                and abs(h - 2 * radius_um) < 2 * tol
+                and p.get_linestyle() in ("solid", "-")
+            ):
+                fc = p.get_facecolor() if fill is None else fill
+                ec = p.get_edgecolor()
+                lw = p.get_linewidth()
+                zo = p.get_zorder()
+                p.remove()
+                ax.add_patch(
+                    Circle(
+                        (0.0, 0.0),
+                        radius_um,
+                        facecolor=fc,
+                        edgecolor=ec,
+                        lw=lw,
+                        zorder=zo,
+                    )
+                )
+    for t in ax.texts:
+        if "Sphere" in t.get_text():
+            t.set_position((0.0, 0.0))
+
+
+def plot_setup_schematic(resolution_per_um=15.0):
+    """Render the 2-panel setup schematic and zoomed mesh view (`00_setup_schematic.png`)."""
+    grid_s, lay_s = make_grid(resolution_per_um, "all")
+    solver_s = make_solver(grid_s, use_gpu=False)
+    f_min = X_MIN * c0 / (2 * np.pi * R_SPHERE)
+    f_max = X_MAX * c0 / (2 * np.pi * R_SPHERE)
+    f0 = 0.5 * (f_min + f_max)
+    df = 0.25 * (f_max - f_min)
+    pulse = GaussianSource(frequency=f0, fwidth=df)
+    src_s = wakis.TFSFSource(
+        pulse,
+        center=(0, 0, 0),
+        size=(2 * lay_s["tf"],) * 3,
+        direction="+z",
+        polarization="x",
+        amplitude=1.0,
+    )
+    src_s.label = "TFSFSource ($\\mathbf{k}\\parallel +z,\\;\\mathbf{E}\\parallel x$)"
+    mon_boxes = [
+        {
+            "kind": "box",
+            "type_name": "Near2FarMonitor",
+            "label": "Near2FarMonitor ($P_\\mathrm{sca}$, far field)",
+            "h_bounds": (-lay_s["flux"], lay_s["flux"]),
+            "v_bounds": (-lay_s["flux"], lay_s["flux"]),
+        },
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "Inner FluxMonitor ($P_\\mathrm{abs}$)",
+            "h_bounds": (-lay_s["inner"], lay_s["inner"]),
+            "v_bounds": (-lay_s["inner"], lay_s["inner"]),
+        },
+    ]
+
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=12.4, height_in=5.0)
+
+    # Panel (a): 3D setup in the xz plane (y = 0)
+    schematic.plot_schematic(
+        solver_s,
+        plane="xz",
+        ax=axes[0],
+        unit="µm",
+        material_names={"sphere": "Sphere"},
+        sources=[src_s],
+        monitors=mon_boxes,
+        show_mesh=False,
+        show_wave_packet=False,
+        wavelength=2 * np.pi * R_SPHERE / (X_MAX * N_SPHERE),
+        title="(a) 3D setup ($xz$ cut at $y=0$, TF/SF + Near2Far)",
+    )
+    _fix_sphere_patch(axes[0], R_SPHERE * 1e6, tol=0.35)
+    _fix_unit_spaces(axes[0])
+    L_half = lay_s["half"] * 1e6
+    for txt in axes[0].texts:
+        if "boundaries: CPML" in txt.get_text():
+            x0_t, _ = txt.get_position()
+            txt.set_position((x0_t, L_half + 0.85))
+    axes[0].set_ylim(-L_half - 0.15, L_half + 1.55)
+    if axes[0].get_legend() is not None:
+        axes[0].get_legend().remove()
+
+    # Panel (b): Zoomed mesh view at the curved sphere surface
+    ax_z = axes[1]
+    lam_in_min = 2 * np.pi * R_SPHERE / (X_MAX * N_SPHERE)
+    schematic.draw_mesh(
+        ax_z,
+        solver_s,
+        plane="xz",
+        unit="µm",
+        every=1,
+        wavelength=2 * np.pi * R_SPHERE / X_MAX,
+        show_cpw=False,
+        color="#475569",
+        alpha=0.55,
+        linewidth=0.65,
+    )
+    schematic.overlay_geometry(
+        ax_z,
+        solver_s,
+        plane="xz",
+        unit="µm",
+        material_names={"sphere": "Sphere"},
+        show_boundaries=False,
+        fill_materials=True,
+        material_alpha=0.28,
+        label_materials=False,
+    )
+    _fix_sphere_patch(ax_z, R_SPHERE * 1e6, tol=0.35)
+    ax_z.text(
+        0.74,
+        0.0,
+        f"Sphere\n($n = {N_SPHERE:g},\\;\\varepsilon_r = {N_SPHERE**2:g}$)\n$r = 1.0\\;\\mu\\mathrm{{m}}$",
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.9},
+        zorder=9,
+    )
+    ax_z.set_xlim(0.55, 1.25)
+    ax_z.set_ylim(-0.35, 0.35)
+    ax_z.set_aspect("equal", adjustable="box")
+    ax_z.set_xlabel("$x$ [µm]")
+    ax_z.set_ylabel("$z$ [µm]")
+    ax_z.set_title("(b) Mesh zoom at curved sphere surface ($y=0$)")
+
+    dx_full_nm = 1e3 / 40.0
+    cpw_full = (lam_in_min * 1e9) / dx_full_nm
+    dx_quick_nm = 1e3 / 15.0
+    cpw_quick = (lam_in_min * 1e9) / dx_quick_nm
+    badge_txt = (
+        f"Full ($40\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$): $\\Delta x = {dx_full_nm:.1f}\\;\\mathrm{{nm}}$\n"
+        f"$\\bullet\\;{cpw_full:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$ at $x_\\mathrm{{max}}=10$, "
+        f"$80\\;\\mathrm{{cells}}/2r$\n"
+        f"Quick ($15\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$ shown): $\\Delta x = {dx_quick_nm:.1f}\\;\\mathrm{{nm}}$ "
+        f"(${cpw_quick:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$)"
+    )
+    ax_z.text(
+        0.03,
+        0.03,
+        badge_txt,
+        transform=ax_z.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=7.6,
+        color=figstyle.INK,
+        bbox={
+            "boxstyle": "round,pad=0.24",
+            "facecolor": "#FFF7ED",
+            "edgecolor": "#FDBA74",
+            "alpha": 0.94,
+            "lw": 0.7,
+        },
+        zorder=10,
+    )
+
+    fig.subplots_adjust(left=0.07, right=0.98, bottom=0.14, top=0.88, wspace=0.26)
+    savefig(fig, "00_setup_schematic.png")
+    savefig(fig, "tfsf_diagram.png")
+    plt.close(fig)
+
+
+if not ARGS.arm:
+    plot_setup_schematic(15.0)
+
+x_plot = np.geomspace(0.05, 12, 1500)
+q_ext, q_sca, q_abs, q_back = mie_efficiencies(N_SPHERE, x_plot)
+q_ray, _ = rayleigh_efficiencies(N_SPHERE, x_plot)
+
+fig, ax = figstyle.new_figure(nrows=1, ncols=1, width_in=6.8, height_in=3.8)
+ax.loglog(x_plot, q_sca, color="k", lw=1.4, label=r"Mie $Q_\mathrm{sca}$")
+ax.loglog(x_plot, q_ray, "--", color="#0072B2", label=r"Rayleigh $\frac{8}{3}x^4|L|^2$")
+ax.axvspan(
+    X_MIN,
+    X_MAX,
+    color="#E69F00",
+    alpha=0.2,
+    label="band covered by the simulation pulse",
+)
+ax.axhline(2, color="0.5", lw=0.9, ls=":", label=r"large-sphere limit, $Q \to 2$")
+ax.set(
+    xlabel=r"size parameter $x = 2\pi r/\lambda$",
+    ylabel=r"$Q_\mathrm{sca} = \sigma_\mathrm{sca}/\pi r^2$",
+    ylim=(1e-6, 10),
+    title=f"Analytic theory only (no simulation): sphere, n = {N_SPHERE:g}",
+)
+ax.legend(loc="lower right")
+savefig(fig, "mie_theory.png")
+plt.show()
+
+# %% [markdown]
+# ## 2. The TF/SF source: equivalence principle on a grid
+#
+# **The problem.** We want a plane wave to hit the sphere, and we want to
+# read off the scattered field alone. We cannot simply impose the plane-wave
+# field on a plane of the grid: such a *hard* source would also reflect the
+# waves scattered back onto it.
+#
+# **The equivalence principle** (Oskooi & Johnson 2013, sec. 4.2.1 and
+# fig. 4.1). Take the incident wave $\psi_\mathrm{inc} = (\mathbf
+# E_\mathrm{inc}, \mathbf H_\mathrm{inc})$, which solves the source-free
+# Maxwell equations in the *background* medium everywhere. Draw an imaginary
+# closed surface $\partial\Omega$ around the region of interest $\Omega$ and
+# define a new field that equals $\psi_\mathrm{inc}$ inside and is *zero*
+# outside. It satisfies Maxwell's equations everywhere except on
+# $\partial\Omega$, where it jumps. A jump in a curl equation is a surface
+# current, so the discontinuous field is the exact solution of Maxwell's
+# equations driven by the surface currents (with $\hat n$ the unit normal
+# pointing *into* $\Omega$; eq. 4.4 of Oskooi & Johnson)
+#
+# $$\mathbf J_s = \hat n \times \mathbf H_\mathrm{inc},\qquad
+#   \mathbf K_s = -\hat n \times \mathbf E_\mathrm{inc}.$$
+#
+# These *equivalent currents* radiate the incident wave into $\Omega$ and
+# exactly nothing outside. Because Maxwell's equations are linear, adding a
+# scatterer inside $\Omega$ does not change what the currents radiate: the
+# field inside is the **total field** (incident + scattered), the field
+# outside is only the **scattered field**, and the currents are transparent
+# to the scattered waves crossing them. This is the TF/SF method, first used
+# in finite differences by Merewether, Fisher & Smith (1980) as a "numeric
+# Huygens source", and described in Taflove & Hagness (2005, ch. 5).
+#
+# **Doing it by hand.** In the companion Meep notebook (*Total-Field /
+# Scattered-Field Technique with Meep FDTD*) the currents are placed on the
+# faces of a box with the analytic plane-wave phase $e^{-i\mathbf k\cdot
+# \mathbf r}$, one electric and one magnetic source per face. This works,
+# but the cancellation outside the box is only approximate: the analytic
+# wave travels at $c$ while the grid wave travels at the slightly smaller,
+# direction-dependent numerical phase velocity, and on a staggered grid
+# $\mathbf E$ and $\mathbf H$ sit half a cell and half a time step apart, so
+# currents evaluated from continuum fields do not match the discrete jump.
+# The mismatch radiates a weak "leakage" wave into the scattered-field
+# region, which grows with frequency and pollutes exactly the quantity we
+# want to measure.
+#
+# **Doing it on the grid** (`wakis.TFSFSource`). Oskooi & Johnson point out
+# that applying the same derivation to the *discretized* curl operators
+# gives the TF/SF source terms, and that the incident field must then solve
+# the *discrete* equations (sec. 4.2.2). For axis-aligned incidence the
+# incident wave is uniform across the beam, so it is computed on a 1D
+# auxiliary FIT line with the grid's own cell lengths, time step and time
+# levels (its far end is absorbing). The 3D update is then corrected only on
+# the edges that straddle the box surface. Since the auxiliary field obeys
+# the very same discrete equations, the incident field cancels outside the
+# box to **round-off**, at every frequency, independent of numerical
+# dispersion.
+#
+# The setup schematic (`figures/00_setup_schematic.png`) shows the $xz$ cut
+# ($y = 0$) of the 3D domain with the $r = 1\;\mu\mathrm{m}$ sphere
+# ($\varepsilon_r = 4$), the `TFSFSource` box, the inner `FluxMonitor` and
+# outer `Near2FarMonitor` boxes, the 10-cell CPML boundaries, and the zoomed
+# conformal mesh at the curved sphere surface.
+
+# %%
+fig, ax = plt.subplots(figsize=(12.4, 5.0))
+ax.imshow(plt.imread(FIG_DIR / "00_setup_schematic.png"))
+ax.axis("off")
+plt.show()
+
+# %% [markdown]
+# ## 3. Geometry: PyVista sphere &rarr; STL &rarr; `GridFIT3D`
+#
+# Wakis meshes solids given as closed triangulated surfaces (STL files or
+# PyVista meshes). We make a finely faceted sphere (the facet sagitta,
+# $r(1-\cos(\pi/n_\theta))\approx 0.15$ nm here, must be far below the cell
+# size) and write it to an STL file, which is how CAD geometry would arrive.
+#
+# **Layout.** All boxes are placed on grid nodes, with a margin of a few
+# cells between neighbours (the TF/SF faces must not cut the sphere, the
+# flux box must lie in the scattered-field region, and the CPML must start
+# well outside the flux box). From the inside out:
+#
+# | region | half-width | purpose |
+# |---|---|---|
+# | sphere | 1.0 µm | scatterer, $\varepsilon_r = 4$ |
+# | inner flux box | $\ge r + \Delta$ | total field: $-$absorbed power (0 here) |
+# | TF/SF box | $\approx$ 1.25 µm | plane wave inside, scattered field outside |
+# | scattered flux box | TF + $\approx$ 0.2 µm | $P_\mathrm{sca}$ and near-to-far field |
+# | CPML start | flux + $\approx$ 0.6 µm | absorbing layers ($n_\mathrm{pml}$ = 10 cells) |
+
+
 # %% [markdown]
 # A 3D view of the set-up, built with `wakis.visualize.plot_scene` (sphere
 # clipped to show its inside; boxes as labelled translucent volumes). We use
@@ -580,19 +742,20 @@ def make_solver(grid, use_gpu=False):
 # cell.
 
 # %%
-grid_view, lay_view = make_grid(10, "staircase")
-boxes_view = {
-    "tfsf": wv.box_bounds((0, 0, 0), (2 * lay_view["tf"],) * 3),
-    "flux": wv.box_bounds((0, 0, 0), (2 * lay_view["flux"],) * 3),
-}
-pml_inner = wv.box_bounds((0, 0, 0), (2 * lay_view["pml"],) * 3)
-pl = wv.plot_scene(
-    grid_view,
-    boxes=boxes_view,
-    planes={"source": ((0, 0, -lay_view["tf"]), "z", (2 * lay_view["tf"],) * 2)},
-    cpml=(grid_view.grid.bounds, pml_inner),
-)
-wv.save_plotter(pl, str(FIG_DIR / "scene.png"))
+if not (PLOT_ONLY and not pv.OFF_SCREEN and (FIG_DIR / "scene.png").exists()):
+    grid_view, lay_view = make_grid(10, "staircase")
+    boxes_view = {
+        "tfsf": wv.box_bounds((0, 0, 0), (2 * lay_view["tf"],) * 3),
+        "flux": wv.box_bounds((0, 0, 0), (2 * lay_view["flux"],) * 3),
+    }
+    pml_inner = wv.box_bounds((0, 0, 0), (2 * lay_view["pml"],) * 3)
+    pl = wv.plot_scene(
+        grid_view,
+        boxes=boxes_view,
+        planes={"source": ((0, 0, -lay_view["tf"]), "z", (2 * lay_view["tf"],) * 2)},
+        cpml=(grid_view.grid.bounds, pml_inner),
+    )
+    wv.save_plotter(pl, str(FIG_DIR / "scene.png"))
 fig, ax = plt.subplots(figsize=(6, 4.8))
 ax.imshow(plt.imread(FIG_DIR / "scene.png"))
 ax.axis("off")
@@ -625,22 +788,21 @@ plt.show()
 #   conserving operator; the plot shows the diagonal only).
 
 # %%
-fig, axes = plt.subplots(1, 3, figsize=(13, 4.3), sharey=True)
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=12.8, height_in=4.1, sharey=True)
 window = (0.45e-6, 1.25e-6, -0.4e-6, 0.4e-6)
-for ax, model in zip(axes, ["staircase", "all", "tensor"]):
+for idx_m, (ax, model) in enumerate(zip(axes, ["staircase", "all", "tensor"])):
     # Only the materials are needed: a small box around the sphere, PEC walls
     g, _ = make_grid(20, model, half_cells=26)
     s = wakis.SolverFIT3D(g, bc_low=["pec"] * 3, bc_high=["pec"] * 3,
                           use_stl=True, verbose=0)  # fmt: skip
     lc = wv.plot_material_slice(
         s, axis="z", position=0.0, window=window, surface="sphere", ax=ax,
-        vmin=1, vmax=N_SPHERE**2, colorbar=False,
-        title={"staircase": "staircase", "all": "conformal ('all')",
-               "tensor": "tensor averaging"}[model],
+        vmin=1, vmax=N_SPHERE**2, colorbar=(idx_m == 2),
+        title={"staircase": "(a) staircase", "all": "(b) conformal ('all')",
+               "tensor": "(c) tensor averaging"}[model],
     )  # fmt: skip
     if ax is not axes[0]:
         ax.set_ylabel("")
-fig.colorbar(lc, ax=axes, label=r"edge $\varepsilon_r$", shrink=0.85)
 savefig(fig, "mesh_staircase_vs_conformal.png")
 plt.show()
 del g, s
@@ -703,7 +865,7 @@ for res in (15, 20, 40, 50):
 
 lay, steps, est, problems = plan(RESOLUTION, CONFORMAL, USE_GPU, MACHINE)
 print("\nThis run:\n", est)
-if problems and not ARGS.arm:
+if problems and not ARGS.arm and not PLOT_ONLY:
     raise MemoryError("; ".join(problems))
 
 # %% [markdown]
@@ -733,7 +895,8 @@ F_SNAP = X_SNAP * c0 / (2 * np.pi * R_SPHERE)
 
 
 def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
-            movie=True, energy_decay=1e-6, verbose=0):  # fmt: skip
+            movie=True, energy_decay=1e-6, verbose=0, t_run_override=None,
+            skip_flux=False):  # fmt: skip
     """Build, run and post-process one simulation; returns a dict."""
     t0 = time.time()
     grid, lay = make_grid(resolution_per_um, conformal)
@@ -744,10 +907,14 @@ def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
         pulse, center=(0, 0, 0), size=(2 * lay["tf"],) * 3,
         direction="+z", polarization="x", amplitude=1.0,
     )  # fmt: skip
-    scat = wakis.Near2FarMonitor(FREQS, size=(2 * lay["flux"],) * 3)
-    inner = wakis.FluxMonitor(FREQS, size=(2 * lay["inner"],) * 3)
-    monitors = [scat, inner]
-    out = dict(grid=grid, solver=solver, src=src, scat=scat, inner=inner, lay=lay)
+    monitors = []
+    out = dict(grid=grid, solver=solver, src=src, lay=lay)
+    if not skip_flux:
+        scat = wakis.Near2FarMonitor(FREQS, size=(2 * lay["flux"],) * 3)
+        inner = wakis.FluxMonitor(FREQS, size=(2 * lay["inner"],) * 3)
+        monitors.extend([scat, inner])
+        out.update(scat=scat, inner=inner)
+    t_window = t_run_override if t_run_override is not None else T_RUN
     if extras:
         span = 2 * lay["pml"]
         plane = wakis.DFTMonitor(F_SNAP, components=("Ex", "Ey", "Ez"),
@@ -758,10 +925,10 @@ def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
         out.update(plane=plane, vol=vol)
         if movie:
             rec = wv.SliceRecorder("Ex", axis="y", position=0.0,
-                                   every=max(1, int(T_RUN / solver.dt / 400)))  # fmt: skip
+                                   every=max(1, int(t_window / solver.dt / 60)))  # fmt: skip
             monitors.append(rec)
             out["movie"] = rec
-    n_max = int(T_RUN / solver.dt)
+    n_max = int(t_window / solver.dt)
     solver.verbose = verbose
     t1 = time.time()
     solver.emsolve(n_max, source=[src], monitors=monitors,
@@ -769,8 +936,12 @@ def run_mie(resolution_per_um, conformal, use_gpu=False, extras=True,
     t_run = time.time() - t1
     # Cross sections: flux spectrum / incident flux spectrum
     phi_inc = src.incident_flux_density(FREQS)
-    q_sca = scat.get_flux() / phi_inc / (np.pi * R_SPHERE**2)
-    q_abs = -inner.get_flux() / phi_inc / (np.pi * R_SPHERE**2)
+    if not skip_flux:
+        q_sca = scat.get_flux() / phi_inc / (np.pi * R_SPHERE**2)
+        q_abs = -inner.get_flux() / phi_inc / (np.pi * R_SPHERE**2)
+    else:
+        q_sca = np.zeros_like(FREQS)
+        q_abs = np.zeros_like(FREQS)
     out.update(
         x=X_SIM, q_sca=q_sca, q_abs=q_abs, steps=solver.Nt, dt=solver.dt,
         cells=int(grid.Nx * grid.Ny * grid.Nz), setup_s=t_setup, run_s=t_run,
@@ -787,6 +958,8 @@ def far_field_errors(res, theta=np.linspace(0, np.pi, 181), floor_db=40.0):
     90 deg), with both clipped at `floor_db` below the Mie maximum so that
     pattern nulls do not dominate. Also returns the patterns [dB re r^2].
     """
+    if "stored_far_field" in res:
+        return res["stored_far_field"]
     out = {}
     # one far-field evaluation per plane (all frequencies at once)
     ffs = {
@@ -818,7 +991,7 @@ def far_field_errors(res, theta=np.linspace(0, np.pi, 181), floor_db=40.0):
 def summary(res):
     """JSON-serializable summary of a run (no field data)."""
     q_mie = mie_efficiencies(N_SPHERE, res["x"])[1]
-    err = res["q_sca"] - q_mie
+    err = np.asarray(res["q_sca"], dtype=float) - q_mie
     lay = res["lay"] if "lay" in res else layout(res["resolution"])
     return dict(
         pml_gap_scale=ARGS.pml_gap, pml_start_m=lay["pml"], n_pml=N_PML,
@@ -849,13 +1022,43 @@ if ARGS.arm:  # study mode: one run, JSON out, no plots
     sys.exit(0)
 
 # %%
-res = run_mie(RESOLUTION, CONFORMAL, USE_GPU, extras=True, movie=not ARGS.no_movie,
-              verbose=1)  # fmt: skip
-info = summary(res)
-DATA_DIR.mkdir(exist_ok=True)
-(DATA_DIR / f"run_{'full' if FULL else 'quick'}.json").write_text(
-    json.dumps(info, indent=1)
-)
+stored_full_path = DATA_DIR / "run_full.json"
+if PLOT_ONLY and stored_full_path.exists():
+    sf = json.loads(stored_full_path.read_text())
+    res = run_mie(
+        10.0,
+        CONFORMAL,
+        USE_GPU,
+        extras=True,
+        movie=not ARGS.no_movie,
+        verbose=0,
+        t_run_override=80e-15,
+        skip_flux=True,
+    )
+    res.update(
+        x=np.asarray(sf["x"], dtype=float),
+        q_sca=np.asarray(sf["q_sca"], dtype=float),
+        q_abs=np.asarray(sf["q_abs"], dtype=float),
+        steps=sf["steps"],
+        dt=sf["dt_s"],
+        cells=sf["cells"],
+        setup_s=sf["setup_s"],
+        run_s=sf["run_s"],
+        resolution=sf["resolution_per_um"],
+        conformal=sf["conformal"],
+        gpu=sf["gpu"],
+        stopped_early=sf["stopped_early"],
+        stored_far_field=sf["far_field"],
+    )
+    info = summary(res)
+else:
+    res = run_mie(RESOLUTION, CONFORMAL, USE_GPU, extras=True, movie=not ARGS.no_movie,
+                  verbose=1)  # fmt: skip
+    info = summary(res)
+    DATA_DIR.mkdir(exist_ok=True)
+    (DATA_DIR / f"run_{'full' if FULL else 'quick'}.json").write_text(
+        json.dumps(info, indent=1)
+    )
 print(f"{info['cells'] / 1e6:.2f} Mcells, {info['steps']} steps, setup "
       f"{info['setup_s']:.0f} s, run {info['run_s']:.0f} s "
       f"({info['gpu'] or 'CPU'}); predicted {est.seconds:.0f} s")  # fmt: skip
@@ -864,33 +1067,129 @@ print(f"{info['cells'] / 1e6:.2f} Mcells, {info['steps']} steps, setup "
 # ## 7. Fields: total inside, scattered outside
 #
 # The DFT plane monitor gives the complex field on the $y = 0$ plane at
-# three size parameters. Inside the dashed TF/SF box we see the total
-# field: the incident wave focused by the sphere (a "photonic nanojet" forms
-# on its shadow side at large $x$). Outside the box we see the scattered
-# field alone, with no trace of the incident plane wave: the log-scale
-# panels show the incident wave cut off at the box faces.
-# The fields are normalized by the source spectrum, so they are in units of
-# the incident amplitude.
+# three size parameters, split into two 3-panel figures: `figures/fields_xz.png`
+# for $\mathrm{Re}(E_x/|E_\mathrm{inc}|)$ and `figures/fields_xz_log.png` for
+# $\log_{10}(|E_x|/|E_\mathrm{inc}|)$. Every panel overlays the sphere
+# boundary and label ($\varepsilon_r = 4$), the `TFSFSource` box, the
+# `Near2FarMonitor` contour, and the CPML absorbing layers via
+# `wakis.schematic.overlay_geometry`. Inside the dashed TF/SF box we see the
+# total field: the incident wave focused by the sphere (a photonic nanojet
+# forms on its shadow side at large $x$). Outside the box we see the scattered
+# field alone, with no trace of the incident plane wave: the log-scale panels
+# show the incident wave cut off cleanly at the box faces.
+
 
 # %%
-boxes = {"tfsf": res["src"].box_bounds(),
-         "flux": wv.box_bounds((0, 0, 0), (2 * res["lay"]["flux"],) * 3)}  # fmt: skip
+def _overlay_sphere_geometry(ax, run):
+    """Overlay sphere circle, TF/SF box, Near2Far box, and CPML on a 2D xz field map."""
+    from matplotlib.patches import Rectangle
+
+    lay_r = run["lay"]
+    mon_boxes = [
+        {
+            "kind": "box",
+            "type_name": "Near2FarMonitor",
+            "label": "Near2Far ($P_\\mathrm{sca}$)",
+            "h_bounds": (-lay_r["flux"], lay_r["flux"]),
+            "v_bounds": (-lay_r["flux"], lay_r["flux"]),
+        }
+    ]
+    run["src"].label = "TFSFSource"
+    schematic.overlay_geometry(
+        ax,
+        run["solver"],
+        plane="xz",
+        unit="µm",
+        material_names={"sphere": "Sphere"},
+        sources=[run["src"]],
+        monitors=mon_boxes,
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+        fill_materials=False,
+        label_materials=True,
+    )
+    _fix_sphere_patch(ax, R_SPHERE * 1e6, tol=0.35, fill="none")
+    tf_um = lay_r["tf"] * 1e6
+    fl_um = lay_r["flux"] * 1e6
+    ax.add_patch(
+        Rectangle(
+            (-tf_um, -tf_um),
+            2 * tf_um,
+            2 * tf_um,
+            facecolor="none",
+            edgecolor="#D55E00",
+            lw=1.1,
+            ls="--",
+            zorder=6,
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (-fl_um, -fl_um),
+            2 * fl_um,
+            2 * fl_um,
+            facecolor="none",
+            edgecolor="#009E73",
+            lw=1.1,
+            ls=":",
+            zorder=6,
+        )
+    )
+    ax.text(
+        -tf_um + 0.05,
+        tf_um - 0.08,
+        "TF/SF",
+        ha="left",
+        va="top",
+        fontsize=7.5,
+        fontweight="bold",
+        color="#B04A00",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.78},
+        zorder=8,
+    )
+    ax.text(
+        fl_um - 0.05,
+        -fl_um + 0.08,
+        "Near2Far",
+        ha="right",
+        va="bottom",
+        fontsize=7.5,
+        fontweight="bold",
+        color="#006B4E",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.78},
+        zorder=8,
+    )
+    _fix_unit_spaces(ax)
+
+
 E_inc, _ = res["src"].incident_fields(F_SNAP)
-fig, axes = plt.subplots(2, 3, figsize=(13, 8))
-for j, xs in enumerate(X_SNAP):
-    ex, co = wv.field_slice(res["plane"], "y", 0.0, "Ex")
-    ex = ex[j] / E_inc[j]  # relative to the incident wave at the entry plane
-    wv.plot_field_slice(ex, co, kind="real", ax=axes[0, j], boxes=boxes, axis="y",
-                        surface=((0, 0, 0), R_SPHERE), vmax=2.0,
-                        title=f"Re $E_x$ / $|E_\\mathrm{{inc}}|$, x = {xs:g}",
-                        colorbar_label="")  # fmt: skip
-    wv.plot_field_slice(ex, co, kind="log", ax=axes[1, j], boxes=boxes, axis="y",
-                        surface=((0, 0, 0), R_SPHERE), log_floor=1e-4,
-                        title=f"log$_{{10}}$ |$E_x$| / $|E_\\mathrm{{inc}}|$, x = {xs:g}",
-                        colorbar_label="")  # fmt: skip
-fig.tight_layout()
-savefig(fig, "fields_xz.png")
-plt.show()
+ex_all, co = wv.field_slice(res["plane"], "y", 0.0, "Ex")
+for kind, fname, title_prefix in (
+    ("real", "fields_xz.png", "Re($E_x / |E_\\mathrm{inc}|$)"),
+    ("log", "fields_xz_log.png", "$\\log_{10}(|E_x| / |E_\\mathrm{inc}|)$"),
+):
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=13.2, height_in=4.2, sharey=True)
+    for j, xs in enumerate(X_SNAP):
+        ax = axes[j]
+        ex = ex_all[j] / E_inc[j]
+        kw = dict(vmax=2.0) if kind == "real" else dict(log_floor=1e-4)
+        wv.plot_field_slice(
+            ex,
+            co,
+            kind=kind,
+            ax=ax,
+            axis="y",
+            title=f"({chr(ord('a') + j)}) {title_prefix}, $x = {xs:g}$",
+            colorbar_label="",
+            **kw,
+        )
+        _overlay_sphere_geometry(ax, res)
+        if j > 0:
+            ax.set_ylabel("")
+    savefig(fig, fname)
+    plt.show()
 
 # %% [markdown]
 # In three dimensions: isosurfaces of $|\mathbf E|$ (total field) inside the
@@ -929,9 +1228,10 @@ mag = mag / abs(E_inc[1])
 coords3 = [np.asarray(comps["x"][1][0])]
 coords3 += [0.5 * (np.asarray(q)[:-1] + np.asarray(q)[1:]) for q in comps["x"][1][1:]]
 levels = (0.35, 0.55, 0.75)  # fractions of the maximum
-pl = wv.plot_isosurfaces(mag, coords3, levels=levels, scalar_label="|E|/max",
-                         surfaces=[res["grid"].read_stl("sphere")])  # fmt: skip
-wv.save_plotter(pl, str(FIG_DIR / "isosurfaces.png"))
+if not (PLOT_ONLY and not pv.OFF_SCREEN and (FIG_DIR / "isosurfaces.png").exists()):
+    pl = wv.plot_isosurfaces(mag, coords3, levels=levels, scalar_label="|E|/max",
+                             surfaces=[res["grid"].read_stl("sphere")])  # fmt: skip
+    wv.save_plotter(pl, str(FIG_DIR / "isosurfaces.png"))
 fig, ax = plt.subplots(figsize=(6, 4.6))
 ax.imshow(plt.imread(FIG_DIR / "isosurfaces.png"))
 ax.axis("off")
@@ -975,17 +1275,41 @@ for ax_, name in ((0, "x"), (1, "y")):
 
 # %% [markdown]
 # And the time domain: $E_x$ on the $y = 0$ plane as the pulse sweeps
-# through the box. The incident pulse appears at the lower face, travels
-# up and vanishes at the upper face; the sphere's scattered wavelets leave
-# the box in all directions and are absorbed by the CPML.
+# through the box, with `wakis.schematic.overlay_geometry` marking the sphere,
+# the TF/SF box, the Near2Far box, and the CPML absorbing layers on every frame.
+# The incident pulse appears at the lower face, travels up and vanishes at the
+# upper face; the sphere's scattered wavelets leave the box in all directions
+# and are absorbed by the CPML.
 
 # %%
-if "movie" in res:
-    gif = wv.save_animation(
-        res["movie"], str(FIG_DIR / "mie_movie.gif"), boxes=boxes,
-        surface=((0, 0, 0), R_SPHERE), max_frames=72, fps=12, dpi=65,
-        title="Ex(y=0)",
-    )  # fmt: skip
+if "movie" in res and res["movie"].frames:
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    rec = res["movie"]
+    frames = rec.frames[:: max(1, len(rec.frames) // 72)]
+    times = rec.times[:: max(1, len(rec.frames) // 72)]
+    h_co, v_co = [np.asarray(c) * 1e6 for c in rec.coords]
+    vmax_m = float(np.percentile(np.abs(frames), 99.5)) or 1.0
+    fig_m, ax_m = plt.subplots(figsize=(5.4, 4.6))
+    mesh_m = ax_m.pcolormesh(
+        h_co, v_co, frames[0].T, cmap="RdBu_r", vmin=-vmax_m, vmax=vmax_m, shading="auto"
+    )
+    ax_m.set_aspect("equal")
+    ax_m.set(xlabel="x [µm]", ylabel="z [µm]")
+    fig_m.colorbar(mesh_m, ax=ax_m, label=rec.component)
+    _overlay_sphere_geometry(ax_m, res)
+    ttl_m = ax_m.set_title("")
+    fig_m.tight_layout()
+
+    def _step_m(i):
+        mesh_m.set_array(frames[i].T.ravel())
+        ttl_m.set_text(f"Ex(y=0)   t = {times[i] * 1e15:6.1f} fs")
+        return mesh_m, ttl_m
+
+    anim = FuncAnimation(fig_m, _step_m, frames=len(frames), interval=1000 / 12)
+    gif = str(FIG_DIR / "mie_movie.gif")
+    anim.save(gif, writer=PillowWriter(fps=12), dpi=65)
+    plt.close(fig_m)
     print("movie:", gif, f"{os.path.getsize(gif) / 1e6:.2f} MB")
     if IN_NOTEBOOK:
         from IPython.display import Image, display
@@ -1010,8 +1334,9 @@ if "movie" in res:
 # %%
 q_mie = mie_efficiencies(N_SPHERE, X_SIM)[1]
 x_fine = np.linspace(X_MIN, X_MAX, 800)
-fig, (ax, ax2) = plt.subplots(2, 1, figsize=(7, 5.6), sharex=True,
-                              gridspec_kw=dict(height_ratios=[3, 1.3]))  # fmt: skip
+fig, (ax, ax2) = figstyle.new_figure(
+    nrows=2, ncols=1, width_in=7.4, height_in=5.6, sharex=True, gridspec_kw=dict(height_ratios=[3, 1.3])
+)
 ax.plot(
     x_fine,
     mie_efficiencies(N_SPHERE, x_fine)[1],
@@ -1029,17 +1354,18 @@ ax.plot(
     color="#0072B2",
     label=r"$Q_\mathrm{abs}$ (should be 0)",
 )
-ax.set(ylabel=r"$Q_\mathrm{sca}$", title=f"Lossless sphere n = {N_SPHERE:g}, r = 1 µm")
+ax.set(ylabel=r"$Q_\mathrm{sca}$", title=f"(a) Lossless sphere n = {N_SPHERE:g}, r = 1 µm")
 ax.legend(fontsize=8)
 ax2.plot(X_SIM, res["q_sca"] - q_mie, color="#D55E00")
 ax2.axhline(0, color="k", lw=0.6)
 ax2.set(
-    xlabel=r"size parameter $x = 2\pi r/\lambda$", ylabel=r"$\Delta Q_\mathrm{sca}$"
+    title="(b) Residual (Wakis − Mie)",
+    xlabel=r"size parameter $x = 2\pi r/\lambda$",
+    ylabel=r"$\Delta Q_\mathrm{sca}$",
 )
 sec = ax.secondary_xaxis("top", functions=(lambda x: 2 * np.pi / np.maximum(x, 1e-3),
                                             lambda w: 2 * np.pi / np.maximum(w, 1e-3)))  # fmt: skip
 sec.set_xlabel(r"vacuum wavelength $\lambda$ [µm]")
-fig.tight_layout()
 savefig(fig, "qsca_vs_mie.png")
 plt.show()
 print(f"relative RMS error {info['rel_rms_error']:.2%}, max |ΔQ| "
@@ -1067,20 +1393,24 @@ print(f"relative RMS error {info['rel_rms_error']:.2%}, max |ΔQ| "
 # %%
 theta = np.linspace(0, np.pi, 181)
 fig, axes = plt.subplots(1, 3, figsize=(13, 3.8), subplot_kw=dict(projection="polar"))
-for ax, xs in zip(axes, X_SNAP):
+for idx_p, (ax, xs) in enumerate(zip(axes, X_SNAP)):
     j = int(np.argmin(np.abs(X_SIM - xs)))
     E_j, _ = res["src"].incident_fields(FREQS[j : j + 1])
     top = -np.inf
     # Right half: E-plane (phi = 0); left half: H-plane (phi = 90 deg)
-    for phi, sgn, col in ((0.0, 1, "#D55E00"), (np.pi / 2, -1, "#0072B2")):
-        ff = res["scat"].get_farfield(theta, phi)
-        dsig = np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2
-        dsig = dsig / abs(E_j[0]) ** 2
+    for plane, phi, sgn, col in (("E", 0.0, 1, "#D55E00"), ("H", np.pi / 2, -1, "#0072B2")):
         mie = mie_differential_cross_section(
             N_SPHERE, R_SPHERE, c0 / FREQS[j], theta, phi
         )
         db_mie = 10 * np.log10(mie / R_SPHERE**2)
-        db_sim = 10 * np.log10(dsig / R_SPHERE**2)
+        key_ff = f"x{xs:g}_{plane}"
+        if "stored_far_field" in res and key_ff in res["stored_far_field"]:
+            db_sim = np.asarray(res["stored_far_field"][key_ff]["db_sim"], dtype=float)
+        else:
+            ff = res["scat"].get_farfield(theta, phi)
+            dsig = np.abs(ff["Etheta"][j]) ** 2 + np.abs(ff["Ephi"][j]) ** 2
+            dsig = dsig / abs(E_j[0]) ** 2
+            db_sim = 10 * np.log10(dsig / R_SPHERE**2)
         top = max(top, db_mie.max())
         ax.plot(sgn * theta, db_mie, color=col, lw=2.2, alpha=0.55,
                 label=("E-plane" if sgn > 0 else "H-plane") + " exact series (Mie)")  # fmt: skip
@@ -1090,14 +1420,13 @@ for ax, xs in zip(axes, X_SNAP):
     ax.set_rgrids(np.round(np.arange(top - 30, top + 1, 10)), fontsize=6, angle=200)
     ax.set_theta_zero_location("N")
     ax.set_thetagrids(range(0, 360, 45))
-    ax.set_title(f"x = {X_SIM[j]:g}:  dσ/dΩ / r²  [dB]", fontsize=9)
+    ax.set_title(f"({chr(ord('a') + idx_p)}) x = {X_SIM[j]:g}:  dσ/dΩ / r²  [dB]", fontsize=9)
     ax.text(np.radians(60), top + 12, "E-plane", color="#D55E00", fontsize=8)
     ax.text(np.radians(-80), top + 14, "H-plane", color="#0072B2", fontsize=8)
 axes[0].legend(fontsize=7, loc="lower left", bbox_to_anchor=(-0.3, -0.2))
 fig.suptitle("left half: E-plane (xz, $|S_2|^2$)   ·   right half: H-plane (yz, "
              "$|S_1|^2$)   ·   each plane is symmetric in $\\pm\\theta$",
-             fontsize=10, y=1.02)  # fmt: skip
-fig.tight_layout()
+             fontsize=10, y=1.08)  # fmt: skip
 savefig(fig, "far_field_vs_mie.png")
 plt.show()
 
@@ -1153,12 +1482,12 @@ plt.show()
 
 # %%
 pml_fig = (
-    HERE.parents[0].parent
+    HERE.parents[2]
     / "studies"
     / "sphere-pml-gap"
     / "figures"
     / "pml_gap_far_field.png"
-    if HERE.parents
+    if len(HERE.parents) >= 3
     else Path("pml_gap_far_field.png")
 )
 if not pml_fig.exists():
@@ -1205,7 +1534,7 @@ study = load_convergence()
 if study:
     styles = {"staircase": ("o-", "#D55E00"), "all": ("s-", "#0072B2"),
               "tensor": ("^-", "#009E73")}  # fmt: skip
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+    fig, (ax, ax2) = figstyle.new_figure(nrows=1, ncols=2, width_in=11.4, height_in=4.0)
     for model, (mk, col) in styles.items():
         runs = sorted((r for r in study["runs"] if r["conformal"] == model),
                       key=lambda r: r["resolution_per_um"])  # fmt: skip
@@ -1223,13 +1552,12 @@ if study:
         e0 = study["runs"][0]["rel_rms_error"]
         ax.loglog(ref, 0.3 * (ref / ref[0]) ** (-order), "k" + ls, lw=0.8,
                   label=f"order {order}")  # fmt: skip
-    ax.set(xlabel=r"cells per wavelength in the sphere at $x = 10$",
+    ax.set(title="(a) Error vs resolution", xlabel=r"cells per wavelength in the sphere at $x = 10$",
            ylabel=r"relative RMS error of $Q_\mathrm{sca}$")  # fmt: skip
-    ax2.set(xlabel=f"wall time [s] ({study.get('machine', '')})",
+    ax2.set(title="(b) Error vs wall time", xlabel=f"wall time [s] ({study.get('machine', '')})",
             ylabel=r"relative RMS error of $Q_\mathrm{sca}$")  # fmt: skip
     ax.legend(fontsize=8)
     ax2.legend(fontsize=8)
-    fig.tight_layout()
     savefig(fig, "convergence.png")
     plt.show()
 

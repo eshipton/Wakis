@@ -420,15 +420,18 @@ def plot_gap_diagnostics(diag_dir=DEFAULT_DIAG_DIR, fig_path=DEFAULT_FIG_PATH):
     1972 Ag) vs Luce et al. (2026) published 2D FDTD ``LEE15`` benchmark bars (``M = 17`` for
     Air, SiO2, dGRIN; ``M = 9`` for Bare).
     """
+    from wakis import figstyle
+
+    figstyle.apply_style()
     diag_dir = Path(diag_dir)
     fig_path = Path(fig_path)
     fig_path.parent.mkdir(parents=True, exist_ok=True)
 
     colors = {
-        "bare": "#475569",
-        "air": "#0284c7",
-        "sio2": "#d97706",
-        "dgrin": "#059669",
+        "bare": figstyle.PALETTE[7],
+        "air": figstyle.PALETTE[0],
+        "sio2": figstyle.PALETTE[1],
+        "dgrin": figstyle.PALETTE[2],
     }
     labels = {
         "bare": r"Bare ($h=0$)",
@@ -439,7 +442,7 @@ def plot_gap_diagnostics(diag_dir=DEFAULT_DIAG_DIR, fig_path=DEFAULT_FIG_PATH):
     markers = {"bare": "s", "air": "^", "sio2": "D", "dgrin": "o"}
     m_vals = [1, 5, 9, 17]
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(13.2, 4.5), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.8, height=4.4)
 
     # Panel (a): LEE15_eq vs M per config (quick mesh + full markers)
     full_star_labeled = False
@@ -594,12 +597,10 @@ def plot_gap_diagnostics(diag_dir=DEFAULT_DIAG_DIR, fig_path=DEFAULT_FIG_PATH):
         f"(b) Silver optical constants ({mesh_used_label}, converged $M$): Rakić vs J&C (1972) vs Paper",
         fontsize=9.5,
     )
-    ax1.grid(True, axis="y", ls=":", alpha=0.4)
     ax1.legend(loc="upper left", fontsize=7.3)
 
-    fig.tight_layout()
-    fig.savefig(fig_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_path, close=True)
     print(f"[diag] Rendered {fig_path}", flush=True)
     return fig_path
 

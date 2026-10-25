@@ -1,0 +1,21 @@
+{
+  "task": "part_b_c_fit_screen",
+  "quick": false,
+  "grid_cells": [
+    63,
+    63,
+    113
+  ],
+  "ex_waist_l2_rel_err": 0.05992458258877273,
+  "ez_waist_l2_rel_err": 0.09227162233991462,
+  "dW_unbounded_sin_norm": 0.061776519606112607,
+  "dW_unbounded_total_norm": 0.06336977114351433,
+  "dW_screen_waist_fit_norm": 0.7519744880076538,
+  "dW_screen_waist_theory_norm": 0.7201007642563675,
+  "screen_waist_rel_err": 0.04426286616179554,
+  "suppression_ratio_screen_over_unbounded": 12.172496812741262,
+  "plettner_2005_dw_peak_kev_at_1p2mj": 12.0,
+  "plettner_2005_m_avg_kev_at_1p2mj": 11.88,
+  "estimate_memory_mb": 1069.27205125,
+  "wall_s": 70.688
+}

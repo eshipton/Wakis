@@ -1,0 +1,15 @@
+{
+  "task": "part_e_wiggler_fel",
+  "quick": false,
+  "target_xray_kev": 10.0,
+  "lambda_x_angstrom": 1.2398419843320028,
+  "e_req_mev_laser_1p0um": 28.10298637849959,
+  "e_req_mev_laser_0p4um": 17.7738892017491,
+  "e_req_gev_static_3cm": 11.415487031194594,
+  "b_f_zolotorev_2002": 9.597279335057366e-07,
+  "m_a_periods_zolotorev_2002": 100.68094638548952,
+  "b_f_conventional": 9.597279335057367e-13,
+  "m_a_periods_conventional": 100680946.38548952,
+  "brightness_enhancement_factor": 999999.9999999999,
+  "wall_s": 0.001
+}

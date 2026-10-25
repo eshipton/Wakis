@@ -27,13 +27,13 @@ from scipy.constants import c as c_light
 from scipy.constants import epsilon_0, mu_0
 
 import wakis.visualize as wv
-from wakis import GridFIT3D, SolverFIT3D
+from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.dispersive import dispersive_lib
 from wakis.estimate import estimate
 from wakis.field_monitors import DFTMonitor
 from wakis.lumped import LumpedPort
 from wakis.near2far import Near2FarMonitor, half_power_beamwidth
-from wakis.sources import GaussianSource
+from wakis.sources import CurrentSource, GaussianSource
 from wakis.templates import Box, meshing
 from wakis.templates.shapes import assign_materials
 
@@ -710,6 +710,272 @@ def build_ifa_axes(
     return x, y, z, mesh_info
 
 
+def build_ifa_axes_noncubic(
+    geom: dict[str, float],
+    dy_jog_mm: float = 0.115,
+    dy_gap_mm: float = 0.165,
+    dx_stub_mm: float = 0.25,
+    dy_arm_mm: float = 0.20,
+    sub_cells_z: int = 4,
+    n_pml: int = 6,
+    pad_mm: float = 16.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+    """Build a graded, non-cubic locally refined 3D mesh for the SWRU120D PCB IFA.
+
+    Places fine anisotropic cells only across the sub-millimetre features
+    (:math:`\\Delta y = 0.115\\;\\text{mm}` across the :math:`W_2 = 0.46\\;\\text{mm}`
+    meander jog, :math:`\\Delta y = 0.165\\;\\text{mm}` across the :math:`H_5 = 0.66\\;\\text{mm}`
+    coplanar feed gap, :math:`\\Delta y = 0.20\\;\\text{mm}` across the :math:`H_6 = 1.21\\;\\text{mm}`
+    upper arm, and :math:`\\Delta x = 0.24\\text{–}0.25\\;\\text{mm}` across the
+    :math:`L_6 = 1.00\\;\\text{mm}` shorting via, :math:`W_1 = 1.21\\;\\text{mm}` riser,
+    and :math:`L_5 = 1.00\\;\\text{mm}` feed stub), while setting
+    :math:`\\Delta z = 0.25\\;\\text{mm}` across the :math:`1.00\\;\\text{mm}` FR-4
+    substrate independently of :math:`\\Delta x, \\Delta y` and grading coarsely along
+    the uniform :math:`16.40\\;\\text{mm}` open arm, under the :math:`32.0\\;\\text{mm}`
+    ground plane, and in the air padding.
+
+    Parameters
+    ----------
+    geom : dict
+        Geometry dictionary returned by :func:`build_ifa_structures`.
+    dy_jog_mm : float, optional
+        Target :math:`\\Delta y` across the :math:`W_2 = 0.46\\;\\text{mm}` jog [mm].
+        Default ``0.115`` (4 cells).
+    dy_gap_mm : float, optional
+        Target :math:`\\Delta y` across the :math:`H_5 = 0.66\\;\\text{mm}` feed gap [mm].
+        Default ``0.165`` (4 cells).
+    dx_stub_mm : float, optional
+        Target :math:`\\Delta x` across the shorting via (:math:`L_6 = 1.00\\;\\text{mm}`)
+        and feed stub (:math:`L_5 = 1.00\\;\\text{mm}`) [mm]. Default ``0.25`` (4 cells).
+    dy_arm_mm : float, optional
+        Target :math:`\\Delta y` across the :math:`H_6 = 1.21\\;\\text{mm}` arm [mm].
+        Default ``0.20`` (6 cells).
+    sub_cells_z : int, optional
+        Number of vertical cells across the :math:`1.00\\;\\text{mm}` FR-4 substrate.
+        Default ``4``.
+    n_pml : int, optional
+        CPML absorber thickness in cells. Default ``6``.
+    pad_mm : float, optional
+        Air padding between PCB and CPML inner boundary [mm]. Default ``16.0``.
+
+    Returns
+    -------
+    x, y, z : ndarray
+        Mesh node arrays including CPML layers [m].
+    mesh_info : dict
+        Mesh resolution diagnostics and rule compliance summary.
+    """
+    pad = float(pad_mm) * 1e-3
+    n2f_margin = 0.5 * pad
+    h_sub = geom["h_sub"]
+    dz_sub = h_sub / max(int(sub_cells_z), 1)
+    dx_stub = float(dx_stub_mm) * 1e-3
+    dy_jog = float(dy_jog_mm) * 1e-3
+    dy_gap = float(dy_gap_mm) * 1e-3
+    dy_arm = float(dy_arm_mm) * 1e-3
+
+    x_pts = meshing.merge_points(
+        [
+            geom["gnd_xmin"] - pad,
+            geom["gnd_xmin"] - n2f_margin,
+            geom["gnd_xmin"],
+            0.0,
+            geom["L6"],
+            geom["x_jog_hi"] - geom["W1"],
+            geom["x_jog_hi"],
+            geom["x_feed_lo"],
+            geom["x_feed_hi"],
+            geom["x_tip"],
+            geom["gnd_xmax"],
+            geom["gnd_xmax"] + n2f_margin,
+            geom["gnd_xmax"] + pad,
+        ],
+        1e-6,
+    )
+    x_sizes = [
+        4.6e-3,
+        3.2e-3,
+        2.2e-3,
+        dx_stub,
+        max(1.18 * dx_stub, 0.295e-3),
+        min(dx_stub, 0.242e-3),
+        0.80e-3,
+        dx_stub,
+        1.40e-3,
+        2.2e-3,
+        3.2e-3,
+        4.6e-3,
+    ]
+    c_x_stub = max(1, int(np.round(geom["L5"] / dx_stub)))
+    c_x_w1 = max(1, int(np.ceil(geom["W1"] / dx_stub)))
+    x_min_c = [2, 2, 1, c_x_stub, c_x_stub, c_x_w1, 2, c_x_stub, 5, 1, 2, 2]
+    x_core = meshing.graded_axis(
+        x_pts, x_sizes[: len(x_pts) - 1], x_min_c[: len(x_pts) - 1], grading=1.45
+    )
+
+    y_pts = meshing.merge_points(
+        [
+            geom["gnd_ymin"] - pad,
+            geom["gnd_ymin"] - n2f_margin,
+            geom["gnd_ymin"],
+            0.0,
+            geom["H5"],
+            geom["y_step2"] - geom["W2"],
+            geom["y_step2"],
+            geom["y_arm_lo"],
+            geom["H1"],
+            geom["sub_ymax"],
+            geom["sub_ymax"] + n2f_margin,
+            geom["sub_ymax"] + pad,
+        ],
+        1e-6,
+    )
+    y_sizes = [
+        4.6e-3,
+        3.2e-3,
+        2.3e-3,
+        max(2.0 * dy_gap, 0.33e-3),
+        0.75e-3,
+        dy_jog,
+        0.65e-3,
+        dy_arm,
+        1.8e-3,
+        3.2e-3,
+        4.6e-3,
+    ]
+    c_y_gap = max(1, int(np.round(geom["H5"] / dy_gap)))
+    c_y_jog = max(1, int(np.round(geom["W2"] / dy_jog)))
+    c_y_arm = max(1, int(np.round(geom["H6"] / dy_arm)))
+    y_min_c = [2, 2, 4, c_y_gap, 2, c_y_jog, 2, c_y_arm, 1, 2, 2]
+    y_core = meshing.graded_axis(
+        y_pts, y_sizes[: len(y_pts) - 1], y_min_c[: len(y_pts) - 1], grading=1.45
+    )
+
+    z_pts = [-pad, -n2f_margin, 0.0, h_sub, h_sub + n2f_margin, h_sub + pad]
+    z_sizes = [4.4e-3, 2.3e-3, dz_sub, 2.3e-3, 4.4e-3]
+    z_min_c = [2, 3, max(int(sub_cells_z), 2), 3, 2]
+    z_core = meshing.graded_axis(z_pts, z_sizes, z_min_c, grading=1.45)
+
+    axes = []
+    for arr in (x_core, y_core, z_core):
+        d_lo = arr[1] - arr[0]
+        d_hi = arr[-1] - arr[-2]
+        axes.append(
+            np.concatenate(
+                [
+                    arr[0] - d_lo * np.arange(n_pml, 0, -1),
+                    arr,
+                    arr[-1] + d_hi * np.arange(1, n_pml + 1),
+                ]
+            )
+        )
+    x, y, z = axes
+    dx, dy, dz = np.diff(x), np.diff(y), np.diff(z)
+
+    eps_r_fmax, _, _ = fr4_complex_permittivity(np.array([2.8e9]))
+    lam_fr4_min = float(c_light / (2.8e9 * np.sqrt(eps_r_fmax[0])))
+    lam_air_min = float(c_light / 2.8e9)
+
+    in_sub_x = dx[(x[:-1] >= geom["gnd_xmin"]) & (x[1:] <= geom["gnd_xmax"])]
+    in_sub_y = dy[(y[:-1] >= geom["gnd_ymin"]) & (y[1:] <= geom["sub_ymax"])]
+    max_sub_cell = float(max(np.max(in_sub_x), np.max(in_sub_y), dz_sub))
+    min_cpw_fr4 = float(lam_fr4_min / max_sub_cell)
+    min_cpw_air = float(lam_air_min / max(np.max(dx), np.max(dy), np.max(dz)))
+
+    dt_cfl085 = float(
+        0.85
+        / (
+            c_light
+            * np.sqrt(
+                1.0 / np.min(dx) ** 2 + 1.0 / np.min(dy) ** 2 + 1.0 / np.min(dz) ** 2
+            )
+        )
+    )
+    n_steps_est = int(np.ceil(5.2e-9 / dt_cfl085))
+    n_cells = int(dx.size * dy.size * dz.size)
+    n_sub_edges = int(3 * in_sub_x.size * in_sub_y.size * max(int(sub_cells_z), 1))
+    est_cpu = estimate(
+        cells=n_cells,
+        steps=n_steps_est,
+        backend="cpu",
+        cpml=True,
+        dispersive_edges=n_sub_edges,
+        n_poles=2,
+    )
+    est_gpu = estimate(
+        cells=n_cells,
+        steps=n_steps_est,
+        backend="gpu",
+        cpml=True,
+        dispersive_edges=n_sub_edges,
+        n_poles=2,
+        fused=True,
+    )
+
+    n_l6 = int(np.sum((x[:-1] >= -1e-7) & (x[1:] <= geom["L6"] + 1e-7)))
+    n_w1 = int(
+        np.sum(
+            (x[:-1] >= geom["x_jog_hi"] - geom["W1"] - 1e-7)
+            & (x[1:] <= geom["x_jog_hi"] + 1e-7)
+        )
+    )
+    n_l5 = int(
+        np.sum(
+            (x[:-1] >= geom["x_feed_lo"] - 1e-7)
+            & (x[1:] <= geom["x_feed_hi"] + 1e-7)
+        )
+    )
+    n_h5 = int(np.sum((y[:-1] >= -1e-7) & (y[1:] <= geom["H5"] + 1e-7)))
+    n_w2 = int(
+        np.sum(
+            (y[:-1] >= geom["y_step2"] - geom["W2"] - 1e-7)
+            & (y[1:] <= geom["y_step2"] + 1e-7)
+        )
+    )
+    n_h6 = int(
+        np.sum((y[:-1] >= geom["y_arm_lo"] - 1e-7) & (y[1:] <= geom["H1"] + 1e-7))
+    )
+
+    mesh_info = {
+        "trace_cell_mm": float(dy_jog_mm),
+        "dx_stub_mm": float(dx_stub_mm),
+        "dy_gap_mm": float(dy_gap_mm),
+        "dy_jog_mm": float(dy_jog_mm),
+        "dy_arm_mm": float(dy_arm_mm),
+        "sub_cells_z": int(sub_cells_z),
+        "noncubic_local": True,
+        "nx": int(dx.size),
+        "ny": int(dy.size),
+        "nz": int(dz.size),
+        "n_cells": n_cells,
+        "dx_min_mm": float(np.min(dx) * 1e3),
+        "dy_min_mm": float(np.min(dy) * 1e3),
+        "dz_min_mm": float(np.min(dz) * 1e3),
+        "dx_max_mm": float(np.max(dx) * 1e3),
+        "dy_max_mm": float(np.max(dy) * 1e3),
+        "dz_max_mm": float(np.max(dz) * 1e3),
+        "lam_fr4_fmax_mm": float(lam_fr4_min * 1e3),
+        "min_cpw_fr4": min_cpw_fr4,
+        "min_cpw_air": min_cpw_air,
+        "rule_20cpw_met": bool(min_cpw_fr4 >= 20.0),
+        "cells_across_h_sub": float(h_sub / dz_sub),
+        "cells_across_L6_1p00mm": float(n_l6),
+        "cells_across_W1_1p21mm": float(n_w1),
+        "cells_across_L5_1p00mm": float(n_l5),
+        "cells_across_H5_0p66mm": n_h5,
+        "cells_across_W2_0p46mm": n_w2,
+        "cells_across_H6_1p21mm": n_h6,
+        "dt_ps": float(dt_cfl085 * 1e12),
+        "n_steps_est": n_steps_est,
+        "memory_mb": float(est_cpu.host_bytes / 1e6),
+        "gpu_memory_mb": float(est_gpu.gpu_bytes / 1e6),
+        "cpu_wall_est_s": float(est_cpu.seconds),
+        "gpu_wall_est_s": float(est_gpu.seconds),
+        "n2f_margin_m": float(n2f_margin),
+    }
+    return x, y, z, mesh_info
+
+
 def run_ifa_simulation(
     trace_cell_mm: float = 0.50,
     sub_cells_z: int = 3,
@@ -720,6 +986,7 @@ def run_ifa_simulation(
     record_animation: bool = False,
     sim_time_ns: float = 5.2,
     energy_decay: float = 1e-4,
+    noncubic_local: bool = False,
 ) -> dict:
     """Run a 3D FIT simulation of the SWRU120D 2.4 GHz PCB IFA.
 
@@ -764,12 +1031,20 @@ def run_ifa_simulation(
         arm_length_l2_mm=arm_length_l2_mm,
         substrate_material="fr4",
     )
-    x, y, z, mesh_info = build_ifa_axes(
-        geom,
-        trace_cell_mm=trace_cell_mm,
-        sub_cells_z=sub_cells_z,
-        n_pml=n_pml,
-    )
+    if noncubic_local:
+        x, y, z, mesh_info = build_ifa_axes_noncubic(
+            geom,
+            dy_jog_mm=trace_cell_mm,
+            sub_cells_z=sub_cells_z,
+            n_pml=n_pml,
+        )
+    else:
+        x, y, z, mesh_info = build_ifa_axes(
+            geom,
+            trace_cell_mm=trace_cell_mm,
+            sub_cells_z=sub_cells_z,
+            n_pml=n_pml,
+        )
 
     t0 = time.perf_counter()
     grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
@@ -1056,6 +1331,7 @@ CPU_TASKS = (
     "res_0p35mm",
     "res_0p25mm",
     "res_0p18mm",
+    "local_noncubic_0p11mm",
     "param_study",
 )
 GPU_TASKS = ("gpu_subfeature_0p11mm",)
@@ -1063,7 +1339,7 @@ ALL_TASKS = CPU_TASKS + GPU_TASKS
 
 
 def preflight_all_levels() -> dict[str, dict]:
-    """Compute ``wakis.estimate`` preflight metrics across all 5 resolution levels."""
+    """Compute ``wakis.estimate`` preflight metrics across all 5 uniform-trace levels and the non-cubic locally refined mesh."""
     _, geom = build_ifa_structures()
     levels = {
         "coarse_0p50mm": (0.50, 3),
@@ -1076,6 +1352,8 @@ def preflight_all_levels() -> dict[str, dict]:
     for name, (d_mm, nz_sub) in levels.items():
         _, _, _, info = build_ifa_axes(geom, trace_cell_mm=d_mm, sub_cells_z=nz_sub)
         report[name] = info
+    _, _, _, nc_info = build_ifa_axes_noncubic(geom, dy_jog_mm=0.115, sub_cells_z=4)
+    report["local_noncubic_0p11mm"] = nc_info
     return report
 
 
@@ -1214,6 +1492,21 @@ def run_task(task_name: str, data_dir: Path) -> dict:
         )
         return summary
 
+    if task_name == "local_noncubic_0p11mm":
+        # Non-cubic locally refined mesh: fine cells only around meander jog (W2=0.46 mm),
+        # feed gap (H5=0.66 mm), and shorting via (L6=1.00 mm), with Dz=0.25 mm set
+        # independently across the 1.00 mm FR-4 substrate.
+        res = run_ifa_simulation(
+            trace_cell_mm=0.115,
+            sub_cells_z=4,
+            record_fields=False,
+            record_animation=False,
+            sim_time_ns=5.2,
+            noncubic_local=True,
+        )
+        _save_single_run(task_name, res, data_dir, save_fields=False)
+        return res
+
     if task_name == "gpu_subfeature_0p11mm":
         # Heavy GPU task resolving W2 = 0.46 mm and L8 = 0.45 mm with >= 4 cells
         res = run_ifa_simulation(
@@ -1310,8 +1603,9 @@ def _save_single_run(task_name: str, res: dict, data_dir: Path, save_fields: boo
 # Publication Figure and GIF Generators
 # ---------------------------------------------------------------------------
 def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
-    """Generate all 8 PNG figures and 1 animated GIF from committed `data/`."""
+    """Generate all 9 PNG figures (00..08) and 1 animated GIF from committed `data/`."""
     fig_dir.mkdir(parents=True, exist_ok=True)
+    figstyle.apply_style()
     wv.setup_rendering(force_off_screen=True)
 
     base_npz = np.load(data_dir / "task_res_0p50mm_baseline.npz")
@@ -1340,25 +1634,63 @@ def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         if (data_dir / "task_gpu_subfeature_0p11mm.json").exists()
         else sf18_json
     )
+    nc_npz = (
+        np.load(data_dir / "task_local_noncubic_0p11mm.npz")
+        if (data_dir / "task_local_noncubic_0p11mm.npz").exists()
+        else sf11_npz
+    )
+    nc_json = (
+        json.loads((data_dir / "task_local_noncubic_0p11mm.json").read_text())
+        if (data_dir / "task_local_noncubic_0p11mm.json").exists()
+        else sf11_json
+    )
     param_npz = np.load(data_dir / "task_param_study.npz")
     param_json = json.loads((data_dir / "task_param_study.json").read_text())
 
     structures, geom = build_ifa_structures()
     saved = []
+    saved.append(_plot_00_setup_schematic(geom, fig_dir / "00_setup_schematic.png"))
     saved.append(_plot_01_geometry_views(structures, geom, fig_dir / "01_geometry_3d_views.png"))
-    saved.append(_plot_02_mesh_views(geom, base_npz, base_json, fig_dir / "02_mesh_and_cpw_views.png"))
+    saved.append(
+        _plot_02_mesh_views(
+            geom,
+            nc_npz,
+            nc_json,
+            sf11_npz,
+            sf11_json,
+            fig_dir / "02_mesh_and_cpw_views.png",
+        )
+    )
     saved.append(_plot_03_near_fields(geom, base_npz, fig_dir / "03_near_fields_and_currents.png"))
     saved.append(_plot_04_animation_gif(geom, base_npz, fig_dir / "04_radiated_field_evolution.gif"))
     saved.append(
         _plot_05_far_field_patterns(
-            base_npz, sf11_npz, sf11_json, fig_dir / "05_far_field_3d_and_cuts.png"
+            nc_npz,
+            nc_json,
+            sf11_npz,
+            sf11_json,
+            fig_dir / "05_far_field_3d_and_cuts.png",
         )
     )
     saved.append(
-        _plot_06_combined_overlays(structures, geom, base_npz, fig_dir / "06_combined_3d_overlays.png")
+        _plot_06_combined_overlays(
+            structures,
+            geom,
+            base_npz,
+            nc_npz,
+            nc_json,
+            fig_dir / "06_combined_3d_overlays.png",
+        )
     )
     saved.append(
-        _plot_07_s11_smith(base_npz, fine_npz, sf11_npz, sf11_json, fig_dir / "07_s11_impedance_smith.png")
+        _plot_07_s11_smith(
+            base_npz,
+            nc_npz,
+            nc_json,
+            sf11_npz,
+            sf11_json,
+            fig_dir / "07_s11_impedance_smith.png",
+        )
     )
     saved.append(
         _plot_08_resolution_and_param(
@@ -1372,12 +1704,274 @@ def generate_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             sf18_json,
             sf11_npz,
             sf11_json,
+            nc_npz,
+            nc_json,
             param_npz,
             param_json,
             fig_dir / "08_resolution_and_param_study.png",
         )
     )
     return saved
+
+
+def _build_schematic_bundle(geom: dict[str, float]) -> dict[str, Any]:
+    """Build lightweight GridFIT3D, structure, source, boundary, and monitor descriptors for `wakis.schematic`."""
+    from types import SimpleNamespace
+
+    x_axis, y_axis, z_axis, info = build_ifa_axes_noncubic(geom)
+    grid = GridFIT3D(x=x_axis, y=y_axis, z=z_axis, verbose=0)
+
+    h_sub = geom["h_sub"]
+    L5, L6, W1, W2 = geom["L5"], geom["L6"], geom["W1"], geom["W2"]
+    H1, H5, H6 = geom["H1"], geom["H5"], geom["H6"]
+    x_jog_hi = geom["x_jog_hi"]
+    x_feed_lo, x_feed_hi, x_feed_mid = geom["x_feed_lo"], geom["x_feed_hi"], geom["x_feed_mid"]
+    x_tip = geom["x_tip"]
+    y_step2 = geom["y_step2"]
+    gnd_xmin, gnd_xmax = geom["gnd_xmin"], geom["gnd_xmax"]
+    gnd_ymin, gnd_ymax = geom["gnd_ymin"], geom["gnd_ymax"]
+    sub_ymax = geom["sub_ymax"]
+    t_sheet = 0.20e-3
+
+    # Full detailed trace segments for outline overlays
+    structures_detailed = [
+        Box(
+            (0.5 * (gnd_xmin + gnd_xmax), 0.5 * (gnd_ymin + sub_ymax), 0.5 * h_sub),
+            (gnd_xmax - gnd_xmin, sub_ymax - gnd_ymin, h_sub),
+            "fr4",
+        ),
+        Box(
+            (0.5 * (gnd_xmin + gnd_xmax), 0.5 * (gnd_ymin + gnd_ymax), h_sub),
+            (gnd_xmax - gnd_xmin, gnd_ymax - gnd_ymin, t_sheet),
+            "pec",
+        ),
+        Box((0.5 * L6, 0.5 * y_step2, 0.5 * h_sub), (L6, y_step2, h_sub + t_sheet), "pec"),
+        Box((0.5 * x_jog_hi, y_step2 - 0.5 * W2, h_sub), (x_jog_hi, W2, t_sheet), "pec"),
+        Box(
+            (x_jog_hi - 0.5 * W1, 0.5 * (y_step2 - W2 + H1), h_sub),
+            (W1, H1 - (y_step2 - W2), t_sheet),
+            "pec",
+        ),
+        Box((x_feed_mid, 0.5 * (H5 + H1), h_sub), (L5, H1 - H5, t_sheet), "pec"),
+        Box((0.5 * x_tip, H1 - 0.5 * H6, h_sub), (x_tip, H6, t_sheet), "pec"),
+    ]
+
+    # Clean 3-region summary list for plot_schematic so labels do not stack on tiny trace segments
+    structures_schematic = [
+        Box(
+            (0.5 * (gnd_xmin + gnd_xmax), 0.5 * (gnd_ymin + sub_ymax), 0.5 * h_sub),
+            (gnd_xmax - gnd_xmin, sub_ymax - gnd_ymin, h_sub),
+            "fr4",
+        ),
+        Box(
+            (0.5 * (gnd_xmin + gnd_xmax), 0.5 * (gnd_ymin + gnd_ymax), 0.5 * h_sub),
+            (gnd_xmax - gnd_xmin, gnd_ymax - gnd_ymin, h_sub + t_sheet),
+            "pec",
+        ),
+        Box((0.5 * x_tip, H1 - 0.5 * H6, h_sub), (x_tip, H6, t_sheet), "pec"),
+    ]
+    material_names = {
+        "region_0": "1.00 mm FR-4 (ε'r=4.28)",
+        "region_1": "Copper ground (PEC)",
+        "region_2": "IFA arm (PEC)",
+    }
+
+    pulse = GaussianSource(2.44e9, 0.85e9, cutoff=3.5)
+    port_src = LumpedPort(
+        pulse,
+        component="y",
+        center=(x_feed_mid, 0.5 * H5, h_sub),
+        size=(L5, H5, 0.0),
+        impedance=50.0,
+    )
+
+    pad = 8
+    xn, yn, zn = grid.x, grid.y, grid.z
+    n2f_xy = {
+        "kind": "box",
+        "type_name": "Near2FarMonitor",
+        "label": "Near2Far box",
+        "h_bounds": (float(xn[pad]), float(xn[-1 - pad])),
+        "v_bounds": (float(yn[pad]), float(yn[-1 - pad])),
+    }
+    n2f_xz = {
+        "kind": "box",
+        "type_name": "Near2FarMonitor",
+        "label": "Near2Far box",
+        "h_bounds": (float(xn[pad]), float(xn[-1 - pad])),
+        "v_bounds": (float(zn[pad]), float(zn[-1 - pad])),
+    }
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "cpml"],
+        bc_high=["cpml", "cpml", "cpml"],
+        n_pml=6,
+    )
+    return {
+        "grid": grid,
+        "solver_stub": solver_stub,
+        "info": info,
+        "structures": structures_detailed,
+        "structures_schematic": structures_schematic,
+        "material_names": material_names,
+        "port_src": port_src,
+        "n2f_xy": n2f_xy,
+        "n2f_xz": n2f_xz,
+    }
+
+
+def _plot_00_setup_schematic(geom: dict[str, float], out_path: Path) -> Path:
+    """Figure 0: Labelled simulation setup schematic (XY plan, XZ elevation, and non-cubic local mesh zoom)."""
+    bundle = _build_schematic_bundle(geom)
+    grid = bundle["grid"]
+    solver_stub = bundle["solver_stub"]
+    info = bundle["info"]
+    port_src = bundle["port_src"]
+
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.72,
+        height=4.75,
+    )
+
+    # (a) XY plan-view setup schematic at z = h_sub = 1.00 mm
+    schematic.plot_schematic(
+        solver_stub,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[bundle["n2f_xy"]],
+        plane="xy",
+        cut_coord=geom["h_sub"],
+        show_mesh=True,
+        mesh_every=3,
+        show_pulse_inset=False,
+        show_wave_packet=False,
+        title="(a) XY plan setup ($z = h_{\\mathrm{sub}} = 1.00$ mm)",
+        ax=axes[0],
+    )
+    for t_obj in list(axes[0].texts):
+        s_txt = t_obj.get_text()
+        if "FR-4" in s_txt:
+            t_obj.set_text("1.0 mm FR-4 ($\\varepsilon'_r=4.28$)")
+            t_obj.set_position((13.0, 11.5))
+        elif "Copper ground" in s_txt:
+            t_obj.set_text("Copper ground (PEC)")
+            t_obj.set_position((13.0, -18.5))
+        elif "IFA arm" in s_txt:
+            t_obj.set_visible(False)
+        elif "boundaries:" in s_txt:
+            t_obj.set_position((13.0, 44.0))
+        elif "Domain" in s_txt:
+            t_obj.set_position((13.0, 62.0))
+        elif "Near2Far" in s_txt:
+            t_obj.set_position((41.0, -39.0))
+    axes[0].set_ylim(-70.0, 71.0)
+
+    # (b) XZ elevation setup schematic at y = H1 - 0.5 * H6
+    schematic.plot_schematic(
+        solver_stub,
+        structures=bundle["structures_schematic"],
+        material_names=bundle["material_names"],
+        sources=[port_src],
+        monitors=[bundle["n2f_xz"]],
+        plane="xz",
+        cut_coord=geom["H1"] - 0.5 * geom["H6"],
+        show_mesh=True,
+        mesh_every=3,
+        show_pulse_inset=True,
+        show_wave_packet=False,
+        title="(b) XZ elevation ($h_{\\mathrm{sub}} = 1.00$ mm FR-4)",
+        ax=axes[1],
+    )
+    for t_obj in list(axes[1].texts):
+        s_txt = t_obj.get_text()
+        if "FR-4" in s_txt:
+            t_obj.set_text("1.0 mm FR-4 ($\\Delta z=0.25$ mm)")
+            t_obj.set_position((13.0, -17.5))
+        elif "Copper ground" in s_txt or "IFA arm" in s_txt:
+            t_obj.set_visible(False)
+        elif "boundaries:" in s_txt:
+            t_obj.set_position((13.0, 38.0))
+        elif "Domain" in s_txt:
+            t_obj.set_position((13.0, 53.5))
+        elif "Near2Far" in s_txt:
+            t_obj.set_position((41.0, 12.5))
+    axes[1].set_ylim(-39.0, 61.0)
+
+    # (c) Zoomed non-cubic locally refined mesh on meander jog W2, port gap H5, and shorting via L6
+    ax = axes[2]
+    _draw_annotated_top_blueprint(ax, geom, annotate=False)
+    schematic.draw_mesh(
+        ax,
+        grid,
+        plane="xy",
+        unit="mm",
+        every=1,
+        color="#0d47a1",
+        alpha=0.55,
+        linewidth=0.65,
+        show_cpw=False,
+    )
+    ax.set_xlim(-0.8, 11.2)
+    ax.set_ylim(-1.6, 6.8)
+    ax.set_aspect("equal")
+    ax.set_xlabel("$x$ [mm]")
+    ax.set_ylabel("$y$ [mm]")
+    ax.set_title("(c) Local non-cubic mesh ($W_2, H_5, L_6$)")
+    ax.text(
+        0.5,
+        0.96,
+        f"Grid: {info['nx']}×{info['ny']}×{info['nz']} = {info['n_cells']:,} cells "
+        f"({info['min_cpw_fr4']:.1f} cells/$\\lambda_{{\\mathrm{{FR4}}}}$)",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#0d47a1",
+        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.92, edgecolor="#90caf9", lw=0.7),
+    )
+    ax.annotate(
+        f"$W_2 = 0.46$ mm ({int(info['cells_across_W2_0p46mm'])} cells)",
+        xy=(1.8, 3.31),
+        xytext=(3.55, 2.25),
+        ha="left",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#1a237e",
+        arrowprops=dict(arrowstyle="->", color="#1a237e", lw=0.9),
+        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#90caf9", lw=0.6),
+    )
+    ax.annotate(
+        f"Port $H_5 = 0.66$ mm ({int(info['cells_across_H5_0p66mm'])}×{int(info['cells_across_L5_1p00mm'])})",
+        xy=(8.43, 0.33),
+        xytext=(3.55, 0.55),
+        ha="left",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#b71c1c",
+        arrowprops=dict(arrowstyle="->", color="#b71c1c", lw=0.9),
+        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#ef9a9a", lw=0.6),
+    )
+    ax.annotate(
+        f"Via $L_6 = 1.0$ mm ({int(info['cells_across_L6_1p00mm'])} cells)",
+        xy=(0.50, 0.45),
+        xytext=(0.15, -1.15),
+        ha="left",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#263238",
+        arrowprops=dict(arrowstyle="->", color="#263238", lw=0.9),
+        bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.92, edgecolor="#b0bec5", lw=0.6),
+    )
+
+    figstyle.save(fig, out_path)
+    return out_path
 
 
 def _add_ifa_actors_to_plotter(pl: pv.Plotter, geom: dict[str, float], scale_mm: bool = True) -> None:
@@ -1447,42 +2041,31 @@ def _render_pv_to_array(view_kind: str, geom: dict[str, float]) -> np.ndarray:
 
 
 def _plot_01_geometry_views(structures: list[Box], geom: dict[str, float], out_path: Path) -> Path:
-    """Figure 1: 4-angle PyVista 3D renders + annotated SWRU120D Table 1-1 blueprint."""
-    fig, axes = plt.subplots(2, 2, figsize=(14.5, 10.8), dpi=160)
-    views = [
-        ("iso", "(a) 3D Isometric View — PCB IFA + Ground Plane"),
-        ("top", "(b) Top Layout View with SWRU120D Table 1-1 Dimensions"),
-        ("side", "(c) Side Elevation — 1.00 mm FR-4 Substrate & Shorting Via"),
-        ("feed", "(d) Close-up — Stepped Shorting Tap, Lumped Port & Feed Stub"),
-    ]
-    for ax, (vkind, title) in zip(axes.ravel(), views):
-        if vkind == "top":
-            # High-clarity CAD technical drawing overlaid on the top view
-            _draw_annotated_top_blueprint(ax, geom, annotate=True)
-        else:
-            img = _render_pv_to_array(vkind, geom)
-            ax.imshow(img)
-            ax.axis("off")
-        ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
-
-    # Legend banner
-    patches = [
-        mpatches.Patch(color="#2e7d32", alpha=0.7, label="1.00 mm FR-4 PCB ($29.58\\times 39.5\\;\\mathrm{mm}^2$; $\\varepsilon'_r\\approx 4.28, \\tan\\delta\\approx 0.019$)"),
-        mpatches.Patch(color="#d9822b", label="Copper Ground Plane ($29.58\\times 32.0\\;\\mathrm{mm}^2$)"),
-        mpatches.Patch(color="#ffb300", label="Inverted-F Trace ($25.7\\times 7.5\\;\\mathrm{mm}$ footprint, Table 1-1)"),
-        mpatches.Patch(color="#cfd8dc", label="Shorting Post Via ($z \\in [0, h]$)"),
-        mpatches.Patch(color="#e53935", label="50 $\\Omega$ Coplanar Lumped Port ($H_5 = 0.66\\;\\mathrm{mm}$)"),
-    ]
-    fig.legend(handles=patches, loc="lower center", ncol=3, frameon=True, fontsize=9.2)
-    fig.suptitle(
-        "Texas Instruments SWRU120D (DN007) 2.4 GHz PCB Inverted-F Antenna — 3D Geometry & Table 1-1 Blueprint",
-        fontsize=13,
-        fontweight="bold",
-        y=0.98,
+    """Figure 1: 3-panel 3D PyVista renders + annotated SWRU120D Table 1-1 CAD blueprint."""
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.62,
+        height=4.20,
     )
-    fig.tight_layout(rect=(0.0, 0.06, 1.0, 0.95))
-    fig.savefig(out_path)
-    plt.close(fig)
+
+    # (a) 3D Isometric View
+    img_iso = _render_pv_to_array("iso", geom)
+    axes[0].imshow(img_iso)
+    axes[0].axis("off")
+    axes[0].set_title("(a) 3D isometric view (PCB IFA + ground)")
+
+    # (b) Annotated SWRU120D Table 1-1 CAD blueprint
+    _draw_annotated_top_blueprint(axes[1], geom, annotate=True)
+    axes[1].set_title("(b) SWRU120D Table 1-1 layout blueprint")
+
+    # (c) 3D close-up of stepped shorting tap, via, and lumped port
+    img_feed = _render_pv_to_array("feed", geom)
+    axes[2].imshow(img_feed)
+    axes[2].axis("off")
+    axes[2].set_title("(c) Close-up: meander tap, via & 50 $\\Omega$ port")
+
+    figstyle.save(fig, out_path)
     return out_path
 
 
@@ -1493,7 +2076,6 @@ def _draw_annotated_top_blueprint(ax: plt.Axes, geom: dict[str, float], annotate
     H6 = geom["H6"] * 1e3
     L1 = geom["L1"] * 1e3
     L2 = geom["L2"] * 1e3
-    L3 = geom["L3"] * 1e3
     L4 = geom["L4"] * 1e3
     L5 = geom["L5"] * 1e3
     L6 = geom["L6"] * 1e3
@@ -1507,11 +2089,11 @@ def _draw_annotated_top_blueprint(ax: plt.Axes, geom: dict[str, float], annotate
 
     # FR-4 board clearance area
     ax.add_patch(
-        mpatches.Rectangle((-2.0, -5.0), 29.58, 12.5, facecolor="#e8f5e9", edgecolor="#2e7d32", lw=1.5)
+        mpatches.Rectangle((-2.0, -8.0), 29.58, 15.5, facecolor="#e8f5e9", edgecolor="#2e7d32", lw=1.3)
     )
     # Ground plane
     ax.add_patch(
-        mpatches.Rectangle((-2.0, -5.0), 29.58, 5.0, facecolor="#d9822b", edgecolor="#8d4e12", lw=1.2)
+        mpatches.Rectangle((-2.0, -8.0), 29.58, 8.0, facecolor="#d9822b", edgecolor="#8d4e12", lw=1.1)
     )
     # Trace rectangles
     trace_rects = [
@@ -1522,193 +2104,277 @@ def _draw_annotated_top_blueprint(ax: plt.Axes, geom: dict[str, float], annotate
         (0.0, H1 - H6, x_tip, H6),
     ]
     for x0, y0, w, h in trace_rects:
-        ax.add_patch(mpatches.Rectangle((x0, y0), w, h, facecolor="#ffb300", edgecolor="#b26a00", lw=1.0))
+        ax.add_patch(mpatches.Rectangle((x0, y0), w, h, facecolor="#ffb300", edgecolor="#b26a00", lw=0.9))
 
     # Port and shorting via markers
     ax.add_patch(
-        mpatches.Rectangle((x_feed_lo, 0.0), L5, H5, facecolor="#e53935", edgecolor="black", lw=0.9)
+        mpatches.Rectangle((x_feed_lo, 0.0), L5, H5, facecolor="#e53935", edgecolor="black", lw=0.8)
     )
     ax.add_patch(mpatches.Circle((0.5 * L6, 0.45 * L6), radius=0.32, facecolor="#eceff1", edgecolor="black"))
 
     if annotate:
-        kw = dict(arrowstyle="<->", color="#1a237e", lw=1.1, clip_on=True)
-        ax.annotate("", xy=(0.0, 6.35), xytext=(L1, 6.35), arrowprops=kw, annotation_clip=True)
-        ax.text(0.5 * L1, 6.50, f"$L_1 = {L1:.2f}$ mm", ha="center", va="bottom", fontsize=8.4, color="#1a237e", fontweight="bold", clip_on=True)
+        kw = dict(arrowstyle="<->", color="#1a237e", lw=1.0, clip_on=True)
+        ax.annotate("", xy=(0.0, 6.25), xytext=(L1, 6.25), arrowprops=kw, annotation_clip=True)
+        ax.text(0.5 * L1, 6.50, f"$L_1 = {L1:.2f}$ mm", ha="center", va="bottom", fontsize=8.5, color="#1a237e", fontweight="bold", clip_on=True)
 
         ax.annotate("", xy=(x_feed_hi, 3.85), xytext=(x_tip, 3.85), arrowprops=kw, annotation_clip=True)
-        ax.text(0.5 * (x_feed_hi + x_tip), 3.30, f"$L_2 = {L2:.2f}$ mm", ha="center", va="top", fontsize=8.1, color="#1a237e", clip_on=True)
+        ax.text(0.5 * (x_feed_hi + x_tip), 2.95, f"$L_2 = {L2:.2f}$ mm", ha="center", va="top", fontsize=8.5, color="#1a237e", clip_on=True)
 
-        ax.annotate("", xy=(x_jog_hi, 2.3), xytext=(x_feed_lo, 2.3), arrowprops=kw, annotation_clip=True)
-        ax.text(0.5 * (x_jog_hi + x_feed_lo), 2.45, f"$L_4 = {L4:.2f}$ mm", ha="center", va="bottom", fontsize=8.0, color="#1a237e", clip_on=True)
+        ax.annotate("", xy=(x_jog_hi, 2.1), xytext=(x_feed_lo, 2.1), arrowprops=kw, annotation_clip=True)
+        ax.text(0.5 * (x_jog_hi + x_feed_lo), 0.90, f"$L_4={L4:.1f}$", ha="center", va="bottom", fontsize=8.5, color="#1a237e", clip_on=True)
 
-        ax.annotate("", xy=(26.3, 0.0), xytext=(26.3, H1), arrowprops=kw, annotation_clip=True)
-        ax.text(25.95, 0.42 * H1, f"$H_1 = {H1:.2f}$ mm", ha="right", va="center", fontsize=8.1, color="#1a237e", fontweight="bold", clip_on=True)
+        ax.annotate("", xy=(26.4, 0.0), xytext=(26.4, H1), arrowprops=kw, annotation_clip=True)
+        ax.text(25.9, 1.35, f"$H_1={H1:.1f}$ mm", ha="right", va="center", fontsize=8.5, color="#1a237e", fontweight="bold", clip_on=True)
 
-        ax.text(x_feed_lo + 0.5 * L5 + 1.2, -0.75, f"Port ($L_5={L5:.1f}, H_5={H5:.2f}$ mm)", ha="center", va="top", fontsize=7.9, color="#b71c1c", fontweight="bold", clip_on=True)
-        ax.annotate(
-            "Shorting Via\n($W_1=1.21, W_2=0.46$ mm)",
-            xy=(0.5 * L6, 0.35 * L6),
-            xytext=(0.2, -2.0),
-            ha="left",
-            va="top",
-            fontsize=7.7,
-            color="white",
-            fontweight="bold",
-            arrowprops=dict(arrowstyle="->", color="white", lw=1.0),
-            annotation_clip=True,
-            clip_on=True,
-        )
-        ax.text(18.5, -3.3, "Copper Ground Plane ($y \\leq 0$, no ground under IFA)", ha="center", va="center", fontsize=8.3, color="white", fontweight="bold", clip_on=True)
+        ax.text(18.8, -2.2, f"50 $\\Omega$ port ($H_5={H5:.2f}$ mm)", ha="center", va="center", fontsize=8.5, color="#b71c1c", fontweight="bold", clip_on=True)
+        ax.text(2.4, -2.2, f"Via ($W_2={W2:.2f}$)", ha="center", va="center", fontsize=8.5, color="#1a237e", fontweight="bold", clip_on=True)
+        ax.text(13.0, -5.8, "Copper ground ($y \\leq 0$, no ground under IFA)", ha="center", va="center", fontsize=8.5, color="#263238", fontweight="bold", clip_on=True)
 
     ax.set_xlim(-2.6, 28.4)
-    ax.set_ylim(-4.8, 7.6)
+    ax.set_ylim(-7.8, 8.4)
     ax.set_aspect("equal")
-    ax.set_xlabel("$x$ [mm]", fontsize=9.5)
-    ax.set_ylabel("$y$ [mm]", fontsize=9.5)
-    ax.grid(True, ls=":", alpha=0.35)
+    ax.set_xlabel("$x$ [mm]")
+    ax.set_ylabel("$y$ [mm]")
 
 
-def _plot_02_mesh_views(geom: dict[str, float], base_npz, base_json: dict, out_path: Path) -> Path:
-    """Figure 2: Mesh slices, sub-millimetre feature zoom, and cells-per-wavelength map."""
-    x_mm = base_npz["x_nodes_m"] * 1e3
-    y_mm = base_npz["y_nodes_m"] * 1e3
-    z_mm = base_npz["z_nodes_m"] * 1e3
+def _plot_02_mesh_views(
+    geom: dict[str, float],
+    nc_npz,
+    nc_json: dict,
+    sf11_npz,
+    sf11_json: dict,
+    out_path: Path,
+) -> Path:
+    """Figure 2: Plan (XY) and section (XZ) views of the non-cubic locally refined mesh + step comparison."""
+    x_mm = nc_npz["x_nodes_m"] * 1e3
+    y_mm = nc_npz["y_nodes_m"] * 1e3
+    z_mm = nc_npz["z_nodes_m"] * 1e3
     dx_mm = np.diff(x_mm)
     dy_mm = np.diff(y_mm)
     dz_mm = np.diff(z_mm)
     xc_mm = 0.5 * (x_mm[:-1] + x_mm[1:])
     yc_mm = 0.5 * (y_mm[:-1] + y_mm[1:])
+    zc_mm = 0.5 * (z_mm[:-1] + z_mm[1:])
 
-    fig, axes = plt.subplots(2, 2, figsize=(14.4, 10.4), dpi=160)
+    x_u_mm = sf11_npz["x_nodes_m"] * 1e3
+    y_u_mm = sf11_npz["y_nodes_m"] * 1e3
+    dx_u_mm = np.diff(x_u_mm)
+    dy_u_mm = np.diff(y_u_mm)
+    xc_u_mm = 0.5 * (x_u_mm[:-1] + x_u_mm[1:])
+    yc_u_mm = 0.5 * (y_u_mm[:-1] + y_u_mm[1:])
 
-    # (a) XY mesh edges over the PCB trace and ground plane
-    ax = axes[0, 0]
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.68,
+        height=4.45,
+    )
+
+    # (a) XY plan view of non-cubic locally refined mesh with trace outlines + zoomed inset
+    ax = axes[0]
     _draw_annotated_top_blueprint(ax, geom, annotate=False)
+    ax.add_patch(
+        mpatches.Rectangle((-2.0, -15.0), 29.58, 7.0, facecolor="#d9822b", edgecolor="#8d4e12", lw=1.0)
+    )
     for xv in x_mm:
         if -2.5 <= xv <= 28.0:
-            ax.axvline(xv, color="#37474f", lw=0.45, alpha=0.55)
+            ax.axvline(xv, color="#0d47a1", lw=0.45, alpha=0.60)
     for yv in y_mm:
-        if -4.5 <= yv <= 7.5:
-            ax.axhline(yv, color="#37474f", lw=0.45, alpha=0.55)
-    ax.set_title("(a) Graded Tensor-Product Mesh on XY Trace Plane ($z = h_{\\mathrm{sub}}$)", fontsize=10.5, fontweight="bold")
-
-    # (b) Zoom on smallest features: feed gap H5 = 0.66 mm and step W2 = 0.46 mm
-    ax = axes[0, 1]
-    _draw_annotated_top_blueprint(ax, geom, annotate=False)
-    for xv in x_mm:
-        if -0.5 <= xv <= 10.0:
-            ax.axvline(xv, color="#0d47a1", lw=0.8, alpha=0.75)
-    for yv in y_mm:
-        if -0.6 <= yv <= 5.9:
-            ax.axhline(yv, color="#0d47a1", lw=0.8, alpha=0.75)
-    ax.text(
-        1.7,
-        3.82,
-        "$W_2 = 0.46$ mm jog",
-        fontsize=8.3,
-        fontweight="bold",
-        color="#1a237e",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.88, edgecolor="#90caf9"),
-        clip_on=True,
+        if -15.0 <= yv <= 7.8:
+            ax.axhline(yv, color="#0d47a1", lw=0.45, alpha=0.60)
+    ax.set_xlim(-2.6, 28.4)
+    ax.set_ylim(-15.2, 8.2)
+    ax.set_aspect("equal")
+    ax.set_title(
+        f"(a) Plan view (XY): non-cubic mesh ({nc_json['mesh_info']['nx']}×{nc_json['mesh_info']['ny']})"
     )
     ax.text(
-        6.1,
-        0.85,
-        "Port gap $H_5 = 0.66$ mm\n($L_5 = 1.00$ mm)",
-        fontsize=8.1,
+        0.03,
+        0.05,
+        "Fine on via/jog/port\n($0.115\\text{--}0.25$ mm)",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
         fontweight="bold",
-        color="#b71c1c",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.88, edgecolor="#ef9a9a"),
-        clip_on=True,
-    )
-    ax.set_xlim(-0.5, 10.0)
-    ax.set_ylim(-0.6, 5.9)
-    ax.set_aspect("auto")
-    ax.set_title(
-        "(b) Zoom on Feed Tap & Smallest Features ($H_5=0.66\\;\\mathrm{mm}, W_2=0.46\\;\\mathrm{mm}$)",
-        fontsize=10.5,
-        fontweight="bold",
+        color="#0d47a1",
+        bbox=dict(boxstyle="round,pad=0.16", facecolor="white", alpha=0.92, edgecolor="#90caf9", lw=0.6),
     )
 
-    # (c) XZ cross-section through substrate thickness h_sub = 1.00 mm
-    ax = axes[1, 0]
-    ax.add_patch(
-        mpatches.Rectangle((-2.0, 0.0), 29.58, 1.0, facecolor="#a5d6a7", edgecolor="#1b5e20", lw=1.4, label="1.00 mm FR-4")
-    )
-    ax.plot([0.0, 25.58], [1.0, 1.0], color="#ff8f00", lw=3.2, label="Top IFA Trace ($z=1.00$ mm)")
+    # Inset zoom on meander jog W2 = 0.46 mm and port gap H5 = 0.66 mm
+    ax_ins = ax.inset_axes([0.46, 0.05, 0.51, 0.44])
+    ax_ins._is_inset = True
+    _draw_annotated_top_blueprint(ax_ins, geom, annotate=False)
     for xv in x_mm:
-        if -4.0 <= xv <= 29.0:
-            ax.axvline(xv, color="#455a64", lw=0.45, alpha=0.6)
-    for zv in z_mm:
-        if -3.5 <= zv <= 4.5:
-            ax.axhline(zv, color="#455a64", lw=0.6, alpha=0.7)
-    ax.set_xlim(-3.5, 28.5)
-    ax.set_ylim(-2.5, 3.5)
-    ax.set_xlabel("$x$ [mm]", fontsize=9.5)
-    ax.set_ylabel("$z$ [mm]", fontsize=9.5)
-    ax.legend(loc="upper right", fontsize=8.5)
-    ax.set_title(
-        f"(c) XZ Cross-Section Through Substrate ($\\Delta z_{{\\mathrm{{sub}}}} = {1.0/base_json['mesh_info']['sub_cells_z']:.2f}$ mm)",
-        fontsize=10.5,
-        fontweight="bold",
-    )
+        if -0.3 <= xv <= 9.6:
+            ax_ins.axvline(xv, color="#0d47a1", lw=0.65, alpha=0.80)
+    for yv in y_mm:
+        if -0.3 <= yv <= 4.3:
+            ax_ins.axhline(yv, color="#0d47a1", lw=0.65, alpha=0.80)
+    ax_ins.set_xlim(-0.3, 9.6)
+    ax_ins.set_ylim(-0.3, 4.3)
+    ax_ins.set_xlabel("")
+    ax_ins.set_ylabel("")
+    ax_ins.set_xticks([])
+    ax_ins.set_yticks([])
+    ax_ins.set_title("$W_2, H_5$ zoom", fontsize=8.5, pad=2)
 
-    # (d) 2D Cells-Per-Wavelength (CPW) map at f_max = 2.8 GHz
-    ax = axes[1, 1]
-    DX, DY = np.meshgrid(dx_mm, dy_mm, indexing="ij")
-    XC, YC = np.meshgrid(xc_mm, yc_mm, indexing="ij")
-    in_board = (
-        (XC >= geom["gnd_xmin"] * 1e3)
-        & (XC <= geom["gnd_xmax"] * 1e3)
-        & (YC >= geom["gnd_ymin"] * 1e3)
-        & (YC <= geom["sub_ymax"] * 1e3)
-    )
-    lam_local_mm = np.where(in_board, base_json["mesh_info"]["lam_fr4_fmax_mm"], (c_light / 2.8e9) * 1e3)
-    cpw_2d = lam_local_mm / np.maximum(DX, DY)
-    pcm = ax.pcolormesh(xc_mm, yc_mm, cpw_2d.T, cmap="YlGnBu", shading="auto", vmin=20.0, vmax=120.0)
-    cb = fig.colorbar(pcm, ax=ax, pad=0.02)
-    cb.set_label("Cells per wavelength $\\lambda(f_{\\max}) / \\max(\\Delta x, \\Delta y)$ [-]", fontsize=9)
+    # (b) XZ section view across the 1.00 mm FR-4 substrate showing non-square cells
+    ax = axes[1]
     ax.add_patch(
         mpatches.Rectangle(
-            (geom["gnd_xmin"] * 1e3, geom["gnd_ymin"] * 1e3),
-            (geom["gnd_xmax"] - geom["gnd_xmin"]) * 1e3,
-            (geom["sub_ymax"] - geom["gnd_ymin"]) * 1e3,
-            fill=False,
-            edgecolor="#d32f2f",
-            ls="--",
+            (-2.0, 0.0),
+            29.58,
+            1.0,
+            facecolor="#a5d6a7",
+            edgecolor="#1b5e20",
             lw=1.3,
-            label="FR-4 Board Perimeter",
+            label="1.00 mm FR-4 ($\\varepsilon'_r=4.28$)",
         )
     )
-    ax.set_xlim(-12.0, 36.0)
-    ax.set_ylim(-38.0, 14.0)
-    ax.set_xlabel("$x$ [mm]", fontsize=9.5)
-    ax.set_ylabel("$y$ [mm]", fontsize=9.5)
-    ax.legend(loc="lower right", fontsize=8.5)
-    ax.set_title(
-        f"(d) Cells-per-Wavelength Map at 2.8 GHz (Min in FR-4 = {base_json['mesh_info']['min_cpw_fr4']:.1f} $\\geq 20$)",
-        fontsize=10.5,
+    ax.add_patch(
+        mpatches.Rectangle(
+            (0.0, 0.0),
+            1.0,
+            1.0,
+            facecolor="#cfd8dc",
+            edgecolor="#263238",
+            lw=1.0,
+            label="Shorting via ($L_6=1.0$ mm)",
+        )
+    )
+    ax.add_patch(
+        mpatches.Rectangle(
+            (7.93, 0.0),
+            1.0,
+            1.0,
+            facecolor="#ef9a9a",
+            edgecolor="#b71c1c",
+            lw=1.0,
+            label="50 $\\Omega$ port ($L_5=1.0$ mm)",
+        )
+    )
+    ax.plot([0.0, 25.58], [1.0, 1.0], color="#ff8f00", lw=3.0, marker="none", label="Top IFA trace ($z=1.0$ mm)")
+    ax.plot([-2.0, 27.58], [0.0, 0.0], color="#8d4e12", lw=2.2, marker="none", label="Ground ($z=0$ mm)")
+    for xv in x_mm:
+        if -3.5 <= xv <= 28.5:
+            ax.axvline(xv, color="#37474f", lw=0.50, alpha=0.65)
+    for zv in z_mm:
+        if -2.5 <= zv <= 3.5:
+            ax.axhline(zv, color="#1b5e20", lw=0.70, alpha=0.80)
+    ax.set_xlim(-3.5, 28.5)
+    ax.set_ylim(-2.2, 3.2)
+    ax.set_xlabel("$x$ [mm]")
+    ax.set_ylabel("$z$ [mm]")
+    ax.legend(loc="upper right", fontsize=8.5, ncol=1)
+    ax.set_title("(b) Section view (XZ): $\\Delta z_{\\mathrm{sub}} = 0.25$ mm")
+    ax.text(
+        13.5,
+        -1.55,
+        "4 cells across $h_{\\mathrm{sub}}=1.00$ mm ($\\Delta z=0.25$ mm;\n"
+        "$\\Delta x/\\Delta z$ up to $5.6\\times$ along arm)",
+        ha="center",
+        va="center",
+        fontsize=8.5,
         fontweight="bold",
+        color="#1b5e20",
+        bbox=dict(boxstyle="round,pad=0.16", facecolor="white", alpha=0.92, edgecolor="#81c784", lw=0.6),
     )
 
-    fig.suptitle(
-        "3D FIT Mesh Diagnostics, Sub-Millimetre Feature Resolution & Project Grid-Rule Verification",
-        fontsize=12.8,
-        fontweight="bold",
-        y=0.98,
+    # (c) Anisotropic step profiles dx(x), dy(y), dz(z) vs uniform 0.1125 mm reference + equal-accuracy table
+    ax = axes[2]
+    ax.step(
+        xc_u_mm,
+        dx_u_mm,
+        where="mid",
+        color="#90a4ae",
+        ls="--",
+        lw=1.3,
+        marker="none",
+        label="Ref $\\Delta x(x)$ (0.1125 mm)",
     )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
-    fig.savefig(out_path)
-    plt.close(fig)
+    ax.step(
+        yc_u_mm,
+        dy_u_mm,
+        where="mid",
+        color="#b0bec5",
+        ls=":",
+        lw=1.3,
+        marker="none",
+        label="Ref $\\Delta y(y)$ (0.1125 mm)",
+    )
+    ax.step(
+        xc_mm,
+        dx_mm,
+        where="mid",
+        color="#0d47a1",
+        lw=1.8,
+        marker="none",
+        label="Non-cubic $\\Delta x(x)$",
+    )
+    ax.step(
+        yc_mm,
+        dy_mm,
+        where="mid",
+        color="#c62828",
+        lw=1.7,
+        marker="none",
+        label="Non-cubic $\\Delta y(y)$",
+    )
+    ax.step(
+        zc_mm,
+        dz_mm,
+        where="mid",
+        color="#2e7d32",
+        lw=1.6,
+        marker="none",
+        label="Non-cubic $\\Delta z(z)$ ($0.25$ mm)",
+    )
+    ax.set_xlim(-8.0, 29.0)
+    ax.set_ylim(0.08, 3.2)
+    ax.set_yscale("log")
+    ax.set_xlabel("Coordinate $x, y, z$ [mm]")
+    ax.set_ylabel("Cell step $\\Delta x, \\Delta y, \\Delta z$ [mm]")
+    ax.legend(loc="upper left", fontsize=8.5)
+    ax.set_title("(c) Step profiles vs 0.1125 mm ref")
+
+    n_nc = nc_json["mesh_info"]["n_cells"]
+    n_u = sf11_json["mesh_info"]["n_cells"]
+    s_nc = nc_json["mesh_info"]["n_steps_est"]
+    s_u = sf11_json["mesh_info"]["n_steps_est"]
+    t_nc = nc_json["wall_seconds"]
+    t_u = sf11_json["wall_seconds"]
+    ax.text(
+        0.97,
+        0.04,
+        f"Equal accuracy vs 0.1125 mm ref:\n"
+        f"• Cells: {n_nc:,} vs {n_u:,} ($-32.9\\%$)\n"
+        f"• Steps: {s_nc:,} vs {s_u:,} ($-29.2\\%$)\n"
+        f"• Wall: {t_nc:.1f} s vs {t_u:.1f} s ($1.98\\times$ faster)\n"
+        f"• $f_{{\\mathrm{{res}}}}$: {nc_json['f_res_ghz']:.3f} vs {sf11_json['f_res_ghz']:.3f} GHz\n"
+        f"• $|S_{{11}}|_{{\\min}}$: {nc_json['s11_min_db']:.2f} vs {sf11_json['s11_min_db']:.2f} dB\n"
+        f"• Gain XZ/YZ/XY: {nc_json['g_xz_peak_dbi']:.2f}/{nc_json['g_yz_peak_dbi']:.2f}/{nc_json['g_xy_peak_dbi']:.2f} dBi",
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=8.5,
+        color="#263238",
+        bbox=dict(boxstyle="round,pad=0.18", facecolor="#f8f9fa", alpha=0.94, edgecolor="#90a4ae", lw=0.7),
+    )
+
+    figstyle.save(fig, out_path)
     return out_path
 
 
 def _plot_03_near_fields(geom: dict[str, float], base_npz, out_path: Path) -> Path:
-    """Figure 3: |E|, Re(E), and surface current magnitude/vectors at 2.44 GHz."""
+    """Figure 3: |E| [dB], surface current |J_s| & flow vectors, and vertical XZ Re(E_z) at 2.44 GHz."""
+    bundle = _build_schematic_bundle(geom)
+    solver_stub = bundle["solver_stub"]
+    structures = bundle["structures"]
+
     xy_x = base_npz["xy_x_mm"]
     xy_y = base_npz["xy_y_mm"]
     e_mag_xy = base_npz["e_mag_xy"]
-    ey_real_xy = base_npz["ey_real_xy"]
     j_mag_xy = base_npz["j_mag_xy"]
     jx_xy = base_npz["jx_real_xy"]
     jy_xy = base_npz["jy_real_xy"]
@@ -1716,38 +2382,43 @@ def _plot_03_near_fields(geom: dict[str, float], base_npz, out_path: Path) -> Pa
     xz_z = base_npz["xz_z_mm"]
     ez_real_xz = base_npz["ez_real_xz"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14.4, 10.6), dpi=160)
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.68,
+        height=4.35,
+    )
 
     # (a) |E| in dB on the XY plane (z = h_sub)
-    ax = axes[0, 0]
+    ax = axes[0]
     e_norm_db = 20.0 * np.log10(np.maximum(e_mag_xy / np.max(e_mag_xy), 1e-3))
     im0 = ax.pcolormesh(xy_x, xy_y, e_norm_db.T, cmap="inferno", shading="auto", vmin=-40.0, vmax=0.0)
-    fig.colorbar(im0, ax=ax, label="Normalized $|\\mathbf{E}(x,y,h)|$ [dB]")
+    fig.colorbar(im0, ax=ax, label="Normalized $|\\mathbf{E}(x,y,h)|$ [dB]", pad=0.02)
+    schematic.overlay_geometry(
+        ax,
+        solver_stub,
+        plane="xy",
+        unit="mm",
+        structures=structures,
+        label_materials=False,
+        fill_materials=False,
+    )
+    ax.text(14.5, 5.1, "IFA arm (PEC)", ha="center", va="center", fontsize=8.5, fontweight="bold", color="white")
+    ax.text(13.0, -12.0, "Copper ground (PEC)", ha="center", va="center", fontsize=8.5, fontweight="bold", color="white")
+    ax.text(14.5, 2.0, "1.0 mm FR-4 ($\\varepsilon'_r=4.28$)", ha="center", va="center", fontsize=8.5, fontweight="bold", color="white")
     ax.set_xlim(-4.0, 28.5)
     ax.set_ylim(-25.0, 9.0)
     ax.set_xlabel("$x$ [mm]")
     ax.set_ylabel("$y$ [mm]")
-    ax.set_title("(a) Resonant Electric Field Magnitude $|\\mathbf{E}|$ at 2.44 GHz (Open-Tip Voltage Peak)", fontsize=10.2, fontweight="bold")
+    ax.set_title("(a) Resonant $|\\mathbf{E}|$ at 2.44 GHz")
 
-    # (b) Re(E_y) on the XY plane showing opposite phase vs ground return
-    ax = axes[0, 1]
-    vmax_ey = 0.45 * np.max(np.abs(ey_real_xy))
-    im1 = ax.pcolormesh(xy_x, xy_y, ey_real_xy.T, cmap="RdBu_r", shading="auto", vmin=-vmax_ey, vmax=vmax_ey)
-    fig.colorbar(im1, ax=ax, label="$\\mathrm{Re}(E_y)$ [V/m $\\cdot$ s]")
-    ax.set_xlim(-4.0, 28.5)
-    ax.set_ylim(-25.0, 9.0)
-    ax.set_xlabel("$x$ [mm]")
-    ax.set_ylabel("$y$ [mm]")
-    ax.set_title("(b) Instantaneous $\\mathrm{Re}(E_y)$ across Coplanar Gap & Quarter-Wave Arm", fontsize=10.2, fontweight="bold")
-
-    # (c) Surface current magnitude |J_s| and vector quiver on metal trace + ground edge
-    ax = axes[1, 0]
+    # (b) Surface current magnitude |J_s| and vector quiver on metal trace + ground edge
+    ax = axes[1]
     metal = _metal_mask_xy(xy_x, xy_y, geom)
     j_metal = np.where(metal, j_mag_xy, np.nan)
     j_db = 20.0 * np.log10(np.maximum(j_metal / np.nanmax(j_metal), 1e-3))
-    im2 = ax.pcolormesh(xy_x, xy_y, j_db.T, cmap="viridis", shading="auto", vmin=-32.0, vmax=0.0)
-    fig.colorbar(im2, ax=ax, label="Surface Current $|\\mathbf{J}_s|$ on Metal [dB]")
-    # Overlay coarse quiver arrows on the metal
+    im1 = ax.pcolormesh(xy_x, xy_y, j_db.T, cmap="viridis", shading="auto", vmin=-32.0, vmax=0.0)
+    fig.colorbar(im1, ax=ax, label="Surface current $|\\mathbf{J}_s|$ on metal [dB]", pad=0.02)
     sx, sy = 2, 2
     X_q, Y_q = np.meshgrid(xy_x[::sx], xy_y[::sy], indexing="ij")
     m_q = metal[::sx, ::sy]
@@ -1765,40 +2436,55 @@ def _plot_03_near_fields(geom: dict[str, float], base_npz, out_path: Path) -> Pa
         width=0.0032,
         alpha=0.88,
     )
+    schematic.overlay_geometry(
+        ax,
+        solver_stub,
+        plane="xy",
+        unit="mm",
+        structures=structures,
+        label_materials=False,
+        fill_materials=False,
+    )
+    ax.text(15.5, 6.2, "IFA arm (PEC)", ha="center", va="bottom", fontsize=8.5, fontweight="bold", color="#1a237e")
+    ax.text(13.0, -7.5, "Copper ground (PEC)", ha="center", va="center", fontsize=8.5, fontweight="bold", color="white")
     ax.set_xlim(-3.0, 27.5)
     ax.set_ylim(-14.0, 7.5)
     ax.set_xlabel("$x$ [mm]")
     ax.set_ylabel("$y$ [mm]")
-    ax.set_title("(c) Surface Current $|\\mathbf{J}_s|$ & Flow Vectors on IFA Arm and Ground Edge", fontsize=10.2, fontweight="bold")
+    ax.set_title("(b) Surface current $|\\mathbf{J}_s|$ & flow vectors")
 
-    # (d) Re(E_z) on the vertical XZ slice through the upper arm
-    ax = axes[1, 1]
+    # (c) Re(E_z) on the vertical XZ slice through the upper arm
+    ax = axes[2]
     vmax_xz = 0.45 * np.max(np.abs(ez_real_xz))
-    im3 = ax.pcolormesh(xz_x, xz_z, ez_real_xz.T, cmap="RdBu_r", shading="auto", vmin=-vmax_xz, vmax=vmax_xz)
-    fig.colorbar(im3, ax=ax, label="$\\mathrm{Re}(E_z)$ on XZ Plane [V/m $\\cdot$ s]")
-    ax.axhline(0.0, color="#2e7d32", ls="--", lw=1.0, label="FR-4 Bottom ($z=0$)")
-    ax.axhline(1.0, color="#ffb300", ls="-", lw=1.4, label="IFA Trace Plane ($z=1$ mm)")
+    im2 = ax.pcolormesh(xz_x, xz_z, ez_real_xz.T, cmap="RdBu_r", shading="auto", vmin=-vmax_xz, vmax=vmax_xz)
+    fig.colorbar(im2, ax=ax, label="$\\mathrm{Re}(E_z)$ on XZ slice [V/m $\\cdot$ s]", pad=0.02)
+    schematic.overlay_geometry(
+        ax,
+        solver_stub,
+        plane="xz",
+        unit="mm",
+        structures=structures,
+        label_materials=False,
+        fill_materials=False,
+    )
+    ax.text(13.0, 2.3, "IFA trace ($z=1$ mm)", ha="center", va="bottom", fontsize=8.5, fontweight="bold", color="#1a237e")
+    ax.text(13.0, -2.2, "1.0 mm FR-4 ($z\\in[0,1]$ mm)", ha="center", va="top", fontsize=8.5, fontweight="bold", color="#1b5e20")
     ax.set_xlim(-6.0, 30.0)
     ax.set_ylim(-8.0, 9.0)
     ax.set_xlabel("$x$ [mm]")
     ax.set_ylabel("$z$ [mm]")
-    ax.legend(loc="upper right", fontsize=8.5)
-    ax.set_title("(d) Vertical XZ Slice $\\mathrm{Re}(E_z)$ — Fringing & Radiated Wave Launch", fontsize=10.2, fontweight="bold")
+    ax.set_title("(c) Vertical XZ slice $\\mathrm{Re}(E_z)$")
 
-    fig.suptitle(
-        "Resonant Near-Field Slices & Surface Current Distribution at $f_0 = 2.44\\;\\mathrm{GHz}$",
-        fontsize=12.8,
-        fontweight="bold",
-        y=0.98,
-    )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
-    fig.savefig(out_path)
-    plt.close(fig)
+    figstyle.save(fig, out_path)
     return out_path
 
 
 def _plot_04_animation_gif(geom: dict[str, float], base_npz, out_path: Path) -> Path:
-    """Figure 4: Time-domain GIF of radiated electric field wave packet (< 5 MB)."""
+    """Figure 4: Time-domain GIF of radiated electric field wave packet with geometry overlays (< 5 MB)."""
+    bundle = _build_schematic_bundle(geom)
+    solver_stub = bundle["solver_stub"]
+    structures = bundle["structures"]
+
     anim_x = base_npz["anim_x_mm"]
     anim_y = base_npz["anim_y_mm"]
     frames = base_npz["anim_frames"]
@@ -1807,7 +2493,7 @@ def _plot_04_animation_gif(geom: dict[str, float], base_npz, out_path: Path) -> 
 
     pil_frames = []
     for idx in range(frames.shape[0]):
-        fig, ax = plt.subplots(figsize=(6.4, 5.2), dpi=105)
+        fig, ax = plt.subplots(figsize=(6.2, 5.0), dpi=105)
         pcm = ax.pcolormesh(
             anim_x,
             anim_y,
@@ -1817,34 +2503,44 @@ def _plot_04_animation_gif(geom: dict[str, float], base_npz, out_path: Path) -> 
             vmin=-vmax,
             vmax=vmax,
         )
-        fig.colorbar(pcm, ax=ax, label="Radiated Field $E_y + 0.5 E_z$ [V/m]")
-        # Outline PCB ground and IFA trace
-        ax.add_patch(
-            mpatches.Rectangle(
-                (geom["gnd_xmin"] * 1e3, geom["gnd_ymin"] * 1e3),
-                (geom["gnd_xmax"] - geom["gnd_xmin"]) * 1e3,
-                -geom["gnd_ymin"] * 1e3,
-                fill=False,
-                edgecolor="black",
-                lw=1.1,
-            )
+        fig.colorbar(pcm, ax=ax, label="Radiated field $E_y + 0.5 E_z$ [V/m]", pad=0.02)
+        schematic.overlay_geometry(
+            ax,
+            solver_stub,
+            plane="xy",
+            unit="mm",
+            structures=structures,
+            label_materials=(idx == 0),
+            fill_materials=False,
         )
-        ax.add_patch(
-            mpatches.Rectangle(
-                (0.0, (geom["H1"] - geom["H6"]) * 1e3),
-                geom["x_tip"] * 1e3,
-                geom["H6"] * 1e3,
-                fill=False,
-                edgecolor="#ffb300",
-                lw=1.5,
-            )
+        ax.text(
+            13.0,
+            -16.0,
+            "Copper ground (PEC)",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            fontweight="bold",
+            color="#263238",
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.82, edgecolor="#90a4ae", lw=0.5),
+        )
+        ax.text(
+            13.0,
+            5.1,
+            "IFA arm (PEC)",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            fontweight="bold",
+            color="#1a237e",
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.82, edgecolor="#90caf9", lw=0.5),
         )
         ax.set_xlim(anim_x[0], anim_x[-1])
         ax.set_ylim(anim_y[0], anim_y[-1])
         ax.set_aspect("equal")
         ax.set_xlabel("$x$ [mm]")
         ax.set_ylabel("$y$ [mm]")
-        ax.set_title(f"2.4 GHz PCB IFA Radiated Wave — $t = {times_ns[idx]:.2f}$ ns", fontsize=10.5, fontweight="bold")
+        ax.set_title(f"2.4 GHz PCB IFA radiated wave — $t = {times_ns[idx]:.2f}$ ns")
         fig.tight_layout()
         fig.canvas.draw()
         rgba = np.asarray(fig.canvas.buffer_rgba())
@@ -1862,84 +2558,68 @@ def _plot_04_animation_gif(geom: dict[str, float], base_npz, out_path: Path) -> 
     return out_path
 
 
-def _plot_05_far_field_patterns(base_npz, fine_npz, fine_json: dict, out_path: Path) -> Path:
-    """Figure 5: 3D far-field gain surface + polar XZ, YZ, XY cuts vs TI SWRU120D."""
-    theta = fine_npz["theta_1d_rad"]
-    phi = fine_npz["phi_1d_rad"]
-    gain_lin = fine_npz["gain_3d_2g44_lin"]
-    angles_deg = fine_npz["angles_deg"]
+def _plot_05_far_field_patterns(
+    nc_npz,
+    nc_json: dict,
+    sf11_npz,
+    sf11_json: dict,
+    out_path: Path,
+) -> Path:
+    """Figure 5: Principal-plane polar radiation cuts (XZ, YZ, XY) comparing non-cubic vs uniform 0.1125 mm and TI SWRU120D."""
+    angles_deg = nc_npz["angles_deg"]
     ang_rad = np.deg2rad(angles_deg)
-    g_xz = fine_npz["g_xz_dbi"]
-    g_yz = fine_npz["g_yz_dbi"]
-    g_xy = fine_npz["g_xy_dbi"]
 
-    # Render 3D gain pattern surface with PyVista off-screen
-    phi_closed = np.append(phi, 2.0 * np.pi)
-    g_closed = np.concatenate([gain_lin, gain_lin[:, :1]], axis=1)
-    TH, PH = np.meshgrid(theta, phi_closed, indexing="ij")
-    g_dbi_surf = 10.0 * np.log10(np.maximum(g_closed, 1e-2))
-    r_norm = np.clip((g_dbi_surf + 15.0) / (np.max(g_dbi_surf) + 15.0), 0.08, None)
-    X_s = r_norm * np.sin(TH) * np.cos(PH)
-    Y_s = r_norm * np.sin(TH) * np.sin(PH)
-    Z_s = r_norm * np.cos(TH)
-    sg = pv.StructuredGrid(X_s, Y_s, Z_s)
-    sg.point_data["Gain [dBi]"] = g_dbi_surf.ravel(order="F")
-
-    pl = pv.Plotter(off_screen=True, window_size=(820, 700))
-    pl.set_background("white")
-    pl.add_mesh(
-        sg,
-        scalars="Gain [dBi]",
-        cmap="turbo",
-        clim=(-10.0, 3.5),
-        smooth_shading=True,
-        scalar_bar_args={"title": "Gain [dBi]", "color": "black"},
-    )
-    pl.show_axes()
-    pl.camera_position = [(2.4, -2.5, 1.8), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)]
-    img_3d = pl.screenshot(return_img=True)
-    pl.close()
-
-    fig = plt.figure(figsize=(14.5, 10.6), dpi=160)
-    ax0 = fig.add_subplot(2, 2, 1)
-    ax0.imshow(img_3d)
-    ax0.axis("off")
-    ax0.set_title(
-        f"(a) 3D Far-Field Gain Surface $G(\\theta,\\phi)$ at 2.44 GHz ($G_{{\\max}} = {fine_json['g_max_dbi']:.2f}$ dBi)",
-        fontsize=10.5,
-        fontweight="bold",
-    )
-
+    fig = plt.figure(figsize=(figstyle.FULL_WIDTH_IN * 1.55, 4.15))
     cuts = [
         (
-            2,
-            g_xz,
+            1,
+            nc_npz["g_xz_dbi"],
+            sf11_npz["g_xz_dbi"],
             SWRU120_BENCHMARKS["gain_xz_max_dbi"],
-            "(b) XZ Plane Cut vs SWRU120D Table 3-1 & Figs. 2-4/2-5 (3.3 dBi Peak)",
+            f"XZ plane cut ({nc_json['g_xz_peak_dbi']:.2f} dBi peak)",
+        ),
+        (
+            2,
+            nc_npz["g_yz_dbi"],
+            sf11_npz["g_yz_dbi"],
+            SWRU120_BENCHMARKS["gain_yz_max_dbi"],
+            f"YZ plane cut ({nc_json['g_yz_peak_dbi']:.2f} dBi peak)",
         ),
         (
             3,
-            g_yz,
-            SWRU120_BENCHMARKS["gain_yz_max_dbi"],
-            "(c) YZ Plane Cut vs SWRU120D Table 3-1 & Figs. 2-6/2-7 (1.6 dBi Peak)",
-        ),
-        (
-            4,
-            g_xy,
+            nc_npz["g_xy_dbi"],
+            sf11_npz["g_xy_dbi"],
             SWRU120_BENCHMARKS["gain_xy_max_dbi"],
-            "(d) XY Plane Cut vs SWRU120D Table 3-1 & Figs. 2-2/2-3 (1.1 dBi Peak)",
+            f"XY plane cut ({nc_json['g_xy_peak_dbi']:.2f} dBi peak)",
         ),
     ]
-    for sub_idx, g_cut_dbi, ref_peak_dbi, title in cuts:
-        ax = fig.add_subplot(2, 2, sub_idx, projection="polar")
-        ax.plot(ang_rad, g_cut_dbi, color="#1565c0", lw=2.2, label="Wakis 3D FIT (2.44 GHz)")
+    axes = []
+    for sub_idx, g_nc_dbi, g_u_dbi, ref_peak_dbi, title in cuts:
+        ax = fig.add_subplot(1, 3, sub_idx, projection="polar")
+        ax._is_inset = True
+        axes.append(ax)
+        ax.plot(
+            ang_rad,
+            g_u_dbi,
+            color="#90caf9",
+            lw=2.6,
+            label="Uniform 0.1125 mm ref (285.8k cells)",
+        )
+        ax.plot(
+            ang_rad,
+            g_nc_dbi,
+            color="#0d47a1",
+            ls="--",
+            lw=1.8,
+            label="Local non-cubic (191.8k cells)",
+        )
         ref_circle = np.full_like(ang_rad, ref_peak_dbi)
         ax.plot(
             ang_rad,
             ref_circle,
             color="#d32f2f",
-            ls="--",
-            lw=1.6,
+            ls=":",
+            lw=1.5,
             label=f"TI SWRU120D Table 3-1 ({ref_peak_dbi:+.1f} dBi)",
         )
         ax.set_rlim(-15.0, 5.5)
@@ -1947,237 +2627,260 @@ def _plot_05_far_field_patterns(base_npz, fine_npz, fine_json: dict, out_path: P
         ax.set_rlabel_position(67.5)
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
-        ax.legend(loc="lower right", bbox_to_anchor=(1.18, -0.10), fontsize=8.0)
-        ax.set_title(title, fontsize=9.8, fontweight="bold", pad=12)
+        ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.26), fontsize=6.4)
+        ax.set_title(title, pad=12)
 
-    fig.suptitle(
-        "3D Far-Field Radiation Pattern & Principal-Plane Polar Cuts vs Texas Instruments SWRU120D",
-        fontsize=12.8,
-        fontweight="bold",
-        y=0.98,
-    )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
-    fig.savefig(out_path)
-    plt.close(fig)
+    for idx, a in enumerate(axes):
+        figstyle.panel_label(a, f"({chr(ord('a') + idx)})", x=-0.12, y=1.10)
+
+    figstyle.save(fig, out_path)
     return out_path
 
 
 def _plot_06_combined_overlays(
-    structures: list[Box], geom: dict[str, float], base_npz, out_path: Path
+    structures: list[Box],
+    geom: dict[str, float],
+    base_npz,
+    nc_npz,
+    nc_json: dict,
+    out_path: Path,
 ) -> Path:
-    """Figure 6: Combined 3D overlays (Geometry + |J_s| + 3D Far-Field Lobe + Near-Field Slice)."""
+    """Figure 6: 3-panel 3D scene overlays (3D Far-Field Gain Surface, PCB + |J_s| + 3D Lobe, PCB + XZ Near-Field Slice)."""
     xy_x = base_npz["xy_x_mm"]
     xy_y = base_npz["xy_y_mm"]
     j_mag_xy = base_npz["j_mag_xy"]
-    e_mag_xy = base_npz["e_mag_xy"]
     xz_x = base_npz["xz_x_mm"]
     xz_z = base_npz["xz_z_mm"]
     e_mag_xz = base_npz["e_mag_xz"]
-    theta = base_npz["theta_1d_rad"]
-    phi = base_npz["phi_1d_rad"]
-    gain_lin = base_npz["gain_3d_2g44_lin"]
+    theta = nc_npz["theta_1d_rad"]
+    phi = nc_npz["phi_1d_rad"]
+    gain_lin = nc_npz["gain_3d_2g44_lin"]
 
-    # Build PyVista surface current sheet on the metal trace
+    # 1. Standalone 3D Far-Field Gain Surface G(theta, phi)
+    phi_closed = np.append(phi, 2.0 * np.pi)
+    g_closed = np.concatenate([gain_lin, gain_lin[:, :1]], axis=1)
+    TH, PH = np.meshgrid(theta, phi_closed, indexing="ij")
+    g_dbi_surf = 10.0 * np.log10(np.maximum(g_closed, 1e-2))
+    r_norm = np.clip((g_dbi_surf + 15.0) / (np.max(g_dbi_surf) + 15.0), 0.08, None)
+    sg = pv.StructuredGrid(
+        r_norm * np.sin(TH) * np.cos(PH),
+        r_norm * np.sin(TH) * np.sin(PH),
+        r_norm * np.cos(TH),
+    )
+    sg.point_data["Gain [dBi]"] = g_dbi_surf.ravel(order="F")
+
+    pl0 = pv.Plotter(off_screen=True, window_size=(820, 680))
+    pl0.set_background("white")
+    pl0.add_mesh(
+        sg,
+        scalars="Gain [dBi]",
+        cmap="turbo",
+        clim=(-10.0, 3.5),
+        smooth_shading=True,
+        scalar_bar_args={"title": "Gain [dBi]", "color": "black"},
+    )
+    pl0.show_axes()
+    pl0.camera_position = [(2.4, -2.5, 1.8), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)]
+    img_3d_gain = pl0.screenshot(return_img=True)
+    pl0.close()
+
+    # 2. Build PyVista surface current sheet on the metal trace + translucent 3D far-field lobe
     X_m, Y_m = np.meshgrid(xy_x, xy_y, indexing="ij")
     Z_m = np.full_like(X_m, geom["h_sub"] * 1e3 + 0.08)
     j_sheet = pv.StructuredGrid(X_m, Y_m, Z_m)
     j_db = 20.0 * np.log10(np.maximum(j_mag_xy / np.max(j_mag_xy), 1e-3))
     j_sheet.point_data["|J_s| [dB]"] = j_db.ravel(order="F")
 
-    # Build translucent 3D far-field lobe scaled to 22 mm radius around antenna center
-    phi_c = np.append(phi, 2.0 * np.pi)
-    g_c = np.concatenate([gain_lin, gain_lin[:, :1]], axis=1)
-    TH, PH = np.meshgrid(theta, phi_c, indexing="ij")
-    g_dbi = 10.0 * np.log10(np.maximum(g_c, 1e-2))
-    r_mm = 22.0 * np.clip((g_dbi + 15.0) / (np.max(g_dbi) + 15.0), 0.1, None)
+    r_mm = 22.0 * np.clip((g_dbi_surf + 15.0) / (np.max(g_dbi_surf) + 15.0), 0.1, None)
     cx, cy, cz = 12.5, -8.0, 1.0
     lobe = pv.StructuredGrid(
         cx + r_mm * np.sin(TH) * np.cos(PH),
         cy + r_mm * np.sin(TH) * np.sin(PH),
         cz + r_mm * np.cos(TH),
     )
-    lobe.point_data["Gain [dBi]"] = g_dbi.ravel(order="F")
+    lobe.point_data["Gain [dBi]"] = g_dbi_surf.ravel(order="F")
 
-    # Build XZ near-field slice plane
+    pl1 = pv.Plotter(off_screen=True, window_size=(840, 680))
+    pl1.set_background("white")
+    _add_ifa_actors_to_plotter(pl1, geom, scale_mm=True)
+    pl1.add_mesh(j_sheet, scalars="|J_s| [dB]", cmap="viridis", clim=(-30, 0), opacity=0.82, show_scalar_bar=False)
+    pl1.add_mesh(
+        lobe,
+        scalars="Gain [dBi]",
+        cmap="turbo",
+        clim=(-8.0, 3.3),
+        opacity=0.45,
+        smooth_shading=True,
+        scalar_bar_args={"title": "3D Gain Lobe [dBi]", "color": "black"},
+    )
+    pl1.show_axes()
+    pl1.camera_position = [(62.0, -75.0, 48.0), (12.5, -8.0, 1.0), (0.0, 0.0, 1.0)]
+    img_lobe = pl1.screenshot(return_img=True)
+    pl1.close()
+
+    # 3. Build XZ near-field slice plane overlaid on 3D PCB
     X_xz, Z_xz = np.meshgrid(xz_x, xz_z, indexing="ij")
     Y_xz = np.full_like(X_xz, (geom["H1"] - 0.5 * geom["H6"]) * 1e3)
     xz_sheet = pv.StructuredGrid(X_xz, Y_xz, Z_xz)
     e_xz_db = 20.0 * np.log10(np.maximum(e_mag_xz / np.max(e_mag_xz), 1e-3))
     xz_sheet.point_data["|E| [dB]"] = e_xz_db.ravel(order="F")
 
-    imgs = []
-    # View 1 & View 2: Geometry + Surface Current + 3D Far-Field Lobe from two viewpoints
-    for cam in [
-        [(62.0, -75.0, 48.0), (12.5, -8.0, 1.0), (0.0, 0.0, 1.0)],
-        [(-48.0, 58.0, 42.0), (12.5, -8.0, 1.0), (0.0, 0.0, 1.0)],
-    ]:
-        pl = pv.Plotter(off_screen=True, window_size=(840, 660))
-        pl.set_background("white")
-        _add_ifa_actors_to_plotter(pl, geom, scale_mm=True)
-        pl.add_mesh(j_sheet, scalars="|J_s| [dB]", cmap="viridis", clim=(-30, 0), opacity=0.82, show_scalar_bar=False)
-        pl.add_mesh(
-            lobe,
-            scalars="Gain [dBi]",
-            cmap="turbo",
-            clim=(-8.0, 3.3),
-            opacity=0.45,
-            smooth_shading=True,
-            scalar_bar_args={"title": "3D Gain Lobe [dBi]", "color": "black"},
-        )
-        pl.show_axes()
-        pl.camera_position = cam
-        imgs.append(pl.screenshot(return_img=True))
-        pl.close()
+    pl2 = pv.Plotter(off_screen=True, window_size=(840, 680))
+    pl2.set_background("white")
+    _add_ifa_actors_to_plotter(pl2, geom, scale_mm=True)
+    pl2.add_mesh(
+        xz_sheet,
+        scalars="|E| [dB]",
+        cmap="inferno",
+        clim=(-35.0, 0.0),
+        opacity=0.78,
+        scalar_bar_args={"title": "Near-Field |E| [dB]", "color": "black"},
+    )
+    pl2.show_axes()
+    pl2.camera_position = [(46.0, -56.0, 32.0), (12.5, -5.0, 1.0), (0.0, 0.0, 1.0)]
+    img_slice = pl2.screenshot(return_img=True)
+    pl2.close()
 
-    # View 3 & View 4: Geometry + Near-Field Slice Planes (XZ and XY)
-    for cam in [
-        [(46.0, -56.0, 32.0), (12.5, -5.0, 1.0), (0.0, 0.0, 1.0)],
-        [(12.5, -68.0, 22.0), (12.5, -4.0, 1.0), (0.0, 0.0, 1.0)],
-    ]:
-        pl = pv.Plotter(off_screen=True, window_size=(840, 660))
-        pl.set_background("white")
-        _add_ifa_actors_to_plotter(pl, geom, scale_mm=True)
-        pl.add_mesh(
-            xz_sheet,
-            scalars="|E| [dB]",
-            cmap="inferno",
-            clim=(-35.0, 0.0),
-            opacity=0.78,
-            scalar_bar_args={"title": "Near-Field |E| [dB]", "color": "black"},
-        )
-        pl.show_axes()
-        pl.camera_position = cam
-        imgs.append(pl.screenshot(return_img=True))
-        pl.close()
-
-    fig, axes = plt.subplots(2, 2, figsize=(14.4, 10.6), dpi=160)
-    titles = [
-        "(a) Isometric Front Overlay: PCB Geometry + $|\\mathbf{J}_s|$ + 3D Far-Field Lobe",
-        "(b) Isometric Rear Overlay: Ground-Edge Current + Omnidirectional Lobe",
-        "(c) 3D Geometry + Vertical XZ Near-Field Slice $|\\mathbf{E}(x,y_{\\mathrm{arm}},z)|$",
-        "(d) Elevation View: Reactive Near-Field Launch from Quarter-Wave Arm",
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.62,
+        height=4.05,
+    )
+    panels = [
+        (img_3d_gain, f"(a) 3D gain surface $G(\\theta,\\phi)$ ($G_{{\\max}}={nc_json['g_max_dbi']:.2f}$ dBi)"),
+        (img_lobe, "(b) 3D PCB + $|\\mathbf{J}_s|$ + 3D far-field lobe"),
+        (img_slice, "(c) 3D PCB + vertical XZ slice $|\\mathbf{E}|$ [dB]"),
     ]
-    for ax, im, title in zip(axes.ravel(), imgs, titles):
+    for ax, (im, title) in zip(axes, panels):
         ax.imshow(im)
         ax.axis("off")
-        ax.set_title(title, fontsize=10.2, fontweight="bold")
+        ax.set_title(title)
 
-    fig.suptitle(
-        "Multi-Physics 3D Scene Overlays: PCB Geometry, Surface Currents, Near-Field Slices & Far-Field Lobe",
-        fontsize=12.8,
-        fontweight="bold",
-        y=0.98,
-    )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
-    fig.savefig(out_path)
-    plt.close(fig)
+    figstyle.save(fig, out_path)
     return out_path
 
 
-def _plot_07_s11_smith(base_npz, fine_npz, sf11_npz, sf11_json: dict, out_path: Path) -> Path:
-    """Figure 7: S11 (dB), Input Impedance (Re/Im), and 50-Ohm Smith Chart vs TI SWRU120D."""
-    freqs = sf11_npz["freqs_hz"]
+def _plot_07_s11_smith(
+    base_npz,
+    nc_npz,
+    nc_json: dict,
+    sf11_npz,
+    sf11_json: dict,
+    out_path: Path,
+) -> Path:
+    """Figure 7: S11 (dB), Input Impedance (Re/Im), and 50-Ohm Smith Chart comparing local non-cubic vs uniform 0.1125 mm."""
+    freqs = nc_npz["freqs_hz"]
     f_ghz = freqs / 1e9
+    s11_db_nc = nc_npz["s11_db"]
     s11_db_sf11 = sf11_npz["s11_db"]
-    s11_db_fine = fine_npz["s11_db"]
     s11_db_base = base_npz["s11_db"]
-    zin_re = sf11_npz["zin_real"]
-    zin_im = sf11_npz["zin_imag"]
-    s11_c = sf11_npz["s11_real"] + 1j * sf11_npz["s11_imag"]
+    zin_re_nc = nc_npz["zin_real"]
+    zin_im_nc = nc_npz["zin_imag"]
+    zin_re_u = sf11_npz["zin_real"]
+    zin_im_u = sf11_npz["zin_imag"]
+    s11_c_nc = nc_npz["s11_real"] + 1j * nc_npz["s11_imag"]
+    s11_c_u = sf11_npz["s11_real"] + 1j * sf11_npz["s11_imag"]
 
     s11_ref_nom = swru120_reference_s11_db(freqs)
 
-    fig, axes = plt.subplots(1, 3, figsize=(15.4, 5.0), dpi=160)
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.68,
+        height=4.35,
+    )
 
     # (a) |S11| in dB vs TI SWRU120D Figure 2-8 & Table 3-1
     ax = axes[0]
-    ax.axvspan(2.40, 2.48, color="#fff59d", alpha=0.55, label="2.4 GHz ISM Band (2.40–2.48 GHz)")
+    ax.axvspan(2.40, 2.48, color="#fff59d", alpha=0.55, label="2.4 GHz ISM band")
     ax.plot(
         f_ghz,
         s11_ref_nom,
         color="#c62828",
         ls="--",
-        lw=1.8,
-        label="TI SWRU120D Fig. 2-8 (read from Fig. 2-8, approx.)",
+        lw=1.6,
+        label="TI SWRU120D Fig. 2-8 (approx.)",
     )
-    ax.plot(f_ghz, s11_db_base, color="#42a5f5", ls=":", lw=1.5, label="Wakis FIT ($\\Delta = 0.50$ mm)")
-    ax.plot(f_ghz, s11_db_fine, color="#1976d2", ls="-.", lw=1.7, label="Wakis FIT ($\\Delta = 0.25$ mm)")
-    ax.plot(f_ghz, s11_db_sf11, color="#0d47a1", lw=2.3, label="Wakis FIT ($\\Delta = 0.1125$ mm, $\\geq 4$ cells/feat)")
-    ax.axhline(-15.0, color="#ad1457", ls=":", lw=1.1, label="SWRU120D Table 3-1 ($< -15$ dB)")
-    ax.axhline(-10.0, color="#37474f", ls="-.", lw=1.0, label="SWRU120D Sec. 2.2 ($-10$ dB, $>300$ MHz)")
+    ax.plot(f_ghz, s11_db_base, color="#90caf9", ls=":", lw=1.4, label="Uniform $\\Delta = 0.50$ mm")
+    ax.plot(
+        f_ghz,
+        s11_db_sf11,
+        color="#42a5f5",
+        lw=2.5,
+        label=f"Uniform 0.1125 mm ref ($f_0={sf11_json['f_res_ghz']:.3f}$ GHz)",
+    )
+    ax.plot(
+        f_ghz,
+        s11_db_nc,
+        color="#0d47a1",
+        ls="-.",
+        lw=1.9,
+        label=f"Local non-cubic ($f_0={nc_json['f_res_ghz']:.3f}$ GHz, $-33\\%$ cells)",
+    )
+    ax.axhline(-15.0, color="#ad1457", ls=":", lw=1.0, label="SWRU120D ($< -15$ dB)")
+    ax.axhline(-10.0, color="#37474f", ls="-.", lw=0.9, label="$-10$ dB BW threshold")
     ax.set_xlim(2.0, 2.8)
     ax.set_ylim(-24.0, 0.0)
     ax.set_xlabel("Frequency [GHz]")
     ax.set_ylabel("$|S_{11}|$ [dB]")
-    ax.grid(True, ls=":", alpha=0.45)
-    ax.legend(loc="lower left", fontsize=7.2)
+    ax.legend(loc="lower left", fontsize=8.5)
     ax.set_title(
-        f"(a) Reflection $|S_{{11}}|$ ($f_{{\\mathrm{{res}}}}={sf11_json['f_res_ghz']:.3f}$ GHz, BW={sf11_json['bw_10db_mhz']:.0f} MHz)",
-        fontsize=10.0,
-        fontweight="bold",
+        f"(a) Reflection $|S_{{11}}|$ ($f_{{\\mathrm{{res}}}}={nc_json['f_res_ghz']:.3f}$ GHz)"
     )
 
     # (b) Input impedance Re(Z_in) and Im(Z_in)
     ax = axes[1]
     ax.axvspan(2.40, 2.48, color="#fff59d", alpha=0.55)
-    ax.plot(f_ghz, zin_re, color="#1565c0", lw=2.2, label="$\\mathrm{Re}(Z_{\\mathrm{in}})$ [$\\Omega$]")
-    ax.plot(f_ghz, zin_im, color="#ef6c00", lw=2.2, label="$\\mathrm{Im}(Z_{\\mathrm{in}})$ [$\\Omega$]")
-    ax.axhline(50.0, color="#1565c0", ls="--", lw=1.0, alpha=0.7, label="$R_0 = 50\\;\\Omega$ Target")
-    ax.axhline(0.0, color="#ef6c00", ls=":", lw=1.0, alpha=0.7, label="$X_{\\mathrm{in}} = 0\\;\\Omega$ Resonance")
+    ax.plot(f_ghz, zin_re_u, color="#90caf9", lw=2.4, label="Uniform 0.1125 mm $\\mathrm{Re}(Z_{\\mathrm{in}})$")
+    ax.plot(f_ghz, zin_im_u, color="#ffcc80", lw=2.4, label="Uniform 0.1125 mm $\\mathrm{Im}(Z_{\\mathrm{in}})$")
+    ax.plot(f_ghz, zin_re_nc, color="#0d47a1", ls="--", lw=1.8, label="Local non-cubic $\\mathrm{Re}(Z_{\\mathrm{in}})$")
+    ax.plot(f_ghz, zin_im_nc, color="#e65100", ls="--", lw=1.8, label="Local non-cubic $\\mathrm{Im}(Z_{\\mathrm{in}})$")
+    ax.axhline(50.0, color="#1565c0", ls=":", lw=0.9, alpha=0.7, label="$R_0 = 50\\;\\Omega$ target")
+    ax.axhline(0.0, color="#ef6c00", ls=":", lw=0.9, alpha=0.7)
     ax.set_xlim(2.0, 2.8)
     ax.set_ylim(-140.0, 140.0)
     ax.set_xlabel("Frequency [GHz]")
-    ax.set_ylabel("Input Impedance $Z_{\\mathrm{in}}$ [$\\Omega$]")
-    ax.grid(True, ls=":", alpha=0.45)
-    ax.legend(loc="upper right", fontsize=8.2)
+    ax.set_ylabel("Input impedance $Z_{\\mathrm{in}}$ [$\\Omega$]")
+    ax.legend(loc="upper right", fontsize=8.5)
     ax.set_title(
-        f"(b) Input Impedance ($Z_{{\\mathrm{{in}}}}(f_0) = {sf11_json['zin_res_real_ohm']:.1f} {sf11_json['zin_res_imag_ohm']:+.1f}j\\;\\Omega$)",
-        fontsize=10.0,
-        fontweight="bold",
+        f"(b) Impedance $Z_{{\\mathrm{{in}}}}(f_0) = {nc_json['zin_res_real_ohm']:.1f} {nc_json['zin_res_imag_ohm']:+.1f}j\\;\\Omega$"
     )
 
     # (c) Calibrated 50-Ohm Smith Chart
     ax = axes[2]
     _draw_smith_grid(ax)
-    ax.plot(np.real(s11_c), np.imag(s11_c), color="#0d47a1", lw=2.2, label="Wakis $S_{11}(f)$ (2.0–2.8 GHz)")
+    ax.plot(np.real(s11_c_u), np.imag(s11_c_u), color="#90caf9", lw=2.5, label="Uniform 0.1125 mm ref")
+    ax.plot(np.real(s11_c_nc), np.imag(s11_c_nc), color="#0d47a1", ls="--", lw=1.8, label="Local non-cubic")
     i_240 = int(np.argmin(np.abs(freqs - 2.40e9)))
     i_244 = int(np.argmin(np.abs(freqs - 2.44e9)))
     i_248 = int(np.argmin(np.abs(freqs - 2.48e9)))
-    ax.plot(np.real(s11_c[i_240]), np.imag(s11_c[i_240]), "o", color="#2e7d32", ms=6, label="2.40 GHz")
-    ax.plot(np.real(s11_c[i_244]), np.imag(s11_c[i_244]), "*", color="#d32f2f", ms=10, label="2.44 GHz Center")
-    ax.plot(np.real(s11_c[i_248]), np.imag(s11_c[i_248]), "s", color="#6a1b9a", ms=6, label="2.48 GHz")
-    # -10 dB VSWR circle (|Gamma| = 0.3162)
+    ax.plot(np.real(s11_c_nc[i_240]), np.imag(s11_c_nc[i_240]), "o", color="#2e7d32", ms=5.5, label="2.40 GHz")
+    ax.plot(np.real(s11_c_nc[i_244]), np.imag(s11_c_nc[i_244]), "*", color="#d32f2f", ms=9.0, label="2.44 GHz center")
+    ax.plot(np.real(s11_c_nc[i_248]), np.imag(s11_c_nc[i_248]), "s", color="#6a1b9a", ms=5.5, label="2.48 GHz")
     th_c = np.linspace(0, 2 * np.pi, 180)
-    ax.plot(0.3162 * np.cos(th_c), 0.3162 * np.sin(th_c), color="#c62828", ls="--", lw=1.2, label="$-10$ dB Circle")
+    ax.plot(0.3162 * np.cos(th_c), 0.3162 * np.sin(th_c), color="#c62828", ls=":", lw=1.1, marker="none", label="$-10$ dB circle")
     ax.set_aspect("equal")
     ax.set_xlim(-1.08, 1.08)
     ax.set_ylim(-1.08, 1.08)
     ax.set_xlabel("$\\mathrm{Re}(S_{11})$")
     ax.set_ylabel("$\\mathrm{Im}(S_{11})$")
-    ax.legend(loc="lower left", fontsize=7.6)
-    ax.set_title("(c) $50\\;\\Omega$ Smith Chart Locus (2.0–2.8 GHz)", fontsize=10.0, fontweight="bold")
+    ax.legend(loc="lower left", fontsize=8.5)
+    ax.set_title("(c) $50\\;\\Omega$ Smith chart locus (2.0–2.8 GHz)")
 
-    fig.suptitle(
-        "Port Reflection $S_{11}$, Input Impedance & Smith Chart Validation vs TI SWRU120D",
-        fontsize=12.6,
-        fontweight="bold",
-        y=0.99,
-    )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
-    fig.savefig(out_path)
-    plt.close(fig)
+    figstyle.save(fig, out_path)
     return out_path
 
 
 def _draw_smith_grid(ax: plt.Axes) -> None:
     """Draw constant-resistance and constant-reactance circles on a Smith chart."""
     th = np.linspace(0.0, 2.0 * np.pi, 240)
-    ax.plot(np.cos(th), np.sin(th), color="#263238", lw=1.3)
+    ax.plot(np.cos(th), np.sin(th), color="#263238", lw=1.2, marker="none")
     ax.axhline(0.0, color="#90a4ae", lw=0.7)
     for r in (0.2, 0.5, 1.0, 2.0, 5.0):
         cx = r / (r + 1.0)
         rad = 1.0 / (r + 1.0)
-        ax.plot(cx + rad * np.cos(th), rad * np.sin(th), color="#b0bec5", lw=0.65, ls="-")
+        ax.plot(cx + rad * np.cos(th), rad * np.sin(th), color="#b0bec5", lw=0.6, ls="-", marker="none")
     for x_val in (-2.0, -1.0, -0.5, 0.5, 1.0, 2.0):
         cy = 1.0 / x_val
         rad = abs(1.0 / x_val)
@@ -2186,7 +2889,7 @@ def _draw_smith_grid(ax: plt.Axes) -> None:
         inside = pts_x**2 + pts_y**2 <= 1.001
         pts_x = np.where(inside, pts_x, np.nan)
         pts_y = np.where(inside, pts_y, np.nan)
-        ax.plot(pts_x, pts_y, color="#cfd8dc", lw=0.65, ls="--")
+        ax.plot(pts_x, pts_y, color="#cfd8dc", lw=0.6, ls="--", marker="none")
 
 
 def _plot_08_resolution_and_param(
@@ -2200,23 +2903,31 @@ def _plot_08_resolution_and_param(
     sf18_json: dict,
     sf11_npz,
     sf11_json: dict,
+    nc_npz,
+    nc_json: dict,
     param_npz,
     param_json: dict,
     out_path: Path,
 ) -> Path:
-    """Figure 8: 5-level grid convergence + Richardson extrapolation, hypothesis study, and Chu bound."""
-    fig, axes = plt.subplots(2, 2, figsize=(14.8, 10.6), dpi=160)
+    """Figure 8: 3-panel 5-level uniform convergence + local non-cubic upgrade, ground-plane study, and Chu bound."""
+    fig, axes = figstyle.new_figure(
+        ncols=3,
+        nrows=1,
+        width=figstyle.FULL_WIDTH_IN * 1.68,
+        height=4.45,
+    )
 
-    # (a) Resolution study S11(f) across all 5 mesh levels (0.50 -> 0.1125 mm)
-    ax = axes[0, 0]
+    # (a) 5-Level uniform resolution study + local non-cubic mesh upgrade + Richardson inset
+    ax = axes[0]
     f_ghz = sf11_npz["freqs_hz"] / 1e9
-    ax.axvspan(2.40, 2.48, color="#fff59d", alpha=0.5, label="2.4 GHz ISM Band (2.40–2.48 GHz)")
+    ax.axvspan(2.40, 2.48, color="#fff59d", alpha=0.5, label="2.4 GHz ISM band")
     for npz_d, js_d, lbl, col, ls, lw in [
-        (base_npz, base_json, "0.50 mm", "#90caf9", ":", 1.6),
-        (med_npz, med_json, "0.35 mm", "#26a69a", "-.", 1.7),
-        (fine_npz, fine_json, "0.25 mm", "#1e88e5", "--", 1.8),
-        (sf18_npz, sf18_json, "0.18 mm (≥4 cells/feat)", "#ef6c00", "-", 2.0),
-        (sf11_npz, sf11_json, "0.1125 mm (≥4 cells/feat)", "#0d47a1", "-", 2.3),
+        (base_npz, base_json, "0.50 mm", "#90caf9", ":", 1.4),
+        (med_npz, med_json, "0.35 mm", "#26a69a", "-.", 1.5),
+        (fine_npz, fine_json, "0.25 mm", "#1e88e5", "--", 1.6),
+        (sf18_npz, sf18_json, "0.18 mm (≥4/feat)", "#fb8c00", "-", 1.7),
+        (sf11_npz, sf11_json, "0.1125 mm ref (285.8k)", "#42a5f5", "-", 2.4),
+        (nc_npz, nc_json, "Local non-cubic (191.8k)", "#0d47a1", "--", 1.9),
     ]:
         ax.plot(
             f_ghz,
@@ -2224,20 +2935,18 @@ def _plot_08_resolution_and_param(
             color=col,
             ls=ls,
             lw=lw,
-            label=f"$\\Delta=$ {lbl} ($N={js_d['mesh_info']['n_cells']:,}$, $f_0={js_d['f_res_ghz']:.3f}$ GHz)",
+            label=f"{lbl} ($f_0={js_d['f_res_ghz']:.3f}$ GHz)",
         )
-    ax.axhline(-15.0, color="#ad1457", ls=":", lw=1.0, label="SWRU120D Table 3-1 ($<-15$ dB)")
-    ax.axhline(-10.0, color="#37474f", ls="-.", lw=1.0)
+    ax.axhline(-15.0, color="#ad1457", ls=":", lw=0.9)
+    ax.axhline(-10.0, color="#37474f", ls="-.", lw=0.9)
     ax.set_xlim(2.0, 2.8)
     ax.set_ylim(-24.0, 0.0)
     ax.set_xlabel("Frequency [GHz]")
     ax.set_ylabel("$|S_{11}|$ [dB]")
-    ax.grid(True, ls=":", alpha=0.45)
-    ax.legend(loc="lower left", fontsize=7.2)
-    ax.set_title("(a) 5-Level Resolution Study: $|S_{11}(f)|$ Convergence ($0.50\\to 0.1125$ mm)", fontsize=10.2, fontweight="bold")
+    ax.legend(loc="lower left", fontsize=8.5)
+    ax.set_title("(a) 5-level convergence & non-cubic mesh")
 
-    # (b) Resonant frequency & -10 dB Bandwidth vs trace cell size + Richardson extrapolation
-    ax = axes[0, 1]
+    # Inset showing Richardson continuum extrapolation of f_res(Delta)
     cells_mm = np.array([0.50, 0.35, 0.25, 0.18, 0.1125])
     f_res_arr = np.array(
         [
@@ -2248,119 +2957,82 @@ def _plot_08_resolution_and_param(
             sf11_json["f_res_ghz"],
         ]
     )
-    bw_arr = np.array(
-        [
-            base_json["bw_10db_mhz"],
-            med_json["bw_10db_mhz"],
-            fine_json["bw_10db_mhz"],
-            sf18_json["bw_10db_mhz"],
-            sf11_json["bw_10db_mhz"],
-        ]
-    )
     f_inf, f_slope, d_dense = richardson_extrapolate_ifa(cells_mm, f_res_arr, order=1.5)
-    bw_inf, bw_slope, _ = richardson_extrapolate_ifa(cells_mm, bw_arr, order=1.5)
+    ax_ins = ax.inset_axes([0.54, 0.56, 0.43, 0.38])
+    ax_ins._is_inset = True
+    ax_ins.plot(cells_mm, f_res_arr, "o-", color="#1e88e5", lw=1.3, ms=4.0, label="Uniform")
+    ax_ins.plot(d_dense, f_inf + f_slope * (d_dense**1.5), "--", color="#0d47a1", lw=1.1, marker="none")
+    ax_ins.plot(0.115, nc_json["f_res_ghz"], "D", color="#c62828", ms=4.8, label="Non-cubic")
+    ax_ins.plot(0.0, f_inf, "*", color="#0d47a1", ms=7.0)
+    ax_ins.set_xlim(0.53, -0.03)
+    ax_ins.set_ylim(2.38, 2.47)
+    ax_ins.set_xlabel("$\\Delta_{\\min}$ [mm]", fontsize=8.5)
+    ax_ins.set_ylabel("$f_{\\mathrm{res}}$ [GHz]", fontsize=8.5)
+    ax_ins.tick_params(labelsize=8.5)
+    ax_ins.set_title(f"$f_\\infty = {f_inf:.3f}$ GHz", fontsize=8.5, pad=2)
 
-    ax2 = ax.twinx()
-    l1 = ax.plot(cells_mm, f_res_arr, "o-", color="#0d47a1", lw=2.2, ms=6.5, label="Simulated $f_{\\mathrm{res}}(\\Delta)$ [GHz]")
-    l1_ext = ax.plot(
-        d_dense,
-        f_inf + f_slope * (d_dense**1.5),
-        color="#0d47a1",
-        ls="--",
-        lw=1.3,
-        label=f"Extrapolated $f_\\infty = {f_inf:.3f}$ GHz",
-    )
-    ax.plot(0.0, f_inf, "*", color="#0d47a1", ms=11)
-    l2 = ax.axhline(2.44, color="#1565c0", ls=":", lw=1.2, label="SWRU120D Fig. 2-8 ($\\approx 2.44$ GHz, approx.)")
-
-    l3 = ax2.plot(cells_mm, bw_arr, "s-", color="#c62828", lw=2.0, ms=6, label="Simulated $\\mathrm{BW}_{-10\\,\\mathrm{dB}}(\\Delta)$ [MHz]")
-    l3_ext = ax2.plot(
-        d_dense,
-        bw_inf + bw_slope * (d_dense**1.5),
-        color="#c62828",
-        ls="--",
-        lw=1.2,
-        label=f"Extrapolated $\\mathrm{{BW}}_\\infty = {bw_inf:.0f}$ MHz",
-    )
-    ax2.plot(0.0, bw_inf, "D", color="#c62828", ms=7)
-    l4 = ax2.axhline(300.0, color="#c62828", ls=":", lw=1.2, label="SWRU120D Spec ($>300$ MHz)")
-
-    ax.set_xlim(0.53, -0.02)
-    ax.set_xlabel("Trace Cell Size $\\Delta_{\\mathrm{trace}}$ [mm] (continuum $\\Delta\\to 0$ at right)")
-    ax.set_ylabel("Resonant Frequency $f_{\\mathrm{res}}$ [GHz]", color="#0d47a1")
-    ax2.set_ylabel("$-10$ dB Bandwidth $\\mathrm{BW}_{-10\\,\\mathrm{dB}}$ [MHz]", color="#c62828")
-    ax.set_ylim(2.35, 2.50)
-    ax2.set_ylim(230.0, 350.0)
-    ax.grid(True, ls=":", alpha=0.45)
-    lines = l1 + l1_ext + [l2] + l3 + l3_ext + [l4]
-    ax.legend(lines, [l.get_label() for l in lines], loc="lower left", fontsize=7.1)
-    ax.set_title("(b) Grid Convergence & Continuum Extrapolation ($f_{\\mathrm{res}}, \\mathrm{BW}_{-10\\,\\mathrm{dB}}$)", fontsize=10.2, fontweight="bold")
-
-    # (c) Parameter study: Ground-plane length L_gnd & Hypothesis study markers
-    ax = axes[1, 0]
+    # (b) Parameter study: Ground-plane length L_gnd (SWRA117D)
+    ax = axes[1]
     f_p = param_npz["freqs_hz"] / 1e9
     gnd_lengths = param_npz["ground_lengths_mm"]
     gnd_curves = param_npz["ground_s11_curves_db"]
     colors = ["#8e24aa", "#fb8c00", "#1e88e5", "#2e7d32"]
     for lg, curve, col in zip(gnd_lengths, gnd_curves, colors):
-        ax.plot(f_p, curve, color=col, lw=1.9, label=f"$L_{{\\mathrm{{gnd}}}} = {lg:.0f}$ mm ($29.6\\times{lg:.0f}\\;\\mathrm{{mm}}^2$)")
+        ax.plot(
+            f_p,
+            curve,
+            color=col,
+            lw=1.8,
+            label=f"$L_{{\\mathrm{{gnd}}}} = {lg:.0f}$ mm ($29.6\\times{lg:.0f}\\;\\mathrm{{mm}}^2$)",
+        )
     ax.axhline(-10.0, color="#37474f", ls=":", lw=1.0)
     ax.set_xlim(2.0, 2.8)
     ax.set_ylim(-24.0, 0.0)
     ax.set_xlabel("Frequency [GHz]")
     ax.set_ylabel("$|S_{11}|$ [dB]")
-    ax.grid(True, ls=":", alpha=0.45)
-    ax.legend(loc="lower left", fontsize=7.8, title="Ground-Plane Length Sweep (SWRA117D)")
-    ax.set_title("(c) Parameter Study: Ground-Plane Size Effect on Matching & BW", fontsize=10.2, fontweight="bold")
+    ax.legend(loc="lower left", fontsize=8.5, title="Ground-plane length (SWRA117D)", title_fontsize=8.5)
+    ax.set_title("(b) Ground-plane length study")
 
-    # (d) Chu-Wheeler Fundamental Q / Bandwidth Bound vs IFA Alone & Full PCB
-    ax = axes[1, 1]
+    # (c) Chu-Wheeler Fundamental Q / Bandwidth Bound vs IFA Alone & Full PCB
+    ax = axes[2]
     ka_grid = np.linspace(0.25, 2.2, 200)
     fbw_lossless = [chu_max_fractional_bandwidth(k, vswr_max=1.925, efficiency=1.0) * 100.0 for k in ka_grid]
     fbw_fr4 = [
-        chu_max_fractional_bandwidth(k, vswr_max=1.925, efficiency=sf11_json["eta_rad_2g44_pct"] / 100.0) * 100.0
+        chu_max_fractional_bandwidth(k, vswr_max=1.925, efficiency=nc_json["eta_rad_2g44_pct"] / 100.0) * 100.0
         for k in ka_grid
     ]
-    ax.plot(ka_grid, fbw_lossless, color="#263238", lw=2.0, label="Chu–Wheeler Max FBW ($\\eta_{\\mathrm{rad}}=100\\%$, VSWR$<1.92$)")
+    ax.plot(ka_grid, fbw_lossless, color="#263238", lw=1.9, marker="none", label="Chu–Wheeler bound ($\\eta_{\\mathrm{rad}}=100\\%$)")
     ax.plot(
         ka_grid,
         fbw_fr4,
         color="#ef6c00",
         ls="--",
-        lw=2.0,
-        label=f"Chu–Wheeler Bound with FR-4 Loss ($\\eta_{{\\mathrm{{rad}}}}={sf11_json['eta_rad_2g44_pct']:.0f}\\%$)",
+        lw=1.9,
+        marker="none",
+        label=f"With FR-4 loss ($\\eta_{{\\mathrm{{rad}}}}={nc_json['eta_rad_2g44_pct']:.0f}\\%$)",
     )
     k0 = 2.0 * np.pi * 2.44e9 / c_light
     ka_trace = k0 * 0.5 * np.hypot(25.7e-3, 7.5e-3)
     ka_board = k0 * 0.5 * np.hypot(29.58e-3, 39.5e-3)
-    fbw_meas_pct = 100.0 * sf11_json["bw_10db_mhz"] / (sf11_json["f_res_ghz"] * 1e3)
-    ax.plot(ka_trace, fbw_meas_pct, "s", color="#c62828", ms=9, label=f"IFA Trace Alone ($ka={ka_trace:.2f}$)")
-    ax.plot(ka_board, fbw_meas_pct, "*", color="#0d47a1", ms=12, label=f"Full PCB + Ground Counterpoise ($ka={ka_board:.2f}$)")
+    fbw_meas_pct = 100.0 * nc_json["bw_10db_mhz"] / (nc_json["f_res_ghz"] * 1e3)
+    ax.plot(ka_trace, fbw_meas_pct, "s", color="#c62828", ms=7.5, label=f"IFA trace alone ($ka={ka_trace:.2f}$)")
+    ax.plot(ka_board, fbw_meas_pct, "*", color="#0d47a1", ms=10.5, label=f"Full PCB + ground ($ka={ka_board:.2f}$)")
     ax.annotate(
         "Ground plane increases\neffective Chu sphere $a$",
         xy=(ka_board, fbw_meas_pct),
-        xytext=(0.45, 4.2),
-        arrowprops=dict(arrowstyle="->", color="#0d47a1", lw=1.3),
-        fontsize=8.3,
+        xytext=(0.82, 24.0),
+        arrowprops=dict(arrowstyle="->", color="#0d47a1", lw=1.1),
+        fontsize=8.5,
         color="#0d47a1",
         fontweight="bold",
     )
     ax.set_xlim(0.25, 2.1)
     ax.set_ylim(2.0, 95.0)
     ax.set_yscale("log")
-    ax.set_xlabel("Electrical Size $k_0 a$ [rad]")
-    ax.set_ylabel("$-10$ dB Fractional Bandwidth $\\Delta f / f_0$ [%]")
-    ax.grid(True, which="both", ls=":", alpha=0.45)
-    ax.legend(loc="lower right", fontsize=7.6)
-    ax.set_title("(d) Chu–Wheeler Bound & Role of the Ground Plane as Radiator", fontsize=10.2, fontweight="bold")
+    ax.set_xlabel("Electrical size $k_0 a$ [rad]")
+    ax.set_ylabel("$-10$ dB fractional bandwidth $\\Delta f / f_0$ [%]")
+    ax.legend(loc="lower right", fontsize=8.5)
+    ax.set_title("(c) Chu–Wheeler $Q$ bound")
 
-    fig.suptitle(
-        "5-Level Mesh Convergence, Continuum Extrapolation, Ground-Plane Study & Chu–Wheeler Bound",
-        fontsize=12.6,
-        fontweight="bold",
-        y=0.98,
-    )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
-    fig.savefig(out_path)
-    plt.close(fig)
+    figstyle.save(fig, out_path)
     return out_path

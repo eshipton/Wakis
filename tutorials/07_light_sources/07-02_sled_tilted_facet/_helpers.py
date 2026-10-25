@@ -1173,7 +1173,6 @@ def run_pml_floor_study(
         "n_steps": mesh_metrics["n_steps"],
     }
 
-
 def run_incoherent_dipole_ensemble_fit(
     cpw: int = 14,
     width: float = WIDTH_MM,
@@ -1398,3 +1397,415 @@ def run_incoherent_dipole_ensemble_fit(
         "n_cells": mesh_metrics["n_cells"],
         "n_steps": mesh_metrics["n_steps"],
     }
+
+
+def build_sled_schematic_objects(
+    theta_deg: float = 7.0,
+    width: float = WIDTH_SM,
+    cpw: int = 14,
+    ar_coated: bool = True,
+    n_pml: int = 10,
+) -> dict:
+    """Build lightweight solver/grid/source/monitor objects for tilted-facet schematic."""
+    from types import SimpleNamespace
+    from wakis import GridFIT3D
+
+    sim, geom_info = create_tilted_facet_simulation(
+        theta_deg=theta_deg,
+        width=width,
+        cpw=cpw,
+        ar_coated=ar_coated,
+        n_pml=n_pml,
+        include_facet=True,
+    )
+    x = np.asarray(sim._axis(0), dtype=float)
+    y = np.asarray(sim._axis(1), dtype=float)
+    z = np.asarray(sim._axis(2), dtype=float)
+    grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=n_pml,
+    )
+    structures = sim.structures
+    names = ["Cladding (n = 3.311)", f"Ridge core (w = {width*1e6:.2f} µm, n = 3.337)"]
+    if ar_coated:
+        names.extend(["λ/4 AR film (216.6 nm, n = 1.72)", "Air (n = 1.00)"])
+    else:
+        names.append("Air (n = 1.00)")
+    for st, nm in zip(structures, names):
+        st.name = nm
+
+    pulse = GaussianSource(frequency=FREQ_0, fwidth=0.22 * FREQ_0)
+    port_size = (0.0, 9.6e-6, np.inf)
+    src = ModeSource(
+        pulse,
+        center=(-3.3e-6, 0.0, 0.0),
+        size=port_size,
+        direction="+",
+        mode_index=0,
+        mode_frequency=FREQ_0,
+    )
+    src.normal = 0
+    src.index = int(np.argmin(np.abs(x - (-3.3e-6))))
+    mon = ModeMonitor(
+        [FREQ_0],
+        center=(-2.6e-6, 0.0, 0.0),
+        size=port_size,
+        n_modes=1,
+        mode_frequency=FREQ_0,
+    )
+    n2f = Near2FarMonitor(
+        [FREQ_0],
+        center=(0.85e-6, 0.0, 0.0),
+        size=(0.0, 9.6e-6, geom_info["hz"]),
+        eps_r=1.0,
+    )
+    n2f.label = "Near2Far plane (x = 0.85 µm)"
+    mesh_info = inspect_simulation_mesh(sim, min_feature=geom_info["t_ar_eff"])
+    return {
+        "solver": solver_stub,
+        "grid": grid,
+        "structures": structures,
+        "sources": [src],
+        "monitors": [mon, n2f],
+        "geom_info": geom_info,
+        "mesh_info": mesh_info,
+    }
+
+
+def build_incoherent_dipole_schematic_objects(
+    width: float = WIDTH_MM,
+    cpw: int = 14,
+    n_unique_half: int = 5,
+    n_pml: int = 8,
+) -> dict:
+    """Build lightweight solver/grid/source/monitor objects for the 9-dipole ensemble."""
+    from types import SimpleNamespace
+    from wakis import GridFIT3D
+
+    sim, geom_info = create_tilted_facet_simulation(
+        theta_deg=0.0,
+        width=width,
+        cpw=cpw,
+        ar_coated=False,
+        include_facet=False,
+        n_pml=n_pml,
+        xmin_nom=-2.4e-6,
+        xmax_nom=2.4e-6,
+        ymin=-5.0e-6,
+        ymax=5.0e-6,
+    )
+    x = np.asarray(sim._axis(0), dtype=float)
+    y = np.asarray(sim._axis(1), dtype=float)
+    z = np.asarray(sim._axis(2), dtype=float)
+    grid = GridFIT3D(x=x, y=y, z=z, verbose=0)
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=n_pml,
+    )
+    structures = sim.structures
+    structures[0].name = "Cladding (n = 3.311)"
+    structures[1].name = f"Bimodal core (w₂ = {width*1e6:.2f} µm, n = 3.337)"
+
+    pulse = GaussianSource(frequency=FREQ_0, fwidth=0.25 * FREQ_0)
+    y_dips = np.linspace(-0.42 * width, 0.42 * width, 2 * n_unique_half - 1)
+    sources = [
+        CurrentSource(
+            pulse,
+            component="y",
+            center=(-1.0e-6, float(yd), 0.0),
+            size=(0.0, 0.0, np.inf),
+        )
+        for yd in y_dips
+    ]
+    mon = ModeMonitor(
+        [FREQ_0],
+        center=(1.0e-6, 0.0, 0.0),
+        size=(0.0, 8.6e-6, np.inf),
+        n_modes=2,
+        mode_frequency=FREQ_0,
+    )
+    return {
+        "solver": solver_stub,
+        "grid": grid,
+        "structures": structures,
+        "sources": sources,
+        "monitors": [mon],
+        "y_dips_um": y_dips * 1e6,
+        "geom_info": geom_info,
+    }
+
+
+def tidy_sled_schematic_axes(
+    ax,
+    xlim: tuple[float, float] = (-4.2, 1.8),
+    ylim: tuple[float, float] = (-6.0, 7.2),
+    is_dipole: bool = False,
+    n_pml: int = 10,
+    fontsize: float = 7.8,
+) -> None:
+    """Declutter internal schematic text and place clear region/boundary callouts."""
+    ax.set_aspect("auto")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_title(ax.get_title(), pad=22)
+    drop_keys = ("boundary:", "Out-of-plane", "Cladding", "Ridge core", "Bimodal core", "AR film", "Air (")
+    src_texts = []
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif "CurrentSource" in s:
+            src_texts.append(t_obj)
+    if len(src_texts) > 1:
+        for t_obj in src_texts[1:]:
+            t_obj.remove()
+        src_texts[0].set_text("9 incoherent dipoles ($J_y$, random $\\phi_j$)")
+        src_texts[0].set_position((-0.85, 1.55))
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "#555555",
+        "linewidth": 0.5,
+        "alpha": 0.88,
+    }
+    ax.text(
+        xlim[0] + 0.15,
+        ylim[1] - 1.65,
+        f"±x, ±y: CPML ({n_pml} cells) | ±z: Periodic",
+        ha="left",
+        va="center",
+        fontsize=fontsize - 0.4,
+        color="#222222",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        xlim[0] + 0.18,
+        -3.5 if not is_dipole else -3.3,
+        "Cladding (n = 3.311)",
+        ha="left",
+        va="center",
+        fontsize=fontsize,
+        color="#111111",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    if is_dipole:
+        ax.text(
+            0.0,
+            0.0,
+            "Active core (w₂ = 2.80 µm, n = 3.337)",
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    else:
+        ax.text(
+            -1.45,
+            0.0,
+            "Ridge core (w₁ = 1.75 µm, n = 3.337)",
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            1.15,
+            -3.5,
+            "Air (n = 1.00)",
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.annotate(
+            "λ/4 AR film (216.6 nm, n = 1.72)\nTilted facet θt = 7°",
+            xy=(0.11, 2.2),
+            xytext=(-1.65, 3.65),
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.2,
+            color="#111111",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#222222", "lw": 0.8},
+            zorder=9,
+        )
+
+
+def overlay_sled_geometry(
+    ax,
+    theta_deg: float = 7.0,
+    width: float = WIDTH_SM,
+    ar_coated: bool = False,
+    is_dipole_ensemble: bool = False,
+    dipole_y_um: np.ndarray | None = None,
+    line_color: str = "white",
+    show_monitors: bool = True,
+    show_snell_beam: bool = False,
+    fontsize: float = 6.5,
+) -> None:
+    """Overlay SLED waveguide core, tilted facet, AR layer, CPML, and monitors/dipoles."""
+    from wakis import schematic
+
+    if is_dipole_ensemble:
+        obj = build_incoherent_dipole_schematic_objects(width=width, cpw=10)
+    else:
+        obj = build_sled_schematic_objects(
+            theta_deg=theta_deg, width=width, cpw=10, ar_coated=ar_coated
+        )
+
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xy",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=False,
+        outline_color=line_color,
+        label_materials=False,
+    )
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "#555555",
+        "linewidth": 0.5,
+        "alpha": 0.82,
+    }
+    w_half_um = 0.5 * width * 1e6
+
+    if is_dipole_ensemble:
+        x_lo, x_hi = -2.4, 2.4
+        ax.plot([x_lo, x_hi], [w_half_um, w_half_um], ls="--", lw=1.1, color=line_color, zorder=7)
+        ax.plot([x_lo, x_hi], [-w_half_um, -w_half_um], ls="--", lw=1.1, color=line_color, zorder=7)
+        if dipole_y_um is not None:
+            ax.plot(
+                np.full_like(dipole_y_um, -1.0),
+                dipole_y_um,
+                "*",
+                color="#00e5ff" if line_color == "white" else "#d95f02",
+                ms=6.5,
+                mec="black",
+                mew=0.4,
+                zorder=9,
+            )
+            ax.text(
+                -1.0,
+                float(np.max(dipole_y_um)) + 0.55,
+                "9 dipoles $J_y$",
+                ha="center",
+                va="bottom",
+                fontsize=fontsize,
+                color="#111111",
+                bbox=bbox_kw,
+                zorder=9,
+            )
+        if show_monitors:
+            ax.plot([1.0, 1.0], [-4.3, 4.3], ls="-.", lw=1.1, color="#2ca25f", zorder=8)
+            ax.text(
+                1.05,
+                -4.1,
+                "ModeMonitor\n(TE0, TE1)",
+                ha="left",
+                va="bottom",
+                fontsize=fontsize - 0.3,
+                color="#1b7837",
+                bbox=bbox_kw,
+                zorder=9,
+            )
+        ax.text(
+            -2.25,
+            -4.2,
+            f"Core w₂ = {width*1e6:.2f} µm (n = 3.337)\nCladding n = 3.311 | CPML",
+            ha="left",
+            va="bottom",
+            fontsize=fontsize - 0.3,
+            color="#111111",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        return
+
+    # Tilted-facet waveguide outlines
+    th_rad = np.deg2rad(theta_deg)
+    tan_th = np.tan(th_rad)
+    y_span = np.linspace(-5.2, 5.2, 200)
+    x_fac = y_span * tan_th
+    x_top_end = w_half_um * tan_th
+    x_bot_end = -w_half_um * tan_th
+    ax.plot([-3.8, x_top_end], [w_half_um, w_half_um], ls=":", lw=1.1, color=line_color, zorder=7)
+    ax.plot([-3.8, x_bot_end], [-w_half_um, -w_half_um], ls=":", lw=1.1, color=line_color, zorder=7)
+    ax.plot(x_fac, y_span, ls="--", lw=1.35, color=line_color, zorder=7)
+    if ar_coated:
+        dx_ar_um = (T_AR_COAT / np.cos(th_rad)) * 1e6
+        ax.plot(x_fac + dx_ar_um, y_span, ls="-", lw=1.0, color="#ffd92f", zorder=7)
+
+    if show_monitors:
+        ax.plot([-3.3, -3.3], [-4.8, 4.8], ls="--", lw=1.0, color="#e6550d", alpha=0.88, zorder=7)
+        ax.plot([-2.6, -2.6], [-4.8, 4.8], ls="-.", lw=1.0, color="#2ca25f", alpha=0.88, zorder=7)
+        ax.plot([0.85, 0.85], [-4.8, 4.8], ls=":", lw=1.1, color="#3182bd", alpha=0.88, zorder=7)
+        ax.text(-3.28, 4.45, "ModeSource", fontsize=fontsize - 0.4, color="#a63603", bbox=bbox_kw, zorder=9)
+        ax.text(-2.55, -4.65, "ModeMonitor", fontsize=fontsize - 0.4, color="#006d2c", bbox=bbox_kw, zorder=9)
+        ax.text(0.82, 4.45, "Near2Far", ha="right", fontsize=fontsize - 0.4, color="#08519c", bbox=bbox_kw, zorder=9)
+
+    ax.text(
+        -3.65,
+        0.0,
+        f"Core (n = 3.337)\nw₁ = {width*1e6:.2f} µm",
+        ha="left",
+        va="center",
+        fontsize=fontsize - 0.2,
+        color="#111111",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        -3.65,
+        -3.4,
+        "Cladding (n = 3.311)",
+        ha="left",
+        va="center",
+        fontsize=fontsize - 0.2,
+        color="#111111",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        1.48,
+        -3.4,
+        f"Air (n = 1.00)\nFacet θt = {theta_deg:.0f}°",
+        ha="right",
+        va="center",
+        fontsize=fontsize - 0.2,
+        color="#111111",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    if show_snell_beam and abs(theta_deg - 7.0) < 1e-3:
+        # Refracted beam at +24 deg from facet normal (+17 deg from +x axis)
+        ang_x = np.deg2rad(24.0 - 7.0)
+        ax.annotate(
+            "Snell 24°",
+            xy=(1.25 * np.cos(ang_x), 1.25 * np.sin(ang_x)),
+            xytext=(0.15, 0.05),
+            fontsize=fontsize - 0.3,
+            color="#d95f02",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#d95f02", "lw": 1.1},
+            zorder=9,
+        )
+

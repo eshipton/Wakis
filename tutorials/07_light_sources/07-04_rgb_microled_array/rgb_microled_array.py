@@ -145,6 +145,32 @@
 #    $$c_{i,j}(\theta_{\text{inc}}) = \int_{M_i} \left|E_x^j(x, y_{\text{MQW}}; \theta_{\text{inc}})\right|^2 dx, \qquad \tilde{C}_{ij} = \frac{c_{i,j}}{\sum_{k \in \{\text{B,G,R}\}} c_{k,j}},$$
 #    where diagonal entries $\text{OE}(i) = \tilde{C}_{ii}$ represent color-routing optical efficiency and
 #    off-diagonal entries $\text{OX}(j, i) = \tilde{C}_{ij}$ ($i \neq j$) represent optical crosstalk.
+#
+# ### 4. Simulation Setup Schematic & Graded Mesh Architecture
+#
+# The first figure (`figures/00_setup_schematic.png`) is generated directly from the live Wakis `GridFIT3D`,
+# `SolverFIT3D`, `Box` structures, `CurrentSource` arrays, and `Near2FarMonitor`/`FluxMonitor` objects via
+# `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`:
+#
+# - **Panel (a) — Forward Incoherent Emission Setup (Tasks 0–3):** Three $1.05\;\mu\text{m}$-wide B ($x_c = -1.50\;\mu\text{m}$),
+#   G ($x_c = 0.00\;\mu\text{m}$), and R ($x_c = +1.50\;\mu\text{m}$) mesas ($200\;\text{nm}$ $\text{p-GaN}$, $200\;\text{nm}$ $\text{MQW}$,
+#   $700\;\text{nm}$ $\text{n-GaN}$) separated by $0.45\;\mu\text{m}$ polyimide isolation trenches ($n_{\text{PI}} = 1.50$) on an
+#   absorbing dispersive $\text{Si}$ substrate ($n + \mathrm{i}\kappa$). Inside the active channel's MQW ($y \in [-0.40, -0.20]\;\mu\text{m}$),
+#   a $5 \times 4 = 20$ grid of horizontal $J_x$ dipoles radiates either one dipole per run (Method A) or simultaneously
+#   with i.i.d. random phases $\phi_m^{(k)} \sim \mathcal{U}(0, 2\pi)$ (Method B). Upward emission is recorded on a
+#   top `Near2FarMonitor` and subpixel exit windows $W_{\text{B}}, W_{\text{G}}, W_{\text{R}}$ at $y = +0.25\;\mu\text{m}$, bounded by
+#   8-cell CPML layers on $\pm x, \pm y$ and periodic BCs on $\pm z$.
+# - **Panel (b) — Reciprocal Dual-Task Color-Routing Setup (Task 4):** An oblique plane-wave line source at $y = +0.35\;\mu\text{m}$
+#   ($\theta_{\text{inc}} \in [-15^\circ, +15^\circ]$ at $\lambda_{\text{B}} = 457\;\text{nm}$, $\lambda_{\text{G}} = 527\;\text{nm}$,
+#   $\lambda_{\text{R}} = 611\;\text{nm}$) illuminates the 3-pixel array from above while planar monitors $M_{\text{B}}, M_{\text{G}}, M_{\text{R}}$
+#   at the MQW center ($y = -0.30\;\mu\text{m}$) record the routed intensity matrix $C_{ij}^{\text{dual}}$ (Eq. 4).
+# - **Panel (c) — Interface-Snapped Graded Mesh Zoom:** Zoom around the Green mesa/polyimide trench and $\text{GaN}/\text{Si}$
+#   interface (`--full` $\text{cpw} = 20$: $\Delta x_{\text{bg}} = 9.08\;\text{nm}$, $\Delta y_{\min} = 4.88\;\text{nm}$), annotating
+#   the $41$ vertical cells across the $200\;\text{nm}$ $\text{p-GaN}$ and $\text{MQW}$ layers, $50$ horizontal cells across the
+#   $450\;\text{nm}$ polyimide trench, and $56.9\text{--}449.9\;\text{cells}/\delta_P$ ($113.9\text{--}899.8\;\text{cells}/\delta_E$)
+#   inside the absorbing $\text{Si}$ substrate.
+#
+# ![Setup Schematic](figures/00_setup_schematic.png)
 
 # %%
 from __future__ import annotations
@@ -160,9 +186,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.animation as animation
+from matplotlib.collections import PolyCollection
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
+
+from wakis import figstyle, schematic
 
 TUTORIAL_DIR = Path(__file__).resolve().parent
 if str(TUTORIAL_DIR) not in sys.path:
@@ -174,6 +203,7 @@ from _helpers import (  # noqa: E402
     PIXEL_GEOMETRY,
     RGB_MATERIALS,
     build_rgb_array_solver,
+    build_rgb_schematic_objects,
     escape_cone_2d_analytical,
     etendue_collimation_bound_2d,
     evaluate_method_b_statistics,
@@ -182,6 +212,7 @@ from _helpers import (  # noqa: E402
     lambertian_2d_density,
     lambertian_3d_cone_fraction,
     mqw_dipole_grid,
+    overlay_rgb_geometry,
     random_phase_rse_theory,
     record_incoherent_Vs_coherent_movie_frames,
     run_dual_task_color_routing_baseline,
@@ -190,6 +221,7 @@ from _helpers import (  # noqa: E402
     run_single_channel_method_a,
     silicon_skin_depth,
     summarize_angular_distribution,
+    tidy_rgb_schematic_axes,
 )
 
 # %% [markdown]
@@ -436,8 +468,9 @@ def run_task(task_id: int, out_dir: Path, full: bool = False) -> Path:
 # ## Figure Generation & Analysis Pipeline
 #
 # When all study tasks have completed, `generate_all_figures_and_summary` loads the `.npz`
-# archives from `data/` and produces 14 diagnostic figures plus an animated GIF in `figures/`:
+# archives from `data/` and produces 16 figures (including `00_setup_schematic.png` first and an animated GIF) in `figures/`:
 #
+# 0. `00_setup_schematic.png` — 3-panel setup schematic built from live solver/grid/source/monitor objects via `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`: (a) Forward 20-dipole incoherent emission setup, (b) Reciprocal plane-wave color-routing setup, and (c) Graded mesh zoom at the Green MQW/trench/Si skin-depth interface.
 # 1. `fig01_geometry_permittivity.png` — 2D RGB microLED cross-section, Kottke permittivity map, and $5\times 4$ MQW dipole grid.
 # 2. `fig02_material_dispersion_skin_depth.png` — Table 1 optical constants and Silicon penetration/skin depth resolution.
 # 3. `fig03_incoherent_rgb_intensity_maps.png` — 20-dipole incoherent near-field intensity maps $I_{\text{inc}}(x, y)$ for B, G, R channels (cf. Fig. 4b,d,f of Chen et al. 2025).
@@ -451,25 +484,15 @@ def run_task(task_id: int, out_dir: Path, full: bool = False) -> Path:
 # 11. `fig11_forward_crosstalk_matrices.png` — Forward inter-pixel exit-window and MQW crosstalk matrices $C_{ij}^{\text{emit}}$.
 # 12. `fig12_dual_task_color_routing.png` — Reciprocal dual-task plane-wave color-routing matrix $C_{ij}^{\text{dual}}$ (Eq. 4, Fig. 3d of Chen et al. 2025).
 # 13. `fig13_resolution_convergence.png` — Spatial grid and skin-depth convergence from $\text{cpw} = 10$ to the $\text{cpw} = 28$ reference run.
-# 14. `fig14_time_domain_snapshots.png` — Time-domain snapshots of $E_x(x, y, t)$ during an incoherent multi-dipole burst.
-# 15. `fig15_rgb_emission_movie.gif` — Animated time-domain wave propagation GIF.
+# 14. `fig14_time_domain_snapshots.png` — 3-panel time-domain snapshots of $E_x(x, y, t)$ during an incoherent multi-dipole burst.
+# 15. `fig15_rgb_emission_movie.gif` — Animated time-domain wave propagation GIF with labelled geometry overlay.
 
 
 # %%
 def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
-    """Load task outputs from ``data_dir`` and create all 15 figures in ``fig_dir``."""
+    """Load task outputs from ``data_dir`` and create all 16 figures in ``fig_dir``."""
     fig_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams.update(
-        {
-            "font.size": 10,
-            "axes.titlesize": 11,
-            "axes.labelsize": 10,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
-            "legend.fontsize": 8.5,
-            "figure.dpi": 140,
-        }
-    )
+    figstyle.apply_style()
 
     data_a = {
         "B": np.load(data_dir / "task_00_method_a_B.npz"),
@@ -488,12 +511,90 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     conv_list = [np.load(f) for f in conv_files]
 
     # -------------------------------------------------------------------------
+    # Figure 00: Setup Schematic (Forward 20-Dipole + Reciprocal PW + Mesh Zoom)
+    # -------------------------------------------------------------------------
+    cpw_fig1 = float(data_a["G"]["cpw"])
+    fwd_obj = build_rgb_schematic_objects(mode="forward", channel="G", cpw=cpw_fig1)
+    rec_obj = build_rgb_schematic_objects(mode="reciprocal", channel="G", cpw=cpw_fig1)
+
+    fig0, axes0 = figstyle.new_figure(
+        nrows=1, ncols=3, width=13.8, height=4.5, gridspec_kw={"width_ratios": [1.05, 1.05, 0.90]}
+    )
+    schematic.plot_schematic(
+        fwd_obj["solver"],
+        plane="xy",
+        ax=axes0[0],
+        unit="um",
+        structures=fwd_obj["structures"],
+        sources=fwd_obj["sources"],
+        monitors=fwd_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(a) Tasks 0–3: Forward 20-Dipole Emission (G Active)",
+    )
+    tidy_rgb_schematic_axes(axes0[0], mode="forward", channel="G")
+
+    schematic.plot_schematic(
+        rec_obj["solver"],
+        plane="xy",
+        ax=axes0[1],
+        unit="um",
+        structures=rec_obj["structures"],
+        sources=rec_obj["sources"],
+        monitors=rec_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(b) Task 4: Reciprocal Plane-Wave Color Routing",
+    )
+    tidy_rgb_schematic_axes(axes0[1], mode="reciprocal", channel="G")
+
+    ax_m = axes0[2]
+    ax_m.axhspan(-1.26, -1.10, facecolor="#64748b", alpha=0.65, zorder=1)
+    ax_m.fill_between([-1.00, -0.525], -1.10, 0.00, facecolor="#fef3c7", alpha=0.65, zorder=1)
+    ax_m.fill_between([-0.525, 0.15], -1.10, -0.40, facecolor="#cbd5e1", alpha=0.65, zorder=1)
+    ax_m.fill_between([-0.525, 0.15], -0.40, -0.20, facecolor="#86efac", alpha=0.75, zorder=1)
+    ax_m.fill_between([-0.525, 0.15], -0.20, 0.00, facecolor="#e2e8f0", alpha=0.75, zorder=1)
+    schematic.draw_mesh(
+        ax_m,
+        fwd_obj["grid"],
+        plane="xy",
+        unit="um",
+        color="#334155",
+        alpha=0.45,
+        linewidth=0.35,
+    )
+    for y_int in (0.00, -0.20, -0.40, -1.10):
+        ax_m.axhline(y_int, color="black", lw=1.1, zorder=5)
+    ax_m.plot([-0.525, -0.525], [-1.10, 0.00], "k-", lw=1.1, zorder=5)
+    ax_m.plot([-0.975, -0.975], [-1.10, 0.00], "k-", lw=1.1, zorder=5)
+    dip_g = mqw_dipole_grid("G") * 1e6
+    ax_m.plot(dip_g[:, 0], dip_g[:, 1], "*", color="#d97706", ms=5.5, mec="black", mew=0.4, zorder=6)
+    bbox_m = {
+        "boxstyle": "round,pad=0.13",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.5,
+        "alpha": 0.90,
+    }
+    ax_m.text(-0.18, -0.10, "p-GaN (200 nm)\n41 cells (Δy=4.88 nm)", ha="center", va="center", fontsize=6.4, bbox=bbox_m, zorder=8)
+    ax_m.text(-0.18, -0.30, "G MQW (200 nm, n=2.41)\n41 cells, 5×4 dipoles", ha="center", va="center", fontsize=6.4, color="#14532d", bbox=bbox_m, zorder=8)
+    ax_m.text(-0.18, -0.75, "n-GaN (700 nm, n=2.38)\nΔx_bg = 9.08 nm (20 c/λ)", ha="center", va="center", fontsize=6.4, bbox=bbox_m, zorder=8)
+    ax_m.text(-0.75, -0.55, "PI trench\n450 nm:\n50 cells", ha="center", va="center", fontsize=6.3, color="#78350f", bbox=bbox_m, zorder=8)
+    ax_m.text(-0.40, -1.18, "Si substrate: Δy_min=4.88 nm (57–450 c/δ_P)", ha="center", va="center", fontsize=6.3, bbox=bbox_m, zorder=8)
+    ax_m.set_xlim(-1.00, 0.15)
+    ax_m.set_ylim(-1.26, 0.12)
+    ax_m.set_xlabel("Lateral coordinate $x$ [µm]")
+    ax_m.set_ylabel("Vertical coordinate $y$ [µm]")
+    ax_m.set_title("(c) Graded Mesh Zoom (MQW, Trench & Si)")
+    figstyle.finish(fig0)
+    figstyle.save(fig0, fig_dir / "00_setup_schematic.png")
+
+    # -------------------------------------------------------------------------
     # Figure 1: 2D Geometry, Kottke Permittivity & 20-Dipole MQW Sampling Grid
     # -------------------------------------------------------------------------
     from scipy.constants import epsilon_0 as _eps0
 
-    cpw_fig1 = float(data_a["G"]["cpw"])
-    grid_g, solver_g, _ = build_rgb_array_solver(channel="G", cpw=cpw_fig1)
+    grid_g, solver_g = fwd_obj["grid"], fwd_obj["solver"]
     eps_x = np.real(
         1.0 / np.maximum(1e-30, _eps0 * np.asarray(solver_g.ieps[:, :, 0, "x"]))
     )
@@ -501,15 +602,13 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     x_um = (grid_g.x[:-1] + 0.5 * grid_g.dx) * 1e6
     y_um = (grid_g.y[:-1] + 0.5 * grid_g.dy) * 1e6
 
-    fig, ax = plt.subplots(figsize=(9.2, 4.4), constrained_layout=True)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=9.2, height=4.4)
     im = ax.pcolormesh(
         x_um, y_um, n_map.T, cmap="viridis", shading="auto", vmin=1.0, vmax=4.3
     )
     cb = fig.colorbar(im, ax=ax, pad=0.02)
     cb.set_label("Refractive index $n(x, y)$ at $\\lambda_G = 527$ nm [-]")
-
     for ch in CHANNELS:
-        x0_um = RGB_MATERIALS[ch]["x_center_m"] * 1e6
         dips = mqw_dipole_grid(ch) * 1e6
         ax.scatter(
             dips[:, 0],
@@ -518,64 +617,38 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
             c=RGB_MATERIALS[ch]["color"],
             edgecolors="white",
             linewidths=0.6,
-            zorder=5,
+            zorder=8,
             label=f"{ch} MQW dipoles (5×4=20)" if ch == "B" else f"{ch} MQW dipoles",
         )
-        # Draw MQW flux box and subpixel label
-        rect_mqw = mpatches.Rectangle(
-            (x0_um - 0.525, -0.40),
-            1.05,
-            0.20,
-            fill=False,
-            edgecolor="white",
-            linestyle="--",
-            linewidth=1.0,
-        )
-        ax.add_patch(rect_mqw)
-        ax.text(
-            x0_um,
-            -0.08,
-            f"{ch} p-GaN",
-            color="white",
-            ha="center",
-            va="center",
-            fontsize=8.5,
-            fontweight="bold",
-        )
-        ax.text(
-            x0_um,
-            -0.75,
-            f"{ch} n-GaN\n($n={RGB_MATERIALS[ch]['n_GaN']:.2f}$)",
-            color="white",
-            ha="center",
-            va="center",
-            fontsize=8,
-        )
-
-    ax.axhline(0.25, color="#f6e05e", linestyle="-.", linewidth=1.4, label="Top N2F / Flux monitor ($y = +0.25\\;\\mu$m)")
-    ax.axhline(-1.10, color="#feb2b2", linestyle=":", linewidth=1.1, label="GaN / Lossy Si interface ($y = -1.10\\;\\mu$m)")
-    ax.text(0.0, -1.24, "Absorbing Silicon Substrate ($n + ik$, DispersiveMaterial)", color="white", ha="center", va="center", fontsize=8.5)
-    ax.set_xlabel(" Lateral coordinate $x$ [$\\mu$m]")
+    overlay_rgb_geometry(
+        ax,
+        active_channel=None,
+        line_color="white",
+        show_dipoles=False,
+        show_monitors=True,
+        show_labels=True,
+    )
+    ax.set_xlabel("Lateral coordinate $x$ [$\\mu$m]")
     ax.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
     ax.set_title("3-Pixel RGB Micro-LED Cross-Section, Kottke Refractive Index Map & 20-Dipole MQW Grids")
-    ax.legend(loc="upper right", ncol=2, framealpha=0.9)
-    fig.savefig(fig_dir / "fig01_geometry_permittivity.png")
-    plt.close(fig)
+    ax.legend(loc="upper left", ncol=3, framealpha=0.88, fontsize=7.5)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig01_geometry_permittivity.png")
 
     # -------------------------------------------------------------------------
     # Figure 2: Table 1 Material Dispersion & Silicon Skin Depth Resolution
     # -------------------------------------------------------------------------
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.0, 4.2), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=10.2, height=4.2)
     wls_nm = [RGB_MATERIALS[ch]["wavelength_m"] * 1e9 for ch in CHANNELS]
     x_idx = np.arange(3)
     width_b = 0.14
     mat_series = [
-        ("GaN", [RGB_MATERIALS[ch]["n_GaN"] for ch in CHANNELS], "#3182ce"),
-        ("MQW", [RGB_MATERIALS[ch]["n_MQW"] for ch in CHANNELS], "#dd6b20"),
-        ("SiN$_x$", [RGB_MATERIALS[ch]["n_SiNx"] for ch in CHANNELS], "#38a169"),
-        ("Polyimide", [RGB_MATERIALS[ch]["n_PI"] for ch in CHANNELS], "#805ad5"),
-        ("SiO$_2$", [RGB_MATERIALS[ch]["n_SiO2"] for ch in CHANNELS], "#718096"),
-        ("Si ($n$)", [RGB_MATERIALS[ch]["n_Si_real"] for ch in CHANNELS], "#e53e3e"),
+        ("GaN", [RGB_MATERIALS[ch]["n_GaN"] for ch in CHANNELS], figstyle.PALETTE[0]),
+        ("MQW", [RGB_MATERIALS[ch]["n_MQW"] for ch in CHANNELS], figstyle.PALETTE[1]),
+        ("SiN$_x$", [RGB_MATERIALS[ch]["n_SiNx"] for ch in CHANNELS], figstyle.PALETTE[2]),
+        ("Polyimide", [RGB_MATERIALS[ch]["n_PI"] for ch in CHANNELS], figstyle.PALETTE[4]),
+        ("SiO$_2$", [RGB_MATERIALS[ch]["n_SiO2"] for ch in CHANNELS], figstyle.PALETTE[7]),
+        ("Si ($n$)", [RGB_MATERIALS[ch]["n_Si_real"] for ch in CHANNELS], figstyle.PALETTE[5]),
     ]
     for i_m, (m_label, vals, col) in enumerate(mat_series):
         ax1.bar(
@@ -590,9 +663,8 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax1.set_xticks(x_idx)
     ax1.set_xticklabels([f"{ch}\n({w:.0f} nm)" for ch, w in zip(CHANNELS, wls_nm)])
     ax1.set_ylabel("Real refractive index $n(\\lambda)$ [-]")
-    ax1.set_title("Table 1 Refractive Indices (Chen et al., 2025)")
-    ax1.grid(axis="y", alpha=0.3)
-    ax1.legend(ncol=2, loc="upper right")
+    ax1.set_title("(a) Table 1 Refractive Indices (Chen et al., 2025)")
+    ax1.legend(ncol=2, loc="upper right", fontsize=7.5)
 
     delta_e_nm = [
         silicon_skin_depth(
@@ -606,73 +678,72 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     dx_full_si_nm = float(data_a["B"]["dx_min_nm"])
     dx_quick_si_nm = float(conv_list[0]["dx_min_nm"])
 
-    ax2.plot(wls_nm, delta_e_nm, "o-", color="#2b6cb0", lw=2.0, label="Field skin depth $\\delta_E = \\lambda / (2\\pi \\kappa_{\\mathrm{Si}})$")
-    ax2.plot(wls_nm, delta_p_nm, "s--", color="#c53030", lw=2.0, label="Power skin depth $\\delta_P = \\lambda / (4\\pi \\kappa_{\\mathrm{Si}})$")
-    ax2.axhline(dx_full_bg_nm, color="#718096", linestyle=":", lw=1.4, label=f"--full $\\Delta x_{{\\mathrm{{bg}}}} = {dx_full_bg_nm:.2f}$ nm (GaN/PI, cpw=20)")
-    ax2.axhline(dx_quick_si_nm, color="#d69e2e", linestyle="--", lw=1.5, label=f"--quick $\\Delta y_{{\\min}} = {dx_quick_si_nm:.2f}$ nm (MQW/Si, cpw=10)")
-    ax2.axhline(dx_full_si_nm, color="#2f855a", linestyle="-.", lw=1.5, label=f"--full $\\Delta y_{{\\min}} = {dx_full_si_nm:.2f}$ nm (MQW/Si, cpw=20)")
+    ax2.plot(wls_nm, delta_e_nm, **figstyle.series_style(0), label="Field skin depth $\\delta_E = \\lambda / (2\\pi \\kappa_{\\mathrm{Si}})$")
+    ax2.plot(wls_nm, delta_p_nm, **figstyle.series_style(1), label="Power skin depth $\\delta_P = \\lambda / (4\\pi \\kappa_{\\mathrm{Si}})$")
+    ax2.axhline(dx_full_bg_nm, color=figstyle.PALETTE[7], linestyle=":", lw=1.4, label=f"--full $\\Delta x_{{\\mathrm{{bg}}}} = {dx_full_bg_nm:.2f}$ nm (GaN/PI, cpw=20)")
+    ax2.axhline(dx_quick_si_nm, color=figstyle.PALETTE[3], linestyle="--", lw=1.5, label=f"--quick $\\Delta y_{{\\min}} = {dx_quick_si_nm:.2f}$ nm (MQW/Si, cpw=10)")
+    ax2.axhline(dx_full_si_nm, color=figstyle.PALETTE[2], linestyle="-.", lw=1.5, label=f"--full $\\Delta y_{{\\min}} = {dx_full_si_nm:.2f}$ nm (MQW/Si, cpw=20)")
     ax2.set_yscale("log")
     ax2.set_xlabel("Wavelength $\\lambda_0$ [nm]")
     ax2.set_ylabel("Length scale [nm]")
-    ax2.set_title("Silicon Skin Depth vs. Graded Wakis FIT Cell Sizes")
-    ax2.grid(True, which="both", alpha=0.3)
-    ax2.legend(loc="upper left", fontsize=7.8)
-    fig.savefig(fig_dir / "fig02_material_dispersion_skin_depth.png")
-    plt.close(fig)
+    ax2.set_title("(b) Silicon Skin Depth vs. Graded Wakis FIT Cell Sizes")
+    ax2.legend(loc="upper left", fontsize=7.4)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig02_material_dispersion_skin_depth.png")
 
     # -------------------------------------------------------------------------
     # Figure 3: 3-Panel Spatially Incoherent Near-Field Intensity Maps (B, G, R)
     # -------------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(12.2, 4.0), sharey=True, constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.0, height=4.1, sharey=True)
     for ax, ch in zip(axes, CHANNELS):
         d = data_a[ch]
         x_c = d["x_cells_m"] * 1e6
         y_c = d["y_cells_m"] * 1e6
         inten = d["intensity_inc_2d"]
-        inten_db = 10.0 * np.log10(np.maximum(inten / np.max(inten), 1e-4))
+        ref_i = max(float(np.percentile(inten, 99.5)), 1e-30)
+        inten_db = 10.0 * np.log10(np.clip(inten / ref_i, 1e-3, 1.0))
         im = ax.pcolormesh(
-            x_c, y_c, inten_db.T, cmap="inferno", shading="auto", vmin=-30.0, vmax=0.0
+            x_c, y_c, inten_db.T, cmap=figstyle.CMAP_MAGNITUDE, shading="auto", vmin=-25.0, vmax=0.0
         )
-        for sub_ch in CHANNELS:
-            x0_s = RGB_MATERIALS[sub_ch]["x_center_m"] * 1e6
-            ax.add_patch(
-                mpatches.Rectangle(
-                    (x0_s - 0.525, -1.10),
-                    1.05,
-                    1.10,
-                    fill=False,
-                    edgecolor="cyan" if sub_ch == ch else "white",
-                    linewidth=1.2 if sub_ch == ch else 0.7,
-                    linestyle="-" if sub_ch == ch else "--",
-                )
-            )
-        ax.axhline(0.0, color="white", lw=0.7, alpha=0.7)
+        overlay_rgb_geometry(
+            ax,
+            active_channel=ch,
+            line_color="white",
+            show_dipoles=True,
+            show_monitors=True,
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlabel("Lateral position $x$ [$\\mu$m]")
         ax.set_title(f"{RGB_MATERIALS[ch]['label']}\n20-Dipole Incoherent $\\sum_m |\\mathbf{{E}}_m|^2$")
     axes[0].set_ylabel("Vertical position $y$ [$\\mu$m]")
-    cb = fig.colorbar(im, ax=axes.ravel().tolist(), pad=0.015)
-    cb.set_label("Normalized intensity $10\\log_{10}(I_{\\mathrm{inc}} / I_{\\max})$ [dB]")
-    fig.savefig(fig_dir / "fig03_incoherent_rgb_intensity_maps.png")
-    plt.close(fig)
+    cb = fig.colorbar(im, ax=axes[-1], pad=0.02)
+    cb.set_label("Normalized intensity $10\\log_{10}(I_{\\mathrm{inc}} / I_{99.5\\%})$ [dB]")
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig03_incoherent_rgb_intensity_maps.png")
 
     # -------------------------------------------------------------------------
     # Figure 4: Incoherent Power Sum vs. Wrong Coherent Field Sum (G Channel)
     # -------------------------------------------------------------------------
     dg = data_a["G"]
-    fig, axes = plt.subplots(1, 3, figsize=(12.4, 4.0), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.0, height=4.1)
     x_c = dg["x_cells_m"] * 1e6
     y_c = dg["y_cells_m"] * 1e6
-    i_inc_db = 10.0 * np.log10(np.maximum(dg["intensity_inc_2d"] / np.max(dg["intensity_inc_2d"]), 1e-4))
-    i_coh_db = 10.0 * np.log10(np.maximum(dg["intensity_coh_2d"] / np.max(dg["intensity_coh_2d"]), 1e-4))
+    ref_inc = max(float(np.percentile(dg["intensity_inc_2d"], 99.5)), 1e-30)
+    ref_coh = max(float(np.percentile(dg["intensity_coh_2d"], 99.5)), 1e-30)
+    i_inc_db = 10.0 * np.log10(np.clip(dg["intensity_inc_2d"] / ref_inc, 1e-3, 1.0))
+    i_coh_db = 10.0 * np.log10(np.clip(dg["intensity_coh_2d"] / ref_coh, 1e-3, 1.0))
 
-    im0 = axes[0].pcolormesh(x_c, y_c, i_inc_db.T, cmap="inferno", shading="auto", vmin=-28, vmax=0)
-    axes[0].set_title("Correct Incoherent Sum: $\\sum_{m=1}^{20} |\\mathbf{E}_m(x,y)|^2$")
+    im0 = axes[0].pcolormesh(x_c, y_c, i_inc_db.T, cmap=figstyle.CMAP_MAGNITUDE, shading="auto", vmin=-25, vmax=0)
+    overlay_rgb_geometry(axes[0], active_channel="G", line_color="white", show_dipoles=True, show_monitors=True, show_labels=True, compact=True)
+    axes[0].set_title("(a) Incoherent Sum: $\\sum_{m=1}^{20} |\\mathbf{E}_m(x,y)|^2$")
     axes[0].set_xlabel("$x$ [$\\mu$m]")
     axes[0].set_ylabel("$y$ [$\\mu$m]")
     fig.colorbar(im0, ax=axes[0], label="[dB]")
 
-    im1 = axes[1].pcolormesh(x_c, y_c, i_coh_db.T, cmap="inferno", shading="auto", vmin=-28, vmax=0)
-    axes[1].set_title("Wrong Coherent Sum: $|\\sum_{m=1}^{20} \\mathbf{E}_m(x,y)|^2$")
+    im1 = axes[1].pcolormesh(x_c, y_c, i_coh_db.T, cmap=figstyle.CMAP_MAGNITUDE, shading="auto", vmin=-25, vmax=0)
+    overlay_rgb_geometry(axes[1], active_channel="G", line_color="white", show_dipoles=True, show_monitors=True, show_labels=True, compact=True)
+    axes[1].set_title("(b) Wrong Coherent Sum: $|\\sum_{m=1}^{20} \\mathbf{E}_m(x,y)|^2$")
     axes[1].set_xlabel("$x$ [$\\mu$m]")
     axes[1].set_ylabel("$y$ [$\\mu$m]")
     fig.colorbar(im1, ax=axes[1], label="[dB]")
@@ -681,16 +752,13 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     axes[2].plot(
         th,
         dg["p_ratio_density_inc"],
-        color="#2f855a",
-        lw=2.2,
+        **figstyle.series_style(2),
         label=f"Incoherent $\\sum |E_m|^2$ ($\\eta_{{\\pm 20^\\circ}}={float(dg['eta_20_inc_pct']):.1f}\\%$)",
     )
     axes[2].plot(
         th,
         dg["p_ratio_density_coh"],
-        color="#c53030",
-        linestyle="--",
-        lw=1.8,
+        **figstyle.series_style(5),
         label=f"Wrong coherent $|\\sum E_m|^2$ ($\\eta_{{\\pm 20^\\circ}}={float(dg['eta_20_coh_pct']):.1f}\\%$)",
     )
     axes[2].plot(
@@ -704,16 +772,15 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     axes[2].axvspan(-20, 20, color="#fefcbf", alpha=0.5, label="$\\pm 20^\\circ$ target cone")
     axes[2].set_xlabel("Far-field angle $\\theta$ [deg]")
     axes[2].set_ylabel("Power ratio density $\\bar{P}_r(\\theta)$ [deg$^{-1}$]")
-    axes[2].set_title("Far-Field Consequence of Coherent Phasing Error")
-    axes[2].grid(True, alpha=0.3)
-    axes[2].legend(loc="upper right")
-    fig.savefig(fig_dir / "fig04_coherent_vs_incoherent_comparison.png")
-    plt.close(fig)
+    axes[2].set_title("(c) Far-Field Phasing Error")
+    axes[2].legend(loc="upper right", fontsize=7.2)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig04_coherent_vs_incoherent_comparison.png")
 
     # -------------------------------------------------------------------------
     # Figure 5: Reproduced Angular Power Ratio Density (Fig. 4c,e,g of Paper)
     # -------------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(12.4, 4.1), sharey=True, constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=12.6, height=4.1, sharey=True)
     th = data_a["B"]["theta_deg"]
     p_lamb = lambertian_2d_density(th)
     for ax, ch in zip(axes, CHANNELS):
@@ -736,7 +803,6 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
             lw=1.4,
             label=f"2D Lambertian ($34.20\\%$);\nChen et al. baseline: ${eta_pub:.2f}\\%$",
         )
-        # Plot lightweight envelope of individual dipoles
         u_dips = d["u_2d_per_dip"]
         dtheta = 180.0 / len(th)
         p_dips = u_dips / (np.sum(u_dips, axis=1, keepdims=True) * dtheta)
@@ -751,18 +817,18 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         ax.set_xlim(-90, 90)
         ax.set_xlabel("Far-field emission angle $\\theta$ [deg]")
         ax.set_title(f"{RGB_MATERIALS[ch]['label']} (cf. Chen et al. Fig. 4)")
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right", fontsize=8)
+        ax.legend(loc="upper right", fontsize=7.5)
     axes[0].set_ylabel("Normalized angular power density $\\bar{P}_r(\\theta)$ [deg$^{-1}$]")
-    fig.savefig(fig_dir / "fig05_angular_power_density_rgb.png")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig05_angular_power_density_rgb.png")
 
     # -------------------------------------------------------------------------
     # Figure 6: Polar Radiation Patterns of B, G, R vs. 2D Lambertian
     # -------------------------------------------------------------------------
-    fig, ax = plt.subplots(
-        figsize=(6.4, 5.4), subplot_kw={"projection": "polar"}, constrained_layout=True
+    fig, ax = figstyle.new_figure(
+        nrows=1, ncols=1, width=6.6, height=5.4, subplot_kw={"projection": "polar"}
     )
+    ax.add_collection(PolyCollection([[(0.0, 0.0), (0.0, 0.0)]], alpha=0.0))
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_thetamin(-90)
@@ -781,23 +847,23 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax.axvline(np.deg2rad(-20.0), color="#d69e2e", linestyle=":", lw=1.5)
     ax.axvline(np.deg2rad(+20.0), color="#d69e2e", linestyle=":", lw=1.5, label="$\\pm 20^\\circ$ acceptance cone")
     ax.set_title("Polar Far-Field Radiation Patterns $\\bar{P}_r(\\theta)$ [deg$^{-1}$]", pad=16)
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.22), ncol=2)
-    fig.savefig(fig_dir / "fig06_polar_radiation_patterns.png")
-    plt.close(fig)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.22), ncol=2, fontsize=7.8)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig06_polar_radiation_patterns.png")
 
     # -------------------------------------------------------------------------
     # Figure 7: Collimation Efficiency & Extraction Efficiency vs. Published/Theory
     # -------------------------------------------------------------------------
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 4.3), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.3)
     x_pos = np.arange(3)
     w_bar = 0.24
     eta_wakis = [float(data_a[ch]["eta_20_inc_pct"]) for ch in CHANNELS]
     eta_paper_uncol = [PAPER_TARGETS[ch]["eta_20_uncol_pct"] for ch in CHANNELS]
     eta_paper_col = [PAPER_TARGETS[ch]["eta_20_col_pct"] for ch in CHANNELS]
 
-    ax1.bar(x_pos - w_bar, eta_wakis, width=w_bar, color="#3182ce", edgecolor="black", label="Wakis 2D FIT (uncollimated)")
-    ax1.bar(x_pos, eta_paper_uncol, width=w_bar, color="#63b3ed", edgecolor="black", label="Chen et al. 2025 (uncollimated)")
-    ax1.bar(x_pos + w_bar, eta_paper_col, width=w_bar, color="#38a169", edgecolor="black", label="Chen et al. 2025 (with collimator)")
+    ax1.bar(x_pos - w_bar, eta_wakis, width=w_bar, color=figstyle.PALETTE[0], edgecolor="black", label="Wakis 2D FIT (uncollimated)")
+    ax1.bar(x_pos, eta_paper_uncol, width=w_bar, color=figstyle.PALETTE[1], edgecolor="black", label="Chen et al. 2025 (uncollimated)")
+    ax1.bar(x_pos + w_bar, eta_paper_col, width=w_bar, color=figstyle.PALETTE[2], edgecolor="black", label="Chen et al. 2025 (with collimator)")
     ax1.axhline(lambertian_2d_cone_fraction(20.0) * 100.0, color="black", linestyle="--", lw=1.4, label="2D Lambertian $\\sin 20^\\circ = 34.20\\%$")
     ax1.axhline(etendue_collimation_bound_2d(1.5e-6, 1.05e-6, 20.0) * 100.0, color="#d69e2e", linestyle="-.", lw=1.4, label="1-subpixel étendue cap ($48.86\\%$)")
     ax1.axhline(lambertian_3d_cone_fraction(20.0) * 100.0, color="#718096", linestyle=":", lw=1.3, label="3D Lambertian $\\sin^2 20^\\circ = 11.70\\%$")
@@ -805,9 +871,8 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax1.set_xticklabels([RGB_MATERIALS[ch]["label"] for ch in CHANNELS])
     ax1.set_ylabel("Power fraction within $\\pm 20^\\circ$, $\\eta_{\\pm 20^\\circ}$ [%]")
     ax1.set_ylim(0, 78)
-    ax1.set_title("Far-Field Collimation Efficiency $\\eta_{\\pm 20^\\circ}$")
-    ax1.grid(axis="y", alpha=0.3)
-    ax1.legend(loc="upper left", fontsize=7.8)
+    ax1.set_title("(a) Far-Field Collimation Efficiency $\\eta_{\\pm 20^\\circ}$")
+    ax1.legend(loc="upper left", fontsize=7.4)
 
     lee_wakis = [float(data_a[ch]["lee_tot_pct"]) for ch in CHANNELS]
     lee_paper_uncol = [PAPER_TARGETS[ch]["lee_tot_uncol_pct"] for ch in CHANNELS]
@@ -821,23 +886,22 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         * 100.0
         for ch in CHANNELS
     ]
-    ax2.bar(x_pos - w_bar, lee_wakis, width=w_bar, color="#dd6b20", edgecolor="black", label="Wakis 2D FIT ($y_{\\mathrm{mon}}=0.25\\;\\mu$m)")
-    ax2.bar(x_pos, lee_paper_uncol, width=w_bar, color="#f6ad55", edgecolor="black", label="Chen et al. 2025 (top of $2\\;\\mu$m region)")
-    ax2.bar(x_pos + w_bar, lee_analytic, width=w_bar, color="#805ad5", edgecolor="black", label="Planar 2D escape-cone estimate")
+    ax2.bar(x_pos - w_bar, lee_wakis, width=w_bar, color=figstyle.PALETTE[1], edgecolor="black", label="Wakis 2D FIT ($y_{\\mathrm{mon}}=0.25\\;\\mu$m)")
+    ax2.bar(x_pos, lee_paper_uncol, width=w_bar, color=figstyle.PALETTE[3], edgecolor="black", label="Chen et al. 2025 (top of $2\\;\\mu$m region)")
+    ax2.bar(x_pos + w_bar, lee_analytic, width=w_bar, color=figstyle.PALETTE[4], edgecolor="black", label="Planar 2D escape-cone estimate")
     ax2.set_xticks(x_pos)
     ax2.set_xticklabels([RGB_MATERIALS[ch]["label"] for ch in CHANNELS])
     ax2.set_ylabel("Total extraction efficiency $\\mathrm{LEE}_{\\mathrm{tot}}$ [%]")
     ax2.set_ylim(0, 42)
-    ax2.set_title("Total Light Extraction Efficiency $\\mathrm{LEE}_{\\mathrm{tot}} = P_{\\mathrm{top}} / P_{\\mathrm{MQW}}$")
-    ax2.grid(axis="y", alpha=0.3)
-    ax2.legend(loc="upper right", fontsize=8.0)
-    fig.savefig(fig_dir / "fig07_collimation_efficiency_comparison.png")
-    plt.close(fig)
+    ax2.set_title("(b) Total Extraction $\\mathrm{LEE}_{\\mathrm{tot}} = P_{\\mathrm{top}} / P_{\\mathrm{MQW}}$")
+    ax2.legend(loc="upper right", fontsize=7.6)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig07_collimation_efficiency_comparison.png")
 
     # -------------------------------------------------------------------------
     # Figure 8: Convergence of Incoherent Metrics vs. Number of Dipoles N
     # -------------------------------------------------------------------------
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.6, 4.1), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=4.1)
     n_axis = np.arange(1, 21)
     for ch in CHANNELS:
         d = data_a[ch]
@@ -849,26 +913,24 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
 
     ax1.set_xlabel("Number of MQW dipoles $N$ [-]")
     ax1.set_ylabel("Cumulative $\\eta_{\\pm 20^\\circ}(N)$ [%]")
-    ax1.set_title("Convergence of $\\eta_{\\pm 20^\\circ}$ vs. Dipole Count $N$")
-    ax1.grid(True, alpha=0.3)
+    ax1.set_title("(a) Convergence of $\\eta_{\\pm 20^\\circ}$ vs. Dipole Count $N$")
     ax1.legend()
 
     ax2.set_xlabel("Number of MQW dipoles $N$ [-]")
     ax2.set_ylabel("Cumulative $\\mathrm{LEE}_{\\mathrm{tot}}(N)$ [%]")
-    ax2.set_title("Convergence of $\\mathrm{LEE}_{\\mathrm{tot}}$ vs. Dipole Count $N$")
-    ax2.grid(True, alpha=0.3)
+    ax2.set_title("(b) Convergence of $\\mathrm{LEE}_{\\mathrm{tot}}$ vs. Dipole Count $N$")
     ax2.legend()
-    fig.savefig(fig_dir / "fig08_dipole_count_convergence.png")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig08_dipole_count_convergence.png")
 
     # -------------------------------------------------------------------------
     # Figure 9: Method A vs. Method B FDTD Realizations (Angular Profiles)
     # -------------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8.6, 4.4), constrained_layout=True)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=8.6, height=4.4)
     u_reals = data_b["u_2d_realizations"]
     n_reals_fdtd = len(u_reals)
     k_show = [k for k in (1, 2, 4, 8, 16) if k <= n_reals_fdtd]
-    colors_k = ["#cbd5e0", "#f6ad55", "#63b3ed", "#3182ce", "#1a365d"][: len(k_show)]
+    colors_k = [figstyle.PALETTE[7], figstyle.PALETTE[3], figstyle.PALETTE[6], figstyle.PALETTE[0], figstyle.PALETTE[4]][: len(k_show)]
     for k_val, c_k in zip(k_show, colors_k):
         u_mean_k = np.mean(u_reals[:k_val], axis=0)
         sum_k = summarize_angular_distribution(th, u_mean_k)
@@ -883,7 +945,7 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax.plot(
         th,
         dg["p_ratio_density_inc"],
-        color="#c53030",
+        color=figstyle.PALETTE[5],
         linestyle="--",
         lw=2.4,
         label=f"Method A Exact ($N=20$ runs): $\\eta_{{\\pm 20^\\circ}}={float(dg['eta_20_inc_pct']):.2f}\\%$",
@@ -892,10 +954,9 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax.set_xlabel("Far-field emission angle $\\theta$ [deg]")
     ax.set_ylabel("Normalized angular power density $\\bar{P}_r(\\theta)$ [deg$^{-1}$]")
     ax.set_title("Method A (20 Single-Dipole Runs) vs. Method B ($K$ Random-Phase 20-Dipole FDTD Runs)")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right")
-    fig.savefig(fig_dir / "fig09_method_a_vs_method_b_profiles.png")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig09_method_a_vs_method_b_profiles.png")
 
     # -------------------------------------------------------------------------
     # Figure 10: Method B Bias, Variance ($\propto K^{-1/2}$) & Cost Crossover
@@ -907,7 +968,6 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         k_values=(1, 2, 4, 8, 16, 32, 64),
         n_trials=400,
     )
-    # Also compute actual FDTD realization error vs Method A for k = 1 .. n_reals_fdtd
     k_fdtd_axis = np.arange(1, n_reals_fdtd + 1)
     rse_fdtd = np.zeros(n_reals_fdtd, dtype=float)
     p_exact_g = dg["p_ratio_density_inc"]
@@ -920,7 +980,7 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
             np.sqrt(np.mean(((p_k[mask_g] - p_exact_g[mask_g]) / p_exact_g[mask_g]) ** 2))
         )
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.0, 4.3), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.3)
     k_vals = stats_b["k_values"]
     ax1.loglog(
         k_vals,
@@ -932,32 +992,29 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax1.loglog(
         k_vals,
         stats_b["rse_empirical"] * 100.0,
-        "o-",
-        color="#2b6cb0",
-        lw=1.8,
+        **figstyle.series_style(0),
         label="Method B Monte Carlo ensemble (400 trials)",
     )
     ax1.loglog(
         k_fdtd_axis,
         rse_fdtd * 100.0,
         "s",
-        color="#c53030",
+        color=figstyle.PALETTE[5],
         markersize=6,
         label="Single Wakis FDTD trajectory ($k=1\\dots K$)",
     )
-    ax1.axvline(20, color="#38a169", linestyle=":", lw=1.6, label="Cost break-even $K = N_{\\mathrm{dip}} = 20$")
+    ax1.axvline(20, color=figstyle.PALETTE[2], linestyle=":", lw=1.6, label="Cost break-even $K = N_{\\mathrm{dip}} = 20$")
     ax1.set_xlabel("Number of random-phase realizations $K$ [-]")
     ax1.set_ylabel("Relative angular root-mean-square error [%]")
-    ax1.set_title("Method B Variance Scaling ($K^{-1/2}$) & Cost Crossover")
-    ax1.grid(True, which="both", alpha=0.3)
-    ax1.legend(loc="upper right", fontsize=8)
+    ax1.set_title("(a) Method B Variance Scaling ($K^{-1/2}$) & Cost Crossover")
+    ax1.legend(loc="upper right", fontsize=7.6)
 
     ax2.errorbar(
         k_vals,
         stats_b["eta_bias_vs_k_pct"],
         yerr=stats_b["eta_std_vs_k_pct"],
         fmt="o-",
-        color="#2f855a",
+        color=figstyle.PALETTE[2],
         capsize=3,
         lw=1.8,
         label="Proper ratio of $K$-means: $\\overline{P}_{\\mathrm{cone}}^{(K)} / \\overline{P}_{\\mathrm{tot}}^{(K)}$ ($\\pm 1\\sigma$)",
@@ -966,7 +1023,7 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         k_vals,
         stats_b["eta_naive_ratio_bias_pct"],
         "d--",
-        color="#c53030",
+        color=figstyle.PALETTE[5],
         lw=1.8,
         label="Naive mean of single-run ratios (Jensen $O(1/K)$ bias)",
     )
@@ -974,11 +1031,10 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax2.set_xscale("log", base=2)
     ax2.set_xlabel("Number of random-phase realizations $K$ [-]")
     ax2.set_ylabel("Bias in $\\eta_{\\pm 20^\\circ}^{(K)} - \\eta_{\\pm 20^\\circ}^{\\mathrm{exact}}$ [% pts]")
-    ax2.set_title("Method B Estimator Unbiasedness vs. Naive Ratio Bias")
-    ax2.grid(True, alpha=0.3)
-    ax2.legend(loc="upper right", fontsize=8)
-    fig.savefig(fig_dir / "fig10_method_b_bias_variance_cost.png")
-    plt.close(fig)
+    ax2.set_title("(b) Method B Estimator Unbiasedness vs. Naive Ratio Bias")
+    ax2.legend(loc="upper right", fontsize=7.6)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig10_method_b_bias_variance_cost.png")
 
     # -------------------------------------------------------------------------
     # Figure 11: Forward Emission Inter-Pixel Crosstalk Matrices C_ij
@@ -989,10 +1045,10 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         c_win[:, j_idx] = data_a[ch]["win_crosstalk_row"] * 100.0
         c_mqw[:, j_idx] = data_a[ch]["mqw_crosstalk_row"] * 100.0
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.4, 4.3), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=10.6, height=4.3)
     for ax, mat_c, title_str in [
-        (ax1, c_win, "Exit-Window Flux Routing/Crosstalk $C_{ij}^{\\mathrm{win}}$ [%]"),
-        (ax2, c_mqw, "MQW Lateral Intensity Crosstalk $C_{ij}^{\\mathrm{mqw}}$ [%]"),
+        (ax1, c_win, "(a) Exit-Window Flux Routing $C_{ij}^{\\mathrm{win}}$ [%]"),
+        (ax2, c_mqw, "(b) MQW Lateral Intensity Crosstalk $C_{ij}^{\\mathrm{mqw}}$ [%]"),
     ]:
         im = ax.imshow(mat_c, cmap="Blues", vmin=0.0, vmax=100.0)
         for r_i in range(3):
@@ -1015,8 +1071,8 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
         ax.set_ylabel("Receiving subpixel monitor $i$")
         ax.set_title(title_str)
         fig.colorbar(im, ax=ax, shrink=0.84, label="[%]")
-    fig.savefig(fig_dir / "fig11_forward_crosstalk_matrices.png")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig11_forward_crosstalk_matrices.png")
 
     # -------------------------------------------------------------------------
     # Figure 12: Dual-Task Plane-Wave Color-Routing Matrix C_ij (Eq. 4, Fig. 3d)
@@ -1025,7 +1081,7 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     c_dual_ang = data_dual["c_norm_per_angle"] * 100.0
     angles_dual = data_dual["angles_deg"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.8, 4.3), constrained_layout=True)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=4.3)
     im = ax1.imshow(c_dual_mean, cmap="Greens", vmin=0.0, vmax=60.0)
     for r_i in range(3):
         for c_j in range(3):
@@ -1045,7 +1101,7 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     ax1.set_yticklabels([f"Monitor $M_{{{ch}}}$" for ch in CHANNELS])
     ax1.set_xlabel("Incident plane-wave wavelength $\\lambda_j$")
     ax1.set_ylabel("MQW monitor $M_i$ ($y = -0.30\\;\\mu$m)")
-    ax1.set_title("Uncollimated Dual-Task Matrix $\\tilde{C}_{ij}^{\\mathrm{dual}}$ (Eq. 4 Avg)")
+    ax1.set_title("(a) Uncollimated Dual-Task Matrix $\\tilde{C}_{ij}^{\\mathrm{dual}}$ (Eq. 4)")
     fig.colorbar(im, ax=ax1, shrink=0.84, label="Routed fraction [%]")
 
     x_ang = np.arange(len(angles_dual))
@@ -1061,17 +1117,16 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
             label=f"Baseline $\\mathrm{{OE}}({ch})$ (~{np.mean(oe_vs_ang):.1f}%)",
         )
     ax2.axhline(33.33, color="black", linestyle="--", lw=1.3, label="Uniform unrouted baseline (33.3%)")
-    ax2.axhline(80.0, color="#2f855a", linestyle="-.", lw=1.6, label="Chen et al. Fig. 3d router (~80%)")
+    ax2.axhline(80.0, color=figstyle.PALETTE[2], linestyle="-.", lw=1.6, label="Chen et al. Fig. 3d router (~80%)")
     ax2.set_xticks(x_ang)
     ax2.set_xticklabels([f"{a:+.1f}°" for a in angles_dual])
     ax2.set_xlabel("Incident plane-wave angle $\\theta_{\\mathrm{inc}}$ [deg]")
     ax2.set_ylabel("Diagonal optical routing efficiency $\\mathrm{OE}(i)$ [%]")
     ax2.set_ylim(0, 92)
-    ax2.set_title("Dual-Task Color Routing vs. Incident Angle (cf. Fig. 3d)")
-    ax2.grid(axis="y", alpha=0.3)
-    ax2.legend(loc="upper right", fontsize=8)
-    fig.savefig(fig_dir / "fig12_dual_task_color_routing.png")
-    plt.close(fig)
+    ax2.set_title("(b) Dual-Task Color Routing vs. Incident Angle")
+    ax2.legend(loc="upper right", fontsize=7.6)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig12_dual_task_color_routing.png")
 
     # -------------------------------------------------------------------------
     # Figure 13: Spatial Resolution & Skin-Depth Convergence (cpw = 10, 12, 16, 20, 28)
@@ -1086,111 +1141,95 @@ def generate_all_figures_and_summary(data_dir: Path, fig_dir: Path) -> dict:
     rel_err_lee = np.abs(lees[:-1] - lees[-1]) / max(1e-12, abs(lees[-1])) * 100.0
     rel_err_eta = np.abs(etas[:-1] - etas[-1]) / max(1e-12, abs(etas[-1])) * 100.0
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 4.4), constrained_layout=True)
-    ax1.plot(cpws, etas, "o-", color="#2b6cb0", lw=2.0, label="$\\eta_{\\pm 20^\\circ}$ [%]")
-    ax1.plot(cpws, lees, "s-", color="#dd6b20", lw=2.0, label="$\\mathrm{LEE}_{\\mathrm{tot}}$ [%]")
-    ax1.axvline(10, color="#718096", linestyle=":", lw=1.5, label="--quick (10 cpw)")
-    ax1.axvline(20, color="#2f855a", linestyle="-.", lw=1.7, label="Accepted --full (20 cpw, $<1\\%$ $\\Delta$)")
-    ax1.set_xlabel("Cells per minimum wavelength in MQW & Si, $\\mathrm{cpw}$ [-]")
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.4)
+    ax1.plot(cpws, etas, **figstyle.series_style(0), label="$\\eta_{\\pm 20^\\circ}$ [%]")
+    ax1.plot(cpws, lees, **figstyle.series_style(1), label="$\\mathrm{LEE}_{\\mathrm{tot}}$ [%]")
+    ax1.axvline(10, color=figstyle.PALETTE[7], linestyle=":", lw=1.5, label="--quick (10 cpw, 91 c/$\\delta_P$)")
+    ax1.axvline(20, color=figstyle.PALETTE[2], linestyle="-.", lw=1.7, label="Accepted --full (20 cpw, 179 c/$\\delta_P$, $<1\\%$ $\\Delta$)")
+    ax1.set_xticks(cpws)
+    ax1.set_xticklabels([f"{c:.0f}\n({s:.0f} c/$\\delta_P$)" for c, s in zip(cpws, cps_skin)])
+    ax1.set_xlabel("Cells per minimum wavelength $\\mathrm{cpw}$ (and cells per Si $\\delta_P$ at 527 nm)")
     ax1.set_ylabel("Efficiency metric [%]")
-    ax1.set_title("Grid & Skin-Depth Convergence (up to 28-cpw Reference)")
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(loc="best", fontsize=8)
-    ax1_top = ax1.twiny()
-    ax1_top.set_xlim(ax1.get_xlim())
-    ax1_top.set_xticks(cpws)
-    ax1_top.set_xticklabels([f"{s:.0f}" for s in cps_skin])
-    ax1_top.set_xlabel("Cells per Si skin depth $\\delta_P = \\lambda/(4\\pi\\kappa)$ (G) [-]", fontsize=8.5)
+    ax1.set_title("(a) Grid & Skin-Depth Convergence (up to 28-cpw Reference)")
+    ax1.legend(loc="best", fontsize=7.6)
 
-    ax2.loglog(dxs_nm[:-1], np.maximum(rel_err_eta, 1e-2), "o-", color="#2b6cb0", lw=2.0, label="$|\\Delta \\eta_{\\pm 20^\\circ}| / \\eta_{\\mathrm{ref}}$ [%]")
-    ax2.loglog(dxs_nm[:-1], np.maximum(rel_err_lee, 1e-2), "s-", color="#dd6b20", lw=2.0, label="$|\\Delta \\mathrm{LEE}_{\\mathrm{tot}}| / \\mathrm{LEE}_{\\mathrm{ref}}$ [%]")
+    ax2.loglog(dxs_nm[:-1], np.maximum(rel_err_eta, 1e-2), **figstyle.series_style(0), label="$|\\Delta \\eta_{\\pm 20^\\circ}| / \\eta_{\\mathrm{ref}}$ [%]")
+    ax2.loglog(dxs_nm[:-1], np.maximum(rel_err_lee, 1e-2), **figstyle.series_style(1), label="$|\\Delta \\mathrm{LEE}_{\\mathrm{tot}}| / \\mathrm{LEE}_{\\mathrm{ref}}$ [%]")
     dx_guide = np.linspace(dxs_nm[-2], dxs_nm[0], 50)
     err_guide = max(rel_err_eta[0], 1.0) * (dx_guide / dxs_nm[0]) ** 2
     ax2.loglog(dx_guide, err_guide, "k--", lw=1.4, label="$O(\\Delta y_{\\min}^2)$ second-order guide")
-    ax2.axhline(1.0, color="#2f855a", linestyle="-.", lw=1.3, label="1% convergence threshold (met at 20 cpw)")
+    ax2.axhline(1.0, color=figstyle.PALETTE[2], linestyle="-.", lw=1.3, label="1% convergence threshold (met at 20 cpw)")
     ax2.set_xlabel("Finest vertical cell size $\\Delta y_{\\min}$ (MQW & Si) [nm]")
     ax2.set_ylabel("Relative error vs. 28-cpw reference [%]")
-    ax2.set_title("Relative Discretization Error vs. Cell Size $\\Delta y_{\\min}$")
-    ax2.grid(True, which="both", alpha=0.3)
-    ax2.legend(loc="best", fontsize=8)
-    fig.savefig(fig_dir / "fig13_resolution_convergence.png")
-    plt.close(fig)
+    ax2.set_title("(b) Relative Discretization Error vs. Cell Size $\\Delta y_{\\min}$")
+    ax2.legend(loc="best", fontsize=7.6)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig13_resolution_convergence.png")
 
     # -------------------------------------------------------------------------
-    # Figure 14: Time-Domain Wavefront Snapshots & Figure 15: Animated GIF
+    # Figure 14: 3-Panel Time-Domain Wavefront Snapshots & Figure 15: Animated GIF
     # -------------------------------------------------------------------------
-    # stored normalized (float16) with a frames_ex_scale factor to keep the committed data small
     frames_ex = np.asarray(data_dual["frames_ex"], dtype=float) * (float(data_dual["frames_ex_scale"]) if "frames_ex_scale" in data_dual else 1.0)
     times_fs = data_dual["times_fs"]
     mx_um = data_dual["mov_x_um"]
     my_um = data_dual["mov_y_um"]
-    vmax_ex = float(np.percentile(np.abs(frames_ex), 99.2))
-    vmax_ex = max(vmax_ex, 1e-6)
+    vmin_ex, vmax_ex = figstyle.symmetric_limits(frames_ex)
 
     snap_indices = [
-        int(round(f * (len(frames_ex) - 1))) for f in (0.18, 0.38, 0.62, 0.88)
+        int(round(f * (len(frames_ex) - 1))) for f in (0.20, 0.50, 0.85)
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(10.2, 6.2), sharex=True, sharey=True, constrained_layout=True)
-    for ax, idx_s in zip(axes.ravel(), snap_indices):
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=12.8, height=4.2, sharey=True)
+    for idx_p, (ax, idx_s) in enumerate(zip(axes, snap_indices)):
         im = ax.pcolormesh(
             mx_um,
             my_um,
             frames_ex[idx_s].T,
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             shading="auto",
-            vmin=-vmax_ex,
+            vmin=vmin_ex,
             vmax=vmax_ex,
         )
-        for sub_ch in CHANNELS:
-            x0_s = RGB_MATERIALS[sub_ch]["x_center_m"] * 1e6
-            ax.add_patch(
-                mpatches.Rectangle(
-                    (x0_s - 0.525, -1.10),
-                    1.05,
-                    1.10,
-                    fill=False,
-                    edgecolor="black",
-                    linewidth=0.9,
-                )
-            )
-        ax.axhline(0.0, color="black", linestyle=":", lw=0.8)
-        ax.set_title(f"$t = {times_fs[idx_s]:.1f}$ fs")
-    for ax in axes[1, :]:
+        overlay_rgb_geometry(
+            ax,
+            active_channel="G",
+            line_color="black",
+            show_dipoles=True,
+            show_monitors=True,
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlabel("Lateral coordinate $x$ [$\\mu$m]")
-    for ax in axes[:, 0]:
-        ax.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
-    fig.colorbar(im, ax=axes.ravel().tolist(), pad=0.015, label="$E_x(x, y, t)$ [V/m]")
-    fig.suptitle("Time-Domain Electric Field $E_x(x, y, t)$ During a 20-Dipole Random-Phase Burst (G Channel)")
-    fig.savefig(fig_dir / "fig14_time_domain_snapshots.png")
-    plt.close(fig)
+        ax.set_title(f"({'abc'[idx_p]}) 20-Dipole Burst at $t = {times_fs[idx_s]:.1f}$ fs")
+    axes[0].set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
+    fig.colorbar(im, ax=axes[-1], pad=0.02, label="$E_x(x, y, t)$ [V/m]")
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "fig14_time_domain_snapshots.png")
 
     # Animated GIF (Figure 15)
-    fig_anim, ax_anim = plt.subplots(figsize=(6.8, 3.8), constrained_layout=True)
+    fig_anim, ax_anim = figstyle.new_figure(nrows=1, ncols=1, width=7.2, height=4.1)
     quad = ax_anim.pcolormesh(
         mx_um,
         my_um,
         frames_ex[0].T,
-        cmap="RdBu_r",
+        cmap=figstyle.CMAP_DIVERGING,
         shading="auto",
-        vmin=-vmax_ex,
+        vmin=vmin_ex,
         vmax=vmax_ex,
     )
-    for sub_ch in CHANNELS:
-        x0_s = RGB_MATERIALS[sub_ch]["x_center_m"] * 1e6
-        ax_anim.add_patch(
-            mpatches.Rectangle(
-                (x0_s - 0.525, -1.10),
-                1.05,
-                1.10,
-                fill=False,
-                edgecolor="black",
-                linewidth=0.9,
-            )
-        )
+    overlay_rgb_geometry(
+        ax_anim,
+        active_channel="G",
+        line_color="black",
+        show_dipoles=True,
+        show_monitors=True,
+        show_labels=True,
+        compact=False,
+    )
     ax_anim.set_xlabel("Lateral coordinate $x$ [$\\mu$m]")
     ax_anim.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
     title_anim = ax_anim.set_title(f"20-Dipole Random-Phase Burst ($t = {times_fs[0]:.1f}$ fs)")
     fig_anim.colorbar(quad, ax=ax_anim, label="$E_x(x, y, t)$ [V/m]")
+    figstyle.finish(fig_anim)
 
     def _update_frame(i_f: int):
         quad.set_array(frames_ex[i_f].T.ravel())

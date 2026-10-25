@@ -1,0 +1,17 @@
+{
+  "task": "part_d_ponderomotive",
+  "quick": false,
+  "a0_ref": 7.4,
+  "tau_fs": 12.0,
+  "gamma_opt_theory": 28.380000000000003,
+  "gamma_peak_ode": 27.444179038316012,
+  "kappa_at_peak": 1.00625,
+  "gamma_at_z_6zr": 27.8631269509085,
+  "r_rim_over_sigma": 0.6324555320336758,
+  "crater_max_x_um": 0.14876450032532032,
+  "gaussian_max_x_um": 134.3100471759421,
+  "radial_blowout_suppression_factor": 902.8366773136802,
+  "bunch_rms_length_nm": 14.85482099219665,
+  "bunch_rms_duration_as": 49.55034923592591,
+  "wall_s": 2.278
+}

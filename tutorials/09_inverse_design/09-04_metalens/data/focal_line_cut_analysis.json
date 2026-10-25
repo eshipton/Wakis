@@ -1,0 +1,38 @@
+{
+  "aperture_width_um": 10.0,
+  "focal_length_um": 2.4,
+  "focus_coordinates_um": [
+    0.0,
+    3.4
+  ],
+  "na": 0.9015230574682737,
+  "wavelength_analysis": [
+    {
+      "wavelength_nm": 450.0,
+      "na_used": 0.9015230574682737,
+      "focal_enhancement_stored_map": 11.055300238542259,
+      "focal_enhancement_resim_line": 10.825318336486816,
+      "diffraction_limit_fwhm_um": 0.22109907211886776,
+      "empirical_fwhm_um": 0.3484187082405342,
+      "fwhm_ratio_empirical_over_diffraction": 1.5758488034414573
+    },
+    {
+      "wavelength_nm": 550.0,
+      "na_used": 0.9015230574682737,
+      "focal_enhancement_stored_map": 8.59374432452023,
+      "focal_enhancement_resim_line": 8.432886123657227,
+      "diffraction_limit_fwhm_um": 0.2702321992563939,
+      "empirical_fwhm_um": 0.4362318840579697,
+      "fwhm_ratio_empirical_over_diffraction": 1.6142853636922696
+    },
+    {
+      "wavelength_nm": 650.0,
+      "na_used": 0.9015230574682737,
+      "focal_enhancement_stored_map": 9.275787524878979,
+      "focal_enhancement_resim_line": 9.179045677185059,
+      "diffraction_limit_fwhm_um": 0.31936532639392007,
+      "empirical_fwhm_um": 0.4641340782122897,
+      "fwhm_ratio_empirical_over_diffraction": 1.4533014070532038
+    }
+  ]
+}

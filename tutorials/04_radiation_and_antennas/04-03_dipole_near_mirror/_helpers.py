@@ -731,12 +731,18 @@ class SlabXZ:
         ymin: float = -1.0,
         ymax: float = 1.0,
         snap: bool = False,
+        name: str | None = None,
     ):
         self.xmin, self.xmax = float(xmin), float(xmax)
         self.ymin, self.ymax = float(ymin), float(ymax)
         self.zmin, self.zmax = float(zmin), float(zmax)
-        self.material = material if isinstance(material, str) else float(material)
+        self.material = (
+            float(material)
+            if isinstance(material, (int, float, np.number))
+            else material
+        )
         self.snap = bool(snap)
+        self.name = name
 
     @property
     def bounds(self) -> tuple[np.ndarray, np.ndarray]:
@@ -872,4 +878,195 @@ def count_cells_in_interval(nodes: np.ndarray, a: float, b: float) -> float:
     dz = c_hi - c_lo
     overlap = np.clip(np.minimum(c_hi, hi) - np.maximum(c_lo, lo), 0.0, dz)
     return float(np.sum(overlap / np.maximum(dz, 1e-30)))
+
+
+def set_monitor_bounds(mon, label: str | None = None):
+    """Populate ``mon.bounds`` from ``mon.center`` and ``mon.size`` prior to ``emsolve``.
+
+    ``wakis.schematic.extract_setup_info`` uses ``mon.bounds`` when present, falling
+    back to the full domain extent for uninitialized box monitors. Setting ``bounds``
+    explicitly ensures that ``plot_schematic`` and ``overlay_geometry`` draw the exact
+    monitor aperture or Huygens box without running a time-stepping loop.
+
+    Parameters
+    ----------
+    mon : Near2FarMonitor or FluxMonitor
+        Monitor object with ``center`` and ``size`` attributes [m].
+    label : str, optional
+        Human-readable label stored in ``mon.name``.
+
+    Returns
+    -------
+    mon : Near2FarMonitor or FluxMonitor
+        The same monitor with ``bounds`` (and optional ``name``) populated.
+    """
+    cx, cy, cz = (float(v) for v in mon.center)
+    sx, sy, sz = (float(v) for v in mon.size)
+    mon.bounds = (
+        cx - 0.5 * sx,
+        cx + 0.5 * sx,
+        cy - 0.5 * sy,
+        cy + 0.5 * sy,
+        cz - 0.5 * sz,
+        cz + 0.5 * sz,
+    )
+    if label is not None:
+        mon.name = label
+    return mon
+
+
+def overlay_xz_boundaries_and_boxes(
+    ax,
+    solver,
+    unit: str = "um",
+    box_monitors: list | None = None,
+    pec_z_label: str | None = "PEC mirror (z = 0)",
+    show_z_pml: bool = True,
+) -> None:
+    """Annotate vertical (-z / +z) boundaries and 2D FluxMonitor boxes on an xz plot.
+
+    Workaround for two ``wakis.schematic`` limitations on ``plane="xz"`` cuts:
+    (1) ``_draw_schematic_panel`` and ``overlay_geometry`` draw shaded PML strips only
+        along the horizontal axis (-x / +x) and summarize -z / +z in the subtitle;
+    (2) ``extract_setup_info`` classifies 2D ``FluxMonitor`` boxes (``size[0] > 0`` and
+        ``size[2] > 0``) as ``kind="plane"``, which would render as a diagonal segment
+        rather than a closed 2D rectangle.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axes in ``unit`` coordinates.
+    solver : SolverFIT3D
+        Configured Wakis solver instance.
+    unit : {"m", "mm", "um", "nm"}
+        Coordinate unit used on ``ax``.
+    box_monitors : list of tuple(FluxMonitor, str), optional
+        Closed 2D ``FluxMonitor`` boxes and their text labels to draw as rectangles.
+    pec_z_label : str or None
+        Label for the ``-z`` (or ``z = 0``) PEC mirror plane if present.
+    show_z_pml : bool
+        If True, shade and label ``-z`` / ``+z`` CPML absorbing layers inside ``ax``.
+    """
+    from matplotlib.patches import Rectangle
+
+    scale = {"m": 1.0, "mm": 1e3, "um": 1e6, "nm": 1e9}[unit]
+    x_nodes = np.asarray(solver.grid.x, dtype=float) * scale
+    z_nodes = np.asarray(solver.grid.z, dtype=float) * scale
+    x_grid_lo, x_grid_hi = float(x_nodes[0]), float(x_nodes[-1])
+    z_lo, z_hi = float(z_nodes[0]), float(z_nodes[-1])
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    x_vis_lo, x_vis_hi = min(xlim), max(xlim)
+    z_vis_lo, z_vis_hi = min(ylim), max(ylim)
+    x_lo = max(x_grid_lo, x_vis_lo)
+    x_hi = min(x_grid_hi, x_vis_hi)
+    x_span = max(x_hi - x_lo, 1e-12)
+    z_vis_span = max(z_vis_hi - z_vis_lo, 1e-12)
+
+    bc_low_z = str(solver.bc_low[2]).lower()
+    bc_high_z = str(solver.bc_high[2]).lower()
+    n_pml = int(getattr(solver, "n_pml", 8))
+
+    if show_z_pml and bc_high_z in ("pml", "cpml") and len(z_nodes) > n_pml:
+        z_pml_top = float(z_nodes[-1 - n_pml])
+        top_hi = min(z_hi, z_vis_hi)
+        if z_pml_top < top_hi - 0.02 * z_vis_span:
+            rect_top = Rectangle(
+                (x_lo, z_pml_top),
+                x_span,
+                top_hi - z_pml_top,
+                facecolor="#64748b",
+                edgecolor="#475569",
+                alpha=0.14,
+                hatch="//",
+                lw=0.8,
+                zorder=3,
+            )
+            ax.add_patch(rect_top)
+            ax.axhline(z_pml_top, color="#475569", ls=":", lw=0.9, zorder=4)
+            ax.text(
+                x_lo + 0.03 * x_span,
+                0.5 * (z_pml_top + top_hi),
+                f"+z: CPML ({n_pml} cells)",
+                fontsize=7.0,
+                color="#1e293b",
+                va="center",
+                ha="left",
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.82, edgecolor="none"),
+                zorder=7,
+            )
+
+    if show_z_pml and bc_low_z in ("pml", "cpml") and len(z_nodes) > n_pml:
+        z_pml_bot = float(z_nodes[n_pml])
+        bot_lo = max(z_lo, z_vis_lo)
+        if z_pml_bot > bot_lo + 0.02 * z_vis_span:
+            rect_bot = Rectangle(
+                (x_lo, bot_lo),
+                x_span,
+                z_pml_bot - bot_lo,
+                facecolor="#64748b",
+                edgecolor="#475569",
+                alpha=0.14,
+                hatch="//",
+                lw=0.8,
+                zorder=3,
+            )
+            ax.add_patch(rect_bot)
+            ax.axhline(z_pml_bot, color="#475569", ls=":", lw=0.9, zorder=4)
+            ax.text(
+                x_lo + 0.03 * x_span,
+                0.5 * (bot_lo + z_pml_bot),
+                f"-z: CPML ({n_pml} cells)",
+                fontsize=7.0,
+                color="#1e293b",
+                va="center",
+                ha="left",
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.82, edgecolor="none"),
+                zorder=7,
+            )
+
+    if bc_low_z == "pec" and pec_z_label is not None and z_lo >= z_vis_lo - 0.02 * z_vis_span:
+        ax.axhline(z_lo, color="#0f172a", lw=2.2, zorder=6)
+        ax.text(
+            x_hi - 0.03 * x_span,
+            max(z_lo, z_vis_lo) + 0.035 * z_vis_span,
+            pec_z_label,
+            fontsize=7.2,
+            fontweight="bold",
+            color="#0f172a",
+            va="bottom",
+            ha="right",
+            bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.88, edgecolor="#0f172a", lw=0.7),
+            zorder=7,
+        )
+
+    if box_monitors:
+        for mon, lbl in box_monitors:
+            cx, _, cz = (float(v) * scale for v in mon.center)
+            sx, _, sz = (float(v) * scale for v in mon.size)
+            rect = Rectangle(
+                (cx - 0.5 * sx, cz - 0.5 * sz),
+                sx,
+                sz,
+                facecolor="none",
+                edgecolor="#0f766e",
+                lw=1.3,
+                ls="--",
+                zorder=6,
+            )
+            ax.add_patch(rect)
+            if lbl:
+                ax.text(
+                    cx + 0.5 * sx + 0.015 * x_span,
+                    cz,
+                    lbl,
+                    fontsize=7.0,
+                    color="#0f766e",
+                    va="center",
+                    ha="left",
+                    bbox=dict(boxstyle="round,pad=0.14", facecolor="white", alpha=0.85, edgecolor="none"),
+                    zorder=7,
+                )
+
 

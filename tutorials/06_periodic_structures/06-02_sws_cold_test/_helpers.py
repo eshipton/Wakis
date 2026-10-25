@@ -1453,11 +1453,20 @@ def project_floquet_space_harmonics(
         nz = max(int(grid.Nz) - int(edge_ghosts[2]), 1)
 
     d_period = float(grid.zmax - grid.zmin)
-    dz = d_period / float(nz)
-    z_centers = (np.arange(nz, dtype=float) + 0.5) * dz
-    n_indices = np.arange(-int(n_harm), int(n_harm) + 1, dtype=int)
-    beta_n = float(beta0_rad_m) + 2.0 * np.pi * n_indices / d_period
-    phase_mat = np.exp(1j * beta_n[:, None] * z_centers[None, :]) / float(nz)
+    dz_vec = np.asarray(grid.dz[:nz], dtype=float)
+    if np.allclose(dz_vec, dz_vec[0], rtol=1e-9, atol=1e-15):
+        dz = d_period / float(nz)
+        z_centers = (np.arange(nz, dtype=float) + 0.5) * dz
+        phase_mat = np.exp(1j * (float(beta0_rad_m) + 2.0 * np.pi * np.arange(-int(n_harm), int(n_harm) + 1, dtype=int) / d_period)[:, None] * z_centers[None, :]) / float(nz)
+        n_indices = np.arange(-int(n_harm), int(n_harm) + 1, dtype=int)
+        beta_n = float(beta0_rad_m) + 2.0 * np.pi * n_indices / d_period
+    else:
+        z_nodes = np.asarray(grid.z[: nz + 1], dtype=float)
+        z_centers = 0.5 * (z_nodes[:-1] + z_nodes[1:]) - float(grid.zmin)
+        weights_z = dz_vec / float(np.sum(dz_vec))
+        n_indices = np.arange(-int(n_harm), int(n_harm) + 1, dtype=int)
+        beta_n = float(beta0_rad_m) + 2.0 * np.pi * n_indices / d_period
+        phase_mat = np.exp(1j * beta_n[:, None] * z_centers[None, :]) * weights_z[None, :]
 
     ez_nodes = np.asarray(ez_field, dtype=np.complex128)[:, :, :nz]
     ez_harm = np.einsum("ij,xyj->ixy", phase_mat, ez_nodes)
@@ -1757,26 +1766,53 @@ def extract_bloch_mode_dft(
 
     # Axial Poynting vector S_z = 0.5 * Re(E_x H_y* - E_y H_x*)
     sz_3d = 0.5 * np.real(ex_c * np.conj(hy_c) - ey_c * np.conj(hx_c))
-    pz_vs_z = np.sum(sz_3d, axis=(0, 1)) * dx * dy
-    pz_mean_w = float(np.sum(sz_3d) * dx * dy * dz / d_period)
-
-    # Time-averaged stored energy U_cell = 2 * U_H = 0.5 * mu0 * int |H|^2 dV
-    u_cell_j = float(
-        0.5
-        * MU0
-        * np.sum(np.abs(hx_c) ** 2 + np.abs(hy_c) ** 2 + np.abs(hz_c) ** 2)
-        * dx
-        * dy
-        * dz
+    dx_vec = np.asarray(grid.dx[:nx], dtype=float)
+    dy_vec = np.asarray(grid.dy[:ny], dtype=float)
+    dz_vec = np.asarray(grid.dz[:nz], dtype=float)
+    is_uniform_xyz = (
+        np.allclose(dx_vec, dx_vec[0], rtol=1e-9, atol=1e-15)
+        and np.allclose(dy_vec, dy_vec[0], rtol=1e-9, atol=1e-15)
+        and np.allclose(dz_vec, dz_vec[0], rtol=1e-9, atol=1e-15)
     )
+    if is_uniform_xyz:
+        pz_vs_z = np.sum(sz_3d, axis=(0, 1)) * dx * dy
+        pz_mean_w = float(np.sum(sz_3d) * dx * dy * dz / d_period)
+        u_cell_j = float(
+            0.5
+            * MU0
+            * np.sum(np.abs(hx_c) ** 2 + np.abs(hy_c) ** 2 + np.abs(hz_c) ** 2)
+            * dx
+            * dy
+            * dz
+        )
+    else:
+        da_xy = dx_vec[:, None] * dy_vec[None, :]
+        dv_xyz = da_xy[:, :, None] * dz_vec[None, None, :]
+        pz_vs_z = np.sum(sz_3d * da_xy[:, :, None], axis=(0, 1))
+        pz_mean_w = float(np.sum(sz_3d * dv_xyz) / d_period)
+        u_cell_j = float(
+            0.5
+            * MU0
+            * np.sum(
+                (np.abs(hx_c) ** 2 + np.abs(hy_c) ** 2 + np.abs(hz_c) ** 2) * dv_xyz
+            )
+        )
     v_energy_m_s = float(pz_mean_w * d_period / max(u_cell_j, 1e-30))
 
     # Space-harmonic projection E_{zn}(x, y) over all Nz axial cells of one period
     n_x_ez = ez_raw.shape[1]
     n_y_ez = ez_raw.shape[2]
     ez_nodes = ez_raw[0, :n_x_ez, :n_y_ez, :nz]
-    x_nodes = np.linspace(grid.xmin, grid.xmax, n_x_ez)
-    y_nodes = np.linspace(grid.ymin, grid.ymax, n_y_ez)
+    if is_uniform_xyz:
+        x_nodes = np.linspace(grid.xmin, grid.xmax, n_x_ez)
+        y_nodes = np.linspace(grid.ymin, grid.ymax, n_y_ez)
+        ix_mid = 0 if nx == 1 else nx // 2
+        iy_mid = ny // 2
+    else:
+        x_nodes = np.asarray(grid.x[:n_x_ez], dtype=float)
+        y_nodes = np.asarray(grid.y[:n_y_ez], dtype=float)
+        ix_mid = 0 if nx == 1 else int(np.argmin(np.abs(x_nodes)))
+        iy_mid = int(np.argmin(np.abs(y_nodes)))
 
     proj = project_floquet_space_harmonics(
         ez_nodes,
@@ -1789,8 +1825,6 @@ def extract_bloch_mode_dft(
     z_centers = proj["z_centers_m"]
     ez_harm = proj["ez_harm"]
 
-    ix_mid = 0 if nx == 1 else nx // 2
-    iy_mid = ny // 2
     ez_harm_x0 = ez_harm[:, ix_mid, :]
     ez_harm_axis = ez_harm[:, ix_mid, iy_mid]
 
@@ -1798,21 +1832,39 @@ def extract_bloch_mode_dft(
     k_n_axis = (np.abs(ez_harm_axis) ** 2) / (2.0 * (beta_n**2) * p_abs)
 
     # Beam cross-section averaged Pierce impedance K_{n,avg}
-    y_beam_mask = np.abs(y_nodes) <= max(beam_y_half_m, dy)
+    dy_min_eff = float(np.min(dy_vec)) if len(dy_vec) > 0 else dy
+    dx_min_eff = float(np.min(dx_vec)) if len(dx_vec) > 0 else dx
+    y_beam_mask = np.abs(y_nodes) <= max(beam_y_half_m, dy_min_eff)
     if not np.any(y_beam_mask):
         y_beam_mask[iy_mid] = True
     if beam_x_half_m is None or nx == 1:
         x_beam_mask = np.zeros(n_x_ez, dtype=bool)
         x_beam_mask[ix_mid] = True
     else:
-        x_beam_mask = np.abs(x_nodes) <= max(beam_x_half_m, dx)
+        x_beam_mask = np.abs(x_nodes) <= max(beam_x_half_m, dx_min_eff)
         if not np.any(x_beam_mask):
             x_beam_mask[ix_mid] = True
 
-    ez_sq_beam_avg = np.mean(
-        np.abs(ez_harm[:, x_beam_mask, :][:, :, y_beam_mask]) ** 2,
-        axis=(1, 2),
-    )
+    if is_uniform_xyz:
+        ez_sq_beam_avg = np.mean(
+            np.abs(ez_harm[:, x_beam_mask, :][:, :, y_beam_mask]) ** 2,
+            axis=(1, 2),
+        )
+    else:
+        tdx_full = 0.5 * (
+            np.concatenate([[0.0], np.diff(grid.x)])
+            + np.concatenate([np.diff(grid.x), [0.0]])
+        )[:n_x_ez]
+        tdy_full = 0.5 * (
+            np.concatenate([[0.0], np.diff(grid.y)])
+            + np.concatenate([np.diff(grid.y), [0.0]])
+        )[:n_y_ez]
+        wx = tdx_full[x_beam_mask]
+        wy = tdy_full[y_beam_mask]
+        w_xy = wx[:, None] * wy[None, :]
+        w_sum = max(float(np.sum(w_xy)), 1e-30)
+        ez_sub = np.abs(ez_harm[:, x_beam_mask, :][:, :, y_beam_mask]) ** 2
+        ez_sq_beam_avg = np.sum(ez_sub * w_xy[None, :, :], axis=(1, 2)) / w_sum
     k_n_beam_avg = ez_sq_beam_avg / (2.0 * (beta_n**2) * p_abs)
 
     # Mid-plane slice E_z(y, z) at x = 0
@@ -1966,3 +2018,1101 @@ def estimate_sws_task_resources(
         "setup_seconds_est": float(est_obj.setup_seconds),
         "step_ms_est": float(est_obj.step_seconds * 1e3),
     }
+
+
+# =====================================================================
+# 5. Graded Non-Uniform SWS Meshing & Setup Schematic Helpers
+# =====================================================================
+
+
+def build_2d_grating_graded_grid(
+    spec: GratingSWSSpec = GratingSWSSpec(),
+    n_feat: int = 8,
+    glide_symmetric: bool = True,
+    conformal: str | bool = "pec",
+    slot_bg_ratio: float = 2.4,
+    tunnel_bg_ratio: float = 1.25,
+    z_bg_ratio: float = 1.6,
+    grading: float = 1.22,
+) -> tuple[GridFIT3D, dict[str, Any]]:
+    """Build a graded non-uniform 2D ``GridFIT3D`` for the double-corrugated grating SWS.
+
+    Refines the vertical grid step ``dy`` across the vane-tip / beam-tunnel
+    aperture bands ``y in [+-g_half - l/2, +-g_half + l/2]`` and the axial step
+    ``dz`` across the ``100 um`` corrugation teeth ``z in [z_i - l/2, z_i + l/2]``
+    with target spacing ``Delta_min = min_feature_m / n_feat``, while grading
+    smoothly into the ``300 um`` slot depth (up to ``slot_bg_ratio * Delta_min``)
+    and ``400 um`` open slot interior (up to ``z_bg_ratio * Delta_min``). The
+    vertical axis is constructed symmetrically about ``y = 0`` so that ``y = 0``
+    and ``y = +-g_half`` are exact grid nodes, and the axial axis preserves
+    identical cell sizes at the Bloch seam ``z = 0`` and ``z = d``.
+
+    Parameters
+    ----------
+    spec : GratingSWSSpec, optional
+        Grating geometry specification.
+    n_feat : int, optional
+        Number of grid cells across the ``0.10 mm`` minimum feature at the vane
+        teeth and vane-tip corners. Default is 8.
+    glide_symmetric : bool, optional
+        If True, staggers the top vane by ``d/2`` relative to the bottom vane.
+        Default is True.
+    conformal : {'pec', False}, optional
+        Wakis conformal PEC treatment. Default is ``'pec'``.
+    slot_bg_ratio : float, optional
+        Ratio of maximum vertical cell size in the deep slot to ``Delta_min``.
+        Default is 2.4.
+    tunnel_bg_ratio : float, optional
+        Ratio of vertical cell size near the beam-tunnel center to ``Delta_min``.
+        Default is 1.25.
+    z_bg_ratio : float, optional
+        Ratio of maximum axial cell size in the open slot to ``Delta_min``.
+        Default is 1.6.
+    grading : float, optional
+        Maximum adjacent cell-size growth ratio for ``meshing.graded_axis``.
+        Default is 1.22.
+
+    Returns
+    -------
+    grid : GridFIT3D
+        Constructed graded non-uniform 2D Wakis FIT grid.
+    mesh_meta : dict[str, Any]
+        Standardized mesh metadata dictionary including ``cells_across_vane_tooth``,
+        ``cells_across_tunnel``, and ``mesh_type = 'graded'``.
+    """
+    from wakis.templates import meshing
+
+    d = spec.period_m
+    l_vane = spec.vane_length_m
+    g = spec.tunnel_half_height_m
+    b = spec.total_height_m
+    lx = 1.0e-3
+
+    dy_min = spec.min_feature_m / float(n_feat)
+    delta_y = 0.5 * l_vane
+    n_half = max(int(n_feat) // 2, 2)
+
+    pts_y_half = [-0.5 * b, -g - delta_y, -g, -g + delta_y, 0.0]
+    sizes_y_half = [
+        float(slot_bg_ratio) * dy_min,
+        dy_min,
+        dy_min,
+        float(tunnel_bg_ratio) * dy_min,
+    ]
+    y_neg = meshing.graded_axis(
+        pts_y_half,
+        sizes_y_half,
+        min_cells=[2, n_half, n_half, 2],
+        grading=float(grading),
+    )
+    y_nodes = np.concatenate([y_neg, -y_neg[-2::-1]])
+
+    z1 = 0.25 * d
+    z2 = 0.75 * d if glide_symmetric else 0.25 * d
+    if glide_symmetric:
+        pts_z = [
+            0.0,
+            z1 - 0.5 * l_vane,
+            z1 + 0.5 * l_vane,
+            0.5 * d,
+            z2 - 0.5 * l_vane,
+            z2 + 0.5 * l_vane,
+            d,
+        ]
+        sizes_z = [
+            float(z_bg_ratio) * dy_min,
+            dy_min,
+            float(z_bg_ratio) * dy_min,
+            float(z_bg_ratio) * dy_min,
+            dy_min,
+            float(z_bg_ratio) * dy_min,
+        ]
+        min_c_z = [2, int(n_feat), 2, 2, int(n_feat), 2]
+    else:
+        pts_z = [
+            0.0,
+            z1 - 0.5 * l_vane,
+            z1 + 0.5 * l_vane,
+            0.625 * d,
+            d,
+        ]
+        sizes_z = [
+            float(z_bg_ratio) * dy_min,
+            dy_min,
+            float(z_bg_ratio) * dy_min,
+            float(z_bg_ratio) * dy_min,
+        ]
+        min_c_z = [2, int(n_feat), 2, 2]
+
+    z_nodes = meshing.graded_axis(
+        pts_z,
+        sizes_z,
+        min_cells=min_c_z,
+        grading=max(float(grading) - 0.02, 1.05),
+    )
+    x_nodes = np.array([-0.5 * lx, 0.5 * lx], dtype=float)
+
+    bot_vane = pv.Box(
+        bounds=(-lx, lx, -0.5 * b - 0.1e-3, -g, z1 - 0.5 * l_vane, z1 + 0.5 * l_vane)
+    )
+    top_vane = pv.Box(
+        bounds=(-lx, lx, g, 0.5 * b + 0.1e-3, z2 - 0.5 * l_vane, z2 + 0.5 * l_vane)
+    )
+
+    grid = GridFIT3D(
+        x=x_nodes,
+        y=y_nodes,
+        z=z_nodes,
+        stl_solids={"bot": bot_vane, "top": top_vane},
+        stl_materials={"bot": "pec", "top": "pec"},
+        conformal=conformal,
+        verbose=0,
+    )
+    meta = measure_sws_mesh_metrics(
+        grid=grid,
+        min_feature_m=spec.min_feature_m,
+        active_axes=("y", "z"),
+    )
+    dz_arr = np.diff(z_nodes)
+    dy_arr = np.diff(y_nodes)
+    tol = 1e-12
+    in_vane_z = (z_nodes[1:] > z1 - 0.5 * l_vane + tol) & (
+        z_nodes[:-1] < z1 + 0.5 * l_vane - tol
+    )
+    max_dz_vane = float(np.max(dz_arr[in_vane_z])) if np.any(in_vane_z) else float(np.max(dz_arr))
+    in_tip_y = (y_nodes[1:] > -g - delta_y + tol) & (y_nodes[:-1] < -g + delta_y - tol)
+    max_dy_tip = float(np.max(dy_arr[in_tip_y])) if np.any(in_tip_y) else float(np.max(dy_arr))
+    in_tunnel_y = (y_nodes[1:] > -g + tol) & (y_nodes[:-1] < g - tol)
+
+    meta["cells_across_vane_tooth"] = round(float(l_vane / max_dz_vane), 3)
+    meta["cells_across_vane_tip"] = round(float(l_vane / max_dy_tip), 3)
+    meta["cells_across_feature"] = round(
+        min(meta["cells_across_vane_tooth"], meta["cells_across_vane_tip"]), 3
+    )
+    meta["cells_across_tunnel"] = int(np.sum(in_tunnel_y))
+    meta["total_cells"] = int(meta["n_cells"])
+    meta["glide_symmetric"] = bool(glide_symmetric)
+    meta["conformal"] = str(conformal)
+    meta["mesh_type"] = "graded"
+    return grid, meta
+
+
+def build_3d_grating_graded_grid(
+    spec: GratingSWSSpec = GratingSWSSpec(),
+    n_feat: int = 4,
+    glide_symmetric: bool = True,
+    conformal: str | bool = "pec",
+    slot_bg_ratio: float = 2.4,
+    tunnel_bg_ratio: float = 1.25,
+    z_bg_ratio: float = 1.6,
+    x_bg_ratio: float = 2.2,
+    grading: float = 1.22,
+) -> tuple[GridFIT3D, dict[str, Any]]:
+    """Build a 3D graded non-uniform ``GridFIT3D`` for the Karetnikova grating SWS.
+
+    Uses the same ``(y, z)`` graded axes as ``build_2d_grating_graded_grid`` and
+    grades the broad waveguide axis ``x in [-a/2, +a/2]`` across the sheet-beam
+    edges ``x = +-W_b/2`` while preflighting memory and runtime via
+    ``estimate_sws_task_resources`` (``wakis.estimate``).
+    """
+    from wakis.templates import meshing
+
+    a = spec.waveguide_width_m
+    b = spec.total_height_m
+    d = spec.period_m
+    l_vane = spec.vane_length_m
+    g = spec.tunnel_half_height_m
+    wb_half = 0.5 * spec.beam_width_m
+
+    grid_2d, _ = build_2d_grating_graded_grid(
+        spec=spec,
+        n_feat=n_feat,
+        glide_symmetric=glide_symmetric,
+        conformal=conformal,
+        slot_bg_ratio=slot_bg_ratio,
+        tunnel_bg_ratio=tunnel_bg_ratio,
+        z_bg_ratio=z_bg_ratio,
+        grading=grading,
+    )
+    edge_g = getattr(grid_2d, "edge_ghosts", [1, 1, 1])
+    y_nodes = np.asarray(grid_2d.y[: int(grid_2d.Ny) + 1 - int(edge_g[1])], dtype=float)
+    z_nodes = np.asarray(grid_2d.z[: int(grid_2d.Nz) + 1 - int(edge_g[2])], dtype=float)
+
+    dy_min = spec.min_feature_m / float(n_feat)
+    dx_wall = min(1.5 * dy_min, 0.5 * a - wb_half)
+    dx_center = float(x_bg_ratio) * dy_min
+    x_neg = meshing.graded_axis(
+        [-0.5 * a, -wb_half, 0.0],
+        [dx_wall, dx_center],
+        min_cells=[2, max(int(n_feat), 3)],
+        grading=float(grading),
+    )
+    x_nodes = np.concatenate([x_neg, -x_neg[-2::-1]])
+
+    z1 = 0.25 * d
+    z2 = 0.75 * d if glide_symmetric else 0.25 * d
+    bot_vane = pv.Box(
+        bounds=(-0.6 * a, 0.6 * a, -0.5 * b - 0.1e-3, -g, z1 - 0.5 * l_vane, z1 + 0.5 * l_vane)
+    )
+    top_vane = pv.Box(
+        bounds=(-0.6 * a, 0.6 * a, g, 0.5 * b + 0.1e-3, z2 - 0.5 * l_vane, z2 + 0.5 * l_vane)
+    )
+
+    grid = GridFIT3D(
+        x=x_nodes,
+        y=y_nodes,
+        z=z_nodes,
+        stl_solids={"bot": bot_vane, "top": top_vane},
+        stl_materials={"bot": "pec", "top": "pec"},
+        conformal=conformal,
+        verbose=0,
+    )
+    meta = measure_sws_mesh_metrics(
+        grid=grid,
+        min_feature_m=spec.min_feature_m,
+        active_axes=("x", "y", "z"),
+        feature_axis="y",
+    )
+    meta["glide_symmetric"] = bool(glide_symmetric)
+    meta["conformal"] = str(conformal)
+    meta["mesh_type"] = "graded"
+    meta["estimate"] = estimate_sws_task_resources(
+        meta["nx"], meta["ny"], meta["nz"], n_steps=3200, n_subruns=5, conformal=conformal
+    )
+    return grid, meta
+
+
+def compare_sws_graded_vs_uniform_meshes(
+    spec: GratingSWSSpec = GratingSWSSpec(),
+    n_feat_list: tuple[int, ...] = (4, 8, 12, 16),
+) -> dict[str, Any]:
+    """Compare uniform vs graded non-uniform 2D and 3D SWS meshes across ``n_feat_list``.
+
+    Parameters
+    ----------
+    spec : GratingSWSSpec, optional
+        Grating specification.
+    n_feat_list : tuple of int, optional
+        Feature resolution levels ``n_feat`` across the ``0.10 mm`` vane tooth.
+
+    Returns
+    -------
+    comparison : dict[str, Any]
+        Dictionary with ``levels_2d`` (per-level uniform vs graded metrics and
+        cell reduction factors) and ``preflight_3d`` (``wakis.estimate`` comparison
+        for the 3D Karetnikova rectangular-waveguide grating at ``n_feat = 4`` and ``8``).
+    """
+    levels_2d: list[dict[str, Any]] = []
+    for nf in n_feat_list:
+        _, meta_u = build_2d_grating_grid(spec, n_feat=int(nf), glide_symmetric=True, conformal="pec")
+        _, meta_g = build_2d_grating_graded_grid(spec, n_feat=int(nf), glide_symmetric=True, conformal="pec")
+        levels_2d.append(
+            {
+                "n_feat": int(nf),
+                "uniform": meta_u,
+                "graded": meta_g,
+                "cell_reduction_2d": round(float(meta_u["n_cells"]) / max(float(meta_g["n_cells"]), 1.0), 3),
+            }
+        )
+
+    preflight_3d: dict[str, Any] = {}
+    for nf, nx_u, n_steps in [(4, 18, 3200), (8, 34, 7000)]:
+        _, m3_u = build_3d_grating_grid(spec, n_feat=nf, nx=nx_u, glide_symmetric=True, conformal="pec")
+        _, m3_g = build_3d_grating_graded_grid(spec, n_feat=nf, glide_symmetric=True, conformal="pec")
+        est_u = estimate_sws_task_resources(m3_u["nx"], m3_u["ny"], m3_u["nz"], n_steps=n_steps, n_subruns=5)
+        est_g = estimate_sws_task_resources(m3_g["nx"], m3_g["ny"], m3_g["nz"], n_steps=n_steps, n_subruns=5)
+        preflight_3d[f"n_feat_{nf}"] = {
+            "uniform_meta": m3_u,
+            "graded_meta": m3_g,
+            "uniform_estimate": est_u,
+            "graded_estimate": est_g,
+            "cell_reduction_3d": round(float(m3_u["n_cells"]) / max(float(m3_g["n_cells"]), 1.0), 3),
+            "speedup_est_3d": round(float(est_u["cpu_seconds_est"]) / max(float(est_g["cpu_seconds_est"]), 1e-9), 3),
+        }
+
+    return {"levels_2d": levels_2d, "preflight_3d": preflight_3d}
+
+
+def load_or_run_sws_graded_mesh_study(
+    data_dir=None,
+    force_rerun: bool = False,
+) -> dict[str, Any]:
+    """Load or execute the graded non-uniform vs uniform SWS cold-test benchmark.
+
+    Evaluates ``build_2d_grating_graded_grid`` at ``n_feat in {4, 8, 12, 16}``
+    (``graded_L1``, ``graded_L2``, ``graded_L3``, ``graded_reference``) at the
+    synchronous mid-band point ``beta_0 d = 0.5 pi`` plus a 7-point Brillouin and
+    Pierce-impedance sweep on ``graded_L2`` (``n_feat = 8``), and caches the
+    results in ``data/graded_mesh_comparison.json`` so ``--plot`` and tests can
+    compare graded vs uniform meshes at equal accuracy and equal cost without
+    modifying the 12 baseline ``task_XX_*.json`` files.
+    """
+    import json
+    from pathlib import Path
+
+    if data_dir is None:
+        data_dir = Path(__file__).resolve().parent / "data"
+    data_dir = Path(data_dir)
+    cache_json = data_dir / "graded_mesh_comparison.json"
+    if cache_json.exists() and not force_rerun:
+        return json.loads(cache_json.read_text(encoding="utf-8"))
+
+    spec = GratingSWSSpec()
+    d = spec.period_m
+    beta0_mid = 0.5 * np.pi / d
+    probes = [("Ez", (0.0, 0.0, 0.07e-3)), ("Ey", (0.0, 0.0, 0.07e-3))]
+    sources = [
+        ("Ez", (0.0, 0.025e-3, 0.21e-3), 1.0),
+        ("Ey", (0.0, 0.025e-3, 0.21e-3), 1.0),
+    ]
+
+    ladder_specs = [
+        ("graded_L1", 4, 4500),
+        ("graded_L2", 8, 8500),
+        ("graded_L3", 12, 12500),
+        ("graded_reference", 16, 16000),
+    ]
+    ladder_results: dict[str, Any] = {}
+    for name, nf, n_steps in ladder_specs:
+        grid_g, meta_g = build_2d_grating_graded_grid(
+            spec, n_feat=nf, glide_symmetric=True, conformal="pec"
+        )
+        _, meta_u = build_2d_grating_grid(
+            spec, n_feat=nf, glide_symmetric=True, conformal="pec"
+        )
+        t0 = time.perf_counter()
+        r1 = run_bloch_harminv_point(
+            grid_g, beta0_mid, 120e9, 70e9, 10e9, 235e9, probes, sources, n_steps=n_steps
+        )
+        f1_hz = float(r1["frequencies_hz"][0])
+        f2_hz = float(r1["frequencies_hz"][1]) if len(r1["frequencies_hz"]) > 1 else 189.0e9
+        n_ring = max(int(0.55 * n_steps), 1500)
+        dft = extract_bloch_mode_dft(
+            grid_g,
+            beta0_mid,
+            f1_hz,
+            sources,
+            n_harm=6,
+            fwidth_hz=6.0e9,
+            n_ring_steps=n_ring,
+            beam_y_half_m=spec.beam_half_thickness_m,
+        )
+        wall_s = time.perf_counter() - t0
+        idx0 = int(np.where(dft["n_indices"] == 0)[0][0])
+        idxm1 = int(np.where(dft["n_indices"] == -1)[0][0])
+        idxp1 = int(np.where(dft["n_indices"] == 1)[0][0])
+
+        ladder_results[name] = {
+            "name": name,
+            "n_feat": int(nf),
+            "ny": int(meta_g["ny"]),
+            "nz": int(meta_g["nz"]),
+            "n_cells": int(meta_g["n_cells"]),
+            "uniform_n_cells": int(meta_u["n_cells"]),
+            "cell_reduction_vs_uniform": round(
+                float(meta_u["n_cells"]) / max(float(meta_g["n_cells"]), 1.0), 3
+            ),
+            "dx_min": float(meta_g["dx_min"]),
+            "dx_background": float(meta_g["dx_background"]),
+            "cells_across_feature": float(meta_g["cells_across_feature"]),
+            "cells_across_vane_tooth": float(meta_g["cells_across_vane_tooth"]),
+            "n_steps": int(r1["n_steps"] + dft["n_steps"]),
+            "wall_time_s": round(float(wall_s), 3),
+            "f1_mid_ghz": round(float(f1_hz * 1e-9), 5),
+            "f2_mid_ghz": round(float(f2_hz * 1e-9), 5),
+            "km1_mid_ohm": round(float(dft["k_n_axis_ohm"][idxm1]), 5),
+            "km1_beam_avg_ohm": round(float(dft["k_n_beam_avg_ohm"][idxm1]), 5),
+            "kp1_mid_ohm": round(float(dft["k_n_axis_ohm"][idxp1]), 5),
+            "k0_mid_ohm": float(dft["k_n_axis_ohm"][idx0]),
+            "v_energy_over_c": round(float(dft["v_energy_over_c"]), 5),
+        }
+
+    # 7-point Brillouin & Pierce impedance sweep on graded_L2 (n_feat=8)
+    bn_sweep = [0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0]
+    grid_g8, _ = build_2d_grating_graded_grid(spec, n_feat=8, glide_symmetric=True, conformal="pec")
+    f1_sweep_ghz: list[float] = []
+    f2_sweep_ghz: list[float] = []
+    km1_sweep_ohm: list[float] = []
+    km1_avg_sweep_ohm: list[float] = []
+    ve_sweep_c: list[float] = []
+    t0_sw = time.perf_counter()
+    for bn in bn_sweep:
+        b0 = float(bn * np.pi / d)
+        rg = run_bloch_harminv_point(
+            grid_g8, b0, 120e9, 70e9, 10e9, 235e9, probes, sources, n_steps=5500
+        )
+        fg1 = float(rg["frequencies_hz"][0])
+        fg2 = float(rg["frequencies_hz"][1]) if len(rg["frequencies_hz"]) > 1 else fg1
+        dft_g = extract_bloch_mode_dft(
+            grid_g8,
+            b0,
+            fg1,
+            sources,
+            n_harm=6,
+            fwidth_hz=6.0e9,
+            n_ring_steps=2800,
+            beam_y_half_m=spec.beam_half_thickness_m,
+        )
+        idxm1 = int(np.where(dft_g["n_indices"] == -1)[0][0])
+        f1_sweep_ghz.append(round(fg1 * 1e-9, 4))
+        f2_sweep_ghz.append(round(fg2 * 1e-9, 4))
+        km1_sweep_ohm.append(round(float(dft_g["k_n_axis_ohm"][idxm1]), 4))
+        km1_avg_sweep_ohm.append(round(float(dft_g["k_n_beam_avg_ohm"][idxm1]), 4))
+        ve_sweep_c.append(round(float(dft_g["v_energy_over_c"]), 4))
+    sweep_wall_s = time.perf_counter() - t0_sw
+
+    out_payload = {
+        "ladder": ladder_results,
+        "sweep_L2": {
+            "bn": bn_sweep,
+            "f1_ghz": f1_sweep_ghz,
+            "f2_ghz": f2_sweep_ghz,
+            "km1_axis_ohm": km1_sweep_ohm,
+            "km1_beam_avg_ohm": km1_avg_sweep_ohm,
+            "v_energy_over_c": ve_sweep_c,
+            "wall_time_s": round(float(sweep_wall_s), 3),
+        },
+        "mesh_comparison": compare_sws_graded_vs_uniform_meshes(spec),
+    }
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cache_json.write_text(json.dumps(out_payload, indent=2) + "\n", encoding="utf-8")
+    return out_payload
+
+
+def build_sws_setup_objects(
+    spec: GratingSWSSpec = GratingSWSSpec(),
+    n_feat: int = 8,
+    beta0_d_over_pi: float = 0.5,
+    graded: bool = True,
+) -> tuple[GridFIT3D, SolverFIT3D, list[Any], list[Any], list[Any]]:
+    """Construct live Wakis ``GridFIT3D``, ``SolverFIT3D``, ``CurrentSource``, and monitor objects.
+
+    Builds the 2D double-corrugated grating SWS cold-test setup without running
+    time steps, suitable for passing directly to ``wakis.schematic``.
+    """
+    from wakis.templates.photonics import Box
+
+    if graded:
+        grid, _ = build_2d_grating_graded_grid(
+            spec=spec, n_feat=n_feat, glide_symmetric=True, conformal="pec"
+        )
+    else:
+        grid, _ = build_2d_grating_grid(
+            spec=spec, n_feat=n_feat, glide_symmetric=True, conformal="pec"
+        )
+    d = spec.period_m
+    b = spec.total_height_m
+    g = spec.tunnel_half_height_m
+    l_vane = spec.vane_length_m
+    beta0 = float(beta0_d_over_pi) * np.pi / d
+
+    solver = SolverFIT3D(
+        grid,
+        use_stl=True,
+        bc_low=["periodic", "pec", "bloch"],
+        bc_high=["periodic", "pec", "bloch"],
+        dtype=np.complex128,
+        k_bloch=(0.0, 0.0, -float(beta0)),
+        verbose=0,
+    )
+    pulse = GaussianSource(frequency=120e9, fwidth=70e9)
+    src_ez = CurrentSource(
+        pulse, component="Ez", center=(0.0, 0.025e-3, 0.21e-3), amplitude=1.0
+    )
+    src_ez.label = "CurrentSource Jz, Jy (f0 = 120 GHz)"
+    sources = [src_ez]
+
+    mon_harminv = ResonanceMonitor("Ez", center=(0.0, 0.0, 0.07e-3), t_start=pulse.end_time)
+    mon_harminv.name = "ResonanceMonitor (harminv)"
+    mon_harminv.label = "ResonanceMonitor (Ez, Ey)"
+    mon_harminv.size = (0.0, 0.0, 0.0)
+    monitors = [mon_harminv]
+
+    z1, z2 = 0.25 * d, 0.75 * d
+    h_v = 0.5 * b - g
+    bot_box = Box(
+        center=(0.0, -g - 0.5 * h_v, z1),
+        size=(1.0e-3, h_v, l_vane),
+        material="pec",
+    )
+    bot_box.name = "PEC vane (z1 = d/4)"
+    top_box = Box(
+        center=(0.0, +g + 0.5 * h_v, z2),
+        size=(1.0e-3, h_v, l_vane),
+        material="pec",
+    )
+    top_box.name = "PEC vane (z2 = 3d/4)"
+    structures = [bot_box, top_box]
+    return grid, solver, sources, monitors, structures
+
+
+def overlay_sws_grating_geometry(
+    ax,
+    spec: GratingSWSSpec = GratingSWSSpec(),
+    glide_symmetric: bool = True,
+    show_beam: bool = True,
+    show_labels: bool = True,
+) -> None:
+    """Overlay crisp PEC vane outlines, beam-tunnel aperture lines, and boundary labels on a 2D (z, y) axis."""
+    from wakis import figstyle, schematic
+
+    d = spec.period_m
+    b = spec.total_height_m
+    grid_bare = GridFIT3D(
+        x=np.linspace(-0.5e-3, 0.5e-3, 2),
+        y=np.linspace(-0.5 * b, 0.5 * b, 9),
+        z=np.linspace(0.0, d, 9),
+        verbose=0,
+    )
+    schematic.overlay_geometry(
+        ax,
+        grid_bare,
+        plane="zy",
+        unit="um",
+        structures=[],
+        show_boundaries=False,
+        label_materials=False,
+    )
+    d_um = spec.period_m * 1e6
+    g_um = spec.tunnel_half_height_m * 1e6
+    hb_um = spec.beam_half_thickness_m * 1e6
+    h_um = spec.vane_height_m * 1e6
+    l_um = spec.vane_length_m * 1e6
+    b_um = spec.total_height_m * 1e6
+    z1_um = 0.25 * d_um - 0.5 * l_um
+    z2_um = (0.75 if glide_symmetric else 0.25) * d_um - 0.5 * l_um
+
+    import matplotlib.patches as mpatches
+
+    for zb, yb in [(z1_um, -0.5 * b_um), (z2_um, g_um)]:
+        ax.add_patch(
+            mpatches.Rectangle(
+                (zb, yb),
+                l_um,
+                h_um,
+                facecolor="#334155",
+                edgecolor="#0f172a",
+                lw=1.3,
+                alpha=0.82,
+                zorder=5,
+            )
+        )
+    ax.axhline(-g_um, color=figstyle.PALETTE[6], ls="--", lw=0.95, alpha=0.85, zorder=6)
+    ax.axhline(+g_um, color=figstyle.PALETTE[6], ls="--", lw=0.95, alpha=0.85, zorder=6)
+    if show_beam:
+        ax.axhline(-hb_um, color=figstyle.PALETTE[1], ls=":", lw=0.9, alpha=0.85, zorder=6)
+        ax.axhline(+hb_um, color=figstyle.PALETTE[1], ls=":", lw=0.9, alpha=0.85, zorder=6)
+    if show_labels:
+        ax.text(
+            z1_um + 0.5 * l_um,
+            -0.5 * b_um + 0.5 * h_um,
+            "PEC\nvane",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            fontweight="bold",
+            color="white",
+            zorder=7,
+        )
+        ax.text(
+            z2_um + 0.5 * l_um,
+            g_um + 0.5 * h_um,
+            "PEC\nvane",
+            ha="center",
+            va="center",
+            fontsize=7.2,
+            fontweight="bold",
+            color="white",
+            zorder=7,
+        )
+        ax.text(
+            0.03,
+            0.94,
+            r"Bloch $z=0,d$ ($\Delta\phi=\beta_0 d$) | PEC $y=\pm 400\;\mu\mathrm{m}$",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=7.0,
+            color="#0f172a",
+            bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "0.80", "alpha": 0.90},
+            zorder=8,
+        )
+
+
+def overlay_marosi_3d_yz_geometry(
+    ax,
+    spec: MarosiPillarSWSSpec = MarosiPillarSWSSpec(),
+) -> None:
+    """Overlay 3D Marosi pillar footprints, beam tunnel, and Bloch/PEC labels on the x=0 (z, y) field slice."""
+    import matplotlib.patches as mpatches
+    from wakis import figstyle, schematic
+
+    grid_bare = GridFIT3D(
+        x=np.linspace(-0.5 * spec.waveguide_width_m, 0.5 * spec.waveguide_width_m, 3),
+        y=np.linspace(-0.5 * spec.waveguide_height_m, 0.5 * spec.waveguide_height_m, 9),
+        z=np.linspace(0.0, spec.period_m, 9),
+        verbose=0,
+    )
+    schematic.overlay_geometry(
+        ax,
+        grid_bare,
+        plane="zy",
+        unit="um",
+        structures=[],
+        show_boundaries=False,
+        label_materials=False,
+    )
+    d_um = spec.period_m * 1e6
+    l_um = spec.pillar_length_m * 1e6
+    yi_um = spec.pillar_y_inner_m * 1e6
+    yo_um = spec.pillar_y_outer_m * 1e6
+    tb_half_um = 0.5 * spec.beam_thickness_m * 1e6
+
+    for z_c, lbl in [(0.25 * d_um, "$-x$ pillar\n($z_1=d/4$)"), (0.75 * d_um, "$+x$ pillar\n($z_2=3d/4$)")]:
+        for y_lo in (-yo_um, yi_um):
+            ax.add_patch(
+                mpatches.Rectangle(
+                    (z_c - 0.5 * l_um, y_lo),
+                    l_um,
+                    yo_um - yi_um,
+                    fill=False,
+                    edgecolor="#0f172a",
+                    lw=1.3,
+                    ls="--",
+                    zorder=6,
+                )
+            )
+        ax.text(
+            z_c,
+            0.5 * (yi_um + yo_um),
+            lbl,
+            ha="center",
+            va="center",
+            fontsize=6.3,
+            fontweight="bold",
+            color="#0f172a",
+            bbox={"boxstyle": "round,pad=0.14", "fc": "white", "ec": "0.75", "alpha": 0.88},
+            zorder=7,
+        )
+    ax.axhline(-yi_um, color=figstyle.PALETTE[6], ls="--", lw=1.0, zorder=6)
+    ax.axhline(+yi_um, color=figstyle.PALETTE[6], ls="--", lw=1.0, zorder=6)
+    ax.axhline(-tb_half_um, color=figstyle.PALETTE[1], ls=":", lw=1.0, zorder=6)
+    ax.axhline(+tb_half_um, color=figstyle.PALETTE[1], ls=":", lw=1.0, zorder=6)
+    ax.text(
+        0.03,
+        0.95,
+        r"Bloch $z=0,d$ | PEC $y=\pm 400\;\mu\mathrm{m}$ | Tunnel $|y|\leq 150\;\mu\mathrm{m}$",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=6.5,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.80", "alpha": 0.90},
+        zorder=8,
+    )
+
+
+def plot_sws_setup_schematic(
+    out_path,
+    grating_spec: GratingSWSSpec = GratingSWSSpec(),
+    marosi_spec: MarosiPillarSWSSpec = MarosiPillarSWSSpec(),
+):
+    """Render ``00_setup_schematic.png`` for Tutorial 6.2 using ``wakis.figstyle`` and ``wakis.schematic``.
+
+    Produces a 3-panel setup schematic:
+    - Panel (a): 2D/3D Corrugated Grating SWS unit cell built from live
+      ``SolverFIT3D`` / ``GridFIT3D`` / ``CurrentSource`` / ``ResonanceMonitor``
+      objects via ``schematic.plot_schematic``, showing Bloch boundaries with
+      phase advance ``beta_0 d``, PEC walls & staggered corrugation vanes,
+      20 kV sheet electron beam, off-axis dipole excitation, and harminv/DFT monitors.
+    - Panel (b): 3D Isometric Cut-Plane View of the V-Band Staggered-Pillar SWS
+      (Marosi et al., 2025), showing the 3D rectangular PEC housing, staggered
+      ``-x`` and ``+x`` pillar pairs, 5.2 kV sheet beam, diagnostic cut planes
+      ``x = 0`` and ``y = 0``, and Bloch phase advance ``beta_0 d``.
+    - Panel (c): Graded Non-Uniform vs Uniform Mesh Zoom at the vane-tip /
+      slot-mouth corner using ``schematic.draw_mesh`` and ``schematic.overlay_geometry``,
+      annotating cells across the ``100 um`` vane tooth/tip and cell reduction.
+    """
+    import matplotlib.patches as mpatches
+    from wakis import figstyle, schematic
+
+    figstyle.apply_style()
+    grid_g, solver_g, sources_g, monitors_g, structs_g = build_sws_setup_objects(
+        spec=grating_spec, n_feat=8, beta0_d_over_pi=0.5, graded=True
+    )
+    grid_u, _, _, _, _ = build_sws_setup_objects(
+        spec=grating_spec, n_feat=8, beta0_d_over_pi=0.5, graded=False
+    )
+
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(
+        nrows=1, ncols=3, width=13.8, height=4.4
+    )
+
+    # ------------------------------------------------------------------
+    # Panel (a): Unit-cell setup schematic from live solver objects
+    # ------------------------------------------------------------------
+    grid_bare = GridFIT3D(
+        x=np.asarray(grid_g.x),
+        y=np.asarray(grid_g.y),
+        z=np.asarray(grid_g.z),
+        verbose=0,
+    )
+    schematic.overlay_geometry(
+        ax0,
+        grid_bare,
+        plane="zy",
+        unit="um",
+        structures=[],
+        sources=sources_g,
+        monitors=monitors_g,
+        show_boundaries=False,
+        show_sources=False,
+        show_monitors=False,
+        label_materials=False,
+    )
+    d_um = grating_spec.period_m * 1e6
+    g_um = grating_spec.tunnel_half_height_m * 1e6
+    hb_um = grating_spec.beam_half_thickness_m * 1e6
+    h_um = grating_spec.vane_height_m * 1e6
+    l_um = grating_spec.vane_length_m * 1e6
+    b_um = grating_spec.total_height_m * 1e6
+
+    ax0.set_facecolor("#f8fafc")
+    # Sheet-beam & tunnel shading
+    ax0.axhspan(-g_um, +g_um, color="#fef3c7", alpha=0.50, zorder=1)
+    ax0.axhspan(-hb_um, +hb_um, color="#fca5a5", alpha=0.42, zorder=2)
+    ax0.axhline(-g_um, color="#b45309", ls="--", lw=1.0, zorder=4)
+    ax0.axhline(+g_um, color="#b45309", ls="--", lw=1.0, zorder=4)
+    ax0.annotate(
+        "",
+        xy=(465.0, 0.0),
+        xytext=(35.0, 0.0),
+        arrowprops={"arrowstyle": "->", "color": "#b91c1c", "lw": 1.6},
+        zorder=7,
+    )
+    ax0.text(
+        265.0,
+        -52.0,
+        r"$20\;\mathrm{kV}$ sheet beam ($H_b=150\;\mu\mathrm{m}$, $u_0=0.272c$)",
+        ha="center",
+        va="center",
+        fontsize=6.6,
+        fontweight="bold",
+        color="#991b1b",
+        bbox={"boxstyle": "round,pad=0.16", "fc": "#fffbeb", "ec": "#f59e0b", "alpha": 0.94},
+        zorder=8,
+    )
+
+    # Clear PEC vane fills and dimension labels
+    for zb, yb in [
+        (0.25 * d_um - 0.5 * l_um, -0.5 * b_um),
+        (0.75 * d_um - 0.5 * l_um, g_um),
+    ]:
+        ax0.add_patch(
+            mpatches.Rectangle(
+                (zb, yb),
+                l_um,
+                h_um,
+                facecolor="#334155",
+                edgecolor="#0f172a",
+                lw=1.4,
+                alpha=0.92,
+                zorder=5,
+            )
+        )
+        ax0.text(
+            zb + 0.5 * l_um,
+            yb + 0.5 * h_um,
+            "PEC\nvane\n$100\\times 300\\;\\mu$m",
+            ha="center",
+            va="center",
+            fontsize=6.6,
+            fontweight="bold",
+            color="white",
+            zorder=6,
+        )
+
+    # Top/bottom PEC wall lines and Bloch boundaries
+    ax0.axhline(-0.5 * b_um, color="#0f172a", lw=2.2, zorder=6)
+    ax0.axhline(+0.5 * b_um, color="#0f172a", lw=2.2, zorder=6)
+    for z_bc in (0.0, d_um):
+        ax0.axvline(z_bc, color=figstyle.PALETTE[0], ls="-.", lw=1.8, zorder=7)
+    ax0.text(
+        16.0,
+        245.0,
+        r"Bloch $z=0,d$" + "\n" + r"$\mathbf{E}(d)=\mathbf{E}(0)e^{-j\beta_0 d}$",
+        ha="left",
+        va="center",
+        fontsize=6.6,
+        color=figstyle.PALETTE[0],
+        fontweight="bold",
+        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": figstyle.PALETTE[0], "alpha": 0.94},
+        zorder=8,
+    )
+    ax0.text(
+        250.0,
+        378.0,
+        r"PEC wall ($y=+400\;\mu\mathrm{m}$) | $\pm x$: Periodic / PEC",
+        ha="center",
+        va="top",
+        fontsize=6.5,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "0.75", "alpha": 0.92},
+        zorder=8,
+    )
+    ax0.text(
+        290.0,
+        -378.0,
+        r"PEC wall ($y=-400\;\mu\mathrm{m}$), period $d=500\;\mu\mathrm{m}$",
+        ha="center",
+        va="bottom",
+        fontsize=6.5,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "0.75", "alpha": 0.92},
+        zorder=8,
+    )
+    ax0.plot(70.0, 0.0, "o", color=figstyle.PALETTE[2], ms=6.5, mec="white", mew=0.9, zorder=9)
+    ax0.text(
+        70.0,
+        22.0,
+        "Harminv\nprobe",
+        ha="center",
+        va="bottom",
+        fontsize=6.5,
+        fontweight="bold",
+        color=figstyle.PALETTE[2],
+        zorder=9,
+    )
+    ax0.plot(210.0, 25.0, "^", color=figstyle.PALETTE[1], ms=7.0, mec="white", mew=0.9, zorder=9)
+    ax0.text(
+        215.0,
+        42.0,
+        r"Dipole $J_z, J_y$" + "\n" + r"($f_0=120\;\mathrm{GHz}$)",
+        ha="left",
+        va="bottom",
+        fontsize=6.5,
+        fontweight="bold",
+        color=figstyle.PALETTE[1],
+        zorder=9,
+    )
+    ax0.set_xlim(-15.0, d_um + 15.0)
+    ax0.set_ylim(-0.5 * b_um - 25.0, 0.5 * b_um + 25.0)
+    ax0.set_aspect("auto")
+    ax0.set_xlabel(r"Axial coordinate $z$ [$\mu$m]")
+    ax0.set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
+    ax0.set_title(r"(a) Corrugated SWS unit cell ($\beta_0 d$ Bloch)")
+
+    # ------------------------------------------------------------------
+    # Panel (b): 3D Isometric Cut-Plane View (Marosi V-Band Staggered-Pillar SWS)
+    # ------------------------------------------------------------------
+    def _iso(z_mm, x_mm, y_mm):
+        # Clean isometric projection (z: axial right-down, x: transverse left-down, y: vertical up)
+        u = 0.88 * np.asarray(z_mm) - 0.52 * np.asarray(x_mm)
+        v = np.asarray(y_mm) + 0.24 * np.asarray(z_mm) + 0.30 * np.asarray(x_mm)
+        return u, v
+
+    def _draw_iso_box(ax, z_rng, x_rng, y_rng, fc, ec, alpha=0.72, lw=1.0, ls="-", zorder=3):
+        z0, z1_b = z_rng
+        x0, x1_b = x_rng
+        y0, y1_b = y_rng
+        faces = [
+            [(z0, x0, y0), (z1_b, x0, y0), (z1_b, x0, y1_b), (z0, x0, y1_b)],  # -x face
+            [(z0, x1_b, y0), (z1_b, x1_b, y0), (z1_b, x1_b, y1_b), (z0, x1_b, y1_b)],  # +x face
+            [(z0, x0, y1_b), (z1_b, x0, y1_b), (z1_b, x1_b, y1_b), (z0, x1_b, y1_b)],  # +y top
+            [(z1_b, x0, y0), (z1_b, x1_b, y0), (z1_b, x1_b, y1_b), (z1_b, x0, y1_b)],  # +z front
+        ]
+        for f_pts in faces:
+            uv = np.column_stack(_iso([p[0] for p in f_pts], [p[1] for p in f_pts], [p[2] for p in f_pts]))
+            ax.add_patch(
+                mpatches.Polygon(
+                    uv, closed=True, facecolor=fc, edgecolor=ec, alpha=alpha, lw=lw, linestyle=ls, zorder=zorder
+                )
+            )
+
+    a_m = marosi_spec.waveguide_width_m * 1e3
+    b_m = marosi_spec.waveguide_height_m * 1e3
+    d_m = marosi_spec.period_m * 1e3
+    w_m = marosi_spec.pillar_width_m * 1e3
+    l_m = marosi_spec.pillar_length_m * 1e3
+    yi_m = marosi_spec.pillar_y_inner_m * 1e3
+    yo_m = marosi_spec.pillar_y_outer_m * 1e3
+    wb_m = marosi_spec.beam_width_m * 1e3
+    tb_m = marosi_spec.beam_thickness_m * 1e3
+
+    # Outer PEC housing wireframe
+    _draw_iso_box(
+        ax1, (0.0, d_m), (-0.5 * a_m, 0.5 * a_m), (-0.5 * b_m, 0.5 * b_m),
+        fc="#f8fafc", ec="#64748b", alpha=0.22, lw=1.0, ls="--", zorder=1
+    )
+    # Cut plane y = 0 (horizontal beam mid-plane)
+    uv_y0 = np.column_stack(
+        _iso([0.0, d_m, d_m, 0.0], [-0.5 * a_m, -0.5 * a_m, 0.5 * a_m, 0.5 * a_m], [0.0, 0.0, 0.0, 0.0])
+    )
+    ax1.add_patch(
+        mpatches.Polygon(
+            uv_y0, closed=True, facecolor="#bae6fd", edgecolor="#0284c7", alpha=0.26, lw=1.1, linestyle=":", zorder=2
+        )
+    )
+    # Cut plane x = 0 (longitudinal Ez slice plane)
+    uv_x0 = np.column_stack(
+        _iso([0.0, d_m, d_m, 0.0], [0.0, 0.0, 0.0, 0.0], [-0.5 * b_m, -0.5 * b_m, 0.5 * b_m, 0.5 * b_m])
+    )
+    ax1.add_patch(
+        mpatches.Polygon(
+            uv_x0, closed=True, facecolor="#bbf7d0", edgecolor="#16a34a", alpha=0.24, lw=1.2, linestyle="-.", zorder=2
+        )
+    )
+
+    # -x pillar pair at z1 = d/4
+    z1_lo, z1_hi = 0.25 * d_m - 0.5 * l_m, 0.25 * d_m + 0.5 * l_m
+    _draw_iso_box(
+        ax1, (z1_lo, z1_hi), (-0.5 * a_m, -0.5 * a_m + w_m), (-yo_m, -yi_m),
+        fc="#1d4ed8", ec="#1e3a8a", alpha=0.80, lw=1.0, zorder=4
+    )
+    _draw_iso_box(
+        ax1, (z1_lo, z1_hi), (-0.5 * a_m, -0.5 * a_m + w_m), (yi_m, yo_m),
+        fc="#1d4ed8", ec="#1e3a8a", alpha=0.80, lw=1.0, zorder=4
+    )
+    # +x staggered pillar pair at z2 = 3d/4
+    z2_lo, z2_hi = 0.75 * d_m - 0.5 * l_m, 0.75 * d_m + 0.5 * l_m
+    _draw_iso_box(
+        ax1, (z2_lo, z2_hi), (0.5 * a_m - w_m, 0.5 * a_m), (-yo_m, -yi_m),
+        fc="#ea580c", ec="#7c2d12", alpha=0.82, lw=1.0, zorder=6
+    )
+    _draw_iso_box(
+        ax1, (z2_lo, z2_hi), (0.5 * a_m - w_m, 0.5 * a_m), (yi_m, yo_m),
+        fc="#ea580c", ec="#7c2d12", alpha=0.82, lw=1.0, zorder=6
+    )
+    # 5.2 kV sheet electron beam along z
+    _draw_iso_box(
+        ax1, (0.0, d_m), (-0.5 * wb_m, 0.5 * wb_m), (-0.5 * tb_m, 0.5 * tb_m),
+        fc="#ef4444", ec="#991b1b", alpha=0.65, lw=1.1, zorder=5
+    )
+
+    ax1.text(
+        0.03,
+        0.96,
+        r"PEC housing $a\times b\times d = 1.40\times 0.80\times 1.05\;\mathrm{mm}^3$"
+        + "\n"
+        + r"Bloch $z=0,d$ ($\beta_0 d$) | PEC walls $x=\pm a/2,\;y=\pm b/2$",
+        transform=ax1.transAxes,
+        ha="left",
+        va="top",
+        fontsize=6.6,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "0.80", "alpha": 0.92},
+        zorder=10,
+    )
+    ax1.text(
+        0.03,
+        0.20,
+        r"$-x$ PEC pillars ($z_1=d/4$)",
+        transform=ax1.transAxes,
+        ha="left",
+        va="center",
+        fontsize=6.6,
+        fontweight="bold",
+        color="#1d4ed8",
+        zorder=10,
+    )
+    ax1.text(
+        0.03,
+        0.13,
+        r"$+x$ PEC pillars ($z_2=3d/4$, glide $+d/2$)",
+        transform=ax1.transAxes,
+        ha="left",
+        va="center",
+        fontsize=6.6,
+        fontweight="bold",
+        color="#c2410c",
+        zorder=10,
+    )
+    ax1.text(
+        0.03,
+        0.05,
+        r"Cuts: $x=0$ (green), $y=0$ (blue) | $5.2\;\mathrm{kV}$ beam (red)",
+        transform=ax1.transAxes,
+        ha="left",
+        va="center",
+        fontsize=6.4,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.16", "fc": "#f8fafc", "ec": "0.80", "alpha": 0.92},
+        zorder=10,
+    )
+    ax1.set_xlim(-0.48, 1.42)
+    ax1.set_ylim(-0.68, 0.82)
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    ax1.set_xlabel(r"Isometric projection ($z$ axial, $x$ transverse, $y$ vertical)")
+    ax1.set_title("(b) 3D V-Band pillar SWS & cut planes")
+
+    # ------------------------------------------------------------------
+    # Panel (c): Graded Non-Uniform Mesh Zoom at Vane Tip & Slot Mouth
+    # ------------------------------------------------------------------
+    schematic.draw_mesh(
+        ax2,
+        grid_g,
+        plane="zy",
+        unit="um",
+        every=1,
+        color="#1d4ed8",
+        alpha=0.55,
+    )
+    ax2.add_patch(
+        mpatches.Rectangle(
+            (75.0, -400.0),
+            100.0,
+            300.0,
+            facecolor="#334155",
+            edgecolor="#0f172a",
+            lw=1.5,
+            alpha=0.78,
+            zorder=4,
+        )
+    )
+    ax2.axhline(-100.0, color="#d97706", ls="--", lw=1.3, zorder=6)
+    ax2.axhline(0.0, color="#dc2626", ls=":", lw=1.1, zorder=6)
+
+    # Show uniform L2 grid tick marks along right spine for direct visual comparison
+    y_u_um = np.asarray(grid_u.y) * 1e6
+    for yu in y_u_um[(y_u_um >= -380.0) & (y_u_um <= 40.0)]:
+        ax2.plot([218.0, 225.0], [yu, yu], "-", color="#dc2626", lw=0.8, alpha=0.75, zorder=7)
+
+    ax2.annotate(
+        r"Vane-tip & tooth refinement"
+        + "\n"
+        + r"$\Delta y_{\min}=\Delta z_{\min}=12.5\;\mu\mathrm{m}$"
+        + "\n"
+        + r"($n_{\mathrm{feat}}=8$ cells / $100\;\mu\mathrm{m}$ tooth)",
+        xy=(125.0, -100.0),
+        xytext=(18.0, -42.0),
+        fontsize=6.5,
+        fontweight="bold",
+        color="#1e3a8a",
+        bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "#1d4ed8", "alpha": 0.94},
+        arrowprops={"arrowstyle": "->", "color": "#1d4ed8", "lw": 1.1},
+        zorder=9,
+    )
+    ax2.text(
+        117.5,
+        -382.0,
+        r"Slot depth: $\Delta y_{\max}=30\;\mu\mathrm{m}$ ($\geq 45\;\mathrm{cells}/\lambda$)"
+        + "\n"
+        + r"Graded L2: $1{,}584$ vs Uniform L2: $2{,}560$ cells ($1.62\times$ fewer)",
+        ha="center",
+        va="bottom",
+        fontsize=6.2,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.78", "alpha": 0.94},
+        zorder=9,
+    )
+    ax2.set_xlim(10.0, 225.0)
+    ax2.set_ylim(-395.0, 45.0)
+    ax2.set_aspect("auto")
+    ax2.set_xlabel(r"Axial coordinate $z$ [$\mu$m]")
+    ax2.set_ylabel(r"Vertical coordinate $y$ [$\mu$m]")
+    ax2.set_title("(c) Graded non-uniform mesh zoom at vane tip")
+
+    figstyle.finish(fig)
+    figstyle.save(fig, out_path)
+    return out_path

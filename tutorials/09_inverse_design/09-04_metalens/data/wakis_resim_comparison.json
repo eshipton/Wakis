@@ -1,0 +1,29 @@
+{
+  "mode": "quick",
+  "quick_coarsened_steps": 374,
+  "wavelengths_nm": [
+    450.0,
+    550.0,
+    650.0
+  ],
+  "wakis_enhancement_resim": [
+    10.825318728693437,
+    8.432886475163288,
+    9.17904600241759
+  ],
+  "wakis_enhancement_stored": [
+    10.825318569991442,
+    8.432886304355437,
+    9.179046008762695
+  ],
+  "official_enhancement_stored": [
+    11.459854930431701,
+    8.86517819331014,
+    9.535331361416123
+  ],
+  "max_abs_diff_vs_stored_wakis": 1.708078514184308e-07,
+  "max_rel_diff_vs_official_fmmax": 0.055370352032402266,
+  "wakis_eval_metric_resim": 8.432886475163288,
+  "wakis_eval_metric_stored": 8.432886304355437,
+  "official_eval_metric_stored": 8.86517819331014
+}

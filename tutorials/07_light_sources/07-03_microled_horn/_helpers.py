@@ -1586,3 +1586,412 @@ def extract_2d_eps_map(
         "y_top": y_top,
         "w_top": w_top,
     }
+
+
+def build_horn_schematic_objects(
+    config: str = "dgrin",
+    h_horn: float = H_HORN_DEFAULT,
+    theta_deg: float = 60.0,
+    y_qw: float = Y_QW_DEFAULT,
+    dx: float = 7.5e-9,
+    dx_skin: float = 3.0e-9,
+    n_dip: int = 17,
+    n_pml: int = 8,
+) -> dict:
+    """Build lightweight solver/grid/source/monitor objects for `wakis.schematic`."""
+    from types import SimpleNamespace
+
+    grid, info = build_graded_horn_grid(
+        config=config,
+        h_horn=h_horn,
+        theta_deg=theta_deg,
+        y_qw=y_qw,
+        dx=dx,
+        dx_skin=dx_skin,
+    )
+    solver_stub = SimpleNamespace(
+        grid=grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=n_pml,
+    )
+    structures, y_top, w_top = build_microled_horn_structures(
+        config=config,
+        h_horn=h_horn,
+        theta_deg=theta_deg,
+        x_max=info["x_max"] + 0.20e-6,
+        y_min=info["y_min"] - 0.10e-6,
+    )
+    structures[0].name = "Ag reflector (Drude)"
+    structures[1].name = "SiO₂ passivation (n = 1.46)"
+    structures[2].name = "GaN core (n = 2.45)"
+    if config == "air" and h_horn > 0:
+        structures[3].name = f"Ag horn ({theta_deg:.0f}°)"
+        structures[4].name = f"Ag horn ({theta_deg:.0f}°)"
+    elif config == "sio2" and h_horn > 0:
+        structures[3].name = "SiO₂ horn fill (n = 1.46)"
+        structures[4].name = f"Ag horn ({theta_deg:.0f}°)"
+        structures[5].name = f"Ag horn ({theta_deg:.0f}°)"
+    elif config == "dgrin" and h_horn > 0:
+        for idx_l, (m_nm, n_val) in enumerate(DGRIN_STACK[:-1]):
+            structures[3 + idx_l].name = f"{m_nm} (n = {n_val:.2f})"
+        structures[8].name = f"Ag horn ({theta_deg:.0f}°)"
+        structures[9].name = f"Ag horn ({theta_deg:.0f}°)"
+    for st in structures:
+        if getattr(st, "material", None) == "pec":
+            st.name = "PEC backing"
+
+    f0 = c_light / WL_0
+    pulse = GaussianSource(frequency=f0, fwidth=0.18 * f0)
+    dip_xs = np.linspace(-0.24e-6, 0.24e-6, int(n_dip)) if n_dip > 1 else np.array([0.0])
+    sources = [
+        CurrentSource(
+            pulse,
+            component="z",
+            center=(float(xd), float(y_qw), 0.0),
+            size=(0.0, 0.0, 0.0),
+        )
+        for xd in dip_xs
+    ]
+    y_mon = y_top + 0.16e-6
+    w_mon = max(2.0 * (info["x_max"] - (n_pml + 2) * dx), w_top + 0.20e-6)
+    n2f = Near2FarMonitor2D(
+        [f0], (0.0, y_mon), (w_mon, 0.0), info["dz"], eps_r=1.0, mu_r=1.0
+    )
+    n2f.label = f"Near2FarMonitor2D (y = {y_mon*1e6:.2f} µm)"
+    res_metrics = compute_mesh_resolution_metrics(
+        grid, config=config, h_horn=h_horn, y_qw=y_qw
+    )
+    return {
+        "solver": solver_stub,
+        "grid": grid,
+        "structures": structures,
+        "sources": sources,
+        "monitors": [n2f],
+        "dip_xs_um": dip_xs * 1e6,
+        "y_top_um": y_top * 1e6,
+        "w_top_um": w_top * 1e6,
+        "y_mon_um": y_mon * 1e6,
+        "info": info,
+        "res_metrics": res_metrics,
+    }
+
+
+def tidy_horn_schematic_axes(
+    ax,
+    config: str = "dgrin",
+    h_um: float = 3.0,
+    theta_deg: float = 60.0,
+    n_dip: int = 17,
+    n_pml: int = 8,
+    xlim: tuple[float, float] = (-2.6, 2.6),
+    ylim: tuple[float, float] = (-0.30, 3.85),
+    fontsize: float = 7.2,
+) -> None:
+    """Declutter internal `plot_schematic` labels and place clear layer/BC callouts."""
+    ax.set_aspect("auto")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_title(ax.get_title(), pad=26)
+
+    drop_keys = (
+        "boundary:",
+        "Out-of-plane",
+        "Ag reflector",
+        "SiO",
+        "GaN core",
+        "Nb2O5",
+        "Si3N4",
+        "Al2O3",
+        "MgF2",
+        "Ag horn",
+        "PEC",
+        "Pulse:",
+    )
+    src_texts = []
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif "Domain" in s:
+            t_obj.set_position((0.0, ylim[1] + 0.06))
+        elif "CurrentSource" in s:
+            src_texts.append(t_obj)
+        elif s == "" and getattr(t_obj, "xy", None) is not None and t_obj.xy[1] > ylim[1]:
+            t_obj.remove()
+    for t_obj in src_texts:
+        t_obj.remove()
+
+    # Draw exact polygonal horn cross-section over bounding-box patches
+    import matplotlib.patches as mpatches
+
+    if config != "bare" and h_um > 0:
+        dx_h = h_um / np.tan(np.deg2rad(theta_deg))
+        x_top = 0.5 + dx_h
+        y_top = 0.30 + h_um
+        if config == "air":
+            ax.add_patch(
+                mpatches.Polygon(
+                    [(-0.5, 0.30), (0.5, 0.30), (x_top, y_top), (-x_top, y_top)],
+                    facecolor="#f8fafc",
+                    edgecolor="#334155",
+                    lw=0.9,
+                    zorder=3,
+                )
+            )
+        elif config == "sio2":
+            ax.add_patch(
+                mpatches.Polygon(
+                    [(-0.5, 0.30), (0.5, 0.30), (x_top, y_top), (-x_top, y_top)],
+                    facecolor="#bae6fd",
+                    edgecolor="#0284c7",
+                    lw=0.9,
+                    zorder=3,
+                )
+            )
+        elif config == "dgrin":
+            dh = h_um / 6.0
+            dgrin_fc = ["#fde68a", "#fcd34d", "#fbbf24", "#7dd3fc", "#bae6fd", "#f8fafc"]
+            for idx_l, fc in enumerate(dgrin_fc):
+                y0 = 0.30 + idx_l * dh
+                y1 = 0.30 + (idx_l + 1) * dh
+                xb0 = 0.5 + (idx_l * dh) / np.tan(np.deg2rad(theta_deg))
+                xb1 = 0.5 + ((idx_l + 1) * dh) / np.tan(np.deg2rad(theta_deg))
+                ax.add_patch(
+                    mpatches.Polygon(
+                        [(-xb0, y0), (xb0, y0), (xb1, y1), (-xb1, y1)],
+                        facecolor=fc,
+                        edgecolor="#475569",
+                        lw=0.65,
+                        zorder=3,
+                    )
+                )
+        for sign in (-1.0, 1.0):
+            ax.add_patch(
+                mpatches.Polygon(
+                    [(sign * 0.5, 0.30), (sign * 2.55, 0.30), (sign * 2.55, y_top), (sign * x_top, y_top)],
+                    facecolor="#94a3b8",
+                    edgecolor="#1e293b",
+                    lw=1.0,
+                    alpha=0.88,
+                    zorder=4,
+                )
+            )
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.13",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.5,
+        "alpha": 0.88,
+    }
+    ax.text(
+        xlim[0] + 0.12,
+        ylim[1] - 0.18,
+        f"±x, ±y: CPML ({n_pml} cells) | ±z: Periodic",
+        ha="left",
+        va="center",
+        fontsize=fontsize - 0.3,
+        color="#1e293b",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        0.0,
+        -0.14,
+        "Drude Ag mirror + PEC backing",
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.2,
+        color="#1e293b",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.annotate(
+        f"GaN (0.6×0.3 µm, n=2.45)\n{n_dip} incoherent QW dipoles (y=150 nm)",
+        xy=(0.0, 0.15),
+        xytext=(-1.35, 0.62 if h_um > 0 else 0.78),
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.3,
+        color="#0f172a",
+        bbox=bbox_kw,
+        arrowprops={"arrowstyle": "->", "color": "#a21caf", "lw": 0.8},
+        zorder=9,
+    )
+    ax.annotate(
+        "SiO₂ pass. (n=1.46)",
+        xy=(0.40, 0.15),
+        xytext=(1.55, 0.50 if h_um > 0 else 0.78),
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.4,
+        color="#0f172a",
+        bbox=bbox_kw,
+        arrowprops={"arrowstyle": "->", "color": "#0284c7", "lw": 0.75},
+        zorder=9,
+    )
+    if config == "bare" or h_um <= 0:
+        ax.text(
+            0.0,
+            2.1,
+            "Air superstrate (n = 1.00)\nCritical angle θc = 24.1°",
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    elif config == "air":
+        ax.text(
+            0.0,
+            1.8,
+            f"Unfilled Air µHorn (n = 1.00)\nAg taper ϑ = {theta_deg:.0f}°, w_top = 2.95 µm",
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.1,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    elif config == "sio2":
+        ax.text(
+            0.0,
+            1.8,
+            f"SiO₂-filled µHorn (n = 1.46)\nAg taper ϑ = {theta_deg:.0f}°, w_top = 3.93 µm",
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.1,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    elif config == "dgrin":
+        dh = h_um / 6.0
+        for idx_l, (m_nm, n_val) in enumerate(DGRIN_STACK):
+            yc = 0.30 + (idx_l + 0.5) * dh
+            ax.text(
+                0.0,
+                yc,
+                f"{m_nm} (n = {n_val:.2f})",
+                ha="center",
+                va="center",
+                fontsize=fontsize - 0.5,
+                color="#0f172a",
+                bbox={**bbox_kw, "pad": 0.09, "alpha": 0.82},
+                zorder=9,
+            )
+        ax.text(
+            -1.95,
+            2.05,
+            f"Ag horn\nϑ = {theta_deg:.0f}°",
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.3,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+
+
+def overlay_horn_geometry(
+    ax,
+    config: str = "dgrin",
+    h_um: float = 3.0,
+    theta_deg: float = 60.0,
+    line_color: str = "white",
+    show_dipoles: bool = True,
+    show_monitor: bool = True,
+    show_labels: bool = True,
+    fontsize: float = 6.2,
+) -> None:
+    """Overlay microLED + horn geometry, material/BC labels, dipoles, and monitor via `wakis.schematic`."""
+    from wakis import schematic
+
+    obj = build_horn_schematic_objects(
+        config=config,
+        h_horn=h_um * 1e-6,
+        theta_deg=theta_deg,
+        dx=15e-9,
+        dx_skin=7.5e-9,
+        n_dip=9 if config == "bare" else 17,
+        n_pml=8,
+    )
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xy",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=False,
+        outline_color=line_color,
+        label_materials=False,
+    )
+    # Crisp structural outlines
+    ax.plot([-2.4, 2.4], [0.30, 0.30], color=line_color, lw=0.8, ls=":", alpha=0.65, zorder=7)
+    ax.plot([-0.5, 0.5], [0.0, 0.0], color=line_color, lw=1.1, alpha=0.9, zorder=7)
+    ax.plot([-0.5, -0.5, 0.5, 0.5], [0.0, 0.30, 0.30, 0.0], color=line_color, lw=0.9, alpha=0.85, zorder=7)
+    ax.plot([-0.3, -0.3, 0.3, 0.3], [0.0, 0.30, 0.30, 0.0], color=line_color, lw=1.0, alpha=0.9, zorder=7)
+
+    if show_dipoles:
+        ax.plot([-0.24, 0.24], [0.15, 0.15], color="#f43f5e", ls="--", lw=1.1, zorder=8)
+        ax.plot([0.0], [0.15], "*", color="#fde047", ms=7.0, mec="black", mew=0.4, zorder=9)
+
+    y_top = 0.30 + (h_um if (config != "bare" and h_um > 0) else 0.0)
+    if config != "bare" and h_um > 0:
+        dx_h = h_um / np.tan(np.deg2rad(theta_deg))
+        x_top = 0.5 + dx_h
+        ax.plot([-0.5, -x_top], [0.30, y_top], color=line_color, lw=1.35, alpha=0.95, zorder=8)
+        ax.plot([0.5, x_top], [0.30, y_top], color=line_color, lw=1.35, alpha=0.95, zorder=8)
+        if config == "dgrin":
+            dh = h_um / 6.0
+            for k in range(1, 6):
+                yk = 0.30 + k * dh
+                xk = 0.5 + (k * dh) / np.tan(np.deg2rad(theta_deg))
+                ax.plot([-xk, xk], [yk, yk], color=line_color, ls="--", lw=0.8, alpha=0.75, zorder=7)
+
+    if show_monitor:
+        y_mon = y_top + 0.16
+        ax.plot([-2.3, 2.3], [y_mon, y_mon], color="#10b981", ls="-.", lw=1.1, zorder=8)
+
+    if not show_labels:
+        return
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.11",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.45,
+        "alpha": 0.82,
+    }
+    ax.text(-2.28, 0.12, "Ag reflector\n+ PEC", ha="left", va="center", fontsize=fontsize - 0.3, color="#0f172a", bbox=bbox_kw, zorder=9)
+    ax.text(0.0, 0.04, "GaN + QW (150 nm)", ha="center", va="bottom", fontsize=fontsize - 0.4, color="#0f172a", bbox=bbox_kw, zorder=9)
+    ax.text(1.42, 0.12, "SiO₂ pass.", ha="center", va="center", fontsize=fontsize - 0.4, color="#0f172a", bbox=bbox_kw, zorder=9)
+    if show_monitor:
+        ax.text(2.25, min(y_top + 0.19, 3.52), "Near2FarMonitor2D | CPML", ha="right", va="bottom", fontsize=fontsize - 0.4, color="#065f46", bbox=bbox_kw, zorder=9)
+
+    if config == "bare" or h_um <= 0:
+        ax.text(0.0, 1.85, "Air (n = 1.00)", ha="center", va="center", fontsize=fontsize, color="#0f172a", bbox=bbox_kw, zorder=9)
+    elif config == "air":
+        ax.text(0.0, 1.85, f"Air µHorn (n=1.00)\nAg ϑ={theta_deg:.0f}°", ha="center", va="center", fontsize=fontsize - 0.2, color="#0f172a", bbox=bbox_kw, zorder=9)
+    elif config == "sio2":
+        ax.text(0.0, 1.85, f"SiO₂ µHorn (n=1.46)\nAg ϑ={theta_deg:.0f}°", ha="center", va="center", fontsize=fontsize - 0.2, color="#0f172a", bbox=bbox_kw, zorder=9)
+    elif config == "dgrin":
+        dh = h_um / 6.0
+        for idx_l, (m_nm, n_val) in enumerate(DGRIN_STACK):
+            yc = 0.30 + (idx_l + 0.5) * dh
+            ax.text(
+                0.0,
+                yc,
+                f"{m_nm} ({n_val:.2f})",
+                ha="center",
+                va="center",
+                fontsize=fontsize - 0.6,
+                color="#0f172a",
+                bbox={**bbox_kw, "pad": 0.08, "alpha": 0.78},
+                zorder=9,
+            )
+        ax.text(-1.90, 1.65, f"Ag horn\nϑ={theta_deg:.0f}°", ha="center", va="center", fontsize=fontsize - 0.3, color="#0f172a", bbox=bbox_kw, zorder=9)
+

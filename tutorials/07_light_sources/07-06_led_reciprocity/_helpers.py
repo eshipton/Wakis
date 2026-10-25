@@ -3402,3 +3402,380 @@ def run_janssen_optimization_study(quick=True, out_dir=None):
         (out_dir / "janssen_optimization.json").write_text(json.dumps(summary, indent=2))
 
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Schematic & geometry-overlay helpers for wakis.schematic
+# ---------------------------------------------------------------------------
+_RECIPROCITY_OVERLAY_CACHE: dict[str, dict] = {}
+
+
+def build_reciprocity_schematic_objects(
+    mode: str = "direct",
+    cpw: int = 12,
+    mirror: str = "ag",
+    cpsd_target: float = 10.0,
+) -> dict:
+    """Build 2D grating LED solver, structures, sources, and monitors for `wakis.schematic`."""
+    solver, meta = make_finite_led_solver(
+        cpw=cpw,
+        averaging="kottke",
+        mirror=mirror,
+        cpsd_target=cpsd_target,
+    )
+    f0 = float(meta["f0"])
+    dz = float(meta["dz"])
+    w_slab = float(meta["w_slab"])
+    w_mon = float(meta["w_mon"])
+    y_emit = float(meta["y_emit"])
+    y_mon = float(meta["y_mon"])
+    slab_poly = meta["slab_poly"]
+    structures = [slab_poly]
+
+    waveform = GaussianSource(frequency=f0, fwidth=0.20 * f0)
+    if mode == "direct":
+        sources = [
+            CurrentSource(
+                waveform,
+                component="z",
+                center=(x_s, y_emit, 0.5 * dz),
+            )
+            for x_s in np.linspace(-0.78e-6, 0.78e-6, 9)
+        ]
+        monitors = [
+            Near2FarMonitor2D(
+                freqs=[f0],
+                center=(0.0, y_mon, 0.5 * dz),
+                size=(w_mon, 0.0, dz),
+            )
+        ]
+    else:
+        sources = make_huygens_planewave_2d(
+            waveform=waveform,
+            center_y=y_mon,
+            width_x=w_mon,
+            dz=dz,
+            dy=float(meta["dy"]),
+            theta_rad=np.deg2rad(25.0),
+            k0=float(meta["k0"]),
+            pol="both",
+            phase_center_x=0.0,
+        )
+        monitors = [
+            DFTMonitor(
+                [f0],
+                components=("Ez", "Ex", "Ey"),
+                center=(0.0, y_emit, 0.5 * dz),
+                size=(w_slab, 0.0, 0.0),
+            )
+        ]
+
+    return {
+        "solver": solver,
+        "grid": solver.grid,
+        "meta": meta,
+        "structures": structures,
+        "sources": sources,
+        "monitors": monitors,
+    }
+
+
+def tidy_reciprocity_schematic_axes(
+    ax,
+    meta: dict,
+    mode: str = "direct",
+    fontsize: float = 6.2,
+) -> None:
+    """Clean up cluttered auto-labels and add clear material/boundary/source/monitor callouts."""
+    import matplotlib.patches as mpatches
+
+    w_slab_um = float(meta["w_slab"]) * 1e6
+    y_emit_um = float(meta["y_emit"]) * 1e6
+    y_mon_um = float(meta["y_mon"]) * 1e6
+    w_mon_um = float(meta["w_mon"]) * 1e6
+    poly_um = np.asarray(meta["slab_poly"].vertices, dtype=float) * 1e6
+
+    xlim = (-1.35, 1.35)
+    ylim = (-0.11, 0.64)
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_aspect("auto")
+
+    drop_keys = (
+        "Periodic",
+        "CPML",
+        "PEC",
+        "Out-of-plane",
+        "Dielectric",
+        "Domain",
+        "\\varepsilon",
+        "ε =",
+        "Pulse:",
+        "CurrentSource",
+        "DFTMonitor",
+        "Near2Far",
+        "E (E_z)",
+        "$E_z$",
+        "\\mathbf{E}",
+        "\\mathbf{k}",
+    )
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif s == "" and getattr(t_obj, "xy", None) is not None:
+            t_obj.remove()
+
+    # Draw Drude Ag / PEC back-reflector and GaN 7-period grating polygon
+    ax.add_patch(
+        mpatches.Rectangle(
+            (-0.5 * w_slab_um, -0.11),
+            w_slab_um,
+            0.11,
+            facecolor="#94a3b8",
+            edgecolor="#334155",
+            lw=1.0,
+            alpha=0.85,
+            zorder=4,
+        )
+    )
+    ax.add_patch(
+        mpatches.Polygon(
+            poly_um,
+            closed=True,
+            facecolor="#bae6fd",
+            edgecolor="#0284c7",
+            lw=1.1,
+            alpha=0.65,
+            zorder=5,
+        )
+    )
+    ax.axhline(0.0, color="#0f172a", lw=1.2, zorder=6)
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.5,
+        "alpha": 0.90,
+    }
+
+    ax.text(
+        0.0,
+        0.625,
+        r"$\pm x, +y$: CPML (10 cells) | $-y$: PEC/Ag | $\pm z$: Periodic ($L_x = 2.70\;\mu\mathrm{m}$, $\lambda_0 = 450\;\mathrm{nm}$)",
+        ha="center",
+        va="top",
+        fontsize=fontsize - 0.5,
+        color="#1e293b",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        0.0,
+        -0.055,
+        r"Ag / PEC Back-Reflector ($y \leq 0$, $\delta_s = 26.9\;\mathrm{nm}$, $\varepsilon_{\mathrm{Ag}} = -6.78 + 0.25i$)",
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.4,
+        color="#0f172a",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.text(
+        0.0,
+        0.135,
+        r"GaN Slab ($n = 2.45$, $d_{\mathrm{slab}} = 225\;\mathrm{nm}$) + 7-Period Grating ($\Lambda = 270\;\mathrm{nm}$, $h_g = 72\;\mathrm{nm}$)",
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.4,
+        color="#0c4a6e",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+
+    if mode == "direct":
+        xs_dip = np.linspace(-0.78, 0.78, 9)
+        ax.plot([-0.5 * w_slab_um, 0.5 * w_slab_um], [y_emit_um, y_emit_um], color="#dc2626", ls=":", lw=1.3, zorder=6)
+        ax.plot(xs_dip, np.full_like(xs_dip, y_emit_um), "*", color="#ef4444", ms=6.0, mec="black", mew=0.4, zorder=7)
+        ax.plot([-0.5 * w_mon_um, 0.5 * w_mon_um], [y_mon_um, y_mon_um], color="#059669", ls="--", lw=1.5, zorder=6)
+        for x_arr in np.linspace(-0.75, 0.75, 5):
+            ax.annotate(
+                "",
+                xy=(x_arr + 0.10 * np.sin(0.35 * x_arr), y_mon_um + 0.085),
+                xytext=(x_arr, y_mon_um),
+                arrowprops={"arrowstyle": "->", "color": "#059669", "lw": 1.1},
+                zorder=7,
+            )
+        ax.text(
+            0.0,
+            y_mon_um + 0.09,
+            r"Direct Run: $3 N_{\mathrm{sites}}$ Dipole Solves in Active QW ($y_0 = 49\;\mathrm{nm}$)"
+            "\n"
+            r"+ Near2FarMonitor2D ($y_{\mathrm{mon}} = 383\;\mathrm{nm}$) $\rightarrow I_{\mathrm{direct}}(\theta)$",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.35,
+            color="#065f46",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    else:
+        ax.plot([-0.5 * w_mon_um, 0.5 * w_mon_um], [y_mon_um, y_mon_um], color="#2563eb", lw=1.8, zorder=6)
+        for x_arr in np.linspace(-0.65, 0.65, 5):
+            ax.annotate(
+                "",
+                xy=(x_arr - 0.07, y_mon_um - 0.095),
+                xytext=(x_arr + 0.04, y_mon_um + 0.055),
+                arrowprops={"arrowstyle": "->", "color": "#2563eb", "lw": 1.2},
+                zorder=7,
+            )
+        ax.plot([-0.5 * w_slab_um, 0.5 * w_slab_um], [y_emit_um, y_emit_um], color="#d97706", ls="--", lw=1.6, zorder=7)
+        ax.text(
+            0.0,
+            y_mon_um + 0.09,
+            r"Reciprocal Run: Downward Huygens Plane Wave from $(-\theta)$"
+            "\n"
+            r"+ Active-QW DFTMonitor ($y_0 = 49\;\mathrm{nm}$): $I_{\mathrm{recip}}(\theta) \propto \int_{\mathcal{O}} |\mathbf{E}_{\mathrm{inc}}|^2\,\mathrm{d}x$",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.35,
+            color="#1e3a8a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+
+
+def overlay_reciprocity_led_geometry(
+    ax,
+    poly_um: np.ndarray,
+    y_emit_um: float,
+    y_mon_um: float,
+    w_mon_um: float,
+    line_color: str = "white",
+    show_dipole: tuple[float, float] | None = None,
+    show_labels: bool = True,
+    compact: bool = False,
+    fontsize: float = 5.8,
+) -> None:
+    """Overlay GaN grating polygon, Ag/PEC mirror, active QW, Huygens/N2F plane & CPML via `wakis.schematic`."""
+    from wakis import schematic
+
+    if "recip" not in _RECIPROCITY_OVERLAY_CACHE:
+        _RECIPROCITY_OVERLAY_CACHE["recip"] = build_reciprocity_schematic_objects(
+            mode="reciprocal", cpw=10, mirror="pec"
+        )
+    obj = _RECIPROCITY_OVERLAY_CACHE["recip"]
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xy",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=False,
+        outline_color=line_color,
+        label_materials=False,
+    )
+
+    ax.plot(poly_um[:, 0], poly_um[:, 1], color=line_color, lw=1.1, alpha=0.92, zorder=7)
+    ax.axhline(0.0, color="#fbbf24" if line_color == "white" else "#0f172a", lw=1.0, alpha=0.9, zorder=7)
+    w_slab_um = float(np.max(poly_um[:, 0]) - np.min(poly_um[:, 0]))
+    ax.plot(
+        [-0.5 * w_slab_um, 0.5 * w_slab_um],
+        [y_emit_um, y_emit_um],
+        color="#f87171" if line_color == "white" else "#dc2626",
+        ls="--",
+        lw=1.0,
+        alpha=0.9,
+        zorder=7,
+    )
+    ax.plot(
+        [-0.5 * w_mon_um, 0.5 * w_mon_um],
+        [y_mon_um, y_mon_um],
+        color="#38bdf8" if line_color == "white" else "#0284c7",
+        ls=":",
+        lw=1.1,
+        alpha=0.9,
+        zorder=7,
+    )
+    if show_dipole is not None:
+        ax.plot(
+            show_dipole[0],
+            show_dipole[1],
+            "*",
+            color="#facc15",
+            ms=8.5,
+            mec="black",
+            mew=0.6,
+            zorder=8,
+        )
+
+    if not show_labels:
+        return
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.10",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.4,
+        "alpha": 0.82,
+    }
+    if not compact:
+        ax.text(
+            0.0,
+            0.235,
+            "GaN 7-period grating (n=2.45)",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.2,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            -0.5 * w_slab_um + 0.04,
+            y_emit_um + 0.012,
+            "Active QW (y₀) | PEC/Ag (y=0)",
+            ha="left",
+            va="bottom",
+            fontsize=fontsize - 0.3,
+            color="#991b1b",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            0.0,
+            y_mon_um - 0.012,
+            "Huygens / N2F (y_mon) | CPML",
+            ha="center",
+            va="top",
+            fontsize=fontsize - 0.3,
+            color="#0369a1",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+    else:
+        ax.text(
+            -0.5 * w_slab_um + 0.04,
+            0.012,
+            "GaN grating | QW (y₀) | PEC/Ag",
+            ha="left",
+            va="bottom",
+            fontsize=fontsize - 0.5,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.text(
+            0.0,
+            y_mon_um - 0.012,
+            "Huygens / N2F | CPML",
+            ha="center",
+            va="top",
+            fontsize=fontsize - 0.5,
+            color="#0369a1",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+

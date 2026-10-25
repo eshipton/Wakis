@@ -1,0 +1,17 @@
+{
+  "task": "part_a_plane_wave",
+  "quick": false,
+  "a0_pulse": 2.5,
+  "gamma_peak_theory": 4.125,
+  "gamma_peak_boris": 4.123980239462923,
+  "gamma_peak_vay": 4.124094656490462,
+  "net_dgamma_boris": 2.0435653169670331e-10,
+  "net_dgamma_vay": 2.0596147010110144e-10,
+  "net_dW_eV_boris": 0.00010442597326402138,
+  "net_dW_eV_vay": 0.00010524609510459372,
+  "boris_gamma_l2_rel_err_ref": 0.0005740905045322215,
+  "vay_gamma_l2_rel_err_ref": 0.0009111139961965132,
+  "boris_order_p": 1.9778947578309098,
+  "vay_order_p": 1.9561690642137426,
+  "wall_s": 11.538
+}

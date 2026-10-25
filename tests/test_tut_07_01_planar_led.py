@@ -391,13 +391,15 @@ def test_planar_led_cli_and_cached_data():
         )
         assert rel_diff < 0.01, f"Full relative change {rel_diff:.4f} >= 1% for {k_acc}"
 
-    # Check all 14 figures exist and are non-empty
+    # Check all figures (including 00_setup_schematic.png) exist and are non-empty
     expected_figs = [
+        "00_setup_schematic.png",
         "01_led_stack_geometry.png",
         "02_mesh_kottke_vs_staircase.png",
         "03_analytic_escape_cone_2d_vs_3d.png",
         "04_semi_infinite_validation.png",
         "05_field_intensity_te_vs_tm.png",
+        "05b_field_intensity_pgan100.png",
         "06_field_wavefronts_te_vs_tm.png",
         "07_dipole_emission_movie.gif",
         "08_lee_vs_pgan_ryu_fig3.png",
@@ -411,3 +413,15 @@ def test_planar_led_cli_and_cached_data():
     for fname in expected_figs:
         fpath = fig_dir / fname
         assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing figure {fpath}"
+
+
+def test_setup_schematic_and_helpers():
+    """Verify setup schematic figure exists and schematic helper objects are well-formed."""
+    fig_path = TUTORIAL_DIR / "figures" / "00_setup_schematic.png"
+    assert fig_path.exists() and fig_path.stat().st_size > 10000
+    obj_semi = helpers.build_semi_infinite_schematic_objects()
+    obj_ryu = helpers.build_ryu_schematic_objects()
+    assert len(obj_semi["structures"]) >= 2
+    assert len(obj_ryu["structures"]) >= 6
+    assert len(obj_ryu["monitors"]) >= 4
+

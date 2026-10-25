@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 from PIL import Image
 from scipy.constants import c as c0
@@ -82,8 +83,8 @@ EMI_CLASSES: list[dict] = [
     },
     {
         "key": "copper foil",
-        "short": "Copper foil (subcell)",
-        "class_label": "Class 6 · Reference copper foil (sigma = 5.8e7 S/m, F3 thin sheet)",
+        "short": "copper film, 50 nm",
+        "class_label": "Class 6 · Metallized copper film, 50 nm (F3 thin sheet) & PCB copper foil (18/35 µm)",
         "mechanism": "Extreme impedance-mismatch reflection + skin-effect SE_A",
         "thicknesses_mm": [1.0e-5, 5.0e-5, 2.0e-4],  # 10 nm, 50 nm, 200 nm metallized films
         "quick_thicknesses_mm": [1.0e-5, 5.0e-5],
@@ -350,19 +351,23 @@ def schelkunoff_decomposition(
         Dictionary with ``SE_total_db``, ``SE_R_db``, ``SE_A_db``, ``SE_M_db``,
         ``R``, ``T``, and ``A``.
     """
+    omega = 2.0 * np.pi * np.asarray(f_hz, dtype=float)
     tm = exact_slab_rt(f_hz, eps_r, mu_r, d)
     z_rel = tm["z_rel"]
     r12 = tm["r12"]
     P = tm["P"]
     T = np.maximum(tm["T"], 1e-300)
 
-    se_total = -10.0 * np.log10(T)
     se_r = np.broadcast_to(
         20.0 * np.log10(np.abs(1.0 + z_rel) ** 2 / np.maximum(4.0 * np.abs(z_rel), 1e-300)),
-        np.shape(se_total),
+        np.shape(T),
     ).copy()
-    se_a = -20.0 * np.log10(np.maximum(np.abs(P), 1e-300))
+    se_a = np.broadcast_to(
+        NP_TO_DB * (omega / c0) * (-np.imag(tm["n"])) * float(d),
+        np.shape(T),
+    ).copy()
     se_m = 20.0 * np.log10(np.maximum(np.abs(1.0 - (r12**2) * (P**2)), 1e-300))
+    se_total = np.where(tm["T"] > 1e-290, -10.0 * np.log10(T), se_r + se_a + se_m)
     return {
         "SE_total_db": se_total,
         "SE_R_db": se_r,
@@ -371,6 +376,81 @@ def schelkunoff_decomposition(
         "R": tm["R"],
         "T": tm["T"],
         "A": tm["A"],
+    }
+
+
+def evaluate_copper_film_and_foil_se(
+    f_hz: np.ndarray | float,
+    thicknesses_m: tuple[float, ...] | list[float] | np.ndarray = (50.0e-9, 18.0e-6, 35.0e-6),
+    sigma: float = 5.8e7,
+) -> dict[str, np.ndarray]:
+    """Compare thin-sheet and full Schelkunoff shielding effectiveness for copper film and PCB foils.
+
+    Evaluates both the zero-thickness conductive-sheet approximation
+    (`wakis.subcell.sheet_transmission_reflection`, valid for ``t << delta``)
+    and the full Schelkunoff slab decomposition (`schelkunoff_decomposition`),
+    including the asymptotic thick-foil skin-depth absorption term
+    ``SE_A_asymptotic = 8.6859 * (t / delta)`` [dB] for ``t >> delta``, across
+    a sequence of thicknesses such as a 50 nm metallized copper film and
+    standard 18 um (0.5 oz/ft^2) and 35 um (1 oz/ft^2) PCB copper foils.
+
+    Parameters
+    ----------
+    f_hz : float or array_like
+        Frequency [Hz].
+    thicknesses_m : sequence of float, optional
+        Copper layer thicknesses [m]. Default is ``(50e-9, 18e-6, 35e-6)``.
+    sigma : float, optional
+        DC electrical conductivity [S/m]. Default is ``5.8e7`` S/m.
+
+    Returns
+    -------
+    out : dict of str to ndarray
+        Dictionary with arrays ``f_hz`` [Hz], ``thicknesses_m`` [m],
+        ``skin_depth_m`` [m], ``t_over_delta`` [dimensionless],
+        ``SE_thin_sheet_db`` [dB], ``SE_total_db`` [dB], ``SE_R_db`` [dB],
+        ``SE_A_db`` [dB], ``SE_A_asymptotic_db`` [dB], and ``SE_M_db`` [dB].
+    """
+    f_arr = np.atleast_1d(np.asarray(f_hz, dtype=float))
+    t_arr = np.atleast_1d(np.asarray(thicknesses_m, dtype=float))
+    omega = 2.0 * np.pi * f_arr
+    sig = float(sigma)
+    delta = np.sqrt(2.0 / (omega * mu0 * sig))
+    eps_cu = 1.0 - 1j * sig / (omega * eps0)
+    mu_cu = np.ones_like(eps_cu)
+
+    nt = t_arr.size
+    nf = f_arr.size
+    t_over_delta = t_arr[:, None] / delta[None, :]
+    se_thin = np.zeros((nt, nf), dtype=float)
+    se_tot = np.zeros((nt, nf), dtype=float)
+    se_r = np.zeros((nt, nf), dtype=float)
+    se_a = np.zeros((nt, nf), dtype=float)
+    se_a_asymp = NP_TO_DB * t_over_delta
+    se_m = np.zeros((nt, nf), dtype=float)
+
+    for it, t_val in enumerate(t_arr):
+        _, _, t_sh, _ = sheet_transmission_reflection(
+            np.full_like(f_arr, sig * float(t_val)), f=f_arr
+        )
+        se_thin[it] = -10.0 * np.log10(np.maximum(t_sh, 1e-300))
+        sch = schelkunoff_decomposition(f_arr, eps_cu, mu_cu, float(t_val))
+        se_tot[it] = sch["SE_total_db"]
+        se_r[it] = sch["SE_R_db"]
+        se_a[it] = sch["SE_A_db"]
+        se_m[it] = sch["SE_M_db"]
+
+    return {
+        "f_hz": f_arr,
+        "thicknesses_m": t_arr,
+        "skin_depth_m": delta,
+        "t_over_delta": t_over_delta,
+        "SE_thin_sheet_db": se_thin,
+        "SE_total_db": se_tot,
+        "SE_R_db": se_r,
+        "SE_A_db": se_a,
+        "SE_A_asymptotic_db": se_a_asymp,
+        "SE_M_db": se_m,
     }
 
 
@@ -1515,7 +1595,7 @@ def _build_schematic_objects(pec_backed: bool = False):
         src = CurrentSource(pulse, component="x", center=(0.0, 0.0, z_src), size=(2.0 * dxy, 2.0 * dxy, 0.0))
         mon_r = FluxMonitor(freqs, center=(0.0, 0.0, z_r), size=(2.0 * dxy, 2.0 * dxy, 0.0))
         mon_t = FluxMonitor(freqs, center=(0.0, 0.0, z_t), size=(2.0 * dxy, 2.0 * dxy, 0.0))
-        slab_box = SlabBox(0.0, d, dxy, mat, "EMI Slab (d = 2.0 mm)")
+        slab_box = SlabBox(0.0, d, dxy, "EMI slab", "EMI slab")
         return solver, [src], [mon_r, mon_t], [slab_box], pulse, z_nodes, dz_act
 
     z_nodes_full, dz_act = build_graded_z_grid(0.0, d, dz_slab, -0.045, d + 0.045, dz_vac)
@@ -1535,7 +1615,7 @@ def _build_schematic_objects(pec_backed: bool = False):
     z_r = float(z_pec_nodes[int(np.argmin(np.abs(z_pec_nodes - (-0.006))))])
     src = CurrentSource(pulse, component="x", center=(0.0, 0.0, z_src), size=(2.0 * dxy, 2.0 * dxy, 0.0))
     mon_r = FluxMonitor(freqs, center=(0.0, 0.0, z_r), size=(2.0 * dxy, 2.0 * dxy, 0.0))
-    slab_box = SlabBox(0.0, d, dxy, mat, "RF-LB Absorber (d = 2.0 mm)")
+    slab_box = SlabBox(0.0, d, dxy, "RF-LB slab", "RF-LB slab")
     return solver, [src], [mon_r], [slab_box], pulse, z_pec_nodes, dz_act
 
 
@@ -1543,6 +1623,24 @@ def _hide_1d_transverse_ticks(ax: plt.Axes) -> None:
     """Hide meaningless transverse axis ticks on quasi-1D `zx` schematics (Rule 6)."""
     ax.set_yticks([])
     ax.set_ylabel("Transverse x (periodic)")
+
+
+def _new_three_panel_figure(height_in: float = 5.8) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes, plt.Axes]]:
+    """Create a 3-panel figure at display width (`2` panels on top row, `1` wide panel on bottom row)."""
+    fig, axes = figstyle.new_figure(
+        width_in=figstyle.FULL_WIDTH_IN,
+        height_in=height_in,
+        nrows=2,
+        ncols=2,
+        constrained_layout=True,
+    )
+    gs = axes[0, 0].get_gridspec()
+    fig.delaxes(axes[1, 0])
+    fig.delaxes(axes[1, 1])
+    ax_a = axes[0, 0]
+    ax_b = axes[0, 1]
+    ax_c = fig.add_subplot(gs[1, :])
+    return fig, (ax_a, ax_b, ax_c)
 
 
 def _save_setup_figure_pair(
@@ -1582,32 +1680,36 @@ def _save_setup_figure_pair(
         written.append(pa)
 
         # 00b: Mesh spacing + local refinement zoom + pulse waveform & spectrum (2 panels)
-        fig_b, (ax_m, ax_p) = plt.subplots(
-            1, 2, figsize=(figstyle.FULL_WIDTH_IN, 3.3), dpi=figstyle.DEFAULT_DPI
+        fig_b, (ax_m, ax_p) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.5,
+            nrows=1,
+            ncols=2,
+            constrained_layout=True,
         )
         z_mid_mm = 0.5 * (z_nodes[:-1] + z_nodes[1:]) * 1e3
         dz_mm = np.diff(z_nodes) * 1e3
         st_m = figstyle.series_style(0, with_marker=True)
         ax_m.plot(z_mid_mm, dz_mm, markevery=max(1, len(z_mid_mm) // 18), label=r"Graded $\Delta z(z)$", **st_m)
-        ax_m.axvspan(0.0, 2.0, color="#DCE8F2", alpha=0.65, label="Slab [0, 2.0 mm]")
+        ax_m.axvspan(0.0, 2.0, color="#DCE8F2", alpha=0.65, label="Slab [0, 2 mm]")
         if pec_backed:
-            ax_m.axvline(2.0, color="#222222", lw=2.2, ls="-", label="PEC ground (z = 2.0 mm)")
+            ax_m.axvline(2.0, color="#222222", lw=2.2, ls="-", label="PEC ground")
         ax_m.axhline(
             dz_act * 1e3,
             color="#D55E00",
             ls="--",
             lw=1.2,
-            label=f"Slab dz = {dz_act * 1e3:.3f} mm (>= 24 cpw)",
+            label=f"dz = {dz_act * 1e3:.3f} mm",
         )
         ax_m.set(
-            xlabel="Longitudinal position z [mm]",
+            xlabel="Position z [mm]",
             ylabel="Cell size dz [mm]",
-            title="(a) Locally refined z-mesh & wave packet",
+            title="(a) Graded z-mesh",
         )
         figstyle.spectrum_grid(ax_m)
-        ax_m.legend(loc="upper right", frameon=False, fontsize=8.0)
+        figstyle.place_legend_below(ax_m, ncol=2, y_offset=-0.24)
 
-        # Pulse spectrum |J_x(f)|^2 and time waveform inset
+        # Pulse spectrum |J_x(f)|^2
         t_arr = np.linspace(0.0, pulse.end_time * 1.15, 600)
         sig_t = np.array([float(np.real(pulse(t))) for t in t_arr])
         f_spec = np.linspace(0.05e9, 4.50e9, 300)
@@ -1616,18 +1718,17 @@ def _save_setup_figure_pair(
         spec_norm = (spec_f / max(float(np.max(spec_f)), 1e-30)) ** 2
 
         st_p = figstyle.series_style(1, with_marker=False)
-        ax_p.plot(f_spec * 1e-9, spec_norm, label=r"Normalized power $|J_x(f)|^2$", **st_p)
-        ax_p.axvspan(0.30, 2.50, color="#E6ECC8", alpha=0.50, label="Evaluated R/T band (0.3–2.5 GHz)")
+        ax_p.plot(f_spec * 1e-9, spec_norm, label=r"Power $|J_x(f)|^2$", **st_p)
+        ax_p.axvspan(0.30, 2.50, color="#E6ECC8", alpha=0.50, label="R/T band (0.3–2.5 GHz)")
         ax_p.set(
             xlabel="Frequency f [GHz]",
-            ylabel="Normalized source spectrum |Jx(f)|^2",
+            ylabel=r"Source power $|J_x(f)|^2$",
             ylim=(0.0, 1.12),
             title=f"(b) {title_b}",
         )
         figstyle.spectrum_grid(ax_p)
-        ax_p.legend(loc="upper right", frameon=False, fontsize=8.0)
+        figstyle.place_legend_below(ax_p, ncol=1, y_offset=-0.24)
 
-        figstyle.finish(fig_b, auto_legend_below=False)
         pb = fig_dir / f"{prefix_b}.png"
         figstyle.save(fig_b, pb, close=True)
         written.append(pb)
@@ -1651,7 +1752,7 @@ def _save_wave_propagation_gif(t1: dict, out_path: Path, fps: int = 10) -> None:
     if n_frames == 0:
         return
 
-    solver_rf, src_rf, mon_rf, st_rf, _, _, _ = _build_schematic_objects(pec_backed=False)
+    solver_rf, src_rf, mon_rf, _, _, _, _ = _build_schematic_objects(pec_backed=False)
     vmax = max(
         float(np.max(np.abs(fr_rf))),
         float(np.max(np.abs(fr_ti))),
@@ -1662,16 +1763,24 @@ def _save_wave_propagation_gif(t1: dict, out_path: Path, fps: int = 10) -> None:
     pil_frames = []
     with figstyle.apply_style():
         for idx in range(n_frames):
-            fig, axes = plt.subplots(1, 3, figsize=(figstyle.FULL_WIDTH_IN, 2.9), dpi=115, sharey=True)
+            fig, axes = figstyle.new_figure(
+                width_in=figstyle.FULL_WIDTH_IN,
+                height_in=3.0,
+                nrows=1,
+                ncols=3,
+                dpi=115,
+                sharey=True,
+                constrained_layout=True,
+            )
             specs = [
-                (axes[0], z_rf, fr_rf[idx], 2.0, "Eccosorb RF-LB (2.0 mm)", 0),
-                (axes[1], z_ti, fr_ti[idx], 2.0, "TiO2 ceramic eps_r=100 (2.0 mm)", 1),
-                (axes[2], z_cn, fr_cn[idx], 1.0, "CNT silicone 3 wt% (1.0 mm)", 2),
+                (axes[0], z_rf, fr_rf[idx], 2.0, "(a) RF-LB", 0),
+                (axes[1], z_ti, fr_ti[idx], 2.0, "(b) TiO2", 1),
+                (axes[2], z_cn, fr_cn[idx], 1.0, "(c) CNT", 2),
             ]
             for ax, z_mm, y_val, d_mm, label, s_idx in specs:
                 st = figstyle.series_style(s_idx, with_marker=False)
                 ax.plot(z_mm, y_val, label=r"$E_x(z, t)$", **st)
-                slab_s = SlabBox(0.0, d_mm * 1e-3, 2.0e-3, dispersive_lib["eccosorb rf-lb"], label)
+                slab_s = SlabBox(0.0, d_mm * 1e-3, 2.0e-3, "Slab", "Slab")
                 schematic.overlay_geometry(
                     ax,
                     solver_rf,
@@ -1681,8 +1790,9 @@ def _save_wave_propagation_gif(t1: dict, out_path: Path, fps: int = 10) -> None:
                     structures=[slab_s],
                     sources=src_rf,
                     monitors=mon_rf,
-                    show_boundaries=True,
+                    show_boundaries=False,
                     show_materials=True,
+                    label_materials=False,
                     show_sources=True,
                     show_monitors=True,
                 )
@@ -1690,10 +1800,10 @@ def _save_wave_propagation_gif(t1: dict, out_path: Path, fps: int = 10) -> None:
                     xlim=(-25.0, 25.0),
                     ylim=(-vmax, vmax),
                     xlabel="Position z [mm]",
-                    title=f"{label}\n(t = {tm_rf[idx]:.2f} ns)",
+                    title=f"{label} ({tm_rf[idx]:.2f} ns)",
                 )
                 figstyle.spectrum_grid(ax)
-            axes[0].set_ylabel("Electric field Ex(z, t) [V/m]")
+            axes[0].set_ylabel("Field Ex(z, t) [V/m]")
             figstyle.finish(fig, auto_legend_below=False)
             fig.canvas.draw()
             rgba = np.asarray(fig.canvas.buffer_rgba())
@@ -1744,8 +1854,8 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             fig_dir,
             "00a_free_space_slab_setup",
             "00b_free_space_slab_mesh_pulse",
-            "Setup 1: Free-space EMI slab R/T & absorption (CPML ±z, periodic x/y)",
-            "Gaussian plane-wave source (f0 = 1.4 GHz)",
+            "Setup 1: Free-space EMI slab (CPML ±z)",
+            "Pulse spectrum",
             pec_backed=False,
         )
     )
@@ -1754,8 +1864,8 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             fig_dir,
             "00c_metal_backed_absorber_setup",
             "00d_metal_backed_absorber_mesh_pulse",
-            "Setup 2: Metal-backed EMI absorber reflection loss (CPML -z, PEC +z)",
-            "Broadband pulse spectrum (0.3–4.5 GHz)",
+            "Setup 2: PEC-backed EMI absorber",
+            "Pulse spectrum",
             pec_backed=True,
         )
     )
@@ -1764,9 +1874,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 01: Eccosorb RF-LB permeability fit, eps' inference & 1-6 GHz extrapolation (3 panels)
         # ------------------------------------------------------------------
-        fig1, (ax1a, ax1b, ax1c) = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.4), dpi=figstyle.DEFAULT_DPI
-        )
+        fig1, (ax1a, ax1b, ax1c) = _new_three_panel_figure(height_in=5.8)
         f_mu_g = t0["f_mu_hz"] * 1e-9
         f_w_g = t0["f_wide_hz"] * 1e-9
         mu_1d1l = t0["mu_wide_1d1l"]
@@ -1775,51 +1883,50 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         s0 = figstyle.series_style(0, with_marker=False)
         s1 = figstyle.series_style(1, with_marker=False)
         s2 = figstyle.series_style(2, with_marker=False)
-        ax1a.semilogx(f_mu_g, t0["mu_real_ds"], "o", color=s0["color"], ms=4.2, label=r"Datasheet $\mu'(f)$")
-        ax1a.semilogx(f_mu_g, t0["mu_imag_ds"], "s", color=s1["color"], ms=4.2, label=r"Datasheet $\mu''(f)$")
-        ax1a.semilogx(f_w_g, np.real(mu_1d1l), "-", color=s0["color"], lw=1.8, label="1 Debye + 1 Lorentz (0.36%)")
+        ax1a.semilogx(f_mu_g, t0["mu_real_ds"], "o", color=s0["color"], ms=4.2, label=r"Data $\mu'$")
+        ax1a.semilogx(f_mu_g, t0["mu_imag_ds"], "s", color=s1["color"], ms=4.2, label=r"Data $\mu''$")
+        ax1a.semilogx(f_w_g, np.real(mu_1d1l), "-", color=s0["color"], lw=1.8, label="1D+1L (0.36%)")
         ax1a.semilogx(f_w_g, -np.imag(mu_1d1l), "-", color=s1["color"], lw=1.8)
-        ax1a.semilogx(f_w_g, -np.imag(mu_2deb), "--", color=s2["color"], lw=1.3, label=r"2 Debye $\mu''$ (4.53%)")
+        ax1a.semilogx(f_w_g, -np.imag(mu_2deb), "--", color=s2["color"], lw=1.3, label=r"2D $\mu''$ (4.53%)")
         ax1a.axvline(1.0, color="#666666", ls=":", lw=1.1)
         ax1a.set(
             xlabel="Frequency f [GHz]",
-            ylabel=r"Permeability $\mu'(f),\, \mu''(f)$",
-            title=r"(a) RF-LB $\mu(f)$ fit & extrapolation",
+            ylabel=r"Permeability $\mu',\, \mu''$",
+            title=r"(a) RF-LB $\mu(f)$ fit",
         )
         figstyle.spectrum_grid(ax1a)
-        ax1a.legend(loc="upper right", frameon=False, fontsize=7.5)
+        figstyle.place_legend_below(ax1a, ncol=2, y_offset=-0.26)
 
         # Panel (b): Inferred eps' sensitivity over 0.1 - 1.0 GHz overlap band
         eps_sw = t0["eps_sweep"]
-        ax1b.plot(eps_sw, t0["rms_vs_eps_td0"], label=r"$\tan\delta_e = 0.00$ ($\varepsilon'=82.7$)", **s0)
-        ax1b.plot(eps_sw, t0["rms_vs_eps_td001"], label=r"$\tan\delta_e = 0.01$ ($\varepsilon'=81.1$)", **s1)
-        ax1b.plot(eps_sw, t0["rms_vs_eps_td005"], label=r"$\tan\delta_e = 0.05$ ($\varepsilon'=74.9$)", **s2)
+        ax1b.plot(eps_sw, t0["rms_vs_eps_td0"], label=r"$\tan\delta_e=0$ ($\varepsilon'=82.7$)", **s0)
+        ax1b.plot(eps_sw, t0["rms_vs_eps_td001"], label=r"$\tan\delta_e=0.01$ ($\varepsilon'=81.1$)", **s1)
+        ax1b.plot(eps_sw, t0["rms_vs_eps_td005"], label=r"$\tan\delta_e=0.05$ ($\varepsilon'=74.9$)", **s2)
         ax1b.axvline(81.06, color=s1["color"], ls=":", lw=1.2)
         ax1b.set(
-            xlabel=r"Inferred relative permittivity $\varepsilon'$",
-            ylabel="Overlap RMS error [dB/cm]",
-            title=r"(b) $\varepsilon'$ inference (0.1–1.0 GHz)",
+            xlabel=r"Relative permittivity $\varepsilon'$",
+            ylabel="Overlap RMS [dB/cm]",
+            title=r"(b) Overlap $\varepsilon'$ fit",
         )
         figstyle.spectrum_grid(ax1b)
-        ax1b.legend(loc="upper right", frameon=False, fontsize=7.5)
+        figstyle.place_legend_below(ax1b, ncol=1, y_offset=-0.26)
 
         # Panel (c): Predicted vs datasheet attenuation 0.1 - 6.0 GHz
         f_att_g = t0["f_att_hz"] * 1e-9
-        ax1c.plot(f_att_g, t0["atten_ds_db_cm"], "ko", ms=4.0, label="Datasheet attenuation")
-        ax1c.plot(f_w_g, t0["att_wide_1d1l"], label="1 Debye + 1 Lorentz (extrap.)", **s0)
-        ax1c.plot(f_w_g, t0["att_wide_2deb"], ls="--", color=s2["color"], lw=1.5, label="2 Debye (extrap. RMS 3.4 dB/cm)")
+        ax1c.plot(f_att_g, t0["atten_ds_db_cm"], "ko", ms=4.0, label="Datasheet")
+        ax1c.plot(f_w_g, t0["att_wide_1d1l"], label="1 Debye + 1 Lorentz", **s0)
+        ax1c.plot(f_w_g, t0["att_wide_2deb"], ls="--", color=s2["color"], lw=1.5, label="2 Debye (RMS 3.4 dB/cm)")
         ax1c.axvspan(0.1, 1.0, color="#D5ECE4", alpha=0.45, label="Overlap (0.1–1 GHz)")
         ax1c.set(
             xlim=(0.0, 6.1),
             ylim=(0.0, 105.0),
             xlabel="Frequency f [GHz]",
             ylabel=r"Attenuation $\alpha(f)$ [dB/cm]",
-            title=r"(c) Attenuation prediction (0.1–6 GHz)",
+            title="(c) Attenuation prediction (0.1–6 GHz)",
         )
         figstyle.spectrum_grid(ax1c)
-        ax1c.legend(loc="upper left", frameon=False, fontsize=7.5)
+        figstyle.place_legend_below(ax1c, ncol=2, y_offset=-0.24)
 
-        figstyle.finish(fig1, auto_legend_below=False)
         p1 = fig_dir / "01_eccosorb_rf_lb_fit_and_attenuation.png"
         figstyle.save(fig1, p1, close=True)
         written.append(p1)
@@ -1827,51 +1934,48 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 02: Six EMI material classes constitutive spectra (3 panels)
         # ------------------------------------------------------------------
-        fig2, (ax2a, ax2b, ax2c) = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.4), dpi=figstyle.DEFAULT_DPI
-        )
+        fig2, (ax2a, ax2b, ax2c) = _new_three_panel_figure(height_in=5.8)
         eps_6 = t0["eps_6"]
         mu_6 = t0["mu_6"]
         zrel_6 = t0["zrel_6"]
 
         for ic, cinfo in enumerate(EMI_CLASSES):
             st = figstyle.series_style(ic, with_marker=False)
-            ax2a.loglog(f_w_g, np.abs(eps_6[ic]), label=cinfo["short"], **st)
+            ax2a.loglog(f_w_g, np.abs(eps_6[ic]), **st)
             ax2c.semilogx(f_w_g, np.abs(zrel_6[ic]), label=cinfo["short"], **st)
 
         ax2a.set(
             xlabel="Frequency f [GHz]",
-            ylabel=r"Permittivity magnitude $|\varepsilon(f)|$",
-            title=r"(a) Electric response $|\varepsilon(f)|$",
+            ylabel=r"Permittivity $|\varepsilon(f)|$",
+            title=r"(a) Electric $|\varepsilon(f)|$",
         )
         figstyle.spectrum_grid(ax2a)
-        ax2a.legend(loc="upper right", frameon=False, fontsize=7.0)
 
         # Panel (b): Magnetic permeability of Class 1 (RF-LB) & Class 2 (Sendust flake)
         st_rf = figstyle.series_style(0, with_marker=False)
         st_sd = figstyle.series_style(1, with_marker=False)
-        ax2b.semilogx(f_w_g, np.real(mu_6[0]), "-", color=st_rf["color"], lw=1.8, label=r"RF-LB $\mu'(f)$")
-        ax2b.semilogx(f_w_g, -np.imag(mu_6[0]), "--", color=st_rf["color"], lw=1.6, label=r"RF-LB $\mu''(f)$")
-        ax2b.semilogx(f_w_g, np.real(mu_6[1]), "-", color=st_sd["color"], lw=1.8, label=r"Sendust $\mu'(f)$")
-        ax2b.semilogx(f_w_g, -np.imag(mu_6[1]), "--", color=st_sd["color"], lw=1.6, label=r"Sendust $\mu''(f)$")
+        ax2b.semilogx(f_w_g, np.real(mu_6[0]), "-", color=st_rf["color"], lw=1.8, label=r"RF-LB $\mu'$")
+        ax2b.semilogx(f_w_g, -np.imag(mu_6[0]), "--", color=st_rf["color"], lw=1.6, label=r"RF-LB $\mu''$")
+        ax2b.semilogx(f_w_g, np.real(mu_6[1]), "-", color=st_sd["color"], lw=1.8, label=r"Sendust $\mu'$")
+        ax2b.semilogx(f_w_g, -np.imag(mu_6[1]), "--", color=st_sd["color"], lw=1.6, label=r"Sendust $\mu''$")
         ax2b.set(
             xlabel="Frequency f [GHz]",
-            ylabel=r"Permeability $\mu'(f),\, \mu''(f)$",
-            title=r"(b) Magnetic absorbers $\mu(f)$",
+            ylabel=r"Permeability $\mu',\, \mu''$",
+            title=r"(b) Magnetic $\mu(f)$",
         )
         figstyle.spectrum_grid(ax2b)
-        ax2b.legend(loc="upper right", frameon=False, fontsize=7.5)
+        figstyle.place_legend_below(ax2b, ncol=2, y_offset=-0.26)
 
-        ax2c.axhline(1.0, color="#444444", ls=":", lw=1.1, label="Vacuum match |Z|/Z0 = 1")
+        ax2c.axhline(1.0, color="#444444", ls=":", lw=1.1, label="Vacuum |Z|/Z0 = 1")
         ax2c.set(
             ylim=(0.0, 1.05),
             xlabel="Frequency f [GHz]",
-            ylabel=r"Normalized wave impedance $|Z(f)| / Z_0$",
-            title=r"(c) Wave impedance $|Z(f)| / Z_0$",
+            ylabel=r"Impedance $|Z(f)| / Z_0$",
+            title=r"(c) Normalized wave impedance $|Z(f)| / Z_0$",
         )
         figstyle.spectrum_grid(ax2c)
+        figstyle.place_legend_below(ax2c, ncol=3, y_offset=-0.24)
 
-        figstyle.finish(fig2, auto_legend_below=False)
         p2 = fig_dir / "02_six_material_classes_dispersion.png"
         figstyle.save(fig2, p2, close=True)
         written.append(p2)
@@ -1879,16 +1983,12 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 03: Free-space slab |R|^2, |T|^2, and Absorbed fraction A vs frequency (3 panels)
         # ------------------------------------------------------------------
-        fig3, (ax3a, ax3b, ax3c) = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.5), dpi=figstyle.DEFAULT_DPI
-        )
+        fig3, (ax3a, ax3b, ax3c) = _new_three_panel_figure(height_in=5.8)
         f_s_g = t1["freqs"] * 1e-9
-        # Plot index 1 thickness for each class (e.g. 2.0 mm for RF-LB/TiO2, 1.0 mm for Sendust/CNT/Ni-C, 50 nm for Cu)
         it_show = 1
         for ic, cinfo in enumerate(EMI_CLASSES):
             d_val = float(t1["d_mm_table"][ic, it_show])
-            d_str = f"{d_val * 1e3:.0f} nm" if cinfo["use_thin_sheet"] else f"{d_val:.1f} mm"
-            lbl = f"{cinfo['short']} ({d_str})"
+            lbl = cinfo["short"] if cinfo["use_thin_sheet"] else f"{cinfo['short']} ({d_val:.1f} mm)"
             st_line = figstyle.series_style(ic, with_marker=False)
             st_mk = figstyle.series_style(ic, with_marker=True)
 
@@ -1900,7 +2000,6 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_mk["color"],
                 marker=st_mk["marker"],
                 ms=4.2,
-                label=lbl,
             )
 
             ax3b.semilogy(f_s_g, np.maximum(t1["T_ex_table"][ic, it_show], 1e-10), **st_line)
@@ -1921,31 +2020,31 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_mk["color"],
                 marker=st_mk["marker"],
                 ms=4.2,
+                label=lbl,
             )
 
         ax3a.set(
             ylim=(-0.02, 1.05),
             xlabel="Frequency f [GHz]",
-            ylabel=r"Power reflectance $|R(f)|^2$",
-            title=r"(a) Reflectance $|R|^2$ (FIT vs. TM)",
+            ylabel=r"Reflectance $|R(f)|^2$",
+            title=r"(a) Reflectance $|R|^2$",
         )
         ax3b.set(
             ylim=(1e-8, 1.5),
             xlabel="Frequency f [GHz]",
-            ylabel=r"Power transmittance $|T(f)|^2$",
-            title=r"(b) Transmittance $|T|^2$ (FIT vs. TM)",
+            ylabel=r"Transmittance $|T(f)|^2$",
+            title=r"(b) Transmittance $|T|^2$",
         )
         ax3c.set(
             ylim=(-0.02, 0.85),
             xlabel="Frequency f [GHz]",
-            ylabel=r"Absorbed fraction $A = 1 - |R|^2 - |T|^2$",
-            title="(c) Absorbed power fraction A(f)",
+            ylabel=r"Absorbed fraction $A(f)$",
+            title=r"(c) Absorbed power fraction $A = 1 - |R|^2 - |T|^2$",
         )
         for ax in (ax3a, ax3b, ax3c):
             figstyle.spectrum_grid(ax)
-        ax3a.legend(loc="lower right", frameon=False, fontsize=6.8)
+        figstyle.place_legend_below(ax3c, ncol=2, y_offset=-0.24)
 
-        figstyle.finish(fig3, auto_legend_below=False)
         p3 = fig_dir / "03_slab_rt_and_absorption_spectra.png"
         figstyle.save(fig3, p3, close=True)
         written.append(p3)
@@ -1953,9 +2052,8 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 04: Schelkunoff SE = SE_R + SE_A + SE_M decomposition (3 panels)
         # ------------------------------------------------------------------
-        fig4, (ax4a, ax4b, ax4c) = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.5), dpi=figstyle.DEFAULT_DPI
-        )
+        fig4, (ax4a, ax4b, ax4c) = _new_three_panel_figure(height_in=5.9)
+        short_4a = ["RF-LB", "Sendust", "TiO2", "CNT", "Ni-graphite", "copper film, 50 nm"]
         for ic, cinfo in enumerate(EMI_CLASSES):
             st_line = figstyle.series_style(ic, with_marker=False)
             st_mk = figstyle.series_style(ic, with_marker=True)
@@ -1967,17 +2065,17 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_mk["color"],
                 marker=st_mk["marker"],
                 ms=4.2,
-                label=cinfo["short"],
+                label=short_4a[ic],
             )
 
         ax4a.set(
             ylim=(0.0, 95.0),
             xlabel="Frequency f [GHz]",
-            ylabel=r"Shielding effectiveness $\mathrm{SE} = -10\log_{10}|T|^2$ [dB]",
-            title="(a) Total SE(f): 3D FIT vs. exact",
+            ylabel="Total SE [dB]",
+            title="(a) Total SE(f): FIT vs. exact",
         )
         figstyle.spectrum_grid(ax4a)
-        ax4a.legend(loc="upper left", frameon=False, fontsize=7.0)
+        figstyle.place_legend_below(ax4a, ncol=2, y_offset=-0.26)
 
         # Panel (b): Bar decomposition into SE_R, SE_A, SE_M near 2.0 GHz
         idx_2g = int(np.argmin(np.abs(f_s_g - 2.0)))
@@ -1985,45 +2083,133 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         se_r_vals = t1["SE_R_table"][:, it_show, idx_2g]
         se_a_vals = t1["SE_A_table"][:, it_show, idx_2g]
         se_m_vals = t1["SE_M_table"][:, it_show, idx_2g]
-        w_bar = 0.26
-        ax4b.bar(x_pos - w_bar, se_r_vals, width=w_bar, color="#0072B2", label=r"$\mathrm{SE}_R$ (reflection)")
-        ax4b.bar(x_pos, se_a_vals, width=w_bar, color="#D55E00", label=r"$\mathrm{SE}_A$ (absorption)")
-        ax4b.bar(x_pos + w_bar, se_m_vals, width=w_bar, color="#009E73", label=r"$\mathrm{SE}_M$ (mult. refl.)")
+        w_bar = 0.25
+        ax4b.bar(x_pos - w_bar, se_r_vals, width=w_bar, color="#0072B2", label=r"$\mathrm{SE}_R$")
+        ax4b.bar(x_pos, se_a_vals, width=w_bar, color="#D55E00", label=r"$\mathrm{SE}_A$")
+        ax4b.bar(x_pos + w_bar, se_m_vals, width=w_bar, color="#009E73", label=r"$\mathrm{SE}_M$")
         ax4b.axhline(0.0, color="#444444", lw=0.8)
         ax4b.set_xticks(x_pos)
-        ax4b.set_xticklabels(["RF-LB", "Sendust", "TiO2", "CNT", "Ni-C", "Cu"], rotation=25, fontsize=7.5)
+        ax4b.set_xticklabels(
+            ["RF-LB", "Sendust", "TiO2", "CNT", "Ni-C", "Cu film"],
+            rotation=30,
+            ha="right",
+        )
         ax4b.set(
-            ylabel="Schelkunoff contribution [dB]",
-            title=f"(b) Decomposition at f = {f_s_g[idx_2g]:.1f} GHz",
+            ylabel="Contribution [dB]",
+            title=f"(b) SE terms ({f_s_g[idx_2g]:.1f} GHz)",
         )
         figstyle.spectrum_grid(ax4b)
-        ax4b.legend(loc="upper left", frameon=False, fontsize=7.2)
+        figstyle.place_legend_below(ax4b, ncol=3, y_offset=-0.32)
 
-        # Panel (c): SE vs thickness at 2.0 GHz
+        # Panel (c): SE vs thickness at 2.0 GHz (bulk classes)
         d_sw = t1["d_sweep_mm"]
-        for ic in range(5):  # 5 bulk millimeter classes on common [0.05, 5.0] mm axis
+        for ic in range(5):
             st_c = figstyle.series_style(ic, with_marker=False)
             ax4c.semilogx(d_sw, t1["SE_vs_d_total"][ic], label=EMI_CLASSES[ic]["short"], **st_c)
         ax4c.set(
             ylim=(0.0, 120.0),
             xlabel="Slab thickness d [mm]",
             ylabel="Total SE at 2.0 GHz [dB]",
-            title="(c) SE(d) scaling at 2.0 GHz",
+            title="(c) Bulk SE(d) scaling at 2.0 GHz",
         )
         figstyle.spectrum_grid(ax4c)
-        ax4c.legend(loc="upper left", frameon=False, fontsize=7.0)
+        figstyle.place_legend_below(ax4c, ncol=3, y_offset=-0.24)
 
-        figstyle.finish(fig4, auto_legend_below=False)
         p4 = fig_dir / "04_schelkunoff_se_decomposition.png"
         figstyle.save(fig4, p4, close=True)
         written.append(p4)
 
         # ------------------------------------------------------------------
+        # Fig 04b: Copper film (50 nm) vs PCB copper foil (18 um, 35 um) (2 panels)
+        # ------------------------------------------------------------------
+        fig4b, (ax4ba, ax4bb) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.6,
+            nrows=1,
+            ncols=2,
+            constrained_layout=True,
+        )
+        cu_se_f = evaluate_copper_film_and_foil_se(t1["freqs"], thicknesses_m=(50.0e-9, 18.0e-6, 35.0e-6))
+        cu_specs = [
+            (0, "copper film, 50 nm"),
+            (1, "copper foil, 18 µm"),
+            (2, "copper foil, 35 µm"),
+        ]
+        for idx_cu, lbl_cu in cu_specs:
+            st_cu = figstyle.series_style(idx_cu, with_marker=False)
+            ax4ba.plot(
+                f_s_g,
+                cu_se_f["SE_total_db"][idx_cu],
+                "-",
+                color=st_cu["color"],
+                lw=1.9,
+                label=f"{lbl_cu} (Schelkunoff)",
+            )
+            ax4ba.plot(
+                f_s_g,
+                cu_se_f["SE_thin_sheet_db"][idx_cu],
+                "--",
+                color=st_cu["color"],
+                lw=1.4,
+                label=f"{lbl_cu} (thin sheet)",
+            )
+        ax4ba.axhline(100.0, color="#555555", ls=":", lw=1.1, label="100 dB dynamic-range ceiling")
+        ax4ba.set(
+            ylim=(40.0, 340.0),
+            xlabel="Frequency f [GHz]",
+            ylabel="Shielding effectiveness SE [dB]",
+            title="(a) Cu film vs. PCB foil SE(f)",
+        )
+        figstyle.spectrum_grid(ax4ba)
+        figstyle.place_legend_below(ax4ba, ncol=1, y_offset=-0.25)
+
+        t_cu_um = np.geomspace(0.01, 50.0, 120)
+        cu_se_t = evaluate_copper_film_and_foil_se(np.array([2.0e9]), thicknesses_m=t_cu_um * 1e-6)
+        delta_2g_um = float(cu_se_t["skin_depth_m"][0] * 1e6)
+        ax4bb.semilogx(
+            t_cu_um,
+            cu_se_t["SE_total_db"][:, 0],
+            "-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            label=r"Full $\mathrm{SE} = \mathrm{SE}_R + \mathrm{SE}_A + \mathrm{SE}_M$",
+        )
+        ax4bb.semilogx(
+            t_cu_um,
+            cu_se_t["SE_thin_sheet_db"][:, 0],
+            "--",
+            color=figstyle.PALETTE[1],
+            lw=1.6,
+            label="Thin-sheet approximation",
+        )
+        ax4bb.semilogx(
+            t_cu_um,
+            cu_se_t["SE_A_asymptotic_db"][:, 0],
+            "-.",
+            color=figstyle.PALETTE[2],
+            lw=1.6,
+            label=r"$\mathrm{SE}_A = 8.686\,t/\delta$",
+        )
+        for t_mark_um, col_m in ((0.05, "#0072B2"), (delta_2g_um, "#666666"), (18.0, "#D55E00"), (35.0, "#009E73")):
+            ax4bb.axvline(t_mark_um, color=col_m, ls=":", lw=1.0)
+        ax4bb.axhline(100.0, color="#555555", ls=":", lw=1.1)
+        ax4bb.set(
+            ylim=(0.0, 360.0),
+            xlabel=r"Copper thickness $t$ [$\mu$m]",
+            ylabel="SE at 2.0 GHz [dB]",
+            title="(b) Cu SE(t) at 2.0 GHz",
+        )
+        figstyle.spectrum_grid(ax4bb)
+        figstyle.place_legend_below(ax4bb, ncol=1, y_offset=-0.25)
+
+        p4b = fig_dir / "04b_copper_film_vs_foil_se.png"
+        figstyle.save(fig4b, p4b, close=True)
+        written.append(p4b)
+
+        # ------------------------------------------------------------------
         # Fig 05: Metal-backed absorber RL(f, d) & Rozanov causality bound (3 panels)
         # ------------------------------------------------------------------
-        fig5, (ax5a, ax5b, ax5c) = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.5), dpi=figstyle.DEFAULT_DPI
-        )
+        fig5, (ax5a, ax5b, ax5c) = _new_three_panel_figure(height_in=5.9)
         f_p_g = t2["freqs"] * 1e-9
         for idx_d, d_mm in enumerate(t2["rf_thicks_mm"]):
             st_l = figstyle.series_style(idx_d, with_marker=False)
@@ -2036,7 +2222,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_m["color"],
                 marker=st_m["marker"],
                 ms=4.2,
-                label=f"RF-LB d = {d_mm:.1f} mm",
+                label=f"RF-LB {d_mm:.1f} mm",
             )
         for idx_d, d_mm in enumerate(t2["sd_thicks_mm"]):
             st_l = figstyle.series_style(idx_d + 3, with_marker=False)
@@ -2049,50 +2235,50 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 color=st_m["color"],
                 marker=st_m["marker"],
                 ms=4.0,
-                label=f"Sendust d = {d_mm:.1f} mm",
+                label=f"Sendust {d_mm:.1f} mm",
             )
         ax5a.axhline(10.0, color="#666666", ls=":", lw=1.0, label="10 dB (90% abs.)")
         ax5a.set(
             xlabel="Frequency f [GHz]",
-            ylabel=r"Reflection loss $\mathrm{RL} = -20\log_{10}|\Gamma|$ [dB]",
-            title="(a) PEC-backed RL(f): FIT vs. exact",
+            ylabel="Reflection loss RL [dB]",
+            title="(a) PEC-backed RL(f)",
         )
         figstyle.spectrum_grid(ax5a)
-        ax5a.legend(loc="upper right", frameon=False, fontsize=6.6)
+        figstyle.place_legend_below(ax5a, ncol=2, y_offset=-0.26)
 
         # Panel (b): 2D RL(f, d) map + quarter-wave trajectory d = lambda_0 / (4 Re n)
         f_m_g = t2["f_map"] * 1e-9
         d_m_mm = t2["d_map_mm"]
         im5 = ax5b.pcolormesh(f_m_g, d_m_mm, t2["RL_map_rf"], shading="auto", cmap="viridis", vmin=0.0, vmax=22.0)
-        ax5b.plot(f_m_g, t2["d_qw_mm"], "w--", lw=1.8, label=r"$d_{\lambda/4} = \lambda_0 / (4\operatorname{Re}\sqrt{\varepsilon\mu})$")
+        ax5b.plot(f_m_g, t2["d_qw_mm"], "w--", lw=1.8)
+        ax5b.plot([], [], "--", color=figstyle.INK, lw=1.8, label=r"$d_{\lambda/4} = \lambda_0 / (4\operatorname{Re}n)$")
         fig5.colorbar(im5, ax=ax5b, pad=0.02, label="RL [dB]")
         ax5b.set(
             xlim=(float(f_m_g[0]), float(f_m_g[-1])),
             ylim=(float(d_m_mm[0]), float(d_m_mm[-1])),
             xlabel="Frequency f [GHz]",
             ylabel="Thickness d [mm]",
-            title=r"(b) RF-LB $\lambda/4$ matching locus",
+            title=r"(b) RF-LB $\lambda/4$ locus",
         )
-        ax5b.legend(loc="upper right", frameon=True, facecolor="#222222", labelcolor="white", fontsize=7.0)
+        figstyle.place_legend_below(ax5b, ncol=1, y_offset=-0.26)
 
         # Panel (c): Rozanov bound comparison
         d_rz = t2["d_roz_mm"]
         s_r0 = figstyle.series_style(0, with_marker=True)
         s_r1 = figstyle.series_style(1, with_marker=True)
-        ax5c.semilogy(d_rz, t2["roz_bound_rf_mm"], "--", color=s_r0["color"], lw=1.5, label=r"Rozanov bound $2\pi^2\mu_s d$ (RF-LB)")
-        ax5c.semilogy(d_rz, t2["roz_int_rf_mm"], color=s_r0["color"], marker="o", lw=1.8, label=r"Integrated $\int|\ln|\Gamma||d\lambda$ (RF-LB)")
-        ax5c.semilogy(d_rz, t2["roz_bound_sd_mm"], "--", color=s_r1["color"], lw=1.5, label=r"Rozanov bound $2\pi^2\mu_s d$ (Sendust)")
-        ax5c.semilogy(d_rz, t2["roz_int_sd_mm"], color=s_r1["color"], marker="s", lw=1.8, label=r"Integrated $\int|\ln|\Gamma||d\lambda$ (Sendust)")
-        ax5c.semilogy(d_rz, t2["roz_bound_nonmag_mm"], "k:", lw=1.3, label=r"Dielectric bound $2\pi^2 d$ ($\mu_s=1$)")
+        ax5c.semilogy(d_rz, t2["roz_bound_rf_mm"], "--", color=s_r0["color"], lw=1.5, label=r"Bound $2\pi^2\mu_s d$ (RF-LB)")
+        ax5c.semilogy(d_rz, t2["roz_int_rf_mm"], color=s_r0["color"], marker="o", lw=1.8, label=r"Integral $\int|\ln|\Gamma||d\lambda$ (RF-LB)")
+        ax5c.semilogy(d_rz, t2["roz_bound_sd_mm"], "--", color=s_r1["color"], lw=1.5, label=r"Bound $2\pi^2\mu_s d$ (Sendust)")
+        ax5c.semilogy(d_rz, t2["roz_int_sd_mm"], color=s_r1["color"], marker="s", lw=1.8, label=r"Integral $\int|\ln|\Gamma||d\lambda$ (Sendust)")
+        ax5c.semilogy(d_rz, t2["roz_bound_nonmag_mm"], "k:", lw=1.3, label=r"Non-magnetic bound ($\mu_s=1$)")
         ax5c.set(
             xlabel="Absorber thickness d [mm]",
-            ylabel=r"Bandwidth integral $\int |\ln|\Gamma(\lambda)||\,d\lambda$ [mm]",
+            ylabel=r"Bandwidth integral [mm]",
             title="(c) Rozanov (2000) causality bound",
         )
         figstyle.spectrum_grid(ax5c)
-        ax5c.legend(loc="lower right", frameon=False, fontsize=6.5)
+        figstyle.place_legend_below(ax5c, ncol=2, y_offset=-0.24)
 
-        figstyle.finish(fig5, auto_legend_below=False)
         p5 = fig_dir / "05_metal_backed_absorber_and_rozanov.png"
         figstyle.save(fig5, p5, close=True)
         written.append(p5)
@@ -2100,25 +2286,32 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 06: Resolution study & locally refined z-mesh vs uniform baseline (2 panels)
         # ------------------------------------------------------------------
-        fig6, (ax6a, ax6b) = plt.subplots(
-            1, 2, figsize=(figstyle.FULL_WIDTH_IN, 3.3), dpi=figstyle.DEFAULT_DPI
+        fig6, (ax6a, ax6b) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.5,
+            nrows=1,
+            ncols=2,
+            constrained_layout=True,
         )
         cpw_lv = t3["cpw_levels"]
-        conv_labels = ["Eccosorb RF-LB (2 mm)", "TiO2 ceramic (2 mm)", "CNT silicone (1 mm)", "Ni-graphite gasket (1 mm)"]
+        conv_labels = ["RF-LB (2 mm)", "TiO2 (2 mm)", "CNT (1 mm)", "Ni-graphite (1 mm)"]
         for ic, lbl in enumerate(conv_labels):
             st_c = figstyle.series_style(ic, with_marker=True)
             ax6a.loglog(cpw_lv, t3["rms_R_conv"][ic], label=lbl, **st_c)
 
         ref_line = t3["rms_R_conv"][0, 0] * (cpw_lv / cpw_lv[0]) ** (-2.0)
-        ax6a.loglog(cpw_lv, ref_line, "k--", lw=1.2, label=r"$\mathcal{O}(\Delta z^2)$ reference")
-        ax6a.axvline(20.0, color="#666666", ls=":", lw=1.1, label="20 cells/λ rule")
+        ax6a.loglog(cpw_lv, ref_line, "k--", lw=1.2, label=r"$\mathcal{O}(\Delta z^2)$")
+        ax6a.axvline(20.0, color="#666666", ls=":", lw=1.1, label="20 cpw rule")
+        ax6a.set_xticks([float(v) for v in cpw_lv])
+        ax6a.xaxis.set_major_formatter(mticker.ScalarFormatter())
+        ax6a.xaxis.set_minor_formatter(mticker.NullFormatter())
         ax6a.set(
-            xlabel=r"Resolution inside slab $\mathrm{cpw}_{\mathrm{slab}}$ [cells/$\lambda_{\mathrm{mat}}$]",
-            ylabel=r"Broadband RMS error $\mathrm{RMS}(|R_{\mathrm{FIT}}|^2 - |R_{\mathrm{exact}}|^2)$",
-            title="(a) Grid convergence across EMI classes",
+            xlabel=r"Slab resolution $\mathrm{cpw}_{\mathrm{slab}}$ [cells/$\lambda$]",
+            ylabel=r"Reflectance error $\mathrm{RMS}(|R|^2)$",
+            title="(a) Slab grid convergence",
         )
         figstyle.spectrum_grid(ax6a)
-        ax6a.legend(loc="upper right", frameon=False, fontsize=7.5)
+        figstyle.place_legend_below(ax6a, ncol=2, y_offset=-0.25)
 
         # Panel (b): Locally refined z-mesh vs uniform z-mesh baseline (error vs cell count Nz)
         n_base = len(t3["cpw_base"])
@@ -2127,7 +2320,7 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         ax6b.loglog(
             t3["nz_graded_conv"][0, :n_base],
             t3["rms_R_conv"][0, :n_base],
-            label="Locally refined graded z-mesh",
+            label="Graded z-mesh",
             **st_gr,
         )
         ax6b.loglog(
@@ -2137,17 +2330,19 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
             color=st_un["color"],
             marker=st_un["marker"],
             lw=1.6,
-            label="Uniform z-mesh baseline (same dz_slab)",
+            label="Uniform z-mesh",
         )
+        ax6b.set_xticks([60, 100, 200, 400, 800])
+        ax6b.xaxis.set_major_formatter(mticker.ScalarFormatter())
+        ax6b.xaxis.set_minor_formatter(mticker.NullFormatter())
         ax6b.set(
-            xlabel="Longitudinal cell count Nz [cells]",
-            ylabel=r"RMS reflectance error (RF-LB, d = 2.0 mm)",
-            title="(b) Local refinement vs. uniform baseline",
+            xlabel="Longitudinal cells Nz",
+            ylabel=r"Reflectance error $\mathrm{RMS}(|R|^2)$",
+            title="(b) Graded vs. uniform mesh",
         )
         figstyle.spectrum_grid(ax6b)
-        ax6b.legend(loc="upper right", frameon=False, fontsize=7.8)
+        figstyle.place_legend_below(ax6b, ncol=1, y_offset=-0.25)
 
-        figstyle.finish(fig6, auto_legend_below=False)
         p6 = fig_dir / "06_resolution_convergence_study.png"
         figstyle.save(fig6, p6, close=True)
         written.append(p6)
@@ -2155,48 +2350,44 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
         # ------------------------------------------------------------------
         # Fig 07: Pulse-slab interaction snapshots with overlay_geometry (3 panels)
         # ------------------------------------------------------------------
-        fig7, axes7 = plt.subplots(
-            1, 3, figsize=(figstyle.FULL_WIDTH_IN, 3.3), dpi=figstyle.DEFAULT_DPI, sharey=True
-        )
+        fig7, (ax7a, ax7b, ax7c) = _new_three_panel_figure(height_in=5.6)
         solver_rf, src_rf, mon_rf, _, _, _, _ = _build_schematic_objects(pec_backed=False)
         snap_specs = [
             (
-                axes7[0],
+                ax7a,
                 t1["snap_rf_z_m"] * 1e3,
                 t1["snap_rf_frames"],
                 t1["snap_rf_times"] * 1e9,
                 2.0,
-                "Eccosorb RF-LB (2 mm)",
-                "(a) Magnetic absorber (RF-LB)",
+                "(a) Eccosorb RF-LB (2 mm)",
             ),
             (
-                axes7[1],
+                ax7b,
                 t1["snap_tio2_z_m"] * 1e3,
                 t1["snap_tio2_frames"],
                 t1["snap_tio2_times"] * 1e9,
                 2.0,
-                "TiO2 eps_r=100 (2 mm)",
-                "(b) Dielectric resonator (TiO2)",
+                "(b) TiO2 ceramic (2 mm)",
             ),
             (
-                axes7[2],
+                ax7c,
                 t1["snap_cnt_z_m"] * 1e3,
                 t1["snap_cnt_frames"],
                 t1["snap_cnt_times"] * 1e9,
                 1.0,
-                "CNT silicone (1 mm)",
-                "(c) Percolated conductor (CNT)",
+                "(c) CNT silicone (1 mm)",
             ),
         ]
-        for ax, z_mm, fr_arr, t_ns, d_mm, s_name, p_title in snap_specs:
+        for idx_p, (ax, z_mm, fr_arr, t_ns, d_mm, p_title) in enumerate(snap_specs):
             n_f = len(fr_arr)
             i_early = max(0, int(0.32 * n_f))
             i_peak = max(1, int(0.50 * n_f))
             i_late = max(2, int(0.72 * n_f))
-            for k_i, (f_idx, tag) in enumerate([(i_early, "incident"), (i_peak, "impinging"), (i_late, "trans./ring")]):
+            for k_i, (f_idx, tag) in enumerate([(i_early, "Incident"), (i_peak, "Impinging"), (i_late, "Transmitted / ring-down")]):
                 st_k = figstyle.series_style(k_i, with_marker=False)
-                ax.plot(z_mm, fr_arr[f_idx], label=f"t = {t_ns[f_idx]:.2f} ns ({tag})", **st_k)
-            slab_s = SlabBox(0.0, d_mm * 1e-3, 2.0e-3, dispersive_lib["eccosorb rf-lb"], s_name)
+                lbl_k = f"{tag} ({t_ns[f_idx]:.2f} ns)" if idx_p == 2 else None
+                ax.plot(z_mm, fr_arr[f_idx], label=lbl_k, **st_k)
+            slab_s = SlabBox(0.0, d_mm * 1e-3, 2.0e-3, "Slab", "Slab")
             schematic.overlay_geometry(
                 ax,
                 solver_rf,
@@ -2206,17 +2397,21 @@ def render_all_figures(data_dir: Path, fig_dir: Path) -> list[Path]:
                 structures=[slab_s],
                 sources=src_rf,
                 monitors=mon_rf,
-                show_boundaries=True,
+                show_boundaries=False,
                 show_materials=True,
+                label_materials=False,
                 show_sources=True,
                 show_monitors=True,
             )
-            ax.set(xlim=(-25.0, 25.0), xlabel="Position z [mm]", title=p_title)
+            ax.set(
+                xlim=(-25.0, 25.0),
+                xlabel="Position z [mm]",
+                ylabel="Field Ex(z, t) [V/m]",
+                title=p_title,
+            )
             figstyle.spectrum_grid(ax)
-            ax.legend(loc="lower left", frameon=False, fontsize=6.8)
-        axes7[0].set_ylabel("Electric field Ex(z, t) [V/m]")
+        figstyle.place_legend_below(ax7c, ncol=3, y_offset=-0.24)
 
-        figstyle.finish(fig7, auto_legend_below=False)
         p7 = fig_dir / "07_pulse_slab_interaction_snapshots.png"
         figstyle.save(fig7, p7, close=True)
         written.append(p7)

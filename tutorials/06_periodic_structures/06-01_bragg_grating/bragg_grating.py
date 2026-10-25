@@ -137,6 +137,34 @@
 #   The $+y$ and $-y$ teeth are $180^\circ$ out of phase ($\cos(\pi/2) = 0 \implies \kappa = 0$),
 #   canceling fundamental $\text{TE}_0 \leftrightarrow \text{TE}_0$ Bragg reflection
 #   so the incident wave transmits straight through the grating.
+#
+# ![Simulation setup schematic: 2D EIM domain, corrugated unit cell with Bloch phase advance, and graded non-uniform mesh zoom](figures/00_setup_schematic.png)
+#
+# **Figure 0 (`00_setup_schematic.png`)** summarizes the complete 2D Effective-Index
+# Method (EIM) simulation setup generated directly from the live Wakis solver,
+# port, and geometry objects:
+# - **Panel (a)** shows the $34.0\;\mu\text{m} \times 1.44\;\mu\text{m}$ computational
+#   domain bounded by $10$-cell CPML absorbing layers on $\pm x$ ($529\;\text{nm}$)
+#   and $\pm y$ ($514\;\text{nm}$) and periodic boundary conditions along $z$, the
+#   corrugated silicon waveguide core ($\varepsilon_{r,\text{slab}} = n_{\text{eff,slab}}^2
+#   = 8.03$, $n_{\text{eff,slab}} = 2.8335$) in air lateral cladding ($\varepsilon_r = 1.0$),
+#   the fundamental $\text{TE}_0$ ($E_y$-polarized) `ModeSource` at Port `'in'`
+#   ($x = -16.6\;\mu\text{m}$, $+x$ injection, Gaussian pulse spanning
+#   $\lambda \in [1500, 1620]\;\text{nm}$), and the modal `ModeMonitor` planes at
+#   Ports `'in'` and `'out'` ($x = +16.6\;\mu\text{m}$).
+# - **Panel (b)** zooms into the unit cell of pitch $\Lambda = 324\;\text{nm}$ and
+#   tooth length $l_{\text{tooth}} = \Lambda/2 = 162\;\text{nm}$ ($50\%$ duty cycle),
+#   marking the periodic unit-cell planes $x_n$ and $x_n + \Lambda$ with the Bragg
+#   Bloch phase advance $\Delta\phi = \beta_B \Lambda = \pi$, the counter-propagating
+#   forward ($\tilde{A}^+$) and backward ($\tilde{A}^-$) coupled waves inside the
+#   $w_{\text{core}} = 450\;\text{nm}$ core ($w_{\text{avg}} = 500\;\text{nm}$,
+#   $w_{\max} = 550\;\text{nm}$), and the $\Delta x_{\text{shift}} = \Lambda/2$
+#   lower-sidewall phase offset that cancels $\kappa$.
+# - **Panel (c)** shows the non-uniform graded Cartesian mesh zoomed onto a single
+#   $50\;\text{nm} \times 162\;\text{nm}$ sidewall tooth, illustrating the local
+#   refinement ($\Delta y_{\text{tooth}} = 8.33\;\text{nm}$, $6\;\text{cells}$ across
+#   $\Delta w = 50\;\text{nm}$) and smooth geometric grading ($g = 1.35$) into the
+#   waveguide core and cladding.
 
 # %%
 import argparse
@@ -161,11 +189,19 @@ from _helpers import (  # noqa: E402
     FastPolySlab,
     bragg_grating,
     build_bragg_mesh_overrides,
+    build_bragg_setup_objects,
+    build_tuned_bragg_mesh_overrides,
+    build_uniform_bragg_mesh_overrides,
     cmt_bragg_spectrum,
     cmt_coupling_from_neff_step,
+    compare_bragg_mesh_strategies,
     extract_stopband_metrics,
+    load_graded_vs_uniform_study_summary,
     measure_grating_mesh_metrics,
+    plot_bragg_setup_schematic,
+    render_bragg_pulse_gif,
 )
+from wakis import figstyle, schematic  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
     PICSimulation,
     Port,
@@ -579,16 +615,65 @@ def build_task_mesh_metrics(task_cfg):
 #   $\|T - T_{\text{ref}}\|_2$ drops monotonically from $0.3549 \to 0.2325 \to 0.1552$ for Kottke vs
 #   $0.5310 \to 0.3753 \to 0.2771$ for staircase ($1.50\text{--}1.79\times$ lower).
 #
-# ### Comparison: Old (`--quick`) vs New (`--full`) vs Reference (Analytical CMT)
+# ### Comparison of mesh strategies: Uniform vs Sidewall-Strip Graded vs Tuned Graded
+#
+# Benchmarking the 100-period silicon Bragg grating ($L = 32.40\;\mu\text{m}$, domain
+# $34.0\;\mu\text{m} \times 1.44\;\mu\text{m}$, $t_{\text{end}} = 1.80\;\text{ps}$) across three
+# Cartesian meshing strategies against the multi-arm Richardson continuum limit
+# ($\lambda_{B,\text{ref}} = 1551.31 \pm 0.11\;\text{nm}$, $\Delta\lambda_{\text{BW,ref}} =
+# 30.41 \pm 0.03\;\text{nm}$; see `studies/subgrid-vs-graded-bragg/`) isolates the
+# cost and accuracy trade-offs of local non-uniform grading:
+#
+# | Mesh strategy | $N_{\text{tooth}}$ | $\Delta y_{\text{tooth}}$ [nm] | $\Delta x_{\text{tooth}}$ [nm] | $\Delta y_{\text{core}}$ [nm] | Grid ($N_x \times N_y$) | $n_{\text{cells}}$ | Steps | Wall time [s] | $\lambda_B$ [nm] ($|\Delta\lambda_B|$ [nm]) | $\Delta\lambda_{\text{BW}}$ [nm] (err [%]) |
+# |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+# | Unrefined uniform (`Task 0`, warning) | $0.97$ | $51.43$ | $52.88$ | $51.43$ | $664 \times 49$ | $32{,}536$ | $20{,}985$ | $82.5$ | $1561.90$ ($10.59$) | $26.75$ ($12.0\%$) |
+# | **Uniform fine (`uniform_N4`)** | $4.06$ | $12.31$ | $12.37$ | $12.31$ | $2769 \times 137$ | $379{,}353$ | $68{,}757$ | $1095.1$ | $1551.42$ ($0.11$) | $30.64$ ($0.77\%$) |
+# | **Sidewall-strip graded (`Task 2`, `L1`)** | $4.00$ | $12.50$ | $40.50$ | $52.72$ | $853 \times 68$ | $58{,}004$ | $54{,}489$ | $339.0$ ($287.5$) | $1563.97$ ($12.66$) | $33.00$ ($8.52\%$) |
+# | **Sidewall-strip graded (`Task 4`, `L2`)** | $6.00$ | $8.33$ | $27.00$ | $35.91$ | $1265 \times 86$ | $108{,}790$ | $81{,}478$ | $951.2$ ($917.0$) | $1557.40$ ($6.10$) | $31.71$ ($4.27\%$) |
+# | **Sidewall-strip graded (`Task 6`, `L3`)** | $8.00$ | $6.25$ | $20.25$ | $25.79$ | $1683 \times 108$ | $181{,}764$ | $108{,}978$ | $3150.0$ ($2062.2$) | $1554.81$ ($3.50$) | $31.23$ ($2.71\%$) |
+# | **Sidewall-strip graded (`Task 8`, `R`)** | $16.00$ | $3.125$ | $10.125$ | $13.09$ | $3343 \times 187$ | $625{,}141$ | $217{,}955$ | $12658.4$ ($14997.8$) | $1552.27$ ($0.96$) | $30.63$ ($0.71\%$) |
+# | **Tuned graded (`graded_tuned_L1`)** | $4.00$ | $12.50$ | $12.50$ | $24.95$ | $2647 \times 74$ | $195{,}878$ | $72{,}820$ | $1516.5$ | $1553.04$ ($1.73$) | $30.29$ ($0.40\%$) |
+# | **Tuned graded (`graded_tuned_L2`, equal cells)** | $6.00$ | $8.33$ | $8.33$ | $16.64$ | $3955 \times 96$ | $379{,}680$ | $109{,}039$ | $4617.5$ | $1552.12$ ($0.82$) | $30.31$ ($0.31\%$) |
+# | **Tuned graded (`graded_tuned_L3`)** | $8.00$ | $6.25$ | $6.25$ | $12.49$ | $5269 \times 122$ | $642{,}818$ | $145{,}640$ | $8730.8$ | $1551.77$ ($0.46$) | $30.34$ ($0.22\%$) |
+# | **Richardson continuum limit ($N_{\text{tooth}} \to \infty$)** | $\infty$ | $0$ | $0$ | $0$ | — | — | — | — | $1551.31$ (tuned) / $1551.42$ (strip) | $30.38$ (tuned) / $30.42$ (strip) |
+#
+# * **Equal tooth resolution ($N_{\text{tooth}} = 4$, $\Delta y_{\text{tooth}} \approx 12.5\;\text{nm}$)**:
+#   `uniform_N4` ($379{,}353$ cells, $1095.1\;\text{s}$) places $12.3\;\text{nm}$ cells across the entire
+#   air cladding, whereas `graded_tuned_L1` (`build_tuned_bragg_mesh_overrides`, which refines
+#   the tooth strips to $\Delta x = \Delta y = 12.5\;\text{nm}$ and the $400\;\text{nm}$ core to
+#   $\Delta y_{\text{core}} = 25.0\;\text{nm}$ while grading at $g = 1.35$ into the cladding)
+#   cuts the cell count by **$1.94\times$** ($195{,}878$ cells) and achieves a $1.9\times$ smaller
+#   stopband bandwidth error ($0.40\%$ vs. $0.77\%$). The baseline sidewall-strip graded mesh
+#   (`Task 2` `kottke_L1`, `build_bragg_mesh_overrides`) cuts the cell count by **$6.54\times$**
+#   ($58{,}004$ cells, $287.5\text{--}339.0\;\text{s}$), trading a coarser core and longitudinal
+#   tooth step ($\Delta x = 40.5\;\text{nm}$, $\Delta y_{\text{core}} = 52.7\;\text{nm}$) for a
+#   $3.8\times$ faster turnaround.
+# * **Equal cell count ($\approx 3.80 \times 10^5$ cells)**:
+#   At the same total cell budget as `uniform_N4` ($379{,}353$ cells, $N_{\text{tooth}} = 4.06$),
+#   `graded_tuned_L2` ($379{,}680$ cells) concentrates $1.5\times$ finer isotropic cells inside
+#   every $50\;\text{nm}$ sidewall tooth ($N_{\text{tooth}} = 6.0$, $\Delta x = \Delta y = 8.33\;\text{nm}$),
+#   halving the stopband bandwidth error from $0.77\%$ ($30.64\;\text{nm}$) to **$0.31\%$**
+#   ($30.31\;\text{nm}$) with $\lambda_B = 1552.12\;\text{nm}$.
+# * **Equal accuracy ($\Delta\lambda_{\text{BW}}$ within $0.7\%$, $|\Delta\lambda_B| < 1.0\;\text{nm}$)**:
+#   Reaching $N_{\text{tooth}} = 8$ ($\Delta_{\text{tooth}} = 6.25\;\text{nm}$) or $N_{\text{tooth}} = 16$
+#   ($\Delta_{\text{tooth}} = 3.125\;\text{nm}$) on a uniform grid would require $1.52\times 10^6$ or
+#   $8.9\times 10^6$ cells; the graded meshes reach $N_{\text{tooth}} = 8$ (`graded_tuned_L3`,
+#   $|\Delta\lambda_B| = 0.46\;\text{nm}$, $0.22\%$ bandwidth error) in $642{,}818$ cells ($2.36\times$
+#   fewer) and $N_{\text{tooth}} = 16$ (`Task 8` `kottke_reference`, $|\Delta\lambda_B| = 0.96\;\text{nm}$,
+#   $0.71\%$ bandwidth error) in $625{,}141$ cells (**$14.2\times$ fewer cells**), with both graded arms
+#   extrapolating to the same continuum Bragg wavelength within $0.11\;\text{nm}$ ($1551.31\;\text{nm}$
+#   vs. $1551.42\;\text{nm}$).
+#
+# ### Comparison: Compact (`--quick`) vs Production (`--full`) vs Analytical CMT
 #
 # Extending the time-domain integration from `--quick` (`energy_decay = 2e-2`, $t_{\max} = 0.95\;\text{ps}$,
 # sweeps at $\text{L2}$) to `--full` (`energy_decay = 1e-4`, $t_{\max} = 1.80\;\text{ps}$, sweeps at $\text{L3}$,
 # reference at $\text{R} = (40, 16)$) allows the slow-group-velocity band-edge Fabry–Pérot modes of the
 # 100-period grating ($L = 32.40\;\mu\text{m}$) and the transmitted pulse tail to ring down completely.
-# In `--quick`, truncating at $0.95\;\text{ps}$ artificially depressed $T_{\min}$ at $N = 100$ ($0.00012\text{--}0.00026$,
-# inflating $\kappa_{T_{\min}}$ to $1490\text{--}1606\;\text{cm}^{-1}$ so it exceeded $\kappa_{\text{BW}} \approx 1163\text{--}1243\;\text{cm}^{-1}$),
-# smeared the first reflection nulls into the stopband edges (inflating $\Delta\lambda_{\text{FWHM}}$ by $\sim 5\;\text{nm}$
-# and damping the first uniform sidelobes to $-7.05\;\text{dB}$), and left $9\%$ of the pulse inside the
+# In `--quick`, truncating at $0.95\;\text{ps}$ artificially depresses $T_{\min}$ at $N = 100$ ($0.00012\text{--}0.00026$,
+# inflating $\kappa_{T_{\min}}$ to $1490\text{--}1606\;\text{cm}^{-1}$ so it exceeds $\kappa_{\text{BW}} \approx 1163\text{--}1243\;\text{cm}^{-1}$),
+# smears the first reflection nulls into the stopband edges (inflating $\Delta\lambda_{\text{FWHM}}$ by $\sim 5\;\text{nm}$
+# and damping the first uniform sidelobes to $-7.05\;\text{dB}$), and leaves $9\%$ of the pulse inside the
 # $\Lambda/2$-shifted waveguide ($T_{\min} = 0.9095$). In `--full`, all three effects resolve cleanly:
 # $\kappa_{T_{\min}}$ ($1141.3\;\text{cm}^{-1}$ at $\text{L3}$, $1104.7\;\text{cm}^{-1}$ at $\text{R}$) and
 # $\kappa_{\text{BW}}$ ($1162.8\;\text{cm}^{-1}$ at $\text{L3}$, $1080.2\;\text{cm}^{-1}$ at $\text{R}$) agree to
@@ -596,7 +681,7 @@ def build_task_mesh_metrics(task_cfg):
 # ($1126.5, 1125.6, 1141.3\;\text{cm}^{-1}$), and the $\Lambda/2$-shifted grating reaches $T_{\min} = 0.9931$
 # ($0.03\;\text{dB}$ maximum insertion loss, $R_{\max} = 0.0003$).
 #
-# | Metric ($N = 100$, $\Delta w = 50\;\text{nm}$ unless noted) | Old (`--quick`: primary L2, ref L3) | New (`--full`: primary L3, ref R) | Analytical CMT (2D EIM, $n_g = 3.2531$) [1–3, 5] |
+# | Metric ($N = 100$, $\Delta w = 50\;\text{nm}$ unless noted) | Compact (`--quick`: primary L2, ref L3) | Production (`--full`: primary L3, ref R) | Analytical CMT (2D EIM, $n_g = 3.2531$) [1–3, 5] |
 # |---|---:|---:|---:|
 # | Aligned Bragg wavelength $\lambda_B$ (primary / ref) | $1557.50\;\text{nm}$ / $1554.91\;\text{nm}$ | $1554.81\;\text{nm}$ / $1552.27\;\text{nm}$ | $2 n_{\text{eff}}(w_{\text{avg}})\Lambda = 1568.66\;\text{nm}$ (1D slab avg) |
 # | Stopband $-3\;\text{dB}$ width $\Delta\lambda_{\text{FWHM}}$ (primary / ref) | $36.69\;\text{nm}$ / $35.96\;\text{nm}$ | $31.23\;\text{nm}$ / $30.63\;\text{nm}$ | $32.19\;\text{nm}$ (at $\kappa_{\text{L3}}$) / $31.39\;\text{nm}$ (at $\kappa_{\text{R}}$) |
@@ -941,29 +1026,30 @@ def run_single_task(task_cfg, out_dir):
 # ## 6. Generating the complete diagnostic figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and renders 15 figures into
+# `generate_all_figures` reads `data/task_*.npz` and renders 16 figures into
 # `figures/`:
 #
+# 0. `00_setup_schematic.png` — Labelled setup schematic (domain extents, CPML boundaries, corrugated silicon waveguide $\varepsilon_{r,\text{slab}} = 8.03$, `ModeSource`, and port `ModeMonitor` planes), unit-cell schematic with Bloch phase advance $\beta_B\Lambda = \pi$ and $\Lambda/2$ sidewall shift, and zoomed non-uniform graded mesh view.
 # 1. `01_bragg_grating_layout.png` — Side-by-side dual waveguide layout (Waveguide 1 aligned at $y_1 = +0.766\;\mu\text{m}$, Waveguide 2 $\Lambda/2$-shifted at $y_2 = -0.766\;\mu\text{m}$) with zoomed insets of the in-phase vs half-period-shifted sidewall teeth.
 # 2. `02_eim_vertical_stack.png` — Asymmetric $220\;\text{nm}$ SOI stack ($\text{SiO}_2$ substrate, $\text{Si}$ core, air cladding), 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_corrugation_and_apodization_profiles.png` — Sidewall width modulation $w(x)$ for uniform, $\Lambda/2$-shifted, and Gaussian-apodized gratings, plus the CMT destructive-interference curve $\kappa(\Delta x_{\text{shift}}/\Lambda)$.
-# 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map with Yee cell edges on the $50\;\text{nm} \times 162\;\text{nm}$ sidewall teeth at the under-resolved warning level ($0.97\;\text{cells}$), $\text{L1} = (10, 4)$ staircase & Kottke ($4.00\;\text{cells}$), and the Kottke reference level ($8.00$ or $16.00\;\text{cells}$), with feature dimensions annotated.
+# 4. `04_permittivity_mesh_zoom.png` — Three-panel zoomed in-plane permittivity map with Yee cell edges and exact polygon outlines on the $50\;\text{nm} \times 162\;\text{nm}$ sidewall teeth comparing the unrefined uniform mesh ($0.97\;\text{cells/tooth}$), the baseline sidewall-strip graded mesh (`build_bragg_mesh_overrides`), and the tuned core-and-tooth graded mesh (`build_tuned_bragg_mesh_overrides`, equal cell count to `uniform_N4`).
 # 5. `05_port_mode_profiles.png` — Input and output port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
-# 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$, group index $n_g(\lambda)$, and graphical Bragg condition $\lambda / (2\Lambda) = n_{\text{eff}}(\lambda)$.
-# 7. `07_field_intensity_bragg.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ near $\lambda_B$: aligned stopband decay vs $\Lambda/2$-misaligned transmission.
-# 8. `08_field_real_ey_bragg.png` — Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ near $\lambda_B$: aligned vs $\Lambda/2$-misaligned.
-# 9. `09_pulse_propagation.gif` — Animated time-domain pulse reflection and transmission in the Bragg grating.
+# 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$, graphical Bragg condition $\lambda / (2\Lambda) = n_{\text{eff}}(\lambda)$, and group index $n_g(\lambda)$.
+# 7. `07_field_intensity_bragg.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ near $\lambda_B$ with `schematic.overlay_geometry` (aligned stopband decay vs $\Lambda/2$-misaligned transmission).
+# 8. `08_field_real_ey_bragg.png` — Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ near $\lambda_B$ with `schematic.overlay_geometry` (aligned vs $\Lambda/2$-misaligned).
+# 9. `09_pulse_propagation.gif` — Animated time-domain pulse reflection and transmission in the Bragg grating with `schematic.overlay_geometry`.
 # 10. `10_aligned_vs_misaligned_spectra.png` — Linear and dB transmission ($|S_{21}|^2$) and reflection ($|S_{11}|^2$) spectra of aligned vs $\Lambda/2$-misaligned gratings compared with analytical CMT and the under-resolved warning run.
 # 11. `11_periods_sweep_and_cmt.png` — Reflection spectra vs period count $N \in \{25, 50, 100\}$ and peak reflectivity $R_{\max}(N)$ vs CMT $\tanh^2(\kappa N\Lambda)$.
-# 12. `12_corrugation_depth_sweep.png` — Reflection spectra and extracted coupling coefficient $\kappa(\Delta w)$ vs corrugation depth $\Delta w \in \{25, 50, 75\}\;\text{nm}$.
+# 12. `12_corrugation_depth_sweep.png` — Stopband transmission spectra, extracted coupling coefficient $\kappa(\Delta w)$, and $-3\;\text{dB}$ bandwidth vs corrugation depth $\Delta w \in \{25, 50, 75\}\;\text{nm}$.
 # 13. `13_apodized_vs_uniform_sidelobes.png` — Uniform vs Gaussian-apodized grating reflection spectra in dB demonstrating sidelobe suppression.
-# 14. `14_kottke_vs_staircase_convergence.png` — Subpixel convergence of Bragg wavelength error $|\lambda_B - \lambda_{B,\text{ref}}|$, stopband width error $|\Delta\lambda_{\text{BW}} - \Delta\lambda_{\text{BW,ref}}|$, and transmission RMS error vs the independent Kottke reference run, with cells across the smallest feature annotated as a second axis and the under-resolved warning pair highlighted.
+# 14. `14_kottke_vs_staircase_convergence.png` — Three-panel convergence and mesh-upgrade comparison: error vs tooth resolution $N_{\text{tooth}}$, error vs total cell count $N_{\text{cells}}$ (Sidewall-Strip Graded vs Tuned Graded vs Uniform Fine `uniform_N4`), and stopband alignment across resolution levels.
 # 15. `15_port_time_trace_and_flux_budget.png` — Port time-domain waveform $E_y(t)$ and 2D Poynting flux-box energy conservation audit.
 
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 15 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all 16 figures (`00`..`15`) into ``fig_dir``."""
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -981,423 +1067,539 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
     primary = tasks_data[primary_name]
 
+    # 0. Setup schematic (domain, unit cell with Bloch phase advance, and graded mesh zoom)
+    plot_bragg_setup_schematic(
+        fig_dir / "00_setup_schematic.png",
+        n_periods=100,
+        pitch=PITCH,
+        w_core=W_CORE,
+        dw=DW_CORRUG,
+        duty_cycle=DUTY_CYCLE,
+    )
+
     # 1. Dual side-by-side Bragg grating layout + zoomed view of aligned vs shifted teeth
     dual_structs, dual_ports, dual_domain = build_dual_bragg_gratings()
-    fig, (ax0, ax1) = plt.subplots(
-        2, 1, figsize=(10.5, 6.2), dpi=150, gridspec_kw={"height_ratios": [1.0, 1.15]}
-    )
-    plot_layout(
-        dual_structs,
-        ports=dual_ports,
-        domain=dual_domain,
-        title="(a) Full 100-period dual waveguide Bragg grating domain (L = 32.40 µm, Λ = 324 nm)",
-        ax=ax0,
-    )
-    ax0.set_aspect("auto")
-
-    # Panel (b): zoomed view over 8 periods near x in [0, 2.6] um
-    plot_layout(
-        dual_structs,
-        ports=(),
-        domain=(0.0, 2.592e-6, -1.35e-6, 1.35e-6),
-        annotations=[
-            {
-                "text": "WG 1 (aligned, shift = 0)\n±y teeth in phase → max κ",
-                "xy": (1.05, +Y_SEP_HALF * 1e6 + 0.275),
-                "xytext": (0.65, 1.18),
-                "arrowprops": dict(arrowstyle="->", color="#1b9e77", lw=1.2),
-            },
-            {
-                "text": "WG 2 (misaligned, shift = Λ/2 = 162 nm)\n−y teeth shifted → κ = 0",
-                "xy": (1.21, -Y_SEP_HALF * 1e6 - 0.275),
-                "xytext": (1.75, -1.18),
-                "arrowprops": dict(arrowstyle="->", color="#d95f02", lw=1.2),
-            },
-        ],
-        title="(b) Zoomed top view (8 periods, x ∈ [0, 2.59 µm]): aligned vs Λ/2-shifted sidewall teeth",
-        ax=ax1,
-    )
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_bragg_grating_layout.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(
+            nrows=2, ncols=1, width=10.6, height=6.2, gridspec_kw={"height_ratios": [1.0, 1.15]}
+        )
+        plot_layout(
+            dual_structs,
+            ports=dual_ports,
+            domain=dual_domain,
+            title="(a) Full 100-period dual waveguide Bragg grating domain (L = 32.40 µm, Λ = 324 nm)",
+            ax=ax0,
+        )
+        ax0.set_aspect("auto")
+        plot_layout(
+            dual_structs,
+            ports=(),
+            domain=(0.0, 2.592e-6, -1.35e-6, 1.35e-6),
+            annotations=[
+                {
+                    "text": "WG 1 (aligned, shift = 0)\n±y teeth in phase → max κ",
+                    "xy": (1.05, +Y_SEP_HALF * 1e6 + 0.275),
+                    "xytext": (0.65, 1.18),
+                    "arrowprops": dict(arrowstyle="->", color="#1b9e77", lw=1.2),
+                },
+                {
+                    "text": "WG 2 (misaligned, shift = Λ/2 = 162 nm)\n−y teeth shifted → κ = 0",
+                    "xy": (1.21, -Y_SEP_HALF * 1e6 - 0.275),
+                    "xytext": (1.75, -1.18),
+                    "arrowprops": dict(arrowstyle="->", color="#d95f02", lw=1.2),
+                },
+            ],
+            title="(b) Zoomed top view (8 periods, x ∈ [0, 2.59 µm]): aligned vs Λ/2-shifted sidewall teeth",
+            ax=ax1,
+        )
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "01_bragg_grating_layout.png")
 
     # 2. Effective-Index Method (EIM) vertical stack (SiO2 / 220 nm Si / air)
-    plot_eim_stack(
-        n_core=N_SI,
-        n_clad=N_SIO2,
-        thickness=H_SI,
-        wavelength_ref=WL_REF,
-        wavelengths=np.linspace(WL_MIN, WL_MAX, 51),
-        out_path=fig_dir / "02_eim_vertical_stack.png",
-    )
+    with figstyle.apply_style():
+        plot_eim_stack(
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            thickness=H_SI,
+            wavelength_ref=WL_REF,
+            wavelengths=np.linspace(WL_MIN, WL_MAX, 51),
+            out_path=fig_dir / "02_eim_vertical_stack.png",
+        )
 
     # 3. Corrugation profiles, Gaussian apodization envelope, and CMT phase-shift law
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.8, 3.9), dpi=150)
-    x_per = np.linspace(-0.5 * 100 * PITCH * 1e6, 0.5 * 100 * PITCH * 1e6, 201)
-    u_norm = x_per / (0.5 * 100 * PITCH * 1e6)
-    env_unif = np.ones_like(x_per) * (DW_CORRUG * 1e9)
-    env_gauss = np.exp(-4.0 * u_norm**2) * (DW_CORRUG * 1e9)
-    env_rcos = 0.5 * (1.0 + np.cos(np.pi * u_norm)) * (DW_CORRUG * 1e9)
-    ax0.plot(x_per, env_unif, color="#2b5c8f", lw=2.2, label="Uniform grating (Δw = 50 nm)")
-    ax0.plot(
-        x_per,
-        env_gauss,
-        color="#d95f02",
-        lw=2.2,
-        ls="--",
-        label=r"Gaussian apodized ($\alpha = 4.0$)",
-    )
-    ax0.plot(
-        x_per,
-        env_rcos,
-        color="#1b9e77",
-        lw=1.8,
-        ls="-.",
-        label="Raised-cosine apodized",
-    )
-    ax0.set(
-        xlabel="Axial position x along grating [µm]",
-        ylabel="Sidewall tooth depth Δw(x) [nm]",
-        ylim=(-2, 58),
-        title="(a) Longitudinal corrugation apodization profiles",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower center", fontsize=8.5)
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=4.0)
+        x_per = np.linspace(-0.5 * 100 * PITCH * 1e6, 0.5 * 100 * PITCH * 1e6, 201)
+        u_norm = x_per / (0.5 * 100 * PITCH * 1e6)
+        env_unif = np.ones_like(x_per) * (DW_CORRUG * 1e9)
+        env_gauss = np.exp(-4.0 * u_norm**2) * (DW_CORRUG * 1e9)
+        env_rcos = 0.5 * (1.0 + np.cos(np.pi * u_norm)) * (DW_CORRUG * 1e9)
+        ax0.plot(
+            x_per,
+            env_unif,
+            label="Uniform grating (Δw = 50 nm)",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax0.plot(
+            x_per,
+            env_gauss,
+            label=r"Gaussian apodized ($\alpha = 4.0$)",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax0.plot(
+            x_per,
+            env_rcos,
+            label="Raised-cosine apodized",
+            **figstyle.series_style(2, with_marker=False),
+        )
+        ax0.set(
+            xlabel="Axial position x along grating [µm]",
+            ylabel="Sidewall tooth depth Δw(x) [nm]",
+            ylim=(-2, 58),
+            title="(a) Longitudinal corrugation apodization profiles",
+        )
+        ax0.legend(loc="lower center", fontsize=8.0)
 
-    shift_norm = np.linspace(0.0, 1.0, 201)
-    kappa_norm = np.abs(np.cos(np.pi * shift_norm))
-    r_max_shift = np.tanh(2.15 * kappa_norm) ** 2
-    ax1.plot(
-        shift_norm,
-        kappa_norm,
-        color="#2b5c8f",
-        lw=2.2,
-        label=r"Normalized coupling $\kappa(\Delta x)/\kappa_0 = |\cos(\pi\Delta x/\Lambda)|$",
-    )
-    ax1.plot(
-        shift_norm,
-        r_max_shift,
-        color="#d95f02",
-        lw=2.0,
-        ls="--",
-        label=r"CMT peak reflectivity $R_{\max} = \tanh^2(\kappa L)$",
-    )
-    ax1.plot([0.0], [1.0], "o", color="#1b9e77", ms=7, label="WG 1: aligned (Δx = 0)")
-    ax1.plot(
-        [0.5],
-        [0.0],
-        "s",
-        color="#e7298a",
-        ms=7,
-        label="WG 2: misaligned (Δx = Λ/2, κ = 0)",
-    )
-    ax1.set(
-        xlabel="Normalized sidewall phase offset Δx / Λ",
-        ylabel="Normalized magnitude",
-        title="(b) Destructive interference vs sidewall shift (Wang 2014)",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_corrugation_and_apodization_profiles.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+        shift_norm = np.linspace(0.0, 1.0, 201)
+        kappa_norm = np.abs(np.cos(np.pi * shift_norm))
+        r_max_shift = np.tanh(2.15 * kappa_norm) ** 2
+        ax1.plot(
+            shift_norm,
+            kappa_norm,
+            label=r"Normalized coupling $\kappa(\Delta x)/\kappa_0 = |\cos(\pi\Delta x/\Lambda)|$",
+            **figstyle.series_style(0, with_marker=False),
+        )
+        ax1.plot(
+            shift_norm,
+            r_max_shift,
+            label=r"CMT peak reflectivity $R_{\max} = \tanh^2(\kappa L)$",
+            **figstyle.series_style(1, with_marker=False),
+        )
+        ax1.plot([0.0], [1.0], "o", color="#059669", ms=7, label="WG 1: aligned (Δx = 0)")
+        ax1.plot(
+            [0.5],
+            [0.0],
+            "s",
+            color="#dc2626",
+            ms=7,
+            label="WG 2: misaligned (Δx = Λ/2, κ = 0)",
+        )
+        ax1.set(
+            xlabel="Normalized sidewall phase offset Δx / Λ",
+            ylabel="Normalized magnitude",
+            title="(b) Destructive interference vs sidewall shift (Wang 2014)",
+        )
+        ax1.legend(loc="upper right", fontsize=7.8)
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "03_corrugation_and_apodization_profiles.png")
 
-    # 4. Zoomed permittivity map with Yee mesh lines on the 50 nm x 162 nm teeth
-    #    at Under-resolved (10, 0), L1 = (10, 4) Staircase & Kottke, and Reference
+    # 4. Three-panel permittivity & mesh zoom comparing:
+    #    (a) Unrefined uniform (Task 0, 0.97 cells/tooth)
+    #    (b) Sidewall-strip graded Kottke (Task 4 L2, build_bragg_mesh_overrides)
+    #    (c) Tuned core+tooth graded Kottke (graded_tuned_L2, build_tuned_bragg_mesh_overrides, equal cells to uniform_N4)
     short_n_per = 6
     short_structs, short_ports, short_dom = build_bragg_grating(n_periods=short_n_per)
     neff_slab_fig4 = float(primary["n_eff_slab"])
-    ref_d_fig4 = tasks_data.get("kottke_reference", primary)
-    cpw_ref_fig4 = int(ref_d_fig4["cpw"])
-    nf_ref_fig4 = int(ref_d_fig4.get("n_feature", 8))
+    study_sum = load_graded_vs_uniform_study_summary()
+    gt_l2 = (
+        study_sum["graded_tuned"][1]
+        if len(study_sum["graded_tuned"]) > 1
+        else {"n_cells": 379680, "lambda_B_nm": 1552.12, "bandwidth_3db_nm": 30.31, "total_wall_time_s": 4617.5}
+    )
+    unif_n4 = study_sum["uniform_N4"]
+    t0_d = tasks_data.get("underresolved_kottke", primary)
+    t4_d = tasks_data.get("kottke_L2", primary)
 
     mesh_cases = [
         (
             "kottke",
             10,
             0,
-            "(a) Under-resolved warning (cpw=10, no override)\n0.97 cells across 50 nm tooth (Δy = 51.4 nm)",
-        ),
-        (
-            "staircase",
-            10,
-            4,
-            "(b) L1 = (10, 4) Staircase (with mesh_overrides)\n4.00 cells across 50 nm tooth (Δy_min = 12.5 nm)",
+            False,
+            f"(a) Uniform coarse (0.97/tooth, {int(t0_d['n_cells']):,} cells)\n"
+            f"λ_B = {float(t0_d['lambda_bragg']) * 1e9:.2f} nm, BW = {float(t0_d['stopband_width_nm']):.2f} nm",
         ),
         (
             "kottke",
-            10,
-            4,
-            "(c) L1 = (10, 4) Kottke (with mesh_overrides)\n4.00 cells across 50 nm tooth (Δy_min = 12.5 nm)",
+            14,
+            6,
+            False,
+            f"(b) Sidewall graded L2 (6/tooth, {int(t4_d['n_cells']):,} cells)\n"
+            f"λ_B = {float(t4_d['lambda_bragg']) * 1e9:.2f} nm, BW = {float(t4_d['stopband_width_nm']):.2f} nm",
         ),
         (
             "kottke",
-            cpw_ref_fig4,
-            nf_ref_fig4,
-            f"(d) Reference ({cpw_ref_fig4}, {nf_ref_fig4}) Kottke (with mesh_overrides)\n"
-            f"{float(nf_ref_fig4):.2f} cells across 50 nm tooth (Δy_min = {50.0 / nf_ref_fig4:.2f} nm)",
+            14,
+            6,
+            True,
+            f"(c) Tuned graded L2 (6/tooth, {int(gt_l2.get('n_cells', 379680)):,} cells)\n"
+            f"λ_B = {float(gt_l2.get('lambda_B_nm', 1552.12)):.2f} nm, BW = {float(gt_l2.get('bandwidth_3db_nm', 30.31)):.2f} nm",
         ),
     ]
-    fig, axes_m = plt.subplots(2, 2, figsize=(11.4, 7.2), dpi=150, sharex=True, sharey=True)
     xlim_zoom = (-0.34, 0.34)
-    ylim_zoom = (0.175, 0.315)
-    poly_xy_um = short_structs[0].vertices * 1e6
-
-    for ax, (avg_m, cpw_m, nf_m, ttl_m) in zip(axes_m.ravel(), mesh_cases):
-        dx_bg_m = WL_MIN / (neff_slab_fig4 * float(cpw_m))
-        ov_m = build_bragg_mesh_overrides(
-            n_periods=short_n_per,
-            pitch=PITCH,
-            w_core=W_CORE,
-            dw=DW_CORRUG,
-            duty_cycle=DUTY_CYCLE,
-            shift=0.0,
-            n_feature=nf_m,
-            dx_background=dx_bg_m,
-        )
-        pic_m = PICSimulation(
-            WL_MIN,
-            WL_MAX,
-            structures=short_structs,
-            ports=short_ports,
-            n_core=N_SI,
-            n_clad=N_AIR,
-            n_sub=N_SIO2,
-            wavelength_ref=WL_REF,
-            two_d=True,
-            averaging=avg_m,
-            cells_per_wavelength=cpw_m,
-            domain=short_dom,
-            n_pml=6,
-            mesh_overrides=ov_m,
-        )
-        g_m = pic_m.solver.grid
-        iz_m = pic_m.solver.Nz // 2
-        ieps_m = pic_m.solver.ieps[:, :, iz_m, "y"]
-        if hasattr(ieps_m, "get"):
-            ieps_m = ieps_m.get()
-        eps_r_m = np.where(
-            ieps_m > 0, 1.0 / (np.where(ieps_m > 0, ieps_m, 1.0) * epsilon_0), 1.0
-        )
-        x_um_m, y_um_m = g_m.x * 1e6, g_m.y * 1e6
-        pcm = ax.pcolormesh(
-            x_um_m,
-            y_um_m,
-            eps_r_m.T,
-            cmap="viridis",
-            vmin=1.0,
-            vmax=neff_slab_fig4**2,
-            shading="flat",
-        )
-        ax.plot(
-            poly_xy_um[:, 0],
-            poly_xy_um[:, 1],
-            color="#ffea00",
-            lw=1.5,
-            ls="-",
-            label="Exact tooth polygon",
-        )
-        ax.set_xlim(*xlim_zoom)
-        ax.set_ylim(*ylim_zoom)
-        xv = x_um_m[(x_um_m >= xlim_zoom[0]) & (x_um_m <= xlim_zoom[1])]
-        yv = y_um_m[(y_um_m >= ylim_zoom[0]) & (y_um_m <= ylim_zoom[1])]
-        vlines = [[(x, ylim_zoom[0]), (x, ylim_zoom[1])] for x in xv]
-        hlines = [[(xlim_zoom[0], y), (xlim_zoom[1], y)] for y in yv]
-        ax.add_collection(
-            LineCollection(vlines + hlines, colors="white", linewidths=0.55, alpha=0.7)
-        )
-        # Annotate 50 nm tooth depth (y in [0.225, 0.275] um) and 162 nm tooth length
-        ax.annotate(
-            "",
-            xy=(-0.081, 0.275),
-            xytext=(-0.081, 0.225),
-            arrowprops=dict(arrowstyle="<->", color="#ff4d4d", lw=1.5),
-        )
-        ax.text(
-            -0.072,
-            0.250,
-            "Δw = 50 nm",
-            color="white",
-            fontsize=8.0,
-            fontweight="bold",
-            va="center",
-            bbox=dict(boxstyle="round,pad=0.15", fc="black", ec="none", alpha=0.65),
-        )
-        ax.annotate(
-            "",
-            xy=(0.0, 0.288),
-            xytext=(-0.162, 0.288),
-            arrowprops=dict(arrowstyle="<->", color="#00e5ff", lw=1.4),
-        )
-        ax.text(
-            -0.081,
-            0.298,
-            "l_tooth = 162 nm",
-            color="white",
-            fontsize=7.8,
-            ha="center",
-            va="bottom",
-            bbox=dict(boxstyle="round,pad=0.15", fc="black", ec="none", alpha=0.65),
-        )
-        ax.set_title(ttl_m, fontsize=9.2)
-        cb = fig.colorbar(pcm, ax=ax, fraction=0.042, pad=0.03)
-        cb.set_label(r"$\varepsilon_{r,y}$")
-
-    axes_m[1, 0].set_xlabel("x [µm]")
-    axes_m[1, 1].set_xlabel("x [µm]")
-    axes_m[0, 0].set_ylabel("y [µm]")
-    axes_m[1, 0].set_ylabel("y [µm]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "04_permittivity_mesh_zoom.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+    ylim_zoom = (0.16, 0.32)
+    short_structs[0].name = "Si EIM core"
+    verts_short_um = short_structs[0].vertices * 1e6
+    with figstyle.apply_style():
+        fig, axes_m = figstyle.new_figure(nrows=1, ncols=3, width=15.6, height=4.4, sharey=True)
+        for ax, (avg_m, cpw_m, nf_m, use_tuned, ttl_m) in zip(axes_m, mesh_cases):
+            dx_bg_m = WL_MIN / (neff_slab_fig4 * float(cpw_m))
+            ov_fn = build_tuned_bragg_mesh_overrides if use_tuned else build_bragg_mesh_overrides
+            ov_m = ov_fn(
+                n_periods=short_n_per,
+                pitch=PITCH,
+                w_core=W_CORE,
+                dw=DW_CORRUG,
+                duty_cycle=DUTY_CYCLE,
+                shift=0.0,
+                n_feature=nf_m,
+                dx_background=dx_bg_m,
+            )
+            pic_m = PICSimulation(
+                WL_MIN,
+                WL_MAX,
+                structures=short_structs,
+                ports=short_ports,
+                n_core=N_SI,
+                n_clad=N_AIR,
+                n_sub=N_SIO2,
+                wavelength_ref=WL_REF,
+                two_d=True,
+                averaging=avg_m,
+                cells_per_wavelength=cpw_m,
+                domain=short_dom,
+                n_pml=6,
+                mesh_overrides=ov_m,
+            )
+            g_m = pic_m.solver.grid
+            iz_m = pic_m.solver.Nz // 2
+            ieps_m = pic_m.solver.ieps[:, :, iz_m, "y"]
+            if hasattr(ieps_m, "get"):
+                ieps_m = ieps_m.get()
+            eps_r_m = np.where(
+                ieps_m > 0, 1.0 / (np.where(ieps_m > 0, ieps_m, 1.0) * epsilon_0), 1.0
+            )
+            x_um_m, y_um_m = g_m.x * 1e6, g_m.y * 1e6
+            pcm = ax.pcolormesh(
+                x_um_m,
+                y_um_m,
+                eps_r_m.T,
+                cmap="viridis",
+                vmin=1.0,
+                vmax=neff_slab_fig4**2,
+                shading="flat",
+            )
+            schematic.draw_mesh(
+                ax,
+                pic_m.solver,
+                plane="xy",
+                unit="µm",
+                every=1,
+                color="white",
+                alpha=0.65,
+                linewidth=0.55,
+                show_cpw=False,
+            )
+            schematic.overlay_geometry(
+                ax,
+                pic_m.solver,
+                plane="xy",
+                unit="µm",
+                structures=short_structs,
+                show_boundaries=False,
+                show_materials=True,
+                show_sources=False,
+                show_monitors=False,
+                label_materials=False,
+                outline_color="none",
+            )
+            ax.plot(
+                np.append(verts_short_um[:, 0], verts_short_um[0, 0]),
+                np.append(verts_short_um[:, 1], verts_short_um[0, 1]),
+                color="#ffea00",
+                lw=1.4,
+                clip_on=True,
+                zorder=6,
+            )
+            ax.annotate(
+                "",
+                xy=(-0.081, 0.275),
+                xytext=(-0.081, 0.225),
+                arrowprops=dict(arrowstyle="<->", color="#ff4d4d", lw=1.5),
+            )
+            ax.text(
+                -0.070,
+                0.250,
+                "Δw = 50 nm",
+                color="white",
+                fontsize=7.6,
+                fontweight="bold",
+                va="center",
+                bbox=dict(boxstyle="round,pad=0.14", fc="black", ec="none", alpha=0.68),
+            )
+            ax.set(
+                xlim=xlim_zoom,
+                ylim=ylim_zoom,
+                aspect="auto",
+                xlabel="x [µm]",
+                title=ttl_m,
+            )
+            cb = fig.colorbar(pcm, ax=ax, fraction=0.042, pad=0.03)
+            cb.set_label(r"$\varepsilon_{r,y}$")
+        axes_m[0].set_ylabel("y [µm]")
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "04_permittivity_mesh_zoom.png")
 
     # 5. Port mode profiles at input and output
     if "port_y_in" in primary:
-        plot_port_modes(
-            primary["port_y_in"] * 1e6,
-            primary["port_ey_in"],
-            float(primary["port_neff_in"]),
-            primary["port_y_out"] * 1e6,
-            primary["port_ey_out"],
-            float(primary["port_neff_out"]),
-            structures_outline_y=[(-0.5 * W_CORE * 1e6, +0.5 * W_CORE * 1e6)],
-            out_path=fig_dir / "05_port_mode_profiles.png",
-        )
+        with figstyle.apply_style():
+            plot_port_modes(
+                primary["port_y_in"] * 1e6,
+                primary["port_ey_in"],
+                float(primary["port_neff_in"]),
+                primary["port_y_out"] * 1e6,
+                primary["port_ey_out"],
+                float(primary["port_neff_out"]),
+                structures_outline_y=[(-0.5 * W_CORE * 1e6, +0.5 * W_CORE * 1e6)],
+                out_path=fig_dir / "05_port_mode_profiles.png",
+            )
 
-    # 6. Channel waveguide effective index, group index, and Bragg condition
+    # 6. Channel waveguide effective index, Bragg condition, and group index (2 panels, no twinx)
     if "disp_wavelengths" in primary:
-        plot_neff_dispersion(
-            primary["disp_wavelengths"] * 1e9,
-            primary["disp_neff"],
-            neff_slab=float(primary["n_eff_slab"]),
-            ng_2d=primary["disp_ng"],
-            out_path=fig_dir / "06_port_neff_dispersion.png",
-        )
+        wl_d_nm = np.asarray(primary["disp_wavelengths"], dtype=float) * 1e9
+        neff_d = np.asarray(primary["disp_neff"], dtype=float)
+        ng_d = np.asarray(primary["disp_ng"], dtype=float)
+        neff_slab_d = float(primary["n_eff_slab"])
+        with figstyle.apply_style():
+            fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=3.9)
+            ax0.plot(
+                wl_d_nm,
+                neff_d,
+                label=r"Channel mode $n_{\mathrm{eff}}(\lambda)$ (2D EIM)",
+                **figstyle.series_style(0),
+            )
+            ax0.plot(
+                wl_d_nm,
+                (wl_d_nm * 1e-9) / (2.0 * PITCH),
+                label=r"Bragg line $\lambda / (2\Lambda)$",
+                **figstyle.series_style(1, with_marker=False),
+            )
+            ax0.axhline(
+                neff_slab_d,
+                color="0.45",
+                ls=":",
+                lw=1.4,
+                label=f"Slab index $n_{{\\mathrm{{eff,slab}}}}$ = {neff_slab_d:.4f}",
+            )
+            ax0.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel=r"Effective index $n_{\mathrm{eff}}$",
+                title="(a) Channel effective index & Bragg phase matching",
+            )
+            ax0.legend(loc="best", fontsize=7.8)
 
-    # 7 & 8. Steady-state field maps at lambda_B: aligned vs misaligned side-by-side
-    structs_aligned, _, _ = build_bragg_grating(n_periods=100, shift=0.0)
+            ax1.plot(
+                wl_d_nm,
+                ng_d,
+                label=r"Channel group index $n_g(\lambda)$",
+                **figstyle.series_style(2),
+            )
+            ax1.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel=r"Group index $n_g$",
+                title=f"(b) Modal group index (mean $n_g$ = {float(np.mean(ng_d)):.4f})",
+            )
+            ax1.legend(loc="best", fontsize=8.0)
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "06_port_neff_dispersion.png")
+
+    # 7 & 8. Steady-state field maps at lambda_B with schematic.overlay_geometry
+    pic_al_obj, src_al_obj, mons_al_obj, structs_al_schem = build_bragg_setup_objects(
+        n_periods=100, shift=0.0, cpw=14, n_feature=6, n_pml=10
+    )
+    pic_mis_obj, src_mis_obj, mons_mis_obj, structs_mis_schem = build_bragg_setup_objects(
+        n_periods=100, shift=0.5 * PITCH, cpw=14, n_feature=6, n_pml=10
+    )
     misaligned = tasks_data.get("misaligned_half_period")
     if "dft_x" in primary and misaligned is not None and "dft_x" in misaligned:
-        structs_mis, _, _ = build_bragg_grating(n_periods=100, shift=0.5 * PITCH)
+        # Figure 7: Logarithmic intensity |E|^2 [dB] with overlay_geometry
+        with figstyle.apply_style():
+            fig, (ax0, ax1) = figstyle.new_figure(nrows=2, ncols=1, width=10.6, height=5.8, sharex=True)
+            for ax, d, pic_o, src_o, mons_o, st_sc, lbl in [
+                (
+                    ax0,
+                    primary,
+                    pic_al_obj,
+                    src_al_obj,
+                    mons_al_obj,
+                    structs_al_schem,
+                    r"(a) Aligned grating ($\Delta x = 0$): strong Bragg stopband reflection & exponential decay",
+                ),
+                (
+                    ax1,
+                    misaligned,
+                    pic_mis_obj,
+                    src_mis_obj,
+                    mons_mis_obj,
+                    structs_mis_schem,
+                    r"(b) Misaligned grating ($\Delta x = \Lambda/2$): destructive interference ($\kappa = 0$) & full transmission",
+                ),
+            ]:
+                x_um, y_um = d["dft_x"] * 1e6, d["dft_y"] * 1e6
+                e2 = d["dft_E2"]
+                f_max = float(np.max(e2)) or 1.0
+                data_db = 10.0 * np.log10(np.maximum(e2 / f_max, 10.0 ** (-35.0 / 10.0)))
+                im = ax.pcolormesh(
+                    x_um,
+                    y_um,
+                    data_db.T,
+                    cmap=figstyle.CMAP_MAGNITUDE,
+                    vmin=-35.0,
+                    vmax=0.0,
+                    shading="auto",
+                )
+                schematic.overlay_geometry(
+                    ax,
+                    pic_o.solver,
+                    plane="xy",
+                    unit="µm",
+                    structures=st_sc,
+                    sources=[src_o],
+                    monitors=mons_o,
+                    show_boundaries=True,
+                    show_materials=True,
+                    show_sources=True,
+                    show_monitors=True,
+                    label_materials=False,
+                    outline_color="none",
+                )
+                v_um_o = st_sc[0].vertices * 1e6
+                ax.plot(
+                    np.append(v_um_o[:, 0], v_um_o[0, 0]),
+                    np.append(v_um_o[:, 1], v_um_o[0, 1]),
+                    color="#ffea00",
+                    lw=0.9,
+                    alpha=0.88,
+                    clip_on=True,
+                    zorder=6,
+                )
+                ax.text(
+                    -10.8,
+                    0.36,
+                    "Si EIM core (ε_r = 8.03)",
+                    color="white",
+                    fontsize=8.0,
+                    fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.14", fc="black", ec="none", alpha=0.65),
+                    zorder=8,
+                )
+                ax.set(
+                    aspect="auto",
+                    xlim=(-17.2, 17.2),
+                    ylim=(-0.75, 0.75),
+                    ylabel="y [µm]",
+                    title=lbl,
+                )
+                cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+                cb.set_label(r"$10\log_{10}(|E|^2/|E|_{\max}^2)$ [dB]")
+            ax1.set_xlabel("x [µm]")
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "07_field_intensity_bragg.png")
 
-        # Figure 7: Logarithmic intensity |E|^2 [dB] (aligned top, misaligned bottom)
-        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10.2, 5.6), dpi=150, sharex=True)
-        for ax, d, st, lbl in [
-            (
-                ax0,
-                primary,
-                structs_aligned,
-                r"(a) Aligned grating ($\Delta x = 0$): strong Bragg stopband reflection & exponential decay",
-            ),
-            (
-                ax1,
-                misaligned,
-                structs_mis,
-                r"(b) Misaligned grating ($\Delta x = \Lambda/2$): destructive interference ($\kappa = 0$) & full transmission",
-            ),
-        ]:
-            x_um, y_um = d["dft_x"] * 1e6, d["dft_y"] * 1e6
-            e2 = d["dft_E2"]
-            f_max = float(np.max(e2)) or 1.0
-            data_db = 10.0 * np.log10(np.maximum(e2 / f_max, 10.0 ** (-35.0 / 10.0)))
-            im = ax.pcolormesh(
-                x_um, y_um, data_db.T, cmap="inferno", vmin=-35.0, vmax=0.0, shading="auto"
-            )
-            ax.plot(
-                st[0].vertices[:, 0] * 1e6,
-                st[0].vertices[:, 1] * 1e6,
-                color="white",
-                lw=0.6,
-                alpha=0.75,
-            )
-            ax.set(
-                xlim=(-17.2, 17.2),
-                ylim=(-0.75, 0.75),
-                ylabel="y [µm]",
-                title=lbl,
-            )
-            cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
-            cb.set_label(r"$10\log_{10}(|E|^2/|E|_{\max}^2)$ [dB]")
-        ax1.set_xlabel("x [µm]")
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "07_field_intensity_bragg.png", dpi=150, bbox_inches="tight"
-        )
-        plt.close(fig)
+        # Figure 8: Real part Re(Ey) wave-front map with overlay_geometry
+        with figstyle.apply_style():
+            fig, (ax0, ax1) = figstyle.new_figure(nrows=2, ncols=1, width=10.6, height=5.8, sharex=True)
+            for ax, d, pic_o, src_o, mons_o, st_sc, lbl in [
+                (
+                    ax0,
+                    primary,
+                    pic_al_obj,
+                    src_al_obj,
+                    mons_al_obj,
+                    structs_al_schem,
+                    r"(a) Aligned grating ($\Delta x = 0$): $\mathrm{Re}(E_y)$ standing-wave envelope at $\lambda \approx \lambda_B$",
+                ),
+                (
+                    ax1,
+                    misaligned,
+                    pic_mis_obj,
+                    src_mis_obj,
+                    mons_mis_obj,
+                    structs_mis_schem,
+                    r"(b) Misaligned grating ($\Delta x = \Lambda/2$): $\mathrm{Re}(E_y)$ unattenuated traveling wave",
+                ),
+            ]:
+                x_um, y_um = d["dft_x"] * 1e6, d["dft_y"] * 1e6
+                ey = np.real(d["dft_Ey"])
+                vmax = float(np.percentile(np.abs(ey), 99.5)) or 1.0
+                im = ax.pcolormesh(
+                    x_um,
+                    y_um,
+                    ey.T / vmax,
+                    cmap=figstyle.CMAP_DIVERGING,
+                    vmin=-1.0,
+                    vmax=1.0,
+                    shading="auto",
+                )
+                schematic.overlay_geometry(
+                    ax,
+                    pic_o.solver,
+                    plane="xy",
+                    unit="µm",
+                    structures=st_sc,
+                    sources=[src_o],
+                    monitors=mons_o,
+                    show_boundaries=True,
+                    show_materials=True,
+                    show_sources=True,
+                    show_monitors=True,
+                    label_materials=False,
+                    outline_color="none",
+                )
+                v_um_o = st_sc[0].vertices * 1e6
+                ax.plot(
+                    np.append(v_um_o[:, 0], v_um_o[0, 0]),
+                    np.append(v_um_o[:, 1], v_um_o[0, 1]),
+                    color="#0f172a",
+                    lw=0.9,
+                    alpha=0.88,
+                    clip_on=True,
+                    zorder=6,
+                )
+                ax.text(
+                    -10.8,
+                    0.36,
+                    "Si EIM core (ε_r = 8.03)",
+                    color="#0f172a",
+                    fontsize=8.0,
+                    fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="none", alpha=0.82),
+                    zorder=8,
+                )
+                ax.set(
+                    aspect="auto",
+                    xlim=(-17.2, 17.2),
+                    ylim=(-0.75, 0.75),
+                    ylabel="y [µm]",
+                    title=lbl,
+                )
+                cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+                cb.set_label(r"Normalized $\mathrm{Re}(E_y)$")
+            ax1.set_xlabel("x [µm]")
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "08_field_real_ey_bragg.png")
 
-        # Figure 8: Real part Re(Ey) wave-front map (aligned top, misaligned bottom)
-        fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(10.2, 5.6), dpi=150, sharex=True)
-        for ax, d, st, lbl in [
-            (
-                ax0,
-                primary,
-                structs_aligned,
-                r"(a) Aligned grating ($\Delta x = 0$): $\mathrm{Re}(E_y)$ standing-wave envelope at $\lambda \approx \lambda_B$",
-            ),
-            (
-                ax1,
-                misaligned,
-                structs_mis,
-                r"(b) Misaligned grating ($\Delta x = \Lambda/2$): $\mathrm{Re}(E_y)$ unattenuated traveling wave",
-            ),
-        ]:
-            x_um, y_um = d["dft_x"] * 1e6, d["dft_y"] * 1e6
-            ey = np.real(d["dft_Ey"])
-            vmax = float(np.percentile(np.abs(ey), 99.5)) or 1.0
-            im = ax.pcolormesh(
-                x_um, y_um, ey.T / vmax, cmap="RdBu_r", vmin=-1.0, vmax=1.0, shading="auto"
-            )
-            ax.plot(
-                st[0].vertices[:, 0] * 1e6,
-                st[0].vertices[:, 1] * 1e6,
-                color="black",
-                lw=0.6,
-                alpha=0.65,
-            )
-            ax.set(
-                xlim=(-17.2, 17.2),
-                ylim=(-0.75, 0.75),
-                ylabel="y [µm]",
-                title=lbl,
-            )
-            cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
-            cb.set_label(r"Normalized $\mathrm{Re}(E_y)$")
-        ax1.set_xlabel("x [µm]")
-        fig.tight_layout()
-        fig.savefig(fig_dir / "08_field_real_ey_bragg.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
-    elif "dft_x" in primary:
-        plot_field_map(
-            primary["dft_x"],
-            primary["dft_y"],
-            primary["dft_E2"],
-            structures=structs_aligned,
-            kind="intensity_log",
-            out_path=fig_dir / "07_field_intensity_bragg.png",
-        )
-        plot_field_map(
-            primary["dft_x"],
-            primary["dft_y"],
-            primary["dft_Ey"],
-            structures=structs_aligned,
-            kind="real",
-            out_path=fig_dir / "08_field_real_ey_bragg.png",
-        )
-
-    # 9. Animated pulse propagation GIF
+    # 9. Animated pulse propagation GIF with overlay_geometry on every frame
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_bragg_pulse_gif(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structs_aligned,
+            pic_al_obj.solver,
+            src_al_obj,
+            mons_al_obj,
+            structs_al_schem,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -1428,347 +1630,354 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 10. Aligned vs Misaligned spectra (linear & dB) + analytical CMT + under-resolved warning
     under_k = tasks_data.get("underresolved_kottke")
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.3), dpi=150)
-    ax0.plot(
-        wl_b,
-        t_al,
-        color="#1b9e77",
-        lw=2.2,
-        label=rf"Aligned $T = |S_{{21}}|^2$ ({primary_name}, N={int(primary['n_feature'])})",
-    )
-    ax0.plot(
-        wl_b,
-        r_al,
-        color="#2b5c8f",
-        lw=2.0,
-        ls="--",
-        label=rf"Aligned $R = |S_{{11}}|^2$ ({primary_name}, N={int(primary['n_feature'])})",
-    )
-    ax0.plot(
-        wl_b,
-        cmt_fit["T"],
-        color="0.25",
-        lw=1.5,
-        ls=":",
-        label=rf"Analytical CMT ($\kappa L = {m_al['kappa_from_tmin'] * L_100:.2f}$)",
-    )
-    if under_k is not None:
-        wl_uk, _, t_uk = _get_spectrum(under_k)
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.3)
         ax0.plot(
-            wl_uk,
-            t_uk,
-            color="#7570b3",
-            lw=1.7,
+            wl_b,
+            t_al,
+            color="#059669",
+            lw=2.1,
+            label=rf"Aligned $T = |S_{{21}}|^2$ ({primary_name}, N={int(primary['n_feature'])})",
+        )
+        ax0.plot(
+            wl_b,
+            r_al,
+            color="#1d4ed8",
+            lw=2.0,
+            ls="--",
+            label=rf"Aligned $R = |S_{{11}}|^2$ ({primary_name}, N={int(primary['n_feature'])})",
+        )
+        ax0.plot(
+            wl_b,
+            cmt_fit["T"],
+            color="0.25",
+            lw=1.5,
             ls=":",
-            label="Warning: under-resolved T (10 cpw, 0.97 cells/tooth)",
+            label=rf"Analytical CMT ($\kappa L = {m_al['kappa_from_tmin'] * L_100:.2f}$)",
         )
-    if misaligned is not None:
-        wl_m, r_mis, t_mis = _get_spectrum(misaligned)
-        ax0.plot(
-            wl_m,
-            t_mis,
-            color="#d95f02",
-            lw=2.2,
-            label=r"Misaligned ($\Lambda/2$) $T = |S_{21}|^2$",
+        if under_k is not None:
+            wl_uk, _, t_uk = _get_spectrum(under_k)
+            ax0.plot(
+                wl_uk,
+                t_uk,
+                color="#7c3aed",
+                lw=1.7,
+                ls=":",
+                label="Warning: under-resolved T (10 cpw, 0.97 cells/tooth)",
+            )
+        if misaligned is not None:
+            wl_m, r_mis, t_mis = _get_spectrum(misaligned)
+            ax0.plot(
+                wl_m,
+                t_mis,
+                color="#d97706",
+                lw=2.1,
+                label=r"Misaligned ($\Lambda/2$) $T = |S_{21}|^2$",
+            )
+            ax0.plot(
+                wl_m,
+                r_mis,
+                color="#dc2626",
+                lw=1.8,
+                ls="-.",
+                label=r"Misaligned ($\Lambda/2$) $R = |S_{11}|^2$",
+            )
+        ax0.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel="Modal power fraction (linear)",
+            ylim=(-0.03, 1.05),
+            title=f"(a) Linear spectra (stopband @ {m_al['lambda_bragg'] * 1e9:.1f} nm)",
         )
-        ax0.plot(
-            wl_m,
-            r_mis,
-            color="#e7298a",
-            lw=1.8,
-            ls="-.",
-            label=r"Misaligned ($\Lambda/2$) $R = |S_{11}|^2$",
-        )
-    ax0.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel="Modal power fraction (linear)",
-        ylim=(-0.03, 1.05),
-        title=f"(a) Linear spectra (stopband @ {m_al['lambda_bragg'] * 1e9:.1f} nm)",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="center left", fontsize=7.4)
+        ax0.legend(loc="center left", fontsize=7.3)
 
-    ax1.plot(
-        wl_b,
-        10.0 * np.log10(np.maximum(t_al, 1e-6)),
-        color="#1b9e77",
-        lw=2.2,
-        label=f"Aligned T [dB] ({primary_name})",
-    )
-    ax1.plot(
-        wl_b,
-        10.0 * np.log10(np.maximum(r_al, 1e-6)),
-        color="#2b5c8f",
-        lw=2.0,
-        ls="--",
-        label=f"Aligned R [dB] ({primary_name})",
-    )
-    ax1.plot(
-        wl_b,
-        10.0 * np.log10(np.maximum(cmt_fit["T"], 1e-6)),
-        color="0.25",
-        lw=1.5,
-        ls=":",
-        label="CMT T [dB]",
-    )
-    if under_k is not None:
-        wl_uk, _, t_uk = _get_spectrum(under_k)
         ax1.plot(
-            wl_uk,
-            10.0 * np.log10(np.maximum(t_uk, 1e-6)),
-            color="#7570b3",
-            lw=1.7,
+            wl_b,
+            10.0 * np.log10(np.maximum(t_al, 1e-6)),
+            color="#059669",
+            lw=2.1,
+            label=f"Aligned T [dB] ({primary_name})",
+        )
+        ax1.plot(
+            wl_b,
+            10.0 * np.log10(np.maximum(r_al, 1e-6)),
+            color="#1d4ed8",
+            lw=2.0,
+            ls="--",
+            label=f"Aligned R [dB] ({primary_name})",
+        )
+        ax1.plot(
+            wl_b,
+            10.0 * np.log10(np.maximum(cmt_fit["T"], 1e-6)),
+            color="0.25",
+            lw=1.5,
             ls=":",
-            label="Warning: under-resolved T [dB] (0.97 cells/tooth)",
+            label="CMT T [dB]",
         )
-    if misaligned is not None:
-        ax1.plot(
-            wl_m,
-            10.0 * np.log10(np.maximum(t_mis, 1e-6)),
-            color="#d95f02",
-            lw=2.2,
-            label="Misaligned (Λ/2) T [dB]",
+        if under_k is not None:
+            wl_uk, _, t_uk = _get_spectrum(under_k)
+            ax1.plot(
+                wl_uk,
+                10.0 * np.log10(np.maximum(t_uk, 1e-6)),
+                color="#7c3aed",
+                lw=1.7,
+                ls=":",
+                label="Warning: under-resolved T [dB] (0.97 cells/tooth)",
+            )
+        if misaligned is not None:
+            ax1.plot(
+                wl_m,
+                10.0 * np.log10(np.maximum(t_mis, 1e-6)),
+                color="#d97706",
+                lw=2.1,
+                label="Misaligned (Λ/2) T [dB]",
+            )
+            ax1.plot(
+                wl_m,
+                10.0 * np.log10(np.maximum(r_mis, 1e-6)),
+                color="#dc2626",
+                lw=1.8,
+                ls="-.",
+                label="Misaligned (Λ/2) R [dB]",
+            )
+        ax1.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel="Modal power [dB]",
+            ylim=(-42.0, 2.0),
+            title=f"(b) Logarithmic spectra (extinction = {m_al['extinction_db']:.1f} dB)",
         )
-        ax1.plot(
-            wl_m,
-            10.0 * np.log10(np.maximum(r_mis, 1e-6)),
-            color="#e7298a",
-            lw=1.8,
-            ls="-.",
-            label="Misaligned (Λ/2) R [dB]",
-        )
-    ax1.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel="Modal power [dB]",
-        ylim=(-42.0, 2.0),
-        title=f"(b) Logarithmic spectra (extinction = {m_al['extinction_db']:.1f} dB)",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower left", fontsize=7.4)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "10_aligned_vs_misaligned_spectra.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+        figstyle.spectrum_grid(ax1)
+        ax1.legend(loc="lower left", fontsize=7.3)
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "10_aligned_vs_misaligned_spectra.png")
 
     # 11. Period-count sweep (N = 25, 50, 100) and CMT R_max = tanh^2(kappa L)
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
-    period_cases = [
-        (25, tasks_data.get("periods_N25"), "#7570b3", "--"),
-        (50, tasks_data.get("periods_N50"), "#d95f02", "-."),
-        (100, primary, "#1b9e77", "-"),
-    ]
-    n_vals, r_sim_vals, t_sim_vals = [], [], []
-    for n_per, d_p, col, ls in period_cases:
-        if d_p is None:
-            continue
-        w_p, r_p, t_p = _get_spectrum(d_p)
-        m_p = extract_stopband_metrics(w_p * 1e-9, r_p, t_p, n_per * PITCH, n_g=ng_est)
-        ax0.plot(
-            w_p,
-            r_p,
-            color=col,
-            ls=ls,
-            lw=2.0,
-            label=f"N = {n_per} (L = {n_per * PITCH * 1e6:.2f} µm, 1−T_min = {1.0 - m_p['T_min']:.3f})",
-        )
-        n_vals.append(n_per)
-        r_sim_vals.append(1.0 - m_p["T_min"])
-        t_sim_vals.append(m_p["T_min"])
-
-    ax0.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel=r"Power reflectivity $R = |S_{11}|^2$",
-        ylim=(-0.02, 1.05),
-        title="(a) Reflection spectrum vs number of periods N",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=8.0)
-
-    n_cont = np.linspace(1, 120, 200)
-    kappa_ref = m_al["kappa_from_tmin"]
-    r_cmt_curve = np.tanh(kappa_ref * n_cont * PITCH) ** 2
-    t_cmt_curve = 1.0 - r_cmt_curve
-    ax1.plot(
-        n_cont,
-        r_cmt_curve,
-        color="#2b5c8f",
-        lw=2.0,
-        label=rf"CMT $R_{{\max}}(N) = \tanh^2(\kappa N\Lambda)$ ($\kappa = {kappa_ref * 1e-2:.0f}\;\mathrm{{cm}}^{{-1}}$)",
-    )
-    ax1.plot(
-        n_cont,
-        t_cmt_curve,
-        color="#d95f02",
-        lw=1.8,
-        ls="--",
-        label=r"CMT $T_{\min}(N) = \mathrm{sech}^2(\kappa N\Lambda)$",
-    )
-    if n_vals:
-        ax1.plot(
-            n_vals,
-            r_sim_vals,
-            "o",
-            color="#1b9e77",
-            ms=7,
-            label="Wakis 2D EIM stopband rejection (1 − T_min)",
-        )
-        ax1.plot(
-            n_vals,
-            t_sim_vals,
-            "s",
-            color="#e7298a",
-            ms=6.5,
-            label="Wakis 2D EIM minimum transmission T_min",
-        )
-    ax1.set(
-        xlabel="Number of grating periods N",
-        ylabel="Stopband reflection / transmission",
-        ylim=(-0.03, 1.05),
-        title=r"(b) Stopband saturation vs CMT $\tanh^2(\kappa L)$",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="center right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "11_periods_sweep_and_cmt.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # 12. Corrugation depth sweep (dw = 25, 50, 75 nm) and coupling coefficient kappa(dw)
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
-    depth_cases = [
-        (25.0, tasks_data.get("depth_dw25nm"), "#7570b3", "--"),
-        (50.0, primary, "#1b9e77", "-"),
-        (75.0, tasks_data.get("depth_dw75nm"), "#d95f02", "-."),
-    ]
-    dw_list, kappa_sim_list, bw_sim_list = [], [], []
-    for dw_nm, d_dw, col, ls in depth_cases:
-        if d_dw is None:
-            continue
-        w_d, r_d, t_d = _get_spectrum(d_dw)
-        m_d = extract_stopband_metrics(w_d * 1e-9, r_d, t_d, L_100, n_g=ng_est)
-        ax0.plot(
-            w_d,
-            10.0 * np.log10(np.maximum(t_d, 1e-6)),
-            color=col,
-            ls=ls,
-            lw=2.0,
-            label=f"Δw = {dw_nm:.0f} nm (ext = {m_d['extinction_db']:.1f} dB, BW = {m_d['fwhm_bandwidth'] * 1e9:.1f} nm)",
-        )
-        dw_list.append(dw_nm)
-        kappa_sim_list.append(m_d["kappa_from_tmin"] * 1e-2)  # cm^-1
-        bw_sim_list.append(m_d["fwhm_bandwidth"] * 1e9)
-
-    ax0.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel=r"Transmission $10\log_{10}|S_{21}|^2$ [dB]",
-        ylim=(-42.0, 2.0),
-        title="(a) Stopband transmission spectrum vs tooth depth Δw",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower left", fontsize=7.8)
-
-    if dw_list:
-        dw_arr_nm = np.linspace(15.0, 85.0, 29)
-        neff_slab_v = float(primary["n_eff_slab"])
-        lam_b0 = m_al["lambda_bragg"]
-        kap_step_50 = (
-            cmt_coupling_from_neff_step(
-                slab_neff(
-                    neff_slab_v,
-                    N_AIR,
-                    W_CORE + 2.0 * DW_CORRUG,
-                    lam_b0,
-                    polarization="TM",
-                )
-                - slab_neff(neff_slab_v, N_AIR, W_CORE, lam_b0, polarization="TM"),
-                lam_b0,
-                duty_cycle=DUTY_CYCLE,
-            )
-            * 1e-2
-        )
-        overlap_ratio = (m_al["kappa_from_tmin"] * 1e-2) / max(kap_step_50, 1e-30)
-        kappa_step_cm = [
-            cmt_coupling_from_neff_step(
-                slab_neff(
-                    neff_slab_v,
-                    N_AIR,
-                    W_CORE + 2.0 * (d_nm * 1e-9),
-                    lam_b0,
-                    polarization="TM",
-                )
-                - slab_neff(neff_slab_v, N_AIR, W_CORE, lam_b0, polarization="TM"),
-                lam_b0,
-                duty_cycle=DUTY_CYCLE,
-            )
-            * 1e-2
-            * overlap_ratio
-            for d_nm in dw_arr_nm
+    with figstyle.apply_style():
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
+        period_cases = [
+            (25, tasks_data.get("periods_N25"), "#7c3aed", "--"),
+            (50, tasks_data.get("periods_N50"), "#d97706", "-."),
+            (100, primary, "#059669", "-"),
         ]
+        n_vals, r_sim_vals, t_sim_vals = [], [], []
+        for n_per, d_p, col, ls in period_cases:
+            if d_p is None:
+                continue
+            w_p, r_p, t_p = _get_spectrum(d_p)
+            m_p = extract_stopband_metrics(w_p * 1e-9, r_p, t_p, n_per * PITCH, n_g=ng_est)
+            ax0.plot(
+                w_p,
+                r_p,
+                color=col,
+                ls=ls,
+                lw=2.0,
+                label=f"N = {n_per} (L = {n_per * PITCH * 1e6:.2f} µm, 1−T_min = {1.0 - m_p['T_min']:.3f})",
+            )
+            n_vals.append(n_per)
+            r_sim_vals.append(1.0 - m_p["T_min"])
+            t_sim_vals.append(m_p["T_min"])
+
+        ax0.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel=r"Power reflectivity $R = |S_{11}|^2$",
+            ylim=(-0.02, 1.05),
+            title="(a) Reflection spectrum vs number of periods N",
+        )
+        ax0.legend(loc="upper right", fontsize=7.8)
+
+        n_cont = np.linspace(1, 120, 200)
+        kappa_ref = m_al["kappa_from_tmin"]
+        r_cmt_curve = np.tanh(kappa_ref * n_cont * PITCH) ** 2
+        t_cmt_curve = 1.0 - r_cmt_curve
         ax1.plot(
-            dw_list,
-            kappa_sim_list,
-            "o-",
-            color="#2b5c8f",
+            n_cont,
+            r_cmt_curve,
+            color="#1d4ed8",
             lw=2.0,
-            ms=7,
-            label=r"Wakis 2D EIM $\kappa$ from stopband [$\mathrm{cm}^{-1}$]",
+            label=rf"CMT $R_{{\max}}(N) = \tanh^2(\kappa N\Lambda)$ ($\kappa = {kappa_ref * 1e-2:.0f}\;\mathrm{{cm}}^{{-1}}$)",
         )
         ax1.plot(
-            dw_arr_nm,
-            kappa_step_cm,
-            ":",
-            color="#1b9e77",
-            lw=1.7,
-            label=rf"1D step scaling $\Gamma\kappa_{{1\mathrm{{D}}}}(\Delta w)$ ($\Gamma={overlap_ratio:.2f}$)",
-        )
-        ax1_r = ax1.twinx()
-        ax1_r.plot(
-            dw_list,
-            bw_sim_list,
-            "s--",
-            color="#d95f02",
+            n_cont,
+            t_cmt_curve,
+            color="#d97706",
             lw=1.8,
-            ms=6.5,
-            label="Stopband −3 dB bandwidth [nm]",
+            ls="--",
+            label=r"CMT $T_{\min}(N) = \mathrm{sech}^2(\kappa N\Lambda)$",
         )
-        ax1_r.set_ylabel("Stopband −3 dB bandwidth [nm]", color="#d95f02")
-        l1, lb1 = ax1.get_legend_handles_labels()
-        l2, lb2 = ax1_r.get_legend_handles_labels()
-        ax1.legend(l1 + l2, lb1 + lb2, loc="lower right", fontsize=7.4)
-    ax1.set(
-        xlabel="Sidewall corrugation depth Δw [nm]",
-        ylabel=r"Coupling coefficient $\kappa$ [$\mathrm{cm}^{-1}$]",
-        title="(b) Coupling strength & bandwidth vs tooth depth",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_corrugation_depth_sweep.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
+        if n_vals:
+            ax1.plot(
+                n_vals,
+                r_sim_vals,
+                "o",
+                color="#059669",
+                ms=7,
+                label="Wakis 2D EIM stopband rejection (1 − T_min)",
+            )
+            ax1.plot(
+                n_vals,
+                t_sim_vals,
+                "s",
+                color="#dc2626",
+                ms=6.5,
+                label="Wakis 2D EIM minimum transmission T_min",
+            )
+        ax1.set(
+            xlabel="Number of grating periods N",
+            ylabel="Stopband reflection / transmission",
+            ylim=(-0.03, 1.05),
+            title=r"(b) Stopband saturation vs CMT $\tanh^2(\kappa L)$",
+        )
+        ax1.legend(loc="center right", fontsize=7.6)
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "11_periods_sweep_and_cmt.png")
+
+    # 12. Corrugation depth sweep (dw = 25, 50, 75 nm) — 3 panels, no twinx
+    with figstyle.apply_style():
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.4, height=4.1)
+        depth_cases = [
+            (25.0, tasks_data.get("depth_dw25nm"), "#7c3aed", "--"),
+            (50.0, primary, "#059669", "-"),
+            (75.0, tasks_data.get("depth_dw75nm"), "#d97706", "-."),
+        ]
+        dw_list, kappa_sim_list, bw_sim_list = [], [], []
+        for dw_nm, d_dw, col, ls in depth_cases:
+            if d_dw is None:
+                continue
+            w_d, r_d, t_d = _get_spectrum(d_dw)
+            m_d = extract_stopband_metrics(w_d * 1e-9, r_d, t_d, L_100, n_g=ng_est)
+            ax0.plot(
+                w_d,
+                10.0 * np.log10(np.maximum(t_d, 1e-6)),
+                color=col,
+                ls=ls,
+                lw=2.0,
+                label=f"Δw = {dw_nm:.0f} nm (ext = {m_d['extinction_db']:.1f} dB, BW = {m_d['fwhm_bandwidth'] * 1e9:.1f} nm)",
+            )
+            dw_list.append(dw_nm)
+            kappa_sim_list.append(m_d["kappa_from_tmin"] * 1e-2)  # cm^-1
+            bw_sim_list.append(m_d["fwhm_bandwidth"] * 1e9)
+
+        ax0.set(
+            xlabel="Wavelength λ [nm]",
+            ylabel=r"Transmission $10\log_{10}|S_{21}|^2$ [dB]",
+            ylim=(-42.0, 2.0),
+            title="(a) Stopband transmission vs Δw",
+        )
+        figstyle.spectrum_grid(ax0)
+        ax0.legend(loc="lower left", fontsize=7.4)
+
+        if dw_list:
+            dw_arr_nm = np.linspace(15.0, 85.0, 29)
+            neff_slab_v = float(primary["n_eff_slab"])
+            lam_b0 = m_al["lambda_bragg"]
+            kap_step_50 = (
+                cmt_coupling_from_neff_step(
+                    slab_neff(
+                        neff_slab_v,
+                        N_AIR,
+                        W_CORE + 2.0 * DW_CORRUG,
+                        lam_b0,
+                        polarization="TM",
+                    )
+                    - slab_neff(neff_slab_v, N_AIR, W_CORE, lam_b0, polarization="TM"),
+                    lam_b0,
+                    duty_cycle=DUTY_CYCLE,
+                )
+                * 1e-2
+            )
+            overlap_ratio = (m_al["kappa_from_tmin"] * 1e-2) / max(kap_step_50, 1e-30)
+            kappa_step_cm = [
+                cmt_coupling_from_neff_step(
+                    slab_neff(
+                        neff_slab_v,
+                        N_AIR,
+                        W_CORE + 2.0 * (d_nm * 1e-9),
+                        lam_b0,
+                        polarization="TM",
+                    )
+                    - slab_neff(neff_slab_v, N_AIR, W_CORE, lam_b0, polarization="TM"),
+                    lam_b0,
+                    duty_cycle=DUTY_CYCLE,
+                )
+                * 1e-2
+                * overlap_ratio
+                for d_nm in dw_arr_nm
+            ]
+            ax1.plot(
+                dw_list,
+                kappa_sim_list,
+                label=r"Wakis 2D EIM $\kappa$ [$\mathrm{cm}^{-1}$]",
+                **figstyle.series_style(0),
+            )
+            ax1.plot(
+                dw_arr_nm,
+                kappa_step_cm,
+                label=rf"1D step scaling $\Gamma\kappa_{{1\mathrm{{D}}}}(\Delta w)$ ($\Gamma={overlap_ratio:.2f}$)",
+                **figstyle.series_style(1, with_marker=False),
+            )
+            ax1.legend(loc="lower right", fontsize=7.4)
+            ax2.plot(
+                dw_list,
+                bw_sim_list,
+                label="Wakis 2D EIM −3 dB bandwidth [nm]",
+                **figstyle.series_style(2),
+            )
+            ax2.legend(loc="lower right", fontsize=7.6)
+        ax1.set(
+            xlabel="Sidewall corrugation depth Δw [nm]",
+            ylabel=r"Coupling coefficient $\kappa$ [$\mathrm{cm}^{-1}$]",
+            title="(b) Coupling strength κ vs tooth depth Δw",
+        )
+        ax2.set(
+            xlabel="Sidewall corrugation depth Δw [nm]",
+            ylabel="Stopband −3 dB bandwidth [nm]",
+            title="(c) Stopband −3 dB bandwidth vs Δw",
+        )
+        figstyle.finish(fig)
+        figstyle.save(fig, fig_dir / "12_corrugation_depth_sweep.png")
 
     # 13. Apodized vs uniform grating sidelobes
     apod = tasks_data.get("apodized_gaussian")
     if apod is not None:
         w_a, r_a, t_a = _get_spectrum(apod)
         m_ap = extract_stopband_metrics(w_a * 1e-9, r_a, t_a, L_100, n_g=ng_est)
-        plot_spectra_db(
-            wl_b,
-            {
-                f"Uniform grating R (SL = {m_al['sidelobe_db']:.1f} dB)": 10.0
-                * np.log10(np.maximum(r_al, 1e-6)),
-                f"Gaussian-apodized R (SL = {m_ap['sidelobe_db']:.1f} dB)": 10.0
-                * np.log10(np.maximum(r_a, 1e-6)),
-                "Uniform grating T": 10.0 * np.log10(np.maximum(t_al, 1e-6)),
-                "Gaussian-apodized T": 10.0 * np.log10(np.maximum(t_a, 1e-6)),
-            },
-            title="Uniform vs Gaussian-apodized Bragg grating spectra (sidelobe suppression)",
-            ylabel="Modal power [dB]",
-            ylim=(-42.0, 2.0),
-            out_path=fig_dir / "13_apodized_vs_uniform_sidelobes.png",
-        )
+        with figstyle.apply_style():
+            fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.6, height=4.1)
+            ax.plot(
+                wl_b,
+                10.0 * np.log10(np.maximum(r_al, 1e-6)),
+                label=f"Uniform grating R (SL = {m_al['sidelobe_db']:.1f} dB)",
+                **figstyle.series_style(0, with_marker=False),
+            )
+            ax.plot(
+                w_a,
+                10.0 * np.log10(np.maximum(r_a, 1e-6)),
+                label=f"Gaussian-apodized R (SL = {m_ap['sidelobe_db']:.1f} dB)",
+                **figstyle.series_style(1, with_marker=False),
+            )
+            ax.plot(
+                wl_b,
+                10.0 * np.log10(np.maximum(t_al, 1e-6)),
+                label="Uniform grating T",
+                **figstyle.series_style(2, with_marker=False),
+            )
+            ax.plot(
+                w_a,
+                10.0 * np.log10(np.maximum(t_a, 1e-6)),
+                label="Gaussian-apodized T",
+                **figstyle.series_style(3, with_marker=False),
+            )
+            ax.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel="Modal power [dB]",
+                ylim=(-42.0, 2.0),
+                title="Uniform vs Gaussian-apodized Bragg grating spectra (sidelobe suppression)",
+            )
+            figstyle.spectrum_grid(ax)
+            ax.legend(loc="lower left", fontsize=7.8)
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "13_apodized_vs_uniform_sidelobes.png")
 
-    # 14. Multi-resolution convergence: Kottke vs staircase against kottke_reference
+    # 14. Three-panel convergence & graded-vs-uniform mesh comparison (no twiny)
     levels = [
         lvl
         for lvl in ("L1", "L2", "L3")
@@ -1783,7 +1992,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ref_cpw = int(ref_d["cpw"])
         ref_caf = float(ref_d.get("cells_across_feature", ref_d.get("n_feature", 8)))
 
-        cpws = [float(tasks_data[f"kottke_{lvl}"]["cpw"]) for lvl in levels]
         cafs = [
             float(
                 tasks_data[f"kottke_{lvl}"].get(
@@ -1792,319 +2000,300 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             )
             for lvl in levels
         ]
+        cells_k = [float(tasks_data[f"kottke_{lvl}"]["n_cells"]) for lvl in levels]
         err_lam_k, err_lam_s = [], []
         err_bw_k, err_bw_s = [], []
-        err_t_k, err_t_s = [], []
 
         for lvl in levels:
-            for avg, lk, bwk, tk in [
-                ("kottke", err_lam_k, err_bw_k, err_t_k),
-                ("staircase", err_lam_s, err_bw_s, err_t_s),
+            for avg, lk, bwk in [
+                ("kottke", err_lam_k, err_bw_k),
+                ("staircase", err_lam_s, err_bw_s),
             ]:
                 d_cur = tasks_data[f"{avg}_{lvl}"]
                 w_c, r_c, t_c = _get_spectrum(d_cur)
                 m_c = extract_stopband_metrics(w_c * 1e-9, r_c, t_c, L_100)
                 lk.append(max(abs(m_c["lambda_bragg"] * 1e9 - lam_b_ref_nm), 0.05))
                 bwk.append(max(abs(m_c["fwhm_bandwidth"] * 1e9 - bw_ref_nm), 0.05))
-                t_interp = np.interp(w_ref, w_c, t_c)
-                tk.append(max(float(np.sqrt(np.mean((t_interp - t_ref) ** 2))), 1e-4))
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.6), dpi=150)
-        res = np.asarray(cpws, dtype=float)
-        ax0.loglog(
-            res,
-            err_lam_s,
-            "s-",
-            color="#d95f02",
-            lw=2.0,
-            ms=6.5,
-            label=r"Staircase $|\lambda_B - \lambda_{B,\mathrm{ref}}|$ [nm]",
-        )
-        ax0.loglog(
-            res,
-            err_lam_k,
-            "o-",
-            color="#1b9e77",
-            lw=2.0,
-            ms=6.5,
-            label=r"Kottke $|\lambda_B - \lambda_{B,\mathrm{ref}}|$ [nm]",
-        )
-        ax0.loglog(
-            res,
-            err_bw_s,
-            "s-.",
-            color="#a6761d",
-            lw=1.7,
-            ms=5.8,
-            label=r"Staircase $|\Delta\lambda_{\mathrm{BW}} - \Delta\lambda_{\mathrm{BW,ref}}|$ [nm]",
-        )
-        ax0.loglog(
-            res,
-            err_bw_k,
-            "o-.",
-            color="#66a61e",
-            lw=1.7,
-            ms=5.8,
-            label=r"Kottke $|\Delta\lambda_{\mathrm{BW}} - \Delta\lambda_{\mathrm{BW,ref}}|$ [nm]",
-        )
-        ax0.loglog(
-            res,
-            err_t_s,
-            "s:",
-            color="#e7298a",
-            lw=1.6,
-            ms=5.5,
-            label=r"Staircase RMS $\|T - T_{\mathrm{ref}}\|_2$",
-        )
-        ax0.loglog(
-            res,
-            err_t_k,
-            "o:",
-            color="#2b5c8f",
-            lw=1.6,
-            ms=5.5,
-            label=r"Kottke RMS $\|T - T_{\mathrm{ref}}\|_2$",
-        )
+        study_s = load_graded_vs_uniform_study_summary()
+        gt_list = study_s["graded_tuned"]
+        unif_d = study_s["uniform_N4"]
+        lam_cont_nm = float(study_s["reference"].get("lambda_B_ref_nm", 1551.3084))
+        bw_cont_nm = float(study_s["reference"].get("BW_ref_nm", 30.4094))
 
-        # Annotate every point with its measured cells_across_feature
-        for cpw_v, caf_v, lk_v, ls_v, bwk_v in zip(
-            res, cafs, err_lam_k, err_lam_s, err_bw_k
-        ):
-            k_dy = 5 if cpw_v <= 15.0 else -13
-            ax0.annotate(
-                f"{caf_v:.1f} cells/tooth",
-                xy=(cpw_v, lk_v),
-                xytext=(16 if cpw_v <= 10.5 else 0, k_dy),
-                textcoords="offset points",
-                fontsize=7.6,
-                color="#1b9e77",
-                fontweight="bold",
-                ha="left" if cpw_v <= 10.5 else "center",
+        with figstyle.apply_style():
+            fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.6, height=4.5)
+            n_arr = np.asarray(cafs, dtype=float)
+
+            # Panel (a): Error vs tooth resolution N_tooth
+            ax0.loglog(
+                n_arr,
+                err_lam_s,
+                "s-",
+                color="#d97706",
+                lw=2.0,
+                ms=6.5,
+                label=r"Staircase $|\Delta\lambda_B|$ vs R [nm]",
             )
-            ax0.annotate(
-                f"{caf_v:.1f} cells/tooth",
-                xy=(cpw_v, ls_v),
-                xytext=(0, 6),
-                textcoords="offset points",
-                fontsize=7.6,
-                color="#d95f02",
-                ha="center",
+            ax0.loglog(
+                n_arr,
+                err_lam_k,
+                "o-",
+                color="#059669",
+                lw=2.0,
+                ms=6.5,
+                label=r"Sidewall-graded Kottke $|\Delta\lambda_B|$ vs R [nm]",
             )
-
-        # Overlay under-resolved warning pair (10 cpw, no overrides, 0.97 cells/tooth)
-        if (
-            "underresolved_kottke" in tasks_data
-            and "underresolved_staircase" in tasks_data
-        ):
-            d_uk = tasks_data["underresolved_kottke"]
-            d_us = tasks_data["underresolved_staircase"]
-            w_uk, r_uk, t_uk = _get_spectrum(d_uk)
-            w_us, r_us, t_us = _get_spectrum(d_us)
-            m_uk = extract_stopband_metrics(w_uk * 1e-9, r_uk, t_uk, L_100)
-            m_us = extract_stopband_metrics(w_us * 1e-9, r_us, t_us, L_100)
-            cpw_u = float(d_uk["cpw"])
-            caf_u = float(d_uk.get("cells_across_feature", 0.97))
-            bw_err_uk = abs(m_uk["fwhm_bandwidth"] * 1e9 - bw_ref_nm)
-            lam_err_us = abs(m_us["lambda_bragg"] * 1e9 - lam_b_ref_nm)
-            ax0.plot(
-                [cpw_u],
-                [bw_err_uk],
-                "^",
-                color="#7570b3",
-                ms=8.5,
-                mfc="none",
-                mew=2.0,
-                label=f"Under-resolved Kottke |ΔBW| ({caf_u:.2f} cells/tooth)",
-            )
-            ax0.plot(
-                [cpw_u],
-                [lam_err_us],
-                "D",
-                color="#e7298a",
-                ms=8.0,
-                mfc="none",
-                mew=2.0,
-                label=f"Under-resolved Staircase |Δλ_B| ({caf_u:.2f} cells/tooth)",
-            )
-            ax0.annotate(
-                f"Warning: no override\n({caf_u:.2f} cells/tooth)",
-                xy=(cpw_u, bw_err_uk),
-                xytext=(14, -15),
-                textcoords="offset points",
-                fontsize=7.3,
-                color="#7570b3",
-                arrowprops=dict(arrowstyle="->", color="#7570b3", lw=0.9),
-            )
-
-        from matplotlib.ticker import NullFormatter
-
-        ax0.set_xlim(8.8, max(res) * 1.18)
-        ax0.set_ylim(0.04, 38.0)
-        ax0.set(
-            xlabel="Background resolution [cells per wavelength in Si slab]",
-            ylabel=f"Error vs Kottke reference (cpw={ref_cpw}, {ref_caf:.1f} cells/tooth)",
-            title="(a) Bragg wavelength, stopband width & spectrum convergence",
-        )
-        ax0.set_xticks(res)
-        ax0.set_xticklabels([f"{int(c)} cpw" for c in res])
-        ax0.xaxis.set_minor_formatter(NullFormatter())
-        ax0.grid(True, which="both", ls=":", alpha=0.4)
-        ax0.legend(loc="lower left", fontsize=6.7, ncol=1)
-
-        # Second x-axis showing measured cells across the 50 nm smallest feature
-        ax0_top = ax0.twiny()
-        ax0_top.set_xscale("log")
-        ax0_top.set_xlim(ax0.get_xlim())
-        ax0_top.set_xticks(res)
-        ax0_top.set_xticklabels([f"N = {c:.1f} cells" for c in cafs])
-        ax0_top.xaxis.set_minor_formatter(NullFormatter())
-        ax0_top.set_xlabel("Measured cells across 50 nm sidewall tooth (mesh_overrides)")
-
-        # Panel (b): spectral overlay of Kottke vs Staircase vs Reference + under-resolved warning
-        ax1.plot(
-            w_ref,
-            t_ref,
-            color="black",
-            lw=2.3,
-            label=f"Kottke reference ({ref_cpw} cpw, N={ref_caf:.0f}, λ_B={lam_b_ref_nm:.1f} nm)",
-        )
-        cols_k = {"L1": "#7570b3", "L2": "#1b9e77", "L3": "#2b5c8f"}
-        cols_s = {"L1": "#e7298a", "L2": "#d95f02", "L3": "#a6761d"}
-        for lvl in levels:
-            for avg, ls, c_map in (
-                ("kottke", "-", cols_k),
-                ("staircase", "--", cols_s),
-            ):
-                d_cur = tasks_data[f"{avg}_{lvl}"]
-                w_c, _, t_c = _get_spectrum(d_cur)
-                caf_c = float(
-                    d_cur.get("cells_across_feature", d_cur.get("n_feature", 4))
-                )
-                ax1.plot(
-                    w_c,
-                    t_c,
-                    color=c_map.get(lvl, "#1b9e77"),
-                    ls=ls,
-                    lw=1.6,
-                    alpha=0.88,
-                    label=f"{avg.capitalize()} {lvl} ({int(d_cur['cpw'])} cpw, {caf_c:.0f} cells/tooth)",
-                )
-        if "underresolved_kottke" in tasks_data:
-            d_uk = tasks_data["underresolved_kottke"]
-            w_uk, _, t_uk = _get_spectrum(d_uk)
-            ax1.plot(
-                w_uk,
-                t_uk,
-                color="#666666",
-                ls=":",
-                lw=1.8,
-                label="Warning: under-resolved Kottke (10 cpw, 0.97 cells/tooth)",
-            )
-        if "underresolved_staircase" in tasks_data:
-            d_us = tasks_data["underresolved_staircase"]
-            w_us, _, t_us = _get_spectrum(d_us)
-            ax1.plot(
-                w_us,
-                t_us,
-                color="#b15928",
-                ls=":",
+            ax0.loglog(
+                n_arr,
+                err_bw_s,
+                "s--",
+                color="#b45309",
                 lw=1.6,
-                label="Warning: under-resolved Staircase (10 cpw, 0.97 cells/tooth)",
+                ms=5.8,
+                label=r"Staircase $|\Delta\lambda_{\mathrm{BW}}|$ vs R [nm]",
             )
-        ax1.set(
-            xlabel="Wavelength λ [nm]",
-            ylabel=r"Transmission $T = |S_{21}|^2$",
-            xlim=(1515.0, 1605.0),
-            ylim=(-0.03, 1.05),
-            title="(b) Stopband alignment across resolution ladder & warning runs",
-        )
-        ax1.grid(True, ls=":", alpha=0.4)
-        ax1.legend(loc="lower left", fontsize=6.9)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "14_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
-        plt.close(fig)
+            ax0.loglog(
+                n_arr,
+                err_bw_k,
+                "o--",
+                color="#0d9488",
+                lw=1.6,
+                ms=5.8,
+                label=r"Sidewall-graded Kottke $|\Delta\lambda_{\mathrm{BW}}|$ vs R [nm]",
+            )
+            if gt_list:
+                gt_n = [float(g["n_tooth_actual"]) for g in gt_list]
+                gt_elam = [abs(float(g["lambda_B_nm"]) - lam_cont_nm) for g in gt_list]
+                gt_ebw = [abs(float(g["bandwidth_3db_nm"]) - bw_cont_nm) for g in gt_list]
+                ax0.loglog(
+                    gt_n,
+                    gt_elam,
+                    "^-",
+                    color="#1d4ed8",
+                    lw=2.0,
+                    ms=6.8,
+                    label=r"Tuned-graded Kottke $|\Delta\lambda_B|$ [nm]",
+                )
+                ax0.loglog(
+                    gt_n,
+                    gt_ebw,
+                    "^--",
+                    color="#3b82f6",
+                    lw=1.6,
+                    ms=6.0,
+                    label=r"Tuned-graded Kottke $|\Delta\lambda_{\mathrm{BW}}|$ [nm]",
+                )
+            if unif_d:
+                ax0.loglog(
+                    [float(unif_d["n_tooth_actual"])],
+                    [abs(float(unif_d["lambda_B_nm"]) - lam_cont_nm)],
+                    "D",
+                    color="#dc2626",
+                    ms=8.0,
+                    label=f"Uniform fine N=4 |Δλ_B| ({int(unif_d['n_cells']):,} cells)",
+                )
+            ax0.set(
+                xlabel="Cells across 50 nm tooth depth N_tooth",
+                ylabel="Spectral error [nm]",
+                title="(a) Convergence vs tooth resolution N_tooth",
+            )
+            ax0.legend(loc="lower left", fontsize=6.6)
+
+            # Panel (b): Equal-accuracy / equal-cost trade-off vs total cell count n_cells
+            ax1.loglog(
+                cells_k + [float(ref_d["n_cells"])],
+                [abs(float(tasks_data[f"kottke_{lvl}"]["lambda_bragg"]) * 1e9 - lam_cont_nm) for lvl in levels]
+                + [abs(lam_b_ref_nm - lam_cont_nm)],
+                "o-",
+                color="#059669",
+                lw=2.0,
+                ms=6.5,
+                label="Sidewall-graded Kottke |Δλ_B| [nm]",
+            )
+            if gt_list:
+                gt_cells = [float(g["n_cells"]) for g in gt_list]
+                gt_elam = [abs(float(g["lambda_B_nm"]) - lam_cont_nm) for g in gt_list]
+                gt_ebw = [abs(float(g["bandwidth_3db_nm"]) - bw_cont_nm) for g in gt_list]
+                ax1.loglog(
+                    gt_cells,
+                    gt_elam,
+                    "^-",
+                    color="#1d4ed8",
+                    lw=2.0,
+                    ms=6.8,
+                    label="Tuned-graded Kottke |Δλ_B| [nm]",
+                )
+                ax1.loglog(
+                    gt_cells,
+                    gt_ebw,
+                    "^--",
+                    color="#3b82f6",
+                    lw=1.6,
+                    ms=6.0,
+                    label="Tuned-graded Kottke |ΔBW| [nm]",
+                )
+                for g in gt_list:
+                    ax1.annotate(
+                        f"N={int(round(g['n_tooth_actual']))}\n({g['total_wall_time_s']:.0f}s)",
+                        xy=(float(g["n_cells"]), abs(float(g["lambda_B_nm"]) - lam_cont_nm)),
+                        xytext=(0, 7),
+                        textcoords="offset points",
+                        fontsize=6.7,
+                        color="#1d4ed8",
+                        ha="center",
+                    )
+            if unif_d:
+                u_c = float(unif_d["n_cells"])
+                u_elam = abs(float(unif_d["lambda_B_nm"]) - lam_cont_nm)
+                u_ebw = abs(float(unif_d["bandwidth_3db_nm"]) - bw_cont_nm)
+                ax1.loglog(
+                    [u_c],
+                    [u_elam],
+                    "D",
+                    color="#dc2626",
+                    ms=8.0,
+                    label=f"Uniform N=4 |Δλ_B| ({int(u_c):,} cells, {unif_d['total_wall_time_s']:.0f}s)",
+                )
+                ax1.loglog(
+                    [u_c],
+                    [u_ebw],
+                    "s",
+                    color="#e11d48",
+                    ms=7.0,
+                    mfc="none",
+                    mew=1.8,
+                    label="Uniform N=4 |ΔBW| [nm]",
+                )
+            ax1.set(
+                xlabel="Total 2D mesh cells N_cells",
+                ylabel="Error vs continuum limit [nm]",
+                title="(b) Graded vs uniform mesh cost-accuracy trade-off",
+            )
+            ax1.legend(loc="lower left", fontsize=6.6)
+
+            # Panel (c): Stopband transmission spectra overlay across resolution ladder
+            ax2.plot(
+                w_ref,
+                t_ref,
+                color="black",
+                lw=2.2,
+                label=f"Kottke reference ({ref_cpw} cpw, N={ref_caf:.0f}, λ_B={lam_b_ref_nm:.1f} nm)",
+            )
+            cols_k = {"L1": "#7c3aed", "L2": "#059669", "L3": "#1d4ed8"}
+            cols_s = {"L1": "#dc2626", "L2": "#d97706", "L3": "#b45309"}
+            for lvl in levels:
+                for avg, ls, c_map in (
+                    ("kottke", "-", cols_k),
+                    ("staircase", "--", cols_s),
+                ):
+                    d_cur = tasks_data[f"{avg}_{lvl}"]
+                    w_c, _, t_c = _get_spectrum(d_cur)
+                    caf_c = float(
+                        d_cur.get("cells_across_feature", d_cur.get("n_feature", 4))
+                    )
+                    ax2.plot(
+                        w_c,
+                        t_c,
+                        color=c_map.get(lvl, "#059669"),
+                        ls=ls,
+                        lw=1.5,
+                        alpha=0.88,
+                        label=f"{avg.capitalize()} {lvl} ({int(d_cur['cpw'])} cpw, {caf_c:.0f}/tooth)",
+                    )
+            if "underresolved_kottke" in tasks_data:
+                d_uk = tasks_data["underresolved_kottke"]
+                w_uk, _, t_uk = _get_spectrum(d_uk)
+                ax2.plot(
+                    w_uk,
+                    t_uk,
+                    color="#64748b",
+                    ls=":",
+                    lw=1.7,
+                    label="Warning: under-resolved Kottke (0.97/tooth)",
+                )
+            ax2.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel=r"Transmission $T = |S_{21}|^2$",
+                xlim=(1515.0, 1605.0),
+                ylim=(-0.03, 1.05),
+                title="(c) Stopband alignment across resolution ladder",
+            )
+            ax2.legend(loc="lower left", fontsize=6.5)
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "14_kottke_vs_staircase_convergence.png")
 
     # 15. Port time trace and 2D Poynting flux-box conservation audit
     if "trace_t" in primary and primary["trace_t"].size > 0:
         t_ps = primary["trace_t"] * 1e12
         ey_tr = primary["trace_Ey"]
         ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-        ax0.plot(
-            t_ps,
-            ey_norm,
-            color="#2b5c8f",
-            lw=1.3,
-            label=r"Output port $E_y(t)/\max|E_y|$",
-        )
-        ax0.plot(
-            t_ps,
-            np.sqrt(np.maximum(ey_norm**2, 1e-10)),
-            color="#d95f02",
-            lw=1.2,
-            alpha=0.7,
-            ls=":",
-            label="Instantaneous envelope",
-        )
-        ax0.set(
-            xlabel="Time t [ps]",
-            ylabel=r"Normalized $E_y(t)$",
-            title="(a) Output port time trace & distributed-feedback ring-down",
-        )
-        ax0.grid(True, ls=":", alpha=0.4)
-        ax0.legend(loc="upper right", fontsize=8.0)
-
-        ax1.plot(
-            wl_b,
-            r_al + t_al,
-            color="#1b9e77",
-            lw=2.0,
-            label=r"Guided modal sum $R + T = |S_{11}|^2 + |S_{21}|^2$",
-        )
-        if "flux_total_box" in primary:
-            w_all = primary["wavelengths"] * 1e9
-            ord_f = np.argsort(w_all)
-            m_f = (w_all[ord_f] >= 1505.0) & (w_all[ord_f] <= 1615.0)
-            f_box = primary["flux_total_box"][ord_f][m_f]
-            f_lat = primary["flux_lateral"][ord_f][m_f]
-            ax1.plot(
-                wl_b,
-                f_box,
-                color="#2b5c8f",
-                ls="--",
-                lw=1.8,
-                label=f"2D Poynting flux box total (mean={np.mean(f_box):.3f})",
+        with figstyle.apply_style():
+            fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.0)
+            ax0.plot(
+                t_ps,
+                ey_norm,
+                color="#1d4ed8",
+                lw=1.3,
+                label=r"Output port $E_y(t)/\max|E_y|$",
             )
-            ax1.plot(
-                wl_b,
-                f_lat,
-                color="#d95f02",
+            ax0.plot(
+                t_ps,
+                np.sqrt(np.maximum(ey_norm**2, 1e-10)),
+                color="#d97706",
+                lw=1.2,
+                alpha=0.75,
                 ls=":",
-                lw=1.6,
-                label=f"Lateral radiation flux (mean={np.mean(f_lat) * 100:.1f}%)",
+                label="Instantaneous envelope",
             )
-        ax1.axhline(1.0, color="0.4", ls=":", lw=1.2, label="Unit incident power")
-        ax1.set(
-            xlabel="Wavelength λ [nm]",
-            ylabel="Normalized power fraction",
-            ylim=(-0.05, 1.15),
-            title="(b) Passivity & 2D Poynting flux-box energy conservation",
-        )
-        ax1.grid(True, ls=":", alpha=0.4)
-        ax1.legend(loc="center right", fontsize=7.8)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "15_port_time_trace_and_flux_budget.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
-        plt.close(fig)
+            ax0.set(
+                xlabel="Time t [ps]",
+                ylabel=r"Normalized $E_y(t)$",
+                title="(a) Output port time trace & DFB ring-down",
+            )
+            ax0.legend(loc="upper right", fontsize=8.0)
 
-    print(f"Rendered 15 figures in {fig_dir}")
+            ax1.plot(
+                wl_b,
+                r_al + t_al,
+                color="#059669",
+                lw=2.0,
+                label=r"Guided modal sum $R + T = |S_{11}|^2 + |S_{21}|^2$",
+            )
+            if "flux_total_box" in primary:
+                w_all = primary["wavelengths"] * 1e9
+                ord_f = np.argsort(w_all)
+                m_f = (w_all[ord_f] >= 1505.0) & (w_all[ord_f] <= 1615.0)
+                f_box = primary["flux_total_box"][ord_f][m_f]
+                f_lat = primary["flux_lateral"][ord_f][m_f]
+                ax1.plot(
+                    wl_b,
+                    f_box,
+                    color="#1d4ed8",
+                    ls="--",
+                    lw=1.8,
+                    label=f"2D Poynting flux box total (mean={np.mean(f_box):.3f})",
+                )
+                ax1.plot(
+                    wl_b,
+                    f_lat,
+                    color="#d97706",
+                    ls=":",
+                    lw=1.6,
+                    label=f"Lateral radiation flux (mean={np.mean(f_lat) * 100:.1f}%)",
+                )
+            ax1.axhline(1.0, color="0.4", ls=":", lw=1.2, label="Unit incident power")
+            ax1.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel="Normalized power fraction",
+                ylim=(-0.05, 1.15),
+                title="(b) Passivity & 2D Poynting flux-box energy conservation",
+            )
+            ax1.legend(loc="center right", fontsize=7.8)
+            figstyle.finish(fig)
+            figstyle.save(fig, fig_dir / "15_port_time_trace_and_flux_budget.png")
+
+    print(f"Rendered 16 figures in {fig_dir}")
 
 
 # %% [markdown]
@@ -2307,9 +2496,16 @@ def main(argv=None):
         generate_all_figures(data_dir=args.out, fig_dir=FIG_DIR)
         return
 
-    # Default when invoked with no flags (e.g. notebook execution): --quick
+    # Default when invoked with no flags (e.g. notebook build/execution):
+    # if all task_*.npz files already exist in DATA_DIR and neither --quick nor --full
+    # was explicitly forced, render figures directly from cached data; otherwise run --quick.
     quick = not args.full
     tasks = get_task_table(quick=quick)
+    existing = list(Path(args.out).glob("task_*.npz"))
+    if not (args.quick or args.full) and len(existing) >= len(tasks):
+        generate_all_figures(data_dir=args.out, fig_dir=FIG_DIR)
+        return
+
     for t in tasks:
         run_single_task(t, DATA_DIR)
     generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR)

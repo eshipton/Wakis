@@ -632,7 +632,29 @@ def test_gap_diagnostics_convergence_and_jc_ag():
         with pytest.raises(AssertionError):
             _assert_jc_matches_paper(d_jc_mut, paper_val, tol_pp=1.0)
 
-    # 4. Figure 15 exists and is non-empty
-    fig15 = mh.FIG_DIR / "15_gap_diagnostics.png"
-    assert fig15.exists() and fig15.stat().st_size > 10_000
+    # 4. Figure 00 (setup schematic) and all figures exist and are non-empty
+    expected_figs = (
+        "00_setup_schematic.png",
+        "01_microled_horn_schematics.png",
+        "02_materials_and_tmm_reflectance.png",
+        "03_sidewall_mesh_kottke_vs_staircase.png",
+        "04_electric_field_wavefronts.png",
+        "04b_electric_field_bare_vs_dgrin.png",
+        "05_poynting_power_flow_maps.png",
+        "06_pulse_propagation_dgrin.gif",
+        "07_farfield_polar_patterns.png",
+        "08_farfield_cartesian_and_paper_refs.png",
+        "09_horn_angle_and_height_sweep.png",
+        "10_qw_position_sensitivity.png",
+        "11_incoherent_dipole_convergence.png",
+        "12_polarization_and_spectral_breakdown.png",
+        "13_kottke_vs_staircase_convergence.png",
+        "14_purcell_and_normalization_audit.png",
+        "15_gap_diagnostics.png",
+    )
+    for fn in expected_figs:
+        fpath = mh.FIG_DIR / fn
+        assert fpath.exists() and fpath.stat().st_size > 10_000, f"Missing or empty {fn}"
+    assert (mh.FIG_DIR / "06_pulse_propagation_dgrin.gif").stat().st_size < 5 * 1024 * 1024
+
 

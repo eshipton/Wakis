@@ -24,8 +24,9 @@ class FastPolySlab(PolySlab):
     `normal` results to `PolySlab` at ~5x higher speed.
     """
 
-    def __init__(self, vertices, z_min, z_max, material, **kwargs):
+    def __init__(self, vertices, z_min, z_max, material, name="Si EIM core", **kwargs):
         super().__init__(vertices, z_min, z_max, material, **kwargs)
+        self.name = name
         p0x = self._edge_p0[:, 0]
         p0y = self._edge_p0[:, 1]
         p1x = p0x + self._edge_seg[:, 0]
@@ -630,15 +631,947 @@ def measure_grating_mesh_metrics(
     cells_across_tooth_x = float(tooth_len / max_dx_tooth)
 
     n_cells = int(len(dx) * len(dy) * len(dz))
+    in_core_y = (y_nodes[1:] > y0 - 0.5 * w_core + tol) & (
+        y_nodes[:-1] < y0 + 0.5 * w_core - tol
+    )
+    dy_core_nm = (
+        float(np.max(dy[in_core_y]) * 1e9)
+        if np.any(in_core_y)
+        else float(np.max(dy) * 1e9)
+    )
     return {
         "min_feature_nm": round(dw * 1e9, 2),
         "dx_background_nm": round(dx_bg_nm, 2),
         "dx_min_nm": round(dx_min_nm, 2),
         "dx_min_x_nm": round(dx_min_x_nm, 2),
         "dy_min_nm": round(dy_min_nm, 2),
+        "dy_core_nm": round(dy_core_nm, 2),
         "cells_across_feature": round(cells_across_feature, 2),
         "cells_across_tooth_x": round(cells_across_tooth_x, 2),
         "n_cells": n_cells,
         "grid_shape": [int(len(dx)), int(len(dy)), int(len(dz))],
     }
+
+
+def build_tuned_bragg_mesh_overrides(
+    n_periods=100,
+    pitch=0.324e-6,
+    w_core=0.45e-6,
+    dw=0.05e-6,
+    duty_cycle=0.5,
+    shift=0.0,
+    y0=0.0,
+    n_feature=4,
+    dx_background=None,
+):
+    """Construct tuned graded non-uniform ``mesh_overrides`` for a Bragg grating.
+
+    Refines the sidewall tooth bands (``|y - y0| in [0.5*w_core - 0.5*dw,
+    0.5*w_core + 1.5*dw]``) to ``hy_tooth = dw / n_feature``, the grating
+    longitudinal extent (``x in [-L/2, +L/2]``) to isotropic ``hx_tooth =
+    hy_tooth``, and the inner waveguide core (``|y - y0| <= 0.5*w_core -
+    0.5*dw``) to ``hy_core = 2 * hy_tooth``, while grading smoothly into the
+    cladding background cell size ``dx_background`` [m].
+
+    Parameters
+    ----------
+    n_periods : int, optional
+        Number of grating periods ``N`` [dimensionless]. Default is 100.
+    pitch : float, optional
+        Grating period ``Lambda`` [m]. Default is ``0.324e-6``.
+    w_core : float, optional
+        Inner uncorrugated core width ``w_core`` [m]. Default is ``0.45e-6``.
+    dw : float, optional
+        Sidewall tooth depth ``Delta_w`` per side [m]. Default is ``0.05e-6``.
+    duty_cycle : float, optional
+        Tooth duty cycle ``f_dc`` in ``(0, 1)`` [dimensionless]. Default is 0.5.
+    shift : float, optional
+        Longitudinal shift of the bottom teeth [m]. Default is 0.0.
+    y0 : float, optional
+        Transverse waveguide centerline coordinate [m]. Default is 0.0.
+    n_feature : int or float, optional
+        Target number of cells across the ``dw`` tooth depth. Default is 4.
+    dx_background : float or None, optional
+        Background slab cell size [m].
+
+    Returns
+    -------
+    overrides : list of tuple
+        List of ``(lo, hi, (hx, hy, hz))`` override boxes in meters [m].
+    """
+    if n_feature is None or float(n_feature) <= 0:
+        return []
+    n_feat = float(n_feature)
+    dw = float(dw)
+    w_core = float(w_core)
+    pitch = float(pitch)
+    length = float(n_periods) * pitch
+
+    hy_tooth = dw / n_feat
+    hx_tooth = hy_tooth
+    hy_core = 2.0 * hy_tooth
+    if dx_background is not None:
+        hy_tooth = min(float(dx_background), hy_tooth)
+        hx_tooth = min(float(dx_background), hx_tooth)
+        hy_core = min(float(dx_background), hy_core)
+
+    y_in = 0.5 * w_core - 0.5 * dw
+    y_out = 0.5 * w_core + 1.5 * dw
+    x_lo = -0.5 * length
+    x_hi = +0.5 * length + max(0.0, float(shift))
+
+    return [
+        ((-np.inf, y0 - y_out, -np.inf), (np.inf, y0 - y_in, np.inf), (1.0, hy_tooth, 1.0)),
+        ((-np.inf, y0 + y_in, -np.inf), (np.inf, y0 + y_out, np.inf), (1.0, hy_tooth, 1.0)),
+        ((-np.inf, y0 - y_in, -np.inf), (np.inf, y0 + y_in, np.inf), (1.0, hy_core, 1.0)),
+        ((x_lo, -np.inf, -np.inf), (x_hi, np.inf, np.inf), (hx_tooth, 1.0, 1.0)),
+    ]
+
+
+def build_uniform_bragg_mesh_overrides(
+    dw=0.05e-6,
+    n_feature=4,
+    dx_background=None,
+):
+    """Construct a full-domain uniform-cell ``mesh_overrides`` box at tooth resolution.
+
+    Applies ``hx = hy = dw / n_feature`` uniformly across the entire computational
+    domain (including the cladding and access waveguides) to benchmark uniform
+    meshing against graded non-uniform meshing at equal tooth resolution.
+
+    Parameters
+    ----------
+    dw : float, optional
+        Sidewall tooth depth ``Delta_w`` [m]. Default is ``0.05e-6``.
+    n_feature : int or float, optional
+        Target number of cells across ``dw``. Default is 4.
+    dx_background : float or None, optional
+        Background slab cell size [m].
+
+    Returns
+    -------
+    overrides : list of tuple
+        Single full-domain override box ``(lo, hi, (h, h, 1.0))`` [m].
+    """
+    if n_feature is None or float(n_feature) <= 0:
+        return []
+    h = float(dw) / float(n_feature)
+    if dx_background is not None:
+        h = min(float(dx_background), h)
+    return [
+        ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf), (h, h, 1.0)),
+    ]
+
+
+def compare_bragg_mesh_strategies(
+    n_periods=100,
+    pitch=0.324e-6,
+    w_core=0.45e-6,
+    dw=0.05e-6,
+    duty_cycle=0.5,
+    cpw=14,
+    n_feature=6,
+    n_pml=6,
+    wl_min=1500e-9,
+    n_eff_slab=2.8335,
+):
+    """Compare uniform coarse, sidewall-strip graded, tuned graded, and uniform fine meshes.
+
+    Parameters
+    ----------
+    n_periods : int, optional
+        Number of grating periods ``N`` [dimensionless]. Default is 100.
+    pitch : float, optional
+        Grating period ``Lambda`` [m]. Default is ``0.324e-6``.
+    w_core : float, optional
+        Inner core width ``w_core`` [m]. Default is ``0.45e-6``.
+    dw : float, optional
+        Sidewall tooth depth ``Delta_w`` [m]. Default is ``0.05e-6``.
+    duty_cycle : float, optional
+        Tooth duty cycle ``f_dc`` [dimensionless]. Default is 0.5.
+    cpw : float, optional
+        Background cells per guided wavelength [dimensionless]. Default is 14.
+    n_feature : int or float, optional
+        Target cells across the ``dw`` tooth depth. Default is 6.
+    n_pml : int, optional
+        Number of CPML boundary layers. Default is 6.
+    wl_min : float, optional
+        Minimum wavelength [m]. Default is ``1500e-9``.
+    n_eff_slab : float, optional
+        Vertical slab effective index [dimensionless]. Default is 2.8335.
+
+    Returns
+    -------
+    comparison : dict
+        Dictionary mapping strategy names (``"uniform_coarse"``,
+        ``"sidewall_graded"``, ``"tuned_graded"``, ``"uniform_fine"``) to their
+        measured mesh metrics and cell-count reduction factors relative to
+        ``"uniform_fine"``.
+    """
+    from scipy.constants import c as c_light
+
+    from wakis.templates import meshing
+    from wakis.templates.photonics import Box
+    from wakis.templates.simulation import Simulation
+
+    length = float(n_periods) * float(pitch)
+    domain_x = 0.5 * length + 0.80e-6
+    domain_y = 0.72e-6
+    f_max = c_light / float(wl_min)
+    f_min = c_light / (float(wl_min) * 1.08)
+    dx_bg = float(wl_min) / (float(n_eff_slab) * float(cpw))
+    h_core = meshing.cell_size(f_max, float(n_eff_slab) ** 2, float(cpw))
+    domain = (-domain_x, +domain_x, -domain_y, +domain_y, -0.5 * h_core, +0.5 * h_core)
+
+    bg_box = Box(
+        center=(0.0, 0.0, 0.0),
+        size=(2.0 * domain_x + 10e-6, 2.0 * domain_y + 10e-6, 4.0 * h_core),
+        material=1.0,
+    )
+    verts = bragg_grating(
+        n_periods=n_periods,
+        pitch=pitch,
+        w_core=w_core,
+        dw=dw,
+        duty_cycle=duty_cycle,
+    )
+    slab = FastPolySlab(
+        verts, z_min=-0.5 * h_core, z_max=+0.5 * h_core, material=float(n_eff_slab) ** 2
+    )
+    structs = [bg_box, slab]
+    boundaries = (["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"])
+
+    strategies = {
+        "uniform_coarse": [],
+        "sidewall_graded": build_bragg_mesh_overrides(
+            n_periods=n_periods,
+            pitch=pitch,
+            w_core=w_core,
+            dw=dw,
+            duty_cycle=duty_cycle,
+            n_feature=n_feature,
+            dx_background=dx_bg,
+        ),
+        "tuned_graded": build_tuned_bragg_mesh_overrides(
+            n_periods=n_periods,
+            pitch=pitch,
+            w_core=w_core,
+            dw=dw,
+            duty_cycle=duty_cycle,
+            n_feature=n_feature,
+            dx_background=dx_bg,
+        ),
+        "uniform_fine": build_uniform_bragg_mesh_overrides(
+            dw=dw,
+            n_feature=n_feature,
+            dx_background=dx_bg,
+        ),
+    }
+
+    out = {}
+    for name, ov in strategies.items():
+        sim = Simulation(
+            f_min=f_min,
+            f_max=f_max,
+            structures=structs,
+            boundaries=boundaries,
+            domain=domain,
+            cells_per_wavelength=float(cpw),
+            mesh_overrides=ov,
+            padding=0.0,
+            n_pml=int(n_pml),
+        )
+        x_n, y_n, z_n = sim._axis(0), sim._axis(1), sim._axis(2)
+        meta = measure_grating_mesh_metrics(
+            x_n,
+            y_n,
+            z_n,
+            dw=dw,
+            n_periods=n_periods,
+            pitch=pitch,
+            w_core=w_core,
+            duty_cycle=duty_cycle,
+            n_pml=n_pml,
+        )
+        out[name] = meta
+
+    n_unif = max(int(out["uniform_fine"]["n_cells"]), 1)
+    for meta in out.values():
+        meta["cell_reduction_vs_uniform_fine"] = round(n_unif / max(int(meta["n_cells"]), 1), 3)
+    return out
+
+
+def load_graded_vs_uniform_study_summary(repo_root=None):
+    """Load the 100-period graded vs uniform mesh benchmark summary.
+
+    Reads ``studies/subgrid-vs-graded-bragg/data/analysis_full.json`` when
+    present and returns a structured dictionary comparing the baseline
+    sidewall-strip graded mesh (``graded_t18``), the tuned core-and-tooth
+    graded mesh (``graded_tuned``), and the uniform fine mesh (``uniform_N4``)
+    in Bragg wavelength ``lambda_B_nm``, ``-3 dB`` stopband width
+    ``bandwidth_3db_nm``, cell count ``n_cells``, time steps ``n_steps``, and
+    wall time ``total_wall_time_s``.
+    """
+    import json
+    from pathlib import Path
+
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parents[3]
+    study_json = (
+        Path(repo_root)
+        / "studies"
+        / "subgrid-vs-graded-bragg"
+        / "data"
+        / "analysis_full.json"
+    )
+    if study_json.exists():
+        raw = json.loads(study_json.read_text(encoding="utf-8"))
+        by_name = {t["name"]: t for t in raw.get("tasks", [])}
+        return {
+            "reference": raw.get("reference", {}),
+            "richardson_limits_nm": raw.get("richardson_limits_nm", {}),
+            "richardson_limits_bandwidth_nm": raw.get("richardson_limits_bandwidth_nm", {}),
+            "uniform_N4": by_name.get("uniform_N4", raw.get("uniform_N4", {})),
+            "graded_tuned": [
+                by_name[k]
+                for k in ("graded_tuned_L1", "graded_tuned_L2", "graded_tuned_L3", "graded_tuned_R")
+                if k in by_name
+            ],
+            "graded_t18": [
+                by_name[k]
+                for k in ("graded_t18_L1", "graded_t18_L2", "graded_t18_L3", "graded_t18_R")
+                if k in by_name
+            ],
+        }
+    return {
+        "reference": {"lambda_B_ref_nm": 1551.3084, "BW_ref_nm": 30.4094},
+        "richardson_limits_nm": {"graded_tuned": 1551.3105, "graded_t18": 1551.4176},
+        "richardson_limits_bandwidth_nm": {"graded_tuned": 30.3757, "graded_t18": 30.4233},
+        "uniform_N4": {
+            "name": "uniform_N4",
+            "n_tooth_actual": 4.063,
+            "dy_tooth_nm": 12.3077,
+            "dx_tooth_nm": 12.3681,
+            "dy_core_nm": 12.3077,
+            "nx": 2769,
+            "ny": 137,
+            "n_cells": 379353,
+            "n_steps": 68757,
+            "total_wall_time_s": 1095.102,
+            "lambda_B_nm": 1551.4229,
+            "bandwidth_3db_nm": 30.6448,
+            "err_lambda_B_nm": 0.1145,
+            "err_bw_pct": 0.7741,
+        },
+        "graded_tuned": [
+            {
+                "name": "graded_tuned_L1",
+                "n_tooth_actual": 4.0,
+                "dy_tooth_nm": 12.5,
+                "dx_tooth_nm": 12.5,
+                "dy_core_nm": 24.9502,
+                "nx": 2647,
+                "ny": 74,
+                "n_cells": 195878,
+                "n_steps": 72820,
+                "total_wall_time_s": 1516.5,
+                "lambda_B_nm": 1553.0407,
+                "bandwidth_3db_nm": 30.2867,
+                "err_lambda_B_nm": 1.7323,
+                "err_bw_pct": 0.4034,
+            },
+            {
+                "name": "graded_tuned_L2",
+                "n_tooth_actual": 6.0,
+                "dy_tooth_nm": 8.3333,
+                "dx_tooth_nm": 8.3333,
+                "dy_core_nm": 16.6445,
+                "nx": 3955,
+                "ny": 96,
+                "n_cells": 379680,
+                "n_steps": 109039,
+                "total_wall_time_s": 4617.53,
+                "lambda_B_nm": 1552.1238,
+                "bandwidth_3db_nm": 30.3142,
+                "err_lambda_B_nm": 0.8154,
+                "err_bw_pct": 0.313,
+            },
+            {
+                "name": "graded_tuned_L3",
+                "n_tooth_actual": 8.0,
+                "dy_tooth_nm": 6.25,
+                "dx_tooth_nm": 6.25,
+                "dy_core_nm": 12.4877,
+                "nx": 5269,
+                "ny": 122,
+                "n_cells": 642818,
+                "n_steps": 145640,
+                "total_wall_time_s": 8730.775,
+                "lambda_B_nm": 1551.768,
+                "bandwidth_3db_nm": 30.3411,
+                "err_lambda_B_nm": 0.4596,
+                "err_bw_pct": 0.2246,
+            },
+        ],
+        "graded_t18": [],
+    }
+
+
+def build_bragg_setup_objects(
+    n_periods=100,
+    pitch=0.324e-6,
+    w_core=0.45e-6,
+    dw=0.05e-6,
+    duty_cycle=0.5,
+    shift=0.0,
+    apodization="uniform",
+    cpw=14,
+    n_feature=6,
+    n_pml=10,
+    tuned_graded=False,
+    n_core=3.47,
+    n_clad=1.0,
+    n_sub=1.44,
+    h_si=220e-9,
+    wl_min=1500e-9,
+    wl_max=1620e-9,
+    wl_ref=1532e-9,
+):
+    """Construct live Wakis ``PICSimulation``, ``SolverFIT3D``, ``ModeSource``, and ``ModeMonitor`` objects.
+
+    Builds the 2D Effective-Index Method (EIM) Bragg grating setup without
+    running time steps, suitable for passing directly to ``wakis.schematic``.
+    """
+    from wakis.mode_solver import ModeMonitor, ModeSource
+    from wakis.templates.photonics import PICSimulation, Port, n_to_eps, slab_neff
+
+    length = float(n_periods) * float(pitch)
+    pad_x = 3.0e-6
+    verts = bragg_grating(
+        n_periods=n_periods,
+        pitch=pitch,
+        w_core=w_core,
+        dw=dw,
+        duty_cycle=duty_cycle,
+        shift=shift,
+        apodization=apodization,
+        y0=0.0,
+        pad_x=pad_x,
+    )
+    slab = FastPolySlab(
+        verts,
+        z_min=0.0,
+        z_max=float(h_si),
+        material=n_to_eps(float(n_core)),
+    )
+    x_port = 0.5 * length + 0.40e-6
+    domain_x = 0.5 * length + 0.80e-6
+    domain_y = 0.72e-6
+    ports = [
+        Port("in", center=(-x_port, 0.0, 0.5 * float(h_si)), size=(0.0, 1.10e-6, 0.8e-6), direction=+1),
+        Port("out", center=(+x_port, 0.0, 0.5 * float(h_si)), size=(0.0, 1.10e-6, 0.8e-6), direction=+1),
+    ]
+    domain = (-domain_x, +domain_x, -domain_y, +domain_y)
+    neff_slab = float(slab_neff(n_core, n_clad, h_si, wl_ref, n_sub=n_sub, polarization="TE"))
+    dx_bg = float(wl_min) / (neff_slab * float(cpw))
+    ov_builder = build_tuned_bragg_mesh_overrides if tuned_graded else build_bragg_mesh_overrides
+    mesh_overrides = ov_builder(
+        n_periods=n_periods,
+        pitch=pitch,
+        w_core=w_core,
+        dw=dw,
+        duty_cycle=duty_cycle,
+        shift=shift,
+        n_feature=n_feature,
+        dx_background=dx_bg,
+    )
+    pic = PICSimulation(
+        wavelength_min=wl_min,
+        wavelength_max=wl_max,
+        n_freqs=21,
+        structures=[slab],
+        ports=ports,
+        n_core=n_core,
+        n_clad=n_clad,
+        n_sub=n_sub,
+        wavelength_ref=wl_ref,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw,
+        domain=domain,
+        n_pml=n_pml,
+        cfln=0.85,
+        mesh_overrides=mesh_overrides,
+    )
+    in_port = pic.port_map["in"]
+    in_center, in_size, in_inward = pic._port_plane_args(in_port)
+    nodes_x = pic.grid.x
+    k_mon = int(np.argmin(np.abs(nodes_x[:-1] - in_center[0])))
+    k_src = int(np.clip(k_mon - 2 * in_inward, 2, len(nodes_x) - 3))
+    src_center = in_center.copy()
+    src_center[0] = nodes_x[k_src]
+    src = ModeSource(
+        pic.sim.pulse,
+        center=src_center,
+        size=in_size,
+        direction="+",
+        mode_index=0,
+        mode_frequency=pic.f_center,
+    )
+    src.normal = 0
+    src.index = k_src
+    src.label = f"ModeSource (TE₀, x = {src_center[0] * 1e6:.1f} µm)"
+    monitors = []
+    for p in pic.ports:
+        p_center, p_size, _ = pic._port_plane_args(p)
+        mon = ModeMonitor(
+            pic.frequencies,
+            center=p_center,
+            size=p_size,
+            n_modes=1,
+            mode_frequency=pic.f_center,
+        )
+        mon.name = f"Port '{p.name}'"
+        mon.label = f"ModeMonitor '{p.name}' (x = {p_center[0] * 1e6:.1f} µm)"
+        monitors.append(mon)
+
+    slab.name = "Si EIM core"
+    structures_schematic = [slab]
+    return pic, src, monitors, structures_schematic
+
+
+def plot_bragg_setup_schematic(
+    out_path,
+    n_periods=100,
+    pitch=0.324e-6,
+    w_core=0.45e-6,
+    dw=0.05e-6,
+    duty_cycle=0.5,
+):
+    """Render ``00_setup_schematic.png`` for Tutorial 6.1 using ``wakis.figstyle`` and ``wakis.schematic``.
+
+    Generates a 3-panel figure:
+    - Panel (a): Full 2D EIM computational domain showing CPML boundaries,
+      corrugated silicon waveguide (``eps_r = n_eff,slab^2 = 8.03``), ``ModeSource``
+      at Port ``'in'``, and ``ModeMonitor`` planes at Ports ``'in'`` and ``'out'``.
+    - Panel (b): Unit-cell & periodic/Bloch phase-advance schematic zoomed on 3
+      grating periods, showing ``Lambda = 324 nm``, ``Delta_w = 50 nm``, ``w_core =
+      450 nm``, Bloch phase advance ``beta_B * Lambda = pi``, counter-propagating
+      coupled waves ``A^+`` / ``A^-``, and the ``Lambda/2`` sidewall shift option.
+    - Panel (c): Graded non-uniform mesh view zoomed on a ``50 nm x 162 nm``
+      sidewall tooth using ``schematic.draw_mesh`` and ``schematic.overlay_geometry``,
+      annotating cells per tooth and cells per guided wavelength.
+    """
+    from matplotlib.patches import Polygon as MplPolygon
+    from wakis import figstyle, schematic
+
+    pic_full, src_full, mons_full, structs_full = build_bragg_setup_objects(
+        n_periods=n_periods,
+        pitch=pitch,
+        w_core=w_core,
+        dw=dw,
+        duty_cycle=duty_cycle,
+        cpw=14,
+        n_feature=6,
+        n_pml=10,
+        tuned_graded=False,
+    )
+    pic_zoom, _, _, structs_zoom = build_bragg_setup_objects(
+        n_periods=6,
+        pitch=pitch,
+        w_core=w_core,
+        dw=dw,
+        duty_cycle=duty_cycle,
+        cpw=14,
+        n_feature=6,
+        n_pml=6,
+        tuned_graded=True,
+    )
+    neff_slab = float(pic_full.n_eff_slab)
+    eps_slab = round(neff_slab**2, 2)
+
+    with figstyle.apply_style():
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(
+            nrows=1,
+            ncols=3,
+            width=15.6,
+            height=4.7,
+            gridspec_kw={"width_ratios": [1.22, 1.05, 1.05]},
+        )
+
+        # Panel (a): Full 2D EIM simulation setup schematic
+        schematic.plot_schematic(
+            pic_full.solver,
+            ax=ax0,
+            plane="xy",
+            unit="µm",
+            structures=structs_full,
+            sources=[src_full],
+            monitors=mons_full,
+            show_mesh=False,
+            show_wave_packet=False,
+            title="(a) 2D EIM domain, CPML boundaries, ModeSource & ports",
+        )
+        v_full_um = structs_full[0].vertices * 1e6
+        ax0.plot(
+            np.append(v_full_um[:, 0], v_full_um[0, 0]),
+            np.append(v_full_um[:, 1], v_full_um[0, 1]),
+            color="#1e3a8a",
+            lw=0.9,
+            clip_on=True,
+            zorder=5,
+        )
+        ax0.set_aspect("auto")
+        ax0.text(
+            0.0,
+            -0.54,
+            f"Si slab EIM: n_eff,slab = {neff_slab:.3f} (ε_r = {eps_slab:.2f}), air clad (ε_r = 1.0)\n"
+            f"100 periods (L = {n_periods * pitch * 1e6:.2f} µm), Gaussian TE₀ pulse (185–200 THz)",
+            ha="center",
+            va="center",
+            fontsize=7.3,
+            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#94a3b8", alpha=0.92),
+            zorder=9,
+        )
+
+        # Panel (b): Unit-cell & periodic/Bloch phase-advance schematic (3 periods)
+        verts_al = bragg_grating(
+            n_periods=6, pitch=pitch, w_core=w_core, dw=dw, duty_cycle=duty_cycle, shift=0.0
+        ) * 1e6
+        verts_sh = bragg_grating(
+            n_periods=6,
+            pitch=pitch,
+            w_core=w_core,
+            dw=dw,
+            duty_cycle=duty_cycle,
+            shift=0.5 * pitch,
+        ) * 1e6
+        ax1.set_facecolor("#f8fafc")
+        ax1.add_patch(
+            MplPolygon(
+                verts_al,
+                closed=True,
+                facecolor="#bfdbfe",
+                edgecolor="#1d4ed8",
+                lw=1.5,
+                alpha=0.88,
+                label=f"Aligned Si tooth (Δx = 0, ε_r = {eps_slab:.2f})",
+                zorder=2,
+            )
+        )
+        ax1.plot(
+            verts_sh[:, 0],
+            verts_sh[:, 1],
+            color="#d97706",
+            ls="--",
+            lw=1.4,
+            label="Misaligned −y tooth (Δx = Λ/2 → κ = 0)",
+            zorder=3,
+        )
+        p_um = pitch * 1e6
+        for x_b, lbl_b in [
+            (-0.5 * p_um, r"Unit-cell face $x_n$"),
+            (+0.5 * p_um, r"Bloch face $x_n + \Lambda$" + "\n" + r"($\Delta\phi = \beta_B\Lambda = \pi$)"),
+        ]:
+            ax1.axvline(x_b, color="#7c3aed", ls="-.", lw=1.4, zorder=4)
+            ax1.text(
+                x_b,
+                0.355 if x_b < 0 else -0.365,
+                lbl_b,
+                color="#6d28d9",
+                fontsize=7.2,
+                fontweight="bold",
+                ha="center",
+                va="bottom" if x_b < 0 else "top",
+                bbox=dict(boxstyle="round,pad=0.16", fc="#f5f3ff", ec="#c4b5fd", alpha=0.94),
+                zorder=6,
+            )
+        # Forward and backward coupled waves inside core
+        ax1.annotate(
+            "",
+            xy=(0.24, 0.05),
+            xytext=(-0.24, 0.05),
+            arrowprops=dict(arrowstyle="->", color="#059669", lw=2.0),
+            zorder=5,
+        )
+        ax1.text(
+            0.0,
+            0.085,
+            r"Forward $\tilde{A}^+(x)\,e^{-j\beta_0 x}$",
+            color="#065f46",
+            fontsize=7.5,
+            fontweight="bold",
+            ha="center",
+            va="bottom",
+            zorder=6,
+        )
+        ax1.annotate(
+            "",
+            xy=(-0.24, -0.05),
+            xytext=(0.24, -0.05),
+            arrowprops=dict(arrowstyle="->", color="#dc2626", lw=2.0),
+            zorder=5,
+        )
+        ax1.text(
+            0.0,
+            -0.085,
+            r"Backward $\tilde{A}^-(x)\,e^{+j\beta_0 x}$ ($\kappa$)",
+            color="#991b1b",
+            fontsize=7.5,
+            fontweight="bold",
+            ha="center",
+            va="top",
+            zorder=6,
+        )
+        # Annotate period Lambda and core/tooth widths
+        ax1.annotate(
+            "",
+            xy=(0.5 * p_um, 0.305),
+            xytext=(-0.5 * p_um, 0.305),
+            arrowprops=dict(arrowstyle="<->", color="#1e293b", lw=1.3),
+            zorder=5,
+        )
+        ax1.text(
+            0.0,
+            0.315,
+            f"Λ = {pitch * 1e9:.0f} nm",
+            fontsize=7.5,
+            fontweight="bold",
+            ha="center",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="none", alpha=0.88),
+            zorder=6,
+        )
+        ax1.set(
+            xlim=(-0.56, 0.56),
+            ylim=(-0.44, 0.44),
+            aspect="equal",
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+            title="(b) Unit cell, Bloch phase (β_B Λ = π) & sidewall shift",
+        )
+        ax1.legend(loc="lower right", fontsize=6.9, framealpha=0.92)
+
+        # Panel (c): Graded non-uniform mesh zoom on a 50 nm x 162 nm sidewall tooth
+        xlim_z = (-0.34, 0.34)
+        ylim_z = (0.16, 0.33)
+        ax2.set_facecolor("#f8fafc")
+        ax2.add_patch(
+            MplPolygon(
+                verts_al,
+                closed=True,
+                facecolor="#bfdbfe",
+                edgecolor="none",
+                alpha=0.65,
+                zorder=1,
+            )
+        )
+        schematic.draw_mesh(
+            ax2,
+            pic_zoom.solver,
+            plane="xy",
+            unit="µm",
+            every=1,
+            color="#334155",
+            alpha=0.55,
+            linewidth=0.55,
+            show_cpw=False,
+        )
+        schematic.overlay_geometry(
+            ax2,
+            pic_zoom.solver,
+            plane="xy",
+            unit="µm",
+            structures=structs_zoom,
+            show_boundaries=False,
+            show_materials=True,
+            show_sources=False,
+            show_monitors=False,
+            label_materials=False,
+            outline_color="none",
+        )
+        ax2.plot(
+            np.append(verts_al[:, 0], verts_al[0, 0]),
+            np.append(verts_al[:, 1], verts_al[0, 1]),
+            color="#1d4ed8",
+            lw=1.6,
+            clip_on=True,
+            zorder=6,
+        )
+        ax2.text(
+            0.97,
+            0.93,
+            f"Air clad (ε_r = 1.00)\nSi EIM tooth (ε_r = {eps_slab:.2f})",
+            transform=ax2.transAxes,
+            fontsize=6.9,
+            fontweight="bold",
+            ha="right",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="#94a3b8", alpha=0.92),
+            zorder=8,
+        )
+        ax2.annotate(
+            "",
+            xy=(-0.081, 0.275),
+            xytext=(-0.081, 0.225),
+            arrowprops=dict(arrowstyle="<->", color="#dc2626", lw=1.6),
+            zorder=7,
+        )
+        ax2.text(
+            -0.068,
+            0.250,
+            "Δw = 50 nm\n(6 cells, Δy = 8.33 nm)",
+            color="#991b1b",
+            fontsize=7.1,
+            fontweight="bold",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="#fca5a5", alpha=0.92),
+            zorder=8,
+        )
+        ax2.annotate(
+            "",
+            xy=(0.0, 0.285),
+            xytext=(-0.162, 0.285),
+            arrowprops=dict(arrowstyle="<->", color="#0284c7", lw=1.5),
+            zorder=7,
+        )
+        ax2.text(
+            -0.081,
+            0.292,
+            "l_tooth = 162 nm",
+            color="#0369a1",
+            fontsize=7.1,
+            fontweight="bold",
+            ha="center",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#7dd3fc", alpha=0.92),
+            zorder=8,
+        )
+        ax2.text(
+            0.03,
+            0.04,
+            "Graded mesh (g = 1.35):\nTooth: Δx=Δy = 8.33 nm (6/tooth)\nCore: Δy = 16.6 nm | Bg: ≥14 cpw",
+            transform=ax2.transAxes,
+            fontsize=6.9,
+            va="bottom",
+            ha="left",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#94a3b8", alpha=0.92),
+            zorder=8,
+        )
+        ax2.set(
+            xlim=xlim_z,
+            ylim=ylim_z,
+            aspect="auto",
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+            title="(c) Graded non-uniform mesh at sidewall tooth",
+        )
+
+        figstyle.finish(fig)
+        if out_path is not None:
+            figstyle.save(fig, out_path)
+    return fig
+
+
+def render_bragg_pulse_gif(
+    x_m,
+    y_m,
+    frames,
+    times_s,
+    solver,
+    src,
+    monitors,
+    structures_schematic,
+    out_path,
+    fps=10,
+):
+    """Render ``09_pulse_propagation.gif`` with ``wakis.figstyle`` and ``schematic.overlay_geometry``."""
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    from wakis import figstyle, schematic
+
+    x_um = np.asarray(x_m, dtype=float) * 1e6
+    y_um = np.asarray(y_m, dtype=float) * 1e6
+    stride = 2 if len(frames) > 20 else 1
+    frames_f = np.asarray(frames[::stride], dtype=np.float32)
+    times_f = np.asarray(times_s[::stride], dtype=float)
+    vmax = float(np.percentile(np.abs(frames_f), 99.2)) or 1.0
+    v_um = structures_schematic[0].vertices * 1e6
+
+    with figstyle.apply_style():
+        fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.2, height=3.1, dpi=88)
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            frames_f[0].T / vmax,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=-1.0,
+            vmax=1.0,
+            shading="auto",
+        )
+        schematic.overlay_geometry(
+            ax,
+            solver,
+            plane="xy",
+            unit="µm",
+            structures=structures_schematic,
+            sources=[src],
+            monitors=monitors,
+            show_boundaries=True,
+            show_materials=True,
+            show_sources=True,
+            show_monitors=True,
+            label_materials=False,
+            outline_color="none",
+        )
+        ax.plot(
+            np.append(v_um[:, 0], v_um[0, 0]),
+            np.append(v_um[:, 1], v_um[0, 1]),
+            color="#0f172a",
+            lw=0.95,
+            clip_on=True,
+            zorder=6,
+        )
+        ax.text(
+            -11.2,
+            0.35,
+            "Si EIM core (ε_r = 8.03)",
+            fontsize=7.8,
+            fontweight="bold",
+            color="#0f172a",
+            bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="none", alpha=0.82),
+            zorder=8,
+        )
+        ax.set(
+            aspect="auto",
+            xlim=(float(x_um.min()), float(x_um.max())),
+            ylim=(float(y_um.min()), float(y_um.max())),
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+        )
+        title_obj = ax.set_title(
+            f"Bragg grating pulse propagation Ey(x, y, t) — t = {float(times_f[0]) * 1e15:.0f} fs"
+        )
+        cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+        cb.set_label(r"Normalized $E_y(x, y, t)$")
+        figstyle.finish(fig)
+
+        def _update(frame_idx):
+            im.set_array((frames_f[frame_idx].T / vmax).ravel())
+            title_obj.set_text(
+                f"Bragg grating pulse propagation Ey(x, y, t) — t = {float(times_f[frame_idx]) * 1e15:.0f} fs"
+            )
+            return im, title_obj
+
+        anim = FuncAnimation(
+            fig, _update, frames=len(frames_f), interval=1000 // fps, blit=False
+        )
+        out_p = Path(out_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        anim.save(str(out_p), writer=PillowWriter(fps=fps))
+        plt.close(fig)
+    return out_p
+
+
 

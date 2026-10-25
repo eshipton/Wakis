@@ -10,7 +10,7 @@ import numpy as np
 from scipy.constants import c as c0
 from scipy.signal import argrelextrema
 
-from wakis import DFTMonitor, FluxMonitor, GridFIT3D, SolverFIT3D
+from wakis import DFTMonitor, FluxMonitor, GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.diffraction import DiffractionMonitor
 from wakis.estimate import estimate, preflight
 from wakis.near2far import Near2FarMonitor
@@ -1264,153 +1264,571 @@ def run_resolution_task(quick: bool = False) -> dict:
     }
 
 
+def _build_finite_n_schematic_solver(
+    n_slits: int = 6,
+    slit_width: float = 0.6 * DEFAULT_WAVELENGTH,
+    period: float = 1.8 * DEFAULT_WAVELENGTH,
+    wavelength: float = DEFAULT_WAVELENGTH,
+    screen_thickness: float = 0.14 * DEFAULT_WAVELENGTH,
+    cpw: int = 22,
+    y_upstream: float = 1.2 * DEFAULT_WAVELENGTH,
+    y_downstream: float = 3.6 * DEFAULT_WAVELENGTH,
+) -> tuple[SolverFIT3D, dict, list[Box], CurrentSource, list]:
+    """Build a lightweight 2D finite-N grating solver, PEC boxes, source, and monitors."""
+    f0 = c0 / wavelength
+    grid_info = build_n_slit_grid(
+        n_slits=n_slits,
+        slit_width=slit_width,
+        period=period,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        y_upstream=y_upstream,
+        y_downstream=y_downstream,
+        cpw=cpw,
+    )
+    x = grid_info["x"]
+    y = grid_info["y"]
+    z = grid_info["z"]
+    x_core = grid_info["x_core"]
+    y_core = grid_info["y_core"]
+    lz = float(grid_info["lz"])
+    centers = grid_info["centers"]
+    n_pml = int(grid_info["n_pml"])
+    half_t = 0.5 * screen_thickness
+
+    grid = GridFIT3D(x=x, y=y, z=z, use_mpi=False, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        cfln=0.65,
+        n_pml=n_pml,
+        verbose=0,
+    )
+
+    left_end = float(x[0])
+    right_end = float(x[-1])
+    first_left_edge = float(centers[0] - 0.5 * slit_width)
+    last_right_edge = float(centers[-1] + 0.5 * slit_width)
+    boxes = [
+        Box(
+            (0.5 * (left_end + first_left_edge), 0.0, 0.0),
+            (first_left_edge - left_end, screen_thickness, 2.0 * lz),
+            "pec",
+        )
+    ]
+    for k in range(int(n_slits) - 1):
+        b_lo = float(centers[k] + 0.5 * slit_width)
+        b_hi = float(centers[k + 1] - 0.5 * slit_width)
+        boxes.append(
+            Box(
+                (0.5 * (b_lo + b_hi), 0.0, 0.0),
+                (b_hi - b_lo, screen_thickness, 2.0 * lz),
+                "pec",
+            )
+        )
+    boxes.append(
+        Box(
+            (0.5 * (last_right_edge + right_end), 0.0, 0.0),
+            (right_end - last_right_edge, screen_thickness, 2.0 * lz),
+            "pec",
+        )
+    )
+    for b in boxes:
+        b.material = "pec"
+    assign_materials(solver, boxes, f0)
+
+    y_src = float(y_core[0] + 0.35 * wavelength)
+    src_span_x = float(x[-1] - x[0])
+    pulse = GaussianSource(frequency=f0, fwidth=0.45 * f0, cutoff=3.5)
+    source = CurrentSource(
+        src_time=pulse,
+        component="x",
+        center=(0.0, y_src, 0.0),
+        size=(src_span_x, 0.0, 2.0 * lz),
+        amplitude=1.0,
+    )
+
+    freqs = np.array([f0])
+    w_ref = float((x_core[-1] - x_core[0]) - 0.4 * wavelength)
+    y_n2f = float(half_t + 2.5 * grid_info["dy_screen"])
+    flux_wide = FluxMonitor(
+        frequencies=freqs,
+        center=(0.0, y_n2f, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
+    )
+    n2f = Near2FarMonitor(
+        frequencies=freqs,
+        center=(0.0, y_n2f, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
+    )
+    return solver, grid_info, boxes, source, [flux_wide, n2f]
+
+
+def _build_periodic_cell_schematic_solver(
+    slit_width: float = 0.6 * DEFAULT_WAVELENGTH,
+    period: float = 1.8 * DEFAULT_WAVELENGTH,
+    wavelength: float = DEFAULT_WAVELENGTH,
+    screen_thickness: float = 0.14 * DEFAULT_WAVELENGTH,
+    cpw: int = 24,
+) -> tuple[SolverFIT3D, list[Box], CurrentSource, list]:
+    """Build a lightweight 2D periodic unit-cell grating solver (N -> infinity) for schematics."""
+    f0 = c0 / wavelength
+    freqs = np.array([f0])
+    dx_base = wavelength / float(cpw)
+    dy_screen = min(dx_base, screen_thickness / 4.0)
+    n_x = max(24, 6 * int(round(cpw * (period / wavelength) / 6.0)))
+    x = np.linspace(-0.5 * period, 0.5 * period, n_x + 1)
+
+    half_t = 0.5 * screen_thickness
+    y_core = graded_axis(
+        [-1.4 * wavelength, -half_t, half_t, 1.8 * wavelength],
+        [dx_base, dy_screen, dx_base],
+        min_cells=[6, 4, 8],
+        grading=1.35,
+    )
+    n_pml = 10
+    dy_bot = float(y_core[1] - y_core[0])
+    dy_top = float(y_core[-1] - y_core[-2])
+    y = np.concatenate(
+        [
+            y_core[0] - np.arange(n_pml, 0, -1) * dy_bot,
+            y_core,
+            y_core[-1] + np.arange(1, n_pml + 1) * dy_top,
+        ]
+    )
+    dx_min = float(min(np.min(np.diff(x)), np.min(np.diff(y))))
+    lz = 10.0 * dx_min
+    z = np.array([-0.5 * lz, 0.5 * lz], dtype=float)
+
+    grid = GridFIT3D(x=x, y=y, z=z, use_mpi=False, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["periodic", "cpml", "periodic"],
+        bc_high=["periodic", "cpml", "periodic"],
+        cfln=0.65,
+        n_pml=n_pml,
+        verbose=0,
+    )
+    w_bar = 0.5 * (period - slit_width)
+    boxes = [
+        Box((-0.5 * slit_width - 0.5 * w_bar, 0.0, 0.0), (w_bar, screen_thickness, 2.0 * lz), "pec"),
+        Box((0.5 * slit_width + 0.5 * w_bar, 0.0, 0.0), (w_bar, screen_thickness, 2.0 * lz), "pec"),
+    ]
+    for b in boxes:
+        b.material = "pec"
+    assign_materials(solver, boxes, f0)
+
+    y_src = float(y_core[0] + 0.35 * wavelength)
+    pulse = GaussianSource(frequency=f0, fwidth=0.45 * f0, cutoff=3.5)
+    source = CurrentSource(
+        src_time=pulse,
+        component="x",
+        center=(0.0, y_src, 0.0),
+        size=(period, 0.0, 2.0 * lz),
+        amplitude=1.0,
+    )
+    y_mon = float(y_core[-3])
+    diff_mon = DiffractionMonitor(
+        frequencies=freqs,
+        center=(0.0, y_mon, 0.0),
+        size=(period, 0.0, lz),
+    )
+    return solver, boxes, source, [diff_mon]
+
+
+def _fix_unit_spaces_in_texts(ax: plt.Axes) -> None:
+    """Ensure a thin space precedes units inside math-mode substrings in schematic text labels."""
+    replacements = (
+        (" THz$", r"\;\mathrm{THz}$"),
+        (" GHz$", r"\;\mathrm{GHz}$"),
+        (" MHz$", r"\;\mathrm{MHz}$"),
+        (" nm$", r"\;\mathrm{nm}$"),
+        (" µm$", r"\;\mu\mathrm{m}$"),
+        (" mm$", r"\;\mathrm{mm}$"),
+    )
+    for txt in ax.texts:
+        s = txt.get_text()
+        new_s = s
+        for old, new in replacements:
+            new_s = new_s.replace(old, new)
+        if new_s != s:
+            txt.set_text(new_s)
+
+
+def _clean_grating_schematic_labels(
+    ax: plt.Axes,
+    y_src: float,
+    y_mon: float,
+    mon_label: str,
+    bc_top_summary: str,
+) -> None:
+    """Clean and reposition labels on a 2D grating setup schematic panel."""
+    leg = ax.get_legend()
+    if leg is not None:
+        leg.remove()
+    pec_seen = False
+    for txt in ax.texts:
+        s = txt.get_text()
+        if "$-y$ boundary:" in s or "-y boundary:" in s or r"\pm y" in s:
+            txt.set_text(bc_top_summary)
+        elif "PEC" in s:
+            if not pec_seen:
+                txt.set_text(r"PEC grating ($\sigma \to \infty$)")
+                txt.set_position((0.0, -0.14))
+                txt.set_ha("center")
+                txt.set_va("top")
+                pec_seen = True
+            else:
+                txt.set_text("")
+        elif "CurrentSource" in s:
+            txt.set_position((0.0, y_src - 0.10))
+            txt.set_ha("center")
+            txt.set_va("top")
+        elif "Near2Far" in s or "Diffraction" in s:
+            txt.set_text(mon_label)
+            txt.set_position((0.0, y_mon + 0.10))
+            txt.set_ha("center")
+            txt.set_va("bottom")
+        elif "FluxMonitor" in s:
+            txt.set_text("")
+    _fix_unit_spaces_in_texts(ax)
+
+
+def plot_setup_schematic(
+    output_path: str | Path,
+    wavelength: float = DEFAULT_WAVELENGTH,
+) -> None:
+    """Generate the 3-panel labelled setup schematic for finite-N, periodic cell, and mesh zoom."""
+    slit_width = 0.6 * wavelength
+    period = 1.8 * wavelength
+    screen_thickness = 0.14 * wavelength
+    a_um = slit_width * 1e6
+    d_um = period * 1e6
+    b_um = (period - slit_width) * 1e6
+    t_um = screen_thickness * 1e6
+
+    solver_fin, grid_info, boxes_fin, src_fin, mons_fin = _build_finite_n_schematic_solver(
+        n_slits=6,
+        slit_width=slit_width,
+        period=period,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        cpw=22,
+    )
+    solver_per, boxes_per, src_per, mons_per = _build_periodic_cell_schematic_solver(
+        slit_width=slit_width,
+        period=period,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        cpw=24,
+    )
+
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.9)
+
+        # Panel (a): Finite N = 6 grating setup in CPML domain
+        ax = axes[0]
+        schematic.plot_schematic(
+            solver_fin,
+            ax=ax,
+            plane="xy",
+            unit="µm",
+            structures=boxes_fin,
+            sources=[src_fin],
+            monitors=mons_fin,
+            wavelength=wavelength,
+            show_mesh=False,
+            mesh_zoom=False,
+            show_wave_packet=False,
+            title=r"(a) Finite $N = 6$ Grating Setup (CPML + Near2Far)",
+        )
+        y_src_fin = float(grid_info["y_core"][0] * 1e6 + 0.35 * wavelength * 1e6)
+        y_n2f_fin = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
+        _clean_grating_schematic_labels(
+            ax,
+            y_src=y_src_fin,
+            y_mon=y_n2f_fin,
+            mon_label="Near2FarMonitor + FluxMonitor",
+            bc_top_summary=r"$\pm y$: CPML (10 cells) $\mid$ $\pm z$: Periodic",
+        )
+        ax.set_aspect("auto")
+
+        # Panel (b): Periodic N -> infinity single unit cell [-d/2, +d/2] with DiffractionMonitor
+        ax_p = axes[1]
+        schematic.plot_schematic(
+            solver_per,
+            ax=ax_p,
+            plane="xy",
+            unit="µm",
+            structures=boxes_per,
+            sources=[src_per],
+            monitors=mons_per,
+            wavelength=wavelength,
+            show_mesh=False,
+            mesh_zoom=False,
+            show_wave_packet=False,
+            title=r"(b) $N \to \infty$ Unit Cell ($x \in [-d/2, d/2]$ + DiffractionMonitor)",
+        )
+        _clean_grating_schematic_labels(
+            ax_p,
+            y_src=-1.05 * wavelength * 1e6,
+            y_mon=0.65,
+            mon_label="DiffractionMonitor (Floquet orders)",
+            bc_top_summary=r"$\pm x$: Periodic $\mid$ $\pm y$: CPML (10 cells)",
+        )
+        ax_p.set_aspect("auto")
+
+        # Panel (c): Zoomed graded FIT mesh around a grating slit a and PEC bar b = d - a
+        ax_m = axes[2]
+        ax_m.set_facecolor("#F8FAFC")
+        schematic.draw_mesh(
+            ax_m,
+            solver_fin,
+            plane="xy",
+            unit="µm",
+            every=1,
+            wavelength=wavelength,
+            zoom_inset=False,
+            show_cpw=True,
+            color="#334155",
+            alpha=0.55,
+            linewidth=0.6,
+        )
+        schematic.overlay_geometry(
+            ax_m,
+            solver_fin,
+            plane="xy",
+            unit="µm",
+            structures=boxes_fin,
+            show_boundaries=False,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.55,
+            outline_color=figstyle.INK,
+            label_materials=False,
+        )
+        ax_m.set_xlim(-1.15, 1.15)
+        ax_m.set_ylim(-0.32, 0.32)
+        ax_m.set_aspect("auto")
+        ax_m.set_xlabel("x [µm]")
+        ax_m.set_ylabel("y [µm]")
+        ax_m.set_title(r"(c) Grating Mesh Zoom ($a = 0.6\lambda$, $b = 1.2\lambda$, $d = 1.8\lambda$)")
+
+        ax_m.text(
+            0.0,
+            0.0,
+            f"PEC bar $b = {b_um:.2f}$ µm\n({grid_info['cells_across_bridge']} cells $\\geq 4$)",
+            ha="center",
+            va="center",
+            fontsize=7.8,
+            fontweight="bold",
+            color=figstyle.INK,
+            bbox={
+                "boxstyle": "round,pad=0.15",
+                "facecolor": figstyle.PAPER,
+                "edgecolor": "#94A3B8",
+                "alpha": 0.92,
+            },
+            zorder=9,
+        )
+        for x_c in (-0.5 * d_um, 0.5 * d_um):
+            ax_m.annotate(
+                "",
+                xy=(x_c + 0.5 * a_um, 0.14),
+                xytext=(x_c - 0.5 * a_um, 0.14),
+                arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
+                zorder=9,
+            )
+            ax_m.text(
+                x_c,
+                0.16,
+                f"Slit $a = {a_um:.2f}$ µm\n({grid_info['cells_across_slit']} cells $\\geq 4$)",
+                ha="center",
+                va="bottom",
+                fontsize=7.8,
+                fontweight="bold",
+                color="#0072B2",
+                zorder=9,
+            )
+        ax_m.text(
+            -0.95,
+            -0.14,
+            f"Screen $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
+            ha="left",
+            va="top",
+            fontsize=8.0,
+            fontweight="bold",
+            color="#D55E00",
+            zorder=9,
+        )
+        _fix_unit_spaces_in_texts(ax_m)
+
+        figstyle.save(fig, output_path, close=True)
+
+
 def plot_n_slit_patterns_and_nearfield(
     pat_data: dict,
     output_path: str | Path,
 ) -> None:
-    """Generate the 4-panel figure for N-slit near field, far-field patterns, and (N-2) secondary maxima."""
-    fig, axes = plt.subplots(2, 2, figsize=(13.2, 9.4), constrained_layout=True)
-
-    # Panel (a): 2D near-field intensity map |H_z(x, y)|^2 / |H_inc|^2 for N = 6
-    ax = axes[0, 0]
-    x_lam = pat_data["map_x_over_lam"]
-    y_lam = pat_data["map_y_over_lam"]
-    inten = pat_data["map_intensity"]
-    im = ax.pcolormesh(
-        x_lam,
-        y_lam,
-        inten.T,
-        shading="auto",
-        cmap="inferno",
-        vmin=0.0,
-        vmax=min(float(np.percentile(inten, 99.5)), 3.2),
+    """Generate the 3-panel figure for N-slit near field, far-field patterns, and (N-2) secondary maxima."""
+    wavelength = DEFAULT_WAVELENGTH
+    lam_um = wavelength * 1e6
+    solver_fin, _, boxes_fin, _, _ = _build_finite_n_schematic_solver(
+        n_slits=6,
+        slit_width=0.6 * wavelength,
+        period=1.8 * wavelength,
+        wavelength=wavelength,
+        screen_thickness=0.14 * wavelength,
+        cpw=22,
     )
-    fig.colorbar(im, ax=ax, label=r"$|H_z(x, y)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
-    ax.axhline(0.0, color="white", lw=2.0, label="PEC grating screen ($y=0$)")
-    ax.set_xlabel(r"Transverse coordinate $x / \lambda$ [-]")
-    ax.set_ylabel(r"Propagation coordinate $y / \lambda$ [-]")
-    ax.set_title(r"(a) 2D FIT near-field Talbot carpet ($N = 6$, $a = 0.6\lambda$, $d = 1.8\lambda$)")
-    ax.legend(loc="lower right", fontsize=8.5)
 
-    # Panel (b): Far-field patterns for N = 2, 4, 8 (or largest available) showing principal peaks & envelope
-    ax = axes[0, 1]
-    theta_deg = pat_data["theta_deg"]
-    n_vals = list(pat_data["n_values"])
-    show_indices = [0, min(2, len(n_vals) - 1), len(n_vals) - 1]
-    # Deduplicate indices while preserving order
-    show_indices = list(dict.fromkeys(show_indices))
-    colors = ["#1b6ca8", "#2b8a3e", "#7570b3"]
-    for idx_plot, k in enumerate(show_indices):
-        n_val = int(n_vals[k])
-        off = idx_plot * 1.08
-        err = float(pat_data["l2_errors"][k]) * 100.0
-        ax.plot(
-            theta_deg,
-            pat_data["patterns_fit"][k] + off,
-            color=colors[idx_plot % len(colors)],
-            lw=2.0,
-            label=rf"FIT $N = {n_val}$ ($L^2={err:.1f}\%$)",
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.2, height=4.8)
+
+        # Panel (a): 2D near-field intensity map |H_z(x, y)|^2 / |H_inc|^2 for N = 6
+        ax = axes[0]
+        x_um = pat_data["map_x_over_lam"] * lam_um
+        y_um = pat_data["map_y_over_lam"] * lam_um
+        inten = pat_data["map_intensity"]
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            inten.T,
+            shading="auto",
+            cmap=figstyle.CMAP_INTENSITY,
+            vmin=0.0,
+            vmax=min(float(np.percentile(inten, 99.5)), 3.2),
         )
-        ax.plot(
-            theta_deg,
-            pat_data["patterns_theory"][k] + off,
-            color="#111111",
+        fig.colorbar(im, ax=ax, label=r"$|H_z(x, y)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
+        schematic.overlay_geometry(
+            ax,
+            solver_fin,
+            plane="xy",
+            unit="µm",
+            orientation="2d",
+            structures=boxes_fin,
+            show_boundaries=True,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.38,
+            outline_color="#FFFFFF",
+            label_materials=False,
+        )
+        ax.text(
+            0.0,
+            0.12,
+            "PEC grating ($N = 6$)",
+            color="white",
+            fontsize=7.6,
+            fontweight="bold",
+            ha="center",
+            va="bottom",
+            zorder=8,
+        )
+        ax.set_xlim(float(x_um[0]), float(x_um[-1]))
+        ax.set_ylim(float(y_um[0]), float(y_um[-1]))
+        ax.set_aspect("auto")
+        ax.set_xlabel(r"Transverse coordinate $x$ [µm]")
+        ax.set_ylabel(r"Propagation coordinate $y$ [µm]")
+        ax.set_title(r"(a) 2D FIT Talbot carpet ($N = 6$, $a = 0.6\lambda$, $d = 1.8\lambda$)")
+
+        # Panel (b): Far-field patterns for N = 2, 4, 8 showing principal peaks & envelope
+        ax = axes[1]
+        theta_deg = pat_data["theta_deg"]
+        n_vals = list(pat_data["n_values"])
+        show_indices = list(dict.fromkeys([0, min(2, len(n_vals) - 1), len(n_vals) - 1]))
+        for idx_plot, k in enumerate(show_indices):
+            n_val = int(n_vals[k])
+            off = idx_plot * 1.12
+            err = float(pat_data["l2_errors"][k]) * 100.0
+            ax.plot(
+                theta_deg,
+                pat_data["patterns_fit"][k] + off,
+                color=figstyle.PALETTE[idx_plot % len(figstyle.PALETTE)],
+                lw=2.0,
+                ls="-",
+                label=rf"FIT $N = {n_val}$ ($L^2={err:.1f}\%$)",
+            )
+            ax.plot(
+                theta_deg,
+                pat_data["patterns_theory"][k] + off,
+                color=figstyle.INK,
+                lw=1.1,
+                ls="--",
+                label=r"Theory $[\sin(N\alpha)/(N\sin\alpha)]^2\mathrm{sinc}^2\beta$"
+                if idx_plot == 0
+                else "_nolegend_",
+            )
+            ax.plot(
+                theta_deg,
+                pat_data["single_env_theory"] + off,
+                color="#D55E00",
+                lw=1.2,
+                ls=":",
+                label=r"Envelope $\mathrm{sinc}^2\beta$" if idx_plot == 0 else "_nolegend_",
+            )
+        theta_m1 = float(pat_data["theta_m1_theory"][0])
+        ax.axvline(theta_m1, color="#CC79A7", ls="-.", lw=1.1)
+        ax.axvline(
+            -theta_m1,
+            color="#CC79A7",
+            ls="-.",
             lw=1.1,
-            ls="--",
-            label=r"Theory $[\sin(N\alpha)/(N\sin\alpha)]^2\mathrm{sinc}^2\beta$"
-            if idx_plot == 0
-            else "_nolegend_",
+            label=rf"Orders $m=\pm 1$ ($\pm {theta_m1:.1f}^\circ$)",
         )
-        ax.plot(
-            theta_deg,
-            pat_data["single_env_theory"] + off,
-            color="#d95f02",
-            lw=1.2,
-            ls=":",
-            label=r"Single-slit envelope $\mathrm{sinc}^2\beta$" if idx_plot == 0 else "_nolegend_",
+        ax.set_xlim(-76.0, 76.0)
+        ax.set_ylim(-0.05, 4.05)
+        ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
+        ax.set_ylabel(
+            r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]"
         )
-    theta_m1 = float(pat_data["theta_m1_theory"][0])
-    ax.axvline(theta_m1, color="#e7298a", ls="-.", lw=1.1)
-    ax.axvline(-theta_m1, color="#e7298a", ls="-.", lw=1.1, label=rf"Principal orders $m=\pm 1$ ($\pm {theta_m1:.1f}^\circ$)")
-    ax.set_xlim(-76.0, 76.0)
-    ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
-    ax.set_ylabel(r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]")
-    ax.set_title(r"(b) Sharpening of grating orders with slit number $N$ ($d/a = 3$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.8)
+        ax.set_title(r"(b) Sharpening of grating orders with $N$ ($d/a = 3$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper center", ncol=2, fontsize=6.6)
 
-    # Panel (c): Zoom between m = 0 and m = +1 in sin(theta) / (lambda/d) showing (N - 2) secondary maxima
-    ax = axes[1, 0]
-    sin_norm = np.sin(np.deg2rad(theta_deg)) * float(pat_data["period_over_lam"])
-    zoom_mask = (sin_norm >= -0.15) & (sin_norm <= 1.15)
-    palette = ["#1b6ca8", "#d95f02", "#2b8a3e", "#7570b3", "#e7298a"]
-    for k, n_val in enumerate(n_vals):
-        off = k * 0.22
-        n_sec = int(pat_data["n_sec_counted"][k])
-        ax.plot(
-            sin_norm[zoom_mask],
-            pat_data["patterns_fit"][k][zoom_mask] + off,
-            color=palette[k % len(palette)],
-            lw=2.0,
-            label=rf"FIT $N = {int(n_val)}$ ($N-2 = {n_sec}$ secondary peaks)",
+        # Panel (c): Zoom between m = 0 and m = +1 showing (N - 2) secondary maxima & peak suppression
+        ax = axes[2]
+        sin_norm = np.sin(np.deg2rad(theta_deg)) * float(pat_data["period_over_lam"])
+        zoom_mask = (sin_norm >= -0.15) & (sin_norm <= 1.15)
+        for k, n_val in enumerate(n_vals):
+            off = k * 0.24
+            n_sec = int(pat_data["n_sec_counted"][k])
+            max_sec_pct = float(pat_data["max_sec_fit"][k]) * 100.0
+            sec_lbl = (
+                rf"FIT $N={int(n_val)}$ ($N-2={n_sec}$)"
+                if int(n_val) == 2
+                else rf"FIT $N={int(n_val)}$ ($N-2={n_sec}$, {max_sec_pct:.1f}%)"
+            )
+            ax.plot(
+                sin_norm[zoom_mask],
+                pat_data["patterns_fit"][k][zoom_mask] + off,
+                color=figstyle.PALETTE[k % len(figstyle.PALETTE)],
+                lw=2.0,
+                ls="-",
+                label=sec_lbl,
+            )
+            ax.plot(
+                sin_norm[zoom_mask],
+                pat_data["patterns_theory"][k][zoom_mask] + off,
+                color=figstyle.INK,
+                lw=1.1,
+                ls="--",
+                label="Grating theory" if k == 0 else "_nolegend_",
+            )
+        ax.axvline(0.0, color="#64748B", ls=":", lw=1.1)
+        ax.axvline(1.0, color="#64748B", ls=":", lw=1.1)
+        ax.set_xlim(-0.12, 1.12)
+        ax.set_ylim(-0.04, 1.35 + 0.24 * (len(n_vals) - 1))
+        ax.set_xlabel(r"Normalized direction cosine $(d / \lambda)\sin\theta$ (order $m$) [-]")
+        ax.set_ylabel(
+            r"Normalized intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]"
         )
-        ax.plot(
-            sin_norm[zoom_mask],
-            pat_data["patterns_theory"][k][zoom_mask] + off,
-            color="#111111",
-            lw=1.1,
-            ls="--",
-            label="Grating theory" if k == 0 else "_nolegend_",
-        )
-    ax.axvline(0.0, color="gray", ls=":", lw=1.1)
-    ax.axvline(1.0, color="gray", ls=":", lw=1.1)
-    ax.set_xlim(-0.12, 1.12)
-    ax.set_ylim(-0.03, 1.15 + 0.22 * (len(n_vals) - 1))
-    ax.set_xlabel(r"Normalized direction cosine $(d / \lambda)\sin\theta$ (order index $m$) [-]")
-    ax.set_ylabel(r"Normalized intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]")
-    ax.set_title(r"(c) $(N - 2)$ secondary maxima between $m = 0$ and $m = +1$")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper center", fontsize=8.0)
+        ax.set_title(r"(c) $(N - 2)$ secondary maxima ($m = 0 \to +1$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper center", ncol=2, fontsize=6.6)
 
-    # Panel (d): Tallest secondary maximum relative intensity vs N
-    ax = axes[1, 1]
-    n_dense = np.linspace(3.0, 12.0, 181)
-    # Exact first sidelobe of [sin(N alpha) / (N sin alpha)]^2 at N*alpha ~ 1.4303*pi
-    sec_dense = (np.sin(1.4303 * np.pi) / (n_dense * np.sin(1.4303 * np.pi / n_dense))) ** 2
-    ax.plot(
-        n_dense,
-        sec_dense,
-        color="#111111",
-        lw=1.8,
-        ls="--",
-        label=r"Theory $[\sin(1.43\pi) / (N\sin(1.43\pi/N))]^2$",
-    )
-    ax.axhline(
-        (np.sin(1.4303 * np.pi) / (1.4303 * np.pi)) ** 2,
-        color="#e7298a",
-        ls=":",
-        lw=1.3,
-        label=r"Asymptotic limit $N \to \infty$ ($\approx 4.72\%$)",
-    )
-    mask_ge3 = pat_data["n_values"] >= 3
-    ax.plot(
-        pat_data["n_values"][mask_ge3],
-        pat_data["max_sec_fit"][mask_ge3],
-        "o",
-        color="#1b6ca8",
-        ms=8,
-        label="2D FIT `Near2FarMonitor` tallest secondary maximum",
-    )
-    ax.set_xlabel(r"Number of slits $N$ [-]")
-    ax.set_ylabel(r"Tallest secondary peak ratio $I_{\mathrm{sec}} / I_{\mathrm{main}}$ [-]")
-    ax.set_title(r"(d) Secondary maximum suppression vs $N$")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.2)
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_resolving_power_and_width(
@@ -1419,108 +1837,109 @@ def plot_resolving_power_and_width(
     output_path: str | Path,
 ) -> None:
     """Generate the 2-panel figure for 1/N peak width scaling and Rayleigh chromatic resolving power."""
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.4), constrained_layout=True)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=4.8)
 
-    # Panel (a): Principal peak width Delta(sin theta) ~ 1/N (both HWZM = lambda/(N d) and FWHM)
-    ax = axes[0]
-    n_vals = pat_data["n_values"]
-    d_over_lam = float(pat_data["period_over_lam"])
-    n_fine = np.linspace(1.8, max(float(n_vals[-1]) + 0.5, 8.5), 161)
-    ax.plot(
-        n_fine,
-        1.0 / (n_fine * d_over_lam),
-        color="#111111",
-        lw=1.8,
-        ls="--",
-        label=r"Exact first-zero width $\Delta(\sin\theta)_{\mathrm{HWZM}} = \lambda / (N d)$",
-    )
-    ax.plot(
-        n_fine,
-        0.88589 / (n_fine * d_over_lam),
-        color="#d95f02",
-        lw=1.6,
-        ls=":",
-        label=r"Asymptotic FWHM $\Delta(\sin\theta)_{\mathrm{FWHM}} \approx 0.886\,\lambda / (N d)$",
-    )
-    ax.plot(
-        n_vals,
-        pat_data["hwzm_sin_fit"],
-        "o",
-        color="#1b6ca8",
-        ms=8,
-        label=r"2D FIT measured $\Delta(\sin\theta)_{\mathrm{HWZM}}$",
-    )
-    ax.plot(
-        n_vals,
-        pat_data["fwhm_sin_fit"],
-        "s",
-        color="#d95f02",
-        ms=7,
-        label=r"2D FIT measured $\Delta(\sin\theta)_{\mathrm{FWHM}}$",
-    )
-    ax.set_xlabel(r"Number of slits $N$ [-]")
-    ax.set_ylabel(r"Principal maximum angular width $\Delta(\sin\theta)$ [-]")
-    ax.set_title(r"(a) Principal peak narrowing $\Delta(\sin\theta) \propto 1 / N$ ($d = 1.8\lambda$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.0)
-
-    # Panel (b): Rayleigh chromatic resolving power R = lambda / Delta_lambda = |m| N (N=6, m=+1)
-    ax = axes[1]
-    theta_deg = res_pow_data["theta_deg"]
-    fracs = res_pow_data["frac_shifts"]
-    saddles = res_pow_data["saddle_to_peak_fit"]
-    colors = ["#7570b3", "#1b6ca8", "#2b8a3e"]
-    labels = [
-        rf"Unresolved $\Delta\lambda/\lambda = 0.55/R$ (saddle/peak $={saddles[0]:.2f}$)",
-        rf"Rayleigh limit $\Delta\lambda/\lambda = 1/R = 1/6$ (saddle/peak $={saddles[1]:.2f}$)",
-        rf"Well-resolved $\Delta\lambda/\lambda = 1.45/R$ (saddle/peak $={saddles[2]:.2f}$)",
-    ]
-    for k in range(3):
+        # Panel (a): Principal peak width Delta(sin theta) ~ 1/N (both HWZM = lambda/(N d) and FWHM)
+        ax = axes[0]
+        n_vals = pat_data["n_values"]
+        d_over_lam = float(pat_data["period_over_lam"])
+        n_fine = np.linspace(1.8, max(float(n_vals[-1]) + 0.5, 8.5), 161)
         ax.plot(
-            theta_deg,
-            res_pow_data["doublet_sum_fit"][k],
-            color=colors[k],
-            lw=2.1,
-            label="FIT " + labels[k],
-        )
-        ax.plot(
-            theta_deg,
-            res_pow_data["doublet_sum_th"][k],
-            color="#111111",
-            lw=1.1,
+            n_fine,
+            1.0 / (n_fine * d_over_lam),
+            color=figstyle.INK,
+            lw=1.8,
             ls="--",
-            label="Theory doublet sum" if k == 0 else "_nolegend_",
+            label=r"Exact first-zero width $\Delta(\sin\theta)_{\mathrm{HWZM}} = \lambda / (N d)$",
         )
-    # Also show the two individual lines for the exact Rayleigh case (k = 1)
-    ax.plot(
-        theta_deg,
-        res_pow_data["u_base_fit"],
-        color="#1b6ca8",
-        lw=1.2,
-        ls=":",
-        alpha=0.8,
-        label=r"Component $\lambda_0$ ($m=+1$)",
-    )
-    ax.plot(
-        theta_deg,
-        res_pow_data["u_shifted_fit"][1],
-        color="#e7298a",
-        lw=1.2,
-        ls=":",
-        alpha=0.8,
-        label=r"Component $\lambda_0(1 + 1/6)$ ($m=+1$)",
-    )
-    ax.set_xlim(24.0, 50.0)
-    ax.set_xlabel(r"Diffraction angle $\theta$ around order $m = +1$ [deg]")
-    ax.set_ylabel(r"Doublet intensity $I(\theta, \lambda_1) + I(\theta, \lambda_2)$ [arb.]")
-    ax.set_title(r"(b) Rayleigh resolving power $R = \lambda/\Delta\lambda = |m|N = 6$ ($N=6, m=+1$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.6)
+        ax.plot(
+            n_fine,
+            0.88589 / (n_fine * d_over_lam),
+            color=figstyle.PALETTE[1],
+            lw=1.6,
+            ls=":",
+            label=r"Asymptotic FWHM $\Delta(\sin\theta)_{\mathrm{FWHM}} \approx 0.886\,\lambda / (N d)$",
+        )
+        ax.plot(
+            n_vals,
+            pat_data["hwzm_sin_fit"],
+            "o",
+            color=figstyle.PALETTE[0],
+            ms=6.5,
+            label=r"2D FIT measured $\Delta(\sin\theta)_{\mathrm{HWZM}}$",
+        )
+        ax.plot(
+            n_vals,
+            pat_data["fwhm_sin_fit"],
+            "s",
+            color=figstyle.PALETTE[1],
+            ms=6.0,
+            label=r"2D FIT measured $\Delta(\sin\theta)_{\mathrm{FWHM}}$",
+        )
+        ax.set_xlabel(r"Number of slits $N$ [-]")
+        ax.set_ylabel(r"Principal maximum angular width $\Delta(\sin\theta)$ [-]")
+        ax.set_title(
+            r"(a) Principal peak narrowing $\Delta(\sin\theta) \propto 1 / N$ ($d = 1.8\lambda$)"
+        )
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=7.8)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        # Panel (b): Rayleigh chromatic resolving power R = lambda / Delta_lambda = |m| N (N=6, m=+1)
+        ax = axes[1]
+        theta_deg = res_pow_data["theta_deg"]
+        saddles = res_pow_data["saddle_to_peak_fit"]
+        labels = [
+            rf"Unresolved $\Delta\lambda/\lambda = 0.55/R$ (saddle/peak $={saddles[0]:.2f}$)",
+            rf"Rayleigh limit $\Delta\lambda/\lambda = 1/R = 1/6$ (saddle/peak $={saddles[1]:.2f}$)",
+            rf"Well-resolved $\Delta\lambda/\lambda = 1.45/R$ (saddle/peak $={saddles[2]:.2f}$)",
+        ]
+        for k in range(3):
+            ax.plot(
+                theta_deg,
+                res_pow_data["doublet_sum_fit"][k],
+                color=figstyle.PALETTE[k],
+                lw=2.0,
+                ls="-",
+                label="FIT " + labels[k],
+            )
+            ax.plot(
+                theta_deg,
+                res_pow_data["doublet_sum_th"][k],
+                color=figstyle.INK,
+                lw=1.1,
+                ls="--",
+                label="Theory doublet sum" if k == 0 else "_nolegend_",
+            )
+        ax.plot(
+            theta_deg,
+            res_pow_data["u_base_fit"],
+            color=figstyle.PALETTE[0],
+            lw=1.2,
+            ls=":",
+            alpha=0.85,
+            label=r"Component $\lambda_0$ ($m=+1$)",
+        )
+        ax.plot(
+            theta_deg,
+            res_pow_data["u_shifted_fit"][1],
+            color=figstyle.PALETTE[4],
+            lw=1.2,
+            ls=":",
+            alpha=0.85,
+            label=r"Component $\lambda_0(1 + 1/6)$ ($m=+1$)",
+        )
+        ax.set_xlim(24.0, 50.0)
+        ax.set_ylim(-0.04, 1.85)
+        ax.set_xlabel(r"Diffraction angle $\theta$ around order $m = +1$ [deg]")
+        ax.set_ylabel(r"Doublet intensity $I(\theta, \lambda_1) + I(\theta, \lambda_2)$ [arb.]")
+        ax.set_title(
+            r"(b) Rayleigh resolving power $R = \lambda/\Delta\lambda = |m|N = 6$ ($N=6, m=+1$)"
+        )
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=6.9)
+
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_periodic_comparison_and_cost(
@@ -1530,112 +1949,116 @@ def plot_periodic_comparison_and_cost(
     output_path: str | Path,
 ) -> None:
     """Generate the 3-panel figure for finite-N vs periodic Bloch unit cell, cost scaling, and convergence."""
-    fig, axes = plt.subplots(1, 3, figsize=(15.2, 5.0), constrained_layout=True)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.2, height=4.8)
 
-    # Panel (a): Finite-N integrated lobe fractions vs N -> infinity periodic unit-cell DiffractionMonitor
-    ax = axes[0]
-    n_vals = pat_data["n_values"]
-    lobe_fracs = pat_data["lobe_fractions"]  # shape (len(n_vals), 3) for m = -1, 0, +1
-    per_fracs = per_data["periodic_order_fractions"]  # shape (3,) for m = -1, 0, +1
-    ax.plot(
-        n_vals,
-        lobe_fracs[:, 1],
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=7,
-        label=r"Finite-$N$ integrated lobe $m = 0$",
-    )
-    ax.plot(
-        n_vals,
-        0.5 * (lobe_fracs[:, 0] + lobe_fracs[:, 2]),
-        "s-",
-        color="#d95f02",
-        lw=2.1,
-        ms=7,
-        label=r"Finite-$N$ integrated lobe $m = \pm 1$",
-    )
-    ax.axhline(
-        float(per_fracs[1]),
-        color="#1b6ca8",
-        ls="--",
-        lw=1.7,
-        label=rf"$N \to \infty$ periodic cell $T_0 / T_{{\mathrm{{tot}}}} = {float(per_fracs[1]):.3f}$",
-    )
-    ax.axhline(
-        float(0.5 * (per_fracs[0] + per_fracs[2])),
-        color="#d95f02",
-        ls="--",
-        lw=1.7,
-        label=rf"$N \to \infty$ periodic cell $T_{{\pm 1}} / T_{{\mathrm{{tot}}}} = {float(0.5*(per_fracs[0]+per_fracs[2])):.3f}$",
-    )
-    ax.set_xlabel(r"Number of slits $N$ [-]")
-    ax.set_ylabel(r"Normalized order power fraction $\eta_m / \sum_k \eta_k$ [-]")
-    ax.set_title(r"(a) Finite-$N$ vs $N \to \infty$ periodic unit cell")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="center right", fontsize=7.8)
+        # Panel (a): Finite-N integrated lobe fractions vs N -> infinity periodic unit-cell DiffractionMonitor
+        ax = axes[0]
+        n_vals = pat_data["n_values"]
+        lobe_fracs = pat_data["lobe_fractions"]  # shape (len(n_vals), 3) for m = -1, 0, +1
+        per_fracs = per_data["periodic_order_fractions"]  # shape (3,) for m = -1, 0, +1
+        ax.plot(
+            n_vals,
+            lobe_fracs[:, 1],
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=6.0,
+            label=r"Finite-$N$ integrated lobe $m = 0$",
+        )
+        ax.plot(
+            n_vals,
+            0.5 * (lobe_fracs[:, 0] + lobe_fracs[:, 2]),
+            "s-",
+            color=figstyle.PALETTE[1],
+            lw=2.0,
+            ms=6.0,
+            label=r"Finite-$N$ integrated lobe $m = \pm 1$",
+        )
+        ax.axhline(
+            float(per_fracs[1]),
+            color=figstyle.PALETTE[0],
+            ls="--",
+            lw=1.6,
+            label=rf"$N \to \infty$ periodic cell $T_0 / T_{{\mathrm{{tot}}}} = {float(per_fracs[1]):.3f}$",
+        )
+        ax.axhline(
+            float(0.5 * (per_fracs[0] + per_fracs[2])),
+            color=figstyle.PALETTE[1],
+            ls="--",
+            lw=1.6,
+            label=rf"$N \to \infty$ periodic cell $T_{{\pm 1}} / T_{{\mathrm{{tot}}}} = {float(0.5*(per_fracs[0]+per_fracs[2])):.3f}$",
+        )
+        ax.set_xlabel(r"Number of slits $N$ [-]")
+        ax.set_ylabel(r"Normalized order power fraction $\eta_m / \sum_k \eta_k$ [-]")
+        ax.set_title(r"(a) Finite-$N$ vs $N \to \infty$ periodic unit cell")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="center right", fontsize=7.5)
 
-    # Panel (b): Computational cost scaling (2D cells & wall-clock / RAM) of finite N vs 1 periodic cell
-    ax = axes[1]
-    ax.plot(
-        per_data["n_proj"],
-        per_data["proj_cells"] / 1e3,
-        "o--",
-        color="#7570b3",
-        lw=1.9,
-        ms=6,
-        label=r"Finite-$N$ domain (`wakis.estimate` cells)",
-    )
-    ax.plot(
-        pat_data["n_values"],
-        pat_data["n_cells"] / 1e3,
-        "s",
-        color="#1b6ca8",
-        ms=7,
-        label=r"Finite-$N$ executed 2D FIT runs",
-    )
-    ax.axhline(
-        float(per_data["periodic_n_cells"]) / 1e3,
-        color="#2b8a3e",
-        ls="-.",
-        lw=2.1,
-        label=rf"1 periodic cell ($N\to\infty$, Ch. 6): {float(per_data['periodic_n_cells'])/1e3:.1f}k cells",
-    )
-    ax.set_xlabel(r"Number of slits $N$ in finite domain [-]")
-    ax.set_ylabel(r"2D mesh size $N_{\mathrm{cells}} / 10^3$ [kcells]")
-    ax.set_title(r"(b) Cost of finite $N$ vs periodic unit cell (Ch. 6)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left", fontsize=7.8)
+        # Panel (b): Computational cost scaling (2D cells & wall-clock / RAM) of finite N vs 1 periodic cell
+        ax = axes[1]
+        ax.plot(
+            per_data["n_proj"],
+            per_data["proj_cells"] / 1e3,
+            "o--",
+            color=figstyle.PALETTE[3],
+            lw=1.8,
+            ms=5.5,
+            label=r"Finite-$N$ domain (wakis.estimate cells)",
+        )
+        ax.plot(
+            pat_data["n_values"],
+            pat_data["n_cells"] / 1e3,
+            "s",
+            color=figstyle.PALETTE[0],
+            ms=6.5,
+            label=r"Finite-$N$ executed 2D FIT runs",
+        )
+        ax.axhline(
+            float(per_data["periodic_n_cells"]) / 1e3,
+            color=figstyle.PALETTE[2],
+            ls="-.",
+            lw=2.0,
+            label=rf"1 periodic cell ($N\to\infty$, Ch. 6): {float(per_data['periodic_n_cells'])/1e3:.1f}k cells",
+        )
+        ax.set_xlabel(r"Number of slits $N$ in finite domain [-]")
+        ax.set_ylabel(r"2D mesh size $N_{\mathrm{cells}} / 10^3$ [kcells]")
+        ax.set_title(r"(b) Cost of finite $N$ vs periodic unit cell (Ch. 6)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper left", fontsize=7.5)
 
-    # Panel (c): Mesh resolution convergence study (N = 4)
-    ax = axes[2]
-    cpw = res_data["cpw_values"]
-    ax.plot(
-        cpw,
-        res_data["l2_vs_theory"] * 100.0,
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=6,
-        label=r"Far-field $L^2$ error vs $N$-slit theory [%]",
-    )
-    ax.plot(
-        cpw,
-        res_data["rel_to_finest"] * 100.0,
-        "s--",
-        color="#2b8a3e",
-        lw=1.9,
-        ms=6,
-        label=r"Relative $L^2$ diff vs finest mesh [%]",
-    )
-    ax.axvline(20.0, color="gray", ls=":", lw=1.2, label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$")
-    ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
-    ax.set_ylabel("Relative error / discrepancy [%]")
-    ax.set_title(r"(c) Mesh convergence ($N = 4$, $a = 0.6\lambda$, $d = 1.8\lambda$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.0)
+        # Panel (c): Mesh resolution convergence study (N = 4)
+        ax = axes[2]
+        cpw = res_data["cpw_values"]
+        ax.plot(
+            cpw,
+            res_data["l2_vs_theory"] * 100.0,
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=5.5,
+            label=r"Far-field $L^2$ error vs $N$-slit theory [%]",
+        )
+        ax.plot(
+            cpw,
+            res_data["rel_to_finest"] * 100.0,
+            "s--",
+            color=figstyle.PALETTE[2],
+            lw=1.8,
+            ms=5.5,
+            label=r"Relative $L^2$ diff vs finest mesh [%]",
+        )
+        ax.axvline(
+            20.0,
+            color="#64748B",
+            ls=":",
+            lw=1.2,
+            label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$",
+        )
+        ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
+        ax.set_ylabel("Relative error / discrepancy [%]")
+        ax.set_title(r"(c) Mesh convergence ($N = 4$, $a = 0.6\lambda$, $d = 1.8\lambda$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="center right", fontsize=7.8)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)

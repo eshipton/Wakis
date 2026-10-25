@@ -24,7 +24,14 @@
 #    - **(c) Optimal active-layer position** (their Fig. 5): standing-wave antinode peaking near $y_0 \approx 120\;\text{nm}$ above the Ag mirror.
 #    - **(d) Grating pitch scan and $\approx 2\times$ extraction enhancement** (their Fig. 6): dispersive Bragg diffraction branches peaking near $\Lambda/\lambda_0 \approx 0.8$ ($\Lambda \approx 360\;\text{nm}$), where the optimized grating achieves $\approx 2\times$ the extraction of the optimized flat LED.
 #
-# ![Emitter vs Absorber Schematic](figures/00_emitter_absorber_schematic.png)
+# ### Simulation Setup & Reciprocity Schematic
+#
+# Figure `00_setup_schematic.png` (also saved as `00_emitter_absorber_schematic.png`), rendered directly from the live Wakis `SolverFIT3D`, `GridFIT3D`, `PolySlab`, `CurrentSource`, `make_huygens_planewave_2d`, `DFTMonitor`, and `Near2FarMonitor2D` objects via `wakis.schematic`, shows the complete simulation setup before any solver runs:
+# - **Panel (a) — Direct Problem (LED as an Incoherent Emitter, $3 N_{\text{sites}}$ Runs):** Uncorrelated point dipoles $(J_x, J_y, J_z)$ in the active quantum-well plane $y_0 = 49\;\text{nm}$ inside the high-index GaN slab ($n = 2.45$, $d_{\text{slab}} = 225\;\text{nm}$) etched with a 7-period surface grating ($\Lambda = 270\;\text{nm}$, $h_g = 72\;\text{nm}$) above a Drude Ag (`silver jc`, $\delta_s = 26.9\;\text{nm}$) or PEC back-reflector ($y \le 0$), monitored in the air cladding by a `Near2FarMonitor2D` line at $y_{\text{mon}} = 383\;\text{nm}$.
+# - **Panel (b) — Reciprocal Problem (LED as an Absorber, 1 Run / Angle):** A downward Huygens plane wave (`make_huygens_planewave_2d`) arriving from observation angle $-\theta$ (or a 1-period Bloch unit cell $x \in [0, \Lambda]$) excites the internal standing wave recorded by an active-layer `DFTMonitor` at $y = y_0$.
+# - **Panel (c) — Graded Mesh Zoom (`wakis.schematic.draw_mesh`):** Local vertical mesh grading (`graded_axis`) across the Ag/GaN interface ($y = 0$), active QW layer ($y_0 = 49\;\text{nm}$), and grating teeth ($h_g = 72\;\text{nm}$), providing $\Delta y_{\min} = 2.58\;\text{nm}$ ($10.0\;\text{cells}/\delta_s = 5.0\;\text{cells}/\delta_p$ in silver), $8.0$ cells across $h_g$, and $20\;\text{cells}/\lambda_{\text{GaN}}$ in the bulk slab.
+#
+# ![Setup & Emitter-Absorber Reciprocity Schematic](figures/00_setup_schematic.png)
 #
 # ---
 #
@@ -103,15 +110,19 @@ HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd(
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from wakis import figstyle, schematic
+
 from _helpers import (  # noqa: E402
     Z0,
     build_grating_led_polyslab,
+    build_reciprocity_schematic_objects,
     compute_grating_gradients_both_ways,
     cone_integrated_reciprocity,
     extract_shallow_grating_resonances,
     get_silver_material,
     make_drude_silver,
     make_finite_led_solver,
+    overlay_reciprocity_led_geometry,
     rcwa_grating_batch,
     reconstruct_unit_cell_field_map,
     run_finite_led_direct_dipoles,
@@ -119,6 +130,7 @@ from _helpers import (  # noqa: E402
     run_janssen_optimization_study,
     solve_bloch_flat_slab,
     solve_bloch_grating_unit_cell,
+    tidy_reciprocity_schematic_axes,
     tmm_angle_integrated_power,
     tmm_slab_emission,
 )
@@ -1312,190 +1324,158 @@ def execute_task(task, out_dir):
 
 # %%
 def _plot_emitter_absorber_schematic(fig_dir):
-    """Render `00_emitter_absorber_schematic.png` illustrating the emitter -> absorber equivalence."""
-    from matplotlib.patches import FancyArrowPatch, Rectangle
+    """Render `00_setup_schematic.png` and `00_emitter_absorber_schematic.png` using `wakis.schematic`."""
+    import matplotlib.patches as mpatches
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.2, 4.6), sharey=True)
-    for idx_p, ax in enumerate(axes):
-        # Mirror (Ag / PEC) at y <= 0
-        ax.add_patch(Rectangle((0.0, -0.11), 1.35, 0.11, facecolor="#b0b7c0", edgecolor="black", lw=1.0))
-        ax.text(
-            0.675,
-            -0.055,
-            r"Silver (Ag, `silver jc`) or PEC Mirror ($y \leq 0$)",
-            ha="center",
-            va="center",
-            fontsize=8.8,
-            fontweight="bold",
-        )
-        # Unetched GaN slab (0 <= y <= 0.40 um)
-        ax.add_patch(Rectangle((0.0, 0.0), 1.35, 0.40, facecolor="#dbe9f6", edgecolor="black", lw=1.0))
-        # Grating teeth (3 periods of pitch 0.45 um, depth 0.30 um, total t = 0.70 um)
-        for m in range(3):
-            x0_t = m * 0.45 + 0.1125
-            ax.add_patch(
-                Rectangle((x0_t, 0.40), 0.225, 0.30, facecolor="#dbe9f6", edgecolor="black", lw=1.0)
-            )
-        ax.text(0.04, 0.33, r"GaN ($n = 2.45$, $t \approx 700\;\mathrm{nm}$)", fontsize=8.8, color="#0d3b66")
-        # Active emitting / absorbing region O at y_0 ~ 100-120 nm
-        ax.add_patch(
-            Rectangle(
-                (0.0, 0.095),
-                1.35,
-                0.035,
-                facecolor="#ffccd5",
-                edgecolor="crimson",
-                ls="--",
-                lw=1.4,
-            )
-        )
-        ax.set_xlim(0.0, 1.35)
-        ax.set_ylim(-0.12, 1.05)
-        ax.set_xlabel(r"Lateral coordinate $x$ [$\mu\mathrm{m}$] ($3\times$ grating period $\Lambda$)")
-        if idx_p == 0:
-            ax.set_ylabel(r"Vertical coordinate $y$ [$\mu\mathrm{m}$]")
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.5)
 
-    # Panel (a): Direct Problem — LED as an Emitter
-    ax0 = axes[0]
-    rng = np.random.default_rng(7)
-    xs_dip = np.linspace(0.12, 1.23, 9)
-    for xd in xs_dip:
-        ax0.plot(xd, 0.112, "o", color="crimson", ms=5.5)
-        ang = rng.uniform(0.0, 2.0 * np.pi)
-        dx_a = 0.045 * np.cos(ang)
-        dy_a = 0.045 * np.sin(ang)
-        ax0.annotate(
-            "",
-            xy=(xd + dx_a, 0.112 + dy_a),
-            xytext=(xd - dx_a, 0.112 - dy_a),
-            arrowprops=dict(arrowstyle="<->", color="crimson", lw=1.2),
-        )
-    # Outgoing rays toward observation angle theta
-    for x_ray in (0.30, 0.675, 1.05):
-        ax0.add_patch(
-            FancyArrowPatch(
-                (x_ray, 0.72),
-                (x_ray + 0.14, 0.98),
-                arrowstyle="->",
-                mutation_scale=13,
-                color="#d95f02",
-                lw=2.0,
-            )
-        )
-    ax0.text(
-        0.675,
-        0.15,
-        r"Emitting QW region $\mathcal{O}$ ($y_0 \approx 100\text{--}120\;\mathrm{nm}$):"
-        "\n"
-        r"$3 N_{\mathrm{sites}}$ incoherent dipoles $\mathbf{p}_m e^{j\phi_m}$",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color="darkred",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.88, edgecolor="crimson"),
+    # Panel (a): Direct Problem — LED as an Incoherent Emitter (3 * N_sites runs)
+    obj_a = build_reciprocity_schematic_objects(mode="direct", cpw=12, mirror="ag", cpsd_target=10.0)
+    schematic.plot_schematic(
+        obj_a["solver"],
+        plane="xy",
+        ax=axes[0],
+        unit="um",
+        structures=obj_a["structures"],
+        sources=obj_a["sources"],
+        monitors=obj_a["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(a) Direct Problem: Incoherent Emitter\n($3 N_{\\mathrm{sites}}$ Dipole Solves)",
     )
-    ax0.text(
-        0.675,
-        0.99,
-        r"Radiated intensity $I(\theta) = \sum_m |\mathbf{E}_{d,m}(\theta)|^2$"
-        r" into direction $\theta$ ($\hat{k}_x = \sin\theta$)",
-        ha="center",
-        va="top",
-        fontsize=8.7,
-        fontweight="bold",
-        color="#b23a00",
-    )
-    ax0.set_title("(a) Direct Problem: LED as an Incoherent Emitter ($3 N_{\\mathrm{sites}}$ Runs)")
+    tidy_reciprocity_schematic_axes(axes[0], obj_a["meta"], mode="direct")
 
-    # Panel (b): Reciprocal Problem — LED as an Absorber (Helmholtz Reciprocity)
-    ax1 = axes[1]
-    # Highlight single Bloch unit cell x in [0.45, 0.90]
-    ax1.axvline(0.45, color="#1b7837", ls="-.", lw=1.8)
-    ax1.axvline(0.90, color="#1b7837", ls="-.", lw=1.8)
-    ax1.text(
-        0.675,
-        0.64,
-        "1 Bloch Unit Cell\n" r"$x \in [0, \Lambda]$",
+    # Panel (b): Reciprocal Problem — LED as an Absorber (Helmholtz Reciprocity, 1 run / angle)
+    obj_b = build_reciprocity_schematic_objects(mode="reciprocal", cpw=12, mirror="ag", cpsd_target=10.0)
+    schematic.plot_schematic(
+        obj_b["solver"],
+        plane="xy",
+        ax=axes[1],
+        unit="um",
+        structures=obj_b["structures"],
+        sources=obj_b["sources"],
+        monitors=obj_b["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(b) Reciprocal Problem: Absorber\n(Huygens Plane Wave, 1 Run / Angle)",
+    )
+    tidy_reciprocity_schematic_axes(axes[1], obj_b["meta"], mode="reciprocal")
+
+    # Panel (c): Graded Mesh Zoom around a grating tooth, active QW, and Drude Ag skin-depth collar
+    _, meta_c = make_finite_led_solver(cpw=20, averaging="kottke", mirror="ag", cpsd_target=10.0)
+    solver_c, _ = make_finite_led_solver(cpw=20, averaging="kottke", mirror="ag", cpsd_target=10.0)
+    poly_c_um = np.asarray(meta_c["slab_poly"].vertices, dtype=float) * 1e6
+    y_emit_c_um = float(meta_c["y_emit"]) * 1e6
+
+    ax_c = axes[2]
+    ax_c.add_patch(
+        mpatches.Rectangle(
+            (-0.5, -0.10),
+            1.0,
+            0.10,
+            facecolor="#94a3b8",
+            edgecolor="#334155",
+            lw=1.0,
+            alpha=0.80,
+            zorder=2,
+        )
+    )
+    ax_c.add_patch(
+        mpatches.Polygon(
+            poly_c_um,
+            closed=True,
+            facecolor="#bae6fd",
+            edgecolor="#0284c7",
+            lw=1.2,
+            alpha=0.65,
+            zorder=3,
+        )
+    )
+    schematic.draw_mesh(
+        ax_c,
+        solver_c.grid,
+        plane="xy",
+        unit="um",
+        color="#334155",
+        alpha=0.45,
+        linewidth=0.45,
+    )
+    ax_c.axhline(0.0, color="#0f172a", lw=1.2, zorder=5)
+    ax_c.axhline(-0.0269, color="#e11d48", ls="--", lw=1.1, zorder=5)
+    ax_c.axhline(y_emit_c_um, color="#dc2626", ls=":", lw=1.2, zorder=5)
+    ax_c.set_xlim(-0.27, 0.27)
+    ax_c.set_ylim(-0.06, 0.25)
+    ax_c.set_aspect("auto")
+    ax_c.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+    ax_c.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+    ax_c.set_title("(c) Graded Skin-Depth & Grating\nMesh Zoom (`draw_mesh`)")
+
+    bbox_c = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "#334155",
+        "linewidth": 0.5,
+        "alpha": 0.92,
+    }
+    ax_c.text(
+        0.0,
+        0.19,
+        f"Grating tooth $h_g = 72\\;\\mathrm{{nm}}$: {meta_c['cells_across_feature']:.1f} cells\n"
+        f"(GaN $n=2.45$: $20\\;\\mathrm{{cells}}/\\lambda_{{\\mathrm{{GaN}}}}$)",
         ha="center",
         va="center",
-        fontsize=8.3,
-        fontweight="bold",
-        color="#1b7837",
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.9, edgecolor="#1b7837"),
+        fontsize=6.2,
+        color="#0c4a6e",
+        bbox=bbox_c,
+        zorder=8,
     )
-    # Incoming plane wave fronts and wavevectors from direction theta
-    for x_inc in (0.35, 0.675, 1.00):
-        ax1.add_patch(
-            FancyArrowPatch(
-                (x_inc + 0.14, 0.98),
-                (x_inc, 0.72),
-                arrowstyle="->",
-                mutation_scale=13,
-                color="#1f78b4",
-                lw=2.2,
-            )
-        )
-    ax1.text(
-        0.675,
-        0.99,
-        r"Incident plane wave $\mathbf{E}_{\mathrm{inc}}^{(s,p)}$ from $(\theta, \varphi)$"
-        r" ($\mathbf{k}_{\mathrm{inc}} = -k_0\sin\theta\,\hat{\mathbf{x}} - k_0\cos\theta\,\hat{\mathbf{y}}$)",
+    ax_c.text(
+        0.0,
+        0.075,
+        f"Active QW plane $y_0 = {y_emit_c_um * 1e3:.1f}\\;\\mathrm{{nm}}$",
         ha="center",
-        va="top",
-        fontsize=8.7,
-        fontweight="bold",
-        color="#0b5394",
+        va="center",
+        fontsize=6.2,
+        color="#991b1b",
+        bbox=bbox_c,
+        zorder=8,
     )
-    ax1.text(
-        0.675,
-        0.15,
-        r"Absorbed intensity in $\mathcal{O}$ (Janssen Eqs. 7–10, 14):"
-        "\n"
-        r"$I(\theta) \propto \cos^2\theta \int_{\mathcal{O}} |\mathbf{E}_{\mathrm{pw}}(\mathbf{r}; \theta)|^2\,\mathrm{d}\mathbf{r}$",
+    ax_c.text(
+        0.0,
+        -0.032,
+        f"Ag $\\delta_s = 26.9\\;\\mathrm{{nm}}$: {meta_c['cells_per_skin_depth']:.1f} cells/$\\delta_s$\n"
+        f"($\\Delta y_{{\\min}} = {meta_c['dx_min_nm']:.2f}\\;\\mathrm{{nm}}$, {meta_c['cells_per_power_skin_depth']:.1f} cells/$\\delta_p$)",
         ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color="#0b5394",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.9, edgecolor="#1f78b4"),
+        va="center",
+        fontsize=6.1,
+        color="#9f1239",
+        bbox=bbox_c,
+        zorder=8,
     )
-    ax1.set_title("(b) Reciprocal Problem: LED as an Absorber (Helmholtz Reciprocity, 1 Run / Angle)")
 
-    fig.suptitle(
-        "Helmholtz Reciprocity Equivalence: Incoherent LED Emission Computed as Plane-Wave Absorption in the Active Region",
-        fontsize=11.2,
-        fontweight="bold",
-    )
-    fig.tight_layout()
-    fig.savefig(fig_dir / "00_emitter_absorber_schematic.png", dpi=150)
+    figstyle.finish(fig)
+    fig.savefig(fig_dir / "00_setup_schematic.png")
+    fig.savefig(fig_dir / "00_emitter_absorber_schematic.png")
     plt.close(fig)
 
 
 def plot_all(out_dir, fig_dir):
-    """Generate all 20 tutorial figures from `out_dir/*.npz` into `fig_dir`."""
+    """Generate all tutorial figures from `out_dir/*.npz` into `fig_dir`."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.animation as animation
     import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
     from matplotlib.patches import Polygon as MplPolygon
+
+    figstyle.apply_style()
 
     out_dir = Path(out_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
 
-    plt.rcParams.update(
-        {
-            "font.size": 10,
-            "axes.titlesize": 11,
-            "axes.labelsize": 10,
-            "legend.fontsize": 8.5,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
-            "figure.dpi": 150,
-        }
-    )
-
-    # Figure 0: Emitter -> Absorber schematic (Helmholtz reciprocity)
+    # Figure 0: Setup & Emitter -> Absorber schematic (Helmholtz reciprocity)
     _plot_emitter_absorber_schematic(fig_dir)
 
     d0 = np.load(out_dir / "task_00.npz")
@@ -1514,7 +1494,9 @@ def plot_all(out_dir, fig_dir):
     # ------------------------------------------------------------------
     # Figure 1: Geometry, Mesh, and Kottke vs Staircase Permittivity
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.4), gridspec_kw={"width_ratios": [1.5, 1.0, 1.0]})
+    fig, axes = figstyle.new_figure(
+        nrows=1, ncols=3, width=13.8, height=4.3, gridspec_kw={"width_ratios": [1.45, 1.0, 1.0]}
+    )
 
     ax = axes[0]
     gx = d2["grid_x"] * 1e6
@@ -1523,7 +1505,7 @@ def plot_all(out_dir, fig_dir):
     im0 = ax.pcolormesh(gx, gy, eps_kz.T, cmap="Blues", vmin=1.0, vmax=N_SLAB**2 + 0.5, shading="auto")
     fig.colorbar(im0, ax=ax, label=r"Relative permittivity $\varepsilon_z(x, y)$")
 
-    # Overlay exact PolySlab polygon
+    # Overlay exact PolySlab polygon & wakis.schematic geometry overlay
     slab_poly = build_grating_led_polyslab(
         width_x=float(d2["w_slab"]),
         d_slab=D_SLAB,
@@ -1534,33 +1516,31 @@ def plot_all(out_dir, fig_dir):
         n_slab=N_SLAB,
     )
     poly_um = np.asarray(slab_poly.vertices) * 1e6
-    ax.add_patch(
-        MplPolygon(poly_um, closed=True, fill=False, edgecolor="black", lw=1.2, label="PolySlab boundary")
-    )
-    ax.axhline(0.0, color="gold", lw=2.5, label="PEC / Ag Mirror ($y=0$)")
-    ax.axhline(float(d2["y_emit_ez"]) * 1e6, color="crimson", ls="--", lw=1.8, label="Active QW layer ($y_0$)")
+    y_emit_um = float(d2["y_emit_ez"]) * 1e6
     w_mon_um = float(d2["w_mon"]) * 1e6
     y_mon_um = float(d2["y_mon"]) * 1e6
-    ax.plot(
-        [-0.5 * w_mon_um, 0.5 * w_mon_um],
-        [y_mon_um, y_mon_um],
-        color="limegreen",
-        lw=2.2,
-        label="Near2Far / Huygens plane ($y_{\\mathrm{mon}}$)",
+    overlay_reciprocity_led_geometry(
+        ax,
+        poly_um,
+        y_emit_um=y_emit_um,
+        y_mon_um=y_mon_um,
+        w_mon_um=w_mon_um,
+        line_color="black",
+        show_labels=True,
+        compact=False,
     )
     ax.set_xlim(-1.45, 1.45)
     ax.set_ylim(-0.02, y_mon_um + 0.10)
     ax.set_xlabel(r"Lateral coordinate $x$ [$\mu\mathrm{m}$]")
     ax.set_ylabel(r"Vertical coordinate $y$ [$\mu\mathrm{m}$]")
-    ax.set_title("(a) 2D Grating LED Geometry & Monitors")
-    ax.legend(loc="upper right", framealpha=0.92)
+    ax.set_title("(a) 2D Grating LED Geometry\n& Monitors")
 
     # Zoomed comparison of Kottke vs Staircase on one grating tooth
     x_zoom = (-0.28, 0.28)
     y_zoom = ((D_SLAB - H_GRAT - 0.03e-6) * 1e6, (D_SLAB + 0.03e-6) * 1e6)
     for ax_z, eps_arr, title_str in [
-        (axes[1], d2["eps_kottke_x"], "(b) Kottke Anisotropic $\\varepsilon_{xx}$ (Tooth Zoom)"),
-        (axes[2], d2["eps_stair_x"], "(c) Staircase $\\varepsilon_{xx}$ (Tooth Zoom)"),
+        (axes[1], d2["eps_kottke_x"], "(b) Kottke Anisotropic $\\varepsilon_{xx}$\n(Tooth Zoom)"),
+        (axes[2], d2["eps_stair_x"], "(c) Staircase $\\varepsilon_{xx}$\n(Tooth Zoom)"),
     ]:
         eps_clean = np.where(np.isinf(eps_arr), np.nan, eps_arr)
         im_z = ax_z.pcolormesh(
@@ -1582,66 +1562,74 @@ def plot_all(out_dir, fig_dir):
         ax_z.set_title(title_str)
         fig.colorbar(im_z, ax=ax_z, label=r"$\varepsilon_{xx}$")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_geometry_mesh.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "01_geometry_mesh.png")
 
     # ------------------------------------------------------------------
-    # Figure 2: Reciprocal Time-Domain Wave Snapshots & Animated GIF
+    # Figure 2: Reciprocal Time-Domain Wave Snapshots (1x3) & Animated GIF
     # ------------------------------------------------------------------
-    # stored normalized (float16) with a frames_Ez_scale factor to keep the committed data small
     frames = np.asarray(d2["frames_Ez"], dtype=float) * (float(d2["frames_Ez_scale"]) if "frames_Ez_scale" in d2 else 1.0)
     n_f = len(frames)
-    pick_idx = [max(0, int(round(q * (n_f - 1)))) for q in (0.18, 0.38, 0.62, 0.88)]
-    vmax_f = float(np.percentile(np.abs(frames), 99.2)) or 1.0
+    pick_idx = [max(0, int(round(q * (n_f - 1)))) for q in (0.20, 0.50, 0.85)]
+    vmin_f, vmax_f = figstyle.symmetric_limits(frames, percentile=99.2)
 
-    fig, axes = plt.subplots(2, 2, figsize=(12.0, 6.8), sharex=True, sharey=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.2, height=4.2)
     for k, (ax, fi) in enumerate(zip(axes.flat, pick_idx)):
         im = ax.pcolormesh(
             gx,
             gy,
             frames[fi].T,
-            cmap="RdBu_r",
-            vmin=-vmax_f,
+            cmap=figstyle.CMAP_DIVERGING,
+            vmin=vmin_f,
             vmax=vmax_f,
             shading="auto",
         )
-        ax.add_patch(MplPolygon(poly_um, closed=True, fill=False, edgecolor="black", lw=0.9))
-        ax.axhline(float(d2["y_emit_ez"]) * 1e6, color="darkgreen", ls="--", lw=1.1)
+        overlay_reciprocity_led_geometry(
+            ax,
+            poly_um,
+            y_emit_um=y_emit_um,
+            y_mon_um=y_mon_um,
+            w_mon_um=w_mon_um,
+            line_color="black",
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlim(-1.35, 1.35)
         ax.set_ylim(0.0, y_mon_um + 0.08)
-        ax.set_title(f"Snapshot {k + 1}/{len(pick_idx)} (frame {fi + 1}/{n_f}, $\\theta = 25^\\circ$)")
-        if k in (2, 3):
-            ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
-        if k in (0, 2):
-            ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+        ax.set_title(f"({chr(97 + k)}) Snapshot {k + 1}/3\n(frame {fi + 1}/{n_f}, $\\theta = 25^\\circ$)")
+        ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+        ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
         fig.colorbar(im, ax=ax, label=r"$E_z(x, y, t)$ [a.u.]")
 
-    fig.suptitle("Reciprocal Oblique Plane Wave ($\\theta = 25^\\circ$) Coupling into Grating LED", fontsize=12)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "02_field_snapshots_and_movie.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "02_field_snapshots_and_movie.png")
 
     # Animated GIF of the reciprocal wave
-    fig_gif, ax_gif = plt.subplots(figsize=(6.8, 3.6))
+    fig_gif, ax_gif = figstyle.new_figure(nrows=1, ncols=1, width=6.8, height=3.8)
     im_gif = ax_gif.pcolormesh(
         gx,
         gy,
         frames[0].T,
-        cmap="RdBu_r",
-        vmin=-vmax_f,
+        cmap=figstyle.CMAP_DIVERGING,
+        vmin=vmin_f,
         vmax=vmax_f,
         shading="auto",
     )
-    ax_gif.add_patch(MplPolygon(poly_um, closed=True, fill=False, edgecolor="black", lw=1.0))
-    ax_gif.axhline(float(d2["y_emit_ez"]) * 1e6, color="darkgreen", ls="--", lw=1.2, label="Emitter plane $y_0$")
+    overlay_reciprocity_led_geometry(
+        ax_gif,
+        poly_um,
+        y_emit_um=y_emit_um,
+        y_mon_um=y_mon_um,
+        w_mon_um=w_mon_um,
+        line_color="black",
+        show_labels=True,
+        compact=False,
+    )
     ax_gif.set_xlim(-1.35, 1.35)
     ax_gif.set_ylim(0.0, y_mon_um + 0.08)
     ax_gif.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
     ax_gif.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
     title_gif = ax_gif.set_title("Reciprocal Wave Propagation ($\\theta = 25^\\circ$, frame 1)")
     fig_gif.colorbar(im_gif, ax=ax_gif, label=r"$E_z(x, y, t)$")
-    fig_gif.tight_layout()
+    figstyle.finish(fig_gif)
 
     def _update_gif(frame_i):
         im_gif.set_array(frames[frame_i].T.ravel())
@@ -1649,7 +1637,7 @@ def plot_all(out_dir, fig_dir):
         return (im_gif, title_gif)
 
     ani = animation.FuncAnimation(fig_gif, _update_gif, frames=n_f, interval=90, blit=False)
-    ani.save(fig_dir / "02_reciprocal_wave_movie.gif", writer="pillow", fps=11)
+    ani.save(fig_dir / "02_reciprocal_wave_movie.gif", writer="pillow", fps=11, dpi=110)
     plt.close(fig_gif)
 
     # ------------------------------------------------------------------
@@ -1668,7 +1656,7 @@ def plot_all(out_dir, fig_dir):
 
     wakis_pec_unpol = (d0["I_tm_ang_pec"] + d0["I_tex_ang_pec"] + d0["I_tey_ang_pec"]) / 3.0
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.6), gridspec_kw={"width_ratios": [1.35, 1.0]})
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3, gridspec_kw={"width_ratios": [1.35, 1.0]})
     ax = axes[0]
     ax.plot(th_dense, tmm_dense_tm, "-", color="tab:blue", lw=2.0, label="Analytic TMM: TM ($J_z$, $s$-pol)")
     ax.plot(th_bloch, d0["I_tm_ang_pec"], "o", color="tab:blue", ms=6, label="Wakis FIT Reciprocity: TM ($J_z$)")
@@ -1685,7 +1673,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Observation Angle $\theta$ in Air [deg]")
     ax.set_ylabel(r"Normalized Intensity $I_\alpha(\theta)/U_{\mathrm{free,2D}} = |E_{\mathrm{rec},\alpha}/E_{\mathrm{inc}}|^2$")
     ax.set_title(f"(a) Flat GaN Slab ($d={D_FLAT_BENCH*1e9:.0f}\\,\\mathrm{{nm}}, y_0={y_ez_b*1e9:.0f}\\,\\mathrm{{nm}}$) vs Exact TMM")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right", ncol=1)
 
     ax2 = axes[1]
@@ -1696,17 +1683,14 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax2.set_ylabel(r"Absolute Pointwise Error $|I_{\mathrm{Wakis}} - I_{\mathrm{TMM}}|$")
     ax2.set_title("(b) Pointwise Error vs Analytic Transfer Matrix")
-    ax2.grid(True, which="both", alpha=0.3)
     ax2.legend(loc="best")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_flat_slab_tmm_vs_wakis_angle.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "03_flat_slab_tmm_vs_wakis_angle.png")
 
     # ------------------------------------------------------------------
     # Figure 4: Flat Slab Depth Standing-Wave Profile vs Emitter Height y0
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.5), sharey=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3, sharey=True)
     y_nm_ez = d0["y_ez_pec"] * 1e9
     y_nm_ey = d0["y_ey_pec"] * 1e9
 
@@ -1718,7 +1702,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Emitter Height Above PEC Mirror $y_0$ [nm]")
     ax.set_ylabel(r"Normalized Intensity $|E_{\mathrm{rec}}(y_0)/E_{\mathrm{inc}}|^2$")
     ax.set_title(r"(a) Normal Incidence ($\theta = 0^\circ$) Standing Wave")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right")
 
     ax = axes[1]
@@ -1731,12 +1714,9 @@ def plot_all(out_dir, fig_dir):
     ax.axvline(y_ez_b * 1e9, color="crimson", ls="--", lw=1.5, label=f"QW $y_0 = {y_ez_b*1e9:.0f}\\,\\mathrm{{nm}}$")
     ax.set_xlabel(r"Emitter Height Above PEC Mirror $y_0$ [nm]")
     ax.set_title(r"(b) Oblique Incidence ($\theta = 25^\circ$) Depth Profiles")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "04_flat_slab_depth_standing_wave.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "04_flat_slab_depth_standing_wave.png")
 
     # ------------------------------------------------------------------
     # Figure 5: Realistic Drude Silver (Ag) Mirror vs Ideal PEC Mirror
@@ -1745,7 +1725,7 @@ def plot_all(out_dir, fig_dir):
     tmm_dense_ag_tm = tmm_slab_emission(th_dense_rad, y_ez_b, D_FLAT_BENCH, N_SLAB, LAM0, pol="TM", eps_mirror=eps_ag_val)
     tmm_dense_ag_unpol = tmm_slab_emission(th_dense_rad, y_ez_b, D_FLAT_BENCH, N_SLAB, LAM0, pol="unpolarized", eps_mirror=eps_ag_val)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.5))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
     ax = axes[0]
     y_ag_nm = d0["y_ez_ag"] * 1e9
     ax.plot(y_nm_ez, d0["I_tm_prof_pec0_ana"], "k--", lw=1.8, label="PEC Mirror TMM ($r_s = -1$, $\\theta=0^\\circ$)")
@@ -1757,7 +1737,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Emitter Height Above Mirror $y_0$ [nm]")
     ax.set_ylabel(r"Normalized Standing-Wave Intensity $|E_z(y_0)/E_{\mathrm{inc}}|^2$")
     ax.set_title(r"(a) Phase Shift & Attenuation on Drude Silver vs PEC Mirror")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right", fontsize=8)
 
     ax2 = axes[1]
@@ -1771,12 +1750,9 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax2.set_ylabel(r"Normalized Angular Intensity $I(\theta)/U_{\mathrm{free,2D}}$")
     ax2.set_title(f"(b) Angular Emission at $y_0 = {y_ez_b*1e9:.0f}\\,\\mathrm{{nm}}$ (Ag vs PEC)")
-    ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper right", fontsize=8)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "05_silver_vs_pec_mirror.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "05_silver_vs_pec_mirror.png")
 
     # ------------------------------------------------------------------
     # Figure 6: Point-by-Point Reciprocity across the Grating Active Layer
@@ -1786,7 +1762,7 @@ def plot_all(out_dir, fig_dir):
     th0_val = float(d1["thetas_deg"][i_th0])
     th25_val = float(d1["thetas_deg"][i_th25])
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.6, 4.6), sharey=False)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.4, sharey=False)
     for ax, ith, th_val, panel in [
         (axes[0], i_th0, th0_val, "(a)"),
         (axes[1], i_th25, th25_val, "(b)"),
@@ -1848,7 +1824,6 @@ def plot_all(out_dir, fig_dir):
             label="Method (A) Direct $J_y$ Dipoles $U_y(\\theta;x_0)/U_{\\mathrm{free}}$",
         )
 
-        # Shade grating teeth positions across the 3 central periods
         for m_p in (-1, 0, 1):
             xc = m_p * PITCH * 1e6
             w_tooth = 0.5 * (DUTY_BOT + DUTY_TOP) * PITCH * 1e6
@@ -1857,19 +1832,16 @@ def plot_all(out_dir, fig_dir):
         ax.set_xlabel(r"Dipole Lateral Position $x_0$ across 3 Grating Periods [$\mu\mathrm{m}$]")
         ax.set_ylabel(r"Normalized Emission Intensity $I_\alpha(\theta; x_0) / U_{\mathrm{free,2D}}$")
         ax.set_title(f"{panel} Point-by-Point Helmholtz Reciprocity at $\\theta = {th_val:+.1f}^\\circ$")
-        ax.grid(True, alpha=0.3)
         if ith == i_th0:
             ax.legend(loc="upper right", fontsize=7.8)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "06_reciprocity_point_by_point.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "06_reciprocity_point_by_point.png")
 
     # ------------------------------------------------------------------
     # Figure 7: Ensemble Angular Pattern: Method (A) Direct vs Method (B) Reciprocity
     # ------------------------------------------------------------------
     th_sym = d1["thetas_deg"]
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.6))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.4)
 
     ax = axes[0]
     ax.plot(th_sym, d1["rec_sample_z"], "-", color="tab:blue", lw=2.0, label="Method (B) Reciprocity: TM ($J_z$)")
@@ -1884,7 +1856,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax.set_ylabel(r"Position-Averaged Intensity $\langle I_\alpha(\theta)\rangle_x / U_{\mathrm{free,2D}}$")
     ax.set_title("(a) Polarization-Resolved Grating LED Emission: (A) vs (B)")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right", fontsize=8)
 
     ax2 = axes[1]
@@ -1895,17 +1866,14 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax2.set_ylabel(r"Unpolarized Intensity $\langle I_{\mathrm{unpol}}(\theta)\rangle_x / U_{\mathrm{free,2D}}$")
     ax2.set_title("(b) Isotropic 3D Unpolarized Ensemble Average")
-    ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper right")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "07_ensemble_direct_vs_reciprocity.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "07_ensemble_direct_vs_reciprocity.png")
 
     # ------------------------------------------------------------------
     # Figure 8: Incoherent Power Average vs Coherent Field Sum (Failure Mode)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.6))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.4)
     ax = axes[0]
     n_dips = d1["I_dip_z"].shape[0]
     for ip in range(0, n_dips, max(1, n_dips // 4)):
@@ -1915,7 +1883,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax.set_ylabel(r"Normalized TM Intensity $I_z(\theta) / U_{\mathrm{free,2D}}$")
     ax.set_title("(a) Individual Dipoles vs Smooth Incoherent Ensemble Mean")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right", fontsize=8)
 
     ax2 = axes[1]
@@ -1925,18 +1892,13 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax2.set_ylabel(r"Normalized Intensity $I_z(\theta) / U_{\mathrm{free,2D}}$")
     ax2.set_title("(b) Pitfall: Coherent Field Sum Creates False Phased-Array Lobe")
-    ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper right", fontsize=8)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "08_incoherent_vs_coherent_sum.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "08_incoherent_vs_coherent_sum.png")
 
     # ------------------------------------------------------------------
     # Figure 9: Dipole-Count Convergence (Spatial Sampling vs Continuous Integral)
     # ------------------------------------------------------------------
-    # Use the fine lateral reciprocal profiles I_tm_rec_full, I_tex_rec_full, I_tey_rec_full
-    # across the 3 central periods to evaluate convergence with N_pos (regular quadrature vs Monte Carlo)
     I_full_z = d1["I_tm_rec_full"]
     I_full_x = d1["I_tex_rec_full"]
     I_full_y = d1["I_tey_rec_full"]
@@ -1960,7 +1922,6 @@ def plot_all(out_dir, fig_dir):
         ) / 3.0
         err_reg.append(float(np.linalg.norm(c_reg - ref_curve) / np.linalg.norm(ref_curve)))
 
-        # Average over 40 random dipole realizations of size ns
         mc_trials = []
         for _ in range(40):
             idx_mc = rng.integers(0, n_fine, size=ns)
@@ -1972,7 +1933,7 @@ def plot_all(out_dir, fig_dir):
             mc_trials.append(np.linalg.norm(c_mc - ref_curve) / np.linalg.norm(ref_curve))
         err_mc.append(float(np.mean(mc_trials)))
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.5))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
     ax = axes[0]
     ax.loglog(n_samples_list, err_mc, "o-", color="tab:red", lw=2.0, label="Random Dipole Realizations (Monte Carlo)")
     ax.loglog(n_samples_list, err_reg, "s-", color="tab:blue", lw=2.0, label="Uniform Grid Sampling across 3 Periods")
@@ -1994,7 +1955,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Number of Dipole Positions Sampled $N_{\mathrm{pos}}$")
     ax.set_ylabel(r"Relative Angular L2 Error vs Continuous Integral")
     ax.set_title("(a) Convergence of Ensemble Average with Dipole Count $N_{\\mathrm{pos}}$")
-    ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="upper right", fontsize=8)
 
     ax2 = axes[1]
@@ -2010,17 +1970,14 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax2.set_ylabel(r"Unpolarized Intensity $\langle I(\theta)\rangle_x / U_{\mathrm{free,2D}}$")
     ax2.set_title("(b) Angular Pattern Stabilization with Increasing $N_{\\mathrm{pos}}$")
-    ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper right")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "09_dipole_count_convergence.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "09_dipole_count_convergence.png")
 
     # ------------------------------------------------------------------
     # Figure 10: Grating LED vs Flat Slab Extraction Enhancement (Cartesian + Polar)
     # ------------------------------------------------------------------
-    fig = plt.figure(figsize=(12.6, 4.8))
+    fig = plt.figure(figsize=(11.8, 4.6))
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2, projection="polar")
 
@@ -2047,7 +2004,6 @@ def plot_all(out_dir, fig_dir):
     ax1.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax1.set_ylabel(r"Normalized Far-Field Intensity $I(\theta)/U_{\mathrm{free,2D}}$")
     ax1.set_title("(a) Bragg Extraction of Guided Modes: Grating vs Flat LED")
-    ax1.grid(True, alpha=0.3)
     ax1.legend(loc="upper right", fontsize=7.8)
 
     # Polar radiation plot (upper hemisphere -90 to +90 deg)
@@ -2061,63 +2017,103 @@ def plot_all(out_dir, fig_dir):
     ax2.plot(th_rad_sym, d1["rec_flat_unpol"], "--", color="crimson", lw=1.6, label="Flat Unpolarized")
     ax2.set_title("(b) Upper-Hemisphere Polar Radiation Pattern", pad=14)
     ax2.legend(loc="lower left", bbox_to_anchor=(-0.12, -0.15), fontsize=8)
+    ax2.add_collection(PolyCollection([[(0.0, 0.0), (0.0, 0.0)]], alpha=0.0))
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "10_grating_vs_flat_extraction.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "10_grating_vs_flat_extraction.png")
 
     # ------------------------------------------------------------------
-    # Figure 11: 2D Spatial Maps of Reciprocal Fields vs Direct Single-Dipole Field
+    # Figure 11 (1x3) & Figure 11b (1x2): 2D Spatial Maps of Reciprocal vs Direct Fields
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(2, 2, figsize=(12.6, 6.8), sharex=True, sharey=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.2, height=4.2)
     x_ez_um = d2["dft25_x_ez"] * 1e6
     y_ez_um = d2["dft25_y_ez"] * 1e6
     x_ey_um = d2["dft25_x_ey"] * 1e6
     y_ey_um = d2["dft25_y_ey"] * 1e6
 
     panels_11 = [
-        (axes[0, 0], x_ez_um, y_ez_um, np.abs(d2["dft0_Ez"]) ** 2, "(a) Reciprocal $|E_z(x,y)/E_{\\mathrm{inc}}|^2$ at $\\theta = 0^\\circ$ (TM)", "inferno", 3.2),
-        (axes[0, 1], x_ez_um, y_ez_um, np.abs(d2["dft25_Ez"]) ** 2, "(b) Reciprocal $|E_z(x,y)/E_{\\mathrm{inc}}|^2$ at $\\theta = 25^\\circ$ (TM)", "inferno", 3.2),
-        (axes[1, 0], x_ey_um, y_ey_um, np.abs(d2["dft25_Ey"]) ** 2, "(c) Reciprocal $|E_y(x,y)/E_{\\mathrm{inc}}|^2$ at $\\theta = 25^\\circ$ ($\\mathrm{TE}_y$)", "magma", 1.2),
+        (axes[0], x_ez_um, y_ez_um, np.abs(d2["dft0_Ez"]) ** 2, "(a) Reciprocal $|E_z(x,y)/E_{\\mathrm{inc}}|^2$\nat $\\theta = 0^\\circ$ (TM)", figstyle.CMAP_MAGNITUDE, 3.2),
+        (axes[1], x_ez_um, y_ez_um, np.abs(d2["dft25_Ez"]) ** 2, "(b) Reciprocal $|E_z(x,y)/E_{\\mathrm{inc}}|^2$\nat $\\theta = 25^\\circ$ (TM)", figstyle.CMAP_MAGNITUDE, 3.2),
+        (axes[2], x_ey_um, y_ey_um, np.abs(d2["dft25_Ey"]) ** 2, "(c) Reciprocal $|E_y(x,y)/E_{\\mathrm{inc}}|^2$\nat $\\theta = 25^\\circ$ ($\\mathrm{TE}_y$)", figstyle.CMAP_MAGNITUDE, 1.2),
     ]
     for ax, xx, yy, field2d, t_str, cmap_name, vmax_val in panels_11:
         im = ax.pcolormesh(xx, yy, field2d.T, cmap=cmap_name, vmin=0.0, vmax=vmax_val, shading="auto")
-        ax.add_patch(MplPolygon(poly_um, closed=True, fill=False, edgecolor="cyan", lw=0.9))
-        ax.axhline(float(d2["y_emit_ez"]) * 1e6, color="white", ls="--", lw=1.2)
+        overlay_reciprocity_led_geometry(
+            ax,
+            poly_um,
+            y_emit_um=y_emit_um,
+            y_mon_um=y_mon_um,
+            w_mon_um=w_mon_um,
+            line_color="white",
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlim(-1.25, 1.25)
         ax.set_ylim(0.0, y_mon_um + 0.05)
+        ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+        ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
         ax.set_title(t_str)
         fig.colorbar(im, ax=ax, label=r"$|E_{\mathrm{rec}}/E_{\mathrm{inc}}|^2$")
 
-    # Panel (d): Forward single-dipole steady-state |Ez(x,y)|
-    ax_d = axes[1, 1]
+    figstyle.save(fig, fig_dir / "11_reciprocal_2d_field_maps.png")
+
+    # Companion 2-panel Figure 11b: Forward Single-Dipole Field vs Reciprocal Plane-Wave Field
+    fig_11b, axes_11b = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.2)
     dip_Ez = np.abs(d1["dip_snap_Ez"])
     dip_Ez_norm = dip_Ez / (np.percentile(dip_Ez, 99.0) or 1.0)
-    im_d = ax_d.pcolormesh(
+    im_d = axes_11b[0].pcolormesh(
         d1["dip_snap_x"] * 1e6,
         d1["dip_snap_y"] * 1e6,
         dip_Ez_norm.T,
-        cmap="viridis",
+        cmap=figstyle.CMAP_MAGNITUDE,
         vmin=0.0,
         vmax=1.0,
         shading="auto",
     )
-    ax_d.add_patch(MplPolygon(poly_um, closed=True, fill=False, edgecolor="white", lw=0.9))
-    ax_d.plot(float(d1["dip_snap_xdip"]) * 1e6, float(d1["dip_snap_ydip"]) * 1e6, "r*", ms=11, label="Point Dipole Source")
-    ax_d.set_xlim(-1.25, 1.25)
-    ax_d.set_ylim(0.0, y_mon_um + 0.05)
-    ax_d.set_title("(d) Forward Single-Dipole Field $|E_z(x,y)|$ (1 of $N$ Runs)")
-    ax_d.legend(loc="upper right")
-    fig.colorbar(im_d, ax=ax_d, label=r"Normalized $|E_z(x,y)|$")
+    overlay_reciprocity_led_geometry(
+        axes_11b[0],
+        poly_um,
+        y_emit_um=y_emit_um,
+        y_mon_um=y_mon_um,
+        w_mon_um=w_mon_um,
+        line_color="white",
+        show_dipole=(float(d1["dip_snap_xdip"]) * 1e6, float(d1["dip_snap_ydip"]) * 1e6),
+        show_labels=True,
+        compact=False,
+    )
+    axes_11b[0].set_xlim(-1.25, 1.25)
+    axes_11b[0].set_ylim(0.0, y_mon_um + 0.05)
+    axes_11b[0].set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+    axes_11b[0].set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+    axes_11b[0].set_title("(a) Direct Single-Dipole Field $|E_z(x,y)|$\n(1 of $3 N_{\\mathrm{sites}}$ Solves)")
+    fig_11b.colorbar(im_d, ax=axes_11b[0], label=r"Normalized $|E_z(x,y)|$")
 
-    for ax in axes[1, :]:
-        ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
-    for ax in axes[:, 0]:
-        ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+    im_r = axes_11b[1].pcolormesh(
+        x_ez_um,
+        y_ez_um,
+        (np.abs(d2["dft0_Ez"]) ** 2).T,
+        cmap=figstyle.CMAP_MAGNITUDE,
+        vmin=0.0,
+        vmax=3.2,
+        shading="auto",
+    )
+    overlay_reciprocity_led_geometry(
+        axes_11b[1],
+        poly_um,
+        y_emit_um=y_emit_um,
+        y_mon_um=y_mon_um,
+        w_mon_um=w_mon_um,
+        line_color="white",
+        show_labels=True,
+        compact=False,
+    )
+    axes_11b[1].set_xlim(-1.25, 1.25)
+    axes_11b[1].set_ylim(0.0, y_mon_um + 0.05)
+    axes_11b[1].set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+    axes_11b[1].set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+    axes_11b[1].set_title("(b) Reciprocal Plane-Wave Intensity $|E_z(x,y)/E_{\\mathrm{inc}}|^2$\n(All $x_0$ in 1 Solve at $\\theta = 0^\\circ$)")
+    fig_11b.colorbar(im_r, ax=axes_11b[1], label=r"$|E_{\mathrm{rec}}/E_{\mathrm{inc}}|^2$")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "11_reciprocal_2d_field_maps.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig_11b, fig_dir / "11b_forward_vs_reciprocal_field_map.png")
 
     # ------------------------------------------------------------------
     # Figure 12: Computational Cost Crossover (Method A vs Method B)
@@ -2126,7 +2122,7 @@ def plot_all(out_dir, fig_dir):
     t_dip_1 = float(d1["time_per_dipole_run"])
 
     n_theta_grid = np.arange(1, 65)
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.5))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
     ax = axes[0]
     ax.plot(
         n_theta_grid,
@@ -2158,10 +2154,8 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Number of Far-Field Observation Angles $N_\theta$ (Symmetry-Reduced)")
     ax.set_ylabel("Total Wall-Clock Time on 2D Grid [s]")
     ax.set_title("(a) Measured 2D Cost Crossover: Direct Sum vs Reciprocity")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left", fontsize=8)
 
-    # Panel (b): Number of FDTD/FIT solves in 2D vs 3D active volume
     ax2 = axes[1]
     n_sites_arr = np.logspace(1, 4, 50)
     ax2.loglog(n_sites_arr, 3.0 * n_sites_arr, "r-", lw=2.3, label="Method (A) Direct Dipole Runs: $N_{\\mathrm{runs}} = 3 N_{\\mathrm{sites}}$")
@@ -2171,17 +2165,14 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Number of Emitter Grid Sites $N_{\mathrm{sites}} = N_x N_y (N_z)$ in Active Layer")
     ax2.set_ylabel(r"Required Number of Time-Domain Solves $N_{\mathrm{runs}}$")
     ax2.set_title("(b) Scaling with Active-Volume Sites (2D & 3D LEDs)")
-    ax2.grid(True, which="both", alpha=0.3)
     ax2.legend(loc="upper left", fontsize=8)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "12_cost_crossover_scaling.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "12_cost_crossover_scaling.png")
 
     # ------------------------------------------------------------------
     # Figure 13: Resolution Convergence (Angular Patterns, Integrated Power, & L2 Errors)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(15.8, 4.7))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
 
     # Extract Kottke, Snapped Staircase, and Un-snapped Staircase series from tasks 2..8
     kottke_pts = []
@@ -2381,18 +2372,13 @@ def plot_all(out_dir, fig_dir):
     ax2.set_xlabel(r"Resolution $\mathrm{cpw}$ [cells / $\lambda_{\mathrm{GaN}}$]")
     ax2.set_ylabel("Relative Error (Angular L2 & Integrated Power)")
     ax2.set_title("(c) Angular L2 & Integrated-Power Error vs $\\mathrm{cpw}$")
-    ax2.grid(True, which="both", alpha=0.3)
     ax2.legend(loc="lower left", fontsize=6.8, ncol=1)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "13_resolution_convergence_kottke_vs_staircase.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "13_resolution_convergence_kottke_vs_staircase.png")
 
     # ------------------------------------------------------------------
     # Figure 14: Broadband Incoherent Spectral Averaging (Finite Linewidth)
     # ------------------------------------------------------------------
-    # Evaluate analytical TMM across the blue InGaN QW emission spectrum (450 nm +/- 25 nm)
-    # and compare monochromatic vs spectrally-averaged incoherent emission
     lams_nm = np.linspace(425.0, 475.0, 41)
     sigma_nm = 10.0  # FWHM ~ 23.5 nm typical blue InGaN QW electroluminescence
     weights_lam = np.exp(-0.5 * ((lams_nm - 450.0) / sigma_nm) ** 2)
@@ -2410,7 +2396,7 @@ def plot_all(out_dir, fig_dir):
     )
     I_broadband = np.trapezoid(I_spec_stack * weights_lam[:, None], lams_nm, axis=0)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.5))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
     ax = axes[0]
     ax.plot(th_deg_14, I_mono_435, ":", color="royalblue", lw=1.6, label=r"Monochromatic $\lambda = 435\,\mathrm{nm}$")
     ax.plot(th_deg_14, I_mono_450, "--", color="tab:green", lw=1.8, label=r"Monochromatic $\lambda_0 = 450\,\mathrm{nm}$")
@@ -2425,7 +2411,6 @@ def plot_all(out_dir, fig_dir):
     ax.set_xlabel(r"Observation Angle $\theta$ [deg]")
     ax.set_ylabel(r"Unpolarized Intensity $I(\theta)/U_{\mathrm{free,2D}}$")
     ax.set_title("(a) Spectral Incoherent Averaging Over InGaN QW Linewidth")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right", fontsize=8)
 
     ax2 = axes[1]
@@ -2433,7 +2418,7 @@ def plot_all(out_dir, fig_dir):
         th_deg_14,
         lams_nm,
         I_spec_stack,
-        cmap="plasma",
+        cmap=figstyle.CMAP_MAGNITUDE,
         shading="auto",
     )
     ax2.axhline(450.0, color="white", ls="--", lw=1.5, label=r"Center $\lambda_0 = 450\,\mathrm{nm}$")
@@ -2442,9 +2427,7 @@ def plot_all(out_dir, fig_dir):
     ax2.set_title(r"(b) Angle-Wavelength Map $I_{\mathrm{unpol}}(\theta, \lambda)$")
     fig.colorbar(im14, ax=ax2, label=r"$I_{\mathrm{unpol}}(\theta, \lambda)/U_{\mathrm{free,2D}}$")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "14_wavelength_broadband_incoherent.png", dpi=150)
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "14_wavelength_broadband_incoherent.png")
 
     # ------------------------------------------------------------------
     # Figure 15: Drude Ag Metal Skin-Depth Resolution Study (Graded Mesh)
@@ -2463,13 +2446,11 @@ def plot_all(out_dir, fig_dir):
         enh_tm_all = np.concatenate([d9["enh_tm_list"], d10["enh_tm_list"]])
         n_demo = len(d9["cpsd_meas"])
 
-        # Accepted index matches task_10 primary cells_per_skin_depth (8.0 in quick, 10.0 in full)
         idx_acc = int(np.argmin(np.abs(cpsd_all - float(d10["cells_per_skin_depth"]))))
         cpsd_acc = float(cpsd_all[idx_acc])
 
-        fig, axes = plt.subplots(1, 3, figsize=(15.0, 4.6))
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
 
-        # Panel (a): Standing-wave L2 error on Drude Ag mirror vs cells per skin depth
         ax = axes[0]
         if "cpsd_ag_meas" in d0:
             ax.plot(
@@ -2512,10 +2493,8 @@ def plot_all(out_dir, fig_dir):
         )
         ax.set_ylabel("Standing-Wave Relative L2 Error vs TMM [%]")
         ax.set_title("(a) Flat-Slab Standing-Wave Error on Drude Ag")
-        ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=7.8)
 
-        # Panel (b): 2D Grating LED angle-integrated extraction power on Drude Ag
         ax2 = axes[1]
         P_ref_u = float(P_unpol_all[-1])
         ax2.axhspan(
@@ -2553,10 +2532,8 @@ def plot_all(out_dir, fig_dir):
         ax2.set_xlabel(r"Cells / Amplitude Skin Depth $\delta_s$ ($\Delta y_{\min}$ at Ag Interface)")
         ax2.set_ylabel(r"Angle-Integrated Power $\int I_{\mathrm{unpol}}(\theta)\,\mathrm{d}\theta$ [rad]")
         ax2.set_title("(b) 2D Grating LED Extraction Power vs Skin-Depth Grid")
-        ax2.grid(True, alpha=0.3)
         ax2.legend(loc="upper right", fontsize=7.8)
 
-        # Panel (c): Grating extraction enhancement (Grating vs Flat on Drude Ag)
         ax3 = axes[2]
         enh_ref_u = float(enh_unpol_all[-1])
         ax3.axhspan(
@@ -2595,12 +2572,9 @@ def plot_all(out_dir, fig_dir):
         ax3.set_xlabel(r"Cells / Amplitude Skin Depth $\delta_s$ ($2\times$ Cells / $\delta_p$)")
         ax3.set_ylabel(r"Grating Extraction Enhancement $\eta_{\mathrm{grat,Ag}} / \eta_{\mathrm{flat,Ag}}$")
         ax3.set_title("(c) Grating Extraction Enhancement on Drude Ag Mirror")
-        ax3.grid(True, alpha=0.3)
         ax3.legend(loc="upper right", fontsize=7.8)
 
-        fig.tight_layout()
-        fig.savefig(fig_dir / "15_metal_skin_depth_resolution_study.png", dpi=150)
-        plt.close(fig)
+        figstyle.save(fig, fig_dir / "15_metal_skin_depth_resolution_study.png")
 
     # ------------------------------------------------------------------
     # Figures 16..19: Janssen et al. (2010) Optimization Study (Figs. 2, 4, 5, 6)
@@ -2614,7 +2588,7 @@ def plot_all(out_dir, fig_dir):
     j_sum = json.loads(p_janssen_json.read_text())
 
     # Figure 16: Shallow-grating guided-mode resonances (Janssen Fig. 2, pitch=250 nm, d=5 nm)
-    fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.9))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
     kx_f2 = np.asarray(j_npz["kx_grid_fig2"], dtype=float)
     kx_dense_pec = np.asarray(j_npz["kx_dense_pec_fig2"], dtype=float)
 
@@ -2656,10 +2630,9 @@ def plot_all(out_dir, fig_dir):
     ax.set_ylabel(r"Absorbed / Emitted Intensity $\int_{\mathcal{O}} |\mathbf{E}|^2\,\mathrm{d}x / (\Lambda |E_{\mathrm{inc}}|^2)$")
     ax.set_title(
         f"(a) PEC Mirror ($\\Lambda=250\\,\\mathrm{{nm}}, d=5\\,\\mathrm{{nm}}$)\n"
-        f"Ultra-narrow GMR spikes ($Q \\sim 10^5$, clipped at 22 for scale)"
+        f"Ultra-narrow GMR spikes ($Q \\sim 10^5$)"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.2)
 
     ax = axes[1]
     ax.plot(
@@ -2701,8 +2674,7 @@ def plot_all(out_dir, fig_dir):
         f"(b) Silver Mirror (`silver jc`, $\\varepsilon_{{\\mathrm{{Ag}}}}={j_sum['eps_ag_450nm_real']:.2f}{j_sum['eps_ag_450nm_imag']:+.2f}j$)\n"
         f"Ohmic damping broadens resonances to $Q \\sim 10^3$"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.2)
 
     ax = axes[2]
     kx_zp = np.asarray(j_npz["kx_zoom_pec"], dtype=float)
@@ -2741,21 +2713,12 @@ def plot_all(out_dir, fig_dir):
         "(c) Resonance Linewidth & Wakis `harminv` Check\n"
         r"PEC $Q \sim 10^5$ vs Silver $Q \sim 10^3$ (Janssen Fig. 2)"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.5)
+    ax.legend(loc="upper right", fontsize=7.2)
 
-    fig.suptitle(
-        r"Shallow-Grating Guided-Mode Resonances ($\Lambda=250\,\mathrm{nm},\,d=5\,\mathrm{nm},\,t=700\,\mathrm{nm},\,y_0=100\,\mathrm{nm}$, Janssen et al. Fig. 2)",
-        fontsize=11.5,
-        fontweight="bold",
-        y=1.01,
-    )
-    fig.tight_layout()
-    fig.savefig(fig_dir / "16_janssen_fig2_shallow_grating_resonances.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "16_janssen_fig2_shallow_grating_resonances.png")
 
     # Figure 17: (t, d) landscape + steepest-ascent paths + both-ways gradient verification (Janssen Fig. 4)
-    fig, axes = plt.subplots(1, 3, figsize=(16.2, 4.9))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
     t_grid_nm = np.asarray(j_npz["t_grid_nm"], dtype=float)
     d_grid_nm = np.asarray(j_npz["d_grid_nm"], dtype=float)
     F60_iso = np.asarray(j_npz["F60_iso"], dtype=float)
@@ -2767,7 +2730,7 @@ def plot_all(out_dir, fig_dir):
         d_grid_nm,
         F60_iso.T,
         shading="auto",
-        cmap="inferno",
+        cmap=figstyle.CMAP_MAGNITUDE,
         vmin=0.5,
         vmax=float(np.nanpercentile(F60_iso, 98)),
     )
@@ -2797,9 +2760,9 @@ def plot_all(out_dir, fig_dir):
     ax.set_ylabel(r"Grating Etch Depth $d$ [nm]")
     ax.set_title(
         r"(a) $(t, d)$ Landscape ($60^\circ$ Cone, $\Lambda=450\,\mathrm{nm}$)"
-        "\nMultiple Local Maxima & Steepest-Ascent Paths (Janssen Fig. 4)"
+        "\nMultiple Local Maxima & Steepest-Ascent Paths"
     )
-    ax.legend(loc="upper left", fontsize=7.8, framealpha=0.88)
+    ax.legend(loc="upper left", fontsize=7.4, framealpha=0.88)
 
     ax = axes[1]
     im1 = ax.pcolormesh(
@@ -2818,7 +2781,7 @@ def plot_all(out_dir, fig_dir):
     ax.set_ylabel(r"Grating Etch Depth $d$ [nm]")
     ax.set_title(
         r"(b) $(t, d)$ Landscape ($90^\circ$ Cone, $|\hat{k}_x| \leq 1/\sqrt{2}$)"
-        f"\nPeak $F_{{90^\\circ}}={j_sum['fig4_best_90_iso']:.2f}$ ({j_sum['fig4_enh_vs_flat_90']:.2f}$\\times$ Flat at $y_0=100\\,\\mathrm{{nm}}$)"
+        f"\nPeak $F_{{90^\\circ}}={j_sum['fig4_best_90_iso']:.2f}$ ({j_sum['fig4_enh_vs_flat_90']:.2f}$\\times$ Flat)"
     )
 
     ax = axes[2]
@@ -2838,18 +2801,14 @@ def plot_all(out_dir, fig_dir):
     ax.set_ylabel(r"Normalized Shape Gradient [$10^7\,\mathrm{m}^{-1}$]")
     ax.set_title(
         "(c) Both-Ways Shape Gradient Verification\n"
-        f"Adjoint vs FD rel. err: {gc['rel_err_dt_delta2']:.2e} ($t$), {gc['rel_err_dd_delta2']:.2e} ($d$)\n"
         f"Quadratic $O(\\delta^2)$ ratio: {gc['order_ratio_dt']:.2f}$\\times$ ($t$), {gc['order_ratio_dd']:.2f}$\\times$ ($d$)"
     )
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.2)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "17_janssen_fig4_thickness_depth_landscape.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "17_janssen_fig4_thickness_depth_landscape.png")
 
     # Figure 18: Optimal active-layer position near y_0 ~ 120 nm (Janssen Fig. 5) + 2D FIT check
-    fig, axes = plt.subplots(1, 3, figsize=(16.0, 4.8))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
     x_rel_5 = np.asarray(j_npz["x_rel_fig5"], dtype=float)
     y_nm_5 = np.asarray(j_npz["y_arr_fig5_nm"], dtype=float)
     map_5_iso = np.asarray(j_npz["map_fig5_iso"], dtype=float)
@@ -2860,7 +2819,7 @@ def plot_all(out_dir, fig_dir):
         y_nm_5,
         map_5_iso.T,
         shading="auto",
-        cmap="magma",
+        cmap=figstyle.CMAP_MAGNITUDE,
     )
     fig.colorbar(im5, ax=ax, label=r"Local Reciprocal Intensity $I_{\mathrm{iso}}(x_0, y_0)$")
     ax.axhline(
@@ -2870,13 +2829,35 @@ def plot_all(out_dir, fig_dir):
         lw=2.0,
         label=f"Optimal QW Height $y_0 = {j_sum['fig5_y_opt_grat_450_nm']:.0f}\\,\\mathrm{{nm}}$",
     )
+    ax.axvline(0.25, color="white", ls=":", lw=1.1, alpha=0.85)
+    ax.axvline(0.75, color="white", ls=":", lw=1.1, alpha=0.85)
+    ax.text(
+        0.50,
+        365.0,
+        "Unetched GaN ($n=2.45$) under tooth ($x_0/\\Lambda \\in [0.25, 0.75]$)",
+        ha="center",
+        va="top",
+        fontsize=6.2,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "#475569", "alpha": 0.85},
+    )
+    ax.text(
+        0.50,
+        18.0,
+        "Silver (`silver jc`) mirror ($y_0 = 0$) | Bloch unit cell $\\pm x$",
+        ha="center",
+        va="bottom",
+        fontsize=6.2,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "#475569", "alpha": 0.85},
+    )
     ax.set_xlabel(r"Unit-Cell Coordinate $x_0 / \Lambda$")
     ax.set_ylabel(r"Height Above Silver Mirror $y_0$ [nm]")
     ax.set_title(
         r"(a) Local Extraction Map $I(x_0, y_0)$ in Unetched GaN"
-        "\n($t=700\\,\\mathrm{nm},\\,d=300\\,\\mathrm{nm},\\,\\Lambda=450\\,\\mathrm{nm}$, Janssen Fig. 5a)"
+        "\n($t=700\\,\\mathrm{nm},\\,d=300\\,\\mathrm{nm},\\,\\Lambda=450\\,\\mathrm{nm}$)"
     )
-    ax.legend(loc="upper right", fontsize=7.8)
+    ax.legend(loc="upper right", fontsize=7.4)
 
     ax = axes[1]
     ax.plot(
@@ -2909,8 +2890,7 @@ def plot_all(out_dir, fig_dir):
         "(b) Active-Layer Position Scan (Janssen Fig. 5b)\n"
         r"First antinode peak near $y_0 \approx 120\,\mathrm{nm}$ above Ag"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.2)
 
     ax = axes[2]
     y_fit_nm = np.asarray(j_npz["fit_unit_y_nm"], dtype=float)
@@ -2950,17 +2930,14 @@ def plot_all(out_dir, fig_dir):
     ax.set_ylabel(r"Unit-Cell-Averaged $\langle |E_z(x, y_0)|^2 \rangle_x / |E_{\mathrm{inc}}|^2$")
     ax.set_title(
         "(c) Wakis 2D Bloch FIT vs RCWA Unit-Cell Standing Wave\n"
-        r"(`dispersive_lib['silver jc']`, $\Lambda=450\,\mathrm{nm},\,t=700\,\mathrm{nm},\,d=300\,\mathrm{nm}$)"
+        r"(`dispersive_lib['silver jc']`, $\Lambda=450\,\mathrm{nm},\,t=700\,\mathrm{nm}$)"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.4)
+    ax.legend(loc="upper right", fontsize=7.2)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "18_janssen_fig5_active_layer_position.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "18_janssen_fig5_active_layer_position.png")
 
     # Figure 19: Pitch scan Lambda / lam0 and ~2x enhancement headline (Janssen Fig. 6)
-    fig, axes = plt.subplots(1, 3, figsize=(16.2, 4.9))
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.4)
     rat_6 = np.asarray(j_npz["ratio_grid_fig6"], dtype=float)
     kx_6 = np.asarray(j_npz["kx_fig6"], dtype=float)
     map6_s = np.asarray(j_npz["map_fig6_s"], dtype=float)
@@ -2972,7 +2949,7 @@ def plot_all(out_dir, fig_dir):
         kx_6,
         np.minimum(map6_s.T, 12.0),
         shading="auto",
-        cmap="inferno",
+        cmap=figstyle.CMAP_MAGNITUDE,
         vmin=0.0,
         vmax=10.0,
     )
@@ -2985,7 +2962,7 @@ def plot_all(out_dir, fig_dir):
         r"(a) $s$-Polarization Pitch Dispersion Map"
         "\n($t=700\\,\\mathrm{nm},\\,d=300\\,\\mathrm{nm}$, Janssen Fig. 6a)"
     )
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.4)
 
     ax = axes[1]
     im6p = ax.pcolormesh(
@@ -2993,7 +2970,7 @@ def plot_all(out_dir, fig_dir):
         kx_6,
         np.minimum(map6_p.T, 12.0),
         shading="auto",
-        cmap="inferno",
+        cmap=figstyle.CMAP_MAGNITUDE,
         vmin=0.0,
         vmax=10.0,
     )
@@ -3006,7 +2983,7 @@ def plot_all(out_dir, fig_dir):
         r"(b) $p$-Polarization Pitch Dispersion Map"
         "\n($t=700\\,\\mathrm{nm},\\,d=300\\,\\mathrm{nm}$, Janssen Fig. 6b)"
     )
-    ax.legend(loc="upper right", fontsize=7.6)
+    ax.legend(loc="upper right", fontsize=7.4)
 
     ax = axes[2]
     c60_120 = np.asarray(j_npz["cone60_iso_120"], dtype=float)
@@ -3048,14 +3025,11 @@ def plot_all(out_dir, fig_dir):
     ax.set_title(
         "(c) Cone-Integrated Pitch Scan vs Optimized Flat LED\n"
         f"Optimized grating $\\approx {j_sum['headline_enhancement_global_60']:.2f}\\times$ ($60^\\circ$) / "
-        f"{j_sum['headline_enhancement_global_90']:.2f}$\\times$ ($90^\\circ$) flat (Janssen Fig. 6c)"
+        f"{j_sum['headline_enhancement_global_90']:.2f}$\\times$ ($90^\\circ$) flat"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.3)
+    ax.legend(loc="upper right", fontsize=7.2)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "19_janssen_fig6_pitch_scan_enhancement.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "19_janssen_fig6_pitch_scan_enhancement.png")
 
 
 # %% [markdown]

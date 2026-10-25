@@ -10,7 +10,7 @@ import numpy as np
 from scipy.constants import c as c0
 from scipy.special import fresnel, hankel1
 
-from wakis import DFTMonitor, FieldMonitor, FluxMonitor, GridFIT3D, SolverFIT3D
+from wakis import DFTMonitor, FieldMonitor, FluxMonitor, GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.conformal import rectangle_sheet
 from wakis.estimate import estimate, preflight
 from wakis.near2far import Near2FarMonitor
@@ -1290,211 +1290,633 @@ def run_resolution_task(quick: bool = False) -> dict:
     }
 
 
+def _build_schematic_solver(
+    slit_width: float,
+    wavelength: float = DEFAULT_WAVELENGTH,
+    screen_thickness: float = 0.15 * DEFAULT_WAVELENGTH,
+    cpw: int = 24,
+    y_upstream: float = 1.4 * DEFAULT_WAVELENGTH,
+    y_downstream: float = 3.2 * DEFAULT_WAVELENGTH,
+) -> tuple[SolverFIT3D, dict, list[Box], CurrentSource, list]:
+    """Build a lightweight 2D single-slit solver, structures, source, and monitors for schematics/overlays."""
+    f0 = c0 / wavelength
+    grid_info = build_single_slit_grid(
+        slit_width=slit_width,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        y_upstream=y_upstream,
+        y_downstream=y_downstream,
+        cpw=cpw,
+    )
+    x = grid_info["x"]
+    y = grid_info["y"]
+    z = grid_info["z"]
+    x_core = grid_info["x_core"]
+    y_core = grid_info["y_core"]
+    lz = float(grid_info["lz"])
+    n_pml = int(grid_info["n_pml"])
+    half_t = 0.5 * screen_thickness
+
+    grid = GridFIT3D(x=x, y=y, z=z, use_mpi=False, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        cfln=0.65,
+        n_pml=n_pml,
+        verbose=0,
+    )
+
+    left_end = float(x[0])
+    right_end = float(x[-1])
+    w_left = (-0.5 * slit_width) - left_end
+    xc_left = 0.5 * (left_end - 0.5 * slit_width)
+    w_right = right_end - 0.5 * slit_width
+    xc_right = 0.5 * (0.5 * slit_width + right_end)
+    boxes = [
+        Box((xc_left, 0.0, 0.0), (w_left, screen_thickness, 2.0 * lz), "pec"),
+        Box((xc_right, 0.0, 0.0), (w_right, screen_thickness, 2.0 * lz), "pec"),
+    ]
+    for b in boxes:
+        b.material = "pec"
+    assign_materials(solver, boxes, f0)
+
+    y_src = float(y_core[0] + 0.35 * wavelength)
+    src_span_x = float(x[-1] - x[0])
+    pulse = GaussianSource(frequency=f0, fwidth=0.5 * f0, cutoff=3.5)
+    source = CurrentSource(
+        src_time=pulse,
+        component="z",
+        center=(0.0, y_src, 0.0),
+        size=(src_span_x, 0.0, 2.0 * lz),
+        amplitude=1.0,
+    )
+
+    freqs = np.array([f0])
+    w_ref = float((x_core[-1] - x_core[0]) - 0.5 * wavelength)
+    y_n2f = float(half_t + 2.5 * grid_info["dy_screen"])
+    flux_slit = FluxMonitor(
+        frequencies=freqs,
+        center=(0.0, 0.0, 0.0),
+        size=(slit_width, 0.0, 2.0 * lz),
+    )
+    n2f = Near2FarMonitor(
+        frequencies=freqs,
+        center=(0.0, y_n2f, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
+    )
+    y_nf1 = float(half_t + (slit_width**2) / (4.0 * wavelength * 1.0))
+    mon_nf1 = DFTMonitor(
+        frequencies=freqs,
+        components=("Ez",),
+        center=(0.0, y_nf1, 0.0),
+        size=(w_ref, 0.0, 0.0),
+    )
+    return solver, grid_info, boxes, source, [flux_slit, n2f, mon_nf1]
+
+
+def _fix_unit_spaces_in_texts(ax: plt.Axes) -> None:
+    """Ensure a thin space precedes units inside math-mode substrings in schematic text labels."""
+    replacements = (
+        (" THz$", r"\;\mathrm{THz}$"),
+        (" GHz$", r"\;\mathrm{GHz}$"),
+        (" MHz$", r"\;\mathrm{MHz}$"),
+        (" nm$", r"\;\mathrm{nm}$"),
+        (" µm$", r"\;\mu\mathrm{m}$"),
+        (" mm$", r"\;\mathrm{mm}$"),
+    )
+    for txt in ax.texts:
+        s = txt.get_text()
+        new_s = s
+        for old, new in replacements:
+            new_s = new_s.replace(old, new)
+        if new_s != s:
+            txt.set_text(new_s)
+
+
+def _reposition_xy_schematic_labels(
+    ax: plt.Axes,
+    x_left_jaw: float,
+    x_right_jaw: float,
+    y_src: float,
+    y_n2f: float,
+    y_dft: float,
+) -> None:
+    """Reposition horizontal structure/source/monitor labels placed at vertical-slab defaults by schematic."""
+    leg = ax.get_legend()
+    if leg is not None:
+        leg.remove()
+    pec_count = 0
+    for txt in ax.texts:
+        s = txt.get_text()
+        if "$-y$ boundary:" in s or "-y boundary:" in s:
+            txt.set_text(
+                r"$\pm y$ boundaries: CPML (10 cells, $0.25\;\mu\mathrm{m}$) $\mid$ Out-of-plane ($\pm z$: Periodic)"
+            )
+        elif "PEC" in s:
+            txt.set_text(r"PEC ($\sigma \to \infty$)")
+            txt.set_position((x_left_jaw if pec_count == 0 else x_right_jaw, -0.15))
+            txt.set_ha("center")
+            txt.set_va("top")
+            pec_count += 1
+        elif "CurrentSource" in s:
+            txt.set_position((0.0, y_src - 0.10))
+            txt.set_ha("center")
+            txt.set_va("top")
+        elif "Near2Far" in s:
+            txt.set_text("Near2FarMonitor")
+            txt.set_position((0.0, y_n2f + 0.10))
+            txt.set_ha("center")
+            txt.set_va("bottom")
+        elif "FluxMonitor" in s:
+            txt.set_position((0.0, -0.15))
+            txt.set_ha("center")
+            txt.set_va("top")
+        elif "DFTMonitor" in s:
+            txt.set_position((0.0, y_dft + 0.08))
+            txt.set_ha("center")
+            txt.set_va("bottom")
+    _fix_unit_spaces_in_texts(ax)
+
+
+def plot_setup_schematic(
+    output_path: str | Path,
+    wavelength: float = DEFAULT_WAVELENGTH,
+) -> None:
+    """Generate the 2-panel labelled setup schematic and slit mesh zoom (Figure 0)."""
+    slit_width = 2.0 * wavelength
+    screen_thickness = 0.15 * wavelength
+    cpw = 24
+    solver, grid_info, boxes, source, monitors = _build_schematic_solver(
+        slit_width=slit_width,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        cpw=cpw,
+    )
+    x_um = grid_info["x"] * 1e6
+    y_core_um = grid_info["y_core"] * 1e6
+    a_um = slit_width * 1e6
+    t_um = screen_thickness * 1e6
+    y_src_um = float(y_core_um[0] + 0.35 * wavelength * 1e6)
+    y_n2f_um = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
+    y_nf1_um = float(0.5 * t_um + ((slit_width**2) / (4.0 * wavelength * 1.0)) * 1e6)
+
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=5.0)
+
+        # Panel (a): Full 2D setup schematic
+        ax = axes[0]
+        schematic.plot_schematic(
+            solver,
+            ax=ax,
+            plane="xy",
+            unit="µm",
+            structures=boxes,
+            sources=[source],
+            monitors=monitors,
+            wavelength=wavelength,
+            show_mesh=False,
+            mesh_zoom=False,
+            show_wave_packet=False,
+            title=r"(a) 2D Single-Slit Diffraction Setup ($\lambda = 0.60\;\mu\mathrm{m}$, $a = 2\lambda$)",
+        )
+        _reposition_xy_schematic_labels(
+            ax,
+            x_left_jaw=0.5 * (float(x_um[0]) - 0.5 * a_um),
+            x_right_jaw=0.5 * (0.5 * a_um + float(x_um[-1])),
+            y_src=y_src_um,
+            y_n2f=y_n2f_um,
+            y_dft=y_nf1_um,
+        )
+        # Annotate slit width a
+        ax.annotate(
+            "",
+            xy=(0.5 * a_um, 0.0),
+            xytext=(-0.5 * a_um, 0.0),
+            arrowprops={"arrowstyle": "<->", "color": figstyle.INK, "lw": 1.2},
+            zorder=9,
+        )
+        ax.text(
+            0.0,
+            0.08,
+            rf"Slit $a = {a_um:.2f}\;\mu\mathrm{{m}}$ ($2\lambda$)",
+            ha="center",
+            va="bottom",
+            fontsize=8.6,
+            fontweight="bold",
+            color=figstyle.INK,
+            zorder=9,
+        )
+
+        # Panel (b): Zoomed graded FIT mesh around the slit opening and PEC screen jaws
+        ax_m = axes[1]
+        ax_m.set_facecolor("#F8FAFC")
+        schematic.draw_mesh(
+            ax_m,
+            solver,
+            plane="xy",
+            unit="µm",
+            every=1,
+            wavelength=wavelength,
+            zoom_inset=False,
+            show_cpw=True,
+            color="#334155",
+            alpha=0.55,
+            linewidth=0.6,
+        )
+        schematic.overlay_geometry(
+            ax_m,
+            solver,
+            plane="xy",
+            unit="µm",
+            structures=boxes,
+            show_boundaries=False,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.55,
+            outline_color=figstyle.INK,
+            label_materials=False,
+        )
+        ax_m.set_xlim(-1.05, 1.05)
+        ax_m.set_ylim(-0.32, 0.32)
+        ax_m.set_aspect("auto")
+        ax_m.set_xlabel("x [µm]")
+        ax_m.set_ylabel("y [µm]")
+        ax_m.set_title(
+            r"(b) Snapped Graded Mesh Zoom at Slit Jaws ($x = \pm a/2$, $y = \pm t/2$)"
+        )
+
+        # Label PEC jaws and cell counts in zoom view
+        for x_jaw in (-0.82, 0.82):
+            ax_m.text(
+                x_jaw,
+                0.0,
+                "PEC jaw\n($\\sigma \\to \\infty$)",
+                ha="center",
+                va="center",
+                fontsize=8.5,
+                fontweight="bold",
+                color=figstyle.INK,
+                bbox={
+                    "boxstyle": "round,pad=0.18",
+                    "facecolor": figstyle.PAPER,
+                    "edgecolor": "#94A3B8",
+                    "alpha": 0.9,
+                },
+                zorder=9,
+            )
+        ax_m.annotate(
+            "",
+            xy=(0.5 * a_um, 0.14),
+            xytext=(-0.5 * a_um, 0.14),
+            arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
+            zorder=9,
+        )
+        ax_m.text(
+            0.0,
+            0.16,
+            f"Slit opening $a = {a_um:.2f}$ µm ({grid_info['cells_across_slit']} cells $\\geq 4$)",
+            ha="center",
+            va="bottom",
+            fontsize=8.6,
+            fontweight="bold",
+            color="#0072B2",
+            zorder=9,
+        )
+        ax_m.annotate(
+            "",
+            xy=(-0.55 * a_um, 0.5 * t_um),
+            xytext=(-0.55 * a_um, -0.5 * t_um),
+            arrowprops={"arrowstyle": "<->", "color": "#D55E00", "lw": 1.3},
+            zorder=9,
+        )
+        ax_m.text(
+            -0.52 * a_um,
+            -0.13,
+            f"Screen thickness $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
+            ha="left",
+            va="top",
+            fontsize=8.5,
+            fontweight="bold",
+            color="#D55E00",
+            zorder=9,
+        )
+        _fix_unit_spaces_in_texts(ax_m)
+
+        figstyle.save(fig, output_path, close=True)
+
+
 def plot_source_and_fresnel(
     src_data: dict,
     fresnel_data: dict,
     output_path: str | Path,
 ) -> None:
-    """Generate the 4-panel figure for plane-wave injection & Fresnel near-field regimes."""
-    fig, axes = plt.subplots(2, 2, figsize=(12.8, 9.4), constrained_layout=True)
+    """Generate the 3-panel figure for plane-wave injection & Fresnel near-field regimes."""
+    wavelength = float(fresnel_data.get("wavelength", DEFAULT_WAVELENGTH))
+    a_fres = float(fresnel_data.get("slit_width", 2.8 * wavelength))
+    t_fres = max(float(fresnel_data.get("screen_thickness", 0.0)), 0.12 * wavelength)
+    solver_fres, _, boxes_fres, _, _ = _build_schematic_solver(
+        slit_width=a_fres,
+        wavelength=wavelength,
+        screen_thickness=t_fres,
+        cpw=22,
+        y_upstream=1.2 * wavelength,
+        y_downstream=8.2 * wavelength,
+    )
 
-    # Panel (a): Plane-wave source transverse uniformity (full-width vs PML-truncated)
-    ax = axes[0, 0]
-    ax.plot(
-        src_data["x_um"],
-        src_data["norm_amp_full"],
-        color="#1b6ca8",
-        lw=2.2,
-        label=f"Full-width source (into CPML): ripple = {float(src_data['ripple_full']) * 100:.2f}%",
-    )
-    ax.plot(
-        src_data["x_um"],
-        src_data["norm_amp_trunc"],
-        color="#d95f02",
-        lw=1.8,
-        ls="--",
-        label=f"Truncated inside CPML: ripple = {float(src_data['ripple_trunc']) * 100:.1f}%",
-    )
-    ax.axvspan(-1.5, 1.5, color="#e8f1f5", alpha=0.6, label=r"Central aperture zone $|x| \leq 2.5\lambda$")
-    ax.set_xlabel(r"Transverse position $x$ [$\mu$m]")
-    ax.set_ylabel(r"Normalized incident amplitude $|E_z^{\mathrm{inc}}(x, 0)| / E_0$ [-]")
-    ax.set_title("(a) Plane-wave source termination at lateral CPML")
-    ax.set_ylim(0.65, 1.30)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower center", fontsize=8.5)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.0, height=4.8)
 
-    # Panel (b): 2D intensity map |E_z(x, y)|^2 / |E_inc|^2 downstream of the slit
-    ax = axes[0, 1]
-    x_lam = fresnel_data["map_x_over_lam"]
-    y_lam = fresnel_data["map_y_over_lam"]
-    inten = fresnel_data["map_intensity"]
-    im = ax.pcolormesh(
-        x_lam,
-        y_lam,
-        inten.T,
-        shading="auto",
-        cmap="inferno",
-        vmin=0.0,
-        vmax=min(float(np.percentile(inten, 99.5)), 1.8),
-    )
-    fig.colorbar(im, ax=ax, label=r"$|E_z(x, y)|^2 / |E_{\mathrm{inc}}|^2$ [-]")
-    for nf_val, d_lam in zip(fresnel_data["nf_values"], fresnel_data["distances_over_lam"]):
-        ax.axhline(
-            float(d_lam),
-            color="#66c2a5",
-            ls="--",
-            lw=1.1,
+        # Panel (a): Plane-wave source transverse uniformity (full-width vs PML-truncated)
+        ax = axes[0]
+        ax.plot(
+            src_data["x_um"],
+            src_data["norm_amp_full"],
+            **figstyle.series_style(0, with_marker=False, lw=2.1),
+            label=f"Full-width source (into CPML): ripple = {float(src_data['ripple_full']) * 100:.2f}%",
+        )
+        ax.plot(
+            src_data["x_um"],
+            src_data["norm_amp_trunc"],
+            **figstyle.series_style(1, with_marker=False, lw=1.8),
+            label=f"Truncated inside CPML: ripple = {float(src_data['ripple_trunc']) * 100:.1f}%",
+        )
+        ax.axvspan(
+            -1.5,
+            1.5,
+            color="#E0F2FE",
+            alpha=0.55,
+            label=r"Central aperture zone $|x| \leq 2.5\lambda$",
+        )
+        schematic.overlay_geometry(
+            ax,
+            solver_fres,
+            plane="xy",
+            unit="µm",
+            orientation="1d",
+            structures=boxes_fres,
+            show_materials=False,
+            show_boundaries=True,
+        )
+        ax.set_xlabel(r"Transverse position $x$ [µm]")
+        ax.set_ylabel(r"Normalized incident amplitude $|E_z^{\mathrm{inc}}(x, 0)| / E_0$ [-]")
+        ax.set_title("(a) Source termination at lateral CPML")
+        ax.set_ylim(0.65, 1.30)
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="lower center", fontsize=7.8)
+
+        # Panel (b): 2D intensity map |E_z(x, y)|^2 / |E_inc|^2 with overlay_geometry
+        ax = axes[1]
+        lam_um = wavelength * 1e6
+        x_um = fresnel_data["map_x_over_lam"] * lam_um
+        y_um = fresnel_data["map_y_over_lam"] * lam_um
+        inten = fresnel_data["map_intensity"]
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            inten.T,
+            shading="auto",
+            cmap=figstyle.CMAP_INTENSITY,
+            vmin=0.0,
+            vmax=min(float(np.percentile(inten, 99.5)), 1.8),
+        )
+        fig.colorbar(im, ax=ax, label=r"$|E_z(x, y)|^2 / |E_{\mathrm{inc}}|^2$ [-]")
+        schematic.overlay_geometry(
+            ax,
+            solver_fres,
+            plane="xy",
+            unit="µm",
+            orientation="2d",
+            structures=boxes_fres,
+            show_boundaries=True,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.35,
+            outline_color="#FFFFFF",
+            label_materials=False,
         )
         ax.text(
-            float(x_lam[0]) + 0.25,
-            float(d_lam) + 0.08,
-            rf"$N_F={nf_val:g}$ ($L={d_lam:.2f}\lambda$)",
+            0.5 * (float(x_um[0]) - 0.5 * a_fres * 1e6),
+            0.16,
+            "PEC screen",
             color="white",
-            fontsize=8.0,
+            fontsize=7.6,
             fontweight="bold",
+            ha="center",
+            va="bottom",
+            zorder=8,
         )
-    ax.axhline(0.0, color="white", lw=2.0)
-    ax.set_xlabel(r"Transverse coordinate $x / \lambda$ [-]")
-    ax.set_ylabel(r"Propagation coordinate $y / \lambda$ [-]")
-    ax.set_title(r"(b) 2D FIT near-field intensity ($a = 2.8\lambda$, $\mathbf{E} \parallel$ slit)")
+        for nf_val, d_lam in zip(
+            fresnel_data["nf_values"], fresnel_data["distances_over_lam"]
+        ):
+            y_line_um = float(d_lam) * lam_um
+            ax.axhline(y_line_um, color="#009E73", ls="--", lw=1.1, zorder=7)
+            y_txt = y_line_um - 0.25 if nf_val <= 0.3 else y_line_um + 0.04
+            ax.text(
+                float(x_um[-1]) - 0.12,
+                y_txt,
+                rf"$N_F={nf_val:g}$ ($L={d_lam:.2f}\lambda$)",
+                color="white",
+                fontsize=7.5,
+                fontweight="bold",
+                ha="right",
+                zorder=8,
+            )
+        ax.set_xlim(float(x_um[0]), float(x_um[-1]))
+        ax.set_ylim(float(y_um[0]), float(y_um[-1]))
+        ax.set_aspect("auto")
+        ax.set_xlabel(r"Transverse coordinate $x$ [µm]")
+        ax.set_ylabel(r"Propagation coordinate $y$ [µm]")
+        ax.set_title(r"(b) 2D FIT near field ($a = 2.8\lambda = 1.68\;\mu\mathrm{m}$)")
 
-    # Panels (c) & (d): Fresnel line profiles at N_F = {1.5, 1.0} and {0.5, 0.25}
-    x_over_a = fresnel_data["x_over_a"]
-    nf_vals = fresnel_data["nf_values"]
-    d_lams = fresnel_data["distances_over_lam"]
-    fit_p = fresnel_data["fit_profiles"]
-    cornu_p = fresnel_data["cornu_profiles"]
-    rs1_p = fresnel_data["rs1_profiles"]
-    err_rs = fresnel_data["l2_errors_rs1"]
+        # Panel (c): Fresnel line profiles across N_F in {1.5, 1.0, 0.5, 0.25}
+        ax_p = axes[2]
+        x_over_a = fresnel_data["x_over_a"]
+        nf_vals = fresnel_data["nf_values"]
+        d_lams = fresnel_data["distances_over_lam"]
+        fit_p = fresnel_data["fit_profiles"]
+        cornu_p = fresnel_data["cornu_profiles"]
+        rs1_p = fresnel_data["rs1_profiles"]
+        err_rs = fresnel_data["l2_errors_rs1"]
 
-    for panel_idx, (ax_p, indices, title_tag) in enumerate(
-        [
-            (axes[1, 0], (0, 1), "(c) Near-zone Fresnel profiles ($N_F = 1.5, 1.0$)"),
-            (axes[1, 1], (2, 3), "(d) Transition to single lobe ($N_F = 0.5, 0.25$)"),
-        ]
-    ):
-        offsets = [0.0, 1.35]
-        colors = ["#1b6ca8", "#2b8a3e"]
-        for local_k, idx in enumerate(indices):
-            off = offsets[local_k]
+        offsets = [0.0, 1.25, 2.50, 3.75]
+        for idx in range(len(nf_vals)):
+            off = offsets[idx]
             nf = float(nf_vals[idx])
             dl = float(d_lams[idx])
             ax_p.plot(
                 x_over_a,
                 fit_p[idx] + off,
-                color=colors[local_k],
-                lw=2.1,
-                label=rf"FIT ($N_F={nf:g}$, $L={dl:.2f}\lambda$, $L^2={err_rs[idx]*100:.1f}\%$)",
+                color=figstyle.PALETTE[idx % len(figstyle.PALETTE)],
+                lw=2.0,
+                ls="-",
+                label=rf"FIT $N_F={nf:g}$ ($L^2={err_rs[idx]*100:.1f}\%$)",
             )
             ax_p.plot(
                 x_over_a,
                 rs1_p[idx] + off,
-                color="#111111",
-                lw=1.4,
+                color=figstyle.INK,
+                lw=1.3,
                 ls="--",
-                label="Rayleigh–Sommerfeld I" if local_k == 0 else "_nolegend_",
+                label="RS-I exact" if idx == 0 else "_nolegend_",
             )
             ax_p.plot(
                 x_over_a,
                 cornu_p[idx] + off,
-                color="#d95f02",
-                lw=1.3,
+                color="#D55E00",
+                lw=1.2,
                 ls=":",
-                label="Fresnel Cornu spiral" if local_k == 0 else "_nolegend_",
+                label="Cornu spiral" if idx == 0 else "_nolegend_",
             )
-        ax_p.axvline(-0.5, color="gray", ls=":", lw=1.0)
-        ax_p.axvline(0.5, color="gray", ls=":", lw=1.0)
+        ax_p.axvline(-0.5, color="#64748B", ls=":", lw=1.0)
+        ax_p.axvline(0.5, color="#64748B", ls=":", lw=1.0, label=r"Slit edges $x/a = \pm 0.5$")
         ax_p.set_xlim(-2.2, 2.2)
+        ax_p.set_ylim(-0.08, 6.25)
         ax_p.set_xlabel(r"Normalized transverse coordinate $x / a$ [-]")
         ax_p.set_ylabel(r"Normalized intensity $|E_z|^2 / |E_{\mathrm{inc}}|^2$ (offset) [-]")
-        ax_p.set_title(title_tag)
-        ax_p.grid(True, alpha=0.3)
-        ax_p.legend(loc="upper right", fontsize=8.0)
+        ax_p.set_title(r"(c) Fresnel profiles ($N_F = 1.5, 1.0, 0.5, 0.25$)")
+        figstyle.spectrum_grid(ax_p)
+        ax_p.legend(loc="upper center", ncol=2, fontsize=6.5)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_farfield_comparison(
     ff_data: dict,
     output_path: str | Path,
 ) -> None:
-    """Generate the 4-panel far-field angular pattern comparison figure."""
-    fig, axes = plt.subplots(2, 2, figsize=(12.8, 9.2), constrained_layout=True)
+    """Generate the 3-panel far-field angular pattern comparison figure."""
     theta_deg = ff_data["theta_deg"]
     ratios = ff_data["a_over_lam"]
 
-    for idx, ax in enumerate(axes.flat):
-        ratio = float(ratios[idx])
-        p_ez = ff_data["u2d_ez_norm"][idx]
-        p_hz = ff_data["u2d_hz_norm"][idx]
-        p_fraun = ff_data["fraunhofer"][idx]
-        p_kirch = ff_data["kirchhoff"][idx]
-        p_rs1 = ff_data["rs1"][idx]
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.0, height=4.8)
 
-        ax.plot(
-            theta_deg,
-            p_ez,
-            color="#1b6ca8",
-            lw=2.2,
-            label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$, TM$_z$)",
-        )
-        ax.plot(
-            theta_deg,
-            p_hz,
-            color="#d95f02",
-            lw=2.0,
-            ls="-.",
-            label=r"FIT $\mathbf{E} \perp$ slit ($H_z$, TE$_z$)",
-        )
-        ax.plot(
-            theta_deg,
-            p_fraun,
-            color="#111111",
-            lw=1.4,
-            ls="--",
-            label=r"Fraunhofer $\mathrm{sinc}^2(\beta)$ (= RS-II)",
-        )
-        ax.plot(
-            theta_deg,
-            p_rs1,
-            color="#2b8a3e",
-            lw=1.4,
-            ls=":",
-            label=r"Rayleigh–Sommerfeld I $\cos^2\theta\,\mathrm{sinc}^2(\beta)$",
-        )
-        ax.plot(
-            theta_deg,
-            p_kirch,
-            color="#7570b3",
-            lw=1.1,
-            ls=":",
-            alpha=0.85,
-            label=r"Kirchhoff $\frac{1}{4}(1+\cos\theta)^2\mathrm{sinc}^2(\beta)$",
-        )
+        # Panel (a): Wide slit a/lambda = 4.0 (idx 0)
+        # Panel (b): Intermediate slit a/lambda = 2.0 (idx 1)
+        for idx in (0, 1):
+            ax = axes[idx]
+            ratio = float(ratios[idx])
+            p_ez = ff_data["u2d_ez_norm"][idx]
+            p_hz = ff_data["u2d_hz_norm"][idx]
+            p_fraun = ff_data["fraunhofer"][idx]
+            p_kirch = ff_data["kirchhoff"][idx]
+            p_rs1 = ff_data["rs1"][idx]
 
-        panel_letter = chr(ord("a") + idx)
-        err_ez_rs1 = float(ff_data["l2_ez_vs_rs1"][idx]) * 100.0
-        err_hz_rs2 = float(ff_data["l2_hz_vs_rs2"][idx]) * 100.0
-        ax.set_title(
-            rf"({panel_letter}) $a / \lambda = {ratio:g}$ "
-            rf"($L^2_{{E_z,\mathrm{{RS-I}}}}={err_ez_rs1:.1f}\%$, "
-            rf"$L^2_{{H_z,\mathrm{{RS-II}}}}={err_hz_rs2:.1f}\%$)"
-        )
+            ax.plot(
+                theta_deg,
+                p_ez,
+                color=figstyle.PALETTE[0],
+                lw=2.0,
+                ls="-",
+                label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$, TM$_z$)",
+            )
+            ax.plot(
+                theta_deg,
+                p_hz,
+                color=figstyle.PALETTE[1],
+                lw=1.9,
+                ls="-.",
+                label=r"FIT $\mathbf{E} \perp$ slit ($H_z$, TE$_z$)",
+            )
+            ax.plot(
+                theta_deg,
+                p_fraun,
+                color=figstyle.INK,
+                lw=1.3,
+                ls="--",
+                label=r"Fraunhofer $\mathrm{sinc}^2(\beta)$ (= RS-II)",
+            )
+            ax.plot(
+                theta_deg,
+                p_rs1,
+                color=figstyle.PALETTE[2],
+                lw=1.3,
+                ls=":",
+                label=r"RS-I $\cos^2\theta\,\mathrm{sinc}^2(\beta)$",
+            )
+            ax.plot(
+                theta_deg,
+                p_kirch,
+                color=figstyle.PALETTE[4],
+                lw=1.1,
+                ls=":",
+                alpha=0.85,
+                label=r"Kirchhoff $\frac{1}{4}(1+\cos\theta)^2\mathrm{sinc}^2(\beta)$",
+            )
+
+            panel_letter = chr(ord("a") + idx)
+            err_ez_rs1 = float(ff_data["l2_ez_vs_rs1"][idx]) * 100.0
+            err_hz_rs2 = float(ff_data["l2_hz_vs_rs2"][idx]) * 100.0
+            ax.set_title(
+                rf"({panel_letter}) $a / \lambda = {ratio:g}$ "
+                rf"($L^2_{{E_z}}={err_ez_rs1:.1f}\%$, $L^2_{{H_z}}={err_hz_rs2:.1f}\%$)"
+            )
+            ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
+            ax.set_ylabel(
+                r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta) / U_{\mathrm{2D}}(0)$ [-]"
+            )
+            ax.set_xlim(-82.0, 82.0)
+            ax.set_ylim(-0.03, 1.08)
+            figstyle.spectrum_grid(ax)
+            if idx == 0:
+                ax.legend(loc="upper right", fontsize=7.4)
+
+        # Panel (c): Wavelength-scale & sub-wavelength slits a/lambda = 1.0 & 0.6 (idx 2, 3)
+        ax = axes[2]
+        offsets = [0.0, 1.15]
+        for local_k, idx in enumerate((2, 3)):
+            off = offsets[local_k]
+            ratio = float(ratios[idx])
+            p_ez = ff_data["u2d_ez_norm"][idx]
+            p_hz = ff_data["u2d_hz_norm"][idx]
+            p_fraun = ff_data["fraunhofer"][idx]
+            p_rs1 = ff_data["rs1"][idx]
+            err_ez_rs1 = float(ff_data["l2_ez_vs_rs1"][idx]) * 100.0
+            err_hz_rs2 = float(ff_data["l2_hz_vs_rs2"][idx]) * 100.0
+
+            ax.plot(
+                theta_deg,
+                p_ez + off,
+                color=figstyle.PALETTE[0],
+                lw=2.0,
+                ls="-",
+                label=rf"FIT $E_z$, $a/\lambda={ratio:g}$ ($L^2={err_ez_rs1:.1f}\%$)",
+            )
+            ax.plot(
+                theta_deg,
+                p_hz + off,
+                color=figstyle.PALETTE[1],
+                lw=1.9,
+                ls="-.",
+                label=rf"FIT $H_z$, $a/\lambda={ratio:g}$ ($L^2={err_hz_rs2:.1f}\%$)",
+            )
+            ax.plot(
+                theta_deg,
+                p_fraun + off,
+                color=figstyle.INK,
+                lw=1.2,
+                ls="--",
+                label="RS-II / Fraunhofer" if local_k == 0 else "_nolegend_",
+            )
+            ax.plot(
+                theta_deg,
+                p_rs1 + off,
+                color=figstyle.PALETTE[2],
+                lw=1.2,
+                ls=":",
+                label="RS-I obliquity" if local_k == 0 else "_nolegend_",
+            )
+
+        ax.set_title(r"(c) Vectorial obliquity split ($a / \lambda = 1.0$ & $0.6$)")
         ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
-        ax.set_ylabel(r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta) / U_{\mathrm{2D}}(0)$ [-]")
+        ax.set_ylabel(r"Normalized far-field intensity (offset) [-]")
         ax.set_xlim(-82.0, 82.0)
-        ax.set_ylim(-0.03, 1.08)
-        ax.grid(True, alpha=0.3)
-        if idx == 0:
-            ax.legend(loc="upper right", fontsize=8.0)
+        ax.set_ylim(-0.04, 2.75)
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper center", ncol=2, fontsize=6.6)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_transmission_and_resolution(
@@ -1503,118 +1925,135 @@ def plot_transmission_and_resolution(
     output_path: str | Path,
 ) -> None:
     """Generate the 2-panel figure for transmission tau(a/lambda) and grid convergence."""
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.2), constrained_layout=True)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=4.8)
 
-    # Panel (a): Total transmitted power efficiency tau(a/lambda)
-    ax = axes[0]
-    ratios = trans_data["a_over_lam"]
-    ax.plot(
-        ratios,
-        trans_data["tau_ez_thick"],
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=6,
-        label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$), $t = 0.20\lambda$ PEC box",
-    )
-    ax.plot(
-        ratios,
-        trans_data["tau_hz_thick"],
-        "s-",
-        color="#d95f02",
-        lw=2.1,
-        ms=6,
-        label=r"FIT $\mathbf{E} \perp$ slit ($H_z$), $t = 0.20\lambda$ PEC box",
-    )
-    ax.plot(
-        ratios,
-        trans_data["tau_ez_sheet"],
-        "^--",
-        color="#41b6c4",
-        lw=1.6,
-        ms=5,
-        label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$), $t = 0$ conformal PEC sheet",
-    )
-    ax.plot(
-        ratios,
-        trans_data["tau_hz_sheet"],
-        "v--",
-        color="#fdae61",
-        lw=1.6,
-        ms=5,
-        label=r"FIT $\mathbf{E} \perp$ slit ($H_z$), $t = 0$ conformal PEC sheet",
-    )
-    ax.plot(
-        trans_data["model_a_over_lam"],
-        trans_data["model_tau_ez_thick"],
-        color="#084081",
-        ls=":",
-        lw=1.4,
-        label=r"Waveguide TE$_{10}$ model ($t = 0.20\lambda$)",
-    )
-    ax.plot(
-        trans_data["model_a_over_lam"],
-        trans_data["model_tau_hz_thick"],
-        color="#8c2d04",
-        ls=":",
-        lw=1.4,
-        label=r"Takakura TEM Fabry–Pérot model ($t = 0.20\lambda$)",
-    )
-    ax.axhline(1.0, color="gray", ls="--", lw=1.0, label=r"Scalar Kirchhoff limit $\tau = 1$")
-    ax.axvline(0.5, color="#1b6ca8", ls=":", lw=1.2, alpha=0.8)
-    ax.text(
-        0.52,
-        0.12,
-        r"TE$_{10}$ cutoff $a = \lambda/2$",
-        color="#1b6ca8",
-        fontsize=8.5,
-    )
-    ax.set_xlabel(r"Normalized slit width $a / \lambda$ [-]")
-    ax.set_ylabel(r"Normalized transmission efficiency $\tau = P'_{\mathrm{trans}} / (a I_{\mathrm{inc}})$ [-]")
-    ax.set_title(r"(a) Vectorial transmission $\tau(a/\lambda)$: polarization & thickness")
-    ax.set_ylim(-0.02, 1.32)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower right", fontsize=7.8)
+        # Panel (a): Total transmitted power efficiency tau(a/lambda)
+        ax = axes[0]
+        ratios = trans_data["a_over_lam"]
+        ax.plot(
+            ratios,
+            trans_data["tau_ez_thick"],
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=5.5,
+            label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$), $t = 0.20\lambda$ PEC box",
+        )
+        ax.plot(
+            ratios,
+            trans_data["tau_hz_thick"],
+            "s-",
+            color=figstyle.PALETTE[1],
+            lw=2.0,
+            ms=5.5,
+            label=r"FIT $\mathbf{E} \perp$ slit ($H_z$), $t = 0.20\lambda$ PEC box",
+        )
+        ax.plot(
+            ratios,
+            trans_data["tau_ez_sheet"],
+            "^--",
+            color=figstyle.PALETTE[3],
+            lw=1.6,
+            ms=5.0,
+            label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$), $t = 0$ conformal PEC sheet",
+        )
+        ax.plot(
+            ratios,
+            trans_data["tau_hz_sheet"],
+            "v--",
+            color=figstyle.PALETTE[5],
+            lw=1.6,
+            ms=5.0,
+            label=r"FIT $\mathbf{E} \perp$ slit ($H_z$), $t = 0$ conformal PEC sheet",
+        )
+        ax.plot(
+            trans_data["model_a_over_lam"],
+            trans_data["model_tau_ez_thick"],
+            color="#004C78",
+            ls=":",
+            lw=1.4,
+            label=r"Waveguide TE$_{10}$ model ($t = 0.20\lambda$)",
+        )
+        ax.plot(
+            trans_data["model_a_over_lam"],
+            trans_data["model_tau_hz_thick"],
+            color="#8C2D04",
+            ls=":",
+            lw=1.4,
+            label=r"Takakura TEM Fabry–Pérot model ($t = 0.20\lambda$)",
+        )
+        ax.axhline(
+            1.0,
+            color="#64748B",
+            ls="--",
+            lw=1.0,
+            label=r"Scalar Kirchhoff limit $\tau = 1$",
+        )
+        ax.axvline(0.5, color=figstyle.PALETTE[0], ls=":", lw=1.2, alpha=0.8)
+        ax.text(
+            0.52,
+            0.12,
+            r"TE$_{10}$ cutoff $a = \lambda/2$",
+            color=figstyle.PALETTE[0],
+            fontsize=8.5,
+        )
+        ax.set_xlabel(r"Normalized slit width $a / \lambda$ [-]")
+        ax.set_ylabel(
+            r"Normalized transmission efficiency $\tau = P'_{\mathrm{trans}} / (a I_{\mathrm{inc}})$ [-]"
+        )
+        ax.set_title(r"(a) Vectorial transmission $\tau(a/\lambda)$: polarization & thickness")
+        ax.set_ylim(-0.02, 1.32)
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="lower right", fontsize=7.6)
 
-    # Panel (b): Resolution convergence study
-    ax = axes[1]
-    cpw = res_data["cpw_values"]
-    ax.plot(
-        cpw,
-        res_data["l2_vs_rs1"] * 100.0,
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=6,
-        label=r"Far-field $L^2$ error vs RS-I [%]",
-    )
-    ax.plot(
-        cpw,
-        res_data["rel_to_finest"] * 100.0,
-        "s--",
-        color="#2b8a3e",
-        lw=1.9,
-        ms=6,
-        label=r"Relative $L^2$ diff vs finest mesh [%]",
-    )
-    tau_rel = np.abs(res_data["tau_values"] - res_data["tau_values"][-1]) / res_data["tau_values"][-1]
-    ax.plot(
-        cpw,
-        tau_rel * 100.0,
-        "^-.",
-        color="#d95f02",
-        lw=1.8,
-        ms=6,
-        label=r"$|\tau(\mathrm{cpw}) - \tau_{\mathrm{fine}}| / \tau_{\mathrm{fine}}$ [%]",
-    )
-    ax.axvline(20.0, color="gray", ls=":", lw=1.2, label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$")
-    ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
-    ax.set_ylabel("Relative error / discrepancy [%]")
-    ax.set_title(r"(b) Mesh convergence ($a = 2\lambda$, $t = 0.15\lambda$, $\mathbf{E} \parallel$ slit)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+        # Panel (b): Resolution convergence study
+        ax = axes[1]
+        cpw = res_data["cpw_values"]
+        ax.plot(
+            cpw,
+            res_data["l2_vs_rs1"] * 100.0,
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=5.5,
+            label=r"Far-field $L^2$ error vs RS-I [%]",
+        )
+        ax.plot(
+            cpw,
+            res_data["rel_to_finest"] * 100.0,
+            "s--",
+            color=figstyle.PALETTE[2],
+            lw=1.8,
+            ms=5.5,
+            label=r"Relative $L^2$ diff vs finest mesh [%]",
+        )
+        tau_rel = (
+            np.abs(res_data["tau_values"] - res_data["tau_values"][-1])
+            / res_data["tau_values"][-1]
+        )
+        ax.plot(
+            cpw,
+            tau_rel * 100.0,
+            "^-.",
+            color=figstyle.PALETTE[1],
+            lw=1.8,
+            ms=5.5,
+            label=r"$|\tau(\mathrm{cpw}) - \tau_{\mathrm{fine}}| / \tau_{\mathrm{fine}}$ [%]",
+        )
+        ax.axvline(
+            20.0,
+            color="#64748B",
+            ls=":",
+            lw=1.2,
+            label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$",
+        )
+        ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
+        ax.set_ylabel("Relative error / discrepancy [%]")
+        ax.set_title(
+            r"(b) Mesh convergence ($a = 2\lambda$, $t = 0.15\lambda$, $\mathbf{E} \parallel$ slit)"
+        )
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=8.0)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)

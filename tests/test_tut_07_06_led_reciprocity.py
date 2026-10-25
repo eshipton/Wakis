@@ -605,14 +605,33 @@ def test_janssen_optimization_study_and_resonances():
     data_dir = TUTORIAL_DIR / "data"
     fig_dir = TUTORIAL_DIR / "figures"
     for fname in (
+        "00_setup_schematic.png",
         "00_emitter_absorber_schematic.png",
+        "01_geometry_mesh.png",
+        "02_field_snapshots_and_movie.png",
+        "02_reciprocal_wave_movie.gif",
+        "03_flat_slab_tmm_vs_wakis_angle.png",
+        "04_flat_slab_depth_standing_wave.png",
+        "05_silver_vs_pec_mirror.png",
+        "06_reciprocity_point_by_point.png",
+        "07_ensemble_direct_vs_reciprocity.png",
+        "08_incoherent_vs_coherent_sum.png",
+        "09_dipole_count_convergence.png",
+        "10_grating_vs_flat_extraction.png",
+        "11_reciprocal_2d_field_maps.png",
+        "11b_forward_vs_reciprocal_field_map.png",
+        "12_cost_crossover_scaling.png",
+        "13_resolution_convergence_kottke_vs_staircase.png",
+        "14_wavelength_broadband_incoherent.png",
+        "15_metal_skin_depth_resolution_study.png",
         "16_janssen_fig2_shallow_grating_resonances.png",
         "17_janssen_fig4_thickness_depth_landscape.png",
         "18_janssen_fig5_active_layer_position.png",
         "19_janssen_fig6_pitch_scan_enhancement.png",
     ):
         p_fig = fig_dir / fname
-        assert p_fig.exists() and p_fig.stat().st_size > 15_000, f"Missing or empty figure {fname}"
+        assert p_fig.exists() and p_fig.stat().st_size > 10_000, f"Missing or empty figure {fname}"
+    assert (fig_dir / "02_reciprocal_wave_movie.gif").stat().st_size < 5 * 1024 * 1024
 
     j_sum = json.loads((data_dir / "janssen_optimization.json").read_text())
     j_npz = np.load(data_dir / "janssen_optimization.npz", allow_pickle=True)

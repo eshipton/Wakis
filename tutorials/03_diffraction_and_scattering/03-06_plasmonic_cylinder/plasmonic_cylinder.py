@@ -133,11 +133,14 @@ from scipy.constants import c as c0
 from scipy.constants import epsilon_0 as eps_0
 
 import wakis
+import wakis.figstyle as figstyle
+import wakis.schematic as schematic
 from wakis import visualize as wv
 from wakis.analytic.mie_cylinder import (
     cylinder_efficiencies,
     cylinder_rayleigh_efficiencies,
 )
+from wakis.benchmarks.meshing import cluster_mesh
 from wakis.benchmarks.metrics import nrms, peak
 from wakis.dispersive import (
     EV,
@@ -150,9 +153,10 @@ from wakis.dispersive import (
 )
 from wakis.estimate import estimate, preflight
 from wakis.sources import GaussianSource
+from wakis.unstructured import UnstructuredFIT2D
 
 print(wv.setup_rendering())
-plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110, "font.size": 10})
+figstyle.apply_style()
 
 IN_NOTEBOOK = "ipykernel" in sys.modules
 parser = argparse.ArgumentParser(
@@ -214,11 +218,65 @@ print(
 )
 
 
-def savefig(fig, name, dpi=120):
-    """Save a figure in figures/ and return the path."""
+def savefig(fig, name, dpi=220):
+    """Apply `wakis.figstyle.finish` and save `fig` in `figures/`."""
     path = FIG_DIR / name
-    fig.savefig(path, bbox_inches="tight", dpi=dpi)
+    figstyle.finish(fig)
+    figstyle.save(fig, path, dpi=dpi)
     return path
+
+
+def _fix_unit_spaces(ax):
+    """Ensure spacing before units in schematic text labels."""
+    import re
+
+    for txt in ax.texts:
+        s = txt.get_text()
+        s_new = s.replace(r"\mu m", r"\,\mu\mathrm{m}")
+        s_new = re.sub(
+            r"(\d)\\text\{(THz|GHz|MHz|nm|mm|ps|fs)\}", r"\1\\;\\text{\2}", s_new
+        )
+        s_new = re.sub(r"(\d)(THz|GHz|MHz)", r"\1\,\\mathrm{\2}", s_new)
+        s_new = re.sub(r"(\d)(µm|nm|mm|ps|fs)\b", r"\1 \2", s_new)
+        s_new = re.sub(r"\(9 cells,\s*[^)]+\)", "(9 cells)", s_new)
+        if s_new != s:
+            txt.set_text(s_new)
+
+
+def _fix_cylinder_patch(ax, radius_nm=20.0, tol=6.0, fill=None):
+    """Replace the STL bounding-box Rectangle at (-a, -a, 2a, 2a) with a Circle."""
+    from matplotlib.patches import Circle, Rectangle
+
+    for p in list(ax.patches):
+        if isinstance(p, Rectangle):
+            x0, y0 = p.get_xy()
+            w, h = p.get_width(), p.get_height()
+            if (
+                abs(x0 + radius_nm) < tol
+                and abs(y0 + radius_nm) < tol
+                and abs(w - 2 * radius_nm) < 2 * tol
+                and abs(h - 2 * radius_nm) < 2 * tol
+                and p.get_linestyle() in ("solid", "-")
+            ):
+                fc = p.get_facecolor() if fill is None else fill
+                ec = p.get_edgecolor()
+                lw = p.get_linewidth()
+                zo = p.get_zorder()
+                p.remove()
+                ax.add_patch(
+                    Circle(
+                        (0.0, 0.0),
+                        radius_nm,
+                        facecolor=fc,
+                        edgecolor=ec,
+                        lw=lw,
+                        zorder=zo,
+                    )
+                )
+    for t in ax.texts:
+        if "Ag" in t.get_text() or "Cylinder" in t.get_text():
+            t.set_text("Ag ($N=2$)")
+            t.set_position((0.0, 0.0))
 
 
 # %% [markdown]
@@ -491,6 +549,293 @@ def load_committed_json(filename):
 MODELS_DATA = load_committed_json("models.json")
 SPECTRA_DATA = load_committed_json("spectra_and_errors.json")
 TIMING_DATA = load_committed_json("timing.json")
+TRI_DATA = load_committed_json("triangle_lspr.json")
+TRIANGLE_DATA = {"meshes": TRI_DATA} if "meshes" not in TRI_DATA else TRI_DATA
+TRI_NPZ = np.load(DATA_DIR / "triangle_lspr_fields.npz")
+
+
+def plot_setup_schematic():
+    """Render the 3-panel setup schematic and side-by-side mesh zoom (`00_setup_schematic.png`)."""
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import Circle
+
+    dx_s = 4e-9
+    r_m = 20e-9
+    i_a = int(np.ceil(r_m / dx_s - 1e-9))
+    i_in = i_a + 2
+    i_tf = i_in + 2
+    i_flux = i_tf + 2
+    i_pml = i_flux + 3
+    n_pml = 9
+    n_half = i_pml + n_pml
+    nz = 4
+    dz_s = 10.0 * dx_s
+    half_s = n_half * dx_s
+    hz_s = 0.5 * nz * dz_s
+
+    mat_ag = reconstruct_material(MODELS_DATA["metals"]["Ag"]["models"]["N2"])
+    cyl_pv = pv.Cylinder(
+        center=(0.0, 0.0, 0.0),
+        direction=(0.0, 0.0, 1.0),
+        radius=r_m,
+        height=10.0 * hz_s,
+        resolution=360,
+        capping=True,
+    ).triangulate()
+    grid_c = wakis.GridFIT3D(
+        -half_s,
+        half_s,
+        -half_s,
+        half_s,
+        -hz_s,
+        hz_s,
+        2 * n_half,
+        2 * n_half,
+        nz,
+        stl_solids={"cylinder": cyl_pv},
+        stl_materials={"cylinder": mat_ag},
+        conformal="all",
+        verbose=0,
+    )
+    solver_c = wakis.SolverFIT3D(
+        grid_c,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=n_pml,
+        use_stl=True,
+        cfln=0.85,
+        verbose=0,
+    )
+    f_min, f_max = c0 / 900e-9, c0 / 300e-9
+    pulse = GaussianSource(
+        frequency=0.5 * (f_min + f_max), fwidth=0.25 * (f_max - f_min)
+    )
+    src_c = wakis.TFSFSource(
+        pulse,
+        center=(0.0, 0.0, 0.0),
+        size=(2.0 * i_tf * dx_s, 2.0 * i_tf * dx_s, None),
+        direction="+x",
+        polarization="y",
+        amplitude=1.0,
+    )
+    src_c.label = "TFSFSource ($\\mathbf{k}\\parallel +x,\\;\\mathbf{E}\\parallel y$)"
+    mon_c = [
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "Outer FluxMonitor ($P'_\\mathrm{sca}$)",
+            "h_bounds": (-i_flux * dx_s, i_flux * dx_s),
+            "v_bounds": (-i_flux * dx_s, i_flux * dx_s),
+        },
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "Inner FluxMonitor ($P'_\\mathrm{abs}$)",
+            "h_bounds": (-i_in * dx_s, i_in * dx_s),
+            "v_bounds": (-i_in * dx_s, i_in * dx_s),
+        },
+    ]
+
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.8)
+
+    # Panel (a): Cartesian 2D setup
+    schematic.plot_schematic(
+        solver_c,
+        plane="xy",
+        ax=axes[0],
+        unit="nm",
+        material_names={"cylinder": "Ag ($N=2$ Drude–Lorentz)"},
+        sources=[src_c],
+        monitors=mon_c,
+        show_mesh=False,
+        show_wave_packet=False,
+        wavelength=300e-9,
+        title="(a) Cartesian 2D setup (TF/SF + FluxMonitor)",
+    )
+    _fix_cylinder_patch(axes[0], 20.0, tol=6.0)
+    _fix_unit_spaces(axes[0])
+    L_half_nm = half_s * 1e9
+    for txt in list(axes[0].texts):
+        s_t = txt.get_text()
+        if "Out-of-plane" in s_t and "boundaries:" not in s_t:
+            txt.remove()
+        elif "boundaries: CPML" in s_t or "+y boundary" in s_t:
+            x0_t, _ = txt.get_position()
+            txt.set_text("$\\pm y$: CPML (9 cells)  |  $\\pm z$: Periodic")
+            txt.set_position((x0_t, L_half_nm + 7.5))
+    axes[0].set_ylim(-L_half_nm - 6.0, L_half_nm + 42.0)
+    if axes[0].get_legend() is not None:
+        axes[0].get_legend().remove()
+
+    # Panel (b): Body-fitted 2D triangular mesh setup (`UnstructuredFIT2D`)
+    h_s_b, h_out_b, r_pml_b = 2.0e-9, 6.0e-9, 80.0e-9
+    mesh_b = cluster_mesh(
+        [dict(center=(0.0, 0.0), radius=r_m)],
+        h_s_b,
+        h_out_b,
+        r_pml_b,
+        growth=1.18,
+        pml_layers=10,
+        pml_dr=h_out_b,
+    )
+    solver_b = UnstructuredFIT2D(
+        mesh_b,
+        {0: [1.0, 1.0], 1: mat_ag, 2: [1.0, 1.0]},
+        polarization="TE",
+        bc="pec",
+        hodge="voronoi",
+        cfl=0.90,
+        pml=dict(r0=r_pml_b, r1=r_pml_b + 10 * h_out_b, kappa_max=1.0, alpha=0.0),
+    )
+    solver_b.add_plane_wave(pulse, direction=(1.0, 0.0), background_eps_r=1.0)
+    schematic.plot_schematic(
+        solver_b,
+        plane="xy",
+        ax=axes[1],
+        unit="nm",
+        material_names={1: "Ag ($N=2$)"},
+        show_mesh=True,
+        show_wave_packet=False,
+        wavelength=300e-9,
+        title="(b) Body-fitted triangular setup (radial CFS-PML)",
+    )
+    for r_ring_nm, lbl_r in ((45.0, None), (55.0, None), (65.0, "Harmonic rings")):
+        axes[1].add_patch(
+            Circle(
+                (0.0, 0.0),
+                r_ring_nm,
+                fill=False,
+                ec="#009E73",
+                ls=":",
+                lw=1.1,
+                zorder=6,
+            )
+        )
+        if lbl_r:
+            axes[1].text(
+                0.0,
+                r_ring_nm + 4.0,
+                lbl_r,
+                ha="center",
+                va="bottom",
+                fontsize=7.3,
+                fontweight="bold",
+                color="#009E73",
+                bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.82},
+                zorder=8,
+            )
+    axes[1].add_patch(
+        Circle((0.0, 0.0), 80.0, fill=False, ec="#64748B", ls="--", lw=1.0, zorder=6)
+    )
+    axes[1].text(
+        0.0,
+        -98.0,
+        "Radial CFS-PML ($r \\in [80, 140]$ nm)",
+        ha="center",
+        va="center",
+        fontsize=7.3,
+        fontweight="bold",
+        color="#334155",
+        bbox={"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+        zorder=8,
+    )
+    _fix_unit_spaces(axes[1])
+    if axes[1].get_legend() is not None:
+        axes[1].get_legend().remove()
+
+    # Panel (c): Side-by-side mesh zoom at the curved r = 20 nm Ag cylinder interface
+    ax_z = axes[2]
+    # Left half (x < 0): Cartesian grid (h = 2.0 nm)
+    xs_c = np.arange(-28.0, 0.1, 2.0)
+    ys_c = np.arange(-28.0, 28.1, 2.0)
+    segs_c = []
+    for xv in xs_c:
+        segs_c.append([(xv, -28.0), (xv, 28.0)])
+    for yv in ys_c:
+        segs_c.append([(-28.0, yv), (0.0, yv)])
+    ax_z.add_collection(
+        LineCollection(segs_c, colors="#64748B", linewidths=0.65, alpha=0.6, zorder=3)
+    )
+    # Right half (x >= 0): Body-fitted locally refined triangular mesh (h_s = 1.25 nm)
+    nodes_nm = TRI_NPZ["nodes_nm"]
+    cells_t = TRI_NPZ["cells"]
+    cent_nm = nodes_nm[cells_t].mean(axis=1)
+    right_mask = (cent_nm[:, 0] >= -1.0) & (np.abs(cent_nm[:, 1]) <= 29.0) & (cent_nm[:, 0] <= 29.0)
+    segs_t = []
+    for tri_c in cells_t[right_mask]:
+        p0, p1, p2 = nodes_nm[tri_c[0]], nodes_nm[tri_c[1]], nodes_nm[tri_c[2]]
+        for pa, pb in ((p0, p1), (p1, p2), (p2, p0)):
+            if pa[0] >= -0.5 and pb[0] >= -0.5:
+                segs_t.append([pa, pb])
+    ax_z.add_collection(
+        LineCollection(segs_t, colors="#0F766E", linewidths=0.65, alpha=0.65, zorder=3)
+    )
+    # Fill Ag cylinder and draw exact r = 20 nm circle + vertical split line x = 0
+    ax_z.add_patch(
+        Circle(
+            (0.0, 0.0),
+            20.0,
+            facecolor="#CBD5E1",
+            edgecolor="#0F172A",
+            lw=1.6,
+            alpha=0.38,
+            zorder=4,
+        )
+    )
+    ax_z.axvline(0.0, color="#0F172A", ls="--", lw=1.1, zorder=5)
+    # Skin depth ring at r = a - delta_min is near the center since a = 20 nm, delta_min = 22.5 nm
+    ax_z.text(
+        -14.0,
+        24.0,
+        "Cartesian\n($h = 2.0$ nm)\n$11.2\\;\\mathrm{cells}/\\delta_\\mathrm{min}$",
+        ha="center",
+        va="top",
+        fontsize=7.6,
+        fontweight="bold",
+        color="#334155",
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.92},
+        zorder=8,
+    )
+    ax_z.text(
+        14.0,
+        24.0,
+        "Body-fitted triangles\n($h_s = 1.25$ nm)\n$18.0\\;\\mathrm{elems}/\\delta_\\mathrm{min}$",
+        ha="center",
+        va="top",
+        fontsize=7.6,
+        fontweight="bold",
+        color="#0F766E",
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#0F766E", "alpha": 0.92},
+        zorder=8,
+    )
+    ax_z.text(
+        0.0,
+        -24.2,
+        "Ag ($2a = 40$ nm, $\\delta_\\mathrm{min} = 22.5$ nm, $\\delta(\\lambda_\\mathrm{res}) = 28.6$ nm)",
+        ha="center",
+        va="bottom",
+        fontsize=7.5,
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "#FFF7ED", "edgecolor": "#FDBA74", "alpha": 0.95},
+        zorder=9,
+    )
+    ax_z.set_xlim(-27.5, 27.5)
+    ax_z.set_ylim(-27.5, 27.5)
+    ax_z.set_aspect("equal", adjustable="box")
+    ax_z.set_xlabel("$x$ [nm]")
+    ax_z.set_ylabel("$y$ [nm]")
+    ax_z.set_title("(c) Side-by-side mesh zoom ($r = 20$ nm Ag cylinder)")
+
+    fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.25)
+    savefig(fig, "00_setup_schematic.png")
+    plt.close(fig)
+
+
+plot_setup_schematic()
+fig_s, ax_s = plt.subplots(figsize=(14.6, 4.8))
+ax_s.imshow(plt.imread(FIG_DIR / "00_setup_schematic.png"))
+ax_s.axis("off")
+plt.show()
 
 if not PLOT_ONLY and ARGS.task in ("all", "fit"):
     demo_mat, demo_rms = fit_jc_poles("Ag", n_poles=2, n_starts=4)
@@ -527,7 +872,7 @@ for metal in ("Ag", "Au"):
         )
 
 # %%
-# Figure 1: eps'(lambda) and -eps''(lambda) of each fit vs J&C data for Ag and Au
+# Figure 1 (3 panels): (a) Ag Re eps(lambda), (b) Au Re eps(lambda), (c) Ag & Au loss -Im eps(lambda) >= 0
 MODEL_COLORS = {
     "N1": "#E69F00",
     "N2": "#0072B2",
@@ -545,32 +890,22 @@ MODEL_LABELS = {
     "Rakic": "Rakić 1998 (1D + 5L)",
 }
 
-fig, axes = plt.subplots(2, 2, figsize=(12.5, 7.6), sharex=True)
-for col_idx, (metal, title_metal) in enumerate(
-    (("Ag", "Silver (Ag)"), ("Au", "Gold (Au)"))
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.4, height_in=4.3)
+for col_idx, (metal, panel_lbl, title_metal) in enumerate(
+    (("Ag", "(a)", "Silver (Ag)"), ("Au", "(b)", "Gold (Au)"))
 ):
     mdata = MODELS_DATA["metals"][metal]
     jc_raw = mdata["jc_raw"]
-    ax_re = axes[0, col_idx]
-    ax_im = axes[1, col_idx]
+    ax_re = axes[col_idx]
 
     ax_re.plot(
         jc_raw["lam_nm"],
         jc_raw["eps_real"],
         "ko",
-        ms=4.0,
+        ms=3.8,
         label="J&C 1972 (CC0 data)",
         zorder=5,
     )
-    ax_im.plot(
-        jc_raw["lam_nm"],
-        [-v for v in jc_raw["eps_imag"]],
-        "ko",
-        ms=4.0,
-        label="J&C 1972 (CC0 data)",
-        zorder=5,
-    )
-
     for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
         minfo = mdata["models"][k]
         ls = "--" if k in ("N1", "Rakic") else "-"
@@ -580,37 +915,82 @@ for col_idx, (metal, title_metal) in enumerate(
         ax_re.plot(
             LAM_EVAL_NM, minfo["eps_real"], color=MODEL_COLORS[k], ls=ls, lw=lw, label=lbl
         )
-        ax_im.plot(
-            LAM_EVAL_NM,
-            [-v for v in minfo["eps_imag"]],
-            color=MODEL_COLORS[k],
-            ls=ls,
-            lw=lw,
-            label=lbl,
-        )
 
     ax_re.axhline(
         -1.0, color="0.35", ls=":", lw=1.0, label=r"2D quasi-static $\varepsilon' = -1$"
     )
     lam_res_jc = SPECTRA_DATA[f"{metal}_40nm"]["mie_jc"]["lam_peak_nm"]
     ax_re.axvline(lam_res_jc, color="0.5", ls="-.", lw=0.9)
-    ax_im.axvline(lam_res_jc, color="0.5", ls="-.", lw=0.9)
     ax_re.set_title(
-        f"{title_metal}: real permittivity $\\mathrm{{Re}}\\,\\varepsilon(\\lambda)$"
-    )
-    ax_im.set_title(
-        f"{title_metal}: loss $-\\mathrm{{Im}}\\,\\varepsilon(\\lambda)$ (passive $\\geq 0$)"
+        f"{panel_lbl} {title_metal}: $\\mathrm{{Re}}\\,\\varepsilon(\\lambda)$"
     )
     ax_re.set_ylabel(r"$\mathrm{Re}\,\varepsilon(\lambda)$")
-    ax_im.set_ylabel(r"$-\mathrm{Im}\,\varepsilon(\lambda)$")
-    ax_im.set_xlabel(r"wavelength $\lambda$ [nm]")
+    ax_re.set_xlabel(r"wavelength $\lambda$ [nm]")
     ax_re.set_ylim(-42, 6)
-    ax_im.set_ylim(0, 7.5 if metal == "Au" else 4.5)
-    ax_re.grid(True, alpha=0.25)
-    ax_im.grid(True, alpha=0.25)
-    ax_re.legend(fontsize=7.5, loc="lower left")
+    ax_re.legend(fontsize=6.8, loc="lower left")
 
-fig.tight_layout()
+# Panel (c): Loss -Im eps(lambda) >= 0 (passivity) for Ag and Au
+ax_im = axes[2]
+for metal, m_col, m_mk in (("Ag", "#0072B2", "o"), ("Au", "#D55E00", "s")):
+    mdata = MODELS_DATA["metals"][metal]
+    jc_raw = mdata["jc_raw"]
+    ax_im.plot(
+        jc_raw["lam_nm"],
+        [-v for v in jc_raw["eps_imag"]],
+        marker=m_mk,
+        ls="none",
+        ms=3.5,
+        color=m_col,
+        alpha=0.75,
+        label=f"{metal} J&C 1972 data",
+    )
+ax_im.plot(
+    LAM_EVAL_NM,
+    [-v for v in MODELS_DATA["metals"]["Ag"]["models"]["N2"]["eps_imag"]],
+    "-",
+    color="#0072B2",
+    lw=1.9,
+    label="Ag $N=2$ (Drude + 1L)",
+)
+ax_im.plot(
+    LAM_EVAL_NM,
+    [-v for v in MODELS_DATA["metals"]["Ag"]["models"]["Rakic"]["eps_imag"]],
+    "--",
+    color="#0072B2",
+    lw=1.2,
+    alpha=0.8,
+    label="Ag Rakić 1998",
+)
+ax_im.plot(
+    LAM_EVAL_NM,
+    [-v for v in MODELS_DATA["metals"]["Au"]["models"]["N1"]["eps_imag"]],
+    ":",
+    color="#E69F00",
+    lw=1.4,
+    label="Au $N=1$ (Drude only)",
+)
+ax_im.plot(
+    LAM_EVAL_NM,
+    [-v for v in MODELS_DATA["metals"]["Au"]["models"]["N3"]["eps_imag"]],
+    "-.",
+    color="#009E73",
+    lw=1.5,
+    label="Au $N=3$ (Drude + 2L)",
+)
+ax_im.plot(
+    LAM_EVAL_NM,
+    [-v for v in MODELS_DATA["metals"]["Au"]["models"]["N6"]["eps_imag"]],
+    "-",
+    color="#D55E00",
+    lw=1.9,
+    label="Au $N=6$ (Drude + 5L)",
+)
+ax_im.set_title(r"(c) Loss $-\mathrm{Im}\,\varepsilon(\lambda) \geq 0$ (Ag vs Au)")
+ax_im.set_ylabel(r"$-\mathrm{Im}\,\varepsilon(\lambda)$")
+ax_im.set_xlabel(r"wavelength $\lambda$ [nm]")
+ax_im.set_ylim(0, 7.2)
+ax_im.legend(fontsize=6.8, loc="upper right")
+
 savefig(fig, "eps_fits_ag_au.png")
 plt.show()
 
@@ -670,14 +1050,31 @@ plt.show()
 #   and $\delta(\lambda_\mathrm{res}) = 42.31\text{ nm}$ at
 #   $\lambda_\mathrm{res} = 496.01\text{ nm}$.
 #
-# We use two Cartesian cross-section resolutions $h = \Delta x = \Delta y$ that
-# satisfy both $\ge 4$ cells per minimum skin depth ($\delta_\mathrm{min} = 22.50\text{ nm}$)
-# and $\ge 20$ cells per shortest vacuum wavelength ($\lambda_\mathrm{min} = 300\text{ nm}$):
+# We compare two Cartesian cross-section resolutions ($h = \Delta x = \Delta y = 4\;\mathrm{nm}$
+# and $2\;\mathrm{nm}$ in `SolverFIT3D` with Kottke subpixel averaging) against two
+# **body-fitted locally refined triangular meshes** (`UnstructuredFIT2D` with
+# `wakis.benchmarks.meshing.cluster_mesh` and a 10-layer radial CFS-PML, where the
+# triangle edge length is refined to $h_s = 2.0\;\mathrm{nm}$ or $1.25\;\mathrm{nm}$
+# on the $r = a = 20\;\mathrm{nm}$ cylinder surface and graded outward with ratio
+# $1.18$ to $h_\mathrm{out} = 6.0\;\mathrm{nm}$ or $5.0\;\mathrm{nm}$). All four
+# meshes satisfy $\ge 4$ elements per minimum skin depth ($\delta_\mathrm{min} = 22.50\;\mathrm{nm}$)
+# and $\ge 20$ elements per shortest vacuum wavelength ($\lambda_\mathrm{min} = 300\;\mathrm{nm}$):
 #
-# | Grid | $h$ [nm] | Cells / $\delta_\mathrm{min}$ ($22.5\text{ nm}$) | Cells / $\delta(\lambda_\mathrm{res})$ ($28.6\text{ nm}$) | Cells / $\lambda_\mathrm{min}$ ($300\text{ nm}$) | Grid $N_x \times N_y \times N_z$ ($2a = 40\text{ nm}$) | $\Delta t$ (CFL 0.85) [as] | Steps ($35\text{ fs}$) |
-# |---|---:|---:|---:|---:|---|---:|---:|
-# | Coarse (`--quick`) | 4.0 | **5.63** | 7.15 | **75.0** | $46 \times 46 \times 4 = 8,464$ | 7.974 | 4,390 |
-# | Fine (`--full`) | 2.0 | **11.25** | 14.30 | **150.0** | $56 \times 56 \times 4 = 12,544$ | 3.987 | 8,780 |
+# | Mesh / Solver | $h_\mathrm{cyl}$ ($h_\mathrm{out}$) [nm] | Elements / $\delta_\mathrm{min}$ ($22.5\text{ nm}$) | Elements / $\lambda_\mathrm{min}$ ($300\text{ nm}$) | Cells / Unknowns ($2a = 40\text{ nm}$) | $\Delta t$ [as] | Steps ($T$) | Wall time (`N2`) [s] | Ag `N2` $\lambda_\mathrm{res}$ [nm] (Disc. NRMS vs Mie) |
+# |---|---|---|---|---|---:|---:|---:|---:|
+# | Cartesian coarse (`--quick`, `SolverFIT3D`) | $4.0$ ($4.0$) | **5.63** | **75.0** | $8,464\text{ cells} / 26,132\text{ E-edges}$ | 7.97 | 4,390 ($35\text{ fs}$) | 5.4 | $343.32\text{ nm}$ ($5.46\%$) |
+# | Cartesian fine (`--full`, `SolverFIT3D`) | $2.0$ ($2.0$) | **11.25** | **150.0** | $12,544\text{ cells} / 37,632\text{ E-edges}$ | 3.99 | 8,780 ($35\text{ fs}$) | 14.9 | $343.59\text{ nm}$ ($2.47\%$) |
+# | **Body-fitted triangles (`UnstructuredFIT2D`, `tri_h2nm`)** | **$2.0$ ($6.0$)** | **11.25** | **50.0--150.0** | **$4,448\text{ tris} / 8,981\text{ dofs}$** | **4.28** | **14,021 ($60\text{ fs}$)** | **11.9** | **$343.09\text{ nm}$ ($0.28\%$)** |
+# | **Body-fitted triangles fine (`UnstructuredFIT2D`, `tri_h1p25nm`)** | **$1.25$ ($5.0$)** | **18.00** | **60.0--240.0** | **$7,097\text{ tris} / 14,296\text{ dofs}$** | **2.65** | **22,600 ($60\text{ fs}$)** | **26.5** | **$343.09\text{ nm}$ ($0.35\%$)** |
+#
+# Because every triangle in `UnstructuredFIT2D` belongs to a single material
+# ($322$ triangles inside the Ag cylinder at $h_s = 2.0\;\mathrm{nm}$, $824$ at
+# $h_s = 1.25\;\mathrm{nm}$ with $101$ vertices on the $r = 20\;\mathrm{nm}$ circle),
+# no edge mixes negative metal permittivity with positive vacuum permittivity. That
+# eliminates the cut-cell zero-crossing artifacts of Cartesian subpixel averaging and
+# lowers the Ag `N2` discretization NRMS error by **$8.8\times$** ($0.28\%$ vs $2.47\%$)
+# with **$4.2\times$ fewer unknowns** ($8,981$ vs $37,632$) and lower wall time
+# ($11.9\;\mathrm{s}$ vs $14.9\;\mathrm{s}$).
 #
 # Because fields are $z$-invariant in 2D, we set $\Delta z = 10 h$ across the
 # $N_z = 4$ periodic slab so that $\Delta z$ adds negligible penalty ($< 0.25\%$)
@@ -962,184 +1359,342 @@ if not PLOT_ONLY:
         )
     )
 
-    # Plot near-field dipolar hotspot at resonance vs off-resonance
-    E_inc, _ = live_run["src"].incident_fields(c0 / (np.array(snap_lams) * 1e-9))
-    ex_vals, co_ex = wv.field_slice(live_run["dft_mon"], "z", 0.0, "Ex")
-    ey_vals, co_ey = wv.field_slice(live_run["dft_mon"], "z", 0.0, "Ey")
-    x_c = co_ex[0] * 1e9
-    y_c = co_ey[1] * 1e9
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4))
-    for idx, (lam_s, label_s) in enumerate(
-        ((343.2, "At LSPR ($\\lambda = 343.2$ nm)"), (550.0, "Off resonance ($\\lambda = 550$ nm)"))
-    ):
-        ex_c = 0.5 * (ex_vals[idx][:, :-1] + ex_vals[idx][:, 1:])
-        ey_c = 0.5 * (ey_vals[idx][:-1, :] + ey_vals[idx][1:, :])
-        e_mag = np.sqrt(np.abs(ex_c) ** 2 + np.abs(ey_c) ** 2) / np.abs(E_inc[idx])
-        ax = axes[idx]
-        im = ax.pcolormesh(
-            x_c, y_c, e_mag.T, cmap="inferno", vmin=0.0, vmax=4.5, shading="auto"
+
+def plot_near_field_comparison():
+    """Render 3-panel near-field LSPR comparison: side-by-side meshes, Cartesian |E|/|E_inc|, and body-fitted triangular |E|/|E_inc|."""
+    import matplotlib.tri as mtri
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import Circle, Rectangle
+
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.5)
+
+    # Panel (a): Side-by-side mesh comparison in [-38, 38] nm
+    ax0 = axes[0]
+    xs_c = np.arange(-38.0, 0.1, 2.0)
+    ys_c = np.arange(-38.0, 38.1, 2.0)
+    segs_c = [[(xv, -38.0), (xv, 38.0)] for xv in xs_c] + [
+        [(-38.0, yv), (0.0, yv)] for yv in ys_c
+    ]
+    ax0.add_collection(
+        LineCollection(segs_c, colors="#64748B", linewidths=0.6, alpha=0.65, zorder=2)
+    )
+
+    nodes_nm = TRI_NPZ["nodes_nm"]
+    cells_t = TRI_NPZ["cells"]
+    cent_nm = nodes_nm[cells_t].mean(axis=1)
+    rmask = (cent_nm[:, 0] >= -1.0) & (np.abs(cent_nm[:, 0]) <= 39.5) & (np.abs(cent_nm[:, 1]) <= 39.5)
+    segs_t = []
+    for tri_c in cells_t[rmask]:
+        p0, p1, p2 = nodes_nm[tri_c[0]], nodes_nm[tri_c[1]], nodes_nm[tri_c[2]]
+        for pa, pb in ((p0, p1), (p1, p2), (p2, p0)):
+            if pa[0] >= -0.5 and pb[0] >= -0.5:
+                segs_t.append([pa, pb])
+    ax0.add_collection(
+        LineCollection(segs_t, colors="#0F766E", linewidths=0.6, alpha=0.7, zorder=2)
+    )
+    ax0.add_patch(
+        Circle(
+            (0.0, 0.0),
+            20.0,
+            facecolor="#CBD5E1",
+            edgecolor="#0F172A",
+            lw=1.6,
+            alpha=0.38,
+            zorder=4,
         )
-        theta = np.linspace(0, 2 * np.pi, 200)
-        ax.plot(20.0 * np.cos(theta), 20.0 * np.sin(theta), "w-", lw=1.3, label="Ag cylinder ($2a=40$ nm)")
-        tf_nm = live_run["lay"]["tf"] * 1e9
-        ax.plot(
-            [-tf_nm, tf_nm, tf_nm, -tf_nm, -tf_nm],
-            [-tf_nm, -tf_nm, tf_nm, tf_nm, -tf_nm],
-            "--",
-            color="#56B4E9",
-            lw=1.0,
-            label="TF/SF boundary",
+    )
+    ax0.axvline(0.0, color="#0F172A", ls="--", lw=1.1, zorder=5)
+    ax0.text(
+        -19.0,
+        34.0,
+        "Cartesian ($h = 2.0$ nm)\n$12,544$ cells, $14.9$ s\n$11.2\\;\\mathrm{cells}/\\delta_\\mathrm{min}$",
+        ha="center",
+        va="top",
+        fontsize=7.3,
+        fontweight="bold",
+        color="#334155",
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.92},
+        zorder=8,
+    )
+    ax0.text(
+        19.0,
+        34.0,
+        "Triangles ($h_s = 1.25$ nm)\n$7,097$ tris, $26.5$ s\n$18.0\\;\\mathrm{elems}/\\delta_\\mathrm{min}$",
+        ha="center",
+        va="top",
+        fontsize=7.3,
+        fontweight="bold",
+        color="#0F766E",
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#0F766E", "alpha": 0.92},
+        zorder=8,
+    )
+    ax0.text(
+        0.0,
+        0.0,
+        "Ag ($2a = 40$ nm)\n$\\delta_\\mathrm{min} = 22.5$ nm",
+        ha="center",
+        va="center",
+        fontsize=7.6,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+        zorder=8,
+    )
+    ax0.set_xlim(-38.0, 38.0)
+    ax0.set_ylim(-38.0, 38.0)
+    ax0.set_aspect("equal", adjustable="box")
+    ax0.set_xlabel("$x$ [nm]")
+    ax0.set_ylabel("$y$ [nm]")
+    ax0.set_title("(a) Meshes: Cartesian vs body-fitted triangles")
+
+    # Panel (b): Cartesian (h = 2.0 nm) near-field |E|/|E_inc| at LSPR (343.2 nm)
+    ax1 = axes[1]
+    xc2 = TRI_NPZ["cart2_x_nm"]
+    yc2 = TRI_NPZ["cart2_y_nm"]
+    ec2 = TRI_NPZ["cart2_e_lspr"]
+    tf_nm, in_nm, fl_nm = TRI_NPZ["cart2_boxes_nm"]
+    im1 = ax1.pcolormesh(
+        xc2, yc2, ec2.T, cmap="inferno", vmin=0.0, vmax=5.5, shading="auto"
+    )
+    ax1.add_patch(
+        Circle((0.0, 0.0), 20.0, fill=False, edgecolor="white", lw=1.5, zorder=5)
+    )
+    ax1.add_patch(
+        Rectangle(
+            (-tf_nm, -tf_nm),
+            2 * tf_nm,
+            2 * tf_nm,
+            fill=False,
+            ec="#D55E00",
+            ls="--",
+            lw=1.1,
+            zorder=5,
         )
-        ax.set_aspect("equal")
-        ax.set_xlim(-50, 50)
-        ax.set_ylim(-50, 50)
-        ax.set_xlabel("x [nm]")
-        ax.set_ylabel("y [nm]")
-        ax.set_title(f"{label_s}: $|\\mathbf{{E}}|/|\\mathbf{{E}}_\\mathrm{{inc}}|$")
-        fig.colorbar(im, ax=ax, label=r"$|\mathbf{E}| / |\mathbf{E}_\mathrm{inc}|$", shrink=0.86)
-    axes[0].legend(fontsize=7.5, loc="upper right")
-    fig.tight_layout()
+    )
+    ax1.add_patch(
+        Rectangle(
+            (-fl_nm, -fl_nm),
+            2 * fl_nm,
+            2 * fl_nm,
+            fill=False,
+            ec="#38BDF8",
+            ls=":",
+            lw=1.1,
+            zorder=5,
+        )
+    )
+    ax1.text(
+        0.0,
+        0.0,
+        "Ag ($N=2$)",
+        ha="center",
+        va="center",
+        fontsize=7.6,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.14", "facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+        zorder=8,
+    )
+    ax1.text(
+        -tf_nm + 1.5,
+        tf_nm - 1.5,
+        "TF/SF",
+        ha="left",
+        va="top",
+        fontsize=7.0,
+        fontweight="bold",
+        color="#D55E00",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.82},
+        zorder=8,
+    )
+    ax1.text(
+        fl_nm - 1.5,
+        -fl_nm + 1.5,
+        "FluxMonitor",
+        ha="right",
+        va="bottom",
+        fontsize=7.0,
+        fontweight="bold",
+        color="#0284C7",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.82},
+        zorder=8,
+    )
+    ax1.set_xlim(-38.0, 38.0)
+    ax1.set_ylim(-38.0, 38.0)
+    ax1.set_aspect("equal", adjustable="box")
+    ax1.set_xlabel("$x$ [nm]")
+    ax1.set_ylabel("$y$ [nm]")
+    ax1.set_title("(b) Cartesian ($h=2$ nm) LSPR ($\\lambda=343.2$ nm)")
+    fig.colorbar(im1, ax=ax1, label=r"$|\mathbf{E}| / |\mathbf{E}_\mathrm{inc}|$", shrink=0.84)
+
+    # Panel (c): Body-fitted triangular mesh (h_s = 1.25 nm) near-field |E|/|E_inc| at LSPR (343.2 nm)
+    ax2 = axes[2]
+    triang = mtri.Triangulation(nodes_nm[:, 0], nodes_nm[:, 1], cells_t)
+    im2 = ax2.tripcolor(
+        triang,
+        TRI_NPZ["e_lspr"],
+        cmap="inferno",
+        vmin=0.0,
+        vmax=5.5,
+        shading="flat",
+    )
+    ax2.triplot(triang, color="white", lw=0.22, alpha=0.28, zorder=3)
+    ax2.add_patch(
+        Circle((0.0, 0.0), 20.0, fill=False, edgecolor="white", lw=1.6, zorder=5)
+    )
+    ax2.text(
+        0.0,
+        0.0,
+        "Ag ($N=2$)\n$|\\mathbf{E}|/|\\mathbf{E}_0| = 3.93$",
+        ha="center",
+        va="center",
+        fontsize=7.4,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "none", "alpha": 0.86},
+        zorder=8,
+    )
+    nf_stats = TRIANGLE_DATA["meshes"]["tri_h1p25nm_N2"]["near_field_stats"]
+    ax2.text(
+        0.03,
+        0.03,
+        f"Dipole lobes ($y = \\pm 20$ nm): max $|\\mathbf{{E}}|/|\\mathbf{{E}}_0| = {nf_stats['lspr_343p2nm_max_outside']:.2f}$\n"
+        f"Off-res ($550$ nm): $|\\mathbf{{E}}|_\\mathrm{{in}}/|\\mathbf{{E}}_0| = {nf_stats['off_550nm_mean_in_cyl']:.2f}$ (shielded)",
+        transform=ax2.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=6.9,
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.9},
+        zorder=8,
+    )
+    ax2.set_xlim(-38.0, 38.0)
+    ax2.set_ylim(-38.0, 38.0)
+    ax2.set_aspect("equal", adjustable="box")
+    ax2.set_xlabel("$x$ [nm]")
+    ax2.set_ylabel("$y$ [nm]")
+    ax2.set_title("(c) Body-fitted triangles ($h_s=1.25$ nm) LSPR")
+    fig.colorbar(im2, ax=ax2, label=r"$|\mathbf{E}| / |\mathbf{E}_\mathrm{inc}|$", shrink=0.84)
+
+    fig.subplots_adjust(left=0.05, right=0.97, bottom=0.14, top=0.88, wspace=0.28)
     savefig(fig, "near_field_lspr.png")
     plt.show()
 
+
+plot_near_field_comparison()
+
 # %% [markdown]
-# ## 5. Extinction spectra $Q_\mathrm{ext}(\lambda)$: FIT vs Mie, constant-$\varepsilon$ baseline, and $80\text{ nm}$ retardation
+# ## 5. Extinction spectra $Q_\mathrm{ext}(\lambda)$: Body-fitted triangles vs Cartesian FIT, Mie, and $80\text{ nm}$ retardation
 #
-# Figure 2 compares the simulated Wakis FIT extinction efficiency $Q_\mathrm{ext}(\lambda)$
-# against exact 2D Mie theory (`cylinder_efficiencies(..., polarization="TE")`):
+# Figure 3 (`qext_spectra_vs_mie.png`) compares the simulated Wakis FIT extinction
+# efficiency $Q_\mathrm{ext}(\lambda)$ against exact 2D Mie theory
+# (`cylinder_efficiencies(..., polarization="TE")`):
 #
-# * **Panel (a) — Ag $2a = 40\text{ nm}$ across pole count $N$ ($h = 2\text{ nm}$):**
-#   Vertical ticks mark $\lambda_\mathrm{res}$ for each model. Pure Drude ($N=1$)
-#   places the resonance $+6.5\text{ nm}$ too red ($\lambda_\mathrm{res} = 347.8\text{ nm}$
-#   vs J&C's $341.3\text{ nm}$) and broadens it by $+35\%$. Adding just **one UV
-#   Lorentz pole ($N=2$)** shifts $\lambda_\mathrm{res}$ to $343.6\text{ nm}$
-#   ($+2.3\text{ nm}$ from interpolated J&C, within the $11\text{ nm}$ spacing of
-#   the raw J&C points at $331.5$ and $342.5\text{ nm}$), and $N = 2, 3, 4, 6$
-#   lie virtually on top of one another.
-# * **Panel (b) — Why dispersion is mandatory:** A constant-$\varepsilon$ model
-#   fixed at the resonance value $\varepsilon(\lambda_\mathrm{res} = 341.33\text{ nm}) = -1.169 - 0.562i$
-#   matches `Mie(J&C)` *only at that single wavelength* ($Q_\mathrm{ext} = 4.90$);
-#   away from $\lambda_\mathrm{res}$ it stays locked in resonance across the entire
-#   $300\text{--}900\text{ nm}$ band ($\mathrm{NRMS} = 99.6\%$), and in the time
-#   domain a static $\varepsilon_r = -1.169 < 0$ is unconditionally unstable without
-#   an ADE pole.
-# * **Panel (c) — Au $2a = 40\text{ nm}$ across pole count $N$ ($h = 4\text{ nm}$):**
+# * **Panel (a) — Ag $2a = 40\text{ nm}$ across pole count $N$ (Body-fitted Triangles vs Cartesian FIT vs Mie) + constant-$\varepsilon$ baseline:**
+#   Pure Drude ($N=1$) places the resonance $+6.5\text{ nm}$ too red
+#   ($\lambda_\mathrm{res} = 347.8\text{ nm}$ vs J&C's $341.3\text{ nm}$) and
+#   broadens it by $+35\%$. Adding just **one UV Lorentz pole ($N=2$)** shifts
+#   $\lambda_\mathrm{res}$ to $343.20\text{ nm}$ (Mie `N2`), and $N = 2, 3, 4, 6$
+#   lie virtually on top of one another. On the **body-fitted triangular mesh**
+#   (`tri_h2nm`, $4,448$ triangles, $h_s = 2\text{ nm}$), the $N=2$ curve
+#   (solid stars, $\lambda_\mathrm{res} = 343.09\text{ nm}$, $Q_\mathrm{peak} = 4.986$)
+#   tracks exact `Mie(N2)` to **$0.28\%$ NRMS** across $300\text{--}900\text{ nm}$
+#   without the small cut-cell spikes seen on the $h = 2\text{ nm}$ Cartesian grid
+#   ($2.47\%$ disc. NRMS). A constant-$\varepsilon(\lambda_\mathrm{res})$ model
+#   (dashed orange) matches `Mie(J&C)` *only at that single wavelength* ($\mathrm{NRMS} = 99.6\%$).
+# * **Panel (b) — Au $2a = 40\text{ nm}$ across pole count $N$ (Cartesian $h = 4\text{ nm}$):**
 #   Because gold's $5d \to 6sp$ interband transition overlaps its plasmon peak
-#   ($\lambda_\mathrm{res} = 496.0\text{ nm}$), $N=1$ (Drude) produces a giant
+#   ($\lambda_\mathrm{res} = 496.0\text{ nm}$), $N=1$ (Drude) produces an
 #   unphysical peak at $399\text{ nm}$ ($-97\text{ nm}$ error), $N=2$ is still
 #   shifted by $-35\text{ nm}$, and $N \ge 3\text{--}6$ accurately reproduces
 #   both the $496\text{ nm}$ plasmon peak and the $< 450\text{ nm}$ interband
 #   absorption plateau.
-# * **Panel (d) — Retardation and size effect ($2a = 40\text{ nm}$ vs $80\text{ nm}$ Ag):**
+# * **Panel (c) — Retardation and size effect ($2a = 40\text{ nm}$ vs $80\text{ nm}$ Ag):**
 #   In the quasi-static limit ($\mathrm{Re}\,\varepsilon = -1$), the peak sits at
 #   $338.0\text{ nm}$ ($\mathrm{FWHM} = 10.9\text{ nm}$). At $2a = 40\text{ nm}$
-#   it red-shifts to $341.3\text{ nm}$ ($\mathrm{FWHM} = 19.2\text{ nm}$, dominated
-#   by absorption and dipole scattering). Doubling the diameter to $2a = 80\text{ nm}$
-#   red-shifts the combined $Q_\mathrm{ext}$ peak to $342.8\text{ nm}$ and the
-#   retarded dipole $Q_\mathrm{sca}$ peak to $348.1\text{ nm}$, broadens the resonance
-#   to $\mathrm{FWHM} = 44.2\text{ nm}$ via radiation damping, and excites a distinct
+#   it red-shifts to $341.3\text{ nm}$ ($\mathrm{FWHM} = 19.2\text{ nm}$).
+#   Doubling the diameter to $2a = 80\text{ nm}$ red-shifts the combined
+#   $Q_\mathrm{ext}$ peak to $342.8\text{ nm}$ and the retarded dipole
+#   $Q_\mathrm{sca}$ peak to $348.1\text{ nm}$, broadens the resonance to
+#   $\mathrm{FWHM} = 44.2\text{ nm}$ via radiation damping, and excites a distinct
 #   **higher-order $n = 2$ quadrupole plasmon** shoulder at $335.5\text{ nm}$.
 
 # %%
-fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.8))
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.4)
 
-# Panel (a): Ag 40 nm FIT (h=2nm) vs Mie for N=1,2,3,4,6,Rakic + Mie(J&C)
-ax = axes[0, 0]
+# Panel (a): Ag 40 nm: Body-fitted Triangles (h_s=2nm) + Cartesian FIT (h=2nm) vs Mie + constant-eps
+ax = axes[0]
 ag40 = SPECTRA_DATA["Ag_40nm"]
+c_eps = ag40["mie_constant_eps_at_res"]
+tri_n2 = TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"]["N2"]
 ax.plot(
     LAM_EVAL_NM,
     ag40["mie_jc"]["q_ext"],
     "k-",
-    lw=2.2,
-    label=f"Mie (J&C interp.): $\\lambda_\\mathrm{{res}}={ag40['mie_jc']['lam_peak_nm']:.1f}$ nm",
+    lw=2.1,
+    label=f"Mie (J&C): $\\lambda_\\mathrm{{res}}={ag40['mie_jc']['lam_peak_nm']:.1f}$ nm",
     zorder=6,
 )
-ax.axvline(ag40["mie_jc"]["lam_peak_nm"], color="k", ls=":", lw=1.0)
-for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
+ax.plot(
+    LAM_EVAL_NM,
+    c_eps["q_ext"],
+    color="#E69F00",
+    ls="--",
+    lw=1.3,
+    alpha=0.85,
+    label=f"Const. $\\varepsilon(\\lambda_\\mathrm{{res}})$ (NRMS {c_eps['nrms_vs_mie_jc']*100:.0f}%)",
+)
+for k in ("N1", "N2", "N6", "Rakic"):
     m_entry = ag40["models"][k]
     fit_h2 = m_entry["resolutions"]["h_2nm"]
     lam_pk = fit_h2["total_error_vs_mie_jc"]["lam_peak_nm"]
     ax.plot(
         LAM_EVAL_NM,
-         m_entry["mie_cont_q_ext"],
+        m_entry["mie_cont_q_ext"],
         color=MODEL_COLORS[k],
         ls="-",
         lw=1.1,
         alpha=0.75,
     )
     ax.plot(
-        LAM_EVAL_NM[::3],
-        fit_h2["q_ext"][::3],
+        LAM_EVAL_NM[::4],
+        fit_h2["q_ext"][::4],
         ls="none",
         marker="o",
-        ms=3.0,
+        ms=2.8,
         color=MODEL_COLORS[k],
-        label=f"FIT {MODEL_LABELS[k]}: $\\lambda_\\mathrm{{res}}={lam_pk:.1f}$ nm",
+        alpha=0.8,
+        label=f"Cart. $h=2$ nm {k} ($\\lambda_\\mathrm{{res}}={lam_pk:.1f}$ nm)",
     )
-    ax.axvline(lam_pk, color=MODEL_COLORS[k], ls="--", lw=0.7, alpha=0.7)
-ax.set_xlim(300, 500)
+ax.plot(
+    LAM_EVAL_NM[::3],
+    np.array(tri_n2["q_ext"], dtype=float)[::3],
+    ls="none",
+    marker="*",
+    ms=5.2,
+    color="#004D40",
+    zorder=7,
+    label=(
+        f"Tri. $h_s=2$ nm $N=2$ ($\\lambda_\\mathrm{{res}}={tri_n2['lam_peak_nm']:.1f}$ nm, "
+        f"disc. {tri_n2['discretization_error_vs_mie_cont']['nrms']*100:.2f}%)"
+    ),
+)
+ax.set_xlim(300, 560)
 ax.set_ylim(0, 6.2)
 ax.set_xlabel(r"wavelength $\lambda$ [nm]")
 ax.set_ylabel(r"extinction efficiency $Q_\mathrm{ext} = C_\mathrm{ext}/(2a)$")
-ax.set_title("(a) Ag cylinder ($2a = 40$ nm, $h = 2$ nm): FIT (markers) vs Mie (lines)")
-ax.legend(fontsize=7.2, loc="upper right")
-ax.grid(True, alpha=0.25)
+ax.set_title("(a) Ag ($2a = 40$ nm): Tri. vs Cart. & Mie")
+ax.legend(fontsize=6.5, loc="upper right")
 
-# Panel (b): Constant-eps(lam_res) baseline vs dispersive N=2 and Mie(J&C)
-ax = axes[0, 1]
-c_eps = ag40["mie_constant_eps_at_res"]
-ax.plot(
-    LAM_EVAL_NM,
-    ag40["mie_jc"]["q_ext"],
-    "k-",
-    lw=2.0,
-    label="Mie (J&C dispersive $\\varepsilon(\\lambda)$)",
-)
-ax.plot(
-    LAM_EVAL_NM,
-    c_eps["q_ext"],
-    color="#D55E00",
-    ls="--",
-    lw=1.8,
-    label=(
-        f"Mie constant $\\varepsilon(\\lambda_\\mathrm{{res}}) = "
-        f"{c_eps['eps_real']:.2f} {c_eps['eps_imag']:+.2f}i$ "
-        f"(NRMS = {c_eps['nrms_vs_mie_jc']*100:.1f}%)"
-    ),
-)
-ax.plot(
-    LAM_EVAL_NM[::3],
-    ag40["models"]["N2"]["resolutions"]["h_2nm"]["q_ext"][::3],
-    "o",
-    ms=3.2,
-    color="#0072B2",
-    label="Wakis FIT $N=2$ ($h=2$ nm, NRMS = 5.0%)",
-)
-ax.plot(
-    c_eps["lam_res_ref_nm"],
-    c_eps["q_ext_at_res"],
-    "ks",
-    ms=6.5,
-    zorder=7,
-    label=f"Exact match at $\\lambda_\\mathrm{{res}} = {c_eps['lam_res_ref_nm']:.1f}$ nm only",
-)
-ax.set_xlim(300, 900)
-ax.set_ylim(0, 6.2)
-ax.set_xlabel(r"wavelength $\lambda$ [nm]")
-ax.set_ylabel(r"extinction efficiency $Q_\mathrm{ext}$")
-ax.set_title(r"(b) Why dispersion is needed: constant $\varepsilon(\lambda_\mathrm{res})$ vs Drude–Lorentz")
-ax.legend(fontsize=7.5, loc="upper right")
-ax.grid(True, alpha=0.25)
-
-# Panel (c): Au 40 nm FIT (h=4nm) vs Mie for N=1,2,3,4,6,Rakic + Mie(J&C)
-ax = axes[1, 0]
+# Panel (b): Au 40 nm FIT (h=4nm) vs Mie for N=1,2,3,4,6,Rakic + Mie(J&C)
+ax = axes[1]
 au40 = SPECTRA_DATA["Au_40nm"]
 ax.plot(
     LAM_EVAL_NM,
     au40["mie_jc"]["q_ext"],
     "k-",
-    lw=2.2,
-    label=f"Mie (J&C interp.): $\\lambda_\\mathrm{{res}}={au40['mie_jc']['lam_peak_nm']:.1f}$ nm",
+    lw=2.1,
+    label=f"Mie (J&C): $\\lambda_\\mathrm{{res}}={au40['mie_jc']['lam_peak_nm']:.1f}$ nm",
     zorder=6,
 )
 ax.axvline(au40["mie_jc"]["lam_peak_nm"], color="k", ls=":", lw=1.0)
@@ -1160,7 +1715,7 @@ for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
         fit_h4["q_ext"][::4],
         ls="none",
         marker="o",
-        ms=3.0,
+        ms=2.8,
         color=MODEL_COLORS[k],
         label=f"FIT {MODEL_LABELS[k]}: $\\lambda_\\mathrm{{res}}={lam_pk:.1f}$ nm",
     )
@@ -1168,12 +1723,11 @@ ax.set_xlim(300, 750)
 ax.set_ylim(0, 3.2)
 ax.set_xlabel(r"wavelength $\lambda$ [nm]")
 ax.set_ylabel(r"extinction efficiency $Q_\mathrm{ext}$")
-ax.set_title("(c) Au cylinder ($2a = 40$ nm, $h = 4$ nm): 5d$\\to$6sp interband requires $N \\geq 3$")
-ax.legend(fontsize=7.2, loc="upper right")
-ax.grid(True, alpha=0.25)
+ax.set_title("(b) Au ($2a = 40$ nm): Interband ($N \\geq 3$)")
+ax.legend(fontsize=6.6, loc="upper right")
 
-# Panel (d): Retardation red-shift & quadrupole emergence (Ag 40 nm vs 80 nm)
-ax = axes[1, 1]
+# Panel (c): Retardation red-shift & quadrupole emergence (Ag 40 nm vs 80 nm)
+ax = axes[2]
 ret = SPECTRA_DATA["Ag_80nm_retardation"]
 ax.plot(
     LAM_EVAL_NM,
@@ -1181,7 +1735,7 @@ ax.plot(
     color="0.45",
     ls=":",
     lw=1.5,
-    label=f"Quasi-static ($2a=40$ nm, $\\varepsilon'=-1$): $\\lambda_\\mathrm{{res}}={ret['quasi_static_40nm']['lam_peak_nm']:.1f}$ nm",
+    label=f"Quasi-static ($2a=40$ nm): $\\lambda_\\mathrm{{res}}={ret['quasi_static_40nm']['lam_peak_nm']:.1f}$ nm",
 )
 ax.plot(
     LAM_EVAL_NM,
@@ -1189,7 +1743,7 @@ ax.plot(
     color="#0072B2",
     ls="-",
     lw=1.8,
-    label=f"Mie $2a=40$ nm (J&C): $\\lambda_\\mathrm{{res}}={ag40['mie_jc']['lam_peak_nm']:.1f}$ nm, FWHM={ag40['mie_jc']['fwhm_nm']:.1f} nm",
+    label=f"Mie $2a=40$ nm: $\\lambda_\\mathrm{{res}}={ag40['mie_jc']['lam_peak_nm']:.1f}$ nm, FWHM={ag40['mie_jc']['fwhm_nm']:.1f} nm",
 )
 ax.plot(
     LAM_EVAL_NM,
@@ -1197,44 +1751,43 @@ ax.plot(
     color="#D55E00",
     ls="-",
     lw=1.8,
-    label=f"Mie $2a=80$ nm (J&C): $\\lambda_\\mathrm{{res}}={ret['mie_jc_80nm']['q_ext_lam_peak_nm']:.1f}$ nm, FWHM={ret['mie_jc_80nm']['q_ext_fwhm_nm']:.1f} nm",
+    label=f"Mie $2a=80$ nm: $\\lambda_\\mathrm{{res}}={ret['mie_jc_80nm']['q_ext_lam_peak_nm']:.1f}$ nm, FWHM={ret['mie_jc_80nm']['q_ext_fwhm_nm']:.1f} nm",
 )
 ax.plot(
     LAM_EVAL_NM[::3],
     ret["fit_n2_80nm_h4nm"]["q_ext"][::3],
     "o",
-    ms=3.2,
+    ms=3.0,
     color="#D55E00",
-    label=f"FIT $2a=80$ nm ($N=2, h=4$ nm): NRMS={ret['fit_n2_80nm_h4nm']['nrms_vs_mie_n2']*100:.1f}% vs Mie($N=2$)",
+    label=f"FIT $2a=80$ nm ($N=2, h=4$ nm): NRMS={ret['fit_n2_80nm_h4nm']['nrms_vs_mie_n2']*100:.1f}%",
 )
 ax.annotate(
     "Quadrupole ($n=2$)\n335.5 nm",
     xy=(335.5, 4.95),
-    xytext=(303.0, 5.55),
-    arrowprops=dict(arrowstyle="->", lw=0.9, color="k"),
-    fontsize=8,
+    xytext=(302.0, 5.55),
+    arrowprops={"arrowstyle": "->", "lw": 0.9, "color": "k"},
+    fontsize=7.3,
 )
 ax.annotate(
     "Retarded dipole ($n=1$)\n$Q_\\mathrm{sca}$ 348.1 nm ($Q_\\mathrm{ext}$ 342.8 nm)",
     xy=(348.1, 4.92),
-    xytext=(368.0, 5.55),
-    arrowprops=dict(arrowstyle="->", lw=0.9, color="#D55E00"),
-    fontsize=7.8,
+    xytext=(382.0, 3.35),
+    arrowprops={"arrowstyle": "->", "lw": 0.9, "color": "#D55E00"},
+    fontsize=7.2,
 )
 ax.set_xlim(300, 500)
-ax.set_ylim(0, 6.4)
+ax.set_ylim(0, 6.6)
 ax.set_xlabel(r"wavelength $\lambda$ [nm]")
 ax.set_ylabel(r"extinction efficiency $Q_\mathrm{ext}$")
-ax.set_title("(d) Retardation red-shift & radiative broadening: Ag $2a=40$ nm vs $80$ nm")
-ax.legend(fontsize=7.2, loc="upper right")
-ax.grid(True, alpha=0.25)
+ax.set_title("(c) Retardation: Ag $2a=40$ vs $80$ nm")
+ax.legend(fontsize=6.4, loc="upper right")
 
-fig.tight_layout()
+fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.24)
 savefig(fig, "qext_spectra_vs_mie.png")
 plt.show()
 
 # %% [markdown]
-# ## 6. Separating model error, discretization error, and total error
+# ## 6. Separating model error, discretization error, and total error (Cartesian vs Body-Fitted Triangles)
 #
 # A time-domain plasmonic simulation contains two distinct sources of error
 # that are often conflated:
@@ -1248,69 +1801,74 @@ plt.show()
 #    $\lambda_\mathrm{res} = 496.01\text{ nm}$, $Q_\mathrm{ext} = 1.988$,
 #    $\mathrm{FWHM} = 70.95\text{ nm}$ for Au $2a = 40\text{ nm}$).
 # 2. **Discretization error ($\text{FIT}$ vs $\text{Mie}(\varepsilon_\mathrm{fit})$):**
-#    How well does the 3D FIT grid ($h = 4\text{ nm}$ vs $h = 2\text{ nm}$, Kottke
-#    subpixel averaging, finite TF/SF + CPML box, and leapfrog time step $\Delta t$)
-#    solve Maxwell's equations for *that exact same pole model*? We evaluate the
-#    Mie denominator with both the continuous $\varepsilon_\mathrm{fit}(\omega)$
-#    (`mat.epsilon(f)`) and the exact discrete-time permittivity
-#    $\varepsilon_\mathrm{disc}(\omega, \Delta t)$ (`mat.epsilon_discrete(f, dt)`).
-#    Because $\Delta t = 7.97\text{ as}$ ($h = 4\text{ nm}$) and $3.99\text{ as}$
-#    ($h = 2\text{ nm}$) are $> 140\times$ smaller than the optical period at
-#    $341\text{ nm}$ ($1,138\text{ as}$), $|\varepsilon_\mathrm{disc} - \varepsilon_\mathrm{cont}|$
-#    shifts $\lambda_\mathrm{res}$ by $\le 0.03\text{ nm}$: spatial meshing of the
-#    curved metal--vacuum interface dominates the discretization error.
+#    How well does the spatial mesh—either the 3D Cartesian FIT grid ($h = 4\text{ nm}$
+#    or $h = 2\text{ nm}$ with Kottke subpixel averaging) or the 2D body-fitted
+#    triangular FIT mesh (`tri_h2nm` at $h_s = 2\text{ nm}$ and `tri_h1p25nm` at
+#    $h_s = 1.25\text{ nm}$ with area-preserving polygon vertices)—solve Maxwell's
+#    equations for *that exact same pole model*? Because $\Delta t \le 8\text{ as}$ is
+#    $> 140\times$ smaller than the optical period at $341\text{ nm}$ ($1,138\text{ as}$),
+#    $|\varepsilon_\mathrm{disc} - \varepsilon_\mathrm{cont}|$ shifts $\lambda_\mathrm{res}$
+#    by $\le 0.03\text{ nm}$: spatial meshing of the curved metal--vacuum interface
+#    dominates the discretization error. Eliminating mixed metal--vacuum cut cells
+#    via the body-fitted triangular mesh drops the $N=2$ discretization NRMS from
+#    **$5.46\%$ ($h = 4\text{ nm}$ Cart.)** and **$2.47\%$ ($h = 2\text{ nm}$ Cart.)**
+#    to **$0.28\%$ (`tri_h2nm`)**, and reduces the peak $Q_\mathrm{ext}$ error from
+#    $-5.92\%$ to **$-0.20\%$** ($Q_\mathrm{peak} = 4.986$ vs Mie `N2` $4.996$).
 # 3. **Total error ($\text{FIT}$ vs $\text{Mie}(\varepsilon_\mathrm{J\&C})$):**
 #    The end-to-end error against the experimental Johnson & Christy Mie reference
 #    (baseline denominator: `Mie(J&C)`).
 #
-# **Table 2 — Error separation for the $2a = 40\text{ nm}$ Ag cylinder (baseline: `Mie(J&C)` for Model & Total; `Mie(fit, cont / disc)` for Discretization):**
+# **Table 2 — Error separation for the $2a = 40\text{ nm}$ Ag cylinder across Cartesian (`h = 4 nm`, `h = 2 nm`) and Body-Fitted Triangular (`tri_h2nm`) meshes:**
 #
 # | Model ($N$) | Error component (baseline denominator) | $\Delta\lambda_\mathrm{res}$ [nm] (%) | $\Delta Q_\mathrm{ext,peak}$ (%) | $\Delta\mathrm{FWHM}$ [nm] (%) | Spectrum NRMS (%) |
 # |---|---|---:|---:|---:|---:|
 # | **`N1` (1)** | Model: `Mie(N1)` vs `Mie(J&C)` | $+6.35$ ($+1.86\%$) | $+4.12\%$ | $+4.59$ ($+23.89\%$) | $14.54\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(N1, cont / disc)` | $-0.10$ / $-0.08$ ($-0.03\%$) | $-8.63\%$ / $-8.65\%$ | $+3.01$ / $+3.01$ ($+12.6\%$) | $3.44\%$ / $3.45\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(N1, cont / disc)` | $+0.13$ / $+0.14$ ($+0.04\%$) | $-6.70\%$ / $-6.70\%$ | $+2.14$ / $+2.14$ ($+8.99\%$) | $1.88\%$ / $1.88\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+6.25$ / $+6.49$ ($+1.90\%$)** | **$-4.87\%$ / $-2.86\%$** | **$+7.60$ / $+6.74$ ($+35.0\%$)** | **$14.69\%$ / $14.36\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(N1)` | $-0.10$ / $+0.13$ | $-8.63\%$ / $-6.70\%$ | $+3.01$ / $+2.14$ | $3.44\%$ / $1.88\%$ |
+# | | **Disc Tri ($h_s=2\text{ nm}$): `UnstructuredFIT2D` vs `Mie(N1)`** | **$-0.09$ ($-0.03\%$)** | **$+0.13\%$** | **$+0.10$ ($+0.42\%$)** | **$0.29\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+6.25$ / $+6.49$ / $+6.26$** | **$-4.87\%$ / $-2.86\%$ / $+4.25\%$** | **$+7.60$ / $+6.74$ / $+4.69$** | **$14.69\%$ / $14.36\%$ / $14.43\%$** |
 # | **`N2` (2)** | Model: `Mie(N2)` vs `Mie(J&C)` | $+1.87$ ($+0.55\%$) | $+2.02\%$ | $+0.41$ ($+2.11\%$) | $3.91\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(N2, cont / disc)` | $+0.12$ / $+0.14$ ($+0.03\%$) | $-9.97\%$ / $-9.98\%$ | $+2.97$ / $+2.97$ ($+15.1\%$) | $5.46\%$ / $5.48\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(N2, cont / disc)` | $+0.38$ / $+0.39$ ($+0.11\%$) | $-5.92\%$ / $-5.93\%$ | $+1.70$ / $+1.70$ ($+8.65\%$) | $2.47\%$ / $2.48\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+1.99$ / $+2.26$ ($+0.66\%$)** | **$-8.15\%$ / $-4.02\%$** | **$+3.37$ / $+2.11$ ($+11.0\%$)** | **$7.21\%$ / $5.03\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(N2)` | $+0.12$ / $+0.38$ | $-9.97\%$ / $-5.92\%$ | $+2.97$ / $+1.70$ | $5.46\%$ / $2.47\%$ |
+# | | **Disc Tri ($h_s=2$ / $1.25\text{ nm}$): `UnstructuredFIT2D` vs `Mie(N2)`** | **$-0.11$ / $-0.11$ ($-0.03\%$)** | **$-0.20\%$ / $-0.62\%$** | **$+0.13$ / $+0.23$** | **$0.28\%$ / $0.35\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+1.99$ / $+2.26$ / $+1.77$** | **$-8.15\%$ / $-4.02\%$ / $+1.82\%$** | **$+3.37$ / $+2.11$ / $+0.54$** | **$7.21\%$ / $5.03\%$ / $3.65\%$** |
 # | **`N3` (3)** | Model: `Mie(N3)` vs `Mie(J&C)` | $+1.96$ ($+0.57\%$) | $+3.25\%$ | $-0.04$ ($-0.21\%$) | $4.14\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(N3, cont / disc)` | $+0.36$ / $+0.39$ ($+0.10\%$) | $-9.75\%$ / $-9.76\%$ | $+2.98$ / $+2.98$ ($+15.5\%$) | $4.34\%$ / $4.36\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(N3, cont / disc)` | $+0.30$ / $+0.31$ ($+0.09\%$) | $-6.40\%$ / $-6.40\%$ | $+1.73$ / $+1.73$ ($+9.04\%$) | $2.26\%$ / $2.27\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.32$ / $+2.26$ ($+0.66\%$)** | **$-6.82\%$ / $-3.36\%$** | **$+2.94$ / $+1.69$ ($+8.81\%$)** | **$6.51\%$ / $5.07\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(N3)` | $+0.36$ / $+0.30$ | $-9.75\%$ / $-6.40\%$ | $+2.98$ / $+1.73$ | $4.34\%$ / $2.26\%$ |
+# | | **Disc Tri ($h_s=2\text{ nm}$): `UnstructuredFIT2D` vs `Mie(N3)`** | **$-0.11$ ($-0.03\%$)** | **$-0.26\%$** | **$+0.13$ ($+0.68\%$)** | **$0.29\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.32$ / $+2.26$ / $+1.85$** | **$-6.82\%$ / $-3.36\%$ / $+2.98\%$** | **$+2.94$ / $+1.69$ / $+0.09$** | **$6.51\%$ / $5.07\%$ / $3.86\%$** |
 # | **`N4` (4)** | Model: `Mie(N4)` vs `Mie(J&C)` | $+1.94$ ($+0.57\%$) | $+4.12\%$ | $-0.33$ ($-1.71\%$) | $4.12\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(N4, cont / disc)` | $+0.30$ / $+0.32$ ($+0.09\%$) | $-9.70\%$ / $-9.72\%$ | $+3.00$ / $+3.00$ ($+15.9\%$) | $3.92\%$ / $3.94\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(N4, cont / disc)` | $+0.32$ / $+0.32$ ($+0.09\%$) | $-6.64\%$ / $-6.64\%$ | $+1.75$ / $+1.75$ ($+9.26\%$) | $2.20\%$ / $2.21\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.24$ / $+2.26$ ($+0.66\%$)** | **$-5.98\%$ / $-2.79\%$** | **$+2.67$ / $+1.42$ ($+7.39\%$)** | **$6.18\%$ / $4.98\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(N4)` | $+0.30$ / $+0.32$ | $-9.70\%$ / $-6.64\%$ | $+3.00$ / $+1.75$ | $3.92\%$ / $2.20\%$ |
+# | | **Disc Tri ($h_s=2\text{ nm}$): `UnstructuredFIT2D` vs `Mie(N4)`** | **$-0.11$ ($-0.03\%$)** | **$-0.30\%$** | **$+0.14$ ($+0.74\%$)** | **$0.29\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.24$ / $+2.26$ / $+1.83$** | **$-5.98\%$ / $-2.79\%$ / $+3.81\%$** | **$+2.67$ / $+1.42$ / $-0.19$** | **$6.18\%$ / $4.98\%$ / $3.83\%$** |
 # | **`N6` (6)** | Model: `Mie(N6)` vs `Mie(J&C)` | $+1.92$ ($+0.56\%$) | $+5.14\%$ | $-0.64$ ($-3.32\%$) | $4.13\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(N6, cont / disc)` | $+0.31$ / $+0.34$ ($+0.09\%$) | $-10.00\%$ / $-10.01\%$ | $+3.02$ / $+3.02$ ($+16.2\%$) | $3.99\%$ / $4.01\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(N6, cont / disc)` | $+0.37$ / $+0.38$ ($+0.11\%$) | $-6.79\%$ / $-6.79\%$ | $+1.76$ / $+1.76$ ($+9.48\%$) | $2.11\%$ / $2.12\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.23$ / $+2.29$ ($+0.67\%$)** | **$-5.37\%$ / $-1.99\%$** | **$+2.38$ / $+1.12$ ($+5.84\%$)** | **$6.17\%$ / $4.90\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(N6)` | $+0.31$ / $+0.37$ | $-10.00\%$ / $-6.79\%$ | $+3.02$ / $+1.76$ | $3.99\%$ / $2.11\%$ |
+# | | **Disc Tri ($h_s=2\text{ nm}$): `UnstructuredFIT2D` vs `Mie(N6)`** | **$-0.11$ ($-0.03\%$)** | **$-0.35\%$** | **$+0.14$ ($+0.75\%$)** | **$0.30\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+2.23$ / $+2.29$ / $+1.81$** | **$-5.37\%$ / $-1.99\%$ / $+4.77\%$** | **$+2.38$ / $+1.12$ / $-0.50$** | **$6.17\%$ / $4.90\%$ / $3.83\%$** |
 # | **`Rakic` (6)** | Model: `Mie(Rakic)` vs `Mie(J&C)` | $+9.38$ ($+2.75\%$) | $-36.09\%$ | $+20.31$ ($+105.6\%$) | $14.48\%$ |
-# | | Disc ($h=4\text{ nm}$): `FIT` vs `Mie(Rakic, cont / disc)` | $+0.60$ / $+0.63$ ($+0.17\%$) | $-4.30\%$ / $-4.31\%$ | $+2.30$ / $+2.30$ ($+5.81\%$) | $4.63\%$ / $4.64\%$ |
-# | | Disc ($h=2\text{ nm}$): `FIT` vs `Mie(Rakic, cont / disc)` | $+0.41$ / $+0.42$ ($+0.12\%$) | $-2.90\%$ / $-2.90\%$ | $+1.25$ / $+1.25$ ($+3.16\%$) | $2.05\%$ / $2.06\%$ |
-# | | **Total ($h=4\text{ nm}$ / $h=2\text{ nm}$) vs `Mie(J&C)`** | **$+9.98$ / $+9.79$ ($+2.87\%$)** | **$-38.84\%$ / $-37.94\%$** | **$+22.61$ / $+21.56$ ($+112.1\%$)** | **$15.34\%$ / $14.86\%$** |
+# | | Disc Cart ($h=4$ / $h=2\text{ nm}$): `FIT` vs `Mie(Rakic)` | $+0.60$ / $+0.41$ | $-4.30\%$ / $-2.90\%$ | $+2.30$ / $+1.25$ | $4.63\%$ / $2.05\%$ |
+# | | **Disc Tri ($h_s=2\text{ nm}$): `UnstructuredFIT2D` vs `Mie(Rakic)`** | **$-0.09$ ($-0.03\%$)** | **$+0.44\%$** | **$-0.02$ ($-0.05\%$)** | **$0.29\%$** |
+# | | **Total ($h=4$ / $h=2$ / Tri $h_s=2\text{ nm}$) vs `Mie(J&C)`** | **$+9.98$ / $+9.79$ / $+9.29$** | **$-38.84\%$ / $-37.94\%$ / $-35.81\%$** | **$+22.61$ / $+21.56$ / $+20.29$** | **$15.34\%$ / $14.86\%$ / $14.45\%$** |
 
 # %%
-print("\n=== Ag 40nm Error Separation Summary (Model / Discretization / Total) ===")
+print("\n=== Ag 40nm Error Separation Summary (Cartesian vs Body-Fitted Triangles) ===")
 print(
-    f"{'Model':<7} {'Mod dlam[nm]':>13} {'Disc4 dlam':>11} {'Disc2 dlam':>11} "
-    f"{'Tot2 dlam':>10} {'Mod NRMS%':>10} {'Disc4 NRMS%':>12} {'Disc2 NRMS%':>12} {'Tot2 NRMS%':>11}"
+    f"{'Model':<7} {'Mod dlam':>9} {'Disc4 dlam':>10} {'Disc2 dlam':>10} {'Tri2 dlam':>10} "
+    f"{'Mod NRMS%':>10} {'Disc4 NRMS%':>11} {'Disc2 NRMS%':>11} {'Tri2 NRMS%':>10} {'TotTri NRMS%':>12}"
 )
 for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
     m_ag = SPECTRA_DATA["Ag_40nm"]["models"][k]
     mod_e = m_ag["model_error_vs_mie_jc"]
     d4_e = m_ag["resolutions"]["h_4nm"]["discretization_error_vs_mie_cont"]
     d2_e = m_ag["resolutions"]["h_2nm"]["discretization_error_vs_mie_cont"]
-    t2_e = m_ag["resolutions"]["h_2nm"]["total_error_vs_mie_jc"]
+    tri_m = TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"][k]
+    dtri_e = tri_m["discretization_error_vs_mie_cont"]
+    ttri_e = tri_m["total_error_vs_mie_jc"]
     print(
-        f"{k:<7} {mod_e['dlam_nm']:>+13.2f} {d4_e['dlam_nm']:>+11.2f} {d2_e['dlam_nm']:>+11.2f} "
-        f"{t2_e['dlam_nm']:>+10.2f} {mod_e['nrms']*100:>10.2f} "
-        f"{d4_e['nrms']*100:>12.2f} {d2_e['nrms']*100:>12.2f} {t2_e['nrms']*100:>11.2f}"
+        f"{k:<7} {mod_e['dlam_nm']:>+9.2f} {d4_e['dlam_nm']:>+10.2f} {d2_e['dlam_nm']:>+10.2f} "
+        f"{dtri_e['dlam_nm']:>+10.2f} {mod_e['nrms']*100:>10.2f} "
+        f"{d4_e['nrms']*100:>11.2f} {d2_e['nrms']*100:>11.2f} "
+        f"{dtri_e['nrms']*100:>10.2f} {ttri_e['nrms']*100:>12.2f}"
     )
 
-print("\n=== Au 40nm Error Separation Summary (h = 4 nm) ===")
+print("\n=== Au 40nm Error Separation Summary (Cartesian h = 4 nm) ===")
 print(
     f"{'Model':<7} {'Mod dlam[nm]':>13} {'Disc4 dlam':>11} {'Tot4 dlam':>10} "
     f"{'Mod NRMS%':>10} {'Disc4 NRMS%':>12} {'Tot4 NRMS%':>11}"
@@ -1326,108 +1884,100 @@ for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
     )
 
 # %%
-# Figure 3: Error separation (Model / Discretization / Total) vs pole count N
+# Figure 4: Error separation (Model / Discretization / Total) vs pole count N (1x3 layout)
 pole_keys = ["N1", "N2", "N3", "N4", "N6"]
 ns_arr = np.array([1, 2, 3, 4, 6])
 
-fig, axes = plt.subplots(2, 2, figsize=(12.8, 8.2), sharex=True)
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.4)
 
-# (a) Ag |Delta lambda_res| [nm] vs N
-ax = axes[0, 0]
+# (a) Ag |Delta lambda_res| [nm] vs N (Model, Cart h=4, Cart h=2, Tri h_s=2)
+ax = axes[0]
 ag_mod_dlam = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["model_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
 ag_d4_dlam = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_4nm"]["discretization_error_vs_mie_cont"]["dlam_nm"]) for k in pole_keys]
 ag_d2_dlam = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]["discretization_error_vs_mie_cont"]["dlam_nm"]) for k in pole_keys]
-ag_t4_dlam = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_4nm"]["total_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
+ag_dtri_dlam = [abs(TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"][k]["discretization_error_vs_mie_cont"]["dlam_nm"]) for k in pole_keys]
 ag_t2_dlam = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]["total_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
+ag_ttri_dlam = [abs(TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"][k]["total_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
 
-ax.plot(ns_arr, ag_mod_dlam, "s-", color="#0072B2", lw=1.8, ms=6, label="Model error: |Mie(fit) $-$ Mie(J&C)|")
-ax.plot(ns_arr, ag_d4_dlam, "^--", color="#009E73", lw=1.3, ms=5.5, label="Disc. error ($h=4$ nm): |FIT $-$ Mie(fit)|")
-ax.plot(ns_arr, ag_d2_dlam, "v:", color="#009E73", lw=1.5, ms=5.5, label="Disc. error ($h=2$ nm): |FIT $-$ Mie(fit)|")
-ax.plot(ns_arr, ag_t4_dlam, "o--", color="#D55E00", lw=1.4, ms=5.5, label="Total error ($h=4$ nm): |FIT $-$ Mie(J&C)|")
-ax.plot(ns_arr, ag_t2_dlam, "o-", color="#D55E00", lw=2.0, ms=6.5, label="Total error ($h=2$ nm): |FIT $-$ Mie(J&C)|")
+ax.plot(ns_arr, ag_mod_dlam, "s-", color="#0072B2", lw=1.8, ms=5.5, label="Model: |Mie(fit) $-$ Mie(J&C)|")
+ax.plot(ns_arr, ag_d4_dlam, "^--", color="#009E73", lw=1.3, ms=5.0, label="Disc. Cart ($h=4$ nm) vs Mie(fit)")
+ax.plot(ns_arr, ag_d2_dlam, "v:", color="#009E73", lw=1.5, ms=5.0, label="Disc. Cart ($h=2$ nm) vs Mie(fit)")
+ax.plot(ns_arr, ag_dtri_dlam, "*-", color="#004D40", lw=1.8, ms=6.5, label="Disc. Tri ($h_s=2$ nm) vs Mie(fit)")
+ax.plot(ns_arr, ag_t2_dlam, "o--", color="#D55E00", lw=1.5, ms=5.0, label="Total Cart ($h=2$ nm) vs Mie(J&C)")
+ax.plot(ns_arr, ag_ttri_dlam, "o-", color="#D55E00", lw=2.0, ms=5.8, label="Total Tri ($h_s=2$ nm) vs Mie(J&C)")
+ax.set_xlabel("number of Drude + Lorentz poles $N$")
 ax.set_ylabel(r"$|\Delta\lambda_\mathrm{res}|$ [nm]")
-ax.set_title(r"(a) Ag $2a=40$ nm: resonance wavelength error $|\Delta\lambda_\mathrm{res}|$ vs $N$")
-ax.legend(fontsize=7.5)
-ax.grid(True, alpha=0.25)
+ax.set_title(r"(a) Ag $2a=40$ nm: $|\Delta\lambda_\mathrm{res}|$ vs $N$")
+ax.set_xticks(ns_arr)
+ax.legend(fontsize=6.6, loc="upper right")
 
-# (b) Ag peak Q_ext relative error (%) and spectrum NRMS (%) vs N
-ax = axes[0, 1]
+# (b) Ag spectrum NRMS (%) vs N (Model, Cart h=4, Cart h=2, Tri h_s=2)
+ax = axes[1]
 ag_mod_nrms = [SPECTRA_DATA["Ag_40nm"]["models"][k]["model_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
 ag_d4_nrms = [SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_4nm"]["discretization_error_vs_mie_cont"]["nrms"] * 100 for k in pole_keys]
 ag_d2_nrms = [SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]["discretization_error_vs_mie_cont"]["nrms"] * 100 for k in pole_keys]
-ag_t4_nrms = [SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_4nm"]["total_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
+ag_dtri_nrms = [TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"][k]["discretization_error_vs_mie_cont"]["nrms"] * 100 for k in pole_keys]
 ag_t2_nrms = [SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]["total_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
-ag_t2_dq = [abs(SPECTRA_DATA["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]["total_error_vs_mie_jc"]["dq_rel"]) * 100 for k in pole_keys]
+ag_ttri_nrms = [TRIANGLE_DATA["meshes"]["tri_h2nm"]["models"][k]["total_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
 
-ax.plot(ns_arr, ag_mod_nrms, "s-", color="#0072B2", lw=1.8, ms=6, label="Model NRMS: Mie(fit) vs Mie(J&C)")
-ax.plot(ns_arr, ag_d4_nrms, "^--", color="#009E73", lw=1.3, ms=5.5, label="Disc. NRMS ($h=4$ nm): FIT vs Mie(fit)")
-ax.plot(ns_arr, ag_d2_nrms, "v:", color="#009E73", lw=1.6, ms=5.5, label="Disc. NRMS ($h=2$ nm): FIT vs Mie(fit)")
-ax.plot(ns_arr, ag_t4_nrms, "o--", color="#D55E00", lw=1.4, ms=5.5, label="Total NRMS ($h=4$ nm): FIT vs Mie(J&C)")
-ax.plot(ns_arr, ag_t2_nrms, "o-", color="#D55E00", lw=2.0, ms=6.5, label="Total NRMS ($h=2$ nm): FIT vs Mie(J&C)")
-ax.plot(ns_arr, ag_t2_dq, "d-.", color="#CC79A7", lw=1.5, ms=5.5, label="Total $|\\Delta Q_\\mathrm{ext,peak}|/Q_\\mathrm{ref}$ ($h=2$ nm)")
-ax.set_ylabel("relative error [%]")
-ax.set_title(r"(b) Ag $2a=40$ nm: $Q_\mathrm{ext}$ NRMS & peak error vs $N$ ($h=4$ nm $\to 2$ nm)")
-ax.legend(fontsize=7.3)
-ax.grid(True, alpha=0.25)
-
-# (c) Au vs Ag: |Delta lambda_res| [nm] vs N
-ax = axes[1, 0]
-au_mod_dlam = [abs(SPECTRA_DATA["Au_40nm"]["models"][k]["model_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
-au_d4_dlam = [abs(SPECTRA_DATA["Au_40nm"]["models"][k]["h_4nm"]["discretization_error_vs_mie_cont"]["dlam_nm"]) for k in pole_keys]
-au_t4_dlam = [abs(SPECTRA_DATA["Au_40nm"]["models"][k]["h_4nm"]["total_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
-
-ax.semilogy(ns_arr, au_mod_dlam, "s--", color="#E69F00", lw=1.6, ms=6, label="Au Model $|\\Delta\\lambda_\\mathrm{res}|$ vs Mie(J&C)")
-ax.semilogy(ns_arr, au_d4_dlam, "^:", color="#009E73", lw=1.5, ms=5.5, label="Au Disc. $|\\Delta\\lambda_\\mathrm{res}|$ ($h=4$ nm) vs Mie(fit)")
-ax.semilogy(ns_arr, au_t4_dlam, "o-", color="#D55E00", lw=2.0, ms=6.5, label="Au Total $|\\Delta\\lambda_\\mathrm{res}|$ ($h=4$ nm) vs Mie(J&C)")
-ax.semilogy(ns_arr, ag_t2_dlam, "d-", color="#0072B2", lw=1.8, ms=6, label="Ag Total $|\\Delta\\lambda_\\mathrm{res}|$ ($h=2$ nm) vs Mie(J&C)")
+ax.plot(ns_arr, ag_mod_nrms, "s-", color="#0072B2", lw=1.8, ms=5.5, label="Model NRMS: Mie(fit) vs Mie(J&C)")
+ax.plot(ns_arr, ag_d4_nrms, "^--", color="#009E73", lw=1.3, ms=5.0, label="Disc. NRMS Cart ($h=4$ nm)")
+ax.plot(ns_arr, ag_d2_nrms, "v:", color="#009E73", lw=1.5, ms=5.0, label="Disc. NRMS Cart ($h=2$ nm)")
+ax.plot(ns_arr, ag_dtri_nrms, "*-", color="#004D40", lw=2.0, ms=6.8, label="Disc. NRMS Tri ($h_s=2$ nm, $\\approx 0.29\\%$)")
+ax.plot(ns_arr, ag_t2_nrms, "o--", color="#D55E00", lw=1.5, ms=5.0, label="Total NRMS Cart ($h=2$ nm)")
+ax.plot(ns_arr, ag_ttri_nrms, "o-", color="#D55E00", lw=2.0, ms=5.8, label="Total NRMS Tri ($h_s=2$ nm)")
 ax.set_xlabel("number of Drude + Lorentz poles $N$")
-ax.set_ylabel(r"$|\Delta\lambda_\mathrm{res}|$ [nm] (log scale)")
-ax.set_title(r"(c) Why Au needs more poles than Ag: $|\Delta\lambda_\mathrm{res}|$ vs $N$")
+ax.set_ylabel("relative error [%]")
+ax.set_title(r"(b) Ag $2a=40$ nm: $Q_\mathrm{ext}$ NRMS error vs $N$")
 ax.set_xticks(ns_arr)
-ax.legend(fontsize=7.5)
-ax.grid(True, which="both", alpha=0.25)
+ax.legend(fontsize=6.6, loc="upper right")
 
-# (d) Au vs Ag: spectrum NRMS (%) vs N
-ax = axes[1, 1]
-au_mod_nrms = [SPECTRA_DATA["Au_40nm"]["models"][k]["model_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
-au_d4_nrms = [SPECTRA_DATA["Au_40nm"]["models"][k]["h_4nm"]["discretization_error_vs_mie_cont"]["nrms"] * 100 for k in pole_keys]
+# (c) Au vs Ag: log-scale |Delta lambda_res| [nm] and Q_ext NRMS (%) vs N
+ax = axes[2]
+au_mod_dlam = [abs(SPECTRA_DATA["Au_40nm"]["models"][k]["model_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
+au_t4_dlam = [abs(SPECTRA_DATA["Au_40nm"]["models"][k]["h_4nm"]["total_error_vs_mie_jc"]["dlam_nm"]) for k in pole_keys]
 au_t4_nrms = [SPECTRA_DATA["Au_40nm"]["models"][k]["h_4nm"]["total_error_vs_mie_jc"]["nrms"] * 100 for k in pole_keys]
 
-ax.semilogy(ns_arr, au_mod_nrms, "s--", color="#E69F00", lw=1.6, ms=6, label="Au Model NRMS vs Mie(J&C)")
-ax.semilogy(ns_arr, au_d4_nrms, "^:", color="#009E73", lw=1.5, ms=5.5, label="Au Disc. NRMS ($h=4$ nm) vs Mie(fit)")
-ax.semilogy(ns_arr, au_t4_nrms, "o-", color="#D55E00", lw=2.0, ms=6.5, label="Au Total NRMS ($h=4$ nm) vs Mie(J&C)")
-ax.semilogy(ns_arr, ag_t2_nrms, "d-", color="#0072B2", lw=1.8, ms=6, label="Ag Total NRMS ($h=2$ nm) vs Mie(J&C)")
+ax.semilogy(ns_arr, au_t4_dlam, "o-", color="#D55E00", lw=2.0, ms=5.8, label="Au Total $|\\Delta\\lambda_\\mathrm{res}|$ [nm] (Cart $h=4$ nm)")
+ax.semilogy(ns_arr, au_t4_nrms, "s--", color="#E69F00", lw=1.7, ms=5.5, label="Au Total $Q_\\mathrm{ext}$ NRMS [%] (Cart $h=4$ nm)")
+ax.semilogy(ns_arr, ag_ttri_dlam, "d-", color="#0072B2", lw=1.8, ms=5.8, label="Ag Total $|\\Delta\\lambda_\\mathrm{res}|$ [nm] (Tri $h_s=2$ nm)")
+ax.semilogy(ns_arr, ag_ttri_nrms, "^--", color="#004D40", lw=1.7, ms=5.5, label="Ag Total $Q_\\mathrm{ext}$ NRMS [%] (Tri $h_s=2$ nm)")
 ax.set_xlabel("number of Drude + Lorentz poles $N$")
-ax.set_ylabel(r"$Q_\mathrm{ext}$ NRMS error [%] (log scale)")
-ax.set_title(r"(d) Why Au needs more poles than Ag: $Q_\mathrm{ext}$ NRMS vs $N$")
+ax.set_ylabel(r"$|\Delta\lambda_\mathrm{res}|$ [nm] or NRMS [%] (log scale)")
+ax.set_title(r"(c) Why Au needs $N \geq 3$ while Ag converges at $N = 2$")
 ax.set_xticks(ns_arr)
-ax.legend(fontsize=7.5)
-ax.grid(True, which="both", alpha=0.25)
+ax.legend(fontsize=6.5, loc="upper right")
 
-fig.tight_layout()
+fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.24)
 savefig(fig, "error_decomposition_vs_poles.png")
 plt.show()
 
 # %% [markdown]
 # ## 7. Cost per pole: time per step, per-edge cost, stability $\Delta t_\mathrm{max}$, and memory
 #
-# ### 7.1 Benchmark protocol and CPU model
+# ### 7.1 Benchmark protocol and CPU model (Cartesian $46 \times 46 \times 4$ grid vs Body-Fitted Triangular `tri_h2nm`)
 #
-# All timing numbers in `data/timing.json` were measured on a single uncontended
+# All per-step timing numbers in `data/timing.json` were measured on a single uncontended
 # process on **Google Cloud `g2-standard-16` (`Intel Xeon @ 2.20 GHz`, 8 cores /
 # 16 vCPU, 64 GB RAM)** with **single-thread execution**
 # (`OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`), on the
-# **same $46 \times 46 \times 4 = 8,464$-cell ($26,132$ E-edge) grid ($h = 4\text{ nm}$)**
+# **same Cartesian $46 \times 46 \times 4 = 8,464$-cell ($26,132$ E-edge) grid ($h = 4\text{ nm}$)**
 # with CPML boundaries in $x, y$ and periodic in $z$. For each case and pole
 # count $N \in \{0, 1, 2, 3, 4, 6\}$, we run $200$ warm-up steps followed by
 # **5 interleaved repeats of $2,500$ steps** with garbage collection disabled,
 # and report the **median time per step**.
 #
-# In every relative number below, **the baseline denominator is `N0`**: the
-# non-dispersive (`n_poles = 0`, static $\varepsilon_r$) solver step on the
-# exact same $46 \times 46 \times 4$ grid.
+# On the **body-fitted triangular mesh `tri_h2nm`** ($4,448$ triangles, $6,714$ edges,
+# $8,981$ unknowns, $14,021$ steps for $60\text{ fs}$), only the $910$ interior silver
+# dual edges ($13.6\%$ of the $6,714$ mesh edges) carry ADE polarization poles, so the
+# full $14,021$-step run time increases only from **$11.78\text{ s}$ (`N1`, $840\ \mu\text{s/step}$)**
+# to **$11.94\text{ s}$ (`N2`, $852\ \mu\text{s/step}$)** and **$12.45\text{ s}$ (`N6`, $888\ \mu\text{s/step}$)**.
 #
-# We benchmark three configurations to separate the sparse cylinder overhead
+# In every relative number in Table 3 below, **the baseline denominator is `N0`**: the
+# non-dispersive (`n_poles = 0`, static $\varepsilon_r$) solver step on the
+# exact same $46 \times 46 \times 4$ Cartesian grid ($h = 4\text{ nm}$).
+#
+# We benchmark three Cartesian configurations to separate the sparse cylinder overhead
 # from the worst-case full-domain ("bulk") overhead:
 #
 # 1. **`cylinder_conformal` ($1,196$ dispersive E-edges, $1,500$ Kottke sub-capacitors;
@@ -1439,7 +1989,7 @@ plt.show()
 #    dispersive material fills the entire domain (`solver.add_dispersive_material`),
 #    giving the worst-case slowdown when every edge in the grid is dispersive.
 #
-# **Table 3 — Single-thread step time, slowdown vs `N0` (non-dispersive baseline on the same grid), per-edge-per-pole cost, and auxiliary memory (`Intel Xeon @ 2.20 GHz`, 1 thread, $46 \times 46 \times 4$ grid):**
+# **Table 3 — Single-thread step time, slowdown vs `N0` (non-dispersive baseline on the same $46 \times 46 \times 4$ Cartesian $h = 4\text{ nm}$ grid), per-edge-per-pole cost, and auxiliary memory (`Intel Xeon @ 2.20 GHz`, 1 thread):**
 #
 # | Case ($N_\mathrm{edge}$ dispersive edges) | Model ($N$) | Median $\mu\text{s/step}$ | Slowdown vs `N0` baseline | $\Delta t_\mathrm{step}$ vs `N0` [$\mu\text{s}$] | Total $(\Delta t_\mathrm{step} / N_\mathrm{edge} / N)$ [ns/edge/pole] | Marginal slope ($N \ge 1$) [ns/edge/pole] | Pole aux. memory [B/disp. edge] ([B/cap]) |
 # |---|---:|---:|---:|---:|---:|---:|---:|
@@ -1467,14 +2017,15 @@ plt.show()
 # Every pole in a leapfrog ADE scheme has its own discrete stability ceiling
 # $\Delta t_\mathrm{max}$, checked by `DispersiveMaterial.is_stable(dt, courant=0.85)`:
 #
-# * On our $h = 4\text{ nm}$ grid ($\Delta t_\mathrm{CFL} = 7.97\text{ as}$) and
-#   $h = 2\text{ nm}$ grid ($\Delta t_\mathrm{CFL} = 3.99\text{ as}$), all of our
-#   fitted $N = 1, 2, 3, 4, 6$ models have $\Delta t_\mathrm{max} = 238\text{--}429\text{ as}$,
+# * On our $h = 4\text{ nm}$ grid ($\Delta t_\mathrm{CFL} = 7.97\text{ as}$),
+#   $h = 2\text{ nm}$ grid ($\Delta t_\mathrm{CFL} = 3.99\text{ as}$), and
+#   body-fitted triangular meshes ($\Delta t = 4.28\text{ as}$ and $2.65\text{ as}$),
+#   all of our fitted $N = 1, 2, 3, 4, 6$ models have $\Delta t_\mathrm{max} = 238\text{--}429\text{ as}$,
 #   and Rakić has $\Delta t_\mathrm{max} = 26.2\text{ as}$ (Ag) and $30.5\text{ as}$ (Au).
 #   Because $\Delta t_\mathrm{CFL} \ll \Delta t_\mathrm{max}$, **none of the models
 #   force a smaller $\Delta t$ than the vacuum Courant step on fine plasmonic grids**
 #   ($h \le 11.3\text{ nm}$ for Rakić Ag; $h \le 107\text{ nm}$ for our fitted Ag `N2`),
-#   so they require **0 extra time steps** to reach $T = 35\text{ fs}$.
+#   so they require **0 extra time steps**.
 # * **When does a model force $\Delta t < \Delta t_\mathrm{CFL}$?** On a coarser
 #   grid—for example $h = 15\text{ nm}$ ($\lambda_\mathrm{min}/20$ in vacuum),
 #   where $\Delta t_\mathrm{CFL} = 29.90\text{ as}$ ($1,171$ steps for $35\text{ fs}$)—our
@@ -1484,9 +2035,8 @@ plt.show()
 #   and forces $\Delta t \le 26.20\text{ as}$. That requires **$1,336$ steps instead
 #   of $1,171$ ($+165$ extra steps, $+14.1\%$)**, multiplying Rakić's 6-pole
 #   per-step overhead ($1.260\times$ in `cylinder_conformal` or $2.026\times$ in `bulk`)
-#   by an additional $1.141\times$ in total wall time to reach the same physical
-#   time ($1.438\times$ total in `cylinder_conformal`, $2.312\times$ in `bulk`
-#   relative to `N0` at $\Delta t_\mathrm{CFL}$).
+#   by an additional $1.141\times$ in total wall time ($1.438\times$ total in `cylinder_conformal`,
+#   $2.312\times$ in `bulk` relative to `N0` at $\Delta t_\mathrm{CFL}$).
 #
 # ### 7.3 Memory per dispersive edge vs $N$
 #
@@ -1494,9 +2044,9 @@ plt.show()
 # ($p^n$ and $p^{n-1}$, $2 \times 8 = 16\text{ bytes}$) per dispersive element
 # (and a first-order Debye pole stores one `float64` array, $8\text{ bytes}$):
 #
-# * In **`cylinder_staircase`** and **`bulk`**, there is 1 capacitor per dispersive
-#   E-edge, so the pole auxiliary memory is **exact: $16 N\text{ bytes/edge}$**
-#   ($16, 32, 48, 64, 96\text{ B/edge}$ for $N = 1, 2, 3, 4, 6$).
+# * In **`cylinder_staircase`**, **`bulk`**, and **`UnstructuredFIT2D`** (`tri_h2nm`),
+#   there is 1 capacitor per dispersive E-edge, so the pole auxiliary memory is
+#   **exact: $16 N\text{ bytes/edge}$** ($16, 32, 48, 64, 96\text{ B/edge}$ for $N = 1, 2, 3, 4, 6$).
 # * In **`cylinder_conformal`** (`wakis.tensor_dispersive.DispersiveNetwork`),
 #   interior edges have 1 capacitor and cut boundary edges have 2 sub-capacitors
 #   (series + parallel branches, $1,500 / 1,196 = 1.2542$ capacitors per dispersive
@@ -1526,8 +2076,8 @@ for case_name, cdata in TIMING_DATA["cases"].items():
         )
 
 # %%
-# Figure 4: Slowdown, per-edge cost, and auxiliary memory vs N (cylinder and bulk)
-fig, axes = plt.subplots(1, 3, figsize=(14.0, 4.3))
+# Figure 5: Slowdown, per-edge cost, and auxiliary memory vs N (46x46x4 Cartesian grid, h = 4 nm)
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.6, height_in=4.3)
 ns_all = np.array([0, 1, 2, 3, 4, 6])
 keys_all = ["N0", "N1", "N2", "N3", "N4", "N6"]
 keys_pos = ["N1", "N2", "N3", "N4", "N6"]
@@ -1539,18 +2089,17 @@ case_styles = {
     "bulk": ("#D55E00", "^-", "Bulk domain (26,132 edges, 100%)"),
 }
 
-# (a) Slowdown vs N relative to N0 baseline on the same grid
+# (a) Slowdown vs N relative to N0 baseline on the same 46x46x4 grid
 ax = axes[0]
 for cname, (col, fmt, lbl) in case_styles.items():
     cdata = TIMING_DATA["cases"][cname]
     slow = [cdata["models"][k]["slowdown_vs_N0"] for k in keys_all]
     ax.plot(ns_all, slow, fmt, color=col, lw=1.8, ms=6, label=lbl)
 ax.set_xlabel("number of Drude + Lorentz poles $N$")
-ax.set_ylabel("slowdown relative to `N0` baseline")
-ax.set_title("(a) Step-time slowdown vs $N$\n(baseline: non-dispersive `N0` on same grid)")
+ax.set_ylabel("slowdown relative to N0 baseline")
+ax.set_title("(a) Step-time slowdown vs $N$ ($46\\times46\\times4$ Cart. $h=4$ nm)\n(baseline: non-dispersive N0 on same grid)")
 ax.set_xticks(ns_all)
-ax.grid(True, alpha=0.25)
-ax.legend(fontsize=7.5, loc="upper left")
+ax.legend(fontsize=6.8, loc="upper left")
 
 # (b) Per-dispersive-edge cost (ns / edge / pole) vs N
 ax = axes[1]
@@ -1572,8 +2121,7 @@ ax.set_xlabel("number of Drude + Lorentz poles $N$")
 ax.set_ylabel(r"$(\Delta t_\mathrm{step}) / (N_\mathrm{edge}\,N)$ [ns / edge / pole]")
 ax.set_title("(b) Amortized & marginal cost per\ndispersive edge per pole vs $N$")
 ax.set_xticks(ns_pos)
-ax.grid(True, alpha=0.25)
-ax.legend(fontsize=7.5, loc="upper right")
+ax.legend(fontsize=6.8, loc="upper right")
 
 # (c) Auxiliary polarization memory per dispersive edge vs N
 ax = axes[2]
@@ -1592,10 +2140,9 @@ ax.set_xlabel("number of poles $N$")
 ax.set_ylabel("auxiliary state memory [bytes / dispersive edge]")
 ax.set_title("(c) Pole auxiliary memory per\ndispersive edge vs $N$")
 ax.set_xticks(ns_all)
-ax.grid(True, alpha=0.25)
-ax.legend(fontsize=7.5, loc="upper left")
+ax.legend(fontsize=6.8, loc="upper left")
 
-fig.tight_layout()
+fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.84, wspace=0.24)
 savefig(fig, "cost_and_memory_vs_poles.png")
 plt.show()
 
@@ -1611,15 +2158,16 @@ plt.show()
 #   nanometre gaps (benchmark case `B3`) concentrate the field into high-order
 #   gap plasmons that require $h \le 0.5\text{--}1\text{ nm}$ or adaptive local
 #   refinement (`wakis.subgrid2d`, `wakis.subtri`).
-# * **Subpixel averaging at negative-permittivity interfaces:** While Kottke
-#   subpixel averaging (`wakis.tensor_dispersive.DispersiveNetwork`) markedly
-#   improves upon staircasing, the harmonic (series) average of a negative metal
-#   $\varepsilon(\omega) < 0$ and positive vacuum $\varepsilon_\mathrm{host} = 1$
+# * **Subpixel averaging at negative-permittivity interfaces vs body-fitted triangles:**
+#   While Kottke subpixel averaging (`wakis.tensor_dispersive.DispersiveNetwork`)
+#   markedly improves upon staircasing, the harmonic (series) average of a negative
+#   metal $\varepsilon(\omega) < 0$ and positive vacuum $\varepsilon_\mathrm{host} = 1$
 #   can cross zero at intermediate fill fractions $f \in (0, 1)$, introducing weak
 #   localized cut-cell resonances that limit Cartesian convergence on curved
 #   plasmonic surfaces compared with boundary-conforming triangular meshes
-#   (see `studies/benchmarks/` case `B2`).
-# * **Tabulated dataset uncertainty Exceeds $N \ge 2$ fit differences:** For
+#   (`wakis.unstructured.UnstructuredFIT2D`, which cuts the $N=2$ discretization
+#   NRMS from $2.47\%$ to $0.28\%$ on the same $2a = 40\text{ nm}$ Ag cylinder).
+# * **Tabulated dataset uncertainty exceeds $N \ge 2$ fit differences:** For
 #   silver, the difference between $N = 2$ and $N = 6$ in $\lambda_\mathrm{res}$
 #   is $< 0.05\text{ nm}$, whereas the discrepancy between two standard handbooks—Johnson
 #   & Christy (1972) and Palik / Rakić (1998)—is **$9.4\text{ nm}$ in $\lambda_\mathrm{res}$
@@ -1639,19 +2187,30 @@ plt.show()
 #
 # ## 9. Conclusions
 #
-# 1. **How many poles does silver need?** **Two poles (`N2`: 1 Drude + 1 UV
+# 1. **Body-fitted triangular mesh vs Cartesian FIT at the curved plasmonic boundary:**
+#    Upgrading from the uniform $h = 2\text{ nm}$ Cartesian grid ($86 \times 86 \times 4 = 29,584$
+#    cells, $37,632$ 2D unknowns, $10.97\text{ cells}/\delta_\mathrm{min}$, $8,782$ steps,
+#    $14.87\text{ s}$) to a **body-fitted triangular mesh** (`tri_h2nm`: $h_s = 2\text{ nm}$
+#    at $r = a = 20\text{ nm}$ graded to $6\text{ nm}$, $4,448$ triangles, $8,981$ unknowns,
+#    $11.25\text{ elements}/\delta_\mathrm{min}$, $14,021$ steps, $11.94\text{ s}$) eliminates
+#    mixed metal--vacuum cut cells, reducing the Ag `N2` discretization NRMS vs `Mie(N2)`
+#    from **$2.47\%$ to $0.28\%$ ($8.8\times$ smaller)**, cutting the peak $Q_\mathrm{ext}$
+#    discretization error from **$-5.92\%$ to $-0.20\%$**, and using **$4.2\times$ fewer unknowns**.
+#    Refining the surface triangles to $h_s = 1.25\text{ nm}$ (`tri_h1p25nm`: $18.0\text{ elements}/\delta_\mathrm{min}$,
+#    $7,097$ triangles, $14,296$ unknowns, $22,600$ steps, $26.47\text{ s}$) yields a clean,
+#    artifact-free dipolar LSPR near-field map ($|\mathbf{E}|/|\mathbf{E}_\mathrm{inc}| = 3.93$
+#    uniformly inside, $5.63$ at the exterior $\rho = a$ poles).
+# 2. **How many poles does silver need?** **Two poles (`N2`: 1 Drude + 1 UV
 #    Lorentz oscillator at $\omega_0 = 4.21\text{ eV} / 294\text{ nm}$)** are
 #    sufficient for an Ag cylinder across $300\text{--}900\text{ nm}$. Going from
 #    $N = 1$ (pure Drude) to $N = 2$ cuts the permittivity fit error from $21.7\%$
 #    to $6.2\%$, reduces the model resonance wavelength error from $+6.35\text{ nm}$
-#    to $+1.87\text{ nm}$ (and total FIT error at $h = 2\text{ nm}$ from
-#    $+6.49\text{ nm}$ to $+2.26\text{ nm}$), and drops the total $Q_\mathrm{ext}$
-#    NRMS error from $14.36\%$ to $5.03\%$. Adding more poles ($N = 3, 4, 6$)
-#    changes $\lambda_\mathrm{res}$ by $< 0.04\text{ nm}$ and total NRMS by
-#    $\le 0.13\%$—far below the $h = 4\text{ nm} \to 2\text{ nm}$ discretization
-#    error ($3.55\% \to 1.88\%$ NRMS) and the $9.4\text{ nm}$ discrepancy between
-#    experimental handbooks (J&C vs Rakić/Palik).
-# 2. **Why does gold need more poles?** Gold's $5d \to 6sp$ interband transition
+#    to $+1.87\text{ nm}$ (and total error vs `Mie(J&C)` to $+1.77\text{ nm}$ on `tri_h2nm`
+#    and $+2.26\text{ nm}$ on Cartesian $h = 2\text{ nm}$), and drops the total $Q_\mathrm{ext}$
+#    NRMS error from $14.43\%$ to **$3.65\%$ on `tri_h2nm`** ($5.03\%$ on Cartesian $h = 2\text{ nm}$).
+#    Adding more poles ($N = 3, 4, 6$) changes $\lambda_\mathrm{res}$ by $< 0.05\text{ nm}$—far
+#    below the $9.4\text{ nm}$ discrepancy between experimental handbooks (J&C vs Rakić/Palik).
+# 3. **Why does gold need more poles?** Gold's $5d \to 6sp$ interband transition
 #    starts at $\sim 2.4\text{ eV}$ ($517\text{ nm}$), directly overlapping its
 #    $\lambda_\mathrm{res} = 496.0\text{ nm}$ localized surface plasmon. Consequently
 #    $N = 1$ fails completely ($\Delta\lambda_\mathrm{res} = -97.2\text{ nm}$,
@@ -1659,16 +2218,18 @@ plt.show()
 #    ($6.7\%$ NRMS), and **$N \ge 3\text{--}6$ poles** are required to reach
 #    $\Delta\lambda_\mathrm{res} = -9.7\text{ nm} \to -2.0\text{ nm}$ and
 #    $2.5\% \to 1.5\%$ total NRMS.
-# 3. **What does each pole cost?** On `Intel Xeon @ 2.20 GHz` (1 thread,
-#    $46 \times 46 \times 4$ grid, relative to the non-dispersive `N0` baseline on
-#    the same grid):
+# 4. **What does each pole cost?** On `Intel Xeon @ 2.20 GHz` (1 thread,
+#    $46 \times 46 \times 4$ Cartesian grid at $h = 4\text{ nm}$, relative to the
+#    non-dispersive `N0` baseline on the same grid):
 #    * For the **conformal cylinder** ($1,196$ dispersive edges = $4.58\%$ of the
 #      grid), enabling dispersion costs $+88.3\ \mu\text{s/step}$ fixed network
 #      overhead plus **$+27.2\ \mu\text{s/step/pole}$ ($22.7\text{ ns/edge/pole}$
 #      marginal; $90.1 \to 34.5\text{ ns/edge/pole}$ total amortized for
 #      $N = 1 \to 6$)**, so `N2` is only **$1.157\times$** slower than `N0`
 #      ($1,101\ \mu\text{s}$ vs $952\ \mu\text{s/step}$) and `N6` is **$1.260\times$**
-#      slower.
+#      slower. On the $4,448$-cell **`tri_h2nm` triangular mesh** ($910$ Ag dual edges),
+#      going from `N1` to `N6` increases the full $14,021$-step run time by only
+#      $5.7\%$ ($11.78\text{ s} \to 12.45\text{ s}$).
 #    * For the **staircase cylinder** ($1,056$ dispersive edges = $4.04\%$ of the
 #      grid), the marginal cost is **$+9.6\ \mu\text{s/step/pole}$
 #      ($9.1\text{ ns/edge/pole}$)**, giving a **$1.056\times$** slowdown at `N2`
@@ -1679,9 +2240,9 @@ plt.show()
 #      ADE gather/scatter overhead, giving slowdowns of **$1.421\times$ (`N1`),
 #      $1.552\times$ (`N2`), and $2.026\times$ (`N6`)** relative to `N0`.
 #    * Each Lorentz/Drude pole adds **2 `float64` arrays ($16\text{ bytes/capacitor}$)**:
-#      exactly **$16 N\text{ B/dispersive edge}$** in staircase/bulk and
-#      **$20.1 N\text{ B/dispersive edge}$** in conformal mode ($1.254$
-#      sub-capacitors per dispersive edge).
+#      exactly **$16 N\text{ B/dispersive edge}$** in staircase, bulk, and
+#      `UnstructuredFIT2D`, and **$20.1 N\text{ B/dispersive edge}$** in conformal
+#      Cartesian mode ($1.254$ sub-capacitors per dispersive edge).
 #
 # ## 10. References
 #

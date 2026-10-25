@@ -1,0 +1,185 @@
+{
+  "mode_converter_wavelength_breakdown": [
+    {
+      "wavelength_nm": 1265,
+      "reflection_S11_sq": 0.00023777023250522237,
+      "reflection_dB": -36.23842517538756,
+      "transmission_TE1_S21_sq": 0.9252037493022748,
+      "transmission_TE1_dB": -0.3376261595979514,
+      "radiation_or_TE0_leakage": 0.07455848046521996,
+      "margin_reflection": 0.9762229762180199,
+      "margin_transmission": 0.3122126393892231,
+      "limiting_channel": "transmission_TE1"
+    },
+    {
+      "wavelength_nm": 1270,
+      "reflection_S11_sq": 0.0002819828773161183,
+      "reflection_dB": -35.49777262293743,
+      "transmission_TE1_S21_sq": 0.9294970342130908,
+      "transmission_TE1_dB": -0.3175199161230213,
+      "radiation_or_TE0_leakage": 0.07022098290959311,
+      "margin_reflection": 0.9718017116381072,
+      "margin_transmission": 0.3516914510892064,
+      "limiting_channel": "transmission_TE1"
+    },
+    {
+      "wavelength_nm": 1275,
+      "reflection_S11_sq": 0.00034144320937870603,
+      "reflection_dB": -34.66681520106749,
+      "transmission_TE1_S21_sq": 0.9323556578308196,
+      "transmission_TE1_dB": -0.30418389395692225,
+      "radiation_or_TE0_leakage": 0.06730289895980168,
+      "margin_reflection": 0.9658556782989444,
+      "margin_transmission": 0.3779778648422574,
+      "limiting_channel": "transmission_TE1"
+    },
+    {
+      "wavelength_nm": 1285,
+      "reflection_S11_sq": 0.0004658361918368046,
+      "reflection_dB": -33.31766773198464,
+      "transmission_TE1_S21_sq": 0.9339722269238626,
+      "transmission_TE1_dB": -0.29666037980877213,
+      "radiation_or_TE0_leakage": 0.06556193688430056,
+      "margin_reflection": 0.9534163797750945,
+      "margin_transmission": 0.39284299216317536,
+      "limiting_channel": "transmission_TE1"
+    },
+    {
+      "wavelength_nm": 1290,
+      "reflection_S11_sq": 0.0005274221329993232,
+      "reflection_dB": -32.77841649214968,
+      "transmission_TE1_S21_sq": 0.9328967515723603,
+      "transmission_TE1_dB": -0.30166419172734027,
+      "radiation_or_TE0_leakage": 0.06657582629464043,
+      "margin_reflection": 0.9472577855211873,
+      "margin_transmission": 0.3829534810377972,
+      "limiting_channel": "transmission_TE1"
+    },
+    {
+      "wavelength_nm": 1295,
+      "reflection_S11_sq": 0.0005865471055245585,
+      "reflection_dB": -32.31697104012417,
+      "transmission_TE1_S21_sq": 0.930659814029504,
+      "transmission_TE1_dB": -0.3120903855521109,
+      "radiation_or_TE0_leakage": 0.06875363886497143,
+      "margin_reflection": 0.9413452881365093,
+      "margin_transmission": 0.3623837685976648,
+      "limiting_channel": "transmission_TE1"
+    }
+  ],
+  "worst_wavelength_nm": 1265,
+  "worst_channel": "transmission_TE1",
+  "worst_margin": 0.3122126393892231,
+  "stage1_peak_iter": 102,
+  "stage1_peak_surrogate_eval": 0.456581477366742,
+  "stage2_entry_surrogate_eval": 0.2598235425924034,
+  "stage2_peak_surrogate_eval": 0.3048749435422905,
+  "candidates_mode_converter": [
+    {
+      "stage": "ste_beta64",
+      "step": 2,
+      "wakis_metrics": {
+        "1": 0.30821420489470197
+      },
+      "score": 0.30821420489470197,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.3122126393892231
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 6,
+      "wakis_metrics": {
+        "1": 0.3048749435422905
+      },
+      "score": 0.3048749435422905,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.3084841101101566
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 0,
+      "wakis_metrics": {
+        "1": 0.2598235425924034
+      },
+      "score": 0.2598235425924034,
+      "length_scale_leaderboard_px": [
+        8,
+        10
+      ],
+      "official_eval_metric": 0.26232082038390364
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 5,
+      "wakis_metrics": {
+        "1": 0.252841625042559
+      },
+      "score": 0.252841625042559,
+      "length_scale_leaderboard_px": [
+        9,
+        8
+      ],
+      "official_eval_metric": 0.2581661875027463
+    }
+  ],
+  "candidates_splitter": [
+    {
+      "stage": "ste_beta64",
+      "step": 11,
+      "wakis_metrics": {
+        "1": 0.06801844150891868
+      },
+      "score": 0.06801844150891868,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.06815500017437344
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 3,
+      "wakis_metrics": {
+        "1": 0.06612298372995645
+      },
+      "score": 0.06612298372995645,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.06620868596244205
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 10,
+      "wakis_metrics": {
+        "1": 0.06528051303152922
+      },
+      "score": 0.06528051303152922,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.06542399073457236
+    },
+    {
+      "stage": "ste_beta64",
+      "step": 12,
+      "wakis_metrics": {
+        "1": 0.04774461340681933
+      },
+      "score": 0.04774461340681933,
+      "length_scale_leaderboard_px": [
+        8,
+        8
+      ],
+      "official_eval_metric": 0.047810102869429195
+    }
+  ]
+}

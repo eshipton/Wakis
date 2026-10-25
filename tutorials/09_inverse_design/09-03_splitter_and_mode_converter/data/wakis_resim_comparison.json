@@ -1,0 +1,15 @@
+{
+  "mode": "quick",
+  "quick_coarsened_steps": [
+    4792,
+    4792
+  ],
+  "splitter_max_abs_diff_vs_wakis_r1_modal_S2": 6.106226635438361e-16,
+  "splitter_max_abs_diff_vs_dense_S2": 0.0002656794880781521,
+  "splitter_resim_modal_eval_metric": 0.0678650995178283,
+  "splitter_stored_modal_eval_metric": 0.06786509951782771,
+  "modeconv_max_abs_diff_vs_wakis_r1_modal_S2": 1.153643306706087e-05,
+  "modeconv_max_abs_diff_vs_dense_S2": 0.0006409350788449952,
+  "modeconv_resim_modal_eval_metric": 0.30785185233198326,
+  "modeconv_stored_modal_eval_metric": 0.30791694471749015
+}

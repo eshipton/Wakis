@@ -523,3 +523,50 @@ def test_committed_full_study_data_and_convergence():
         assert np.all(np.abs(bad_flux - mono_ana_y) / mono_ana_y < 0.012)
 
 
+def test_setup_schematic_and_all_figures_exist():
+    """Verify that 00_setup_schematic.png and all 14 diagnostic figures exist and are non-empty."""
+    fig_dir = TUTORIAL_DIR / "figures"
+    expected_figures = [
+        "00_setup_schematic.png",
+        "01_geometry_and_mesh_overview.png",
+        "02_pec_mirror_drexhage_purcell.png",
+        "03_pec_mirror_angular_patterns.png",
+        "04_pec_mirror_field_snapshots.png",
+        "05_dipole_mirror_interference.gif",
+        "06_drude_silver_drexhage_cps.png",
+        "07_sommerfeld_spp_kspace_spectrum.png",
+        "08_planar_cavity_purcell_2d_vs_3d.png",
+        "09_cavity_cutoff_ringing_diagnostic.png",
+        "10_rcled_dbr_reflectance_and_cavity_field.png",
+        "11_rcled_angular_extraction_beaming.png",
+        "12_incoherent_quantum_well_averaging.png",
+        "13_incoherent_monte_carlo_convergence.png",
+        "14_mesh_and_subpixel_convergence.png",
+    ]
+    for fname in expected_figures:
+        p = fig_dir / fname
+        assert p.is_file(), f"Missing expected figure: {p}"
+        size_bytes = p.stat().st_size
+        assert size_bytes > 10_000, f"Figure {p} is unexpectedly small ({size_bytes} bytes)"
+        if fname.endswith(".gif"):
+            assert size_bytes < 5 * 1024 * 1024, f"GIF {p} exceeds 5 MB limit ({size_bytes} bytes)"
+
+    # Verify set_monitor_bounds helper and its mutation check
+    fm = FluxMonitor([300.0e12], center=(1.0e-6, 2.0e-6, 3.0e-6), size=(0.4e-6, 0.2e-6, 0.8e-6))
+    hlp.set_monitor_bounds(fm, label="TestFluxBox")
+    assert fm.name == "TestFluxBox"
+    assert np.allclose(fm.bounds, (0.8e-6, 1.2e-6, 1.9e-6, 2.1e-6, 2.6e-6, 3.4e-6))
+    with pytest.raises(AssertionError):
+        # Mutation check: omitting the 0.5 half-span factor must fail the bounds check
+        bad_bounds = (
+            fm.center[0] - fm.size[0],
+            fm.center[0] + fm.size[0],
+            fm.center[1] - fm.size[1],
+            fm.center[1] + fm.size[1],
+            fm.center[2] - fm.size[2],
+            fm.center[2] + fm.size[2],
+        )
+        assert np.allclose(fm.bounds, bad_bounds)
+
+
+

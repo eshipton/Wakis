@@ -1,0 +1,78 @@
+{
+  "round2_v3_seed0": {
+    "official_eval_stored": 8.86517819331014,
+    "official_eval_recomputed": 8.86517819331014,
+    "official_eval_abs_diff": 0.0,
+    "official_enhancement_ex": [
+      11.459854930431701,
+      8.86517819331014,
+      9.535331361416123
+    ],
+    "official_softmin_loss": -9.687599916685924,
+    "wakis_eval_stored": 8.432886304355437,
+    "wakis_eval_recomputed": 8.432886304355437,
+    "wakis_enhancement_ex": [
+      10.825318569991442,
+      8.432886304355437,
+      9.179046008762695
+    ],
+    "wakis_softmin_loss": -9.252890781699591,
+    "length_scale_stored_px": [
+      5,
+      5
+    ],
+    "length_scale_measured_px": [
+      5,
+      5
+    ],
+    "length_scale_nm": [
+      100,
+      100
+    ],
+    "selected_stage": "ste_beta16:100"
+  },
+  "round1_unconstrained": {
+    "seed0_official_eval": 14.067628047770652,
+    "seed0_official_enhancement_ex": [
+      14.067628047770652,
+      16.78301629484724,
+      16.321729753289965
+    ],
+    "seed0_wakis_eval": 11.660670121896906,
+    "seed0_length_scale_px": [
+      2,
+      1
+    ],
+    "seed1_official_eval": 7.779437569369018,
+    "seed1_official_enhancement_ex": [
+      7.779437569369018,
+      12.633027527196951,
+      10.853485229727513
+    ],
+    "seed1_wakis_eval": 6.2563880157144025,
+    "seed1_length_scale_px": [
+      2,
+      2
+    ],
+    "target_length_scale_px": [
+      5,
+      5
+    ]
+  },
+  "rasmus123nm_validation": {
+    "fmmax_enhancement_ex": [
+      16.39,
+      14.3,
+      15.45
+    ],
+    "fmmax_eval_metric": 14.3,
+    "wakis_enhancement_ex": [
+      15.55,
+      14.27,
+      16.09
+    ],
+    "wakis_eval_metric": 14.27,
+    "min_eval_relative_diff": 0.0020979020979021773
+  },
+  "leaderboard_status": "not_included_in_bundle"
+}

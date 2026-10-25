@@ -1,0 +1,114 @@
+{
+  "splitter": {
+    "official_eval_stored": 0.06815500017437344,
+    "official_eval_recomputed": 0.06815500017437344,
+    "official_eval_abs_diff": 0.0,
+    "wakis_estimator_eval_stored": 0.06801844150891757,
+    "wakis_estimator_eval_recomputed": 0.06801844150891757,
+    "wakis_modal_eval_stored": 0.06786509951782771,
+    "wakis_modal_eval_recomputed": 0.06786509951782771,
+    "official_margins": [
+      [
+        0.7501043961711394,
+        0.06815500017437344,
+        0.06815503497506757
+      ],
+      [
+        0.8166806487154666,
+        0.07039074677507892,
+        0.070390781033572
+      ],
+      [
+        0.8670404985561843,
+        0.07214930128281066,
+        0.07214933341895728
+      ],
+      [
+        0.9280139762644972,
+        0.07422520116648354,
+        0.07422522478393093
+      ],
+      [
+        0.9417990411948726,
+        0.0745433494051668,
+        0.07454336688820447
+      ],
+      [
+        0.9458563434656447,
+        0.07438605628632493,
+        0.07438606662180981
+      ]
+    ],
+    "length_scale_stored_px": [
+      8,
+      8
+    ],
+    "length_scale_measured_px": [
+      8,
+      8
+    ],
+    "round1_best_official_eval": 0.0668602657153569,
+    "round1_best_length_scale_px": [
+      1,
+      2
+    ],
+    "leaderboard_best_eval": 0.009036790840653642,
+    "leaderboard_best_file": "240812_mfschubert_gym_levelset_example.csv",
+    "leaderboard_best_length_scale_px": [
+      9,
+      8
+    ],
+    "leaderboard_num_entries": 1,
+    "leaderboard_num_positive": 1
+  },
+  "mode_converter": {
+    "official_eval_stored": 0.3122126393892231,
+    "official_eval_recomputed": 0.3122126393892231,
+    "official_eval_abs_diff": 0.0,
+    "wakis_estimator_eval_stored": 0.3082142048946979,
+    "wakis_estimator_eval_recomputed": 0.3082142048946979,
+    "wakis_modal_eval_stored": 0.30791694471749015,
+    "wakis_modal_eval_recomputed": 0.30791694471749015,
+    "official_margins": [
+      [
+        0.9762229762180199,
+        0.3122126393892231
+      ],
+      [
+        0.9718017116381072,
+        0.3516914510892064
+      ],
+      [
+        0.9658556782989444,
+        0.3779778648422574
+      ],
+      [
+        0.9534163797750945,
+        0.39284299216317536
+      ],
+      [
+        0.9472577855211873,
+        0.3829534810377972
+      ],
+      [
+        0.9413452881365093,
+        0.3623837685976648
+      ]
+    ],
+    "length_scale_stored_px": [
+      8,
+      8
+    ],
+    "length_scale_measured_px": [
+      8,
+      8
+    ],
+    "round1_best_official_eval": -0.3101090011448193,
+    "round1_best_length_scale_px": [
+      2,
+      3
+    ],
+    "leaderboard_reported_6px": 0.9095,
+    "leaderboard_reported_8px": 0.8536
+  }
+}

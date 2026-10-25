@@ -82,7 +82,7 @@
 # 2. [2D vs. 3D planar microcavity density of states & RCLED extraction](#2.-2D-vs.-3D-planar-microcavity-density-of-states-&-RCLED-extraction)
 # 3. [Incoherent spontaneous emission & subpixel DBR discretization](#3.-Incoherent-spontaneous-emission-&-subpixel-DBR-discretization)
 # 4. [Simulation building blocks & study task table](#4.-Simulation-building-blocks-&-study-task-table)
-# 5. [Generating the 14-figure diagnostic suite](#5.-Generating-the-14-figure-diagnostic-suite)
+# 5. [Generating the setup schematics and 14-figure diagnostic suite](#5.-Generating-the-setup-schematics-and-14-figure-diagnostic-suite)
 # 6. [Quantitative results & benchmark comparison tables](#6.-Quantitative-results-&-benchmark-comparison-tables)
 # 7. [Resolution convergence: Kottke vs. staircase & skin-depth audit](#7.-Resolution-convergence:-Kottke-vs.-staircase-&-skin-depth-audit)
 # 8. [Limits & failure modes](#8.-Limits-&-failure-modes)
@@ -260,8 +260,8 @@
 # > **Provenance note on literature targets**: The $\text{NP-GaN/GaN}$ indices ($1.70 / 2.39$),
 # > $\text{Ta}_2\text{O}_5/\text{SiO}_2$ top DBR architecture, $\lambda_0 = 450\;\text{nm}$ operating
 # > wavelength, and $5\times 5\;\mu\text{m}^2$ mesa dimensions are verified directly from open-access
-# > **Lee *et al.* (2024), Fig. 1a,b & text** (`doi:10.1186/s11671-024-04018-4`). The 1998 IEEE JQE
-# > companions by **Abram *et al.*** (`doi:10.1109/3.655009`, Eq. 7, $n = 2.4$) and **Benisty *et al.***
+# > **Lee, Huang, Hung, Chen *et al.* (2024), "InGaN blue resonant cavity micro-LED with RGY quantum dot layer for broad gamut, efficient displays," Fig. 1a,b & text** (`doi:10.1186/s11671-024-04018-4`). The 1998 IEEE JQE
+# > companions by **Abram, Robert & Kuszelewicz (1998), "Spontaneous emission control in semiconductor microcavities with metallic or Bragg mirrors"** (`doi:10.1109/3.655009`, Eq. 7, $n = 2.4$) and **Benisty, De Neve & Weisbuch (1998), "Impact of planar microcavity effects on light extraction—Part I: Basic concepts and analytical trends"**
 # > (`doi:10.1109/3.709578`, Airy extraction formula) are paywalled on IEEE Xplore; their analytical
 # > equations are self-contained and verified here from first-principles Green's function / Poisson-summation
 # > derivations.
@@ -338,7 +338,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import _helpers as hlp
-from wakis import GridFIT3D, SolverFIT3D
+from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.dispersive import DispersiveMaterial, Drude
 from wakis.field_monitors import DFTMonitor, FluxMonitor
 from wakis.near2far import Near2FarMonitor
@@ -2038,63 +2038,285 @@ def run_single_task(task_cfg: dict, out_dir: Path = DATA_DIR) -> dict:
 
 
 # %% [markdown]
-# ## 5. Generating the 14-figure diagnostic suite
+# ## 5. Generating the setup schematics and 14-figure diagnostic suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`), `generate_all_figures`
-# reads `data/task_*.npz` and renders 14 publication-quality figures into `figures/`:
+# constructs the solver setups for schematic inspection, reads `data/task_*.npz`, and renders
+# the labelled setup schematic (`00_setup_schematic.png`) followed by the 14 diagnostic figures
+# into `figures/`, all styled with `wakis.figstyle` and `wakis.schematic`:
 #
-# 1. `01_geometry_and_mesh_overview.png` — Three-panel benchmark overview: (a) dipole at height $h$ above PEC/Drude mirror with `FluxMonitor` & `Near2FarMonitor` Huygens box; (b) planar microcavity of optical thickness $d = n L / \lambda_0$; (c) off-grid DBR permittivity profile $\varepsilon_r(z)$ comparing Kottke subpixel smoothing vs. staircasing.
+# 0. `00_setup_schematic.png` — Three-panel labelled setup schematic generated directly from the `SolverFIT3D`, `CurrentSource`, `FluxMonitor`, and `Near2FarMonitor` objects via `wakis.schematic.plot_schematic`: (a) **Part A** — line dipole at height $h$ above a PEC ground mirror ($z = 0$ PEC, $\pm x, +z$ 8-cell CPML, $\pm y$ periodic, `Near2FarMonitor(..., ground_plane="-z")` Huygens box); (b) **Part B** — line dipole at $\lambda_0 = 600\;\text{nm}$ above a $150\;\text{nm}$ dispersive `Drude` silver mirror ($\varepsilon_\infty = 3.7$, $\hbar\omega_p = 9.01\;\text{eV}$, $\hbar\gamma = 0.048\;\text{eV}$, skin depth $\delta_E = 24.41\;\text{nm}$) with dipole and metal-surface `FluxMonitor` contours; (c) **Parts C & D** — planar microcavity and blue $\text{InGaN}$ DBR micro-RCLED ($\lambda_0 = 450\;\text{nm}$, bottom $\text{NP-GaN/GaN}$ DBR, $1\lambda$ $\text{GaN}$ spacer, top $\text{Ta}_2\text{O}_5/\text{SiO}_2$ DBR, midplane QW dipole, and top `Near2FarMonitor` extraction aperture).
+# 1. `01_geometry_and_mesh_overview.png` — Three-panel mesh & discretization view: (a) `wakis.schematic.draw_mesh` view of the locally graded Drude silver mesh ($\Delta z_{\text{Ag}} = 2.50\;\text{nm}$, $9.76\;\text{cells}/\delta_E$, $\Delta x_{\text{core}} = 5.0\;\text{nm}$) with a zoom inset on the $\text{Ag/air}$ interface and geometry overlays; (b) vertical grid-step profile $\Delta z(z)$ across the Drude silver skin-depth refinement zone and the interface-snapped RCLED DBR stack; (c) off-grid DBR permittivity profile $\varepsilon_r(z)$ comparing Kottke tensorial subpixel smoothing vs. staircasing.
 # 2. `02_pec_mirror_drexhage_purcell.png` — (a) Wakis 2D FIT Purcell factor $F_P(kh)$ (`FluxMonitor` box & local dipole work) vs. exact 2D Bessel analytical curves for $\text{TE}_\parallel$ ($J_y$), $\text{TM}_\parallel$ ($J_x$), and $\text{TM}_\perp$ ($J_z$); (b) 2D cylindrical Bessel decay $\mathcal{O}((kh)^{-1/2})$ vs. 3D Drexhage spherical decay $\mathcal{O}((kh)^{-1})$.
 # 3. `03_pec_mirror_angular_patterns.png` — Far-field angular radiation patterns $\frac{1}{P_0'}\frac{\mathrm{d}P'}{\mathrm{d}\theta}$ from `Near2FarMonitor(..., ground_plane="-z")` overlaid with exact 2D analytical curves at $h/\lambda_0 \in \{0.25, 0.50, 0.75\}$ for $J_y$, $J_x$, and $J_z$.
-# 4. `04_pec_mirror_field_snapshots.png` — 2D $(x, z)$ steady-state wave-front maps $\operatorname{Re}(E_y)$ and logarithmic intensity $10\log_{10}(|E_y|^2/|E_y|_{\max}^2)$ comparing constructive ($h = 0.25\lambda_0$) and destructive ($h = 0.50\lambda_0$) image-dipole interference.
-# 5. `05_dipole_mirror_interference.gif` — Animated time-domain movie GIF of a line dipole pulse reflecting off the mirror and forming far-field interference lobes.
+# 4. `04_pec_mirror_field_snapshots.png` — 2D $(x, z)$ steady-state wave-front maps $\operatorname{Re}(E_y)$ comparing constructive ($h = 0.24\lambda_0$) and destructive ($h = 0.48\lambda_0$) image-dipole interference, with `wakis.schematic.overlay_geometry` labelling the PEC mirror, CPML boundaries, `Near2FarMonitor` Huygens box, and dipole source.
+# 5. `05_dipole_mirror_interference.gif` — Animated time-domain movie GIF of a line dipole pulse reflecting off the PEC mirror and forming far-field interference lobes, with labelled geometry and boundary overlays on every frame.
 # 6. `06_drude_silver_drexhage_cps.png` — Line dipole above a dispersive Drude silver mirror at $\lambda_0 = 600\;\text{nm}$ ($\delta_E = 24.41\;\text{nm}$): Wakis total power $F_{\text{tot}}(kh)$ vs. exact 2D CPS Sommerfeld integrals ($F_{\text{tot}}, F_{\text{rad}}, F_{\text{nonrad}}$) and radiative quantum efficiency $\eta_{\text{rad}}(kh)$.
 # 7. `07_sommerfeld_spp_kspace_spectrum.png` — (a) Wavenumber-resolved CPS power dissipation density $\mathrm{d}F/\mathrm{d}u$ vs. $u = k_x / k_0$, highlighting the light line ($u = 1$) and the TM surface-plasmon-polariton pole at $u_{\text{SPP}} = 1.0338$; (b) Wakis vertical electric-field decay $|E(z)|$ inside the silver mirror vs. the analytical skin depth $\delta_E = 24.41\;\text{nm}$.
 # 8. `08_planar_cavity_purcell_2d_vs_3d.png` — Planar PEC microcavity Purcell factor $F_P(d)$ ($n = 2.4$, Abram *et al.* 1998): (a) Wakis 2D FIT multi-band extraction vs. exact 2D Van Hove curves for $J_y, J_x, J_z$; (b) direct comparison of 2D $1/\sqrt{d^2 - d_m^2}$ Van Hove singularities against the 3D step-function DOS of Abram *et al.* (IEEE JQE 1998, Eq. 7, Fig. 2).
 # 9. `09_cavity_cutoff_ringing_diagnostic.png` — Numerical pathology & cure at the $d = 0.50$ waveguide cutoff: (a) trapped $v_g = 0$ time-domain oscillation $E_y(\mathbf{r}_0, t)$; (b) broadband cutoff-crossing DFT ringing vs. band-limited spectral windowing.
-# 10. `10_rcled_dbr_reflectance_and_cavity_field.png` — Blue InGaN micro-RCLED ($\lambda_0 = 450\;\text{nm}$, Lee *et al.* 2024 Fig. 1): (a) TMM reflectance spectra of the bottom $\text{NP-GaN/GaN}$ DBR ($n = 1.70/2.39$), top $\text{Ta}_2\text{O}_5/\text{SiO}_2$ DBR ($n = 2.15/1.46$), and full microcavity; (b) 2D Wakis intracavity standing-wave field $|E_y(x, z)|^2$.
-# 11. `11_rcled_angular_extraction_beaming.png` — RCLED angular extraction & detuning (Benisty *et al.* 1998): (a) Wakis 2D far-field patterns into air vs. TMM Fabry–Pérot Airy curves for tuned ($d = 1.00$, normal beam) and detuned ($d = 1.12$, rabbit-ear sidelobes) cavities; (b) fraction of extracted power captured within $\text{NA} = 0.50$ ($|\theta_{\text{ext}}| \le 30^\circ$) vs. cavity optical thickness $d$.
-# 12. `12_incoherent_quantum_well_averaging.png` — Extended $N_{\text{dip}} = 7$ quantum-well emitter layer: (a) artificial multi-slit interference fringes of a coherent in-phase dipole array vs. the smooth deterministic incoherent power sum; (b) 2D spatial intensity maps comparing coherent phased-array beaming vs. incoherent power superposition.
+# 10. `10_rcled_dbr_reflectance_and_cavity_field.png` — Blue InGaN micro-RCLED ($\lambda_0 = 450\;\text{nm}$, Lee *et al.* 2024 Fig. 1): (a) TMM reflectance spectra of the bottom $\text{NP-GaN/GaN}$ DBR ($n = 1.70/2.39$), top $\text{Ta}_2\text{O}_5/\text{SiO}_2$ DBR ($n = 2.15/1.46$), and full microcavity; (b) 2D Wakis intracavity standing-wave field $|E_y(x, z)|^2$ with `wakis.schematic.overlay_geometry` labelling the DBR mirrors, GaN cavity, QW dipole, and top extraction aperture.
+# 11. `11_rcled_angular_extraction_beaming.png` — RCLED angular extraction & detuning (Benisty *et al.* 1998): (a) Wakis 2D far-field patterns into air vs. TMM Fabry–Pérot Airy curves for tuned ($d = 1.00$, normal beam) and detuned ($d = 1.055$, rabbit-ear sidelobes) cavities; (b) fraction of extracted power captured within $\text{NA} = 0.50$ ($|\theta_{\text{ext}}| \le 30^\circ$) vs. cavity optical thickness $d$.
+# 12. `12_incoherent_quantum_well_averaging.png` — Extended $N_{\text{dip}} = 7$ quantum-well emitter layer: (a) artificial multi-slit interference fringes of a coherent in-phase dipole array vs. the smooth deterministic incoherent power sum; (b) lateral near-field intensity profiles in the superstrate comparing coherent phased-array beaming vs. incoherent power superposition.
 # 13. `13_incoherent_monte_carlo_convergence.png` — Statistical convergence of random-phase Monte Carlo realizations ($N_{\text{real}} \in [1, 128]$) and spatial emitter sampling ($N_{\text{dip}} \in [1, 7]$) toward the deterministic incoherent benchmark, verifying the $1/\sqrt{N_{\text{real}}}$ law.
 # 14. `14_mesh_and_subpixel_convergence.png` — Multi-resolution convergence across `coarse`, `medium`, `fine`, and `reference`: (a) PEC mirror & off-grid DBR resonator error comparing **Kottke subpixel smoothing** vs. **staircasing**; (b) Drude silver relative error vs. **cells per skin depth** ($\delta_E / \Delta z$).
 
 
 # %%
+def _build_schematic_setups(cpw_pec: int = 25, cpw_ag: int = 24, dz_ag_nm: float = 2.5, cpw_rcled: int = 20) -> dict:
+    """Build lightweight SolverFIT3D + source/monitor/structure bundles for schematics and overlays."""
+    # 1. Part A: PEC mirror setup (lambda_0 = 1.0 um)
+    m_pec = build_task_mesh({"kind": "pec_mirror", "cpw": cpw_pec, "quick": False})
+    grid_pec = m_pec["grid"]
+    dx_pec = float(grid_pec.dx[0])
+    y_mid_pec = 1.5 * dx_pec
+    solver_pec = SolverFIT3D(
+        grid_pec,
+        bc_low=["cpml", "periodic", "pec"],
+        bc_high=["cpml", "periodic", "cpml"],
+        n_pml=8,
+        use_stl=False,
+        verbose=0,
+    )
+    f0_pec = c0 / LAM_PEC
+    pulse_pec = GaussianSource(f0_pec, 0.30 * f0_pec, cutoff=3.8)
+    h_pec_025 = max(4, int(round(0.25 * LAM_PEC / dx_pec))) * dx_pec
+    h_pec_050 = max(4, int(round(0.50 * LAM_PEC / dx_pec))) * dx_pec
+    src_pec_025 = CurrentSource(
+        pulse_pec, component="y", center=(0.0, y_mid_pec, h_pec_025), size=(0.0, 1.0, 0.0), amplitude=1.0
+    )
+    src_pec_050 = CurrentSource(
+        pulse_pec, component="y", center=(0.0, y_mid_pec, h_pec_050), size=(0.0, 1.0, 0.0), amplitude=1.0
+    )
+    z_top_box = max(h_pec_025 + 4 * dx_pec, 10 * dx_pec)
+    n2f_pec = hlp.set_monitor_bounds(
+        Near2FarMonitor(
+            frequencies=[f0_pec],
+            center=(0.0, y_mid_pec, 0.5 * z_top_box),
+            size=(14 * dx_pec, dx_pec, z_top_box),
+            ground_plane="-z",
+        ),
+        label="Near2Far box (ground_plane='-z')",
+    )
+
+    # 2. Part B: Drude silver mirror setup (lambda_0 = 600 nm, skin depth delta_E = 24.41 nm)
+    m_ag = build_task_mesh({"kind": "silver_mirror", "cpw": cpw_ag, "dz_ag_nm": dz_ag_nm, "quick": False})
+    grid_ag = m_ag["grid"]
+    dx_core_ag = float(m_ag["dx_core"])
+    dz_ag = dz_ag_nm * 1e-9
+    y_mid_ag = 1.5 * dx_core_ag
+    z_ag_bot = float(grid_ag.z[0])
+    solver_ag = SolverFIT3D(
+        grid_ag,
+        bc_low=["cpml", "periodic", "pec"],
+        bc_high=["cpml", "periodic", "cpml"],
+        n_pml=8,
+        cfln=0.48,
+        use_stl=False,
+        verbose=0,
+    )
+    ag_mat = DispersiveMaterial(
+        AG_EPS_INF,
+        [Drude(AG_WP_EV * hlp.EV_TO_RAD_S, AG_GAMMA_EV * hlp.EV_TO_RAD_S)],
+    )
+    solver_ag.add_dispersive_material(
+        ag_mat, center=(0.0, 0.0, 0.5 * z_ag_bot), size=(2.0, 2.0, abs(z_ag_bot))
+    )
+    ag_struct = hlp.SlabXZ(
+        float(grid_ag.x[0]),
+        float(grid_ag.x[-1]),
+        z_ag_bot,
+        0.0,
+        material=ag_mat,
+        name="Drude Ag mirror (δE = 24.4 nm)",
+    )
+    f0_ag = c0 / LAM_AG
+    pulse_ag = GaussianSource(f0_ag, 0.42 * f0_ag, cutoff=3.5)
+    h_ag = max(5, int(round(48.0e-9 / dz_ag))) * dz_ag
+    src_ag = CurrentSource(
+        pulse_ag, component="y", center=(0.0, y_mid_ag, h_ag), size=(0.0, 1.0, 0.0), amplitude=1.0
+    )
+    box_ag = hlp.set_monitor_bounds(
+        FluxMonitor([f0_ag], center=(0.0, y_mid_ag, h_ag), size=(4 * dx_core_ag, dx_core_ag, 4 * dz_ag)),
+        label="Dipole FluxMonitor box (P_tot)",
+    )
+    x_plane_span = 2.0 * float(abs(grid_ag.x[8]))
+    plane_ag = hlp.set_monitor_bounds(
+        FluxMonitor([f0_ag], center=(0.0, y_mid_ag, dz_ag), size=(x_plane_span, dx_core_ag, 0.0)),
+        label="Surface FluxMonitor (P_metal)",
+    )
+
+    # 3. Parts C & D: Planar microcavity / Blue InGaN DBR micro-RCLED setup (lambda_0 = 450 nm)
+    m_rc = build_task_mesh({"kind": "rcled", "cpw": cpw_rcled, "quick": False})
+    grid_rc = m_rc["grid"]
+    dx_rc = float(grid_rc.dx[0])
+    y_mid_rc = 1.5 * dx_rc
+    z_dip_rc = float(m_rc["z_dip"])
+    z_mon_top_rc = float(m_rc["z_mon_top"])
+    st_rc = _build_rcled_stack(d_opt=1.00, n_bot_pairs=4, n_top_pairs=2)
+    solver_rc = SolverFIT3D(
+        grid_rc,
+        bc_low=["cpml", "periodic", "cpml"],
+        bc_high=["cpml", "periodic", "cpml"],
+        n_pml=8,
+        use_stl=False,
+        verbose=0,
+    )
+    f0_rc = c0 / LAM_RCLED
+    dz_pad_rc = float(np.max(grid_rc.dz))
+    n_slabs_rc = len(st_rc["slabs"])
+    shapes_rc = [
+        hlp.SlabXZ(
+            -1.5, 1.5, float(grid_rc.z[0]) - dz_pad_rc, st_rc["z_bot_end"] + 0.6 * dz_pad_rc, material=N_GAN**2, snap=False
+        )
+    ] + [
+        hlp.SlabXZ(
+            -1.5, 1.5, z0, z1 + (0.6 * dz_pad_rc if idx_s < n_slabs_rc - 1 else 0.0), material=n_val**2, snap=False
+        )
+        for idx_s, (z0, z1, n_val) in enumerate(st_rc["slabs"])
+    ]
+    assign_materials(solver_rc, shapes_rc, f0_rc, averaging="kottke")
+
+    x_rc_lo, x_rc_hi = float(grid_rc.x[0]), float(grid_rc.x[-1])
+    rc_macro_structs = [
+        hlp.SlabXZ(
+            x_rc_lo,
+            x_rc_hi,
+            st_rc["z_bot_end"],
+            0.0,
+            material=N_NPGAN**2,
+            name="Bottom NP-GaN/GaN DBR",
+        ),
+        hlp.SlabXZ(
+            x_rc_lo,
+            x_rc_hi,
+            0.0,
+            st_rc["L_cav"],
+            material=N_GAN**2,
+            name="1λ GaN cavity",
+        ),
+        hlp.SlabXZ(
+            x_rc_lo,
+            x_rc_hi,
+            st_rc["L_cav"],
+            st_rc["z_top_end"],
+            material=N_TA2O5**2,
+            name="Top Ta₂O₅/SiO₂ DBR",
+        ),
+    ]
+    rc_macro_names = {
+        "region_0": "Bottom NP-GaN/GaN DBR",
+        "region_1": "1λ GaN cavity",
+        "region_2": "Top Ta₂O₅/SiO₂ DBR",
+    }
+    pulse_rc = GaussianSource(f0_rc, 0.28 * f0_rc, cutoff=3.8)
+    src_rc = CurrentSource(
+        pulse_rc, component="y", center=(0.0, y_mid_rc, z_dip_rc), size=(0.0, 1.0, 0.0), amplitude=1.0
+    )
+    x_ap_span = 2.0 * float(abs(grid_rc.x[9]))
+    n2f_rc = hlp.set_monitor_bounds(
+        FluxMonitor([f0_rc], center=(0.0, y_mid_rc, z_mon_top_rc), size=(x_ap_span, dx_rc, 0.0)),
+        label="Top Near2Far aperture",
+    )
+    dz_cav = float(st_rc["L_cav"] / (2 * max(4, cpw_rcled // 4)))
+    box_rc = hlp.set_monitor_bounds(
+        FluxMonitor([f0_rc], center=(0.0, y_mid_rc, z_dip_rc), size=(4 * dx_rc, dx_rc, 4 * dz_cav)),
+        label="Dipole FluxMonitor box",
+    )
+
+    return {
+        "pec": {
+            "solver": solver_pec,
+            "src_025": src_pec_025,
+            "src_050": src_pec_050,
+            "n2f": n2f_pec,
+            "h_025": h_pec_025,
+            "h_050": h_pec_050,
+        },
+        "ag": {
+            "solver": solver_ag,
+            "structures": [ag_struct],
+            "material_names": {"region_0": "Drude Ag mirror (δE = 24.4 nm)"},
+            "src": src_ag,
+            "box": box_ag,
+            "plane": plane_ag,
+            "mesh_info": m_ag,
+        },
+        "rcled": {
+            "solver": solver_rc,
+            "macro_structs": rc_macro_structs,
+            "macro_names": rc_macro_names,
+            "src": src_rc,
+            "n2f": n2f_rc,
+            "box": box_rc,
+            "stack": st_rc,
+            "mesh_info": m_rc,
+        },
+    }
+
+
 def _save_movie_gif(
     x_arr: np.ndarray,
     z_arr: np.ndarray,
     frames: np.ndarray,
     times: np.ndarray,
     out_path: Path,
+    pec_setup: dict | None = None,
     fps: int = 10,
 ) -> None:
-    """Render an animated GIF of 2D dipole-mirror wave interference."""
+    """Render an animated GIF of 2D dipole-mirror wave interference with geometry overlays."""
     if frames.size == 0:
         return
-    vmax = max(float(np.percentile(np.abs(frames), 99.2)) * 0.65, 1e-30)
+    figstyle.apply_style()
+    vmin, vmax = figstyle.symmetric_limits(frames, percentile=99.2)
+    vmax = max(float(vmax) * 0.65, 1e-30)
+    vmin = -vmax
     pil_frames = []
     x_um = x_arr * 1e6
     z_um = z_arr * 1e6
     for idx in range(len(frames)):
-        fig, ax = plt.subplots(figsize=(5.6, 4.3), dpi=110)
+        fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=6.2, height=4.6, dpi=105)
         im = ax.pcolormesh(
             x_um,
             z_um,
             frames[idx].T,
             cmap="RdBu_r",
-            vmin=-vmax,
+            vmin=vmin,
             vmax=vmax,
             shading="auto",
         )
-        ax.axhline(0.0, color="k", lw=2.2, label="PEC Mirror (z = 0)")
-        ax.plot(0.0, 0.50, "ko", ms=5, label="Dipole (h = 0.50 µm)")
         ax.set(
+            xlim=(float(x_um[0]), float(x_um[-1])),
+            ylim=(float(z_um[0]), float(z_um[-1])),
             xlabel="Horizontal position x [µm]",
-            ylabel="Height above mirror z [µm]",
+            ylabel="Height above PEC mirror z [µm]",
             title=f"Line dipole pulse near PEC mirror (t = {times[idx] * 1e15:.1f} fs)",
         )
+        if pec_setup is not None:
+            schematic.overlay_geometry(
+                ax,
+                pec_setup["solver"],
+                plane="xz",
+                unit="um",
+                sources=[pec_setup["src_050"]],
+                monitors=[pec_setup["n2f"]],
+                show_boundaries=True,
+                show_materials=False,
+                show_sources=True,
+                show_monitors=True,
+            )
+            hlp.overlay_xz_boundaries_and_boxes(
+                ax,
+                pec_setup["solver"],
+                unit="um",
+                pec_z_label="z = 0: PEC mirror",
+                show_z_pml=True,
+            )
+        else:
+            ax.axhline(0.0, color="k", lw=2.2, label="PEC Mirror (z = 0)")
+            ax.plot(0.0, 0.50, "ko", ms=5, label="Dipole (h = 0.50 µm)")
         fig.colorbar(im, ax=ax, label=r"Electric field $E_y(x, z, t)$ [V/m]")
-        fig.tight_layout()
+        figstyle.finish(fig, auto_legend_below=False)
         fig.canvas.draw()
         rgba = np.asarray(fig.canvas.buffer_rgba())
         pil_frames.append(Image.fromarray(rgba).convert("P", palette=Image.ADAPTIVE))
@@ -2111,7 +2333,8 @@ def _save_movie_gif(
 
 
 def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> None:
-    """Read ``data_dir/task_*.npz`` and render all 14 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render ``00_setup_schematic.png`` plus all 14 figures into ``fig_dir``."""
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -2133,48 +2356,256 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     t_cav = tasks_data["planar_cavity_pec"]
     t_rc = tasks_data["rcled_and_incoherent"]
 
-    # ------------------------------------------------------------------
-    # Fig 01: Geometry, Huygens box, and Kottke vs Staircase DBR mesh
-    # ------------------------------------------------------------------
-    fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(13.2, 4.0), dpi=150)
-
-    # Panel (a): Dipole + mirror + image dipole + Near2Far / FluxMonitor box
-    ax0.axhspan(-0.35, 0.0, color="#b0b7c0", alpha=0.75, label="Mirror (PEC or Drude Ag)")
-    ax0.axhline(0.0, color="#1f2937", lw=2.2)
-    ax0.plot(0.0, 0.45, "o", color="#d95f02", ms=8, label=r"Line dipole at $z = +h$")
-    ax0.plot(0.0, -0.45, "o", color="#2b5c8f", ms=8, mfc="none", mew=2.0, label=r"Image dipole at $z = -h$")
-    rect_x = [-0.42, 0.42, 0.42, -0.42, -0.42]
-    rect_z = [0.0, 0.0, 0.78, 0.78, 0.0]
-    ax0.plot(rect_x, rect_z, "--", color="#1b9e77", lw=1.8, label="Near2Far / Flux box (ground='-z')")
-    ax0.annotate("", xy=(0.0, 0.45), xytext=(0.0, 0.0), arrowprops=dict(arrowstyle="<->", color="k", lw=1.2))
-    ax0.text(0.06, 0.22, "$h$", fontsize=10, fontweight="bold")
-    ax0.set(
-        xlim=(-0.85, 0.85),
-        ylim=(-0.65, 1.05),
-        xlabel="Horizontal coordinate x [λ₀]",
-        ylabel="Vertical coordinate z [λ₀]",
-        title="(a) Dipole near mirror & Huygens box",
+    setups = _build_schematic_setups(
+        cpw_pec=int(t_pec.get("cpw", 25)),
+        cpw_ag=24 if float(t_ag.get("dz_ag_nm", 2.5)) <= 3.0 else 20,
+        dz_ag_nm=float(t_ag.get("dz_ag_nm", 2.5)),
+        cpw_rcled=20 if float(t_rc.get("dx_min_nm", 8.69)) < 9.0 else 16,
     )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="upper right", fontsize=7.5)
+    pec_s = setups["pec"]
+    ag_s = setups["ag"]
+    rc_s = setups["rcled"]
 
-    # Panel (b): Planar microcavity schematic (2D vs 3D mode quantization)
-    ax1.axhspan(-0.18, 0.0, color="#4b5563", alpha=0.85, label="Bottom mirror (z = 0)")
-    ax1.axhspan(1.0, 1.18, color="#4b5563", alpha=0.85, label="Top mirror (z = L)")
-    ax1.axhspan(0.0, 1.0, color="#e0f2fe", alpha=0.55, label="Cavity spacer (n = 2.4)")
-    z_m = np.linspace(0.0, 1.0, 200)
-    ax1.plot(0.28 * np.sin(np.pi * z_m), z_m, color="#1b9e77", lw=2.0, label="m = 1 mode (d = 0.5 cutoff)")
-    ax1.plot(0.28 * np.sin(3 * np.pi * z_m), z_m, "--", color="#7570b3", lw=1.6, label="m = 3 mode (d = 1.5 cutoff)")
-    ax1.plot(0.0, 0.50, "o", color="#d95f02", ms=8, label="Midplane dipole (z₀ = L/2)")
+    # ------------------------------------------------------------------
+    # Fig 00: Setup Schematics for the 3 Configurations (PEC, Drude Ag, RCLED)
+    # ------------------------------------------------------------------
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.2, height=5.4)
+    schematic.plot_schematic(
+        pec_s["solver"],
+        plane="xz",
+        ax=ax0,
+        sources=[pec_s["src_025"]],
+        monitors=[pec_s["n2f"]],
+        unit="um",
+        show_mesh=True,
+        mesh_every=3,
+        mesh_zoom=False,
+        show_pulse_inset=True,
+        show_wave_packet=False,
+        wavelength=LAM_PEC,
+        freq=c0 / LAM_PEC,
+        title="(a) Part A: Line dipole above PEC mirror",
+    )
+    hlp.overlay_xz_boundaries_and_boxes(
+        ax0,
+        pec_s["solver"],
+        unit="um",
+        pec_z_label=None,
+        show_z_pml=False,
+    )
+    ax0.axhline(0.0, color="#0f172a", lw=2.2, zorder=6)
+    ax0.text(
+        -0.62,
+        0.26,
+        "z = 0: PEC mirror (image at −h)",
+        fontsize=7.0,
+        fontweight="bold",
+        color="#0f172a",
+        va="bottom",
+        ha="center",
+        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.88, edgecolor="#0f172a", lw=0.7),
+        zorder=7,
+    )
+    for t_obj in list(ax0.texts):
+        s_txt = t_obj.get_text()
+        if "Near2Far" in s_txt:
+            t_obj.set_position((0.55, 1.62))
+
+    schematic.plot_schematic(
+        ag_s["solver"],
+        plane="xz",
+        ax=ax1,
+        structures=ag_s["structures"],
+        material_names=ag_s["material_names"],
+        sources=[ag_s["src"]],
+        monitors=[ag_s["plane"]],
+        unit="nm",
+        show_mesh=True,
+        mesh_every=3,
+        mesh_zoom=False,
+        show_pulse_inset=False,
+        show_wave_packet=False,
+        wavelength=LAM_AG,
+        freq=c0 / LAM_AG,
+        title="(b) Part B: Drude Ag mirror (δE = 24.4 nm)",
+    )
+    hlp.overlay_xz_boundaries_and_boxes(
+        ax1,
+        ag_s["solver"],
+        unit="nm",
+        box_monitors=[(ag_s["box"], "Dipole FluxBox")],
+        pec_z_label="−z: PEC backing",
+        show_z_pml=False,
+    )
+    for t_obj in list(ax1.texts):
+        s_txt = t_obj.get_text()
+        if "Drude Ag" in s_txt:
+            t_obj.set_text("Drude Ag mirror (δE = 24.4 nm)")
+            t_obj.set_position((0.0, -70.0))
+        elif "Domain" in s_txt:
+            t_obj.set_position((0.0, 595.0))
+        elif "Out-of-plane" in s_txt:
+            t_obj.set_position((0.0, 492.0))
+        elif "FluxMonitor" in s_txt:
+            t_obj.set_position((-190.0, 22.0))
+    ax1.set_ylim(-185.0, 650.0)
+    ax1.set_title("(b) Part B: Drude Ag mirror (δE = 24.4 nm)", pad=14)
+
+    schematic.plot_schematic(
+        rc_s["solver"],
+        plane="xz",
+        ax=ax2,
+        structures=rc_s["macro_structs"],
+        material_names=rc_s["macro_names"],
+        sources=[rc_s["src"]],
+        monitors=[rc_s["n2f"]],
+        unit="nm",
+        show_mesh=True,
+        mesh_every=3,
+        mesh_zoom=False,
+        show_pulse_inset=False,
+        show_wave_packet=False,
+        wavelength=LAM_RCLED,
+        freq=c0 / LAM_RCLED,
+        title="(c) Parts C & D: Planar cavity / DBR RCLED",
+    )
+    hlp.overlay_xz_boundaries_and_boxes(
+        ax2,
+        rc_s["solver"],
+        unit="nm",
+        box_monitors=[(rc_s["box"], "QW FluxBox")],
+        pec_z_label=None,
+        show_z_pml=False,
+    )
+    for t_obj in list(ax2.texts):
+        s_txt = t_obj.get_text()
+        if "Bottom NP-GaN" in s_txt:
+            t_obj.set_text("Bottom NP-GaN/GaN DBR")
+            t_obj.set_position((0.0, -225.0))
+        elif "1λ GaN" in s_txt:
+            t_obj.set_text("1λ GaN cavity")
+            t_obj.set_position((-560.0, 94.0))
+        elif "Top Ta" in s_txt:
+            t_obj.set_text("Top Ta₂O₅/SiO₂ DBR")
+            t_obj.set_position((0.0, 324.0))
+        elif "Domain" in s_txt:
+            t_obj.set_position((0.0, 920.0))
+        elif "Out-of-plane" in s_txt:
+            t_obj.set_position((0.0, 725.0))
+        elif "FluxMonitor" in s_txt:
+            t_obj.set_position((0.0, 505.0))
+    ax2.set_ylim(-580.0, 1010.0)
+    ax2.set_title("(c) Parts C & D: Planar cavity / DBR RCLED", pad=14)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "00_setup_schematic.png", auto_legend_below=False)
+
+    # ------------------------------------------------------------------
+    # Fig 01: Skin-Depth Refined Mesh View, Graded Step Profile & Kottke DBR
+    # ------------------------------------------------------------------
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.4, height=4.5)
+
+    # Panel (a): Skin-depth graded 2D FIT mesh on Drude Silver with zoom inset
+    schematic.draw_mesh(
+        ax0,
+        ag_s["solver"],
+        plane="xz",
+        unit="nm",
+        every=2,
+        wavelength=LAM_AG,
+        freq=c0 / LAM_AG,
+        zoom_inset=True,
+        zoom_bounds=(-40.0e-9, 40.0e-9, -50.0e-9, 30.0e-9),
+    )
+    for _ax_cand in fig.axes:
+        if _ax_cand not in (ax0, ax1, ax2):
+            _ax_cand._is_inset = True
+    schematic.overlay_geometry(
+        ax0,
+        ag_s["solver"],
+        plane="xz",
+        unit="nm",
+        structures=ag_s["structures"],
+        material_names=ag_s["material_names"],
+        sources=[ag_s["src"]],
+        monitors=[ag_s["plane"]],
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+    )
+    hlp.overlay_xz_boundaries_and_boxes(
+        ax0,
+        ag_s["solver"],
+        unit="nm",
+        box_monitors=[(ag_s["box"], "P_tot FluxBox")],
+        pec_z_label=None,
+        show_z_pml=False,
+    )
+    for t_obj in list(ax0.texts):
+        s_txt = t_obj.get_text()
+        if "Drude Ag" in s_txt:
+            t_obj.set_text("Drude Ag mirror (δE = 24.4 nm)")
+            t_obj.set_position((95.0, -68.0))
+    ax0.text(
+        0.50,
+        0.96,
+        f"Δz_Ag = {float(t_ag['dz_ag_nm']):.2f} nm ({float(t_ag['cells_per_skin_depth']):.2f} cells / δE)\n"
+        f"δE = {float(t_ag['skin_depth_nm']):.2f} nm, h_min = 20 nm ({float(t_ag['cells_across_feature']):.1f} cells)",
+        transform=ax0.transAxes,
+        va="top",
+        ha="center",
+        fontsize=7.3,
+        bbox=dict(boxstyle="round,pad=0.22", facecolor="white", alpha=0.90, edgecolor="#cbd5e1"),
+        zorder=9,
+    )
+    ax0.set_title("(a) Drude Ag skin-depth graded mesh & zoom")
+
+    # Panel (b): Vertical grid-step profile dz(z) across Silver skin-depth & RCLED DBR stack
+    z_ag_nodes_nm = np.asarray(ag_s["solver"].grid.z, dtype=float) * 1e9
+    dz_ag_cells_nm = np.diff(z_ag_nodes_nm)
+    z_ag_mid_nm = 0.5 * (z_ag_nodes_nm[:-1] + z_ag_nodes_nm[1:])
+
+    z_rc_nodes_nm = np.asarray(rc_s["solver"].grid.z, dtype=float) * 1e9
+    dz_rc_cells_nm = np.diff(z_rc_nodes_nm)
+    z_rc_mid_nm = 0.5 * (z_rc_nodes_nm[:-1] + z_rc_nodes_nm[1:])
+
+    ax1.step(
+        z_ag_mid_nm,
+        dz_ag_cells_nm,
+        where="mid",
+        **figstyle.series_style(0),
+        label=f"Part B Drude Ag Δz(z) (min {np.min(dz_ag_cells_nm):.2f} nm)",
+    )
+    ax1.step(
+        z_rc_mid_nm,
+        dz_rc_cells_nm,
+        where="mid",
+        **figstyle.series_style(1),
+        label=f"Part D RCLED DBR Δz(z) (min {np.min(dz_rc_cells_nm):.2f} nm)",
+    )
+    ax1.axhline(
+        float(t_ag["skin_depth_nm"]) / 4.0,
+        color=figstyle.PALETTE[2],
+        ls="--",
+        lw=1.3,
+        label=f"Skin-depth rule δE / 4 = {float(t_ag['skin_depth_nm']) / 4.0:.2f} nm",
+    )
+    ax1.axhline(
+        (LAM_RCLED / (4.0 * N_GAN)) * 1e9 / 4.0,
+        color=figstyle.PALETTE[3],
+        ls=":",
+        lw=1.3,
+        label=f"DBR quarter-wave rule d_GaN / 4 = {(LAM_RCLED / (4.0 * N_GAN)) * 1e9 / 4.0:.2f} nm",
+    )
+    ax1.axvspan(-150.0, 0.0, color="#94a3b8", alpha=0.22, label="Drude Ag slab (z ∈ [−150, 0] nm)")
     ax1.set(
-        xlim=(-0.6, 0.6),
-        ylim=(-0.18, 1.18),
-        xlabel="Normalized mode profile E(z) [arb.]",
-        ylabel="Normalized cavity height z / L",
-        title=r"(b) Planar microcavity ($d = nL/\lambda_0$)",
+        xlim=(-480.0, 480.0),
+        ylim=(0.0, 28.0),
+        xlabel="Vertical coordinate z [nm]",
+        ylabel="Local vertical cell size Δz(z) [nm]",
+        title="(b) Graded vertical mesh step Δz(z) audit",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=7.5)
+    ax1.legend(loc="upper left", fontsize=7.0)
 
     # Panel (c): Kottke vs Staircase permittivity profile on off-grid DBR layers
     if "kottke_medium" in tasks_data and "staircase_medium" in tasks_data:
@@ -2186,7 +2617,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ds["z_dbr_nm"][:n_s],
             ds["eps_x_prof"][:n_s],
             where="mid",
-            color="#d95f02",
+            color=figstyle.PALETTE[1],
             lw=1.8,
             label=r"Staircase $\varepsilon_{xx}(z)$",
         )
@@ -2194,7 +2625,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             dk["z_dbr_nm"][:n_k],
             dk["eps_x_prof"][:n_k],
             "o-",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=1.6,
             ms=3.5,
             label=r"Kottke arithmetic $\langle\varepsilon\rangle_x$",
@@ -2203,7 +2634,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             dk["z_dbr_nm"][:n_k],
             dk["eps_z_prof"][:n_k],
             "s--",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.3,
             ms=3.0,
             label=r"Kottke harmonic $\langle\varepsilon^{-1}\rangle_z^{-1}$",
@@ -2215,16 +2646,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylabel=r"Relative permittivity $\varepsilon_r(z)$ [dimensionless]",
         title="(c) Subpixel DBR smoothing: Kottke vs. staircase",
     )
-    ax2.grid(True, ls=":", alpha=0.4)
     ax2.legend(loc="upper right", fontsize=7.5)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_geometry_and_mesh_overview.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "01_geometry_and_mesh_overview.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 02: PEC Mirror Drexhage Purcell Factor (2D FIT vs Exact & 2D vs 3D)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     kh_fine = np.linspace(0.01, 9.6, 400)
     cols = {"y": "#1b9e77", "x": "#2b5c8f", "z": "#d95f02"}
     labels_pol = {
@@ -2266,7 +2695,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 2.15),
         title="(a) 2D PEC mirror Drexhage oscillations: Wakis FIT vs. exact Bessel",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.2, ncol=2)
 
     # Panel (b): 2D cylindrical Bessel decay O((kh)^-1/2) vs 3D spherical decay O((kh)^-1)
@@ -2309,16 +2737,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 2.15),
         title="(b) Dimensional comparison: 2D cylindrical vs. 3D spherical decay",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "02_pec_mirror_drexhage_purcell.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "02_pec_mirror_drexhage_purcell.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 03: PEC Mirror Far-Field Angular Radiation Patterns (Near2FarMonitor)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.0), dpi=150, sharey=False)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.2, height=4.0, sharey=False)
     th_deg = t_pec["theta_deg"]
     h_tags = [("025", 0, "#1b9e77"), ("050", 1, "#d95f02"), ("075", 2, "#2b5c8f")]
     titles_p3 = {
@@ -2350,41 +2776,57 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             xlim=(-90.0, 90.0),
             title=titles_p3[pol],
         )
-        ax.grid(True, ls=":", alpha=0.4)
         ax.legend(loc="upper right", fontsize=7.0, ncol=2)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_pec_mirror_angular_patterns.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "03_pec_mirror_angular_patterns.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 04: 2D Steady-State Field Snapshots (h ~ 0.25 lambda vs h ~ 0.50 lambda)
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.4)
     sx_um = t_pec["snap_x"] * 1e6
     sz_um = t_pec["snap_z"] * 1e6
     h_025_um = float(t_pec["mono_kh_y"][0] / (2.0 * np.pi))
     h_050_um = float(t_pec["mono_kh_y"][1] / (2.0 * np.pi))
-    for ax, tag, h_um, desc in (
-        (axes[0], "025", h_025_um, f"(a) Constructive beaming (h = {h_025_um:.2f} λ₀)"),
-        (axes[1], "050", h_050_um, f"(b) Destructive node / split (h = {h_050_um:.2f} λ₀)"),
+    for ax, tag, h_um, src_obj, desc in (
+        (axes[0], "025", h_025_um, pec_s["src_025"], f"(a) Constructive beaming (h = {h_025_um:.2f} λ₀)"),
+        (axes[1], "050", h_050_um, pec_s["src_050"], f"(b) Destructive node / split (h = {h_050_um:.2f} λ₀)"),
     ):
         ey_c = t_pec[f"ey_{tag}"]
         re_ey = np.real(ey_c) * 1e6
-        vm = max(float(np.percentile(np.abs(re_ey), 98.5)), 1e-24)
+        vmin, vmax = figstyle.symmetric_limits(re_ey, percentile=98.5)
         im = ax.pcolormesh(
-            sx_um, sz_um, re_ey.T, cmap="RdBu_r", vmin=-vm, vmax=vm, shading="auto"
+            sx_um, sz_um, re_ey.T, cmap="RdBu_r", vmin=vmin, vmax=vmax, shading="auto"
         )
-        ax.axhline(0.0, color="k", lw=2.2)
-        ax.plot(0.0, h_um, "ko", ms=5.5)
         ax.set(
+            xlim=(float(sx_um[0]), float(sx_um[-1])),
+            ylim=(float(sz_um[0]), float(sz_um[-1])),
             xlabel="Horizontal position x [µm]",
             ylabel="Height above PEC mirror z [µm]",
             title=desc,
         )
+        schematic.overlay_geometry(
+            ax,
+            pec_s["solver"],
+            plane="xz",
+            unit="um",
+            sources=[src_obj],
+            monitors=[pec_s["n2f"]],
+            show_boundaries=True,
+            show_materials=False,
+            show_sources=True,
+            show_monitors=True,
+        )
+        hlp.overlay_xz_boundaries_and_boxes(
+            ax,
+            pec_s["solver"],
+            unit="um",
+            pec_z_label="z = 0: PEC mirror",
+            show_z_pml=True,
+        )
         fig.colorbar(im, ax=ax, label=r"Steady-state $\mathrm{Re}[E_y(x, z)]$ [µV s/m]")
-    fig.tight_layout()
-    fig.savefig(fig_dir / "04_pec_mirror_field_snapshots.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "04_pec_mirror_field_snapshots.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 05: Animated Time-Domain Movie GIF
@@ -2395,12 +2837,13 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         t_pec["movie_frames"],
         t_pec["movie_times"],
         fig_dir / "05_dipole_mirror_interference.gif",
+        pec_setup=pec_s,
     )
 
     # ------------------------------------------------------------------
     # Fig 06: Drude Silver Mirror Drexhage & CPS Radiative/SPP Partition
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     kh_d = t_ag["kh_dense"]
     ax0.plot(kh_d, t_ag["cps_z_tot"], color="#d95f02", lw=2.2, label=r"CPS $\mathrm{TM}_\perp$ $F_{\mathrm{tot}}$ (rad + SPP + Ohmic)")
     ax0.plot(kh_d, t_ag["cps_z_rad"], "--", color="#d95f02", lw=1.7, label=r"CPS $\mathrm{TM}_\perp$ $F_{\mathrm{rad}}$ (upper hemisphere)")
@@ -2421,7 +2864,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 3.3),
         title="(a) Silver (Drude) mirror: Wakis 2D FIT vs. CPS Sommerfeld",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.0, ncol=2)
 
     ax1.plot(kh_d, t_ag["cps_y_eta"] * 100.0, color="#1b9e77", lw=2.2, label=r"$\mathrm{TE}_\parallel$ ($J_y$) radiative efficiency $\eta_{\mathrm{rad}}$")
@@ -2443,16 +2885,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 105.0),
         title="(b) Near-field SPP & Ohmic quenching on Silver",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="lower right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "06_drude_silver_drexhage_cps.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "06_drude_silver_drexhage_cps.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 07: CPS Wavevector Spectrum (SPP Pole) & Skin-Depth Field Profile
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     u_g = t_ag["u_grid"]
     u_spp = float(t_ag["u_spp"])
     ax0.semilogy(u_g, np.maximum(t_ag["df_du_z"], 1e-5), color="#d95f02", lw=2.1, label=r"$\mathrm{TM}_\perp$ ($J_z$) power density $\mathrm{d}F/\mathrm{d}u$")
@@ -2502,14 +2942,13 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     )
     ax1.grid(True, which="both", ls=":", alpha=0.4)
     ax1.legend(loc="lower left", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "07_sommerfeld_spp_kspace_spectrum.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "07_sommerfeld_spp_kspace_spectrum.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 08: Planar PEC Microcavity Purcell Factor F_P(d) (2D vs 3D Abram 1998)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.3), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
     d_d = t_cav["d_dense"]
     ax0.plot(d_d, t_cav["F_2d_dense_y"], color="#1b9e77", lw=2.0, label=r"Exact 2D $\mathrm{TE}_\parallel$ ($J_y$)")
     ax0.plot(t_cav["d_sim_y"], t_cav["F_sim_y"], "o", color="#1b9e77", ms=4.5, label=r"Wakis 2D FIT $\mathrm{TE}_\parallel$")
@@ -2527,7 +2966,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 3.2),
         title="(a) 2D Planar PEC microcavity: Wakis FIT vs. Poisson-sum DOS",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.2, ncol=2)
 
     # Panel (b): 2D 1/sqrt Van Hove singularities vs 3D Abram et al. (1998) Eq. 7 step DOS
@@ -2544,16 +2982,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 3.2),
         title="(b) 2D Van Hove singularities vs. 3D step DOS (Abram et al. 1998)",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=7.4)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "08_planar_cavity_purcell_2d_vs_3d.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "08_planar_cavity_purcell_2d_vs_3d.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 09: Waveguide Cutoff Ringing Diagnostic & Cure (v_g = 0 at d = 0.5)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.0)
     t_fs = t_cav["trace_t"] * 1e15
     ey_tr = t_cav["trace_ey"]
     ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
@@ -2564,7 +3000,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(-0.45, 0.45),
         title=r"(a) Trapped $v_g = 0$ Van Hove cutoff oscillation ($t^{-1/2}$ tail)",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=8.0)
 
     ax1.plot(t_cav["d_dense"], t_cav["F_2d_dense_y"], color="k", lw=2.0, label="Exact 2D analytical DOS")
@@ -2592,16 +3027,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(-0.15, 3.2),
         title="(b) Spectral sinc ringing vs. band-limited windowing",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "09_cavity_cutoff_ringing_diagnostic.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "09_cavity_cutoff_ringing_diagnostic.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 10: Blue InGaN DBR Micro-RCLED Reflectance Spectra & Cavity Field
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.4)
     wl_nm = t_rc["wl_tmm_nm"]
     ax0.plot(wl_nm, t_rc["r_bot_spec"] * 100.0, color="#2b5c8f", lw=2.0, label="Bottom NP-GaN/GaN DBR (n = 1.70/2.39, Lee 2024)")
     ax0.plot(wl_nm, t_rc["r_top_spec"] * 100.0, "--", color="#1b9e77", lw=2.0, label="Top SiO₂/Ta₂O₅ DBR (n = 1.46/2.15, Lee 2024)")
@@ -2614,32 +3047,43 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 103.0),
         title="(a) Lee et al. (2024) blue InGaN RCLED DBR stopband",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower right", fontsize=7.5)
+    figstyle.spectrum_grid(ax0)
+    ax0.legend(loc="lower right", fontsize=7.4)
 
-    rx_um = t_rc["rcled_x"] * 1e6
+    rx_nm = t_rc["rcled_x"] * 1e9
     rz_nm = t_rc["rcled_z"] * 1e9
     i_rc = np.abs(t_rc["rcled_ey"]) ** 2
     i_rc_db = 10.0 * np.log10(np.maximum(i_rc / max(float(np.max(i_rc)), 1e-30), 1e-4))
-    im = ax1.pcolormesh(rx_um, rz_nm, i_rc_db.T, cmap="inferno", vmin=-32.0, vmax=0.0, shading="auto")
-    ax1.axhline(0.0, color="w", ls="--", lw=1.2, label="Bottom DBR / GaN cavity")
-    ax1.axhline(float(t_rc["rcled_z_cav_top"]) * 1e9, color="#38bdf8", ls="--", lw=1.2, label="GaN cavity / Top DBR")
-    ax1.axhline(float(t_rc["rcled_z_top"]) * 1e9, color="#4ade80", ls=":", lw=1.3, label="Top DBR / Air interface")
+    im = ax1.pcolormesh(rx_nm, rz_nm, i_rc_db.T, cmap="inferno", vmin=-32.0, vmax=0.0, shading="auto")
     ax1.set(
-        xlabel="Lateral position x [µm]",
+        xlim=(float(rx_nm[0]), float(rx_nm[-1])),
+        ylim=(float(rz_nm[0]), float(rz_nm[-1])),
+        xlabel="Lateral position x [nm]",
         ylabel="Vertical position z [nm]",
         title="(b) Tuned RCLED standing-wave intensity [dB]",
     )
-    ax1.legend(loc="upper right", fontsize=7.2)
+    schematic.overlay_geometry(
+        ax1,
+        rc_s["solver"],
+        plane="xz",
+        unit="nm",
+        structures=rc_s["macro_structs"],
+        material_names=rc_s["macro_names"],
+        sources=[rc_s["src"]],
+        monitors=[rc_s["n2f"]],
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+    )
     fig.colorbar(im, ax=ax1, label="Normalized intensity [dB]")
-    fig.tight_layout()
-    fig.savefig(fig_dir / "10_rcled_dbr_reflectance_and_cavity_field.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "10_rcled_dbr_reflectance_and_cavity_field.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 11: RCLED Angular Extraction & Detuning Beaming (Benisty et al. 1998)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     th_rc = t_rc["theta_deg"]
     ax0.plot(th_rc, t_rc["pat_tmm_tuned"], color="#1b9e77", lw=2.2, label="TMM Airy formula (tuned d = 1.00)")
     ax0.plot(th_rc[::3], t_rc["pat_wakis_tuned"][::3], "o", color="#1b9e77", ms=4.5, label="Wakis 2D FIT Near2Far (tuned d = 1.00)")
@@ -2653,7 +3097,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 1.12),
         title="(a) RCLED angular beaming: tuned normal lobe vs. detuned rabbit ears",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.2)
 
     d_det = t_rc["d_detune_grid"]
@@ -2675,16 +3118,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 105.0),
         title="(b) NA = 0.50 directionality vs. cavity detuning (Benisty 1998)",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="lower left", fontsize=7.6)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "11_rcled_angular_extraction_beaming.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "11_rcled_angular_extraction_beaming.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 12: Incoherent Quantum-Well Emission (Power Sum vs Coherent Field Sum)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     ax0.plot(
         th_rc,
         t_rc["pat_coh_norm"],
@@ -2725,7 +3166,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylim=(0.0, 1.12),
         title="(a) Far-field: coherent fringes vs. incoherent power average",
     )
-    ax0.grid(True, ls=":", alpha=0.4)
     ax0.legend(loc="upper right", fontsize=7.3)
 
     # Panel (b): Lateral intensity cross-section in the air superstrate comparing coherent vs incoherent
@@ -2753,16 +3193,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylabel="Normalized near-field intensity |E(x)|² / max|E|²",
         title="(b) Superstrate profile: speckle fringes vs. smooth emission",
     )
-    ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "12_incoherent_quantum_well_averaging.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "12_incoherent_quantum_well_averaging.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 13: Random-Phase Monte Carlo & Emitter Count Convergence
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.1)
     n_r = t_rc["n_real_list"]
     mc_err = t_rc["mc_rms_err"]
     ax0.loglog(n_r, mc_err, "o-", color="#2b5c8f", lw=2.2, ms=6.0, label="Monte Carlo RMS pattern error")
@@ -2796,14 +3234,13 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     ax1.set_xticks(nd_list)
     ax1.grid(True, which="both", ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.2)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "13_incoherent_monte_carlo_convergence.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "13_incoherent_monte_carlo_convergence.png", auto_legend_below=False)
 
     # ------------------------------------------------------------------
     # Fig 14: Multi-Resolution & Subpixel Convergence (Kottke vs Staircase + Skin Depth)
     # ------------------------------------------------------------------
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12.0, 4.3), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=12.0, height=4.3)
     levels = ["coarse", "medium", "fine"]
     avail = all(f"{avg}_{lvl}" in tasks_data for avg in ("kottke", "staircase") for lvl in levels)
     if avail and "kottke_reference" in tasks_data:
@@ -2879,6 +3316,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ax1.set_xlim(0.7, max(float(np.max(cps_all)) + 0.6, 10.6))
 
         ax1_r = ax1.twinx()
+        ax1_r._is_inset = True
         ax1_r.semilogy(
             cps_all,
             err_all * 100.0,
@@ -2909,11 +3347,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         title="(b) Drude Silver resolution study: metric & error vs. cells/δE",
     )
     ax1.grid(True, which="both", ls=":", alpha=0.4)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "14_mesh_and_subpixel_convergence.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig, auto_legend_below=False)
+    figstyle.save(fig, fig_dir / "14_mesh_and_subpixel_convergence.png", auto_legend_below=False)
 
-    print(f"Rendered 14 figures in {fig_dir}")
+    print(f"Rendered 15 figures (00..14) in {fig_dir}")
 
 
 # %% [markdown]

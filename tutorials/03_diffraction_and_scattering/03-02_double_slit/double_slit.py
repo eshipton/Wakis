@@ -177,6 +177,7 @@ from _helpers import (  # noqa: E402
     plot_coupling_and_resolution,
     plot_fringe_spacing_scaling,
     plot_missing_orders_and_nearfield,
+    plot_setup_schematic,
     run_coupling_task,
     run_fringe_spacing_task,
     run_missing_orders_task,
@@ -186,7 +187,22 @@ from _helpers import (  # noqa: E402
 
 
 # %% [markdown]
-# ## Numerical Setup & Preflight Check
+# ## Simulation Setup Schematic & Preflight Check
+#
+# Figure 0 (`figures/00_setup_schematic.png`, generated via `wakis.schematic.plot_schematic` and
+# `wakis.schematic.draw_mesh`) illustrates the 2D Young's double-slit setup on the $(x, y)$ cut
+# plane:
+# - **Panel (a)** shows the full computational domain with 10-cell CPML boundaries on $\pm x$ and
+#   $\pm y$ (periodic along $z$), the three PEC blocks at $y \in [-t/2, +t/2]$ (left jaw, central
+#   PEC bridge $b = d - a$, and right jaw), the full-width soft `CurrentSource` upstream of the
+#   screen, the downstream `FluxMonitor` and `Near2FarMonitor` contour at $y = +t/2 + 2.5\Delta y$,
+#   and the transverse detector `DFTMonitor` at $L = 3.5\lambda$.
+# - **Panel (b)** zooms into the snapped graded FIT mesh around both slits $x = \pm d/2$ and the
+#   central PEC bridge $b = d - a$, verifying that every slit opening, the central bridge, and the
+#   screen thickness $t$ are resolved by $\ge 4$ cells alongside a background resolution above
+#   $20$ cells/$\lambda$.
+#
+# ![Double-slit setup schematic and mesh zoom](figures/00_setup_schematic.png)
 #
 # We run `wakis.estimate.estimate` and `preflight` on the representative double-slit mesh
 # ($\lambda = 600\,\mathrm{nm}$, $a = 1.5\lambda$, $d = 4.5\lambda$, $t = 0.15\lambda$,
@@ -343,6 +359,11 @@ def main(argv: list[str] | None = None) -> int:
     coup_data = _load_npz(f_cp) if f_cp.exists() else None
     res_data = _load_npz(f_rs) if f_rs.exists() else None
 
+    plot_setup_schematic(
+        fig_dir / "00_setup_schematic.png",
+        wavelength=DEFAULT_WAVELENGTH,
+    )
+
     if mo_data is not None:
         plot_missing_orders_and_nearfield(
             mo_data,
@@ -372,16 +393,23 @@ if __name__ == "__main__":
 # %% [markdown]
 # ## Results & Validation Summary
 #
-# Running `double_slit.py --full` generates three benchmark figures and four datasets:
+# Running `double_slit.py --full` generates four figures (`00_setup_schematic.png` plus three
+# benchmark figures) and four datasets:
 #
+# 0. **Setup Schematic & Mesh Zoom** (`figures/00_setup_schematic.png`):
+#    - Labels the computational domain extents, 10-cell CPML boundaries, the three PEC blocks
+#      (left jaw, central PEC bridge $b = d - a$, and right jaw), the soft `CurrentSource`, the
+#      downstream `FluxMonitor` and `Near2FarMonitor`, and the snapped graded mesh around both
+#      slits and the central bridge.
 # 1. **Interference $\times$ Diffraction Envelope & Missing Orders**
 #    (`figures/double_slit_envelope_and_missing_orders.png`):
 #    - Panel (a) shows the 2D near-field interference web downstream of two slits ($a = 1.5\lambda$,
-#      $d = 4.5\lambda$, $d/a = 3$), and Panel (b) confirms that the finite-distance screen profile
-#      at $L = 3.5\lambda$ tracks the 2D Rayleigh–Sommerfeld I integral across the central and
-#      secondary interference fringes.
-#    - Panels (c) and (d) overlay the double-slit far-field patterns for $d/a \in \{2, 3, 4\}$
-#      against both the analytical $\cos^2\alpha\,\operatorname{sinc}^2\beta\,\cos^2\theta$ curve
+#      $d = 4.5\lambda$, $d/a = 3$) with geometry and boundary overlays from
+#      `wakis.schematic.overlay_geometry`, and Panel (b) confirms that the finite-distance screen
+#      profile at $L = 3.5\lambda$ tracks the 2D Rayleigh–Sommerfeld II integral across the central
+#      and secondary interference fringes.
+#    - Panel (c) overlays the double-slit far-field patterns for $d/a \in \{2, 3, 4\}$
+#      against both the analytical $\cos^2\alpha\,\operatorname{sinc}^2\beta$ curve
 #      and the **numerical FIT single-slit envelope** measured in an isolated single-slit run. At
 #      the single-slit diffraction null $\theta_{\mathrm{null}} = \pm\arcsin(\lambda/a) =
 #      \pm 41.81^\circ$, the interference orders $m = \pm 2$ ($d/a = 2$), $m = \pm 3$ ($d/a = 3$),

@@ -115,6 +115,7 @@ class TestSingleSlitSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
+            "00_setup_schematic.png",
             "single_slit_fresnel_and_source.png",
             "single_slit_farfield_patterns.png",
             "single_slit_transmission_and_convergence.png",

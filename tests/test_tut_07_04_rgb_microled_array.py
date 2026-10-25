@@ -216,12 +216,19 @@ def test_method_a_vs_method_b_statistics_and_mutation():
     assert abs(eta_mutated - eta_inc) > 25.0, "Mutation check failed: coherent sum must differ strongly from incoherent sum"
 
 
+def test_setup_schematic_exists():
+    """Verify the first figure (00_setup_schematic.png) exists and is non-empty."""
+    setup_fig = TUTORIAL_DIR / "figures" / "00_setup_schematic.png"
+    assert setup_fig.is_file() and setup_fig.stat().st_size > 10_000
+
+
 def test_saved_study_outputs_and_crosstalk_matrices():
     """Verify saved --full study archives, figures, and physical matrix constraints."""
     data_dir = TUTORIAL_DIR / "data"
     fig_dir = TUTORIAL_DIR / "figures"
 
     expected_figs = [
+        "00_setup_schematic.png",
         "fig01_geometry_permittivity.png",
         "fig02_material_dispersion_skin_depth.png",
         "fig03_incoherent_rgb_intensity_maps.png",

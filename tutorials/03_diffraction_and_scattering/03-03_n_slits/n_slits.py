@@ -166,6 +166,7 @@ from _helpers import (  # noqa: E402
     plot_n_slit_patterns_and_nearfield,
     plot_periodic_comparison_and_cost,
     plot_resolving_power_and_width,
+    plot_setup_schematic,
     run_patterns_task,
     run_periodic_vs_finite_task,
     run_preflight_summary,
@@ -178,12 +179,29 @@ FIG_DIR = TUTORIAL_DIR / "figures"
 
 
 # %% [markdown]
-# ## Numerical Setup & Preflight Budget
+# ## Simulation Setup Schematics & Preflight Budget
+#
+# Figure 0 (`figures/00_setup_schematic.png`, generated via `wakis.schematic.plot_schematic` and
+# `wakis.schematic.draw_mesh`) shows the two complementary 2D setups used in this tutorial along
+# with a zoomed mesh view of the grating bars:
+# - **Panel (a)** illustrates the **finite-$N$ grating setup** ($N = 6$) inside an open CPML-bounded
+#   domain (`bc_low=['cpml', 'cpml', 'periodic']`), with 7 PEC blocks at $y \in [-t/2, +t/2]$,
+#   an upstream full-width soft `CurrentSource`, and a downstream `Near2FarMonitor` + `FluxMonitor`
+#   contour.
+# - **Panel (b)** illustrates the **$N \to \infty$ periodic unit-cell setup** ($x \in [-d/2, +d/2]$
+#   with `bc_low=['periodic', 'cpml', 'periodic']`), where a single slit $[-a/2, +a/2]$ and two
+#   PEC half-bars represent an infinite grating and `wakis.diffraction.DiffractionMonitor` extracts
+#   exact Rayleigh–Floquet order efficiencies $T_m$.
+# - **Panel (c)** zooms into the snapped graded FIT mesh around a grating slit $a = 0.6\lambda$
+#   and adjacent PEC bar $b = d - a = 1.2\lambda$, verifying $\ge 4$ cells across every slit,
+#   bar, and screen thickness alongside $\ge 20$ cells/$\lambda$.
+#
+# ![N-slit grating setup schematics and mesh zoom](figures/00_setup_schematic.png)
 #
 # All simulations run in 2D ($N_z = 1$ with periodic $z$ boundaries and $p$-polarization
 # $\mathbf{E} \perp$ slit edges, where $H_z$ is the fundamental uniform TEM aperture mode):
 #
-# - **Wavelength**: $\lambda = 1.0\,\mu\text{m}$, slit width $a = 0.6\lambda$, grating period
+# - **Wavelength**: $\lambda = 0.60\,\mu\text{m}$ ($500\,\text{THz}$), slit width $a = 0.6\lambda$, grating period
 #   $d = 1.8\lambda$ ($d/a = 3$, propagating orders $m \in \{-1, 0, +1\}$ at $0^\circ$ and
 #   $\pm 33.75^\circ$), PEC screen thickness $t = 0.14\lambda$.
 # - **Discretization rules**: background resolution $\mathrm{cpw} = 22 \ge 20$ cells per
@@ -357,8 +375,12 @@ def print_summary_tables() -> None:
 
 
 def generate_all_plots() -> None:
-    """Generate all three Tutorial 3.3 publication figures from saved data/."""
+    """Generate all four Tutorial 3.3 publication figures from saved data/."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    plot_setup_schematic(
+        FIG_DIR / "00_setup_schematic.png",
+        wavelength=DEFAULT_WAVELENGTH,
+    )
     pat_path = DATA_DIR / "n_slits_patterns.npz"
     rp_path = DATA_DIR / "n_slits_resolving_power.npz"
     per_path = DATA_DIR / "n_slits_periodic_vs_finite.npz"
@@ -392,9 +414,9 @@ def generate_all_plots() -> None:
 # ### 1. Principal Maxima and $(N - 2)$ Secondary Maxima (`figures/n_slits_patterns_and_secondary_maxima.png`)
 #
 # - **Near-field Talbot carpet (Panel a)**: Immediately behind the $N = 6$ grating ($a = 0.6\lambda$,
-#   $d = 1.8\lambda$), the six emerging cylindrical wavelets interfere to form a structured
-#   near-field self-imaging (Talbot) carpet before separating into the $m = 0$ and $m = \pm 1$
-#   far-field diffraction orders.
+#   $d = 1.8\lambda$, with PEC bars and CPML boundaries overlaid via `wakis.schematic.overlay_geometry`),
+#   the six emerging cylindrical wavelets interfere to form a structured near-field self-imaging
+#   (Talbot) carpet before separating into the $m = 0$ and $m = \pm 1$ far-field diffraction orders.
 # - **Sharpening of principal orders (Panel b)**: As $N$ increases from $2$ to $8$, the
 #   principal maxima remain pinned at the grating-equation angles $\theta_0 = 0^\circ$ and
 #   $\theta_{\pm 1} = \pm\arcsin(\lambda / d) = \pm 33.75^\circ$ (measured $\pm 33.6^\circ\text{--}33.8^\circ$),
@@ -402,7 +424,7 @@ def generate_all_plots() -> None:
 #   $\operatorname{sinc}^2(\beta)$. Across all $N \in \{2, 3, 4, 6, 8\}$, the 2D FIT
 #   `Near2FarMonitor` angular pattern agrees with $\left[\frac{\sin(N\alpha)}{N\sin\alpha}\right]^2 \operatorname{sinc}^2\beta$
 #   to within $2.5\%\text{--}4.2\%$ $L^2$ error.
-# - **$(N - 2)$ secondary maxima (Panels c & d)**: Zooming into the interval $0 \le (d/\lambda)\sin\theta \le 1$
+# - **$(N - 2)$ secondary maxima (Panel c)**: Zooming into the interval $0 \le (d/\lambda)\sin\theta \le 1$
 #   between $m = 0$ and $m = +1$ confirms that $N = 2$ has $0$ secondary peaks, $N = 3$ has
 #   $1$, $N = 4$ has $2$, $N = 6$ has $4$, and $N = 8$ has $6$ secondary peaks—matching the
 #   $(N - 2)$ rule without exception. The tallest secondary peak drops from $11.1\%$ ($N = 3$)

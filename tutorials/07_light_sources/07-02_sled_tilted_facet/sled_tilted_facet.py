@@ -163,6 +163,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.constants import c as C_LIGHT
 
+from wakis import figstyle, schematic
+
 SCRIPT_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -614,15 +616,95 @@ def load_all_results(data_dir: Path, quick: bool | None = None) -> dict:
 # <a id="6-visualizing-fields"></a>
 # ## 6. Visualizing Geometry, Kottke Subpixel Mesh, Eigenmodes & Pulse Propagation
 #
-# We first inspect the 2D tilted-facet waveguide layout, compare staircase vs. Kottke subpixel permittivity averaging along the $\theta_t = 7^\circ$ inclined facet, examine the exact vs. Wakis 2D FIT eigenmode profiles ($\text{TE}_0$ and $\text{TE}_1$), and visualize both steady-state frequency-domain fields and time-domain wavepacket reflection/refraction.
+# Figure `00_setup_schematic.png` shows the complete simulation setup before examining any fields:
+# - **Panel (a)** depicts the 2D $(x, y)$ tilted-facet waveguide domain ($x \in [-4.2, 1.8]\;\mu\text{m}$, $y \in [-6.0, 6.0]\;\mu\text{m}$) with 10-cell CPML boundaries on $\pm x, \pm y$ and periodic BCs in $z$, the ridge core ($w_1 = 1.75\;\mu\text{m}$, $n_{\text{core}} = 3.337$) in cladding ($n_{\text{clad}} = 3.311$), the $\theta_t = 7^\circ$ angled facet coated with a quarter-wave $\text{Al}_2\text{O}_3/\text{SiO}_x\text{N}_y$ film ($t_{\text{AR}} = 216.6\;\text{nm}$, $n_{\text{AR}} = 1.72$), the `ModeSource` at $x = -3.3\;\mu\text{m}$, the upstream `ModeMonitor` at $x = -2.6\;\mu\text{m}$, and the `Near2FarMonitor` at $x = +0.85\;\mu\text{m}$ in air.
+# - **Panel (b)** shows the 9-dipole incoherent spontaneous-emission ensemble (`CurrentSource` $J_y$ at $x = -1.0\;\mu\text{m}$, $y_j \in [-0.42 w_2, +0.42 w_2]$) inside the bimodal waveguide ($w_2 = 2.80\;\mu\text{m}$) with the downstream two-mode `ModeMonitor` ($\text{TE}_0, \text{TE}_1$) at $x = +1.0\;\mu\text{m}$.
+# - **Panel (c)** zooms into the locally refined non-uniform mesh across the quarter-wave AR coating ($x \in [0, 216.6]\;\text{nm}$, resolved with $10$ cells at $\Delta x_{\min} = 21.66\;\text{nm}$, $20\;\text{cells}/\lambda$) and the core sidewalls $y = \pm w_1/2$.
+#
+# ![Setup schematic and thin-layer mesh](figures/00_setup_schematic.png)
+#
+# We next compare staircase vs. Kottke subpixel permittivity averaging along the $\theta_t = 7^\circ$ inclined facet (`sled_schematic_and_mesh.png`), examine the exact vs. Wakis 2D FIT eigenmode profiles ($\text{TE}_0$ and $\text{TE}_1$), and visualize both steady-state frequency-domain fields and time-domain wavepacket reflection/refraction with full geometry overlays.
 
 # %%
 def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
-    """Generate Figures 1 and 2: schematic/subpixel mesh and eigenmode profiles."""
+    """Generate Figures 0, 1, and 2: setup schematic, subpixel mesh, and eigenmodes."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
     ar_d = results["npz"]["ar_tilt_sweep"]
     bimod = results["npz"]["bimodal_tilt_sweep"]
+    cpw_val = int(round(1.49e-6 / (h.N_CORE * float(bare["dx_min_nm"]) * 1e-9)))
+    cpw_val = max(14, cpw_val)
+
+    # --- Figure 0: 00_setup_schematic.png (Tilted facet + 9-dipole ensemble + AR mesh zoom) ---
+    fig0, axes0 = figstyle.new_figure(
+        nrows=1, ncols=3, width=13.5, height=4.4, gridspec_kw={"width_ratios": [1.1, 1.05, 0.95]}
+    )
+    sled_obj = h.build_sled_schematic_objects(theta_deg=7.0, width=h.WIDTH_SM, cpw=cpw_val, ar_coated=True)
+    schematic.plot_schematic(
+        sled_obj["solver"],
+        plane="xy",
+        ax=axes0[0],
+        unit="um",
+        structures=sled_obj["structures"],
+        sources=sled_obj["sources"],
+        monitors=sled_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(a) Tasks 0–2: Tilted Facet & AR Setup",
+    )
+    h.tidy_sled_schematic_axes(axes0[0], xlim=(-4.2, 1.8), ylim=(-6.0, 7.6), is_dipole=False, n_pml=10)
+
+    dip_obj = h.build_incoherent_dipole_schematic_objects(width=h.WIDTH_MM, cpw=cpw_val, n_unique_half=5)
+    schematic.plot_schematic(
+        dip_obj["solver"],
+        plane="xy",
+        ax=axes0[1],
+        unit="um",
+        structures=dip_obj["structures"],
+        sources=dip_obj["sources"],
+        monitors=dip_obj["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(b) Task 3: 9-Dipole Incoherent Ensemble",
+    )
+    h.tidy_sled_schematic_axes(axes0[1], xlim=(-2.4, 2.4), ylim=(-5.0, 6.4), is_dipole=True, n_pml=8)
+
+    ax_m = axes0[2]
+    t_ar_um = h.T_AR_COAT * 1e6
+    w_half_um = 0.5 * h.WIDTH_SM * 1e6
+    ax_m.axvspan(-0.18, 0.0, facecolor="#9ecae1", alpha=0.55, zorder=1)
+    ax_m.axvspan(0.0, t_ar_um, facecolor="#fdae6b", alpha=0.65, zorder=1)
+    ax_m.axvspan(t_ar_um, 0.36, facecolor="#f7fbff", alpha=0.65, zorder=1)
+    schematic.draw_mesh(
+        ax_m,
+        sled_obj["grid"],
+        plane="xy",
+        unit="um",
+        every=1,
+        color="#222222",
+        alpha=0.55,
+        linewidth=0.45,
+        show_cpw=False,
+    )
+    ax_m.axvline(0.0, color="#111111", lw=1.2, zorder=5)
+    ax_m.axvline(t_ar_um, color="#111111", lw=1.2, zorder=5)
+    ax_m.axhline(w_half_um, color="#b30000", ls="--", lw=1.1, zorder=5)
+    ax_m.axhline(-w_half_um, color="#b30000", ls="--", lw=1.1, zorder=5)
+    ax_m.set_xlim(-0.14, 0.34)
+    ax_m.set_ylim(-1.05, 1.05)
+    n_ar_cells = int(sled_obj["mesh_info"]["cells_across_feature"])
+    dx_min_nm = float(sled_obj["mesh_info"]["dx_min_nm"])
+    bbox_z = {"boxstyle": "round,pad=0.14", "facecolor": "white", "edgecolor": "#444444", "lw": 0.5, "alpha": 0.90}
+    ax_m.text(0.5 * t_ar_um, 0.42, f"λ/4 AR film\n216.6 nm: {n_ar_cells} cells", ha="center", va="center", fontsize=8.0, bbox=bbox_z, zorder=7)
+    ax_m.text(-0.07, -0.42, "Core\n$n=3.337$", ha="center", va="center", fontsize=7.8, bbox=bbox_z, zorder=7)
+    ax_m.text(0.28, -0.42, "Air\n$n=1.00$", ha="center", va="center", fontsize=7.8, bbox=bbox_z, zorder=7)
+    ax_m.text(0.10, 0.90, f"$\\Delta x_{{\\min}} = {dx_min_nm:.1f}$ nm, {cpw_val} cells/$\\lambda$", ha="center", va="center", fontsize=8.0, bbox=bbox_z, zorder=7)
+    ax_m.set_xlabel("$x$ [$\\mu$m]")
+    ax_m.set_ylabel("$y$ [$\\mu$m]")
+    ax_m.set_title("(c) Local Mesh at AR Coating & Core")
+    figstyle.finish(fig0)
+    figstyle.save(fig0, fig_dir / "00_setup_schematic.png", close=True)
 
     x_um = bare["x_coords"] * 1e6
     y_um = bare["y_coords"] * 1e6
@@ -631,40 +713,38 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
     eps_ar = ar_d["eps_y_ar_7deg"] / np.min(ar_d["eps_y_ar_7deg"])
 
     # --- Figure 1: Full 2D layout + Staircase vs Kottke zoom on 7 deg facet ---
-    fig, axes = plt.subplots(1, 3, figsize=(15.0, 4.6), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.2)
 
     ax = axes[0]
     im0 = ax.pcolormesh(
-        x_um, y_um, np.sqrt(eps_ar).T, shading="auto", cmap="viridis", vmin=1.0, vmax=3.45
+        x_um, y_um, np.sqrt(eps_ar).T, shading="auto", cmap=figstyle.CMAP_EPS, vmin=1.0, vmax=3.45
     )
-    ax.axvline(-3.3, color="cyan", ls="--", lw=1.6, label="ModeSource ($x=-3.3\\;\\mu$m)")
-    ax.axvline(-2.6, color="lime", ls="-.", lw=1.6, label="ModeMonitor ($x=-2.6\\;\\mu$m)")
-    ax.axvline(0.85, color="orange", ls=":", lw=1.8, label="Near2Far ($x=+0.85\\;\\mu$m)")
-    y_line = np.linspace(-6.0, 6.0, 200)
-    ax.plot(
-        y_line * np.tan(np.deg2rad(7.0)),
-        y_line,
-        "w--",
-        lw=1.2,
-        label="Tilted facet ($\\theta_t=7^\\circ$)",
+    h.overlay_sled_geometry(
+        ax,
+        theta_deg=7.0,
+        width=h.WIDTH_SM,
+        ar_coated=True,
+        line_color="white",
+        show_monitors=True,
+        show_snell_beam=True,
+        fontsize=6.2,
     )
     ax.set_xlim(-4.2, 1.8)
     ax.set_ylim(-5.5, 5.5)
     ax.set_xlabel("$x$ [$\\mu$m]")
     ax.set_ylabel("$y$ [$\\mu$m]")
-    ax.set_title("(a) 2D SLED Tilted-Facet Layout ($n(x,y)$, AR-coated)")
-    ax.legend(loc="lower left", fontsize=8, framealpha=0.85)
+    ax.set_title("(a) 2D SLED Tilted-Facet Layout ($n(x,y)$, AR)")
     fig.colorbar(im0, ax=ax, label="Refractive index $n(x,y)$ [-]")
 
-    # Zoom region around facet-core intersection
+    y_line = np.linspace(-6.0, 6.0, 200)
     for ax_z, eps_map, title_str in [
-        (axes[1], eps_stair, "(b) Staircase Permittivity $\\varepsilon_y(x,y)$ ($\\theta_t=7^\\circ$)"),
+        (axes[1], eps_stair, "(b) Staircase $\\varepsilon_y(x,y)$ ($\\theta_t=7^\\circ$)"),
         (axes[2], eps_kottke, "(c) Kottke Subpixel $\\varepsilon_y(x,y)$ ($\\theta_t=7^\\circ$)"),
     ]:
         im_z = ax_z.pcolormesh(
-            x_um, y_um, eps_map.T, shading="auto", cmap="magma", vmin=1.0, vmax=11.3
+            x_um, y_um, eps_map.T, shading="auto", cmap=figstyle.CMAP_MAGNITUDE, vmin=1.0, vmax=11.3
         )
-        ax_z.plot(y_line * np.tan(np.deg2rad(7.0)), y_line, "c--", lw=1.4, label="Exact facet")
+        ax_z.plot(y_line * np.tan(np.deg2rad(7.0)), y_line, "c--", lw=1.4, label="Exact facet ($7^\\circ$)")
         ax_z.axhline(0.5 * h.WIDTH_SM * 1e6, color="w", ls=":", lw=1.1)
         ax_z.axhline(-0.5 * h.WIDTH_SM * 1e6, color="w", ls=":", lw=1.1, label="Core $\\pm w_1/2$")
         ax_z.set_xlim(-0.55, 0.55)
@@ -672,19 +752,18 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
         ax_z.set_xlabel("$x$ [$\\mu$m]")
         ax_z.set_ylabel("$y$ [$\\mu$m]")
         ax_z.set_title(title_str)
-        ax_z.legend(loc="upper left", fontsize=8)
+        ax_z.legend(loc="upper left", fontsize=7.5)
         fig.colorbar(im_z, ax=ax_z, label="Permittivity $\\varepsilon_y$ [-]")
 
-    fig.savefig(fig_dir / "sled_schematic_and_mesh.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "sled_schematic_and_mesh.png", close=True)
 
     # --- Figure 2: Single-mode and Two-mode eigenmode profiles ---
     slab_sm = h.solve_1d_slab_modes(width=h.WIDTH_SM)
     slab_mm = h.solve_1d_slab_modes(width=h.WIDTH_MM)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.6, 4.5), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.5, height=4.1)
 
-    # Panel (a): Single-mode guide w1 = 1.75 um
     ax = axes[0]
     y_s = slab_sm["y"] * 1e6
     psi0_s = slab_sm["psi_0"] / np.max(np.abs(slab_sm["psi_0"]))
@@ -700,16 +779,18 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
     ax.plot(
         y_s,
         g_fit,
-        "r--",
+        "--",
+        color=figstyle.PALETTE[1],
         lw=1.8,
         label=f"Gaussian fit ($w_0={w0_fit*1e6:.3f}\\;\\mu$m, $99.65\\%$ overlap)",
     )
     ax.plot(
         bare["y_coords"] * 1e6,
         ey0_w,
-        "bo",
+        "o",
+        color=figstyle.PALETTE[0],
         ms=3.5,
-        alpha=0.75,
+        alpha=0.8,
         label="Wakis 2D FIT ModeMonitor $\\mathrm{TE}_0$",
     )
     ax.set_xlim(-4.5, 4.5)
@@ -717,10 +798,8 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Transverse coordinate $y$ [$\\mu$m]")
     ax.set_ylabel("Normalized field $E_y(y) / \\max|E_y|$ [-]")
     ax.set_title("(a) Single-Mode Waveguide ($w_1=1.75\\;\\mu$m, $V_{\\mathrm{half}}=1.534 < \\pi/2$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+    ax.legend(loc="upper right", fontsize=7.6)
 
-    # Panel (b): Two-mode guide w2 = 2.80 um
     ax = axes[1]
     y_m = slab_mm["y"] * 1e6
     psi0_m = slab_mm["psi_0"] / np.max(np.abs(slab_mm["psi_0"]))
@@ -736,23 +815,23 @@ def plot_geometry_and_eigenmodes(results: dict, fig_dir: Path) -> None:
 
     ax.axvspan(-0.5 * h.WIDTH_MM * 1e6, 0.5 * h.WIDTH_MM * 1e6, color="#f5e8e0", alpha=0.7, label="Core ($w_2=2.80\\;\\mu$m)")
     ax.plot(y_m, psi0_m, "k-", lw=2.0, label=f"Exact $\\mathrm{{TE}}_0$ ($n_{{\\mathrm{{eff}},0}}={slab_mm['neff_0']:.4f}$)")
-    ax.plot(y_m, psi1_m, "g-", lw=2.0, label=f"Exact $\\mathrm{{TE}}_1$ ($n_{{\\mathrm{{eff}},1}}={slab_mm['neff_1']:.4f}$)")
-    ax.plot(bimod["y_coords_mm"] * 1e6, ey0_mm, "bo", ms=3.2, alpha=0.7, label="Wakis FIT $\\mathrm{TE}_0$")
-    ax.plot(bimod["y_coords_mm"] * 1e6, ey1_mm, "m^", ms=3.2, alpha=0.7, label="Wakis FIT $\\mathrm{TE}_1$")
+    ax.plot(y_m, psi1_m, "-", color=figstyle.PALETTE[2], lw=2.0, label=f"Exact $\\mathrm{{TE}}_1$ ($n_{{\\mathrm{{eff}},1}}={slab_mm['neff_1']:.4f}$)")
+    ax.plot(bimod["y_coords_mm"] * 1e6, ey0_mm, "o", color=figstyle.PALETTE[0], ms=3.2, alpha=0.75, label="Wakis FIT $\\mathrm{TE}_0$")
+    ax.plot(bimod["y_coords_mm"] * 1e6, ey1_mm, "^", color=figstyle.PALETTE[4], ms=3.2, alpha=0.75, label="Wakis FIT $\\mathrm{TE}_1$")
     ax.set_xlim(-4.5, 4.5)
     ax.set_ylim(-1.12, 1.12)
     ax.set_xlabel("Transverse coordinate $y$ [$\\mu$m]")
     ax.set_ylabel("Normalized field $E_y(y) / \\max|E_y|$ [-]")
     ax.set_title("(b) Bimodal Waveguide ($w_2=2.80\\;\\mu$m, $V_{\\mathrm{half}}=2.454 \\in (\\pi/2, \\pi)$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8.5)
+    ax.legend(loc="lower right", fontsize=7.6)
 
-    fig.savefig(fig_dir / "eigenmode_profiles.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "eigenmode_profiles.png", close=True)
 
 
 def plot_fields_and_movie(results: dict, fig_dir: Path) -> None:
-    """Generate Figures 3, 4 (.gif), and 5: steady-state DFT fields and pulse movie."""
+    """Generate steady-state DFT field maps (<=3 panels) and time-domain pulse movie/snapshots."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
 
@@ -761,49 +840,79 @@ def plot_fields_and_movie(results: dict, fig_dir: Path) -> None:
     dx_um = bare["dft_x"] * 1e6
     dy_um = bare["dft_y"] * 1e6
 
-    # --- Figure 3: 4-panel steady-state DFT field comparison (0 deg vs 7 deg) ---
-    fig, axes = plt.subplots(2, 2, figsize=(13.2, 8.8), constrained_layout=True)
-    y_line = np.linspace(-5.5, 5.5, 200)
+    # --- Figure 3: 3-panel steady-state DFT field comparison (0 deg vs 7 deg) ---
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.2, sharey=True)
+    re_0 = np.real(ey_0) / np.max(np.abs(ey_0))
+    re_7 = np.real(ey_7) / np.max(np.abs(ey_7))
+    i_db_0 = 10.0 * np.log10(np.maximum(np.abs(ey_0) ** 2 / np.max(np.abs(ey_0) ** 2), 1e-5))
+    i_db_7 = 10.0 * np.log10(np.maximum(np.abs(ey_7) ** 2 / np.max(np.abs(ey_7) ** 2), 1e-5))
 
-    for col, (th_val, ey_map) in enumerate([(0.0, ey_0), (7.0, ey_7)]):
-        re_norm = np.real(ey_map) / np.max(np.abs(ey_map))
-        i_db = 10.0 * np.log10(np.maximum(np.abs(ey_map) ** 2 / np.max(np.abs(ey_map) ** 2), 1e-5))
-        x_fac = y_line * np.tan(np.deg2rad(th_val))
+    im0 = axes[0].pcolormesh(
+        dx_um, dy_um, re_0.T, shading="auto", cmap=figstyle.CMAP_DIVERGING, vmin=-0.85, vmax=0.85
+    )
+    h.overlay_sled_geometry(
+        axes[0], theta_deg=0.0, width=h.WIDTH_SM, line_color="#222222", show_monitors=True, fontsize=6.0
+    )
+    axes[0].set_xlim(-3.8, 1.6)
+    axes[0].set_ylim(-5.2, 5.2)
+    axes[0].set_xlabel("$x$ [$\\mu$m]")
+    axes[0].set_ylabel("$y$ [$\\mu$m]")
+    axes[0].set_title("(a) $\\mathrm{Re}\\{\\tilde{E}_y\\}$ at $\\theta_t = 0^\\circ$ (Standing Wave)")
+    fig.colorbar(im0, ax=axes[0], label="Normalized $\\mathrm{Re}(E_y)$")
 
-        ax_re = axes[0, col]
-        im_re = ax_re.pcolormesh(
-            dx_um, dy_um, re_norm.T, shading="auto", cmap="RdBu_r", vmin=-0.85, vmax=0.85
-        )
-        ax_re.plot(x_fac, y_line, "k--", lw=1.4, label=f"Facet ($\\theta_t={th_val:.0f}^\\circ$)")
-        ax_re.axhline(0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=1.0)
-        ax_re.axhline(-0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=1.0)
-        ax_re.set_xlim(-3.8, 1.6)
-        ax_re.set_ylim(-5.2, 5.2)
-        ax_re.set_xlabel("$x$ [$\\mu$m]")
-        ax_re.set_ylabel("$y$ [$\\mu$m]")
-        ax_re.set_title(f"$\\mathrm{{Re}}\\{{\\tilde{{E}}_y(x,y;f_0)\\}}$ at $\\theta_t={th_val:.0f}^\\circ$")
-        fig.colorbar(im_re, ax=ax_re, label="Normalized $\\mathrm{Re}(E_y)$ [-]")
+    im1 = axes[1].pcolormesh(
+        dx_um, dy_um, re_7.T, shading="auto", cmap=figstyle.CMAP_DIVERGING, vmin=-0.85, vmax=0.85
+    )
+    h.overlay_sled_geometry(
+        axes[1], theta_deg=7.0, width=h.WIDTH_SM, line_color="#222222", show_monitors=True, show_snell_beam=True, fontsize=6.0
+    )
+    axes[1].set_xlim(-3.8, 1.6)
+    axes[1].set_ylim(-5.2, 5.2)
+    axes[1].set_xlabel("$x$ [$\\mu$m]")
+    axes[1].set_title("(b) $\\mathrm{Re}\\{\\tilde{E}_y\\}$ at $\\theta_t = 7^\\circ$ (Deflected)")
+    fig.colorbar(im1, ax=axes[1], label="Normalized $\\mathrm{Re}(E_y)$")
 
-        ax_db = axes[1, col]
+    im2 = axes[2].pcolormesh(
+        dx_um, dy_um, i_db_7.T, shading="auto", cmap=figstyle.CMAP_MAGNITUDE, vmin=-35.0, vmax=0.0
+    )
+    h.overlay_sled_geometry(
+        axes[2], theta_deg=7.0, width=h.WIDTH_SM, line_color="white", show_monitors=True, show_snell_beam=True, fontsize=6.0
+    )
+    axes[2].set_xlim(-3.8, 1.6)
+    axes[2].set_ylim(-5.2, 5.2)
+    axes[2].set_xlabel("$x$ [$\\mu$m]")
+    axes[2].set_title("(c) $|\\tilde{E}_y|^2$ [dB] at $\\theta_t = 7^\\circ$")
+    fig.colorbar(im2, ax=axes[2], label="Relative intensity [dB]")
+
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "steady_state_fields_0_vs_7deg.png", close=True)
+
+    # --- Companion 2-panel intensity comparison (0 deg vs 7 deg) ---
+    fig_i, axes_i = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.1, sharey=True)
+    for ax_db, th_val, idb_map, lbl in [
+        (axes_i[0], 0.0, i_db_0, "(a) Intensity $|\\tilde{E}_y|^2$ [dB] at $\\theta_t = 0^\\circ$"),
+        (axes_i[1], 7.0, i_db_7, "(b) Intensity $|\\tilde{E}_y|^2$ [dB] at $\\theta_t = 7^\\circ$"),
+    ]:
         im_db = ax_db.pcolormesh(
-            dx_um, dy_um, i_db.T, shading="auto", cmap="inferno", vmin=-35.0, vmax=0.0
+            dx_um, dy_um, idb_map.T, shading="auto", cmap=figstyle.CMAP_MAGNITUDE, vmin=-35.0, vmax=0.0
         )
-        ax_db.plot(x_fac, y_line, "w--", lw=1.4)
-        ax_db.axhline(0.5 * h.WIDTH_SM * 1e6, color="w", ls=":", lw=1.0)
-        ax_db.axhline(-0.5 * h.WIDTH_SM * 1e6, color="w", ls=":", lw=1.0)
+        h.overlay_sled_geometry(
+            ax_db, theta_deg=th_val, width=h.WIDTH_SM, line_color="white", show_monitors=True, show_snell_beam=(th_val > 0), fontsize=6.2
+        )
         ax_db.set_xlim(-3.8, 1.6)
         ax_db.set_ylim(-5.2, 5.2)
         ax_db.set_xlabel("$x$ [$\\mu$m]")
-        ax_db.set_ylabel("$y$ [$\\mu$m]")
-        ax_db.set_title(f"Intensity $10\\log_{{10}}(|E_y|^2/I_{{\\max}})$ [dB] at $\\theta_t={th_val:.0f}^\\circ$")
-        fig.colorbar(im_db, ax=ax_db, label="Relative intensity [dB]")
-
-    fig.savefig(fig_dir / "steady_state_fields_0_vs_7deg.png", dpi=180)
-    plt.close(fig)
+        ax_db.set_title(lbl)
+        fig_i.colorbar(im_db, ax=ax_db, label="Relative intensity [dB]")
+    axes_i[0].set_ylabel("$y$ [$\\mu$m]")
+    figstyle.finish(fig_i)
+    figstyle.save(fig_i, fig_dir / "steady_state_intensity_0_vs_7deg.png", close=True)
 
     # --- Figure 4 (.gif) and Figure 5 (.png): Time-domain pulse propagation at 7 deg ---
     # stored normalized (float16) with a movie_frames_scale factor to keep the committed data small
-    frames = np.asarray(bare["movie_frames"], dtype=float) * (float(bare["movie_frames_scale"]) if "movie_frames_scale" in bare else 1.0)
+    frames = np.asarray(bare["movie_frames"], dtype=float) * (
+        float(bare["movie_frames_scale"]) if "movie_frames_scale" in bare else 1.0
+    )
     times_fs = bare["movie_times_fs"]
     x_um = bare["x_coords"] * 1e6
     y_um = bare["y_coords"] * 1e6
@@ -811,25 +920,34 @@ def plot_fields_and_movie(results: dict, fig_dir: Path) -> None:
 
     pil_images = []
     for k_f in range(len(frames)):
-        fig_m, ax_m = plt.subplots(figsize=(6.4, 4.6), constrained_layout=True)
+        fig_m, ax_m = figstyle.new_figure(nrows=1, ncols=1, width=6.4, height=4.4)
         im_m = ax_m.pcolormesh(
             x_um,
             y_um,
             frames[k_f].T / max(vmax, 1e-30),
             shading="auto",
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-1.0,
             vmax=1.0,
         )
-        ax_m.plot(y_line * np.tan(np.deg2rad(7.0)), y_line, "k--", lw=1.4, label="Tilted facet ($7^\\circ$)")
-        ax_m.axhline(0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=1.0)
-        ax_m.axhline(-0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=1.0)
+        h.overlay_sled_geometry(
+            ax_m,
+            theta_deg=7.0,
+            width=h.WIDTH_SM,
+            line_color="#222222",
+            show_monitors=True,
+            show_snell_beam=True,
+            fontsize=6.2,
+        )
         ax_m.set_xlim(-3.8, 1.6)
         ax_m.set_ylim(-5.2, 5.2)
         ax_m.set_xlabel("$x$ [$\\mu$m]")
         ax_m.set_ylabel("$y$ [$\\mu$m]")
-        ax_m.set_title(f"Wakis 2D FIT Pulse at Tilted Facet ($\\theta_t=7^\\circ$, $t={times_fs[k_f]:.1f}$ fs)")
+        ax_m.set_title(
+            f"Wakis 2D FIT Pulse at Tilted Facet ($\\theta_t=7^\\circ$, $t={times_fs[k_f]:.1f}$ fs)"
+        )
         fig_m.colorbar(im_m, ax=ax_m, label="Normalized $E_y(x,y,t)$ [-]")
+        figstyle.finish(fig_m)
         fig_m.canvas.draw()
         rgba = np.asarray(fig_m.canvas.buffer_rgba())
         pil_images.append(Image.fromarray(rgba[:, :, :3]))
@@ -844,30 +962,37 @@ def plot_fields_and_movie(results: dict, fig_dir: Path) -> None:
             loop=0,
         )
 
-    # Static 4-snapshot strip (Figure 5)
-    sel_indices = np.linspace(2, len(frames) - 3, 4, dtype=int)
-    fig_s, axes_s = plt.subplots(1, 4, figsize=(15.5, 3.9), constrained_layout=True)
-    for ax_k, idx_f in zip(axes_s, sel_indices):
+    # Static 3-snapshot strip (Figure 5, <= 3 panels rule)
+    sel_indices = np.linspace(2, len(frames) - 3, 3, dtype=int)
+    fig_s, axes_s = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.1, sharey=True)
+    im_k = None
+    for idx_p, (ax_k, idx_f) in enumerate(zip(axes_s, sel_indices)):
         im_k = ax_k.pcolormesh(
             x_um,
             y_um,
             frames[idx_f].T / max(vmax, 1e-30),
             shading="auto",
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-1.0,
             vmax=1.0,
         )
-        ax_k.plot(y_line * np.tan(np.deg2rad(7.0)), y_line, "k--", lw=1.3)
-        ax_k.axhline(0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=0.9)
-        ax_k.axhline(-0.5 * h.WIDTH_SM * 1e6, color="k", ls=":", lw=0.9)
+        h.overlay_sled_geometry(
+            ax_k,
+            theta_deg=7.0,
+            width=h.WIDTH_SM,
+            line_color="#222222",
+            show_monitors=True,
+            show_snell_beam=True,
+            fontsize=5.8,
+        )
         ax_k.set_xlim(-3.8, 1.6)
         ax_k.set_ylim(-5.0, 5.0)
         ax_k.set_xlabel("$x$ [$\\mu$m]")
-        ax_k.set_ylabel("$y$ [$\\mu$m]")
-        ax_k.set_title(f"$t = {times_fs[idx_f]:.1f}$ fs")
+        ax_k.set_title(f"({chr(ord('a') + idx_p)}) $t = {times_fs[idx_f]:.1f}$ fs")
+    axes_s[0].set_ylabel("$y$ [$\\mu$m]")
     fig_s.colorbar(im_k, ax=axes_s[-1], label="Normalized $E_y(x,y,t)$ [-]")
-    fig_s.savefig(fig_dir / "pulse_snapshots_7deg.png", dpi=180)
-    plt.close(fig_s)
+    figstyle.finish(fig_s)
+    figstyle.save(fig_s, fig_dir / "pulse_snapshots_7deg.png", close=True)
 
 
 # %% [markdown]
@@ -886,6 +1011,7 @@ def plot_fields_and_movie(results: dict, fig_dir: Path) -> None:
 # %%
 def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     """Generate Figures 6 and 7: R_00(theta_t) log-scale sweep and broadband AR spectrum."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
     ar_d = results["npz"]["ar_tilt_sweep"]
@@ -907,7 +1033,7 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     )
 
     # --- Figure 6: High-dynamic-range R00(theta_t) bare & AR-coated ---
-    fig, ax = plt.subplots(figsize=(8.6, 5.6), constrained_layout=True)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.4, height=4.8)
 
     ax.semilogy(
         th_fine,
@@ -919,14 +1045,16 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     ax.semilogy(
         th_fine,
         r_slab_bare,
-        "b-",
+        "-",
+        color=figstyle.PALETTE[0],
         lw=2.1,
         label="Exact 1D step-index slab overlap (bare)",
     )
     ax.semilogy(
         bare["thetas"],
         bare["r00"],
-        "bo",
+        "o",
+        color=figstyle.PALETTE[0],
         ms=6.5,
         mfc="white",
         mew=2.0,
@@ -936,14 +1064,16 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     ax.semilogy(
         th_fine,
         r_gauss_ar,
-        "r:",
+        ":",
+        color=figstyle.PALETTE[1],
         lw=1.8,
         label=f"Marcuse Gaussian + $\\lambda/4$ AR ($n_{{\\mathrm{{AR}}}}={h.N_AR_COAT}$)",
     )
     ax.semilogy(
         th_fine,
         r_slab_ar,
-        "r-",
+        "-",
+        color=figstyle.PALETTE[1],
         lw=1.9,
         alpha=0.85,
         label="Exact 1D slab overlap + $\\lambda/4$ AR coating",
@@ -951,26 +1081,26 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     ax.semilogy(
         ar_d["thetas"],
         ar_d["r00_ar"],
-        "rs",
+        "s",
+        color=figstyle.PALETTE[1],
         ms=6.2,
         mfc="white",
         mew=1.8,
         label="Wakis 2D FIT (single-layer AR facet)",
     )
 
-    # Zah et al. (1987) experimental range at 7 deg (bare angled facet: 2e-3 to 3e-3)
     ax.errorbar(
         [7.0],
         [2.5e-3],
         yerr=[[0.5e-3], [0.6e-3]],
-        fmt="gD",
-        ms=7.5,
+        fmt="D",
+        color=figstyle.PALETTE[2],
+        ms=7.0,
         capsize=5,
         lw=2.0,
         label="Zah et al. (1987) exp. range at $7^\\circ$ ($2\\text{--}3\\times 10^{-3}$)",
     )
 
-    # CPML floor at n_pml = 10
     r_fl_10 = float(pml_d["r_floor"][list(pml_d["n_pml"]).index(10)])
     ax.axhline(
         r_fl_10,
@@ -985,11 +1115,10 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Waveguide facet tilt angle $\\theta_t$ [deg]")
     ax.set_ylabel("Fundamental modal reflectivity $R_{00}(\\theta_t)$ [-]")
     ax.set_title("Tilted-Facet Modal Reflectivity $R_{00}(\\theta_t)$: Wakis 2D FIT vs. Marcuse (1989)")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="lower left", fontsize=8.5, framealpha=0.92)
+    ax.legend(loc="lower left", fontsize=7.6)
 
-    fig.savefig(fig_dir / "reflectivity_vs_tilt_marcuse.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "reflectivity_vs_tilt_marcuse.png", close=True)
 
     # --- Figure 7: Broadband wavelength dependence R00(lambda) ---
     wls_um = (C_LIGHT / bare["freqs_broad"]) * 1e6
@@ -997,7 +1126,6 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     wls_um = wls_um[sort_idx]
 
     wls_fine = np.linspace(1.425e-6, 1.555e-6, 200)
-    # Exact 1D slab overlap factor across wls_fine at theta_t = 7 deg
     q_7 = 2.0 * neff0 * (2.0 * np.pi / wls_fine) * np.tan(np.deg2rad(7.0))
     ov_7_sq = (
         np.abs(
@@ -1010,7 +1138,6 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
         )
         ** 2
     )
-    # Ideal quarter-wave index sqrt(neff) vs practical n_ar = 1.72
     r_tmm_0_bare = h.transfer_matrix_ar_reflectance(
         0.0, n_inc=neff0, wavelength=wls_fine
     )
@@ -1036,7 +1163,7 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
         * ov_7_sq
     )
 
-    fig, ax = plt.subplots(figsize=(8.4, 5.0), constrained_layout=True)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.6, height=4.6)
     ax.semilogy(wls_fine * 1e6, r_tmm_0_bare, "k--", lw=1.6, label="1D TMM $\\theta_t=0^\\circ$ (bare)")
     ax.semilogy(
         wls_um,
@@ -1045,34 +1172,38 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
         ms=5.0,
         label="Wakis FIT $\\theta_t=0^\\circ$ (bare)",
     )
-    ax.semilogy(wls_fine * 1e6, r_tmm_0_ar, "b--", lw=1.6, label="1D TMM $\\theta_t=0^\\circ$ ($\\lambda_0/4$ AR, $n=1.72$)")
+    ax.semilogy(wls_fine * 1e6, r_tmm_0_ar, "--", color=figstyle.PALETTE[0], lw=1.6, label="1D TMM $\\theta_t=0^\\circ$ ($\\lambda_0/4$ AR, $n=1.72$)")
     ax.semilogy(
         wls_um,
         ar_d["r00_ar_spec_0deg"][sort_idx],
-        "bs",
+        "s",
+        color=figstyle.PALETTE[0],
         ms=5.0,
         label="Wakis FIT $\\theta_t=0^\\circ$ ($\\lambda_0/4$ AR)",
     )
-    ax.semilogy(wls_fine * 1e6, r_tmm_7_bare, "g-", lw=1.8, label="1D slab + TMM $\\theta_t=7^\\circ$ (bare)")
+    ax.semilogy(wls_fine * 1e6, r_tmm_7_bare, "-", color=figstyle.PALETTE[2], lw=1.8, label="1D slab + TMM $\\theta_t=7^\\circ$ (bare)")
     ax.semilogy(
         wls_um,
         bare["r00_spec_7deg"][sort_idx],
-        "g^",
+        "^",
+        color=figstyle.PALETTE[2],
         ms=5.5,
         label="Wakis FIT $\\theta_t=7^\\circ$ (bare)",
     )
-    ax.semilogy(wls_fine * 1e6, r_tmm_7_ar, "r-", lw=1.8, label="1D slab + TMM $\\theta_t=7^\\circ$ + AR ($n=1.72$)")
+    ax.semilogy(wls_fine * 1e6, r_tmm_7_ar, "-", color=figstyle.PALETTE[1], lw=1.8, label="1D slab + TMM $\\theta_t=7^\\circ$ + AR ($n=1.72$)")
     ax.semilogy(
         wls_um,
         ar_d["r00_ar_spec_7deg"][sort_idx],
-        "rd",
+        "d",
+        color=figstyle.PALETTE[1],
         ms=5.5,
         label="Wakis FIT $\\theta_t=7^\\circ$ + AR ($n=1.72$)",
     )
     ax.semilogy(
         wls_fine * 1e6,
         r_tmm_7_ideal,
-        "m:",
+        ":",
+        color=figstyle.PALETTE[4],
         lw=1.8,
         label=f"1D slab + ideal $\\sqrt{{n_{{\\mathrm{{eff}}}}}}$ AR ($n={n_ar_ideal:.3f}$)",
     )
@@ -1082,11 +1213,10 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Free-space wavelength $\\lambda$ [$\\mu$m]")
     ax.set_ylabel("Modal power reflectivity $R_{00}(\\lambda)$ [-]")
     ax.set_title("Broadband Spectral Reflectivity $R_{00}(\\lambda)$: Bare vs. Single-Layer AR Coating")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8.0, ncol=2, framealpha=0.9)
+    ax.legend(loc="lower right", fontsize=7.4, ncol=2)
 
-    fig.savefig(fig_dir / "broadband_ar_spectrum.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "broadband_ar_spectrum.png", close=True)
 
 
 # %% [markdown]
@@ -1105,6 +1235,7 @@ def plot_reflectivity_and_ar(results: dict, fig_dir: Path) -> None:
 # %%
 def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     """Generate Figures 8 and 9: bimodal mode conversion R01 and far-field patterns."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
     bimod = results["npz"]["bimodal_tilt_sweep"]
@@ -1120,24 +1251,26 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     r01_gauss_mm = h.marcuse_gaussian_r01(th_fine, neff=neff_avg, w0=w0_mm)
 
     # --- Figure 8: Bimodal R00 vs R01 mode conversion ---
-    fig, ax = plt.subplots(figsize=(8.4, 5.2), constrained_layout=True)
-    ax.semilogy(th_fine, r00_slab_mm, "b-", lw=2.0, label="Exact 1D slab $R_{00}(\\theta_t)$ ($\\mathrm{TE}_0 \\to \\mathrm{TE}_0$)")
-    ax.semilogy(th_fine, r00_gauss_mm, "b--", lw=1.4, alpha=0.75, label=f"Marcuse Gaussian $R_{{00}}$ ($w_0={w0_mm*1e6:.2f}\\;\\mu$m)")
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.4, height=4.6)
+    ax.semilogy(th_fine, r00_slab_mm, "-", color=figstyle.PALETTE[0], lw=2.0, label="Exact 1D slab $R_{00}(\\theta_t)$ ($\\mathrm{TE}_0 \\to \\mathrm{TE}_0$)")
+    ax.semilogy(th_fine, r00_gauss_mm, "--", color=figstyle.PALETTE[0], lw=1.4, alpha=0.75, label=f"Marcuse Gaussian $R_{{00}}$ ($w_0={w0_mm*1e6:.2f}\\;\\mu$m)")
     ax.semilogy(
         bimod["thetas"],
         bimod["r00_mm"],
-        "bo",
+        "o",
+        color=figstyle.PALETTE[0],
         ms=6.5,
         mfc="white",
         mew=2.0,
         label="Wakis 2D FIT $R_{00}(\\theta_t)$ ($w_2=2.80\\;\\mu$m)",
     )
 
-    ax.semilogy(th_fine, np.maximum(r01_slab_mm, 1e-8), "r-", lw=2.0, label="Exact 1D slab $R_{01}(\\theta_t)$ ($\\mathrm{TE}_0 \\to \\mathrm{TE}_1$)")
+    ax.semilogy(th_fine, np.maximum(r01_slab_mm, 1e-8), "-", color=figstyle.PALETTE[1], lw=2.0, label="Exact 1D slab $R_{01}(\\theta_t)$ ($\\mathrm{TE}_0 \\to \\mathrm{TE}_1$)")
     ax.semilogy(
         th_fine,
         np.maximum(r01_gauss_mm, 1e-8),
-        "r--",
+        "--",
+        color=figstyle.PALETTE[1],
         lw=1.4,
         alpha=0.75,
         label="Hermite–Gaussian $R_{01} = R_f u^2 e^{-u^2}$",
@@ -1145,7 +1278,8 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     ax.semilogy(
         bimod["thetas"],
         np.maximum(bimod["r01_mm"], 1e-7),
-        "rs",
+        "s",
+        color=figstyle.PALETTE[1],
         ms=6.5,
         mfc="white",
         mew=2.0,
@@ -1157,14 +1291,13 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Waveguide facet tilt angle $\\theta_t$ [deg]")
     ax.set_ylabel("Modal power reflectivity $R_{0m}(\\theta_t)$ [-]")
     ax.set_title("Mode Conversion in a Bimodal Guide ($w_2=2.80\\;\\mu$m): $R_{00}(\\theta_t)$ vs. $R_{01}(\\theta_t)$")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="lower left", fontsize=8.5)
+    ax.legend(loc="lower left", fontsize=7.6)
 
-    fig.savefig(fig_dir / "bimodal_mode_conversion.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "bimodal_mode_conversion.png", close=True)
 
     # --- Figure 9: Far-field radiation patterns reproducing Zah et al. (1987) Fig. 2 ---
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 4.6), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.5, height=4.1)
 
     th_0 = bare["theta_norm_0deg"]
     ff_0 = bare["ff_0deg"] / np.max(bare["ff_0deg"])
@@ -1177,13 +1310,14 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     ax.plot(
         th_7,
         ff_7,
-        "b-",
+        "-",
+        color=figstyle.PALETTE[0],
         lw=2.2,
         label=f"$\\theta_t=7^\\circ$ ($\\mathrm{{TE}}_0$, Wakis peak $+{th_7[np.argmax(ff_7)]:.1f}^\\circ$)",
     )
     ax.axvline(
         snell_7,
-        color="r",
+        color=figstyle.PALETTE[1],
         ls=":",
         lw=1.8,
         label=f"Snell law / Zah Fig. 2(a) ($+{snell_7:.1f}^\\circ$)",
@@ -1193,26 +1327,24 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Angle from facet normal $\\theta_\\parallel$ [deg]")
     ax.set_ylabel("Normalized far-field intensity $U(\\theta_\\parallel)/U_{\\max}$ [-]")
     ax.set_title("(a) Single-Mode Guide ($w_1=1.75\\;\\mu$m): Snell Beam Deflection")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left", fontsize=8.5)
+    ax.legend(loc="upper left", fontsize=7.6)
 
     ax = axes[1]
     th_mm = bimod["theta_norm_7deg"]
     ff_mm0 = bimod["ff_mm_te0_7deg"] / np.max(bimod["ff_mm_te0_7deg"])
     ff_mm1 = bimod["ff_mm_te1_7deg"] / np.max(bimod["ff_mm_te1_7deg"])
-    ax.plot(th_mm, ff_mm0, "b--", lw=1.7, alpha=0.8, label="$\\mathrm{TE}_0$ launched ($w_2=2.80\\;\\mu$m)")
-    ax.plot(th_mm, ff_mm1, "m-", lw=2.2, label="$\\mathrm{TE}_1$ launched (double-lobed, Zah Fig. 2b)")
+    ax.plot(th_mm, ff_mm0, "--", color=figstyle.PALETTE[0], lw=1.7, alpha=0.8, label="$\\mathrm{TE}_0$ launched ($w_2=2.80\\;\\mu$m)")
+    ax.plot(th_mm, ff_mm1, "-", color=figstyle.PALETTE[4], lw=2.2, label="$\\mathrm{TE}_1$ launched (double-lobed, Zah Fig. 2b)")
     ax.axvline(snell_7, color="k", ls=":", lw=1.5, label=f"Refracted axis $+{snell_7:.1f}^\\circ$ (TE$_1$ null)")
     ax.set_xlim(-45.0, 60.0)
     ax.set_ylim(0.0, 1.12)
     ax.set_xlabel("Angle from facet normal $\\theta_\\parallel$ [deg]")
     ax.set_ylabel("Normalized far-field intensity $U(\\theta_\\parallel)/U_{\\max}$ [-]")
     ax.set_title("(b) Bimodal Guide ($w_2=2.80\\;\\mu$m, $\\theta_t=7^\\circ$): $\\mathrm{TE}_0$ vs. $\\mathrm{TE}_1$ Far Field")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left", fontsize=8.5)
+    ax.legend(loc="upper left", fontsize=7.6)
 
-    fig.savefig(fig_dir / "farfield_radiation_zah1987.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "farfield_radiation_zah1987.png", close=True)
 
 
 # %% [markdown]
@@ -1227,6 +1359,7 @@ def plot_bimodal_and_farfield(results: dict, fig_dir: Path) -> None:
 # %%
 def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     """Generate Figures 10 and 11: SLED ASE spectral ripple and CPML floor."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     bare = results["npz"]["bare_tilt_sweep"]
     ar_d = results["npz"]["ar_tilt_sweep"]
@@ -1237,11 +1370,10 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     r_ar_7 = float(ar_d["r00_ar"][idx_7])
 
     # --- Figure 10: SLED Fabry-Perot ASE spectrum and Hakki-Paoli ripple ---
-    fig, axes = plt.subplots(1, 2, figsize=(13.2, 4.8), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2)
 
-    # Panel (a): Broadband + zoom ASE spectrum around 1.482 um (Zah et al. Fig. 4)
     wls_zoom = np.linspace(1.4795e-6, 1.4845e-6, 2500)
-    g_s_val = 120.0  # 20.8 dB single-pass power gain
+    g_s_val = 120.0
     spec_bare, env_bare, rip_bare = h.sled_ase_spectrum(
         wls_zoom, g_peak_linear=g_s_val, r1=r_bare_7, r2=r_bare_7
     )
@@ -1253,7 +1385,8 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     ax.plot(
         wls_zoom * 1e9,
         10.0 * np.log10(np.maximum(spec_bare, 1e-6)),
-        "b-",
+        "-",
+        color=figstyle.PALETTE[0],
         lw=1.3,
         alpha=0.85,
         label=f"Bare $7^\\circ$ facets ($R_1=R_2={r_bare_7:.2e}$, $\\Delta G={rip_bare:.2f}$ dB)",
@@ -1261,7 +1394,8 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     ax.plot(
         wls_zoom * 1e9,
         10.0 * np.log10(np.maximum(spec_ar, 1e-6)),
-        "r-",
+        "-",
+        color=figstyle.PALETTE[1],
         lw=1.8,
         label=f"$7^\\circ$ + AR output ($R_2={r_ar_7:.2e}$, $\\Delta G={rip_ar:.2f}$ dB)",
     )
@@ -1277,18 +1411,11 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Free-space wavelength $\\lambda$ [nm]")
     ax.set_ylabel("Relative ASE spectral density [dB]")
     ax.set_title("(a) SLED Longitudinal Mode Ripple ($L=380\\;\\mu$m, $G_s=20.8$ dB)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower center", fontsize=8.2)
+    ax.legend(loc="lower center", fontsize=7.5)
 
-    # Panel (b): Hakki-Paoli ripple vs R_eff = sqrt(R1*R2) for several gains G_s
     ax = axes[1]
     r_eff_grid = np.logspace(-6, -1, 400)
-    for g_db, col_str in [
-        (15.0, "teal"),
-        (20.8, "navy"),
-        (25.0, "purple"),
-        (30.0, "crimson"),
-    ]:
+    for g_idx, g_db in enumerate((15.0, 20.8, 25.0, 30.0)):
         g_lin = 10.0 ** (0.1 * g_db)
         gamma = g_lin * r_eff_grid
         valid = gamma < 0.995
@@ -1296,28 +1423,28 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
         ax.loglog(
             r_eff_grid[valid],
             rip_curve,
-            color=col_str,
+            color=figstyle.PALETTE[g_idx],
             lw=1.9,
             label=f"Single-pass gain $G_s = {g_db:.1f}$ dB ($\\times{g_lin:.0f}$)",
         )
 
     ax.axvline(
         r_bare_7,
-        color="b",
+        color=figstyle.PALETTE[0],
         ls="--",
         lw=1.5,
         label=f"Bare $7^\\circ$ facet ($R_{{00}}={r_bare_7:.2e}$)",
     )
     ax.axvline(
         np.sqrt(r_bare_7 * r_ar_7),
-        color="r",
+        color=figstyle.PALETTE[1],
         ls="-.",
         lw=1.5,
         label=f"Hybrid $7^\\circ$ bare/AR ($\\sqrt{{R_1 R_2}}={np.sqrt(r_bare_7*r_ar_7):.2e}$)",
     )
     ax.axvline(
         r_ar_7,
-        color="g",
+        color=figstyle.PALETTE[2],
         ls=":",
         lw=1.6,
         label=f"Dual $7^\\circ$ + AR ($R_{{00}}={r_ar_7:.2e}$)",
@@ -1329,35 +1456,34 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Effective modal facet reflectivity $R_{\\mathrm{eff}} = \\sqrt{R_1 R_2}$ [-]")
     ax.set_ylabel("Hakki–Paoli peak-to-valley ripple $\\Delta G_{\\mathrm{dB}}$ [dB]")
     ax.set_title("(b) Fabry–Pérot Ripple Contrast vs. Residual Facet Reflectivity")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper left", fontsize=7.8)
+    ax.legend(loc="upper left", fontsize=7.2)
 
-    fig.savefig(fig_dir / "sled_ase_spectral_ripple.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "sled_ase_spectral_ripple.png", close=True)
 
     # --- Figure 11: Straight-waveguide CPML parasitic reflectivity floor ---
-    fig, ax = plt.subplots(figsize=(7.6, 4.8), constrained_layout=True)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.0, height=4.4)
     n_pmls = pml_d["n_pml"]
     r_fls = pml_d["r_floor"]
     ax.semilogy(
         n_pmls,
         r_fls,
         "ko-",
-        ms=7.0,
+        ms=6.5,
         lw=2.0,
-        mfc="orange",
+        mfc=figstyle.PALETTE[5],
         label="Straight-WG into CPML parasitic floor $R_{\\mathrm{floor}}(n_{\\mathrm{pml}})$",
     )
     ax.axhline(
         r_bare_7,
-        color="b",
+        color=figstyle.PALETTE[0],
         ls="--",
         lw=1.6,
         label=f"Bare $7^\\circ$ facet $R_{{00}}(7^\\circ) = {r_bare_7:.2e}$",
     )
     ax.axhline(
         r_ar_7,
-        color="r",
+        color=figstyle.PALETTE[1],
         ls="-.",
         lw=1.6,
         label=f"AR-coated $7^\\circ$ facet $R_{{00}}^{{\\mathrm{{AR}}}}(7^\\circ) = {r_ar_7:.2e}$",
@@ -1366,7 +1492,7 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     r_bare_10 = float(bare["r00"][idx_10])
     ax.axhline(
         r_bare_10,
-        color="g",
+        color=figstyle.PALETTE[2],
         ls=":",
         lw=1.6,
         label=f"Marcuse slab null $R_{{00}}(10^\\circ) = {r_bare_10:.2e}$",
@@ -1376,11 +1502,10 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
     ax.set_title("High-Dynamic-Range Measurement Floor vs. CPML Thickness $n_{\\mathrm{pml}}$")
     ax.set_xticks(n_pmls)
     ax.set_ylim(1e-14, 1e-2)
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+    ax.legend(loc="upper right", fontsize=7.6)
 
-    fig.savefig(fig_dir / "pml_reflectivity_floor.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "pml_reflectivity_floor.png", close=True)
 
 
 # %% [markdown]
@@ -1408,11 +1533,12 @@ def plot_sled_ripple_and_pml(results: dict, fig_dir: Path) -> None:
 # %%
 def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     """Generate Figures 12, 13, and 14: incoherent dipole maps/convergence and grid convergence."""
+    figstyle.apply_style()
     fig_dir.mkdir(parents=True, exist_ok=True)
     pml_d = results["npz"]["pml_and_incoherent_study"]
 
     # --- Figure 12: Incoherent power average vs Coherent field sum 2D maps ---
-    fig, axes = plt.subplots(1, 3, figsize=(15.4, 4.5), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.2)
     dx_um = pml_d["x_coords"] * 1e6
     dy_um = pml_d["y_coords"] * 1e6
     mask_wg = dx_um > -0.35
@@ -1437,17 +1563,20 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
         ),
     ]:
         im = ax_i.pcolormesh(
-            dx_um, dy_um, imap.T, shading="auto", cmap="inferno", vmin=0.0, vmax=1.0
+            dx_um, dy_um, imap.T, shading="auto", cmap=figstyle.CMAP_MAGNITUDE, vmin=0.0, vmax=1.0
         )
-        ax_i.plot(np.full_like(y_dips, -1.0), y_dips, "c*", ms=7.0, label="Dipoles $y_j$")
-        ax_i.axhline(0.5 * h.WIDTH_MM * 1e6, color="w", ls=":", lw=1.1)
-        ax_i.axhline(
-            -0.5 * h.WIDTH_MM * 1e6, color="w", ls=":", lw=1.1, label="Core $\\pm w_2/2$"
+        h.overlay_sled_geometry(
+            ax_i,
+            width=h.WIDTH_MM,
+            is_dipole_ensemble=True,
+            dipole_y_um=y_dips,
+            line_color="white",
+            show_monitors=True,
+            fontsize=5.8,
         )
         ax_i.set_xlabel("$x$ [$\\mu$m]")
         ax_i.set_ylabel("$y$ [$\\mu$m]")
-        ax_i.set_title(t_str, fontsize=10.5)
-        ax_i.legend(loc="upper right", fontsize=8)
+        ax_i.set_title(t_str)
         fig.colorbar(im, ax=ax_i, label="Normalized guided intensity [-]")
 
     # Panel (c): Per-dipole modal power coupling |a_0,j|^2 and |a_1,j|^2 vs y_j
@@ -1466,33 +1595,32 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
         )
     )
 
-    ax.plot(y_s, psi0_sq, "b-", lw=1.8, label="Exact slab $|\\psi_0(y)|^2$ ($\\mathrm{TE}_0$)")
-    ax.plot(y_s, psi1_sq, "r--", lw=1.8, label="Exact slab $|\\psi_1(y)|^2$ ($\\mathrm{TE}_1$)")
-    ax.plot(y_dips, p0_norm, "bo", ms=6.5, label="Wakis FIT dipole $|a_{0,j}^+|^2$")
-    ax.plot(y_dips, p1_norm, "rs", ms=6.5, label="Wakis FIT dipole $|a_{1,j}^+|^2$")
+    ax.plot(y_s, psi0_sq, "-", color=figstyle.PALETTE[0], lw=1.8, label="Exact slab $|\\psi_0(y)|^2$ ($\\mathrm{TE}_0$)")
+    ax.plot(y_s, psi1_sq, "--", color=figstyle.PALETTE[1], lw=1.8, label="Exact slab $|\\psi_1(y)|^2$ ($\\mathrm{TE}_1$)")
+    ax.plot(y_dips, p0_norm, "o", color=figstyle.PALETTE[0], ms=6.0, label="Wakis FIT dipole $|a_{0,j}^+|^2$")
+    ax.plot(y_dips, p1_norm, "s", color=figstyle.PALETTE[1], ms=6.0, label="Wakis FIT dipole $|a_{1,j}^+|^2$")
     ax.set_xlim(-1.8, 1.8)
     ax.set_ylim(-0.05, 1.12)
     ax.set_xlabel("Dipole lateral position $y_j$ [$\\mu$m]")
     ax.set_ylabel("Normalized modal power coupling [-]")
     ax.set_title(
-        f"(c) Per-Dipole Coupling ($\\eta_{{\\mathrm{{TE1}}}}^{{\\mathrm{{incoh}}}}={pml_d['eta_te1_incoh']:.2f}$, $\\eta_{{\\mathrm{{TE1}}}}^{{\\mathrm{{coh}}}}={pml_d['eta_te1_coh']:.1e}$)",
-        fontsize=10.5,
+        f"(c) Per-Dipole Coupling ($\\eta_{{\\mathrm{{TE1}}}}^{{\\mathrm{{incoh}}}}={pml_d['eta_te1_incoh']:.2f}$, $\\eta_{{\\mathrm{{TE1}}}}^{{\\mathrm{{coh}}}}={pml_d['eta_te1_coh']:.1e}$)"
     )
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper center", fontsize=8)
+    ax.legend(loc="upper center", fontsize=7.4)
 
-    fig.savefig(fig_dir / "incoherent_dipole_maps.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "incoherent_dipole_maps.png", close=True)
 
     # --- Figure 13: Incoherent dipole convergence vs N_dip and N_real ---
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 4.5), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.1)
 
     ax = axes[0]
     nd_grid = pml_d["n_dip_grid"]
     ax.semilogy(
         nd_grid,
         np.maximum(pml_d["quad_err_te0"], 1e-5),
-        "bo-",
+        "o-",
+        color=figstyle.PALETTE[0],
         ms=6.0,
         lw=1.9,
         label="Spatial quadrature error ($\\mathrm{TE}_0$ power)",
@@ -1500,7 +1628,8 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.semilogy(
         nd_grid,
         np.maximum(pml_d["quad_err_te1"], 1e-5),
-        "rs--",
+        "s--",
+        color=figstyle.PALETTE[1],
         ms=6.0,
         lw=1.9,
         label="Spatial quadrature error ($\\mathrm{TE}_1$ power)",
@@ -1515,15 +1644,15 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Number of dipole positions across core $N_{\\mathrm{dip}}$ [-]")
     ax.set_ylabel("Relative quadrature error $|\\bar{P}_{N} - P_{\\infty}| / P_{\\infty}$ [-]")
     ax.set_title("(a) Deterministic Spatial Quadrature Convergence vs. $N_{\\mathrm{dip}}$")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+    ax.legend(loc="upper right", fontsize=7.6)
 
     ax = axes[1]
     nr_grid = pml_d["n_real_grid"]
     ax.loglog(
         nr_grid,
         pml_d["rel_err_mc_te0"],
-        "bo-",
+        "o-",
+        color=figstyle.PALETTE[0],
         ms=6.0,
         lw=1.9,
         label="Random-phase RMS error ($\\mathrm{TE}_0$)",
@@ -1531,7 +1660,8 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.loglog(
         nr_grid,
         pml_d["rel_err_mc_te1"],
-        "rs--",
+        "s--",
+        color=figstyle.PALETTE[1],
         ms=6.0,
         lw=1.9,
         label="Random-phase RMS error ($\\mathrm{TE}_1$)",
@@ -1546,11 +1676,10 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Number of random-phase realizations $N_{\\mathrm{real}}$ [-]")
     ax.set_ylabel("RMS relative error vs. exact incoherent sum [-]")
     ax.set_title("(b) Stochastic Phase-Realization Convergence vs. $N_{\\mathrm{real}}$")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+    ax.legend(loc="upper right", fontsize=7.6)
 
-    fig.savefig(fig_dir / "incoherent_dipole_convergence.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "incoherent_dipole_convergence.png", close=True)
 
     # --- Figure 14: Grid resolution convergence (R00(7 deg), R00(10 deg), R_AR(0 deg)) ---
     ref_npz = results["npz"]["kottke_reference"]
@@ -1597,36 +1726,39 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     stair_err = np.abs(np.asarray(stair_r7) - r7_ref) / r7_ref
     neff_err = np.abs(np.asarray(kottke_neff) - neff_exact) / neff_exact
 
-    fig, axes = plt.subplots(1, 3, figsize=(15.6, 4.6), constrained_layout=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.2)
 
     ax = axes[0]
     ax.plot(
         kottke_cpw + [cpw_ref],
         np.asarray(kottke_r7 + [r7_ref]) * 1e3,
-        "bo-",
-        ms=6.5,
+        "o-",
+        color=figstyle.PALETTE[0],
+        ms=6.0,
         lw=2.0,
         label="Kottke $R_{00}(7^\\circ)$ (tilted facet)",
     )
     ax.plot(
         stair_cpw,
         np.asarray(stair_r7) * 1e3,
-        "rs--",
-        ms=6.5,
+        "s--",
+        color=figstyle.PALETTE[1],
+        ms=6.0,
         lw=2.0,
         label="Staircase $R_{00}(7^\\circ)$ (tilted facet)",
     )
     ax.plot(
         kottke_cpw + [cpw_ref],
         np.asarray(kottke_rar0 + [rar0_ref]) * 1e3,
-        "g^-.",
-        ms=6.5,
+        "^-.",
+        color=figstyle.PALETTE[2],
+        ms=6.0,
         lw=2.0,
         label="Node-snapped $R_{\\mathrm{AR}}(0^\\circ)$ ($\\geq 6$ cells in AR)",
     )
     ax.axhline(
         r_ar0_tmm * 1e3,
-        color="g",
+        color=figstyle.PALETTE[2],
         ls=":",
         lw=1.5,
         label=f"1D TMM $R_{{\\mathrm{{AR}}}}(0^\\circ) = {r_ar0_tmm*1e3:.2f}\\times 10^{{-3}}$",
@@ -1634,23 +1766,24 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Resolution [cells per wavelength in core, cpw]")
     ax.set_ylabel("Modal reflectivity $R_{00}$ [$\\times 10^{-3}$]")
     ax.set_title("(a) $R_{00}(7^\\circ)$ & $R_{\\mathrm{AR}}(0^\\circ)$ vs. Resolution")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=8.0)
+    ax.legend(loc="best", fontsize=7.2)
 
     ax = axes[1]
     ax.semilogy(
         kottke_cpw + [cpw_ref],
         kottke_r10 + [r10_ref],
-        "bo-",
-        ms=6.5,
+        "o-",
+        color=figstyle.PALETTE[0],
+        ms=6.0,
         lw=2.0,
         label="Kottke $R_{00}(10^\\circ)$ (Marcuse null)",
     )
     ax.semilogy(
         stair_cpw,
         stair_r10,
-        "rs--",
-        ms=6.5,
+        "s--",
+        color=figstyle.PALETTE[1],
+        ms=6.0,
         lw=2.0,
         label="Staircase $R_{00}(10^\\circ)$ (facet step noise)",
     )
@@ -1666,30 +1799,32 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.set_ylabel("Modal reflectivity $R_{00}(10^\\circ)$ [-]")
     ax.set_title("(b) Marcuse $10^\\circ$ Interference Null vs. Resolution")
     ax.set_ylim(5e-9, 1e-3)
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="best", fontsize=8.0)
+    ax.legend(loc="best", fontsize=7.2)
 
     ax = axes[2]
     ax.loglog(
         kottke_h,
         kottke_err,
-        "bo-",
-        ms=6.5,
+        "o-",
+        color=figstyle.PALETTE[0],
+        ms=6.0,
         lw=2.0,
         label=f"Kottke $|R_{{00}}(7^\\circ) - R_{{00}}^{{\\mathrm{{ref}}}}| / R_{{00}}^{{\\mathrm{{ref}}}}$ (cpw={cpw_ref})",
     )
     ax.loglog(
         stair_h,
         stair_err,
-        "rs--",
-        ms=6.5,
+        "s--",
+        color=figstyle.PALETTE[1],
+        ms=6.0,
         lw=2.0,
         label="Staircase $|R_{00}(7^\\circ) - R_{00}^{\\mathrm{ref}}| / R_{00}^{\\mathrm{ref}}$",
     )
     ax.loglog(
         kottke_h + [float(ref_npz["dx_min_nm"])],
         list(neff_err) + [abs(neff_ref - neff_exact) / neff_exact],
-        "m^-.",
+        "^-.",
+        color=figstyle.PALETTE[4],
         ms=6.0,
         lw=1.8,
         label="$|n_{\\mathrm{eff},0} - n_{\\mathrm{eff},0}^{\\mathrm{exact}}| / n_{\\mathrm{eff},0}^{\\mathrm{exact}}$",
@@ -1705,15 +1840,14 @@ def plot_convergence_studies(results: dict, fig_dir: Path) -> None:
     ax.set_xlabel("Minimum cell size $\\Delta x_{\\min}$ [nm]")
     ax.set_ylabel("Relative error [-]")
     ax.set_title("(c) Convergence Rate with $\\Delta x_{\\min}$")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="best", fontsize=7.8)
+    ax.legend(loc="best", fontsize=7.2)
 
-    fig.savefig(fig_dir / "grid_convergence_kottke_vs_staircase.png", dpi=180)
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, fig_dir / "grid_convergence_kottke_vs_staircase.png", close=True)
 
 
 def plot_all(data_dir: Path, fig_dir: Path, quick: bool | None = None) -> None:
-    """Load all task outputs and generate all 14 tutorial figures."""
+    """Load all task outputs and generate all 16 tutorial figures."""
     results = load_all_results(data_dir=data_dir, quick=quick)
     plot_geometry_and_eigenmodes(results, fig_dir=fig_dir)
     plot_fields_and_movie(results, fig_dir=fig_dir)
@@ -1721,16 +1855,16 @@ def plot_all(data_dir: Path, fig_dir: Path, quick: bool | None = None) -> None:
     plot_bimodal_and_farfield(results, fig_dir=fig_dir)
     plot_sled_ripple_and_pml(results, fig_dir=fig_dir)
     plot_convergence_studies(results, fig_dir=fig_dir)
-    print(f"Generated 14 figures in {fig_dir}")
+    print(f"Generated 16 figures in {fig_dir}")
 
 
 # %% [markdown]
 # <a id="11-summary-table"></a>
 # ## 11. Summary of Quantitative Results
 #
-# The table below compares the earlier Wakis 2D FIT `--quick` (`cpw = 14`, $\Delta x_{\min} = 30.94\;\text{nm}$, $\Delta x_{\text{bg}} = 40.81\;\text{nm}$, $7$ cells across $t_{\text{AR}}$) and the `--full` production study (`cpw = 20`, $\Delta x_{\min} = 21.66\;\text{nm}$, $\Delta x_{\text{bg}} = 28.57\;\text{nm}$, $10$ cells across $t_{\text{AR}}$, plus the `cpw = 40` fine reference with $\Delta x_{\min} = 10.83\;\text{nm}$ and $20$ cells across $t_{\text{AR}}$) against the analytical models of **Marcuse (1989)** and the experimental benchmarks of **Zah et al. (1987)**:
+# The table below compares the coarse Wakis 2D FIT `--quick` grid (`cpw = 14`, $\Delta x_{\min} = 30.94\;\text{nm}$, $\Delta x_{\text{bg}} = 40.81\;\text{nm}$, $7$ cells across $t_{\text{AR}}$) and the `--full` production study (`cpw = 20`, $\Delta x_{\min} = 21.66\;\text{nm}$, $\Delta x_{\text{bg}} = 28.57\;\text{nm}$, $10$ cells across $t_{\text{AR}}$, plus the `cpw = 40` fine reference with $\Delta x_{\min} = 10.83\;\text{nm}$ and $20$ cells across $t_{\text{AR}}$) against the analytical models of **Marcuse (1989)** and the experimental benchmarks of **Zah et al. (1987)**:
 #
-# | Quantity | Waveguide / Condition | Old (`--quick`, `cpw=14`) | New (`--full`, `cpw=20` / ref `cpw=40`) | Analytic / Published Reference | Source & Parameter Sensitivity Notes |
+# | Quantity | Waveguide / Condition | Coarse Grid (`--quick`, `cpw=14`) | Production Grid (`--full`, `cpw=20` / ref `cpw=40`) | Analytic / Published Reference | Source & Parameter Sensitivity Notes |
 # | :--- | :--- | :---: | :---: | :---: | :--- |
 # | Fundamental $n_{\text{eff},0}$ | Single-mode ($w_1 = 1.75\;\mu\text{m}$) | $3.3537$ ($0.78\%$ err) | $3.3402$ ($0.38\%$) / `cpw=40`: $3.3306$ ($0.09\%$) | $3.3276$ | Exact 1D slab dispersion ($V_{\text{half}} = 1.534$) |
 # | Bimodal $n_{\text{eff},0},\;n_{\text{eff},1}$ | Two-mode ($w_2 = 2.80\;\mu\text{m}$) | $3.3578,\;3.3435$ | $3.3444,\;3.3303$ ($0.38\%$ err) | $3.3318,\;3.3178$ | Exact 1D slab dispersion ($V_{\text{half}} = 2.454$) |

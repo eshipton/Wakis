@@ -27,9 +27,13 @@ from _helpers import (  # noqa: E402
     FastPolySlab,
     bragg_grating,
     build_bragg_mesh_overrides,
+    build_tuned_bragg_mesh_overrides,
+    build_uniform_bragg_mesh_overrides,
     cmt_bragg_spectrum,
     cmt_coupling_from_neff_step,
+    compare_bragg_mesh_strategies,
     extract_stopband_metrics,
+    load_graded_vs_uniform_study_summary,
     measure_grating_mesh_metrics,
 )
 from bragg_grating import (  # noqa: E402
@@ -645,4 +649,104 @@ def test_subgrid_vs_graded_bragg_full_analysis_and_verdict():
     )
     with pytest.raises(AssertionError):
         study_mod.assert_full_verdict(mutated)
+
+
+def test_setup_schematic_and_graded_mesh_comparison_with_mutation():
+    """
+    Verify that:
+    1. ``00_setup_schematic.png`` and all 16 restyled figures exist in
+       ``tutorials/06_periodic_structures/06-01_bragg_grating/figures/``, with
+       ``09_pulse_propagation.gif`` under 5 MB.
+    2. ``compare_bragg_mesh_strategies`` confirms that at equal tooth resolution
+       ``n_feature = 4``, both ``sidewall_graded`` and ``tuned_graded`` resolve the
+       50 nm tooth with >= 4 cells while reducing total 2D cell count vs
+       ``uniform_fine`` (``cell_reduction_vs_uniform_fine > 1.5``).
+    3. ``load_graded_vs_uniform_study_summary`` loads the benchmark comparison
+       between ``graded_t18``, ``graded_tuned``, and ``uniform_N4``.
+    4. Mutation check: replacing ``build_tuned_bragg_mesh_overrides`` with an
+       empty override list drops ``cells_across_feature`` below 4.0 and fails
+       the tooth-resolution requirement.
+    """
+    fig_dir = TUTORIAL_DIR / "figures"
+    expected_figures = [
+        "00_setup_schematic.png",
+        "01_bragg_grating_layout.png",
+        "02_eim_vertical_stack.png",
+        "03_corrugation_and_apodization_profiles.png",
+        "04_permittivity_mesh_zoom.png",
+        "05_port_mode_profiles.png",
+        "06_port_neff_dispersion.png",
+        "07_field_intensity_bragg.png",
+        "08_field_real_ey_bragg.png",
+        "09_pulse_propagation.gif",
+        "10_aligned_vs_misaligned_spectra.png",
+        "11_periods_sweep_and_cmt.png",
+        "12_corrugation_depth_sweep.png",
+        "13_apodized_vs_uniform_sidelobes.png",
+        "14_kottke_vs_staircase_convergence.png",
+        "15_port_time_trace_and_flux_budget.png",
+    ]
+    for fname in expected_figures:
+        fpath = fig_dir / fname
+        assert fpath.is_file(), f"Missing expected figure {fpath}"
+        assert fpath.stat().st_size > 10_000, f"Figure {fpath} is unexpectedly small"
+    assert (fig_dir / "09_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024
+
+    cmp = compare_bragg_mesh_strategies(
+        n_periods=20,
+        pitch=PITCH,
+        w_core=W_CORE,
+        dw=DW_CORRUG,
+        cpw=10,
+        n_feature=4,
+    )
+    assert cmp["uniform_coarse"]["cells_across_feature"] < 2.0
+    assert cmp["sidewall_graded"]["cells_across_feature"] >= 4.0 - 1e-6
+    assert cmp["tuned_graded"]["cells_across_feature"] >= 4.0 - 1e-6
+    assert cmp["uniform_fine"]["cells_across_feature"] >= 4.0 - 1e-6
+    assert cmp["sidewall_graded"]["cell_reduction_vs_uniform_fine"] > 4.0
+    assert cmp["tuned_graded"]["cell_reduction_vs_uniform_fine"] > 1.8
+    assert cmp["tuned_graded"]["dy_core_nm"] == pytest.approx(
+        2.0 * cmp["tuned_graded"]["dy_min_nm"], rel=5e-2
+    )
+
+    study_sum = load_graded_vs_uniform_study_summary()
+    assert len(study_sum["graded_t18"]) == 4
+    assert len(study_sum["graded_tuned"]) == 3
+    assert study_sum["uniform_N4"]["n_cells"] == 379353
+    assert study_sum["graded_tuned"][0]["err_lambda_B_nm"] < study_sum["graded_t18"][0]["err_lambda_B_nm"]
+
+    # Mutation check: omitting mesh_overrides drops tooth resolution below 4 cells/tooth
+    neff_slab = slab_neff(N_SI, N_AIR, H_SI, WL_REF, n_sub=N_SIO2, polarization="TE")
+    dx_bg = WL_MIN / (neff_slab * 10.0)
+    ov_tuned = build_tuned_bragg_mesh_overrides(
+        n_periods=12, pitch=PITCH, w_core=W_CORE, dw=DW_CORRUG, n_feature=4, dx_background=dx_bg
+    )
+    ov_unif = build_uniform_bragg_mesh_overrides(
+        dw=DW_CORRUG, n_feature=4, dx_background=dx_bg
+    )
+    assert len(ov_tuned) == 4
+    assert len(ov_unif) == 1
+    structs, ports, domain = _build_compact_grating(12)
+    pic_mut = PICSimulation(
+        wavelength_min=WL_MIN,
+        wavelength_max=1.63e-6,
+        structures=structs,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_AIR,
+        n_sub=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=10,
+        domain=domain,
+        n_pml=6,
+        mesh_overrides=[],
+    )
+    m_mut = measure_grating_mesh_metrics(
+        pic_mut.grid.x, pic_mut.grid.y, pic_mut.grid.z, dw=DW_CORRUG, n_periods=12, pitch=PITCH, w_core=W_CORE, n_pml=6
+    )
+    assert m_mut["cells_across_feature"] < 2.0
+
 

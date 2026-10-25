@@ -1660,3 +1660,437 @@ def run_resolution_convergence_point(
         "runtime_s": float(runtime_s),
     }
 
+
+_OVERLAY_RGB_CACHE: dict[str, dict] = {}
+
+
+def build_rgb_schematic_objects(
+    mode: str = "forward",
+    channel: str = "G",
+    cpw: float = 20.0,
+) -> dict:
+    """Build solver, grid, structures, sources, and monitors for `wakis.schematic`."""
+    grid, solver, meta = build_rgb_array_solver(channel=channel, cpw=cpw)
+    f0 = meta["f0_hz"]
+    omega0 = 2.0 * np.pi * f0
+    dz = meta["dz_m"]
+    mat = RGB_MATERIALS[channel]
+    n_si = mat["n_Si_real"]
+    k_si = mat["n_Si_imag"]
+    eps_si_real = n_si**2 - k_si**2
+    sigma_si = 2.0 * omega0 * EPS_0 * n_si * k_si
+    si_dispersive = DispersiveMaterial(
+        eps_inf=eps_si_real, sigma=sigma_si, poles=[], name=f"Si_{channel}"
+    )
+
+    w_span = 5.70e-6
+    w_ch = PIXEL_GEOMETRY["channel_width_m"]
+
+    structures = [
+        Box(
+            center=(0.0, -1.24e-6, 0.0),
+            size=(w_span, 0.28e-6, 4.0 * dz),
+            material=si_dispersive,
+        ),
+        Box(
+            center=(0.0, -0.55e-6, 0.0),
+            size=(w_span, 1.10e-6, 4.0 * dz),
+            material=mat["n_PI"] ** 2,
+        ),
+    ]
+    for ch in CHANNELS:
+        x0 = RGB_MATERIALS[ch]["x_center_m"]
+        eps_gan = RGB_MATERIALS[ch]["n_GaN"] ** 2
+        eps_mqw = RGB_MATERIALS[ch]["n_MQW"] ** 2
+        structures.extend(
+            [
+                Box(
+                    center=(x0, -0.75e-6, 0.0),
+                    size=(w_ch, 0.70e-6, 4.0 * dz),
+                    material=eps_gan,
+                ),
+                Box(
+                    center=(x0, -0.30e-6, 0.0),
+                    size=(w_ch, 0.20e-6, 4.0 * dz),
+                    material=eps_mqw,
+                ),
+                Box(
+                    center=(x0, -0.10e-6, 0.0),
+                    size=(w_ch, 0.20e-6, 4.0 * dz),
+                    material=eps_gan,
+                ),
+            ]
+        )
+
+    src_time = GaussianSource(frequency=f0, fwidth=0.35 * f0, cutoff=4.0)
+    if mode == "forward":
+        dip_coords = mqw_dipole_grid(channel=channel, nx_dip=5, ny_dip=4)
+        sources = [
+            CurrentSource(
+                src_time,
+                component="x",
+                center=(float(xd), float(yd), 0.0),
+                size=(0.0, 0.0, dz),
+            )
+            for xd, yd in dip_coords
+        ]
+        monitors = [
+            wakis.Near2FarMonitor(
+                [f0],
+                center=(0.0, 0.25e-6, 0.0),
+                size=(5.20e-6, 0.0, np.inf),
+            )
+        ]
+    else:
+        pw_src = CurrentSource(
+            src_time,
+            component="x",
+            center=(0.0, 0.35e-6, 0.0),
+            size=(4.90e-6, 0.0, dz),
+        )
+        pw_src.normal = 1
+        sources = [pw_src]
+        monitors = [
+            wakis.FluxMonitor(
+                [f0],
+                center=(RGB_MATERIALS[ch]["x_center_m"], PIXEL_GEOMETRY["y_mqw_center_m"], 0.0),
+                size=(w_ch, 0.0, np.inf),
+            )
+            for ch in CHANNELS
+        ]
+
+    return {
+        "grid": grid,
+        "solver": solver,
+        "meta": meta,
+        "structures": structures,
+        "sources": sources,
+        "monitors": monitors,
+    }
+
+
+def tidy_rgb_schematic_axes(
+    ax,
+    mode: str = "forward",
+    channel: str = "G",
+    xlim: tuple[float, float] = (-2.95, 2.95),
+    ylim: tuple[float, float] = (-1.52, 0.65),
+    fontsize: float = 6.5,
+) -> None:
+    """Declutter `plot_schematic` auto-labels and draw crisp RGB mesa/layer/source/monitor callouts."""
+    import matplotlib.patches as mpatches
+
+    ax.set_aspect("auto")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_title(ax.get_title(), pad=26)
+
+    drop_keys = (
+        "boundary:",
+        "Out-of-plane",
+        "Si substrate",
+        "Si_",
+        "Dielectric",
+        "ε =",
+        "Polyimide",
+        "n-GaN",
+        "MQW",
+        "p-GaN",
+        "Pulse:",
+        "CurrentSource",
+        "Flux",
+        "Near2Far",
+    )
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif "Domain" in s:
+            t_obj.set_position((0.0, ylim[1] + 0.04))
+        elif s == "" and getattr(t_obj, "xy", None) is not None and t_obj.xy[1] > ylim[1]:
+            t_obj.remove()
+
+    # Crisp color-coded patches for substrate, trenches, and RGB mesas
+    ax.add_patch(
+        mpatches.Rectangle(
+            (-2.90, -1.45),
+            5.80,
+            0.35,
+            facecolor="#64748b",
+            edgecolor="#334155",
+            lw=0.8,
+            alpha=0.80,
+            zorder=2,
+        )
+    )
+    ax.add_patch(
+        mpatches.Rectangle(
+            (-2.90, -1.10),
+            5.80,
+            1.10,
+            facecolor="#fef3c7",
+            edgecolor="#b45309",
+            lw=0.7,
+            alpha=0.55,
+            zorder=2,
+        )
+    )
+    mqw_colors = {"B": "#93c5fd", "G": "#86efac", "R": "#fca5a5"}
+    edge_colors = {"B": "#1d4ed8", "G": "#15803d", "R": "#b91c1c"}
+    w_ch = 1.05
+    for ch in CHANNELS:
+        x0 = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+        # n-GaN
+        ax.add_patch(
+            mpatches.Rectangle(
+                (x0 - 0.5 * w_ch, -1.10),
+                w_ch,
+                0.70,
+                facecolor="#cbd5e1",
+                edgecolor="#334155",
+                lw=0.85,
+                alpha=0.90,
+                zorder=3,
+            )
+        )
+        # MQW
+        ax.add_patch(
+            mpatches.Rectangle(
+                (x0 - 0.5 * w_ch, -0.40),
+                w_ch,
+                0.20,
+                facecolor=mqw_colors[ch],
+                edgecolor=edge_colors[ch],
+                lw=1.1,
+                alpha=0.92,
+                zorder=4,
+            )
+        )
+        # p-GaN
+        ax.add_patch(
+            mpatches.Rectangle(
+                (x0 - 0.5 * w_ch, -0.20),
+                w_ch,
+                0.20,
+                facecolor="#e2e8f0",
+                edgecolor="#334155",
+                lw=0.85,
+                alpha=0.92,
+                zorder=3,
+            )
+        )
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.13",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.5,
+        "alpha": 0.90,
+    }
+
+    # Subpixel headers
+    for ch in CHANNELS:
+        x0 = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+        lam_nm = RGB_MATERIALS[ch]["wavelength_m"] * 1e9
+        ax.text(
+            x0,
+            0.06,
+            f"{ch} ({lam_nm:.0f} nm)\nW_ch = 1.05 µm",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.2,
+            fontweight="bold",
+            color=edge_colors[ch],
+            bbox=bbox_kw,
+            zorder=9,
+        )
+
+    # Layer labels inside mesas
+    ax.text(-1.50, -0.10, "p-GaN (200 nm)", ha="center", va="center", fontsize=fontsize - 0.6, color="#0f172a", zorder=8)
+    ax.text(-1.50, -0.75, "n-GaN (700 nm\nn ≈ 2.38–2.44)", ha="center", va="center", fontsize=fontsize - 0.5, color="#0f172a", zorder=8)
+    ax.text(1.50, -0.75, "n-GaN (700 nm)", ha="center", va="center", fontsize=fontsize - 0.5, color="#0f172a", zorder=8)
+    ax.text(-0.75, -0.68, "PI trench\n0.45 µm\n(n=1.50)", ha="center", va="center", fontsize=fontsize - 0.7, color="#78350f", bbox={**bbox_kw, "pad": 0.08}, zorder=8)
+    ax.text(0.0, -1.27, "Absorbing Si substrate (n + iκ: 4.58+0.13i B, 4.22+0.048i G, 3.91+0.022i R)", ha="center", va="center", fontsize=fontsize - 0.4, color="#0f172a", bbox=bbox_kw, zorder=9)
+    ax.text(-2.78, 0.56, "±x, ±y: CPML (10 cells) | ±z: Periodic", ha="left", va="top", fontsize=fontsize - 0.4, color="#1e293b", bbox=bbox_kw, zorder=9)
+
+    if mode == "forward":
+        dip = mqw_dipole_grid(channel=channel, nx_dip=5, ny_dip=4) * 1e6
+        ax.plot(dip[:, 0], dip[:, 1], "*", color="#d97706", ms=5.2, mec="black", mew=0.35, zorder=8)
+        ax.plot([-2.60, 2.60], [0.25, 0.25], color="#059669", ls="-.", lw=1.3, zorder=8)
+        for xb in (-2.25, -0.75, 0.75, 2.25):
+            ax.plot([xb, xb], [0.21, 0.29], color="#059669", lw=1.1, zorder=8)
+        ax.text(
+            0.0,
+            0.34,
+            "Near2FarMonitor + Exit Windows W_B, W_G, W_R (y = +0.25 µm)",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.3,
+            color="#065f46",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        ax.annotate(
+            "Active MQW (200 nm): 5×4 = 20\nincoherent J_x dipoles (Method A / B)",
+            xy=(0.0, -0.30),
+            xytext=(0.0, -0.95),
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.4,
+            color="#0f172a",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#d97706", "lw": 0.9},
+            zorder=9,
+        )
+    else:
+        ax.plot([-2.45, 2.45], [0.35, 0.35], color="#dc2626", lw=1.6, zorder=8)
+        for x_arr in (-1.6, -0.8, 0.0, 0.8, 1.6):
+            ax.annotate(
+                "",
+                xy=(x_arr + 0.05, 0.14),
+                xytext=(x_arr, 0.34),
+                arrowprops={"arrowstyle": "->", "color": "#dc2626", "lw": 1.0},
+                zorder=8,
+            )
+        ax.text(
+            0.0,
+            0.39,
+            "Reciprocal Plane-Wave Line Source (y = +0.35 µm, θ_inc ∈ [−15°, +15°])",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.3,
+            color="#991b1b",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        for ch in CHANNELS:
+            x0 = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+            ax.plot([x0 - 0.5 * w_ch, x0 + 0.5 * w_ch], [-0.30, -0.30], color="#059669", ls="--", lw=1.4, zorder=8)
+        ax.annotate(
+            "Planar MQW Monitors M_B, M_G, M_R (y = −0.30 µm, Eq. 4)",
+            xy=(0.0, -0.30),
+            xytext=(0.0, -0.95),
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.4,
+            color="#065f46",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#059669", "lw": 0.9},
+            zorder=9,
+        )
+
+
+def overlay_rgb_geometry(
+    ax,
+    active_channel: str | None = "G",
+    line_color: str = "white",
+    show_dipoles: bool = True,
+    show_monitors: bool = True,
+    show_labels: bool = True,
+    compact: bool = False,
+    fontsize: float = 6.0,
+) -> None:
+    """Overlay RGB microLED layer outlines, labels, CPML boundaries, dipoles, and monitors via `wakis.schematic`."""
+    from wakis import schematic
+
+    ch_use = active_channel if active_channel in CHANNELS else "G"
+    if ch_use not in _OVERLAY_RGB_CACHE:
+        _OVERLAY_RGB_CACHE[ch_use] = build_rgb_schematic_objects(mode="forward", channel=ch_use, cpw=10.0)
+    obj = _OVERLAY_RGB_CACHE[ch_use]
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xy",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=False,
+        outline_color=line_color,
+        label_materials=False,
+    )
+
+    # Crisp horizontal and mesa boundaries
+    for y_val, ls_val, al_val in [
+        (0.0, "--", 0.75),
+        (-0.20, ":", 0.55),
+        (-0.40, ":", 0.55),
+        (-1.10, "--", 0.75),
+    ]:
+        ax.axhline(y_val, color=line_color, ls=ls_val, lw=0.8, alpha=al_val, zorder=6)
+
+    w_ch = PIXEL_GEOMETRY["channel_width_m"] * 1e6
+    for ch in CHANNELS:
+        x0 = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+        ax.plot(
+            [x0 - 0.5 * w_ch, x0 + 0.5 * w_ch, x0 + 0.5 * w_ch, x0 - 0.5 * w_ch, x0 - 0.5 * w_ch],
+            [-1.10, -1.10, 0.0, 0.0, -1.10],
+            color=line_color,
+            lw=0.95,
+            alpha=0.85,
+            zorder=7,
+        )
+        ax.plot(
+            [x0 - 0.5 * w_ch, x0 + 0.5 * w_ch, x0 + 0.5 * w_ch, x0 - 0.5 * w_ch, x0 - 0.5 * w_ch],
+            [-0.40, -0.40, -0.20, -0.20, -0.40],
+            color=line_color,
+            lw=1.1,
+            alpha=0.92,
+            zorder=7,
+        )
+
+    if show_dipoles and active_channel in CHANNELS:
+        dip = mqw_dipole_grid(channel=active_channel, nx_dip=5, ny_dip=4) * 1e6
+        ax.plot(
+            dip[:, 0],
+            dip[:, 1],
+            "o",
+            ms=3.2 if compact else 4.0,
+            mfc="#fde047",
+            mec="black",
+            mew=0.4,
+            zorder=8,
+        )
+
+    if show_monitors:
+        ax.plot([-2.60, 2.60], [0.25, 0.25], color="#34d399", ls="-.", lw=1.0, alpha=0.9, zorder=7)
+
+    if not show_labels:
+        return
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.10",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.4,
+        "alpha": 0.82,
+    }
+    for ch in CHANNELS:
+        x0 = RGB_MATERIALS[ch]["x_center_m"] * 1e6
+        lam_nm = RGB_MATERIALS[ch]["wavelength_m"] * 1e9
+        lbl = f"{ch} ({lam_nm:.0f} nm)" if not compact else f"{ch}"
+        ax.text(
+            x0,
+            0.05,
+            lbl,
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - (0.3 if compact else 0.0),
+            fontweight="bold",
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+
+    if not compact:
+        ax.text(-2.72, -0.10, "p-GaN", ha="left", va="center", fontsize=fontsize - 0.5, color="#0f172a", bbox=bbox_kw, zorder=9)
+        ax.text(-2.72, -0.30, "MQW (20 dip.)", ha="left", va="center", fontsize=fontsize - 0.5, color="#0f172a", bbox=bbox_kw, zorder=9)
+        ax.text(-2.72, -0.75, "n-GaN / PI", ha="left", va="center", fontsize=fontsize - 0.5, color="#0f172a", bbox=bbox_kw, zorder=9)
+        ax.text(0.0, -1.32, "Absorbing Si substrate (n+iκ) | CPML", ha="center", va="center", fontsize=fontsize - 0.4, color="#0f172a", bbox=bbox_kw, zorder=9)
+        if show_monitors:
+            ax.text(2.58, 0.29, "Near2FarMonitor | CPML", ha="right", va="bottom", fontsize=fontsize - 0.5, color="#065f46", bbox=bbox_kw, zorder=9)
+    else:
+        ax.text(-2.72, -0.30, "MQW", ha="left", va="center", fontsize=fontsize - 0.6, color="#0f172a", bbox=bbox_kw, zorder=9)
+        ax.text(-2.72, -0.82, "n-GaN/PI", ha="left", va="center", fontsize=fontsize - 0.6, color="#0f172a", bbox=bbox_kw, zorder=9)
+        ax.text(0.0, -1.32, "Si (n+iκ) | CPML", ha="center", va="center", fontsize=fontsize - 0.6, color="#0f172a", bbox=bbox_kw, zorder=9)
+
+

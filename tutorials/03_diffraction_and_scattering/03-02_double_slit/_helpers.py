@@ -10,7 +10,7 @@ import numpy as np
 from scipy.constants import c as c0
 from scipy.special import hankel1
 
-from wakis import DFTMonitor, FluxMonitor, GridFIT3D, SolverFIT3D
+from wakis import DFTMonitor, FluxMonitor, GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.estimate import estimate, preflight
 from wakis.near2far import Near2FarMonitor
 from wakis.sources import CurrentSource, GaussianSource
@@ -1069,158 +1069,495 @@ def run_resolution_task(quick: bool = False) -> dict:
     }
 
 
+def _build_schematic_solver(
+    slit_width: float = 1.0 * DEFAULT_WAVELENGTH,
+    slit_sep: float = 3.0 * DEFAULT_WAVELENGTH,
+    wavelength: float = DEFAULT_WAVELENGTH,
+    screen_thickness: float = 0.15 * DEFAULT_WAVELENGTH,
+    cpw: int = 22,
+    x_half_span: float | None = None,
+    y_upstream: float = 1.2 * DEFAULT_WAVELENGTH,
+    y_downstream: float = 4.0 * DEFAULT_WAVELENGTH,
+    detector_distance: float = 3.5 * DEFAULT_WAVELENGTH,
+) -> tuple[SolverFIT3D, dict, list[Box], CurrentSource, list]:
+    """Build a lightweight 2D double-slit solver, PEC boxes, source, and monitors for schematics/overlays."""
+    f0 = c0 / wavelength
+    grid_info = build_double_slit_grid(
+        slit_width=slit_width,
+        slit_sep=slit_sep,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        x_half_span=x_half_span,
+        y_upstream=y_upstream,
+        y_downstream=y_downstream,
+        cpw=cpw,
+    )
+    x = grid_info["x"]
+    y = grid_info["y"]
+    z = grid_info["z"]
+    x_core = grid_info["x_core"]
+    y_core = grid_info["y_core"]
+    lz = float(grid_info["lz"])
+    n_pml = int(grid_info["n_pml"])
+    half_t = 0.5 * screen_thickness
+
+    grid = GridFIT3D(x=x, y=y, z=z, use_mpi=False, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        cfln=0.65,
+        n_pml=n_pml,
+        verbose=0,
+    )
+
+    left_end = float(x[0])
+    right_end = float(x[-1])
+    x_outer = 0.5 * slit_sep + 0.5 * slit_width
+    x_inner = 0.5 * slit_sep - 0.5 * slit_width
+    w_left = (-x_outer) - left_end
+    xc_left = 0.5 * (left_end - x_outer)
+    w_right = right_end - x_outer
+    xc_right = 0.5 * (x_outer + right_end)
+    w_bridge = 2.0 * x_inner
+    boxes = [
+        Box((xc_left, 0.0, 0.0), (w_left, screen_thickness, 2.0 * lz), "pec"),
+        Box((0.0, 0.0, 0.0), (w_bridge, screen_thickness, 2.0 * lz), "pec"),
+        Box((xc_right, 0.0, 0.0), (w_right, screen_thickness, 2.0 * lz), "pec"),
+    ]
+    for b in boxes:
+        b.material = "pec"
+    assign_materials(solver, boxes, f0)
+
+    y_src = float(y_core[0] + 0.35 * wavelength)
+    src_span_x = float(x[-1] - x[0])
+    pulse = GaussianSource(frequency=f0, fwidth=0.5 * f0, cutoff=3.5)
+    source = CurrentSource(
+        src_time=pulse,
+        component="x",
+        center=(0.0, y_src, 0.0),
+        size=(src_span_x, 0.0, 2.0 * lz),
+        amplitude=1.0,
+    )
+
+    freqs = np.array([f0])
+    w_ref = float((x_core[-1] - x_core[0]) - 0.5 * wavelength)
+    y_n2f = float(half_t + 2.5 * grid_info["dy_screen"])
+    flux_wide = FluxMonitor(
+        frequencies=freqs,
+        center=(0.0, y_n2f, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
+    )
+    n2f = Near2FarMonitor(
+        frequencies=freqs,
+        center=(0.0, y_n2f, 0.0),
+        size=(w_ref, 0.0, 2.0 * lz),
+    )
+    mon_det = DFTMonitor(
+        frequencies=freqs,
+        components=("Hz",),
+        center=(0.0, float(half_t + detector_distance), 0.0),
+        size=(w_ref, 0.0, 0.0),
+    )
+    return solver, grid_info, boxes, source, [flux_wide, n2f, mon_det]
+
+
+def _fix_unit_spaces_in_texts(ax: plt.Axes) -> None:
+    """Ensure a thin space precedes units inside math-mode substrings in schematic text labels."""
+    replacements = (
+        (" THz$", r"\;\mathrm{THz}$"),
+        (" GHz$", r"\;\mathrm{GHz}$"),
+        (" MHz$", r"\;\mathrm{MHz}$"),
+        (" nm$", r"\;\mathrm{nm}$"),
+        (" µm$", r"\;\mu\mathrm{m}$"),
+        (" mm$", r"\;\mathrm{mm}$"),
+    )
+    for txt in ax.texts:
+        s = txt.get_text()
+        new_s = s
+        for old, new in replacements:
+            new_s = new_s.replace(old, new)
+        if new_s != s:
+            txt.set_text(new_s)
+
+
+def _reposition_xy_schematic_labels(
+    ax: plt.Axes,
+    x_left_jaw: float,
+    x_right_jaw: float,
+    y_src: float,
+    y_n2f: float,
+    y_dft: float,
+) -> None:
+    """Reposition horizontal structure/source/monitor labels placed at vertical-slab defaults by schematic."""
+    leg = ax.get_legend()
+    if leg is not None:
+        leg.remove()
+    pec_count = 0
+    pec_positions = (x_left_jaw, 0.0, x_right_jaw)
+    pec_labels = (r"PEC ($\sigma \to \infty$)", "PEC bridge $b$", r"PEC ($\sigma \to \infty$)")
+    for txt in ax.texts:
+        s = txt.get_text()
+        if "$-y$ boundary:" in s or "-y boundary:" in s:
+            txt.set_text(
+                r"$\pm y$ boundaries: CPML (10 cells, $0.27\;\mu\mathrm{m}$) $\mid$ Out-of-plane ($\pm z$: Periodic)"
+            )
+        elif "PEC" in s:
+            idx = min(pec_count, 2)
+            txt.set_text(pec_labels[idx])
+            txt.set_position((pec_positions[idx], -0.15))
+            txt.set_ha("center")
+            txt.set_va("top")
+            pec_count += 1
+        elif "CurrentSource" in s:
+            txt.set_position((0.0, y_src - 0.12))
+            txt.set_ha("center")
+            txt.set_va("top")
+        elif "Near2Far" in s:
+            txt.set_text("Near2FarMonitor + FluxMonitor")
+            txt.set_position((0.0, y_n2f + 0.12))
+            txt.set_ha("center")
+            txt.set_va("bottom")
+        elif "FluxMonitor" in s:
+            txt.set_text("")
+        elif "DFTMonitor" in s:
+            txt.set_text(r"DFTMonitor ($L = 3.5\lambda$)")
+            txt.set_position((0.0, y_dft + 0.10))
+            txt.set_ha("center")
+            txt.set_va("bottom")
+    _fix_unit_spaces_in_texts(ax)
+
+
+def plot_setup_schematic(
+    output_path: str | Path,
+    wavelength: float = DEFAULT_WAVELENGTH,
+) -> None:
+    """Generate the 2-panel labelled setup schematic and double-slit mesh zoom (Figure 0)."""
+    slit_width = 1.0 * wavelength
+    slit_sep = 3.0 * wavelength
+    screen_thickness = 0.15 * wavelength
+    cpw = 22
+    solver, grid_info, boxes, source, monitors = _build_schematic_solver(
+        slit_width=slit_width,
+        slit_sep=slit_sep,
+        wavelength=wavelength,
+        screen_thickness=screen_thickness,
+        cpw=cpw,
+    )
+    x_um = grid_info["x"] * 1e6
+    y_core_um = grid_info["y_core"] * 1e6
+    a_um = slit_width * 1e6
+    d_um = slit_sep * 1e6
+    b_um = (slit_sep - slit_width) * 1e6
+    t_um = screen_thickness * 1e6
+    x_outer_um = 0.5 * (d_um + a_um)
+    y_src_um = float(y_core_um[0] + 0.35 * wavelength * 1e6)
+    y_n2f_um = float(0.5 * t_um + 2.5 * grid_info["dy_screen"] * 1e6)
+    y_det_um = float(0.5 * t_um + 3.5 * wavelength * 1e6)
+
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=5.0)
+
+        # Panel (a): Full 2D Young's double-slit setup schematic
+        ax = axes[0]
+        schematic.plot_schematic(
+            solver,
+            ax=ax,
+            plane="xy",
+            unit="µm",
+            structures=boxes,
+            sources=[source],
+            monitors=monitors,
+            wavelength=wavelength,
+            show_mesh=False,
+            mesh_zoom=False,
+            show_wave_packet=False,
+            title=r"(a) Young's Double-Slit Setup ($\lambda = 0.60\;\mu\mathrm{m}$, $a = \lambda$, $d = 3\lambda$)",
+        )
+        _reposition_xy_schematic_labels(
+            ax,
+            x_left_jaw=0.5 * (float(x_um[0]) - x_outer_um),
+            x_right_jaw=0.5 * (x_outer_um + float(x_um[-1])),
+            y_src=y_src_um,
+            y_n2f=y_n2f_um,
+            y_dft=y_det_um,
+        )
+        # Dimension arrow for center-to-center separation d
+        ax.annotate(
+            "",
+            xy=(0.5 * d_um, 0.90),
+            xytext=(-0.5 * d_um, 0.90),
+            arrowprops={"arrowstyle": "<->", "color": figstyle.INK, "lw": 1.2},
+            zorder=9,
+        )
+        ax.text(
+            0.0,
+            0.96,
+            rf"Slit pitch $d = {d_um:.2f}\;\mu\mathrm{{m}}$ ($3\lambda$)",
+            ha="center",
+            va="bottom",
+            fontsize=8.4,
+            fontweight="bold",
+            color=figstyle.INK,
+            zorder=9,
+        )
+
+        # Panel (b): Zoomed graded FIT mesh around both slits and the central PEC bridge
+        ax_m = axes[1]
+        ax_m.set_facecolor("#F8FAFC")
+        schematic.draw_mesh(
+            ax_m,
+            solver,
+            plane="xy",
+            unit="µm",
+            every=1,
+            wavelength=wavelength,
+            zoom_inset=False,
+            show_cpw=True,
+            color="#334155",
+            alpha=0.55,
+            linewidth=0.6,
+        )
+        schematic.overlay_geometry(
+            ax_m,
+            solver,
+            plane="xy",
+            unit="µm",
+            structures=boxes,
+            show_boundaries=False,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.55,
+            outline_color=figstyle.INK,
+            label_materials=False,
+        )
+        ax_m.set_xlim(-1.60, 1.60)
+        ax_m.set_ylim(-0.34, 0.34)
+        ax_m.set_aspect("auto")
+        ax_m.set_xlabel("x [µm]")
+        ax_m.set_ylabel("y [µm]")
+        ax_m.set_title(r"(b) Snapped Mesh Zoom at Slits ($\pm d/2$) and PEC Bridge ($b = d - a$)")
+
+        # Annotate central PEC bridge and slits
+        ax_m.text(
+            0.0,
+            0.0,
+            f"PEC bridge\n$b = {b_um:.2f}$ µm ({grid_info['cells_across_bridge']} cells $\\geq 4$)",
+            ha="center",
+            va="center",
+            fontsize=8.0,
+            fontweight="bold",
+            color=figstyle.INK,
+            bbox={
+                "boxstyle": "round,pad=0.16",
+                "facecolor": figstyle.PAPER,
+                "edgecolor": "#94A3B8",
+                "alpha": 0.92,
+            },
+            zorder=9,
+        )
+        for sign, x_c in ((-1, -0.5 * d_um), (1, 0.5 * d_um)):
+            ax_m.annotate(
+                "",
+                xy=(x_c + 0.5 * a_um, 0.14),
+                xytext=(x_c - 0.5 * a_um, 0.14),
+                arrowprops={"arrowstyle": "<->", "color": "#0072B2", "lw": 1.3},
+                zorder=9,
+            )
+            ax_m.text(
+                x_c,
+                0.16,
+                f"$a = {a_um:.2f}$ µm\n({grid_info['cells_across_slit']} cells $\\geq 4$)",
+                ha="center",
+                va="bottom",
+                fontsize=8.0,
+                fontweight="bold",
+                color="#0072B2",
+                zorder=9,
+            )
+        ax_m.annotate(
+            "",
+            xy=(-1.32, 0.5 * t_um),
+            xytext=(-1.32, -0.5 * t_um),
+            arrowprops={"arrowstyle": "<->", "color": "#D55E00", "lw": 1.3},
+            zorder=9,
+        )
+        ax_m.text(
+            -1.32,
+            -0.14,
+            f"Screen $t = {t_um*1e3:.0f}$ nm ({grid_info['cells_across_screen']} cells $\\geq 4$)",
+            ha="left",
+            va="top",
+            fontsize=8.3,
+            fontweight="bold",
+            color="#D55E00",
+            zorder=9,
+        )
+        _fix_unit_spaces_in_texts(ax_m)
+
+        figstyle.save(fig, output_path, close=True)
+
+
 def plot_missing_orders_and_nearfield(
     mo_data: dict,
     output_path: str | Path,
 ) -> None:
-    """Generate the 4-panel figure for 2D interference map, screen fringes, and missing orders."""
-    fig, axes = plt.subplots(2, 2, figsize=(13.0, 9.4), constrained_layout=True)
-
-    # Panel (a): 2D intensity map |E_z(x, y)|^2 / |E_inc|^2 for d/a = 3 (a = 1.5*lambda, d = 4.5*lambda)
-    ax = axes[0, 0]
-    x_lam = mo_data["map_x_over_lam"]
-    y_lam = mo_data["map_y_over_lam"]
-    inten = mo_data["map_intensity"]
-    im = ax.pcolormesh(
-        x_lam,
-        y_lam,
-        inten.T,
-        shading="auto",
-        cmap="inferno",
-        vmin=0.0,
-        vmax=min(float(np.percentile(inten, 99.5)), 2.8),
+    """Generate the 3-panel figure for 2D interference map, screen fringes, and missing orders."""
+    wavelength = DEFAULT_WAVELENGTH
+    lam_um = wavelength * 1e6
+    a_mo = float(mo_data.get("slit_width_over_lam", 1.5)) * wavelength
+    d_mo = 3.0 * a_mo
+    t_mo = 0.14 * wavelength
+    solver_mo, _, boxes_mo, _, _ = _build_schematic_solver(
+        slit_width=a_mo,
+        slit_sep=d_mo,
+        wavelength=wavelength,
+        screen_thickness=t_mo,
+        cpw=22,
+        x_half_span=6.2 * wavelength,
+        y_upstream=1.2 * wavelength,
+        y_downstream=4.1 * wavelength,
     )
-    fig.colorbar(im, ax=ax, label=r"$|H_z(x, y)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
-    ax.axhline(0.0, color="white", lw=2.0)
-    ax.axhline(3.5, color="#66c2a5", ls="--", lw=1.2, label=r"Detector plane $L = 3.5\lambda$")
-    ax.set_xlabel(r"Transverse coordinate $x / \lambda$ [-]")
-    ax.set_ylabel(r"Propagation coordinate $y / \lambda$ [-]")
-    ax.set_title(r"(a) Young's double-slit near field ($a = 1.5\lambda$, $d = 4.5\lambda$, $d/a = 3$)")
-    ax.legend(loc="lower right", fontsize=8.5)
 
-    # Panel (b): Transverse detector line profile at L = 3.5 * lambda vs 2D Rayleigh-Sommerfeld II
-    ax = axes[0, 1]
-    ax.plot(
-        mo_data["det_x_over_lam"],
-        mo_data["det_fit_d3"],
-        color="#1b6ca8",
-        lw=2.1,
-        label=r"2D FIT detector line ($L = 3.5\lambda$)",
-    )
-    ax.plot(
-        mo_data["det_x_over_lam"],
-        mo_data["det_rs1_d3"],
-        color="#d95f02",
-        lw=1.6,
-        ls="--",
-        label=r"2D Rayleigh–Sommerfeld II integral",
-    )
-    ax.set_xlim(-5.5, 5.5)
-    ax.set_xlabel(r"Transverse detector coordinate $x / \lambda$ [-]")
-    ax.set_ylabel(r"Normalized intensity $|H_z(x, L)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
-    ax.set_title(r"(b) Finite-distance interference profile at $L = 3.5\lambda$ ($d/a = 3$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=15.0, height=4.8)
 
-    # Panels (c) & (d): Far-field cos^2 * sinc^2 envelope and missing orders for d/a = 2, 3, 4
-    theta_deg = mo_data["theta_deg"]
-    theta_miss = float(mo_data["theta_missing_deg"])
-    env_fit = mo_data["single_env_fit"]
-    env_th = mo_data["single_env_theory"]
-    p_ratios = mo_data["p_ratios"]
+        # Panel (a): 2D intensity map |H_z(x, y)|^2 / |H_inc|^2 for d/a = 3 (a = 1.5*lambda, d = 4.5*lambda)
+        ax = axes[0]
+        x_um = mo_data["map_x_over_lam"] * lam_um
+        y_um = mo_data["map_y_over_lam"] * lam_um
+        inten = mo_data["map_intensity"]
+        im = ax.pcolormesh(
+            x_um,
+            y_um,
+            inten.T,
+            shading="auto",
+            cmap=figstyle.CMAP_INTENSITY,
+            vmin=0.0,
+            vmax=min(float(np.percentile(inten, 99.5)), 2.8),
+        )
+        fig.colorbar(im, ax=ax, label=r"$|H_z(x, y)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
+        schematic.overlay_geometry(
+            ax,
+            solver_mo,
+            plane="xy",
+            unit="µm",
+            orientation="2d",
+            structures=boxes_mo,
+            show_boundaries=True,
+            show_materials=True,
+            fill_materials=True,
+            material_alpha=0.38,
+            outline_color="#FFFFFF",
+            label_materials=False,
+        )
+        ax.text(
+            0.0,
+            0.14,
+            "PEC bridge",
+            color="white",
+            fontsize=7.6,
+            fontweight="bold",
+            ha="center",
+            va="bottom",
+            zorder=8,
+        )
+        y_det_um = 3.5 * lam_um
+        ax.axhline(y_det_um, color="#009E73", ls="--", lw=1.2, zorder=7)
+        ax.text(
+            float(x_um[-1]) - 0.15,
+            y_det_um - 0.22,
+            rf"Detector $L = 3.5\lambda$ ({y_det_um:.1f} µm)",
+            color="white",
+            fontsize=7.6,
+            fontweight="bold",
+            ha="right",
+            zorder=8,
+        )
+        ax.set_xlim(float(x_um[0]), float(x_um[-1]))
+        ax.set_ylim(float(y_um[0]), float(y_um[-1]))
+        ax.set_aspect("auto")
+        ax.set_xlabel(r"Transverse coordinate $x$ [µm]")
+        ax.set_ylabel(r"Propagation coordinate $y$ [µm]")
+        ax.set_title(r"(a) Young's double-slit near field ($a = 1.5\lambda$, $d = 4.5\lambda$)")
 
-    # Panel (c): d/a = 2 and d/a = 3
-    ax = axes[1, 0]
-    offsets = [0.0, 1.15]
-    colors = ["#1b6ca8", "#2b8a3e"]
-    for k in (0, 1):
-        p_int = int(p_ratios[k])
-        off = offsets[k]
-        err = float(mo_data["l2_errors"][k]) * 100.0
+        # Panel (b): Transverse detector line profile at L = 3.5 * lambda vs 2D Rayleigh-Sommerfeld II
+        ax = axes[1]
         ax.plot(
-            theta_deg,
-            mo_data["patterns_fit"][k] + off,
-            color=colors[k],
-            lw=2.0,
-            label=rf"FIT $d/a = {p_int}$ ($L^2={err:.1f}\%$, missing $m=\pm {p_int}$)",
+            mo_data["det_x_over_lam"],
+            mo_data["det_fit_d3"],
+            **figstyle.series_style(0, with_marker=False, lw=2.1),
+            label=r"2D FIT detector line ($L = 3.5\lambda$)",
         )
         ax.plot(
-            theta_deg,
-            mo_data["patterns_theory"][k] + off,
-            color="#111111",
+            mo_data["det_x_over_lam"],
+            mo_data["det_rs1_d3"],
+            **figstyle.series_style(1, with_marker=False, lw=1.6),
+            label=r"2D Rayleigh–Sommerfeld II integral",
+        )
+        ax.set_xlim(-5.5, 5.5)
+        ax.set_ylim(-0.03, 1.05)
+        ax.set_xlabel(r"Transverse detector coordinate $x / \lambda$ [-]")
+        ax.set_ylabel(r"Normalized intensity $|H_z(x, L)|^2 / |H_{\mathrm{inc}}|^2$ [-]")
+        ax.set_title(r"(b) Finite-distance screen profile at $L = 3.5\lambda$ ($d/a = 3$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=7.8)
+
+        # Panel (c): Far-field cos^2 * sinc^2 envelope and missing orders for d/a in {2, 3, 4}
+        ax = axes[2]
+        theta_deg = mo_data["theta_deg"]
+        theta_miss = float(mo_data["theta_missing_deg"])
+        env_fit = mo_data["single_env_fit"]
+        p_ratios = mo_data["p_ratios"]
+
+        offsets = [0.0, 1.15, 2.30]
+        for k in range(len(p_ratios)):
+            p_int = int(p_ratios[k])
+            off = offsets[k]
+            err = float(mo_data["l2_errors"][k]) * 100.0
+            ax.plot(
+                theta_deg,
+                mo_data["patterns_fit"][k] + off,
+                color=figstyle.PALETTE[k % len(figstyle.PALETTE)],
+                lw=2.0,
+                ls="-",
+                label=rf"FIT $d/a={p_int}$ ($m=\pm{p_int}$, $L^2={err:.1f}\%$)",
+            )
+            ax.plot(
+                theta_deg,
+                mo_data["patterns_theory"][k] + off,
+                color=figstyle.INK,
+                lw=1.2,
+                ls="--",
+                label=r"Theory $\cos^2\alpha\,\mathrm{sinc}^2\beta$" if k == 0 else "_nolegend_",
+            )
+            ax.plot(
+                theta_deg,
+                env_fit + off,
+                color="#D55E00",
+                lw=1.3,
+                ls=":",
+                label="FIT single-slit envelope" if k == 0 else "_nolegend_",
+            )
+        ax.axvline(theta_miss, color="#CC79A7", ls="-.", lw=1.2)
+        ax.axvline(
+            -theta_miss,
+            color="#CC79A7",
+            ls="-.",
             lw=1.2,
-            ls="--",
-            label=r"Theory $\cos^2\alpha\,\mathrm{sinc}^2\beta$" if k == 0 else "_nolegend_",
+            label=rf"Missing order $\pm {theta_miss:.1f}^\circ$",
         )
-        ax.plot(
-            theta_deg,
-            env_fit + off,
-            color="#d95f02",
-            lw=1.3,
-            ls=":",
-            label="FIT single-slit envelope" if k == 0 else "_nolegend_",
+        ax.set_xlim(-75.0, 75.0)
+        ax.set_ylim(-0.05, 4.10)
+        ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
+        ax.set_ylabel(
+            r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]"
         )
-    ax.axvline(theta_miss, color="#e7298a", ls="-.", lw=1.2)
-    ax.axvline(-theta_miss, color="#e7298a", ls="-.", lw=1.2, label=rf"Missing order $\pm {theta_miss:.1f}^\circ$")
-    ax.set_xlim(-75.0, 75.0)
-    ax.set_ylim(-0.05, 2.35)
-    ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
-    ax.set_ylabel(r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ (offset) [-]")
-    ax.set_title(r"(c) Far-field missing orders: $d/a = 2$ ($m=\pm 2$) & $d/a = 3$ ($m=\pm 3$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=7.8)
+        ax.set_title(r"(c) Far-field missing orders ($d/a = 2, 3, 4$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper center", ncol=2, fontsize=6.6)
 
-    # Panel (d): d/a = 4 with explicit annotations of orders m = 0, +-1, +-2, +-3 and missing m = +-4
-    ax = axes[1, 1]
-    k = 2
-    p_int = int(p_ratios[k])
-    err = float(mo_data["l2_errors"][k]) * 100.0
-    ax.plot(
-        theta_deg,
-        mo_data["patterns_fit"][k],
-        color="#7570b3",
-        lw=2.1,
-        label=rf"FIT $d/a = {p_int}$ ($d=6\lambda$, $L^2={err:.1f}\%$)",
-    )
-    ax.plot(
-        theta_deg,
-        mo_data["patterns_theory"][k],
-        color="#111111",
-        lw=1.3,
-        ls="--",
-        label=r"Theory $\cos^2\alpha\,\mathrm{sinc}^2\beta$",
-    )
-    ax.plot(
-        theta_deg,
-        env_fit,
-        color="#d95f02",
-        lw=1.6,
-        ls=":",
-        label="FIT single-slit envelope",
-    )
-    ax.plot(
-        theta_deg,
-        env_th,
-        color="#666666",
-        lw=1.1,
-        ls="-.",
-        alpha=0.75,
-        label=r"$\mathrm{sinc}^2\beta$ envelope theory",
-    )
-    ax.axvline(theta_miss, color="#e7298a", ls="-.", lw=1.3)
-    ax.axvline(-theta_miss, color="#e7298a", ls="-.", lw=1.3, label=rf"Missing order $m=\pm 4$ ($\pm {theta_miss:.1f}^\circ$)")
-    ax.set_xlim(-75.0, 75.0)
-    ax.set_ylim(-0.04, 1.08)
-    ax.set_xlabel(r"Diffraction angle $\theta$ [deg]")
-    ax.set_ylabel(r"Normalized far-field intensity $U_{\mathrm{2D}}(\theta)/U_{\mathrm{2D}}(0)$ [-]")
-    ax.set_title(r"(d) Envelope modulation & missing $m = \pm 4$ order for $d/a = 4$")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.0)
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_fringe_spacing_scaling(
@@ -1228,86 +1565,85 @@ def plot_fringe_spacing_scaling(
     output_path: str | Path,
 ) -> None:
     """Generate the 2-panel figure for fringe spacing Delta(sin theta) = lambda / d."""
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.2), constrained_layout=True)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=4.8)
 
-    # Panel (a): Normalized patterns vs sin(theta) showing uniform period lambda / d
-    ax = axes[0]
-    sin_th = fringe_data["sin_theta"]
-    d_ratios = fringe_data["d_over_lam"]
-    colors = ["#1b6ca8", "#2b8a3e", "#d95f02", "#7570b3"]
-    for k, d_ratio in enumerate(d_ratios):
-        off = k * 1.10
+        # Panel (a): Normalized patterns vs sin(theta) showing uniform period lambda / d
+        ax = axes[0]
+        sin_th = fringe_data["sin_theta"]
+        d_ratios = fringe_data["d_over_lam"]
+        for k, d_ratio in enumerate(d_ratios):
+            off = k * 1.10
+            ax.plot(
+                sin_th,
+                fringe_data["patterns_fit"][k] + off,
+                color=figstyle.PALETTE[k % len(figstyle.PALETTE)],
+                lw=2.0,
+                ls="-",
+                label=rf"FIT $d/\lambda = {d_ratio:g}$ ($\Delta\sin\theta = {fringe_data['dsin_fit'][k]:.3f}$)",
+            )
+            ax.plot(
+                sin_th,
+                fringe_data["patterns_theory"][k] + off,
+                color=figstyle.INK,
+                lw=1.2,
+                ls="--",
+                label="Theory" if k == 0 else "_nolegend_",
+            )
+        ax.set_xlim(-0.92, 0.92)
+        ax.set_ylim(-0.05, 5.15)
+        ax.set_xlabel(r"Direction cosine $\sin\theta$ [-]")
+        ax.set_ylabel(r"Normalized far-field intensity (offset) [-]")
+        ax.set_title(r"(a) Interference fringes in $\sin\theta$ space ($a = 0.8\lambda$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper center", ncol=2, fontsize=7.0)
+
+        # Panel (b): Extracted fringe spacing Delta(sin theta) and first-order peak angle vs d / lambda
+        ax = axes[1]
+        d_fine = np.linspace(1.5, 4.3, 141)
         ax.plot(
-            sin_th,
-            fringe_data["patterns_fit"][k] + off,
-            color=colors[k % len(colors)],
-            lw=2.0,
-            label=rf"FIT $d/\lambda = {d_ratio:g}$ ($\Delta\sin\theta = {fringe_data['dsin_fit'][k]:.3f}$)",
-        )
-        ax.plot(
-            sin_th,
-            fringe_data["patterns_theory"][k] + off,
-            color="#111111",
-            lw=1.2,
+            d_fine,
+            1.0 / d_fine,
+            color=figstyle.INK,
+            lw=1.8,
             ls="--",
-            label="Theory" if k == 0 else "_nolegend_",
+            label=r"Exact grating law $\Delta(\sin\theta) = \lambda / d$",
         )
-    ax.set_xlim(-0.92, 0.92)
-    ax.set_xlabel(r"Direction cosine $\sin\theta$ [-]")
-    ax.set_ylabel(r"Normalized far-field intensity (offset) [-]")
-    ax.set_title(r"(a) Interference fringes in $\sin\theta$ space ($a = 0.8\lambda$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.0)
+        ax.plot(
+            d_ratios,
+            fringe_data["dsin_fit"],
+            "o",
+            color=figstyle.PALETTE[0],
+            ms=6.5,
+            label=r"2D FIT Near2FarMonitor measured $\Delta(\sin\theta)$",
+        )
+        ax2 = ax.twinx()
+        ax2.plot(
+            d_fine,
+            np.rad2deg(np.arcsin(1.0 / d_fine)),
+            color=figstyle.PALETTE[1],
+            lw=1.6,
+            ls=":",
+            label=r"Theory $\theta_1 = \arcsin(\lambda / d)$ [deg]",
+        )
+        ax2.plot(
+            d_ratios,
+            fringe_data["first_peak_deg_fit"],
+            "s",
+            color=figstyle.PALETTE[1],
+            ms=6.0,
+            label=r"FIT measured $\theta_1$ [deg]",
+        )
+        ax.set_xlabel(r"Normalized slit separation $d / \lambda$ [-]")
+        ax.set_ylabel(r"Fringe spacing $\Delta(\sin\theta)$ [-]", color=figstyle.PALETTE[0])
+        ax2.set_ylabel(r"First-order maximum angle $\theta_1$ [deg]", color=figstyle.PALETTE[1])
+        ax.set_title(r"(b) Fringe spacing scaling $\Delta(\sin\theta) = \lambda / d$")
+        figstyle.spectrum_grid(ax)
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=7.8)
 
-    # Panel (b): Extracted fringe spacing Delta(sin theta) and first-order peak angle vs d / lambda
-    ax = axes[1]
-    d_fine = np.linspace(1.5, 4.3, 141)
-    ax.plot(
-        d_fine,
-        1.0 / d_fine,
-        color="#111111",
-        lw=1.8,
-        ls="--",
-        label=r"Exact grating law $\Delta(\sin\theta) = \lambda / d$",
-    )
-    ax.plot(
-        d_ratios,
-        fringe_data["dsin_fit"],
-        "o",
-        color="#1b6ca8",
-        ms=8,
-        label=r"2D FIT `Near2FarMonitor` measured $\Delta(\sin\theta)$",
-    )
-    ax2 = ax.twinx()
-    ax2.plot(
-        d_fine,
-        np.rad2deg(np.arcsin(1.0 / d_fine)),
-        color="#d95f02",
-        lw=1.5,
-        ls=":",
-        label=r"Theory $\theta_1 = \arcsin(\lambda / d)$ [deg]",
-    )
-    ax2.plot(
-        d_ratios,
-        fringe_data["first_peak_deg_fit"],
-        "s",
-        color="#d95f02",
-        ms=7,
-        label=r"FIT measured $\theta_1$ [deg]",
-    )
-    ax.set_xlabel(r"Normalized slit separation $d / \lambda$ [-]")
-    ax.set_ylabel(r"Fringe spacing $\Delta(\sin\theta)$ [-]", color="#1b6ca8")
-    ax2.set_ylabel(r"First-order maximum angle $\theta_1$ [deg]", color="#d95f02")
-    ax.set_title(r"(b) Fringe spacing scaling $\Delta(\sin\theta) = \lambda / d$")
-    ax.grid(True, alpha=0.3)
-    lines1, labels1 = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, loc="upper right", fontsize=8.0)
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)
 
 
 def plot_coupling_and_resolution(
@@ -1316,73 +1652,87 @@ def plot_coupling_and_resolution(
     output_path: str | Path,
 ) -> None:
     """Generate the 2-panel figure for inter-slit coupling and mesh convergence."""
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.2), constrained_layout=True)
+    with figstyle.apply_style():
+        fig, axes = figstyle.new_figure(nrows=1, ncols=2, width=13.8, height=4.8)
 
-    # Panel (a): Normalized mutual transmission coupling eta = P'_double(d) / (2 * P'_single)
-    ax = axes[0]
-    d_lam = coup_data["d_over_lam"]
-    ax.plot(
-        d_lam,
-        coup_data["eta_hz"],
-        "s-",
-        color="#d95f02",
-        lw=2.1,
-        ms=6,
-        label=r"FIT $\mathbf{E} \perp$ slit ($H_z$, TEM + surface wave)",
-    )
-    ax.plot(
-        d_lam,
-        coup_data["eta_ez"],
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=6,
-        label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$, Dirichlet screen)",
-    )
-    ax.plot(
-        coup_data["model_d_over_lam"],
-        coup_data["model_eta_hz"],
-        color="#8c2d04",
-        ls=":",
-        lw=1.4,
-        label=r"Cylindrical surface-wave model $\propto \cos(k_0 d + \phi)/\sqrt{d/\lambda}$",
-    )
-    ax.axhline(1.0, color="gray", ls="--", lw=1.1, label=r"Uncoupled slits $P'_{\mathrm{double}} = 2 P'_{\mathrm{single}}$")
-    ax.set_xlabel(r"Center-to-center slit separation $d / \lambda$ [-]")
-    ax.set_ylabel(r"Normalized transmission ratio $P'_{\mathrm{double}}(d) / (2 P'_{\mathrm{single}})$ [-]")
-    ax.set_title(r"(a) Inter-slit electromagnetic coupling ($a = 0.55\lambda$, $t = 0.18\lambda$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.0)
+        # Panel (a): Normalized mutual transmission coupling eta = P'_double(d) / (2 * P'_single)
+        ax = axes[0]
+        d_lam = coup_data["d_over_lam"]
+        ax.plot(
+            d_lam,
+            coup_data["eta_hz"],
+            "s-",
+            color=figstyle.PALETTE[1],
+            lw=2.0,
+            ms=5.5,
+            label=r"FIT $\mathbf{E} \perp$ slit ($H_z$, TEM + surface wave)",
+        )
+        ax.plot(
+            d_lam,
+            coup_data["eta_ez"],
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=5.5,
+            label=r"FIT $\mathbf{E} \parallel$ slit ($E_z$, Dirichlet screen)",
+        )
+        ax.plot(
+            coup_data["model_d_over_lam"],
+            coup_data["model_eta_hz"],
+            color="#8C2D04",
+            ls=":",
+            lw=1.5,
+            label=r"Cylindrical surface-wave model $\propto \cos(k_0 d + \phi)/\sqrt{d/\lambda}$",
+        )
+        ax.axhline(
+            1.0,
+            color="#64748B",
+            ls="--",
+            lw=1.1,
+            label=r"Uncoupled slits $P'_{\mathrm{double}} = 2 P'_{\mathrm{single}}$",
+        )
+        ax.set_xlabel(r"Center-to-center slit separation $d / \lambda$ [-]")
+        ax.set_ylabel(
+            r"Normalized transmission ratio $P'_{\mathrm{double}}(d) / (2 P'_{\mathrm{single}})$ [-]"
+        )
+        ax.set_title(
+            r"(a) Inter-slit electromagnetic coupling ($a = 0.55\lambda$, $t = 0.18\lambda$)"
+        )
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=7.6)
 
-    # Panel (b): Mesh resolution convergence study
-    ax = axes[1]
-    cpw = res_data["cpw_values"]
-    ax.plot(
-        cpw,
-        res_data["l2_vs_theory"] * 100.0,
-        "o-",
-        color="#1b6ca8",
-        lw=2.1,
-        ms=6,
-        label=r"Far-field $L^2$ error vs $\cos^2\alpha\,\mathrm{sinc}^2\beta$ [%]",
-    )
-    ax.plot(
-        cpw,
-        res_data["rel_to_finest"] * 100.0,
-        "s--",
-        color="#2b8a3e",
-        lw=1.9,
-        ms=6,
-        label=r"Relative $L^2$ diff vs finest mesh [%]",
-    )
-    ax.axvline(20.0, color="gray", ls=":", lw=1.2, label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$")
-    ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
-    ax.set_ylabel("Relative error / discrepancy [%]")
-    ax.set_title(r"(b) Mesh convergence ($a = \lambda$, $d = 3\lambda$, $d/a = 3$)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8.5)
+        # Panel (b): Mesh resolution convergence study
+        ax = axes[1]
+        cpw = res_data["cpw_values"]
+        ax.plot(
+            cpw,
+            res_data["l2_vs_theory"] * 100.0,
+            "o-",
+            color=figstyle.PALETTE[0],
+            lw=2.0,
+            ms=5.5,
+            label=r"Far-field $L^2$ error vs $\cos^2\alpha\,\mathrm{sinc}^2\beta$ [%]",
+        )
+        ax.plot(
+            cpw,
+            res_data["rel_to_finest"] * 100.0,
+            "s--",
+            color=figstyle.PALETTE[2],
+            lw=1.8,
+            ms=5.5,
+            label=r"Relative $L^2$ diff vs finest mesh [%]",
+        )
+        ax.axvline(
+            20.0,
+            color="#64748B",
+            ls=":",
+            lw=1.2,
+            label=r"Chapter 3 rule: $\mathrm{cpw} \geq 20$",
+        )
+        ax.set_xlabel(r"Background resolution $\mathrm{cpw} = \lambda / \Delta x$ [cells/$\lambda$]")
+        ax.set_ylabel("Relative error / discrepancy [%]")
+        ax.set_title(r"(b) Mesh convergence ($a = \lambda$, $d = 3\lambda$, $d/a = 3$)")
+        figstyle.spectrum_grid(ax)
+        ax.legend(loc="upper right", fontsize=8.0)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+        figstyle.save(fig, output_path, close=True)

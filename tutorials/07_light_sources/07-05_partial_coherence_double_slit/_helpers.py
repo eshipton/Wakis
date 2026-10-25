@@ -965,3 +965,344 @@ class CustomLineSource:
             solver.J[self.ix, self.iy, 0, "z"] = 0.0
 
 
+# ---------------------------------------------------------------------------
+# 6. Schematic & Geometry Overlay Helpers (`wakis.schematic`)
+# ---------------------------------------------------------------------------
+
+_DOUBLE_SLIT_OVERLAY_CACHE: dict[str, dict] = {}
+
+
+def build_double_slit_schematic_objects(
+    mode: str = "vcz",
+    cpw: int = 20,
+    screen_material: str = "pec",
+    cells_per_skin_depth: float | None = None,
+) -> dict:
+    """Build solver, grid, structures, sources, and monitors for `wakis.schematic`."""
+    from wakis.field_monitors import DFTMonitor
+    from wakis.sources import CurrentSource, GaussianSource
+
+    wavelength = 0.50e-6
+    f0 = c_light / wavelength
+    slit_sep = 2.00e-6
+    slit_width = 0.40e-6
+    screen_thickness = 0.20e-6
+    y_bounds = (-8.5e-6, 6.4e-6) if mode == "vcz" else (-1.6e-6, 6.4e-6)
+
+    solver, grid, screen_boxes = build_double_slit_solver(
+        x_bounds=(-5.0e-6, 5.0e-6),
+        y_bounds=y_bounds,
+        wavelength=wavelength,
+        cpw=cpw,
+        n_pml=8,
+        slit_sep=slit_sep,
+        slit_width=slit_width,
+        screen_thickness=screen_thickness,
+        screen_material=screen_material,
+        cells_per_skin_depth=cells_per_skin_depth,
+    )
+    dz = float(grid.z[-1] - grid.z[0])
+    pulse = GaussianSource(f0, 0.20 * f0)
+
+    if mode == "vcz":
+        xs_dip = np.linspace(-1.6e-6, 1.6e-6, 9)
+        sources = [
+            CurrentSource(
+                pulse,
+                component="z",
+                center=(float(xs), -8.0e-6, 0.0),
+                size=(0.0, 0.0, dz),
+            )
+            for xs in xs_dip
+        ]
+    else:
+        src = CurrentSource(
+            pulse,
+            component="z",
+            center=(0.0, -1.0e-6, 0.0),
+            size=(8.0e-6, 0.0, dz),
+        )
+        src.normal = 1
+        sources = [src]
+
+    monitors = [
+        DFTMonitor(
+            [f0],
+            components=("Ez",),
+            center=(0.0, 0.0, 0.0),
+            size=(9.2e-6, 0.0, 0.0),
+        ),
+        DFTMonitor(
+            [f0],
+            components=("Ez",),
+            center=(0.0, 6.0e-6, 0.0),
+            size=(9.2e-6, 0.0, 0.0),
+        ),
+    ]
+    return {
+        "solver": solver,
+        "grid": grid,
+        "structures": screen_boxes,
+        "sources": sources,
+        "monitors": monitors,
+    }
+
+
+def tidy_double_slit_schematic_axes(
+    ax,
+    mode: str = "vcz",
+    xlim: tuple[float, float] = (-5.2, 5.2),
+    ylim: tuple[float, float] | None = None,
+    fontsize: float = 6.5,
+) -> None:
+    """Declutter `plot_schematic` auto-labels and draw crisp double-slit setup callouts."""
+    import matplotlib.patches as mpatches
+
+    if ylim is None:
+        ylim = (-8.8, 6.8) if mode == "vcz" else (-1.8, 6.8)
+    ax.set_aspect("auto")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_title(ax.get_title(), pad=26)
+
+    drop_keys = (
+        "boundary:",
+        "Out-of-plane",
+        "PEC",
+        "silver",
+        "ε =",
+        "Pulse:",
+        "CurrentSource",
+        "DFTMonitor",
+        "E (E_z)",
+        "$E_z$",
+        "\\mathbf{E}",
+        "\\mathbf{k}",
+    )
+    for t_obj in list(ax.texts):
+        s = t_obj.get_text()
+        if any(k in s for k in drop_keys):
+            t_obj.remove()
+        elif "Domain" in s:
+            t_obj.set_text(r"Domain $L_x = 10.8\;\mu\mathrm{m}$ ($\lambda_0 = 600\;\mathrm{nm}$, $\geq 20\;\mathrm{cells}/\lambda_0$)")
+            t_obj.set_position((0.0, ylim[1] + 0.03 * (ylim[1] - ylim[0])))
+        elif s == "" and getattr(t_obj, "xy", None) is not None and t_obj.xy[1] > ylim[1]:
+            t_obj.remove()
+
+    # Draw the 3 double-slit screen segments at y in [-0.10, +0.10] um
+    for x_lo, x_hi in [(-5.2, -1.2), (-0.8, 0.8), (1.2, 5.2)]:
+        ax.add_patch(
+            mpatches.Rectangle(
+                (x_lo, -0.10),
+                x_hi - x_lo,
+                0.20,
+                facecolor="#334155",
+                edgecolor="#0f172a",
+                lw=1.0,
+                zorder=5,
+            )
+        )
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.13",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.5,
+        "alpha": 0.90,
+    }
+
+    # Monitor lines at y = 0 (slits) and y = +6.0 um (detector screen)
+    ax.plot([-4.6, 4.6], [6.0, 6.0], color="#059669", ls="--", lw=1.4, zorder=6)
+    ax.text(
+        0.0,
+        5.55 if mode == "vcz" else 5.65,
+        r"Detector DFTMonitor ($y = +L_2 = +6.0\;\mu\mathrm{m}$, $\Lambda_f = 1.50\;\mu\mathrm{m}$)",
+        ha="center",
+        va="top",
+        fontsize=fontsize - 0.2,
+        color="#065f46",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+    ax.annotate(
+        "PEC / Drude Ag Screen ($y = 0$, $t = 200\\;\\mathrm{nm}$)\n2 slits: $a = 0.40\\;\\mu\\mathrm{m}$ at $x = \\pm 1.00\\;\\mu\\mathrm{m}$ ($d = 2.00\\;\\mu\\mathrm{m}$)",
+        xy=(1.0, 0.10),
+        xytext=(0.0, 1.55),
+        ha="center",
+        va="center",
+        fontsize=fontsize - 0.3,
+        color="#0f172a",
+        bbox=bbox_kw,
+        arrowprops={"arrowstyle": "->", "color": "#334155", "lw": 0.9},
+        zorder=9,
+    )
+    ax.text(
+        -4.85,
+        ylim[1] - 0.04 * (ylim[1] - ylim[0]),
+        r"$\pm x, \pm y$: CPML (8 cells) | $\pm z$: Periodic ($E_z$ TM)",
+        ha="left",
+        va="top",
+        fontsize=fontsize - 0.4,
+        color="#1e293b",
+        bbox=bbox_kw,
+        zorder=9,
+    )
+
+    if mode == "vcz":
+        xs_dip = np.linspace(-1.6, 1.6, 9)
+        ax.plot([-1.8, 1.8], [-8.0, -8.0], color="#d97706", lw=2.2, zorder=6)
+        ax.plot(xs_dip, np.full_like(xs_dip, -8.0), "*", color="#f59e0b", ms=6.2, mec="black", mew=0.4, zorder=7)
+        ax.annotate(
+            "Method A: Extended Incoherent Strip $D \\in [0, 3.6\\;\\mu\\mathrm{m}]$\n37 uncorrelated $J_z$ line dipoles at $y = -L_1 = -8.0\\;\\mu\\mathrm{m}$\n(First VCZ null $D_0 = \\lambda_0 L_1 / d = 2.00\\;\\mu\\mathrm{m}$)",
+            xy=(0.0, -8.0),
+            xytext=(0.0, -5.2),
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.3,
+            color="#78350f",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#d97706", "lw": 0.9},
+            zorder=9,
+        )
+    else:
+        x_prof = np.linspace(-3.8, 3.8, 200)
+        phi0 = 0.48 * np.exp(-0.5 * (x_prof / 1.4) ** 2)
+        ax.plot([-4.2, 4.2], [-1.0, -1.0], color="#2563eb", lw=1.6, zorder=6)
+        ax.fill_between(x_prof, -1.0, -1.0 + phi0, color="#60a5fa", alpha=0.35, zorder=5)
+        ax.annotate(
+            "Methods B & C: GSM Mercer Eigenmodes $\\Phi_m(x)$\n& Broadband Pulse Line Source ($y = -1.0\\;\\mu\\mathrm{m}$, $w_m = 1.40\\;\\mu\\mathrm{m}$)",
+            xy=(0.0, -1.0),
+            xytext=(0.0, 3.65),
+            ha="center",
+            va="center",
+            fontsize=fontsize - 0.3,
+            color="#1e3a8a",
+            bbox=bbox_kw,
+            arrowprops={"arrowstyle": "->", "color": "#2563eb", "lw": 0.9},
+            zorder=9,
+        )
+
+
+def overlay_double_slit_geometry(
+    ax,
+    line_color: str = "white",
+    show_source: bool = True,
+    show_detector: bool = True,
+    show_labels: bool = True,
+    compact: bool = False,
+    fontsize: float = 6.0,
+) -> None:
+    """Overlay double-slit screen, slit openings, CPML boundaries, source & detector via `wakis.schematic`."""
+    import matplotlib.patches as mpatches
+    from wakis import schematic
+
+    if "gsm" not in _DOUBLE_SLIT_OVERLAY_CACHE:
+        _DOUBLE_SLIT_OVERLAY_CACHE["gsm"] = build_double_slit_schematic_objects(
+            mode="gsm", cpw=10, screen_material="pec"
+        )
+    obj = _DOUBLE_SLIT_OVERLAY_CACHE["gsm"]
+    schematic.overlay_geometry(
+        ax,
+        obj["solver"],
+        plane="xy",
+        unit="um",
+        structures=obj["structures"],
+        show_boundaries=True,
+        show_materials=False,
+        outline_color=line_color,
+        label_materials=False,
+    )
+
+    # Crisp double-slit screen jaws at y in [-0.10, +0.10] um
+    for x_lo, x_hi in [(-4.9, -1.2), (-0.8, 0.8), (1.2, 4.9)]:
+        ax.add_patch(
+            mpatches.Rectangle(
+                (x_lo, -0.10),
+                x_hi - x_lo,
+                0.20,
+                facecolor="#334155" if line_color == "black" else "none",
+                edgecolor=line_color,
+                lw=1.1,
+                alpha=0.85,
+                zorder=7,
+            )
+        )
+
+    if show_source:
+        ax.axhline(-1.0, color="#38bdf8", ls=":", lw=1.0, alpha=0.85, zorder=7)
+    if show_detector:
+        ax.axhline(6.0, color="#34d399", ls="--", lw=1.1, alpha=0.90, zorder=7)
+
+    if not show_labels:
+        return
+
+    bbox_kw = {
+        "boxstyle": "round,pad=0.10",
+        "facecolor": "white",
+        "edgecolor": "#475569",
+        "linewidth": 0.4,
+        "alpha": 0.82,
+    }
+    if not compact:
+        ax.text(
+            0.0,
+            0.22,
+            "PEC/Ag screen (a=0.4 µm, d=2.0 µm)",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.2,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        if show_detector:
+            ax.text(
+                4.55,
+                5.85,
+                "Detector (y=6 µm) | CPML",
+                ha="right",
+                va="top",
+                fontsize=fontsize - 0.3,
+                color="#065f46",
+                bbox=bbox_kw,
+                zorder=9,
+            )
+        if show_source:
+            ax.text(
+                -4.55,
+                -0.88,
+                "GSM source (y=−1 µm)",
+                ha="left",
+                va="bottom",
+                fontsize=fontsize - 0.4,
+                color="#1e3a8a",
+                bbox=bbox_kw,
+                zorder=9,
+            )
+    else:
+        ax.text(
+            0.0,
+            0.22,
+            "Slits (±1 µm, a=0.4 µm)",
+            ha="center",
+            va="bottom",
+            fontsize=fontsize - 0.5,
+            color="#0f172a",
+            bbox=bbox_kw,
+            zorder=9,
+        )
+        if show_detector:
+            ax.text(
+                4.55,
+                5.82,
+                "Detector | CPML",
+                ha="right",
+                va="top",
+                fontsize=fontsize - 0.5,
+                color="#065f46",
+                bbox=bbox_kw,
+                zorder=9,
+            )
+
+
+

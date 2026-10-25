@@ -239,6 +239,7 @@ if str(TUTORIAL_DIR) not in sys.path:
 from _helpers import (  # noqa: E402
     DEFAULT_WAVELENGTH,
     plot_farfield_comparison,
+    plot_setup_schematic,
     plot_source_and_fresnel,
     plot_transmission_and_resolution,
     run_farfield_task,
@@ -251,12 +252,31 @@ from _helpers import (  # noqa: E402
 
 
 # %% [markdown]
-# ## Numerical Setup & Preflight Check
+# ## Simulation Setup Schematic & Preflight Check
 #
-# Before launching parameter sweeps, we run `wakis.estimate.estimate` and `preflight` on the
-# baseline 2D graded mesh ($\lambda = 600\,\mathrm{nm}$, $a = 2\lambda$, $t = 0.15\lambda$,
-# background resolution $\mathrm{cpw} = 24$ cells/$\lambda$, refined to $\ge 8$ cells across the
-# slit opening and $\ge 4$ cells across the PEC screen thickness).
+# Figure 0 (`figures/00_setup_schematic.png`) illustrates the 2D single-slit diffraction
+# geometry in the $xy$ plane ($\lambda = 600\,\mathrm{nm}$, $f_0 = 500\,\mathrm{THz}$,
+# slit width $a = 2\lambda = 1.20\,\mu\mathrm{m}$, PEC screen thickness
+# $t = 0.15\lambda = 90\,\mathrm{nm}$):
+#
+# - **Panel (a) — Domain, boundaries, source, and monitors**: The computational domain is
+#   terminated by 10-cell CPML absorbing layers on $\pm x$ and $\pm y$ (`bc=['cpml', 'cpml', 'periodic']`)
+#   and one periodic cell along $z$. Two PEC blocks ($\sigma \to \infty$) at $y \in [-t/2, +t/2]$
+#   define the slit aperture $x \in [-a/2, +a/2]$. A full-width soft `CurrentSource` sheet
+#   at $y_{\mathrm{src}}$ extends continuously into both lateral $\pm x$ CPMLs to launch a
+#   artifact-free $+y$-propagating plane wave (`GaussianSource`, $f_0 = 500\,\mathrm{THz}$,
+#   $\Delta f = 250\,\mathrm{THz}$). Downstream monitors include the aperture `FluxMonitor`,
+#   the `Near2FarMonitor` contour at $y_{\mathrm{n2f}} = t/2 + 2.5\,\Delta y_{\mathrm{screen}}$,
+#   and transverse Fresnel `DFTMonitor` lines at $L = a^2 / (4\lambda N_F)$.
+# - **Panel (b) — Graded FIT mesh zoom at the slit jaws**: The 2D Cartesian mesh uses a
+#   background resolution of $\mathrm{cpw} = 24\;\text{cells}/\lambda$ ($\Delta x = 25\,\mathrm{nm}$)
+#   and snaps exact grid nodes to the slit edges $x = \pm a/2$ ($48\;\text{cells} \ge 4$ across $a$)
+#   and screen faces $y = \pm t/2$ ($4\;\text{cells} \ge 4$ across $t$).
+#
+# ![Single-slit setup schematic and mesh zoom](figures/00_setup_schematic.png)
+#
+# Before launching parameter sweeps, we run `wakis.estimate.estimate` and `preflight` on this
+# baseline 2D graded mesh.
 
 # %%
 def print_preflight_report(pf: dict) -> None:
@@ -438,6 +458,10 @@ def main(argv: list[str] | None = None) -> int:
     trans_data = _load_npz(f_trans) if f_trans.exists() else None
     res_data = _load_npz(f_res) if f_res.exists() else None
 
+    plot_setup_schematic(
+        fig_dir / "00_setup_schematic.png",
+        wavelength=DEFAULT_WAVELENGTH,
+    )
     if src_data is not None and fresnel_data is not None:
         plot_source_and_fresnel(
             src_data,

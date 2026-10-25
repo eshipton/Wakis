@@ -312,3 +312,34 @@ def test_mutation_checks_detect_broken_physics():
             cpw=14,
             metrics={**valid_metrics, "x_node_err_nm": 5.0},
         )
+
+
+def test_setup_schematic_and_figures_exist():
+    """Verify 00_setup_schematic.png and all Tutorial 7.2 figures exist and are non-empty."""
+    fig_dir = TUTORIAL_DIR / "figures"
+    expected_figs = [
+        "00_setup_schematic.png",
+        "sled_schematic_and_mesh.png",
+        "eigenmode_profiles.png",
+        "steady_state_fields_0_vs_7deg.png",
+        "steady_state_intensity_0_vs_7deg.png",
+        "pulse_propagation_7deg.gif",
+        "pulse_snapshots_7deg.png",
+        "reflectivity_vs_tilt_marcuse.png",
+        "broadband_ar_spectrum.png",
+        "bimodal_mode_conversion.png",
+        "farfield_radiation_zah1987.png",
+        "sled_ase_spectral_ripple.png",
+        "pml_reflectivity_floor.png",
+        "incoherent_dipole_maps.png",
+        "incoherent_dipole_convergence.png",
+        "grid_convergence_kottke_vs_staircase.png",
+    ]
+    for fname in expected_figs:
+        fpath = fig_dir / fname
+        assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing figure {fpath}"
+    obj_sled = h.build_sled_schematic_objects()
+    obj_dip = h.build_incoherent_dipole_schematic_objects()
+    assert len(obj_sled["structures"]) == 4
+    assert len(obj_dip["sources"]) == 9
+

@@ -16,7 +16,7 @@
 
 `wakis` is a **3D Time-domain Electromagnetic solver** that solves the Integral form of Maxwell's equations using the Finite Integration Technique (FIT) numerical method. It computes the longitudinal and transverse **wake potential and beam-coupling impedance** from the simulated electric and magnetic fields. It is also a multi-purpose solver, capable of simulating planewaves interaction with nano-structures, optical diffraction, and much more!
 
-**Contents:** [About this fork](#about-this-fork) · [Highlights](#highlights) · [New features](#new-features-in-this-fork) · [Work on feature branches](#work-on-feature-branches-status-21-october-2026) · [Tutorials and examples](#tutorials-and-examples) · [Roadmap](#feature-checklist-and-roadmap) · [Installation](#installation) · [Upstream Wakis](#about)
+**Contents:** [About this fork](#about-this-fork) · [What this fork adds](#what-this-fork-adds-to-wakis) · [Tutorial textbook](#the-tutorial-textbook) · [Feature results in detail](#feature-results-in-detail) · [More examples and studies](#more-examples-and-studies) · [Roadmap](#feature-checklist-and-roadmap) · [Installation](#installation) · [Upstream Wakis](#about)
 
 ## About this fork
 
@@ -27,19 +27,6 @@ inverse design.
 
 The [examples library (EXAMPLES.md)](EXAMPLES.md) lists every tutorial, study and upstream example with a thumbnail.
 
-What this fork adds to Wakis:
-- **Meshes beyond the Cartesian staircase**: conformal and full-tensor subpixel averaging (including dispersive metals),
-  graded and locally refined grids, Cartesian subgridding, triangles and tetrahedra, polygonal, prism, curvilinear O-grid and
-  high-order DGTD meshes, and local time stepping.
-- **The tools of a design suite**: plane-wave TF/SF sources, mode solvers, mode ports and S-parameters, lumped elements,
-  DFT/flux/diffraction monitors, near-to-far transforms, harmonic inversion, dispersive materials, Bloch-periodic boundaries,
-  and design templates for antennas, waveguides, metasurfaces and silicon photonics.
-- **Inverse design**: an exact discrete adjoint with a JAX wrapper for every feature above, on CPU, GPU and MPI, with a
-  memory ladder that makes long 3D gradients affordable, and a fused GPU time step.
-- **Tutorials and studies**: worked examples that reproduce published results (LEDs, microLEDs, superluminescent diodes,
-  partially coherent light, silicon photonics, Mie scattering), each with a resolution study, and benchmark studies that compare
-  mesh types at equal accuracy.
-
 How the work is done: every feature is validated against analytic results, conservation laws or independent solvers (exact
 series, RCWA, FDFD, method of moments, Meep-inspired tests) with tests that can fail, and documented in the
 [physics guide](docs/physicsguide.md) with equations, references and its limits. Every speed or accuracy claim names its
@@ -48,139 +35,301 @@ baseline and is measured at equal accuracy; studies run on cloud batch machines 
 upstream Wakis as small, focused pull requests (see the roadmap). The
 [User Manual & FIT Theory Guide](user_manual.md) has quickstarts, the FIT theory, the API reference and benchmarks.
 
-## Highlights
+## What this fork adds to Wakis
 
-What you can do with it. Tutorials marked ![On a feature branch](https://img.shields.io/badge/status-feature%20branch%2C%20in%20review-blue) live on a feature branch and are being reviewed before they are merged.
+Everything added to the Wakis FIT solver in this fork, grouped by area. Each feature ships with validation tests
+against analytic results, independent solvers or published data, and most have a section in the
+[physics guide](docs/physicsguide.md) with equations, references, limits and failure modes. Detailed results with
+their baselines are under [Feature results in detail](#feature-results-in-detail).
 
-#### LEDs, microLEDs and superluminescent diodes &nbsp;·&nbsp; `feature/emitter-tutorials`
+### 1 · Meshes and discretizations
 
-![On a feature branch](https://img.shields.io/badge/status-feature%20branch%2C%20in%20review-blue)
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat1_meshes.jpg" width="300" alt="Voronoi polygonal mesh of a dielectric cylinder, finer cells inside the cylinder"></td>
+<td valign="top">
+
+- **Unstructured FIT on triangles and tetrahedra** (`wakis.unstructured`): Body-fitted meshes with circumcentric (Voronoi) dual. Graded triangle meshes and a radial CFS-PML (reflection 2–8×10⁻⁴). Exact discrete adjoint.
+- **Local time stepping** (`UnstructuredFIT2D(lts=2)`): Two-level, energy-conserving subcycling in fine-mesh regions: about 2× fewer steps at unchanged error, exact adjoint.
+- **Polygonal FIT** (`PolygonFIT2D`): Hybrid square/triangle and Voronoi meshes.
+- **Quadtree squares + triangle band** (`wakis.unstructured.subtri`): Cartesian cells away from interfaces, a thin conforming triangle band at curved boundaries, two-level LTS. 5–7× less work than the best Cartesian baseline on the dielectric Mie benchmark.
+- **Extruded prism 3D FIT** (`PrismFIT3D`): Triangles × z layers with GPU support: 15× fewer unknowns on a silicon micro-ring, 3–6× less work on a 3D cavity.
+- **Cartesian subgridding** (`wakis.subgrid`): Nested 2:1 / 3:1 patches with a symmetric hanging-node interface: energy-conserving, second order, exact transposed step; works with subpixel averaging, PML, plane waves, Drude/Lorentz media and LTS.
+- **Curvilinear O-grid FIT** (`wakis.curvilinear`): Body-fitted nonorthogonal 2D FIT with radial PML and dispersive media; fewest unknowns on round dielectric and plasmonic scatterers.
+- **High-order DGTD on curved triangles** (`wakis.highorder`): 0.1 % accuracy with about 100× fewer unknowns than low-order FIT on smooth scatterers.
+- **Conformal and subpixel averaging** (`conformal='tensor' / 'all'`): Cut-cell PEC, full-tensor subpixel averaging for curved dielectrics, and dispersive subpixel averaging for metals and dispersive dielectrics (passive network, exact adjoint).
+- **Graded meshes and mesh overrides** (`SubgridPICSimulation(mesh_overrides=…)`): Local refinement boxes on graded meshes and a photonics simulation kit (shapes, mode ports, monitors, LTS) on top of the subgrid solver.
+
+</td></tr></table>
+
+### 2 · Materials
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat2_materials.jpg" width="300" alt="Dielectric dispersion hierarchy (Debye, Lorentz phonon, electronic Lorentz, Drude) mapped to Wakis poles"></td>
+<td valign="top">
+
+- **Dispersive permittivity** (`DispersiveMaterial`): Drude, Lorentz and Debye media through auxiliary differential equations, with pole fitting to measured data and a stability check.
+- **Dispersive permeability μ(ω)** (`mu_poles`): Magnetic Lorentz/Debye poles (ferrites, magneto-dielectrics), the exact dual of the permittivity update, with its exact adjoint. Validated on slabs, the Snoek limit and a magnon–photon cavity.
+- **Materials library** (`wakis.material_library`): Metals, semiconductors, dielectrics and tissues fitted from the original literature and CC0 refractive-index data, each entry with its source citation; ferrite models for NFC shielding.
+- **Thin sheets and thin wires** (`wakis.subcell`): Resistive and PEC sheets and wires thinner than a cell (graphene, resistive films, thin traces, wire antennas). Salisbury screen and wire resonance within 1 %, exact adjoint.
+- **Linear plasma wakefields** (`wakis.plasma`): Wakefields in a plasma-filled pipe.
+- **Gain media** (`wakis.gain`): Four-level atomic system coupled to the fields: lasing threshold, gain saturation and mode competition (a Fabry–Pérot laser is the first example).
+- **Time-varying materials** (`wakis.time_varying`): ε(t), σ(t) and time-varying Drude media for time interfaces and photonic time crystals (Tutorial 2.5).
+
+</td></tr></table>
+
+### 3 · Sources and boundaries
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat3_sources.jpg" width="300" alt="Plane wave diffracted by a slanted grating with Bloch-periodic boundaries"></td>
+<td valign="top">
+
+- **Soft and magnetic current sources** (`CurrentSource`): Gaussian (zero-DC), continuous and custom profiles; magnetic currents and one-directional Huygens sources.
+- **Total-field / scattered-field plane waves** (`TFSFSource`): Incident field from a 1D FIT line, leakage at round-off (10⁻¹⁵), 2D and 3D, CPU and GPU; a scattered-field variant for unstructured meshes.
+- **Bloch-periodic boundaries** (`wakis.bloch`): Complex fields in unit cells, oblique plane waves at fixed transverse wavevector.
+- **Broadband oblique incidence and Floquet ports** (`wakis.floquet`): Constant-angle spectra from (k∥, f) sampling, Floquet-mode ports and S-matrices, and a built-in 1D RCWA reference; validated against Fresnel, Brewster, total internal reflection and fmmax.
+- **Dispersion-free wake computation** (`scheme='tete'`): Explicit TE/TM stepping along the beam axis removes numerical Cherenkov radiation: smooth-pipe wake at round-off and 19× less work for a 1 % loss-factor error.
+- **Incoherent emitters and reciprocity** (`wakis.subgrid.emitters`): Incoherent dipole ensembles, analytic dipole-above-mirror and slab references, and emission computed as absorption via Helmholtz reciprocity (LEDs, microLEDs).
+- **Linearized electron beams** (`wakis.beam_fluid`): Cold-fluid beam coupled to the fields, space-charge reduction factors (planar, cylindrical, rectangular) and ballistic bunching for slow-wave-structure and TWT work.
+
+</td></tr></table>
+
+### 4 · Ports, monitors and post-processing
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat4_monitors.jpg" width="300" alt="Far-field patterns of a dielectric sphere from the near-to-far transform against Lorenz-Mie theory"></td>
+<td valign="top">
+
+- **Lumped elements and S-parameters** (`wakis.lumped, wakis.sparameters`): R/L/C elements, discrete ports, S-parameters, Touchstone export, energy-decay stopping.
+- **Mode solver and mode ports** (`wakis.mode_solver`): 2D eigenmodes, mode sources and mode decomposition.
+- **DFT, flux and diffraction monitors**: Frequency-domain fields, Poynting flux, and diffraction-order efficiencies (TE/TM/circular).
+- **Near-to-far transform** (`wakis.near2far`): Far-field patterns and antenna metrics: directivity, gain, efficiency, axial ratio.
+- **Resonances and Q** (`harminv, ResonanceMonitor`): Harmonic inversion for resonance frequencies and quality factors.
+- **Benchmark suite** (`wakis.benchmarks`): Shared references B1–B5: dielectric Mie cylinder, Au/Ag nanocylinders, Au dimer gaps, multi-cylinder T-matrix, Hallén thin-wire dipole.
+
+</td></tr></table>
+
+### 5 · Inverse design
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat5_inverse.jpg" width="300" alt="invrs-gym designs optimized with the exact Wakis adjoint and their fields"></td>
+<td valign="top">
+
+- **Exact discrete adjoint** (`wakis.inverse`): Gradients through the discrete time stepper to round-off (dot-product tests ~10⁻¹⁵), with a JAX wrapper, on CPU, GPU and MPI, for all features above.
+- **Adjoint memory options** (`AdjointSimulation(memory=…)`): Binomial checkpointing (bitwise-equal gradients), time reversal with recorded boundary layers, optional Nyquist storage: exact gradients in 30–60× less memory.
+- **Material grids, filters and projections**: Density parameterization, conic filters, tanh projection and differentiable subpixel smoothing (MaterialGrid(smoothing='tensor')).
+- **Subpixel-smoothed projection** (`wakis.inverse.smoothed_projection`): Binary designs that stay differentiable at β = ∞, evaluated per edge.
+- **invrs-gym bridge** (`github.com/eshipton/invrs-wakis`): Runs the invrs-gym photonic design challenges with Wakis and scores them with the official evaluators. Our waveguide-bend and power-splitter designs score above the published leaderboard best at the required feature size.
+
+</td></tr></table>
+
+### 6 · Performance and tooling
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat6_performance.jpg" width="300" alt="Fused GPU time step against the standard step on an NVIDIA L4"></td>
+<td valign="top">
+
+- **Fused GPU time stepping** (`SolverFIT3D(use_gpu=True, fused=True)`): Step, CPML, sources, monitors, subpixel averaging, dispersive media and the adjoint in a few kernels replayed as CUDA graphs: 45× faster inverse-design iterations on an L4.
+- **Faster core step**: Forward step about 2× faster on CPU and GPU; periodic setup 59 s → 0.02 s.
+- **Memory and run-time estimator** (`wakis.estimate`): Predicts memory and time before a run, with a preflight check against the machine.
+- **Design templates** (`wakis.templates`): Patch and dipole antennas, waveguides, metasurface cells, silicon photonics, with sweeps and optimizers.
+- **Correctness fixes**: Second-order boundaries on non-uniform meshes, mixed PEC/PMC masks, tensor-update initialization, MPI fixes (CPML deadlock, rank-boundary sources and monitors).
+- **Figure and schematic tools** (`wakis.figstyle`, `wakis.schematic`): A shared publication figure style and labelled simulation-setup schematics (geometry, sources, monitors, boundaries, mesh, excitation) drawn from the solver objects.
+
+</td></tr></table>
+
+### 7 · Next up
+
+<table><tr>
+<td width="300" valign="top"><img src="docs/img/readme/cat7_development.jpg" width="300" alt="Fabry-Perot laser built with the gain-media feature: schematic and light-current curve, the starting point for the laser tutorials"></td>
+<td valign="top">
+
+- **Laser tutorials**: DFB, microdisk, photonic-crystal surface-emitting and BIC lasers built on the gain-media feature.
+- **Vacuum electronics**: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave-tube gain; backward-wave oscillators; a beam over a slow-wave structure.
+- **Magnetic antennas**: magneto-dielectric and ferrite-loaded antennas on the dispersive-μ feature.
+- **Particle-in-cell beams**: for large-signal beam physics (saturation, efficiency) and nonlinear plasma wakefields.
+
+</td></tr></table>
+
+**Upstream contributions.** Two fixes merged into CERN's Wakis (PR #109, mixed PEC/PMC masks; PR #110, a CPML + MPI deadlock) and two under review (PR #111, tensor-update initialization; PR #112, the 3D wake-potential accumulator), plus analysis and tests offered on PR #105 and issue #62.
+
+## The tutorial textbook
+
+48 tutorials in nine chapters, from fields on a grid to antennas, silicon photonics, light sources, vacuum
+electronics and inverse design. Each one is a single-source script that generates its notebook and figures,
+reproduces a publication or an exact result, and includes a resolution study. Open any of them in Colab with the
+badge. Full chapter guides: [`tutorials/README.md`](tutorials/README.md); every tutorial, study and planned
+example: [`EXAMPLES.md`](EXAMPLES.md).
+
+### Chapter 1 · Fields on a Grid
+
+[Chapter guide](tutorials/01_fields_on_a_grid/README.md)
 
 <table>
 <tr>
-<td colspan="2"><img src="docs/img/emit_microled_horn_power_flow.png" width="880" alt="Time-averaged Poynting power flow in three microLED micro-horn collimators: air-filled, SiO2-filled and a six-layer descending graded-index stack, with the silver sidewalls outlined"></td>
-</tr>
-<tr>
-<td colspan="2">
-
-Seven tutorials model light emitters with incoherent dipole ensembles, Drude silver mirrors, near-to-far transforms and
-reciprocity, each against a publication or exact theory and each with a resolution study (at least 10 cells per wavelength,
-4 cells across the thinnest layer and 4 per metal skin depth). Above: power flow in the microLED micro-horn collimators of
-Luce *et al.* (2026). With the paper's definition (equal polarization weights, normalized to the source power) and a
-converged ensemble of 17 dipoles, extraction into ±15° with Johnson & Christy silver is 27.5 % for the air horn (paper, 2D:
-27.5 %), 31.1 % for the SiO<sub>2</sub> horn (30.4 %) and 37.6 % for the graded-index horn (37.7 %). Without a horn it is
-9.9 % (14.9 %), a gap that is still unexplained. The paper does not say which silver data it used; with Rakić silver all
-three horns come out 5.7–7.4 points lower. Also: the deep-UV LED extraction of Ryu *et al.* (2014) versus p-GaN thickness (e.g. 1.72 % vs 1.70 % at
-50 nm), RGB microLED arrays (Chen *et al.* 2025), a dipole near a mirror and in a microcavity (Drexhage oscillation, Purcell
-factor), the tilted facet of a superluminescent diode (Marcuse 1989; an anti-reflection coating suppresses the facet
-reflection 81×), and LED far fields computed by reciprocity, which agree with the direct dipole sum to 0.07 %.
-
-</td>
+<td width="170" valign="top"><a href="tutorials/01_fields_on_a_grid/01-01_plane_wave/plane_wave.ipynb"><img src="docs/img/readme/tut_01-01.jpg" width="170" alt="Tutorial 1.1"></a></td><td width="300" valign="top"><b><a href="tutorials/01_fields_on_a_grid/01-01_plane_wave/plane_wave.ipynb">1.1 · Plane wave in a box</a></b><br><sub>Exact discrete Yee dispersion, Courant limit, TF/SF round-off leakage, CPML reflection</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_fields_on_a_grid/01-01_plane_wave/plane_wave.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/01_fields_on_a_grid/01-02_slab_rt/slab_rt.ipynb"><img src="docs/img/readme/tut_01-02.jpg" width="170" alt="Tutorial 1.2"></a></td><td width="300" valign="top"><b><a href="tutorials/01_fields_on_a_grid/01-02_slab_rt/slab_rt.ipynb">1.2 · Reflection and transmission at a slab</a></b><br><sub>Fresnel equations and the Fabry–Pérot transfer matrix; subpixel averaging</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/01_fields_on_a_grid/01-02_slab_rt/slab_rt.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
-#### Partially coherent light &nbsp;·&nbsp; `feature/emitter-tutorials`
+### Chapter 2 · Materials
 
-![On a feature branch](https://img.shields.io/badge/status-feature%20branch%2C%20in%20review-blue)
+[Chapter guide](tutorials/02_materials/README.md)
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/emit_partial_coherence_fields.png" width="600" alt="Double-slit intensity for the symmetric and antisymmetric coherent modes, their incoherent power sum, and the wrong coherent field sum"></td>
-<td>
-
-Time-domain solvers are coherent; partially coherent light is a weighted **incoherent sum of coherent runs**. A double slit
-lit by an extended source reproduces the van Cittert–Zernike theorem (fringe-visibility error against theory 0.012 RMS,
-second-order convergence), a Gaussian Schell-model beam is built from its coherent modes, and a broadband pulse shows temporal
-coherence. The panel at the bottom right is what goes wrong when the fields instead of the powers are summed. A silver screen
-transmits 5 % more on axis than a perfect conductor once its skin depth is resolved (an under-resolved grid gave 10.5 %).
-
-</td>
+<td width="170" valign="top"><a href="tutorials/02_materials/02-01_dispersion_physics/dispersion_physics.ipynb"><img src="docs/img/readme/tut_02-01.jpg" width="170" alt="Tutorial 2.1"></a></td><td width="300" valign="top"><b><a href="tutorials/02_materials/02-01_dispersion_physics/dispersion_physics.ipynb">2.1 · Where dispersion comes from</a></b><br><sub>Lorentz, Drude and Debye media; Kramers–Kronig, f-sum rule, ADE stability</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-01_dispersion_physics/dispersion_physics.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb"><img src="docs/img/readme/tut_02-02.jpg" width="170" alt="Tutorial 2.2"></a></td><td width="300" valign="top"><b><a href="tutorials/02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb">2.2 · Fitting measured material data</a></b><br><sub>Multi-pole fits to Johnson &amp; Christy Au/Ag, Malitson SiO₂ and Gabriel tissues</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb"><img src="docs/img/readme/tut_02-03.jpg" width="170" alt="Tutorial 2.3"></a></td><td width="300" valign="top"><b><a href="tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb">2.3 · Magnetic materials</a></b><br><sub>Dispersive μ(ω): Snoek limit, impedance-matched slabs, magnon–photon avoided crossing</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb"><img src="docs/img/readme/tut_02-04.jpg" width="170" alt="Tutorial 2.4"></a></td><td width="300" valign="top"><b><a href="tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb">2.4 · EMI shielding and absorbing materials</a></b><br><sub>Commercially available absorbers fitted from datasheet curves, Schelkunoff shielding, Rozanov limit</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-04_emi_shielding_materials/emi_shielding_materials.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/02_materials/02-05_time_varying_media/time_varying_media.ipynb"><img src="docs/img/readme/tut_02-05.jpg" width="170" alt="Tutorial 2.5"></a></td><td width="300" valign="top"><b><a href="tutorials/02_materials/02-05_time_varying_media/time_varying_media.ipynb">2.5 · Time interfaces and photonic time crystals</a></b><br><sub>Temporal Fresnel laws, momentum gaps and growth rate m/8</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/02_materials/02-05_time_varying_media/time_varying_media.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
-#### Photonic integrated circuits &nbsp;·&nbsp; `feature/pic-tutorials`
+### Chapter 3 · Diffraction and Scattering
 
-![On a feature branch](https://img.shields.io/badge/status-feature%20branch%2C%20in%20review-blue)
+[Chapter guide](tutorials/03_diffraction_and_scattering/README.md)
 
 <table>
 <tr>
-<td width="58%"><img src="docs/img/pic_ring_add_drop_fields.png" width="620" alt="Add-drop micro-ring fields on resonance (power routed to the drop port through the ring) and off resonance (power bypasses on the bus)"></td>
-<td><img src="docs/img/pic_y_junction_pulse.gif" width="380" alt="Animation of a pulse splitting in a silicon Y-junction"><br>
-
-Eleven silicon-photonics tutorials in 2D (effective-index method): Y-junction, ring coupler, crossing, Euler bend,
-directional coupler, 1×4 and 2×2 MMIs, add-drop ring (left), size and strip-to-slot converters, Bragg grating. Mode ports,
-broadband S-parameters, field movies, and a Kottke-versus-staircase convergence study against an independent fine reference
-in every one. The lesson they share: resolve the smallest feature, not just the wavelength. With one cell across a 50 nm
-coupler gap the staircase gets the coupled power 40 % wrong; with six cells, 0.3 %.
-
-</td>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-01_single_slit/single_slit.ipynb"><img src="docs/img/readme/tut_03-01.jpg" width="170" alt="Tutorial 3.1"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-01_single_slit/single_slit.ipynb">3.1 · Diffraction by a single slit</a></b><br><sub>Fresnel near field, Fraunhofer far field, vectorial polarization effects</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-01_single_slit/single_slit.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-02_double_slit/double_slit.ipynb"><img src="docs/img/readme/tut_03-02.jpg" width="170" alt="Tutorial 3.2"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-02_double_slit/double_slit.ipynb">3.2 · Young&#x27;s double slit</a></b><br><sub>Interference × envelope, missing orders, inter-slit coupling</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-02_double_slit/double_slit.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-03_n_slits/n_slits.ipynb"><img src="docs/img/readme/tut_03-03.jpg" width="170" alt="Tutorial 3.3"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-03_n_slits/n_slits.ipynb">3.3 · N-slit diffraction gratings</a></b><br><sub>Principal maxima, N−2 sidelobes, resolving power, periodic vs finite N</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-03_n_slits/n_slits.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb"><img src="docs/img/readme/tut_03-04.jpg" width="170" alt="Tutorial 3.4"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb">3.4 · Mie scattering by a dielectric cylinder (2D)</a></b><br><sub>Exact Mie series: staircase vs conformal vs triangle meshes</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb"><img src="docs/img/readme/tut_03-05.jpg" width="170" alt="Tutorial 3.5"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb">3.5 · Mie scattering by a sphere (3D)</a></b><br><sub>Lorenz–Mie S₁/S₂ and Q_sca with the near-to-far-field transform</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/03_diffraction_and_scattering/03-06_plasmonic_cylinder/plasmonic_cylinder.ipynb"><img src="docs/img/readme/tut_03-06.jpg" width="170" alt="Tutorial 3.6"></a></td><td width="300" valign="top"><b><a href="tutorials/03_diffraction_and_scattering/03-06_plasmonic_cylinder/plasmonic_cylinder.ipynb">3.6 · Localized surface plasmons of a metal cylinder</a></b><br><sub>Mie series for Drude–Lorentz Ag/Au; body-fitted triangles</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-06_plasmonic_cylinder/plasmonic_cylinder.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
-#### Photonic inverse design: invrs-gym &nbsp;·&nbsp; [invrs-wakis](https://github.com/eshipton/invrs-wakis)
+### Chapter 4 · Radiation and Antennas
+
+[Chapter guide](tutorials/04_radiation_and_antennas/README.md)
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/invrs_round2_gallery.png" width="600" alt="Round-2 designs and fields for the waveguide bend, mode converter and power splitter, with official eval metrics and length scales"></td>
-<td>
-
-[invrs-gym](https://github.com/invrs-io/gym) challenges optimized with Wakis's **exact adjoint + JAX** and scored by the gym's own backends. In the round-2 pilot, the length-scale constraints are enforced by construction: **all 18 designs meet the 3/3-pixel length scale** (most round-1 designs violated it). Best official scores: **waveguide bend +0.675, mode converter +0.381, power splitter +0.052**. The 10 nm ceviche re-check gives +0.462, +0.315 and +0.045. These are the lightweight challenges, which are not on the leaderboard. The full-ceviche (leaderboard-eligible) and metalens GPU sweeps are running. In round 1, Wakis's predictions agreed with the official evaluator to < 0.007.
-
-</td>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-01_point_dipole/point_dipole.ipynb"><img src="docs/img/readme/tut_04-01.jpg" width="170" alt="Tutorial 4.1"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-01_point_dipole/point_dipole.ipynb">4.1 · Point (Hertzian) dipole in 3D</a></b><br><sub>Near, intermediate and far zones; radiation resistance; directivity 1.5</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-01_point_dipole/point_dipole.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-02_wire_dipoles/wire_dipoles.ipynb"><img src="docs/img/readme/tut_04-02.jpg" width="170" alt="Tutorial 4.2"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-02_wire_dipoles/wire_dipoles.ipynb">4.2 · Half-wave dipole and quarter-wave monopole</a></b><br><sub>Balanis impedance and pattern, image theory, thin-wire subcell model</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-02_wire_dipoles/wire_dipoles.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.ipynb"><img src="docs/img/readme/tut_04-03.jpg" width="170" alt="Tutorial 4.3"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.ipynb">4.3 · Dipole near a mirror</a></b><br><sub>Drexhage oscillation, Purcell factor, exact Sommerfeld integral for silver</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-04_pcb_ifa_2g4/pcb_ifa_2g4.ipynb"><img src="docs/img/readme/tut_04-04.jpg" width="170" alt="Tutorial 4.4"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-04_pcb_ifa_2g4/pcb_ifa_2g4.ipynb">4.4 · 2.4 GHz printed inverted-F antenna</a></b><br><sub>Texas Instruments DN007: S₁₁, impedance, 3D gain, Wheeler–Chu limit</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-04_pcb_ifa_2g4/pcb_ifa_2g4.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb"><img src="docs/img/readme/tut_04-05.jpg" width="170" alt="Tutorial 4.5"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb">4.5 · 77 GHz series-fed patch array</a></b><br><sub>Yang et al. 2020 automotive radar array: gain and sidelobes</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb"><img src="docs/img/readme/tut_04-06.jpg" width="170" alt="Tutorial 4.6"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb">4.6 · NFC reader and tag coils at 13.56 MHz</a></b><br><sub>Wheeler/Grover inductance, Neumann mutual inductance, ferrite shielding</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
+### Chapter 5 · Guided Waves
 
-#### Light scattering: Mie in 2D and 3D with a total-field/scattered-field plane wave &nbsp;·&nbsp; [tutorials/](tutorials/)
+[Chapter guide](tutorials/05_guided_waves/README.md)
 
 <table>
 <tr>
-<td colspan="2"><img src="docs/img/tutorial01_fields_relief_map.png" width="880" alt="Wakis FIT simulation of an n = 2 cylinder at size parameter 6: left, 3D relief of Re Ez for TM with the TF/SF box (orange), flux box (blue) and cylinder outline; right, Re Hz map for TE with the focused field behind the cylinder"></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-01_y_junction/y_junction.ipynb"><img src="docs/img/readme/tut_05-01.jpg" width="170" alt="Tutorial 5.1"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-01_y_junction/y_junction.ipynb">5.1 · Y-junction power splitter</a></b><br><sub>Zhang et al. 2013; independent 56-cells-per-wavelength reference</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-01_y_junction/y_junction.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-02_euler_bend/euler_bend.ipynb"><img src="docs/img/readme/tut_05-02.jpg" width="170" alt="Tutorial 5.2"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-02_euler_bend/euler_bend.ipynb">5.2 · Euler waveguide bend</a></b><br><sub>Bend loss vs radius, Euler vs circular</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-02_euler_bend/euler_bend.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/img/tutorial01_movie.gif" width="440" alt="Animation of the time-domain field as the plane-wave pulse enters the TF/SF box, scatters off the cylinder and leaves through the PML"></td>
-<td width="50%"><img src="docs/img/tutorial01_triangles.png" width="440" alt="Conforming triangle mesh with its Voronoi dual at the cylinder surface"></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-03_size_converter/size_converter.ipynb"><img src="docs/img/readme/tut_05-03.jpg" width="170" alt="Tutorial 5.3"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-03_size_converter/size_converter.ipynb">5.3 · Mode size converters</a></b><br><sub>Tapers, Luneburg lens and semi-lens; TE₀ transmission vs 3D FDTD</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-03_size_converter/size_converter.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-04_strip_to_slot/strip_to_slot.ipynb"><img src="docs/img/readme/tut_05-04.jpg" width="170" alt="Tutorial 5.4"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-04_strip_to_slot/strip_to_slot.ipynb">5.4 · Strip-to-slot mode converters</a></b><br><sub>Subpixel averaging vs staircase on a 100 nm slot</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-04_strip_to_slot/strip_to_slot.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/img/tutorial01_mesh_edges.png" width="880" alt="Permittivity seen by the TE edges near the cylinder surface for the staircase, conformal ('all') and tensor material models"></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-05_crossing/crossing.ipynb"><img src="docs/img/readme/tut_05-05.jpg" width="170" alt="Tutorial 5.5"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-05_crossing/crossing.ipynb">5.5 · Waveguide crossing</a></b><br><sub>Cosine tapers: 0.19 dB insertion loss, −44 dB crosstalk</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-05_crossing/crossing.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-06_mmi_1x4/mmi_1x4.ipynb"><img src="docs/img/readme/tut_05-06.jpg" width="170" alt="Tutorial 5.6"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-06_mmi_1x4/mmi_1x4.ipynb">5.6 · 1×4 MMI power splitter</a></b><br><sub>Self-imaging; 0.47 dB excess loss; width × length sweep</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-06_mmi_1x4/mmi_1x4.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 <tr>
-<td colspan="2">
-
-[Tutorial 3.4 · Mie scattering by a dielectric cylinder (2D)](tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb)): a `TFSFSource` plane wave hits an n = 2 cylinder (a = 1 µm, x = 2&ndash;10, TM and TE). The scattered flux is compared with the exact series. Over 42 runs, conformal averaging reaches **0.33 % RMS error for x &le; 5 and 1.2 % for x &le; 10 at 80 cells/µm (TM)**, at second order. The staircase at the same resolution stays first order (3.9 % and 4.8 %). TE needs the full tensor (0.21 % vs 0.35 % diagonal at x &le; 5). A triangle-mesh section shows that conforming triangles match conformal Cartesian accuracy at equal h, at ~1.45× the work on uniform meshes; graded meshes change that (see above).
-
-</td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-07_mmi_2x2/mmi_2x2.ipynb"><img src="docs/img/readme/tut_05-07.jpg" width="170" alt="Tutorial 5.7"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-07_mmi_2x2/mmi_2x2.ipynb">5.7 · 2×2 MMI coupler</a></b><br><sub>Splitting ratio and 90° phase</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-07_mmi_2x2/mmi_2x2.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-08_directional_coupler/directional_coupler.ipynb"><img src="docs/img/readme/tut_05-08.jpg" width="170" alt="Tutorial 5.8"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-08_directional_coupler/directional_coupler.ipynb">5.8 · Directional coupler</a></b><br><sub>Supermode beating vs coupled-mode theory; sidewall-angle sensitivity</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-08_directional_coupler/directional_coupler.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/img/tutorial01b_fields_xz.png" width="880" alt="Wakis FIT simulation of an n = 2 sphere: Re Ex and log10 |Ex| in the xz plane at size parameters 3, 6 and 9, total field inside the TF/SF box and scattered field outside"></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/img/tutorial01b_isosurfaces.png" width="440" alt="3D isosurfaces of |E| inside and behind the dielectric sphere (photonic nanojet)"></td>
-<td width="50%"><img src="docs/img/tutorial01b_far_field.png" width="440" alt="Split polar far-field plot: left half E-plane (xz, |S2|^2), right half H-plane (yz, |S1|^2), Wakis against Mie"><br><sub>Split polar plot: left half E-plane (xz, |S<sub>2</sub>|²), right half H-plane (yz, |S<sub>1</sub>|²); the two planes differ physically (dipole null near 90° in the E-plane), and each is symmetric in ±θ.</sub></td>
-</tr>
-<tr>
-<td colspan="2">
-
-[Tutorial 3.5 · Mie scattering by a sphere (3D) and the near-to-far-field transform](tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb) ([Colab](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb)): the same set-up in 3D, an n = 2 sphere with r = 1 µm. It covers the Mie series, near fields, isosurfaces, a movie, and the far field (`Near2FarMonitor` against S<sub>1</sub>, S<sub>2</sub>). Full mode on an NVIDIA L4: 6.3 Mcells and 11 min, with **Q<sub>sca</sub> within 3.4 % RMS of Mie** over x = 2&ndash;10 (conformal, 40 cells/µm). The 3D resolution study is still to do.
-
-</td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb"><img src="docs/img/readme/tut_05-09.jpg" width="170" alt="Tutorial 5.9"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb">5.9 · Waveguide-to-ring point coupler</a></b><br><sub>Coupling vs gap against coupled-mode theory</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb"><img src="docs/img/readme/tut_05-10.jpg" width="170" alt="Tutorial 5.10"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb">5.10 · Microring add-drop filter</a></b><br><sub>FSR, loaded Q and gap sweep vs coupled-mode theory</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
-#### Accelerator wakefields without numerical Cherenkov radiation &nbsp;·&nbsp; `SolverFIT3D(scheme='tete')`
+*Planned:* Grating couplers, polarization devices, (de)multiplexers and more splitters and couplers (catalogue in [EXAMPLES.md](EXAMPLES.md)).
+
+### Chapter 6 · Periodic Structures
+
+[Chapter guide](tutorials/06_periodic_structures/README.md)
 
 <table>
 <tr>
-<td width="55%"><img src="docs/img/tete_pipe_spurious_wake.png" width="600" alt="Spurious wake and loss factor in a smooth PEC pipe versus pipe length for the TE/TM scheme and for Yee at Courant numbers 0.99 and 0.5"></td>
-<td>
-
-Opt-in `SolverFIT3D(scheme="tete")`: the explicit TE/TM scheme of Dohlus & Zagorodnov (JCP 228, 2822, 2009), dispersion-free along the beam axis at c·dt = dz, with conformal PEC, the TF/SF beam, GPU, MPI and an exact transposed step. **Smooth pipe (exact wake 0): ≤ 3e-8 V/pC, against 1.2–660 V/pC of spurious Cherenkov wake for Yee, growing with length.** Closed box at σ<sub>z</sub>/dz = 1: loss-factor error 10 % vs 48 % for Yee (19× less work to reach 1 %); pillbox with pipes at σ<sub>z</sub>/dz = 2: 3.3 % vs 42 %. Long bunches: equal to Yee. Found along the way: Wakis wake post-processing samples E<sub>z</sub> at `int(t/dt)` (first order in dt), which raises the Yee loss-factor error from 1.5 % to 7.8 %; an upstream issue is drafted. **Limits:** 1.3–1.9× cost per simulated time; not yet fused for GPU; no x/y CPML, ADE or `AdjointSimulation`. Code on `main`, [studies/dispersion-free-wake](studies/dispersion-free-wake).
-
-</td>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb"><img src="docs/img/readme/tut_06-01.jpg" width="170" alt="Tutorial 6.1"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb">6.1 · Waveguide Bragg grating</a></b><br><sub>Bragg wavelength convergence, coupled-mode theory, apodization</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb"><img src="docs/img/readme/tut_06-02.jpg" width="170" alt="Tutorial 6.2"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb">6.2 · Slow-wave structure cold test</a></b><br><sub>Corrugated and glide-symmetric waveguides: dispersion, Pierce impedance</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb"><img src="docs/img/readme/tut_06-03.jpg" width="170" alt="Tutorial 6.3"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb">6.3 · Quasi-bound states in the continuum</a></b><br><sub>Metasurface Q ∝ α⁻², Fano spectra, absorption-limited Q</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-03_quasi_bic_metasurface/quasi_bic_metasurface.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb"><img src="docs/img/readme/tut_06-04.jpg" width="170" alt="Tutorial 6.4"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb">6.4 · AR waveguide combiner</a></b><br><sub>k-space map, field-of-view limits, RGB in-coupler efficiencies</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-04_ar_waveguide_combiner/ar_waveguide_combiner.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb"><img src="docs/img/readme/tut_06-05.jpg" width="170" alt="Tutorial 6.5"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb">6.5 · Slanted and blazed in-coupler gratings</a></b><br><sub>Unidirectional coupling; conformal subpixel meshing vs staircase</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
-## New features in this fork
+*Planned:* Diffraction gratings with periodic boundaries, photonic crystals, metasurfaces.
+
+### Chapter 7 · Light Sources
+
+[Chapter guide](tutorials/07_light_sources/README.md)
+
+<table>
+<tr>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-01_planar_led/planar_led.ipynb"><img src="docs/img/readme/tut_07-01.jpg" width="170" alt="Tutorial 7.1"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-01_planar_led/planar_led.ipynb">7.1 · Planar deep-UV LED</a></b><br><sub>Ryu et al. 2014; analytic escape cone; TE vs TM dipoles</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-01_planar_led/planar_led.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-02_sled_tilted_facet/sled_tilted_facet.ipynb"><img src="docs/img/readme/tut_07-02.jpg" width="170" alt="Tutorial 7.2"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-02_sled_tilted_facet/sled_tilted_facet.ipynb">7.2 · Superluminescent diode tilted facet</a></b><br><sub>Marcuse 1989 residual reflectivity; exact slab overlap</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-02_sled_tilted_facet/sled_tilted_facet.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-03_microled_horn/microled_horn.ipynb"><img src="docs/img/readme/tut_07-03.jpg" width="170" alt="Tutorial 7.3"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-03_microled_horn/microled_horn.ipynb">7.3 · MicroLED with a graded-index micro-horn</a></b><br><sub>Luce et al. 2026 collimation and far field</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-03_microled_horn/microled_horn.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb"><img src="docs/img/readme/tut_07-04.jpg" width="170" alt="Tutorial 7.4"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb">7.4 · RGB microLED array</a></b><br><sub>Chen et al. 2025: incoherent averaging, collimation and crosstalk</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb"><img src="docs/img/readme/tut_07-05.jpg" width="170" alt="Tutorial 7.5"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb">7.5 · Partially coherent light through a double slit</a></b><br><sub>van Cittert–Zernike, Gaussian Schell model, temporal coherence</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb"><img src="docs/img/readme/tut_07-06.jpg" width="170" alt="Tutorial 7.6"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb">7.6 · Thin-film LED emission by Helmholtz reciprocity</a></b><br><sub>Direct dipole sum (0.07 %), transfer matrix, Janssen et al.</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+</table>
+
+*Planned:* Lasers (DFB, microdisk, photonic-crystal surface-emitting, BIC) with the gain-media feature.
+
+### Chapter 8 · Vacuum Electronics
+
+[Chapter guide](tutorials/08_vacuum_electronics/README.md)
+
+<table>
+<tr>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb"><img src="docs/img/readme/tut_08-01.jpg" width="170" alt="Tutorial 8.1"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb">8.1 · Space-charge waves on an electron beam</a></b><br><sub>Fast/slow waves, plasma-frequency reduction, Chu kinetic power</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb"><img src="docs/img/readme/tut_08-02.jpg" width="170" alt="Tutorial 8.2"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb">8.2 · Cherenkov radiation from a moving charge</a></b><br><sub>Cone angle cos θ = 1/βn, Frank–Tamm spectrum, numerical Cherenkov</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb"><img src="docs/img/readme/tut_08-03.jpg" width="170" alt="Tutorial 8.3"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb">8.3 · Laser acceleration of electrons in vacuum</a></b><br><sub>Lawson–Woodward theorem, Huang–Stupakov–Zolotorev screen, attosecond bunches</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb"><img src="docs/img/readme/tut_08-04.jpg" width="170" alt="Tutorial 8.4"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb">8.4 · Smith–Purcell radiation and the DLA grating</a></b><br><sub>Smith–Purcell dispersion; Peralta et al. 2013 dielectric laser accelerator</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+</table>
+
+*Planned:* Folded-waveguide and helix slow-wave structures, metamaterial and FSS slow-wave structures, traveling-wave tube gain, backward-wave oscillator, klystron cavities.
+
+### Chapter 9 · Inverse Design
+
+[Chapter guide](tutorials/09_inverse_design/README.md)
+
+<table>
+<tr>
+<td width="170" valign="top"><a href="tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb"><img src="docs/img/readme/tut_09-01.jpg" width="170" alt="Tutorial 9.1"></a></td><td width="300" valign="top"><b><a href="tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb">9.1 · Adjoint gradients for time-domain Maxwell</a></b><br><sub>Dot-product test (1e-15), finite differences, memory ladder</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-01_adjoint_gradients/adjoint_gradients.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb"><img src="docs/img/readme/tut_09-02.jpg" width="170" alt="Tutorial 9.2"></a></td><td width="300" valign="top"><b><a href="tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb">9.2 · Inverse design of a 90° waveguide bend</a></b><br><sub>invrs-gym ceviche bend: +0.643 vs leaderboard best −1.250</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-02_waveguide_bend/waveguide_bend.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/09_inverse_design/09-03_splitter_and_mode_converter/splitter_and_mode_converter.ipynb"><img src="docs/img/readme/tut_09-03.jpg" width="170" alt="Tutorial 9.3"></a></td><td width="300" valign="top"><b><a href="tutorials/09_inverse_design/09-03_splitter_and_mode_converter/splitter_and_mode_converter.ipynb">9.3 · Power splitter and mode converter</a></b><br><sub>invrs-gym: splitter +0.068 vs +0.009; mode converter +0.312 vs 0.854</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-03_splitter_and_mode_converter/splitter_and_mode_converter.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/09_inverse_design/09-04_metalens/metalens.ipynb"><img src="docs/img/readme/tut_09-04.jpg" width="170" alt="Tutorial 9.4"></a></td><td width="300" valign="top"><b><a href="tutorials/09_inverse_design/09-04_metalens/metalens.ipynb">9.4 · RGB achromatic metalens</a></b><br><sub>Wakis vs fmmax on the reference lens; length-scale-feasible design</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/09_inverse_design/09-04_metalens/metalens.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+</table>
+
+## Feature results in detail
 
 ![Complete](https://img.shields.io/badge/status-complete-2ea44f) merged on `develop`/`main` &nbsp; ![In progress](https://img.shields.io/badge/status-in%20progress-orange) interim numbers only &nbsp; ![On a feature branch](https://img.shields.io/badge/status-feature%20branch%2C%20in%20review-blue) code on a feature branch
 
@@ -488,19 +637,6 @@ RCWA agreement of grating diffraction efficiencies 1.3e-3; TE10 propagation cons
 reflection at oblique incidence 0.15–0.55 %; exact discrete adjoint (dot-product tests ~1e-17, finite-difference gradients 1e-8–1e-10);
 MPI results identical to serial to ~1e-14; forward step ~2x faster than upstream. See `docs/performance.md` and the test suite.
 
-### Work on feature branches (status 21 October 2026)
-
-Features marked complete and checked roadmap items are merged on `develop` (identical to `main` on GitHub). The work below
-lives on feature branches and will be merged after review.
-
-| Branch | Contents | Status |
-|---|---|---|
-| `feature/pic-tutorials` | 11 photonic-integrated-circuit tutorials in 2D (effective-index method, Chapters 5 and 6): Y-junction (5.1), Euler bend (5.2), size converter (5.3), strip-to-slot converter (5.4), waveguide crossing (5.5), 1×4 MMI (5.6), 2×2 MMI (5.7), directional coupler (5.8), waveguide-to-ring coupler (5.9), add-drop micro-ring (5.10), Bragg grating (6.1). Each one is a single-source script + notebook with 13–16 figures, tests that can fail, and a Kottke-vs-staircase convergence study against an independent fine reference. Also: mesh-override boxes in the templates (`Simulation(mesh_overrides=...)`, `PICSimulation(mesh_overrides=...)`) and a Cloud Batch study runner (`tutorials/05_guided_waves/cloud/`). | Quick studies done and resolution-audited; full-resolution studies (162 Batch tasks) finished, figures being re-rendered from them |
-| `feature/emitter-tutorials` | 7 light-emitter tutorials (Chapters 4 and 7): dipole near a mirror / microcavity Purcell factor (4.1), planar deep-UV LED vs Ryu 2014 (7.1), superluminescent-diode tilted facet vs Marcuse 1989 (7.2), microLED with a graded-index micro-horn vs Luce 2026 (7.3), RGB microLED array vs Chen 2025 (7.4), partially coherent light in a double slit: van Cittert–Zernike and Gaussian Schell-model (7.5), LED far field by reciprocity (7.6) | Full studies done for 4.1 and 7.1–7.6 |
-| `docs/examples-library` | `EXAMPLES.md`: chapter-organized index of 35 built tutorials, 14 tutorials in progress, 157 planned examples across Chapters 2–9 and the solver how-to appendix, 11 standalone scripts, 10 upstream notebooks, and 27 method studies | Updated |
-| `feature/subgrid-kit` | Subgridding (`wakis.subgrid`) as a backend for the photonics kit: polygon geometry, mode ports, DFT/flux monitors, S-parameters; then a cost comparison against the graded mesh on the Bragg grating at equal accuracy | Started |
-| (planned) | Vacuum-electronics series: slow-wave structure design, traveling-wave tubes, backward-wave oscillators, microwave amplifiers | Planning |
-
 **Resolution policy for every tutorial.** At least 10 cells per wavelength in the highest-index material (20 for the accurate
 runs), at least 4 cells across the smallest geometric feature (gaps, teeth, thin layers), and for metals a resolution study
 that refines until the metric stops changing, ending at no fewer than 4 cells per skin depth. Local refinement uses graded
@@ -513,106 +649,7 @@ several results, which the tutorials state plainly:
   tuning a guided-mode resonance; with the geometry snapped to the grid, staircase converges.
 - Bragg grating: the Bragg wavelength converges (1564 → 1557.5 → 1554.9 nm) instead of drifting by > 36 nm.
 
-## Tutorials and examples
-
-Status: ✅ merged on `develop`/`main` · 🔵 built on a feature branch (script, notebook, figures, tests and a full-resolution
-study; in review) · 🚧 being built · 🗺️ planned. Every tutorial is a single-source script (`--quick`, `--full`, `--task`,
-`--plot`) that generates its notebook and figures, reproduces a publication or an exact result, and includes a resolution study.
-See [`tutorials/README.md`](tutorials/README.md) for the full table of contents by chapter.
-
-**Chapter 1 · Fields on a Grid** ([`tutorials/01_fields_on_a_grid/`](tutorials/01_fields_on_a_grid/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 1.1 | [Tutorial 1.1 · Plane wave in a box](tutorials/01_fields_on_a_grid/01-01_plane_wave/plane_wave.ipynb) | Exact discrete Yee dispersion, TF/SF round-off leakage, CPML reflection | 🔵 |
-| 1.2 | [Tutorial 1.2 · Reflection and transmission at a slab](tutorials/01_fields_on_a_grid/01-02_slab_rt/slab_rt.ipynb) | Fresnel equations, Fabry–Pérot transfer matrix | 🔵 |
-
-**Chapter 2 · Materials** ([`tutorials/02_materials/`](tutorials/02_materials/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 2.1 | [Tutorial 2.1 · Where dispersion comes from](tutorials/02_materials/02-01_dispersion_physics/dispersion_physics.ipynb) | Lorentz, Drude and Debye ADE; Kramers–Kronig and skin depth | 🔵 |
-| 2.2 | [Tutorial 2.2 · Fitting Measured Material Data](tutorials/02_materials/02-02_fitting_measured_data/fitting_measured_data.ipynb) | Multi-pole Drude–Lorentz fitting to `wakis.materials` | 🔵 |
-| 2.3 | [Tutorial 2.3 · Magnetic Materials](tutorials/02_materials/02-03_magnetic_materials/magnetic_materials.ipynb) | Dispersive permeability $\mu(\omega)$ and impedance-matched slabs | 🔵 |
-| 2.4–2.5 | EMI shielding and absorbing materials; Time interfaces and photonic time crystals | Schelkunoff shielding theory; Morgenthaler / temporal Fresnel laws | 🚧 |
-
-**Chapter 3 · Diffraction and Scattering** ([`tutorials/03_diffraction_and_scattering/`](tutorials/03_diffraction_and_scattering/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 3.1 | [Tutorial 3.1 · Diffraction by a Single Slit](tutorials/03_diffraction_and_scattering/03-01_single_slit/single_slit.ipynb) | Fresnel and Fraunhofer slit diffraction | 🔵 |
-| 3.2 | [Tutorial 3.2 · Young's Double-Slit Diffraction](tutorials/03_diffraction_and_scattering/03-02_double_slit/double_slit.ipynb) | Young's two-slit interference pattern | 🔵 |
-| 3.3 | [Tutorial 3.3 · N-Slit Diffraction Gratings](tutorials/03_diffraction_and_scattering/03-03_n_slits/n_slits.ipynb) | Multi-slit interference and grating factor | 🔵 |
-| 3.4 | [Tutorial 3.4 · Mie scattering by a dielectric cylinder (2D)](tutorials/03_diffraction_and_scattering/03-04_mie_cylinder/mie_cylinder.ipynb) | Exact Mie series (TM/TE, staircase vs conformal vs triangles) | ✅ |
-| 3.5 | [Tutorial 3.5 · Mie scattering by a sphere (3D) and the near-to-far-field transform](tutorials/03_diffraction_and_scattering/03-05_mie_sphere/mie_sphere.ipynb) | Lorenz–Mie $S_1/S_2$ and $Q_{\text{sca}}$ | ✅ |
-| 3.6 | [Tutorial 3.6 · Localized surface plasmons of a metal cylinder: pole count, accuracy and cost](tutorials/03_diffraction_and_scattering/03-06_plasmonic_cylinder/plasmonic_cylinder.ipynb) | Mie series with Drude–Lorentz Ag/Au metals | 🔵 |
-
-**Chapter 4 · Radiation and Antennas** ([`tutorials/04_radiation_and_antennas/`](tutorials/04_radiation_and_antennas/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 4.1–4.2 | Point dipole; Half-wave dipole and quarter-wave monopole | Hertzian dipole fields and Balanis dipole impedance/pattern | 🚧 |
-| 4.3 | [Tutorial 4.3 · Dipole near a mirror: image theory, Drexhage effect and Purcell factor](tutorials/04_radiation_and_antennas/04-03_dipole_near_mirror/dipole_near_mirror.ipynb) | Drexhage oscillation, Purcell factor, exact Sommerfeld integral for silver | 🔵 |
-| 4.4 | [Tutorial 4.4 · 2.4 GHz Printed Inverted-F PCB Antenna (Texas Instruments SWRU120D)](tutorials/04_radiation_and_antennas/04-04_pcb_ifa_2g4/pcb_ifa_2g4.ipynb) | TI DN007 (SWRU120D) $S_{11}$, $Z_{\text{in}}$, 3D gain pattern, Wheeler–Chu limit | 🔵 |
-| 4.5 | [Tutorial 4.5 · 77 GHz Series-Fed Microstrip Patch Array for Automotive Radar](tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb) | Yang *et al.* 2020 10-element 77 GHz patch array directivity and sidelobes | 🔵 |
-| 4.6 | [Tutorial 4.6 · NFC reader and tag coils at 13.56 MHz (near-field inductive coupling)](tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb) | Wheeler/Grover self-inductance, 3D Neumann mutual inductance, ferrite shielding | 🔵 |
-
-**Chapter 5 · Guided Waves** (`feature/pic-tutorials`, [`tutorials/05_guided_waves/`](tutorials/05_guided_waves/README.md), 2D effective-index method)
-
-| # | Tutorial | Key result / check | Status |
-|---|---|---|---|
-| 5.1 | [Tutorial 5.1 · Y-junction power splitter](tutorials/05_guided_waves/05-01_y_junction/y_junction.ipynb) | Zhang *et al.* 2013; independent 56-cpw reference | 🔵 |
-| 5.2 | [Tutorial 5.2 · Euler waveguide bend](tutorials/05_guided_waves/05-02_euler_bend/euler_bend.ipynb) | Bend loss vs radius 2.5–4 µm | 🔵 |
-| 5.3 | [Tutorial 5.3 · Mode size converters: tapers, Luneburg lens and semi-lens](tutorials/05_guided_waves/05-03_size_converter/size_converter.ipynb) | TE0 transmission 77 %, mode share vs 3D FDTD | 🔵 |
-| 5.4 | [Tutorial 5.4 · Strip-to-slot waveguide mode converters](tutorials/05_guided_waves/05-04_strip_to_slot/strip_to_slot.ipynb) | Kottke vs staircase on a 100 nm slot | 🔵 |
-| 5.5 | [Tutorial 5.5 · Waveguide crossing with cosine tapers](tutorials/05_guided_waves/05-05_crossing/crossing.ipynb) | Insertion loss 0.19 dB, crosstalk −44 dB at 1310 nm | 🔵 |
-| 5.6 | [Tutorial 5.6 · 1×4 multimode-interference power splitter](tutorials/05_guided_waves/05-06_mmi_1x4/mmi_1x4.ipynb) | Self-imaging; 0.47 dB excess loss; W × L optimum sweep | 🔵 |
-| 5.7 | [Tutorial 5.7 · 2×2 multimode-interference coupler](tutorials/05_guided_waves/05-07_mmi_2x2/mmi_2x2.ipynb) | Splitting ratio and 90° phase | 🔵 |
-| 5.8 | [Tutorial 5.8 · Directional coupler: supermode beating and sidewall-angle sensitivity](tutorials/05_guided_waves/05-08_directional_coupler/directional_coupler.ipynb) | Supermode beating, gap and sidewall-angle sweeps | 🔵 |
-| 5.9 | [Tutorial 5.9 · Waveguide-to-ring point coupler](tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb) | Coupling vs gap (50–250 nm), exponential decay; 1 cell across the gap gives a 40 % error, 6 cells 0.3 % | 🔵 |
-| 5.10 | [Tutorial 5.10 · Microring add-drop filter](tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb) | FSR 23.7 nm, loaded Q ≈ 760, gap sweep vs coupled-mode theory | 🔵 |
-| — | Grating couplers, polarization devices, (de)multiplexers, further splitters and couplers | See the catalogue below | 🗺️ |
-
-**Chapter 6 · Periodic Structures** ([`tutorials/06_periodic_structures/`](tutorials/06_periodic_structures/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 6.1 | [Tutorial 6.1 · Sidewall-corrugated waveguide Bragg grating](tutorials/06_periodic_structures/06-01_bragg_grating/bragg_grating.ipynb) | Bragg wavelength convergence, coupled-mode theory, side-lobe suppression ([subgrid cost study](studies/subgrid-vs-graded-bragg/)) | 🔵 |
-| 6.2 | [Tutorial 6.2 · Slow-wave structure cold test: corrugated and glide-symmetric waveguides](tutorials/06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb) | Field-matching dispersion, space harmonics, Pierce interaction impedance | 🔵 |
-| — | Diffraction gratings (revisiting Tutorial 3.3 with periodic boundaries), photonic crystals, metasurfaces | Floquet orders, band structure, RCWA | 🗺️ |
-
-**Chapter 7 · Light Sources** (`feature/emitter-tutorials`, [`tutorials/07_light_sources/`](tutorials/07_light_sources/README.md))
-
-| # | Tutorial | Reproduces / validates against | Status |
-|---|---|---|---|
-| 7.1 | [Tutorial 7.1 · Planar deep-UV LED: escape cone, total internal reflection, TE vs TM dipoles](tutorials/07_light_sources/07-01_planar_led/planar_led.ipynb) | Ryu *et al.* 2014 (Fig. 3, Fig. 7); analytic escape cone | 🔵 |
-| 7.2 | [Tutorial 7.2 · Superluminescent diode: residual reflectivity of a tilted facet](tutorials/07_light_sources/07-02_sled_tilted_facet/sled_tilted_facet.ipynb) | Marcuse 1989; exact slab overlap | 🔵 |
-| 7.3 | [Tutorial 7.3 · MicroLED with a graded-index micro-horn collimator](tutorials/07_light_sources/07-03_microled_horn/microled_horn.ipynb) | Luce *et al.* 2026 | 🔵 |
-| 7.4 | [Tutorial 7.4 · RGB microLED array: incoherent averaging, collimation and crosstalk](tutorials/07_light_sources/07-04_rgb_microled_array/rgb_microled_array.ipynb) | Chen *et al.* 2025 | 🔵 |
-| 7.5 | [Tutorial 7.5 · Partially coherent light through a double slit](tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb) | van Cittert–Zernike, Gaussian Schell-model, temporal coherence | 🔵 |
-| 7.6 | [Tutorial 7.6 · Thin-film LED emission by Lorentz reciprocity](tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb) | Direct dipole sum (0.07 %), transfer matrix | 🔵 |
-
-**Chapter 8 · Vacuum Electronics** (`feature/vacuum-electronics`, [`tutorials/08_vacuum_electronics/`](tutorials/08_vacuum_electronics/README.md))
-
-| # | Tutorial | Validates against | Status |
-|---|---|---|---|
-| 8.1 | [Tutorial 8.1 · Space-charge waves on a drifting electron beam](tutorials/08_vacuum_electronics/08-01_space_charge_waves/space_charge_waves.ipynb) | Fast/slow space-charge waves, plasma-frequency reduction, Chu kinetic power | 🔵 |
-| 8.2 | [Tutorial 8.2 · Cherenkov Radiation and Vavilov–Cherenkov Cone](tutorials/08_vacuum_electronics/08-02_cherenkov_radiation/cherenkov_radiation.ipynb) | Tamm–Frank cone angle $\cos\theta_C = 1/(\beta n)$ and Tamm–Frank spectrum | 🔵 |
-| 8.3–8.4 | Laser acceleration in vacuum (after Zolotorev); Smith–Purcell radiation and the DLA grating | Lawson–Woodward theorem; Smith–Purcell dispersion | 🚧 |
-| — | Folded-waveguide slow-wave structure (3D, W-band to 220 GHz) | Published dispersion and impedance | 🗺️ |
-| — | Helix slow-wave structure (3D) | Sheath-helix model | 🗺️ |
-| — | Metamaterial slow-wave structures (e.g. CSRR-loaded waveguide, reversed-Cherenkov BWO) | Published dispersion, effective-medium model | 🗺️ |
-| — | Frequency-selective-surface slow-wave structures | Surface-impedance and equivalent-circuit models | 🗺️ |
-| — | Traveling-wave tube small-signal gain (sheet beam) | Pierce three-wave theory | 🗺️ |
-| — | Backward-wave oscillator: start oscillation and voltage tuning | Johnson's start-oscillation condition | 🗺️ |
-| — | Klystron cavities and two-cavity gain | R/Q and Q from the wake tools; ballistic bunching theory | 🗺️ |
-| — | Microwave amplifier circuit: microstrip matching networks with transistor S-parameters | Circuit theory, stability and gain circles | 🗺️ |
-
-**Chapter 9 · Inverse Design** ([`tutorials/09_inverse_design/`](tutorials/09_inverse_design/README.md))
-
-| # | Tutorial | Validates against | Status |
-|---|---|---|---|
-| 9.1–9.4 | Adjoint gradients, `invrs-gym` waveguide bend, power splitter and mode converter, metalens | Dot-product test, finite differences, `invrs-gym` evaluator | 🚧 |
+## More examples and studies
 
 Large-signal beam physics (saturation, efficiency) needs a particle-in-cell beam, which is on the roadmap but not built.
 

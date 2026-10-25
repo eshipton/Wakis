@@ -1,0 +1,20 @@
+{
+  "task": "resolved_wire_vs_subcell_mesh",
+  "l_dip_m": 0.14390037983999998,
+  "a_wire_mm": 1.8,
+  "w_half_mm": 1.5254237288135593,
+  "dx_core_res_mm": 0.7627118644067796,
+  "dx_core_sub_mm": 8.464728225882352,
+  "dx_unif_mm": 11.069259987692305,
+  "rel_diff_res_vs_sub": 0.0956589376222882,
+  "cells_res": 34596,
+  "cells_sub": 31958,
+  "cells_unif": 49284,
+  "cells_unif_res_est": 5832000,
+  "steps_res": 4679,
+  "steps_sub": 516,
+  "steps_unif": 395,
+  "wall_res_s": 19.03194966800038,
+  "wall_sub_s": 1.9005002180001611,
+  "wall_unif_s": 2.0951732890007406
+}

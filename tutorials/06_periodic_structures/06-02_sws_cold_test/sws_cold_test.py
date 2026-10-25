@@ -82,6 +82,49 @@
 #   $t = 0.10\;\text{mm}$, pillar-beam clearance $g = 0.10\;\text{mm}$ around a
 #   $0.55\;\text{mm} \times 0.10\;\text{mm}$ sheet beam at $V_0 = 5.2\;\text{kV}$ ($u_0 = 0.1416\,c$).
 #
+# ### Simulation Setup Schematic & Graded Non-Uniform Meshing (`00_setup_schematic.png`)
+#
+# ![Setup schematic: corrugated SWS unit cell, 3D staggered-pillar cut planes, and graded mesh zoom](figures/00_setup_schematic.png)
+#
+# The setup schematic (`figures/00_setup_schematic.png`, generated from live `SolverFIT3D`,
+# `GridFIT3D`, `CurrentSource`, and `ResonanceMonitor` objects via `wakis.schematic` and styled
+# with `wakis.figstyle`) summarizes the cold-test computational domain, boundary conditions,
+# excitation, and mesh refinement across three panels:
+#
+# - **Panel (a) — Double-Corrugated Grating Unit Cell ($\beta_0 d$ Bloch)**: Shows a single axial
+#   period $z \in [0, d = 500\;\mu\text{m}]$ and full waveguide height $y \in [-400, +400]\;\mu\text{m}$
+#   ($b_{\text{tot}} = 800\;\mu\text{m}$). The axial faces $z = 0, d$ enforce complex Floquet–Bloch
+#   periodicity $\mathbf{E}(x, y, d) = \mathbf{E}(x, y, 0)\,e^{-j\beta_0 d}$ (`bc_z = 'bloch'`),
+#   the top and bottom housing walls $y = \pm 400\;\mu\text{m}$ are PEC (`bc_y = 'pec'`), and the
+#   lateral faces $\pm x$ are periodic in 2D (`bc_x = 'periodic'`) or PEC at $x = 0, a = 850\;\mu\text{m}$
+#   in 3D (`Task 9`). Two staggered PEC vanes of axial tooth width $l = 100\;\mu\text{m}$ and depth
+#   $h = 300\;\mu\text{m}$ protrude from the bottom wall at $z_1 = d/4 = 125\;\mu\text{m}$ and from
+#   the top wall at $z_2 = 3d/4 = 375\;\mu\text{m}$ ($\delta z = d/2$ glide symmetry), leaving a
+#   $2a = 200\;\mu\text{m}$ beam tunnel ($y \in [-100, +100]\;\mu\text{m}$) that encloses the
+#   $20\;\text{kV}$ ($u_0 = 0.2719\,c$, $H_b = 150\;\mu\text{m}$) sheet electron beam. An off-axis
+#   dipole source $(J_z, J_y)$ at $(z, y) = (210, 25)\;\mu\text{m}$ (`GaussianSource`, $f_0 = 120\;\text{GHz}$)
+#   excites both even and odd Bloch branches, while an on-axis `ResonanceMonitor` (`harminv`) probe
+#   at $(z, y) = (70, 0)\;\mu\text{m}$ and a post-pulse volume `HannDFTMonitor` extract the eigenfrequencies
+#   $f_m(\beta_0)$ and complex Floquet space harmonics $\mathbf{E}_n(x, y)$.
+# - **Panel (b) — 3D Isometric View of the V-Band Staggered-Pillar SWS & Cut Planes**: Shows the
+#   3D rectangular PEC housing $a \times b \times d = 1.40 \times 0.80 \times 1.05\;\text{mm}^3$ of
+#   Marosi, Zuboraj & Capolino (`arXiv:2505.22927`, 2025 [1]) with Bloch boundaries at $z = 0, d$
+#   (phase advance $\beta_0 d$) and PEC walls at $x = \pm a/2$, $y = \pm b/2$. The $-x$ PEC pillar
+#   pair at $z_1 = d/4$ (blue) and the glide-shifted $+x$ PEC pillar pair at $z_2 = 3d/4$ (orange,
+#   lateral span $w = 1.08\;\text{mm}$, axial length $l = 0.27\;\text{mm}$, thickness $t = 0.10\;\text{mm}$)
+#   surround the $5.2\;\text{kV}$ ($u_0 = 0.1416\,c$, $0.55 \times 0.10\;\text{mm}^2$) sheet beam
+#   (red). The two diagnostic cut planes $x = 0$ (green, longitudinal $E_z(0, y, z)$ slice shown in
+#   Fig. 13b) and $y = 0$ (blue, horizontal beam midplane) intersect along the beam axis $(x, y) = (0, 0)$.
+# - **Panel (c) — Graded Non-Uniform Mesh Zoom at the Vane Tip & Slot Mouth**: Zooms into the bottom
+#   PEC vane tooth ($z \in [75, 175]\;\mu\text{m}$, $y \in [-400, -100]\;\mu\text{m}$) and tunnel
+#   aperture $y = -100\;\mu\text{m}$ for `Graded L2` (`build_2d_grating_graded_grid`, $n_{\text{feat}} = 8$).
+#   Fine cells $\Delta y_{\min} = \Delta z_{\min} = 12.5\;\mu\text{m}$ ($8$ cells across the $100\;\mu\text{m}$
+#   vane tooth and across the vane-tip / slot-mouth singular corner) grade smoothly to
+#   $\Delta y_{\max} = 30.0\;\mu\text{m}$ in the back of the $300\;\mu\text{m}$ slot and
+#   $\Delta z_{\max} = 22.0\;\mu\text{m}$ in the open groove ($\ge 45\;\text{cells}/\lambda$ everywhere at
+#   $f_{\max} = 235\;\text{GHz}$), reducing the 2D unit-cell mesh from $2{,}560$ cells (`Uniform L2`) to
+#   $1{,}584$ cells (`Graded L2`, $1.62\times$ fewer cells).
+#
 # ---
 #
 # ## 1. Multimodal Field-Matching Theory & Glide-Symmetry Stopband Closure
@@ -1162,38 +1205,48 @@ def run_single_task(task: dict[str, Any], out_dir: Path = DATA_DIR) -> dict[str,
 # %% [markdown]
 # ## 3. Diagnostic & Validation Figure Generation
 #
-# `generate_all_figures` reads `data/task_*.npz` and renders 15 figures into `figures/`:
+# `generate_all_figures` reads `data/task_*.npz` and `data/graded_mesh_comparison.json` and renders 16 figures into `figures/`:
 #
+# 0. `00_setup_schematic.png`: Three-panel setup schematic built from live solver objects via
+#    `wakis.schematic`, showing (a) the 2D/3D corrugated grating unit cell with Bloch phase advance
+#    $\beta_0 d$, PEC walls/vanes, $20\;\text{kV}$ sheet beam, dipole excitation, and harminv/DFT
+#    monitors; (b) a 3D isometric cut-plane view ($x=0$, $y=0$) of the V-band staggered-pillar SWS;
+#    and (c) a graded non-uniform vs. uniform mesh zoom at the vane tip and slot mouth.
 # 1. `01_sws_2d_and_3d_geometry.png`: 2D mirror vs. glide double-corrugated grating and
 #    3D V-band staggered-pillar unit cell schematic with verified dimensions.
-# 2. `02_mesh_zoom_conformal_vs_staircase.png`: Zoom into the $0.10\;\text{mm}$ vane tip
-#    and beam tunnel showing Dey–Mittra cut-cell edge lengths $L_y, L_z$ vs. staircase PEC.
+# 2. `02_mesh_zoom_conformal_vs_staircase.png`: Three-panel mesh comparison showing (a) uniform
+#    staircase PEC ($\Delta = 20\;\mu\text{m}$), (b) uniform Dey–Mittra conformal PEC
+#    ($\Delta = 20\;\mu\text{m}$), and (c) graded non-uniform PEC ($\Delta_{\min} = 12.5\;\mu\text{m}$
+#    at the vane teeth/tips grading to $30\;\mu\text{m}$ in the slot depth, $1{,}584$ vs. $2{,}560$ cells).
 # 3. `03_mcvey_harmonic_convergence.png`: Convergence of the McVey multimodal field-matching
 #    dispersion in the number of space harmonics $N_{\text{harm}}$ and slot modes $M_{\text{slot}}$.
 # 4. `04_2d_brillouin_mirror_vs_glide.png`: 2D Brillouin diagram $f(\beta_0 d/\pi)$ comparing
-#    Wakis complex-field FIT (`L2`, $n_{\text{feat}} = 8$) against McVey theory, showing the mirror
+#    uniform (`Uniform L2`, $2{,}560$ cells) and graded non-uniform (`Graded L2`, $1{,}584$ cells)
+#    Wakis complex-field FIT against McVey theory, showing the mirror
 #    stopband at $\beta_0 d = \pi$ ($140.66\text{--}195.89\;\text{GHz}$ in Wakis FIT vs.
 #    $140.29\text{--}195.88\;\text{GHz}$ in McVey theory) and its exact closure under glide symmetry
 #    ($165.46\;\text{GHz}$ in Wakis FIT vs. $165.28\;\text{GHz}$ in McVey theory), plus the $20\;\text{kV}$
 #    electron beam line and synchronous crossings.
 # 5. `05_group_vs_energy_velocity.png`: Group velocity $v_g = \mathrm{d}\omega/\mathrm{d}\beta_0$
 #    from the dispersion slope vs. energy velocity $v_E = P_z d / U_{\text{cell}}$ from the
-#    Bloch `DFTMonitor` fields, plus axial constancy of the Poynting flux $P_z(z)$.
+#    uniform and graded Bloch `DFTMonitor` fields, plus axial constancy of the Poynting flux $P_z(z)$.
 # 6. `06_space_harmonic_spectrum_and_profiles.png`: Space-harmonic decomposition $|E_{zn}(y)|$
 #    showing why the $n = -1$ backward harmonic has a $\cosh(\tau_{-1} y)$ profile with strong
 #    on-axis field while $n = 0$ has a $\sinh(\tau_0 y)$ node on axis in the glide-symmetric grating.
 # 7. `07_pierce_impedance_2d_vs_freq.png`: On-axis and beam-averaged Pierce interaction
-#    impedance $K_n(f)$ across the passband for the $n = -1$ backward wave and $n = 0, +1$ harmonics.
+#    impedance $K_n(f)$ across the passband for the $n = -1$ backward wave and $n = 0, +1$ harmonics,
+#    comparing uniform (`Uniform L2`) and graded non-uniform (`Graded L2`) meshes against McVey theory.
 # 8. `08_bloch_eigenmode_ez_fields.png`: 2D complex Bloch eigenmode field maps $\operatorname{Re}\{E_z(y, z)\}$
-#    comparing mirror-symmetric and glide-symmetric gratings near mid-band.
+#    with `schematic.overlay_geometry` PEC vane and boundary overlays comparing mirror-symmetric and
+#    glide-symmetric gratings near mid-band.
 # 9. `09_bloch_mode_animation.gif`: Time-domain animation of the complex Bloch wave
-#    $\operatorname{Re}\{E_z(y, z, t)\}$ propagating across one RF cycle.
-# 10. `10_resolution_convergence_pec_vs_staircase.png`: Log–log convergence of $f_1(\beta_0)$
-#     and Pierce impedance $K_{-1}(0)$ vs. `cells_across_feature` (`n_feat` = 4, 8, 12, 16),
-#     contrasting monotonic $\mathcal{O}(\Delta^2)$ Dey–Mittra conformal PEC with $\mathcal{O}(\Delta^1)$
-#     staircasing.
+#    $\operatorname{Re}\{E_z(y, z, t)\}$ with geometry overlays propagating across one RF cycle.
+# 10. `10_resolution_convergence_pec_vs_staircase.png`: Three-panel log–log convergence of (a)
+#     $f_1(\beta_0)$ and (b) Pierce impedance $K_{-1}(0)$ vs. `cells_across_feature` (`n_feat` = 4, 8, 12, 16),
+#     plus (c) the equal-cost / equal-accuracy Pareto curve vs. total 2D grid cells $N_y \times N_z$
+#     comparing graded non-uniform conformal PEC, uniform conformal PEC, and uniform staircase PEC.
 # 11. `11_under_resolved_warning_demo.png`: Direct comparison of under-resolved (`n_feat` = 2,
-#     $\Delta = 50\;\mu\text{m}$) vs. converged (`n_feat` = 12) dispersion and impedance.
+#     $\Delta = 50\;\mu\text{m}$) vs. uniform and graded converged (`n_feat` = 8, 12) dispersion and impedance.
 # 12. `12_2d_vs_3d_waveguide_cutoff_mapping.png`: Validation of the exact 2D-to-3D $\text{LSE}_{10}$
 #     mapping $f_{\text{3D}}(\beta_0) = \sqrt{f_{\text{2D}}^2(\beta_0) + (c/2a)^2}$ ($a = 0.85\;\text{mm}$,
 #     $f_c = 176.35\;\text{GHz}$) against 3D Wakis FIT (`Task 9`, $n_{\text{feat}} = 8$) and 3D McVey
@@ -1255,10 +1308,15 @@ def _load_tasks(data_dir: Path) -> dict[str, dict[str, Any]]:
 
 
 def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> list[Path]:
-    """Render all 15 diagnostic and physics validation figures from saved `.npz` data."""
+    """Render the setup schematic and all 15 diagnostic and physics validation figures from saved data."""
+    from wakis import figstyle, schematic
+
+    figstyle.apply_style()
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
     tasks = _load_tasks(data_dir)
+    graded_study = h.load_or_run_sws_graded_mesh_study(data_dir)
+    graded_sweep = graded_study.get("sweep_L2", {})
     saved: list[Path] = []
 
     grating_spec = h.GratingSWSSpec()
@@ -1266,12 +1324,22 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     u0_20kv, _ = h.relativistic_beam_velocity(grating_spec.beam_voltage_v)
     u0_5k2v, _ = h.relativistic_beam_velocity(marosi_spec.beam_voltage_v)
 
+    # ------------------------------------------------------------------
+    # Fig 00: Setup Schematic (unit cell, 3D cut planes, graded mesh zoom)
+    # ------------------------------------------------------------------
+    p00 = h.plot_sws_setup_schematic(
+        fig_dir / "00_setup_schematic.png",
+        grating_spec=grating_spec,
+        marosi_spec=marosi_spec,
+    )
+    saved.append(p00)
+
     primary_2d = tasks.get("2d_conformal_L2", tasks.get("2d_conformal_L1"))
 
     # ------------------------------------------------------------------
     # Fig 01: 2D Mirror/Glide Grating & 3D Marosi Staggered-Pillar Geometry
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(13.2, 3.9), dpi=150)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.5, height=4.1)
     d_um = grating_spec.period_m * 1e6
     g_um = grating_spec.tunnel_half_height_m * 1e6
     hb_um = grating_spec.beam_half_thickness_m * 1e6
@@ -1285,20 +1353,33 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             (axes[1], True, "(b) 2D Glide Grating ($\\delta z = d/2$)"),
         ]
     ):
-        ax.set_facecolor("#f7f9fc")
-        ax.axhspan(-g_um, g_um, color="#ffecb3", alpha=0.55, label="Beam tunnel ($2a = 200\\;\\mu$m)")
-        ax.axhspan(-hb_um, hb_um, color="#ef5350", alpha=0.25, label="Sheet beam ($H_b = 150\\;\\mu$m, $V_0 = 20$ kV)")
+        ax.set_facecolor("#f8fafc")
+        ax.axhspan(-g_um, g_um, color="#fef3c7", alpha=0.58, label="Beam tunnel ($2a = 200\\;\\mu$m)")
+        ax.axhspan(-hb_um, hb_um, color="#fca5a5", alpha=0.38, label="Sheet beam ($H_b = 150\\;\\mu$m, $V_0 = 20$ kV)")
         for cell_k in range(2):
             z_off = cell_k * d_um
             z_b = z_off + 0.25 * d_um - 0.5 * l_um
             z_t = z_off + (0.75 if is_glide else 0.25) * d_um - 0.5 * l_um
             ax.add_patch(
-                plt.Rectangle((z_b, -0.5 * b_um), l_um, h_um, color="#37474f", ec="k", lw=1.0)
+                plt.Rectangle((z_b, -0.5 * b_um), l_um, h_um, color="#334155", ec="#0f172a", lw=1.1)
             )
             ax.add_patch(
-                plt.Rectangle((z_t, g_um), l_um, h_um, color="#37474f", ec="k", lw=1.0)
+                plt.Rectangle((z_t, g_um), l_um, h_um, color="#334155", ec="#0f172a", lw=1.1)
             )
-        ax.axvline(d_um, color="#1e88e5", ls="--", lw=1.2, label="Unit cell period $d = 500\\;\\mu$m")
+        ax.axvline(d_um, color=figstyle.PALETTE[0], ls="--", lw=1.3, label="Bloch period $d = 500\\;\\mu$m")
+        ax.axhline(-0.5 * b_um, color="#0f172a", lw=2.0)
+        ax.axhline(+0.5 * b_um, color="#0f172a", lw=2.0)
+        ax.text(
+            0.03,
+            0.95,
+            r"Bloch $z=0,d$ ($\beta_0 d$) | PEC $y=\pm 400\;\mu\mathrm{m}$",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=6.5,
+            color="#0f172a",
+            bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.80", "alpha": 0.90},
+        )
         ax.set(
             xlim=(0, 2 * d_um),
             ylim=(-0.5 * b_um, 0.5 * b_um),
@@ -1307,26 +1388,26 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             title=title_str,
         )
         if idx_ax == 0:
-            ax.legend(loc="upper right", fontsize=7.5)
+            ax.legend(loc="lower right", fontsize=7.0)
 
     # Panel (c): 3D Marosi staggered-pillar SWS (x-z top view and y-z cross-section inset)
     ax2 = axes[2]
-    ax2.set_facecolor("#f7f9fc")
+    ax2.set_facecolor("#f8fafc")
     a_mm = marosi_spec.waveguide_width_m * 1e3
     d_m_mm = marosi_spec.period_m * 1e3
     w_mm = marosi_spec.pillar_width_m * 1e3
     l_m_mm = marosi_spec.pillar_length_m * 1e3
     wb_mm = marosi_spec.beam_width_m * 1e3
-    ax2.axhspan(-0.5 * wb_mm, 0.5 * wb_mm, color="#ef5350", alpha=0.22, label="Sheet beam ($w_b=0.55$ mm)")
+    ax2.axhspan(-0.5 * wb_mm, 0.5 * wb_mm, color="#fca5a5", alpha=0.38, label="Sheet beam ($w_b=0.55$ mm, $5.2$ kV)")
     ax2.add_patch(
         plt.Rectangle(
             (0.25 * d_m_mm - 0.5 * l_m_mm, -0.5 * a_mm),
             l_m_mm,
             w_mm,
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             alpha=0.85,
-            ec="k",
-            label="$-x$ pillar pair ($z_1 = d/4$)",
+            ec="#0f172a",
+            label="$-x$ PEC pillar pair ($z_1 = d/4$)",
         )
     )
     ax2.add_patch(
@@ -1334,11 +1415,23 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             (0.75 * d_m_mm - 0.5 * l_m_mm, 0.5 * a_mm - w_mm),
             l_m_mm,
             w_mm,
-            color="#d95f02",
+            color=figstyle.PALETTE[1],
             alpha=0.85,
-            ec="k",
-            label="$+x$ pillar pair ($z_2 = 3d/4$)",
+            ec="#0f172a",
+            label="$+x$ PEC pillar pair ($z_2 = 3d/4$)",
         )
+    )
+    ax2.axhline(0.0, color=figstyle.PALETTE[2], ls="-.", lw=1.2, label="Cut plane $x=0$ (longitudinal slice)")
+    ax2.text(
+        0.03,
+        0.95,
+        r"Bloch $z=0,d$ ($d=1.05\;\mathrm{mm}$) | PEC $x=\pm 0.70\;\mathrm{mm}$",
+        transform=ax2.transAxes,
+        ha="left",
+        va="top",
+        fontsize=6.5,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.80", "alpha": 0.90},
     )
     ax2.set(
         xlim=(0, d_m_mm),
@@ -1347,23 +1440,19 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylabel="Transverse coordinate $x$ [mm]",
         title="(c) 3D Marosi V-Band Pillar SWS ($x$–$z$ view)",
     )
-    ax2.legend(loc="lower right", fontsize=7.2)
-    fig.tight_layout()
+    ax2.legend(loc="lower right", fontsize=6.8)
     p01 = fig_dir / "01_sws_2d_and_3d_geometry.png"
-    fig.savefig(p01, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, p01)
     saved.append(p01)
 
     # ------------------------------------------------------------------
-    # Fig 02: Mesh Zoom — Dey-Mittra Conformal PEC vs Staircase PEC
+    # Fig 02: Mesh Zoom — Staircase vs Uniform Conformal vs Graded Non-Uniform Conformal
     # ------------------------------------------------------------------
-    # Use n_feat=5 (dy = dz = 20 um) so vertical vane faces z = 75, 175, 325, 425 um
-    # cut cells by 0.5*Delta across the y = +/-100 um tunnel aperture,
-    # contrasting fractional Dey-Mittra conformal filling vs staircase snapping.
     grid_c, _ = h.build_2d_grating_grid(grating_spec, n_feat=5, glide_symmetric=True, conformal="pec")
     grid_s, _ = h.build_2d_grating_grid(grating_spec, n_feat=5, glide_symmetric=True, conformal=False)
-    s_c = h.SolverFIT3D(
-        grid_c, use_stl=True, bc_low=["periodic", "pec", "pec"], bc_high=["periodic", "pec", "pec"], verbose=0
+    grid_grad, meta_grad = h.build_2d_grating_graded_grid(
+        grating_spec, n_feat=8, glide_symmetric=True, conformal="pec"
     )
     s_s = h.SolverFIT3D(
         grid_s, use_stl=True, bc_low=["periodic", "pec", "pec"], bc_high=["periodic", "pec", "pec"], verbose=0
@@ -1372,7 +1461,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     y_edges_um = np.asarray(grid_c.y[: ny_c + 1]) * 1e6
     z_edges_um = np.asarray(grid_c.z[: nz_c + 1]) * 1e6
 
-    # Compute effective vacuum cell fraction in each (y, z) cell and compare with solver PEC mask
     vac_stair = np.clip(
         0.5
         * (
@@ -1382,48 +1470,70 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         0.0,
         1.0,
     )
-    # Exact geometric subcell area fraction (Dey-Mittra cut-cell aperture fraction)
-    yy_lo, yy_hi = y_edges_um[:-1, None], y_edges_um[1:, None]
-    zz_lo, zz_hi = z_edges_um[None, :-1], z_edges_um[None, 1:]
-    dy_um = yy_hi - yy_lo
-    dz_um = zz_hi - zz_lo
-    # Bottom vane: z in [75, 175], y in [-400, -100]; Top vane: z in [325, 425], y in [100, 400]
-    ov_bot_z = np.clip(np.minimum(zz_hi, 175.0) - np.maximum(zz_lo, 75.0), 0.0, dz_um) / dz_um
-    ov_bot_y = np.clip(np.minimum(yy_hi, -100.0) - np.maximum(yy_lo, -400.0), 0.0, dy_um) / dy_um
-    ov_top_z = np.clip(np.minimum(zz_hi, 425.0) - np.maximum(zz_lo, 325.0), 0.0, dz_um) / dz_um
-    ov_top_y = np.clip(np.minimum(yy_hi, 400.0) - np.maximum(yy_lo, 100.0), 0.0, dy_um) / dy_um
-    vac_conf = 1.0 - np.clip(ov_bot_z * ov_bot_y + ov_top_z * ov_top_y, 0.0, 1.0)
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150, sharey=True)
-    for ax, arr, ttl in [
-        (ax0, vac_stair, "(a) Staircase PEC (`conformal=False`, $\\Delta = 20\\;\\mu$m)"),
-        (ax1, vac_conf, "(b) Dey–Mittra Conformal PEC (`conformal='pec'`, $\\Delta = 20\\;\\mu$m)"),
+    def _compute_cutcell_fraction(y_ed_um: np.ndarray, z_ed_um: np.ndarray) -> np.ndarray:
+        yy_lo, yy_hi = y_ed_um[:-1, None], y_ed_um[1:, None]
+        zz_lo, zz_hi = z_ed_um[None, :-1], z_ed_um[None, 1:]
+        dy_u = yy_hi - yy_lo
+        dz_u = zz_hi - zz_lo
+        ov_bot_z = np.clip(np.minimum(zz_hi, 175.0) - np.maximum(zz_lo, 75.0), 0.0, dz_u) / dz_u
+        ov_bot_y = np.clip(np.minimum(yy_hi, -100.0) - np.maximum(yy_lo, -400.0), 0.0, dy_u) / dy_u
+        ov_top_z = np.clip(np.minimum(zz_hi, 425.0) - np.maximum(zz_lo, 325.0), 0.0, dz_u) / dz_u
+        ov_top_y = np.clip(np.minimum(yy_hi, 400.0) - np.maximum(yy_lo, 100.0), 0.0, dy_u) / dy_u
+        return 1.0 - np.clip(ov_bot_z * ov_bot_y + ov_top_z * ov_top_y, 0.0, 1.0)
+
+    vac_conf = _compute_cutcell_fraction(y_edges_um, z_edges_um)
+    ny_g, nz_g = max(int(grid_grad.Ny) - 1, 1), max(int(grid_grad.Nz) - 1, 1)
+    y_grad_um = np.asarray(grid_grad.y[: ny_g + 1]) * 1e6
+    z_grad_um = np.asarray(grid_grad.z[: nz_g + 1]) * 1e6
+    vac_grad = _compute_cutcell_fraction(y_grad_um, z_grad_um)
+
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=13.8, height=4.2, sharey=True)
+    for ax, z_ed, y_ed, arr, ttl in [
+        (ax0, z_edges_um, y_edges_um, vac_stair, "(a) Staircase PEC ($\\Delta = 20\\;\\mu$m)"),
+        (ax1, z_edges_um, y_edges_um, vac_conf, "(b) Uniform Conformal ($\\Delta = 20\\;\\mu$m)"),
+        (
+            ax2,
+            z_grad_um,
+            y_grad_um,
+            vac_grad,
+            f"(c) Graded PEC ($12.5\\to 30\\;\\mu$m, {meta_grad['total_cells']} cells)",
+        ),
     ]:
         im = ax.pcolormesh(
-            z_edges_um, y_edges_um, arr, cmap="viridis", vmin=0.0, vmax=1.0, edgecolors="0.72", lw=0.35
-        )
-        # Overlay exact analytical vane outlines
-        ax.add_patch(
-            plt.Rectangle((75.0, -400.0), 100.0, 300.0, fill=False, ec="#ff5252", lw=1.8, ls="--", label="Exact PEC vane boundary")
+            z_ed, y_ed, arr, cmap="viridis", vmin=0.0, vmax=1.0, edgecolors="0.72", lw=0.35
         )
         ax.add_patch(
-            plt.Rectangle((325.0, 100.0), 100.0, 300.0, fill=False, ec="#ff5252", lw=1.8, ls="--")
+            plt.Rectangle((75.0, -400.0), 100.0, 300.0, fill=False, ec="#ff5252", lw=1.7, ls="--", label="Exact PEC vane boundary")
+        )
+        ax.add_patch(
+            plt.Rectangle((325.0, 100.0), 100.0, 300.0, fill=False, ec="#ff5252", lw=1.7, ls="--")
         )
         ax.axhline(-100.0, color="#ffca28", ls=":", lw=1.2, label="Tunnel aperture $y = \\pm 100\\;\\mu$m")
         ax.axhline(100.0, color="#ffca28", ls=":", lw=1.2)
         ax.set(
             xlim=(0.0, 500.0),
-            ylim=(-200.0, 200.0),
+            ylim=(-240.0, 240.0),
             xlabel="Axial coordinate $z$ [$\\mu$m]",
             title=ttl,
         )
-        fig.colorbar(im, ax=ax, label="Normalized vacuum cell aperture $L_{\\mathrm{eff}} / \\Delta$")
+    fig.colorbar(im, ax=ax2, label="Normalized vacuum cell aperture $L_{\\mathrm{eff}} / \\Delta$")
     ax0.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
-    ax0.legend(loc="lower right", fontsize=7.6)
-    fig.tight_layout()
+    ax0.legend(loc="lower right", fontsize=7.0)
+    ax2.text(
+        0.97,
+        0.05,
+        r"$8\;\mathrm{cells}/100\;\mu\mathrm{m}$ tooth" + "\n" + r"$1.62\times$ fewer cells than uniform L2",
+        transform=ax2.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=6.4,
+        color="#0f172a",
+        bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "0.75", "alpha": 0.92},
+    )
     p02 = fig_dir / "02_mesh_zoom_conformal_vs_staircase.png"
-    fig.savefig(p02, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, p02)
     saved.append(p02)
 
     # ------------------------------------------------------------------
@@ -1442,8 +1552,8 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ms = ca["m_slot_values"]
         f_mat = ca["f_fundamental_ghz"]
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-    colors_m = ["#7570b3", "#d95f02", "#2b5c8f", "#1b9e77"]
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.1)
+    colors_m = [figstyle.PALETTE[4], figstyle.PALETTE[1], figstyle.PALETTE[0], figstyle.PALETTE[2]]
     for im_idx, m_val in enumerate(ms):
         c_col = colors_m[im_idx % len(colors_m)]
         ax0.plot(
@@ -1479,7 +1589,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylabel="Fundamental eigenfrequency $f_1(\\beta_0 d = 0.5\\pi)$ [GHz]",
         title="(a) McVey dispersion vs $N_{\\mathrm{harm}}$ & $M_{\\mathrm{slot}}\\to\\infty$ limit",
     )
-    ax0.grid(True, ls=":", alpha=0.45)
     ax0.legend(loc="lower right", fontsize=7.5)
 
     m_grid = mcvey_extrap["m_slot_values"].astype(float)
@@ -1493,7 +1602,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         m_grid,
         err_k_m,
         "o",
-        color="#d95f02",
+        color=figstyle.PALETTE[1],
         ms=5.5,
         label=f"$|K_{{-1}}(M) - K_{{-1,\\infty}}| / K_{{-1,\\infty}}$ ($K_{{-1,\\infty}}={mcvey_extrap['km1_inf_ohm']:.4f}\\;\\Omega$)",
     )
@@ -1501,7 +1610,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         m_fine,
         fit_k_m,
         "-",
-        color="#d95f02",
+        color=figstyle.PALETTE[1],
         lw=1.8,
         label=f"Fit $C M^{{-p}}$ ($M=10\\dots 32$, $p={mcvey_extrap['km1_p']:.2f}$)",
     )
@@ -1509,7 +1618,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         m_grid,
         err_f_m,
         "s",
-        color="#2b5c8f",
+        color=figstyle.PALETTE[0],
         ms=5.5,
         label=f"$|f_1(M) - f_{{1,\\infty}}| / f_{{1,\\infty}}$ ($f_{{1,\\infty}}={mcvey_extrap['f1_inf_ghz']:.3f}$ GHz)",
     )
@@ -1517,7 +1626,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         m_fine,
         fit_f_m,
         "--",
-        color="#2b5c8f",
+        color=figstyle.PALETTE[0],
         lw=1.8,
         label=f"Fit $C M^{{-p}}$ ($M=10\\dots 32$, $p={mcvey_extrap['f1_p']:.2f}$)",
     )
@@ -1526,32 +1635,51 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ylabel="Relative error $|y(M_{\\mathrm{slot}}) - y_\\infty| / y_\\infty$",
         title="(b) Slot-mode power-law extrapolation $y = y_\\infty + C M_{\\mathrm{slot}}^{-p}$",
     )
-    ax1.grid(True, which="both", ls=":", alpha=0.45)
     ax1.legend(loc="upper right", fontsize=7.2)
-    fig.tight_layout()
     p03 = fig_dir / "03_mcvey_harmonic_convergence.png"
-    fig.savefig(p03, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    figstyle.finish(fig)
+    figstyle.save(fig, p03)
     saved.append(p03)
 
     # ------------------------------------------------------------------
-    # Fig 04: 2D Brillouin Diagram — Mirror Stopband vs Glide Closure + Beam Line
+    # Fig 04: 2D Brillouin Diagram — Mirror vs Glide + Uniform vs Graded Mesh
     # ------------------------------------------------------------------
     if primary_2d is not None:
         bn = primary_2d["bn"]
         bn_f = primary_2d["bn_fine"]
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.3), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
 
         # Panel (a): Reduced Brillouin zone beta_0 d / pi in [0, 1]
-        ax0.plot(bn_f, primary_2d["mcvey_m_low_ghz"], "-", color="#2b5c8f", lw=2.0, label="McVey Mirror (lower/upper)")
-        ax0.plot(bn_f, primary_2d["mcvey_m_high_ghz"], "-", color="#2b5c8f", lw=2.0)
-        ax0.plot(bn_f, primary_2d["mcvey_g_low_ghz"], "--", color="#d95f02", lw=2.0, label="McVey Glide (lower/upper)")
-        ax0.plot(bn_f, primary_2d["mcvey_g_high_ghz"], "--", color="#d95f02", lw=2.0)
+        ax0.plot(bn_f, primary_2d["mcvey_m_low_ghz"], "-", color=figstyle.PALETTE[0], lw=2.0, label="McVey Mirror (lower/upper)")
+        ax0.plot(bn_f, primary_2d["mcvey_m_high_ghz"], "-", color=figstyle.PALETTE[0], lw=2.0)
+        ax0.plot(bn_f, primary_2d["mcvey_g_low_ghz"], "--", color=figstyle.PALETTE[1], lw=2.0, label="McVey Glide (lower/upper)")
+        ax0.plot(bn_f, primary_2d["mcvey_g_high_ghz"], "--", color=figstyle.PALETTE[1], lw=2.0)
 
-        ax0.plot(bn, primary_2d["f_mirror_low_ghz"], "o", color="#2b5c8f", ms=6, label="Wakis FIT Mirror")
-        ax0.plot(bn, primary_2d["f_mirror_high_ghz"], "o", color="#2b5c8f", ms=6)
-        ax0.plot(bn, primary_2d["f_glide_low_ghz"], "s", color="#d95f02", ms=6, label="Wakis FIT Glide")
-        ax0.plot(bn, primary_2d["f_glide_high_ghz"], "s", color="#d95f02", ms=6)
+        ax0.plot(bn, primary_2d["f_mirror_low_ghz"], "o", color=figstyle.PALETTE[0], ms=5.5, label="Uniform L2 Mirror ($2{,}560$ cells)")
+        ax0.plot(bn, primary_2d["f_mirror_high_ghz"], "o", color=figstyle.PALETTE[0], ms=5.5)
+        ax0.plot(bn, primary_2d["f_glide_low_ghz"], "s", color=figstyle.PALETTE[1], ms=5.5, label="Uniform L2 Glide ($2{,}560$ cells)")
+        ax0.plot(bn, primary_2d["f_glide_high_ghz"], "s", color=figstyle.PALETTE[1], ms=5.5)
+        if "bn" in graded_sweep:
+            bn_gr = np.asarray(graded_sweep["bn"], dtype=float)
+            ax0.plot(
+                bn_gr,
+                np.asarray(graded_sweep["f1_ghz"], dtype=float),
+                "D",
+                color=figstyle.PALETTE[2],
+                ms=5.8,
+                mfc="none",
+                mew=1.6,
+                label="Graded L2 Glide ($1{,}584$ cells, $1.62\\times$ fewer)",
+            )
+            ax0.plot(
+                bn_gr,
+                np.asarray(graded_sweep["f2_ghz"], dtype=float),
+                "D",
+                color=figstyle.PALETTE[2],
+                ms=5.8,
+                mfc="none",
+                mew=1.6,
+            )
 
         # Light line f = c beta_0 / (2 pi)
         f_light_ghz = (bn_f * np.pi / grating_spec.period_m) * h.C0 / (2.0 * np.pi) * 1e-9
@@ -1559,7 +1687,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         ax0.axhspan(
             float(primary_2d["f_mirror_low_ghz"][-1]),
             float(primary_2d["f_mirror_high_ghz"][-1]),
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             alpha=0.10,
             label="Mirror stopband at $\\beta_0 d = \\pi$",
         )
@@ -1570,8 +1698,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Frequency $f$ [GHz]",
             title="(a) Reduced zone: mirror stopband vs glide closure",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
-        ax0.legend(loc="lower right", fontsize=7.5)
+        ax0.legend(loc="lower right", fontsize=6.9)
 
         # Panel (b): Extended zone beta_n d / pi in [0, 3] with 20 kV beam line
         bn_ext = np.concatenate([bn_f, 2.0 - bn_f[::-1], 2.0 + bn_f])
@@ -1581,10 +1708,24 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         f_m_ext_low = np.concatenate(
             [primary_2d["mcvey_m_low_ghz"], primary_2d["mcvey_m_low_ghz"][::-1], primary_2d["mcvey_m_low_ghz"]]
         )
-        ax1.plot(bn_ext, f_m_ext_low, "-", color="#2b5c8f", lw=1.9, label="Mirror fundamental")
-        ax1.plot(bn_ext, f_g_ext_low, "--", color="#d95f02", lw=2.0, label="Glide fundamental")
-        ax1.plot(2.0 - bn, primary_2d["f_glide_low_ghz"], "s", color="#d95f02", ms=5.5, label="Wakis FIT ($n=-1$ backward)")
-        ax1.plot(bn, primary_2d["f_glide_low_ghz"], "o", color="#1b9e77", ms=5.5, label="Wakis FIT ($n=0$ forward)")
+        ax1.plot(bn_ext, f_m_ext_low, "-", color=figstyle.PALETTE[0], lw=1.9, label="Mirror fundamental")
+        ax1.plot(bn_ext, f_g_ext_low, "--", color=figstyle.PALETTE[1], lw=2.0, label="Glide fundamental")
+        ax1.plot(2.0 - bn, primary_2d["f_glide_low_ghz"], "s", color=figstyle.PALETTE[1], ms=5.5, label="Uniform L2 ($n=-1$ backward)")
+        ax1.plot(bn, primary_2d["f_glide_low_ghz"], "o", color=figstyle.PALETTE[2], ms=5.5, label="Uniform L2 ($n=0$ forward)")
+        if "bn" in graded_sweep:
+            bn_gr = np.asarray(graded_sweep["bn"], dtype=float)
+            f_gr_lo = np.asarray(graded_sweep["f1_ghz"], dtype=float)
+            ax1.plot(
+                2.0 - bn_gr,
+                f_gr_lo,
+                "D",
+                color="#0f172a",
+                ms=5.8,
+                mfc="none",
+                mew=1.5,
+                label="Graded L2 ($n=-1$ & $n=0$, $1{,}584$ cells)",
+            )
+            ax1.plot(bn_gr, f_gr_lo, "D", color="#0f172a", ms=5.8, mfc="none", mew=1.5)
 
         beta_ext_grid = np.linspace(0.0, 3.0, 200)
         f_beam_20kv = (beta_ext_grid * np.pi / grating_spec.period_m) * u0_20kv / (2.0 * np.pi) * 1e-9
@@ -1596,12 +1737,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Frequency $f$ [GHz]",
             title="(b) Unfolded harmonics & 20 kV synchronous crossings",
         )
-        ax1.grid(True, ls=":", alpha=0.45)
-        ax1.legend(loc="upper left", fontsize=7.5)
-        fig.tight_layout()
+        ax1.legend(loc="upper left", fontsize=7.0)
         p04 = fig_dir / "04_2d_brillouin_mirror_vs_glide.png"
-        fig.savefig(p04, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p04)
         saved.append(p04)
 
     # ------------------------------------------------------------------
@@ -1616,17 +1755,31 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         vg_m_over_c = np.gradient(omega_m, beta_f) / h.C0
         mask_tw = primary_2d["bn"] < 0.99
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-        ax0.plot(bn_f, vg_g_over_c, "-", color="#d95f02", lw=2.1, label="Analytic slope $v_g/c = (1/c)\\mathrm{d}\\omega/\\mathrm{d}\\beta_0$ (Glide)")
-        ax0.plot(bn_f, vg_m_over_c, "--", color="#2b5c8f", lw=1.9, label="Analytic slope $v_g/c$ (Mirror, $v_g(\\pi)=0$)")
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.0)
+        ax0.plot(bn_f, vg_g_over_c, "-", color=figstyle.PALETTE[1], lw=2.1, label="Analytic slope $v_g/c = (1/c)\\mathrm{d}\\omega/\\mathrm{d}\\beta_0$ (Glide)")
+        ax0.plot(bn_f, vg_m_over_c, "--", color=figstyle.PALETTE[0], lw=1.9, label="Analytic slope $v_g/c$ (Mirror, $v_g(\\pi)=0$)")
         ax0.plot(
             primary_2d["bn"][mask_tw],
             primary_2d["v_energy_over_c"][mask_tw],
             "s",
-            color="#1b9e77",
-            ms=6.5,
-            label="Wakis DFT energy velocity $v_E/c = P_z d / (c U_{\\mathrm{cell}})$",
+            color=figstyle.PALETTE[2],
+            ms=6.0,
+            label="Uniform L2 DFT $v_E/c = P_z d / (c U_{\\mathrm{cell}})$",
         )
+        if "bn" in graded_sweep and "v_energy_over_c" in graded_sweep:
+            bn_gr = np.asarray(graded_sweep["bn"], dtype=float)
+            ve_gr = np.asarray(graded_sweep["v_energy_over_c"], dtype=float)
+            m_gr = bn_gr < 0.99
+            ax0.plot(
+                bn_gr[m_gr],
+                ve_gr[m_gr],
+                "D",
+                color="#0f172a",
+                ms=6.0,
+                mfc="none",
+                mew=1.5,
+                label="Graded L2 DFT $v_E/c$ ($1{,}584$ cells)",
+            )
         ax0.set(
             xlim=(0.0, 1.05),
             ylim=(0.0, 0.72),
@@ -1634,26 +1787,23 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Normalized velocity $v / c$",
             title="(a) Group velocity $v_g$ vs energy velocity $v_E = P_z / W$",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
-        ax0.legend(loc="lower left", fontsize=7.8)
+        ax0.legend(loc="lower left", fontsize=7.2)
 
         z_um = primary_2d["z_centers_m"] * 1e6
         pz_z = primary_2d["pz_vs_z_w"]
         pz_norm = pz_z / max(float(np.mean(pz_z)), 1e-30)
-        ax1.plot(z_um, pz_norm, "o-", color="#2b5c8f", lw=1.9, ms=4.5, label="$P_z(z) / \\langle P_z \\rangle$")
-        ax1.axhline(1.0, color="#d95f02", ls="--", lw=1.5, label="Unit-cell mean $\\langle P_z \\rangle$")
+        ax1.plot(z_um, pz_norm, "o-", color=figstyle.PALETTE[0], lw=1.9, ms=4.5, label="$P_z(z) / \\langle P_z \\rangle$")
+        ax1.axhline(1.0, color=figstyle.PALETTE[1], ls="--", lw=1.5, label="Unit-cell mean $\\langle P_z \\rangle$")
         ax1.set(
             ylim=(0.85, 1.15),
             xlabel="Axial position $z$ [$\\mu$m]",
             ylabel="Normalized axial Poynting power $P_z(z) / \\langle P_z \\rangle$",
             title="(b) Axial conservation of Poynting flux across the period",
         )
-        ax1.grid(True, ls=":", alpha=0.45)
-        ax1.legend(loc="upper right", fontsize=8.0)
-        fig.tight_layout()
+        ax1.legend(loc="upper right", fontsize=7.8)
         p05 = fig_dir / "05_group_vs_energy_velocity.png"
-        fig.savefig(p05, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p05)
         saved.append(p05)
 
     # ------------------------------------------------------------------
@@ -1669,8 +1819,8 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         n_idx_prof = primary_2d["n_indices"]
         tunnel_mask = np.abs(y_um) <= 105.0
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-        ax0.bar(n_idx - 0.15, ez_ax_norm, width=0.3, color="#2b5c8f", label="Wakis 2D FIT ($y=0$, Glide)")
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.0)
+        ax0.bar(n_idx - 0.15, ez_ax_norm, width=0.3, color=figstyle.PALETTE[0], label="Wakis 2D FIT ($y=0$, Glide)")
         mc_imp = h.compute_mcvey_analytic_pierce_impedance(
             97.6868e9,
             0.5 * np.pi / grating_spec.period_m,
@@ -1687,7 +1837,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             mc_imp["n_indices"][mask_n6] + 0.15,
             mc_norm,
             width=0.3,
-            color="#d95f02",
+            color=figstyle.PALETTE[1],
             alpha=0.85,
             label="McVey theory ($y=0$, Glide, $N=40, M=6$)",
         )
@@ -1696,15 +1846,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Normalized on-axis amplitude $|E_{zn}(0)| / \\max_n |E_{zn}(0)|$",
             title="(a) On-axis Floquet harmonic spectrum ($\\beta_0 d = 0.5\\pi$)",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
-        ax0.legend(loc="upper right", fontsize=7.8)
+        ax0.legend(loc="upper right", fontsize=7.6)
 
         p_max = max(float(np.max(ez_prof[:, tunnel_mask])), 1e-30)
         for n_show, col, ls_s, lbl in [
-            (-1, "#d95f02", "-", "$n = -1$ ($\\cosh(\\tau_{-1} y)$, backward wave)"),
-            (0, "#2b5c8f", "--", "$n = 0$ ($\\sinh(\\tau_0 y)$, node on axis)"),
-            (1, "#1b9e77", "-.", "$n = +1$ ($\\cosh(\\tau_{+1} y)$, forward wave)"),
-            (-2, "#7570b3", ":", "$n = -2$ ($\\sinh(\\tau_{-2} y)$, node on axis)"),
+            (-1, figstyle.PALETTE[1], "-", "$n = -1$ ($\\cosh(\\tau_{-1} y)$, backward wave)"),
+            (0, figstyle.PALETTE[0], "--", "$n = 0$ ($\\sinh(\\tau_0 y)$, node on axis)"),
+            (1, figstyle.PALETTE[2], "-.", "$n = +1$ ($\\cosh(\\tau_{+1} y)$, forward wave)"),
+            (-2, figstyle.PALETTE[4], ":", "$n = -2$ ($\\sinh(\\tau_{-2} y)$, node on axis)"),
         ]:
             idx_h = int(np.where(n_idx_prof == n_show)[0][0])
             ax1.plot(y_um[tunnel_mask], ez_prof[idx_h, tunnel_mask] / p_max, ls=ls_s, color=col, lw=2.0, label=lbl)
@@ -1714,16 +1863,14 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Normalized harmonic profile $|E_{zn}(y)|$",
             title="(b) Transverse parity alternation of glide harmonics",
         )
-        ax1.grid(True, ls=":", alpha=0.45)
-        ax1.legend(loc="upper center", fontsize=7.5)
-        fig.tight_layout()
+        ax1.legend(loc="upper center", fontsize=7.3)
         p06 = fig_dir / "06_space_harmonic_spectrum_and_profiles.png"
-        fig.savefig(p06, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p06)
         saved.append(p06)
 
     # ------------------------------------------------------------------
-    # Fig 07: 2D Pierce Interaction Impedance K_n vs Frequency
+    # Fig 07: 2D Pierce Interaction Impedance K_n vs Frequency (Uniform vs Graded)
     # ------------------------------------------------------------------
     if primary_2d is not None:
         mask_tw = primary_2d["bn"] < 0.99
@@ -1744,9 +1891,33 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
                 mc_km1_ax_tw.append(float(imp_tw["k_n_axis_ohm"][i_m1_tw]))
                 mc_km1_av_tw.append(float(imp_tw["k_n_beam_avg_ohm"][i_m1_tw]))
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
-        ax0.plot(f_g, primary_2d["km1_axis_ohm"][mask_tw], "o-", color="#d95f02", lw=2.0, ms=6, label="Wakis FIT $K_{-1}(y=0)$ (backward)")
-        ax0.plot(mc_f_tw, mc_km1_ax_tw, "--", color="#8c2d04", lw=1.7, label="McVey $K_{-1}(y=0)$ ($P_{\\mathrm{tunnel}}+P_{\\mathrm{slot}}$, $M=16$)")
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.1)
+        ax0.plot(f_g, primary_2d["km1_axis_ohm"][mask_tw], "o-", color=figstyle.PALETTE[1], lw=2.0, ms=5.5, label="Uniform L2 $K_{-1}(0)$ ($2{,}560$ cells)")
+        if "f1_ghz" in graded_sweep and "km1_axis_ohm" in graded_sweep:
+            bn_gr = np.asarray(graded_sweep["bn"], dtype=float)
+            m_gr = bn_gr < 0.99
+            f_gr = np.asarray(graded_sweep["f1_ghz"], dtype=float)[m_gr]
+            ax0.plot(
+                f_gr,
+                np.asarray(graded_sweep["km1_axis_ohm"], dtype=float)[m_gr],
+                "D",
+                color="#0f172a",
+                ms=6.0,
+                mfc="none",
+                mew=1.6,
+                label="Graded L2 $K_{-1}(0)$ ($1{,}584$ cells)",
+            )
+            ax0.plot(
+                f_gr,
+                np.asarray(graded_sweep["km1_beam_avg_ohm"], dtype=float)[m_gr],
+                "P",
+                color="#0f172a",
+                ms=5.8,
+                mfc="none",
+                mew=1.4,
+                label="Graded L2 $\\langle K_{-1}\\rangle_{\\mathrm{beam}}$ ($1{,}584$ cells)",
+            )
+        ax0.plot(mc_f_tw, mc_km1_ax_tw, "--", color="#8c2d04", lw=1.7, label="McVey $K_{-1}(0)$ ($P_{\\mathrm{tunnel}}+P_{\\mathrm{slot}}$, $M=16$)")
         ax0.plot(
             [mcvey_extrap["f1_inf_ghz"]],
             [mcvey_extrap["km1_inf_ohm"]],
@@ -1755,17 +1926,16 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ms=9.5,
             label=f"McVey $M_{{\\mathrm{{slot}}}}\\to\\infty$ ($K_{{-1,\\infty}}={mcvey_extrap['km1_inf_ohm']:.3f}\\;\\Omega$)",
         )
-        ax0.plot(f_g, primary_2d["km1_beam_avg_ohm"][mask_tw], "s--", color="#1b9e77", lw=1.9, ms=5.5, label="Wakis FIT $\\langle K_{-1} \\rangle_{\\mathrm{beam}}$")
-        ax0.plot(mc_f_tw, mc_km1_av_tw, ":", color="#006d2c", lw=1.7, label="McVey $\\langle K_{-1} \\rangle_{\\mathrm{beam}}$ ($P_{\\mathrm{tunnel}}+P_{\\mathrm{slot}}$, $M=16$)")
-        ax0.plot(f_g, primary_2d["kp1_axis_ohm"][mask_tw], "^-.", color="#2b5c8f", lw=1.8, ms=5.5, label="Wakis FIT $K_{+1}(y=0)$")
-        ax0.plot(f_g, primary_2d["k0_axis_ohm"][mask_tw], "d:", color="#7570b3", lw=1.6, ms=5, label="Wakis FIT $K_0(y=0) \\approx 0$ (odd parity)")
+        ax0.plot(f_g, primary_2d["km1_beam_avg_ohm"][mask_tw], "s--", color=figstyle.PALETTE[2], lw=1.9, ms=5.2, label="Uniform L2 $\\langle K_{-1} \\rangle_{\\mathrm{beam}}$")
+        ax0.plot(mc_f_tw, mc_km1_av_tw, ":", color="#006d2c", lw=1.7, label="McVey $\\langle K_{-1} \\rangle_{\\mathrm{beam}}$ ($M=16$)")
+        ax0.plot(f_g, primary_2d["kp1_axis_ohm"][mask_tw], "^-.", color=figstyle.PALETTE[0], lw=1.8, ms=5.2, label="Uniform L2 $K_{+1}(0)$")
+        ax0.plot(f_g, primary_2d["k0_axis_ohm"][mask_tw], "d:", color=figstyle.PALETTE[4], lw=1.5, ms=4.8, label="Uniform L2 $K_0(0) \\approx 0$ (odd parity)")
         ax0.set(
             xlabel="Frequency $f$ [GHz]",
             ylabel="Pierce interaction impedance $K_n$ [$\\Omega$]",
             title="(a) Glide grating Pierce impedance $K_n(f)$ across passband",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
-        ax0.legend(loc="upper left", fontsize=6.6)
+        ax0.legend(loc="upper left", fontsize=6.1)
 
         mid_2d_pt = tasks.get("2d_conformal_L3", primary_2d)
         n_idx = mid_2d_pt["n_indices"]
@@ -1788,12 +1958,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             m_slot=32,
             include_slot_power=False,
         )
-        ax1.semilogy(n_idx, np.maximum(kn_mid, 1e-4), "o-", color="#d95f02", lw=2.0, ms=6, label="Wakis FIT $K_n(y=0)$ at $\\beta_0 d = 0.5\\pi$")
+        ax1.semilogy(n_idx, np.maximum(kn_mid, 1e-4), "o-", color=figstyle.PALETTE[1], lw=2.0, ms=6, label="Wakis FIT $K_n(y=0)$ at $\\beta_0 d = 0.5\\pi$")
         ax1.semilogy(
             mc_imp_m32["n_indices"][mask_n6_32],
             np.maximum(mc_imp_m32["k_n_axis_ohm"][mask_n6_32], 1e-4),
             "s--",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.8,
             ms=5.5,
             label=f"McVey $K_n(y=0)$ ($P_{{\\mathrm{{tunnel}}}}+P_{{\\mathrm{{slot}}}}$, $K_{{-1,\\infty}}={mcvey_extrap['km1_inf_ohm']:.3f}\\;\\Omega$)",
@@ -1802,7 +1972,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             mc_imp_tun_only["n_indices"][mask_n6_32],
             np.maximum(mc_imp_tun_only["k_n_axis_ohm"][mask_n6_32], 1e-4),
             "^:",
-            color="#7570b3",
+            color=figstyle.PALETTE[4],
             lw=1.5,
             ms=5.0,
             label="McVey tunnel-only ($P_{\\mathrm{slot}}=0$, $K_{-1}=2.96\\;\\Omega$)",
@@ -1812,12 +1982,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="On-axis Pierce impedance $K_n(y=0)$ [$\\Omega$]",
             title="(b) Harmonic impedance roll-off $K_n \\propto |E_{zn}|^2 / \\beta_n^2$",
         )
-        ax1.grid(True, which="both", ls=":", alpha=0.45)
-        ax1.legend(loc="upper right", fontsize=7.0)
-        fig.tight_layout()
+        ax1.legend(loc="upper right", fontsize=6.9)
         p07 = fig_dir / "07_pierce_impedance_2d_vs_freq.png"
-        fig.savefig(p07, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p07)
         saved.append(p07)
 
     # ------------------------------------------------------------------
@@ -1831,25 +1999,23 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         z_um = primary_2d["z_centers_m"] * 1e6
         y_um = primary_2d["y_nodes_m"][: ez_g.shape[0]] * 1e6
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150, sharey=True)
-        for ax, arr, ttl in [
-            (ax0, ez_m, "(a) Mirror Grating $\\operatorname{Re}\\{E_z(y, z)\\}$ ($\\beta_0 d = 0.5\\pi$)"),
-            (ax1, ez_g, "(b) Glide Grating $\\operatorname{Re}\\{E_z(y, z)\\}$ ($\\beta_0 d = 0.5\\pi$)"),
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2, sharey=True)
+        for ax, arr, is_gl, ttl in [
+            (ax0, ez_m, False, "(a) Mirror Grating $\\operatorname{Re}\\{E_z(y, z)\\}$ ($\\beta_0 d = 0.5\\pi$)"),
+            (ax1, ez_g, True, "(b) Glide Grating $\\operatorname{Re}\\{E_z(y, z)\\}$ ($\\beta_0 d = 0.5\\pi$)"),
         ]:
             im = ax.pcolormesh(z_um, y_um, arr, cmap="RdBu_r", vmin=-1.0, vmax=1.0, shading="auto")
-            ax.axhline(-100.0, color="k", ls="--", lw=1.0)
-            ax.axhline(100.0, color="k", ls="--", lw=1.0)
+            h.overlay_sws_grating_geometry(ax, grating_spec, glide_symmetric=is_gl, show_beam=True, show_labels=True)
             ax.set(xlabel="Axial coordinate $z$ [$\\mu$m]", title=ttl)
             fig.colorbar(im, ax=ax, label="Normalized $\\operatorname{Re}\\{E_z\\}$")
         ax0.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
-        fig.tight_layout()
         p08 = fig_dir / "08_bloch_eigenmode_ez_fields.png"
-        fig.savefig(p08, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p08)
         saved.append(p08)
 
     # ------------------------------------------------------------------
-    # Fig 09: Animated Time-Domain Bloch Wave Movie (.gif)
+    # Fig 09: Animated Time-Domain Bloch Wave Movie (.gif) with Geometry Overlay
     # ------------------------------------------------------------------
     mov_src = tasks.get("2d_conformal_L2")
     if mov_src is not None and "movie_frames_ez" in mov_src:
@@ -1858,7 +2024,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         y_um_m = mov_src["movie_y_um"]
         z_um_m = mov_src["movie_z_um"]
     elif primary_2d is not None:
-        # Synthesize harmonic time evolution Re{E_z(y,z) e^{+j phi}} from complex DFT slice
         ez_c = primary_2d["ez_yz_slice_glide"]
         phases = np.linspace(0.0, 2.0 * np.pi, 18, endpoint=False)
         frames = np.array([np.real(ez_c * np.exp(1j * ph)) for ph in phases])
@@ -1870,12 +2035,11 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     if frames is not None:
         f_max_amp = max(float(np.max(np.abs(frames))), 1e-30)
         frames_norm = frames / f_max_amp
-        fig_m, ax_m = plt.subplots(figsize=(6.4, 3.8), dpi=110)
+        fig_m, ax_m = plt.subplots(figsize=(6.5, 3.9), dpi=110)
         im_m = ax_m.pcolormesh(
             z_um_m, y_um_m, frames_norm[0], cmap="RdBu_r", vmin=-1.0, vmax=1.0, shading="auto"
         )
-        ax_m.axhline(-100.0, color="k", ls="--", lw=1.0)
-        ax_m.axhline(100.0, color="k", ls="--", lw=1.0)
+        h.overlay_sws_grating_geometry(ax_m, grating_spec, glide_symmetric=True, show_beam=True, show_labels=True)
         ttl_m = ax_m.set_title("Bloch Eigenmode $\\operatorname{Re}\\{E_z(y, z, t)\\}$ ($\\omega t = 0.00$ rad)")
         ax_m.set_xlabel("Axial coordinate $z$ [$\\mu$m]")
         ax_m.set_ylabel("Vertical coordinate $y$ [$\\mu$m]")
@@ -1896,7 +2060,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         saved.append(p09)
 
     # ------------------------------------------------------------------
-    # Fig 10: Resolution Convergence — Dey-Mittra Conformal PEC vs Staircase
+    # Fig 10: Resolution Convergence & Cost-Accuracy — Staircase vs Conformal vs Graded
     # ------------------------------------------------------------------
     def _mid_f1(t_dict: dict[str, Any]) -> float:
         arr = t_dict["f1_ghz"]
@@ -1921,9 +2085,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
     conv_levels = ["L1", "L2", "L3"]
     if all(f"2d_conformal_{lv}" in tasks and f"2d_staircase_{lv}" in tasks for lv in conv_levels):
         ref_task = tasks.get("2d_conformal_reference", tasks["2d_conformal_L3"])
-
-        f_ref = _mid_f1(ref_task)
-        # Use second-order Richardson extrapolation from L3 (n=12) and Reference (n=16) for self-convergence
+        f_l3 = _mid_f1(tasks["2d_conformal_L3"])
+        f_ref_16 = _mid_f1(ref_task)
+        # Second-order Richardson extrapolation from uniform L3 (n=12) and Reference (n=16)
+        f_ref = f_ref_16 + (f_ref_16 - f_l3) / ((16.0 / 12.0) ** 2 - 1.0)
         k_l3 = _mid_km1(tasks["2d_conformal_L3"])
         k_ref_16 = _mid_km1(ref_task)
         k_ref = k_ref_16 + (k_ref_16 - k_l3) / ((16.0 / 12.0) ** 2 - 1.0)
@@ -1934,52 +2099,119 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         k_conf = np.array([_mid_km1(tasks[f"2d_conformal_{lv}"]) for lv in conv_levels])
         k_stair = np.array([_mid_km1(tasks[f"2d_staircase_{lv}"]) for lv in conv_levels])
 
-        err_f_conf = np.maximum(np.abs(f_conf - f_ref) / f_ref, 5e-5)
+        n_feats_all = np.append(n_feats, float(ref_task["cells_across_feature"]))
+        f_conf_all = np.append(f_conf, f_ref_16)
+        k_conf_all = np.append(k_conf, k_ref_16)
+        cells_conf_all = np.array(
+            [float(tasks[f"2d_conformal_{lv}"]["n_cells"]) for lv in conv_levels]
+            + [float(ref_task["n_cells"])]
+        )
+        cells_stair = np.array([float(tasks[f"2d_staircase_{lv}"]["n_cells"]) for lv in conv_levels])
+
+        err_f_conf_all = np.maximum(np.abs(f_conf_all - f_ref) / f_ref, 5e-5)
         err_f_stair = np.maximum(np.abs(f_stair - f_ref) / f_ref, 5e-5)
-        err_k_conf = np.maximum(np.abs(k_conf - k_ref) / k_ref, 1e-4)
+        err_k_conf_all = np.maximum(np.abs(k_conf_all - k_ref) / k_ref, 1e-4)
         err_k_stair = np.maximum(np.abs(k_stair - k_ref) / k_ref, 1e-4)
 
-        n_feats_k = np.append(n_feats, float(ref_task["cells_across_feature"]))
-        k_conf_all = np.append(k_conf, _mid_km1(ref_task))
-        err_k_conf_all = np.maximum(np.abs(k_conf_all - k_ref) / k_ref, 1e-4)
+        grad_levels = list(graded_study.get("ladder", {}).values())
+        n_feats_grad = np.array([float(g["n_feat"]) for g in grad_levels], dtype=float)
+        f_grad_all = np.array([float(g["f1_mid_ghz"]) for g in grad_levels], dtype=float)
+        k_grad_all = np.array([float(g["km1_mid_ohm"]) for g in grad_levels], dtype=float)
+        cells_grad_all = np.array([float(g["n_cells"]) for g in grad_levels], dtype=float)
+        err_f_grad_all = np.maximum(np.abs(f_grad_all - f_ref) / f_ref, 5e-5)
+        err_k_grad_all = np.maximum(np.abs(k_grad_all - k_ref) / k_ref, 1e-4)
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
-        ax0.loglog(n_feats, err_f_stair, "s-", color="#d95f02", lw=2.0, ms=6, label="Staircase PEC (`conformal=False`)")
-        ax0.loglog(n_feats, err_f_conf, "o-", color="#1b9e77", lw=2.0, ms=6, label="Dey–Mittra PEC (`conformal='pec'`)")
-        ax0.loglog(n_feats, err_f_stair[0] * (n_feats[0] / n_feats) ** 1, "--", color="#d95f02", alpha=0.55, label="$\\mathcal{O}(\\Delta^1)$ slope")
-        ax0.loglog(n_feats, err_f_conf[0] * (n_feats[0] / n_feats) ** 2, ":", color="#1b9e77", alpha=0.65, label="$\\mathcal{O}(\\Delta^2)$ slope")
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.2, height=4.2)
+        ax0.loglog(n_feats, err_f_stair, "s-", color=figstyle.PALETTE[1], lw=2.0, ms=5.8, label="Uniform Staircase (`conformal=False`)")
+        ax0.loglog(n_feats_all, err_f_conf_all, "o-", color=figstyle.PALETTE[2], lw=2.0, ms=5.8, label="Uniform Conformal (`conformal='pec'`)")
+        if len(n_feats_grad) > 0:
+            ax0.loglog(
+                n_feats_grad,
+                err_f_grad_all,
+                "D--",
+                color=figstyle.PALETTE[0],
+                lw=2.0,
+                ms=6.0,
+                mfc="none",
+                mew=1.6,
+                label="Graded Non-Uniform Conformal",
+            )
+        ax0.loglog(n_feats, err_f_stair[0] * (n_feats[0] / n_feats) ** 1, "--", color=figstyle.PALETTE[1], alpha=0.50, label="$\\mathcal{O}(\\Delta^1)$ slope")
+        ax0.loglog(n_feats_all, err_f_conf_all[0] * (n_feats_all[0] / n_feats_all) ** 2, ":", color=figstyle.PALETTE[2], alpha=0.60, label="$\\mathcal{O}(\\Delta^2)$ slope")
         ax0.set(
-            xlabel="Cells across $0.10\\;\\mathrm{mm}$ minimum feature ($n_{\\mathrm{feat}}$)",
-            ylabel="Relative eigenfrequency error $|f_1 - f_{\\mathrm{ref}}| / f_{\\mathrm{ref}}$",
-            title="(a) Eigenfrequency convergence ($\\beta_0 d = 0.5\\pi$)",
+            xlabel="Cells across $0.10\\;\\mathrm{mm}$ feature ($n_{\\mathrm{feat}}$)",
+            ylabel="Rel. error $|f_1 - f_{\\mathrm{ref}}| / f_{\\mathrm{ref}}$",
+            title="(a) Eigenfrequency $f_1$ vs $n_{\\mathrm{feat}}$",
         )
-        ax0.grid(True, which="both", ls=":", alpha=0.45)
-        ax0.legend(loc="best", fontsize=8.0)
+        ax0.legend(loc="best", fontsize=6.6)
 
-        ax1.loglog(n_feats, err_k_stair, "s-", color="#d95f02", lw=2.0, ms=6, label="Staircase PEC $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$")
-        ax1.loglog(n_feats_k, err_k_conf_all, "o-", color="#1b9e77", lw=2.0, ms=6, label="Conformal PEC $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$")
-        ax1.loglog(n_feats, err_k_stair[0] * (n_feats[0] / n_feats) ** 1, "--", color="#d95f02", alpha=0.55, label="$\\mathcal{O}(\\Delta^1)$ slope")
-        ax1.loglog(n_feats, err_k_conf[0] * (n_feats[0] / n_feats) ** 2, ":", color="#1b9e77", alpha=0.65, label="$\\mathcal{O}(\\Delta^2)$ slope")
+        ax1.loglog(n_feats, err_k_stair, "s-", color=figstyle.PALETTE[1], lw=2.0, ms=5.8, label="Uniform Staircase $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$")
+        ax1.loglog(n_feats_all, err_k_conf_all, "o-", color=figstyle.PALETTE[2], lw=2.0, ms=5.8, label="Uniform Conformal $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$")
+        if len(n_feats_grad) > 0:
+            ax1.loglog(
+                n_feats_grad,
+                err_k_grad_all,
+                "D--",
+                color=figstyle.PALETTE[0],
+                lw=2.0,
+                ms=6.0,
+                mfc="none",
+                mew=1.6,
+                label="Graded Conformal $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$",
+            )
+        ax1.loglog(n_feats, err_k_stair[0] * (n_feats[0] / n_feats) ** 1, "--", color=figstyle.PALETTE[1], alpha=0.50, label="$\\mathcal{O}(\\Delta^1)$ slope")
+        ax1.loglog(n_feats_all, err_k_conf_all[0] * (n_feats_all[0] / n_feats_all) ** 2, ":", color=figstyle.PALETTE[2], alpha=0.60, label="$\\mathcal{O}(\\Delta^2)$ slope")
         ax1.set(
-            xlabel="Cells across $0.10\\;\\mathrm{mm}$ minimum feature ($n_{\\mathrm{feat}}$)",
-            ylabel="Relative Pierce impedance error $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$",
-            title="(b) Pierce interaction impedance $K_{-1}$ convergence",
+            xlabel="Cells across $0.10\\;\\mathrm{mm}$ feature ($n_{\\mathrm{feat}}$)",
+            ylabel="Rel. error $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$",
+            title="(b) Pierce impedance $K_{-1}(0)$ vs $n_{\\mathrm{feat}}$",
         )
-        ax1.grid(True, which="both", ls=":", alpha=0.45)
-        ax1.legend(loc="best", fontsize=8.0)
-        ax0.set_xticks(n_feats)
-        ax1.set_xticks(n_feats_k)
+        ax1.legend(loc="best", fontsize=6.6)
+
+        # Panel (c): Equal-accuracy / Equal-cost Pareto curve (error vs total 2D cell count)
+        ax2.loglog(cells_stair, err_k_stair, "s-", color=figstyle.PALETTE[1], lw=1.9, ms=5.8, label="Uniform Staircase ($K_{-1}$ err)")
+        ax2.loglog(cells_conf_all, err_k_conf_all, "o-", color=figstyle.PALETTE[2], lw=2.0, ms=5.8, label="Uniform Conformal ($K_{-1}$ err)")
+        if len(cells_grad_all) > 0:
+            ax2.loglog(
+                cells_grad_all,
+                err_k_grad_all,
+                "D--",
+                color=figstyle.PALETTE[0],
+                lw=2.1,
+                ms=6.2,
+                mfc="none",
+                mew=1.7,
+                label="Graded Non-Uniform ($K_{-1}$ err)",
+            )
+            ax2.annotate(
+                "Graded Ref ($5{,}248$ cells, $20.4$ s)\n< Uniform L3 ($5{,}760$ cells, $26.0$ s)",
+                xy=(cells_grad_all[-1], err_k_grad_all[-1]),
+                xytext=(520.0, 6.2e-2),
+                fontsize=6.4,
+                fontweight="bold",
+                color=figstyle.PALETTE[0],
+                bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": figstyle.PALETTE[0], "alpha": 0.92},
+                arrowprops={"arrowstyle": "->", "color": figstyle.PALETTE[0], "lw": 1.0},
+            )
+        ax2.set(
+            xlabel="Total 2D grid cells $N_y \\times N_z$",
+            ylabel="Rel. Pierce impedance error $|K_{-1} - K_{\\mathrm{ref}}| / K_{\\mathrm{ref}}$",
+            title="(c) Equal-cost / equal-accuracy pareto curve",
+        )
+        ax2.legend(loc="upper right", fontsize=6.5)
+
+        ax0.set_xticks(n_feats_all)
+        ax1.set_xticks(n_feats_all)
         for ax in (ax0, ax1):
             ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
             ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-        fig.tight_layout()
         p10 = fig_dir / "10_resolution_convergence_pec_vs_staircase.png"
-        fig.savefig(p10, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p10)
         saved.append(p10)
 
     # ------------------------------------------------------------------
-    # Fig 11: Under-Resolved Failure Mode Demo (n_feat=2 vs Ladder)
+    # Fig 11: Under-Resolved Failure Mode Demo (n_feat=2 vs Uniform & Graded Ladder)
     # ------------------------------------------------------------------
     if "under_resolved_staircase" in tasks and "2d_conformal_L3" in tasks:
         labels_u = [
@@ -1987,49 +2219,56 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             "Conformal\n($n=2$)",
             "Staircase L1\n($n=4$)",
             "Conformal L1\n($n=4$)",
-            "Conformal L2\n($n=8$)",
+            "Conformal L2\n($n=8$, 2.56k)",
+            "Graded L2\n($n=8$, 1.58k)",
             "Conformal L3\n($n=12$)",
         ]
-        keys_u = [
-            "under_resolved_staircase",
-            "under_resolved_conformal",
-            "2d_staircase_L1",
-            "2d_conformal_L1",
-            "2d_conformal_L2",
-            "2d_conformal_L3",
+        grad_l2_dict = graded_study.get("ladder", {}).get("graded_L2", {})
+        f_vals_u = [
+            _mid_f1(tasks["under_resolved_staircase"]),
+            _mid_f1(tasks["under_resolved_conformal"]),
+            _mid_f1(tasks["2d_staircase_L1"]),
+            _mid_f1(tasks["2d_conformal_L1"]),
+            _mid_f1(tasks["2d_conformal_L2"]),
+            float(grad_l2_dict.get("f1_mid_ghz", _mid_f1(tasks["2d_conformal_L2"]))),
+            _mid_f1(tasks["2d_conformal_L3"]),
         ]
-        f_vals_u = [_mid_f1(tasks[k]) for k in keys_u if k in tasks]
-        k_vals_u = [_mid_km1(tasks[k]) for k in keys_u if k in tasks]
+        k_vals_u = [
+            _mid_km1(tasks["under_resolved_staircase"]),
+            _mid_km1(tasks["under_resolved_conformal"]),
+            _mid_km1(tasks["2d_staircase_L1"]),
+            _mid_km1(tasks["2d_conformal_L1"]),
+            _mid_km1(tasks["2d_conformal_L2"]),
+            float(grad_l2_dict.get("km1_mid_ohm", _mid_km1(tasks["2d_conformal_L2"]))),
+            _mid_km1(tasks["2d_conformal_L3"]),
+        ]
         x_pos = np.arange(len(f_vals_u))
-        bar_cols = ["#e53935", "#fb8c00", "#d95f02", "#2b5c8f", "#1e88e5", "#1b9e77"][: len(f_vals_u)]
+        bar_cols = ["#e53935", "#fb8c00", "#d95f02", "#2b5c8f", "#1e88e5", "#0284c7", "#1b9e77"][: len(f_vals_u)]
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.0), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.8, height=4.1)
         ax0.bar(x_pos, f_vals_u, color=bar_cols, width=0.58, ec="k", lw=0.8)
         ax0.axhline(97.69, color="k", ls="--", lw=1.5, label="McVey theory (97.69 GHz)")
         ax0.set_xticks(x_pos)
-        ax0.set_xticklabels(labels_u[: len(f_vals_u)], fontsize=7.8)
+        ax0.set_xticklabels(labels_u[: len(f_vals_u)], fontsize=7.2)
         ax0.set(
             ylim=(65.0, 105.0),
             ylabel="Eigenfrequency $f_1(\\beta_0 d = 0.5\\pi)$ [GHz]",
             title="(a) Severe frequency shift when $n_{\\mathrm{feat}} < 4$",
         )
-        ax0.grid(True, axis="y", ls=":", alpha=0.45)
-        ax0.legend(loc="lower right", fontsize=8.0)
+        ax0.legend(loc="lower right", fontsize=7.8)
 
         ax1.bar(x_pos, k_vals_u, color=bar_cols, width=0.58, ec="k", lw=0.8)
         ax1.axhline(k_vals_u[-1], color="k", ls="--", lw=1.5, label=f"Converged FIT ({k_vals_u[-1]:.2f} $\\Omega$)")
         ax1.set_xticks(x_pos)
-        ax1.set_xticklabels(labels_u[: len(k_vals_u)], fontsize=7.8)
+        ax1.set_xticklabels(labels_u[: len(k_vals_u)], fontsize=7.2)
         ax1.set(
             ylabel="On-axis Pierce impedance $K_{-1}$ [$\\Omega$]",
             title="(b) Artificial impedance inflation in under-resolved staircase",
         )
-        ax1.grid(True, axis="y", ls=":", alpha=0.45)
-        ax1.legend(loc="upper right", fontsize=8.0)
-        fig.tight_layout()
+        ax1.legend(loc="upper right", fontsize=7.8)
         p11 = fig_dir / "11_under_resolved_warning_demo.png"
-        fig.savefig(p11, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p11)
         saved.append(p11)
 
     # ------------------------------------------------------------------
@@ -2048,15 +2287,15 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         f3d_mapped_g_hi = np.sqrt(f2d_g_hi_fine**2 + fc_ghz**2)
         f3d_mapped_m = np.sqrt(f2d_m_fine**2 + fc_ghz**2)
 
-        fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(14.4, 4.0), dpi=150)
-        ax0.plot(bn_f, f2d_g_fine, "--", color="#d95f02", alpha=0.65, lw=1.6, label="2D planar Glide $f_{\\mathrm{2D}}(\\beta_0)$")
-        ax0.plot(bn_f, f3d_mapped_g, "-", color="#d95f02", lw=2.1, label="Mapped $\\sqrt{f_{\\mathrm{2D}}^2 + (c/2a)^2}$ (Glide)")
-        ax0.plot(bn_f, f3d_mapped_g_hi, "-", color="#d95f02", lw=1.8, alpha=0.85)
-        ax0.plot(bn_f, f3d_mapped_m, "-", color="#2b5c8f", lw=2.0, label="Mapped $\\sqrt{f_{\\mathrm{2D}}^2 + (c/2a)^2}$ (Mirror)")
-        ax0.plot(bn_3d, t3d_g["f3d_glide_low_ghz"], "s", color="#d95f02", ms=6.0, label="Wakis 3D FIT Glide ($a=0.85$ mm)")
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.4, height=4.1)
+        ax0.plot(bn_f, f2d_g_fine, "--", color=figstyle.PALETTE[1], alpha=0.65, lw=1.6, label="2D planar Glide $f_{\\mathrm{2D}}(\\beta_0)$")
+        ax0.plot(bn_f, f3d_mapped_g, "-", color=figstyle.PALETTE[1], lw=2.1, label="Mapped $\\sqrt{f_{\\mathrm{2D}}^2 + (c/2a)^2}$ (Glide)")
+        ax0.plot(bn_f, f3d_mapped_g_hi, "-", color=figstyle.PALETTE[1], lw=1.8, alpha=0.85)
+        ax0.plot(bn_f, f3d_mapped_m, "-", color=figstyle.PALETTE[0], lw=2.0, label="Mapped $\\sqrt{f_{\\mathrm{2D}}^2 + (c/2a)^2}$ (Mirror)")
+        ax0.plot(bn_3d, t3d_g["f3d_glide_low_ghz"], "s", color=figstyle.PALETTE[1], ms=6.0, label="Wakis 3D FIT Glide ($a=0.85$ mm)")
         if "f3d_glide_high_ghz" in t3d_g:
-            ax0.plot(bn_3d, t3d_g["f3d_glide_high_ghz"], "s", color="#d95f02", ms=5.0, mfc="none")
-        ax0.plot(bn_3d, t3d_g["f3d_mirror_low_ghz"], "o", color="#2b5c8f", ms=6.0, label="Wakis 3D FIT Mirror ($a=0.85$ mm)")
+            ax0.plot(bn_3d, t3d_g["f3d_glide_high_ghz"], "s", color=figstyle.PALETTE[1], ms=5.0, mfc="none")
+        ax0.plot(bn_3d, t3d_g["f3d_mirror_low_ghz"], "o", color=figstyle.PALETTE[0], ms=6.0, label="Wakis 3D FIT Mirror ($a=0.85$ mm)")
         ax0.axhline(fc_ghz, color="0.35", ls=":", lw=1.4, label=f"$\\mathrm{{TE}}_{{10}}$ cutoff $c/(2a) = {fc_ghz:.1f}$ GHz")
         ax0.set(
             xlim=(0.0, 1.05),
@@ -2065,22 +2304,20 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Frequency $f$ [GHz]",
             title="(a) 2D vs 3D $\\mathrm{LSE}_{10}$ dispersion",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
         ax0.legend(loc="lower right", fontsize=6.8)
 
         # Panel (b): Verify k_perp^2 = k_0^2 - (pi/a)^2 residual
         f_3d_fit_g = t3d_g["f3d_glide_low_ghz"]
         f_2d_recovered = np.sqrt(np.maximum(f_3d_fit_g**2 - fc_ghz**2, 0.0))
         f_2d_interp = np.interp(bn_3d, primary_2d["bn"], primary_2d["f_glide_low_ghz"])
-        ax1.plot(bn_3d, f_2d_interp, "o-", color="#1b9e77", lw=2.0, ms=6, label="Direct 2D Wakis FIT $f_{\\mathrm{2D}}(\\beta_0)$")
-        ax1.plot(bn_3d, f_2d_recovered, "s--", color="#d95f02", lw=2.0, ms=6, label="3D Wakis FIT $\\sqrt{f_{\\mathrm{3D}}^2 - (c/2a)^2}$")
-        ax1.plot(bn_3d, t3d_g["mcvey_3d_g_low_ghz"], "^:", color="#2b5c8f", lw=1.8, ms=5.5, label="3D McVey field-matching $f_{\\mathrm{3D}}(\\beta_0)$")
+        ax1.plot(bn_3d, f_2d_interp, "o-", color=figstyle.PALETTE[2], lw=2.0, ms=6, label="Direct 2D Wakis FIT $f_{\\mathrm{2D}}(\\beta_0)$")
+        ax1.plot(bn_3d, f_2d_recovered, "s--", color=figstyle.PALETTE[1], lw=2.0, ms=6, label="3D Wakis FIT $\\sqrt{f_{\\mathrm{3D}}^2 - (c/2a)^2}$")
+        ax1.plot(bn_3d, t3d_g["mcvey_3d_g_low_ghz"], "^:", color=figstyle.PALETTE[0], lw=1.8, ms=5.5, label="3D McVey field-matching $f_{\\mathrm{3D}}(\\beta_0)$")
         ax1.set(
             xlabel="Normalized Floquet phase $\\beta_0 d / \\pi$",
             ylabel="Frequency [GHz]",
             title="(b) Transverse reduction $k_\\perp^2 = k_0^2 - (\\pi/a)^2$",
         )
-        ax1.grid(True, ls=":", alpha=0.45)
         ax1.legend(loc="upper left", fontsize=7.0)
 
         # Panel (c): 3D LSE_10 beam-averaged Pierce impedance <K_{+1}> and <K_{-2}>
@@ -2104,21 +2341,19 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             km2_dir.append(float(chk_3d["k_n_beam_avg_ohm"][i_m2]))
             km2_vgw.append(float(chk_3d["k_n_beam_avg_vg_w_ohm"][i_m2]))
 
-        ax2.semilogy(f3d_mc_arr, kp1_dir, "o-", color="#d95f02", lw=2.0, ms=5.5, label="$\\langle K_{+1}\\rangle_{\\mathrm{beam}}$ ($P_{\\mathrm{direct}}$)")
-        ax2.semilogy(f3d_mc_arr, kp1_vgw, "s--", color="#2b5c8f", lw=1.7, ms=4.5, label="$\\langle K_{+1}\\rangle_{\\mathrm{beam}}$ ($v_g W / d$)")
-        ax2.semilogy(f3d_mc_arr, km2_dir, "^-", color="#1b9e77", lw=1.9, ms=5.5, label="$\\langle K_{-2}\\rangle_{\\mathrm{beam}}$ ($P_{\\mathrm{direct}}$)")
-        ax2.semilogy(f3d_mc_arr, km2_vgw, "d:", color="#7570b3", lw=1.6, ms=4.5, label="$\\langle K_{-2}\\rangle_{\\mathrm{beam}}$ ($v_g W / d$)")
+        ax2.semilogy(f3d_mc_arr, kp1_dir, "o-", color=figstyle.PALETTE[1], lw=2.0, ms=5.5, label="$\\langle K_{+1}\\rangle_{\\mathrm{beam}}$ ($P_{\\mathrm{direct}}$)")
+        ax2.semilogy(f3d_mc_arr, kp1_vgw, "s--", color=figstyle.PALETTE[0], lw=1.7, ms=4.5, label="$\\langle K_{+1}\\rangle_{\\mathrm{beam}}$ ($v_g W / d$)")
+        ax2.semilogy(f3d_mc_arr, km2_dir, "^-", color=figstyle.PALETTE[2], lw=1.9, ms=5.5, label="$\\langle K_{-2}\\rangle_{\\mathrm{beam}}$ ($P_{\\mathrm{direct}}$)")
+        ax2.semilogy(f3d_mc_arr, km2_vgw, "d:", color=figstyle.PALETTE[4], lw=1.6, ms=4.5, label="$\\langle K_{-2}\\rangle_{\\mathrm{beam}}$ ($v_g W / d$)")
         ax2.set(
             xlabel="3D Frequency $f_{\\mathrm{3D}}$ [GHz]",
             ylabel="Beam-averaged Pierce impedance [$\\Omega$]",
             title="(c) 3D $\\mathrm{LSE}_{10}$ Pierce impedance ($W_b\\times H_b$)",
         )
-        ax2.grid(True, which="both", ls=":", alpha=0.45)
         ax2.legend(loc="upper right", fontsize=6.8)
-        fig.tight_layout()
         p12 = fig_dir / "12_2d_vs_3d_waveguide_cutoff_mapping.png"
-        fig.savefig(p12, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p12)
         saved.append(p12)
 
     # ------------------------------------------------------------------
@@ -2136,16 +2371,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         vg_lo_g = np.gradient(2.0 * np.pi * f_lo_g * 1e9, beta0_m) / h.C0
         vg_up_g = np.gradient(2.0 * np.pi * f_up_g * 1e9, beta0_m) / h.C0
 
-        # Unfold into Marosi et al. Fig. 2 convention (design band beta_n d / pi in [2, 4]):
-        # Lower mode n = +1: beta_1 d / pi = 2 + bn in [2, 3];
-        # Upper mode n = -2: |beta_{-2}| d / pi = 4 - bn in [3, 4].
         bn_lo_g = 2.0 + bn_m
         bn_up_g = (4.0 - bn_m)[::-1]
         f_up_g_asc = f_up_g[::-1]
         bn_unfolded = np.concatenate([bn_lo_g, bn_up_g[bn_up_g > 3.001]])
         f_glide_unfolded = np.concatenate([f_lo_g, f_up_g_asc[bn_up_g > 3.001]])
 
-        # Points read from Marosi, Zuboraj & Capolino (arXiv:2505.22927, Fig. 2, +/-0.3 GHz; 61.0 GHz verified in text)
         marosi_paper_bn = np.array([2.25, 2.50, 2.80, 3.00, 3.20, 3.50, 3.75])
         marosi_paper_fg = np.array([50.3, 52.8, 57.5, 61.0, 65.0, 70.0, 72.7])
         f_degen_val = float(f_lo_g[-1])
@@ -2157,12 +2388,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         for b_p, f_p, f_i in zip(marosi_paper_bn, marosi_paper_fg, f_fit_disp_interp):
             print(f"| {b_p:.2f} | {f_p:.2f} | {f_i:.3f} | {(f_i - f_p) / f_p * 100.0:+.1f}% |")
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.1), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.2)
         ax0.plot(
             bn_lo_g,
             f_lo_g,
             "o-",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=2.1,
             ms=5.5,
             label="Wakis 3D FIT Glide (lower mode, $n=+1$)",
@@ -2171,7 +2402,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             bn_up_g,
             f_up_g_asc,
             "o--",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=2.0,
             ms=5.5,
             mfc="none",
@@ -2184,7 +2415,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
                 2.0 + tm_m["bn"],
                 f_lo_m,
                 "^-",
-                color="#d95f02",
+                color=figstyle.PALETTE[1],
                 lw=1.9,
                 ms=5.5,
                 label="Wakis 3D FIT Mirror (lower mode, $n=+1$)",
@@ -2193,7 +2424,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
                 (4.0 - tm_m["bn"])[::-1],
                 f_up_m[::-1],
                 "^--",
-                color="#d95f02",
+                color=figstyle.PALETTE[1],
                 lw=1.9,
                 ms=5.5,
                 mfc="none",
@@ -2202,7 +2433,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ax0.axhspan(
                 float(f_lo_m[-1]),
                 float(f_up_m[-1]),
-                color="#d95f02",
+                color=figstyle.PALETTE[1],
                 alpha=0.12,
                 label=f"Broken-glide $3\\pi$ stopband ({float(f_lo_m[-1]):.2f}–{float(f_up_m[-1]):.2f} GHz)",
             )
@@ -2210,7 +2441,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             marosi_paper_bn,
             marosi_paper_fg,
             "s:",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.8,
             ms=6,
             label="Marosi et al. (2025) Fig. 2 (CST, $\\pm 0.3$ GHz)",
@@ -2229,7 +2460,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Frequency $f$ [GHz]",
             title="(a) 3D V-Band dispersion: glide vs broken-glide control & CST",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
         ax0.legend(loc="upper left", fontsize=6.3)
 
         if "ez_yz_slice_fwd" in tm_g:
@@ -2238,17 +2468,16 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             y_m_um = np.linspace(-400.0, 400.0, ez_sl.shape[0])
             z_m_um = np.linspace(0.0, 1050.0, ez_sl.shape[1])
             im13 = ax1.pcolormesh(z_m_um, y_m_um, ez_sl, cmap="RdBu_r", vmin=-1.0, vmax=1.0, shading="auto")
-            ax1.axhspan(-150.0, 150.0, color="none", ec="k", ls="--", lw=1.0, label="Beam tunnel $|y| \\leq 150\\;\\mu$m")
+            h.overlay_marosi_3d_yz_geometry(ax1, marosi_spec)
             ax1.set(
                 xlabel="Axial coordinate $z$ [$\\mu$m]",
                 ylabel="Vertical coordinate $y$ [$\\mu$m]",
                 title="(b) 3D lower-mode $\\operatorname{Re}\\{E_z(0, y, z)\\}$ near $\\beta_n d \\approx 2.85\\pi$",
             )
             fig.colorbar(im13, ax=ax1, label="Normalized $\\operatorname{Re}\\{E_z\\}$")
-        fig.tight_layout()
         p13 = fig_dir / "13_3d_marosi_dispersion_and_stopband.png"
-        fig.savefig(p13, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p13)
         saved.append(p13)
 
         # ------------------------------------------------------------------
@@ -2259,9 +2488,9 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         paper_beta = marosi_paper_bn * np.pi / marosi_spec.period_m
         paper_vp_c = (2.0 * np.pi * marosi_paper_fg * 1e9) / (paper_beta * h.C0)
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.0), dpi=150)
-        ax0.plot(f_glide_unfolded, vp_over_c, "o-", color="#1b9e77", lw=2.1, ms=6, label="Wakis 3D FIT $v_p / c$")
-        ax0.plot(marosi_paper_fg, paper_vp_c, "s--", color="#2b5c8f", lw=1.8, ms=6, label="Marosi et al. (2025) Fig. 3 (CST)")
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.0)
+        ax0.plot(f_glide_unfolded, vp_over_c, "o-", color=figstyle.PALETTE[2], lw=2.1, ms=6, label="Wakis 3D FIT $v_p / c$")
+        ax0.plot(marosi_paper_fg, paper_vp_c, "s--", color=figstyle.PALETTE[0], lw=1.8, ms=6, label="Marosi et al. (2025) Fig. 3 (CST)")
         ax0.axhline(
             u0_5k2v / h.C0,
             color="#e53935",
@@ -2269,17 +2498,16 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             lw=2.0,
             label=f"5.2 kV sheet beam ($u_0/c = {u0_5k2v / h.C0:.4f}$, sync $66.0$ GHz @ $3.3\\pi$)",
         )
-        ax0.axvspan(57.0, 68.0, color="#1b9e77", alpha=0.10, label="Operating TWT band (57–68 GHz)")
+        ax0.axvspan(57.0, 68.0, color=figstyle.PALETTE[2], alpha=0.10, label="Operating TWT band (57–68 GHz)")
         ax0.set(
             xlabel="Frequency $f$ [GHz]",
             ylabel="Normalized phase velocity $v_p / c$",
             title="(a) Phase velocity vs frequency (Marosi et al. Fig. 3a)",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
-        ax0.legend(loc="upper right", fontsize=7.6)
+        ax0.legend(loc="upper right", fontsize=7.5)
 
-        ax1.plot(bn_unfolded, vp_over_c, "o-", color="#1b9e77", lw=2.1, ms=6, label="Wakis 3D FIT $v_p / c$")
-        ax1.plot(marosi_paper_bn, paper_vp_c, "s--", color="#2b5c8f", lw=1.8, ms=6, label="Marosi et al. (2025) Fig. 3b (CST)")
+        ax1.plot(bn_unfolded, vp_over_c, "o-", color=figstyle.PALETTE[2], lw=2.1, ms=6, label="Wakis 3D FIT $v_p / c$")
+        ax1.plot(marosi_paper_bn, paper_vp_c, "s--", color=figstyle.PALETTE[0], lw=1.8, ms=6, label="Marosi et al. (2025) Fig. 3b (CST)")
         ax1.axhline(u0_5k2v / h.C0, color="#e53935", ls="-.", lw=2.0, label="5.2 kV beam velocity $u_0 / c$")
         ax1.axvline(3.30, color="0.4", ls=":", lw=1.4, label="Synchronism $\\beta_n d \\approx 3.3\\pi$")
         ax1.set(
@@ -2287,12 +2515,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Normalized phase velocity $v_p / c$",
             title="(b) Phase velocity vs phase shift (Marosi et al. Fig. 3b)",
         )
-        ax1.grid(True, ls=":", alpha=0.45)
-        ax1.legend(loc="upper right", fontsize=7.8)
-        fig.tight_layout()
+        ax1.legend(loc="upper right", fontsize=7.6)
         p14 = fig_dir / "14_3d_marosi_phase_velocity_and_beam_sync.png"
-        fig.savefig(p14, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p14)
         saved.append(p14)
 
         # ------------------------------------------------------------------
@@ -2302,9 +2528,6 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         idx_p1 = int(np.where(kn_n == 1)[0][0])
         idx_m2 = int(np.where(kn_n == -2)[0][0])
 
-        # Forward-wave Z_P (Marosi Fig. 5a): continuous curve from lower mode n = +1
-        # (beta d = (2 + bn) pi, 49.0-60.9 GHz) continued above 3 pi by upper mode n = -2
-        # (|beta| d = (4 - bn) pi, 60.9-73.6 GHz; same as n = +2 of the -beta_0 mode).
         zp_fwd_lo_ax = tm_g["kn_lower_axis_ohm"][:, idx_p1]
         zp_fwd_lo_av = tm_g["kn_lower_avg_ohm"][:, idx_p1]
         zp_fwd_up_ax = tm_g["kn_upper_axis_ohm"][:, idx_m2]
@@ -2316,15 +2539,11 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
         zp_fwd_cont_ax = np.concatenate([zp_fwd_lo_ax[mask_lo_g], zp_fwd_up_ax[mask_up_g][::-1]])
         zp_fwd_cont_av = np.concatenate([zp_fwd_lo_av[mask_lo_g], zp_fwd_up_av[mask_up_g][::-1]])
 
-        # Backward-wave Z_P (Marosi Fig. 11a): upper mode n = +1 ((2 + bn) pi, v_g < 0)
-        # and lower mode n = -2 ((4 - bn) pi).
         zp_bwd_up_ax = tm_g["kn_upper_axis_ohm"][:, idx_p1]
         zp_bwd_up_av = tm_g["kn_upper_avg_ohm"][:, idx_p1]
         zp_bwd_lo_ax = tm_g["kn_lower_axis_ohm"][:, idx_m2]
         zp_bwd_lo_av = tm_g["kn_lower_avg_ohm"][:, idx_m2]
 
-        # Reference curve from Marosi, Zuboraj & Capolino (arXiv:2505.22927, Sec. II & Fig. 5a):
-        # 3.8 Ohm @ 58 GHz and 1.3 Ohm @ 68 GHz stated in Sec. II text; other points read from Fig. 5a (+/-0.3 Ohm)
         paper_f_zp = np.array([53.0, 56.0, 58.0, 60.0, 65.0, 68.0])
         paper_zp_fwd = np.array([9.9, 5.1, 3.8, 2.8, 1.6, 1.3])
         zp_fit_interp_ax = np.interp(paper_f_zp, f_fwd_cont, zp_fwd_cont_ax)
@@ -2368,12 +2587,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
                     f"| {zp_m_bwd_lo_ax[k]:.4f} / {zp_m_bwd_lo_av[k]:.4f} |"
                 )
 
-        fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(14.6, 4.1), dpi=150)
+        fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.6, height=4.1)
         ax0.plot(
             f_fwd_cont,
             zp_fwd_cont_ax,
             "o-",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=2.1,
             ms=5.0,
             label="Wakis 3D FIT $Z_P(0,0)$ (lower $n=+1$ & upper $n=-2$)",
@@ -2382,7 +2601,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             f_fwd_cont,
             zp_fwd_cont_av,
             "s--",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.8,
             ms=4.5,
             label="Wakis 3D FIT $\\langle Z_P \\rangle_{\\mathrm{beam}}$",
@@ -2391,7 +2610,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             paper_f_zp,
             paper_zp_fwd,
             "^:",
-            color="#d95f02",
+            color=figstyle.PALETTE[1],
             lw=2.0,
             ms=6,
             label="Marosi et al. (2025) Fig. 5a (3.8 $\\Omega$ @ 58, 1.3 $\\Omega$ @ 68 GHz)",
@@ -2410,13 +2629,12 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Forward Pierce impedance $Z_P$ [$\\Omega$]",
             title="(a) Continuous forward-wave $Z_P(f)$ vs Fig. 5a",
         )
-        ax0.grid(True, ls=":", alpha=0.45)
         ax0.legend(loc="upper right", fontsize=6.2)
 
         ax0_ins = ax0.inset_axes([0.33, 0.28, 0.63, 0.43])
-        ax0_ins.plot(f_fwd_cont, zp_fwd_cont_ax, "o-", color="#1b9e77", lw=1.6, ms=3.8)
-        ax0_ins.plot(f_fwd_cont, zp_fwd_cont_av, "s--", color="#2b5c8f", lw=1.4, ms=3.4)
-        ax0_ins.plot(paper_f_zp, paper_zp_fwd, "^:", color="#d95f02", lw=1.6, ms=4.5)
+        ax0_ins.plot(f_fwd_cont, zp_fwd_cont_ax, "o-", color=figstyle.PALETTE[2], lw=1.6, ms=3.8)
+        ax0_ins.plot(f_fwd_cont, zp_fwd_cont_av, "s--", color=figstyle.PALETTE[0], lw=1.4, ms=3.4)
+        ax0_ins.plot(paper_f_zp, paper_zp_fwd, "^:", color=figstyle.PALETTE[1], lw=1.6, ms=4.5)
         ax0_ins.axvline(f_degen_val, color="0.4", ls="--", lw=1.0)
         ax0_ins.set(xlim=(52.0, 74.2), ylim=(0.0, 11.2))
         ax0_ins.tick_params(labelsize=6.5)
@@ -2428,7 +2646,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             f_lo_g[mask_lo_g],
             np.maximum(zp_bwd_lo_ax[mask_lo_g], zp_floor),
             "o-",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=2.0,
             ms=5.5,
             label="Glide $Z_P^{\\mathrm{bw}}(0,0)$ (lower $n=-2$)",
@@ -2437,7 +2655,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             f_up_g[mask_up_g][::-1],
             np.maximum(zp_bwd_up_ax[mask_up_g][::-1], zp_floor),
             "s-",
-            color="#1b9e77",
+            color=figstyle.PALETTE[2],
             lw=2.0,
             ms=5.5,
             mfc="none",
@@ -2447,7 +2665,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             f_lo_g[mask_lo_g],
             np.maximum(zp_bwd_lo_av[mask_lo_g], zp_floor),
             "o--",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.7,
             ms=4.5,
             label="Glide $\\langle Z_P^{\\mathrm{bw}}\\rangle_{\\mathrm{beam}}$ (lower $n=-2$)",
@@ -2456,7 +2674,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             f_up_g[mask_up_g][::-1],
             np.maximum(zp_bwd_up_av[mask_up_g][::-1], zp_floor),
             "s--",
-            color="#2b5c8f",
+            color=figstyle.PALETTE[0],
             lw=1.7,
             ms=4.5,
             mfc="none",
@@ -2478,7 +2696,7 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
                 f_up_m[mask_m_up][::-1],
                 np.maximum(zp_m_bwd_up_ax[mask_m_up][::-1], zp_floor),
                 "v-",
-                color="#d95f02",
+                color=figstyle.PALETTE[1],
                 lw=1.9,
                 ms=5.5,
                 label="Broken-glide $Z_P^{\\mathrm{bw}}(0,0)$ (upper $n=+1$)",
@@ -2497,19 +2715,18 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Backward Pierce impedance $Z_P^{\\mathrm{bw}}$ [$\\Omega$] (log, floor $10^{-6}$)",
             title="(b) Backward-wave on-axis suppression: glide vs broken glide",
         )
-        ax1.grid(True, which="both", ls=":", alpha=0.45)
         ax1.legend(loc="center left", bbox_to_anchor=(0.01, 0.45), fontsize=6.0, framealpha=0.9)
 
         # Panel (c): Stage-2 energy velocity v_E vs Stage-1 group velocity v_g (interior bn[1:11])
-        ax2.plot(bn_m[1:], vg_lo_g[1:], "-", color="#1b9e77", lw=1.9, label="Glide $v_g/c$ (lower/upper)")
-        ax2.plot(bn_m[1:], vg_up_g[1:], "--", color="#1b9e77", lw=1.9)
-        ax2.plot(bn_m[1:11], ve_lo_g[1:11], "o", color="#1b9e77", ms=5.5, label="Glide $v_E/c$ (Stage-2 DFT)")
-        ax2.plot(bn_m[1:11], ve_up_g[1:11], "s", color="#1b9e77", ms=5.5, mfc="none")
+        ax2.plot(bn_m[1:], vg_lo_g[1:], "-", color=figstyle.PALETTE[2], lw=1.9, label="Glide $v_g/c$ (lower/upper)")
+        ax2.plot(bn_m[1:], vg_up_g[1:], "--", color=figstyle.PALETTE[2], lw=1.9)
+        ax2.plot(bn_m[1:11], ve_lo_g[1:11], "o", color=figstyle.PALETTE[2], ms=5.5, label="Glide $v_E/c$ (Stage-2 DFT)")
+        ax2.plot(bn_m[1:11], ve_up_g[1:11], "s", color=figstyle.PALETTE[2], ms=5.5, mfc="none")
         if tm_m is not None:
-            ax2.plot(bn_m[1:], vg_lo_m[1:], "-", color="#d95f02", lw=1.8, label="Broken-glide $v_g/c$ (lower/upper)")
-            ax2.plot(bn_m[1:], vg_up_m[1:], "--", color="#d95f02", lw=1.8)
-            ax2.plot(bn_m[1:11], ve_lo_m[1:11], "^", color="#d95f02", ms=5.5, label="Broken-glide $v_E/c$ (Stage-2 DFT)")
-            ax2.plot(bn_m[1:11], ve_up_m[1:11], "v", color="#d95f02", ms=5.5, mfc="none")
+            ax2.plot(bn_m[1:], vg_lo_m[1:], "-", color=figstyle.PALETTE[1], lw=1.8, label="Broken-glide $v_g/c$ (lower/upper)")
+            ax2.plot(bn_m[1:], vg_up_m[1:], "--", color=figstyle.PALETTE[1], lw=1.8)
+            ax2.plot(bn_m[1:11], ve_lo_m[1:11], "^", color=figstyle.PALETTE[1], ms=5.5, label="Broken-glide $v_E/c$ (Stage-2 DFT)")
+            ax2.plot(bn_m[1:11], ve_up_m[1:11], "v", color=figstyle.PALETTE[1], ms=5.5, mfc="none")
         ax2.axhline(0.0, color="0.4", ls=":", lw=1.1)
         ax2.set(
             xlim=(0.18, 1.03),
@@ -2518,12 +2735,10 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
             ylabel="Normalized velocity $v / c$",
             title="(c) Consistency check: $v_E = P_z d / U$ vs $v_g = \\mathrm{d}\\omega/\\mathrm{d}\\beta_0$",
         )
-        ax2.grid(True, ls=":", alpha=0.45)
         ax2.legend(loc="lower left", fontsize=6.5)
-        fig.tight_layout()
         p15 = fig_dir / "15_3d_marosi_pierce_impedance_vs_paper.png"
-        fig.savefig(p15, dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        figstyle.finish(fig)
+        figstyle.save(fig, p15)
         saved.append(p15)
 
     print(f"Rendered {len(saved)} figures in {fig_dir}")
@@ -2892,6 +3107,61 @@ def generate_all_figures(data_dir: Path = DATA_DIR, fig_dir: Path = FIG_DIR) -> 
 # 2. **On-axis Pierce impedance $K_{-1}(0)$ (monotone across both conformal and staircase ladders, self-converged to $0.30\%$ between the last two conformal levels, and within $+0.25\%$ of the converged McVey limit)**:
 #    - **Dey–Mittra conformal PEC (`L1` $\to$ `L2` $\to$ `L3` $\to$ `Reference`, $n_{\text{feat}} = 4 \to 8 \to 12 \to 16$)**: Strict monotonic convergence from above: $1.8381 \to 1.7921 \to 1.7802 \to 1.7749\;\Omega$. The relative change between successive levels decreases as $-2.50\%$ (`L1` $\to$ `L2`), $-0.66\%$ (`L2` $\to$ `L3`), and **$-0.30\%$ between the last two levels (`L3` $\to$ `Reference`)**—matching $\mathcal{O}(\Delta^2)$ second-order self-convergence toward the FIT Richardson ($p = 2$) limit $K_{-1,\infty}^{\text{FIT}} = 1.7681\;\Omega$ ($|K_{-1} - K_{-1,\infty}^{\text{FIT}}| / K_{-1,\infty}^{\text{FIT}} = 3.96\% \to 1.36\% \to 0.69\% \to 0.39\%$). Compared against the slot-mode-extrapolated McVey limit $K_{-1,\infty} = 1.7637\;\Omega$ ($M_{\text{slot}} \to \infty$ at $N_{\text{harm}} = 60$, fitted order $p \approx 1.66$; see Section 4), FIT Richardson ($1.7681\;\Omega$) is **$+0.25\%$** above $K_{-1,\infty}$ and FIT `Reference` ($1.7749\;\Omega$) is **$+0.63\%$** above—an independent agreement within the FIT discretization error. McVey's $M_{\text{slot}}$ truncation is the dominant analytic error ($M_{\text{slot}} = 6\dots 10$ gives $1.8274\dots 1.7897\;\Omega$) and must be extrapolated.
 #    - **Staircase PEC (`Tasks 0, 2, 3, 4`, $n_{\text{feat}} = 2 \to 4 \to 8 \to 12$)**: Also converges monotonically from above ($5.9410 \to 3.2418 \to 2.4082 \to 2.1733\;\Omega$), with a relative change of **$-9.75\%$** between the last two staircase levels (`L2` $\to$ `L3`), still $+22.4\%$ above FIT `Reference` ($+23.2\%$ above McVey $K_{-1,\infty}$) at `L3`.
+#
+# ### Graded Non-Uniform Mesh Upgrade vs. Uniform Mesh Baseline (Equal Accuracy & Equal Cost)
+#
+# In a corrugated SWS, the electromagnetic field gradients are concentrated at the $90^\circ$ PEC vane
+# corners ($y = \pm g_{\text{half}} = \pm 100\;\mu\text{m}$) and across the $l = 100\;\mu\text{m}$ vane
+# teeth, whereas the back of the $h = 300\;\mu\text{m}$ groove slots and the open groove span carry
+# smoothly varying evanescent/standing fields. `build_2d_grating_graded_grid` and
+# `build_3d_grating_graded_grid` in `_helpers.py` construct graded non-uniform Cartesian grids that
+# place exact grid nodes on the vane walls ($z \in [75, 175]\;\mu\text{m}$ and $[325, 425]\;\mu\text{m}$)
+# and tunnel apertures ($y = \pm 100\;\mu\text{m}$), maintaining $\Delta y_{\min} = \Delta z_{\min} = l / n_{\text{feat}}$
+# across the vane teeth and across a $\pm 35\;\mu\text{m}$ band straddling the vane tips while grading
+# smoothly toward $\Delta y_{\max} = 30.0\;\mu\text{m}$ in the slot depth and $\Delta z_{\max} = 22.0\;\mu\text{m}$
+# in the open groove ($\ge 42.4\;\text{cells}/\lambda$ everywhere at $f_{\max} = 235\;\text{GHz}$, adjacent
+# cell-size stretch ratio $\le 1.24$).
+#
+# Comparing the 4-level graded non-uniform convergence ladder (`data/graded_mesh_comparison.json`, evaluated
+# at $\beta_0 d = 0.5\pi$) directly against the uniform conformal baseline (`Tasks 5–8`, kept as the
+# reference throughout the text):
+#
+# | Level ($n_{\text{feat}}$) | Uniform Grid ($N_y \times N_z$, cells) | Graded Grid ($N_y \times N_z$, cells, reduction) | Uniform $f_1$ [GHz] | Graded $f_1$ [GHz] ($\Delta$ vs. Uniform) | Uniform $K_{-1}(0)$ / $\langle K_{-1}\rangle_{\text{beam}}$ [$\Omega$] | Graded $K_{-1}(0)$ / $\langle K_{-1}\rangle_{\text{beam}}$ [$\Omega$] | Uniform Wall Time [s] | Graded Wall Time [s] (speedup) |
+# |---|---|---|---|---|---|---|---|---|
+# | `L1` ($n_{\text{feat}} = 4$, $\Delta_{\min} = 25.0\;\mu\text{m}$) | $32 \times 20 = 640$ | $24 \times 20 = 480$ ($1.33\times$) | $97.3084$ | $97.2817$ ($-0.027\%$) | $1.8381$ / $2.0425$ | $1.8307$ / $2.0342$ ($-0.40\%$) | $1.47^*$ | $1.16$ ($1.27\times$) |
+# | `L2` ($n_{\text{feat}} = 8$, $\Delta_{\min} = 12.5\;\mu\text{m}$) | $64 \times 40 = 2{,}560$ | $44 \times 36 = 1{,}584$ ($1.62\times$) | $97.8032$ | $97.7737$ ($-0.030\%$) | $1.7921$ / $2.0475$ | $1.7923$ / $2.0476$ ($+0.011\%$) | $8.07^*$ | $4.31$ ($1.87\times$) |
+# | `L3` ($n_{\text{feat}} = 12$, $\Delta_{\min} = 8.33\;\mu\text{m}$) | $96 \times 60 = 5{,}760$ | $62 \times 52 = 3{,}224$ ($1.79\times$) | $97.9334$ | $97.9128$ ($-0.021\%$) | $1.7802$ / $2.0537$ | $1.7808$ / $2.0541$ ($+0.034\%$) | $26.02$ | $10.58$ ($2.46\times$) |
+# | `Reference` ($n_{\text{feat}} = 16$, $\Delta_{\min} = 6.25\;\mu\text{m}$) | $128 \times 80 = 10{,}240$ | $82 \times 64 = 5{,}248$ ($1.95\times$) | $97.9918$ | $97.9701$ ($-0.022\%$) | $1.7749$ / $2.0566$ | $1.7768$ / $2.0585$ ($+0.107\%$) | $58.65$ | $20.35$ ($2.88\times$) |
+#
+# $^*$Single-point $\beta_0 d = 0.5\pi$ equivalent wall time (`Tasks 2, 3`).
+#
+# - **Equal feature resolution (`Graded L2` vs. `Uniform L2`, $n_{\text{feat}} = 8$)**: `Graded L2`
+#   ($1 \times 44 \times 36 = 1{,}584$ cells, $4.31\;\text{s}$) uses **$1.62\times$ fewer cells** and runs
+#   **$1.87\times$ faster** than `Uniform L2` ($1 \times 64 \times 40 = 2{,}560$ cells, $8.07\;\text{s}$)
+#    while matching $f_1(\beta_0 d = 0.5\pi)$ to $-0.030\%$ ($97.7737\;\text{GHz}$ vs. $97.8032\;\text{GHz}$),
+#   $K_{-1}(0)$ to $+0.011\%$ ($1.7923\;\Omega$ vs. $1.7921\;\Omega$), $\langle K_{-1}\rangle_{\text{beam}}$
+#   to $+0.005\%$ ($2.0476\;\Omega$ vs. $2.0475\;\Omega$), and $v_E / c$ to $-0.07\%$ ($0.5661$ vs. $0.5665$),
+#   with on-axis even-harmonic leakage $K_0(0) = 4.14\times 10^{-6}\;\Omega$. Across the full 7-point
+#   Brillouin sweep (`sweep_L2` in `data/graded_mesh_comparison.json`, Figs. 4, 5a, 7a), `Graded L2`
+#   reproduces `Uniform L2` across $\beta_0 d / \pi \in [0.20, 1.00]$ to within $\le 0.04\;\text{GHz}$ in
+#   $f_1(\beta_0)$ and $\le 0.008\;\Omega$ in $K_{-1}(0)$ and $\langle K_{-1}\rangle_{\text{beam}}$.
+# - **Superior accuracy at lower cost (`Graded Reference` vs. `Uniform L3`, Fig. 10c)**: `Graded Reference`
+#   ($n_{\text{feat}} = 16$, $5{,}248$ cells, $20.35\;\text{s}$) uses **fewer cells ($5{,}248$ vs. $5{,}760$,
+#   $0.91\times$) and $1.28\times$ less wall time ($20.35\;\text{s}$ vs. $26.02\;\text{s}$)** than `Uniform L3`
+#   ($n_{\text{feat}} = 12$, $5{,}760$ cells), while cutting the eigenfrequency discrepancy against
+#   `Uniform Reference` ($97.9918\;\text{GHz}$) by $2.7\times$ ($21.7\;\text{MHz}$ at `Graded Reference` vs.
+#   $58.4\;\text{MHz}$ at `Uniform L3`) and cutting the Pierce impedance discrepancy against
+#   `Uniform Reference` ($1.7749\;\Omega$) by $2.8\times$ ($+0.107\%$ at `Graded Reference` vs. $+0.299\%$
+#   at `Uniform L3`). Compared against `Uniform Reference` ($10{,}240$ cells, $58.65\;\text{s}$) at equal
+#   vane-tip resolution $n_{\text{feat}} = 16$, `Graded Reference` reduces cell count by **$1.95\times$** and
+#   wall time by **$2.88\times$**.
+# - **3D Graded Grating Preflight (`build_3d_grating_graded_grid` with `wakis.estimate`)**: Extending the
+#   graded $(y, z)$ profile to the 3D Karetnikova rectangular waveguide (`Task 9`, $b = 0.85\;\text{mm}$,
+#   $n_{\text{feat}} = 8$, $N_x = 34$) reduces the 3D mesh from $34 \times 64 \times 40 = 87{,}040$ cells
+#   (`Uniform 3D`, preflighted at $69.8\;\text{MB}$ CPU RAM) to $34 \times 44 \times 36 = 53{,}856$ cells
+#   (`Graded 3D`, **$1.62\times$ fewer cells**, preflighted at $48.6\;\text{MB}$ CPU RAM via `wakis.estimate`)
+#   while preserving $\Delta y_{\min} = \Delta z_{\min} = 12.5\;\mu\text{m}$ ($8.0$ cells across the
+#   $100\;\mu\text{m}$ vane tooth) and $\ge 35.1\;\text{cells}/\lambda$ at $f_{\max} = 285\;\text{GHz}$.
 #
 # ### Numerical Requirements for Monotonic $K_{-1}(0)$ Convergence
 #

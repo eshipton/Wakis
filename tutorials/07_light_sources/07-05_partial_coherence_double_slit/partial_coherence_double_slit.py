@@ -233,6 +233,28 @@
 # | GSM Hermite–Gaussian scale | $w_m$ | $1.40\;\mu\text{m}$ ($2.8\,\lambda_0$) | Mercer mode waist injected at $y_{\text{GSM}} = -1.00\;\mu\text{m}$ |
 # | Silver permittivity at $500\;\text{nm}$ | $\varepsilon_{\text{Ag}}(\omega_0)$ | $-7.632 - 0.731i$ | Rakic *et al.* (1998); $\delta_E = 28.77\;\text{nm}$, $\delta_I = 14.39\;\text{nm}$ |
 # | Background resolution (`--quick` / `--full` / ref) | $\text{cpw}_{\text{bg}}$ | $10\text{--}13$ / $20\text{--}26$ / $40$ | Graded to $\Delta x_{\min} = 2.86\;\text{nm}$ ($10.07\;\text{cells}/\delta_E$ in `--full`; $3.57\;\text{nm}$, $8.06\;\text{cells}/\delta_E$ in `--quick`) at Ag slit jaws |
+#
+# ### 2.1 Simulation setup schematic & graded skin-depth mesh
+#
+# The first figure (`figures/00_setup_schematic.png`) is built directly from the live Wakis `GridFIT3D`,
+# `SolverFIT3D`, `Box` screen jaws, `CurrentSource` arrays, and `DFTMonitor` planes via
+# `wakis.schematic.plot_schematic` and `wakis.schematic.draw_mesh`:
+#
+# - **Panel (a) — Method A (Extended Incoherent Strip Source):** An upstream strip of width $D \in [0, 3.60\;\mu\text{m}]$
+#   at $y = -L_1 = -8.00\;\mu\text{m}$ sampled by $N_s = 37$ uncorrelated $J_z$ line dipoles (`--full`), illuminating
+#   the $200\;\text{nm}$-thick $\text{PEC}$ screen at $y = 0$ pierced by two slits of width $a = 0.40\;\mu\text{m}$
+#   separated by $d = 2.00\;\mu\text{m}$, with downstream `DFTMonitor` at $y = +L_2 = +6.00\;\mu\text{m}$ and
+#   8-cell CPML boundaries on $\pm x, \pm y$.
+# - **Panel (b) — Methods B & C (GSM Mercer Eigenmodes & Broadband Pulse):** Orthonormal Hermite–Gaussian Mercer modes
+#   $\Phi_m(x)$ ($w_m = 1.40\;\mu\text{m}$) and broadband pulses injected at $y_{\text{GSM}} = -1.00\;\mu\text{m}$
+#   upstream of the $\text{PEC}$ / Drude $\text{Ag}$ double-slit screen.
+# - **Panel (c) — Graded Slit & Silver Skin-Depth Mesh Zoom:** Zoom around the upper slit aperture
+#   ($x \in [0.80, 1.20]\;\mu\text{m}$, $y \in [-0.10, +0.10]\;\mu\text{m}$), showing the interface-snapped graded
+#   collar (`--full`: $\Delta x_{\text{bg}} = 24.92\;\text{nm}$, $\Delta x_{\min} = 2.86\;\text{nm}$, $70$ cells across
+#   the $200\;\text{nm}$ screen thickness, $67$ cells across the $400\;\text{nm}$ slit opening, and
+#   $10.07\;\text{cells}/\delta_E = 5.04\;\text{cells}/\delta_I$ across the $28.77\;\text{nm}$ $\text{Ag}$ skin depth).
+#
+# ![Setup Schematic](figures/00_setup_schematic.png)
 
 # %%
 import argparse
@@ -251,6 +273,8 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c as c_light
+
+from wakis import figstyle, schematic
 
 TUTORIAL_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 if str(TUTORIAL_DIR) not in sys.path:
@@ -1377,9 +1401,136 @@ def _reconstruct_gsm_bank(d_even, d_odd):
     return modes_sorted, x_det, x_slit, det_calibrated, slit_calibrated
 
 
+def _plot_fig00_setup_schematic(fig_dir, d4):
+    """00: 3-panel labelled setup schematic using wakis.schematic (VCZ, GSM/Broadband, Graded Mesh)."""
+    dx_min_nm = float(d4["dx_min_nm"])
+    cpsd_e = float(d4["cells_per_skin_depth"])
+    cpsd_i = float(d4["cells_per_skin_depth_power"])
+
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.2, height=4.4)
+
+    # Panel (a): Method A — Extended incoherent strip (van Cittert-Zernike)
+    obj_a = h.build_double_slit_schematic_objects(mode="vcz", cpw=10, screen_material="pec")
+    schematic.plot_schematic(
+        obj_a["solver"],
+        plane="xy",
+        ax=axes[0],
+        unit="um",
+        structures=obj_a["structures"],
+        sources=obj_a["sources"],
+        monitors=obj_a["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title=r"(a) Method A: Incoherent Strip ($N_s=37$)",
+    )
+    h.tidy_double_slit_schematic_axes(axes[0], mode="vcz")
+
+    # Panel (b): Methods B & C — Coherent-mode GSM & broadband polychromatic synthesis
+    obj_b = h.build_double_slit_schematic_objects(mode="gsm", cpw=10, screen_material="pec")
+    schematic.plot_schematic(
+        obj_b["solver"],
+        plane="xy",
+        ax=axes[1],
+        unit="um",
+        structures=obj_b["structures"],
+        sources=obj_b["sources"],
+        monitors=obj_b["monitors"],
+        show_mesh=False,
+        show_wave_packet=False,
+        title=r"(b) Methods B & C: GSM Mercer Modes & Broadband",
+    )
+    h.tidy_double_slit_schematic_axes(axes[1], mode="gsm")
+
+    # Panel (c): Graded mesh zoom around the upper slit and Drude Ag skin-depth collar
+    _, grid_ag, _ = h.build_double_slit_solver(
+        x_bounds=(-3.0e-6, 3.0e-6),
+        y_bounds=(-1.2e-6, 1.2e-6),
+        wavelength=WAVELENGTH_0,
+        cpw=int(d4["cpw"]) if "cpw" in d4 else 20,
+        screen_material="silver",
+        cells_per_skin_depth=round(cpsd_e),
+        grid_only=True,
+    )
+    ax_m = axes[2]
+    for x_lo, x_hi in [(-0.80, 0.80), (1.20, 3.00)]:
+        ax_m.add_patch(
+            mpatches.Rectangle(
+                (x_lo, -0.10),
+                x_hi - x_lo,
+                0.20,
+                facecolor="#cbd5e1",
+                edgecolor="#0f172a",
+                lw=1.2,
+                zorder=2,
+            )
+        )
+    schematic.draw_mesh(
+        ax_m,
+        grid_ag,
+        plane="xy",
+        unit="um",
+        color="#334155",
+        alpha=0.42,
+        linewidth=0.35,
+    )
+    _, skin_m = h.silver_drude_material(WAVELENGTH_0)
+    skin_um = skin_m * 1e6
+    for x_edge, sign in [(0.80, -1.0), (1.20, +1.0)]:
+        ax_m.axvline(
+            x_edge + sign * skin_um,
+            color="#e11d48",
+            ls="--",
+            lw=1.3,
+            zorder=6,
+        )
+    ax_m.set_xlim(0.62, 1.38)
+    ax_m.set_ylim(-0.22, 0.22)
+    ax_m.set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
+    ax_m.set_ylabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
+    ax_m.set_title(r"(c) Graded Slit & Ag Skin-Depth Mesh Zoom")
+    ax_m.text(
+        1.00,
+        0.0,
+        "Upper slit\n"
+        + r"$a=400\;\mathrm{nm}$"
+        + "\n67 cells",
+        fontsize=6.3,
+        fontweight="bold",
+        color="#1e3a8a",
+        ha="center",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#2563eb", lw=0.65, alpha=0.92),
+        zorder=8,
+    )
+    ax_m.text(
+        1.00,
+        0.155,
+        rf"Screen $t=200\;\mathrm{{nm}}$: 70 cells ($\Delta x_{{\min}}={dx_min_nm:.2f}\;\mathrm{{nm}}$)",
+        fontsize=6.1,
+        color="#0f172a",
+        ha="center",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#475569", lw=0.6, alpha=0.92),
+        zorder=8,
+    )
+    ax_m.text(
+        1.00,
+        -0.155,
+        rf"Ag $\delta_E=28.8\;\mathrm{{nm}}$: {cpsd_e:.2f} cells/$\delta_E$ ({cpsd_i:.2f} cells/$\delta_I$)",
+        fontsize=6.1,
+        color="#9f1239",
+        ha="center",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec="#e11d48", lw=0.6, alpha=0.92),
+        zorder=8,
+    )
+
+    figstyle.save(fig, fig_dir / "00_setup_schematic.png")
+
+
 def _plot_fig01_schematic(fig_dir):
     """01: Annotated 2D geometry schematic of Young's double-slit coherence experiment."""
-    fig, ax = plt.subplots(figsize=(10.5, 5.2), dpi=160)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=10.0, height=4.4)
     ax.set_facecolor("#f8fafc")
 
     # Upstream incoherent strip source at y = -8 um
@@ -1398,7 +1549,7 @@ def _plot_fig01_schematic(fig_dir):
         r"$D \in [0, 3.6]\;\mu\mathrm{m}$",
         xy=(-8.0, -1.55),
         xytext=(-8.9, -2.85),
-        fontsize=9.5,
+        fontsize=8.5,
         fontweight="bold",
         color="#92400e",
         arrowprops=dict(arrowstyle="->", color="#92400e", lw=1.2),
@@ -1433,7 +1584,7 @@ def _plot_fig01_schematic(fig_dir):
         0.0,
         3.15,
         "PEC / Drude Ag screen\n" + r"($t = 0.20\;\mu\mathrm{m},\;a = 0.40\;\mu\mathrm{m},\;d = 2.00\;\mu\mathrm{m}$)",
-        fontsize=8.8,
+        fontsize=8.0,
         ha="center",
         va="bottom",
         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="#64748b", alpha=0.92),
@@ -1462,24 +1613,19 @@ def _plot_fig01_schematic(fig_dir):
 
     # Dimension arrows
     ax.annotate("", xy=(0.0, -4.2), xytext=(-8.0, -4.2), arrowprops=dict(arrowstyle="<->", color="#475569", lw=1.3))
-    ax.text(-4.0, -4.55, r"$L_1 = 8.0\;\mu\mathrm{m}$ ($16\lambda_0$)", ha="center", fontsize=9.5, color="#334155")
+    ax.text(-4.0, -4.55, r"$L_1 = 8.0\;\mu\mathrm{m}$ ($16\lambda_0$)", ha="center", fontsize=8.5, color="#334155")
     ax.annotate("", xy=(6.0, -4.2), xytext=(0.0, -4.2), arrowprops=dict(arrowstyle="<->", color="#475569", lw=1.3))
-    ax.text(3.0, -4.55, r"$L_2 = 6.0\;\mu\mathrm{m}$ ($12\lambda_0$)", ha="center", fontsize=9.5, color="#334155")
+    ax.text(3.0, -4.55, r"$L_2 = 6.0\;\mu\mathrm{m}$ ($12\lambda_0$)", ha="center", fontsize=8.5, color="#334155")
 
     ax.set_xlim(-9.4, 7.6)
     ax.set_ylim(-5.0, 4.8)
-    ax.set_xlabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]", fontsize=11)
-    ax.set_ylabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]", fontsize=11)
+    ax.set_xlabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
+    ax.set_ylabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
     ax.set_title(
-        r"Young's Double-Slit Partial Coherence Setup in 2D Wakis FIT ($\lambda_0 = 0.50\;\mu\mathrm{m}$, TM Polarization)",
-        fontsize=11.5,
-        fontweight="bold",
+        r"Young's Double-Slit Partial Coherence Geometry ($\lambda_0 = 0.50\;\mu\mathrm{m}$, 2D TM)"
     )
-    ax.legend(loc="upper left", fontsize=8.5, framealpha=0.94)
-    ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_double_slit_schematic.png")
-    plt.close(fig)
+    ax.legend(loc="upper left", fontsize=7.8, framealpha=0.94)
+    figstyle.save(fig, fig_dir / "01_double_slit_schematic.png")
 
 
 def _plot_fig02_grid_and_slit_zoom(fig_dir, d4):
@@ -1508,33 +1654,39 @@ def _plot_fig02_grid_and_slit_zoom(fig_dir, d4):
     ieps_z = solver_pec.ieps.to_matrix("z")[:, :, 0]
     pec_mask = (ieps_z == 0.0).astype(float)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.6), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=4.0)
     xc = 0.5 * (grid_pec.x[:-1] + grid_pec.x[1:]) * 1e6
     yc = 0.5 * (grid_pec.y[:-1] + grid_pec.y[1:]) * 1e6
 
     im1 = ax1.pcolormesh(
         xc, yc, pec_mask[:-1, :-1].T, cmap="Greys", vmin=0.0, vmax=1.2, shading="auto"
     )
-    ax1.axhline(-1.0, color="#2563eb", ls="--", lw=1.5, label=r"GSM source plane $y=-1.0\;\mu\mathrm{m}$")
-    ax1.axvline(-1.0, color="#dc2626", ls=":", lw=1.2, label=r"Slit centers $x=\pm 1.0\;\mu\mathrm{m}$")
-    ax1.axvline(+1.0, color="#dc2626", ls=":", lw=1.2)
+    h.overlay_double_slit_geometry(
+        ax1,
+        line_color="black",
+        show_source=True,
+        show_detector=False,
+        show_labels=True,
+        compact=False,
+    )
     ax1.set_xlim(-2.6, 2.6)
     ax1.set_ylim(-1.1, 1.1)
     ax1.set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
     ax1.set_title(r"(a) Double-Slit Screen PEC Mask ($\mathrm{cpw}=20,\;\Delta x=25\;\mathrm{nm}$)")
-    ax1.legend(loc="upper right", fontsize=8.5)
     plt.colorbar(im1, ax=ax1, label=r"Screen conductor mask ($1-\varepsilon_r^{-1}$)")
 
-    # Panel (b): Zoom around the upper slit x in [0.6, 1.4] um showing graded FIT grid lines and Ag skin depth
+    # Panel (b): Zoom around the upper slit x in [0.62, 1.38] um showing graded FIT grid lines and Ag skin depth
     ax2.pcolormesh(xc, yc, pec_mask[:-1, :-1].T, cmap="Blues", vmin=0.0, vmax=1.3, shading="auto")
-    for xg in grid_ag.x * 1e6:
-        if 0.55 <= xg <= 1.45:
-            ax2.axvline(xg, color="#475569", lw=0.45, alpha=0.6)
-    for yg in grid_ag.y * 1e6:
-        if -0.35 <= yg <= 0.35:
-            ax2.axhline(yg, color="#475569", lw=0.45, alpha=0.6)
-
+    schematic.draw_mesh(
+        ax2,
+        grid_ag,
+        plane="xy",
+        unit="um",
+        color="#334155",
+        alpha=0.5,
+        linewidth=0.4,
+    )
     _, skin_m = h.silver_drude_material(WAVELENGTH_0)
     skin_um = skin_m * 1e6
     for x_edge, sign in [(0.80, -1.0), (1.20, +1.0)]:
@@ -1551,49 +1703,42 @@ def _plot_fig02_grid_and_slit_zoom(fig_dir, d4):
     ax2.set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
     ax2.set_ylabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
     ax2.set_title(
-        rf"(b) Graded Slit & Skin-Depth Mesh ($\Delta x_{{\min}}={dx_min_nm:.2f}\;\mathrm{{nm}},\;{cpsd_e:.2f}\;\mathrm{{cells}}/\delta_E$)",
-        fontsize=10.0,
+        rf"(b) Graded Slit & Skin-Depth Mesh ($\Delta x_{{\min}}={dx_min_nm:.2f}\;\mathrm{{nm}},\;{cpsd_e:.2f}\;\mathrm{{cells}}/\delta_E$)"
     )
-    ax2.legend(loc="upper right", fontsize=8.2)
+    ax2.legend(loc="upper right", fontsize=7.5)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "02_grid_and_slit_zoom.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "02_grid_and_slit_zoom.png")
 
 
 def _plot_fig03_gsm_mercer_modes(fig_dir):
     """03: Hermite-Gaussian Mercer eigenmodes, eigenvalue spectra, and CSD W(x1, x2)."""
-    fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.2), dpi=160)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=11.6, height=3.8)
     x = np.linspace(-3.8e-6, 3.8e-6, 401)
-    colors = ["#1d4ed8", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777"]
 
     for m in range(6):
         phi_m = h.gsm_hermite_mode(m, x, w_m=W_M_GSM) / np.sqrt(1e6)
-        axes[0].plot(x * 1e6, phi_m, lw=1.7, color=colors[m], label=rf"$m={m}$")
+        st = figstyle.series_style(m)
+        axes[0].plot(x * 1e6, phi_m, color=st["color"], ls=st["linestyle"], lw=1.6, label=rf"$m={m}$")
     axes[0].axvline(-1.0, color="k", ls=":", lw=1.1)
     axes[0].axvline(+1.0, color="k", ls=":", lw=1.1, label=r"Slits $x=\pm 1\;\mu\mathrm{m}$")
     axes[0].set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
     axes[0].set_ylabel(r"Eigenmode $\Phi_m(x)$ [$\mu\mathrm{m}^{-1/2}$]")
     axes[0].set_title(r"(a) Mercer Eigenmodes $\Phi_m(x)$ ($w_m = 1.4\;\mu\mathrm{m}$)")
-    axes[0].legend(loc="upper right", fontsize=7.8, ncol=2)
-    axes[0].grid(True, alpha=0.25)
+    axes[0].legend(loc="upper right", fontsize=7.2, ncol=2)
 
     m_arr = np.arange(10)
-    for ratio, col, mk in [(0.5, "#dc2626", "o"), (0.75, "#d97706", "s"), (1.0, "#059669", "^"), (2.0, "#1d4ed8", "D")]:
+    for idx_r, ratio in enumerate([0.5, 0.75, 1.0, 2.0]):
         info = h.gsm_parameters_from_modal_scale(ratio * SLIT_SEP, w_m=W_M_GSM, n_modes=10)
         axes[1].semilogy(
             m_arr,
             info["weights"],
-            marker=mk,
-            lw=1.7,
-            color=col,
+            **figstyle.series_style(idx_r),
             label=rf"$\sigma_\mu / d = {ratio:.2f}\;(q={info['q']:.2f})$",
         )
     axes[1].set_xlabel(r"Mercer mode index $m$")
     axes[1].set_ylabel(r"Normalized modal weight $w_m = (1-q)q^m$")
     axes[1].set_title("(b) Starikov & Wolf (1982) Eigenvalue Spectrum")
-    axes[1].legend(loc="upper right", fontsize=8.0)
-    axes[1].grid(True, which="both", alpha=0.25)
+    axes[1].legend(loc="upper right", fontsize=7.4)
 
     # Panel (c): Cross-spectral density W(x1, x2) reconstructed at sigma_mu / d = 0.75
     info_c = h.gsm_parameters_from_modal_scale(0.75 * SLIT_SEP, w_m=W_M_GSM, n_modes=12)
@@ -1601,21 +1746,19 @@ def _plot_fig03_gsm_mercer_modes(fig_dir):
     phis = np.array([h.gsm_hermite_mode(m, x_c, w_m=W_M_GSM) for m in range(12)])
     w_csd = (info_c["weights"][:, None, None] * phis[:, :, None] * phis[:, None, :]).sum(axis=0)
     w_csd /= np.max(w_csd)
-    im = axes[2].pcolormesh(x_c * 1e6, x_c * 1e6, w_csd, cmap="magma", shading="auto")
-    axes[2].plot([-1.0, 1.0], [1.0, -1.0], "wo", ms=6, mec="k", label=r"Slit cross-points $(\pm d/2, \mp d/2)$")
+    im = axes[2].pcolormesh(x_c * 1e6, x_c * 1e6, w_csd, cmap=figstyle.CMAP_MAGNITUDE, shading="auto")
+    axes[2].plot([-1.0, 1.0], [1.0, -1.0], "wo", ms=6, mec="k", label=r"Slits $(\pm d/2, \mp d/2)$")
     axes[2].set_xlabel(r"$x_1$ [$\mu\mathrm{m}$]")
     axes[2].set_ylabel(r"$x_2$ [$\mu\mathrm{m}$]")
     axes[2].set_title(r"(c) Reconstructed CSD $W(x_1, x_2)/W(0,0)$ ($\sigma_\mu/d=0.75$)")
-    axes[2].legend(loc="upper left", fontsize=7.8)
+    axes[2].legend(loc="upper left", fontsize=7.2)
     plt.colorbar(im, ax=axes[2], label=r"Normalized $W(x_1, x_2)$")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_gsm_mercer_eigenmodes.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "03_gsm_mercer_eigenmodes.png")
 
 
 def _plot_fig04_coherent_vs_incoherent_2d(fig_dir, d0, d2, d3):
-    """04: 4-panel 2D intensity comparison showing coherent vs incoherent superposition."""
+    """04 & 04b: 3-panel physical Mercer mode synthesis + 2-panel unphysical coherent sum pitfall."""
     x_2d = d2["x_2d"] * 1e6
     y_2d = d2["y_2d"] * 1e6
     ez_m0 = d2["ez_2d_m0"]
@@ -1634,58 +1777,96 @@ def _plot_fig04_coherent_vs_incoherent_2d(fig_dir, d0, d2, d3):
     # Erroneous coherent field sum |0.707*e0 + 0.707*e1|^2 -> illuminates only 1 slit / skewed!
     i_coh_err = np.abs((e0 + e1) / np.sqrt(2.0)) ** 2
 
-    panels = [
-        (i_m0, r"(a) Symmetric Mode $m=0$ ($\mu_{12}=+1,\;\mathcal{V}=1.00$)"),
-        (i_m1, r"(b) Antisymmetric Mode $m=1$ ($\mu_{12}=-1$, central dark fringe)"),
-        (i_inc, r"(c) Incoherent Power Sum $\sum_m w_m |E_z^{(m)}|^2$ ($\mu_{12}=0,\;\mathcal{V}=0$)"),
-        (i_coh_err, r"(d) Erroneous Coherent Field Sum $|\sum_m \sqrt{w_m} E_z^{(m)}|^2$ (Unphysical)"),
+    panels_main = [
+        (i_m0, "(a) Symmetric Mode $m=0$\n($\\mu_{12}=+1,\\;\\mathcal{V}=1.00$)"),
+        (i_m1, "(b) Antisymmetric Mode $m=1$\n($\\mu_{12}=-1$, dark center)"),
+        (i_inc, "(c) Incoherent Power Sum\n$\\sum_m w_m |E_z^{(m)}|^2$ ($\\mathcal{V}=0$)"),
     ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(11.4, 8.6), dpi=160)
-    for ax, (field_i, title) in zip(axes.ravel(), panels):
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=12.6, height=4.4)
+    for ax, (field_i, title) in zip(axes.ravel(), panels_main):
         mask_down = d2["y_2d"] >= 0.25e-6
         vmax = float(np.percentile(field_i[:, mask_down], 99.2))
         im = ax.pcolormesh(
-            x_2d, y_2d, np.clip(field_i.T / vmax, 0.0, 1.0), cmap="inferno", shading="auto"
+            x_2d, y_2d, np.clip(field_i.T / vmax, 0.0, 1.0), cmap=figstyle.CMAP_MAGNITUDE, shading="auto"
         )
-        ax.axhline(0.0, color="cyan", lw=1.2, alpha=0.8)
-        ax.axhline(L2_DET * 1e6, color="#22c55e", ls="--", lw=1.2)
+        h.overlay_double_slit_geometry(
+            ax,
+            line_color="white",
+            show_source=True,
+            show_detector=True,
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
         ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
-        ax.set_title(title, fontsize=10.0, fontweight="bold")
+        ax.set_title(title)
         plt.colorbar(im, ax=ax, label=r"Normalized $|E_z(x,y)|^2$")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "04_coherent_vs_incoherent_2d_intensity.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "04_coherent_vs_incoherent_2d_intensity.png")
+
+    # Companion 2-panel figure contrasting physical incoherent power sum vs unphysical coherent field sum
+    fig_b, axes_b = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
+    for ax, (field_i, title) in zip(
+        axes_b.ravel(),
+        [
+            (i_inc, r"(a) Physical Incoherent Sum $\sum_m w_m |E_z^{(m)}|^2$ ($\mathcal{V}=0$)"),
+            (i_coh_err, r"(b) Erroneous Coherent Sum $|\sum_m \sqrt{w_m} E_z^{(m)}|^2$ (Skewed)"),
+        ],
+    ):
+        mask_down = d2["y_2d"] >= 0.25e-6
+        vmax = float(np.percentile(field_i[:, mask_down], 99.2))
+        im = ax.pcolormesh(
+            x_2d, y_2d, np.clip(field_i.T / vmax, 0.0, 1.0), cmap=figstyle.CMAP_MAGNITUDE, shading="auto"
+        )
+        h.overlay_double_slit_geometry(
+            ax,
+            line_color="white",
+            show_source=True,
+            show_detector=True,
+            show_labels=True,
+            compact=True,
+        )
+        ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
+        ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
+        ax.set_title(title)
+        plt.colorbar(im, ax=ax, label=r"Normalized $|E_z(x,y)|^2$")
+
+    figstyle.save(fig_b, fig_dir / "04b_coherent_vs_incoherent_error_2d.png")
 
 
 def _plot_fig05_field_snapshots(fig_dir, d2):
-    """05: Four time-domain wavepacket snapshots Ez(x, y, t) during double-slit diffraction."""
-    # stored normalized (float16) with a td_frames_ez_scale factor to keep the committed data small
-    frames = np.asarray(d2["td_frames_ez"], dtype=float) * (float(d2["td_frames_ez_scale"]) if "td_frames_ez_scale" in d2 else 1.0)
+    """05: Three time-domain wavepacket snapshots Ez(x, y, t) during double-slit diffraction."""
+    frames = np.asarray(d2["td_frames_ez"], dtype=float) * (
+        float(d2["td_frames_ez_scale"]) if "td_frames_ez_scale" in d2 else 1.0
+    )
     times_fs = d2["td_frames_t_fs"]
     tx = d2["td_x"] * 1e6
     ty = d2["td_y"] * 1e6
-    pick = [2, 7, 13, 20]
+    pick = [3, 9, 18]
 
-    fig, axes = plt.subplots(2, 2, figsize=(11.2, 8.2), dpi=160)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=11.8, height=4.1)
     vmax = float(np.max(np.abs(frames))) * 0.45
-    for ax, idx in zip(axes.ravel(), pick):
+    vmin, vmax = figstyle.symmetric_limits(np.array([-vmax, vmax]))
+    for idx_p, (ax, idx) in enumerate(zip(axes.ravel(), pick)):
         snap = frames[idx]
         im = ax.pcolormesh(
-            tx, ty, snap.T, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto"
+            tx, ty, snap.T, cmap=figstyle.CMAP_DIVERGING, vmin=vmin, vmax=vmax, shading="auto"
         )
-        ax.axhline(0.0, color="k", lw=1.4)
-        ax.axhline(L2_DET * 1e6, color="#059669", ls="--", lw=1.1)
+        h.overlay_double_slit_geometry(
+            ax,
+            line_color="black",
+            show_source=True,
+            show_detector=True,
+            show_labels=True,
+            compact=True,
+        )
         ax.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
         ax.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
-        ax.set_title(rf"Instantaneous $E_z(x,y,t)$ at $t = {times_fs[idx]:.1f}\;\mathrm{{fs}}$")
+        ax.set_title(rf"({chr(ord('a') + idx_p)}) $E_z(x,y,t)$ at $t = {times_fs[idx]:.1f}\;\mathrm{{fs}}$")
         plt.colorbar(im, ax=ax, label=r"$E_z$ [V/m, arb.]")
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "05_field_snapshots_ez.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "05_field_snapshots_ez.png")
 
 
 def _plot_fig06_poynting_and_slit_profile(fig_dir, d2):
@@ -1701,17 +1882,15 @@ def _plot_fig06_poynting_and_slit_profile(fig_dir, d2):
     x_2d = d2["x_2d"][:nx_c] * 1e6
     y_2d = d2["y_2d"][:ny_c] * 1e6
 
-    # For 2D TM (Ez, Hx, Hy), time-averaged Poynting vector is S = 0.5 * Re(E x H*)
-    # E_z z_hat x (H_x x_hat + H_y y_hat)* = -E_z H_y^* x_hat + E_z H_x^* y_hat
     sx = -0.5 * np.real(ez * np.conj(hy))
     sy = +0.5 * np.real(ez * np.conj(hx))
     s_mag = np.hypot(sx, sy)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.6, 4.8), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
     mask_down = y_2d >= 0.2
     vmax = float(np.percentile(s_mag[:, mask_down], 99.0))
     im = ax1.pcolormesh(
-        x_2d, y_2d, np.clip(s_mag.T / vmax, 0.0, 1.0), cmap="viridis", shading="auto"
+        x_2d, y_2d, np.clip(s_mag.T / vmax, 0.0, 1.0), cmap=figstyle.CMAP_MAGNITUDE, shading="auto"
     )
     step_q = max(1, len(x_2d) // 24)
     Xq, Yq = np.meshgrid(x_2d[::step_q], y_2d[::step_q], indexing="ij")
@@ -1728,7 +1907,14 @@ def _plot_fig06_poynting_and_slit_profile(fig_dir, d2):
         scale=28,
         width=0.003,
     )
-    ax1.axhline(0.0, color="cyan", lw=1.2)
+    h.overlay_double_slit_geometry(
+        ax1,
+        line_color="white",
+        show_source=True,
+        show_detector=True,
+        show_labels=True,
+        compact=False,
+    )
     ax1.set_xlabel(r"$x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"$y$ [$\mu\mathrm{m}$]")
     ax1.set_title(r"(a) Time-Averaged Poynting Vector $\langle\mathbf{S}(x,y)\rangle$")
@@ -1738,46 +1924,62 @@ def _plot_fig06_poynting_and_slit_profile(fig_dir, d2):
     x_slit = d2["x_slit"] * 1e6
     ez_slit = np.abs(d2["ez_slit_f0"][0])
     ez_slit /= np.max(ez_slit)
-    ax2.plot(x_slit, ez_slit, "o-", color="#1d4ed8", ms=3.5, lw=1.6, label=r"Wakis 2D FIT $|E_z(x, y=0)|$")
+    st0 = figstyle.series_style(0)
+    st1 = figstyle.series_style(1)
+    ax2.plot(
+        x_slit,
+        ez_slit,
+        color=st0["color"],
+        ls="-",
+        marker="o",
+        ms=3.2,
+        lw=1.6,
+        label=r"Wakis 2D FIT $|E_z(x, y=0)|$",
+    )
 
     u_fine = np.linspace(-0.20, 0.20, 101)
     cos_mode = np.cos(np.pi * u_fine / 0.40)
-    ax2.plot(-1.0 + u_fine, cos_mode, "--", color="#dc2626", lw=2.0, label=r"Analytical $\mathrm{TM}_0$ slit mode $\cos(\pi u / a)$")
-    ax2.plot(+1.0 + u_fine, cos_mode, "--", color="#dc2626", lw=2.0)
+    ax2.plot(-1.0 + u_fine, cos_mode, ls="--", color=st1["color"], lw=2.0, label=r"Analytical $\mathrm{TM}_0$ slit mode $\cos(\pi u / a)$")
+    ax2.plot(+1.0 + u_fine, cos_mode, ls="--", color=st1["color"], lw=2.0)
     ax2.set_xlim(-2.2, 2.2)
     ax2.set_ylim(-0.05, 1.12)
     ax2.set_xlabel(r"Slit plane coordinate $x$ [$\mu\mathrm{m}$]")
     ax2.set_ylabel(r"Normalized slit aperture amplitude $|E_z(x,0)|$")
     ax2.set_title(r"(b) Double-Slit Aperture Field ($a = 0.40\;\mu\mathrm{m},\;d = 2.00\;\mu\mathrm{m}$)")
-    ax2.legend(loc="upper right", fontsize=8.8)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=8.0)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "06_poynting_and_slit_profile.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "06_poynting_and_slit_profile.png")
 
 
 def _plot_fig07_propagation_gif(fig_dir, d2):
     """07: Animated GIF movie of the TM wavepacket propagating through the double slit."""
-    # stored normalized (float16) with a td_frames_ez_scale factor to keep the committed data small
-    frames = np.asarray(d2["td_frames_ez"], dtype=float) * (float(d2["td_frames_ez_scale"]) if "td_frames_ez_scale" in d2 else 1.0)
+    frames = np.asarray(d2["td_frames_ez"], dtype=float) * (
+        float(d2["td_frames_ez_scale"]) if "td_frames_ez_scale" in d2 else 1.0
+    )
     times_fs = d2["td_frames_t_fs"]
     tx = d2["td_x"] * 1e6
     ty = d2["td_y"] * 1e6
     vmax = float(np.max(np.abs(frames))) * 0.42
+    vmin, vmax = figstyle.symmetric_limits(np.array([-vmax, vmax]))
 
-    fig, ax = plt.subplots(figsize=(6.4, 5.2), dpi=110)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=5.6, height=4.6)
+    fig.set_dpi(105)
     quad = ax.pcolormesh(
-        tx, ty, frames[0].T, cmap="RdBu_r", vmin=-vmax, vmax=vmax, shading="auto"
+        tx, ty, frames[0].T, cmap=figstyle.CMAP_DIVERGING, vmin=vmin, vmax=vmax, shading="auto"
     )
-    ax.axhline(0.0, color="k", lw=1.8, label="Double-slit screen ($y=0$)")
-    ax.axhline(L2_DET * 1e6, color="#059669", ls="--", lw=1.3, label=r"Detector ($y=6\;\mu\mathrm{m}$)")
+    h.overlay_double_slit_geometry(
+        ax,
+        line_color="black",
+        show_source=True,
+        show_detector=True,
+        show_labels=True,
+        compact=False,
+    )
     ax.set_xlabel(r"Transverse coordinate $x$ [$\mu\mathrm{m}$]")
     ax.set_ylabel(r"Propagation coordinate $y$ [$\mu\mathrm{m}$]")
     title = ax.set_title(rf"2D FIT Double-Slit Wavepacket: $t = {times_fs[0]:.1f}\;\mathrm{{fs}}$")
-    ax.legend(loc="lower right", fontsize=8.0)
     plt.colorbar(quad, ax=ax, label=r"$E_z(x,y,t)$ [arb.]")
-    fig.tight_layout()
+    figstyle.finish(fig)
 
     def _update(frame_idx):
         quad.set_array(frames[frame_idx].T.ravel())
@@ -1802,11 +2004,10 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
 
     # Figure 08: Screen fringe profiles at selected strip widths D / D0
     d_ratios_prof = [0.0, 0.4, 0.7, 1.0, 1.4]
-    colors_prof = ["#1d4ed8", "#0284c7", "#059669", "#d97706", "#dc2626"]
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.8), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
 
     i0_ref = None
-    for ratio, col in zip(d_ratios_prof, colors_prof):
+    for idx_r, ratio in enumerate(d_ratios_prof):
         width_D = ratio * D0_VCZ
         w = _strip_overlap_weights(xs_full, width_D)
         i_prof = h.incoherent_power_sum(ez_det_norm, weights=w)
@@ -1816,11 +2017,13 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
         vis, mu_s = h.extract_fringe_visibility(
             x_det, i_prof_n, d=SLIT_SEP, L2=L2_DET, wavelength=WAVELENGTH_0
         )
+        st = figstyle.series_style(idx_r)
         ax1.plot(
             x_det * 1e6,
             i_prof_n,
-            lw=1.8,
-            color=col,
+            lw=1.7,
+            color=st["color"],
+            ls=st["linestyle"],
             label=rf"$D/D_0={ratio:.1f}\;(\mu_{{12}}={mu_s:+.2f},\;\mathcal{{V}}={vis:.2f})$",
         )
 
@@ -1829,11 +2032,10 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
     ax1.set_xlabel(r"Detector coordinate $x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"Normalized screen intensity $I(x)/I_0$")
     ax1.set_title(r"(a) Wakis 2D FIT Fringe Profiles vs Strip Width $D$")
-    ax1.legend(loc="upper right", fontsize=8.0)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.5)
 
     # Panel (b): Direct zoom on phase reversal at D/D0 = 1.4 (mu_12 < 0) vs D/D0 = 0.0 and 1.0
-    for ratio, col, ls_style in [(0.0, "#1d4ed8", "-"), (1.0, "#d97706", "--"), (1.4, "#dc2626", "-")]:
+    for idx_r, (ratio, ls_style) in enumerate([(0.0, "-"), (1.0, "--"), (1.4, "-")]):
         width_D = ratio * D0_VCZ
         w = _strip_overlap_weights(xs_full, width_D)
         i_prof_n = h.incoherent_power_sum(ez_det_norm, weights=w) / i0_ref
@@ -1841,6 +2043,7 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
         i_th, _ = h.double_slit_2d_hankel_intensity(
             x_det, mu_th, d=SLIT_SEP, a=SLIT_WIDTH, L2=L2_DET, wavelength=WAVELENGTH_0
         )
+        col = figstyle.series_style(idx_r)["color"]
         ax2.plot(
             x_det * 1e6,
             i_prof_n,
@@ -1862,12 +2065,9 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
     ax2.set_xlabel(r"Detector coordinate $x$ [$\mu\mathrm{m}$]")
     ax2.set_ylabel(r"Normalized intensity $I(x)/I_0$")
     ax2.set_title(r"(b) Secondary-Lobe Phase Reversal ($\mu_{12} < 0$ at $D = 1.4\,D_0$)")
-    ax2.legend(loc="upper right", fontsize=8.0)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.5)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "08_vcz_fringe_profiles_vs_D.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "08_vcz_fringe_profiles_vs_D.png")
 
     # Figure 09: Visibility V(D) and signed coherence mu_12(D) vs D / D0
     d_sweep = np.linspace(0.0, 3.6e-6, 19)
@@ -1895,32 +2095,31 @@ def _plot_fig08_and_fig09_vcz(fig_dir, xs_full, x_det, x_slit, ez_det_full, ez_s
     mu_sinc_fine = h.van_cittert_zernike_sinc(d_fine, SLIT_SEP, WAVELENGTH_0, L1_VCZ)
     mu_hankel_fine = h.van_cittert_zernike_2d_hankel(d_fine, SLIT_SEP, WAVELENGTH_0, L1_VCZ)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.0, 4.7), dpi=160)
-    ax1.plot(u_fine, np.abs(mu_sinc_fine), "--", color="#64748b", lw=1.8, label=r"Paraxial VCZ $|\mathrm{sinc}(D/D_0)|$ (Zernike 1938)")
-    ax1.plot(u_fine, np.abs(mu_hankel_fine), "-", color="#dc2626", lw=2.0, label=r"Exact 2D Hankel $|W_{12}|/\sqrt{I_1 I_2}$")
-    ax1.plot(u_sweep, vis_sim, "o", color="#1d4ed8", ms=6.0, label=r"Wakis 2D FIT screen visibility $\mathcal{V}$")
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
+    st0 = figstyle.series_style(0)
+    st1 = figstyle.series_style(1)
+    st2 = figstyle.series_style(2)
+    ax1.plot(u_fine, np.abs(mu_sinc_fine), "--", color="#64748b", lw=1.7, label=r"Paraxial VCZ $|\mathrm{sinc}(D/D_0)|$ (Zernike 1938)")
+    ax1.plot(u_fine, np.abs(mu_hankel_fine), "-", color=st1["color"], lw=2.0, label=r"Exact 2D Hankel $|W_{12}|/\sqrt{I_1 I_2}$")
+    ax1.plot(u_sweep, vis_sim, "o", color=st0["color"], ms=5.8, label=r"Wakis 2D FIT screen visibility $\mathcal{V}$")
     ax1.axvline(1.0, color="#d97706", ls=":", lw=1.4, label=r"First null $D_0 = \lambda_0 L_1 / d = 2.0\;\mu\mathrm{m}$")
     ax1.set_xlabel(r"Normalized strip width $D / D_0 = D d / (\lambda_0 L_1)$")
     ax1.set_ylabel(r"Fringe visibility $\mathcal{V} = |\mu_{12}|$")
     ax1.set_title(r"(a) Fringe Visibility $\mathcal{V}(D)$ vs Van Cittert–Zernike Theory")
-    ax1.legend(loc="upper right", fontsize=8.2)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.6)
 
-    ax2.plot(u_fine, mu_sinc_fine, "--", color="#64748b", lw=1.8, label=r"Paraxial $\mathrm{sinc}(D/D_0)$ (Born & Wolf Fig. 10.11)")
-    ax2.plot(u_fine, mu_hankel_fine, "-", color="#dc2626", lw=2.0, label=r"Exact 2D Hankel $\mathrm{Re}\,\mu_{12}(D)$")
-    ax2.plot(u_sweep, mu_sim, "o", color="#1d4ed8", ms=6.0, label=r"Wakis 2D FIT signed fringe contrast $\mu_{\mathrm{fit}}$")
-    ax2.plot(u_sweep, mu_slit_sim, "s", color="#059669", ms=4.8, alpha=0.85, label=r"Wakis slit-plane CSD $\mathrm{Re}\,\mu_{12}$")
+    ax2.plot(u_fine, mu_sinc_fine, "--", color="#64748b", lw=1.7, label=r"Paraxial $\mathrm{sinc}(D/D_0)$ (Born & Wolf Fig. 10.11)")
+    ax2.plot(u_fine, mu_hankel_fine, "-", color=st1["color"], lw=2.0, label=r"Exact 2D Hankel $\mathrm{Re}\,\mu_{12}(D)$")
+    ax2.plot(u_sweep, mu_sim, "o", color=st0["color"], ms=5.8, label=r"Wakis 2D FIT signed fringe contrast $\mu_{\mathrm{fit}}$")
+    ax2.plot(u_sweep, mu_slit_sim, "s", color=st2["color"], ms=4.6, alpha=0.85, label=r"Wakis slit-plane CSD $\mathrm{Re}\,\mu_{12}$")
     ax2.axhline(0.0, color="k", lw=1.0)
     ax2.fill_between(u_fine, mu_hankel_fine, 0.0, where=(mu_hankel_fine < 0), color="#fecaca", alpha=0.45, label=r"Phase-reversed lobe ($\mu_{12} < 0$)")
     ax2.set_xlabel(r"Normalized strip width $D / D_0 = D d / (\lambda_0 L_1)$")
     ax2.set_ylabel(r"Signed degree of spatial coherence $\mathrm{Re}\,\mu_{12}$")
     ax2.set_title(r"(b) Signed Coherence & Secondary-Lobe Phase Reversal")
-    ax2.legend(loc="upper right", fontsize=8.0)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.4)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "09_vcz_visibility_vs_source_width.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "09_vcz_visibility_vs_source_width.png")
 
     return {
         "d_sweep_um": (d_sweep * 1e6).tolist(),
@@ -1936,16 +2135,13 @@ def _plot_fig10_gsm(fig_dir, modes_sorted, x_det, det_calibrated):
     """10: Gaussian Schell-Model fringe profiles and visibility vs sigma_mu / d."""
     n_modes = len(modes_sorted)
     ratios_prof = [0.4, 0.6, 0.8, 1.2, np.inf]
-    colors = ["#dc2626", "#d97706", "#059669", "#0284c7", "#1d4ed8"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.0, 4.7), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
 
-    # Normalize each synthesized GSM profile by its total integrated screen power
-    for ratio, col in zip(ratios_prof, colors):
+    for idx_r, ratio in enumerate(ratios_prof):
         smu = ratio * SLIT_SEP if np.isfinite(ratio) else np.inf
         info = h.gsm_parameters_from_modal_scale(smu, w_m=W_M_GSM, n_modes=n_modes)
         i_prof = h.incoherent_power_sum(det_calibrated, weights=info["weights"])
-        # Normalize by single-slit envelope at x=0 (average of max and min or integral)
         i_prof_n = i_prof / np.mean(i_prof[np.abs(x_det) <= 3.0e-6])
         v_sim, _ = h.extract_fringe_visibility(
             x_det, i_prof_n, d=SLIT_SEP, L2=L2_DET, wavelength=WAVELENGTH_0
@@ -1955,14 +2151,14 @@ def _plot_fig10_gsm(fig_dir, modes_sorted, x_det, det_calibrated):
             if np.isinf(ratio)
             else rf"$\sigma_\mu / d = {ratio:.1f}\;(\mathcal{{V}}={v_sim:.3f})$"
         )
-        ax1.plot(x_det * 1e6, i_prof_n, lw=1.8, color=col, label=lbl)
+        st = figstyle.series_style(idx_r)
+        ax1.plot(x_det * 1e6, i_prof_n, lw=1.7, color=st["color"], ls=st["linestyle"], label=lbl)
 
     ax1.set_xlim(-4.2, 4.2)
     ax1.set_xlabel(r"Detector coordinate $x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"Normalized screen intensity $I(x)/\langle I\rangle$")
     ax1.set_title(rf"(a) GSM Fringe Profiles via $M={n_modes}$ Mercer Modes")
-    ax1.legend(loc="upper right", fontsize=8.2)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.6)
 
     # Panel (b): Visibility vs sigma_mu / d compared against exp(-d^2 / (2*sigma_mu^2))
     ratio_sweep = np.array([0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0])
@@ -1986,11 +2182,14 @@ def _plot_fig10_gsm(fig_dir, modes_sorted, x_det, det_calibrated):
     vis_gsm_ana_fine = h.gsm_visibility_analytic(SLIT_SEP, r_fine * SLIT_SEP)
     vis_gsm_ana = h.gsm_visibility_analytic(SLIT_SEP, ratio_sweep * SLIT_SEP)
 
+    st0 = figstyle.series_style(0)
+    st1 = figstyle.series_style(1)
+    st2 = figstyle.series_style(2)
     ax2.plot(
         r_fine,
         vis_gsm_ana_fine,
         "-",
-        color="#dc2626",
+        color=st1["color"],
         lw=2.0,
         label=r"Analytical GSM $\exp[-d^2/(2\sigma_\mu^2)]$ (Mandel & Wolf §5.6.4)",
     )
@@ -1998,8 +2197,8 @@ def _plot_fig10_gsm(fig_dir, modes_sorted, x_det, det_calibrated):
         ratio_sweep,
         vis_gsm_modal,
         "s--",
-        color="#059669",
-        ms=5.2,
+        color=st2["color"],
+        ms=5.0,
         lw=1.3,
         label=rf"Exact $M={n_modes}$ Mercer truncation $|\mu_{{12}}^{{(M)}}|$",
     )
@@ -2007,19 +2206,16 @@ def _plot_fig10_gsm(fig_dir, modes_sorted, x_det, det_calibrated):
         ratio_sweep,
         vis_gsm_sim,
         "o",
-        color="#1d4ed8",
-        ms=6.2,
+        color=st0["color"],
+        ms=6.0,
         label=rf"Wakis 2D FIT screen visibility ($M={n_modes}$)",
     )
     ax2.set_xlabel(r"Normalized spatial coherence width $\sigma_\mu / d$")
     ax2.set_ylabel(r"Fringe visibility $\mathcal{V} = |\mu_{12}|$")
     ax2.set_title(r"(b) GSM Fringe Visibility vs Coherence Width $\sigma_\mu / d$")
-    ax2.legend(loc="lower right", fontsize=8.2)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="lower right", fontsize=7.6)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "10_gsm_fringe_profiles_and_visibility.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "10_gsm_fringe_profiles_and_visibility.png")
 
     return {
         "ratio_sweep": ratio_sweep.tolist(),
@@ -2043,13 +2239,12 @@ def _plot_fig11_temporal_coherence(fig_dir, d2, d3):
     pulse = GaussianSource(F0, 0.22 * F0)
 
     bw_list = [0.0, 0.04, 0.08, 0.12, 0.16]
-    colors = ["#1d4ed8", "#0284c7", "#059669", "#d97706", "#dc2626"]
     delta_L = np.hypot(x_det + 0.5 * SLIT_SEP, L2_DET) - np.hypot(x_det - 0.5 * SLIT_SEP, L2_DET)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.8), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
     temporal_summary = {}
 
-    for bw, col in zip(bw_list, colors):
+    for idx_b, bw in enumerate(bw_list):
         i_poly, i_inc, contrast = h.polychromatic_screen_intensity(
             freqs, dft_even, dft_odd, pulse, F0, rel_bw_sigma=bw, x_det=x_det
         )
@@ -2061,6 +2256,7 @@ def _plot_fig11_temporal_coherence(fig_dir, d2, d3):
             if bw == 0.0
             else rf"$\sigma_f/f_0 = {100*bw:.0f}\%\;(L_c = {Lc*1e6:.2f}\;\mu\mathrm{{m}})$"
         )
+        col = figstyle.series_style(idx_b)["color"]
         ax1.plot(x_det * 1e6, i_poly, lw=1.7, color=col, label=lbl)
         if bw in (0.04, 0.08, 0.16):
             ax2.plot(
@@ -2074,15 +2270,14 @@ def _plot_fig11_temporal_coherence(fig_dir, d2, d3):
                 delta_L / WAVELENGTH_0,
                 gamma_wk,
                 "--",
-                lw=1.6,
+                lw=1.5,
                 color=col,
                 label=rf"Wiener–Khinchin $\pm\exp(-\Delta L^2/2L_c^2)$ ({100*bw:.0f}%)",
             )
-            ax2.plot(delta_L / WAVELENGTH_0, -gamma_wk, "--", lw=1.6, color=col)
+            ax2.plot(delta_L / WAVELENGTH_0, -gamma_wk, "--", lw=1.5, color=col)
 
-        # Record peak contrast at m=1 (|delta_L| = lambda_0) and m=2 (|delta_L| = 2*lambda_0)
-        m1_mask = (np.abs(delta_L / WAVELENGTH_0 - 1.0) < 0.22)
-        m2_mask = (np.abs(delta_L / WAVELENGTH_0 - 2.0) < 0.25)
+        m1_mask = np.abs(delta_L / WAVELENGTH_0 - 1.0) < 0.22
+        m2_mask = np.abs(delta_L / WAVELENGTH_0 - 2.0) < 0.25
         c_m1_sim = float(np.max(contrast[m1_mask]))
         c_m2_sim = float(np.max(contrast[m2_mask]))
         c_m1_ana, _ = h.temporal_coherence_envelope(WAVELENGTH_0, WAVELENGTH_0, bw)
@@ -2099,20 +2294,16 @@ def _plot_fig11_temporal_coherence(fig_dir, d2, d3):
     ax1.set_xlabel(r"Detector coordinate $x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"Polychromatic intensity $I_{\mathrm{poly}}(x)$ [arb.]")
     ax1.set_title(r"(a) Broadband Polychromatic Fringe Profiles ($y = L_2$)")
-    ax1.legend(loc="upper right", fontsize=7.8)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.4)
 
     ax2.set_xlim(-2.6, 2.6)
     ax2.set_ylim(-1.08, 1.08)
     ax2.set_xlabel(r"Optical path difference $\Delta L(x) / \lambda_0 = [r_1(x)-r_2(x)]/\lambda_0$")
     ax2.set_ylabel(r"Normalized fringe modulation $(I_{\mathrm{poly}}-I_{\mathrm{inc}})/I_{\mathrm{inc}}$")
     ax2.set_title(r"(b) Wiener–Khinchin Temporal Coherence Envelope $|\gamma_{11}(\Delta L)|$")
-    ax2.legend(loc="upper right", fontsize=7.5, ncol=2)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.0, ncol=2)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "11_temporal_coherence_broadband.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "11_temporal_coherence_broadband.png")
     return temporal_summary
 
 
@@ -2126,34 +2317,31 @@ def _plot_fig12_ensemble_convergence(
     ez_det_norm = ez_det_full / np.sqrt(np.maximum(slit_pwr, 1e-30))[:, None]
 
     # Panel (a): Method A convergence with number of symmetric point dipoles N_s across D
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.0, 4.7), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
     ns_base = [1, 3, 5, 7, 9, 11, 13, 15, 17, 21, 25, 29, 33, len(xs_full)]
     ns_list = sorted(list({n for n in ns_base if n <= len(xs_full)}))
 
-    for ratio_D, col, mk in [(0.5, "#059669", "o"), (1.0, "#dc2626", "s"), (1.4, "#1d4ed8", "^")]:
+    for idx_r, ratio_D in enumerate([0.5, 1.0, 1.4]):
         width_D = ratio_D * D0_VCZ
         vis_vs_ns = []
         for ns in ns_list:
             if ns == 1:
                 idx_pick = [len(xs_full) // 2]
-                w_sub = np.array([1.0])
-            else:
-                pts = np.linspace(-0.5 * width_D, 0.5 * width_D, ns)
-                # Interpolate complex field at pts from xs_full bank
-                re_interp = np.array([np.interp(pts, xs_full, ez_det_norm[:, ix].real) for ix in range(len(x_det))]).T
-                im_interp = np.array([np.interp(pts, xs_full, ez_det_norm[:, ix].imag) for ix in range(len(x_det))]).T
-                f_sub = re_interp + 1j * im_interp
-                w_sub = np.ones(ns) / ns
-                w_sub[0] *= 0.5
-                w_sub[-1] *= 0.5
-                w_sub /= np.sum(w_sub)
-                i_sub = h.incoherent_power_sum(f_sub, weights=w_sub)
+                i_sub = np.abs(ez_det_norm[idx_pick[0]]) ** 2
                 v_sub, _ = h.extract_fringe_visibility(
                     x_det, i_sub, d=SLIT_SEP, L2=L2_DET, wavelength=WAVELENGTH_0
                 )
                 vis_vs_ns.append(v_sub)
                 continue
-            i_sub = np.abs(ez_det_norm[idx_pick[0]]) ** 2
+            pts = np.linspace(-0.5 * width_D, 0.5 * width_D, ns)
+            re_interp = np.array([np.interp(pts, xs_full, ez_det_norm[:, ix].real) for ix in range(len(x_det))]).T
+            im_interp = np.array([np.interp(pts, xs_full, ez_det_norm[:, ix].imag) for ix in range(len(x_det))]).T
+            f_sub = re_interp + 1j * im_interp
+            w_sub = np.ones(ns) / ns
+            w_sub[0] *= 0.5
+            w_sub[-1] *= 0.5
+            w_sub /= np.sum(w_sub)
+            i_sub = h.incoherent_power_sum(f_sub, weights=w_sub)
             v_sub, _ = h.extract_fringe_visibility(
                 x_det, i_sub, d=SLIT_SEP, L2=L2_DET, wavelength=WAVELENGTH_0
             )
@@ -2164,21 +2352,18 @@ def _plot_fig12_ensemble_convergence(
         ax1.semilogy(
             ns_list[:-1],
             err_ns[:-1],
-            marker=mk,
-            lw=1.8,
-            color=col,
+            **figstyle.series_style(idx_r),
             label=rf"$D/D_0 = {ratio_D:.1f}\;(\mathcal{{V}}_\infty={vis_vs_ns[-1]:.3f})$",
         )
 
     ax1.set_xlabel(r"Number of incoherent point emitters $N_s$")
     ax1.set_ylabel(r"Visibility quadrature error $|\mathcal{V}(N_s) - \mathcal{V}(N_{\max})|$")
     ax1.set_title(r"(a) Method A Convergence vs Number of Point Sources $N_s$")
-    ax1.legend(loc="upper right", fontsize=8.2)
-    ax1.grid(True, which="both", alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.6)
 
     # Panel (b): Method B convergence vs number of Mercer modes M = 1..M_max
     m_counts = np.arange(1, len(modes_sorted) + 1)
-    for ratio_smu, col, mk in [(0.5, "#dc2626", "o"), (0.75, "#d97706", "s"), (1.25, "#059669", "^")]:
+    for idx_r, ratio_smu in enumerate([0.5, 0.75, 1.25]):
         smu = ratio_smu * SLIT_SEP
         info = h.gsm_parameters_from_modal_scale(smu, w_m=W_M_GSM, n_modes=len(modes_sorted))
         v_inf = abs(h.gsm_modal_slit_coherence(smu, d=SLIT_SEP, w_m=W_M_GSM, n_modes=20))
@@ -2186,12 +2371,11 @@ def _plot_fig12_ensemble_convergence(
         for m_cut in m_counts:
             v_m = abs(h.gsm_modal_slit_coherence(smu, d=SLIT_SEP, w_m=W_M_GSM, n_modes=int(m_cut)))
             err_m.append(max(abs(v_m - v_inf), 1e-6))
+        st = figstyle.series_style(idx_r)
         ax2.semilogy(
             m_counts,
             err_m,
-            marker=mk,
-            lw=1.8,
-            color=col,
+            **st,
             label=rf"Wakis Mercer $\sigma_\mu/d={ratio_smu:.2f}\;(q={info['q']:.2f})$",
         )
         ax2.semilogy(
@@ -2199,7 +2383,7 @@ def _plot_fig12_ensemble_convergence(
             info["q"] ** m_counts,
             "--",
             lw=1.2,
-            color=col,
+            color=st["color"],
             alpha=0.75,
             label=rf"Asymptotic bound $q^M$ ($\sigma_\mu/d={ratio_smu:.2f}$)",
         )
@@ -2207,12 +2391,9 @@ def _plot_fig12_ensemble_convergence(
     ax2.set_xlabel(r"Number of coherent Mercer modes $M$")
     ax2.set_ylabel(r"Modal truncation error $|\mathcal{V}^{(M)} - \mathcal{V}^{(\infty)}|$")
     ax2.set_title(r"(b) Method B Exponential Convergence vs Mode Count $M$")
-    ax2.legend(loc="upper right", fontsize=7.8, ncol=1)
-    ax2.grid(True, which="both", alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.2, ncol=1)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "12_ensemble_and_mode_convergence.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "12_ensemble_and_mode_convergence.png")
 
 
 def _plot_fig13_silver_vs_pec(fig_dir, d4, d5_ag):
@@ -2244,14 +2425,17 @@ def _plot_fig13_silver_vs_pec(fig_dir, d4, d5_ag):
         d4["x_det"], det_ag_n, d=SLIT_SEP, L2=L2_DET, wavelength=WAVELENGTH_0
     )
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.6), dpi=160)
-    ax1.plot(x_slit, slit_pec_n, "-", color="#1d4ed8", lw=1.9, label="Ideal PEC screen (resolved)")
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
+    st0 = figstyle.series_style(0)
+    st1 = figstyle.series_style(1)
+    st2 = figstyle.series_style(3)
+    ax1.plot(x_slit, slit_pec_n, "-", color=st0["color"], lw=1.8, label="Ideal PEC screen (resolved)")
     ax1.plot(
         x_slit,
         slit_ag_n,
         "--",
-        color="#e11d48",
-        lw=1.9,
+        color=st1["color"],
+        lw=1.8,
         label=rf"Drude Ag resolved ($\Delta x_{{\min}}={dx_min_nm:.2f}\;\mathrm{{nm}},\;{cpsd_acc:.1f}\;\mathrm{{cells}}/\delta_E$)",
     )
     if "x_slit_coarse" in d5_ag:
@@ -2261,8 +2445,8 @@ def _plot_fig13_silver_vs_pec(fig_dir, d4, d5_ag):
             xs_c,
             ag_c,
             "o:",
-            color="#d97706",
-            ms=3.8,
+            color=st2["color"],
+            ms=3.6,
             lw=1.4,
             alpha=0.85,
             label=r"DEMO: Under-resolved Ag ($\mathrm{cpw}=10,\;0.58\;\mathrm{cells}/\delta_E$)",
@@ -2273,35 +2457,31 @@ def _plot_fig13_silver_vs_pec(fig_dir, d4, d5_ag):
     ax1.set_xlabel(r"Slit-plane coordinate $x$ [$\mu\mathrm{m}$]")
     ax1.set_ylabel(r"Normalized slit electric field $|E_z(x, 0)|$")
     ax1.set_title(r"(a) Upper-Slit Aperture Field & Skin-Depth Penetration")
-    ax1.legend(loc="upper right", fontsize=7.8)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.4)
 
     ax2.plot(
         x_det,
         det_pec_n,
         "-",
-        color="#1d4ed8",
-        lw=1.9,
+        color=st0["color"],
+        lw=1.8,
         label=rf"PEC screen ($\mathcal{{V}} = {v_pec:.4f}$)",
     )
     ax2.plot(
         x_det,
         det_ag_n,
         "--",
-        color="#e11d48",
-        lw=1.9,
+        color=st1["color"],
+        lw=1.8,
         label=rf"Drude Ag screen ($\mathcal{{V}} = {v_ag:.4f},\;I_{{\mathrm{{Ag}}}}(0)/I_{{\mathrm{{PEC}}}}(0)={ratio_0:.4f}$)",
     )
     ax2.set_xlim(-4.2, 4.2)
     ax2.set_xlabel(r"Detector coordinate $x$ [$\mu\mathrm{m}$]")
     ax2.set_ylabel(r"Normalized detector intensity $I(x)/I_{\mathrm{PEC}}(0)$")
     ax2.set_title(r"(b) Downstream Interference Fringes: PEC vs Dispersive Ag")
-    ax2.legend(loc="upper right", fontsize=8.2)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.6)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "13_pec_vs_silver_screen.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "13_pec_vs_silver_screen.png")
     return {
         "skin_depth_nm": round(skin_nm, 2),
         "skin_depth_power_nm": round(0.5 * skin_nm, 2),
@@ -2334,23 +2514,17 @@ def _plot_fig14_mesh_convergence(fig_dir, d6, d7):
         float(abs(d6["vis_pc"][k] - vis_pc_ref)) for k in range(len(cpw_coarse))
     ]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.8, 4.6), dpi=160)
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
     ax1.loglog(
         cpw_coarse,
         l2_err_pc,
-        "o-",
-        color="#1d4ed8",
-        ms=6.5,
-        lw=2.0,
+        **figstyle.series_style(0),
         label=r"Partially coherent $L_2$ fringe error ($\mu_{12}=0.5$)",
     )
     ax1.loglog(
         cpw_coarse,
         l2_err_coh,
-        "s--",
-        color="#059669",
-        ms=6.0,
-        lw=1.8,
+        **figstyle.series_style(2),
         label=r"Coherent $L_2$ fringe error ($\mu_{12}=1.0$)",
     )
     ref_slope = l2_err_pc[0] * (cpw_coarse[0] / cpw_coarse.astype(float)) ** 2
@@ -2358,36 +2532,29 @@ def _plot_fig14_mesh_convergence(fig_dir, d6, d7):
         cpw_coarse,
         ref_slope,
         ":",
-        color="#dc2626",
+        color=figstyle.series_style(1)["color"],
         lw=1.8,
         label=r"Second-order FIT reference $\mathcal{O}(\Delta x^2)$",
     )
     ax1.set_xlabel(r"Grid resolution $\mathrm{cpw} = \lambda_0 / \Delta x$ [cells/wavelength]")
     ax1.set_ylabel(rf"Relative $L_2$ screen intensity error vs $\mathrm{{cpw}}={cpw_ref}$")
     ax1.set_title(rf"(a) Spatial Mesh Convergence (Reference $\mathrm{{cpw}}={cpw_ref}$)")
-    ax1.legend(loc="upper right", fontsize=8.2)
-    ax1.grid(True, which="both", alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.6)
 
     all_cpw = np.append(cpw_coarse, cpw_ref)
     all_times = np.append(d6["runtimes_s"], d7["runtimes_s"])
     ax2.plot(
         all_cpw,
         all_times,
-        "D-",
-        color="#7c3aed",
-        ms=6.0,
-        lw=2.0,
+        **figstyle.series_style(4),
         label="2-mode solve wall time [s]",
     )
     ax2.set_xlabel(r"Grid resolution $\mathrm{cpw} = \lambda_0 / \Delta x$ [cells/wavelength]")
     ax2.set_ylabel("Wall-clock runtime for 2 modes [s]")
     ax2.set_title(r"(b) Computational Cost Scaling $\mathcal{O}(\mathrm{cpw}^3)$ in 2D Time-Domain")
-    ax2.legend(loc="upper left", fontsize=8.5)
-    ax2.grid(True, alpha=0.25)
+    ax2.legend(loc="upper left", fontsize=7.8)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "14_mesh_resolution_convergence.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "14_mesh_resolution_convergence.png")
 
     return {
         "cpw_coarse": cpw_coarse.tolist(),
@@ -2426,91 +2593,82 @@ def _plot_fig15_silver_skin_depth_resolution(fig_dir, d4, d5_ag):
     rel_step_pct = np.abs(np.diff(r_all)) / r_all[:-1] * 100.0
     rel_err_vs_acc_pct = np.abs(r_all - r_acc) / r_acc * 100.0
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.7), dpi=160)
-    # Plot full curve
+    fig, (ax1, ax2) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
+    st0 = figstyle.series_style(0)
+    st1 = figstyle.series_style(1)
+    st2 = figstyle.series_style(2)
     ax1.plot(
         cpsd_e_all,
         r_all,
         "o-",
-        color="#1d4ed8",
-        ms=6.5,
-        lw=2.0,
+        color=st0["color"],
+        ms=6.0,
+        lw=1.8,
         label=r"Graded mesh $I_{\mathrm{Ag}}(0) / I_{\mathrm{PEC}}(0)$",
     )
-    # Highlight under-resolved uniform demo points (first two points: 0.58 and 1.15 cpsd_E)
     ax1.plot(
         cpsd_e_all[:2],
         r_all[:2],
         "s",
         color="#d97706",
-        ms=8.5,
+        ms=8.0,
         mec="#78350f",
         zorder=5,
         label=r"DEMO: Under-resolved uniform ($\mathrm{cpw}=10, 20$)",
     )
-    # Highlight accepted resolved point
     ax1.plot(
         [cpsd_e_acc],
         [r_acc],
         "*",
-        color="#e11d48",
-        ms=13.5,
+        color=st1["color"],
+        ms=13.0,
         mec="#881337",
         zorder=6,
         label=rf"Accepted level: {cpsd_e_acc:.2f} cells/$\delta_E$ ({cpsd_i_acc:.2f} cells/$\delta_I$, $R={r_acc:.4f}$)",
     )
-    ax1.axhline(r_acc, color="#e11d48", ls="--", lw=1.2, alpha=0.8)
+    ax1.axhline(r_acc, color=st1["color"], ls="--", lw=1.2, alpha=0.8)
     ax1.axhspan(r_acc * 0.995, r_acc * 1.005, color="#fecdd3", alpha=0.38, label=r"$\pm 0.5\%$ convergence band")
-    ax1.axvline(8.0, color="#059669", ls=":", lw=1.4, label=r"Rule 3 threshold: $8\;\mathrm{cells}/\delta_E = 4\;\mathrm{cells}/\delta_I$")
-    ax1.set_xlabel(r"Cells per electric-field skin depth $\delta_E / \Delta x_{\min}$ ($\delta_E = \lambda_0 / 2\pi\kappa = 28.8\;\mathrm{nm}$)")
+    ax1.axvline(8.0, color=st2["color"], ls=":", lw=1.4, label=r"Rule 3 threshold: $8\;\mathrm{cells}/\delta_E = 4\;\mathrm{cells}/\delta_I$")
+    ax1.set_xlabel(r"Cells per electric-field skin depth $\delta_E / \Delta x_{\min}$ ($\delta_E = 28.8\;\mathrm{nm}$)")
     ax1.set_ylabel(r"On-axis transmission ratio $R = I_{\mathrm{Ag}}(0) / I_{\mathrm{PEC}}(0)$")
     ax1.set_title(r"(a) Silver Screen Transmission Ratio vs Skin-Depth Resolution")
-    ax1.legend(loc="upper right", fontsize=7.8)
-    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=7.2)
 
-    ax1_top = ax1.twiny()
-    ax1_top.set_xlim(ax1.get_xlim()[0] * 0.5, ax1.get_xlim()[1] * 0.5)
-    ax1_top.set_xlabel(r"Cells per power skin depth $\delta_I / \Delta x_{\min}$ ($\delta_I = \lambda_0 / 4\pi\kappa = 14.4\;\mathrm{nm}$)", fontsize=9.0)
-
-    # Panel (b): Step-to-step relative change |Delta R| / R [%]
     ax2.semilogy(
         cpsd_e_all[1:],
         rel_step_pct,
         "o-",
-        color="#1d4ed8",
-        ms=6.5,
-        lw=2.0,
+        color=st0["color"],
+        ms=6.0,
+        lw=1.8,
         label=r"Step-to-step relative change $|R_k - R_{k-1}| / R_{k-1}$ [%]",
     )
     ax2.semilogy(
         cpsd_e_all[:-1],
         rel_err_vs_acc_pct[:-1],
         "s--",
-        color="#059669",
-        ms=6.0,
-        lw=1.8,
+        color=st2["color"],
+        ms=5.5,
+        lw=1.7,
         label=rf"Relative error vs accepted ($R={r_acc:.4f}$) [%]",
     )
     ax2.plot(
         [cpsd_e_acc],
         [rel_step_pct[-1]],
         "*",
-        color="#e11d48",
-        ms=13.0,
+        color=st1["color"],
+        ms=12.5,
         mec="#881337",
         zorder=6,
         label=rf"Accepted step change: {rel_step_pct[-1]:.2f}% (< 1% threshold)",
     )
-    ax2.axhline(1.0, color="#dc2626", ls=":", lw=1.5, label="1.0% relative acceptance threshold")
+    ax2.axhline(1.0, color=st1["color"], ls=":", lw=1.5, label="1.0% relative acceptance threshold")
     ax2.set_xlabel(r"Cells per electric-field skin depth $\delta_E / \Delta x_{\min}$")
     ax2.set_ylabel("Relative change / error [%]")
     ax2.set_title(r"(b) Skin-Depth Convergence Rate & Acceptance Criterion")
-    ax2.legend(loc="upper right", fontsize=8.0)
-    ax2.grid(True, which="both", alpha=0.25)
+    ax2.legend(loc="upper right", fontsize=7.4)
 
-    fig.tight_layout()
-    fig.savefig(fig_dir / "15_silver_skin_depth_resolution.png")
-    plt.close(fig)
+    figstyle.save(fig, fig_dir / "15_silver_skin_depth_resolution.png")
 
     return {
         "cpsd_field": [round(float(x), 2) for x in cpsd_e_all],
@@ -2551,7 +2709,8 @@ def _extract_npz_res(d_npz, name, demo=False, lam_min_nm=500.0):
 
 
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Load data/task_*.npz, render all 15 figures, and save summary_metrics.json."""
+    """Load data/task_*.npz, render all figures (including 00_setup_schematic.png), and save summary_metrics.json."""
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -2568,6 +2727,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     xs_full, x_det_vcz, x_slit_vcz, ez_det_vcz, ez_slit_vcz = _reconstruct_vcz_bank(d0, d1)
     modes_sorted, x_det_gsm, _, det_cal_gsm, _ = _reconstruct_gsm_bank(d2, d3)
 
+    _plot_fig00_setup_schematic(fig_dir, d4)
     _plot_fig01_schematic(fig_dir)
     _plot_fig02_grid_and_slit_zoom(fig_dir, d4)
     _plot_fig03_gsm_mercer_modes(fig_dir)
@@ -2616,7 +2776,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         "task_resolutions": task_res,
     }
     (data_dir / "summary_metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
-    print(f"Rendered 15 figures in {fig_dir} and wrote {data_dir / 'summary_metrics.json'}")
+    print(f"Rendered 17 figures in {fig_dir} and wrote {data_dir / 'summary_metrics.json'}")
 
 
 # %% [markdown]
@@ -2757,7 +2917,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # $d = 2.00\;\mu\text{m}$, $t_{\text{screen}} = 0.20\;\mu\text{m}$, $L_1 = 8.00\;\mu\text{m}$,
 # $L_2 = 6.00\;\mu\text{m}$, $\lambda_0 = 0.50\;\mu\text{m}$) without parameter tuning:
 #
-# | Benchmark metric | Old (`--quick`) | New (`--full`) | Analytic / published reference | Reference source |
+# | Benchmark metric | `--quick` (10–13 cpw) | `--full` (20–26 cpw) | Analytic / published reference | Reference source |
 # | :--- | :---: | :---: | :---: | :--- |
 # | VCZ $\mu_{12}$ at $D = 0.5\,D_0 = 1.0\;\mu\text{m}$ | $+0.6774$ | $+0.6409$ | $+0.6424$ (Hankel) / $+0.6366$ ($\operatorname{sinc}$) | Zernike (1938); Born & Wolf §10.4.2 |
 # | VCZ $\mu_{12}$ at $D = 0.6\,D_0 = 1.2\;\mu\text{m}$ | $+0.5278$ | $+0.5145$ | $+0.5124$ (Hankel) / $+0.5046$ ($\operatorname{sinc}$) | Zernike (1938); Born & Wolf §10.4.2 |

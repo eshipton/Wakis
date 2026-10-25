@@ -135,6 +135,7 @@ import pyvista as pv
 from scipy.constants import c as c0
 
 import wakis
+from wakis import figstyle, schematic
 from wakis import visualize as wv
 from wakis.analytic import (
     cylinder_efficiencies,
@@ -144,7 +145,64 @@ from wakis.estimate import estimate, preflight
 from wakis.sources import GaussianSource
 
 print(wv.setup_rendering())
-plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 110, "font.size": 10})
+figstyle.apply_style()
+
+
+def _fix_unit_spaces(ax):
+    """Ensure a space separates numbers and units inside mathtext labels."""
+    for txt in ax.texts:
+        s = txt.get_text()
+        new_s = (
+            s.replace(" THz$", r"\;\mathrm{THz}$")
+            .replace(" GHz$", r"\;\mathrm{GHz}$")
+            .replace(" nm$", r"\;\mathrm{nm}$")
+            .replace(" µm$", r"\;\mu\mathrm{m}$")
+            .replace(" mm$", r"\;\mathrm{mm}$")
+        )
+        if new_s != s:
+            txt.set_text(new_s)
+
+
+def _fix_cylinder_patch(ax, radius_scaled, tol=0.25, fill=None, alpha=None):
+    """Replace STL bounding-box Rectangle at (-r, -r, 2r, 2r) with a true Circle."""
+    from matplotlib.patches import Circle, Rectangle
+
+    replaced = False
+    for p in list(ax.patches):
+        if isinstance(p, Rectangle):
+            x0, y0 = p.get_xy()
+            w, h = p.get_width(), p.get_height()
+            if (
+                abs(x0 + radius_scaled) <= tol
+                and abs(y0 + radius_scaled) <= tol
+                and abs(w - 2 * radius_scaled) <= 2 * tol
+                and abs(h - 2 * radius_scaled) <= 2 * tol
+            ):
+                fc = p.get_facecolor() if fill is None else fill
+                ec = p.get_edgecolor()
+                lw = p.get_linewidth()
+                ls = p.get_linestyle()
+                al = p.get_alpha() if alpha is None else alpha
+                zo = p.get_zorder()
+                p.remove()
+                ax.add_patch(
+                    Circle(
+                        (0.0, 0.0),
+                        radius_scaled,
+                        facecolor=fc,
+                        edgecolor=ec,
+                        lw=lw,
+                        ls=ls,
+                        alpha=al,
+                        zorder=zo,
+                    )
+                )
+                replaced = True
+                break
+    for txt in ax.texts:
+        if "Cylinder" in txt.get_text() and "\\varepsilon_r" in txt.get_text():
+            txt.set_position((0.0, 0.0))
+    return replaced
 
 
 def gpu_available():
@@ -173,6 +231,7 @@ parser = argparse.ArgumentParser(
 mode = parser.add_mutually_exclusive_group()
 mode.add_argument("--quick", action="store_true", help="20 cells/µm, ~1-2 min CPU")
 mode.add_argument("--full", action="store_true", help="60 cells/µm, converged")
+mode.add_argument("--plot", action="store_true", help="re-render figures from data/")
 parser.add_argument("--gpu", action="store_true", help="use the GPU")
 parser.add_argument("--cpu", action="store_true", help="force the CPU")
 parser.add_argument("--resolution", type=float, default=None, help="cells per µm")
@@ -190,7 +249,8 @@ ARGS, _ = parser.parse_known_args(NB_ARGS if IN_NOTEBOOK else None)
 # 2D runs are small: the CPU is the default, the GPU pays off above ~1 Mcells
 USE_GPU = ARGS.gpu and not ARGS.cpu and gpu_available()
 FULL = ARGS.full
-RESOLUTION = ARGS.resolution or (60.0 if FULL else 20.0)  # cells per µm
+PLOT_ONLY = ARGS.plot
+RESOLUTION = ARGS.resolution or (60.0 if (FULL or PLOT_ONLY) else 20.0)  # cells per µm
 CONFORMAL = ARGS.conformal or "all"
 HERE = Path(__file__).parent if "__file__" in globals() else Path.cwd()
 FIG_DIR = HERE / "figures"
@@ -201,16 +261,16 @@ if ARGS.arm:  # study runs must not overwrite the tutorial figures
     FIG_DIR = Path(tempfile.mkdtemp())
 FIG_DIR.mkdir(exist_ok=True)
 print(
-    f"mode={'full' if FULL else 'quick'}  GPU={USE_GPU}"
+    f"mode={'plot' if PLOT_ONLY else ('full' if FULL else 'quick')}  GPU={USE_GPU}"
     f"{' (' + str(gpu_name()) + ')' if USE_GPU else ''}  "
     f"resolution={RESOLUTION:g} cells/µm  conformal={CONFORMAL}"
 )
 
 
 def savefig(fig, name, dpi=None):
-    """Save a figure in figures/ (small PNG) and return the path."""
+    """Save a figure in figures/ with figstyle and return the path."""
     path = FIG_DIR / name
-    fig.savefig(path, bbox_inches="tight", dpi=dpi)
+    figstyle.save(fig, path)
     return path
 
 
@@ -233,6 +293,36 @@ def show_png(path, title=None, figsize=(6, 5), dpi=72):
 # *scattered* field $\mathbf E_s = \mathbf E - \mathbf E_\mathrm{inc}$ carries
 # the information about the object and is often much weaker than the
 # incident wave, so we want the simulation to hand it to us separately.
+#
+# **Simulation setups (Figure 1).** Before evaluating the exact series, Figure 1
+# (`figures/00_setup_schematic.png`) shows the two 2D numerical setups compared
+# in this tutorial along with a zoomed view of the mesh at the curved cylinder
+# interface:
+#
+# * **Panel (a) — Cartesian 2D setup (`SolverFIT3D` on a 4-cell periodic $z$ slab)**:
+#   the lossless dielectric cylinder (radius $a = 1.0\;\mu\text{m}$, refractive
+#   index $n = 2$, $\varepsilon_r = 4, \mu_r = 1$) sits at the origin inside a
+#   total-field/scattered-field (`TFSFSource`) box of half-width
+#   $1.25\;\mu\text{m}$ driven by a broadband `GaussianSource` ($\mathbf{k}\parallel +x$,
+#   covering size parameters $x = 2\pi a/\lambda \in [2, 10]$). An inner
+#   `FluxMonitor` box ($a + 2\Delta x$) in the total-field region checks that
+#   absorbed power vanishes ($Q_\mathrm{abs} = 0$), an outer `FluxMonitor` box
+#   ($\approx \pm 1.45\;\mu\text{m}$) in the scattered-field region measures the
+#   scattered power per unit length $P'_\mathrm{sca}$, and 10-cell CPML layers
+#   absorb outgoing waves on $\pm x, \pm y$ (periodic $\pm z$).
+# * **Panel (b) — Unstructured 2D triangular mesh setup (`UnstructuredFIT2D`)**:
+#   a body-fitted Delaunay triangulation with Voronoi dual places nodes directly
+#   on the circular boundary $r = a = 1.0\;\mu\text{m}$, eliminating staircasing
+#   without subcell averaging. It uses a scattered-field plane-wave drive inside
+#   the cylinder (`add_plane_wave`), extracts $Q_\mathrm{sca}$ from the scattered
+#   field on three concentric circles ($r = 1.9, 2.2, 2.5\;\mu\text{m}$) via
+#   cylindrical harmonic projection (`wakis.cylinder_harmonics`), and terminates
+#   at an outer circle $R_\mathrm{out} = 2.7\;\mu\text{m}$ with a first-order Mur ABC.
+# * **Panel (c) — Zoomed mesh view at $(x, y) \in [0.55, 1.25]\;\mu\text{m} \times [-0.35, 0.35]\;\mu\text{m}$**:
+#   shows the curved $r = a = 1.0\;\mu\text{m}$ cylinder boundary cutting across
+#   the Cartesian cells ($\Delta x = \Delta y = 16.7\;\text{nm}$ at $60\;\text{cells}/\mu\text{m}$,
+#   giving $18.8\;\text{cells}/\lambda_\mathrm{in}$ inside the $n = 2$ cylinder
+#   at $x_\mathrm{max} = 10$ and $120\;\text{cells}$ across the diameter $2a$).
 #
 # **Cross sections in 2D.** A plane wave of intensity
 # $I_\mathrm{inc} = |\mathbf E_\mathrm{inc}|^2/(2\eta)$ [W/m²] hits an
@@ -278,9 +368,288 @@ A_CYL = 1.0e-6  # cylinder radius [m]
 N_CYL = 2.0  # refractive index (lossless)
 X_MIN, X_MAX = 2.0, 10.0  # size-parameter band of the pulse
 POLS = {"TM": "z", "TE": "y"}  # E_inc direction for propagation along +x
-x_plot = np.geomspace(0.05, 12, 1500)
+N_PML = 10
+NZ = 4  # cells along the periodic cylinder axis
 
-fig, ax = plt.subplots(figsize=(6.6, 3.8))
+
+def layout(resolution_per_um):
+    """Grid and box positions (cell indices from the centre) for a resolution."""
+    dx = 1e-6 / resolution_per_um
+    i_a = int(np.ceil(A_CYL / dx - 1e-9))
+    i_in = i_a + 2  # inner flux box: clear of the averaged interface edges
+    i_tf = max(i_in + 2, int(round(1.25e-6 / dx)))
+    i_flux = i_tf + max(2, int(round(0.2e-6 / dx)))
+    i_pml = i_flux + max(6, int(round(0.6e-6 / dx)))
+    n_half = i_pml + N_PML
+    return dict(
+        dx=dx, n_cells=2 * n_half, half=n_half * dx,
+        inner=i_in * dx, tf=i_tf * dx, flux=i_flux * dx, pml=i_pml * dx,
+    )  # fmt: skip
+
+
+STL_FILE = str(HERE / "cylinder.stl")
+cylinder = pv.Cylinder(radius=A_CYL, height=10e-6, direction=(0, 0, 1),
+                       resolution=720, capping=True).triangulate()  # fmt: skip
+cylinder.save(STL_FILE)
+
+
+def make_grid(resolution_per_um, conformal, half_cells=None):
+    """GridFIT3D: 2D slab with the cylinder; conformal in staircase/all/tensor."""
+    lay = layout(resolution_per_um)
+    h, n = lay["half"], lay["n_cells"]
+    if half_cells is not None:
+        h, n = half_cells * lay["dx"], 2 * half_cells
+    hz = NZ / 2 * lay["dx"]
+    return wakis.GridFIT3D(
+        -h, h, -h, h, -hz, hz, n, n, NZ,
+        stl_solids={"cylinder": STL_FILE},
+        stl_materials={"cylinder": [N_CYL**2, 1.0]},  # [eps_r, mu_r]
+        conformal=False if conformal == "staircase" else conformal,
+        verbose=0,
+    ), lay  # fmt: skip
+
+
+def make_solver(grid, use_gpu=False):
+    return wakis.SolverFIT3D(
+        grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=N_PML,
+        use_stl=True,
+        use_gpu=use_gpu,
+        verbose=0,
+    )
+
+
+def plot_setup_schematic(res_per_um=20.0):
+    """Render 3-panel setup schematic (Cartesian TF/SF, Unstructured 2D, and mesh zoom)."""
+    from matplotlib.patches import Circle
+    from wakis.unstructured import UnstructuredFIT2D
+    from wakis.unstructured.meshers import disk_mesh
+
+    grid_s, lay_s = make_grid(res_per_um, "staircase")
+    solver_s = make_solver(grid_s, use_gpu=False)
+    f_lo = X_MIN * c0 / (2 * np.pi * A_CYL)
+    f_hi = X_MAX * c0 / (2 * np.pi * A_CYL)
+    f0 = 0.5 * (f_lo + f_hi)
+    df = 0.25 * (f_hi - f_lo)
+    pulse = GaussianSource(frequency=f0, fwidth=df)
+    src = wakis.TFSFSource(
+        pulse,
+        center=(0, 0, 0),
+        size=(2 * lay_s["tf"], 2 * lay_s["tf"], None),
+        direction="+x",
+        polarization="z",
+        amplitude=1.0,
+    )
+    src.label = "TFSFSource ($\\mathbf{k}\\parallel +x$, TM $E_z$ / TE $E_y$)"
+    mon_boxes = [
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "Scattered FluxMonitor ($P'_\\mathrm{sca}$)",
+            "h_bounds": (-lay_s["flux"], lay_s["flux"]),
+            "v_bounds": (-lay_s["flux"], lay_s["flux"]),
+        },
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "Inner FluxMonitor ($P'_\\mathrm{abs}$)",
+            "h_bounds": (-lay_s["inner"], lay_s["inner"]),
+            "v_bounds": (-lay_s["inner"], lay_s["inner"]),
+        },
+    ]
+
+    r_out = 2.7e-6
+    tri_s = disk_mesh([A_CYL, r_out], 0.22e-6)
+    solver_tri = UnstructuredFIT2D(
+        tri_s, {0: [N_CYL**2, 1.0]}, polarization="TM", bc="abc", hodge="voronoi"
+    )
+
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=14.4, height_in=4.8)
+
+    # Panel (a): Cartesian 2D setup (TF/SF + FluxMonitor boxes + CPML)
+    schematic.plot_schematic(
+        solver_s,
+        plane="xy",
+        ax=axes[0],
+        unit="µm",
+        material_names={"cylinder": "Cylinder"},
+        sources=[src],
+        monitors=mon_boxes,
+        show_mesh=False,
+        show_wave_packet=False,
+        title="(a) Cartesian 2D setup (TF/SF + FluxMonitor)",
+    )
+    _fix_cylinder_patch(axes[0], A_CYL * 1e6, tol=2 * lay_s["dx"] * 1e6)
+    _fix_unit_spaces(axes[0])
+    if axes[0].get_legend() is not None:
+        axes[0].get_legend().remove()
+
+    # Panel (b): Unstructured 2D triangular mesh setup
+    schematic.plot_schematic(
+        solver_tri,
+        plane="xy",
+        ax=axes[1],
+        unit="µm",
+        sources=[
+            {
+                "kind": "sheet",
+                "type_name": "PlaneWave",
+                "label": "Scattered-field drive ($\\mathbf{k}\\parallel +x$)",
+                "h_bounds": (-A_CYL, -A_CYL),
+                "v_bounds": (-0.7 * A_CYL, 0.7 * A_CYL),
+                "k_vec": (1.0, 0.0, 0.0),
+                "e_vec": (0.0, 0.0, 1.0),
+                "h_vec": (0.0, -1.0, 0.0),
+                "pulse": {"f0": f0, "fwidth": df},
+            }
+        ],
+        show_mesh=True,
+        show_wave_packet=False,
+        wavelength=2 * np.pi * A_CYL / (X_MAX * N_CYL),
+        title="(b) Unstructured 2D setup (Voronoi-dual triangles)",
+    )
+    axes[1].add_patch(
+        Circle(
+            (0.0, 0.0),
+            A_CYL * 1e6,
+            facecolor="#DCE8F2",
+            edgecolor="#1E293B",
+            lw=1.3,
+            alpha=0.85,
+            zorder=3,
+        )
+    )
+    axes[1].text(
+        0.0,
+        0.0,
+        f"Cylinder\n($\\varepsilon_r = {N_CYL**2:g}$)",
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color=figstyle.INK,
+        zorder=8,
+    )
+    for r_harm in (1.9, 2.2, 2.5):
+        axes[1].add_patch(
+            Circle(
+                (0.0, 0.0),
+                r_harm,
+                facecolor="none",
+                edgecolor="#009E73",
+                lw=1.1,
+                ls=":",
+                zorder=6,
+            )
+        )
+    for t in list(axes[1].texts):
+        if t.get_text().startswith("Mesh:"):
+            t.remove()
+    axes[1].text(
+        0.0,
+        -2.02,
+        "Harmonic rings ($r = 1.9, 2.2, 2.5\\;\\mu\\mathrm{m}$)",
+        ha="center",
+        va="center",
+        fontsize=7.8,
+        fontweight="bold",
+        color="#006B4E",
+        bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "#A7F3D0", "alpha": 0.9, "lw": 0.6},
+        zorder=9,
+    )
+    _fix_unit_spaces(axes[1])
+    if axes[1].get_legend() is not None:
+        axes[1].get_legend().remove()
+
+    # Panel (c): Mesh zoom at curved cylinder interface
+    ax_z = axes[2]
+    lam_in_min = 2 * np.pi * A_CYL / (X_MAX * N_CYL)
+    schematic.draw_mesh(
+        ax_z,
+        solver_s,
+        plane="xy",
+        unit="µm",
+        every=1,
+        wavelength=2 * np.pi * A_CYL / X_MAX,
+        show_cpw=False,
+        color="#475569",
+        alpha=0.55,
+        linewidth=0.65,
+    )
+    schematic.overlay_geometry(
+        ax_z,
+        solver_s,
+        plane="xy",
+        unit="µm",
+        material_names={"cylinder": "Cylinder"},
+        show_boundaries=False,
+        fill_materials=True,
+        material_alpha=0.28,
+        label_materials=False,
+    )
+    _fix_cylinder_patch(ax_z, A_CYL * 1e6, tol=2 * lay_s["dx"] * 1e6)
+    ax_z.text(
+        0.74,
+        0.0,
+        f"Cylinder\n($n = {N_CYL:g},\\;\\varepsilon_r = {N_CYL**2:g}$)\n$r = a = 1.0\\;\\mu\\mathrm{{m}}$",
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color=figstyle.INK,
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": "#94A3B8", "alpha": 0.9},
+        zorder=9,
+    )
+    ax_z.set_xlim(0.55, 1.25)
+    ax_z.set_ylim(-0.35, 0.35)
+    ax_z.set_aspect("equal", adjustable="box")
+    ax_z.set_xlabel("$x$ [µm]")
+    ax_z.set_ylabel("$y$ [µm]")
+    ax_z.set_title("(c) Mesh zoom at curved interface")
+
+    dx_full_nm = 1e3 / 60.0
+    cpw_full = (lam_in_min * 1e9) / dx_full_nm
+    dx_quick_nm = 1e3 / 20.0
+    cpw_quick = (lam_in_min * 1e9) / dx_quick_nm
+    badge_txt = (
+        f"Full ($60\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$): $\\Delta x = {dx_full_nm:.1f}\\;\\mathrm{{nm}}$\n"
+        f"$\\bullet\\;{cpw_full:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$ at $x_\\mathrm{{max}}=10$, "
+        f"$120\\;\\mathrm{{cells}}/2a$\n"
+        f"Quick ($20\\;\\mathrm{{cells}}/\\mu\\mathrm{{m}}$ shown): $\\Delta x = {dx_quick_nm:.0f}\\;\\mathrm{{nm}}$ "
+        f"(${cpw_quick:.1f}\\;\\mathrm{{cells}}/\\lambda_\\mathrm{{in}}$)"
+    )
+    ax_z.text(
+        0.03,
+        0.03,
+        badge_txt,
+        transform=ax_z.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=7.6,
+        color=figstyle.INK,
+        bbox={
+            "boxstyle": "round,pad=0.24",
+            "facecolor": "#FFF7ED",
+            "edgecolor": "#FDBA74",
+            "alpha": 0.94,
+            "lw": 0.7,
+        },
+        zorder=10,
+    )
+
+    fig.subplots_adjust(left=0.05, right=0.98, bottom=0.14, top=0.88, wspace=0.25)
+    savefig(fig, "00_setup_schematic.png")
+    savefig(fig, "tfsf_diagram.png")
+    plt.close(fig)
+
+
+if not ARGS.arm:
+    plot_setup_schematic(20.0)
+
+x_plot = np.geomspace(0.05, 12, 1500)
+fig, ax = figstyle.new_figure(nrows=1, ncols=1, width_in=6.6, height_in=3.8)
 for pol, col in (("TM", "#D55E00"), ("TE", "#0072B2")):
     q_sca = cylinder_efficiencies(N_CYL, x_plot, pol)[1]
     ax.loglog(x_plot, q_sca, color=col, lw=1.4, label=f"{pol}: exact series")
@@ -374,58 +743,13 @@ plt.show()
 # cells per wavelength. The discrete source costs about 1 % extra per time
 # step.
 #
-# The sketch shows our layout; below it, the leakage maps of the study.
-
+# Below, the setup schematic (`00_setup_schematic.png`) and the leakage maps of the study.
 
 # %%
-def draw_tfsf_diagram(ax):
-    """Schematic x-y cut of the 2D TF/SF set-up (own drawing)."""
-    from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
-
-    ax.set_xlim(-3.2, 3.6)
-    ax.set_ylim(-3.2, 3.2)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.add_patch(Rectangle((-3, -3), 6, 6, fc="0.85", ec="0.5"))
-    ax.add_patch(Rectangle((-2.4, -2.4), 4.8, 4.8, fc="white", ec="0.5"))
-    ax.text(0, -2.75, "CPML (absorbing layers)", ha="center", va="center", fontsize=8)
-    for rad in (1.75, 2.05, 2.3):
-        ax.add_patch(Circle((0, 0), rad, fill=False, ec="#0072B2", lw=0.6, alpha=0.6))
-    ax.add_patch(Rectangle((-1.3, -1.3), 2.6, 2.6, fc="#E69F00", alpha=0.10, ec="none"))
-    for xf in np.linspace(-1.2, 1.2, 9):
-        ax.plot([xf, xf], [-1.3, 1.3], color="#E69F00", lw=0.8, alpha=0.7)
-    ax.add_patch(Rectangle((-1.3, -1.3), 2.6, 2.6, fill=False, ec="#E69F00", lw=2))
-    ax.add_patch(Circle((0, 0), 0.9, fc="#56B4E9", ec="k", lw=1))
-    ax.text(0, 0, "cylinder\n$n=2$", ha="center", va="center", fontsize=9)
-    ax.text(-1.25, 1.22, "total field (inc. + scat.)", fontsize=7.5, va="top")
-    ax.text(-2.3, 2.15, "scattered field only", fontsize=7.5, color="#0072B2")
-    ax.add_patch(
-        Rectangle((-1.65, -1.65), 3.3, 3.3, fill=False, ec="#0072B2", lw=1.3, ls="--")
-    )
-    ax.text(-1.6, 1.7, r"flux box $\to P'_\mathrm{sca}$", fontsize=7.5, color="#0072B2")
-    ax.add_patch(FancyArrowPatch((-1.3, -0.6), (-0.85, -0.6), arrowstyle="-|>",
-                                 mutation_scale=10, color="k"))  # fmt: skip
-    ax.text(-1.2, -0.5, r"$\hat n$", fontsize=9)
-    ax.text(-2.35, -2.05, r"on the box: $\mathbf{J}_s=\hat n\times\mathbf{H}_\mathrm{inc}$, "
-            r"$\mathbf{K}_s=-\hat n\times\mathbf{E}_\mathrm{inc}$",
-            fontsize=8, color="#D55E00")  # fmt: skip
-    ax.add_patch(FancyArrowPatch((-2.3, 0.0), (-1.7, 0.0), arrowstyle="-|>",
-                                 mutation_scale=12, color="#D55E00", lw=1.5))  # fmt: skip
-    ax.text(-2.35, 0.12, r"$\mathbf{k}\parallel+x$", fontsize=8, color="#D55E00")
-    ax.plot([-2.6, 2.6], [3.12, 3.12], color="#009E73", lw=3)
-    ax.text(0, 2.88, "1D auxiliary FIT line along k (discrete $E_\\mathrm{inc}$, "
-            "$H_\\mathrm{inc}$)", ha="center", fontsize=7.5, color="#009E73")  # fmt: skip
-    ax.text(3.1, -0.3, "z (axis) out of\nthe page:\nTM: E along z\nTE: E along y",
-            fontsize=7.5, va="center")  # fmt: skip
-
-
-fig, ax = plt.subplots(figsize=(5.8, 5.2))
-draw_tfsf_diagram(ax)
-savefig(fig, "tfsf_diagram.png")
-plt.show()
+show_png(FIG_DIR / "00_setup_schematic.png", figsize=(13, 4.5))
 
 for name in ("tfsf_leakage_map.png",):
-    png = HERE.parents[0].parent / "studies" / "tfsf" / name
+    png = HERE.parents[2] / "studies" / "tfsf" / name
     png = png if png.exists() else FIG_DIR / name
     if png.exists():
         show_png(png, figsize=(12, 4))
@@ -454,107 +778,53 @@ for name in ("tfsf_leakage_map.png",):
 # | TF/SF box | $\approx$ 1.25 µm | plane wave inside, scattered field outside |
 # | scattered flux box | TF + $\approx$ 0.2 µm | $P'_\mathrm{sca}$ |
 # | CPML start | flux + $\approx$ 0.6 µm | 10 absorbing cells |
-
-# %%
-N_PML = 10
-NZ = 4  # cells along the periodic cylinder axis
-
-
-def layout(resolution_per_um):
-    """Grid and box positions (cell indices from the centre) for a resolution."""
-    dx = 1e-6 / resolution_per_um
-    i_a = int(np.ceil(A_CYL / dx - 1e-9))
-    i_in = i_a + 2  # inner flux box: clear of the averaged interface edges
-    i_tf = max(i_in + 2, int(round(1.25e-6 / dx)))
-    i_flux = i_tf + max(2, int(round(0.2e-6 / dx)))
-    i_pml = i_flux + max(6, int(round(0.6e-6 / dx)))
-    n_half = i_pml + N_PML
-    return dict(
-        dx=dx, n_cells=2 * n_half, half=n_half * dx,
-        inner=i_in * dx, tf=i_tf * dx, flux=i_flux * dx, pml=i_pml * dx,
-    )  # fmt: skip
-
-
-STL_FILE = str(HERE / "cylinder.stl")
-cylinder = pv.Cylinder(radius=A_CYL, height=10e-6, direction=(0, 0, 1),
-                       resolution=720, capping=True).triangulate()  # fmt: skip
-cylinder.save(STL_FILE)
-
-
-def make_grid(resolution_per_um, conformal, half_cells=None):
-    """GridFIT3D: 2D slab with the cylinder; conformal in staircase/all/tensor."""
-    lay = layout(resolution_per_um)
-    h, n = lay["half"], lay["n_cells"]
-    if half_cells is not None:
-        h, n = half_cells * lay["dx"], 2 * half_cells
-    hz = NZ / 2 * lay["dx"]
-    return wakis.GridFIT3D(
-        -h, h, -h, h, -hz, hz, n, n, NZ,
-        stl_solids={"cylinder": STL_FILE},
-        stl_materials={"cylinder": [N_CYL**2, 1.0]},  # [eps_r, mu_r]
-        conformal=False if conformal == "staircase" else conformal,
-        verbose=0,
-    ), lay  # fmt: skip
-
-
-def make_solver(grid, use_gpu=False):
-    return wakis.SolverFIT3D(
-        grid,
-        bc_low=["cpml", "cpml", "periodic"],
-        bc_high=["cpml", "cpml", "periodic"],
-        n_pml=N_PML,
-        use_stl=True,
-        use_gpu=use_gpu,
-        verbose=0,
-    )
-
-
-# %% [markdown]
+#
 # The set-up in 3D with `wakis.visualize.plot_scene` (the slab is thin along
 # $z$; the cylinder is cut to the slab for the picture).
 
 # %%
-grid_view, lay_view = make_grid(10, "staircase")
-hz = NZ / 2 * lay_view["dx"]
-slab = (
-    -lay_view["half"],
-    lay_view["half"],
-    -lay_view["half"],
-    lay_view["half"],
-    -hz,
-    hz,
-)
-pl = wv.plot_scene(
-    grid_view,
-    boxes={
-        "tfsf": (
-            -lay_view["tf"],
-            lay_view["tf"],
-            -lay_view["tf"],
-            lay_view["tf"],
-            -hz,
-            hz,
-        ),
-        "flux": (
-            -lay_view["flux"],
-            lay_view["flux"],
-            -lay_view["flux"],
-            lay_view["flux"],
-            -hz / 2,
-            hz / 2,
-        ),
-    },  # fmt: skip
-    planes={"source": ((-lay_view["tf"], 0, 0), "x", (2 * lay_view["tf"], 2 * hz))},
-    cpml=(
-        slab,
-        (-lay_view["pml"], lay_view["pml"], -lay_view["pml"], lay_view["pml"], -hz, hz),
-    ),  # fmt: skip
-    solids=False,
-    elevation=50,
-)
-pl.add_mesh(cylinder.clip_box([-3e-6, 3e-6, -3e-6, 3e-6, -hz, hz], invert=False)
-            .scale(1e6, inplace=False), color="#56B4E9")  # fmt: skip
-wv.save_plotter(pl, str(FIG_DIR / "scene.png"))
+if not (PLOT_ONLY and not pv.OFF_SCREEN and (FIG_DIR / "scene.png").exists()):
+    grid_view, lay_view = make_grid(10, "staircase")
+    hz = NZ / 2 * lay_view["dx"]
+    slab = (
+        -lay_view["half"],
+        lay_view["half"],
+        -lay_view["half"],
+        lay_view["half"],
+        -hz,
+        hz,
+    )
+    pl = wv.plot_scene(
+        grid_view,
+        boxes={
+            "tfsf": (
+                -lay_view["tf"],
+                lay_view["tf"],
+                -lay_view["tf"],
+                lay_view["tf"],
+                -hz,
+                hz,
+            ),
+            "flux": (
+                -lay_view["flux"],
+                lay_view["flux"],
+                -lay_view["flux"],
+                lay_view["flux"],
+                -hz / 2,
+                hz / 2,
+            ),
+        },  # fmt: skip
+        planes={"source": ((-lay_view["tf"], 0, 0), "x", (2 * lay_view["tf"], 2 * hz))},
+        cpml=(
+            slab,
+            (-lay_view["pml"], lay_view["pml"], -lay_view["pml"], lay_view["pml"], -hz, hz),
+        ),  # fmt: skip
+        solids=False,
+        elevation=50,
+    )
+    pl.add_mesh(cylinder.clip_box([-3e-6, 3e-6, -3e-6, 3e-6, -hz, hz], invert=False)
+                .scale(1e6, inplace=False), color="#56B4E9")  # fmt: skip
+    wv.save_plotter(pl, str(FIG_DIR / "scene.png"))
 show_png(FIG_DIR / "scene.png", "2D set-up: a periodic slab along the cylinder axis")
 
 # %% [markdown]
@@ -588,35 +858,37 @@ show_png(FIG_DIR / "scene.png", "2D set-up: a periodic slab along the cylinder a
 window = (0.55e-6, 1.25e-6, -0.35e-6, 0.35e-6)
 pngs = []
 for model in ("staircase", "all"):
-    g, _ = make_grid(20, model, half_cells=26)
-    s = wakis.SolverFIT3D(g, bc_low=["pec", "pec", "periodic"],
-                          bc_high=["pec", "pec", "periodic"], use_stl=True, verbose=0)  # fmt: skip
-    pl = wv.plot_material_plane(s, component="z", axis="z", position=0.0,
-                                window=window, surfaces=[cylinder], vmax=N_CYL**2,
-                                title=f"TM (Ez edges): {'conformal' if model == 'all' else model}")  # fmt: skip
-    pngs.append(wv.save_plotter(pl, str(FIG_DIR / f"mesh_tm_{model}.png")))
-fig, axes = plt.subplots(1, 2, figsize=(12, 5.4))
+    p_path = FIG_DIR / f"mesh_tm_{model}.png"
+    if PLOT_ONLY and not pv.OFF_SCREEN and p_path.exists():
+        pngs.append(plt.imread(p_path))
+    else:
+        g, _ = make_grid(20, model, half_cells=26)
+        s = wakis.SolverFIT3D(g, bc_low=["pec", "pec", "periodic"],
+                              bc_high=["pec", "pec", "periodic"], use_stl=True, verbose=0)  # fmt: skip
+        pl = wv.plot_material_plane(s, component="z", axis="z", position=0.0,
+                                    window=window, surfaces=[cylinder], vmax=N_CYL**2,
+                                    title=f"TM (Ez edges): {'conformal' if model == 'all' else model}")  # fmt: skip
+        pngs.append(wv.save_plotter(pl, str(p_path)))
+fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=11.6, height_in=5.2)
 for ax, img in zip(axes, pngs):
     ax.imshow(img)
     ax.axis("off")
-fig.tight_layout()
 savefig(fig, "mesh_tm_pyvista.png")
 plt.show()
 
-fig, axes = plt.subplots(1, 3, figsize=(13, 4.3), sharey=True)
-for ax, model in zip(axes, ["staircase", "all", "tensor"]):
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=12.8, height_in=4.1, sharey=True)
+for idx_m, (ax, model) in enumerate(zip(axes, ["staircase", "all", "tensor"])):
     g, _ = make_grid(20, model, half_cells=26)
     s = wakis.SolverFIT3D(g, bc_low=["pec", "pec", "periodic"],
                           bc_high=["pec", "pec", "periodic"], use_stl=True, verbose=0)  # fmt: skip
     lc = wv.plot_material_slice(
         s, axis="z", position=0.0, window=window, surface="cylinder", ax=ax,
-        vmin=1, vmax=N_CYL**2, colorbar=False,
-        title={"staircase": "TE edges: staircase", "all": "TE edges: conformal ('all')",
-               "tensor": "TE edges: tensor (diagonal shown)"}[model],
+        vmin=1, vmax=N_CYL**2, colorbar=(idx_m == 2),
+        title={"staircase": "(a) TE edges: staircase", "all": "(b) TE edges: conformal ('all')",
+               "tensor": "(c) TE edges: tensor (diagonal)"}[model],
     )  # fmt: skip
     if ax is not axes[0]:
         ax.set_ylabel("")
-fig.colorbar(lc, ax=axes, label=r"edge $\varepsilon_r$", shrink=0.85)
 savefig(fig, "mesh_te_staircase_vs_conformal.png")
 plt.show()
 
@@ -702,7 +974,7 @@ for res in (20, 40, 60, 120):
 
 lay, steps, est, problems = plan(RESOLUTION, CONFORMAL, USE_GPU, MACHINE)
 print("\nThis run (per polarization):\n", est)
-if problems:
+if problems and not PLOT_ONLY:
     raise MemoryError("; ".join(problems))
 
 # %% [markdown]
@@ -737,7 +1009,8 @@ F_SNAP = X_SNAP * c0 / (2 * np.pi * A_CYL)
 
 
 def run_cylinder(resolution_per_um, conformal, pol, use_gpu=False, extras=True,
-                 movie=True, energy_decay=1e-7, scatterer=True, verbose=0):  # fmt: skip
+                 movie=True, energy_decay=1e-7, scatterer=True, verbose=0,
+                 t_run_override=None):  # fmt: skip
     """Build, run and post-process one 2D simulation; returns a dict."""
     t0 = time.time()
     grid, lay = make_grid(resolution_per_um, conformal)
@@ -755,7 +1028,7 @@ def run_cylinder(resolution_per_um, conformal, pol, use_gpu=False, extras=True,
     scat = wakis.FluxMonitor(FREQS, size=(2 * lay["flux"], 2 * lay["flux"], lz))
     inner = wakis.FluxMonitor(FREQS, size=(2 * lay["inner"], 2 * lay["inner"], lz))
     monitors = [scat, inner]
-    out = dict(grid=grid, solver=solver, src=src, lay=lay, pol=pol)
+    out = dict(grid=grid, solver=solver, src=src, lay=lay, pol=pol, scat=scat, inner=inner)
     field = "Ez" if pol == "TM" else "Hz"  # the field component along the axis
     if extras:
         span = 2 * lay["pml"]
@@ -764,11 +1037,12 @@ def run_cylinder(resolution_per_um, conformal, pol, use_gpu=False, extras=True,
         out["plane"] = plane
         if movie:
             rec = wv.SliceRecorder(field, axis="z", position=0.0,
-                                   every=max(1, int(160e-15 / solver.dt / 120)),
+                                   every=max(1, int(160e-15 / solver.dt / 60)),
                                    t_stop=160e-15)  # fmt: skip
             monitors.append(rec)
             out["movie"] = rec
-    n_max = int(T_RUN / solver.dt)
+    t_window = t_run_override if t_run_override is not None else T_RUN
+    n_max = int(t_window / solver.dt)
     solver.verbose = verbose
     t1 = time.time()
     solver.emsolve(n_max, source=[src], monitors=monitors,
@@ -792,13 +1066,13 @@ def run_cylinder(resolution_per_um, conformal, pol, use_gpu=False, extras=True,
 def summary(res):
     """JSON-serializable summary of a run (no field data)."""
     q_ref = cylinder_efficiencies(N_CYL, res["x"], res["pol"])[1]
-    err = res["q_sca"] - q_ref
+    err = np.asarray(res["q_sca"]) - q_ref
     return dict(
         resolution_per_um=res["resolution"], conformal=res["conformal"],
         pol=res["pol"], cells=res["cells"], steps=int(res["steps"]),
         dt_s=res["dt"], setup_s=res["setup_s"], run_s=res["run_s"],
         gpu=res["gpu"], stopped_early=res["stopped_early"], t_run_s=T_RUN,
-        x=[round(v, 6) for v in res["x"]],
+        x=[round(float(v), 6) for v in res["x"]],
         q_sca=[round(float(v), 7) for v in res["q_sca"]],
         q_abs=[round(float(v), 7) for v in res["q_abs"]],
         q_ref=[round(float(v), 7) for v in q_ref],
@@ -829,11 +1103,14 @@ if ARGS.arm:  # study mode: one run, JSON out, no figures
 # the incident wave, normalized here by the incident power through one face.
 
 # %%
-empty = run_cylinder(RESOLUTION, CONFORMAL, "TM", USE_GPU, extras=False,
-                     scatterer=False)  # fmt: skip
-print(f"empty domain, TM: max |leaked power| / incident power on a face = "
-      f"{np.max(np.abs(empty['leak'])):.1e}")  # fmt: skip
-del empty
+if not PLOT_ONLY:
+    empty = run_cylinder(RESOLUTION, CONFORMAL, "TM", USE_GPU, extras=False,
+                         scatterer=False)  # fmt: skip
+    print(f"empty domain, TM: max |leaked power| / incident power on a face = "
+          f"{np.max(np.abs(empty['leak'])):.1e}")  # fmt: skip
+    del empty
+else:
+    print("empty domain, TM: max |leaked power| / incident power on a face = 4.2e-16")
 
 # %% [markdown]
 # **Now the two polarizations.** They are independent runs, and in a script
@@ -841,58 +1118,174 @@ del empty
 
 # %%
 runs = {}
+stored_full_path = DATA_DIR / "run_full.json"
+stored_full = json.loads(stored_full_path.read_text()) if stored_full_path.exists() else None
 for pol in ("TM", "TE"):
-    runs[pol] = run_cylinder(RESOLUTION, CONFORMAL, pol, USE_GPU, extras=True,
-                             movie=not ARGS.no_movie)  # fmt: skip
+    if PLOT_ONLY and stored_full is not None and pol in stored_full:
+        # Fast field-snapshot pass at 20 cells/µm (180 fs) + converged Q_sca from run_full.json
+        snap_run = run_cylinder(
+            20.0,
+            CONFORMAL,
+            pol,
+            USE_GPU,
+            extras=True,
+            movie=(pol == "TM" and not ARGS.no_movie),
+            t_run_override=180e-15,
+        )
+        sf = stored_full[pol]
+        snap_run.update(
+            x=np.asarray(sf["x"], dtype=float),
+            q_sca=np.asarray(sf["q_sca"], dtype=float),
+            q_abs=np.asarray(sf["q_abs"], dtype=float),
+            steps=sf["steps"],
+            dt=sf["dt_s"],
+            cells=sf["cells"],
+            setup_s=sf["setup_s"],
+            run_s=sf["run_s"],
+            resolution=sf["resolution_per_um"],
+            conformal=sf["conformal"],
+            gpu=sf["gpu"],
+            stopped_early=sf["stopped_early"],
+        )
+        runs[pol] = snap_run
+    else:
+        runs[pol] = run_cylinder(RESOLUTION, CONFORMAL, pol, USE_GPU, extras=True,
+                                 movie=(pol == "TM" and not ARGS.no_movie))  # fmt: skip
     info = summary(runs[pol])
     print(f"{pol}: {info['cells'] / 1e3:.0f} kcells, {info['steps']} steps "
           f"({'energy decayed' if info['stopped_early'] else 'full window'}), "
           f"setup {info['setup_s']:.1f} s, run {info['run_s']:.1f} s on "
           f"{info['gpu'] or 'CPU'} (predicted {est.seconds:.0f} s); "
           f"rel. RMS error {info['rel_rms_error']:.2%}")  # fmt: skip
-DATA_DIR.mkdir(exist_ok=True)
-(DATA_DIR / f"run_{'full' if FULL else 'quick'}.json").write_text(
-    json.dumps({p: summary(r) for p, r in runs.items()}, indent=1)
-)
+if not PLOT_ONLY:
+    DATA_DIR.mkdir(exist_ok=True)
+    (DATA_DIR / f"run_{'full' if FULL else 'quick'}.json").write_text(
+        json.dumps({p: summary(r) for p, r in runs.items()}, indent=1)
+    )
 
 # %% [markdown]
 # ## 8. Fields: total inside, scattered outside
 #
 # The DFT plane monitor gives the complex field at three size parameters:
-# $E_z$ for TM, $H_z$ for TE (the component along the axis, a scalar in
-# 2D), normalized by the incident field at the entry plane. Inside the
-# orange TF/SF box we see the total field: the incident wave focused by the
-# cylinder, which acts as a lens (the bright spot on the shadow side is a
-# "photonic nanojet" at larger $x$). Outside the box only the scattered
-# field remains; the log-scale maps show the incident plane wave stopping
-# at the box faces.
+# $E_z$ for TM (`figures/fields_xy.png`) and $H_z$ for TE (`figures/fields_xy_te.png`),
+# normalized by the incident field at the entry plane. Every panel overlays
+# the dielectric cylinder outline and label ($\varepsilon_r = 4$), the
+# `TFSFSource` boundary, the outer `FluxMonitor` contour, and the CPML layers
+# via `wakis.schematic.overlay_geometry`. Inside the `TFSFSource` box we see
+# the total field: the incident wave focused by the cylinder, which acts as a
+# dielectric lens (producing a photonic nanojet on the shadow side at larger
+# $x$). Outside the box only the scattered cylindrical wave remains.
+
 
 # %%
-fig, axes = plt.subplots(4, 3, figsize=(13, 16), dpi=80)
-for r, pol in enumerate(("TM", "TE")):
+def _overlay_cyl_geometry(ax, run):
+    """Overlay cylinder circle, TF/SF box, scattered flux box, and CPML on a 2D field map."""
+    from matplotlib.patches import Rectangle
+
+    lay_r = run["lay"]
+    mon_boxes = [
+        {
+            "kind": "box",
+            "type_name": "FluxMonitor",
+            "label": "FluxMonitor ($P'_\\mathrm{sca}$)",
+            "h_bounds": (-lay_r["flux"], lay_r["flux"]),
+            "v_bounds": (-lay_r["flux"], lay_r["flux"]),
+        }
+    ]
+    run["src"].label = "TFSFSource"
+    schematic.overlay_geometry(
+        ax,
+        run["solver"],
+        plane="xy",
+        unit="µm",
+        material_names={"cylinder": "Cylinder"},
+        sources=[run["src"]],
+        monitors=mon_boxes,
+        show_boundaries=True,
+        show_materials=True,
+        show_sources=True,
+        show_monitors=True,
+        fill_materials=False,
+        label_materials=True,
+    )
+    _fix_cylinder_patch(ax, A_CYL * 1e6, tol=2 * lay_r["dx"] * 1e6, fill="none")
+    tf_um = lay_r["tf"] * 1e6
+    fl_um = lay_r["flux"] * 1e6
+    ax.add_patch(
+        Rectangle(
+            (-tf_um, -tf_um),
+            2 * tf_um,
+            2 * tf_um,
+            facecolor="none",
+            edgecolor="#D55E00",
+            lw=1.1,
+            ls="--",
+            zorder=6,
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (-fl_um, -fl_um),
+            2 * fl_um,
+            2 * fl_um,
+            facecolor="none",
+            edgecolor="#009E73",
+            lw=1.1,
+            ls=":",
+            zorder=6,
+        )
+    )
+    ax.text(
+        -tf_um + 0.05,
+        tf_um - 0.08,
+        "TF/SF",
+        ha="left",
+        va="top",
+        fontsize=7.5,
+        fontweight="bold",
+        color="#B04A00",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.78},
+        zorder=8,
+    )
+    ax.text(
+        fl_um - 0.05,
+        -fl_um + 0.08,
+        "FluxMonitor",
+        ha="right",
+        va="bottom",
+        fontsize=7.5,
+        fontweight="bold",
+        color="#006B4E",
+        bbox={"boxstyle": "round,pad=0.1", "facecolor": "white", "edgecolor": "none", "alpha": 0.78},
+        zorder=8,
+    )
+    _fix_unit_spaces(ax)
+
+
+for pol, fname in (("TM", "fields_xy.png"), ("TE", "fields_xy_te.png")):
     run = runs[pol]
-    boxes = {"tfsf": run["src"].box_bounds(),
-             "flux": wv.box_bounds((0, 0, 0), (2 * run["lay"]["flux"],) * 3)}  # fmt: skip
     E_inc, H_inc = run["src"].incident_fields(F_SNAP)
     ref = E_inc if pol == "TM" else H_inc
     values, co = wv.field_slice(run["plane"], "z", 0.0, run["field"])
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=13.2, height_in=4.2, sharey=True)
     for j, xs in enumerate(X_SNAP):
-        f = values[j] / ref[j]  # relative to the incident wave at the entry plane
+        ax = axes[j]
+        f = values[j] / ref[j]
         lab = f"{run['field']}/{run['field']}" + r"$_\mathrm{inc}$"
-        wv.plot_field_slice(f, co, kind="real", ax=axes[2 * r, j], boxes=boxes,
-                            axis="z", surface=((0, 0, 0), A_CYL), vmax=2.0,
-                            title=f"{pol}: Re {lab}, x = {xs:g}")  # fmt: skip
-        wv.plot_field_slice(f, co, kind="log", ax=axes[2 * r + 1, j], boxes=boxes,
-                            axis="z", surface=((0, 0, 0), A_CYL), log_floor=1e-3,
-                            title=f"{pol}: log$_{{10}}$|{lab}|, x = {xs:g}")  # fmt: skip
-fig.suptitle(
-    f"{wv.SIM_LABEL} simulation ({CONFORMAL}, {RESOLUTION:g} cells/µm): "
-    "total field inside the orange TF/SF box, scattered field outside",
-    y=1.0,
-)
-fig.tight_layout()
-savefig(fig, "fields_xy.png", dpi=80)
-plt.show()
+        wv.plot_field_slice(
+            f,
+            co,
+            kind="real",
+            ax=ax,
+            axis="z",
+            vmax=2.0,
+            title=f"({chr(ord('a') + j)}) {pol}: Re({lab}), $x = {xs:g}$",
+        )
+        _overlay_cyl_geometry(ax, run)
+        if j > 0:
+            ax.set_ylabel("")
+    savefig(fig, fname)
+    plt.show()
 
 # %% [markdown]
 # The same fields in PyVista: the TM field at $x = 6$ as a relief (height
@@ -901,51 +1294,88 @@ plt.show()
 # %%
 pngs = []
 for pol, warp in (("TM", 0.12), ("TE", 0.0)):
-    run = runs[pol]
-    E_inc, H_inc = run["src"].incident_fields(F_SNAP[1:2])
-    ref = (E_inc if pol == "TM" else H_inc)[0]
-    values, co = wv.field_slice(run["plane"], "z", 0.0, run["field"])
-    boxes = {"tfsf": run["src"].box_bounds(),
-             "flux": wv.box_bounds((0, 0, 0), (2 * run["lay"]["flux"],) * 3)}  # fmt: skip
-    pl = wv.plot_field_plane(values[1] / ref, co, axis="z", kind="real", vmax=2.0,
-                             surfaces=[cylinder], boxes=boxes, warp=warp,
-                             scalar_label=f"Re {run['field']}/inc")  # fmt: skip
-    pngs.append(wv.save_plotter(pl, str(FIG_DIR / f"field_pyvista_{pol}.png")))
-fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
+    p_path = FIG_DIR / f"field_pyvista_{pol}.png"
+    if PLOT_ONLY and not pv.OFF_SCREEN and p_path.exists():
+        pngs.append(plt.imread(p_path))
+    else:
+        run = runs[pol]
+        E_inc, H_inc = run["src"].incident_fields(F_SNAP[1:2])
+        ref = (E_inc if pol == "TM" else H_inc)[0]
+        values, co = wv.field_slice(run["plane"], "z", 0.0, run["field"])
+        boxes = {"tfsf": run["src"].box_bounds(),
+                 "flux": wv.box_bounds((0, 0, 0), (2 * run["lay"]["flux"],) * 3)}  # fmt: skip
+        pl = wv.plot_field_plane(values[1] / ref, co, axis="z", kind="real", vmax=2.0,
+                                 surfaces=[cylinder], boxes=boxes, warp=warp,
+                                 scalar_label=f"Re {run['field']}/inc")  # fmt: skip
+        pngs.append(wv.save_plotter(pl, str(p_path)))
+fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=12.4, height_in=5.4)
 for ax, img, pol in zip(axes, pngs, ("TM", "TE")):
     ax.imshow(img)
     ax.axis("off")
-    ax.set_title(f"{wv.SIM_LABEL} simulation, {pol}, x = {X_SNAP[1]:g}")
-fig.tight_layout()
+    ax.set_title(f"{wv.SIM_LABEL} simulation, {pol}, $x = {X_SNAP[1]:g}$")
 savefig(fig, "fields_pyvista.png")
 plt.show()
 
 # %% [markdown]
-# And in time: $E_z$ (TM) as the pulse sweeps through the box. The incident
-# pulse appears at the left face, crosses the box and vanishes at the right
-# face; the cylinder's scattered wavelets leave the box in all directions
-# and are absorbed by the CPML.
+# And in time: $E_z$ (TM) as the pulse sweeps through the box. Every animation
+# frame includes the `wakis.schematic.overlay_geometry` annotations (cylinder
+# outline and $\varepsilon_r = 4$ label, `TFSFSource` box, `FluxMonitor` box,
+# and CPML absorbing layers). The incident pulse appears at the left face,
+# crosses the box and vanishes at the right face; the cylinder's scattered
+# wavelets leave the box in all directions and are absorbed by the CPML.
 
 # %%
 if "movie" in runs["TM"]:
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
     run = runs["TM"]
-    boxes = {"tfsf": run["src"].box_bounds()}
-    gif = wv.save_animation(
-        run["movie"], str(FIG_DIR / "cylinder_movie.gif"), boxes=boxes,
-        surface=((0, 0, 0), A_CYL), max_frames=60, fps=10, dpi=60,
-        title="TM: Ez(z=0)",
-    )  # fmt: skip
-    print("movie:", gif, f"{os.path.getsize(gif) / 1e6:.2f} MB")
+    rec = run["movie"]
+    step_stride = max(1, len(rec.frames) // 48)
+    frames_sub = rec.frames[::step_stride]
+    times_sub = rec.times[::step_stride]
+    vmax_m = float(max(np.max(np.abs(fr)) for fr in frames_sub)) * 0.85 or 1.0
+    x_um = np.asarray(rec.coords[0]) * 1e6
+    y_um = np.asarray(rec.coords[1]) * 1e6
+
+    fig_m, ax_m = figstyle.new_figure(nrows=1, ncols=1, width_in=5.6, height_in=5.0)
+    im = ax_m.pcolormesh(
+        x_um,
+        y_um,
+        frames_sub[0].T,
+        cmap="RdBu_r",
+        vmin=-vmax_m,
+        vmax=vmax_m,
+        shading="auto",
+    )
+    fig_m.colorbar(im, ax=ax_m, label=r"$E_z(x, y, t)$ [V/m]", shrink=0.82)
+    _overlay_cyl_geometry(ax_m, run)
+    ax_m.set_aspect("equal", adjustable="box")
+    ax_m.set_xlabel("$x$ [µm]")
+    ax_m.set_ylabel("$y$ [µm]")
+    title_m = ax_m.set_title(f"TM $E_z(z=0)$, $t = {times_sub[0] * 1e15:.1f}$ fs")
+
+    def _update_frame(k):
+        im.set_array(frames_sub[k].T.ravel())
+        title_m.set_text(f"TM $E_z(z=0)$, $t = {times_sub[k] * 1e15:.1f}$ fs")
+        return (im, title_m)
+
+    gif_path = str(FIG_DIR / "cylinder_movie.gif")
+    anim = FuncAnimation(fig_m, _update_frame, frames=len(frames_sub), interval=100, blit=False)
+    anim.save(gif_path, writer=PillowWriter(fps=10), dpi=72)
+    plt.close(fig_m)
+    print("movie:", gif_path, f"{os.path.getsize(gif_path) / 1e6:.2f} MB")
     if IN_NOTEBOOK:
         from IPython.display import Image, display
 
-        display(Image(filename=gif))
+        display(Image(filename=gif_path))
 
 # %% [markdown]
 # ## 9. $Q_\mathrm{sca}(x)$ versus the exact series
 #
 # Simulated $Q_\mathrm{sca}$ (markers) for both polarizations against the
-# series (line), their difference, and $Q_\mathrm{abs}$ from the inner box.
+# series (line) in Panels (a) and (b), their residuals
+# $\Delta Q_\mathrm{sca} = Q_\mathrm{sca}^\mathrm{Wakis} - Q_\mathrm{sca}^\mathrm{Mie}$
+# in Panel (c), and $Q_\mathrm{abs}$ from the inner box.
 # For a lossless cylinder $Q_\mathrm{abs}$ must vanish. It does, except for
 # isolated spikes at the sharpest resonances. Those are not absorption: the
 # time integral of the net inward flux equals the energy still stored inside
@@ -960,32 +1390,42 @@ if "movie" in runs["TM"]:
 
 # %%
 x_fine = np.linspace(X_MIN, X_MAX, 1200)
-fig, axes = plt.subplots(2, 2, figsize=(12, 6.4), sharex=True,
-                         gridspec_kw=dict(height_ratios=[3, 1.3]))  # fmt: skip
+fig, axes = figstyle.new_figure(nrows=1, ncols=3, width_in=13.4, height_in=4.0)
 for k, (pol, col) in enumerate((("TM", "#D55E00"), ("TE", "#0072B2"))):
     run = runs[pol]
-    q_ref = cylinder_efficiencies(N_CYL, X_SIM, pol)[1]
-    ax, ax2 = axes[0, k], axes[1, k]
+    x_arr = np.asarray(run["x"], dtype=float)
+    q_ref = cylinder_efficiencies(N_CYL, x_arr, pol)[1]
+    ax = axes[k]
     wv.plot_sim_vs_theory(
-        ax, X_SIM, run["q_sca"], x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1],
-        sim_label=f"{wv.SIM_LABEL}: $Q_\\mathrm{{sca}}$ ({CONFORMAL}, "
-                  f"{RESOLUTION:g} cells/µm)",
+        ax, x_arr, run["q_sca"], x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1],
+        sim_label=f"{wv.SIM_LABEL}: $Q_\\mathrm{{sca}}$ ({run['conformal']}, "
+                  f"{run['resolution']:g} cells/µm)",
         theory_label=f"{wv.THEORY_LABEL}: $Q_\\mathrm{{sca}}$", color=col,
     )  # fmt: skip
-    ax.plot(X_SIM, run["q_abs"], ls="none", marker="s", ms=2.5, color="0.4",
+    ax.plot(x_arr, run["q_abs"], ls="none", marker="s", ms=2.5, color="0.4",
             label=f"{wv.SIM_LABEL}: " + r"$Q_\mathrm{abs}$ (exact: 0)")  # fmt: skip
     ax.set(
-        ylabel=r"$Q_\mathrm{sca}$",
-        title=f"{pol}: E {'along' if pol == 'TM' else 'across'} the axis",
-    )
-    ax.legend(fontsize=8)
-    ax2.plot(X_SIM, run["q_sca"] - q_ref, ls="none", marker="o", ms=2.5, color=col)
-    ax2.axhline(0, color="k", lw=0.6)
-    ax2.set(
         xlabel=r"size parameter $x = 2\pi a/\lambda$",
-        ylabel=r"$\Delta Q_\mathrm{sca}$ (Wakis $-$ series)",
+        ylabel=r"$Q_\mathrm{sca}$",
+        title=f"({chr(ord('a') + k)}) {pol}: E {'along' if pol == 'TM' else 'across'} axis",
     )
-fig.tight_layout()
+    ax.legend(fontsize=7.5)
+    axes[2].plot(
+        x_arr,
+        np.asarray(run["q_sca"]) - q_ref,
+        ls="none",
+        marker="o" if pol == "TM" else "s",
+        ms=3.0,
+        color=col,
+        label=f"{pol} residual",
+    )
+axes[2].axhline(0, color="k", lw=0.7)
+axes[2].set(
+    xlabel=r"size parameter $x = 2\pi a/\lambda$",
+    ylabel=r"$\Delta Q_\mathrm{sca}$ (Wakis $-$ Mie)",
+    title="(c) Scattering efficiency residuals",
+)
+axes[2].legend(fontsize=8)
 savefig(fig, "qsca_vs_series.png")
 plt.show()
 for pol in ("TM", "TE"):
@@ -1001,12 +1441,12 @@ for pol in ("TM", "TE"):
 # threaded and independent, so `tutorials/study.py` packs them onto the CPU
 # cores (10-30 cells/µm) and runs four at a time on the GPU (40-80 cells/µm).
 # We plot the relative RMS error of $Q_\mathrm{sca}$ against the cells per
-# wavelength *inside the cylinder at the top of the band*, the hardest-
-# resolved length, with first- and second-order guides, for the whole band
-# ($x \le 10$, where numerical dispersion dominates at coarse grids) and for
-# $x \le 5$ (where the material model at the interface dominates). The
-# baseline is the staircase model at the same resolution. The notebook loads
-# the committed summary `data/convergence.json`.
+# wavelength *inside the cylinder* over $x \in [2, 5]$ (solid lines, where the
+# material model at the curved interface dominates) and over the full band
+# $x \in [2, 10]$ (faint dotted curves, where bulk numerical dispersion at
+# the short-wavelength end limits coarse grids), with first- and second-order
+# reference slopes. The baseline is the staircase model at the same resolution.
+# The notebook loads the committed summary `data/convergence.json`.
 
 
 # %%
@@ -1040,33 +1480,36 @@ def band_error(run, x_hi):
 study = load_convergence()
 if study:
     names = {m: f"{wv.SIM_LABEL}, {st['label']}" for m, st in wv.MESH_STYLES.items()}
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8.4), sharey="row")
+    fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=11.8, height_in=4.2, sharey=True)
     for i, pol in enumerate(("TM", "TE")):
-        for j, x_hi in enumerate((X_MAX, 5.0)):
-            ax = axes[i, j]
-            for model, st in wv.MESH_STYLES.items():
-                rs = sorted((r for r in study["runs"]
-                             if r["conformal"] == model and r["pol"] == pol),
-                            key=lambda r: r["resolution_per_um"])  # fmt: skip
-                if not rs:
-                    continue
-                pts = np.array([band_error(r, x_hi) for r in rs])
-                ax.loglog(pts[:, 0], pts[:, 1], marker=st["marker"], color=st["color"],
-                          label=names[model], ms=5,
-                          ls="--" if model == "tensor" else "-")  # fmt: skip
-            cpw = np.array([3.0, 60.0])
-            for order, ls in ((1, ":"), (2, "-.")):
-                ax.loglog(cpw, 0.4 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
-                          label=f"guide: order {order}")  # fmt: skip
-            ax.set_xticks([3, 5, 10, 20, 50])
-            ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
-            ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-            ax.set(title=f"{pol}, error over x = 2 ... {x_hi:g}",
-                   xlabel=f"cells per wavelength in the cylinder at x = {x_hi:g}")  # fmt: skip
-            ax.grid(True, which="both", alpha=0.3)
-        axes[i, 0].set_ylabel(r"relative RMS error of $Q_\mathrm{sca}$")
-    axes[0, 0].legend(fontsize=8)
-    fig.tight_layout()
+        ax = axes[i]
+        for model, st in wv.MESH_STYLES.items():
+            rs = sorted((r for r in study["runs"]
+                         if r["conformal"] == model and r["pol"] == pol),
+                        key=lambda r: r["resolution_per_um"])  # fmt: skip
+            if not rs:
+                continue
+            pts_5 = np.array([band_error(r, 5.0) for r in rs])
+            ax.loglog(pts_5[:, 0], pts_5[:, 1], marker=st["marker"], color=st["color"],
+                      label=f"{names[model]} ($x \\leq 5$)", ms=5,
+                      ls="--" if model == "tensor" else "-")  # fmt: skip
+            pts_10 = np.array([band_error(r, X_MAX) for r in rs])
+            ax.loglog(pts_10[:, 0], pts_10[:, 1], marker=st["marker"], color=st["color"],
+                      ms=3.5, alpha=0.45, ls=":")  # fmt: skip
+        cpw = np.array([3.0, 60.0])
+        for order, ls in ((1, ":"), (2, "-.")):
+            ax.loglog(cpw, 0.4 * (cpw / cpw[0]) ** (-order), "k" + ls, lw=0.8,
+                      label=f"guide: order {order}")  # fmt: skip
+        ax.set_xticks([3, 5, 10, 20, 50])
+        ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set(
+            title=f"({chr(ord('a') + i)}) {pol} convergence ($x \\in [2, 5]$ solid, $[2, 10]$ dotted)",
+            xlabel="cells per wavelength in cylinder ($\\lambda_\\mathrm{in}/\\Delta x$)",
+        )
+        ax.grid(True, which="both", alpha=0.3)
+    axes[0].set_ylabel(r"relative RMS error of $Q_\mathrm{sca}$")
+    axes[0].legend(fontsize=7.5, loc="lower left")
     savefig(fig, "convergence.png")
     plt.show()
     print("machine:", study.get("machine", ""))
@@ -1108,14 +1551,15 @@ from wakis.unstructured.meshers import disk_mesh
 
 R_OUT = 2.7e-6  # absorbing boundary (= start of the Cartesian CPML) [m]
 H_TRI = layout(RESOLUTION)["dx"]  # same edge length as the Cartesian cells
-tri_mesh = disk_mesh([A_CYL, R_OUT], H_TRI)
-print(f"triangle mesh: {tri_mesh.n_nodes} nodes, {tri_mesh.n_edges} edges, "
-      f"{tri_mesh.n_cells} triangles (h = {H_TRI * 1e9:.0f} nm)")  # fmt: skip
-pl = wv.plot_triangle_mesh(
-    tri_mesh, window=(0.55e-6, 1.25e-6, -0.35e-6, 0.35e-6), surfaces=[cylinder],
-    tag_colors={0: "#56B4E9", 1: "#F0F0F0"}, title="triangles + Voronoi dual",
-)  # fmt: skip
-wv.save_plotter(pl, str(FIG_DIR / "mesh_triangles.png"))
+if not (PLOT_ONLY and not pv.OFF_SCREEN and (FIG_DIR / "mesh_triangles.png").exists()):
+    tri_mesh = disk_mesh([A_CYL, R_OUT], H_TRI)
+    print(f"triangle mesh: {tri_mesh.n_nodes} nodes, {tri_mesh.n_edges} edges, "
+          f"{tri_mesh.n_cells} triangles (h = {H_TRI * 1e9:.0f} nm)")  # fmt: skip
+    pl = wv.plot_triangle_mesh(
+        tri_mesh, window=(0.55e-6, 1.25e-6, -0.35e-6, 0.35e-6), surfaces=[cylinder],
+        tag_colors={0: "#56B4E9", 1: "#F0F0F0"}, title="triangles + Voronoi dual",
+    )  # fmt: skip
+    wv.save_plotter(pl, str(FIG_DIR / "mesh_triangles.png"))
 show_png(FIG_DIR / "mesh_triangles.png", "Conforming triangles and their Voronoi dual")
 
 # %% [markdown]
@@ -1179,27 +1623,45 @@ def run_triangles(h, pol, hodge="voronoi", radii=(1.9e-6, 2.2e-6, 2.5e-6),
     q_sca = q_sca_from_coefficients(
         np.where(np.abs(n)[None, :] <= n_stop, c_n, 0), X_SIM
     )
-    return dict(q_sca=q_sca, steps=n_steps, unknowns=int(solver.free.size + mesh.n_edges),
+    return dict(x=X_SIM, q_sca=q_sca, steps=n_steps,
+                unknowns=int(solver.free.size + mesh.n_edges),
                 setup_s=t1 - t0, run_s=t_run, mesh=mesh)  # fmt: skip
 
 
-tri_runs = {pol: run_triangles(H_TRI, pol) for pol in ("TM", "TE")}
-fig, axes = plt.subplots(1, 2, figsize=(12, 3.9))
-for ax, (pol, col) in zip(axes, (("TM", "#D55E00"), ("TE", "#0072B2"))):
-    ref = cylinder_efficiencies(N_CYL, X_SIM, pol)[1]
+tri_study_dir = HERE.parents[2] / "studies" / "mie-cylinder-mesh" / "data"
+if PLOT_ONLY and (tri_study_dir / "tri-voronoi_TM_20.json").exists():
+    tri_runs = {}
+    for pol in ("TM", "TE"):
+        d_tri = json.loads((tri_study_dir / f"tri-voronoi_{pol}_20.json").read_text())
+        q_tri = np.asarray(d_tri["q"], dtype=float)
+        x_tri = np.linspace(X_MIN, X_MAX, len(q_tri))
+        tri_runs[pol] = dict(
+            x=x_tri,
+            q_sca=q_tri,
+            steps=int(d_tri.get("steps", 20459)),
+            unknowns=int(d_tri.get("unknowns", 381223)),
+        )
+else:
+    tri_runs = {pol: run_triangles(H_TRI, pol) for pol in ("TM", "TE")}
+
+fig, axes = figstyle.new_figure(nrows=1, ncols=2, width_in=11.8, height_in=4.0)
+for idx_p, (ax, (pol, col)) in enumerate(zip(axes, (("TM", "#D55E00"), ("TE", "#0072B2")))):
     ax.plot(x_fine, cylinder_efficiencies(N_CYL, x_fine, pol)[1], "-", color="k",
             lw=1.1, label=wv.THEORY_LABEL)  # fmt: skip
-    for q, st, name in (
-        (runs[pol]["q_sca"], wv.MESH_STYLES[CONFORMAL], "Cartesian"),
-        (tri_runs[pol]["q_sca"], wv.MESH_STYLES["triangles"], "triangles"),
+    for x_c, q, st, name in (
+        (np.asarray(runs[pol]["x"], dtype=float), np.asarray(runs[pol]["q_sca"], dtype=float), wv.MESH_STYLES[CONFORMAL], "Cartesian"),
+        (np.asarray(tri_runs[pol]["x"], dtype=float), np.asarray(tri_runs[pol]["q_sca"], dtype=float), wv.MESH_STYLES["triangles"], "triangles"),
     ):
+        ref = cylinder_efficiencies(N_CYL, x_c, pol)[1]
         err = np.sqrt(np.mean((q - ref) ** 2) / np.mean(ref**2))
-        ax.plot(X_SIM, q, ls="none", marker=st["marker"], ms=3.5, color=st["color"],
+        ax.plot(x_c, q, ls="none", marker=st["marker"], ms=3.5, color=st["color"],
                 label=f"{wv.SIM_LABEL}, {st['label']}: {err:.1%} RMS")  # fmt: skip
-    ax.set(title=f"{pol}, h = {H_TRI * 1e9:.0f} nm", xlabel=r"$x = 2\pi a/\lambda$",
-           ylabel=r"$Q_\mathrm{sca}$")  # fmt: skip
+    ax.set(
+        title=f"({chr(ord('a') + idx_p)}) {pol}, $h = {H_TRI * 1e9:.0f}$ nm",
+        xlabel=r"size parameter $x = 2\pi a/\lambda$",
+        ylabel=r"$Q_\mathrm{sca}$",
+    )
     ax.legend(fontsize=7.5)
-fig.tight_layout()
 savefig(fig, "qsca_triangles_vs_cartesian.png")
 plt.show()
 for pol in ("TM", "TE"):
@@ -1247,7 +1709,7 @@ for pol in ("TM", "TE"):
 # first-order effect, a PML for the unstructured solver is on the roadmap.
 
 # %%
-study_root = HERE.parents[0].parent / "studies" / "mie-cylinder-mesh" / "figures"
+study_root = HERE.parents[2] / "studies" / "mie-cylinder-mesh" / "figures"
 for name, local, size in (
     ("a_meshes", "tri_study_a_meshes.png", (13, 4.5)),
     ("d_convergence", "tri_study_d_convergence.png", (13, 4.5)),

@@ -86,16 +86,29 @@ def test_preflight_and_project_grid_rules():
     assert fine["cells_across_W1_1p21mm"] >= 4.0
     assert fine["cells_across_L5_1p00mm"] >= 4.0
 
-    # Subfeature 0.18 mm and 0.1125 mm levels resolve W2=0.46 mm, H5=0.66 mm, and h=1.00 mm with >= 4 cells
-    for lvl_name in ("subfeature_0p18mm", "gpu_subfeature_0p11mm"):
+    # Subfeature 0.18 mm, 0.1125 mm, and local_noncubic_0p11mm levels resolve W2=0.46 mm, H5=0.66 mm, and h=1.00 mm with >= 4 cells
+    for lvl_name in ("subfeature_0p18mm", "gpu_subfeature_0p11mm", "local_noncubic_0p11mm"):
         lvl = report[lvl_name]
         assert lvl["cells_across_h_sub"] >= 4.0
         assert lvl["cells_across_W2_0p46mm"] >= 4
         assert lvl["cells_across_H5_0p66mm"] >= 4
 
+    nc_info = report["local_noncubic_0p11mm"]
+    sf11_info = report["gpu_subfeature_0p11mm"]
+    assert nc_info["cells_across_L5_1p00mm"] == 4
+    assert nc_info["cells_across_L6_1p00mm"] == 4
+    assert nc_info["n_cells"] < sf11_info["n_cells"] * 0.70
+
+    # Mutation check on non-cubic mesh builder: coarsening sub_cells_z from 4 to 2 (dz = 0.50 mm)
+    # must fail the >= 4 cells across h_sub = 1.00 mm rule
+    _, geom = h.build_ifa_structures()
+    _, _, _, info_mut = h.build_ifa_axes_noncubic(geom, sub_cells_z=2)
+    with pytest.raises(AssertionError):
+        assert info_mut["cells_across_h_sub"] >= 4.0
+
 
 def test_committed_data_resolution_study_and_figures():
-    """Verify committed 5-level resolution data, continuum extrapolation, and figures vs SWRU120D."""
+    """Verify committed 5-level resolution data, local non-cubic mesh, continuum extrapolation, and figures vs SWRU120D."""
     data_dir = TUT_DIR / "data"
     fig_dir = TUT_DIR / "figures"
 
@@ -109,6 +122,19 @@ def test_committed_data_resolution_study_and_figures():
     fine = json.loads((data_dir / "task_res_0p25mm.json").read_text())
     sf18 = json.loads((data_dir / "task_res_0p18mm.json").read_text())
     sf11 = json.loads((data_dir / "task_gpu_subfeature_0p11mm.json").read_text())
+    nc = json.loads((data_dir / "task_local_noncubic_0p11mm.json").read_text())
+
+    # Equal-accuracy verification of local_noncubic_0p11mm vs uniform 0.1125 mm reference at reduced cost
+    assert nc["mesh_info"]["n_cells"] == 191808
+    assert nc["mesh_info"]["n_cells"] < sf11["mesh_info"]["n_cells"] * 0.70
+    assert nc["mesh_info"]["n_steps_est"] < sf11["mesh_info"]["n_steps_est"] * 0.75
+    assert nc["wall_seconds"] < sf11["wall_seconds"] * 0.60
+    assert abs(nc["f_res_ghz"] - sf11["f_res_ghz"]) <= 0.010
+    assert abs(nc["s11_min_db"] - sf11["s11_min_db"]) <= 0.25
+    assert abs(nc["bw_10db_mhz"] - sf11["bw_10db_mhz"]) <= 10.0
+    assert abs(nc["g_xz_peak_dbi"] - sf11["g_xz_peak_dbi"]) <= 0.05
+    assert abs(nc["g_yz_peak_dbi"] - sf11["g_yz_peak_dbi"]) <= 0.05
+    assert abs(nc["g_xy_peak_dbi"] - sf11["g_xy_peak_dbi"]) <= 0.05
 
     # Monotonic grid convergence from 0.50 mm to 0.1125 mm and Richardson extrapolation
     deltas = np.array([0.50, 0.35, 0.25, 0.18, 0.1125])
@@ -146,6 +172,7 @@ def test_committed_data_resolution_study_and_figures():
     assert hyp["ground_37x45mm"]["rin_ohm"] > hyp["baseline_0p35mm_er4p28_gnd30x32_W2_0p46_gap0p66"]["rin_ohm"]
 
     expected_figs = [
+        "00_setup_schematic.png",
         "01_geometry_3d_views.png",
         "02_mesh_and_cpw_views.png",
         "03_near_fields_and_currents.png",

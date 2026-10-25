@@ -74,7 +74,7 @@ def _load_tutorial_module():
 
 
 def test_notebook_and_figures_present():
-    """Verify tutorial script and notebook are in sync and all 5 figures exist."""
+    """Verify tutorial script and notebook are in sync and all 6 figures exist."""
     pytest.importorskip("jupytext")
     spec = importlib.util.spec_from_file_location(
         "tut_build", REPO_ROOT / "tutorials" / "build.py"
@@ -87,6 +87,7 @@ def test_notebook_and_figures_present():
     )
 
     expected_figs = [
+        "00_setup_schematic.png",
         "eps_fits_ag_au.png",
         "qext_spectra_vs_mie.png",
         "error_decomposition_vs_poles.png",
@@ -334,6 +335,42 @@ def test_mutation_checks_can_fail():
     ]
     assert not np.all(np.diff(mutated_slowdowns) > 0), (
         "Mutation check failed: swapped N2/N3 order must fail strict monotonicity"
+    )
+
+
+def test_triangle_mesh_upgrade_and_mutation():
+    """Verify body-fitted triangular mesh LSPR results and skin-depth resolution vs Cartesian."""
+    tri_data = json.loads((DATA_DIR / "triangle_lspr.json").read_text())
+    spec_data = json.loads((DATA_DIR / "spectra_and_errors.json").read_text())
+    tri_npz = np.load(DATA_DIR / "triangle_lspr_fields.npz")
+
+    tri_h2 = tri_data["tri_h2nm"]
+    tri_fine = tri_data["tri_h1p25nm_N2"]
+    assert tri_h2["elements_per_skin_depth"] >= 10.0  # >= 4 elements per skin depth
+    assert tri_fine["elements_per_skin_depth"] >= 16.0
+
+    for k in ("N1", "N2", "N3", "N4", "N6", "Rakic"):
+        tri_m = tri_h2["models"][k]
+        cart_h2 = spec_data["Ag_40nm"]["models"][k]["resolutions"]["h_2nm"]
+        nrms_tri = tri_m["discretization_error_vs_mie_cont"]["nrms"]
+        nrms_cart2 = cart_h2["discretization_error_vs_mie_cont"]["nrms"]
+        assert nrms_tri < 0.005, f"Triangle {k} disc NRMS {nrms_tri:.4f} >= 0.5%"
+        assert nrms_tri < 0.25 * nrms_cart2, (
+            f"Triangle {k} disc NRMS {nrms_tri:.4f} not >4x smaller than Cartesian h=2nm ({nrms_cart2:.4f})"
+        )
+        assert tri_m["cost"]["n_unknowns"] < 0.30 * 37632
+
+    # Near-field LSPR enhancement on fine body-fitted triangle mesh vs off-resonance shielding
+    e_lspr = tri_npz["e_lspr"]
+    e_off = tri_npz["e_off"]
+    tags = tri_npz["cell_tags"]
+    assert float(np.mean(e_lspr[tags == 1])) > 3.5
+    assert float(np.max(e_lspr[tags == 0])) > 5.0
+    assert float(np.mean(e_off[tags == 1])) < 0.35
+
+    # Mutation check: swapping on/off resonance fields fails interior LSPR enhancement predicate
+    assert not (float(np.mean(e_off[tags == 1])) > 3.5), (
+        "Mutation check failed: off-resonance field should not pass LSPR enhancement check"
     )
 
 

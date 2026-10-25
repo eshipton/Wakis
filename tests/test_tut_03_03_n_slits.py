@@ -115,6 +115,7 @@ class TestNSlitSavedBenchmarks:
             assert p.is_file() and p.stat().st_size > 100, f"Missing or empty {p}"
 
         for fig_name in (
+            "00_setup_schematic.png",
             "n_slits_patterns_and_secondary_maxima.png",
             "n_slits_resolving_power_and_width.png",
             "n_slits_periodic_vs_finite_and_cost.png",

@@ -480,3 +480,34 @@ def test_full_study_summary_metrics_and_convergence_audit():
             _assert_mesh_audit_satisfies_rules(audit, require_20cpw=req_20)
 
 
+def test_setup_schematic_and_expected_figures_exist():
+    """Verify that 00_setup_schematic.png and all expected tutorial figures exist and are non-empty."""
+    fig_dir = os.path.join(TUTORIAL_DIR, "figures")
+    expected = [
+        "00_setup_schematic.png",
+        "01_double_slit_schematic.png",
+        "02_grid_and_slit_zoom.png",
+        "03_gsm_mercer_eigenmodes.png",
+        "04_coherent_vs_incoherent_2d_intensity.png",
+        "04b_coherent_vs_incoherent_error_2d.png",
+        "05_field_snapshots_ez.png",
+        "06_poynting_and_slit_profile.png",
+        "07_double_slit_propagation.gif",
+        "08_vcz_fringe_profiles_vs_D.png",
+        "09_vcz_visibility_vs_source_width.png",
+        "10_gsm_fringe_profiles_and_visibility.png",
+        "11_temporal_coherence_broadband.png",
+        "12_ensemble_and_mode_convergence.png",
+        "13_pec_vs_silver_screen.png",
+        "14_mesh_resolution_convergence.png",
+        "15_silver_skin_depth_resolution.png",
+    ]
+    for fname in expected:
+        fpath = os.path.join(fig_dir, fname)
+        assert os.path.isfile(fpath), f"Missing figure: {fname}"
+        assert os.path.getsize(fpath) > 1000, f"Empty/corrupt figure: {fname}"
+    gif_path = os.path.join(fig_dir, "07_double_slit_propagation.gif")
+    assert os.path.getsize(gif_path) < 5 * 1024 * 1024, "GIF exceeds 5 MB limit"
+
+
+

@@ -28,13 +28,17 @@ if str(TUTORIAL_DIR) not in sys.path:
 from _helpers import (  # noqa: E402
     GratingSWSSpec,
     MarosiPillarSWSSpec,
+    build_2d_grating_graded_grid,
     build_2d_grating_grid,
+    build_3d_grating_graded_grid,
     build_3d_grating_grid,
     build_3d_marosi_pillar_grid,
+    compare_sws_graded_vs_uniform_meshes,
     compute_mcvey_analytic_pierce_impedance,
     compute_mcvey_harmonic_convergence,
     compute_mcvey_power_and_energy_check,
     extract_bloch_mode_dft,
+    load_or_run_sws_graded_mesh_study,
     mcvey_dispersion_determinant,
     project_floquet_space_harmonics,
     run_bloch_harminv_point,
@@ -42,6 +46,7 @@ from _helpers import (  # noqa: E402
 )
 from sws_cold_test import (  # noqa: E402
     DATA_DIR,
+    FIG_DIR,
     compute_mcvey_slot_mode_extrapolation,
     get_task_table,
 )
@@ -919,5 +924,113 @@ def test_mcvey_slot_mode_extrapolation_vs_fit_richardson():
     )
     assert abs(k_mut_wrong_tail_sign - k_fit_rich) / k_fit_rich > 0.02
     assert abs(float(k_vals[idx_m10]) - k_fit_rich) / k_fit_rich > 0.01
+
+
+def test_setup_schematic_and_graded_nonuniform_mesh_upgrade():
+    """
+    Verify:
+    1. All 16 figures in figures/ exist and are non-empty, starting with
+       00_setup_schematic.png, and 09_bloch_mode_animation.gif is < 5 MB.
+    2. Graded non-uniform 2D and 3D grating grids (`build_2d_grating_graded_grid`
+       and `build_3d_grating_graded_grid` with `wakis.estimate` preflight) satisfy
+       all resolution rules (>= 20 cells/lambda, >= 4 cells across the 0.10 mm
+       vane tooth, exact node snapping at vane tips and slot walls) while reducing
+       cell counts vs uniform grids.
+    3. The graded cold-test study (`load_or_run_sws_graded_mesh_study`) achieves
+       equal accuracy at lower cell count/runtime (`Graded L2` vs `Uniform L2`)
+       and superior accuracy at lower cell count/runtime (`Graded Reference` vs
+       `Uniform L3`).
+    4. Provably-failing mutation check: coarsening the vane-tooth cell spacing in
+       the graded axis builder drops `cells_across_vane_tooth < 4.0`, which our
+       mesh resolution check catches.
+    """
+    expected_figs = [
+        "00_setup_schematic.png",
+        "01_sws_2d_and_3d_geometry.png",
+        "02_mesh_zoom_conformal_vs_staircase.png",
+        "03_mcvey_harmonic_convergence.png",
+        "04_2d_brillouin_mirror_vs_glide.png",
+        "05_group_vs_energy_velocity.png",
+        "06_space_harmonic_spectrum_and_profiles.png",
+        "07_pierce_impedance_2d_vs_freq.png",
+        "08_bloch_eigenmode_ez_fields.png",
+        "09_bloch_mode_animation.gif",
+        "10_resolution_convergence_pec_vs_staircase.png",
+        "11_under_resolved_warning_demo.png",
+        "12_2d_vs_3d_waveguide_cutoff_mapping.png",
+        "13_3d_marosi_dispersion_and_stopband.png",
+        "14_3d_marosi_phase_velocity_and_beam_sync.png",
+        "15_3d_marosi_pierce_impedance_vs_paper.png",
+    ]
+    for fname in expected_figs:
+        fpath = FIG_DIR / fname
+        assert fpath.exists() and fpath.stat().st_size > 1000, f"Missing or empty figure: {fpath}"
+    gif_size_mb = (FIG_DIR / "09_bloch_mode_animation.gif").stat().st_size / (1024.0 * 1024.0)
+    assert gif_size_mb < 5.0, f"GIF exceeds 5 MB limit: {gif_size_mb:.2f} MB"
+
+    spec = GratingSWSSpec()
+    cmp_mesh = compare_sws_graded_vs_uniform_meshes(spec=spec, n_feat_list=(4, 8, 12, 16))
+    lv2_2d = next(row for row in cmp_mesh["levels_2d"] if row["n_feat"] == 8)
+    assert lv2_2d["uniform"]["n_cells"] == 2560
+    assert lv2_2d["graded"]["n_cells"] == 1584
+    assert lv2_2d["cell_reduction_2d"] > 1.5
+    assert lv2_2d["graded"]["cells_across_feature"] >= 8.0 - 1e-6
+    wavelength_min_2d_um = (c_light / 235.0e9) * 1e6
+    assert wavelength_min_2d_um / lv2_2d["graded"]["dx_background"] >= 20.0
+
+    p3d = cmp_mesh["preflight_3d"]["n_feat_8"]
+    assert p3d["uniform_meta"]["n_cells"] == 87040
+    assert p3d["graded_meta"]["n_cells"] < p3d["uniform_meta"]["n_cells"]
+    assert p3d["cell_reduction_3d"] > 1.5
+    assert p3d["graded_estimate"]["ram_working_mb"] < p3d["uniform_estimate"]["ram_working_mb"]
+
+    # Check exact node alignment on vane tips y = +/- 100 um and vane walls z = 75, 175, 325, 425 um
+    grid_g, meta_g = build_2d_grating_graded_grid(spec=spec, n_feat=8, glide_symmetric=True)
+    y_um = np.asarray(grid_g.y) * 1e6
+    z_um = np.asarray(grid_g.z) * 1e6
+    for y_target in (-100.0, 100.0):
+        assert np.min(np.abs(y_um - y_target)) < 1e-6
+    for z_target in (75.0, 175.0, 325.0, 425.0):
+        assert np.min(np.abs(z_um - z_target)) < 1e-6
+
+    # Check graded cold-test study results against uniform baseline
+    study = load_or_run_sws_graded_mesh_study(DATA_DIR)
+    l2 = study["ladder"]["graded_L2"]
+    l3 = study["ladder"]["graded_L3"]
+    ref = study["ladder"]["graded_reference"]
+    u_l2 = json.loads((DATA_DIR / "task_06_2d_conformal_L2.json").read_text())
+    u_l3 = json.loads((DATA_DIR / "task_07_2d_conformal_L3.json").read_text())
+    u_ref = json.loads((DATA_DIR / "task_08_2d_conformal_reference.json").read_text())
+
+    # Equal-feature-resolution check (Graded L2 vs Uniform L2)
+    assert l2["n_cells"] < u_l2["n_cells"]
+    assert abs(l2["f1_mid_ghz"] - u_l2["f1_mid_ghz"]) / u_l2["f1_mid_ghz"] < 5e-4
+    assert abs(l2["km1_mid_ohm"] - u_l2["km1_mid_ohm"]) / u_l2["km1_mid_ohm"] < 2e-3
+
+    # Equal-cost / superior-accuracy check (Graded Reference vs Uniform L3)
+    assert ref["n_cells"] < u_l3["n_cells"]
+    assert ref["wall_time_s"] < u_l3["wall_time_s"]
+    assert abs(ref["f1_mid_ghz"] - u_ref["f1_mid_ghz"]) < abs(u_l3["f1_mid_ghz"] - u_ref["f1_mid_ghz"])
+    assert abs(ref["km1_mid_ohm"] - u_ref["km1_mid_ohm"]) < abs(u_l3["km1_mid_ohm"] - u_ref["km1_mid_ohm"])
+
+    # Monotonic convergence across graded ladder
+    assert (
+        study["ladder"]["graded_L1"]["f1_mid_ghz"]
+        < l2["f1_mid_ghz"]
+        < l3["f1_mid_ghz"]
+        < ref["f1_mid_ghz"]
+    )
+    assert (
+        study["ladder"]["graded_L1"]["km1_mid_ohm"]
+        > l2["km1_mid_ohm"]
+        > l3["km1_mid_ohm"]
+        > ref["km1_mid_ohm"]
+    )
+
+    # Provably-failing mutation check: if vane-tooth refinement were coarsened to n_feat=2
+    # (dz_tooth = 50 um across the 100 um vane tooth), cells_across_vane_tooth drops below 4.0
+    _, meta_mut = build_2d_grating_graded_grid(spec=spec, n_feat=2, glide_symmetric=True)
+    assert meta_mut["cells_across_vane_tooth"] < 4.0
+
 
 
