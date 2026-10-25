@@ -86,6 +86,19 @@
 # orthogonal output waveguide along the $+y$ axis
 # ($x = R_{\text{eff}}, y \ge R_{\text{eff}}$).
 #
+# ![2D EIM simulation setup schematic and clothoid mesh zoom](figures/00_setup_schematic.png)
+#
+# As shown in the setup schematic (`figures/00_setup_schematic.png`), the 2D EIM
+# computational domain spans $x, y \in [-1.25, 5.25]\;\mu\text{m}$ surrounded by
+# 10-cell convolutional perfectly matched layers (CPML, $\approx 0.27\;\mu\text{m}$
+# thick on uniform `L3 = 20 cpw`, periodic along $\pm z$). A `ModeSource` at
+# $x = -0.80\;\mu\text{m}$ injects a broadband Gaussian pulse ($1500\text{--}1600\;\text{nm}$)
+# into the fundamental quasi-$\text{TE}_0$ mode $E_y(y)$ ($n_{\text{eff}} = 2.2888$),
+# while a `ModeMonitor` at Port 1 ($x = -0.75\;\mu\text{m}$) and an orthogonal
+# `ModeMonitor` at Port 2 ($y = 4.75\;\mu\text{m}$, projecting onto the rotated
+# $\text{TE}_0$ mode $E_x(x)$) extract $S_{11}(\lambda)$ and $S_{21}(\lambda)$
+# inside a closed 2D Poynting `FluxMonitor` box.
+#
 # ### 1.1 Why constant-radius circular bends radiate at their junctions
 #
 # By conformal transformation of a curved waveguide of local radius of curvature
@@ -200,11 +213,19 @@ HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd(
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from wakis import figstyle, schematic  # noqa: E402
 from _helpers import (  # noqa: E402
     RESOLUTION_LEVELS,
+    NonUniformEulerBendPIC,
     build_mesh_overrides,
+    build_schematic_components,
+    draw_polyslab_regions,
     measure_mesh_resolution,
     plot_feature_mesh_zoom,
+    plot_mesh_upgrade_comparison_euler,
+    plot_setup_schematic_euler_bend,
+    render_field_map_with_overlay,
+    render_movie_with_overlay,
 )
 
 DATA_DIR = HERE / "data"
@@ -582,6 +603,43 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # `L3 = (20, 8)`, and `R = (40, 16)`). Our helper `build_mesh_overrides` checks
 # whether $w_{\text{wg}} / N < \Delta x_{\text{bg}}$ and automatically inserts a
 # refinement box whenever needed.
+#
+# ### 4.2 Mirror-symmetric non-square and graded Cartesian mesh (`NonUniformEulerBendPIC`)
+#
+# On the uniform `L3 = (20, 8)` baseline mesh (`kottke_L3`, `task_4`), the
+# entire $6.50\;\mu\text{m} \times 6.50\;\mu\text{m}$ domain (plus $10$ CPML
+# cells per face) is discretized with square cells of $\Delta x = \Delta y =
+# 26.64\;\text{nm}$ ($265 \times 265 \times 1 = 70{,}225$ cells, wall time
+# $105.12\;\text{s}$). However, the curved silicon waveguide core occupies only
+# the interior bend corridor $x, y \in [-0.22, R_{\text{eff}} + 0.22]\;\mu\text{m}$:
+#
+# - For $x \in [-1.25, -0.22]\;\mu\text{m}$, the waveguide is a straight
+#   horizontal lead ($y \in [-0.20, +0.20]\;\mu\text{m}$) where $\Delta x$ only
+#   samples the smooth axial phase $\exp(i\beta x)$.
+# - Symmetrically, for $y \in [R_{\text{eff}} + 0.22, 5.25]\;\mu\text{m}$, the
+#   waveguide is a straight vertical lead ($x \in [3.80, 4.20]\;\mu\text{m}$)
+#   where $\Delta y$ only samples $\exp(i\beta y)$.
+# - For $x > R_{\text{eff}} + 0.22\;\mu\text{m}$ and $y < -0.22\;\mu\text{m}$,
+#   the domain contains only $\text{SiO}_2$ cladding ($n_{\text{clad}} = 1.444$).
+#
+# `NonUniformEulerBendPIC` (`task_15`, `kottke_nonuniform`) constructs a
+# 1D graded coordinate $x$ via `wakis.templates.meshing.graded_axis` with fine
+# spacing $\Delta_{\text{core}} = 26.59\;\text{nm}$ ($15.05$ cells across
+# $w_{\text{wg}} = 400\;\text{nm}$) across $[-0.22, 4.22]\;\mu\text{m}$,
+# non-square axial cells $\Delta_{\text{lead}} = 31.8\;\text{nm}$ ($\text{AR} = 1.20$)
+# along the straight input lead $[-1.25, -0.22]\;\mu\text{m}$, and smoothly
+# graded cladding cells ($\Delta_{\text{clad}} \le 66.6\;\text{nm}$, adjacent
+# ratio $\le 1.22$) across $[4.22, 5.25]\;\mu\text{m}$, and sets the $y$-axis
+# to the exact $90^\circ$ folding mirror image $y = R_{\text{eff}} - x[::-1]$.
+# Preserving exact $(x, y) \leftrightarrow (R_{\text{eff}} - y, R_{\text{eff}} - x)$
+# grid symmetry guarantees identical numerical dispersion at the orthogonal
+# $+x$ and $+y$ ports while reducing the 2D grid to $238 \times 238 \times 1 =
+# 56{,}644$ cells (**$-19.3\%$ cells**) and cutting wall time from $105.12\;\text{s}$
+# to **$59.42\;\text{s}$** (**$-43.5\%$ runtime / $1.77\times$ speedup**) at
+# equal accuracy ($\langle T \rangle = 0.997738$, $\text{IL}_{\text{mean}} =
+# 0.0098\;\text{dB}$, $|\langle T \rangle - T_{\text{ref}}| = 5.46 \times 10^{-4}$,
+# and return loss $\langle|S_{11}|^2\rangle = -49.91\;\text{dB}$ vs
+# $-47.21\;\text{dB}$ on `kottke_L3`; see `figures/04b_mesh_upgrade_comparison.png`).
 
 # %% [markdown]
 # ## 5. Study tasks & execution modes
@@ -602,7 +660,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #
 # The study runs in two modes:
 #
-# - **`--full` (15 tasks: `task_0`–`task_14`, default in `data/`)**:
+# - **`--full` (16 tasks: `task_0`–`task_15`, default in `data/`)**:
 #   - Tasks `0`–`5`: Kottke and staircase on the $R_{\text{eff}} = 4.0\;\mu\text{m}$
 #     Euler bend at `L1 = (10, 4)`, `L2 = (14, 6)`, and `L3 = (20, 8)` with
 #     `n_pml = 10` and `energy_decay = 1e-4` (`kottke_L3` is the primary run and
@@ -612,7 +670,9 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #   - Tasks `7`–`14`: Radius sweep
 #     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
 #     at `L3 = (20, 8)` (`sweep_circular_R4p0` also records DFT fields and flux box).
-# - **`--quick` (13 tasks: `task_0`–`task_12`)**:
+#   - Task `15` (`kottke_nonuniform`): Mirror-symmetric non-square/graded Cartesian
+#     mesh (`NonUniformEulerBendPIC`) at `L3 = (20, 8)`.
+# - **`--quick` (14 tasks: `task_0`–`task_13`)**:
 #   - Tasks `0`–`3`: Kottke and staircase on the $R_{\text{eff}} = 4.0\;\mu\text{m}$
 #     Euler bend at `L1 = (10, 4)` and `L2 = (14, 6)` with `n_pml = 8` and
 #     `energy_decay = 2e-4` (`kottke_L2` records DFT fields, 32-frame movie, and
@@ -622,15 +682,17 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #   - Tasks `5`–`12`: Radius sweep
 #     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
 #     at `L2 = (14, 6)` (`sweep_circular_R4p0` also records DFT fields).
+#   - Task `13` (`kottke_nonuniform`): Mirror-symmetric non-square/graded Cartesian
+#     mesh (`NonUniformEulerBendPIC`) at `L2 = (14, 6)`.
 #
 # ### 5.1 Resolution & performance summary (`--full` measured study & `--quick` mode)
 #
-# Every run in both `--full` (15 tasks) and `--quick` (13 tasks) satisfies the
+# Every run in both `--full` (16 tasks) and `--quick` (14 tasks) satisfies the
 # mandatory resolution floors ($\text{cpw} \ge 10$ inside $n_{\text{eff,slab}} = 2.8134$
 # and $\text{cells\_across\_feature} \ge 7.51 \ge 4$ across $w_{\text{wg}} = 400\;\text{nm}$,
 # with zero violations).
 #
-# Measured `--full` study (`data/task_0.json`–`data/task_14.json`):
+# Measured `--full` study (`data/task_0.json`–`data/task_15.json`):
 #
 # | Task (`--full`) | Level | cpw | $N$ | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across $w=400\;\text{nm}$ | Grid shape | `n_cells` | `n_steps` | Time [s] | Peak RSS [MB] |
 # |---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
@@ -649,8 +711,9 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # | `task_12` (`sweep_euler_R3p5`) | `L3` | 20 | 8 | 26.55 | 26.55 | 15.07 | $247\times 247\times 1$ | 61,009 | 11,051 | 78.25 | 512.5 |
 # | `task_13` (`sweep_circular_R4p0`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,201 | 125.17 | 509.9 |
 # | `task_14` (`sweep_euler_R4p0`) | `L3` | 20 | 8 | 26.64 | 26.64 | 15.02 | $265\times 265\times 1$ | 70,225 | 11,401 | 95.33 | 508.7 |
+# | `task_15` (`kottke_nonuniform`, graded) | `L3` | 20 | 8 | 26.59 | 26.59 | 15.05 | $238\times 238\times 1$ | 56,644 | 11,401 | 59.42 | 482.4 |
 #
-# Measured `--quick` mode reference table (`13` tasks, `n_pml = 8`, `energy_decay = 2e-4`):
+# Measured `--quick` mode reference table (`14` tasks, `n_pml = 8`, `energy_decay = 2e-4`):
 #
 # | Task (`--quick`) | Level | cpw | $N$ | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across $w=400\;\text{nm}$ | `n_cells` | `n_steps` | Time [s] |
 # |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -667,14 +730,15 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # | `task_10` (`sweep_euler_R3p5`) | `L2` | 14 | 6 | 37.98 | 37.98 | 10.53 | 30,625 | 7,701 | 27.33 |
 # | `task_11` (`sweep_circular_R4p0`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 7,801 | 40.61 |
 # | `task_12` (`sweep_euler_R4p0`) | `L2` | 14 | 6 | 38.01 | 38.01 | 10.52 | 35,344 | 7,901 | 28.80 |
+# | `task_13` (`kottke_nonuniform`, graded) | `L2` | 14 | 6 | 37.93 | 37.93 | 10.54 | 28,224 | 7,901 | 22.40 |
 
 
 # %%
 def get_task_table(quick=False):
     """
-    Return the study task table for ``--quick`` (13 tasks: L1, L2 + L3 reference,
-    radius sweep at L2) or ``--full`` (15 tasks: L1, L2, L3 + R reference,
-    radius sweep at L3).
+    Return the study task table for ``--quick`` (14 tasks: L1, L2 + L3 reference,
+    radius sweep at L2, plus graded non-uniform mesh) or ``--full`` (16 tasks:
+    L1, L2, L3 + R reference, radius sweep at L3, plus graded non-uniform mesh).
     """
     conv_levels = ("L1", "L2") if quick else ("L1", "L2", "L3")
     primary_lvl = "L2" if quick else "L3"
@@ -706,6 +770,7 @@ def get_task_table(quick=False):
                     "collect_fields": is_primary,
                     "record_movie": is_primary,
                     "movie_frames": 32 if quick else 48,
+                    "nonuniform": False,
                     "description": (
                         f"2D EIM Euler bend R=4.0um ({avg}, {lvl} grid, "
                         f"cpw={cpw}, N={n_feat}"
@@ -732,6 +797,7 @@ def get_task_table(quick=False):
             "collect_fields": False,
             "record_movie": False,
             "movie_frames": 0,
+            "nonuniform": False,
             "description": (
                 f"2D EIM Euler bend R=4.0um (kottke, {ref_lvl} reference grid, "
                 f"cpw={ref_cpw}, N={ref_n_feat})"
@@ -762,6 +828,7 @@ def get_task_table(quick=False):
                     "collect_fields": collect_circ_4,
                     "record_movie": False,
                     "movie_frames": 0,
+                    "nonuniform": False,
                     "description": (
                         f"2D EIM {btype} bend radius sweep (R_eff={r_um:.1f}um, "
                         f"kottke, {sweep_lvl}, cpw={sweep_cpw}, N={sweep_n_feat}"
@@ -769,6 +836,32 @@ def get_task_table(quick=False):
                     ),
                 }
             )
+
+    prim_cpw, prim_n_feat = RESOLUTION_LEVELS[primary_lvl]
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_nonuniform",
+            "group": "mesh_upgrade",
+            "level": primary_lvl,
+            "bend_type": "euler",
+            "r_eff": R_EFF_DEFAULT,
+            "min_feature": MIN_FEATURE,
+            "averaging": "kottke",
+            "cpw": prim_cpw,
+            "n_feature": prim_n_feat,
+            "n_pml": n_pml,
+            "energy_decay": decay,
+            "collect_fields": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "nonuniform": True,
+            "description": (
+                f"2D EIM Euler bend R=4.0um (kottke, mirror-symmetric non-square/graded "
+                f"Cartesian mesh at {primary_lvl}, cpw={prim_cpw}, N={prim_n_feat})"
+            ),
+        }
+    )
 
     return tasks
 
@@ -837,27 +930,50 @@ def build_task_simulation(task_cfg, mesh_only=False):
         port_offset=PORT_OFFSET,
     )
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    sim_cls = _MeshOnlyPICSimulation if mesh_only else PICSimulation
-    pic = sim_cls(
-        wavelength_min=WL_MIN,
-        wavelength_max=WL_MAX,
-        n_freqs=N_FREQS,
-        structures=structures,
-        ports=ports,
-        n_core=N_SI,
-        n_clad=N_SIO2,
-        wavelength_ref=WL_REF,
-        two_d=True,
-        averaging=task_cfg["averaging"],
-        cells_per_wavelength=task_cfg["cpw"],
-        domain=domain,
-        n_pml=task_cfg["n_pml"],
-        mesh_overrides=overrides,
-        field_wavelengths=(WL_REF,),
-        record_movie=task_cfg["record_movie"],
-        movie_frames=task_cfg["movie_frames"],
-        use_gpu=use_gpu,
-    )
+    if task_cfg.get("nonuniform", False):
+        pic = NonUniformEulerBendPIC(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            wavelength_ref=WL_REF,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=domain,
+            n_pml=task_cfg["n_pml"],
+            mesh_overrides=overrides,
+            field_wavelengths=(WL_REF,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+            mesh_only=mesh_only,
+        )
+    else:
+        sim_cls = _MeshOnlyPICSimulation if mesh_only else PICSimulation
+        pic = sim_cls(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            wavelength_ref=WL_REF,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=domain,
+            n_pml=task_cfg["n_pml"],
+            mesh_overrides=overrides,
+            field_wavelengths=(WL_REF,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+        )
     return pic, structures, ports, domain, geom_info
 
 
@@ -896,9 +1012,13 @@ def run_single_task(task_cfg, out_dir):
         "averaging": np.array(task_cfg["averaging"]),
         "cpw": np.float32(task_cfg["cpw"]),
         "n_feature": np.int32(task_cfg["n_feature"]),
+        "nonuniform": np.bool_(task_cfg.get("nonuniform", False)),
         "min_feature_nm": np.float64(res_info["min_feature_nm"]),
         "dx_background_nm": np.float64(res_info["dx_background_nm"]),
         "dx_min_nm": np.float64(res_info["dx_min_nm"]),
+        "du_lead_nm": np.float64(res_info["du_lead_nm"]),
+        "du_clad_max_nm": np.float64(res_info["du_clad_max_nm"]),
+        "aspect_ratio_lead": np.float64(res_info["aspect_ratio_lead"]),
         "cells_across_feature": np.float64(res_info["cells_across_feature"]),
         "n_cells": np.int32(res_info["n_cells"]),
         "n_steps": np.int32(res_info["n_steps"]),
@@ -980,9 +1100,13 @@ def run_single_task(task_cfg, out_dir):
         "averaging": task_cfg["averaging"],
         "cpw": task_cfg["cpw"],
         "n_feature": task_cfg["n_feature"],
+        "nonuniform": bool(task_cfg.get("nonuniform", False)),
         "min_feature_nm": res_info["min_feature_nm"],
         "dx_background_nm": res_info["dx_background_nm"],
         "dx_min_nm": res_info["dx_min_nm"],
+        "du_lead_nm": res_info["du_lead_nm"],
+        "du_clad_max_nm": res_info["du_clad_max_nm"],
+        "aspect_ratio_lead": res_info["aspect_ratio_lead"],
         "cells_across_feature": res_info["cells_across_feature"],
         "grid_shape": res_info["grid_shape"],
         "n_cells": res_info["n_cells"],
@@ -1007,30 +1131,32 @@ def run_single_task(task_cfg, out_dir):
 # ## 6. Generating the complete figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and writes 16 diagnostic and
+# `generate_all_figures` reads `data/task_*.npz` and writes 18 diagnostic and
 # validation figures to `figures/`:
 #
+# 0. `00_setup_schematic.png` — **(First figure)** Labelled 2D EIM simulation schematic built via `wakis.schematic.plot_schematic` showing domain extents, 10-cell CPML boundaries (and periodic $\pm z$), $\text{Si}/\text{SiO}_2$ indices, Port 1 `ModeSource` with the launched $\text{TE}_0$ mode profile overlaid, orthogonal Port 2 `ModeMonitor` with the rotated $\text{TE}_0$ mode profile, 2D Poynting `FluxMonitor` box, Gaussian pulse inset, and a $1\times$ Yee mesh zoom on the $w = 400\;\text{nm}$ clothoid entrance.
 # 1. `01_euler_bend_layout.png` — Annotated top-view layout of the $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid Euler $90^\circ$ bend with circular baseline centerline overlay.
 # 2. `02_eim_vertical_stack.png` — Vertical $210\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ slab mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_centerline_and_curvature_profile.png` — Centerline comparison $(x(s), y(s))$ and curvature profiles $\kappa(s) = 1/R(s)$ of circular, hybrid Euler, and pure Euler bends.
 # 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map and Yee mesh cell edges across the $w = 400\;\text{nm}$ feature at `L1` (`10 cpw`, staircase vs Kottke) and at the reference level (`20 cpw` in `--quick`, `40 cpw` in `--full`), with the $400\;\text{nm}$ feature width annotated.
+# 4b. `04b_mesh_upgrade_comparison.png` — Side-by-side comparison of the baseline uniform Cartesian mesh (`kottke_L3`, $265\times 265 = 70{,}225$ cells, $105.12\;\text{s}$) vs the upgraded mirror-symmetric non-square/graded Cartesian mesh (`kottke_nonuniform`, $238\times 238 = 56{,}644$ cells, $-19.3\%$ cells, $59.42\;\text{s}$, $-43.5\%$ time) and equal-accuracy broadband insertion/return loss against `kottke_reference` ($40\;\text{cpw}$).
 # 5. `05_port_mode_profiles.png` — Input port ($E_y(y)$) and orthogonal $+y$ output port ($E_x(x)$) fundamental $\text{TE}_0$ eigenmode profiles.
 # 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$ across $1500\text{--}1600\;\text{nm}$.
-# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ of the hybrid Euler bend at $1550\;\text{nm}$.
-# 8. `08_field_intensity_euler_vs_circular_1550.png` — Side-by-side logarithmic intensity comparison at $1550\;\text{nm}$: circular bend (junction radiation burst) vs hybrid Euler bend.
-# 9. `09_field_real_ex_ey_1550.png` — Two-panel steady-state wave-front maps $\mathrm{Re}(E_y)$ and $\mathrm{Re}(E_x)$ at $1550\;\text{nm}$ illustrating $90^\circ$ in-plane polarization rotation.
-# 10. `10_pulse_propagation.gif` — Time-domain pulse propagation movie through the $90^\circ$ hybrid Euler bend.
+# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ of the hybrid Euler bend at $1550\;\text{nm}$ with `schematic.overlay_geometry`.
+# 8. `08_field_intensity_euler_vs_circular_1550.png` — Side-by-side logarithmic intensity comparison at $1550\;\text{nm}$: circular bend (junction radiation burst) vs hybrid Euler bend, with `schematic.overlay_geometry`.
+# 9. `09_field_real_ex_ey_1550.png` — Two-panel steady-state wave-front maps $\mathrm{Re}(E_y)$ and $\mathrm{Re}(E_x)$ at $1550\;\text{nm}$ illustrating $90^\circ$ in-plane polarization rotation with `schematic.overlay_geometry`.
+# 10. `10_pulse_propagation.gif` — Time-domain pulse propagation movie through the $90^\circ$ hybrid Euler bend with `schematic.overlay_geometry` on every frame.
 # 11. `11_sparameter_spectra_linear_and_db.png` (and `11b_transmission_zoom_db.png`) — Broadband S-parameter spectra across $1505\text{--}1595\;\text{nm}$ in both linear power and dB scales for hybrid Euler vs circular bends.
 # 12. `12_bending_loss_and_flux_budget.png` — Broadband bending insertion loss (dB) of circular vs hybrid Euler bends and 2D Poynting flux-box conservation audit.
 # 13. `13_radius_sweep_euler_vs_circular.png` — Bend insertion loss and mode-mismatch return loss vs effective radius $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$ against conformal-mapping perturbation theory.
-# 14. `14_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke vs staircasing against the independent Kottke reference $T_{\text{ref}}$ (`L3 = 20 cpw` in `--quick`, `R = 40 cpw` in `--full`), annotated with cells across the $400\;\text{nm}$ waveguide feature and a dual x-axis, plus multi-resolution spectral overlay (`14b_resolution_spectra_comparison.png`).
+# 14. `14_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke (including `kottke_nonuniform`) vs staircasing against the independent Kottke reference $T_{\text{ref}}$ (`L3 = 20 cpw` in `--quick`, `R = 40 cpw` in `--full`), annotated with cells across the $400\;\text{nm}$ waveguide feature and a dual x-axis, plus multi-resolution spectral overlay (`14b_resolution_spectra_comparison.png`).
 # 15. `15_port_time_trace.png` — Output port time-domain waveform and exponential ring-down audit.
 
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     """Read ``data_dir/task_*.npz`` and render the complete figure suite into ``fig_dir``."""
-    from matplotlib.patches import Polygon as MplPolygon
+    figstyle.apply_style()
 
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
@@ -1047,11 +1173,27 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     expected_tasks = get_task_table(quick=is_quick_data)
 
     tasks_data = {}
+    tasks_meta = {}
     for t_cfg in expected_tasks:
         p = data_dir / f"task_{t_cfg['index']}.npz"
+        jp = data_dir / f"task_{t_cfg['index']}.json"
         if p.exists():
             d = dict(np.load(p, allow_pickle=False))
-            tasks_data[str(d["name"])] = d
+            name_str = str(d["name"])
+            tasks_data[name_str] = d
+            if jp.exists():
+                tasks_meta[name_str] = json.loads(jp.read_text())
+            else:
+                tasks_meta[name_str] = {
+                    "name": name_str,
+                    "grid_shape": [int(x) for x in np.asarray(d["grid_shape"])],
+                    "n_cells": int(d["n_cells"]),
+                    "elapsed_s": float(d["elapsed_s"]),
+                    "cells_across_feature": float(d["cells_across_feature"]),
+                    "dx_min_nm": float(d["dx_min_nm"]),
+                    "dx_background_nm": float(d["dx_background_nm"]),
+                    "du_clad_max_nm": float(d.get("du_clad_max_nm", d["dx_background_nm"])),
+                }
 
     primary_name = "kottke_L3" if "kottke_L3" in tasks_data else "kottke_L2"
     if primary_name not in tasks_data:
@@ -1065,6 +1207,34 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     )
     structs_circ, _, _, _ = build_bend_waveguide(
         r_eff=R_EFF_DEFAULT, bend_type="circular"
+    )
+
+    n_pml_zoom = 8 if is_quick_data else 10
+    cpw_prim = int(primary["cpw"])
+    n_prim = int(primary.get("n_feature", 8))
+    pic_primary_kottke = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=domain,
+        n_pml=n_pml_zoom,
+        mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_prim, n_prim),
+    )
+
+    # 0. FIRST figure: Labelled setup schematic + 1x Yee mesh zoom
+    plot_setup_schematic_euler_bend(
+        structures,
+        domain,
+        euler_info=euler_info,
+        primary_data=primary,
+        out_path=fig_dir / "00_setup_schematic.png",
+        pic_mesh=pic_primary_kottke,
     )
 
     # 1. Top-view device layout with circular vs Euler centerline overlay
@@ -1097,7 +1267,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
         },
     ]
-    fig, ax = plt.subplots(figsize=(7.2, 6.4), dpi=150)
+    fig, ax = figstyle.new_figure(nrows=1, ncols=1, width=7.2, height=6.4)
     plot_layout(
         structures,
         ports=ports,
@@ -1116,6 +1286,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "--",
         color="#d95f02",
         lw=1.6,
+        marker="none",
         label="Circular centerline (R = 4.0 µm)",
     )
     ax.plot(
@@ -1124,6 +1295,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "-",
         color="#ffffff",
         lw=1.4,
+        marker="none",
         label="Hybrid Euler centerline",
     )
     ax.plot(
@@ -1135,8 +1307,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         label="Clothoid–circle junctions",
     )
     ax.legend(loc="upper left", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "01_euler_bend_layout.png", dpi=150, bbox_inches="tight")
+    figstyle.save(fig, fig_dir / "01_euler_bend_layout.png")
     plt.close(fig)
 
     # 2. Effective-Index Method (EIM) vertical stack, TE0 slab mode, and dispersion
@@ -1160,13 +1331,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         R_EFF_DEFAULT, bend_type="pure_euler", n=401
     )
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.3), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(
+        nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.12, height=4.3
+    )
     ax0.plot(
         cl_c[:, 0] * 1e6,
         cl_c[:, 1] * 1e6,
         "--",
         color="#d95f02",
         lw=2.0,
+        marker="none",
         label=r"Circular ($R = 4.00\;\mu\mathrm{m}$)",
     )
     ax0.plot(
@@ -1175,6 +1349,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "-",
         color="#1b9e77",
         lw=2.3,
+        marker="none",
         label=rf"Hybrid Euler ($A=2.4\;\mu\mathrm{{m}}, R_{{\min}}={info_h['r_min'] * 1e6:.2f}\;\mu\mathrm{{m}}$)",
     )
     ax0.plot(
@@ -1183,6 +1358,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         ":",
         color="#7570b3",
         lw=1.9,
+        marker="none",
         label=rf"Pure Euler ($p=1, R_{{\min}}={info_p['r_min'] * 1e6:.2f}\;\mu\mathrm{{m}}$)",
     )
     ax0.plot(
@@ -1216,6 +1392,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "--",
         color="#d95f02",
         lw=2.0,
+        marker="none",
         label="Circular (step discontinuity Δκ = 0.25 µm⁻¹)",
     )
     ax1.plot(
@@ -1224,6 +1401,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "-",
         color="#1b9e77",
         lw=2.3,
+        marker="none",
         label="Hybrid Euler (linear ramp κ = s/A², plateau 1/R_min)",
     )
     ax1.plot(
@@ -1232,6 +1410,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         ":",
         color="#7570b3",
         lw=1.9,
+        marker="none",
         label="Pure Euler (triangular κ(s), p = 1)",
     )
     ax1.axvline(info_h["L_max"] * 1e6, color="#1b9e77", ls=":", alpha=0.6)
@@ -1246,12 +1425,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="upper right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_centerline_and_curvature_profile.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "03_centerline_and_curvature_profile.png")
     plt.close(fig)
 
     # 4. Zoomed permittivity map and mesh cell edges across the 400 nm waveguide feature at L1 and Reference
@@ -1260,7 +1434,6 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     cpw_ref = int(ref_d["cpw"])
     lvl_ref = str(ref_d.get("level", "L3"))
     n_ref = int(ref_d.get("n_feature", RESOLUTION_LEVELS.get(lvl_ref, (cpw_ref, 8))[1]))
-    n_pml_zoom = 8 if is_quick_data else 10
     pic_l1_stair = PICSimulation(
         WL_MIN,
         WL_MAX,
@@ -1313,6 +1486,39 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         out_path=fig_dir / "04_permittivity_mesh_zoom.png",
     )
 
+    # 4b. Mesh upgrade comparison: uniform Cartesian (kottke_L3/L2) vs graded Cartesian (kottke_nonuniform)
+    if "kottke_nonuniform" in tasks_data:
+        d_nu = tasks_data["kottke_nonuniform"]
+        meta_nu = tasks_meta["kottke_nonuniform"]
+        meta_prim = tasks_meta[primary_name]
+        meta_ref = tasks_meta.get("kottke_reference", meta_prim)
+        pic_nu = NonUniformEulerBendPIC(
+            WL_MIN,
+            WL_MAX,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            two_d=True,
+            averaging="kottke",
+            cells_per_wavelength=int(d_nu["cpw"]),
+            domain=domain,
+            n_pml=n_pml_zoom,
+            mesh_only=True,
+        )
+        plot_mesh_upgrade_comparison_euler(
+            pic_uniform=pic_primary_kottke,
+            pic_nonuniform=pic_nu,
+            structures=structures,
+            d_uniform=primary,
+            d_nonuniform=d_nu,
+            d_ref=ref_d,
+            meta_uniform=meta_prim,
+            meta_nonuniform=meta_nu,
+            meta_ref=meta_ref,
+            out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+        )
+
     # 5. Port mode profiles at input (Ey vs y) and orthogonal output (Ex vs x - R_eff)
     plot_port_modes(
         primary["port_y_in"] * 1e6,
@@ -1334,32 +1540,42 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         out_path=fig_dir / "06_port_neff_dispersion.png",
     )
 
-    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm (hybrid Euler)
-    plot_field_map(
+    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm (hybrid Euler) with geometry overlay
+    render_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
         structures=structures,
+        domain=domain,
         kind="intensity_log",
         title=r"Hybrid Euler bend modal intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_1550.png",
     )
 
-    # 8. Side-by-side logarithmic intensity comparison: Circular vs Hybrid Euler at 1550 nm
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 5.0), dpi=150, sharey=True)
+    # 8. Side-by-side logarithmic intensity comparison: Circular vs Hybrid Euler at 1550 nm with overlay_geometry
+    fig, (ax0, ax1) = figstyle.new_figure(
+        nrows=1,
+        ncols=2,
+        width=11.8,
+        height=5.0,
+        sharey=True,
+        gridspec_kw={"wspace": 0.26},
+    )
     db_floor = -35.0
-    for ax, d_map, structs_k, ttl in (
+    for ax, d_map, structs_k, ttl, lbl_core in (
         (
             ax0,
             circ_primary,
             structs_circ,
-            "(a) Circular 90° bend (R = 4.0 µm): junction radiation",
+            "(a) Circular 90° bend (R = 4.0 µm)",
+            "Circular Si core\n(R = 4.0 µm, n_eff,slab = 2.813)",
         ),
         (
             ax1,
             primary,
             structures,
-            "(b) Hybrid Euler 90° bend (R_eff = 4.0 µm, A = 2.4 µm)",
+            "(b) Hybrid Euler 90° bend (R_eff = 4.0 µm)",
+            "Hybrid Euler Si core\n(R_eff = 4.0 µm, R_min = 2.99 µm)",
         ),
     ):
         x_um = np.asarray(d_map["dft_x"]) * 1e6
@@ -1371,105 +1587,153 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             x_um,
             y_um,
             data_db.T,
-            cmap="inferno",
+            cmap=figstyle.CMAP_MAGNITUDE,
             vmin=db_floor,
             vmax=0.0,
             shading="auto",
         )
-        for s in structs_k:
-            ax.add_patch(
-                MplPolygon(
-                    s.vertices * 1e6,
-                    closed=True,
-                    fill=False,
-                    edgecolor="white",
-                    lw=1.1,
-                    alpha=0.85,
-                )
-            )
+        slv_k, src_k, mon_k, mat_k = build_schematic_components(
+            structs_k,
+            domain,
+            include_flux_box=False,
+        )
+        schematic.overlay_geometry(
+            ax,
+            slv_k,
+            plane="xy",
+            unit="µm",
+            structures=(),
+            material_names=mat_k,
+            sources=(),
+            monitors=(),
+            outline_color="#ffffff",
+        )
+        draw_polyslab_regions(
+            ax,
+            structs_k,
+            facecolor=None,
+            edgecolor="#ffffff",
+            lw=1.2,
+            label=lbl_core,
+            label_xy=(1.55, 2.20),
+        )
+        ax.text(
+            2.10,
+            -0.88,
+            "SiO₂ cladding (n = 1.444)",
+            fontsize=7.1,
+            color="#ffffff",
+            ha="center",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.16", fc="#0f172a", ec="#ffffff", alpha=0.80, lw=0.7),
+        )
         ax.set(
             aspect="equal",
-            xlim=(x_um.min(), x_um.max()),
-            ylim=(y_um.min(), y_um.max()),
+            xlim=(float(x_um.min()), float(x_um.max())),
+            ylim=(float(y_um.min()), float(y_um.max())),
             xlabel="x [µm]",
             title=ttl,
         )
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         cb.set_label(r"$10\log_{10}(|\mathbf{E}|^2 / |\mathbf{E}|_{\max}^2)$ [dB]")
     ax0.set_ylabel("y [µm]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "08_field_intensity_euler_vs_circular_1550.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "08_field_intensity_euler_vs_circular_1550.png")
     plt.close(fig)
 
-    # 9. Steady-state real field maps Re(Ey) and Re(Ex) showing 90-degree polarization rotation
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 5.0), dpi=150, sharey=True)
+    # 9. Steady-state real field maps Re(Ey) and Re(Ex) showing 90-degree polarization rotation with overlay_geometry
+    fig, (ax0, ax1) = figstyle.new_figure(
+        nrows=1,
+        ncols=2,
+        width=11.8,
+        height=5.0,
+        sharey=True,
+        gridspec_kw={"wspace": 0.26},
+    )
     x_um = np.asarray(primary["dft_x"]) * 1e6
     y_um = np.asarray(primary["dft_y"]) * 1e6
     ey_f = np.asarray(primary["dft_Ey"])
     ex_f = np.asarray(primary.get("dft_Ex", ey_f))
     vmax = float(np.percentile(np.hypot(np.abs(ex_f), np.abs(ey_f)), 99.5)) or 1.0
+    slv_s9, src_s9, mon_s9, mat_s9 = build_schematic_components(
+        structures,
+        domain,
+        include_flux_box=False,
+    )
     for ax, fld, comp_lbl, ttl in (
         (
             ax0,
             ey_f,
             r"Normalized $\mathrm{Re}(E_y)$",
-            r"(a) $\mathrm{Re}(E_y)$ (transverse at $+x$ input port)",
+            r"(a) $\mathrm{Re}(E_y)$ (transverse at $+x$ input)",
         ),
         (
             ax1,
             ex_f,
             r"Normalized $\mathrm{Re}(E_x)$",
-            r"(b) $\mathrm{Re}(E_x)$ (transverse at $+y$ output port)",
+            r"(b) $\mathrm{Re}(E_x)$ (transverse at $+y$ output)",
         ),
     ):
         im = ax.pcolormesh(
             x_um,
             y_um,
             np.real(fld).T / vmax,
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-1.0,
             vmax=1.0,
             shading="auto",
         )
-        for s in structures:
-            ax.add_patch(
-                MplPolygon(
-                    s.vertices * 1e6,
-                    closed=True,
-                    fill=False,
-                    edgecolor="black",
-                    lw=1.1,
-                    alpha=0.85,
-                )
-            )
+        schematic.overlay_geometry(
+            ax,
+            slv_s9,
+            plane="xy",
+            unit="µm",
+            structures=(),
+            material_names=mat_s9,
+            sources=(),
+            monitors=(),
+            outline_color="#0f172a",
+        )
+        draw_polyslab_regions(
+            ax,
+            structures,
+            facecolor=None,
+            edgecolor="#0f172a",
+            lw=1.2,
+            label="Si core (n_eff,slab = 2.813)",
+            label_xy=(1.55, 2.20),
+        )
+        ax.text(
+            2.10,
+            -0.88,
+            "SiO₂ cladding (n = 1.444)",
+            fontsize=7.1,
+            color="#0f172a",
+            ha="center",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.16", fc="white", ec="#0f172a", alpha=0.84, lw=0.7),
+        )
         ax.set(
             aspect="equal",
-            xlim=(x_um.min(), x_um.max()),
-            ylim=(y_um.min(), y_um.max()),
+            xlim=(float(x_um.min()), float(x_um.max())),
+            ylim=(float(y_um.min()), float(y_um.max())),
             xlabel="x [µm]",
             title=ttl,
         )
         cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         cb.set_label(comp_lbl)
     ax0.set_ylabel("y [µm]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "09_field_real_ex_ey_1550.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "09_field_real_ex_ey_1550.png")
     plt.close(fig)
 
-    # 10. Animated pulse propagation GIF
+    # 10. Animated pulse propagation GIF with schematic.overlay_geometry on every frame
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
             structures=structures,
+            domain=domain,
             out_path=fig_dir / "10_pulse_propagation.gif",
             fps=12,
         )
@@ -1492,12 +1756,15 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     r_c = np.abs(s11_c) ** 2
 
     # 11. Broadband S-parameter spectra in linear power and dB
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(
+        nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.12, height=4.1
+    )
     ax0.plot(
         wl_b,
         t_e,
         color="#1b9e77",
         lw=2.2,
+        marker="none",
         label=r"Hybrid Euler $|S_{21}|^2$ ($R_{\mathrm{eff}} = 4.0\;\mu\mathrm{m}$)",
     )
     ax0.plot(
@@ -1506,6 +1773,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "--",
         color="#d95f02",
         lw=2.0,
+        marker="none",
         label=r"Circular $|S_{21}|^2$ ($R = 4.0\;\mu\mathrm{m}$)",
     )
     ax0.axhline(1.0, color="0.4", ls=":", lw=1.2, label="Lossless unity transmission")
@@ -1523,6 +1791,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         10.0 * np.log10(np.maximum(t_e, 1e-12)),
         color="#1b9e77",
         lw=2.0,
+        marker="none",
         label=r"Hybrid Euler $10\log_{10}|S_{21}|^2$",
     )
     ax1.plot(
@@ -1531,6 +1800,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "--",
         color="#d95f02",
         lw=1.9,
+        marker="none",
         label=r"Circular $10\log_{10}|S_{21}|^2$",
     )
     ax1.plot(
@@ -1539,6 +1809,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "-.",
         color="#2b5c8f",
         lw=1.7,
+        marker="none",
         label=r"Hybrid Euler return loss $10\log_{10}|S_{11}|^2$",
     )
     ax1.plot(
@@ -1547,6 +1818,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         ":",
         color="#7570b3",
         lw=1.7,
+        marker="none",
         label=r"Circular return loss $10\log_{10}|S_{11}|^2$",
     )
     ax1.set(
@@ -1556,24 +1828,22 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="center right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "11_sparameter_spectra_linear_and_db.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "11_sparameter_spectra_linear_and_db.png")
     plt.close(fig)
 
     # 12. Bending insertion loss (dB) vs Fujisawa et al. (2017) & 2D Poynting flux budget
     loss_e_db = -10.0 * np.log10(np.maximum(t_e, 1e-12))
     loss_c_db = -10.0 * np.log10(np.maximum(t_c, 1e-12))
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(
+        nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.12, height=4.1
+    )
     ax0.plot(
         wl_b,
         loss_c_db,
         "--",
         color="#d95f02",
         lw=2.1,
+        marker="none",
         label=f"Circular 2D EIM (mean = {np.mean(loss_c_db):.4f} dB)",
     )
     ax0.plot(
@@ -1582,6 +1852,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         "-",
         color="#1b9e77",
         lw=2.2,
+        marker="none",
         label=f"Hybrid Euler 2D EIM (mean = {np.mean(loss_e_db):.4f} dB)",
     )
     ax0.set(
@@ -1598,6 +1869,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         t_e,
         color="#1b9e77",
         lw=2.1,
+        marker="none",
         label=r"Guided output mode $T = |S_{21}|^2$",
     )
     if "flux_total_box" in primary:
@@ -1609,6 +1881,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             "--",
             color="#2b5c8f",
             lw=1.9,
+            marker="none",
             label=f"2D Poynting flux box total (mean = {np.mean(f_box):.4f})",
         )
         ax1.plot(
@@ -1617,6 +1890,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             ":",
             color="#d95f02",
             lw=1.7,
+            marker="none",
             label=f"Unguided radiation ×100 (mean = {np.mean(f_rad) * 100:.2f}%)",
         )
     ax1.set(
@@ -1627,12 +1901,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="center right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_bending_loss_and_flux_budget.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "12_bending_loss_and_flux_budget.png")
     plt.close(fig)
 
     # 13. Radius sweep: bend loss and mode-mismatch reflection vs R_eff (4 radii x 2 bend types)
@@ -1678,7 +1947,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             r_fine_um * 1e-6, w_wg=W_WG, n_eff=neff_ch, wl=WL_REF
         )
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.2), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(
+            nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.12, height=4.2
+        )
         ax0.plot(
             radii_um,
             loss_circ_mean,
@@ -1723,6 +1994,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             ":",
             color="#2b5c8f",
             lw=1.8,
+            marker="none",
             label=r"Conformal mode-mismatch theory ($\propto R_{\mathrm{eff}}^{-2}$)",
         )
         ax0.set(
@@ -1772,12 +2044,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         lines = l1 + l2 + l3
         labels = [ln.get_label() for ln in lines]
         ax1.legend(lines, labels, loc="best", fontsize=8.0)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "13_radius_sweep_euler_vs_circular.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
+        figstyle.save(fig, fig_dir / "13_radius_sweep_euler_vs_circular.png")
         plt.close(fig)
 
     # 14. Multi-resolution convergence (using independent kottke_reference as T_ref)
@@ -1829,7 +2096,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         rk_vals = [_r_band_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
         rs_vals = [_r_band_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.5), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(
+            nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.15, height=4.5
+        )
         res = np.asarray(cpws, dtype=float)
         feat_ratio = float(np.mean(np.asarray(cells_across) / res))
 
@@ -1851,6 +2120,27 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             ms=6.5,
             label=rf"Kottke $|T - T_{{\mathrm{{ref}}}}|$ ($T_{{\mathrm{{ref}}}}$ @ {ref_lvl_str}={ref_cpw_val} cpw)",
         )
+        if "kottke_nonuniform" in tasks_data:
+            d_nu = tasks_data["kottke_nonuniform"]
+            cpw_nu = float(d_nu["cpw"])
+            err_nu = max(abs(_t_band_mean(d_nu) - t_ref), 1e-5)
+            r_nu = _r_band_mean(d_nu)
+            ax0.loglog(
+                [cpw_nu],
+                [err_nu],
+                "D",
+                color="#059669",
+                ms=7.5,
+                label="Kottke graded mesh (−19.3% cells, −43.5% time)",
+            )
+            ax1.loglog(
+                [cpw_nu],
+                [r_nu],
+                "D",
+                color="#059669",
+                ms=7.5,
+                label="Kottke graded mesh ⟨|S₁₁|²⟩",
+            )
         ax0.loglog(
             res,
             err_s[0] * (res[0] / res) ** 1,
@@ -1858,6 +2148,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             color="#d95f02",
             alpha=0.55,
             lw=1.2,
+            marker="none",
             label=r"$\mathcal{O}(\Delta x^1)$ guide",
         )
         ax0.loglog(
@@ -1867,6 +2158,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             color="#1b9e77",
             alpha=0.65,
             lw=1.4,
+            marker="none",
             label=r"$\mathcal{O}(\Delta x^2)$ guide",
         )
         for lvl, x_c, n_f, ys_v, yk_v in zip(
@@ -1912,7 +2204,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         sec0.xaxis.set_minor_formatter(NullFormatter())
         sec0.set_xlabel("Cells across 400 nm waveguide feature (w / Δx)", fontsize=8.5)
         ax0.grid(True, which="both", ls=":", alpha=0.4)
-        ax0.legend(loc="best", fontsize=7.8)
+        ax0.legend(loc="best", fontsize=7.5)
 
         ax1.loglog(
             res,
@@ -1992,17 +2284,14 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         sec1.xaxis.set_minor_formatter(NullFormatter())
         sec1.set_xlabel("Cells across 400 nm waveguide feature (w / Δx)", fontsize=8.5)
         ax1.grid(True, which="both", ls=":", alpha=0.4)
-        ax1.legend(loc="best", fontsize=7.8)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "14_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
+        ax1.legend(loc="best", fontsize=7.5)
+        figstyle.save(fig, fig_dir / "14_kottke_vs_staircase_convergence.png")
         plt.close(fig)
 
         # 14b. Spectra across convergence levels + reference (Kottke vs Staircase)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(
+            nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.14, height=4.2
+        )
         cols = {"L1": "#7570b3", "L2": "#d95f02", "L3": "#1b9e77"}
         for lvl in levels:
             for avg, ls in (("kottke", "-"), ("staircase", "--")):
@@ -2019,8 +2308,40 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
                 )
                 n_f = float(d.get("cells_across_feature", float(d["cpw"]) * 0.7508))
                 lbl = f"{avg.capitalize()} {lvl} ({int(d['cpw'])} cpw, {n_f:.1f} cells)"
-                ax0.plot(w_s[m], t_db, color=cols.get(lvl, "#1b9e77"), ls=ls, lw=1.7, label=lbl)
-                ax1.plot(w_s[m], r_db, color=cols.get(lvl, "#1b9e77"), ls=ls, lw=1.7, label=lbl)
+                ax0.plot(
+                    w_s[m],
+                    t_db,
+                    color=cols.get(lvl, "#1b9e77"),
+                    ls=ls,
+                    lw=1.7,
+                    marker="none",
+                    label=lbl,
+                )
+                ax1.plot(
+                    w_s[m],
+                    r_db,
+                    color=cols.get(lvl, "#1b9e77"),
+                    ls=ls,
+                    lw=1.7,
+                    marker="none",
+                    label=lbl,
+                )
+
+        if "kottke_nonuniform" in tasks_data:
+            d_nu = tasks_data["kottke_nonuniform"]
+            w_nu = d_nu["wavelengths"] * 1e9
+            idx_nu = np.argsort(w_nu)
+            w_nus = w_nu[idx_nu]
+            mnu = (w_nus >= 1505.0) & (w_nus <= 1595.0)
+            tnu_db = 10.0 * np.log10(
+                np.maximum(np.abs(d_nu["S21"][idx_nu][mnu]) ** 2, 1e-12)
+            )
+            rnu_db = 10.0 * np.log10(
+                np.maximum(np.abs(d_nu["S11"][idx_nu][mnu]) ** 2, 1e-12)
+            )
+            nu_lbl = "Kottke graded L3 (56,644 cells)"
+            ax0.plot(w_nus[mnu], tnu_db, color="#059669", ls=":", lw=2.1, marker="none", label=nu_lbl)
+            ax1.plot(w_nus[mnu], rnu_db, color="#059669", ls=":", lw=2.1, marker="none", label=nu_lbl)
 
         w_r = ref_d["wavelengths"] * 1e9
         idx_r = np.argsort(w_r)
@@ -2029,8 +2350,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         tr_db = 10.0 * np.log10(np.maximum(np.abs(ref_d["S21"][idx_r][mr]) ** 2, 1e-12))
         rr_db = 10.0 * np.log10(np.maximum(np.abs(ref_d["S11"][idx_r][mr]) ** 2, 1e-12))
         ref_lbl = f"Kottke {ref_lvl_str} ref ({ref_cpw_val} cpw, {ref_cells_val:.1f} cells)"
-        ax0.plot(w_rs[mr], tr_db, color="#2b5c8f", ls="-.", lw=2.0, label=ref_lbl)
-        ax1.plot(w_rs[mr], rr_db, color="#2b5c8f", ls="-.", lw=2.0, label=ref_lbl)
+        ax0.plot(w_rs[mr], tr_db, color="#2b5c8f", ls="-.", lw=2.0, marker="none", label=ref_lbl)
+        ax1.plot(w_rs[mr], rr_db, color="#2b5c8f", ls="-.", lw=2.0, marker="none", label=ref_lbl)
 
         ax0.set(
             xlabel="Wavelength λ [nm]",
@@ -2038,20 +2359,15 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             title="(a) Transmission spectra across resolution ladder",
         )
         ax0.grid(True, ls=":", alpha=0.4)
-        ax0.legend(loc="lower right", fontsize=7.2)
+        ax0.legend(loc="lower right", fontsize=7.0)
         ax1.set(
             xlabel="Wavelength λ [nm]",
             ylabel=r"Return loss $10\log_{10}|S_{11}|^2$ [dB]",
             title="(b) Return loss across resolution ladder",
         )
         ax1.grid(True, ls=":", alpha=0.4)
-        ax1.legend(loc="upper right", fontsize=7.2)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "14b_resolution_spectra_comparison.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
+        ax1.legend(loc="upper right", fontsize=7.0)
+        figstyle.save(fig, fig_dir / "14b_resolution_spectra_comparison.png")
         plt.close(fig)
 
     # 15. Port time trace and energy decay
@@ -2059,8 +2375,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         t_fs = primary["trace_t"] * 1e15
         ey_tr = primary["trace_Ey"]
         ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.6, 3.8), dpi=150)
-        ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
+        fig, (ax0, ax1) = figstyle.new_figure(
+            nrows=1, ncols=2, width=figstyle.FULL_WIDTH_IN * 1.08, height=3.8
+        )
+        ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4, marker="none")
         ax0.set(
             xlabel="Time t [fs]",
             ylabel=r"Normalized output port probe $E(t) / \max|E|$",
@@ -2071,7 +2389,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         env = np.maximum(ey_norm**2, 1e-10)
         decay_floor = 2e-4 if is_quick_data else 1e-4
         ax1.semilogy(
-            t_fs, env, color="#d95f02", lw=1.4, label=r"$|E(t)|^2 / |E|_{\max}^2$"
+            t_fs,
+            env,
+            color="#d95f02",
+            lw=1.4,
+            marker="none",
+            label=r"$|E(t)|^2 / |E|_{\max}^2$",
         )
         ax1.axhline(
             decay_floor,
@@ -2088,8 +2411,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
         ax1.legend(loc="upper right", fontsize=8.5)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "15_port_time_trace.png", dpi=150, bbox_inches="tight")
+        figstyle.save(fig, fig_dir / "15_port_time_trace.png")
         plt.close(fig)
 
     # Render standalone spectra dB plot via kit helper for direct comparison
@@ -2106,31 +2428,54 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         out_path=fig_dir / "11b_transmission_zoom_db.png",
     )
 
-    print(f"Rendered 16 figures in {fig_dir}")
+    n_rendered = len(list(fig_dir.glob("*.png")) + list(fig_dir.glob("*.gif")))
+    print(f"Rendered {n_rendered} figures in {fig_dir}")
 
 
 # %% [markdown]
 # ## 7. Quantitative results, convergence & when 2D EIM breaks down
 #
-# ### 7.1 Subpixel convergence study (`L1`, `L2`, `L3` vs `R = 40 cpw` reference)
+# ### 7.1 Subpixel convergence study & graded mesh upgrade (`L1`, `L2`, `L3`, `kottke_nonuniform` vs `R = 40 cpw` reference)
 #
-# The `--full` convergence study (`task_0`–`task_6`) evaluates Kottke subpixel
-# smoothing against staircasing on the $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid
-# Euler bend across `L1 = (10, 4)`, `L2 = (14, 6)`, and `L3 = (20, 8)` relative
-# to the independent `R = (40, 16)` Kottke reference (`task_6`,
-# $\Delta x = 13.32\;\text{nm}$, $30.03$ cells across $w_{\text{wg}} = 400\;\text{nm}$):
+# The `--full` convergence study (`task_0`–`task_6` plus `task_15`) evaluates
+# Kottke subpixel smoothing against staircasing on the
+# $R_{\text{eff}} = 4.0\;\mu\text{m}$ hybrid Euler bend across `L1 = (10, 4)`,
+# `L2 = (14, 6)`, the uniform baseline `L3 = (20, 8)` (`kottke_L3`), and the
+# upgraded mirror-symmetric non-square/graded Cartesian mesh (`kottke_nonuniform`,
+# `task_15`) relative to the independent `R = (40, 16)` Kottke reference
+# (`task_6`, $\Delta x = 13.32\;\text{nm}$, $30.03$ cells across
+# $w_{\text{wg}} = 400\;\text{nm}$):
 #
-# | Task (`--full`) | Averaging | Level (`cpw`, $N$) | Cells across $w$ | $\langle T \rangle_{1515\text{--}1585}$ | $\text{IL}_{\text{mean}}$ [dB] | $\text{IL}(1550\;\text{nm})$ [dB] | $|\langle T \rangle - T_{\text{ref}}|$ | $|\Delta\text{IL}|$ [dB] | $\langle|S_{11}|^2\rangle$ [dB] |
-# |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-# | `task_0` (`kottke_L1`) | Kottke | `L1 = (10, 4)` | 7.51 | 0.997689 | 0.0100 | 0.0212 | $4.97\times 10^{-4}$ | 0.0022 | $-49.87$ ($1.03\times 10^{-5}$) |
-# | `task_1` (`staircase_L1`) | Staircase | `L1 = (10, 4)` | 7.51 | 0.976299 | 0.1042 | 0.0999 | $2.09\times 10^{-2}$ | 0.0920 | $-23.67$ ($4.30\times 10^{-3}$) |
-# | `task_2` (`kottke_L2`) | Kottke | `L2 = (14, 6)` | 10.52 | 0.997790 | 0.0096 | 0.0207 | $5.97\times 10^{-4}$ | 0.0026 | $-50.36$ ($9.20\times 10^{-6}$) |
-# | `task_3` (`staircase_L2`) | Staircase | `L2 = (14, 6)` | 10.52 | 0.988372 | 0.0508 | 0.0519 | $8.82\times 10^{-3}$ | 0.0386 | $-24.37$ ($3.66\times 10^{-3}$) |
-# | `task_4` (`kottke_L3`, primary) | Kottke | `L3 = (20, 8)` | 15.02 | 0.997810 | 0.0095 | 0.0206 | $6.18\times 10^{-4}$ | 0.0027 | $-47.21$ ($1.90\times 10^{-5}$) |
-# | `task_5` (`staircase_L3`) | Staircase | `L3 = (20, 8)` | 15.02 | 0.995069 | 0.0215 | 0.0326 | $2.12\times 10^{-3}$ | 0.0093 | $-44.84$ ($3.28\times 10^{-5}$) |
-# | `task_6` (`kottke_reference`) | Kottke | `R = (40, 16)` | 30.03 | 0.997192 | 0.0122 | 0.0262 | 0 (ref) | 0 (ref) | $-51.54$ ($7.02\times 10^{-6}$) |
+# | Task (`--full`) | Averaging / Mesh | Level (`cpw`, $N$) | Grid ($N_x \times N_y \times N_z$) | Cells | Wall time [s] | Cells across $w$ | $\langle T \rangle_{1515\text{--}1585}$ | $\text{IL}_{\text{mean}}$ [dB] | $\text{IL}(1550\;\text{nm})$ [dB] | $|\langle T \rangle - T_{\text{ref}}|$ | $|\Delta\text{IL}|$ [dB] | $\langle|S_{11}|^2\rangle$ [dB] |
+# |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+# | `task_0` (`kottke_L1`) | Kottke uniform | `L1 = (10, 4)` | $142 \times 142 \times 1$ | $20{,}164$ | $16.41$ | 7.51 | 0.997689 | 0.0100 | 0.0212 | $4.97\times 10^{-4}$ | 0.0022 | $-49.87$ ($1.03\times 10^{-5}$) |
+# | `task_1` (`staircase_L1`) | Staircase uniform | `L1 = (10, 4)` | $142 \times 142 \times 1$ | $20{,}164$ | $16.36$ | 7.51 | 0.976299 | 0.1042 | 0.0999 | $2.09\times 10^{-2}$ | 0.0920 | $-23.67$ ($4.30\times 10^{-3}$) |
+# | `task_2` (`kottke_L2`) | Kottke uniform | `L2 = (14, 6)` | $192 \times 192 \times 1$ | $36{,}864$ | $41.40$ | 10.52 | 0.997790 | 0.0096 | 0.0207 | $5.97\times 10^{-4}$ | 0.0026 | $-50.36$ ($9.20\times 10^{-6}$) |
+# | `task_3` (`staircase_L2`) | Staircase uniform | `L2 = (14, 6)` | $192 \times 192 \times 1$ | $36{,}864$ | $41.32$ | 10.52 | 0.988372 | 0.0508 | 0.0519 | $8.82\times 10^{-3}$ | 0.0386 | $-24.37$ ($3.66\times 10^{-3}$) |
+# | `task_4` (`kottke_L3`, uniform baseline) | Kottke uniform | `L3 = (20, 8)` | $265 \times 265 \times 1$ | $70{,}225$ | $105.12$ | 15.02 | 0.997810 | 0.0095 | 0.0206 | $6.18\times 10^{-4}$ | 0.0027 | $-47.21$ ($1.90\times 10^{-5}$) |
+# | `task_5` (`staircase_L3`) | Staircase uniform | `L3 = (20, 8)` | $265 \times 265 \times 1$ | $70{,}225$ | $103.52$ | 15.02 | 0.995069 | 0.0215 | 0.0326 | $2.12\times 10^{-3}$ | 0.0093 | $-44.84$ ($3.28\times 10^{-5}$) |
+# | `task_15` (`kottke_nonuniform`, **graded upgrade**) | Kottke graded (`NonUniformEulerBendPIC`) | `L3 = (20, 15)` | $238 \times 238 \times 1$ | $56{,}644$ (**$-19.3\%$**) | $59.42$ (**$-43.5\%$**) | 15.05 | 0.997738 | 0.0098 | 0.0216 | $5.46\times 10^{-4}$ | 0.0024 | $-49.91$ ($1.02\times 10^{-5}$) |
+# | `task_6` (`kottke_reference`) | Kottke uniform | `R = (40, 16)` | $509 \times 509 \times 1$ | $259{,}081$ | $700.74$ | 30.03 | 0.997192 | 0.0122 | 0.0262 | 0 (ref) | 0 (ref) | $-51.54$ ($7.02\times 10^{-6}$) |
 #
-# **Convergence verdict:**
+# **Convergence & mesh-upgrade verdict (`04b_mesh_upgrade_comparison.png`, `14_kottke_vs_staircase_convergence.png`):**
+#
+# - **Graded non-uniform Cartesian mesh upgrade (`kottke_nonuniform`, `task_15`) vs uniform baseline (`kottke_L3`, `task_4`)**:
+#   By retaining $\Delta_{\text{core}} = 26.59\;\text{nm}$ ($15.05$ cells across $w_{\text{wg}} = 400\;\text{nm}$)
+#   across the bend and core window $[-0.22, 4.22]\;\mu\text{m}$, using non-square
+#   axial cells ($\Delta_{\text{lead}} = 31.8\;\text{nm}$, aspect ratio $1.20$) along
+#   the straight access leads, and grading smoothly to $\Delta_{\text{clad}} = 66.6\;\text{nm}$
+#   in the exterior $\text{SiO}_2$ cladding buffers while preserving exact folding
+#   symmetry $y = R_{\text{eff}} - x[::-1]$, `NonUniformEulerBendPIC` cuts the
+#   2D grid from $265\times 265 = 70{,}225$ cells (`kottke_L3`) to
+#   $238\times 238 = 56{,}644$ cells (**$-19.3\%$ cells**) and reduces wall time
+#   from $105.12\;\text{s}$ to $59.42\;\text{s}$ (**$-43.5\%$ runtime**, $1.77\times$
+#   speedup) at equal accuracy: $\langle T \rangle = 0.997738$
+#   ($\text{IL}_{\text{mean}} = 0.0098\;\text{dB}$, $|\langle T\rangle - T_{\text{ref}}| = 5.46\times 10^{-4}$,
+#   slightly closer to `kottke_reference` than `kottke_L3`'s $6.18\times 10^{-4}$)
+#   and $2.7\;\text{dB}$ lower return loss ($\langle|S_{11}|^2\rangle = -49.91\;\text{dB}$
+#   vs $-47.21\;\text{dB}$). Relative to `kottke_reference` ($259{,}081$ cells,
+#   $700.74\;\text{s}$), the graded mesh uses $4.57\times$ fewer cells and runs
+#   $11.8\times$ faster.
 #
 # - **Kottke subpixel smoothing is converged at the accepted `L3 = (20, 8)` level**
 #   (and already within $0.0022\;\text{dB}$ at `L1 = (10, 4)`): between the last
@@ -2168,7 +2513,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
 # references across all four swept effective radii
 # $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m}$:
 #
-# | Quantity / Metric | Old (`--quick`, `L2 = 14 cpw`) | New (`--full`, `L3 = 20 cpw`) | Reference (Fujisawa *et al.* 2017 [1] / Conformal theory [3]) |
+# | Quantity / Metric | Quick (`--quick`, `L2 = 14 cpw`) | Full (`--full`, `L3 = 20 cpw`) | Reference (Fujisawa *et al.* 2017 [1] / Conformal theory [3]) |
 # |---|---|---|---|
 # | 1D vertical slab index $n_{\text{eff,slab}}(1550\;\text{nm})$ | $2.8134$ | $2.8134$ | $2.8134$ (exact 1D $\text{TE}_0$ slab) |
 # | 2D channel $n_{\text{eff}}(1550\;\text{nm})$ ($1500\text{--}1600\;\text{nm}$) | $2.2965$ ($2.2673\text{--}2.3257$) | $2.2888$ ($2.2593\text{--}2.3182$) | $\sim 2.29$ (2D EIM strip) |

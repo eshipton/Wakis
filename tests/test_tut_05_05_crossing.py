@@ -102,8 +102,8 @@ def test_task_table_resolution_and_mesh_overrides():
 
     quick_tasks = mod.get_task_table(quick=True)
     full_tasks = mod.get_task_table(quick=False)
-    assert len(quick_tasks) == 8
-    assert len(full_tasks) == 10
+    assert len(quick_tasks) == 9
+    assert len(full_tasks) == 11
 
     for mode_name, table in (("quick", quick_tasks), ("full", full_tasks)):
         for task in table:
@@ -370,7 +370,7 @@ def test_full_study_data_and_zoomed_solver():
     mod = _load_crossing_module()
     data_dir = mod.DATA_DIR
     json_files = sorted(data_dir.glob("task_*.json"))
-    assert len(json_files) == 10
+    assert len(json_files) == 11
 
     tasks = {}
     for jf in json_files:
@@ -472,5 +472,59 @@ def test_full_study_data_and_zoomed_solver():
     ieps_k = sol_k.ieps[:, :, sol_k.Nz // 2, "y"]
     ieps_s = sol_s.ieps[:, :, sol_s.Nz // 2, "y"]
     assert not np.allclose(ieps_k, ieps_s)
+
+    # Verify graded non-uniform mesh (kottke_nonuniform) vs kottke_L3
+    assert "kottke_nonuniform" in m
+    assert m["kottke_nonuniform"]["meta"]["n_cells"] < 0.50 * m["kottke_L3"]["meta"]["n_cells"]
+    assert abs(m["kottke_nonuniform"]["t0"] - m["kottke_L3"]["t0"]) < 3e-3
+    assert m["kottke_nonuniform"]["il0_db"] < 0.12
+    assert m["kottke_nonuniform"]["xt0_db"] < -40.0
+
+
+def test_setup_schematic_and_graded_mesh_mutation():
+    """
+    Verify that the setup schematics and mesh comparison figures exist and are
+    non-empty, the GIF is < 5 MB, and ``build_crossing_graded_axes`` constructs
+    an exact D4-symmetric non-uniform grid with non-square cells along the arms
+    and fails its feature-resolution check when mutated to a coarse core spacing.
+    """
+    mod = _load_crossing_module()
+    fig_dir = mod.FIG_DIR
+    for fname in (
+        "00_setup_schematic.png",
+        "00b_crossing_geometries_schematic.png",
+        "04_permittivity_mesh_zoom.png",
+        "04b_mesh_upgrade_comparison.png",
+        "04c_taper_subpixel_smoothing.png",
+        "07_field_intensity_1310.png",
+        "08_field_real_ey_1310.png",
+        "09_pulse_propagation.gif",
+        "13_multimode_focusing_comparison.png",
+        "15_kottke_vs_staircase_convergence.png",
+    ):
+        p = fig_dir / fname
+        assert p.exists() and p.stat().st_size > 1000, f"Missing figure {p}"
+    assert (fig_dir / "09_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024
+
+    xg, yg, zg = mod.build_crossing_graded_axes(cpw=20.0, n_feature_min=8)
+    assert np.allclose(xg, yg, atol=1e-15)
+    assert np.allclose(xg, -xg[::-1], atol=1e-15)
+    du = np.diff(xg)
+    # Non-square cells along the horizontal arm: dx in taper > dy in core
+    assert float(np.max(du)) > 1.5 * float(np.min(du))
+    res_good = mod.measure_grid_resolution(
+        xg, yg, zg, min_feature=mod.MIN_FEATURE, has_ghost=False
+    )
+    assert res_good["cells_across_feature"] >= 16.0
+
+    # Mutation check: coarsening du_fine to 120 nm drops cells across w_in below 4
+    xg_mut, yg_mut, zg_mut = mod.build_crossing_graded_axes(
+        cpw=20.0, n_feature_min=8, du_fine=120e-9
+    )
+    res_mut = mod.measure_grid_resolution(
+        xg_mut, yg_mut, zg_mut, min_feature=mod.MIN_FEATURE, has_ghost=False
+    )
+    assert res_mut["cells_across_feature"] < 4.0
+
 
 

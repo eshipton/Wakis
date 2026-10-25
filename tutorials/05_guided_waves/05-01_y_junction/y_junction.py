@@ -122,6 +122,7 @@ import numpy as np
 from scipy.constants import c as c_light
 from scipy.interpolate import CubicSpline
 
+from wakis import figstyle
 from wakis.templates.photonics import (
     PIC_MATERIALS,
     PICSimulation,
@@ -145,6 +146,19 @@ from wakis.templates.photonics import (
 )
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from _helpers import (  # noqa: E402
+    TIP_GAP,
+    NonUniformYJunctionPIC,
+    measure_y_junction_mesh,
+    plot_mesh_upgrade_comparison,
+    plot_setup_schematic_y_junction,
+    render_field_map_with_overlay,
+    render_movie_with_overlay,
+)
+
 DATA_DIR = HERE / "data"
 FIG_DIR = HERE / "figures"
 
@@ -164,6 +178,37 @@ FIG_DIR = HERE / "figures"
 # | Bifurcation tip gap at $x = 2.0\;\mu\text{m}$ | $g_{\text{tip}}$ | $200\;\text{nm}$ |
 # | S-bend initial arm center ($x = 2.0\;\mu\text{m}$) | $\pm y_0$ | $\pm 0.35\;\mu\text{m}$ |
 # | S-bend axial length / final arm center | $L_{\text{sb}}, \pm y_{\text{out}}$ | $2.0\;\mu\text{m}, \pm 0.90\;\mu\text{m}$ |
+#
+# ### Simulation setup schematic and non-square graded mesh
+#
+# Figure `00_setup_schematic.png` (generated first by `generate_all_figures` using
+# `wakis.schematic.plot_schematic` and `wakis.figstyle`) summarizes the complete
+# 2D effective-index simulation domain:
+#
+# - **Domain extents & boundary conditions**: Physical interior
+#   $x \in [-1.15, 4.85]\;\mu\text{m}$ ($6.00\;\mu\text{m}$ axial length) and
+#   $y \in [-1.85, 1.85]\;\mu\text{m}$ ($3.70\;\mu\text{m}$ lateral width), padded on
+#   $\pm x$ and $\pm y$ by $N_{\text{PML}} = 10$ convolutional PML (CPML) cells and
+#   terminated by a single periodic cell along $z$ (`ieps_z = 0`).
+# - **Materials**: Silicon core ($n_{\text{Si}} = 3.476$, mapped to 2D EIM slab index
+#   $n_{\text{eff,slab}} = 2.8449$, $\varepsilon_r = 8.09$) embedded in $\text{SiO}_2$
+#   cladding ($n_{\text{SiO}_2} = 1.444$, $\varepsilon_r = 2.09$).
+# - **Excitation & monitors**: Fundamental $\text{TE}_0$ (`Ey`-polarized) `ModeSource`
+#   at port `'in'` ($x = -0.80\;\mu\text{m}$) with its transverse mode profile
+#   $|E_y(y)|$ overlaid on the port plane and broadband Gaussian pulse inset
+#   ($f_0 = 193.6\;\text{THz}$, $\lambda \in [1500, 1600]\;\text{nm}$), three
+#   `ModeMonitor` planes (`'in'` at $x = -0.80\;\mu\text{m}$, `'out1'` and `'out2'` at
+#   $x = 4.45\;\mu\text{m}, y = \pm 0.90\;\mu\text{m}$), and a closed 2D Poynting
+#   `FluxMonitor` box just inside the CPML.
+# - **Zoomed mesh view (`mesh_box` around the $200\;\text{nm}$ bifurcation tip gap at
+#   $x = 2.0\;\mu\text{m}$)**: Shows the upgraded graded non-square Cartesian mesh
+#   (`NonUniformYJunctionPIC`), which places $12.0$ transverse cells across the
+#   $200\;\text{nm}$ tip gap ($\Delta y_{\text{tip}} = 16.7\;\text{nm}$), stretches
+#   axial cells along the smooth leads ($\Delta x_{\text{lead}} = 24.5\;\text{nm}$,
+#   aspect ratio $1.47$), and grades $\Delta y$ up to $52.0\;\text{nm}$ in the outer
+#   $\text{SiO}_2$ cladding.
+#
+# ![Simulation setup schematic and tip-gap mesh view](figures/00_setup_schematic.png)
 
 # %%
 # Material refractive indices at 1550 nm
@@ -338,26 +383,27 @@ def build_y_junction(n_taper=160, n_sbend=100):
 # ## 5. Study tasks & execution modes
 #
 # To compare Kottke subpixel smoothing against staircasing across three mesh
-# resolutions, we define **7 study tasks** (`task_0` through `task_6`). Task 6 is an
-# independent, much finer Kottke run that serves as the reference $T_{\mathrm{ref}}$
-# for the convergence plot (an extrapolation from the compared runs themselves would
-# presuppose their convergence order):
+# resolutions and benchmark our graded non-square Cartesian mesh upgrade, we
+# define **8 study tasks** (`task_0` through `task_7`). Task 6 is an independent,
+# much finer Kottke run ($56\;\text{cpw}$) that serves as the reference
+# $T_{\mathrm{ref}}$ for the convergence and mesh-upgrade accuracy checks:
 #
-# | Task ID | Name | Averaging | `--quick` resolution (cpw) | `--full` resolution (cpw) |
+# | Task ID | Name | Averaging / Mesh | `--quick` resolution (cpw) | `--full` resolution (cpw) |
 # |---|---|---|---|---|
-# | `0` | `kottke_coarse` | `kottke` | $8$ | $14$ |
-# | `1` | `staircase_coarse` | `staircase` | $8$ | $14$ |
-# | `2` | `kottke_medium` | `kottke` | $10$ | $20$ |
-# | `3` | `staircase_medium` | `staircase` | $10$ | $20$ |
-# | `4` | `kottke_fine` | `kottke` | $12$ (+ fields & movie) | $28$ (+ fields & movie) |
-# | `5` | `staircase_fine` | `staircase` | $12$ | $28$ |
-# | `6` | `kottke_reference` | `kottke` | $24$ | $56$ |
+# | `0` | `kottke_coarse` | `kottke` (uniform) | $10$ | $14$ |
+# | `1` | `staircase_coarse` | `staircase` (uniform) | $10$ | $14$ |
+# | `2` | `kottke_medium` | `kottke` (uniform) | $14$ | $20$ |
+# | `3` | `staircase_medium` | `staircase` (uniform) | $14$ | $20$ |
+# | `4` | `kottke_fine` | `kottke` (uniform baseline) | $20$ (+ fields & movie) | $28$ (+ fields & movie) |
+# | `5` | `staircase_fine` | `staircase` (uniform) | $20$ | $28$ |
+# | `6` | `kottke_reference` | `kottke` (uniform reference) | $24$ | $56$ |
+# | `7` | `kottke_nonuniform` | `kottke` (non-square graded) | $20$ | $28$ |
 
 
 # %%
 def get_task_table(quick=False):
-    """Return the 7-point `(averaging, cells_per_wavelength)` study table (6 compared runs + reference)."""
-    cpws = (8, 10, 12) if quick else (14, 20, 28)
+    """Return the 8-point study table (6 uniform Kottke/staircase runs + 56-cpw reference + non-square graded mesh)."""
+    cpws = (10, 14, 20) if quick else (14, 20, 28)
     levels = ("coarse", "medium", "fine")
     tasks = []
     for lvl, cpw in zip(levels, cpws):
@@ -376,6 +422,7 @@ def get_task_table(quick=False):
                     "collect_fields": is_primary,
                     "record_movie": is_primary,
                     "movie_frames": 32 if quick else 48,
+                    "nonuniform": False,
                     "description": (
                         f"2D EIM Y-junction ({avg}, {lvl} grid, cpw={cpw}"
                         + (", DFT fields + movie + flux box)" if is_primary else ")")
@@ -395,7 +442,28 @@ def get_task_table(quick=False):
             "collect_fields": False,
             "record_movie": False,
             "movie_frames": 0,
+            "nonuniform": False,
             "description": f"2D EIM Y-junction (kottke, reference grid, cpw={ref_cpw})",
+        }
+    )
+    nu_cpw = 20 if quick else 28
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_nonuniform",
+            "level": "nonuniform",
+            "averaging": "kottke",
+            "cpw": nu_cpw,
+            "n_pml": 8 if quick else 10,
+            "energy_decay": 5e-3 if quick else 1e-4,
+            "collect_fields": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "nonuniform": True,
+            "description": (
+                f"2D EIM Y-junction (kottke, non-square graded mesh, cpw={nu_cpw}, "
+                "12 cells across 200 nm tip gap)"
+            ),
         }
     )
     return tasks
@@ -413,7 +481,8 @@ def run_single_task(task_cfg, out_dir):
 
     structures, ports = build_y_junction()
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic = PICSimulation(
+    sim_cls = NonUniformYJunctionPIC if task_cfg.get("nonuniform", False) else PICSimulation
+    pic = sim_cls(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=N_FREQS,
@@ -438,6 +507,7 @@ def run_single_task(task_cfg, out_dir):
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
+    mesh_info = measure_y_junction_mesh(pic.grid, min_feature_m=TIP_GAP)
 
     payload = {
         "task_index": np.int32(idx),
@@ -451,6 +521,15 @@ def run_single_task(task_cfg, out_dir):
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out1", "in")].astype(np.complex128),
         "S31": s_mat[("out2", "in")].astype(np.complex128),
+        "min_feature_nm": np.float64(mesh_info["min_feature_nm"]),
+        "dx_background_nm": np.float64(mesh_info["dx_background_nm"]),
+        "dx_min_nm": np.float64(mesh_info["dx_min_nm"]),
+        "dy_tip_nm": np.float64(mesh_info["dy_tip_nm"]),
+        "dy_clad_max_nm": np.float64(mesh_info["dy_clad_max_nm"]),
+        "cells_across_feature": np.float64(mesh_info["cells_across_feature"]),
+        "aspect_ratio_max_core": np.float64(mesh_info["aspect_ratio_max_core"]),
+        "grid_shape": np.array(mesh_info["grid_shape"], dtype=np.int32),
+        "n_cells": np.int32(mesh_info["n_cells"]),
     }
 
     if task_cfg["collect_fields"]:
@@ -516,8 +595,16 @@ def run_single_task(task_cfg, out_dir):
         "name": task_cfg["name"],
         "averaging": task_cfg["averaging"],
         "cpw": task_cfg["cpw"],
-        "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
-        "n_cells": int(pic.grid.Nx * pic.grid.Ny * pic.grid.Nz),
+        "nonuniform": bool(task_cfg.get("nonuniform", False)),
+        "grid_shape": mesh_info["grid_shape"],
+        "n_cells": mesh_info["n_cells"],
+        "min_feature_nm": mesh_info["min_feature_nm"],
+        "dx_background_nm": mesh_info["dx_background_nm"],
+        "dx_min_nm": mesh_info["dx_min_nm"],
+        "dy_tip_nm": mesh_info["dy_tip_nm"],
+        "dy_clad_max_nm": mesh_info["dy_clad_max_nm"],
+        "cells_across_feature": mesh_info["cells_across_feature"],
+        "aspect_ratio_max_core": mesh_info["aspect_ratio_max_core"],
         "elapsed_s": round(elapsed, 3),
         "peak_rss_mb": round(rss_mb, 2),
         "npz_bytes": int(npz_path.stat().st_size),
@@ -534,18 +621,20 @@ def run_single_task(task_cfg, out_dir):
 # ## 6. Generating the complete figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and writes 14 diagnostic and
+# `generate_all_figures` reads `data/task_*.npz` and writes 16 diagnostic and
 # validation figures to `figures/`:
 #
+# 0. `00_setup_schematic.png` — Labelled simulation setup schematic (`wakis.schematic.plot_schematic`) with domain extents, CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, `ModeSource` with launched $\text{TE}_0$ mode profile and Gaussian pulse inset, `ModeMonitor`s, 2D `FluxMonitor` box, and zoomed mesh view on the $200\;\text{nm}$ bifurcation tip gap.
 # 1. `01_y_junction_layout.png` — Annotated top-view layout of the Zhang *et al.* (2013) Y-junction.
 # 2. `02_eim_vertical_stack.png` — Vertical $220\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_junction_width_profile.png` — The 13 PSO spline width control knots $w(x)$ and slope $\mathrm{d}w/\mathrm{d}x$.
 # 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map with Yee mesh lines: staircase vs Kottke side by side.
+# 4b. `04b_mesh_upgrade_comparison.png` — Side-by-side mesh comparison (`kottke_fine` uniform baseline vs `kottke_nonuniform` non-square graded mesh) and broadband excess-loss agreement against `kottke_reference`.
 # 5. `05_port_mode_profiles.png` — Input and output port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
 # 6. `06_port_neff_dispersion.png` — Channel waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$.
-# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$.
-# 8. `08_field_real_ey_1550.png` — Steady-state wave-front map $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$.
-# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the Y-junction.
+# 7. `07_field_intensity_1550.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$ with `schematic.overlay_geometry`.
+# 8. `08_field_real_ey_1550.png` — Steady-state wave-front map $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$ with `schematic.overlay_geometry`.
+# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the Y-junction with `schematic.overlay_geometry`.
 # 10. `10_sparameter_spectra_db.png` — Broadband transmission ($S_{21}, S_{31}$) and reflection ($S_{11}$) spectra in dB.
 # 11. `11_excess_loss_and_energy_budget.png` — Excess insertion loss vs Zhang *et al.* (2013), 2D flux-box radiation budget, and symmetry error $|T_1 - T_2|$.
 # 12. `12_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke vs staircasing across mesh resolutions.
@@ -555,16 +644,20 @@ def run_single_task(task_cfg, out_dir):
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 14 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all 16 figures into ``fig_dir``."""
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     tasks_data = {}
+    tasks_meta = {}
     for p in sorted(data_dir.glob("task_*.npz")):
         d = dict(np.load(p, allow_pickle=False))
         name = str(d["name"])
         tasks_data[name] = d
+        jp = p.with_suffix(".json")
+        if jp.exists():
+            tasks_meta[name] = json.loads(jp.read_text())
 
     if "kottke_fine" not in tasks_data:
         raise FileNotFoundError(
@@ -573,123 +666,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     primary = tasks_data["kottke_fine"]
     structures, ports = build_y_junction()
 
-    # 1. Top-view device layout with dimensional annotations
-    annotations = [
-        {
-            "text": "Input WG\nw = 500 nm",
-            "xy": (-0.30, -0.25),
-            "xytext": (-0.30, -1.05),
-            "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
-        },
-        {
-            "text": "13-pt PSO spline taper\nL = 2.0 µm, wmax = 1.40 µm",
-            "xy": (1.0, 0.70),
-            "xytext": (1.0, 1.38),
-            "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
-        },
-        {
-            "text": "200 nm tip gap\n(x = 2.0 µm)",
-            "xy": (2.0, 0.0),
-            "xytext": (2.55, 0.0),
-            "arrowprops": dict(arrowstyle="->", color="#d95f02", lw=1.2),
-        },
-        {
-            "text": "Cosine S-bends\nL = 2.0 µm, y = ±0.90 µm",
-            "xy": (3.1, -0.70),
-            "xytext": (2.9, -1.48),
-            "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
-        },
-    ]
-    plot_layout(
-        structures,
-        ports=ports,
-        domain=DOMAIN_2D,
-        annotations=annotations,
-        title="Zhang et al. (2013) compact SOI Y-junction layout (2D EIM domain)",
-        out_path=fig_dir / "01_y_junction_layout.png",
-    )
-
-    # 2. Effective-Index Method (EIM) vertical stack, TE0 slab mode, and dispersion
-    plot_eim_stack(
-        n_core=N_SI,
-        n_clad=N_SIO2,
-        thickness=H_SI,
-        wavelength_ref=WL_REF,
-        wavelengths=np.linspace(WL_MIN, WL_MAX, 51),
-        out_path=fig_dir / "02_eim_vertical_stack.png",
-    )
-
-    # 3. Spline width profile w(x) and slope dw/dx vs linear taper
-    x_knots = np.linspace(0.0, L_JUNC * 1e6, len(W_KNOTS_UM))
-    cs_um = CubicSpline(x_knots, W_KNOTS_UM)
-    x_fine = np.linspace(0.0, L_JUNC * 1e6, 300)
-    w_fine = cs_um(x_fine)
-    dw_dx = cs_um(x_fine, 1)
-    w_lin = W_KNOTS_UM[0] + (W_KNOTS_UM[-1] - W_KNOTS_UM[0]) * (x_fine / (L_JUNC * 1e6))
-
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.2, 3.8), dpi=150)
-    ax0.plot(x_fine, w_fine, color="#2b5c8f", lw=2.2, label="Cubic-spline taper $w(x)$")
-    ax0.plot(
-        x_knots,
-        W_KNOTS_UM,
-        "o",
-        color="#d95f02",
-        ms=5.5,
-        label="13 PSO knots (Zhang 2013)",
-    )
-    ax0.plot(
-        x_fine, w_lin, "--", color="0.5", lw=1.5, label="Linear taper (0.50 → 1.20 µm)"
-    )
-    ax0.set(
-        xlabel="Axial position x along junction [µm]",
-        ylabel="Waveguide width w(x) [µm]",
-        title="(a) Junction width profile w(x)",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower right", fontsize=8.5)
-
-    ax1.plot(
-        x_fine,
-        dw_dx,
-        color="#1b9e77",
-        lw=2.0,
-        label=r"Spline slope $\mathrm{d}w/\mathrm{d}x$",
-    )
-    ax1.axhline(0.0, color="0.4", ls=":", lw=1.2)
-    ax1.axhline(
-        (W_KNOTS_UM[-1] - W_KNOTS_UM[0]) / (L_JUNC * 1e6),
-        color="0.5",
-        ls="--",
-        lw=1.4,
-        label="Linear taper slope (+0.35)",
-    )
-    ax1.set(
-        xlabel="Axial position x along junction [µm]",
-        ylabel=r"Taper flare rate $\mathrm{d}w/\mathrm{d}x$ [rad]",
-        title="(b) Local flare rate (expansion then contraction)",
-    )
-    ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="upper right", fontsize=8.5)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "03_junction_width_profile.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    # 4. In-plane permittivity map with mesh lines zoomed on the junction tip: staircase vs Kottke
-    cpw_mesh = float(tasks_data.get("kottke_medium", primary)["cpw"])
-    pic_stair = PICSimulation(
-        WL_MIN,
-        WL_MAX,
-        structures=structures,
-        ports=ports,
-        n_core=N_SI,
-        n_clad=N_SIO2,
-        two_d=True,
-        averaging="staircase",
-        cells_per_wavelength=cpw_mesh,
-        domain=DOMAIN_2D,
-        n_pml=8,
-    )
-    pic_kottke = PICSimulation(
+    cpw_primary = float(primary["cpw"])
+    n_pml_primary = 8 if cpw_primary < 22 else 10
+    pic_uniform_fine = PICSimulation(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -698,71 +677,268 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_clad=N_SIO2,
         two_d=True,
         averaging="kottke",
-        cells_per_wavelength=cpw_mesh,
+        cells_per_wavelength=cpw_primary,
         domain=DOMAIN_2D,
-        n_pml=8,
+        n_pml=n_pml_primary,
     )
-    plot_cross_section_mesh(
-        pic_stair.solver,
-        pic_kottke.solver,
-        xlim_um=(0.2, 2.7),
-        ylim_um=(-0.85, 0.85),
-        component="y",
-        out_path=fig_dir / "04_permittivity_mesh_zoom.png",
+    pic_nonuniform = NonUniformYJunctionPIC(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_primary,
+        domain=DOMAIN_2D,
+        n_pml=n_pml_primary,
     )
 
-    # 5. Port mode profiles at input and upper output arm
-    plot_port_modes(
+    # 0. Setup schematic + zoomed mesh view on the 200 nm tip gap (FIRST figure)
+    plot_setup_schematic_y_junction(
+        pic_nonuniform.grid,
+        structures,
+        ports,
         primary["port_y_in"] * 1e6,
         primary["port_ey_in"],
-        float(primary["port_neff_in"]),
-        primary["port_y_out"] * 1e6,
-        primary["port_ey_out"],
-        float(primary["port_neff_out"]),
-        out_path=fig_dir / "05_port_mode_profiles.png",
+        out_path=fig_dir / "00_setup_schematic.png",
+        n_pml=n_pml_primary,
     )
 
-    # 6. Waveguide mode effective index and group index dispersion
-    plot_neff_dispersion(
-        primary["disp_wavelengths"] * 1e9,
-        primary["disp_neff"],
-        neff_slab=float(primary["n_eff_slab"]),
-        ng_2d=primary["disp_ng"],
-        out_path=fig_dir / "06_port_neff_dispersion.png",
-    )
+    with figstyle.apply_style():
+        # 1. Top-view device layout with dimensional annotations
+        annotations = [
+            {
+                "text": "Input WG\nw = 500 nm",
+                "xy": (-0.30, -0.25),
+                "xytext": (-0.30, -1.05),
+                "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
+            },
+            {
+                "text": "13-pt PSO spline taper\nL = 2.0 µm, wmax = 1.40 µm",
+                "xy": (1.0, 0.70),
+                "xytext": (1.0, 1.38),
+                "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
+            },
+            {
+                "text": "200 nm tip gap\n(x = 2.0 µm)",
+                "xy": (2.0, 0.0),
+                "xytext": (2.55, 0.0),
+                "arrowprops": dict(arrowstyle="->", color="#d95f02", lw=1.2),
+            },
+            {
+                "text": "Cosine S-bends\nL = 2.0 µm, y = ±0.90 µm",
+                "xy": (3.1, -0.70),
+                "xytext": (2.9, -1.48),
+                "arrowprops": dict(arrowstyle="->", color="0.3", lw=1.0),
+            },
+        ]
+        plot_layout(
+            structures,
+            ports=ports,
+            domain=DOMAIN_2D,
+            annotations=annotations,
+            title="Zhang et al. (2013) compact SOI Y-junction layout (2D EIM domain)",
+            out_path=fig_dir / "01_y_junction_layout.png",
+        )
 
-    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm
-    plot_field_map(
+        # 2. Effective-Index Method (EIM) vertical stack, TE0 slab mode, and dispersion
+        plot_eim_stack(
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            thickness=H_SI,
+            wavelength_ref=WL_REF,
+            wavelengths=np.linspace(WL_MIN, WL_MAX, 51),
+            out_path=fig_dir / "02_eim_vertical_stack.png",
+        )
+
+        # 3. Spline width profile w(x) and slope dw/dx vs linear taper
+        x_knots = np.linspace(0.0, L_JUNC * 1e6, len(W_KNOTS_UM))
+        cs_um = CubicSpline(x_knots, W_KNOTS_UM)
+        x_fine = np.linspace(0.0, L_JUNC * 1e6, 300)
+        w_fine = cs_um(x_fine)
+        dw_dx = cs_um(x_fine, 1)
+        w_lin = W_KNOTS_UM[0] + (W_KNOTS_UM[-1] - W_KNOTS_UM[0]) * (
+            x_fine / (L_JUNC * 1e6)
+        )
+
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.6,
+            ncols=2,
+            nrows=1,
+        )
+        ax0.plot(
+            x_fine, w_fine, color="#2b5c8f", lw=2.0, label="Cubic-spline taper $w(x)$"
+        )
+        ax0.plot(
+            x_knots,
+            W_KNOTS_UM,
+            "o",
+            color="#d95f02",
+            ms=5.0,
+            label="13 PSO knots (Zhang 2013)",
+        )
+        ax0.plot(
+            x_fine,
+            w_lin,
+            "--",
+            color="0.5",
+            lw=1.4,
+            label="Linear taper (0.50 → 1.20 µm)",
+        )
+        ax0.set(
+            xlabel="Axial position x along junction [µm]",
+            ylabel="Waveguide width w(x) [µm]",
+            title="(a) Junction width profile w(x)",
+        )
+        ax0.legend(loc="lower right", fontsize=8.0)
+
+        ax1.plot(
+            x_fine,
+            dw_dx,
+            color="#1b9e77",
+            lw=2.0,
+            label=r"Spline slope $\mathrm{d}w/\mathrm{d}x$",
+        )
+        ax1.axhline(0.0, color="0.4", ls=":", lw=1.2)
+        ax1.axhline(
+            (W_KNOTS_UM[-1] - W_KNOTS_UM[0]) / (L_JUNC * 1e6),
+            color="0.5",
+            ls="--",
+            lw=1.4,
+            label="Linear taper slope (+0.35)",
+        )
+        ax1.set(
+            xlabel="Axial position x along junction [µm]",
+            ylabel=r"Taper flare rate $\mathrm{d}w/\mathrm{d}x$ [rad]",
+            title="(b) Local flare rate (expansion then contraction)",
+        )
+        ax1.legend(loc="upper right", fontsize=8.0)
+        figstyle.save(
+            fig,
+            fig_dir / "03_junction_width_profile.png",
+            close=True,
+            auto_legend_below=False,
+        )
+
+        # 4. In-plane permittivity map with mesh lines zoomed on the junction tip: staircase vs Kottke
+        cpw_mesh = float(tasks_data.get("kottke_medium", primary)["cpw"])
+        pic_stair = PICSimulation(
+            WL_MIN,
+            WL_MAX,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            two_d=True,
+            averaging="staircase",
+            cells_per_wavelength=cpw_mesh,
+            domain=DOMAIN_2D,
+            n_pml=8,
+        )
+        pic_kottke = PICSimulation(
+            WL_MIN,
+            WL_MAX,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            two_d=True,
+            averaging="kottke",
+            cells_per_wavelength=cpw_mesh,
+            domain=DOMAIN_2D,
+            n_pml=8,
+        )
+        plot_cross_section_mesh(
+            pic_stair.solver,
+            pic_kottke.solver,
+            xlim_um=(0.2, 2.7),
+            ylim_um=(-0.85, 0.85),
+            component="y",
+            out_path=fig_dir / "04_permittivity_mesh_zoom.png",
+        )
+
+    # 4b. Mesh upgrade comparison: uniform baseline vs graded non-square Cartesian mesh
+    if "kottke_nonuniform" in tasks_data:
+        plot_mesh_upgrade_comparison(
+            pic_uniform_fine.grid,
+            pic_nonuniform.grid,
+            structures,
+            ports,
+            data_uniform=primary,
+            data_nonuniform=tasks_data["kottke_nonuniform"],
+            data_reference=tasks_data.get("kottke_reference"),
+            meta_uniform=tasks_meta.get("kottke_fine"),
+            meta_nonuniform=tasks_meta.get("kottke_nonuniform"),
+            out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+            n_pml=n_pml_primary,
+        )
+
+    with figstyle.apply_style():
+        # 5. Port mode profiles at input and upper output arm
+        plot_port_modes(
+            primary["port_y_in"] * 1e6,
+            primary["port_ey_in"],
+            float(primary["port_neff_in"]),
+            primary["port_y_out"] * 1e6,
+            primary["port_ey_out"],
+            float(primary["port_neff_out"]),
+            out_path=fig_dir / "05_port_mode_profiles.png",
+        )
+
+        # 6. Waveguide mode effective index and group index dispersion
+        plot_neff_dispersion(
+            primary["disp_wavelengths"] * 1e9,
+            primary["disp_neff"],
+            neff_slab=float(primary["n_eff_slab"]),
+            ng_2d=primary["disp_ng"],
+            out_path=fig_dir / "06_port_neff_dispersion.png",
+        )
+
+    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm with overlay_geometry
+    render_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        structures=structures,
+        pic_uniform_fine.grid,
+        structures,
+        ports,
         kind="intensity_log",
-        title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
+        title=r"Steady-state modal intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_1550.png",
+        n_pml=n_pml_primary,
     )
 
-    # 8. Steady-state real field map Re(Ey) at 1550 nm
-    plot_field_map(
+    # 8. Steady-state real field map Re(Ey) at 1550 nm with overlay_geometry
+    render_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        structures=structures,
+        pic_uniform_fine.grid,
+        structures,
+        ports,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "08_field_real_ey_1550.png",
+        n_pml=n_pml_primary,
     )
 
-    # 9. Animated pulse propagation GIF
+    # 9. Animated pulse propagation GIF with overlay_geometry on every frame
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structures,
+            pic_uniform_fine.grid,
+            structures,
+            ports,
             out_path=fig_dir / "09_pulse_propagation.gif",
+            n_pml=n_pml_primary,
             fps=12,
+            stride_frames=2,
         )
 
     # Sort wavelengths ascending for spectral plots (interior of pulse band: 1505-1595 nm)
@@ -779,305 +955,331 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     t2 = np.abs(s31) ** 2
     r = np.abs(s11) ** 2
 
-    # 10. S-parameter spectra in dB (T1, T2, R)
-    plot_spectra_db(
-        wl_b,
-        {
-            r"$T_1 = |S_{21}|^2$ (upper arm)": 10.0 * np.log10(np.maximum(t1, 1e-12)),
-            r"$T_2 = |S_{31}|^2$ (lower arm)": 10.0 * np.log10(np.maximum(t2, 1e-12)),
-            r"$R = |S_{11}|^2$ (return loss)": 10.0 * np.log10(np.maximum(r, 1e-12)),
-        },
-        title="Y-junction S-parameter spectra across the 1505–1595 nm band (2D EIM, Kottke)",
-        ylabel="Modal power [dB]",
-        reference_lines=[
+    with figstyle.apply_style():
+        # 10. S-parameter spectra in dB (T1, T2, R)
+        plot_spectra_db(
+            wl_b,
             {
-                "y": -3.0103,
-                "color": "0.35",
-                "ls": ":",
-                "label": "Ideal 50/50 split (−3.01 dB)",
-            }
-        ],
-        out_path=fig_dir / "10_sparameter_spectra_db.png",
-    )
+                r"$T_1 = |S_{21}|^2$ (upper arm)": 10.0
+                * np.log10(np.maximum(t1, 1e-12)),
+                r"$T_2 = |S_{31}|^2$ (lower arm)": 10.0
+                * np.log10(np.maximum(t2, 1e-12)),
+                r"$R = |S_{11}|^2$ (return loss)": 10.0
+                * np.log10(np.maximum(r, 1e-12)),
+            },
+            title="Y-junction S-parameter spectra across the 1505–1595 nm band (2D EIM, Kottke)",
+            ylabel="Modal power [dB]",
+            reference_lines=[
+                {
+                    "y": -3.0103,
+                    "color": "0.35",
+                    "ls": ":",
+                    "label": "Ideal 50/50 split (−3.01 dB)",
+                }
+            ],
+            out_path=fig_dir / "10_sparameter_spectra_db.png",
+        )
 
-    # 11. Excess insertion loss vs Zhang (2013), energy conservation & symmetry check
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
-    t_tot_db = 10.0 * np.log10(np.maximum(t1 + t2, 1e-12))
-    ax0.plot(
-        wl_b,
-        t_tot_db,
-        color="#1b9e77",
-        lw=2.2,
-        label=r"Guided total $10\log_{10}(T_1 + T_2)$ (2D EIM)",
-    )
-    ax0.axhline(
-        -0.13,
-        color="#2b5c8f",
-        ls="--",
-        lw=1.7,
-        label="Zhang et al. (2013) 3D FDTD (−0.13 dB)",
-    )
-    ax0.axhline(
-        -0.28,
-        color="#d95f02",
-        ls="-.",
-        lw=1.7,
-        label="Zhang et al. (2013) measured (−0.28 ± 0.02 dB)",
-    )
-    ax0.fill_between(wl_b, -0.30, -0.26, color="#d95f02", alpha=0.15)
-    if "flux_total_box" in primary:
-        f_box = primary["flux_total_box"][order][mask]
-        f_lat = primary["flux_lateral"][order][mask]
+        # 11. Excess insertion loss vs Zhang (2013), energy conservation & symmetry check
+        fig, (ax0, ax1) = figstyle.new_figure(
+            width_in=figstyle.FULL_WIDTH_IN,
+            height_in=3.8,
+            ncols=2,
+            nrows=1,
+        )
+        t_tot_db = 10.0 * np.log10(np.maximum(t1 + t2, 1e-12))
         ax0.plot(
             wl_b,
-            10.0 * np.log10(np.maximum(f_box, 1e-12)),
-            color="0.3",
-            ls=":",
+            t_tot_db,
+            color="#1b9e77",
+            lw=2.0,
+            label=r"Guided total $10\log_{10}(T_1 + T_2)$ (2D EIM)",
+        )
+        ax0.axhline(
+            -0.13,
+            color="#2b5c8f",
+            ls="--",
             lw=1.6,
-            label=f"2D Poynting flux box total (mean={np.mean(f_box):.3f}, lat={np.mean(f_lat) * 100:.1f}%)",
+            label="Zhang et al. (2013) 3D FDTD (−0.13 dB)",
         )
-    ax0.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel="Normalized transmitted power [dB]",
-        ylim=(-0.85, 0.15),
-        title="(a) Excess transmission vs Zhang et al. (2013) & flux budget",
-    )
-    ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower right", fontsize=8.0)
-
-    sym_err = np.maximum(np.abs(t1 - t2), 1e-16)
-    phase_err = np.maximum(np.abs(np.angle(s21 * np.conj(s31))), 1e-16)
-    ax1.semilogy(
-        wl_b, sym_err, color="#2b5c8f", lw=2.0, label=r"Power imbalance $|T_1 - T_2|$"
-    )
-    ax1.semilogy(
-        wl_b,
-        phase_err,
-        color="#d95f02",
-        ls="--",
-        lw=1.8,
-        label=r"Phase imbalance $|\arg(S_{21}) - \arg(S_{31})|$ [rad]",
-    )
-    ax1.semilogy(
-        wl_b,
-        r,
-        color="#7570b3",
-        ls="-.",
-        lw=1.8,
-        label=r"Return loss $R = |S_{11}|^2$",
-    )
-    ax1.set(
-        xlabel="Wavelength λ [nm]",
-        ylabel="Dimensionless magnitude (log scale)",
-        title="(b) Mirror symmetry audit & return loss",
-    )
-    ax1.grid(True, which="both", ls=":", alpha=0.4)
-    ax1.legend(loc="best", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "11_excess_loss_and_energy_budget.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(fig)
-
-    # 12 & 13. Multi-resolution convergence & 3-resolution spectral comparison
-    levels = ["coarse", "medium", "fine"]
-    avail = all(
-        f"{avg}_{lvl}" in tasks_data
-        for avg in ("kottke", "staircase")
-        for lvl in levels
-    )
-    if avail:
-        cpws = [float(tasks_data[f"kottke_{lvl}"]["cpw"]) for lvl in levels]
-
-        # Reference at 1550 nm: the independent kottke_reference run (task 6)
-        def _t_tot_at_1550(d):
-            w = d["wavelengths"]
-            i0 = int(np.argmin(np.abs(w - WL_REF)))
-            return float(np.abs(d["S21"][i0]) ** 2 + np.abs(d["S31"][i0]) ** 2)
-
-        def _r_mean(d):
-            w = d["wavelengths"] * 1e9
-            m = (w >= 1515.0) & (w <= 1585.0)
-            return float(np.mean(np.abs(d["S11"][m]) ** 2))
-
-        tk_vals = [_t_tot_at_1550(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
-        ts_vals = [_t_tot_at_1550(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
-        if "kottke_reference" in tasks_data:
-            t_ref = _t_tot_at_1550(tasks_data["kottke_reference"])
-        else:  # fallback only: Richardson from the compared runs presupposes 2nd order
-            print("WARNING: no kottke_reference task; T_ref is a Richardson estimate")
-            r_ratio = (cpws[2] / cpws[1]) ** 2
-            t_ref = tk_vals[2] + (tk_vals[2] - tk_vals[1]) / max(r_ratio - 1.0, 0.25)
-
-        err_k = [max(abs(v - t_ref), 2e-4) for v in tk_vals]
-        err_s = [max(abs(v - t_ref), 2e-4) for v in ts_vals]
-        rk_vals = [_r_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
-        rs_vals = [_r_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
-
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
-        res = np.asarray(cpws, dtype=float)
-        ax0.loglog(
-            res,
-            err_s,
-            "s-",
+        ax0.axhline(
+            -0.28,
             color="#d95f02",
-            lw=2.0,
-            ms=6,
-            label="Staircase $|T - T_{\\mathrm{ref}}|$",
+            ls="-.",
+            lw=1.6,
+            label="Zhang et al. (2013) measured (−0.28 ± 0.02 dB)",
         )
-        ax0.loglog(
-            res,
-            err_k,
-            "o-",
-            color="#1b9e77",
-            lw=2.0,
-            ms=6,
-            label="Kottke $|T - T_{\\mathrm{ref}}|$",
-        )
-        ax0.loglog(
-            res,
-            err_s[0] * (res[0] / res) ** 1,
-            "--",
-            color="#d95f02",
-            alpha=0.55,
-            lw=1.2,
-            label=r"$\mathcal{O}(\Delta x^1)$ guide",
-        )
-        ax0.loglog(
-            res,
-            err_k[0] * (res[0] / res) ** 2,
-            ":",
-            color="#1b9e77",
-            alpha=0.65,
-            lw=1.4,
-            label=r"$\mathcal{O}(\Delta x^2)$ guide",
-        )
-        ax0.set(
-            xlabel="Resolution [cells per wavelength]",
-            ylabel=r"Transmission error $|T_{\mathrm{tot}}(1550\;\mathrm{nm}) - T_{\mathrm{ref}}|$",
-            title="(a) Total transmission convergence at 1550 nm",
-        )
-        ax0.grid(True, which="both", ls=":", alpha=0.4)
-        ax0.legend(loc="best", fontsize=8.5)
-
-        ax1.loglog(
-            res,
-            rs_vals,
-            "s-",
-            color="#d95f02",
-            lw=2.0,
-            ms=6,
-            label="Staircase mean $|S_{11}|^2$",
-        )
-        ax1.loglog(
-            res,
-            rk_vals,
-            "o-",
-            color="#1b9e77",
-            lw=2.0,
-            ms=6,
-            label="Kottke mean $|S_{11}|^2$",
-        )
-        ax1.set(
-            xlabel="Resolution [cells per wavelength]",
-            ylabel=r"Band-averaged reflection $\langle |S_{11}|^2 \rangle$",
-            title="(b) Back-reflection vs resolution (near the -30 dB floor)",
-        )
-        ax1.grid(True, which="both", ls=":", alpha=0.4)
-        ax1.legend(loc="best", fontsize=8.5)
-        for ax in (ax0, ax1):  # label only the simulated resolutions
-            ax.set_xticks(res)
-            ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
-            ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "12_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
-        plt.close(fig)
-
-        # 13. Spectra at 3 resolutions on one figure (Kottke vs Staircase)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150, sharey=False)
-        cols = {"coarse": "#7570b3", "medium": "#d95f02", "fine": "#1b9e77"}
-        for lvl in levels:
-            for avg, ls in (("kottke", "-"), ("staircase", "--")):
-                d = tasks_data[f"{avg}_{lvl}"]
-                w = d["wavelengths"] * 1e9
-                idx_s = np.argsort(w)
-                w_s = w[idx_s]
-                m = (w_s >= 1505.0) & (w_s <= 1595.0)
-                t_db = 10.0 * np.log10(
-                    np.maximum(
-                        np.abs(d["S21"][idx_s][m]) ** 2
-                        + np.abs(d["S31"][idx_s][m]) ** 2,
-                        1e-12,
-                    )
-                )
-                r_db = 10.0 * np.log10(
-                    np.maximum(np.abs(d["S11"][idx_s][m]) ** 2, 1e-12)
-                )
-                lbl = f"{avg.capitalize()} {lvl} (cpw={int(d['cpw'])})"
-                ax0.plot(w_s[m], t_db, color=cols[lvl], ls=ls, lw=1.8, label=lbl)
-                ax1.plot(w_s[m], r_db, color=cols[lvl], ls=ls, lw=1.8, label=lbl)
-
+        ax0.fill_between(wl_b, -0.30, -0.26, color="#d95f02", alpha=0.15)
+        if "flux_total_box" in primary:
+            f_box = primary["flux_total_box"][order][mask]
+            f_lat = primary["flux_lateral"][order][mask]
+            ax0.plot(
+                wl_b,
+                10.0 * np.log10(np.maximum(f_box, 1e-12)),
+                color="0.3",
+                ls=":",
+                lw=1.5,
+                label=f"2D Poynting flux box total (mean={np.mean(f_box):.3f}, lat={np.mean(f_lat) * 100:.1f}%)",
+            )
         ax0.set(
             xlabel="Wavelength λ [nm]",
-            ylabel=r"Total guided transmission $10\log_{10}(T_1 + T_2)$ [dB]",
-            title="(a) Excess transmission across 3 resolutions",
+            ylabel="Normalized transmitted power [dB]",
+            ylim=(-0.85, 0.15),
+            title="(a) Excess transmission vs Zhang et al. (2013) & flux budget",
         )
-        ax0.grid(True, ls=":", alpha=0.4)
-        ax0.legend(loc="best", fontsize=7.5)
+        ax0.legend(loc="lower right", fontsize=7.6)
 
-        ax1.set(
-            xlabel="Wavelength λ [nm]",
-            ylabel=r"Return loss $10\log_{10}|S_{11}|^2$ [dB]",
-            title="(b) Return loss across 3 resolutions",
-        )
-        ax1.grid(True, ls=":", alpha=0.4)
-        ax1.legend(loc="best", fontsize=7.5)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "13_resolution_spectra_comparison.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
-        plt.close(fig)
-
-    # 14. Port time trace and energy decay
-    if "trace_t" in primary and primary["trace_t"].size > 0:
-        t_fs = primary["trace_t"] * 1e15
-        ey_tr = primary["trace_Ey"]
-        ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.5, 3.8), dpi=150)
-        ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
-        ax0.set(
-            xlabel="Time t [fs]",
-            ylabel=r"Normalized $E_y(t) / \max|E_y|$",
-            title="(a) Output arm port time-domain waveform",
-        )
-        ax0.grid(True, ls=":", alpha=0.4)
-
-        env = np.maximum(ey_norm**2, 1e-10)
+        sym_err = np.maximum(np.abs(t1 - t2), 1e-16)
+        phase_err = np.maximum(np.abs(np.angle(s21 * np.conj(s31))), 1e-16)
         ax1.semilogy(
-            t_fs, env, color="#d95f02", lw=1.4, label=r"$|E_y(t)|^2 / |E_y|_{\max}^2$"
+            wl_b,
+            sym_err,
+            color="#2b5c8f",
+            lw=1.8,
+            label=r"Power imbalance $|T_1 - T_2|$",
         )
-        ax1.axhline(
-            1e-4, color="0.4", ls="--", lw=1.2, label="1e-4 energy decay threshold"
+        ax1.semilogy(
+            wl_b,
+            phase_err,
+            color="#d95f02",
+            ls="--",
+            lw=1.6,
+            label=r"Phase imbalance $|\arg(S_{21}) - \arg(S_{31})|$ [rad]",
+        )
+        ax1.semilogy(
+            wl_b,
+            r,
+            color="#7570b3",
+            ls="-.",
+            lw=1.6,
+            label=r"Return loss $R = |S_{11}|^2$",
         )
         ax1.set(
-            xlabel="Time t [fs]",
-            ylabel="Normalized instantaneous power (log scale)",
-            ylim=(1e-8, 2.0),
-            title="(b) Ring-down & termination audit",
+            xlabel="Wavelength λ [nm]",
+            ylabel="Dimensionless magnitude (log scale)",
+            title="(b) Mirror symmetry audit & return loss",
         )
-        ax1.grid(True, which="both", ls=":", alpha=0.4)
-        ax1.legend(loc="upper right", fontsize=8.5)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "14_port_time_trace.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        ax1.legend(loc="best", fontsize=7.6)
+        figstyle.save(
+            fig,
+            fig_dir / "11_excess_loss_and_energy_budget.png",
+            close=True,
+            auto_legend_below=False,
+        )
 
-    print(f"Rendered 14 figures in {fig_dir}")
+        # 12 & 13. Multi-resolution convergence & 3-resolution spectral comparison
+        levels = ["coarse", "medium", "fine"]
+        avail = all(
+            f"{avg}_{lvl}" in tasks_data
+            for avg in ("kottke", "staircase")
+            for lvl in levels
+        )
+        if avail:
+            cpws = [float(tasks_data[f"kottke_{lvl}"]["cpw"]) for lvl in levels]
+
+            def _t_tot_at_1550(d):
+                w = d["wavelengths"]
+                i0 = int(np.argmin(np.abs(w - WL_REF)))
+                return float(np.abs(d["S21"][i0]) ** 2 + np.abs(d["S31"][i0]) ** 2)
+
+            def _r_mean(d):
+                w = d["wavelengths"] * 1e9
+                m = (w >= 1515.0) & (w <= 1585.0)
+                return float(np.mean(np.abs(d["S11"][m]) ** 2))
+
+            tk_vals = [_t_tot_at_1550(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
+            ts_vals = [_t_tot_at_1550(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
+            if "kottke_reference" in tasks_data:
+                t_ref = _t_tot_at_1550(tasks_data["kottke_reference"])
+            else:
+                r_ratio = (cpws[2] / cpws[1]) ** 2
+                t_ref = tk_vals[2] + (tk_vals[2] - tk_vals[1]) / max(
+                    r_ratio - 1.0, 0.25
+                )
+
+            err_k = [max(abs(v - t_ref), 2e-4) for v in tk_vals]
+            err_s = [max(abs(v - t_ref), 2e-4) for v in ts_vals]
+            rk_vals = [_r_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
+            rs_vals = [_r_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
+
+            fig, (ax0, ax1) = figstyle.new_figure(
+                width_in=figstyle.FULL_WIDTH_IN,
+                height_in=3.8,
+                ncols=2,
+                nrows=1,
+            )
+            res = np.asarray(cpws, dtype=float)
+            ax0.loglog(
+                res,
+                err_s,
+                "s-",
+                color="#d95f02",
+                lw=2.0,
+                ms=6,
+                label="Staircase $|T - T_{\\mathrm{ref}}|$",
+            )
+            ax0.loglog(
+                res,
+                err_k,
+                "o-",
+                color="#1b9e77",
+                lw=2.0,
+                ms=6,
+                label="Kottke $|T - T_{\\mathrm{ref}}|$",
+            )
+            ax0.loglog(
+                res,
+                err_s[0] * (res[0] / res) ** 1,
+                "--",
+                color="#d95f02",
+                alpha=0.55,
+                lw=1.2,
+                label=r"$\mathcal{O}(\Delta x^1)$ guide",
+            )
+            ax0.loglog(
+                res,
+                err_k[0] * (res[0] / res) ** 2,
+                ":",
+                color="#1b9e77",
+                alpha=0.65,
+                lw=1.4,
+                label=r"$\mathcal{O}(\Delta x^2)$ guide",
+            )
+            ax0.set(
+                xlabel="Resolution [cells per wavelength]",
+                ylabel=r"Transmission error $|T_{\mathrm{tot}}(1550\;\mathrm{nm}) - T_{\mathrm{ref}}|$",
+                title="(a) Total transmission convergence at 1550 nm",
+            )
+            ax0.legend(loc="best", fontsize=8.0)
+
+            ax1.loglog(
+                res,
+                rs_vals,
+                "s-",
+                color="#d95f02",
+                lw=2.0,
+                ms=6,
+                label="Staircase mean $|S_{11}|^2$",
+            )
+            ax1.loglog(
+                res,
+                rk_vals,
+                "o-",
+                color="#1b9e77",
+                lw=2.0,
+                ms=6,
+                label="Kottke mean $|S_{11}|^2$",
+            )
+            ax1.set(
+                xlabel="Resolution [cells per wavelength]",
+                ylabel=r"Band-averaged reflection $\langle |S_{11}|^2 \rangle$",
+                title="(b) Back-reflection vs resolution (near the −30 dB floor)",
+            )
+            ax1.legend(loc="best", fontsize=8.0)
+            for ax in (ax0, ax1):
+                ax.set_xticks(res)
+                ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
+                ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+            figstyle.save(
+                fig,
+                fig_dir / "12_kottke_vs_staircase_convergence.png",
+                close=True,
+                auto_legend_below=False,
+            )
+
+            # 13. Spectra at 3 resolutions on one figure (Kottke vs Staircase)
+            fig, (ax0, ax1) = figstyle.new_figure(
+                width_in=figstyle.FULL_WIDTH_IN,
+                height_in=3.8,
+                ncols=2,
+                nrows=1,
+            )
+            cols = {"coarse": "#7570b3", "medium": "#d95f02", "fine": "#1b9e77"}
+            for lvl in levels:
+                for avg, ls in (("kottke", "-"), ("staircase", "--")):
+                    d = tasks_data[f"{avg}_{lvl}"]
+                    w = d["wavelengths"] * 1e9
+                    idx_s = np.argsort(w)
+                    w_s = w[idx_s]
+                    m = (w_s >= 1505.0) & (w_s <= 1595.0)
+                    t_db = 10.0 * np.log10(
+                        np.maximum(
+                            np.abs(d["S21"][idx_s][m]) ** 2
+                            + np.abs(d["S31"][idx_s][m]) ** 2,
+                            1e-12,
+                        )
+                    )
+                    r_db = 10.0 * np.log10(
+                        np.maximum(np.abs(d["S11"][idx_s][m]) ** 2, 1e-12)
+                    )
+                    lbl = f"{avg.capitalize()} {lvl} (cpw={int(d['cpw'])})"
+                    ax0.plot(w_s[m], t_db, color=cols[lvl], ls=ls, lw=1.7, label=lbl)
+                    ax1.plot(w_s[m], r_db, color=cols[lvl], ls=ls, lw=1.7, label=lbl)
+
+            ax0.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel=r"Total guided transmission $10\log_{10}(T_1 + T_2)$ [dB]",
+                title="(a) Excess transmission across 3 resolutions",
+            )
+            ax0.legend(loc="best", fontsize=7.2)
+
+            ax1.set(
+                xlabel="Wavelength λ [nm]",
+                ylabel=r"Return loss $10\log_{10}|S_{11}|^2$ [dB]",
+                title="(b) Return loss across 3 resolutions",
+            )
+            ax1.legend(loc="best", fontsize=7.2)
+            figstyle.save(
+                fig,
+                fig_dir / "13_resolution_spectra_comparison.png",
+                close=True,
+                auto_legend_below=False,
+            )
+
+        # 14. Port time trace and energy decay
+        if "trace_t" in primary and primary["trace_t"].size > 0:
+            t_fs = primary["trace_t"] * 1e15
+            ey_tr = primary["trace_Ey"]
+            ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
+            fig, (ax0, ax1) = figstyle.new_figure(
+                width_in=figstyle.FULL_WIDTH_IN,
+                height_in=3.6,
+                ncols=2,
+                nrows=1,
+            )
+            ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
+            ax0.set(
+                xlabel="Time t [fs]",
+                ylabel=r"Normalized $E_y(t) / \max|E_y|$",
+                title="(a) Output arm port time-domain waveform",
+            )
+
+            env = np.maximum(ey_norm**2, 1e-10)
+            ax1.semilogy(
+                t_fs,
+                env,
+                color="#d95f02",
+                lw=1.4,
+                label=r"$|E_y(t)|^2 / |E_y|_{\max}^2$",
+            )
+            ax1.axhline(
+                1e-4, color="0.4", ls="--", lw=1.2, label="1e-4 energy decay threshold"
+            )
+            ax1.set(
+                xlabel="Time t [fs]",
+                ylabel="Normalized instantaneous power (log scale)",
+                ylim=(1e-8, 2.0),
+                title="(b) Ring-down & termination audit",
+            )
+            ax1.legend(loc="upper right", fontsize=8.0)
+            figstyle.save(
+                fig,
+                fig_dir / "14_port_time_trace.png",
+                close=True,
+                auto_legend_below=False,
+            )
+
+    print(f"Rendered 16 figures in {fig_dir}")
 
 
 # %% [markdown]
@@ -1095,11 +1297,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # effective-index model has no substrate or cladding to escape into and is confined
 # to the plane, so the 2D loss is not a prediction of the 3D device loss (Section 9).
 #
-# ## 8. Resolution convergence: Kottke vs staircase
+# ## 8. Resolution convergence & non-square graded mesh upgrade
 #
 # Full study (`--full`, run on Cloud Batch), transmission error at 1550 nm against an
-# independent Kottke run at 56 cells per wavelength (counted inside the core, with
-# the slab effective index):
+# independent Kottke run at 56 cells per wavelength (`kottke_reference`, counted inside
+# the core with the slab effective index):
 #
 # | cells per wavelength | Kottke $|T - T_{\mathrm{ref}}|$ | staircase $|T - T_{\mathrm{ref}}|$ | Kottke runtime | staircase runtime |
 # |---|---|---|---|---|
@@ -1115,6 +1317,39 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # smoothing is also what modern FDTD codes use, so this is a staircase-vs-smoothing
 # result, not a FIT-vs-FDTD one. Back-reflection (Fig. 12b) sits near the $-30$ dB
 # floor at every resolution and shows no clean trend.
+#
+# ### Graded non-uniform and non-square Cartesian mesh vs uniform baseline
+#
+# In the baseline uniform mesh (`kottke_fine`, `task_4`, $28\;\text{cpw}$), the entire
+# $6.0\;\mu\text{m} \times 3.7\;\mu\text{m}$ domain is discretized with uniform square
+# cells $\Delta x = \Delta y = 18.82\;\text{nm}$ ($340 \times 218 \times 1 = 74{,}120$
+# cells), even though the outer $\text{SiO}_2$ cladding ($|y| > 0.92\;\mu\text{m}$) has
+# nearly $2\times$ longer wavelength and the smooth input/output leads and S-bends do
+# not require the same axial resolution as the $200\;\text{nm}$ bifurcation tip gap.
+#
+# Figure `04b_mesh_upgrade_comparison.png` compares `kottke_fine` against our upgraded
+# graded non-square Cartesian mesh (`NonUniformYJunctionPIC`, `kottke_nonuniform`,
+# `task_7`), which uses `wakis.templates.meshing.graded_axis` (geometric grading ratio
+# $\le 1.25$) to:
+#
+# 1. Refine the $200\;\text{nm}$ bifurcation tip gap ($|y| \le 0.20\;\mu\text{m}$) to
+#    $\Delta y_{\text{tip}} = 16.67\;\text{nm}$ (**$12.0$ cells across the $200\;\text{nm}$
+#    tip gap**, up from $10.6$ cells in `kottke_fine`).
+# 2. Keep $\Delta y_{\text{core}} = 18.82\;\text{nm}$ across the waveguide arms
+#    ($|y| \in [0.20, 0.92]\;\mu\text{m}$) and grade smoothly up to
+#    $\Delta y_{\text{clad}} = 52.0\;\text{nm}$ in the outer $\text{SiO}_2$ cladding.
+# 3. Use fine axial steps $\Delta x_{\text{junc}} = 18.82\;\text{nm}$ across the
+#    $2.0\;\mu\text{m}$ PSO spline junction ($x \in [-0.15, 2.40]\;\mu\text{m}$) and
+#    non-square axial cells $\Delta x_{\text{lead}} = 24.50\;\text{nm}$ ($\Delta x /
+#    \Delta y_{\text{tip}} = 1.47$) along the straight leads and adiabatic S-bends.
+#
+# | Mesh configuration | Grid $(N_x \times N_y \times N_z)$ | Total cells | Cells across $200\;\text{nm}$ tip | Wall time | $T_1 + T_2 (1550\;\text{nm})$ | Excess loss $\text{EL}(1550\;\text{nm})$ | $|T - T_{\text{ref}}|$ |
+# |---|---|---|---|---|---|---|---|
+# | Baseline uniform (`kottke_fine`, `task_4`) | $340 \times 218 \times 1$ | $74{,}120$ | $10.6$ ($\Delta y = 18.8\;\text{nm}$) | $135.4\;\text{s}$ | $0.91330$ | $0.3939\;\text{dB}$ | $2.7 \times 10^{-4}$ |
+# | **Upgraded graded non-square (`kottke_nonuniform`, `task_7`)** | **$299 \times 163 \times 1$** | **$48{,}737$ ($-34.2\%$)** | **$12.0$ ($\Delta y = 16.7\;\text{nm}$)** | **$84.2\;\text{s}$ ($-37.8\%$)** | **$0.91298$** | **$0.3954\;\text{dB}$** | **$5.2 \times 10^{-5}$** |
+# | Fine uniform reference (`kottke_reference`, `task_6`, $56\;\text{cpw}$) | $659 \times 415 \times 1$ | $273{,}485$ | $21.3$ ($\Delta y = 9.4\;\text{nm}$) | $670.9\;\text{s}$ | $0.91303$ | $0.3952\;\text{dB}$ | — (ref) |
+#
+# ![Uniform baseline vs graded non-square Cartesian mesh comparison](figures/04b_mesh_upgrade_comparison.png)
 
 # %% [markdown]
 # ## 9. Limits & when 2D EIM breaks down

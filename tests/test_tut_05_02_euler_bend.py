@@ -71,12 +71,16 @@ def test_hybrid_euler_geometry_and_curvature_linearity():
 
 def test_task_tables_resolution_floor_and_feature_cells():
     """
-    Verify that every task in both the ``--quick`` (13 tasks) and ``--full``
-    (15 tasks) tables satisfies:
+    Verify that every task in both the ``--quick`` (14 tasks) and ``--full``
+    (16 tasks) tables satisfies:
     1. ``cpw >= 10`` (cells per wavelength in the EIM slab core).
     2. ``n_feature >= 4`` and actual measured ``cells_across_feature >= 4`` on
        the constructed ``PICSimulation`` mesh (without running the solver).
-    3. Mutation check: when ``n_feature`` requires finer spacing than the
+    3. ``kottke_nonuniform`` (`NonUniformEulerBendPIC`) reduces total cells
+       relative to the uniform baseline (`kottke_L3` / `kottke_L2`) while
+       retaining >= 10 cells across the 400 nm waveguide core, non-square
+       straight leads, and graded coarse cladding cells.
+    4. Mutation check: when ``n_feature`` requires finer spacing than the
        background grid (e.g. ``cpw=10, n_feature=12``), ``build_mesh_overrides``
        activates a local refinement box and increases ``cells_across_feature``
        to ``>= 12``.
@@ -84,10 +88,11 @@ def test_task_tables_resolution_floor_and_feature_cells():
     mod = _load_tutorial_module()
     quick_tasks = mod.get_task_table(quick=True)
     full_tasks = mod.get_task_table(quick=False)
-    assert len(quick_tasks) == 13
-    assert len(full_tasks) == 15
+    assert len(quick_tasks) == 14
+    assert len(full_tasks) == 16
 
     for mode_name, table in (("quick", quick_tasks), ("full", full_tasks)):
+        res_by_name = {}
         for t in table:
             assert int(t["cpw"]) >= 10, (
                 f"{mode_name} task {t['name']} has cpw={t['cpw']} < 10"
@@ -101,6 +106,7 @@ def test_task_tables_resolution_floor_and_feature_cells():
             res = mod.measure_mesh_resolution(
                 pic, r_eff=r_eff, min_feature=min_feat
             )
+            res_by_name[t["name"]] = res
             assert res["cells_across_feature"] >= 4.0, (
                 f"{mode_name} task {t['name']} has only "
                 f"{res['cells_across_feature']:.2f} cells across feature (< 4)"
@@ -111,6 +117,30 @@ def test_task_tables_resolution_floor_and_feature_cells():
             )
             assert res["dx_min_nm"] <= res["dx_background_nm"] + 1e-6
             assert res["n_cells"] > 0
+
+        base_name = "kottke_L2" if mode_name == "quick" else "kottke_L3"
+        res_nu = res_by_name["kottke_nonuniform"]
+        res_base = res_by_name[base_name]
+        assert res_nu["n_cells"] < res_base["n_cells"] * 0.85, (
+            f"Expected kottke_nonuniform ({res_nu['n_cells']} cells) < 0.85 * "
+            f"{base_name} ({res_base['n_cells']} cells)"
+        )
+        assert res_nu["du_clad_max_nm"] > res_nu["dx_min_nm"] * 2.0
+        assert res_nu["aspect_ratio_lead"] > 1.05
+
+    # Mutation check on NonUniformEulerBendPIC: tightening du_clad from 68 nm to 26.64 nm increases cell count
+    t_nu_fine = dict(full_tasks[-1])
+    structs, ports, domain, _ = mod.build_bend_waveguide(r_eff=t_nu_fine["r_eff"], bend_type="euler")
+    pic_nu_default = mod.NonUniformEulerBendPIC(
+        mod.WL_MIN, mod.WL_MAX, structures=structs, ports=ports, n_core=mod.N_SI, n_clad=mod.N_SIO2,
+        two_d=True, averaging="kottke", cells_per_wavelength=20, domain=domain, n_pml=10, mesh_only=True
+    )
+    pic_nu_dense = mod.NonUniformEulerBendPIC(
+        mod.WL_MIN, mod.WL_MAX, structures=structs, ports=ports, n_core=mod.N_SI, n_clad=mod.N_SIO2,
+        two_d=True, averaging="kottke", cells_per_wavelength=20, domain=domain, n_pml=10,
+        du_clad=26.64e-9, du_lead=26.64e-9, mesh_only=True
+    )
+    assert pic_nu_default.grid.Nx * pic_nu_default.grid.Ny < pic_nu_dense.grid.Nx * pic_nu_dense.grid.Ny * 0.85
 
     # Mutation check on mesh_overrides: requesting N=12 at cpw=10 forces refinement
     t_override = dict(quick_tasks[0])
@@ -253,12 +283,15 @@ def test_saved_quick_study_data_and_figures():
         str(np.load(t4_path, allow_pickle=False)["name"]) == "kottke_reference"
     )
     expected_tasks = mod.get_task_table(quick=is_quick_data)
-    assert len(expected_tasks) == (13 if is_quick_data else 15)
+    assert len(expected_tasks) == (14 if is_quick_data else 16)
 
     required_res_keys = (
         "min_feature_nm",
         "dx_background_nm",
         "dx_min_nm",
+        "du_lead_nm",
+        "du_clad_max_nm",
+        "aspect_ratio_lead",
         "cells_across_feature",
         "n_cells",
         "n_steps",
@@ -329,11 +362,19 @@ def test_saved_quick_study_data_and_figures():
     if not is_quick_data:
         t_k_l2 = 10.0 ** (-0.1 * _loss_db(tasks_data["kottke_L2"]))
         t_k_l3 = 10.0 ** (-0.1 * _loss_db(tasks_data["kottke_L3"]))
+        t_k_nu = 10.0 ** (-0.1 * _loss_db(tasks_data["kottke_nonuniform"]))
         assert abs(t_k_l3 - t_k_l2) / t_k_l3 < 1e-3
         assert abs(t_k_l3 - t_ref) / t_ref < 2e-3
+        assert abs(t_k_nu - t_ref) / t_ref < 2e-3
+        assert int(tasks_data["kottke_nonuniform"]["n_cells"]) < int(
+            tasks_data["kottke_L3"]["n_cells"]
+        )
 
-    # Check all 16 figures (15 PNG + 1 GIF) exist and are non-empty
+    # Check all 18 figures (including 00_setup_schematic.png and 04b_mesh_upgrade_comparison.png) exist and are non-empty
     figs = list(fig_dir.glob("*.png")) + list(fig_dir.glob("*.gif"))
-    assert len(figs) >= 16, f"Expected >= 16 figures in {fig_dir}, found {len(figs)}"
+    assert len(figs) >= 18, f"Expected >= 18 figures in {fig_dir}, found {len(figs)}"
+    assert (fig_dir / "00_setup_schematic.png").stat().st_size > 10_000
+    assert (fig_dir / "04b_mesh_upgrade_comparison.png").stat().st_size > 10_000
     assert (fig_dir / "10_pulse_propagation.gif").stat().st_size > 1024
+    assert (fig_dir / "10_pulse_propagation.gif").stat().st_size < 5 * 1024 * 1024
 

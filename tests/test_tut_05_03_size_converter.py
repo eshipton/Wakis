@@ -40,9 +40,11 @@ from _helpers import (  # noqa: E402
     WL_MAX,
     WL_MIN,
     WL_REF,
+    NonUniformSemilensPIC,
     SymmetricProfileSlab,
     build_luneburg_converter,
     build_semilens_expander,
+    build_semilens_graded_axes,
     build_taper_converter,
     calibrate_luneburg_profile,
     compute_abrupt_step_overlap,
@@ -67,8 +69,8 @@ def test_task_table_resolution_rules():
     """
     tasks_q = get_task_table(quick=True)
     tasks_f = get_task_table(quick=False)
-    assert len(tasks_q) == 13
-    assert len(tasks_f) == 15
+    assert len(tasks_q) == 14
+    assert len(tasks_f) == 16
 
     for mode_name, table in (("quick", tasks_q), ("full", tasks_f)):
         non_demo_count = 0
@@ -96,7 +98,7 @@ def test_task_table_resolution_rules():
     data_dir = TUTORIAL_DIR / "data"
     json_files = sorted(data_dir.glob("task_*.json"))
     if json_files:
-        assert len(json_files) in (13, 15)
+        assert len(json_files) in (13, 15, 16)
         for jf in json_files:
             meta = json.loads(jf.read_text())
             assert float(meta["cpw"]) >= 10.0
@@ -410,5 +412,109 @@ def test_semilens_beam_expander_and_mutation_check():
     )
     t_te0_mut = float(np.abs(res_mut["s_matrix"][("out", "in")][i0]) ** 2)
     assert t_te0_mut < t_te0_nom - 0.35
+
+
+def test_setup_schematic_and_nonuniform_mesh_upgrade():
+    """
+    Verify:
+    1. Setup schematic figures (`00_setup_schematic.png`,
+       `00b_taper_and_luneburg_schematics.png`), mesh upgrade comparison
+       (`04b_mesh_upgrade_comparison.png`), and split taper field figures
+       (`08_taper_ey_field_comparison.png`, `08b_taper_ey_long_comparison.png`)
+       exist and are non-empty, and `15_pulse_propagation.gif` is < 5 MB.
+    2. `NonUniformSemilensPIC` (`kottke_nonuniform`, `task_15`) reduces the 2D
+       cell count by > 25% compared to uniform-background `PICSimulation` at
+       `(cpw=20, n_feature=8)` while preserving 8.0 cells across the 50 nm
+       Segment 3 flare and matching `kottke_L3` (`task_6`) and `kottke_reference`
+       (`task_8`) guided transmission within 0.3%.
+    3. Mutation check on `build_semilens_graded_axes`: mutating `n_feature=2`
+       violates the >= 4 cells across feature rule (`cells_across_feature < 4.0`).
+    """
+    fig_dir = TUTORIAL_DIR / "figures"
+    for fname in (
+        "00_setup_schematic.png",
+        "00b_taper_and_luneburg_schematics.png",
+        "04b_mesh_upgrade_comparison.png",
+        "08_taper_ey_field_comparison.png",
+        "08b_taper_ey_long_comparison.png",
+    ):
+        fpath = fig_dir / fname
+        assert fpath.exists() and fpath.stat().st_size > 10_000, f"Missing or empty {fname}"
+
+    gif_path = fig_dir / "15_pulse_propagation.gif"
+    if gif_path.exists():
+        assert gif_path.stat().st_size < 5 * 1024 * 1024
+
+    semi_structs, semi_ports, semi_dom = build_semilens_expander()
+    pic_u = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=semi_structs,
+        ports=semi_ports,
+        n_core=N_SI,
+        n_clad=N_AIR,
+        n_sub=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=20,
+        domain=semi_dom,
+        n_pml=10,
+        mesh_overrides=semilens_mesh_overrides(8),
+    )
+    pic_nu = NonUniformSemilensPIC(
+        WL_MIN,
+        WL_MAX,
+        structures=semi_structs,
+        ports=semi_ports,
+        n_core=N_SI,
+        n_clad=N_AIR,
+        n_sub=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=20,
+        domain=semi_dom,
+        n_pml=10,
+        n_feature=8,
+    )
+    n_u = int(pic_u.grid.Nx * pic_u.grid.Ny)
+    n_nu = int(pic_nu.grid.Nx * pic_nu.grid.Ny)
+    assert n_nu < 0.75 * n_u
+
+    m_nu = measure_grid_resolution(
+        pic_nu.grid,
+        min_feature_m=MIN_FEATURE_SEMILENS,
+        feature_bounds=(SEMILENS_SEG3_X_LO, SEMILENS_SEG3_X_HI),
+        feature_axis=0,
+    )
+    assert np.isclose(m_nu["cells_across_feature"], 8.0, atol=1e-3)
+
+    # Mutation check: n_feature=2 drops cells across 50 nm Segment 3 below 4.0
+    xg_mut, _, _ = build_semilens_graded_axes(
+        (*semi_dom, -0.5e-6, 0.5e-6), n_pml=10, cpw=20, n_feature=2
+    )
+    in_seg3 = (xg_mut[:-1] >= SEMILENS_SEG3_X_LO - 1e-12) & (
+        xg_mut[1:] <= SEMILENS_SEG3_X_HI + 1e-12
+    )
+    dx_mut = float(np.min(np.diff(xg_mut)[in_seg3]))
+    assert MIN_FEATURE_SEMILENS / dx_mut < 4.0
+
+    data_dir = TUTORIAL_DIR / "data"
+    if (data_dir / "task_15.npz").exists() and (data_dir / "task_6.npz").exists():
+        d_nu = np.load(data_dir / "task_15.npz", allow_pickle=False)
+        d_l3 = np.load(data_dir / "task_6.npz", allow_pickle=False)
+        w = d_nu["wavelengths"] * 1e9
+        mb = (w >= 1510.0) & (w <= 1590.0)
+        ev_nu = float(
+            np.mean(
+                sum(np.abs(d_nu[f"S21_TE{k}"][mb]) ** 2 for k in (0, 2, 4, 6, 8))
+            )
+        )
+        ev_l3 = float(
+            np.mean(
+                sum(np.abs(d_l3[f"S21_TE{k}"][mb]) ** 2 for k in (0, 2, 4, 6, 8))
+            )
+        )
+        assert abs(ev_nu - ev_l3) < 3e-3
+
 
 

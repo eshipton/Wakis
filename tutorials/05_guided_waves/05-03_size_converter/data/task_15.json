@@ -1,0 +1,24 @@
+{
+  "task_index": 15,
+  "name": "kottke_nonuniform",
+  "kind": "semilens",
+  "level": "L3",
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "demo": false,
+  "min_feature_nm": 50.0,
+  "dx_background_nm": 25.385,
+  "dx_min_nm": 6.25,
+  "cells_across_feature": 8.0,
+  "grid_shape": [
+    424,
+    407,
+    1
+  ],
+  "n_cells": 172568,
+  "n_steps": 33564,
+  "elapsed_s": 598.509,
+  "peak_rss_mb": 633.99,
+  "npz_bytes": 11981
+}

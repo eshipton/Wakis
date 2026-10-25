@@ -151,13 +151,12 @@ import numpy as np
 from scipy.constants import c as c_light
 from scipy.optimize import brentq, fsolve
 
+from wakis import figstyle
 from wakis.templates.photonics import (
     PICSimulation,
     Port,
-    make_movie,
     n_to_eps,
     plot_eim_stack,
-    plot_field_map,
     plot_layout,
     plot_neff_dispersion,
     plot_port_modes,
@@ -171,12 +170,20 @@ if str(HERE) not in sys.path:
 
 from _helpers import (  # noqa: E402
     FastCrossingPolySlab,
+    NonUniformCrossingPIC,
+    build_crossing_graded_axes,
     build_zoomed_2d_solver,
     crossing_mesh_overrides,
     inspect_task_mesh,
     measure_grid_resolution,
+    overlay_crossing_geometry,
     plot_convergence_ladder,
+    plot_crossing_geometries_schematic,
     plot_feature_and_subpixel_mesh,
+    plot_mesh_upgrade_comparison_crossing,
+    plot_setup_schematic_crossing,
+    render_crossing_field_map_with_overlay,
+    render_crossing_movie_with_overlay,
 )
 
 DATA_DIR = HERE / "data"
@@ -479,14 +486,42 @@ def lateral_slab_mode_neff(
 # refinement (`crossing_mesh_overrides` activates an override box automatically
 # whenever $d_{\min} / N < \Delta x_{\text{bg}}$).
 
+# ### $D_4$-symmetric graded non-uniform Cartesian mesh (`kottke_nonuniform`)
+#
+# In the uniform-background `kottke_L3` baseline ($20\;\text{cpw}$,
+# $\Delta x = \Delta y = 21.51\;\text{nm}$, $658 \times 658 \times 1 = 432{,}964$
+# cells), over $78\%$ of the $13.70 \times 13.70\;\mu\text{m}^2$ domain consists
+# of the four outer $\text{SiO}_2$ cladding quadrants ($|x|, |y| > 0.80\;\mu\text{m}$,
+# $n_{\text{SiO}_2} = 1.45$). `NonUniformCrossingPIC` (`build_crossing_graded_axes`)
+# constructs an exact $D_4$-symmetric graded non-uniform Cartesian mesh
+# ($x = y$, $x = -x[::-1]$):
+#
+# - Fine uniform spacing $\Delta u_{\text{fine}} = 21.05\;\text{nm}$ ($16.625$
+#   cells across $w_{\text{in}} = 350\;\text{nm}$) across the central
+#   $1.10 \times 1.10\;\mu\text{m}^2$ crossing box and perpendicular waveguide
+#   core/bulge strip $|u| \le 0.80\;\mu\text{m}$ ($> w_m = 0.75\;\mu\text{m}$),
+# - Smooth geometric grading across the cosine-tapered arms
+#   $|u| \in [0.80, 5.85]\;\mu\text{m}$ ($\Delta u \le 35.0\;\text{nm}$, giving
+#   non-square cells $\Delta x > \Delta y$ along the horizontal propagation axis
+#   and $\Delta y > \Delta x$ along the vertical cross arms) and outer port
+#   leads / CPML $|u| > 5.85\;\mu\text{m}$ ($\Delta u \le 42.0\;\text{nm}$).
+#
+# This reduces the 2D grid from $658 \times 658 \times 1 = 432{,}964$ cells to
+# $439 \times 439 \times 1 = 192{,}721$ cells (**$-55.5\%$ cells**) and single-core
+# wall time from $1{,}061.1\;\text{s}$ to $362.3\;\text{s}$ (**$-65.9\%$ runtime**)
+# while matching `kottke_L3` and `kottke_reference` to within $6.6 \times 10^{-4}$
+# in through transmission ($T(1310\;\text{nm}) = 0.98024$, $\text{IL} = 0.0867\;\text{dB}$,
+# $\text{XT} = -43.58\;\text{dB}$).
+#
 # %% [markdown]
 # ## 5. Study tasks & execution modes
 #
-# In `--full` mode (the 10-task study stored in `data/task_0.*` through
-# `data/task_9.*`, executed on Cloud Batch with `n_pml = 10` and ring-down
-# threshold `energy_decay = 1e-4`), Kottke and staircase permittivity averaging
+# In `--full` mode (the 11-task study stored in `data/task_0.*` through
+# `data/task_10.*`, executed with `n_pml = 10` and ring-down threshold
+# `energy_decay = 1e-4`), Kottke and staircase permittivity averaging
 # are evaluated across three resolution levels—`L1 = (10, 4)`, `L2 = (14, 6)`,
-# and `L3 = (20, 8)`—against an independent fine-grid Kottke reference at
+# and `L3 = (20, 8)`—plus the $D_4$-graded non-uniform mesh `kottke_nonuniform`
+# (`task_10`) against an independent fine-grid Kottke reference at
 # `R = (40, 16)` ($1295 \times 1295 \times 1 = 1{,}677{,}025$ cells,
 # $\Delta x = 10.754\;\text{nm}$, $32.547$ cells across $w_{\text{in}} = 350\;\text{nm}$,
 # $33{,}451$ steps, $7{,}077.2\;\text{s} \approx 1.97\;\text{h}$ single-core wall
@@ -495,12 +530,13 @@ def lateral_slab_mode_neff(
 # audit (`symmetry_4port` driving `west`, `east`, `north`, `south`) run at the
 # accepted study level `L3 = (20, 8)`.
 #
-# For rapid local verification, `--quick` mode runs **8 tasks** (`task_0`
-# through `task_7` with `n_pml = 8` and `energy_decay = 5e-3`): Kottke and
+# For rapid local verification, `--quick` mode runs **9 tasks** (`task_0`
+# through `task_8` with `n_pml = 8` and `energy_decay = 5e-3`): Kottke and
 # staircase at `L1 = (10, 4)` and `L2 = (14, 6)`, an independent Kottke
-# reference at `L3 = (20, 8)`, and the geometry/symmetry tasks at `L2 = (14, 6)`.
-# Every task in both `--full` and `--quick` modes satisfies $\text{cpw} \ge 10$
-# in the highest-index 2D EIM slab material ($n_{\text{eff,slab}} = 2.9274$) and
+# reference at `L3 = (20, 8)`, the geometry/symmetry tasks at `L2 = (14, 6)`,
+# and `kottke_nonuniform` at `cpw = 14`. Every task in both `--full` and
+# `--quick` modes satisfies $\text{cpw} \ge 10$ in the highest-index 2D EIM
+# slab material ($n_{\text{eff,slab}} = 2.9274$) and
 # $\text{cells\_across\_feature} \ge 4$ across $w_{\text{in}} = 350\;\text{nm}$
 # (zero resolution violations):
 #
@@ -516,6 +552,7 @@ def lateral_slab_mode_neff(
 # | `7` / `5` | `plain_crossing` | `L3` / `L2` | `(20, 8)` / `(14, 6)` | $21.507$ ($30.717$ q) | $21.507$ ($30.717$ q) | $16.274$ ($11.394$ q) | $658\times658\times1$ ($432{,}964$ / $214{,}369$) | $13{,}851$ / $9{,}251$ | $832.5$ / $366.7$ | $995.4$ |
 # | `8` / `6` | `linear_taper_crossing` | `L3` / `L2` | `(20, 8)` / `(14, 6)` | $21.507$ ($30.717$ q) | $21.507$ ($30.717$ q) | $16.274$ ($11.394$ q) | $658\times658\times1$ ($432{,}964$ / $214{,}369$) | $13{,}451$ / $8{,}951$ | $695.2$ / $291.9$ | $1{,}319.5$ |
 # | `9` / `7` | `symmetry_4port` | `L3` / `L2` | `(20, 8)` / `(14, 6)` | $21.507$ ($30.717$ q) | $21.507$ ($30.717$ q) | $16.274$ ($11.394$ q) | $658\times658\times1$ ($432{,}964$ / $214{,}369$) | $67{,}204$ ($4\times16{,}801$) / $35{,}604$ | $3{,}257.5$ / $1{,}084.5$ | $1{,}514.0$ |
+# | `10` / `8` | `kottke_nonuniform` | `nonuniform` | `(20, 8)` / `(14, 6)` | $42.000$ | $21.053$ | $16.625$ | $439\times439\times1$ ($192{,}721$, $-55.5\%$) | $17{,}151$ / `—` | $362.3$ ($-65.9\%$) | $919.4$ |
 
 
 # %%
@@ -610,6 +647,18 @@ def get_task_table(quick=False):
                 False,
                 f"2D EIM cosine-taper crossing 4-port symmetry audit (kottke, {sweep_lvl}: cpw={cpw_sw}, N>={n_sw})",
             ),
+            (
+                "kottke_nonuniform",
+                "nonuniform",
+                "cosine",
+                "kottke",
+                cpw_sw,
+                n_sw,
+                ["west"],
+                False,
+                False,
+                f"2D EIM cosine-taper crossing (kottke, D4-graded non-uniform mesh: cpw={cpw_sw}, N>={n_sw})",
+            ),
         ]
     )
 
@@ -626,8 +675,13 @@ def get_task_table(quick=False):
         rec_mov,
         desc,
     ) in enumerate(specs):
-        overrides = crossing_mesh_overrides(
-            cpw, n_feat, min_feature=MIN_FEATURE, wavelength_min=WL_MIN
+        is_nu = name == "kottke_nonuniform"
+        overrides = (
+            ()
+            if is_nu
+            else crossing_mesh_overrides(
+                cpw, n_feat, min_feature=MIN_FEATURE, wavelength_min=WL_MIN
+            )
         )
         tasks.append(
             {
@@ -640,6 +694,7 @@ def get_task_table(quick=False):
                 "n_feature_min": n_feat,
                 "min_feature_nm": float(MIN_FEATURE * 1e9),
                 "mesh_overrides": overrides,
+                "nonuniform": is_nu,
                 "drive": drive,
                 "n_pml": n_pml,
                 "energy_decay": decay,
@@ -664,35 +719,60 @@ def run_single_task(task_cfg, out_dir):
 
     structures, ports = build_crossing(kind=task_cfg["kind"])
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    overrides = task_cfg.get(
-        "mesh_overrides",
-        crossing_mesh_overrides(
-            task_cfg["cpw"],
-            task_cfg.get("n_feature_min", 4),
-            min_feature=MIN_FEATURE,
+    if task_cfg.get("nonuniform", False):
+        pic = NonUniformCrossingPIC(
             wavelength_min=WL_MIN,
-        ),
-    )
-    pic = PICSimulation(
-        wavelength_min=WL_MIN,
-        wavelength_max=WL_MAX,
-        n_freqs=N_FREQS,
-        structures=structures,
-        ports=ports,
-        n_core=N_SI,
-        n_clad=N_SIO2,
-        wavelength_ref=WL_REF,
-        two_d=True,
-        averaging=task_cfg["averaging"],
-        cells_per_wavelength=task_cfg["cpw"],
-        domain=DOMAIN_2D,
-        n_pml=task_cfg["n_pml"],
-        mesh_overrides=overrides,
-        field_wavelengths=(WL_REF,),
-        record_movie=task_cfg["record_movie"],
-        movie_frames=task_cfg["movie_frames"],
-        use_gpu=use_gpu,
-    )
+            wavelength_max=WL_MAX,
+            w_in=W_IN,
+            w_cross=W_OUT,
+            l_taper=L_TAPER,
+            n_feature_min=task_cfg.get("n_feature_min", 8),
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            wavelength_ref=WL_REF,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=DOMAIN_2D,
+            n_pml=task_cfg["n_pml"],
+            field_wavelengths=(WL_REF,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+        )
+    else:
+        overrides = task_cfg.get(
+            "mesh_overrides",
+            crossing_mesh_overrides(
+                task_cfg["cpw"],
+                task_cfg.get("n_feature_min", 4),
+                min_feature=MIN_FEATURE,
+                wavelength_min=WL_MIN,
+            ),
+        )
+        pic = PICSimulation(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            wavelength_ref=WL_REF,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=DOMAIN_2D,
+            n_pml=task_cfg["n_pml"],
+            mesh_overrides=overrides,
+            field_wavelengths=(WL_REF,),
+            record_movie=task_cfg["record_movie"],
+            movie_frames=task_cfg["movie_frames"],
+            use_gpu=use_gpu,
+        )
 
     drive_ports = task_cfg["drive"]
     s_mat = pic.run_s_parameters(
@@ -837,38 +917,45 @@ def run_single_task(task_cfg, out_dir):
 # ## 6. Generating the complete figure suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and writes 16 figures to
+# `generate_all_figures` reads `data/task_*.npz` and writes 20 figures to
 # `figures/`:
 #
+# 0. `00_setup_schematic.png` & `00b_crossing_geometries_schematic.png` — Labelled 2D EIM setup schematics (`wakis.schematic`) of the cosine-tapered, linear-tapered, and plain untapered 4-port crossings with domain extents, 10-cell CPML boundaries, $\text{Si}/\text{SiO}_2$ indices, West `ModeSource` + launched $\text{TE}_0$ mode profile, East/North/South `ModeMonitor`s, 4-wall Poynting `FluxMonitor` box, and $1\times$ Yee mesh zoom on the $w_{\text{in}} = 350\;\text{nm}$ access waveguide.
 # 1. `01_crossing_layout.png` — Annotated top-view layout of the Chandran *et al.* (2020) cosine-tapered waveguide crossing.
 # 2. `02_eim_vertical_stack.png` — Vertical $161\;\text{nm}$ O-band SOI stack, 1D $\text{TE}_0$ mode profile, and $n_{\text{eff,slab}}(\lambda)$.
-# 3. `03_cosine_taper_profile_and_mmi_phase.png` — Cosine taper width/slope profile and analytical $\text{TE}_0\text{--}\text{TE}_2$ self-imaging phase integral.
-# 4. `04_permittivity_mesh_zoom.png` — Zoomed permittivity map with Yee cell edges across the smallest feature ($w_{\text{in}} = 0.35\;\mu\text{m}$) at `L1` and at the reference level, plus staircase vs Kottke on the cosine taper.
+# 3. `03_cosine_taper_profile_and_mmi_phase.png` — Cosine taper width/slope profile, local $\text{TE}_0/\text{TE}_2$ mode dispersion, and analytical $\text{TE}_0\text{--}\text{TE}_2$ self-imaging phase integral (3 panels).
+# 4. `04_permittivity_mesh_zoom.png`, `04b_mesh_upgrade_comparison.png` & `04c_taper_subpixel_smoothing.png` — Zoomed permittivity map across $w_{\text{in}} = 0.35\;\mu\text{m}$ at `L1` and `R`, split-half comparison of the uniform-background `kottke_L3` baseline vs the $D_4$-graded non-uniform mesh (`kottke_nonuniform`), and staircase vs Kottke subpixel smoothing on the curved cosine taper.
 # 5. `05_port_mode_profiles.png` — Orthogonal port eigenmode profiles (`west` $E_y(y)$ and `north` $E_x(x)$) at $\lambda_0 = 1310\;\text{nm}$.
 # 6. `06_port_neff_dispersion.png` — Access strip waveguide effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$ across the O-band.
-# 7. `07_field_intensity_1310.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda_0 = 1310\;\text{nm}$.
-# 8. `08_field_real_ey_1310.png` — Steady-state wave-front phase map $\mathrm{Re}(E_y)$ at $\lambda_0 = 1310\;\text{nm}$.
-# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the cosine-tapered crossing.
+# 7. `07_field_intensity_1310.png` — Steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda_0 = 1310\;\text{nm}$ with `overlay_geometry`.
+# 8. `08_field_real_ey_1310.png` — Steady-state wave-front phase map $\mathrm{Re}(E_y)$ at $\lambda_0 = 1310\;\text{nm}$ with `overlay_geometry`.
+# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the cosine-tapered crossing ($< 5\;\text{MB}$, with `overlay_geometry`).
 # 10. `10_sparameter_spectra_linear.png` — Linear through transmission, 2D Poynting flux-box budget, and zoomed insertion loss vs Chandran *et al.* (2020).
 # 11. `11_sparameter_spectra_db.png` — Broadband 4-port S-parameter spectra ($S_{21}, S_{31}, S_{41}, S_{11}$) in dB.
 # 12. `12_tapered_vs_plain_crossing.png` — Insertion loss, crosstalk, and return loss comparison: cosine taper vs linear taper vs plain untapered crossing.
-# 13. `13_multimode_focusing_comparison.png` — Multimode self-imaging waist vs untapered diffraction: zoomed 2D $|E|^2$ and axial/transverse cross-sections.
+# 13. `13_multimode_focusing_comparison.png` — Multimode self-imaging waist vs untapered diffraction: zoomed 2D $|E|^2$ (with `overlay_geometry`) and transverse cross-sections.
 # 14. `14_symmetry_4fold_audit.png` — 4-fold ($D_4$) rotational/mirror symmetry and Lorentz reciprocity audit across all 4 input ports.
-# 15. `15_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke vs staircasing against the independent `kottke_reference` $T_{\text{ref}}$, labeled with both $\text{cpw}$ and cells across $w_{\text{in}}$.
+# 15. `15_kottke_vs_staircase_convergence.png` — Subpixel convergence of Kottke vs staircasing against the independent `kottke_reference` $T_{\text{ref}}$, labeled with both $\text{cpw}$ and cells across $w_{\text{in}}$ plus the graded non-uniform mesh point.
 # 16. `16_port_time_trace.png` — Through-port time-domain waveform $E_y(t)$ and exponential ring-down audit.
 
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 16 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all 20 figures into ``fig_dir``."""
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     tasks_data = {}
+    tasks_meta = {}
     for p in sorted(data_dir.glob("task_*.npz")):
         d = dict(np.load(p, allow_pickle=False))
-        tasks_data[str(d["name"])] = d
+        name_s = str(d["name"])
+        tasks_data[name_s] = d
+        jp = p.with_suffix(".json")
+        if jp.exists():
+            tasks_meta[name_s] = json.loads(jp.read_text())
 
     primary_name = None
     for cand in ("kottke_L3", "kottke_L2", "kottke_fine"):
@@ -881,6 +968,70 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
     primary = tasks_data[primary_name]
     structures, ports = build_crossing(kind="cosine")
+    structs_lin, ports_lin = build_crossing(kind="linear")
+    structs_pln, ports_pln = build_crossing(kind="plain")
+
+    n_pml_plot = 10 if "kottke_L3" in tasks_data else 8
+    cpw_prim = float(primary.get("cpw", 20.0))
+    n_prim = int(primary.get("n_feature_min", 8))
+
+    pic_primary = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=DOMAIN_2D,
+        n_pml=n_pml_plot,
+        mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
+    )
+    pic_linear = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structs_lin,
+        ports=ports_lin,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=DOMAIN_2D,
+        n_pml=n_pml_plot,
+        mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
+    )
+    pic_plain = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structs_pln,
+        ports=ports_pln,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=DOMAIN_2D,
+        n_pml=n_pml_plot,
+        mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
+    )
+
+    # 0. Labelled setup schematics (00_setup_schematic.png & 00b_crossing_geometries_schematic.png)
+    plot_setup_schematic_crossing(
+        pic_primary,
+        primary,
+        out_path=fig_dir / "00_setup_schematic.png",
+    )
+    plot_crossing_geometries_schematic(
+        pic_linear,
+        pic_plain,
+        out_path=fig_dir / "00b_crossing_geometries_schematic.png",
+    )
 
     # 1. Top-view layout with dimensional annotations
     annotations = [
@@ -928,7 +1079,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         out_path=fig_dir / "02_eim_vertical_stack.png",
     )
 
-    # 3. Cosine taper width/slope profile and analytical TE0-TE2 self-imaging phase
+    # 3. Cosine taper width/slope profile and analytical TE0-TE2 self-imaging phase (3 panels <= 3)
     x_taper_um = np.linspace(-(0.5 * W_OUT + L_TAPER) * 1e6, -0.5 * W_OUT * 1e6, 300)
     x_taper_m = x_taper_um * 1e-6
     w_cos_um = 2.0 * (W_M * 1e6) * np.cos(TAPER_A * x_taper_m + TAPER_B)
@@ -954,13 +1105,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     dx_m = x_taper_m[1] - x_taper_m[0]
     cum_dphi_pi = np.cumsum(k0_ref * d_neff * dx_m) / np.pi
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
+    fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=14.6, height=4.2)
     ax0.plot(
         x_taper_um,
         w_cos_um,
         color="#2b5c8f",
         lw=2.2,
-        label=r"Cosine taper $w(x) = 2w_m\cos(ax+b)$",
+        label=r"Cosine $w(x) = 2w_m\cos(ax+b)$",
     )
     ax0.plot(
         x_taper_um,
@@ -970,66 +1121,75 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         lw=1.7,
         label="Linear taper (0.35 → 1.10 µm)",
     )
+    ax0.plot(
+        x_taper_um,
+        dw_dx,
+        ":",
+        color="#1b9e77",
+        lw=1.6,
+        label=r"Slope $\mathrm{d}w/\mathrm{d}x$ [rad]",
+    )
     ax0.axhline(
-        W_IN * 1e6, color="0.45", ls=":", lw=1.3, label="Untapered strip (0.35 µm)"
+        W_IN * 1e6, color="0.45", ls=":", lw=1.2, label="Untapered strip (0.35 µm)"
     )
     ax0.axvline(
         X_PEAK_UM,
         color="#1b9e77",
         ls="-.",
-        lw=1.3,
+        lw=1.2,
         label=f"Peak 2w_m = 1.50 µm @ x = {X_PEAK_UM:.2f} µm",
     )
-    ax0_r = ax0.twinx()
-    ax0_r.plot(
-        x_taper_um, dw_dx, color="#1b9e77", lw=1.4, alpha=0.65, label=r"$\mathrm{d}w/\mathrm{d}x$"
-    )
-    ax0_r.set_ylabel(r"Flare slope $\mathrm{d}w/\mathrm{d}x$ [rad]", color="#1b9e77")
     ax0.set(
         xlabel="Axial position x along input taper [µm]",
-        ylabel="Full waveguide width w(x) [µm]",
+        ylabel="Full width w(x) [µm] & slope dw/dx [rad]",
         title="(a) Convex cosine vs linear taper profile",
     )
     ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="lower right", fontsize=7.8)
+    ax0.legend(loc="lower right", fontsize=7.0)
 
     ax1.plot(
-        x_taper_um, neff_te0, color="#2b5c8f", lw=2.1, label=r"Even mode $\mathrm{TE}_0$ $n_{\mathrm{eff}}(x)$"
+        x_taper_um,
+        neff_te0,
+        color="#2b5c8f",
+        lw=2.1,
+        label=r"Even mode $\mathrm{TE}_0$ $n_{\mathrm{eff}}(x)$",
     )
     ax1.plot(
-        x_taper_um, neff_te2, color="#d95f02", lw=2.1, label=r"Even mode $\mathrm{TE}_2$ $n_{\mathrm{eff}}(x)$"
+        x_taper_um,
+        neff_te2,
+        color="#d95f02",
+        lw=2.1,
+        label=r"Even mode $\mathrm{TE}_2$ $n_{\mathrm{eff}}(x)$",
     )
     ax1.axhline(N_SIO2, color="0.5", ls=":", lw=1.2, label=f"Cladding n_SiO2 = {N_SIO2}")
-    ax1_r = ax1.twinx()
-    ax1_r.plot(
-        x_taper_um,
-        cum_dphi_pi,
-        "--",
-        color="#1b9e77",
-        lw=1.9,
-        label=f"Cumulative $\\Delta\\Phi/\\pi$ (end = {cum_dphi_pi[-1]:.2f}$\\pi$)",
-    )
-    ax1_r.set_ylabel(r"Accumulated phase $\Delta\Phi(x) / \pi$", color="#1b9e77")
     ax1.set(
         xlabel="Axial position x along input taper [µm]",
         ylabel="Local lateral mode effective index",
-        title=r"(b) Local $\mathrm{TE}_0 / \mathrm{TE}_2$ dispersion & self-imaging phase",
+        title=r"(b) Local $\mathrm{TE}_0$ and $\mathrm{TE}_2$ mode dispersion",
     )
     ax1.grid(True, ls=":", alpha=0.4)
-    l1, lb1 = ax1.get_legend_handles_labels()
-    l2, lb2 = ax1_r.get_legend_handles_labels()
-    ax1.legend(l1 + l2, lb1 + lb2, loc="center left", fontsize=7.8)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_cosine_taper_profile_and_mmi_phase.png",
-        dpi=150,
-        bbox_inches="tight",
+    ax1.legend(loc="lower right", fontsize=7.2)
+
+    ax2.plot(
+        x_taper_um,
+        cum_dphi_pi,
+        color="#1b9e77",
+        lw=2.2,
+        label=f"Cumulative $\\Delta\\Phi(x)/\\pi$ (end = {cum_dphi_pi[-1]:.2f}$\\pi$)",
     )
+    ax2.axhline(3.0, color="#d95f02", ls="--", lw=1.4, label=r"3D SOI self-imaging target $3\pi$")
+    ax2.set(
+        xlabel="Axial position x along input taper [µm]",
+        ylabel=r"Accumulated differential phase $\Delta\Phi(x) / \pi$",
+        title=r"(c) $\mathrm{TE}_0\text{--}\mathrm{TE}_2$ beat phase integral",
+    )
+    ax2.grid(True, ls=":", alpha=0.4)
+    ax2.legend(loc="upper left", fontsize=7.2)
+    figstyle.save(fig, fig_dir / "03_cosine_taper_profile_and_mmi_phase.png")
     plt.close(fig)
 
     # 4. Zoomed permittivity map with Yee cell edges across the smallest feature (L1 vs Ref) & cosine taper
     cpw_l1, n_l1 = RESOLUTION_LADDER["L1"]
-    n_pml_plot = 10 if "kottke_L3" in tasks_data else 8
     if "kottke_reference" in tasks_data:
         cpw_ref = float(tasks_data["kottke_reference"]["cpw"])
         n_ref = int(tasks_data["kottke_reference"].get("n_feature_min", 8))
@@ -1094,8 +1254,42 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         min_feature_um=MIN_FEATURE * 1e6,
         component="y",
         out_path=fig_dir / "04_permittivity_mesh_zoom.png",
+        out_path_taper=fig_dir / "04c_taper_subpixel_smoothing.png",
     )
     del pic_l1_stair, pic_l1_kottke, solver_ref_kottke
+
+    # 4b. Mesh upgrade comparison: uniform-background kottke_L3 vs D4-graded kottke_nonuniform
+    pic_nonuniform = NonUniformCrossingPIC(
+        wavelength_min=WL_MIN,
+        wavelength_max=WL_MAX,
+        w_in=W_IN,
+        w_cross=W_OUT,
+        l_taper=L_TAPER,
+        n_feature_min=n_prim,
+        structures=structures,
+        ports=ports,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        wavelength_ref=WL_REF,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=cpw_prim,
+        domain=DOMAIN_2D,
+        n_pml=n_pml_plot,
+    )
+    td_nu = tasks_data.get("kottke_nonuniform", primary)
+    plot_mesh_upgrade_comparison_crossing(
+        pic_primary,
+        pic_nonuniform,
+        primary,
+        td_nu,
+        tasks_data.get("kottke_reference"),
+        tasks_meta.get(primary_name),
+        tasks_meta.get("kottke_nonuniform"),
+        WL_REF,
+        out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+    )
+    del pic_nonuniform
 
     # 5. Orthogonal port mode profiles (west Ey(y) and north Ex(x))
     plot_port_modes(
@@ -1118,41 +1312,39 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         out_path=None,
     )
     ax_disp.set_title("Access waveguide mode dispersion across the O-band (1260–1360 nm)")
-    fig_disp.savefig(
-        fig_dir / "06_port_neff_dispersion.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig_disp, fig_dir / "06_port_neff_dispersion.png")
     plt.close(fig_disp)
 
-    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1310 nm
-    plot_field_map(
+    # 7. Steady-state logarithmic intensity map |E|^2 [dB] at 1310 nm with geometry overlay
+    render_crossing_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        structures=structures,
+        pic_primary,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda_0 = 1310\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_1310.png",
     )
 
-    # 8. Steady-state real field map Re(Ey) at 1310 nm
-    plot_field_map(
+    # 8. Steady-state real field map Re(Ey) at 1310 nm with geometry overlay
+    render_crossing_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        structures=structures,
+        pic_primary,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda_0 = 1310\;\mathrm{nm}$",
         out_path=fig_dir / "08_field_real_ey_1310.png",
     )
 
-    # 9. Animated pulse propagation GIF
+    # 9. Animated pulse propagation GIF with geometry overlay
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_crossing_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structures,
+            pic_primary,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -1175,7 +1367,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     t_guided_tot = t_thru + t_north + t_south + r_west
 
     # 10. Linear S-parameter spectra, 2D flux-box budget, and zoomed insertion loss vs Chandran (2020)
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     ax0.plot(
         wl_b,
         t_thru,
@@ -1216,7 +1408,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(a) Linear transmission & 2D energy conservation budget",
     )
     ax0.grid(True, ls=":", alpha=0.4)
-    ax0.legend(loc="center right", fontsize=8.0)
+    ax0.legend(loc="center right", fontsize=7.6)
 
     il_db = 10.0 * np.log10(np.maximum(t_thru, 1e-12))
     prim_lvl = str(primary.get("level", "L3"))
@@ -1228,6 +1420,20 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         lw=2.2,
         label=f"Wakis 2D EIM (Kottke {prim_lvl}, {prim_cpw} cpw)",
     )
+    if "kottke_nonuniform" in tasks_data:
+        nud = tasks_data["kottke_nonuniform"]
+        nuw = nud["wavelengths"] * 1e9
+        nuo = np.argsort(nuw)
+        num = (nuw[nuo] >= 1265.0) & (nuw[nuo] <= 1355.0)
+        nu_il_db = 10.0 * np.log10(np.maximum(np.abs(nud["S21"][nuo][num]) ** 2, 1e-12))
+        ax1.plot(
+            nuw[nuo][num],
+            nu_il_db,
+            "-.",
+            color="#e7298a",
+            lw=2.0,
+            label=f"Wakis 2D EIM (D₄-graded Kottke, {int(nud['n_cells']):,} cells)",
+        )
     if "kottke_reference" in tasks_data:
         rd = tasks_data["kottke_reference"]
         rw = rd["wavelengths"] * 1e9
@@ -1264,11 +1470,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         title="(b) Zoomed insertion loss vs Chandran et al. (2020)",
     )
     ax1.grid(True, ls=":", alpha=0.4)
-    ax1.legend(loc="lower right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "10_sparameter_spectra_linear.png", dpi=150, bbox_inches="tight"
-    )
+    ax1.legend(loc="lower right", fontsize=7.4)
+    figstyle.save(fig, fig_dir / "10_sparameter_spectra_linear.png")
     plt.close(fig)
 
     # 11. Full 4-port S-parameter spectra in dB
@@ -1297,7 +1500,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
 
     # 12. Cosine-tapered vs linear-tapered vs plain (untapered) crossing comparison
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     geom_specs = [
         (primary_name, "Cosine taper (2w_m = 1.50 µm)", "#1b9e77", "-"),
         ("linear_taper_crossing", "Linear taper (0.35 → 1.10 µm)", "#2b5c8f", "--"),
@@ -1355,14 +1558,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=7.2)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_tapered_vs_plain_crossing.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "12_tapered_vs_plain_crossing.png")
     plt.close(fig)
 
     # 13. Multimode taper focusing vs plain untapered diffraction across the intersection
-    fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.0), dpi=150)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=14.4, height=4.4)
     xc_um = primary["dft_x"] * 1e6
     yc_um = primary["dft_y"] * 1e6
     e2_cos = primary["dft_E2"]
@@ -1377,7 +1577,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     else:
         xp_um, yp_um, e2_pln_norm = xc_um, yc_um, e2_cos_norm
 
-    # Panel (a): Plain crossing zoomed intensity
+    # Panel (a): Plain crossing zoomed intensity with geometry overlay
     im0 = axes[0].pcolormesh(
         xp_um,
         yp_um,
@@ -1387,6 +1587,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         vmax=0.0,
         shading="auto",
     )
+    overlay_crossing_geometry(axes[0], pic_plain, outline_color="white")
     axes[0].set(
         aspect="equal",
         xlim=(-3.5, 3.5),
@@ -1397,7 +1598,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.03, label="|E|² [dB]")
 
-    # Panel (b): Cosine-tapered crossing zoomed intensity
+    # Panel (b): Cosine-tapered crossing zoomed intensity with geometry overlay
     im1 = axes[1].pcolormesh(
         xc_um,
         yc_um,
@@ -1407,6 +1608,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         vmax=0.0,
         shading="auto",
     )
+    overlay_crossing_geometry(axes[1], pic_primary, outline_color="white")
     axes[1].set(
         aspect="equal",
         xlim=(-3.5, 3.5),
@@ -1459,14 +1661,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     axes[2].grid(True, ls=":", alpha=0.4)
     axes[2].legend(loc="upper right", fontsize=7.5)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "13_multimode_focusing_comparison.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "13_multimode_focusing_comparison.png")
     plt.close(fig)
 
+    del pic_primary, pic_linear, pic_plain
+
     # 14. 4-fold (D4) symmetry and Lorentz reciprocity audit
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     if "symmetry_4port" in tasks_data:
         sd = tasks_data["symmetry_4port"]
         sw = sd["wavelengths"] * 1e9
@@ -1562,8 +1763,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, which="both", ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "14_symmetry_4fold_audit.png", dpi=150, bbox_inches="tight")
+    figstyle.save(fig, fig_dir / "14_symmetry_4fold_audit.png")
     plt.close(fig)
 
     # 15. Multi-resolution convergence (Kottke vs Staircase against independent kottke_reference)
@@ -1629,6 +1829,19 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         rk_vals = [_r_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
         rs_vals = [_r_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
 
+        nu_point = None
+        if "kottke_nonuniform" in tasks_data:
+            nud = tasks_data["kottke_nonuniform"]
+            nu_point = {
+                "cpw": float(nud["cpw"]),
+                "err_rms": max(
+                    float(np.sqrt(np.mean((_band_thru(nud) - t_ref_band) ** 2))),
+                    1e-5,
+                ),
+                "r_mean": _r_mean(nud),
+                "n_cells": int(nud["n_cells"]),
+            }
+
         plot_convergence_ladder(
             cpws=cpws,
             cells_across=cells_across,
@@ -1640,6 +1853,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             ref_cells_across=_cells_across(ref_d),
             ref_r_mean=_r_mean(ref_d),
             level_labels=levels,
+            nonuniform_point=nu_point,
             out_path=fig_dir / "15_kottke_vs_staircase_convergence.png",
         )
 
@@ -1648,7 +1862,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         t_fs = primary["trace_t"] * 1e15
         ey_tr = primary["trace_Ey"]
         ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.5, 3.8), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=3.9)
         ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
         ax0.set(
             xlabel="Time t [fs]",
@@ -1672,11 +1886,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
         ax1.legend(loc="upper right", fontsize=8.5)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "16_port_time_trace.png", dpi=150, bbox_inches="tight")
+        figstyle.save(fig, fig_dir / "16_port_time_trace.png")
         plt.close(fig)
 
-    print(f"Rendered 16 figures in {fig_dir}")
+    print(f"Rendered 20 figures in {fig_dir}")
 
 
 # %% [markdown]
@@ -1684,7 +1897,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #
 # ### Full-resolution (`--full`) S-parameter and convergence summary
 #
-# Evaluating the 10 `--full` study tasks (`data/task_0.*` through `data/task_9.*`,
+# Evaluating the 11 `--full` study tasks (`data/task_0.*` through `data/task_10.*`,
 # `n_pml = 10`, `energy_decay = 1e-4`) across the interior O-band
 # ($1270\text{--}1350\;\text{nm}$) against the independent fine-grid
 # `kottke_reference` (`R: cpw=40, N>=16`, $\Delta x = 10.754\;\text{nm}$,
@@ -1702,17 +1915,18 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # | `7` | `plain_crossing` (`kottke`, `L3`) | $20$ | $16.274$ | $0.80355$ | $0.9499$ | $-14.86$ | $-21.87$ | $6.43 \times 10^{-3}$ | — |
 # | `8` | `linear_taper_crossing` (`kottke`, `L3`) | $20$ | $16.274$ | $0.86109$ | $0.6495$ | $-37.35$ | $-34.30$ | $3.66 \times 10^{-4}$ | — |
 # | `9` | `symmetry_4port` (`kottke`, `L3`) | $20$ | $16.274$ | $0.97958$ | $0.0896$ | $-43.47$ | $-41.82$ | $3.55 \times 10^{-5}$ | $\max |T_i - T_j| = 5.60 \times 10^{-7}$ |
+# | `10` | `kottke_nonuniform` (`kottke`, $D_4$-graded) | $20$ | $16.625$ | $0.98024$ | $0.0867$ | $-43.58$ | $-38.56$ | $5.09 \times 10^{-5}$ | $2.07 \times 10^{-3}$ ($-55.5\%$ cells, $-65.9\%$ time) |
 #
-# ### Old (`--quick`) vs New (`--full`) vs Reference / Analytic Theory
+# ### `--quick` vs `--full` vs Reference / Analytic Theory
 #
-# The table below compares the earlier `--quick` study (`L2: 14 cpw` primary,
+# The table below compares the `--quick` study (`L2: 14 cpw` primary,
 # `L3: 20 cpw` reference, `n_pml = 8`, `energy_decay = 5e-3`) against the
-# completed `--full` study (`L3: 20 cpw` primary, `R: 40 cpw` reference,
+# `--full` study (`L3: 20 cpw` primary, `R: 40 cpw` reference,
 # `n_pml = 10`, `energy_decay = 1e-4`), the published 3D FDTD / experimental
 # results of **Chandran *et al.* (2020)** [1], and analytical waveguide/MMI
 # theory:
 #
-# | Quantity | Old (`--quick`: `L2` $14\;\text{cpw}$ / `L3` $20\;\text{cpw}$ ref) | New (`--full`: `L3` $20\;\text{cpw}$ / `R` $40\;\text{cpw}$ ref) | Published Reference [1] / Analytic Theory |
+# | Quantity | `--quick` (`L2` $14\;\text{cpw}$ / `L3` $20\;\text{cpw}$ ref) | `--full` (`L3` $20\;\text{cpw}$ / `R` $40\;\text{cpw}$ ref) | Published Reference [1] / Analytic Theory |
 # |---|---|---|---|
 # | **Cosine crossing $T(1310\;\text{nm}) = |S_{21}|^2$** | $0.95576$ (`L2`) / $0.95647$ (`L3`) | $0.97958$ (`L3`) / $0.97847$ (`R`) | $\approx 0.9556$ ($\text{IL} = 0.197 \pm 0.017\;\text{dB}$ at $1310\;\text{nm}$, Abstract of [1]) |
 # | **Cosine crossing $\text{IL}(1310\;\text{nm})$ [dB]** | $0.1965\;\text{dB}$ (`L2`) / $0.1933\;\text{dB}$ (`L3`) | $0.0896\;\text{dB}$ (`L3`) / $0.0945\;\text{dB}$ (`R`) | $\sim 0.2\;\text{dB}$ (3D FDTD & exp.); $0.197 \pm 0.017\;\text{dB}$ at $1310\;\text{nm}$ (Abstract of [1]) |

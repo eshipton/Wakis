@@ -26,7 +26,9 @@ if str(TUTORIAL_DIR) not in sys.path:
     sys.path.insert(0, str(TUTORIAL_DIR))
 
 from _helpers import (  # noqa: E402
+    NonUniformStripToSlotPIC,
     asymmetric_taper,
+    build_mmi_graded_axes,
     slot_straight,
     slot_waveguide_mode,
     slot_waveguide_neff,
@@ -379,7 +381,7 @@ def test_full_study_data_convergence_and_topologies():
     """
     data_dir = TUTORIAL_DIR / "data"
     expected_tasks = get_task_table(quick=False)
-    assert len(expected_tasks) == 15
+    assert len(expected_tasks) == 16
 
     metas = {}
     npz_by_name = {}
@@ -483,4 +485,78 @@ def test_full_study_data_convergence_and_topologies():
     assert not all(
         t_sweep_mut[i] < t_sweep_mut[i + 1] for i in range(len(t_sweep_mut) - 1)
     )
+
+    # Graded non-uniform Cartesian mesh upgrade (kottke_nonuniform, task_15)
+    t_nu, r_nu = _t_r_1550(npz_by_name["kottke_nonuniform"])
+    m_u = metas["kottke_L3"]
+    m_nu = metas["kottke_nonuniform"]
+    assert m_nu["n_cells"] < 0.65 * m_u["n_cells"]
+    assert m_nu["elapsed_s"] < 0.55 * m_u["elapsed_s"]
+    assert abs(t_nu - t_ref) < 1.2e-3
+    assert r_nu < 1e-3
+
+
+def test_setup_schematic_and_nonuniform_mesh_upgrade():
+    """
+    Verify that the setup schematic figures (``00_setup_schematic.png`` and
+    ``00b_taper_converters_schematic.png``), the mesh-upgrade comparison figure
+    (``04b_mesh_upgrade_comparison.png``), all split 3-panel field figures, and
+    the ``< 5 MB`` GIF exist, and verify ``build_mmi_graded_axes`` along with a
+    cladding-grading mutation check.
+    """
+    fig_dir = TUTORIAL_DIR / "figures"
+    required_figs = (
+        "00_setup_schematic.png",
+        "00b_taper_converters_schematic.png",
+        "01_converter_topologies_layout.png",
+        "02_eim_vertical_stack.png",
+        "03_slot_mode_physics_and_discontinuity.png",
+        "04_permittivity_mesh_zoom.png",
+        "04b_mesh_upgrade_comparison.png",
+        "05_port_mode_profiles.png",
+        "06_port_neff_dispersion.png",
+        "07_mmi_field_intensity_1550.png",
+        "08_mmi_field_real_ey_1550.png",
+        "10_all_designs_field_comparison_1550.png",
+        "10b_all_designs_real_ey_1550.png",
+        "11_sparameter_spectra_linear_and_db.png",
+        "12_energy_budget_and_passivity.png",
+        "13_conversion_efficiency_vs_length.png",
+        "14_kottke_vs_staircase_convergence.png",
+        "15_resolution_spectra_comparison.png",
+        "16_port_time_trace.png",
+    )
+    for fname in required_figs:
+        fpath = fig_dir / fname
+        assert fpath.is_file() and fpath.stat().st_size > 8_000, f"Missing/empty {fpath}"
+
+    gif_path = fig_dir / "09_pulse_propagation.gif"
+    assert gif_path.is_file() and 0 < gif_path.stat().st_size < 5 * 1024 * 1024
+
+    # Verify graded non-uniform axes properties and mutation check
+    xg, yg, _ = build_mmi_graded_axes(
+        domain=(-2.60e-6, 8.60e-6, -1.48e-6, +1.48e-6),
+        length_conv=6.00e-6,
+        length_mmi=L_MMI,
+        width_mmi=W_MMI,
+        width_slot=W_SLOT,
+        gap_slot=GAP_SLOT,
+        n_feature=8,
+        cpw=20,
+    )
+    assert np.allclose(yg, -yg[::-1], atol=1e-15)
+    dy = np.diff(yg)
+    dx = np.diff(xg)
+    in_slot = (yg[1:] > -0.5 * GAP_SLOT + 1e-12) & (yg[:-1] < 0.5 * GAP_SLOT - 1e-12)
+    assert int(np.sum(in_slot)) == 8
+    assert np.allclose(dy[in_slot], GAP_SLOT / 8.0, rtol=1e-10)
+    # Non-square axial cells in taper section are > 2x the transverse slot cell size
+    assert float(np.max(dx)) > 2.4 * float(np.min(dy))
+
+    # Mutation check: disabling transverse grading (forcing uniform 12.5 nm everywhere in y)
+    # must increase Ny by > 1.8x relative to build_mmi_graded_axes
+    ny_graded = len(yg) - 1
+    ny_ungraded = int(np.ceil((yg[-1] - yg[0]) / (GAP_SLOT / 8.0)))
+    assert ny_ungraded > 1.8 * ny_graded
+
 

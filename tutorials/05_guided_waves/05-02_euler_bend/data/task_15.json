@@ -1,0 +1,29 @@
+{
+  "task_index": 15,
+  "name": "kottke_nonuniform",
+  "group": "mesh_upgrade",
+  "level": "L3",
+  "bend_type": "euler",
+  "r_eff_um": 4.0,
+  "averaging": "kottke",
+  "cpw": 20,
+  "n_feature": 8,
+  "nonuniform": true,
+  "min_feature_nm": 400.0,
+  "dx_background_nm": 26.587,
+  "dx_min_nm": 26.587,
+  "du_lead_nm": 31.282,
+  "du_clad_max_nm": 66.568,
+  "aspect_ratio_lead": 1.177,
+  "cells_across_feature": 15.045,
+  "grid_shape": [
+    238,
+    238,
+    1
+  ],
+  "n_cells": 56644,
+  "n_steps": 11401,
+  "elapsed_s": 64.542,
+  "peak_rss_mb": 472.75,
+  "npz_bytes": 7621
+}

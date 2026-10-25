@@ -11,5 +11,13 @@
   "n_cells": 273485,
   "elapsed_s": 670.932,
   "peak_rss_mb": 1115.3,
-  "npz_bytes": 5456
+  "npz_bytes": 5456,
+  "nonuniform": false,
+  "min_feature_nm": 200.0,
+  "dx_background_nm": 9.4,
+  "dx_min_nm": 9.39,
+  "dy_tip_nm": 9.39,
+  "dy_clad_max_nm": 9.39,
+  "cells_across_feature": 21.3,
+  "aspect_ratio_max_core": 1.0
 }

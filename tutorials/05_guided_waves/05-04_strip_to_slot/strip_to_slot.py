@@ -40,8 +40,16 @@
 # oxide slot against the exact 5-layer analytical eigenvalue solution, extract
 # broadband $1500\text{--}1600\;\text{nm}$ S-parameters and 2D Poynting flux
 # budgets, sweep the converter length $L$ to demonstrate adiabatic mode
-# evolution, and quantify the convergence advantage of Kottke subpixel
-# smoothing over staircasing when resolving a $100\;\text{nm}$ slot.
+# evolution, quantify the convergence advantage of Kottke subpixel
+# smoothing over staircasing when resolving a $100\;\text{nm}$ slot, and
+# upgrade the Cartesian mesh to a **graded non-uniform, non-square Cartesian
+# grid** (`NonUniformStripToSlotPIC`, `kottke_nonuniform`) that achieves equal
+# accuracy ($T(1550\;\text{nm}) = 97.57\%$, within $8.4\times 10^{-4}$ of the
+# $40\;\text{cpw}$ `kottke_reference`) with $38.1\%$ fewer cells ($40{,}737$ vs
+# $65{,}780$) and $58.6\%$ shorter runtime ($60.62\;\text{s}$ vs $146.50\;\text{s}$).
+#
+# ![Setup schematic and slot mesh zoom](figures/00_setup_schematic.png)
+# ![Taper converter setup schematics](figures/00b_taper_converters_schematic.png)
 #
 # ---
 #
@@ -56,16 +64,19 @@
 #    (Almeida *et al.*, 2004 [4]).
 # 2. Construct three distinct strip-to-slot converter topologies (`build_mmi_converter`,
 #    `build_symmetric_taper_converter`, `build_asymmetric_taper_converter`) using
-#    `PolySlab`, `straight`, and `asymmetric_taper`.
+#    `PolySlab`, `straight`, and `asymmetric_taper`, and inspect their labelled
+#    2D EIM setup schematics (`00_setup_schematic.png`,
+#    `00b_taper_converters_schematic.png`).
 # 3. Run broadband 2D EIM time-domain FIT simulations (`PICSimulation`) with
 #    `ModeSource` and `ModeMonitor` ports that resolve the discontinuous
 #    transverse slot mode profile across the $1500\text{--}1600\;\text{nm}$ C-band.
 # 4. Quantify conversion efficiency vs. converter length $L$, audit energy
-#    conservation with a 2D Poynting `FluxMonitor` box, and compare Kottke
+#    conservation with a 2D Poynting `FluxMonitor` box, compare Kottke
 #    subpixel smoothing against staircasing across a feature-resolved
 #    mesh-override ladder (`L1=(10, 4)`, `L2=(14, 6)`, `L3=(20, 8)`, and full
 #    reference `R=(40, 16)`) as well as an under-resolved $10\;\text{cpw}$
-#    warning demonstration pair (`1.96` cells across the slot).
+#    warning demonstration pair (`1.96` cells across the slot), and build a
+#    graded non-uniform Cartesian mesh (`kottke_nonuniform`, `04b_mesh_upgrade_comparison.png`).
 #
 # ## Contents
 #
@@ -74,7 +85,7 @@
 # 3. [Parametric geometry of the three converter topologies](#3.-Parametric-geometry-of-the-three-converter-topologies)
 # 4. [Resolution: cells per wavelength, cells across the smallest feature & subpixel smoothing](#4.-Resolution:-cells-per-wavelength,-cells-across-the-smallest-feature-&-subpixel-smoothing)
 # 5. [Study tasks & execution modes](#5.-Study-tasks-&-execution-modes)
-# 6. [Generating the complete 16-figure diagnostic suite](#6.-Generating-the-complete-16-figure-diagnostic-suite)
+# 6. [Generating the complete 20-figure diagnostic suite](#6.-Generating-the-complete-20-figure-diagnostic-suite)
 # 7. [Limits, failure modes & when 2D EIM differs from 3D FDTD](#7.-Limits,-failure-modes-&-when-2D-EIM-differs-from-3D-FDTD)
 # 8. [Exercises](#8.-Exercises)
 # 9. [References](#9.-References)
@@ -151,11 +162,20 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
+    NonUniformStripToSlotPIC,
     asymmetric_taper,
+    build_mmi_graded_axes,
+    overlay_converter_geometry,
+    plot_mesh_upgrade_comparison,
+    plot_setup_schematic,
+    plot_taper_converters_schematic,
+    render_field_map_with_overlay,
+    render_movie_with_overlay,
     slot_straight,
     slot_waveguide_mode,
     slot_waveguide_neff,
 )
+from wakis import figstyle  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
     PICSimulation,
     PolySlab,
@@ -605,21 +625,23 @@ def build_design(design_key, length_conv=None):
 #   explicit warning example ("what happens if you don't resolve the gap") and
 #   excluded from converged design metrics.
 # - **Resolved convergence ladder**: `L1 = (10, 4)`, `L2 = (14, 6)`,
-#   `L3 = (20, 8)`, and full reference `R = (40, 16)`.
-#   - In `--quick` (**13 tasks**, `task_0`..`task_12`, `n_pml = 8`): Kottke and
+#   `L3 = (20, 8)`, and full reference `R = (40, 16)`, plus the **graded
+#   non-uniform Cartesian mesh upgrade** (`kottke_nonuniform`).
+#   - In `--quick` (**14 tasks**, `task_0`..`task_13`, `n_pml = 8`): Kottke and
 #     staircase run at `L1 = (10, 4)` and `L2 = (14, 6)` with the independent
-#     Kottke reference at `L3 = (20, 8)`; Designs 2 & 3 and the 4 MMI
-#     length-sweep tasks run at `L2 = (14, 6)`.
-#   - In `--full` (**15 tasks**, `task_0`..`task_14`, `n_pml = 10`): Kottke and
+#     Kottke reference at `L3 = (20, 8)`; Designs 2 & 3, the 4 MMI
+#     length-sweep tasks, and `kottke_nonuniform` run at `L2 = (14, 6)`.
+#   - In `--full` (**16 tasks**, `task_0`..`task_15`, `n_pml = 10`): Kottke and
 #     staircase run at `L1 = (10, 4)`, `L2 = (14, 6)`, and `L3 = (20, 8)` with
-#     the independent Kottke reference at `R = (40, 16)`; Designs 2 & 3 and the
-#     4 MMI length-sweep tasks run at `L3 = (20, 8)`.
+#     the independent Kottke reference at `R = (40, 16)`; Designs 2 & 3, the
+#     4 MMI length-sweep tasks, and `kottke_nonuniform` (`task_15`) run at
+#     `L3 = (20, 8)`.
 #
 # ### Measured `--full` resolution, mesh, and timing summary
 #
 # Every task records `min_feature_nm`, `dx_background_nm`, `dx_min_nm`,
 # `cells_across_feature` (measured directly from `pic.grid`), `n_cells`, and
-# `n_steps` in its JSON and NPZ outputs (`data/task_0.json`..`data/task_14.json`):
+# `n_steps` in its JSON and NPZ outputs (`data/task_0.json`..`data/task_15.json`):
 #
 # | Task | Name | Design | Avg | cpw | $N$ | $\text{min\_feat}$ [nm] | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across feature | `n_cells` | `n_steps` | Time [s] | $T(1550\;\text{nm})$ |
 # |---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -638,6 +660,35 @@ def build_design(design_key, length_conv=None):
 # | `12` | `length_L2.2um` | Design 1 MMI ($2.2\;\mu\text{m}$) | `kottke` | 20 | 8 | 100.0 | 25.51 | 12.50 | 8.00 | 44,473 | 15,301 | 76.38 | 0.8294 |
 # | `13` | `length_L3.0um` | Design 1 MMI ($3.0\;\mu\text{m}$) | `kottke` | 20 | 8 | 100.0 | 25.58 | 12.50 | 8.00 | 48,906 | 15,701 | 44.40 | 0.9673 |
 # | `14` | `length_L4.5um` | Design 1 MMI ($4.5\;\mu\text{m}$) | `kottke` | 20 | 8 | 100.0 | 25.54 | 12.50 | 8.00 | 57,343 | 16,601 | 62.70 | 0.9724 |
+# | `15` | `kottke_nonuniform` *(upgrade)* | Design 1 MMI ($6\;\mu\text{m}$) | `kottke` | 20 | 8 | 100.0 | 33.77 | 12.50 | 8.00 | 40,737 | 18,301 | 60.62 | 0.9757 |
+#
+# ### Graded non-uniform Cartesian mesh upgrade (`kottke_nonuniform`, `task_15`)
+#
+# In `NonUniformStripToSlotPIC` (`build_mmi_graded_axes` in `_helpers.py`), we
+# replace the uniform-background grid of `kottke_L3` ($460 \times 143 \times 1 = 65{,}780$
+# cells, $146.50\;\text{s}$) with a graded non-uniform, non-square Cartesian
+# mesh ($367 \times 111 \times 1 = 40{,}737$ cells, **$-38.1\%$ cells**,
+# $60.62\;\text{s}$ or **$-58.6\%$ wall time** vs `kottke_L3` and **$-46.6\%$**
+# vs `staircase_L3`):
+#
+# - **Transverse ($y$) grading**: Exact $N = 8.00$ cells ($\Delta y = 12.50\;\text{nm}$)
+#   across the $g = 100\;\text{nm}$ central oxide slot ($|y| \le 50\;\text{nm}$),
+#   fine $\Delta y \approx 24\;\text{nm}$ across the silicon rails and MMI box
+#   ($|y| \in [0.05, 0.66]\;\mu\text{m}$), and smoothly graded coarse cells up
+#   to $\Delta y_{\text{clad}} \le 52\;\text{nm}$ in the outer $\text{SiO}_2$
+#   cladding ($|y| \in [0.66, 1.48]\;\mu\text{m}$).
+# - **Longitudinal ($x$) non-square grading**: Fine $\Delta x \approx 22\;\text{nm}$
+#   across the MMI input step and abrupt slot opening ($x \in [-0.15, 1.65]\;\mu\text{m}$),
+#   relaxed non-square $\Delta x \approx 34\;\text{nm}$ ($\Delta x / \Delta y_{\text{slot}} = 2.7$)
+#   along the adiabatic slot-rail taper ($x \in [1.65, 6.10]\;\mu\text{m}$), and
+#   $\Delta x \approx 40\;\text{nm}$ along the uniform input/output waveguide leads.
+# - **Equal accuracy**: `kottke_nonuniform` achieves $T(1550\;\text{nm}) = 0.975703$
+#   ($97.57\%$, insertion loss $0.1068\;\text{dB}$, return loss
+#   $R(1550\;\text{nm}) = 6.19\times 10^{-4}$ or $-32.08\;\text{dB}$, C-band
+#   mean $\langle T\rangle = 97.63\%$), matching `kottke_L3` ($97.47\%$) and the
+#   $236{,}174$-cell `kottke_reference` ($97.49\%$) within
+#   $|T - T_{\text{ref}}| = 8.39\times 10^{-4}$ ($0.0037\;\text{dB}$, see
+#   `04b_mesh_upgrade_comparison.png`).
 #
 # ### Resolution and convergence audit (`--full` study)
 #
@@ -763,6 +814,33 @@ def build_task_simulation(task_cfg, use_gpu=None):
     )
     if use_gpu is None:
         use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
+
+    if task_cfg.get("nonuniform", False):
+        return NonUniformStripToSlotPIC(
+            wavelength_min=WL_MIN,
+            wavelength_max=WL_MAX,
+            n_freqs=N_FREQS,
+            structures=structures,
+            ports=ports,
+            n_core=N_SI,
+            n_clad=N_SIO2,
+            wavelength_ref=WL_REF,
+            two_d=True,
+            averaging=task_cfg["averaging"],
+            cells_per_wavelength=task_cfg["cpw"],
+            domain=domain,
+            n_pml=task_cfg["n_pml"],
+            length_conv=L_c,
+            length_mmi=L_MMI,
+            width_mmi=W_MMI,
+            width_slot=W_SLOT,
+            gap_slot=g_slot,
+            n_feature=task_cfg.get("n_feature", 8),
+            field_wavelengths=(WL_REF,),
+            record_movie=task_cfg.get("record_movie", False),
+            movie_frames=task_cfg.get("movie_frames", 0),
+            use_gpu=use_gpu,
+        )
 
     return PICSimulation(
         wavelength_min=WL_MIN,
@@ -1000,6 +1078,32 @@ def get_task_table(quick=False):
             }
         )
 
+    # Graded non-uniform Cartesian mesh upgrade on Design 1 MMI (L = 6.0 um)
+    tasks.append(
+        {
+            "index": len(tasks),
+            "name": "kottke_nonuniform",
+            "design": "mmi",
+            "length_um": 6.0,
+            "level": "nonuniform",
+            "averaging": "kottke",
+            "cpw": primary_cpw,
+            "n_feature": primary_n,
+            "nonuniform": True,
+            "is_demo": False,
+            "n_pml": n_pml,
+            "energy_decay": decay,
+            "collect_fields": False,
+            "solve_modes_extra": False,
+            "record_movie": False,
+            "movie_frames": 0,
+            "description": (
+                f"Design 1 MMI 6 um (kottke, graded non-uniform Cartesian mesh, "
+                f"cpw={primary_cpw}, N={primary_n})"
+            ),
+        }
+    )
+
     return tasks
 
 
@@ -1147,40 +1251,53 @@ def run_single_task(task_cfg, out_dir):
 
 
 # %% [markdown]
-# ## 6. Generating the complete 16-figure diagnostic suite
+# ## 6. Generating the complete 20-figure diagnostic suite
 #
 # When invoked with `--plot` (or at the end of `--quick` / `--full`),
-# `generate_all_figures` reads `data/task_*.npz` and writes 16 figures to
-# `figures/`:
+# `generate_all_figures` reads `data/task_*.npz` and writes 20 figures to
+# `figures/` (every figure $\le 3$ panels; every field map and GIF frame
+# includes `schematic.overlay_geometry`):
 #
+# 0. `00_setup_schematic.png` — Labelled 2-panel setup schematic of the Design 1 symmetric MMI strip-to-slot converter (domain, 10-cell CPML, periodic $\pm z$, $\text{Si}/\text{SiO}_2$ indices, input/output ports with overlaid $\text{TE}_0$ strip and slot mode profiles, and 2D Poynting flux box) plus a $1\times$ Yee mesh zoom on the $g = 100\;\text{nm}$ slot opening.
+# 0b. `00b_taper_converters_schematic.png` — Labelled 2-panel setup schematics of Design 2 (Symmetric Double-Tip Tapered-Finger Coupler, $L = 8.0\;\mu\text{m}$, $d = 60\;\text{nm}$) and Design 3 (Asymmetric Lateral Taper, $L = 20.0\;\mu\text{m}$).
 # 1. `01_converter_topologies_layout.png` — Annotated 3-panel top-view layout of Designs 1 (MMI), 2 (Symmetric Tapered-Finger Coupler), and 3 (Asymmetric Lateral Taper).
 # 2. `02_eim_vertical_stack.png` — Vertical $250\;\text{nm}$ SOI stack, 1D $\text{TE}_0$ slab mode profile, and $n_{\text{eff,slab}}(\lambda)$.
 # 3. `03_slot_mode_physics_and_discontinuity.png` — Analytical 5-layer slot waveguide mode vs Wakis port mode showing the $(n_{\text{eff,slab}}/n_{\text{SiO}_2})^2 = 4.14$ normal $E_y$ jump and slot confinement vs gap width $g$.
 # 4. `04_permittivity_mesh_zoom.png` — Zoomed in-plane permittivity map $\varepsilon_{r,y}$ with Yee cell edges across the $100\;\text{nm}$ slot opening at `L1 = (10, 4)` (staircase and Kottke, $4$ cells across the slot) and at the reference level (`L3 = (20, 8)` in `--quick` or `R = (40, 16)` in `--full`).
+# 4b. `04b_mesh_upgrade_comparison.png` — Side-by-side mesh view and equal-accuracy C-band conversion efficiency comparison between the baseline `kottke_L3` ($65{,}780$ cells, $146.50\;\text{s}$) and the graded non-uniform Cartesian `kottke_nonuniform` ($40{,}737$ cells, $-38.1\%$, $60.62\;\text{s}$, $-58.6\%$).
 # 5. `05_port_mode_profiles.png` — Input strip ($w = 400\;\text{nm}$) and output slot ($w_{\text{slot}} = 620\;\text{nm}, g = 100\;\text{nm}$) port eigenmode profiles $|E_y(y)|$ and $\mathrm{Re}(E_y(y))$.
 # 6. `06_port_neff_dispersion.png` — Effective index $n_{\text{eff}}(\lambda)$ and group index $n_g(\lambda)$ dispersion for both strip and slot waveguide ports.
-# 7. `07_mmi_field_intensity_1550.png` — Design 1 (MMI converter) steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$.
-# 8. `08_mmi_field_real_ey_1550.png` — Design 1 (MMI converter) steady-state wave-front phase map $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$.
-# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the Design 1 MMI strip-to-slot converter.
-# 10. `10_all_designs_field_comparison_1550.png` — Side-by-side steady-state $|E|^2$ [dB] and $\mathrm{Re}(E_y)$ field maps across all three converter topologies at $1550\;\text{nm}$.
+# 7. `07_mmi_field_intensity_1550.png` — Design 1 (MMI converter) steady-state logarithmic intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $1550\;\text{nm}$ with `overlay_geometry`.
+# 8. `08_mmi_field_real_ey_1550.png` — Design 1 (MMI converter) steady-state wave-front phase map $\mathrm{Re}(E_y)$ at $1550\;\text{nm}$ with `overlay_geometry`.
+# 9. `09_pulse_propagation.gif` — Time-domain pulse propagation movie through the Design 1 MMI strip-to-slot converter with `overlay_geometry`.
+# 10. `10_all_designs_field_comparison_1550.png` — 3-panel steady-state modal intensity $|E|^2$ [dB] across all three converter topologies at $1550\;\text{nm}$ with `overlay_geometry`.
+# 10b. `10b_all_designs_real_ey_1550.png` — 3-panel steady-state wave-front phase map $\mathrm{Re}(E_y)$ across all three converter topologies at $1550\;\text{nm}$ with `overlay_geometry`.
 # 11. `11_sparameter_spectra_linear_and_db.png` — Broadband coupling efficiency $T(\lambda) = |S_{21}|^2$ (linear $\%$) and insertion/return loss (dB) across the $1505\text{--}1595\;\text{nm}$ band for all three topologies.
 # 12. `12_energy_budget_and_passivity.png` — 2D Poynting flux-box radiation budget and guided vs lateral radiation breakdown across the three topologies.
 # 13. `13_conversion_efficiency_vs_length.png` — Strip-to-slot conversion efficiency $T(1550\;\text{nm})$ and return loss $R(1550\;\text{nm})$ vs converter length $L \in [1.6, 6.0]\;\mu\text{m}$.
-# 14. `14_kottke_vs_staircase_convergence.png` — Multi-resolution convergence of Kottke vs staircasing across the resolved ladder (`L1`, `L2`, `L3`) against the independent `kottke_reference` run, with a second axis and point labels showing cells across the $100\;\text{nm}$ slot plus the under-resolved `(cpw=10, N=0)` warning pair.
-# 15. `15_resolution_spectra_comparison.png` — Broadband insertion loss and return loss across the resolved ladder and the under-resolved warning pair for Kottke vs staircase.
+# 14. `14_kottke_vs_staircase_convergence.png` — Multi-resolution convergence of Kottke vs staircasing across the resolved ladder (`L1`, `L2`, `L3`) and graded `kottke_nonuniform` against the independent `kottke_reference` run, with a second axis and point labels showing cells across the $100\;\text{nm}$ slot plus the under-resolved `(cpw=10, N=0)` warning pair.
+# 15. `15_resolution_spectra_comparison.png` — Broadband insertion loss and return loss across the resolved ladder, `kottke_nonuniform`, and the under-resolved warning pair for Kottke vs staircase.
 # 16. `16_port_time_trace.png` — Output slot port time-domain waveform $E_y(t)$ and exponential ring-down audit.
+#
+# ![Mesh upgrade comparison](figures/04b_mesh_upgrade_comparison.png)
+# ![Multi-design intensity comparison](figures/10_all_designs_field_comparison_1550.png)
+# ![Multi-design phase comparison](figures/10b_all_designs_real_ey_1550.png)
 #
 # ### 6.1 Summary of measured results across topologies, length sweep, and published references
 #
 # - **Design 1 — Symmetric MMI Converter ($L = 6.0\;\mu\text{m}$, Deng *et al.* 2014 [1])**:
 #   At the `--full` primary level `L3 = (20, 8)` ($8.00$ cells across the
-#   $100\;\text{nm}$ slot, $\Delta y_{\min} = 12.50\;\text{nm}$), Kottke yields
-#   conversion efficiency $T(1550\;\text{nm}) = 97.47\%$ ($0.974670$, insertion
-#   loss $0.1114\;\text{dB}$, return loss $R(1550\;\text{nm}) = 7.28\times 10^{-4}$
-#   or $-31.38\;\text{dB}$, band-averaged reflection
-#   $\langle|S_{11}|^2\rangle_{1515\text{--}1585} = 7.55\times 10^{-4}$, and
-#   C-band mean transmission $\langle T\rangle_{1505\text{--}1595} = 97.54\%$
-#   over $[96.48\%, 98.84\%]$), while the `R = (40, 16)` independent reference
+#   $100\;\text{nm}$ slot, $\Delta y_{\min} = 12.50\;\text{nm}$, $65{,}780$ cells,
+#   $146.50\;\text{s}$), Kottke yields conversion efficiency
+#   $T(1550\;\text{nm}) = 97.47\%$ ($0.974670$, insertion loss $0.1114\;\text{dB}$,
+#   return loss $R(1550\;\text{nm}) = 7.28\times 10^{-4}$ or $-31.38\;\text{dB}$,
+#   band-averaged reflection $\langle|S_{11}|^2\rangle_{1515\text{--}1585} = 7.55\times 10^{-4}$,
+#   and C-band mean transmission $\langle T\rangle_{1505\text{--}1595} = 97.54\%$
+#   over $[96.48\%, 98.84\%]$). On the upgraded **graded non-uniform Cartesian mesh**
+#   (`kottke_nonuniform`, $40{,}737$ cells / **$-38.1\%$**, $60.62\;\text{s}$ / **$-58.6\%$**),
+#   Kottke yields $T(1550\;\text{nm}) = 97.57\%$ ($0.975703$, insertion loss
+#   $0.1068\;\text{dB}$, $R(1550\;\text{nm}) = 6.19\times 10^{-4}$ or $-32.08\;\text{dB}$,
+#   $\langle T\rangle = 97.63\%$), while the `R = (40, 16)` independent reference
 #   ($16.00$ cells across the slot, $\Delta y_{\min} = 6.25\;\text{nm}$) gives
 #   $T_{\text{ref}}(1550\;\text{nm}) = 97.49\%$ ($0.974864$, insertion loss
 #   $0.1106\;\text{dB}$, $R(1550\;\text{nm}) = 7.82\times 10^{-4}$ or
@@ -1209,7 +1326,7 @@ def run_single_task(task_cfg, out_dir):
 #   $\langle|S_{11}|^2\rangle_{1515\text{--}1585} = 9.81\times 10^{-6}$) and
 #   $\langle\Phi_{\text{box}}\rangle = 0.9995$.
 #
-# ### 6.2 Old (`--quick`) vs New (`--full`) vs Published / Analytic Reference
+# ### 6.2 Quick (`--quick`) vs Full (`--full`) vs Published / Analytic Reference
 #
 # All geometric and material parameters are taken directly from Deng *et al.*
 # (2014) [1], Wang *et al.* (2009) [2], and Feng *et al.* (2007) [3] without
@@ -1220,7 +1337,7 @@ def run_single_task(task_cfg, out_dir):
 # radiation at the tip/slot transition add $\sim 0.02\text{--}0.13\;\text{dB}$
 # loss [2, 3].
 #
-# | Quantity ($\lambda_0 = 1550\;\text{nm}$ unless noted) | Old (`--quick`: primary `L2=(14,6)`, ref `L3=(20,8)`) | New (`--full`: primary `L3=(20,8)`, ref `R=(40,16)`) | Analytic Theory / Published Reference |
+# | Quantity ($\lambda_0 = 1550\;\text{nm}$ unless noted) | Quick (`--quick`: primary `L2=(14,6)`, ref `L3=(20,8)`) | Full (`--full`: primary `L3=(20,8)`, ref `R=(40,16)`) | Analytic Theory / Published Reference |
 # |---|---:|---:|---:|
 # | 1D vertical $\text{TE}_0$ slab index $n_{\text{eff,slab}}$ ($h_{\text{Si}} = 250\;\text{nm}$) | $2.9306$ ($\varepsilon_{\text{eff}} = 8.5883$) | $2.9306$ ($\varepsilon_{\text{eff}} = 8.5883$) | Exact 3-layer slab: $2.9306$ |
 # | Slot-wall normal $E_y$ jump $E_y(50\;\text{nm}^-)/E_y(50\;\text{nm}^+)$ | $4.1417$ (2D EIM) | $4.1417$ (2D EIM) | Almeida *et al.* [4]: $(n_{\text{high}}/n_{\text{low}})^2 = 4.1417$ (2D EIM), $5.8065$ (3D Si) |
@@ -1228,6 +1345,7 @@ def run_single_task(task_cfg, out_dir):
 # | Output slot ($w = 620\;\text{nm}, g = 100\;\text{nm}$) port $n_{\text{eff,slot}},\; n_{g,\text{slot}}$ | $2.1629,\; 2.8123$ (`L2`) | $2.1626,\; 2.8000$ (`L3`) | Almeida 5-layer analytic [4]: $n_{\text{eff}} = 2.1563$ ($\Gamma_{\text{slot}} = 57.2\%$) |
 # | Slot-to-rail field ratio $|E_y(0)| / |E_y(180\;\text{nm})|$ | $2.78$ (`L2`) | $2.7839$ (`L3`) | Almeida 5-layer analytic [4]: $2.7844$ |
 # | **Design 1 MMI ($L = 6.0\;\mu\text{m}$)** primary $T(1550\;\text{nm})$ & IL | $97.65\%$ ($0.976503$, $0.1033\;\text{dB}$) | $97.47\%$ ($0.974670$, $0.1114\;\text{dB}$) | Deng *et al.* (2014) [1] 3D FDTD: $96.5\text{--}97.5\%$ ($0.11\text{--}0.15\;\text{dB}$) |
+# | **Design 1 MMI ($L = 6.0\;\mu\text{m}$)** `kottke_nonuniform` $T(1550\;\text{nm})$, cells & time | — | $97.57\%$ ($0.975703$, $0.1068\;\text{dB}$; $40{,}737$ cells, $60.62\;\text{s}$) | $-38.1\%$ cells, $-58.6\%$ time vs `kottke_L3`; $|T - T_{\text{ref}}| = 8.4\text{e-}4$ |
 # | **Design 1 MMI ($L = 6.0\;\mu\text{m}$)** `kottke_reference` $T_{\text{ref}}(1550\;\text{nm})$ | $97.47\%$ ($0.974667$, `L3`) | $97.49\%$ ($0.974864$, `R`) | Relative change `L3` $\to$ `R`: $0.0199\%$ ($1.94\times 10^{-4}$) |
 # | **Design 1 MMI ($L = 6.0\;\mu\text{m}$)** return loss $R(1550\;\text{nm})$ (primary / ref) | $8.64\times 10^{-4}$ ($-30.6\;\text{dB}$) / $7.27\times 10^{-4}$ | $7.28\times 10^{-4}$ ($-31.4\;\text{dB}$) / $7.82\times 10^{-4}$ ($-31.1\;\text{dB}$) | Deng *et al.* (2014) [1]: $< -30\;\text{dB}$ ($< 10^{-3}$) |
 # | **Design 1 MMI ($L = 6.0\;\mu\text{m}$)** band mean $\langle T\rangle_{1505\text{--}1595}$ (primary / ref) | $97.74\%$ / $97.54\%$ | $97.54\%$ ($96.48\text{--}98.84\%$) / $97.54\%$ | Deng *et al.* (2014) [1]: $> 96\%$ across C-band |
@@ -1245,15 +1363,21 @@ def run_single_task(task_cfg, out_dir):
 
 # %%
 def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
-    """Read ``data_dir/task_*.npz`` and render all 16 figures into ``fig_dir``."""
+    """Read ``data_dir/task_*.npz`` and render all 20 figures into ``fig_dir``."""
+    figstyle.apply_style()
     data_dir = Path(data_dir)
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     tasks_data = {}
+    tasks_meta = {}
     for p in sorted(data_dir.glob("task_*.npz")):
         d = dict(np.load(p, allow_pickle=False))
-        tasks_data[str(d["name"])] = d
+        name = str(d["name"])
+        tasks_data[name] = d
+        jf = p.with_suffix(".json")
+        if jf.exists():
+            tasks_meta[name] = json.loads(jf.read_text())
 
     primary_key = None
     for cand in ("kottke_L3", "kottke_L2", "kottke_fine"):
@@ -1271,8 +1395,85 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     structures_sym, ports_sym, domain_sym = build_symmetric_taper_converter()
     structures_asym, ports_asym, domain_asym = build_asymmetric_taper_converter()
 
+    prim_cpw = int(round(float(primary["cpw"])))
+    prim_n = int(primary.get("n_feature", 8))
+    pic_mmi_u = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures_mmi,
+        ports=ports_mmi,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=prim_cpw,
+        domain=domain_mmi,
+        n_pml=10 if primary_key == "kottke_L3" else 8,
+        mesh_overrides=build_mesh_overrides("mmi", length_conv=L_CONV_MMI, n_feature=prim_n),
+    )
+    pic_mmi_nu = NonUniformStripToSlotPIC(
+        WL_MIN,
+        WL_MAX,
+        structures=structures_mmi,
+        ports=ports_mmi,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=prim_cpw,
+        domain=domain_mmi,
+        n_pml=10 if primary_key == "kottke_L3" else 8,
+        length_conv=L_CONV_MMI,
+        length_mmi=L_MMI,
+        width_mmi=W_MMI,
+        width_slot=W_SLOT,
+        gap_slot=GAP_SLOT,
+        n_feature=prim_n,
+    )
+    pic_sym = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures_sym,
+        ports=ports_sym,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=prim_cpw,
+        domain=domain_sym,
+        n_pml=10 if primary_key == "kottke_L3" else 8,
+        mesh_overrides=build_mesh_overrides("sym_taper", length_conv=L_CONV_SYM, n_feature=prim_n),
+    )
+    pic_asym = PICSimulation(
+        WL_MIN,
+        WL_MAX,
+        structures=structures_asym,
+        ports=ports_asym,
+        n_core=N_SI,
+        n_clad=N_SIO2,
+        two_d=True,
+        averaging="kottke",
+        cells_per_wavelength=prim_cpw,
+        domain=domain_asym,
+        n_pml=10 if primary_key == "kottke_L3" else 8,
+        mesh_overrides=build_mesh_overrides("asym_taper", length_conv=L_CONV_ASYM, n_feature=prim_n),
+    )
+
+    # 0. Setup schematics (FIRST figures: Design 1 MMI + Designs 2 & 3 tapers)
+    plot_setup_schematic(
+        pic_mmi_nu,
+        primary,
+        out_path=fig_dir / "00_setup_schematic.png",
+    )
+    plot_taper_converters_schematic(
+        pic_sym,
+        pic_asym,
+        primary,
+        out_path=fig_dir / "00b_taper_converters_schematic.png",
+    )
+
     # 1. Three-panel annotated top-view layout of all three converter topologies
-    fig, axes = plt.subplots(3, 1, figsize=(9.8, 9.2), dpi=150)
+    fig, axes = figstyle.new_figure(nrows=3, ncols=1, width=9.8, height=9.2)
     layout_specs = [
         (
             axes[0],
@@ -1353,10 +1554,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title=ttl_i,
             ax=ax_i,
         )
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "01_converter_topologies_layout.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "01_converter_topologies_layout.png")
     plt.close(fig)
 
     # 2. Effective-Index Method (EIM) vertical stack (250 nm Si on SiO2)
@@ -1379,7 +1577,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         y_span=1.6e-6,
         n_pts=801,
     )
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.1)
     y_ana_um = ana_slot["y"] * 1e6
     ax0.axvspan(-0.31, -0.05, color="#2b5c8f", alpha=0.18, label="Si rails (260 nm)")
     ax0.axvspan(+0.05, +0.31, color="#2b5c8f", alpha=0.18)
@@ -1464,12 +1662,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ax1.grid(True, ls=":", alpha=0.4)
     lines = l1 + l2
     ax1.legend(lines, [ln.get_label() for ln in lines], loc="center right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "03_slot_mode_physics_and_discontinuity.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "03_slot_mode_physics_and_discontinuity.png")
     plt.close(fig)
 
     # 4. In-plane permittivity map with mesh edges zoomed on the 100 nm slot opening
@@ -1497,7 +1690,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             f"(c) Reference Kottke (cpw={ref_cpw_v}, N={ref_n_v})",
         ),
     ]
-    fig, axes = plt.subplots(1, 3, figsize=(13.6, 4.5), dpi=150, sharey=True)
+    fig, axes = figstyle.new_figure(nrows=1, ncols=3, width=13.6, height=4.5, sharey=True)
     xl_m, yl_m = (1.10, 2.35), (-0.66, 0.66)
     for ax_m, (avg_m, cpw_m, n_m, ttl_m) in zip(axes, mesh_panels):
         ov_m = build_mesh_overrides("mmi", length_conv=L_CONV_MMI, n_feature=n_m)
@@ -1523,7 +1716,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         x_um_m, y_um_m = g_m.x * 1e6, g_m.y * 1e6
         pcm = ax_m.pcolormesh(
-            x_um_m, y_um_m, eps_r_m.T, cmap="viridis", shading="flat"
+            x_um_m, y_um_m, eps_r_m.T, cmap=figstyle.CMAP_EPS, shading="flat"
         )
         ax_m.set_xlim(*xl_m)
         ax_m.set_ylim(*yl_m)
@@ -1567,11 +1760,22 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         cb = fig.colorbar(pcm, ax=ax_m, fraction=0.046, pad=0.03)
         cb.set_label(r"$\varepsilon_{r,y}$")
     axes[0].set_ylabel("y [µm]")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "04_permittivity_mesh_zoom.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "04_permittivity_mesh_zoom.png")
     plt.close(fig)
+
+    # 4b. Mesh upgrade comparison: uniform-background kottke_L3 vs graded kottke_nonuniform
+    td_nu = tasks_data.get("kottke_nonuniform", primary)
+    plot_mesh_upgrade_comparison(
+        pic_mmi_u,
+        pic_mmi_nu,
+        primary,
+        td_nu,
+        tasks_data.get("kottke_reference"),
+        tasks_meta.get(primary_key),
+        tasks_meta.get("kottke_nonuniform"),
+        WL_REF,
+        out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
+    )
 
     # 5. Port mode profiles at input strip and output slot waveguide
     plot_port_modes(
@@ -1586,7 +1790,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
 
     # 6. Strip vs slot waveguide dispersion across 1500-1600 nm
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.8, 3.9), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=10.8, height=3.9)
     wl_d_nm = primary["disp_wavelengths"] * 1e9
     ax0.plot(
         wl_d_nm,
@@ -1646,124 +1850,128 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="best", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(fig_dir / "06_port_neff_dispersion.png", dpi=150, bbox_inches="tight")
+    figstyle.save(fig, fig_dir / "06_port_neff_dispersion.png")
     plt.close(fig)
 
-    # 7. Design 1 (MMI) steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm
-    plot_field_map(
+    # 7. Design 1 (MMI) steady-state logarithmic intensity map |E|^2 [dB] at 1550 nm (with overlay_geometry)
+    render_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        structures=structures_mmi,
+        pic=pic_mmi_u,
         kind="intensity_log",
-        title=r"Design 1 (MMI converter): modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
+        title=r"Design 1 (MMI converter): modal intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "07_mmi_field_intensity_1550.png",
     )
 
-    # 8. Design 1 (MMI) steady-state real field map Re(Ey) at 1550 nm
-    plot_field_map(
+    # 8. Design 1 (MMI) steady-state real field map Re(Ey) at 1550 nm (with overlay_geometry)
+    render_field_map_with_overlay(
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        structures=structures_mmi,
+        pic=pic_mmi_u,
         kind="real",
         title=r"Design 1 (MMI converter): wave-front pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "08_mmi_field_real_ey_1550.png",
     )
 
-    # 9. Animated pulse propagation GIF through Design 1 (MMI)
+    # 9. Animated pulse propagation GIF through Design 1 (MMI) (with overlay_geometry, < 5 MB)
     if "movie_frames" in primary and len(primary["movie_frames"]) > 0:
-        make_movie(
+        render_movie_with_overlay(
             primary["movie_x"],
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            structures=structures_mmi,
+            pic=pic_mmi_u,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
 
-    # 10. Multi-design comparison of |E|^2 [dB] and Re(Ey) at 1550 nm across all 3 topologies
+    # 10 & 10b. Split 3-panel multi-design field comparisons at 1550 nm (<= 3 panels per figure)
     design_entries = [
-        (primary_key, structures_mmi, "Design 1: Symmetric MMI (L = 6 µm)"),
+        (primary_key, pic_mmi_u, "Design 1: Symmetric MMI (L = 6 µm)"),
         (
             "design2_sym_taper",
-            structures_sym,
+            pic_sym,
             "Design 2: Symmetric Tapered-Finger (L = 8 µm)",
         ),
         (
             "design3_asym_taper",
-            structures_asym,
+            pic_asym,
             "Design 3: Asymmetric Lateral Taper (L = 20 µm)",
         ),
     ]
     avail_designs = [e for e in design_entries if e[0] in tasks_data]
-    fig, axes = plt.subplots(
-        len(avail_designs), 2, figsize=(12.2, 3.1 * len(avail_designs)), dpi=150
+
+    # 10. 3-panel steady-state modal intensity |E|^2 [dB] across all 3 topologies
+    fig_i, axes_i = figstyle.new_figure(
+        nrows=len(avail_designs), ncols=1, width=9.8, height=3.1 * len(avail_designs)
     )
     if len(avail_designs) == 1:
-        axes = np.array([axes])
-    for row_idx, (t_key, st_list, d_label) in enumerate(avail_designs):
+        axes_i = [axes_i]
+    for row_idx, (t_key, pic_d, d_label) in enumerate(avail_designs):
         td = tasks_data[t_key]
         x_um = td["dft_x"] * 1e6
         y_um = td["dft_y"] * 1e6
         e2 = td["dft_E2"]
-        ey = td["dft_Ey"]
         db_floor = -35.0
         data_db = 10.0 * np.log10(
             np.maximum(e2 / (float(np.max(e2)) or 1.0), 10.0 ** (db_floor / 10.0))
         )
-        ax_i, ax_r = axes[row_idx, 0], axes[row_idx, 1]
+        ax_i = axes_i[row_idx]
         im0 = ax_i.pcolormesh(
             x_um, y_um, data_db.T, cmap="inferno", vmin=db_floor, vmax=0.0, shading="auto"
         )
-        cb0 = fig.colorbar(im0, ax=ax_i, fraction=0.046, pad=0.03)
+        cb0 = fig_i.colorbar(im0, ax=ax_i, fraction=0.046, pad=0.03)
         cb0.set_label("Intensity [dB]")
+        overlay_converter_geometry(ax_i, pic_d, outline_color="white")
+        ax_i.set(
+            xlim=(float(x_um.min()), float(x_um.max())),
+            ylim=(-1.15, 1.15),
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+            title=f"({chr(ord('a') + row_idx)}) {d_label} — $|\\mathbf{{E}}|^2$ [dB] at 1550 nm",
+        )
+    figstyle.save(fig_i, fig_dir / "10_all_designs_field_comparison_1550.png")
+    plt.close(fig_i)
 
+    # 10b. 3-panel steady-state wave-front phase map Re(Ey) across all 3 topologies
+    fig_r, axes_r = figstyle.new_figure(
+        nrows=len(avail_designs), ncols=1, width=9.8, height=3.1 * len(avail_designs)
+    )
+    if len(avail_designs) == 1:
+        axes_r = [axes_r]
+    for row_idx, (t_key, pic_d, d_label) in enumerate(avail_designs):
+        td = tasks_data[t_key]
+        x_um = td["dft_x"] * 1e6
+        y_um = td["dft_y"] * 1e6
+        ey = td["dft_Ey"]
         vmax_r = float(np.percentile(np.abs(ey), 99.5)) or 1.0
+        ax_r = axes_r[row_idx]
         im1 = ax_r.pcolormesh(
             x_um,
             y_um,
             np.real(ey).T / vmax_r,
-            cmap="RdBu_r",
+            cmap=figstyle.CMAP_DIVERGING,
             vmin=-1.0,
             vmax=1.0,
             shading="auto",
         )
-        cb1 = fig.colorbar(im1, ax=ax_r, fraction=0.046, pad=0.03)
+        cb1 = fig_r.colorbar(im1, ax=ax_r, fraction=0.046, pad=0.03)
         cb1.set_label(r"$\mathrm{Re}(E_y)$ [norm.]")
-
-        for ax_sub, col_out in ((ax_i, "white"), (ax_r, "black")):
-            for s in st_list:
-                ax_sub.add_patch(
-                    MplPolygon(
-                        s.vertices * 1e6,
-                        closed=True,
-                        fill=False,
-                        edgecolor=col_out,
-                        lw=1.0,
-                        alpha=0.85,
-                    )
-                )
-            ax_sub.set(
-                xlim=(x_um.min(), x_um.max()),
-                ylim=(-1.15, 1.15),
-                xlabel="x [µm]",
-                ylabel="y [µm]",
-            )
-        ax_i.set_title(f"{d_label} — $|E|^2$ [dB] at 1550 nm")
-        ax_r.set_title(f"{d_label} — $\\mathrm{{Re}}(E_y)$ at 1550 nm")
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "10_all_designs_field_comparison_1550.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
-    plt.close(fig)
+        overlay_converter_geometry(ax_r, pic_d, outline_color="black")
+        ax_r.set(
+            xlim=(float(x_um.min()), float(x_um.max())),
+            ylim=(-1.15, 1.15),
+            xlabel="x [µm]",
+            ylabel="y [µm]",
+            title=f"({chr(ord('a') + row_idx)}) {d_label} — $\\mathrm{{Re}}(E_y)$ at 1550 nm",
+        )
+    figstyle.save(fig_r, fig_dir / "10b_all_designs_real_ey_1550.png")
+    plt.close(fig_r)
 
     # 11. Broadband S-parameter spectra (linear % and dB) across all 3 converter topologies
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.4, 4.2), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)
     topo_colors = {
         primary_key: ("#1b9e77", "-", "Design 1: MMI (6 µm, Deng 2014)"),
         "design2_sym_taper": (
@@ -1835,16 +2043,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     ax1.grid(True, ls=":", alpha=0.4)
     ax1.legend(loc="center right", fontsize=7.2, ncol=1)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "11_sparameter_spectra_linear_and_db.png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    figstyle.save(fig, fig_dir / "11_sparameter_spectra_linear_and_db.png")
     plt.close(fig)
 
     # 12. 2D Poynting flux-box radiation & passivity audit
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.2, 4.1), dpi=150)
+    fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.2, height=4.1)
     w_nm = primary["wavelengths"] * 1e9
     order = np.argsort(w_nm)
     w_s = w_nm[order]
@@ -1939,10 +2142,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ax1.set_title("(b) Power partition at λ = 1550 nm across topologies")
     ax1.grid(True, axis="y", ls=":", alpha=0.4)
     ax1.legend(loc="center right", fontsize=8.0)
-    fig.tight_layout()
-    fig.savefig(
-        fig_dir / "12_energy_budget_and_passivity.png", dpi=150, bbox_inches="tight"
-    )
+    figstyle.save(fig, fig_dir / "12_energy_budget_and_passivity.png")
     plt.close(fig)
 
     # 13. Conversion efficiency vs converter length L (Design 1 MMI sweep)
@@ -1964,7 +2164,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         sweep_R = np.asarray(sweep_R)
         L_taper_sec = sweep_L - L_MMI * 1e6
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.0, 4.0), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.0, height=4.0)
         ax0.plot(
             sweep_L,
             sweep_T * 100.0,
@@ -2031,12 +2231,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax1.grid(True, ls=":", alpha=0.4)
         lines = l1 + l2
         ax1.legend(lines, [ln.get_label() for ln in lines], loc="upper right", fontsize=8.0)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "13_conversion_efficiency_vs_length.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
+        figstyle.save(fig, fig_dir / "13_conversion_efficiency_vs_length.png")
         plt.close(fig)
 
     # 14 & 15. Multi-resolution convergence & spectral comparison (with under-resolved demo)
@@ -2081,7 +2276,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         rk_vals = [_r_mean(tasks_data[f"kottke_{lvl}"]) for lvl in levels]
         rs_vals = [_r_mean(tasks_data[f"staircase_{lvl}"]) for lvl in levels]
 
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.4), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.4)
         res = np.asarray(cpws, dtype=float)
         ax0.loglog(
             res,
@@ -2143,6 +2338,31 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 color="#1b9e77",
             )
 
+        if "kottke_nonuniform" in tasks_data:
+            d_nu_c = tasks_data["kottke_nonuniform"]
+            nu_cpw = float(d_nu_c["cpw"])
+            nu_cells = float(d_nu_c.get("cells_across_feature", d_nu_c["slot_cells"]))
+            err_nu = max(abs(_t_at_1550(d_nu_c) - t_ref), 1e-4)
+            r_nu = _r_mean(d_nu_c)
+            ax0.loglog(
+                [nu_cpw],
+                [err_nu],
+                "*",
+                color="#e7298a",
+                ms=11.0,
+                zorder=9,
+                label=f"Graded non-uniform Kottke ({int(d_nu_c['n_cells']):,} cells, {nu_cells:.0f} slot cells)",
+            )
+            ax1.loglog(
+                [nu_cpw],
+                [r_nu],
+                "*",
+                color="#e7298a",
+                ms=11.0,
+                zorder=9,
+                label=f"Graded non-uniform Kottke ({int(d_nu_c['n_cells']):,} cells)",
+            )
+
         has_under = (
             "underresolved_kottke" in tasks_data
             and "underresolved_staircase" in tasks_data
@@ -2196,23 +2416,17 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax0.margins(x=0.14)
         ax0.set_ylim(4.2e-5, 6.5e-2)
         ax0.set(
-            xlabel="Background resolution [cells per wavelength]",
+            xlabel="Background resolution [cpw] & cells across 100 nm slot",
             ylabel=rf"Error $|T(1550\;\mathrm{{nm}}) - T_{{\mathrm{{ref}}}}|$ (ref: cpw={ref_cpw:.0f}, N={ref_cells:.0f} cells)",
             title="(a) Conversion efficiency error vs independent reference",
         )
         ax0.xaxis.set_minor_formatter(plt.NullFormatter())
         ax0.set_xticks(res)
-        ax0.set_xticklabels([f"{int(r)} cpw" for r in res])
+        ax0.set_xticklabels(
+            [f"{int(r)} cpw\n({fc:.0f} cells, {lvl})" for r, lvl, fc in zip(res, levels, feat_cells)]
+        )
         ax0.grid(True, which="both", ls=":", alpha=0.4)
         ax0.legend(loc="lower left", fontsize=6.4, framealpha=0.92)
-
-        ax0_top = ax0.twiny()
-        ax0_top.set_xscale("log")
-        ax0_top.set_xlim(ax0.get_xlim())
-        ax0_top.xaxis.set_minor_formatter(plt.NullFormatter())
-        ax0_top.set_xticks(res)
-        ax0_top.set_xticklabels([f"{fc:.0f} cells ({lvl})" for lvl, fc in zip(levels, feat_cells)])
-        ax0_top.set_xlabel("Cells across 100 nm slot (mesh-override ladder)", fontsize=8.5)
 
         ax1.loglog(
             res,
@@ -2295,34 +2509,23 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ax1.margins(x=0.14)
         ax1.set_ylim(3.8e-4, 4.4e-3)
         ax1.set(
-            xlabel="Background resolution [cells per wavelength]",
+            xlabel="Background resolution [cpw] & cells across 100 nm slot",
             ylabel=r"Band-averaged reflection $\langle |S_{11}|^2 \rangle$",
             title="(b) Spurious reflection vs resolution",
         )
         ax1.xaxis.set_minor_formatter(plt.NullFormatter())
         ax1.set_xticks(res)
-        ax1.set_xticklabels([f"{int(r)} cpw" for r in res])
-        ax1.grid(True, which="both", ls=":", alpha=0.4)
-        ax1.legend(loc="upper center", fontsize=7.0, framealpha=0.92)
-
-        ax1_top = ax1.twiny()
-        ax1_top.set_xscale("log")
-        ax1_top.set_xlim(ax1.get_xlim())
-        ax1_top.xaxis.set_minor_formatter(plt.NullFormatter())
-        ax1_top.set_xticks(res)
-        ax1_top.set_xticklabels([f"{fc:.0f} cells ({lvl})" for lvl, fc in zip(levels, feat_cells)])
-        ax1_top.set_xlabel("Cells across 100 nm slot (mesh-override ladder)", fontsize=8.5)
-
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "14_kottke_vs_staircase_convergence.png",
-            dpi=150,
-            bbox_inches="tight",
+        ax1.set_xticklabels(
+            [f"{int(r)} cpw\n({fc:.0f} cells, {lvl})" for r, lvl, fc in zip(res, levels, feat_cells)]
         )
+        ax1.grid(True, which="both", ls=":", alpha=0.4)
+        ax1.legend(loc="upper center", fontsize=6.6, framealpha=0.92)
+
+        figstyle.save(fig, fig_dir / "14_kottke_vs_staircase_convergence.png")
         plt.close(fig)
 
         # 15. Spectra across resolved levels + under-resolved warning pair + reference
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11.6, 4.3), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.6, height=4.3)
         cols = {"L1": "#7570b3", "L2": "#d95f02", "L3": "#1b9e77"}
         if has_under:
             for avg_u, ls_u, col_u in (
@@ -2366,6 +2569,22 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 ax0.plot(w_s[m_b], t_db, color=cols[lvl], ls=ls, lw=1.9, label=lbl)
                 ax1.plot(w_s[m_b], r_db, color=cols[lvl], ls=ls, lw=1.9, label=lbl)
 
+        if "kottke_nonuniform" in tasks_data:
+            d_nu_s = tasks_data["kottke_nonuniform"]
+            w_n = d_nu_s["wavelengths"] * 1e9
+            idx_n = np.argsort(w_n)
+            w_sn = w_n[idx_n]
+            m_bn = (w_sn >= 1505.0) & (w_sn <= 1595.0)
+            t_db_n = 10.0 * np.log10(
+                np.maximum(np.abs(d_nu_s["S21"][idx_n][m_bn]) ** 2, 1e-12)
+            )
+            r_db_n = 10.0 * np.log10(
+                np.maximum(np.abs(d_nu_s["S11"][idx_n][m_bn]) ** 2, 1e-12)
+            )
+            lbl_n = f"Graded non-uniform Kottke ({int(d_nu_s['n_cells']):,} cells)"
+            ax0.plot(w_sn[m_bn], t_db_n, color="#e7298a", ls="-.", lw=1.9, label=lbl_n)
+            ax1.plot(w_sn[m_bn], r_db_n, color="#e7298a", ls="-.", lw=1.9, label=lbl_n)
+
         d_ref = tasks_data["kottke_reference"]
         w_r = d_ref["wavelengths"] * 1e9
         idx_r = np.argsort(w_r)
@@ -2387,7 +2606,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title="(a) Insertion loss: resolved ladder vs under-resolved warning",
         )
         ax0.grid(True, ls=":", alpha=0.4)
-        ax0.legend(loc="lower right", fontsize=6.8)
+        ax0.legend(loc="lower right", fontsize=6.4)
 
         ax1.set(
             xlabel="Wavelength λ [nm]",
@@ -2395,13 +2614,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title="(b) Return loss: resolved ladder vs under-resolved warning",
         )
         ax1.grid(True, ls=":", alpha=0.4)
-        ax1.legend(loc="best", fontsize=6.8)
-        fig.tight_layout()
-        fig.savefig(
-            fig_dir / "15_resolution_spectra_comparison.png",
-            dpi=150,
-            bbox_inches="tight",
-        )
+        ax1.legend(loc="best", fontsize=6.4)
+        figstyle.save(fig, fig_dir / "15_resolution_spectra_comparison.png")
         plt.close(fig)
 
     # 16. Output slot port time-domain waveform and exponential ring-down
@@ -2409,7 +2623,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         t_fs = primary["trace_t"] * 1e15
         ey_tr = primary["trace_Ey"]
         ey_norm = ey_tr / max(float(np.max(np.abs(ey_tr))), 1e-30)
-        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(10.6, 3.8), dpi=150)
+        fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=10.6, height=3.8)
         ax0.plot(t_fs, ey_norm, color="#2b5c8f", lw=1.4)
         ax0.set(
             xlabel="Time t [fs]",
@@ -2433,11 +2647,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         ax1.grid(True, which="both", ls=":", alpha=0.4)
         ax1.legend(loc="upper right", fontsize=8.5)
-        fig.tight_layout()
-        fig.savefig(fig_dir / "16_port_time_trace.png", dpi=150, bbox_inches="tight")
+        figstyle.save(fig, fig_dir / "16_port_time_trace.png")
         plt.close(fig)
 
-    print(f"Rendered 16 figures in {fig_dir}")
+    print(f"Rendered 20 figures in {fig_dir}")
 
 
 # %% [markdown]

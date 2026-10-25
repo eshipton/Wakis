@@ -21,5 +21,9 @@
   "n_steps": 11051,
   "elapsed_s": 78.252,
   "peak_rss_mb": 512.55,
-  "npz_bytes": 6807
+  "npz_bytes": 6807,
+  "nonuniform": false,
+  "du_lead_nm": 26.549,
+  "du_clad_max_nm": 26.549,
+  "aspect_ratio_lead": 1.0
 }
