@@ -1084,7 +1084,10 @@ def plot_00_setup_schematic(d0: Any, fig_dir: Path) -> Path:
     )
     for txt in ax_a.texts:
         if "1 ·" in txt.get_text():
-            txt.set_position((24.0, 18.0))
+            txt.set_position((0.0, 55.0))
+            txt.set_ha("center")
+        elif txt.get_text() == "CPML" and txt.get_position()[0] > 200.0:
+            txt.set_position((405.0, -145.0))
             txt.set_ha("left")
     figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 

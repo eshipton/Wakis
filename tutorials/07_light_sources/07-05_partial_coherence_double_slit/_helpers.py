@@ -1310,11 +1310,43 @@ def overlay_double_slit_geometry(
 class _RepCoord(np.ndarray):
     """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 class _LineStart(float):
@@ -1572,6 +1604,128 @@ def save_double_slit_setup_figures(
         variations=variations_ag,
         suffix="_gsm_silver",
     )
+
+    from wakis import figstyle
+
+    fig_a_vcz, ax_a_vcz = schematic.plot_schematic(
+        solver_vcz,
+        plane="xy",
+        structures=boxes_vcz,
+        material_names={"background": "Vacuum / Air (n = 1.00)"},
+        sources=[src_vcz],
+        monitors=[mon_slit, mon_det],
+        wavelength=wavelength,
+        title="Young's Double Slit — Method A: Extended Incoherent Strip Source (N_s = 37 Dipoles)",
+        width_in=10.2,
+        height_in=5.8,
+    )
+    for txt in list(ax_a_vcz.texts):
+        t_str = txt.get_text().strip()
+        x_t, _ = txt.get_position()
+        if t_str == "1 · VCZ strip (37)":
+            txt.set_position((0.0, -5.8))
+            txt.set_fontsize(7.2)
+        elif t_str == "2 · Slit DFT":
+            txt.set_position((0.0, 1.35))
+            txt.set_fontsize(7.4)
+        elif t_str == "3 · Detector DFT":
+            txt.set_position((0.0, 4.65))
+            txt.set_fontsize(7.2)
+        elif t_str == "CPML" and x_t > 4.0:
+            txt.set_position((7.85, -3.5))
+            txt.set_horizontalalignment("left")
+        elif "10.4" in t_str:
+            txt.set_position((0.0, 9.2))
+    ax_a_vcz.set_title(ax_a_vcz.get_title(), pad=46)
+    figstyle.save(fig_a_vcz, paths_vcz["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_a_ag, ax_a_ag = schematic.plot_schematic(
+        solver_ag,
+        plane="xy",
+        structures=boxes_ag,
+        material_names={"background": "Vacuum / Air (n = 1.00)"},
+        sources=[src_gsm],
+        monitors=[mon_slit_ag, mon_det_ag],
+        wavelength=wavelength,
+        title="Young's Double Slit — Methods B & C: GSM Mercer Eigenmodes & Drude Ag Screen",
+        width_in=10.2,
+        height_in=5.8,
+    )
+    for txt in list(ax_a_ag.texts):
+        t_str = txt.get_text().strip()
+        x_t, _ = txt.get_position()
+        if t_str == "1 · GSM modes (+y)":
+            txt.set_position((0.35, -0.55))
+            txt.set_fontsize(7.4)
+        elif t_str == "2 · Slit DFT":
+            txt.set_position((0.0, 0.72))
+            txt.set_fontsize(7.4)
+        elif t_str == "3 · Detector DFT":
+            txt.set_position((0.0, 5.15))
+            txt.set_fontsize(7.4)
+        elif t_str == "" and getattr(txt, "xy", None) is not None and txt.xy[0] < -3.0:
+            txt.xy = (-3.2, -0.32)
+            txt.set_position((-3.2, -1.00))
+        elif t_str == "CPML" and x_t > 3.5:
+            txt.set_position((7.10, 0.8))
+            txt.set_horizontalalignment("left")
+        elif "9.40" in t_str:
+            txt.set_position((0.0, 7.85))
+    ax_a_ag.set_title(ax_a_ag.get_title(), pad=46)
+    figstyle.save(fig_a_ag, paths_ag["geometry_figure"], close=True, auto_legend_below=False)
+
+    for solver_b, structs_b, src_b, mons_b, min_f_b, title_b, path_b, zoom_lbl in (
+        (
+            solver_vcz,
+            boxes_vcz,
+            [src_vcz],
+            [mon_slit, mon_det],
+            0.20e-6,
+            "Young's Double Slit (Method A): Interface-Snapped Mesh & TM Line-Dipole Excitation",
+            paths_vcz["mesh_figure"],
+            "1× zoom\n(Δx = 25 nm)",
+        ),
+        (
+            solver_ag,
+            boxes_ag,
+            [src_gsm],
+            [mon_slit_ag, mon_det_ag],
+            skin_e_m,
+            "Young's Double Slit (Methods B & C): Graded Ag Skin-Depth Mesh & Broadband Excitation",
+            paths_ag["mesh_figure"],
+            "1× zoom\n(Δx = 2.88 nm)",
+        ),
+    ):
+        fig_b, _ = schematic.plot_mesh_and_excitation(
+            solver_b,
+            plane="xy",
+            structures=structs_b,
+            material_names={"background": "Vacuum / Air (n = 1.00)"},
+            sources=src_b,
+            monitors=mons_b,
+            wavelength=wavelength,
+            min_feature=min_f_b,
+            title=title_b,
+        )
+        all_axes_b = list(fig_b.axes)
+        for ax_sub in list(fig_b.axes):
+            all_axes_b.extend(getattr(ax_sub, "child_axes", []))
+        for ax_sub in all_axes_b:
+            for txt in list(ax_sub.texts):
+                t_str = txt.get_text().strip()
+                if "zoom" in t_str:
+                    txt.set_text(zoom_lbl)
+                    txt.set_position((-0.10, 0.55))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("center")
+                    txt.set_fontsize(6.8)
+                elif t_str == "s(t) [fs]":
+                    txt.set_text("s(t)\n[fs]")
+                    txt.set_position((0.98, 0.96))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("top")
+                    txt.set_fontsize(5.8)
+        figstyle.save(fig_b, path_b, close=True, auto_legend_below=False)
 
     return {"vcz": paths_vcz, "gsm_silver": paths_ag}
 

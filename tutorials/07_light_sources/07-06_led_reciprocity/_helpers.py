@@ -3783,11 +3783,43 @@ def overlay_reciprocity_led_geometry(
 class _RepCoord(np.ndarray):
     """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 class _LineStart(float):
@@ -4024,6 +4056,122 @@ def save_reciprocity_setup_figures(
         variations=variations_rec,
         suffix="_reciprocal",
     )
+
+    from wakis import figstyle
+
+    fig_a_fwd, ax_a_fwd = schematic.plot_schematic(
+        solver,
+        plane="xy",
+        structures=structures,
+        material_names={"background": "Air cladding (n = 1.00)"},
+        sources=[src_fwd],
+        monitors=[mon_fwd],
+        wavelength=lam0,
+        title="Thin-Film GaN LED — Forward Setup: Direct Incoherent QW Dipole Ensemble (75 Runs)",
+        width_in=10.5,
+        height_in=5.0,
+    )
+    for txt in list(ax_a_fwd.texts):
+        t_str = txt.get_text().strip()
+        if t_str == "1 · QW dipoles (25×3=75)":
+            txt.remove()
+            ax_a_fwd.annotate(
+                "1 · QW dipoles (25×3=75)",
+                xy=(0.38, y_emit * 1e6),
+                xytext=(0.56, 0.305),
+                ha="center",
+                va="center",
+                fontsize=7.2,
+                color="#b91c1c",
+                fontweight="semibold",
+                bbox=dict(
+                    boxstyle="round,pad=0.08",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.88,
+                ),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color="#b91c1c",
+                    lw=0.85,
+                    shrinkA=2,
+                    shrinkB=2,
+                ),
+                zorder=9,
+            )
+        elif "2.70" in t_str:
+            txt.set_position((0.0, 0.75))
+    ax_a_fwd.set_title(ax_a_fwd.get_title(), pad=46)
+    figstyle.save(fig_a_fwd, paths_fwd["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_a_rec, ax_a_rec = schematic.plot_schematic(
+        solver,
+        plane="xy",
+        structures=structures,
+        material_names={"background": "Air cladding (n = 1.00)"},
+        sources=[src_rec],
+        monitors=[mon_rec],
+        wavelength=lam0,
+        title="Thin-Film GaN LED — Reciprocal Setup: Downward Huygens Plane Wave (1 Run / Angle)",
+        width_in=10.5,
+        height_in=5.0,
+    )
+    for txt in list(ax_a_rec.texts):
+        t_str = txt.get_text().strip()
+        if t_str == "2 · Active-QW DFT":
+            txt.set_position((0.0, 0.102))
+            txt.set_fontsize(7.2)
+        elif t_str == "" and getattr(txt, "xy", None) is not None and txt.xy[0] < -1.0:
+            txt.xy = (-0.95, 0.275)
+            txt.set_position((-0.90, y_mon * 1e6))
+        elif "2.70" in t_str:
+            txt.set_position((0.0, 0.75))
+    ax_a_rec.set_title(ax_a_rec.get_title(), pad=46)
+    figstyle.save(fig_a_rec, paths_rec["geometry_figure"], close=True, auto_legend_below=False)
+
+    for src_b, mon_b, title_b, path_b in (
+        (
+            [src_fwd],
+            [mon_fwd],
+            "Thin-Film GaN LED (Forward): Graded Ag Skin-Depth Mesh & QW Dipole Excitation",
+            paths_fwd["mesh_figure"],
+        ),
+        (
+            [src_rec],
+            [mon_rec],
+            "Thin-Film GaN LED (Reciprocal): Graded Ag Skin-Depth Mesh & Plane-Wave Excitation",
+            paths_rec["mesh_figure"],
+        ),
+    ):
+        fig_b, _ = schematic.plot_mesh_and_excitation(
+            solver,
+            plane="xy",
+            structures=structures,
+            material_names={"background": "Air cladding (n = 1.00)"},
+            sources=src_b,
+            monitors=mon_b,
+            wavelength=lam0,
+            min_feature=skin_depth,
+            title=title_b,
+        )
+        all_axes_b = list(fig_b.axes)
+        for ax_sub in list(fig_b.axes):
+            all_axes_b.extend(getattr(ax_sub, "child_axes", []))
+        for ax_sub in all_axes_b:
+            for txt in list(ax_sub.texts):
+                t_str = txt.get_text().strip()
+                if "zoom" in t_str:
+                    txt.set_position((-0.08, 0.65))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("center")
+                    txt.set_fontsize(7.2)
+                elif t_str == "s(t) [fs]":
+                    txt.set_text("s(t)\n[fs]")
+                    txt.set_position((0.98, 0.96))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("top")
+                    txt.set_fontsize(5.8)
+        figstyle.save(fig_b, path_b, close=True, auto_legend_below=False)
 
     return {"forward": paths_fwd, "reciprocal": paths_rec}
 

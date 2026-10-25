@@ -2496,7 +2496,8 @@ def _draw_schematic_panel(
                 markeredgewidth=0.6,
                 zorder=8,
             )
-            tx, ty = sh0 + 0.03 * dh, v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            # Tag next to the marker itself, not in a fixed lane (which can fall in another layer).
+            tx, ty = sh0 + 0.03 * dh, yv_pt + (0.08 if yv_pt < v0 + 0.85 * dv else -0.08) * dv
             leg_handle = plt.Line2D(
                 [0],
                 [0],

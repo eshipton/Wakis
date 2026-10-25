@@ -2866,7 +2866,7 @@ def plot_sws_setup_schematic(
         variations=variations_2d,
     )
 
-    # Enhance 00a_setup_geometry.png with vane/groove dimensions, sheet-beam sync region, and Floquet phase callout
+    # Enhance 00a_setup_geometry.png with vane/groove dimensions, sheet-beam sync region, and clear non-overlapping tags
     fig_a, ax_a = schematic.plot_schematic(
         solver_proxy,
         plane="zy",
@@ -2876,12 +2876,12 @@ def plot_sws_setup_schematic(
         unit="µm",
         freq=120e9,
     )
+    fig_a.set_size_inches(6.6, 5.2)
+    ax_a.set_aspect(0.82, adjustable="box")
+    ax_a.spines["left"].set_position(("outward", 54))
     d_um = d * 1e6
     g_um = g * 1e6
     hb_um = hb * 1e6
-    h_um = h_v * 1e6
-    l_um = l_vane * 1e6
-    b_um = b * 1e6
 
     # Shade beam tunnel and 20 kV sheet electron beam region
     ax_a.axhspan(-g_um, +g_um, color="#FEF3C7", alpha=0.42, zorder=1.5)
@@ -2889,35 +2889,60 @@ def plot_sws_setup_schematic(
     ax_a.axhline(-g_um, color="#B45309", ls="--", lw=0.95, zorder=4)
     ax_a.axhline(+g_um, color="#B45309", ls="--", lw=0.95, zorder=4)
 
-    # Reposition source/monitor tags cleanly so each sits on its own object without overlap
-    for txt in ax_a.texts:
+    tag_bbox = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": 0.92,
+    }
+    for txt in list(ax_a.texts):
         t_str = txt.get_text()
-        if "1 · dipole" in t_str:
-            txt.set_position((250.0, +68.0))
-        elif "2 · harminv" in t_str:
-            txt.set_position((165.0, -52.0))
-        elif "3 · DFT cell" in t_str:
-            txt.set_position((185.0, +330.0))
-
-    # Place vane/groove & Floquet callout in the open margin to the right of the unit cell
+        if t_str.startswith(("1 ·", "2 ·", "3 ·")):
+            txt.remove()
+        elif t_str == "Bloch":
+            if txt.get_position()[0] < 250.0:
+                txt.set_position((-16.0, 0.0))
+                txt.set_ha("right")
+            else:
+                txt.set_position((585.0, -165.0))
+                txt.set_ha("left")
     ax_a.text(
-        1.58,
-        0.52,
-        "SWS Cold-Test Unit Cell:\n"
-        "• Period d = 500 µm, groove s = 400 µm\n"
-        "• Staggered PEC vanes: l = 100 µm, h = 300 µm\n"
-        "  (bottom z₁ = d/4, top z₂ = 3d/4, glide +d/2)\n"
-        "• Beam tunnel 2a = 200 µm (20 kV beam, H_b = 150 µm)\n"
-        "• Floquet–Bloch ±z faces: Δφ = β₀d = 0.5π rad\n"
-        "• ±x faces: Periodic (2D) / PEC a = 850 µm (3D)",
-        transform=ax_a.transAxes,
-        ha="left",
+        160.0,
+        332.0,
+        "3 · DFT cell",
+        ha="center",
         va="center",
-        fontsize=7.6,
-        color="#1E293B",
-        bbox=dict(boxstyle="round,pad=0.28", facecolor="#F8FAFC", edgecolor="#94A3B8", lw=0.8),
-        clip_on=False,
-        zorder=9,
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        zorder=8,
+    )
+    ax_a.annotate(
+        "1 · dipole Jz,Jy",
+        xy=(210.0, 25.0),
+        xytext=(165.0, 195.0),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#c2410c",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#c2410c", "lw": 1.1, "shrinkA": 2, "shrinkB": 4},
+        zorder=8,
+    )
+    ax_a.annotate(
+        "2 · harminv",
+        xy=(70.0, 0.0),
+        xytext=(330.0, -205.0),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 2, "shrinkB": 4},
+        zorder=8,
     )
     figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
 
@@ -2938,8 +2963,14 @@ def plot_sws_setup_schematic(
     ax_mesh_b = axes_b[0]
     for ch_ax in getattr(ax_mesh_b, "child_axes", []):
         ch_ax.set_axes_locator(
-            _TransformedBoundsLocator([1.14, 0.08, 1.24, 0.82], ax_mesh_b.transAxes)
+            _TransformedBoundsLocator([1.18, 0.08, 1.18, 0.80], ax_mesh_b.transAxes)
         )
+        for txt in ch_ax.texts:
+            if "zoom" in txt.get_text():
+                txt.set_transform(ch_ax.transAxes)
+                txt.set_position((0.0, 1.03))
+                txt.set_ha("left")
+                txt.set_va("bottom")
     figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
 
     # Companion setup pair (_marosi) for the 3D V-Band Staggered-Pillar SWS (Tasks 10–11)
@@ -3045,6 +3076,10 @@ def plot_sws_setup_schematic(
         min_feature=marosi_spec.min_feature_m,
         variations=[
             {
+                "name": "Housing, pillar & sheet-beam geometry (Marosi 2022)",
+                "details": "Housing 1.40 × 0.80 × 1.05 mm³ (PEC ±x, ±y), pillars w = 1.08 mm × l = 270 µm × t = 100 µm (−x pair at z₁ = d/4, +x pair at z₂ = 3d/4), tunnel |y| ≤ 150 µm (5.2 kV sheet beam)",
+            },
+            {
                 "name": "Glide vs broken-glide symmetry (Tasks 10–11)",
                 "details": "Glide-symmetric (+x pillars at z₂ = 3d/4, gapless at β_n d = 3π, f = 60.86 GHz) vs mirror control (17.81 GHz stopband)",
             },
@@ -3060,31 +3095,56 @@ def plot_sws_setup_schematic(
         unit="µm",
         freq=60e9,
     )
-    for txt in ax_a_m.texts:
+    fig_a_m.set_size_inches(6.8, 4.9)
+    ax_a_m.spines["left"].set_position(("outward", 54))
+    for txt in list(ax_a_m.texts):
         t_str = txt.get_text()
-        if "1 · dipole" in t_str:
-            txt.set_position((620.0, +58.0))
-        elif "2 · harminv" in t_str:
-            txt.set_position((260.0, -78.0))
-        elif "3 · DFT cell" in t_str:
-            txt.set_position((525.0, +315.0))
+        if t_str.startswith(("1 ·", "2 ·", "3 ·")):
+            txt.remove()
+        elif t_str == "Bloch":
+            if txt.get_position()[0] < 500.0:
+                txt.set_position((-28.0, 0.0))
+                txt.set_ha("right")
+            else:
+                txt.set_position((1245.0, -165.0))
+                txt.set_ha("left")
     ax_a_m.text(
-        1.34,
-        0.50,
-        "3D V-Band Staggered-Pillar SWS:\n"
-        "• Housing: 1.40 × 0.80 × 1.05 mm³ (PEC ±x, ±y)\n"
-        "• Pillars: w = 1.08 mm, l = 270 µm, t = 100 µm\n"
-        "  (−x pair at z₁ = d/4, +x pair at z₂ = 3d/4)\n"
-        "• Tunnel |y| ≤ 150 µm (5.2 kV sheet beam)\n"
-        "• Floquet–Bloch ±z faces: Δφ = β₀d",
-        transform=ax_a_m.transAxes,
-        ha="left",
+        525.0,
+        315.0,
+        "3 · DFT cell",
+        ha="center",
         va="center",
-        fontsize=7.4,
-        color="#1E293B",
-        bbox=dict(boxstyle="round,pad=0.26", facecolor="#F8FAFC", edgecolor="#94A3B8", lw=0.8),
-        clip_on=False,
-        zorder=9,
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        zorder=8,
+    )
+    ax_a_m.annotate(
+        "1 · dipole Jz,Jy",
+        xy=(420.0, 20.0),
+        xytext=(690.0, 68.0),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#c2410c",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#c2410c", "lw": 1.1, "shrinkA": 2, "shrinkB": 4},
+        zorder=8,
+    )
+    ax_a_m.annotate(
+        "2 · harminv",
+        xy=(150.0, 0.0),
+        xytext=(310.0, -82.0),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 2, "shrinkB": 4},
+        zorder=8,
     )
     figstyle.save(fig_a_m, res_m["geometry_figure"], close=True, auto_legend_below=False)
 
@@ -3107,5 +3167,11 @@ def plot_sws_setup_schematic(
         ch_ax.set_axes_locator(
             _TransformedBoundsLocator([1.08, 0.08, 0.88, 0.82], ax_mesh_bm.transAxes)
         )
+        for txt in ch_ax.texts:
+            if "zoom" in txt.get_text():
+                txt.set_transform(ch_ax.transAxes)
+                txt.set_position((0.5, 1.03))
+                txt.set_ha("center")
+                txt.set_va("bottom")
     figstyle.save(fig_b_m, res_m["mesh_figure"], close=True, auto_legend_below=False)
     return res["geometry_figure"]

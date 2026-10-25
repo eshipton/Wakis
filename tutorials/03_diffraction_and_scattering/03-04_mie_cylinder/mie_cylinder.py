@@ -534,6 +534,73 @@ def plot_setup_schematic(res_per_um=20.0):
             },
         ],
     )
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_s,
+        plane="xy",
+        structures=[cyl_struct],
+        material_names={"cylinder": "Dielectric cylinder (n = 2)"},
+        sources=[src],
+        monitors=mon_boxes,
+        unit="µm",
+        title="Cartesian 2D Mie cylinder setup (TF/SF + FluxMonitor, XY plane)",
+    )
+    fig_a.set_size_inches(7.2, 4.4)
+    for txt in list(ax_a.texts):
+        if txt.get_text().startswith(("1 ·", "2 ·", "3 ·")):
+            txt.remove()
+        elif txt.get_text() == "CPML" and txt.get_position()[0] > 2.0:
+            txt.set_position((3.45, -1.25))
+            txt.set_ha("left")
+    tag_bbox = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": 0.92,
+    }
+    tfsf_um = lay_s["tf"] * 1e6
+    flux_um = lay_s["flux"] * 1e6
+    inner_um = lay_s["inner"] * 1e6
+    ax_a.annotate(
+        "2 · flux",
+        xy=(-1.05, flux_um),
+        xytext=(-1.05, 1.78),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 1, "shrinkB": 1},
+        zorder=8,
+    )
+    ax_a.annotate(
+        "1 · TFSF",
+        xy=(1.00, tfsf_um),
+        xytext=(1.00, 1.78),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#c2410c",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#c2410c", "lw": 1.1, "shrinkA": 1, "shrinkB": 1},
+        zorder=8,
+    )
+    ax_a.annotate(
+        "3 · flux",
+        xy=(0.0, -inner_um),
+        xytext=(0.0, -1.78),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 1, "shrinkB": 1},
+        zorder=8,
+    )
+    figstyle.save(fig_a, FIG_DIR / "00a_setup_geometry.png")
+    plt.close(fig_a)
 
     r_out = 2.7e-6
     tri_s = disk_mesh([A_CYL, r_out], 0.22e-6)
@@ -589,6 +656,36 @@ def plot_setup_schematic(res_per_um=20.0):
             },
         ],
     )
+    fig_u, ax_u = schematic.plot_schematic(
+        solver_tri,
+        plane="xy",
+        structures=[cyl_struct],
+        sources=[tri_src],
+        monitors=[tri_mon],
+        unit="µm",
+        title="Unstructured 2D Mie cylinder setup (Voronoi-dual triangles, XY plane)",
+    )
+    for txt in list(ax_u.texts):
+        if txt.get_text().startswith("2 ·"):
+            txt.remove()
+        elif txt.get_text() == "Mur ABC" and txt.get_position()[0] > 2.0:
+            txt.set_position((3.65, -1.35))
+            txt.set_ha("left")
+    ax_u.annotate(
+        "2 · rings",
+        xy=(0.0, -2.20),
+        xytext=(0.0, -1.65),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 1, "shrinkB": 1},
+        zorder=8,
+    )
+    figstyle.save(fig_u, FIG_DIR / "00a_setup_geometry_unstructured.png")
+    plt.close(fig_u)
 
 
 if not ARGS.arm:

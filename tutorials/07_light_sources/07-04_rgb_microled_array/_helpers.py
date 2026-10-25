@@ -2097,11 +2097,43 @@ def overlay_rgb_geometry(
 class _RepCoord(np.ndarray):
     """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 class _LineStart(float):
@@ -2319,6 +2351,151 @@ def save_rgb_setup_figures(
         variations=variations_rec,
         suffix="_dual_routing",
     )
+
+    from wakis import figstyle
+
+    fig_a_fwd, ax_a_fwd = schematic.plot_schematic(
+        fwd["solver"],
+        plane="xy",
+        structures=structs_fwd,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src_ens],
+        monitors=[mon_n2f],
+        wavelength=RGB_MATERIALS["G"]["wavelength_m"],
+        title="3-Pixel RGB Micro-LED Array — Forward 20-Dipole Incoherent Emission Setup (Tasks 0–3, 5–9)",
+        width_in=10.5,
+        height_in=5.2,
+    )
+    for txt in list(ax_a_fwd.texts):
+        t_str = txt.get_text().strip()
+        if t_str == "1 · MQW dipoles (5×4)":
+            txt.remove()
+            ax_a_fwd.annotate(
+                "1 · MQW dipoles\n(5×4)",
+                xy=(0.0, -0.38),
+                xytext=(0.0, -0.78),
+                ha="center",
+                va="center",
+                fontsize=6.5,
+                color="#b91c1c",
+                fontweight="semibold",
+                bbox=dict(
+                    boxstyle="round,pad=0.08",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.88,
+                ),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color="#b91c1c",
+                    lw=0.85,
+                    shrinkA=2,
+                    shrinkB=2,
+                ),
+                zorder=9,
+            )
+        elif "5.70" in t_str:
+            txt.set_position((0.0, 0.90))
+    ax_a_fwd.set_title(ax_a_fwd.get_title(), pad=46)
+    figstyle.save(fig_a_fwd, paths_fwd["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_a_rec, ax_a_rec = schematic.plot_schematic(
+        rec["solver"],
+        plane="xy",
+        structures=structs_rec,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src_pw],
+        monitors=mons_rec,
+        wavelength=RGB_MATERIALS["G"]["wavelength_m"],
+        title="3-Pixel RGB Micro-LED Array — Reciprocal Plane-Wave Color-Routing Setup (Task 4)",
+        width_in=10.5,
+        height_in=5.2,
+    )
+    mon_x_map = {"2 · Mon M_B": -1.50, "3 · Mon M_G": 0.00, "4 · Mon M_R": 1.50}
+    for txt in list(ax_a_rec.texts):
+        t_str = txt.get_text().strip()
+        if t_str in mon_x_map:
+            xm = mon_x_map[t_str]
+            txt.remove()
+            ax_a_rec.annotate(
+                t_str,
+                xy=(xm, -0.30),
+                xytext=(xm, -0.76),
+                ha="center",
+                va="center",
+                fontsize=6.8,
+                color="#047857",
+                fontweight="semibold",
+                bbox=dict(
+                    boxstyle="round,pad=0.08",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.88,
+                ),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color="#047857",
+                    lw=0.85,
+                    shrinkA=2,
+                    shrinkB=2,
+                ),
+                zorder=9,
+            )
+        elif t_str == "" and getattr(txt, "xy", None) is not None and txt.xy[0] < -2.0:
+            txt.xy = (-1.50, 0.12)
+            txt.set_position((-1.50, 0.35))
+        elif "5.70" in t_str:
+            txt.set_position((0.0, 0.90))
+    ax_a_rec.set_title(ax_a_rec.get_title(), pad=46)
+    figstyle.save(fig_a_rec, paths_rec["geometry_figure"], close=True, auto_legend_below=False)
+
+    for solver_b, structs_b, src_b, mons_b, title_b, path_b in (
+        (
+            fwd["solver"],
+            structs_fwd,
+            [src_ens],
+            [mon_n2f],
+            "3-Pixel RGB Micro-LED Array: Interface-Snapped Graded Mesh & Green MQW Excitation",
+            paths_fwd["mesh_figure"],
+        ),
+        (
+            rec["solver"],
+            structs_rec,
+            [src_pw],
+            mons_rec,
+            "3-Pixel RGB Micro-LED Array: Graded Mesh & Reciprocal Plane-Wave Excitation",
+            paths_rec["mesh_figure"],
+        ),
+    ):
+        fig_b, _ = schematic.plot_mesh_and_excitation(
+            solver_b,
+            plane="xy",
+            structures=structs_b,
+            material_names={"background": "Air superstrate (n = 1.00)"},
+            sources=src_b,
+            monitors=mons_b,
+            wavelength=RGB_MATERIALS["G"]["wavelength_m"],
+            min_feature=0.20e-6,
+            title=title_b,
+        )
+        all_axes_b = list(fig_b.axes)
+        for ax_sub in list(fig_b.axes):
+            all_axes_b.extend(getattr(ax_sub, "child_axes", []))
+        for ax_sub in all_axes_b:
+            for txt in list(ax_sub.texts):
+                t_str = txt.get_text().strip()
+                if "zoom" in t_str:
+                    txt.set_position((-0.08, 0.72))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("center")
+                    txt.set_fontsize(7.2)
+                elif t_str == "s(t) [fs]":
+                    txt.set_text("s(t)\n[fs]")
+                    txt.set_position((0.98, 0.96))
+                    txt.set_horizontalalignment("right")
+                    txt.set_verticalalignment("top")
+                    txt.set_fontsize(5.8)
+        figstyle.save(fig_b, path_b, close=True, auto_legend_below=False)
 
     return {"forward": paths_fwd, "dual_routing": paths_rec}
 

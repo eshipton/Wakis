@@ -1429,22 +1429,38 @@ def _plot_00_setup_schematics(fig_dir: Path) -> None:
             bbox=dict(boxstyle="round,pad=0.20", facecolor="#F5F3FF", edgecolor="#6D28D9", lw=0.8, alpha=0.94),
             zorder=9,
         )
-        # Position numbered tags and bottom boundary tag cleanly without overlaps
+        # Position numbered tags and boundary tags cleanly without overlaps
         for txt_obj in ax_a.texts:
             t_str = txt_obj.get_text()
             role = getattr(txt_obj, "_schematic_role", "")
             if t_str.startswith("1 ·"):
-                txt_obj.set_position((-3.25, 0.5 * w_cm + 0.45))
-                txt_obj.set_ha("right")
+                txt_obj.set_text("1 · J_z\nsrc")
+                txt_obj.set_fontsize(8.4)
+                txt_obj.set_position((-3.10, 3.10))
+                txt_obj.set_ha("center")
                 txt_obj.set_va("bottom")
             elif t_str.startswith("2 ·"):
-                txt_obj.set_position((0.5 * w_cm + 0.35, y_prb * 1e2))
+                txt_obj.set_text("2 · obj\nDFT")
+                txt_obj.set_fontsize(8.4)
+                txt_obj.set_position((1.50, y_prb * 1e2))
                 txt_obj.set_ha("left")
                 txt_obj.set_va("center")
             elif role == "boundary_bottom":
                 txt_obj.set_position((-3.2, -0.5 * L * 1e2 - 0.35))
                 txt_obj.set_ha("center")
                 txt_obj.set_va("top")
+            elif role == "boundary_right":
+                txt_obj.set_rotation(90)
+                txt_obj.set_position((0.5 * L * 1e2 + 0.38, 0.0))
+                txt_obj.set_ha("left")
+                txt_obj.set_va("center")
+        ax_a.annotate(
+            "",
+            xy=(x_src * 1e2, 0.5 * w_cm + 0.08),
+            xytext=(-3.45, 3.00),
+            arrowprops=dict(arrowstyle="->,head_width=0.18,head_length=0.22", color="#C85200", lw=1.1),
+            zorder=8.5,
+        )
         ax_a.spines["bottom"].set_position(("outward", 24))
 
         leg = ax_a.get_legend()
@@ -1547,8 +1563,23 @@ def _plot_00_setup_schematics(fig_dir: Path) -> None:
                 )
             )
             for ins_txt in child_ax.texts:
-                ins_txt.set_fontsize(8.4)
-                ins_txt.set_position((0.5, 0.93))
+                ins_txt.set_fontsize(8.0)
+                ins_txt.set_position((0.5, 1.03))
+                ins_txt.set_ha("center")
+                ins_txt.set_va("bottom")
+        for child_ax in axes_b[2].child_axes:
+            cy0, cy1 = child_ax.get_ylim()
+            child_ax.set_ylim(cy0, cy1 * 1.48)
+            child_ax.title.set_position((0.04, 0.94))
+            child_ax.title.set_ha("left")
+            child_ax.title.set_va("top")
+            child_ax.title.set_fontsize(7.6)
+            for ins_txt in child_ax.texts:
+                if "s(t)" in ins_txt.get_text():
+                    ins_txt.set_position((0.04, 0.94))
+                    ins_txt.set_ha("left")
+                    ins_txt.set_va("top")
+                    ins_txt.set_fontsize(7.6)
         figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
 
 

@@ -1410,7 +1410,7 @@ def build_sled_schematic_objects(
 ) -> dict:
     """Build lightweight solver/grid/source/monitor objects for tilted-facet schematic."""
     from types import SimpleNamespace
-    from wakis import GridFIT3D
+    from wakis import GridFIT3D, figstyle
 
     sim, geom_info = create_tilted_facet_simulation(
         theta_deg=theta_deg,
@@ -1485,7 +1485,7 @@ def build_incoherent_dipole_schematic_objects(
 ) -> dict:
     """Build lightweight solver/grid/source/monitor objects for the 9-dipole ensemble."""
     from types import SimpleNamespace
-    from wakis import GridFIT3D
+    from wakis import GridFIT3D, figstyle
 
     sim, geom_info = create_tilted_facet_simulation(
         theta_deg=0.0,
@@ -1815,11 +1815,43 @@ def overlay_sled_geometry(
 class _RepCoord(np.ndarray):
     """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 def save_sled_setup_figures(
@@ -1850,7 +1882,7 @@ def save_sled_setup_figures(
         Mapping ``{"tilted_facet": paths_1, "dipole_ensemble": paths_2}``.
     """
     from types import SimpleNamespace
-    from wakis import GridFIT3D
+    from wakis import GridFIT3D, figstyle
 
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -1943,6 +1975,71 @@ def save_sled_setup_figures(
         title_geometry="SLED Tilted Waveguide Facet (θ_t = 7°, λ/4 AR): Geometry, Sources & Monitors",
         title_mesh="SLED Tilted Waveguide Facet: Subpixel AR-Coating Mesh & 1.49 µm Excitation",
     )
+    tag_bbox = {
+        "boxstyle": "round,pad=0.14",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": 0.92,
+    }
+    fig_a1, ax_a1 = schematic.plot_schematic(
+        objs1["solver"],
+        plane="xy",
+        structures=structs1,
+        material_names=mat_names1,
+        sources=[src1],
+        monitors=[mon1_mode, mon1_n2f],
+        unit="µm",
+        title="SLED Tilted Waveguide Facet (θ_t = 7°, λ/4 AR): Geometry, Sources & Monitors",
+    )
+    fig_a1.set_size_inches(7.4, 5.0)
+    ax_a1.set_aspect(0.55, adjustable="box")
+    for txt in list(ax_a1.texts):
+        t_str = txt.get_text()
+        if t_str.startswith(("1 ·", "2 ·", "3 ·")):
+            txt.remove()
+        elif t_str == "CPML" and txt.get_position()[0] > 1.5:
+            txt.set_position((3.35, -3.20))
+            txt.set_ha("left")
+    ax_a1.annotate(
+        "1 · TE₀",
+        xy=(x_src * 1e6, 3.60),
+        xytext=(-1.30, 3.60),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#c2410c",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#c2410c", "lw": 1.1, "shrinkA": 2, "shrinkB": 2},
+        zorder=8,
+    )
+    ax_a1.annotate(
+        "2 · R_0m",
+        xy=(x_mon * 1e6, -3.40),
+        xytext=(-1.15, -3.40),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 2, "shrinkB": 2},
+        zorder=8,
+    )
+    ax_a1.annotate(
+        "3 · N2F",
+        xy=(x_n2f * 1e6, 1.80),
+        xytext=(-1.15, 1.80),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 2, "shrinkB": 2},
+        zorder=8,
+    )
+    figstyle.save(fig_a1, paths_1["geometry_figure"], close=True, auto_legend_below=False)
 
     # 2. Bimodal waveguide 9-dipole incoherent spontaneous-emission ensemble setup
     w2 = WIDTH_MM
@@ -2047,6 +2144,52 @@ def save_sled_setup_figures(
         title_geometry="SLED Bimodal Waveguide: 9-Dipole Incoherent Spontaneous-Emission Ensemble",
         title_mesh="SLED Bimodal Waveguide: Core Mesh & Dipole Excitation Spectrum",
     )
+    fig_a2, ax_a2 = schematic.plot_schematic(
+        solver2,
+        plane="xy",
+        structures=[core_box2],
+        material_names=mat_names2,
+        sources=[src2],
+        monitors=[mon2],
+        unit="µm",
+        title="SLED Bimodal Waveguide: 9-Dipole Incoherent Spontaneous-Emission Ensemble",
+    )
+    fig_a2.set_size_inches(7.4, 5.0)
+    ax_a2.set_aspect(0.75, adjustable="box")
+    for txt in list(ax_a2.texts):
+        t_str = txt.get_text()
+        if t_str.startswith(("1 ·", "2 ·")):
+            txt.remove()
+        elif t_str == "CPML" and txt.get_position()[0] > 2.5:
+            txt.set_position((5.35, -2.60))
+            txt.set_ha("left")
+    ax_a2.annotate(
+        f"1 · dipoles (×{n_dipoles})",
+        xy=(-1.00, float(y_rep[-1]) * 1e6),
+        xytext=(-1.20, 2.75),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#c2410c",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#c2410c", "lw": 1.1, "shrinkA": 2, "shrinkB": 3},
+        zorder=8,
+    )
+    ax_a2.annotate(
+        "2 · TE₀/TE₁",
+        xy=(1.00, -2.75),
+        xytext=(-1.10, -2.75),
+        ha="center",
+        va="center",
+        fontsize=8.5,
+        fontweight="bold",
+        color="#047857",
+        bbox=tag_bbox,
+        arrowprops={"arrowstyle": "->", "color": "#047857", "lw": 1.1, "shrinkA": 2, "shrinkB": 2},
+        zorder=8,
+    )
+    figstyle.save(fig_a2, paths_2["geometry_figure"], close=True, auto_legend_below=False)
 
     return {"tilted_facet": paths_1, "dipole_ensemble": paths_2}
 

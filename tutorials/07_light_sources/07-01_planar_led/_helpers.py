@@ -1672,14 +1672,46 @@ def overlay_ryu_stack(
 
 class _RepCoord(np.ndarray):
     """Coordinate array that plots all representative ensemble markers while returning
-    its first scalar coordinate when converted to ``float`` for tag placement.
+    its scalar tag coordinate for comparisons and arithmetic offsets.
     """
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 def save_planar_led_setup_figures(
@@ -1726,7 +1758,7 @@ def save_planar_led_setup_figures(
     src_base = info0["sources"][0]
 
     rep_x = _RepCoord([0.0, -1.05e-6, -0.50e-6, 0.50e-6, 1.05e-6])
-    rep_z = _RepCoord([-0.075e-6] * 5)
+    rep_z = _RepCoord([-0.075e-6] * 5, tag_pos=-0.34e-6)
 
     src_ens = dict(src_base)
     src_ens["h_bounds"] = (rep_x, 0.0)

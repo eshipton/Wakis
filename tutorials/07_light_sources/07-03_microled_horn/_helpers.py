@@ -1999,11 +1999,43 @@ def overlay_horn_geometry(
 class _RepCoord(np.ndarray):
     """Coordinate array that plots multiple markers while formatting as a scalar tag coordinate."""
 
-    def __new__(cls, vals):
-        return np.asarray(vals, dtype=float).view(cls)
+    def __new__(cls, vals, tag_pos: float | None = None):
+        obj = np.asarray(vals, dtype=float).view(cls)
+        obj._tag_pos = None if tag_pos is None else float(tag_pos)
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self._tag_pos = getattr(obj, "_tag_pos", None)
 
     def __float__(self) -> float:
+        if getattr(self, "_tag_pos", None) is not None:
+            return float(self._tag_pos)
         return float(np.asarray(self).flat[0])
+
+    def __mul__(self, other):
+        res = np.asarray(self, dtype=float) * float(other)
+        tp = None if getattr(self, "_tag_pos", None) is None else self._tag_pos * float(other)
+        return _RepCoord(res, tag_pos=tp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __lt__(self, other):
+        return float(self) < float(other)
+
+    def __gt__(self, other):
+        return float(self) > float(other)
+
+    def __add__(self, other):
+        return float(self) + float(other)
+
+    def __radd__(self, other):
+        return float(other) + float(self)
+
+    def __sub__(self, other):
+        return float(self) - float(other)
 
 
 def save_horn_setup_figures(
@@ -2114,7 +2146,7 @@ def save_horn_setup_figures(
 
     src = dict(info0["sources"][0])
     src["h_bounds"] = (_RepCoord(x_rep_ord), 0.0)
-    src["v_bounds"] = (_RepCoord(y_rep_ord), Y_QW_DEFAULT)
+    src["v_bounds"] = (_RepCoord(y_rep_ord, tag_pos=-0.12e-6), Y_QW_DEFAULT)
     src["short_word"] = "QW dipoles (17×3)"
     src["polarization"] = "TE (J_x, J_y) & TM (J_z)"
     src["pos_str"] = "y = 150 nm, M = 17 sites in x ∈ [-240, +240] nm (5 shown)"
@@ -2161,7 +2193,7 @@ def save_horn_setup_figures(
         },
     ]
 
-    return schematic.save_setup_figures(
+    res = schematic.save_setup_figures(
         solver_stub,
         fig_dir,
         plane="xy",
@@ -2175,5 +2207,87 @@ def save_horn_setup_figures(
         title_mesh="GaN MicroLED + dGRIN Micro-Horn: Graded Ag Skin-Depth Mesh & Blue QW Excitation",
         variations=variations,
     )
+
+    fig_a, ax_a = schematic.plot_schematic(
+        solver_stub,
+        plane="xy",
+        structures=structs,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src],
+        monitors=[mon],
+        title="GaN MicroLED with 6-Layer dGRIN Micro-Horn Collimator (Luce et al. 2026)",
+        width_in=10.0,
+        height_in=5.8,
+    )
+    for txt in list(ax_a.texts):
+        t_str = txt.get_text().strip()
+        x_t, y_t = txt.get_position()
+        if t_str == "1 · QW dipoles (17×3)":
+            txt.remove()
+            ax_a.annotate(
+                "1 · QW dipoles\n(17×3)",
+                xy=(0.24, 0.15),
+                xytext=(1.66, 0.72),
+                ha="center",
+                va="center",
+                fontsize=6.4,
+                color="#b91c1c",
+                fontweight="semibold",
+                bbox=dict(
+                    boxstyle="round,pad=0.08",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.88,
+                ),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color="#b91c1c",
+                    lw=0.85,
+                    shrinkA=2,
+                    shrinkB=2,
+                ),
+                zorder=9,
+            )
+        elif t_str == "CPML" and x_t > 2.0:
+            txt.set_position((3.53, 1.35))
+            txt.set_horizontalalignment("left")
+        elif "5.19" in t_str:
+            txt.set_position((0.0, 4.79))
+    ax_a.set_title(ax_a.get_title(), pad=48)
+    from wakis import figstyle
+
+    figstyle.save(fig_a, res["geometry_figure"], close=True, auto_legend_below=False)
+
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver_stub,
+        plane="xy",
+        structures=structs,
+        material_names={"background": "Air superstrate (n = 1.00)"},
+        sources=[src],
+        monitors=[mon],
+        wavelength=WL_0,
+        min_feature=delta_i,
+        title="GaN MicroLED + dGRIN Micro-Horn: Graded Ag Skin-Depth Mesh & Blue QW Excitation",
+    )
+    all_axes_b = list(fig_b.axes)
+    for ax_sub in list(fig_b.axes):
+        all_axes_b.extend(getattr(ax_sub, "child_axes", []))
+    for ax_sub in all_axes_b:
+        for txt in list(ax_sub.texts):
+            t_str = txt.get_text().strip()
+            if "zoom" in t_str:
+                txt.set_text("1× zoom\n(Δx = 3 nm)")
+                txt.set_position((-0.10, 0.50))
+                txt.set_horizontalalignment("right")
+                txt.set_verticalalignment("center")
+                txt.set_fontsize(7.0)
+            elif t_str == "s(t) [fs]":
+                txt.set_text("s(t)\n[fs]")
+                txt.set_position((0.98, 0.96))
+                txt.set_horizontalalignment("right")
+                txt.set_verticalalignment("top")
+                txt.set_fontsize(5.8)
+    figstyle.save(fig_b, res["mesh_figure"], close=True, auto_legend_below=False)
+    return res
 
 
