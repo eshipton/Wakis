@@ -1,0 +1,184 @@
+{
+  "example": "015_semiconductor_fp_laser.py",
+  "elapsed_seconds": 129.77605080604553,
+  "figures": [
+    "docs/img/semiconductor_gain_spectrum_and_alpha.png",
+    "docs/img/semiconductor_fp_laser_li_and_chirp.png"
+  ],
+  "slab_gain_spectrum": {
+    "abs_0.25Ntr": {
+      "g_center_fit_m_inv": -60016.4746284112,
+      "g_center_an_m_inv": -60014.24031763693,
+      "rel_err_t2": 5.2060649494136905e-05,
+      "rel_err_center": 3.722967686399188e-05
+    },
+    "trans_1.0Ntr": {
+      "g_center_fit_m_inv": 0.0,
+      "g_center_an_m_inv": 0.0,
+      "rel_err_t2": 0.0,
+      "rel_err_center": 0.0
+    },
+    "gain_2.5Ntr": {
+      "g_center_fit_m_inv": 120302.28272071802,
+      "g_center_an_m_inv": 120021.43993232388,
+      "rel_err_t2": 0.00010837747126275703,
+      "rel_err_center": 0.0023399385022584767
+    },
+    "log_2.5Ntr": {
+      "g_center_fit_m_inv": 73445.41376227015,
+      "g_center_an_m_inv": 73320.94342541114,
+      "rel_err_t2": 6.639646281503508e-05,
+      "rel_err_center": 0.0016976095920756308
+    }
+  },
+  "henry_alpha_factor": {
+    "alpha_2.0": {
+      "alpha_input": 2.0,
+      "alpha_measured": 1.999101097694588,
+      "rel_err": 0.0004494511527060041,
+      "dln_amp": [
+        0.0022541086075903477,
+        0.004511882007444365,
+        0.0067733191165740905
+      ],
+      "dphi_rad": [
+        0.0045078216263167775,
+        0.00901970827375049,
+        0.013535671356610157
+      ]
+    },
+    "alpha_4.0": {
+      "alpha_input": 4.0,
+      "alpha_measured": 3.9983298755079684,
+      "rel_err": 0.0004175311230079082,
+      "dln_amp": [
+        0.0022549835341550088,
+        0.004515374679543585,
+        0.00678112789092227
+      ],
+      "dphi_rad": [
+        0.009018074448210622,
+        0.018053957480331336,
+        0.027107700235325508
+      ]
+    },
+    "alpha_5.0": {
+      "alpha_input": 5.0,
+      "alpha_measured": 4.9996422940680265,
+      "rel_err": 7.154118639469686e-05,
+      "dln_amp": [
+        0.0022551032991812115,
+        0.004515829233442487,
+        0.006782080549593948
+      ],
+      "dphi_rad": [
+        0.011274810972632388,
+        0.022577530828307855,
+        0.03390824069829676
+      ]
+    }
+  },
+  "fabry_perot_li": {
+    "J_tr_A_per_m2": 75396547.48235293,
+    "J_th_theory_A_per_m2": 92872230.53933857,
+    "J_th_fit_A_per_m2": 92004647.2986704,
+    "J_th_rel_err": 0.009341686267572619,
+    "N_tr_m_inv3": 5e+19,
+    "N_th_m_inv3": 6.158917990314871e+19,
+    "eta_d_theory": 0.85,
+    "eta_d_fit": 0.8257315021041004,
+    "eta_d_rel_err": 0.028551173995175972,
+    "max_rel_err_N_clamped": 0.00690826133124541,
+    "max_rel_err_I_above": 0.0754260237127876,
+    "f_cold_THz": 249.64684333976766,
+    "Q_cold": 34.73202117434532,
+    "tau_p_cold_fs": 22.14237031607955,
+    "L_eff_dbr_m": 1.6616948293344724e-06,
+    "Gamma_z_dbr": 0.7221542601059988,
+    "L_pen_analytic_m": 3e-07,
+    "L_eff_analytic_dbr_m": 1.8e-06,
+    "Gamma_z_analytic_dbr": 0.6666666666666666,
+    "f_R_fit_THz": 3.3903681031827038,
+    "f_R_bare_THz": 3.9800917896534846,
+    "f_R_bare_rel_err": 0.14816836335378172,
+    "f_R_theory_THz": 3.3822684675717665,
+    "f_R_fit_rel_err": 0.0023947346843085668,
+    "f_R_analytic_lpen_THz": 3.2497313380305846,
+    "f_R_analytic_lpen_rel_err": 0.04327642827155936,
+    "r_excess": [
+      0.0,
+      0.4,
+      1.5,
+      2.0,
+      2.5,
+      3.0
+    ],
+    "I_fit_1_W_per_m2": [
+      8.894692513307772e-14,
+      5.197087153429713e-07,
+      3975655.40672992,
+      8252560.632446812,
+      11061764.166274654,
+      15463695.273782816
+    ],
+    "I_an_1_W_per_m2": [
+      0.0,
+      0.0,
+      3836879.7343938975,
+      7673759.468787795,
+      11510639.203181691,
+      15347518.93757559
+    ],
+    "N_clamped_m_inv3": [
+      4.999999999999998e+19,
+      5.463567164170152e+19,
+      6.116370575320067e+19,
+      6.147306463070667e+19,
+      6.196692186659298e+19,
+      6.1717289143509475e+19
+    ]
+  },
+  "modulation_and_chirp": {
+    "bias_factors": [
+      1.5,
+      2.0,
+      3.0,
+      4.0
+    ],
+    "f_R_theory_GHz": [
+      6.260404179066152,
+      8.853548495972554,
+      12.520808358132305,
+      15.334795822299482
+    ],
+    "f_R_numerical_GHz": [
+      6.258946992873526,
+      8.853432002714953,
+      12.521487086879452,
+      15.330136454319495
+    ],
+    "ode_f_R_linearization_rel_err": 0.00030384284433775707,
+    "ode_chirp_consistency_rel_err": 2.6970606838845067e-06,
+    "fit_chirp_slope_alpha_2p0": 0.1589729484905631,
+    "fit_chirp_slope_theory_alpha_2p0": 0.15915494309189535,
+    "fit_chirp_slope_rel_err_alpha_2p0": 0.0011435058050768161,
+    "fit_chirp_slope_alpha_3p5": 0.27853721961264005,
+    "fit_chirp_slope_theory_alpha_3p5": 0.2785211504108169,
+    "fit_chirp_slope_rel_err_alpha_3p5": 5.769472731056424e-05,
+    "fit_chirp_rms_alpha_0_GHz": 0.8632879157155136
+  },
+  "conservation_and_diffusion": {
+    "rel_err_bookkeeping_consistency": 6.529363365479764e-14,
+    "rel_err_poynting_alpha_0": 3.3136431361800167e-13,
+    "rel_err_poynting_alpha_3p5": 3.3389127353118546e-13,
+    "rel_err_poynting_uncorrected_alpha_3p5": 3.5289577802866323,
+    "dchi_work_joules_alpha_3p5": -3.096601729509156e-16,
+    "dchi_parametric_joules_alpha_3p5": 4.0641936509338074e-18,
+    "dchi_stored_joules_alpha_3p5": 3.1372436660184823e-16,
+    "dchi_parametric_bound_joules_alpha_3p5": 1.462946509268761e-17,
+    "rel_err_diffusion_mode": 1.6957014532060006e-07,
+    "rel_err_diffusion_sum": 2.6843545600000003e-16,
+    "final_photons_generated": 2392.5543879059005,
+    "final_carriers_removed": 2392.5543879058678
+  }
+}

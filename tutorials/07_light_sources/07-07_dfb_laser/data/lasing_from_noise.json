@@ -1,0 +1,93 @@
+{
+  "r_pump": 2.0,
+  "gamma_fwhm_thz": 12.0,
+  "d_gamma_L": 2.8294,
+  "tau_21_ps": 15.0,
+  "tau_10_fs": 20.0,
+  "tau_32_fs": 10.0,
+  "time_scale_main": 100.0,
+  "time_scaling_limits": {
+    "time_scale": 100.0,
+    "sat_rate_over_kappa_cav": 0.359,
+    "rate_21_over_kappa_cav": 0.3589,
+    "rate_21_over_gamma_a": 0.0884,
+    "gamma_a_over_rate_21": 11.31,
+    "max_rate_over_gamma_a": 132.63,
+    "s_max_cavity": 278.54,
+    "s_max_dephasing": 1130.97,
+    "s_max_fast_dephasing": 0.754,
+    "max_rate_dt": 1.078,
+    "s_max_cn_positivity": 185.53
+  },
+  "qws_savg_dn_clamped_over_th": 0.9662,
+  "qws_savg_dn_clamping_err_pct": 3.38,
+  "qws_shb_dn_mean_over_th": 1.2923,
+  "qws_shb_dn_center_over_th": 1.0911,
+  "qws_shb_I_out_over_Isat": 0.5184,
+  "qws_rigrod_sw_I_out_over_Isat": 0.5218,
+  "qws_shb_vs_rigrod_rel_err_pct": 0.64,
+  "qws_savg_I_out_over_Isat": 0.7438,
+  "qws_savg_theory_I_out_over_Isat": 0.6971,
+  "qws_savg_vs_theory_rel_err_pct": 6.69,
+  "qws_linear_I_out_over_Isat": 0.6083,
+  "qws_peak_delta_L": 0.0065,
+  "qws_smsr_db": 28.95,
+  "uni_peak_pos_delta_L": 2.4283,
+  "uni_peak_neg_delta_L": -2.5462,
+  "uni_half_splitting_delta_L": 2.4873,
+  "cwt_uni_delta_L": 3.3797,
+  "cwt_uni_disp_alpha0_L": 1.7578,
+  "cwt_uni_disp_delta_L": 2.5072,
+  "cwt_uni_disp_r_th": 1.7852,
+  "cwt_uni_lorentz_factor_cwt_edge": 0.4121,
+  "cwt_uni_lorentz_factor_disp_edge": 0.5602,
+  "uni_disp_delta_rel_err_pct": 0.79,
+  "uni_cwt_undisp_delta_rel_diff_pct": -26.41,
+  "buildup_gain_ratio": 22.49,
+  "late_clamping_ratio": 1.0491,
+  "time_scale_list": [
+    25.0,
+    50.0,
+    100.0
+  ],
+  "time_scale_dn_clamped": [
+    1.0082,
+    0.9646,
+    0.9662
+  ],
+  "time_scale_I_out_over_Isat": [
+    0.7571,
+    0.716,
+    0.7438
+  ],
+  "time_scale_dn_spread_pct": 4.45,
+  "time_scale_I_out_spread_pct": 5.56,
+  "elapsed_s": 99.8,
+  "fit_runs_log": [
+    {
+      "run": "noise_qws_savg_s100",
+      "wall_s": 16.075161081000033,
+      "rss_mb": 203.6171875
+    },
+    {
+      "run": "noise_qws_shb_s100",
+      "wall_s": 15.54215844700002,
+      "rss_mb": 205.953125
+    },
+    {
+      "run": "noise_uni_shb_s100",
+      "wall_s": 15.237351682000053,
+      "rss_mb": 207.328125
+    },
+    {
+      "run": "noise_qws_savg_s25",
+      "wall_s": 30.339254227999845,
+      "rss_mb": 209.62109375
+    },
+    {
+      "run": "noise_qws_savg_s50",
+      "wall_s": 22.58345142600001,
+      "rss_mb": 211.1875
+    }
+  ]
+}

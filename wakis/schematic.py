@@ -874,11 +874,19 @@ def _parse_monitor(
     v_span = abs(m_bounds[v_idx][1] - m_bounds[v_idx][0])
     kind = "probe" if (h_span < 1e-12 and v_span < 1e-12) else "plane"
     h_ax = "xyz"[h_idx]
-    if abs(m_bounds[h_idx][1] - m_bounds[h_idx][0]) < 1e-12:
+    v_ax = "xyz"[v_idx]
+    if abs(m_bounds[h_idx][1] - m_bounds[h_idx][0]) < 1e-12 and abs(m_bounds[v_idx][1] - m_bounds[v_idx][0]) < 1e-12:
         pos_str = f"{h_ax} = {_format_length(m_bounds[h_idx][0])}"
-    elif len(plane_axes) == 1:
+    elif abs(m_bounds[h_idx][1] - m_bounds[h_idx][0]) < 1e-12:
+        pos_str = f"{h_ax} = {_format_length(m_bounds[h_idx][0])}"
+    elif len(plane_axes) == 1 and plane_axes[0] != n_idx:
         ax_c = "xyz"[plane_axes[0]]
         pos_str = f"{ax_c} = {_format_length(m_bounds[plane_axes[0]][0])}"
+    elif h_span > 1e-12 and v_span > 1e-12 and abs(bounds[v_idx][1] - bounds[v_idx][0]) >= 0.15 * abs(bounds[h_idx][1] - bounds[h_idx][0]):
+        pos_str = (
+            f"{h_ax} ∈ [{_format_length(m_bounds[h_idx][0])}, {_format_length(m_bounds[h_idx][1])}], "
+            f"{v_ax} ∈ [{_format_length(m_bounds[v_idx][0])}, {_format_length(m_bounds[v_idx][1])}]"
+        )
     else:
         pos_str = f"{h_ax} ∈ [{_format_length(m_bounds[h_idx][0])}, {_format_length(m_bounds[h_idx][1])}]"
     short_w = "flux" if "Flux" in cls_name else ("DFT" if "DFT" in cls_name else "mon")
@@ -925,7 +933,11 @@ def _parse_probe(
     h_val = coords3[h_idx]
     v_val = coords3[v_idx]
     h_ax = "xyz"[h_idx]
-    pos_str = f"{h_ax} = {_format_length(h_val)}"
+    v_ax = "xyz"[v_idx]
+    if abs(bounds[v_idx][1] - bounds[v_idx][0]) >= 0.15 * abs(bounds[h_idx][1] - bounds[h_idx][0]):
+        pos_str = f"({h_ax}, {v_ax}) = ({_format_length(h_val)}, {_format_length(v_val)})"
+    else:
+        pos_str = f"{h_ax} = {_format_length(h_val)}"
     return {
         "kind": "probe",
         "type_name": "Probe",
@@ -1707,16 +1719,22 @@ def draw_mesh(
                 zh0, zh1, zv0, zv1 = zoom_bounds
             else:
                 if info["materials"]:
-                    z_center_h = info["materials"][0]["h_bounds"][0]
+                    m0 = info["materials"][0]
+                    if m0["kind"] == "circle":
+                        z_center_h = m0["center"][0] + m0["radius"]
+                        z_center_v = m0["center"][1]
+                    else:
+                        z_center_h = m0["h_bounds"][0]
+                        z_center_v = 0.5 * sum(info["v_bounds"])
                 else:
                     z_center_h = 0.5 * sum(info["h_bounds"])
-                z_center_v = 0.5 * sum(info["v_bounds"])
+                    z_center_v = 0.5 * sum(info["v_bounds"])
                 half_h = min(4.0 * dh_min, 0.12 * h_span)
                 half_v = min(4.0 * dv_min, 0.25 * v_span) if nv > 2 else 0.35 * v_span
                 zh0, zh1 = z_center_h - half_h, z_center_h + half_h
                 zv0, zv1 = z_center_v - half_v, z_center_v + half_v
 
-            ins = ax.inset_axes([0.74, 0.48, 0.23, 0.44])
+            ins = ax.inset_axes([0.68, 0.52, 0.29, 0.42])
             ins._is_inset = True
             ins.set_in_layout(False)
             ins.set_facecolor(figstyle.PAPER)
@@ -1733,6 +1751,31 @@ def draw_mesh(
                             (mh0, mv0),
                             mh1 - mh0,
                             mv1 - mv0,
+                            facecolor=mat["color"],
+                            edgecolor="#1E293B",
+                            lw=0.9,
+                            alpha=0.75,
+                        )
+                    )
+                elif mat["kind"] == "circle":
+                    cx, cy = mat["center"][0] * scale, mat["center"][1] * scale
+                    rad = mat["radius"] * scale
+                    ins.add_patch(
+                        Circle(
+                            (cx, cy),
+                            rad,
+                            facecolor=mat["color"],
+                            edgecolor="#1E293B",
+                            lw=0.9,
+                            alpha=0.75,
+                        )
+                    )
+                elif mat["kind"] == "polygon":
+                    verts = np.asarray(mat["vertices"], dtype=float) * scale
+                    ins.add_patch(
+                        Polygon(
+                            verts,
+                            closed=True,
                             facecolor=mat["color"],
                             edgecolor="#1E293B",
                             lw=0.9,
@@ -1756,7 +1799,7 @@ def draw_mesh(
                 transform=ins.transAxes,
                 ha="center",
                 va="top",
-                fontsize=9.2,
+                fontsize=7.6,
                 fontweight="bold",
                 color=figstyle.INK,
                 path_effects=_text_halo(2.4),
@@ -2197,7 +2240,10 @@ def _draw_schematic_panel(
                 zorder=3,
             )
             ax.add_patch(patch)
-            mat_leg = f"{mat['label']} (r = {_format_length(mat['radius'])})"
+            if "r =" in mat["label"].lower():
+                mat_leg = mat["label"]
+            else:
+                mat_leg = f"{mat['label']} (r = {_format_length(mat['radius'])})"
         elif mat["kind"] == "polygon":
             verts = np.asarray(mat["vertices"], dtype=float) * scale
             patch = Polygon(
@@ -2224,8 +2270,18 @@ def _draw_schematic_panel(
                 zorder=3,
             )
             ax.add_patch(patch)
-            thick_m = abs(mat["h_bounds"][1] - mat["h_bounds"][0])
-            mat_leg = f"{mat['label']} (d = {_format_length(thick_m)})"
+            thick_m = (
+                abs(mat["h_bounds"][1] - mat["h_bounds"][0])
+                if is_quasi_1d
+                else min(
+                    abs(mat["h_bounds"][1] - mat["h_bounds"][0]),
+                    abs(mat["v_bounds"][1] - mat["v_bounds"][0]),
+                )
+            )
+            if "(w =" in mat["label"] or "(d =" in mat["label"]:
+                mat_leg = mat["label"]
+            else:
+                mat_leg = f"{mat['label']} (d = {_format_length(thick_m)})"
 
         if mat_leg not in seen_mat_labels:
             seen_mat_labels.add(mat_leg)
@@ -2609,8 +2665,11 @@ def _draw_schematic_panel(
                 markeredgewidth=0.7,
                 zorder=8,
             )
-            tx = mh0
-            ty = (yv - 0.18 * dv) if is_quasi_1d else (v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv)
+            if is_quasi_1d:
+                tx, ty = mh0, yv - 0.18 * dv
+            else:
+                tx = mh0 + 0.03 * dh
+                ty = yv + (0.075 if yv < v0 + 0.85 * dv else -0.075) * dv
             leg_handle = plt.Line2D(
                 [0],
                 [0],
@@ -2625,10 +2684,27 @@ def _draw_schematic_panel(
             if yv_line is not None:
                 ax.plot([mh0, mh1], [yv_line, yv_line], color=mon_color, lw=1.9, ls="--", zorder=7)
                 tx = 0.5 * (mh0 + mh1)
+                ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            elif abs(mh1 - mh0) > 1e-9 * scale and abs(mv1 - mv0) > 1e-9 * scale:
+                # 2D area monitor in the cut plane: draw its bounding rectangle
+                ax.add_patch(
+                    Rectangle(
+                        (mh0, mv0),
+                        mh1 - mh0,
+                        mv1 - mv0,
+                        facecolor="none",
+                        edgecolor=mon_color,
+                        lw=1.7,
+                        ls="--",
+                        zorder=6,
+                    )
+                )
+                tx = mh0 + 0.22 * (mh1 - mh0)
+                ty = mv1 - 0.06 * dv
             else:
                 ax.plot([mh0, mh1], [mv0, mv1], color=mon_color, lw=1.9, ls="--", zorder=7)
                 tx = mh0
-            ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+                ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
             if yv_line is None and abs(mh1 - mh0) > 1e-9 * scale and abs(mv1 - mv0) < 1e-9 * scale:
                 # Horizontal line monitor: tag it at its own height, near the middle of the line.
                 tx, ty = 0.5 * (mh0 + mh1), mv0 + 0.07 * dv
@@ -3015,8 +3091,37 @@ def plot_mesh_and_excitation(
                     zorder=2,
                 )
             )
+        elif mat["kind"] == "circle":
+            cx, cy = mat["center"][0] * scale, mat["center"][1] * scale
+            rad = mat["radius"] * scale
+            ax_mesh.add_patch(
+                Circle(
+                    (cx, cy),
+                    rad,
+                    facecolor=mat["color"],
+                    edgecolor="#1E293B",
+                    lw=1.1,
+                    alpha=0.75,
+                    zorder=2,
+                )
+            )
+        elif mat["kind"] == "polygon":
+            verts = np.asarray(mat["vertices"], dtype=float) * scale
+            ax_mesh.add_patch(
+                Polygon(
+                    verts,
+                    closed=True,
+                    facecolor=mat["color"],
+                    edgecolor="#1E293B",
+                    lw=1.1,
+                    alpha=0.75,
+                    zorder=2,
+                )
+            )
     th_h_low = info["pml_thickness"][f"{h_ax}_low"] * scale
     th_h_high = info["pml_thickness"][f"{h_ax}_high"] * scale
+    th_v_low = info["pml_thickness"][f"{v_ax}_low"] * scale
+    th_v_high = info["pml_thickness"][f"{v_ax}_high"] * scale
     if th_h_low > 0.0:
         ax_mesh.add_patch(
             Rectangle(
@@ -3040,6 +3145,34 @@ def plot_mesh_and_excitation(
                 facecolor="#CBD5E1",
                 edgecolor="#64748B",
                 hatch="///",
+                alpha=0.35,
+                lw=0.8,
+                zorder=2,
+            )
+        )
+    if not is_quasi_1d and th_v_low > 0.0:
+        ax_mesh.add_patch(
+            Rectangle(
+                (h0, v0),
+                dh,
+                th_v_low,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="\\\\\\",
+                alpha=0.35,
+                lw=0.8,
+                zorder=2,
+            )
+        )
+    if not is_quasi_1d and th_v_high > 0.0:
+        ax_mesh.add_patch(
+            Rectangle(
+                (h0, v1 - th_v_high),
+                dh,
+                th_v_high,
+                facecolor="#CBD5E1",
+                edgecolor="#64748B",
+                hatch="\\\\\\",
                 alpha=0.35,
                 lw=0.8,
                 zorder=2,
@@ -3449,12 +3582,17 @@ def setup_table(
     for idx, mat in enumerate(info["materials"], start=1):
         mh0, mh1 = mat["h_bounds"]
         thick_m = abs(mh1 - mh0)
+        d_suffix = (
+            ""
+            if ("(d =" in mat["name"] or "(w =" in mat["name"])
+            else f" (d = {_format_length(thick_m)})"
+        )
         rows.append(
             (
                 "Material",
                 f"Region {idx}: {mat['name']}",
                 f"ε_r = {mat['eps_r']:.2f}, μ_r = {mat['mu_r']:.2f}, model = {mat['model']}, "
-                f"{h_ax} ∈ [{_format_length(mh0)}, {_format_length(mh1)}] (d = {_format_length(thick_m)})",
+                f"{h_ax} ∈ [{_format_length(mh0)}, {_format_length(mh1)}]{d_suffix}",
             )
         )
 

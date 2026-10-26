@@ -34,6 +34,8 @@ from .gain import (  # noqa: F401
     FourLevelGain,
     GainMaterial,
     SaturableGain,
+    SemiconductorGain,
+    adiabatic_chirp,
     amplified_intensity,
     dbr_reflectance,
     fabry_perot_laser_output,

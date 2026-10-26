@@ -1,0 +1,88 @@
+{
+  "phi_pts_deg": [
+    0.0,
+    45.0,
+    90.0,
+    135.0
+  ],
+  "fit_phi_alpha_L": [
+    0.976,
+    0.7762,
+    0.6967,
+    0.7822
+  ],
+  "cwt_phi_alpha_L": [
+    0.9847,
+    0.7799,
+    0.6971,
+    0.7799
+  ],
+  "fit_phi_delta_L": [
+    3.3063,
+    -1.9092,
+    -0.0111,
+    1.8634
+  ],
+  "cwt_phi_delta_L": [
+    -3.3797,
+    -1.8866,
+    -0.0,
+    1.8866
+  ],
+  "phi_45_splitting_fit_delta_L": 3.7726,
+  "phi_45_splitting_cwt_delta_L": 3.7732,
+  "kappa_pos_alpha_L": 0.6967,
+  "kappa_neg_asym_alpha_L": 0.6964,
+  "kappa_neg_asym_delta_L": -0.1704,
+  "kappa_neg_center_excited_alpha_L": 1.4074,
+  "kappa_neg_center_excited_delta_L": 5.0633,
+  "cwt_side_m1_alpha_L": 1.4298,
+  "cwt_side_m1_delta_L": 5.1577,
+  "kappa_pos_center_field_norm": 1.0,
+  "kappa_neg_center_field_norm": 0.0425,
+  "gain_off_I_out_over_Isat": 1.3176395808406739e-18,
+  "gain_off_decay_rate": 6962148374024.379,
+  "elapsed_s": 6.0,
+  "fit_runs_log": [
+    {
+      "run": "mut_phi_0deg",
+      "wall_s": 0.6872029220000968,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_phi_45deg",
+      "wall_s": 0.6875038000000586,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_phi_90deg",
+      "wall_s": 0.6946837000000414,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_phi_135deg",
+      "wall_s": 0.6754014410000764,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_kappa_pos",
+      "wall_s": 0.6674560419999125,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_kappa_neg_center",
+      "wall_s": 0.655556456000113,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_kappa_neg_asym",
+      "wall_s": 0.6560998109998764,
+      "rss_mb": 304.0078125
+    },
+    {
+      "run": "mut_gain_off",
+      "wall_s": 1.19021753800007,
+      "rss_mb": 304.0078125
+    }
+  ]
+}

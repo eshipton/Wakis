@@ -29,13 +29,14 @@ Physical setup
   linewidth ``gamma_a / (2 * pi) = 40 THz``, upper-state lifetime
   ``tau_21 = 150 fs``, and fast nonradiative relaxation
   ``tau_32 = tau_10 = 5 fs`` (``tau_21 >> tau_10``).
-* **Seeding**: Because semiclassical Maxwell–rate equations do not include
-  stochastic spontaneous-emission Langevin noise, a weak broadband Gaussian
-  current sheet pulse ``J_x(t)`` inside the cavity seeds the cavity mode. Below
-  threshold (``W_p < W_{p,th}``) the seed decays away; above threshold
-  (``W_p > W_{p,th}``) it amplifies through damped relaxation oscillations into
-  steady-state single-mode continuous-wave oscillation at ``f_cav`` with
-  clamped modal inversion ``Delta N = Delta N_th``.
+* **Seeding & spontaneous-emission noise**: By default (`spontaneous_emission=False`),
+  a weak broadband Gaussian current sheet pulse ``J_x(t)`` inside the cavity seeds
+  the cavity mode. Passing ``spontaneous_emission=True`` (with optional ``seed=...``)
+  injects Fluctuation–Dissipation-Theorem (FDT) Langevin polarization noise
+  proportional to ``sqrt(N_2)`` so lasing self-starts from rest without an
+  external seed pulse, producing the spontaneous-emission ``beta_sp``-factor
+  threshold rounding and multi-mode homogeneous mode competition (see also
+  ``examples/014_laser_noise_and_time_scaling.py``).
 
 Saves two publication-style figures in ``docs/img/``:
   1. ``docs/img/fabry_perot_laser_schematic_and_li.png``
@@ -246,7 +247,15 @@ def run_cold_cavity(p):
     }
 
 
-def run_laser_point(p, pump_ratio, total_time=0.95e-12, spatial_averaging=False):
+def run_laser_point(
+    p,
+    pump_ratio,
+    total_time=0.95e-12,
+    spatial_averaging=False,
+    spontaneous_emission=False,
+    noise_amplitude=None,
+    seed=42,
+):
     """Run one active Fabry-Perot laser simulation at W_p = pump_ratio * W_{p,th}."""
     wp = pump_ratio * p["W_p_th"]
     solver = build_cavity_solver(p)
@@ -262,20 +271,25 @@ def run_laser_point(p, pump_ratio, total_time=0.95e-12, spatial_averaging=False)
         initial_populations="steady_state" if wp > 0 else "ground",
         enable_stimulated=True,
         spatial_averaging=spatial_averaging,
+        spontaneous_emission=spontaneous_emission,
+        noise_amplitude=noise_amplitude,
+        seed=seed if spontaneous_emission else None,
     )
     solver.add_gain_material(
         fg,
         center=(0.0, 0.0, 0.5 * p["L_cav"]),
         size=(4.0e-6, 4.0e-6, p["L_cav"]),
     )
-    src = GaussianSource(frequency=p["f0"], fwidth=0.08 * p["f0"])
-    sheet = CurrentSource(
-        src,
-        component="x",
-        center=(0.0, 0.0, 0.25 * p["L_cav"]),
-        size=(2.0e-6, 2.0e-6, 0.0),
-        amplitude=2.0,
-    )
+    sheet = None
+    if not spontaneous_emission:
+        src = GaussianSource(frequency=p["f0"], fwidth=0.08 * p["f0"])
+        sheet = CurrentSource(
+            src,
+            component="x",
+            center=(0.0, 0.0, 0.25 * p["L_cav"]),
+            size=(2.0e-6, 2.0e-6, 0.0),
+            amplitude=2.0,
+        )
     z_out = p["L_cav"] + 2.0 * p["d_H"] + p["d_L"] + 0.2e-6
     k_out = int(np.argmin(np.abs(solver.z - z_out)))
     idx_out = k_out * solver.Nx * solver.Ny
@@ -288,7 +302,8 @@ def run_laser_point(p, pump_ratio, total_time=0.95e-12, spatial_averaging=False)
     cw = g_grp["cell_weight"] / g_grp["eff_n_cells"]
 
     for n in range(Nt):
-        sheet.update(solver, n * solver.dt)
+        if sheet is not None:
+            sheet.update(solver, n * solver.dt)
         solver.one_step()
         ex_out[n] = solver.E.array[idx_out]
         N_arr = g_grp["N"]

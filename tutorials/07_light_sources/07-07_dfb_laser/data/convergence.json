@@ -1,0 +1,110 @@
+{
+  "cpp_list": [
+    12,
+    16,
+    24,
+    32,
+    48
+  ],
+  "cpw_list": [
+    24,
+    32,
+    48,
+    64,
+    96
+  ],
+  "qws_alpha_L": [
+    0.681996,
+    0.689057,
+    0.694181,
+    0.695981,
+    0.697277
+  ],
+  "qws_delta_L": [
+    -0.266393,
+    -0.145077,
+    -0.058543,
+    -0.028106,
+    -0.006454
+  ],
+  "uni_alpha_L": [
+    0.973412,
+    0.978769,
+    0.982588,
+    0.983921,
+    0.984873
+  ],
+  "uni_delta_L": [
+    3.361715,
+    3.367764,
+    3.372089,
+    3.373596,
+    3.374676
+  ],
+  "qws_alpha_L_richardson": 0.698313,
+  "qws_delta_L_richardson": 0.010868,
+  "uni_alpha_L_richardson": 0.985635,
+  "uni_delta_L_richardson": 3.375541,
+  "cwt_qws_alpha_L": 0.697135,
+  "cwt_uni_alpha_L": 0.984669,
+  "cwt_uni_delta_L": 3.379719,
+  "finest_qws_alpha_rel_err_pct": 0.0203,
+  "finest_uni_alpha_rel_err_pct": 0.0207,
+  "finest_uni_delta_rel_err_pct": 0.1492,
+  "p_obs_qws_alpha": 1.98,
+  "p_obs_qws_delta": 2.63,
+  "p_obs_uni_alpha": 2.0,
+  "elapsed_s": 15.0,
+  "fit_runs_log": [
+    {
+      "run": "conv_qws_cpp12",
+      "wall_s": 0.5410927610000726,
+      "rss_mb": 192.85546875
+    },
+    {
+      "run": "conv_uni_cpp12",
+      "wall_s": 0.5402964790000624,
+      "rss_mb": 193.48046875
+    },
+    {
+      "run": "conv_qws_cpp16",
+      "wall_s": 0.7467660929996782,
+      "rss_mb": 194.10546875
+    },
+    {
+      "run": "conv_uni_cpp16",
+      "wall_s": 0.7588446449999537,
+      "rss_mb": 194.23046875
+    },
+    {
+      "run": "conv_qws_cpp24",
+      "wall_s": 1.2499751989998913,
+      "rss_mb": 194.98046875
+    },
+    {
+      "run": "conv_uni_cpp24",
+      "wall_s": 1.2845719039996766,
+      "rss_mb": 195.23046875
+    },
+    {
+      "run": "conv_qws_cpp32",
+      "wall_s": 1.7387155470005382,
+      "rss_mb": 196.35546875
+    },
+    {
+      "run": "conv_uni_cpp32",
+      "wall_s": 1.785762190999776,
+      "rss_mb": 197.35546875
+    },
+    {
+      "run": "conv_qws_cpp48",
+      "wall_s": 3.1381604740008697,
+      "rss_mb": 198.10546875
+    },
+    {
+      "run": "conv_uni_cpp48",
+      "wall_s": 3.2117871159998685,
+      "rss_mb": 198.10546875
+    }
+  ]
+}

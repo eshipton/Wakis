@@ -1,0 +1,648 @@
+# ---
+# jupyter:
+#   jupytext:
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.16.0
+#   kernelspec:
+#     display_name: Python 3
+#     language: python
+#     name: python3
+# ---
+
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2026.                   #
+# SPDX-License-Identifier: Apache-2.0         #
+# ########################################### #
+
+# %% [markdown]
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb)
+#
+# # Tutorial 7.8 · Microdisk Whispering-Gallery Laser
+#
+# **Abstract.** Semiconductor microdisk lasers trap light by total internal reflection around the perimeter of a wavelength-scale dielectric disk, forming **whispering-gallery modes (WGMs)** whose radiative quality factor $Q_{\mathrm{rad}}(m)$ grows exponentially with the azimuthal mode order $m$ [McCall *et al.*, *Appl. Phys. Lett.* **60**, 289 (1992)]. When an active gain medium is embedded inside the disk, full-wave time-domain simulation of lasing requires coupling Maxwell's curl equations to **multilevel atomic population rate equations** and an **auxiliary differential equation (ADE)** for the homogeneously broadened macroscopic polarization $\mathbf{P}_a(\mathbf{r}, t)$ [Chang & Taflove, *Opt. Express* **12**, 3827 (2004); Erratum, *Opt. Express* **14**, 10371 (2006)].
+#
+# In this tutorial we model a $D = 2R = 2.0\;\mu\mathrm{m}$ effective-index microdisk cavity ($n_{\mathrm{disk}} = 2.0$ in air, $n_{\mathrm{out}} = 1.0$) evanescently coupled across a $g_{\mathrm{bus}} = 300\;\mathrm{nm}$ gap to a $w_{\mathrm{bus}} = 220\;\mathrm{nm}$ output bus waveguide in 2D Finite Integration Technique (FIT) using `wakis.SolverFIT3D` and `wakis.gain.FourLevelGain`:
+# 1. **Part 1 — Cold-cavity whispering-gallery modes & subpixel vs staircase convergence:** We solve the exact 2D Bessel/Hankel complex root equation for both $\mathrm{TM}$ ($E_z$ out-of-plane) and $\mathrm{TE}$ ($H_z$ out-of-plane) polarizations across azimuthal orders $m = 4\dots 9$ and radial orders $q = 1, 2$, verify exponential $Q_{\mathrm{rad}}(m)$ scaling ($Q_{\mathrm{rad}} = 18.36 \to 468.25$ for $\mathrm{TM}_{m,1}$), isolate higher-order radial modes $\mathrm{TM}_{m,2}$ via $\Delta\phi = \pi$ parity projection ($\mathrm{TM}_{6,2}$: $-0.11\%$ in $f$ and $+1.37\%$ in $Q$), demonstrate second-order grid convergence ($p_{\mathrm{obs}} = 2.05$, Richardson error $-0.0069\%$ on $f_{6,1}$ and $+0.0008\% \pm 1.13\%$ on $Q_{8,1}$), and show how staircase boundary discretization degrades $Q$ via artificial sidewall-roughness scattering compared with conformal subpixel smoothing.
+# 2. **Part 2 — Linear Lorentz gain threshold vs cold-cavity $Q$ and modal confinement:** We derive the threshold material gain $g_{\mathrm{th}} = \frac{n_{\mathrm{disk}}\omega_{m,q}}{c\,\Gamma_{m,q}\,Q_{\mathrm{cold}}}$ including the exact quasi-normal-mode (QNM) electric-energy confinement factor $\Gamma_{m,q}^{\mathrm{QNM}} = -\frac{n_{\mathrm{disk}}}{\operatorname{Re}(x_{m,q})}\operatorname{Re}\!\left(\frac{\mathrm{d}x_{m,q}}{\mathrm{d}n_{\mathrm{disk}}}\right)$ and compare it with the radially truncated energy-integral definition $\Gamma_{m,q}^{\mathrm{trunc}}(R_{\mathrm{cut}})$. Across $m = 4\dots 8$, 2D FIT Harminv zero-crossings of $\gamma_{\mathrm{net}}(g) = 0$ match the self-consistent FIT-to-FIT threshold prediction to $0.14\%$ mean relative error ($+0.04\%$ at $m=6$) and the exact analytical Bessel/Hankel threshold to $1.77\%$ mean error ($-1.42\%$ at $m=6$), versus $10.18\%$ systematic underprediction when $\Gamma_{m,1}$ is omitted.
+# 3. **Part 3 — Active 4-level lasing from spontaneous-emission noise (`FourLevelGain`), clamping, $L$–pump curve, spatial hole burning & mutation checks:** Driving the disk from zero initial field with stochastic spontaneous-emission noise (`FourLevelGain(spontaneous_emission=True, seed=42, time_scale=100.0)`, $s = 100 \le 100$) on a $\Delta x = 32\;\mathrm{nm}$ subpixel grid ($23.30\;\mathrm{cells}/\lambda_{\mathrm{disk}}$ at $\mathrm{TM}_{6,1}$ and $20.42\;\mathrm{cells}/\lambda_{\mathrm{disk}} \ge 20$ at $\mathrm{TM}_{7,1}$) over $N_t = 24{,}000$ steps ($t_{\mathrm{end}} = 903.5\;\mathrm{fs}$, spanning $> 12\,\tau_{21,\mathrm{eff}}$ after threshold), we capture WGM build-up from quantum noise to steady-state clamping ($\langle\Delta N\rangle/\Delta N_{\mathrm{th}} = 0.946$ homogenized, $\langle\Delta N\rangle_{\mathrm{modal}}/\Delta N_{\mathrm{th}} = 0.878\text{--}0.995$ SHB, late-window clamping ratio $1.002$), single-mode selection at $\mathrm{TM}_{6,1}$ ($f_{\mathrm{sim}} = 201.05\;\mathrm{THz}$ vs unloaded $201.06\;\mathrm{THz}$, $-0.005\%$, with $32.83\;\mathrm{dB}$ side-mode suppression over $\mathrm{TM}_{7,1}$), selective fundamental-radial-mode ($q=1$) excitation by an annular ring pump ($r \in [0.55 R, R]$, saving $30.25\%$ pump area while producing $88.69\times$ higher intensity than a central core pump), unscaled comparison of the 2D FIT $L$–pump curve against rate-equation and SHB theory across all above-threshold pump ratios $r_p \in \{1.45, 2.05, 2.40\}$ (with $28.22\%$ FIT SHB intensity reduction at $r_p = 2.40$ bracketed by the $11.80\%$ 1D radial SHB prediction and $35.20\%$ 2D standing-wave SHB bound, and $2m = 12$ azimuthal inversion holes), and physical mutation checks.
+#
+# ---
+#
+# ## Learning Goals
+#
+# 1. Derive the **2D cylindrical Bessel/Hankel characteristic equation** for leaky whispering-gallery modes ($\mathrm{TM}$ and $\mathrm{TE}$), extract complex dimensionless eigenfrequencies $x_{m,q} = k_0 R = x'_{m,q} + \mathrm{i}x''_{m,q}$, and explain why radiative quality factors $Q_{\mathrm{rad}} = -x'_{m,q}/(2x''_{m,q})$ grow exponentially with azimuthal order $m$ while decreasing rapidly with radial order $q$.
+# 2. Derive (**derived here**) the exact **QNM modal confinement factor** $\Gamma_{m,q}^{\mathrm{QNM}}$ of an open dielectric resonator from the implicit derivative of the characteristic determinant, relate it to the **radially truncated energy-integral confinement** $\Gamma_{m,q}^{\mathrm{trunc}}(R_{\mathrm{cut}})$ across the radiation caustic $r_{\mathrm{rad}} = m / (n_{\mathrm{out}} k_0)$, and prove the **threshold gain relation** $g_{\mathrm{th}} = \frac{n_{\mathrm{disk}}\omega_{m,q}}{c\,\Gamma_{m,q}\,Q_{\mathrm{cold}}}$.
+# 3. Connect the **4-level atomic rate equations** and **Lorentzian polarization ADE** (`wakis.gain.FourLevelGain`) of Chang & Taflove (2004, 2006) to the small-signal susceptibility $\chi_{\mathrm{gain}}(\omega)$, stimulated emission cross section $\sigma_{21} = \frac{\kappa_a}{\varepsilon_0 n_{\mathrm{disk}} c \gamma_a}$, saturation intensity $I_{\mathrm{sat}}$, and **2D standing-wave WGM spatial hole burning** (**derived here**).
+# 4. Understand **stochastic spontaneous-emission noise** (`spontaneous_emission=True`), **population time scaling** (`time_scale = s` with $s = 100 \le 100$), and **`FourLevelGain.time_scaling_limits`**, proving (**derived here**) which physical steady-state observables are strictly invariant under `time_scale = s` ($\sigma_{21}, g_{\mathrm{th}}, \Delta N_{\mathrm{th}}, I_{\mathrm{sat}}, r_p = W_p/W_{p,\mathrm{th}}$) and why scaling $\tau_{21} = 6.0\;\mathrm{ps} \to \tau_{21,\mathrm{eff}} = 60\;\mathrm{fs} \approx \tau_p = 50.69\;\mathrm{fs}$ shifts the transient turn-on from the underdamped Class-B regime ($s = 1$) into the critically/overdamped Class-A regime ($s = 100$).
+# 5. Validate every simulation stage against closed-form theory and verify that **mutation checks** (pumping below threshold $W_p < W_{p,\mathrm{th}}$, pumping only the central core, or halving the oscillator coupling $\kappa_a$) fail to clamp and suppress lasing intensity as predicted.
+
+# %% [markdown]
+# ---
+#
+# ## 1. Theory & Step-by-Step Derivations
+#
+# ### 1.1 Cold-Cavity Whispering-Gallery Modes: Exact 2D Bessel/Hankel Roots
+#
+# Consider an infinitely long circular dielectric cylinder (or a thin semiconductor microdisk reduced to 2D via the effective-index approximation) of radius $R$ and refractive index $n_{\mathrm{disk}} = \sqrt{\varepsilon_{\mathrm{disk}}}$ surrounded by a homogeneous cladding of index $n_{\mathrm{out}}$ (air, $n_{\mathrm{out}} = 1.0$). In cylindrical coordinates $(r, \phi, z)$ with $\partial_z = 0$ and Wakis harmonic time dependence $\exp(+\mathrm{i}\omega t)$, the two polarizations decouple into:
+# - **$\mathrm{TM}$ polarization ($E_z$ out of the disk plane, $H_r, H_\phi$ in-plane):** $\psi(r, \phi) = E_z(r, \phi)$, with tangential magnetic field $H_\phi = -\frac{\mathrm{i}}{\omega\mu_0}\frac{\partial E_z}{\partial r}$.
+# - **$\mathrm{TE}$ polarization ($H_z$ out of the disk plane, $E_r, E_\phi$ in-plane):** $\psi(r, \phi) = H_z(r, \phi)$, with tangential electric field $E_\phi = \frac{\mathrm{i}}{\omega\varepsilon_0 n^2(r)}\frac{\partial H_z}{\partial r}$.
+#
+# For azimuthal mode number $m \in \mathbb{Z}_{\ge 0}$, separation of variables $\psi(r, \phi) = \Psi_m(r)\cos(m\phi)$ in the Helmholtz equation $[\nabla_\perp^2 + n^2(r)k_0^2]\psi = 0$ ($k_0 = \omega/c$) requires $\Psi_m(r)$ to be regular at the origin $r = 0$ and purely outgoing as $r \to \infty$. Under the $\exp(+\mathrm{i}\omega t)$ phasor convention, an outgoing cylindrical wave $\propto r^{-1/2}\exp[\mathrm{i}(\omega t - n_{\mathrm{out}}k_0 r)]$ is given by the Hankel function of the **second** kind $H_m^{(2)}(n_{\mathrm{out}}k_0 r)$, or equivalently under the complex-conjugate $\exp(-\mathrm{i}\omega t)$ convention by $H_m^{(1)}(n_{\mathrm{out}}k_0 r)$ with $\operatorname{Im}(k_0 R) < 0$:
+#
+# $$
+# \Psi_m(r) = \begin{cases}
+# A_m\,J_m(n_{\mathrm{disk}} k_0 r), & r \le R, \\[4pt]
+# B_m\,H_m^{(1)}(n_{\mathrm{out}} k_0 r), & r > R.
+# \end{cases}
+# $$
+#
+# Enforcing continuity of $\psi$ and the tangential field ($H_\phi \propto \partial_r E_z$ for $\mathrm{TM}$, or $E_\phi \propto n^{-2}\partial_r H_z$ for $\mathrm{TE}$) at the dielectric boundary $r = R$ yields the **2D WGM characteristic equation** in terms of the dimensionless complex size parameter $x \equiv k_0 R = \omega R / c$:
+#
+# $$
+# \boxed{
+# F_m(x; n_{\mathrm{disk}}, n_{\mathrm{out}}) \equiv
+# \eta_{\mathrm{pol}}\,n_{\mathrm{disk}}\,J_m'(n_{\mathrm{disk}} x)\,H_m^{(1)}(n_{\mathrm{out}} x)
+# - n_{\mathrm{out}}\,J_m(n_{\mathrm{disk}} x)\,H_m^{(1)\prime}(n_{\mathrm{out}} x) = 0,
+# \qquad
+# \eta_{\mathrm{pol}} = \begin{cases}
+# 1, & \text{TM } (E_z), \\
+# \dfrac{n_{\mathrm{out}}^2}{n_{\mathrm{disk}}^2}, & \text{TE } (H_z).
+# \end{cases}
+# }
+# $$
+#
+# Because the microdisk radiates energy through the curved boundary into free space, the roots $x_{m,q} = x'_{m,q} + \mathrm{i}x''_{m,q}$ (ordered by radial mode index $q = 1, 2, \dots$ from lowest to highest $x'_{m,q}$, where $q$ equals the number of radial intensity lobes inside $r \in [0, R]$) have $x''_{m,q} < 0$. The resonance frequency $f_{m,q}$, amplitude decay rate $\gamma_{\mathrm{rad}}$, and radiative quality factor $Q_{\mathrm{rad}}$ are
+#
+# $$
+# f_{m,q} = \frac{c}{2\pi R}\,x'_{m,q}, \qquad
+# \gamma_{\mathrm{rad}} = -\frac{c}{R}\,x''_{m,q} > 0, \qquad
+# Q_{\mathrm{rad}}(m, q) = \frac{\omega_{m,q}}{2\gamma_{\mathrm{rad}}} = -\frac{x'_{m,q}}{2\,x''_{m,q}}.
+# $$
+#
+# **Why $Q_{\mathrm{rad}}(m)$ grows exponentially with $m$:** Viewed radially, the Helmholtz equation $\frac{\mathrm{d}^2}{\mathrm{d}r^2}(\sqrt{r}\Psi_m) + \left[n^2(r)k_0^2 - \frac{m^2 - 1/4}{r^2}\right](\sqrt{r}\Psi_m) = 0$ is equivalent to a 1D quantum particle of energy $k_0^2$ in an effective centrifugal potential $V_{\mathrm{eff}}(r) = \frac{m^2 - 1/4}{r^2} - [n^2(r) - 1]k_0^2$. For a WGM with $m / n_{\mathrm{disk}} < x'_{m,1} < m / n_{\mathrm{out}}$, the wave is oscillatory inside the rim ($r_{\mathrm{caustic}} < r < R$, where $r_{\mathrm{caustic}} \approx m / (n_{\mathrm{disk}}k_0)$) and **evanescent** across the classically forbidden radiation barrier $R < r < r_{\mathrm{rad}}$ ($r_{\mathrm{rad}} = m / (n_{\mathrm{out}}k_0)$) before becoming a propagating wave at $r > r_{\mathrm{rad}}$. By the WKB tunneling integral across $r \in [R, r_{\mathrm{rad}}]$ (or Debye's large-order asymptotic expansion of $Y_m(x'_{m,1})$), the tunneling transmission scales as $T_{\mathrm{WKB}} \sim \exp(-2 m\,\alpha_{\mathrm{WKB}})$, so $Q_{\mathrm{rad}}(m, 1) \propto \exp(+2 m\,\alpha_{\mathrm{WKB}})$ grows **exponentially** with $m$.
+#
+# ---
+#
+# ### 1.2 Modal Confinement Factor $\Gamma_{m,q}$ and Threshold Gain Formula (**Derived Here**)
+#
+# Suppose an active material inside the disk ($r \le R$, or an annular ring $r \in [R_{\mathrm{in}}, R]$) supplies a small uniform power gain coefficient $g$ [$\mathrm{m}^{-1}$]. An optical wave propagating through a homogeneous medium of refractive index $n_{\mathrm{disk}}$ and power gain $g$ has complex refractive index
+#
+# $$
+# \tilde{n}_{\mathrm{disk}}(g) = n_{\mathrm{disk}} + \mathrm{i}n''_{\mathrm{disk}}, \qquad
+# I(s) \propto |\exp(\mathrm{i}\tilde{n}_{\mathrm{disk}}k_0 s)|^2 = \exp(-2 n''_{\mathrm{disk}} k_0 s) = \exp(g s)
+# \implies n''_{\mathrm{disk}} = -\frac{g}{2 k_0} = -\frac{g c}{2\omega_{m,q}}.
+# $$
+#
+# Because the WGM field extends partially into the unpumped exterior cladding ($r > R$, where $n_{\mathrm{out}} = 1$ has zero gain), perturbing the disk refractive index by $\delta n_{\mathrm{disk}} = \mathrm{i}n''_{\mathrm{disk}}$ shifts the complex eigenfrequency $x_{m,q}(n_{\mathrm{disk}})$ at first order by Taylor expansion (**derived here**):
+#
+# $$
+# x_{m,q}(n_{\mathrm{disk}} + \mathrm{i}n''_{\mathrm{disk}}) \approx x'_{m,q} + \mathrm{i}\left[x''_{m,q} + \operatorname{Re}\!\left(\frac{\mathrm{d}x_{m,q}}{\mathrm{d}n_{\mathrm{disk}}}\right) n''_{\mathrm{disk}}\right].
+# $$
+#
+# On the other hand, by electromagnetic perturbation theory for a dielectric resonator where $\varepsilon_r(\mathbf{r}) = n^2(\mathbf{r})$ is perturbed by $\delta\varepsilon_r = 2 n_{\mathrm{disk}}\,\delta n_{\mathrm{disk}}$ inside the disk ($r \le R$), the fractional frequency shift is weighted by the **modal electric-energy confinement factor** $\Gamma_{\mathrm{disk}} \equiv U_{E,\mathrm{disk}} / U_{E,\mathrm{tot}}$:
+#
+# $$
+# \frac{\delta x_{m,q}}{x_{m,q}} = -\frac{\int_{\mathrm{disk}} \delta\varepsilon_r |\mathbf{E}|^2\,\mathrm{d}A}{2\int_{\mathrm{all}} \varepsilon_r |\mathbf{E}|^2\,\mathrm{d}A}
+# = -\frac{\delta n_{\mathrm{disk}}}{n_{\mathrm{disk}}}\,\Gamma_{\mathrm{disk}}
+# \implies \boxed{\Gamma_{m,q}^{\mathrm{QNM}} = -\frac{n_{\mathrm{disk}}}{\operatorname{Re}(x_{m,q})}\,\operatorname{Re}\!\left(\frac{\mathrm{d}x_{m,q}}{\mathrm{d}n_{\mathrm{disk}}}\right) = -\frac{n_{\mathrm{disk}}}{\operatorname{Re}(x_{m,q})}\,\operatorname{Re}\!\left(-\frac{\partial F_m / \partial n_{\mathrm{disk}}}{\partial F_m / \partial x}\right)} \quad \text{(derived here)}.
+# $$
+#
+# **Definition of $\Gamma$ truncation for a leaky mode vs exact QNM confinement:** For an open leaky mode with $\operatorname{Im}(x_{m,q}) < 0$, the exterior Hankel wavefunction $|H_m^{(1)}(n_{\mathrm{out}} x_{m,q} r / R)| \propto r^{-1/2}\exp(|x''_{m,q}| n_{\mathrm{out}} r / R)$ diverges exponentially as $r \to \infty$, so a naive spatial integral over $r \in [0, \infty)$ is divergent. If one defines a **radially truncated energy-integral confinement factor** across a finite exterior cutoff radius $R_{\mathrm{cut}}$,
+#
+# $$
+# \Gamma_{m,q}^{\mathrm{trunc}}(R_{\mathrm{cut}}) \equiv \frac{\int_0^R n_{\mathrm{disk}}^2 |\Psi_m(r)|^2\,r\,\mathrm{d}r}{\int_0^R n_{\mathrm{disk}}^2 |\Psi_m(r)|^2\,r\,\mathrm{d}r + \int_R^{R_{\mathrm{cut}}} n_{\mathrm{out}}^2 |\Psi_m(r)|^2\,r\,\mathrm{d}r},
+# $$
+#
+# the physical choice of truncation radius is the **radiation caustic (turning point)** $r_{\mathrm{rad}} = m / (n_{\mathrm{out}} k_0) = R\,(m / x'_{m,q})$, where the exterior field transitions from evanescent tunneling ($R < r < r_{\mathrm{rad}}$) to free-space radiation ($r > r_{\mathrm{rad}}$). Evaluating $\Gamma_{m,q}^{\mathrm{trunc}}(R_{\mathrm{cut}})$ at $R_{\mathrm{cut}} = 1.45 R$ (just outside $r_{\mathrm{rad}} \approx 1.43 R$ for $m=6$) gives $\Gamma_{6,1}^{\mathrm{trunc}}(1.45 R) = 0.8699$, compared with the exact cutoff-free QNM sensitivity $\Gamma_{6,1}^{\mathrm{QNM}} = 0.8945$ (and as $Q_{\mathrm{rad}}$ increases from $m=4$ to $m=9$, the difference $|\Gamma_{m,1}^{\mathrm{QNM}} - \Gamma_{m,1}^{\mathrm{trunc}}(1.45 R)|$ shrinks from $0.075$ to $0.004$). Because $\Gamma_{m,q}^{\mathrm{QNM}}$ directly governs the first-order complex pole trajectory $\mathrm{d}x_{m,q}/\mathrm{d}n_{\mathrm{disk}}$ without any arbitrary radial cutoff, we use $\Gamma_{m,q}^{\mathrm{QNM}}$ in our threshold predictions and report both $\Gamma_{m,q}^{\mathrm{QNM}}$ and $\Gamma_{m,q}^{\mathrm{trunc}}(1.45 R)$ in Task 1 and Task 2. For an annular ring pump $r \in [R_{\mathrm{in}}, R]$, the ring confinement factor is weighted by the interior Bessel energy fraction:
+#
+# $$
+# \Gamma_{m,q}^{\mathrm{ring}}(R_{\mathrm{in}}) = \Gamma_{m,q}^{\mathrm{QNM}}\,\frac{\int_{R_{\mathrm{in}}}^R J_m^2(n_{\mathrm{disk}} x'_{m,q} r / R)\,r\,\mathrm{d}r}{\int_0^R J_m^2(n_{\mathrm{disk}} x'_{m,q} r / R)\,r\,\mathrm{d}r}.
+# $$
+#
+# Substituting $\operatorname{Re}(\mathrm{d}x_{m,q}/\mathrm{d}n_{\mathrm{disk}}) = -(x'_{m,q}/n_{\mathrm{disk}})\Gamma_{m,q}$ and $n''_{\mathrm{disk}} = -g c / (2\omega_{m,q})$ into the perturbed imaginary part yields the **net modal amplitude decay rate** $\gamma_{\mathrm{net}}(g)$ (**derived here**):
+#
+# $$
+# \gamma_{\mathrm{net}}(g) = -\frac{c}{R}\,\operatorname{Im}\!\left[x_{m,q}(n_{\mathrm{disk}} + \mathrm{i}n''_{\mathrm{disk}})\right]
+# = \gamma_{\mathrm{cold}} - \frac{\Gamma_{m,q}\,c}{2 n_{\mathrm{disk}}}\,g
+# = \frac{\omega_{m,q}}{2 Q_{\mathrm{cold}}} - \frac{\Gamma_{m,q}\,c}{2 n_{\mathrm{disk}}}\,g.
+# $$
+#
+# Lasing threshold occurs when round-trip modal gain exactly balances cold-cavity loss, $\gamma_{\mathrm{net}}(g_{\mathrm{th}}) = 0$, giving (**derived here**):
+#
+# $$
+# \boxed{g_{\mathrm{th}}(m, q) = \frac{n_{\mathrm{disk}}\,\omega_{m,q}}{c\,\Gamma_{m,q}\,Q_{\mathrm{cold}}(m, q)} = \frac{2 n_{\mathrm{disk}}\,\gamma_{\mathrm{cold}}}{c\,\Gamma_{m,q}}.}
+# $$
+#
+# Because $\Gamma_{m,1} \approx 0.88\text{--}0.92$ for $m = 4\dots 8$, omitting the confinement factor ($\Gamma_{m,1} \to 1$) systematically **underpredicts** the required material gain $g_{\mathrm{th}}$ by $1 - \Gamma_{m,1} \approx 8\text{--}12\%$.
+#
+# ---
+#
+# ### 1.3 Semiclassical 4-Level Gain Model (`wakis.gain.FourLevelGain`, Chang & Taflove 2004)
+#
+# In `wakis/gain.py`, `FourLevelGain` implements the full-wave Maxwell–Bloch / rate-equation formulation introduced by Chang & Taflove [*Opt. Express* **12**, 3827 (2004); Erratum, *Opt. Express* **14**, 10371 (2006)]:
+# 1. **Lorentzian Polarization ADE (lasing transition $1 \leftrightarrow 2$ at frequency $\omega_a$ and homogeneous linewidth $\gamma_a$):**
+#    $$
+#    \frac{\mathrm{d}^2 \mathbf{P}_a}{\mathrm{d}t^2} + \gamma_a \frac{\mathrm{d}\mathbf{P}_a}{\mathrm{d}t} + \omega_a^2 \mathbf{P}_a = -\kappa_a\,\Delta N(\mathbf{r}, t)\,\mathbf{E}(\mathbf{r}, t), \qquad \Delta N(\mathbf{r}, t) \equiv N_2(\mathbf{r}, t) - N_1(\mathbf{r}, t),
+#    $$
+#    where $\kappa_a$ [$\mathrm{C^2/(kg\cdot m^3)}$ in SI; note that the minus sign on the right-hand side is required so that positive population inversion $\Delta N > 0$ produces a negative imaginary susceptibility $\operatorname{Im}\chi(\omega_a) > 0$ under $\exp(+\mathrm{i}\omega t)$, i.e. optical amplification].
+# 2. **Four-Level Population Rate Equations ($N_0 + N_1 + N_2 + N_3 = N_{\mathrm{total}}$):**
+#    $$
+#    \begin{aligned}
+#    \frac{\mathrm{d}N_3}{\mathrm{d}t} &= W_p N_0 - \frac{N_3}{\tau_{32}}, &
+#    \frac{\mathrm{d}N_2}{\mathrm{d}t} &= \frac{N_3}{\tau_{32}} - \frac{N_2}{\tau_{21}} + \frac{1}{\hbar\omega_a}\,\mathbf{E}\cdot\frac{\mathrm{d}\mathbf{P}_a}{\mathrm{d}t}, \\
+#    \frac{\mathrm{d}N_1}{\mathrm{d}t} &= \frac{N_2}{\tau_{21}} - \frac{N_1}{\tau_{10}} - \frac{1}{\hbar\omega_a}\,\mathbf{E}\cdot\frac{\mathrm{d}\mathbf{P}_a}{\mathrm{d}t}, &
+#    \frac{\mathrm{d}N_0}{\mathrm{d}t} &= \frac{N_1}{\tau_{10}} - W_p N_0.
+#    \end{aligned}
+#    $$
+#    Above threshold ($\Delta N > 0$), $\mathbf{P}_a$ leads $\mathbf{E}$ in phase so that the cycle-averaged work rate $\langle\mathbf{E}\cdot\dot{\mathbf{P}}_a\rangle < 0$: stimulated emission depletes the upper laser level $N_2$, populates the lower laser level $N_1$, and transfers energy into the electromagnetic field $\mathbf{E}$.
+#
+# Transforming the polarization ODE to the frequency domain ($\mathrm{d}/\mathrm{d}t \to +\mathrm{i}\omega$) gives the complex susceptibility and line-center stimulated emission cross section $\sigma_{21}$:
+#
+# $$
+# \chi_{\mathrm{gain}}(\omega) = \frac{-\kappa_a\,\Delta N}{\omega_a^2 - \omega^2 + \mathrm{i}\gamma_a\omega}, \qquad
+# g(\omega_a) = \frac{\kappa_a\,\Delta N}{\varepsilon_0 n_{\mathrm{disk}} c\,\gamma_a} \equiv \sigma_{21}\,\Delta N
+# \implies \boxed{\sigma_{21} = \frac{\kappa_a}{\varepsilon_0 n_{\mathrm{disk}} c\,\gamma_a}, \qquad \Delta N_{\mathrm{th}} = \frac{g_{\mathrm{th}}}{\sigma_{21}}.}
+# $$
+#
+# **Literature honesty note on Chang & Taflove (2004, 2006):** In their 2006 erratum [*Opt. Express* **14**, 10371 (2006)], Chang & Taflove noted that Eqs. (3b)–(3c) of their 2004 paper contained a sign typo in front of the $\frac{1}{\hbar\omega_a}\mathbf{E}\cdot\dot{\mathbf{P}}$ stimulated-emission term, and that the numerical FDTD code used to generate the 2004 figures had accidentally omitted the $1/\varepsilon_0$ factor in the coupling constant $\frac{3\omega_a\varepsilon_0\gamma_{\mathrm{rad}}}{e^2}$. Because the raw threshold pump numbers plotted in Figs. 3–7 of the 2004 paper reflect that unscaled coupling constant, we do **not** use the 2004 paper's raw pump numbers as a target; instead, we use the corrected SI equations implemented in `wakis.gain.FourLevelGain` and benchmark every simulation against our exact closed-form derivations.
+#
+# ---
+#
+# ### 1.4 Steady-State $L$–Pump Curve & 2D Standing-Wave Spatial Hole Burning (**Derived Here**)
+#
+# In steady state ($\mathrm{d}N_j/\mathrm{d}t = 0$) under zero optical intensity ($I = 0$), solving the 4-level algebraic system yields the unsaturated inversion $\Delta N_0(W_p)$ and threshold pump rate $W_{p,\mathrm{th}}$:
+#
+# $$
+# \Delta N_0(W_p) = N_{\mathrm{total}}\,\frac{W_p(\tau_{21} - \tau_{10})}{1 + W_p(\tau_{32} + \tau_{21} + \tau_{10})}, \qquad
+# \boxed{W_{p,\mathrm{th}} = \frac{\Delta N_{\mathrm{th}}}{N_{\mathrm{total}}(\tau_{21} - \tau_{10}) - \Delta N_{\mathrm{th}}(\tau_{32} + \tau_{21} + \tau_{10})}.}
+# $$
+#
+# In the fast-relaxation / non-depleting-ground limit ($\tau_{10}, \tau_{32} \ll \tau_{21}$ and $W_p \tau_{21} \ll 1$), $\Delta N_0(W_p) \approx N_{\mathrm{total}}\,\tau_{21}\,W_p$ is linear in $W_p$, so the normalized unsaturated inversion equals the normalized pump rate $r_p \equiv W_p / W_{p,\mathrm{th}} \approx \Delta N_0(W_p) / \Delta N_{\mathrm{th}}$. Under local optical intensity $I(\mathbf{r}) = \frac{1}{2}c\varepsilon_0 n_{\mathrm{disk}}|\tilde{E}_z(\mathbf{r})|^2$, stimulated emission saturates the local inversion according to
+#
+# $$
+# \Delta N(\mathbf{r}) = \frac{\Delta N_0(W_p)}{1 + I(\mathbf{r}) / I_{\mathrm{sat}}(W_p)}, \qquad
+# I_{\mathrm{sat}}(W_p) = \frac{\hbar\omega_a}{\sigma_{21}\,\tau_{\mathrm{eff}}(W_p)}, \qquad
+# \tau_{\mathrm{eff}}(W_p) = \frac{\tau_{21} + \tau_{10} + W_p\tau_{10}(\tau_{21} + \tau_{32})}{1 + W_p(\tau_{32} + \tau_{21} + \tau_{10})}.
+# $$
+#
+# Above threshold ($r_p > 1$), steady-state single-mode oscillation requires the **modal-overlap gain** to clamp at $g_{\mathrm{th}}$ (**derived here**):
+# 1. **Spatially homogenized gain (`spatial_averaging=True`, fast carrier diffusion):** When carrier diffusion washes out spatial variations of $\Delta N$, the spatially averaged inversion clamps at $\langle\Delta N\rangle = \Delta N_{\mathrm{th}}$, yielding the linear $L$–pump law
+#    $$
+#    \boxed{\frac{I_{\mathrm{hom}}}{I_{\mathrm{sat}}} = \frac{\Delta N_0(W_p)}{\Delta N_{\mathrm{th}}} - 1 \approx r_p - 1 \qquad (r_p \ge 1).}
+#    $$
+# 2. **2D WGM standing-wave spatial hole burning (`spatial_averaging=False`, localized carriers, derived here):** A standing-wave WGM inside the pumped ring $r \in [R_{\mathrm{in}}, R]$ has dimensionless spatial intensity profile $u(r, \phi) = u_{\mathrm{rad}}(r)\cos^2(m\phi)$, where $u_{\mathrm{rad}}(r) = J_m^2(n_{\mathrm{disk}} x'_{m,1} r / R) / J_{\max}^2$. Writing $I(r, \phi) = s\,I_{\mathrm{sat}}\,u(r, \phi)$ where $s \equiv I_{\mathrm{peak}} / I_{\mathrm{sat}}$, modal gain clamping requires
+#    $$
+#    \frac{\int_{R_{\mathrm{in}}}^R \int_0^{2\pi} \dfrac{\Delta N_0(W_p)}{1 + s\,u_{\mathrm{rad}}(r)\cos^2(m\phi)}\,u_{\mathrm{rad}}(r)\cos^2(m\phi)\,r\,\mathrm{d}\phi\,\mathrm{d}r}{\int_{R_{\mathrm{in}}}^R \int_0^{2\pi} u_{\mathrm{rad}}(r)\cos^2(m\phi)\,r\,\mathrm{d}\phi\,\mathrm{d}r} = \Delta N_{\mathrm{th}}.
+#    $$
+#    Integrating analytically over $\phi \in [0, 2\pi]$ via $\frac{1}{2\pi}\int_0^{2\pi}\frac{\cos^2(m\phi)}{1 + a\cos^2(m\phi)}\,\mathrm{d}\phi = \frac{1}{a}\left(1 - \frac{1}{\sqrt{1+a}}\right)$ yields the exact 1D radial clamping equation (**derived here**):
+#    $$
+#    \boxed{\frac{\Delta N_{\mathrm{th}}}{\Delta N_0(W_p)} = \frac{2}{s\int_{R_{\mathrm{in}}}^R u_{\mathrm{rad}}(r)\,r\,\mathrm{d}r}\int_{R_{\mathrm{in}}}^R \left[1 - \frac{1}{\sqrt{1 + s\,u_{\mathrm{rad}}(r)}}\right] r\,\mathrm{d}r \qquad \text{(derived here)}.}
+#    $$
+#    Near threshold ($s \ll 1$), expanding $1 - (1 + s u)^{-1/2} = \frac{1}{2}s u - \frac{3}{8}s^2 u^2 + \mathcal{O}(s^3)$ shows that the azimuthal standing wave ($\langle\cos^4 m\phi\rangle / \langle\cos^2 m\phi\rangle^2 = 3/2$) burns **$2m$ inversion holes** at the azimuthal antinodes while leaving undepleted gain at the $2m$ nodes, reducing the local intracavity antinode intensity compared with the homogenized model.
+#
+# ---
+#
+# ### 1.5 Spontaneous-Emission Noise Startup & Population Time Scaling (`time_scale` $\le 100$, **Derived Here**)
+#
+# To start lasing self-consistently from zero initial electromagnetic field ($\mathbf{E} = \mathbf{H} = 0$) without an artificial seed pulse, `FourLevelGain(..., spontaneous_emission=True, noise_components="z", noise_amplitude=0.10, seed=42, time_scale=100.0)` injects a cell-local stochastic polarization drive $\delta S_z(t)$ at every FDTD time step (`docs/physicsguide.md`, "Noise and time scaling in gain media"):
+#
+# $$
+# \delta S_z(\mathbf{r}_i, t) = \eta_{\mathrm{noise}}\,\sqrt{\frac{\hbar\omega_a^3\,\kappa_a\,\max(N_2(\mathbf{r}_i, t), 0)}{\tau_{21,\mathrm{eff}}\,V_{\mathrm{cell}}\,\Delta t}}\,\xi_i(t), \qquad \xi_i(t) \sim \mathcal{N}(0, 1).
+# $$
+#
+# Because the upper-level radiative lifetime $\tau_{21} = 6.0\;\mathrm{ps}$ is much longer than the optical cycle $T_0 \approx 5.0\;\mathrm{fs}$, `FourLevelGain` provides `time_scale = s` with $s = 100 \le 100$, which scales only the slow population relaxation and pumping rates by $s$ during time integration:
+#
+# $$
+# \tau_{21,\mathrm{eff}} = \frac{\tau_{21}}{s} = \frac{6.0\;\mathrm{ps}}{100} = 60\;\mathrm{fs}, \qquad
+# \tau_{10,\mathrm{eff}} = \tau_{32,\mathrm{eff}} = \frac{200\;\mathrm{fs}}{100} = 2.0\;\mathrm{fs}, \qquad
+# W_{p,\mathrm{eff}} = s\,W_p, \qquad
+# \mathbf{E}\cdot\dot{\mathbf{P}}_a \to s\,\mathbf{E}\cdot\dot{\mathbf{P}}_a,
+# $$
+#
+# while leaving the fast optical polarization equation ($\omega_a, \gamma_a, \kappa_a$) unscaled. From the steady-state equations above, `time_scale = s` obeys five exact invariants and scaling laws (**derived here** and verified in `_helpers.lifetime_scaling_laws`):
+# 1. **Stimulated emission cross section $\sigma_{21} = \frac{\kappa_a}{\varepsilon_0 n_{\mathrm{disk}} c \gamma_a}$:** **Strictly invariant ($s^0$)**.
+# 2. **Cold-cavity $Q_{\mathrm{cold}}$, confinement $\Gamma_{m,q}$, threshold gain $g_{\mathrm{th}}$, and threshold inversion $\Delta N_{\mathrm{th}} = g_{\mathrm{th}}/\sigma_{21}$:** **Strictly invariant ($s^0$)**.
+# 3. **Physical threshold pump rate $W_{p,\mathrm{th}}$ and pump ratio $r_p = W_p / W_{p,\mathrm{th}}$:** Because `FourLevelGain` multiplies both $W_p$ and $\gamma_{ij} = 1/\tau_{ij}$ by $s$, the user-supplied threshold pump rate $W_{p,\mathrm{th}}$ and pump ratio $r_p = W_p / W_{p,\mathrm{th}}$ are **strictly invariant ($s^0$)** (whereas if one manually divided $\tau_{ij}$ by $s$ without scaling $W_p$ and the stimulated work term, $W_{p,\mathrm{th}}$ and $I_{\mathrm{sat}}$ would scale as $s^1$).
+# 4. **Physical saturation intensity $I_{\mathrm{sat}} = \frac{\hbar\omega_a}{\sigma_{21}\tau_{\mathrm{eff}}}$:** Because both $\gamma_{ij}$ and the stimulated work term $\frac{1}{\hbar\omega_a}\mathbf{E}\cdot\dot{\mathbf{P}}_a$ are multiplied by $s$ in the population rate equations, every common factor of $s$ cancels at steady state ($\mathrm{d}N_j/\mathrm{d}t = 0$), so $I_{\mathrm{sat}}$, the normalized $L$–pump curve $I(r_p)/I_{\mathrm{sat}}$, and the spatial hole burning map $\Delta N(x, y)/\Delta N_{\mathrm{th}}$ are **strictly invariant ($s^0$)**.
+# 5. **Transient turn-on & Class-B $\to$ Class-A relaxation-oscillation crossover under `time_scale = s`:**
+#    In a linearized rate-equation laser with photon lifetime $\tau_p = Q_{\mathrm{cold}}/\omega_a = 50.69\;\mathrm{fs}$ and effective upper-level lifetime $\tau_{21,\mathrm{eff}} = \tau_{21}/s$, small perturbations around the steady state at pump ratio $r_p$ obey the damped harmonic oscillator characteristic equation $\lambda^2 + 2\Gamma_{\mathrm{RO}}\lambda + \omega_{\mathrm{RO},0}^2 = 0$, where the **relaxation-oscillation damping rate** $\Gamma_{\mathrm{RO}} = \frac{r_p\,s}{2\tau_{21}}$ scales as $s^1$ while the **undamped natural frequency** $\omega_{\mathrm{RO},0}^{\mathrm{bare}} = \sqrt{(r_p - 1)/(\tau_p\tau_{21,\mathrm{eff}})}$ scales only as $s^{1/2}$:
+#    - At **$s = 1$ (physical lifetimes, $\tau_{21} = 6.0\;\mathrm{ps} \gg \tau_p = 50.69\;\mathrm{fs}$):** The laser operates deep in the **Class-B regime** ($(1/\tau_{\mathrm{sat}})/\kappa_{\mathrm{cav}} = 0.0085 \ll 1$), where $\Gamma_{\mathrm{RO}} = 2.00\times 10^{11}\;\mathrm{s}^{-1} \ll \omega_{\mathrm{RO},0}^{\mathrm{bare}} = 1.81\times 10^{12}\;\mathrm{s}^{-1}$ ($f_{\mathrm{RO}}^{\mathrm{bare}} = 288.6\;\mathrm{GHz}$, or $f_{\mathrm{RO,damped}} = 340.1\;\mathrm{GHz}$ from `FourLevelGain.relaxation_oscillation_parameters` including ground-state depletion) produces weakly damped relaxation oscillations.
+#    - At **$s = 100$ ($\tau_{21,\mathrm{eff}} = 60.0\;\mathrm{fs} \approx \tau_p = 50.69\;\mathrm{fs}$):** Because $\Gamma_{\mathrm{RO}} \propto s$ grows faster than $\omega_{\mathrm{RO},0} \propto s^{1/2}$, the bare damping rate $\Gamma_{\mathrm{RO}}^{\mathrm{bare}} = r_p s / (2\tau_{21}) = 2.00\times 10^{13}\;\mathrm{s}^{-1}$ **exceeds** the bare natural frequency $\omega_{\mathrm{RO},0}^{\mathrm{bare}} = 1.81\times 10^{13}\;\mathrm{s}^{-1}$ ($f_{\mathrm{RO}}^{\mathrm{bare}} = 2.886\;\mathrm{THz}$, overdamped in the bare model; with ground-state depletion included the damping ratio is $\zeta = 0.932 < 1$, i.e. still underdamped, with $f_{\mathrm{RO,damped}} = 1.234\;\mathrm{THz}$). Thus, $s = 100$ does **not** simply compress an underdamped relaxation-oscillation period by $\sqrt{s}$; instead, it compresses the threshold build-up time $t_{\mathrm{th}} \propto \tau_{21}/s$ by $100\times$ ($3.43\;\mathrm{ps} \to 34.3\;\mathrm{fs}$) while moving the laser to the **Class-A/B boundary** ($\tau_{21,\mathrm{eff}} \approx \tau_p$, $(s/\tau_{\mathrm{sat}})/\kappa_{\mathrm{cav}} = 0.845 \sim \mathcal{O}(1)$), where relaxation oscillations are strongly damped.
+
+# %%
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import sys
+from pathlib import Path
+
+import numpy as np
+from IPython.display import Image, Markdown, display
+
+HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from _helpers import (  # noqa: E402
+    DATA_DIR,
+    DEFAULT_BUS_GAP_M,
+    DEFAULT_BUS_WIDTH_M,
+    DEFAULT_GAMMA_A_HZ,
+    DEFAULT_N_DISK,
+    DEFAULT_N_TOTAL,
+    DEFAULT_R_DISK_M,
+    DEFAULT_R_IN_FRAC,
+    DEFAULT_TAU_10,
+    DEFAULT_TAU_21,
+    DEFAULT_TAU_21_PHYS,
+    DEFAULT_TAU_32,
+    DEFAULT_TIME_SCALE,
+    FIG_DIR,
+    lifetime_scaling_laws,
+    render_all_figures,
+    run_task_cold_cavity,
+    run_task_lasing,
+    run_task_threshold,
+    solve_wgm_complex_root,
+    wgm_four_level_li_curve,
+)
+
+TASKS: dict[str, tuple[str, object]] = {
+    "cold_cavity": (
+        "Part 1: 2D FIT cold-cavity WGMs (TM/TE, m=4..9, q=1,2), 3-level convergence & subpixel vs staircase",
+        run_task_cold_cavity,
+    ),
+    "threshold": (
+        "Part 2: Linear Lorentz gain pole threshold g_th(m) scan vs n*omega/(c*Gamma*Q) for m=4..8",
+        run_task_threshold,
+    ),
+    "lasing": (
+        "Part 3: Active FourLevelGain lasing from noise, clamping, L-pump curve, ring/full/core selection & mutations",
+        run_task_lasing,
+    ),
+}
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments or WAKIS_TUTORIAL_ARGS when executed inside a notebook."""
+    if argv is None:
+        env_args = os.environ.get("WAKIS_TUTORIAL_ARGS")
+        argv = shlex.split(env_args) if env_args is not None else sys.argv[1:]
+    parser = argparse.ArgumentParser(
+        description="Tutorial 7.8: Microdisk whispering-gallery laser (2D FIT + FourLevelGain)"
+    )
+    parser.add_argument("--quick", action="store_true", help="Run fast reduced-grid sweep.")
+    parser.add_argument("--full", action="store_true", help="Run full converged sweep and write data/.")
+    parser.add_argument(
+        "--task",
+        choices=list(TASKS),
+        help="Run a single simulation task and write its data/task_0N_<name>.{json,npz} files.",
+    )
+    parser.add_argument("--list-tasks", action="store_true", help="List available tasks and exit.")
+    parser.add_argument("--plot", action="store_true", help="Render all figures and GIF from existing data/.")
+    args, _ = parser.parse_known_args(argv)
+    return args
+
+
+def ensure_data_and_figures(args: argparse.Namespace) -> dict[str, dict]:
+    """Run requested simulation tasks or load committed data/ and render all figures."""
+    if args.list_tasks:
+        for name, (desc, _) in TASKS.items():
+            print(f"{name:14s} : {desc}")
+        raise SystemExit(0)
+
+    task_files = {
+        "cold_cavity": "task_01_cold_cavity",
+        "threshold": "task_02_threshold",
+        "lasing": "task_03_lasing",
+    }
+
+    if args.task:
+        _, fn = TASKS[args.task]
+        res = fn(quick=args.quick)
+        print(json.dumps(res, indent=2))
+        return {args.task: res}
+
+    need_run = bool(args.full) or (
+        bool(args.quick)
+        and not all((DATA_DIR / f"{stem}.json").exists() for stem in task_files.values())
+    )
+    if not all((DATA_DIR / f"{stem}.npz").exists() for stem in task_files.values()):
+        need_run = True
+
+    summaries: dict[str, dict] = {}
+    if need_run and not args.plot:
+        quick_flag = bool(args.quick and not args.full)
+        for name, (_, fn) in TASKS.items():
+            summaries[name] = fn(quick=quick_flag)
+    else:
+        for name, stem in task_files.items():
+            jpath = DATA_DIR / f"{stem}.json"
+            if jpath.exists():
+                summaries[name] = json.loads(jpath.read_text(encoding="utf-8"))
+            else:
+                _, fn = TASKS[name]
+                summaries[name] = fn(quick=True)
+
+    render_all_figures()
+    return summaries
+
+
+if __name__ == "__main__":
+    _cli_args = parse_args()
+    _summaries = ensure_data_and_figures(_cli_args)
+    if _cli_args.task or _cli_args.list_tasks:
+        raise SystemExit(0)
+
+# %% [markdown]
+# ---
+#
+# ## 2. Simulation Setup & Mesh Schematic
+#
+# We model the 2D microdisk cavity on an $N_z = 1$ extruded FIT grid with `periodic` boundary conditions along $\pm z$ and 10-cell convolutional perfectly matched layers (`cpml`) on $\pm x, \pm y$.
+# - **Geometry & Materials:** A circular dielectric disk of radius $R = 1.0\;\mu\mathrm{m}$ ($D = 2.0\;\mu\mathrm{m}$) and effective refractive index $n_{\mathrm{disk}} = 2.0$ ($\varepsilon_r = 4.0$) sits in air ($n_{\mathrm{out}} = 1.0$). In Part 3, a straight bus waveguide of width $w_{\mathrm{bus}} = 220\;\mathrm{nm}$ and index $n_{\mathrm{bus}} = 2.0$ runs along $y = -(R + g_{\mathrm{bus}} + w_{\mathrm{bus}}/2)$ at an edge-to-edge coupling gap $g_{\mathrm{bus}} = 300\;\mathrm{nm}$ ($\ge 6\text{--}11$ cells across the waveguide core and gap).
+# - **Subpixel Smoothing vs Staircase:** Circular boundaries on a Cartesian Yee grid suffer from first-order $\mathcal{O}(\Delta x)$ staircase errors that scatter high-$Q$ WGMs into radiation modes and split degenerate $\cos(m\phi)/\sin(m\phi)$ doublets. In `build_microdisk_solver`, we compute $8\times 8$ subcell area fill fractions at each staggered Yee node ($E_z$ at cell centers, $E_x, E_y$ at edge midpoints) and apply harmonic-mean normal / arithmetic-mean tangential permittivity averaging (`subpixel=True`), comparing directly against binary cell snapping (`subpixel=False`).
+# - **Excitation & Spontaneous-Emission Noise Startup:** In Parts 1 and 2, we probe the passive or linear-gain cavity with a localized current source $J_z(t)$ near the disk rim ($r = 0.85 R$). In Part 3, the deterministic source is turned off ($J_z = 0$) and lasing starts purely from stochastic spontaneous-emission noise via `FourLevelGain(..., spontaneous_emission=True, noise_components="z", noise_amplitude=0.10, seed=42, time_scale=100.0)`.
+#
+# The setup figures (`figures/00a_setup_geometry.png` and `figures/00b_setup_mesh_and_excitation.png`) and setup summary table (`figures/00_setup_table.md`) are generated directly from the live `SolverFIT3D` and shape objects via `wakis.schematic.save_setup_figures`:
+#
+# ![Microdisk WGM Laser Setup Geometry](figures/00a_setup_geometry.png)
+# ![Microdisk WGM Laser Subpixel Mesh and Seed Spectrum](figures/00b_setup_mesh_and_excitation.png)
+
+# %%
+display(Image(filename=str(FIG_DIR / "00a_setup_geometry.png"), width=900))
+display(Markdown((FIG_DIR / "00_setup_table.md").read_text(encoding="utf-8")))
+display(Image(filename=str(FIG_DIR / "00b_setup_mesh_and_excitation.png"), width=900))
+
+# %% [markdown]
+# ### Analytical Pre-Checks: Exact Bessel/Hankel Roots & Lifetime Scaling Laws
+#
+# Before inspecting the 2D FIT time-domain fields, we evaluate the exact 2D Bessel/Hankel complex roots $x_{m,q}$ for $\mathrm{TM}_{m,1}$ ($m = 4\dots 9$), $\mathrm{TM}_{6,2}$, and $\mathrm{TE}_{6,1}$, comparing both $\Gamma_{m,q}^{\mathrm{QNM}}$ and $\Gamma_{m,q}^{\mathrm{trunc}}(1.45 R)$, and verify the algebraic time-scaling laws for $s = \text{time\_scale} = 100$:
+
+# %%
+for pol in ("TM", "TE"):
+    print(f"--- Exact 2D Bessel/Hankel WGM Roots ({pol}, R = {DEFAULT_R_DISK_M*1e6:.1f} um, n = {DEFAULT_N_DISK:.1f}) ---")
+    for m_val in (4, 5, 6, 7, 8, 9):
+        r1 = solve_wgm_complex_root(m_val, 1, polarization=pol)
+        print(
+            f"  {pol}_({m_val},1): x = {r1['x_real']:.5f} - i*{abs(r1['x_imag']):.3e}, "
+            f"f = {r1['frequency_thz']:7.3f} THz (lambda_0 = {r1['wavelength_m']*1e9:6.1f} nm), "
+            f"Q_rad = {r1['q_rad']:7.2f}, Gamma_QNM = {r1['confinement_disk']:.4f}, "
+            f"Gamma_trunc(1.45R) = {r1['confinement_disk_trunc']:.4f}, g_th = {r1['g_th_cm1']:7.1f} cm^-1"
+        )
+
+r61_tm = solve_wgm_complex_root(6, 1, polarization="TM")
+r62_tm = solve_wgm_complex_root(6, 2, polarization="TM")
+scale_check = lifetime_scaling_laws(
+    scale_factor=DEFAULT_TIME_SCALE,
+    g_th_1_m=r61_tm["g_th_ring_1_m"],
+    q_cold=r61_tm["q_rad"],
+)
+ts_lim = scale_check["time_scaling_limits"]
+print(
+    f"\nRadial Order Comparison at m = 6 (TM):\n"
+    f"  TM_(6,1): Q_rad = {r61_tm['q_rad']:.2f}, Gamma_QNM = {r61_tm['confinement_disk']:.4f}, "
+    f"Gamma_trunc(1.45R) = {r61_tm['confinement_disk_trunc']:.4f}, "
+    f"Gamma_ring(r >= 0.55R) = {r61_tm['confinement_ring']:.4f} "
+    f"({100.0*r61_tm['confinement_ring']/r61_tm['confinement_disk']:.2f}% of disk)\n"
+    f"  TM_(6,2): Q_rad = {r62_tm['q_rad']:.2f}, Gamma_QNM = {r62_tm['confinement_disk']:.4f}, "
+    f"Gamma_trunc(1.45R) = {r62_tm['confinement_disk_trunc']:.4f}, "
+    f"Gamma_ring(r >= 0.55R) = {r62_tm['confinement_ring']:.4f} "
+    f"({100.0*r62_tm['confinement_ring']/r62_tm['confinement_disk']:.2f}% of disk)\n"
+    f"\nTime-Scaling Verification (time_scale s = {scale_check['scale_factor']:.0f}x <= 100, tau_21: 6.0 ps -> 60 fs, tau_p = {scale_check['tau_p_fs']:.2f} fs):\n"
+    f"  sigma_21 ratio (fixed kappa_a) : {scale_check['sigma_ratio_fixed_kappa']:.6f}\n"
+    f"  dN_th ratio    (fixed kappa_a) : {scale_check['dN_th_ratio_fixed_kappa']:.6f}\n"
+    f"  W_p,th ratio   (unscaled vs s) : {scale_check['W_p_th_ratio_fixed_kappa']:.2f}x (FourLevelGain time_scale ratio = {scale_check['W_p_th_ratio_time_scale']:.2f}x)\n"
+    f"  I_sat ratio    (unscaled vs s) : {scale_check['I_sat_ratio_fixed_kappa']:.2f}x (FourLevelGain time_scale ratio = {scale_check['I_sat_ratio_time_scale']:.2f}x)\n"
+    f"  Bare RO at s = 100 (r_p = 2.4) : omega_RO,0 = {scale_check['omega_ro_bare_scaled_1_s']:.2e} s^-1 ({scale_check['f_ro_scaled_ghz']:.1f} GHz) "
+    f"vs Gamma_RO = {scale_check['gamma_ro_bare_scaled_1_s']:.2e} s^-1 (overdamped_bare = {scale_check['overdamped_bare_scaled']}, "
+    f"4-level damping ratio = {scale_check['damping_ratio_scaled']:.3f})\n"
+    f"  FourLevelGain.time_scaling_limits (dt = 0.0376 fs, s = {ts_lim['time_scale']:.0f}):\n"
+    f"    Condition 1 (cavity): (s/tau_sat)/kappa_cav = {ts_lim['sat_rate_over_kappa_cav']:.4f}, "
+    f"(s/tau_21)/kappa_cav = {ts_lim['rate_21_over_kappa_cav']:.4f} (s_max_cavity = {ts_lim['s_max_cavity']:.1f})\n"
+    f"    Condition 2 (dephasing): (s/tau_21)/gamma_a = {ts_lim['rate_21_over_gamma_a']:.4f} (s_max_dephasing = {ts_lim['s_max_dephasing']:.1f}), "
+    f"(s/tau_min)/gamma_a = {ts_lim['max_rate_over_gamma_a']:.4f} (s_max_fast_dephasing = {ts_lim['s_max_fast_dephasing']:.2f})\n"
+    f"    CN positivity: max_rate_dt = {ts_lim['max_rate_dt']:.4f} < 0.1 (s_max_cn_positivity = {ts_lim['s_max_cn_positivity']:.1f})"
+)
+
+# %% [markdown]
+# ---
+#
+# ## 3. Results
+#
+# ### 3.1 Part 1 · Cold-Cavity Whispering-Gallery Modes, Exponential $Q_{\mathrm{rad}}(m)$ & Subpixel vs Staircase Convergence
+#
+# In Task 1 (`run_task_cold_cavity`), we excite the passive microdisk with a broadband Gaussian pulse ($f_0 = 215\;\mathrm{THz}, \Delta f = 80\;\mathrm{THz}$) and extract the complex resonance frequencies and radiative quality factors via filter-diagonalization harmonic inversion (`wakis.resonances.ResonanceMonitor.harminv`, Wall & Neuhauser 1995; Mandelshtam & Taylor 1997) across three grid resolutions:
+# - **Coarse ($\Delta x = 40\;\mathrm{nm}$):** $91 \times 91 \times 1 = 8{,}281$ cells ($18.6\;\mathrm{cells}/\lambda_{\mathrm{disk}}$ at $\mathrm{TM}_{6,1}$).
+# - **Medium ($\Delta x = 28\;\mathrm{nm}$):** $129 \times 129 \times 1 = 16{,}641$ cells ($26.6\;\mathrm{cells}/\lambda_{\mathrm{disk}}$ at $\mathrm{TM}_{6,1}$, $10.7$ cells across the $300\;\mathrm{nm}$ bus gap).
+# - **Fine ($\Delta x = 20\;\mathrm{nm}$):** $181 \times 181 \times 1 = 32{,}761$ cells ($37.3\;\mathrm{cells}/\lambda_{\mathrm{disk}}$ at $\mathrm{TM}_{6,1}$, $15.0$ cells across the $300\;\mathrm{nm}$ bus gap).
+#
+# **Isolating higher-order radial modes $\mathrm{TM}_{m,2}$ ($q=2$) from adjacent high-$Q$ $\mathrm{TM}_{m+3,1}$ resonances:** The second radial order $\mathrm{TM}_{6,2}$ ($f_{\mathrm{exact}} = 284.460\;\mathrm{THz}, Q_{\mathrm{exact}} = 21.59$, linewidth $\Delta f = f/Q = 13.18\;\mathrm{THz}$) lies only **$0.410\;\mathrm{THz}$** away from the much higher-$Q$ fundamental mode $\mathrm{TM}_{9,1}$ ($f_{\mathrm{exact}} = 284.870\;\mathrm{THz}, Q_{\mathrm{exact}} = 468.25$). In a single-point late-time ringdown window ($t \in [45, 250]\;\mathrm{fs}$), the rapidly decaying $\mathrm{TM}_{6,2}$ signal is completely masked by the long-lived $\mathrm{TM}_{9,1}$ tail. Because $m=6$ (even) and $m=9$ (odd) have **opposite parity under inversion** $(x, y) \to (-x, -y)$ ($\cos(m(\phi + \pi)) = (-1)^m\cos(m\phi)$), recording two diametrically opposite probes at $(\pm r_s, 0)$ and forming the even/odd parity projections $s_{\pm}(t) = \frac{1}{2}[E_z(+r_s, 0, t) \pm E_z(-r_s, 0, t)]$ over an earlier $t \in [42, 130]\;\mathrm{fs}$ window exactly cancels $\mathrm{TM}_{9,1}$ ($m=9$, odd) in $s_+(t)$ and isolates $\mathrm{TM}_{6,2}$ ($m=6$, even), yielding $f_{\mathrm{FIT}} = 284.134\;\mathrm{THz}$ (**$-0.115\%$** error) and $Q_{\mathrm{FIT}} = 21.89$ (**$+1.37\%$** error).
+#
+# Figure 1 shows the cold-cavity ringdown spectra, exponential $Q_{\mathrm{rad}}(m)$ growth, and the 2D $\mathrm{TM}_{6,1}$ whispering-gallery mode profile:
+# - **Panel (a):** Every $\mathrm{TM}_{m,1}$ peak in the 2D FIT ringdown spectrum aligns with the exact Bessel/Hankel vertical lines across $m = 4\dots 9$ ($143.26\;\mathrm{THz}$ to $284.87\;\mathrm{THz}$), with relative frequency errors below $0.15\%$ on the fine subpixel grid ($-0.071\%$ on $\mathrm{TM}_{6,1}$, and **$-0.0069\%$** after Richardson extrapolation).
+# - **Panel (b):** On a semi-log plot, $Q_{\mathrm{rad}}(m)$ follows a straight line over more than an order of magnitude—rising from $Q_{4,1} = 18.36$ to $Q_{9,1} = 468.25$ for $\mathrm{TM}_{m,1}$ and from $Q_{4,1} = 9.18$ to $Q_{8,1} = 145.64$ for $\mathrm{TE}_{m,1}$ (lower than $\mathrm{TM}$ because the $\mathrm{TE}$ boundary condition contains the smaller factor $\eta_{\mathrm{TE}} = n_{\mathrm{out}}^2/n_{\mathrm{disk}}^2 = 0.25$, weakening internal reflection), while the second radial order $\mathrm{TM}_{m,2}$ ($q=2$, green diamonds) has much lower $Q_{\mathrm{rad}}$ ($12.18 \to 29.47$ for $m = 4\dots 7$) because its radial caustic sits closer to the disk center.
+# - **Panel (c):** The 2D DFT slice of $\operatorname{Re}[E_z(x, y)]$ at $f_{6,1} = 201.06\;\mathrm{THz}$ exhibits $2m = 12$ azimuthal standing-wave lobes concentrated inside the outer annulus $r \in [0.55 R, R]$ (marked by the dashed orange circle), where $99.12\%$ of the interior $\mathrm{TM}_{6,1}$ electric energy resides.
+
+# %%
+cold_summary = json.loads((DATA_DIR / "task_01_cold_cavity.json").read_text(encoding="utf-8"))
+display(Image(filename=str(FIG_DIR / "01_cold_cavity_wgm.png"), width=980))
+
+md_cold = [
+    "| Mode $(m, q)$ | Pol. | Bessel $f_{\\mathrm{exact}}$ [THz] | Subpixel $f_{\\mathrm{FIT}}$ [THz] | Freq. Error [\\%] | Staircase Freq. Error [\\%] | Bessel $Q_{\\mathrm{exact}}$ [-] | Subpixel $Q_{\\mathrm{FIT}}$ [-] | Subpixel $Q$ Error [\\%] | Staircase $Q$ Error [\\%] | QNM $\\Gamma_{m,q}^{\\mathrm{QNM}}$ [-] | Trunc. $\\Gamma_{m,q}^{\\mathrm{trunc}}(1.45R)$ [-] |",
+    "| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+]
+for row in cold_summary["tm_q1_modes"]:
+    md_cold.append(
+        f"| $({row['m']}, 1)$ | TM | {row['f_ana_thz']:.3f} | {row['f_sub_thz']:.3f} | "
+        f"{row['f_sub_rel_err']*100:+.3f}% | {row['f_stair_rel_err']*100:+.3f}% | "
+        f"{row['q_ana']:.2f} | {row['q_sub']:.2f} | {row['q_sub_rel_err']*100:+.2f}% | "
+        f"{row['q_stair_rel_err']*100:+.2f}% | {row['confinement_disk']:.4f} | {row['confinement_disk_trunc']:.4f} |"
+    )
+for row in cold_summary["tm_q2_modes"]:
+    md_cold.append(
+        f"| $({row['m']}, 2)$ | TM | {row['f_ana_thz']:.3f} | {row['f_sub_thz']:.3f} | "
+        f"{row['f_sub_rel_err']*100:+.3f}% | — | "
+        f"{row['q_ana']:.2f} | {row['q_sub']:.2f} | {row['q_sub_rel_err']*100:+.2f}% | — | — | — |"
+    )
+for row in cold_summary["te_q1_modes"]:
+    if row["m"] in (6, 8):
+        md_cold.append(
+            f"| $({row['m']}, 1)$ | TE | {row['f_ana_thz']:.3f} | {row['f_sub_thz']:.3f} | "
+            f"{row['f_sub_rel_err']*100:+.3f}% | — | "
+            f"{row['q_ana']:.2f} | {row['q_sub']:.2f} | {row['q_sub_rel_err']*100:+.2f}% | — | — | — |"
+        )
+display(Markdown("\n".join(md_cold)))
+
+# %% [markdown]
+# Figure 2 quantifies the **3-level spatial convergence** ($\Delta x \in \{40, 28, 20\}\;\mathrm{nm}$) and compares **conformal subpixel smoothing** against **staircase cell snapping**:
+# - **Panel (a) — $\mathrm{TM}_{6,1}$ Frequency Convergence:** Subpixel permittivity smoothing converges cleanly at second order ($p_{\mathrm{obs}} = 2.05$, $|f_{\mathrm{FIT}} - f_{\mathrm{exact}}|/f_{\mathrm{exact}} = 0.293\% \to 0.132\% \to 0.071\%$), with the 2-grid Richardson estimate reaching $201.045\;\mathrm{THz}$ (**$-0.0069\%$** error). Staircase snapping exhibits a $2.4\text{--}2.9\times$ larger frequency error at every resolution ($0.592\% \to 0.390\% \to 0.172\%$).
+# - **Panel (b) — High-$Q$ ($\mathrm{TM}_{8,1}$) Radiative $Q$ Convergence:** On the high-$Q$ $\mathrm{TM}_{8,1}$ mode ($Q_{\mathrm{exact}} = 236.70$), subpixel smoothing reduces the $Q$ error monotonically along the $\mathcal{O}(\Delta x^2)$ reference slope from $4.50\%$ ($\Delta x = 40\;\mathrm{nm}$) to $2.23\%$ ($\Delta x = 28\;\mathrm{nm}$) and $1.14\%$ ($\Delta x = 20\;\mathrm{nm}$), with the Richardson extrapolate $Q_{\mathrm{Rich}} = 236.705$ matching the exact Bessel/Hankel value to **$+0.0008\% \pm 1.13\%$** (where $\pm 1.13\%$ is the conservative two-grid discretization uncertainty $|Q_{\mathrm{Rich}} - Q_{\mathrm{fine}}|/Q_{\mathrm{exact}}$, since the sub-$10^{-5}$ central residual reflects a fortuitous cancellation of higher-order terms).
+# - **Panel (c) — Staircase Sidewall Roughness vs Conformal Subpixel Across $m = 4\dots 9$:** At every azimuthal order $m$, staircase pixelation introduces artificial $\mathcal{O}(\Delta x)$ boundary roughness that perturbs both the effective optical perimeter and the radiative leakage rate.
+
+# %%
+display(Image(filename=str(FIG_DIR / "02_convergence_and_staircase.png"), width=980))
+
+print(
+    f"Cold-Cavity 3-Level Convergence Summary (dx = {cold_summary['dx_levels_nm']} nm):\n"
+    f"  Grid cells (Nx x Ny x 1)         : {cold_summary['cells_levels']}\n"
+    f"  Cells per wavelength (TM_6,1)    : {[round(x, 2) for x in cold_summary['cpw_m6_levels']]}\n"
+    f"  TM_(6,1) subpixel freq error [%] : {[round(x*100, 3) for x in cold_summary['err_f6_sub']]} "
+    f"(p_obs = {cold_summary['p_obs_f6_sub']:.2f}, Richardson err = {cold_summary['f6_rich_rel_err']*100:+.4f}%)\n"
+    f"  TM_(6,1) staircase freq error [%]: {[round(x*100, 3) for x in cold_summary['err_f6_stair']]}\n"
+    f"  TM_(8,1) subpixel Q error [%]    : {[round(x*100, 2) for x in cold_summary['err_q8_sub']]} "
+    f"(Richardson err = {cold_summary['q8_rich_rel_err']*100:+.4f}% +/- {cold_summary['q8_rich_uncert_rel']*100:.2f}%)\n"
+    f"  TM_(8,1) staircase Q error [%]   : {[round(x*100, 2) for x in cold_summary['err_q8_stair']]}"
+)
+
+# %% [markdown]
+# ---
+#
+# ### 3.2 Part 2 · Linear Gain Threshold $g_{\mathrm{th}}(m)$ vs $g_{\mathrm{th}} = \frac{n_{\mathrm{disk}}\omega_m}{c\,\Gamma_{m,1}\,Q_{\mathrm{cold}}}$
+#
+# In Task 2 (`run_task_threshold`), we load the microdisk ($\Delta x = 28\;\mathrm{nm}$) with an **unsaturated linear Lorentz gain pole** (`FourLevelGain` with `enable_stimulated=False`, $\tau_{21} = \infty$, and initial inversion fixed at $N_2 = N_{\mathrm{total}}$ so $\Delta N$ is constant and linear) and sweep the material power gain coefficient $g \in \{0, 0.55, 0.90, 1.25\}\,g_{\mathrm{th,pred}}$ for each azimuthal order $m \in \{4, 5, 6, 7, 8\}$.
+#
+# Placing the `ResonanceMonitor` at the diametrically opposite point $(-x_0, -y_0)$ from the source $(x_0, y_0)$ guarantees an azimuthal separation $\Delta\phi = \pi$, so $|\cos(m\Delta\phi)| = |\cos(m\pi)| = 1$ is an **antinode for every integer $m$**. We compare the Harminv zero-crossing threshold $g_{\mathrm{th,FIT}}(m)$ against three references:
+# 1. **Self-consistent FIT-to-FIT prediction $g_{\mathrm{th,pred}} = \frac{n_{\mathrm{disk}}\omega_{\mathrm{FIT}}}{c\,\Gamma_{m,1}^{\mathrm{QNM}}\,Q_{\mathrm{cold,FIT}}}$:** Uses the cold-cavity $Q_{\mathrm{cold,FIT}}$ measured on the identical $\Delta x = 28\;\mathrm{nm}$ grid and the exact QNM confinement $\Gamma_{m,1}^{\mathrm{QNM}}$ ($\Gamma_{6,1}^{\mathrm{QNM}} = 0.8945$). Agreement is **$0.14\%$ mean relative error** across $m = 4\dots 8$ ($+0.04\%$ at $m=6$).
+# 2. **Exact analytical Bessel/Hankel prediction $g_{\mathrm{th,Bessel}} = \frac{n_{\mathrm{disk}}\omega_{\mathrm{exact}}}{c\,\Gamma_{m,1}^{\mathrm{QNM}}\,Q_{\mathrm{rad,exact}}}$:** Uses the continuum Bessel/Hankel $Q_{\mathrm{rad,exact}}$ and $\Gamma_{m,1}^{\mathrm{QNM}}$. Because the $\Delta x = 28\;\mathrm{nm}$ grid has a $+0.5\text{--}3.2\%$ finite-grid $Q$ offset on $m = 4\dots 8$, $g_{\mathrm{th,FIT}}$ agrees with $g_{\mathrm{th,Bessel}}$ to **$-1.42\%$ at $m=6$** and **$1.77\%$ mean relative error** across $m = 4\dots 8$.
+# 3. **Unconfined formula ($\Gamma_{m,1} \to 1$):** Omitting $\Gamma_{m,1}^{\mathrm{QNM}}$ systematically underpredicts $g_{\mathrm{th}}$ by **$8.21\text{--}11.33\%$** ($10.18\%$ mean error).
+
+# %%
+th_summary = json.loads((DATA_DIR / "task_02_threshold.json").read_text(encoding="utf-8"))
+display(Image(filename=str(FIG_DIR / "03_linear_gain_threshold.png"), width=980))
+
+md_th = [
+    "| Order $m$ | $\\Gamma_{m,1}^{\\mathrm{QNM}}$ [-] | $\\Gamma_{m,1}^{\\mathrm{trunc}}(1.45R)$ [-] | Exact $g_{\\mathrm{th,Bessel}}$ [cm$^{-1}$] | FIT-to-FIT $g_{\\mathrm{th,pred}}$ [cm$^{-1}$] | 2D FIT $g_{\\mathrm{th,FIT}}$ [cm$^{-1}$] | Error vs Bessel [\\%] | Error vs FIT $Q_{\\mathrm{cold}}$ [\\%] | Unconfined ($\\Gamma=1$) Error [\\%] |",
+    "| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+]
+for row in th_summary["modes"]:
+    md_th.append(
+        f"| $m = {row['m']}$ | {row['confinement_disk']:.4f} | {row['confinement_disk_trunc']:.4f} | "
+        f"{row['g_th_bessel_cm1']:.1f} | {row['g_th_pred_cm1']:.1f} | {row['g_th_fit_cm1']:.1f} | "
+        f"**{row['rel_err_vs_bessel']*100:+.2f}%** | **{row['rel_err_vs_pred']*100:+.2f}%** | "
+        f"{row['rel_err_unconfined_vs_fit']*100:+.2f}% |"
+    )
+display(Markdown("\n".join(md_th)))
+
+# %% [markdown]
+# ---
+#
+# ### 3.3 Part 3 · Active 4-Level Lasing from Spontaneous-Emission Noise (`FourLevelGain`), Clamping, $L$–Pump Curve, Spatial Hole Burning & Mutations
+#
+# In Task 3 (`run_task_lasing`), we activate full nonlinear stimulated emission (`enable_stimulated=True`) and stochastic spontaneous-emission noise (`spontaneous_emission=True, noise_components="z", noise_amplitude=0.10, seed=42, time_scale=100.0`) in `FourLevelGain` tuned to the $\mathrm{TM}_{6,1}$ whispering-gallery resonance ($\omega_a / 2\pi = 201.059\;\mathrm{THz}$, homogeneous linewidth $\gamma_a / 2\pi = 10.0\;\mathrm{THz}$, active density $N_{\mathrm{total}} = 5.0\times 10^{23}\;\mathrm{m}^{-3}$, physical lifetimes $\tau_{21} = 6.0\;\mathrm{ps}$, $\tau_{10} = \tau_{32} = 200\;\mathrm{fs}$, and population time-scaling factor $s = \text{time\_scale} = 100 \le 100$ giving $\tau_{21,\mathrm{eff}} = 60\;\mathrm{fs}$ and $\tau_{10,\mathrm{eff}} = \tau_{32,\mathrm{eff}} = 2.0\;\mathrm{fs}$). Each simulation starts from **zero electromagnetic field** ($\mathbf{E} = \mathbf{H} = 0$, $J_z = 0$) on a $\Delta x = 32\;\mathrm{nm}$ subpixel grid ($23.30\;\mathrm{cells}/\lambda_{\mathrm{disk}}$ at $\mathrm{TM}_{6,1}$ and $20.42\;\mathrm{cells}/\lambda_{\mathrm{disk}} \ge 20$ at the adjacent $\mathrm{TM}_{7,1}$ mode at $229.36\;\mathrm{THz}$) and runs for $N_t = 24{,}000$ steps ($t_{\mathrm{end}} = 903.5\;\mathrm{fs}$). Threshold crossing ($I_{\mathrm{cav}}/I_{\mathrm{sat}} = 0.5$) at $r_p = 2.40$ occurs at $t_{\mathrm{cross}} = 158.2\;\mathrm{fs}$ (`spatial_averaging=False`) and $173.2\;\mathrm{fs}$ (`spatial_averaging=True`), providing **$745.3\;\mathrm{fs} = 12.42\,\tau_{21,\mathrm{eff}}$** (SHB) and **$730.3\;\mathrm{fs} = 12.17\,\tau_{21,\mathrm{eff}}$** (homogenized) of post-threshold evolution ($\ge 10\,\tau_{21,\mathrm{eff}}$).
+#
+# Figure 4 illustrates the time-domain lasing build-up from noise, population clamping, single-mode spectral selection, and spatial pump-profile selection:
+# - **Panel (a) — WGM Build-Up from Spontaneous-Emission Noise & Inversion Clamping:** When pumped above threshold ($W_p = 2.4\,W_{p,\mathrm{th}}$ in the outer ring $r \in [0.55 R, R]$), spontaneous-emission noise amplifies by a late-to-early RMS build-up ratio of **$9.05\times$** and reaches a field RMS ratio between the final two $113\;\mathrm{fs}$ windows of $\mathrm{RMS}_{\mathrm{late}}/\mathrm{RMS}_{\mathrm{prev}} = 1.002$ at $r_p = 2.40$. **The inversion is not converged:** between the same two windows the homogenized inversion moves $0.891 \to 0.946$ ($+6\%$) and the SHB modal inversion $0.995 \to 0.878$ ($-12\%$), and at $r_p = 1.45$ the field is still growing ($1.218$ per window). All clamping and $L$–pump numbers below carry this $\pm 6\text{--}12\%$ window-to-window uncertainty. Over the $12.2\,\tau_{21,\mathrm{eff}}$ post-threshold trajectory, stimulated emission depletes and clamps the homogenized inversion (`spatial_averaging=True`) to **$\langle\Delta N\rangle/\Delta N_{\mathrm{th}} = 0.946$** at $r_p = 2.40$ ($0.944$ at $r_p = 2.05$, and $0.967$ at $r_p = 1.45$, within $3.3\text{--}5.6\%$ below $1.0$). In the localized SHB case (`spatial_averaging=False`), the modal-weighted inversion $\langle\Delta N\rangle_{\mathrm{modal}}/\Delta N_{\mathrm{th}}$ settles between **$0.995$** (preceding window) and **$0.878$** (final window; $1.008$ at $r_p = 2.05$ and $0.889$ at $r_p = 1.45$), while the unweighted ring average remains at $1.345$ because the $2m = 12$ azimuthal nodal planes are unsaturated. Why does the homogenized inversion sit $\approx 3.3\text{--}5.6\%$ below the noiseless isolated-disk reference $\Delta N_{\mathrm{th}}$? Part of it is the non-convergence above; a plausible (untested) further contribution is that `spontaneous_emission=True` continuously injects stochastic dipole power into the cavity modes even above threshold (visible in the sub-threshold floor $I/I_{\mathrm{sat}} = 0.030$ at $r_p = 0.50$ and $0.082$ at $r_p = 0.85$), steady-state power balance requires the stimulated modal gain to sit slightly below the cold-cavity decay rate ($\Delta N < \Delta N_{\mathrm{th}}$), reinforced by the mild non-adiabatic polarization lag at $s = 100$ ($(s/\tau_{21})/\gamma_a = 0.265$). Conversely, in the **below-threshold mutation check** ($W_p = 0.5\,W_{p,\mathrm{th}}$), only weak amplified spontaneous emission (ASE) is present ($30.65\times$ lower late-time intensity than above threshold) and $\langle\Delta N\rangle/\Delta N_{\mathrm{th}}$ remains unclamped at $0.471$.
+# - **Panel (b) — Single-Mode Selection from Broadband Noise at $\mathrm{TM}_{6,1}$:** Starting from broadband white polarization noise without any narrowband seed, the above-threshold cavity selects a single dominant whispering-gallery lasing line at $f_{\mathrm{lasing}} = 201.048\;\mathrm{THz}$ (**$-0.005\%$** relative to the unloaded cold-cavity root $201.059\;\mathrm{THz}$), suppressing the adjacent $\mathrm{TM}_{7,1}$ resonance at $229.36\;\mathrm{THz}$ by a side-mode suppression ratio of **$\mathrm{SMSR} = 32.83\;\mathrm{dB}$** ($1921\times$ in spectral power).
+# - **Panel (c) — Mode Selection by Pump Profile (Annular Ring vs Full Disk vs Central Core):** Because the fundamental radial mode $\mathrm{TM}_{6,1}$ is confined to the outer rim ($\Gamma_{\mathrm{ring}} / \Gamma_{\mathrm{disk}} = 99.12\%$ for $r \in [0.55 R, R]$), an **annular ring pump** at $r_p = 2.05$ achieves higher mode-selective WGM intensity ($I_{\mathrm{ring}}/I_{\mathrm{sat}} = 0.766, G = 8.02\times$) than a **full-disk pump** ($I_{\mathrm{full}}/I_{\mathrm{sat}} = 0.744, G = 7.75\times$, where inner-core spontaneous emission competes with the rim mode) while saving **$30.25\%$** of the pumped area ($R_{\mathrm{in}}^2 / R^2 = 0.55^2$). Conversely, pumping only the **central core** ($r < 0.55 R$, where $\mathrm{TM}_{6,1}$ has only $0.88\%$ of its interior energy) fails to lase into $\mathrm{TM}_{6,1}$, producing **$88.69\times$ lower intensity** ($I_{\mathrm{core}}/I_{\mathrm{sat}} = 0.0086$).
+
+# %%
+las_summary = json.loads((DATA_DIR / "task_03_lasing.json").read_text(encoding="utf-8"))
+display(Image(filename=str(FIG_DIR / "04_lasing_dynamics_and_spectrum.png"), width=980))
+
+print(
+    f"Part 3 FourLevelGain Lasing from Noise (`spontaneous_emission=True, time_scale={las_summary['time_scale']:.0f}, dx={las_summary['dx_nm']:.0f} nm`) Summary:\n"
+    f"  Grid resolution                  : dx = {las_summary['dx_nm']:.1f} nm (TM_6,1: {las_summary['cpw_m6']:.2f} cells/lambda, TM_7,1: {las_summary['cpw_m7']:.2f} cells/lambda >= 20)\n"
+    f"  Post-threshold duration (r_p=2.4): t_end = {las_summary['t_end_fs']:.1f} fs, post-th = {las_summary['above_shb_post_th_fs']:.1f} fs ({las_summary['above_shb_post_th_tau21_eff']:.2f} tau_21,eff SHB / {las_summary['above_hom_post_th_tau21_eff']:.2f} tau_21,eff hom)\n"
+    f"  Threshold pump rate W_p,th       : {las_summary['W_p_th_1_s']:.3e} s^-1, dN_th = {las_summary['dN_th_m3']:.3e} m^-3, I_sat = {las_summary['I_sat_w_m2']:.3e} W/m^2\n"
+    f"  Lasing frequency f_sim vs f_exact: {las_summary['f_lasing_sim_thz']:.3f} THz vs {las_summary['f_m6_ana_thz']:.3f} THz "
+    f"(rel. error = {las_summary['f_lasing_rel_err']*100:+.3f}%, SMSR vs TM_7,1 = {las_summary['smsr_tm6_over_tm7_db']:.2f} dB)\n"
+    f"  Above threshold (r_p = 2.40)     : buildup G = {las_summary['above_th_gain_ratio']:.2f}x, "
+    f"late clamping ratio = {las_summary['above_th_late_clamping_ratio']:.3f}, "
+    f"clamped <dN>/dN_th = {las_summary['li_dn_final_over_th'][-1]:.3f} (hom) / {las_summary['above_shb_dN_modal_prev_over_th']:.3f}->{las_summary['li_dn_shb_modal_final_over_th'][-1]:.3f} (SHB modal)\n"
+    f"  Clamped <dN>/dN_th across r_p    : r_p=[1.45, 2.05, 2.40] -> hom={[round(x, 3) for x in las_summary['li_dn_final_over_th'][3:]]}, "
+    f"SHB modal={[round(x, 3) for x in las_summary['li_dn_shb_modal_final_over_th'][3:]]}\n"
+    f"  Below threshold (r_p = 0.50)     : <dN>/dN_th = {las_summary['li_dn_final_over_th'][1]:.3f} (unclamped; "
+    f"I_above / I_below = {las_summary['above_over_below_intensity_ratio']:.2f}x)\n"
+    f"  L-pump hom vs theory (r_p>=1.45) : sim={[round(x, 4) for x in las_summary['li_hom_s_sim'][3:]]} vs theory={[round(x, 4) for x in las_summary['li_hom_s_theory'][3:]]} "
+    f"(rel. err = {[f'{x*100:+.2f}%' for x in las_summary['li_hom_vs_theory_rel_err_above']]})\n"
+    f"  L-pump SHB vs 1D radial theory   : sim={[round(x, 4) for x in las_summary['li_shb_s_sim'][3:]]} vs 1D-rad={[round(x, 4) for x in las_summary['li_shb_s_theory'][3:]]} "
+    f"(rel. err = {[f'{x*100:+.2f}%' for x in las_summary['li_shb_vs_theory_rel_err_above']]}) vs 2D-SW={[round(x, 4) for x in las_summary['li_shb_sw_s_theory'][3:]]}\n"
+    f"  SHB intensity reduction (r_p=2.4): FIT = {las_summary['shb_reduction_pct_r240']:.2f}% vs 1D radial theory = {las_summary['shb_theory_reduction_pct_r240']:.2f}% "
+    f"and 2D standing-wave bound = {las_summary['shb_sw_theory_reduction_pct_r240']:.2f}%\n"
+    f"  Pump profile (r_p = 2.05)        : Ring I/I_sat = {las_summary['profile_selection']['ring_I_cav_w_m2']/las_summary['I_sat_w_m2']:.3f} "
+    f"(saves {las_summary['profile_selection']['ring_area_saving_pct']:.2f}% area, retains "
+    f"{las_summary['profile_selection']['ring_confinement_retention_pct']:.2f}% confinement), "
+    f"Core I_ring / I_core = {las_summary['profile_selection']['ring_to_core_intensity_ratio']:.2f}x\n"
+    f"  Coupling mutation (r_p = 1.45)   : I(0.5*kappa_a) = {las_summary['mutation_kappa_a']['kappa_half_I_cav_w_m2']:.2e} W/m^2 (unclamped), "
+    f"I(1.0*kappa_a) = {las_summary['mutation_kappa_a']['kappa_nom_I_cav_w_m2']:.2e} W/m^2, "
+    f"I(2.0*kappa_a) = {las_summary['mutation_kappa_a']['kappa_double_I_cav_w_m2']:.2e} W/m^2"
+)
+
+# %% [markdown]
+# Figure 5 presents the **clamped $L$–pump characteristic compared directly (unscaled) against our 4-level rate-equation, 1D radial SHB, and 2D standing-wave SHB theories across all pump ratios**, the **2D steady-state population-inversion depletion map** $\Delta N(x, y)/\Delta N_{\mathrm{th}}$, and **evanescent outcoupling into the bus waveguide**:
+# - **Panel (a) — $L$–Pump Characteristic Across All Above-Threshold Points & SHB Reduction Bounds:** Below threshold ($r_p \in \{0.0, 0.50, 0.85\}$), the ring-averaged intracavity intensity $I_{\mathrm{ring}}/I_{\mathrm{sat}}$ remains low ($0.0, 0.030, 0.082$ homogenized; $0.0, 0.038, 0.106$ SHB), reflecting spontaneous-emission background. Above threshold ($r_p \in \{1.45, 2.05, 2.40\}$), the homogenized 2D FIT intensities (`spatial_averaging=True`, blue open squares: $I_{\mathrm{ring}}/I_{\mathrm{sat}} = 0.456, 1.201, 1.603$) compare with the noiseless single-mode rate-equation curve ($0.450, 1.050, 1.399$) with relative differences of $+1.27\%$ ($r_p = 1.45$, field still growing, not converged), $+14.47\%$ ($r_p = 2.05$), and $+14.57\%$ ($r_p = 2.40$). About 10 of the 14.6 points follow from the clamping deficit alone ($2.4/0.946 - 1 = 1.537$ vs $1.399$); the remainder is attributed, without a dedicated test, to the continuous stochastic spontaneous-emission input (`spontaneous_emission=True`) into both $\cos(6\phi)$ and $\sin(6\phi)$ polarizations (which also clamps $\Delta N_{\mathrm{hom}}/\Delta N_{\mathrm{th}}$ to $0.967, 0.944, 0.946$). When carrier diffusion is disabled (`spatial_averaging=False`, orange filled circles), the 2D FIT intensities drop to $I_{\mathrm{ring}}/I_{\mathrm{sat}} = 0.402, 0.766, 1.151$. Comparing these with the **1D radial-only SHB model** (`s_rad_ring`: $0.383, 0.916, 1.234$, solid orange curve, which assumes azimuthally uniform intensity and predicts an **$11.80\%$** reduction at $r_p = 2.40$) gives relative differences of **$+4.81\%$** ($r_p = 1.45$), **$-16.34\%$** ($r_p = 2.05$), and **$-6.76\%$** ($r_p = 2.40$); comparing with the **2D single-standing-wave SHB bound** (`s_shb_ring`: $0.267, 0.662, 0.907$, dotted orange curve, which assumes a pinned $\cos^2(6\phi)$ azimuthal standing wave and predicts a **$35.20\%$** reduction at $r_p = 2.40$) shows why the observed 2D FIT SHB intensity reduction of **$28.22\%$** at $r_p = 2.40$ sits squarely between the 1D radial SHB prediction ($11.80\%$) and the 2D single-standing-wave SHB bound ($35.20\%$). Specifically, near threshold ($r_p = 1.45$) radial hole burning dominates, whereas at $r_p = 2.05\text{--}2.40$ deep $2m = 12$ azimuthal hole burning suppresses the primary standing wave and partially excites the orthogonal azimuthal partner mode.
+# - **Panel (b) — 2D Clamped Population Inversion Map $\Delta N(x, y)/\Delta N_{\mathrm{th}}$:** Inside the pumped ring $r \in [0.55 R, R]$, the clamped $\mathrm{TM}_{6,1}$ standing wave burns **$2m = 12$ periodic azimuthal holes** aligned with the field antinodes where $\Delta N(x, y)/\Delta N_{\mathrm{th}}$ is depleted down to $\approx 0.45\text{--}0.75$, while the $12$ azimuthal nodal planes ($\cos(6\phi) = 0$) remain unsaturated near $\Delta N_0 / \Delta N_{\mathrm{th}} \approx 2.3$, yielding an unweighted ring average of $1.345$ and a modal-weighted average $\langle\Delta N\rangle_{\mathrm{modal}}/\Delta N_{\mathrm{th}} \in [0.878, 0.995]$.
+# - **Panel (c) — Lasing Electric Field $E_z(x, y)$ & Coupled Bus Waveguide Output:** The $\mathrm{TM}_{6,1}$ whispering-gallery mode evanescently tunnels across the $300\;\mathrm{nm}$ air gap into the $220\;\mathrm{nm}$ bus waveguide along the bottom of the disk, launching guided waves toward the $\pm x$ output ports whose intensity scales linearly with the intracavity WGM power.
+
+# %%
+display(Image(filename=str(FIG_DIR / "05_li_curve_and_spatial_hole_burning.png"), width=980))
+
+# %% [markdown]
+# The animated GIF below (`figures/microdisk_wgm_lasing_buildup.gif`) visualizes the time-domain build-up of the $\mathrm{TM}_{6,1}$ whispering-gallery laser mode from stochastic spontaneous-emission noise inside the ring-pumped microdisk and its evanescent outcoupling into the bottom bus waveguide as the population inversion clamps toward threshold:
+#
+# ![Microdisk WGM laser build-up and bus waveguide emission](figures/microdisk_wgm_lasing_buildup.gif)
+
+# %% [markdown]
+# ---
+#
+# ## 4. Quantitative Summary Table
+#
+# Every numerical value in the table below is read directly from `data/task_01_cold_cavity.json`, `data/task_02_threshold.json`, and `data/task_03_lasing.json` (and verified by `tests/test_074_microdisk_laser.py`):
+#
+# | Quantity | Analytical / Theory Reference | Wakis 2D FIT Result | Relative Error / Outcome |
+# | :--- | :--- | :--- | :--- |
+# | **Cold-cavity $\mathrm{TM}_{4,1}$ frequency & $Q_{\mathrm{rad}}$** ($\Delta x = 20\;\mathrm{nm}$) | $f = 143.263\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 18.36$ | $f = 143.236\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 18.40$ | **$-0.019\%$** ($f$), **$+0.21\%$** ($Q$) |
+# | **Cold-cavity $\mathrm{TM}_{5,1}$ frequency & $Q_{\mathrm{rad}}$** ($\Delta x = 20\;\mathrm{nm}$) | $f = 172.364\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 34.15$ | $f = 172.280\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 34.26$ | **$-0.049\%$** ($f$), **$+0.31\%$** ($Q$) |
+# | **Cold-cavity $\mathrm{TM}_{6,1}$ frequency** ($\Delta x = 20\;\mathrm{nm}$ & Richardson) | $f = 201.059\;\mathrm{THz}$ | $f_{\mathrm{fine}} = 200.916\;\mathrm{THz}$, $f_{\mathrm{Rich}} = 201.045\;\mathrm{THz}$ | **$-0.071\%$** (fine), **$-0.0069\%$** (Richardson, $p = 2.05$) |
+# | **Cold-cavity $\mathrm{TM}_{6,1}$ radiative $Q_{\mathrm{rad}}$** (subpixel vs staircase) | $Q_{\mathrm{rad}} = 64.04$ | $Q_{\mathrm{sub}} = 64.38$, $Q_{\mathrm{stair}} = 64.57$ | **$+0.53\%$** (subpixel) vs **$+0.83\%$** (staircase) |
+# | **Cold-cavity $\mathrm{TM}_{8,1}$ radiative $Q_{\mathrm{rad}}$** ($\Delta x = 20\;\mathrm{nm}$ & Richardson) | $Q_{\mathrm{rad}} = 236.70$ | $Q_{\mathrm{fine}} = 239.39$, $Q_{\mathrm{Rich}} = 236.70$ | **$+1.14\%$** (fine), **$+0.0008\% \pm 1.13\%$** (Richardson) |
+# | **Cold-cavity $\mathrm{TM}_{9,1}$ frequency & $Q_{\mathrm{rad}}$** ($\Delta x = 20\;\mathrm{nm}$) | $f = 284.870\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 468.25$ | $f = 284.461\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 476.04$ | **$-0.144\%$** ($f$), **$+1.66\%$** ($Q$) |
+# | **Higher-order radial mode $\mathrm{TM}_{6,2}$** ($\Delta\phi=\pi$ parity projection) | $f = 284.460\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 21.59$ | $f = 284.134\;\mathrm{THz}$, $Q_{\mathrm{rad}} = 21.89$ | **$-0.115\%$** ($f$), **$+1.37\%$** ($Q$) |
+# | **Cold-cavity $\mathrm{TE}_{6,1}$ & $\mathrm{TE}_{8,1}$ $Q_{\mathrm{rad}}$** ($\Delta x = 20\;\mathrm{nm}$) | $Q_{6,1} = 36.16$, $Q_{8,1} = 145.64$ | $Q_{6,1} = 35.60$, $Q_{8,1} = 144.27$ | **$-1.55\%$** ($m=6$), **$-0.94\%$** ($m=8$) |
+# | **Linear threshold gain $g_{\mathrm{th}}(m=4)$** ($\Gamma_{4,1}^{\mathrm{QNM}} = 0.8826$) | $g_{\mathrm{th,Bessel}} = 3706.4\;\mathrm{cm}^{-1}$, $g_{\mathrm{th,pred}} = 3688.2\;\mathrm{cm}^{-1}$ | $g_{\mathrm{th,FIT}} = 3669.5\;\mathrm{cm}^{-1}$ | **$-1.00\%$** vs Bessel, **$-0.51\%$** vs FIT $Q$ (**$-11.29\%$** for $\Gamma=1$) |
+# | **Linear threshold gain $g_{\mathrm{th}}(m=5)$** ($\Gamma_{5,1}^{\mathrm{QNM}} = 0.8859$) | $g_{\mathrm{th,Bessel}} = 2388.0\;\mathrm{cm}^{-1}$, $g_{\mathrm{th,pred}} = 2366.8\;\mathrm{cm}^{-1}$ | $g_{\mathrm{th,FIT}} = 2364.7\;\mathrm{cm}^{-1}$ | **$-0.97\%$** vs Bessel, **$-0.09\%$** vs FIT $Q$ (**$-11.33\%$** for $\Gamma=1$) |
+# | **Linear threshold gain $g_{\mathrm{th}}(m=6)$** ($\Gamma_{6,1}^{\mathrm{QNM}} = 0.8945$, $\Gamma_{6,1}^{\mathrm{trunc}} = 0.8699$) | $g_{\mathrm{th,Bessel}} = 1471.3\;\mathrm{cm}^{-1}$, $g_{\mathrm{th,pred}} = 1449.9\;\mathrm{cm}^{-1}$ | $g_{\mathrm{th,FIT}} = 1450.5\;\mathrm{cm}^{-1}$ | **$-1.42\%$** vs Bessel, **$+0.04\%$** vs FIT $Q$ (**$-10.59\%$** for $\Gamma=1$) |
+# | **Linear threshold gain $g_{\mathrm{th}}(m=7)$** ($\Gamma_{7,1}^{\mathrm{QNM}} = 0.9056$) | $g_{\mathrm{th,Bessel}} = 870.4\;\mathrm{cm}^{-1}$, $g_{\mathrm{th,pred}} = 851.1\;\mathrm{cm}^{-1}$ | $g_{\mathrm{th,FIT}} = 851.2\;\mathrm{cm}^{-1}$ | **$-2.20\%$** vs Bessel, **$+0.01\%$** vs FIT $Q$ (**$-9.45\%$** for $\Gamma=1$) |
+# | **Linear threshold gain $g_{\mathrm{th}}(m=8)$** ($\Gamma_{8,1}^{\mathrm{QNM}} = 0.9174$) | $g_{\mathrm{th,Bessel}} = 496.7\;\mathrm{cm}^{-1}$, $g_{\mathrm{th,pred}} = 480.8\;\mathrm{cm}^{-1}$ | $g_{\mathrm{th,FIT}} = 480.5\;\mathrm{cm}^{-1}$ | **$-3.25\%$** vs Bessel, **$-0.06\%$** vs FIT $Q$ (**$-8.21\%$** for $\Gamma=1$) |
+# | **Active `FourLevelGain` lasing from noise** ($\Delta x = 32\;\mathrm{nm}$, $r_p = 2.40$, $12.42\,\tau_{21,\mathrm{eff}}$ post-th) | $f_{6,1,\mathrm{exact}} = 201.059\;\mathrm{THz}$, clamping $\Delta N/\Delta N_{\mathrm{th}} \to 1$ | $f_{\mathrm{lasing}} = 201.048\;\mathrm{THz}$, $\langle\Delta N\rangle/\Delta N_{\mathrm{th}} = 0.946$ (hom) / $0.878$ (SHB) | **$-0.005\%$** ($f$), clamping ratio **$1.002$**, SMSR **$32.83\;\mathrm{dB}$** ($20.42\;\mathrm{cells}/\lambda_{\mathrm{TM}_{7,1}}$) |
+# | **$L$–pump curve vs homogenized & SHB theory** ($r_p \in \{1.45, 2.05, 2.40\}$) | Hom: $0.450, 1.050, 1.399$; 1D-rad SHB: $0.383, 0.916, 1.234$ ($11.80\%$ red.); 2D-SW: $35.20\%$ red. | Hom: $0.456, 1.201, 1.603$; SHB: $0.402, 0.766, 1.151$ | Hom: **$+1.27\%, +14.47\%, +14.57\%$**; SHB vs 1D-rad: **$+4.81\%, -16.34\%, -6.76\%$** (**$28.22\%$** FIT SHB reduction) |
+# | **Annular ring pump mode selection** ($r \in [0.55 R, R]$, $r_p = 2.05$) | Saves $30.25\%$ area, retains $99.12\%$ of $\mathrm{TM}_{6,1}$ confinement | Ring $I/I_{\mathrm{sat}} = 0.766$ ($G = 8.02\times$), Full $0.744$, Core $0.009$ | Ring lases with **$88.69\times$** higher intensity than core pump |
+# | **Mutation check 1: Pump below threshold** ($r_p = 0.50 < 1$) | Inversion unclamped ($\Delta N/\Delta N_{\mathrm{th}} \approx 0.50$), only weak ASE | $\langle\Delta N\rangle/\Delta N_{\mathrm{th}} = 0.471$, $I_{\mathrm{above}}/I_{\mathrm{below}} = 30.65\times$ | Verified (no inversion clamping, $30.65\times$ intensity suppression) |
+# | **Mutation check 2: Wrong coupling $\kappa_a$** ($r_p = 1.45$) | $0.5\kappa_a$ doubles threshold ($r_{\mathrm{eff}} = 0.725 < 1 \implies$ unclamped) | $I(0.5\kappa_a) = 1.06\times 10^6$, $I(1.0\kappa_a) = 6.33\times 10^6$, $I(2.0\kappa_a) = 1.27\times 10^7\;\mathrm{W/m^2}$ | $0.5\kappa_a$ fails to clamp ($5.95\times$ lower intensity than $1.0\kappa_a$) |
+
+# %% [markdown]
+# ---
+#
+# ## 5. Limits & Failure Modes
+#
+# 1. **2D Effective-Index Approximation vs 3D Vertical Slab Leakage:**
+#    Our 2D model ($\partial_z = 0$) assumes all radiated power escapes radially in the disk plane $(x, y)$, so $Q_{\mathrm{rad}}(m)$ grows without bound as $\exp(2m\alpha_{\mathrm{WKB}})$. In a real 3D semiconductor microdisk of finite thickness $d \sim 150\text{--}250\;\mathrm{nm}$ supported on a post [McCall *et al.*, 1992], vertical scattering at the disk rim and pedestal leakage introduce an upper ceiling $Q_{\mathrm{vert}} \sim 10^4\text{--}10^5$: once $Q_{\mathrm{rad}}(m) \gg Q_{\mathrm{vert}}$, increasing $m$ no longer lowers the lasing threshold.
+# 2. **Standing-Wave Azimuthal Spatial Hole Burning vs Counter-Propagating Travelling Waves:**
+#    In a localized gain medium (`spatial_averaging=False`) without carrier diffusion, a single standing-wave WGM $\propto \cos(m\phi)$ burns $2m$ azimuthal holes at its antinodes while leaving undepleted inversion $\Delta N \approx \Delta N_0$ at its $2m$ nodes. At high pump rates ($r_p \gtrsim 1.8$), the orthogonal degenerate partner mode $\propto \sin(m\phi)$—whose antinodes sit precisely at the nodes of $\cos(m\phi)$—experiences net positive modal gain unless symmetry is broken by a directional bus coupler or carrier diffusion homogenizes the inversion over a diffusion length $L_D = \sqrt{D_{\mathrm{amb}}\tau_{21}} \gtrsim \pi R / m$. Consequently, the 2D FIT SHB intensity reduction ($28.22\%$ at $r_p = 2.40$) lies between the 1D radial-only SHB prediction ($11.80\%$, uniform azimuth) and the single-standing-wave 2D SHB bound ($35.20\%$, pinned $\cos^2 m\phi$).
+# 3. **Staircase Sidewall Roughness Splitting & $Q$ Degradation on Coarse Grids:**
+#    When a circular boundary of radius $R$ is snapped onto a coarse Cartesian grid ($\Delta x \gtrsim \lambda_{\mathrm{disk}}/15$, `subpixel=False`), the discrete $C_{4v}$ grid symmetry couples $\cos(m\phi)$ and $\sin(m\phi)$ and scatters high-$m$ WGMs into lower-$m$ radiation harmonics. When the staircase roughness scattering rate $\gamma_{\mathrm{rough}}$ exceeds $\gamma_{\mathrm{rad}}(m)$, the simulated quality factor saturates at $Q_{\mathrm{rough}}$ instead of following the exponential Bessel/Hankel law.
+# 4. **Fast-Relaxation Breakdown ($\tau_{10} \to \tau_{21}$, Self-Terminating Bottleneck):**
+#    An ideal 4-level laser requires rapid emptying of the lower laser level ($\tau_{10} \ll \tau_{21}$). As shown immediately by our steady-state formula $\Delta N_0(W_p) \propto (\tau_{21} - \tau_{10})$, if $\tau_{10} \ge \tau_{21}$ (a counter-case encountered in self-terminating atomic or intersubband transitions without phonon-assisted depopulation), steady-state population inversion $\Delta N_0 \le 0$ is **impossible at any pump rate $W_p$**, and continuous-wave lasing ceases completely.
+# 5. **Population Time-Scaling Limits (`time_scale` $s = 100$, Class-B $\to$ Class-A Crossover & Fast-Level Dephasing Ratio):**
+#    Accelerating the slow population dynamics via `time_scale = s` with $s = 100 \le 100$ ($\tau_{21} = 6.0\;\mathrm{ps} \to \tau_{21,\mathrm{eff}} = 60\;\mathrm{fs}$, $\tau_{10} = \tau_{32} = 200\;\mathrm{fs} \to 2.0\;\mathrm{fs}$) preserves the algebraic steady-state threshold $W_{p,\mathrm{th}}$, saturation intensity $I_{\mathrm{sat}}$, and normalized $L$–pump slope $I(r_p)/I_{\mathrm{sat}}$, but modifies the transient regime as quantified by `FourLevelGain.time_scaling_limits`:
+#    - **Condition 1 (Cavity decay vs upper-level relaxation):** At $s = 100$, $(s/\tau_{\mathrm{sat}})/\kappa_{\mathrm{cav}} = 0.8453 \sim \mathcal{O}(1)$ (`s_max_cavity = 118.3`) because $\tau_{21,\mathrm{eff}} = 60.0\;\mathrm{fs}$ is comparable to the cold-cavity photon lifetime $\tau_p = Q_{\mathrm{rad}}/\omega_{6,1} = 50.69\;\mathrm{fs}$. Because the bare relaxation-oscillation damping rate $\Gamma_{\mathrm{RO}}^{\mathrm{bare}} = r_p s / (2\tau_{21}) = 2.00\times 10^{13}\;\mathrm{s}^{-1}$ scales as $s^1$ while $\omega_{\mathrm{RO},0}^{\mathrm{bare}} = 1.81\times 10^{13}\;\mathrm{s}^{-1}$ ($f_{\mathrm{RO}}^{\mathrm{bare}} = 2.886\;\mathrm{THz}$) scales as $s^{1/2}$, $s = 100$ crosses from the physical underdamped Class-B regime ($s = 1$, $f_{\mathrm{RO,damped}} = 340.1\;\mathrm{GHz}$) to the **Class-A/B boundary** (bare model overdamped, $\Gamma_{\mathrm{RO}}^{\mathrm{bare}} > \omega_{\mathrm{RO},0}^{\mathrm{bare}}$; with ground-state depletion $\zeta = 0.932$, strongly damped but underdamped). Observing underdamped relaxation oscillations directly in FDTD requires smaller time scaling ($s \lesssim 20$, where $\tau_{21,\mathrm{eff}} \ge 300\;\mathrm{fs} \gg \tau_p$).
+#    - **Condition 2 (Polarization dephasing vs population rates):** For the upper laser level $\tau_{21}$, $(s/\tau_{21})/\gamma_a = 0.2653 < 1$ (`s_max_dephasing = 376.99`), so $\tau_{21,\mathrm{eff}} = 60\;\mathrm{fs}$ remains $3.77\times$ longer than $\gamma_a^{-1} = 15.92\;\mathrm{fs}$. However, the fast non-radiative levels $\tau_{10} = \tau_{32} = 200\;\mathrm{fs}$ have $(s/\tau_{\min})/\gamma_a = 7.9577 > 1$ (`s_max_fast_dephasing = 12.57`), violating the strict fast-level adiabatic bound $(s/\tau_{\min})/\gamma_a \ll 1$ (while remaining well inside the Crank–Nicolson positivity limit `max_rate_dt = 0.0374 < 0.1`, `s_max_cn_positivity = 5353.2`). Together with continuous spontaneous-emission injection (`spontaneous_emission=True`), this non-adiabaticity is a plausible but untested contributor to the $\approx 3.3\text{--}5.6\%$ offset of the clamped homogenized inversion ($\langle\Delta N\rangle/\Delta N_{\mathrm{th}} = 0.946$ at $r_p = 2.40$) below the ideal adiabatic rate-equation value of $1.0$.
+#
+# ---
+#
+# ## 6. Verified References
+#
+# 1. **S.-H. Chang and A. Taflove**, "Finite-difference time-domain model of lasing action in a four-level two-electron atomic system," *Optics Express* **12**(16), 3827–3833 (2004), [`doi:10.1364/OPEX.12.003827`](https://doi.org/10.1364/OPEX.12.003827). — Formulated the 4-level atomic rate equations coupled to the Lorentzian polarization ADE in FDTD (demonstrated in their paper on a 1D single-defect distributed-Bragg-reflector microcavity) that we combine here with the 2D microdisk whispering-gallery geometry of McCall *et al.* (1992).
+# 2. **S. L. McCall, A. F. J. Levi, R. E. Slusher, S. J. Pearton, and R. A. Logan**, "Whispering-gallery mode microdisk lasers," *Applied Physics Letters* **60**(3), 289–291 (1992), [`doi:10.1063/1.106688`](https://doi.org/10.1063/1.106688). — Seminal experimental and theoretical demonstration of semiconductor microdisk whispering-gallery lasers, deriving the Bessel/Hankel WGM resonance condition and exponential radiative quality factor $Q_{\mathrm{rad}}(m)$.
+# 3. **A. E. Siegman**, *Lasers* (University Science Books, Mill Valley, CA, 1986), ISBN 978-0-935702-11-8, Chaps. 6–8 and 13. — Standard reference for Lorentzian atomic susceptibility, stimulated emission cross section $\sigma_{21}$, four-level rate equations, saturation intensity $I_{\mathrm{sat}}$, threshold clamping, and spatial hole burning.
+# 4. **M. R. Wall and D. Neuhauser**, "Extraction, through filter-diagonalization, of general quantum eigenvalues or classical normal mode frequencies from a small number of residues or a short-time segment of a signal. I. Theory and application to a quantum-dynamics model," *Journal of Chemical Physics* **102**(20), 8011–8022 (1995), [`doi:10.1063/1.468999`](https://doi.org/10.1063/1.468999). — Filter-diagonalization method (FDM) used by `wakis.resonances.harminv` to extract complex frequencies and $Q$ factors from short ringdown signals.
+# 5. **V. A. Mandelshtam and H. S. Taylor**, "Harmonic inversion of time signals and its applications," *Journal of Chemical Physics* **107**(17), 6756–6769 (1997), [`doi:10.1063/1.475324`](https://doi.org/10.1063/1.475324). — Numerically stable generalized-eigenvalue formulation of filter-diagonalization harmonic inversion implemented in `wakis.resonances.harminv`.

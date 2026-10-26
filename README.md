@@ -72,7 +72,8 @@ studies behind each speed or accuracy claim, with their baselines, are in [studi
 - **Materials library** (`wakis.material_library`): Metals, semiconductors, dielectrics and tissues fitted from the original literature and CC0 refractive-index data, each entry with its source citation; ferrite models for NFC shielding.
 - **Thin sheets and thin wires** (`wakis.subcell`): Resistive and PEC sheets and wires thinner than a cell (graphene, resistive films, thin traces, wire antennas). Salisbury screen and wire resonance within 1 %, exact adjoint.
 - **Linear plasma wakefields** (`wakis.plasma`): Wakefields in a plasma-filled pipe.
-- **Gain media** (`wakis.gain`): Four-level atomic system coupled to the fields: lasing threshold, gain saturation and mode competition (a Fabry–Pérot laser is the first example).
+- **Gain media** (`wakis.gain`): Four-level atomic system coupled to the fields: lasing threshold, gain saturation and mode competition (a Fabry–Pérot laser is the first example); spontaneous-emission Langevin noise so lasers start from noise, and lifetime acceleration for slow upper-state lifetimes.
+- **Semiconductor gain** (`wakis.gain_semiconductor`): Carrier-density gain with linewidth enhancement factor (chirp), validated on a Fabry–Pérot diode laser (relaxation-oscillation frequency against rate equations with a measured cold-cavity photon lifetime).
 - **Time-varying materials** (`wakis.time_varying`): ε(t), σ(t) and time-varying Drude media for time interfaces and photonic time crystals (Tutorial 2.5).
 
 </td></tr></table>
@@ -145,7 +146,7 @@ This work builds on the adjoint inverse-design literature, and in particular on 
 <td width="300" valign="top"><img src="docs/img/readme/cat7_development.jpg" width="300" alt="Fabry-Perot laser built with the gain-media feature: schematic and light-current curve, the starting point for the laser tutorials"></td>
 <td valign="top">
 
-- **Laser tutorials**: DFB, microdisk, photonic-crystal surface-emitting and BIC lasers built on the gain-media feature.
+- **Laser tutorials**: photonic-crystal surface-emitting and BIC lasers built on the gain-media feature.
 - **Vacuum electronics**: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave-tube gain; backward-wave oscillators; a beam over a slow-wave structure.
 - **Magnetic antennas**: magneto-dielectric and ferrite-loaded antennas on the dispersive-μ feature.
 - **Particle-in-cell beams**: for large-signal beam physics (saturation, efficiency) and nonlinear plasma wakefields.
@@ -295,9 +296,13 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <td width="170" valign="top"><a href="tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb"><img src="docs/img/readme/tut_07-05.jpg" width="170" alt="Tutorial 7.5"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb">7.5 · Partially coherent light through a double slit</a></b><br><sub>van Cittert–Zernike, Gaussian Schell model, temporal coherence</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-05_partial_coherence_double_slit/partial_coherence_double_slit.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb"><img src="docs/img/readme/tut_07-06.jpg" width="170" alt="Tutorial 7.6"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb">7.6 · Thin-film LED emission by Helmholtz reciprocity</a></b><br><sub>Direct dipole sum (0.07 %), transfer matrix, Janssen et al.</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-06_led_reciprocity/led_reciprocity.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb"><img src="docs/img/readme/tut_07-07.jpg" width="170" alt="Tutorial 7.7"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb">7.7 · DFB laser with a quarter-wave phase shift</a></b><br><sub>Kogelnik–Shank coupled-wave thresholds; lasing from noise</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb"><img src="docs/img/readme/tut_07-08.jpg" width="170" alt="Tutorial 7.8"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb">7.8 · Microdisk whispering-gallery laser</a></b><br><sub>Bessel/Hankel WGM roots; clamping and hole burning</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
 </table>
 
-*Planned:* Lasers (DFB, microdisk, photonic-crystal surface-emitting, BIC) with the gain-media feature.
+*Planned:* Photonic-crystal surface-emitting (PCSEL) and BIC lasers.
 
 ### Chapter 8 · Vacuum Electronics
 
@@ -357,7 +362,8 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Dispersive permeability μ(ω) for ferrites and magneto-dielectrics (`mu_poles`), exact adjoint
 - [x] Materials library fitted from the original literature with source citations (`wakis.material_library`)
 - [x] Thin sheets and thin wires below the cell size (`wakis.subcell`): graphene, resistive films, traces, wire antennas
-- [x] Gain media: four-level atomic system coupled to the fields (`wakis.gain`)
+- [x] Gain media: four-level atomic system coupled to the fields (`wakis.gain`), with spontaneous-emission noise and lifetime acceleration
+- [x] Semiconductor gain with linewidth enhancement factor (`wakis.gain_semiconductor`)
 - [x] Time-varying materials: ε(t), σ(t), time-varying Drude media (`wakis.time_varying`)
 
 **Meshes and time stepping**
@@ -407,7 +413,8 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Visual examples library ([EXAMPLES.md](EXAMPLES.md)): built tutorials, studies and 157 planned examples with literature references
 - [x] Setup schematics, labelled overlays and graded/non-square meshes in Chapters 2–7 (Chapters 1, 8 and 5.6–5.10 in progress)
 - [ ] Tutorial 3.5: 3D resolution study (staircase vs conformal vs tensor)
-- [ ] Laser tutorials (DFB, microdisk, photonic-crystal surface-emitting, BIC) with the gain-media feature
+- [x] Laser tutorials: DFB (7.7) and microdisk (7.8)
+- [ ] Laser tutorials: photonic-crystal surface-emitting and BIC lasers
 - [ ] Vacuum electronics: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave tube gain; backward-wave oscillator; klystron cavities
 - [ ] Magnetic antennas on the dispersive-μ feature
 - [ ] Grating couplers, polarization devices and (de)multiplexers (Chapter 5 catalogue)

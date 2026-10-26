@@ -958,6 +958,93 @@ res = patch_results(sim)  # resonance, |S11| dip, Zin, bandwidth, directivity
 print(res["resonance"] / 1e9, res["s11_min_db"], res["directivity_dbi"])
 ```
 
+#### Semiconductor gain media and diode lasers: `SemiconductorGain`
+
+`wakis.gain_semiconductor` provides `SemiconductorGain` (and the frequency-chirp helper `adiabatic_chirp`), coupling carrier density $N(\mathbf{r}, t)$ [$\text{m}^{-3}$] (driven by current injection $\eta_i J/(q d)$, SRH/radiative/Auger recombination $A N + B N^2 + C N^3$, stimulated emission work $-\mathbf{E}\cdot\partial_t\mathbf{P}/(\hbar\omega_0)$, and optional carrier diffusion $D\nabla^2 N$) to one or more Lorentzian ADE gain poles and Henry's linewidth enhancement factor $\alpha_H$ (`solver.add_gain_material`). See *Semiconductor gain media* in the [physics guide](physicsguide.md) and the full example script `examples/015_semiconductor_fp_laser.py`:
+
+```python
+import numpy as np
+from scipy.constants import c
+import wakis
+from wakis.gain_semiconductor import SemiconductorGain, adiabatic_chirp
+from wakis.sources import CurrentSource, GaussianSource
+
+f0 = c / 1.55e-6  # 193.41 THz (1.55 um telecom band)
+gain = SemiconductorGain(
+    omega_0=2 * np.pi * f0,
+    gamma=2 * np.pi * 25.0e12,
+    N_tr=1.2e24,                # transparency carrier density [1/m^3]
+    differential_gain=4.0e-20,  # dg/dN [m^2]
+    gain_model="linear",        # or "logarithmic" with g0=...
+    alpha_H=4.0,                # Henry linewidth enhancement factor [-]
+    J=2.5e7,                    # injection current density [A/m^2] (or callable J(t))
+    eta_i=0.90,
+    active_thickness=0.12e-6,   # active-layer thickness d [m]
+    A=5.0e8,                    # SRH [1/s]
+    B=1.0e-16,                  # radiative [m^3/s]
+    C=3.0e-41,                  # Auger [m^6/s]
+    diffusion_coeff=1.0e-3,     # ambipolar diffusion D [m^2/s]
+    eps_inf=12.25,
+    initial_carriers="steady_state",
+)
+
+# Analytic Fabry-Perot diode laser operating point (with optional DBR effective length L_eff),
+# small-signal modulation transfer function, and Koch-Bowers chirp helper
+ss = gain.steady_state_laser(length=300e-6, R1=0.32, R2=0.32, L_eff=300e-6)
+H_tf = gain.modulation_transfer_function(np.linspace(0.1e9, 20e9, 200), length=300e-6, R1=0.32)
+
+# Register on SolverFIT3D and inspect carrier density / particle & Poynting budget (including dchi_work_joules)
+grid = wakis.GridFIT3D(-1e-6, 1e-6, -1e-6, 1e-6, -1.6e-6, 1.6e-6, 2, 2, 160, verbose=0)
+solver = wakis.SolverFIT3D(grid, cfln=0.5, bc_low=["periodic", "periodic", "cpml"],
+                           bc_high=["periodic", "periodic", "cpml"], n_pml=10, verbose=0)
+solver.add_gain_material(gain, center=(0, 0, 0), size=(4e-6, 4e-6, 1.2e-6))
+N_avg = solver.get_gain_carriers(cell_average=True)
+budget = solver.get_gain_bookkeeping()
+```
+
+#### Active gain media: spontaneous-emission noise and lifetime acceleration
+
+`wakis.gain` (`FourLevelGain`, `SaturableGain`, `solver.add_gain_material`) couples four-level rate equations and Lorentzian dipole polarizations to `SolverFIT3D`. By default (`spontaneous_emission=False`), the equations are deterministic and require an external seed pulse to start lasing; passing `spontaneous_emission=True` (with optional `seed=...`) injects Fluctuation–Dissipation-Theorem (FDT) Langevin polarization noise proportional to $\sqrt{N_2}$ (evaluated at the Crank–Nicolson half-step midpoint $N_2^{n+1/2}$) so amplified spontaneous emission (ASE) and laser oscillation start from rest. Passing `time_scale=s` (alias `lifetime_scale=s`) scales $\tau_{ij} \to \tau_{ij}/s$ and $W_p \to s W_p$ (while holding $\kappa_a$ at the physical unscaled $\tau_{21}$) to compress nanosecond population build-up by a factor of $s$ (for $s \ll s_{\max,\text{cav}} = \tau_{\text{sat}}/\tau_p$ in the Class-B underdamped regime) without altering the threshold pump rate, steady-state inversion, saturation intensity, or steady-state laser output:
+
+```python
+from wakis.gain import (
+    FourLevelGain,
+    ase_spectrum_1d,
+    dbr_reflectance,
+    fabry_perot_laser_output,
+    fabry_perot_threshold_gain,
+)
+
+f0 = c / 1.2e-6
+R_dbr = dbr_reflectance(2.0, 1.0, n_pairs=1, extra_high=True)  # 3-layer (H L H) DBR: 1 (H,L) pair + 1 extra H
+g_th = fabry_perot_threshold_gain(length=1.2e-6, R1=R_dbr, R2=R_dbr)
+
+gain = FourLevelGain(
+    omega_a=2 * np.pi * f0,
+    gamma_a=1.0e14,
+    tau_21=15.0e-12,
+    tau_10=20.0e-15,
+    tau_32=10.0e-15,
+    N_total=6.0e25,
+    spontaneous_emission=True,  # FDT Langevin noise (~ sqrt(N_2)); False by default
+    seed=42,                    # reproducible per-group PCG64 RNG
+    time_scale=100.0,           # 100x lifetime acceleration; steady state unchanged
+    spatial_averaging=True,
+)
+gain.W_p = gain.threshold_pump_rate(2.5 * g_th)
+solver.add_gain_material(gain, center=(0.0, 0.0, 0.6e-6), size=(4e-6, 4e-6, 1.2e-6))
+
+# Analytic helpers for ASE gain narrowing, beta-rounded L-I curve, and validity bounds
+freqs = np.linspace(200e12, 300e12, 201)
+S_ase = ase_spectrum_1d(freqs, length=2.4e-6, material=gain)
+I_out = fabry_perot_laser_output(
+    2.5, gain.saturation_intensity(), R_dbr, R_dbr,
+    spatial_hole_burning=False, beta_sp=1e-2,
+)
+limits = gain.time_scaling_limits(tau_p=22.0e-15)  # checks s/tau_sat << kappa_cav, gamma_a
+```
+See `examples/012_fabry_perot_laser.py` and `examples/014_laser_noise_and_time_scaling.py` for full Fabry–Pérot laser, ASE gain-narrowing, multi-mode competition, and lifetime-acceleration benchmarks.
+
 ## 🕹️ Using `wakis` as a Wakefield solver for beam-coupling impedance
 
 ### A few words about beam-coupling impedance and wakefields

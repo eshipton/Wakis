@@ -65,16 +65,71 @@ Conventions and Discretization
        The scheme is second-order accurate in time, ``O(dt^2)``, and conserves
        total population ``N_0 + N_1 + N_2 + N_3 = N_total`` to machine precision
        at every step.
+    4. When ``spontaneous_emission=True``, a quantum-Langevin / fluctuation-
+       dissipation random polarization kick ``eta_a^n`` proportional to
+       ``N_2^(p_noise)`` (with ``p_noise = 0.5`` by default, evaluated at the
+       half-step midpoint ``N_2^(n+1/2) = 0.5 * (N_2^n + N_2^(n+1))``) is added
+       to the 1 <-> 2 polarization update (J. Andreasen and H. Cao,
+       "Finite-difference time-domain formulation of stochastic noise in
+       macroscopic atomic systems", *J. Lightwave Technol.* **27**(20),
+       4530-4535, 2009, doi:10.1109/JLT.2009.2024627; J. Andreasen, H. Cao,
+       A. Taflove, P. Kumar, and C.-q. Cao, "Finite-difference time-domain
+       simulation of thermal noise in open cavities", *Phys. Rev. A* **77**(2),
+       023810, 2008, doi:10.1103/PhysRevA.77.023810; J. Andreasen and H. Cao,
+       "Numerical study of amplified spontaneous emission and lasing in random
+       media", *Phys. Rev. A* **82**(6), 063835, 2010,
+       doi:10.1103/PhysRevA.82.063835).
+    5. When ``time_scale=s`` (alias ``lifetime_scale=s``) is set with ``s > 0``,
+       all population relaxation lifetimes ``tau_ij -> tau_ij / s``, pumping rate
+       ``W_p -> s * W_p``, and stimulated population transition rates are
+       accelerated by factor ``s`` while holding ``kappa_a`` fixed at the
+       physical unscaled ``tau_21``, preserving steady-state populations,
+       threshold gain/pump, saturation intensity, and steady-state laser output.
 """
 
 import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import hbar
+from scipy.linalg import expm
 from scipy.optimize import brentq
 from scipy.special import lambertw
 
 from .dispersive import DispersiveMaterial, Lorentz, _restrict_group
+
+
+def _normalize_noise_components(components):
+    """Normalize ``noise_components`` specification to a tuple of ``('x', 'y', 'z')``."""
+    if isinstance(components, str):
+        key = components.strip().lower()
+        if key == "all":
+            return ("x", "y", "z")
+        chars = tuple(dict.fromkeys(c for c in key if c in ("x", "y", "z")))
+        if not chars or any(c not in ("x", "y", "z") for c in key):
+            raise ValueError(
+                f"Invalid noise_components={components!r}; expected 'x', 'y', 'z', "
+                "'xy', 'all', or a sequence of ('x', 'y', 'z')."
+            )
+        return chars
+    out = []
+    for item in components:
+        c = str(item).strip().lower()
+        if c not in ("x", "y", "z"):
+            raise ValueError(
+                f"Invalid component {item!r} in noise_components; expected 'x', 'y', or 'z'."
+            )
+        if c not in out:
+            out.append(c)
+    if not out:
+        raise ValueError("noise_components cannot be empty.")
+    return tuple(out)
+
+
+def _make_gain_rng(seed):
+    """Construct a reproducible ``np.random.Generator`` from ``seed``."""
+    if isinstance(seed, np.random.Generator):
+        return seed
+    return np.random.default_rng(seed)
 
 
 class GainMaterial(list):
@@ -178,6 +233,41 @@ class FourLevelGain(GainMaterial):
         True, the stimulated transition rate is spatially averaged across the
         gain region at each step (fast carrier diffusion / homogenized-cavity
         limit).
+    spontaneous_emission : bool, optional
+        If True, inject quantum-Langevin / fluctuation-dissipation polarization
+        noise proportional to ``N_2**(noise_exponent)`` into the 1 <-> 2
+        polarization update at each step (Andreasen & Cao, *J. Lightwave
+        Technol.* **27**(20), 4530-4535, 2009). Default False (existing
+        deterministic results unchanged).
+    noise_amplitude : float, optional
+        Dimensionless multiplier ``>= 0`` applied to the physical FDT Langevin
+        noise amplitude. Defaults to ``1.0`` when ``spontaneous_emission=True``
+        and ``0.0`` when ``spontaneous_emission=False``.
+    noise_exponent : float, optional
+        Exponent ``p_noise >= 0`` of the upper-level population density in the
+        Langevin noise amplitude ``eta_a ~ max(N_2, 0)**p_noise``. Default
+        ``0.5`` (FDT square-root law so radiated spontaneous power scales
+        linearly with ``N_2``).
+    noise_components : str or sequence of str, optional
+        Electric-field component(s) receiving Langevin polarization noise
+        (``'x'``, ``'y'``, ``'z'``, ``'xy'``, or ``'all'``). Default ``'x'``.
+    transverse_uniform_noise : bool, optional
+        If True, share the stochastic draw across transverse ``(x, y)`` cells of
+        each ``z`` slice using slice volume ``A_perp * dz``. If None (default),
+        enabled automatically on 1D-periodic ``(x, y)`` grids.
+    seed : int or numpy.random.Generator, optional
+        Random seed or generator for reproducible Langevin trajectories.
+        Default None.
+    time_scale : float, optional
+        Dimensionless lifetime-acceleration factor ``s > 0`` (alias
+        ``lifetime_scale``). Scales ``tau_ij -> tau_ij / s``, ``W_p -> s * W_p``,
+        and the population rate evolution by ``s`` while holding ``kappa_a``
+        fixed at the physical unscaled ``tau_21``, leaving steady-state
+        populations, threshold gain/pump, saturation intensity, and steady-state
+        laser output invariant while compressing population relaxation dynamics
+        by factor ``s``. Default ``1.0``.
+    lifetime_scale : float, optional
+        Alias for ``time_scale``.
     sigma : float, optional
         Host static electric conductivity [S/m], ``>= 0``. Default ``0.0``.
     name : str, optional
@@ -207,6 +297,14 @@ class FourLevelGain(GainMaterial):
         N_site=None,
         enable_stimulated=True,
         spatial_averaging=False,
+        spontaneous_emission=False,
+        noise_amplitude=None,
+        noise_exponent=0.5,
+        noise_components="x",
+        transverse_uniform_noise=None,
+        seed=None,
+        time_scale=1.0,
+        lifetime_scale=None,
         sigma=0.0,
         name=None,
     ):
@@ -215,6 +313,8 @@ class FourLevelGain(GainMaterial):
             N_total = N_density
         if W_p is not None:
             pump_rate = W_p
+        if lifetime_scale is not None:
+            time_scale = lifetime_scale
 
         self.omega_a = float(omega_a)
         self.gamma_a = float(gamma_a)
@@ -224,6 +324,7 @@ class FourLevelGain(GainMaterial):
         self.tau_30 = float(tau_30)
         self.N_total = float(N_total)
         self.pump_rate = float(pump_rate)
+        self.time_scale = float(time_scale)
 
         if self.omega_a <= 0.0:
             raise ValueError(f"omega_a must be > 0, got {self.omega_a}.")
@@ -235,6 +336,27 @@ class FourLevelGain(GainMaterial):
             raise ValueError(f"N_total must be >= 0, got {self.N_total}.")
         if self.pump_rate < 0.0:
             raise ValueError(f"pump_rate must be >= 0, got {self.pump_rate}.")
+        if self.time_scale <= 0.0 or not np.isfinite(self.time_scale):
+            raise ValueError(f"time_scale must be finite and > 0, got {self.time_scale}.")
+
+        if noise_amplitude is None:
+            self.spontaneous_emission = bool(spontaneous_emission)
+            self.noise_amplitude = 1.0 if self.spontaneous_emission else 0.0
+        else:
+            amp = float(noise_amplitude)
+            if amp < 0.0:
+                raise ValueError(f"noise_amplitude must be >= 0, got {amp}.")
+            self.noise_amplitude = amp
+            self.spontaneous_emission = bool(spontaneous_emission or (amp > 0.0))
+
+        self.noise_exponent = float(noise_exponent)
+        if self.noise_exponent < 0.0:
+            raise ValueError(f"noise_exponent must be >= 0, got {self.noise_exponent}.")
+        self.noise_components = _normalize_noise_components(noise_components)
+        self.transverse_uniform_noise = (
+            None if transverse_uniform_noise is None else bool(transverse_uniform_noise)
+        )
+        self.seed = seed
 
         if kappa_a is None:
             self.kappa_a = float(
@@ -308,6 +430,43 @@ class FourLevelGain(GainMaterial):
         self.pump_rate = val
 
     @property
+    def lifetime_scale(self):
+        """Dimensionless lifetime acceleration factor ``time_scale`` [-]."""
+        return self.time_scale
+
+    @lifetime_scale.setter
+    def lifetime_scale(self, value):
+        val = float(value)
+        if val <= 0.0 or not np.isfinite(val):
+            raise ValueError(f"lifetime_scale must be finite and > 0, got {val}.")
+        self.time_scale = val
+
+    @property
+    def effective_tau_21(self):
+        """Time-scaled upper-level lifetime ``tau_21 / time_scale`` [s]."""
+        return float(self.tau_21 / self.time_scale)
+
+    @property
+    def effective_tau_10(self):
+        """Time-scaled lower-level lifetime ``tau_10 / time_scale`` [s]."""
+        return float(self.tau_10 / self.time_scale)
+
+    @property
+    def effective_tau_32(self):
+        """Time-scaled pump-relaxation lifetime ``tau_32 / time_scale`` [s]."""
+        return float(self.tau_32 / self.time_scale)
+
+    @property
+    def effective_tau_30(self):
+        """Time-scaled 3 -> 0 lifetime ``tau_30 / time_scale`` [s]."""
+        return float(self.tau_30 / self.time_scale)
+
+    @property
+    def effective_pump_rate(self):
+        """Time-scaled pumping rate ``time_scale * pump_rate`` [1/s]."""
+        return float(self.time_scale * self.pump_rate)
+
+    @property
     def N_density(self):
         """Total atomic population density ``N_total`` [1/m^3]."""
         return self.N_total
@@ -344,7 +503,7 @@ class FourLevelGain(GainMaterial):
             return self.steady_state_populations()
         return np.array(self._init_tuple, dtype=float)
 
-    def rate_matrix(self, W_p=None, stim_rate_a=0.0):
+    def rate_matrix(self, W_p=None, stim_rate_a=0.0, apply_time_scale=False):
         """
         Linear rate matrix ``M`` [1/s] for the state vector ``[N_0, N_1, N_2, N_3]``.
 
@@ -355,6 +514,8 @@ class FourLevelGain(GainMaterial):
         stim_rate_a : float, optional
             Continuous-wave stimulated transition rate ``W_stim = sigma_21 * I / (hbar * omega_a)``
             [1/s] between levels 1 and 2. Default ``0.0``.
+        apply_time_scale : bool, optional
+            If True, multiply the rate matrix by ``self.time_scale``. Default False.
 
         Returns
         -------
@@ -367,7 +528,7 @@ class FourLevelGain(GainMaterial):
         g32 = 0.0 if np.isinf(self.tau_32) else 1.0 / self.tau_32
         g30 = 0.0 if np.isinf(self.tau_30) else 1.0 / self.tau_30
         ws = float(stim_rate_a)
-        return np.array(
+        mat = np.array(
             [
                 [-wp, g10, 0.0, g30],
                 [0.0, -(g10 + ws), g21 + ws, 0.0],
@@ -376,6 +537,7 @@ class FourLevelGain(GainMaterial):
             ],
             dtype=float,
         )
+        return self.time_scale * mat if apply_time_scale else mat
 
     def steady_state_populations(self, W_p=None, intensity=0.0):
         """
@@ -771,14 +933,437 @@ class FourLevelGain(GainMaterial):
                 hist[n + 1] = n_col[:, 0]
         return np.arange(Nt + 1) * dt, hist
 
+    def effective_saturation_time(self, W_p=None, time_scale=None):
+        """
+        Time-scaled saturation recovery time ``tau_sat / s`` [s].
+        """
+        s = self.time_scale if time_scale is None else float(time_scale)
+        if s <= 0.0:
+            raise ValueError(f"time_scale must be > 0, got {s}.")
+        return float(self.saturation_time(W_p=W_p) / s)
+
+    def radiative_fraction_1d(self, area_perp):
+        """
+        Fraction ``f_rad,1D`` [-] of 3D spontaneous emission coupled into 1D plane waves.
+
+        For a 1D-periodic slab of transverse area ``area_perp = L_x * L_y`` [m^2]
+        and host refractive index ``n_bg = sqrt(eps_inf)``, the FDT polarization
+        current radiates total plane-wave power ``(+z plus -z)`` equal to
+        ``f_rad,1D * V * N_2 * hbar * omega_a / tau_21`` per polarization, where::
+
+            f_rad,1D = kappa_a * tau_21 / (2 * eps_0 * c * n_bg * area_perp)
+                     = 3 * pi * c^2 / (n_bg * omega_a^2 * area_perp)
+                     = 3 * lambda_0^2 / (4 * pi * n_bg * area_perp)
+
+        Parameters
+        ----------
+        area_perp : float
+            Transverse periodic cell area ``L_x * L_y`` [m^2], ``> 0``.
+
+        Returns
+        -------
+        f_rad_1d : float
+            Dimensionless 1D plane-wave radiative fraction per polarization.
+        """
+        a_perp = float(area_perp)
+        if a_perp <= 0.0:
+            raise ValueError(f"area_perp must be > 0, got {a_perp}.")
+        return float(
+            self.kappa_a
+            * self.tau_21
+            / (2.0 * eps_0 * c_light * self.n_bg * a_perp)
+        )
+
+    def spontaneous_emission_power(
+        self,
+        volume,
+        N_2=None,
+        W_p=None,
+        area_perp=None,
+        dt=None,
+        noise_amplitude=None,
+    ):
+        """
+        Analytic spontaneous emission power [W] of an optically thin inverted region.
+
+        In 3D (``area_perp=None``), the spontaneous emission power per
+        polarization from upper-level density ``N_2`` in volume ``V`` is::
+
+            P_sp,3D = V * N_2 * hbar * omega_a / tau_21
+
+        In a 1D-periodic plane-wave domain of transverse area ``area_perp``
+        (``area_perp != None``), the total power radiated into ``+z`` and ``-z``
+        plane waves is ``f_rad,1D * P_sp,3D`` (multiplied by the discrete AR(2)
+        factor ``1 / (1 - (omega_a * dt / 2)^2)`` when ``dt`` is provided).
+
+        Parameters
+        ----------
+        volume : float
+            Active region volume ``V`` [m^3], ``>= 0``.
+        N_2 : float, optional
+            Upper-level population density [1/m^3]. If None, uses the
+            unsaturated steady-state (or explicit initial) ``N_2``.
+        W_p : float, optional
+            Pumping rate [1/s] used when ``N_2`` is None.
+        area_perp : float, optional
+            Transverse periodic area ``L_x * L_y`` [m^2]. If provided, returns
+            the 1D plane-wave radiated power ``P_rad,1D`` [W]; otherwise returns
+            the 3D rate ``P_sp,3D`` [W].
+        dt : float, optional
+            Solver timestep [s] for the discrete central-difference correction
+            ``1 / (1 - (omega_a * dt / 2)^2)``.
+        noise_amplitude : float, optional
+            Noise amplitude scale factor ``alpha_noise``. Defaults to
+            ``self.noise_amplitude`` if ``spontaneous_emission=True``, else ``1.0``.
+
+        Returns
+        -------
+        power : float
+            Spontaneous emission power [W].
+        """
+        vol = float(volume)
+        if vol < 0.0:
+            raise ValueError(f"volume must be >= 0, got {vol}.")
+        if N_2 is None:
+            if W_p is not None:
+                n2_val = float(self.steady_state_populations(W_p=W_p)[2])
+            else:
+                n2_val = float(self._effective_populations()[2])
+        else:
+            n2_val = float(N_2)
+        n2_pos = max(n2_val, 0.0)
+        amp = (
+            (self.noise_amplitude if self.spontaneous_emission else 1.0)
+            if noise_amplitude is None
+            else float(noise_amplitude)
+        )
+        n2_eff = (
+            n2_pos
+            if np.isclose(self.noise_exponent, 0.5)
+            else n2_pos ** (2.0 * self.noise_exponent)
+        )
+        p_3d = (amp**2) * vol * n2_eff * hbar * self.omega_a / self.tau_21
+        if area_perp is None:
+            return float(p_3d)
+        n_trans = max(sum(1 for c in self.noise_components if c in ("x", "y")), 1)
+        p_1d = n_trans * self.radiative_fraction_1d(area_perp) * p_3d
+        if dt is not None:
+            dt_f = float(dt)
+            p_1d /= 1.0 - (0.5 * self.omega_a * dt_f) ** 2
+        return float(p_1d)
+
+    def ase_spectrum(
+        self,
+        f,
+        length,
+        W_p=None,
+        populations=None,
+        area_perp=None,
+        dt=None,
+        normalize=False,
+    ):
+        """
+        Analytic 1D amplified spontaneous emission (ASE) spectrum ``S_ASE(f)``.
+
+        Evaluates the single-pass radiative-transfer solution for a homogeneous
+        1D gain slab of length ``L``::
+
+            S_ASE(f) ~ (g_sp(f) / g(f)) * (exp(g(f) * L) - 1)
+
+        where ``g(f) ~ (N_2 - N_1) * L_shape(f)`` is the net stimulated power
+        gain coefficient and ``g_sp(f) ~ N_2**(2 * p_noise) * L_shape(f)`` is
+        the spontaneous emission source profile.
+
+        Parameters
+        ----------
+        f : float or array_like
+            Frequency [Hz].
+        length : float
+            Slab length ``L`` [m], ``>= 0``.
+        W_p : float, optional
+            Pumping rate [1/s] used when ``populations`` is None.
+        populations : sequence of 4 float, optional
+            Explicit populations ``(N_0, N_1, N_2, N_3)`` [1/m^3].
+        area_perp : float, optional
+            Transverse periodic area [m^2] for physical power spectral density
+            units [W/Hz].
+        dt : float, optional
+            Timestep [s]. If provided, uses the discrete ADE permittivity
+            `epsilon_discrete` to evaluate ``g(f, dt)``.
+        normalize : bool, optional
+            If True, normalize the returned spectrum to unit peak value.
+
+        Returns
+        -------
+        S : float or ndarray
+            ASE spectral density at ``f``.
+        """
+        f_arr = np.asarray(f, dtype=float)
+        scalar = f_arr.ndim == 0
+        L = float(length)
+        if L < 0.0:
+            raise ValueError(f"length must be >= 0, got {L}.")
+        pops = (
+            self.steady_state_populations(W_p=W_p, intensity=0.0)
+            if (populations is None and W_p is not None)
+            else self._effective_populations(populations=populations)
+        )
+        n1, n2 = float(pops[1]), max(float(pops[2]), 0.0)
+        dn = n2 - n1
+
+        if dt is None:
+            eps_r = self.epsilon(f_arr, populations=pops)
+        else:
+            eps_r = self.epsilon_discrete(f_arr, float(dt), populations=pops)
+        omega = 2.0 * np.pi * f_arr
+        n_c = np.sqrt(eps_r.astype(complex))
+        n_c = np.where(n_c.real < 0, -n_c, n_c)
+        g_f = 2.0 * (omega / c_light) * n_c.imag
+
+        # Compute Lorentzian spontaneous emission coefficient g_sp(f)
+        pops_sp = np.array([pops[0], 0.0, 1.0, pops[3]], dtype=float)
+        if dt is None:
+            eps_sp = self.epsilon(f_arr, populations=pops_sp)
+        else:
+            eps_sp = self.epsilon_discrete(f_arr, float(dt), populations=pops_sp)
+        n_sp = np.sqrt(eps_sp.astype(complex))
+        n_sp = np.where(n_sp.real < 0, -n_sp, n_sp)
+        g_sp_unit = 2.0 * (omega / c_light) * n_sp.imag
+        n2_factor = (
+            n2
+            if np.isclose(self.noise_exponent, 0.5)
+            else n2 ** (2.0 * self.noise_exponent)
+        )
+        g_sp = n2_factor * g_sp_unit
+
+        x = g_f * L
+        exprel_x = np.where(np.abs(x) > 1e-12, np.expm1(x) / np.where(np.abs(x) > 1e-12, x, 1.0), 1.0 + 0.5 * x)
+        spec = g_sp * L * exprel_x
+        if area_perp is not None:
+            amp = self.noise_amplitude if self.spontaneous_emission else 1.0
+            pref = (amp**2) * (hbar * self.omega_a / (2.0 * np.pi)) * self.radiative_fraction_1d(area_perp) * float(area_perp) / (self.tau_21 * max(self.emission_cross_section, 1e-300))
+            spec = pref * spec
+        if normalize and np.max(spec) > 0.0:
+            spec = spec / np.max(spec)
+        return float(spec) if scalar else spec
+
+    def ase_linewidth(self, length, W_p=None, populations=None):
+        """
+        Analytic gain-narrowed full-width at half-maximum ``Delta f_ASE`` [Hz] of 1D ASE.
+
+        For a Lorentzian gain profile ``g(f) = g_0 / (1 + (2 pi (f - f_a) / (gamma_a / 2))^2)``
+        and single-pass gain-length product ``G = g_0 * L > 0``, the half-maximum
+        of ``exp(g(f) * L) - 1`` occurs at::
+
+            Delta f_ASE = (gamma_a / (2 * pi)) * sqrt(G / ln((exp(G) + 1) / 2) - 1)
+
+        which reduces to ``gamma_a / (2 * pi)`` as ``G -> 0`` and narrows as
+        ``(gamma_a / (2 * pi)) * sqrt(ln(2) / G)`` for ``G >> 1``.
+        """
+        L = float(length)
+        if L < 0.0:
+            raise ValueError(f"length must be >= 0, got {L}.")
+        f_0 = self.omega_a / (2.0 * np.pi)
+        g0 = float(self.small_signal_gain(f=f_0, W_p=W_p, populations=populations))
+        G = g0 * L
+        fwhm_0 = self.gamma_a / (2.0 * np.pi)
+        if abs(G) < 1e-9:
+            return float(fwhm_0)
+        half_level = np.log(0.5 * (np.exp(G) + 1.0))
+        ratio = G / half_level - 1.0
+        return float(fwhm_0 * np.sqrt(max(ratio, 0.0)))
+
+    def relaxation_oscillation_parameters(
+        self, pump_ratio, tau_p, W_p=None, time_scale=None
+    ):
+        """
+        Small-signal relaxation-oscillation frequency and damping rate from the rate equations.
+
+        Linearizing the coupled cavity-intensity and population-inversion rate
+        equations around the steady state ``(I_ss, Delta N_th)`` at pump ratio
+        ``r = Delta N_0 / Delta N_th > 1`` with lifetime acceleration ``s`` gives
+        the characteristic polynomial ``lambda^2 + 2 * Gamma_RO * lambda + omega_0^2 = 0``
+        with::
+
+            omega_0(s)  = sqrt(s * (r - 1) / (tau_p * tau_sat))   ~ sqrt(s)
+            Gamma_RO(s) = s * r / (2 * tau_sat)                   ~ s
+            omega_RO(s) = sqrt(max(omega_0(s)^2 - Gamma_RO(s)^2, 0))
+
+        Parameters
+        ----------
+        pump_ratio : float
+            Normalized above-threshold pump parameter ``r = Delta N_0 / Delta N_th``.
+        tau_p : float
+            Cold-cavity photon lifetime ``1 / kappa_cav`` [s], ``> 0``.
+        W_p : float, optional
+            Pumping rate [1/s] used to evaluate ``tau_sat``. Defaults to
+            ``self.pump_rate``.
+        time_scale : float, optional
+            Lifetime acceleration factor ``s > 0``. Defaults to ``self.time_scale``.
+
+        Returns
+        -------
+        params : dict
+            Dictionary with keys ``'omega_ro'`` [rad/s], ``'f_ro'`` [Hz],
+            ``'omega_ro_undamped'`` [rad/s], ``'f_ro_undamped'`` [Hz],
+            ``'gamma_ro'`` [1/s], ``'tau_sat_eff'`` [s], and ``'underdamped'`` [bool].
+        """
+        r = float(pump_ratio)
+        tp = float(tau_p)
+        if tp <= 0.0:
+            raise ValueError(f"tau_p must be > 0, got {tp}.")
+        s = self.time_scale if time_scale is None else float(time_scale)
+        if s <= 0.0:
+            raise ValueError(f"time_scale must be > 0, got {s}.")
+        tau_sat = self.saturation_time(W_p=W_p)
+        tau_sat_eff = tau_sat / s
+        gamma_ro = 0.5 * r / tau_sat_eff
+        if r <= 1.0:
+            return {
+                "omega_ro": 0.0,
+                "f_ro": 0.0,
+                "omega_ro_undamped": 0.0,
+                "f_ro_undamped": 0.0,
+                "gamma_ro": float(gamma_ro),
+                "tau_sat_eff": float(tau_sat_eff),
+                "underdamped": False,
+            }
+        w0_sq = (r - 1.0) / (tp * tau_sat_eff)
+        w0 = float(np.sqrt(w0_sq))
+        disc = w0_sq - gamma_ro**2
+        w_ro = float(np.sqrt(disc)) if disc > 0.0 else 0.0
+        return {
+            "omega_ro": w_ro,
+            "f_ro": float(w_ro / (2.0 * np.pi)),
+            "omega_ro_undamped": w0,
+            "f_ro_undamped": float(w0 / (2.0 * np.pi)),
+            "gamma_ro": float(gamma_ro),
+            "tau_sat_eff": float(tau_sat_eff),
+            "underdamped": bool(disc > 0.0),
+        }
+
+    def relaxation_oscillation_frequency(
+        self, pump_ratio, tau_p, W_p=None, time_scale=None, damped=True
+    ):
+        """
+        Relaxation-oscillation frequency ``f_RO(s)`` [Hz] at pump ratio ``r`` and photon lifetime ``tau_p``.
+        """
+        info = self.relaxation_oscillation_parameters(
+            pump_ratio=pump_ratio, tau_p=tau_p, W_p=W_p, time_scale=time_scale
+        )
+        return info["f_ro"] if damped else info["f_ro_undamped"]
+
+    def turn_on_delay(self, g_th, W_p=None, time_scale=None):
+        """
+        Analytic threshold turn-on time ``t_th(s) = t_th(1) / s`` [s] from the ground state.
+
+        Computes the exact time required for the zero-field population inversion
+        ``Delta N(t) = N_2(t) - N_1(t)`` starting from ``(N_total, 0, 0, 0)``
+        under constant pump ``W_p`` to reach the threshold inversion
+        ``Delta N_th = g_th / sigma_21``. Under lifetime acceleration ``s``,
+        ``N(t; s) = N(s * t; 1)`` so ``t_th(s) = t_th(1) / s``.
+        """
+        g_th = float(g_th)
+        if g_th <= 0.0:
+            return 0.0
+        wp = self.pump_rate if W_p is None else float(W_p)
+        s = self.time_scale if time_scale is None else float(time_scale)
+        if s <= 0.0:
+            raise ValueError(f"time_scale must be > 0, got {s}.")
+        dn_th = g_th / self.emission_cross_section
+        dn_ss = self.steady_state_inversion(W_p=wp)
+        if dn_ss <= dn_th:
+            raise ValueError(
+                f"Steady-state inversion {dn_ss:.3e} m^-3 at W_p={wp:.3e} s^-1 "
+                f"does not exceed threshold inversion {dn_th:.3e} m^-3."
+            )
+        m_mat = self.rate_matrix(W_p=wp, apply_time_scale=False)
+        n0 = np.array([self.N_total, 0.0, 0.0, 0.0], dtype=float)
+
+        # Solve in dimensionless time u = t_unscaled / tau_21 so that brentq's
+        # absolute tolerance xtol operates on O(1) dimensionless brackets rather
+        # than raw picosecond times (where default xtol=2e-12 would truncate).
+        t_ref = self.tau_21
+        m_scaled = m_mat * t_ref
+
+        def f_inv_u(u_dimless):
+            n_t = expm(m_scaled * u_dimless) @ n0
+            return float((n_t[2] - n_t[1]) - dn_th)
+
+        u_hi = 1.0
+        while f_inv_u(u_hi) < 0.0:
+            u_hi *= 2.0
+        u_root = float(brentq(f_inv_u, 0.0, u_hi, xtol=1e-14, rtol=1e-14))
+        t_unscaled = u_root * t_ref
+        return float(t_unscaled / s)
+
+    def time_scaling_limits(self, tau_p=None, dt=None, W_p=None, time_scale=None):
+        """
+        Dimensionless adiabaticity and stability ratios for lifetime acceleration ``s``.
+
+        To preserve the physical separation of timescales when accelerating
+        population relaxation by ``s``:
+
+        1. **Cavity photon decay limit (Class-B relaxation dynamics)**:
+           ``(s / tau_sat) << kappa_cav = 1 / tau_p``. When ``s / tau_sat``
+           approaches ``kappa_cav``, relaxation oscillations become overdamped
+           (Class-B -> Class-A crossover), though the steady state remains invariant.
+        2. **Polarization dephasing limit (rate-equation adiabaticity)**:
+           ``(s / tau_ij) << gamma_a``. The population inversion must vary
+           slowly compared with the dipole dephasing time ``1 / gamma_a``.
+        3. **Discrete Crank-Nicolson positivity**:
+           ``(s / min(tau_ij)) * dt < 2``.
+
+        Returns
+        -------
+        limits : dict
+            Dictionary of dimensionless ratios and maximum scale factors.
+        """
+        s = self.time_scale if time_scale is None else float(time_scale)
+        tau_sat = self.saturation_time(W_p=W_p)
+        finite_taus = [
+            t
+            for t in (self.tau_21, self.tau_10, self.tau_32, self.tau_30)
+            if np.isfinite(t)
+        ]
+        tau_min = float(min(finite_taus))
+        rate_21_s = s / self.tau_21
+        rate_max_s = s / tau_min
+        rate_sat_s = s / tau_sat
+
+        out = {
+            "time_scale": float(s),
+            "rate_21_over_gamma_a": float(rate_21_s / self.gamma_a) if self.gamma_a > 0 else np.inf,
+            "max_rate_over_gamma_a": float(rate_max_s / self.gamma_a) if self.gamma_a > 0 else np.inf,
+            "sat_rate_over_gamma_a": float(rate_sat_s / self.gamma_a) if self.gamma_a > 0 else np.inf,
+            "s_max_dephasing": float(self.gamma_a * self.tau_21),
+            "s_max_fast_dephasing": float(self.gamma_a * tau_min),
+        }
+        if tau_p is not None:
+            tp = float(tau_p)
+            kappa_cav = 1.0 / tp
+            out["sat_rate_over_kappa_cav"] = float(rate_sat_s / kappa_cav)
+            out["rate_21_over_kappa_cav"] = float(rate_21_s / kappa_cav)
+            out["s_max_cavity"] = float(tau_sat * kappa_cav)
+        if dt is not None:
+            dt_f = float(dt)
+            out["max_rate_dt"] = float(rate_max_s * dt_f)
+            out["s_max_cn_positivity"] = float(2.0 * tau_min / dt_f)
+        return out
+
     def __repr__(self):
         label = f"{self.name}: " if self.name else ""
+        extra = ""
+        if self.spontaneous_emission:
+            extra += f", spontaneous_emission=True, noise_amplitude={self.noise_amplitude:.4g}"
+        if self.time_scale != 1.0:
+            extra += f", time_scale={self.time_scale:.4g}"
         return (
             f"FourLevelGain({label}eps_inf={self.eps_inf:.6g}, "
             f"omega_a={self.omega_a:.6g}, gamma_a={self.gamma_a:.6g}, "
             f"tau_21={self.tau_21:.6g}, tau_10={self.tau_10:.6g}, "
             f"tau_32={self.tau_32:.6g}, N_total={self.N_total:.6g}, "
-            f"pump_rate={self.pump_rate:.6g})"
+            f"pump_rate={self.pump_rate:.6g}{extra})"
         )
 
 
@@ -1103,7 +1688,7 @@ def dbr_reflectance(n_high, n_low, n_pairs, n_in=1.0, n_out=1.0, extra_high=Fals
 
 
 def fabry_perot_laser_output(
-    pump_ratio, I_sat, R1, R2=None, spatial_hole_burning=True
+    pump_ratio, I_sat, R1, R2=None, spatial_hole_burning=True, beta_sp=0.0
 ):
     """
     Analytic steady-state single-side output intensity ``I_out`` [W/m^2] of a Fabry-Perot laser.
@@ -1124,6 +1709,13 @@ def fabry_perot_laser_output(
         reduction ``s(r) = (4 r - 1 - sqrt(8 r + 1)) / 4`` (Siegman 1986,
         Sec. 8.3). If False, use the spatially homogenized linear law
         ``s(r) = r - 1``.
+    beta_sp : float, optional
+        Spontaneous-emission coupling factor ``beta >= 0`` into the lasing
+        mode. When ``beta_sp > 0``, solves the coupled rate-equation balance
+        ``(n - 1) s + beta_sp * n = 0`` with ``n = r / (1 + s)`` to give the
+        smooth threshold transition
+        ``s(r, beta_sp) = ((r - 1) + sqrt((r - 1)^2 + 4 * beta_sp * r)) / 2``.
+        Default ``0.0`` (sharp threshold at ``r = 1``).
 
     Returns
     -------
@@ -1135,17 +1727,26 @@ def fabry_perot_laser_output(
     r1 = float(R1)
     r2 = r1 if R2 is None else float(R2)
     isat = float(I_sat)
+    beta = float(beta_sp)
     if not (0.0 < r1 < 1.0 and 0.0 < r2 <= 1.0):
         raise ValueError(f"Expected 0 < R1 < 1 and 0 < R2 <= 1, got {r1}, {r2}.")
     if isat <= 0.0:
         raise ValueError(f"I_sat must be > 0, got {isat}.")
+    if beta < 0.0:
+        raise ValueError(f"beta_sp must be >= 0, got {beta}.")
 
     r_pos = np.maximum(r_arr, 1.0)
     if spatial_hole_burning:
-        s = 0.25 * (4.0 * r_pos - 1.0 - np.sqrt(8.0 * r_pos + 1.0))
+        s_above = 0.25 * (4.0 * r_pos - 1.0 - np.sqrt(8.0 * r_pos + 1.0))
     else:
-        s = r_pos - 1.0
-    s = np.where(r_arr > 1.0, s, 0.0)
+        s_above = r_pos - 1.0
+
+    if beta == 0.0:
+        s = np.where(r_arr > 1.0, s_above, 0.0)
+    else:
+        r_nonneg = np.maximum(r_arr, 0.0)
+        s_eff = np.where(r_arr >= 1.0, s_above, r_nonneg - 1.0)
+        s = 0.5 * (s_eff + np.sqrt(s_eff**2 + 4.0 * beta * r_nonneg))
 
     # Rigrod outcoupling fraction through mirror 1 of the total round-trip mirror loss
     t1 = 1.0 - r1
@@ -1154,6 +1755,34 @@ def fabry_perot_laser_output(
     total_mirror_loss = 0.5 * np.log(1.0 / (r1 * r2))
     out = frac_1 * total_mirror_loss * isat * s
     return float(out) if scalar else out
+
+
+def ase_spectrum_1d(
+    f,
+    length,
+    material,
+    W_p=None,
+    populations=None,
+    area_perp=None,
+    dt=None,
+    normalize=False,
+):
+    """
+    Analytic 1D amplified spontaneous emission (ASE) spectrum ``S_ASE(f)`` for a `FourLevelGain` slab.
+
+    Convenience wrapper around `FourLevelGain.ase_spectrum`.
+    """
+    if not isinstance(material, FourLevelGain):
+        raise TypeError(f"Expected a FourLevelGain instance, got {type(material).__name__}.")
+    return material.ase_spectrum(
+        f=f,
+        length=length,
+        W_p=W_p,
+        populations=populations,
+        area_perp=area_perp,
+        dt=dt,
+        normalize=normalize,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1172,11 +1801,13 @@ def _lorentz_step_coeffs(omega_0, gamma, strength_per_eps0, dt):
 
 def _rate_cn_matrices(material, dt, W_p=None):
     """Precompute Crank-Nicolson matrices (A_rate, B_rate) for 4-level populations."""
-    m_mat = material.rate_matrix(W_p=W_p)
+    s = float(getattr(material, "time_scale", 1.0))
+    dt_eff = float(dt) * s
+    m_mat = material.rate_matrix(W_p=W_p, apply_time_scale=False)
     eye4 = np.eye(4, dtype=float)
-    lhs_inv = np.linalg.inv(eye4 - 0.5 * dt * m_mat)
-    a_rate = lhs_inv @ (eye4 + 0.5 * dt * m_mat)
-    b_rate = dt * lhs_inv
+    lhs_inv = np.linalg.inv(eye4 - 0.5 * dt_eff * m_mat)
+    a_rate = lhs_inv @ (eye4 + 0.5 * dt_eff * m_mat)
+    b_rate = dt_eff * lhs_inv
     return a_rate, b_rate
 
 
@@ -1213,10 +1844,92 @@ def _step_pauli_rates(material, n_arr, s_half, dt, wp=None):
     """Second-order Heun (trapezoidal predictor-corrector) step for Pauli-blocked rates."""
     if wp is None:
         wp = material.pump_rate
+    dt_eff = float(dt) * float(getattr(material, "time_scale", 1.0))
     k1 = _pauli_rate_rhs(material, n_arr, wp) + s_half
-    n_pred = n_arr + dt * k1
+    n_pred = n_arr + dt_eff * k1
     k2 = _pauli_rate_rhs(material, n_pred, wp) + s_half
-    return n_arr + 0.5 * dt * (k1 + k2)
+    return n_arr + 0.5 * dt_eff * (k1 + k2)
+
+
+def _build_group_noise_meta(solver, group):
+    """Precompute geometry and FDT Langevin noise prefactors for a FourLevelGain group."""
+    mat = group["material"]
+    if not isinstance(mat, FourLevelGain):
+        group["noise_channels"] = ()
+        return
+    idx_e = group["idx"]
+    w_e = group["weight"]
+    den_e = group["den"]
+    inv_e = group["inv"]
+    N = solver.N
+    Nx, Ny, Nz = solver.Nx, solver.Ny, solver.Nz
+    dt = float(solver.dt)
+    d_coeff = 1.0 + 0.5 * mat.gamma_a * dt
+    base_fdt = (dt**2 / (eps_0 * d_coeff)) * np.sqrt(
+        2.0 * mat.gamma_a * hbar * mat.omega_a * mat.kappa_a / dt
+    )
+
+    bc_lo = [str(b).lower() for b in getattr(solver, "bc_low", ("pec", "pec", "pec"))]
+    if mat.transverse_uniform_noise is None:
+        is_1d_periodic = (
+            bc_lo[0] == "periodic"
+            and bc_lo[1] == "periodic"
+            and Nx <= 2
+            and Ny <= 2
+        )
+    else:
+        is_1d_periodic = bool(mat.transverse_uniform_noise)
+
+    dx_arr = np.atleast_1d(np.asarray(solver.dx, dtype=float))
+    dy_arr = np.atleast_1d(np.asarray(solver.dy, dtype=float))
+    dz_arr = np.atleast_1d(np.asarray(solver.dz, dtype=float))
+    lx = float(np.sum(dx_arr)) if dx_arr.size > 1 else float(dx_arr[0]) * max(Nx - 1, 1)
+    ly = float(np.sum(dy_arr)) if dy_arr.size > 1 else float(dy_arr[0]) * max(Ny - 1, 1)
+    if hasattr(solver, "grid") and hasattr(solver.grid, "xmin"):
+        lx = float(solver.grid.xmax - solver.grid.xmin)
+        ly = float(solver.grid.ymax - solver.grid.ymin)
+    area_perp = lx * ly
+    dz_mean = float(np.mean(dz_arr))
+    dv_cell = float(np.mean(dx_arr) * np.mean(dy_arr) * dz_mean)
+
+    comp_map = {"x": 0, "y": 1, "z": 2}
+    channels = []
+    for comp in mat.noise_components:
+        c_idx = comp_map[comp]
+        lo, hi = c_idx * N, (c_idx + 1) * N
+        mask_c = (idx_e >= lo) & (idx_e < hi)
+        if not np.any(mask_c):
+            continue
+        pos_c = np.flatnonzero(mask_c)
+        cell_flat = idx_e[pos_c] - lo
+        w_c = w_e[pos_c]
+        den_c = den_e[pos_c]
+        inv_c = inv_e[pos_c]
+        if is_1d_periodic:
+            z_idx = cell_flat // (Nx * Ny)
+            uniq_z, z_inv = np.unique(z_idx, return_inverse=True)
+            dv_eff = area_perp * dz_mean * w_c
+            n_draws = uniq_z.size
+            draw_inv = z_inv
+        else:
+            dv_eff = dv_cell * w_c
+            n_draws = pos_c.size
+            draw_inv = None
+        pref_c = base_fdt / np.sqrt(np.maximum(dv_eff, 1e-300))
+        channels.append(
+            {
+                "pos": pos_c,
+                "idx_global": idx_e[pos_c],
+                "inv": inv_c,
+                "weight": w_c,
+                "den": den_c,
+                "pref": pref_c,
+                "n_draws": n_draws,
+                "draw_inv": draw_inv,
+            }
+        )
+    group["noise_channels"] = tuple(channels)
+    group["area_perp"] = area_perp
 
 
 class GainMixin:
@@ -1326,7 +2039,7 @@ class GainMixin:
         for group in self._gain_groups:
             old = ~np.isin(group["idx_host"], idx)
             if not old.all():
-                _restrict_gain_group(group, old)
+                _restrict_gain_group(group, old, solver=self)
         for group in getattr(self, "_dispersive_groups", ()):
             old = ~np.isin(group["idx_host"], idx)
             if not old.all():
@@ -1394,9 +2107,12 @@ class GainMixin:
             n_init = material.initial_population_vector()
             group["N"] = np.broadcast_to(n_init[:, None], (4, n_cells)).copy()
             group["W_p_cached"] = material.pump_rate
+            group["time_scale_cached"] = material.time_scale
             group["A_rate"], group["B_rate"] = _rate_cn_matrices(
                 material, self.dt, W_p=material.pump_rate
             )
+            group["rng"] = _make_gain_rng(material.seed)
+            _build_group_noise_meta(self, group)
         elif isinstance(material, SaturableGain):
             alpha, xi, zeta0 = _lorentz_step_coeffs(
                 material.omega_0,
@@ -1414,6 +2130,8 @@ class GainMixin:
             else:
                 group["kappa_I"] = 0.0
                 group["beta_I"] = 1.0
+        elif getattr(material, "_gain_kind", None) == "semiconductor":
+            material._init_solver_group(group, self)
 
         self._gain_groups = [
             g for g in self._gain_groups if g["idx_host"].size > 0
@@ -1437,6 +2155,8 @@ class GainMixin:
         3. Advance ``N^(n+1)`` (or intensity ``I^(n+1)``) from ``N^n`` centred at
            ``t^(n+1/2)`` using ``E^(n+1/2) = 0.5 * (E^(n+1) + E^n)`` and
            ``dP/dt|^(n+1/2) = eps_0 * (p^(n+1) - p^n) / dt``.
+        4. When ``spontaneous_emission=True``, inject the quantum-Langevin
+           polarization kick ``eta_a^n`` proportional to ``N_2**(noise_exponent)``.
         """
         if E_n is None:
             return
@@ -1505,11 +2225,15 @@ class GainMixin:
                     sb = 0.0
 
                 if not mat.pauli_exclusion:
-                    if mat.pump_rate != g["W_p_cached"]:
+                    if (
+                        mat.pump_rate != g["W_p_cached"]
+                        or mat.time_scale != g.get("time_scale_cached", 1.0)
+                    ):
                         g["A_rate"], g["B_rate"] = _rate_cn_matrices(
                             mat, dt, W_p=mat.pump_rate
                         )
                         g["W_p_cached"] = mat.pump_rate
+                        g["time_scale_cached"] = mat.time_scale
                     a_rate, b_rate = g["A_rate"], g["B_rate"]
                     n_next = a_rate @ N
                     if mat.enable_stimulated:
@@ -1526,6 +2250,29 @@ class GainMixin:
                             s_vec[0] -= sb
                             s_vec[3] += sb
                     g["N"] = _step_pauli_rates(mat, N, s_vec, dt, wp=mat.pump_rate)
+
+                # Quantum-Langevin spontaneous emission polarization noise kick
+                if mat.spontaneous_emission and mat.noise_amplitude > 0.0:
+                    rng = g["rng"]
+                    amp = mat.noise_amplitude
+                    p_exp = mat.noise_exponent
+                    N_cur = g["N"]
+                    pa_cur = g["lorentz_a"][3]
+                    for ch in g["noise_channels"]:
+                        n2_half = 0.5 * (N[2, ch["inv"]] + N_cur[2, ch["inv"]])
+                        n2_ch = np.maximum(n2_half, 0.0)
+                        if p_exp == 0.5:
+                            n2_pow = np.sqrt(n2_ch)
+                        elif p_exp == 0.0:
+                            n2_pow = np.ones_like(n2_ch)
+                        else:
+                            n2_pow = n2_ch**p_exp
+                        xi_draw = rng.standard_normal(ch["n_draws"])
+                        if ch["draw_inv"] is not None:
+                            xi_draw = xi_draw[ch["draw_inv"]]
+                        eta = (amp * ch["pref"]) * n2_pow * xi_draw
+                        pa_cur[ch["pos"]] += eta
+                        E[ch["idx_global"]] -= ch["weight"] * eta / ch["den"]
 
             elif g["kind"] == "saturable":
                 I_cell = g["I"]
@@ -1552,6 +2299,60 @@ class GainMixin:
                     g["I"] = g["kappa_I"] * I_cell + g["beta_I"] * i_inst
                 else:
                     g["I"] = 0.5 * c_light * eps_0 * mat.n_bg * e2_cell
+            elif g["kind"] == "semiconductor":
+                mat._step_solver_group(g, En, E, acc, dt)
+
+    def get_gain_carriers(self, group=0, cell_average=False):
+        """Return the carrier density ``N`` [1/m^3] of a `SemiconductorGain` group."""
+        groups = getattr(self, "_gain_groups", None)
+        if not groups:
+            raise RuntimeError("No gain material has been registered on this solver.")
+        g = groups[group]
+        if g["kind"] != "semiconductor":
+            raise TypeError(f"Gain group {group} is not a SemiconductorGain material.")
+        if cell_average:
+            return float(np.average(g["N"], weights=g["cell_vol"]))
+        return g["N"].copy()
+
+    def set_gain_carriers(self, carriers, group=0):
+        """Set the carrier density ``N`` [1/m^3] of a `SemiconductorGain` group."""
+        groups = getattr(self, "_gain_groups", None)
+        if not groups:
+            raise RuntimeError("No gain material has been registered on this solver.")
+        g = groups[group]
+        if g["kind"] != "semiconductor":
+            raise TypeError(f"Gain group {group} is not a SemiconductorGain material.")
+        arr = np.asarray(carriers, dtype=float)
+        if arr.ndim == 0 or arr.shape == g["N"].shape:
+            g["N"][:] = arr
+            g["N_initial_total"] = float(np.sum(g["cell_vol"] * g["N"]))
+        else:
+            raise ValueError(
+                f"Expected scalar or shape {g['N'].shape}, got {arr.shape}."
+            )
+
+    def get_gain_bookkeeping(self, group=0):
+        """Return carrier-photon conservation counters of a `SemiconductorGain` group."""
+        groups = getattr(self, "_gain_groups", None)
+        if not groups:
+            raise RuntimeError("No gain material has been registered on this solver.")
+        g = groups[group]
+        if g["kind"] != "semiconductor":
+            raise TypeError(f"Gain group {group} is not a SemiconductorGain material.")
+        n_curr_tot = float(np.sum(g["cell_vol"] * g["N"]))
+        return {
+            "carriers_initial": g["N_initial_total"],
+            "carriers_current": n_curr_tot,
+            "carriers_removed": g["N_initial_total"] - n_curr_tot,
+            "carriers_injected": g["carriers_injected"],
+            "carriers_recombined": g["carriers_recombined"],
+            "carriers_stimulated": g["carriers_stimulated"],
+            "photons_generated": g["photons_generated"],
+            "em_work_joules": g["em_work_joules"],
+            "dchi_work_joules": g.get("dchi_work_joules", 0.0),
+            "dchi_parametric_joules": g.get("dchi_parametric_joules", 0.0),
+            "dchi_stored_joules": g.get("dchi_stored_joules", 0.0),
+        }
 
     def get_gain_populations(self, group=0, cell_average=False):
         """
@@ -1613,7 +2414,7 @@ class GainMixin:
             )
 
     def reset_gain_state(self):
-        """Reset all auxiliary gain polarizations, intensities, and populations."""
+        """Reset all auxiliary gain polarizations, intensities, populations, and RNGs."""
         for g in getattr(self, "_gain_groups", ()):
             if g["kind"] == "four_level":
                 g["lorentz_a"][3][:] = 0.0
@@ -1623,13 +2424,16 @@ class GainMixin:
                     g["lorentz_b"][4][:] = 0.0
                 n_init = g["material"].initial_population_vector()
                 g["N"][:] = n_init[:, None]
+                g["rng"] = _make_gain_rng(g["material"].seed)
             elif g["kind"] == "saturable":
                 g["lorentz"][3][:] = 0.0
                 g["lorentz"][4][:] = 0.0
                 g["I"][:] = 0.0
+            elif g["kind"] == "semiconductor":
+                g["material"]._reset_solver_group(g)
 
 
-def _restrict_gain_group(group, keep):
+def _restrict_gain_group(group, keep, solver=None):
     """Drop edges of a gain group where ``keep`` is False and rebuild cell mapping."""
     group["idx_host"] = group["idx_host"][keep]
     group["idx"] = group["idx"][keep]
@@ -1657,7 +2461,16 @@ def _restrict_gain_group(group, keep):
             group["lorentz_b"][3] = group["lorentz_b"][3][keep]
             group["lorentz_b"][4] = group["lorentz_b"][4][keep]
         group["N"] = group["N"][:, old_cell_mask]
+        if solver is not None:
+            _build_group_noise_meta(solver, group)
     elif group["kind"] == "saturable":
         group["lorentz"][3] = group["lorentz"][3][keep]
         group["lorentz"][4] = group["lorentz"][4][keep]
         group["I"] = group["I"][old_cell_mask]
+    elif group["kind"] == "semiconductor":
+        group["material"]._restrict_solver_group(group, keep, old_cell_mask)
+
+
+from .gain_semiconductor import SemiconductorGain, adiabatic_chirp  # noqa: E402, F401
+
+

@@ -132,6 +132,10 @@ def test_schematic_2d_subgrid_and_unstructured():
     texts = "\n".join(_collect_axes_texts(ax))
     assert "PEC" in texts
     assert "Center probe" in texts
+    probe_tags = [t for t in ax.texts if "probe" in t.get_text()]
+    assert len(probe_tags) == 1
+    # In 2D (mm units: y = 15 mm in a 30 mm tall domain), probe tag stays near the probe y-coordinate
+    assert abs(probe_tags[0].get_position()[1] - 15.0) < 6.0
     assert len(schematic.in_axes_texts(ax)) <= 6
     _assert_no_overlapping_texts(fig)
     plt.close(fig)
@@ -381,3 +385,63 @@ def test_mesh_and_excitation_and_save_setup_figures(tmp_path):
     assert "SiO₂ slab" in md_table
     assert "Transmission DFT" in md_table
     assert "| Variation | Reference run |" in md_table
+
+
+def test_2d_area_monitor_and_cylinder_schematic():
+    """Verify 2D XY Cylinder + 2D area DFTMonitor draws a bounding Rectangle and deduplicates R label."""
+    from matplotlib.patches import Circle as MplCircle, Rectangle as MplRectangle
+    from wakis.templates.shapes import Cylinder
+
+    grid = GridFIT3D(-1.5e-6, 1.5e-6, -1.5e-6, 1.5e-6, -0.02e-6, 0.02e-6, 60, 60, 1, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        bc_low=["cpml", "cpml", "periodic"],
+        bc_high=["cpml", "cpml", "periodic"],
+        n_pml=6,
+        verbose=0,
+    )
+    disk = Cylinder(
+        center=(0.0, 0.0, 0.0),
+        radius=1.0e-6,
+        length=0.04e-6,
+        axis="z",
+        material=4.0,
+    )
+    disk.name = "Microdisk (n = 2.0, R = 1.0 µm)"
+    mon_dft = DFTMonitor([200e12], components=("Ez",), center=(0.0, 0.0, 0.0), size=(2.2e-6, 2.2e-6, 0.0))
+
+    fig, ax = schematic.plot_schematic(
+        solver,
+        plane="xy",
+        structures=[disk],
+        monitors=[mon_dft],
+        probes=[{"pos": (-0.7e-6, 0.45e-6, 0.0), "label": "Rim probe"}],
+    )
+    leg = ax.get_legend()
+    assert leg is not None
+    leg_str = "\n".join(t.get_text() for t in leg.get_texts())
+    assert "Microdisk (n = 2.0, R = 1.0 µm), ε = 4.00" in leg_str
+    assert "(r =" not in leg_str
+    assert "x ∈" in leg_str and "y ∈" in leg_str
+    assert "(x, y) =" in leg_str
+    # Area monitor must be drawn as a dashed unfilled Rectangle patch, not a diagonal Line2D
+    dashed_rects = [
+        p
+        for p in ax.patches
+        if isinstance(p, MplRectangle)
+        and p.get_linestyle() in ("--", "dashed")
+        and np.isclose(p.get_width(), 2.2)
+    ]
+    assert len(dashed_rects) == 1
+    plt.close(fig)
+
+    fig_b, axes_b = schematic.plot_mesh_and_excitation(
+        solver,
+        plane="xy",
+        structures=[disk],
+        monitors=[mon_dft],
+    )
+    circles_b = [p for p in axes_b[0].patches if isinstance(p, MplCircle)]
+    assert len(circles_b) >= 1
+    plt.close(fig_b)
+

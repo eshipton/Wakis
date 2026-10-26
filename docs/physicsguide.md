@@ -3742,7 +3742,7 @@ Above threshold ($`r \equiv \Delta N_0(W_p)/\Delta N_{\text{th}} > 1`$), stimula
 - *Stiff rate equations vs $`\Delta t`$ and oscillator Courant bound.* The central-difference polarization update requires $`\omega_{a,b}\Delta t < 2\sqrt{1 - C^2}`$ (`FourLevelGain.is_stable`); `add_gain_material` raises `ValueError` if $`\Delta t`$ does not resolve the atomic resonance. For the linear rate equations (`pauli_exclusion=False`), the Crank–Nicolson update $`\mathbf{A}_{\text{rate}} = (\mathbf{I} - \tfrac{1}{2}\Delta t\mathbf{M})^{-1}(\mathbf{I} + \tfrac{1}{2}\Delta t\mathbf{M})`$ is unconditionally A-stable and conserves $`\sum N_i = N_{\text{total}}`$ for any $`\Delta t`$, but remains guaranteed non-negative only when $`\Delta t \le 2 / \max_i |M_{ii}| \approx 2\min(\tau_{10}, \tau_{32}, \tau_{21}, W_p^{-1})`$. When fast nonradiative lifetimes $`\tau_{10}, \tau_{32}`$ are chosen comparable to $`\Delta t`$, or when `pauli_exclusion=True` (which uses the explicit second-order Heun predictor–corrector), $`\Delta t`$ must satisfy $`\Delta t < \min(\tau_{10}, \tau_{32})`$.
 - *Spatial hole burning resolution.* With `spatial_averaging=False` (default), population inversion is tracked independently in every grid cell and depleted proportional to the local standing-wave intensity $`\sin^2(kz)`$. Resolving the $`\lambda_0 / (2 n_{\text{bg}})`$ spatial-hole-burning grating requires $`\ge 20`$ cells per wavelength inside the gain host ($`\ge 10`$ cells per half-wave lobe). When physical carrier diffusion or atomic thermal motion washes out the standing-wave grating on sub-wavelength scales, pass `spatial_averaging=True` to homogenize the stimulated rate across the gain region.
 - *Homogeneous broadening only (inhomogeneous broadening not included).* Each transition is modelled by a single homogeneously broadened Lorentzian oscillator of linewidth $`\gamma_a`$. Doppler-broadened gas lasers or inhomogeneously broadened solid-state/quantum-dot ensembles (where spectral hole burning occurs across a Gaussian distribution of resonance frequencies $`\omega_a`$) are not captured by a single pole and require superimposing multiple detuned gain groups.
-- *No spontaneous emission noise unless added — seeding required for lasing.* Semiclassical Maxwell–Bloch / rate equations have $`\mathbf{P}_a = \mathbf{0}`$ as an exact fixed point when $`\mathbf{E} = \mathbf{0}`$, even when $`N_2 > N_1`$ above threshold: stochastic quantum spontaneous-emission Langevin noise is not injected automatically. To initiate laser oscillation in a cavity simulation, seed the cavity with a weak broadband `CurrentSource` (e.g. a short `GaussianSource` pulse overlapping the cavity mode); below threshold ($`W_p < W_{p,\text{th}}`$) the seed pulse rings down to zero, whereas above threshold ($`W_p > W_{p,\text{th}}`$) it amplifies into steady-state continuous-wave lasing whose final saturated intensity is independent of the seed amplitude.
+- *Spontaneous-emission noise off by default — seeding or `spontaneous_emission=True` required for lasing.* When `spontaneous_emission=False` (the default, preserving deterministic backwards compatibility), the semiclassical Maxwell–Bloch / rate equations have $`\mathbf{P}_a = \mathbf{0}`$ as an exact fixed point when $`\mathbf{E} = \mathbf{0}`$, even when $`N_2 > N_1`$ above threshold. To initiate laser oscillation in a cavity simulation, either pass `spontaneous_emission=True` (see **Noise and time scaling in gain media** below) so lasing starts from Fluctuation–Dissipation-Theorem Langevin noise, or seed the cavity with a weak broadband `CurrentSource` (e.g. a short `GaussianSource` pulse overlapping the cavity mode).
 - *Supported solver backends.* `wakis.gain` is currently implemented for the CPU Yee/FIT stepper (standard, CPML, MKL, and MPI). Passing a gain material to `use_gpu=True`, `fused=True`, `scheme='tete'`, or `SubgridFIT2D` raises `NotImplementedError`.
 
 References:
@@ -3751,6 +3751,274 @@ References:
 - A. E. Siegman, *Lasers*, University Science Books, Mill Valley, CA, Chs. 2, 7, 8, 13 (1986).
 - W. W. Rigrod, "Saturation effects in high-gain lasers", *J. Appl. Phys.* **36**(8), 2487–2490 (1965), [doi:10.1063/1.1714517](https://doi.org/10.1063/1.1714517).
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House, Ch. 9 (2005).
+
+### 🔬 Semiconductor gain media (`wakis.gain_semiconductor`)
+
+Semiconductor diode lasers and optical amplifiers differ from atomic four-level gain media in three essential physical respects [Coldren, Corzine & Mašanović, 2012; Henry, 1982; Agrawal & Dutta, 1993]:
+1. Optical amplification arises from band-to-band transitions of a shared electron–hole plasma of density $`N(\mathbf{r}, t)`$ $[\text{m}^{-3}]$ driven by electrical current injection $`J(\mathbf{r}, t)`$ $[\text{A/m}^2]$ and depleted by Shockley–Read–Hall (SRH) nonradiative defects ($`A N`$), bimolecular spontaneous radiative recombination ($`B N^2`$), three-carrier Auger recombination ($`C N^3`$), stimulated emission, and ambipolar carrier diffusion ($`D\nabla^2 N`$).
+2. The peak material power gain $`g(N)`$ $[1/\text{m}]$ vanishes at a finite transparency carrier density $`N_{\text{tr}} > 0`$ (where quasi-Fermi-level separation equals the photon energy $`\hbar\omega_0`$), being absorbing ($`g < 0`$) for $`N < N_{\text{tr}}`$ and amplifying ($`g > 0`$) for $`N > N_{\text{tr}}`$, with either a linear dependence $`g'(N - N_{\text{tr}})`$ (bulk active layers) or a logarithmic dependence $`g_0 \ln((N + N_s)/(N_{\text{tr}} + N_s))`$ (quantum-well active layers).
+3. Because the asymmetric conduction/valence band densities of states shift the Kramers–Kronig refractive index strongly with carrier density $`N`$ near the band edge, carrier modulation produces a large amplitude–phase coupling quantified by Henry's linewidth enhancement factor $`\alpha_H \in [2, 7]`$ [Henry, 1982], which broadens the laser linewidth by $`1 + \alpha_H^2`$ and drives dynamic frequency chirp under current modulation [Koch & Bowers, 1984].
+
+`wakis.gain_semiconductor` implements `SemiconductorGain` (and the chirp helper `adiabatic_chirp`), driven by `GainMixin` on `SolverFIT3D`.
+
+**Carrier rate equation and stimulated field work.** In each active-region grid cell of volume $`V_m`$, the carrier density $`N(\mathbf{r}, t)`$ $[\text{m}^{-3}]$ obeys [Coldren, Corzine & Mašanović, 2012, Chs. 2 & 5]
+
+```math
+\frac{\partial N}{\partial t}
+= \frac{\eta_i\,J(\mathbf{r}, t)}{q\,d}
+- \left(A N + B N^2 + C N^3\right)
+- R_{\text{stim}}(\mathbf{r}, t)
++ D \nabla^2 N,
+```
+
+where $`\eta_i \in [0, 1]`$ is the internal current injection efficiency, $`q`$ is the elementary charge, $`d`$ $[\text{m}]$ is the active-layer thickness, $`A`$ $[1/\text{s}]$, $`B`$ $[\text{m}^3/\text{s}]$, and $`C`$ $[\text{m}^6/\text{s}]$ are the SRH, bimolecular radiative, and Auger recombination coefficients, and $`D`$ $[\text{m}^2/\text{s}]$ is the ambipolar diffusion coefficient along the active layer (`diffusion_axes`). The stimulated emission rate per unit volume $`R_{\text{stim}}`$ $[\text{m}^{-3}\text{s}^{-1}]$ is given by the electromagnetic work done per unit volume by the resonant gain polarization poles $`\mathbf{P}_p(\mathbf{r}, t)`$ on the electric field $`\mathbf{E}(\mathbf{r}, t)`$:
+
+```math
+R_{\text{stim}}(\mathbf{r}, t)
+= -\sum_p \frac{1}{\hbar\omega_p}\,\mathbf{E}(\mathbf{r}, t)\cdot\frac{\partial \mathbf{P}_p(\mathbf{r}, t)}{\partial t} .
+```
+
+When $`N > N_{\text{tr}}`$ (amplification), the polarization current $`\partial\mathbf{P}_p/\partial t`$ is anti-parallel to $`\mathbf{E}`$, so $`-\mathbf{E}\cdot\partial\mathbf{P}_p/\partial t > 0`$ delivers power from the carrier reservoir to the electromagnetic field and removes one electron–hole pair per generated photon of energy $`\hbar\omega_p`$. When $`N < N_{\text{tr}}`$ (interband absorption), $`-\mathbf{E}\cdot\partial\mathbf{P}_p/\partial t < 0`$ absorbs photons and creates electron–hole pairs ($`R_{\text{stim}} < 0`$).
+
+**Lorentzian ADE gain poles, linear/logarithmic gain models, and bandfilling peak shift.** The resonant interband polarization $`\mathbf{P}(\mathbf{r}, t) = \varepsilon_0 \sum_p \mathbf{p}_p(\mathbf{r}, t)`$ is represented by one or more Lorentzian auxiliary differential equation (ADE) poles $`p = 1, \dots, N_p`$:
+
+```math
+\frac{\partial^2 \mathbf{p}_p}{\partial t^2}
++ \gamma_p \frac{\partial \mathbf{p}_p}{\partial t}
++ \omega_p(N)^2 \mathbf{p}_p
+= S_p(N)\,\mathbf{E}, \qquad
+S_p(N) = -c\,n_{\text{bg}}\,\gamma_p\,g_p(N),
+```
+
+where $`n_{\text{bg}} = \sqrt{\varepsilon_\infty}`$ is the host refractive index, $`\gamma_p`$ $[\text{rad/s}]$ is the homogeneous dephasing linewidth, $`\omega_p(N) = \omega_{0,p} + (\partial\omega_p/\partial N)(N - N_{\text{tr},p})`$ incorporates the optional bandfilling blue-shift (`domega_dN`), and the peak pole gain coefficient $`g_p(N)`$ $[1/\text{m}]$ follows either the linear model (`gain_model='linear'`) or the three-parameter logarithmic quantum-well model (`gain_model='logarithmic'`, [Coldren, Corzine & Mašanović, 2012, Eq. (4.86)]):
+
+```math
+g_p^{\text{lin}}(N) = w_p\,g_p'\,\big(N - N_{\text{tr},p}\big), \qquad
+g_p^{\text{log}}(N) = w_p\,g_{0,p}\,\ln\!\left(\frac{N + N_s}{N_{\text{tr},p} + N_s}\right) .
+```
+
+**Henry linewidth enhancement factor $`\alpha_H`$ and Wakis sign convention.** In Wakis's harmonic convention $`\mathbf{E}(t) = \operatorname{Re}[\tilde{\mathbf{E}}\,e^{+i\omega t - i k z}]`$ (see `notation_glossary.md`), each pole contributes the complex susceptibility
+
+```math
+\chi_p(\omega, N) = \frac{-c\,n_{\text{bg}}\,\gamma_p\,g_p(N)}{\omega_p(N)^2 - \omega^2 + i\gamma_p\omega}, \qquad
+\operatorname{Im}\chi_p\big(\omega_p(N), N\big) = +\frac{c\,n_{\text{bg}}}{\omega_p(N)}\,g_p(N),
+```
+
+so active gain ($`g_p > 0`$) corresponds to $`\operatorname{Im}\chi > 0`$ and $`n_i = \operatorname{Im}\sqrt{\varepsilon_r} > 0`$ ($`e^{-i k z} = e^{-i(\omega/c)(n_r + i n_i)z} = e^{+(\omega n_i / c)z} e^{-i(\omega n_r / c)z}`$, power gain $`g(\omega, N) = (2\omega/c)\operatorname{Im}\sqrt{\varepsilon_r(\omega, N)}`$). Increasing the carrier density $`\Delta N > 0`$ increases the gain ($`\Delta g > 0`$, $`\Delta\operatorname{Im}\chi > 0`$) while bandfilling and free-carrier plasma dispersion *reduce* the real refractive index ($`\Delta n_r < 0`$, $`\Delta\operatorname{Re}\chi < 0`$). Henry's linewidth enhancement factor [Henry, 1982] is defined as
+
+```math
+\alpha_H \equiv -\frac{\partial n_r / \partial N}{\partial n_i / \partial N}
+= -\frac{\partial(\operatorname{Re}\chi)/\partial N}{\partial(\operatorname{Im}\chi)/\partial N}
+= -\frac{4\pi}{\lambda_0}\,\frac{\partial n_r / \partial N}{\partial g / \partial N} > 0 .
+```
+
+Because a symmetric Lorentzian pole has $`\operatorname{Re}\chi_p(\omega_0, N) = 0`$ at line center, `SemiconductorGain` adds a real, instantaneous carrier-dependent background susceptibility $`\Delta\chi_{\text{bg}}(N)`$ (`SemiconductorGain.delta_chi_bg`):
+
+```math
+\Delta\chi_{\text{bg}}(N)
+= -\alpha_H\,\operatorname{Im}\chi_{\text{poles}}(\omega_0, N) - \operatorname{Re}\chi_{\text{poles}}(\omega_0, N)
+\quad\Longrightarrow\quad
+\left.\frac{\partial\operatorname{Re}\chi(\omega_0, N)}{\partial N}\right|
+= -\alpha_H\,\left.\frac{\partial\operatorname{Im}\chi(\omega_0, N)}{\partial N}\right| .
+```
+
+For a single-pass slab of length $`L`$, the complex transmission phasor $`\tilde{t}(\omega_0, N) \propto \exp(-i(\omega_0/c)\Delta n_c(N)L) = \exp(\tfrac{1}{2}\Delta g(N)L - i(\omega_0/c)\Delta n_r(N)L)`$ satisfies the direct phase–amplitude identity
+
+```math
+\Delta\phi_{\text{trans}}(\omega_0) = \arg\!\left(\frac{\tilde{t}(\omega_0, N + \Delta N)}{\tilde{t}(\omega_0, N)}\right)
+= -\frac{\omega_0}{c}\,\Delta n_r\,L
+= +\alpha_H\,\Delta\ln|\tilde{t}(\omega_0)| .
+```
+
+**Fabry–Pérot diode laser L–I curve, relaxation oscillations, and dynamic chirp.** In a Fabry–Pérot diode laser of active length $`L`$, optical confinement factor $`\Gamma`$, internal loss $`\alpha_i`$, and facet reflectances $`R_1, R_2`$ with mirror loss $`\alpha_m = \frac{1}{2L}\ln(1/(R_1 R_2))`$, round-trip gain–loss balance clamps the steady-state modal gain above threshold at $`\Gamma g(N_{\text{th}}) = \alpha_i + \alpha_m`$ (`SemiconductorGain.steady_state_laser`, [Coldren, Corzine & Mašanović, 2012, Ch. 2]):
+
+```math
+J_{\text{th}} = \frac{q\,d}{\eta_i}\left(A N_{\text{th}} + B N_{\text{th}}^2 + C N_{\text{th}}^3\right), \qquad
+\eta_d = \eta_i\,\frac{\alpha_m}{\alpha_i + \alpha_m}, \qquad
+I_{\text{out,tot}}(J) = \frac{\hbar\omega_0}{q}\,\eta_d\,\frac{L}{d}\,(J - J_{\text{th}}) \quad (J > J_{\text{th}}) .
+```
+
+With steady-state intracavity photon density $`S_0 = \frac{\Gamma\tau_p}{q d}\eta_i(J - J_{\text{th}})`$ and bare point-mirror photon lifetime $`\tau_p = [v_g(\alpha_i + \alpha_m)]^{-1}`$, small-signal linearization of the coupled carrier–photon rate equations around $`(N_{\text{th}}, S_0)`$ (with nonlinear gain compression $`\varepsilon_{\text{nl}} = 0`$) yields the second-order modulation transfer function (`SemiconductorGain.modulation_transfer_function`, [Coldren, Corzine & Mašanović, 2012, Ch. 5])
+
+```math
+H(\omega_m) = \frac{\omega_R^2}{\omega_R^2 - \omega_m^2 + i\omega_m\gamma_{\text{RO}}}, \qquad
+\omega_R^2 = \Gamma_z\,\frac{\Gamma\,v_g\,g'(N_{\text{th}})\,S_0}{\tau_p}, \qquad
+\gamma_{\text{RO}} = \frac{1}{\tau_{\text{diff}}(N_{\text{th}})} + v_g\,g'(N_{\text{th}})\,S_0,
+```
+
+where $`\tau_{\text{diff}}^{-1} = A + 2 B N_{\text{th}} + 3 C N_{\text{th}}^2`$ is the differential carrier recombination rate, and $`\Gamma_z = L / L_{\text{eff}} \le 1`$ (`L_eff` parameter on `steady_state_laser`) accounts for longitudinal field penetration into distributed Bragg reflector (DBR) mirrors ($`L_{\text{eff}} = L + 2 L_{\text{pen}} = v_g \tau_{p,\text{cold}} \ln(1/\sqrt{R_1 R_2})`$, which lengthens the cold-cavity photon lifetime to $`\tau_{p,\text{eff}} = \tau_p / \Gamma_z`$ while leaving threshold gain $`g_{\text{th}}`$ and slope efficiency $`\eta_d`$ unchanged). Because the instantaneous cavity resonance shifts with $`\Delta n_r(N)`$ as $`\Delta\nu(t) = \frac{\alpha_H}{4\pi}\Gamma v_g [g(N(t)) - g_{\text{th}}]`$ while the optical power $`P(t) \propto S(t)`$ obeys $`\frac{d\ln P}{dt} = \Gamma v_g [g(N(t)) - g_{\text{th}}]`$ (for $`\varepsilon_{\text{nl}} = 0`$ and negligible spontaneous-emission coupling into the lasing mode), eliminating $`g(N) - g_{\text{th}}`$ gives the Koch–Bowers dynamic/adiabatic chirp relation (`adiabatic_chirp`, [Koch & Bowers, 1984]):
+
+```math
+\Delta\nu(t) = \frac{\alpha_H}{4\pi}\,\frac{d\ln P(t)}{dt} .
+```
+
+**Time-level centring, discrete carrier–photon bookkeeping, and $`\alpha_H \neq 0`$ parametric energy balance.** Within each `SolverFIT3D` step $`n \to n+1`$:
+1. Each pole $`\mathbf{p}_p^n \to \mathbf{p}_p^{n+1}`$ is advanced by the second-order central difference centred at $`t^n`$ using $`g_p(N^n)`$ and $`\omega_p(N^n)`$, producing the discrete susceptibility `SemiconductorGain.chi_discrete`.
+2. Ampère's law advances $`\mathbf{E}^n \to \mathbf{E}^{n+1}`$ centred at $`t^{n+1/2}`$, incorporating the carrier-dependent background permittivity $`\varepsilon_\infty + \Delta\chi_{\text{bg}}(N^n)`$ and polarization currents $`(\mathbf{p}_p^{n+1} - \mathbf{p}_p^n)/\Delta t`$.
+3. The stimulated emission rate per cell $`R_{\text{stim},m}^{n+1/2}`$ is evaluated at $`t^{n+1/2}`$ from $`\mathbf{E}^{n+1/2} = \tfrac{1}{2}(\mathbf{E}^{n+1} + \mathbf{E}^n)`$ and $`\partial_t\mathbf{P}_p|^{n+1/2} = \varepsilon_0(\mathbf{p}_p^{n+1} - \mathbf{p}_p^n)/\Delta t`$, weighted by the primary-edge finite volumes $`w_e \Delta V_{E,e}`$.
+4. The carrier density $`N_m^n \to N_m^{n+1}`$ is advanced at $`t^{n+1/2}`$ by the implicit midpoint / Crank–Nicolson rule: the linear SRH decay $`A N`$ and finite-volume diffusion operator $`\mathbf{L}_{\text{diff}}`$ (constructed with harmonic-mean inter-cell conductances so that $`\mathbf{V}_{\text{cell}}^T \mathbf{L}_{\text{diff}} = \mathbf{0}`$ identically) are inverted via a pre-factored sparse CSC solver, followed by Newton polishing on the nonlinear $`B (N^{n+1/2})^2 + C (N^{n+1/2})^3`$ terms. Multiplying the update by $`V_m`$ and summing over all active cells gives the exact per-step particle conservation law (`solver.get_gain_bookkeeping()`):
+   ```math
+   \sum_m V_m\big(N_m^0 - N_m^n\big)
+   + \sum_{k=0}^{n-1} \Delta t \sum_m V_m \big(R_{\text{inj},m}^{k+1/2} - R_{\text{rec},m}^{k+1/2}\big)
+   = \sum_{k=0}^{n-1} \Delta t \sum_m V_m R_{\text{stim},m}^{k+1/2}
+   = \frac{\Delta W_{\text{pol}\to\text{EM}}}{\hbar\omega_0} \quad (\text{single pole})
+   ```
+   to machine precision ($`\sim 10^{-14}`$; note that when $`J = A = B = C = 0`$, `carriers_removed` and `photons_generated` both accumulate $`R_{\text{stim},m}^{k+1/2}`$, so their agreement is an internal bookkeeping consistency check, whereas comparing the 3D FIT electromagnetic energy change $`\Delta W_{\text{EM}}`$ against $`\Delta W_{\text{pol}\to\text{EM}}`$ is an independent discrete Poynting validation).
+5. When $`\alpha_H \neq 0`$ (or multi-pole / `domega_dN != 0`), the real background susceptibility $`\Delta\chi_{\text{bg}}(N^n)`$ varies in time with $`N^n`$. In the discrete Ampère step, the $`\Delta\chi_{\text{bg}}(N^n)`$ displacement current performs work $`\Delta W_{\Delta\chi}^n = -\tfrac{1}{2}\varepsilon_0 \sum_e w_e \Delta V_{E,e} \Delta\chi_{\text{bg},e}^n [(E_e^{n+1})^2 - (E_e^n)^2]`$ (`dchi_work_joules`) on the host-permittivity electromagnetic field $`W_{\text{EM}}^n`$, so the exact per-step discrete Poynting identity is
+   ```math
+   W_{\text{EM}}^{n+1} - W_{\text{EM}}^n = \Delta W_{\text{pol}\to\text{EM}}^n + \Delta W_{\Delta\chi}^n .
+   ```
+   Summing by parts over $`n`$ decomposes $`\sum_n \Delta W_{\Delta\chi}^n = W_{\Delta\chi,\text{param}} - \Delta W_{\Delta\chi,\text{stored}}`$, where $`W_{\Delta\chi,\text{stored}}^n = \tfrac{1}{2}\varepsilon_0 \sum_e w_e \Delta V_{E,e} \Delta\chi_{\text{bg},e}^n (E_e^n)^2`$ (`dchi_stored_joules`) is the reactive electrostatic energy stored in $`\Delta\chi_{\text{bg}}`$ and $`W_{\Delta\chi,\text{param}} = \tfrac{1}{2}\varepsilon_0 \sum_{n,e} w_e \Delta V_{E,e}(\Delta\chi_{\text{bg},e}^{n+1} - \Delta\chi_{\text{bg},e}^n)(E_e^{n+1})^2`$ (`dchi_parametric_joules`) is the parametric index-modulation work, which is bounded relative to the resonant stimulated work by
+   ```math
+   \frac{\big|W_{\Delta\chi,\text{param}}\big|}{\big|W_{\text{pol}\to\text{EM}}\big|}
+   \le |\alpha_H|\,\frac{c\,n_{\text{bg}}\,g'}{\omega_0}\,\frac{u_{\text{EM},\max}}{\hbar\omega_0} .
+   ```
+
+**Validation** (`tests/test_073_semiconductor_gain.py`, `examples/015_semiconductor_fp_laser.py`):
+1. *Small-signal gain spectrum (`test_small_signal_gain_spectrum_slab`):* Across 33 frequencies spanning $`193.4 \pm 18\text{ THz}`$ in a $`1.2\ \mu\text{m}`$ slab ($`\Delta z = 20\text{ nm} = \lambda_0/77.5`$), 3D FIT transmission reproduces the analytical slab transmittance $`|t_{\text{slab}}(\omega, N)|^2`$ to $`5.2\times 10^{-5}`$ (absorption, $`0.25\,N_{\text{tr}}`$), $`0.0`$ (transparency, $`1.0\,N_{\text{tr}}`$), $`1.1\times 10^{-4}`$ (linear gain, $`2.5\,N_{\text{tr}}`$), and $`6.6\times 10^{-5}`$ (logarithmic gain, $`2.5\,N_{\text{tr}}`$), with line-center gain error $`3.7\times 10^{-5}`$–$`2.3\times 10^{-3}`$.
+2. *Linewidth enhancement factor $`\alpha_H`$ (`test_henry_alpha_factor_transmission`):* From the 3D FIT complex transmission ratio $`\tilde{t}(N + \Delta N)/\tilde{t}(N)`$ at $`\omega_0`$, the measured phase-to-amplitude slope $`\Delta\phi / \Delta\ln|\tilde{t}|`$ recovers $`\alpha_H \in \{2.0, 4.0, 5.0\}`$ as $`1.9991, 3.9983, 4.9996`$ (relative errors $`4.5\times 10^{-4}`$, $`4.2\times 10^{-4}`$, $`7.2\times 10^{-5}`$).
+3. *1D DBR Fabry–Pérot diode laser L–I curve, slope efficiency, and relaxation-oscillation frequency (`test_fabry_perot_diode_laser_li_and_slope_efficiency`):* In a $`1.2\ \mu\text{m}`$ cavity bounded by symmetric 3-layer $`(H L H)`$ quarter-wave DBR mirrors (`n_pairs = 1, extra_high = True`, i.e. 1 $`(H, L)`$ pair + 1 extra $`H`$ layer, $`R = (15/17)^2 = 0.77855`$, $`\eta_i = 0.85`$), the 3D FIT L–I sweep recovers threshold current density $`J_{\text{th}}`$ to $`0.93\%`$, differential quantum slope efficiency $`\eta_{d,\text{FIT}} = 0.8257`$ vs $`\eta_d = 0.8500`$ ($`2.86\%`$ relative error; the $`10^{-14}`$ check of `steady_state_laser()["eta_d"]` is an API formula consistency check), and carrier clamping at $`N_{\text{th}}`$ to $`0.69\%`$ across $`r \in [1.5, 3.0]`$. For the step-bias relaxation-oscillation ringdown at $`r = 2.5`$ (3D FIT $`f_{R,\text{FIT}} = 3.3904\text{ THz}`$), two independent zero-free-parameter evaluations of DBR mirror field penetration are reported: (i) a cold-cavity ringdown (`ResonanceMonitor` + `harminv`, gain off on the identical passive 3-layer $`(H L H)`$ DBR cavity) measures $`f_{\text{cold}} = 249.65\text{ THz}`$, $`Q_{\text{cold}} = 34.732`$, $`\tau_{p,\text{cold}} = 22.1424\text{ fs}`$, and $`L_{\text{eff,cold}} = v_g\tau_{p,\text{cold}}\ln(1/R) = 1.6617\ \mu\text{m}`$ ($`\Gamma_z = L_{\text{cav}}/L_{\text{eff,cold}} = 0.7222`$), predicting $`f_{R,\text{DBR}} = 3.3823\text{ THz}`$ ($`0.24\%`$ relative error vs 3D FIT); and (ii) the asymptotic analytical quarter-wave DBR phase-penetration depth $`L_{\text{pen}} = \lambda_0 / (4(n_H - n_L)) = 0.300\ \mu\text{m}`$ gives $`L_{\text{eff,an}} = L_{\text{cav}} + 2 L_{\text{pen}} = 1.800\ \mu\text{m}`$ ($`\Gamma_{z,\text{an}} = 2/3`$), predicting $`f_{R,\text{an}} = 3.2497\text{ THz}`$ ($`4.33\%`$ relative error vs 3D FIT), whereas neglecting DBR penetration with bare $`L_{\text{eff}} = L_{\text{cav}} = 1.200\ \mu\text{m}`$ overpredicts $`f_{R,\text{bare}} = 3.9801\text{ THz}`$ by $`14.82\%`$.
+4. *Modulation response and 3D FIT Koch–Bowers frequency-chirp slope (`test_modulation_response_relaxation_oscillation_and_chirp`):* In the standalone coupled rate-equation ODEs (`step_laser_rate_equations`), small-signal ringdown and sinusoidal modulation reproduce the linearized transfer function `modulation_transfer_function` to $`3.0\times 10^{-4}`$ in $`f_R`$ and $`2.7\times 10^{-6}`$ in `adiabatic_chirp` (consistency checks of the ODE integrator against its own defining equations; the $`10^{-14}`$ check on `steady_state_laser()["omega_R"]` is likewise a formula consistency check). For full-wave 3D FIT physical validation under sinusoidal current modulation above threshold in a symmetric 5-layer $`(H L H L H)`$ DBR cavity (`n_pairs = 2, extra_high = True`, i.e. 2 $`(H, L)`$ pairs + 1 extra $`H`$ layer, $`R = (63/65)^2 = 0.93941`$), demodulating $`E_x(z_{\text{out}}, t)`$ and fitting the linear regression slope $`m_{\text{chirp}}`$ of $`\Delta\nu_{\text{FIT}}(t)`$ versus $`d\ln P_{\text{FIT}}/dt`$ gives $`m_{\text{chirp}} = 0.15897`$ vs $`\alpha_H/(4\pi) = 0.15915`$ ($`0.11\%`$ relative error, $`r = 0.995`$) at $`\alpha_H = 2.0`$ and $`m_{\text{chirp}} = 0.27854`$ vs $`\alpha_H/(4\pi) = 0.27852`$ ($`5.8\times 10^{-5}`$ relative error, $`r = 0.971`$) at $`\alpha_H = 3.5`$, while flipping $`\alpha_H \to -2.0`$ reverses the slope sign ($`m_{\text{chirp}} < 0`$).
+5. *Discrete Poynting conservation ($`\alpha_H = 0`$ and $`\alpha_H \neq 0`$), bookkeeping consistency, and carrier diffusion (`test_carrier_photon_conservation_and_diffusion`):* In a closed 3D FIT PEC cavity, the internal bookkeeping counters `carriers_removed` and `photons_generated` agree to $`6.5\times 10^{-14}`$ (consistency check), while the independent discrete Poynting work balance on the 3D FIT fields closes to $`3.3\times 10^{-13}`$ for $`\alpha_H = 0`$ and to $`3.3\times 10^{-13}`$ for $`\alpha_H = 3.5`$ when `dchi_work_joules` is included (with parametric index-modulation work $`W_{\Delta\chi,\text{param}} = 4.06\times 10^{-18}\text{ J} \le 1.46\times 10^{-17}\text{ J}`$ analytical bound, or $`|W_{\Delta\chi,\text{param}}|/|W_{\text{pol}\to\text{EM}}| = 1.02\times 10^{-2} \le 1.95\times 10^{-2}`$). 1D/3D Crank–Nicolson carrier diffusion conserves total carriers to $`2.7\times 10^{-16}`$ and matches analytical Fourier mode decay $`\exp(-D k^2 t)`$ to $`1.7\times 10^{-7}`$.
+
+![Semiconductor small-signal gain spectrum, Henry alpha_H factor, and closed-cavity carrier–photon conservation](img/semiconductor_gain_spectrum_and_alpha.png)
+
+![1D DBR Fabry–Pérot diode laser L–I curve, modulation transfer function, and Koch–Bowers frequency chirp](img/semiconductor_fp_laser_li_and_chirp.png)
+
+**Limits & failure modes.**
+- *Lorentzian vs asymmetric microscopic semiconductor gain spectra.* A single Lorentzian pole is symmetric around $`\omega_0(N)`$, whereas microscopic semiconductor gain spectra derived from parabolic or $`\mathbf{k}\cdot\mathbf{p}`$ band structures with Fermi–Dirac occupancies exhibit a sharp low-energy band-edge cutoff at $`\hbar\omega = E_g`$ and a high-energy transparency crossing at $`\hbar\omega = \Delta E_F(N)`$. When wideband spectral asymmetry matters, pass multiple poles via `extra_poles` (e.g. a lower-energy gain pole plus a higher-energy absorbing pole) and `domega_dN > 0`.
+- *Background susceptibility $`\Delta\chi_{\text{bg}}(N)`$ and Courant bound.* Because $`\Delta\chi_{\text{bg}}(N)`$ modifies the instantaneous high-frequency permittivity to $`\varepsilon_{\text{eff}}(N) = \varepsilon_\infty + \Delta\chi_{\text{bg}}(N)`$, very large carrier swings with large $`\alpha_H`$ in low-index hosts can reduce $`\varepsilon_{\text{eff}}(N)`$ toward the vacuum Courant limit $`C^2`$. Ensure $`\varepsilon_\infty + \Delta\chi_{\text{bg}}(N) > C^2`$ across the operating carrier density range (for typical III–V semiconductors with $`\varepsilon_\infty \sim 10`$–$`13`$ and $`|\Delta\chi_{\text{bg}}| \ll 1`$, this is satisfied with wide margin).
+- *Nonlinear intraband gain compression ($`\varepsilon_{\text{nl}}`$) scope.* Spectral hole burning and carrier heating enter the standalone coupled rate-equation methods (`steady_state_laser`, `modulation_transfer_function`, `step_laser_rate_equations`) through the gain compression factor $`(1 + \varepsilon_{\text{nl}} S)^{-1}`$. In the full-wave 3D FIT ADE solver, gain saturation arises directly from carrier depletion via $`R_{\text{stim}} = -(\hbar\omega_0)^{-1}\mathbf{E}\cdot\partial_t\mathbf{P}`$ on the grid; sub-picosecond intraband carrier-heating dynamics are not evolved as a separate temperature equation on the 3D grid.
+- *Supported solver backends.* Like `FourLevelGain` and `SaturableGain`, `SemiconductorGain` is supported on the CPU Yee/FIT stepper (standard, CPML, MKL, and MPI) and raises `NotImplementedError` for `use_gpu=True`, `fused=True`, or `scheme='tete'`.
+
+References:
+- L. A. Coldren, S. W. Corzine, and M. L. Mašanović, *Diode Lasers and Photonic Integrated Circuits*, 2nd ed., Wiley, Hoboken, NJ (2012), [doi:10.1002/9781118148167](https://doi.org/10.1002/9781118148167).
+- C. H. Henry, "Theory of the linewidth of semiconductor lasers", *IEEE J. Quantum Electron.* **18**(2), 259–264 (1982), [doi:10.1109/JQE.1982.1071522](https://doi.org/10.1109/JQE.1982.1071522).
+- T. L. Koch and J. E. Bowers, "Nature of wavelength chirping in directly modulated semiconductor lasers", *Electron. Lett.* **20**(25), 1038–1040 (1984), [doi:10.1049/el:19840709](https://doi.org/10.1049/el:19840709).
+- G. P. Agrawal and N. K. Dutta, *Semiconductor Lasers*, 2nd ed., Van Nostrand Reinhold, New York (1993).
+
+
+### Noise and time scaling in gain media
+
+Real lasers start oscillating from quantum spontaneous emission rather than an external coherent seed pulse, and their atomic upper-state lifetimes ($\tau_{21} \sim \text{ps–ns}$) exceed optical FDTD/FIT timesteps ($\Delta t \sim 0.05\text{–}0.1\text{ fs}$) by four to seven orders of magnitude. `FourLevelGain` (`wakis.gain`, `tests/test_074_gain_noise_and_scaling.py`, `examples/014_laser_noise_and_time_scaling.py`) addresses both problems through (1) a Fluctuation–Dissipation-Theorem (FDT) / quantum-Langevin stochastic polarization force (`spontaneous_emission=True`, `seed=...`) and (2) an explicit rate-equation lifetime acceleration transformation (`time_scale = s`, alias `lifetime_scale = s`).
+
+**1. Langevin noise in the polarization equations (FDT / quantum-Langevin derivation).** Following the stochastic Maxwell–Bloch FDTD formalism of Andreasen, Cao, Taflove, Kumar, and Cao (*Phys. Rev. A* **77**, 023810, 2008), Andreasen and Cao (*J. Lightwave Technol.* **27**, 4530–4535, 2009; *Phys. Rev. A* **82**, 063835, 2010), and Siegman (*Lasers*, 1986, Chs. 2, 7, 13), spontaneous emission into the $1 \leftrightarrow 2$ transition is incorporated by adding a stochastic Langevin force $\mathbf{F}_a(\mathbf{r}, t)$ to the auxiliary polarization oscillator equation:
+
+```math
+\frac{\partial^2 \mathbf{P}_a}{\partial t^2} + \gamma_a \frac{\partial \mathbf{P}_a}{\partial t} + \omega_a^2 \mathbf{P}_a = \kappa_a \bigl(N_1(\mathbf{r}, t) - N_2(\mathbf{r}, t)\bigr)\mathbf{E}(\mathbf{r}, t) + \mathbf{F}_a(\mathbf{r}, t) .
+```
+
+In the Markovian thermal/quantum-Langevin limit ($\gamma_a \ll \omega_a$), the fluctuation–dissipation theorem relates the two-time correlation of $\mathbf{F}_a$ to the dissipative damping rate $\gamma_a$, the dipole coupling constant $\kappa_a = \frac{6\pi\varepsilon_0 c^3}{\omega_a^2 \tau_{21}}$, and the upper-level population density $N_2(\mathbf{r}, t)$ responsible for downward spontaneous emission:
+
+```math
+\bigl\langle F_{a,\mu}(\mathbf{r}, t)\,F_{a,\nu}(\mathbf{r}', t') \bigr\rangle = D_{F,a}(\mathbf{r}, t)\,\delta_{\mu\nu}\,\delta(\mathbf{r} - \mathbf{r}')\,\delta(t - t'), \qquad
+D_{F,a}(\mathbf{r}, t) = 2\gamma_a \kappa_a \hbar\omega_a\,\bigl[\max(N_2(\mathbf{r}, t), 0)\bigr]^{2 p_{\text{noise}}},
+```
+
+where the physical FDT / quantum-Langevin exponent is $p_{\text{noise}} = \tfrac{1}{2}$ (`noise_exponent=0.5`, so the Langevin force amplitude scales as $\propto \sqrt{N_2}$ and the radiated spontaneous power scales linearly with $N_2$).
+
+*Time-level centring and discrete cell-volume scaling.* On the FIT staggered grid, $\mathbf{P}_a^n = \varepsilon_0 \mathbf{p}_a^n$ lives at integer time levels $t^n = n\Delta t$ on primary electric-field edges $e$ with dual cell volume $\Delta V_e$. Integrating the white-noise Langevin impulse over $(t^n, t^{n+1})$ and spatial dual volume $\Delta V_{\text{eff},e}$ gives a discrete Gaussian kick per timestep with variance $\langle (F_{a,e}^n)^2 \rangle = D_{F,a,e}^{n+1/2} / (\Delta V_{\text{eff},e}\,\Delta t)$. Evaluating the population factor at the Crank–Nicolson half-step midpoint $N_{2,+}^{n+1/2} = \max(\tfrac{1}{2}(N_2^n + N_2^{n+1}), 0)$ (`wakis/gain.py:_update_gain_E`, preserving second-order midpoint accuracy during rapid population transients) yields:
+
+```math
+\mathbf{p}_a^{n+1} = b_1\,\mathbf{p}_a^n + b_2\,\mathbf{p}_a^{n-1} + a_E\,(N_1^n - N_2^n)\,\mathbf{E}^n + \frac{\Delta t^2}{\varepsilon_0 (1 + \gamma_a \Delta t / 2)}\,\alpha_{\text{noise}}\sqrt{\frac{2\gamma_a \kappa_a \hbar\omega_a\,(N_{2,+}^{n+1/2})^{2 p_{\text{noise}}}}{\Delta V_{\text{eff}}\,\Delta t}}\,\boldsymbol{\xi}_e^n ,
+```
+
+where $\boldsymbol{\xi}_e^n \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$ are independent standard normal variates drawn from a dedicated per-group `np.random.Generator(np.random.PCG64(seed))` and $\alpha_{\text{noise}} \ge 0$ is `noise_amplitude` ($0$ when `spontaneous_emission=False`, $1$ when `spontaneous_emission=True`). Auto-detected transverse-uniform plane-wave noise (`transverse_uniform_noise=None`) is restricted strictly to quasi-1D periodic slabs (`bc_low[0] == "periodic"`, `bc_low[1] == "periodic"`, `Nx <= 2`, and `Ny <= 2`), where transverse edges in the same $z$-slice share the plane-wave mode of cross-sectional area $A_\perp = L_x L_y$ and $\Delta V_{\text{eff}} = A_\perp \Delta z$. On 3D periodic grids with `Nx > 2` or `Ny > 2` (such as photonic-crystal, PCSEL, or BIC unit cells), each grid cell draws independent Langevin kicks scaled by its local edge volume $\Delta V_e$.
+
+**2. 1D radiative fraction and spontaneous-emission power.** In three dimensions, a single inverted atom in level $2$ radiates spontaneous power $\hbar\omega_a / \tau_{21}$ into all $4\pi$ steradians. In a 1D-periodic planar waveguide or slab of transverse period area $A_\perp = L_x L_y$ and background refractive index $n_{\text{bg}} = \sqrt{\varepsilon_\infty}$, a uniform current sheet $J_x(\omega)$ of thickness $\Delta z$ radiates plane waves into $\pm z$ with cycle-averaged Poynting flux $P_{\text{rad}} = \frac{A_\perp \Delta z^2}{4 c \varepsilon_0 n_{\text{bg}}} |J_x(\omega)|^2$. Integrating the Lorentzian spectral density of $J_x(\omega) = i\omega P_a(\omega)$ driven by $D_{F,a}$ over all frequencies $\omega \in (0, \infty)$ via the residue theorem $\int_{-\infty}^{\infty} \frac{\omega^2 d\omega}{(\omega_a^2 - \omega^2)^2 + \gamma_a^2 \omega^2} = \frac{\pi}{2\gamma_a}$ gives the exact 1D FDT spontaneous-emission power (`FourLevelGain.spontaneous_emission_power`, `FourLevelGain.radiative_fraction_1d`):
+
+```math
+P_{\text{sp,1D}} = f_{\text{rad,1D}}\,V_{\text{gain}} N_2\,\frac{\hbar\omega_a}{\tau_{21}}, \qquad
+f_{\text{rad,1D}} = \frac{\kappa_a \tau_{21}}{2\varepsilon_0 c n_{\text{bg}} A_\perp} = \frac{3\pi c^2}{n_{\text{bg}} \omega_a^2 A_\perp} = \frac{3\lambda_0^2}{4\pi n_{\text{bg}} A_\perp} .
+```
+
+Here $f_{\text{rad,1D}}$ is the exact fraction of the 3D free-space spontaneous emission rate per polarization captured by the $\pm z$ 1D plane-wave continuum of cross-section $A_\perp$. On the discrete Yee/FIT grid with timestep $\Delta t$, the discrete Lorentzian integral $\int \frac{\tilde{\omega}^2 d\omega}{(\omega_a^2 - \tilde{\omega}^2)^2 + \gamma_a^2 \tilde{\omega}_c^2}$ introduces the second-order finite-timestep factor $1 / [1 - (\omega_a \Delta t / 2)^2]$ (included when `dt` is passed to `spontaneous_emission_power`).
+
+**3. Amplified spontaneous emission (ASE) and spectral gain narrowing.** In a 1D gain slab of length $L$ below threshold with population densities $(N_1, N_2)$, each slice $dz'$ at position $z' \in [0, L]$ emits spontaneous power spectral density proportional to the emission lineshape $g_{\text{sp}}(\omega) = \sigma_{21}(\omega)\,N_2$, which is subsequently amplified by $\exp[g(\omega)(L - z')]$ where $g(\omega) = \sigma_{21}(\omega)(N_2 - N_1)$ is the net power gain coefficient. Integrating over $z' \in [0, L]$ yields the analytical single-pass ASE power spectral density (`ase_spectrum_1d`, `FourLevelGain.ase_spectrum`, [Siegman, 1986, §13.6]):
+
+```math
+S_{\text{ASE}}(\omega) \propto \int_0^L g_{\text{sp}}(\omega)\,e^{g(\omega)(L - z')}\,dz' = \frac{e^{g(\omega)L} - 1}{g(\omega)}\,g_{\text{sp}}(\omega) = \frac{e^{g(\omega)L} - 1}{N_2 - N_1}\,N_2 .
+```
+
+For $g_0 L \ll 1$, $S_{\text{ASE}}(\omega) \propto g_{\text{sp}}(\omega) L$ retains the full homogeneous Lorentzian FWHM $\Delta\omega_0 = \gamma_a$. As $g_0 L$ increases above unity, preferential exponential amplification at line centre $\omega_a$ narrows the half-maximum of $\exp[g(\omega)L] - 1$ (`FourLevelGain.ase_linewidth`):
+
+```math
+\Delta\omega_{\text{ASE}}(g_0 L) = \gamma_a \sqrt{\frac{g_0 L}{\ln\!\left(\frac{e^{g_0 L} + 1}{2}\right)} - 1} \;\underset{g_0 L \gg 1}{\sim}\; \frac{\gamma_a \sqrt{\ln 2}}{\sqrt{g_0 L - \ln 2}} \simeq \gamma_a \sqrt{\frac{\ln 2}{g_0 L}} .
+```
+
+**4. Threshold rounding ($\beta_{\text{sp}}$-factor) and multi-mode homogeneous mode competition.** Including the fraction $\beta_{\text{sp}}$ of spontaneous emission coupled into the lasing cavity mode modifies the dimensionless steady-state rate-equation balance between modal gain and cavity loss [Coldren, Corzine & Mašanović, 2012, Ch. 5]:
+
+```math
+\left(1 - \frac{r}{1 + s}\right)s = \beta_{\text{sp}}\,\frac{r}{1 + s}
+\quad\Longrightarrow\quad
+s(r, \beta_{\text{sp}}) = \frac{(r - 1) + \sqrt{(r - 1)^2 + 4\beta_{\text{sp}}\,r}}{2},
+```
+
+implemented in `fabry_perot_laser_output(..., beta_sp=...)`. For $\beta_{\text{sp}} = 0$, $s(r, 0) = \max(r - 1, 0)$ has a sharp kink at $r = 1$; for $\beta_{\text{sp}} > 0$, the threshold transition is smoothly rounded with $s(1, \beta_{\text{sp}}) = \sqrt{\beta_{\text{sp}}}$ at threshold and $s(r, \beta_{\text{sp}}) \simeq \beta_{\text{sp}} r / (1 - r)$ below threshold. In a 1D-periodic DBR Fabry–Pérot cavity of active length $L_{\text{cav}}$ bounded by symmetric quarter-wave DBR mirrors with phase penetration depth $L_{\text{pen}} = \lambda_0 / (4(n_H - n_L))$ and effective mode length $L_{\text{eff}} = L_{\text{cav}} + 2 L_{\text{pen}}$ ($\Gamma_z = L_{\text{cav}}/L_{\text{eff}}$), integrating the normalized Lorentzian spontaneous-emission spectrum $\frac{\gamma_a/(2\pi)}{(\omega - \omega_a)^2 + (\gamma_a/2)^2}$ over one longitudinal free spectral range $\Delta\omega_{\text{FSR}} = \pi c / L_{\text{eff}}$ centered on the lasing mode gives the spectral overlap factor $\Gamma_\omega = \frac{2}{\pi}\arctan(\Delta\omega_{\text{FSR}} / \gamma_a)$. The a priori theoretical spontaneous-emission coupling factor at physical FDT noise amplitude (`noise_amplitude=1.0`) is the product of the 1D plane-wave radiative fraction, longitudinal mode confinement, and Lorentzian-FSR spectral overlap:
+
+```math
+\beta_{\text{sp,theory}} = f_{\text{rad,1D}}(A_\perp)\,\Gamma_z\,\frac{2}{\pi}\arctan\!\left(\frac{\Delta\omega_{\text{FSR}}}{\gamma_a}\right), \qquad \Delta\omega_{\text{FSR}} = \frac{\pi c}{L_{\text{eff}}} .
+```
+
+In a long multi-mode Fabry–Pérot cavity ($L_{\text{cav}} \gg \lambda_0 / 2$) whose longitudinal mode spacing $\Delta f_{\text{FSR}} = c / (2 n_{\text{bg}} L_{\text{cav}})$ is smaller than the homogeneous gain bandwidth $\gamma_a / (2\pi)$, broadband spontaneous emission initially excites multiple longitudinal modes simultaneously; as the intracavity intensity saturates the homogeneous inversion (`spatial_averaging=True`), the central mode closest to $\omega_a$ clamps the gain at $g_{\text{th}}$, leaving all detuned side modes with net round-trip loss $g(\omega_m) - g_{\text{th}} < 0$ so that a single longitudinal mode wins in steady state.
+
+**5. Lifetime acceleration (`time_scale = s`) and scaling analysis.** To bridge the $\sim\text{ns}$ population build-up timescale and the $\sim 0.05\text{ fs}$ FDTD/FIT timestep, `FourLevelGain(..., time_scale=s)` applies the rate-equation time-scaling transformation ($s > 0$):
+
+```math
+\tau_{ij} \longrightarrow \frac{\tau_{ij}}{s}, \qquad
+W_p \longrightarrow s\,W_p, \qquad
+W_{\text{stim}} = \frac{\mathbf{E}\cdot\partial_t \mathbf{P}_a}{\hbar\omega_a} \longrightarrow s\,W_{\text{stim}}, \qquad
+\text{with } \kappa_a = \frac{6\pi\varepsilon_0 c^3}{\omega_a^2 \tau_{21,\text{phys}}} \text{ held fixed.}
+```
+
+Multiplying the entire right-hand side of the population rate equations by $s$ while keeping the optical susceptibility parameters $(\omega_a, \gamma_a, \kappa_a)$ at their physical unscaled values yields an exact separation between **invariant** steady-state observables and **scaled** transient observables (`FourLevelGain.relaxation_oscillation_parameters`, `FourLevelGain.turn_on_delay`, `FourLevelGain.time_scaling_limits`):
+
+| Observable | Dependence on `time_scale` $s$ | Rate-equation expression / scaling |
+| :--- | :--- | :--- |
+| Dipole coupling $\kappa_a$ and cross-section $\sigma_{21}$ | **Invariant** ($s^0$) | $\sigma_{21} = \kappa_a / (\varepsilon_0 c n_{\text{bg}} \gamma_a)$ uses physical $\tau_{21}$ |
+| Threshold pump rate $W_{p,\text{th}}$ (unscaled user input) | **Invariant** ($s^0$) | $(s W_p)(\tau_{21}/s) = W_p \tau_{21}$ cancels $s$ identically |
+| Steady-state populations $\mathbf{N}_{\text{ss}}$ and inversion $\Delta N_{\text{ss}}$ | **Invariant** ($s^0$) | $\mathbf{M}(s)\mathbf{N}_{\text{ss}} = s\,\mathbf{M}(1)\mathbf{N}_{\text{ss}} = \mathbf{0}$ |
+| Saturation intensity $I_{\text{sat}}$ | **Invariant** ($s^0$) | $(s W_{\text{stim}})(\tau_{\text{sat}}/s) = I / I_{\text{sat}}$ cancels $s$ identically |
+| Steady-state laser output intensity $I_{\text{out}}$ | **Invariant** ($s^0$) | $I_{\text{out}} = \tfrac{1}{2}\ln(1/R)\,s(r)\,I_{\text{sat}}$ |
+| Lasing spectrum peak frequency $f_{\text{lase}}$ | **Invariant** ($s^0$) | Determined by $\omega_a$, $\gamma_a$, and cold-cavity resonance $f_{\text{cav}}$ |
+| Effective saturation recovery time $\tau_{\text{sat,eff}}(s)$ | **Scales as $s^{-1}$** | $\tau_{\text{sat}}(s) = \tau_{\text{sat}}(1) / s$ |
+| Turn-on delay time $t_{\text{th}}(s)$ from ground state | **Scales as $s^{-1}$** | Exact root of $[\exp(\mathbf{M}(1)\,u\,\tau_{21})\mathbf{N}(0)]_{2-1} = \Delta N_{\text{th}}$ gives $t_{\text{th}}(s) = u\,\tau_{21}/s \propto s^{-1}$ |
+| Undamped relaxation-oscillation frequency $\omega_{\text{RO},0}(s)$ | **Scales as $\sqrt{s}$** ($s \ll s_{\max,\text{cav}}$) | $\omega_{\text{RO},0}(s) = \sqrt{\frac{s\,(r - 1)}{\tau_{p,\text{disp}} \tau_{\text{sat}}(1)}} = \sqrt{s}\,\omega_{\text{RO},0}(1)$ |
+| Relaxation-oscillation damping rate $\Gamma_{\text{RO}}(s)$ | **Scales as $s^1$** | $\Gamma_{\text{RO}}(s) = \frac{s\,r}{2\tau_{\text{sat}}(1)} = s\,\Gamma_{\text{RO}}(1)$ |
+| Transient relaxation sideband / Schawlow–Townes width | **Scales with $s$** | Damping envelope broadens as $\Gamma_{\text{RO}}(s) \propto s$; scaled spontaneous rate $\propto s$ |
+
+**Validation** (`tests/test_074_gain_noise_and_scaling.py`, `examples/014_laser_noise_and_time_scaling.py`):
+1. *Default deterministic bit-identity, seeded reproducibility, and 3D periodic cell independence (`test_default_noise_off_and_seeded_reproducibility`):* With default `spontaneous_emission=False, time_scale=1.0`, an inverted cavity with no external source remains at $|\mathbf{E}| = |\mathbf{H}| = 0$ identically, and driven pulse propagation is bit-for-bit identical (`assert_array_equal`) to an in-process re-implementation of the deterministic rate-equation step (a regression guard for the noise-off path, not a comparison with the historical pre-F11b code) and to `spontaneous_emission=True, noise_amplitude=0.0` in the same process (avoiding platform-specific OpenBLAS vs macOS Accelerate ULP differences). With `spontaneous_emission=True, seed=42`, two independent runs and a run after `solver.reset_gain_state()` reproduce identical field trajectories ($0.0$ difference), while `seed=99` produces an independent realization. On a 3D periodic grid with `Nx = Ny = 4 > 2`, auto-detection disables transverse synchronization so each cell draws independent Langevin kicks (`corr < 0.15`).
+2. *1D spontaneous-emission power vs FDT theory (`test_spontaneous_decay_power_and_noise_scaling`):* For an optically thin inverted layer ($L = 50\text{ nm} = 2\Delta z \ll \lambda_0 = 1.2\ \mu\text{m}$, $\Delta z = 25\text{ nm}$, $A_\perp = 4\ \mu\text{m}^2$, $f_{\text{rad,1D}} = 0.085944$) averaged over an $N_{\text{seeds}} = 8$ ensemble ($0.9\text{ ps} \approx 270/\gamma_a$ averaging window per seed, single-seed standard deviation $\sigma_1 = 7.12\%$, ensemble standard error $\sigma_{\text{SEM}} = \sigma_1/\sqrt{8} = 2.52\%$), the ensemble-averaged 3D FIT Poynting flux $P_{\text{rad,FIT}} = 1855.2 \pm 46.7\text{ fW}$ matches the analytical 1D FDT rate $P_{\text{sp,1D}} = 1898.9\text{ fW}$ to $2.31\%$ ($0.92\,\sigma_{\text{SEM}}$, well within the $3\sigma_{\text{SEM}} \approx 8\%$ statistical tolerance; single seed 42 gives $1868.1\text{ fW}$, $1.62\%$). Scaling $N_2 \to 4 N_2$ or `noise_amplitude` $\alpha \in \{0, 0.5, 1.0, 1.5, 2.0\}$ with a fixed seed scales the radiated power by $4.00000\times$ and $\alpha^2$ (internal linearity consistency checks).
+3. *1D gain-slab ASE spectrum & gain narrowing (`test_ase_spectrum_and_noise_exponent_mutation`):* In an $L_{\text{slab}} = 2.4\ \mu\text{m}$ gain slab, the analytical ASE FWHM (`FourLevelGain.ase_linewidth`) narrows from the homogeneous width $\gamma_a/(2\pi) = 55.70\text{ THz}$ to $30.23\text{ THz}$ ($30.14\text{ THz}$ for an ideal Lorentzian) at $g_0 L = 2.80$, while the 3D FIT ASE spectral RMS width narrows from $31.37\text{ THz}$ at $g_0 L = 0.15$ (analytic $30.70\text{ THz}$, $2.20\%$ error) to $23.27\text{ THz}$ at $g_0 L = 2.80$ (analytic $22.56\text{ THz}$, $3.15\%$ error), and the integrated ASE power ratio between $g_0 L = 2.80$ and $g_0 L = 0.15$ ($N_{2,\text{hi}}/N_{2,\text{lo}} = 18.73$) matches `ase_spectrum_1d` within $6\%$. Mutating `noise_exponent` from $p = 0.50$ to $p = 0.55$ shifts the high-to-low ASE power ratio by $(18.73)^{2(0.55 - 0.50)} = 18.73^{0.1} = 1.340\times$ ($+34\%$) and fails the benchmark check.
+4. *Fabry–Pérot lasing from noise, $\beta_{\text{sp}}$ sub-threshold/threshold validation, and multi-mode competition (`test_fabry_perot_lasing_from_noise_beta_curve_and_mode_competition`):* Starting from rest with zero external current source and physical FDT noise (`noise_amplitude=1.0`, $A_\perp = 3.6\times 3.6\ \mu\text{m}^2$, $\Delta z = 25\text{ nm}$) in a symmetric 3-layer $(H L H)$ quarter-wave DBR cavity (`n_pairs = 1, extra_high = True`, $R = (15/17)^2 = 0.77855$), the laser self-starts from Langevin noise. Because above-threshold points ($r \ge 1.5$, $I_{\text{out}}$ up to $7.26\text{ MW/m}^2$) follow the stimulated slope $s(r) \simeq r - 1$, the full-range $L_2$ norm across $r \in [0.5, 3.0]$ is insensitive to $\beta_{\text{sp}}$ (`3.120%` for $\beta_{\text{sp,theory}} = 0.01515$, $3.118\%$ for $\beta_{\text{sp,eff}} = 0.01228$, $3.120\%$ out-of-sample, and $6.28\%$ even for $\beta_{\text{sp}} = 0$, despite a $23.3\%$ difference between $\beta_{\text{sp,theory}}$ and $\beta_{\text{sp,eff}}$). Accordingly, $\beta_{\text{sp}}$ is evaluated and claimed **only from the sub-threshold and threshold points ($r \le 1.0$, $r \in \{0.5, 0.85, 1.0\}$)**, where sharp-threshold theory ($\beta_{\text{sp}} = 0$) predicts $I_{\text{out}} = 0$ ($100\%$ error): the zero-free-parameter prediction $\beta_{\text{sp,theory}} = f_{\text{rad,1D}}(A_\perp)\,\Gamma_z\,(2/\pi)\arctan(\Delta\omega_{\text{FSR}}/\gamma_a) = 0.01515$ matches the 3D FIT threshold output $I_{\text{out}}(1.0) = 0.4008\text{ MW/m}^2$ vs $0.4450\text{ MW/m}^2$ to $9.95\%$, $I_{\text{out}}(0.85) = 0.2351\text{ MW/m}^2$ vs $0.2206\text{ MW/m}^2$ to $6.55\%$, and the $r \le 1.0$ $L_2$ norm to $10.80\%$. In a multi-mode cavity of length $L_{\text{cav}} = 4.8\ \mu\text{m} = 8(\lambda_0 / 2)$, side modes at $222\text{ THz}$ and $277\text{ THz}$ are excited during early build-up ($0.05\text{–}0.45\text{ ps}$) and suppressed by $\text{SMSR} = 44.0\text{ dB}$ in steady state ($1.5\text{–}2.4\text{ ps}$), where the central $249.92\text{ THz}$ mode carries $99.99\%$ of the spectral power.
+5. *Lifetime acceleration invariants, relaxation-oscillation scaling ($s \le 100$), and $s = 1000$ breakdown (`test_lifetime_acceleration_invariants_and_scalings`):* For a slow upper-state lifetime $\tau_{21} = 15\text{ ps}$ at $r = 3.0$, the exact matrix-exponential `turn_on_delay` $t_{\text{th}}(s) = [6.0918, 0.6092, 0.06092, 0.006092]\text{ ps}$ matches the Crank–Nicolson `step_rate_equations` trajectory ($\Delta t_{\text{rate}} = 0.2\text{ fs}$) with relative errors $3.4\times 10^{-12}$ ($s = 1$), $3.6\times 10^{-10}$ ($s = 10$), $3.8\times 10^{-7}$ ($s = 100$), and $3.9\times 10^{-5}$ ($s = 1000$), scaling as $O((s\Delta t_{\text{rate}})^2)$ (while the $10^{-12}$ checks on `threshold_pump_rate`, `steady_state_inversion`, and `saturation_intensity` verify algebraic scaling consistency). In 3D FIT, independent cold-start runs from rest across $s \in \{1, 5, 20\}$ (evolving for $> 9\tau_{21}(1)$ at $\tau_{21} = 150\text{ fs}$) converge to invariant steady-state output $I_{\text{out}}(s) = [4.488, 4.471, 4.425]\text{ MW/m}^2$ ($1.4\%$ spread, matching analytic $4.520\text{ MW/m}^2$ within $2.1\%$), and warm-start runs at $\tau_{21} = 15\text{ ps}$ give $I_{\text{out}}(s) = [5.876, 5.893, 5.975, 5.989]\text{ MW/m}^2$ (analytic $6.027\text{ MW/m}^2$). For small-perturbation relaxation oscillations on the passive 3-layer $(H L H)$ DBR cavity, a cold-cavity ringdown (`ResonanceMonitor` + `harminv`, gain off) measures $Q_{\text{cold}} = 34.732$, $\kappa_{\text{cav}} = 4.5162\times 10^{13}\text{ s}^{-1}$, and $\tau_{p,\text{cold}} = 22.1424\text{ fs}$. Including active-region Lorentzian slow-light group-delay enhancement $\tau_{p,\text{disp}} = \tau_{p,\text{cold}}(1 + \Gamma_z\kappa_{\text{cav}}/\gamma_a) = 28.809\text{ fs}$ (with $\Gamma_z = L_{\text{cav}}/(L_{\text{cav}} + 2 L_{\text{pen}}) = 2/3$ and $\Gamma_z\kappa_{\text{cav}}/\gamma_a = 0.3011$), the damped 2-ODE dispersive theory (`damped=True`) predicts quarter-periods $t_{1/4,\text{disp}}(s) = 1/(4 f_{\text{RO,disp}}(s)) = [730.94, 233.43, 82.47]\text{ fs}$ for $s \in \{1, 10, 100\}$ (vs bare cold-cavity $t_{1/4,\text{bare}}(1) = 640.65\text{ fs}$), while the undamped dispersive theory (`damped=False`) predicts $t_{1/4,\text{disp},0}(s) = [730.15, 230.89, 73.01]\text{ fs}$ scaling strictly as $1/\sqrt{s}$ ($t_{1/4,\text{disp},0}(1)/t_{1/4,\text{disp},0}(100) = 10.000$). Against the damped 2-ODE quarter-period $t_{1/4,\text{disp}}(s)$, the 3D FIT first zero-crossing times $t_{\text{zc,FIT}}(s) = [726.38, 245.35, 72.60]\text{ fs}$ differ by $-0.62\%$ at $s = 1$ ($726.38$ vs $730.94\text{ fs}$), $+5.11\%$ at $s = 10$ ($245.35$ vs $233.43\text{ fs}$), and $-11.96\%$ at $s = 100$ ($72.60$ vs $82.47\text{ fs}$). In the damped 2-ODE model, $\Gamma_{\text{RO}}(s) = s r / (2\tau_{\text{sat}}) \propto s$ reaches $0.465\,\omega_{\text{RO},0}(100)$ at $s = 100$, lengthening the damped period so that $t_{1/4,\text{disp}}(1)/t_{1/4,\text{disp}}(100) = 8.863$ (and $t_{1/4,\text{disp}}(1)/t_{1/4,\text{disp}}(10) = 3.131$). The FIT ratio $t_{\text{zc,FIT}}(1)/t_{\text{zc,FIT}}(100) = 10.005$ therefore lies close to the undamped $\sqrt{s}$ value, but no two-ODE model we tested reproduces the FIT zero crossings at $s = 10$ and $s = 100$: the damped quarter-period is off by $+5.11\%$ and $-11.96\%$, and adding the first-crossing phase advance $[\pi/2 - \arctan(\Gamma_{\text{RO}}/\omega_{\text{RO}})]/\omega_{\text{RO}}$ over-corrects (FIT is $+2.4\%$, $+16.0\%$ and $+27.2\%$ above it at $s = 1, 10, 100$). The near-$\sqrt{s}$ ratio is therefore an observation, not a confirmation; its explanation is open. At $s = 1000 > s_{\max,\text{cav}} = 677$, $(s/\tau_{\text{sat}})/\kappa_{\text{cav}} = 1.48 > 1$ violates the Class-B hierarchy so the 2-ODE model is overdamped ($f_{\text{RO,disp}}(1000) = 0$) and $t_{\text{zc,FIT}}(100)/t_{\text{zc,FIT}}(1000) = 4.595$ ($15.80\text{ fs}$) departs from $\sqrt{10} = 3.162$ by $+45.3\%$.
+
+![Spontaneous-emission FDT power calibration, 1D slab gain-narrowed ASE spectrum, and Fabry–Pérot L–I curve with beta threshold rounding](img/laser_spontaneous_emission_and_ase.png)
+
+![Multi-mode cavity homogeneous mode competition, lifetime-accelerated turn-on collapse, and relaxation-oscillation time-scaling laws](img/laser_mode_competition_and_time_scaling.png)
+
+**Limits & failure modes.**
+- *Cavity photon decay rate vs polarization dephasing rate for `time_scale = s` (`time_scaling_limits`).* Lifetime acceleration compresses the population relaxation rates $s / \tau_{ij}$ and the damped relaxation-oscillation decay rate $\Gamma_{\text{RO}}(s) = s r / (2\tau_{\text{sat}})$ by a factor of $s$, while leaving the cold-cavity photon decay rate $\kappa_{\text{cav}} = 1 / \tau_p$ and the polarization dephasing rate $\gamma_a$ unchanged. Two distinct physical hierarchy limits apply:
+  1. **Class-B cavity limit (tighter bound in high-$Q$ cavities):** Underdamped relaxation oscillations with $\omega_{\text{RO}}(s) = \sqrt{\omega_{\text{RO},0}^2(s) - \Gamma_{\text{RO}}^2(s)} \propto \sqrt{s}$ require that the accelerated population recovery rate remain much slower than the cavity photon decay rate,
+     ```math
+     \frac{s}{\tau_{\text{sat}}} \ll \kappa_{\text{cav}} = \frac{1}{\tau_p} \qquad \left(s \ll s_{\max,\text{cav}} \equiv \frac{\tau_{\text{sat}}}{\tau_p}\right) .
+     ```
+     When $s / \tau_{\text{sat}} \gtrsim \kappa_{\text{cav}}$ (as demonstrated by the $s = 1000 > s_{\max,\text{cav}} = 677$ counter-case above, where $(s/\tau_{\text{sat}})/\kappa_{\text{cav}} = 1.48$), $\Gamma_{\text{RO}}(s)$ approaches $\omega_{\text{RO},0}(s)$, breaking the $\sqrt{s}$ relaxation-oscillation scaling and transitioning the dynamics toward Class-A adiabatic following (while the final steady-state intensity $I_{\text{out}}$ remains invariant).
+  2. **Polarization adiabaticity limit:** The rate-equation description of stimulated emission requires that the accelerated population rates remain much slower than the homogeneous dipole dephasing rate,
+     ```math
+     \frac{s}{\tau_{21}},\, \frac{s}{\tau_{\text{sat}}} \ll \gamma_a \qquad \left(s \ll s_{\max,\text{deph}} \equiv \gamma_a \tau_{21}\right) .
+     ```
+     In typical optical cavities where $\kappa_{\text{cav}} \ll \gamma_a$, the cavity bound $s_{\max,\text{cav}} = \tau_{\text{sat}} / \tau_p$ is strictly tighter than $s_{\max,\text{deph}} = \gamma_a \tau_{21}$; both bounds are reported by `FourLevelGain.time_scaling_limits(tau_p)`.
+- *Crank–Nicolson positivity limit at large `time_scale`.* Scaling $\tau_{\min} = \min(\tau_{10}, \tau_{32}, \tau_{21}, W_p^{-1})$ by $1/s$ increases the stiffness of the rate matrix $s\mathbf{M}$. To prevent oscillatory overshoot or negative transient populations in the Crank–Nicolson step (or instability in the explicit Heun step when `pauli_exclusion=True`), $s$ must satisfy $(s / \tau_{\min})\Delta t < 2$. If $\tau_{10}$ and $\tau_{32}$ are already chosen on the femtosecond scale ($\sim 10\text{–}20\text{ fs}$), choose $s$ so that $\tau_{10}/s, \tau_{32}/s \gtrsim \Delta t$.
+- *Normally ordered excited-state noise vs Wigner-symmetrized vacuum fluctuations.* Because the Langevin variance $D_{F,a} = 2\gamma_a\kappa_a\hbar\omega_a N_2$ depends only on the upper-level population $N_2$ (rather than $N_2 + N_1$), it generates **normally ordered** field correlations in which an unpumped ground-state medium ($N_2 = 0$, $N_1 > 0$) injects strictly zero noise (`P_rad = 0`) and cannot spuriously heat a passive absorber (unlike a Wigner-symmetrized $\tfrac{1}{2}\hbar\omega$ zero-point bath, which requires subtracting vacuum energy; see Andreasen & Cao, 2009). Multi-photon entanglement and sub-Poissonian intensity squeezing are not modelled by this classical stochastic force.
+
+References:
+- J. Andreasen, H. Cao, A. Taflove, P. Kumar, and C.-q. Cao, "Finite-difference time-domain simulation of thermal noise in open cavities", *Phys. Rev. A* **77**(2), 023810 (2008), [doi:10.1103/PhysRevA.77.023810](https://doi.org/10.1103/PhysRevA.77.023810).
+- J. Andreasen and H. Cao, "Finite-difference time-domain formulation of stochastic noise in macroscopic atomic systems", *J. Lightwave Technol.* **27**(20), 4530–4535 (2009), [doi:10.1109/JLT.2009.2024627](https://doi.org/10.1109/JLT.2009.2024627).
+- J. Andreasen and H. Cao, "Numerical study of amplified spontaneous emission and lasing in random media", *Phys. Rev. A* **82**(6), 063835 (2010), [doi:10.1103/PhysRevA.82.063835](https://doi.org/10.1103/PhysRevA.82.063835).
+- A. E. Siegman, *Lasers*, University Science Books, Mill Valley, CA, Chs. 2, 7, 11, 13 (1986).
+- L. A. Coldren, S. W. Corzine, and M. L. Mašanović, *Diode Lasers and Photonic Integrated Circuits*, 2nd ed., Wiley, Chs. 2, 5 (2012), [doi:10.1002/9781118148167](https://doi.org/10.1002/9781118148167).
 
 
 ```{admonition} Modularity

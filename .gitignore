@@ -34,6 +34,7 @@ tmp/*
 !studies/**/*.png
 !docs/img/*.png
 !tutorials/**/*.png
+!tutorials/**/*.gif
 .briefs/
 tutorials/06_periodic_structures/06-02_sws_cold_test/shards_*/
 .ref/

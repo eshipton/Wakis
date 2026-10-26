@@ -1,0 +1,113 @@
+{
+  "r_main": 1.6,
+  "qws_peak_delta_L": 0.0135,
+  "qws_smsr_db": 40.03,
+  "uni_peak_pos_delta_L": 3.1857,
+  "uni_peak_neg_delta_L": -3.4307,
+  "uni_half_splitting_delta_L": 3.3082,
+  "cwt_uni_delta_L": 3.3797,
+  "uni_secondary_mode_ratio": 0.444,
+  "qws_peak_to_edge_fit": 2.757,
+  "qws_peak_to_edge_cwt": 2.8689,
+  "qws_peak_to_edge_rel_diff_pct": 3.9,
+  "qws_central_gain_compression": 0.582,
+  "cwt_energy_balance_check": 1.000004,
+  "pump_points": [
+    0.5,
+    0.8,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.0,
+    2.5
+  ],
+  "I_out_over_Isat_fit": [
+    0.0,
+    0.0,
+    1e-05,
+    0.10237,
+    0.21765,
+    0.34013,
+    0.46931,
+    0.74234
+  ],
+  "I_out_over_Isat_rigrod_sw": [
+    0.0,
+    0.0,
+    0.0,
+    0.116,
+    0.24399,
+    0.38004,
+    0.52179,
+    0.81699
+  ],
+  "I_out_over_Isat_linear_shb": [
+    0.0,
+    0.0,
+    0.0,
+    0.15207,
+    0.30413,
+    0.4562,
+    0.60827,
+    0.9124
+  ],
+  "I_out_r2_fit": 0.4693,
+  "I_out_r2_rigrod_sw": 0.5218,
+  "slope_fit": 0.5264,
+  "slope_rigrod_sw": 0.5745,
+  "slope_rel_diff_pct": 8.36,
+  "elapsed_s": 42.71,
+  "fit_runs_log": [
+    {
+      "run": "lasing_qws_r1.6",
+      "wall_s": 4.311714428000414,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "lasing_uni_r1.6",
+      "wall_s": 4.274258057000225,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r0.50",
+      "wall_s": 4.719661119999728,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r0.80",
+      "wall_s": 4.783290212000793,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r1.00",
+      "wall_s": 4.7963535170001705,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r1.25",
+      "wall_s": 4.6881220859995665,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r1.50",
+      "wall_s": 3.8325898670000242,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r1.75",
+      "wall_s": 3.734652965999885,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r2.00",
+      "wall_s": 3.747368149000067,
+      "rss_mb": 398.984375
+    },
+    {
+      "run": "li_qws_r2.50",
+      "wall_s": 3.7067583589996502,
+      "rss_mb": 398.984375
+    }
+  ]
+}
