@@ -1,0 +1,59 @@
+{
+  "seawater_1khz_ka": 0.053314595254365445,
+  "seawater_1khz_t1": 26.52580909342418,
+  "seawater_1khz_t2a": 351.8096654714364,
+  "seawater_1khz_t2b": 351.8088825893484,
+  "seawater_1khz_t3": 9332.036023516746,
+  "seawater_1khz_eta_tm": 1.4154664745205518e-15,
+  "seawater_1khz_eta_te": 5.143443321480312e-13,
+  "seawater_1khz_ratio_full": 363.3744362064459,
+  "seawater_1khz_inv_ka2": 351.80966547143646,
+  "poynting_differential_rel_err": 1.6713796162406703e-11,
+  "muscle_debye_eps_inf": 23.336950713397712,
+  "muscle_debye_poles": [
+    {
+      "delta_eps": 30.775758353261427,
+      "tau_s": 1.4729359009487715e-11
+    },
+    {
+      "delta_eps": 2081.956428400424,
+      "tau_s": 2.5727098331798423e-08
+    },
+    {
+      "delta_eps": 4.927772894222536,
+      "tau_s": 3.6218153081730886e-10
+    }
+  ],
+  "muscle_debye_rms_fit_error": 0.0020061241606115854,
+  "muscle_403mhz_cole_cole_real": 57.10405574662034,
+  "muscle_403mhz_cole_cole_imag": 35.552119489241925,
+  "muscle_403mhz_debye_real": 57.237042852647924,
+  "muscle_403mhz_debye_imag": 35.55259400868407,
+  "muscle_403mhz_rel_err": 0.0019770212618231745,
+  "muscle_403mhz_lambda_mm": 94.24143991729962,
+  "muscle_403mhz_skin_depth_mm": 52.573662680770354,
+  "muscle_403mhz_k_abs_m": 69.33136545079846,
+  "muscle_2450mhz_cole_cole_real": 52.73082090694891,
+  "muscle_2450mhz_cole_cole_imag": 12.754169482648782,
+  "muscle_2450mhz_debye_real": 52.77471146372197,
+  "muscle_2450mhz_debye_imag": 12.75014032818123,
+  "muscle_2450mhz_rel_err": 0.0008124242438404884,
+  "muscle_2450mhz_lambda_mm": 16.72400300566262,
+  "muscle_2450mhz_skin_depth_mm": 22.351370773076475,
+  "muscle_2450mhz_k_abs_m": 378.35319463612905,
+  "a_ref_mm": 2.25,
+  "ka_ref_403mhz": 0.15599557226429653,
+  "ka_ref_2450mhz": 0.8512946879312903,
+  "nz_excess_ratio_403mhz_ref": 45.61110354673744,
+  "nz_excess_ratio_2450mhz_ref": 2.6576866953829628,
+  "nz_eff_ratio_403mhz_ref": 35.73567401739894,
+  "nz_eff_ratio_2450mhz_ref": 1.3603997960137209,
+  "cavity_tm_qs_boost_403mhz": 2.2218663722237726,
+  "cavity_tm_full_boost_403mhz": 2.181749125960155,
+  "cavity_tm_qs_boost_2450mhz": 2.210241551264346,
+  "cavity_tm_full_boost_2450mhz": 1.4216978086180876,
+  "cavity_tm_cer_qs_boost_403mhz": 1.9409694459164828,
+  "cavity_tm_cer_full_boost_403mhz": 1.9153810706999082,
+  "cavity_tm_cer_qs_boost_2450mhz": 1.8336595080542528,
+  "cavity_tm_cer_full_boost_2450mhz": 1.3449927570516254
+}

@@ -372,13 +372,24 @@ def _describe_material(mat: Any, name_hint: str | None = None) -> dict[str, Any]
         "DispersiveMaterial",
     ):
         eps_inf = float(getattr(mat, "eps_inf", 1.0))
+        mu_inf = float(getattr(mat, "mu_inf", 1.0))
+        has_mag = bool(getattr(mat, "has_magnetic", False))
+        mu_static = (
+            float(np.real(mat.mu(0.0)))
+            if has_mag and callable(getattr(mat, "mu", None))
+            else mu_inf
+        )
         model = getattr(mat, "name", None) or cls_name
         name = name_hint or str(model)
+        if has_mag:
+            label = f"{name}, {cls_name} (ε_∞ = {eps_inf:.2f}, μ_s = {mu_static:.2f})"
+        else:
+            label = f"{name}, {cls_name} (ε_∞ = {eps_inf:.2f})"
         return {
             "name": name,
-            "label": f"{name}, {cls_name} (ε_∞ = {eps_inf:.2f})",
+            "label": label,
             "eps_r": eps_inf,
-            "mu_r": 1.0,
+            "mu_r": mu_static,
             "sigma": 0.0,
             "model": cls_name,
         }
@@ -2609,18 +2620,31 @@ def _draw_schematic_panel(
             leg_handle = plt.Line2D([0], [0], color=src_color, lw=1.8, ls="-.")
         else:
             ax.plot([sh0, sh1], [sv0, sv1], color=src_color, lw=2.3, ls="-", marker="none", zorder=7)
+            is_horiz_sheet = abs(sv1 - sv0) < 1e-9 * scale and abs(sh1 - sh0) >= 1e-9 * scale
+            y_arrow = sv0 if is_horiz_sheet else v0 + 0.50 * dv
             if s_idx == 0:
                 k_vec = src.get("k_vec", (1.0, 0.0, 0.0))
                 if abs(k_vec[0]) > 0.1 or abs(k_vec[1]) > 0.1:
                     ax.annotate(
                         "",
-                        xy=(sh0 + 0.065 * dh * k_vec[0], v0 + 0.50 * dv + 0.12 * dv * k_vec[1]),
-                        xytext=(sh0, v0 + 0.50 * dv),
+                        xy=(sh0 + 0.065 * dh * k_vec[0], y_arrow + 0.12 * dv * k_vec[1]),
+                        xytext=(sh0, y_arrow),
                         arrowprops={"arrowstyle": "-|>", "color": src_color, "lw": 1.6},
                         zorder=8,
                     )
-            tx = sh0 + 0.025 * dh
-            ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            if is_horiz_sheet:
+                tx = 0.5 * (sh0 + sh1)
+                ty = sv0 + 0.09 * dv
+            else:
+                tx = sh0 + 0.025 * dh
+                ty = v0 + y_lanes[(item_num - 1) % len(y_lanes)] * dv
+            ty = float(
+                np.clip(
+                    ty,
+                    v0 + th_v_low + 0.06 * dv,
+                    v1 - th_v_high - 0.06 * dv,
+                )
+            )
             leg_handle = plt.Line2D([0], [0], color=src_color, lw=2.3, ls="-")
 
         if in_axes_count < max_in_axes:

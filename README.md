@@ -149,7 +149,7 @@ This work builds on the adjoint inverse-design literature, and in particular on 
 <td valign="top">
 
 - **Vacuum electronics**: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave-tube gain; backward-wave oscillators; a beam over a slow-wave structure.
-- **Magnetic antennas**: magneto-dielectric and ferrite-loaded antennas on the dispersive-μ feature.
+- **Magnetic antennas**: toroidal (closed-magnetization-loop) antennas and magnetic antennas in cavities.
 - **Particle-in-cell beams**: for large-signal beam physics (saturation, efficiency) and nonlinear plasma wakefields.
 
 </td></tr></table>
@@ -228,6 +228,10 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <tr>
 <td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb"><img src="docs/img/readme/tut_04-05.jpg" width="170" alt="Tutorial 4.5"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb">4.5 · 77 GHz series-fed patch array</a></b><br><sub>Yang et al. 2020 automotive radar array: gain and sidelobes</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-05_radar_patch_array_77g/radar_patch_array_77g.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb"><img src="docs/img/readme/tut_04-06.jpg" width="170" alt="Tutorial 4.6"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb">4.6 · NFC reader and tag coils at 13.56 MHz</a></b><br><sub>Wheeler/Grover inductance, Neumann mutual inductance, ferrite shielding</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-06_nfc_coils/nfc_coils.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-08_magnetic_antenna_ground/magnetic_antenna_ground.ipynb"><img src="docs/img/readme/tut_04-08.jpg" width="170" alt="Tutorial 4.8"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-08_magnetic_antenna_ground/magnetic_antenna_ground.ipynb">4.8 · Magnetic antennas on and near a ground plane</a></b><br><sub>Image theory, +3 dB over PEC, efficiency below the magneto-dielectric bound</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-08_magnetic_antenna_ground/magnetic_antenna_ground.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/04_radiation_and_antennas/04-09_implant_antennas_tissue/implant_antennas_tissue.ipynb"><img src="docs/img/readme/tut_04-09.jpg" width="170" alt="Tutorial 4.9"></a></td><td width="300" valign="top"><b><a href="tutorials/04_radiation_and_antennas/04-09_implant_antennas_tissue/implant_antennas_tissue.ipynb">4.9 · Electric vs magnetic implant antennas in tissue</a></b><br><sub>Near-zone loss, Li et al. efficiency bounds, ferrite cores</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/04_radiation_and_antennas/04-09_implant_antennas_tissue/implant_antennas_tissue.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
@@ -429,7 +433,8 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Laser tutorials: DFB (7.7), microdisk (7.8), BIC laser (7.9) and PCSEL (7.10)
 - [x] Coupled-wave theory for photonic-crystal surface-emitting lasers (`wakis.pcsel_cwt`)
 - [ ] Vacuum electronics: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave tube gain; backward-wave oscillator; klystron cavities
-- [ ] Magnetic antennas on the dispersive-μ feature
+- [x] Magnetic antennas on and near ground planes (4.8) and implant antennas in tissue (4.9), on the dispersive-μ feature
+- [ ] Toroidal magnetic antennas (4.7)
 - [ ] Grating couplers, polarization devices and (de)multiplexers (Chapter 5 catalogue)
 
 **Validation and studies**

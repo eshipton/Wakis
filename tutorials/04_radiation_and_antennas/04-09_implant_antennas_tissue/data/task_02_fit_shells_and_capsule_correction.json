@@ -1,0 +1,167 @@
+{
+  "grid_N": 38,
+  "dx_mm": 0.64,
+  "cells": 59319,
+  "n_steps": 2210,
+  "wall_time_tm_air_s": 32.51754089099995,
+  "wall_time_te_air_s": 33.25877778699942,
+  "peak_rss_mb": 338.5078125,
+  "est_ram_gb": 0.62635034875,
+  "a_ref_mm": 2.24,
+  "r1_mm": 3.2,
+  "r2_mm": 6.4,
+  "cpml_inner_mm": 8.32,
+  "poynting_closure_rel_err_tm_403mhz": 0.005469706041124466,
+  "poynting_closure_rel_err_tm_2450mhz": 0.0035163634900085973,
+  "poynting_closure_rel_err_te_403mhz": 0.00755537373073302,
+  "poynting_closure_rel_err_te_2450mhz": 7.781264635455223e-07,
+  "cavity_boost_tm_air_2450mhz_fit": 1.7958646241217253,
+  "cavity_boost_tm_air_2450mhz_full_theory": 1.4257204329614162,
+  "cavity_boost_tm_air_2450mhz_qs_theory": 2.210241551264346,
+  "cavity_boost_tm_air_2450mhz_rel_err_vs_full": 0.2596190547619978,
+  "cavity_boost_tm_cer_2450mhz_fit": 1.4804773095102732,
+  "cavity_boost_tm_cer_2450mhz_full_theory": 1.3475690040274426,
+  "cavity_boost_tm_cer_2450mhz_qs_theory": 1.8336595080542528,
+  "cavity_boost_tm_cer_2450mhz_rel_err_vs_full": 0.09862820017795838,
+  "cavity_boost_te_air_403mhz_fit": 0.9952369297793235,
+  "cavity_boost_te_air_403mhz_theory": 1.0,
+  "graded_dx_min_mm": 0.3499999999999953,
+  "graded_cavity_boost_tm_air_2450mhz_fit": 1.6829260705012032,
+  "graded_cavity_boost_tm_cer_2450mhz_fit": 1.41842395629254,
+  "graded_cavity_boost_tm_air_403mhz_fit": 2.640162051765361,
+  "graded_cavity_boost_tm_cer_403mhz_fit": 2.0456912560239635,
+  "trans_tm_403mhz_hom": 0.15924707696480647,
+  "trans_tm_403mhz_air": 0.15632670668065626,
+  "trans_te_403mhz_hom": 0.5538034102431862,
+  "trans_te_403mhz_air": 0.5524342994268024,
+  "a_sweep_mm": [
+    1.6,
+    2.24,
+    2.8800000000000003
+  ],
+  "ka_sweep_403mhz": [
+    0.11093018472127754,
+    0.15530225860978855,
+    0.19967433249829958
+  ],
+  "ka_sweep_2450mhz": [
+    0.6053651114178065,
+    0.8475111559849291,
+    1.0896572005520517
+  ],
+  "cavity_boost_tm_air_2450mhz_fit_sweep": [
+    2.3192722731529334,
+    1.7958646241217253,
+    1.4959894210690141
+  ],
+  "cavity_boost_tm_cer_2450mhz_fit_sweep": [
+    1.6927445946296262,
+    1.4804773095102732,
+    1.2859793366434824
+  ],
+  "cavity_boost_tm_air_2450mhz_full_sweep": [
+    1.7020624054448927,
+    1.4257204329614162,
+    1.1917992054995739
+  ],
+  "cavity_boost_tm_cer_2450mhz_full_sweep": [
+    1.5227995621353787,
+    1.3475690040274426,
+    1.197346115672882
+  ],
+  "cavity_boost_tm_air_2450mhz_qs_sweep": [
+    2.210241551264346,
+    2.210241551264346,
+    2.210241551264346
+  ],
+  "cavity_boost_tm_cer_2450mhz_qs_sweep": [
+    1.8336595080542528,
+    1.8336595080542528,
+    1.8336595080542528
+  ],
+  "cavity_boost_tm_air_403mhz_fit_sweep": [
+    3.083398347615752,
+    2.798777810564925,
+    2.8566346797362905
+  ],
+  "cavity_boost_tm_cer_403mhz_fit_sweep": [
+    2.2139059917247503,
+    2.1591664313445165,
+    2.0986854628508613
+  ],
+  "cavity_boost_tm_air_403mhz_full_sweep": [
+    2.200847132147333,
+    2.18208245944219,
+    2.158507148243788
+  ],
+  "cavity_boost_tm_cer_403mhz_full_sweep": [
+    1.9275031986740254,
+    1.9155920269684954,
+    1.9007163511157368
+  ],
+  "cut_cell_loss_ratio_tm_over_te_403mhz_fit": [
+    137.88995718457937,
+    37.508670644584846,
+    46.52007973443481
+  ],
+  "cut_cell_loss_ratio_tm_over_te_2450mhz_fit": [
+    10.530923360220335,
+    3.4728057895330116,
+    3.8954718713107916
+  ],
+  "r1_shell_sweep_mm": [
+    2.56,
+    3.2,
+    3.8400000000000007
+  ],
+  "kr1_shell_sweep_403mhz": [
+    0.17748829555404408,
+    0.22186036944255508,
+    0.2662324433310661
+  ],
+  "kr1_shell_sweep_2450mhz": [
+    0.9685841782684904,
+    1.210730222835613,
+    1.4528762674027358
+  ],
+  "shell_loss_ratio_tm_over_te_403mhz_fit": [
+    9.764031723771854,
+    6.674363055186642,
+    5.090296667255701
+  ],
+  "shell_loss_ratio_tm_over_te_403mhz_theory": [
+    9.966994716160356,
+    7.113048355740033,
+    5.505868620122653
+  ],
+  "shell_loss_ratio_tm_over_te_403mhz_spherical_theory": [
+    10.632202276698942,
+    7.596179503061406,
+    5.883478434570535
+  ],
+  "shell_loss_ratio_tm_over_te_403mhz_rel_err": [
+    0.020363509580216783,
+    0.06167331903478256,
+    0.07547800021020021
+  ],
+  "shell_loss_ratio_tm_over_te_2450mhz_fit": [
+    1.4125340669437145,
+    1.2356771874702561,
+    1.1541203348599713
+  ],
+  "shell_loss_ratio_tm_over_te_2450mhz_theory": [
+    1.3630861063431639,
+    1.2215302488367545,
+    1.1490009343438123
+  ],
+  "shell_loss_ratio_tm_over_te_2450mhz_spherical_theory": [
+    1.6086162430190676,
+    1.376182303897016,
+    1.2556460711029973
+  ],
+  "shell_loss_ratio_tm_over_te_2450mhz_rel_err": [
+    0.03627647613048291,
+    0.011581324856239545,
+    0.004455523370903662
+  ]
+}
