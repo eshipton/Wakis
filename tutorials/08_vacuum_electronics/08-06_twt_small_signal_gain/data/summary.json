@@ -1,0 +1,775 @@
+{
+  "task_01_pierce_and_scw": {
+    "A_launching_loss_db": -9.542425,
+    "B_pierce_slope_db": 47.263383,
+    "max_bvp_vs_ode_diff_db": 1.3164296319700952e-09,
+    "gamma0_20kv": 1.039139,
+    "chi_rel_20kv": 0.943864,
+    "sheet_2d_to_3d_mapping": {
+      "w_beam_m": 0.00075,
+      "b_wg_m": 0.00085,
+      "fx_lateral": 0.5651591830676962,
+      "w_eff_m": 0.0007520005207967971,
+      "eta_x_current_factor": 0.9973397348253463,
+      "j_sheet_a_per_m": 132.97863131004618
+    },
+    "scw_check": {
+      "f_ref_ghz": 186.0,
+      "lambda_e_um": 438.19,
+      "gamma_h_186ghz": 1.0349,
+      "gamma_a_186ghz": 1.3799,
+      "R_planar_wakis": 0.652264,
+      "D_karetnikova_eq4": 0.635475,
+      "omega_q_theory_rad_s": 169588572681.74463,
+      "omega_fast_theory_rad_s": 1338261039817.1477,
+      "omega_slow_theory_rad_s": 999083894453.6584,
+      "levels": [
+        {
+          "nz_per_lambda_e": 20,
+          "ny": 16,
+          "dz_um": 21.91,
+          "sinc_advection_factor": 0.983632,
+          "wq_theory_rad_s": 169588572681.74463,
+          "wq_fit_rad_s": 167992039950.2134,
+          "rel_err_wq": 0.009414152771527384,
+          "amplitude_conservation_ratio": 0.998595,
+          "wall_time_s": 0.461
+        },
+        {
+          "nz_per_lambda_e": 28,
+          "ny": 22,
+          "dz_um": 15.65,
+          "sinc_advection_factor": 0.991629,
+          "wq_theory_rad_s": 169588572681.74463,
+          "wq_fit_rad_s": 168323620328.72952,
+          "rel_err_wq": 0.00745894804710077,
+          "amplitude_conservation_ratio": 0.999623,
+          "wall_time_s": 0.856
+        },
+        {
+          "nz_per_lambda_e": 40,
+          "ny": 32,
+          "dz_um": 10.955,
+          "sinc_advection_factor": 0.995893,
+          "wq_theory_rad_s": 169588572681.74463,
+          "wq_fit_rad_s": 168452670383.2137,
+          "rel_err_wq": 0.006697988435002546,
+          "amplitude_conservation_ratio": 0.999779,
+          "wall_time_s": 1.767
+        }
+      ]
+    }
+  },
+  "task_02_2d_convergence": {
+    "f0_ghz": 186.0,
+    "I0_conv_a": 0.25,
+    "beta_c_rad_m": 14407.41,
+    "K_beam_ohm": 1.0133,
+    "C_pierce": 0.014456,
+    "QC_pierce": 0.18199,
+    "R_sc_planar": 0.65416,
+    "x1_pierce_3w": 0.650646,
+    "x1_pierce_4w": 0.6574,
+    "alpha_pierce_3w_np_m": 135.5111,
+    "alpha_pierce_4w_np_m": 136.9179,
+    "alpha_pierce_finest_grid_np_m": 134.4769,
+    "slope_pierce_db_per_mm": 1.177,
+    "levels": [
+      {
+        "level": "coarse",
+        "mesh": {
+          "mesh_level": "coarse",
+          "nx": 2,
+          "ny": 25,
+          "nz": 677,
+          "n_cells": 33850,
+          "nz_per_period": 26,
+          "dz_um": 19.231,
+          "dz_max_um": 20.0,
+          "dy_min_um": 6.25,
+          "dy_gap_um": 6.25,
+          "dy_beam_um": 25.0,
+          "dy_slot_um": 60.0,
+          "dy_max_um": 60.0,
+          "cells_across_vane": 5,
+          "cells_across_beam_wall_gap": 4,
+          "cells_across_beam": 6,
+          "lambda_g_186ghz_um": 436.07,
+          "cells_per_lambda_g_186ghz": 21.8,
+          "cells_per_lambda_g_200ghz": 20.12,
+          "cells_per_lambda0_210ghz": 23.79
+        },
+        "cold_circuit_on_grid": {
+          "f_cold_fit_ghz": 185.8821,
+          "beta_c_fit_rad_m": 14419.275,
+          "alpha_cold_loss_np_m": 0.0,
+          "k_2d_fit_ohm_mm": 0.76993,
+          "k_3d_fit_ohm": 1.02384,
+          "v_sync_volt_grid": 19764.73,
+          "C_grid": 0.014515,
+          "QC_grid": 0.18089,
+          "x1_grid": 0.652027,
+          "alpha_pierce_grid_np_m": 136.4634
+        },
+        "alpha_pierce_grid_np_m": 136.4634,
+        "alpha_fit_np_m": 145.922,
+        "slope_db_per_mm": 1.2675,
+        "rel_err_vs_pierce": 0.06931,
+        "rel_err_vs_pierce_grid": 0.06931,
+        "rel_err_vs_pierce_mcvey": 0.07683,
+        "gain_period_19_db": 7.343,
+        "min_launching_dip_db": -0.436,
+        "cold_wall_time_s": 26.659,
+        "hot_wall_time_s": 33.647,
+        "ram_est_mb": 581.35,
+        "n_steps": 12494
+      },
+      {
+        "level": "medium",
+        "mesh": {
+          "mesh_level": "medium",
+          "nx": 2,
+          "ny": 31,
+          "nz": 833,
+          "n_cells": 51646,
+          "nz_per_period": 32,
+          "dz_um": 15.625,
+          "dz_max_um": 16.667,
+          "dy_min_um": 5.0,
+          "dy_gap_um": 5.0,
+          "dy_beam_um": 18.75,
+          "dy_slot_um": 50.0,
+          "dy_max_um": 50.0,
+          "cells_across_vane": 6,
+          "cells_across_beam_wall_gap": 5,
+          "cells_across_beam": 8,
+          "lambda_g_186ghz_um": 436.07,
+          "cells_per_lambda_g_186ghz": 26.16,
+          "cells_per_lambda_g_200ghz": 24.14,
+          "cells_per_lambda0_210ghz": 28.55
+        },
+        "cold_circuit_on_grid": {
+          "f_cold_fit_ghz": 185.9281,
+          "beta_c_fit_rad_m": 14414.647,
+          "alpha_cold_loss_np_m": 0.0,
+          "k_2d_fit_ohm_mm": 0.76041,
+          "k_3d_fit_ohm": 1.01118,
+          "v_sync_volt_grid": 19778.18,
+          "C_grid": 0.014451,
+          "QC_grid": 0.18234,
+          "x1_grid": 0.650218,
+          "alpha_pierce_grid_np_m": 135.4458
+        },
+        "alpha_pierce_grid_np_m": 135.4458,
+        "alpha_fit_np_m": 141.043,
+        "slope_db_per_mm": 1.2251,
+        "rel_err_vs_pierce": 0.04132,
+        "rel_err_vs_pierce_grid": 0.04132,
+        "rel_err_vs_pierce_mcvey": 0.04082,
+        "gain_period_19_db": 7.199,
+        "min_launching_dip_db": -0.434,
+        "cold_wall_time_s": 50.154,
+        "hot_wall_time_s": 63.412,
+        "ram_est_mb": 619.05,
+        "n_steps": 15616
+      },
+      {
+        "level": "fine",
+        "mesh": {
+          "mesh_level": "fine",
+          "nx": 2,
+          "ny": 39,
+          "nz": 1041,
+          "n_cells": 81198,
+          "nz_per_period": 40,
+          "dz_um": 12.5,
+          "dz_max_um": 12.5,
+          "dy_min_um": 4.167,
+          "dy_gap_um": 4.167,
+          "dy_beam_um": 15.0,
+          "dy_slot_um": 37.5,
+          "dy_max_um": 37.5,
+          "cells_across_vane": 8,
+          "cells_across_beam_wall_gap": 6,
+          "cells_across_beam": 10,
+          "lambda_g_186ghz_um": 436.07,
+          "cells_per_lambda_g_186ghz": 34.89,
+          "cells_per_lambda_g_200ghz": 32.19,
+          "cells_per_lambda0_210ghz": 38.07
+        },
+        "cold_circuit_on_grid": {
+          "f_cold_fit_ghz": 185.9722,
+          "beta_c_fit_rad_m": 14410.202,
+          "alpha_cold_loss_np_m": 0.0,
+          "k_2d_fit_ohm_mm": 0.75608,
+          "k_3d_fit_ohm": 1.00542,
+          "v_sync_volt_grid": 19791.1,
+          "C_grid": 0.01442,
+          "QC_grid": 0.18298,
+          "x1_grid": 0.649416,
+          "alpha_pierce_grid_np_m": 134.9484
+        },
+        "alpha_pierce_grid_np_m": 134.9484,
+        "alpha_fit_np_m": 139.2402,
+        "slope_db_per_mm": 1.2094,
+        "rel_err_vs_pierce": 0.0318,
+        "rel_err_vs_pierce_grid": 0.0318,
+        "rel_err_vs_pierce_mcvey": 0.02752,
+        "gain_period_19_db": 7.173,
+        "min_launching_dip_db": -0.409,
+        "cold_wall_time_s": 101.134,
+        "hot_wall_time_s": 126.962,
+        "ram_est_mb": 679.31,
+        "n_steps": 18739
+      },
+      {
+        "level": "ultrafine",
+        "mesh": {
+          "mesh_level": "ultrafine",
+          "nx": 2,
+          "ny": 45,
+          "nz": 1197,
+          "n_cells": 107730,
+          "nz_per_period": 46,
+          "dz_um": 10.87,
+          "dz_max_um": 11.111,
+          "dy_min_um": 3.571,
+          "dy_gap_um": 3.571,
+          "dy_beam_um": 12.5,
+          "dy_slot_um": 33.333,
+          "dy_max_um": 33.333,
+          "cells_across_vane": 9,
+          "cells_across_beam_wall_gap": 7,
+          "cells_across_beam": 12,
+          "lambda_g_186ghz_um": 436.07,
+          "cells_per_lambda_g_186ghz": 39.25,
+          "cells_per_lambda_g_200ghz": 36.21,
+          "cells_per_lambda0_210ghz": 42.83
+        },
+        "cold_circuit_on_grid": {
+          "f_cold_fit_ghz": 185.9888,
+          "beta_c_fit_rad_m": 14408.536,
+          "alpha_cold_loss_np_m": 0.0,
+          "k_2d_fit_ohm_mm": 0.75165,
+          "k_3d_fit_ohm": 0.99954,
+          "v_sync_volt_grid": 19795.94,
+          "C_grid": 0.014391,
+          "QC_grid": 0.18368,
+          "x1_grid": 0.648545,
+          "alpha_pierce_grid_np_m": 134.4769
+        },
+        "alpha_pierce_grid_np_m": 134.4769,
+        "alpha_fit_np_m": 136.8793,
+        "slope_db_per_mm": 1.1889,
+        "rel_err_vs_pierce": 0.01786,
+        "rel_err_vs_pierce_grid": 0.01786,
+        "rel_err_vs_pierce_mcvey": 0.0101,
+        "gain_period_19_db": 7.092,
+        "min_launching_dip_db": -0.414,
+        "cold_wall_time_s": 162.92,
+        "hot_wall_time_s": 208.864,
+        "ram_est_mb": 732.09,
+        "n_steps": 21862
+      }
+    ],
+    "observed_order_p": 2.223,
+    "alpha_richardson_np_m": 133.5221,
+    "rel_err_richardson": 0.0071,
+    "rel_err_richardson_vs_finest_grid": 0.0071,
+    "rel_err_richardson_vs_mcvey": 0.01468,
+    "pairwise_orders": [
+      2.53,
+      1.19,
+      4.15
+    ],
+    "in_asymptotic_range": false,
+    "asymptotic_range_note": "Pairwise convergence orders across coarse->medium->fine->ultrafine are 2.53, 1.19, and 4.15 (successive alpha_FIT increments 4.88, 1.80, 2.36 Np/m; 4-point log-log fit slope p_obs = 2.223); because the pairwise orders oscillate between 1.19 and 4.15, the 4-level data are not in the asymptotic convergence range and no Richardson value is claimed as converged.",
+    "alpha_fit_increments_np_m": [
+      4.88,
+      1.8,
+      2.36
+    ]
+  },
+  "task_03_karetnikova_gain_vs_freq": {
+    "I0_mA": 100.0,
+    "L_fig3_mm": 25.0,
+    "L_fig5_mm": 40.0,
+    "fig3_voltage_sweep": {
+      "v_19kv": {
+        "voltage_kv": 19.0,
+        "peak_freq_ghz": 189.75,
+        "peak_gain_25mm_db": 5.25,
+        "is_lower_sweep_boundary": false,
+        "cold_table_min_freq_ghz": 178.99,
+        "gain_25mm_at_cold_table_min_db": -4.3,
+        "midplane_peak_freq_ghz": 187.5,
+        "midplane_peak_gain_25mm_db": 2.59,
+        "max_bvp_ode_diff_db": 1.2475101840436764e-08
+      },
+      "v_20kv": {
+        "voltage_kv": 20.0,
+        "peak_freq_ghz": 184.0,
+        "peak_gain_25mm_db": 17.53,
+        "is_lower_sweep_boundary": false,
+        "cold_table_min_freq_ghz": 178.99,
+        "gain_25mm_at_cold_table_min_db": 9.59,
+        "midplane_peak_freq_ghz": 184.25,
+        "midplane_peak_gain_25mm_db": 14.08,
+        "max_bvp_ode_diff_db": 6.683080755465198e-10
+      },
+      "v_21kv": {
+        "voltage_kv": 21.0,
+        "peak_freq_ghz": 180.0,
+        "peak_gain_25mm_db": 22.11,
+        "is_lower_sweep_boundary": true,
+        "cold_table_min_freq_ghz": 178.99,
+        "gain_25mm_at_cold_table_min_db": 23.74,
+        "midplane_peak_freq_ghz": 180.0,
+        "midplane_peak_gain_25mm_db": 18.51,
+        "max_bvp_ode_diff_db": 2.564802703552971e-09,
+        "boundary_note": "At 21 kV, the maximum on the 180.0-212.0 GHz sweep (22.11 dB at 180.00 GHz) occurs at the lower boundary of linspace(180, 212); extending down to the lower edge of the Tutorial 6.2 cold-test table (178.99 GHz at beta_0 d = 0.15 pi) gives 23.74 dB."
+      }
+    },
+    "karetnikova_2018_benchmarks": {
+      "paper_ref_file": ".ref/sws/2018_IEEETED65_0.2THz_TWT_sheet_beam_staggered_grating_gain.txt",
+      "paper_line_citations": {
+        "fig3_25mm_20kv_5_to_13db_60ghz_band": "l.205-206",
+        "fig3_25mm_21kv_19db": "l.209",
+        "text_40mm_20kv_10_to_20db": "l.289-290",
+        "fig5a_25mm_20kv_10db": "l.328",
+        "fig6_190ghz_40mm_20kv_75w_at_1p01w": "l.278/291"
+      },
+      "fig3_25mm_20kv_1d_range_db": [
+        5.0,
+        13.0
+      ],
+      "fig3_25mm_20kv_bandwidth_ghz": 60.0,
+      "fig3_25mm_21kv_1d_max_db": 19.0,
+      "fig5a_25mm_20kv_pin_mw": 20.0,
+      "fig5a_25mm_20kv_pic_small_signal_pin_20mw_db": 10.0,
+      "text_40mm_20kv_small_signal_range_db": [
+        10.0,
+        20.0
+      ],
+      "fig6_190ghz_40mm_20kv_freq_ghz": 190.0,
+      "fig6_190ghz_40mm_20kv_pin_w": 1.01,
+      "fig6_190ghz_40mm_20kv_pout_w": 75.0,
+      "fig6_190ghz_40mm_20kv_saturated_gain_db": 18.7,
+      "fig5b_40mm_20kv_pic_saturated_pin_1p01w_pout_75w_db": 18.7,
+      "overprediction_range_db": [
+        3.11,
+        4.53
+      ],
+      "hypothetical_midplane_shift_range_db": [
+        3.45,
+        3.6
+      ],
+      "overprediction_explanation": "Pierce (<K>_beam) overpredicts the paper by 4.53 dB at 20 kV (17.53 dB vs 13.0 dB, l.205-206) and by >= 3.1 dB at 21 kV (peak not bracketed by the sweep: 22.11 dB at 180.0 GHz vs 19.0 dB, l.209, reaching 23.74 dB at the 178.99 GHz cold-table edge); the FIT extrapolations deviate from Pierce by -8.2% to +25.7% in alpha across the sweep and reach 23.71 dB at 25 mm. At 186 GHz, 2D FIT agrees within 1.79% on the ultrafine grid (136.88 vs 134.48 Np/m, pre-asymptotic; increments 4.88, 1.80, 2.36 Np/m). This overprediction is UNEXPLAINED within our lossless PEC model (alpha_cold = 0); one untested hypothesis is that the paper's 1D parametric code evaluated midplane K_+1(y=0) rather than the cosh^2(tau_+1 y) beam average <K_+1>_beam (a 3.45-3.60 dB shift: 17.53 vs 14.08 dB at 20 kV and 22.11 vs 18.51 dB at 21 kV)."
+    },
+    "fig5_40mm_20kv": {
+      "wakis_planar_peak_freq_ghz": 183.75,
+      "wakis_planar_peak_gain_db": 32.44,
+      "karetnikova_eq4_peak_freq_ghz": 183.75,
+      "karetnikova_eq4_peak_gain_db": 32.76,
+      "midplane_eq4_peak_freq_ghz": 184.25,
+      "midplane_eq4_peak_gain_db": 26.41,
+      "paper_text_small_signal_range_db": [
+        10.0,
+        20.0
+      ],
+      "paper_fig5b_saturated_gain_db": 18.7
+    },
+    "fit_frequency_sweep": {
+      "model_length_mm": 11.0,
+      "model_periods": 22,
+      "extrapolation_note": "At each frequency, alpha_fit_np_m is de-embedded from the raw 22-period FIT window slope s_fit_raw_np_m over m in [8, 19] by inverting Pierce's 3-wave BVP using Pierce's own velocity detuning b(f) and space-charge parameter QC(f); gain_25mm_fit_db (N=50) and gain_40mm_fit_db (N=80) are Pierce 3-wave extrapolations evaluated using that de-embedded alpha_fit_np_m.",
+      "freqs_ghz": [
+        183.0,
+        185.0,
+        186.5,
+        188.5,
+        191.5,
+        196.0
+      ],
+      "b_pierce": [
+        -0.1585,
+        0.2768,
+        0.5288,
+        0.8107,
+        1.0827,
+        1.2838
+      ],
+      "s_fit_raw_np_m": [
+        90.516,
+        75.454,
+        64.364,
+        51.91,
+        43.333,
+        41.161
+      ],
+      "alpha_fit_np_m": [
+        146.729,
+        129.369,
+        116.899,
+        101.847,
+        88.227,
+        80.12
+      ],
+      "alpha_pierce_np_m": [
+        116.736,
+        114.973,
+        111.367,
+        105.132,
+        96.107,
+        86.856
+      ],
+      "rel_err_signed": [
+        0.25693,
+        0.12521,
+        0.04967,
+        -0.03125,
+        -0.08199,
+        -0.07756
+      ],
+      "rel_err_pct": [
+        25.69,
+        12.52,
+        4.97,
+        -3.13,
+        -8.2,
+        -7.76
+      ],
+      "max_abs_rel_err": 0.25693,
+      "gain_25mm_fit_db": [
+        23.71,
+        20.46,
+        18.08,
+        15.25,
+        12.85,
+        11.62
+      ],
+      "gain_40mm_fit_db": [
+        42.66,
+        37.16,
+        33.18,
+        28.43,
+        24.31,
+        22.06
+      ],
+      "extrapolated_gain_25mm_db": [
+        23.71,
+        20.46,
+        18.08,
+        15.25,
+        12.85,
+        11.62
+      ],
+      "extrapolated_gain_40mm_db": [
+        42.66,
+        37.16,
+        33.18,
+        28.43,
+        24.31,
+        22.06
+      ],
+      "wall_time_s": 354.179
+    }
+  },
+  "task_04_validation_suite": {
+    "cold_limit_I0_zero": {
+      "alpha_fit_np_m": 0.0,
+      "max_abs_gain_db": 0.0
+    },
+    "coupling_sign_mutation": {
+      "b_detuning_mag": 1.0,
+      "cubic_x1_b0_pos_sign": 0.652027,
+      "cubic_x1_b0_neg_sign": 0.652027,
+      "cubic_y1_b0_pos_sign": -0.618785,
+      "cubic_y1_b0_neg_sign": 0.618785,
+      "cubic_x1_pos_b_pos_sign": 0.689101,
+      "cubic_x1_neg_b_pos_sign": 0.306637,
+      "cubic_x1_pos_b_neg_sign": 0.306637,
+      "cubic_x1_neg_b_neg_sign": 0.689101,
+      "alpha_b0_pos_sign_np_m": 145.922,
+      "alpha_pos_b_pos_sign_np_m": 202.4176,
+      "alpha_neg_b_pos_sign_np_m": 29.3319,
+      "alpha_pos_b_neg_sign_np_m": 178.4078,
+      "alpha_neg_b_neg_sign_np_m": 215.0878,
+      "mirror_peak_rel_diff": 0.06259,
+      "gain_19_pos_b_pos_sign_db": 9.445,
+      "gain_19_neg_b_pos_sign_db": 2.402,
+      "gain_19_pos_b_neg_sign_db": 10.056,
+      "gain_19_neg_b_neg_sign_db": 12.27,
+      "mirror_offpeak_rel_diff": 5.08238,
+      "mirror_symmetry_holds_for_both_pairs": false,
+      "mirror_symmetry_note": "While the 1D Pierce cubic is mirror-symmetric under (b, sign_cpl) -> (-b, -sign_cpl) (x1(+1,+1) = x1(-1,-1) = 0.6891 and x1(-1,+1) = x1(+1,-1) = 0.3066), in the 22-period 2D FIT run (m in [8, 19]) only the peak moves from +b to -b: the peak pair gives alpha(+b,+1) = 202.42 Np/m vs alpha(-b,-1) = 215.09 Np/m (6.26% difference), whereas mirror symmetry FAILS on the off-peak pair: alpha(-b,+1) = 29.33 Np/m vs alpha(+b,-1) = 178.41 Np/m (508.2% difference). This asymmetry is not predicted by the 3-wave Pierce BVP, which is exactly mirror-symmetric at all z; it is unexplained. (The live 10-period test at 0.45 A, m in [5, 8], is a different current and window.)",
+      "short_10period_vs_22period_reconciliation": {
+        "pos_b_neg_sign_peak_period_m=6": 6,
+        "live_10period_current_a": 0.45,
+        "live_10period_window_periods": [
+          5,
+          8
+        ],
+        "live_10period_0p45A_slope_periods_5_to_8_np_m": -14.61,
+        "run_22period_current_a": 0.25,
+        "run_22period_window_periods": [
+          8,
+          19
+        ],
+        "run_22period_0p25A_slope_periods_5_to_8_np_m": 25.48,
+        "run_22period_0p25A_slope_periods_8_to_19_np_m": 178.41
+      },
+      "alpha_pierce_neg_b_pos_sign_np_m": 65.12
+    },
+    "current_cube_root_scaling": {
+      "i0_values_a": [
+        0.08,
+        0.14,
+        0.25,
+        0.45
+      ],
+      "alpha_raw_window_fit_np_m": [
+        18.7496,
+        64.7318,
+        145.922,
+        236.4935
+      ],
+      "alpha_fit_np_m": [
+        159.4019,
+        197.0604,
+        241.5487,
+        292.7116
+      ],
+      "alpha_deemb_sc_fit_np_m": [
+        132.8264,
+        157.2601,
+        181.8611,
+        203.528
+      ],
+      "alpha_pierce_qc0_np_m": [
+        123.9741,
+        149.3977,
+        181.2513,
+        220.4814
+      ],
+      "alpha_pierce_sc_np_m": [
+        103.3051,
+        119.2238,
+        136.4635,
+        153.305
+      ],
+      "loglog_slope_fit": 0.35166,
+      "loglog_slope_theory": 0.33333,
+      "loglog_slope_sc_fit": 0.24717,
+      "loglog_slope_sc_theory": 0.22884,
+      "slope_rel_err": 0.05499,
+      "raw_window_loglog_slope": 1.4575,
+      "deemb_vs_pierce_overprediction_pct": [
+        28.58,
+        31.9,
+        33.27,
+        32.76
+      ],
+      "deembedding_note": "The raw 22-period FIT window slope over m in [8, 19] (18.75, 64.73, 145.92, 236.49 Np/m) does NOT follow I0^(1/3): its log-log slope is 1.4575 because low-current runs (I0 = 0.08 A, CN ~ 0.15) remain inside the 3-wave launching dip across m in [8, 19]. The de-embedded rate alpha_fit_np_m (159.40, 197.06, 241.55, 292.71 Np/m, log-log slope 0.35166) is obtained by inverting Pierce's 3-wave BVP at period m = 19 using Pierce's own b = 0 and QC(I0), and lies 28.6%-33.3% (mean 31.6%) above the 1D Pierce prediction (123.97, 149.40, 181.25, 220.48 Np/m) at every current.",
+      "mean_deemb_vs_pierce_overprediction_pct": 31.6,
+      "cn_window_at_min_i0": 0.15
+    },
+    "velocity_detuning_b": {
+      "b_values": [
+        -1.0,
+        -0.5,
+        0.0,
+        0.7,
+        1.4,
+        2.2
+      ],
+      "alpha_fit_np_m": [
+        29.3319,
+        88.2893,
+        145.922,
+        193.8955,
+        203.7106,
+        174.0216
+      ],
+      "alpha_pierce_np_m": [
+        65.1216,
+        111.0336,
+        136.4635,
+        146.7382,
+        126.0489,
+        -0.0
+      ],
+      "alpha_bvp_total_field_win_np_m": [
+        -142.0084,
+        -266.4642,
+        15.7395,
+        138.6922,
+        167.6983,
+        147.2636
+      ],
+      "rel_err_at_b0": 0.06931,
+      "rel_err_at_bm0p5": 0.20484,
+      "peak_b_fit": 1.4,
+      "finite_cn_note": "Relative difference vs the asymptotic single-wave Pierce rate is 6.93% at b = 0; 20.48% at b = -0.5 (not agreement); and 54.96% at b = -1.0 (29.33 vs 65.12 Np/m). At positive detuning b in {+0.7, +1.4, +2.2}, the 22-period FIT window slope (193.90, 203.71, 174.02 Np/m) exceeds the single-wave Pierce asymptote (146.74, 126.05, -0.00 Np/m). The 1D finite-window total-field BVP / crestatron model is WITHDRAWN as a quantitative explanation of the sweep because at b in {-1.0, -0.5, 0.0} it predicts -142.01, -266.46, and +15.74 Np/m versus the 2D FIT window slopes +29.33, +88.29, and +145.92 Np/m.",
+      "rel_err_at_bm1p0": 0.54958,
+      "total_field_bvp_explanation_withdrawn": true
+    },
+    "space_charge_qc_reduction": {
+      "QC_values": [
+        0.009,
+        0.1809,
+        0.4522,
+        0.814
+      ],
+      "alpha_fit_np_m": [
+        178.3872,
+        145.922,
+        103.3008,
+        66.2306
+      ],
+      "alpha_pierce_np_m": [
+        179.0655,
+        136.4635,
+        34.4772,
+        0.0
+      ],
+      "disagreement_explanation": "At fixed b = 0, the infinite-length single-wave Pierce root x1(0, QC) cuts off to zero above QC_crit = 3/2^(8/3) = 0.4725 because the slow space-charge wave shifts to b_sync = sqrt(4 QC) > 1.37. Over the short 22-period FIT window (CN in [0.12, 0.30]), the uncalibrated on-axis slope decreases monotonically with QC (178.39 -> 145.92 -> 103.30 -> 66.23 Np/m) but remains positive at QC = 0.45 and 0.81 (103.30 and 66.23 Np/m vs Pierce 34.48 and 0.00 Np/m) because the 22-period window measures the total on-axis field including two-wave plasma beating and the local electrostatic space-charge field E_sc on-axis."
+    },
+    "drive_linearity": {
+      "drive_amplitudes": [
+        0.01,
+        1.0,
+        100.0
+      ],
+      "alpha_fit_np_m": [
+        145.921956,
+        145.921956,
+        145.921956
+      ],
+      "gain_19_db": [
+        7.342926,
+        7.342926,
+        7.342926
+      ],
+      "max_rel_diff": 0.0,
+      "note": "Algebraic sanity check only (holds by construction to floating-point precision because SolverFIT3D and LinearizedBeam solve linear equations); not a physical validation."
+    }
+  },
+  "task_05_3d_marosi_and_bwo": {
+    "marosi_3d_vband": {
+      "cold_test_source": "tutorials/06_periodic_structures/06-02_sws_cold_test/data/task_10_3d_marosi_glide.npz",
+      "paper_operating_voltage_kv": 5.2,
+      "paper_operating_current_ma": 11.0,
+      "paper_cold_insertion_loss_db": 4.7,
+      "derived_alpha_loss_np_m": 8.589,
+      "derived_pierce_d_at_58ghz": 0.0797,
+      "K_p1_beam_58ghz_ohm": 3.8214,
+      "v_energy_over_c_58ghz": 0.1279,
+      "n_periods_full": 60,
+      "L_full_mm": 63.0,
+      "gain_60per_5p20kv_at_58ghz_db": 13.54,
+      "gain_60per_5p20kv_peak_db": 14.62,
+      "gain_60per_5p20kv_peak_freq_ghz": 69.1,
+      "gain_60per_5p38kv_at_58ghz_db": 28.87,
+      "gain_60per_5p38kv_peak_db": 31.89,
+      "gain_60per_5p38kv_peak_freq_ghz": 54.9,
+      "marosi_2025_fig7_peak_gain_db": 19.0,
+      "marosi_2025_fig7_peak_freq_ghz": 58.0,
+      "marosi_2025_fig7_secondary_peak_freq_ghz": 68.0,
+      "hot_test_3d_levels": [
+        {
+          "level": "coarse_3d",
+          "nx": 12,
+          "ny": 16,
+          "nz_per_period": 12,
+          "nz_total": 168,
+          "n_cells": 32256,
+          "bn_cold_fit": 0.7881,
+          "b_simulated": -0.0,
+          "alpha_fit_np_m": 35.445,
+          "alpha_pierce_np_m": 58.639,
+          "rel_err_vs_pierce": 0.3955,
+          "cold_wall_time_s": 22.38,
+          "hot_wall_time_s": 25.82,
+          "n_steps": 9313,
+          "ram_est_mb": 571.53,
+          "dy_um": 50.0,
+          "cells_across_100um_beam_thickness": 2.0
+        },
+        {
+          "level": "medium_3d",
+          "nx": 16,
+          "ny": 20,
+          "nz_per_period": 14,
+          "nz_total": 196,
+          "n_cells": 62720,
+          "bn_cold_fit": 0.7974,
+          "b_simulated": 0.0,
+          "alpha_fit_np_m": 19.623,
+          "alpha_pierce_np_m": 58.649,
+          "rel_err_vs_pierce": 0.6654,
+          "cold_wall_time_s": 54.49,
+          "hot_wall_time_s": 60.95,
+          "n_steps": 10853,
+          "ram_est_mb": 631.99,
+          "dy_um": 40.0,
+          "cells_across_100um_beam_thickness": 2.5
+        }
+      ],
+      "hot_test_3d_converged": false,
+      "hot_test_3d_convergence_note": "Both coarse_3d (12x16x168, dy = 50.0 um, 2.0 cells across the 100 um sheet beam thickness) and medium_3d (16x20x196, dy = 40.0 um, 2.5 cells across the 100 um beam thickness) are reported at the actual simulated b = 0; with only 2.0-2.5 cells across the 100 um beam thickness (below the >= 4-cell feature threshold), the 2-level compact 3D run is not yet in the asymptotic convergence regime on local VM resources.",
+      "full_60period_batch_estimate": {
+        "grid_shape": [
+          56,
+          64,
+          3472
+        ],
+        "n_cells": 12443648,
+        "n_steps": 65000,
+        "ram_working_gb": 20.931,
+        "cpu_hours_est": 16.67,
+        "batch_command": "python tutorials/08_vacuum_electronics/08-06_twt_small_signal_gain/_helpers.py --run-3d-marosi-full60 --nx 56 --ny 64 --nz-per 56 --n-periods 60 --preflight-only",
+        "dy_um": 12.5,
+        "cells_across_100um_beam_thickness": 8.0,
+        "note": "a preflight estimate only; the full 60-period run is not implemented"
+      },
+      "paper_table1_line": 103,
+      "waveguide_width_a_mm": 1.4,
+      "waveguide_height_b_mm": 0.8,
+      "period_d_mm": 1.05,
+      "beam_width_mm": 0.55,
+      "beam_thickness_mm": 0.1,
+      "beam_thickness_um": 100.0,
+      "paper_ref_file": ".ref/sws/Marosi_2025_glide_sws.txt",
+      "paper_table1_lines": "l.72-74",
+      "paper_beam_dimensions_line": "l.103"
+    },
+    "bwo_johnson_1955": {
+      "CN_start_qc0": 0.314055,
+      "b_start_qc0": 1.521839,
+      "johnson_1955_table1_CN": 0.314,
+      "johnson_1955_table1_b": 1.522,
+      "CN_rel_err_vs_johnson": 0.00018,
+      "ist_vs_length_loglog_slope": -3.0,
+      "f_cold_bwo_ghz": 97.308,
+      "K_m1_beam_ohm": 2.08,
+      "v_sync_bwo_kv": 12.401,
+      "ist_50periods_ma": 14.52,
+      "single_cell_bloch_note": "Withdrawn FIT start-current claim: a lossless 1-cell Bloch unit cell has no finite interaction length L and no collector boundary condition E_ckt(L)=0, so it cannot define a finite-length start threshold (claim withdrawn).",
+      "i0_sweep_a": [
+        0.0,
+        0.04,
+        0.12,
+        0.28,
+        0.55
+      ],
+      "unbounded_bloch_temporal_rate_ns_inv": [
+        -1.6433,
+        1.2895,
+        6.5805,
+        13.7051,
+        19.3378
+      ]
+    }
+  }
+}

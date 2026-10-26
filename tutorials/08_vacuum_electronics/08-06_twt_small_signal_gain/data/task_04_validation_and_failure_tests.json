@@ -1,0 +1,180 @@
+{
+  "cold_limit_I0_zero": {
+    "alpha_fit_np_m": 0.0,
+    "max_abs_gain_db": 0.0
+  },
+  "coupling_sign_mutation": {
+    "b_detuning_mag": 1.0,
+    "cubic_x1_b0_pos_sign": 0.652027,
+    "cubic_x1_b0_neg_sign": 0.652027,
+    "cubic_y1_b0_pos_sign": -0.618785,
+    "cubic_y1_b0_neg_sign": 0.618785,
+    "cubic_x1_pos_b_pos_sign": 0.689101,
+    "cubic_x1_neg_b_pos_sign": 0.306637,
+    "cubic_x1_pos_b_neg_sign": 0.306637,
+    "cubic_x1_neg_b_neg_sign": 0.689101,
+    "alpha_b0_pos_sign_np_m": 145.922,
+    "alpha_pos_b_pos_sign_np_m": 202.4176,
+    "alpha_neg_b_pos_sign_np_m": 29.3319,
+    "alpha_pos_b_neg_sign_np_m": 178.4078,
+    "alpha_neg_b_neg_sign_np_m": 215.0878,
+    "mirror_peak_rel_diff": 0.06259,
+    "gain_19_pos_b_pos_sign_db": 9.445,
+    "gain_19_neg_b_pos_sign_db": 2.402,
+    "gain_19_pos_b_neg_sign_db": 10.056,
+    "gain_19_neg_b_neg_sign_db": 12.27,
+    "mirror_offpeak_rel_diff": 5.08238,
+    "mirror_symmetry_holds_for_both_pairs": false,
+    "mirror_symmetry_note": "While the 1D Pierce cubic is mirror-symmetric under (b, sign_cpl) -> (-b, -sign_cpl) (x1(+1,+1) = x1(-1,-1) = 0.6891 and x1(-1,+1) = x1(+1,-1) = 0.3066), in the 22-period 2D FIT run (m in [8, 19]) only the peak moves from +b to -b: the peak pair gives alpha(+b,+1) = 202.42 Np/m vs alpha(-b,-1) = 215.09 Np/m (6.26% difference), whereas mirror symmetry FAILS on the off-peak pair: alpha(-b,+1) = 29.33 Np/m vs alpha(+b,-1) = 178.41 Np/m (508.2% difference). This asymmetry is not predicted by the 3-wave Pierce BVP, which is exactly mirror-symmetric at all z; it is unexplained. (The live 10-period test at 0.45 A, m in [5, 8], is a different current and window.)",
+    "short_10period_vs_22period_reconciliation": {
+      "pos_b_neg_sign_peak_period_m=6": 6,
+      "live_10period_current_a": 0.45,
+      "live_10period_window_periods": [
+        5,
+        8
+      ],
+      "live_10period_0p45A_slope_periods_5_to_8_np_m": -14.61,
+      "run_22period_current_a": 0.25,
+      "run_22period_window_periods": [
+        8,
+        19
+      ],
+      "run_22period_0p25A_slope_periods_5_to_8_np_m": 25.48,
+      "run_22period_0p25A_slope_periods_8_to_19_np_m": 178.41
+    },
+    "alpha_pierce_neg_b_pos_sign_np_m": 65.12
+  },
+  "current_cube_root_scaling": {
+    "i0_values_a": [
+      0.08,
+      0.14,
+      0.25,
+      0.45
+    ],
+    "alpha_raw_window_fit_np_m": [
+      18.7496,
+      64.7318,
+      145.922,
+      236.4935
+    ],
+    "alpha_fit_np_m": [
+      159.4019,
+      197.0604,
+      241.5487,
+      292.7116
+    ],
+    "alpha_deemb_sc_fit_np_m": [
+      132.8264,
+      157.2601,
+      181.8611,
+      203.528
+    ],
+    "alpha_pierce_qc0_np_m": [
+      123.9741,
+      149.3977,
+      181.2513,
+      220.4814
+    ],
+    "alpha_pierce_sc_np_m": [
+      103.3051,
+      119.2238,
+      136.4635,
+      153.305
+    ],
+    "loglog_slope_fit": 0.35166,
+    "loglog_slope_theory": 0.33333,
+    "loglog_slope_sc_fit": 0.24717,
+    "loglog_slope_sc_theory": 0.22884,
+    "slope_rel_err": 0.05499,
+    "raw_window_loglog_slope": 1.4575,
+    "deemb_vs_pierce_overprediction_pct": [
+      28.58,
+      31.9,
+      33.27,
+      32.76
+    ],
+    "deembedding_note": "The raw 22-period FIT window slope over m in [8, 19] (18.75, 64.73, 145.92, 236.49 Np/m) does NOT follow I0^(1/3): its log-log slope is 1.4575 because low-current runs (I0 = 0.08 A, CN ~ 0.15) remain inside the 3-wave launching dip across m in [8, 19]. The de-embedded rate alpha_fit_np_m (159.40, 197.06, 241.55, 292.71 Np/m, log-log slope 0.35166) is obtained by inverting Pierce's 3-wave BVP at period m = 19 using Pierce's own b = 0 and QC(I0), and lies 28.6%-33.3% (mean 31.6%) above the 1D Pierce prediction (123.97, 149.40, 181.25, 220.48 Np/m) at every current.",
+    "mean_deemb_vs_pierce_overprediction_pct": 31.6,
+    "cn_window_at_min_i0": 0.15
+  },
+  "velocity_detuning_b": {
+    "b_values": [
+      -1.0,
+      -0.5,
+      0.0,
+      0.7,
+      1.4,
+      2.2
+    ],
+    "alpha_fit_np_m": [
+      29.3319,
+      88.2893,
+      145.922,
+      193.8955,
+      203.7106,
+      174.0216
+    ],
+    "alpha_pierce_np_m": [
+      65.1216,
+      111.0336,
+      136.4635,
+      146.7382,
+      126.0489,
+      -0.0
+    ],
+    "alpha_bvp_total_field_win_np_m": [
+      -142.0084,
+      -266.4642,
+      15.7395,
+      138.6922,
+      167.6983,
+      147.2636
+    ],
+    "rel_err_at_b0": 0.06931,
+    "rel_err_at_bm0p5": 0.20484,
+    "peak_b_fit": 1.4,
+    "finite_cn_note": "Relative difference vs the asymptotic single-wave Pierce rate is 6.93% at b = 0; 20.48% at b = -0.5 (not agreement); and 54.96% at b = -1.0 (29.33 vs 65.12 Np/m). At positive detuning b in {+0.7, +1.4, +2.2}, the 22-period FIT window slope (193.90, 203.71, 174.02 Np/m) exceeds the single-wave Pierce asymptote (146.74, 126.05, -0.00 Np/m). The 1D finite-window total-field BVP / crestatron model is WITHDRAWN as a quantitative explanation of the sweep because at b in {-1.0, -0.5, 0.0} it predicts -142.01, -266.46, and +15.74 Np/m versus the 2D FIT window slopes +29.33, +88.29, and +145.92 Np/m.",
+    "rel_err_at_bm1p0": 0.54958,
+    "total_field_bvp_explanation_withdrawn": true
+  },
+  "space_charge_qc_reduction": {
+    "QC_values": [
+      0.009,
+      0.1809,
+      0.4522,
+      0.814
+    ],
+    "alpha_fit_np_m": [
+      178.3872,
+      145.922,
+      103.3008,
+      66.2306
+    ],
+    "alpha_pierce_np_m": [
+      179.0655,
+      136.4635,
+      34.4772,
+      0.0
+    ],
+    "disagreement_explanation": "At fixed b = 0, the infinite-length single-wave Pierce root x1(0, QC) cuts off to zero above QC_crit = 3/2^(8/3) = 0.4725 because the slow space-charge wave shifts to b_sync = sqrt(4 QC) > 1.37. Over the short 22-period FIT window (CN in [0.12, 0.30]), the uncalibrated on-axis slope decreases monotonically with QC (178.39 -> 145.92 -> 103.30 -> 66.23 Np/m) but remains positive at QC = 0.45 and 0.81 (103.30 and 66.23 Np/m vs Pierce 34.48 and 0.00 Np/m) because the 22-period window measures the total on-axis field including two-wave plasma beating and the local electrostatic space-charge field E_sc on-axis."
+  },
+  "drive_linearity": {
+    "drive_amplitudes": [
+      0.01,
+      1.0,
+      100.0
+    ],
+    "alpha_fit_np_m": [
+      145.921956,
+      145.921956,
+      145.921956
+    ],
+    "gain_19_db": [
+      7.342926,
+      7.342926,
+      7.342926
+    ],
+    "max_rel_diff": 0.0,
+    "note": "Algebraic sanity check only (holds by construction to floating-point precision because SolverFIT3D and LinearizedBeam solve linear equations); not a physical validation."
+  }
+}

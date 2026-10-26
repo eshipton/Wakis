@@ -1,0 +1,61 @@
+{
+  "A_launching_loss_db": -9.542425,
+  "B_pierce_slope_db": 47.263383,
+  "max_bvp_vs_ode_diff_db": 1.3164296319700952e-09,
+  "gamma0_20kv": 1.039139,
+  "chi_rel_20kv": 0.943864,
+  "sheet_2d_to_3d_mapping": {
+    "w_beam_m": 0.00075,
+    "b_wg_m": 0.00085,
+    "fx_lateral": 0.5651591830676962,
+    "w_eff_m": 0.0007520005207967971,
+    "eta_x_current_factor": 0.9973397348253463,
+    "j_sheet_a_per_m": 132.97863131004618
+  },
+  "scw_check": {
+    "f_ref_ghz": 186.0,
+    "lambda_e_um": 438.19,
+    "gamma_h_186ghz": 1.0349,
+    "gamma_a_186ghz": 1.3799,
+    "R_planar_wakis": 0.652264,
+    "D_karetnikova_eq4": 0.635475,
+    "omega_q_theory_rad_s": 169588572681.74463,
+    "omega_fast_theory_rad_s": 1338261039817.1477,
+    "omega_slow_theory_rad_s": 999083894453.6584,
+    "levels": [
+      {
+        "nz_per_lambda_e": 20,
+        "ny": 16,
+        "dz_um": 21.91,
+        "sinc_advection_factor": 0.983632,
+        "wq_theory_rad_s": 169588572681.74463,
+        "wq_fit_rad_s": 167992039950.2134,
+        "rel_err_wq": 0.009414152771527384,
+        "amplitude_conservation_ratio": 0.998595,
+        "wall_time_s": 0.461
+      },
+      {
+        "nz_per_lambda_e": 28,
+        "ny": 22,
+        "dz_um": 15.65,
+        "sinc_advection_factor": 0.991629,
+        "wq_theory_rad_s": 169588572681.74463,
+        "wq_fit_rad_s": 168323620328.72952,
+        "rel_err_wq": 0.00745894804710077,
+        "amplitude_conservation_ratio": 0.999623,
+        "wall_time_s": 0.856
+      },
+      {
+        "nz_per_lambda_e": 40,
+        "ny": 32,
+        "dz_um": 10.955,
+        "sinc_advection_factor": 0.995893,
+        "wq_theory_rad_s": 169588572681.74463,
+        "wq_fit_rad_s": 168452670383.2137,
+        "rel_err_wq": 0.006697988435002546,
+        "amplitude_conservation_ratio": 0.999779,
+        "wall_time_s": 1.767
+      }
+    ]
+  }
+}

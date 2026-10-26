@@ -90,7 +90,17 @@ def _tutorial_dir(path):
     elif name in _EXTRA_TUTORIAL_TESTS:
         ch, num = _EXTRA_TUTORIAL_TESTS[name].split("-")
     else:
-        return None
+        # Other tests that import a tutorial's bare `_helpers` and name its folder (e.g. "08-06_twt_...").
+        try:
+            text = Path(str(path)).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        if not re.search(r"^\s*(import _helpers|from _helpers import)", text, re.M):
+            return None
+        m = re.search(r"(\d\d)-(\d\d)_[A-Za-z0-9_]+", text)
+        if not m:
+            return None
+        ch, num = m.groups()
     hits = sorted(_TUTORIALS.glob(f"{ch}_*/{ch}-{num}_*"))
     return hits[0] if hits else None
 
