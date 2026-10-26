@@ -1,0 +1,170 @@
+{
+  "parameters": {
+    "a_m": 1.0,
+    "r0_over_a": 0.18,
+    "delta": 0.12,
+    "eps_rod": 12.0,
+    "eps_bg": 1.0
+  },
+  "setup": {
+    "supercell_table_path": "figures/00_setup_table_supercell.md",
+    "bend_table_path": "figures/00_setup_table.md"
+  },
+  "bulk_and_berry": {
+    "dirac_freq_norm": 0.28757316267583655,
+    "dirac_degeneracy_split": 5.95933341152044e-06,
+    "dirac_velocity_over_c": 0.17000739422861252,
+    "unfolding_max_error": 4.190670138072035e-08,
+    "gap_bottom_pwe": 0.27150764029916075,
+    "gap_top_pwe": 0.3059449084352725,
+    "gap_width_pwe": 0.034437268136111754,
+    "gap_mid_pwe": 0.28872627436721665,
+    "gap_midgap_ratio_pwe": 0.11927306654576472,
+    "gap_slope_vs_delta": 0.2864308465196563,
+    "fit_band1_K": 0.27057510603481394,
+    "fit_band2_K": 0.30506862099417453,
+    "fit_gap_width_K": 0.034493514959360594,
+    "fit_band1_rel_err": 0.0034346520168614557,
+    "fit_band2_rel_err": 0.0028642001123001517,
+    "c_patch_dirac_K_pos": -0.12566801638574648,
+    "c_patch_pwe_K_pos": -0.1188474881717755,
+    "c_patch_pwe_K_neg": 0.1185644366038749,
+    "c_patch_pwe_Kp_pos": 0.1188474881717829,
+    "c_patch_fit_K_pos": -0.11750997504166603,
+    "c_patch_fit_K_neg": 0.11750997504166592,
+    "c_patch_fit_K_zero": -3.1835185623166424e-06,
+    "c_patch_fit_rel_err_vs_pwe": 0.011254029434566567,
+    "berry_nsteps_sweep": [
+      1600,
+      3000,
+      6000,
+      10000
+    ],
+    "c_patch_fit_vs_nsteps": [
+      -0.23821679678422533,
+      -0.12272062843129379,
+      -0.11750997504166603,
+      -0.1174052281695681
+    ],
+    "wall_bulk_fit_s": 0.31657523700005186,
+    "wall_berry_fit_s": 17.965142785999888,
+    "preflight_bulk_ram_mb": 493.72624
+  },
+  "ribbon": {
+    "n_cells_y": 6,
+    "edge_freq_at_K_norm": 0.28742848788387787,
+    "interior_wall_freq_at_K_norm": 0.2929029290079896,
+    "boundary_wall_freq_at_K_norm": 0.28195404675976615,
+    "edge_confinement_fraction": 0.9218835515860271,
+    "trivial_defect_radius_over_a": 0.11699999999999999,
+    "trivial_freq_at_K_norm": 0.28902952085086236,
+    "trivial_confinement_fraction": 0.8708207820380014,
+    "trivial_core_offset_over_a": 0.4330127018922193,
+    "bulk_gap_window": [
+      0.27150764029916075,
+      0.3059449084352725
+    ],
+    "lower_window": [
+      0.27150764029916075,
+      0.2856904810730113
+    ],
+    "ribbon_minigap_window": [
+      0.2856904810730113,
+      0.2867462495347686
+    ],
+    "upper_single_mode_window": [
+      0.2914871788572202,
+      0.30325566039232876
+    ]
+  },
+  "waveguide_bend": {
+    "nx_per_a": 22,
+    "ny_per_supercell": 36,
+    "trivial_defect_radius_over_a": 0.11699999999999999,
+    "dft_freq_norm": 0.2929029290079896,
+    "bulk_gap_window": [
+      0.27150764029916075,
+      0.3059449084352725
+    ],
+    "lower_window": [
+      0.27150764029916075,
+      0.2856904810730113
+    ],
+    "ribbon_minigap_window": [
+      0.2856904810730113,
+      0.2867462495347686
+    ],
+    "upper_single_mode_window": [
+      0.2914871788572202,
+      0.30325566039232876
+    ],
+    "mean_transmission_valley_straight": 1.0,
+    "mean_transmission_trivial_straight": 1.0,
+    "mean_transmission_valley_bend": 1.0101986510572314,
+    "mean_transmission_trivial_bend": 0.07176977700155074,
+    "bend_to_straight_valley": 1.0101986510572314,
+    "bend_to_straight_trivial": 0.07176977700155074,
+    "peak_transmission_valley_bend": 1.0153707747479321,
+    "peak_transmission_trivial_bend": 0.27401570818488424,
+    "bend_transmission_advantage_db": 11.484651874303143,
+    "mean_transmission_valley_bend_lower": 0.8913845053113196,
+    "mean_transmission_trivial_bend_lower": 0.2351837095628043,
+    "bend_transmission_advantage_lower_db": 5.786578443650842,
+    "mean_transmission_valley_bend_full_gap": 0.9558799216304913,
+    "mean_transmission_trivial_bend_full_gap": 0.1481276128275948,
+    "bend_transmission_advantage_full_gap_db": 8.097673153406424,
+    "wall_vh_straight_s": 26.988031435000266,
+    "wall_vh_bend_s": 26.842697531999875,
+    "wall_tr_straight_s": 26.628220005000003,
+    "wall_tr_bend_s": 26.552240146999793,
+    "ram_mb_waveguide": 594.43861
+  },
+  "convergence": {
+    "grids_nx": [
+      18,
+      24,
+      30
+    ],
+    "grids_ny": [
+      30,
+      42,
+      54
+    ],
+    "f1_K_values": [
+      0.2694685534563422,
+      0.27020330747297244,
+      0.27067287250944577
+    ],
+    "f1_K_richardson": 0.27150765479650946,
+    "f1_K_pwe_ref": 0.2714912699733019,
+    "richardson_vs_pwe_rel_err": 6.035119733002594e-05,
+    "rel_errors_vs_richardson": [
+      0.0075102904251283225,
+      0.004804090420635105,
+      0.0030746178692064507
+    ],
+    "observed_order_p": 1.7483334271147593,
+    "cells_per_wavelength_finest": 25.471335405424664,
+    "cells_across_min_diameter_finest": 9.504,
+    "wall_seconds_per_grid": [
+      0.141458061999856,
+      0.19864239599974098,
+      0.34675350799989246
+    ],
+    "ram_mb_per_grid": [
+      491.49715,
+      492.79468,
+      494.49145
+    ]
+  },
+  "figures": {
+    "fig1": "figures/01_supercell_unfolding_and_dirac_gap.png",
+    "fig2": "figures/02_berry_curvature_and_valley_chern.png",
+    "fig3": "figures/03_ribbon_domain_wall_dispersion.png",
+    "fig4": "figures/04_bend_transmission_and_convergence.png",
+    "fig5": "figures/05_bend_field_maps.png",
+    "gif": "figures/06_valley_hall_bend_wavefront.gif"
+  },
+  "total_wall_seconds": 242.9401412850002,
+  "summary_table_markdown": "| Quantity | Symbol | Theory / PWE Reference | 2D FIT Result | Relative Error / Comparison |\n| :--- | :--- | :--- | :--- | :--- |\n| Dirac point frequency ($\\delta = 0$) | $\\omega_D a / (2\\pi c)$ | `0.2876` | `0.2876` | Degeneracy split `5.96e-06` |\n| Dirac group velocity ($\\delta = 0$) | $v_D / c$ | `0.1700` | \u2014 | Linear cone slope near $K$ |\n| Supercell unfolding error | $\\max|\\omega_{\\mathrm{sup}} - \\omega_{\\mathrm{prim}}|$ | `0.0000` | `4.19e-08` | Exact primitive-zone projection |\n| Lower band edge at $K$ ($\\delta = 0.12$) | $\\omega_1(K) a / (2\\pi c)$ | `0.2715` | `0.2706` | `0.34%` (Richardson `0.2715`) |\n| Upper band edge at $K$ ($\\delta = 0.12$) | $\\omega_2(K) a / (2\\pi c)$ | `0.3059` | `0.3051` | `0.29%` |\n| Valley-Hall bandgap width ($\\delta = 0.12$) | $\\Delta\\omega_K a / (2\\pi c)$ | `0.0344` | `0.0345` | Midgap ratio `11.93%` |\n| Patch valley Chern number ($K, \\delta = +0.12$) | $C_K^{\\mathrm{patch}}(+\\delta)$ | `-0.1188` | `-0.1175` | `1.13%` vs PWE (Dirac `-0.1257`) |\n| Patch valley Chern number ($K, \\delta = -0.12$) | $C_K^{\\mathrm{patch}}(-\\delta)$ | `+0.1186` | `+0.1175` | Sign flip $C(-\\delta) = -C(+\\delta)$; $\\delta=0$: `-3.18e-06` |\n| Interior-wall & trivial mode at $k_x = K_x$ | $\\omega(K_x) a / (2\\pi c)$ | Valley `0.2929` | Trivial `0.2890` | Confinement `92.2%` vs `87.1%` |\n| Straight reference transmission | $\\langle T_{\\mathrm{straight}} \\rangle$ | Valley `1.000` | Trivial `1.000` | Matched straight reference ($T \\le 1$) |\n| $120^\\circ$ bend transmission (upper single-mode $[0.2915, 0.3033]$) | $\\langle T_{\\mathrm{bend}} \\rangle_{\\mathrm{up}}$ | Valley `1.010` | Trivial `0.072` | Bend ratio `+11.48 dB` |\n| $120^\\circ$ bend transmission (full bulk gap $[0.2715, 0.3059]$) | $\\langle T_{\\mathrm{bend}} \\rangle_{\\mathrm{gap}}$ | Valley `0.956` | Trivial `0.148` | Full-gap ratio `+8.10 dB` |\n| Grid convergence order | $p_{\\mathrm{obs}}$ | `2.00` | `1.75` | Finest grid `25.5` cells/$\\lambda$ |"
+}

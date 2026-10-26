@@ -552,6 +552,50 @@ Points to keep in mind (details in the [physics guide](physicsguide.md)):
 * `tests/test_024_bloch.py` shows complete, validated set-ups: oblique Fresnel reflection, and photonic-crystal bands from a broadband pulse with spectral peak finding.
 
 
+#### Triangular and hexagonal photonic crystals: `wakis.lattices`
+
+`wakis.lattices` represents 2D triangular (Bravais) and honeycomb (two-sublattice) photonic crystals on Cartesian FIT meshes via their centred-rectangular $a \times \sqrt{3}a$ supercell, unfolds supercell bands onto the primitive hexagonal Brillouin zone along $\Gamma\text{–}M\text{–}K\text{–}\Gamma$, provides an independent 2D plane-wave-expansion (`PWE2D`) solver, and computes gauge-invariant Berry curvature and valley Chern numbers (physics guide: *Triangular and hexagonal lattices on Cartesian FIT grids*; full script: `examples/016_triangular_honeycomb_lattices.py`; tutorial: `tutorials/06_periodic_structures/06-06_valley_hall_edge_states/`):
+
+```python
+import numpy as np
+from wakis.lattices import (
+    HexagonalLattice,
+    PWE2D,
+    fit_berry_curvature_patch,
+    fit_supercell_bands_at_k,
+)
+
+lat = HexagonalLattice(a=1.0)
+path = lat.bz_path(["Gamma", "M", "K", "Gamma"], n_per_segment=12)
+
+# Valley-Hall honeycomb crystal (r_A != r_B breaks inversion symmetry at K/K')
+r0, delta, eps_rod = 0.18, 0.12, 12.0
+r_a, r_b = r0 * (1.0 + delta), r0 * (1.0 - delta)
+A1, A2 = lat.supercell_vectors
+inc_sup = lat.honeycomb_supercell_sites(r_a, r_b, eps_in=eps_rod)
+
+# 1. Supercell PWE bands unfolded onto the primitive hexagonal Brillouin zone
+pwe_sup = PWE2D(A1, A2, inc_sup, eps_bg=1.0, n_pw=5, polarization="TM")
+sup_bands = pwe_sup.solve_path(path.k_points, n_bands=8, unfold_supercell=True, lattice_a=1.0)
+f_unfolded = sup_bands["unfolded_frequencies"]  # shape (n_k, 4)
+
+# 2. 2D FIT + harminv supercell eigenfrequencies at K with tau-translation unfolding
+k_K = lat.high_symmetry_points()["K"]
+fit_k = fit_supercell_bands_at_k(
+    lat, inc_sup, k_K, polarization="TM", nx=24, ny=42, eps_bg=1.0, f_min=0.22, f_max=0.35
+)
+print("Unfolded FIT bands at K:", fit_k["unfolded_frequencies"][:2])
+
+# 3. Gauge-invariant Berry curvature & valley Chern sign from PWE or 2D FIT fields
+q = np.linspace(-0.22 * 2 * np.pi, 0.22 * 2 * np.pi, 9)
+omega_pwe, c_patch_pwe = pwe_sup.berry_curvature(k_K[0] + q, k_K[1] + q, band_index=0)
+fit_berry = fit_berry_curvature_patch(
+    lat, inc_sup, k_center=k_K, dk_half=0.18 * 2 * np.pi, n_k=3, f_target=0.271, nx=16, ny=28
+)
+print("Patch valley Chern at K:", c_patch_pwe, fit_berry["c_patch"])
+```
+
+
 #### Diffraction efficiencies of gratings and metasurfaces: `DiffractionMonitor`
 
 `DiffractionMonitor(frequencies, center, size)` decomposes the field on a plane of a periodic (or Bloch) unit cell into its diffraction orders: complex amplitudes and powers of each propagating order $(m, n)$, split into waves going up (along $+$normal) and down, and into TE/TM or circular polarizations. With a monitor between the source and the structure (incident wave = up $(0,0)$, reflected orders = down) and one beyond it (transmitted orders = up), one run gives all reflection and transmission efficiencies. A lamellar grating (period $1.5\lambda_0$, $\varepsilon = 4$ teeth on glass) lit from the substrate at normal incidence:
@@ -1485,4 +1529,47 @@ ax.set_ylim(ymin=0)
 ax.set_title(f'2 beam power loss vs s')
 fig.legend(bbox_to_anchor=(0.55, 0.0), fontsize=14, loc='lower center', ncol=2)
 fig.tight_layout(rect=[0, 0.2, 1, 1])
+```
+
+## 🔮 Nonlinear Kerr ($\chi^{(3)}$) Media and Soliton Microcombs (`wakis.nonlinear`)
+
+Wakis supports sub-cycle third-order ($\chi^{(3)}$) Kerr and delayed vibrational Raman nonlinear media in `SolverFIT3D` via `KerrMaterial` and `solver.add_nonlinear_material`, together with analytical helpers for self-phase modulation (SPM), third-harmonic generation (THG), Kerr cavity perturbation theory, and a split-step Fourier Lugiato–Lefever Equation (LLE) solver for dissipative Kerr soliton microcombs:
+
+```python
+import numpy as np
+import wakis
+from wakis.materials import Lorentz
+
+# 1. Define a dispersion-engineered Kerr material (instantaneous chi^(3) + optional Raman/Lorentz poles)
+kerr_mat = wakis.KerrMaterial(
+    eps_inf=2.25,
+    chi3=2.0e-18,            # [m^2/V^2] (or specify n2=... [m^2/W])
+    poles=[Lorentz(omega_0=2 * np.pi * 80e12, delta_eps=0.15, gamma=0.0)],
+    raman_fraction=0.18,     # optional delayed Raman fraction f_R in [0, 1]
+    tau1=12.2e-15,           # Raman vibrational period parameter [s]
+    tau2=32.0e-15,           # Raman damping time [s]
+    method="newton",         # 'newton' (default), 'fixed_point', or 'explicit_ade'
+)
+
+# Convert between chi^(3) [m^2/V^2] and n2 [m^2/W] (with the 3/4 real-field factor)
+n2_val = wakis.chi3_to_n2(kerr_mat.chi3, eps_r=2.25)
+phi_nl = wakis.spm_phase_shift(n2=n2_val, intensity=1.0e14, length=6.0e-6, wavelength=1.5e-6)
+
+# 2. Attach KerrMaterial to a box region in SolverFIT3D
+grid = wakis.GridFIT3D(-0.1e-6, 0.1e-6, -0.1e-6, 0.1e-6, 0.0, 10.0e-6, 2, 2, 400, verbose=0)
+solver = wakis.SolverFIT3D(
+    grid, cfln=0.5, bc_low=["periodic", "periodic", "cpml"], bc_high=["periodic", "periodic", "cpml"], verbose=0
+)
+solver.add_nonlinear_material(kerr_mat, center=(0.0, 0.0, 5.0e-6), size=(0.2e-6, 0.2e-6, 6.0e-6))
+
+# 3. Solve the FIT-informed Lugiato-Lefever Equation (LLE) for a soliton microcomb
+phi = np.linspace(-np.pi, np.pi, 256, endpoint=False)
+sol_ref = wakis.lle_soliton_analytic(phi, zeta_0=4.0, d2=0.04, f_pump=2.3)
+lle_out = wakis.solve_lle(
+    d2=0.04, f_pump=2.3, zeta_0=4.0, n_modes=256, dtau=0.01, n_steps=1500, psi_init=sol_ref["psi"]
+)
+```
+
+```{seealso}
+See `examples/013_kerr_nonlinear_optics.py` and [Tutorial 5.11 · Kerr ($\chi^{(3)}$) Nonlinear Media in FIT and FIT-Informed Soliton Microcombs](../tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb) for complete worked examples.
 ```

@@ -74,6 +74,7 @@ studies behind each speed or accuracy claim, with their baselines, are in [studi
 - **Linear plasma wakefields** (`wakis.plasma`): Wakefields in a plasma-filled pipe.
 - **Gain media** (`wakis.gain`): Four-level atomic system coupled to the fields: lasing threshold, gain saturation and mode competition (a Fabry–Pérot laser is the first example); spontaneous-emission Langevin noise so lasers start from noise, and lifetime acceleration for slow upper-state lifetimes.
 - **Semiconductor gain** (`wakis.gain_semiconductor`): Carrier-density gain with linewidth enhancement factor (chirp), validated on a Fabry–Pérot diode laser (relaxation-oscillation frequency against rate equations with a measured cold-cavity photon lifetime).
+- **Kerr nonlinear media** (`wakis.nonlinear`): Sub-cycle χ⁽³⁾ Kerr and delayed Raman response in the time step, plus a FIT-informed Lugiato–Lefever solver for soliton microcombs (Tutorial 5.11).
 - **Time-varying materials** (`wakis.time_varying`): ε(t), σ(t) and time-varying Drude media for time interfaces and photonic time crystals (Tutorial 2.5).
 
 </td></tr></table>
@@ -87,6 +88,7 @@ studies behind each speed or accuracy claim, with their baselines, are in [studi
 - **Soft and magnetic current sources** (`CurrentSource`): Gaussian (zero-DC), continuous and custom profiles; magnetic currents and one-directional Huygens sources.
 - **Total-field / scattered-field plane waves** (`TFSFSource`): Incident field from a 1D FIT line, leakage at round-off (10⁻¹⁵), 2D and 3D, CPU and GPU; a scattered-field variant for unstructured meshes.
 - **Bloch-periodic boundaries** (`wakis.bloch`): Complex fields in unit cells, oblique plane waves at fixed transverse wavevector.
+- **Triangular and honeycomb lattices** (`wakis.lattices`): Hexagonal crystals on Cartesian supercells, band unfolding, plane-wave reference bands and gauge-invariant Berry curvature (Tutorial 6.6).
 - **Broadband oblique incidence and Floquet ports** (`wakis.floquet`): Constant-angle spectra from (k∥, f) sampling, Floquet-mode ports and S-matrices, and a built-in 1D RCWA reference; validated against Fresnel, Brewster, total internal reflection and fmmax.
 - **Dispersion-free wake computation** (`scheme='tete'`): Explicit TE/TM stepping along the beam axis removes numerical Cherenkov radiation: smooth-pipe wake at round-off and 19× less work for a 1 % loss-factor error.
 - **Incoherent emitters and reciprocity** (`wakis.subgrid.emitters`): Incoherent dipole ensembles, analytic dipole-above-mirror and slab references, and emission computed as absorption via Helmholtz reciprocity (LEDs, microLEDs).
@@ -254,6 +256,9 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <td width="170" valign="top"><a href="tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb"><img src="docs/img/readme/tut_05-09.jpg" width="170" alt="Tutorial 5.9"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb">5.9 · Waveguide-to-ring point coupler</a></b><br><sub>Coupling vs gap against coupled-mode theory</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-09_ring_coupling/ring_coupling.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb"><img src="docs/img/readme/tut_05-10.jpg" width="170" alt="Tutorial 5.10"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb">5.10 · Microring add-drop filter</a></b><br><sub>FSR, loaded Q and gap sweep vs coupled-mode theory</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-10_ring_add_drop/ring_add_drop.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb"><img src="docs/img/readme/tut_05-11.jpg" width="170" alt="Tutorial 5.11"></a></td><td width="300" valign="top"><b><a href="tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb">5.11 · Kerr nonlinear media and soliton microcombs</a></b><br><sub>χ⁽³⁾ in FIT; Bessel WGM dispersion; FIT-informed LLE</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
 </table>
 
 *Planned:* Grating couplers, polarization devices, (de)multiplexers and more splitters and couplers (catalogue in [EXAMPLES.md](EXAMPLES.md)).
@@ -273,6 +278,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 </tr>
 <tr>
 <td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb"><img src="docs/img/readme/tut_06-05.jpg" width="170" alt="Tutorial 6.5"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb">6.5 · Slanted and blazed in-coupler gratings</a></b><br><sub>Unidirectional coupling; conformal subpixel meshing vs staircase</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-05_slanted_grating_coupler/slanted_grating_coupler.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/06_periodic_structures/06-06_valley_hall_edge_states/valley_hall_edge_states.ipynb"><img src="docs/img/readme/tut_06-06.jpg" width="170" alt="Tutorial 6.6"></a></td><td width="300" valign="top"><b><a href="tutorials/06_periodic_structures/06-06_valley_hall_edge_states/valley_hall_edge_states.ipynb">6.6 · Valley-Hall photonic crystal and edge states</a></b><br><sub>Valley Chern number from FIT fields vs PWE; Z-bend</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/06_periodic_structures/06-06_valley_hall_edge_states/valley_hall_edge_states.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
@@ -318,6 +324,9 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <tr>
 <td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb"><img src="docs/img/readme/tut_08-03.jpg" width="170" alt="Tutorial 8.3"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb">8.3 · Laser acceleration of electrons in vacuum</a></b><br><sub>Lawson–Woodward theorem, Huang–Stupakov–Zolotorev screen, attosecond bunches</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-03_vacuum_laser_acceleration/vacuum_laser_acceleration.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb"><img src="docs/img/readme/tut_08-04.jpg" width="170" alt="Tutorial 8.4"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb">8.4 · Smith–Purcell radiation and the DLA grating</a></b><br><sub>Smith–Purcell dispersion; Peralta et al. 2013 dielectric laser accelerator</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-04_smith_purcell_dla/smith_purcell_dla.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb"><img src="docs/img/readme/tut_08-05.jpg" width="170" alt="Tutorial 8.5"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb">8.5 · Electron bunch through a slow-wave structure</a></b><br><sub>Beam–wave impedance vs Pierce K; L² scaling</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
 </table>
 
@@ -366,6 +375,8 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Thin sheets and thin wires below the cell size (`wakis.subcell`): graphene, resistive films, traces, wire antennas
 - [x] Gain media: four-level atomic system coupled to the fields (`wakis.gain`), with spontaneous-emission noise and lifetime acceleration
 - [x] Semiconductor gain with linewidth enhancement factor (`wakis.gain_semiconductor`)
+- [x] Kerr (χ⁽³⁾) and Raman nonlinear media with a FIT-informed LLE microcomb solver (`wakis.nonlinear`)
+- [x] Triangular/honeycomb lattices, band unfolding and Berry curvature (`wakis.lattices`)
 - [x] Time-varying materials: ε(t), σ(t), time-varying Drude media (`wakis.time_varying`)
 
 **Meshes and time stepping**

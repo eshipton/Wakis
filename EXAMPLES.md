@@ -217,6 +217,9 @@ This page indexes all examples and validation studies in the repository, organiz
 
 #### Waveguides and mode solving
 
+- **5.11 · Tutorial 5.11 · Kerr ($\chi^{(3)}$) nonlinear media in FIT and FIT-informed soliton microcombs** ([notebook](tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb) · [script](tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.py)) — Sub-cycle Kerr and Raman time stepping in `SolverFIT3D`, ring-resonator dispersion and coupling from FIT, and a Lugiato–Lefever microcomb driven by the FIT-extracted ring parameters.
+  - *Validation target:* Cylindrical Bessel whispering-gallery dispersion, Kerr resonance shift from nonlinear-volume perturbation theory, and the analytic single-soliton solution of the LLE.
+  - *Headline result:* FIT integrated dispersion $D_2$ is $9.6\%$ below the Bessel value on the finest grid, with an extrapolation band of $29.0$–$30.5\;\text{GHz}$ against $30.85\;\text{GHz}$; the LLE driven by the FIT ring parameters reaches the single dissipative Kerr soliton step.
 - **2D effective index approximation of 3D simulations** — Reduces a 3D SOI strip waveguide ($220\text{ nm}$ slab) to an equivalent 2D in-plane problem via vertical slab effective index $n_{\mathrm{eff}}(\lambda)$, comparing ring resonance shifts against full 3D ([Effective refractive index](https://en.wikipedia.org/wiki/Refractive_index), [Optical waveguide](https://en.wikipedia.org/wiki/Waveguide_(optics)) · Ref: [DOI](https://doi.org/10.1007/s11082-009-9349-3)).
 - **Scale-invariant effective index waveguide** — Demonstrates constant effective index independent of core width by pairing a high-index silicon core with low-index side barriers satisfying the cutoff $k_0$ condition ([Effective refractive index](https://en.wikipedia.org/wiki/Refractive_index), [Total internal reflection](https://en.wikipedia.org/wiki/Total_internal_reflection) · Ref: [DOI](https://doi.org/10.1038/s41467-023-42234-1)).
 - **Dispersion in a tapered waveguide** — Tracks how group index $n_g(\lambda, w)$ and group-velocity dispersion $D(\lambda)$ evolve continuously along a width-tapered silicon waveguide ([Group velocity dispersion](https://en.wikipedia.org/wiki/Group_velocity_dispersion), [Dispersion (optics)](https://en.wikipedia.org/wiki/Dispersion_(optics))).
@@ -304,6 +307,9 @@ This page indexes all examples and validation studies in the repository, organiz
 
 #### Grating couplers and Bragg filters
 
+- **6.6 · Tutorial 6.6 · Valley-Hall photonic crystal and domain-wall edge states** ([notebook](tutorials/06_periodic_structures/06-06_valley_hall_edge_states/valley_hall_edge_states.ipynb) · [script](tutorials/06_periodic_structures/06-06_valley_hall_edge_states/valley_hall_edge_states.py)) — Honeycomb photonic crystal on a Cartesian supercell (`wakis.lattices`): band unfolding, valley-Hall gap opening, Berry curvature and valley Chern number from FIT fields, domain-wall ribbon bands and a $120^\circ$ Z-bend.
+  - *Validation target:* Plane-wave-expansion bands and Berry curvature on the same lattice (Ma & Shvets 2016), gauge-invariant Fukui–Hatsugai–Suzuki method.
+  - *Headline result:* The FIT valley Chern number $-0.1174$ agrees with PWE ($-0.1188$) to $1.1\%$ once the time window is long enough; in the derived single-mode window the valley-Hall bend-to-straight flux ratio is $14\times$ that of a tuned trivial guide.
 - **Uniform linear grating coupler** — Shallow-etched periodic silicon teeth ($\Lambda = 630\text{ nm}$) diffract a guided slab mode into free space at the phase-matched angle $\sin\theta = (n_{\mathrm{eff}} - \lambda/\Lambda)/n_c$ ([Grating coupler](https://en.wikipedia.org/wiki/Diffraction_grating), [Bragg phase matching](https://en.wikipedia.org/wiki/Bragg%27s_law)).
 - **Focusing apodized grating coupler** — Confocal elliptical grating arcs focus a fibre mode directly into a strip waveguide while linearly apodized fill factors match the Gaussian beam profile ([Grating coupler](https://en.wikipedia.org/wiki/Diffraction_grating), [Apodization](https://en.wikipedia.org/wiki/Apodization) · Ref: [DOI](https://doi.org/10.1038/s41598-017-16505-z)).
 - **Bilayer SiN/Si grating coupler** — Laterally offset $\mathrm{Si}_3\mathrm{N}_4$ and $\mathrm{Si}$ grating layers interfere destructively downward and constructively upward for unidirectional fibre coupling ([Grating coupler](https://en.wikipedia.org/wiki/Diffraction_grating), [Phased-array interference](https://en.wikipedia.org/wiki/Wave_interference) · Ref: [DOI](https://doi.org/10.1364/OE.23.026305)).
@@ -413,6 +419,9 @@ This page indexes all examples and validation studies in the repository, organiz
 
 ### Planned
 
+- **8.5 · Tutorial 8.5 · An electron bunch passing through a slow-wave structure** ([notebook](tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb) · [script](tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.py)) — A rigid bunch (`WakeSolver`) crossing finite G-band and V-band slow-wave structures from Tutorial 6.2: beam–wave impedance, $L^2$ scaling, walk-off linewidth, stopping power and forward vs backward energy flow.
+  - *Validation target:* Lorentz-reciprocity beam–wave resistance $\operatorname{Re} Z_\parallel = \tfrac14 \beta_n^2 K_n L^2 \operatorname{sinc}^2(\Delta\beta L/2)$ with the Pierce impedance $K_n$ from the Tutorial 6.2 cold test, and energy conservation between the ports.
+  - *Headline result:* The extracted on-axis $K_{-1}$ lies in the band $2.63$–$2.69\;\Omega$ across the finest meshes (4–6 % from the cold-test value), and radiated energy balances the beam energy loss to $4.2\%$ (backward wave) and $2.6\%$ (forward wave).
 - **Gaussian and advanced beams** — Injects paraxial and vector-corrected Hermite–Gaussian ($\mathrm{HG}_{mn}$), Laguerre–Gaussian ($\mathrm{LG}_{p\ell}$), and high-NA focused beams with Gouy phase evolution ([Gaussian beam](https://en.wikipedia.org/wiki/Gaussian_beam), [Gouy phase shift](https://en.wikipedia.org/wiki/Gouy_phase_shift)).
 
 ---
@@ -513,6 +522,8 @@ Standalone Python scripts in [`examples/`](examples/) demonstrating wakefields, 
 - [`examples/012_fabry_perot_laser.py`](examples/012_fabry_perot_laser.py) — A 1D Fabry–Pérot laser with a four-level atomic gain medium (`wakis.gain`): lasing threshold vs cavity loss, light-vs-pump curve, relaxation oscillations and the lasing frequency at the cavity mode.
 - [`examples/014_laser_noise_and_time_scaling.py`](examples/014_laser_noise_and_time_scaling.py) — Spontaneous-emission Langevin noise and lifetime acceleration in `wakis.gain`: FDT-calibrated spontaneous-emission power, gain-narrowed ASE spectrum, lasing from noise with $\beta_{\text{sp}}$ threshold rounding, and the validity limits of the `time_scale` acceleration.
 - [`examples/015_semiconductor_fp_laser.py`](examples/015_semiconductor_fp_laser.py) — A Fabry–Pérot diode laser with `SemiconductorGain`: threshold and $L$–$I$ curve, relaxation-oscillation frequency against rate equations with a measured cold-cavity photon lifetime, and adiabatic chirp from the linewidth enhancement factor.
+- [`examples/013_kerr_nonlinear_optics.py`](examples/013_kerr_nonlinear_optics.py) — Kerr ($\chi^{(3)}$) and Raman nonlinear media in `SolverFIT3D` (`wakis.nonlinear`): self-phase modulation, third-harmonic generation and the Kerr resonance shift of a cavity.
+- [`examples/016_triangular_honeycomb_lattices.py`](examples/016_triangular_honeycomb_lattices.py) — Triangular and honeycomb photonic crystals on Cartesian supercells (`wakis.lattices`): band unfolding onto the primitive zone and comparison with plane-wave-expansion bands.
 
 ---
 

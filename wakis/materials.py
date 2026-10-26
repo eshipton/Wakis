@@ -46,6 +46,21 @@ from .material_library import (  # noqa: F401
     list_materials,
     uniaxial_crystal,
 )
+from .nonlinear import (  # noqa: F401
+    KerrMaterial,
+    NonlinearMaterial,
+    chi3_to_n2,
+    effective_nonlinear_volume,
+    field_from_intensity,
+    kerr_cavity_frequency_shift,
+    lle_cw_bistability,
+    lle_soliton_analytic,
+    n2_to_chi3,
+    optical_intensity,
+    solve_lle,
+    spm_phase_shift,
+    thg_conversion_efficiency,
+)
 from .subcell import (  # noqa: F401
     SheetMaterial,
     graphene_sheet,

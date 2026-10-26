@@ -1,0 +1,70 @@
+{
+  "triangular_air_holes_gap": {
+    "r_over_a": 0.43,
+    "eps_bg": 13.0,
+    "te_gap_bottom": 0.2613986948313574,
+    "te_gap_top": 0.4471952775866068,
+    "te_gap_midgap_ratio": 0.5244091538663478,
+    "tm_gap_bottom": 0.36437714248374525,
+    "tm_gap_top": 0.38624766225732043,
+    "tm_gap_midgap_ratio": 0.058272840533479565,
+    "complete_gap_bottom": 0.36437714248374525,
+    "complete_gap_top": 0.38624766225732043,
+    "complete_gap_width": 0.02187051977357518
+  },
+  "triangular_validation_and_unfolding": {
+    "r_over_a": 0.35,
+    "eps_bg": 12.0,
+    "unfolding_max_diff_tm": 4.599081922098012e-08,
+    "unfolding_max_diff_te": 3.742145482377168e-14,
+    "pwe_ref_K_tm": 0.2178493506800616,
+    "pwe_ref_K_te": 0.22041606541258676,
+    "fit_grids_nx": [
+      14,
+      22,
+      28,
+      36
+    ],
+    "fit_K_tm_values": [
+      0.21745088156609077,
+      0.2178364701094865,
+      0.21798680319783603,
+      0.2180126023637131
+    ],
+    "fit_K_te_values": [
+      0.21991442337968584,
+      0.22165943723328566,
+      0.2210288443667693,
+      0.2212299319945718
+    ],
+    "fit_K_tm_richardson": 0.2180521073364623,
+    "fit_K_te_richardson": 0.22153784742464439,
+    "fit_vs_pwe_rel_err_tm": 0.00074937879384022,
+    "fit_vs_pwe_rel_err_te": 0.0036924104441370923,
+    "cells_per_wavelength_finest": 29.692299558323615,
+    "preflight": {
+      "ram_mb": 493.72624,
+      "wall_seconds_est": 0.2385415529411765
+    }
+  },
+  "honeycomb_valley_hall": {
+    "r0_over_a": 0.18,
+    "eps_rod": 12.0,
+    "dirac_frequency_norm": 0.2875519106124471,
+    "dirac_splitting_symmetric": 3.785051252036542e-06,
+    "dirac_velocity_over_c": 0.1696646348752236,
+    "gap_linear_slope": 0.286286378034607,
+    "delta_benchmark": 0.12,
+    "valley_gap_delta_0p12": 0.03443378709781719,
+    "pwe_patch_chern_K_pos": -0.17526523156091375,
+    "pwe_patch_chern_K_neg": 0.1752652315609201,
+    "pwe_patch_chern_Kp_pos": 0.17526523156092297,
+    "fit_patch_chern_K_pos": -0.11750997504166603,
+    "fit_patch_chern_K_neg": 0.11750997504166592
+  },
+  "wall_time_seconds": 58.830398430999594,
+  "figures": [
+    "docs/img/triangular_lattice_bands_unfolding.png",
+    "docs/img/honeycomb_dirac_and_valley_hall.png"
+  ]
+}

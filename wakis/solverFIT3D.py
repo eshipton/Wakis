@@ -20,6 +20,7 @@ from .field import Field
 from .gain import GainMixin
 from .logger import Logger
 from .materials import material_lib
+from .nonlinear import NonlinearMixin
 from .plotting import PlotMixinSolver as PlotMixin
 from .routines import RoutinesMixin
 from .subcell import SubcellMixin
@@ -71,6 +72,7 @@ class SolverFIT3D(
     BCsMixin,
     DispersiveMixin,
     GainMixin,
+    NonlinearMixin,
     SubcellMixin,
     TimeVaryingMixin,
 ):
@@ -597,9 +599,10 @@ class SolverFIT3D(
             self._one_step_backend = self.one_step
             self.one_step = self._one_step_with_abc
 
-        if self.use_stl:  # ADE for solids with a DispersiveMaterial, GainMaterial or TimeVaryingMaterial
+        if self.use_stl:  # ADE for solids with a DispersiveMaterial, GainMaterial, NonlinearMaterial or TimeVaryingMaterial
             self._apply_stl_dispersive()
             self._apply_stl_gain()
+            self._apply_stl_nonlinear()
             self._apply_stl_time_varying()
             if self.tensor_operator is not None:  # no couplings to ADE edges
                 self.tensor_operator.install(self)
@@ -2237,6 +2240,7 @@ class SolverFIT3D(
             self.J[:, :, :, d] = 0.0
         self.reset_dispersive_state()
         self.reset_gain_state()
+        self.reset_nonlinear_state()
         self.reset_time_varying_state()
         self.reset_beam_state()
 

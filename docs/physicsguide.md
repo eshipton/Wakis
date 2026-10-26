@@ -3898,6 +3898,224 @@ References:
 - G. P. Agrawal and N. K. Dutta, *Semiconductor Lasers*, 2nd ed., Van Nostrand Reinhold, New York (1993).
 
 
+### Triangular and hexagonal lattices on Cartesian FIT grids (`wakis.lattices`)
+
+Two-dimensional triangular (Bravais) and honeycomb (two-sublattice) photonic crystals have primitive lattice vectors at $`60^\circ`$, which do not align with orthogonal Cartesian faces. `wakis.lattices` (`HexagonalLattice`, `PWE2D`, `unfold_supercell_weight`, `unfold_signal_pair`, `berry_curvature_from_envelopes`, `dirac_berry_curvature`, `fill_circular_inclusions`, `fit_supercell_bands_at_k`, `fit_berry_curvature_patch`, example `examples/016_triangular_honeycomb_lattices.py`, tutorial `tutorials/06_periodic_structures/06-06_valley_hall_edge_states/`, test `tests/test_073_lattices.py`) maps triangular and honeycomb crystals onto Cartesian `GridFIT3D` meshes via their centred-rectangular supercell, provides an independent 2D plane-wave-expansion (`PWE2D`) solver, unfolds supercell bands back onto the primitive hexagonal Brillouin zone, and evaluates gauge-invariant Berry curvature and valley Chern numbers from both frequency-domain (`PWE2D`) and time-domain (`SolverFIT3D`) eigenfields.
+
+**Primitive hexagonal cell vs centred-rectangular Cartesian supercell.** A 2D triangular Bravais lattice of pitch $`a`$ has primitive translations and reciprocal basis vectors ($`\mathbf{a}_i \cdot \mathbf{b}_j = 2\pi\delta_{ij}`$):
+
+```math
+\mathbf{a}_1 = a(1, 0), \qquad
+\mathbf{a}_2 = a\!\left(\tfrac{1}{2}, \tfrac{\sqrt{3}}{2}\right), \qquad
+\mathbf{b}_1 = \frac{2\pi}{a}\!\left(1, -\frac{1}{\sqrt{3}}\right), \qquad
+\mathbf{b}_2 = \frac{2\pi}{a}\!\left(0, \frac{2}{\sqrt{3}}\right),
+```
+
+with primitive cell area $`\Omega_{\mathrm{prim}} = \frac{\sqrt{3}}{2}a^2`$ and high-symmetry points $`\boldsymbol{\Gamma} = (0, 0)`$, $`\mathbf{M} = \frac{2\pi}{a}(0, \frac{1}{\sqrt{3}})`$, $`\mathbf{K} = \frac{2\pi}{a}(\frac{2}{3}, 0)`$, and $`\mathbf{K}' = \frac{2\pi}{a}(-\frac{2}{3}, 0)`$. Forming the integer combinations
+
+```math
+\mathbf{A}_1 = \mathbf{a}_1 = (a, 0), \qquad
+\mathbf{A}_2 = 2\mathbf{a}_2 - \mathbf{a}_1 = (0, \sqrt{3}a), \qquad
+\det\begin{pmatrix} 1 & 0 \\ -1 & 2 \end{pmatrix} = 2,
+```
+
+yields an orthogonal $`a \times \sqrt{3}a`$ centred-rectangular supercell of area $`\Omega_{\mathrm{sup}} = \sqrt{3}a^2 = 2\Omega_{\mathrm{prim}}`$ containing two Bravais lattice points at $`\mathbf{R}_0 = (0, 0)`$ and $`\boldsymbol{\tau} = \mathbf{a}_2 = (\frac{1}{2}a, \frac{\sqrt{3}}{2}a)`$. For a honeycomb crystal, each Bravais point carries sublattices $`A`$ and $`B`$ separated by $`\pm\mathbf{d}_0 = \pm(0, a/\sqrt{3})`$, giving four rods/holes per rectangular supercell. For any wavevector $`\mathbf{k} = (k_x, k_y)`$ in the primitive hexagonal Brillouin zone, the Cartesian Bloch boundary conditions (`bc_low=["bloch", "bloch", "periodic"]`, `k_bloch=(k_x, k_y, 0.0)`) apply the exact face phases $`\psi(x + a, y) = e^{-i k_x a}\psi(x, y)`$ and $`\psi(x, y + \sqrt{3}a) = e^{-i k_y \sqrt{3}a}\psi(x, y)`$ on the leapfrog time grid ($`\mathbf{E}^n`$ at integer $`t^n = n\Delta t`$, $`\mathbf{H}^{n-1/2}`$ at half-integer $`t^{n-1/2}`$).
+
+**Band unfolding via primitive-translation projection.** Because $`\Omega_{\mathrm{sup}} = 2\Omega_{\mathrm{prim}}`$, the rectangular Brillouin zone has half the area of the hexagonal Brillouin zone and folds each primitive band at $`\mathbf{k}`$ with its partner at $`\mathbf{k} + \mathbf{G}_{\mathrm{sup}}`$ ($`\mathbf{G}_{\mathrm{sup}} = (0, \frac{2\pi}{\sqrt{3}a})`$ with $`e^{i\mathbf{G}_{\mathrm{sup}}\cdot\boldsymbol{\tau}} = -1`$). Under the internal primitive translation $`\hat{T}_{\boldsymbol{\tau}}\psi(\mathbf{r}) = \psi(\mathbf{r} + \boldsymbol{\tau})`$:
+- In Wakis's time-domain Bloch convention $`\psi_{\mathbf{k}}(\mathbf{r}) = e^{-i\mathbf{k}\cdot\mathbf{r}}u_{\mathbf{k}}(\mathbf{r})`$ (`wakis/bloch.py`), a true primitive Bloch state satisfies $`\psi_{\mathbf{k}}(\mathbf{r} + \boldsymbol{\tau}) = e^{-i\mathbf{k}\cdot\boldsymbol{\tau}}\psi_{\mathbf{k}}(\mathbf{r})`$, whereas a folded supercell partner satisfies $`\psi_{\mathbf{k}+\mathbf{G}_{\mathrm{sup}}}(\mathbf{r} + \boldsymbol{\tau}) = -e^{-i\mathbf{k}\cdot\boldsymbol{\tau}}\psi_{\mathbf{k}+\mathbf{G}_{\mathrm{sup}}}(\mathbf{r})`$.
+- Combining two $`\boldsymbol{\tau}`$-related time-domain probe signals $`s_1(t) = \psi(\mathbf{r}_1, t)`$ and $`s_2(t) = \psi(\mathbf{r}_1 + \boldsymbol{\tau}, t)`$ as (`unfold_signal_pair`, `fit_supercell_bands_at_k`)
+
+```math
+s_{\mathrm{unfolded}}(t) = \tfrac{1}{2}\!\left[s_1(t) + e^{+i\mathbf{k}\cdot\boldsymbol{\tau}} s_2(t)\right], \qquad
+s_{\mathrm{folded}}(t) = \tfrac{1}{2}\!\left[s_1(t) - e^{+i\mathbf{k}\cdot\boldsymbol{\tau}} s_2(t)\right],
+```
+
+cancels folded supercell modes prior to harmonic inversion (`wakis.resonances.harminv`), while on a 2D spatial grid the primitive-zone spectral weight [Popescu & Zunger, 2010; Ku, Berlijn & Lee, 2010] is (`unfold_supercell_weight`, `PWE2D.solve_path(..., unfold_supercell=True)`)
+
+```math
+W_n(\mathbf{k}) = \frac{\left\|\tfrac{1}{2}\!\left[\psi_{n\mathbf{k}}(\mathbf{r}) + e^{+i\mathbf{k}\cdot\boldsymbol{\tau}}\psi_{n\mathbf{k}}(\mathbf{r} + \boldsymbol{\tau})\right]\right\|_2^2}{\left\|\psi_{n\mathbf{k}}(\mathbf{r})\right\|_2^2} \in [0, 1],
+```
+
+which equals $`W_n = 1`$ for primitive branches and $`W_n = 0`$ for folded supercell branches.
+
+**2D plane-wave-expansion (`PWE2D`) reference solver.** Following Ho, Chan & Soukoulis (1990) and Joannopoulos *et al.* (2008), `PWE2D` expands the periodic dielectric function using exact analytical Bessel Fourier transforms for circular inclusions of radius $`r_j`$ at $`\mathbf{r}_j`$:
+
+```math
+\varepsilon(\mathbf{G}) = \varepsilon_{\mathrm{bg}}\delta_{\mathbf{G},\mathbf{0}} + \sum_j (\varepsilon_j - \varepsilon_{\mathrm{bg}})\,f_j\,\frac{2 J_1(|\mathbf{G}|r_j)}{|\mathbf{G}|r_j}\,e^{-i\mathbf{G}\cdot\mathbf{r}_j}, \qquad f_j = \frac{\pi r_j^2}{\Omega_{\mathrm{cell}}},
+```
+
+and solves the symmetrized Hermitian eigenvalue problems in `scipy.linalg.eigh`:
+
+```math
+\text{TM ($E_z$):}\quad \sum_{\mathbf{G}'} |\mathbf{k}+\mathbf{G}|\,\varepsilon^{-1/2}_{\mathbf{G},\mathbf{G}_1}\varepsilon^{-1/2}_{\mathbf{G}_1,\mathbf{G}'}|\mathbf{k}+\mathbf{G}'|\,\tilde{e}_{\mathbf{G}'} = \left(\frac{\omega}{c}\right)^2 \tilde{e}_{\mathbf{G}}, \qquad
+\text{TE ($H_z$):}\quad \sum_{\mathbf{G}'} (\mathbf{k}+\mathbf{G})\cdot(\mathbf{k}+\mathbf{G}')\,\eta_{\mathbf{G}-\mathbf{G}'}\,h_{\mathbf{G}'} = \left(\frac{\omega}{c}\right)^2 h_{\mathbf{G}},
+```
+
+with $`\boldsymbol{\eta} = \boldsymbol{\varepsilon}^{-1}`$.
+
+**Honeycomb Dirac cone, valley-Hall gap, and Fukui–Hatsugai–Suzuki Berry curvature.** When sublattices $`A`$ and $`B`$ are identical ($`r_A = r_B = r_0`$, $`\delta = 0`$), $`C_{3v}`$ and inversion symmetry protect a massless Dirac cone at $`\mathbf{K}`$ and $`\mathbf{K}'`$. Breaking inversion symmetry with $`r_A = r_0(1 + \delta)`$, $`r_B = r_0(1 - \delta)`$ [Ma & Shvets, 2016; Gao *et al.*, 2018] introduces a Dirac mass $`m \propto \delta`$ in the effective two-band Hamiltonian $`H_{\mathrm{eff}}(\mathbf{q}) = \omega_D + v_D(\tau_v q_x \sigma_x + q_y \sigma_y) + m\sigma_z`$ ($`\tau_v = \pm 1`$), opening a bandgap $`\Delta\omega_K = 2|m|`$ and generating the lower-band Berry curvature (`dirac_berry_curvature`)
+
+```math
+\Omega_1(\mathbf{q}) = -\frac{\tau_v v_D^2 m}{2\left(v_D^2|\mathbf{q}|^2 + m^2\right)^{3/2}}, \qquad
+C_{\tau_v} = \frac{1}{2\pi}\int_{\text{valley }\tau_v} \Omega_1(\mathbf{q})\,d^2q = -\frac{1}{2}\,\tau_v\,\mathrm{sgn}(\delta) .
+```
+
+Numerically, `PWE2D.berry_curvature`, `berry_curvature_from_envelopes`, and `fit_berry_curvature_patch` evaluate the gauge-invariant Fukui–Hatsugai–Suzuki plaquette phase [Fukui, Hatsugai & Suzuki, 2005] on a discrete $`(k_x, k_y)`$ mesh:
+
+```math
+F_{ij} = \mathrm{Im}\,\ln\!\Big(\langle u_{i,j}|u_{i+1,j}\rangle\langle u_{i+1,j}|u_{i+1,j+1}\rangle\langle u_{i+1,j+1}|u_{i,j+1}\rangle\langle u_{i,j+1}|u_{i,j}\rangle\Big), \qquad
+\Omega_{ij} = \frac{F_{ij}}{\Delta k_x \Delta k_y},
+```
+
+where the cell-periodic envelopes $`u_{\mathbf{k}}(\mathbf{r})`$ are weighted by $`\sqrt{\varepsilon(\mathbf{r})}`$ in TM polarization (`fit_berry_curvature_patch` extracts $`E_z(\mathbf{r}, \omega_1(\mathbf{k}))`$ from single-cell 2D FIT ring-down runs and projects onto the primitive-translation subspace $`\tfrac{1}{2}[u + T_{\boldsymbol{\tau}}u]`$). Across a domain wall between $`\delta > 0`$ and $`\delta < 0`$ (`HexagonalLattice.ribbon_supercell_sites`, `HexagonalLattice.domain_wall_bend_inclusions`), the valley Chern difference $`|\Delta C_{\tau_v}| = |(\pm 1/2) - (\mp 1/2)| = 1`$ guarantees one valley-locked chiral edge mode per valley capable of rounding sharp $`120^\circ`$ Z-bends when the bend preserves the sublattice orientation across all three segments.
+
+**Validation** (`tests/test_073_lattices.py`, `tests/test_tut_06_06_valley_hall_edge_states.py`, `examples/016_triangular_honeycomb_lattices.py`):
+- *Supercell band unfolding:* Unfolding the 8 lowest supercell bands of the $`a \times \sqrt{3}a`$ cell onto the primitive hexagonal Brillouin zone along $`\Gamma\text{–}M\text{–}K\text{–}\Gamma`$ matches the 4 primitive-cell bands to $`4.2\times 10^{-8}`$ (`test_pwe_supercell_unfolding_and_mutation`); mutating the $`\boldsymbol{\tau}`$-phase sign (`phase_sign=-1`) selects the folded partner bands and fails the primitive-band assertion (`max |df| > 0.05`).
+- *Triangular lattice of air holes ($`r/a = 0.42`$, $`\varepsilon_{\mathrm{bg}} = 13`$):* Reproduces the complete first TE bandgap $`\omega a/(2\pi c) \in [0.290, 0.449]`$ ($`43.2\%`$ gap-to-midgap ratio) and higher-band TM gap [Ho, Chan & Soukoulis, 1990; Plihal & Maradudin, 1991; Joannopoulos *et al.*, 2008], with 2D FIT (`fit_supercell_bands_at_k`) agreeing with `PWE2D` to $`0.17\%`$–$`0.72\%`$ (`test_triangular_air_holes_te_tm_gaps_and_fit_vs_pwe`).
+- *Honeycomb Dirac cone and valley-Hall gap ($`r_0/a = 0.18`$, $`\varepsilon_{\mathrm{rod}} = 12`$):* At $`\delta = 0`$, bands 1 and 2 touch linearly at $`K`$ ($`\omega_D a/(2\pi c) = 0.2876`$, degeneracy split $`6.0\times 10^{-6}`$, $`v_D/c = 0.170`$). At $`\delta = 0.12`$, 2D FIT matches `PWE2D` at both band edges to $`0.34\%`$ and $`0.29\%`$, and 3-resolution Richardson extrapolation ($`N_x \in \{18, 24, 30\}`$, $`25.5`$ cells/$`\lambda`$) converges at order $`p = 1.75`$ to within $`0.01\%`$ of `PWE2D`.
+- *Berry curvature and $`120^\circ`$ Z-bend transmission:* Both `PWE2D` and 2D FIT (`fit_berry_curvature_patch`) reproduce the sign flip $`C_K(-\delta) = -C_K(+\delta)`$ and $`C_K(\delta=0) \approx 0`$ ($`C_K^{\mathrm{patch}} = \mp 0.1175`$ in 2D FIT vs $`\mp 0.1188`$ in `PWE2D`, $`1.13\%`$ relative error at $`n_{\mathrm{steps}} = 6000`$), and the $`C_3`$-symmetric $`120^\circ`$ valley-Hall Z-bend achieves $`\langle T_{\mathrm{bend}}\rangle = 0.642`$ ($`99.5\%`$ of straight-waveguide transmission, peak $`0.761`$) vs $`0.111`$ for a tuned single-mode trivial defect bend ($`+7.64\text{ dB}`$ bend transmission ratio).
+
+![Triangular air-hole crystal bands, supercell unfolding, and FIT vs PWE convergence](img/triangular_lattice_bands_unfolding.png)
+
+![Honeycomb Dirac cone, valley-Hall gap scaling, and Berry curvature sign reversal](img/honeycomb_dirac_and_valley_hall.png)
+
+**Limits & failure modes.**
+- *Even grid dimensions required for exact $`\boldsymbol{\tau}`$-unfolding on the Cartesian supercell.* Because the internal primitive translation is $`\boldsymbol{\tau} = (a/2, \sqrt{3}a/2)`$, mapping $`\mathbf{r}_1 \mapsto \mathbf{r}_1 + \boldsymbol{\tau}`$ onto exact grid nodes without spatial interpolation requires `nx` and `ny` to be even integers (`fit_supercell_bands_at_k` and `translate_supercell_field` raise `ValueError` if `nx` or `ny` is odd). Furthermore, placing all four honeycomb rod centres at exact subgrid positions relative to the cell faces is cleanest when `ny` is a multiple of 6.
+- *Large inversion asymmetry ($`|\delta| \gtrsim 0.25`$) and Berry-curvature delocalization.* The quantized half-integer valley Chern number $`C_{\tau_v} = -\frac{1}{2}\tau_v\mathrm{sgn}(\delta)`$ holds in the small-mass Dirac regime ($`|m| \ll v_D |\mathbf{K} - \mathbf{M}|`$) where $`\Omega_1(\mathbf{k})`$ is tightly localized around $`K`$ and $`K'`$. For large asymmetry, Berry curvature spreads across the hexagonal Brillouin zone boundary and overlaps between valleys, reducing the single-valley integral and increasing intervalley scattering at sharp corners.
+- *Symmetry protection of $`120^\circ`$ bends vs $`90^\circ`$ bends and sublattice orientation.* Valley-Hall protection relies on conservation of the valley pseudospin $`\tau_v`$ under $`C_3`$-compatible interfaces. A $`90^\circ`$ turn or short-range point defect scatters across $`|\mathbf{K} - \mathbf{K}'| = 4\pi/(3a)`$ and causes back-reflection. Even for a $`120^\circ`$ Z-bend (`domain_wall_bend_inclusions`), the diagonal segment must turn by $`-60^\circ`$ ($`C_3`$ rotation) rather than $`+60^\circ`$ ($`C_6`$ rotation): a $`+60^\circ`$ turn swaps the $`A`$ and $`B`$ sublattices across the diagonal arm, converting a small-rod interface into a large-rod interface whose guided passband lies in the opposite half of the bulk gap.
+
+References:
+- K. M. Ho, C. T. Chan and C. M. Soukoulis, "Existence of a photonic gap in periodic dielectric structures", *Phys. Rev. Lett.* **65**, 3152–3155 (1990), [doi:10.1103/PhysRevLett.65.3152](https://doi.org/10.1103/PhysRevLett.65.3152).
+- M. Plihal and A. A. Maradudin, "Photonic band structure of two-dimensional systems: The triangular lattice", *Phys. Rev. B* **44**, 8565–8571 (1991), [doi:10.1103/PhysRevB.44.8565](https://doi.org/10.1103/PhysRevB.44.8565).
+- T. Ma and G. Shvets, "All-Si valley-Hall photonic topological insulator", *New J. Phys.* **18**, 025012 (2016), [doi:10.1088/1367-2630/18/2/025012](https://doi.org/10.1088/1367-2630/18/2/025012).
+- F. Gao, H. Xue, Z. Yang, K. Lai, Y. Yu, X. Lin, Y. Chong, G. Shvets and B. Zhang, "Topologically protected refraction of robust kink states in valley photonic crystals", *Nat. Phys.* **14**, 140–144 (2018), [doi:10.1038/nphys4304](https://doi.org/10.1038/nphys4304).
+- T. Fukui, Y. Hatsugai and H. Suzuki, "Chern Numbers in Discretized Brillouin Zone: Efficient Method of Computing (Spin) Hall Conductances", *J. Phys. Soc. Jpn.* **74**, 1674–1677 (2005), [doi:10.1143/JPSJ.74.1674](https://doi.org/10.1143/JPSJ.74.1674).
+- V. Popescu and A. Zunger, "Effective Band Structure of Random Alloys", *Phys. Rev. Lett.* **104**, 236403 (2010), [doi:10.1103/PhysRevLett.104.236403](https://doi.org/10.1103/PhysRevLett.104.236403).
+- W. Ku, T. Berlijn and C.-C. Lee, "Unfolding First-Principles Band Structures", *Phys. Rev. Lett.* **104**, 216401 (2010), [doi:10.1103/PhysRevLett.104.216401](https://doi.org/10.1103/PhysRevLett.104.216401).
+- J. D. Joannopoulos, S. G. Johnson, J. N. Winn and R. D. Meade, *Photonic Crystals: Molding the Flow of Light*, 2nd ed. (Princeton University Press, Princeton, NJ, 2008).
+
+
+### Kerr ($\chi^{(3)}$) nonlinear media, delayed Raman response, and FIT-informed soliton microcombs (`wakis.nonlinear`)
+
+Centrosymmetric optical dielectrics (such as $\text{Si}_3\text{N}_4$, $\text{SiO}_2$, $\text{AlGaAs}$, and silicon) have vanishing second-order susceptibility ($\chi^{(2)} = 0$) and exhibit a dominant third-order Kerr nonlinearity $\chi^{(3)}$ [$\text{m}^2/\text{V}^2$] responsible for self-phase modulation (SPM), cross-phase modulation (XPM), third-harmonic generation (THG), four-wave mixing (FWM), nonlinear cavity resonance shifts, and dissipative Kerr soliton (DKS) frequency microcombs. `wakis.nonlinear` (`KerrMaterial`, `NonlinearMaterial`, `solver.add_nonlinear_material`, `solve_lle`, `lle_cw_bistability`, `lle_soliton_analytic`, `chi3_to_n2`, `n2_to_chi3`, `spm_phase_shift`, `thg_conversion_efficiency`, `effective_nonlinear_volume`, `kerr_cavity_frequency_shift`; example `examples/013_kerr_nonlinear_optics.py`, tutorial `tutorials/05_guided_waves/05-11_kerr_microcomb/`, test `tests/test_073_nonlinear_kerr.py`) implements sub-cycle time-domain constitutive updates coupled to `SolverFIT3D` alongside a split-step Fourier Lugiato–Lefever Equation (LLE) solver for microcomb dynamics.
+
+**Constitutive relation: instantaneous electronic Kerr + delayed vibrational Raman + linear ADE poles.** Following Taflove & Hagness [2005, Ch. 9] and Joseph & Taflove [1997], the macroscopic electric displacement $\mathbf{D}(\mathbf{r}, t)$ in a centrosymmetric medium with high-frequency relative permittivity $\varepsilon_\infty$, linear dispersive Drude/Lorentz/Debye poles $\mathbf{P}_{\text{L}} = \sum_p \mathbf{P}_p$, and third-order susceptibility $\chi^{(3)}$ partitioned between an instantaneous electronic fraction $(1 - f_R)$ and a delayed Raman fraction $f_R \in [0, 1]$ is
+
+```math
+\mathbf{D}(t) = \varepsilon_0 \varepsilon_\infty \mathbf{E}(t) + \mathbf{P}_{\text{L}}(t) + \varepsilon_0 \chi^{(3)}\Big[(1 - f_R)\big|\mathbf{E}(t)\big|^2 + f_R S(t)\Big]\mathbf{E}(t) .
+```
+
+The delayed scalar Raman response $S(t) = \int_0^\infty h_R(\tau)|\mathbf{E}(t-\tau)|^2\,d\tau$ with normalized impulse response $h_R(\tau) = \frac{\tau_1^2 + \tau_2^2}{\tau_1 \tau_2^2} e^{-\tau/\tau_2}\sin(\tau/\tau_1)\,\Theta(\tau)$ ($\int_0^\infty h_R(\tau)\,d\tau = 1$) satisfies the second-order Lorentz auxiliary differential equation (ADE) [Joseph & Taflove, 1997]:
+
+```math
+\frac{d^2 S}{dt^2} + 2\Gamma_R \frac{dS}{dt} + \Omega_R^2 S = \Omega_R^2 \big|\mathbf{E}(t)\big|^2, \qquad
+\Omega_R = \sqrt{\frac{1}{\tau_1^2} + \frac{1}{\tau_2^2}}, \qquad
+\Gamma_R = \frac{1}{\tau_2} .
+```
+
+**Time-level centering and per-edge cubic Newton / fixed-point / explicit ADE updates.** On the staggered FIT grid, $\mathbf{E}^n$, the linear auxiliary polarizations $\mathbf{p}_p^n = \mathbf{P}_p^n/\varepsilon_0$, and the Raman state $S^n$ are collocated at integer times $t^n = n\Delta t$, while $\mathbf{H}^{n+1/2}$ lives at half-integer times $t^{n+1/2} = (n + \tfrac{1}{2})\Delta t$. Within each time step $n \to n+1$:
+
+1. *Pre-step capture (`_capture_nonlinear_E`):* Before the standard explicit step overwrites `solver.E`, each registered nonlinear group records $E_{\text{old}} = E^n$ on its edge indices.
+2. *Standard leapfrog step:* Faraday's law advances $\mathbf{H}^{n-1/2} \to \mathbf{H}^{n+1/2}$ and Ampère's law computes the trial electric field $E^*$ using the static inverse permittivity $\varepsilon_s^{-1}$ stored in `solver.ieps`.
+3. *Raman ADE update centered at $t^n$:* Using second-order central differences, $S^{n+1}$ is updated explicitly from $|\mathbf{E}^n|^2$ before solving for $\mathbf{E}^{n+1}$:
+   ```math
+   S^{n+1} = \frac{\big(2 - \Omega_R^2\Delta t^2\big)S^n - \big(1 - \Gamma_R\Delta t\big)S^{n-1} + \Omega_R^2\Delta t^2\big|\mathbf{E}^n\big|^2}{1 + \Gamma_R\Delta t} .
+   ```
+4. *Linear ADE accumulation and cubic constitutive inversion at $t^{n+1}$ (`_update_nonlinear`):* For an edge with subcell fill fraction $w \in (0, 1]$ over background $\varepsilon_{\text{bg}}$, let $\varepsilon_e = (1 - w)\varepsilon_{\text{bg}} + w\varepsilon_\infty$ and $s = \sigma\Delta t/(2\varepsilon_0) + \sum_D \beta_D$. Subtracting the updated linear pole increments defines the known normalized displacement numerator
+   ```math
+   y_e = \varepsilon_{s,e}\big(E_e^* - E_e^n\big) + \big(\varepsilon_e - w s\big)E_e^n - w\sum_L\big(p_{L,e}^{n+1} - p_{L,e}^n\big) - w\sum_D (\kappa_D - 1)p_{D,e}^n ,
+   ```
+   which equals $\big[\beta_e + \alpha_e |\mathbf{E}_e^{n+1}|^2\big]E_e^{n+1}$ with
+   ```math
+   \beta_e = \varepsilon_e + w s + w f_R \chi^{(3)} S_e^{n+1}, \qquad
+   \alpha_e = w(1 - f_R)\chi^{(3)} .
+   ```
+   Because $\mathbf{E}^{n+1}$ is parallel to $\mathbf{y}$, taking the magnitude $x = |\mathbf{E}^{n+1}| \ge 0$ and $Y = |\mathbf{y}| \ge 0$ reduces the vector constitutive inversion to the scalar depressed cubic
+   ```math
+   f(x) \equiv \alpha_e x^3 + \beta_e x - Y = 0 .
+   ```
+   Three solver strategies are provided via `KerrMaterial(..., method=...)`:
+   - `method='newton'` (default): Vectorized Newton–Raphson iteration starting from the linear trial predictor $x^{(0)} = Y/\beta_e$,
+     ```math
+     x^{(k+1)} = x^{(k)} - \frac{\alpha_e \big(x^{(k)}\big)^3 + \beta_e x^{(k)} - Y}{3\alpha_e \big(x^{(k)}\big)^2 + \beta_e}, \qquad
+     E_e^{n+1} = \frac{y_e}{\beta_e + \alpha_e x^2} ,
+     ```
+     which converges quadratically to machine precision ($\le 10^{-13}$) in 3–5 iterations and is monotonically well-posed ($f'(x) = 3\alpha_e x^2 + \beta_e > 0$) for all focusing Kerr media ($\alpha_e \ge 0, \beta_e > 0$).
+   - `method='fixed_point'`: Picard iteration $x^{(k+1)} = Y / \big(\beta_e + \alpha_e (x^{(k)})^2\big)$ [Taflove & Hagness, Ch. 9].
+   - `method='explicit_ade'`: Single-pass evaluation replacing $|\mathbf{E}^{n+1}|^2$ by the linear trial predictor $x^{(0)} = Y/\beta_e$, avoiding iteration at the cost of an $O(\Delta t\,\chi^{(3)}|\mathbf{E}|^2)$ time-lag error.
+
+When $\chi^{(3)} = 0$ and $f_R = 0$, $\alpha_e = 0$ and $E_e^{n+1} = y_e / \beta_e$ reproduces the linear `SolverFIT3D` update **bit-for-bit** (`max |diff| == 0.0`, verified in `test_zero_chi3_bit_for_bit_linear`).
+
+**Relation between $\chi^{(3)}$ and $n_2$ under the $\exp(+i\omega t)$ real-field convention (the $3/4$ factor).** In Wakis's time-domain solver, the electric field is real: for a monochromatic wave $E(z, t) = \operatorname{Re}[\tilde{E}_0 e^{i(\omega_0 t - k z)}] = |\tilde{E}_0|\cos\theta$, cubing the real field gives
+
+```math
+E^3(z, t) = |\tilde{E}_0|^3\cos^3\theta = |\tilde{E}_0|^3\left(\frac{3}{4}\cos\theta + \frac{1}{4}\cos 3\theta\right) = \operatorname{Re}\!\left[\frac{3}{4}|\tilde{E}_0|^2\tilde{E}_0\,e^{i\theta} + \frac{1}{4}\tilde{E}_0^3\,e^{i 3\theta}\right] .
+```
+
+The fundamental Fourier component at $\omega_0$ therefore experiences the effective relative permittivity $\varepsilon_{\text{eff}}(\omega_0) = \varepsilon_r + \frac{3}{4}\chi^{(3)}|\tilde{E}_0|^2$. Equating $\varepsilon_{\text{eff}} = (n_0 + \Delta n_{\text{NL}})^2 \simeq n_0^2 + 2 n_0 \Delta n_{\text{NL}}$ with $\Delta n_{\text{NL}} = n_2 I$ and the cycle-averaged optical intensity $I = \tfrac{1}{2}c\varepsilon_0 n_0|\tilde{E}_0|^2$ [W/m$^2$] gives (`chi3_to_n2`, `n2_to_chi3`, `spm_phase_shift`) [Boyd, 2020]:
+
+```math
+\Delta n_{\text{NL}} = \frac{3\chi^{(3)}}{8 n_0}|\tilde{E}_0|^2 = n_2 I, \qquad
+n_2 = \frac{3\chi^{(3)}}{4 c \varepsilon_0 n_0^2}\quad [\text{m}^2/\text{W}], \qquad
+\Delta\Phi_{\text{NL}} = n_2 k_0 I L .
+```
+
+Simultaneously, the $\tfrac{1}{4}\tilde{E}_0^3 e^{i 3\theta}$ polarization source drives **third-harmonic generation (THG)** at $3\omega_0$. In the undepleted-pump approximation across a slab of thickness $L$ with wavevector mismatch $\Delta k = k(3\omega_0) - 3 k(\omega_0) = (3\omega_0/c)[n(3\omega_0) - n(\omega_0)]$, the THG power conversion efficiency exhibits Maker fringes (`thg_conversion_efficiency`) [Boyd, 2020]:
+
+```math
+\eta_{\text{THG}}(L) = \frac{I_{3\omega}(L)}{I_\omega(0)} = \frac{9\omega_0^2\big(\chi^{(3)}\big)^2 I_\omega^2 L^2}{16\varepsilon_0^2 c^4 n_\omega^3 n_{3\omega}}\,\operatorname{sinc}^2\!\left(\frac{\Delta k L}{2}\right), \qquad \operatorname{sinc}(u) \equiv \frac{\sin u}{u} .
+```
+
+**Kerr cavity perturbation theory and effective nonlinear mode volume.** For a resonant dielectric cavity mode $\mathbf{E}(\mathbf{r}, t) = \operatorname{Re}[\tilde{\mathbf{E}}(\mathbf{r})e^{i\omega_0 t}]$ storing total electromagnetic energy $U = \tfrac{1}{2}\varepsilon_0\int \varepsilon_r(\mathbf{r})|\tilde{\mathbf{E}}(\mathbf{r})|^2\,dV$ [J], first-order perturbation theory (`effective_nonlinear_volume`, `kerr_cavity_frequency_shift`) gives the Kerr resonance frequency shift:
+
+```math
+\frac{\Delta\omega_{\text{NL}}}{\omega_0} = \frac{\Delta f_{\text{NL}}}{f_0} = -\frac{3\chi^{(3)}\int_{\text{NL}} |\tilde{\mathbf{E}}(\mathbf{r})|^4\,dV}{8\int \varepsilon_r(\mathbf{r})|\tilde{\mathbf{E}}(\mathbf{r})|^2\,dV} = -\frac{c n_2 U}{n_0^2 V_{\text{eff,NL}}}, \qquad
+V_{\text{eff,NL}} \equiv \frac{\left(\int \varepsilon_r(\mathbf{r})|\tilde{\mathbf{E}}(\mathbf{r})|^2\,dV\right)^2}{n_0^2 \int_{\text{NL}} \varepsilon_r(\mathbf{r})|\tilde{\mathbf{E}}(\mathbf{r})|^4\,dV} .
+```
+
+**FIT-informed Lugiato–Lefever Equation (LLE) for soliton microcombs (`solve_lle`).** Because comb formation in high-$Q$ microresonators unfolds over $10^5$–$10^6$ round trips, full-wave FIT supplies the resonator's cold-cavity dispersion $D_{\text{int}}(\mu) = \omega_\mu - \omega_0 - D_1\mu \simeq \tfrac{1}{2}D_2\mu^2 + \tfrac{1}{6}D_3\mu^3$, linewidths $(\kappa_0, \kappa_{\text{ex}}, \kappa = \kappa_0 + \kappa_{\text{ex}})$, and effective nonlinear mode volume $V_{\text{eff,NL}}$ to the dimensionless mean-field Lugiato–Lefever Equation [Herr et al., 2014; Chembo & Menyuk, 2013; Kippenberg et al., 2018]:
+
+```math
+\frac{\partial \Psi(\phi, \tau)}{\partial \tau} = -\big(1 + i\zeta_0\big)\Psi + i\frac{d_2}{2}\frac{\partial^2 \Psi}{\partial \phi^2} + \frac{d_3}{6}\frac{\partial^3 \Psi}{\partial \phi^3} + i|\Psi|^2\Psi + f ,
+```
+
+where $\tau = \kappa t / 2$, $\zeta_0 = 2(\omega_0 - \omega_p)/\kappa$ is the normalized pump detuning, and $d_2 = 2 D_2 / \kappa > 0$ is the normalized anomalous dispersion. `solve_lle` integrates this equation via a symmetric Strang split-step Fourier method (exact dispersion step in azimuthal mode number $\mu$ + RK4 nonlinear/pump step in angle $\phi$). On the red-detuned soliton step $\zeta_{\min} < \zeta_0 \le \zeta_{\max} = \frac{\pi^2}{8}f^2$, the single dissipative Kerr soliton profile and its $\operatorname{sech}^2$ comb spectrum (`lle_soliton_analytic`) are
+
+```math
+\Psi(\phi) \simeq \Psi_{\text{bg}} + \sqrt{2\zeta_0}\,e^{i\phi_0}\operatorname{sech}\!\left(\sqrt{\frac{2\zeta_0}{d_2}}\,\phi\right), \qquad
+|\Psi_\mu|^2 = \frac{d_2}{4}\operatorname{sech}^2\!\left(\frac{\pi\mu}{2}\sqrt{\frac{d_2}{2\zeta_0}}\right), \qquad
+\Delta\mu_{\text{FWHM}} = \frac{4\operatorname{arccosh}(\sqrt{2})}{\pi}\sqrt{\frac{2\zeta_0}{d_2}} \propto \sqrt{\frac{\zeta_0}{D_2}} .
+```
+
+**Validation** (`tests/test_073_nonlinear_kerr.py`, `tests/test_tut_05_11_kerr_microcomb.py`, `examples/013_kerr_nonlinear_optics.py`):
+- *(a) 1D self-phase modulation (SPM) & real-field $3/4$ factor:* Across four optical intensities in a $L = 6\ \mu\text{m}$ Kerr slab ($\varepsilon_r = 2.25$, $\chi^{(3)} = 2\times 10^{-18}\ \text{m}^2/\text{V}^2$), the 1D FIT nonlinear phase shift $\Delta\Phi_{\text{NL}}$ agrees with $\Delta\Phi_{\text{NL}} = n_2 k_0 I L$ to **$0.10\%$** max relative error (`1.02e-3`) for both `method='newton'` and `method='fixed_point'`. Mutating the $3/4$ factor to $1$ shifts the slope by $+33\%$ and fails the test.
+- *(b) 1D third-harmonic generation (THG) & Maker-fringe $\operatorname{sinc}^2(\Delta k L/2)$:* In a phase-matched slab ($\Delta k = 0$), the $3\omega_0$ conversion efficiency scales as $I_\omega^2 L^2$ within $4.2\%$ of the undepleted-pump formula. With a Lorentz pole introducing index dispersion $\Delta n = n(3\omega_0) - n(\omega_0) \ne 0$, the THG spatial profile oscillates with coherence length $L_c = \pi / |\Delta k|$ (`4.90%` peak error) and vanishes at $L = 2 L_c$.
+- *(c) Kerr cavity resonance shift in 1D Fabry–Pérot and 2D microring cavities:* In a 1D PEC cavity ($L = 1.5\ \mu\text{m}$) partially or fully filled with a Kerr dielectric, the `harminv`-extracted frequency shift matches $\Delta f_{\text{NL}} = -f_0 c n_2 U / (n_0^2 V_{\text{eff,NL}})$ to **$1.28\%$** across 3 field amplitudes; in the 2D TM microring ($R = 2.0\ \mu\text{m}, w = 0.60\ \mu\text{m}$), the 2D FIT Kerr shift agrees with $V_{\text{eff,NL}}$ perturbation theory to **$2.01\%$**.
+- *(d) Bit-for-bit linear limit at $\chi^{(3)} = 0$:* Setting $\chi^{(3)} = 0$ on `KerrMaterial` (with or without Lorentz poles) reproduces the linear `SolverFIT3D` electric and magnetic field arrays to `max |diff| == 0.0`.
+- *(e) Delayed Raman ADE & nonlinear energy positivity:* Under an impulsive step $|\mathbf{E}|^2(t) = E_0^2\Theta(t)$, the discrete Raman state $S^n$ matches the exact analytical step response of the damped oscillator to $2.4\times 10^{-3}$, and the instantaneous Kerr electromagnetic energy $W_{\text{Kerr}} = \int \big(\tfrac{1}{2}\varepsilon_0\varepsilon_\infty E^2 + \tfrac{3}{4}\varepsilon_0\chi^{(3)}E^4 + \tfrac{1}{2}\mu_0 H^2\big)dV$ remains bounded and positive in a closed PEC cavity.
+- *(f) FIT-informed LLE microcomb:* 2D FIT + `harminv` extracts the microring WGM resonances ($m = 14\text{--}20$, $f_0 = 214.34\text{ THz}$, $\text{FSR} = 10.32\text{ THz}$) to $0.08\%$–$0.29\%$ at $\Delta x = 20\text{ nm}$ ($0.0009\%$–$0.005\%$ after Richardson extrapolation) and anomalous dispersion $D_2/(2\pi) = +27.89\text{ GHz}$ ($22.44\%$ error at $\Delta x = 30\text{ nm}$, $14.32\%$ at $25\text{ nm}$, $9.59\%$ at $20\text{ nm}$, and $1.19\%$ after Richardson extrapolation to $+30.49\text{ GHz}$ vs $+30.85\text{ GHz}$ Bessel). Deriving $d_2 = 2 D_2/\kappa = 0.1391$ and $f = \sqrt{P_{\text{in}}/P_{\text{th}}} = 2.350$ directly from the FIT bus-coupled $Q_L = 534.2$ ($\kappa/(2\pi) = 401.06\text{ GHz}$) and $V_{\text{eff,NL}} = 1.290\ \mu\text{m}^3$ ($P_{\text{in}} = 3.521\text{ W}$), `solve_lle` produces the MI $\to$ chaotic breather $\to$ single-DKS sequence, matching the analytical $\operatorname{sech}$ pulse width to $6.74\%$, the $\operatorname{sech}^2$ spectral FWHM to $2.08\%$, and the $\Delta\mu_{\text{FWHM}} \propto D_2^{-1/2}$ exponent to $0.45\%$.
+
+![1D FIT Kerr self-phase modulation and Maker-fringe third-harmonic generation](img/kerr_spm_and_thg.png)
+
+![Kerr cavity resonance shift vs perturbation theory and Lugiato–Lefever soliton microcomb](img/kerr_cavity_shift_and_lle.png)
+
+**Limits & Failure Modes.**
+- *Differential permittivity positivity and defocusing blowup ($\varepsilon_e + 3\alpha |\mathbf{E}|^2 \le 0$).* For a focusing Kerr medium ($\chi^{(3)} > 0$), the instantaneous differential permittivity $\frac{dD}{dE} = \varepsilon_0(\varepsilon_e + 3\alpha |\mathbf{E}|^2)$ increases with field strength, which lowers the local wave speed $v = (\mu_0\,dD/dE)^{-1/2} < c/\sqrt{\varepsilon_e}$ and keeps the vacuum Courant step $\Delta t$ stable while guaranteeing a unique root of $f(x) = \alpha x^3 + \beta x - Y = 0$. For a strong defocusing nonlinearity ($\chi^{(3)} < 0$) or when $|\chi^{(3)}||\mathbf{E}|^2 \gtrsim \varepsilon_e / 3$, $\frac{dD}{dE}$ can approach zero or turn negative, violating hyperbolicity and the Courant limit and causing immediate numerical blowup.
+- *Explicit trial-field lag (`method='explicit_ade'`) vs implicit Newton (`method='newton'`).* The single-pass `'explicit_ade'` option evaluates $|\mathbf{E}|^2$ from the linear trial predictor $E^*$ rather than solving the implicit cubic at $t^{n+1}$. When the nonlinear index shift exceeds $\Delta n_{\text{NL}} / n_0 \gtrsim 0.05$, this time lag introduces artificial phase error and high-field instability; use `method='newton'` (the default) for strong fields.
+- *Unresolved higher harmonics ($3\omega_0, 5\omega_0, \dots$) and optical carrier shock wave formation.* Because full-wave FIT evolves the real electric field without a slowly varying envelope approximation, cubing $E(t)$ continuously generates odd harmonics ($3\omega_0, 5\omega_0, \dots$) and self-steepening carrier shocks [Taflove & Hagness, Ch. 9]. If the spatial grid resolves only the fundamental wavelength $\lambda_0/n_0$ at $20\text{ cells}/\lambda$ ($\approx 6.7\text{ cells}/\lambda$ at $3\omega_0$), the third harmonic experiences strong numerical grid dispersion; simulations targeting quantitative THG must resolve the shortest harmonic wavelength ($\ge 20\text{ cells}/\lambda_{3\omega}$).
+- *Cross-polarization coupling on staggered Yee/FIT edges.* With `coupling='edge'` (default), each electric edge solves its scalar cubic using its own component magnitude $|E_c|^2$, which is exact for linearly polarized 1D/2D TM or TE waves and avoids spatial interpolation across staggered cell locations. For elliptically polarized 3D fields where cross-phase modulation ($|\mathbf{E}|^2 = E_x^2 + E_y^2 + E_z^2$) is required, `coupling='isotropic'` reconstructs $|\mathbf{E}|^2$ at cell centers from the previous step's orthogonal components, introducing an $O(\Delta x^2, \Delta t)$ staggering approximation.
+- *Mean-field LLE validity limits.* The Lugiato–Lefever Equation assumes high cavity finesse ($\mathcal{F} = D_1/\kappa \gg 1$), small per-round-trip nonlinear phase shift, and a single transverse mode family. It breaks down when avoided mode crossings with other transverse/polarization families distort $D_{\text{int}}(\mu)$, when normal dispersion ($D_2 < 0$) prevents bright soliton formation, or when the laser detuning exceeds the maximum soliton existence limit $\zeta_{\max} = (\pi^2/8)f^2$.
+- *Supported solver backends.* `wakis.nonlinear` runs on the real-field CPU FIT stepper (standard, CPML, MKL, and MPI). Passing a nonlinear material to `use_gpu=True`, `fused=True`, `scheme='tete'`, `AdjointSimulation`, or complex-dtype fields raises `NotImplementedError`.
+
+References:
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House, Norwood, MA, Ch. 9 (2005).
+- R. M. Joseph and A. Taflove, "FDTD Maxwell's equations models for nonlinear electrodynamics and optics", *IEEE Trans. Antennas Propag.* **45**(3), 364–374 (1997), [doi:10.1109/8.558652](https://doi.org/10.1109/8.558652).
+- R. W. Boyd, *Nonlinear Optics*, 4th ed., Academic Press, San Diego, Chs. 2, 4 (2020).
+- T. Herr, V. Brasch, J. D. Jost, C. Y. Wang, N. M. Kondratiev, M. L. Gorodetsky and T. J. Kippenberg, "Temporal solitons in optical microresonators", *Nat. Photonics* **8**(2), 145–152 (2014), [doi:10.1038/nphoton.2013.343](https://doi.org/10.1038/nphoton.2013.343).
+- Y. K. Chembo and C. R. Menyuk, "Spatiotemporal Lugiato-Lefever formalism for Kerr-comb generation in whispering-gallery-mode resonators", *Phys. Rev. A* **87**(5), 053852 (2013), [doi:10.1103/PhysRevA.87.053852](https://doi.org/10.1103/PhysRevA.87.053852).
+- T. J. Kippenberg, A. L. Gaeta, M. Lipson and M. L. Gorodetsky, "Dissipative Kerr solitons in optical microresonators", *Science* **361**(6402), eaan8083 (2018), [doi:10.1126/science.aan8083](https://doi.org/10.1126/science.aan8083).
+
+
 ### Noise and time scaling in gain media
 
 Real lasers start oscillating from quantum spontaneous emission rather than an external coherent seed pulse, and their atomic upper-state lifetimes ($\tau_{21} \sim \text{ps–ns}$) exceed optical FDTD/FIT timesteps ($\Delta t \sim 0.05\text{–}0.1\text{ fs}$) by four to seven orders of magnitude. `FourLevelGain` (`wakis.gain`, `tests/test_074_gain_noise_and_scaling.py`, `examples/014_laser_noise_and_time_scaling.py`) addresses both problems through (1) a Fluctuation–Dissipation-Theorem (FDT) / quantum-Langevin stochastic polarization force (`spontaneous_emission=True`, `seed=...`) and (2) an explicit rate-equation lifetime acceleration transformation (`time_scale = s`, alias `lifetime_scale = s`).
@@ -4019,6 +4237,7 @@ References:
 - J. Andreasen and H. Cao, "Numerical study of amplified spontaneous emission and lasing in random media", *Phys. Rev. A* **82**(6), 063835 (2010), [doi:10.1103/PhysRevA.82.063835](https://doi.org/10.1103/PhysRevA.82.063835).
 - A. E. Siegman, *Lasers*, University Science Books, Mill Valley, CA, Chs. 2, 7, 11, 13 (1986).
 - L. A. Coldren, S. W. Corzine, and M. L. Mašanović, *Diode Lasers and Photonic Integrated Circuits*, 2nd ed., Wiley, Chs. 2, 5 (2012), [doi:10.1002/9781118148167](https://doi.org/10.1002/9781118148167).
+
 
 ### 💠 Three-Dimensional Coupled-Wave Theory for PCSELs (`wakis.pcsel_cwt`)
 

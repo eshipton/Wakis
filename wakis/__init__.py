@@ -17,11 +17,13 @@ from . import (
     geometry,
     gridFIT3D,
     inverse,
+    lattices,
     logger,
     lumped,
     material_library,
     materials,
     near2far,
+    nonlinear,
     pcsel_cwt,
     resonances,
     schematic,
@@ -51,10 +53,39 @@ from .gain import (
     fabry_perot_threshold_gain,
 )
 from .gridFIT3D import GridFIT3D
+from .lattices import (
+    BZPath,
+    CircularInclusion,
+    HexagonalLattice,
+    PWE2D,
+    berry_curvature_from_envelopes,
+    dirac_berry_curvature,
+    fill_circular_inclusions,
+    fit_berry_curvature_patch,
+    fit_supercell_bands_at_k,
+    translate_supercell_field,
+    unfold_signal_pair,
+    unfold_supercell_weight,
+)
 from .logger import Logger
 from .lumped import LumpedElement, LumpedPort
 from .mode_solver import ModeMonitor, ModeSource, solve_modes
 from .near2far import Near2FarMonitor
+from .nonlinear import (
+    KerrMaterial,
+    NonlinearMaterial,
+    chi3_to_n2,
+    effective_nonlinear_volume,
+    field_from_intensity,
+    kerr_cavity_frequency_shift,
+    lle_cw_bistability,
+    lle_soliton_analytic,
+    n2_to_chi3,
+    optical_intensity,
+    solve_lle,
+    spm_phase_shift,
+    thg_conversion_efficiency,
+)
 from .pcsel_cwt import (
     PCSELLayerStack,
     compute_cwt_band_structure,

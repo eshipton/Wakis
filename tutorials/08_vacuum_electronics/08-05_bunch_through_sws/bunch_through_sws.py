@@ -1,0 +1,676 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.16.0
+#   kernelspec:
+#     display_name: Python 3
+#     language: python
+#     name: python3
+# ---
+
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2024.                   #
+# ########################################### #
+
+# %% [markdown]
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb)
+#
+# # Tutorial 8.5 · An Electron Bunch Passing Through a Slow-Wave Structure: Beam–Wave Impedance
+#
+# In [Tutorial 6.2 · Slow-Wave Structure Cold Test](../../06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb) we computed the **Floquet–Bloch dispersion** $\omega(\beta_0)$, **group velocity** $v_g = \mathrm{d}\omega/\mathrm{d}\beta_0$, and **Pierce interaction impedance**
+#
+# $$
+# K_n(x_0, y_0) = \frac{|E_{z,n}(x_0, y_0)|^2}{2 \beta_n^2 P}, \qquad \beta_n = \beta_0 + \frac{2\pi n}{d},
+# $$
+#
+# solely from the source-free eigenmodes of a single periodic unit cell $z \in [0, d]$ with Bloch boundary conditions. In [Tutorial 8.2 · Cherenkov Radiation](../08-02_cherenkov_radiation/cherenkov_radiation.ipynb) and [Tutorial 8.4 · Smith–Purcell Radiation and the DLA Grating](../08-04_smith_purcell_dla/smith_purcell_dla.ipynb) we saw that a rigid sub-relativistic electron bunch (`wakis.sources.Beam`, velocity $u_0 = \beta c < c$) radiates whenever its space-time harmonic $k_z = \omega / u_0$ matches a guided or diffracted wave mode, and that `wakis.wakeSolver.WakeSolver` extracts the longitudinal wake potential $W_\parallel(s)$ and beam coupling impedance $Z_\parallel(\omega)$ directly from the fields excited by the bunch.
+#
+# In this tutorial we unite these two viewpoints: **a rigid electron bunch crossing a finite, matched slow-wave structure (SWS) of length $L = N d$ measures the cold-test Pierce impedance $K_n$ and group velocity $v_g$ independently, purely from the electromagnetic energy it loses**. This Lorentz-reciprocity link provides both a rigorous cross-check of the cold-test eigenmode solver and the physical bridge to self-consistent traveling-wave tube (TWT) convective gain and backward-wave oscillator (BWO) start-oscillation conditions in Tutorial 8.6.
+#
+# We demonstrate the complete workflow on two benchmark slow-wave structures reused directly from [Tutorial 6.2](../../06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb):
+# 1. **2D G-band staggered double-vane sheet-beam grating** after **Karetnikova *et al.*, *IEEE Trans. Electron Devices* **65**(6), 2129–2134 (2018)** ($d = 0.50\;\mathrm{mm}$, $20\;\mathrm{kV}$ sheet beam with $u_0 = 0.2719\,c$, synchronous with the $n = -1$ backward space harmonic at $f_s \approx 114.3\;\mathrm{GHz}$ and $v_g \approx -0.544\,c$).
+# 2. **3D V-band glide-symmetric staggered-pillar SWS** after **Marosi, Zuboraj, and Capolino (2025)** (`arXiv:2505.22927`, $d = 1.05\;\mathrm{mm}$, $5.2\;\mathrm{kV}$ sheet beam with $u_0 = 0.1416\,c$, broadband group-velocity-matched to the forward hybrid space harmonic with $v_g \approx +0.132\,c$ across $50\text{–}70\;\mathrm{GHz}$).
+#
+# ---
+#
+# ## Learning Goals
+#
+# 1. **Derive** from Lorentz reciprocity (Collin normal-mode excitation) why a harmonic beam current $I(z) = I\,e^{-j\omega z / u_0}$ traversing a matched periodic structure of length $L = N d$ radiates wave power $P_{\mathrm{wave}}(\omega) = \frac{1}{8}|I|^2 \beta_n^2 K_n L^2 \operatorname{sinc}^2(\Delta\beta L / 2)$, yielding a longitudinal beam–wave resistance $\operatorname{Re} Z_\parallel(\omega) = \frac{2 P_{\mathrm{wave}}}{|I|^2} = \frac{1}{4}\beta_n^2 K_n L^2 \operatorname{sinc}^2(\Delta\beta L / 2)$ with phase slip $\Delta\beta(\omega) = \omega/u_0 - \beta_n(\omega) \approx (\omega - \omega_s)(1/u_0 - 1/v_g)$.
+# 2. **Verify six quantitative consequences in 3D FIT** (`SolverFIT3D` + `Beam` + `WakeSolver` at $\beta < 1$ with smooth-pipe space-charge subtraction):
+#    - **(a)** Peak beam–wave resistance $\operatorname{Re} Z_\parallel(\omega_s) \propto L^2$ and spectral FWHM $\Delta f_{\mathrm{FWHM}} \propto 1/L$ across $N \in \{5, 10, 20, 40\}$ periods;
+#    - **(b)** Spectral linewidth $\Delta f_{\mathrm{FWHM}} = \frac{0.885895}{L\,|1/u_0 - 1/v_g|}$ determined **without free parameters** by the Tutorial 6.2 cold-test dispersion slope $v_g$;
+#    - **(c)** Independent extraction of on-axis $K_n(0)$ and off-axis sheet-beam-averaged $\langle K_n\rangle_{\mathrm{nodes}}$ from a multi-position beam-wake sweep across $y_0 \in \{0, 25, 50, 75\}\;\mu\mathrm{m}$: at $N = 20$ ($n_{\mathrm{feat}} = 4$), on-axis $K_{-1}(0) = 2.974\;\Omega$ differs by $2.53\%$ from Tutorial 6.2 L1 ($2.901\;\Omega$) and $\langle K_{-1}\rangle_{\mathrm{nodes}} = 3.582\;\Omega$ differs by $3.26\%$ ($0.72\%$ in transverse profile ratio), while noting that on the same $n_{\mathrm{feat}} = 4$ mesh $K_{-1}(0)$ varies with structure length by $+7.52\%$ between $N = 8$ ($2.767\;\Omega$) and $N = 20$ ($2.974\;\Omega$) and the residual port reflection $|\Gamma(f_s)| = 0.1854$ allows up to a $38.4\%$ worst-case coherent standing-wave bound (both exceeding $2.53\%$); at fixed $N = 8$, the non-monotone sequence $2.767, 2.629, 2.689\;\Omega$ across $n_{\mathrm{feat}} \in \{4, 6, 8\}$ defines a finest-level ($n_{\mathrm{feat}} \in \{6, 8\}$) converged band $K_{-1}(0) \in [2.629, 2.689]\;\Omega$ (spread $0.061\;\Omega$ or $2.28\%$, no Richardson order justified) that agrees with the Tutorial 6.2 L2 ($2.804\;\Omega$) and reference ($2.777\;\Omega$) cold tests within $4.09\text{–}6.25\%$ and $3.16\text{–}5.34\%$;
+#    - **(d)** Infinite-structure ($L \to \infty$) stopping power $\mathrm{d}W/\mathrm{d}z = \frac{q^2 \beta_n^2 K_n}{2\,|1/u_0 - 1/v_g|}$, the slow-wave waveguide analogue of Cherenkov (Tutorial 8.2) and Smith–Purcell (Tutorial 8.4) radiation;
+#    - **(e)** Backward-wave ($n = -1, v_g < 0$) vs forward-wave ($v_g > 0$) synchronism: full-cross-section smooth-waveguide Poynting flux closure ($E_{\mathrm{rad}} = E_{\mathrm{out}} - E_{\mathrm{in}}$ at the smooth-port monitor planes matching the bunch energy loss $W_{\mathrm{loss}}$ between the ports within **$4.2\%$** backward and **$2.6\%$** forward), off-axis odd-mode coupling $K_0(y_0 = 50\;\mu\mathrm{m})$, and narrower backward-wave spectral lines $|1/u_0 - 1/v_g| = 1/u_0 + 1/|v_g|$;
+#    - **(f)** Longitudinal loss factor $k_\parallel(\sigma_z) = \frac{1}{\pi}\int_0^\infty \operatorname{Re} Z_\parallel(\omega)\,|F(\omega)|^2\,\mathrm{d}\omega$ and Gaussian bunch form factor $|F(\omega)|^2 = \exp(-\omega^2\sigma_z^2/u_0^2)$.
+# 3. **Design and characterize matched SWS terminations** using adiabatic vane-height tapers into CPML, measure the residual port reflection $|\Gamma(\omega)|$ via a dedicated time-domain S-parameter run, and bound the reflection-induced systematic error on $\operatorname{Re} Z_\parallel(\omega_s)$ and $K_n$.
+# 4. **Validate two physical mutation checks**: (i) velocity detuning $u_0 \to (1 \pm 0.05)u_0$ shifts the synchronous peak by the predicted $\Delta f_s = \frac{f_s(\Delta u_0 / u_0)}{u_0(1/u_0 - 1/v_g)}$, and (ii) replacing matched ports with short-circuit PEC walls turns the continuous $\operatorname{sinc}^2$ spectrum into discrete Fabry–Pérot cavity resonances at $\beta_0 d = m\pi / N$ whose circuit $(R/Q)_m$ is linked directly to $K_n$.
+
+# %% [markdown]
+# ---
+#
+# ## Theory & Step-by-Step Derivations
+#
+# ### 1. Lorentz-Reciprocity Mode Excitation of a Matched Slow-Wave Structure *(derived here)*
+#
+# Consider a lossless, periodic slow-wave structure of period $d$ and active length $L = N d$ ($z \in [0, L]$), terminated at both ends ($z = 0$ and $z = L$) by non-reflecting matched transitions ($\Gamma = 0$). In the $e^{+j\omega t}$ phasor convention of [Tutorial 6.2](../../06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb) [1, 2], a unit-power Bloch eigenmode carrying time-averaged axial power $P > 0$ has electric field
+#
+# $$
+# \mathbf{E}_+(\mathbf{r}_\perp, z) = \sum_{n=-\infty}^{\infty} \mathbf{E}_n(\mathbf{r}_\perp)\,e^{-j\beta_n(\omega) z}, \qquad \beta_n(\omega) = \beta_0(\omega) + \frac{2\pi n}{d},
+# $$
+#
+# where each space harmonic $n$ has axial Pierce interaction impedance evaluated at transverse beam position $\mathbf{r}_{\perp,0} = (x_0, y_0)$ [1]:
+#
+# $$
+# K_n(\mathbf{r}_{\perp,0}) \equiv \frac{|E_{z,n}(\mathbf{r}_{\perp,0})|^2}{2 \beta_n^2 P} \quad [\Omega] \qquad \Longleftrightarrow \qquad |E_{z,n}(\mathbf{r}_{\perp,0})| = \beta_n \sqrt{2 P K_n(\mathbf{r}_{\perp,0})}.
+# $$
+#
+# Now let a rigid filamentary electron beam travel along $\mathbf{r}_\perp = \mathbf{r}_{\perp,0}$ at constant axial velocity $u_0 = \beta c$. A monochromatic current harmonic at angular frequency $\omega$,
+#
+# $$
+# \mathbf{J}(\mathbf{r}_\perp, z, \omega) = \hat{\mathbf{z}}\,I(\omega)\,\delta^{(2)}(\mathbf{r}_\perp - \mathbf{r}_{\perp,0})\,e^{-j\omega z / u_0},
+# $$
+#
+# excites the synchronous Bloch mode. By **Lorentz reciprocity** (Collin's normal-mode waveguide excitation theorem [4, Sec. 5.3]), the complex amplitude $a(\omega)$ of the radiated Bloch mode at the exit port ($z = L$ for a forward group velocity $v_g > 0$, or $z = 0$ for a backward wave $v_g < 0$, derived here) is
+#
+# $$
+# a(\omega) = -\frac{1}{4 P}\int_V \mathbf{E}_+^*(\mathbf{r}_\perp, z)\cdot\mathbf{J}(\mathbf{r}_\perp, z, \omega)\,\mathrm{d}V = -\frac{I(\omega)}{4 P}\sum_{m=-\infty}^{\infty} E_{z,m}^*(\mathbf{r}_{\perp,0}) \int_0^L e^{-j\left(\frac{\omega}{u_0} - \beta_m(\omega)\right)z}\,\mathrm{d}z.
+# $$
+#
+# Near Cherenkov synchronism with a single space harmonic $m = n$ ($\omega / u_0 \approx \beta_n(\omega)$), all non-synchronous harmonics $m \ne n$ oscillate rapidly with phase mismatch $|\Delta\beta_m| L \sim 2\pi |m - n| N \gg 1$ and average to $\mathcal{O}(N^{-1})$. Retaining the synchronous harmonic $n$ with phase-detuning wavenumber
+#
+# $$
+# \Delta\beta(\omega) \equiv \frac{\omega}{u_0} - \beta_n(\omega) \quad [\mathrm{rad/m}],
+# $$
+#
+# the longitudinal overlap integral over $z \in [0, L]$ evaluates to (*derived here*)
+#
+# $$
+# \int_0^L e^{-j\Delta\beta z}\,\mathrm{d}z = e^{-j\Delta\beta L / 2}\,L\,\operatorname{sinc}\!\left(\frac{\Delta\beta L}{2}\right), \qquad \operatorname{sinc}(x) \equiv \frac{\sin x}{x}.
+# $$
+#
+# Consequently, the complex mode amplitude is
+#
+# $$
+# a(\omega) = -\frac{I(\omega)\,E_{z,n}^*(\mathbf{r}_{\perp,0})\,L}{4 P}\,e^{-j\Delta\beta L / 2}\,\operatorname{sinc}\!\left(\frac{\Delta\beta L}{2}\right),
+# $$
+#
+# and the time-averaged electromagnetic power carried away by the excited slow wave is (*derived here*)
+#
+# $$
+# \boxed{P_{\mathrm{wave}}(\omega) = |a(\omega)|^2 P = \frac{|I(\omega)|^2\,|E_{z,n}(\mathbf{r}_{\perp,0})|^2\,L^2}{16 P}\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta L}{2}\right) = \frac{1}{8}|I(\omega)|^2 \beta_n^2 K_n L^2\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta L}{2}\right).}
+# $$
+#
+# At exact synchronism ($\Delta\beta = 0$, i.e. $\omega / u_0 = \beta_n$), this reduces to $P_{\mathrm{wave}}(\omega_s) = \frac{1}{8}|I|^2 \beta_n^2 K_n L^2$.
+#
+# ---
+#
+# ### 2. Longitudinal Beam–Wave Impedance $\operatorname{Re} Z_\parallel(\omega)$ and Wakis `WakeSolver` Normalization *(derived here)*
+#
+# In accelerator and vacuum-electronics wakefield theory, the **longitudinal coupling impedance** $Z_\parallel(\omega)$ of a structure of length $L$ is defined via the complex power lost by a harmonic beam current $I(z, t) = \operatorname{Re}\{I(\omega)\,e^{j(\omega t - \omega z / u_0)}\}$:
+#
+# $$
+# P_{\mathrm{loss}}(\omega) = -\frac{1}{2}\operatorname{Re}\!\left\{\int_V \mathbf{E}(\mathbf{r}, \omega)\cdot\mathbf{J}^*(\mathbf{r}, \omega)\,\mathrm{d}V\right\} \equiv \frac{1}{2}|I(\omega)|^2\,\operatorname{Re} Z_\parallel(\omega).
+# $$
+#
+# By global energy conservation in a lossless structure terminated in matched loads ($P_{\mathrm{loss}}(\omega) = P_{\mathrm{wave}}(\omega)$), we obtain the fundamental **beam–wave resistance formula** (*derived here*):
+#
+# $$
+# \boxed{\operatorname{Re} Z_\parallel(\omega) = \frac{2 P_{\mathrm{wave}}(\omega)}{|I(\omega)|^2} = \frac{1}{4}\beta_n(\omega)^2 K_n(\omega) L^2\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta(\omega) L}{2}\right) \quad [\Omega].}
+# $$
+#
+# Let us verify that `wakis.wakeSolver.WakeSolver` uses the **exact same normalization**. In Wakis, a rigid Gaussian bunch of total charge $q$ and RMS length $\sigma_z$,
+#
+# $$
+# \lambda_z(s) = \frac{q}{\sqrt{2\pi}\sigma_z}\exp\!\left(-\frac{s^2}{2\sigma_z^2}\right), \qquad I(\omega) = q\,F(\omega), \qquad F(\omega) = \exp\!\left(-\frac{\omega^2 \sigma_z^2}{2 u_0^2}\right),
+# $$
+#
+# traverses the structure along $t = (z - z_0 + s)/u_0$. `WakeSolver` computes the longitudinal wake potential $W_\parallel(s)$ (in $\mathrm{V/pC}$) and its Fourier transform $Z_\parallel(\omega)$ (in $\Omega$):
+#
+# $$
+# W_\parallel(s) = -\frac{1}{q}\int_0^L E_z\!\left(\mathbf{r}_{\perp,0}, z, t = \frac{z - z_0 + s}{u_0}\right)\mathrm{d}z, \qquad Z_\parallel(\omega) = \frac{\int_{-\infty}^{\infty} W_\parallel(s)\,e^{-j\omega s / u_0}\,\mathrm{d}(s/u_0)}{F(\omega)}.
+# $$
+#
+# Taking the real part of $Z_\parallel(\omega)$ for a point charge ($F(\omega) \to 1$) and substituting the radiated mode field $E_z(z, \omega) = a(\omega) E_{z,n}(\mathbf{r}_{\perp,0})\,e^{-j\beta_n z}$ along the synchronous trajectory $e^{j\omega z / u_0}$ gives (*derived here*)
+#
+# $$
+# \operatorname{Re} Z_\parallel(\omega) = -\operatorname{Re}\!\left\{\frac{1}{I(\omega)}\int_0^L E_z(\mathbf{r}_{\perp,0}, z, \omega)\,e^{j\omega z / u_0}\,\mathrm{d}z\right\} = \frac{|E_{z,n}(\mathbf{r}_{\perp,0})|^2 L^2}{8 P}\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta L}{2}\right) = \frac{1}{4}\beta_n^2 K_n L^2\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta L}{2}\right).
+# $$
+#
+# Thus Wakis `WakeSolver.Z` and the Lorentz-reciprocity power balance $2 P_{\mathrm{wave}} / |I|^2$ share the **exact factor of $1/4$** with no hidden $2\pi$ or factor-of-2 discrepancies.
+#
+# > **Important step for $\beta < 1$ in periodic structures:** Because a sub-relativistic bunch ($u_0 < c$) carries an intense, non-radiating pancake Coulomb self-field $E_z^{\mathrm{sc}} \propto (\gamma_0 \beta)^{-2}$, entering and exiting the finite computational domain of length $L$ generates artificial boundary transition spikes if integrated directly. Exactly as in [Tutorial 8.4](../08-04_smith_purcell_dla/smith_purcell_dla.ipynb), we perform a **paired reference subtraction**: we step the identical `Beam` through a smooth-walled reference pipe of the same transverse aperture $2a$ and grid, and integrate the scattered wakefield $E_z^{\mathrm{scat}}(z, t) = E_z^{\mathrm{SWS}}(z, t) - E_z^{\mathrm{pipe}}(z, t)$ over the active grating $z \in [z_{\mathrm{start}}, z_{\mathrm{end}}]$.
+#
+# ---
+#
+# ### 3. Consequences (a)–(f) Tested by our FIT Simulations *(derived here)*
+#
+# Expanding the dispersion relation $\beta_n(\omega)$ to first order around the synchronous intersection $\omega_s$ where $\beta_n(\omega_s) = \omega_s / u_0$, with group velocity $v_g \equiv (\mathrm{d}\beta_n / \mathrm{d}\omega)_{\omega_s}^{-1}$, gives the linearized phase-slip wavenumber (*derived here*):
+#
+# $$
+# \Delta\beta(\omega) = \frac{\omega}{u_0} - \beta_n(\omega) \approx (\omega - \omega_s)\left(\frac{1}{u_0} - \frac{1}{v_g}\right).
+# $$
+#
+# Six direct, falsifiable physical consequences follow immediately:
+#
+# #### (a) Quadratic Peak Scaling $\propto L^2$ and Inverse Linewidth Scaling $\propto L^{-1}$
+# At exact synchronism ($\omega = \omega_s, \Delta\beta = 0$), the peak longitudinal resistance grows **quadratically** with the interaction length $L = N d$:
+#
+# $$
+# \operatorname{Re} Z_\parallel(\omega_s) = \frac{1}{4}\beta_n(\omega_s)^2 K_n(\omega_s)\,L^2 \propto N^2,
+# $$
+#
+# because the bunch induces coherent wavelets in each of the $N$ unit cells that add in phase ($|a| \propto N \implies P_{\mathrm{wave}} \propto N^2$). Simultaneously, the first zeros of $\operatorname{sinc}^2(\Delta\beta L / 2)$ occur at $\Delta\beta L / 2 = \pm\pi$, and the half-maximum points $\operatorname{sinc}^2(x_{1/2}) = 1/2$ occur at $x_{1/2} \approx 1.3915574\;\mathrm{rad}$, so the full width at half maximum (FWHM) scales **inversely** with $L$ (*derived here*):
+#
+# $$
+# \boxed{\Delta f_{\mathrm{FWHM}} = \frac{2 x_{1/2}}{\pi\,L\,\left|\frac{1}{u_0} - \frac{1}{v_g}\right|} \approx \frac{0.885895}{L\,\left|\frac{1}{u_0} - \frac{1}{v_g}\right|} \propto N^{-1}.}
+# $$
+#
+# #### (b) Parameter-Free Linewidth Set by Group-Velocity Walk-Off $|1/u_0 - 1/v_g|$
+# Physically, $\tau_{\mathrm{walk}} = L\,|1/u_0 - 1/v_g| = |L/u_0 - L/v_g|$ is the **envelope walk-off time** between the rigid electron bunch (transit time $L/u_0$) and a wave packet travelling at the circuit group velocity $v_g$ (transit time $L/v_g$). Using the cold-test dispersion slope $v_g(\omega_s)$ from Tutorial 6.2 predicts $\Delta f_{\mathrm{FWHM}}$ with **zero adjustable parameters**.
+#
+# #### (c) Independent Extraction of Pierce Impedance $K_n$ and Off-Axis Sheet-Beam Averaging
+# Inverting the peak resistance formula extracts the Pierce impedance at the bunch transverse coordinate $y_0$ directly from the time-domain beam-wake simulation (*derived here*):
+#
+# $$
+# K_n(y_0) = \frac{4\,\operatorname{Re} Z_\parallel(\omega_s; y_0)}{\beta_n(\omega_s)^2\,L^2}, \qquad \beta_n(\omega_s) = \frac{\omega_s}{u_0}.
+# $$
+#
+# In a glide-symmetric TM slow wave with transverse evanescent decay constant $\gamma_{\perp,n} = \sqrt{\beta_n^2 - (\omega/c)^2}$, the longitudinal electric field of the $n = -1$ space harmonic varies across the tunnel height $y \in [-a, +a]$ as $E_{z,-1}(y) = E_{z,-1}(0)\cosh(\gamma_{\perp,-1} y)$ (whereas in a mirror-symmetric grating the fundamental $n = 0$ mode has odd transverse symmetry $E_{z,0}(y) \propto \sinh(\gamma_{\perp,0} y)$, vanishing on axis $y = 0$). Averaging $|E_{z,-1}(y)|^2$ over a uniform sheet beam of thickness $H_b$ ($y \in [-H_b/2, +H_b/2]$), as in Karetnikova *et al.* (2018) [2, Eq. (2)], yields the continuum **sheet-beam averaging factor** $\eta_{\mathrm{sheet}} > 1$, while Tutorial 6.2 (`sws_cold_test`) evaluates the discrete equal-weight node mean over the $M$ grid nodes $y_j \in [-H_b/2, +H_b/2]$ (*derived here*):
+#
+# $$
+# \langle K_n\rangle_{\mathrm{cosh}} = \frac{1}{H_b}\int_{-H_b/2}^{+H_b/2} K_n(y)\,\mathrm{d}y = \eta_{\mathrm{sheet}}\,K_n(0), \qquad \eta_{\mathrm{sheet}} = \frac{1}{2}\left(1 + \frac{\sinh(\gamma_{\perp,n} H_b)}{\gamma_{\perp,n} H_b}\right), \qquad \langle K_n\rangle_{\mathrm{nodes}} = \frac{1}{M}\sum_{j=1}^{M} K_n(y_j).
+# $$
+#
+# Running off-axis beam-wake simulations across all grid nodes $y_0 \in \{0, 25, 50, 75\}\;\mu\mathrm{m}$ in the upper half-sheet ($y_j \in \{-75, -50, -25, 0, +25, +50, +75\}\;\mu\mathrm{m}$ by symmetry) directly measures both the discrete 7-node average $\langle K_{-1}\rangle_{\mathrm{nodes}}$ (for exact like-with-like comparison against Tutorial 6.2) and the composite trapezoidal integral $\langle K_{-1}\rangle_{\mathrm{trapz}}$.
+#
+# #### (d) Infinite-Structure Limit ($L \to \infty$): Stopping Power $\mathrm{d}W/\mathrm{d}z$ vs Cherenkov & Smith–Purcell *(derived here)*
+# A point charge $q$ loses total electromagnetic energy $W = \frac{q^2}{\pi}\int_0^\infty \operatorname{Re} Z_\parallel(\omega)\,\mathrm{d}\omega$ when crossing the structure of length $L$. Using the distributional identity $\int_{-\infty}^{\infty} \operatorname{sinc}^2(\alpha \Omega L / 2)\,\mathrm{d}\Omega = \frac{2\pi}{|\alpha| L}$, we obtain for a large structure ($L \to \infty$) the distributional limit
+#
+# $$
+# \lim_{L\to\infty} L\,\operatorname{sinc}^2\!\left(\frac{(\omega - \omega_s)(1/u_0 - 1/v_g) L}{2}\right) = \frac{2\pi}{\left|\frac{1}{u_0} - \frac{1}{v_g}\right|}\,\delta(\omega - \omega_s).
+# $$
+#
+# Dividing the total energy loss $W$ by $L$ therefore yields an **L-independent stopping power (energy loss per unit length)** (*derived here*):
+#
+# $$
+# \boxed{\frac{\mathrm{d}W}{\mathrm{d}z} = \lim_{L\to\infty} \frac{q^2}{\pi L}\int_0^\infty \operatorname{Re} Z_\parallel(\omega)\,\mathrm{d}\omega = \frac{q^2 \beta_n(\omega_s)^2 K_n(\omega_s)}{2\,\left|\frac{1}{u_0} - \frac{1}{v_g}\right|} = \frac{q^2 \omega_s^2 K_n(\omega_s)}{2 u_0^2 \left|\frac{1}{u_0} - \frac{1}{v_g}\right|} \quad [\mathrm{J/m}].}
+# $$
+#
+# Notice how this formula unifies all three Cherenkov-type radiation tutorials in Chapter 8:
+# - In **unbounded or waveguide Cherenkov radiation** ([Tutorial 8.2](../08-02_cherenkov_radiation/cherenkov_radiation.ipynb)), a charge couples to a continuum or discrete set of dielectric modes where $v_p(\omega_s) = u_0$; each discrete waveguide mode contributes $\mathrm{d}W/\mathrm{d}z \propto q^2 |E_{z,m}|^2 / (P\,|1/u_0 - 1/v_g|)$.
+# - In **open-grating Smith–Purcell radiation** ([Tutorial 8.4](../08-04_smith_purcell_dla/smith_purcell_dla.ipynb)), the $n \le -1$ space harmonics lie inside the vacuum light cone and radiate into a continuum of polar angles $\theta$ with $\lambda(\theta) = (d/|n|)(\beta^{-1} - \cos\theta)$ and evanescent coupling $\propto \exp(-2\gamma_\perp h)$.
+# - In a **closed metallic slow-wave structure** (this tutorial), the $n = -1$ space harmonic lies outside the vacuum light cone ($\beta_{-1} > \omega/c$, evanescent across the beam tunnel with decay constant $\gamma_{\perp,-1} = \omega/(\beta\gamma c)$) and is trapped inside the corrugated waveguide, concentrating all synchronous Cherenkov/Smith–Purcell emission into a single guided mode of impedance $K_n$ and group velocity $v_g$.
+#
+# #### (e) Backward-Wave ($n = -1, v_g < 0$) vs Forward-Wave ($v_g > 0$) Synchronism
+# - In a **forward-wave SWS** ($v_g > 0$, used in TWT amplifiers), the wave packet co-propagates with the bunch ($u_0 > 0, v_g > 0$), so the inverse velocities **subtract**: $|1/u_0 - 1/v_g| = |1/u_0 - 1/|v_g||$, producing a broader bandwidth (and in the group-velocity-matched limit $v_g \to u_0$, ultra-wideband synchronism as in Marosi *et al.* [3]), while the radiated Poynting flux exits the **downstream** collector end ($P_z(z_{\mathrm{out}}) > 0$).
+# - In a **backward-wave SWS** ($v_g < 0$, used in BWOs), the phase velocity is positive ($v_{p,-1} = \omega/\beta_{-1} = u_0 > 0$) so the space-harmonic wave crests travel forward with the electrons, but the mode group velocity is negative ($v_g = \mathrm{d}\omega/\mathrm{d}\beta_0 < 0$). Consequently, the electromagnetic energy flows **upstream** out the gun end ($P_z(z_{\mathrm{in}}) < 0$), and the inverse velocities **add**:
+#
+# $$
+# \left|\frac{1}{u_0} - \frac{1}{v_g}\right| = \frac{1}{u_0} + \frac{1}{|v_g|},
+# $$
+#
+# producing a significantly **narrower** $\operatorname{sinc}^2$ spectral line for the same length $L$.
+#
+# #### (f) Longitudinal Loss Factor $k_\parallel(\sigma_z)$ and Gaussian Bunch Form Factor $|F(\omega)|^2$
+# For a finite Gaussian bunch of RMS length $\sigma_z$, coherent emission is suppressed at wavelengths shorter than $2\pi\sigma_z$ by the **bunch form factor** $|F(\omega)|^2 = \exp(-\omega^2 \sigma_z^2 / u_0^2)$, yielding the total longitudinal loss factor
+#
+# $$
+# k_\parallel(\sigma_z) = \frac{\Delta U_{\mathrm{bunch}}}{q^2} = \frac{1}{\pi}\int_0^\infty \operatorname{Re} Z_\parallel(\omega)\,\exp\!\left(-\frac{\omega^2 \sigma_z^2}{u_0^2}\right)\mathrm{d}\omega \quad [\mathrm{V/C}, \text{ or } \mathrm{V/pC} \text{ when multiplied by } 10^{-12}].
+# $$
+#
+# ---
+#
+# ### 4. Termination Reflection Bound and Mutation Identities *(derived here)*
+#
+# #### Port Reflection Error Bound
+# If each end of the finite SWS has a small residual voltage reflection coefficient $\Gamma(\omega)$ ($|\Gamma| \ll 1$), weak multi-pass Fabry–Pérot interference across the $N$-period cavity modifies the forward-wave amplitude by the round-trip denominator $1 - \Gamma^2 e^{-2j\beta_0 L}$. Bounding the maximum and minimum of $|(1 + \Gamma e^{-j\phi}) / (1 - \Gamma^2 e^{-2j\beta_0 L})|$ over all phases shows that the relative systematic error in the peak resistance $\operatorname{Re} Z_\parallel(\omega_s)$ and extracted $K_n$ is bounded by (*derived here*)
+#
+# $$
+# \boxed{\frac{|\Delta \operatorname{Re} Z_\parallel(\omega_s)|}{\operatorname{Re} Z_\parallel(\omega_s)} \le \frac{2|\Gamma(\omega_s)|}{1 - |\Gamma(\omega_s)|^2} \approx 2|\Gamma(\omega_s)|.}
+# $$
+#
+# #### Mutation 1 — Detuned Beam Velocity ($u_0 \to u_0 + \Delta u_0$)
+# Perturbing the beam velocity to $u_0' = u_0 + \Delta u_0$ shifts the synchronous intersection $\omega_s'/u_0' = \beta_n(\omega_s') \approx \beta_n(\omega_s) + (\omega_s' - \omega_s)/v_g$, shifting the impedance peak frequency by (*derived here*)
+#
+# $$
+# \boxed{\Delta f_s = \frac{\Delta\omega_s}{2\pi} \approx \frac{f_s\,(\Delta u_0 / u_0)}{u_0\left(\frac{1}{u_0} - \frac{1}{v_g}\right)}.}
+# $$
+#
+# Notice that for a backward wave ($v_g < 0$), $1/u_0 - 1/v_g = 1/u_0 + 1/|v_g| > 0$, so increasing the beam voltage ($\Delta u_0 > 0$) shifts the synchronous frequency **upward** ($\Delta f_s > 0$)—the classic voltage-tuning law of a backward-wave oscillator.
+#
+# #### Mutation 2 — Unmatched Reflecting Ends ($|\Gamma| = 1$) and Standing-Wave Cavity $(R/Q)_m$ *(derived here)*
+# If we remove the matched terminations and close the $N$-period SWS with short-circuit PEC walls at $z = 0$ and $z = L = N d$, the forward and backward Bloch waves form standing-wave cavity modes at discrete resonant phase advances [5]
+#
+# $$
+# \beta_0(\omega_m)\,d = \frac{m\pi}{N}, \qquad m = 0, 1, \dots, N.
+# $$
+#
+# Inside the shorted resonator, the standing wave is the superposition of a forward-propagating Bloch wave ($+P$) and a backward-propagating Bloch wave ($-P$). Because both waves carry equal stored energy per unit length $W = P / |v_g|$, the **total stored energy** in the $N$-period cavity is **twice** that of a single traveling wave (*derived here*):
+#
+# $$
+# U_m = 2\,W\,L = \frac{2 P L}{|v_g(\omega_m)|}.
+# $$
+#
+# Meanwhile, the electron bunch moving at $+u_0$ is synchronous **only** with the co-moving space harmonic $\beta_n(\omega_m) \approx \omega_m / u_0$ (the counter-propagating harmonic $-\beta_n$ has phase mismatch $\approx 2\omega_m / u_0$ and averages to zero), so the synchronous transit-time voltage across the cavity is $|V_m| = |E_{z,n}| L\,\operatorname{sinc}(\Delta\beta_m L / 2) = \beta_n\sqrt{2 P K_n}\,L\,\operatorname{sinc}(\Delta\beta_m L / 2)$. Substituting $|V_m|^2$ and $U_m$ into the circuit definition of $R/Q$ [5], $(R/Q)_{\mathrm{circuit},m} \equiv \frac{|V_m|^2}{2\omega_m U_m} = \frac{1}{2}(R/Q)_{\mathrm{linac},m}$, gives the exact **standing-wave $R/Q$ to traveling-wave $K_n$ identity** (*derived here*):
+#
+# $$
+# \boxed{\left(\frac{R}{Q}\right)_{\mathrm{circuit},m} = \frac{|V_m|^2}{2\omega_m U_m} = \frac{1}{2}\,\frac{\beta_n(\omega_m)^2 K_n(\omega_m) L\,|v_g(\omega_m)|}{\omega_m}\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta_m L}{2}\right).}
+# $$
+#
+# In the wakefield spectrum $\operatorname{Re} Z_\parallel(\omega)$, each lossless cavity mode $m$ contributes a delta-function (or ring-down-broadened) resonance with one-sided frequency integral $\mathcal{A}_m = \int_{\text{mode } m} \operatorname{Re} Z_\parallel(\omega)\,\mathrm{d}\omega = \frac{\pi}{2}\omega_m (R/Q)_{\mathrm{circuit},m}$. Dividing $\mathcal{A}_m$ by the cavity mode spacing (free spectral range) $\Delta\omega_{\mathrm{FSR}} = |v_g|\,\Delta\beta_0 = \frac{\pi |v_g|}{L}$ recovers the matched traveling-wave resistance identically (*derived here*):
+#
+# $$
+# \boxed{\frac{\mathcal{A}_m}{\Delta\omega_{\mathrm{FSR}}} = \frac{\frac{\pi}{2}\omega_m (R/Q)_{\mathrm{circuit},m}}{\pi |v_g| / L} = \frac{1}{4}\beta_n(\omega_m)^2 K_n(\omega_m) L^2\,\operatorname{sinc}^2\!\left(\frac{\Delta\beta_m L}{2}\right) = \operatorname{Re} Z_\parallel^{\mathrm{TW}}(\omega_m).}
+# $$
+
+# %%
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+from IPython.display import Image, Markdown, display
+
+TUTORIAL_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+if str(TUTORIAL_DIR) not in sys.path:
+    sys.path.insert(0, str(TUTORIAL_DIR))
+
+from _helpers import (
+    KaretnikovaGratingSpec,
+    MarosiGlideSWSSpec,
+    build_convergence_separation_markdown,
+    build_quantitative_summary_markdown,
+    load_cold_test_benchmarks,
+    relativistic_beam_velocity,
+)
+
+DATA_DIR = TUTORIAL_DIR / "data"
+FIG_DIR = TUTORIAL_DIR / "figures"
+
+spec_2d = KaretnikovaGratingSpec()
+spec_3d = MarosiGlideSWSSpec()
+u0_2d, gamma_2d = relativistic_beam_velocity(spec_2d.beam_voltage_v)
+u0_3d, gamma_3d = relativistic_beam_velocity(spec_3d.beam_voltage_v)
+cold_bench = load_cold_test_benchmarks()
+
+print(
+    f"Loaded Tutorial 6.2 Cold-Test Benchmarks:\n"
+    f"  1. 2D Karetnikova grating (V0 = {spec_2d.beam_voltage_v*1e-3:.1f} kV, u0/c = {cold_bench['u0_2d_over_c']:.4f}):\n"
+    f"     Glide n = -1 backward sync : f_s = {cold_bench['levels_2d']['L2']['f_sync_bwd_ghz']:.2f} GHz, "
+    f"v_g/c = {cold_bench['levels_2d']['L2']['vg_bwd_over_c']:.3f}, "
+    f"K_-1(0) = {cold_bench['levels_2d']['L1']['k_m1_on_axis_ohm']:.3f} Ohm (L1) / "
+    f"{cold_bench['levels_2d']['L2']['k_m1_on_axis_ohm']:.3f} Ohm (L2)\n"
+    f"     Sheet-beam <K_-1> (Hb=150 um): {cold_bench['levels_2d']['L1']['k_m1_beam_avg_ohm']:.3f} Ohm (L1) / "
+    f"{cold_bench['levels_2d']['L2']['k_m1_beam_avg_ohm']:.3f} Ohm (L2)\n"
+    f"  2. 3D Marosi V-band glide SWS (V0 = {spec_3d.beam_voltage_v*1e-3:.1f} kV, u0/c = {cold_bench['u0_3d_over_c']:.4f}):\n"
+    f"     Zero-detuning crossing     : f_s = {cold_bench['marosi_3d']['f_sync_ghz']:.2f} GHz, "
+    f"v_g/c = +{cold_bench['marosi_3d']['vg_over_c']:.3f}, "
+    f"K_n(f_s) = {cold_bench['marosi_3d']['k_n_on_axis_ohm']:.2f} Ohm"
+)
+
+# %% [markdown]
+# ---
+#
+# ## Simulation Setup, Meshing & Port Termination Justification
+#
+# ### 1. Geometry 1 — 2D Karetnikova G-Band Sheet-Beam Grating ($20\;\mathrm{kV}, u_0 = 0.2719\,c$)
+#
+# The first geometry is the planar staggered double-vane grating of **Karetnikova *et al.* (2018)** [2, Sec. II, Fig. 1, p. 2130]:
+# - Axial period $d = 0.50\;\mathrm{mm}$, vane thickness $l = 0.10\;\mathrm{mm}$, groove width $w = d - l = 0.40\;\mathrm{mm}$, vane height $h = 0.30\;\mathrm{mm}$, beam-tunnel half-height $a = 0.10\;\mathrm{mm}$ ($2a = 0.20\;\mathrm{mm}$), and sheet-beam thickness $H_b = 0.15\;\mathrm{mm}$ ($y \in [-75, +75]\;\mu\mathrm{m}$).
+# - The top row of vanes is shifted axially by $d/2 = 0.25\;\mathrm{mm}$ relative to the bottom row (**glide symmetry**). In our 2D planar model (`Nx = 1` periodic cell along $x$ of domain width `lx = 1.0e-3 m` and `width_scale = 1.0`), all impedances $Z_\parallel(\omega)$ and $K_n$ are reported **per $1.0\;\mathrm{mm}$ of transverse $x$-width** ($W_x = 1.0\;\mathrm{mm}$), matching the exact 2D per-millimeter normalization of [Tutorial 6.2](../../06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb) (note that for 3D enclosed rectangular waveguides, Tutorial 6.2 also cold-tested a $0.85\;\mathrm{mm}$-wide G-band waveguide with a $0.75\;\mathrm{mm}$ beam width).
+# - Our grid uses $\Delta z = 25\;\mu\mathrm{m}$ ($20\;\mathrm{cells/period}$, $\ge 105\;\mathrm{cells}/\lambda_0$ at $f_s = 114.2\;\mathrm{GHz}$ and $4.0\;\mathrm{cells}$ across the $100\;\mu\mathrm{m}$ vane thickness) and a locally refined graded $y$-mesh (`graded_axis`) with $\Delta y_{\min} = 25\;\mu\mathrm{m}$ across the beam tunnel and vane tips. All `data/task_0*.json` and `data/summary_metrics.json` files are reproducibly generated by the committed driver script `generate_data.py` (which also supports `--quick` for fast CI verification).
+#
+# The figures below (`00a_setup_geometry.png` and `00b_setup_mesh_and_excitation.png`) and the accompanying setup table show the complete 2D FIT domain, conformal PEC vanes, 2-stage adiabatic vane-height tapers into CPML, rigid `Beam` trajectory, `WakeSolver` integration line, and full-cross-section smooth-waveguide Poynting flux planes:
+
+# %%
+display(Image(filename=str(FIG_DIR / "00a_setup_geometry.png"), width=960))
+display(Image(filename=str(FIG_DIR / "00b_setup_mesh_and_excitation.png"), width=960))
+display(Markdown((FIG_DIR / "00_setup_table.md").read_text()))
+
+# %% [markdown]
+# ### 2. Geometry 2 — 3D Marosi V-Band Staggered-Pillar Glide SWS ($5.2\;\mathrm{kV}, u_0 = 0.1416\,c$)
+#
+# The second geometry is the 3D enclosed V-band glide-symmetric slow-wave structure of **Marosi *et al.* (2025)** [3, Table I]:
+# - Rectangular waveguide housing $a_{\mathrm{wg}} = 1.40\;\mathrm{mm} \times b_{\mathrm{wg}} = 0.80\;\mathrm{mm}$, period $d = 1.05\;\mathrm{mm}$, with two pairs of transverse PEC pillars per period shifted by $d/2 = 0.525\;\mathrm{mm}$ along $z$ and alternating between the $-x$ and $+x$ sidewalls ($w_{\mathrm{pillar}} = 1.08\;\mathrm{mm}$, $l_{\mathrm{pillar}} = 0.27\;\mathrm{mm}$, thickness $t_{\mathrm{pillar}} = 0.10\;\mathrm{mm}$, and $0.10\;\mathrm{mm}$ clearance from the $0.10\;\mathrm{mm}$-thick sheet beam).
+# - Our 3D graded mesh (`build_3d_marosi_axes`) uses $\Delta y_{\min} = 25\;\mu\mathrm{m}$ across the $100\;\mu\mathrm{m}$ pillar thickness and $100\;\mu\mathrm{m}$ beam-pillar clearance ($4.0\;\mathrm{cells}$ across every smallest vertical feature) and $20\;\mathrm{cells/period}$ along $z$ ($\sim 91\;\mathrm{cells}/\lambda_0$ at $65\;\mathrm{GHz}$).
+
+# %%
+display(Image(filename=str(FIG_DIR / "00a_setup_geometry_marosi.png"), width=960))
+display(Image(filename=str(FIG_DIR / "00b_setup_mesh_and_excitation_marosi.png"), width=960))
+display(Markdown((FIG_DIR / "00_setup_table_marosi.md").read_text()))
+
+# %% [markdown]
+# ### 3. Termination Trade-Off & S-Parameter Reflection Measurement
+#
+# Terminating a finite periodic slow-wave structure without reflections is nontrivial because a CPML absorber is impedance-matched to a **smooth** waveguide, whereas the corrugated SWS has a Bloch wave impedance that varies strongly with frequency. Two main strategies exist:
+# 1. **Smooth-waveguide sections with adiabatic geometric tapers into CPML** (used here): gradually ramping the vane height $h_k$ from zero in the smooth buffer waveguide up to the full height $h$ over $N_{\mathrm{taper}}$ transition periods adiabatically transforms the smooth-pipe $\mathrm{TM}$ mode into the corrugated Bloch mode before entering the active $N$-period section, while keeping the active SWS completely lossless.
+# 2. **Long distributed conductivity/magnetic-loss tapers**: adding artificial ohmic loss $\sigma(z)$ inside many extra SWS periods damps outgoing waves, but requires long buffer regions (increasing cell count and runtime) and can perturb the evanescent space-charge tail of a $\beta < 1$ bunch near the entrance/exit planes.
+#
+# To quantify the residual reflection $\Gamma(\omega)$ of the exact production 2-stage vane-height taper ($h_{\mathrm{taper}} = [0.25h, 0.55h]$ at the entrance and $[0.55h, 0.25h]$ at the exit) versus an abrupt untapered SWS-to-smooth-waveguide junction, Task 1 excites the periodic grating with a broadband TM wave packet and extracts $|\Gamma(\omega)| = |\widetilde{E}_y^{\mathrm{refl}}(\omega)| / |\widetilde{E}_y^{\mathrm{PEC}}(\omega)|$ directly against a shorted-PEC reference termination (with no denominator floor and no clipping):
+
+# %%
+t1_data = json.loads((DATA_DIR / "task_01_termination_reflection.json").read_text())
+display(Image(filename=str(FIG_DIR / "01_termination_reflection_gamma.png"), width=960))
+
+print(
+    f"Task 1 — SWS Port Termination Reflection Summary (taper = {t1_data['taper_scales']}, f_sync = {t1_data['f_sync_ghz']:.2f} GHz):\n"
+    f"  Abrupt SWS-to-smooth transition : |Gamma(f_s)| = {t1_data['gamma_abrupt_at_sync']:.4f} "
+    f"-> peak Z error bound = {t1_data['rel_error_bound_abrupt']*100:.1f}%\n"
+    f"  2-stage tapered transition      : |Gamma(f_s)| = {t1_data['gamma_tapered_at_sync']:.4f} "
+    f"-> peak Z error bound = {t1_data['rel_error_bound_tapered']*100:.1f}%\n"
+    f"  Reflection reduction factor     : {t1_data['reduction_factor_abrupt_over_tapered']:.2f}x "
+    f"(wall time = {t1_data['wall_time_s']:.2f} s)"
+)
+
+# %% [markdown]
+# As shown in Figure 1, an abrupt transition reflects $|\Gamma_{\mathrm{abrupt}}(f_s)| = 39.05\%$ of the synchronous wave amplitude at the nearest FFT bin $f_s = 113.29\;\mathrm{GHz}$ to the cold-test crossing $114.09\;\mathrm{GHz}$ (giving a worst-case coherent round-trip Fabry–Pérot bound $2|\Gamma|/(1-|\Gamma|^2) = 92.1\%$ on $\operatorname{Re} Z_\parallel$), whereas the compact 2-stage vane taper $[0.25h, 0.55h]$ reduces $|\Gamma_{\mathrm{taper}}(f_s)|$ by **$2.11\times$** to $18.54\%$ (passband average $|\Gamma| = 16.18\%$), cutting the worst-case coherent standing-wave ripple bound to $38.4\%$ while adding only 2 transition periods per end.
+
+# %% [markdown]
+# ---
+#
+# ## Results · 2D Karetnikova G-Band Grating ($20\;\mathrm{kV}, u_0 = 0.2719\,c$)
+#
+# ### 1. Consequences (a) & (b): $\operatorname{Re} Z_\parallel(f)$ vs Analytic $\operatorname{sinc}^2$, Peak $\propto L^2$, and Linewidth $\propto 1/L$
+#
+# We inject a rigid $20\;\mathrm{kV}$ electron bunch ($u_0 = 0.2719\,c$, $q = 1\;\mathrm{pC}$, $\sigma_z = 0.15\;\mathrm{mm}$) on axis ($y = 0$) through $N \in \{5, 10, 20, 40\}$ active grating periods ($L \in \{2.5, 5.0, 10.0, 20.0\}\;\mathrm{mm}$). Figure 2 compares the `WakeSolver` longitudinal resistance $\operatorname{Re} Z_\parallel(f)$ (per $1.0\;\mathrm{mm}$ of $x$-width) directly against our parameter-free analytical formula
+#
+# $$
+# \operatorname{Re} Z_\parallel(\omega) = \frac{1}{4}\beta_{-1}^2 K_{-1}(0)\,L^2\,\operatorname{sinc}^2\!\left(\frac{(\omega - \omega_s)(1/u_0 - 1/v_g) L}{2}\right)
+# $$
+#
+# evaluated using the Tutorial 6.2 cold-test parameters ($K_{-1}(0) = 2.901\;\Omega$ at matched L1 grid resolution, $v_g = -0.544\,c$), and plots the peak resistance $\operatorname{Re} Z_\parallel(\omega_s)$ and spectral FWHM $\Delta f_{\mathrm{FWHM}}$ versus $L = N d$ on log–log axes:
+
+# %%
+t2_data = json.loads((DATA_DIR / "task_02_2d_length_sweep.json").read_text())
+display(Image(filename=str(FIG_DIR / "02_re_z_vs_sinc2_length_sweep.png"), width=960))
+
+print(
+    f"Task 2 — Interaction Length Sweep Summary (N in {t2_data.get('n_periods_list', [int(k) for k in t2_data['runs']])}):\n"
+    f"  Log-log slope of Peak Re Z_|| vs L : FIT = {t2_data['power_law_slope_peak_vs_L']:.4f} vs theory = 2.0000 "
+    f"(rel. error = {abs(t2_data['power_law_slope_peak_vs_L'] - 2.0)/2.0*100:.2f}%)\n"
+    f"  Log-log slope of FWHM df vs L      : FIT = {t2_data['power_law_slope_fwhm_vs_L']:.4f} vs theory = -1.0000 "
+    f"(rel. error = {abs(t2_data['power_law_slope_fwhm_vs_L'] + 1.0)*100:.2f}%)"
+)
+for n_str in ["5", "10", "20", "40"]:
+    r = t2_data["runs"][n_str]
+    n_val = int(n_str)
+    z_cold_l1 = t2_data["cold_test_L1"]["z_peak_per_n2_on_axis_ohm"] * (n_val**2)
+    fwhm_cold_l2 = t2_data["cold_test_L2"]["fwhm_times_n_ghz"] / n_val
+    print(
+        f"  N = {n_val:2d} (L = {r['active_length_m']*1e3:5.2f} mm): "
+        f"f_pk = {r['f_pk_ghz']:.2f} GHz, Re Z_pk = {r['re_z_pk_ohm']:8.2f} Ohm "
+        f"(cold L1 = {z_cold_l1:8.2f} Ohm), "
+        f"FWHM = {r['fwhm_ghz']:5.2f} GHz (cold L2 = {fwhm_cold_l2:5.2f} GHz)"
+    )
+
+# %% [markdown]
+# Both scaling laws hold across the full $8\times$ range in structure length ($64\times$ range in peak impedance):
+# - **Peak resistance $\propto L^2$:** The fitted log–log slope is **$2.0099$** versus the exact theoretical slope of **$2.0000$** ($0.49\%$ relative error).
+# - **Spectral width $\propto L^{-1}$:** The fitted log–log slope is **$-0.9873$** versus the exact theoretical slope of **$-1.0000$** ($1.27\%$ relative error), and the measured linewidths match the parameter-free cold-test group-velocity walk-off prediction $\Delta f_{\mathrm{FWHM}} = 0.8859 / (L\,|1/u_0 - 1/v_g|)$ within $2.9\text{–}5.5\%$ across all four lengths.
+
+# %% [markdown]
+# ### 2. Consequences (c), (d) & (f): On-Axis & Off-Axis Sheet-Beam Pierce Impedance $K_{-1}$, Stopping Power $\mathrm{d}W/\mathrm{d}z$, and Loss Factor $k_\parallel(\sigma_z)$
+#
+# To compare the sheet-beam-averaged Pierce impedance $\langle K_{-1}\rangle$ directly against Tutorial 6.2 on identical terms, Task 2 sweeps the bunch transverse position across all grid nodes inside the $H_b = 150\;\mu\mathrm{m}$ sheet beam ($y_0 \in \{0, 25, 50, 75\}\;\mu\mathrm{m}$ at $N = 20$, covering all 7 L1 nodes $y_j \in \{-75, -50, -25, 0, +25, +50, +75\}\;\mu\mathrm{m}$ by symmetry):
+# - **On-axis $K_{-1}(0)$ and finite-length / port-reflection systematic bounds:** At $N = 20$ ($n_{\mathrm{feat}} = 4$), the extracted on-axis Pierce impedance $K_{-1}(0) = 2.974\;\Omega$ differs by **$2.53\%$** from the Tutorial 6.2 L1 cold-test value $2.901\;\Omega$. However, at the identical $n_{\mathrm{feat}} = 4$ mesh resolution, $K_{-1}(0)$ depends on the structure length $N$ ($N = 8 \to 2.767\;\Omega$, $N = 20 \to 2.974\;\Omega$, non-monotone in $N$: $K = 2.895, 2.767, 2.951, 2.974, 2.976\;\Omega$ for $N = 5, 8, 10, 20, 40$, so $N = 8$ is the low outlier and $N = 5 \to 40$ changes by only $+2.8\%$; cause not identified. The mesh band below is computed at $N = 8$, which sits $4.6\%$ below the $N \ge 10$ plateau), and the residual port reflection $|\Gamma(f_s)| = 0.1854$ allows up to a $2|\Gamma|/(1-|\Gamma|^2) = \mathbf{38.4\%}$ worst-case coherent standing-wave bound; both systematic effects exceed the $2.53\%$ single-length difference at $N = 20$.
+# - **Measured off-axis beam profile:** The extracted $K_{-1}(y_0)$ rises from $K_{-1}(0) = 2.974\;\Omega$ on axis to $3.119\;\Omega$ ($25\;\mu\mathrm{m}$), $3.559\;\Omega$ ($50\;\mu\mathrm{m}$), and $4.370\;\Omega$ ($75\;\mu\mathrm{m}$), following the analytical evanescent profile $\cosh^2(\gamma_{\perp,-1} y_0)$ (Figure 3b, green circles).
+# - **Discrete 7-node mean vs continuum integral:** Tutorial 6.2's cold test computes $\langle K_{-1}\rangle$ via an equal-weight average (`np.mean`) over the grid nodes in $|y| \le 75\;\mu\mathrm{m}$, which weights the high-field boundary nodes $y = \pm 75\;\mu\mathrm{m}$ equally with interior nodes and yields a profile ratio $\langle K_{-1}\rangle_{\mathrm{nodes}} / K_{-1}(0) = 1.1955$ on L1 ($7$ nodes, $\Delta y = 25\;\mu\mathrm{m}$) and $1.1709$ on L2 ($13$ nodes, $\Delta y = 12.5\;\mu\mathrm{m}$), compared with the continuum integral ratio $\eta_{\mathrm{sheet}} = \frac{1}{2}[1 + \sinh(\gamma_{\perp,-1} H_b)/(\gamma_{\perp,-1} H_b)] = 1.1461$. Taking the identical 7-node equal-weight mean of our off-axis beam-wake runs gives **$\langle K_{-1}\rangle_{\mathrm{nodes}} = 3.582\;\Omega$** with measured profile ratio **$1.2041$**—agreeing with Tutorial 6.2 L1 ($\langle K_{-1}\rangle_{\mathrm{L1}} = 3.468\;\Omega$, ratio $1.1955$) within **$3.26\%$** in absolute value and **$0.72\%$** in profile ratio. Composite trapezoidal integration across the measured beam nodes gives $\langle K_{-1}\rangle_{\mathrm{trapz}} = 3.450\;\Omega$ (ratio $1.1599$), and the continuum formula $K_{-1}(0)\eta_{\mathrm{sheet}}$ gives $3.408\;\Omega$.
+#
+# Figures 3 and 4 present the on-axis and off-axis Pierce impedance benchmarks alongside the unattenuated stopping power $\mathrm{d}W/\mathrm{d}z$ and Gaussian-bunch loss factor $k_\parallel(\sigma_z)$:
+
+# %%
+display(Image(filename=str(FIG_DIR / "03_pierce_k_and_sheet_beam_profile.png"), width=960))
+display(Image(filename=str(FIG_DIR / "04_stopping_power_and_loss_factor.png"), width=960))
+
+t5_data = json.loads((DATA_DIR / "task_05_mesh_convergence.json").read_text())
+r20 = t2_data["runs"]["20"]
+r40 = t2_data["runs"]["40"]
+y_sw = t2_data["sheet_beam_y_sweep"]
+c_l1 = t2_data["cold_test_L1"]
+c_l2 = t2_data["cold_test_L2"]
+k_n8_nf4 = t5_data["runs"]["uniform_conformal_nf4"]["k_on_axis_beam_ohm"]
+err_k_n20_l1 = abs(r20["k_on_axis_beam_ohm"] - c_l1["k_m1_on_axis_ohm"]) / c_l1["k_m1_on_axis_ohm"] * 100.0
+len_shift_n20_vs_n8 = (r20["k_on_axis_beam_ohm"] - k_n8_nf4) / k_n8_nf4 * 100.0
+err_dw_dz_n20 = (
+    abs(r20["dw_dz_unattenuated_j_per_m"] - t2_data["dw_dz_analytic_unattenuated_j_per_m"])
+    / t2_data["dw_dz_analytic_unattenuated_j_per_m"]
+    * 100.0
+)
+print(
+    f"Consequences (c), (d), (f) at N = 20 (L = {r20['active_length_mm']:.1f} mm) and N = 40 (L = {r40['active_length_mm']:.1f} mm):\n"
+    f"  On-axis K_-1(0) from beam wake (N=20) : {r20['k_on_axis_beam_ohm']:.3f} Ohm "
+    f"vs 6.2 cold-test L1 = {c_l1['k_m1_on_axis_ohm']:.3f} Ohm (diff = {err_k_n20_l1:.2f}%; "
+    f"same-mesh N=8 -> {k_n8_nf4:.3f} Ohm, length shift = {len_shift_n20_vs_n8:+.2f}%, "
+    f"Gamma bound = {t1_data['rel_error_bound_tapered']*100:.1f}%)\n"
+    f"  Finest-level band at fixed N=8 (nf=6,8): [{t5_data['k_on_axis_finest_band_min_ohm']:.3f}, {t5_data['k_on_axis_finest_band_max_ohm']:.3f}] Ohm "
+    f"(spread {t5_data['k_on_axis_finest_band_rel_spread']*100:.2f}%, mesh shift {t5_data['rel_diff_nf6_vs_nf4_same_N']*100:+.2f}% to {t5_data['rel_diff_nf8_vs_nf4_same_N']*100:+.2f}% vs N=8 nf=4; "
+    f"vs 6.2 L2 = {c_l2['k_m1_on_axis_ohm']:.3f} Ohm: {t5_data['rel_diff_finest_band_vs_cold_L2_min']*100:.2f}-{t5_data['rel_diff_finest_band_vs_cold_L2_max']*100:.2f}%)\n"
+    f"  Off-axis K_-1(y0) sweep (0..75 um)    : {[round(x, 3) for x in y_sw['k_m1_at_y_ohm']]} Ohm\n"
+    f"  Measured 7-node sheet avg <K_-1>_nodes: {y_sw['k_sheet_avg_7node_mean_ohm']:.3f} Ohm (ratio {y_sw['ratio_7node_mean_over_axis']:.4f}) "
+    f"vs 6.2 L1 = {c_l1['k_m1_beam_avg_ohm']:.3f} Ohm (ratio {c_l1['k_m1_ratio_beam_over_axis']:.4f}, value diff = {y_sw['rel_diff_7node_vs_cold_L1']*100:.2f}%, ratio diff = {y_sw['rel_diff_ratio_7node_vs_cold_L1']*100:.2f}%)\n"
+    f"  Trapezoidal / continuum sheet avg     : trapz = {y_sw['k_sheet_avg_trapz_ohm']:.3f} Ohm (ratio {y_sw['ratio_trapz_over_axis']:.4f}), "
+    f"K(0)*eta_sheet = {r20['k_sheet_avg_beam_ohm']:.3f} Ohm (eta = {y_sw['eta_sheet_continuum']:.4f})\n"
+    f"  Stopping power dW/dz (q = 1 pC, N=20) : {r20['dw_dz_unattenuated_j_per_m']*1e9:.3f} nJ/m "
+    f"(N=40: {r40['dw_dz_unattenuated_j_per_m']*1e9:.3f} nJ/m) vs analytic {t2_data['dw_dz_analytic_unattenuated_j_per_m']*1e9:.3f} nJ/m "
+    f"(diff = {err_dw_dz_n20:.2f}%)\n"
+    f"  Gaussian bunch loss factor k_||       : {r20['k_loss_v_per_pc']:.3f} V/pC "
+    f"at sigma_z = {r20['sigmaz_m']*1e6:.0f} um (|F(omega_s)|^2 = {r20['form_factor_sync_sq']:.4f})"
+)
+
+# %% [markdown]
+# ---
+#
+# ### 3. Consequence (e): Backward-Wave ($n = -1, v_g < 0$) vs Forward-Wave ($v_g > 0$) Synchronism, Off-Axis Odd-Mode Validation, and Full-Section Poynting Energy Balance
+#
+# To test Consequence (e), Task 3 compares two synchronous regimes in the $N = 10$ ($L = 5.0\;\mathrm{mm}$) grating and integrates the radiated Poynting flux $P_z(t) = W_x\int_{-y_{\mathrm{wall}}}^{+y_{\mathrm{wall}}}(-E_y^{\mathrm{scat}} H_x^{\mathrm{scat}})\,\mathrm{d}y$ across the **full waveguide cross section** $y \in [-400, +400]\;\mu\mathrm{m}$ at monitor planes placed in the **smooth waveguide buffer sections** ($z_{\mathrm{in}} = 0.50\;\mathrm{mm}$ and $z_{\mathrm{out}} = z_{\mathrm{tot}} - 0.50\;\mathrm{mm}$, outside all vanes/grooves and just before the $\mp z$ CPML absorbers), pairing both cases with the identical comparator—the bunch energy loss $W_{\mathrm{loss}}$ integrated between the smooth-port monitor planes:
+# 1. **Backward-wave synchronism (`glide`, $n = -1, v_g = -0.544\,c < 0, u_0 = 0.2719\,c, y_0 = 0$):** The $20\;\mathrm{kV}$ electron bunch moves in $+z$, while the excited $n = -1$ Bloch mode has negative group velocity $v_g < 0$. Because $1/u_0$ and $-1/v_g$ have the **same sign**, $|1/u_0 - 1/v_g| = 1/u_0 + 1/|v_g| = 5.515 / c$, producing a narrow $\operatorname{sinc}^2$ line ($\Delta f_{\mathrm{FWHM}} = 9.13\;\mathrm{GHz}$ vs $9.63\;\mathrm{GHz}$ theory, compared with $28.86\;\mathrm{GHz}$ if $v_g$ had the wrong positive sign). Full-cross-section smooth-guide Poynting integration records $E_{\mathrm{in}} = -0.710\;\mathrm{pJ}$ ($97.0\%$ flowing **upstream** into the $-z$ CPML) and $E_{\mathrm{out}} = +0.022\;\mathrm{pJ}$, giving a total radiated wave energy $E_{\mathrm{rad}} = E_{\mathrm{out}} - E_{\mathrm{in}} = 0.732\;\mathrm{pJ}$ that closes the electromagnetic energy balance against the bunch energy loss $W_{\mathrm{loss}} = 0.702\;\mathrm{pJ}$ between the smooth ports within **$4.2\%$** ($4.24\%$; whereas a tunnel-only monitor $|y| \le a$ cutting through the grooves captured only $0.385\;\mathrm{pJ}$ because nearly half the Bloch mode power flows outside the tunnel aperture $|y| \le a$).
+# 2. **Forward-wave synchronism (`mirror`, $n = 0, v_g = +0.325\,c > 0, u_0 = 0.5689\,c, y_0 = 50\;\mu\mathrm{m}$):** In the mirror-symmetric grating, the fundamental $n = 0$ passband mode has odd transverse symmetry ($E_{z,0}(y) \propto \sinh(\gamma_{\perp,0} y)$, so $K_0(0) = 0$ on axis, $\sim 10^{-17}\;\Omega$ numerically in Tutorial 6.2). We therefore inject the bunch off axis at $y_0 = 50\;\mu\mathrm{m}$ with $u_0 = 0.5689\,c$ ($V_0 = 110.4\;\mathrm{kV}$, derived directly from Tutorial 6.2's L2 mirror-mode dispersion at $\beta_0 d = 0.75\pi$, where $f_s = 125.78\;\mathrm{GHz}$ on L1 and $127.92\;\mathrm{GHz}$ on L2, and $v_g = 2d\,\mathrm{d}f/\mathrm{d}(\beta_0 d/\pi) = +0.3254\,c$ on L2 and $+0.3221\,c$ on L1):
+#    - **Cold-test validation at $y_0 = 50\;\mu\mathrm{m}$:** Reconstructing $K_0(y_0 = 50\;\mu\mathrm{m})$ from Tutorial 6.2's node-averaged `km1_mirror_avg_ohm` via the odd-mode $\sinh^2(\gamma_{\perp,0} y)$ profile yields $K_0^{\mathrm{cold}}(f_s, 50\;\mu\mathrm{m}) = 2.820\;\Omega$ (L1) / $2.827\;\Omega$ (L2). At the synchronous crossing $f_s = 125.78\;\mathrm{GHz}$, Wakis FIT gives $\operatorname{Re} Z_\parallel(f_s) = 362.3\;\Omega$ (vs $378.4\;\Omega$ cold test) and $K_0^{\mathrm{FIT}}(f_s, 50\;\mu\mathrm{m}) = 2.701\;\Omega$, agreeing with Tutorial 6.2 within **$4.23\%$**.
+#    - **Stopband peak pulling and linewidth truncation:** Across the widened $95\text{–}145\;\mathrm{GHz}$ search band, because the $\beta_0 d = \pi$ Bragg stopband edge sits at $f_{\mathrm{stop}} = 139.72\;\mathrm{GHz}$ where $v_g(f) \to 0$ and $K_0(f) \propto 1/v_g(f)$ diverges, the full passband product $\operatorname{Re} Z_\parallel(f) = \frac{1}{4}\beta_0(f)^2 K_0(f, y_0) L^2 \operatorname{sinc}^2(\Delta\beta(f) L / 2)$ is pulled upward to $f_{\mathrm{pk}} = 134.69\;\mathrm{GHz}$ with peak resistance $\operatorname{Re} Z_{\mathrm{pk}} = 582.8\;\Omega$ (matching the nonlinear cold-test passband product peak of $626.8\;\Omega$ within **$7.03\%$**). Simultaneously, the upper half-maximum edge is cut off by the $139.72\;\mathrm{GHz}$ Bragg stopband at $137.3\;\mathrm{GHz}$, truncating the spectral FWHM from the idealized constant-$v_g, K_0$ linear estimate ($39.4\text{–}40.4\;\mathrm{GHz}$) to **$\Delta f_{\mathrm{FWHM}} = 20.16\;\mathrm{GHz}$** (nonlinear cold-test product FWHM: $16.59\;\mathrm{GHz}$)—still more than **$2.2\times$ broader** than the backward-wave line ($9.13\;\mathrm{GHz}$).
+#    - **Forward-wave Poynting energy balance:** Full-section smooth-guide integration records $E_{\mathrm{out}} = +8.374\;\mathrm{pJ}$ ($86.8\%$ exiting **downstream**) and $E_{\mathrm{in}} = -1.269\;\mathrm{pJ}$, giving total radiated wave energy $E_{\mathrm{rad}} = 9.643\;\mathrm{pJ}$ versus bunch energy loss $W_{\mathrm{loss}} = 9.401\;\mathrm{pJ}$ between the smooth ports—closing the energy balance within **$2.6\%$** ($2.57\%$).
+
+# %%
+t3_data = json.loads((DATA_DIR / "task_03_fwd_vs_bwd_poynting.json").read_text())
+display(Image(filename=str(FIG_DIR / "05_forward_vs_backward_poynting_and_width.png"), width=960))
+display(Image(filename=str(FIG_DIR / "06_sws_bunch_excitation_fwd_vs_bwd.png"), width=960))
+
+bwd = t3_data["backward_wave_glide_m1"]
+fwd = t3_data["forward_wave_mirror_n0"]
+print(
+    f"Task 3 — Backward-Wave vs Forward-Wave Synchronism & Smooth-Guide Energy Balance (N = 10, L = 5.0 mm):\n"
+    f"  Backward wave (glide, n = -1, u0 = 0.2719c, v_g = {bwd['vg_over_c']:.3f}c < 0, y0 = 0):\n"
+    f"    f_pk = {bwd['f_pk_ghz']:.2f} GHz, FWHM = {bwd['fwhm_ghz']:.2f} GHz "
+    f"(exact theory = {bwd['fwhm_analytic_ghz']:.2f} GHz vs mutated +|v_g| = {bwd['fwhm_mutated_flipped_vg_ghz']:.2f} GHz)\n"
+    f"    Smooth-port energy: E_in = {bwd['integrated_energy_in_j']*1e12:+.3f} pJ, E_out = {bwd['integrated_energy_out_j']*1e12:+.3f} pJ -> "
+    f"E_rad = {bwd['total_radiated_cpml_energy_j']*1e12:.3f} pJ vs W_loss (between ports) = {bwd['w_loss_between_smooth_ports_j']*1e12:.3f} pJ "
+    f"(closure err = {bwd['energy_balance_rel_error_vs_total']*100:.2f}%)\n"
+    f"  Forward wave (mirror, n = 0, u0 = {fwd['u0_over_c']:.4f}c, v_g = +{fwd['vg_over_c']:.3f}c > 0, y0 = {fwd['ysource_um']:.0f} um):\n"
+    f"    At f_s = {fwd['f_sync_cold_L1_ghz']:.2f} GHz: FIT K_0(50 um) = {fwd['k0_at_sync_y50um_fit_ohm']:.3f} Ohm "
+    f"vs 6.2 cold-test = {fwd['k0_at_sync_y50um_cold_L1_ohm']:.3f} Ohm (diff = {fwd['rel_diff_k0_at_sync_vs_cold_L1']*100:.2f}%)\n"
+    f"    Stopband-pulled peak: f_pk = {fwd['f_pk_ghz']:.2f} GHz (band {fwd['f_search_band_ghz']} GHz, stopband {fwd['f_upper_stopband_cold_L1_ghz']:.2f} GHz), "
+    f"Re Z_pk = {fwd['re_z_pk_ohm']:.1f} Ohm vs nonlinear cold = {fwd['re_z_pk_nonlinear_cold_L1_ohm']:.1f} Ohm (diff = {fwd['rel_diff_re_z_pk_vs_nonlinear_cold_L1']*100:.2f}%), "
+    f"FWHM = {fwd['fwhm_ghz']:.2f} GHz\n"
+    f"    Smooth-port energy: E_in = {fwd['integrated_energy_in_j']*1e12:+.3f} pJ, E_out = {fwd['integrated_energy_out_j']*1e12:+.3f} pJ -> "
+    f"E_rad = {fwd['total_radiated_cpml_energy_j']*1e12:.3f} pJ vs W_loss (between ports) = {fwd['w_loss_between_smooth_ports_j']*1e12:.3f} pJ "
+    f"(closure err = {fwd['energy_balance_rel_error_vs_total']*100:.2f}%)"
+)
+
+# %% [markdown]
+# The animated GIF below (`figures/06_sws_bunch_excitation_fwd_vs_bwd.gif`) shows the time-domain scattered longitudinal electric field $E_z^{\mathrm{scat}}(y, z, t)$ as the rigid electron bunch (gold marker) crosses the $N = 10$ SWS: in the top panel ($n = -1$ backward wave, $v_g < 0$), the radiated wave packet trails behind the bunch and propagates **upstream** toward the gun end $z_{\mathrm{in}}$; in the bottom panel ($n = 0$ forward wave, $v_g > 0$), the wave packet travels **downstream** with the bunch toward the collector end $z_{\mathrm{out}}$:
+#
+# ![Time-domain excitation of backward vs forward slow-wave modes by a rigid electron bunch](figures/06_sws_bunch_excitation_fwd_vs_bwd.gif)
+
+# %% [markdown]
+# ---
+#
+# ### 4. Mutation Checks: Detuned Beam Velocity ($u_0 \pm 5\%$) and Unmatched Reflecting Cavity Ends ($|\Gamma| = 1$)
+#
+# Figure 7 presents the two physical mutation checks from Task 4 on the $N = 10$ ($L = 5.0\;\mathrm{mm}$) Karetnikova grating:
+# - **Panel (a) — Velocity detuning ($u_0 \to 0.95\,u_0$ and $1.05\,u_0$):** Slowing the beam by $-5\%$ shifts the peak frequency by $\Delta f_{\mathrm{fit}} = -3.79\;\mathrm{GHz}$ versus our linear walk-off formula $\Delta f_s = \frac{f_s(\Delta u_0/u_0)}{u_0(1/u_0 - 1/v_g)} = -3.81\;\mathrm{GHz}$ ($0.45\%$ relative error); speeding the beam up by $+5\%$ shifts the peak by $+3.27\;\mathrm{GHz}$ (versus $+3.48\;\mathrm{GHz}$ from the exact nonlinear dispersion curve, where curvature near the Brillouin zone boundary slightly compresses the upward shift).
+# - **Panel (b) — Unmatched PEC cavity ends ($|\Gamma| = 1$):** Replacing the tapered CPML ports with short-circuit PEC end walls converts the smooth $\operatorname{sinc}^2$ traveling-wave curve (dashed teal, $Z_{\mathrm{pk}} = 1.43\;\mathrm{k\Omega}$) into sharp Fabry–Pérot standing-wave cavity modes at $\beta_0(\omega_m) d = m\pi / 10$. Because the synchronous phase advance is $\beta_0(\omega_s) d / \pi \approx 0.625$, mode $m = 6$ ($\beta_0 d / \pi = 0.60$) sits right at synchronism: its simulated frequency $f_6 = 114.14\;\mathrm{GHz}$ matches the cold-test cavity prediction $114.07\;\mathrm{GHz}$ within **$0.06\%$**, its integrated circuit $(R/Q)_{\mathrm{circuit},6} = 139.5\;\Omega$ agrees with our derived formula $\frac{1}{2}\frac{\beta_{-1}^2 K_{-1} L |v_g|}{\omega_6}\operatorname{sinc}^2(\Delta\beta_6 L / 2) = 127.0\;\Omega$ within **$9.9\%$**, and dividing the mode area $\mathcal{A}_6$ by the free spectral range $\Delta\omega_{\mathrm{FSR}} = \pi|v_g|/L$ reconstructs $\mathcal{A}_6 / \Delta\omega_{\mathrm{FSR}} = 1.54\;\mathrm{k\Omega}$ (green diamond), matching the traveling-wave peak $1.43\;\mathrm{k\Omega}$ within **$7.6\%$**.
+
+# %%
+t4_data = json.loads((DATA_DIR / "task_04_mutations_detuning_and_cavity.json").read_text())
+display(Image(filename=str(FIG_DIR / "07_mutations_detuned_u0_and_cavity_rq.png"), width=960))
+
+d_nom = t4_data["detuning_sweep"]["u0_nominal"]
+d_m5 = t4_data["detuning_sweep"]["u0_minus_5pct"]
+d_p5 = t4_data["detuning_sweep"]["u0_plus_5pct"]
+cav = t4_data["pec_cavity_resonances"]
+m6 = cav["modes"][1]
+rel_err_f6 = abs(m6["f_fit_cavity_ghz"] - m6["f_cold_test_ghz"]) / m6["f_cold_test_ghz"] * 100.0
+print(
+    f"Task 4 — Physical Mutation Checks (N = 10, L = 5.0 mm):\n"
+    f"  1. Velocity detuning u0 -> 0.95 u0 : f_pk = {d_m5['f_pk_ghz']:.2f} GHz, "
+    f"df_fit = {d_m5['delta_f_fit_ghz']:+.2f} GHz vs linear theory {d_m5['delta_f_linear_analytic_ghz']:+.2f} GHz "
+    f"(exact dispersion {d_m5['delta_f_exact_dispersion_ghz']:+.2f} GHz)\n"
+    f"  2. Velocity detuning u0 -> 1.05 u0 : f_pk = {d_p5['f_pk_ghz']:.2f} GHz, "
+    f"df_fit = {d_p5['delta_f_fit_ghz']:+.2f} GHz vs linear theory {d_p5['delta_f_linear_analytic_ghz']:+.2f} GHz "
+    f"(exact dispersion {d_p5['delta_f_exact_dispersion_ghz']:+.2f} GHz)\n"
+    f"  3. Shorted PEC cavity mode m = 6 (beta_0 d = 0.6 pi):\n"
+    f"     Resonant frequency f_6          : FIT = {m6['f_fit_cavity_ghz']:.2f} GHz vs cold test = {m6['f_cold_test_ghz']:.2f} GHz (rel. err = {rel_err_f6:.2f}%)\n"
+    f"     Circuit (R/Q)_6                 : FIT = {m6['r_over_q_circuit_fit_ohm']:.1f} Ohm vs derived formula = {cav['synchronous_mode_m6_r_over_q_circuit_analytic_ohm']:.1f} Ohm\n"
+    f"     Reconstructed TW peak A_6 / FSR : {cav['reconstructed_traveling_wave_z_pk_ohm']:.1f} Ohm vs matched TW peak = {cav['matched_traveling_wave_z_pk_ohm']:.1f} Ohm"
+)
+
+# %% [markdown]
+# ---
+#
+# ### 5. Spatial Mesh Convergence, Length vs Mesh Separation & Conformal vs Staircase Ablation
+#
+# Task 5 (`task_05_mesh_convergence.json`) verifies spatial convergence on an $N = 8$ ($L = 4.0\;\mathrm{mm}$) Karetnikova grating across three uniform conformal-PEC grid resolutions $n_{\mathrm{feat}} \in \{4, 6, 8\}$ cells across the $100\;\mu\mathrm{m}$ vane thickness ($\Delta y_{\min} = \Delta z \in \{25.0, 16.67, 12.5\}\;\mu\mathrm{m}$, corresponding to $105, 158, 210\;\mathrm{cells}/\lambda_0$), alongside locally refined graded conformal meshing and a staircase (non-conformal) ablation.
+#
+# To avoid mixing structure-length variation with mesh refinement, the table below (`build_convergence_separation_markdown(DATA_DIR)`) separates the two axes explicitly:
+# - **Structure-length effect at fixed mesh ($n_{\mathrm{feat}} = 4, \Delta y = \Delta z = 25\;\mu\mathrm{m}$):** At $N = 20$, the extracted on-axis Pierce impedance $K_{-1}(0) = 2.974\;\Omega$ differs by **$2.53\%$** from the Tutorial 6.2 L1 cold-test value $2.901\;\Omega$. However, on this identical $n_{\mathrm{feat}} = 4$ grid, $K_{-1}(0)$ varies with structure length from $2.767\;\Omega$ at $N = 8$ ($4.64\%$ below L1) to $2.974\;\Omega$ at $N = 20$ (**$+7.52\%$** shift) and $2.976\;\Omega$ at $N = 40$ (**$+7.58\%$** shift), while the residual port reflection $|\Gamma(f_s)| = 0.1854$ allows up to a **$38.4\%$** worst-case coherent standing-wave error bound; both systematic effects exceed the $2.53\%$ single-length difference at $N = 20$.
+# - **Spatial mesh effect at fixed length ($N = 8, L = 4.0\;\mathrm{mm}$):** Refining the uniform conformal grid across $n_{\mathrm{feat}} \in \{4, 6, 8\}$ yields the three-level sequence $K_{-1}(0) = 2.767, 2.629, 2.689\;\Omega$ ($-4.98\%$ at $n_{\mathrm{feat}} = 6$ and $-2.79\%$ at $n_{\mathrm{feat}} = 8$ relative to $n_{\mathrm{feat}} = 4$ at the same $N = 8$). Because this sequence is **non-monotone**, no asymptotic Richardson order is justified. We therefore report the converged $N = 8$ result as the **finest-level band** ($n_{\mathrm{feat}} \in \{6, 8\}$): **$K_{-1}(0) \in [2.629, 2.689]\;\Omega$** (midpoint $2.659\;\Omega$, full spread $0.061\;\Omega$ or **$2.28\%$**; peak frequency $f_{\mathrm{pk}} \in [114.700, 114.758]\;\mathrm{GHz}$, spread $0.059\;\mathrm{GHz}$ or $0.05\%$), which agrees with the Tutorial 6.2 L2 ($2.804\;\Omega$, $n_{\mathrm{feat}} = 8$) and reference ($2.777\;\Omega$, $n_{\mathrm{feat}} = 16$) cold-test benchmarks within **$4.09\text{–}6.25\%$** and **$3.16\text{–}5.34\%$**, respectively:
+#
+# | Variation Axis | Active Periods $N$ ($L = N d$) | Mesh Resolution ($n_{\mathrm{feat}}, \Delta y_{\min}$) | Extracted $f_{\mathrm{pk}}$ [GHz] | Extracted $K_{-1}(0)$ [$\Omega$] | Shift Along Axis (Fixed Complement) | Cold-Test Benchmark Comparison |
+# | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+# | **Length effect** (fixed $n_{\mathrm{feat}}=4$) | $N = 5$ ($L = 2.5\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.554$ | $2.895$ | $+4.64\%$ vs $N=8$ (same $n_{\mathrm{feat}}=4$) | $0.22\%$ vs L1 ($2.901\;\Omega$; $\Delta K(N)=7.52\%, \Gamma$ bound $38.4\%$) |
+# | **Length effect** (fixed $n_{\mathrm{feat}}=4$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.566$ | $2.767$ | baseline ($N=8, n_{\mathrm{feat}}=4$) | $4.64\%$ vs L1 ($2.901\;\Omega$; $\Delta K(N)=7.52\%, \Gamma$ bound $38.4\%$) |
+# | **Length effect** (fixed $n_{\mathrm{feat}}=4$) | $N = 10$ ($L = 5.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.321$ | $2.951$ | $+6.68\%$ vs $N=8$ (same $n_{\mathrm{feat}}=4$) | $1.73\%$ vs L1 ($2.901\;\Omega$; $\Delta K(N)=7.52\%, \Gamma$ bound $38.4\%$) |
+# | **Length effect** (fixed $n_{\mathrm{feat}}=4$) | $N = 20$ ($L = 10.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.211$ | $2.974$ | $+7.52\%$ vs $N=8$ (same $n_{\mathrm{feat}}=4$) | $2.53\%$ vs L1 ($2.901\;\Omega$; $\Delta K(N)=7.52\%, \Gamma$ bound $38.4\%$) |
+# | **Length effect** (fixed $n_{\mathrm{feat}}=4$) | $N = 40$ ($L = 20.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.162$ | $2.976$ | $+7.58\%$ vs $N=8$ (same $n_{\mathrm{feat}}=4$) | $2.59\%$ vs L1 ($2.901\;\Omega$; $\Delta K(N)=7.52\%, \Gamma$ bound $38.4\%$) |
+# | **Mesh effect** (fixed $N=8$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $114.566$ | $2.767$ | baseline ($N=8, n_{\mathrm{feat}}=4$) | $4.64\%$ vs L1 ($2.901\;\Omega$) |
+# | **Mesh effect** (fixed $N=8$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=6, 16.7\;\mu\mathrm{m}$) | $114.758$ | $2.629$ | $-4.98\%$ vs $n_{\mathrm{feat}}=4$ (same $N=8$) | $6.25\%$ vs L2 ($2.804\;\Omega$) |
+# | **Mesh effect** (fixed $N=8$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Conformal uniform ($n_{\mathrm{feat}}=8, 12.5\;\mu\mathrm{m}$) | $114.700$ | $2.689$ | $-2.79\%$ vs $n_{\mathrm{feat}}=4$ (same $N=8$) | $4.09\%$ vs L2 ($2.804\;\Omega$) |
+# | **Finest-level band** ($n_{\mathrm{feat}} \in \{6, 8\}$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Non-monotone finest band ($12.5\text{–}16.7\;\mu\mathrm{m}$) | $[114.700, 114.758]$ | $[2.629, 2.689]$ (mid $2.659$, spread $0.061\;\Omega$ / $2.28\%$) | $-4.98\%$ to $-2.79\%$ vs $n_{\mathrm{feat}}=4$ (no Richardson order justified) | **$4.09\text{–}6.25\%$** vs L2 ($2.804\;\Omega$), **$3.16\text{–}5.34\%$** vs ref ($2.777\;\Omega$) |
+# | **Graded mesh ablation** (fixed $N=8$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Conformal graded ($n_{\mathrm{feat}}=4, \Delta y_{\min}=25.0\;\mu\mathrm{m}$) | $114.539$ | $2.789$ | $+0.82\%$ vs uniform $n_{\mathrm{feat}}=4$ | $3.85\%$ vs L1 ($2.901\;\Omega$) |
+# | **Staircase ablation** (fixed $N=8$) | $N = 8$ ($L = 4.0\;\mathrm{mm}$) | Non-conformal staircase ($n_{\mathrm{feat}}=4, 25.0\;\mu\mathrm{m}$) | $110.177$ | $6.255$ | $2.26\times$ uniform conformal $n_{\mathrm{feat}}=4$ | Over-predicts $K_{-1}(0)$ without Dey–Mittra areas |
+
+# %%
+t5_data = json.loads((DATA_DIR / "task_05_mesh_convergence.json").read_text())
+display(Image(filename=str(FIG_DIR / "08_mesh_convergence.png"), width=960))
+display(Markdown(build_convergence_separation_markdown(DATA_DIR)))
+
+grad_vs_unif_pct = (
+    (t5_data["runs"]["graded_conformal_nf4"]["k_on_axis_beam_ohm"] - t5_data["runs"]["uniform_conformal_nf4"]["k_on_axis_beam_ohm"])
+    / t5_data["runs"]["uniform_conformal_nf4"]["k_on_axis_beam_ohm"]
+    * 100.0
+)
+print(
+    f"Task 5 — Mesh Convergence & Conformal Ablation Summary (N = {t5_data['n_periods']} periods, is_monotone = {t5_data['is_monotone_k_on_axis']}):\n"
+    f"  Uniform conformal f_pk (n_feat=4,6,8) : {[round(x, 3) for x in t5_data['f_pk_ghz_array']]} GHz -> "
+    f"finest band [{t5_data['f_pk_finest_band_min_ghz']:.3f}, {t5_data['f_pk_finest_band_max_ghz']:.3f}] GHz "
+    f"(spread {t5_data['f_pk_finest_band_spread_ghz']:.3f} GHz / {t5_data['f_pk_finest_band_rel_spread']*100:.2f}%)\n"
+    f"  Uniform conformal K_-1(0) (n_feat=4,6,8): {[round(x, 3) for x in t5_data['k_on_axis_ohm_array']]} Ohm -> "
+    f"finest band [{t5_data['k_on_axis_finest_band_min_ohm']:.3f}, {t5_data['k_on_axis_finest_band_max_ohm']:.3f}] Ohm "
+    f"(mid {t5_data['k_on_axis_finest_band_mid_ohm']:.3f} Ohm, spread {t5_data['k_on_axis_finest_band_spread_ohm']:.3f} Ohm / {t5_data['k_on_axis_finest_band_rel_spread']*100:.2f}%)\n"
+    f"  Mesh shift at fixed N={t5_data['n_periods']} vs nf=4       : nf=6 -> {t5_data['rel_diff_nf6_vs_nf4_same_N']*100:+.2f}%, "
+    f"nf=8 -> {t5_data['rel_diff_nf8_vs_nf4_same_N']*100:+.2f}% "
+    f"(vs 6.2 L2 {t5_data['cold_test_L2_k_on_axis_ohm']:.3f} Ohm: {t5_data['rel_diff_finest_band_vs_cold_L2_min']*100:.2f}-{t5_data['rel_diff_finest_band_vs_cold_L2_max']*100:.2f}%; "
+    f"vs ref {t5_data['cold_test_ref_k_on_axis_ohm']:.3f} Ohm: {t5_data['rel_diff_finest_band_vs_cold_ref_min']*100:.2f}-{t5_data['rel_diff_finest_band_vs_cold_ref_max']*100:.2f}%)\n"
+    f"  Graded conformal (n_feat = 4)         : f_pk = {t5_data['runs']['graded_conformal_nf4']['f_pk_ghz']:.3f} GHz, "
+    f"K_-1(0) = {t5_data['runs']['graded_conformal_nf4']['k_on_axis_beam_ohm']:.3f} Ohm ({grad_vs_unif_pct:+.2f}% vs uniform)\n"
+    f"  Staircase ablation (n_feat = 4)       : f_pk = {t5_data['runs']['uniform_staircase_nf4']['f_pk_ghz']:.3f} GHz, "
+    f"K_-1(0) = {t5_data['runs']['uniform_staircase_nf4']['k_on_axis_beam_ohm']:.3f} Ohm "
+    f"({t5_data['staircase_over_conformal_k_ratio']:.2f}x over-prediction without Dey-Mittra conformal areas)"
+)
+
+# %% [markdown]
+# ---
+#
+# ## Results · 3D Marosi V-Band Glide-Symmetric SWS ($5.2\;\mathrm{kV}, u_0 = 0.1416\,c$)
+#
+# Finally, Task 6 (`task_06_3d_marosi_beam_wake.json`) runs the full 3D time-domain beam-wake simulation for a rigid $5.2\;\mathrm{kV}$ electron bunch ($u_0 = 0.1416\,c$) traversing $N = 6$ periods ($L = 6.30\;\mathrm{mm}$) of the 3D Marosi V-band staggered-pillar glide SWS [3] with 1-stage tapered transitions into CPML.
+#
+# As established in [Tutorial 6.2](../../06_periodic_structures/06-02_sws_cold_test/sws_cold_test.ipynb), the glide-symmetric staggered pillars eliminate the stopband at the Brillouin zone boundary $\beta d = \pi$ and produce an almost linear dispersion curve whose group velocity $v_g \approx +0.132\,c$ closely matches the $5.2\;\mathrm{kV}$ beam velocity $u_0 = 0.1416\,c$ across the entire V-band ($50\text{–}70\;\mathrm{GHz}$). Figure 9 reveals a critical physical insight into **broadband group-velocity-matched slow-wave structures**:
+# - Because $|1/u_0 - 1/v_g|$ is nearly zero, the phase-matching factor $\operatorname{sinc}^2(\Delta\beta(f) L / 2)$ (green dashed curve in Panel b) remains $> 0.90$ from $54\;\mathrm{GHz}$ to $70\;\mathrm{GHz}$ ($\Delta f_{\mathrm{FWHM}} \approx 40.9\;\mathrm{GHz}$, wider than the entire V-band passband!).
+# - Across that same broad synchronous window, the cold-test Pierce interaction impedance $K_n(f)$ (blue curve in Panel b) is **not constant**: it rises steeply by more than $4\times$ toward the lower passband edge (from $K_n = 1.66\;\Omega$ at the zero-detuning crossing $f_s = 64.84\;\mathrm{GHz}$ to $K_n = 4.78\;\Omega$ at $55.3\text{–}58.3\;\mathrm{GHz}$ and $19.9\;\Omega$ at $52.5\;\mathrm{GHz}$).
+# - Consequently, the full frequency-dependent product $\operatorname{Re} Z_\parallel(f) = \frac{1}{4}\beta_n(f)^2 K_n(f) L^2\,\operatorname{sinc}^2(\Delta\beta(f) L / 2)$ (orange dashed curve in Panel a, computed directly from the Tutorial 6.2 3D cold-test points) peaks in the lower V-band around $55\text{–}59\;\mathrm{GHz}$ at $\operatorname{Re} Z_{\mathrm{pk}}^{\mathrm{cold}} = 3.82\;\mathrm{k\Omega}$, in close agreement with our 3D FIT beam-wake peak of **$\operatorname{Re} Z_{\mathrm{pk}} = 3.91\;\mathrm{k\Omega}$ at $f_{\mathrm{pk}} = 58.92\;\mathrm{GHz}$** (**$2.42\%$** relative difference in peak resistance, and $K_n(f_{\mathrm{pk}}) = 5.18\;\Omega$ vs $4.78\;\Omega$ cold test, **$8.39\%$** difference).
+
+# %%
+t6_data = json.loads((DATA_DIR / "task_06_3d_marosi_beam_wake.json").read_text())
+display(Image(filename=str(FIG_DIR / "09_3d_marosi_glide_beam_wake.png"), width=960))
+
+c3 = t6_data["cold_test_marosi_3d"]
+print(
+    f"Task 6 — 3D Marosi V-Band Glide SWS Beam-Wake Summary (N = {t6_data['n_periods']}, L = {t6_data['active_length_m']*1e3:.2f} mm):\n"
+    f"  Grid & runtime                  : {t6_data['grid_shape']} ({t6_data['n_cells']:,} cells), "
+    f"nt = {t6_data['nt']}, wall = {t6_data['wall_time_s']:.1f} s\n"
+    f"  3D FIT beam-wake peak           : f_pk = {t6_data['f_pk_ghz']:.2f} GHz, Re Z_pk = {t6_data['re_z_pk_ohm']*1e-3:.3f} kOhm\n"
+    f"  6.2 3D cold-test lower-branch   : Re Z_cold = {c3['re_z_cold_lower_branch_54_57ghz_ohm']*1e-3:.3f} kOhm "
+    f"(rel. diff = {t6_data['rel_diff_re_z_pk_vs_cold_lower_branch']*100:.2f}%)\n"
+    f"  Extracted on-axis K_n(f_pk)     : {t6_data['k_on_axis_at_pk_ohm']:.2f} Ohm vs 6.2 cold-test (55-58 GHz) = {c3['k_cold_lower_branch_55_58ghz_ohm']:.2f} Ohm "
+    f"(rel. diff = {t6_data['rel_diff_k_pk_vs_cold_lower_branch']*100:.2f}%)"
+)
+
+# %% [markdown]
+# ---
+#
+# ## Quantitative Summary
+#
+# Every number in the table below is generated directly from `data/summary_metrics.json` via `build_quantitative_summary_markdown(DATA_DIR)`:
+#
+# | Quantity / Benchmark | Theory / Tutorial 6.2 Cold Test | Wakis FIT Beam-Wake Result | Relative Difference / Agreement |
+# | :--- | :--- | :--- | :--- |
+# | **Tapered vs abrupt port reflection** $|\Gamma(f_s)|$ ($113.29\;\mathrm{GHz}$) | Production 2-stage taper $[0.25h, 0.55h]$ vs abrupt end ($|\Gamma_{\mathrm{abrupt}}| = 0.3905$, no floor/clip) | $|\Gamma_{\mathrm{taper}}(f_s)| = 0.1854$ (worst-case peak bound $38.4\%$) | **$2.11\times$ reflection reduction** |
+# | **(a) Peak impedance length scaling** $\mathrm{slope}(\log\mathrm{Re}\,Z_{\mathrm{pk}}, \log L)$ | Exact $\propto L^2$ scaling: slope $= 2.0000$ | Fitted slope ($N \in \{5,10,20,40\}$) $= 2.0099$ | **$0.49\%$** relative error |
+# | **(a) Linewidth length scaling** $\mathrm{slope}(\log\Delta f_{\mathrm{FWHM}}, \log L)$ | Exact $\propto L^{-1}$ scaling: slope $= -1.0000$ | Fitted slope ($N \in \{5,10,20,40\}$) $= -0.9873$ | **$1.27\%$** relative error |
+# | **(b) Synchronous frequency** $f_s$ ($N=20$, $20\;\mathrm{kV}$, $u_0 = 0.2719c$) | 6.2 cold-test crossing $f_s = 114.29\;\mathrm{GHz}$ | Beam-wake peak $f_{\mathrm{pk}} = 114.21\;\mathrm{GHz}$ | **$0.07\%$** relative error |
+# | **(b) Group-velocity walk-off FWHM** $\Delta f_{\mathrm{FWHM}}$ ($N=20$, no fit) | $\frac{0.8859}{L|1/u_0 - 1/v_g|} = 4.81\;\mathrm{GHz}$ ($v_g = -0.544c$) | Measured $\Delta f_{\mathrm{FWHM}} = 4.60\;\mathrm{GHz}$ | **$4.42\%$** relative difference |
+# | **(c) Peak resistance** $\mathrm{Re}\,Z_\parallel(\omega_s)$ ($N=20, L=10\;\mathrm{mm}, W_x=1.0\;\mathrm{mm}$) | $\frac{1}{4}\beta_{-1}^2 K_{-1}(0) L^2 = 5610.9\;\Omega$ (L1) / $5441.6\;\Omega$ (L2) | $\mathrm{Re}\,Z_{\mathrm{pk}} = 5764.7\;\Omega$ (per $1.0\;\mathrm{mm}$ $x$-width) | **$2.74\%$** vs L1 (**$5.94\%$** vs L2) |
+# | **(c) On-axis Pierce impedance & length effect** $K_{-1}(0)$ (fixed $n_{\mathrm{feat}}=4$) | 6.2 cold test L1 ($n_{\mathrm{feat}}=4$): $2.901\;\Omega$ (residual $|\Gamma|=0.1854$ allows $\le 38.4\%$ bound) | $N=20$: $2.974\;\Omega$; $N=8$: $2.767\;\Omega$ ($+7.52\%$ length shift at fixed $n_{\mathrm{feat}}=4$) | **$2.53\%$** at $N=20$ ($4.64\%$ at $N=8$; length shift $7.52\%$ & $\Gamma$ bound $38.4\%$ exceed $2.53\%$) |
+# | **(c) Mesh convergence of $K_{-1}(0)$** (fixed $N=8, n_{\mathrm{feat}}\in\{4,6,8\}$) | 6.2 cold test: $2.804\;\Omega$ (L2, $n_{\mathrm{feat}}=8$) / $2.777\;\Omega$ (ref, $n_{\mathrm{feat}}=16$) | $n_{\mathrm{feat}}=4,6,8$: $2.767, 2.629, 2.689\;\Omega$; finest band $[2.629, 2.689]\;\Omega$ (spread $2.28\%$, mesh shift $-4.98\%$ to $-2.79\%$) | **$4.09\text{–}6.25\%$** vs L2 (**$3.16\text{–}5.34\%$** vs ref) |
+# | **(c) Measured off-axis sheet average** $\langle K_{-1}\rangle_{\mathrm{nodes}}$ ($H_b = 150\;\mu\mathrm{m}$) | 6.2 L1 7-node mean: $3.468\;\Omega$ (ratio $1.196$); L2: $3.283\;\Omega$ (ratio $1.171$) | 7-node beam sweep: $3.582\;\Omega$ (ratio $1.204$; trapz $3.450\;\Omega$; $K(0)\eta_{\mathrm{cosh}}=3.408\;\Omega$) | **$3.26\%$** in $\langle K_{-1}\rangle$, **$0.72\%$** in ratio |
+# | **(d) Infinite-structure stopping power** $\mathrm{d}W/\mathrm{d}z$ ($q = 1\;\mathrm{pC}$) | $\frac{q^2 \beta_{-1}^2 K_{-1}(0)}{2|1/u_0 - 1/v_g|} = 5.915\;\mathrm{nJ/m}$ | $\frac{q^2}{\pi L}\int \mathrm{Re}\,Z_\parallel\,\mathrm{d}\omega = 5.864\;\mathrm{nJ/m}$ ($N=20$) | **$0.85\%$** relative difference |
+# | **(e) Forward-wave control** $K_0(y_0=50\;\mu\mathrm{m})$ ($n=0, u_0=0.5689c$) | 6.2 mirror-odd at $y_0=50\;\mu\mathrm{m}$: $K_0(f_s) = 2.820\;\Omega$, nonlinear $Z_{\mathrm{pk}} = 626.8\;\Omega$ ($137.2\;\mathrm{GHz}$) | FIT $K_0(f_s) = 2.701\;\Omega$, $Z_{\mathrm{pk}} = 582.8\;\Omega$ at $134.69\;\mathrm{GHz}$, FWHM $= 20.16\;\mathrm{GHz}$ | **$4.23\%$** at $f_s$, **$7.03\%$** at $f_{\mathrm{pk}}$ |
+# | **(e) Smooth-guide Poynting energy balance** ($E_{\mathrm{rad}} = E_{\mathrm{out}} - E_{\mathrm{in}}$ vs $W_{\mathrm{loss}}$ between ports) | Bwd ($v_g < 0$): $W_{\mathrm{loss}} = 0.702\;\mathrm{pJ}$; Fwd ($v_g > 0$): $W_{\mathrm{loss}} = 9.401\;\mathrm{pJ}$ | Bwd: $E_{\mathrm{in}} = -0.710\;\mathrm{pJ}, E_{\mathrm{rad}} = 0.732\;\mathrm{pJ}$; Fwd: $E_{\mathrm{out}} = +8.374\;\mathrm{pJ}, E_{\mathrm{rad}} = 9.643\;\mathrm{pJ}$ | **$4.2\%$** (bwd) & **$2.6\%$** (fwd) closure |
+# | **Mutation 1: Detuned beam velocity** ($u_0 \to 0.95\,u_0$) | $\Delta f_s = \frac{f_s \Delta u_0}{u_0^2(1/u_0 - 1/v_g)} = -3.81\;\mathrm{GHz}$ | Measured peak shift $\Delta f_{\mathrm{fit}} = -3.79\;\mathrm{GHz}$ | **$0.45\%$** relative error |
+# | **Mutation 2: Shorted PEC cavity mode** $m=6$ ($N=10$, $\beta_0 d = 0.6\pi$) | $f_6 = 114.07\;\mathrm{GHz}$, $(R/Q)_{\mathrm{circuit},6} = 127.0\;\Omega$ | $f_6 = 114.14\;\mathrm{GHz}$, $(R/Q)_{\mathrm{circuit},6} = 139.5\;\Omega$ | **$0.06\%$** in $f_6$, **$9.88\%$** in $(R/Q)_6$ |
+# | **3D Marosi V-band glide SWS** ($N=6, 5.2\;\mathrm{kV}, u_0 = 0.1416c$) | Cold-test lower-branch peak $3.82\;\mathrm{k\Omega}$, $K_n = 4.78\;\Omega$ | 3D FIT peak $3.91\;\mathrm{k\Omega}$ at $58.92\;\mathrm{GHz}$, $K_n = 5.18\;\Omega$ | **$2.42\%$** in $\mathrm{Re}\,Z_{\mathrm{pk}}$, **$8.39\%$** in $K_n$ |
+
+# %%
+display(Markdown(build_quantitative_summary_markdown(DATA_DIR)))
+
+# %% [markdown]
+# ---
+#
+# ## Limits & Failure Modes
+#
+# 1. **Matched Port Terminations ($|\Gamma(\omega)| \ll 1$) vs Finite-End Fabry–Pérot Reflections:**
+#    - *Assumption:* The traveling-wave relation $\operatorname{Re} Z_\parallel(\omega) = \frac{1}{4}\beta_n^2 K_n L^2 \operatorname{sinc}^2(\Delta\beta L / 2)$ assumes that the excited Bloch wave exits the periodic structure without reflecting ($\Gamma = 0$).
+#    - *Counter-case:* In an abruptly terminated SWS ($|\Gamma_{\mathrm{abrupt}}| = 0.390$ in Task 1) or a shorted PEC cavity ($|\Gamma| = 1$ in Task 4, Figure 7b), multi-pass reflections split the smooth $\operatorname{sinc}^2$ lobe into discrete cavity resonances at $\beta_0 d = m\pi / N$ whose peak heights depend on the quality factor $Q_m$ rather than $L^2$. Even for weak reflections, $K_n$ extracted solely from the peak value $\operatorname{Re} Z_\parallel(\omega_s)$ carries a worst-case coherent round-trip uncertainty bounded by $2|\Gamma(\omega_s)| / (1 - |\Gamma(\omega_s)|^2)$ ($38.4\%$ for the 2-stage taper with $|\Gamma| = 0.185$, though in practice the finite wave-packet walk-off suppresses multi-bounce interference so the observed error is $< 3\text{–}7\%$), whereas integrating the area $\mathcal{A}_m$ under a cavity resonance and dividing by $\Delta\omega_{\mathrm{FSR}} = \pi|v_g|/L$ recovers the traveling-wave coupling even at $|\Gamma| = 1$.
+# 2. **Narrowband Constant-$K_n$ Approximation vs Stopband Pulling and Broadband Group-Velocity Matching ($u_0 \approx v_g$):**
+#    - *Assumption:* Replacing $\beta_n(\omega)^2 K_n(\omega)$ by its constant value at the zero-detuning crossing $\omega_s$ assumes that the main lobe of $\operatorname{sinc}^2(\Delta\beta L / 2)$ is narrow compared with the frequency scale over which $K_n(\omega)$ varies ($\Delta f_{\mathrm{FWHM}} \ll |K_n / (\mathrm{d}K_n/\mathrm{d}f)|$) and stays well away from passband edges where $v_g \to 0$.
+#    - *Counter-case:* While this assumption holds well for the backward-wave Karetnikova grating ($|1/u_0 - 1/v_g| = 5.52/c$, $\Delta f_{\mathrm{FWHM}} = 2.3\text{–}9.1\;\mathrm{GHz}$), it breaks down in two regimes: (i) in the **forward-wave mirror-mode control** ($u_0 = 0.5689\,c, v_g = +0.325\,c$, Figure 5b), where proximity to the $\beta_0 d = \pi$ Bragg stopband at $139.7\;\mathrm{GHz}$ ($v_g \to 0, K_0 \propto 1/v_g \to \infty$) pulls the impedance peak from $f_s = 125.8\;\mathrm{GHz}$ to $134.7\;\mathrm{GHz}$ and truncates the upper half-width so $\Delta f_{\mathrm{FWHM}} = 20.16\;\mathrm{GHz}$; and (ii) in the **broadband group-velocity-matched 3D Marosi glide SWS** ($u_0 = 0.1416\,c \approx v_g = +0.132\,c$, $|1/u_0 - 1/v_g| = 0.51/c$), where $\operatorname{sinc}^2(\Delta\beta L / 2) > 0.90$ across $54\text{–}70\;\mathrm{GHz}$ while $K_n(f)$ increases by more than $4\times$ toward the lower passband cutoff (Figure 9). In both cases, the full frequency-dependent product $\frac{1}{4}\beta_n(f)^2 K_n(f) L^2 \operatorname{sinc}^2(\Delta\beta(f) L / 2)$ must be retained.
+# 3. **Rigid-Bunch Approximation ($\Delta u \ll u_0$, Zero Beam Modulation) vs Self-Consistent Pierce Gain and BWO Oscillation:**
+#    - *Assumption:* `wakis.sources.Beam` prescribes a rigid, unmodulated trajectory $z(t) = u_0 t$, so the radiated field acts back on the bunch only as an average stopping power $\mathrm{d}W/\mathrm{d}z$ without bunching the beam current.
+#    - *Counter-case:* In a continuous or long-pulse electron beam of DC current $I_0$, the synchronous axial field $E_{z,n}$ modulates the electron velocity and density, creating an AC space-charge current $\tilde{I}_1(z) \propto e^{-j\beta_e z + \Gamma z}$ that feeds back on the circuit wave. When the structure length exceeds the Pierce gain length $L_g = (\sqrt{3}\,\beta_e C)^{-1}$ with Pierce gain parameter $C = (I_0 K_n / (4 V_0))^{1/3}$, the wave grows **exponentially** ($\propto \exp(\sqrt{3}\,\beta_e C z)$ in a forward-wave TWT) rather than quadratically ($\propto L^2$), or breaks into self-sustained backward-wave oscillation when $C N_{\lambda} \gtrsim 0.314$ in a BWO—the subject of Tutorial 8.6.
+#
+# ---
+#
+# ## References
+#
+# 1. **J. R. Pierce**, *Traveling-Wave Tubes*, D. Van Nostrand Company, New York (1950). — Defined the interaction impedance $K_n = |E_{z,n}|^2 / (2\beta_n^2 P)$ and small-signal space-harmonic coupling of slow-wave structures.
+# 2. **T. A. Karetnikova, A. G. Rozhnev, N. M. Ryskin, A. E. Fedotov, S. V. Mishakin, and N. S. Ginzburg**, "Gain Analysis of a 0.2-THz Traveling-Wave Tube With Sheet Electron Beam and Staggered Grating Slow Wave Structure," *IEEE Transactions on Electron Devices* **65**(6), 2129–2134 (2018), DOI: [10.1109/TED.2017.2787960](https://doi.org/10.1109/TED.2017.2787960). — Introduced the G-band staggered double-vane sheet-beam SWS ($d = 0.50\;\mathrm{mm}, l = 0.10\;\mathrm{mm}, h = 0.30\;\mathrm{mm}, 2a = 0.20\;\mathrm{mm}, V_0 = 20\;\mathrm{kV}$) and the sheet-beam-averaged Pierce impedance formula [Eq. (2)].
+# 3. **R. Marosi, M. Zuboraj, and F. Capolino**, "Wideband Glide-Symmetric Slow-Wave Structure for Millimeter-Wave Sheet Beam TWTs," *arXiv:2505.22927v1* (2025), DOI: [10.48550/arXiv.2505.22927](https://doi.org/10.48550/arXiv.2505.22927). — Designed and cold-tested the 3D V-band staggered-pillar glide-symmetric SWS ($a = 1.40\;\mathrm{mm}, b = 0.80\;\mathrm{mm}, d = 1.05\;\mathrm{mm}, 5.2\;\mathrm{kV}$ sheet beam, $u_0 = 0.1416\,c$) with closed zero-stopband dispersion at the $3\pi$ point.
+# 4. **R. E. Collin**, *Field Theory of Guided Waves*, 2nd ed., IEEE Press, New York (1991), Sec. 5.3. — Normal-mode Lorentz-reciprocity waveguide excitation formula $a_n = -(1/4P_n)\int \mathbf{E}_n^*\cdot\mathbf{J}\,\mathrm{d}V$.
+# 5. **J. C. Slater**, *Microwave Electronics*, D. Van Nostrand Company, New York (1950), Ch. 4 & Ch. 11. — Normal-mode expansion of resonant cavities, shunt impedance $R/Q$, and relationship between standing-wave periodic resonators and traveling-wave slow-wave structures.

@@ -347,6 +347,24 @@ def _describe_material(mat: Any, name_hint: str | None = None) -> dict[str, Any]
         }
 
     cls_name = type(mat).__name__
+    if getattr(mat, "is_nonlinear", False) or cls_name in (
+        "KerrMaterial",
+        "NonlinearMaterial",
+    ):
+        eps_inf = float(getattr(mat, "eps_inf", 1.0))
+        chi3 = float(getattr(mat, "chi3", 0.0))
+        model = getattr(mat, "name", None) or cls_name
+        name = name_hint or str(model)
+        return {
+            "name": name,
+            "label": (
+                f"{name}, {cls_name} (ε_∞ = {eps_inf:.2f}, χ⁽³⁾ = {chi3:.2e} m²/V²)"
+            ),
+            "eps_r": eps_inf,
+            "mu_r": 1.0,
+            "sigma": float(getattr(mat, "sigma", 0.0)),
+            "model": cls_name,
+        }
     if hasattr(mat, "poles") or cls_name in (
         "Drude",
         "Lorentz",

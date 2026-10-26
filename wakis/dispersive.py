@@ -781,6 +781,8 @@ class DispersiveMixin:
         """
         if getattr(material, "is_gain", False):
             return self.add_gain_material(material, center=center, size=size)
+        if getattr(material, "is_nonlinear", False):
+            return self.add_nonlinear_material(material, center=center, size=size)
         if not isinstance(material, DispersiveMaterial):
             raise TypeError("material must be a DispersiveMaterial")
         if getattr(self, "scheme", "yee") == "tete":
@@ -907,6 +909,16 @@ class DispersiveMixin:
                     _restrict_gain_group(group, old)
             self._gain_groups = [
                 g for g in self._gain_groups if g["idx_host"].size > 0
+            ]
+        if getattr(self, "_nonlinear_groups", None):
+            from .nonlinear import _restrict_nonlinear_group
+
+            for group in self._nonlinear_groups:
+                old = ~np.isin(group["idx_host"], idx)
+                if not old.all():
+                    _restrict_nonlinear_group(group, old)
+            self._nonlinear_groups = [
+                g for g in self._nonlinear_groups if g["idx_host"].size > 0
             ]
 
         eps_s = 1 / (eps_0 * ieps[idx])  # permittivity used by the solver step
