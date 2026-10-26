@@ -1,0 +1,178 @@
+{
+  "f0_ghz": 0.75,
+  "lambda0_mm": 399.72327733333333,
+  "r_major_mm": 15.0,
+  "r_minor_mm": 5.0,
+  "mu_dc": 20.0,
+  "headline_metrics": {
+    "loop_ka4_ratio_sim": 4.969527280202589,
+    "loop_ka4_ratio_theory": 5.0625,
+    "loop_ka4_rel_err": 0.018364981688377406,
+    "dubovik_tugushev_rel_err": 1.772557389079326e-16,
+    "dubovik_tugushev_mutated_rel_err": 0.3999999999999999,
+    "toroid_m_cancel_ratio": 5.216862863715859e-07,
+    "toroid_p_a10_frac": 0.9999980435608335,
+    "toroid_b1_over_a1": 5.341061146631845e-06,
+    "toroid_pattern_l2_err": 0.0016188064165932323,
+    "toroid_prad_sim_w": 0.00023399782833701023,
+    "toroid_prad_theory_j1_w": 0.00023447751989048315,
+    "toroid_prad_rel_err": 0.0020457890961016736,
+    "omega6_slope_fixed_t": 5.997437883793838,
+    "omega_slope_fixed_i": 6.436565769689209,
+    "octupole_slope_kr2": 2.177259264980819,
+    "four_rods_m_cancel_ratio": 8.137888364807544e-07,
+    "four_rods_b1_over_a1": 8.65674457023929e-06,
+    "broken_gap_b1_over_a1": 2.524548604424167,
+    "broken_7of8_b1_over_a1": 0.4898355929006446,
+    "broken_mode1_b1_over_a1": 1404015.4934987873,
+    "broken_3of4_rods_b1_over_a1": 3.5978557526368933,
+    "helical_uncomp_b1_over_a1": 0.5098217108258187,
+    "helical_marinov_b1_over_a1": 0.0012996901551829804,
+    "nearfield_rel_diff_vs_dipole": 0.42987924023869306,
+    "energy_closure_rel_err": 0.0007486569842972105,
+    "energy_closure_mutated_rel_err": 1.1849276354732599,
+    "tz_rel_err_levels": [
+      0.1127662272129739,
+      0.1226779880889734,
+      0.02749366944725675
+    ],
+    "tz_disc_static_rel_err_levels": [
+      0.07211145261729773,
+      0.048018386928310494,
+      0.08823438280876858
+    ],
+    "grid_convergence_criterion_rel_dp_max": 0.02,
+    "is_grid_converged": false
+  },
+  "quantitative_summary_rows": [
+    {
+      "metric": "Baseline short electric dipole TM fraction ($|a_{10}|^2 / P_{\\mathrm{VSH}}$)",
+      "theory": "100.00% ($|b_1|/|a_1| = 0$)",
+      "simulation": "100.0000% ($|b_1|/|a_1| = 1.85e-07$)",
+      "rel_err": "0.034% pattern $L_2$",
+      "num_sim": 0.9999999199807156,
+      "num_err": 0.00033525982054240266
+    },
+    {
+      "metric": "Baseline small magnetic loop TE fraction ($|b_1|^2 / P_{\\mathrm{VSH}}$)",
+      "theory": "100.00% ($|a_1|/|b_1| = 0$)",
+      "simulation": "99.9922% ($|a_1|/|b_1| = 2.76e-07$)",
+      "rel_err": "0.091% pattern $L_2$",
+      "num_sim": 0.9999222414857766,
+      "num_err": 0.0009129695087434866
+    },
+    {
+      "metric": "Loop radiation scaling $P_{\\mathrm{rad}}(15\\;\\mathrm{mm}) / P_{\\mathrm{rad}}(10\\;\\mathrm{mm})$",
+      "theory": "5.0625 ($(a_2/a_1)^4$), 5.0313 ($J_1^2$)",
+      "simulation": "4.9695 (slope 3.96)",
+      "rel_err": "1.84% vs $(a_2/a_1)^4$ (1.23% vs $J_1^2$)",
+      "num_sim": 4.969527280202589,
+      "num_err": 0.018364981688377406
+    },
+    {
+      "metric": "Closed toroid net magnetic dipole $|\\int \\mathbf{M}\\,\\mathrm{d}V| / \\int |\\mathbf{M}|\\,\\mathrm{d}V$",
+      "theory": "0.00",
+      "simulation": "5.22e-07",
+      "rel_err": "5.22e-07 residual",
+      "num_sim": 5.216862863715859e-07,
+      "num_err": 5.216862863715859e-07
+    },
+    {
+      "metric": "Dubovik\u2013Tugushev identity $|T_{z,\\mathrm{DT}}(\\mathbf{J}_b)|$ vs $|T_{z,\\mathrm{mag}}(\\mathbf{M})|$",
+      "theory": "1.194649e-06 $\\mathrm{A\\,m^3}$",
+      "simulation": "1.194649e-06 $\\mathrm{A\\,m^3}$",
+      "rel_err": "1.77e-16",
+      "num_sim": 1.1946486984984732e-06,
+      "num_err": 1.772557389079326e-16
+    },
+    {
+      "metric": "Closed toroid TM electric dipole fraction ($|a_{10}|^2 / P_{\\mathrm{VSH}}$)",
+      "theory": "100.00% ($|b_1|/|a_1| = 0$)",
+      "simulation": "99.9998% ($|b_1|/|a_1| = 5.34e-06$)",
+      "rel_err": "0.162% pattern $L_2$",
+      "num_sim": 0.9999980435608335,
+      "num_err": 0.0016188064165932323
+    },
+    {
+      "metric": "Multipole-to-far-field self-consistency $P_{\\mathrm{rad}}^{\\mathrm{N2F}}$ vs $P_{\\mathrm{dip}}(p_{\\mathrm{eff}} = -\\mathrm{i}k_0 T_{\\mathrm{tot}}^{\\mathrm{sim}} F_1/c_0)$",
+      "theory": "2.3448e-04 W (from simulated $T_{\\mathrm{tot}}$)",
+      "simulation": "2.3400e-04 W (N2F), 2.3407e-04 W (Flux)",
+      "rel_err": "0.20% self-consistency",
+      "num_sim": 0.00023399782833701023,
+      "num_err": 0.0020457890961016736
+    },
+    {
+      "metric": "Fixed-$T$ power scaling exponent $\\mathrm{d}\\ln(P_{\\mathrm{rad}}/|T_{\\mathrm{tot}}|^2)/\\mathrm{d}\\ln\\omega$",
+      "theory": "6.00 ($\\omega^6$)",
+      "simulation": "6.00",
+      "rel_err": "0.04%",
+      "num_sim": 5.997437883793838,
+      "num_err": 0.00042701936769370025
+    },
+    {
+      "metric": "Electric octupole scaling exponent $\\mathrm{d}\\ln(|a_{30}|/|a_{10}|)/\\mathrm{d}\\ln(k_0 R)$",
+      "theory": "2.00 ($(k_0 R)^2$)",
+      "simulation": "2.18",
+      "rel_err": "8.86%",
+      "num_sim": 2.177259264980819,
+      "num_err": 0.08862963249040945
+    },
+    {
+      "metric": "Square of 4 rods ($C_4$) $|b_1|/|a_1|$ and $|m=\\pm 4|/|a_{10}|$ ($R_{\\mathrm{sq}}=12.5\\;\\mathrm{mm}$)",
+      "theory": "$|b_1|/|a_1| = 0$, $C_4$ residual $> 0$",
+      "simulation": "$|b_1|/|a_1| = 8.66e-06$, $|m=\\pm 4|/|a_{10}| = 6.12e-05$",
+      "rel_err": "99.9999% in $a_{10}$",
+      "num_sim": 8.65674457023929e-06,
+      "num_err": 6.118230605826423e-05
+    },
+    {
+      "metric": "Broken loop: 7 of 8 feeds $|b_1|/|a_1|$ vs closed 8/8 feeds",
+      "theory": "$|b_1|/|a_1| \\sim \\mathcal{O}(1)$ (Valero 2024)",
+      "simulation": "0.4898 (vs 5.34e-06 closed)",
+      "rel_err": "9.17e+04$\\times$ jump",
+      "num_sim": 0.4898355929006446,
+      "num_err": 5.341061146627232e-06
+    },
+    {
+      "metric": "Helical 1-turn axial $m_z$ vs Marinov compensating loop $|b_1|/|a_1|$",
+      "theory": "Uncompensated $> 0.1$, compensated $\\to 0$",
+      "simulation": "0.5098 $\\to$ 1.30e-03",
+      "rel_err": "3.92e+02$\\times$ suppression",
+      "num_sim": 0.5098217108258187,
+      "num_err": 0.0012996901551829804
+    },
+    {
+      "metric": "Consistent near-field vs outer-zone error $|\\Delta\\mathbf{E}|/|\\mathbf{E}|$ ($20\\text{\u2013}30\\;\\mathrm{mm}$ vs $45\\text{\u2013}55\\;\\mathrm{mm}$)",
+      "theory": "Outer $h_3^{(2)}/h_1^{(2)}$ octupole decays 4.51$\\times$ (91.82 $\\to$ 20.34)",
+      "simulation": "42.99% $\\to$ 12.95% ($|\\Delta H_y|/|H_y|$: 46.02% $\\to$ 3.99%)",
+      "rel_err": "3.32$\\times$ ($|\\mathbf{E}|$), 11.52$\\times$ ($|H_y|$) reduction",
+      "num_sim": 0.42987924023869306,
+      "num_err": 0.12945667408821276
+    },
+    {
+      "metric": "Energy bookkeeping $|P_{\\mathrm{in}} - (P_{\\mathrm{rad}} + P_{\\mathrm{loss,core}})| / P_{\\mathrm{in}}$ ($\\gamma = 0.02\\;\\mathrm{GHz}$)",
+      "theory": "0.00% (Poynting theorem)",
+      "simulation": "0.075% (mutated: 118.5%)",
+      "rel_err": "0.075%",
+      "num_sim": 0.0007486569842972105,
+      "num_err": 1.1849276354732599
+    },
+    {
+      "metric": "Toroid radiation quality factor $Q_{\\mathrm{rad}}$ vs Chu bound $Q_{\\mathrm{Chu}}(k_0 a_{\\mathrm{sph}})$",
+      "theory": "$Q_{\\mathrm{rad,th}} = 2349.7$, $Q_{\\mathrm{Chu}} = 35.37$",
+      "simulation": "$Q_{\\mathrm{rad,sim}} = 2392.5$ (67.7$\\times Q_{\\mathrm{Chu}}$)",
+      "rel_err": "1.82%",
+      "num_sim": 2392.4875714027,
+      "num_err": 0.018196368658702767
+    },
+    {
+      "metric": "3-grid resolution study ($\\Delta_{\\mathrm{core}} = 2.50, 2.00, 1.67\\;\\mathrm{mm}$; 4\u20136 cells/$2r$)",
+      "theory": "$T_z^{\\mathrm{qs}} = 1.127e-06\\;\\mathrm{A\\,m^3}$, $P_{\\mathrm{rad}} = P_{\\mathrm{dip}}(T_{\\mathrm{sim}})$",
+      "simulation": "$|T_z^{\\mathrm{sim}}| = 1.254e-06 \\to 1.265e-06 \\to 1.096e-06$; $P_{\\mathrm{rad}} = 2.340e-04 \\to 2.382e-04 \\to 1.788e-04$ W",
+      "rel_err": "Not grid-converged ($\\pm 9\\%$ drive staircase, -25% $P_{\\mathrm{rad}}$ on fine); 0.17\u20130.20% N2F self-consistency",
+      "num_sim": 0.0001787794723285337,
+      "num_err": 0.0017497271132680373
+    }
+  ],
+  "quantitative_summary_markdown": "| Physical Quantity / Validation Target | Analytical / Literature Target | 3D FIT Result (`wakis`) | Relative Error / Status |\n| :--- | :--- | :--- | :--- |\n| Baseline short electric dipole TM fraction ($|a_{10}|^2 / P_{\\mathrm{VSH}}$) | 100.00% ($|b_1|/|a_1| = 0$) | 100.0000% ($|b_1|/|a_1| = 1.85e-07$) | 0.034% pattern $L_2$ |\n| Baseline small magnetic loop TE fraction ($|b_1|^2 / P_{\\mathrm{VSH}}$) | 100.00% ($|a_1|/|b_1| = 0$) | 99.9922% ($|a_1|/|b_1| = 2.76e-07$) | 0.091% pattern $L_2$ |\n| Loop radiation scaling $P_{\\mathrm{rad}}(15\\;\\mathrm{mm}) / P_{\\mathrm{rad}}(10\\;\\mathrm{mm})$ | 5.0625 ($(a_2/a_1)^4$), 5.0313 ($J_1^2$) | 4.9695 (slope 3.96) | 1.84% vs $(a_2/a_1)^4$ (1.23% vs $J_1^2$) |\n| Closed toroid net magnetic dipole $|\\int \\mathbf{M}\\,\\mathrm{d}V| / \\int |\\mathbf{M}|\\,\\mathrm{d}V$ | 0.00 | 5.22e-07 | 5.22e-07 residual |\n| Dubovik\u2013Tugushev identity $|T_{z,\\mathrm{DT}}(\\mathbf{J}_b)|$ vs $|T_{z,\\mathrm{mag}}(\\mathbf{M})|$ | 1.194649e-06 $\\mathrm{A\\,m^3}$ | 1.194649e-06 $\\mathrm{A\\,m^3}$ | 1.77e-16 |\n| Closed toroid TM electric dipole fraction ($|a_{10}|^2 / P_{\\mathrm{VSH}}$) | 100.00% ($|b_1|/|a_1| = 0$) | 99.9998% ($|b_1|/|a_1| = 5.34e-06$) | 0.162% pattern $L_2$ |\n| Multipole-to-far-field self-consistency $P_{\\mathrm{rad}}^{\\mathrm{N2F}}$ vs $P_{\\mathrm{dip}}(p_{\\mathrm{eff}} = -\\mathrm{i}k_0 T_{\\mathrm{tot}}^{\\mathrm{sim}} F_1/c_0)$ | 2.3448e-04 W (from simulated $T_{\\mathrm{tot}}$) | 2.3400e-04 W (N2F), 2.3407e-04 W (Flux) | 0.20% self-consistency |\n| Fixed-$T$ power scaling exponent $\\mathrm{d}\\ln(P_{\\mathrm{rad}}/|T_{\\mathrm{tot}}|^2)/\\mathrm{d}\\ln\\omega$ | 6.00 ($\\omega^6$) | 6.00 | 0.04% |\n| Electric octupole scaling exponent $\\mathrm{d}\\ln(|a_{30}|/|a_{10}|)/\\mathrm{d}\\ln(k_0 R)$ | 2.00 ($(k_0 R)^2$) | 2.18 | 8.86% |\n| Square of 4 rods ($C_4$) $|b_1|/|a_1|$ and $|m=\\pm 4|/|a_{10}|$ ($R_{\\mathrm{sq}}=12.5\\;\\mathrm{mm}$) | $|b_1|/|a_1| = 0$, $C_4$ residual $> 0$ | $|b_1|/|a_1| = 8.66e-06$, $|m=\\pm 4|/|a_{10}| = 6.12e-05$ | 99.9999% in $a_{10}$ |\n| Broken loop: 7 of 8 feeds $|b_1|/|a_1|$ vs closed 8/8 feeds | $|b_1|/|a_1| \\sim \\mathcal{O}(1)$ (Valero 2024) | 0.4898 (vs 5.34e-06 closed) | 9.17e+04$\\times$ jump |\n| Helical 1-turn axial $m_z$ vs Marinov compensating loop $|b_1|/|a_1|$ | Uncompensated $> 0.1$, compensated $\\to 0$ | 0.5098 $\\to$ 1.30e-03 | 3.92e+02$\\times$ suppression |\n| Consistent near-field vs outer-zone error $|\\Delta\\mathbf{E}|/|\\mathbf{E}|$ ($20\\text{\u2013}30\\;\\mathrm{mm}$ vs $45\\text{\u2013}55\\;\\mathrm{mm}$) | Outer $h_3^{(2)}/h_1^{(2)}$ octupole decays 4.51$\\times$ (91.82 $\\to$ 20.34) | 42.99% $\\to$ 12.95% ($|\\Delta H_y|/|H_y|$: 46.02% $\\to$ 3.99%) | 3.32$\\times$ ($|\\mathbf{E}|$), 11.52$\\times$ ($|H_y|$) reduction |\n| Energy bookkeeping $|P_{\\mathrm{in}} - (P_{\\mathrm{rad}} + P_{\\mathrm{loss,core}})| / P_{\\mathrm{in}}$ ($\\gamma = 0.02\\;\\mathrm{GHz}$) | 0.00% (Poynting theorem) | 0.075% (mutated: 118.5%) | 0.075% |\n| Toroid radiation quality factor $Q_{\\mathrm{rad}}$ vs Chu bound $Q_{\\mathrm{Chu}}(k_0 a_{\\mathrm{sph}})$ | $Q_{\\mathrm{rad,th}} = 2349.7$, $Q_{\\mathrm{Chu}} = 35.37$ | $Q_{\\mathrm{rad,sim}} = 2392.5$ (67.7$\\times Q_{\\mathrm{Chu}}$) | 1.82% |\n| 3-grid resolution study ($\\Delta_{\\mathrm{core}} = 2.50, 2.00, 1.67\\;\\mathrm{mm}$; 4\u20136 cells/$2r$) | $T_z^{\\mathrm{qs}} = 1.127e-06\\;\\mathrm{A\\,m^3}$, $P_{\\mathrm{rad}} = P_{\\mathrm{dip}}(T_{\\mathrm{sim}})$ | $|T_z^{\\mathrm{sim}}| = 1.254e-06 \\to 1.265e-06 \\to 1.096e-06$; $P_{\\mathrm{rad}} = 2.340e-04 \\to 2.382e-04 \\to 1.788e-04$ W | Not grid-converged ($\\pm 9\\%$ drive staircase, -25% $P_{\\mathrm{rad}}$ on fine); 0.17\u20130.20% N2F self-consistency |"
+}
