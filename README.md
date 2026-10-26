@@ -93,6 +93,7 @@ studies behind each speed or accuracy claim, with their baselines, are in [studi
 - **Dispersion-free wake computation** (`scheme='tete'`): Explicit TE/TM stepping along the beam axis removes numerical Cherenkov radiation: smooth-pipe wake at round-off and 19× less work for a 1 % loss-factor error.
 - **Incoherent emitters and reciprocity** (`wakis.subgrid.emitters`): Incoherent dipole ensembles, analytic dipole-above-mirror and slab references, and emission computed as absorption via Helmholtz reciprocity (LEDs, microLEDs).
 - **Linearized electron beams** (`wakis.beam_fluid`): Cold-fluid beam coupled to the fields, space-charge reduction factors (planar, cylindrical, rectangular) and ballistic bunching for slow-wave-structure and TWT work.
+- **Self-consistent particles** (`wakis.particles`): Electromagnetic particle-in-cell on the FIT grid: charge-conserving Esirkepov deposit (discrete Gauss law to 10⁻¹³), Boris, Vay and Higuera–Cary pushers, absorbing, PEC and collector boundaries, on CPU and GPU (CuPy kernels with no host synchronisation in the step).
 
 </td></tr></table>
 
@@ -150,7 +151,7 @@ This work builds on the adjoint inverse-design literature, and in particular on 
 
 - **Vacuum electronics**: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave-tube gain; backward-wave oscillators; a beam over a slow-wave structure.
 - **Magnetic antennas**: magnetic antennas in cavities.
-- **Particle-in-cell beams**: for large-signal beam physics (saturation, efficiency) and nonlinear plasma wakefields.
+- **Particles at scale**: multi-GPU particles (NCCL), beam injection and emission, and large-signal tutorials: space-charge-limited diode, TWT saturation, metamaterial backward-wave oscillator, klystron, nonlinear plasma wakefields.
 
 </td></tr></table>
 
@@ -427,7 +428,9 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] invrs-gym round-2 pilot on the lightweight ceviche challenges (all designs meet the length scale)
 - [x] invrs-gym round 2 with the official evaluators: waveguide bend +0.643 (leaderboard best −1.250), power splitter +0.068 (+0.009), mode converter +0.312 (0.854, behind), metalens with a guaranteed length scale (Tutorials 9.2–9.4)
 - [ ] invrs-gym 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
-- [ ] Nonlinear plasma wakefields (blowout regime, particle-in-cell — `wakis.particles`, in development)
+- [x] Self-consistent electromagnetic particles (`wakis.particles`), core and GPU: Esirkepov deposit with Gauss's law at round-off (≤ 9e-14 vs 0.58 for a naive deposit), Boris/Vay/Higuera–Cary pushers, cold-plasma frequency within 2.3e-7 of the discrete dispersion relation; GPU = CPU to a derived round-off bound, 23–387× per coupled step on one L4 vs a 1-thread NumPy reference (examples 017, 018)
+- [ ] Particles: MPI / multi-GPU (NCCL), beam injection, emission models, large-signal tutorials
+- [ ] Nonlinear plasma wakefields (blowout regime, `wakis.particles`)
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
 - [x] Tutorial textbook, Chapters 1–9: 48 tutorials, each reproducing a publication or an exact result with a resolution study (see [The tutorial textbook](#the-tutorial-textbook))

@@ -1,0 +1,1091 @@
+{
+  "environment": {
+    "machine": "Intel(R) Xeon(R) CPU @ 2.20GHz",
+    "cpu_count": 8,
+    "processes": 1,
+    "thread_pinning": {
+      "MKL_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "mkl_get_max_threads": 1
+    },
+    "cpu_baseline_description": "1-process, 1-thread unoptimised vectorised NumPy M1 CPU baseline on this VM (Intel(R) Xeon(R) CPU @ 2.20GHz, MKL_NUM_THREADS=OMP_NUM_THREADS=OPENBLAS_NUM_THREADS=1)",
+    "gpu_model": "NVIDIA L4",
+    "gpu_memory_total_mib": 23034,
+    "gpu_driver_version": "580.178.04",
+    "cupy_version": "14.2.0",
+    "cuda_runtime_version": "12.9 (12090)",
+    "memory_bytes_per_particle": {
+      "active_soa_bytes_with_ids": 64,
+      "active_soa_bytes_without_ids": 56,
+      "gpu_preallocated_scratch_bytes": 168,
+      "total_gpu_bytes_with_ids": 232,
+      "total_gpu_bytes_without_ids": 224,
+      "field_buffers_128cubed_bytes": 402653184,
+      "field_buffers_128cubed_gb": 0.402653184,
+      "field_buffers_128cubed_gib": 0.375
+    },
+    "cpu_stripped_attributes": [
+      "solver.imu",
+      "solver.sigma",
+      "solver.itA",
+      "solver.J_old",
+      "grid.L",
+      "grid.iA",
+      "grid.tL",
+      "grid.itA",
+      "ps._itA_arr",
+      "ps._q0_buf",
+      "ps._H_prev",
+      "solver._particles_q_bg"
+    ],
+    "cpu_shared_csr_indptr": true,
+    "coupled_timing_excludes_sorting": true,
+    "coupled_timing_sort_note": "ps.n_particle_steps is reset to 1 before timing < 50 coupled steps (sort_every = 50), so coupled_one_step_s excludes periodic cell sorting while stage_sum_step_s includes sort_amortized_s = sort_call_s / 50",
+    "cpu_one_step_variant": "_one_step",
+    "gpu_one_step_variant": "_one_step"
+  },
+  "problem_sizes": {
+    "grids": [
+      [
+        32,
+        32,
+        32
+      ],
+      [
+        128,
+        128,
+        128
+      ]
+    ],
+    "particle_counts": [
+      10000,
+      100000,
+      1000000,
+      10000000
+    ],
+    "shape_orders": [
+      1,
+      2
+    ],
+    "sort_every": 50
+  },
+  "validation_metrics": {
+    "esirkepov_single_step_roundoff": {
+      "p1": {
+        "grid": [
+          8,
+          8,
+          8
+        ],
+        "n_particles": 500,
+        "max_n_contrib": 16,
+        "mean_active_n_contrib": 5.5055664702030125,
+        "rel_linf_diff": 9.819307252483812e-17,
+        "max_edge_abs_diff_C": 1.262177448353619e-29,
+        "max_higham_edge_bound_C": 4.656742589004212e-28,
+        "max_bound_utilization": 0.33768555554212565
+      },
+      "p2": {
+        "grid": [
+          8,
+          8,
+          8
+        ],
+        "n_particles": 500,
+        "max_n_contrib": 39,
+        "mean_active_n_contrib": 21.4921875,
+        "rel_linf_diff": 1.7274348843621449e-16,
+        "max_edge_abs_diff_C": 1.262177448353619e-29,
+        "max_higham_edge_bound_C": 8.478569309213553e-28,
+        "max_bound_utilization": 0.08790992807237072
+      },
+      "p3": {
+        "grid": [
+          8,
+          8,
+          8
+        ],
+        "n_particles": 500,
+        "max_n_contrib": 81,
+        "mean_active_n_contrib": 54.111979166666664,
+        "rel_linf_diff": 4.0753583291984674e-16,
+        "max_edge_abs_diff_C": 2.524354896707238e-29,
+        "max_higham_edge_bound_C": 1.6396202157228667e-27,
+        "max_bound_utilization": 0.03166687692639002
+      }
+    },
+    "coupled_v2_8x8x8_60steps": {
+      "p1": {
+        "grid": [
+          8,
+          8,
+          8
+        ],
+        "domain_lengths_m": [
+          0.08,
+          0.08,
+          0.1
+        ],
+        "n_steps": 60,
+        "n_particles": 256,
+        "max_n_contrib": 9,
+        "rel_x_diff": 9.740531730449468e-16,
+        "rel_u_diff": 2.129237765423045e-15,
+        "rel_E_diff": 5.692759692568497e-15,
+        "rel_H_diff": 7.601143053811091e-15,
+        "rel_J_diff": 1.2913741514356403e-14,
+        "empirical_linear_growth_budget": 9.325873406851323e-14,
+        "gauss_residual_gpu": 1.720070775821849e-15,
+        "gauss_residual_cpu": 5.56493486295304e-16
+      },
+      "p2": {
+        "grid": [
+          8,
+          8,
+          8
+        ],
+        "domain_lengths_m": [
+          0.08,
+          0.08,
+          0.1
+        ],
+        "n_steps": 60,
+        "n_particles": 256,
+        "max_n_contrib": 24,
+        "rel_x_diff": 3.539655003169677e-15,
+        "rel_u_diff": 5.880668963837261e-15,
+        "rel_E_diff": 7.267804589454436e-15,
+        "rel_H_diff": 6.774272363115724e-15,
+        "rel_J_diff": 1.1119719258216786e-14,
+        "empirical_linear_growth_budget": 2.531308496145362e-13,
+        "gauss_residual_gpu": 8.675216409832978e-16,
+        "gauss_residual_cpu": 5.205129845899787e-16
+      }
+    },
+    "gauss_1000_steps_6x6x6": {
+      "p1_uniform": 1.025250639745195e-13,
+      "p1_graded": 4.922676388216372e-14,
+      "p2_uniform": 4.033415337530584e-14,
+      "p2_graded": 3.046851364723727e-14
+    }
+  },
+  "grids": {
+    "32x32x32": {
+      "grid_shape": [
+        32,
+        32,
+        32
+      ],
+      "n_cells": 32768,
+      "cpu": {
+        "p1": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 5,
+            "push_gather_s": 0.00598511160005728,
+            "deposit_s": 0.007116012999722443,
+            "sort_call_s": 0.0016278279999824008,
+            "sort_amortized_s": 3.255655999964802e-05,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 0.013133681159779373,
+            "stage_sum_step_s": 0.014473991659797323,
+            "coupled_one_step_s": 0.01488379239999631,
+            "push_gather_particles_per_s": 1670812.6210886852,
+            "deposit_particles_per_s": 1405281.300131133,
+            "particle_only_steps_per_s": 761401.154660586,
+            "stage_sum_particle_steps_per_s": 690894.4149647263,
+            "coupled_particle_steps_per_s": 671871.773755893
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.06731028566628083,
+            "deposit_s": 0.08235829033249804,
+            "sort_call_s": 0.017829918000643374,
+            "sort_amortized_s": 0.00035659836001286746,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 0.15002517435879173,
+            "stage_sum_step_s": 0.15136548485880968,
+            "coupled_one_step_s": 0.1530070463334899,
+            "push_gather_particles_per_s": 1485657.0434984071,
+            "deposit_particles_per_s": 1214206.846648693,
+            "particle_only_steps_per_s": 666554.79940217,
+            "stage_sum_particle_steps_per_s": 660652.5925859369,
+            "coupled_particle_steps_per_s": 653564.6716690601
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.6165709383324914,
+            "deposit_s": 0.8744856056652376,
+            "sort_call_s": 0.20507471400014765,
+            "sort_amortized_s": 0.004101494280002953,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 1.495158038277732,
+            "stage_sum_step_s": 1.4964983487777501,
+            "coupled_one_step_s": 1.4941014433334203,
+            "push_gather_particles_per_s": 1621873.3933592262,
+            "deposit_particles_per_s": 1143529.4000514522,
+            "particle_only_steps_per_s": 668825.6186964001,
+            "stage_sum_particle_steps_per_s": 668226.5976549456,
+            "coupled_particle_steps_per_s": 669298.5971347076
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 6.123538188663891,
+            "deposit_s": 9.446988127667282,
+            "sort_call_s": 3.105191893000665,
+            "sort_amortized_s": 0.0621038378600133,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 15.632630154191185,
+            "stage_sum_step_s": 15.633970464691203,
+            "coupled_one_step_s": 15.574556751666629,
+            "push_gather_particles_per_s": 1633042.808243174,
+            "deposit_particles_per_s": 1058538.4320229131,
+            "particle_only_steps_per_s": 639687.6214281159,
+            "stage_sum_particle_steps_per_s": 639632.7805904881,
+            "coupled_particle_steps_per_s": 642072.8473656179
+          }
+        },
+        "p2": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 5,
+            "push_gather_s": 0.012410929400357418,
+            "deposit_s": 0.013629165000202193,
+            "sort_call_s": 0.0016786810001576669,
+            "sort_amortized_s": 3.3573620003153336e-05,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 0.026073668020562768,
+            "stage_sum_step_s": 0.027413978520580716,
+            "coupled_one_step_s": 0.027935419599816668,
+            "push_gather_particles_per_s": 805741.429784623,
+            "deposit_particles_per_s": 733720.6644612232,
+            "particle_only_steps_per_s": 383528.6999939398,
+            "stage_sum_particle_steps_per_s": 364777.40698938025,
+            "coupled_particle_steps_per_s": 357968.4910143833
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.13193821999993816,
+            "deposit_s": 0.17019646733357754,
+            "sort_call_s": 0.017490813999756938,
+            "sort_amortized_s": 0.00034981627999513875,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 0.3024845036135108,
+            "stage_sum_step_s": 0.30382481411352874,
+            "coupled_one_step_s": 0.30453054133310314,
+            "push_gather_particles_per_s": 757930.4920139658,
+            "deposit_particles_per_s": 587556.2611061981,
+            "particle_only_steps_per_s": 330595.44804903975,
+            "stage_sum_particle_steps_per_s": 329137.0400135701,
+            "coupled_particle_steps_per_s": 328374.2890359804
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 1.3321061383321648,
+            "deposit_s": 1.7763537726671832,
+            "sort_call_s": 0.20415152900022804,
+            "sort_amortized_s": 0.0040830305800045605,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 3.112542941579352,
+            "stage_sum_step_s": 3.1138832520793702,
+            "coupled_one_step_s": 3.1116509809996082,
+            "push_gather_particles_per_s": 750690.9331204109,
+            "deposit_particles_per_s": 562950.9253094932,
+            "particle_only_steps_per_s": 321280.7080157373,
+            "stage_sum_particle_steps_per_s": 321142.4189819018,
+            "coupled_particle_steps_per_s": 321372.8037322338
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 13.139605199665615,
+            "deposit_s": 16.892035457665468,
+            "sort_call_s": 3.140624172000571,
+            "sort_amortized_s": 0.06281248344001142,
+            "field_step_s": 0.0013403105000179493,
+            "particle_only_step_s": 30.094453140771094,
+            "stage_sum_step_s": 30.095793451271113,
+            "coupled_one_step_s": 30.035665004666953,
+            "push_gather_particles_per_s": 761057.8741174419,
+            "deposit_particles_per_s": 591994.9685792355,
+            "particle_only_steps_per_s": 332287.14784161636,
+            "stage_sum_particle_steps_per_s": 332272.3494959939,
+            "coupled_particle_steps_per_s": 332937.52605265094
+          }
+        }
+      },
+      "gpu": {
+        "p1": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 30,
+            "push_gather_s": 4.942506551742554e-05,
+            "deposit_s": 4.655786752700806e-05,
+            "deposit_unsorted_s": 4.778666496276855e-05,
+            "sort_call_s": 0.00021237759888172148,
+            "sort_amortized_s": 4.24755197763443e-06,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.00010023048502206802,
+            "stage_sum_step_s": 0.000283909684240818,
+            "coupled_one_step_s": 0.00046585172017415364,
+            "push_gather_particles_per_s": 202326489.51116416,
+            "deposit_particles_per_s": 214786469.63800552,
+            "deposit_unsorted_particles_per_s": 209263400.3187119,
+            "particle_only_steps_per_s": 99770044.98978801,
+            "stage_sum_particle_steps_per_s": 35222468.81694178,
+            "coupled_particle_steps_per_s": 21466057.904136553
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.00014571520487467447,
+            "deposit_s": 0.00026019840240478517,
+            "deposit_unsorted_s": 0.0002596874713897705,
+            "sort_call_s": 0.0002353215992450714,
+            "sort_amortized_s": 4.706431984901428e-06,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.00041062003926436107,
+            "stage_sum_step_s": 0.000594299238483111,
+            "coupled_one_step_s": 0.000579583994547526,
+            "push_gather_particles_per_s": 686270180.8367025,
+            "deposit_particles_per_s": 384322113.7247111,
+            "deposit_unsorted_particles_per_s": 385078261.4379877,
+            "particle_only_steps_per_s": 243534144.55649364,
+            "stage_sum_particle_steps_per_s": 168265401.54289937,
+            "coupled_particle_steps_per_s": 172537545.79276943
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 15,
+            "push_gather_s": 0.0014021291097005208,
+            "deposit_s": 0.0021840555826822916,
+            "deposit_unsorted_s": 0.002088686879475911,
+            "sort_call_s": 0.0022364031791687012,
+            "sort_amortized_s": 4.472806358337402e-05,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.003630912755966187,
+            "stage_sum_step_s": 0.0038145919551849368,
+            "coupled_one_step_s": 0.004061798350016276,
+            "push_gather_particles_per_s": 713201083.3250505,
+            "deposit_particles_per_s": 457863805.2662908,
+            "deposit_unsorted_particles_per_s": 478769704.4618377,
+            "particle_only_steps_per_s": 275412841.67647254,
+            "stage_sum_particle_steps_per_s": 262151237.07812637,
+            "coupled_particle_steps_per_s": 246196367.67442998
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 10,
+            "push_gather_s": 0.013897421264648439,
+            "deposit_s": 0.023028839111328126,
+            "deposit_unsorted_s": 0.023137586975097657,
+            "sort_call_s": 0.03854097112019857,
+            "sort_amortized_s": 0.0007708194224039713,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.03769707979838054,
+            "stage_sum_step_s": 0.03788075899759929,
+            "coupled_one_step_s": 0.04019814453125,
+            "push_gather_particles_per_s": 719557953.2036996,
+            "deposit_particles_per_s": 434238128.6202523,
+            "deposit_unsorted_particles_per_s": 432197186.8009712,
+            "particle_only_steps_per_s": 265272537.11651158,
+            "stage_sum_particle_steps_per_s": 263986262.80518177,
+            "coupled_particle_steps_per_s": 248767701.01231936
+          }
+        },
+        "p2": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 30,
+            "push_gather_s": 5.1370668411254884e-05,
+            "deposit_s": 7.895039717356364e-05,
+            "deposit_unsorted_s": 8.07253360748291e-05,
+            "sort_call_s": 0.00021360639929771425,
+            "sort_amortized_s": 4.2721279859542854e-06,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.00013459319357077282,
+            "stage_sum_step_s": 0.00031827239278952284,
+            "coupled_one_step_s": 0.0004730197270711263,
+            "push_gather_particles_per_s": 194663614.6515291,
+            "deposit_particles_per_s": 126661807.38794911,
+            "deposit_unsorted_particles_per_s": 123876845.68733671,
+            "particle_only_steps_per_s": 74297962.13834338,
+            "stage_sum_particle_steps_per_s": 31419627.42151222,
+            "coupled_particle_steps_per_s": 21140767.345832776
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.0002889386812845866,
+            "deposit_s": 0.0005269845326741537,
+            "deposit_unsorted_s": 0.0005243904113769531,
+            "sort_call_s": 0.00024391679763793948,
+            "sort_amortized_s": 4.878335952758789e-06,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.0008208015499114992,
+            "stage_sum_step_s": 0.0010044807491302492,
+            "coupled_one_step_s": 0.000962664540608724,
+            "push_gather_particles_per_s": 346094193.9494291,
+            "deposit_particles_per_s": 189758890.0618308,
+            "deposit_unsorted_particles_per_s": 190697613.51550713,
+            "particle_only_steps_per_s": 121832128.61961852,
+            "stage_sum_particle_steps_per_s": 99553923.84233057,
+            "coupled_particle_steps_per_s": 103878345.75974591
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 15,
+            "push_gather_s": 0.002861738586425781,
+            "deposit_s": 0.004722960917154948,
+            "deposit_unsorted_s": 0.004613734436035156,
+            "sort_call_s": 0.0022640639781951904,
+            "sort_amortized_s": 4.528127956390381e-05,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.007629980783144633,
+            "stage_sum_step_s": 0.007813659982363384,
+            "coupled_one_step_s": 0.008054782104492187,
+            "push_gather_particles_per_s": 349437927.2597948,
+            "deposit_particles_per_s": 211731584.81319538,
+            "deposit_unsorted_particles_per_s": 216744161.12674156,
+            "particle_only_steps_per_s": 131061929.04300584,
+            "stage_sum_particle_steps_per_s": 127980997.67038132,
+            "coupled_particle_steps_per_s": 124149851.23462193
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 10,
+            "push_gather_s": 0.02760028381347656,
+            "deposit_s": 0.05523507080078125,
+            "deposit_unsorted_s": 0.05017446289062501,
+            "sort_call_s": 0.03850344467163086,
+            "sort_amortized_s": 0.0007700688934326172,
+            "field_step_s": 0.00018367919921875002,
+            "particle_only_step_s": 0.08360542350769043,
+            "stage_sum_step_s": 0.08378910270690917,
+            "coupled_one_step_s": 0.08609166870117188,
+            "push_gather_particles_per_s": 362315114.8582479,
+            "deposit_particles_per_s": 181044395.43614307,
+            "deposit_unsorted_particles_per_s": 199304574.95477206,
+            "particle_only_steps_per_s": 119609465.27685674,
+            "stage_sum_particle_steps_per_s": 119347262.07749936,
+            "coupled_particle_steps_per_s": 116155258.12039325
+          }
+        }
+      },
+      "speedup_vs_1proc_cpu": {
+        "p1": {
+          "10000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 31.949634949146834,
+            "stage_sum_speedup": 50.980971989388664,
+            "particle_only_speedup": 131.03479601927194,
+            "push_gather_speedup": 121.09466193721363,
+            "deposit_speedup": 152.84233101085374,
+            "sort_speedup": 7.664782013516312,
+            "field_step_speedup": 7.297018419716249
+          },
+          "100000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 263.9946026338091,
+            "stage_sum_speedup": 254.69574089503269,
+            "particle_only_speedup": 365.36252499407146,
+            "push_gather_speedup": 461.9304191636865,
+            "deposit_speedup": 316.52112223339094,
+            "sort_speedup": 75.76830200815833,
+            "field_step_speedup": 7.297018419716249
+          },
+          "1000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 367.8423482858112,
+            "stage_sum_speedup": 392.30889341746064,
+            "particle_only_speedup": 411.78572407749033,
+            "push_gather_speedup": 439.7390611654758,
+            "deposit_speedup": 400.3953070604827,
+            "sort_speedup": 91.69845397750528,
+            "field_step_speedup": 7.297018419716249
+          },
+          "10000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 387.44466773980037,
+            "stage_sum_speedup": 412.71534357804217,
+            "particle_only_speedup": 414.69074628063794,
+            "push_gather_speedup": 440.6240605399679,
+            "deposit_speedup": 410.2242445655982,
+            "sort_speedup": 80.56859499768274,
+            "field_step_speedup": 7.297018419716249
+          }
+        },
+        "p2": {
+          "10000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 59.05762064679412,
+            "stage_sum_speedup": 86.13369912579849,
+            "particle_only_speedup": 193.7220399399507,
+            "push_gather_speedup": 241.595637825851,
+            "deposit_speedup": 172.62946721141876,
+            "sort_speedup": 7.858758003864868,
+            "field_step_speedup": 7.297018419716249
+          },
+          "100000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 316.3412886700268,
+            "stage_sum_speedup": 302.46952405668486,
+            "particle_only_speedup": 368.52330949682715,
+            "push_gather_speedup": 456.6305190200104,
+            "deposit_speedup": 322.96292733664313,
+            "sort_speedup": 71.70811591959163,
+            "field_step_speedup": 7.297018419716249
+          },
+          "1000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 386.31100638516676,
+            "stage_sum_speedup": 398.5178852302093,
+            "particle_only_speedup": 407.9358821525817,
+            "push_gather_speedup": 465.48840786884114,
+            "deposit_speedup": 376.1101994757213,
+            "sort_speedup": 90.17038871974299,
+            "field_step_speedup": 7.297018419716249
+          },
+          "10000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 348.88004214347524,
+            "stage_sum_speedup": 359.18505484591424,
+            "particle_only_speedup": 359.9581447967052,
+            "push_gather_speedup": 476.06775671088786,
+            "deposit_speedup": 305.82083471189367,
+            "sort_speedup": 81.56735582451839,
+            "field_step_speedup": 7.297018419716249
+          }
+        }
+      },
+      "sorting_study": {
+        "p1": {
+          "10000": {
+            "sorted_deposit_s": 4.655786752700806e-05,
+            "unsorted_deposit_s": 4.778666496276855e-05,
+            "sorted_deposit_particles_per_s": 214786469.63800552,
+            "unsorted_deposit_particles_per_s": 209263400.3187119,
+            "sorting_deposit_speedup": 1.026392906312723
+          },
+          "100000": {
+            "sorted_deposit_s": 0.00026019840240478517,
+            "unsorted_deposit_s": 0.0002596874713897705,
+            "sorted_deposit_particles_per_s": 384322113.7247111,
+            "unsorted_deposit_particles_per_s": 385078261.4379877,
+            "sorting_deposit_speedup": 0.9980363791234206
+          },
+          "1000000": {
+            "sorted_deposit_s": 0.0021840555826822916,
+            "unsorted_deposit_s": 0.002088686879475911,
+            "sorted_deposit_particles_per_s": 457863805.2662908,
+            "unsorted_deposit_particles_per_s": 478769704.4618377,
+            "sorting_deposit_speedup": 0.9563341226466151
+          },
+          "10000000": {
+            "sorted_deposit_s": 0.023028839111328126,
+            "unsorted_deposit_s": 0.023137586975097657,
+            "sorted_deposit_particles_per_s": 434238128.6202523,
+            "unsorted_deposit_particles_per_s": 432197186.8009712,
+            "sorting_deposit_speedup": 1.004722246885473
+          }
+        },
+        "p2": {
+          "10000": {
+            "sorted_deposit_s": 7.895039717356364e-05,
+            "unsorted_deposit_s": 8.07253360748291e-05,
+            "sorted_deposit_particles_per_s": 126661807.38794911,
+            "unsorted_deposit_particles_per_s": 123876845.68733671,
+            "sorting_deposit_speedup": 1.0224816969237462
+          },
+          "100000": {
+            "sorted_deposit_s": 0.0005269845326741537,
+            "unsorted_deposit_s": 0.0005243904113769531,
+            "sorted_deposit_particles_per_s": 189758890.0618308,
+            "unsorted_deposit_particles_per_s": 190697613.51550713,
+            "sorting_deposit_speedup": 0.9950774242195747
+          },
+          "1000000": {
+            "sorted_deposit_s": 0.004722960917154948,
+            "unsorted_deposit_s": 0.004613734436035156,
+            "sorted_deposit_particles_per_s": 211731584.81319538,
+            "unsorted_deposit_particles_per_s": 216744161.12674156,
+            "sorting_deposit_speedup": 0.9768733040489379
+          },
+          "10000000": {
+            "sorted_deposit_s": 0.05523507080078125,
+            "unsorted_deposit_s": 0.05017446289062501,
+            "sorted_deposit_particles_per_s": 181044395.43614307,
+            "unsorted_deposit_particles_per_s": 199304574.95477206,
+            "sorting_deposit_speedup": 0.90838053003664
+          }
+        }
+      }
+    },
+    "128x128x128": {
+      "grid_shape": [
+        128,
+        128,
+        128
+      ],
+      "n_cells": 2097152,
+      "cpu": {
+        "p1": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 5,
+            "push_gather_s": 0.020953889599877585,
+            "deposit_s": 0.049076315999991495,
+            "sort_call_s": 0.0015814460002729902,
+            "sort_amortized_s": 3.1628920005459804e-05,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 0.07006183451987455,
+            "stage_sum_step_s": 0.21053898491984002,
+            "coupled_one_step_s": 0.21757938399987325,
+            "push_gather_particles_per_s": 477238.3643778681,
+            "deposit_particles_per_s": 203764.27603086043,
+            "particle_only_steps_per_s": 142731.0613335893,
+            "stage_sum_particle_steps_per_s": 47497.14169946896,
+            "coupled_particle_steps_per_s": 45960.23674745685
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.08981882433333037,
+            "deposit_s": 0.14877855266604456,
+            "sort_call_s": 0.016865885000697745,
+            "sort_amortized_s": 0.0003373177000139549,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 0.2389346946993889,
+            "stage_sum_step_s": 0.3794118450993544,
+            "coupled_one_step_s": 0.385807984333951,
+            "push_gather_particles_per_s": 1113352.3595108064,
+            "deposit_particles_per_s": 672139.8898432946,
+            "particle_only_steps_per_s": 418524.4010955089,
+            "stage_sum_particle_steps_per_s": 263565.8356259636,
+            "coupled_particle_steps_per_s": 259196.2946869475
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.6568372530000488,
+            "deposit_s": 1.0889263193339502,
+            "sort_call_s": 0.2175121450000006,
+            "sort_amortized_s": 0.004350242900000012,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 1.750113815233999,
+            "stage_sum_step_s": 1.8905909656339646,
+            "coupled_one_step_s": 1.9352587173334541,
+            "push_gather_particles_per_s": 1522447.1441480888,
+            "deposit_particles_per_s": 918335.7792395516,
+            "particle_only_steps_per_s": 571391.4096874293,
+            "stage_sum_particle_steps_per_s": 528935.1415390234,
+            "coupled_particle_steps_per_s": 516726.77717110387
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 6.18786170733559,
+            "deposit_s": 10.279055710003073,
+            "sort_call_s": 3.358694047999961,
+            "sort_amortized_s": 0.06717388095999922,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 16.534091298298662,
+            "stage_sum_step_s": 16.67456844869863,
+            "coupled_one_step_s": 16.735200475666716,
+            "push_gather_particles_per_s": 1616067.1445105495,
+            "deposit_particles_per_s": 972852.0091848992,
+            "particle_only_steps_per_s": 604810.982326497,
+            "stage_sum_particle_steps_per_s": 599715.6706493626,
+            "coupled_particle_steps_per_s": 597542.8865964398
+          }
+        },
+        "p2": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 5,
+            "push_gather_s": 0.034216809600002306,
+            "deposit_s": 0.058507018000273095,
+            "sort_call_s": 0.0015994140003385837,
+            "sort_amortized_s": 3.1988280006771675e-05,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 0.09275581588028217,
+            "stage_sum_step_s": 0.23323296628024764,
+            "coupled_one_step_s": 0.23896640920011122,
+            "push_gather_particles_per_s": 292254.0154064897,
+            "deposit_particles_per_s": 170919.6664228097,
+            "particle_only_steps_per_s": 107809.95137713816,
+            "stage_sum_particle_steps_per_s": 42875.58555502063,
+            "coupled_particle_steps_per_s": 41846.88565004954
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 3,
+            "push_gather_s": 0.19667077666690602,
+            "deposit_s": 0.26134688766675634,
+            "sort_call_s": 0.01621501099998568,
+            "sort_amortized_s": 0.00032430021999971356,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 0.4583419645536621,
+            "stage_sum_step_s": 0.5988191149536276,
+            "coupled_one_step_s": 0.605232345666991,
+            "push_gather_particles_per_s": 508463.950235811,
+            "deposit_particles_per_s": 382633.2155426702,
+            "particle_only_steps_per_s": 218177.70951298552,
+            "stage_sum_particle_steps_per_s": 166995.33716077846,
+            "coupled_particle_steps_per_s": 165225.8024805265
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 1.377089759666281,
+            "deposit_s": 1.9658861793344233,
+            "sort_call_s": 0.2170189010003014,
+            "sort_amortized_s": 0.004340378020006028,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 3.3473163170207103,
+            "stage_sum_step_s": 3.487793467420676,
+            "coupled_one_step_s": 3.532525225333302,
+            "push_gather_particles_per_s": 726169.0772011379,
+            "deposit_particles_per_s": 508676.4485716885,
+            "particle_only_steps_per_s": 298746.7885586783,
+            "stage_sum_particle_steps_per_s": 286714.22472143365,
+            "coupled_particle_steps_per_s": 283083.61192400195
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 3,
+            "push_gather_s": 13.400589996332807,
+            "deposit_s": 18.710044442002374,
+            "sort_call_s": 3.3021480819998033,
+            "sort_amortized_s": 0.06604296163999607,
+            "field_step_s": 0.14047715039996547,
+            "particle_only_step_s": 32.176677399975176,
+            "stage_sum_step_s": 32.31715455037514,
+            "coupled_one_step_s": 32.36977206833368,
+            "push_gather_particles_per_s": 746235.8002697338,
+            "deposit_particles_per_s": 534472.27402362,
+            "particle_only_steps_per_s": 310784.10849243606,
+            "stage_sum_particle_steps_per_s": 309433.1830610971,
+            "coupled_particle_steps_per_s": 308930.19508724567
+          }
+        }
+      },
+      "gpu": {
+        "p1": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.0004724053382873535,
+            "deposit_s": 0.0017977344512939454,
+            "deposit_unsorted_s": 0.0017940853118896484,
+            "sort_call_s": 0.00023080959916114808,
+            "sort_amortized_s": 4.616191983222961e-06,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.0022747559815645218,
+            "stage_sum_step_s": 0.008667588165402413,
+            "coupled_one_step_s": 0.009306521606445314,
+            "push_gather_particles_per_s": 21168262.061249666,
+            "deposit_particles_per_s": 5562556.8018693505,
+            "deposit_unsorted_particles_per_s": 5573870.949017103,
+            "particle_only_steps_per_s": 4396075.922447842,
+            "stage_sum_particle_steps_per_s": 1153723.4821465155,
+            "coupled_particle_steps_per_s": 1074515.3154831135
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.0007938069025675456,
+            "deposit_s": 0.0023213396708170577,
+            "deposit_unsorted_s": 0.002399368540445964,
+            "sort_call_s": 0.000244531199336052,
+            "sort_amortized_s": 4.89062398672104e-06,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.0031200371973713246,
+            "stage_sum_step_s": 0.009512869381209215,
+            "coupled_one_step_s": 0.010165214029947916,
+            "push_gather_particles_per_s": 125975221.02233285,
+            "deposit_particles_per_s": 43078572.798784904,
+            "deposit_unsorted_particles_per_s": 41677632.39131796,
+            "particle_only_steps_per_s": 32050899.932940356,
+            "stage_sum_particle_steps_per_s": 10512075.378384795,
+            "coupled_particle_steps_per_s": 9837471.174280073
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 15,
+            "push_gather_s": 0.0018707115173339844,
+            "deposit_s": 0.0043399169921875,
+            "deposit_unsorted_s": 0.00769638417561849,
+            "sort_call_s": 0.0022632448196411134,
+            "sort_amortized_s": 4.5264896392822266e-05,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.006255893405914307,
+            "stage_sum_step_s": 0.012648725589752198,
+            "coupled_one_step_s": 0.013433854166666667,
+            "push_gather_particles_per_s": 534555964.79415196,
+            "deposit_particles_per_s": 230419153.59214237,
+            "deposit_unsorted_particles_per_s": 129931143.92183247,
+            "particle_only_steps_per_s": 159849270.9378012,
+            "stage_sum_particle_steps_per_s": 79059348.14572819,
+            "coupled_particle_steps_per_s": 74438801.2251386
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 10,
+            "push_gather_s": 0.014908621215820313,
+            "deposit_s": 0.024873164367675782,
+            "deposit_unsorted_s": 0.06204569702148438,
+            "sort_call_s": 0.038544041951497396,
+            "sort_amortized_s": 0.0007708808390299479,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.04055266642252605,
+            "stage_sum_step_s": 0.04694549860636394,
+            "coupled_one_step_s": 0.04941097106933594,
+            "push_gather_particles_per_s": 670752838.5917056,
+            "deposit_particles_per_s": 402039718.4764967,
+            "deposit_unsorted_particles_per_s": 161171531.30759946,
+            "particle_only_steps_per_s": 246592909.47253805,
+            "stage_sum_particle_steps_per_s": 213012968.16228506,
+            "coupled_particle_steps_per_s": 202384203.01368904
+          }
+        },
+        "p2": {
+          "10000": {
+            "n_particles": 10000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.0005618346532185873,
+            "deposit_s": 0.0018570240020751954,
+            "deposit_unsorted_s": 0.0018595840454101562,
+            "sort_call_s": 0.00021299199759960177,
+            "sort_amortized_s": 4.259839951992036e-06,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.0024231184952457747,
+            "stage_sum_step_s": 0.008815950679083666,
+            "coupled_one_step_s": 0.009493332926432292,
+            "push_gather_particles_per_s": 17798830.92421037,
+            "deposit_particles_per_s": 5384960.016039187,
+            "deposit_unsorted_particles_per_s": 5377546.674850271,
+            "particle_only_steps_per_s": 4126913.3224892947,
+            "stage_sum_particle_steps_per_s": 1134307.616276207,
+            "coupled_particle_steps_per_s": 1053370.831666189
+          },
+          "100000": {
+            "n_particles": 100000,
+            "n_steps_timed": 30,
+            "push_gather_s": 0.001166882069905599,
+            "deposit_s": 0.002881706746419271,
+            "deposit_unsorted_s": 0.0030970197041829428,
+            "sort_call_s": 0.00023674880266189575,
+            "sort_amortized_s": 4.734976053237915e-06,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.004053323792378108,
+            "stage_sum_step_s": 0.010446155976215999,
+            "coupled_one_step_s": 0.011089169311523437,
+            "push_gather_particles_per_s": 85698463.09155305,
+            "deposit_particles_per_s": 34701657.31619195,
+            "deposit_unsorted_particles_per_s": 32289106.803207133,
+            "particle_only_steps_per_s": 24671110.703773666,
+            "stage_sum_particle_steps_per_s": 9572899.373480719,
+            "coupled_particle_steps_per_s": 9017808.024274988
+          },
+          "1000000": {
+            "n_particles": 1000000,
+            "n_steps_timed": 15,
+            "push_gather_s": 0.003434837341308594,
+            "deposit_s": 0.006956236775716146,
+            "deposit_unsorted_s": 0.017836578369140623,
+            "sort_call_s": 0.002272447967529297,
+            "sort_amortized_s": 4.544895935058594e-05,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.010436523076375326,
+            "stage_sum_step_s": 0.016829355260213216,
+            "coupled_one_step_s": 0.017475242106119792,
+            "push_gather_particles_per_s": 291134601.3313757,
+            "deposit_particles_per_s": 143755888.74302655,
+            "deposit_unsorted_particles_per_s": 56064564.58768558,
+            "particle_only_steps_per_s": 95817351.49550463,
+            "stage_sum_particle_steps_per_s": 59419982.79423871,
+            "coupled_particle_steps_per_s": 57223813.77765302
+          },
+          "10000000": {
+            "n_particles": 10000000,
+            "n_steps_timed": 10,
+            "push_gather_s": 0.028698727416992188,
+            "deposit_s": 0.050450942993164063,
+            "deposit_unsorted_s": 0.1699492919921875,
+            "sort_call_s": 0.038530731201171876,
+            "sort_amortized_s": 0.0007706146240234375,
+            "field_step_s": 0.00639283218383789,
+            "particle_only_step_s": 0.07992028503417968,
+            "stage_sum_step_s": 0.08631311721801757,
+            "coupled_one_step_s": 0.08924754028320313,
+            "push_gather_particles_per_s": 348447506.21517503,
+            "deposit_particles_per_s": 198212350.5868853,
+            "deposit_unsorted_particles_per_s": 58841080.67046078,
+            "particle_only_steps_per_s": 125124678.86874126,
+            "stage_sum_particle_steps_per_s": 115857245.3679443,
+            "coupled_particle_steps_per_s": 112047905.95088315
+          }
+        }
+      },
+      "speedup_vs_1proc_cpu": {
+        "p1": {
+          "10000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 23.379238044124534,
+            "stage_sum_speedup": 24.290377080931055,
+            "particle_only_speedup": 30.799714381534553,
+            "push_gather_speedup": 44.35574262527027,
+            "deposit_speedup": 27.298979537644232,
+            "sort_speedup": 6.85173409607131,
+            "field_step_speedup": 21.97416518379981
+          },
+          "100000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 37.953749246923415,
+            "stage_sum_speedup": 39.88405915136469,
+            "particle_only_speedup": 76.58071990317768,
+            "push_gather_speedup": 113.1494624735738,
+            "deposit_speedup": 64.09167711922055,
+            "sort_speedup": 68.97232355826897,
+            "field_step_speedup": 21.97416518379981
+          },
+          "1000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 144.0583389788017,
+            "stage_sum_speedup": 149.46888935322403,
+            "particle_only_speedup": 279.75441742332845,
+            "push_gather_speedup": 351.1162714901816,
+            "deposit_speedup": 250.90948082513574,
+            "sort_speedup": 96.10632624114075,
+            "field_step_speedup": 21.97416518379981
+          },
+          "10000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 338.69402105421176,
+            "stage_sum_speedup": 355.18993180824845,
+            "particle_only_speedup": 407.7189678732041,
+            "push_gather_speedup": 415.0525805008265,
+            "deposit_speedup": 413.2588663853861,
+            "sort_speedup": 87.13912392027893,
+            "field_step_speedup": 21.97416518379981
+          }
+        },
+        "p2": {
+          "10000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 25.1720245199404,
+            "stage_sum_speedup": 26.455793001837666,
+            "particle_only_speedup": 38.279521229470056,
+            "push_gather_speedup": 60.90192088363393,
+            "deposit_speedup": 31.505795258915562,
+            "sort_speedup": 7.509268039944305,
+            "field_step_speedup": 21.97416518379981
+          },
+          "100000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 54.57869103306565,
+            "stage_sum_speedup": 57.3243513036786,
+            "particle_only_speedup": 113.07805347688503,
+            "push_gather_speedup": 168.54383295375916,
+            "deposit_speedup": 90.69170136465091,
+            "sort_speedup": 68.49036116622969,
+            "field_step_speedup": 21.97416518379981
+          },
+          "1000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 202.14456565933466,
+            "stage_sum_speedup": 207.24462782399473,
+            "particle_only_speedup": 320.73098411461143,
+            "push_gather_speedup": 400.91847817796275,
+            "deposit_speedup": 282.6077148778529,
+            "sort_speedup": 95.50005285104665,
+            "field_step_speedup": 21.97416518379981
+          },
+          "10000000": {
+            "baseline": "1-process 1-thread unoptimised vectorised NumPy M1 CPU on this VM",
+            "coupled_speedup": 362.6965176364177,
+            "stage_sum_speedup": 374.41765043365905,
+            "particle_only_speedup": 402.60964267349783,
+            "push_gather_speedup": 466.94021660341883,
+            "deposit_speedup": 370.85618884343796,
+            "sort_speedup": 85.70167186184547,
+            "field_step_speedup": 21.97416518379981
+          }
+        }
+      },
+      "sorting_study": {
+        "p1": {
+          "10000": {
+            "sorted_deposit_s": 0.0017977344512939454,
+            "unsorted_deposit_s": 0.0017940853118896484,
+            "sorted_deposit_particles_per_s": 5562556.8018693505,
+            "unsorted_deposit_particles_per_s": 5573870.949017103,
+            "sorting_deposit_speedup": 0.9979701454785658
+          },
+          "100000": {
+            "sorted_deposit_s": 0.0023213396708170577,
+            "unsorted_deposit_s": 0.002399368540445964,
+            "sorted_deposit_particles_per_s": 43078572.798784904,
+            "unsorted_deposit_particles_per_s": 41677632.39131796,
+            "sorting_deposit_speedup": 1.0336137234071574
+          },
+          "1000000": {
+            "sorted_deposit_s": 0.0043399169921875,
+            "unsorted_deposit_s": 0.00769638417561849,
+            "sorted_deposit_particles_per_s": 230419153.59214237,
+            "unsorted_deposit_particles_per_s": 129931143.92183247,
+            "sorting_deposit_speedup": 1.7733943274659707
+          },
+          "10000000": {
+            "sorted_deposit_s": 0.024873164367675782,
+            "unsorted_deposit_s": 0.06204569702148438,
+            "sorted_deposit_particles_per_s": 402039718.4764967,
+            "unsorted_deposit_particles_per_s": 161171531.30759946,
+            "sorting_deposit_speedup": 2.494483456319559
+          }
+        },
+        "p2": {
+          "10000": {
+            "sorted_deposit_s": 0.0018570240020751954,
+            "unsorted_deposit_s": 0.0018595840454101562,
+            "sorted_deposit_particles_per_s": 5384960.016039187,
+            "unsorted_deposit_particles_per_s": 5377546.674850271,
+            "sorting_deposit_speedup": 1.0013785730998093
+          },
+          "100000": {
+            "sorted_deposit_s": 0.002881706746419271,
+            "unsorted_deposit_s": 0.0030970197041829428,
+            "sorted_deposit_particles_per_s": 34701657.31619195,
+            "unsorted_deposit_particles_per_s": 32289106.803207133,
+            "sorting_deposit_speedup": 1.0747171647605065
+          },
+          "1000000": {
+            "sorted_deposit_s": 0.006956236775716146,
+            "unsorted_deposit_s": 0.017836578369140623,
+            "sorted_deposit_particles_per_s": 143755888.74302655,
+            "unsorted_deposit_particles_per_s": 56064564.58768558,
+            "sorting_deposit_speedup": 2.564113175590453
+          },
+          "10000000": {
+            "sorted_deposit_s": 0.050450942993164063,
+            "unsorted_deposit_s": 0.1699492919921875,
+            "sorted_deposit_particles_per_s": 198212350.5868853,
+            "unsorted_deposit_particles_per_s": 58841080.67046078,
+            "sorting_deposit_speedup": 3.368604864634841
+          }
+        }
+      }
+    }
+  },
+  "figures": [
+    "docs/img/particles_gpu_throughput_scaling.png",
+    "docs/img/particles_gpu_kernel_breakdown.png"
+  ]
+}

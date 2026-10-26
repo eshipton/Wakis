@@ -17,7 +17,7 @@ For cold-test dispersion and Pierce interaction impedance of corrugated and glid
 
 - Folded-waveguide and helix slow-wave structures (3D dispersion and interaction impedance).
 - Metamaterial and frequency-selective-surface slow-wave structures.
-- Traveling-wave tube small-signal convective gain vs Pierce three-wave theory.
 - Backward-wave oscillator start-oscillation condition and voltage tuning.
 - Klystron cavities ($R/Q$, $Q_0$) and two-cavity ballistic bunching gain.
+- With self-consistent particles (`wakis.particles`): a space-charge-limited diode (Child–Langmuir current and the virtual cathode), large-signal TWT saturation and efficiency, a metamaterial backward-wave oscillator (start current and output power), a two-cavity klystron, multipactor in an RF gap, and nonlinear plasma wakefields in the blowout regime.
 - Microwave amplifier circuit with microstrip matching networks and transistor S-parameters.

@@ -24,6 +24,7 @@ from . import (
     materials,
     near2far,
     nonlinear,
+    particles,
     pcsel_cwt,
     resonances,
     schematic,
@@ -85,6 +86,14 @@ from .nonlinear import (
     solve_lle,
     spm_phase_shift,
     thg_conversion_efficiency,
+)
+from .particles import (
+    BeamInjector,
+    Collector,
+    LogicalGridMap,
+    ParticleSolver,
+    Species,
+    gauss_residual,
 )
 from .pcsel_cwt import (
     PCSELLayerStack,

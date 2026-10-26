@@ -3,6 +3,7 @@
 # Copyright (c) CERN, 2024.                   #
 # ########################################### #
 
+import inspect
 import time
 
 import h5py
@@ -14,7 +15,13 @@ from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
 
 from . import conformal, tete
-from .boundaries import BCsMixin
+from .boundaries import (
+    BCsMixin,
+    _assemble_curl,
+    _dia_view,
+    _scale_csr_lr,
+    _scale_csr_lr_gpu,
+)
 from .dispersive import DispersiveMixin
 from .field import Field
 from .gain import GainMixin
@@ -292,6 +299,12 @@ class SolverFIT3D(
         self.M = None
         # Off-diagonal permittivity couplings (wakis.tensor_averaging)
         self.tensor_operator = None
+        # Optional mid-step hooks executed between the H and E updates (wakis.particles)
+        self._mid_step_fn = None
+        self._mid_step_takes_arg = False
+        self._mid_step_hooks = []
+        self._mid_step_hook_takes_arg = []
+        self._H_before_update = None
 
         # MPI init
         if self.use_mpi:
@@ -326,32 +339,38 @@ class SolverFIT3D(
             )
 
         # original grid
-        self.Ds = diags(self.L.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
-        self.iDa = diags(self.iA.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
+        self.Ds = _dia_view(self.L.toarray(), self.dtype)
+        self.iDa = _dia_view(self.iA.toarray(), self.dtype)
 
         # tilde grid
-        self.tDs = diags(self.tL.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
-        self.itDa = diags(self.itA.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
-
-        # Curl matrix
-        self.C = vstack(
-            [
-                hstack([sparse_mat((N, N)), -self.Pz, self.Py]),
-                hstack([self.Pz, sparse_mat((N, N)), -self.Px]),
-                hstack([-self.Py, self.Px, sparse_mat((N, N))]),
-            ],
-            dtype=np.int8,
-        )
+        self.tDs = _dia_view(self.tL.toarray(), self.dtype)
+        self.itDa = _dia_view(self.itA.toarray(), self.dtype)
 
         # Boundaries
-        if verbose:
-            print("Applying boundary conditions...")
         self.bc_low = ["Periodic"] * 3 if bc_low is None else bc_low
         self.bc_high = ["Periodic"] * 3 if bc_high is None else bc_high
         self.update_logger(["bc_low", "bc_high"])
         self.k_bloch = np.zeros(3) if k_bloch is None else np.asarray(k_bloch, float)
         if self.k_bloch.shape != (3,):
             raise ValueError("k_bloch must have three components (kx, ky, kz).")
+
+        # Curl matrix (deferred to _apply_bc_to_C when any axis is periodic/Bloch)
+        if self.use_mpi and (
+            self.bc_low[2].lower() in ("periodic", "bloch")
+            or self.bc_high[2].lower() in ("periodic", "bloch")
+        ):
+            raise NotImplementedError(
+                "Longitudinal periodic MPI requires cyclic ghost exchange."
+            )
+        if any(x.lower() in ("periodic", "bloch") for x in self.bc_low):
+            self.C = None
+        else:
+            from .boundaries import _assemble_curl
+
+            self.C = _assemble_curl(self.Px, self.Py, self.Pz)
+
+        if verbose:
+            print("Applying boundary conditions...")
         self._apply_bc_to_C()
 
         # Materials
@@ -515,20 +534,42 @@ class SolverFIT3D(
         # Pre-computing
         if verbose:
             print("Pre-computing...")
-        self.iDeps = diags(self.ieps.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
-        self.iDmu = diags(self.imu.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype)
-        self.Dsigma = diags(
-            self.sigma.toarray(), shape=(3 * N, 3 * N), dtype=self.dtype
-        )
+        self.iDeps = _dia_view(self.ieps.toarray(), self.dtype)
+        self.iDmu = _dia_view(self.imu.toarray(), self.dtype)
+        self.Dsigma = _dia_view(self.sigma.toarray(), self.dtype)
 
         if self.activate_cpml:
             self._initialize_CPML_matrices()  # Calculate diagonal matrices for CPML update equations
         else:
-            self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
-            # Dual curl = C^H (C^T for real C; conjugates Bloch phases)
-            self.itDaiDepsDstC = (
-                self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
-            )
+            dl_h = self.iDa.data[0] * self.iDmu.data[0] if self.iDa.format == "dia" else None
+            dl_e = self.iDeps.data[0] * self.itDa.data[0] if self.itDa.format == "dia" else None
+            Ct = self.C.conj().transpose()  # dual curl = C^H (conjugates Bloch phases)
+            if use_gpu and imported_cupyx and self.scheme == "yee":
+                self.ieps.to_gpu()
+                self.sigma.to_gpu()
+                self.imu.to_gpu()
+                if dl_h is not None:
+                    self.tDsiDmuiDaC = _scale_csr_lr_gpu(
+                        self.C, dl_h, self.Ds.data[0], self.dtype, cp, gpu_sparse_mat
+                    )
+                else:
+                    self.tDsiDmuiDaC = gpu_sparse_mat(self.iDa * self.iDmu * self.C * self.Ds)
+                if dl_e is not None:
+                    self.itDaiDepsDstC = _scale_csr_lr_gpu(
+                        Ct, dl_e, self.tDs.data[0], self.dtype, cp, gpu_sparse_mat
+                    )
+                else:
+                    self.itDaiDepsDstC = gpu_sparse_mat(self.iDeps * self.itDa * Ct * self.tDs)
+            else:
+                if dl_h is not None:
+                    self.tDsiDmuiDaC = _scale_csr_lr(self.C, dl_h, self.Ds.data[0], self.dtype)
+                else:
+                    self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
+                if dl_e is not None:
+                    self.itDaiDepsDstC = _scale_csr_lr(Ct, dl_e, self.tDs.data[0], self.dtype)
+                else:
+                    self.itDaiDepsDstC = self.iDeps * self.itDa * Ct * self.tDs
+            del dl_h, dl_e, Ct
 
         if self.source_type.lower() == "tfsf":
             self.E_trans = Field(
@@ -571,7 +612,9 @@ class SolverFIT3D(
                 self.imu.to_gpu()
                 if self.activate_cpml:
                     self._move_CPML_to_gpu()
-                elif self.scheme == "yee":
+                elif self.scheme == "yee" and not isinstance(
+                    self.tDsiDmuiDaC, gpu_sparse_mat
+                ):
                     self.tDsiDmuiDaC = gpu_sparse_mat(self.tDsiDmuiDaC)
                     self.itDaiDepsDstC = gpu_sparse_mat(self.itDaiDepsDstC)
                 if self.source_type == "tfsf":
@@ -822,10 +865,25 @@ class SolverFIT3D(
 
         if self.verbose:
             print("Re-Pre-computing ...")
-        self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
-        self.itDaiDepsDstC = (
-            self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
-        )
+        # Same assembly as __init__: the CSR layout (zeros dropped, index order) fixes the
+        # summation order of the sparse matvec, so both paths must agree to stay bit-identical
+        if self.iDa.format == "dia" and self.iDmu.format == "dia":
+            self.tDsiDmuiDaC = _scale_csr_lr(
+                self.C, self.iDa.data[0] * self.iDmu.data[0], self.Ds.data[0], self.dtype
+            )
+        else:
+            self.tDsiDmuiDaC = self.iDa * self.iDmu * self.C * self.Ds
+        if self.iDeps.format == "dia" and self.itDa.format == "dia":
+            self.itDaiDepsDstC = _scale_csr_lr(
+                self.C.conj().transpose(),
+                self.iDeps.data[0] * self.itDa.data[0],
+                self.tDs.data[0],
+                self.dtype,
+            )
+        else:
+            self.itDaiDepsDstC = (
+                self.iDeps * self.itDa * self.C.conj().transpose() * self.tDs
+            )
         if self.scheme == "tete":
             if self.activate_cpml:
                 raise NotImplementedError(
@@ -1023,7 +1081,8 @@ class SolverFIT3D(
         if self.use_gpu:
             _gpu_kernels()[0](curl, self.dt, self.H.array)
         else:
-            self.H.array -= self.dt * curl
+            curl *= self.dt
+            self.H.array -= curl
 
     def _update_E(self):
         """
@@ -1038,9 +1097,81 @@ class SolverFIT3D(
                 curl, self.ieps.toarray(), self.J.toarray(), self.dt, self.E.array
             )
             return
-        curl -= self.ieps.toarray() * self.J.toarray()
+        ieps_arr = self.ieps.toarray()
+        J_arr = self.J.toarray()
+        step = 262144
+        for s0 in range(0, curl.size, step):
+            s1 = min(s0 + step, curl.size)
+            curl[s0:s1] -= ieps_arr[s0:s1] * J_arr[s0:s1]
         curl *= self.dt
         self.E.array += curl
+
+    @staticmethod
+    def _hook_takes_solver(fn) -> bool:
+        """Return True if ``fn`` accepts a positional ``solver`` argument."""
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return True
+        for param in sig.parameters.values():
+            if param.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                return True
+        return False
+
+    @property
+    def mid_step(self):
+        """Optional single mid-step callback executed between the H and E updates."""
+        return self._mid_step_fn
+
+    @mid_step.setter
+    def mid_step(self, fn):
+        self._mid_step_fn = fn
+        self._mid_step_takes_arg = (
+            self._hook_takes_solver(fn) if fn is not None else False
+        )
+
+    def register_mid_step(self, fn):
+        """Register a callback ``fn(solver)`` or ``fn()`` executed between the H and E updates."""
+        if fn not in self._mid_step_hooks:
+            self._mid_step_hooks.append(fn)
+            self._mid_step_hook_takes_arg.append(self._hook_takes_solver(fn))
+
+    def _capture_mid_step_H(self):
+        """Capture ``H^{n-1/2}`` into a preallocated buffer prior to the H update when a particle solver is attached."""
+        ps = getattr(self, "_particle_solver", None)
+        if ps is not None:
+            # dt re-check BEFORE the H update: raising later would leave H at n+1/2 and E at n
+            if float(self.dt) != ps._attached_dt:
+                ps._check_cfl_dt(float(self.dt))
+            H_arr = self.H.toarray()
+            if self._H_before_update is None or self._H_before_update.shape != H_arr.shape:
+                self._H_before_update = H_arr.copy()
+            else:
+                self.H.xp.copyto(self._H_before_update, H_arr)
+
+    def _run_mid_step(self):
+        """Invoke registered ``mid_step`` hooks between the H and E updates."""
+        if self.use_mpi and getattr(self, "_particle_solver", None) is not None:
+            raise NotImplementedError(
+                "MPI particle time-stepping is not implemented in milestone M1 (scheduled for M3)."
+            )
+        if self._mid_step_fn is not None:
+            if self._mid_step_takes_arg:
+                self._mid_step_fn(self)
+            else:
+                self._mid_step_fn()
+        if self._mid_step_hooks:
+            for fn, takes_arg in zip(
+                self._mid_step_hooks, self._mid_step_hook_takes_arg
+            ):
+                if takes_arg:
+                    fn(self)
+                else:
+                    fn()
 
     def _one_step(self):
         if self.step_0:
@@ -1050,6 +1181,7 @@ class SolverFIT3D(
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self._update_H()
         self._add_magnetic_current()
@@ -1070,6 +1202,8 @@ class SolverFIT3D(
             dJ = Jtemp - self.J_old
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
+
+        self._run_mid_step()
 
         E_n = self._capture_gain_E()
         self._update_E()
@@ -1166,6 +1300,7 @@ class SolverFIT3D(
             )
 
         # Update the magnetic field components using the curl of E
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self.H.field_x -= self.dt * self.imu.field_x * (dxyEz - dxzEy)
         self.H.field_y -= self.dt * self.imu.field_y * (dyzEx - dyxEz)
@@ -1232,6 +1367,8 @@ class SolverFIT3D(
         # without CPML faces step with it, and the collective calls must match
         if self.use_mpi:
             self._mpi_communicate(self.J)
+
+        self._run_mid_step()
 
         # Compute the curl of H fields
         dtxyHz = self.dtxy * self.H.field_z
@@ -1374,6 +1511,7 @@ class SolverFIT3D(
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self.H.fromarray(
             self.H.toarray()
@@ -1401,6 +1539,8 @@ class SolverFIT3D(
             dJ = Jtemp - self.J_old
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
+
+        self._run_mid_step()
 
         E_n = self._capture_gain_E()
         self.E.fromarray(
@@ -1505,6 +1645,7 @@ class SolverFIT3D(
             )
 
         # Update the magnetic field components using the curl of E
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self.H.field_x -= self.dt * self.imu.field_x * (dxyEz - dxzEy)
         self.H.field_y -= self.dt * self.imu.field_y * (dyzEx - dyxEz)
@@ -1571,6 +1712,8 @@ class SolverFIT3D(
         # without CPML faces step with it, and the collective calls must match
         if self.use_mpi:
             self._mpi_communicate(self.J)
+
+        self._run_mid_step()
 
         # Compute the curl of H fields using MKL dot products
         dtxyHz = dot_product_mkl(self.dtxy, self.H.field_z)
@@ -1745,6 +1888,7 @@ class SolverFIT3D(
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
         self._mpi_communicate(self.J)
+        self._run_mid_step()
         E_n = self._capture_gain_E()
         self._update_E()
 
@@ -1797,6 +1941,8 @@ class SolverFIT3D(
             self.J.fromarray(self.J.toarray() + dJ)
             self.J_old = Jtemp
         self._mpi_communicate(self.J)
+
+        self._run_mid_step()
 
         E_n = self._capture_gain_E()
         self.E.fromarray(

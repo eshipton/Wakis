@@ -1577,3 +1577,128 @@ lle_out = wakis.solve_lle(
 ```{seealso}
 See `examples/013_kerr_nonlinear_optics.py` and [Tutorial 5.11 · Kerr ($\chi^{(3)}$) Nonlinear Media in FIT and FIT-Informed Soliton Microcombs](../tutorials/05_guided_waves/05-11_kerr_microcomb/kerr_microcomb.ipynb) for complete worked examples.
 ```
+
+## ⚡ Relativistic Particle-in-Cell (`wakis.particles`)
+
+`wakis.particles` couples relativistic charged macroparticles (`Species`, `ParticleSolver`, `BeamInjector`, `Collector`) self-consistently to `SolverFIT3D` via a leapfrog `mid_step` hook between the magnetic and electric field updates, with exact 3D Esirkepov charge-conserving current deposition on uniform and graded meshes:
+
+```python
+import numpy as np
+from scipy import constants as const
+import wakis
+from wakis.particles import (
+    BeamInjector,
+    Collector,
+    ParticleSolver,
+    Species,
+    cold_plasma_dispersion_discrete,
+    gauss_residual,
+)
+
+# 1. Create a 3D FIT grid and solver
+grid = wakis.GridFIT3D(0.0, 0.02, 0.0, 0.02, 0.0, 0.08, 6, 6, 32, verbose=0)
+solver = wakis.SolverFIT3D(
+    grid, cfln=0.5, bc_low=["periodic", "periodic", "pec"], bc_high=["periodic", "periodic", "pec"], verbose=0
+)
+
+# 2. Define an electron species (q = -e, m = m_e by default; u = gamma * v [m/s])
+electrons = Species(name="e-", charge=-const.e, mass=const.m_e)
+
+# 3. Optional continuous beam injector at the z = zmin PEC cathode and downstream collector
+injector = BeamInjector(
+    species=electrons,
+    z0=0.0,                             # cathode emitter plane [m]
+    current=5.0,                        # beam current [A]
+    energy_eV=250.0e3,                  # relativistic kinetic energy [eV]
+    x0=0.01,
+    y0=0.01,
+    radius=0.004,                       # beam radius [m]
+    direction=1,                        # +1 along +z
+    n_macro_per_step=16,
+)
+collector = Collector(name="anode_cup", bounds=(0.0, 0.02, 0.0, 0.02, 0.035, 0.08))
+
+# 4. Attach ParticleSolver with external axial magnetic guiding field B_z = 0.25 T
+ps = ParticleSolver(
+    solver,
+    species=[electrons],
+    injectors=[injector],
+    collectors=[collector],
+    pusher="higuera_cary",              # 'boris' (default), 'vay', or 'higuera_cary'
+    shape=2,                            # 1 (CIC, default) or 2 (TSC)
+    gather="galerkin",                  # 'galerkin' (energy-consistent) or 'momentum'
+    B_ext=lambda x, y, z, t: (np.zeros_like(x), np.zeros_like(y), np.full_like(z, 0.25)),
+    profile=False,                      # opt-in per-step CPU stage timing (default False, zero overhead)
+).attach()
+
+# If solver.E or particle positions/weights are modified in place after attach(),
+# call ps.reset_gauss_reference() before stepping to refresh the Gauss reference state.
+
+# 5. Step the coupled Vlasov-Maxwell system and inspect conservation diagnostics
+for _ in range(80):
+    solver.one_step()
+
+print("Active macroparticles:", electrons.n_particles)
+print("Gauss law relative residual:", gauss_residual(solver, [electrons]))
+print("Charge balance [C]:", ps.injected_charge(), ps.total_charge() + ps.absorbed_charge())
+print("Collector absorbed energy [J]:", collector.absorbed_energy)
+```
+
+### GPU-Accelerated Execution (`use_gpu=True`)
+
+When `SolverFIT3D` is initialised with `use_gpu=True` (either with the standard CuPy sparse step or the fused `wakis.gpu_fused` CUDA step `fused=True`), setting `use_gpu=True` on each `Species` keeps all particle struct-of-arrays buffers on the device (`xp = cupy`) and executes the coupled gather-push, Esirkepov `float64` `atomicAdd` current deposition, boundary compaction, and periodic cell sorting via compiled CUDA `RawKernel` kernels asynchronously on the GPU stream without device-to-host synchronization on the standard Esirkepov path:
+
+```python
+import cupy as cp
+from scipy import constants as const
+import wakis
+from wakis.particles import ParticleSolver, Species, gauss_residual
+
+# 1. Create a GPU-accelerated 3D FIT solver (standard or fused=True)
+grid_gpu = wakis.GridFIT3D(0.0, 0.02, 0.0, 0.02, 0.0, 0.02, 16, 16, 16, verbose=0)
+solver_gpu = wakis.SolverFIT3D(
+    grid_gpu,
+    cfln=0.45,
+    bc_low=["periodic", "periodic", "periodic"],
+    bc_high=["periodic", "periodic", "periodic"],
+    use_gpu=True,
+    fused=True,
+    verbose=0,
+)
+
+# 2. Allocate device-resident electron species (xp = cupy)
+electrons_gpu = Species(
+    name="e-", charge=-const.e, mass=const.m_e, capacity=4096, use_gpu=True
+)
+rs = cp.random.RandomState(42)
+electrons_gpu.add_particles(
+    x=rs.uniform(0.002, 0.018, size=1024),
+    y=rs.uniform(0.002, 0.018, size=1024),
+    z=rs.uniform(0.002, 0.018, size=1024),
+    ux=rs.normal(0.0, 0.05 * const.c, size=1024),
+    uy=rs.normal(0.0, 0.05 * const.c, size=1024),
+    uz=rs.normal(0.20 * const.c, 0.02 * const.c, size=1024),
+    w=cp.full(1024, 1.0e3, dtype=cp.float64),
+)
+
+# 3. Attach ParticleSolver with periodic cell sorting and external B_z field
+ps_gpu = ParticleSolver(
+    solver_gpu,
+    species=[electrons_gpu],
+    pusher="boris",
+    shape=2,
+    gather="galerkin",
+    sort_every=20,
+    B_ext=(0.0, 0.0, 0.15),
+).attach()
+
+# 4. Advance asynchronously on the GPU stream (no host synchronization inside one_step)
+for _ in range(40):
+    solver_gpu.one_step()
+
+print("GPU Gauss law relative residual:", gauss_residual(solver_gpu, [electrons_gpu]))
+```
+
+```{seealso}
+See `examples/017_particles_plasma_oscillation_and_gyration.py`, `examples/018_particles_gpu_throughput.py`, and the [Physics Guide section on Electromagnetic Particle-in-Cell](physicsguide.md#electromagnetic-particle-in-cell-wakisparticles) for discrete charge-conservation theory, relativistic pusher benchmarks, cold-plasma dispersion analysis, and GPU throughput scaling.
+```

@@ -1,0 +1,183 @@
+{
+  "v1_single_particle": {
+    "gyration": {
+      "boris": {
+        "r_larmor_m": 0.08350354753036622,
+        "r_num_m": 0.08353215881577665,
+        "rel_r_error": 0.00034263556766884286,
+        "omega_c_rad_s": 3517640016.755997,
+        "omega_num_rad_s": 3516836696.1589966,
+        "rel_omega_error": 0.00022836918876691345
+      },
+      "vay": {
+        "r_larmor_m": 0.08350354753036622,
+        "r_num_m": 0.08353215881577748,
+        "rel_r_error": 0.00034263556767881453,
+        "omega_c_rad_s": 3517640016.755997,
+        "omega_num_rad_s": 3516836696.1589637,
+        "rel_omega_error": 0.0002283691887762668
+      },
+      "hc": {
+        "r_larmor_m": 0.08350354753036622,
+        "r_num_m": 0.08350469291865335,
+        "rel_r_error": 1.3716642238655763e-05,
+        "omega_c_rad_s": 3517640016.755997,
+        "omega_num_rad_s": 3517993699.8116918,
+        "rel_omega_error": 0.0001005455515657768
+      }
+    },
+    "exb_gammas": [
+      1.1,
+      2.0,
+      5.0,
+      10.0,
+      20.0
+    ],
+    "exb_errors": {
+      "boris": [
+        0.003436252140305531,
+        0.013906026696148576,
+        0.015563911663879536,
+        0.04799313603322517,
+        0.07239988114377775
+      ],
+      "vay": [
+        2.909132188476316e-15,
+        2.590614590961688e-15,
+        5.161736736935154e-15,
+        3.110428431339092e-15,
+        3.913711831379277e-15
+      ],
+      "hc": [
+        4.225179838758188e-15,
+        2.4705497573896134e-15,
+        4.820467771540039e-15,
+        3.109730857758226e-15,
+        4.10269857565939e-15
+      ]
+    },
+    "hyperbolic": {
+      "boris": {
+        "z_exact_m": 0.5664853198658905,
+        "z_num_m": 0.5664880679864478,
+        "rel_z_error": 4.851177004885741e-06,
+        "rel_uz_error": 5.602980723395697e-15
+      },
+      "vay": {
+        "z_exact_m": 0.5664853198658905,
+        "z_num_m": 0.5664880679864477,
+        "rel_z_error": 4.851177004689756e-06,
+        "rel_uz_error": 3.4340849595005886e-15
+      },
+      "hc": {
+        "z_exact_m": 0.5664853198658905,
+        "z_num_m": 0.5664880679864478,
+        "rel_z_error": 4.851177004885741e-06,
+        "rel_uz_error": 5.602980723395697e-15
+      }
+    },
+    "convergence_dt_s": [
+      3e-11,
+      1.5e-11,
+      7.5e-12,
+      3.75e-12
+    ],
+    "convergence_errors": {
+      "boris": [
+        0.0368365133049213,
+        0.009197091643370413,
+        0.00229650935378856,
+        0.0005736320361845683
+      ],
+      "vay": [
+        0.031316009307463824,
+        0.007873980675109474,
+        0.0019731117569554554,
+        0.0004937185505922281
+      ],
+      "hc": [
+        0.012911654092944843,
+        0.0032471861249629814,
+        0.0008137996824117004,
+        0.00020374087082363846
+      ]
+    },
+    "convergence_orders": {
+      "boris": 2.001633636843553,
+      "vay": 1.9957823642370287,
+      "hc": 1.9953828278991588
+    }
+  },
+  "v2_charge_conservation": {
+    "p1_uniform": {
+      "max_gauss_residual": 8.85696021795165e-14,
+      "final_gauss_residual": 8.85696021795165e-14,
+      "wall_time_s": 2.152801248999822,
+      "particle_steps_per_s": 475659.3301289397
+    },
+    "p1_graded": {
+      "max_gauss_residual": 2.1130978728385977e-14,
+      "final_gauss_residual": 2.1130978728385977e-14,
+      "wall_time_s": 2.542879938000169,
+      "particle_steps_per_s": 402693.0193193934
+    },
+    "p2_uniform": {
+      "max_gauss_residual": 3.736547383605527e-14,
+      "final_gauss_residual": 3.736547383605527e-14,
+      "wall_time_s": 4.039831177999986,
+      "particle_steps_per_s": 253475.93869181324
+    },
+    "p2_graded": {
+      "max_gauss_residual": 8.723681184457865e-15,
+      "final_gauss_residual": 7.6340304066715e-15,
+      "wall_time_s": 4.420831310000267,
+      "particle_steps_per_s": 231630.64324205986
+    },
+    "naive_mutation_p1_uniform_max_residual": 0.5828161140240953
+  },
+  "v3_cold_plasma_oscillation": {
+    "p1": {
+      "omega_p0_rad_s": 7539822368.615503,
+      "omega_pred_rad_s": 7541479309.867317,
+      "omega_num_rad_s": 7541477568.965682,
+      "rel_omega_error": 2.3084352069920508e-07,
+      "ke0_J": 7.677864748309234e-08,
+      "ue_max_J": 7.663566948542933e-08,
+      "rel_energy_drift": 0.0013153151317573208,
+      "pred_leapfrog_energy_osc": 0.001318349153146925,
+      "secular_energy_drift": 1.4112916821189254e-07,
+      "gauss_residual": 1.0274044789882031e-15
+    },
+    "p2": {
+      "omega_p0_rad_s": 7539822368.615503,
+      "omega_pred_rad_s": 7517278694.125286,
+      "omega_num_rad_s": 7517088584.241495,
+      "rel_omega_error": 2.528972139073941e-05,
+      "ke0_J": 7.677864748309234e-08,
+      "ue_max_J": 7.687571180956078e-08,
+      "rel_energy_drift": 0.0013109184767973957,
+      "pred_leapfrog_energy_osc": 0.0013099015612111394,
+      "secular_energy_drift": 5.201320821897521e-08,
+      "gauss_residual": 2.1255667672119468e-15
+    }
+  },
+  "throughput": {
+    "machine": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count": 4,
+    "processes": 1,
+    "n_particles": 10000,
+    "grid_shape": [
+      10,
+      10,
+      10
+    ],
+    "n_steps": 40,
+    "standalone_boris_pushes_per_s": 21665317.63955543,
+    "p1_full_particle_pushes_per_s": 690847.3975456194,
+    "p2_full_particle_pushes_per_s": 333203.1999906216
+  },
+  "figures": [
+    "docs/img/particles_pushers_and_charge_conservation.png",
+    "docs/img/particles_cold_plasma_oscillation.png"
+  ]
+}

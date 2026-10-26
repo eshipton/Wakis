@@ -754,7 +754,7 @@ class FusedStep:
         self.ready = False
         self.cpml = solver.activate_cpml
         self.views = {}
-        self.pre, self.post = [], []  # device-only hooks around the step
+        self.pre, self.mid, self.post = [], [], []  # device-only hooks around/inside the step
 
     def _build(self):
         s = self.solver
@@ -825,11 +825,17 @@ class FusedStep:
             J_old, sigma = s.J_old, s.sigma.array
         else:
             J_old = sigma = None
+        if s.mid_step is not None or s._mid_step_hooks:
+            s._capture_mid_step_H()
         if self.cpml:
             h, e = self.h.rows, self.e.rows
             launch(h.name("fused_h", T), n, np.int32(n), np.int32(1), *h.args(),
                    E, H, dt, self.h.slot_a, self.h.slot_b, self.psi_h, self.h.pb,
                    self.h.pc, M, s.imu.array)  # fmt: skip
+            for hook in self.mid:
+                hook()
+            if s.mid_step is not None or s._mid_step_hooks:
+                s._run_mid_step()
             launch(e.name("fused_e", T), n, np.int32(n), np.int32(1), *e.args(),
                    H, E, s.ieps.array, dt, self.e.slot_a, self.e.slot_b,
                    self.psi_e, self.e.pb, self.e.pc, J, J_old, sigma)  # fmt: skip
@@ -837,6 +843,10 @@ class FusedStep:
         A, B = self._rows("tDsiDmuiDaC"), self._rows("itDaiDepsDstC")
         launch(A.name("fused_h", T), n, np.int32(n), np.int32(0), *A.args(), E, H,
                dt, None, None, None, None, None, M, s.imu.array)  # fmt: skip
+        for hook in self.mid:
+            hook()
+        if s.mid_step is not None or s._mid_step_hooks:
+            s._run_mid_step()
         launch(B.name("fused_e", T), n, np.int32(n), np.int32(0), *B.args(), H, E,
                s.ieps.array, dt, None, None, None, None, None, J, J_old,
                sigma)  # fmt: skip
@@ -1231,6 +1241,8 @@ class FusedLoop:
         """True if the loop can run as CUDA graphs (after step 0)."""
         s = solver
         if not is_fused(s) or s.one_step is not s._fused_step or elements:
+            return False
+        if s.mid_step is not None or getattr(s, "_mid_step_hooks", None):
             return False
         if s.source_type == "tfsf" and not s.injection_done:
             return False

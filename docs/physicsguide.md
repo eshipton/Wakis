@@ -4319,6 +4319,304 @@ References:
 - M. Yoshida, S. Katsuno, T. Inoue, J. Gelleta, K. Izumi, M. De Zoysa, K. Ishizaki and S. Noda, "High-brightness scalable continuous-wave single-mode photonic-crystal laser", *Nature* **618**, 727–732 (2023), [doi:10.1038/s41586-023-06059-8](https://doi.org/10.1038/s41586-023-06059-8).
 
 
+### Electromagnetic particle-in-cell (`wakis.particles`)
+
+The `wakis.particles` package provides a self-consistent relativistic electromagnetic particle-in-cell module coupled directly to Wakis's Finite Integration Technique (`SolverFIT3D`) time-domain loop. Note the naming convention: `wakis.particles` refers to charged macroparticle kinematics and self-consistent Vlasov–Maxwell evolution, whereas `wakis.subgrid.photonic_circuit` denotes *photonic integrated circuits*.
+
+#### 1. Discrete charge conservation in FIT notation
+
+In the Finite Integration Technique (FIT), the electric field $\mathbf{E}$ [V/m] and current density $\mathbf{J}$ [A/m$^2$] live on primal edges $e$, while the magnetic field $\mathbf{H}$ [A/m] lives on dual edges $\tilde{e}$. Let $\tilde{\mathbf{A}} = \operatorname{diag}(\tilde{A}_e) = \operatorname{diag}(\mathrm{itA}_e^{-1})$ denote the diagonal matrix of dual face areas [m$^2$] associated with the primal edges. In integral FIT variables, the dual-face electric displacement flux is $\tilde{\mathbf{d}} = \tilde{\mathbf{A}}\,\boldsymbol{\varepsilon}\mathbf{E}$ [C] and the dual-face electric current is $\tilde{\mathbf{i}} = \tilde{\mathbf{A}}\mathbf{J}$ [A]. Discrete Ampère–Maxwell's law on the dual complex reads
+
+```math
+\frac{\tilde{\mathbf{d}}^{n+1} - \tilde{\mathbf{d}}^{n}}{\Delta t} = \tilde{\mathbf{C}}\,\hat{\mathbf{h}}^{n+1/2} - \tilde{\mathbf{i}}^{n+1/2},
+```
+
+which corresponds to Wakis's primal-edge field update $\mathbf{E}^{n+1} = \mathbf{E}^n + \Delta t\left(\mathbf{B}_{\text{curl}}\mathbf{H}^{n+1/2} - \boldsymbol{\varepsilon}^{-1}\mathbf{J}^{n+1/2}\right)$. Left-multiplying by the dual divergence incidence matrix $\tilde{\mathbf{S}} = -\mathbf{G}^T$ (which sums the outward fluxes through the six dual faces bounding each dual volume / primal node) and invoking the exact topological identity $\tilde{\mathbf{S}}\tilde{\mathbf{C}} = \mathbf{0}$ yields
+
+```math
+\frac{\tilde{\mathbf{S}}\tilde{\mathbf{d}}^{n+1} - \tilde{\mathbf{S}}\tilde{\mathbf{d}}^{n}}{\Delta t} = -\tilde{\mathbf{S}}\tilde{\mathbf{i}}^{n+1/2}.
+```
+
+Let $\mathbf{q}^n$ [C] be the discrete charge assigned to the primal nodes (dual control volumes) at time $t_n = n\Delta t$. Discrete Gauss's law $\tilde{\mathbf{S}}\tilde{\mathbf{d}}^n = \mathbf{q}^n$ is preserved to floating-point round-off for all time steps $n \ge 0$ if and only if:
+
+1. The initial electric field satisfies $\tilde{\mathbf{S}}\tilde{\mathbf{d}}^0 = \mathbf{q}^0$ (or for a neutral / stationary background with initial charge $\mathbf{q}^0$, $\tilde{\mathbf{S}}(\tilde{\mathbf{d}}^n - \tilde{\mathbf{d}}^0) = \mathbf{q}^n - \mathbf{q}^0$), and
+2. The deposited dual-face currents $\tilde{\mathbf{i}}^{n+1/2}$ satisfy the exact discrete continuity equation on the dual complex:
+
+```math
+\tilde{\mathbf{S}}\tilde{\mathbf{i}}^{n+1/2} = -\frac{\mathbf{q}^{n+1} - \mathbf{q}^n}{\Delta t}.
+```
+
+Define $W_e^{n+1/2} = \Delta t\,\tilde{i}_e^{n+1/2}$ [C] as the net charge that crosses dual face $\tilde{e}$ during the step $t_n \to t_{n+1}$. Then the discrete continuity condition is purely topological in index space:
+
+```math
+\sum_{e \in \partial \tilde{V}_{i,j,k}} s_{i,j,k;e}\,W_e^{n+1/2} = -\left(q_{i,j,k}^{n+1} - q_{i,j,k}^n\right),
+```
+
+and the current density stored in `solver.J` on primal edge $e$ is obtained by dividing $W_e^{n+1/2}$ by $\Delta t$ and the dual face area $\tilde{A}_e = 1 / \mathrm{itA}_e$:
+
+```math
+J_e^{n+1/2} = \frac{W_e^{n+1/2}}{\Delta t\,\tilde{A}_e} = \frac{W_e^{n+1/2}\,\mathrm{itA}_e}{\Delta t} \qquad [\text{A/m}^2].
+```
+
+Because $\tilde{\mathbf{S}}\tilde{\mathbf{C}} = \mathbf{0}$ and the divergence sum $\tilde{\mathbf{S}}\mathbf{W}$ depend only on cell connectivity, **exact charge conservation holds on arbitrary non-uniform (graded) tensor-product meshes** provided that both the node charge $q_{i,j,k}$ and the charge flux $W_e$ are evaluated in logical coordinates $\boldsymbol{\xi} = (\xi, \eta, \zeta)$, where
+
+```math
+\xi(x) = i + \frac{x - x_i}{\Delta x_i}, \qquad x \in [x_i, x_{i+1}], \qquad \Delta x_i = x_{i+1} - x_i,
+```
+
+implemented via `LogicalGridMap` (`np.searchsorted` on the primal node arrays `grid.x, grid.y, grid.z`). The diagnostic `gauss_residual(solver, species)` computes the normalized maximum residual across all interior vacuum primal nodes (`solver.py`):
+
+```math
+\mathcal{R}_{\text{Gauss}}^n = \frac{\left\|\left(\tilde{\mathbf{S}}\tilde{\mathbf{d}}^n - (\mathbf{q}_{\text{nodes}}^n + \mathbf{q}_{\text{bg}}^n)\right)\big|_{\text{vac}}\right\|_{\infty}}{\max\!\left(\left\|\mathbf{q}_{\text{nodes}}^n\big|_{\text{vac}}\right\|_{\infty},\; q_{\text{ref}},\; 10^{-30}\right)},
+```
+
+where $\mathbf{q}_{\text{bg}}^0 = \tilde{\mathbf{S}}\tilde{\mathbf{d}}^0 - \mathbf{q}_{\text{nodes}}^0$ (`solver._particles_q_bg`) captures any initial immobile background charge and accumulates neutralizing image charges $-\mathbf{q}_{\text{inj}}$ left behind at emitter planes and charges $+\mathbf{q}_{\text{abs}}$ deposited onto boundary or collector surfaces before particle removal, and $q_{\text{ref}} = \|\mathbf{q}_{\text{nodes}}^0\|_{\infty}$ (`solver._particles_q_scale_ref`, or $|\sum q_{\text{inj}}|$ when starting from an empty domain).
+
+#### 2. Leapfrog time-level centring and the `mid_step` hook
+
+Macroparticles store positions $\mathbf{x}_p^n$ [m] at integer time steps $t_n = n\Delta t$ (collocated in time with $\mathbf{E}^n$) and relativistic proper velocities $\mathbf{u}_p^{n-1/2} = \gamma_p^{n-1/2}\mathbf{v}_p^{n-1/2}$ [m/s] at half-integer steps $t_{n-1/2}$ (collocated in time with $\mathbf{H}^{n-1/2}$), where $\gamma = \sqrt{1 + |\mathbf{u}|^2/c^2}$ is the Lorentz factor. `SolverFIT3D` exposes a `mid_step` hook (`solver._mid_step_hooks`, registered via `solver.register_mid_step(fn)`) that executes immediately *after* the magnetic-field update $\mathbf{H}^{n-1/2} \to \mathbf{H}^{n+1/2}$ (including any CPML magnetic flux correction) and *before* the electric-field update $\mathbf{E}^n \to \mathbf{E}^{n+1}$. When no `mid_step` hook is registered, the boolean guard `if self._mid_step_hooks:` executes in $O(1)$ and leaves the field update bit-identical (`np.testing.assert_array_equal`).
+
+During step $n$, `ParticleSolver._mid_step_hook()` (registered on the solver by `ParticleSolver.attach()`) executes the six-stage cycle:
+
+1. **Time-centred magnetic field**: $\mathbf{B}_{\text{grid}}^n = \frac{1}{2}\mu_0\left(\mathbf{H}^{n-1/2} + \mathbf{H}^{n+1/2}\right)$ at dual edges, where $\mathbf{H}^{n-1/2}$ is captured before the magnetic-field update (`solver._capture_mid_step_H()`). On the first step ($n = 0$), `_initialize_species_half_step()` automatically back-pushes any synchronized species (`sp.u_is_synced == True`) by $-\Delta t/2$ from $\mathbf{u}^0$ to $\mathbf{u}^{-1/2}$ using $\mathbf{E}^0$ and $\mathbf{B}^0$. Conversely, `ParticleSolver.kinetic_energy(synchronised=True)` half-pushes $\mathbf{u}^{n-1/2} \to \mathbf{u}^n$ by $+\Delta t/2$ on a temporary copy using $\mathbf{E}^n$ and $\mathbf{B}^n = \frac{1}{2}\mu_0(\mathbf{H}^{n-1/2} + \mathbf{H}^{n+1/2})$ (with $\mathbf{H}^{n+1/2} = \mathbf{H}^{n-1/2} - \Delta t\,\tilde{\mathbf{D}}_s\mathbf{D}_\mu^{-1}\mathbf{D}_A^{-1}\mathbf{C}\mathbf{E}^n$) to evaluate second-order time-centred kinetic energy at $t_n$.
+2. **Field gather**: Interpolate $\mathbf{E}^n(\mathbf{x}_p^n)$ and $\mathbf{B}^n(\mathbf{x}_p^n) = \mathbf{B}_{\text{grid}}^n(\mathbf{x}_p^n) + \mathbf{B}_{\text{ext}}(\mathbf{x}_p^n, t_n)$ to each particle's logical position $\boldsymbol{\xi}_p^n$.
+3. **Momentum push**: Advance $\mathbf{u}_p^{n-1/2} \to \mathbf{u}_p^{n+1/2}$ over $\Delta t$ using the selected relativistic pusher (`"boris"`, `"vay"`, or `"higuera_cary"`).
+4. **Position advance**: Advance $\mathbf{x}_p^{n+1} = \mathbf{x}_p^n + \Delta t\,\mathbf{u}_p^{n+1/2} / \gamma_p^{n+1/2}$ (periodic axes wrap modularly after current deposition).
+5. **Current deposition**: Deposit the exact charge flux $W_e^{n+1/2}$ along each straight segment $\boldsymbol{\xi}_p^n \to \boldsymbol{\xi}_p^{n+1}$ via the 3D Esirkepov decomposition and add $J_e^{n+1/2} = W_e^{n+1/2}\,\mathrm{itA}_e/\Delta t$ into `solver.J` (preserving any external `CurrentSource` writing to `solver.J` in `pre_step`).
+6. **Boundaries and injection**: Truncate trajectories that cross domain boundaries, CPML inner faces, PEC/solid cells, or user `Collector` regions at the exact entry coordinate $\boldsymbol{\xi}_{\text{stop}}$, record absorbed charge and kinetic energy, compact the `Species` arrays, and inject new macroparticles from `BeamInjector` planes.
+
+#### 3. Relativistic particle pushers
+
+All three pushers solve the discrete Lorentz equation
+
+```math
+\frac{\mathbf{u}^{n+1/2} - \mathbf{u}^{n-1/2}}{\Delta t} = \frac{q}{m}\left(\mathbf{E}^n + \bar{\mathbf{v}}^n \times \mathbf{B}^n\right), \qquad \gamma = \sqrt{1 + \frac{|\mathbf{u}|^2}{c^2}},
+```
+
+via an electric half-kick $\mathbf{u}^- = \mathbf{u}^{n-1/2} + \boldsymbol{\varepsilon}$, a relativistic magnetic rotation $\mathbf{u}^- \to \mathbf{u}^+$, and a second half-kick $\mathbf{u}^{n+1/2} = \mathbf{u}^+ + \boldsymbol{\varepsilon}$, where $\boldsymbol{\varepsilon} = \frac{q\Delta t}{2m}\mathbf{E}^n$ [m/s] and $\boldsymbol{\tau} = \frac{q\Delta t}{2m}\mathbf{B}^n$ [dimensionless]:
+
+- **Boris pusher** (`push_boris`, default) [Boris, 1970; Birdsall & Langdon, 1991]: Evaluates $\gamma^- = \sqrt{1 + |\mathbf{u}^-|^2/c^2}$ at the intermediate state and rotates by $\mathbf{t} = \boldsymbol{\tau}/\gamma^-$, $\mathbf{s} = 2\mathbf{t}/(1 + |\mathbf{t}|^2)$:
+
+```math
+\mathbf{u}' = \mathbf{u}^- + \mathbf{u}^- \times \mathbf{t}, \qquad
+\mathbf{u}^+ = \mathbf{u}^- + \mathbf{u}' \times \mathbf{s}.
+```
+
+  Boris is volume-preserving in $(\mathbf{x}, \mathbf{u})$ phase space and exact for pure electric or pure magnetic fields up to the time-step phase error $\omega_c^{\text{num}} = (2/\Delta t)\arctan(\omega_c\Delta t / (2\gamma))$, so the discrete guiding-centre Larmor radius $r_L = u_\perp / (\gamma\omega_c)$ has $O(\Delta t^2)$ chord error. However, because $\mathbf{E} + \mathbf{v}\times\mathbf{B} = \mathbf{0}$ does not imply $\mathbf{u}^+ = \mathbf{u}^-$ when $\gamma^-$ differs between the half-kicks, Boris exhibits a spurious $\mathbf{E}\times\mathbf{B}$ drift in crossed relativistic fields ($E_y = v_d B_z$, $\gamma_d = (1 - v_d^2/c^2)^{-1/2} \gg 1$).
+
+- **Vay pusher** (`push_vay`) [Vay, 2008]: Replaces the average velocity in the magnetic term by $\bar{\mathbf{v}} = (\mathbf{v}^{n-1/2} + \mathbf{v}^{n+1/2})/2$, leading to $\mathbf{u}' = \mathbf{u}^{n-1/2} + 2\boldsymbol{\varepsilon} + (\mathbf{u}^{n-1/2}/\gamma^{n-1/2})\times\boldsymbol{\tau}$ and a closed quadratic equation for $(\gamma^{n+1/2})^2$:
+
+```math
+\sigma = 1 + \frac{|\mathbf{u}'|^2}{c^2} - |\boldsymbol{\tau}|^2, \qquad
+u^* = \frac{\mathbf{u}'\cdot\boldsymbol{\tau}}{c}, \qquad
+\gamma^{n+1/2} = \sqrt{\frac{\sigma + \sqrt{\sigma^2 + 4\left(|\boldsymbol{\tau}|^2 + (u^*)^2\right)}}{2}}.
+```
+
+  Setting $\mathbf{t} = \boldsymbol{\tau}/\gamma^{n+1/2}$ and $s = (1 + |\mathbf{t}|^2)^{-1}$, the updated momentum is $\mathbf{u}^{n+1/2} = s\left[\mathbf{u}' + (\mathbf{u}'\cdot\mathbf{t})\mathbf{t} + \mathbf{u}'\times\mathbf{t}\right]$. By construction, if $\mathbf{E} + \mathbf{v}^{n-1/2}\times\mathbf{B} = \mathbf{0}$ initially, then $\mathbf{u}^{n+1/2} = \mathbf{u}^{n-1/2}$ **identically**, so Vay reproduces uniform $\mathbf{E}\times\mathbf{B}$ drift to machine precision at arbitrary $\gamma_d$.
+
+- **Higuera–Cary pusher** (`push_higuera_cary`) [Higuera & Cary, 2017]: Retains the symmetric Boris half-kick structure ($\mathbf{u}^- = \mathbf{u}^{n-1/2} + \boldsymbol{\varepsilon}$) so that the Jacobian in $(\mathbf{x}, \mathbf{u})$ phase space is strictly unity ($\det\partial(\mathbf{x}^{n+1},\mathbf{u}^{n+1/2})/\partial(\mathbf{x}^n,\mathbf{u}^{n-1/2}) = 1$), while solving for the intermediate Lorentz factor $\gamma_{\text{new}}$ from
+
+```math
+\gamma_-^2 = 1 + \frac{|\mathbf{u}^-|^2}{c^2}, \qquad
+\sigma = \gamma_-^2 - |\boldsymbol{\tau}|^2, \qquad
+u^* = \frac{\mathbf{u}^-\cdot\boldsymbol{\tau}}{c}, \qquad
+\gamma_{\text{new}} = \sqrt{\frac{\sigma + \sqrt{\sigma^2 + 4\left(|\boldsymbol{\tau}|^2 + (u^*)^2\right)}}{2}},
+```
+
+  and applying the standard Boris rotation with $\mathbf{t} = \boldsymbol{\tau}/\gamma_{\text{new}}$. Higuera–Cary simultaneously preserves phase-space volume and eliminates the spurious relativistic $\mathbf{E}\times\mathbf{B}$ drift.
+
+#### 4. B-spline shape functions, Esirkepov current deposition, and Galerkin gather
+
+In logical coordinates $\xi = x/\Delta x$, a macroparticle of shape order $p \in \{1, 2, 3\}$ has factorized assignment weight $S^{(p)}(\boldsymbol{\xi}_n - \boldsymbol{\xi}_p) = S^{(p)}(i - \xi_p)\,S^{(p)}(j - \eta_p)\,S^{(p)}(k - \zeta_p)$, where the 1D cardinal B-splines are:
+
+- **Cloud-in-Cell (`p = 1`, CIC, default)**: 2-node stencil around $i_0 = \lfloor\xi\rfloor$ with fractional offset $\delta = \xi - i_0 \in [0, 1)$:
+
+```math
+w_0^{(1)} = 1 - \delta, \qquad w_1^{(1)} = \delta.
+```
+
+- **Triangular-Shaped Cloud (`p = 2`, TSC)**: 3-node stencil around the nearest integer node $i_0 = \lfloor\xi + 1/2\rfloor$ with offset $\delta = \xi - i_0 \in [-1/2, 1/2)$:
+
+```math
+w_{-1}^{(2)} = \frac{1}{2}\left(\frac{1}{2} - \delta\right)^2, \qquad
+w_0^{(2)} = \frac{3}{4} - \delta^2, \qquad
+w_{+1}^{(2)} = \frac{1}{2}\left(\frac{1}{2} + \delta\right)^2.
+```
+
+- **Piecewise Cubic Spline (`p = 3`, PCS)**: 4-node stencil around $i_0 = \lfloor\xi\rfloor - 1$ (`bspline_weights_1d(..., order=3)`).
+
+**Esirkepov 3D decomposition** (`deposit_current_esirkepov`) [Villasenor & Buneman, 1992; Esirkepov, 2001]: Under the CFL condition $|\Delta\xi|, |\Delta\eta|, |\Delta\zeta| \le 1$, a particle moving from $\boldsymbol{\xi}^n$ to $\boldsymbol{\xi}^{n+1}$ overlaps at most $M = p + 3$ stencil nodes per axis anchored at the initial base node $\mathbf{i}_0^n$. Define the 1D weight differences $\Delta S_x(i) = S^{(p)}(i - \xi^{n+1}) - S^{(p)}(i - \xi^n)$ (and analogously $\Delta S_y(j)$, $\Delta S_z(k)$). The 3D change in node charge factorizes into exact telescope differences along the three coordinate axes:
+
+```math
+S^{(p)}_{i,j,k}(\boldsymbol{\xi}^{n+1}) - S^{(p)}_{i,j,k}(\boldsymbol{\xi}^n)
+= \Delta S_x(i)\,W_{x}(j,k) + \Delta S_y(j)\,W_{y}(i,k) + \Delta S_z(k)\,W_{z}(i,j),
+```
+
+with exact transverse weights [Esirkepov, 2001]:
+
+```math
+W_x(j,k) = S_y^n(j) S_z^n(k) + \frac{1}{2}\Delta S_y(j) S_z^n(k) + \frac{1}{2}S_y^n(j)\Delta S_z(k) + \frac{1}{3}\Delta S_y(j)\Delta S_z(k),
+```
+
+and cyclic permutations for $W_y(i,k)$ and $W_z(i,j)$. The charge $W_{x; i+1/2, j, k}$ crossing the $x$-directed dual face (primal edge $e_x(i,j,k)$) during $\Delta t$ is obtained by cumulative summation over the stencil index:
+
+```math
+W_{x; i, j, k}^{n+1/2} = -q_p w_p \sum_{m \le i} \Delta S_x(m)\,W_x(j,k),
+```
+
+which guarantees $\tilde{\mathbf{S}}\mathbf{W}^{n+1/2} = -(\mathbf{q}^{n+1} - \mathbf{q}^n)$ to floating-point round-off on every step.
+
+**Galerkin (energy-conserving) vs momentum-conserving gather** (`gather_fields`):
+- `gather="galerkin"` (default, energy-conserving): Interpolates $E_x$ using spline order $p-1$ along its staggered axis $x$ (evaluated at cell centres $i + 1/2$) and order $p$ along the nodal axes $y, z$, while dual-edge magnetic fields $B_x$ use order $p$ along $x$ and order $p-1$ along $y, z$. Because the derivative of the order-$p$ node spline is the difference of order-$(p-1)$ edge splines, the Galerkin gather is the exact transpose of the Esirkepov deposit in the small-step limit, ensuring energy consistency and suppressing aliasing-driven finite-grid heating. Because charge/current assignment (order $p$) and longitudinal electric-field interpolation (order $p-1$) use different spline orders, energy-conserving gathers retain a bounded oscillatory electrostatic self-force when a particle is displaced from cell symmetry planes ($x_p \neq i\Delta x, (i + 1/2)\Delta x$), whose magnitude decreases with higher spline order $p$ [Birdsall & Langdon, 1991, Ch. 8 & Ch. 10].
+- `gather="momentum"` (momentum-conserving): Uses spline order $p$ along all three axes (evaluating staggered axes at $i + 1/2$). On a collocated symmetric electrostatic field solve where charge assignment and field interpolation share the identical nodal shape function $S^{(p)}$ on centered nodal differences $E_i = -(\phi_{i+1}-\phi_{i-1})/(2\Delta x)$, momentum-conserving gathers eliminate the isolated-particle electrostatic self-force identically [Birdsall & Langdon, 1991, Ch. 8]; on staggered Yee/FIT edges ($E_{i+1/2} = -(\phi_{i+1}-\phi_i)/\Delta x$), evaluating $S^{(p)}$ at $i + 1/2$ uses the higher smoothness of $S^{(p)}$ relative to $S^{(p-1)}$ to reduce the sub-cell self-force compared to `gather="galerkin"`.
+
+![Relativistic particle pushers and Esirkepov charge conservation](img/particles_pushers_and_charge_conservation.png)
+
+#### 5. Cold plasma oscillation dispersion relation (finite grid and finite $\Delta t$)
+
+Consider a 1D cold electron plasma of uniform unperturbed density $n_0$ perturbed by a sinusoidal longitudinal mode $k = 2\pi / L_z$ along $z$ in a periodic box (`examples/017_particles_plasma_oscillation_and_gyration.py`). In the continuum limit ($\Delta z \to 0, \Delta t \to 0$), the plasma oscillates at $\omega_{p0} = \sqrt{n_0 e^2 / (\varepsilon_0 m_e)}$. On a discrete FIT grid with spacing $\Delta z$, time step $\Delta t$, Esirkepov current deposition of order $p$, and Galerkin electric-field gather of longitudinal order $p-1$, Fourier-transforming the linearized discrete equations of motion
+
+```math
+\frac{u_z^{n+1/2} - u_z^{n-1/2}}{\Delta t} = \frac{q}{m} E_{z,\text{gathered}}^n(z_p), \qquad
+\frac{z_p^{n+1} - z_p^n}{\Delta t} = u_z^{n+1/2}, \qquad
+\frac{E_{z,k+1/2}^{n+1} - E_{z,k+1/2}^n}{\Delta t} = -\frac{J_{z,k+1/2}^{n+1/2}}{\varepsilon_0}
+```
+
+yields the discrete harmonic oscillator leapfrog dispersion relation [Birdsall & Langdon, 1991, Ch. 4 & Ch. 8]:
+
+```math
+\left(\frac{2}{\Delta t}\sin\frac{\omega_p\Delta t}{2}\right)^2 = \omega_{p0}^2\,\kappa_{\text{grid}}^2(k\Delta z),
+```
+
+where the spatial grid attenuation factor $\kappa_{\text{grid}}^2(\theta)$ ($\theta \equiv k\Delta z$, $s \equiv \sin(\theta/2)$) is obtained by summing the product of the Fourier symbols of the Esirkepov longitudinal current deposit (order $p-1$ centred at staggered cell midpoints $k + 1/2$, with symbol $\hat{W}_{\text{dep}}(k_m) = e^{-i k_m \Delta z / 2}\operatorname{sinc}^{p}(\theta_m/2)$) and the longitudinal field gather (order $p_g$ centred at $k + 1/2$, where $p_g = p - 1$ for `"galerkin"` and $p_g = p$ for `"momentum"`, with conjugate symbol $\hat{W}_{\text{gat}}^*(k_m) = e^{+i k_m \Delta z / 2}\operatorname{sinc}^{p_g + 1}(\theta_m/2)$) over all Brillouin zone aliases $k_m = k + 2\pi m / \Delta z$ ($\theta_m = \theta + 2\pi m$, $\operatorname{sinc}(x) \equiv \sin x / x$):
+
+```math
+\kappa_{\text{grid}}^2(\theta)
+= \sum_{m=-\infty}^{\infty} \hat{W}_{\text{dep}}(k_m)\,\hat{W}_{\text{gat}}^*(k_m)
+= \sum_{m=-\infty}^{\infty} \left[\operatorname{sinc}\!\left(\frac{\theta}{2} + \pi m\right)\right]^{p + p_g + 1}.
+```
+
+Using $\sin(\theta/2 + \pi m) = (-1)^m \sin(\theta/2)$ together with the partial-fraction expansions $\sum_{m=-\infty}^{\infty} (\theta/2 + \pi m)^{-2} = \csc^2(\theta/2)$ (for even exponent $p + p_g + 1 = 2p$, `"galerkin"`) and $\sum_{m=-\infty}^{\infty} (-1)^m (\theta/2 + \pi m)^{-1} = \csc(\theta/2)$ (for odd exponent $p + p_g + 1 = 2p + 1$, `"momentum"`), differentiating with respect to $\theta/2$ yields the exact closed forms implemented in `cold_plasma_dispersion_discrete()`:
+
+- **`p = 1` (CIC), `gather="galerkin"`** ($p_g = 0$, $N = 2$):
+```math
+\kappa_{\text{grid}}^2(\theta) = \sin^2\!\left(\frac{\theta}{2}\right)\sum_{m=-\infty}^{\infty} \frac{1}{(\theta/2 + \pi m)^2} = 1.
+```
+- **`p = 2` (TSC), `gather="galerkin"`** ($p_g = 1$, $N = 4$, from $\frac{1}{3!}\frac{\mathrm{d}^2}{\mathrm{d}z^2}\csc^2 z$):
+```math
+\kappa_{\text{grid}}^2(\theta) = \sin^4\!\left(\frac{\theta}{2}\right)\sum_{m=-\infty}^{\infty} \frac{1}{(\theta/2 + \pi m)^4} = 1 - \frac{2}{3}s^2.
+```
+- **`p = 1` (CIC), `gather="momentum"`** ($p_g = 1$, $N = 3$, from $\frac{1}{2!}\frac{\mathrm{d}^2}{\mathrm{d}z^2}\csc z$):
+```math
+\kappa_{\text{grid}}^2(\theta) = \sin^3\!\left(\frac{\theta}{2}\right)\sum_{m=-\infty}^{\infty} \frac{(-1)^m}{(\theta/2 + \pi m)^3} = 1 - \frac{1}{2}s^2.
+```
+- **`p = 2` (TSC), `gather="momentum"`** ($p_g = 2$, $N = 5$, from $\frac{1}{4!}\frac{\mathrm{d}^4}{\mathrm{d}z^4}\csc z$):
+```math
+\kappa_{\text{grid}}^2(\theta) = \sin^5\!\left(\frac{\theta}{2}\right)\sum_{m=-\infty}^{\infty} \frac{(-1)^m}{(\theta/2 + \pi m)^5} = 1 - \frac{5}{6}s^2 + \frac{1}{24}s^4.
+```
+
+![Cold plasma oscillation dispersion and energy conservation](img/particles_cold_plasma_oscillation.png)
+
+#### 6. Boundaries, collectors, and beam injection
+
+`ParticleBoundaries` handles four particle termination mechanisms at the end of every particle step:
+
+1. **Domain boundaries** (`xmin..xmax`, `ymin..ymax`, `zmin..zmax`, accounting for `GridFIT3D.edge_ghosts` on non-periodic faces): Periodic axes wrap $\mathbf{x}_p^{n+1}$ modularly after depositing current across the periodic seam; non-periodic axes absorb particles at the exact boundary intersection $\boldsymbol{\xi}_{\text{stop}} = \boldsymbol{\xi}^n + \alpha(\boldsymbol{\xi}^{n+1} - \boldsymbol{\xi}^n)$ ($\alpha \in [0, 1]$) so that current is deposited only up to the wall, recording absorbed charge and kinetic energy under `"x_low"`, `"x_high"`, `"y_low"`, `"y_high"`, `"z_low"`, and `"z_high"`.
+2. **CPML inner faces**: When any boundary uses `bc="cpml"`, particles are absorbed upon crossing the inner interface between the physical vacuum region and the `n_pml`-cell CPML layer (`x_low`, `x_high`, `y_low`, `y_high`, `z_low`, `z_high`), preventing unphysical charge accumulation inside the auxiliary PML variables.
+3. **PEC / solid cell mask**: Any cell where all three primal edge permittivities vanish ($\mathrm{ieps}_x = \mathrm{ieps}_y = \mathrm{ieps}_z = 0$, e.g. from embedded CAD/STL conductors) or where an explicit `solid_mask` is True is flagged as solid. Particles entering a solid cell are truncated at the entry face and recorded under `"pec"`.
+4. **User `Collector` regions**: Axis-aligned bounding boxes (`bounds=(xmin, xmax, ymin, ymax, zmin, zmax)`), planes (`plane=(axis, pos, direction)`), or custom predicates (`mask(x, y, z)`) that absorb incident macroparticles and record time-integrated absorbed charge [C] and relativistic kinetic energy $E_k = w(\gamma - 1)m c^2$ [J] on each collector (`col.absorbed_charge`, `col.absorbed_energy`), in the boundary dictionary (`ps.boundaries.absorbed_charge[name]`, `ps.boundaries.absorbed_energy[name]`), and as total scalars via `ps.absorbed_charge()` and `ps.absorbed_energy()`. Because the particle trajectory stops at $\boldsymbol{\xi}_{\text{stop}}$ and its charge $+q$ is added to `solver._particles_q_bg` upon removal, a collector located inside the vacuum interior retains the collected charge as fixed immobile space charge at the collector surface.
+5. **`BeamInjector`**: Injects a cold or relativistic beam of current $I$ [A] and kinetic energy `energy_eV` [eV] (or Lorentz factor `gamma`) from a planar emitter `z = z0` with a deterministic fractional-particle accumulator (`_charge_accumulator`), guaranteeing that the time-integrated injected charge matches $\int I\,\mathrm{d}t$. Upon injection, the deposited emitter charge $-q_{\text{inj}}$ is subtracted from `solver._particles_q_bg` at `z = z0`: when `z0` lies on a PEC boundary face (`z = zmin` or `z = zmax` with `bc="pec"`), this represents the physical wall image charge where tangential $\mathbf{E} = 0$; if `z0` is placed inside the vacuum interior, $-q_{\text{inj}}$ remains at `z = z0` as a fixed immobile opposite space-charge sheet balancing the emitted beam charge.
+
+#### 7. Validation summary (`examples/017_particles_plasma_oscillation_and_gyration.py`)
+
+| Benchmark | Physical setup | Reference / theory | Measured Wakis result |
+| :--- | :--- | :--- | :--- |
+| **V1a: Relativistic gyration** | Electron at $\gamma = 5.0$ in $B_z = 0.10\text{ T}$, $120\text{ steps}/T_c$ | $r_L = 83.5036\text{ mm}$, $\omega_c = 3.51764\times 10^9\text{ rad/s}$ | Relative $r_L$ error: $3.43\times 10^{-4}$ (Boris/Vay), $1.37\times 10^{-5}$ (HC); $\omega_c$ error $\le 2.28\times 10^{-4}$ |
+| **V1b: Relativistic $\mathbf{E}\times\mathbf{B}$ drift** | Crossed $E_y = v_d B_z$ at $\gamma_d = 1.1 \to 20$ | Drift displacement $\Delta x = v_d T$ | Boris error grows from $3.44\times 10^{-3}$ ($\gamma_d=1.1$) to $7.24\times 10^{-2}$ ($\gamma_d=20$); Vay & HC $\le 5.16\times 10^{-15}$ |
+| **V1c: Hyperbolic motion & order** | Uniform $E_z = 1.5\times 10^7\text{ V/m}$ ($\gamma(T) = 5.10$); $\Delta t$ sweep | $z(T) = (mc^2/qE_z)(\gamma(T)-1)$; slope $= 2$ | $z(T)$ error $4.85\times 10^{-6}$, $u_z(T)$ error $\le 5.6\times 10^{-15}$; convergence order $2.00$ (Boris/Vay/HC) |
+| **V2: 3D Esirkepov Gauss's law** | $1024$ relativistic particles ($\bar{\gamma} \approx 2.6$), $1000$ steps, uniform & graded 3D grids | $\mathcal{R}_{\text{Gauss}} \le 10^{-12}$ (machine round-off); naive $\mathbf{J}=q\mathbf{v}$ grows $O(1)$ | $p=1$: $8.86\times 10^{-14}$ (uniform), $2.11\times 10^{-14}$ (graded); $p=2$: $3.74\times 10^{-14}$ (uniform), $8.72\times 10^{-15}$ (graded); naive mutation $= 0.583$ |
+| **V3: Cold plasma oscillation** | 1D periodic plasma ($32\text{ cells}/\lambda$, $\omega_{p0}/2\pi = 1.2\text{ GHz}$) | Birdsall–Langdon discrete $\omega_p^{\text{pred}}$; leapfrog osc. $(\omega_p\Delta t)^2/4 = 1.32\times 10^{-3}$ | $\omega_p$ error: $2.31\times 10^{-7}$ ($p=1$), $2.53\times 10^{-5}$ ($p=2$); leapfrog osc. $1.32\times 10^{-3}$ (secular drift $1.41\times 10^{-7}$); $\mathcal{R}_{\text{Gauss}} = 1.03\times 10^{-15}$ |
+
+#### 8. GPU (`CuPy RawKernel`) acceleration and throughput (`examples/018_particles_gpu_throughput.py`)
+
+When `SolverFIT3D(..., use_gpu=True)` is paired with device-resident `Species(..., use_gpu=True)`, `wakis.particles` executes the coupled particle-field cycle on the GPU (`xp = cupy`) via compiled CUDA C++ `RawKernel` routines (`wakis/particles/gpu_kernels.py`). On the standard Esirkepov fast path (periodic/PEC/CPML boundaries, plane or bounding-box collectors, and uniform external fields), `solver.one_step()` enqueues all kernels asynchronously on the current CUDA stream without device-to-host synchronization (`not ev.done`) and performs zero CuPy memory-pool allocations on non-sorting steps (while periodic cell sorting every `sort_every` steps reuses cached blocks in the CuPy memory pool via `cupy.argsort` without growing `pool.total_bytes()`):
+
+1. **Kernel architecture (`wakis/particles/gpu_kernels.py`)**:
+   - **Fused gather + relativistic push + position advance** (`gather_and_push_kernel`, `launch_gather_and_push_gpu`): One CUDA thread per active particle (`block_size = 256`) converts the physical position $(x_p^n, y_p^n, z_p^n)$ to logical coordinates $(\xi_p^n, \eta_p^n, \zeta_p^n)$ (by $O(1)$ affine scaling on uniform axes or device binary search on graded axes), evaluates the 1D nodal B-spline weights of order $p \in \{1, 2, 3\}$ and staggered B-spline weights of order $p_{\text{stag}} \in \{p-1, p\}$ (`gather="galerkin"` or `"momentum"`), interpolates the six field components $(E_x, E_y, E_z, B_x, B_y, B_z)$ from the flat Fortran-order FIT field arrays, adds any uniform or callable external field $\mathbf{B}_{\text{ext}}$, advances $\mathbf{u}_p^{n-1/2} \to \mathbf{u}_p^{n+1/2}$ using the selected relativistic pusher (`"boris"`, `"vay"`, or `"higuera_cary"`), and advances $\mathbf{x}_p^{n+1} = \mathbf{x}_p^n + \Delta t\,\mathbf{u}_p^{n+1/2}/\gamma_p^{n+1/2}$ together with $(\xi_p^{n+1}, \eta_p^{n+1}, \zeta_p^{n+1})$ in registers.
+   - **Minimal-window 3D Esirkepov current deposition** (`deposit_esirkepov_kernel`, `deposit_current_esirkepov_gpu`): One CUDA thread per particle evaluates the 1D spline weights $S^0, S^1$ and differences $\Delta S = S^1 - S^0$ on the compact $M_{\min} = p + 2$ node window per axis ($3, 4, 5$ nodes for $p = 1, 2, 3$) anchored at $i_{\text{base}} = \min(b_0, b_1)$ (`esirkepov_1d_window_dev`, which also increments a device error counter `d_cfl_error` if $|b_1 - b_0| > 1$), forms the running cumulative sums $F_m = -\sum_{r=0}^m \Delta S_r$ for $m \in \{0, \dots, p\}$ in thread-local registers, and scatters the charge fluxes $(q_p w_p)\,F_m\,W_\perp$ into the primal-edge accumulators `Wx_out`, `Wy_out`, `Wz_out` via hardware `atomicAdd(double*, double)`. A CUDA kernel (`finalize_j_delta_kernel`, `finalize_j_delta_gpu`) converts $(W_x, W_y, W_z)$ into $J_e^{n+1/2} = W_e^{n+1/2}\,\mathrm{itA}_e/\Delta t$ and updates `solver.J` in-place.
+   - **Asynchronous boundary ray-casting and 3-pass shared-memory stream compaction** (`boundary_prepare_paths_kernel`, `compact_scan_blocks_kernel`, `compact_scan_totals_kernel`, `compact_scatter_kernel`): Ray-casts each particle segment $\boldsymbol{\xi}_p^n \to \boldsymbol{\xi}_p^{n+1}$ against domain walls, CPML inner faces, PEC/solid cells (`solid_mask`), and user `Collector` boxes/planes entirely on the device, truncating absorbed paths at $\boldsymbol{\xi}_{\text{stop}}$ before current deposition and accumulating absorbed charge and kinetic energy into device arrays (`_d_absorbed_charge`, `_d_absorbed_energy`, `_d_absorbed_count`). Absorbed particles (`keep_mask == 0`) are removed by a 3-pass block prefix-sum (Hillis–Steele shared-memory scan) that writes the surviving count into a 1-element device tensor `_d_n_particles` (marking `_n_dirty_gpu = True`) while keeping the host launch bound `_n_launch_bound` on the CPU without synchronizing the stream.
+   - **Hooked fused GPU field step (`wakis/gpu_fused.py`)**: `FusedStep._launch_halves()` calls `s._capture_mid_step_H()` before launching `fused_h`, then invokes `s._run_mid_step()` between `fused_h` and `fused_e`. When mid-step hooks are registered, `FusedLoop.supported()` returns `False` so `emsolve` steps through the hooked `FusedStep` path.
+
+2. **Floating-point atomics, summation determinism, and exact Gauss conservation**:
+   - In `gather_and_push_kernel` (compiled with `--fmad=false`), each thread writes exclusively to its own particle index $p$ using IEEE-754 `float64` arithmetic in the identical operation order as the CPU reference, so single-step GPU positions $\mathbf{x}_p^{n+1}$ and momenta $\mathbf{u}_p^{n+1/2}$ match the CPU NumPy reference bitwise ($0.0$ difference, tested against a bound of $8\,\varepsilon_{\text{mach}} = 1.78\times 10^{-15}$ across all $36$ combinations of pushers, gather modes, $p \in \{1, 2, 3\}$, and uniform/graded meshes in `tests/test_080_particles_gpu.py`).
+   - In `deposit_esirkepov_kernel`, $n(e)$ non-zero stencil contributions $w_{e,k}$ ($k \in \mathcal{C}(e)$) accumulate into primal edge $e$ via concurrent `atomicAdd(double*, double)`. Because warp scheduling order is non-deterministic, floating-point addition order differs from the deterministic sequential CPU `np.bincount` reduction. By Higham's floating-point summation error bound [Higham, 2002, Sec. 3.1], each summation order of $n(e)$ terms is within $\gamma_{n(e)-1}\sum_{k \in \mathcal{C}(e)} |w_{e,k}|$ of the exact sum, so the single-step discrepancy between the two summation orders ($W_{e,\text{GPU}}$ and $W_{e,\text{CPU}}$) is bounded edge-by-edge by
+     ```math
+     \left|W_{e,\text{GPU}} - W_{e,\text{CPU}}\right| \le 2\,\gamma_{n(e)-1}\sum_{k \in \mathcal{C}(e)} \left|w_{e,k}\right|, \qquad \gamma_{n(e)-1} = \frac{(n(e)-1)\,u}{1 - (n(e)-1)\,u}, \qquad u = 2^{-53} \approx 1.11\times 10^{-16},
+     ```
+     where `esirkepov_edge_abs_sum_and_counts` (`wakis/particles/shapes.py`) evaluates both $\sum_{k \in \mathcal{C}(e)} |w_{e,k}|$ and the exact non-zero contribution count $n(e)$ on every primal edge $e$. In `tests/test_080_particles_gpu.py` and `examples/018_particles_gpu_throughput.json` (`validation_metrics.esirkepov_single_step_roundoff`, $N_p = 500$ particles on an $8\times 8\times 8$ periodic grid), the maximum per-edge contribution counts are $\max_e n(e) = 16$ ($\bar{n} = 5.51$) for $p=1$, $\max_e n(e) = 39$ ($\bar{n} = 21.49$) for $p=2$, and $\max_e n(e) = 81$ ($\bar{n} = 54.11$) for $p=3$, with measured relative $L_\infty$ differences $\|\mathbf{W}_{\text{GPU}} - \mathbf{W}_{\text{CPU}}\|_\infty / \|\mathbf{W}_{\text{CPU}}\|_\infty$ of $9.82\times 10^{-17}$ ($p=1$), $1.73\times 10^{-16}$ ($p=2$), and $4.08\times 10^{-16}$ ($p=3$) and maximum edge bound utilization $\max_e |W_{e,\text{GPU}} - W_{e,\text{CPU}}| / \left(2\,\gamma_{n(e)-1}\sum_k |w_{e,k}|\right)$ of $0.338$ ($p=1$), $0.088$ ($p=2$), and $0.032$ ($p=3$). In the coupled 60-step relativistic self-field plasma benchmark on an $8\times 8\times 8$ periodic grid with $N_p = 256$ high-weight macroparticles (`test_gpu_vs_cpu_coupled_v2_and_gauss`, `validation_metrics.coupled_v2_8x8x8_60steps`), the GPU vs CPU relative $L_\infty$ differences after $60$ steps are $9.74\times 10^{-16}$ in $\mathbf{x}$, $2.13\times 10^{-15}$ in $\mathbf{u}$, $5.69\times 10^{-15}$ in $\mathbf{E}$, $7.60\times 10^{-15}$ in $\mathbf{H}$, and $1.29\times 10^{-14}$ in $\mathbf{J}$ for $p=1$ (all below the empirical linear-growth budget $N_{\text{steps}} \times \max_e\!\left(2\,\gamma_{n(e)-1}\sum_k |w_{e,k}|\right) / \max_e \sum_k |w_{e,k}| = 9.33\times 10^{-14}$, `empirical_linear_growth_budget`, with $\mathcal{R}_{\text{Gauss}} = 1.72\times 10^{-15}$ on GPU and $5.56\times 10^{-16}$ on CPU), and $3.54\times 10^{-15}$ in $\mathbf{x}$, $5.88\times 10^{-15}$ in $\mathbf{u}$, $7.27\times 10^{-15}$ in $\mathbf{E}$, $6.77\times 10^{-15}$ in $\mathbf{H}$, and $1.11\times 10^{-14}$ in $\mathbf{J}$ for $p=2$ (all below the empirical linear-growth budget $2.53\times 10^{-13}$, with $\mathcal{R}_{\text{Gauss}} = 8.68\times 10^{-16}$ on GPU and $5.21\times 10^{-16}$ on CPU; note that `empirical_linear_growth_budget` is an empirical linear-growth budget over $60$ steps with the domain lengths $(0.08, 0.08, 0.10)\text{ m}$ used as position scales and no cuSPARSE SpMV round-off term, not a rigorous multi-step Higham bound).
+   - Crucially, **non-deterministic atomic summation order does not degrade discrete Gauss's law**: each particle thread computes its own stencil flux differences $F_m - F_{m-1} = \Delta S_m$ in registers before scattering, and the sum of `atomicAdd` contributions on the six dual faces of any node $(i,j,k)$ equals $\sum_p \Delta q_{p;i,j,k}$ up to $O(n(e)\,u)$. Over $1000$ coupled steps on a $6\times 6\times 6$ periodic grid on the GPU (`test_gpu_gauss_residual_1000_steps`, `validation_metrics.gauss_1000_steps_6x6x6`), $\mathcal{R}_{\text{Gauss}}^{1000}$ is $1.03\times 10^{-13}$ (uniform, $p=1$), $4.92\times 10^{-14}$ (graded, $p=1$), $4.03\times 10^{-14}$ (uniform, $p=2$), and $3.05\times 10^{-14}$ (graded, $p=2$), all $\ll 10^{-12}$.
+
+3. **Device memory layout and periodic cell sorting**:
+   - `Species` stores its active particle state in contiguous device `float64` struct-of-arrays (SoA) vectors (`_x, _y, _z, _ux, _uy, _uz, _w`: $7 \times 8 = 56\text{ B/particle}$, plus $8\text{ B/particle}$ `int64` `_id` when `track_ids=True`, i.e. $64\text{ B/particle}$). To avoid per-step allocations, `Species._ensure_gpu_scratch()` preallocates $168\text{ B/particle}$ of reusable device scratch buffers ($9 \times 8 = 72\text{ B}$ for `x0, y0, z0, xi0, eta0, zeta0, xi1, eta1, zeta1` plus $96\text{ B}$ for cell indices, compaction masks/prefix-sums, permutation indices, and radix-sort workspace), totalling **$224\text{ B/particle}$ without IDs** ($2.24\text{ GB}$ at $N_p = 10^7$) or **$232\text{ B/particle}$ with IDs** ($2.32\text{ GB}$ at $N_p = 10^7$), grown by amortised doubling outside `step`.
+   - Every `sort_every` steps (default `50`), `Species.sort_by_cell(grid_map)` computes each particle's linear cell index $c_p = i_x + N_x(i_y + N_y i_z)$ (`compute_cell_index_kernel`), sorts `c_p` via `cupy.argsort` (device radix sort), and permutes the SoA arrays in-place (`permute_particles_kernel`). On large grids such as $128^3$ ($2,097,152$ cells, where the three `float64` edge accumulators `Wx, Wy, Wz` occupy $48\text{ MiB}$), sorting clusters particles within the same cell into adjacent threads of the same warps, turning random DRAM `atomicAdd` updates into L2-cache-local updates and accelerating `deposit` by **$2.49\times$ ($p=1$)** and **$3.37\times$ ($p=2$)** at $N_p = 10^7$ (`24.87 ms` vs `62.05 ms` for $p=1$; `50.45 ms` vs `169.95 ms` for $p=2$), while a sort call at $N_p = 10^7$ takes $38.50\text{–}38.54\text{ ms}$ ($0.77\text{ ms/step}$ amortised over `sort_every = 50`, $< 1.6\%$ of the coupled step time).
+
+4. **Measured coupled `solver.one_step()` throughput and speedup vs 1-process, 1-thread unoptimised NumPy M1 CPU baseline (`examples/018_particles_gpu_throughput.json`)**:
+   - Measured on this VM (`NVIDIA L4` GPU, $23,034\text{ MiB}$, driver `580.178.04`, CuPy `14.2.0`, CUDA `12.9 (12090)`, `gpu_one_step_variant = "_one_step"`) against the **1-process, 1-thread unoptimised vectorised NumPy M1 CPU baseline on the same VM** (`Intel(R) Xeon(R) CPU @ 2.20GHz`, $8$ vCPUs, `processes = 1`, `MKL_NUM_THREADS = OMP_NUM_THREADS = OPENBLAS_NUM_THREADS = 1`, `mkl_get_max_threads = 1`, `cpu_one_step_variant = "_one_step"`). Note that the M1 CPU reference executes unoptimised single-thread vectorised NumPy/SciPy array operations (`~1.56–1.67 µs` per particle-step, `5.98–6.42e5 particle-steps/s` for $p=1$, and `~3.00–3.24 µs` per particle-step, `3.09–3.33e5 particle-steps/s` for $p=2$ at $N_p = 10^7$), so the $23.4\text{–}387.4\times$ coupled speedups reported below measure the CUDA `RawKernel` GPU path against the 1-thread vectorised NumPy CPU baseline rather than a multi-threaded compiled C++/OpenMP CPU code.
+   - To fit the $128^3$ + $10^7$-particle CPU benchmark within the $2000\text{ MB}$ `memguard` resident-memory cap while executing genuine `solver.one_step()`, `benchmark_cpu_grid()` runs a stripped CPU solver after `attach()` (`solver.imu`, `solver.sigma`, `solver.itA`, `solver.J_old`, `grid.L`, `grid.iA`, `grid.tL`, `grid.itA`, `ps._q0_buf`, `ps._H_prev`, and `solver._particles_q_bg` set to `None`, `ps._itA_arr` replaced by the uniform-cube scalar `float(n_grid**2)`, and the two curl CSR matrices `tDsiDmuiDaC` and `itDaiDepsDstC` sharing one `indptr` array; recorded in `environment.cpu_stripped_attributes` and `environment.cpu_shared_csr_indptr`) and enables stage timing via the opt-in flag `ParticleSolver(..., profile=True)` (default `profile=False`, which incurs zero `time.perf_counter()` calls during normal production stepping).
+   - CPU timings average $5$ timed steps at $N_p = 10^4$ and $3$ timed steps at $N_p \in \{10^5, 10^6, 10^7\}$ (`n_steps_timed`), while GPU timings average $30, 30, 15, 10$ timed steps across $N_p \in \{10^4, 10^5, 10^6, 10^7\}$ using CUDA events. Because `ps.n_particle_steps` is reset to `1` before timing $< 50$ coupled steps (`sort_every = 50`), **coupled `solver.one_step()` timings (`coupled_one_step_s`, `coupled_particle_steps_per_s`, `coupled_speedup`) exclude periodic cell sorting**, whereas the **sum of stage times (`stage_sum_step_s = pg + dep + sort_amort + field`, `stage_sum_particle_steps_per_s`, `stage_sum_speedup`) includes `sort_amortized_s = sort_call_s / 50`** (`environment.coupled_timing_excludes_sorting = true`):
+
+| Grid | Order | $N_p$ | 1T CPU `one_step` [ms] (stage sum [ms]) | L4 GPU `one_step` [ms] (stage sum: `pg`/`dep`/`sort`/`field` [ms]) | 1T CPU coupled rate [part-steps/s] | L4 GPU coupled rate [part-steps/s] | Coupled speedup (vs 1T CPU) | Stage-sum speedup (vs 1T CPU) | Particle-only speedup (vs 1T CPU) |
+| :--- | :---: | ---: | ---: | :--- | ---: | ---: | ---: | ---: | ---: |
+| $32^3$ | $p=1$ | $10^4$ | $14.88$ ($14.47$) | $0.466$ ($0.284$: $0.049 / 0.047 / 0.004 / 0.184$) | $6.719\times 10^{5}$ | $2.147\times 10^{7}$ | **$31.9\times$** | $51.0\times$ | $131.0\times$ |
+| $32^3$ | $p=1$ | $10^5$ | $153.01$ ($151.37$) | $0.580$ ($0.594$: $0.146 / 0.260 / 0.005 / 0.184$) | $6.536\times 10^{5}$ | $1.725\times 10^{8}$ | **$264.0\times$** | $254.7\times$ | $365.4\times$ |
+| $32^3$ | $p=1$ | $10^6$ | $1494.10$ ($1496.50$) | $4.062$ ($3.815$: $1.402 / 2.184 / 0.045 / 0.184$) | $6.693\times 10^{5}$ | $2.462\times 10^{8}$ | **$367.8\times$** | $392.3\times$ | $411.8\times$ |
+| $32^3$ | $p=1$ | $10^7$ | $15574.56$ ($15633.97$) | $40.198$ ($37.881$: $13.90 / 23.03 / 0.771 / 0.184$) | $6.421\times 10^{5}$ | $2.488\times 10^{8}$ | **$387.4\times$** | $412.7\times$ | $414.7\times$ |
+| $32^3$ | $p=2$ | $10^4$ | $27.94$ ($27.41$) | $0.473$ ($0.318$: $0.051 / 0.079 / 0.004 / 0.184$) | $3.580\times 10^{5}$ | $2.114\times 10^{7}$ | **$59.1\times$** | $86.1\times$ | $193.7\times$ |
+| $32^3$ | $p=2$ | $10^5$ | $304.53$ ($303.82$) | $0.963$ ($1.004$: $0.289 / 0.527 / 0.005 / 0.184$) | $3.284\times 10^{5}$ | $1.039\times 10^{8}$ | **$316.3\times$** | $302.5\times$ | $368.5\times$ |
+| $32^3$ | $p=2$ | $10^6$ | $3111.65$ ($3113.88$) | $8.055$ ($7.814$: $2.862 / 4.723 / 0.045 / 0.184$) | $3.214\times 10^{5}$ | $1.241\times 10^{8}$ | **$386.3\times$** | $398.5\times$ | $407.9\times$ |
+| $32^3$ | $p=2$ | $10^7$ | $30035.67$ ($30095.79$) | $86.092$ ($83.789$: $27.60 / 55.24 / 0.770 / 0.184$) | $3.329\times 10^{5}$ | $1.162\times 10^{8}$ | **$348.9\times$** | $359.2\times$ | $360.0\times$ |
+| $128^3$ | $p=1$ | $10^4$ | $217.58$ ($210.54$) | $9.307$ ($8.668$: $0.472 / 1.798 / 0.005 / 6.393$) | $4.596\times 10^{4}$ | $1.075\times 10^{6}$ | **$23.4\times$** | $24.3\times$ | $30.8\times$ |
+| $128^3$ | $p=1$ | $10^5$ | $385.81$ ($379.41$) | $10.165$ ($9.513$: $0.794 / 2.321 / 0.005 / 6.393$) | $2.592\times 10^{5}$ | $9.837\times 10^{6}$ | **$38.0\times$** | $39.9\times$ | $76.6\times$ |
+| $128^3$ | $p=1$ | $10^6$ | $1935.26$ ($1890.59$) | $13.434$ ($12.649$: $1.871 / 4.340 / 0.045 / 6.393$) | $5.167\times 10^{5}$ | $7.444\times 10^{7}$ | **$144.1\times$** | $149.5\times$ | $279.8\times$ |
+| $128^3$ | $p=1$ | $10^7$ | $16735.20$ ($16674.57$) | $49.411$ ($46.945$: $14.91 / 24.87 / 0.771 / 6.393$) | $5.975\times 10^{5}$ | $2.024\times 10^{8}$ | **$338.7\times$** | $355.2\times$ | $407.7\times$ |
+| $128^3$ | $p=2$ | $10^4$ | $238.97$ ($233.23$) | $9.493$ ($8.816$: $0.562 / 1.857 / 0.004 / 6.393$) | $4.185\times 10^{4}$ | $1.053\times 10^{6}$ | **$25.2\times$** | $26.5\times$ | $38.3\times$ |
+| $128^3$ | $p=2$ | $10^5$ | $605.23$ ($598.82$) | $11.089$ ($10.446$: $1.167 / 2.882 / 0.005 / 6.393$) | $1.652\times 10^{5}$ | $9.018\times 10^{6}$ | **$54.6\times$** | $57.3\times$ | $113.1\times$ |
+| $128^3$ | $p=2$ | $10^6$ | $3532.53$ ($3487.79$) | $17.475$ ($16.829$: $3.435 / 6.956 / 0.045 / 6.393$) | $2.831\times 10^{5}$ | $5.722\times 10^{7}$ | **$202.1\times$** | $207.2\times$ | $320.7\times$ |
+| $128^3$ | $p=2$ | $10^7$ | $32369.77$ ($32317.15$) | $89.248$ ($86.313$: $28.70 / 50.45 / 0.771 / 6.393$) | $3.089\times 10^{5}$ | $1.120\times 10^{8}$ | **$362.7\times$** | $374.4\times$ | $402.6\times$ |
+
+![Coupled GPU vs 1-process CPU particle throughput and speedup scaling](img/particles_gpu_throughput_scaling.png)
+
+![GPU kernel stage breakdown and effect of cell sorting on Esirkepov deposit](img/particles_gpu_kernel_breakdown.png)
+
+#### 9. Limits & Failure Modes
+
+- **Single-cell per-step displacement condition ($|\Delta\xi| < 1$)**: The 3D Esirkepov stencil assumes that a particle changes its base cell index by at most $\pm 1$ along each axis per time step ($\max_p |v_{p,a}|\Delta t < \Delta x_a$). For relativistic particles ($|\mathbf{v}| < c$), `ParticleSolver.attach()` enforces the host-side time-step guard $c\Delta t \le \min(\Delta x_{\min}, \Delta y_{\min}, \Delta z_{\min})$, resets `_d_cfl_error` via `ps.reset_cfl_error()`, and raises `ValueError` if violated; `ps.step()` / `solver.one_step()` also re-checks $c\Delta t \le \min(\Delta x_{\min}, \Delta y_{\min}, \Delta z_{\min})$ on the host (with zero GPU stream synchronization) whenever `solver.dt` has changed since `attach()`. In addition, on the CPU `_esirkepov_1d_window()` checks $|b_1 - b_0| \le 1$ directly, while on the GPU `esirkepov_1d_window_dev()` atomically increments the device error flag `_d_cfl_error` whenever $|b_1 - b_0| > 1$; to preserve asynchronous stepping, `_d_cfl_error` is inspected during host-side diagnostics (`gauss_residual()`, which raises `ValueError` if any particle violated $|b_1 - b_0| \le 1$) and can be cleared explicitly with `ps.reset_cfl_error()`.
+- **Post-`attach()` field or particle modification (`reset_gauss_reference()`)**: Step 0 re-records the initial Gauss reference state (`solver._particles_q_bg` and `solver._particles_q_scale_ref`) automatically only when species particle counts changed after `attach()`. If electromagnetic fields (`solver.E`) or active particle positions/weights are modified in place after `attach()` without changing particle counts, call `ps.reset_gauss_reference()` before stepping so `gauss_residual()` uses the updated initial state.
+- **Vacuum permeability $\mu_0$ in time-centred magnetic field (`_compute_centred_B` / `compute_centred_B_kernel`)**: Both the CPU path (`ParticleSolver._compute_centred_B`) and the GPU kernel (`compute_centred_B_kernel`) compute the time-centred magnetic flux density $\mathbf{B}_{\text{grid}}^n = \frac{1}{2}\mu_0\left(\mathbf{H}^{n-1/2} + \mathbf{H}^{n+1/2}\right)$ using the vacuum permeability $\mu_0$ ($\mu_r = 1$). Consequently, active macroparticles must propagate in non-magnetic ($\mu = \mu_0$) regions; magnetic media with $\mu \neq \mu_0$ (`solver.imu != 1/mu_0`) inside the active particle domain are not supported by `_compute_centred_B`.
+- **Boundary stencil truncation for $p \ge 2$ (`_wrap_or_mask_1d`)**: On non-periodic axes, `_wrap_or_mask_1d()` (`wakis/particles/shapes.py`) clips out-of-domain B-spline stencil indices to `[0, N_a - 1]` and zeroes their weights. For spline orders $p \ge 2$, particles within $p / 2$ cells of a non-periodic boundary have their outer stencil tails truncated at the wall; interior vacuum Gauss conservation ($\mathcal{R}_{\text{Gauss}}$ evaluated on `_interior_vacuum_node_mask`) remains exact because the discrete continuity identity holds at every in-domain node.
+- **End-cell check for `solid_mask` absorption**: In `ParticleBoundaries.prepare_step_paths()`, solid/PEC cell interception tests `solid_mask[ix1, iy1, iz1]` at the step endpoint $\boldsymbol{\xi}^{n+1}$ before computing the entry-face intersection $\alpha_{\text{pec}}$. A diagonal single-step trajectory that clips the corner of a solid cell while both endpoints `(ix0, iy0, iz0)` and `(ix1, iy1, iz1)` lie in vacuum cells is not caught by the endpoint check.
+- **Fixed emitter/collector space charge in `_particles_q_bg`**: `BeamInjector` leaves fixed opposite charge $-q_{\text{inj}}$ at `z = z0` (which should lie on a PEC wall so that $-q_{\text{inj}}$ represents wall image charge rather than an ungrounded interior space-charge sheet), and `Collector` absorption leaves the collected charge $+q_{\text{abs}}$ as fixed immobile space charge at the absorption point unless externally neutralized.
+- **Hooked `SolverFIT3D` step variants required**: `ParticleSolver.attach()` requires `solver.one_step` to be a step variant that invokes `_run_mid_step()` (`_one_step`, `_one_step_mkl`, `_one_step_cpml`, `_one_step_cpml_mkl`, or the fused GPU `FusedStep`, optionally wrapped by `_one_step_with_abc`). Specialized field-only step variants (`_one_step_dispersive`, `_one_step_nonlinear`, `_one_step_time_varying`, `_one_step_tete`, `one_step_tensor`, `one_step_network`, or unhooked `FusedLoop`) do not call mid-step hooks and are rejected with a `ValueError` at `attach()`.
+- **Synchronised kinetic energy diagnostic (`kinetic_energy(synchronised=True)`) ignores CPML $\boldsymbol{\psi}$ terms and magnetic sources**: When `solver._H_before_update` has not yet been captured by a completed step, `ParticleSolver.kinetic_energy(synchronised=True)` previews $\mathbf{H}^{n+1/2} = \mathbf{H}^{n-1/2} - \Delta t\,\tilde{\mathbf{D}}_s\mathbf{D}_\mu^{-1}\mathbf{D}_A^{-1}\mathbf{C}\mathbf{E}^n$ using the bare curl operator `tDsiDmuiDaC`, which omits auxiliary CPML $\boldsymbol{\psi}_H$ terms and impressed magnetic current sources $\mathbf{M}$.
+- **Finite-grid instability (aliasing heating)**: When the plasma Debye length $\lambda_D = v_{\text{th}}/\omega_p$ is under-resolved by the grid ($\lambda_D / \Delta x \lesssim 0.3$ for $p=1$ CIC or $\lesssim 0.1$ for $p=2$ TSC), spatial aliasing between the discrete grid modes $k + 2\pi m/\Delta x$ and particle streaming causes unphysical secular heating until $\lambda_D \sim \Delta x$ [Birdsall & Langdon, 1991]. Use `shape=2` (TSC) and optional binomial current filtering (`filter="binomial"`) for warm or dense beams.
+- **Staircase approximation at curved PEC boundaries**: Embedded STL conductors absorb particles via the staircase solid-cell mask (`solid_mask`, recorded under `"pec"`) at first-order spatial accuracy $O(\Delta x)$. Cut-cell fractional embeddings (`use_ect=True`) handle the electromagnetic field update conformally, while sub-cell cut-face particle interception is a higher-order extension.
+- **GPU `float64` `atomicAdd` contention, non-deterministic summation order, device memory footprint, and non-fast-path allocations/syncs**:
+  1. *Global `float64` atomic throughput and sorting trade-offs*: In `deposit_esirkepov_kernel`, each particle performs $3(p+1)(p+2)^2$ double-precision `atomicAdd` updates ($54, 144, 300$ atomics per particle for $p = 1, 2, 3$), making deposition $1.7\text{–}2.0\times$ more expensive than `gather_and_push_kernel`. On large grids ($128^3$) where `Wx, Wy, Wz` exceed L2 cache capacity, periodic cell sorting improves deposit rate by $2.49\text{–}3.37\times$ at $N_p = 10^7$; conversely, on small grids with high particle-per-cell density ($32^3$ at $N_p = 10^7$, $\approx 305\text{ particles/cell}$, where `Wx, Wy, Wz` occupy only $786\text{ KB}$ and already reside in L2 cache), sorting groups identical-cell particles into the same warp and slightly increases intra-warp atomic serialization.
+  2. *Non-deterministic `atomicAdd` summation order*: Concurrent `atomicAdd(double*, double)` updates execute in warp-scheduled order, introducing a $O(n(e)\,u)$ difference in $\mathbf{W}$ and $\mathbf{J}$ per step relative to sequential CPU summation (bounded by $2\,\gamma_{n(e)-1}\sum_{k\in\mathcal{C}(e)} |w_{e,k}|$ per edge) while preserving discrete Gauss's law to $\le 1.03\times 10^{-13}$ over $1000$ steps. Bitwise run-to-run reproducibility of the current deposit would require deterministic fixed-point integer atomics or per-cell segmented reductions.
+  3. *Device memory per particle*: Maintaining preallocated scratch buffers alongside the active `float64` SoA arrays requires $224\text{ B/particle}$ without IDs ($232\text{ B/particle}$ with `track_ids=True`), or $2.24\text{–}2.32\text{ GB}$ per $10^7$ macroparticles (plus $8\times 3N\times 8\text{ B}$ for the solver and particle field buffers, e.g. $0.40\text{ GB}$ / $0.375\text{ GiB}$ on $128^3$), limiting a single $23\text{ GB}$ L4 GPU to $N_p \lesssim 8\times 10^7$ macroparticles before amortised buffer doubling exhausts device RAM.
+  4. *Paths that sub-allocate from the CuPy memory pool or synchronize the host*: While non-sorting steps on the standard Esirkepov fast path perform zero CuPy memory-pool allocations and zero host synchronizations (`not ev.done`), (i) `sort_species_by_cell_gpu` (`sort_every > 0`) calls `cupy.argsort(..., kind="stable")`, which sub-allocates temporary permutation and radix-sort workspace buffers from the pre-warmed CuPy memory pool cache (without growing `pool.total_bytes()` or synchronizing the host); (ii) `BeamInjector` queries `inj.species.n_particles` (which calls `.get()` on `_d_n_particles` if prior boundary compaction set `_n_dirty_gpu = True`) and allocates temporary slices for newly injected particles; and (iii) custom-callable `Collector(mask=...)`, `deposit_scheme="naive"`, `filter="binomial"`, and callable `E_ext`/`B_ext` perform temporary device allocations or host boolean reductions (`bool(xp.any(...))`).
+- **Single-rank execution in M2 (`use_mpi=False`)**: `ParticleSolver` supports CPU and single-GPU (`use_gpu=True`) execution and raises `NotImplementedError` if `solver.use_mpi=True` (and `SolverFIT3D` itself raises `NotImplementedError("Longitudinal periodic MPI requires cyclic ghost exchange.")` when `use_mpi=True` is combined with periodic or Bloch boundaries along $z$; MPI domain decomposition with longitudinal particle halo migration is scheduled for milestone M3).
+
+References:
+- J. P. Boris, "Relativistic plasma simulation—optimization of a hybrid code", *Proc. Fourth Conf. Numerical Simulation of Plasmas*, Naval Research Laboratory, Washington, D.C., pp. 3–67 (1970).
+- J.-L. Vay, "Simulation of beams or plasmas crossing at relativistic velocity", *Phys. Plasmas* **15**(5), 056701 (2008), [doi:10.1063/1.2837054](https://doi.org/10.1063/1.2837054).
+- A. V. Higuera and J. R. Cary, "Structure-preserving second-order integration of relativistic charged particle trajectories in electromagnetic fields", *Phys. Plasmas* **24**(5), 052104 (2017), [doi:10.1063/1.4979989](https://doi.org/10.1063/1.4979989).
+- T. Zh. Esirkepov, "Exact charge conservation scheme for Particle-in-Cell simulation with an arbitrary form-factor", *Comput. Phys. Commun.* **135**(2), 144–153 (2001), [doi:10.1016/S0010-4655(00)00228-9](https://doi.org/10.1016/S0010-4655(00)00228-9).
+- J. Villasenor and O. Buneman, "Rigorous charge conservation for local electromagnetic field solvers", *Comput. Phys. Commun.* **69**(2–3), 306–316 (1992), [doi:10.1016/0010-4655(92)90169-Y](https://doi.org/10.1016/0010-4655(92)90169-Y).
+- C. K. Birdsall and A. B. Langdon, *Plasma Physics via Computer Simulation*, Taylor & Francis / IOP Publishing, Bristol (1991), ISBN 978-0-7503-0117-6.
+- N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM, Philadelphia (2002), Sec. 3.1, [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027).
+
+
 ```{admonition} Modularity
 
 #### 🧪 Open-Source Compatibility

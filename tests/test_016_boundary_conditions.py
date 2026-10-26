@@ -237,3 +237,37 @@ def test_unpaired_periodic_rejected():
         SolverFIT3D(
             grid, bc_low=["pec"] * 3, bc_high=["pec", "pec", "periodic"], verbose=0
         )
+
+
+@pytest.mark.parametrize(
+    "bc",
+    [["pec"] * 3, ["periodic", "pec", "pmc"]],
+    ids=["pec", "mixed"],
+)
+def test_update_tensors_reproduces_init_operators_bitwise(bc):
+    """
+    update_tensors must rebuild the update operators with exactly the CSR layout of
+    __init__ (data, indices, indptr): the layout fixes the SpMV summation order, so any
+    difference breaks bit-identity between solvers set up in different ways. Rows of a
+    PEC block (ieps = 0) must hold no explicit zeros.
+    """
+    grid = GridFIT3D(0, 1, 0, 1, 0, 1, 6, 5, 7, verbose=0)
+    s = SolverFIT3D(grid, bc_low=bc, bc_high=bc, verbose=0)
+    s.ieps.array[: s.N // 3] = 0.0
+    s.update_tensors()
+    ref = {n: getattr(s, n).tocsr().copy() for n in ("tDsiDmuiDaC", "itDaiDepsDstC")}
+    s.update_tensors()
+    for n, a in ref.items():
+        b = getattr(s, n).tocsr()
+        assert np.count_nonzero(a.data == 0) == 0, f"{n} stores explicit zeros"
+        assert np.array_equal(a.indptr, b.indptr) and np.array_equal(a.indices, b.indices)
+        assert np.array_equal(a.data, b.data)
+    # the constructor path must give the same layout as update_tensors
+    s2 = SolverFIT3D(GridFIT3D(0, 1, 0, 1, 0, 1, 6, 5, 7, verbose=0), bc_low=bc, bc_high=bc, verbose=0)
+    s3 = SolverFIT3D(GridFIT3D(0, 1, 0, 1, 0, 1, 6, 5, 7, verbose=0), bc_low=bc, bc_high=bc, verbose=0)
+    s3.update_tensors()
+    for n in ("tDsiDmuiDaC", "itDaiDepsDstC"):
+        a, b = getattr(s2, n).tocsr(), getattr(s3, n).tocsr()
+        assert np.count_nonzero(a.data == 0) == 0, f"{n} stores explicit zeros (__init__)"
+        assert np.array_equal(a.indptr, b.indptr) and np.array_equal(a.indices, b.indices)
+        assert np.array_equal(a.data, b.data)

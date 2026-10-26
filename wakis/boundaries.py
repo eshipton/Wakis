@@ -9,9 +9,16 @@ import numpy as np
 from scipy.constants import c
 from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import mu_0
-from scipy.sparse import coo_matrix
+from scipy.sparse import coo_matrix, csr_matrix, dia_matrix
 from scipy.sparse import csc_matrix as sparse_mat
 from scipy.sparse import diags, hstack, vstack
+
+
+def _dia_view(vec, dtype):
+    """Return a zero-copy diagonal sparse matrix view of a 1D vector."""
+    v = np.asarray(vec, dtype=dtype)
+    n = v.size
+    return dia_matrix((v[np.newaxis, :], np.array([0], dtype=np.int32)), shape=(n, n))
 
 from .field import Field
 
@@ -67,7 +74,10 @@ class BCsMixin:
 
         if any(True for x in self.bc_low if x.lower() == "periodic"):
             # Flat field indices: i + j*Nx + k*Nx*Ny.
-            indices = np.arange(self.N).reshape((self.Nx, self.Ny, self.Nz), order="F")
+            idx_dtype = np.int32 if 3 * self.N < 2**31 else np.int64
+            indices = np.arange(self.N, dtype=idx_dtype).reshape(
+                (self.Nx, self.Ny, self.Nz), order="F"
+            )
 
             if (
                 self.bc_low[0].lower() == "periodic"
@@ -132,6 +142,7 @@ class BCsMixin:
                         self.L[:, :, -1, "z"] + self.L[:, :, 0, "z"]
                     )
 
+            del indices
             # Recompute dual areas after all periodic lengths, including corners.
             aux = self.tL.field_y * self.tL.field_z
             self.itA.field_x = np.divide(
@@ -145,28 +156,14 @@ class BCsMixin:
             self.itA.field_z = np.divide(
                 1.0, aux, out=np.zeros_like(aux), where=aux != 0
             )
+            del aux
 
-            self.tDs = diags(
-                self.tL.toarray(),
-                shape=(3 * self.N, 3 * self.N),
-                dtype=self.dtype,
-            )
-            self.itDa = diags(
-                self.itA.toarray(),
-                shape=(3 * self.N, 3 * self.N),
-                dtype=self.dtype,
-            )
+            self.tDs = _dia_view(self.tL.toarray(), self.dtype)
+            self.itDa = _dia_view(self.itA.toarray(), self.dtype)
 
             # Rebuild before PEC/PMC masks; CPML also uses the updated P matrices.
-            N = self.N
-            self.C = vstack(
-                [
-                    hstack([sparse_mat((N, N)), -self.Pz, self.Py]),
-                    hstack([self.Pz, sparse_mat((N, N)), -self.Px]),
-                    hstack([-self.Py, self.Px, sparse_mat((N, N))]),
-                ],
-                dtype=np.result_type(self.Px.dtype, self.Py.dtype, self.Pz.dtype),
-            )
+            self.C = None
+            self.C = _assemble_curl(self.Px, self.Py, self.Pz)
 
         # Dirichlet PEC: tangential E field = 0 at boundary
         if any(
@@ -1222,3 +1219,92 @@ def _wrap_rows(P, high, low, phase, n_axis):
         data = np.full(high.size, phase - 1, dtype=P.dtype)
     wrap = coo_matrix((data, (rows, cols)), shape=P.shape)
     return (P + wrap).tocsc()
+
+
+def _assemble_curl(Px, Py, Pz):
+    """Assemble the 3N x 3N discrete curl CSR matrix from 1D difference operators."""
+    N = Px.shape[0]
+    dtype = np.result_type(Px.dtype, Py.dtype, Pz.dtype)
+    idx_dtype = np.int32 if 3 * N < 2**31 else np.int64
+
+    def _block_row(A, ca, B, cb):
+        A = A.tocsr()
+        B = B.tocsr()
+        if not A.has_sorted_indices:
+            A.sort_indices()
+        if not B.has_sorted_indices:
+            B.sort_indices()
+        na = np.diff(A.indptr)
+        nb = np.diff(B.indptr)
+        indptr = np.empty(N + 1, dtype=idx_dtype)
+        indptr[0] = 0
+        np.cumsum(na + nb, out=indptr[1:])
+        nnz = int(indptr[-1])
+        indices = np.empty(nnz, dtype=idx_dtype)
+        data = np.empty(nnz, dtype=dtype)
+        rows_a = np.repeat(np.arange(N, dtype=idx_dtype), na)
+        pos_a = indptr[rows_a] + (np.arange(A.nnz, dtype=idx_dtype) - A.indptr[rows_a])
+        rows_b = np.repeat(np.arange(N, dtype=idx_dtype), nb)
+        pos_b = (indptr[rows_b] + na[rows_b]) + (
+            np.arange(B.nnz, dtype=idx_dtype) - B.indptr[rows_b]
+        )
+        indices[pos_a] = A.indices + idx_dtype(ca * N)
+        data[pos_a] = A.data
+        indices[pos_b] = B.indices + idx_dtype(cb * N)
+        data[pos_b] = B.data
+        return indptr, indices, data
+
+    p0, i0, d0 = _block_row(-Pz, 1, Py, 2)
+    p1, i1, d1 = _block_row(Pz, 0, -Px, 2)
+    p2, i2, d2 = _block_row(-Py, 0, Px, 1)
+    indptr = np.concatenate([p0, p1[1:] + p0[-1], p2[1:] + p0[-1] + p1[-1]])
+    indices = np.concatenate([i0, i1, i2])
+    data = np.concatenate([d0, d1, d2])
+    return csr_matrix((data, indices, indptr), shape=(3 * N, 3 * N))
+
+
+def _scale_csr_lr(M, d_left, d_right, dtype, copy_indices=True):
+    """Compute diags(d_left) * M * diags(d_right) without intermediate CSR matrices."""
+    if M.format != "csr":
+        M = M.tocsr()
+        copy_indices = False
+    data = np.repeat(np.asarray(d_left, dtype=dtype), np.diff(M.indptr))
+    data *= M.data
+    dr = np.asarray(d_right, dtype=dtype)
+    step = 4_000_000
+    for s0 in range(0, data.size, step):
+        s1 = min(s0 + step, data.size)
+        data[s0:s1] *= dr[M.indices[s0:s1]]
+    indices = M.indices.copy() if copy_indices else M.indices
+    indptr = M.indptr.copy() if copy_indices else M.indptr
+    out = csr_matrix((data, indices, indptr), shape=M.shape)
+    # drop the zeros of PEC/solid rows (ieps = 0): they cost SpMV time and look like couplings
+    out.eliminate_zeros()
+    if not out.has_sorted_indices:
+        out.sort_indices()
+    return out
+
+
+def _scale_csr_lr_gpu(M, d_left, d_right, dtype, cp, gpu_sparse_mat):
+    """Compute diags(d_left) * M * diags(d_right) directly on GPU without host float64 CSR allocation."""
+    if M.format != "csr":
+        M = M.tocsr()
+    if not M.has_sorted_indices:
+        M.sort_indices()
+    indptr = cp.asarray(M.indptr, dtype=np.int32)
+    indices = cp.asarray(M.indices, dtype=np.int32)
+    dl = cp.asarray(d_left, dtype=dtype)
+    dr = cp.asarray(d_right, dtype=dtype)
+    data = cp.repeat(dl, cp.diff(indptr))
+    data *= cp.asarray(M.data)
+    data *= dr[indices]
+    # drop the zeros of PEC/solid rows by hand (same layout as the host eliminate_zeros)
+    nz = data != 0
+    if not bool(nz.all()):
+        rows = cp.repeat(cp.arange(M.shape[0], dtype=np.int32), cp.diff(indptr))[nz]
+        data, indices = data[nz], indices[nz]
+        indptr = cp.zeros(M.shape[0] + 1, dtype=np.int32)
+        cp.cumsum(cp.bincount(rows, minlength=M.shape[0]).astype(np.int32), out=indptr[1:])
+    return gpu_sparse_mat((data, indices, indptr), shape=M.shape)
+
+
