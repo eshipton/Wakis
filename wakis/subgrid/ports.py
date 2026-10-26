@@ -7,16 +7,16 @@
 Polarization mapping, 1D waveguide eigenmode solver, and unidirectional mode
 injection for `SubgridFIT2D`.
 
-Polarization mapping between `PICSimulation(..., two_d=True)` and `SubgridFIT2D`
---------------------------------------------------------------------------------
-In `wakis.templates.photonics.PICSimulation` (`two_d=True`, 2D effective-index
+Polarization mapping between `PhotonicCircuit(..., two_d=True)` and `SubgridFIT2D`
+----------------------------------------------------------------------------------
+In `wakis.templates.photonics.PhotonicCircuit` (`two_d=True`, 2D effective-index
 method):
 
 1. The vertical SOI slab stack (`z in [z_min, z_max]`) is reduced to its
    fundamental horizontal-E slab mode (`polarization='TE'`, dominant `E_y(z)`
    tangential to the horizontal slab faces) with effective index `n_eff_slab`.
 2. In the 2D `(x, y)` calculation (`Nz = 1`, periodic `z` so `d/dz = 0`),
-   `PICSimulation.build()` sets `solver.ieps[:, :, :, 'z'] = 0`, which freezes
+   `PhotonicCircuit.build()` sets `solver.ieps[:, :, :, 'z'] = 0`, which freezes
    `E_z = 0` and restricts `SolverFIT3D` to the **in-plane electric field
    `(E_x, E_y)` and out-of-plane magnetic field `H_z`**:
 
@@ -49,31 +49,44 @@ In `SubgridFIT2D`, this exact system is **`polarization="TE"`** (`TE_z`):
   parallel along the primal edge. For a sidewall normal to `y`, `E_y` (on
   `x`-edges) sees the harmonic mean of `eps` across `y` while `E_x` (on
   `y`-edges) sees the arithmetic mean along `y`, matching Kottke's subpixel
-  smoothing in `PICSimulation`.
+  smoothing in `PhotonicCircuit`.
 """
+
+import warnings
 
 import numpy as np
 from scipy.constants import c as c_light
 from scipy.linalg import eigh
 
 __all__ = [
-    "PIC_POLARIZATION",
+    "PHOTONIC_CIRCUIT_POLARIZATION",
     "polarization_mapping",
     "SubgridMode",
     "solve_port_modes_2d",
     "SubgridModeSource",
 ]
 
-PIC_POLARIZATION = "TE"
+PHOTONIC_CIRCUIT_POLARIZATION = "TE"
+
+
+def __getattr__(name):
+    if name == "PIC_POLARIZATION":
+        warnings.warn(
+            "PIC_POLARIZATION is deprecated; use PHOTONIC_CIRCUIT_POLARIZATION instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return PHOTONIC_CIRCUIT_POLARIZATION
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def polarization_mapping():
     """
-    Return the correspondence between `PICSimulation(two_d=True)` and
+    Return the correspondence between `PhotonicCircuit(two_d=True)` and
     `SubgridFIT2D`.
     """
     return {
-        "subgrid_polarization": PIC_POLARIZATION,
+        "subgrid_polarization": PHOTONIC_CIRCUIT_POLARIZATION,
         "node_unknown_u": "Hz",
         "x_edge_flux_f": "+Lx * eps_0 * eps_y * Ey",
         "y_edge_flux_f": "-Ly * eps_0 * eps_x * Ex",
@@ -237,7 +250,7 @@ class SubgridMode:
 
     Attributes match `wakis.mode_solver.Mode` (`frequency`, `beta`,
     `beta_tilde`, `neff`, `e`, `h`, `h_mean`, `axes`, `coords`) so existing
-    PIC analysis and plotting helpers work unchanged.
+    photonic-circuit analysis and plotting helpers work unchanged.
     """
 
     def __init__(self, line, frequency, beta_tilde, u_line):

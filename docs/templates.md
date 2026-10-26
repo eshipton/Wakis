@@ -151,7 +151,7 @@ formulas (|ΔT| < 0.016 at ≥ 20 cells/λ); a square patch array (p = 15 mm,
 12 mm patches) is transparent at low frequency (R = 0.2 at 0.2 c/p) and
 totally reflecting just below c/p (R = 0.995), with R + T = 1 within 3e-4.
 
-### Silicon photonics: `slab_waveguide`
+### Silicon photonics: `slab_waveguide` and `PhotonicCircuit`
 
 220 nm silicon slab (Sellmeier silicon, dispersive) in SiO2 at 1550 nm,
 2D-like (one periodic cell along y), or a 3D strip with `width=...`. A TE0
@@ -159,7 +159,10 @@ totally reflecting just below c/p (R = 0.995), with R + T = 1 within 3e-4.
 the effective index from the phase advance and the mode-solver index.
 Validated: T = 1 within 1.3e-3, n<sub>eff</sub> within 0.25 % of the
 dispersive slab eigenvalue equation over 1395-1705 nm (11 cells across the
-core).
+core). For multi-port photonic integrated circuits (2D effective-index or 3D
+extruded `PolySlab` layouts with Kottke subpixel smoothing, eigenmode ports,
+and $N$-port S-matrices), use `PhotonicCircuit` in `wakis.templates.photonics`
+(or `SubgridPhotonicCircuit` via `backend="subgrid"`).
 
 ## Sweeps and optimization
 

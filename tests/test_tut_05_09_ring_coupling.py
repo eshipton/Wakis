@@ -49,7 +49,7 @@ from ring_coupling import (  # noqa: E402
     measure_mesh_resolution,
 )
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     n_to_eps,
@@ -289,7 +289,7 @@ def test_ring_coupler_passivity_reciprocity_and_gap_mutation():
     structs_50, ports_50, dom_50, ov_50 = _build_compact_coupler(
         gap=50e-9, radius=r_test
     )
-    pic_50 = PICSimulation(
+    circuit_50 = PhotonicCircuit(
         wavelength_min=wl_lo,
         wavelength_max=wl_hi,
         n_freqs=15,
@@ -305,14 +305,14 @@ def test_ring_coupler_passivity_reciprocity_and_gap_mutation():
         n_pml=6,
         mesh_overrides=ov_50,
     )
-    res_50 = measure_mesh_resolution(pic_50.grid.x, pic_50.grid.y, gap=50e-9)
+    res_50 = measure_mesh_resolution(circuit_50.grid.x, circuit_50.grid.y, gap=50e-9)
     assert res_50["cells_across_feature"] >= 4.0 - 1e-6
 
-    s_50 = pic_50.run_s_parameters(
+    s_50 = circuit_50.run_s_parameters(
         drive=["in", "through"], energy_decay=1e-2, collect_fields=True
     )
 
-    wl = pic_50.wavelengths
+    wl = circuit_50.wavelengths
     order = np.argsort(wl)
     wl_s = wl[order]
     mid = slice(2, -2)
@@ -354,7 +354,7 @@ def test_ring_coupler_passivity_reciprocity_and_gap_mutation():
     assert float(k2_50[-1]) > float(k2_50[0])
 
     # Check angled 45-deg DFT slice and ring resonator synthesis helper on real FIT data
-    fmap = pic_50.dft_fields[WL_REF]
+    fmap = circuit_50.dft_fields[WL_REF]
     sl = sample_angled_drop_slice(
         fmap["x"],
         fmap["y"],
@@ -373,7 +373,7 @@ def test_ring_coupler_passivity_reciprocity_and_gap_mutation():
     structs_180, ports_180, dom_180, ov_180 = _build_compact_coupler(
         gap=180e-9, radius=r_test
     )
-    pic_180 = PICSimulation(
+    circuit_180 = PhotonicCircuit(
         wavelength_min=wl_lo,
         wavelength_max=wl_hi,
         n_freqs=15,
@@ -389,10 +389,10 @@ def test_ring_coupler_passivity_reciprocity_and_gap_mutation():
         n_pml=6,
         mesh_overrides=ov_180,
     )
-    res_180 = measure_mesh_resolution(pic_180.grid.x, pic_180.grid.y, gap=180e-9)
+    res_180 = measure_mesh_resolution(circuit_180.grid.x, circuit_180.grid.y, gap=180e-9)
     assert res_180["cells_across_feature"] >= 4.0 - 1e-6
 
-    s_180 = pic_180.run_s_parameters(
+    s_180 = circuit_180.run_s_parameters(
         drive=["in"], energy_decay=1e-2, collect_fields=False
     )
     k2_180 = float(np.abs(s_180[("drop", "in")][order][mid][i_1550]) ** 2)

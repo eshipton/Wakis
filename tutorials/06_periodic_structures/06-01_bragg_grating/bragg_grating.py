@@ -202,7 +202,7 @@ from _helpers import (  # noqa: E402
 )
 from wakis import figstyle, schematic  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     Port,
     make_movie,
     n_to_eps,
@@ -504,7 +504,7 @@ def build_task_mesh_metrics(task_cfg):
 #
 # To resolve both the transverse tooth depth and longitudinal tooth edges without
 # paying the cost of a uniform fine mesh across the entire air cladding and feed
-# waveguides, we pass three **per-axis `mesh_overrides` boxes** to `PICSimulation`:
+# waveguides, we pass three **per-axis `mesh_overrides` boxes** to `PhotonicCircuit`:
 #
 # * **Two transverse $y$-strips over the upper and lower tooth bands**: spanning
 #   from the inner core edge ($|y| = w_{\text{wg}}/2 = 225\;\text{nm}$) to the
@@ -808,7 +808,7 @@ def run_single_task(task_cfg, out_dir):
         dx_background=dx_bg,
     )
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=N_FREQS,
@@ -831,18 +831,18 @@ def run_single_task(task_cfg, out_dir):
         use_gpu=use_gpu,
     )
 
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=task_cfg["energy_decay"],
         max_time=task_cfg["max_time"],
         collect_fields=task_cfg["collect_fields"],
     )
-    n_steps = int(getattr(pic.solver, "Nt", int(np.ceil(task_cfg["max_time"] / pic.solver.dt))))
+    n_steps = int(getattr(circuit.solver, "Nt", int(np.ceil(task_cfg["max_time"] / circuit.solver.dt))))
 
     mesh_meta = measure_grating_mesh_metrics(
-        pic.grid.x,
-        pic.grid.y,
-        pic.grid.z,
+        circuit.grid.x,
+        circuit.grid.y,
+        circuit.grid.z,
         dw=task_cfg["dw"],
         n_periods=task_cfg["n_periods"],
         pitch=PITCH,
@@ -855,7 +855,7 @@ def run_single_task(task_cfg, out_dir):
     length = float(task_cfg["n_periods"]) * PITCH
     r_pow = np.abs(s_mat[("in", "in")]) ** 2
     t_pow = np.abs(s_mat[("out", "in")]) ** 2
-    metrics = extract_stopband_metrics(pic.wavelengths, r_pow, t_pow, length)
+    metrics = extract_stopband_metrics(circuit.wavelengths, r_pow, t_pow, length)
 
     payload = {
         "task_index": np.int32(idx),
@@ -877,9 +877,9 @@ def run_single_task(task_cfg, out_dir):
         "dw": np.float64(task_cfg["dw"]),
         "shift": np.float64(task_cfg["shift"]),
         "apodization": np.array(task_cfg["apodization"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out", "in")].astype(np.complex128),
         "lambda_bragg": np.float64(metrics["lambda_bragg"]),
@@ -890,10 +890,10 @@ def run_single_task(task_cfg, out_dir):
 
     if task_cfg["collect_fields"]:
         if task_cfg["name"] in ("kottke_L2", "kottke_L3"):
-            modes_in = pic.solve_port_modes(
+            modes_in = circuit.solve_port_modes(
                 "in", frequencies=c_light / WL_FIELD_BRAGG, n_modes=1
             )
-            modes_out = pic.solve_port_modes(
+            modes_out = circuit.solve_port_modes(
                 "out", frequencies=c_light / WL_FIELD_BRAGG, n_modes=1
             )
             y_in = modes_in[0].coords["Eb"][0]
@@ -914,7 +914,7 @@ def run_single_task(task_cfg, out_dir):
             neff_avg = np.array(
                 [
                     slab_neff(
-                        pic.n_eff_slab,
+                        circuit.n_eff_slab,
                         N_AIR,
                         W_CORE + DW_CORRUG,
                         w,
@@ -925,14 +925,14 @@ def run_single_task(task_cfg, out_dir):
             )
             neff_min = np.array(
                 [
-                    slab_neff(pic.n_eff_slab, N_AIR, W_CORE, w, polarization="TM")
+                    slab_neff(circuit.n_eff_slab, N_AIR, W_CORE, w, polarization="TM")
                     for w in wl_disp
                 ]
             )
             neff_max = np.array(
                 [
                     slab_neff(
-                        pic.n_eff_slab,
+                        circuit.n_eff_slab,
                         N_AIR,
                         W_CORE + 2.0 * DW_CORRUG,
                         w,
@@ -949,29 +949,29 @@ def run_single_task(task_cfg, out_dir):
             payload["disp_neff_max"] = neff_max.astype(np.float64)
             payload["disp_ng"] = ng_avg.astype(np.float64)
 
-        if WL_FIELD_BRAGG in pic.dft_fields:
-            fmap = pic.dft_fields[WL_FIELD_BRAGG]
+        if WL_FIELD_BRAGG in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_FIELD_BRAGG]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -1254,7 +1254,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 n_feature=nf_m,
                 dx_background=dx_bg_m,
             )
-            pic_m = PICSimulation(
+            circuit_m = PhotonicCircuit(
                 WL_MIN,
                 WL_MAX,
                 structures=short_structs,
@@ -1270,9 +1270,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 n_pml=6,
                 mesh_overrides=ov_m,
             )
-            g_m = pic_m.solver.grid
-            iz_m = pic_m.solver.Nz // 2
-            ieps_m = pic_m.solver.ieps[:, :, iz_m, "y"]
+            g_m = circuit_m.solver.grid
+            iz_m = circuit_m.solver.Nz // 2
+            ieps_m = circuit_m.solver.ieps[:, :, iz_m, "y"]
             if hasattr(ieps_m, "get"):
                 ieps_m = ieps_m.get()
             eps_r_m = np.where(
@@ -1290,7 +1290,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             )
             schematic.draw_mesh(
                 ax,
-                pic_m.solver,
+                circuit_m.solver,
                 plane="xy",
                 unit="µm",
                 every=1,
@@ -1301,7 +1301,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             )
             schematic.overlay_geometry(
                 ax,
-                pic_m.solver,
+                circuit_m.solver,
                 plane="xy",
                 unit="µm",
                 structures=short_structs,
@@ -1413,10 +1413,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             figstyle.save(fig, fig_dir / "06_port_neff_dispersion.png")
 
     # 7 & 8. Steady-state field maps at lambda_B with schematic.overlay_geometry
-    pic_al_obj, src_al_obj, mons_al_obj, structs_al_schem = build_bragg_setup_objects(
+    circuit_al_obj, src_al_obj, mons_al_obj, structs_al_schem = build_bragg_setup_objects(
         n_periods=100, shift=0.0, cpw=14, n_feature=6, n_pml=10
     )
-    pic_mis_obj, src_mis_obj, mons_mis_obj, structs_mis_schem = build_bragg_setup_objects(
+    circuit_mis_obj, src_mis_obj, mons_mis_obj, structs_mis_schem = build_bragg_setup_objects(
         n_periods=100, shift=0.5 * PITCH, cpw=14, n_feature=6, n_pml=10
     )
     misaligned = tasks_data.get("misaligned_half_period")
@@ -1424,11 +1424,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         # Figure 7: Logarithmic intensity |E|^2 [dB] with overlay_geometry
         with figstyle.apply_style():
             fig, (ax0, ax1) = figstyle.new_figure(nrows=2, ncols=1, width=10.6, height=5.8, sharex=True)
-            for ax, d, pic_o, src_o, mons_o, st_sc, lbl in [
+            for ax, d, circuit_o, src_o, mons_o, st_sc, lbl in [
                 (
                     ax0,
                     primary,
-                    pic_al_obj,
+                    circuit_al_obj,
                     src_al_obj,
                     mons_al_obj,
                     structs_al_schem,
@@ -1437,7 +1437,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 (
                     ax1,
                     misaligned,
-                    pic_mis_obj,
+                    circuit_mis_obj,
                     src_mis_obj,
                     mons_mis_obj,
                     structs_mis_schem,
@@ -1459,7 +1459,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 )
                 schematic.overlay_geometry(
                     ax,
-                    pic_o.solver,
+                    circuit_o.solver,
                     plane="xy",
                     unit="µm",
                     structures=st_sc,
@@ -1508,11 +1508,11 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         # Figure 8: Real part Re(Ey) wave-front map with overlay_geometry
         with figstyle.apply_style():
             fig, (ax0, ax1) = figstyle.new_figure(nrows=2, ncols=1, width=10.6, height=5.8, sharex=True)
-            for ax, d, pic_o, src_o, mons_o, st_sc, lbl in [
+            for ax, d, circuit_o, src_o, mons_o, st_sc, lbl in [
                 (
                     ax0,
                     primary,
-                    pic_al_obj,
+                    circuit_al_obj,
                     src_al_obj,
                     mons_al_obj,
                     structs_al_schem,
@@ -1521,7 +1521,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 (
                     ax1,
                     misaligned,
-                    pic_mis_obj,
+                    circuit_mis_obj,
                     src_mis_obj,
                     mons_mis_obj,
                     structs_mis_schem,
@@ -1542,7 +1542,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
                 )
                 schematic.overlay_geometry(
                     ax,
-                    pic_o.solver,
+                    circuit_o.solver,
                     plane="xy",
                     unit="µm",
                     structures=st_sc,
@@ -1595,7 +1595,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic_al_obj.solver,
+            circuit_al_obj.solver,
             src_al_obj,
             mons_al_obj,
             structs_al_schem,

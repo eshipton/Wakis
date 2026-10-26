@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from wakis.templates.photonics import PICSimulation, PolySlab, Port, n_to_eps
+from wakis.templates.photonics import PhotonicCircuit, PolySlab, Port, n_to_eps
 
 TUTORIAL_PATH = (
     Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ TUTORIAL_PATH = (
 
 
 def _load_crossing_module():
-    spec = importlib.util.spec_from_file_location("pic_03_crossing", TUTORIAL_PATH)
+    spec = importlib.util.spec_from_file_location("tut_05_05_crossing", TUTORIAL_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -195,7 +195,7 @@ def test_crossing_tapered_vs_plain_and_mutation():
 
     def _run_geom(kind="cosine", w_m=mod.W_M, collect_fields=False):
         structures, _ = mod.build_crossing(kind=kind, n_taper=26, w_m=w_m)
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=1.18e-6,
             wavelength_max=1.44e-6,
             n_freqs=5,
@@ -212,17 +212,17 @@ def test_crossing_tapered_vs_plain_and_mutation():
             field_wavelengths=(mod.WL_REF,),
             record_movie=False,
         )
-        s_mat = pic.run_s_parameters(
+        s_mat = circuit.run_s_parameters(
             drive=["west"], energy_decay=3e-2, collect_fields=collect_fields
         )
-        i0 = int(np.argmin(np.abs(pic.wavelengths - mod.WL_REF)))
+        i0 = int(np.argmin(np.abs(circuit.wavelengths - mod.WL_REF)))
         t_thru = np.abs(s_mat[("east", "west")]) ** 2
         t_north = np.abs(s_mat[("north", "west")]) ** 2
         t_south = np.abs(s_mat[("south", "west")]) ** 2
         r_west = np.abs(s_mat[("west", "west")]) ** 2
-        return pic, i0, t_thru, t_north, t_south, r_west
+        return circuit, i0, t_thru, t_north, t_south, r_west
 
-    pic_cos, i0, t_cos, xn_cos, xs_cos, r_cos = _run_geom(
+    circuit_cos, i0, t_cos, xn_cos, xs_cos, r_cos = _run_geom(
         "cosine", w_m=mod.W_M, collect_fields=True
     )
     _, _, t_pln, xn_pln, xs_pln, r_pln = _run_geom("plain", collect_fields=False)
@@ -254,7 +254,7 @@ def test_crossing_tapered_vs_plain_and_mutation():
     )
 
     # Multimode self-imaging waist focusing check at x = 0
-    fmap = pic_cos.dft_fields[mod.WL_REF]
+    fmap = circuit_cos.dft_fields[mod.WL_REF]
     ix0 = int(np.argmin(np.abs(fmap["x"])))
     iy0 = int(np.argmin(np.abs(fmap["y"])))
     iy_edge = int(np.argmin(np.abs(fmap["y"] - 0.5 * mod.W_OUT)))
@@ -294,7 +294,7 @@ def test_crossing_4fold_symmetry():
         Port("north", center=(0.0, +L_p, 0.0), size=(1.3e-6, 0.0, 0.644e-6), direction=-1),
         Port("south", center=(0.0, -L_p, 0.0), size=(1.3e-6, 0.0, 0.644e-6), direction=+1),
     ]
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=1.18e-6,
         wavelength_max=1.44e-6,
         n_freqs=7,
@@ -309,7 +309,7 @@ def test_crossing_4fold_symmetry():
         domain=(-L_dom, L_dom, -L_dom, L_dom),
         n_pml=4,
     )
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["west", "east", "north", "south"],
         energy_decay=5e-2,
         collect_fields=False,

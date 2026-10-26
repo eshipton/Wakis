@@ -25,7 +25,7 @@ if str(TUTORIAL_DIR) not in sys.path:
     sys.path.insert(0, str(TUTORIAL_DIR))
 
 from _helpers import (  # noqa: E402
-    NonUniformMMI1x4PIC,
+    NonUniformMMI1x4Circuit,
     build_mmi_1x4_graded_axes,
     equivalent_3layer_core_index,
     measure_mmi_1x4_mesh,
@@ -64,7 +64,7 @@ from mmi_1x4 import (  # noqa: E402
     build_mmi_1x4,
     get_task_table,
 )
-from wakis.templates.photonics import PICSimulation, slab_neff  # noqa: E402
+from wakis.templates.photonics import PhotonicCircuit, slab_neff  # noqa: E402
 
 
 def test_slot_eim_and_34_vertex_geometry():
@@ -180,7 +180,7 @@ def test_mmi_1x4_fit_symmetry_passivity_and_length_mutation():
     structures, ports, domain = build_mmi_1x4(
         L_MMI_OPT, W_MMI_OPT, include_mode1_port=True
     )
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=21,
@@ -197,7 +197,7 @@ def test_mmi_1x4_fit_symmetry_passivity_and_length_mutation():
         cfln=0.85,
         field_wavelengths=(WL_REF,),
     )
-    s_mat = pic.run_s_parameters(drive=["in"], energy_decay=5e-3, collect_fields=True)
+    s_mat = circuit.run_s_parameters(drive=["in"], energy_decay=5e-3, collect_fields=True)
 
     mid = slice(3, -3)
     t1 = np.abs(s_mat[("out1", "in")])[mid] ** 2
@@ -213,18 +213,18 @@ def test_mmi_1x4_fit_symmetry_passivity_and_length_mutation():
 
     # 2. Passivity and 2D Poynting flux conservation
     assert float(np.max(t_tot + r)) <= 1.0 + 1e-3
-    assert pic.flux_balance is not None
-    np.testing.assert_allclose(pic.flux_balance["total_box"][mid], 1.0, atol=0.05)
+    assert circuit.flux_balance is not None
+    np.testing.assert_allclose(circuit.flux_balance["total_box"][mid], 1.0, atol=0.05)
 
     # 3. Mode 0 vs Mode 1 power share at outer output port (> 97% in Mode 0)
-    i0 = int(np.argmin(np.abs(pic.wavelengths - WL_REF)))
+    i0 = int(np.argmin(np.abs(circuit.wavelengths - WL_REF)))
     p_m0 = float(np.abs(s_mat[("out4", "in")][i0]) ** 2)
     p_m1 = float(np.abs(s_mat[("out4_m1", "in")][i0]) ** 2)
     mode0_share = p_m0 / max(p_m0 + p_m1, 1e-12)
     assert mode0_share > 0.97
 
     # 4. 4-fold self-imaging intensity profile across the four output channels
-    fmap = pic.dft_fields[WL_REF]
+    fmap = circuit.dft_fields[WL_REF]
     ix_img = int(np.argmin(np.abs(fmap["x"] - (L1 + L_MMI_OPT + L2 + 0.8e-6))))
     y_prof = fmap["y"]
     e2_prof = fmap["E2"][ix_img, :]
@@ -239,7 +239,7 @@ def test_mmi_1x4_fit_symmetry_passivity_and_length_mutation():
     structs_mut, ports_mut, dom_mut = build_mmi_1x4(
         0.5 * L_MMI_OPT, W_MMI_OPT, include_mode1_port=False
     )
-    pic_mut = PICSimulation(
+    circuit_mut = PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=21,
@@ -255,7 +255,7 @@ def test_mmi_1x4_fit_symmetry_passivity_and_length_mutation():
         n_pml=8,
         cfln=0.85,
     )
-    s_mut = pic_mut.run_s_parameters(
+    s_mut = circuit_mut.run_s_parameters(
         drive=["in"], energy_decay=5e-3, collect_fields=False
     )
     t_tot_opt_1550 = float(
@@ -410,7 +410,7 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
 
     # Verify graded non-uniform non-square mesh properties and exact MMI sidewall snapping
     structures, ports, domain = build_mmi_1x4(L_MMI_OPT, W_MMI_OPT)
-    pic_nu = NonUniformMMI1x4PIC(
+    circuit_nu = NonUniformMMI1x4Circuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -429,14 +429,14 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
         w_mmi=W_MMI_OPT,
     )
     stats_nu = measure_mmi_1x4_mesh(
-        pic_nu.grid.x,
-        pic_nu.grid.y,
+        circuit_nu.grid.x,
+        circuit_nu.grid.y,
         w1=W1,
         g2=PITCH - W2,
         w_mmi=W_MMI_OPT,
         has_ghost=True,
     )
-    assert pic_nu.grid.Nx == 732 and pic_nu.grid.Ny == 257
+    assert circuit_nu.grid.Nx == 732 and circuit_nu.grid.Ny == 257
     assert stats_nu["nx"] == 731 and stats_nu["ny"] == 256
     assert stats_nu["sidewall_err_nm"] == pytest.approx(0.0, abs=1e-6)
     assert stats_nu["dy_min_nm"] == pytest.approx(20.0, rel=1e-2)

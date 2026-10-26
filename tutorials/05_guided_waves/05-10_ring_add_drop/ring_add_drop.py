@@ -74,10 +74,10 @@
 #    $\Delta\lambda_{\text{FSR}} \approx 18.5\;\text{nm}$).
 # 3. **Two-criterion resolution ladder $(\text{cpw}, N)$ with local `mesh_overrides`**,
 #    **mirror-symmetric graded non-uniform Cartesian meshing** (`build_ring_add_drop_graded_axes` /
-#    `NonUniformRingAddDropPIC`, $-35.3\%$ cells and $-59.2\%$ wall time), **body-fitted
+#    `NonUniformRingAddDropCircuit`, $-35.3\%$ cells and $-59.2\%$ wall time), **body-fitted
 #    `wakis.unstructured` hybrid square+triangle circular rim meshing**
 #    (`build_ring_add_drop_hybrid_unstructured_mesh`), and **anisotropic Kottke subpixel
-#    smoothing** across the coupler gaps and curved ring perimeter (`RingPICSimulation` +
+#    smoothing** across the coupler gaps and curved ring perimeter (`RingPhotonicCircuit` +
 #    `FastRingPolySlab` + `FastModeMonitor` + `attach_fast_2d_te_step`).
 # 4. **Diagnostic figures ($\le 3$ panels each)** covering the labelled setup schematic
 #    (`00a_setup_geometry.png`), mesh + wave-packet + excitation view
@@ -116,8 +116,8 @@ if str(TUTORIAL_DIR) not in sys.path:
 
 from _helpers import (  # noqa: E402
     FastRingPolySlab,
-    NonUniformRingAddDropPIC,
-    RingPICSimulation,
+    NonUniformRingAddDropCircuit,
+    RingPhotonicCircuit,
     _lorentzian_peak,
     build_ring_add_drop_graded_axes,
     build_ring_add_drop_hybrid_unstructured_mesh,
@@ -361,7 +361,7 @@ def compute_waveguide_dispersion(n_pts=41):
 #
 # To satisfy both rules without paying the cost of a uniform fine grid across the entire
 # $12.6 \times 13.8\;\mu\text{m}^2$ domain, we pass two local refinement boxes via
-# `mesh_overrides=[(lo, hi, max_cell), ...]` on `PICSimulation`:
+# `mesh_overrides=[(lo, hi, max_cell), ...]` on `PhotonicCircuit`:
 # one box at the upper coupling point $(x \in [-0.8, +0.8]\;\mu\text{m},\; y \in [r_{\text{out}}, r_{\text{out}} + g])$
 # and one at the lower coupling point $(x \in [-0.8, +0.8]\;\mu\text{m},\; y \in [-(r_{\text{out}} + g), -r_{\text{out}}])$,
 # with per-axis cap `max_cell = (1.0, g / N, 1.0)`. Because the tensor-product mesh
@@ -433,7 +433,7 @@ def build_ring_add_drop(
     nonuniform=False,
 ):
     """
-    Build a 2D effective-index `RingPICSimulation` for the microring add-drop filter.
+    Build a 2D effective-index `RingPhotonicCircuit` for the microring add-drop filter.
 
     Parameters
     ----------
@@ -465,7 +465,7 @@ def build_ring_add_drop(
 
     Returns
     -------
-    RingPICSimulation
+    RingPhotonicCircuit
         Configured and meshed simulation instance ready for `run_s_parameters()`.
     """
     y_bus = float(radius_m + width_m + gap_m)
@@ -550,7 +550,7 @@ def build_ring_add_drop(
     )
 
     if nonuniform:
-        return NonUniformRingAddDropPIC(
+        return NonUniformRingAddDropCircuit(
             structures=[top_bus, bot_bus, ring_slab],
             ports=ports,
             wavelength_min=WL_MIN,
@@ -575,7 +575,7 @@ def build_ring_add_drop(
             build_solver=build_solver,
         )
 
-    return RingPICSimulation(
+    return RingPhotonicCircuit(
         structures=[top_bus, bot_bus, ring_slab],
         ports=ports,
         wavelength_min=WL_MIN,

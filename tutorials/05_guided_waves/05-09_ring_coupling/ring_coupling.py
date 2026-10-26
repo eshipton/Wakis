@@ -20,7 +20,7 @@
 # # Tutorial 5.9 · Waveguide-to-ring point coupler
 #
 # **Abstract.** Microring resonators are essential building blocks of silicon
-# photonic integrated circuits (PICs), serving as wavelength-division
+# photonic integrated circuits, serving as wavelength-division
 # multiplexers, electro-optic modulators, dispersion compensators, and
 # Kerr frequency-comb cavities. Their spectral finesse, extinction ratio, and
 # quality factor are governed by the single-pass point-coupling coefficients
@@ -169,7 +169,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
-    NonUniformRingCouplerPIC,
+    NonUniformRingCouplerCircuit,
     bent_waveguide_radial_mode,
     build_ring_coupler_graded_axes,
     build_ring_coupler_hybrid_unstructured_mesh,
@@ -188,8 +188,8 @@ from _helpers import (  # noqa: E402
 from wakis import figstyle  # noqa: E402
 from wakis.templates import Box, Simulation  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -208,8 +208,8 @@ DATA_DIR = HERE / "data"
 FIG_DIR = HERE / "figures"
 
 # Material and spectral parameters
-N_SI = PIC_MATERIALS["Si"]  # 3.476
-N_SIO2 = PIC_MATERIALS["SiO2"]  # 1.444
+N_SI = PHOTONIC_MATERIALS["Si"]  # 3.476
+N_SIO2 = PHOTONIC_MATERIALS["SiO2"]  # 1.444
 H_SI = 220e-9  # 220 nm SOI thickness
 
 WL_MIN = 1500e-9
@@ -395,7 +395,7 @@ def build_ring_coupler(gap=GAP_NOMINAL, n_arc=180, extrude_into_pml=True):
 #
 # Rather than over-refining the entire $11.7\;\mu\text{m} \times 6.95\;\mu\text{m}$
 # domain uniformly, we pass a local **mesh-override box**
-# `PICSimulation(..., mesh_overrides=[(lo, hi, (max_cell, max_cell, 1.0))])`
+# `PhotonicCircuit(..., mesh_overrides=[(lo, hi, (max_cell, max_cell, 1.0))])`
 # around the coupling region:
 #
 # - Along $y$, the override box covers $g_0 \pm 0.30\;\mu\text{m}$, i.e.
@@ -426,7 +426,7 @@ def build_ring_coupler(gap=GAP_NOMINAL, n_arc=180, extrude_into_pml=True):
 # `kottke_L3`). In `_helpers.py` we implement two mesh upgrades shown in
 # [`04b_mesh_upgrade_comparison.png`](figures/04b_mesh_upgrade_comparison.png):
 #
-# 1. **Mirror-symmetric graded non-uniform Cartesian mesh (`build_ring_coupler_graded_axes` / `NonUniformRingCouplerPIC`, `task_13` `kottke_nonuniform`)**:
+# 1. **Mirror-symmetric graded non-uniform Cartesian mesh (`build_ring_coupler_graded_axes` / `NonUniformRingCouplerCircuit`, `task_13` `kottke_nonuniform`)**:
 #    Using `wakis.templates.meshing.graded_axis`, we pin exact grid nodes at both
 #    walls of the $50\;\text{nm}$ oxide slot ($y \in [250, 300]\;\text{nm}$) with
 #    $8.00$ uniform cells of $\Delta y_{\min} = 6.25\;\text{nm}$, resolve the bus
@@ -811,7 +811,7 @@ def run_single_task(task_cfg, out_dir):
     overrides = coupling_mesh_overrides(gap=gap_m, cells_per_feature=n_feat, cpw=cpw)
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
     if task_cfg.get("level") == "nonuniform":
-        pic = NonUniformRingCouplerPIC(
+        circuit = NonUniformRingCouplerCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -835,7 +835,7 @@ def run_single_task(task_cfg, out_dir):
             cells_per_feature=n_feat,
         )
     else:
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -856,16 +856,16 @@ def run_single_task(task_cfg, out_dir):
             use_gpu=use_gpu,
         )
 
-    res_metrics = measure_mesh_resolution(pic.grid.x, pic.grid.y, gap=gap_m)
-    zoom_x, zoom_y, zoom_eps_y = _extract_zoom_permittivity(pic.solver)
+    res_metrics = measure_mesh_resolution(circuit.grid.x, circuit.grid.y, gap=gap_m)
+    zoom_x, zoom_y, zoom_eps_y = _extract_zoom_permittivity(circuit.solver)
 
     drive_ports = ["in", "through", "drop"] if task_cfg["collect_fields"] else ["in"]
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=drive_ports,
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
-    n_steps = int(pic.solver.Nt)
+    n_steps = int(circuit.solver.Nt)
 
     payload = {
         "task_index": np.int32(idx),
@@ -881,9 +881,9 @@ def run_single_task(task_cfg, out_dir):
         "cells_across_feature": np.float64(res_metrics["cells_across_feature"]),
         "n_cells": np.int64(res_metrics["n_cells"]),
         "n_steps": np.int64(n_steps),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("through", "in")].astype(np.complex128),
         "S31": s_mat[("drop", "in")].astype(np.complex128),
@@ -900,8 +900,8 @@ def run_single_task(task_cfg, out_dir):
         payload["S13"] = s_mat[("in", "drop")].astype(np.complex128)
 
         # Solve port modes at 1550 nm on 'in' (x-normal, Ey(y)) and 'drop' (y-normal, Ex(x))
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_drop = pic.solve_port_modes(
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_drop = circuit.solve_port_modes(
             "drop", frequencies=c_light / WL_REF, n_modes=1
         )
         y_in = modes_in[0].coords["Eb"][0]
@@ -921,7 +921,7 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -929,36 +929,36 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ex"] = fmap["Ex"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
         # Companion unextruded-CPML run to quantify PML waveguide truncation reflection
         structs_noext, ports_noext, dom_noext = build_ring_coupler(
             gap=gap_m, extrude_into_pml=False
         )
-        pic_noext = PICSimulation(
+        circuit_noext = PhotonicCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -975,7 +975,7 @@ def run_single_task(task_cfg, out_dir):
             mesh_overrides=overrides,
             use_gpu=use_gpu,
         )
-        s_noext = pic_noext.run_s_parameters(
+        s_noext = circuit_noext.run_s_parameters(
             drive=["in"],
             energy_decay=task_cfg["energy_decay"],
             collect_fields=False,
@@ -1004,7 +1004,7 @@ def run_single_task(task_cfg, out_dir):
         "dx_background_nm": round(res_metrics["dx_background_nm"], 3),
         "dx_min_nm": round(res_metrics["dx_min_nm"], 3),
         "cells_across_feature": round(res_metrics["cells_across_feature"], 3),
-        "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
+        "grid_shape": [int(circuit.grid.Nx), int(circuit.grid.Ny), int(circuit.grid.Nz)],
         "n_cells": int(res_metrics["n_cells"]),
         "n_steps": int(n_steps),
         "elapsed_s": round(elapsed, 3),
@@ -1086,7 +1086,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     # 0. Setup figures (00a geometry/materials/sources/monitors/boundaries,
     #    00b mesh + excitation pulse/spectrum) and Markdown setup table
     ov_schem = coupling_mesh_overrides(gap=GAP_NOMINAL, cells_per_feature=8, cpw=20)
-    pic_schem = PICSimulation(
+    circuit_schem = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1101,7 +1101,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         mesh_overrides=ov_schem,
     )
     save_ring_coupler_setup_figures(
-        pic_schem,
+        circuit_schem,
         primary,
         fig_dir,
         wavelength=WL_REF,
@@ -1268,7 +1268,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         ov_fb = coupling_mesh_overrides(
             gap=GAP_NOMINAL, cells_per_feature=fallback_n, cpw=fallback_cpw
         )
-        pic_fb = PICSimulation(
+        circuit_fb = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -1282,8 +1282,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_pml=8,
             mesh_overrides=ov_fb,
         )
-        zx, zy, ze = _extract_zoom_permittivity(pic_fb.solver)
-        rm = measure_mesh_resolution(pic_fb.grid.x, pic_fb.grid.y, gap=GAP_NOMINAL)
+        zx, zy, ze = _extract_zoom_permittivity(circuit_fb.solver)
+        rm = measure_mesh_resolution(circuit_fb.grid.x, circuit_fb.grid.y, gap=GAP_NOMINAL)
         return (
             zx,
             zy,
@@ -1375,7 +1375,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     # 4b. Mesh upgrade comparison: (a) baseline override-box mesh vs (b) graded non-uniform
     #     Cartesian mesh vs (c) body-fitted square+triangle hybrid unstructured mesh
     if "kottke_nonuniform" in tasks_data and "kottke_reference" in tasks_data:
-        pic_nu_schem = NonUniformRingCouplerPIC(
+        circuit_nu_schem = NonUniformRingCouplerCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -1391,8 +1391,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             cells_per_feature=8,
         )
         plot_mesh_upgrade_comparison_ring_coupler(
-            pic_schem,
-            pic_nu_schem,
+            circuit_schem,
+            circuit_nu_schem,
             tasks_data.get("kottke_L3", primary),
             tasks_data["kottke_nonuniform"],
             tasks_data["kottke_reference"],
@@ -1523,7 +1523,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic=pic_schem,
+        circuit=circuit_schem,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$ (g = 50 nm)",
         out_path=fig_dir / "07_field_intensity_1550.png",
@@ -1534,7 +1534,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic=pic_schem,
+        circuit=circuit_schem,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$ (g = 50 nm)",
         out_path=fig_dir / "08_field_real_ey_1550.png",
@@ -1547,7 +1547,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic=pic_schem,
+            circuit=circuit_schem,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )

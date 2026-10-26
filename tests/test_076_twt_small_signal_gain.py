@@ -423,7 +423,7 @@ def test_twt_falsifiable_physics_and_live_solver_mutations(
     assert slope_pos_b_neg_sign < 0.0
     assert np.isclose(
         slope_pos_b_neg_sign,
-        csm["short_10period_vs_22period_reconciliation"]["live_10period_0p45A_slope_periods_5_to_8_np_m"],
+        csm["short_10period_vs_22period_reconciliation"]["slope_10period_run_0p45A_periods_5_to_8_np_m"],
         atol=0.05,
     )
     assert np.isclose(slope_pos_b_pos_sign, slope_neg_b_neg_sign, rtol=0.10)

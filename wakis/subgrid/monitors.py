@@ -260,7 +260,7 @@ class SubgridModeMonitor:
         Number of modes to decompose into. Default 1.
     mode_frequency : float, optional
         If given, use the eigenmodes solved at `mode_frequency` [Hz] across the
-        band (matching `PICSimulation.run_s_parameters`). If None, solve the
+        band (matching `PhotonicCircuit.run_s_parameters`). If None, solve the
         eigenmodes at every monitored frequency.
     """
 

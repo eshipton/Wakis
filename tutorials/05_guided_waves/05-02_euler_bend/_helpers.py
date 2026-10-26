@@ -5,7 +5,7 @@
 
 """
 Resolution ladder, mesh-override construction, mirror-symmetric graded
-Cartesian mesh (`NonUniformEulerBendPIC`), setup schematic, mesh upgrade
+Cartesian mesh (`NonUniformEulerBendCircuit`), setup schematic, mesh upgrade
 comparison, and geometry-overlay helpers for Tutorial 5.2
 (Hybrid Euler 90-degree silicon waveguide bend).
 """
@@ -25,7 +25,7 @@ from wakis.gridFIT3D import GridFIT3D
 from wakis.solverFIT3D import SolverFIT3D
 from wakis.sources import GaussianSource
 from wakis.templates import meshing
-from wakis.templates.photonics import PIC_MATERIALS, PICSimulation, n_to_eps, slab_neff
+from wakis.templates.photonics import PHOTONIC_MATERIALS, PhotonicCircuit, n_to_eps, slab_neff
 from wakis.templates.simulation import Simulation
 
 # Resolution ladder: each level is (cpw, N_min_cells_across_feature)
@@ -76,8 +76,8 @@ def build_mesh_overrides(
     """
     if n_eff_slab is None:
         n_eff_slab = slab_neff(
-            PIC_MATERIALS["Si"],
-            PIC_MATERIALS["SiO2"],
+            PHOTONIC_MATERIALS["Si"],
+            PHOTONIC_MATERIALS["SiO2"],
             h_si,
             wl_ref,
             polarization="TE",
@@ -98,9 +98,9 @@ def build_mesh_overrides(
     ]
 
 
-class NonUniformEulerBendPIC(PICSimulation):
+class NonUniformEulerBendCircuit(PhotonicCircuit):
     """
-    2D EIM ``PICSimulation`` with a mirror-symmetric non-square/graded Cartesian
+    2D EIM ``PhotonicCircuit`` with a mirror-symmetric non-square/graded Cartesian
     mesh tailored to a $90^\\circ$ waveguide bend.
 
     Exploits the exact folding symmetry $(x, y) \\leftrightarrow (R_{\\text{eff}} - y, R_{\\text{eff}} - x)$
@@ -189,19 +189,19 @@ class NonUniformEulerBendPIC(PICSimulation):
 
 
 def measure_mesh_resolution(
-    pic,
+    circuit,
     r_eff=4.0e-6,
     min_feature=0.40e-6,
     port_offset=1.0e-6,
 ):
     """
     Measure background cell size, smallest cell size, and actual number of cells
-    across the smallest feature directly from ``pic.grid``.
+    across the smallest feature directly from ``circuit.grid``.
 
     Parameters
     ----------
-    pic : PICSimulation
-        Built 2D/3D PIC simulation object.
+    circuit : PhotonicCircuit
+        Built 2D/3D photonic circuit simulation object.
     r_eff : float
         Effective bend radius $R_{\\text{eff}}$ [m].
     min_feature : float
@@ -217,8 +217,8 @@ def measure_mesh_resolution(
         ``cells_across_feature``, ``n_cells``, ``n_steps``, ``n_steps_max``,
         and ``grid_shape``.
     """
-    x = np.asarray(pic.grid.x, dtype=float)
-    y = np.asarray(pic.grid.y, dtype=float)
+    x = np.asarray(circuit.grid.x, dtype=float)
+    y = np.asarray(circuit.grid.y, dtype=float)
     dx = np.diff(x)
     dy = np.diff(y)
 
@@ -238,7 +238,7 @@ def measure_mesh_resolution(
     in_lead_x = x[1:] < -0.25e-6
     du_lead_m = float(np.median(dx[in_lead_x])) if np.any(in_lead_x) else dx_feat_max
 
-    if isinstance(pic, NonUniformEulerBendPIC):
+    if isinstance(circuit, NonUniformEulerBendCircuit):
         dx_background_nm = float(dx_feat_max * 1e9)
     else:
         dx_background_nm = float(max(np.max(dx), np.max(dy)) * 1e9)
@@ -248,25 +248,25 @@ def measure_mesh_resolution(
     cells_across_feature = float(min_feature / dx_feat_max)
     aspect_ratio_lead = float(du_lead_m / max(dx_feat_max, 1e-30))
 
-    nx, ny, nz = int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)
+    nx, ny, nz = int(circuit.grid.Nx), int(circuit.grid.Ny), int(circuit.grid.Nz)
     n_cells = int(nx * ny * nz)
 
-    lx = float(pic.grid.xmax - pic.grid.xmin)
-    ly = float(pic.grid.ymax - pic.grid.ymin)
-    transit = np.hypot(lx, ly) * float(pic.n_core) / c_light
-    max_time = float(pic.sim.pulse.end_time + 15.0 * transit)
-    if pic.solver is not None:
-        dt = float(pic.solver.dt)
+    lx = float(circuit.grid.xmax - circuit.grid.xmin)
+    ly = float(circuit.grid.ymax - circuit.grid.ymin)
+    transit = np.hypot(lx, ly) * float(circuit.n_core) / c_light
+    max_time = float(circuit.sim.pulse.end_time + 15.0 * transit)
+    if circuit.solver is not None:
+        dt = float(circuit.solver.dt)
     else:
-        dz = np.diff(np.asarray(pic.grid.z, dtype=float))
+        dz = np.diff(np.asarray(circuit.grid.z, dtype=float))
         inv_h2 = (
             1.0 / float(np.min(dx)) ** 2
             + 1.0 / float(np.min(dy)) ** 2
             + 1.0 / float(np.min(dz)) ** 2
         )
-        dt = float(pic.cfln) / (c_light * float(np.sqrt(inv_h2)))
+        dt = float(circuit.cfln) / (c_light * float(np.sqrt(inv_h2)))
     n_steps_max = int(np.ceil(max_time / dt))
-    nt_run = getattr(pic.solver, "Nt", None) if pic.solver is not None else None
+    nt_run = getattr(circuit.solver, "Nt", None) if circuit.solver is not None else None
     n_steps = int(nt_run) if nt_run is not None else n_steps_max
 
     return {
@@ -570,7 +570,7 @@ def plot_setup_schematic_euler_bend(
     euler_info: dict,
     primary_data: dict,
     out_path: Path,
-    pic_mesh: PICSimulation | None = None,
+    circuit_mesh: PhotonicCircuit | None = None,
 ):
     """Render `00a_setup_geometry.png`, `00b_setup_mesh_and_excitation.png`, and
     `00_setup_table.md` for Tutorial 5.2 using `wakis.schematic.save_setup_figures`.
@@ -584,12 +584,12 @@ def plot_setup_schematic_euler_bend(
 
     n_eff_slab = float(primary_data.get("n_eff_slab", 2.8134))
     eps_slab = n_to_eps(n_eff_slab)
-    n_clad = float(PIC_MATERIALS["SiO2"])
+    n_clad = float(PHOTONIC_MATERIALS["SiO2"])
     eps_clad = n_to_eps(n_clad)
     r_eff = float(primary_data.get("r_eff", 4.0e-6))
 
-    x_g = pic_mesh.grid.x if pic_mesh is not None else None
-    y_g = pic_mesh.grid.y if pic_mesh is not None else None
+    x_g = circuit_mesh.grid.x if circuit_mesh is not None else None
+    y_g = circuit_mesh.grid.y if circuit_mesh is not None else None
     solver_raw, sources_s, monitors_s, _ = build_schematic_components(
         structures,
         domain,
@@ -796,8 +796,8 @@ def plot_setup_schematic_euler_bend(
 
 
 def plot_mesh_upgrade_comparison_euler(
-    pic_uniform: PICSimulation,
-    pic_nonuniform: PICSimulation,
+    circuit_uniform: PhotonicCircuit,
+    circuit_nonuniform: PhotonicCircuit,
     structures,
     d_uniform: dict,
     d_nonuniform: dict,
@@ -824,10 +824,10 @@ def plot_mesh_upgrade_comparison_euler(
         gridspec_kw={"width_ratios": [1.0, 1.0, 1.15], "wspace": 0.32},
     )
 
-    for ax, pic_obj, meta_d, d_npz, ttl, col_grid in (
+    for ax, circuit_obj, meta_d, d_npz, ttl, col_grid in (
         (
             ax0,
-            pic_uniform,
+            circuit_uniform,
             meta_uniform,
             d_uniform,
             "(a) Uniform baseline (kottke_L3)",
@@ -835,15 +835,15 @@ def plot_mesh_upgrade_comparison_euler(
         ),
         (
             ax1,
-            pic_nonuniform,
+            circuit_nonuniform,
             meta_nonuniform,
             d_nonuniform,
             "(b) Graded mesh (kottke_nonuniform)",
             "#059669",
         ),
     ):
-        xg = np.asarray(pic_obj.grid.x, dtype=float) * 1e6
-        yg = np.asarray(pic_obj.grid.y, dtype=float) * 1e6
+        xg = np.asarray(circuit_obj.grid.x, dtype=float) * 1e6
+        yg = np.asarray(circuit_obj.grid.y, dtype=float) * 1e6
         xl = (float(xg[0]), float(xg[-1]))
         yl = (float(yg[0]), float(yg[-1]))
         # Draw every 3rd grid line so grading and non-square lead/cladding cells are clearly visible
@@ -964,9 +964,9 @@ def plot_mesh_upgrade_comparison_euler(
 
 
 def plot_feature_mesh_zoom(
-    pic_l1_stair,
-    pic_l1_kottke,
-    pic_ref_kottke,
+    circuit_l1_stair,
+    circuit_l1_kottke,
+    circuit_ref_kottke,
     structures,
     min_feature_m=0.40e-6,
     ref_label="L3 reference (20 cpw)",
@@ -989,15 +989,15 @@ def plot_feature_mesh_zoom(
         sharey=True,
     )
     configs = [
-        (axes[0], pic_l1_stair, "(a) L1 Staircase (10 cpw, N=4)"),
-        (axes[1], pic_l1_kottke, "(b) L1 Kottke (10 cpw, N=4)"),
-        (axes[2], pic_ref_kottke, f"(c) {ref_label}"),
+        (axes[0], circuit_l1_stair, "(a) L1 Staircase (10 cpw, N=4)"),
+        (axes[1], circuit_l1_kottke, "(b) L1 Kottke (10 cpw, N=4)"),
+        (axes[2], circuit_ref_kottke, f"(c) {ref_label}"),
     ]
 
     hw_um = 0.5 * float(min_feature_m) * 1e6
     im = None
-    for ax, pic_obj, title in configs:
-        solver = pic_obj.solver
+    for ax, circuit_obj, title in configs:
+        solver = circuit_obj.solver
         g = solver.grid
         iz = solver.Nz // 2
         ieps = solver.ieps[:, :, iz, "y"]
@@ -1032,7 +1032,7 @@ def plot_feature_mesh_zoom(
             ls="--",
         )
 
-        res = measure_mesh_resolution(pic_obj, min_feature=min_feature_m)
+        res = measure_mesh_resolution(circuit_obj, min_feature=min_feature_m)
         n_feat = res["cells_across_feature"]
         dx_nm = res["dx_min_nm"]
 

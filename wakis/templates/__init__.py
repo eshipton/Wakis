@@ -12,6 +12,8 @@ functions return a configured `Simulation` for common devices; the `*_results`
 helpers extract the usual engineering quantities. See docs/templates.md.
 """
 
+import warnings
+
 from . import analysis, formulas, meshing, photonics
 from .antennas import (
     dipole_antenna,
@@ -25,7 +27,7 @@ from .periodic import (
     reflection_transmission,
     unit_cell,
 )
-from .photonics import PIC_MATERIALS, PICSimulation, PolySlab, Port, n_to_eps
+from .photonics import PHOTONIC_MATERIALS, PICSimulation, PhotonicCircuit, PolySlab, Port, n_to_eps
 from .shapes import Box, Cylinder, Sheet
 from .simulation import Simulation
 from .sweeps import optimize, parameter_sweep
@@ -35,3 +37,14 @@ from .waveguides import (
     slab_waveguide,
     waveguide_s_parameters,
 )
+
+
+def __getattr__(name):
+    if name == "PIC_MATERIALS":
+        warnings.warn(
+            "PIC_MATERIALS is deprecated; use PHOTONIC_MATERIALS instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return PHOTONIC_MATERIALS
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

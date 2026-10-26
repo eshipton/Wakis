@@ -510,7 +510,7 @@
           5,
           8
         ],
-        "live_10period_0p45A_slope_periods_5_to_8_np_m": -14.61,
+        "slope_10period_run_0p45A_periods_5_to_8_np_m": -14.61,
         "run_22period_current_a": 0.25,
         "run_22period_window_periods": [
           8,

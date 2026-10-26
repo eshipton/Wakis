@@ -20,7 +20,7 @@
 # # Tutorial 5.1 · Y-junction power splitter
 #
 # **Abstract.** Passive $1 \times 2$ optical power splitters are foundational
-# building blocks of silicon photonic integrated circuits (PICs), feeding
+# building blocks of silicon photonic integrated circuits, feeding
 # Mach–Zehnder modulators, phased arrays, and on-chip interferometers. Whereas
 # conventional adiabatic Y-branches require tens of micrometres to suppress
 # mode-mismatch radiation at the bifurcation tip, particle-swarm-optimized
@@ -43,7 +43,7 @@
 #    $\text{SiO}_2$) waveguide layout onto a **2D effective-index (EIM)**
 #    finite-integration-technique (FIT) domain (`Ex`, `Ey`, `Hz`; one periodic
 #    cell along $z$).
-# 2. Construct smooth parametric PIC polygons (`spline_taper`, `sbend`,
+# 2. Construct smooth parametric photonic circuit polygons (`spline_taper`, `sbend`,
 #    `straight`) wrapped in `PolySlab`, and understand how `PolySlab.fill` and
 #    `PolySlab.normal` drive diagonal **Kottke (2008) subpixel smoothing**.
 # 3. Solve waveguide port eigenmodes (`solve_modes`), launch a broadband
@@ -124,8 +124,8 @@ from scipy.interpolate import CubicSpline
 
 from wakis import figstyle
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -151,7 +151,7 @@ if str(HERE) not in sys.path:
 
 from _helpers import (  # noqa: E402
     TIP_GAP,
-    NonUniformYJunctionPIC,
+    NonUniformYJunctionCircuit,
     measure_y_junction_mesh,
     plot_mesh_upgrade_comparison,
     plot_setup_schematic_y_junction,
@@ -204,7 +204,7 @@ FIG_DIR = HERE / "figures"
 #   `FluxMonitor` box just inside the CPML.
 # - **Discretization & zoomed mesh view (`00b_setup_mesh_and_excitation.png` around
 #   the $200\;\text{nm}$ bifurcation tip gap at $x = 2.0\;\mu\text{m}$)**: Shows the
-#   upgraded graded non-square Cartesian mesh (`NonUniformYJunctionPIC`), which places
+#   upgraded graded non-square Cartesian mesh (`NonUniformYJunctionCircuit`), which places
 #   $12.0$ transverse cells across the $200\;\text{nm}$ tip gap
 #   ($\Delta y_{\text{tip}} = 16.7\;\text{nm}$), stretches axial cells along the smooth
 #   leads ($\Delta x_{\text{lead}} = 24.5\;\text{nm}$, aspect ratio $1.47$), and grades
@@ -239,8 +239,8 @@ FIG_DIR = HERE / "figures"
 
 # %%
 # Material refractive indices at 1550 nm
-N_SI = PIC_MATERIALS["Si"]  # 3.476
-N_SIO2 = PIC_MATERIALS["SiO2"]  # 1.444
+N_SI = PHOTONIC_MATERIALS["Si"]  # 3.476
+N_SIO2 = PHOTONIC_MATERIALS["SiO2"]  # 1.444
 H_SI = 220e-9  # 220 nm SOI thickness
 
 # Wavelength band: 1500 nm to 1600 nm
@@ -508,8 +508,8 @@ def run_single_task(task_cfg, out_dir):
 
     structures, ports = build_y_junction()
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    sim_cls = NonUniformYJunctionPIC if task_cfg.get("nonuniform", False) else PICSimulation
-    pic = sim_cls(
+    sim_cls = NonUniformYJunctionCircuit if task_cfg.get("nonuniform", False) else PhotonicCircuit
+    circuit = sim_cls(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=N_FREQS,
@@ -529,12 +529,12 @@ def run_single_task(task_cfg, out_dir):
         use_gpu=use_gpu,
     )
 
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
-    mesh_info = measure_y_junction_mesh(pic.grid, min_feature_m=TIP_GAP)
+    mesh_info = measure_y_junction_mesh(circuit.grid, min_feature_m=TIP_GAP)
 
     payload = {
         "task_index": np.int32(idx),
@@ -542,9 +542,9 @@ def run_single_task(task_cfg, out_dir):
         "level": np.array(task_cfg["level"]),
         "averaging": np.array(task_cfg["averaging"]),
         "cpw": np.float32(task_cfg["cpw"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out1", "in")].astype(np.complex128),
         "S31": s_mat[("out2", "in")].astype(np.complex128),
@@ -561,8 +561,8 @@ def run_single_task(task_cfg, out_dir):
 
     if task_cfg["collect_fields"]:
         # Solve port modes at 1550 nm and port dispersion across 11 wavelengths
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes(
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes(
             "out1", frequencies=c_light / WL_REF, n_modes=1
         )
         y_in = modes_in[0].coords["Eb"][0]
@@ -580,7 +580,7 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -588,29 +588,29 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -696,7 +696,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     cpw_primary = float(primary["cpw"])
     n_pml_primary = 8 if cpw_primary < 22 else 10
-    pic_uniform_fine = PICSimulation(
+    circuit_uniform_fine = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -709,7 +709,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         domain=DOMAIN_2D,
         n_pml=n_pml_primary,
     )
-    pic_nonuniform = NonUniformYJunctionPIC(
+    circuit_nonuniform = NonUniformYJunctionCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -725,7 +725,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 0. Setup geometry + mesh/excitation figures and setup table (FIRST figures)
     plot_setup_schematic_y_junction(
-        pic_nonuniform.grid,
+        circuit_nonuniform.grid,
         structures,
         ports,
         primary["port_y_in"] * 1e6,
@@ -853,7 +853,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
         # 4. In-plane permittivity map with mesh lines zoomed on the junction tip: staircase vs Kottke
         cpw_mesh = float(tasks_data.get("kottke_medium", primary)["cpw"])
-        pic_stair = PICSimulation(
+        circuit_stair = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -866,7 +866,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             domain=DOMAIN_2D,
             n_pml=8,
         )
-        pic_kottke = PICSimulation(
+        circuit_kottke = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -880,8 +880,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_pml=8,
         )
         plot_cross_section_mesh(
-            pic_stair.solver,
-            pic_kottke.solver,
+            circuit_stair.solver,
+            circuit_kottke.solver,
             xlim_um=(0.2, 2.7),
             ylim_um=(-0.85, 0.85),
             component="y",
@@ -891,8 +891,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     # 4b. Mesh upgrade comparison: uniform baseline vs graded non-square Cartesian mesh
     if "kottke_nonuniform" in tasks_data:
         plot_mesh_upgrade_comparison(
-            pic_uniform_fine.grid,
-            pic_nonuniform.grid,
+            circuit_uniform_fine.grid,
+            circuit_nonuniform.grid,
             structures,
             ports,
             data_uniform=primary,
@@ -930,7 +930,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic_uniform_fine.grid,
+        circuit_uniform_fine.grid,
         structures,
         ports,
         kind="intensity_log",
@@ -944,7 +944,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic_uniform_fine.grid,
+        circuit_uniform_fine.grid,
         structures,
         ports,
         kind="real",
@@ -960,7 +960,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic_uniform_fine.grid,
+            circuit_uniform_fine.grid,
             structures,
             ports,
             out_path=fig_dir / "09_pulse_propagation.gif",
@@ -1356,7 +1356,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # not require the same axial resolution as the $200\;\text{nm}$ bifurcation tip gap.
 #
 # Figure `04b_mesh_upgrade_comparison.png` compares `kottke_fine` against our upgraded
-# graded non-square Cartesian mesh (`NonUniformYJunctionPIC`, `kottke_nonuniform`,
+# graded non-square Cartesian mesh (`NonUniformYJunctionCircuit`, `kottke_nonuniform`,
 # `task_7`), which uses `wakis.templates.meshing.graded_axis` (geometric grading ratio
 # $\le 1.25$) to:
 #
@@ -1422,7 +1422,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # 2. **Linear vs PSO spline taper**: Replace `W_KNOTS_UM` by a linear ramp from
 #    $0.50\;\mu\text{m}$ to $1.20\;\mu\text{m}$ over the same $2.0\;\mu\text{m}$
 #    length. By how many dB does the insertion loss degrade?
-# 3. **Reciprocity check**: Run `pic.run_s_parameters(drive=["in", "out1"])` and
+# 3. **Reciprocity check**: Run `circuit.run_s_parameters(drive=["in", "out1"])` and
 #    verify that $|S_{12}(\lambda) - S_{21}(\lambda)| < 10^{-3}$ across the band
 #    while driving a single output arm reflects roughly $-6\;\text{dB}$ and
 #    radiates $-3\;\text{dB}$ into the antisymmetric $\text{TE}_1$ radiation

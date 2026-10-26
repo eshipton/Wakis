@@ -57,7 +57,7 @@ studies behind each speed or accuracy claim, with their baselines, are in [studi
 - **Curvilinear O-grid FIT** (`wakis.curvilinear`): Body-fitted nonorthogonal 2D FIT with radial PML and dispersive media; fewest unknowns on round dielectric and plasmonic scatterers.
 - **High-order DGTD on curved triangles** (`wakis.highorder`): 0.1 % accuracy with about 100× fewer unknowns than low-order FIT on smooth scatterers.
 - **Conformal and subpixel averaging** (`conformal='tensor' / 'all'`): Cut-cell PEC, full-tensor subpixel averaging for curved dielectrics, and dispersive subpixel averaging for metals and dispersive dielectrics (passive network, exact adjoint).
-- **Graded meshes and mesh overrides** (`SubgridPICSimulation(mesh_overrides=…)`): Local refinement boxes on graded meshes and a photonics simulation kit (shapes, mode ports, monitors, LTS) on top of the subgrid solver.
+- **Graded meshes and mesh overrides** (`PhotonicCircuit(mesh_overrides=…)`, `SubgridPhotonicCircuit`): Local refinement boxes on graded meshes and a photonic integrated circuit simulation kit (shapes, mode ports, monitors, LTS) on top of the subgrid solver.
 
 </td></tr></table>
 
@@ -390,7 +390,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Two-level local time stepping for unstructured FIT: energy-conserving, exact adjoint (`lts=2`)
 - [x] Polygonal FIT: hybrid square/triangle and Voronoi meshes (`PolygonFIT2D`)
 - [x] Cartesian subgridding with nested 2:1/3:1 patches (`wakis.subgrid`): symmetric hanging-node interface (energy-conserving, second order, exact transposed step), sub-pixel averaging, PML, scattered-field plane waves, Drude/Lorentz ADE, LTS; benchmark arm `subgrid-2to1` ([studies/mie-cylinder-subgrid](studies/mie-cylinder-subgrid), [studies/subgrid-benchmarks](studies/subgrid-benchmarks))
-- [x] Mesh-override boxes on graded tensor-product meshes (`PICSimulation(mesh_overrides=...)`)
+- [x] Mesh-override boxes on graded tensor-product meshes (`PhotonicCircuit(mesh_overrides=...)`)
 - [x] Subgridding backend for the photonics kit (shapes, mode ports, monitors, LTS) and a graded-vs-subgrid cost study ([studies/subgrid-vs-graded-bragg](studies/subgrid-vs-graded-bragg))
 - [ ] Cartesian subgridding in 3D (`SolverFIT3D` octree blocks; plan in the physics guide)
 - [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
@@ -424,7 +424,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] invrs-gym round-2 pilot on the lightweight ceviche challenges (all designs meet the length scale)
 - [x] invrs-gym round 2 with the official evaluators: waveguide bend +0.643 (leaderboard best −1.250), power splitter +0.068 (+0.009), mode converter +0.312 (0.854, behind), metalens with a guaranteed length scale (Tutorials 9.2–9.4)
 - [ ] invrs-gym 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
-- [ ] Nonlinear plasma wakefields (blowout regime, PIC)
+- [ ] Nonlinear plasma wakefields (blowout regime, particle-in-cell — `wakis.particles`, in development)
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
 - [x] Tutorial textbook, Chapters 1–9: 48 tutorials, each reproducing a publication or an exact result with a resolution study (see [The tutorial textbook](#the-tutorial-textbook))

@@ -819,7 +819,7 @@ def run_chu_energy_and_slow_wave_audit(
     u_tot[0] = u_tot[1]
     rel_drift = float((np.max(u_tot) - np.min(u_tot)) / np.mean(u_tot))
 
-    # Analytical vs PIC/Lagrangian bunching parameter X sweep
+    # Analytical vs particle-in-cell/Lagrangian bunching parameter X sweep
     X_arr = np.linspace(0.0, 3.0, 300)
     I1_linear = X_arr.copy()
     I1_bessel = np.abs(2.0 * bessel_jn(1, X_arr))
@@ -2406,7 +2406,7 @@ def render_all_figures(tasks_data, fig_dir):
         figstyle.save(fig, fig_dir / "13_resolution_convergence.png", close=True, auto_legend_below=False)
 
         # ------------------------------------------------------------------
-        # Fig 14: Linearized fluid validity limits vs nonlinear PIC/Bessel bunching
+        # Fig 14: Linearized fluid validity limits vs nonlinear particle-in-cell/Bessel bunching
         # ------------------------------------------------------------------
         fig, (ax0, ax1) = figstyle.new_figure(
             width_in=figstyle.FULL_WIDTH_IN,
@@ -2433,13 +2433,13 @@ def render_all_figures(tasks_data, fig_dir):
         ax0.plot(
             X_arr,
             chu["I2_bessel"],
-            label=r"2nd harm. $2|J_2(2X)|$ (PIC)",
+            label=r"2nd harm. $2|J_2(2X)|$ (particle-in-cell)",
             **figstyle.series_style(1, with_marker=False),
         )
         ax0.plot(
             X_arr,
             chu["I3_bessel"],
-            label=r"3rd harm. $2|J_3(3X)|$ (PIC)",
+            label=r"3rd harm. $2|J_3(3X)|$ (particle-in-cell)",
             **figstyle.series_style(4, with_marker=False),
         )
         ax0.axvspan(
@@ -2472,7 +2472,7 @@ def render_all_figures(tasks_data, fig_dir):
             (
                 (0.25, "X = 0.25 (linear fluid valid)"),
                 (1.00, "X = 1.00 (trajectory crossing)"),
-                (1.60, "X = 1.60 (multi-stream, PIC)"),
+                (1.60, "X = 1.60 (multi-stream, particle-in-cell)"),
             )
         ):
             psi = phi0 - X_val * np.sin(phi0)

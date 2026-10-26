@@ -414,19 +414,19 @@ IEEE-754 `float64` / `complex128` machine precision ($\sim 10^{-15}$–$10^{-16}
 
 ---
 
-## 7. Validity Limits and When PIC Is Required
+## 7. Validity Limits and When Particle-in-Cell Is Required
 
 The Eulerian linearized cold-fluid model is valid in the **small-signal, single-stream,
 strongly focused regime** and breaks down when any of the following conditions is violated:
 
-| Physical Effect | Linearized Fluid Validity Criterion | Failure Mode / Why PIC Is Required |
+| Physical Effect | Linearized Fluid Validity Criterion | Failure Mode / Why Particle-in-Cell Is Required |
 |---|---|---|
 | **Velocity modulation depth** | $\|v_1\| / u_0 \ll \|1 - v_p / u_0\| \sim \omega_q / \omega$ | Convective nonlinearity $v_1 \partial_s v_1$ steepens the velocity profile. |
 | **Charge bunching / harmonic generation** | $\|\rho_1\| / \|\rho_0\| \ll 1$, $\|I_1\| / I_0 \lesssim 0.1$ | Neglects $\nabla \cdot (\rho_1 \mathbf{v}_1)$, which drives 2nd/3rd harmonic currents ($2\omega, 3\omega$) before saturation. |
 | **Trajectory crossing (wave breaking)** | Bunching parameter $X = (\beta \Delta V / 2 V_0) \frac{\sin(\beta_q s)}{\beta_q s} < 1$ | Fast electrons overtake slow electrons; velocity becomes multi-valued in Eulerian space, causing density singularities ($\rho_1 \to \infty$). |
-| **Trapping and saturation** | Linear growth regime ($P_{\text{RF}} \ll \eta_{\text{sat}} I_0 V_0$) | Electrons drop into the potential troughs of the slow wave and execute synchrotron bounces, saturating gain; requires Lagrangian particles (PIC). |
-| **Thermal velocity spread** | $\sigma_{v,\parallel} \ll \omega_q / \beta$ | Warm-beam Landau damping and Debye screening ($\lambda_D = v_{\text{th}}/\omega_p$) require kinetic/PIC modeling. |
-| **Finite magnetic focusing ($B_0$)** | $\omega_c = e B_0 / (\gamma_0 m_e) \gg \omega_p$ | Transverse $\mathbf{E}_\perp, \mathbf{v}_\perp$ motion, Brillouin scalloping, and cyclotron-space-charge modes require 3D fluid or full 3D PIC. |
+| **Trapping and saturation** | Linear growth regime ($P_{\text{RF}} \ll \eta_{\text{sat}} I_0 V_0$) | Electrons drop into the potential troughs of the slow wave and execute synchrotron bounces, saturating gain; requires Lagrangian particle-in-cell (`wakis.particles`, in development). |
+| **Thermal velocity spread** | $\sigma_{v,\parallel} \ll \omega_q / \beta$ | Warm-beam Landau damping and Debye screening ($\lambda_D = v_{\text{th}}/\omega_p$) require kinetic/particle-in-cell modeling. |
+| **Finite magnetic focusing ($B_0$)** | $\omega_c = e B_0 / (\gamma_0 m_e) \gg \omega_p$ | Transverse $\mathbf{E}_\perp, \mathbf{v}_\perp$ motion, Brillouin scalloping, and cyclotron-space-charge modes require 3D fluid or full 3D particle-in-cell modeling. |
 
 ---
 

@@ -25,7 +25,7 @@ from wakis.solverFIT3D import SolverFIT3D
 from wakis.sources import GaussianSource
 from wakis.templates import Box, Simulation, meshing
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     _SnapshotRecorder,
@@ -698,9 +698,9 @@ def build_semilens_graded_axes(
     )
 
 
-class NonUniformSemilensPIC(PICSimulation):
+class NonUniformSemilensCircuit(PhotonicCircuit):
     """
-    2D EIM `PICSimulation` with a graded non-uniform Cartesian mesh tailored to
+    2D EIM `PhotonicCircuit` with a graded non-uniform Cartesian mesh tailored to
     Design 3 (6-segment ultra-short semi-lens beam expander).
     """
 
@@ -812,35 +812,35 @@ def inspect_task_mesh(task_cfg):
     else:
         raise ValueError(f"Unknown task kind {kind!r}")
 
-    pic_stub = object.__new__(PICSimulation)
-    pic_stub.wavelength_min = float(WL_MIN)
-    pic_stub.wavelength_max = float(WL_MAX)
-    pic_stub.wavelength_ref = float(WL_REF)
-    pic_stub.f_min = c_light / pic_stub.wavelength_max
-    pic_stub.f_max = c_light / pic_stub.wavelength_min
-    pic_stub.f_center = 0.5 * (pic_stub.f_min + pic_stub.f_max)
-    pic_stub.structures_3d = list(structures)
-    pic_stub.ports = list(ports)
-    pic_stub.n_core = float(N_SI)
-    pic_stub.n_clad = float(n_clad)
-    pic_stub.n_sub = float(n_sub)
-    pic_stub.cells_per_wavelength = cpw
-    pic_stub.padding = 0.8e-6
-    pic_stub._domain_input = domain_2d
-    z_mins = [s.bounds[0][2] for s in pic_stub.structures_3d]
-    z_maxs = [s.bounds[1][2] for s in pic_stub.structures_3d]
-    pic_stub.z_min = min(z_mins)
-    pic_stub.z_max = max(z_maxs)
-    pic_stub.thickness = pic_stub.z_max - pic_stub.z_min
-    pic_stub.n_eff_slab = slab_neff(
-        pic_stub.n_core,
-        pic_stub.n_clad,
-        pic_stub.thickness,
-        pic_stub.wavelength_ref,
-        n_sub=pic_stub.n_sub,
+    circuit_stub = object.__new__(PhotonicCircuit)
+    circuit_stub.wavelength_min = float(WL_MIN)
+    circuit_stub.wavelength_max = float(WL_MAX)
+    circuit_stub.wavelength_ref = float(WL_REF)
+    circuit_stub.f_min = c_light / circuit_stub.wavelength_max
+    circuit_stub.f_max = c_light / circuit_stub.wavelength_min
+    circuit_stub.f_center = 0.5 * (circuit_stub.f_min + circuit_stub.f_max)
+    circuit_stub.structures_3d = list(structures)
+    circuit_stub.ports = list(ports)
+    circuit_stub.n_core = float(N_SI)
+    circuit_stub.n_clad = float(n_clad)
+    circuit_stub.n_sub = float(n_sub)
+    circuit_stub.cells_per_wavelength = cpw
+    circuit_stub.padding = 0.8e-6
+    circuit_stub._domain_input = domain_2d
+    z_mins = [s.bounds[0][2] for s in circuit_stub.structures_3d]
+    z_maxs = [s.bounds[1][2] for s in circuit_stub.structures_3d]
+    circuit_stub.z_min = min(z_mins)
+    circuit_stub.z_max = max(z_maxs)
+    circuit_stub.thickness = circuit_stub.z_max - circuit_stub.z_min
+    circuit_stub.n_eff_slab = slab_neff(
+        circuit_stub.n_core,
+        circuit_stub.n_clad,
+        circuit_stub.thickness,
+        circuit_stub.wavelength_ref,
+        n_sub=circuit_stub.n_sub,
         polarization="TE",
     )
-    structs_2d, domain = pic_stub._build_2d_structures_and_domain()
+    structs_2d, domain = circuit_stub._build_2d_structures_and_domain()
     if bool(task_cfg.get("nonuniform", False)) and kind == "semilens":
         x, y, z = build_semilens_graded_axes(
             domain,
@@ -851,8 +851,8 @@ def inspect_task_mesh(task_cfg):
         )
     else:
         sim = Simulation(
-            pic_stub.f_min,
-            pic_stub.f_max,
+            circuit_stub.f_min,
+            circuit_stub.f_max,
             structures=structs_2d,
             boundaries=(["cpml", "cpml", "periodic"], ["cpml", "cpml", "periodic"]),
             domain=domain,
@@ -872,7 +872,7 @@ def inspect_task_mesh(task_cfg):
     )
     if bool(task_cfg.get("nonuniform", False)):
         metrics["dx_background_nm"] = round(
-            float(WL_MIN / (pic_stub.n_eff_slab * cpw)) * 1e9, 3
+            float(WL_MIN / (circuit_stub.n_eff_slab * cpw)) * 1e9, 3
         )
     dt_s = 0.5 / (
         c_light
@@ -883,8 +883,8 @@ def inspect_task_mesh(task_cfg):
         )
     )
     pulse = GaussianSource(
-        frequency=pic_stub.f_center,
-        fwidth=1.25 * (pic_stub.f_max - pic_stub.f_min),
+        frequency=circuit_stub.f_center,
+        fwidth=1.25 * (circuit_stub.f_max - circuit_stub.f_min),
         cutoff=4.2,
     )
     lx = grid.xmax - grid.xmin
@@ -973,14 +973,14 @@ def run_converter_simulation(
     n_feature=8,
 ):
     """
-    Build and run a 2D EIM converter simulation using `PICSimulation` (or
-    `NonUniformSemilensPIC` when `nonuniform=True`), returning the simulation
+    Build and run a 2D EIM converter simulation using `PhotonicCircuit` (or
+    `NonUniformSemilensCircuit` when `nonuniform=True`), returning the simulation
     instance, S-parameters, output aperture flux transmission, and optional
     multi-mode output amplitudes (`TE0, TE2, TE4, TE6, TE8`).
     """
-    sim_cls = NonUniformSemilensPIC if nonuniform else PICSimulation
+    sim_cls = NonUniformSemilensCircuit if nonuniform else PhotonicCircuit
     extra_kw = {"n_feature": int(n_feature)} if nonuniform else {}
-    pic = sim_cls(
+    circuit = sim_cls(
         wavelength_min=wavelength_min,
         wavelength_max=wavelength_max,
         n_freqs=n_freqs,
@@ -1002,108 +1002,108 @@ def run_converter_simulation(
         use_gpu=use_gpu,
         **extra_kw,
     )
-    pic.sim.pulse = GaussianSource(
-        frequency=pic.f_center,
-        fwidth=1.25 * (pic.f_max - pic.f_min),
+    circuit.sim.pulse = GaussianSource(
+        frequency=circuit.f_center,
+        fwidth=1.25 * (circuit.f_max - circuit.f_min),
         cutoff=4.2,
     )
 
-    lx = pic.grid.xmax - pic.grid.xmin
+    lx = circuit.grid.xmax - circuit.grid.xmin
     if max_time is None:
-        max_time = pic.sim.pulse.end_time + 2.0 * lx * 2.8 / c_light
+        max_time = circuit.sim.pulse.end_time + 2.0 * lx * 2.8 / c_light
 
-    in_port = pic.port_map["in"]
-    out_port = pic.port_map["out"]
-    in_center, in_size, in_inward = pic._port_plane_args(in_port)
-    out_center, out_size, out_inward = pic._port_plane_args(out_port)
+    in_port = circuit.port_map["in"]
+    out_port = circuit.port_map["out"]
+    in_center, in_size, in_inward = circuit._port_plane_args(in_port)
+    out_center, out_size, out_inward = circuit._port_plane_args(out_port)
 
-    nodes_x = pic.grid.x
+    nodes_x = circuit.grid.x
     k_mon = int(np.argmin(np.abs(nodes_x[:-1] - in_center[0])))
     k_src = int(np.clip(k_mon - 2 * in_inward, 2, len(nodes_x) - 3))
     src_center = in_center.copy()
     src_center[0] = nodes_x[k_src]
 
     src = ModeSource(
-        pic.sim.pulse,
+        circuit.sim.pulse,
         center=src_center,
         size=in_size,
         direction="+" if in_inward > 0 else "-",
         mode_index=in_port.mode_index,
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     )
 
     max_out_mode = max([out_port.mode_index, *multimode_indices])
     mon_in = ModeMonitor(
-        pic.frequencies,
+        circuit.frequencies,
         center=in_center,
         size=in_size,
         n_modes=1,
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     )
     mon_out = ModeMonitor(
-        pic.frequencies,
+        circuit.frequencies,
         center=out_center,
         size=out_size,
         n_modes=max_out_mode + 1,
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     )
-    flux_out_port = FluxMonitor(pic.frequencies, center=out_center, size=out_size)
+    flux_out_port = FluxMonitor(circuit.frequencies, center=out_center, size=out_size)
     monitors_list = [mon_in, mon_out, flux_out_port]
 
     dft_mon = snap_mon = flux_planes = None
     if collect_fields:
-        f_dft = [c_light / w for w in pic.field_wavelengths]
-        stride = max(1, int(np.ceil(max(pic.grid.Nx, pic.grid.Ny) / 400)))
-        z_mid = 0.5 * (pic.grid.zmin + pic.grid.zmax)
+        f_dft = [c_light / w for w in circuit.field_wavelengths]
+        stride = max(1, int(np.ceil(max(circuit.grid.Nx, circuit.grid.Ny) / 400)))
+        z_mid = 0.5 * (circuit.grid.zmin + circuit.grid.zmax)
         dft_mon = DFTMonitor(
             f_dft,
             components=("Ex", "Ey"),
             center=(
-                0.5 * (pic.grid.xmin + pic.grid.xmax),
-                0.5 * (pic.grid.ymin + pic.grid.ymax),
+                0.5 * (circuit.grid.xmin + circuit.grid.xmax),
+                0.5 * (circuit.grid.ymin + circuit.grid.ymax),
                 z_mid,
             ),
             size=(np.inf, np.inf, 0.0),
         )
         monitors_list.append(dft_mon)
 
-        Nt_est = int(np.ceil(max_time / pic.solver.dt))
+        Nt_est = int(np.ceil(max_time / circuit.solver.dt))
         snap_mon = _SnapshotRecorder(
             component="y",
-            max_frames=pic.movie_frames if pic.record_movie else 0,
+            max_frames=circuit.movie_frames if circuit.record_movie else 0,
             stride_xy=stride,
             n_steps_est=Nt_est,
         )
-        ix = int(np.argmin(np.abs(pic.grid.x[:-1] - out_center[0])))
-        iy = int(np.argmin(np.abs(pic.grid.y[:-1] - out_center[1])))
-        snap_mon.probe_idx = (ix, iy, pic.solver.Nz // 2)
+        ix = int(np.argmin(np.abs(circuit.grid.x[:-1] - out_center[0])))
+        iy = int(np.argmin(np.abs(circuit.grid.y[:-1] - out_center[1])))
+        snap_mon.probe_idx = (ix, iy, circuit.solver.Nz // 2)
         monitors_list.append(snap_mon)
 
-        n_p = pic.sim.n_pml + 1
-        xw = float(pic.grid.x[max(1, k_src - 2)])
-        xe = float(pic.grid.x[-1 - n_p])
-        ys = float(pic.grid.y[n_p])
-        yn = float(pic.grid.y[-1 - n_p])
+        n_p = circuit.sim.n_pml + 1
+        xw = float(circuit.grid.x[max(1, k_src - 2)])
+        xe = float(circuit.grid.x[-1 - n_p])
+        ys = float(circuit.grid.y[n_p])
+        yn = float(circuit.grid.y[-1 - n_p])
         xc_b, yc_b = 0.5 * (xw + xe), 0.5 * (ys + yn)
         lx_b, ly_b = xe - xw, yn - ys
         flux_planes = {
             "west": FluxMonitor(
-                pic.frequencies, (xw, yc_b, z_mid), (0.0, ly_b, np.inf)
+                circuit.frequencies, (xw, yc_b, z_mid), (0.0, ly_b, np.inf)
             ),
             "east": FluxMonitor(
-                pic.frequencies, (xe, yc_b, z_mid), (0.0, ly_b, np.inf)
+                circuit.frequencies, (xe, yc_b, z_mid), (0.0, ly_b, np.inf)
             ),
             "south": FluxMonitor(
-                pic.frequencies, (xc_b, ys, z_mid), (lx_b, 0.0, np.inf)
+                circuit.frequencies, (xc_b, ys, z_mid), (lx_b, 0.0, np.inf)
             ),
             "north": FluxMonitor(
-                pic.frequencies, (xc_b, yn, z_mid), (lx_b, 0.0, np.inf)
+                circuit.frequencies, (xc_b, yn, z_mid), (lx_b, 0.0, np.inf)
             ),
         }
         monitors_list.extend(flux_planes.values())
 
-    Nt = int(np.ceil(max_time / pic.solver.dt))
-    pic.solver.emsolve(
+    Nt = int(np.ceil(max_time / circuit.solver.dt))
+    circuit.solver.emsolve(
         Nt,
         source=[src],
         monitors=monitors_list,
@@ -1131,19 +1131,19 @@ def run_converter_simulation(
         modal_s21[int(m_idx)] = bm / a_inc
 
     if dft_mon is not None:
-        nx, ny = pic.grid.Nx, pic.grid.Ny
-        xc = 0.5 * (pic.grid.x[:-1] + pic.grid.x[1:])
-        yc = 0.5 * (pic.grid.y[:-1] + pic.grid.y[1:])
+        nx, ny = circuit.grid.Nx, circuit.grid.Ny
+        xc = 0.5 * (circuit.grid.x[:-1] + circuit.grid.x[1:])
+        yc = 0.5 * (circuit.grid.y[:-1] + circuit.grid.y[1:])
         ex_raw, _ = dft_mon.get_field("Ex")
         ey_raw, _ = dft_mon.get_field("Ey")
         ex_c = ex_raw[:, :nx, :ny, 0]
         ey_c = ey_raw[:, :nx, :ny, 0]
         x_dft = xc[::stride].astype(np.float32)
         y_dft = yc[::stride].astype(np.float32)
-        for idx_w, w_val in enumerate(pic.field_wavelengths):
+        for idx_w, w_val in enumerate(circuit.field_wavelengths):
             ex = ex_c[idx_w, ::stride, ::stride].astype(np.complex64)
             ey = ey_c[idx_w, ::stride, ::stride].astype(np.complex64)
-            pic.dft_fields[w_val] = {
+            circuit.dft_fields[w_val] = {
                 "x": x_dft,
                 "y": y_dft,
                 "Ex": ex,
@@ -1152,14 +1152,14 @@ def run_converter_simulation(
             }
 
     if snap_mon is not None:
-        pic.port_time_trace = {
+        circuit.port_time_trace = {
             "t": np.asarray(snap_mon.port_trace_t, dtype=np.float32),
             "Ey": np.asarray(snap_mon.port_trace_val, dtype=np.float32),
         }
-        if pic.record_movie and snap_mon.frames:
+        if circuit.record_movie and snap_mon.frames:
             frames_f32 = np.stack(snap_mon.frames, axis=0)
             peak = max(float(np.max(np.abs(frames_f32))), 1e-30)
-            pic.movie_data = {
+            circuit.movie_data = {
                 "x": snap_mon.x,
                 "y": snap_mon.y,
                 "times": np.asarray(snap_mon.times, dtype=np.float32),
@@ -1172,7 +1172,7 @@ def run_converter_simulation(
         f_west = -flux_planes["west"].get_flux() / p_inc
         f_north = flux_planes["north"].get_flux() / p_inc
         f_south = -flux_planes["south"].get_flux() / p_inc
-        pic.flux_balance = {
+        circuit.flux_balance = {
             "east": f_east,
             "west": f_west,
             "lateral": f_north + f_south,
@@ -1180,11 +1180,11 @@ def run_converter_simulation(
         }
 
     return {
-        "pic": pic,
+        "circuit": circuit,
         "s_matrix": s_matrix,
         "t_flux_port": t_flux_port,
         "modal_s21": modal_s21,
-        "n_steps": int(pic.solver.Nt),
+        "n_steps": int(circuit.solver.Nt),
     }
 
 
@@ -1482,7 +1482,7 @@ def plot_setup_schematic_semilens(
     semi_ports,
     semi_dom,
     primary_data: dict,
-    pic_zoom: PICSimulation,
+    circuit_zoom: PhotonicCircuit,
     out_path: Path,
 ):
     """
@@ -1499,14 +1499,14 @@ def plot_setup_schematic_semilens(
     - `00_setup_table.md`: Complete Markdown setup table (including Design 1
       taper and Design 2 Luneburg lens variations).
     """
-    _ = pic_zoom
+    _ = circuit_zoom
     figstyle.apply_style()
     fig_dir = Path(out_path).parent
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     cpw_v = float(primary_data.get("cpw", 20.0))
     nf_v = int(round(float(primary_data.get("n_feature", 8))))
-    pic_full = PICSimulation(
+    circuit_full = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         n_freqs=N_FREQS,
@@ -1524,10 +1524,10 @@ def plot_setup_schematic_semilens(
         mesh_overrides=semilens_mesh_overrides(nf_v),
     )
 
-    n_eff_slab = float(primary_data.get("n_eff_slab", pic_full.n_eff_slab))
+    n_eff_slab = float(primary_data.get("n_eff_slab", circuit_full.n_eff_slab))
     eps_slab = float(n_to_eps(n_eff_slab))
     eps_clad = float(n_to_eps(N_AIR))
-    proxy_solver = _SchematicSolverProxy(pic_full.solver, eps_clad)
+    proxy_solver = _SchematicSolverProxy(circuit_full.solver, eps_clad)
     poly_structs = [
         _PolygonSchematicProxy(
             semi_structs[0].vertices,
@@ -1565,7 +1565,7 @@ def plot_setup_schematic_semilens(
         },
         {
             "name": "Graded non-uniform Cartesian mesh (task 15)",
-            "param": "NonUniformSemilensPIC (424 × 407 × 1 = 172,568 cells vs 235,008 at L3)",
+            "param": "NonUniformSemilensCircuit (424 × 407 × 1 = 172,568 cells vs 235,008 at L3)",
             "note": "8.0 cells across L₃ = 50 nm (Δx_min = 6.25 nm), non-square lead cells (−26.6% cells, −33.2% time)",
         },
     ]
@@ -1607,8 +1607,8 @@ def plot_setup_schematic_semilens(
     if fig_a._suptitle is not None:
         fig_a._suptitle.set_y(1.07)
 
-    xg_um = pic_full.grid.x * 1e6
-    yg_um = pic_full.grid.y * 1e6
+    xg_um = circuit_full.grid.x * 1e6
+    yg_um = circuit_full.grid.y * 1e6
     x0_u, x1_u = float(xg_um[0]), float(xg_um[-1])
     y0_u, y1_u = float(yg_um[0]), float(yg_um[-1])
     dy_pml_low = float(yg_um[10] - yg_um[0])
@@ -1989,7 +1989,7 @@ def plot_mesh_upgrade_comparison_semilens(
     """
     Render `04b_mesh_upgrade_comparison.png` (3 panels <= 3):
     - Panel (a): Baseline uniform Cartesian mesh with Segment 3 override (`kottke_L3`).
-    - Panel (b): Upgraded graded non-uniform Cartesian mesh (`kottke_nonuniform`, `NonUniformSemilensPIC`).
+    - Panel (b): Upgraded graded non-uniform Cartesian mesh (`kottke_nonuniform`, `NonUniformSemilensCircuit`).
     - Panel (c): Broadband total port flux, even-mode sum, and TE0 transmission vs 40 cpw reference.
     """
     figstyle.apply_style()

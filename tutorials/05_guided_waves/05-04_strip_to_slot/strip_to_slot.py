@@ -25,7 +25,7 @@
 # $\Delta E_y \propto (n_{\text{high}} / n_{\text{low}})^2$ across the slot
 # boundaries to enhance light–matter interaction for electro-optic modulation,
 # nonlinear optics, and biochemical sensing (Almeida *et al.*, 2004 [4]).
-# Practical photonic integrated circuits (PICs), however, route signals in
+# Practical photonic integrated circuits, however, route signals in
 # low-loss single-mode strip waveguides, requiring compact, broadband,
 # low-reflection **strip-to-slot mode converters**. In this tutorial we model
 # and compare three classic silicon-on-insulator (SOI) strip-to-slot converter
@@ -43,7 +43,7 @@
 # evolution, quantify the convergence advantage of Kottke subpixel
 # smoothing over staircasing when resolving a $100\;\text{nm}$ slot, and
 # upgrade the Cartesian mesh to a **graded non-uniform, non-square Cartesian
-# grid** (`NonUniformStripToSlotPIC`, `kottke_nonuniform`) that achieves equal
+# grid** (`NonUniformStripToSlotCircuit`, `kottke_nonuniform`) that achieves equal
 # accuracy ($T(1550\;\text{nm}) = 97.57\%$, within $8.4\times 10^{-4}$ of the
 # $40\;\text{cpw}$ `kottke_reference`) with $38.1\%$ fewer cells ($40{,}737$ vs
 # $65{,}780$) and $58.6\%$ shorter runtime ($60.62\;\text{s}$ vs $146.50\;\text{s}$).
@@ -94,7 +94,7 @@
 #    `PolySlab`, `straight`, and `asymmetric_taper`, and inspect their labelled
 #    2D EIM setup schematics (`00a_setup_geometry.png`,
 #    `00b_setup_mesh_and_excitation.png`, `00b_taper_converters_schematic.png`).
-# 3. Run broadband 2D EIM time-domain FIT simulations (`PICSimulation`) with
+# 3. Run broadband 2D EIM time-domain FIT simulations (`PhotonicCircuit`) with
 #    `ModeSource` and `ModeMonitor` ports that resolve the discontinuous
 #    transverse slot mode profile across the $1500\text{--}1600\;\text{nm}$ C-band.
 # 4. Quantify conversion efficiency vs. converter length $L$, audit energy
@@ -189,7 +189,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
-    NonUniformStripToSlotPIC,
+    NonUniformStripToSlotCircuit,
     asymmetric_taper,
     build_mmi_graded_axes,
     overlay_converter_geometry,
@@ -204,7 +204,7 @@ from _helpers import (  # noqa: E402
 )
 from wakis import figstyle  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -549,7 +549,7 @@ def build_design(design_key, length_conv=None):
 #
 # To satisfy $N \ge 4$ without paying the cost of a uniform fine mesh across
 # the entire simulation domain, we pass **mesh-override boxes**
-# `mesh_overrides=[(lo, hi, (1.0, max_hy, 1.0)), ...]` to `PICSimulation`,
+# `mesh_overrides=[(lo, hi, (1.0, max_hy, 1.0)), ...]` to `PhotonicCircuit`,
 # where `max_hy = min_feature / N` caps the transverse cell size $\Delta y$
 # across the slot and taper-gap strips while leaving $\Delta x$ at the
 # background core resolution (`hx = 1.0` m > $\Delta x_{\text{bg}}$). Because
@@ -667,7 +667,7 @@ def build_design(design_key, length_conv=None):
 # ### Measured `--full` resolution, mesh, and timing summary
 #
 # Every task records `min_feature_nm`, `dx_background_nm`, `dx_min_nm`,
-# `cells_across_feature` (measured directly from `pic.grid`), `n_cells`, and
+# `cells_across_feature` (measured directly from `circuit.grid`), `n_cells`, and
 # `n_steps` in its JSON and NPZ outputs (`data/task_0.json`..`data/task_15.json`):
 #
 # | Task | Name | Design | Avg | cpw | $N$ | $\text{min\_feat}$ [nm] | $\Delta x_{\text{bg}}$ [nm] | $\Delta x_{\min}$ [nm] | Cells across feature | `n_cells` | `n_steps` | Time [s] | $T(1550\;\text{nm})$ |
@@ -691,7 +691,7 @@ def build_design(design_key, length_conv=None):
 #
 # ### Graded non-uniform Cartesian mesh upgrade (`kottke_nonuniform`, `task_15`)
 #
-# In `NonUniformStripToSlotPIC` (`build_mmi_graded_axes` in `_helpers.py`), we
+# In `NonUniformStripToSlotCircuit` (`build_mmi_graded_axes` in `_helpers.py`), we
 # replace the uniform-background grid of `kottke_L3` ($460 \times 143 \times 1 = 65{,}780$
 # cells, $146.50\;\text{s}$) with a graded non-uniform, non-square Cartesian
 # mesh ($367 \times 111 \times 1 = 40{,}737$ cells, **$-38.1\%$ cells**,
@@ -811,7 +811,7 @@ def build_mesh_overrides(
 
 
 def build_task_simulation(task_cfg, use_gpu=None):
-    """Instantiate and build the `PICSimulation` for `task_cfg` (without running)."""
+    """Instantiate and build the `PhotonicCircuit` for `task_cfg` (without running)."""
     L_c = float(task_cfg["length_um"]) * 1e-6
     g_slot = float(task_cfg.get("gap_slot_m", GAP_SLOT))
     g_fing = float(task_cfg.get("gap_finger_m", GAP_FINGER))
@@ -843,7 +843,7 @@ def build_task_simulation(task_cfg, use_gpu=None):
         use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
 
     if task_cfg.get("nonuniform", False):
-        return NonUniformStripToSlotPIC(
+        return NonUniformStripToSlotCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -869,7 +869,7 @@ def build_task_simulation(task_cfg, use_gpu=None):
             use_gpu=use_gpu,
         )
 
-    return PICSimulation(
+    return PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=N_FREQS,
@@ -891,9 +891,9 @@ def build_task_simulation(task_cfg, use_gpu=None):
     )
 
 
-def measure_task_resolution(pic, task_cfg):
+def measure_task_resolution(circuit, task_cfg):
     """
-    Measure resolution metrics from the built `pic.grid` mesh:
+    Measure resolution metrics from the built `circuit.grid` mesh:
     `min_feature_nm`, `dx_background_nm`, `dx_min_nm`, `cells_across_feature`,
     `slot_cells`, `min_feature_cells`, `n_cells`, and `n_steps`.
     """
@@ -904,9 +904,9 @@ def measure_task_resolution(pic, task_cfg):
         d_key, gap_slot=g_slot, gap_finger=g_fing
     )
 
-    dx = np.diff(pic.grid.x)
-    dy = np.diff(pic.grid.y)
-    yg = pic.grid.y
+    dx = np.diff(circuit.grid.x)
+    dy = np.diff(circuit.grid.y)
+    yg = circuit.grid.y
 
     dx_bg_m = float(np.median(dx))
     dx_min_m = float(min(np.min(dx), np.min(dy)))
@@ -925,12 +925,12 @@ def measure_task_resolution(pic, task_cfg):
     dy_feat_max = float(np.max(dy[in_feat]))
     cells_across_feature = float(min_feat_m / dy_feat_max)
 
-    lx = pic.grid.xmax - pic.grid.xmin
-    ly = pic.grid.ymax - pic.grid.ymin
-    transit = np.hypot(lx, ly) * pic.n_core / c_light
-    max_time = pic.sim.pulse.end_time + 15.0 * transit
-    nt_est = int(np.ceil(max_time / pic.solver.dt))
-    n_steps = int(getattr(pic.solver, "Nt", None) or nt_est)
+    lx = circuit.grid.xmax - circuit.grid.xmin
+    ly = circuit.grid.ymax - circuit.grid.ymin
+    transit = np.hypot(lx, ly) * circuit.n_core / c_light
+    max_time = circuit.sim.pulse.end_time + 15.0 * transit
+    nt_est = int(np.ceil(max_time / circuit.solver.dt))
+    n_steps = int(getattr(circuit.solver, "Nt", None) or nt_est)
 
     return {
         "min_feature_nm": float(min_feat_m * 1e9),
@@ -940,7 +940,7 @@ def measure_task_resolution(pic, task_cfg):
         "cells_across_feature": float(cells_across_feature),
         "slot_cells": float(slot_cells),
         "min_feature_cells": float(cells_across_feature),
-        "n_cells": int(pic.grid.Nx * pic.grid.Ny * pic.grid.Nz),
+        "n_cells": int(circuit.grid.Nx * circuit.grid.Ny * circuit.grid.Nz),
         "n_steps": int(n_steps),
     }
 
@@ -1144,15 +1144,15 @@ def run_single_task(task_cfg, out_dir):
     idx = task_cfg["index"]
     t0 = time.perf_counter()
 
-    pic = build_task_simulation(task_cfg)
+    circuit = build_task_simulation(task_cfg)
 
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
 
-    res = measure_task_resolution(pic, task_cfg)
+    res = measure_task_resolution(circuit, task_cfg)
 
     payload = {
         "task_index": np.int32(idx),
@@ -1173,16 +1173,16 @@ def run_single_task(task_cfg, out_dir):
         "min_feature_cells": np.float64(res["min_feature_cells"]),
         "n_cells": np.int32(res["n_cells"]),
         "n_steps": np.int32(res["n_steps"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out", "in")].astype(np.complex128),
     }
 
     if task_cfg.get("solve_modes_extra", False):
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)
         y_in = modes_in[0].coords["Eb"][0]
         ey_in = modes_in[0].e["b"][:, 0]
         m_in = np.abs(y_in) <= 0.85e-6
@@ -1198,8 +1198,8 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_in = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
-        disp_out = pic.solve_port_modes("out", frequencies=f_disp, n_modes=1)
+        disp_in = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_out = circuit.solve_port_modes("out", frequencies=f_disp, n_modes=1)
         neff_in_d = np.array([float(np.real(m[0].neff)) for m in disp_in])
         neff_out_d = np.array([float(np.real(m[0].neff)) for m in disp_out])
         ng_in_d = neff_in_d - wl_disp * np.gradient(neff_in_d, wl_disp)
@@ -1211,29 +1211,29 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_ng_slot"] = ng_out_d.astype(np.float64)
 
     if task_cfg["collect_fields"]:
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -1257,7 +1257,7 @@ def run_single_task(task_cfg, out_dir):
         "cells_across_feature": round(res["cells_across_feature"], 2),
         "slot_cells": round(res["slot_cells"], 2),
         "min_feature_cells": round(res["min_feature_cells"], 2),
-        "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
+        "grid_shape": [int(circuit.grid.Nx), int(circuit.grid.Ny), int(circuit.grid.Nz)],
         "n_cells": int(res["n_cells"]),
         "n_steps": int(res["n_steps"]),
         "elapsed_s": round(elapsed, 3),
@@ -1425,7 +1425,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     prim_cpw = int(round(float(primary["cpw"])))
     prim_n = int(primary.get("n_feature", 8))
-    pic_mmi_u = PICSimulation(
+    circuit_mmi_u = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures_mmi,
@@ -1439,7 +1439,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=10 if primary_key == "kottke_L3" else 8,
         mesh_overrides=build_mesh_overrides("mmi", length_conv=L_CONV_MMI, n_feature=prim_n),
     )
-    pic_mmi_nu = NonUniformStripToSlotPIC(
+    circuit_mmi_nu = NonUniformStripToSlotCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures_mmi,
@@ -1458,7 +1458,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         gap_slot=GAP_SLOT,
         n_feature=prim_n,
     )
-    pic_sym = PICSimulation(
+    circuit_sym = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures_sym,
@@ -1472,7 +1472,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=10 if primary_key == "kottke_L3" else 8,
         mesh_overrides=build_mesh_overrides("sym_taper", length_conv=L_CONV_SYM, n_feature=prim_n),
     )
-    pic_asym = PICSimulation(
+    circuit_asym = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures_asym,
@@ -1489,13 +1489,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 0. Setup schematics (FIRST figures: Design 1 MMI + Designs 2 & 3 tapers)
     plot_setup_schematic(
-        pic_mmi_nu,
+        circuit_mmi_nu,
         primary,
         out_path=fig_dir / "00a_setup_geometry.png",
     )
     plot_taper_converters_schematic(
-        pic_sym,
-        pic_asym,
+        circuit_sym,
+        circuit_asym,
         primary,
         out_path=fig_dir / "00b_taper_converters_schematic.png",
     )
@@ -1722,7 +1722,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     xl_m, yl_m = (1.10, 2.35), (-0.66, 0.66)
     for ax_m, (avg_m, cpw_m, n_m, ttl_m) in zip(axes, mesh_panels):
         ov_m = build_mesh_overrides("mmi", length_conv=L_CONV_MMI, n_feature=n_m)
-        pic_m = PICSimulation(
+        circuit_m = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures_mmi,
@@ -1736,9 +1736,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_pml=8,
             mesh_overrides=ov_m,
         )
-        g_m = pic_m.grid
-        iz_m = pic_m.solver.Nz // 2
-        ieps_m = np.asarray(pic_m.solver.ieps[:, :, iz_m, "y"])
+        g_m = circuit_m.grid
+        iz_m = circuit_m.solver.Nz // 2
+        ieps_m = np.asarray(circuit_m.solver.ieps[:, :, iz_m, "y"])
         eps_r_m = np.where(
             ieps_m > 0, 1.0 / (np.where(ieps_m > 0, ieps_m, 1.0) * epsilon_0), 1.0
         )
@@ -1794,8 +1794,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     # 4b. Mesh upgrade comparison: uniform-background kottke_L3 vs graded kottke_nonuniform
     td_nu = tasks_data.get("kottke_nonuniform", primary)
     plot_mesh_upgrade_comparison(
-        pic_mmi_u,
-        pic_mmi_nu,
+        circuit_mmi_u,
+        circuit_mmi_nu,
         primary,
         td_nu,
         tasks_data.get("kottke_reference"),
@@ -1886,7 +1886,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic=pic_mmi_u,
+        circuit=circuit_mmi_u,
         kind="intensity_log",
         title=r"Design 1 (MMI converter): modal intensity $10\log_{10}(|\mathbf{E}|^2/|\mathbf{E}|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "07_mmi_field_intensity_1550.png",
@@ -1897,7 +1897,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic=pic_mmi_u,
+        circuit=circuit_mmi_u,
         kind="real",
         title=r"Design 1 (MMI converter): wave-front pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
         out_path=fig_dir / "08_mmi_field_real_ey_1550.png",
@@ -1910,22 +1910,22 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic=pic_mmi_u,
+            circuit=circuit_mmi_u,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
 
     # 10 & 10b. Split 3-panel multi-design field comparisons at 1550 nm (<= 3 panels per figure)
     design_entries = [
-        (primary_key, pic_mmi_u, "Design 1: Symmetric MMI (L = 6 µm)"),
+        (primary_key, circuit_mmi_u, "Design 1: Symmetric MMI (L = 6 µm)"),
         (
             "design2_sym_taper",
-            pic_sym,
+            circuit_sym,
             "Design 2: Symmetric Tapered-Finger (L = 8 µm)",
         ),
         (
             "design3_asym_taper",
-            pic_asym,
+            circuit_asym,
             "Design 3: Asymmetric Lateral Taper (L = 20 µm)",
         ),
     ]
@@ -1937,7 +1937,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     if len(avail_designs) == 1:
         axes_i = [axes_i]
-    for row_idx, (t_key, pic_d, d_label) in enumerate(avail_designs):
+    for row_idx, (t_key, circuit_d, d_label) in enumerate(avail_designs):
         td = tasks_data[t_key]
         x_um = td["dft_x"] * 1e6
         y_um = td["dft_y"] * 1e6
@@ -1952,7 +1952,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         cb0 = fig_i.colorbar(im0, ax=ax_i, fraction=0.046, pad=0.03)
         cb0.set_label("Intensity [dB]")
-        overlay_converter_geometry(ax_i, pic_d, outline_color="white")
+        overlay_converter_geometry(ax_i, circuit_d, outline_color="white")
         ax_i.set(
             xlim=(float(x_um.min()), float(x_um.max())),
             ylim=(-1.15, 1.15),
@@ -1969,7 +1969,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     if len(avail_designs) == 1:
         axes_r = [axes_r]
-    for row_idx, (t_key, pic_d, d_label) in enumerate(avail_designs):
+    for row_idx, (t_key, circuit_d, d_label) in enumerate(avail_designs):
         td = tasks_data[t_key]
         x_um = td["dft_x"] * 1e6
         y_um = td["dft_y"] * 1e6
@@ -1987,7 +1987,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         )
         cb1 = fig_r.colorbar(im1, ax=ax_r, fraction=0.046, pad=0.03)
         cb1.set_label(r"$\mathrm{Re}(E_y)$ [norm.]")
-        overlay_converter_geometry(ax_r, pic_d, outline_color="black")
+        overlay_converter_geometry(ax_r, circuit_d, outline_color="black")
         ax_r.set(
             xlim=(float(x_um.min()), float(x_um.max())),
             ylim=(-1.15, 1.15),
@@ -2758,7 +2758,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #    and compare the degraded return loss $|S_{11}|^2$ against the tip-free
 #    Design 1 MMI converter.
 # 3. **Reciprocity (slot-to-strip conversion)**: Run
-#    `pic.run_s_parameters(drive=["in", "out"])` on Design 1 and verify that
+#    `circuit.run_s_parameters(drive=["in", "out"])` on Design 1 and verify that
 #    $|S_{12}(\lambda) - S_{21}(\lambda)| < 10^{-3}$ across the entire
 #    $1500\text{--}1600\;\text{nm}$ C-band.
 #

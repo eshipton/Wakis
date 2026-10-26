@@ -21,7 +21,7 @@ from wakis import figstyle, schematic
 from wakis.gridFIT3D import GridFIT3D
 from wakis.solverFIT3D import SolverFIT3D
 from wakis.templates import Simulation, meshing
-from wakis.templates.photonics import Box, PICSimulation, PolySlab, n_to_eps, slab_neff
+from wakis.templates.photonics import Box, PhotonicCircuit, PolySlab, n_to_eps, slab_neff
 
 # Resolution ladder: level -> (cells_per_wavelength, cells_across_min_feature)
 RESOLUTION_LADDER = {
@@ -59,7 +59,7 @@ def build_gap_mesh_overrides(
     Returns
     -------
     overrides : list of tuple
-        Two ``(lo, hi, (hx, hy, hz))`` mesh-override tuples for ``PICSimulation``.
+        Two ``(lo, hi, (hx, hy, hz))`` mesh-override tuples for ``PhotonicCircuit``.
         ``hz = 1.0`` leaves the single periodic 2D EIM z-cell unrefined.
     """
     if n_cells_feature is None or n_cells_feature <= 0:
@@ -248,9 +248,9 @@ def build_mmi_2x2_graded_axes(
     )
 
 
-class NonUniformMMI2x2PIC(PICSimulation):
+class NonUniformMMI2x2Circuit(PhotonicCircuit):
     """
-    ``PICSimulation`` subclass that builds a mirror-symmetric graded non-uniform,
+    ``PhotonicCircuit`` subclass that builds a mirror-symmetric graded non-uniform,
     non-square Cartesian mesh for the 2x2 MMI coupler while preserving exact
     2D EIM Kottke subpixel smoothing and port eigenmode extraction.
     """
@@ -587,19 +587,19 @@ class _SchematicSolverProxy:
 
 
 def _build_mmi_2x2_sources_and_monitors(
-    pic,
+    circuit,
     *,
     y_port: float = 1.30e-6,
     x_port: float = 6.00e-6,
     include_flux_box: bool = True,
 ):
-    """Build ``(sources, monitors)`` dicts for ``wakis.schematic`` from ``pic``."""
-    xmin, xmax = float(pic.grid.xmin), float(pic.grid.xmax)
-    ymin, ymax = float(pic.grid.ymin), float(pic.grid.ymax)
-    dx_bg = float(np.median(np.diff(pic.grid.x[:-1])))
-    dy_bg = float(np.median(np.diff(pic.grid.y[:-1])))
-    n_pml = int(getattr(pic.solver, "n_pml", 8))
-    pulse_obj = pic.sim.pulse
+    """Build ``(sources, monitors)`` dicts for ``wakis.schematic`` from ``circuit``."""
+    xmin, xmax = float(circuit.grid.xmin), float(circuit.grid.xmax)
+    ymin, ymax = float(circuit.grid.ymin), float(circuit.grid.ymax)
+    dx_bg = float(np.median(np.diff(circuit.grid.x[:-1])))
+    dy_bg = float(np.median(np.diff(circuit.grid.y[:-1])))
+    n_pml = int(getattr(circuit.solver, "n_pml", 8))
+    pulse_obj = circuit.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
 
@@ -663,7 +663,7 @@ def _build_mmi_2x2_sources_and_monitors(
 
 
 def save_mmi_2x2_setup_figures(
-    pic,
+    circuit,
     structures,
     primary_data: dict,
     out_dir: str | Path,
@@ -685,20 +685,20 @@ def save_mmi_2x2_setup_figures(
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    eps_clad = n_to_eps(pic.n_clad)
-    eps_slab = n_to_eps(pic.n_eff_slab)
-    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    eps_clad = n_to_eps(circuit.n_clad)
+    eps_slab = n_to_eps(circuit.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(circuit.solver, eps_clad=eps_clad)
     poly_proxy = _PolygonSchematicProxy(
         structures[0],
         material_eps=eps_slab,
-        name=f"SOI 220 nm EIM (n_eff = {pic.n_eff_slab:.2f})",
+        name=f"SOI 220 nm EIM (n_eff = {circuit.n_eff_slab:.2f})",
     )
     mat_names = {
-        "background": f"SiO₂ cladding (n = {pic.n_clad:.2f}, ε_r = {eps_clad:.2f})",
-        "region_0": f"SOI 220 nm EIM (n_eff = {pic.n_eff_slab:.2f}, ε_eff = {eps_slab:.2f})",
+        "background": f"SiO₂ cladding (n = {circuit.n_clad:.2f}, ε_r = {eps_clad:.2f})",
+        "region_0": f"SOI 220 nm EIM (n_eff = {circuit.n_eff_slab:.2f}, ε_eff = {eps_slab:.2f})",
     }
     sources_s, monitors_s = _build_mmi_2x2_sources_and_monitors(
-        pic, y_port=y_port, x_port=x_port, include_flux_box=True
+        circuit, y_port=y_port, x_port=x_port, include_flux_box=True
     )
     variations = [
         {
@@ -733,7 +733,7 @@ def save_mmi_2x2_setup_figures(
         sources=sources_s,
         monitors=monitors_s,
         unit="µm",
-        wavelength=pic.wavelength_ref,
+        wavelength=circuit.wavelength_ref,
         min_feature=min_feature,
         title_geometry=(
             "2×2 SOI Multimode-Interference Power Splitter (2D EIM Setup Schematic)"
@@ -753,18 +753,18 @@ def save_mmi_2x2_setup_figures(
         sources=sources_s,
         monitors=monitors_s,
         unit="µm",
-        wavelength=pic.wavelength_ref,
+        wavelength=circuit.wavelength_ref,
         title="2×2 SOI Multimode-Interference Power Splitter (2D EIM Setup Schematic)",
         width_in=7.6,
         height_in=4.6,
     )
-    x0_um = float(pic.grid.xmin * 1e6)
-    x1_um = float(pic.grid.xmax * 1e6)
-    y0_um = float(pic.grid.ymin * 1e6)
-    y1_um = float(pic.grid.ymax * 1e6)
-    n_pml = int(getattr(pic.solver, "n_pml", 8))
-    th_y_low = float((pic.grid.y[n_pml] - pic.grid.y[0]) * 1e6)
-    th_y_high = float((pic.grid.y[-2] - pic.grid.y[-2 - n_pml]) * 1e6)
+    x0_um = float(circuit.grid.xmin * 1e6)
+    x1_um = float(circuit.grid.xmax * 1e6)
+    y0_um = float(circuit.grid.ymin * 1e6)
+    y1_um = float(circuit.grid.ymax * 1e6)
+    n_pml = int(getattr(circuit.solver, "n_pml", 8))
+    th_y_low = float((circuit.grid.y[n_pml] - circuit.grid.y[0]) * 1e6)
+    th_y_high = float((circuit.grid.y[-2] - circuit.grid.y[-2 - n_pml]) * 1e6)
     for yb_start, th_y in ((y0_um, th_y_low), (y1_um - th_y_high, th_y_high)):
         ax_a.add_patch(
             Rectangle(
@@ -867,7 +867,7 @@ def save_mmi_2x2_setup_figures(
         unit="µm",
         mesh_every=6,
         zoom_bounds=zoom_bounds,
-        wavelength=pic.wavelength_ref,
+        wavelength=circuit.wavelength_ref,
         min_feature=min_feature,
         title="Discretization (Graded Non-Uniform Mesh & 1× Zoom on 200 nm Throat Gap) and Excitation",
         width_in=7.6,
@@ -904,8 +904,8 @@ def save_mmi_2x2_setup_figures(
 
 
 def plot_mesh_upgrade_comparison_mmi_2x2(
-    pic_uniform,
-    pic_nonuniform,
+    circuit_uniform,
+    circuit_nonuniform,
     structures,
     d_fine: dict,
     d_nonuniform: dict,
@@ -932,21 +932,21 @@ def plot_mesh_upgrade_comparison_mmi_2x2(
     ylim_um = (-1.65, 1.65)
     verts_um = np.asarray(structures[0].vertices, dtype=float) * 1e6
 
-    for ax, pic_obj, panel_ttl in (
+    for ax, circuit_obj, panel_ttl in (
         (
             ax0,
-            pic_uniform,
-            f"(a) Baseline L3 mesh ({pic_uniform.grid.Nx}×{pic_uniform.grid.Ny})",
+            circuit_uniform,
+            f"(a) Baseline L3 mesh ({circuit_uniform.grid.Nx}×{circuit_uniform.grid.Ny})",
         ),
         (
             ax1,
-            pic_nonuniform,
-            f"(b) Graded non-square mesh ({pic_nonuniform.grid.Nx}×{pic_nonuniform.grid.Ny})",
+            circuit_nonuniform,
+            f"(b) Graded non-square mesh ({circuit_nonuniform.grid.Nx}×{circuit_nonuniform.grid.Ny})",
         ),
     ):
-        g = pic_obj.grid
+        g = circuit_obj.grid
         iz = g.Nz // 2
-        ieps_y = pic_obj.solver.ieps[:, :, iz, "y"]
+        ieps_y = circuit_obj.solver.ieps[:, :, iz, "y"]
         if hasattr(ieps_y, "get"):
             ieps_y = ieps_y.get()
         ieps_y = np.asarray(ieps_y, dtype=float)
@@ -963,7 +963,7 @@ def plot_mesh_upgrade_comparison_mmi_2x2(
             cmap="Blues",
             shading="flat",
             vmin=2.0,
-            vmax=float(pic_obj.n_eff_slab**2) * 1.03,
+            vmax=float(circuit_obj.n_eff_slab**2) * 1.03,
             alpha=0.88,
         )
         ax.set_xlim(*xlim_um)
@@ -990,7 +990,7 @@ def plot_mesh_upgrade_comparison_mmi_2x2(
             ax.axhline(y_mark, color="#009E73", ls="--", lw=1.0, alpha=0.85)
         st = measure_grid_resolution(
             g,
-            n_pml=pic_obj.n_pml,
+            n_pml=circuit_obj.n_pml,
             l_mmi=l_mmi,
             min_feature=min_feature,
             w_mmi=w_mmi,
@@ -1076,12 +1076,12 @@ def plot_mesh_upgrade_comparison_mmi_2x2(
     nc_f = (
         int(meta_fine["n_cells"])
         if meta_fine
-        else int(pic_uniform.grid.Nx * pic_uniform.grid.Ny)
+        else int(circuit_uniform.grid.Nx * circuit_uniform.grid.Ny)
     )
     nc_n = (
         int(meta_nonuniform["n_cells"])
         if meta_nonuniform
-        else int(pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny)
+        else int(circuit_nonuniform.grid.Nx * circuit_nonuniform.grid.Ny)
     )
     t_f_s = float(meta_fine["elapsed_s"]) if meta_fine else 0.0
     t_n_s = float(meta_nonuniform["elapsed_s"]) if meta_nonuniform else 0.0
@@ -1122,7 +1122,7 @@ def render_mmi_2x2_field_map_with_overlay(
     x: np.ndarray,
     y: np.ndarray,
     field_2d: np.ndarray,
-    pic,
+    circuit,
     structures,
     *,
     kind: str = "intensity_log",
@@ -1166,16 +1166,16 @@ def render_mmi_2x2_field_map_with_overlay(
     cb = fig.colorbar(im, ax=ax, fraction=0.040, pad=0.02)
     cb.set_label(cb_label)
 
-    eps_clad = n_to_eps(pic.n_clad)
-    eps_slab = n_to_eps(pic.n_eff_slab)
-    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    eps_clad = n_to_eps(circuit.n_clad)
+    eps_slab = n_to_eps(circuit.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(circuit.solver, eps_clad=eps_clad)
     poly_proxy = _PolygonSchematicProxy(
         structures[0],
         material_eps=eps_slab,
-        name=f"SOI 220 nm EIM (n={pic.n_eff_slab:.2f})",
+        name=f"SOI 220 nm EIM (n={circuit.n_eff_slab:.2f})",
     )
     sources_s, monitors_s = _build_mmi_2x2_sources_and_monitors(
-        pic, include_flux_box=False
+        circuit, include_flux_box=False
     )
     schematic.overlay_geometry(
         ax,
@@ -1184,8 +1184,8 @@ def render_mmi_2x2_field_map_with_overlay(
         unit="µm",
         structures=[poly_proxy],
         material_names={
-            "background": f"SiO₂ (n={pic.n_clad:.2f})",
-            "region_0": f"SOI 220 nm (n_eff={pic.n_eff_slab:.2f})",
+            "background": f"SiO₂ (n={circuit.n_clad:.2f})",
+            "region_0": f"SOI 220 nm (n_eff={circuit.n_eff_slab:.2f})",
         },
         sources=sources_s,
         monitors=monitors_s,
@@ -1197,10 +1197,10 @@ def render_mmi_2x2_field_map_with_overlay(
         outline_color=outline_col,
         label_materials=True,
     )
-    n_pml = int(getattr(pic.solver, "n_pml", 8))
-    y0_um, y1_um = float(pic.grid.ymin * 1e6), float(pic.grid.ymax * 1e6)
-    x0_um, x1_um = float(pic.grid.xmin * 1e6), float(pic.grid.xmax * 1e6)
-    th_y = float((pic.grid.y[n_pml] - pic.grid.y[0]) * 1e6)
+    n_pml = int(getattr(circuit.solver, "n_pml", 8))
+    y0_um, y1_um = float(circuit.grid.ymin * 1e6), float(circuit.grid.ymax * 1e6)
+    x0_um, x1_um = float(circuit.grid.xmin * 1e6), float(circuit.grid.xmax * 1e6)
+    th_y = float((circuit.grid.y[n_pml] - circuit.grid.y[0]) * 1e6)
     for yb_s in (y0_um, y1_um - th_y):
         ax.add_patch(
             Rectangle(
@@ -1233,7 +1233,7 @@ def render_mmi_2x2_field_comparison_with_overlay(
     y: np.ndarray,
     e2_1550: np.ndarray,
     e2_1580: np.ndarray,
-    pic,
+    circuit,
     structures,
     out_path: str | Path,
 ):
@@ -1247,16 +1247,16 @@ def render_mmi_2x2_field_comparison_with_overlay(
     )
     x_um = np.asarray(x, dtype=float) * 1e6
     y_um = np.asarray(y, dtype=float) * 1e6
-    eps_clad = n_to_eps(pic.n_clad)
-    eps_slab = n_to_eps(pic.n_eff_slab)
-    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    eps_clad = n_to_eps(circuit.n_clad)
+    eps_slab = n_to_eps(circuit.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(circuit.solver, eps_clad=eps_clad)
     poly_proxy = _PolygonSchematicProxy(
         structures[0],
         material_eps=eps_slab,
-        name=f"SOI 220 nm EIM (n={pic.n_eff_slab:.2f})",
+        name=f"SOI 220 nm EIM (n={circuit.n_eff_slab:.2f})",
     )
     sources_s, monitors_s = _build_mmi_2x2_sources_and_monitors(
-        pic, include_flux_box=False
+        circuit, include_flux_box=False
     )
 
     for ax, field_arr, wl_lbl in zip(
@@ -1284,8 +1284,8 @@ def render_mmi_2x2_field_comparison_with_overlay(
             unit="µm",
             structures=[poly_proxy],
             material_names={
-                "background": f"SiO₂ (n={pic.n_clad:.2f})",
-                "region_0": f"SOI 220 nm (n_eff={pic.n_eff_slab:.2f})",
+                "background": f"SiO₂ (n={circuit.n_clad:.2f})",
+                "region_0": f"SOI 220 nm (n_eff={circuit.n_eff_slab:.2f})",
             },
             sources=sources_s,
             monitors=monitors_s,
@@ -1316,7 +1316,7 @@ def render_mmi_2x2_movie_with_overlay(
     y: np.ndarray,
     frames: np.ndarray,
     times: np.ndarray,
-    pic,
+    circuit,
     structures,
     out_path: str | Path,
     *,
@@ -1345,16 +1345,16 @@ def render_mmi_2x2_movie_with_overlay(
     cb = fig.colorbar(im, ax=ax, fraction=0.040, pad=0.02)
     cb.set_label(r"$E_y(x, y, t)$ [arb. u.]")
 
-    eps_clad = n_to_eps(pic.n_clad)
-    eps_slab = n_to_eps(pic.n_eff_slab)
-    solver_proxy = _SchematicSolverProxy(pic.solver, eps_clad=eps_clad)
+    eps_clad = n_to_eps(circuit.n_clad)
+    eps_slab = n_to_eps(circuit.n_eff_slab)
+    solver_proxy = _SchematicSolverProxy(circuit.solver, eps_clad=eps_clad)
     poly_proxy = _PolygonSchematicProxy(
         structures[0],
         material_eps=eps_slab,
-        name=f"SOI 220 nm EIM (n={pic.n_eff_slab:.2f})",
+        name=f"SOI 220 nm EIM (n={circuit.n_eff_slab:.2f})",
     )
     sources_s, monitors_s = _build_mmi_2x2_sources_and_monitors(
-        pic, include_flux_box=False
+        circuit, include_flux_box=False
     )
     schematic.overlay_geometry(
         ax,
@@ -1363,8 +1363,8 @@ def render_mmi_2x2_movie_with_overlay(
         unit="µm",
         structures=[poly_proxy],
         material_names={
-            "background": f"SiO₂ (n={pic.n_clad:.2f})",
-            "region_0": f"SOI 220 nm (n_eff={pic.n_eff_slab:.2f})",
+            "background": f"SiO₂ (n={circuit.n_clad:.2f})",
+            "region_0": f"SOI 220 nm (n_eff={circuit.n_eff_slab:.2f})",
         },
         sources=sources_s,
         monitors=monitors_s,

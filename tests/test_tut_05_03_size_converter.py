@@ -40,7 +40,7 @@ from _helpers import (  # noqa: E402
     WL_MAX,
     WL_MIN,
     WL_REF,
-    NonUniformSemilensPIC,
+    NonUniformSemilensCircuit,
     SymmetricProfileSlab,
     build_luneburg_converter,
     build_semilens_expander,
@@ -56,7 +56,7 @@ from _helpers import (  # noqa: E402
 )
 from size_converter import get_task_table  # noqa: E402
 
-from wakis.templates.photonics import PICSimulation, Port, n_to_eps  # noqa: E402
+from wakis.templates.photonics import PhotonicCircuit, Port, n_to_eps  # noqa: E402
 
 
 def test_task_table_resolution_rules():
@@ -130,7 +130,7 @@ def test_luneburg_calibration_and_2d_grid():
     assert rel_err < 1.2e-2
 
     structures, ports, domain_2d, _ = build_luneburg_converter(n_shells=16)
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         n_freqs=11,
@@ -147,9 +147,9 @@ def test_luneburg_calibration_and_2d_grid():
         n_pml=6,
         mesh_overrides=waveguide_width_mesh_overrides(4, width=W_OUT_TAPER),
     )
-    assert pic.grid.Nz == 1
+    assert circuit.grid.Nz == 1
     res_m = measure_grid_resolution(
-        pic.grid,
+        circuit.grid,
         min_feature_m=MIN_FEATURE_LUNEBURG,
         feature_bounds=(-0.5 * W_OUT_TAPER, 0.5 * W_OUT_TAPER),
         feature_axis=1,
@@ -157,11 +157,11 @@ def test_luneburg_calibration_and_2d_grid():
     assert res_m["cells_across_feature"] >= 4.0
 
     # Core permittivity at center (0, 0) must exceed edge waveguide permittivity
-    ix0 = int(np.argmin(np.abs(pic.grid.x[:-1])))
-    iy0 = int(np.argmin(np.abs(pic.grid.y[:-1])))
-    eps_center = 1.0 / float(pic.solver.ieps[ix0, iy0, 0, "y"])
-    ix_wg = int(np.argmin(np.abs(pic.grid.x[:-1] - (-6.0e-6))))
-    eps_wg = 1.0 / float(pic.solver.ieps[ix_wg, iy0, 0, "y"])
+    ix0 = int(np.argmin(np.abs(circuit.grid.x[:-1])))
+    iy0 = int(np.argmin(np.abs(circuit.grid.y[:-1])))
+    eps_center = 1.0 / float(circuit.solver.ieps[ix0, iy0, 0, "y"])
+    ix_wg = int(np.argmin(np.abs(circuit.grid.x[:-1] - (-6.0e-6))))
+    eps_wg = 1.0 / float(circuit.solver.ieps[ix_wg, iy0, 0, "y"])
     assert eps_center > 1.8 * eps_wg
 
 
@@ -222,7 +222,7 @@ def test_abrupt_step_overlap_and_taper_monotonicity():
             mesh_overrides=overrides,
             collect_fields=False,
         )
-        wl = res["pic"].wavelengths
+        wl = res["circuit"].wavelengths
         i0 = int(np.argmin(np.abs(wl - WL_REF)))
         t_val = float(np.abs(res["s_matrix"][("out", "in")][i0]) ** 2)
         r_val = float(np.abs(res["s_matrix"][("in", "in")][i0]) ** 2)
@@ -369,14 +369,14 @@ def test_semilens_beam_expander_and_mutation_check():
         multimode_indices=(0, 2, 4),
     )
     res_m = measure_grid_resolution(
-        res_nom["pic"].grid,
+        res_nom["circuit"].grid,
         min_feature_m=MIN_FEATURE_SEMILENS,
         feature_bounds=(seg3_lo, seg3_hi),
         feature_axis=0,
     )
     assert res_m["cells_across_feature"] >= 4.0 - 1e-6
 
-    i0 = int(np.argmin(np.abs(res_nom["pic"].wavelengths - WL_REF)))
+    i0 = int(np.argmin(np.abs(res_nom["circuit"].wavelengths - WL_REF)))
     t_te0_nom = float(np.abs(res_nom["s_matrix"][("out", "in")][i0]) ** 2)
     t_flux_nom = float(res_nom["t_flux_port"][i0])
     even_powers = [
@@ -423,8 +423,8 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
        (`04b_mesh_upgrade_comparison.png`), and split taper field figures
        (`08_taper_ey_field_comparison.png`, `08b_taper_ey_long_comparison.png`)
        exist and are non-empty, and `15_pulse_propagation.gif` is < 5 MB.
-    2. `NonUniformSemilensPIC` (`kottke_nonuniform`, `task_15`) reduces the 2D
-       cell count by > 25% compared to uniform-background `PICSimulation` at
+    2. `NonUniformSemilensCircuit` (`kottke_nonuniform`, `task_15`) reduces the 2D
+       cell count by > 25% compared to uniform-background `PhotonicCircuit` at
        `(cpw=20, n_feature=8)` while preserving 8.0 cells across the 50 nm
        Segment 3 flare and matching `kottke_L3` (`task_6`) and `kottke_reference`
        (`task_8`) guided transmission within 0.3%.
@@ -450,7 +450,7 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
         assert gif_path.stat().st_size < 5 * 1024 * 1024
 
     semi_structs, semi_ports, semi_dom = build_semilens_expander()
-    pic_u = PICSimulation(
+    circuit_u = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -465,7 +465,7 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
         n_pml=10,
         mesh_overrides=semilens_mesh_overrides(8),
     )
-    pic_nu = NonUniformSemilensPIC(
+    circuit_nu = NonUniformSemilensCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -480,12 +480,12 @@ def test_setup_schematic_and_nonuniform_mesh_upgrade():
         n_pml=10,
         n_feature=8,
     )
-    n_u = int(pic_u.grid.Nx * pic_u.grid.Ny)
-    n_nu = int(pic_nu.grid.Nx * pic_nu.grid.Ny)
+    n_u = int(circuit_u.grid.Nx * circuit_u.grid.Ny)
+    n_nu = int(circuit_nu.grid.Nx * circuit_nu.grid.Ny)
     assert n_nu < 0.75 * n_u
 
     m_nu = measure_grid_resolution(
-        pic_nu.grid,
+        circuit_nu.grid,
         min_feature_m=MIN_FEATURE_SEMILENS,
         feature_bounds=(SEMILENS_SEG3_X_LO, SEMILENS_SEG3_X_HI),
         feature_axis=0,

@@ -6,11 +6,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Photonic-integrated-circuit (PIC) geometry primitives, subpixel-smoothed
+Photonic-integrated-circuit geometry primitives, subpixel-smoothed
 polygonal slabs, effective-index 2D/3D simulation wrapper, S-parameter port
 extraction, and plotting helpers.
 
-Materials in `PIC_MATERIALS` provide non-dispersive refractive indices at
+Materials in `PHOTONIC_MATERIALS` provide non-dispersive refractive indices at
 lambda = 1550 nm. Over 1500-1600 nm silicon changes by ~0.8 % and SiO2 by
 ~0.1 %; for broadband dispersive time-domain runs use the `'silicon'`
 Sellmeier ADE model in `wakis.templates.shapes.resolve_material`.
@@ -29,6 +29,7 @@ References
 """
 
 import copy
+import warnings
 from pathlib import Path as FilePath
 
 import matplotlib.pyplot as plt
@@ -49,7 +50,7 @@ from .formulas import slab_waveguide_neff
 from .shapes import Box, material_eps, resolve_material
 from .simulation import Simulation
 
-PIC_MATERIALS = {
+PHOTONIC_MATERIALS = {
     "Si": 3.476,
     "SiO2": 1.444,
     "Si3N4": 1.996,
@@ -58,10 +59,10 @@ PIC_MATERIALS = {
 
 
 def n_to_eps(n):
-    """Convert refractive index (or `PIC_MATERIALS` key) to relative permittivity `n**2`."""
+    """Convert refractive index (or `PHOTONIC_MATERIALS` key) to relative permittivity `n**2`."""
     if isinstance(n, str):
-        if n in PIC_MATERIALS:
-            n = PIC_MATERIALS[n]
+        if n in PHOTONIC_MATERIALS:
+            n = PHOTONIC_MATERIALS[n]
         else:
             return resolve_material(n)
     return np.asarray(n, dtype=float) ** 2 if np.ndim(n) > 0 else float(n) ** 2
@@ -105,7 +106,7 @@ class PolySlab:
     z_min, z_max : float
         Bottom and top z coordinates [m] (`z_min < z_max`).
     material : float, str or DispersiveMaterial
-        Relative permittivity `eps_r`, key of `PIC_MATERIALS`, `'pec'`, or
+        Relative permittivity `eps_r`, key of `PHOTONIC_MATERIALS`, `'pec'`, or
         key of `wakis.materials.dispersive_lib`.
     holes : sequence of array_like, optional
         Interior hole polygons `(M_i, 2)` [m] subtracted from the slab.
@@ -123,8 +124,8 @@ class PolySlab:
         self.holes = [_clean_polygon(h, ccw=True) for h in holes]
         self.z_min = float(z_min)
         self.z_max = float(z_max)
-        if isinstance(material, str) and material in PIC_MATERIALS:
-            material = n_to_eps(PIC_MATERIALS[material])
+        if isinstance(material, str) and material in PHOTONIC_MATERIALS:
+            material = n_to_eps(PHOTONIC_MATERIALS[material])
         self.material = resolve_material(material)
         self.sidewall_angle_deg = float(sidewall_angle_deg)
         self._tan_angle = float(np.tan(np.deg2rad(self.sidewall_angle_deg)))
@@ -529,8 +530,8 @@ def slab_neff(n_core, n_clad, thickness, wavelength, n_sub=None, polarization="T
 
 
 def vertical_slab_mode(
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
     wavelength=1550e-9,
     n_sub=None,
@@ -570,7 +571,7 @@ def vertical_slab_mode(
     }
 
 
-# ------------------------------------------------------- ports & PICSimulation
+# ----------------------------------------------------- ports & PhotonicCircuit
 class Port:
     """Named waveguide mode port on a plane normal to x or y."""
 
@@ -639,14 +640,14 @@ class _SnapshotRecorder:
         self.step += 1
 
 
-class PICSimulation:
+class PhotonicCircuit:
     """
     Photonic-integrated-circuit wrapper on top of `Simulation`.
 
     Supports both the 2D effective-index method (`two_d=True`, default) and 3D
     extruded `PolySlab` stacks, with subpixel Kottke permittivity smoothing and
     multi-port S-parameter extraction. Pass `backend="subgrid"` to dispatch to
-    `wakis.subgrid.SubgridPICSimulation`.
+    `wakis.subgrid.SubgridPhotonicCircuit`.
 
     `mesh_overrides` (list of (lo, hi, max_cell) boxes [m]) refines the mesh
     locally, e.g. to put >= 4 cells across a coupler gap, slot or grating
@@ -655,12 +656,12 @@ class PICSimulation:
 
     def __new__(cls, *args, backend=None, **kwargs):
         if backend == "subgrid":
-            from ..subgrid.pic import SubgridPICSimulation
+            from ..subgrid.photonic_circuit import SubgridPhotonicCircuit
 
-            return SubgridPICSimulation(*args, **kwargs)
+            return SubgridPhotonicCircuit(*args, **kwargs)
         if backend not in (None, "cartesian"):
             raise ValueError(
-                f"Unknown PICSimulation backend {backend!r}; expected None, 'cartesian' or 'subgrid'."
+                f"Unknown PhotonicCircuit backend {backend!r}; expected None, 'cartesian' or 'subgrid'."
             )
         return super().__new__(cls)
 
@@ -670,8 +671,8 @@ class PICSimulation:
         wavelength_max=1600e-9,
         structures=(),
         ports=(),
-        n_core=PIC_MATERIALS["Si"],
-        n_clad=PIC_MATERIALS["SiO2"],
+        n_core=PHOTONIC_MATERIALS["Si"],
+        n_clad=PHOTONIC_MATERIALS["SiO2"],
         n_sub=None,
         wavelength_ref=1550e-9,
         two_d=True,
@@ -853,7 +854,7 @@ class PICSimulation:
         `ModeMonitor`, so `|S[(out, in)]|^2` is the guided modal power fraction.
         """
         if not self.ports:
-            raise ValueError("No ports defined on PICSimulation.")
+            raise ValueError("No ports defined on PhotonicCircuit.")
         if drive is None:
             drive = [self.ports[0].name]
         elif isinstance(drive, str):
@@ -1027,6 +1028,29 @@ class PICSimulation:
         return s_matrix
 
 
+class PICSimulation(PhotonicCircuit):
+    """Deprecated alias for `PhotonicCircuit`."""
+
+    def __new__(cls, *args, **kwargs):
+        warnings.warn(
+            "PICSimulation is deprecated; use PhotonicCircuit instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return super().__new__(cls, *args, **kwargs)
+
+
+def __getattr__(name):
+    if name == "PIC_MATERIALS":
+        warnings.warn(
+            "PIC_MATERIALS is deprecated; use PHOTONIC_MATERIALS instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return PHOTONIC_MATERIALS
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # -------------------------------------------------------------- figure helpers
 def _finalize_fig(fig, out_path, close=True):
     fig.tight_layout()
@@ -1065,7 +1089,7 @@ def plot_layout(
     out_path=None,
     ax=None,
 ):
-    """Plot top-view x-y PIC layout with ports and dimensional annotations."""
+    """Plot top-view x-y photonic-circuit layout with ports and dimensional annotations."""
     created = ax is None
     fig, ax = plt.subplots(figsize=(8.0, 4.2), dpi=150) if created else (ax.figure, ax)
     all_lo = np.min([s.bounds[0][:2] for s in structures], axis=0) * 1e6
@@ -1139,8 +1163,8 @@ def plot_layout(
 
 
 def plot_eim_stack(
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
     wavelength_ref=1550e-9,
     wavelengths=None,
@@ -1233,8 +1257,8 @@ def plot_eim_stack(
 def plot_3d(
     structures,
     out_path=None,
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
 ):
     """2D-scope replacement for 3D render: plots the EIM vertical stack and slab mode."""

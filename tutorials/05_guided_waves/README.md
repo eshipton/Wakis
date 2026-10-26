@@ -1,8 +1,8 @@
 # Chapter 5 · Guided Waves
 
-Worked examples of passive silicon-on-insulator (SOI) and silicon-nitride ($\text{Si}_3\text{N}_4$) photonic integrated circuit (PIC) waveguides, splitters, bends, mode converters, couplers, and ring resonators modeled with the Finite Integration Technique (FIT) in Wakis (`wakis.templates.photonics`).
+Worked examples of passive silicon-on-insulator (SOI) and silicon-nitride ($\text{Si}_3\text{N}_4$) photonic integrated circuit waveguides, splitters, bends, mode converters, couplers, and ring resonators modeled with the Finite Integration Technique (FIT) in Wakis (`wakis.templates.photonics`).
 
-Every tutorial runs as a **2D effective-index (EIM)** simulation (`Ex`, `Ey`, `Hz`; one periodic cell along $z$) with **Kottke (2008) subpixel permittivity smoothing** on extruded polygonal slabs (`PolySlab`), broadband eigenmode port sources and monitors (`ModeSource`, `ModeMonitor`), and automated $N$-port S-parameter extraction (`PICSimulation.run_s_parameters`). All geometry primitives (`PolySlab`, `straight`, `taper`, `spline_taper`, `arc`, `euler_bend`, `sbend`, `ring`) retain their full vertical $z$ bounds so that selected tutorials can be extended to 3D on GPU.
+Every tutorial runs as a **2D effective-index (EIM)** simulation (`Ex`, `Ey`, `Hz`; one periodic cell along $z$) with **Kottke (2008) subpixel permittivity smoothing** on extruded polygonal slabs (`PolySlab`), broadband eigenmode port sources and monitors (`ModeSource`, `ModeMonitor`), and automated $N$-port S-parameter extraction (`PhotonicCircuit.run_s_parameters`). All geometry primitives (`PolySlab`, `straight`, `taper`, `spline_taper`, `arc`, `euler_bend`, `sbend`, `ring`) retain their full vertical $z$ bounds so that selected tutorials can be extended to 3D on GPU.
 
 ## Tutorials
 

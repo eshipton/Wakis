@@ -4,21 +4,27 @@
 # ########################################### #
 
 """
-Validation tests for the photonic-integrated-circuit (PIC) toolkit in
+Validation tests for the photonic-integrated-circuit toolkit in
 `wakis.templates.photonics` and subpixel Kottke averaging in
 `wakis.templates.shapes`.
 """
+
+import warnings
 
 import numpy as np
 import pytest
 from scipy.constants import c as c_light
 
+import wakis.templates as templates_mod
+import wakis.templates.photonics as photonics_mod
 from wakis.mode_solver import solve_modes
+from wakis.subgrid import SubgridPhotonicCircuit
 from wakis.templates import Box, Simulation
 from wakis.templates.formulas import slab_waveguide_neff
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
+    PHOTONIC_MATERIALS,
     PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     euler_bend,
@@ -224,8 +230,8 @@ def test_kottke_vs_staircase_slab_modes():
     """
     lam0 = 1.55e-6
     f0 = c_light / lam0
-    n_core = PIC_MATERIALS["Si"]
-    n_clad = PIC_MATERIALS["SiO2"]
+    n_core = PHOTONIC_MATERIALS["Si"]
+    n_clad = PHOTONIC_MATERIALS["SiO2"]
     eps_core = n_to_eps(n_core)
     eps_clad = n_to_eps(n_clad)
     thickness = 0.22e-6
@@ -317,7 +323,7 @@ def test_straight_waveguide_2d_eim():
         straight((-0.5 * length, 0.0), (0.5 * length, 0.0), width=w_wg),
         z_min=0.0,
         z_max=0.22e-6,
-        material=n_to_eps(PIC_MATERIALS["Si"]),
+        material=n_to_eps(PHOTONIC_MATERIALS["Si"]),
     )
     ports = [
         Port(
@@ -333,7 +339,7 @@ def test_straight_waveguide_2d_eim():
             direction=+1,
         ),
     ]
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=1.50e-6,
         wavelength_max=1.60e-6,
         n_freqs=21,
@@ -346,7 +352,9 @@ def test_straight_waveguide_2d_eim():
         record_movie=True,
         movie_frames=10,
     )
-    s_mat = pic.run_s_parameters(drive=["in"], energy_decay=1e-4, collect_fields=True)
+    s_mat = circuit.run_s_parameters(
+        drive=["in"], energy_decay=1e-4, collect_fields=True
+    )
     t_power = np.abs(s_mat[("out", "in")]) ** 2
     r_power = np.abs(s_mat[("in", "in")]) ** 2
     # Check interior band points (avoiding Gaussian pulse edges)
@@ -357,12 +365,12 @@ def test_straight_waveguide_2d_eim():
     assert float(np.max(r_power[mid])) < 1e-3, (
         f"Max straight waveguide reflection {np.max(r_power[mid]):.4e} >= 1e-3"
     )
-    assert 1550e-9 in pic.dft_fields
-    assert pic.dft_fields[1550e-9]["E2"].max() > 0
-    assert pic.movie_data is not None and len(pic.movie_data["frames"]) > 0
-    assert pic.port_time_trace is not None and pic.port_time_trace["t"].size > 0
-    assert pic.flux_balance is not None
-    np.testing.assert_allclose(pic.flux_balance["total_box"][mid], 1.0, atol=0.03)
+    assert 1550e-9 in circuit.dft_fields
+    assert circuit.dft_fields[1550e-9]["E2"].max() > 0
+    assert circuit.movie_data is not None and len(circuit.movie_data["frames"]) > 0
+    assert circuit.port_time_trace is not None and circuit.port_time_trace["t"].size > 0
+    assert circuit.flux_balance is not None
+    np.testing.assert_allclose(circuit.flux_balance["total_box"][mid], 1.0, atol=0.03)
 
 
 def test_y_junction_2d_eim_symmetry_and_power():
@@ -375,7 +383,7 @@ def test_y_junction_2d_eim_symmetry_and_power():
         np.array([0.5, 0.5, 0.6, 0.7, 0.9, 1.26, 1.4, 1.4, 1.4, 1.4, 1.31, 1.2, 1.2])
         * 1e-6
     )
-    eps_si = n_to_eps(PIC_MATERIALS["Si"])
+    eps_si = n_to_eps(PHOTONIC_MATERIALS["Si"])
     in_wg = PolySlab(straight((-1.2e-6, 0.0), (0.0, 0.0), 0.5e-6), 0.0, 0.22e-6, eps_si)
     junc = PolySlab(
         spline_taper(2.0e-6, widths, x0=0.0, y0=0.0, n=100), 0.0, 0.22e-6, eps_si
@@ -418,7 +426,7 @@ def test_y_junction_2d_eim_symmetry_and_power():
             direction=+1,
         ),
     ]
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=1.50e-6,
         wavelength_max=1.60e-6,
         n_freqs=21,
@@ -429,7 +437,9 @@ def test_y_junction_2d_eim_symmetry_and_power():
         domain=(-1.1e-6, 4.8e-6, -1.9e-6, 1.9e-6),
         n_pml=8,
     )
-    s_mat = pic.run_s_parameters(drive=["in"], energy_decay=1e-3, collect_fields=False)
+    s_mat = circuit.run_s_parameters(
+        drive=["in"], energy_decay=1e-3, collect_fields=False
+    )
     t1 = np.abs(s_mat[("out1", "in")]) ** 2
     t2 = np.abs(s_mat[("out2", "in")]) ** 2
     r = np.abs(s_mat[("in", "in")]) ** 2
@@ -454,8 +464,8 @@ def test_off_center_polyslab_mesh_and_kottke_anisotropy():
     (tangential) permittivities on cut cells.
     """
     f0 = c_light / 1.55e-6
-    eps_si = n_to_eps(PIC_MATERIALS["Si"])
-    eps_sio2 = n_to_eps(PIC_MATERIALS["SiO2"])
+    eps_si = n_to_eps(PHOTONIC_MATERIALS["Si"])
+    eps_sio2 = n_to_eps(PHOTONIC_MATERIALS["SiO2"])
     bg = Box((0.0, 0.0, 0.0), (4.0e-6, 6.0e-6, 2.0e-6), material=eps_sio2)
     # Off-center waveguide at y = +1.511 um (does not cross domain midpoint y = 0)
     wg = PolySlab(
@@ -478,7 +488,7 @@ def test_off_center_polyslab_mesh_and_kottke_anisotropy():
     solver_a = sim_a.build()
 
     dy = np.diff(sim_k.grid.y)
-    expected_core_dy = 1.55e-6 / (PIC_MATERIALS["Si"] * 16)
+    expected_core_dy = 1.55e-6 / (PHOTONIC_MATERIALS["Si"] * 16)
     # Without interval-overlap check in Simulation._axis, dy would be ~67 nm (cladding)
     # instead of ~27.8 nm (Si core) when the PolySlab does not cross y = 0.
     assert float(np.max(dy)) <= expected_core_dy * 1.02
@@ -500,18 +510,18 @@ def test_off_center_polyslab_mesh_and_kottke_anisotropy():
     assert np.allclose(ieps_xk, ieps_xa, rtol=1e-12)
 
 
-def _pic_straight(mesh_overrides=(), cpw=10):
+def _circuit_straight(mesh_overrides=(), cpw=10):
     wg = PolySlab(
         straight((-1.5e-6, 0.0), (1.5e-6, 0.0), width=0.5e-6),
         z_min=0.0,
         z_max=0.22e-6,
-        material=n_to_eps(PIC_MATERIALS["Si"]),
+        material=n_to_eps(PHOTONIC_MATERIALS["Si"]),
     )
     ports = [
         Port("in", center=(-1.0e-6, 0.0, 0.11e-6), size=(0.0, 2.0e-6, 0.8e-6)),
         Port("out", center=(1.0e-6, 0.0, 0.11e-6), size=(0.0, 2.0e-6, 0.8e-6)),
     ]
-    return PICSimulation(
+    return PhotonicCircuit(
         wavelength_min=1.50e-6,
         wavelength_max=1.60e-6,
         n_freqs=21,
@@ -532,8 +542,8 @@ def test_mesh_override_refines_box_and_grades_out():
     """
     h = 15e-9
     box = ((-0.2e-6, 0.25e-6, -np.inf), (0.2e-6, 0.35e-6, np.inf), h)
-    plain = _pic_straight()
-    fine = _pic_straight(mesh_overrides=[box])
+    plain = _circuit_straight()
+    fine = _circuit_straight(mesh_overrides=[box])
     for axis, (a, b) in ((0, (-0.2e-6, 0.2e-6)), (1, (0.25e-6, 0.35e-6))):
         nodes = (fine.grid.x, fine.grid.y)[axis]
         d = np.diff(nodes)
@@ -553,8 +563,8 @@ def test_mesh_override_graded_straight_waveguide_low_reflection():
     significant reflection: |S11|^2 < 1e-3, |S21|^2 > 0.98 (as uniform).
     """
     box = ((-0.3e-6, -0.3e-6, -np.inf), (0.3e-6, 0.3e-6, np.inf), 12e-9)
-    pic = _pic_straight(mesh_overrides=[box], cpw=12)
-    s_mat = pic.run_s_parameters(drive=["in"], energy_decay=1e-4)
+    circuit = _circuit_straight(mesh_overrides=[box], cpw=12)
+    s_mat = circuit.run_s_parameters(drive=["in"], energy_decay=1e-4)
     mid = slice(3, -3)
     t_power = np.abs(s_mat[("out", "in")]) ** 2
     r_power = np.abs(s_mat[("in", "in")]) ** 2
@@ -565,7 +575,7 @@ def test_mesh_override_graded_straight_waveguide_low_reflection():
 def test_mesh_override_per_axis_cap():
     """A per-axis cap (hx, hy, hz) refines only the axes that ask for it."""
     box = ((-0.2e-6, 0.25e-6, -np.inf), (0.2e-6, 0.35e-6, np.inf), (1.0, 15e-9, 1.0))
-    plain, fine = _pic_straight(), _pic_straight(mesh_overrides=[box])
+    plain, fine = _circuit_straight(), _circuit_straight(mesh_overrides=[box])
     np.testing.assert_allclose(
         np.diff(fine.grid.x).max(), np.diff(plain.grid.x).max(), rtol=0.05
     )
@@ -573,3 +583,55 @@ def test_mesh_override_per_axis_cap():
     assert np.diff(fine.grid.y)[(mid > 0.25e-6) & (mid < 0.35e-6)].max() <= 15e-9 * (
         1 + 1e-9
     )
+
+
+def test_deprecated_pic_aliases_and_mutation():
+    """
+    Deprecated `PICSimulation` and `PIC_MATERIALS` still work and emit
+    `DeprecationWarning`; `PhotonicCircuit` and `PHOTONIC_MATERIALS` emit no
+    warning.
+    """
+    wg = PolySlab(
+        straight((-1.5e-6, 0.0), (1.5e-6, 0.0), width=0.5e-6),
+        z_min=0.0,
+        z_max=0.22e-6,
+        material=n_to_eps(PHOTONIC_MATERIALS["Si"]),
+    )
+    ports = [
+        Port("in", center=(-1.0e-6, 0.0, 0.11e-6), size=(0.0, 2.0e-6, 0.8e-6)),
+        Port("out", center=(1.0e-6, 0.0, 0.11e-6), size=(0.0, 2.0e-6, 0.8e-6)),
+    ]
+    kw = dict(
+        wavelength_min=1.50e-6,
+        wavelength_max=1.60e-6,
+        n_freqs=11,
+        structures=[wg],
+        ports=ports,
+        cells_per_wavelength=10,
+        domain=(-1.3e-6, 1.3e-6, -1.2e-6, 1.2e-6),
+        n_pml=6,
+    )
+
+    with warnings.catch_warnings(record=True) as rec_new:
+        warnings.simplefilter("always", DeprecationWarning)
+        circuit_new = PhotonicCircuit(**kw)
+        _ = PHOTONIC_MATERIALS["Si"]
+    dep_new = [w for w in rec_new if issubclass(w.category, DeprecationWarning)]
+    assert len(dep_new) == 0
+
+    with pytest.deprecated_call(match="PICSimulation is deprecated"):
+        circuit_old = PICSimulation(**kw)
+    assert isinstance(circuit_old, PhotonicCircuit)
+    assert circuit_old.grid.Nx == circuit_new.grid.Nx
+
+    with pytest.deprecated_call(match="PICSimulation is deprecated"):
+        circuit_sg = PICSimulation(**kw, backend="subgrid")
+    assert isinstance(circuit_sg, SubgridPhotonicCircuit)
+
+    with pytest.deprecated_call(match="PIC_MATERIALS is deprecated"):
+        mats_phot = photonics_mod.PIC_MATERIALS
+    assert mats_phot == PHOTONIC_MATERIALS
+
+    with pytest.deprecated_call(match="PIC_MATERIALS is deprecated"):
+        mats_tmpl = templates_mod.PIC_MATERIALS
+    assert mats_tmpl == PHOTONIC_MATERIALS

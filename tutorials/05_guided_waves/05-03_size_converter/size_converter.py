@@ -23,7 +23,7 @@
 # waveguides ($w \sim 9\text{--}10\;\mu\text{m}$, used for low-loss delay lines,
 # grating couplers, and star couplers) and submicron single-mode strip waveguides
 # ($w \sim 0.45\text{--}0.50\;\mu\text{m}$, used for compact bends and routing)
-# is a fundamental challenge in silicon photonic integrated circuits (PICs).
+# is a fundamental challenge in silicon photonic integrated circuits.
 # Whereas conventional linear adiabatic tapers require lengths $L_t \gtrsim
 # 50\text{--}100\;\mu\text{m}$ to suppress coupling into higher-order symmetric
 # slab modes, metamaterial and wavefront-transforming mode-size converters shrink
@@ -177,7 +177,7 @@
 # | Variation | Design 1: Linear & non-linear tapers (tasks 10–14) | param=w_in = 10.0 µm → w_out = 0.50 µm (t_Si = 110 nm, n_eff,slab = 2.2166), L_t ∈ [0, 100] µm, note=Linear, parabolic, exponential, and cosine tapers vs Milton–Burns adiabatic scaling & abrupt-step overlap |
 # | Variation | Design 2: Graded-thickness Luneburg lens (task 9) | param=D_lens = 11.0 µm (R = 5.5 µm, 60 CircularPolySlab shells, t(r) ∈ [110, 356.1] nm), note=n_eff(r) = n_edge √(2 − (r/R)²) ∈ [2.2166, 3.1348] calibrated via 1D SOI slab cubic polynomial fit |
 # | Variation | Resolution & subpixel ladder (tasks 0–8) | param=(cpw, N_feat) ∈ {(10, 1) demo, (10, 4) L1, (14, 6) L2, (20, 8) L3, (40, 16) R}, note=Kottke subpixel smoothing vs staircasing across the L₃ = 50 nm Segment 3 flare |
-# | Variation | Graded non-uniform Cartesian mesh (task 15) | param=NonUniformSemilensPIC (424 × 407 × 1 = 172,568 cells vs 235,008 at L3), note=8.0 cells across L₃ = 50 nm (Δx_min = 6.25 nm), non-square lead cells (−26.6% cells, −33.2% time) |
+# | Variation | Graded non-uniform Cartesian mesh (task 15) | param=NonUniformSemilensCircuit (424 × 407 × 1 = 172,568 cells vs 235,008 at L3), note=8.0 cells across L₃ = 50 nm (Δx_min = 6.25 nm), non-square lead cells (−26.6% cells, −33.2% time) |
 #
 # ![Taper and Luneburg schematics](figures/00b_taper_and_luneburg_schematics.png)
 
@@ -210,7 +210,7 @@ from _helpers import (  # noqa: E402
     N_FREQS,
     N_SI,
     N_SIO2,
-    NonUniformSemilensPIC,
+    NonUniformSemilensCircuit,
     R_LENS,
     SEMILENS_L_UM,
     SEMILENS_M,
@@ -247,7 +247,7 @@ from _helpers import (  # noqa: E402
 
 from wakis import figstyle, schematic  # noqa: E402
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     make_movie,
     n_to_eps,
     plot_cross_section_mesh,
@@ -342,7 +342,7 @@ FIG_DIR = HERE / "figures"
 #   strip has width $w_0 = 0.45\;\mu\text{m} = 450\;\text{nm}$. At $\text{cpw} = 10$
 #   ($n_{\text{eff,slab}} = 2.9545$), the unrefined background cell size is
 #   $\Delta x_{\text{bg}} \approx 50.6\;\text{nm}$, which places only **$0.99$
-#   cells** across the $50\;\text{nm}$ flare! We use `PICSimulation(..., mesh_overrides=...)`
+#   cells** across the $50\;\text{nm}$ flare! We use `PhotonicCircuit(..., mesh_overrides=...)`
 #   to pass tensor-product refinement boxes over $x \in [4.61, 4.66]\;\mu\text{m}$
 #   with $h_x \le 50\;\text{nm}/N$ and over $y \in [-0.225, +0.225]\;\mu\text{m}$
 #   with $h_y \le 450\;\text{nm}/N$, which grade smoothly back to $\Delta x_{\text{bg}}$
@@ -352,7 +352,7 @@ FIG_DIR = HERE / "figures"
 #   **$w_{\text{out}} = 0.50\;\mu\text{m} = 500\;\text{nm}$** ($y \in [-0.25, +0.25]\;\mu\text{m}$),
 #   which is refined with a transverse override box $h_y \le 500\;\text{nm}/N$.
 #
-# ### 4.2 Graded non-uniform Cartesian & body-fitted hybrid mesh upgrades (`NonUniformSemilensPIC`, `subtri_circles_mesh`)
+# ### 4.2 Graded non-uniform Cartesian & body-fitted hybrid mesh upgrades (`NonUniformSemilensCircuit`, `subtri_circles_mesh`)
 #
 # Even with local `mesh_overrides` across Segment 3 ($x \in [4.61, 4.66]\;\mu\text{m}$),
 # the baseline `kottke_L3` (`task_6`) mesh keeps a uniform $25.35\;\text{nm}$
@@ -360,7 +360,7 @@ FIG_DIR = HERE / "figures"
 # ($512 \times 459 \times 1 = 235{,}008$ cells, $895.42\;\text{s}$). Two geometry-adapted
 # meshing strategies substantially reduce the cell count or conform to curved rims:
 #
-# 1. **Graded non-uniform Cartesian mesh (`NonUniformSemilensPIC`, `kottke_nonuniform`, `task_15`)**:
+# 1. **Graded non-uniform Cartesian mesh (`NonUniformSemilensCircuit`, `kottke_nonuniform`, `task_15`)**:
 #    - **Axial grading & non-square lead cells**: Retains $\Delta x_{\text{flare}} = 6.25\;\text{nm}$
 #      ($8.0$ cells across $L_3 = 50\;\text{nm}$) across Segment 3 and isotropic
 #      $\Delta x_{\text{lens}} = 25.0\;\text{nm}$ across the curved dielectric lens
@@ -625,18 +625,18 @@ def get_task_table(quick=False):
             "record_movie": False,
             "movie_frames": 0,
             "description": (
-                f"Design 3 Semi-lens expander (kottke graded mesh NonUniformSemilensPIC, {dev_lvl}=({dev_cpw},{dev_n}))"
+                f"Design 3 Semi-lens expander (kottke graded mesh NonUniformSemilensCircuit, {dev_lvl}=({dev_cpw},{dev_n}))"
             ),
         }
     )
     return tasks
 
 
-def _populate_field_and_port_payload(payload, pic, solve_ports=False):
+def _populate_field_and_port_payload(payload, circuit, solve_ports=False):
     """Store optional DFT field maps, port eigenmodes, movie frames, and flux balance."""
     if solve_ports:
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=9)
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=9)
         y_in = modes_in[0].coords["Eb"][0]
         ey_in = modes_in[0].e["b"][:, 0]
         m_in = np.abs(y_in) <= 0.9e-6
@@ -658,7 +658,7 @@ def _populate_field_and_port_payload(payload, pic, solve_ports=False):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -666,29 +666,29 @@ def _populate_field_and_port_payload(payload, pic, solve_ports=False):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-    if WL_REF in pic.dft_fields:
-        fmap = pic.dft_fields[WL_REF]
+    if WL_REF in circuit.dft_fields:
+        fmap = circuit.dft_fields[WL_REF]
         payload["dft_x"] = fmap["x"]
         payload["dft_y"] = fmap["y"]
         payload["dft_Ey"] = fmap["Ey"]
         payload["dft_E2"] = fmap["E2"]
 
-    if pic.movie_data is not None:
-        payload["movie_x"] = pic.movie_data["x"]
-        payload["movie_y"] = pic.movie_data["y"]
-        payload["movie_times"] = pic.movie_data["times"]
-        payload["movie_frames"] = pic.movie_data["frames"]
-        payload["movie_peak"] = pic.movie_data["peak"]
+    if circuit.movie_data is not None:
+        payload["movie_x"] = circuit.movie_data["x"]
+        payload["movie_y"] = circuit.movie_data["y"]
+        payload["movie_times"] = circuit.movie_data["times"]
+        payload["movie_frames"] = circuit.movie_data["frames"]
+        payload["movie_peak"] = circuit.movie_data["peak"]
 
-    if pic.port_time_trace is not None:
-        payload["trace_t"] = pic.port_time_trace["t"]
-        payload["trace_Ey"] = pic.port_time_trace["Ey"]
+    if circuit.port_time_trace is not None:
+        payload["trace_t"] = circuit.port_time_trace["t"]
+        payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-    if pic.flux_balance is not None:
-        payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-        payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-        payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-        payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+    if circuit.flux_balance is not None:
+        payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+        payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+        payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+        payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
 
 def run_single_task(task_cfg, out_dir):
@@ -739,10 +739,10 @@ def run_single_task(task_cfg, out_dir):
             nonuniform=is_nu,
             n_feature=n_feat,
         )
-        pic = res["pic"]
+        circuit = res["circuit"]
         n_steps = int(res["n_steps"])
         res_metrics = measure_grid_resolution(
-            pic.grid,
+            circuit.grid,
             min_feature_m=MIN_FEATURE_SEMILENS,
             feature_bounds=(SEMILENS_SEG3_X_LO, SEMILENS_SEG3_X_HI),
             feature_axis=0,
@@ -750,18 +750,18 @@ def run_single_task(task_cfg, out_dir):
         )
         if is_nu:
             res_metrics["dx_background_nm"] = round(
-                float(WL_MIN / (pic.n_eff_slab * float(task_cfg["cpw"]))) * 1e9, 3
+                float(WL_MIN / (circuit.n_eff_slab * float(task_cfg["cpw"]))) * 1e9, 3
             )
-        payload["n_eff_slab"] = np.float64(pic.n_eff_slab)
-        payload["frequencies"] = pic.frequencies.astype(np.float64)
-        payload["wavelengths"] = pic.wavelengths.astype(np.float64)
+        payload["n_eff_slab"] = np.float64(circuit.n_eff_slab)
+        payload["frequencies"] = circuit.frequencies.astype(np.float64)
+        payload["wavelengths"] = circuit.wavelengths.astype(np.float64)
         payload["S11"] = res["s_matrix"][("in", "in")].astype(np.complex128)
         payload["S21"] = res["s_matrix"][("out", "in")].astype(np.complex128)
         payload["T_flux_port"] = res["t_flux_port"].astype(np.float64)
         for m_idx, s_arr in res["modal_s21"].items():
             payload[f"S21_TE{m_idx}"] = s_arr.astype(np.complex128)
         if task_cfg["collect_fields"]:
-            _populate_field_and_port_payload(payload, pic, solve_ports=True)
+            _populate_field_and_port_payload(payload, circuit, solve_ports=True)
 
     elif kind == "luneburg":
         structures, ports, domain_2d, _ = build_luneburg_converter(
@@ -784,25 +784,25 @@ def run_single_task(task_cfg, out_dir):
             record_movie=False,
             use_gpu=use_gpu,
         )
-        pic = res["pic"]
+        circuit = res["circuit"]
         n_steps = int(res["n_steps"])
         res_metrics = measure_grid_resolution(
-            pic.grid,
+            circuit.grid,
             min_feature_m=MIN_FEATURE_LUNEBURG,
             feature_bounds=(-0.5 * W_OUT_TAPER, 0.5 * W_OUT_TAPER),
             feature_axis=1,
             core_x_bounds=(-3.0e-6, 3.0e-6),
         )
         payload["n_eff_slab"] = np.float64(cal["n_edge"])
-        payload["frequencies"] = pic.frequencies.astype(np.float64)
-        payload["wavelengths"] = pic.wavelengths.astype(np.float64)
+        payload["frequencies"] = circuit.frequencies.astype(np.float64)
+        payload["wavelengths"] = circuit.wavelengths.astype(np.float64)
         payload["S11"] = res["s_matrix"][("in", "in")].astype(np.complex128)
         payload["S21"] = res["s_matrix"][("out", "in")].astype(np.complex128)
         payload["T_flux_port"] = res["t_flux_port"].astype(np.float64)
         for k, v in cal.items():
             payload[f"cal_{k}"] = np.asarray(v, dtype=np.float64)
         if task_cfg["collect_fields"]:
-            _populate_field_and_port_payload(payload, pic, solve_ports=False)
+            _populate_field_and_port_payload(payload, circuit, solve_ports=False)
 
     elif kind == "taper_single":
         length_um = float(task_cfg["length_um"])
@@ -825,24 +825,24 @@ def run_single_task(task_cfg, out_dir):
             record_movie=False,
             use_gpu=use_gpu,
         )
-        pic = res["pic"]
+        circuit = res["circuit"]
         n_steps = int(res["n_steps"])
         res_metrics = measure_grid_resolution(
-            pic.grid,
+            circuit.grid,
             min_feature_m=MIN_FEATURE_TAPER,
             feature_bounds=(-0.5 * W_OUT_TAPER, 0.5 * W_OUT_TAPER),
             feature_axis=1,
             core_x_bounds=None,
         )
         payload["length_um"] = np.float64(length_um)
-        payload["n_eff_slab"] = np.float64(pic.n_eff_slab)
-        payload["frequencies"] = pic.frequencies.astype(np.float64)
-        payload["wavelengths"] = pic.wavelengths.astype(np.float64)
+        payload["n_eff_slab"] = np.float64(circuit.n_eff_slab)
+        payload["frequencies"] = circuit.frequencies.astype(np.float64)
+        payload["wavelengths"] = circuit.wavelengths.astype(np.float64)
         payload["S11"] = res["s_matrix"][("in", "in")].astype(np.complex128)
         payload["S21"] = res["s_matrix"][("out", "in")].astype(np.complex128)
         payload["T_flux_port"] = res["t_flux_port"].astype(np.float64)
         if task_cfg["collect_fields"]:
-            _populate_field_and_port_payload(payload, pic, solve_ports=False)
+            _populate_field_and_port_payload(payload, circuit, solve_ports=False)
 
     elif kind == "taper_sweep":
         lengths_um = np.asarray(
@@ -876,12 +876,12 @@ def run_single_task(task_cfg, out_dir):
             collect_fields=False,
             use_gpu=use_gpu,
         )
-        i_ref0 = int(np.argmin(np.abs(r0["pic"].wavelengths - WL_REF)))
+        i_ref0 = int(np.argmin(np.abs(r0["circuit"].wavelengths - WL_REF)))
         t0_1550 = float(np.abs(r0["s_matrix"][("out", "in")][i_ref0]) ** 2)
         r0_1550 = float(np.abs(r0["s_matrix"][("in", "in")][i_ref0]) ** 2)
         n_steps = int(r0["n_steps"])
         res_metrics = measure_grid_resolution(
-            r0["pic"].grid,
+            r0["circuit"].grid,
             min_feature_m=MIN_FEATURE_TAPER,
             feature_bounds=(-0.5 * W_OUT_TAPER, 0.5 * W_OUT_TAPER),
             feature_axis=1,
@@ -936,13 +936,13 @@ def run_single_task(task_cfg, out_dir):
                 )
                 n_steps += int(rs["n_steps"])
                 res_metrics = measure_grid_resolution(
-                    rs["pic"].grid,
+                    rs["circuit"].grid,
                     min_feature_m=MIN_FEATURE_TAPER,
                     feature_bounds=(-0.5 * W_OUT_TAPER, 0.5 * W_OUT_TAPER),
                     feature_axis=1,
                     core_x_bounds=None,
                 )
-                i_c = int(np.argmin(np.abs(rs["pic"].wavelengths - WL_REF)))
+                i_c = int(np.argmin(np.abs(rs["circuit"].wavelengths - WL_REF)))
                 t_arr.append(float(np.abs(rs["s_matrix"][("out", "in")][i_c]) ** 2))
                 r_arr.append(float(np.abs(rs["s_matrix"][("in", "in")][i_c]) ** 2))
             payload[f"T_{prof}"] = np.asarray(t_arr, dtype=np.float64)
@@ -1101,7 +1101,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     nf_prim = int(primary.get("n_feature", 8))
 
     zoom_dom = (4.20e-6, 5.05e-6, -5.20e-6, 5.20e-6)
-    pic_zoom_prim = PICSimulation(
+    circuit_zoom_prim = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -1123,7 +1123,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         semi_ports,
         semi_dom,
         primary_data=primary,
-        pic_zoom=pic_zoom_prim,
+        circuit_zoom=circuit_zoom_prim,
         out_path=fig_dir / "00a_setup_geometry.png",
     )
     plot_taper_and_luneburg_schematics(
@@ -1303,7 +1303,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ref_d = tasks_data.get("kottke_reference", primary)
     cpw_ref = float(ref_d.get("cpw", 20))
     nf_ref = int(ref_d.get("n_feature", 8))
-    pic_l1_stair = PICSimulation(
+    circuit_l1_stair = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -1318,7 +1318,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=6,
         mesh_overrides=semilens_mesh_overrides(4),
     )
-    pic_l1_kottke = PICSimulation(
+    circuit_l1_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -1333,7 +1333,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=6,
         mesh_overrides=semilens_mesh_overrides(4),
     )
-    pic_ref_kottke = PICSimulation(
+    circuit_ref_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=semi_structs,
@@ -1356,27 +1356,27 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ylim_z = (1.45, 4.70)
     v_semi = semi_structs[0].vertices * 1e6
     im_m = None
-    for ax, pic_m, title_m, n_f_m in [
+    for ax, circuit_m, title_m, n_f_m in [
         (
             axes[0],
-            pic_l1_stair,
+            circuit_l1_stair,
             "(a) L1=(10, 4) Staircase\n4 cells / 50 nm (dx_min=12.5 nm)",
             4,
         ),
         (
             axes[1],
-            pic_l1_kottke,
+            circuit_l1_kottke,
             "(b) L1=(10, 4) Kottke\n4 cells / 50 nm (dx_min=12.5 nm)",
             4,
         ),
         (
             axes[2],
-            pic_ref_kottke,
+            circuit_ref_kottke,
             f"(c) Reference=({int(cpw_ref)}, {nf_ref}) Kottke\n{nf_ref} cells / 50 nm (dx_min={50.0 / nf_ref:.2f} nm)",
             nf_ref,
         ),
     ]:
-        slv = pic_m.solver
+        slv = circuit_m.solver
         iz = slv.Nz // 2
         ieps_y = slv.ieps.to_matrix("y")[:, :, iz]
         if hasattr(ieps_y, "get"):
@@ -1395,7 +1395,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             eps_y[: slv.Nx, : slv.Ny].T,
             cmap="viridis",
             vmin=1.0,
-            vmax=float(n_to_eps(pic_m.n_eff_slab)) * 1.02,
+            vmax=float(n_to_eps(circuit_m.n_eff_slab)) * 1.02,
             edgecolors="w",
             linewidth=0.35,
         )
@@ -1441,7 +1441,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 4b. Mesh upgrade comparison: uniform-background kottke_L3 vs graded kottke_nonuniform
     if "kottke_nonuniform" in tasks_data:
-        pic_u_cmp = PICSimulation(
+        circuit_u_cmp = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=semi_structs,
@@ -1456,7 +1456,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_pml=10,
             mesh_overrides=semilens_mesh_overrides(nf_prim),
         )
-        pic_nu_cmp = NonUniformSemilensPIC(
+        circuit_nu_cmp = NonUniformSemilensCircuit(
             WL_MIN,
             WL_MAX,
             structures=semi_structs,
@@ -1480,8 +1480,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             meta_uniform=tasks_meta.get(prim_name, {}),
             meta_nonuniform=tasks_meta.get("kottke_nonuniform", {}),
             meta_ref=tasks_meta.get("kottke_reference", tasks_meta.get(prim_name, {})),
-            grid_uniform=pic_u_cmp.grid,
-            grid_nonuniform=pic_nu_cmp.grid,
+            grid_uniform=circuit_u_cmp.grid,
+            grid_nonuniform=circuit_nu_cmp.grid,
             out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
         )
 

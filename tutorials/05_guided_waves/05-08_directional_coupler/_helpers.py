@@ -26,7 +26,7 @@ to be upstreamed into ``wakis.templates.photonics`` and ``wakis.sources``:
    (3 dB) power-splitting wavelength ``lambda_cross`` and total transmittance.
 6. ``coupler_mesh_overrides`` / ``build_coupler_mesh_axes``: Builds 2D
    coupling-region ``mesh_overrides`` boxes with per-axis ``(hx, hy, 1.0)`` caps
-   (avoiding the 2D ``PICSimulation`` scalar ``max_cell`` gotcha that splits
+   (avoiding the 2D ``PhotonicCircuit`` scalar ``max_cell`` gotcha that splits
    ``Nz > 1`` when ``max_cell < h_core``) and measures actual mesh resolution
    metrics (``min_feature_nm``, ``dx_background_nm``, ``dx_min_nm``,
    ``cells_across_feature``, ``n_cells``).
@@ -43,7 +43,7 @@ from wakis.field_monitors import DFTMonitor
 from wakis.mode_solver import ModeMonitor, ModeSource, solve_modes
 from wakis.templates import meshing
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     n_to_eps,
     slab_neff,
     vertical_slab_mode,
@@ -175,7 +175,7 @@ def coupler_mesh_overrides(
     seam inside the core.
 
     .. note::
-       In 2D mode (``two_d=True``), ``PICSimulation`` sets the periodic slab
+       In 2D mode (``two_d=True``), ``PhotonicCircuit`` sets the periodic slab
        domain along :math:`z` to thickness ``h_core``. Passing a scalar
        ``max_cell = h_max`` broadcasts to ``(h_max, h_max, h_max)`` and splits
        ``Nz > 1`` whenever ``h_max < h_core``. Always pass a 3-tuple
@@ -330,7 +330,7 @@ def build_coupler_mesh_axes(
 
 
 def solve_coupler_supermodes(
-    pic,
+    circuit,
     wavelengths,
     x_coupled=0.0,
     x_sb_start=2.0e-6,
@@ -343,12 +343,12 @@ def solve_coupler_supermodes(
     """
     Compute the symmetric (even) and antisymmetric (odd) supermodes of the
     coupled waveguide section and integrate the S-bend coupling contribution
-    directly on ``pic.solver``.
+    directly on ``circuit.solver``.
 
     Parameters
     ----------
-    pic : PICSimulation
-        Built 2D EIM ``PICSimulation`` of the directional coupler.
+    circuit : PhotonicCircuit
+        Built 2D EIM ``PhotonicCircuit`` of the directional coupler.
     wavelengths : array_like
         Wavelengths :math:`\\lambda` [m] at which to evaluate supermode dispersion.
     x_coupled : float, optional
@@ -374,12 +374,12 @@ def solve_coupler_supermodes(
         50:50 crossing wavelength ``wl_cross_cmt``.
     """
     wls = np.asarray(wavelengths, dtype=float)
-    z_mid = 0.5 * (pic.grid.zmin + pic.grid.zmax)
+    z_mid = 0.5 * (circuit.grid.zmin + circuit.grid.zmax)
 
     # 1. Transverse supermode profiles at wavelength_profile
     f_prof = c_light / float(wavelength_profile)
     modes_prof = solve_modes(
-        pic.solver,
+        circuit.solver,
         f_prof,
         center=(float(x_coupled), 0.0, z_mid),
         size=(0.0, float(window_y), np.inf),
@@ -411,7 +411,7 @@ def solve_coupler_supermodes(
     for i, wl in enumerate(wls):
         f = c_light / float(wl)
         m0 = solve_modes(
-            pic.solver,
+            circuit.solver,
             f,
             center=(float(x_coupled), 0.0, z_mid),
             size=(0.0, float(window_y), np.inf),
@@ -425,7 +425,7 @@ def solve_coupler_supermodes(
         acc = 0.0
         for xs, dsdx in zip(x_sb_pts, ds_dx_pts):
             ms = solve_modes(
-                pic.solver,
+                circuit.solver,
                 f,
                 center=(float(xs), 0.0, z_mid),
                 size=(0.0, float(window_y) + 0.8e-6, np.inf),
@@ -462,7 +462,7 @@ def solve_coupler_supermodes(
 
 
 def run_phased_dual_drive(
-    pic,
+    circuit,
     port_phases,
     energy_decay=1e-4,
     max_time=None,
@@ -474,8 +474,8 @@ def run_phased_dual_drive(
 
     Parameters
     ----------
-    pic : PICSimulation
-        Configured ``PICSimulation`` instance.
+    circuit : PhotonicCircuit
+        Configured ``PhotonicCircuit`` instance.
     port_phases : dict of {str: float}
         Mapping from driven port name to carrier phase offset [rad], e.g.
         ``{"in_bot": 0.0, "in_top": -0.5 * np.pi}``.
@@ -484,7 +484,7 @@ def run_phased_dual_drive(
     max_time : float, optional
         Maximum simulation duration [s].
     collect_dft : bool, optional
-        If True, record 2D midplane DFT fields at ``pic.field_wavelengths``.
+        If True, record 2D midplane DFT fields at ``circuit.field_wavelengths``.
 
     Returns
     -------
@@ -493,28 +493,28 @@ def run_phased_dual_drive(
         amplitudes, and optional DFT field arrays.
     """
     if max_time is None:
-        lx = pic.grid.xmax - pic.grid.xmin
-        ly = pic.grid.ymax - pic.grid.ymin
-        transit = np.hypot(lx, ly) * pic.n_core / c_light
-        max_time = pic.sim.pulse.end_time + 15.0 * transit
+        lx = circuit.grid.xmax - circuit.grid.xmin
+        ly = circuit.grid.ymax - circuit.grid.ymin
+        transit = np.hypot(lx, ly) * circuit.n_core / c_light
+        max_time = circuit.sim.pulse.end_time + 15.0 * transit
 
-    if pic.solver is None:
-        pic.build()
+    if circuit.solver is None:
+        circuit.build()
     else:
-        pic.solver.reset_fields()
+        circuit.solver.reset_fields()
     sources = []
     inward_map = {}
     for pname, phase in port_phases.items():
-        port = pic.port_map[pname]
-        in_center, in_size, in_inward = pic._port_plane_args(port)
+        port = circuit.port_map[pname]
+        in_center, in_size, in_inward = circuit._port_plane_args(port)
         inward_map[pname] = in_inward
         a_in = port.axis
-        nodes_a = pic.grid.x if a_in == 0 else pic.grid.y
+        nodes_a = circuit.grid.x if a_in == 0 else circuit.grid.y
         k_mon = int(np.argmin(np.abs(nodes_a[:-1] - in_center[a_in])))
         k_src = int(np.clip(k_mon - 2 * in_inward, 2, len(nodes_a) - 3))
         src_center = in_center.copy()
         src_center[a_in] = nodes_a[k_src]
-        pulse_phased = PhasedGaussianSource(pic.sim.pulse, phase=phase)
+        pulse_phased = PhasedGaussianSource(circuit.sim.pulse, phase=phase)
         sources.append(
             ModeSource(
                 pulse_phased,
@@ -522,53 +522,53 @@ def run_phased_dual_drive(
                 size=in_size,
                 direction="+" if in_inward > 0 else "-",
                 mode_index=port.mode_index,
-                mode_frequency=pic.f_center,
+                mode_frequency=circuit.f_center,
             )
         )
 
     port_monitors, monitors_list = {}, []
-    for p in pic.ports:
-        p_center, p_size, p_inw = pic._port_plane_args(p)
+    for p in circuit.ports:
+        p_center, p_size, p_inw = circuit._port_plane_args(p)
         inward_map[p.name] = p_inw
         mon = ModeMonitor(
-            pic.frequencies,
+            circuit.frequencies,
             center=p_center,
             size=p_size,
             n_modes=p.mode_index + 1,
-            mode_frequency=pic.f_center,
+            mode_frequency=circuit.f_center,
         )
         port_monitors[p.name] = mon
         monitors_list.append(mon)
 
     dft_mon = None
-    stride = max(1, int(np.ceil(max(pic.grid.Nx, pic.grid.Ny) / 400)))
-    if collect_dft and pic.field_wavelengths:
-        f_dft = [c_light / w for w in pic.field_wavelengths]
-        z_mid = 0.5 * (pic.grid.zmin + pic.grid.zmax)
+    stride = max(1, int(np.ceil(max(circuit.grid.Nx, circuit.grid.Ny) / 400)))
+    if collect_dft and circuit.field_wavelengths:
+        f_dft = [c_light / w for w in circuit.field_wavelengths]
+        z_mid = 0.5 * (circuit.grid.zmin + circuit.grid.zmax)
         dft_mon = DFTMonitor(
             f_dft,
             components=("Ex", "Ey"),
             center=(
-                0.5 * (pic.grid.xmin + pic.grid.xmax),
-                0.5 * (pic.grid.ymin + pic.grid.ymax),
+                0.5 * (circuit.grid.xmin + circuit.grid.xmax),
+                0.5 * (circuit.grid.ymin + circuit.grid.ymax),
                 z_mid,
             ),
             size=(np.inf, np.inf, 0.0),
         )
         monitors_list.append(dft_mon)
 
-    Nt = int(np.ceil(max_time / pic.solver.dt))
-    pic.solver.emsolve(
+    Nt = int(np.ceil(max_time / circuit.solver.dt))
+    circuit.solver.emsolve(
         Nt,
         source=sources,
         monitors=monitors_list,
         stop_when_energy_decayed=energy_decay,
     )
 
-    p_inc_total = np.zeros_like(pic.frequencies, dtype=float)
+    p_inc_total = np.zeros_like(circuit.frequencies, dtype=float)
     inc_amps = {}
     for pname in port_phases:
-        port = pic.port_map[pname]
+        port = circuit.port_map[pname]
         a_p, a_m = port_monitors[pname].get_amplitudes(port.mode_index)
         a_inc = a_p if inward_map[pname] > 0 else a_m
         inc_amps[pname] = a_inc
@@ -576,7 +576,7 @@ def run_phased_dual_drive(
 
     out_power = {}
     out_amp = {}
-    for p in pic.ports:
+    for p in circuit.ports:
         a_p, a_m = port_monitors[p.name].get_amplitudes(p.mode_index)
         b_out = a_m if inward_map[p.name] > 0 else a_p
         out_amp[p.name] = b_out
@@ -584,16 +584,16 @@ def run_phased_dual_drive(
 
     dft_out = {}
     if dft_mon is not None:
-        nx, ny = pic.grid.Nx, pic.grid.Ny
-        xc = 0.5 * (pic.grid.x[:-1] + pic.grid.x[1:])
-        yc = 0.5 * (pic.grid.y[:-1] + pic.grid.y[1:])
+        nx, ny = circuit.grid.Nx, circuit.grid.Ny
+        xc = 0.5 * (circuit.grid.x[:-1] + circuit.grid.x[1:])
+        yc = 0.5 * (circuit.grid.y[:-1] + circuit.grid.y[1:])
         ex_raw, _ = dft_mon.get_field("Ex")
         ey_raw, _ = dft_mon.get_field("Ey")
         ex_c = ex_raw[:, :nx, :ny, 0]
         ey_c = ey_raw[:, :nx, :ny, 0]
         x_dft = xc[::stride].astype(np.float32)
         y_dft = yc[::stride].astype(np.float32)
-        for idx_w, w_val in enumerate(pic.field_wavelengths):
+        for idx_w, w_val in enumerate(circuit.field_wavelengths):
             ex = ex_c[idx_w, ::stride, ::stride].astype(np.complex64)
             ey = ey_c[idx_w, ::stride, ::stride].astype(np.complex64)
             dft_out[w_val] = {
@@ -853,9 +853,9 @@ def build_coupler_graded_axes(
     return x_full, y_full, z_full, metrics
 
 
-class NonUniformCouplerPIC(PICSimulation):
+class NonUniformCouplerCircuit(PhotonicCircuit):
     """
-    ``PICSimulation`` subclass that discretizes the 2D EIM directional coupler
+    ``PhotonicCircuit`` subclass that discretizes the 2D EIM directional coupler
     on the mirror-symmetric graded non-uniform Cartesian mesh from
     ``build_coupler_graded_axes`` (fine transverse ``dy`` across the coupling
     gap and waveguide cores, coarser ``dy`` in the S-bend trench and outer air
@@ -951,23 +951,23 @@ class _SchematicSolverProxy:
         self._assigned_structures = ()
 
 
-def _build_coupler_schematic_io(pic, quadrature: bool = False, include_flux_box: bool = True):
+def _build_coupler_schematic_io(circuit, quadrature: bool = False, include_flux_box: bool = True):
     """Build normalized ``(sources, monitors)`` dicts for ``wakis.schematic``."""
-    xmin, xmax = float(pic.grid.xmin), float(pic.grid.xmax)
-    ymin, ymax = float(pic.grid.ymin), float(pic.grid.ymax)
-    dx_bg = float(np.median(np.diff(pic.grid.x)))
-    dy_bg = float(np.median(np.diff(pic.grid.y)))
-    pulse_obj = pic.sim.pulse
+    xmin, xmax = float(circuit.grid.xmin), float(circuit.grid.xmax)
+    ymin, ymax = float(circuit.grid.ymin), float(circuit.grid.ymax)
+    dx_bg = float(np.median(np.diff(circuit.grid.x)))
+    dy_bg = float(np.median(np.diff(circuit.grid.y)))
+    pulse_obj = circuit.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
-    freqs = np.asarray(pic.frequencies, dtype=float)
+    freqs = np.asarray(circuit.frequencies, dtype=float)
     f_lo_thz = float(np.min(freqs)) * 1e-12
     f_hi_thz = float(np.max(freqs)) * 1e-12
     freq_str = f"{freqs.size} freqs in [{f_lo_thz:.1f}, {f_hi_thz:.1f}] THz"
 
     sources_s = []
     monitors_s = []
-    for pt in pic.ports:
+    for pt in circuit.ports:
         cx, cy, _ = (float(v) for v in pt.center)
         _, sy, _ = (float(v) for v in pt.size)
         hy = min(0.5 * sy, 0.72e-6)
@@ -1112,7 +1112,7 @@ def _build_coupler_schematic_io(pic, quadrature: bool = False, include_flux_box:
 
 
 def save_coupler_setup_figures(
-    pic,
+    circuit,
     primary_data: dict,
     fig_dir,
     wavelength: float = 1.53e-6,
@@ -1135,23 +1135,23 @@ def save_coupler_setup_figures(
 
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
-    neff_s = float(pic.n_eff_slab)
+    neff_s = float(circuit.n_eff_slab)
     eps_s = neff_s**2
-    eps_clad = float(n_to_eps(pic.n_clad))
-    proxy_solver = _SchematicSolverProxy(pic.solver, eps_clad)
+    eps_clad = float(n_to_eps(circuit.n_clad))
+    proxy_solver = _SchematicSolverProxy(circuit.solver, eps_clad)
     poly_structs = [
         _PolyStructProxy(
             s.vertices,
             eps_s,
             f"Si EIM core (n_Si=3.48, h=220 nm → n_eff,slab={neff_s:.4f}, w_eff=343 nm)",
         )
-        for s in pic.structures_3d
+        for s in circuit.structures_3d
     ]
     mat_names = {
-        "background": f"Air lateral/upper clad (n={pic.n_clad:.2f}, ε_r={eps_clad:.2f}; SiO₂ BOX n_sub=1.45)",
+        "background": f"Air lateral/upper clad (n={circuit.n_clad:.2f}, ε_r={eps_clad:.2f}; SiO₂ BOX n_sub=1.45)",
     }
     sources_s, monitors_s = _build_coupler_schematic_io(
-        pic, quadrature=False, include_flux_box=True
+        circuit, quadrature=False, include_flux_box=True
     )
     variations = [
         {
@@ -1205,7 +1205,7 @@ def save_coupler_setup_figures(
         yin = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
         eyin = np.abs(np.asarray(primary_data["port_ey_in"]))
         eyin = eyin / max(float(np.max(eyin)), 1e-30)
-        x_in_um = float(pic.port_map["in_bot"].center[0]) * 1e6
+        x_in_um = float(circuit.port_map["in_bot"].center[0]) * 1e6
         ax_a.fill_betweenx(
             yin, x_in_um, x_in_um + 1.05 * eyin, color="#D55E00", alpha=0.25, zorder=7
         )
@@ -1221,7 +1221,7 @@ def save_coupler_setup_figures(
         yout = np.asarray(primary_data["port_y_out"], dtype=float) * 1e6
         eyout = np.abs(np.asarray(primary_data["port_ey_out"]))
         eyout = eyout / max(float(np.max(eyout)), 1e-30)
-        x_out_um = float(pic.port_map["out_top"].center[0]) * 1e6
+        x_out_um = float(circuit.port_map["out_top"].center[0]) * 1e6
         ax_a.fill_betweenx(
             yout, x_out_um - 1.05 * eyout, x_out_um, color="#009E73", alpha=0.22, zorder=7
         )
@@ -1249,7 +1249,7 @@ def save_coupler_setup_figures(
         title="Directional Coupler Discretization, Wave Packet & Broadband Excitation",
     )
     ax_mesh = axes_b[0]
-    for s in pic.structures_3d:
+    for s in circuit.structures_3d:
         ax_mesh.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1265,7 +1265,7 @@ def save_coupler_setup_figures(
 
     # Render companion schematic 00c for the dual-port quadrature excitation setup (Rule 6)
     sources_q, monitors_q = _build_coupler_schematic_io(
-        pic, quadrature=True, include_flux_box=False
+        circuit, quadrature=True, include_flux_box=False
     )
     fig_c, ax_c = schematic.plot_schematic(
         proxy_solver,
@@ -1282,7 +1282,7 @@ def save_coupler_setup_figures(
         yin = np.asarray(primary_data["port_y_in"], dtype=float) * 1e6
         eyin = np.abs(np.asarray(primary_data["port_ey_in"]))
         eyin = eyin / max(float(np.max(eyin)), 1e-30)
-        x_in_um = float(pic.port_map["in_bot"].center[0]) * 1e6
+        x_in_um = float(circuit.port_map["in_bot"].center[0]) * 1e6
         for sgn_p, col_p in ((-1.0, "#D55E00"), (+1.0, "#7570b3")):
             y_arm = sgn_p * (-yin)
             ax_c.fill_betweenx(
@@ -1296,8 +1296,8 @@ def save_coupler_setup_figures(
 
 
 def plot_mesh_upgrade_comparison_coupler(
-    pic_uniform,
-    pic_nonuniform,
+    circuit_uniform,
+    circuit_nonuniform,
     td_uniform: dict,
     td_nonuniform: dict,
     td_ref: dict | None,
@@ -1307,7 +1307,7 @@ def plot_mesh_upgrade_comparison_coupler(
     """
     Render ``04b_mesh_upgrade_comparison.png`` (3 panels <= 3) comparing the
     baseline ``kottke_L3`` mesh against the mirror-symmetric graded non-uniform
-    Cartesian mesh ``kottke_nonuniform`` (``NonUniformCouplerPIC``):
+    Cartesian mesh ``kottke_nonuniform`` (``NonUniformCouplerCircuit``):
     - Panel (a): Split-half mesh view (``y >= 0``: ``kottke_L3`` baseline,
       ``y <= 0``: ``kottke_nonuniform`` graded non-square mesh).
     - Panel (b): 1D transverse ``Δy(y)`` and axial ``Δx(x)`` cell-spacing
@@ -1320,18 +1320,18 @@ def plot_mesh_upgrade_comparison_coupler(
     fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.7)
 
     # Panel (a): Split-half mesh view (y >= 0: kottke_L3, y <= 0: kottke_nonuniform)
-    iz = pic_nonuniform.solver.Nz // 2
-    ieps = np.asarray(pic_nonuniform.solver.ieps[:, :, iz, "y"])
+    iz = circuit_nonuniform.solver.Nz // 2
+    ieps = np.asarray(circuit_nonuniform.solver.ieps[:, :, iz, "y"])
     eps_r = np.where(ieps > 0, 1.0 / (np.where(ieps > 0, ieps, 1.0) * epsilon_0), 1.0)
-    xu_nu = pic_nonuniform.grid.x * 1e6
-    yu_nu = pic_nonuniform.grid.y * 1e6
+    xu_nu = circuit_nonuniform.grid.x * 1e6
+    yu_nu = circuit_nonuniform.grid.y * 1e6
     ax0.pcolormesh(
         xu_nu, yu_nu, eps_r.T, cmap=figstyle.CMAP_EPS, shading="flat", alpha=0.88
     )
 
     xl_m, yl_m = (-6.50, 6.50), (-2.95, 2.95)
-    xu_u = pic_uniform.grid.x * 1e6
-    yu_u = pic_uniform.grid.y * 1e6
+    xu_u = circuit_uniform.grid.x * 1e6
+    yu_u = circuit_uniform.grid.y * 1e6
     xv_u = xu_u[(xu_u >= xl_m[0]) & (xu_u <= xl_m[1])][::3]
     yv_u = yu_u[(yu_u >= 0.0) & (yu_u <= yl_m[1])][::2]
     segs_u = [[(x, 0.0), (x, yl_m[1])] for x in xv_u] + [
@@ -1350,7 +1350,7 @@ def plot_mesh_upgrade_comparison_coupler(
         LineCollection(segs_nu, colors="#d95f02", linewidths=0.45, alpha=0.80)
     )
     ax0.axhline(0.0, color="black", lw=1.1, ls="--")
-    for s in pic_nonuniform.structures_3d:
+    for s in circuit_nonuniform.structures_3d:
         ax0.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1361,8 +1361,8 @@ def plot_mesh_upgrade_comparison_coupler(
             )
         )
 
-    n_u = int(td_uniform.get("n_cells", pic_uniform.grid.Nx * pic_uniform.grid.Ny))
-    n_nu = int(td_nonuniform.get("n_cells", pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny))
+    n_u = int(td_uniform.get("n_cells", circuit_uniform.grid.Nx * circuit_uniform.grid.Ny))
+    n_nu = int(td_nonuniform.get("n_cells", circuit_nonuniform.grid.Nx * circuit_nonuniform.grid.Ny))
     t_u_s = float(td_uniform.get("elapsed_s", 346.5))
     t_nu_s = float(td_nonuniform.get("elapsed_s", 162.9))
     red_cells = 100.0 * (1.0 - n_nu / max(n_u, 1))
@@ -1372,7 +1372,7 @@ def plot_mesh_upgrade_comparison_coupler(
         -6.25,
         2.38,
         f"Upper (y > 0): kottke_L3 baseline\n"
-        f"{pic_uniform.grid.Nx}×{pic_uniform.grid.Ny} = {n_u:,} cells ({t_u_s:.1f} s)",
+        f"{circuit_uniform.grid.Nx}×{circuit_uniform.grid.Ny} = {n_u:,} cells ({t_u_s:.1f} s)",
         fontsize=7.3,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#08519c", alpha=0.92),
     )
@@ -1380,7 +1380,7 @@ def plot_mesh_upgrade_comparison_coupler(
         -6.25,
         -2.72,
         f"Lower (y < 0): kottke_nonuniform (graded)\n"
-        f"{pic_nonuniform.grid.Nx}×{pic_nonuniform.grid.Ny} = {n_nu:,} cells "
+        f"{circuit_nonuniform.grid.Nx}×{circuit_nonuniform.grid.Ny} = {n_nu:,} cells "
         f"(−{red_cells:.1f}%, {t_nu_s:.1f} s, −{red_time:.1f}%)",
         fontsize=7.3,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d95f02", alpha=0.92),
@@ -1408,7 +1408,7 @@ def plot_mesh_upgrade_comparison_coupler(
         where="mid",
         color="#08519c",
         lw=1.7,
-        label=f"kottke_L3 Δy(y) ({pic_uniform.grid.Ny} cells)",
+        label=f"kottke_L3 Δy(y) ({circuit_uniform.grid.Ny} cells)",
     )
     ax1.step(
         yc_nu,
@@ -1416,7 +1416,7 @@ def plot_mesh_upgrade_comparison_coupler(
         where="mid",
         color="#d95f02",
         lw=2.0,
-        label=f"kottke_nonuniform Δy(y) ({pic_nonuniform.grid.Ny} cells)",
+        label=f"kottke_nonuniform Δy(y) ({circuit_nonuniform.grid.Ny} cells)",
     )
     ax1.step(
         xc_nu * (3.0 / 8.65),
@@ -1425,7 +1425,7 @@ def plot_mesh_upgrade_comparison_coupler(
         color="#1b9e77",
         ls="--",
         lw=1.6,
-        label=f"kottke_nonuniform Δx(x·Ly/Lx) ({pic_nonuniform.grid.Nx} cells)",
+        label=f"kottke_nonuniform Δx(x·Ly/Lx) ({circuit_nonuniform.grid.Nx} cells)",
     )
     ax1.set(
         xlim=(-3.1, 3.1),
@@ -1493,30 +1493,30 @@ def plot_mesh_upgrade_comparison_coupler(
 
 def overlay_coupler_geometry(
     ax,
-    pic,
+    circuit,
     outline_color: str = "white",
     quadrature: bool = False,
 ):
     """Overlay material outlines/labels, port planes, and CPML boundaries on a 2D coupler field map."""
-    neff_s = float(pic.n_eff_slab)
-    eps_clad = float(n_to_eps(pic.n_clad))
+    neff_s = float(circuit.n_eff_slab)
+    eps_clad = float(n_to_eps(circuit.n_clad))
     sources_s, monitors_s = _build_coupler_schematic_io(
-        pic, quadrature=quadrature, include_flux_box=False
+        circuit, quadrature=quadrature, include_flux_box=False
     )
     schematic.overlay_geometry(
         ax,
-        _SchematicSolverProxy(pic.solver, eps_clad),
+        _SchematicSolverProxy(circuit.solver, eps_clad),
         plane="xy",
         unit="µm",
         structures=(),
-        material_names={"background": f"Air clad (n={pic.n_clad:.2f})"},
+        material_names={"background": f"Air clad (n={circuit.n_clad:.2f})"},
         sources=sources_s,
         monitors=monitors_s,
         show_materials=False,
         label_materials=False,
         outline_color=outline_color,
     )
-    for s in pic.structures_3d:
+    for s in circuit.structures_3d:
         ax.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1546,7 +1546,7 @@ def render_coupler_field_map_with_overlay(
     x: np.ndarray,
     y: np.ndarray,
     field: np.ndarray,
-    pic,
+    circuit,
     kind: str,
     title: str,
     out_path,
@@ -1593,7 +1593,7 @@ def render_coupler_field_map_with_overlay(
         cb.set_label(r"Normalized $\mathrm{Re}(E_y)$")
         outline_col = "black"
 
-    overlay_coupler_geometry(ax, pic, outline_color=outline_col, quadrature=quadrature)
+    overlay_coupler_geometry(ax, circuit, outline_color=outline_col, quadrature=quadrature)
     ax.set(
         xlim=(float(x_um.min()), float(x_um.max())),
         ylim=(float(y_um.min()), float(y_um.max())),
@@ -1610,7 +1610,7 @@ def render_coupler_movie_with_overlay(
     y: np.ndarray,
     frames: np.ndarray,
     times: np.ndarray,
-    pic,
+    circuit,
     out_path,
     fps: int = 12,
 ):
@@ -1635,7 +1635,7 @@ def render_coupler_movie_with_overlay(
     )
     cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
     cb.set_label(r"$E_y(x, y, t) / E_{\max}$")
-    overlay_coupler_geometry(ax, pic, outline_color="black", quadrature=False)
+    overlay_coupler_geometry(ax, circuit, outline_color="black", quadrature=False)
     ax.set(
         xlim=(float(x_um.min()), float(x_um.max())),
         ylim=(float(y_um.min()), float(y_um.max())),

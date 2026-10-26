@@ -185,7 +185,7 @@ from scipy.optimize import brentq, fsolve
 
 from wakis import figstyle
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     Port,
     n_to_eps,
     plot_eim_stack,
@@ -202,7 +202,7 @@ if str(HERE) not in sys.path:
 
 from _helpers import (  # noqa: E402
     FastCrossingPolySlab,
-    NonUniformCrossingPIC,
+    NonUniformCrossingCircuit,
     build_crossing_graded_axes,
     build_zoomed_2d_solver,
     crossing_mesh_overrides,
@@ -505,7 +505,7 @@ def lateral_slab_mode_neff(
 # - `L1 = (10, 4)`, `L2 = (14, 6)`, `L3 = (20, 8)`, and reference `R = (40, 16)`.
 #
 # When a device contains a sub-wavelength slot, coupler gap, or grating tooth
-# where $d_{\min} / N < \Delta x_{\text{bg}}$, `PICSimulation(..., mesh_overrides=[(lo, hi, max_cell)])`
+# where $d_{\min} / N < \Delta x_{\text{bg}}$, `PhotonicCircuit(..., mesh_overrides=[(lo, hi, max_cell)])`
 # refines only the strip spanning that feature and grades smoothly back to the
 # background mesh at ratio $\le 1.4$. For this cosine-tapered crossing, the
 # smallest geometric feature is the access-waveguide width
@@ -524,7 +524,7 @@ def lateral_slab_mode_neff(
 # $\Delta x = \Delta y = 21.51\;\text{nm}$, $658 \times 658 \times 1 = 432{,}964$
 # cells), over $78\%$ of the $13.70 \times 13.70\;\mu\text{m}^2$ domain consists
 # of the four outer $\text{SiO}_2$ cladding quadrants ($|x|, |y| > 0.80\;\mu\text{m}$,
-# $n_{\text{SiO}_2} = 1.45$). `NonUniformCrossingPIC` (`build_crossing_graded_axes`)
+# $n_{\text{SiO}_2} = 1.45$). `NonUniformCrossingCircuit` (`build_crossing_graded_axes`)
 # constructs an exact $D_4$-symmetric graded non-uniform Cartesian mesh
 # ($x = y$, $x = -x[::-1]$):
 #
@@ -752,7 +752,7 @@ def run_single_task(task_cfg, out_dir):
     structures, ports = build_crossing(kind=task_cfg["kind"])
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
     if task_cfg.get("nonuniform", False):
-        pic = NonUniformCrossingPIC(
+        circuit = NonUniformCrossingCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             w_in=W_IN,
@@ -785,7 +785,7 @@ def run_single_task(task_cfg, out_dir):
                 wavelength_min=WL_MIN,
             ),
         )
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -807,21 +807,21 @@ def run_single_task(task_cfg, out_dir):
         )
 
     drive_ports = task_cfg["drive"]
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=drive_ports,
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
 
     mesh_info = measure_grid_resolution(
-        pic.grid.x,
-        pic.grid.y,
-        pic.grid.z,
+        circuit.grid.x,
+        circuit.grid.y,
+        circuit.grid.z,
         min_feature=MIN_FEATURE,
-        n_cells_z=int(pic.grid.Nz),
+        n_cells_z=int(circuit.grid.Nz),
         has_ghost=True,
     )
-    n_steps_per_drive = int(getattr(pic.solver, "Nt", 0))
+    n_steps_per_drive = int(getattr(circuit.solver, "Nt", 0))
     n_steps = int(n_steps_per_drive * len(drive_ports))
 
     payload = {
@@ -839,9 +839,9 @@ def run_single_task(task_cfg, out_dir):
         "n_cells": np.int64(mesh_info["n_cells"]),
         "n_steps": np.int64(n_steps),
         "n_steps_per_drive": np.int64(n_steps_per_drive),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("west", "west")].astype(np.complex128),
         "S21": s_mat[("east", "west")].astype(np.complex128),
         "S31": s_mat[("north", "west")].astype(np.complex128),
@@ -853,10 +853,10 @@ def run_single_task(task_cfg, out_dir):
 
     if task_cfg["collect_fields"]:
         if task_cfg["kind"] == "cosine":
-            modes_w = pic.solve_port_modes(
+            modes_w = circuit.solve_port_modes(
                 "west", frequencies=c_light / WL_REF, n_modes=1
             )
-            modes_n = pic.solve_port_modes(
+            modes_n = circuit.solve_port_modes(
                 "north", frequencies=c_light / WL_REF, n_modes=1
             )
             y_w = modes_w[0].coords["Eb"][0]
@@ -874,7 +874,7 @@ def run_single_task(task_cfg, out_dir):
 
             wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
             f_disp = c_light / wl_disp
-            disp_modes = pic.solve_port_modes("west", frequencies=f_disp, n_modes=1)
+            disp_modes = circuit.solve_port_modes("west", frequencies=f_disp, n_modes=1)
             neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
             dneff_dl = np.gradient(neff_disp, wl_disp)
             ng_disp = neff_disp - wl_disp * dneff_dl
@@ -882,30 +882,30 @@ def run_single_task(task_cfg, out_dir):
             payload["disp_neff"] = neff_disp.astype(np.float64)
             payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ex"] = fmap["Ex"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -924,7 +924,7 @@ def run_single_task(task_cfg, out_dir):
         "dx_background_nm": round(float(mesh_info["dx_background_nm"]), 3),
         "dx_min_nm": round(float(mesh_info["dx_min_nm"]), 3),
         "cells_across_feature": round(float(mesh_info["cells_across_feature"]), 3),
-        "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
+        "grid_shape": [int(circuit.grid.Nx), int(circuit.grid.Ny), int(circuit.grid.Nz)],
         "n_cells": int(mesh_info["n_cells"]),
         "n_steps": int(n_steps),
         "n_steps_per_drive": int(n_steps_per_drive),
@@ -1007,7 +1007,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     cpw_prim = float(primary.get("cpw", 20.0))
     n_prim = int(primary.get("n_feature_min", 8))
 
-    pic_primary = PICSimulation(
+    circuit_primary = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1022,7 +1022,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=n_pml_plot,
         mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
     )
-    pic_linear = PICSimulation(
+    circuit_linear = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structs_lin,
@@ -1037,7 +1037,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=n_pml_plot,
         mesh_overrides=crossing_mesh_overrides(cpw_prim, n_prim, min_feature=MIN_FEATURE),
     )
-    pic_plain = PICSimulation(
+    circuit_plain = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structs_pln,
@@ -1055,13 +1055,13 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 0. Labelled setup schematics (00a_setup_geometry.png, 00b_setup_mesh_and_excitation.png & 00b_crossing_geometries_schematic.png)
     plot_setup_schematic_crossing(
-        pic_primary,
+        circuit_primary,
         primary,
         out_path=fig_dir / "00a_setup_geometry.png",
     )
     plot_crossing_geometries_schematic(
-        pic_linear,
-        pic_plain,
+        circuit_linear,
+        circuit_plain,
         out_path=fig_dir / "00b_crossing_geometries_schematic.png",
     )
 
@@ -1228,7 +1228,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     else:
         cpw_ref, n_ref = RESOLUTION_LADDER["L3"]
 
-    pic_l1_stair = PICSimulation(
+    circuit_l1_stair = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1243,7 +1243,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=n_pml_plot,
         mesh_overrides=crossing_mesh_overrides(cpw_l1, n_l1, min_feature=MIN_FEATURE),
     )
-    pic_l1_kottke = PICSimulation(
+    circuit_l1_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1276,9 +1276,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         min_feature=MIN_FEATURE,
     )
     plot_feature_and_subpixel_mesh(
-        pic_l1_kottke.solver,
+        circuit_l1_kottke.solver,
         solver_ref_kottke,
-        pic_l1_stair.solver,
+        circuit_l1_stair.solver,
         cpw_l1=cpw_l1,
         n_l1=n_l1,
         cpw_ref=cpw_ref,
@@ -1288,10 +1288,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         out_path=fig_dir / "04_permittivity_mesh_zoom.png",
         out_path_taper=fig_dir / "04c_taper_subpixel_smoothing.png",
     )
-    del pic_l1_stair, pic_l1_kottke, solver_ref_kottke
+    del circuit_l1_stair, circuit_l1_kottke, solver_ref_kottke
 
     # 4b. Mesh upgrade comparison: uniform-background kottke_L3 vs D4-graded kottke_nonuniform
-    pic_nonuniform = NonUniformCrossingPIC(
+    circuit_nonuniform = NonUniformCrossingCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=WL_MAX,
         w_in=W_IN,
@@ -1311,8 +1311,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     )
     td_nu = tasks_data.get("kottke_nonuniform", primary)
     plot_mesh_upgrade_comparison_crossing(
-        pic_primary,
-        pic_nonuniform,
+        circuit_primary,
+        circuit_nonuniform,
         primary,
         td_nu,
         tasks_data.get("kottke_reference"),
@@ -1321,7 +1321,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         WL_REF,
         out_path=fig_dir / "04b_mesh_upgrade_comparison.png",
     )
-    del pic_nonuniform
+    del circuit_nonuniform
 
     # 5. Orthogonal port mode profiles (west Ey(y) and north Ex(x))
     plot_port_modes(
@@ -1352,7 +1352,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic_primary,
+        circuit_primary,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda_0 = 1310\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_1310.png",
@@ -1363,7 +1363,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic_primary,
+        circuit_primary,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda_0 = 1310\;\mathrm{nm}$",
         out_path=fig_dir / "08_field_real_ey_1310.png",
@@ -1376,7 +1376,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic_primary,
+            circuit_primary,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -1619,7 +1619,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         vmax=0.0,
         shading="auto",
     )
-    overlay_crossing_geometry(axes[0], pic_plain, outline_color="white")
+    overlay_crossing_geometry(axes[0], circuit_plain, outline_color="white")
     axes[0].set(
         aspect="equal",
         xlim=(-3.5, 3.5),
@@ -1640,7 +1640,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         vmax=0.0,
         shading="auto",
     )
-    overlay_crossing_geometry(axes[1], pic_primary, outline_color="white")
+    overlay_crossing_geometry(axes[1], circuit_primary, outline_color="white")
     axes[1].set(
         aspect="equal",
         xlim=(-3.5, 3.5),
@@ -1696,7 +1696,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     figstyle.save(fig, fig_dir / "13_multimode_focusing_comparison.png")
     plt.close(fig)
 
-    del pic_primary, pic_linear, pic_plain
+    del circuit_primary, circuit_linear, circuit_plain
 
     # 14. 4-fold (D4) symmetry and Lorentz reciprocity audit
     fig, (ax0, ax1) = figstyle.new_figure(nrows=1, ncols=2, width=11.4, height=4.2)

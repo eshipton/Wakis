@@ -1,6 +1,6 @@
 # `wakis.subgrid` Toolkit Compatibility Audit
 
-This document records the feature-by-feature compatibility audit between the 2D quadtree subgridding solver (`wakis.subgrid`: `QuadMesh`, `SubgridFIT2D`, `geometry.py`, `ports.py`, `monitors.py`, `pic.py`, `emitters.py`, `inverse.py`) and the Cartesian `SolverFIT3D` toolkit, along with the adapters added on `feature/subgrid-kit`, verification benchmarks in `tests/test_054_subgrid_compat.py`, and a ranked gap roadmap for the tutorial tracks.
+This document records the feature-by-feature compatibility audit between the 2D quadtree subgridding solver (`wakis.subgrid`: `QuadMesh`, `SubgridFIT2D`, `geometry.py`, `ports.py`, `monitors.py`, `photonic_circuit.py`, `emitters.py`, `inverse.py`) and the Cartesian `SolverFIT3D` toolkit, along with the adapters added on `feature/subgrid-kit`, verification benchmarks in `tests/test_054_subgrid_compat.py`, and a ranked gap roadmap for the tutorial tracks.
 
 ---
 
@@ -69,7 +69,7 @@ Unlike a tensor-product graded Cartesian mesh (which forces thin $\Delta y = 7.5
 
 ## 3. Ranked Gaps for the Tutorial Tracks
 
-Ordered by impact across the four tutorial families (**PIC**, **Emitters**, **Metasurfaces**, **Vacuum Electronics**):
+Ordered by impact across the four tutorial families (**Photonic Integrated Circuits**, **Emitters**, **Metasurfaces**, **Vacuum Electronics**):
 
 1. **[Rank 1 — Vacuum Electronics & RF Cavities] Conformal Small-Cell CFL Bypass (Dey-Mittra / ECT) & SIBC on Subgrid (`~2–3 days`)**
    - *Why it matters*: While `material="pec"` and static conductivity `sigma` now work with sub-pixel fraction weighting (`test_09`), in TE mode a curved PEC wall that clips a tiny sliver ($< 5\%$) of a cell currently zeros out the clipped area (`open_area < 0.05 * area`) to avoid $\Delta t \to 0$. True Dey-Mittra area/length borrowing or a dispersive Surface Impedance Boundary Condition (SIBC) for copper RF walls at GHz/THz frequencies would eliminate staircase artifacts on high-$Q$ curved cavities without shrinking $\Delta t$.
@@ -77,10 +77,10 @@ Ordered by impact across the four tutorial families (**PIC**, **Emitters**, **Me
    - *Why it matters*: `SubgridAdjointSimulation` currently differentiates dielectric (`eps_r`) and conductive (`sigma`) designs with PML and mode/DFT monitors (`test_10`). Adding the reverse-mode transpose of `SubgridFIT2D.groups` (Drude/Lorentz auxiliary polarization states `p, p_old`) and plugging in `wakis.inverse.memory.CheckpointRung` will enable topology optimization of plasmonic nano-antennas and long-time high-$Q$ metasurface resonators.
 3. **[Rank 3 — Metasurfaces & Emitters] Total-Field / Scattered-Field (TF/SF) Closed Contour Injection (`~1 day`)**
    - *Why it matters*: `SubgridFIT2D.add_plane_wave` uses the volumetric scattered-field formulation (which is exact for bounded scatterers in a homogeneous background and now supports `add_bloch_plane_wave` for periodic gratings/slabs). A closed-contour Huygens TF/SF box on `SubgridFIT2D` would allow finite-beam or plane-wave injection onto scatterers sitting on multi-layer substrates where the background is piecewise homogeneous.
-4. **[Rank 4 — PIC & Accelerator Wakefields] 2D Axisymmetric ($r\text{–}z$) Coordinate Weighting in `SubgridFIT2D` (`~2 days`)**
+4. **[Rank 4 — Particle-in-Cell & Accelerator Wakefields] 2D Axisymmetric ($r\text{–}z$) Coordinate Weighting in `SubgridFIT2D` (`~2 days`)**
    - *Why it matters*: Vacuum electronics and accelerator wakefield tutorials frequently model cylindrically symmetric cavities and iris-loaded structures ($m = 0, 1$ azimuthal modes). Adding radial $2\pi r$ metric factors to `QuadMesh` node areas $D$ and edge lengths $W$ (with $r = 0$ axis regularity) would allow 2D subgridding around sharp cavity irises with full 3D axisymmetric accuracy.
-5. **[Rank 5 — Large-Scale PIC & Metasurfaces] GPU (`cupy`) Acceleration for `SubgridFIT2D` (`~2–3 days`)**
-   - *Why it matters*: Moving `K, KH, _BWx_p` to `cupyx.scipy.sparse.csr_matrix` and vectorizing the PML/ADE/PIC gather-deposit updates on GPU would speed up large subgrid meshes ($> 10^5$ unknowns or $> 10^5$ macro-particles).
+5. **[Rank 5 — Large-Scale Photonic Circuits & Metasurfaces] GPU (`cupy`) Acceleration for `SubgridFIT2D` (`~2–3 days`)**
+   - *Why it matters*: Moving `K, KH, _BWx_p` to `cupyx.scipy.sparse.csr_matrix` and vectorizing the PML/ADE/particle-in-cell gather-deposit updates on GPU would speed up large subgrid meshes ($> 10^5$ unknowns or $> 10^5$ macro-particles).
 6. **[Rank 6 — Full 3D Photonics / Emitters / Wakefields] 3D Octree Subgridding (`~3–4 weeks`)**
    - *Why it matters*: Needed when neither 2D planar nor 2D axisymmetric symmetry applies (e.g., 3D photonic crystal cavities, 3D waveguide bends with vertical radiation, or 3D off-axis wakefields).
 

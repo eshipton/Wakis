@@ -17,7 +17,7 @@ from scipy.constants import c as c_light
 
 from wakis.mode_solver import solve_modes
 from wakis.sources import GaussianSource
-from wakis.templates.photonics import PICSimulation, PolySlab, n_to_eps, straight
+from wakis.templates.photonics import PhotonicCircuit, PolySlab, n_to_eps, straight
 
 TUTORIAL_DIR = (
     Path(__file__).resolve().parent.parent
@@ -29,7 +29,7 @@ if str(TUTORIAL_DIR) not in sys.path:
     sys.path.insert(0, str(TUTORIAL_DIR))
 
 from _helpers import (  # noqa: E402
-    NonUniformCouplerPIC,
+    NonUniformCouplerCircuit,
     PhasedGaussianSource,
     build_coupler_graded_axes,
     coupler_mesh_overrides,
@@ -198,7 +198,7 @@ def test_supermodes_and_gap_mutation():
             H_WG,
             n_to_eps(N_WG),
         )
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=[s_top, s_bot],
@@ -213,13 +213,13 @@ def test_supermodes_and_gap_mutation():
             mesh_overrides=ov,
         )
         m = extract_mesh_metrics_from_grid(
-            pic.grid.x, pic.grid.y, gap_eff, Nz=pic.grid.Nz
+            circuit.grid.x, circuit.grid.y, gap_eff, Nz=circuit.grid.Nz
         )
         assert m["cells_across_feature"] >= 4.0
-        assert pic.grid.Nz == 1
-        z_mid = 0.5 * (pic.grid.zmin + pic.grid.zmax)
+        assert circuit.grid.Nz == 1
+        z_mid = 0.5 * (circuit.grid.zmin + circuit.grid.zmax)
         modes = solve_modes(
-            pic.solver, f0, (0.0, 0.0, z_mid), (0.0, 3.2e-6, np.inf), n_modes=2
+            circuit.solver, f0, (0.0, 0.0, z_mid), (0.0, 3.2e-6, np.inf), n_modes=2
         )
         ne = float(np.real(modes[0].neff))
         no = float(np.real(modes[1].neff))
@@ -283,7 +283,7 @@ def test_coupler_passivity_cmt_3db_and_length_mutation():
         dx_sb=dx_sb_test,
         dy_sb=dy_sb_test,
     )
-    pic_4 = PICSimulation(
+    circuit_4 = PhotonicCircuit(
         WL_MIN,
         1.80e-6,
         n_freqs=13,
@@ -299,10 +299,10 @@ def test_coupler_passivity_cmt_3db_and_length_mutation():
         n_pml=6,
         mesh_overrides=ov_4,
     )
-    s_4 = pic_4.run_s_parameters(
+    s_4 = circuit_4.run_s_parameters(
         drive=["in_bot"], energy_decay=5e-3, collect_fields=False
     )
-    wl = pic_4.wavelengths
+    wl = circuit_4.wavelengths
     order = np.argsort(wl)
     wl_s = wl[order]
     s11 = s_4[("in_bot", "in_bot")][order]
@@ -336,7 +336,7 @@ def test_coupler_passivity_cmt_3db_and_length_mutation():
     # CMT 3 dB crossing wavelength agreement within 3.5 %
     wl_cross_fit, _ = find_crossing_wavelength(wl_s[mid], tc[mid], tb[mid])
     sm = solve_coupler_supermodes(
-        pic_4,
+        circuit_4,
         wavelengths=np.array([1.45e-6, 1.53e-6, 1.62e-6]),
         x_coupled=0.0,
         x_sb_start=2.0e-6,
@@ -373,7 +373,7 @@ def test_coupler_passivity_cmt_3db_and_length_mutation():
             dx_sb=1.2e-6,
             dy_sb=0.70e-6,
         )
-        pic_l = PICSimulation(
+        circuit_l = PhotonicCircuit(
             WL_MIN,
             1.85e-6,
             n_freqs=15,
@@ -390,12 +390,12 @@ def test_coupler_passivity_cmt_3db_and_length_mutation():
             mesh_overrides=ov_l,
         )
         res_l = run_phased_dual_drive(
-            pic_l,
+            circuit_l,
             port_phases={"in_bot": 0.0},
             energy_decay=5e-2,
             collect_dft=False,
         )
-        wl_l = pic_l.wavelengths
+        wl_l = circuit_l.wavelengths
         ord_l = np.argsort(wl_l)
         i_l = int(np.argmin(np.abs(wl_l[ord_l] - WL_DESIGN)))
         tc_l = float(res_l["power"]["out_top"][ord_l][i_l])
@@ -446,7 +446,7 @@ def test_phased_gaussian_zero_dc_and_quadrature_switching():
         dx_sb=dx_sb_test,
         dy_sb=dy_sb_test,
     )
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         WL_MIN,
         1.85e-6,
         n_freqs=15,
@@ -463,13 +463,13 @@ def test_phased_gaussian_zero_dc_and_quadrature_switching():
         mesh_overrides=ov,
     )
     res_minus = run_phased_dual_drive(
-        pic,
+        circuit,
         port_phases={"in_bot": 0.0, "in_top": -0.5 * np.pi},
         energy_decay=1.5e-2,
         collect_dft=False,
     )
     res_plus = run_phased_dual_drive(
-        pic,
+        circuit,
         port_phases={"in_bot": 0.0, "in_top": +0.5 * np.pi},
         energy_decay=1.5e-2,
         collect_dft=False,
@@ -681,7 +681,7 @@ def test_setup_figures_mesh_upgrade_and_mutation():
     structures, ports, domain, geom = build_directional_coupler(
         L_c=4.0e-6, theta_sw_deg=30.0, four_ports=True
     )
-    pic_nu = NonUniformCouplerPIC(
+    circuit_nu = NonUniformCouplerCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -711,20 +711,20 @@ def test_setup_figures_mesh_upgrade_and_mutation():
     )
     np.testing.assert_allclose(xa + xa[::-1], 0.0, atol=1e-13)
     np.testing.assert_allclose(ya + ya[::-1], 0.0, atol=1e-13)
-    xg = pic_nu.grid.x
-    yg = pic_nu.grid.y
+    xg = circuit_nu.grid.x
+    yg = circuit_nu.grid.y
     np.testing.assert_allclose(yg[:-1] + yg[:-1][::-1], 0.0, atol=1e-13)
     dx = np.diff(xg)
     dy = np.diff(yg)
     assert float(np.max(dx)) > float(np.min(dy))
     assert float(np.max(dy)) > 1.8 * float(np.min(dy))
-    m_good = extract_mesh_metrics_from_grid(xg, yg, geom["gap_eff"], Nz=pic_nu.grid.Nz)
+    m_good = extract_mesh_metrics_from_grid(xg, yg, geom["gap_eff"], Nz=circuit_nu.grid.Nz)
     assert m_good["cells_across_feature"] >= 8.0
 
     # Mutation check: n_cells_gap=2 without minimum-4 clamp would violate the >= 4 rule;
     # mutating gap_eff to 0.3 * gap_eff on the fixed grid must fail the >= 4 cells check
     m_mut = extract_mesh_metrics_from_grid(
-        xg, yg, 0.3 * geom["gap_eff"], Nz=pic_nu.grid.Nz
+        xg, yg, 0.3 * geom["gap_eff"], Nz=circuit_nu.grid.Nz
     )
     assert m_mut["cells_across_feature"] < 4.0
 

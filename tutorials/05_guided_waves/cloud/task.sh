@@ -6,17 +6,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Cloud Batch worker entrypoint for PIC tutorials.
+# Cloud Batch worker entrypoint for photonic-circuit tutorials.
 # Environment variables provided by submit.py / Cloud Batch:
 #   BATCH_TASK_INDEX  0-based global task index
-#   GCS_PREFIX        gs://<bucket>/pic-tutorials/<run_id>
+#   GCS_PREFIX        gs://<bucket>/photonic-circuit-tutorials/<run_id>
 #   OMP_NUM_THREADS   OpenMP thread count (default 4)
 #   WAKIS_USE_GPU     "1" when running on an L4 GPU node, "0" otherwise
 
 set -euo pipefail
 
 idx="${BATCH_TASK_INDEX:-0}"
-echo "=== PIC tutorial worker: global task ${idx} on $(hostname) at $(date -Is) ==="
+echo "=== Photonic-circuit tutorial worker: global task ${idx} on $(hostname) at $(date -Is) ==="
 
 export DEBIAN_FRONTEND=noninteractive
 curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null

@@ -75,8 +75,8 @@ def test_task_tables_resolution_floor_and_feature_cells():
     (16 tasks) tables satisfies:
     1. ``cpw >= 10`` (cells per wavelength in the EIM slab core).
     2. ``n_feature >= 4`` and actual measured ``cells_across_feature >= 4`` on
-       the constructed ``PICSimulation`` mesh (without running the solver).
-    3. ``kottke_nonuniform`` (`NonUniformEulerBendPIC`) reduces total cells
+       the constructed ``PhotonicCircuit`` mesh (without running the solver).
+    3. ``kottke_nonuniform`` (`NonUniformEulerBendCircuit`) reduces total cells
        relative to the uniform baseline (`kottke_L3` / `kottke_L2`) while
        retaining >= 10 cells across the 400 nm waveguide core, non-square
        straight leads, and graded coarse cladding cells.
@@ -100,11 +100,11 @@ def test_task_tables_resolution_floor_and_feature_cells():
             assert int(t["n_feature"]) >= 4, (
                 f"{mode_name} task {t['name']} has n_feature={t['n_feature']} < 4"
             )
-            pic, _, _, _, _ = mod.build_task_simulation(t, mesh_only=True)
+            circuit, _, _, _, _ = mod.build_task_simulation(t, mesh_only=True)
             r_eff = float(t["r_eff"])
             min_feat = float(t.get("min_feature", mod.MIN_FEATURE))
             res = mod.measure_mesh_resolution(
-                pic, r_eff=r_eff, min_feature=min_feat
+                circuit, r_eff=r_eff, min_feature=min_feat
             )
             res_by_name[t["name"]] = res
             assert res["cells_across_feature"] >= 4.0, (
@@ -128,19 +128,19 @@ def test_task_tables_resolution_floor_and_feature_cells():
         assert res_nu["du_clad_max_nm"] > res_nu["dx_min_nm"] * 2.0
         assert res_nu["aspect_ratio_lead"] > 1.05
 
-    # Mutation check on NonUniformEulerBendPIC: tightening du_clad from 68 nm to 26.64 nm increases cell count
+    # Mutation check on NonUniformEulerBendCircuit: tightening du_clad from 68 nm to 26.64 nm increases cell count
     t_nu_fine = dict(full_tasks[-1])
     structs, ports, domain, _ = mod.build_bend_waveguide(r_eff=t_nu_fine["r_eff"], bend_type="euler")
-    pic_nu_default = mod.NonUniformEulerBendPIC(
+    circuit_nu_default = mod.NonUniformEulerBendCircuit(
         mod.WL_MIN, mod.WL_MAX, structures=structs, ports=ports, n_core=mod.N_SI, n_clad=mod.N_SIO2,
         two_d=True, averaging="kottke", cells_per_wavelength=20, domain=domain, n_pml=10, mesh_only=True
     )
-    pic_nu_dense = mod.NonUniformEulerBendPIC(
+    circuit_nu_dense = mod.NonUniformEulerBendCircuit(
         mod.WL_MIN, mod.WL_MAX, structures=structs, ports=ports, n_core=mod.N_SI, n_clad=mod.N_SIO2,
         two_d=True, averaging="kottke", cells_per_wavelength=20, domain=domain, n_pml=10,
         du_clad=26.64e-9, du_lead=26.64e-9, mesh_only=True
     )
-    assert pic_nu_default.grid.Nx * pic_nu_default.grid.Ny < pic_nu_dense.grid.Nx * pic_nu_dense.grid.Ny * 0.85
+    assert circuit_nu_default.grid.Nx * circuit_nu_default.grid.Ny < circuit_nu_dense.grid.Nx * circuit_nu_dense.grid.Ny * 0.85
 
     # Mutation check on mesh_overrides: requesting N=12 at cpw=10 forces refinement
     t_override = dict(quick_tasks[0])
@@ -153,10 +153,10 @@ def test_task_tables_resolution_floor_and_feature_cells():
         n_feature=12,
     )
     assert len(overrides) == 1, "Expected mesh_overrides to activate when w/N < dx_bg"
-    pic_ov, _, _, _, _ = mod.build_task_simulation(t_override, mesh_only=True)
+    circuit_ov, _, _, _, _ = mod.build_task_simulation(t_override, mesh_only=True)
     r_eff = float(t_override["r_eff"])
     res_ov = mod.measure_mesh_resolution(
-        pic_ov, r_eff=r_eff, min_feature=mod.MIN_FEATURE
+        circuit_ov, r_eff=r_eff, min_feature=mod.MIN_FEATURE
     )
     assert res_ov["cells_across_feature"] >= 12.0 - 1e-6
     assert res_ov["dx_min_nm"] < res_ov["dx_background_nm"]
@@ -174,7 +174,7 @@ def test_euler_vs_circular_physics_and_mutation():
        radiating regime (R_eff = 1.4 um) increases insertion loss by > 0.12 dB
        compared to R_eff = 2.5 um.
     """
-    from wakis.templates.photonics import PICSimulation
+    from wakis.templates.photonics import PhotonicCircuit
 
     mod = _load_tutorial_module()
 
@@ -190,7 +190,7 @@ def test_euler_vs_circular_physics_and_mutation():
             cpw=cpw,
             n_feature=4,
         )
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=mod.WL_MIN,
             wavelength_max=mod.WL_MAX,
             n_freqs=15,
@@ -206,7 +206,7 @@ def test_euler_vs_circular_physics_and_mutation():
             n_pml=8,
             mesh_overrides=overrides,
         )
-        s = pic.run_s_parameters(
+        s = circuit.run_s_parameters(
             drive=["in"], energy_decay=5e-4, collect_fields=False
         )
         mid = slice(3, -3)

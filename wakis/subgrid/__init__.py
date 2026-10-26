@@ -13,6 +13,8 @@ under a computed CFL limit, exactly transposable), sub-pixel material
 averaging, PML, scattered-field plane waves and Drude/Lorentz ADE media.
 """
 
+import warnings
+
 from .emitters import (
     SubgridDipole,
     add_bloch_plane_wave,
@@ -46,9 +48,9 @@ from .monitors import (
     SubgridNear2FarMonitor,
     SubgridResonanceMonitor,
 )
-from .pic import SubgridPICSimulation
+from .photonic_circuit import SubgridPhotonicCircuit, SubgridPICSimulation
 from .ports import (
-    PIC_POLARIZATION,
+    PHOTONIC_CIRCUIT_POLARIZATION,
     SubgridMode,
     SubgridModeSource,
     polarization_mapping,
@@ -56,6 +58,18 @@ from .ports import (
 )
 from .shapes import Circle, Geometry, Rect
 from .solver import SubgridFIT2D
+
+
+def __getattr__(name):
+    if name == "PIC_POLARIZATION":
+        warnings.warn(
+            "PIC_POLARIZATION is deprecated; use PHOTONIC_CIRCUIT_POLARIZATION instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return PHOTONIC_CIRCUIT_POLARIZATION
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "QuadMesh",
@@ -72,7 +86,7 @@ __all__ = [
     "choose_refinement",
     "skin_depth",
     "refine_skin_depth",
-    "PIC_POLARIZATION",
+    "PHOTONIC_CIRCUIT_POLARIZATION",
     "polarization_mapping",
     "SubgridMode",
     "solve_port_modes_2d",
@@ -84,6 +98,7 @@ __all__ = [
     "Near2FarMonitor2D",
     "SubgridDiffractionMonitor",
     "SubgridResonanceMonitor",
+    "SubgridPhotonicCircuit",
     "SubgridPICSimulation",
     "SubgridDipole",
     "homogeneous_dipole_power_2d",

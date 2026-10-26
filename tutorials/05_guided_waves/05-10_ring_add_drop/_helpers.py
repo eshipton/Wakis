@@ -19,7 +19,7 @@ Provides:
   at both off-resonance (`1550 nm`) and a dense wavelength comb spanning one
   free spectral range so the exact on-resonance steady-state field map can be
   extracted after the resonance wavelength is identified from `S_drop`.
-- `RingPICSimulation`: `PICSimulation` subclass integrating the fast 2D TE
+- `RingPhotonicCircuit`: `PhotonicCircuit` subclass integrating the fast 2D TE
   stepper, `FastModeMonitor`, dual-port (`through` and `drop`) time-trace
   probes, achieved energy-decay tracking, and automatic on/off-resonance DFT
   field extraction.
@@ -44,7 +44,7 @@ from wakis.gridFIT3D import GridFIT3D
 from wakis.mode_solver import ModeMonitor, ModeSource, _host, _Plane, solve_modes
 from wakis.templates import meshing
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     _SnapshotRecorder,
     n_to_eps,
@@ -625,9 +625,9 @@ class _DualPortSnapshotRecorder(_SnapshotRecorder):
         self.step += 1
 
 
-class RingPICSimulation(PICSimulation):
+class RingPhotonicCircuit(PhotonicCircuit):
     """
-    `PICSimulation` subclass tailored for high-Q microring resonators in 2D EIM.
+    `PhotonicCircuit` subclass tailored for high-Q microring resonators in 2D EIM.
 
     - Attaches `attach_fast_2d_te_step` in `build()` for 2D quasi-TE runs.
     - Uses `FastModeMonitor` for port S-parameters.
@@ -753,7 +753,7 @@ class RingPICSimulation(PICSimulation):
         self, drive=None, energy_decay=1e-3, max_time=12e-12, collect_fields=True
     ):
         if not self.ports:
-            raise ValueError("No ports defined on RingPICSimulation.")
+            raise ValueError("No ports defined on RingPhotonicCircuit.")
         if drive is None:
             drive = [self.ports[0].name]
         elif isinstance(drive, str):
@@ -1200,7 +1200,7 @@ def build_ring_add_drop_graded_axes(
     y_pos[0] = 0.0
     y_axis = np.concatenate([-y_pos[:0:-1], y_pos])
 
-    # 3. Single-cell periodic 2D z-axis matching PICSimulation._build_2d_structures_and_domain
+    # 3. Single-cell periodic 2D z-axis matching PhotonicCircuit._build_2d_structures_and_domain
     z_axis = np.array([-0.5 * h_core, +0.5 * h_core], dtype=float)
 
     caf, dy_max_gap = measure_cells_across_gap(y_axis, g, radius_m=r, width_m=w)
@@ -1218,9 +1218,9 @@ def build_ring_add_drop_graded_axes(
     return x_axis, y_axis, z_axis, info
 
 
-class NonUniformRingAddDropPIC(RingPICSimulation):
+class NonUniformRingAddDropCircuit(RingPhotonicCircuit):
     """
-    2D EIM :class:`RingPICSimulation` subclass that replaces the uniform
+    2D EIM :class:`RingPhotonicCircuit` subclass that replaces the uniform
     background + override-box mesh with :func:`build_ring_add_drop_graded_axes`.
     """
 

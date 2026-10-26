@@ -77,7 +77,7 @@ def test_y_junction_geometry_and_nonuniform_mesh_builder():
     f_neg = slab.fill(x_test, -y_test, z_test, h_test, h_test, h_test, n_sub=8)
     np.testing.assert_allclose(f_pos, f_neg, atol=1e-12)
 
-    pic_u = yj.PICSimulation(
+    circuit_u = yj.PhotonicCircuit(
         yj.WL_MIN,
         yj.WL_MAX,
         structures=structures,
@@ -90,7 +90,7 @@ def test_y_junction_geometry_and_nonuniform_mesh_builder():
         domain=yj.DOMAIN_2D,
         n_pml=10,
     )
-    pic_nu = hlp.NonUniformYJunctionPIC(
+    circuit_nu = hlp.NonUniformYJunctionCircuit(
         yj.WL_MIN,
         yj.WL_MAX,
         structures=structures,
@@ -103,8 +103,8 @@ def test_y_junction_geometry_and_nonuniform_mesh_builder():
         domain=yj.DOMAIN_2D,
         n_pml=10,
     )
-    m_u = hlp.measure_y_junction_mesh(pic_u.grid)
-    m_nu = hlp.measure_y_junction_mesh(pic_nu.grid)
+    m_u = hlp.measure_y_junction_mesh(circuit_u.grid)
+    m_nu = hlp.measure_y_junction_mesh(circuit_nu.grid)
 
     # Upgraded non-square graded mesh cuts cell count by > 30% while increasing tip-gap resolution
     assert m_nu["n_cells"] < 0.70 * m_u["n_cells"]
@@ -114,8 +114,8 @@ def test_y_junction_geometry_and_nonuniform_mesh_builder():
     assert m_nu["dy_clad_max_nm"] > 45.0
 
     # Adjacent cell-size grading ratio <= 1.30 on both axes
-    dx = np.diff(pic_nu.grid.x)
-    dy = np.diff(pic_nu.grid.y)
+    dx = np.diff(circuit_nu.grid.x)
+    dy = np.diff(circuit_nu.grid.y)
     assert float(np.max(np.maximum(dx[1:] / dx[:-1], dx[:-1] / dx[1:]))) <= 1.30
     assert float(np.max(np.maximum(dy[1:] / dy[:-1], dy[:-1] / dy[1:]))) <= 1.30
 

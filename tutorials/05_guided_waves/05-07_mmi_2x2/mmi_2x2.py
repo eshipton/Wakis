@@ -21,7 +21,7 @@
 #
 # **Abstract.** $2 \times 2$ multimode interference (MMI) couplers are workhorse
 # $3\;\text{dB}$ directional splitters and quadrature hybrids in silicon photonic
-# integrated circuits (PICs), offering broader optical bandwidth and looser
+# integrated circuits, offering broader optical bandwidth and looser
 # lithography tolerances than directional couplers. By launching an off-axis
 # fundamental $\text{TE}_0$ waveguide mode into a wide multi-mode slab section,
 # self-imaging (Talbot interference) among the guided lateral eigenmodes produces
@@ -130,7 +130,7 @@ from scipy.optimize import brentq
 
 from wakis import figstyle
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -151,7 +151,7 @@ if str(HERE) not in sys.path:
 from _helpers import (  # noqa: E402
     RESOLUTION_LADDER,
     THROAT_OVERRIDE_X,
-    NonUniformMMI2x2PIC,
+    NonUniformMMI2x2Circuit,
     build_gap_mesh_overrides,
     build_mmi_2x2_graded_axes,
     build_task_grid_only,
@@ -573,7 +573,7 @@ def analytic_mmi_model(wavelength=WL_REF):
 # $\text{SiO}_2$ cladding ($|y| > 1.50\;\mu\text{m}$) and along the $4.0\;\mu\text{m}$
 # S-bends and straight port leads, and its transverse grid lines miss the exact MMI
 # sidewalls $y = \pm 0.50\;\mu\text{m}$ by $7.1\;\text{nm}$ ($8.8\;\text{nm}$ in 8-cell PML).
-# In `build_mmi_2x2_graded_axes` and `NonUniformMMI2x2PIC` (`task_11`,
+# In `build_mmi_2x2_graded_axes` and `NonUniformMMI2x2Circuit` (`task_11`,
 # `kottke_nonuniform`), we upgrade to a mirror-symmetric **graded non-uniform,
 # non-square Cartesian mesh**:
 #
@@ -884,7 +884,7 @@ def get_task_table(quick=False):
 
 
 def build_task_simulation(task_cfg, use_gpu=False):
-    """Build and return ``(pic, structures, ports, domain)`` for ``task_cfg``."""
+    """Build and return ``(circuit, structures, ports, domain)`` for ``task_cfg``."""
     l_mmi = float(task_cfg.get("l_mmi", L_MMI))
     min_feature = float(task_cfg.get("min_feature", GAP_MMI))
     n_cells_feature = int(task_cfg.get("n_cells_feature", 4))
@@ -909,7 +909,7 @@ def build_task_simulation(task_cfg, use_gpu=False):
         use_gpu=use_gpu,
     )
     if task_cfg.get("nonuniform", False):
-        pic = NonUniformMMI2x2PIC(
+        circuit = NonUniformMMI2x2Circuit(
             l_mmi=l_mmi,
             w_mmi=W_MMI,
             w_wg=W_WG,
@@ -924,8 +924,8 @@ def build_task_simulation(task_cfg, use_gpu=False):
             n_cells_feature=n_cells_feature,
             min_feature=min_feature,
         )
-        pic = PICSimulation(mesh_overrides=mesh_overrides, **common_kw)
-    return pic, structures, ports, domain
+        circuit = PhotonicCircuit(mesh_overrides=mesh_overrides, **common_kw)
+    return circuit, structures, ports, domain
 
 
 def run_single_task(task_cfg, out_dir):
@@ -942,23 +942,23 @@ def run_single_task(task_cfg, out_dir):
     min_feature = float(task_cfg.get("min_feature", GAP_MMI))
     n_cells_feature = int(task_cfg.get("n_cells_feature", 4))
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic, structures, ports, domain = build_task_simulation(task_cfg, use_gpu=use_gpu)
+    circuit, structures, ports, domain = build_task_simulation(task_cfg, use_gpu=use_gpu)
 
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in1"],
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
 
     res_metrics = measure_grid_resolution(
-        pic.grid,
+        circuit.grid,
         n_pml=task_cfg["n_pml"],
         l_mmi=l_mmi,
         min_feature=min_feature,
         w_mmi=W_MMI,
     )
-    n_steps = int(pic.solver.Nt)
-    zoom_patch = extract_zoom_permittivity(pic.solver, component="y")
+    n_steps = int(circuit.solver.Nt)
+    zoom_patch = extract_zoom_permittivity(circuit.solver, component="y")
 
     payload = {
         "task_index": np.int32(idx),
@@ -974,9 +974,9 @@ def run_single_task(task_cfg, out_dir):
         "cells_across_feature": np.float64(res_metrics["cells_across_feature"]),
         "n_cells": np.int32(res_metrics["n_cells"]),
         "n_steps": np.int32(n_steps),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in1", "in1")].astype(np.complex128),
         "S21": s_mat[("in2", "in1")].astype(np.complex128),
         "S31": s_mat[("out1", "in1")].astype(np.complex128),
@@ -985,8 +985,8 @@ def run_single_task(task_cfg, out_dir):
     }
 
     if task_cfg["collect_fields"]:
-        modes_in = pic.solve_port_modes("in1", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes(
+        modes_in = circuit.solve_port_modes("in1", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes(
             "out2", frequencies=c_light / WL_REF, n_modes=1
         )
         y_in = modes_in[0].coords["Eb"][0]
@@ -1004,7 +1004,7 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in1", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in1", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -1012,34 +1012,34 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if WL_5050_3D in pic.dft_fields:
-            fmap2 = pic.dft_fields[WL_5050_3D]
+        if WL_5050_3D in circuit.dft_fields:
+            fmap2 = circuit.dft_fields[WL_5050_3D]
             payload["dft_Ey_1580"] = fmap2["Ey"]
             payload["dft_E2_1580"] = fmap2["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -1166,7 +1166,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ovr_prim = build_gap_mesh_overrides(
         l_mmi=L_MMI, n_cells_feature=n_feat_prim, min_feature=GAP_MMI
     )
-    pic_uniform = PICSimulation(
+    circuit_uniform = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1180,7 +1180,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=n_pml_prim,
         mesh_overrides=ovr_prim,
     )
-    pic_nonuniform = NonUniformMMI2x2PIC(
+    circuit_nonuniform = NonUniformMMI2x2Circuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1197,7 +1197,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         min_feature=GAP_MMI,
     )
     save_mmi_2x2_setup_figures(
-        pic_nonuniform,
+        circuit_nonuniform,
         structures,
         primary,
         fig_dir,
@@ -1338,7 +1338,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         cpw_v = float(d_task["cpw"]) if d_task is not None else float(default_cpw)
         n_v = int(d_task.get("n_cells_feature", default_n)) if d_task is not None else int(default_n)
         ovr = build_gap_mesh_overrides(l_mmi=L_MMI, n_cells_feature=n_v, min_feature=GAP_MMI)
-        pic_z = PICSimulation(
+        circuit_z = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -1352,8 +1352,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_pml=6,
             mesh_overrides=ovr,
         )
-        m_z = measure_grid_resolution(pic_z.grid, n_pml=6, l_mmi=L_MMI, min_feature=GAP_MMI)
-        zp = extract_zoom_permittivity(pic_z.solver, component="y")
+        m_z = measure_grid_resolution(circuit_z.grid, n_pml=6, l_mmi=L_MMI, min_feature=GAP_MMI)
+        zp = extract_zoom_permittivity(circuit_z.solver, component="y")
         return {**m_z, **zp, "cpw": cpw_v, "n_cells_feature": n_v}
 
     d_s1 = _ensure_zoom(tasks_data.get("staircase_L1"), 10, 4, "staircase")
@@ -1399,8 +1399,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     d_ref_cmp = tasks_data.get("kottke_reference", primary)
     prim_name = str(primary.get("name", "kottke_L3"))
     plot_mesh_upgrade_comparison_mmi_2x2(
-        pic_uniform,
-        pic_nonuniform,
+        circuit_uniform,
+        circuit_nonuniform,
         structures,
         primary,
         d_nu,
@@ -1442,7 +1442,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic_nonuniform,
+        circuit_nonuniform,
         structures,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$",
@@ -1454,7 +1454,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic_nonuniform,
+        circuit_nonuniform,
         structures,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
@@ -1469,7 +1469,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_y"],
         e2_1550,
         e2_1580,
-        pic_nonuniform,
+        circuit_nonuniform,
         structures,
         out_path=fig_dir / "09_field_comparison_1550_vs_1580.png",
     )
@@ -1481,7 +1481,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic_nonuniform,
+            circuit_nonuniform,
             structures,
             out_path=fig_dir / "10_pulse_propagation.gif",
             fps=12,
@@ -2165,7 +2165,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #    Set $L_{\text{mmi}} = 2.00\;\mu\text{m}$ and show that input power from Port 1
 #    transfers predominantly into the cross port (Port 4, $|S_{41}|^2 \gg |S_{31}|^2$).
 # 3. **90° optical hybrid verification**: Drive both Port 1 and Port 2
-#    (`pic.run_s_parameters(drive=["in1", "in2"])`) and verify by mirror symmetry
+#    (`circuit.run_s_parameters(drive=["in1", "in2"])`) and verify by mirror symmetry
 #    that $S_{42} = S_{31}$, $S_{32} = S_{41}$, and that the $2 \times 2$ transmission
 #    sub-matrix is unitary up to the radiation loss factor.
 #

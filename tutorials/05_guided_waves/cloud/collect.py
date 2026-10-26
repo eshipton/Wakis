@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Download completed Cloud Batch PIC tutorial outputs from GCS into ``<tutorial>/data/``.
+Download completed Cloud Batch photonic-circuit tutorial outputs from GCS into ``<tutorial>/data/``.
 
 Usage
 -----
@@ -40,7 +40,7 @@ def find_tutorial_script(tdir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "run_id", help="Cloud Batch run identifier (e.g. pic-20261021-120000)"
+        "run_id", help="Cloud Batch run identifier (e.g. photonic-circuit-20261021-120000)"
     )
     ap.add_argument(
         "tutorials",
@@ -63,7 +63,7 @@ def main():
         tdir = resolve_tutorial_dir(item)
         tutorial_name = tdir.name
         data_dir = tdir / "data"
-        gcs_src = f"gs://{BUCKET}/pic-tutorials/{args.run_id}/{tutorial_name}/*"
+        gcs_src = f"gs://{BUCKET}/photonic-circuit-tutorials/{args.run_id}/{tutorial_name}/*"
         cmd = ["gcloud", "storage", "cp", "-r", gcs_src, str(data_dir) + "/"]
         if args.dry_run:
             print(" ".join(cmd))

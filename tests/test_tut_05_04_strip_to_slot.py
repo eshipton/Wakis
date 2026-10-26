@@ -26,7 +26,7 @@ if str(TUTORIAL_DIR) not in sys.path:
     sys.path.insert(0, str(TUTORIAL_DIR))
 
 from _helpers import (  # noqa: E402
-    NonUniformStripToSlotPIC,
+    NonUniformStripToSlotCircuit,
     asymmetric_taper,
     build_mmi_graded_axes,
     slot_straight,
@@ -56,7 +56,7 @@ from strip_to_slot import (  # noqa: E402
     measure_task_resolution,
 )
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     slab_neff,
@@ -116,7 +116,7 @@ def test_task_tables_resolution_and_cells_across_feature():
     """
     Verify that every non-demo task in both the `--quick` and `--full` task
     tables satisfies `cpw >= 10` and `cells_across_feature >= 4` measured
-    directly from the built `PICSimulation` mesh (without running the solver),
+    directly from the built `PhotonicCircuit` mesh (without running the solver),
     that the explicit under-resolved demo pair is present, and that mutating
     `n_feature` below 4 is detected.
     """
@@ -134,8 +134,8 @@ def test_task_tables_resolution_and_cells_across_feature():
         for t in demo_tasks:
             assert t["cpw"] >= 10
             assert t["n_feature"] == 0
-            pic_demo = build_task_simulation(t, use_gpu=False)
-            res_demo = measure_task_resolution(pic_demo, t)
+            circuit_demo = build_task_simulation(t, use_gpu=False)
+            res_demo = measure_task_resolution(circuit_demo, t)
             assert 1.0 <= res_demo["cells_across_feature"] < 2.5
 
         for t in non_demo_tasks:
@@ -145,8 +145,8 @@ def test_task_tables_resolution_and_cells_across_feature():
             assert t["n_feature"] >= 4, (
                 f"Task {t['name']} (quick={quick}) has n_feature={t['n_feature']} < 4"
             )
-            pic = build_task_simulation(t, use_gpu=False)
-            res = measure_task_resolution(pic, t)
+            circuit = build_task_simulation(t, use_gpu=False)
+            res = measure_task_resolution(circuit, t)
             assert res["cells_across_feature"] >= 4.0 - 1e-6, (
                 f"Task {t['name']} (quick={quick}) has only "
                 f"{res['cells_across_feature']:.2f} cells across feature (< 4)"
@@ -158,8 +158,8 @@ def test_task_tables_resolution_and_cells_across_feature():
     swept_cfg = dict(get_task_table(quick=True)[2])
     swept_cfg["gap_slot_m"] = 60e-9
     swept_cfg["n_feature"] = 6
-    pic_sw = build_task_simulation(swept_cfg, use_gpu=False)
-    res_sw = measure_task_resolution(pic_sw, swept_cfg)
+    circuit_sw = build_task_simulation(swept_cfg, use_gpu=False)
+    res_sw = measure_task_resolution(circuit_sw, swept_cfg)
     assert res_sw["min_feature_nm"] == pytest.approx(60.0)
     assert res_sw["cells_across_feature"] == pytest.approx(6.0, rel=1e-2)
     assert res_sw["dx_min_nm"] == pytest.approx(10.0, rel=1e-2)
@@ -167,8 +167,8 @@ def test_task_tables_resolution_and_cells_across_feature():
     # Mutation check: reducing n_feature from 4 -> 2 must drop cells_across_feature < 4
     mut_cfg = dict(get_task_table(quick=True)[2])
     mut_cfg["n_feature"] = 2
-    pic_mut = build_task_simulation(mut_cfg, use_gpu=False)
-    res_mut = measure_task_resolution(pic_mut, mut_cfg)
+    circuit_mut = build_task_simulation(mut_cfg, use_gpu=False)
+    res_mut = measure_task_resolution(circuit_mut, mut_cfg)
     assert res_mut["cells_across_feature"] < 4.0
 
 
@@ -210,7 +210,7 @@ def test_slot_mode_field_enhancement_and_discontinuity():
     # Compare against Wakis 2D EIM eigenmode on the output slot port at L3=(20, 8)
     structures, ports, domain = build_mmi_converter()
     overrides = build_mesh_overrides("mmi", n_feature=8)
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -225,7 +225,7 @@ def test_slot_mode_field_enhancement_and_discontinuity():
         n_pml=8,
         mesh_overrides=overrides,
     )
-    m_slot = pic.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)[0]
+    m_slot = circuit.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)[0]
     neff_num = float(np.real(m_slot.neff))
     assert neff_num == pytest.approx(ana["neff"], abs=0.025)
 
@@ -315,7 +315,7 @@ def test_mmi_conversion_efficiency_vs_length_and_mutation():
         ]
         dom = (-1.95e-6, L_c + 1.95e-6, -1.42e-6, +1.42e-6)
         overrides = build_mesh_overrides("mmi", length_conv=L_c, n_feature=n_feature)
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             WL_MIN,
             WL_MAX,
             n_freqs=15,
@@ -331,10 +331,10 @@ def test_mmi_conversion_efficiency_vs_length_and_mutation():
             n_pml=7,
             mesh_overrides=overrides,
         )
-        s = pic.run_s_parameters(
+        s = circuit.run_s_parameters(
             drive=["in"], energy_decay=2e-3, collect_fields=False
         )
-        i0 = int(np.argmin(np.abs(pic.wavelengths - WL_REF)))
+        i0 = int(np.argmin(np.abs(circuit.wavelengths - WL_REF)))
         t0 = float(np.abs(s[("out", "in")][i0]) ** 2)
         r0 = float(np.abs(s[("in", "in")][i0]) ** 2)
         return t0, r0

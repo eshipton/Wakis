@@ -138,7 +138,7 @@ from scipy.constants import c as c_light
 
 from wakis import figstyle
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -155,7 +155,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
-    NonUniformMMI1x4PIC,
+    NonUniformMMI1x4Circuit,
     build_mmi_1x4_graded_axes,
     equivalent_3layer_core_index,
     measure_mmi_1x4_mesh,
@@ -176,7 +176,7 @@ FIG_DIR = HERE / "figures"
 # %% [markdown]
 # ### Device parameters from Malka *et al.* (2016)
 #
-# In keeping with the Wakis PIC convention, propagation is oriented along $+x$,
+# In keeping with the Wakis photonic-circuit convention, propagation is oriented along $+x$,
 # transverse waveguide width along $y$, and the vertical sandwich slot stack
 # along $z$:
 #
@@ -214,7 +214,7 @@ WL_REF = 1.55e-6
 N_FREQS = 51
 
 # Exact 5-layer vertical-slot TM mode effective index at 1550 nm (2.984168)
-# and the equivalent 3-layer core index passed to PICSimulation (3.110774)
+# and the equivalent 3-layer core index passed to PhotonicCircuit (3.110774)
 N_EFF_SLOT = slot_slab_neff(
     n_rail=N_SI,
     n_slot=N_GAN,
@@ -280,7 +280,7 @@ X_PORT_IN = -0.75e-6
 # $$n_{\text{eff,slot}}(1550\;\text{nm}) = 2.9842.$$
 #
 # Passing `N_CORE_EQ = 3.1108` on the $H_{\text{stack}} = 0.70\;\mu\text{m}$
-# `PolySlab` ensures that `PICSimulation` sets `pic.n_eff_slab = 2.9842` in the
+# `PolySlab` ensures that `PhotonicCircuit` sets `circuit.n_eff_slab = 2.9842` in the
 # 2D FIT domain.
 
 # %% [markdown]
@@ -304,7 +304,7 @@ X_PORT_IN = -0.75e-6
 #
 # Before launching the time-domain solver, `save_mmi_1x4_setup_figures` calls
 # `wakis.schematic.save_setup_figures` on the graded non-uniform, non-square
-# simulation setup (`NonUniformMMI1x4PIC`) to render the labelled geometry
+# simulation setup (`NonUniformMMI1x4Circuit`) to render the labelled geometry
 # schematic (`figures/00a_setup_geometry.png`), the mesh-and-excitation overview
 # (`figures/00b_setup_mesh_and_excitation.png`), and the setup summary table
 # (`figures/00_setup_table.md`):
@@ -525,7 +525,7 @@ def build_mmi_1x4(
 # cladding ($|y| > 2.45\;\mu\text{m}$) and along the straight/adiabatically
 # tapered leads while leaving the MMI sidewalls ($y = \pm 2.45\;\mu\text{m}$) at
 # a $3.6\;\text{nm}$ offset from the nearest grid node. In
-# `_helpers.build_mmi_1x4_graded_axes` and `NonUniformMMI1x4PIC` (`task_37`), we
+# `_helpers.build_mmi_1x4_graded_axes` and `NonUniformMMI1x4Circuit` (`task_37`), we
 # upgrade the mesh to a **symmetric, piecewise-graded non-square Cartesian grid**
 # ($732 \times 257 \times 1 = 188{,}124$ cells including ghost cell):
 #
@@ -584,7 +584,7 @@ def build_mmi_1x4(
 #   of the sweep grid.
 # - **Task `37` (`kottke_nonuniform`, `task_16` in `--quick`)**: Graded
 #   non-uniform, non-square Cartesian mesh upgrade on the $(11.15, 4.90)\;\mu\text{m}$
-#   MMI (`NonUniformMMI1x4PIC`, $732 \times 257 \times 1 = 188{,}124$ cells in
+#   MMI (`NonUniformMMI1x4Circuit`, $732 \times 257 \times 1 = 188{,}124$ cells in
 #   `--full`), benchmarked directly against `kottke_fine` (`task_4`) and
 #   `kottke_reference` (`task_6`).
 
@@ -745,7 +745,7 @@ def get_task_table(quick=False):
 
 
 def build_task_simulation(task_cfg, use_gpu=False):
-    """Build and return ``(pic, structures, ports, domain)`` for ``task_cfg``."""
+    """Build and return ``(circuit, structures, ports, domain)`` for ``task_cfg``."""
     structures, ports, domain = build_mmi_1x4(
         l_mmi=task_cfg["l_mmi"],
         w_mmi=task_cfg["w_mmi"],
@@ -772,7 +772,7 @@ def build_task_simulation(task_cfg, use_gpu=False):
         use_gpu=use_gpu,
     )
     if task_cfg.get("nonuniform", False):
-        pic = NonUniformMMI1x4PIC(
+        circuit = NonUniformMMI1x4Circuit(
             l1=L1,
             l_mmi=task_cfg["l_mmi"],
             w1=W1,
@@ -781,8 +781,8 @@ def build_task_simulation(task_cfg, use_gpu=False):
             **common_kw,
         )
     else:
-        pic = PICSimulation(**common_kw)
-    return pic, structures, ports, domain
+        circuit = PhotonicCircuit(**common_kw)
+    return circuit, structures, ports, domain
 
 
 def run_single_task(task_cfg, out_dir):
@@ -796,9 +796,9 @@ def run_single_task(task_cfg, out_dir):
     t0 = time.perf_counter()
 
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
-    pic, structures, ports, domain = build_task_simulation(task_cfg, use_gpu=use_gpu)
+    circuit, structures, ports, domain = build_task_simulation(task_cfg, use_gpu=use_gpu)
 
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
@@ -813,9 +813,9 @@ def run_single_task(task_cfg, out_dir):
         "cpw": np.float32(task_cfg["cpw"]),
         "l_mmi": np.float64(task_cfg["l_mmi"]),
         "w_mmi": np.float64(task_cfg["w_mmi"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out1", "in")].astype(np.complex128),
         "S31": s_mat[("out2", "in")].astype(np.complex128),
@@ -827,8 +827,8 @@ def run_single_task(task_cfg, out_dir):
         payload["S51_m1"] = s_mat[("out4_m1", "in")].astype(np.complex128)
 
     if task_cfg["collect_fields"]:
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes(
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes(
             "out3", frequencies=c_light / WL_REF, n_modes=1
         )
         y_in = modes_in[0].coords["Eb"][0]
@@ -846,7 +846,7 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -854,29 +854,29 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -884,8 +884,8 @@ def run_single_task(task_cfg, out_dir):
     elapsed = time.perf_counter() - t0
     rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     m_stats = measure_mmi_1x4_mesh(
-        pic.grid.x,
-        pic.grid.y,
+        circuit.grid.x,
+        circuit.grid.y,
         w1=W1,
         g2=PITCH - W2,
         w_mmi=task_cfg["w_mmi"],
@@ -900,8 +900,8 @@ def run_single_task(task_cfg, out_dir):
         "nonuniform": bool(task_cfg.get("nonuniform", False)),
         "l_mmi_um": round(task_cfg["l_mmi"] * 1e6, 3),
         "w_mmi_um": round(task_cfg["w_mmi"] * 1e6, 3),
-        "grid_shape": [int(pic.grid.Nx), int(pic.grid.Ny), int(pic.grid.Nz)],
-        "n_cells": int(pic.grid.Nx * pic.grid.Ny * pic.grid.Nz),
+        "grid_shape": [int(circuit.grid.Nx), int(circuit.grid.Ny), int(circuit.grid.Nz)],
+        "n_cells": int(circuit.grid.Nx * circuit.grid.Ny * circuit.grid.Nz),
         "dx_min_nm": round(m_stats["dx_min_nm"], 3),
         "dx_max_nm": round(m_stats["dx_max_nm"], 3),
         "dy_min_nm": round(m_stats["dy_min_nm"], 3),
@@ -975,7 +975,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     cpw_fine = float(primary["cpw"])
     n_pml_fine = 10 if cpw_fine >= 15.0 else 8
-    pic_fine = PICSimulation(
+    circuit_fine = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -988,7 +988,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         domain=domain,
         n_pml=n_pml_fine,
     )
-    pic_nonuniform = NonUniformMMI1x4PIC(
+    circuit_nonuniform = NonUniformMMI1x4Circuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1010,7 +1010,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     # 0a & 0b. Setup schematic (00a_setup_geometry.png), mesh+excitation (00b_setup_mesh_and_excitation.png),
     # and markdown setup table (00_setup_table.md)
     save_mmi_1x4_setup_figures(
-        pic_nonuniform,
+        circuit_nonuniform,
         structures,
         primary,
         fig_dir,
@@ -1163,7 +1163,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 
     # 4. In-plane permittivity map with mesh lines zoomed on the MMI-to-output-taper junction
     cpw_mesh = float(tasks_data.get("kottke_medium", primary)["cpw"])
-    pic_stair = PICSimulation(
+    circuit_stair = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1176,7 +1176,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         domain=domain,
         n_pml=8,
     )
-    pic_kottke = PICSimulation(
+    circuit_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1190,8 +1190,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=8,
     )
     plot_cross_section_mesh(
-        pic_stair.solver,
-        pic_kottke.solver,
+        circuit_stair.solver,
+        circuit_kottke.solver,
         xlim_um=(12.6, 15.2),
         ylim_um=(-1.35, 1.35),
         component="y",
@@ -1204,16 +1204,16 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     meta_u = metas_by_name.get(
         "kottke_fine",
         {
-            "grid_shape": [int(pic_fine.grid.Nx), int(pic_fine.grid.Ny), 1],
-            "n_cells": int(pic_fine.grid.Nx * pic_fine.grid.Ny),
+            "grid_shape": [int(circuit_fine.grid.Nx), int(circuit_fine.grid.Ny), 1],
+            "n_cells": int(circuit_fine.grid.Nx * circuit_fine.grid.Ny),
             "elapsed_s": 845.4,
         },
     )
     meta_nu = metas_by_name.get(
         "kottke_nonuniform",
         {
-            "grid_shape": [int(pic_nonuniform.grid.Nx), int(pic_nonuniform.grid.Ny), 1],
-            "n_cells": int(pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny),
+            "grid_shape": [int(circuit_nonuniform.grid.Nx), int(circuit_nonuniform.grid.Ny), 1],
+            "n_cells": int(circuit_nonuniform.grid.Nx * circuit_nonuniform.grid.Ny),
             "elapsed_s": 589.1,
         },
     )
@@ -1222,8 +1222,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         {"grid_shape": [1705, 571, 1], "n_cells": 973555, "elapsed_s": 5709.3},
     )
     plot_mesh_upgrade_comparison_mmi_1x4(
-        pic_fine,
-        pic_nonuniform,
+        circuit_fine,
+        circuit_nonuniform,
         structures,
         primary,
         d_nu,
@@ -1260,7 +1260,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic_fine,
+        circuit_fine,
         structures,
         kind="intensity_log",
         title=r"Steady-state modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1550\;\mathrm{nm}$ (1×4 self-imaging)",
@@ -1272,7 +1272,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic_fine,
+        circuit_fine,
         structures,
         kind="real",
         title=r"Steady-state wave-front phase pattern $\mathrm{Re}(E_y)$ at $\lambda = 1550\;\mathrm{nm}$",
@@ -1286,7 +1286,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic_fine,
+            circuit_fine,
             structures,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
@@ -2279,7 +2279,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # 2. **(b) Staircase MMI width quantization explains the $14\text{--}20\;\text{cpw}$ plateau**:
 #    In a 2D TM simulation, the dominant transverse electric field $E_y$ sits at
 #    half-cell centers $y_{j+1/2}$, while the longitudinal field $E_x$ sits on
-#    grid nodes $y_j$. Because `PICSimulation` rounds the total cell count $N_y$
+#    grid nodes $y_j$. Because `PhotonicCircuit` rounds the total cell count $N_y$
 #    across the $[-3.45, +3.45]\;\mu\text{m}$ domain plus PMLs, $\Delta y$ at
 #    $14\;\text{cpw}$ ($35.75\;\text{nm}$) and $20\;\text{cpw}$ ($25.09\;\text{nm}$)
 #    does not divide $W_{\text{MMI}} = 4.9000\;\mu\text{m}$ evenly. Crucially,

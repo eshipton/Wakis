@@ -1002,6 +1002,10 @@ res = patch_results(sim)  # resonance, |S11| dip, Zin, bandwidth, directivity
 print(res["resonance"] / 1e9, res["s11_min_db"], res["directivity_dbi"])
 ```
 
+For multi-port photonic integrated circuits (waveguides, bends, tapers, couplers, MMIs, and ring resonators), `wakis.templates.photonics` provides `PhotonicCircuit` (and `wakis.subgrid.SubgridPhotonicCircuit` for 2D quadtree subgridding via `backend="subgrid"`), extruded `PolySlab` geometry primitives, and automated $N$-port `run_s_parameters()`.
+
+> Naming: `PhotonicCircuit` (formerly `PICSimulation`) — 'PIC' is avoided in Wakis because it usually means particle-in-cell.
+
 #### Semiconductor gain media and diode lasers: `SemiconductorGain`
 
 `wakis.gain_semiconductor` provides `SemiconductorGain` (and the frequency-chirp helper `adiabatic_chirp`), coupling carrier density $N(\mathbf{r}, t)$ [$\text{m}^{-3}$] (driven by current injection $\eta_i J/(q d)$, SRH/radiative/Auger recombination $A N + B N^2 + C N^3$, stimulated emission work $-\mathbf{E}\cdot\partial_t\mathbf{P}/(\hbar\omega_0)$, and optional carrier diffusion $D\nabla^2 N$) to one or more Lorentzian ADE gain poles and Henry's linewidth enhancement factor $\alpha_H$ (`solver.add_gain_material`). See *Semiconductor gain media* in the [physics guide](physicsguide.md) and the full example script `examples/015_semiconductor_fp_laser.py`:

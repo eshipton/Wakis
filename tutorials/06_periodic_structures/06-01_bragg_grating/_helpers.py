@@ -1037,13 +1037,13 @@ def build_bragg_setup_objects(
     wl_max=1620e-9,
     wl_ref=1532e-9,
 ):
-    """Construct live Wakis ``PICSimulation``, ``SolverFIT3D``, ``ModeSource``, and ``ModeMonitor`` objects.
+    """Construct live Wakis ``PhotonicCircuit``, ``SolverFIT3D``, ``ModeSource``, and ``ModeMonitor`` objects.
 
     Builds the 2D Effective-Index Method (EIM) Bragg grating setup without
     running time steps, suitable for passing directly to ``wakis.schematic``.
     """
     from wakis.mode_solver import ModeMonitor, ModeSource
-    from wakis.templates.photonics import PICSimulation, Port, n_to_eps, slab_neff
+    from wakis.templates.photonics import PhotonicCircuit, Port, n_to_eps, slab_neff
 
     length = float(n_periods) * float(pitch)
     pad_x = 3.0e-6
@@ -1085,7 +1085,7 @@ def build_bragg_setup_objects(
         n_feature=n_feature,
         dx_background=dx_bg,
     )
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=wl_min,
         wavelength_max=wl_max,
         n_freqs=21,
@@ -1103,33 +1103,33 @@ def build_bragg_setup_objects(
         cfln=0.85,
         mesh_overrides=mesh_overrides,
     )
-    in_port = pic.port_map["in"]
-    in_center, in_size, in_inward = pic._port_plane_args(in_port)
-    nodes_x = pic.grid.x
+    in_port = circuit.port_map["in"]
+    in_center, in_size, in_inward = circuit._port_plane_args(in_port)
+    nodes_x = circuit.grid.x
     k_mon = int(np.argmin(np.abs(nodes_x[:-1] - in_center[0])))
     k_src = int(np.clip(k_mon - 2 * in_inward, 2, len(nodes_x) - 3))
     src_center = in_center.copy()
     src_center[0] = nodes_x[k_src]
     src = ModeSource(
-        pic.sim.pulse,
+        circuit.sim.pulse,
         center=src_center,
         size=in_size,
         direction="+",
         mode_index=0,
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     )
     src.normal = 0
     src.index = k_src
     src.label = f"ModeSource (TE₀, x = {src_center[0] * 1e6:.1f} µm)"
     monitors = []
-    for p in pic.ports:
-        p_center, p_size, _ = pic._port_plane_args(p)
+    for p in circuit.ports:
+        p_center, p_size, _ = circuit._port_plane_args(p)
         mon = ModeMonitor(
-            pic.frequencies,
+            circuit.frequencies,
             center=p_center,
             size=p_size,
             n_modes=1,
-            mode_frequency=pic.f_center,
+            mode_frequency=circuit.f_center,
         )
         mon.name = f"Port '{p.name}'"
         mon.label = f"ModeMonitor '{p.name}' (x = {p_center[0] * 1e6:.1f} µm)"
@@ -1137,7 +1137,7 @@ def build_bragg_setup_objects(
 
     slab.name = "Si EIM core"
     structures_schematic = [slab]
-    return pic, src, monitors, structures_schematic
+    return circuit, src, monitors, structures_schematic
 
 
 class _PolygonSchematicProxy:
@@ -1183,7 +1183,7 @@ def plot_bragg_setup_schematic(
     out_dir = out_p if out_p.suffix == "" else out_p.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pic_full, src_full, mons_full, structs_full = build_bragg_setup_objects(
+    circuit_full, src_full, mons_full, structs_full = build_bragg_setup_objects(
         n_periods=n_periods,
         pitch=pitch,
         w_core=w_core,
@@ -1194,9 +1194,9 @@ def plot_bragg_setup_schematic(
         n_pml=10,
         tuned_graded=False,
     )
-    neff_slab = float(pic_full.n_eff_slab)
+    neff_slab = float(circuit_full.n_eff_slab)
     eps_slab = round(neff_slab**2, 2)
-    solver_proxy = _SchematicSolverProxy(pic_full.solver, eps_clad=1.0)
+    solver_proxy = _SchematicSolverProxy(circuit_full.solver, eps_clad=1.0)
     poly_proxy = _PolygonSchematicProxy(
         structs_full[0],
         material_eps=eps_slab,
@@ -1207,15 +1207,15 @@ def plot_bragg_setup_schematic(
         "region_0": f"Si EIM core (n_Si = 3.47, h = 220 nm → n_eff,slab = {neff_slab:.4f}, ε_r = {eps_slab:.2f})",
     }
 
-    xmin, xmax = float(pic_full.grid.xmin), float(pic_full.grid.xmax)
-    ymin, ymax = float(pic_full.grid.ymin), float(pic_full.grid.ymax)
-    n_pml = int(getattr(pic_full.solver, "n_pml", 10))
-    th_x_low = float(pic_full.grid.x[n_pml] - pic_full.grid.x[0])
-    th_x_high = float(pic_full.grid.x[-2] - pic_full.grid.x[-2 - n_pml])
-    th_y_low = float(pic_full.grid.y[n_pml] - pic_full.grid.y[0])
-    th_y_high = float(pic_full.grid.y[-2] - pic_full.grid.y[-2 - n_pml])
+    xmin, xmax = float(circuit_full.grid.xmin), float(circuit_full.grid.xmax)
+    ymin, ymax = float(circuit_full.grid.ymin), float(circuit_full.grid.ymax)
+    n_pml = int(getattr(circuit_full.solver, "n_pml", 10))
+    th_x_low = float(circuit_full.grid.x[n_pml] - circuit_full.grid.x[0])
+    th_x_high = float(circuit_full.grid.x[-2] - circuit_full.grid.x[-2 - n_pml])
+    th_y_low = float(circuit_full.grid.y[n_pml] - circuit_full.grid.y[0])
+    th_y_high = float(circuit_full.grid.y[-2] - circuit_full.grid.y[-2 - n_pml])
 
-    pulse_obj = pic_full.sim.pulse
+    pulse_obj = circuit_full.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
     x_src = float(src_full.center[0])
@@ -1255,7 +1255,7 @@ def plot_bragg_setup_schematic(
             "desc": f"Port 'in' ModeMonitor at x = {x_in_mon * 1e6:.2f} µm (S₁₁ reflection)",
             "pos_str": f"x = {x_in_mon * 1e6:.2f} µm, y ∈ [{-hy_port * 1e6:.2f}, {+hy_port * 1e6:.2f}] µm",
             "freq_str": "185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts)",
-            "frequencies": pic_full.frequencies,
+            "frequencies": circuit_full.frequencies,
             "h_bounds": (x_in_mon, x_in_mon),
             "v_bounds": (-hy_port, +hy_port),
         },
@@ -1267,7 +1267,7 @@ def plot_bragg_setup_schematic(
             "desc": f"Port 'out' ModeMonitor at x = {x_out_mon * 1e6:.2f} µm (S₂₁ transmission)",
             "pos_str": f"x = {x_out_mon * 1e6:.2f} µm, y ∈ [{-hy_port * 1e6:.2f}, {+hy_port * 1e6:.2f}] µm",
             "freq_str": "185.1–199.9 THz (λ ∈ [1500, 1620] nm, 81 pts)",
-            "frequencies": pic_full.frequencies,
+            "frequencies": circuit_full.frequencies,
             "h_bounds": (x_out_mon, x_out_mon),
             "v_bounds": (-hy_port, +hy_port),
         },
@@ -1279,7 +1279,7 @@ def plot_bragg_setup_schematic(
             "desc": "Closed 2D Poynting FluxBox (4 faces inside CPML)",
             "pos_str": f"x ∈ [{(xmin + th_x_low) * 1e6:.2f}, {(xmax - th_x_high) * 1e6:.2f}] µm, y ∈ [{(ymin + th_y_low) * 1e6:.2f}, {(ymax - th_y_high) * 1e6:.2f}] µm",
             "freq_str": "185.1–199.9 THz (81 pts)",
-            "frequencies": pic_full.frequencies,
+            "frequencies": circuit_full.frequencies,
             "h_bounds": (xmin + 1.15 * th_x_low, xmax - 1.15 * th_x_high),
             "v_bounds": (ymin + 1.15 * th_y_low, ymax - 1.15 * th_y_high),
         },

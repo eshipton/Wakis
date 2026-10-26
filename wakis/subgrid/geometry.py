@@ -4,8 +4,8 @@
 # ########################################### #
 
 """
-Geometry adapter and quadtree refinement predicates for PIC `PolySlab`s on
-`SubgridFIT2D`.
+Geometry adapter and quadtree refinement predicates for photonic-circuit
+`PolySlab`s on `SubgridFIT2D`.
 
 `PolySlabGeometry` adapts a sequence of `wakis.templates.photonics.PolySlab`
 (and `Box`, `Cylinder`, `Circle`, `Rect`) objects to the `Geometry` interface
@@ -238,7 +238,7 @@ class PolySlabGeometry:
     structures : sequence of PolySlab, Box, Cylinder, Circle or Rect
         Shapes painted in order (later shapes override earlier ones).
     background_eps : float or str, optional
-        Background relative permittivity (or `PIC_MATERIALS` key, converted via
+        Background relative permittivity (or `PHOTONIC_MATERIALS` key, converted via
         `n_to_eps`). Default 1.0 (vacuum).
     z : float, optional
         Midplane z-coordinate [m] used to slice 3D shapes (`Box`, `PolySlab`).
@@ -570,7 +570,7 @@ def _parse_target_box(entry, clip_box=None):
     """
     Normalize a target-cell box specification to `(x0, x1, y0, y1, h_target)`:
     * `(x0, x1, y0, y1, h_target)`
-    * `((x0, y0[, z0]), (x1, y1[, z1]), h_target)` (`PICSimulation` `mesh_overrides`)
+    * `((x0, y0[, z0]), (x1, y1[, z1]), h_target)` (`PhotonicCircuit` `mesh_overrides`)
     """
     if len(entry) == 3 and np.ndim(entry[0]) > 0:
         lo, hi, h = entry
@@ -610,7 +610,7 @@ def choose_refinement(
     target_boxes : float or sequence of tuple
         Either:
         * a sequence of `(x0, x1, y0, y1, max_cell)` tuples [m];
-        * a sequence of `PICSimulation`-style `mesh_overrides`
+        * a sequence of `PhotonicCircuit`-style `mesh_overrides`
           `((x0, y0, z0), (x1, y1, z1), max_cell)` [m];
         * a single target cell size `max_cell` [m] (used with `clip_box` or the
           whole domain `(-inf, inf, -inf, inf)`).

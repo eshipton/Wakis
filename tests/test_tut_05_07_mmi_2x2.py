@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from wakis.templates.photonics import PICSimulation
+from wakis.templates.photonics import PhotonicCircuit
 
 TUTORIAL_PATH = (
     Path(__file__).resolve().parents[1]
@@ -153,7 +153,7 @@ def test_mmi_2x2_passivity_quadrature_and_length_mutation():
         overrides = mod.build_gap_mesh_overrides(
             l_mmi=l_mmi, n_cells_feature=4, min_feature=mod.GAP_MMI
         )
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=mod.WL_MIN,
             wavelength_max=mod.WL_MAX,
             n_freqs=15,
@@ -170,14 +170,14 @@ def test_mmi_2x2_passivity_quadrature_and_length_mutation():
             mesh_overrides=overrides,
         )
         res = mod.measure_grid_resolution(
-            pic.grid, n_pml=6, l_mmi=l_mmi, min_feature=mod.GAP_MMI
+            circuit.grid, n_pml=6, l_mmi=l_mmi, min_feature=mod.GAP_MMI
         )
         assert res["cells_across_feature"] >= 4.0 - 1e-6
-        s_mat = pic.run_s_parameters(
+        s_mat = circuit.run_s_parameters(
             drive=["in1"], energy_decay=1e-2, collect_fields=False
         )
-        order = np.argsort(pic.wavelengths)
-        wl = pic.wavelengths[order]
+        order = np.argsort(circuit.wavelengths)
+        wl = circuit.wavelengths[order]
         s11 = s_mat[("in1", "in1")][order]
         s21 = s_mat[("in2", "in1")][order]
         s31 = s_mat[("out1", "in1")][order]
@@ -382,7 +382,7 @@ def test_mmi_2x2_setup_schematic_and_nonuniform_mesh_upgrade():
     Verify that the setup schematic figures (`00a_setup_geometry.png`,
     `00b_setup_mesh_and_excitation.png`, `00_setup_table.md`), the mesh-upgrade
     comparison (`04b_mesh_upgrade_comparison.png`), and the `< 5 MB` GIF exist,
-    that `NonUniformMMI2x2PIC` (`kottke_nonuniform`, `task_11`) achieves lower
+    that `NonUniformMMI2x2Circuit` (`kottke_nonuniform`, `task_11`) achieves lower
     cell count, lower wall time, zero MMI sidewall rounding error, and lower
     broadband RMS error against `kottke_reference` than `kottke_L3`, and include
     a mutation check on `build_mmi_2x2_graded_axes`.
@@ -410,9 +410,9 @@ def test_mmi_2x2_setup_schematic_and_nonuniform_mesh_upgrade():
     gif_size_mb = (fig_dir / "10_pulse_propagation.gif").stat().st_size / (1024 * 1024)
     assert gif_size_mb < 5.0, f"GIF size {gif_size_mb:.2f} MB exceeds 5 MB limit"
 
-    # Verify NonUniformMMI2x2PIC grid properties vs baseline kottke_L3
+    # Verify NonUniformMMI2x2Circuit grid properties vs baseline kottke_L3
     structures, ports, domain = mod.build_mmi_2x2(l_mmi=mod.L_MMI)
-    pic_nu = mod.NonUniformMMI2x2PIC(
+    circuit_nu = mod.NonUniformMMI2x2Circuit(
         mod.WL_MIN,
         mod.WL_MAX,
         structures=structures,
@@ -429,9 +429,9 @@ def test_mmi_2x2_setup_schematic_and_nonuniform_mesh_upgrade():
         min_feature=mod.GAP_MMI,
     )
     stats_nu = mod.measure_grid_resolution(
-        pic_nu.grid, n_pml=10, l_mmi=mod.L_MMI, min_feature=mod.GAP_MMI, w_mmi=mod.W_MMI
+        circuit_nu.grid, n_pml=10, l_mmi=mod.L_MMI, min_feature=mod.GAP_MMI, w_mmi=mod.W_MMI
     )
-    assert (pic_nu.grid.Nx, pic_nu.grid.Ny, pic_nu.grid.Nz) == (425, 171, 1)
+    assert (circuit_nu.grid.Nx, circuit_nu.grid.Ny, circuit_nu.grid.Nz) == (425, 171, 1)
     assert stats_nu["n_cells"] == 72675
     assert stats_nu["cells_across_feature"] == pytest.approx(8.0, abs=1e-3)
     assert stats_nu["sidewall_err_nm"] == pytest.approx(0.0, abs=1e-3)

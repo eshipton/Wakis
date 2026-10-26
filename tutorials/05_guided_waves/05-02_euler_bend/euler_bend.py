@@ -21,7 +21,7 @@
 #
 # **Abstract.** Compact $90^\circ$ waveguide bends are ubiquitous routing
 # elements in high-density silicon-on-insulator (SOI) photonic integrated
-# circuits (PICs). In a conventional constant-radius circular $90^\circ$ bend,
+# circuits. In a conventional constant-radius circular $90^\circ$ bend,
 # the curvature jumps discontinuously from $\kappa = 0$ in the straight
 # waveguide to $\kappa = 1/R_{\text{eff}}$ at the bend entrance and exit. This
 # step discontinuity shifts the guided mode centroid outward by
@@ -216,8 +216,8 @@ from scipy.integrate import cumulative_trapezoid, quad
 from scipy.optimize import brentq
 
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     PolySlab,
     Port,
     arc,
@@ -240,7 +240,7 @@ if str(HERE) not in sys.path:
 from wakis import figstyle, schematic  # noqa: E402
 from _helpers import (  # noqa: E402
     RESOLUTION_LEVELS,
-    NonUniformEulerBendPIC,
+    NonUniformEulerBendCircuit,
     build_mesh_overrides,
     build_schematic_components,
     draw_polyslab_regions,
@@ -274,8 +274,8 @@ FIG_DIR = HERE / "figures"
 
 # %%
 # Material refractive indices at 1550 nm
-N_SI = PIC_MATERIALS["Si"]  # 3.476
-N_SIO2 = PIC_MATERIALS["SiO2"]  # 1.444
+N_SI = PHOTONIC_MATERIALS["Si"]  # 3.476
+N_SIO2 = PHOTONIC_MATERIALS["SiO2"]  # 1.444
 H_SI = 210e-9  # 210 nm SOI thickness
 
 # Wavelength band: 1500 nm to 1600 nm
@@ -600,7 +600,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # 1. **Wavelength resolution floor ($\text{cpw} \ge 10$)**: The grid spacing
 #    inside the highest-index material must never fall below $10$ cells per
 #    wavelength at $\lambda_{\min} = 1500\;\text{nm}$. In 2D EIM,
-#    `PICSimulation` counts `cells_per_wavelength` inside the vertical slab
+#    `PhotonicCircuit` counts `cells_per_wavelength` inside the vertical slab
 #    effective index $n_{\text{eff,slab}}(1550\;\text{nm}) = 2.8134$, giving a
 #    background core cell size
 #    $\Delta x_{\text{bg}} = \lambda_{\min} / (n_{\text{eff,slab}}\,\text{cpw}) \approx 533.2\;\text{nm} / \text{cpw}$.
@@ -612,7 +612,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #
 # When a device contains a sub-wavelength gap or grating tooth narrower than
 # $4\,\Delta x_{\text{bg}}$, we pass local refinement boxes
-# `mesh_overrides=[(lo, hi, max_cell), ...]` to `PICSimulation`, where `lo` and
+# `mesh_overrides=[(lo, hi, max_cell), ...]` to `PhotonicCircuit`, where `lo` and
 # `hi` are $(x, y, z)$ box corners in metres (`-np.inf`/`np.inf` spanning an
 # axis) and `max_cell = min_feature / N` caps the cell size across the feature
 # while the tensor-product mesh grades smoothly back to $\Delta x_{\text{bg}}$
@@ -628,7 +628,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # whether $w_{\text{wg}} / N < \Delta x_{\text{bg}}$ and automatically inserts a
 # refinement box whenever needed.
 #
-# ### 4.2 Mirror-symmetric non-square and graded Cartesian mesh (`NonUniformEulerBendPIC`)
+# ### 4.2 Mirror-symmetric non-square and graded Cartesian mesh (`NonUniformEulerBendCircuit`)
 #
 # On the uniform `L3 = (20, 8)` baseline mesh (`kottke_L3`, `task_4`), the
 # entire $6.50\;\mu\text{m} \times 6.50\;\mu\text{m}$ domain (plus $10$ CPML
@@ -646,7 +646,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 # - For $x > R_{\text{eff}} + 0.22\;\mu\text{m}$ and $y < -0.22\;\mu\text{m}$,
 #   the domain contains only $\text{SiO}_2$ cladding ($n_{\text{clad}} = 1.444$).
 #
-# `NonUniformEulerBendPIC` (`task_15`, `kottke_nonuniform`) constructs a
+# `NonUniformEulerBendCircuit` (`task_15`, `kottke_nonuniform`) constructs a
 # 1D graded coordinate $x$ via `wakis.templates.meshing.graded_axis` with fine
 # spacing $\Delta_{\text{core}} = 26.59\;\text{nm}$ ($15.05$ cells across
 # $w_{\text{wg}} = 400\;\text{nm}$) across $[-0.22, 4.22]\;\mu\text{m}$,
@@ -695,7 +695,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
 #     at `L3 = (20, 8)` (`sweep_circular_R4p0` also records DFT fields and flux box).
 #   - Task `15` (`kottke_nonuniform`): Mirror-symmetric non-square/graded Cartesian
-#     mesh (`NonUniformEulerBendPIC`) at `L3 = (20, 8)`.
+#     mesh (`NonUniformEulerBendCircuit`) at `L3 = (20, 8)`.
 # - **`--quick` (14 tasks: `task_0`–`task_13`)**:
 #   - Tasks `0`–`3`: Kottke and staircase on the $R_{\text{eff}} = 4.0\;\mu\text{m}$
 #     Euler bend at `L1 = (10, 4)` and `L2 = (14, 6)` with `n_pml = 8` and
@@ -707,7 +707,7 @@ def analytical_circular_bend_loss_db(r_eff_m, w_wg=W_WG, n_eff=2.31, wl=WL_REF):
 #     $R_{\text{eff}} \in \{2.5, 3.0, 3.5, 4.0\}\;\mu\text{m} \times \{\text{circular}, \text{euler}\}$
 #     at `L2 = (14, 6)` (`sweep_circular_R4p0` also records DFT fields).
 #   - Task `13` (`kottke_nonuniform`): Mirror-symmetric non-square/graded Cartesian
-#     mesh (`NonUniformEulerBendPIC`) at `L2 = (14, 6)`.
+#     mesh (`NonUniformEulerBendCircuit`) at `L2 = (14, 6)`.
 #
 # ### 5.1 Resolution & performance summary (`--full` measured study & `--quick` mode)
 #
@@ -890,9 +890,9 @@ def get_task_table(quick=False):
     return tasks
 
 
-class _MeshOnlyPICSimulation(PICSimulation):
+class _MeshOnlyPhotonicCircuit(PhotonicCircuit):
     """
-    ``PICSimulation`` subclass that constructs the exact 2D/3D ``Simulation``
+    ``PhotonicCircuit`` subclass that constructs the exact 2D/3D ``Simulation``
     and ``GridFIT3D`` mesh without allocating ``SolverFIT3D`` or running
     subpixel polygon supersampling.
     """
@@ -933,7 +933,7 @@ class _MeshOnlyPICSimulation(PICSimulation):
 
 def build_task_simulation(task_cfg, mesh_only=False):
     """
-    Build the geometry, mesh overrides, and ``PICSimulation`` object for a study
+    Build the geometry, mesh overrides, and ``PhotonicCircuit`` object for a study
     task without running the time-domain solver. When ``mesh_only=True``, only
     ``GridFIT3D`` is constructed (skipping subpixel material assignment).
     """
@@ -955,7 +955,7 @@ def build_task_simulation(task_cfg, mesh_only=False):
     )
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
     if task_cfg.get("nonuniform", False):
-        pic = NonUniformEulerBendPIC(
+        circuit = NonUniformEulerBendCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -977,8 +977,8 @@ def build_task_simulation(task_cfg, mesh_only=False):
             mesh_only=mesh_only,
         )
     else:
-        sim_cls = _MeshOnlyPICSimulation if mesh_only else PICSimulation
-        pic = sim_cls(
+        sim_cls = _MeshOnlyPhotonicCircuit if mesh_only else PhotonicCircuit
+        circuit = sim_cls(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -998,7 +998,7 @@ def build_task_simulation(task_cfg, mesh_only=False):
             movie_frames=task_cfg["movie_frames"],
             use_gpu=use_gpu,
         )
-    return pic, structures, ports, domain, geom_info
+    return circuit, structures, ports, domain, geom_info
 
 
 def run_single_task(task_cfg, out_dir):
@@ -1011,14 +1011,14 @@ def run_single_task(task_cfg, out_dir):
     idx = task_cfg["index"]
     t0 = time.perf_counter()
 
-    pic, _, _, _, geom_info = build_task_simulation(task_cfg)
-    s_mat = pic.run_s_parameters(
+    circuit, _, _, _, geom_info = build_task_simulation(task_cfg)
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=task_cfg["energy_decay"],
         collect_fields=task_cfg["collect_fields"],
     )
     res_info = measure_mesh_resolution(
-        pic,
+        circuit,
         r_eff=task_cfg["r_eff"],
         min_feature=task_cfg.get("min_feature", MIN_FEATURE),
         port_offset=PORT_OFFSET,
@@ -1046,9 +1046,9 @@ def run_single_task(task_cfg, out_dir):
         "cells_across_feature": np.float64(res_info["cells_across_feature"]),
         "n_cells": np.int32(res_info["n_cells"]),
         "n_steps": np.int32(res_info["n_steps"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
         "S11": s_mat[("in", "in")].astype(np.complex128),
         "S21": s_mat[("out", "in")].astype(np.complex128),
     }
@@ -1057,8 +1057,8 @@ def run_single_task(task_cfg, out_dir):
         # Solve orthogonal port modes at 1550 nm:
         # - Port "in" (axis=0, +x normal) has axes "xyz": transverse coord y = coords["Eb"][0], field Ey = e["b"][:, 0]
         # - Port "out" (axis=1, +y normal) has axes "yzx": transverse coord x = coords["Ec"][1], field Ex = e["c"][0, :]
-        modes_in = pic.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
-        modes_out = pic.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)
+        modes_in = circuit.solve_port_modes("in", frequencies=c_light / WL_REF, n_modes=1)
+        modes_out = circuit.solve_port_modes("out", frequencies=c_light / WL_REF, n_modes=1)
         y_in = modes_in[0].coords["Eb"][0]
         ey_in = modes_in[0].e["b"][:, 0]
         m_in = np.abs(y_in) <= 0.85e-6
@@ -1076,7 +1076,7 @@ def run_single_task(task_cfg, out_dir):
 
         wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
         f_disp = c_light / wl_disp
-        disp_modes = pic.solve_port_modes("in", frequencies=f_disp, n_modes=1)
+        disp_modes = circuit.solve_port_modes("in", frequencies=f_disp, n_modes=1)
         neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
         dneff_dl = np.gradient(neff_disp, wl_disp)
         ng_disp = neff_disp - wl_disp * dneff_dl
@@ -1084,30 +1084,30 @@ def run_single_task(task_cfg, out_dir):
         payload["disp_neff"] = neff_disp.astype(np.float64)
         payload["disp_ng"] = ng_disp.astype(np.float64)
 
-        if WL_REF in pic.dft_fields:
-            fmap = pic.dft_fields[WL_REF]
+        if WL_REF in circuit.dft_fields:
+            fmap = circuit.dft_fields[WL_REF]
             payload["dft_x"] = fmap["x"]
             payload["dft_y"] = fmap["y"]
             payload["dft_Ex"] = fmap["Ex"]
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
 
-        if pic.movie_data is not None:
-            payload["movie_x"] = pic.movie_data["x"]
-            payload["movie_y"] = pic.movie_data["y"]
-            payload["movie_times"] = pic.movie_data["times"]
-            payload["movie_frames"] = pic.movie_data["frames"]
-            payload["movie_peak"] = pic.movie_data["peak"]
+        if circuit.movie_data is not None:
+            payload["movie_x"] = circuit.movie_data["x"]
+            payload["movie_y"] = circuit.movie_data["y"]
+            payload["movie_times"] = circuit.movie_data["times"]
+            payload["movie_frames"] = circuit.movie_data["frames"]
+            payload["movie_peak"] = circuit.movie_data["peak"]
 
-        if pic.port_time_trace is not None:
-            payload["trace_t"] = pic.port_time_trace["t"]
-            payload["trace_Ey"] = pic.port_time_trace["Ey"]
+        if circuit.port_time_trace is not None:
+            payload["trace_t"] = circuit.port_time_trace["t"]
+            payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-        if pic.flux_balance is not None:
-            payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-            payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-            payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-            payload["flux_total_box"] = pic.flux_balance["total_box"].astype(np.float64)
+        if circuit.flux_balance is not None:
+            payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+            payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+            payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+            payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(np.float64)
 
     npz_path = out_dir / f"task_{idx}.npz"
     np.savez_compressed(npz_path, **payload)
@@ -1237,7 +1237,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     n_pml_zoom = 8 if is_quick_data else 10
     cpw_prim = int(primary["cpw"])
     n_prim = int(primary.get("n_feature", 8))
-    pic_primary_kottke = PICSimulation(
+    circuit_primary_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1259,7 +1259,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         euler_info=euler_info,
         primary_data=primary,
         out_path=fig_dir,
-        pic_mesh=pic_primary_kottke,
+        circuit_mesh=circuit_primary_kottke,
     )
 
     # 1. Top-view device layout with circular vs Euler centerline overlay
@@ -1459,7 +1459,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
     cpw_ref = int(ref_d["cpw"])
     lvl_ref = str(ref_d.get("level", "L3"))
     n_ref = int(ref_d.get("n_feature", RESOLUTION_LEVELS.get(lvl_ref, (cpw_ref, 8))[1]))
-    pic_l1_stair = PICSimulation(
+    circuit_l1_stair = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1473,7 +1473,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         n_pml=n_pml_zoom,
         mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_l1, n_l1),
     )
-    pic_l1_kottke = PICSimulation(
+    circuit_l1_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1487,7 +1487,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         n_pml=n_pml_zoom,
         mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_l1, n_l1),
     )
-    pic_ref_kottke = PICSimulation(
+    circuit_ref_kottke = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=structures,
@@ -1502,9 +1502,9 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         mesh_overrides=build_mesh_overrides(R_EFF_DEFAULT, MIN_FEATURE, cpw_ref, n_ref),
     )
     plot_feature_mesh_zoom(
-        pic_l1_stair,
-        pic_l1_kottke,
-        pic_ref_kottke,
+        circuit_l1_stair,
+        circuit_l1_kottke,
+        circuit_ref_kottke,
         structures=structures,
         min_feature_m=MIN_FEATURE,
         ref_label=f"{lvl_ref} Ref Kottke ({cpw_ref} cpw, N={n_ref})",
@@ -1517,7 +1517,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
         meta_nu = tasks_meta["kottke_nonuniform"]
         meta_prim = tasks_meta[primary_name]
         meta_ref = tasks_meta.get("kottke_reference", meta_prim)
-        pic_nu = NonUniformEulerBendPIC(
+        circuit_nu = NonUniformEulerBendCircuit(
             WL_MIN,
             WL_MAX,
             structures=structures,
@@ -1532,8 +1532,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
             mesh_only=True,
         )
         plot_mesh_upgrade_comparison_euler(
-            pic_uniform=pic_primary_kottke,
-            pic_nonuniform=pic_nu,
+            circuit_uniform=circuit_primary_kottke,
+            circuit_nonuniform=circuit_nu,
             structures=structures,
             d_uniform=primary,
             d_nonuniform=d_nu,
@@ -2479,7 +2479,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
 # | `task_3` (`staircase_L2`) | Staircase uniform | `L2 = (14, 6)` | $192 \times 192 \times 1$ | $36{,}864$ | $41.32$ | 10.52 | 0.988372 | 0.0508 | 0.0519 | $8.82\times 10^{-3}$ | 0.0386 | $-24.37$ ($3.66\times 10^{-3}$) |
 # | `task_4` (`kottke_L3`, uniform baseline) | Kottke uniform | `L3 = (20, 8)` | $265 \times 265 \times 1$ | $70{,}225$ | $105.12$ | 15.02 | 0.997810 | 0.0095 | 0.0206 | $6.18\times 10^{-4}$ | 0.0027 | $-47.21$ ($1.90\times 10^{-5}$) |
 # | `task_5` (`staircase_L3`) | Staircase uniform | `L3 = (20, 8)` | $265 \times 265 \times 1$ | $70{,}225$ | $103.52$ | 15.02 | 0.995069 | 0.0215 | 0.0326 | $2.12\times 10^{-3}$ | 0.0093 | $-44.84$ ($3.28\times 10^{-5}$) |
-# | `task_15` (`kottke_nonuniform`, **graded upgrade**) | Kottke graded (`NonUniformEulerBendPIC`) | `L3 = (20, 15)` | $238 \times 238 \times 1$ | $56{,}644$ (**$-19.3\%$**) | $59.42$ (**$-43.5\%$**) | 15.05 | 0.997738 | 0.0098 | 0.0216 | $5.46\times 10^{-4}$ | 0.0024 | $-49.91$ ($1.02\times 10^{-5}$) |
+# | `task_15` (`kottke_nonuniform`, **graded upgrade**) | Kottke graded (`NonUniformEulerBendCircuit`) | `L3 = (20, 15)` | $238 \times 238 \times 1$ | $56{,}644$ (**$-19.3\%$**) | $59.42$ (**$-43.5\%$**) | 15.05 | 0.997738 | 0.0098 | 0.0216 | $5.46\times 10^{-4}$ | 0.0024 | $-49.91$ ($1.02\times 10^{-5}$) |
 # | `task_6` (`kottke_reference`) | Kottke uniform | `R = (40, 16)` | $509 \times 509 \times 1$ | $259{,}081$ | $700.74$ | 30.03 | 0.997192 | 0.0122 | 0.0262 | 0 (ref) | 0 (ref) | $-51.54$ ($7.02\times 10^{-6}$) |
 #
 # **Convergence & mesh-upgrade verdict (`04b_mesh_upgrade_comparison.png`, `14_kottke_vs_staircase_convergence.png`):**
@@ -2490,7 +2490,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR, quick=None):
 #   axial cells ($\Delta_{\text{lead}} = 31.8\;\text{nm}$, aspect ratio $1.20$) along
 #   the straight access leads, and grading smoothly to $\Delta_{\text{clad}} = 66.6\;\text{nm}$
 #   in the exterior $\text{SiO}_2$ cladding buffers while preserving exact folding
-#   symmetry $y = R_{\text{eff}} - x[::-1]$, `NonUniformEulerBendPIC` cuts the
+#   symmetry $y = R_{\text{eff}} - x[::-1]$, `NonUniformEulerBendCircuit` cuts the
 #   2D grid from $265\times 265 = 70{,}225$ cells (`kottke_L3`) to
 #   $238\times 238 = 56{,}644$ cells (**$-19.3\%$ cells**) and reduces wall time
 #   from $105.12\;\text{s}$ to $59.42\;\text{s}$ (**$-43.5\%$ runtime**, $1.77\times$

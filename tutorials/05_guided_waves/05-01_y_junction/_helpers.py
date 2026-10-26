@@ -21,8 +21,8 @@ from wakis import GridFIT3D, SolverFIT3D, figstyle, schematic
 from wakis.sources import GaussianSource
 from wakis.templates import meshing
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     PolySlab,
     Port,
     n_to_eps,
@@ -34,8 +34,8 @@ from wakis.templates.photonics import (
 from wakis.templates.simulation import Simulation
 
 # Material refractive indices at 1550 nm (Malitson 1965; Li 1980)
-N_SI = PIC_MATERIALS["Si"]  # 3.476
-N_SIO2 = PIC_MATERIALS["SiO2"]  # 1.444
+N_SI = PHOTONIC_MATERIALS["Si"]  # 3.476
+N_SIO2 = PHOTONIC_MATERIALS["SiO2"]  # 1.444
 H_SI = 220e-9  # 220 nm SOI thickness
 
 # Wavelength range: 1500 nm to 1600 nm (centered at 1550 nm)
@@ -155,8 +155,8 @@ def build_y_junction(n_taper: int = 160, n_sbend: int = 100):
     return [slab], ports
 
 
-class NonUniformYJunctionPIC(PICSimulation):
-    """`PICSimulation` with graded non-uniform, non-square Cartesian meshing for the Y-junction.
+class NonUniformYJunctionCircuit(PhotonicCircuit):
+    """`PhotonicCircuit` with graded non-uniform, non-square Cartesian meshing for the Y-junction.
 
     Places fine transverse cells (`dy_tip`) across the 200 nm bifurcation tip gap
     (`y in [-0.20, +0.20] um`), intermediate core cells (`dy_core`) across the

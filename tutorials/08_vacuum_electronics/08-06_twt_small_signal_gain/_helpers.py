@@ -2433,7 +2433,7 @@ def run_hot_test_validation_suite(
                 "pos_b_neg_sign_peak_period_m=6": 6,
                 "live_10period_current_a": 0.45,
                 "live_10period_window_periods": [5, 8],
-                "live_10period_0p45A_slope_periods_5_to_8_np_m": -14.61,
+                "slope_10period_run_0p45A_periods_5_to_8_np_m": -14.61,
                 "run_22period_current_a": 0.25,
                 "run_22period_window_periods": [8, 19],
                 "run_22period_0p25A_slope_periods_5_to_8_np_m": round(float(sl_58), 2),

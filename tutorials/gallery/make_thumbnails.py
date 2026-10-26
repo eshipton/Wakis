@@ -1348,7 +1348,7 @@ def draw_solver_feature(ax, variant: str):
             ax.text(5.0, 4.85, f"Constitutive tensor / dispersion [{variant}]", fontsize=7.5, fontweight="bold", color=PAL["text"], ha="center")
         mat_badge(ax, 0.6, 5.75, f"Material model: {variant}", "pcm")
     else:
-        # Resonance finder, Cavity FOM, S-matrix, PIC components, subpixel mesh, STL import, instability
+        # Resonance finder, Cavity FOM, S-matrix, photonic circuit components, subpixel mesh, STL import, instability
         ax.add_patch(Rectangle((1.3, 1.25), 7.4, 4.0, facecolor="#ffffff", edgecolor="#94a3b8"))
         if variant in ("subpixel", "layer_ref", "stl_import"):
             for xg in np.linspace(1.3, 8.7, 12):
@@ -1382,7 +1382,7 @@ SPECS: list[tuple[str, str, str, str, str]] = [
     ("M12_magnetic_dipole_pec.png", "M12 · Magnetic dipole antenna with PEC ground plane", "cross-section", "dipole", "md_pec"),
     ("M13_led_incoherent.png", "M13 · LED stochastic incoherent dipole emission", "cross-section", "dipole", "led"),
     ("M14_led_reciprocity.png", "M14 · LED emission by Lorentz reciprocity", "cross-section", "dipole", "led"),
-    # T01..T45 Passive PIC
+    # T01..T45 Passive photonic integrated circuits
     ("T01_y_junction.png", "T01 · Waveguide Y junction (13-segment spline)", "top view", "y_junction", "standard"),
     ("T02_wg_to_ring.png", "T02 · Point-coupled waveguide-to-ring coupler", "top view", "ring", "bus"),
     ("T03_wg_crossing.png", "T03 · Waveguide crossing based on cosine tapers", "top view", "crossing", "cosine"),
@@ -1428,7 +1428,7 @@ SPECS: list[tuple[str, str, str, str, str]] = [
     ("T43_si_to_plasmonic_coupler.png", "T43 · Bayesian-optimized Si-to-plasmonic slot coupler", "top view", "taper", "plasmonic_slot"),
     ("T44_photonic_spin_selector.png", "T44 · Direct-binary-search photonic spin selector", "top view", "metasurface", "spin"),
     ("T45_sin_to_alox_coupler.png", "T45 · Interlayer SiN-to-AlOx vertical adiabatic coupler", "top view", "taper", "bilayer_sin"),
-    # T46..T57 Active & Multiphysics PIC
+    # T46..T57 Active & Multiphysics photonic circuits
     ("T46_metal_heater_phase_shifter.png", "T46 · Thermally tuned SOI waveguide (TiN heater)", "cross-section", "thermo", "metal_heater"),
     ("T47_thermally_tuned_ring.png", "T47 · Thermally tuned microring resonator filter", "top view", "ring", "thermal"),
     ("T48_carrier_injection_mzm.png", "T48 · Carrier-injection Si Mach-Zehnder modulator", "cross-section", "pin", "pin"),
@@ -1525,7 +1525,7 @@ SPECS: list[tuple[str, str, str, str, str]] = [
     ("F28_beer_lambert_check.png", "F28 · Beer-Lambert exponential absorption verification", "attenuation", "feature", "beer_lambert"),
     ("F29_led_extraction_efficiency.png", "F29 · LED light-extraction efficiency (LEE)", "cross-section", "dipole", "led"),
     ("F30_phc_components.png", "F30 · Photonic-crystal waveguide & cavity components", "top view", "phc", "wg"),
-    ("F31_pic_component_library.png", "F31 · Photonic integrated circuit (PIC) component library", "diagnostics", "feature", "pic_lib"),
+    ("F31_photonic_circuit_component_library.png", "F31 · Photonic integrated circuit component library", "diagnostics", "feature", "photonic_circuit_lib"),
     ("F32_mmi_meep_benchmark.png", "F32 · MMI splitter benchmark against Meep", "top view", "mmi", "2x2"),
     ("F33_diverged_simulation.png", "F33 · Diagnosing diverged FDTD/FIT instabilities", "time trace", "feature", "diverged"),
     ("F34_stl_gds_import.png", "F34 · CAD STL and GDSII layout geometry import", "mesh view", "feature", "stl_import"),

@@ -4,9 +4,9 @@
 # ########################################### #
 
 """
-Validation tests for the 2D subgridding PIC kit (`wakis.subgrid`):
+Validation tests for the 2D subgridding photonic-circuit kit (`wakis.subgrid`):
 
-* polarization mapping between `PICSimulation(two_d=True)` and
+* polarization mapping between `PhotonicCircuit(two_d=True)` and
   `SubgridFIT2D(polarization="TE")` (mutation: `polarization="TM"` gives the
   wrong waveguide effective index);
 * `PolySlabGeometry` material sampling vs `PolySlab.fill` on a uniform grid,
@@ -16,35 +16,41 @@ Validation tests for the 2D subgridding PIC kit (`wakis.subgrid`):
 * exact discrete adjoint dot-product test of `linear_step` vs `linear_step_T`
   with soft current sources registered via `add_current` (mutation: omitting
   the within-step flux-to-node coupling in the source adjoint fails);
-* discrete energy conservation over a long run on a refined PIC waveguide with
-  PML off (mutation: non-transposed injection restriction blows up);
-* straight waveguide S-parameters on `SubgridPICSimulation`:
-  - `max_level=0` vs `PICSimulation` on the same uniform grid (`||S21_sg| -
+* discrete energy conservation over a long run on a refined photonic-circuit
+  waveguide with PML off (mutation: non-transposed injection restriction blows up);
+* straight waveguide S-parameters on `SubgridPhotonicCircuit`:
+  - `max_level=0` vs `PhotonicCircuit` on the same uniform grid (`||S21_sg| -
     |S21_cart|| < 1e-2`),
   - refined patch crossed by the waveguide (interfaces normal to propagation:
     `T > 0.98`, `R < 1e-3`),
   - refined patch covering only the core width (interfaces parallel to
     propagation: `T > 0.98`, `R < 1e-3`),
-  - `lts=2` passthrough and `PICSimulation(..., backend="subgrid")`,
+  - `lts=2` passthrough and `PhotonicCircuit(..., backend="subgrid")`,
   - mutation of the hanging-node prolongation weights `P` breaks `R < 1e-3`
     and `T > 0.98`;
 * cost baseline: wall time per cell/node per step of `SubgridFIT2D(max_level=0)`
   vs `SolverFIT3D` 2D on the same grid.
 """
 
+import importlib
+import sys
 import time
+import warnings
 
 import numpy as np
 import pytest
 from scipy.constants import c as c_light
 
+import wakis.subgrid as subgrid_mod
+import wakis.subgrid.ports as subgrid_ports_mod
 from wakis.subgrid import (
-    PIC_POLARIZATION,
+    PHOTONIC_CIRCUIT_POLARIZATION,
     PolySlabGeometry,
     QuadMesh,
     SubgridDFTMonitor,
     SubgridFIT2D,
     SubgridFluxMonitor,
+    SubgridPhotonicCircuit,
     SubgridPICSimulation,
     choose_refinement,
     combine_refinements,
@@ -56,8 +62,8 @@ from wakis.subgrid import (
 from wakis.subgrid.interface import _inject
 from wakis.templates.formulas import slab_waveguide_neff
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     PolySlab,
     Port,
     euler_bend,
@@ -72,7 +78,7 @@ def _straight_wg_setup():
         straight((-1.5e-6, 0.0), (1.5e-6, 0.0), width=0.5e-6),
         z_min=0.0,
         z_max=0.22e-6,
-        material=n_to_eps(PIC_MATERIALS["Si"]),
+        material=n_to_eps(PHOTONIC_MATERIALS["Si"]),
     )
     ports = [
         Port(
@@ -103,31 +109,31 @@ def _straight_wg_setup():
 
 def test_polarization_mapping_and_mode_dispersion():
     """
-    2D EIM `PICSimulation` (`Ex, Ey, Hz` with `ieps_z = 0`) maps to
+    2D EIM `PhotonicCircuit` (`Ex, Ey, Hz` with `ieps_z = 0`) maps to
     `SubgridFIT2D(polarization="TE")`. Mutation: `polarization="TM"` solves
     `(Ez, Hx, Hy)` with continuous tangential `Ez` on the sidewalls and gives
     the wrong effective index by > 0.15.
     """
     pmap = polarization_mapping()
     assert pmap["subgrid_polarization"] == "TE"
-    assert PIC_POLARIZATION == "TE"
+    assert PHOTONIC_CIRCUIT_POLARIZATION == "TE"
     assert pmap["node_unknown_u"] == "Hz"
 
     _, _, kw = _straight_wg_setup()
-    pic_cart = PICSimulation(**kw)
-    pic_sg = SubgridPICSimulation(**kw, max_level=0)
+    circuit_cart = PhotonicCircuit(**kw)
+    circuit_sg = SubgridPhotonicCircuit(**kw, max_level=0)
 
-    f0 = pic_cart.f_center
+    f0 = circuit_cart.f_center
     lam0 = c_light / f0
-    m_cart = pic_cart.solve_port_modes("in", frequencies=f0, n_modes=1)[0]
-    m_sg = pic_sg.solve_port_modes("in", frequencies=f0, n_modes=1)[0]
+    m_cart = circuit_cart.solve_port_modes("in", frequencies=f0, n_modes=1)[0]
+    m_sg = circuit_sg.solve_port_modes("in", frequencies=f0, n_modes=1)[0]
 
     # Analytical 1D horizontal effective index (in 1D slab terminology, E_y is
     # normal to the y-sidewalls of width 0.5 um, which is the 1D TM slab equation)
     neff_exact = float(
         slab_waveguide_neff(
-            pic_sg.n_eff_slab,
-            pic_sg.n_clad,
+            circuit_sg.n_eff_slab,
+            circuit_sg.n_clad,
             0.5e-6,
             lam0,
             polarization="TM",
@@ -142,12 +148,12 @@ def test_polarization_mapping_and_mode_dispersion():
     # Mutation: solving the port on a TM SubgridFIT2D instance gives the wrong
     # polarization (Ez tangential to sidewalls instead of Ey normal to sidewalls)
     solver_tm = SubgridFIT2D(
-        pic_sg.mesh,
-        geometry=pic_sg.geometry,
+        circuit_sg.mesh,
+        geometry=circuit_sg.geometry,
         polarization="TM",
-        cfl=pic_sg.cfl,
+        cfl=circuit_sg.cfl,
     )
-    p_center, p_size, _ = pic_sg._port_plane_args(pic_sg.port_map["in"])
+    p_center, p_size, _ = circuit_sg._port_plane_args(circuit_sg.port_map["in"])
     m_tm = solve_port_modes_2d(solver_tm, f0, p_center, p_size, n_modes=1)[0]
     assert abs(m_tm.neff - m_cart.neff) > 0.10
 
@@ -328,7 +334,7 @@ def test_adjoint_dot_product_with_current_sources(pol, lts):
     assert abs(lhs_q - rhs_q_bad) > 0.9 * abs(lhs_q)
 
 
-def test_pic_subgrid_pec_energy_conservation_and_mutation():
+def test_photonic_circuit_subgrid_pec_energy_conservation_and_mutation():
     """
     With PML off (PEC outer box) and a refined patch crossing a silicon strip
     waveguide, discrete energy is conserved to < 1e-12 over 4000 steps; a
@@ -383,27 +389,27 @@ def test_pic_subgrid_pec_energy_conservation_and_mutation():
 def test_straight_waveguide_subgrid_patches_and_vs_cartesian():
     """
     Validate S-parameters on a straight silicon waveguide:
-    1. `max_level=0` vs `PICSimulation` on the same uniform grid:
+    1. `max_level=0` vs `PhotonicCircuit` on the same uniform grid:
        `max ||S21_sg| - |S21_cart|| < 1e-2`;
     2. Refined patch crossed by the waveguide (interfaces normal to
        propagation): `T > 0.98`, `R < 1e-3`;
     3. Refined patch covering only the core width (interfaces parallel to
        propagation): `T > 0.98`, `R < 1e-3`;
-    4. `lts=2` passthrough and `PICSimulation(..., backend='subgrid')`;
+    4. `lts=2` passthrough and `PhotonicCircuit(..., backend='subgrid')`;
     5. Mutation: corrupting the hanging-node prolongation weights `P` makes the
        reflection test (`R < 1e-3`) and transmission test (`T > 0.98`) fail.
     """
     _, _, kw = _straight_wg_setup()
     mid = slice(3, -3)
 
-    # 1. Uniform coarse subgrid (max_level=0) vs Cartesian PICSimulation
-    pic_cart = PICSimulation(**kw)
-    s_cart = pic_cart.run_s_parameters(
+    # 1. Uniform coarse subgrid (max_level=0) vs Cartesian PhotonicCircuit
+    circuit_cart = PhotonicCircuit(**kw)
+    s_cart = circuit_cart.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=False
     )
 
-    pic_sg0 = SubgridPICSimulation(**kw, max_level=0)
-    s_sg0 = pic_sg0.run_s_parameters(
+    circuit_sg0 = SubgridPhotonicCircuit(**kw, max_level=0)
+    s_sg0 = circuit_sg0.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=True
     )
 
@@ -415,21 +421,21 @@ def test_straight_waveguide_subgrid_patches_and_vs_cartesian():
             )
         )
     )
-    assert s21_diff < 1e-2, f"|S21| diff vs PICSimulation = {s21_diff:.4e} >= 1e-2"
-    assert 1550e-9 in pic_sg0.dft_fields
-    assert pic_sg0.dft_fields[1550e-9]["E2"].max() > 0
-    assert pic_sg0.flux_balance is not None
+    assert s21_diff < 1e-2, f"|S21| diff vs PhotonicCircuit = {s21_diff:.4e} >= 1e-2"
+    assert 1550e-9 in circuit_sg0.dft_fields
+    assert circuit_sg0.dft_fields[1550e-9]["E2"].max() > 0
+    assert circuit_sg0.flux_balance is not None
     np.testing.assert_allclose(
-        pic_sg0.flux_balance["total_box"][mid], 1.0, atol=0.04
+        circuit_sg0.flux_balance["total_box"][mid], 1.0, atol=0.04
     )
     for key in ("n_cells", "n_nodes", "n_steps", "dt", "wall_time", "peak_rss_mb"):
-        assert key in pic_sg0.summary() and pic_sg0.summary()[key] > 0
+        assert key in circuit_sg0.summary() and circuit_sg0.summary()[key] > 0
 
     # 2. Refined patch crossed by the waveguide (both interfaces normal to +x)
-    pic_norm = SubgridPICSimulation(
+    circuit_norm = SubgridPhotonicCircuit(
         **kw, refine=[(-0.4e-6, 0.4e-6, -1.0e-6, 1.0e-6, 1)]
     )
-    s_norm = pic_norm.run_s_parameters(
+    s_norm = circuit_norm.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=False
     )
     t_norm = float(np.min(np.abs(s_norm[("out", "in")][mid]) ** 2))
@@ -438,10 +444,10 @@ def test_straight_waveguide_subgrid_patches_and_vs_cartesian():
     assert r_norm < 1e-3, f"Normal-patch R_max = {r_norm:.4e} >= 1e-3"
 
     # 3. Refined patch covering only the core width (interfaces parallel to +x)
-    pic_par = SubgridPICSimulation(
+    circuit_par = SubgridPhotonicCircuit(
         **kw, refine=[(-1.3e-6, 1.3e-6, -0.3e-6, 0.3e-6, 1)]
     )
-    s_par = pic_par.run_s_parameters(
+    s_par = circuit_par.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=False
     )
     t_par = float(np.min(np.abs(s_par[("out", "in")][mid]) ** 2))
@@ -449,33 +455,33 @@ def test_straight_waveguide_subgrid_patches_and_vs_cartesian():
     assert t_par > 0.98, f"Parallel-patch T_min = {t_par:.4f} <= 0.98"
     assert r_par < 1e-3, f"Parallel-patch R_max = {r_par:.4e} >= 1e-3"
 
-    # 4. Backend switch on PICSimulation + LTS passthrough (lts=2) on a patch
-    pic_lts = PICSimulation(
+    # 4. Backend switch on PhotonicCircuit + LTS passthrough (lts=2) on a patch
+    circuit_lts = PhotonicCircuit(
         **kw,
         backend="subgrid",
         refine=[(-0.4e-6, 0.4e-6, -0.5e-6, 0.5e-6, 1)],
         lts=2,
     )
-    assert isinstance(pic_lts, SubgridPICSimulation)
-    assert pic_lts.solver.lts is not None
-    s_lts = pic_lts.run_s_parameters(
+    assert isinstance(circuit_lts, SubgridPhotonicCircuit)
+    assert circuit_lts.solver.lts is not None
+    s_lts = circuit_lts.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=False
     )
     assert float(np.min(np.abs(s_lts[("out", "in")][mid]) ** 2)) > 0.98
     assert float(np.max(np.abs(s_lts[("in", "in")][mid]) ** 2)) < 1e-3
 
     # 5. Mutation: break hanging-node prolongation weights -> R >= 1e-3 and T <= 0.98
-    pic_mut = SubgridPICSimulation(
+    circuit_mut = SubgridPhotonicCircuit(
         **kw, refine=[(-0.4e-6, 0.4e-6, -1.0e-6, 1.0e-6, 1)]
     )
-    m = pic_mut.mesh
+    m = circuit_mut.mesh
     h, ab, t, wb = m._constraints
     # Perturb hanging-node weights so rows of P no longer interpolate linearly
     m.P = m.prolongation()
     m.P.data[np.isin(m.P.tocoo().row, h)] *= -0.5
-    pic_mut.solver._assemble()
-    pic_mut.solver._setup_pml(pic_mut.solver.pml)
-    s_mut = pic_mut.run_s_parameters(
+    circuit_mut.solver._assemble()
+    circuit_mut.solver._setup_pml(circuit_mut.solver.pml)
+    s_mut = circuit_mut.run_s_parameters(
         drive=["in"], energy_decay=1e-4, collect_fields=False
     )
     t_mut = float(np.min(np.abs(s_mut[("out", "in")][mid]) ** 2))
@@ -490,42 +496,42 @@ def test_monitors_dft_and_flux_consistency():
     line matching the modal field.
     """
     _, _, kw = _straight_wg_setup()
-    pic = SubgridPICSimulation(
+    circuit = SubgridPhotonicCircuit(
         **kw, refine=[(-0.3e-6, 0.3e-6, -0.3e-6, 0.3e-6, 1)]
     )
-    out_port = pic.port_map["out"]
-    p_center, p_size, _ = pic._port_plane_args(out_port)
+    out_port = circuit.port_map["out"]
+    p_center, p_size, _ = circuit._port_plane_args(out_port)
 
-    in_port = pic.port_map["in"]
-    in_c, in_s, in_inward = pic._port_plane_args(in_port)
-    k_mon = int(np.argmin(np.abs(pic.grid.x[:-1] - in_c[0])))
+    in_port = circuit.port_map["in"]
+    in_c, in_s, in_inward = circuit._port_plane_args(in_port)
+    k_mon = int(np.argmin(np.abs(circuit.grid.x[:-1] - in_c[0])))
     src_c = in_c.copy()
-    src_c[0] = pic.grid.x[k_mon - 2 * in_inward]
+    src_c[0] = circuit.grid.x[k_mon - 2 * in_inward]
 
-    pic.solver.clear_currents()
-    pic.solver.reset()
-    src = pic.solver
+    circuit.solver.clear_currents()
+    circuit.solver.reset()
+    src = circuit.solver
     from wakis.subgrid import SubgridModeMonitor, SubgridModeSource
 
     SubgridModeSource(
-        pic.pulse,
+        circuit.pulse,
         center=src_c,
         size=in_s,
         direction="+",
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     ).register(src)
 
     mode_mon = SubgridModeMonitor(
-        [pic.f_center],
+        [circuit.f_center],
         center=p_center,
         size=p_size,
-        mode_frequency=pic.f_center,
+        mode_frequency=circuit.f_center,
     )
     flux_mon = SubgridFluxMonitor(
-        [pic.f_center], center=p_center[:2], size=p_size[:2], n_pts=80
+        [circuit.f_center], center=p_center[:2], size=p_size[:2], n_pts=80
     )
     dft_mon = SubgridDFTMonitor(
-        [pic.f_center],
+        [circuit.f_center],
         center=p_center[:2],
         size=(0.0, 0.0),
         components=("Ey", "Hz"),
@@ -554,26 +560,26 @@ def test_cost_baseline_subgrid_vs_solverfit3d():
     `SubgridFIT2D(max_level=0)` vs `SolverFIT3D` 2D on the same uniform grid.
     """
     _, _, kw = _straight_wg_setup()
-    pic_c = PICSimulation(**kw)
-    pic_s = SubgridPICSimulation(**kw, max_level=0)
+    circuit_c = PhotonicCircuit(**kw)
+    circuit_s = SubgridPhotonicCircuit(**kw, max_level=0)
 
-    assert (pic_c.grid.Nx - 1) * (pic_c.grid.Ny - 1) == pic_s.mesh.n_cells
-    assert pic_c.grid.Nx * pic_c.grid.Ny == pic_s.mesh.n_nodes
-    n_cells = pic_s.mesh.n_cells
-    n_nodes = pic_s.mesh.n_nodes
+    assert (circuit_c.grid.Nx - 1) * (circuit_c.grid.Ny - 1) == circuit_s.mesh.n_cells
+    assert circuit_c.grid.Nx * circuit_c.grid.Ny == circuit_s.mesh.n_nodes
+    n_cells = circuit_s.mesh.n_cells
+    n_nodes = circuit_s.mesh.n_nodes
     n_steps = 200
 
-    pic_c.solver.one_step()
-    pic_s.solver.one_step()
+    circuit_c.solver.one_step()
+    circuit_s.solver.one_step()
 
     t0 = time.perf_counter()
     for _ in range(n_steps):
-        pic_c.solver.one_step()
+        circuit_c.solver.one_step()
     dt_cart = (time.perf_counter() - t0) / n_steps
 
     t0 = time.perf_counter()
     for _ in range(n_steps):
-        pic_s.solver.one_step()
+        circuit_s.solver.one_step()
     dt_sg = (time.perf_counter() - t0) / n_steps
 
     ns_per_cell_cart = dt_cart / n_cells * 1e9
@@ -585,3 +591,38 @@ def test_cost_baseline_subgrid_vs_solverfit3d():
     assert 1.0 < ns_per_cell_sg < 5000.0
     assert 1.0 < ns_per_node_cart < 5000.0
     assert 1.0 < ns_per_node_sg < 5000.0
+
+
+def test_deprecated_subgrid_pic_aliases_and_mutation():
+    """
+    Deprecated `wakis.subgrid.pic`, `SubgridPICSimulation`, and `PIC_POLARIZATION`
+    still work and emit `DeprecationWarning`; the new names emit no warning.
+    """
+    _, _, kw = _straight_wg_setup()
+
+    with warnings.catch_warnings(record=True) as rec_new:
+        warnings.simplefilter("always", DeprecationWarning)
+        circuit_new = SubgridPhotonicCircuit(**kw, max_level=0)
+        pol_new = PHOTONIC_CIRCUIT_POLARIZATION
+    dep_new = [w for w in rec_new if issubclass(w.category, DeprecationWarning)]
+    assert len(dep_new) == 0
+    assert pol_new == "TE"
+
+    with pytest.deprecated_call(match="SubgridPICSimulation is deprecated"):
+        circuit_old = SubgridPICSimulation(**kw, max_level=0)
+    assert isinstance(circuit_old, SubgridPhotonicCircuit)
+    assert circuit_old.mesh.n_cells == circuit_new.mesh.n_cells
+
+    with pytest.deprecated_call(match="PIC_POLARIZATION is deprecated"):
+        pol_old_pkg = subgrid_mod.PIC_POLARIZATION
+    assert pol_old_pkg == PHOTONIC_CIRCUIT_POLARIZATION
+
+    with pytest.deprecated_call(match="PIC_POLARIZATION is deprecated"):
+        pol_old_ports = subgrid_ports_mod.PIC_POLARIZATION
+    assert pol_old_ports == PHOTONIC_CIRCUIT_POLARIZATION
+
+    sys.modules.pop("wakis.subgrid.pic", None)
+    with pytest.deprecated_call(match="wakis.subgrid.pic is deprecated"):
+        shim = importlib.import_module("wakis.subgrid.pic")
+    assert shim.SubgridPhotonicCircuit is SubgridPhotonicCircuit
+    assert shim.SubgridPICSimulation is SubgridPICSimulation

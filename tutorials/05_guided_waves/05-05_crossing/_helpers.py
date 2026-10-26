@@ -21,7 +21,7 @@ from scipy.constants import c as c_light, epsilon_0
 
 from wakis import figstyle, schematic
 from wakis.templates import meshing
-from wakis.templates.photonics import PICSimulation, PolySlab, n_to_eps, slab_neff
+from wakis.templates.photonics import PhotonicCircuit, PolySlab, n_to_eps, slab_neff
 from wakis.templates.shapes import Box
 from wakis.templates.simulation import Simulation
 
@@ -150,7 +150,7 @@ def crossing_mesh_overrides(
     Build `mesh_overrides` boxes across the smallest feature (`min_feature` [m],
     the `0.35 um` access-waveguide width) for resolution level `(cpw, n_feature_min)`.
 
-    Following the PIC resolution rule, an override box with
+    Following the photonic-circuit resolution rule, an override box with
     `max_cell = min_feature / n_feature_min` is added only when `max_cell` is
     finer than the background 2D EIM slab cell size
     `h_slab = wavelength_min / (neff_slab * cpw)`. Because the 2D grid is a
@@ -889,9 +889,9 @@ def build_crossing_graded_axes(
     return u_full, u_full.copy(), z_nodes
 
 
-class NonUniformCrossingPIC(PICSimulation):
+class NonUniformCrossingCircuit(PhotonicCircuit):
     """
-    `PICSimulation` subclass that builds the 2D EIM 4-port waveguide crossing on
+    `PhotonicCircuit` subclass that builds the 2D EIM 4-port waveguide crossing on
     the exact $D_4$-symmetric graded non-uniform Cartesian mesh from
     `build_crossing_graded_axes`.
     """
@@ -983,23 +983,23 @@ class _SchematicSolverProxy:
         self._assigned_structures = tuple(structures)
 
 
-def _build_crossing_port_sources_and_monitors(pic, include_flux_box: bool = True):
-    """Build ``(sources, monitors)`` dicts for ``wakis.schematic`` from a 4-port crossing ``pic``."""
-    xmin, xmax = float(pic.grid.xmin), float(pic.grid.xmax)
-    ymin, ymax = float(pic.grid.ymin), float(pic.grid.ymax)
-    dx_bg = float(np.median(np.diff(pic.grid.x)))
-    dy_bg = float(np.median(np.diff(pic.grid.y)))
-    pulse_obj = pic.sim.pulse
+def _build_crossing_port_sources_and_monitors(circuit, include_flux_box: bool = True):
+    """Build ``(sources, monitors)`` dicts for ``wakis.schematic`` from a 4-port crossing ``circuit``."""
+    xmin, xmax = float(circuit.grid.xmin), float(circuit.grid.xmax)
+    ymin, ymax = float(circuit.grid.ymin), float(circuit.grid.ymax)
+    dx_bg = float(np.median(np.diff(circuit.grid.x)))
+    dy_bg = float(np.median(np.diff(circuit.grid.y)))
+    pulse_obj = circuit.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
-    freqs = np.asarray(getattr(pic, "frequencies", [f0]), dtype=float)
+    freqs = np.asarray(getattr(circuit, "frequencies", [f0]), dtype=float)
     f_min_thz = float(np.min(freqs)) * 1e-12
     f_max_thz = float(np.max(freqs)) * 1e-12
     n_f = int(freqs.size)
 
     sources_s = []
     monitors_s = []
-    for pt in pic.ports:
+    for pt in circuit.ports:
         cx, cy, _ = (float(v) for v in pt.center)
         sx, sy, _ = (float(v) for v in pt.size)
         if pt.name == "west":
@@ -1176,7 +1176,7 @@ def _draw_crossing_polyslab(
 
 
 def plot_setup_schematic_crossing(
-    pic,
+    circuit,
     primary_data: dict,
     out_path: str | Path,
 ):
@@ -1199,11 +1199,11 @@ def plot_setup_schematic_crossing(
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     sources_s, monitors_s = _build_crossing_port_sources_and_monitors(
-        pic, include_flux_box=True
+        circuit, include_flux_box=True
     )
-    neff_s = float(pic.n_eff_slab)
+    neff_s = float(circuit.n_eff_slab)
     eps_s = neff_s**2
-    eps_clad = float(n_to_eps(pic.n_clad))
+    eps_clad = float(n_to_eps(circuit.n_clad))
     core_label = f"Si crossing core (ε_r = {eps_s:.2f})"
     clad_label = f"SiO₂ cladding (ε_r = {eps_clad:.2f})"
     mat_names = {
@@ -1211,18 +1211,18 @@ def plot_setup_schematic_crossing(
         eps_s: core_label,
     }
     dom_bounds = (
-        float(pic.grid.xmin),
-        float(pic.grid.xmax),
-        float(pic.grid.ymin),
-        float(pic.grid.ymax),
+        float(circuit.grid.xmin),
+        float(circuit.grid.xmax),
+        float(circuit.grid.ymin),
+        float(circuit.grid.ymax),
     )
     dom_bounds_um = tuple(v * 1e6 for v in dom_bounds)
     struct_proxies = [
         _PolygonSchematicProxy(s, eps_s, core_label, domain_bounds=dom_bounds)
-        for s in pic.structures_3d
+        for s in circuit.structures_3d
     ]
     solver_proxy = _SchematicSolverProxy(
-        pic.solver, eps_clad, structures=struct_proxies
+        circuit.solver, eps_clad, structures=struct_proxies
     )
 
     variations = [
@@ -1296,7 +1296,7 @@ def plot_setup_schematic_crossing(
 
     _draw_crossing_polyslab(
         ax0,
-        pic.structures_3d,
+        circuit.structures_3d,
         facecolor="#2563eb",
         alpha=0.28,
         edgecolor="#0f172a",
@@ -1329,8 +1329,8 @@ def plot_setup_schematic_crossing(
         m = np.abs(yp) <= 1.25
         yw = yp[m]
         ew = ep[m]
-        xw = float(pic.ports[0].center[0]) * 1e6
-        xe = float(pic.ports[1].center[0]) * 1e6
+        xw = float(circuit.ports[0].center[0]) * 1e6
+        xe = float(circuit.ports[1].center[0]) * 1e6
         ax0.fill_betweenx(yw, xw, xw + 0.95 * ew, color="#d62728", alpha=0.24, zorder=8)
         ax0.plot(
             xw + 0.95 * ew,
@@ -1384,7 +1384,7 @@ def plot_setup_schematic_crossing(
         ax_zoom = axes_b[0]
         _draw_crossing_polyslab(
             ax_zoom,
-            pic.structures_3d,
+            circuit.structures_3d,
             facecolor="#DCEAF7",
             alpha=0.72,
             edgecolor="#1E293B",
@@ -1395,7 +1395,7 @@ def plot_setup_schematic_crossing(
             if getattr(child_ax, "_is_inset", False):
                 _draw_crossing_polyslab(
                     child_ax,
-                    pic.structures_3d,
+                    circuit.structures_3d,
                     facecolor="#DCEAF7",
                     alpha=0.72,
                     edgecolor="#1E293B",
@@ -1403,7 +1403,7 @@ def plot_setup_schematic_crossing(
                     clip_bounds_um=dom_bounds_um,
                 )
         m_res = measure_grid_resolution(
-            pic.grid.x, pic.grid.y, min_feature=0.35e-6, has_ghost=True
+            circuit.grid.x, circuit.grid.y, min_feature=0.35e-6, has_ghost=True
         )
         ax_zoom.annotate(
             f"Access w_in = 350 nm\n{m_res['cells_across_feature']:.1f} cells (Δy = {m_res['dx_min_nm']:.1f} nm)",
@@ -1426,8 +1426,8 @@ def plot_setup_schematic_crossing(
 
 
 def plot_crossing_geometries_schematic(
-    pic_linear,
-    pic_plain,
+    circuit_linear,
+    circuit_plain,
     out_path: str | Path,
 ):
     """
@@ -1442,36 +1442,36 @@ def plot_crossing_geometries_schematic(
         1, 2, figsize=(14.4, 5.9), gridspec_kw={"wspace": 0.44}
     )
 
-    neff_s = float(pic_linear.n_eff_slab)
-    eps_clad = float(n_to_eps(pic_linear.n_clad))
+    neff_s = float(circuit_linear.n_eff_slab)
+    eps_clad = float(n_to_eps(circuit_linear.n_clad))
     mat_names = {
-        "background": f"SiO₂ cladding (n={pic_linear.n_clad:.2f})",
+        "background": f"SiO₂ cladding (n={circuit_linear.n_clad:.2f})",
     }
-    for ax_i, pic_i, ttl_i, lbl_i in (
+    for ax_i, circuit_i, ttl_i, lbl_i in (
         (
             ax0,
-            pic_linear,
+            circuit_linear,
             "(a) Linear-tapered crossing setup (l_t = 5.30 µm)",
             f"Si linear-tapered crossing\nw: 0.35 → 1.10 µm (n_eff={neff_s:.2f})",
         ),
         (
             ax1,
-            pic_plain,
+            circuit_plain,
             "(b) Plain untapered crossing setup (w = 0.35 µm)",
             f"Si untapered crossing\nw = 0.35 µm (n_eff={neff_s:.2f})",
         ),
     ):
         src_i, mon_i = _build_crossing_port_sources_and_monitors(
-            pic_i, include_flux_box=False
+            circuit_i, include_flux_box=False
         )
         dom_um = (
-            float(pic_i.grid.xmin) * 1e6,
-            float(pic_i.grid.xmax) * 1e6,
-            float(pic_i.grid.ymin) * 1e6,
-            float(pic_i.grid.ymax) * 1e6,
+            float(circuit_i.grid.xmin) * 1e6,
+            float(circuit_i.grid.xmax) * 1e6,
+            float(circuit_i.grid.ymin) * 1e6,
+            float(circuit_i.grid.ymax) * 1e6,
         )
         schematic.plot_schematic(
-            _SchematicSolverProxy(pic_i.solver, eps_clad),
+            _SchematicSolverProxy(circuit_i.solver, eps_clad),
             plane="xy",
             ax=ax_i,
             unit="µm",
@@ -1494,7 +1494,7 @@ def plot_crossing_geometries_schematic(
                 ln.set_marker("none")
         _draw_crossing_polyslab(
             ax_i,
-            pic_i.structures_3d,
+            circuit_i.structures_3d,
             facecolor="#2563eb",
             alpha=0.28,
             edgecolor="#0f172a",
@@ -1524,8 +1524,8 @@ def plot_crossing_geometries_schematic(
 
 
 def plot_mesh_upgrade_comparison_crossing(
-    pic_uniform,
-    pic_nonuniform,
+    circuit_uniform,
+    circuit_nonuniform,
     td_uniform: dict,
     td_nonuniform: dict,
     td_ref: dict | None,
@@ -1550,18 +1550,18 @@ def plot_mesh_upgrade_comparison_crossing(
     fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.7)
 
     # Panel (a): Split-half mesh view (y >= 0: kottke_L3, y <= 0: kottke_nonuniform)
-    iz = pic_nonuniform.solver.Nz // 2
-    ieps = np.asarray(pic_nonuniform.solver.ieps[:, :, iz, "y"])
+    iz = circuit_nonuniform.solver.Nz // 2
+    ieps = np.asarray(circuit_nonuniform.solver.ieps[:, :, iz, "y"])
     eps_r = np.where(ieps > 0, 1.0 / (np.where(ieps > 0, ieps, 1.0) * epsilon_0), 1.0)
-    xu_nu = pic_nonuniform.grid.x * 1e6
-    yu_nu = pic_nonuniform.grid.y * 1e6
+    xu_nu = circuit_nonuniform.grid.x * 1e6
+    yu_nu = circuit_nonuniform.grid.y * 1e6
     ax0.pcolormesh(
         xu_nu, yu_nu, eps_r.T, cmap=figstyle.CMAP_EPS, shading="flat", alpha=0.88
     )
 
     xl_m, yl_m = (-4.50, 4.50), (-4.50, 4.50)
-    xu_u = pic_uniform.grid.x * 1e6
-    yu_u = pic_uniform.grid.y * 1e6
+    xu_u = circuit_uniform.grid.x * 1e6
+    yu_u = circuit_uniform.grid.y * 1e6
     xv_u = xu_u[(xu_u >= xl_m[0]) & (xu_u <= xl_m[1])][::2]
     yv_u = yu_u[(yu_u >= 0.0) & (yu_u <= yl_m[1])][::2]
     segs_u = [[(x, 0.0), (x, yl_m[1])] for x in xv_u] + [
@@ -1582,14 +1582,14 @@ def plot_mesh_upgrade_comparison_crossing(
     ax0.axhline(0.0, color="black", lw=1.1, ls="--")
     _draw_crossing_polyslab(
         ax0,
-        pic_nonuniform.structures_3d,
+        circuit_nonuniform.structures_3d,
         facecolor=None,
         edgecolor="black",
         lw=1.1,
     )
 
-    n_u = int(pic_uniform.grid.Nx * pic_uniform.grid.Ny)
-    n_nu = int(pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny)
+    n_u = int(circuit_uniform.grid.Nx * circuit_uniform.grid.Ny)
+    n_nu = int(circuit_nonuniform.grid.Nx * circuit_nonuniform.grid.Ny)
     t_u_s = float(meta_uniform["elapsed_s"]) if meta_uniform else 1061.10
     t_nu_s = float(meta_nonuniform["elapsed_s"]) if meta_nonuniform else 0.0
     red_cells = 100.0 * (1.0 - n_nu / n_u)
@@ -1599,7 +1599,7 @@ def plot_mesh_upgrade_comparison_crossing(
         -4.30,
         3.55,
         f"Upper (y > 0): kottke_L3 baseline\n"
-        f"{pic_uniform.grid.Nx}×{pic_uniform.grid.Ny} = {n_u:,} cells ({t_u_s:.1f} s)",
+        f"{circuit_uniform.grid.Nx}×{circuit_uniform.grid.Ny} = {n_u:,} cells ({t_u_s:.1f} s)",
         fontsize=7.1,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#08519c", alpha=0.92),
     )
@@ -1607,7 +1607,7 @@ def plot_mesh_upgrade_comparison_crossing(
         -4.30,
         -4.20,
         f"Lower (y < 0): kottke_nonuniform\n"
-        f"{pic_nonuniform.grid.Nx}×{pic_nonuniform.grid.Ny} = {n_nu:,} cells "
+        f"{circuit_nonuniform.grid.Nx}×{circuit_nonuniform.grid.Ny} = {n_nu:,} cells "
         f"(-{red_cells:.1f}%, {t_nu_s:.1f} s, -{red_time:.1f}%)",
         fontsize=7.1,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d95f02", alpha=0.92),
@@ -1647,7 +1647,7 @@ def plot_mesh_upgrade_comparison_crossing(
         where="mid",
         color="#08519c",
         lw=1.8,
-        label=f"kottke_L3 ({pic_uniform.grid.Nx} cells/axis)",
+        label=f"kottke_L3 ({circuit_uniform.grid.Nx} cells/axis)",
     )
     ax1.step(
         uc_nu,
@@ -1655,7 +1655,7 @@ def plot_mesh_upgrade_comparison_crossing(
         where="mid",
         color="#d95f02",
         lw=2.0,
-        label=f"kottke_nonuniform ({pic_nonuniform.grid.Nx} cells/axis)",
+        label=f"kottke_nonuniform ({circuit_nonuniform.grid.Nx} cells/axis)",
     )
     ax1.set(
         xlim=(-7.2, 7.2),
@@ -1717,19 +1717,19 @@ def plot_mesh_upgrade_comparison_crossing(
     plt.close(fig)
 
 
-def overlay_crossing_geometry(ax, pic, outline_color: str = "white"):
+def overlay_crossing_geometry(ax, circuit, outline_color: str = "white"):
     """Overlay material outlines/labels, ports, and CPML boundaries on a 2D crossing field map."""
-    neff_s = float(pic.n_eff_slab)
-    eps_clad = float(n_to_eps(pic.n_clad))
+    neff_s = float(circuit.n_eff_slab)
+    eps_clad = float(n_to_eps(circuit.n_clad))
     mat_names = {
-        "background": f"SiO₂ (n={pic.n_clad:.2f})",
+        "background": f"SiO₂ (n={circuit.n_clad:.2f})",
     }
     sources_s, monitors_s = _build_crossing_port_sources_and_monitors(
-        pic, include_flux_box=False
+        circuit, include_flux_box=False
     )
     schematic.overlay_geometry(
         ax,
-        _SchematicSolverProxy(pic.solver, eps_clad),
+        _SchematicSolverProxy(circuit.solver, eps_clad),
         plane="xy",
         unit="µm",
         structures=(),
@@ -1742,11 +1742,11 @@ def overlay_crossing_geometry(ax, pic, outline_color: str = "white"):
     )
     _draw_crossing_polyslab(
         ax,
-        pic.structures_3d,
+        circuit.structures_3d,
         facecolor=None,
         edgecolor=outline_color,
         lw=1.15,
-        label=f"Si EIM core (n_eff={neff_s:.2f}) | SiO₂ clad (n={pic.n_clad:.2f})",
+        label=f"Si EIM core (n_eff={neff_s:.2f}) | SiO₂ clad (n={circuit.n_clad:.2f})",
         label_xy=(-3.2, -3.5),
     )
 
@@ -1755,7 +1755,7 @@ def render_crossing_field_map_with_overlay(
     x: np.ndarray,
     y: np.ndarray,
     field: np.ndarray,
-    pic,
+    circuit,
     kind: str,
     title: str,
     out_path: str | Path,
@@ -1801,7 +1801,7 @@ def render_crossing_field_map_with_overlay(
         cb.set_label(r"Normalized $\mathrm{Re}(E_y)$")
         outline_col = "black"
 
-    overlay_crossing_geometry(ax, pic, outline_color=outline_col)
+    overlay_crossing_geometry(ax, circuit, outline_color=outline_col)
     ax.set(
         xlim=(float(x_um.min()), float(x_um.max())),
         ylim=(float(y_um.min()), float(y_um.max())),
@@ -1819,7 +1819,7 @@ def render_crossing_movie_with_overlay(
     y: np.ndarray,
     frames: np.ndarray,
     times: np.ndarray,
-    pic,
+    circuit,
     out_path: str | Path,
     fps: int = 12,
 ):
@@ -1844,7 +1844,7 @@ def render_crossing_movie_with_overlay(
     )
     cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
     cb.set_label(r"$E_y(x, y, t) / E_{\max}$")
-    overlay_crossing_geometry(ax, pic, outline_color="black")
+    overlay_crossing_geometry(ax, circuit, outline_color="black")
     ax.set(
         xlim=(float(x_um.min()), float(x_um.max())),
         ylim=(float(y_um.min()), float(y_um.max())),

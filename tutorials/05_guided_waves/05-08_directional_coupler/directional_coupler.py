@@ -20,7 +20,7 @@
 # # Tutorial 5.8 · Directional coupler: supermode beating and sidewall-angle sensitivity
 #
 # **Abstract.** Evanescent directional couplers are the fundamental $2 \times 2$
-# coherent beam splitters of silicon photonic integrated circuits (PICs),
+# coherent beam splitters of silicon photonic integrated circuits,
 # forming the building blocks of Mach–Zehnder interferometers, optical switches,
 # ring-resonator bus couplers, and quantum photonic gates. Power transfer
 # between two closely spaced waveguides is governed by the interference of the
@@ -156,7 +156,7 @@ from scipy.constants import c as c_light, epsilon_0
 
 from wakis import figstyle
 from wakis.templates.photonics import (
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     make_movie,
@@ -175,7 +175,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _helpers import (  # noqa: E402
-    NonUniformCouplerPIC,
+    NonUniformCouplerCircuit,
     build_coupler_graded_axes,
     build_coupler_mesh_axes,
     coupler_mesh_overrides,
@@ -481,7 +481,7 @@ def build_directional_coupler(
 #
 # 1. **Wavelength sampling rule ($\text{cpw} \ge 10$)**: The background grid
 #    must place at least $10$ cells per wavelength inside the highest-index
-#    guided medium (`cells_per_wavelength` in `PICSimulation` counts cells per
+#    guided medium (`cells_per_wavelength` in `PhotonicCircuit` counts cells per
 #    $\lambda_{\min} / n_{\text{eff,slab}} \approx 492\;\text{nm}$, giving a
 #    background cell size $\Delta x_{\text{bg}} \approx 49.1\;\text{nm}$ at
 #    $10\;\text{cpw}$, $35.1\;\text{nm}$ at $14\;\text{cpw}$, $24.6\;\text{nm}$
@@ -499,7 +499,7 @@ def build_directional_coupler(
 #
 # Rather than over-refining the entire $17.3 \times 6.0\;\mu\text{m}^2$ domain,
 # `coupler_mesh_overrides` passes a targeted `mesh_overrides=[(lo, hi, (h_max, h_max, 1.0))]`
-# box to `PICSimulation` with $h_{\max} = g_{\text{eff}}(\theta_{\text{sw}}) / N$.
+# box to `PhotonicCircuit` with $h_{\max} = g_{\text{eff}}(\theta_{\text{sw}}) / N$.
 # Axially, the box covers the parallel coupling section ($|x| \le L_c/2$) plus
 # the S-bend transition ends where the local gap $g(x) = g_{\text{eff}} + \Delta y_{\text{sb}}[1 - \cos(\pi u)]$
 # is below $3 g_{\text{eff}}$ ($|x| \le L_c/2 + u_{3\times}\Delta x_{\text{sb}}$).
@@ -522,7 +522,7 @@ def build_directional_coupler(
 #   plots (and excluded from the converged trends).
 #
 # > **Resolution audit (`cpw` in 2D EIM vs 3D bulk core and `cells_across_feature`)**:
-# > In `PICSimulation(..., two_d=True)`, `cells_per_wavelength` (`cpw` in `data/task_*.json`)
+# > In `PhotonicCircuit(..., two_d=True)`, `cells_per_wavelength` (`cpw` in `data/task_*.json`)
 # > is defined with respect to the highest-index medium on the 2D grid, the EIM slab
 # > core $n_{\text{eff,slab}} = 2.8424$ ($\lambda_{\min}/n_{\text{eff,slab}} = 492.54\;\text{nm}$).
 # > Every non-demo task in `data/task_*.json` satisfies $\text{cpw} \ge 10$
@@ -733,7 +733,7 @@ def get_task_table(quick=False):
             }
         )
 
-    # Upgraded mirror-symmetric graded non-uniform Cartesian mesh (NonUniformCouplerPIC)
+    # Upgraded mirror-symmetric graded non-uniform Cartesian mesh (NonUniformCouplerCircuit)
     tasks.append(
         {
             "index": len(tasks),
@@ -840,7 +840,7 @@ def run_single_task(task_cfg, out_dir):
     )
     use_gpu = os.environ.get("WAKIS_USE_GPU", "0") == "1"
     if task_cfg.get("nonuniform", False):
-        pic = NonUniformCouplerPIC(
+        circuit = NonUniformCouplerCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             L_c=task_cfg["L_c"],
@@ -868,7 +868,7 @@ def run_single_task(task_cfg, out_dir):
             use_gpu=use_gpu,
         )
     else:
-        pic = PICSimulation(
+        circuit = PhotonicCircuit(
             wavelength_min=WL_MIN,
             wavelength_max=WL_MAX,
             n_freqs=N_FREQS,
@@ -891,10 +891,10 @@ def run_single_task(task_cfg, out_dir):
         )
 
     mesh_metrics = extract_mesh_metrics_from_grid(
-        pic.grid.x,
-        pic.grid.y,
+        circuit.grid.x,
+        circuit.grid.y,
         gap_eff=geom_info["gap_eff"],
-        Nz=int(pic.grid.Nz),
+        Nz=int(circuit.grid.Nz),
     )
 
     payload = {
@@ -911,19 +911,19 @@ def run_single_task(task_cfg, out_dir):
         "gap_eff": np.float64(geom_info["gap_eff"]),
         "w_bot": np.float64(geom_info["w_bot"]),
         "w_top": np.float64(geom_info["w_top"]),
-        "n_eff_slab": np.float64(pic.n_eff_slab),
+        "n_eff_slab": np.float64(circuit.n_eff_slab),
         "min_feature_nm": np.float64(mesh_metrics["min_feature_nm"]),
         "dx_background_nm": np.float64(mesh_metrics["dx_background_nm"]),
         "dx_min_nm": np.float64(mesh_metrics["dx_min_nm"]),
         "cells_across_feature": np.float64(mesh_metrics["cells_across_feature"]),
         "n_cells": np.int64(mesh_metrics["n_cells"]),
-        "frequencies": pic.frequencies.astype(np.float64),
-        "wavelengths": pic.wavelengths.astype(np.float64),
+        "frequencies": circuit.frequencies.astype(np.float64),
+        "wavelengths": circuit.wavelengths.astype(np.float64),
     }
 
     if kind == "quadrature":
         res_up = run_phased_dual_drive(
-            pic,
+            circuit,
             port_phases={"in_bot": 0.0, "in_top": -0.5 * np.pi},
             energy_decay=task_cfg["energy_decay"],
             collect_dft=True,
@@ -939,7 +939,7 @@ def run_single_task(task_cfg, out_dir):
             payload["dft_Ey"] = fmap["Ey"]
             payload["dft_E2"] = fmap["E2"]
     else:
-        s_mat = pic.run_s_parameters(
+        s_mat = circuit.run_s_parameters(
             drive=["in_bot"],
             energy_decay=task_cfg["energy_decay"],
             collect_fields=task_cfg["collect_fields"],
@@ -959,7 +959,7 @@ def run_single_task(task_cfg, out_dir):
 
         tc = np.abs(s31) ** 2
         tb = np.abs(s41) ** 2
-        wl_cross, t_tot_cross = find_crossing_wavelength(pic.wavelengths, tc, tb)
+        wl_cross, t_tot_cross = find_crossing_wavelength(circuit.wavelengths, tc, tb)
         payload["wl_cross"] = np.float64(wl_cross)
         payload["t_tot_cross"] = np.float64(t_tot_cross)
 
@@ -967,7 +967,7 @@ def run_single_task(task_cfg, out_dir):
             n_cmt_pts = 13 if task_cfg["collect_fields"] else 7
             wls_cmt = np.linspace(WL_MIN, WL_MAX, n_cmt_pts)
             sm = solve_coupler_supermodes(
-                pic,
+                circuit,
                 wavelengths=wls_cmt,
                 x_coupled=0.0,
                 x_sb_start=0.5 * task_cfg["L_c"],
@@ -980,10 +980,10 @@ def run_single_task(task_cfg, out_dir):
                 payload[k_sm] = v_sm
 
         if task_cfg["collect_fields"]:
-            modes_in = pic.solve_port_modes(
+            modes_in = circuit.solve_port_modes(
                 "in_bot", frequencies=c_light / WL_DESIGN, n_modes=1
             )
-            modes_out = pic.solve_port_modes(
+            modes_out = circuit.solve_port_modes(
                 "out_top", frequencies=c_light / WL_DESIGN, n_modes=1
             )
             y_in = modes_in[0].coords["Eb"][0]
@@ -1001,7 +1001,7 @@ def run_single_task(task_cfg, out_dir):
 
             wl_disp = np.linspace(WL_MIN, WL_MAX, 11)
             f_disp = c_light / wl_disp
-            disp_modes = pic.solve_port_modes("in_bot", frequencies=f_disp, n_modes=1)
+            disp_modes = circuit.solve_port_modes("in_bot", frequencies=f_disp, n_modes=1)
             neff_disp = np.array([float(np.real(m[0].neff)) for m in disp_modes])
             dneff_dl = np.gradient(neff_disp, wl_disp)
             ng_disp = neff_disp - wl_disp * dneff_dl
@@ -1009,33 +1009,33 @@ def run_single_task(task_cfg, out_dir):
             payload["disp_neff"] = neff_disp.astype(np.float64)
             payload["disp_ng"] = ng_disp.astype(np.float64)
 
-            if WL_DESIGN in pic.dft_fields:
-                fmap = pic.dft_fields[WL_DESIGN]
+            if WL_DESIGN in circuit.dft_fields:
+                fmap = circuit.dft_fields[WL_DESIGN]
                 payload["dft_x"] = fmap["x"]
                 payload["dft_y"] = fmap["y"]
                 payload["dft_Ey"] = fmap["Ey"]
                 payload["dft_E2"] = fmap["E2"]
 
-            if pic.movie_data is not None:
-                payload["movie_x"] = pic.movie_data["x"]
-                payload["movie_y"] = pic.movie_data["y"]
-                payload["movie_times"] = pic.movie_data["times"]
-                payload["movie_frames"] = pic.movie_data["frames"]
-                payload["movie_peak"] = pic.movie_data["peak"]
+            if circuit.movie_data is not None:
+                payload["movie_x"] = circuit.movie_data["x"]
+                payload["movie_y"] = circuit.movie_data["y"]
+                payload["movie_times"] = circuit.movie_data["times"]
+                payload["movie_frames"] = circuit.movie_data["frames"]
+                payload["movie_peak"] = circuit.movie_data["peak"]
 
-            if pic.port_time_trace is not None:
-                payload["trace_t"] = pic.port_time_trace["t"]
-                payload["trace_Ey"] = pic.port_time_trace["Ey"]
+            if circuit.port_time_trace is not None:
+                payload["trace_t"] = circuit.port_time_trace["t"]
+                payload["trace_Ey"] = circuit.port_time_trace["Ey"]
 
-            if pic.flux_balance is not None:
-                payload["flux_east"] = pic.flux_balance["east"].astype(np.float64)
-                payload["flux_west"] = pic.flux_balance["west"].astype(np.float64)
-                payload["flux_lateral"] = pic.flux_balance["lateral"].astype(np.float64)
-                payload["flux_total_box"] = pic.flux_balance["total_box"].astype(
+            if circuit.flux_balance is not None:
+                payload["flux_east"] = circuit.flux_balance["east"].astype(np.float64)
+                payload["flux_west"] = circuit.flux_balance["west"].astype(np.float64)
+                payload["flux_lateral"] = circuit.flux_balance["lateral"].astype(np.float64)
+                payload["flux_total_box"] = circuit.flux_balance["total_box"].astype(
                     np.float64
                 )
 
-    n_steps = int(getattr(pic.solver, "Nt", 0))
+    n_steps = int(getattr(circuit.solver, "Nt", 0))
     elapsed = time.perf_counter() - t0
     payload["n_steps"] = np.int64(n_steps)
     payload["elapsed_s"] = np.float64(elapsed)
@@ -1142,7 +1142,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         L_COUPLED_BASE, geom_base["gap_eff"], geom_base["w_eff"], n_gap_prim
     )
     st_schem, ports_schem, dom_schem, _ = build_directional_coupler(four_ports=True)
-    pic_schem = PICSimulation(
+    circuit_schem = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=st_schem,
@@ -1159,7 +1159,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         mesh_overrides=ov_prim,
     )
     save_coupler_setup_figures(
-        pic_schem,
+        circuit_schem,
         primary,
         fig_dir,
         wavelength=WL_DESIGN,
@@ -1305,12 +1305,12 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     ov_ref = coupler_mesh_overrides(
         L_COUPLED_BASE, geom_base["gap_eff"], geom_base["w_eff"], n_gap_ref
     )
-    # Build zoomed coupling-section PICSimulations with identical override boxes
+    # Build zoomed coupling-section PhotonicCircuits with identical override boxes
     zoom_dom = (-1.6e-6, 1.6e-6, -1.8e-6, 1.8e-6)
     st_l1_k, _, _, _ = build_directional_coupler(four_ports=False)
     st_l1_s, _, _, _ = build_directional_coupler(four_ports=False)
     st_ref_k, _, _, _ = build_directional_coupler(four_ports=False)
-    pic_l1_k = PICSimulation(
+    circuit_l1_k = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=st_l1_k,
@@ -1325,7 +1325,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=6,
         mesh_overrides=ov_l1,
     )
-    pic_l1_s = PICSimulation(
+    circuit_l1_s = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=st_l1_s,
@@ -1340,7 +1340,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         n_pml=6,
         mesh_overrides=ov_l1,
     )
-    pic_ref_k = PICSimulation(
+    circuit_ref_k = PhotonicCircuit(
         WL_MIN,
         WL_MAX,
         structures=st_ref_k,
@@ -1362,19 +1362,19 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     y_in_nm = 0.5 * g_nm
     y_out_nm = y_in_nm + w_nm
 
-    for ax_m, pic_m, task_m, tag_m in (
-        (ax0, pic_l1_k, l1_task, f"(a) L1 (cpw={int(cpw_l1)}, N={n_gap_l1}) Kottke mesh"),
+    for ax_m, circuit_m, task_m, tag_m in (
+        (ax0, circuit_l1_k, l1_task, f"(a) L1 (cpw={int(cpw_l1)}, N={n_gap_l1}) Kottke mesh"),
         (
             ax1,
-            pic_ref_k,
+            circuit_ref_k,
             ref_task,
             f"(b) Ref {ref_lvl_str} (cpw={int(cpw_ref)}, N={n_gap_ref}) Kottke mesh",
         ),
     ):
-        xg = pic_m.grid.x * 1e9
-        yg = pic_m.grid.y * 1e9
-        nx_m, ny_m = pic_m.grid.Nx, pic_m.grid.Ny
-        ieps_m = pic_m.solver.ieps[:nx_m, :ny_m, 0, "y"]
+        xg = circuit_m.grid.x * 1e9
+        yg = circuit_m.grid.y * 1e9
+        nx_m, ny_m = circuit_m.grid.Nx, circuit_m.grid.Ny
+        ieps_m = circuit_m.solver.ieps[:nx_m, :ny_m, 0, "y"]
         eps_yy = np.where(
             ieps_m > 0, 1.0 / (np.where(ieps_m > 0, ieps_m, 1.0) * epsilon_0), 1.0
         ).T
@@ -1384,7 +1384,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             eps_yy,
             cmap="viridis",
             vmin=1.0,
-            vmax=float(pic_m.n_eff_slab**2),
+            vmax=float(circuit_m.n_eff_slab**2),
             edgecolors=(1.0, 1.0, 1.0, 0.38),
             linewidth=0.45,
         )
@@ -1437,20 +1437,20 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         cb_m.set_label(r"Subpixel permittivity $\varepsilon_{yy}$")
 
     # Panel (c): 1D transverse permittivity cut across gap & mesh override grading
-    for pic_c, lbl_c, col_c, ls_c, mk_c in (
-        (pic_l1_s, f"L1 Staircase (cpw={int(cpw_l1)}, N={n_gap_l1})", "#d95f02", "--", "s"),
-        (pic_l1_k, f"L1 Kottke (cpw={int(cpw_l1)}, N={n_gap_l1})", "#2b5c8f", "-", "o"),
+    for circuit_c, lbl_c, col_c, ls_c, mk_c in (
+        (circuit_l1_s, f"L1 Staircase (cpw={int(cpw_l1)}, N={n_gap_l1})", "#d95f02", "--", "s"),
+        (circuit_l1_k, f"L1 Kottke (cpw={int(cpw_l1)}, N={n_gap_l1})", "#2b5c8f", "-", "o"),
         (
-            pic_ref_k,
+            circuit_ref_k,
             f"Ref {ref_lvl_str} Kottke (cpw={int(cpw_ref)}, N={n_gap_ref})",
             "#1b9e77",
             "-",
             ".",
         ),
     ):
-        yc_nm = 0.5 * (pic_c.grid.y[:-1] + pic_c.grid.y[1:]) * 1e9
-        ix0 = int(np.argmin(np.abs(0.5 * (pic_c.grid.x[:-1] + pic_c.grid.x[1:]))))
-        ieps_c = pic_c.solver.ieps[ix0, : pic_c.grid.Ny, 0, "y"]
+        yc_nm = 0.5 * (circuit_c.grid.y[:-1] + circuit_c.grid.y[1:]) * 1e9
+        ix0 = int(np.argmin(np.abs(0.5 * (circuit_c.grid.x[:-1] + circuit_c.grid.x[1:]))))
+        ieps_c = circuit_c.solver.ieps[ix0, : circuit_c.grid.Ny, 0, "y"]
         eps_cut = np.where(
             ieps_c > 0, 1.0 / (np.where(ieps_c > 0, ieps_c, 1.0) * epsilon_0), 1.0
         )
@@ -1485,7 +1485,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
     if "kottke_nonuniform" in tasks_data:
         nu_task = tasks_data["kottke_nonuniform"]
         st_nu, ports_nu, dom_nu, _ = build_directional_coupler(four_ports=True)
-        pic_nu = NonUniformCouplerPIC(
+        circuit_nu = NonUniformCouplerCircuit(
             WL_MIN,
             WL_MAX,
             structures=st_nu,
@@ -1505,8 +1505,8 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             n_cells_gap=int(nu_task.get("n_cells_gap", n_gap_prim)) or n_gap_prim,
         )
         plot_mesh_upgrade_comparison_coupler(
-            pic_schem,
-            pic_nu,
+            circuit_schem,
+            circuit_nu,
             primary,
             nu_task,
             ref_task,
@@ -1620,7 +1620,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_E2"],
-        pic=pic_schem,
+        circuit=circuit_schem,
         kind="intensity_log",
         title=r"Single-port drive (`in_bot`): modal intensity $10\log_{10}(|E|^2/|E|_{\max}^2)$ at $\lambda = 1530\;\mathrm{nm}$",
         out_path=fig_dir / "07_field_intensity_single_drive.png",
@@ -1631,7 +1631,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
         primary["dft_x"],
         primary["dft_y"],
         primary["dft_Ey"],
-        pic=pic_schem,
+        circuit=circuit_schem,
         kind="real",
         title=r"Single-port drive (`in_bot`): wave-front phase $\mathrm{Re}(E_y)$ at $\lambda = 1530\;\mathrm{nm}$ ($\pi/2$ split)",
         out_path=fig_dir / "08_field_real_ey_single_drive.png",
@@ -1644,7 +1644,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             primary["movie_y"],
             primary["movie_frames"],
             primary["movie_times"],
-            pic=pic_schem,
+            circuit=circuit_schem,
             out_path=fig_dir / "09_pulse_propagation.gif",
             fps=12,
         )
@@ -2042,7 +2042,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
             title="(a) Dual-port quadrature (Δφ = −π/2): upper-arm routing",
         )
         overlay_coupler_geometry(
-            ax0, pic_schem, outline_color="white", quadrature=True
+            ax0, circuit_schem, outline_color="white", quadrature=True
         )
 
     # Superposition prediction from single-port S31, S41 (by mirror symmetry S32=S41, S42=S31)
@@ -2729,10 +2729,10 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #
 # Because `PolySlab` structures represent extruded 2D polygons whose axis-aligned
 # bounding boxes span the entire $17.3 \times 4.34\;\mu\text{m}^2$ waveguide
-# footprint, standard `PICSimulation` assigns the core cell size
+# footprint, standard `PhotonicCircuit` assigns the core cell size
 # $\Delta x_{\text{core}} \approx 24.5\;\text{nm}$ uniformly across the entire
 # S-bend and cladding envelope (`kottke_L3`, $726 \times 267 \times 1 = 193{,}842\;\text{cells}$).
-# In `04b_mesh_upgrade_comparison.png`, `NonUniformCouplerPIC`
+# In `04b_mesh_upgrade_comparison.png`, `NonUniformCouplerCircuit`
 # (`build_coupler_graded_axes`, built with `wakis.templates.meshing.graded_axis`)
 # exploits the directional coupler's multi-scale physics while preserving exact
 # $x \mapsto -x$ and $y \mapsto -y$ grid mirror symmetry:

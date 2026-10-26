@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Submit PIC tutorial parameter sweeps as a Google Cloud Batch array job.
+Submit photonic-circuit tutorial parameter sweeps as a Google Cloud Batch array job.
 
 Queries each tutorial script with ``--list-tasks`` to build a global task
 manifest, packages the worktree, uploads to GCS, and submits a single array
@@ -277,8 +277,8 @@ def main():
         raise SystemExit("No tasks discovered from --list-tasks.")
 
     ts = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
-    run_id = args.run_id or f"pic-{ts}"
-    gcs_prefix = f"gs://{BUCKET}/pic-tutorials/{run_id}"
+    run_id = args.run_id or f"photonic-circuit-{ts}"
+    gcs_prefix = f"gs://{BUCKET}/photonic-circuit-tutorials/{run_id}"
     files = collect_repo_files()
     job_spec = make_job_spec(
         gcs_prefix=gcs_prefix,

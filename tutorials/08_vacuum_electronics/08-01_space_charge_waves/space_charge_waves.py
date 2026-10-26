@@ -34,7 +34,7 @@
 # [3], verify **Chu's kinetic power theorem** [4] (demonstrating the negative
 # kinetic energy of the slow space-charge wave and coupled Chu–Poynting energy
 # conservation), and delineate the small-signal validity boundaries beyond which
-# Lagrangian Particle-In-Cell (PIC) modeling is required.
+# Lagrangian particle-in-cell (`wakis.particles`, in development) modeling is required.
 #
 # ---
 #
@@ -61,7 +61,7 @@
 #    klystron bunching distance $\lambda_q / 4 = \pi / (2 \beta_q)$.
 # 5. Audit **Chu's kinetic power theorem** ($P_k > 0$ for the fast wave,
 #    $P_k < 0$ for the slow wave) and identify when trajectory overtaking
-#    ($X \ge 1$), harmonic generation, and particle trapping require PIC.
+#    ($X \ge 1$), harmonic generation, and particle trapping require particle-in-cell modeling.
 #
 # ## Contents
 #
@@ -73,7 +73,7 @@
 # 6. [Generating the complete 14-figure suite](#6.-Generating-the-complete-14-figure-suite)
 # 7. [Dispersion, reduction factor & klystron bunching results](#7.-Dispersion,-reduction-factor-&-klystron-bunching-results)
 # 8. [Mesh resolution convergence study](#8.-Mesh-resolution-convergence-study)
-# 9. [Limits & failure modes: when PIC is required](#9.-Limits-&-failure-modes:-when-PIC-is-required)
+# 9. [Limits & failure modes: when particle-in-cell is required](#9.-Limits-&-failure-modes:-when-particle-in-cell-is-required)
 # 10. [References](#10.-References)
 
 # %% [markdown]
@@ -866,7 +866,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # to within $0.082\%$ (`13_resolution_convergence.png`).
 
 # %% [markdown]
-# ## 9. Limits & failure modes: when PIC is required
+# ## 9. Limits & failure modes: when particle-in-cell is required
 #
 # Because `LinearizedBeam` solves the **Eulerian small-signal cold-fluid**
 # equations, it is fast, noise-free, and exactly differentiable (`BeamTranspose`),
@@ -883,7 +883,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 #    is the Webster–Hahn bunching parameter. At $X = 1$, $d\psi / d\phi_0 = 0$:
 #    fast electrons overtake slow electrons, the phase-space curve $(z, v_z)$
 #    folds into a multi-stream distribution, and the Eulerian charge density
-#    diverges ($\rho_1 \to \infty$). Only a Lagrangian particle/PIC code can
+#    diverges ($\rho_1 \to \infty$). Only a Lagrangian particle-in-cell (`wakis.particles`, in development) code can
 #    represent multi-valued velocities at a single spatial point.
 # 2. **Harmonic generation & gain compression ($X \gtrsim 0.5$)**: Expand the
 #    bunched convection current in a Fourier–Bessel series $I_n(z) = 2 I_0 J_n(n X)$.
@@ -896,7 +896,7 @@ def generate_all_figures(data_dir=DATA_DIR, fig_dir=FIG_DIR):
 # 3. **Electron trapping & large-signal saturation**: In high-gain TWTs or BWOs
 #    approaching saturation, electrons lose enough kinetic energy to drop out of
 #    synchronism and become trapped in the potential troughs of the slow circuit
-#    wave, executing synchrotron phase-space oscillations that require PIC.
+#    wave, executing synchrotron phase-space oscillations that require particle-in-cell modeling.
 # 4. **Thermal velocity spread & finite-$B_0$ transverse dynamics**: Warm-beam
 #    Landau damping ($\sigma_{v_z} \gtrsim \omega_q / \beta$) and finite
 #    magnetic focusing effects (Brillouin scalloping, cyclotron-space-charge

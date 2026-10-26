@@ -52,7 +52,7 @@ from bragg_grating import (  # noqa: E402
     get_task_table,
 )
 from wakis.templates.photonics import (  # noqa: E402
-    PICSimulation,
+    PhotonicCircuit,
     PolySlab,
     Port,
     n_to_eps,
@@ -116,7 +116,7 @@ def _run_compact_case(n_per, pitch_val=PITCH, shift=0.0):
         n_feature=n_feat,
         dx_background=dx_bg,
     )
-    pic = PICSimulation(
+    circuit = PhotonicCircuit(
         wavelength_min=1.51e-6,
         wavelength_max=1.63e-6,
         n_freqs=47,
@@ -135,9 +135,9 @@ def _run_compact_case(n_per, pitch_val=PITCH, shift=0.0):
         mesh_overrides=overrides,
     )
     mesh_m = measure_grating_mesh_metrics(
-        pic.grid.x,
-        pic.grid.y,
-        pic.grid.z,
+        circuit.grid.x,
+        circuit.grid.y,
+        circuit.grid.z,
         dw=DW_CORRUG,
         n_periods=n_per,
         pitch=pitch_val,
@@ -146,7 +146,7 @@ def _run_compact_case(n_per, pitch_val=PITCH, shift=0.0):
         shift=shift,
         n_pml=6,
     )
-    s_mat = pic.run_s_parameters(
+    s_mat = circuit.run_s_parameters(
         drive=["in"],
         energy_decay=3e-2,
         max_time=0.42e-12,
@@ -155,7 +155,7 @@ def _run_compact_case(n_per, pitch_val=PITCH, shift=0.0):
     r_pow = np.abs(s_mat[("in", "in")]) ** 2
     t_pow = np.abs(s_mat[("out", "in")]) ** 2
     metrics = extract_stopband_metrics(
-        pic.wavelengths, r_pow, t_pow, n_per * pitch_val
+        circuit.wavelengths, r_pow, t_pow, n_per * pitch_val
     )
     return metrics, r_pow, t_pow, mesh_m
 
@@ -732,7 +732,7 @@ def test_setup_schematic_and_graded_mesh_comparison_with_mutation():
     assert len(ov_tuned) == 4
     assert len(ov_unif) == 1
     structs, ports, domain = _build_compact_grating(12)
-    pic_mut = PICSimulation(
+    circuit_mut = PhotonicCircuit(
         wavelength_min=WL_MIN,
         wavelength_max=1.63e-6,
         structures=structs,
@@ -749,7 +749,7 @@ def test_setup_schematic_and_graded_mesh_comparison_with_mutation():
         mesh_overrides=[],
     )
     m_mut = measure_grating_mesh_metrics(
-        pic_mut.grid.x, pic_mut.grid.y, pic_mut.grid.z, dw=DW_CORRUG, n_periods=12, pitch=PITCH, w_core=W_CORE, n_pml=6
+        circuit_mut.grid.x, circuit_mut.grid.y, circuit_mut.grid.z, dw=DW_CORRUG, n_periods=12, pitch=PITCH, w_core=W_CORE, n_pml=6
     )
     assert m_mut["cells_across_feature"] < 2.0
 

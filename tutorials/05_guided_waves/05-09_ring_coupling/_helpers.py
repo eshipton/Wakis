@@ -42,8 +42,8 @@ from wakis.sources import GaussianSource
 from wakis.templates import Simulation
 from wakis.templates.meshing import graded_axis
 from wakis.templates.photonics import (
-    PIC_MATERIALS,
-    PICSimulation,
+    PHOTONIC_MATERIALS,
+    PhotonicCircuit,
     make_movie,
     n_to_eps,
     plot_field_map,
@@ -54,7 +54,7 @@ from wakis.unstructured import subtri_circles_mesh
 
 def isolated_eim_channel_mode(
     n_core_2d,
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     width=0.50e-6,
     wavelength=1550e-9,
     y_span=5.0e-6,
@@ -170,8 +170,8 @@ def cmt_coupling_vs_gap(
     gaps_m,
     radius=5.0e-6,
     width=0.50e-6,
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
     wavelength=1550e-9,
     n_core_2d=None,
@@ -322,8 +322,8 @@ def cmt_coupling_vs_wavelength(
     gap=0.05e-6,
     radius=5.0e-6,
     width=0.50e-6,
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
     fixed_neff_slab=None,
 ):
@@ -406,7 +406,7 @@ def fit_exponential_decay(gaps_m, values):
 
 def bent_waveguide_radial_mode(
     n_core_2d,
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     width=0.50e-6,
     radius=5.0e-6,
     wavelength=1550e-9,
@@ -665,8 +665,8 @@ def build_ring_coupler_graded_axes(
     n_pml=10,
     wl_min=1500e-9,
     wl_ref=1550e-9,
-    n_core=PIC_MATERIALS["Si"],
-    n_clad=PIC_MATERIALS["SiO2"],
+    n_core=PHOTONIC_MATERIALS["Si"],
+    n_clad=PHOTONIC_MATERIALS["SiO2"],
     thickness=220e-9,
     grading_ratio=1.22,
 ):
@@ -751,9 +751,9 @@ def build_ring_coupler_graded_axes(
     return x_axis, y_axis, z_axis, info
 
 
-class NonUniformRingCouplerPIC(PICSimulation):
+class NonUniformRingCouplerCircuit(PhotonicCircuit):
     """
-    2D EIM ``PICSimulation`` subclass for the waveguide-to-ring point coupler
+    2D EIM ``PhotonicCircuit`` subclass for the waveguide-to-ring point coupler
     that overrides ``build`` so ``self.sim._axis`` uses :func:`build_ring_coupler_graded_axes`.
     """
 
@@ -878,7 +878,7 @@ class _PolyStructProxy:
 class _SchematicSolverProxy:
     """Proxy exposing 2D plane attributes to ``wakis.schematic``."""
 
-    def __init__(self, solver, eps_clad: float = float(PIC_MATERIALS["SiO2"] ** 2)):
+    def __init__(self, solver, eps_clad: float = float(PHOTONIC_MATERIALS["SiO2"] ** 2)):
         self._solver = solver
         self.grid = solver.grid
         self.Nx = solver.Nx
@@ -892,19 +892,19 @@ class _SchematicSolverProxy:
         self._assigned_structures = ()
 
 
-def _build_ring_coupler_schematic_io(pic):
+def _build_ring_coupler_schematic_io(circuit):
     """Construct normalized ``(sources, monitors)`` dictionaries for ``wakis.schematic``."""
-    pulse_obj = pic.sim.pulse
+    pulse_obj = circuit.sim.pulse
     f0 = float(pulse_obj.frequency)
     fwidth = float(pulse_obj.fwidth)
-    freqs = np.asarray(pic.frequencies, dtype=float)
+    freqs = np.asarray(circuit.frequencies, dtype=float)
     f_lo_thz = float(np.min(freqs)) * 1e-12
     f_hi_thz = float(np.max(freqs)) * 1e-12
     freq_str = f"{freqs.size} freqs in [{f_lo_thz:.1f}, {f_hi_thz:.1f}] THz"
 
     sources = []
     monitors = []
-    for pt in pic.ports:
+    for pt in circuit.ports:
         cx, cy, _ = (float(v) for v in pt.center)
         sx, sy, _ = (float(v) for v in pt.size)
         pos_s = f"x = {cx * 1e6:.2f} µm, y = {cy * 1e6:.2f} µm"
@@ -993,7 +993,7 @@ def _build_ring_coupler_schematic_io(pic):
 
 
 def save_ring_coupler_setup_figures(
-    pic,
+    circuit,
     primary_data: dict,
     fig_dir: str | Path,
     *,
@@ -1012,25 +1012,25 @@ def save_ring_coupler_setup_figures(
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
 
-    proxy_solver = _SchematicSolverProxy(pic.solver)
-    eps_core = float(pic.n_eff_slab**2)
-    eps_clad = float(pic.n_clad**2)
+    proxy_solver = _SchematicSolverProxy(circuit.solver)
+    eps_core = float(circuit.n_eff_slab**2)
+    eps_clad = float(circuit.n_clad**2)
     poly_structs = [
         _PolyStructProxy(
-            pic.structures_3d[0].vertices,
+            circuit.structures_3d[0].vertices,
             eps_core,
-            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={pic.n_eff_slab:.4f}, w=500 nm)",
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={circuit.n_eff_slab:.4f}, w=500 nm)",
         ),
         _PolyStructProxy(
-            pic.structures_3d[1].vertices,
+            circuit.structures_3d[1].vertices,
             eps_core,
-            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={pic.n_eff_slab:.4f}, w=500 nm)",
+            f"Si EIM bus/ring core (n_Si=3.476, h=220 nm → n_eff,slab={circuit.n_eff_slab:.4f}, w=500 nm)",
         ),
     ]
     mat_names = {
-        "background": f"SiO₂ cladding (n={pic.n_clad:.3f}, ε_r={eps_clad:.2f})",
+        "background": f"SiO₂ cladding (n={circuit.n_clad:.3f}, ε_r={eps_clad:.2f})",
     }
-    sources_s, monitors_s = _build_ring_coupler_schematic_io(pic)
+    sources_s, monitors_s = _build_ring_coupler_schematic_io(circuit)
     variations = [
         {
             "name": "Coupling-gap sweep (task_9..task_12)",
@@ -1080,8 +1080,8 @@ def save_ring_coupler_setup_figures(
     for ln in ax_a.lines:
         if ln.get_linestyle() in ("--", ":"):
             ln.set_marker("none")
-    x_in_um = float(pic.port_map["in"].center[0]) * 1e6
-    y_in_um = float(pic.port_map["in"].center[1]) * 1e6
+    x_in_um = float(circuit.port_map["in"].center[0]) * 1e6
+    y_in_um = float(circuit.port_map["in"].center[1]) * 1e6
     for ann in ax_a.texts:
         if ann.get_text() == "" and getattr(ann, "arrow_patch", None) is not None:
             if abs(ann.xy[0] - x_in_um) < 1.5 and abs(ann.xy[1]) < 5.5:
@@ -1107,7 +1107,7 @@ def save_ring_coupler_setup_figures(
         xdr = np.asarray(primary_data["port_x_drop"], dtype=float) * 1e6
         exdr = np.abs(np.asarray(primary_data["port_ex_drop"]))
         exdr = exdr / max(float(np.max(exdr)), 1e-30)
-        y_dr_um = float(pic.port_map["drop"].center[1]) * 1e6
+        y_dr_um = float(circuit.port_map["drop"].center[1]) * 1e6
         ax_a.fill_between(
             xdr, y_dr_um - 0.75 * exdr, y_dr_um, color="#009E73", alpha=0.22, zorder=7
         )
@@ -1155,7 +1155,7 @@ def save_ring_coupler_setup_figures(
         title="Waveguide-to-Ring Coupler Mesh, Wave Packet & Broadband Excitation",
     )
     ax_mesh = axes_b[0]
-    for s in pic.structures_3d:
+    for s in circuit.structures_3d:
         ax_mesh.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1172,8 +1172,8 @@ def save_ring_coupler_setup_figures(
 
 
 def plot_mesh_upgrade_comparison_ring_coupler(
-    pic_uniform,
-    pic_nonuniform,
+    circuit_uniform,
+    circuit_nonuniform,
     td_uniform: dict,
     td_nonuniform: dict,
     td_ref: dict | None,
@@ -1195,18 +1195,18 @@ def plot_mesh_upgrade_comparison_ring_coupler(
     fig, (ax0, ax1, ax2) = figstyle.new_figure(nrows=1, ncols=3, width=15.4, height=4.7)
 
     # Panel (a): Split-half mesh view (x <= 0: kottke_L3, x >= 0: kottke_nonuniform)
-    iz = pic_nonuniform.solver.Nz // 2
-    ieps = np.asarray(pic_nonuniform.solver.ieps[:, :, iz, "y"])
+    iz = circuit_nonuniform.solver.Nz // 2
+    ieps = np.asarray(circuit_nonuniform.solver.ieps[:, :, iz, "y"])
     eps_r = np.where(ieps > 0, 1.0 / (np.where(ieps > 0, ieps, 1.0) * epsilon_0), 1.0)
-    xu_nu = pic_nonuniform.grid.x * 1e6
-    yu_nu = pic_nonuniform.grid.y * 1e6
+    xu_nu = circuit_nonuniform.grid.x * 1e6
+    yu_nu = circuit_nonuniform.grid.y * 1e6
     ax0.pcolormesh(
         xu_nu, yu_nu, eps_r.T, cmap=figstyle.CMAP_EPS, shading="flat", alpha=0.88
     )
 
     xl_m, yl_m = (-5.75, 5.75), (-0.75, 6.00)
-    xu_u = pic_uniform.grid.x * 1e6
-    yu_u = pic_uniform.grid.y * 1e6
+    xu_u = circuit_uniform.grid.x * 1e6
+    yu_u = circuit_uniform.grid.y * 1e6
     xv_u = xu_u[(xu_u >= xl_m[0]) & (xu_u <= 0.0)][::3]
     yv_u = yu_u[(yu_u >= yl_m[0]) & (yu_u <= yl_m[1])][::3]
     segs_u = [[(x, yl_m[0]), (x, yl_m[1])] for x in xv_u] + [
@@ -1225,7 +1225,7 @@ def plot_mesh_upgrade_comparison_ring_coupler(
         LineCollection(segs_nu, colors="#d95f02", linewidths=0.45, alpha=0.80)
     )
     ax0.axvline(0.0, color="black", lw=1.1, ls="--")
-    for s in pic_nonuniform.structures_3d:
+    for s in circuit_nonuniform.structures_3d:
         ax0.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1236,9 +1236,9 @@ def plot_mesh_upgrade_comparison_ring_coupler(
             )
         )
 
-    n_u = int(td_uniform.get("n_cells", pic_uniform.grid.Nx * pic_uniform.grid.Ny))
+    n_u = int(td_uniform.get("n_cells", circuit_uniform.grid.Nx * circuit_uniform.grid.Ny))
     n_nu = int(
-        td_nonuniform.get("n_cells", pic_nonuniform.grid.Nx * pic_nonuniform.grid.Ny)
+        td_nonuniform.get("n_cells", circuit_nonuniform.grid.Nx * circuit_nonuniform.grid.Ny)
     )
     # Single-drive L3 wall time (staircase_L3 is 1437.3 s for 1 drive; kottke_L3 runs 3 drives + noext)
     t_u_s = float(td_uniform.get("single_drive_s", 1437.3))
@@ -1249,7 +1249,7 @@ def plot_mesh_upgrade_comparison_ring_coupler(
     ax0.text(
         -5.55,
         5.15,
-        f"Left (x < 0): kottke_L3\n{pic_uniform.grid.Nx}×{pic_uniform.grid.Ny} = {n_u:,} cells",
+        f"Left (x < 0): kottke_L3\n{circuit_uniform.grid.Nx}×{circuit_uniform.grid.Ny} = {n_u:,} cells",
         fontsize=7.3,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#08519c", alpha=0.92),
     )
@@ -1257,7 +1257,7 @@ def plot_mesh_upgrade_comparison_ring_coupler(
         0.20,
         5.05,
         f"Right (x > 0): kottke_nonuniform\n"
-        f"{pic_nonuniform.grid.Nx}×{pic_nonuniform.grid.Ny} = {n_nu:,} cells\n"
+        f"{circuit_nonuniform.grid.Nx}×{circuit_nonuniform.grid.Ny} = {n_nu:,} cells\n"
         f"(−{red_cells:.1f}% cells, {t_nu_s:.1f} s, −{red_time:.1f}%)",
         fontsize=7.2,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#d95f02", alpha=0.92),
@@ -1285,7 +1285,7 @@ def plot_mesh_upgrade_comparison_ring_coupler(
         linewidths=0.45,
     )
     ax1.add_collection(pc)
-    for s in pic_nonuniform.structures_3d:
+    for s in circuit_nonuniform.structures_3d:
         ax1.add_patch(
             MplPolygon(
                 s.vertices * 1e6,
@@ -1392,28 +1392,28 @@ def plot_mesh_upgrade_comparison_ring_coupler(
 
 def overlay_ring_coupler_geometry(
     ax,
-    pic,
+    circuit,
     *,
     outline_color: str = "white",
     include_labels: bool = True,
 ):
     """Overlay material outlines/labels, CPML boundaries, source, and monitors on ``ax``."""
-    proxy_solver = _SchematicSolverProxy(pic.solver)
-    eps_core = float(pic.n_eff_slab**2)
+    proxy_solver = _SchematicSolverProxy(circuit.solver)
+    eps_core = float(circuit.n_eff_slab**2)
     poly_structs = [
         _PolyStructProxy(
-            pic.structures_3d[0].vertices,
+            circuit.structures_3d[0].vertices,
             eps_core,
             "Si bus/ring (n_eff=2.85)",
         ),
         _PolyStructProxy(
-            pic.structures_3d[1].vertices,
+            circuit.structures_3d[1].vertices,
             eps_core,
             "Si bus/ring (n_eff=2.85)",
         ),
     ]
     mat_names = {"background": "SiO₂ (n=1.444)"}
-    sources_s, monitors_s = _build_ring_coupler_schematic_io(pic)
+    sources_s, monitors_s = _build_ring_coupler_schematic_io(circuit)
     schematic.overlay_geometry(
         ax,
         proxy_solver,
@@ -1433,7 +1433,7 @@ def render_ring_coupler_field_map_with_overlay(
     y,
     field,
     *,
-    pic,
+    circuit,
     kind="intensity_log",
     title="",
     out_path=None,
@@ -1444,14 +1444,14 @@ def render_ring_coupler_field_map_with_overlay(
         x,
         y,
         field,
-        structures=pic.structures_3d,
+        structures=circuit.structures_3d,
         kind=kind,
         title=title,
         out_path=None,
     )
     outline_col = "white" if kind == "intensity_log" else "black"
     overlay_ring_coupler_geometry(
-        ax, pic, outline_color=outline_col, include_labels=True
+        ax, circuit, outline_color=outline_col, include_labels=True
     )
     if out_path is not None:
         figstyle.save(fig, out_path, close=True, auto_legend_below=False)
@@ -1464,7 +1464,7 @@ def render_ring_coupler_movie_with_overlay(
     frames,
     times_s,
     *,
-    pic,
+    circuit,
     out_path,
     fps=12,
 ):
@@ -1489,7 +1489,7 @@ def render_ring_coupler_movie_with_overlay(
     )
     cb = fig.colorbar(im, ax=ax, fraction=0.038, pad=0.02)
     cb.set_label(r"$E_y(x, y, t) / E_{\max}$")
-    overlay_ring_coupler_geometry(ax, pic, outline_color="black", include_labels=True)
+    overlay_ring_coupler_geometry(ax, circuit, outline_color="black", include_labels=True)
     ax.set(
         xlim=(float(x_um.min()), float(x_um.max())),
         ylim=(float(y_um.min()), float(y_um.max())),
