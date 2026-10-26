@@ -4020,6 +4020,85 @@ References:
 - A. E. Siegman, *Lasers*, University Science Books, Mill Valley, CA, Chs. 2, 7, 11, 13 (1986).
 - L. A. Coldren, S. W. Corzine, and M. L. Mašanović, *Diode Lasers and Photonic Integrated Circuits*, 2nd ed., Wiley, Chs. 2, 5 (2012), [doi:10.1002/9781118148167](https://doi.org/10.1002/9781118148167).
 
+### 💠 Three-Dimensional Coupled-Wave Theory for PCSELs (`wakis.pcsel_cwt`)
+
+`wakis.pcsel_cwt` implements the three-dimensional coupled-wave theory (3D-CWT) of Noda and collaborators [Sakai *et al.*, 2010; Liang *et al.*, 2011; Liang *et al.*, 2012] for square-lattice transverse-electric (TE) photonic-crystal surface-emitting lasers (PCSELs), together with the double-lattice Hermitian/non-Hermitian feedback cancellation formalism [Yoshida *et al.*, 2019; Inoue *et al.*, 2022; Yoshida *et al.*, 2023].
+
+**1D vertical slab waveguide and Fourier permittivity expansion.** A PCSEL epitaxial stack (`PCSELLayerStack`) consists of lower/upper claddings ($`n_{\text{clad}}`$), an active waveguide core ($`n_{\text{act}}`$), and a photonic-crystal (PhC) layer ($`z \in [z_{\text{PhC,min}}, z_{\text{PhC,max}}]`$) of host index $`n_{\text{host}}`$ perforated by a 2D square lattice of period $`a`$ and hole index $`n_{\text{hole}}`$. Inside the PhC layer, the relative permittivity is expanded in 2D reciprocal-lattice harmonics $`\mathbf{G}_{m,n} = (m G_0, n G_0)`$ with $`G_0 = \beta_0 = 2\pi / a`$ (`fourier_coefficients_phc`):
+
+```math
+\varepsilon(x, y) = \varepsilon_0 + \sum_{(m,n)\neq(0,0)} \xi_{m,n}\,e^{-i(m G_0 x + n G_0 y)}, \qquad
+\xi_{m,n} = \frac{1}{a^2}\iint_{[-a/2,a/2]^2} \varepsilon(x,y)\,e^{+i(m G_0 x + n G_0 y)}\,\mathrm{d}x\,\mathrm{d}y .
+```
+
+For circular holes of radii $`r_1, r_2`$ centered at $`\mathbf{r}_{1,2} = (\mp d_x/2, \mp d_y/2)`$, the Fourier coefficients evaluate analytically in terms of first-order Bessel functions $`J_1`$:
+
+```math
+\xi_{m,n} = (\varepsilon_{\text{hole}} - \varepsilon_{\text{host}})\sum_{j=1}^2 \frac{r_j}{a}\frac{J_1\!\left(2\pi\sqrt{m^2+n^2}\,r_j/a\right)}{\sqrt{m^2+n^2}}\,e^{+i G_0(m x_j + n y_j)} .
+```
+
+At the second-order Bragg condition $`\beta_0 = 2\pi / a`$, the fundamental vertically guided $`\text{TE}_0`$ profile $`\Theta_0(z)`$ and effective index $`n_{\text{eff}} = \beta_0 / k_0`$ satisfy (`solve_vertical_slab_mode`):
+
+```math
+\left[\frac{\mathrm{d}^2}{\mathrm{d}z^2} + k_0^2 \varepsilon_{\text{slab}}(z)\right]\Theta_0(z) = \beta_0^2 \Theta_0(z), \qquad
+\int_{-\infty}^{\infty} |\Theta_0(z)|^2\,\mathrm{d}z = 1, \qquad
+\Gamma_{\text{PhC}} = \int_{z_{\text{PhC,min}}}^{z_{\text{PhC,max}}} |\Theta_0(z)|^2\,\mathrm{d}z .
+```
+
+**Vertical Green's functions and optical theorem.** First-order diffraction of the four basic waves $`\mathbf{v} = (R_x, S_x, R_y, S_y)^T`$ (propagating along $`\pm x`$ and $`\pm y`$ with TE polarization) by $`\xi_{\pm 1, 0}`$ and $`\xi_{0, \pm 1}`$ drives the $`(0,0)`$ surface-radiating wave $`\Phi_{\text{rad}}(z)`$ at $`\mathbf{K}_{0,0} = \mathbf{0}`$, while diffraction by $`\xi_{\pm 1, \pm 1}`$ drives evanescent waves $`\Phi_{1,1}(z)`$ at $`|\mathbf{K}_{\pm 1,\pm 1}|^2 = 2\beta_0^2`$ (`solve_vertical_greens_functions`):
+
+```math
+\left[\frac{\mathrm{d}^2}{\mathrm{d}z^2} + k_0^2\varepsilon_{\text{slab}}(z)\right]\Phi_{\text{rad}}(z) = -k_0^2\mathbf{1}_{\text{PhC}}(z)\Theta_0(z), \qquad
+\Phi_{\text{rad}}'(z_{\max,\min}) = \mp i k_0 n_{\text{clad}}\Phi_{\text{rad}}(z_{\max,\min}) .
+```
+
+With the overlap integral $`\mathcal{I}_{\text{rad}} = \int_{\text{PhC}} \Theta_0(z)\Phi_{\text{rad}}(z)\,\mathrm{d}z`$ and normalized response $`\chi_{\text{rad}} = \mathcal{I}_{\text{rad}} / \Gamma_{\text{PhC}}`$, integration by parts yields the exact optical theorem:
+
+```math
+-\operatorname{Im}(\mathcal{I}_{\text{rad}}) = \frac{n_{\text{clad}}}{k_0}\left(|\Phi_{\text{rad}}(z_{\max})|^2 + |\Phi_{\text{rad}}(z_{\min})|^2\right) > 0 .
+```
+
+**Infinite-crystal $`4\times 4`$ CWT eigenproblem and $`C_{4v}`$ band-edge modes.** For the basic wave vector $`\mathbf{v} = (R_x, S_x, R_y, S_y)^T`$ with in-plane wavevectors $`\beta_0(m_\alpha, n_\alpha) \in \{\beta_0(\pm 1,0), \beta_0(0,\pm 1)\}`$ and TE unit vectors $`\hat{\mathbf{e}}_0 = \hat{\mathbf{e}}_1 = \hat{\mathbf{y}}`$ and $`\hat{\mathbf{e}}_2 = \hat{\mathbf{e}}_3 = \hat{\mathbf{x}}`$, the $`4\times 4`$ coupling matrix $`\mathbf{C} = \mathbf{C}_{\text{rad}} + \mathbf{C}_{1\text{D}} + \mathbf{C}_{2\text{D}}`$ (`compute_cwt_coupling_coefficients`) follows Liang *et al.* [2011]:
+
+```math
+(\mathbf{C}_{1\text{D}})_{\alpha\beta} = -\frac{k_0^2}{2\beta_0}\Gamma_{\text{PhC}}(\hat{\mathbf{e}}_\alpha\cdot\hat{\mathbf{e}}_\beta)\xi_{m_\alpha - m_\beta, n_\alpha - n_\beta}\;(\alpha\neq\beta), \qquad
+(\mathbf{C}_{\text{rad}})_{\alpha\beta} = -\frac{k_0^2}{2\beta_0}\mathcal{I}_{\text{rad}}(\hat{\mathbf{e}}_\alpha\cdot\hat{\mathbf{e}}_\beta)\xi_{m_\alpha, n_\alpha}\xi_{-m_\beta, -n_\beta},
+```
+
+```math
+(\mathbf{C}_{2\text{D}}^{(T)})_{\alpha\beta} = -\frac{k_0^2}{2\beta_0}\sum_{m^2+n^2 > 1} \mathcal{I}_{m,n}(\hat{\mathbf{e}}_\alpha\cdot\hat{\mathbf{t}}_{m,n})(\hat{\mathbf{t}}_{m,n}\cdot\hat{\mathbf{e}}_\beta)\xi_{m_\alpha - m, n_\alpha - n}\xi_{m - m_\beta, n - n_\beta}, \qquad
+\hat{\mathbf{t}}_{m,n} = \frac{n\hat{\mathbf{x}} - m\hat{\mathbf{y}}}{\sqrt{m^2+n^2}} .
+```
+
+Here $`\mathcal{I}_{m,n} = \int_{\text{PhC}} \Theta_0(z)\Phi_{m,n}(z)\,\mathrm{d}z > 0`$ is the vertical Green's function overlap of the $`(m,n)`$ evanescent TE diffraction wave at $`|\mathbf{K}_{m,n}|^2 = (m^2+n^2)\beta_0^2`$, and two-step scattering through the $`(\pm 1, \pm 1)`$ orders ($`R_x \to (\pm 1,\pm 1) \to R_y, S_y`$) mediates the leading 2D orthogonal coupling via the first-order harmonics $`\xi_{0,\pm 1}\xi_{\pm 1,0}`$. When `include_longitudinal=True`, `compute_cwt_coupling_coefficients` also adds the higher-order longitudinal (in-plane depolarization, $`\hat{\mathbf{l}}_{m,n} = (m\hat{\mathbf{x}} + n\hat{\mathbf{y}})/\sqrt{m^2+n^2}`$) contribution $`\mathbf{C}_{2\text{D}}^{(L)}`$ associated with the inverse-permittivity harmonics $`\zeta_{m,n}`$ of $`1/\varepsilon(x,y)`$. For an infinite crystal with in-plane Bloch wavevector $`\mathbf{k}_\parallel = (k_x, k_y)`$ relative to $`\Gamma`$, the $`4\times 4`$ eigenvalue problem (`solve_infinite_cwt`, `compute_cwt_band_structure`) is
+
+```math
+\big(\operatorname{diag}(+k_x, -k_x, +k_y, -k_y) + \mathbf{C}\big)\mathbf{v}_\nu = \tilde{\delta}_\nu\mathbf{v}_\nu, \qquad
+\tilde{\delta}_\nu = \delta_\nu + i\frac{\alpha_{v,\nu}}{2}, \qquad
+f_\nu = f_{\text{B}}\!\left(1 + \frac{\delta_\nu}{\beta_0}\right), \qquad
+Q_\nu = \frac{\beta_0}{\alpha_{v,\nu}} .
+```
+
+For a $`C_{4v}`$-symmetric unit cell at $`\Gamma`$ ($`\mathbf{k}_\parallel = \mathbf{0}`$), Modes A ($`A_2`$, $`\mathbf{v}_A \propto (1,-1,-1,1)^T`$) and B ($`B_2`$, $`\mathbf{v}_B \propto (1,-1,1,-1)^T`$) are symmetry-protected bound states in the continuum ($`\alpha_{v,A} = \alpha_{v,B} = 0`$, $`Q = \infty`$), whereas Modes C and D ($`E`$ doublet, $`\mathbf{v}_C \propto (1,1,0,0)^T`$, $`\mathbf{v}_D \propto (0,0,1,1)^T`$) are degenerate and surface-radiating.
+
+**Finite-size 2D CWT and double-lattice feedback cancellation.** On a finite square cavity $`[-L/2, L/2]^2`$ with open boundaries $`R_x(-L/2, y) = S_x(+L/2, y) = R_y(x, -L/2) = S_y(x, +L/2) = 0`$, the spatial derivatives $`\operatorname{diag}(+i\partial_x, -i\partial_x, +i\partial_y, -i\partial_y)`$ are discretized on a 2D Gauss–Lobatto–Legendre (GLL) grid with Summation-By-Parts (SBP) matrices $`W D + D^T W = \mathbf{e}_N\mathbf{e}_N^T - \mathbf{e}_0\mathbf{e}_0^T`$ and Simultaneous Approximation Term (SAT) upwind boundary penalties (`solve_finite_cwt`). Every eigenmode satisfies the exact discrete Poynting power balance
+
+```math
+\alpha_{\text{th}} = 2\operatorname{Im}(\tilde{\delta}) = \alpha_v + \alpha_\parallel
+```
+
+to machine precision ($`\sim 10^{-12}`$). In a strongly over-coupled single-lattice PCSEL ($`|C_{12}| L \gg 1`$), the perimeter leakage scales as $`\alpha_\parallel \propto L^{-3}`$ while finite-envelope $`\mathbf{k}_\parallel\cdot\mathbf{p}`$ mixing with the bright upper band produces vertical radiation $`\alpha_v \propto L^{-2}`$, so the threshold gain margin $`\Delta\alpha_{\text{th}}(L) = \Delta\alpha_v(L) + \Delta\alpha_\parallel(L)`$ crosses over from mixed $`L^{-3}/L^{-2}`$ behavior at intermediate $`L`$ to an asymptotic $`\Delta\alpha_{\text{th}} \propto L^{-2}`$ collapse at millimeter apertures. In a double-lattice PCSEL (`double_lattice_coupling_scan`) with a second hole shifted by $`d_x = d_y \approx a/4`$, the $`(2,0)`$ Bragg phase shifts by $`\pi`$ ($`R \to 0`$) while the radius ratio $`r_2/r_1`$ tunes the imaginary Hermitian coupling $`I`$ to balance the radiation-mediated non-Hermitian coupling $`\mu`$ at the unidirectional coupling / exceptional-point root $`C_{12} = R + i(\mu + I) = 0`$ ($`\sqrt{C_{12}C_{21}} = 0`$), expanding the mode across millimeter-scale cavities and restoring a wide single-mode threshold margin $`\Delta\alpha_{\text{th}} / \alpha_{\text{th}}`$ [Yoshida *et al.*, 2019; Inoue *et al.*, 2022; Yoshida *et al.*, 2023].
+
+**Assumptions and limits.** Standard 3D-CWT assumes weak-to-moderate index contrast or fill factor ($`f = \pi r^2/a^2 \lesssim 15\%`$) so that a single mode-independent vertical slab profile $`\Theta_0(z)`$ and lowest-order Fourier harmonics ($`|m|, |n| \le 2`$) suffice. At large hole fill factors ($`r/a \gtrsim 0.24`$, $`f \gtrsim 18\%`$), the antisymmetric modes C/D have field antinodes inside the low-index hole where the effective PhC permittivity $`\varepsilon_0 - |\xi_{2,0}|`$ approaches or drops below $`\varepsilon_{\text{clad}}`$, expelling $`\Theta_{C,D}(z)`$ into the cladding (`dressed_vertical_profile=True` captures the leading-order shift, while full 3D FIT resolves the exact 3D vector field).
+
+References:
+- K. Sakai, E. Miyai and S. Noda, "Coupled-wave theory for square-lattice photonic crystal lasers with TE polarization", *IEEE J. Quantum Electron.* **46**(5), 788–795 (2010), [doi:10.1109/JQE.2009.2037597](https://doi.org/10.1109/JQE.2009.2037597).
+- Y. Liang, C. Peng, K. Sakai, S. Iwahashi and S. Noda, "Three-dimensional coupled-wave model for square-lattice photonic crystal lasers with transverse electric polarization: A general approach", *Phys. Rev. B* **84**(19), 195119 (2011), [doi:10.1103/PhysRevB.84.195119](https://doi.org/10.1103/PhysRevB.84.195119).
+- Y. Liang, C. Peng, K. Sakai, S. Iwahashi and S. Noda, "Three-dimensional coupled-wave analysis for square-lattice photonic crystal surface emitting lasers with transverse-electric polarization: finite-size effects", *Opt. Express* **20**(14), 15945–15961 (2012), [doi:10.1364/OE.20.015945](https://doi.org/10.1364/OE.20.015945).
+- M. Yoshida, M. De Zoysa, K. Ishizaki, Y. Tanaka, M. Kawasaki, R. Hatsuda, B. Song, J. Gelleta and S. Noda, "Double-lattice photonic-crystal resonators enabling high-brightness semiconductor lasers with symmetric narrow-divergence beams", *Nat. Mater.* **18**, 121–128 (2019), [doi:10.1038/s41563-018-0242-y](https://doi.org/10.1038/s41563-018-0242-y).
+- T. Inoue, M. Yoshida, J. Gelleta, K. Izumi, K. Yoshida, K. Ishizaki, M. De Zoysa and S. Noda, "General recipe to realize photonic-crystal surface-emitting lasers with 100-W-to-1-kW single-mode operation", *Nat. Commun.* **13**, 3262 (2022), [doi:10.1038/s41467-022-30910-7](https://doi.org/10.1038/s41467-022-30910-7).
+- M. Yoshida, S. Katsuno, T. Inoue, J. Gelleta, K. Izumi, M. De Zoysa, K. Ishizaki and S. Noda, "High-brightness scalable continuous-wave single-mode photonic-crystal laser", *Nature* **618**, 727–732 (2023), [doi:10.1038/s41586-023-06059-8](https://doi.org/10.1038/s41586-023-06059-8).
+
 
 ```{admonition} Modularity
 

@@ -1,0 +1,70 @@
+{
+  "task": 3,
+  "name": "symmetry_breaking_mutation",
+  "n_array_edge": 8,
+  "Q0_const": 47.11,
+  "Q_edge_0": 528.34,
+  "alphas": [
+    0.0,
+    0.04,
+    0.06,
+    0.08,
+    0.1,
+    0.14,
+    0.2
+  ],
+  "Q_rad_inf": [
+    1572905115.21,
+    29406.18,
+    13073.24,
+    7356.63,
+    4710.65,
+    2406.67,
+    1182.7
+  ],
+  "Q_tot_finite": [
+    528.34,
+    518.81,
+    507.37,
+    492.2,
+    473.98,
+    431.47,
+    362.64
+  ],
+  "Q_tot_finite_analytic": [
+    528.34,
+    519.02,
+    507.82,
+    492.94,
+    475.06,
+    433.23,
+    365.2
+  ],
+  "g_th_analytic_cm1": [
+    276.1,
+    281.06,
+    287.26,
+    295.93,
+    307.07,
+    336.71,
+    399.44
+  ],
+  "g_th_fit_cm1": [
+    276.1,
+    281.17,
+    287.51,
+    296.38,
+    307.77,
+    338.09,
+    402.26
+  ],
+  "slope_alpha_threshold": 1.997,
+  "rel_err_slope_alpha_threshold": 0.00151,
+  "max_rel_err_mutation": 0.00705,
+  "quench_time_scale": 20.0,
+  "Q_tot_004_quench": 518.81,
+  "Q_tot_018_quench_analytic": 387.52,
+  "g0_fixed_cm1": 371.15,
+  "quench_ratio_alpha018_over_004": 0.023096,
+  "elapsed_s": 141.88
+}

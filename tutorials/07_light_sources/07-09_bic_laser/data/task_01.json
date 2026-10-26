@@ -1,0 +1,54 @@
+{
+  "task": 1,
+  "name": "finite_array_q_scaling",
+  "N_list": [
+    4,
+    6,
+    8,
+    10,
+    12
+  ],
+  "lambda1_N_nm": [
+    1604.753,
+    1588.63,
+    1582.472,
+    1579.497,
+    1577.841
+  ],
+  "Q1_N_fit": [
+    90.08,
+    252.53,
+    528.34,
+    934.73,
+    1482.5
+  ],
+  "p_exponent_fit": 2.5518,
+  "p_baseline_momentum_spread": 2.0,
+  "modes_m": [
+    1,
+    2,
+    3
+  ],
+  "lambda_m_N8_nm": [
+    1582.472,
+    1607.883,
+    1649.572
+  ],
+  "Q_m_N8_fit": [
+    528.34,
+    138.07,
+    65.28
+  ],
+  "Q_m_N8_analytic": [
+    528.34,
+    132.09,
+    58.7
+  ],
+  "Q1_over_Q2_N8": 3.827,
+  "Q1_over_Q3_N8": 8.093,
+  "slope_Q_vs_m": -1.9068,
+  "highest_Q_mode": 1,
+  "preflight_3d_8x8_ram_mb": 2730.7,
+  "preflight_3d_8x8_fits_laptop": false,
+  "elapsed_s": 105.17
+}

@@ -146,7 +146,6 @@ This work builds on the adjoint inverse-design literature, and in particular on 
 <td width="300" valign="top"><img src="docs/img/readme/cat7_development.jpg" width="300" alt="Fabry-Perot laser built with the gain-media feature: schematic and light-current curve, the starting point for the laser tutorials"></td>
 <td valign="top">
 
-- **Laser tutorials**: photonic-crystal surface-emitting and BIC lasers built on the gain-media feature.
 - **Vacuum electronics**: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave-tube gain; backward-wave oscillators; a beam over a slow-wave structure.
 - **Magnetic antennas**: magneto-dielectric and ferrite-loaded antennas on the dispersive-μ feature.
 - **Particle-in-cell beams**: for large-signal beam physics (saturation, efficiency) and nonlinear plasma wakefields.
@@ -300,9 +299,12 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <td width="170" valign="top"><a href="tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb"><img src="docs/img/readme/tut_07-07.jpg" width="170" alt="Tutorial 7.7"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb">7.7 · DFB laser with a quarter-wave phase shift</a></b><br><sub>Kogelnik–Shank coupled-wave thresholds; lasing from noise</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-07_dfb_laser/dfb_laser.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb"><img src="docs/img/readme/tut_07-08.jpg" width="170" alt="Tutorial 7.8"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb">7.8 · Microdisk whispering-gallery laser</a></b><br><sub>Bessel/Hankel WGM roots; clamping and hole burning</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-08_microdisk_laser/microdisk_laser.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-09_bic_laser/bic_laser.ipynb"><img src="docs/img/readme/tut_07-09.jpg" width="170" alt="Tutorial 7.9"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-09_bic_laser/bic_laser.ipynb">7.9 · Lasing from a bound state in the continuum</a></b><br><sub>Q ∝ k⁻² near Γ; polarization vortex; doughnut beam</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-09_bic_laser/bic_laser.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+<td width="170" valign="top"><a href="tutorials/07_light_sources/07-10_pcsel/pcsel.ipynb"><img src="docs/img/readme/tut_07-10.jpg" width="170" alt="Tutorial 7.10"></a></td><td width="300" valign="top"><b><a href="tutorials/07_light_sources/07-10_pcsel/pcsel.ipynb">7.10 · Photonic-crystal surface-emitting laser</a></b><br><sub>3D FIT band-edge modes vs coupled-wave theory</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/07_light_sources/07-10_pcsel/pcsel.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
 </table>
 
-*Planned:* Photonic-crystal surface-emitting (PCSEL) and BIC lasers.
 
 ### Chapter 8 · Vacuum Electronics
 
@@ -413,8 +415,8 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Visual examples library ([EXAMPLES.md](EXAMPLES.md)): built tutorials, studies and 157 planned examples with literature references
 - [x] Setup schematics, labelled overlays and graded/non-square meshes in Chapters 2–7 (Chapters 1, 8 and 5.6–5.10 in progress)
 - [ ] Tutorial 3.5: 3D resolution study (staircase vs conformal vs tensor)
-- [x] Laser tutorials: DFB (7.7) and microdisk (7.8)
-- [ ] Laser tutorials: photonic-crystal surface-emitting and BIC lasers
+- [x] Laser tutorials: DFB (7.7), microdisk (7.8), BIC laser (7.9) and PCSEL (7.10)
+- [x] Coupled-wave theory for photonic-crystal surface-emitting lasers (`wakis.pcsel_cwt`)
 - [ ] Vacuum electronics: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave tube gain; backward-wave oscillator; klystron cavities
 - [ ] Magnetic antennas on the dispersive-μ feature
 - [ ] Grating couplers, polarization devices and (de)multiplexers (Chapter 5 catalogue)

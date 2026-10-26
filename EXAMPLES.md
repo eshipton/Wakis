@@ -377,6 +377,12 @@ This page indexes all examples and validation studies in the repository, organiz
 
 ### In progress
 
+- **7.9 · Tutorial 7.9 · Lasing from a bound state in the continuum** ([notebook](tutorials/07_light_sources/07-09_bic_laser/bic_laser.ipynb) · [script](tutorials/07_light_sources/07-09_bic_laser/bic_laser.py)) — Symmetry-protected and quasi-BICs of a dimer bar grating: radiative $Q$ versus Bloch momentum, the far-field polarization vortex, finite-array scaling, single-mode lasing with `wakis.gain`, the doughnut far-field beam and a symmetry-breaking mutation.
+  - *Validation target:* BIC theory ($Q \propto k_\parallel^{-2}$ near $\Gamma$, topological charge $q = \pm 1$; Hsu *et al.* 2016; Kodigala *et al.* 2017) and the analytic far field of the finite array.
+  - *Headline result:* 3D FIT gives $Q(k) \propto k^{-1.96}$ off $\Gamma$ and $Q_\Gamma > 10^7$ (lower bound from a 22-cycle record), charge $q = +1$ from the simulated near field, and a doughnut far-field peak at $10.0^\circ$ vs $11.25^\circ$ from the analytic array factor.
+- **7.10 · Tutorial 7.10 · Photonic-crystal surface-emitting laser (PCSEL)** ([notebook](tutorials/07_light_sources/07-10_pcsel/pcsel.ipynb) · [script](tutorials/07_light_sources/07-10_pcsel/pcsel.py)) — Square-lattice PCSEL band-edge modes from 3D FIT Bloch unit cells compared with `wakis.pcsel_cwt` coupled-wave theory, and finite-size threshold margins of single and double lattices.
+  - *Validation target:* 3D coupled-wave theory (Liang *et al.* 2011; Yoshida *et al.* 2019) against 3D FIT on the same layer stack.
+  - *Headline result:* Band-edge frequencies agree within the FIT discretization error (0.25–0.28 %); the transverse-only coupled-wave model underestimates the band-edge splitting 6.8×, and an ad hoc longitudinal term reduces that to 1.5×; the threshold margin falls as $L^{-2}$, and the double lattice beats a circular-hole single lattice only below about 1.75 mm.
 - **7.x lasers (DFB, microdisk, PCSEL, BIC) after the gain-media feature**
 
 ### Planned

@@ -1,0 +1,355 @@
+{
+  "task_00": {
+    "task": 0,
+    "name": "infinite_bloch_and_vortex",
+    "lambda_bic_gamma_nm": 1573.8847,
+    "Q_bic_gamma": 1572905115.2,
+    "kx_norms": [
+      0.0,
+      0.02,
+      0.03,
+      0.04,
+      0.06,
+      0.08,
+      0.1
+    ],
+    "Q_kx_fit": [
+      1572905115.21,
+      15320.13,
+      6833.36,
+      3862.97,
+      1741.29,
+      998.74,
+      655.13
+    ],
+    "slope_Q_vs_kx_all": -1.9605,
+    "slope_Q_vs_kx_near_gamma": -1.9879,
+    "rel_err_slope_kx_near_gamma": 0.00606,
+    "qk_const": 6.1529,
+    "w0_nm": [
+      140.0,
+      155.0,
+      170.0,
+      185.0,
+      200.0
+    ],
+    "lambda_sym_nm": [
+      1503.41,
+      1543.59,
+      1573.9,
+      1605.45,
+      1629.93
+    ],
+    "Q_sym_min": 855060054.8,
+    "Q_qbic_vs_w0": [
+      2313.2,
+      4795.45,
+      4710.72,
+      4978.66,
+      12672.61
+    ],
+    "g_th_qbic_vs_w0_cm1": [
+      67.25,
+      31.36,
+      31.16,
+      28.82,
+      11.09
+    ],
+    "Q_qbic_vs_w0_nx48": [
+      3093.51,
+      3592.13,
+      4690.8,
+      6259.99,
+      8504.6
+    ],
+    "g_th_qbic_vs_w0_nx48_cm1": [
+      50.31,
+      41.95,
+      31.28,
+      22.93,
+      16.54
+    ],
+    "phi_off_mirror_deg": [
+      17.0,
+      62.0,
+      107.0,
+      152.0,
+      197.0,
+      242.0,
+      287.0,
+      332.0
+    ],
+    "nx_3d": 30,
+    "nz_3d": 44,
+    "n_pml_3d": 10,
+    "cpw_3d_A1": 21.38,
+    "f_gamma_A1_thz": 196.3574,
+    "lambda_gamma_A1_nm": 1526.77,
+    "Q_gamma_A1_pml6": 24345.8,
+    "Q_gamma_A1": 19245231.8,
+    "Q_gamma_A1_pml_ratio": 790.5,
+    "k_3d_norms": [
+      0.03,
+      0.05,
+      0.08
+    ],
+    "Q_k_3d_A1": [
+      69899.56,
+      25480.82,
+      10266.02
+    ],
+    "slope_Q_vs_k_3d_A1": -1.956,
+    "rel_err_slope_k_3d_A1": 0.022,
+    "Q_ring_A1_min": 24614.6,
+    "Q_ring_A1_max": 25483.7,
+    "q_charge_A1": 1.0,
+    "gamma_suppression_A1": 1.8e-07,
+    "preflight_3d_ram_mb": 629.35,
+    "elapsed_s": 741.58,
+    "rel_diff_Q_qbic_w200_nx32_vs_nx48": 0.4901
+  },
+  "task_01": {
+    "task": 1,
+    "name": "finite_array_q_scaling",
+    "N_list": [
+      4,
+      6,
+      8,
+      10,
+      12
+    ],
+    "lambda1_N_nm": [
+      1604.753,
+      1588.63,
+      1582.472,
+      1579.497,
+      1577.841
+    ],
+    "Q1_N_fit": [
+      90.08,
+      252.53,
+      528.34,
+      934.73,
+      1482.5
+    ],
+    "p_exponent_fit": 2.5518,
+    "p_baseline_momentum_spread": 2.0,
+    "modes_m": [
+      1,
+      2,
+      3
+    ],
+    "lambda_m_N8_nm": [
+      1582.472,
+      1607.883,
+      1649.572
+    ],
+    "Q_m_N8_fit": [
+      528.34,
+      138.07,
+      65.28
+    ],
+    "Q_m_N8_analytic": [
+      528.34,
+      132.09,
+      58.7
+    ],
+    "Q1_over_Q2_N8": 3.827,
+    "Q1_over_Q3_N8": 8.093,
+    "slope_Q_vs_m": -1.9068,
+    "highest_Q_mode": 1,
+    "preflight_3d_8x8_ram_mb": 2730.7,
+    "preflight_3d_8x8_fits_laptop": false,
+    "elapsed_s": 105.17
+  },
+  "task_02": {
+    "task": 2,
+    "name": "threshold_and_single_mode_lasing",
+    "gamma_conf": 0.9472,
+    "Q_cold_alpha008": 7356.63,
+    "lambda0_alpha008_nm": 1573.6912,
+    "g_th_alpha008_analytic_cm1": 19.94,
+    "g_th_alpha008_fit_cm1": 19.929,
+    "rel_err_linear_threshold": 0.00056,
+    "g_th_N_cm1": [
+      1596.96,
+      575.41,
+      276.1,
+      156.36,
+      98.69
+    ],
+    "sat_g0_ratios": [
+      0.0,
+      0.5,
+      0.8,
+      1.0,
+      1.3,
+      1.6,
+      2.0,
+      2.5,
+      3.0
+    ],
+    "sat_I_fit": [
+      0.0,
+      0.0,
+      0.005,
+      0.0507,
+      0.2653,
+      0.5342,
+      0.9044,
+      1.376,
+      1.854
+    ],
+    "sat_I_shb": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.2625,
+      0.5337,
+      0.9039,
+      1.3752,
+      1.8528
+    ],
+    "rel_err_shb_li_at_g2": 0.0006,
+    "max_rel_err_shb_li": 0.01086,
+    "fl_time_scale": 80.0,
+    "fl_dn_peak_above": 1.5763,
+    "fl_dn_clamped_final": 1.0924,
+    "doughnut_nodal_null_ratio": 0.000651,
+    "doughnut_theta_env_deg": 8.36,
+    "doughnut_theta_peak_fit_deg": 10.05,
+    "doughnut_theta_peak_theory_deg": 11.25,
+    "rel_diff_doughnut_theta_peak": 0.10667,
+    "elapsed_s": 128.27
+  },
+  "task_03": {
+    "task": 3,
+    "name": "symmetry_breaking_mutation",
+    "n_array_edge": 8,
+    "Q0_const": 47.11,
+    "Q_edge_0": 528.34,
+    "alphas": [
+      0.0,
+      0.04,
+      0.06,
+      0.08,
+      0.1,
+      0.14,
+      0.2
+    ],
+    "Q_rad_inf": [
+      1572905115.21,
+      29406.18,
+      13073.24,
+      7356.63,
+      4710.65,
+      2406.67,
+      1182.7
+    ],
+    "Q_tot_finite": [
+      528.34,
+      518.81,
+      507.37,
+      492.2,
+      473.98,
+      431.47,
+      362.64
+    ],
+    "Q_tot_finite_analytic": [
+      528.34,
+      519.02,
+      507.82,
+      492.94,
+      475.06,
+      433.23,
+      365.2
+    ],
+    "g_th_analytic_cm1": [
+      276.1,
+      281.06,
+      287.26,
+      295.93,
+      307.07,
+      336.71,
+      399.44
+    ],
+    "g_th_fit_cm1": [
+      276.1,
+      281.17,
+      287.51,
+      296.38,
+      307.77,
+      338.09,
+      402.26
+    ],
+    "slope_alpha_threshold": 1.997,
+    "rel_err_slope_alpha_threshold": 0.00151,
+    "max_rel_err_mutation": 0.00705,
+    "quench_time_scale": 20.0,
+    "Q_tot_004_quench": 518.81,
+    "Q_tot_018_quench_analytic": 387.52,
+    "g0_fixed_cm1": 371.15,
+    "quench_ratio_alpha018_over_004": 0.023096,
+    "elapsed_s": 141.88
+  },
+  "task_04": {
+    "task": 4,
+    "name": "mesh_convergence_study",
+    "nx_list": [
+      32,
+      48,
+      64
+    ],
+    "dx_nm": [
+      21.25,
+      14.167,
+      10.625
+    ],
+    "cpw_si": [
+      21.28,
+      31.92,
+      42.57
+    ],
+    "cells_across_gap": [
+      4.0,
+      6.0,
+      8.0
+    ],
+    "lambda_bic_nm": [
+      1573.8847,
+      1574.417,
+      1575.2147
+    ],
+    "lambda_bic_drift_nm": 1.33,
+    "lambda_bic_increments_nm": [
+      0.5324,
+      0.7976
+    ],
+    "rel_spread_lambda_bic": 0.000844,
+    "Q_a10": [
+      4710.65,
+      4690.77,
+      4683.88
+    ],
+    "gamma_conf_a10": [
+      0.947,
+      0.9473,
+      0.9475
+    ],
+    "g_th_a10_cm1": [
+      31.149,
+      31.261,
+      31.283
+    ],
+    "Q_a10_richardson": 4675.03,
+    "g_th_a10_richardson_cm1": 31.311,
+    "rel_err_Q_a10_nx32": 0.00762,
+    "rel_err_Q_a10_nx64": 0.00189,
+    "observed_order_Q_a10": 2.009,
+    "rel_err_g_th_nx32": 0.00519,
+    "rel_err_g_th_nx64": 0.0009,
+    "observed_order_g_th": 2.558,
+    "elapsed_s": 40.57
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "task": 4,
+  "name": "mesh_convergence_study",
+  "nx_list": [
+    32,
+    48,
+    64
+  ],
+  "dx_nm": [
+    21.25,
+    14.167,
+    10.625
+  ],
+  "cpw_si": [
+    21.28,
+    31.92,
+    42.57
+  ],
+  "cells_across_gap": [
+    4.0,
+    6.0,
+    8.0
+  ],
+  "lambda_bic_nm": [
+    1573.8847,
+    1574.417,
+    1575.2147
+  ],
+  "lambda_bic_drift_nm": 1.33,
+  "lambda_bic_increments_nm": [
+    0.5324,
+    0.7976
+  ],
+  "rel_spread_lambda_bic": 0.000844,
+  "Q_a10": [
+    4710.65,
+    4690.77,
+    4683.88
+  ],
+  "gamma_conf_a10": [
+    0.947,
+    0.9473,
+    0.9475
+  ],
+  "g_th_a10_cm1": [
+    31.149,
+    31.261,
+    31.283
+  ],
+  "Q_a10_richardson": 4675.03,
+  "g_th_a10_richardson_cm1": 31.311,
+  "rel_err_Q_a10_nx32": 0.00762,
+  "rel_err_Q_a10_nx64": 0.00189,
+  "observed_order_Q_a10": 2.009,
+  "rel_err_g_th_nx32": 0.00519,
+  "rel_err_g_th_nx64": 0.0009,
+  "observed_order_g_th": 2.558,
+  "elapsed_s": 40.57
+}

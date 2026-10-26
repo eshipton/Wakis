@@ -22,6 +22,7 @@ from . import (
     material_library,
     materials,
     near2far,
+    pcsel_cwt,
     resonances,
     schematic,
     solverFIT3D,
@@ -54,6 +55,17 @@ from .logger import Logger
 from .lumped import LumpedElement, LumpedPort
 from .mode_solver import ModeMonitor, ModeSource, solve_modes
 from .near2far import Near2FarMonitor
+from .pcsel_cwt import (
+    PCSELLayerStack,
+    compute_cwt_band_structure,
+    compute_cwt_coupling_coefficients,
+    double_lattice_coupling_scan,
+    fourier_coefficients_phc,
+    solve_finite_cwt,
+    solve_infinite_cwt,
+    solve_vertical_greens_functions,
+    solve_vertical_slab_mode,
+)
 from .resonances import ResonanceMonitor, harminv
 from .solverFIT3D import SolverFIT3D
 from .subcell import (
