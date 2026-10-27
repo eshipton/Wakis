@@ -1,0 +1,107 @@
+{
+  "quick": false,
+  "n_cells": 5,
+  "sheet_beam_filaments": 6,
+  "beta_99k7": 0.5474,
+  "f_peak_99k7_ghz": 3.040419249735366,
+  "f_peak_line_beam_99k7_ghz": 3.0396712406086994,
+  "f_cold_sync_99k7_ghz": 3.002533448654314,
+  "f_cold_paper_99k7_ghz": 2.98,
+  "f_hot_rcr_sim_paper_ghz": 2.836,
+  "f_hot_rcr_meas_paper_ghz": 2.85,
+  "rayleigh_df_ghz": 0.16129210580645406,
+  "wake_window_ns": 6.199931453557756,
+  "f_peak_vs_cold_rel_err": 0.012617944721992064,
+  "f_peak_vs_cold_paper_rel_err": 0.02027491601857925,
+  "f_peak_vs_hot_rcr_sim_rel_diff": 0.07208013037213198,
+  "asymmetry_99k7_db": 12.36367314487255,
+  "asymmetry_poynting_energy_db": 12.36367314487255,
+  "asymmetry_plane_offsets_cells": [
+    0,
+    3,
+    6
+  ],
+  "asymmetry_plane_values_db": [
+    14.678796105130374,
+    13.588335089487249,
+    12.36367314487255
+  ],
+  "asymmetry_plane_spread_db": 2.315122960257824,
+  "asymmetry_paper_sim_db": 16.9,
+  "asymmetry_paper_meas_db": 17.6,
+  "asymmetry_diff_vs_sim_db": -4.536326855127449,
+  "asymmetry_diff_vs_meas_db": -5.2363268551274516,
+  "asymmetry_rel_err": 0.26842170740399107,
+  "w_wake_up_j": 3.8511066796221034e-07,
+  "w_wake_dn_j": 2.2346948838143437e-08,
+  "w_wake_up_line_beam_j": 7.377005039186843e-07,
+  "sheet_vs_line_wake_energy_ratio": 0.5220420291385087,
+  "theta_rcr_obtuse_deg": 143.3329918017916,
+  "beta_sweep": [
+    0.5,
+    0.5474,
+    0.6,
+    0.6471
+  ],
+  "beta_sweep_f_rcr_ghz": [
+    3.0096096285094616,
+    3.040419249735366,
+    3.072395795260374,
+    3.0974492737922334
+  ],
+  "beta_sweep_f_cold_ghz": [
+    2.9748471120034834,
+    3.002533448654314,
+    3.031731932343053,
+    3.0555135627549785
+  ],
+  "beta_sweep_rel_err": [
+    0.011685480025414316,
+    0.012617944721992064,
+    0.013412750145720919,
+    0.013724603139854474
+  ],
+  "beta_sweep_asymmetry_db": [
+    18.211449874925343,
+    12.36367314487255,
+    8.383180047307642,
+    7.0118497095434265
+  ],
+  "plain_plate_peak_spec_up": 3.614107124888012e-21,
+  "cesrr_peak_spec_up": 1.2876564607947215e-15,
+  "plain_plate_suppression_db": 53.5790323376297,
+  "energy_beam_loss_j": 4.900418847044485e-07,
+  "energy_stored_at_clear_j": 4.7494601580654175e-07,
+  "energy_stored_em_j": 6.794570162796992e-08,
+  "energy_rad_up_j": 3.8511066796221034e-07,
+  "energy_rad_dn_j": 2.2346948838143437e-08,
+  "energy_rad_wake_net_j": 4.0745761680035376e-07,
+  "energy_absorber_removed_wake_j": 1.1203142198922285e-10,
+  "energy_rhs_total_j": 4.898882481310569e-07,
+  "energy_bookkeeping_rel_err": 0.0003135172281942276,
+  "energy_wake_decay_rel_err": 0.0011987342241503319,
+  "fraction_wake_radiated": 0.8579030105314583,
+  "mesh_meta": {
+    "n_slot": 4,
+    "graded": true,
+    "nx": 34,
+    "ny": 18,
+    "nz": 288,
+    "n_cells": 176256,
+    "d_min_mm": 0.25,
+    "d_max_mm": 1.10833333,
+    "cells_across_slot": 4.0,
+    "cells_across_plate": 4.0,
+    "ppw_min_at_3g5": 77.2826959398496,
+    "n_cells_active": 5,
+    "n_cells_buffer_each_end": 2,
+    "n_cells_total": 9,
+    "lz_mm": 130.5
+  },
+  "preflight": {
+    "cells": 176256,
+    "host_mb": 734.33488,
+    "estimated_s": 136.73826840520542
+  },
+  "wall_time_s": 983.0155325050009
+}

@@ -337,9 +337,12 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 <td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb"><img src="docs/img/readme/tut_08-05.jpg" width="170" alt="Tutorial 8.5"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb">8.5 · Electron bunch through a slow-wave structure</a></b><br><sub>Beam–wave impedance vs Pierce K; L² scaling</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-05_bunch_through_sws/bunch_through_sws.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 <td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-06_twt_small_signal_gain/twt_small_signal_gain.ipynb"><img src="docs/img/readme/tut_08-06.jpg" width="170" alt="Tutorial 8.6"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-06_twt_small_signal_gain/twt_small_signal_gain.ipynb">8.6 · Traveling-wave-tube small-signal gain</a></b><br><sub>Pierce theory vs FIT hot tests with a linearized beam</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-06_twt_small_signal_gain/twt_small_signal_gain.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
 </tr>
+<tr>
+<td width="170" valign="top"><a href="tutorials/08_vacuum_electronics/08-07_metamaterial_sws_reversed_cherenkov/metamaterial_sws.ipynb"><img src="docs/img/readme/tut_08-07.jpg" width="170" alt="Tutorial 8.7"></a></td><td width="300" valign="top"><b><a href="tutorials/08_vacuum_electronics/08-07_metamaterial_sws_reversed_cherenkov/metamaterial_sws.ipynb">8.7 · Metamaterial slow-wave structure: reversed Cherenkov radiation</a></b><br><sub>CeSRR backward band (v<sub>g</sub> &lt; 0), upstream energy flow, BWO start current (Duan et al. 2017)</sub><br><a href="https://colab.research.google.com/github/eshipton/Wakis/blob/main/tutorials/08_vacuum_electronics/08-07_metamaterial_sws_reversed_cherenkov/metamaterial_sws.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a></td>
+</tr>
 </table>
 
-*Planned:* Folded-waveguide and helix slow-wave structures, metamaterial and FSS slow-wave structures, backward-wave oscillator, klystron cavities.
+*Planned:* Folded-waveguide and helix slow-wave structures, FSS slow-wave structures, backward-wave oscillator, klystron cavities.
 
 ### Chapter 9 · Inverse Design
 
