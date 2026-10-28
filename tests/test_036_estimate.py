@@ -95,4 +95,6 @@ def test_estimate_scales_and_preflight():
         (100, 100, 1), steps=2000, adjoint={"design_edges": 5000, "store_bytes": 8}
     )
     assert adj.breakdown["adjoint stored increments"] == 2000 * 5000 * 8
-    assert set(MACHINES) >= {"laptop", "n2-standard-8", "g2-standard-16"}
+    assert set(MACHINES) >= {"laptop", "n2-standard-8", "n2-standard-16", "n2-highmem-8"}
+    assert MACHINES["n2-highmem-8"] == {"ram": 64e9, "gpu": 0}
+    assert not preflight(estimate((96, 96, 200), steps=5000, conformal="pec"), "n2-highmem-8", raise_error=False)

@@ -134,6 +134,7 @@ MACHINES = {
     "n2-standard-4": dict(ram=16e9, gpu=0),
     "n2-standard-8": dict(ram=32e9, gpu=0),
     "n2-standard-16": dict(ram=64e9, gpu=0),
+    "n2-highmem-8": dict(ram=64e9, gpu=0),
     "n2-highmem-16": dict(ram=128e9, gpu=0),
     "g2-standard-16": dict(ram=64e9, gpu=24e9),
     "g2-standard-32": dict(ram=128e9, gpu=24e9),

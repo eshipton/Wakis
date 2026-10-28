@@ -1,0 +1,209 @@
+{
+  "spec": {
+    "period_m": 0.002,
+    "wagon_wheel_thickness_m": 0.001,
+    "spacer_thickness_m": 0.001,
+    "beam_hole_radius_m": 0.003,
+    "hub_outer_radius_m": 0.004,
+    "waveguide_radius_m": 0.008,
+    "slot_outer_radius_m": 0.008,
+    "spoke_width_m": 0.001,
+    "n_spokes": 4,
+    "n_periods_experiment": 40,
+    "beam_kinetic_energy_ev": 65000000.0,
+    "single_bunch_charge_c": 4.5e-08,
+    "two_bunch_total_charge_c": 8.5e-08,
+    "bunch_length_rms_m": 0.0012,
+    "linac_frequency_hz": 1300000000.0,
+    "unloaded_q_thesis": 1050.0,
+    "coax_port_wall_radius_m": 0.0033,
+    "passband_low_hz": 9800000000.0,
+    "passband_high_hz": 13000000000.0,
+    "wake_passband_low_hz": 9500000000.0,
+    "wake_passband_high_hz": 13500000000.0,
+    "paper_sync_freq_hz": 11420000000.0,
+    "paper_vg_over_c": -0.158,
+    "paper_r_over_q_ohm_per_m": 21000.0,
+    "default_dz_m": 0.00025
+  },
+  "beam_gamma": 128.20182675915038,
+  "beam_beta": 0.9999695779704818,
+  "beam_u0_m_s": 299783337.70499337,
+  "empty_waveguide_tm01_cutoff_analytic_ghz": 14.342815979401255,
+  "empty_waveguide_tm01_cutoff_8p1mm_analytic_ghz": 14.165744177186427,
+  "empty_waveguide_tm01_cutoff_paper_ghz": 14.2,
+  "pec_ohmic_justification": {
+    "unloaded_q0_thesis": 1050.0,
+    "f_sync_ghz": 11.42,
+    "ohmic_field_decay_time_2q_over_omega_ns": 29.266670796232944,
+    "ohmic_energy_decay_time_q_over_omega_ns": 14.633335398116472,
+    "pulse_duration_n8_ns": 0.39115830442969607,
+    "pulse_duration_n40_ns": 1.95579152214848,
+    "ratio_field_decay_over_pulse_n8": 74.820527813933,
+    "ratio_field_decay_over_pulse_n40": 14.964105562786601,
+    "attenuation_alpha_np_per_m": 0.7213547363076614,
+    "mean_ohmic_power_loss_fraction_n8": 0.01145337906073085,
+    "mean_ohmic_power_loss_fraction_n40": 0.0555508180531048
+  },
+  "paper_parameters": [
+    {
+      "parameter": "Unit-cell axial period p",
+      "symbol": "p",
+      "value": 2.0,
+      "unit": "mm",
+      "ref_lines": "PRL lines 140, 145\u2013146, 166; Lu thesis lines 1978, 1985, 1994, 2036",
+      "quote_context": "Total period 2 mm composed of one 1 mm wagon-wheel plate and one 1 mm spacer plate"
+    },
+    {
+      "parameter": "Wagon-wheel plate thickness t_ww",
+      "symbol": "t_ww",
+      "value": 1.0,
+      "unit": "mm",
+      "ref_lines": "PRL lines 112\u2013113, 163\u2013165; Lu thesis lines 1950\u20131951, 1967, 2037\u20132038",
+      "quote_context": "1-mm-thick stainless-steel wagon-wheel plate in alternating periodic stack"
+    },
+    {
+      "parameter": "Spacer plate thickness t_sp",
+      "symbol": "t_sp",
+      "value": 1.0,
+      "unit": "mm",
+      "ref_lines": "PRL lines 112\u2013113, 163\u2013165; Lu thesis lines 1950\u20131951, 1967, 2037\u20132038",
+      "quote_context": "1-mm-thick copper circular spacer plate between adjacent wagon-wheel plates"
+    },
+    {
+      "parameter": "Radial spoke width w_spoke",
+      "symbol": "w_spoke",
+      "value": 1.0,
+      "unit": "mm",
+      "ref_lines": "PRL Fig. 2(b) line 119; Lu thesis line 1968",
+      "quote_context": "Dimension callout '1 mm' in PRL Fig. 2(b) and 'thickness of spokes as 1 mm' in thesis line 1968"
+    },
+    {
+      "parameter": "Beam hole diameter 2 r_b",
+      "symbol": "2 r_b",
+      "value": 6.0,
+      "unit": "mm",
+      "ref_lines": "PRL lines 122\u2013123, 145; Lu thesis lines 1967, 1969, 2185, 2322",
+      "quote_context": "Central electron beam aperture of 6.0 mm diameter (r_b = 3.0 mm, PRL line 122)"
+    },
+    {
+      "parameter": "Enclosing circular waveguide ID 2 R_wg",
+      "symbol": "2 R_wg",
+      "value": 16.0,
+      "unit": "mm",
+      "ref_lines": "PRL lines 121, 152 & thesis line 1968 (16 mm ID); cf. thesis lines 2075, 2208 (R_wg = 8.1 mm)",
+      "quote_context": "Circular waveguide of 16.0 mm ID (R_wg = 8.0 mm, PRL line 121); thesis lines 2075, 2208 state R_wg = 8.1 mm (TM01 cutoff 14.2 GHz at PRL lines 150\u2013151)"
+    },
+    {
+      "parameter": "Number of periods N_exp (active length L_exp)",
+      "symbol": "N_exp (L_exp)",
+      "value": 40,
+      "unit": "periods (80 mm)",
+      "ref_lines": "PRL lines 134, 166; Lu thesis lines 1951\u20131952, 2201, 2237, 2244, 2376",
+      "quote_context": "40 periods for a total metamaterial interaction length of 8 cm (80 mm)"
+    },
+    {
+      "parameter": "Drive electron beam energy E_k",
+      "symbol": "E_k",
+      "value": 65.0,
+      "unit": "MeV",
+      "ref_lines": "PRL lines 49, 104, 143, 149\u2013150; Lu thesis lines 1991, 2054",
+      "quote_context": "65 MeV relativistic electron bunches from the 1.3 GHz (PRL line 143) AWA rf photoinjector"
+    },
+    {
+      "parameter": "Single drive bunch charge q",
+      "symbol": "q",
+      "value": 45.0,
+      "unit": "nC",
+      "ref_lines": "PRL lines 49\u201350, 145, 150, 214, 224, 233\u2013234, 291\u2013294; Lu thesis lines 2246, 2312\u20132314, 2364",
+      "quote_context": "Single high-charge bunch of up to 45 nC generating 25 MW peak power"
+    },
+    {
+      "parameter": "RMS longitudinal bunch length \u03c3_z",
+      "symbol": "\u03c3_z",
+      "value": 1.2,
+      "unit": "mm",
+      "ref_lines": "PRL lines 151, 212, 247\u2013248, 291; Lu thesis lines 2310, 2313",
+      "quote_context": "Gaussian longitudinal bunch distribution with \u03c3_z = 1.2 mm (\u03a6 = 0.96, PRL lines 151, 248)"
+    },
+    {
+      "parameter": "Two-bunch total charge Q_1 + Q_2",
+      "symbol": "Q_tot",
+      "value": 85.0,
+      "unit": "nC",
+      "ref_lines": "PRL lines 51, 77, 143, 153\u2013154, 255\u2013257, 297\u2013298, 323, 329\u2013331, 337\u2013338; Lu thesis lines 2337\u20132341, 2365",
+      "quote_context": "Two electron bunches spaced around 1/(1.3 GHz) = 769.23 ps (PRL line 143) and fine-tuned in phase with laser splitters (PRL lines 153\u2013154, 256\u2013257, 329\u2013331; thesis lines 2338\u20132341: 11.42 GHz is the 9th harmonic of a 1.27 GHz bunch train with T_b = 0.79 ns at line 2365) with combined charge 85 nC generating 80 MW"
+    }
+  ],
+  "assumed_parameters": [
+    {
+      "parameter": "Inner hub ring outer radius",
+      "symbol": "r_hub",
+      "assumed_value": "4.0 mm (ASSUMED: r_b + 1.0 mm ring wall, PRL Fig. 2(b) line 119)",
+      "reason": "PRL Fig. 2(b) (line 119) shows a 1 mm dimension callout and thesis line 1968 states 'thickness of spokes as 1 mm', but neither text explicitly prints r_hub = 4.0 mm"
+    },
+    {
+      "parameter": "Number & orientation of radial spokes",
+      "symbol": "N_spokes",
+      "assumed_value": "4 spokes along \u00b1x, \u00b1y on every plate (ASSUMED)",
+      "reason": "Counted from PRL Fig. 2(b) (line 119); spokes span r \u2208 [4.0, 8.0] mm directly into the outer waveguide wall with no separate outer slot rim (R_slot = R_wg = 8.0 mm, PRL line 121, ASSUMED)"
+    },
+    {
+      "parameter": "Spoke & hub corner fillet radius",
+      "symbol": "r_fillet",
+      "assumed_value": "0.0 mm (sharp rectangular cross-section, ASSUMED)",
+      "reason": "Machined corner radii are not specified in PRL or thesis; represented via subcell conformal PEC (conformal='pec')"
+    },
+    {
+      "parameter": "Conductor wall conductivity",
+      "symbol": "\u03c3_wall",
+      "assumed_value": "Lossless PEC (\u03c3 \u2192 \u221e, ASSUMED)",
+      "reason": "Experiment uses stainless-steel wagon-wheel plates and copper spacers (PRL lines 163\u2013165) with cold-test Q_0 = 1050 (Lu thesis Table 2.4, line 2173); ohmic decay time 2Q_0/\u03c9_s = 29.27 ns \u226b pulse length t_p \u2264 1.96 ns"
+    },
+    {
+      "parameter": "End output port couplers",
+      "symbol": "2-cell adiabatic coaxial TEM coupler (r \u2208 [3.3, 8.0] mm) + 10-cell CPML (ASSUMED)",
+      "assumed_value": "Replaces 2 rectangular WR-90 side-wall couplers (PRL lines 95\u201397, 156\u2013158; Lu thesis lines 2198\u20132224)",
+      "reason": "An empty R_wg = 8.0 mm (PRL line 121) circular pipe is cut off below 14.34 GHz; the coaxial transition extracts the backward wave axisymmetrically with |\u0393| = 0.2166 at 11.41 GHz"
+    },
+    {
+      "parameter": "Simulated active periods N_sim",
+      "symbol": "N_sim",
+      "assumed_value": "N \u2208 {6, 8, 12} (L = 12, 16, 24 mm, ASSUMED)",
+      "reason": "Probes the short-structure pre-asymptotic regime where the 8 mm coupler taper length is comparable to the active interaction length L = N p, isolating the affine active-section slope a_W = dW/dL from the end/taper intercept b_W and testing length invariance of peak backward-wave power P_up,max(L)"
+    }
+  ],
+  "port_reflection": {
+    "n_xy_port": 64,
+    "cells_across_1mm_feature_port": 4.0,
+    "n_fft_port": 65536,
+    "f_sync_target_ghz": 11.42,
+    "f_sync_eval_ghz": 11.405216286972694,
+    "f_sync_adjacent_bin_ghz": 11.483872951020782,
+    "gamma_tapered_at_sync": 0.2166353306114934,
+    "gamma_tapered_raw_at_sync": 0.2166353306114934,
+    "gamma_tapered_unclipped_at_sync": 0.2166353306114934,
+    "gamma_tapered_at_adjacent_bin": 0.2138673490515285,
+    "gamma_tapered_passband_mean": 0.2214565214783931,
+    "gamma_tapered_passband_min": 0.19815767041604349,
+    "power_transmission_tapered_at_sync": 0.953069133530849,
+    "gamma_abrupt_at_sync": 0.8778227452383971,
+    "gamma_abrupt_raw_at_sync": 0.8778227452383971,
+    "gamma_abrupt_unclipped_at_sync": 0.8778227452383971,
+    "gamma_abrupt_is_clipped": false,
+    "gamma_abrupt_at_sync_label": "0.8778",
+    "gamma_abrupt_passband_mean": 0.8829669910035022,
+    "reduction_factor_abrupt_over_tapered": 4.052075636788236,
+    "rel_error_bound_tapered": 0.4546057006566173,
+    "rel_error_bound_tapered_mutated_no_2x": 0.22730285032830866,
+    "rel_error_bound_abrupt": 7.652297882096526,
+    "forward_control_18p86ghz_port_note": "The port S-parameter sweep in task_01 covers [10.5, 12.3] GHz around the 11.42 GHz (PRL line 137) backward-wave MTM passband. The disk-loaded forward-wave control in task_03 operates at f_pk = 18.86 GHz (above the 14.34 GHz empty-pipe TM01 cutoff), where both the coaxial taper and the circular beam pipe are propagating and terminated by 10-cell CPML layers, but |Gamma(18.86 GHz)| is not separately swept in task_01.",
+    "wall_times_s": {
+      "ref_periodic": 154.893818934,
+      "pec_cap": 145.16676802899997,
+      "abrupt_empty_pipe": 147.52371340999997,
+      "tapered_coax": 158.45147930500002
+    },
+    "est_memory_mb": 1738.3029802552865
+  }
+}
