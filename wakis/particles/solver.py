@@ -809,6 +809,7 @@ class ParticleSolver:
         self._initialized_half_step = False
         self._init_gauss_counts = ()
         self.n_particle_steps = 0
+        self.diagnostics: list = []
         self._j_in_solver = False
         self._local_cfl_err = None
         self._local_step_exc = None
@@ -2628,6 +2629,7 @@ class ParticleSolver:
             self._last_guard_reduce_s = 0.0
             self._last_migrate_s = 0.0
         self.n_particle_steps += 1
+        self._run_diagnostics(t_n + dt, dt)
 
     def _mid_step_hook(self, solver=None) -> None:
         """Execute one self-consistent particle-in-cell step between the H and E field updates."""
@@ -3103,8 +3105,34 @@ class ParticleSolver:
             self._last_guard_reduce_s = 0.0
             self._last_migrate_s = 0.0
         self.n_particle_steps += 1
+        self._run_diagnostics(t_n + dt, dt)
 
     # --- Diagnostics ---------------------------------------------------------
+
+    def add_diagnostic(self, diag):
+        """Attach a particle diagnostic monitor to this solver.
+
+        Parameters
+        ----------
+        diag : object
+            Diagnostic monitor instance from :mod:`wakis.particles.diagnostics`.
+
+        Returns
+        -------
+        object
+            The attached diagnostic ``diag``.
+        """
+        if hasattr(diag, "_bind"):
+            diag._bind(self)
+        self.diagnostics.append(diag)
+        return diag
+
+    def _run_diagnostics(self, t: float, dt: float) -> None:
+        """Advance all attached diagnostic monitors at the end of a particle step."""
+        step = self.n_particle_steps - 1
+        for diag in self.diagnostics:
+            if getattr(diag, "_always_record", False) or step % diag.every == 0:
+                diag._record(self, t, dt, step)
 
     def kinetic_energy(self, synchronised: bool = False) -> float:
         """Total relativistic kinetic energy [J] across all species.
@@ -3259,3 +3287,15 @@ class ParticleSolver:
     def gauss_residual(self) -> float:
         """Return relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``."""
         return gauss_residual(self.solver, self.species, order=self.shape)
+
+    def save_checkpoint(self, path):
+        """Save coupled electromagnetic field and particle state to ``path``."""
+        from .checkpoint import save_checkpoint
+
+        return save_checkpoint(self, path)
+
+    def load_checkpoint(self, path) -> None:
+        """Restore coupled electromagnetic field and particle state from ``path``."""
+        from .checkpoint import load_checkpoint
+
+        load_checkpoint(self, path)

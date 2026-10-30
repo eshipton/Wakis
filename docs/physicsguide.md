@@ -4696,6 +4696,845 @@ References:
 
 ```{admonition} Modularity
 
+#### 11. Two-stream instability (with the $\gamma_0^{-3/2}$ longitudinal-mass correction) (`wakis.particles`)
+
+##### 1. Continuum dispersion relation and analytical growth rate
+
+Consider two cold, counter-streaming electron beams of unperturbed lab-frame number densities $n_+ = s_+ n_b$ and $n_- = s_- n_b$ ($s_+ = s_- = 1$ for equal symmetric beams), charge $q = -e$, rest mass $m_e$, and streaming velocities $\mathbf{v}_{0,\pm} = \pm v_0\,\hat{\mathbf{z}}$ ($\gamma_0 = (1 - v_0^2/c^2)^{-1/2}$, proper velocity $u_0 = \gamma_0 v_0$), propagating through a uniform, immobile neutralising background of charge density $\rho_{\text{bg}} = +e(n_+ + n_-)$ (`solver._particles_q_bg`) in a 1D periodic domain of length $L_z$ along $z$. Reference single-beam density $n_b$ defines the non-relativistic plasma frequency
+
+```math
+\omega_b \;=\; \sqrt{\frac{n_b e^2}{\varepsilon_0 m_e}}.
+```
+
+For longitudinal perturbations $(\delta n_\pm, \delta v_{z,\pm}, \delta E_z) \propto \exp\bigl(i(k z - \omega t)\bigr)$ with wavevector $\mathbf{k} = k\,\hat{\mathbf{z}}$ ($\mathbf{k}_\perp = \mathbf{0}$, $\delta\mathbf{B} = \mathbf{0}$), the linearized 1D continuity equation, momentum equation (with the relativistic longitudinal mass $\gamma_0^3 m_e$ derived in Subsection 3 below, $\omega_{b,\text{rel}} = \gamma_0^{-3/2}\omega_b$), and Gauss's law for the two beams $s \in \{+1, -1\}$ read [Bohm & Gross, 1949; Buneman, 1959; Birdsall & Langdon, 1991]:
+
+```math
+-i(\omega - s k v_0)\,\delta n_s + i k n_s\,\delta v_{z,s} = 0, \qquad
+-i\gamma_0^3 m_e(\omega - s k v_0)\,\delta v_{z,s} = -e\,\delta E_z, \qquad
+i k \varepsilon_0\,\delta E_z = -e(\delta n_+ + \delta n_-).
+```
+
+Eliminating $\delta v_{z,s}$ and $\delta n_s$ yields the general 1D two-beam electrostatic dispersion relation implemented in `tests/_two_stream_dispersion.py` (`two_stream_continuum_root` and `two_stream_continuum_growth_rate`):
+
+```math
+\varepsilon_\parallel(k, \omega) \;\equiv\; 1 - \omega_{b,\text{rel}}^2\left[\frac{s_+}{(\omega - k v_0)^2} + \frac{s_-}{(\omega + k v_0)^2}\right] \;=\; 0
+\qquad \Longleftrightarrow \qquad
+1 \;=\; \omega_{b,\text{rel}}^2\left[\frac{s_+}{(\omega - k v_0)^2} + \frac{s_-}{(\omega + k v_0)^2}\right].
+```
+
+Multiplying through by $(\omega^2 - k^2 v_0^2)^2$ gives the general quartic polynomial in $\omega$:
+
+```math
+\omega^4 - \left[2 k^2 v_0^2 + (s_+ + s_-)\omega_{b,\text{rel}}^2\right]\omega^2 - 2(s_+ - s_-)\omega_{b,\text{rel}}^2 k v_0\,\omega + k^2 v_0^2\left[k^2 v_0^2 - (s_+ + s_-)\omega_{b,\text{rel}}^2\right] \;=\; 0.
+```
+
+For symmetric counter-streaming electron beams ($s_+ = s_- = 1$), the linear term in $\omega$ vanishes and the quartic reduces to a biquadratic in $\omega^2$:
+
+```math
+\left(\omega^2 - k^2 v_0^2\right)^2 - 2\omega_{b,\text{rel}}^2\left(\omega^2 + k^2 v_0^2\right) \;=\; 0
+\qquad \Longleftrightarrow \qquad
+\omega_\pm^2(k) \;=\; k^2 v_0^2 + \omega_{b,\text{rel}}^2 \;\pm\; \omega_{b,\text{rel}}\sqrt{\omega_{b,\text{rel}}^2 + 4 k^2 v_0^2}.
+```
+
+From these exact roots follow the analytical properties and code-path mutation predictions verified in `tests/test_085_particles_two_stream.py`:
+
+1. **Instability condition ($k v_0 < \sqrt{2}\,\omega_{b,\text{rel}}$)**: The fast branch $\omega_+^2(k) > 0$ is real for all $k$, representing stable high-frequency space-charge oscillations $\omega = \pm\omega_+(k)$. The slow branch $\omega_-^2(k)$ is negative ($\omega = \pm i\gamma(k)$, with one exponentially growing mode $e^{+\gamma t}$ and one exponentially decaying mode $e^{-\gamma t}$) if and only if
+   ```math
+   k^2 v_0^2\left(k^2 v_0^2 - 2\omega_{b,\text{rel}}^2\right) < 0 \qquad \Longleftrightarrow \qquad 0 < k v_0 < \sqrt{2}\,\omega_{b,\text{rel}}.
+   ```
+   For $k v_0 \ge \sqrt{2}\,\omega_{b,\text{rel}}$, $\omega_-^2(k) \ge 0$ and all four roots $\pm\omega_\pm(k)$ are purely real ($\gamma(k) = 0$).
+
+2. **Analytical growth rate $\gamma(k)$ and maximum $\gamma_{\max} = \omega_{b,\text{rel}} / 2$ at $k_1 v_0 = (\sqrt{3}/2)\,\omega_{b,\text{rel}}$**: On the unstable interval $0 < k v_0 < \sqrt{2}\,\omega_{b,\text{rel}}$, setting $\omega = +i\gamma(k)$ in $\omega_-^2(k) = -\gamma^2(k)$ gives
+   ```math
+   \gamma(k) \;=\; \sqrt{\omega_{b,\text{rel}}\sqrt{\omega_{b,\text{rel}}^2 + 4 k^2 v_0^2} - \left(k^2 v_0^2 + \omega_{b,\text{rel}}^2\right)}.
+   ```
+   Writing $\xi \equiv (k v_0 / \omega_{b,\text{rel}})^2$ and differentiating $\gamma^2/\omega_{b,\text{rel}}^2 = \sqrt{1 + 4\xi} - (1 + \xi)$ with respect to $\xi$,
+   ```math
+   \frac{\mathrm{d}}{\mathrm{d}\xi}\left(\frac{\gamma^2}{\omega_{b,\text{rel}}^2}\right) \;=\; \frac{2}{\sqrt{1 + 4\xi}} - 1 \;=\; 0
+   \qquad \Longleftrightarrow \qquad
+   \xi = \frac{3}{4},
+   ```
+   shows that the growth rate attains its unique maximum at
+   ```math
+   k_1\,v_0 \;=\; \frac{\sqrt{3}}{2}\,\omega_{b,\text{rel}}, \qquad
+   \gamma_{\max} \;=\; \gamma(k_1) \;=\; \omega_{b,\text{rel}}\sqrt{\sqrt{1 + 3} - \left(1 + \frac{3}{4}\right)} \;=\; \frac{\omega_{b,\text{rel}}}{2},
+   ```
+   while the companion oscillatory root at $k = k_1$ has frequency $\omega_+(k_1) = \frac{\sqrt{15}}{2}\,\omega_{b,\text{rel}}$.
+
+3. **Code-path mutation 1 — opposite force sign on one species ($s_+ = +1, s_- = -1$)**:
+   When the momentum push (`push_momentum`) is monkeypatched so the $-v_0$ beam sees the opposite Lorentz force sign ($-q\mathbf{E} = +e\mathbf{E}$) while its charge/current deposition retains the true charge $q = -e$, its susceptibility contribution changes sign ($s_+ = +1, s_- = -1$), yielding the cold-beam dispersion relation
+   ```math
+   1 \;=\; \frac{\omega_{b,\text{rel}}^2}{(\omega - k v_0)^2} - \frac{\omega_{b,\text{rel}}^2}{(\omega + k v_0)^2}
+   \qquad \Longleftrightarrow \qquad
+   \left(\omega^2 - k^2 v_0^2\right)^2 \;=\; 4\omega_{b,\text{rel}}^2 k v_0\,\omega,
+   ```
+   or equivalently the quartic $\omega^4 - 2 k^2 v_0^2 \omega^2 - 4\omega_{b,\text{rel}}^2 k v_0\,\omega + k^4 v_0^4 = 0$. At $k_1 v_0 = (\sqrt{3}/2)\,\omega_{b,\text{rel}}$ ($k_1^2 v_0^2 = \frac{3}{4}\omega_{b,\text{rel}}^2$), this quartic has two positive real roots and one unstable complex-conjugate root pair $\omega / \omega_{b,\text{rel}} = -0.977451 \pm 1.044708\,i$. Both the continuum root and the discrete FIT / leapfrog root (`s_plus=1.0, s_minus=-1.0`) are computed with the same root finder (`two_stream_continuum_growth_rate` and `two_stream_discrete_growth_rate`) and checked against the measured slope in `test_two_stream_mutations_fail_growth_check`.
+
+4. **Code-path mutation 2 — halved longitudinal field gather ($s_+ = s_- = 1/2$)**:
+   When `gather_fields` is monkeypatched to return $\frac{1}{2}E_z$, the effective squared plasma frequency of both beams is halved ($\omega_{b,\text{rel}}^2 \to \frac{1}{2}\omega_{b,\text{rel}}^2$, i.e. $s_+ = s_- = 1/2$). Substituting $\omega_{b,\text{rel}}^2 \to \frac{1}{2}\omega_{b,\text{rel}}^2$ into the continuum growth rate at $k_1^2 v_0^2 = \frac{3}{4}\omega_{b,\text{rel}}^2$ gives
+   ```math
+   \gamma_{\text{cont,gather}}(k_1)
+   \;=\; \sqrt{\frac{\omega_{b,\text{rel}}^2}{2}\sqrt{1 + \frac{4 k_1^2 v_0^2}{\omega_{b,\text{rel}}^2 / 2}} - \left(k_1^2 v_0^2 + \frac{\omega_{b,\text{rel}}^2}{2}\right)}
+   \;=\; \frac{1}{\sqrt{2}}\sqrt{\sqrt{7} - 2.5}\;\omega_{b,\text{rel}}
+   \;\approx\; 0.269955\,\omega_{b,\text{rel}},
+   ```
+   and its discrete equivalent is obtained from `two_stream_discrete_growth_rate(..., s_plus=0.5, s_minus=0.5)`.
+
+5. **Asymmetric beam density ratio ($n_+ : n_- = 1 : 0.5$, i.e. $s_+ = 1, s_- = 1/2$)**:
+   When the two counter-streaming beams have unequal unperturbed densities $n_+ \neq n_-$, the odd linear term $-2(s_+ - s_-)\omega_{b,\text{rel}}^2 k v_0\,\omega$ in the quartic dispersion relation is nonzero, breaking the $\omega \leftrightarrow -\omega$ symmetry so the unstable mode acquires a nonzero real phase velocity ($\omega = \omega_r + i\gamma$ with $\omega_r \neq 0$). For $s_+ = 1, s_- = 1/2$ at $k_1^2 v_0^2 = \frac{3}{4}\omega_{b,\text{rel}}^2$, the quartic
+   ```math
+   \omega^4 - 3\omega_{b,\text{rel}}^2 \omega^2 - \frac{\sqrt{3}}{2}\omega_{b,\text{rel}}^3 \omega - \frac{9}{16}\omega_{b,\text{rel}}^4 \;=\; 0
+   ```
+   has the continuum growing root $\omega / \omega_{b,\text{rel}} = -0.131521 + 0.404324\,i$, and its discrete FIT / leapfrog root is obtained from `two_stream_discrete_root(..., s_plus=1.0, s_minus=0.5)`. Since $|E_{z,1}(t)| = |\hat{E}_{z,1}(0)|\,e^{\gamma t}$ is insensitive to the uniform phase rotation $\exp(-i\omega_r t)$ once the non-growing modes have decayed, the growth rate $\gamma$ is fitted directly from $\ln|E_{z,1}(t)|$ over the same rule-defined window (`test_two_stream_linear_growth_and_stable_mode`), ensuring that a sign or species-indexing bug cannot hide behind symmetric beams.
+
+---
+
+##### 2. Discrete FIT and leapfrog dispersion relation
+
+On a discrete FIT grid with longitudinal cell size $\Delta z$, time step $\Delta t$, Esirkepov current deposition [Esirkepov, 2001] of B-spline order $p = \text{order}$, and field gather of longitudinal staggered spline order $p_g$ ($p_g = p - 1$ for `gather="galerkin"` and $p_g = p$ for `gather="momentum"`), the discrete two-stream dispersion relation follows the exact operator-symbol derivation used by `cold_plasma_dispersion_discrete` (`wakis/particles/solver.py`):
+
+1. **Replacement of $k$ by its FIT operator symbol and Brillouin-zone alias weights**:
+   - A plane-wave displacement $\delta z_s \propto \exp(i k_m z)$ of beam $s$ at Brillouin-zone alias wavenumber $k_m = k + 2\pi m / \Delta z$ ($m \in \mathbb{Z}$) produces a point-particle charge density perturbation $\delta\rho_s(k_m) = -i k_m n_s q\,\delta z_s$, which is deposited onto primal nodes with the order-$p$ nodal B-spline Fourier symbol $\hat{S}^{(p)}(k_m) = \operatorname{sinc}^{p+1}(k_m\Delta z / 2)$ ($\operatorname{sinc}(x) \equiv \sin x / x$).
+   - By Esirkepov's discrete charge-continuity identity $\tilde{\mathbf{S}}\mathbf{J}^{n+1/2} = -(\mathbf{q}^{n+1} - \mathbf{q}^n)/\Delta t$, the 1D discrete Gauss equation $\tilde{\mathbf{S}}_z(\varepsilon_0 \mathbf{E}_z^n) = \mathbf{q}^n + \mathbf{q}_{\text{bg}}$ holds to machine round-off at every step $n$. In Fourier space, the FIT dual divergence operator $\tilde{\mathbf{S}}_z$ replaces the continuum derivative $i k$ by its staggered FIT symbol
+     ```math
+     i\,\hat{k}_{\text{FIT}}(k)\,e^{-i k\Delta z / 2}, \qquad \hat{k}_{\text{FIT}}(k) \;\equiv\; \frac{2}{\Delta z}\sin\!\left(\frac{k\Delta z}{2}\right).
+     ```
+   - Dividing the deposited node charge at alias $k_m$ by the FIT divergence symbol $\hat{k}_{\text{FIT}}(k)$ yields the effective Esirkepov edge symbol of order $p - 1$:
+     ```math
+     \hat{W}_{\text{dep}}(k_m)
+     \;=\; \frac{k_m}{\hat{k}_{\text{FIT}}(k)}\,e^{-i k_m \Delta z / 2}\left[\operatorname{sinc}\!\left(\frac{k_m\Delta z}{2}\right)\right]^{p+1}
+     \;=\; e^{-i k\Delta z / 2}\left[\operatorname{sinc}\!\left(\frac{k_m\Delta z}{2}\right)\right]^p.
+     ```
+   - Interpolating the staggered edge field $E_{z,k+1/2}^n$ back to the particle trajectories with longitudinal spline order $p_g$ multiplies by the conjugate gather symbol $\hat{W}_{\text{gat}}^*(k_m) = e^{+i k\Delta z / 2}\operatorname{sinc}^{p_g + 1}(k_m\Delta z / 2)$. The combined deposit-gather spatial weight at alias $m$ is therefore
+     ```math
+     \hat{W}_{\text{dep}}(k_m)\,\hat{W}_{\text{gat}}^*(k_m) \;=\; \left[\operatorname{sinc}\!\left(\frac{k_m\Delta z}{2}\right)\right]^{p + p_g + 1} \;=\; \left[\operatorname{sinc}\!\left(\frac{k\Delta z}{2} + \pi m\right)\right]^{p + p_g + 1}.
+     ```
+     In particular, for the fundamental mode ($m = 0$), $\operatorname{sinc}(k\Delta z / 2) \equiv \hat{k}_{\text{FIT}}(k) / k$, so the fundamental grid factor is $\left[\hat{k}_{\text{FIT}}(k) / k\right]^{p + p_g + 1}$.
+
+2. **Leapfrog Doppler-shifted time symbol**:
+   Along the unperturbed streaming trajectory $z_{p,0}^n = z_{p,0} + s v_0 n\Delta t$ of beam $s \in \{+1, -1\}$, the $m$-th spatial alias oscillates with Doppler-shifted frequency $\omega - s k_m v_0$. The leapfrog momentum-position advance replaces $-i(\omega - s k_m v_0)$ by $-i\,\Omega_t(\omega - s k_m v_0)$ with
+   ```math
+   \Omega_t(\varpi) \;\equiv\; \frac{2}{\Delta t}\sin\!\left(\frac{\varpi\,\Delta t}{2}\right).
+   ```
+
+3. **Full discrete dispersion relation and reduction to `cold_plasma_dispersion_discrete`**:
+   Summing over both beams and all Brillouin-zone aliases $m \in \mathbb{Z}$ gives the discrete two-stream dispersion relation (`two_stream_discrete_root` and `two_stream_discrete_growth_rate` in `tests/_two_stream_dispersion.py`) [Birdsall & Langdon, 1991]:
+   ```math
+   1 \;=\; \omega_{b,\text{rel}}^2 \sum_{m=-\infty}^{\infty} \left[\operatorname{sinc}\!\left(\frac{k\Delta z}{2} + \pi m\right)\right]^{p + p_g + 1} \left\{ \frac{s_+}{\Omega_t^2(\omega - k_m v_0)} + \frac{s_-}{\Omega_t^2(\omega + k_m v_0)} \right\}.
+   ```
+   - **Stationary limit ($v_0 \to 0$)**: When $v_0 = 0$ and $s_+ = s_- = 1$, the leapfrog denominator $\Omega_t^2(\omega)$ factors out of the alias sum, yielding $\Omega_t^2(\omega) = 2\omega_{b,\text{rel}}^2\sum_{m=-\infty}^{\infty}\operatorname{sinc}^{p + p_g + 1}(k\Delta z / 2 + \pi m) = \omega_{p0}^2\,\kappa_{\text{grid}}^2(k\Delta z)$ with $\omega_{p0} = \sqrt{2}\,\omega_{b,\text{rel}}$, which is **identically** `cold_plasma_dispersion_discrete` (`wakis/particles/solver.py`, verified in `test_dispersion_identities_and_stationary_limit`).
+   - **Leading finite-grid and finite-$\Delta t$ error expansion ($v_0 \neq 0$) and CFL time-step scaling**: For a resolved grid ($k\Delta z \ll 2\pi$), the $m = 0$ weight expands as $\left[\hat{k}_{\text{FIT}}(k)/k\right]^{p + p_g + 1} = 1 - \frac{p + p_g + 1}{24}(k\Delta z)^2 + O\bigl((k\Delta z)^4\bigr)$ and $\Omega_t(\varpi) = \varpi\bigl[1 - \frac{1}{24}(\varpi\Delta t)^2 + O((\varpi\Delta t)^4)\bigr]$. At $k_1 v_0 = (\sqrt{3}/2)\,\omega_{b,\text{rel}}$, the discrete growth rate approaches the continuum prediction at second order in $\Delta z$ and $\Delta t$:
+     ```math
+     \frac{\gamma_{\text{disc}}(k_1) - \gamma_{\text{cont}}(k_1)}{\gamma_{\text{cont}}(k_1)}
+     \;=\; -\frac{p + p_g + 1}{48}\,(k_1\Delta z)^2 \;+\; O\bigl((\omega_b\Delta t)^2,\; (k_1\Delta z)^4\bigr).
+     ```
+     In `SolverFIT3D` with fixed transverse aspect ratio $\Delta x = \Delta y = 8\Delta z$ and Courant number $\mathrm{CFL} = 0.8$, the 3D Courant–Friedrichs–Lewy (CFL) time step scales strictly linearly with $\Delta z$:
+     ```math
+     \Delta t \;=\; \frac{\mathrm{CFL}}{c\sqrt{\Delta x^{-2} + \Delta y^{-2} + \Delta z^{-2}}} \;=\; \frac{\mathrm{CFL}}{\sqrt{1 + 2/64}}\,\frac{\Delta z}{c} \;=\; \frac{0.8}{\sqrt{33/32}}\,\frac{\Delta z}{c} \;\approx\; 0.7878\,\frac{\Delta z}{c}.
+     ```
+     Since $k_1\Delta z = 2\pi / N_z$ and $\omega_b / (k_1 v_0) = \frac{2}{\sqrt{3}}\gamma_0^{3/2}$, the dimensionless time step at $v_0 / c = 0.06$ and $N_z = 16$ ($k_1\Delta z = \pi / 8 \approx 0.3927$) satisfies
+     ```math
+     \omega_b\Delta t \;=\; \frac{2}{\sqrt{3}}\,\gamma_0^{3/2}\left(\frac{v_0}{c}\right)\frac{\mathrm{CFL}}{\sqrt{33/32}}\,(k_1\Delta z) \;\approx\; 0.02145
+     \qquad \Longrightarrow \qquad
+     (\omega_b\Delta t)^2 \;\approx\; 4.60\times 10^{-4} \;\approx\; 5\times 10^{-4},
+     ```
+     so the ratio of temporal to spatial discretization error is $(\omega_b\Delta t / (k_1\Delta z))^2 \approx 3.0\times 10^{-3}$ ($0.3\%$), making the finite-$\Delta t$ error negligible compared with the spatial grid error $(k_1\Delta z)^2 = (\pi / 8)^2 \approx 0.1542$.
+
+---
+
+##### 3. Relativistic longitudinal mass correction ($\gamma_0^{-3/2}$ scaling)
+
+In the relativistic Boris, Vay, and Higuera–Cary pushers (`wakis/particles/pushers.py`), the longitudinal proper velocity $u_z = \gamma v_z$ evolves according to $\frac{\mathrm{d}u_z}{\mathrm{d}t} = \frac{q}{m_e} E_z$. Linearizing $v_z = u_z / \sqrt{1 + u_z^2 / c^2}$ around the unperturbed streaming state $u_{z,0} = \pm \gamma_0 v_0$ gives:
+
+```math
+\delta v_z \;=\; \frac{\mathrm{d}v_z}{\mathrm{d}u_z}\Big|_{u_z = \pm\gamma_0 v_0}\,\delta u_z \;=\; \gamma_0^{-3}\,\delta u_z
+\qquad \Longrightarrow \qquad
+\gamma_0^3 m_e\,\frac{\mathrm{d}\,\delta v_z}{\mathrm{d}t} \;=\; -e\,\delta E_z.
+```
+
+Replacing the rest mass $m_e$ by the longitudinal relativistic mass $\gamma_0^3 m_e$ in $\omega_b = \sqrt{n_b e^2 / (\varepsilon_0 m_e)}$ scales the effective plasma frequency, maximum growth rate, and critical wavenumber by $\gamma_0^{-3/2}$:
+
+```math
+\omega_{b,\text{rel}} \;=\; \gamma_0^{-3/2}\,\omega_b \;=\; \left(1 - \frac{v_0^2}{c^2}\right)^{3/4}\omega_b \;=\; \omega_b\left[1 - \frac{3}{4}\left(\frac{v_0}{c}\right)^2 + \frac{3}{32}\left(\frac{v_0}{c}\right)^4 + O\!\left(\left(\frac{v_0}{c}\right)^6\right)\right].
+```
+
+At $v_0 = 0.06\,c$ ($\gamma_0 = 1.0018049$, used in `tests/test_085_particles_two_stream.py` and `examples/022_particles_two_stream_instability.py`), $1 - \gamma_0^{-3/2} = 2.70\times 10^{-3}$ ($0.27\%$).
+
+---
+
+##### 4. Quiet-start seeding, linear window rule, trapping saturation, and verification
+
+In `tests/test_085_particles_two_stream.py` and `examples/022_particles_two_stream_instability.py`, the periodic box length $L_z = 2\pi / k_1$ is chosen so that the fundamental mode $k_1 = 2\pi / L_z$ sits at $k_1 v_0 = (\sqrt{3}/2)\,\omega_{b,\text{rel}}$. Each beam is initialized on a quiet-start uniform lattice $z_{p,0} = (p + 1/2) L_z / N_p$ ($N_p = N_z N_{\text{ppc},z}$) displaced by a small sinusoidal perturbation
+
+```math
+z_\pm(0) \;=\; \left(z_{p,0} - \frac{\varepsilon}{k_1}\sin\!\left(k_1 z_{p,0} \pm \frac{\pi}{3}\right)\right) \bmod L_z,
+```
+
+producing initial beam density perturbations $\delta n_\pm(z, 0) = \varepsilon n_\pm \cos(k_1 z \pm \pi/3)$. Prior to calling `ParticleSolver.attach()`, the initial longitudinal electric field $E_z(0)$ is computed by solving the 1D discrete Gauss equation $\tilde{\mathbf{S}}_z(\varepsilon_0 \mathbf{E}_z^0) = \mathbf{q}_{\text{beams}}^0 + \mathbf{q}_{\text{bg}}$ with zero spatial mean.
+
+On a periodic domain, $\sum_{k=0}^{N_z-1} (\tilde{\mathbf{S}}_z \tilde{\mathbf{d}})_k = 0$ identically, so a physically valid periodic load must be charge-neutral ($\sum_k (q_{\text{beams},k}^0 + q_{\text{bg},k}) = 0$). Note that `ParticleSolver.attach()` infers `solver._particles_q_bg = div_d0 - q0` (`wakis/particles/solver.py`), which makes the initial Gauss residual `gauss_init` zero by construction (an algebraic identity); `gauss_final` after time-stepping is the nontrivial Esirkepov charge-conservation check. If a non-neutral load is supplied on a periodic domain, `run_two_stream_simulation` raises `ValueError`, and raw cumulative-sum initialization places a compensating point-charge sheet at node $k = 0$ (`test_two_stream_mutations_fail_growth_check`).
+
+1. **Wave-particle trapping saturation amplitude $E_{\text{trap}}$**:
+   In the stationary wave frame ($\operatorname{Re}(\omega) = 0$), beam electrons enter the electrostatic potential well $\phi(z) = (E_1 / k_1)\sin(k_1 z)$ with streaming kinetic energy $\frac{1}{2}\gamma_0^3 m_e v_0^2$. Wave-particle trapping saturates the linear instability when $2 e \phi_{\text{trap}} = 2 e E_{\text{trap}} / k_1 = \frac{1}{2}\gamma_0^3 m_e v_0^2$:
+   ```math
+   E_{\text{trap}} \;=\; \frac{\gamma_0^3 m_e k_1 v_0^2}{2 e}, \qquad
+   \frac{E_0}{E_{\text{trap}}} \;=\; \frac{e n_b \varepsilon / (\varepsilon_0 k_1)}{E_{\text{trap}}} \;=\; \frac{2\omega_{b,\text{rel}}^2}{k_1^2 v_0^2}\,\varepsilon \;=\; \frac{8}{3}\,\varepsilon,
+   ```
+   where $\gamma_0^3$ cancels identically because $k_1$ is chosen from $\omega_{b,\text{rel}} = \gamma_0^{-3/2}\omega_b$ via $k_1^2 v_0^2 = \frac{3}{4}\omega_{b,\text{rel}}^2 = \frac{3}{4}\gamma_0^{-3}\omega_b^2$.
+
+2. **Normal-mode decomposition of the position-only seed and per-case window bounds $[t_{\text{start}}(\text{case}),\, t_{\text{end}}(\alpha_{\text{sat}})]$ (`two_stream_seed_mode_shares`, `two_stream_window_bounds_wb`)**:
+   For initial position displacements $\delta z_a(z, 0) = -(\varepsilon / k)\sin(k z + \phi_a)$ ($\phi_\pm = \pm\pi/3$) and zero initial velocity perturbation $\delta v_{z,a}(z, 0) = 0$ on beam $a \in \{+, -\}$ ($v_\pm = \pm v_0$, relative density weight $d_+ = 1, d_- = n_- / n_+$), Gauss's law $i k \varepsilon_0 \hat{E}_a(0) = -e\widehat{\delta n}_a(0)$ gives the initial complex Fourier harmonic contributed by beam $a$:
+   ```math
+   \hat{E}_a(0) \;=\; i E_0 d_a e^{i\phi_a}, \qquad E_0 \;\equiv\; \frac{e n_b \varepsilon}{\varepsilon_0 k}, \qquad
+   \hat{E}(0) \;=\; \hat{E}_+(0) + \hat{E}_-(0) \;=\; i E_0\left(d_+ e^{i\pi/3} + d_- e^{-i\pi/3}\right).
+   ```
+   Taking the one-sided Laplace transform $\tilde{f}(\omega) = \int_0^\infty f(t) e^{i\omega t}\,\mathrm{d}t$ ($\operatorname{Im}\omega > \gamma$) of the linearized continuity equation $(\partial_t + i k v_a)\delta n_a + i k n_{a,0}\delta v_{z,a} = 0$ and momentum equation $(\partial_t + i k v_a)\delta v_{z,a} = \bigl(q_a^{\text{push}} / (\gamma_0^3 m_e)\bigr) E_z$ with $\delta v_{z,a}(0) = 0$ yields
+   ```math
+   \tilde{E}_a(\omega) \;=\; \frac{i \hat{E}_a(0)}{\omega - k v_a} + \frac{s_a \omega_{b,\text{rel}}^2}{(\omega - k v_a)^2}\,\tilde{E}(\omega)
+   \qquad \Longrightarrow \qquad
+   \tilde{E}(\omega) \;=\; i\,\frac{(\omega^2 - k^2 v_0^2)\left[(\omega + k v_0)\hat{E}_+(0) + (\omega - k v_0)\hat{E}_-(0)\right]}{P(\omega)},
+   ```
+   where $P(\omega) = (\omega^2 - k^2 v_0^2)^2 \varepsilon_\parallel(k, \omega) = \prod_{j=1}^4 (\omega - \omega_j)$ is the monic quartic dispersion polynomial. Inverting by residues decomposes $\hat{E}(t) = \sum_{j=1}^4 c_j e^{-i\omega_j t}$ with exact mode amplitudes
+   ```math
+   \frac{c_j}{E_0} \;=\; \frac{(\hat{\omega}_j^2 - \hat{k}^2)\left[(\hat{\omega}_j + \hat{k})\,i d_+ e^{i\phi_+} + (\hat{\omega}_j - \hat{k})\,i d_- e^{i\phi_-}\right]}{P'(\hat{\omega}_j)}, \qquad \hat{\omega}_j \equiv \frac{\omega_j}{\omega_{b,\text{rel}}}, \quad \hat{k} \equiv \frac{k v_0}{\omega_{b,\text{rel}}}.
+   ```
+   For equal symmetric beams ($s_+ = s_- = 1, d_+ = d_- = 1, \phi_\pm = \pm\pi/3$), $\hat{E}_+(0) + \hat{E}_-(0) = i E_0$ ($|\hat{E}(0)| = E_0$) and $\hat{E}_+(0) - \hat{E}_-(0) = -\sqrt{3}\,E_0$, so $P(\omega) = (\omega^2 + \gamma^2)(\omega^2 - \omega_+^2)$ gives closed-form shares at $\hat{k}_1 = \sqrt{3}/2$ ($\gamma = \frac{1}{2}\omega_{b,\text{rel}}, \omega_+ = \frac{\sqrt{15}}{2}\omega_{b,\text{rel}}$):
+   - *Growing mode ($\omega_1 = +i\gamma$)*:
+     ```math
+     a_{\text{grow}} \;\equiv\; \frac{|c_{\text{grow}}|}{E_0} \;=\; \frac{\gamma^2 + k_1^2 v_0^2}{\gamma^2 + \omega_+^2}\,\frac{\gamma + \sqrt{3} k_1 v_0}{2\gamma} \;=\; \frac{1/4 + 3/4}{1/4 + 15/4}\cdot\frac{1/2 + 3/2}{1} \;=\; \frac{1}{2}.
+     ```
+   - *Decaying mode ($\omega_2 = -i\gamma$)*:
+     ```math
+     a_{\text{decay}} \;\equiv\; \frac{|c_{\text{decay}}|}{E_0} \;=\; \frac{\gamma^2 + k_1^2 v_0^2}{\gamma^2 + \omega_+^2}\,\frac{|\gamma - \sqrt{3} k_1 v_0|}{2\gamma} \;=\; \frac{1}{4}.
+     ```
+   - *Non-decaying oscillatory $\omega_+$ branch ($\omega_{3,4} = \pm\omega_+$)*:
+     ```math
+     \frac{c_{+,+} e^{-i\omega_+ t} + c_{+,-} e^{+i\omega_+ t}}{i E_0} \;=\; \frac{\omega_+^2 - k_1^2 v_0^2}{\omega_+^2 + \gamma^2}\left[\cos(\omega_+ t) + \frac{\sqrt{3} k_1 v_0}{\omega_+}\sin(\omega_+ t)\right],
+     ```
+     whose envelope share relative to $E_0$ is
+     ```math
+     a_{\text{osc}} \;\equiv\; \frac{|c_{+,+}| + |c_{+,-}|}{E_0} \;=\; \frac{\omega_+^2 - k_1^2 v_0^2}{\omega_+^2 + \gamma^2}\sqrt{1 + \frac{3 k_1^2 v_0^2}{\omega_+^2}} \;=\; \frac{3}{4}\sqrt{1 + \frac{3}{5}} \;=\; \frac{3}{\sqrt{10}}, \qquad
+     \frac{a_{\text{osc}}}{a_{\text{grow}}} \;=\; \frac{6}{\sqrt{10}} \;=\; 3\sqrt{\frac{2}{5}}.
+     ```
+   Because the $\omega_+$ branch is undamped ($\operatorname{Im}\omega_+ = 0$), its amplitude relative to the growing mode decays only as $(a_{\text{osc}} / a_{\text{grow}}) e^{-\gamma t}$ (whereas the decaying mode falls as $(a_{\text{decay}} / a_{\text{grow}}) e^{-2\gamma t}$). Both `tests/test_085_particles_two_stream.py` and `examples/022_particles_two_stream_instability.py` therefore compute the linear fit window $[t_{\text{start}}(\text{case}),\, t_{\text{end}}(\text{case})]$ **per case** from `two_stream_window_bounds_wb` in `tests/_two_stream_dispersion.py`:
+   - *Per-case start rule (`TRANSIENT_TOL = 1.0e-3`)*: For each case (symmetric, asymmetric, opposite-force mutation, halved-gather mutation), $t_{\text{start}}(\text{case})$ is set from that case's analytic seed shares $(a_{\text{grow}}, a_{\text{osc}})$ and discrete growth rate $\gamma_{\text{disc}}(\text{case})$ (never $\gamma_{\max}$):
+     ```math
+     \frac{a_{\text{osc}}(\text{case})}{a_{\text{grow}}(\text{case})}\,e^{-\gamma_{\text{disc}}(\text{case})\,t_{\text{start}}(\text{case})} \;\le\; 10^{-3}
+     \qquad \Longleftrightarrow \qquad
+     t_{\text{start}}(\text{case}) \;=\; \frac{\ln\!\left(10^3\,\dfrac{a_{\text{osc}}(\text{case})}{a_{\text{grow}}(\text{case})}\right)}{\gamma_{\text{disc}}(\text{case})}.
+     ```
+   - *Per-case end rule (`ALPHA_SAT = 1.0e-2`) and per-case integration horizon (`1.5 * t_end_pred(case)`)*: The linear fit window ends when $|E_{z,1}(t)|$ crosses $\alpha_{\text{sat}} E_{\text{trap}}$ ($\alpha_{\text{sat}} = 10^{-2}$). Since the growing mode starts at amplitude $a_{\text{grow}} E_0 = a_{\text{grow}}\frac{8\varepsilon}{3} E_{\text{trap}}$ (with $\gamma_0^3$ cancelling because $k_1 v_0 = (\sqrt{3}/2)\,\omega_{b,\text{rel}}$), the analytical predicted saturation window end is
+     ```math
+     t_{\text{end,pred}}(\text{case}) \;=\; \frac{\ln\!\left(\dfrac{3\,\alpha_{\text{sat}}}{8\varepsilon\,a_{\text{grow}}(\text{case})}\right)}{\gamma_{\text{disc}}(\text{case})}.
+     ```
+     Each unstable verification case integrates to its own per-case horizon $1.5\,t_{\text{end,pred}}(\text{case})$ (with `T_HORIZON_WB` recording the suite maximum $1.5 \times \max_{\text{case}}\bigl(\omega_b t_{\text{end,pred}}(\text{case})\bigr)$ in `two_stream_suite_horizon_wb`), and every test asserts $\omega_b t_{\text{horizon}}(\text{case}) = 1.5\,\omega_b t_{\text{end,pred}}(\text{case}) > \omega_b t_{\text{win,end}}(\text{case})$ and that `"alpha_sat"` ended the window. If fewer than 5 points lie in the window, `AssertionError("no linear window")` is raised (never a `gamma_fit = 0.0` fallback).
+
+3. **Tolerance on the fitted growth rate, stable-mode beat envelope check, and convergence bands**:
+   The fitted slope $\gamma_{\text{fit}}$ from ordinary least-squares regression of $\ln|E_{z,1}(t)|$ over $[t_{\text{start}},\, t_{\text{end}}]$ is checked against $\gamma_{\text{disc}}(k_1)$ within the sum of three error bounds:
+   ```math
+   \left|\gamma_{\text{fit}} - \gamma_{\text{disc}}(k_1)\right| \;\le\; \mathrm{tol}_\gamma \;\equiv\; 3\,\sigma_{\text{fit}} \;+\; \delta\gamma_{\text{nl}} \;+\; \delta\gamma_{\text{lat}},
+   ```
+   where:
+   - $3\,\sigma_{\text{fit}}$ is **empirical (single-run OLS SE)**: three times the ordinary least-squares slope standard error from a single run with autocorrelated residual $e^{-\gamma t}\cos(\omega_+ t)$ beat modulation across the window;
+   - $\delta\gamma_{\text{nl}} = \frac{3}{16}|\gamma_{\text{disc}}|\bigl(|E_{z,1}(t_{\text{end}})| / E_{\text{trap}}\bigr)^2$ (`two_stream_nonlinear_bound`) is an **order-of-magnitude** quadratic $O(\text{amplitude}^2)$ weakly nonlinear detuning bound $\delta\gamma_{\text{nl}} / |\gamma_{\text{disc}}| \sim (|\delta v_{z,1}| / v_0)^2$: by spatial translation symmetry $z \to z + \pi/k_1$ ($E_1 \to -E_1$), the leading nonlinear shift in the instantaneous growth rate of the fundamental mode is quadratic in the first-order velocity modulation $|\delta v_{z,1}| / v_0 = \frac{k_1 v_0}{2\sqrt{\gamma^2 + k_1^2 v_0^2}}\frac{|E_1|}{E_{\text{trap}}} = \frac{\sqrt{3}}{4}\frac{|E_1|}{E_{\text{trap}}}$ (using $E_{\text{trap}} = \frac{1}{2}\gamma_0^3 m_e k_1 v_0^2 / e$);
+   - $\delta\gamma_{\text{lat}}$ (`two_stream_lattice_alias_bound`) is a **heuristic** particle-lattice alias bound from the alias of the $N_p = N_z N_{\text{ppc},z}$ quiet-start lattice at $k_{\text{lat},m} = (1 + m N_p) k_1 \approx m N_p k_1$ ($m \in \mathbb{Z}\setminus\{0\}$): since $k_{\text{lat},m}\Delta z / 2 = k_1\Delta z / 2 + \pi m N_{\text{ppc},z}$, the deposit-gather B-spline symbol $\operatorname{sinc}^{p + p_g + 1}(k\Delta z / 2)$ attenuates the $m$-th particle-lattice harmonic relative to $k_1$ by $|1 + m N_p|^{-(p + p_g + 1)}$, motivating
+     ```math
+     \delta\gamma_{\text{lat}} \;=\; |\gamma_{\text{disc}}| \sum_{m=1}^{M_{\text{lat}}} \left[ \frac{1}{(m N_p - 1)^{p + p_g + 1}} + \frac{1}{(m N_p + 1)^{p + p_g + 1}} \right] \;\simeq\; \frac{2\,\zeta(p + p_g + 1)}{N_p^{p + p_g + 1}}\,|\gamma_{\text{disc}}|.
+     ```
+   At both $N_z = 16$ and $N_z = 32$, $\mathrm{tol}_\gamma < |\gamma_{\text{cont}}(k_1) - \gamma_{\text{disc}}(k_1)|$, confirming that $\mathrm{tol}_\gamma$ separates the discrete FIT dispersion from the continuum prediction. Note that $N_z = 16$ resolves the two-beam plasma wavelength $\lambda_p = 2\pi u_0 / (\sqrt{2}\omega_b)$ with $N_z\sqrt{3}/(2\sqrt{2})$ cells — a deliberate deviation below the $\ge 20$ cells/$\lambda_p$ production guideline in Subsection 5 below (`examples/022_particles_two_stream_instability.py` uses $N_z = 36$ in `--smoke` mode and $N_z = 64$ in full mode, both satisfying $N_z\sqrt{3}/(2\sqrt{2}) \ge 20$) so that the $O((k_1\Delta z)^2)$ discrete shift at $N_z = 16$ is large enough to be cleanly separated from $\mathrm{tol}_\gamma$ and to measure second-order spatial convergence from $N_z = 16$ to $N_z = 32$.
+   - *Stable wavenumber $k_2 = 2 k_1$ ($k_2 v_0 = \sqrt{3}\,\omega_{b,\text{rel}} > \sqrt{2}\,\omega_{b,\text{rel}}$) verification (`two_stream_discrete_uhp_root_count`, `two_stream_discrete_complex_roots`, `two_stream_stable_beat_envelope_bound`)*:
+     - First, `two_stream_discrete_uhp_root_count` counts the roots with $\operatorname{Im}\omega > 0$ inside the fundamental Nyquist strip $\operatorname{Re}\omega \in [-\pi/\Delta t, +\pi/\Delta t]$ by the argument principle (winding number of the discrete dispersion function with real-axis poles removed around an upper-half-plane rectangular contour bounded by $\pm\pi/\Delta t$), verifying that the upper-half-plane root count is $0$ at $k_2$ and $1$ at $k_1$ (supplemented by `two_stream_discrete_complex_roots`, which searches dominant aliases $|m| \le 4$, not exhaustive).
+     - Second, the stable run uses its own derived horizon $T_{\text{stable}} = 3\pi / \omega_{-,\text{disc}}(k_2)$ — the shortest horizon that covers one slow half-period $\pi / \omega_{-,\text{disc}}(k_2)$ in each of the three equal thirds of the run (and $\frac{3}{2}\bigl(\omega_{+,\text{disc}}(k_2)/\omega_{-,\text{disc}}(k_2) - 1\bigr)$ beat periods $2\pi / (\omega_{+,\text{disc}} - \omega_{-,\text{disc}})$) — and asserts $\max_t |E_{z,1}(t)| \le 10^{-3}\,|E_{z,2}(0)|$ so that second-harmonic contamination from the unseeded unstable fundamental mode $k_1$ cannot reach the $k_2$ envelope test.
+     - Third, because all roots at $k_2$ are real ($\omega_\mp(k_2) = \sqrt{4 \mp \sqrt{13}}\,\omega_{b,\text{rel}}$ in the continuum limit), $|E_{z,2}(t)|$ is a two-real-frequency beat $\hat{E}_2(t)/(i E_0) = A_-\cos(\omega_{-,\text{disc}} t - \varphi_-) - A_+\cos(\omega_{+,\text{disc}} t - \varphi_+)$ with supremum $A_{\max} = A_- + A_+$. Since the fast extremum of the required opposite sign recurs every $2\pi / \omega_{+,\text{disc}}$, the slow-mode phase offset at the measured maximum in each third can be up to $\Delta\theta = \pi\,\omega_{-,\text{disc}} / \omega_{+,\text{disc}}$. The test compares the envelope maximum over the last third $M_3 = \max_{t \in [2T_{\text{stable}}/3, T_{\text{stable}}]} |E_{z,2}(t)|$ against the first third $M_1 = \max_{t \in [0, T_{\text{stable}}/3]} |E_{z,2}(t)|$ within the derived beat-sampling tolerance
+       ```math
+       \frac{|M_3 - M_1|}{\max(M_1, M_3)} \;\le\; \mathrm{tol}_{\text{env}} \;\equiv\; \frac{A_-}{A_{\max}}\,\bigl(1 - \cos\Delta\theta\bigr), \qquad \Delta\theta \;=\; \pi\,\frac{\omega_{-,\text{disc}}}{\omega_{+,\text{disc}}},
+       ```
+       and reports the test's minimum detectable growth rate $\gamma_{\min,\text{detectable}} = \ln(1 + \mathrm{tol}_{\text{env}}) / \Delta t_{13}$ across the midpoint separation $\Delta t_{13} = \frac{2}{3} T_{\text{stable}}$.
+   - *Derived convergence order bands (`test_two_stream_grid_and_particle_convergence`)*:
+     - For the spatial grid refinement $N_z \in \{16, 32\}$, writing $\Delta\gamma_{N_z} \equiv |\gamma_{\text{disc}}(N_z) - \gamma_{\text{cont}}|$ and using $|\gamma_{\text{fit}}(N_z) - \gamma_{\text{disc}}(N_z)| \le \mathrm{tol}_{N_z}$ bounds the measured continuum error order $p_{\text{grid}} = \log_2\bigl(|\gamma_{\text{fit}}(16) - \gamma_{\text{cont}}| / |\gamma_{\text{fit}}(32) - \gamma_{\text{cont}}|\bigr)$ within the derived interval
+       ```math
+       \left[\log_2\!\left(\frac{\Delta\gamma_{16} - \mathrm{tol}_{16}}{\Delta\gamma_{32} + \mathrm{tol}_{32}}\right),\; \log_2\!\left(\frac{\Delta\gamma_{16} + \mathrm{tol}_{16}}{\Delta\gamma_{32} - \mathrm{tol}_{32}}\right)\right].
+       ```
+     - For the macroparticle count refinement $N_{\text{ppc}} \in \{8, 128\}$ across $N_s = 16$ independent random seeds run in parallel, each sample variance of $\gamma_{\text{fit}} - \gamma_{\text{disc}}$ follows $s^2 \sim (\sigma^2 / \nu)\,\chi^2_\nu$ with $\nu = N_s - 1 = 15$. By the delta method on $\ln s$, $\operatorname{Var}\bigl(\ln(s_{\text{low}} / s_{\text{high}})\bigr) = \frac{1}{2\nu} + \frac{1}{2\nu} = \frac{1}{N_s - 1}$, yielding the $\chi^2$-derived $3\sigma_p$ convergence order band around the theoretical Monte-Carlo order $0.5$:
+       ```math
+       p_{\text{ppc,std}} \;\in\; \left[0.5 - 3\sigma_p,\; 0.5 + 3\sigma_p\right], \qquad \sigma_p \;=\; \frac{1}{\sqrt{N_s - 1}\,\ln(N_{\text{ppc,high}} / N_{\text{ppc,low}})}.
+       ```
+       This $\chi^2$ band applies strictly to the standard-deviation ratio $s_{\text{low}} / s_{\text{high}}$, and at $N_s = 16$ ($3\sigma_p \approx 0.279$, band $[0.221, 0.779]$) it has low statistical power: it cannot distinguish order $0.5$ from $0.25$ or $0.75$.
+
+4. **Reproducing the verification and example runs**:
+   To print the runtime growth rates, convergence orders, Gauss residuals, mutation checks, and generate the figures in `docs/img/`, run:
+   ```bash
+   pytest tests/test_085_particles_two_stream.py -v -s
+   python examples/022_particles_two_stream_instability.py --smoke
+   ```
+
+![Two-stream mode amplitude growth and dispersion relation](img/particles_two_stream_growth.png)
+
+![Longitudinal phase-space evolution from linear modulation to trapping vortex](img/particles_two_stream_phase_space.png)
+
+---
+
+##### 5. Limits & Failure Modes
+
+- **Stable-mode detection power**: the stable $k_2$ run uses its own short horizon $T_\text{stable} = 3\pi/\omega_-(k_2)$, so that the second harmonic of the unseeded, round-off-driven $k_1$ mode cannot reach the envelope test. The price is sensitivity: the envelope test detects growth only above $\gamma_\text{min} = \ln(1 + \text{tol}_\text{env})/(\tfrac{2}{3}T_\text{stable})$, a few percent of $\gamma_\text{max}$; the test prints the value. The argument-principle root count (`two_stream_discrete_uhp_root_count`) covers smaller rates, except roots with $0 < \operatorname{Im}\omega < 10^{-4}\,\omega_{b,\text{rel}}$, which lie below its contour.
+
+- **The 1D reduction ($k_\perp = 0$ vs multidimensional oblique and filamentation modes)**:
+  The dispersion relation $1 = \omega_{b,\text{rel}}^2 / (\omega - k v_0)^2 + \omega_{b,\text{rel}}^2 / (\omega + k v_0)^2$ assumes purely longitudinal electrostatic wavevectors $\mathbf{k} = k\,\hat{\mathbf{z}}$ ($\mathbf{k}_\perp = \mathbf{0}$, $\delta\mathbf{B} = \mathbf{0}$). In `tests/test_085_particles_two_stream.py` and `examples/022_particles_two_stream_instability.py`, the 1D regime is enforced on the 3D FIT grid by initializing transversely uniform particle sheets on a narrow periodic cross-section ($N_x, N_y \in \{2, 4\}$). In wide 2D/3D domains with transverse perturbations ($\mathbf{k}_\perp \neq \mathbf{0}$), counter-streaming beams also excite electromagnetic current-filamentation (Weibel-type, $\mathbf{k} \perp \mathbf{v}_0$) and oblique two-stream modes; at relativistic speeds ($v_0 \sim c$), the transverse filamentation growth rate $\gamma_{\text{fil}} \sim \omega_b (v_0/c)\gamma_0^{-1/2}$ decays more slowly with $\gamma_0$ than the longitudinal two-stream rate $\gamma_{\parallel} \propto \gamma_0^{-3/2}$ and dominates when $\gamma_0 \gg 1$ [Bret, Firpo & Deutsch, 2005].
+
+- **Noise-seeded vs mode-seeded runs**:
+  When counter-streaming beams are initialized with random Monte-Carlo macroparticle positions or thermal velocity noise rather than a coherent quiet-start mode seed:
+  1. Every box harmonic $k_m = 2\pi m / L_z$ inside the unstable band $0 < k_m v_0 < \sqrt{2}\,\omega_{b,\text{rel}}$ is excited simultaneously with random initial complex amplitude $|\hat{E}_m(0)| = O(N_{\text{tot}}^{-1/2})$ and random partitioning among the four normal modes ($\pm i\gamma(k_m)$ and $\pm\omega_+(k_m)$).
+  2. Multi-mode competition and beating between adjacent unstable harmonics distort the single-mode exponential slope, and if the shot-noise floor $O(N_{\text{ppc}}^{-1/2})$ is too large (e.g. $N_{\text{ppc}} \lesssim 10$), nonlinear particle trapping occurs before the fastest-growing mode $k_1$ has separated cleanly from the initial transient. Quantitative linear growth-rate verification therefore requires a quiet-start regular lattice seeded at a single resolved mode $k_1$ with $\varepsilon \ll 1$, while statistical $N_{\text{ppc}}^{-1/2}$ convergence is measured by superimposing controlled velocity sampling jitter on a quiet-start seed (`test_two_stream_grid_and_particle_convergence`).
+
+- **The nonrelativistic limit**:
+  Using the uncorrected non-relativistic formula $\gamma_{\max} = \omega_b / 2$ and $k_{\text{opt}} v_0 = (\sqrt{3}/2)\,\omega_b$ neglects the longitudinal relativistic inertia $\gamma_0^3 m_e$, overpredicting both the growth rate and the unstable wavenumber bandwidth by the fraction
+  ```math
+  1 - \gamma_0^{-3/2} \;=\; 1 - \left(1 - \frac{v_0^2}{c^2}\right)^{3/4} \;=\; \frac{3}{4}\left(\frac{v_0}{c}\right)^2 + O\!\left(\left(\frac{v_0}{c}\right)^4\right).
+  ```
+  While this neglect is $\le 0.75\%$ for $v_0 \le 0.1\,c$ ($0.27\%$ at $v_0 = 0.06\,c$), it exceeds the second-order spatial grid error $\frac{1}{24}(k_1\Delta z)^2$ on fine grids ($N_z \ge 32$) unless $\omega_{b,\text{rel}} = \gamma_0^{-3/2}\omega_b$ is used, and becomes $O(1)$ for moderately or ultra-relativistic beams ($\gamma_0 \gtrsim 2$).
+
+- **Finite-grid instability (spatial aliasing) at high $k\Delta z$**:
+  In the discrete dispersion relation, Brillouin-zone aliases $k_m = k + 2\pi m / \Delta z$ ($m \neq 0$) couple to the streaming beams through the Doppler-shifted denominators $\Omega_t^2(\omega \mp k_m v_0)$ with weight $\operatorname{sinc}^{p + p_g + 1}(k\Delta z / 2 + \pi m)$. When the grid under-resolves the beam plasma wavelength ($\omega_b \Delta z / v_0 \gtrsim 1$, i.e. $k_1 \Delta z \gtrsim 1$) or when wavenumbers near the Nyquist limit $k\Delta z \sim \pi$ are excited, the $m = -1$ alias $k_{-1} = k - 2\pi / \Delta z$ satisfies $|k_{-1}| \approx k$ and folds back into the Cherenkov resonance $\omega \approx \pm k_m v_0$, driving unphysical numerical aliasing instabilities even for modes whose fundamental wavenumber $k$ lies in the continuum-stable region $k v_0 > \sqrt{2}\,\omega_b$ [Birdsall & Langdon, 1991]. To prevent finite-grid aliasing:
+  1. Resolve the beam plasma wavelength $\lambda_p = 2\pi u_0 / \omega_p$ with at least $20$ cells per wavelength ($\Delta z \le \lambda_p / 20$, so $k_1 \Delta z \le \pi / 10$ and $|k_{\pm 1}| v_0 \gg \sqrt{2}\,\omega_b$);
+  2. Use energy-conserving field interpolation (`gather="galerkin"`, default) so the deposit-gather alias weight $\operatorname{sinc}^{2p}(k_m\Delta z / 2)$ is strictly non-negative and symmetric; and
+  3. Increase the B-spline order to `shape=2` (TSC, $\operatorname{sinc}^4$ alias decay) or `shape=3` (PCS, $\operatorname{sinc}^6$ alias decay), optionally combined with `filter="binomial"`, when simulating warm or high-density streaming beams.
+
+---
+
+##### References
+
+- [Bohm & Gross, 1949] D. Bohm and E. P. Gross, "Theory of Plasma Oscillations. A. Origin of Medium-Like Behavior," *Physical Review*, vol. 75, no. 12, pp. 1851–1864, 1949, doi:10.1103/PhysRev.75.1851.
+- [Buneman, 1959] O. Buneman, "Dissipation of Currents in Ionized Media," *Physical Review*, vol. 115, no. 3, pp. 503–517, 1959, doi:10.1103/PhysRev.115.503.
+- [Birdsall & Langdon, 1991] C. K. Birdsall and A. B. Langdon, *Plasma Physics via Computer Simulation*, Series in Plasma Physics, Bristol: Institute of Physics Publishing (Taylor & Francis), 1991, ISBN 978-0-7503-0117-6.
+- [Esirkepov, 2001] T. Zh. Esirkepov, "Exact charge conservation scheme for Particle-in-Cell simulation with an arbitrary form-factor," *Computer Physics Communications*, vol. 135, no. 2, pp. 144–153, 2001, doi:10.1016/S0010-4655(00)00228-9.
+- [Bret, Firpo & Deutsch, 2005] A. Bret, M.-C. Firpo, and C. Deutsch, "Characterization of the initial filamentation of a relativistic electron beam passing through a plasma," *Physical Review Letters*, vol. 94, no. 11, p. 115002, 2005, doi:10.1103/PhysRevLett.94.115002.
+
+#### 12. GPU-Resident and MPI-Aware Particle Diagnostics (`wakis.particles.diagnostics`)
+
+The `wakis.particles.diagnostics` module provides five in-situ particle monitors—`PhaseSpaceMonitor`, `EnergySpectrumMonitor`, `PlaneCurrentProbe`, `EmittanceProbe`, and `TrackRecorder`—attached via `ParticleSolver.add_diagnostic(diag)`.
+
+##### Asynchronous Device Accumulation and Collective Readout
+
+During time stepping (`SolverFIT3D.one_step()`), `ParticleSolver._run_diagnostics(t, dt)` is invoked at the end of each particle step (`_mid_step_hook` on CPU and `_mid_step_hook_gpu` on GPU) after particle pushing, Esirkepov current deposition, boundary absorption/compaction, periodic coordinate wrapping, and MPI $z$-slab migration have completed.
+
+To preserve asynchronous GPU execution:
+
+1. **Zero per-step host synchronization:** On the GPU path (`sp.on_gpu == True`), every monitor launches CUDA kernels from a cached `cupy.RawModule` directly onto the active stream, reading the device-side active particle count `sp._d_n_particles[0]` when asynchronous stream compaction (`sp._n_dirty_gpu == True`) is active. No `.get()`, scalar host casts, or host-blocking reductions occur during `one_step()`.
+2. **Zero per-step memory allocations on the GPU path:** On the GPU path, device accumulators and snapshot ring buffers are preallocated when the monitor is bound (`add_diagnostic(diag)` or first sample), and subsequent steps reuse the fixed device buffers in place without dynamic allocation. On the CPU path, monitors accumulate into preallocated host arrays using vectorised NumPy operations that allocate small temporary arrays during per-step reductions and binning.
+3. **Sampling interval and species filtering:** Histograms, `EmittanceProbe`, and `TrackRecorder` record on steps $n \equiv 0 \pmod N$ when `every=N` is specified. `PlaneCurrentProbe` runs crossing detection on every step and accumulates into the current slot, advancing the slot every $N$ steps so each slot holds the net charge of $N$ steps and $I = Q_{\text{slot}} / (N\Delta t)$. Each monitor accepts `species=...` (filtering by `Species` instance, species name string, integer index, or `None` for all attached species, except `TrackRecorder` which requires a single species).
+4. **Collective MPI semantics:** Under MPI $z$-slab domain decomposition (`use_mpi=True`), each rank accumulates diagnostics over its locally owned post-migration particles without per-step MPI communication. Calling `diag.result()` (or its alias `diag.to_numpy()`) transfers the accumulated device buffers to the host and performs a collective reduction (`MPI.Allreduce` or `comm.allgather`) across `solver.comm`. Because `.result()` is collective across `solver.comm`, all ranks must call it in the same order.
+
+##### Leapfrog Time Levels at Diagnostic Evaluation
+
+In the relativistic leapfrog particle-in-cell cycle (Birdsall & Langdon 2004), at the end of step $n$ (advancing $t_n \to t_{n+1} = t_n + \Delta t$):
+
+$$\mathbf{x}_p = \mathbf{x}_p^{n+1} \quad\text{at } t_{n+1}, \qquad \mathbf{u}_p = \mathbf{u}_p^{n+1/2} = \gamma_p^{n+1/2}\mathbf{v}_p^{n+1/2} \quad\text{at } t_{n+1/2} = t_n + \tfrac{1}{2}\Delta t.$$
+
+All spatial coordinates reported by the monitors are therefore at integer time level $t_{n+1}$, whereas proper velocities $\mathbf{u}$, physical velocities $\mathbf{v} = \mathbf{u}/\gamma$, trace-space slopes $(x', y')$, and kinetic energies $E_k$ are evaluated at the leapfrog half-step time level $t_{n+1/2}$.
+
+---
+
+##### Monitor Definitions and Formulations
+
+###### 1. `PhaseSpaceMonitor(axes=("z", "uz"), bins, ranges, weighted=True)`
+
+Accumulates a two-dimensional histogram over any pair of phase-space coordinates chosen from `("x", "y", "z", "ux", "uy", "uz", "vx", "vy", "vz", "xp", "yp", "gamma", "ek_eV")` on a uniform $B_0 \times B_1$ grid spanning `ranges = ((min_0, max_0), (min_1, max_1))` with bin edges
+
+$$e_{m,k} = a_{m,\min} + \frac{k}{B_m}\left(a_{m,\max} - a_{m,\min}\right), \qquad k = 0, 1, \dots, B_m, \quad m \in \{0, 1\}.$$
+
+To match `numpy.histogram2d` exactly across floating-point rounding boundaries, interior bins $0 \le b < B_m - 1$ are half-open intervals $[e_{m,b}, e_{m,b+1})$ while the uppermost bin $b = B_m - 1$ is closed $[e_{m,B_m-1}, e_{m,B_m}]$. The preliminary index $\hat{b} = \lfloor B_m (v - a_{m,\min}) / (a_{m,\max} - a_{m,\min}) \rfloor$ is refined against the stored `linspace` edge array $e_{m,\hat{b}}$ and $e_{m,\hat{b}+1}$ on the device. Each in-range particle contributes weight $w_p$ when `weighted=True` (or $1$ when `weighted=False`) on the flattened bin index $b_0 B_1 + b_1$ without sorting. On the GPU path, when $B_0 B_1 \le 3072$ ($24\text{ KiB}$ of double-precision shared memory per thread block), each CUDA thread block accumulates into a block-private shared-memory histogram and flushes non-zero bins to global memory once per block; larger bin grids fall back to direct global `atomicAdd`. Particles falling outside $[a_{0,\min}, a_{0,\max}] \times [a_{1,\min}, a_{1,\max}]$ are accumulated into `overflow` (total weight or count) and `overflow_count` (integer particle count) rather than dropped silently. When `ring_size=K` is specified, the monitor also maintains a preallocated device ring buffer of the $K$ most recent individual snapshot frames.
+
+###### 2. `EnergySpectrumMonitor(bins, range_eV)`
+
+Accumulates a one-dimensional histogram of single-particle relativistic kinetic energy in electron-volts (`[eV]`) over `range_eV = (E_min, E_max)`. To avoid catastrophic cancellation at non-relativistic velocities $|\mathbf{u}| \ll c$ where $\gamma - 1 = \sqrt{1 + |\mathbf{u}|^2/c^2} - 1 \to 0$, the kinetic energy is evaluated from the half-step proper velocity $\mathbf{u}_p^{n+1/2}$ via the algebraically equivalent rationalized form:
+
+$$E_{k,p}^{n+1/2}\,[\text{eV}] = \frac{m_s c^2}{e}\left(\gamma_p^{n+1/2} - 1\right) = \frac{m_s |\mathbf{u}_p^{n+1/2}|^2}{e\left(\gamma_p^{n+1/2} + 1\right)}, \qquad \gamma_p^{n+1/2} = \sqrt{1 + \frac{|\mathbf{u}_p^{n+1/2}|^2}{c^2}}.$$
+
+Binning, closed upper-edge treatment, shared-memory privatised block accumulation for `bins <= 3072`, out-of-range overflow tracking (`overflow`, `overflow_count`), optional `ring_size=K` snapshot buffering, and collective `MPI.SUM` reduction in `.result()` follow the same conventions as `PhaseSpaceMonitor`.
+
+###### 3. `PlaneCurrentProbe(z_plane)`
+
+Records the net electric charge $\Delta Q_m$ (`[C]`) and beam current $I_m = \Delta Q_m / (N\Delta t)$ (`[A]`) crossing a transverse plane $z = z_{\text{plane}}$, where crossing detection runs on every step and advances the output slot every $N =$ `every` steps.
+
+* **Leapfrog trajectory reconstruction:** In the leapfrog cycle (Birdsall & Langdon 2004), the momentum pusher updates $\mathbf{u}_p^{n-1/2} \to \mathbf{u}_p^{n+1/2}$ and the position advance immediately computes
+
+  $$\gamma_{p}^{-1} = \frac{1}{\sqrt{1 + |\mathbf{u}_p^{n+1/2}|^2 / c^2}}, \qquad \Delta z_p = (\Delta t \, \gamma_p^{-1}) u_{z,p}^{n+1/2}, \qquad z_p^{n+1} = z_p^n + \Delta z_p$$
+
+  (using $(\Delta t / \gamma_p) u_{z,p}^{n+1/2}$ on the chunked CPU path when $N_p > 65536$). Because $\mathbf{u}_p^{n+1/2}$ is unmodified between the position update and the end-of-step diagnostic hook, reconstructing
+
+  $$z_{p,\text{old}} = z_p^{n+1} - \Delta z_p$$
+
+  uses the same formula as the pusher; agrees to a few $\operatorname{ulp}(z)$ (`same formula as the pusher; agrees to a few ulp(z)`) of IEEE-754 floating-point round-off error. Known differences between the diagnostic reconstruction and the pusher position advance are: (i) the fused CPU path for fully periodic domains (`solver.py` ~l. 2831–2838) always uses `fac = dt/sqrt(...)`; (ii) the $N_p > 65536$ branch test uses the particle count after compaction; and (iii) `nvcc` FMA contraction. By contrast, using the pre-push velocity $v_{z,p}^{n-1/2}$ introduces an $O(\Delta t^2)$ displacement error $(v_{z,p}^{n+1/2} - v_{z,p}^{n-1/2})\Delta t \approx (q_s E_z / \gamma m_s)\Delta t^2$ that misses or double-counts particles accelerating across $z_{\text{plane}}$.
+* **Placement warnings and running totals:** Once at bind time (or the first time $\Delta t$ is known), `PlaneCurrentProbe` emits a `UserWarning` if $z_{\text{plane}}$ equals an injector plane $z_0$ or lies within one $c\Delta t$ of an absorbing `Collector` (since crossings absorbed in the same step are removed before diagnostics run and are not counted). In addition to the `capacity`-length ring buffer of per-slot $\Delta Q_m$ and $I_m$, a device-side running total tracks all crossings over the entire simulation so `Q_total` and `Q_cumulative` cover the whole run even when the number of recorded slots exceeds `capacity`.
+* **Signed crossing and periodic unwrapping:** For non-periodic $z$, a particle contributes $+q_s w_p$ (and $+1$ to `counts`) if $z_{p,\text{old}} < z_{\text{plane}} \le z_p^{n+1}$, and $-q_s w_p$ (and $-1$ to `counts`) if $z_{p,\text{old}} \ge z_{\text{plane}} > z_p^{n+1}$. The complementary half-open intervals ensure that a particle landing directly on $z_{\text{plane}}$ at step $n$ is counted once and not double-counted on step $n+1$. When the $z$ domain $[z_{\min}, z_{\max})$ of length $L_z = z_{\max} - z_{\min}$ is periodic, `z` has already been wrapped into $[z_{\min}, z_{\max})$ before the diagnostic runs; particles that wrapped during the step ($z_p^{n+1} - \Delta z_p < z_{\min}$ for $\Delta z_p > 0$, or $\ge z_{\max}$ for $\Delta z_p < 0$) have their pre-wrap interval $[z_{p,\text{old}}, z_{\max}) \cup [z_{\min}, z_p^{n+1}]$ tested against $z_{\text{plane}}$.
+
+###### 4. `EmittanceProbe(z_window)`
+
+Computes the transverse geometric RMS trace-space emittances $\varepsilon_x, \varepsilon_y$ (`[m rad]`), trace-space normalized emittances $\varepsilon_{n,x}, \varepsilon_{n,y}$ (`[m rad]`), and momentum-space normalized emittances $\varepsilon_{n,u,x}, \varepsilon_{n,u,y}$ (`[m rad]`) for active particles inside $z \in [z_{\min}, z_{\max}]$ with $u_z \ne 0$. Note that because diagnostics run at the end of the leapfrog step, positions $(x, y)$ are at integer time level $t_{n+1}$ whereas proper velocities $(u_x, u_y, u_z)$ and slopes $(x', y')$ are at half-step time level $t_{n+1/2}$. Defining trace-space slopes $x'_p = u_{x,p} / u_{z,p}$ and $y'_p = u_{y,p} / u_{z,p}$, total window weight $W = \sum_{p \in \mathcal{W}} w_p$, and weighted centroids $\bar{x} = W^{-1}\sum w_p x_p$, $\bar{x}' = W^{-1}\sum w_p x'_p$, $\bar{u}_x = W^{-1}\sum w_p u_{x,p}$, the weighted central second moments are
+
+$$\sigma_x^2 = \frac{1}{W}\sum_{p \in \mathcal{W}} w_p (x_p - \bar{x})^2, \quad \sigma_{x'}^2 = \frac{1}{W}\sum_{p \in \mathcal{W}} w_p (x'_p - \bar{x}')^2, \quad \sigma_{xx'} = \frac{1}{W}\sum_{p \in \mathcal{W}} w_p (x_p - \bar{x})(x'_p - \bar{x}'),$$
+
+$$\sigma_{u_x}^2 = \frac{1}{W}\sum_{p \in \mathcal{W}} w_p (u_{x,p} - \bar{u}_x)^2, \quad \sigma_{x u_x} = \frac{1}{W}\sum_{p \in \mathcal{W}} w_p (x_p - \bar{x})(u_{x,p} - \bar{u}_x),$$
+
+giving the trace-space geometric/normalized emittances and the momentum-space normalized emittance (`momentum_emittance_x` / `norm_emit_u_x`; Reiser 2008):
+
+$$\varepsilon_x = \sqrt{\max\!\left(0,\; \sigma_x^2 \sigma_{x'}^2 - \sigma_{xx'}^2\right)}, \qquad \varepsilon_{n,x} = \langle \beta\gamma \rangle_w \, \varepsilon_x, \qquad \varepsilon_{n,u,x} = \frac{1}{c}\sqrt{\max\!\left(0,\; \sigma_x^2 \sigma_{u_x}^2 - \sigma_{x u_x}^2\right)},$$
+
+where $\langle \beta\gamma \rangle_w = W^{-1}\sum_{p \in \mathcal{W}} w_p |\mathbf{u}_p|/c$. Note that $\langle |\mathbf{u}|/c \rangle_w \varepsilon_x$ equals $\varepsilon_{n,u,x}$ only for a monoenergetic beam (zero longitudinal momentum spread in the paraxial limit).
+
+* **Two-pass central moments on the device (round-off justification):** Evaluating variance via the textbook one-pass shift formula $\langle x^2 \rangle_w - \bar{x}^2$ amplifies round-off error by the squared condition number $\kappa^2 = 1 + \bar{x}^2 / \sigma_x^2$, suffering catastrophic cancellation when the beam has a macroscopic offset $|\bar{x}| \gg \sigma_x$ (Higham 2002; Chan, Golub & LeVeque 1983). Conversely, sequential one-pass Welford recurrences serialize across threads on a GPU. `EmittanceProbe` executes two device passes per sampled step using shared-memory block reductions followed by a single atomic update per thread block: Pass 1 accumulates $(W, \sum w_p x_p, \sum w_p x'_p, \sum w_p y_p, \sum w_p y'_p, \sum w_p \beta\gamma, \sum w_p \beta_z\gamma, N_{\text{cnt}}, \sum w_p u_{x,p}, \sum w_p u_{y,p})$ into a 20-element device slot; Pass 2 reads the means directly on the device without host synchronization and accumulates the central co-moment sums $M_{xx}, M_{x'x'}, M_{xx'}, M_{yy}, M_{y'y'}, M_{yy'}, M_{u_x u_x}, M_{x u_x}, M_{u_y u_y}, M_{y u_y}$. By Chan, Golub & LeVeque (1983), two-pass central summation bounds the relative round-off error at $\lesssim N u + N^2 u^2 \kappa^2$.
+* **Cross-rank MPI combination:** When `.result()` is called under MPI, per-rank statistics $(W_A, \bar{x}_A, \bar{x}'_A, M_{xx,A}, M_{x'x',A}, M_{xx',A}, \dots)$ and $(W_B, \bar{x}_B, \bar{x}'_B, M_{xx,B}, M_{x'x',B}, M_{xx',B}, \dots)$ are combined via the parallel central-moment update of Chan, Golub & LeVeque (1983, Eq. 2.1):
+
+  $$W_{AB} = W_A + W_B, \qquad \delta_x = \bar{x}_B - \bar{x}_A, \qquad \delta_{x'} = \bar{x}'_B - \bar{x}'_A,$$
+
+  $$M_{xx,AB} = M_{xx,A} + M_{xx,B} + \frac{W_A W_B}{W_{AB}}\delta_x^2, \qquad M_{xx',AB} = M_{xx',A} + M_{xx',B} + \frac{W_A W_B}{W_{AB}}\delta_x \delta_{x'}.$$
+
+###### 5. `TrackRecorder(ids, every)`
+
+Records the six-dimensional phase-space coordinates $(x_p^{n+1}, y_p^{n+1}, z_p^{n+1}, u_{x,p}^{n+1/2}, u_{y,p}^{n+1/2}, u_{z,p}^{n+1/2})$ of a selected list of macroparticle integer `ids` (requiring `Species(..., track_ids=True)`) into a preallocated device ring buffer of shape `(ring_size, n_ids, 6)`. `TrackRecorder` requires a single resolved species and raises `ValueError` if multiple species match. At each sampled step, the current frame slot is filled with IEEE-754 quiet `NaN` and the per-ID match counter is zeroed on the device before active particles matching `ids` write their coordinates. Consequently, any particle absorbed by a boundary or `Collector` automatically appears as `NaN` on all subsequent frames. In `.result()`, if any `(id, sample)` entry matched more than one particle (`valid_sum > 1`) on CPU or GPU (locally or across MPI ranks), a `ValueError` is raised. Under MPI domain decomposition (`wakis.particles.species`), each rank initializes `_next_id = 0` independently and increments it locally in `Species.add_particles`, so particle `id` values are globally unique across ranks only if the user guarantees it (for example, by seeding tracked particles on a single rank or assigning disjoint `_next_id` offsets per rank).
+
+---
+
+##### Verification and Example Commands
+
+The diagnostic suite is validated in `tests/test_088_particles_diagnostics.py` (covering exact count agreement and Higham round-off agreement with `numpy.histogram2d` and `numpy.histogram`, `PlaneCurrentProbe` charge conservation across `every=1`, `every=3`, and wrapped `capacity` plus wrong-time-level failure, `EmittanceProbe` against the analytical Wishart standard error $\varepsilon / \sqrt{N_{\text{eff}}}$ on correlated bivariate Gaussians with uniform and varying $u_z$, `TrackRecorder` against analytical relativistic Boris gyration and duplicate-ID detection, GPU no-sync/no-allocation verification with the $6 \times 10^7$-cycle device spin kernel while `_n_dirty_gpu` is active, and 2-rank MPI equivalence):
+
+```bash
+pytest tests/test_088_particles_diagnostics.py -v
+mpiexec --allow-run-as-root --oversubscribe -n 2 python -m pytest tests/test_088_particles_diagnostics.py -v
+```
+
+Ballistic velocity bunching of a modulated relativistic electron beam monitored by all five diagnostics (and optional GPU step-time benchmarking with and without all monitors) is demonstrated in `examples/025_particles_phase_space_diagnostics.py`:
+
+```bash
+python examples/025_particles_phase_space_diagnostics.py --smoke
+python examples/025_particles_phase_space_diagnostics.py --benchmark
+```
+
+---
+
+##### Limits & Failure Modes
+
+1. **Histogram binning bias:** Discretizing a continuous phase-space density $f(a_0, a_1)$ onto uniform bins of widths $\Delta a_0, \Delta a_1$ introduces a second-moment discretization bias $\Delta \sigma_m^2 = +\Delta a_m^2 / 12 + O(\Delta a_m^4)$ (Sheppard's correction) and artificially broadens features narrower than a bin width, such as the vertical phase-space caustic formed at a ballistic bunching focus $L_b = \gamma_0^2 / (k_m \alpha_u)$. Use `EmittanceProbe` rather than moments computed from binned `PhaseSpaceMonitor` arrays when accurate RMS beam moments are required. In addition, particles outside `ranges` or `range_eV` are accumulated in `overflow` and `overflow_count` rather than clipped into the boundary bins; always check that `overflow == 0` when expecting the histogram integral to equal the total active species weight.
+2. **Half-step energy:** `EnergySpectrumMonitor` (as well as velocity/energy axes in `PhaseSpaceMonitor` and `TrackRecorder`) evaluates kinetic energy directly from the leapfrog half-step proper velocity $\mathbf{u}^{n+1/2}$ at $t_{n+1/2}$ to avoid an extra field gather and pusher call on the diagnostic path. In the presence of a longitudinal electric field $E_z$, the half-step kinetic energy $E_k(t_{n+1/2})$ differs from the integer-step energy $E_k(t_{n+1})$ by $\frac{1}{2} q_s \mathbf{E}(t_{n+1}) \cdot \mathbf{v}^{n+1/2}\Delta t + O(\Delta t^2)$. For exact second-order time-centered energy conservation checks at integer steps $t_n$, use `ParticleSolver.kinetic_energy(synchronised=True)`.
+3. **Probe at a slab boundary under MPI:** Because `ParticleSolver._run_diagnostics` executes at the very end of the particle step *after* `_mpi_migrate_particles`, any particle that crosses an internal MPI slab boundary $z_{\text{slab}}$ during step $n$ has already been transferred to its new owning rank before `PlaneCurrentProbe` evaluates $z_{\text{old}} = z^{n+1} - v_z^{n+1/2}\Delta t$. Therefore, a probe placed near or on a slab boundary ($|z_{\text{plane}} - z_{\text{slab}}| \le c\Delta t$) detects crossings on whichever rank owns the particle's post-step coordinate $z^{n+1}$, and all ranks must participate in `_record` and the collective `.result()` reduction. Furthermore, because boundary and `Collector` absorption also occurs before `_run_diagnostics`, particles absorbed during step $n$ are already compacted out of the species arrays; `PlaneCurrentProbe` must be placed in the transmission interior upstream of absorbing planes, whereas current collected on an absorbing wall should be read from `Collector.current_history` or `ParticleSolver.absorbed_charge`.
+4. **Memory cost of the ring buffers:** Preallocating device buffers avoids per-step CUDA allocator calls and stream synchronizations, at the cost of fixed device memory proportional to `ring_size` (or `capacity`): `PhaseSpaceMonitor` allocates $8 K B_0 B_1$ bytes for `ring_size = K` and `bins = (B_0, B_1)` (for example, $K = 256$ frames at $512 \times 512$ bins requires $512\text{ MiB}$ of GPU memory), and `TrackRecorder` allocates $48 K N_{\text{ids}}$ bytes for $N_{\text{ids}}$ tracked particles over $K$ frames. When the number of recorded samples exceeds `ring_size`, the ring buffer wraps modulo `ring_size` and silently overwrites the oldest frames, retaining only the most recent `ring_size` snapshots in chronological order.
+5. **`TrackRecorder` per-sample search cost:** `TrackRecorder` costs $O(K \cdot N)$ per recorded sample for $K = \text{len}(\text{ids})$ tracked IDs and $N$ active particles: on the GPU path, each of the $N$ particle threads loops over the $K$ target IDs, and the CPU path has a Python loop over `ids` calling `np.flatnonzero(sp_ids == target_id)` for each tracked ID. `TrackRecorder` is therefore intended for a small number of marker particles ($K \ll N$).
+6. **Per-step monitor execution overhead:** Running all monitors on every time step (`every=1`) incurs a significant step-time cost from scanning the active particle arrays and executing histogram binning, two-pass central-moment reductions, and marker-ID searches at every step. This overhead is measured by `examples/025_particles_phase_space_diagnostics.py --benchmark` and recorded under `benchmark` in its output JSON (`examples/025_particles_phase_space_diagnostics.json`), together with the GPU name (`gpu_name`) and timing metadata. To reduce this overhead in production runs, users should sample with `every=N` ($N > 1$).
+
+---
+
+##### References
+
+* T. W. Anderson (2003), *An Introduction to Multivariate Statistical Analysis*, 3rd ed., Wiley, Hoboken, NJ.
+* C. K. Birdsall and A. B. Langdon (2004), *Plasma Physics via Computer Simulation*, CRC Press, Boca Raton, FL.
+* T. F. Chan, G. H. Golub, and R. J. LeVeque (1983), "Algorithms for Computing the Sample Variance: Analysis and Recommendations," *The American Statistician*, 37(3), 242–247, DOI: `10.1080/00031305.1983.10483115`.
+* N. J. Higham (2002), *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM, Philadelphia, PA.
+* M. Reiser (2008), *Theory and Design of Charged Particle Beams*, 2nd ed., Wiley-VCH, Weinheim.
+
+#### 13. Checkpoint and Restart of Coupled Field and Particle Runs (`wakis.particles.checkpoint`)
+
+Long-running self-consistent electromagnetic particle-in-cell simulations require exact state serialization so that a run of $2N$ steps can be split into $N$ steps, written to disk via `ParticleSolver.save_checkpoint(path)`, and resumed in a new Python process on a freshly constructed `SolverFIT3D` and `ParticleSolver` via `ParticleSolver.load_checkpoint(path)` for the remaining $N$ steps.
+
+##### Complete inter-step state inventory
+
+At the boundary between step $n - 1$ and step $n$, the coupled FIT + particle-in-cell leapfrog integrator is at time $t_n = n\Delta t$:
+
+- Primary electric field edge voltages/fields $\mathbf{E}^n$ and dual electric displacement $\tilde{\mathbf{d}}^n = \mathbf{D}_\varepsilon \mathbf{D}_A \mathbf{E}^n$ are defined at integer time $t_n$.
+- Dual magnetic field $\mathbf{H}^{n-1/2}$ is defined at half-integer time $t_{n-1/2}$.
+- Particle positions $\mathbf{x}_p^n$ are at $t_n$, and relativistic proper velocities $\mathbf{u}_p^{n-1/2} = \gamma_p^{n-1/2}\mathbf{v}_p^{n-1/2}$ are staggered at $t_{n-1/2}$ (once the step-0 half-step back-push $\mathbf{u}^0 \to \mathbf{u}^{-1/2}$ has executed, indicated by `_initialized_half_step = True` and `sp.u_is_synced = False`).
+- Both `solver.J` and `ParticleSolver.J_particles` (plus `ParticleSolver._J_prev` on GPU and `_j_in_solver` on CPU) hold the staggered current density $\mathbf{J}_{\text{particles}}^{n-1/2}$ from step $n - 1$, because `_mid_step_hook` updates `solver.J` by delta ($\mathbf{J}_{\text{solver}} \leftarrow \mathbf{J}_{\text{solver}} - \mathbf{J}_{\text{particles}}^{n-1/2} + \mathbf{J}_{\text{particles}}^{n+1/2}$) so external `CurrentSource` or conductive currents can coexist on the same FIT edges, and under MPI `SolverFIT3D._mpi_one_step` communicates `solver.J` halo planes prior to invoking `_run_mid_step()`.
+
+The module-level tuple `CHECKPOINT_STATE_KEYS` (`CHECKPOINT_STATE_ITEMS`) in `wakis/particles/checkpoint.py` enumerates the 29 inter-step state items saved and restored on every rank:
+
+| Key in `CHECKPOINT_STATE_KEYS` | `.npz` array key(s) | Object attribute(s) | Physical / numerical role |
+| :--- | :--- | :--- | :--- |
+| `"E"` | `field_E` | `solver.E` | Electric field $\mathbf{E}^n$ [V/m] on primary edges ($3 N_{\text{cells}}$). |
+| `"H"` | `field_H` | `solver.H` | Magnetic field $\mathbf{H}^{n-1/2}$ [A/m] on dual faces ($3 N_{\text{cells}}$). |
+| `"field_J"` | `field_J` | `solver.J` | Total staggered current density $\mathbf{J}^{n-1/2}$ [A/m$^2$] on primary edges ($3 N_{\text{cells}}$). |
+| `"field_J_old"` | `has_field_J_old`, `field_J_old` | `solver.J_old` | Previous-step ohmic conduction current $\sigma\mathbf{E}^{n-1}$ [A/m$^2$] when `solver.use_conductivity=True`. |
+| `"solver_step_0"` | `solver_step_0` | `solver.step_0` | First-step solver guard flag (prevents `_set_ghosts_to_0()` and `J_old` reset from re-running after restart). |
+| `"cpml_psi"` | `has_cpml_psi`, `cpml_psiHa_*`, `cpml_psiHb_*`, `cpml_psiEa_*`, `cpml_psiEb_*` | `solver.psiHa_*`, `solver.psiHb_*`, `solver.psiEa_*`, `solver.psiEb_*` | Up to 24 convolutional perfectly matched layer (CPML) auxiliary memory arrays across the 6 domain faces. |
+| `"J_particles"` | `J_particles` | `ps.J_particles` | Previous step's particle current density $\mathbf{J}_{\text{particles}}^{n-1/2}$ [A/m$^2$] subtracted from `solver.J` on CPU at step $n$. |
+| `"j_in_solver"` | `j_in_solver` | `ps._j_in_solver` | Boolean flag indicating whether `solver.J` currently contains $\mathbf{J}_{\text{particles}}^{n-1/2}$ on CPU. |
+| `"J_prev"` | `has_J_prev`, `J_prev` | `ps._J_prev` | GPU previous-step particle current buffer $\mathbf{J}_{\text{prev}}^{n-1/2}$ [A/m$^2$] subtracted inside `finalize_j_delta_gpu`. |
+| `"q_bg"` | `q_bg` | `solver._particles_q_bg` | Immobile background, cathode-image, and boundary/collector-absorbed node charge $\mathbf{q}_{\text{bg}}$ [C] on primary grid nodes $(N_x, N_y, N_z)$. |
+| `"gauss_ref"` | `gauss_q_scale_ref`, `gauss_has_q_scale_ref`, `gauss_init_counts` | `solver._particles_q_scale_ref`, `ps._init_gauss_counts` | Reference node-charge normalisation scale $\max|\mathbf{q}^0|$ [C] and initial species particle counts for `gauss_residual()`. |
+| `"species_x"` | `sp_<s>_x` | `sp._x[:n_particles]` | Active macroparticle $x$-coordinates [m]. |
+| `"species_y"` | `sp_<s>_y` | `sp._y[:n_particles]` | Active macroparticle $y$-coordinates [m]. |
+| `"species_z"` | `sp_<s>_z` | `sp._z[:n_particles]` | Active macroparticle $z$-coordinates [m]. |
+| `"species_ux"` | `sp_<s>_ux` | `sp._ux[:n_particles]` | Active macroparticle proper velocities $u_x^{n-1/2} = \gamma v_x$ [m/s]. |
+| `"species_uy"` | `sp_<s>_uy` | `sp._uy[:n_particles]` | Active macroparticle proper velocities $u_y^{n-1/2} = \gamma v_y$ [m/s]. |
+| `"species_uz"` | `sp_<s>_uz` | `sp._uz[:n_particles]` | Active macroparticle proper velocities $u_z^{n-1/2} = \gamma v_z$ [m/s]. |
+| `"species_w"` | `sp_<s>_w` | `sp._w[:n_particles]` | Macroparticle statistical weights $w_p$ [real particles / macroparticle]. |
+| `"species_id"` | `sp_<s>_track_ids`, `sp_<s>_id` | `sp.track_ids`, `sp._id[:n_particles]` | Unique `int64` macroparticle identifiers. |
+| `"species_n_particles"` | `species_n_particles` | `sp.n_particles` (and `sp._d_n_particles`, `sp._n_launch_bound`) | Active macroparticle count per species on this rank. |
+| `"species_next_id"` | `species_next_id` | `sp._next_id` | Monotonic counter for assigning unique IDs to newly injected particles. |
+| `"initialized_half_step"` | `initialized_half_step` | `ps._initialized_half_step` | Leapfrog half-step initialization flag (prevents a duplicate $-0.5\Delta t$ back-push and `_particles_q_bg` reset on restart). |
+| `"species_u_is_synced"` | `species_u_is_synced` | `sp.u_is_synced` | Per-species momentum synchronization flag (`False` when $\mathbf{u}_p^{n-1/2}$ is half-step staggered relative to $\mathbf{x}_p^n$). |
+| `"n_particle_steps"` | `n_particle_steps` | `ps.n_particle_steps` | Integer particle step index $n$, physical time $t_n = n\Delta t$ [s], and cell-sorting schedule counter ($n \bmod \texttt{sort\_every} = 0$). |
+| `"solver_nstep"` | `solver_nstep` | `solver.nstep` | Electromagnetic solver step counter `solver.nstep`. |
+| `"injector_rng_state"` | `has_injector_rng_state`, `inj_<i>_rng_json_u8` | `inj.rng.bit_generator.state` | Pseudo-random number generator state for each `BeamInjector` (transverse profile and thermal velocity sampling). |
+| `"injector_counters"` | `inj_<i>_counters_f64`, `inj_<i>_injected_count` | `inj._charge_accumulator`, `inj.injected_charge`, `inj.injected_energy`, `inj.injected_count` | Cumulative injected charge [C], kinetic energy [J], macroparticle count, and fractional charge accumulator per injector. |
+| `"boundary_absorbed"` | `boundary_absorbed_charge`, `boundary_absorbed_energy`, `boundary_absorbed_count` | `ps.boundaries._absorbed_charge`, `_absorbed_energy`, `_absorbed_count` | Cumulative charge [C], kinetic energy [J], and macroparticle count absorbed on each domain boundary face and collector key. |
+| `"collector_state"` | `has_collector_state`, `col_<c>_scalars_f64`, `col_<c>_count`, `col_<c>_history` | `col._absorbed_charge`, `col._absorbed_energy`, `col._absorbed_count`, `col.current_history` | Per-collector absorbed charge [C], kinetic energy [J], macroparticle count, and time series $(t_n, \Delta q_n)$ [s, C]. |
+
+**Why `SolverFIT3D.save_state` / `load_state` are not used directly.** `SolverFIT3D.save_state` and `load_state` (`wakis/solverFIT3D.py`) write a single HDF5 archive containing only `E`, `H`, and `J`, and under MPI they gather `E`, `H`, and `J` to rank 0 via `mpi_gather_asField` (stripping the 1-cell MPI ghost layers). They omit the 24 CPML convolutional memory arrays (`psiHa_*`, `psiHb_*`, `psiEa_*`, `psiEb_*`), `solver.step_0` (which, if left `True` on a fresh solver after loading a checkpoint at step $n > 0$, triggers `solver._set_ghosts_to_0()` on the first post-restart step and zeroes the upper MPI ghost layer `k = Nz - 1` on interior ranks), `solver.nstep`, and conductive `solver.J_old`. `wakis/particles/checkpoint.py` therefore writes and restores all field, CPML, and solver step flags directly in the per-rank `.npz` archive.
+
+**Why `_H_before_update`, `_H_prev`, and Mur ABC `abc_E_previous` are intra-step scratch rather than inter-step state.** At the start of every `SolverFIT3D.one_step()` call, `SolverFIT3D._capture_mid_step_H()` copies `solver.H.toarray()` ($\mathbf{H}^{n-1/2}$) into `solver._H_before_update` before `_update_H()` advances `solver.H` to $\mathbf{H}^{n+1/2}$. `ParticleSolver._mid_step_hook()` then averages `solver._H_before_update` and `solver.H` to form the time-centred magnetic flux density $\mathbf{B}^n = \frac{1}{2}\mu_0(\mathbf{H}^{n-1/2} + \mathbf{H}^{n+1/2})$. Between completed `one_step()` calls, `_H_before_update` and `_H_prev` are always overwritten from `solver.H` before they are read; on `load_checkpoint`, they are synchronized in-place from the restored `solver.H` buffer just as in `ParticleSolver.attach()`. Likewise, for first-order Mur absorbing boundary conditions (`bc='abc'`), `SolverFIT3D._capture_abc()` (`wakis/boundaries.py`) refills `solver.abc_E_previous` from `solver.E` at the start of every time step prior to `_update_E()`, and `_apply_abc()` consumes that snapshot at the end of the same step; `abc_E_previous` therefore carries no inter-step state across `one_step()` boundaries.
+
+**Note on injector step counter and `_charge_accumulator`.** `BeamInjector` does not maintain an internal step counter; `ParticleSolver._mid_step_hook` computes $t_n = \texttt{n\_particle\_steps} \times \Delta t$ and passes $(t_n, \Delta t)$ into `inj.inject(t_n, dt)`. Similarly, `ParticleSolver` uses `self.n_particle_steps % self.sort_every == 0` as the cell-sorting counter. In `BeamInjector.inject()`, whenever `n_macro_per_step > 0` and $I(t_n + \frac{1}{2}\Delta t) > 0$, all real charge in the step is divided across `n_macro_per_step` variable-weight macroparticles ($w_{\text{macro}} = n_{\text{real}} / n_{\text{macro}}$) and `_charge_accumulator` is reset to `0.0`; `_charge_accumulator` is nevertheless saved and restored as part of `"injector_counters"` for completeness when `n_macro_per_step == 0` or $I = 0$.
+
+##### Checkpoint directory format and integrity verification
+
+Calling `ps.save_checkpoint(path)` (or `wakis.particles.save_checkpoint(ps, path)`) requires `ps` to be attached (`ps.attach()` already called; calling `save_checkpoint` on an unattached `ParticleSolver` raises `RuntimeError` rather than calling `attach()` silently). Assuming a shared filesystem across MPI ranks for `path`, `save_checkpoint` writes a directory containing:
+
+1. **One uncompressed token-suffixed NumPy archive per rank (`rank_000000-<token>.npz`, `rank_000001-<token>.npz`, $\dots$)**:
+   - Before calling `np.savez`, every collected array is checked to ensure `arr.dtype != object and not arr.dtype.hasobject` (`ValueError` otherwise). Rank 0 generates a per-save token `<token>` and broadcasts it across `solver.comm`. Each rank writes to a temporary file `rank_<rank:06d>-<token>.npz.tmp-<token>`, immediately verifies that the written file can be opened with `np.load(..., allow_pickle=False)` and reads its `.npy` member headers (`np.lib.format.read_magic` / `read_array_header_*`) without materializing array payloads multiple times, and computes its SHA-256 digest. **No `pickle` or object arrays are used anywhere.**
+   - Native field and particle array dtypes (`float64`, `float32`, etc.) are preserved without silent casting.
+   - Each injector's `rng.bit_generator.state` dictionary (`PCG64` or any NumPy `BitGenerator`) is serialized via UTF-8 JSON into a `uint8` byte array (`inj_<i>_rng_json_u8`), avoiding Python object pickling while preserving the exact 128-bit generator state and increment.
+   - On GPU runs (`ps.on_gpu=True`), device arrays are transferred to host memory only inside `save_checkpoint` and restored in-place into the existing device buffers (`cp.copyto(..., casting="no")`) inside `load_checkpoint`.
+
+2. **A JSON manifest (`manifest.json`) written by rank 0**:
+   - `"format_version"`: integer schema version (`CHECKPOINT_FORMAT_VERSION = 1`).
+   - `"wakis_version"`: package version string (`wakis.__version__`).
+   - `"grid_hash"`: 64-character hexadecimal SHA-256 digest (`compute_grid_hash(solver)`) of `(Nx, Ny, Nz, NZ)`, domain bounds `(xmin, xmax, ymin, ymax, zmin, zmax)`, primary node coordinate vectors `x, y, z`, time step `dt`, boundary condition strings `bc_low` and `bc_high`, CPML profile parameters (`activate_cpml`, `n_pml`, `kappa_max`, `alpha_max`, `sigma_factor`, `pml_exp`) and the 24 per-face CPML damping/stretch coefficient arrays (`pml_b_*`, `pml_c_*`, which depend on `sigma_max` and `fmax`), field `dtype`, and material tensors (`ieps`, `imu`, `sigma`, `use_conductivity`, and any solid/STL masks), combined across all MPI ranks via `comm.allgather` when `use_mpi=True`. `grid_hash` and `config_hash` are kept separate so a mismatch error names the specific hash that differed.
+   - `"config_hash"`: 64-character hexadecimal SHA-256 digest (`compute_config_hash(ps)`) of `shape`, `pusher`, `deposit_scheme`, `gather`, `filter`, `sort_every`, `capacity_headroom`, external fields `E_ext` and `B_ext` (constant 3-tuple or callable qualified name plus samples on a fixed 8-point $\times$ 6-time grid), each species' `name`, `charge`, `mass`, `dtype`, and `track_ids`, each injector's parameters (`z0`, `gamma0`, `uz0`, `profile`, `radius`, `x0`, `y0`, `n_macro_per_step`, `rise_time`, `direction`, `thermal_u`, `current` callable qualified name plus 8 time samples across $t \in [0, 100\,\Delta t]$, `weight`), and each collector's `name`, `bounds`, `plane`, and evaluated node boolean `mask` when `col.mask` is a callable. Because `compute_config_hash` invokes user-supplied callables (`E_ext`, `B_ext`, injector `current`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` call, these callables must be cheap to evaluate and free of side effects.
+   - `"rank_count"`: positive integer number of MPI ranks $S$.
+   - `"species_names"`: ordered list of `Species.name` strings.
+   - `"injector_names"`: ordered list of canonical injector identifiers (`"<species>:z0=<z0>:<index>"` or custom `inj.name`).
+   - `"collector_names"`: ordered list of `Collector.name` strings.
+   - `"state_keys"`: list of keys from `CHECKPOINT_STATE_KEYS`.
+   - `"files"`: mapping `"rank_<rank:06d>-<token>.npz": "<sha256_hexdigest>"` for every rank $r \in \{0, \dots, S-1\}$.
+
+3. **Whole-checkpoint atomic commit via `manifest.json` switch and collective MPI exception preservation**:
+   - At the start of `save_checkpoint`, rank 0 cleans up any stale `*.tmp-*` files left by previously interrupted saves. Each rank writes `rank_<rank:06d>-<token>.npz.tmp-<token>` and renames it to `rank_<rank:06d>-<token>.npz` via `os.replace` without overwriting any previous checkpoint's rank files (which carry an older token). Rank 0 writes `manifest.json.tmp-<token>` and, only after every rank passes the collective check, atomically switches `manifest.json` last via `os.replace("manifest.json.tmp-<token>", "manifest.json")`. Only after `manifest.json` has been switched and synced across all ranks does rank 0 delete `rank_<rank:06d>-<old_token>.npz` files from earlier checkpoints. Consequently, a crash or I/O error at any point — including after the new rank files are written but before `manifest.json` is switched — leaves the previous checkpoint intact and loadable.
+   - Every validation and I/O phase in both `save_checkpoint` and `load_checkpoint` is wrapped in `_checkpoint_collective_check(ps, local_exc)`, which allgathers `(type(exc).__name__, str(exc))` across `solver.comm`. When all failing ranks raise the same exception class (`NotImplementedError`, `ValueError`, `FileNotFoundError`, `OSError`, etc.), that original exception class is re-raised on every rank; when failing ranks raise different exception classes, `RuntimeError` is raised on every rank listing each failing rank's error.
+
+During `load_checkpoint(ps, path)`, `ps.attach()` may run first if `ps` is not yet attached. Verification then proceeds on every rank in strict order before any checkpoint data is copied into solver or particle buffers:
+1. Check `_check_supported_solver_features(solver)` (`NotImplementedError` if unsupported auxiliary state is active) and call `ps.attach()` if `not ps._attached`.
+2. Verify `manifest.json` exists (`FileNotFoundError` if absent) and parses as a JSON object containing all required keys (`ValueError` if malformed).
+3. Verify `manifest["format_version"] == CHECKPOINT_FORMAT_VERSION` (`ValueError` on mismatch) and validate that `manifest["rank_count"]` is a positive integer (`ValueError` on non-integer, boolean, or $< 1$).
+4. Verify `int(manifest["rank_count"]) == size` (`NotImplementedError` if the current MPI rank count differs from the saved checkpoint).
+5. Verify `manifest["grid_hash"] == compute_grid_hash(solver)` (`ValueError` naming `grid_hash` if grid dimensions, bounds, node coordinates, boundary conditions, CPML parameters or `pml_b_*`/`pml_c_*` coefficient arrays, field `dtype`, materials $\varepsilon/\mu/\sigma$, solid masks, or `dt` differ) and `manifest["config_hash"] == compute_config_hash(ps)` (`ValueError` naming `config_hash` if particle solver settings, `capacity_headroom`, `E_ext`/`B_ext`, species, injectors, or collectors differ).
+6. Verify `species_names`, `injector_names`, and `collector_names` match the target `ParticleSolver` (`ValueError` on mismatch).
+7. Locate the rank's active `rank_<rank:06d>-<token>.npz` entry in `manifest["files"]`, verify the file exists on disk (`FileNotFoundError` if missing), recompute its SHA-256 digest, and compare against `manifest["files"][rank_filename]` (`ValueError` on mismatch).
+8. Open `rank_<rank:06d>-<token>.npz` with `np.load(..., allow_pickle=False)` and run `_validate_rank_archive(ps, data)` (reading `.npy` member headers via `np.lib.format.read_magic` and `read_array_header_*`) to verify that every required `.npz` key is present with the exact expected shape and native dtype, and that the saved `cpml_*` key set equals the active CPML set on `solver` (`ValueError` on any mismatch, before any solver array is modified).
+9. Copy all validated state arrays in-place via `_copy_into_target` (`np.copyto` / `cp.copyto` with `casting="no"`), preserving CPU buffer views (such as `_Wx_buf`, `_Wy_buf`, `_Wz_buf` into `J_particles`) and existing CPU/GPU array pointers for `E`, `H`, `J`, `J_old`, `_particles_q_bg`, `J_particles`, `_J_prev`, and CPML `psi*` arrays.
+
+##### Determinism guarantees per backend
+
+- **CPU serial (`use_gpu=0, use_mpi=False`)**: Restarting from a checkpoint in a new Python process is **bitwise identical** (`np.testing.assert_array_equal` with zero tolerance) to an uninterrupted run of $2N$ steps across all primary and dual fields (`E`, `H`, `J`, `J_particles`), all active CPML memory arrays (`psiHa_*`, `psiHb_*`, `psiEa_*`, `psiEb_*`), background charge `_particles_q_bg`, `gauss_residual()`, boundary/injector/collector histories, and all species SoA arrays (`x, y, z, ux, uy, uz, w, id`) both in raw memory slot order and sorted by `id`.
+- **CPU MPI (`use_gpu=0, use_mpi=True`)**: Restarting with the same MPI rank count $S$ is **bitwise identical on every rank** to an uninterrupted $2N$-step MPI run. Because each rank saves and restores its full local field arrays (including the 1-cell MPI ghost layers $k = 0$ and $k = N_z(r) - 1$), restores `solver.step_0 = False` so `_set_ghosts_to_0()` does not re-run at step $N$, and restores its local slab particles in their exact memory slot order, all subsequent point-to-point halo exchanges, deterministic slice additions in `_mpi_sum_guards()`, and particle migrations execute in the identical floating-point order. (In `pytest`, the MPI restart test runs inside a single `mpiexec` launch where a shared `tmp_path` directory created via `_mpi_tmp_dirs` assumes a single node; a two-phase MPI restart across two separate `mpiexec` invocations is a cloud-suite verification check rather than an in-process `pytest` test.)
+- **GPU (`use_gpu=1`)**: **Bitwise equality is not guaranteed on the GPU** because concurrent threads across multiple CUDA warps and thread blocks deposit per-particle current fluxes $\Delta W_{p,e}$ via hardware `atomicAdd(double*, double)` (`deposit_esirkepov_kernel`, `deposit_charge_kernel`, and `boundary_prepare_paths_kernel` in `wakis/particles/gpu_kernels.py`), whose execution order is scheduled by hardware and is non-associative in IEEE-754 `binary64` arithmetic. On the first step after restart from an identical checkpoint state $(\mathbf{E}^N, \mathbf{H}^{N-1/2})$ — comparing the checkpointed run stepped once before restart against a restored solver stepped once after restart, both in-process (`test_gpu_restart`) and in a fresh Python subprocess (`test_gpu_restart_subprocess`) — `gather_and_push_kernel` assigns one thread per particle with no inter-thread atomics so single-step particle positions and velocities match exactly, while the deposited current flux on edge $e$ agrees within Higham's summation error bound [Higham, 2002, Ch. 4, §4.2], $|\widehat{W}_e^{(A)} - \widehat{W}_e^{(B)}| \le 2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}|$ (and in current density, $|\widehat{J}_e^{(A)} - \widehat{J}_e^{(B)}| \le 2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| / (\Delta t\,\tilde{A}_e)$), where $\gamma_n = n u / (1 - n u)$ is defined in [Higham, 2002, Ch. 3, §3.1] with $u = 2^{-53}$ and $n_e = |\mathcal{P}_e|$ is the number of particles contributing to edge $e$. In `test_gpu_restart` and `test_gpu_restart_subprocess`, the uniform-sign identity $\sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| = |\sum_{p \in \mathcal{P}_e} \Delta W_{p,e}|$ holds on edges in the bulk beam subvolume ($\mathbf{u}_p > 0$), and the bound $|\Delta J_e| \le 2\,\gamma_{n_e}\,|J_e^{(A)}| + \text{floor}$ is evaluated per edge $e$ in vectorised form using the per-edge $3\times 3\times 3$ S1 stencil contributor count $n_e$. Over $N_{\text{post}} > 1$ coupled steps, single-step round-off perturbations in $\mathbf{J}$ feed back into $\mathbf{E}$, $\mathbf{H}$, and subsequent particle trajectories, so a single-step summation bound does not strictly bound $N_{\text{post}}$ coupled steps.
+
+Verification commands:
+```bash
+pytest tests/test_089_particles_checkpoint.py -v
+mpiexec --allow-run-as-root --oversubscribe --timeout 300 -n 2 pytest tests/test_089_particles_checkpoint.py -v
+```
+
+##### Limits & Failure Modes
+
+- **Shared filesystem assumption and whole-checkpoint atomic write**: `save_checkpoint` and `load_checkpoint` assume `path` resides on a shared filesystem visible to all MPI ranks (rank 0 creates `path` and writes `manifest.json`; every rank $r$ writes and verifies `rank_<rank:06d>-<token>.npz` inside `path`). The MPI test suite's shared `tmp_path` helper (`_mpi_tmp_dirs`) assumes all ranks run on a single node sharing `/tmp`. Because each save uses a fresh `<token>` in the rank filenames and switches `manifest.json` last via `os.replace` before deleting older-token rank files, a crash during rank writes or right before the manifest switch leaves the previous checkpoint intact. A crash between the per-rank rename (`rank_<rank:06d>-<new_token>.npz.tmp-<new_token>` $\to$ `rank_<rank:06d>-<new_token>.npz`) and the `manifest.json` switch leaves the unreferenced new-token `rank_<rank:06d>-<new_token>.npz` rank files on disk alongside the previous checkpoint's rank files until the next successful `save_checkpoint` deletes all `rank_*.npz` files not referenced by the new manifest.
+- **No change of MPI rank count ($S_{\text{load}} \ne S_{\text{save}}$)**: Each rank archive `rank_<rank:06d>-<token>.npz` stores the rank-local longitudinal slab $\Omega_r = [z_{\text{own,min}}(r), z_{\text{own,max}}(r))$ together with its local 1-cell MPI ghost planes and rank-local CPML auxiliary arrays. Resuming on a different number of MPI ranks would require global field gathering, ghost-plane reconstruction, CPML face re-slicing, and particle redistribution across new $z$-slab boundaries. This is not supported; `load_checkpoint` raises `NotImplementedError` whenever `int(manifest["rank_count"]) != size` (and raises `ValueError` if `manifest["rank_count"]` is not a valid positive integer).
+- **Objects owned by the `emsolve` run loop are not checkpointed**: `save_checkpoint` and `load_checkpoint` operate on `ParticleSolver` and `SolverFIT3D`. Objects passed as arguments into `solver.emsolve(...)` rather than stored on `SolverFIT3D` are **not** serialized in the checkpoint:
+  1. External electromagnetic field sources (`sources` list passed to `emsolve` or invoked manually between steps);
+  2. Lumped circuit elements and lumped ports (`lumped_elements` / `lumped_ports` in `wakis/lumped.py`, including `LumpedElement` inductor state arrays `J_L`, `J_old`, and `E_n`, as well as recorded history lists `t_rec`, `V_rec`, `I_L_rec`, and `I_s_rec`);
+  3. On-the-fly discrete Fourier transform (DFT) field monitors (`monitors`, including their complex spectral accumulator arrays `_acc`).
+  Users must re-create these objects when setting up the post-restart run loop, and their internal accumulators/inductor states restart from zero.
+- **Limits of callable fingerprinting in `config_hash`**: `compute_config_hash` calls user-supplied callables (`E_ext`, `B_ext`, injector `current(t)`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` invocation; these callables must therefore be cheap to evaluate and free of side effects (pure functions that do not mutate external state, advance random number generators, or perform I/O). They are fingerprinted without `pickle` by hashing their qualified function name (`__qualname__`) together with evaluations on a fixed sample set ($8\text{ points} \times 6\text{ times}$ for `E_ext`/`B_ext`, 8 times across $[0, 100\,\Delta t]$ for `current(t)`, and up to an $8\times 8\times 8$ sample grid for `Collector.mask`). If a user modifies a callable or closure while keeping the same qualified name and its output differs only at unsampled times (for example, a delayed pulse active only at $t \gg 100\,\Delta t$) or between the 8 spatial sample points for `E_ext`/`B_ext`, `compute_config_hash` will not detect the change.
+- **Unsupported solver auxiliary features refuse with `NotImplementedError`**: Both `save_checkpoint` and `load_checkpoint` inspect `solver` via `_check_supported_solver_features(solver)` and raise `NotImplementedError` if any auxiliary field state on `SolverFIT3D` not serialized by P7a is present or active:
+  1. Dispersive electric ADE poles (`solver._dispersive_groups` non-empty);
+  2. Dispersive magnetic ADE poles (`solver._dispersive_h_groups` non-empty);
+  3. Conformal dispersive subcell network (`solver.dispersive_network is not None`);
+  4. Active gain media 4-level atomic population/polarization ADE (`solver._gain_groups` non-empty);
+  5. Nonlinear Kerr/Raman media (`solver._nonlinear_groups` non-empty);
+  6. Time-varying media (`solver._time_varying_groups`, `solver._time_varying_h_groups`, or `solver._time_varying_installed`);
+  7. Active Total-Field / Scattered-Field (TF/SF) plane-wave injection (`solver.injection_done == False` or non-zero `solver.E_trans` / `solver.H_trans`);
+  8. Magnetic current density (`solver.M is not None`);
+  9. Linearized cold-fluid relativistic beams (`solver._beams` non-empty);
+  10. Off-diagonal tensor material operator (`solver.tensor_operator is not None`).
+- **No cross-version compatibility guarantee beyond `format_version`**: `load_checkpoint` enforces `manifest["format_version"] == CHECKPOINT_FORMAT_VERSION` and records `wakis_version` in `manifest.json` for provenance, but checkpoints are not guaranteed to be portable across Wakis releases that increment `CHECKPOINT_FORMAT_VERSION` or alter internal operator/buffer conventions.
+- **Per-rank checkpoint file size formula in cells and particles**: Let $N_{\text{cells}}(r) = N_x N_y N_z(r)$ denote the number of local grid cells on rank $r$ (including MPI ghost layers when `use_mpi=True`), let $b_{\text{field}} \in \{4, 8\}\text{ B}$ be the byte width of `solver.dtype`, let $n_{\text{pml}}$ be the CPML thickness in cells, let $n_{\text{cpml},\alpha}(r) \in \{0, 1, 2\}$ be the number of active CPML faces along axis $\alpha \in \{x, y, z\}$ present on rank $r$, let $N_{p,s}(r)$ be the number of active macroparticles of species $s$ on rank $r$, and let $N_{\text{hist},c}$ be the number of recorded `(t, dq)` entries in collector $c$. With `np.savez` (uncompressed IEEE-754 binary `.npy` payloads), the byte size $B_{\text{rank}}(r)$ of `rank_<rank:06d>.npz` is:
+  $$B_{\text{rank}}(r) \;=\; B_{\text{fields}}(r) \;+\; B_{\text{CPML}}(r) \;+\; B_{\text{particles}}(r) \;+\; B_{\text{collectors}}(r) \;+\; B_{\text{header}}(r),$$
+  where:
+  1. *Primary/dual fields and background charge*: `field_E`, `field_H`, and `field_J` each occupy $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$, `field_J_old` adds $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$ when `use_conductivity=True` ($\mathbb{I}_{\sigma} \in \{0, 1\}$), `J_particles` occupies $24 N_{\text{cells}}(r)\text{ B}$, `J_prev` adds $24 N_{\text{cells}}(r)\text{ B}$ when `on_gpu=True` ($\mathbb{I}_{\text{GPU}} \in \{0, 1\}$), and `q_bg` occupies $8 N_{\text{cells}}(r)\text{ B}$:
+     $$B_{\text{fields}}(r) \;=\; \Bigl(3\,(3 + \mathbb{I}_{\sigma})\,b_{\text{field}} + 32 + 24\,\mathbb{I}_{\text{GPU}}\Bigr)\,N_{\text{cells}}(r)\;\text{bytes} \;=\; \bigl(104 + 24\,\mathbb{I}_{\text{GPU}} + 24\,\mathbb{I}_{\sigma}\bigr)\,N_{\text{cells}}(r)\;\text{bytes}\quad(\text{for }b_{\text{field}}=8).$$
+  2. *CPML convolutional memory arrays*: Each active CPML face stores 4 arrays (`psiHa`, `psiHb`, `psiEa`, `psiEb`, $4\,b_{\text{field}}\text{ B}$ per CPML cell):
+     $$B_{\text{CPML}}(r) \;=\; 4\,b_{\text{field}}\,\Bigl(n_{\text{cpml},x}(r)\,n_{\text{pml}} N_y N_z(r) \;+\; n_{\text{cpml},y}(r)\,N_x n_{\text{pml}} N_z(r) \;+\; n_{\text{cpml},z}(r)\,N_x N_y n_{\text{pml}}\Bigr)\;\text{bytes}.$$
+  3. *Species SoA particle buffers*: Only the active prefix `[:n_particles]` (not the preallocated buffer `_capacity`) is written to disk. Each species $s$ stores 7 floating-point component arrays (`x, y, z, ux, uy, uz, w` of element size $b_{\text{float},s} \in \{4, 8\}\text{ B}$) plus one `int64` `id` array ($8\text{ B}$ when `track_ids=True`, $\mathbb{I}_{\text{id},s} \in \{0, 1\}$):
+     $$B_{\text{particles}}(r) \;=\; \sum_{s} N_{p,s}(r)\,\bigl(7\,b_{\text{float},s} + 8\,\mathbb{I}_{\text{id},s}\bigr)\;\text{bytes} \;=\; 64\,\sum_{s} N_{p,s}(r)\;\text{bytes}\quad(\text{for }\texttt{float64},\;\texttt{track\_ids=True}).$$
+  4. *Collector histories and per-entry archive headers*: Each collector history array `col_<c>_history` of shape $(N_{\text{hist},c}, 2)$ in `float64` occupies $B_{\text{collectors}}(r) = 16 \sum_c N_{\text{hist},c}\text{ B}$. For an archive with $M_{\text{arrays}}(r) = 19 + \mathbb{I}_{\sigma} + \mathbb{I}_{\text{GPU}} + 4\,\sum_\alpha n_{\text{cpml},\alpha}(r) + \sum_s (8 + \mathbb{I}_{\text{id},s}) + 3\,N_{\text{inj}} + 3\,N_{\text{col}}$ `.npy` entries, each entry $a$ with filename length $L_{\text{name}}(a)$ (including `.npy`) and `.npy` header descriptor length $L_{\text{descr}}(a)$ contributes a 30-byte local ZIP header, a 46-byte central-directory ZIP header, $2\,L_{\text{name}}(a)$ filename bytes, and a 64-byte-aligned `.npy` v1.0 header $H_{\text{npy}}(a) = 64\,\lceil(10 + L_{\text{descr}}(a))/64\rceil\text{ B}$, plus a 22-byte end-of-central-directory record and scalar payload bytes $b_{\text{scalar}}(a)$:
+     $$B_{\text{header}}(r) \;=\; 22 \;+\; \sum_{a=1}^{M_{\text{arrays}}(r)} \Bigl(76 + 2\,L_{\text{name}}(a) + 64\,\bigl\lceil(10 + L_{\text{descr}}(a))/64\bigr\rceil + b_{\text{scalar}}(a)\Bigr)\;\text{bytes}.$$
+- **GPU determinism caveats**:
+  1. *Concurrent `atomicAdd` warp scheduling (no bitwise equality guarantee)*: In `deposit_esirkepov_kernel`, `deposit_charge_kernel`, and `boundary_prepare_paths_kernel` (`wakis/particles/gpu_kernels.py`), multiple CUDA threads deposit per-particle current flux $\Delta W_{p,e}$ [Esirkepov, 2001] or node charge into shared grid edges/nodes via hardware `atomicAdd(double*, double)`. When multiple warps or thread blocks concurrently update the same grid edge $e$, hardware warp scheduling does not guarantee a fixed associative summation order across runs, so bitwise equality is not guaranteed on the GPU. By Higham's summation bound [Higham, 2002, Ch. 4, §4.2, Eq. 4.4] with $\gamma_n = n u / (1 - n u)$ from [Higham, 2002, Ch. 3, §3.1] and $u = 2^{-53}$, two GPU evaluations of a single step's edge-flux sum over the $n_e$ particles $\mathcal{P}_e$ overlapping edge $e$ can differ by up to $2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}|$ in edge flux (or $2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| / (\Delta t\,\tilde{A}_e)$ in current density $J_e$). This bound applies to a single step; over $N > 1$ coupled steps, round-off differences in $\mathbf{J}$ couple into $\mathbf{E}$, $\mathbf{H}$, and particle positions/velocities, so a one-step summation bound does not bound $N$ coupled steps (any multi-step growth factor is heuristic).
+  2. *Asynchronous GPU stream-compaction launch bound (`_n_launch_bound`)*: On GPU, `compact_species_gpu` updates the device counter `_d_n_particles[0]` without synchronizing the host, leaving `_n_dirty_gpu = True` and keeping the previous upper bound `_n_launch_bound >= _d_n_particles[0]` until a host query (such as `sp.n_particles` in `BeamInjector`) synchronizes `_d_n_particles`. Because `save_checkpoint` reads `_d_n_particles[0]` to write the exact active slice `[:n_particles]` and `load_checkpoint` sets `_n_launch_bound = n_particles` and `_n_dirty_gpu = False`, if a simulation has absorbing boundaries without an injector and `sort_every > 0` triggers `sort_species_by_cell_gpu` while `_n_dirty_gpu` was `True`, the uninterrupted run sorts `_n_launch_bound` slots (with inactive slots `>= _d_n_particles[0]` padded with sentinel key `INT_MAX`) whereas the restarted run sorts `n_particles` slots; the active particle prefix `[:n_particles]` is identical, and any subsequent multi-warp `atomicAdd` differences on the next step remain within the same single-step $\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}|$ round-off bound.
+
+References:
+- T. Zh. Esirkepov, "Exact charge conservation scheme for Particle-in-Cell simulation with an arbitrary form-factor", *Comput. Phys. Commun.* **135**(2), 144–153 (2001), [doi:10.1016/S0010-4655(00)00228-9](https://doi.org/10.1016/S0010-4655(00)00228-9).
+- N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM, Philadelphia (2002), Ch. 3 (§3.1) and Ch. 4 (§4.2), [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027).
+
+#### 14. Relativistic beam self-fields in a PEC pipe (V5) and numerical Cherenkov instability
+
+This section documents the analytical and discrete properties of relativistic space-charge self-fields in a conducting pipe (verification benchmark V5) and the numerical Cherenkov resonance of the Yee/FIT leapfrog solver, validated in `tests/test_084_particles_selffield_cherenkov.py` and `examples/021_particles_numerical_cherenkov.py`.
+
+---
+
+##### 1. Steady self-fields of a $z$-invariant relativistic beam in a PEC pipe (V5)
+
+###### Continuum derivation: $c\mathbf{B}_\perp = \beta_0 \hat{\mathbf{z}} \times \mathbf{E}_\perp$ and $1/\gamma_0^2$ force cancellation
+
+Consider an infinitely long, $z$-invariant, cold, mono-energetic charged-particle beam with charge density $\rho(x, y)$ propagating at constant velocity $\mathbf{v}_0 = v_0 \hat{\mathbf{z}} = \beta_0 c \hat{\mathbf{z}}$ ($\gamma_0 = (1 - \beta_0^2)^{-1/2}$) inside a perfectly conducting (PEC) pipe of arbitrary uniform cross-section $\Omega_\perp$ with boundary $\partial\Omega_\perp$. Because $\partial_t = 0$ and $\partial_z = 0$ in the steady state, the current density is purely longitudinal, $\mathbf{J}(x, y) = \rho(x, y) v_0 \hat{\mathbf{z}}$.
+
+Introducing the electrostatic scalar potential $\phi(x, y)$ ($\mathbf{E}_\perp = -\nabla_\perp \phi$, $E_z = 0$) and the longitudinal magnetostatic vector potential $A_z(x, y)\hat{\mathbf{z}}$ ($\mathbf{B}_\perp = \nabla_\perp \times (A_z \hat{\mathbf{z}}) = \nabla_\perp A_z \times \hat{\mathbf{z}}$, $B_z = 0$), Gauss's law and Ampère's law reduce to two scalar Poisson equations on $\Omega_\perp$:
+
+```math
+-\nabla_\perp^2 \phi = \frac{\rho(x, y)}{\varepsilon_0}, \qquad -\nabla_\perp^2 A_z = \mu_0 J_z(x, y) = \mu_0 \beta_0 c \rho(x, y) = \frac{\beta_0}{c}\frac{\rho(x, y)}{\varepsilon_0}.
+```
+
+On the PEC pipe wall $\partial\Omega_\perp$, the tangential electric field $E_z = 0$ and tangential component $\mathbf{E}_\perp \cdot \hat{\boldsymbol{\tau}} = -\partial_\tau \phi = 0$ enforce the homogeneous Dirichlet condition $\phi|_{\partial\Omega_\perp} = 0$, while the vanishing normal magnetic flux density $\mathbf{B}_\perp \cdot \hat{\mathbf{n}} = (\nabla_\perp A_z \times \hat{\mathbf{z}})\cdot\hat{\mathbf{n}} = \partial_\tau A_z = 0$ enforces $A_z|_{\partial\Omega_\perp} = 0$. Because $\phi$ and $(c/\beta_0) A_z$ satisfy the identical 2D Poisson equation with the identical homogeneous Dirichlet boundary condition on $\partial\Omega_\perp$, uniqueness of the Dirichlet problem guarantees:
+
+```math
+A_z(x, y) = \frac{\beta_0}{c}\,\phi(x, y) \qquad \forall (x, y) \in \Omega_\perp,
+```
+
+independently of the pipe cross-section shape $\Omega_\perp$ or the transverse beam profile $\rho(x, y)$. Differentiating yields the exact pointwise relation between the transverse electric and magnetic self-fields:
+
+```math
+c\mathbf{B}_\perp = c\,\nabla_\perp A_z \times \hat{\mathbf{z}} = \beta_0\,\nabla_\perp \phi \times \hat{\mathbf{z}} = \beta_0\,\hat{\mathbf{z}} \times \mathbf{E}_\perp,
+```
+
+or in cylindrical coordinates $(r, \theta, z)$, $c B_\theta = \beta_0 E_r$ and $c B_r = -\beta_0 E_\theta$.
+
+A co-moving beam particle with velocity $\mathbf{v}_0 = \beta_0 c \hat{\mathbf{z}}$ therefore experiences a magnetic pinch force $q(\mathbf{v}_0 \times \mathbf{B}_\perp) = q(\beta_0 c \hat{\mathbf{z}}) \times \left(\frac{\beta_0}{c}\hat{\mathbf{z}} \times \mathbf{E}_\perp\right) = -\beta_0^2 q \mathbf{E}_\perp$ that opposes the electrostatic space-charge repulsion $q\mathbf{E}_\perp$. The net transverse Lorentz force is suppressed by $1/\gamma_0^2$:
+
+```math
+\mathbf{F}_\perp = q\left(\mathbf{E}_\perp + \mathbf{v}_0 \times \mathbf{B}_\perp\right) = q\mathbf{E}_\perp\left(1 - \beta_0^2\right) = \frac{q\mathbf{E}_\perp}{\gamma_0^2}.
+```
+
+###### Near-axis radial electric field and square-pipe wall corrections
+
+For an axisymmetric round beam of radius $a$ and uniform charge density $\rho(r) = \rho_0 \Theta(a - r)$ centred at $(x, y) = (0, 0)$ inside any pipe cross-section, the potential inside the beam ($r < a$) decomposes into the free-space parabolic particular solution $\phi_p(r) = -\frac{\rho_0 r^2}{4\varepsilon_0}$ and a homogeneous wall-image potential $\phi_{\text{wall}}(r, \theta)$ satisfying Laplace's equation $\nabla_\perp^2 \phi_{\text{wall}} = 0$ throughout the pipe interior:
+
+```math
+\phi(r, \theta) = -\frac{\rho_0 r^2}{4\varepsilon_0} + \phi_{\text{wall}}(r, \theta) \quad (r < a).
+```
+
+In a square PEC pipe $\Omega_\perp = [-L/2, L/2]^2$, both the pipe boundary and the centred round beam are invariant under the dihedral group $D_4$ (fourfold rotations $\theta \to \theta + \pi/2$ and reflections $\theta \to -\theta$). Expanding the regular harmonic function $\phi_{\text{wall}}(r, \theta) = \sum_{m=0}^\infty r^m (a_m \cos m\theta + b_m \sin m\theta)$ about the origin, reflection symmetry eliminates all $\sin(m\theta)$ terms and fourfold rotational invariance requires $m \equiv 0 \pmod 4$:
+
+```math
+\phi_{\text{wall}}(r, \theta) = C_0 - C_4 \frac{\rho_0 a^2}{2\varepsilon_0} \left(\frac{r}{L/2}\right)^4 \cos(4\theta) - C_8 \frac{\rho_0 a^2}{2\varepsilon_0} \left(\frac{r}{L/2}\right)^8 \cos(8\theta) + \mathcal{O}\!\left(\left(\frac{r}{L/2}\right)^{12}\right),
+```
+
+where the dimensionless multipole coefficients $C_{4k}$ follow from the converged 2D method-of-images lattice sum over alternating image line charges $q_{m,n} = (-1)^{m+n}\pi a^2 \rho_0$ at $z_{m,n} = (m + i n)L = 2(m + i n)(L/2)$ for $(m, n) \in \mathbb{Z}^2 \setminus \{(0, 0)\}$:
+
+```math
+C_4 = -\frac{1}{64} \sum_{(m, n) \in \mathbb{Z}^2 \setminus \{(0, 0)\}} (-1)^{m+n} \frac{m^4 - 6 m^2 n^2 + n^4}{(m^2 + n^2)^4} \approx 0.073857 \quad (4 C_4 \approx 0.295426).
+```
+
+Differentiating with respect to $r$ gives the radial electric field inside the beam ($r < a$):
+
+```math
+E_r(r, \theta) = -\frac{\partial \phi}{\partial r} = \frac{\rho_0 r}{2\varepsilon_0}\left[1 + 4 C_4 \left(\frac{a}{L/2}\right)^2\left(\frac{r}{L/2}\right)^2 \cos(4\theta) + \mathcal{O}\!\left(\left(\frac{a}{L/2}\right)^2\left(\frac{r}{L/2}\right)^6\right)\right].
+```
+
+The leading square-pipe wall correction to $E_r$ is therefore the octupolar ($m = 4$) term of order **$\mathcal{O}(r^3)$** (scaling as $r^3 / (L/2)^4$). Because the wall correction vanishes as $\mathcal{O}(r^3)$ near the axis, the exact continuum near-axis slope $\left.\partial_r E_r\right|_{r \to 0} = \frac{\rho_0}{2\varepsilon_0}$ is independent of the pipe width $L$.
+
+In the $z$-invariant V5 setup ($\partial_z = 0$) with purely longitudinal particle motion ($\mathbf{J}_\perp = \mathbf{0}$), the transverse electric field $\mathbf{E}_\perp$ decouples from $(E_z, \mathbf{H}_\perp)$ in Maxwell's curl equations and remains at its 2D 5-point discrete FIT Poisson initial value $\mathbf{E}_\perp(0) = -\mathbf{G}_\perp \boldsymbol{\phi}$. Because the 5-point discrete Laplacian $-\Delta_\perp^{(5)}$ is exact on the quadratic particular potential $\phi_p(x, y) = -\frac{\rho_0(x^2 + y^2)}{4\varepsilon_0}$, check V5(b) serves as an identity check of the discrete Poisson initialiser combined with `deposit_charge`:
+- **Innermost cell ($r_0 = \Delta x / 2$):** The 5-point discrete mean-value property $(\Delta_\perp^{(5)}\phi_{\text{hom}})_{0,0} = 0$ combined with $D_4$ symmetry ($\phi_{\text{hom}}(\pm\Delta x, 0) = \phi_{\text{hom}}(0, \pm\Delta x)$) gives $\phi_{\text{hom}}(\Delta x, 0) = \phi_{\text{hom}}(0, 0)$ identically, so $E_r(r_0)/r_0 = \frac{\rho_0}{2\varepsilon_0}$ to machine round-off.
+- **Fixed-$r$ least-squares slope shift ($r \le r_{\text{fit}} = a/2$) and $m = 4$ edge-charge multipole moment:** On a Cartesian grid of spacing $\Delta x$, the staircased, area-fraction-weighted disk edge at $r \approx a$ carries a grid-dependent $\mathcal{O}(\Delta x / a)$ octupolar ($m = 4$) charge moment $M_{4,\text{edge}}$ in the deposited nodal charge $\mathbf{q}_{\text{nodes}}$. For each dual cell $C_{i,j} = [x_i - \Delta x/2, x_i + \Delta x/2] \times [y_j - \Delta x/2, y_j + \Delta x/2]$ outside a uniform square core $\mathcal{C}_K = [-X_K, X_K]^2$ ($X_K = (K + \frac{1}{2})\Delta x$, where $q_{i,j} = q_{\text{core}} = \rho_0 \Delta x^2 \Delta z$), using the exact identity $\frac{\cos(4\theta)}{r^4} = -\frac{1}{3}\frac{\partial^2}{\partial x\,\partial y}\!\left(\frac{x y}{(x^2 + y^2)^2}\right)$ with corner antiderivative $F(x, y) = -\frac{x y}{3(x^2 + y^2)^2}$ gives the cell-averaged weight $w_{4;i,j} = \langle\cos(4\theta)/r^4\rangle_{C_{i,j}}$ and the core-independent edge moment:
+
+```math
+M_{4,\text{edge}} = \sum_{(i, j) \notin \mathcal{C}_K} q_{i,j}\,w_{4;i,j} - \frac{q_{\text{core}}}{3\Delta x^2 X_K^2},
+```
+
+where $\frac{q_{\text{core}}}{3\Delta x^2 X_K^2} = \iint_{B(0, a) \setminus [-X_K, X_K]^2} \frac{q_{\text{core}}}{\Delta x^2}\frac{\cos(4\theta)}{r^4}\,\mathrm{d}x\,\mathrm{d}y$ subtracts the exact geometric moment of the uniform annulus between the square core $\mathcal{C}_K$ and the circular boundary $r = a$ (note that the sign of $M_{4,\text{edge}}$ oscillates with the fractional part of $a/\Delta x$, a Gauss-circle-type lattice effect). By the 2D interior multipole expansion of $-\frac{q'}{2\pi\varepsilon_0\Delta z}\ln|\mathbf{r} - \mathbf{r}'|$ for $r < r'$, this edge moment generates the interior harmonic potential $\phi_{\text{edge}}^{(4)}(r, \theta) = +\frac{M_{4,\text{edge}}}{8\pi\varepsilon_0\Delta z} r^4 \cos(4\theta)$ and radial field $E_{r,\text{edge}}^{(4)}(r, \theta) = -\frac{M_{4,\text{edge}}}{2\pi\varepsilon_0\Delta z} r^3 \cos(4\theta)$, which has the **same $r^3\cos(4\theta)$ interior-field form** as the $m = 4$ wall-image field. Least-squares fitting $E_r(r_m, 0)$ against $r_m$ on $r_m \le r_{\text{fit}} = a/2$ across three resolutions $N \in \{16, 32, 64\}$ multiplies both $r^3$ terms by the identical discrete least-squares factor $\langle r^2\rangle_{\text{fit}} = \frac{\sum_{r_m \le r_{\text{fit}}} r_m^4}{\sum_{r_m \le r_{\text{fit}}} r_m^2} = \frac{3}{5} r_{\text{fit}}^2 + \mathcal{O}(\Delta x^2)$:
+
+```math
+\delta_{\text{pred}} = \delta_{\text{wall}} + \delta_{\text{edge}} = \left[\frac{4 C_4 a^2}{(L/2)^4} - \frac{M_{4,\text{edge}}}{\pi \rho_0 \Delta z}\right]\langle r^2\rangle_{\text{fit}}.
+```
+
+- **Leading-order $\mathcal{O}(\Delta x^2)$ residual prediction, uncomputed remainders, and convergence checks:** On the 5-point discrete Laplacian stencil, the continuum degree-4 harmonic polynomial $x^4 - 6x^2y^2 + y^4$ satisfies $\Delta_\perp^{(5)}(x^4 - 6x^2y^2 + y^4) = 4\Delta x^2 \neq 0$; the unique degree-4 $D_4$-symmetric discrete harmonic polynomial inside the uniform core is $P_4^{(h)}(x, y) = (x^4 - 6x^2y^2 + y^4) - \Delta x^2(x^2 + y^2)$, whose primal-edge difference along $+x$ ($y = 0$) at $r_m = (m + \frac{1}{2})\Delta x$ is $4 r_m(r_m^2 - \frac{\Delta x^2}{4})$ rather than $4 r_m^3$. Using the continuum $r^3$ interior-field form in $\delta_{\text{pred}}$ therefore leaves the leading-order $\mathcal{O}(\Delta x^2)$ 5-point stencil prediction for the residual $\text{res}_N = \delta_{\text{meas},N} - \delta_{\text{pred},N}$:
+
+```math
+\delta_{\text{stencil}}^{(2)} = -\frac{\Delta x^2}{4\langle r^2\rangle_{\text{fit}}}\,\delta_{\text{pred}} = -\left[\frac{C_4 a^2}{(L/2)^4} - \frac{M_{4,\text{edge}}}{4\pi\rho_0\Delta z}\right]\Delta x^2
+```
+
+(whereas the grid-independent $m = 8$ wall-image term $8 C_8 (a/(L/2))^2 \langle r^6\rangle_{\text{fit}} / (L/2)^6$ is two orders of magnitude smaller on $N \in \{16, 32, 64\}$). Here $\delta_{\text{stencil}}^{(2)}$ is the leading-order $\mathcal{O}(\Delta x^2)$ term of $\text{res}_N$ (not a bound with no free parameters): there are three uncomputed $\mathcal{O}(\Delta x^2)$ remainder terms—(i) the 2D lattice Green's function versus the continuum wall-image coefficient $C_4$, (ii) nodal point charges in the discrete Poisson solve versus the dual-cell average kernel $w_4$, and (iii) the $\mathcal{O}(\Delta x^2/r^6)$ cell-averaging remainder—which together shift $\text{res}_N / \delta_{\text{stencil},N}^{(2)}$ by about $-15\%$ (giving $\text{res}_N / \delta_{\text{stencil},N}^{(2)} \approx 0.836, 0.887, 0.848$ at $N = 16, 32, 64$). Accordingly, `tests/test_084_particles_selffield_cherenkov.py` tests the residual as a prediction via: (a) $\operatorname{sign}(\text{res}_N) = \operatorname{sign}(\delta_{\text{stencil},N}^{(2)})$ at each $N$; (b) the heuristic "leading term dominates" check $0.5 \le \text{res}_N / \delta_{\text{stencil},N}^{(2)} \le 1.5$ at each $N$; (c) the falsifiable $\mathcal{O}(\Delta x^2)$ ratio-constancy statement $|\text{ratio}_N - \text{ratio}_{2N}| \le \Delta x_N / a$ for $N = 16 \to 32$ and $32 \to 64$ (confirming that $\text{res}_N / \delta_{\text{stencil},N}^{(2)}$ is constant up to $\mathcal{O}(\Delta x/a)$); and (d) second-order convergence within the **heuristic** order band $[2 - \Delta x_{16}/a,\, 2 + \Delta x_{16}/a]$ (where the $\mathcal{O}(\Delta x/a)$ variation of $M_{4,\text{edge}}$ and the uncomputed $\mathcal{O}(\Delta x^2)$ remainders shift the log-ratio order by $\approx 0.17 c$ for an unknown $\mathcal{O}(1)$ coefficient $c$), alongside a **model ablation** check omitting $M_{4,\text{edge}} \to 0$ from the test's own prediction.
+
+###### Discrete equivalence on FIT: uniform versus graded grids
+
+In the Finite Integration Technique (FIT), for $z$-invariant fields ($\partial_z = 0$):
+- The scalar potential $\phi_{i,j}$ resides on primal nodes $(x_i, y_j)$, with primal electric edge voltages $e_{x;i+1/2,j} = \Delta x_i E_{x;i+1/2,j} = -(\phi_{i+1,j} - \phi_{i,j})$ and $e_{y;i,j+1/2} = \Delta y_j E_{y;i,j+1/2} = -(\phi_{i,j+1} - \phi_{i,j})$.
+- The longitudinal vector potential $A_{z;i,j}$ resides on primal $z$-edges passing through the **same** transverse node coordinates $(x_i, y_j)$, with primal magnetic fluxes $b_{x;i,j+1/2} = \Delta y_j \Delta z B_{x;i,j+1/2} = \Delta z (A_{z;i,j+1} - A_{z;i,j})$ and $b_{y;i+1/2,j} = \Delta x_i \Delta z B_{y;i+1/2,j} = -\Delta z (A_{z;i+1,j} - A_{z;i,j})$.
+
+Discrete Gauss's law on dual volumes ($\widetilde{\mathbf{S}}\mathbf{M}_\varepsilon \mathbf{E} = \mathbf{q}_{\text{nodes}}$) and the $z$-component of discrete magnetostatic Ampère's law on dual $z$-faces ($\widetilde{\mathbf{C}}\mathbf{M}_\mu^{-1}\mathbf{B} = \mathbf{I}_z$) at interior node $(i, j)$ take the form:
+
+```math
+-\left[\tilde{L}_{y,j}\frac{\phi_{i+1,j}-\phi_{i,j}}{\Delta x_i} - \tilde{L}_{y,j}\frac{\phi_{i,j}-\phi_{i-1,j}}{\Delta x_{i-1}} + \tilde{L}_{x,i}\frac{\phi_{i,j+1}-\phi_{i,j}}{\Delta y_j} - \tilde{L}_{x,i}\frac{\phi_{i,j}-\phi_{i,j-1}}{\Delta y_{j-1}}\right] = \frac{q_{i,j}}{\varepsilon_0 \Delta z},
+```
+
+```math
+-\left[\tilde{L}_{y,j}\frac{A_{z;i+1,j}-A_{z;i,j}}{\Delta x_i} - \tilde{L}_{y,j}\frac{A_{z;i,j}-A_{z;i-1,j}}{\Delta x_{i-1}} + \tilde{L}_{x,i}\frac{A_{z;i,j+1}-A_{z;i,j}}{\Delta y_j} - \tilde{L}_{x,i}\frac{A_{z;i,j}-A_{z;i,j-1}}{\Delta y_{j-1}}\right] = \mu_0 I_{z;i,j}.
+```
+
+On a **uniform** transverse grid ($\Delta x_i = \tilde{L}_{x,i} = \Delta x$, $\Delta y_j = \tilde{L}_{y,j} = \Delta y$), both equations share the identical 5-point discrete Laplacian $-\Delta_\perp^{(5)}$. Moreover, for particles streaming purely along $z$ ($\Delta x_p = \Delta y_p = 0$), Esirkepov current deposition assigns longitudinal current flux using the exact same transverse B-spline nodal weights $S^{(p)}_x(\xi_p) S^{(p)}_y(\eta_p)$ as nodal charge deposition (`deposit_charge`), so $I_{z;i,j} = v_0 q_{i,j}/\Delta z$ when the $z$-column is translation-invariant. With PEC Dirichlet conditions $\phi = A_z = 0$ on the boundary nodes, $A_{z;i,j} = (\beta_0/c)\phi_{i,j}$ and $c B_{y;i+1/2,j} = \beta_0 E_{x;i+1/2,j}$, $c B_{x;i,j+1/2} = -\beta_0 E_{y;i,j+1/2}$ hold **discretely** on the staggered FIT edges. Initialising both $\mathbf{E}_\perp(0) = -\mathbf{G}_\perp \boldsymbol{\phi}$ and $\mathbf{H}_\perp(0)$ from the discrete $A_z = (\beta_0/c)\phi$ ($H_x = -\frac{\beta_0}{\mu_0 c}E_y$, $H_y = +\frac{\beta_0}{\mu_0 c}E_x$) starts the solver directly in the discrete magnetostatic steady state without exciting transverse TM cavity modes, so $\mathbf{E}_\perp$, $\mathbf{H}_\perp$, and $c B_\theta / E_r = \beta_0$ remain stationary at floating-point round-off over the run. In check V5(c), the radial Lorentz force $F_{\text{edge}}$ on outer-interior beam particles is verified both against the absolute prediction $\frac{q\,\rho_{0,\text{disc}}\langle r\rangle}{2\varepsilon_0\gamma_0^2}$ within the 2nd-order finite-cell smoothing bound $\frac{1}{2}(\Delta x/a)^2$ (because a fractional error $\delta_B$ in $B_\theta$ shifts $F_r = q(E_r - v_0 B_\theta)$ by $-\frac{\beta_0^2}{1 - \beta_0^2}\delta_B$, this absolute check has a detection threshold of about $0.4\%$ $B$ error at $\beta_0 = 0.9$ and about $2.5\%$ at $\beta_0 = 0.5$) and in ratio between $\beta_0 = 0.5$ and $\beta_0 = 0.9$ (which cancels the $\beta_0$-independent spatial discretisation error to round-off and serves as the sharp $B$ check).
+
+On **graded** (non-uniform) grids, this discrete cancellation is broken by two mechanisms:
+1. *Staggered primal-versus-dual interpolation mismatch*: While $E_{x;i+1/2,j}$ and $B_{y;i+1/2,j}$ share the same cell index $(i, j)$, $E_x$ is a primal edge average along $[x_i, x_{i+1}]$ at node $y_j$, whereas $H_y = (\mathbf{M}_\mu^{-1}\mathbf{b})_y$ is scaled by the dual edge length $\tilde{L}_{y,j} = (\Delta y_{j-1} + \Delta y_j)/2$ and staggered dual area. In `gather_fields`, `gather="galerkin"` interpolates $E_x$ and $B_y$ with complementary spline orders $(p-1, p, p)$ versus $(p, p-1, p-1)$ in logical coordinates $(\xi, \eta, \zeta)$; when $\Delta x_i \neq \Delta x_{i+1}$ or $\Delta y_{j-1} \neq \Delta y_j$, the logical midpoint does not coincide with the physical dual-edge centre, introducing an $\mathcal{O}(\Delta x_{i+1} - \Delta x_i)$ discrepancy between $c\mathbf{B}_\perp(\mathbf{x}_p)$ and $\beta_0\hat{\mathbf{z}}\times\mathbf{E}_\perp(\mathbf{x}_p)$.
+2. *Logical-coordinate spline assignment*: Because `GridMap.to_logical` maps particle coordinates cell-by-cell to logical indices $(\xi, \eta, \zeta)$ where B-splines are unit-partitioned in index space rather than physical volume, a physically uniform charge density $\rho_0$ deposits nodal charges $q_{i,j}$ proportional to primal cell widths $(\Delta x_{i-1} + \Delta x_i)/2$ only to first order when cell widths vary, and longitudinal grading ($\Delta z_k \neq \Delta z_{k+1}$) causes the logical step $\Delta\zeta = v_0 \Delta t / \Delta z_k$ to vary as particles cross cell interfaces.
+
+---
+
+##### 2. Numerical Cherenkov instability and binomial current filtering
+
+###### 3D FIT/Yee discrete dispersion relation and minimum phase velocity $v_{\min}$
+
+In vacuum on a uniform Cartesian grid with spacings $(\Delta x, \Delta y, \Delta z)$ and leapfrog time step $\Delta t$, plane-wave eigenmodes $\propto \exp(i(k_x x + k_y y + k_z z - \omega_d t))$ of the FIT/Yee update equations obey the discrete dispersion relation [Yee, 1966; Taflove & Hagness, 2005, Ch. 4]:
+
+```math
+\left(\frac{2}{c\Delta t}\sin\frac{\omega_d \Delta t}{2}\right)^2 = \left(\frac{2}{\Delta x}\sin\frac{k_x \Delta x}{2}\right)^2 + \left(\frac{2}{\Delta y}\sin\frac{k_y \Delta y}{2}\right)^2 + \left(\frac{2}{\Delta z}\sin\frac{k_z \Delta z}{2}\right)^2.
+```
+
+On a uniform cubic grid $\Delta x = \Delta y = \Delta z = \Delta$ with 1D Courant ratio $\sigma \equiv c\Delta t / \Delta \le 1/\sqrt{3}$, this simplifies to:
+
+```math
+\sin^2\!\left(\frac{\omega_d \Delta t}{2}\right) = \sigma^2 \left(\sin^2\frac{k_x\Delta}{2} + \sin^2\frac{k_y\Delta}{2} + \sin^2\frac{k_z\Delta}{2}\right).
+```
+
+For on-axis propagation ($k_x = k_y = 0$, $k_z \in (0, \pi/\Delta]$), the discrete frequency is:
+
+```math
+\omega_d(0, 0, k_z) = \frac{2}{\Delta t}\arcsin\!\left(\sigma \sin\frac{k_z\Delta}{2}\right).
+```
+
+Because $\sigma \le 1/\sqrt{3} < 1$, the function $u \mapsto \arcsin(\sigma \sin u) / u$ is strictly decreasing on $u = k_z\Delta / 2 \in (0, \pi/2]$. Consequently, the on-axis discrete phase velocity $v_p(k_z) = \omega_d(0, 0, k_z) / k_z$ decreases monotonically from $c$ at $k_z \to 0$ to its global minimum $v_{\min}$ at the longitudinal Nyquist wavenumber $k_z = \pi/\Delta$ ($u = \pi/2$):
+
+```math
+v_{\min} = \frac{\omega_d(0, 0, \pi/\Delta)}{\pi/\Delta} = \frac{2}{c\Delta t}\arcsin\!\left(\frac{c\Delta t}{\Delta}\right)\frac{\Delta}{\pi}\,c = \frac{2}{\pi\sigma}\arcsin(\sigma)\,c.
+```
+
+At 90% of the 3D Courant limit ($\Delta t = 0.9\,\Delta / (\sqrt{3}\,c)$, $\sigma = 0.9/\sqrt{3} \approx 0.5196$), this yields $v_{\min}/c = \frac{2}{\pi\sigma}\arcsin(\sigma) \approx 0.6694$.
+
+###### Resonance condition, fundamental ($m = 0$) sub-$v_{\min}$ cutoff, and aliased beam harmonics ($m = \pm 1$)
+
+A relativistic beam streaming along $+z$ at velocity $v_0 = \beta_0 c$ on a discrete longitudinal grid of spacing $\Delta$ drives the grid Fourier mode $k_z \in [-\pi/\Delta, \pi/\Delta]$ at the spatial-harmonic frequencies [Godfrey, 1974; Birdsall & Langdon, 1991, Ch. 8]:
+
+```math
+\omega_m(k_z) = \left(k_z + \frac{2\pi m}{\Delta}\right) v_0 = \left(k_z + \frac{2\pi m}{\Delta}\right) \beta_0 c, \qquad m \in \mathbb{Z}.
+```
+
+A numerical Cherenkov resonance on harmonic $m$ occurs wherever $|\omega_m(k_z)|$ matches the discrete grid electromagnetic dispersion relation:
+
+```math
+\omega_d(k_x, k_y, k_z) = \left|k_z + \frac{2\pi m}{\Delta}\right| v_0.
+```
+
+**Proposition (Oblique modes and fundamental $m = 0$ sub-$v_{\min}$ cutoff).**
+1. *At any fixed $k_z \in (0, \pi/\Delta]$, nonzero transverse wavenumbers $\mathbf{k}_\perp = (k_x, k_y) \neq \mathbf{0}$ strictly increase $\omega_d(k_x, k_y, k_z)$.*
+   *Proof:* Let $S_\perp^2(k_x, k_y) \equiv \sin^2(k_x\Delta/2) + \sin^2(k_y\Delta/2) \ge 0$ and $S_z^2(k_z) \equiv \sin^2(k_z\Delta/2) > 0$. For any $\mathbf{k}$ in the Brillouin zone $[-\pi/\Delta, \pi/\Delta]^3$, $\sigma^2(S_\perp^2 + S_z^2) \le 3\sigma^2 \le 1$. Since $\arcsin$ is strictly increasing on $[0, 1]$ and $\sqrt{S_\perp^2 + S_z^2} > |S_z|$ whenever $S_\perp^2 > 0$,
+   ```math
+   \omega_d(k_x, k_y, k_z) = \frac{2}{\Delta t}\arcsin\!\left(\sigma\sqrt{S_\perp^2 + S_z^2}\right) \ge \frac{2}{\Delta t}\arcsin\!\left(\sigma |S_z|\right) = \omega_d(0, 0, k_z),
+   ```
+   with strict inequality whenever $\sin^2(k_x\Delta/2) + \sin^2(k_y\Delta/2) > 0$. $\square$
+
+2. *For the fundamental ($m = 0$) beam harmonic $\omega_0(k_z) = k_z v_0$, a beam with $\beta_0 > v_{\min}/c$ (< 1) intersects the on-axis dispersion branch at a unique resonant wavenumber $k_{\text{res}} \in (0, \pi/\Delta)$, whereas a beam with $\beta_0 < v_{\min}/c$ has no $m = 0$ resonance in the Brillouin zone.*
+   *Proof:* On axis ($S_\perp = 0$), the continuous function $g(k_z) \equiv \omega_d(0, 0, k_z)/k_z$ decreases strictly from $\lim_{k_z\to 0^+} g(k_z) = c$ to $g(\pi/\Delta) = v_{\min}$. By the intermediate value theorem, for any $v_0 = \beta_0 c \in (v_{\min}, c)$, there exists a unique $k_{\text{res}} \in (0, \pi/\Delta)$ such that $g(k_{\text{res}}) = v_0$, determined by the transcendental equation in $u_{\text{res}} \equiv k_{\text{res}}\Delta \in (0, \pi)$:
+   ```math
+   \sin\!\left(\frac{1}{2}\beta_0 \sigma u_{\text{res}}\right) = \sigma \sin\!\left(\frac{1}{2}u_{\text{res}}\right).
+   ```
+   Conversely, if $\beta_0 < v_{\min}/c$, then for $m = 0$ and every $0 < |k_z| \le \pi/\Delta$,
+   ```math
+   \frac{\omega_d(k_x, k_y, k_z)}{|k_z|} \ge \frac{\omega_d(0, 0, k_z)}{|k_z|} \ge v_{\min} > \beta_0 c = v_0,
+   ```
+   so $\omega_d(\mathbf{k}) > |k_z| v_0$ and no $m = 0$ Cherenkov resonance exists. $\square$
+
+In a rectangular PEC pipe of transverse width $L_x = L_y = N_\perp \Delta$, $k_\perp = 0$ is not a PEC-pipe waveguide mode; the lowest waveguide branch is $(1, 1)$ with $S_{\perp,11}^2 = 2\sin^2(\pi/(2N_\perp))$, shifting the $m = 0$ resonant dimensionless wavenumber to the root of $\sin(\frac{1}{2}\beta_0\sigma u) = \sigma\sqrt{S_{\perp,11}^2 + \sin^2(\frac{1}{2}u)}$ (at $\beta_0 = 0.86$, $\sigma = 0.9/\sqrt{3}$, and $N_\perp = 16$: $u_{\text{res},0}^{\text{1D}} \approx 2.0789\text{ rad}$ and $u_{\text{res},0}^{\text{3D}} \approx 2.1575\text{ rad}$, resolved on $N_z \ge 64$ where the FFT bin spacing $\Delta u = 2\pi/N_z \le 0.0982\text{ rad}$ separates the 1D and 3D predictions).
+
+###### Aliased beam harmonics ($m = \pm 1$)
+
+On the positive half-Brillouin zone $u \equiv k_z\Delta \in (0, \pi]$, the first spatial-alias branches ($m = \pm 1$) have frequencies $\omega_{+1}(u) = (2\pi + u)\beta_0 c/\Delta$ (forward alias) and $\omega_{-1}(u) = (u - 2\pi)\beta_0 c/\Delta < 0$ (backward alias coupling to $-\omega_d$, or equivalently $|\omega_{-1}(u)| = (2\pi - u)\beta_0 c/\Delta$ for the conjugate mode at $-k_z$). Their intersections with $\omega_d(\mathbf{k}_\perp, u/\Delta)$ satisfy:
+
+```math
+\sin\!\left(\frac{1}{2}\beta_0 \sigma (2\pi \pm u)\right) = \sigma\sqrt{S_\perp^2 + \sin^2\!\left(\frac{1}{2}u\right)}, \qquad u \in (0, \pi].
+```
+
+At the Nyquist boundary $u = \pi$, the folded $m = -1$ branch $|\omega_{-1}(\pi)| = \pi\beta_0 c/\Delta$ meets the fundamental $m = 0$ branch $\omega_0(\pi) = \pi\beta_0 c/\Delta$:
+- **Super-$v_{\min}$ beam ($\beta_0 = 0.86 > v_{\min}/c$):** On the on-axis ($k_\perp = 0$) and $(1, 1)$ waveguide ($k_\perp = k_{\perp,11}$) branches at $u = \pi$, $|\omega_{-1}(\pi)| = \omega_0(\pi) = \pi\beta_0 c/\Delta > \omega_d(k_{\perp,11}, \pi/\Delta)$ ($\pi\beta_0\sigma \approx 1.403\text{ rad}$ versus $\omega_d(k_{\perp,11}, \pi/\Delta)\Delta t \approx 1.102\text{ rad}$). Because $|\omega_{-1}(u)| = (2\pi - u)\beta_0 c/\Delta$ decreases monotonically with $u$ while $\omega_d(k_{\perp,11}, u/\Delta)$ increases monotonically with $u$, $|\omega_{-1}(u)| \ge \pi\beta_0 c/\Delta > \omega_d(k_{\perp,11}, u/\Delta)$ for all $u \in [0, \pi]$, and $\omega_{+1}(u) = (2\pi + u)\beta_0 c/\Delta > |\omega_{-1}(u)|$. Thus on the $(1, 1)$ branch neither $m = -1$ nor $m = +1$ has a root in $u \in (0, \pi]$. Across the full 3D Brillouin zone, however, the global maximum $\omega_{d,\max}\Delta t = 2\arcsin(\sqrt{3}\sigma) \approx 2.240\text{ rad}$ exceeds $\pi\beta_0\sigma \approx 1.403\text{ rad}$, so higher-$k_\perp$ oblique branches can resonate with the $m = -1$ alias (in our benchmark, the smooth $\cos(\pi x/L_x)\cos(\pi y/L_y)$ transverse profile excites only the $(1, 1)$ waveguide mode).
+- **Sub-$v_{\min}$ control beam ($\beta_0 = 0.50 < v_{\min}/c$):** On the $(1, 1)$ waveguide branch, for $m = +1$, $\omega_{+1}(u)\Delta t = (2\pi + u)\beta_0\sigma \ge 2\pi(0.50)\sigma \approx 1.632\text{ rad} > \omega_d(k_{\perp,11}, \pi/\Delta)\Delta t \approx 1.102\text{ rad}$, so $m = +1$ has no root on the $(1, 1)$ branch in $u \in (0, \pi]$ (whereas high-$k_\perp$ oblique branches can resonate because the 3D maximum $2\arcsin(\sqrt{3}\sigma) \approx 2.240\text{ rad}$ exceeds $2\pi\beta_0\sigma \approx 1.632\text{ rad}$). For $m = -1$ on the $(1, 1)$ branch, $|\omega_{-1}(u)|$ decreases from $2\pi\beta_0 c/\Delta > \omega_d(k_{\perp,11}, 0)$ at $u = 0$ to $\pi\beta_0 c/\Delta < \omega_d(0, 0, \pi/\Delta) < \omega_d(k_{\perp,11}, \pi/\Delta)$ at $u = \pi$, and therefore crosses $\omega_d(k_{\perp,11}, u/\Delta)$ at a unique resonant wavenumber $u_{\text{res}, m=-1} \in (0, \pi)$. At $\beta_0 = 0.50$, $\sigma = 0.9/\sqrt{3}$, and $N_\perp = 16$, solving $\sin(\frac{1}{2}\beta_0\sigma(2\pi - u)) = \sigma\sqrt{S_\perp^2 + \sin^2(u/2)}$ yields $u_{\text{res}, m=-1}^{\text{1D}} \approx 2.3953\text{ rad}$ ($u/\pi \approx 0.7624$) on axis and $u_{\text{res}, m=-1}^{\text{3D}} \approx 2.3697\text{ rad}$ ($u/\pi \approx 0.7543$) on the $(1, 1)$ waveguide branch. Under CIC ($p = 1$) charge assignment and force interpolation, the two-way spatial-alias power weight at $k_m\Delta = u + 2\pi m$ is $\operatorname{sinc}^4((u + 2\pi m)/2) = \left[\frac{\sin((u + 2\pi m)/2)}{(u + 2\pi m)/2}\right]^4 \approx 0.0503$ at $u_{\text{res}, m=-1}^{\text{3D}}$.
+
+###### Co-moving two-window radiation diagnostic, frozen neutralizing background $\mathbf{q}_{\text{bg}}$, and resonant versus off-resonance response
+
+Unlike the V5 space-charge benchmark, the numerical Cherenkov runs start from $\mathbf{E}(0) = \mathbf{0}$ and $\mathbf{H}(0) = \mathbf{0}$ without a Poisson solve. At `ParticleSolver.attach()`, `_record_initial_gauss_state` therefore records a frozen immobile neutralizing background charge $\mathbf{q}_{\text{bg}} = \widetilde{\mathbf{S}}\mathbf{M}_\varepsilon\mathbf{E}(0) - \mathbf{q}_{\text{nodes}}(0) = -\mathbf{q}_{\text{nodes}}(0)$ on the grid. As the beam streams through the periodic domain, the total electric field decomposes into:
+1. the stationary co-moving self-field of the streaming beam ($\propto \exp(-i k_z v_0 t)$ in the lab frame),
+2. the static lab-frame field of the frozen background $\mathbf{q}_{\text{bg}}$ ($\omega = 0$ in the lab frame), and
+3. radiated waveguide modes ($\propto \exp(-i\omega_d(\mathbf{k}_\perp, k_z)t)$).
+
+To separate radiated Cherenkov waves from the stationary co-moving self-field of the beam, the longitudinal Fourier mode $\hat{E}_x(k_z, t)$ is transformed to the $m = 0$ co-moving frame $\tilde{E}_x(k_z, t) = \exp(+i k_z v_0 t)\hat{E}_x(k_z, t)$ (in which the co-moving beam self-field is time-independent and cancels identically between the two equal-length half-windows $[0, T/2]$ and $[T/2, T]$, while the frozen $\mathbf{q}_{\text{bg}}$ contribution oscillates at $\exp(+i k_z v_0 t)$ and is suppressed by $\mathcal{O}(1/(k_z v_0 T/2))$, bounded by $4/(k_z v_0 T/2)$). In this frame, a mode with detuning $\Delta\omega(k_z) = \omega_d(\mathbf{k}_\perp, k_z) - k_z v_0$ driven by a rigid shot-noise source $s(k_z)$ obeys:
+
+```math
+\frac{\mathrm{d}a}{\mathrm{d}t} = i\Delta\omega\,a + s \implies a(t) = s\,\frac{e^{i\Delta\omega t} - 1}{i\Delta\omega}.
+```
+
+Taking the difference $\Delta\tilde{E}_x(k_z) = \langle a(t)\rangle_{[T/2, T]} - \langle a(t)\rangle_{[0, T/2]}$ of the means over the second and first halves of a run of duration $T$ cancels any steady co-moving component and yields:
+
+```math
+\Delta a(k_z) = s\,\frac{\left(e^{i\Delta\omega T/2} - 1\right)^2}{(i\Delta\omega)^2 (T/2)} \approx \begin{cases} \dfrac{1}{2} s T, & |\Delta\omega| T \ll 1 \text{ (on resonance)}, \\[8pt] \mathcal{O}\!\left(\dfrac{|s|}{\Delta\omega^2 T}\right), \quad |\Delta a| \le \dfrac{8|s|}{\Delta\omega^2 T}, & |\Delta\omega| T \gg 1 \text{ (off resonance)}. \end{cases}
+```
+
+The per-mode power ratio between a resonant mode and an off-resonance mode therefore scales as $\sim \Delta\omega^4 T^4 / 256$, where on a finite periodic domain $L_z = N_z\Delta$ the nearest discrete FFT bin $k_{\text{bin}} = 2\pi n / L_z$ has small nonzero detuning and the stochastic shot-noise source amplitude $|s(k_z)|$ varies between independent runs (note that on the $(1, 1)$ branch for $\beta_0 = 0.50$, $\Delta\omega(u) > 0$ is not monotone across the upper Brillouin zone: $\Delta\omega\cdot\Delta t$ is $\approx 0.360$ at $u_{\text{med}} = \pi/2$, reaches $\approx 0.404$ near $u_{\text{res}}$, and decreases to $\approx 0.277$ at $u = \pi$). Accordingly, `tests/test_084_particles_selffield_cherenkov.py` asserts a heuristic off-resonance threshold on the control's $|\Delta\tilde{E}_x(k_{\text{res}})|^2 / \operatorname{median}_{k_z > 0}|\Delta\tilde{E}_x(k_z)|^2$ (combining $(\Delta\omega(u_{\text{med}})/\Delta\omega(u_{\text{res}}))^4$ with the exponential shot-noise quantile $-\ln(10^{-3})/\ln 2$) together with the radiated energy ordering $E_{\text{rad}}(\beta_0 = 0.86) > E_{\text{rad}}(\beta_0 = 0.50)$.
+
+###### Transfer function of the 1-2-1 binomial filter at $k_{\text{bin}}$
+
+A single three-point binomial smoothing pass along $z$ with stencil weights $(\frac{1}{4}, \frac{1}{2}, \frac{1}{4})$ (`alpha = 0.25`) acts on a discrete Fourier mode $\exp(i k_z m \Delta)$ as multiplication by the uncompensated transfer function [Birdsall & Langdon, 1991, App. C]:
+
+```math
+T_{\text{uncomp}}(k_z\Delta) = \frac{1}{2} + \frac{1}{2}\cos(k_z\Delta) = \cos^2\!\left(\frac{k_z\Delta}{2}\right) = 1 - \sin^2\!\left(\frac{k_z\Delta}{2}\right).
+```
+
+To reduce long-wavelength passband attenuation ($k_z\Delta \ll 1$, where $T_{\text{uncomp}}(k_z\Delta) = 1 - \frac{1}{4}(k_z\Delta)^2 + \mathcal{O}((k_z\Delta)^4)$), `ParticleSolver(..., filter="binomial")` applies a second sharpening pass with $\alpha_2 = -1/6$, whose symbol is $1 - 4\alpha_2\sin^2(k_z\Delta/2) = 1 + \frac{2}{3}\sin^2(k_z\Delta/2)$. The resulting two-pass **compensated** 1-2-1 binomial filter transfer function is:
+
+```math
+T_{\text{comp}}(k_z\Delta) = \cos^2\!\left(\frac{k_z\Delta}{2}\right)\left(1 + \frac{2}{3}\sin^2\frac{k_z\Delta}{2}\right) = 1 - \frac{1}{3}\sin^2\frac{k_z\Delta}{2} - \frac{2}{3}\sin^4\frac{k_z\Delta}{2}.
+```
+
+At the Nyquist limit $k_z\Delta = \pi$, both filters vanish identically ($T_{\text{uncomp}}(\pi) = T_{\text{comp}}(\pi) = 0$). Because `apply_binomial_filter_3d` is linear and translation-invariant in periodic $z$ and applies the 1D filter along all three axes $(x, y, z)$, at the measured resonant FFT bin $k_{\text{bin}}$ of the $(1, 1)$ transverse waveguide mode ($k_x = k_y = \pi/(N_\perp\Delta)$) the radiated spectral power $|\Delta\tilde{E}_x(k_{\text{bin}})|^2$ is multiplied by the 3D power transfer factor:
+
+```math
+\frac{|\Delta\tilde{E}_{x,\text{filt}}(k_{\text{bin}})|^2}{|\Delta\tilde{E}_{x,\text{unfilt}}(k_{\text{bin}})|^2} = \left|T_{\text{comp}}(k_{\text{bin}}\Delta)\right|^2 \, T_\perp^4, \qquad T_\perp \equiv T_{\text{comp}}\!\left(\frac{\pi}{N_\perp}\right),
+```
+
+Because the transverse beam profile $\cos(\pi x / L_x)\cos(\pi y / L_y) = \sin(\pi i / N_\perp)\sin(\pi j / N_\perp)$ vanishes on the PEC wall nodes $i, j \in \{0, N_\perp\}$, it is an exact eigenvector of the Dirichlet-truncated 1D stencil in `_filter_1d_axis` with eigenvalue $T_\perp = T_{\text{comp}}(\pi / N_\perp)$ along each transverse axis; there is therefore no PEC wall boundary correction, and the equality holds up to floating-point round-off plus the small self-consistent particle trajectory nonlinearity $\mathcal{O}(\omega_{p,\perp}^2 T^2)$ (tested in `tests/test_084_particles_selffield_cherenkov.py` with the stated factor-of-10 margin $10\,\omega_{p,\perp}^2 T^2 + 10^{-12}$).
+
+The diagnostic values for both the V5 self-field benchmark and the numerical Cherenkov test (including the solver mutation and model-ablation failure checks) are printed at run time by:
+- `pytest -v -s tests/test_084_particles_selffield_cherenkov.py`
+- `python examples/021_particles_numerical_cherenkov.py --smoke`
+
+---
+
+##### Limits & Failure Modes
+
+- **Quiet start versus random start**:
+  - In equilibrium self-field benchmarks such as V5, random Monte-Carlo particle loading with $N_{\text{ppc}}$ macroparticles per cell introduces uncorrelated Poisson density fluctuations $\delta\rho/\rho_0 \sim N_{\text{ppc}}^{-1/2}$. These fluctuations excite broadband cavity oscillations and short-wavelength Cherenkov modes whose amplitude ($\sim \mathcal{O}(N_{\text{ppc}}^{-1/2})$) overwhelms percent- and sub-percent-level checks of $c B_\theta / E_r = \beta_0$, $\mathcal{O}(\Delta x^2)$ near-axis slope convergence, and $1/\gamma_0^2$ force cancellation unless $N_{\text{ppc}} \gtrsim 10^6$. V5 therefore requires a deterministic **quiet start** (regular sub-cell lattice or low-discrepancy sequence) so that interior cells have zero initial density variance ($\delta\rho = 0$).
+  - Conversely, the numerical Cherenkov benchmark in `examples/021_particles_numerical_cherenkov.py` relies on high-wavenumber current harmonics $\hat{J}_z(k_z)$ near $k_{\text{res}} \sim 2/\Delta z$ to seed the resonance. A longitudinally uniform quiet start sets $\hat{J}_z(k_z) = 0$ at all $k_z > 0$ (except multiples of the lattice wavenumber $2\pi / \Delta z_p$), suppressing the initial seed until round-off grows; a **random start** in $z$ is therefore required when testing shot-noise-driven Cherenkov radiation.
+- **Uniform grid only**:
+  - Both the exact discrete FIT identity $A_{z;i,j} = (\beta_0/c)\phi_{i,j} \implies c\mathbf{B}_\perp = \beta_0\hat{\mathbf{z}}\times\mathbf{E}_\perp$ and the analytical plane-wave dispersion relation $\omega_d(\mathbf{k})$ assume a **uniform** Cartesian grid ($\Delta x_i = \Delta x$, $\Delta y_j = \Delta y$, $\Delta z_k = \Delta z$). On graded meshes, the staggered dual-to-primal metric ratios $\tilde{L}/\Delta$, logical-coordinate B-spline deposition (`GridMap.to_logical`), and spatially varying local Nyquist cutoffs $\pi/\Delta z_k$ break the exact discrete self-field cancellation at $\mathcal{O}(\Delta x_{i+1} - \Delta x_i)$ and broaden the Cherenkov resonance across a band of wavenumbers.
+- **Effect of the binomial filter on the physical beam spectrum**:
+  - `apply_binomial_filter_3d` is a linear spatial low-pass filter applied to all three deposited current components $(W_x, W_y, W_z)$ along all three axes. While the compensation pass ($\alpha_2 = -1/6$) reduces the leading $\mathcal{O}((k\Delta)^2)$ long-wavelength attenuation of the uncompensated 1-2-1 stencil by a factor of three ($1 - T_{\text{comp}}(k\Delta) = \frac{1}{12}(k\Delta)^2 + \frac{5}{144}(k\Delta)^4 + \mathcal{O}((k\Delta)^6)$, versus $1 - T_{\text{uncomp}}(k\Delta) = \frac{1}{4}(k\Delta)^2 + \mathcal{O}((k\Delta)^4)$), any physical beam bunch structure, microbunching, or sharp transverse beam edge with significant spectral content at $k\Delta \gtrsim 1$ is still attenuated by $T_{\text{comp}}(k_x\Delta x) T_{\text{comp}}(k_y\Delta y) T_{\text{comp}}(k_z\Delta z)$. Resolving physical beam features with $\ge 20$ cells per wavelength keeps $k_{\text{phys}}\Delta \le \pi/10$, where $1 - T_{\text{comp}}(\pi/10) < 9\times 10^{-3}$.
+- **Co-moving two-window diagnostic is blind to aliased ($m \neq 0$) branches**:
+  - The co-moving two-window diagnostic $\tilde{E}_x(k_z, t) = \exp(+i k_z v_0 t)\hat{E}_x(k_z, t)$ demodulates at the fundamental ($m = 0$) beam frequency $\omega_0(k_z) = k_z v_0$ and is therefore blind to $m \neq 0$ spatial-alias branches by construction [Godfrey, 1974]. A grid mode driven by an $m \neq 0$ spatial alias at $\omega_m(k_z) = (k_z + 2\pi m/\Delta)v_0$ retains the rapid relative phase factor $\exp(i\,2\pi m v_0 t / \Delta)$ in the $m = 0$ co-moving frame and averages out over each half-window $[0, T/2]$ and $[T/2, T]$. For the $\beta_0 = 0.50 < v_{\min}/c$ control beam, although the $m = 0$ branch is strictly non-resonant, the $m = -1$ backward alias resonates at $u_{\text{res}, m=-1}^{\text{3D}} \approx 2.3697\text{ rad}$ with CIC alias power weight $\operatorname{sinc}^4((u_{\text{res}, m=-1}^{\text{3D}} - 2\pi)/2) \approx 0.0503$; when the same control run is demodulated at $\omega_{-1}(k_z) = (k_z - 2\pi/\Delta)v_0$, this $m = -1$ resonance measurably radiates at the predicted bin (reported at run time by `pytest -v -s tests/test_084_particles_selffield_cherenkov.py` and `python examples/021_particles_numerical_cherenkov.py --smoke`).
+- **Oblique Cherenkov in 3D covered only through the $k_z$ argument**:
+  - The fundamental ($m = 0$) resonance condition $\omega_d(k_x, k_y, k_z) = k_z v_0$ is parametrized here by the longitudinal wavenumber $k_z$ for a fixed transverse waveguide mode $\mathbf{k}_\perp = (k_x, k_y)$. As proved above, oblique propagation ($S_\perp^2 = \sin^2(k_x\Delta/2) + \sin^2(k_y\Delta/2) > 0$) raises $\omega_d(\mathbf{k})$ at a given $k_z$, which guarantees that no $m = 0$ oblique resonance can occur when $\beta_0 < v_{\min}/c$ and shifts the $m = 0$ resonant longitudinal wavenumber $k_{\text{res}}(k_\perp)$ of higher transverse modes toward the Nyquist boundary $k_z = \pi/\Delta$. However, in a 3D beam with sharp transverse edges or uncorrelated 3D particle noise, multiple oblique waveguide branches $(m_\perp, n_\perp)$ with $S_{\perp,m_\perp n_\perp}^2 \le (\sin^2(\beta_0\sigma\pi/2)/\sigma^2 - 1)$ can resonate simultaneously at distinct longitudinal wavenumbers $k_{\text{res}}(k_{\perp,m_\perp n_\perp}) > k_{\text{res}}(0)$ and undergo additional transverse filter attenuation $|T_{\text{comp}}(k_x\Delta) T_{\text{comp}}(k_y\Delta)|^2$; full 3D $(k_x, k_y, k_z)$ directional Cherenkov cones and Godfrey's finite-grid plasma instability growth rates at high beam density are outside the scope of this single-$k_z$ cold-beam analysis.
+
+##### References
+
+- B. B. Godfrey, "Numerical Cherenkov instabilities in electromagnetic particle codes", *J. Comput. Phys.* **15**(4), 504–521 (1974), [doi:10.1016/0021-9991(74)90076-X](https://doi.org/10.1016/0021-9991(74)90076-X).
+- K. S. Yee, "Numerical solution of initial boundary value problems involving Maxwell's equations in isotropic media", *IEEE Trans. Antennas Propag.* **14**(3), 302–307 (1966), [doi:10.1109/TAP.1966.1138693](https://doi.org/10.1109/TAP.1966.1138693).
+- T. Weiland, "A discretization method for the solution of Maxwell's equations for six-component fields", *Electronics and Communication (AEÜ)* **31**, 116–120 (1977).
+- A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4.
+- C. K. Birdsall and A. B. Langdon, *Plasma Physics via Computer Simulation*, Taylor & Francis / IOP Publishing, Bristol (1991), ISBN 978-0-7503-0117-6.
+
 #### 🧪 Open-Source Compatibility
 
 The wake and impedance analysis is performed within the `WakeSolver` class in `Wakesolver.py`. Even if this module is tailored for Wakis, it is completely modular and can be used with other EM solvers besides Wakis' `SolverFIT3D` output:

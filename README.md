@@ -434,6 +434,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [ ] invrs-gym 3D challenges (metagrating, splitter, meta-atom library, Bayer sorter, photon extractor)
 - [x] Self-consistent electromagnetic particles (`wakis.particles`), core and GPU: Esirkepov deposit with Gauss's law at round-off (≤ 9e-14 vs 0.58 for a naive deposit), Boris/Vay/Higuera–Cary pushers, cold-plasma frequency within 2.3e-7 of the discrete dispersion relation; GPU = CPU to a derived round-off bound, 23–387× per coupled step on one L4 vs a 1-thread NumPy reference (examples 017, 018)
 - [x] Particles on MPI and multiple GPUs: slab decomposition with particle migration and guard-current reduction, NCCL or pinned-host MPI; multi-rank runs match the serial CPU reference to a derived round-off envelope; 1.8× on 2 L4 at 10⁷ particles with cell sorting, 87–88 % efficiency against an equal-work one-GPU control (example 019)
+- [x] Particles: beam self-fields in a PEC pipe (c·B = β·E, 1/γ² force) and numerical Cherenkov radiation at the predicted resonance, including aliased harmonics and the binomial filter (example 021); two-stream instability validated against the discrete dispersion relation (example 022); GPU-resident phase-space, energy, current, emittance and track monitors (example 025); checkpoint and restart of coupled field + particle runs, bitwise on CPU and to a derived round-off bound on GPU
 - [ ] Particles: multi-node GPU runs, beam injection, emission models, large-signal tutorials
 - [ ] Nonlinear plasma wakefields (blowout regime, `wakis.particles`)
 
