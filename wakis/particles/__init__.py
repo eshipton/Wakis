@@ -17,6 +17,7 @@ from .pushers import (
     push_vay,
 )
 from .shapes import (
+    ParticleCFLError,
     bspline_weights_1d,
     deposit_charge,
     deposit_current_esirkepov,
@@ -37,6 +38,7 @@ __all__ = [
     "Collector",
     "LogicalGridMap",
     "ParticleBoundaries",
+    "ParticleCFLError",
     "ParticleSolver",
     "Species",
     "apply_binomial_filter_3d",

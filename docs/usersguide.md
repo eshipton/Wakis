@@ -1699,6 +1699,61 @@ for _ in range(40):
 print("GPU Gauss law relative residual:", gauss_residual(solver_gpu, [electrons_gpu]))
 ```
 
+### MPI and Multi-GPU Execution (`use_mpi=True`)
+
+When `GridFIT3D(..., use_mpi=True)` and `SolverFIT3D(..., use_mpi=True)` partition the domain into longitudinal $z$-slabs (requiring `Nz % size == 0`, `NZ // size >= 2`, and `shape=1` CIC splines), `ParticleSolver` automatically filters initial particles to each rank's owned slab $[z_{\text{own,min}}, z_{\text{own,max}})$, preallocates `capacity_headroom` (default `0.05` when `size > 1`), migrates slab-crossing particles after each step's current deposition, and performs additive Esirkepov guard-plane reductions across neighbouring ranks. On multi-GPU runs (`use_gpu=True`, `use_mpi=True`, `size > 1`), `particles_comm` selects between `"auto"` / `None` (uses GPU-to-GPU `"nccl"` when available and warns/falls back to `"mpi"` otherwise), explicit `"nccl"` (raises `RuntimeError` collectively if NCCL is unavailable), and pinned-host MPI staging (`"mpi"`); on single-rank runs (`size == 1`), `particles_comm` resolves to `"none"`:
+
+```python
+import numpy as np
+from scipy import constants as const
+import wakis
+from wakis.particles import ParticleSolver, Species
+
+# Launch with: mpiexec -n 2 python script.py
+grid_mpi = wakis.GridFIT3D(
+    0.0, 0.04, 0.0, 0.04, 0.0, 0.08, 16, 16, 32, use_mpi=True, verbose=0
+)
+solver_mpi = wakis.SolverFIT3D(
+    grid_mpi,
+    cfln=0.45,
+    bc_low=["periodic", "periodic", "pec"],
+    bc_high=["periodic", "periodic", "pec"],
+    use_mpi=True,
+    use_gpu=False,                      # set True for multi-GPU (binds via MPI.COMM_TYPE_SHARED)
+    verbose=0,
+)
+
+# Generate a deterministic global particle set on all ranks; attach() filters to each rank's z-slab
+rng = np.random.default_rng(2026)
+sp_mpi = Species(name="e-", charge=-const.e, mass=const.m_e)
+sp_mpi.add_particles(
+    x=rng.uniform(0.005, 0.035, size=256),
+    y=rng.uniform(0.005, 0.035, size=256),
+    z=rng.uniform(0.010, 0.070, size=256),
+    ux=rng.normal(0.0, 0.05 * const.c, size=256),
+    uy=rng.normal(0.0, 0.05 * const.c, size=256),
+    uz=rng.normal(0.15 * const.c, 0.03 * const.c, size=256),
+    w=np.full(256, 1.0e5),
+)
+
+ps_mpi = ParticleSolver(
+    solver_mpi,
+    species=[sp_mpi],
+    shape=1,                            # MPI requires shape=1 (CIC)
+    particles_comm=None,                # auto-selects "nccl" on multi-GPU or "mpi" fallback
+).attach()
+
+for _ in range(40):
+    solver_mpi.one_step()
+
+# Collective diagnostics reduce across all MPI ranks
+q_tot = ps_mpi.total_charge()
+res_gauss = ps_mpi.gauss_residual()
+sp_global = ps_mpi.mpi_gather_species(0)
+if solver_mpi.rank == 0:
+    print("Global particles:", sp_global.n_particles, "Gauss residual:", res_gauss)
+```
+
 ```{seealso}
-See `examples/017_particles_plasma_oscillation_and_gyration.py`, `examples/018_particles_gpu_throughput.py`, and the [Physics Guide section on Electromagnetic Particle-in-Cell](physicsguide.md#electromagnetic-particle-in-cell-wakisparticles) for discrete charge-conservation theory, relativistic pusher benchmarks, cold-plasma dispersion analysis, and GPU throughput scaling.
+See `examples/017_particles_plasma_oscillation_and_gyration.py`, `examples/018_particles_gpu_throughput.py`, `examples/019_particles_multi_gpu_scaling.py`, and the [Physics Guide section on Electromagnetic Particle-in-Cell](physicsguide.md#electromagnetic-particle-in-cell-wakisparticles) for discrete charge-conservation theory, relativistic pusher benchmarks, cold-plasma dispersion analysis, GPU throughput scaling, and parallel / multi-GPU slab decomposition.
 ```

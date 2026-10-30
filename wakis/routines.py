@@ -303,8 +303,19 @@ class RoutinesMixin:
         imu = xp.asarray(self.imu.toarray())
         itA = self.grid.itA.toarray()
         dA = np.divide(1.0, itA, out=np.zeros_like(itA), where=itA != 0)
-        vol_E = xp.asarray(self.grid.L.toarray() * dA)
-        vol_H = xp.asarray(self.grid.tL.toarray() / self.grid.iA.toarray())
+        vol_E_h = self.grid.L.toarray() * dA
+        vol_H_h = self.grid.tL.toarray() / self.grid.iA.toarray()
+        if self.use_mpi and getattr(self, "size", 1) > 1:
+            _, z_local = self._mpi_rank_z_slices(self.rank)
+            own_z = np.zeros(self.Nz, dtype=bool)
+            own_z[z_local] = True
+            own_mask = np.broadcast_to(
+                own_z[None, None, :, None], (self.Nx, self.Ny, self.Nz, 3)
+            ).reshape(-1, order="F")
+            vol_E_h = np.where(own_mask, vol_E_h, 0.0)
+            vol_H_h = np.where(own_mask, vol_H_h, 0.0)
+        vol_E = xp.asarray(vol_E_h)
+        vol_H = xp.asarray(vol_H_h)
         eps = xp.where(ieps != 0, 1 / xp.where(ieps != 0, ieps, 1), 0)
         mu = xp.where(imu != 0, 1 / xp.where(imu != 0, imu, 1), 0)
         for g in getattr(self, "_time_varying_groups", ()):

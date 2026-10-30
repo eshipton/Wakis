@@ -59,6 +59,7 @@ from wakis.particles import (
     Collector,
     LogicalGridMap,
     ParticleBoundaries,
+    ParticleCFLError,
     ParticleSolver,
     Species,
     cold_plasma_dispersion_discrete,
@@ -1262,11 +1263,12 @@ def test_gpu_esirkepov_cfl_guard_and_attach_dt_check(monkeypatch):
     sp = Species(use_gpu=True)
     sp.add_particles(x=0.03, y=0.03, z=0.03, ux=0.0, uy=0.0, uz=0.1 * c_light, w=1.0e5)
 
-    # 1. Host-side dt check at attach(): setting c * dt > min_cell_size must raise ValueError
+    # 1. Host-side dt check at attach(): setting c * dt > min_cell_size must raise ParticleCFLError
+    assert issubclass(ParticleCFLError, ValueError)
     dx_min = float(min(np.min(grid.dx), np.min(grid.dy), np.min(grid.dz)))
     orig_dt = solver.dt
     solver.dt = 1.25 * dx_min / c_light
-    with pytest.raises(ValueError, match="c \\* dt <= min_cell_size"):
+    with pytest.raises(ParticleCFLError, match="c \\* dt <= min_cell_size"):
         ParticleSolver(solver, species=[sp], shape=1).attach()
 
     # Restore valid dt and attach
@@ -1277,11 +1279,11 @@ def test_gpu_esirkepov_cfl_guard_and_attach_dt_check(monkeypatch):
     # 1b. Host-side dt re-check at the start of one_step()/step() when dt changes after attach()
     solver.dt = 1.25 * dx_min / c_light
     H_before = solver.H.toarray().copy()
-    with pytest.raises(ValueError, match="c \\* dt <= min_cell_size"):
+    with pytest.raises(ParticleCFLError, match="c \\* dt <= min_cell_size"):
         solver.one_step()
     # the check runs before the H update: a rejected step must leave H untouched
     assert bool(cp.all(solver.H.toarray() == H_before))
-    with pytest.raises(ValueError, match="c \\* dt <= min_cell_size"):
+    with pytest.raises(ParticleCFLError, match="c \\* dt <= min_cell_size"):
         ps._mid_step_hook()
     solver.dt = orig_dt
     solver.one_step()
@@ -1314,7 +1316,7 @@ def test_gpu_esirkepov_cfl_guard_and_attach_dt_check(monkeypatch):
         d_cfl_error=ps._d_cfl_error,
     )
     assert int(ps._d_cfl_error[0].get()) > 0
-    with pytest.raises(ValueError, match="crossed more than 1 cell"):
+    with pytest.raises(ParticleCFLError, match="crossed more than 1 cell"):
         ps.gauss_residual()
 
     # 3. Resetting _d_cfl_error via ps.reset_cfl_error() clears the device counter
@@ -1347,4 +1349,152 @@ def test_usersguide_particles_gpu_snippet_executes():
     )
     assert res < 1e-12
     assert ns["electrons_gpu"].n_particles == 1024
+
+
+def test_gpu_vs_cpu_dep_scratch_alias_with_absorption():
+    """Verify GPU = CPU equivalence when ``dep_scratch_alias_threshold=0`` forces ``_xi1_dep_scratch`` to alias ``_xi1_scratch`` under active PEC/collector absorption."""
+    n_p = 64
+    rng = np.random.default_rng(20261027)
+    x0 = rng.uniform(0.01, 0.05, size=n_p)
+    y0 = rng.uniform(0.01, 0.05, size=n_p)
+    z0 = rng.uniform(0.035, 0.059, size=n_p)
+    ux0 = rng.uniform(-0.08 * c_light, 0.08 * c_light, size=n_p)
+    uy0 = rng.uniform(-0.08 * c_light, 0.08 * c_light, size=n_p)
+    uz0 = rng.uniform(0.20 * c_light, 0.45 * c_light, size=n_p)
+    w0 = rng.uniform(2.0e6, 8.0e6, size=n_p)
+
+    def _run_case(on_gpu: bool, alias_threshold: int):
+        grid = _make_grid(graded=False, Nx=6, Ny=6, Nz=6)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.45,
+            bc_low=["pec", "pec", "pec"],
+            bc_high=["pec", "pec", "pec"],
+            use_gpu=on_gpu,
+            verbose=0,
+        )
+        sp = Species(
+            use_gpu=on_gpu,
+            capacity=n_p,
+            dep_scratch_alias_threshold=alias_threshold,
+        )
+        sp.add_particles(x=x0, y=y0, z=z0, ux=ux0, uy=uy0, uz=uz0, w=w0)
+        col = Collector(name="screen", plane=("z", 0.052, +1))
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            collectors=[col],
+            shape=1,
+            sort_every=2,
+        ).attach()
+        if on_gpu:
+            # Verify all needed scratch was allocated at attach(), and alias path is active when threshold=0
+            assert sp._x_tmp is not None
+            assert sp._cell_idx_scratch is not None
+            if alias_threshold == 0:
+                assert sp._xi1_dep_scratch is sp._xi1_scratch
+                assert sp._eta1_dep_scratch is sp._eta1_scratch
+                assert sp._zeta1_dep_scratch is sp._zeta1_scratch
+            else:
+                assert sp._xi1_dep_scratch is not sp._xi1_scratch
+        for _ in range(10):
+            solver.one_step()
+        return solver, sp, ps, col
+
+    s_cpu, sp_cpu, ps_cpu, col_cpu = _run_case(
+        on_gpu=False, alias_threshold=Species.DEFAULT_DEP_SCRATCH_ALIAS_THRESHOLD
+    )
+    s_gpu_alias, sp_gpu_alias, ps_gpu_alias, col_gpu_alias = _run_case(
+        on_gpu=True, alias_threshold=0
+    )
+    s_gpu_sep, sp_gpu_sep, ps_gpu_sep, col_gpu_sep = _run_case(
+        on_gpu=True, alias_threshold=Species.DEFAULT_DEP_SCRATCH_ALIAS_THRESHOLD
+    )
+
+    assert ps_cpu.gauss_residual() <= 1e-12
+    assert ps_gpu_alias.gauss_residual() <= 1e-12
+    assert col_gpu_alias.absorbed_count == col_cpu.absorbed_count > 0
+    assert sp_gpu_alias.n_particles == sp_cpu.n_particles < n_p
+    assert np.isclose(
+        col_gpu_alias.absorbed_charge, col_cpu.absorbed_charge, rtol=1e-13, atol=1e-22
+    )
+    assert np.isclose(
+        col_gpu_alias.absorbed_energy, col_cpu.absorbed_energy, rtol=1e-13, atol=1e-22
+    )
+    np.testing.assert_allclose(
+        cp.asnumpy(s_gpu_alias.E.toarray()),
+        s_cpu.E.toarray(),
+        rtol=1e-12,
+        atol=1e-12 * float(np.max(np.abs(s_cpu.E.toarray()))),
+    )
+    np.testing.assert_allclose(
+        cp.asnumpy(s_gpu_alias.E.toarray()),
+        cp.asnumpy(s_gpu_sep.E.toarray()),
+        rtol=1e-13,
+        atol=1e-13 * float(np.max(np.abs(s_cpu.E.toarray()))),
+    )
+
+
+def test_scale_csr_lr_gpu_indptr_prefix_sum_and_zero_rows(monkeypatch):
+    """Verify ``_scale_csr_lr_gpu`` prefix-sum ``indptr`` compaction matches CPU ``_scale_csr_lr`` with leading, interior, trailing, and all-zero PEC rows."""
+    from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+    from scipy.sparse import csr_matrix as cpu_csr_matrix
+
+    import wakis.boundaries as bnd_mod
+    from wakis.boundaries import _scale_csr_lr, _scale_csr_lr_gpu
+
+    rng = np.random.default_rng(20261028)
+    n = 24
+    dense = rng.standard_normal((n, n))
+    dense[np.abs(dense) < 0.6] = 0.0
+    M = cpu_csr_matrix(dense, dtype=np.float64)
+
+    # Case 1: leading, interior, and trailing zeroed PEC rows/columns
+    d_left = rng.uniform(0.5, 2.0, size=n)
+    d_right = rng.uniform(0.5, 2.0, size=n)
+    d_left[:3] = 0.0
+    d_left[9:13] = 0.0
+    d_left[-4:] = 0.0
+    d_right[5] = 0.0
+    d_right[-2:] = 0.0
+
+    out_cpu = _scale_csr_lr(M, d_left, d_right, np.float64)
+    out_gpu = _scale_csr_lr_gpu(M, d_left, d_right, np.float64, cp, gpu_csr_matrix)
+
+    np.testing.assert_array_equal(cp.asnumpy(out_gpu.indptr), out_cpu.indptr)
+    np.testing.assert_array_equal(cp.asnumpy(out_gpu.indices), out_cpu.indices)
+    np.testing.assert_allclose(
+        cp.asnumpy(out_gpu.data), out_cpu.data, rtol=1e-15, atol=0.0
+    )
+
+    # Case 2: all-zero scaling (every entry eliminated, indptr must be all zeros of length n + 1)
+    d_zero = np.zeros(n, dtype=np.float64)
+    out_zero_cpu = _scale_csr_lr(M, d_zero, d_right, np.float64)
+    out_zero_gpu = _scale_csr_lr_gpu(
+        M, d_zero, d_right, np.float64, cp, gpu_csr_matrix
+    )
+    assert out_zero_gpu.nnz == 0
+    np.testing.assert_array_equal(cp.asnumpy(out_zero_gpu.indptr), out_zero_cpu.indptr)
+    assert int(out_zero_gpu.indptr.size) == n + 1
+
+    # Input check: confirm PEC scaling genuinely eliminated entries from M
+    assert not np.array_equal(M.indptr, out_cpu.indptr)
+
+    # Code-path mutation check: monkeypatching _compact_csr_zeros_gpu to keep
+    # explicit zeros (skipping prefix-sum indptr compaction) must fail the CSR
+    # row-pointer and nnz assertions against _scale_csr_lr.
+    with monkeypatch.context() as m:
+        m.setattr(
+            bnd_mod,
+            "_compact_csr_zeros_gpu",
+            lambda data, indices, indptr, nz, cp_mod: (data, indices, indptr),
+        )
+        out_mut = _scale_csr_lr_gpu(
+            M, d_left, d_right, np.float64, cp, gpu_csr_matrix
+        )
+        with pytest.raises(AssertionError):
+            np.testing.assert_array_equal(cp.asnumpy(out_mut.indptr), out_cpu.indptr)
+        assert out_mut.nnz > out_cpu.nnz
+
+
 

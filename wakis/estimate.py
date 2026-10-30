@@ -137,6 +137,7 @@ MACHINES = {
     "n2-highmem-8": dict(ram=64e9, gpu=0),
     "n2-highmem-16": dict(ram=128e9, gpu=0),
     "g2-standard-16": dict(ram=64e9, gpu=24e9),
+    "g2-standard-24": dict(ram=96e9, gpu=24e9),
     "g2-standard-32": dict(ram=128e9, gpu=24e9),
 }
 _OS_RESERVE = 0.85  # fraction of RAM a job may use (OS, Python, page cache)

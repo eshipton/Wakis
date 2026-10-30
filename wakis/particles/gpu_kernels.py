@@ -63,8 +63,8 @@ __device__ __forceinline__ double to_logical_1d_dev(
     if (is_uni) {
         return (pos - p_min) / dx0;
     }
-    double n_wrap = floor((pos - p_min) / L_ax);
-    double pos_mod = p_min + (pos - p_min) - n_wrap * L_ax;
+    double n_wrap = (L_ax > 0.0) ? floor((pos - p_min) / L_ax) : 0.0;
+    double pos_mod = (L_ax > 0.0) ? (p_min + (pos - p_min) - n_wrap * L_ax) : pos;
     int lo = 0;
     int hi = n_cells - 1;
     if (pos_mod < nodes[1]) {
@@ -774,17 +774,17 @@ __global__ void boundary_prepare_paths_kernel(
     const double* __restrict__ xi0,
     const double* __restrict__ eta0,
     const double* __restrict__ zeta0,
-    const double* __restrict__ xi1,
-    const double* __restrict__ eta1,
-    const double* __restrict__ zeta1,
+    const double* xi1,
+    const double* eta1,
+    const double* zeta1,
     const double* __restrict__ ux,
     const double* __restrict__ uy,
     const double* __restrict__ uz,
     const double* __restrict__ w_arr,
     double q_charge, double mass, double inv_c2,
-    double* __restrict__ xi1_dep,
-    double* __restrict__ eta1_dep,
-    double* __restrict__ zeta1_dep,
+    double* xi1_dep,
+    double* eta1_dep,
+    double* zeta1_dep,
     int* __restrict__ keep_mask,
     int Nx, int Ny, int Nz,
     int per_x, int per_y, int per_z,
@@ -1208,11 +1208,11 @@ __global__ void compute_centred_B_kernel(
 }
 
 __global__ void finalize_j_delta_kernel(
-    const double* __restrict__ Wx,
-    const double* __restrict__ Wy,
-    const double* __restrict__ Wz,
+    const double* Wx,
+    const double* Wy,
+    const double* Wz,
     const double* __restrict__ itA,
-    double* __restrict__ J_particles,
+    double* J_particles,
     double* __restrict__ J_prev,
     double* __restrict__ J_solver,
     double inv_dt,
@@ -1240,6 +1240,109 @@ __global__ void finalize_j_delta_kernel(
     J_prev[i0] = jx;
     J_prev[i1] = jy;
     J_prev[i2] = jz;
+}
+
+__global__ void classify_and_pack_migration_kernel(
+    const double* __restrict__ x,
+    const double* __restrict__ y,
+    const double* __restrict__ z,
+    const double* __restrict__ ux,
+    const double* __restrict__ uy,
+    const double* __restrict__ uz,
+    const double* __restrict__ w,
+    const long long* __restrict__ pid,
+    int has_ids,
+    int has_lo,
+    int has_hi,
+    double z_own_min,
+    double z_own_max,
+    double z_ghost_lo,
+    double z_ghost_hi,
+    int* __restrict__ keep_mask,
+    int* __restrict__ counts,
+    double* __restrict__ send_lo,
+    double* __restrict__ send_hi,
+    int pack_cap,
+    const int* __restrict__ d_n_particles,
+    int n_launch
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_launch) return;
+    int n_active = (d_n_particles != nullptr) ? d_n_particles[0] : n_launch;
+    if (tid >= n_active) {
+        keep_mask[tid] = 0;
+        return;
+    }
+
+    double zp = z[tid];
+    if (has_lo && zp < z_own_min) {
+        keep_mask[tid] = 0;
+        if (zp < z_ghost_lo) {
+            atomicAdd(&counts[3], 1);
+        }
+        int dst = atomicAdd(&counts[0], 1);
+        if (dst < pack_cap) {
+            int base = dst * 8;
+            send_lo[base + 0] = x[tid];
+            send_lo[base + 1] = y[tid];
+            send_lo[base + 2] = zp;
+            send_lo[base + 3] = ux[tid];
+            send_lo[base + 4] = uy[tid];
+            send_lo[base + 5] = uz[tid];
+            send_lo[base + 6] = w[tid];
+            send_lo[base + 7] = has_ids ? __longlong_as_double(pid[tid]) : 0.0;
+        }
+    } else if (has_hi && zp >= z_own_max) {
+        keep_mask[tid] = 0;
+        if (zp >= z_ghost_hi) {
+            atomicAdd(&counts[3], 1);
+        }
+        int dst = atomicAdd(&counts[1], 1);
+        if (dst < pack_cap) {
+            int base = dst * 8;
+            send_hi[base + 0] = x[tid];
+            send_hi[base + 1] = y[tid];
+            send_hi[base + 2] = zp;
+            send_hi[base + 3] = ux[tid];
+            send_hi[base + 4] = uy[tid];
+            send_hi[base + 5] = uz[tid];
+            send_hi[base + 6] = w[tid];
+            send_hi[base + 7] = has_ids ? __longlong_as_double(pid[tid]) : 0.0;
+        }
+    } else {
+        keep_mask[tid] = 1;
+        atomicAdd(&counts[2], 1);
+    }
+}
+
+__global__ void unpack_migration_kernel(
+    const double* __restrict__ recv_buf,
+    int n_recv,
+    int dst_offset,
+    double* __restrict__ x,
+    double* __restrict__ y,
+    double* __restrict__ z,
+    double* __restrict__ ux,
+    double* __restrict__ uy,
+    double* __restrict__ uz,
+    double* __restrict__ w,
+    long long* __restrict__ pid,
+    int has_ids
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_recv) return;
+    int dst = dst_offset + tid;
+    int base = tid * 8;
+    x[dst] = recv_buf[base + 0];
+    y[dst] = recv_buf[base + 1];
+    z[dst] = recv_buf[base + 2];
+    ux[dst] = recv_buf[base + 3];
+    uy[dst] = recv_buf[base + 4];
+    uz[dst] = recv_buf[base + 5];
+    w[dst] = recv_buf[base + 6];
+    if (has_ids) {
+        pid[dst] = __double_as_longlong(recv_buf[base + 7]);
+    }
 }
 
 } // extern "C"
@@ -1353,7 +1456,8 @@ def launch_gather_and_push_gpu(
     n_launch = species._n_launch_bound
     if n_launch == 0:
         return
-    species._ensure_gpu_scratch()
+    if species._gpu_scratch_cap < species._capacity:
+        species._ensure_gpu_scratch()
 
     pusher_id = PUSHER_IDS[str(pusher).strip().lower()]
     if E_ext_arrays is not None:
@@ -1579,8 +1683,10 @@ def launch_boundary_prepare_paths_gpu(
             species._keep_mask_scratch,
         )
 
-    species._ensure_gpu_scratch()
-    boundaries._ensure_gpu_buffers()
+    if species._gpu_scratch_cap < species._capacity or species._xi1_dep_scratch is None:
+        species._ensure_gpu_scratch(need_boundary=True)
+    if boundaries._col_types_gpu is None and boundaries.collectors:
+        boundaries._ensure_gpu_buffers()
 
     if q_bg_nodes is not None and q_bg_nodes.flags.f_contiguous:
         q_bg_ptr = q_bg_nodes.reshape(-1, order="F")
@@ -1690,7 +1796,11 @@ def compact_species_gpu(species, keep_mask_i32) -> None:
     n_launch = species._n_launch_bound
     if n_launch == 0:
         return
-    species._ensure_gpu_scratch()
+    if (
+        species._gpu_scratch_cap < species._capacity
+        or getattr(species, "_x_tmp", None) is None
+    ):
+        species._ensure_gpu_scratch(need_tmp=True)
 
     n_blocks = max(1, (n_launch + _BLOCK_SIZE - 1) // _BLOCK_SIZE)
     d_n_ptr = species._d_n_particles if species._n_dirty_gpu else 0
@@ -1780,7 +1890,12 @@ def sort_species_by_cell_gpu(species, grid_map) -> None:
     n_launch = species._n_launch_bound
     if n_launch <= 1:
         return
-    species._ensure_gpu_scratch()
+    if (
+        species._gpu_scratch_cap < species._capacity
+        or getattr(species, "_x_tmp", None) is None
+        or species._cell_idx_scratch is None
+    ):
+        species._ensure_gpu_scratch(need_tmp=True, need_sort=True)
 
     d_n_ptr = species._d_n_particles if species._n_dirty_gpu else 0
     k_cell = get_kernel("compute_cell_index_kernel")
@@ -1895,5 +2010,89 @@ def finalize_j_delta_gpu(
             J_solver,
             np.float64(inv_dt),
             np.int32(N),
+        ),
+    )
+
+
+def classify_and_pack_migration_gpu(
+    species,
+    has_lo: bool,
+    has_hi: bool,
+    z_own_min: float,
+    z_own_max: float,
+    z_ghost_lo: float,
+    z_ghost_hi: float,
+    d_counts,
+    d_send_lo,
+    d_send_hi,
+    pack_cap: int,
+) -> None:
+    """Classify active GPU particles and pack leavers into ``d_send_lo`` and ``d_send_hi``."""
+    n_launch = species._n_launch_bound
+    d_counts.fill(0)
+    if n_launch == 0:
+        return
+    if species._gpu_scratch_cap < species._capacity:
+        species._ensure_gpu_scratch()
+    d_n_ptr = species._d_n_particles if species._n_dirty_gpu else 0
+    kern = get_kernel("classify_and_pack_migration_kernel")
+    grid, block = _grid_1d(n_launch)
+    kern(
+        grid,
+        block,
+        (
+            species._x,
+            species._y,
+            species._z,
+            species._ux,
+            species._uy,
+            species._uz,
+            species._w,
+            species._id if species.track_ids else 0,
+            np.int32(1 if species.track_ids else 0),
+            np.int32(1 if has_lo else 0),
+            np.int32(1 if has_hi else 0),
+            np.float64(z_own_min),
+            np.float64(z_own_max),
+            np.float64(z_ghost_lo),
+            np.float64(z_ghost_hi),
+            species._keep_mask_scratch,
+            d_counts,
+            d_send_lo,
+            d_send_hi,
+            np.int32(pack_cap),
+            d_n_ptr,
+            np.int32(n_launch),
+        ),
+    )
+
+
+def unpack_migration_gpu(
+    species,
+    d_recv_buf,
+    n_recv: int,
+    dst_offset: int,
+) -> None:
+    """Unpack ``n_recv`` migrated 8-word particle records into ``species`` at ``dst_offset``."""
+    if n_recv <= 0:
+        return
+    kern = get_kernel("unpack_migration_kernel")
+    grid, block = _grid_1d(n_recv)
+    kern(
+        grid,
+        block,
+        (
+            d_recv_buf,
+            np.int32(n_recv),
+            np.int32(dst_offset),
+            species._x,
+            species._y,
+            species._z,
+            species._ux,
+            species._uy,
+            species._uz,
+            species._w,
+            species._id if species.track_ids else 0,
+            np.int32(1 if species.track_ids else 0),
         ),
     )

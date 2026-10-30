@@ -249,12 +249,20 @@ class ParticleBoundaries:
         xi_max = []
         for a in range(3):
             n_phys = counts[a] - (0 if self.periodic[a] else int(edge_ghosts[a]))
-            low = float(self.n_pml) if self.bc_low[a] == "cpml" else 0.0
-            high = (
-                float(n_phys - self.n_pml)
-                if self.bc_high[a] == "cpml"
-                else float(n_phys)
-            )
+            if self.bc_low[a] == "mpi":
+                low = -1.0e30
+            elif self.bc_low[a] == "cpml":
+                low = float(self.n_pml)
+            else:
+                low = 0.0
+
+            if self.bc_high[a] == "mpi":
+                high = 1.0e30
+            elif self.bc_high[a] == "cpml":
+                high = float(n_phys - self.n_pml)
+            else:
+                high = float(n_phys)
+
             if high <= low:
                 raise ValueError(
                     f"Active particle region along axis {a} is empty "

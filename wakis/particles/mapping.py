@@ -30,9 +30,18 @@ class LogicalGridMap:
         Array module (``numpy`` or ``cupy``). Default is ``numpy``.
     """
 
-    def __init__(self, x_nodes, y_nodes, z_nodes, xp=np, edge_ghosts=(0, 0, 0)):
+    def __init__(
+        self,
+        x_nodes,
+        y_nodes,
+        z_nodes,
+        xp=np,
+        edge_ghosts=(0, 0, 0),
+        use_mpi: bool = False,
+    ):
         self.xp = xp
         self.edge_ghosts = tuple(int(g) for g in edge_ghosts)
+        self.use_mpi = bool(use_mpi)
         self.x_nodes = xp.asarray(x_nodes, dtype=np.float64)
         self.y_nodes = xp.asarray(y_nodes, dtype=np.float64)
         self.z_nodes = xp.asarray(z_nodes, dtype=np.float64)
@@ -74,10 +83,14 @@ class LogicalGridMap:
         self._counts = (self.Nx, self.Ny, self.Nz)
         self._mins = (self.xmin, self.ymin, self.zmin)
         self._maxs = (self.xmax, self.ymax, self.zmax)
-        self._spans = (
-            self.xmax - self.xmin,
-            self.ymax - self.ymin,
-            self.zmax - self.zmin,
+        non_periodic = (
+            bool(self.edge_ghosts[0]),
+            bool(self.edge_ghosts[1]),
+            bool(self.edge_ghosts[2]) or self.use_mpi,
+        )
+        self._spans = tuple(
+            -1.0 if np_ax else float(mx - mn)
+            for np_ax, mn, mx in zip(non_periodic, self._mins, self._maxs)
         )
         self._dx0 = (float(self.dx[0]), float(self.dy[0]), float(self.dz[0]))
 
@@ -107,15 +120,29 @@ class LogicalGridMap:
         """
         if hasattr(grid_or_solver, "E") and hasattr(grid_or_solver, "grid"):
             grid = grid_or_solver.grid
+            use_mpi = bool(
+                getattr(grid_or_solver, "use_mpi", False)
+                or getattr(grid, "use_mpi", False)
+            )
         else:
             grid = grid_or_solver
+            use_mpi = bool(getattr(grid, "use_mpi", False))
         if xp is None:
             field_E = getattr(grid_or_solver, "E", None)
             xp = getattr(field_E, "xp", np)
         edge_ghosts = getattr(grid, "edge_ghosts", (0, 0, 0))
-        return cls(grid.x, grid.y, grid.z, xp=xp, edge_ghosts=edge_ghosts)
+        return cls(
+            grid.x,
+            grid.y,
+            grid.z,
+            xp=xp,
+            edge_ghosts=edge_ghosts,
+            use_mpi=use_mpi,
+        )
 
-    def to_logical_1d(self, pos, axis: int, use_searchsorted: bool = False):
+    def to_logical_1d(
+        self, pos, axis: int, use_searchsorted: bool = False, out=None
+    ):
         """Map 1D physical coordinates [m] to logical coordinates along ``axis``.
 
         For ``pos`` inside cell ``i`` (``nodes[i] <= pos < nodes[i+1]``),
@@ -131,6 +158,9 @@ class LogicalGridMap:
             Axis index (0 for x, 1 for y, 2 for z).
         use_searchsorted : bool, optional
             If True, force ``searchsorted`` even on uniform axes.
+        out : ndarray of float, optional
+            Optional pre-allocated output array of matching shape and
+            ``float64`` dtype to avoid temporary buffer allocations.
 
         Returns
         -------
@@ -145,18 +175,37 @@ class LogicalGridMap:
         n_cells = self._counts[axis]
 
         if self._uniform[axis] and not use_searchsorted:
+            if out is not None and out.shape == pos.shape and out.dtype == np.float64:
+                xp.subtract(pos, self._mins[axis], out=out)
+                out /= self._dx0[axis]
+                return out
             return (pos - self._mins[axis]) / self._dx0[axis]
 
         p_min = self._mins[axis]
         L_ax = self._spans[axis]
-        n_wrap = xp.floor((pos - p_min) / L_ax)
-        pos_mod = p_min + (pos - p_min) - n_wrap * L_ax
-        idx = xp.searchsorted(nodes, pos_mod, side="right") - 1
-        idx = xp.clip(idx, 0, n_cells - 1)
-        xi_mod = idx.astype(np.float64) + (pos_mod - nodes[idx]) / deltas[idx]
-        return n_wrap * float(n_cells) + xi_mod
+        if L_ax > 0.0:
+            n_wrap = xp.floor((pos - p_min) / L_ax)
+            pos_mod = p_min + (pos - p_min) - n_wrap * L_ax
+            idx = xp.searchsorted(nodes, pos_mod, side="right") - 1
+            idx = xp.clip(idx, 0, n_cells - 1)
+            xi_mod = idx.astype(np.float64) + (pos_mod - nodes[idx]) / deltas[idx]
+            res = n_wrap * float(n_cells) + xi_mod
+            if out is not None and out.shape == pos.shape:
+                out[...] = res
+                return out
+            return res
 
-    def to_logical(self, x, y, z, use_searchsorted: bool = False):
+        idx = xp.searchsorted(nodes, pos, side="right") - 1
+        idx = xp.clip(idx, 0, n_cells - 1)
+        res = idx.astype(np.float64) + (pos - nodes[idx]) / deltas[idx]
+        if out is not None and out.shape == pos.shape:
+            out[...] = res
+            return out
+        return res
+
+    def to_logical(
+        self, x, y, z, use_searchsorted: bool = False, out=None
+    ):
         """Map 3D physical coordinates ``(x, y, z)`` [m] to ``(xi, eta, zeta)``.
 
         Parameters
@@ -165,16 +214,19 @@ class LogicalGridMap:
             Physical particle coordinates [m].
         use_searchsorted : bool, optional
             If True, force ``searchsorted`` even on uniform axes.
+        out : tuple of 3 ndarray of float, optional
+            Optional pre-allocated output arrays ``(xi_out, eta_out, zeta_out)``.
 
         Returns
         -------
         xi, eta, zeta : tuple of ndarray of float
             Logical coordinates along x, y, and z.
         """
+        out_x, out_y, out_z = (None, None, None) if out is None else out
         return (
-            self.to_logical_1d(x, 0, use_searchsorted=use_searchsorted),
-            self.to_logical_1d(y, 1, use_searchsorted=use_searchsorted),
-            self.to_logical_1d(z, 2, use_searchsorted=use_searchsorted),
+            self.to_logical_1d(x, 0, use_searchsorted=use_searchsorted, out=out_x),
+            self.to_logical_1d(y, 1, use_searchsorted=use_searchsorted, out=out_y),
+            self.to_logical_1d(z, 2, use_searchsorted=use_searchsorted, out=out_z),
         )
 
     def to_physical_1d(self, xi, axis: int):

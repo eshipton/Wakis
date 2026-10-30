@@ -59,6 +59,20 @@ class Species:
     dtype : numpy dtype, optional
         Floating-point precision of the phase-space and weight arrays.
         Default is ``np.float64``.
+    dep_scratch_alias_threshold : int, optional
+        Capacity threshold [macroparticles] above which GPU boundary-truncation
+        scratch buffers (``_xi1_dep_scratch``, ``_eta1_dep_scratch``,
+        ``_zeta1_dep_scratch``) alias ``(_xi1_scratch, _eta1_scratch,
+        _zeta1_scratch)`` in place instead of allocating three separate
+        ``float64`` arrays. Set to ``0`` to always alias in place. Default is
+        ``20_000_000``: below this threshold, a GPU species with
+        ``track_ids=False``, ``sort_every=0``, and absorbing boundaries uses
+        ``27 * 8 B = 216 B/particle`` (``4.32 GB`` at ``2e7`` particles, under
+        ``20%`` of a 24 GB GPU's VRAM), whereas above ``2e7`` particles
+        in-place aliasing saves ``3 * 8 B = 24 B/particle`` (``1.20 GB`` at
+        ``5e7`` particles), reducing the footprint to ``192 B/particle``
+        (``9.60 GB`` at ``5e7`` particles) so ``5e7`` particles plus FIT field
+        arrays fit comfortably within half of a 24 GB GPU's memory.
 
     Attributes
     ----------
@@ -75,6 +89,7 @@ class Species:
     """
 
     _FLOAT_FIELDS = ("_x", "_y", "_z", "_ux", "_uy", "_uz", "_w")
+    DEFAULT_DEP_SCRATCH_ALIAS_THRESHOLD = 20_000_000
 
     def __init__(
         self,
@@ -85,6 +100,7 @@ class Species:
         track_ids: bool = True,
         use_gpu: bool = False,
         dtype=np.float64,
+        dep_scratch_alias_threshold: int = DEFAULT_DEP_SCRATCH_ALIAS_THRESHOLD,
     ):
         if float(mass) <= 0.0:
             raise ValueError(f"Species mass must be > 0, got {mass}.")
@@ -99,6 +115,7 @@ class Species:
         self.track_ids = bool(track_ids)
         self.on_gpu = bool(use_gpu)
         self.dtype = np.dtype(dtype)
+        self.dep_scratch_alias_threshold = int(dep_scratch_alias_threshold)
 
         if self.on_gpu:
             if not _HAS_CUPY:
@@ -115,6 +132,9 @@ class Species:
         self._n_dirty_gpu = False
         self._next_id = 0
         self._gpu_scratch_cap = 0
+        self._gpu_need_tmp: bool | None = None
+        self._gpu_need_boundary: bool | None = None
+        self._gpu_need_sort: bool | None = None
 
         if self.on_gpu:
             self._d_n_particles = self.xp.zeros(1, dtype=np.int32)
@@ -159,44 +179,114 @@ class Species:
         """Current allocated buffer capacity [macroparticles]."""
         return self._capacity
 
-    def _ensure_gpu_scratch(self) -> None:
+    def _ensure_gpu_scratch(
+        self,
+        need_tmp: bool | None = None,
+        need_boundary: bool | None = None,
+        need_sort: bool | None = None,
+    ) -> None:
         """Pre-allocate device scratch buffers for zero-allocation GPU kernels."""
-        if not self.on_gpu or self._gpu_scratch_cap >= self._capacity:
+        if need_tmp is not None:
+            self._gpu_need_tmp = bool(need_tmp)
+        if need_boundary is not None:
+            self._gpu_need_boundary = bool(need_boundary)
+        if need_sort is not None:
+            self._gpu_need_sort = bool(need_sort)
+        if not self.on_gpu:
             return
         cap = self._capacity
         xp = self.xp
-        for attr in self._FLOAT_FIELDS:
-            setattr(self, f"{attr}_tmp", xp.empty(cap, dtype=self.dtype))
-        if self.track_ids:
-            self._id_tmp = xp.empty(cap, dtype=np.int64)
-        else:
+        if self._gpu_scratch_cap < cap:
+            for attr in self._FLOAT_FIELDS:
+                setattr(self, f"{attr}_tmp", None)
             self._id_tmp = None
 
-        for name in (
-            "_x0_scratch",
-            "_y0_scratch",
-            "_z0_scratch",
-            "_xi0_scratch",
-            "_eta0_scratch",
-            "_zeta0_scratch",
-            "_xi1_scratch",
-            "_eta1_scratch",
-            "_zeta1_scratch",
-            "_xi1_dep_scratch",
-            "_eta1_dep_scratch",
-            "_zeta1_dep_scratch",
-        ):
-            setattr(self, name, xp.empty(cap, dtype=self.dtype))
+            for name in (
+                "_x0_scratch",
+                "_y0_scratch",
+                "_z0_scratch",
+                "_xi0_scratch",
+                "_eta0_scratch",
+                "_zeta0_scratch",
+                "_xi1_scratch",
+                "_eta1_scratch",
+                "_zeta1_scratch",
+            ):
+                setattr(self, name, xp.empty(cap, dtype=self.dtype))
 
-        self._keep_mask_scratch = xp.ones(cap, dtype=np.int32)
-        self._scan_dst_idx = xp.zeros(cap, dtype=np.int32)
-        n_blocks = max(1, (cap + 255) // 256)
-        self._scan_block_sums = xp.zeros(n_blocks, dtype=np.int32)
-        self._scan_block_offsets = xp.zeros(n_blocks, dtype=np.int32)
-        self._cell_idx_scratch = xp.zeros(cap, dtype=np.int64)
-        # Pre-warm CuPy stable argsort workspace in the memory pool
-        _ = xp.argsort(self._cell_idx_scratch[: max(self._n_launch_bound, 2)], kind="stable")
-        self._gpu_scratch_cap = cap
+            self._xi1_dep_scratch = None
+            self._eta1_dep_scratch = None
+            self._zeta1_dep_scratch = None
+            self._keep_mask_scratch = xp.ones(cap, dtype=np.int32)
+            self._scan_dst_idx = xp.zeros(cap, dtype=np.int32)
+            n_blocks = max(1, (cap + 255) // 256)
+            self._scan_block_sums = xp.zeros(n_blocks, dtype=np.int32)
+            self._scan_block_offsets = xp.zeros(n_blocks, dtype=np.int32)
+            self._cell_idx_scratch = None
+            self._gpu_scratch_cap = cap
+
+        default_eager = cap <= self.dep_scratch_alias_threshold
+        if (
+            self._gpu_need_tmp
+            if self._gpu_need_tmp is not None
+            else default_eager
+        ):
+            self._ensure_gpu_tmp_scratch()
+        if (
+            self._gpu_need_boundary
+            if self._gpu_need_boundary is not None
+            else default_eager
+        ):
+            self._ensure_gpu_boundary_scratch()
+        if (
+            self._gpu_need_sort
+            if self._gpu_need_sort is not None
+            else default_eager
+        ):
+            self._ensure_gpu_sort_scratch()
+
+    def _ensure_gpu_tmp_scratch(self) -> None:
+        """Allocate ``_x_tmp .. _w_tmp`` (and ``_id_tmp``) double-buffers for compaction or sorting."""
+        if not self.on_gpu:
+            return
+        cap = self._capacity
+        if getattr(self, "_x_tmp", None) is None or self._x_tmp.size < cap:
+            for attr in self._FLOAT_FIELDS:
+                setattr(self, f"{attr}_tmp", self.xp.empty(cap, dtype=self.dtype))
+            if self.track_ids:
+                self._id_tmp = self.xp.empty(cap, dtype=np.int64)
+            else:
+                self._id_tmp = None
+
+    def _ensure_gpu_boundary_scratch(self) -> None:
+        """Allocate or alias ``_xi1_dep_scratch``, ``_eta1_dep_scratch``, and ``_zeta1_dep_scratch``."""
+        if not self.on_gpu:
+            return
+        cap = self._capacity
+        if cap > self.dep_scratch_alias_threshold:
+            self._xi1_dep_scratch = self._xi1_scratch
+            self._eta1_dep_scratch = self._eta1_scratch
+            self._zeta1_dep_scratch = self._zeta1_scratch
+            return
+        if (
+            self._xi1_dep_scratch is None
+            or self._xi1_dep_scratch is self._xi1_scratch
+            or self._xi1_dep_scratch.size < cap
+        ):
+            for name in ("_xi1_dep_scratch", "_eta1_dep_scratch", "_zeta1_dep_scratch"):
+                setattr(self, name, self.xp.empty(cap, dtype=self.dtype))
+
+    def _ensure_gpu_sort_scratch(self) -> None:
+        """Allocate ``_cell_idx_scratch`` and pre-warm the CuPy stable argsort workspace."""
+        if not self.on_gpu:
+            return
+        cap = self._capacity
+        if self._cell_idx_scratch is None or self._cell_idx_scratch.size < cap:
+            self._cell_idx_scratch = self.xp.zeros(cap, dtype=np.int64)
+            _ = self.xp.argsort(
+                self._cell_idx_scratch[: max(self._n_launch_bound, 2)],
+                kind="stable",
+            )
 
     def to_gpu(self) -> "Species":
         """Migrate particle buffers to the GPU (`xp = cupy`) in place."""
@@ -251,11 +341,15 @@ class Species:
             self._id = buf_id
         return self
 
-    def _ensure_capacity(self, required: int) -> None:
-        """Grow SoA buffers with amortised doubling when ``required > capacity``."""
+    def _ensure_capacity(self, required: int, exact: bool = False) -> None:
+        """Grow SoA buffers (with amortised doubling unless ``exact=True``) when ``required > capacity``."""
         if required <= self._capacity:
             return
-        new_cap = max(self._capacity * 2, int(required), 16)
+        new_cap = (
+            max(int(required), 16)
+            if exact
+            else max(self._capacity * 2, int(required), 16)
+        )
         n = self.n_particles
         for attr in self._FLOAT_FIELDS:
             old = getattr(self, attr)
@@ -654,6 +748,7 @@ class Species:
             track_ids=self.track_ids,
             use_gpu=self.on_gpu,
             dtype=self.dtype,
+            dep_scratch_alias_threshold=self.dep_scratch_alias_threshold,
         )
         n = self.n_particles
         out.n_particles = n

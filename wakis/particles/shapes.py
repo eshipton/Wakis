@@ -28,6 +28,10 @@ from __future__ import annotations
 import numpy as np
 
 
+class ParticleCFLError(ValueError):
+    """Raised when a particle step violates the single-cell Esirkepov CFL condition."""
+
+
 def bspline_weights_1d(xi, order: int, staggered: bool = False, xp=np):
     """Evaluate 1D B-spline weights of ``order`` in ``{0, 1, 2, 3}``.
 
@@ -540,7 +544,7 @@ def _esirkepov_1d_window(xi0, xi1, order: int, xp=np):
 
     db = b1 - b0
     if n_p > 0 and bool(xp.any((db < -1) | (db > 1))):
-        raise ValueError(
+        raise ParticleCFLError(
             "Particle crossed more than 1 cell in a single step "
             "(|db| > 1 violates the Esirkepov single-cell CFL assumption)."
         )

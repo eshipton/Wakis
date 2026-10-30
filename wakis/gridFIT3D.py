@@ -219,23 +219,21 @@ class GridFIT3D(PlotMixin):
         # generate from custom x,y,z arrays
         elif x is not None and y is not None and z is not None:
             # allow user to set the grid axis manually
-            self.x = x
-            self.y = y
-            self.z = z
+            self._custom_xyz = True
+            self.x = np.asarray(x, dtype=float).copy()
+            self.y = np.asarray(y, dtype=float).copy()
+            self.z = np.asarray(z, dtype=float).copy()
             self.Nx = len(self.x) - 1
             self.Ny = len(self.y) - 1
             self.Nz = len(self.z) - 1
             self.xmin, self.xmax = self.x[0], self.x[-1]
             self.ymin, self.ymax = self.y[0], self.y[-1]
             self.zmin, self.zmax = self.z[0], self.z[-1]
-            if self.use_mpi:
-                raise ValueError(
-                    "[!] Error: use_mpi=True is not compatible with custom x,y,z arrays."
-                )
 
         # generate from domain extents and number of cells [LEGACY]
         elif all(v is not None for v in [xmin, xmax, ymin, ymax, zmin, zmax]):
             # uniform grid from domain extents and number of cells
+            self._custom_xyz = False
             self.xmin, self.xmax = xmin, xmax
             self.ymin, self.ymax = ymin, ymax
             self.zmin, self.zmax = zmin, zmax
@@ -498,6 +496,12 @@ class GridFIT3D(PlotMixin):
         self.comm = comm
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
+        shm_comm = self.comm.Split_type(MPI.COMM_TYPE_SHARED)
+        try:
+            self.local_rank = shm_comm.Get_rank()
+            self.local_size = shm_comm.Get_size()
+        finally:
+            shm_comm.Free()
 
         # Error handling for Nz < size
         if self.Nz < self.size:
@@ -509,51 +513,105 @@ class GridFIT3D(PlotMixin):
         # global z quantities [ALLCAPS]
         self.ZMIN = self.zmin
         self.ZMAX = self.zmax
+        self._Nz_input = int(self.Nz)
         self.NZ = self.Nz - self.Nz % (self.size)  # ensure multiple of MPI size
+        self.NZ_samples = self.NZ + int(self.boundary_at_domain_edge)
+        self.n_ghosts = 1
+        nz_own = self.NZ // self.size
+        self.k_own_start = self.n_ghosts if self.rank > 0 else 0
+        self.k_own_end = self.k_own_start + nz_own
+
+        if getattr(self, "_custom_xyz", False):
+            Z_nodes = np.asarray(self.z, dtype=float)[: self.NZ + 1].copy()
+            self.Z_nodes = Z_nodes
+            self.ZMIN = float(Z_nodes[0])
+            self.ZMAX = float(Z_nodes[-1])
+            self.Z = 0.5 * (Z_nodes[:-1] + Z_nodes[1:])
+            if self.boundary_at_domain_edge:
+                self.Z = np.append(
+                    self.Z, Z_nodes[-1] + 0.5 * (Z_nodes[-1] - Z_nodes[-2])
+                )
+            if self.verbose and self.rank == 0:
+                print(
+                    f" * Global grid ZMIN={self.ZMIN}, ZMAX={self.ZMAX}, NZ={self.NZ}"
+                )
+            self.z_own_min = float(Z_nodes[self.rank * nz_own])
+            self.z_own_max = float(Z_nodes[(self.rank + 1) * nz_own])
+            k0 = self.rank * nz_own - (self.n_ghosts if self.rank > 0 else 0)
+            k1 = (self.rank + 1) * nz_own + (
+                self.n_ghosts if self.rank < self.size - 1 else 0
+            )
+            z_local = Z_nodes[k0 : k1 + 1].copy()
+            self.Nz = k1 - k0
+            self.zmin = float(z_local[0])
+            self.zmax = float(z_local[-1])
+            if self.verbose:
+                print(
+                    f"MPI rank {self.rank} of {self.size} initialized with "
+                    f"zmin={self.zmin}, zmax={self.zmax}, Nz={self.Nz}"
+                )
+            if self.boundary_at_domain_edge and self.rank == self.size - 1:
+                dz_last = float(z_local[-1] - z_local[-2])
+                z_local = np.append(z_local, z_local[-1] + dz_last)
+                self.zmax = float(z_local[-1])
+                self.Nz += 1
+                self.edge_ghosts[2] = 1
+            elif (
+                not self.boundary_at_domain_edge
+                and self.rank == 0
+                and self.size == 1
+            ):
+                dz_last = float(z_local[-1] - z_local[-2])
+                z_local = np.append(z_local, z_local[-1] + self.n_ghosts * dz_last)
+                self.zmax = float(z_local[-1])
+                self.Nz += self.n_ghosts
+            self.z = z_local
+            self.dz = np.diff(self.z)
+            return
+
+        self.Z_nodes = np.linspace(self.ZMIN, self.ZMAX, self.NZ + 1)
         self.Z = np.linspace(self.ZMIN, self.ZMAX, self.NZ + 1)[:-1]
         self.Z += (self.ZMAX - self.ZMIN) / (2 * self.NZ)
-        # Global number of z samples, as in a serial run: with domain-edge
-        # ghosts the boundary node at ZMAX adds one (its edge midpoint lies
-        # beyond ZMAX)
-        self.NZ_samples = self.NZ + int(self.boundary_at_domain_edge)
         if self.boundary_at_domain_edge:
             self.Z = np.append(self.Z, self.Z[-1] + (self.ZMAX - self.ZMIN) / self.NZ)
 
         if self.verbose and self.rank == 0:
             print(f" * Global grid ZMIN={self.ZMIN}, ZMAX={self.ZMAX}, NZ={self.NZ}")
 
-        # MPI subdomain quantities [TODO: support non-uniform dz with MPI]
-        self.Nz = self.NZ // (self.size)
+        # MPI subdomain quantities: slice global Z_nodes so local z nodes match
+        # the serial grid bit-for-bit without per-rank linspace round-off drift.
         self.dz = (self.ZMAX - self.ZMIN) / self.NZ
-        self.zmin = self.rank * self.Nz * self.dz + self.ZMIN
-        self.zmax = (self.rank + 1) * self.Nz * self.dz + self.ZMIN
+        self.z_own_min = float(self.Z_nodes[self.rank * nz_own])
+        self.z_own_max = float(self.Z_nodes[(self.rank + 1) * nz_own])
+        k0 = self.rank * nz_own - (self.n_ghosts if self.rank > 0 else 0)
+        k1 = (self.rank + 1) * nz_own + (
+            self.n_ghosts if self.rank < self.size - 1 else 0
+        )
+        z_local = self.Z_nodes[k0 : k1 + 1].copy()
+        self.Nz = k1 - k0
+        self.zmin = float(z_local[0])
+        self.zmax = float(z_local[-1])
 
         if self.verbose:
             print(
                 f"MPI rank {self.rank} of {self.size} initialized with \
                         zmin={self.zmin}, zmax={self.zmax}, Nz={self.Nz}"
             )
-        # Add ghost cells
-        self.n_ghosts = 1
-        if self.rank > 0:
-            self.zmin += -self.n_ghosts * self.dz
-            self.Nz += self.n_ghosts
-        if self.rank < (self.size - 1):
-            self.zmax += self.n_ghosts * self.dz
-            self.Nz += self.n_ghosts
 
         # Domain-edge ghost cell beyond ZMAX on the last rank (legacy: only
         # for a single rank, so the wall position depended on the rank count)
         if self.boundary_at_domain_edge and self.rank == self.size - 1:
-            self.zmax += self.dz
+            z_local = np.append(z_local, z_local[-1] + self.dz)
+            self.zmax = float(z_local[-1])
             self.Nz += 1
             self.edge_ghosts[2] = 1
         elif not self.boundary_at_domain_edge and self.rank == 0 and self.size == 1:
-            self.zmax += self.n_ghosts * self.dz
+            z_local = np.append(z_local, z_local[-1] + self.n_ghosts * self.dz)
+            self.zmax = float(z_local[-1])
             self.Nz += self.n_ghosts
 
-        self.z = np.linspace(self.zmin, self.zmax, self.Nz + 1)
-        self.dz = np.diff(self.z)  # only uniform grid possible with MPI
+        self.z = z_local
+        self.dz = np.diff(self.z)
 
     def mpi_gather_asGrid(self):
         """
@@ -567,6 +625,20 @@ class GridFIT3D(PlotMixin):
         _grid = None
         if self.rank == 0:
             print(f"Generating global grid from {self.ZMIN} to {self.ZMAX}")
+            custom_xyz = getattr(self, "_custom_xyz", False)
+            x_nodes = (
+                (self.x[:-1] if self.edge_ghosts[0] else self.x)
+                if custom_xyz
+                else None
+            )
+            y_nodes = (
+                (self.y[:-1] if self.edge_ghosts[1] else self.y)
+                if custom_xyz
+                else None
+            )
+            z_nodes = self.Z_nodes if custom_xyz else None
+            nx_phys = self.Nx - int(self.edge_ghosts[0])
+            ny_phys = self.Ny - int(self.edge_ghosts[1])
             _grid = GridFIT3D(
                 self.xmin,
                 self.xmax,
@@ -574,9 +646,12 @@ class GridFIT3D(PlotMixin):
                 self.ymax,
                 self.ZMIN,
                 self.ZMAX,
-                self.Nx,
-                self.Ny,
+                nx_phys,
+                ny_phys,
                 self.NZ,
+                x=x_nodes,
+                y=y_nodes,
+                z=z_nodes,
                 use_mpi=False,
                 stl_solids=self.stl_solids,
                 stl_materials=self.stl_materials,
@@ -588,6 +663,9 @@ class GridFIT3D(PlotMixin):
                 stl_tol=self.stl_tol,
                 boundary_at_domain_edge=self.boundary_at_domain_edge,
             )
+            for ax in (0, 1):
+                if not self.edge_ghosts[ax] and _grid.edge_ghosts[ax]:
+                    _grid.remove_edge_ghost(ax)
         return _grid
 
     def _prepare_stl_dicts(self):

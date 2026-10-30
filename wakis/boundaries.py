@@ -1285,6 +1285,16 @@ def _scale_csr_lr(M, d_left, d_right, dtype, copy_indices=True):
     return out
 
 
+def _compact_csr_zeros_gpu(data, indices, indptr, nz, cp):
+    """Compact explicit zeros from GPU CSR arrays using a prefix-sum row pointer remap."""
+    nz_cs = cp.zeros(nz.size + 1, dtype=np.int32)
+    cp.cumsum(nz, dtype=np.int32, out=nz_cs[1:])
+    indptr = nz_cs[indptr]
+    del nz_cs
+    data, indices = data[nz], indices[nz]
+    return data, indices, indptr
+
+
 def _scale_csr_lr_gpu(M, d_left, d_right, dtype, cp, gpu_sparse_mat):
     """Compute diags(d_left) * M * diags(d_right) directly on GPU without host float64 CSR allocation."""
     if M.format != "csr":
@@ -1298,13 +1308,17 @@ def _scale_csr_lr_gpu(M, d_left, d_right, dtype, cp, gpu_sparse_mat):
     data = cp.repeat(dl, cp.diff(indptr))
     data *= cp.asarray(M.data)
     data *= dr[indices]
-    # drop the zeros of PEC/solid rows by hand (same layout as the host eliminate_zeros)
+    # Drop the zeros of PEC/solid rows by hand (same layout as host eliminate_zeros).
+    # Computing indptr via a prefix sum of the non-zero mask (indptr = nz_cs[indptr])
+    # avoids materializing per-non-zero row indices or an int64 bincount buffer in the
+    # CuPy pool, and preserves indptr.size == M.shape[0] + 1 even when trailing PEC
+    # rows (or all entries) are zero.
     nz = data != 0
     if not bool(nz.all()):
-        rows = cp.repeat(cp.arange(M.shape[0], dtype=np.int32), cp.diff(indptr))[nz]
-        data, indices = data[nz], indices[nz]
-        indptr = cp.zeros(M.shape[0] + 1, dtype=np.int32)
-        cp.cumsum(cp.bincount(rows, minlength=M.shape[0]).astype(np.int32), out=indptr[1:])
+        data, indices, indptr = _compact_csr_zeros_gpu(
+            data, indices, indptr, nz, cp
+        )
+    del nz
     return gpu_sparse_mat((data, indices, indptr), shape=M.shape)
 
 

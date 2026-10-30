@@ -46,6 +46,15 @@ except ImportError:
 _GPU_KERNELS = None
 
 
+def _abort_world(comm, msg: str) -> None:
+    """Write ``msg`` to ``sys.stderr`` and abort ``comm`` with exit code 1."""
+    import sys
+
+    sys.stderr.write(f"{msg}\n")
+    sys.stderr.flush()
+    comm.Abort(1)
+
+
 def _gpu_kernels():
     """Fused CuPy kernels of the standard H and E updates (built on first use)."""
     global _GPU_KERNELS
@@ -284,6 +293,30 @@ class SolverFIT3D(
         if verbose > 1:
             print(f"    * Maximum frequency set to fmax={self.fmax / 1e9} GHz")
 
+        # Optional mid-step hooks executed between the H and E updates (wakis.particles)
+        self._mid_step_fn = None
+        self._mid_step_takes_arg = False
+        self._mid_step_hooks = []
+        self._mid_step_hook_takes_arg = []
+        self._H_before_update = None
+        self.particles_comm = "nccl"
+        self._nccl_comm = None
+        self._nccl_unavailable = False
+        self._pinned_field_comm_bufs = {}
+        self._profile_mpi = False
+        self._last_ghost_exchange_s = 0.0
+
+        # MPI init (before allocating GPU fields so each rank binds to its node-local GPU)
+        if self.use_mpi:
+            if self.grid.use_mpi:
+                self._mpi_initialize()
+                self.one_step = self._mpi_one_step
+            else:
+                print(
+                    "[!] Grid not subdivided for MPI, set `use_mpi`=True also in \
+                    `GridFIT3D` to enable MPI"
+                )
+
         # Fields
         self.dtype = dtype
         self.E = Field(
@@ -299,23 +332,6 @@ class SolverFIT3D(
         self.M = None
         # Off-diagonal permittivity couplings (wakis.tensor_averaging)
         self.tensor_operator = None
-        # Optional mid-step hooks executed between the H and E updates (wakis.particles)
-        self._mid_step_fn = None
-        self._mid_step_takes_arg = False
-        self._mid_step_hooks = []
-        self._mid_step_hook_takes_arg = []
-        self._H_before_update = None
-
-        # MPI init
-        if self.use_mpi:
-            if self.grid.use_mpi:
-                self._mpi_initialize()
-                self.one_step = self._mpi_one_step
-            else:
-                print(
-                    "[!] Grid not subdivided for MPI, set `use_mpi`=True also in \
-                    `GridFIT3D` to enable MPI"
-                )
 
         # Matrices
         if verbose:
@@ -485,18 +501,22 @@ class SolverFIT3D(
         if dt is None and self.scheme == "tete":
             self.dt = tete.magic_dt(self)
         elif dt is None:
+            dz_all = (
+                np.diff(self.grid.Z_nodes)
+                if getattr(self.grid, "Z_nodes", None) is not None
+                else self.grid.dz
+            )
             self.dt = cfln / (
                 c_light
                 * np.sqrt(
                     1 / np.min(self.grid.dx) ** 2
                     + 1 / np.min(self.grid.dy) ** 2
-                    + 1 / np.min(self.grid.dz) ** 2
+                    + 1 / np.min(dz_all) ** 2
                 )
             )
         else:
             self.dt = dt
         self.dt = real_dtype(self.dt)
-        self.update_logger(["dt"])
 
         if self.use_conductivity:  # relaxation time criterion tau
             mask = np.logical_and(
@@ -507,7 +527,13 @@ class SolverFIT3D(
             self.tau = (1 / self.ieps.toarray()[mask]) / self.sigma.toarray()[mask]
 
             if self.dt > self.tau.min():
-                self.dt = self.tau.min()
+                self.dt = real_dtype(self.tau.min())
+
+        if self.use_mpi and self.grid.use_mpi:
+            from mpi4py import MPI
+
+            self.dt = real_dtype(self.comm.allreduce(float(self.dt), op=MPI.MIN))
+        self.update_logger(["dt"])
 
         if self.verbose > 1:
             print(f"    * Simulation timestep: dt={self.dt:.3e} s")
@@ -1155,10 +1181,6 @@ class SolverFIT3D(
 
     def _run_mid_step(self):
         """Invoke registered ``mid_step`` hooks between the H and E updates."""
-        if self.use_mpi and getattr(self, "_particle_solver", None) is not None:
-            raise NotImplementedError(
-                "MPI particle time-stepping is not implemented in milestone M1 (scheduled for M3)."
-            )
         if self._mid_step_fn is not None:
             if self._mid_step_takes_arg:
                 self._mid_step_fn(self)
@@ -1857,6 +1879,182 @@ class SolverFIT3D(
         self.ZMIN = self.grid.ZMIN
         self.ZMAX = self.grid.ZMAX
         self.Z = self.grid.Z
+        local_rank = getattr(self.grid, "local_rank", None)
+        local_size = getattr(self.grid, "local_size", None)
+        if local_rank is None or local_size is None:
+            shm_comm = self.comm.Split_type(MPI.COMM_TYPE_SHARED)
+            try:
+                local_rank = shm_comm.Get_rank()
+                local_size = shm_comm.Get_size()
+            finally:
+                shm_comm.Free()
+        self._local_rank = int(local_rank)
+        self._local_size = int(local_size)
+        if self.use_gpu:
+            try:
+                n_gpus = int(cp.cuda.runtime.getDeviceCount())
+                if n_gpus > 0:
+                    cp.cuda.Device(self._local_rank % n_gpus).use()
+            except Exception:
+                pass
+
+    def _ensure_nccl_comm(self):
+        """Initialize or return the cached GPU-to-GPU NCCL communicator."""
+        if self._nccl_comm is not None:
+            return self._nccl_comm
+        if getattr(self, "_nccl_unavailable", False):
+            return None
+        if not (self.use_gpu and self.use_mpi and self.size > 1):
+            return None
+        from mpi4py import MPI
+
+        local_ok = 0
+        nccl_mod = None
+        dev_id = 0
+        try:
+            from cupy.cuda import nccl as nccl_mod
+
+            n_gpus = int(cp.cuda.runtime.getDeviceCount())
+            local_rank = int(getattr(self, "_local_rank", self.rank))
+            local_size = int(getattr(self, "_local_size", self.size))
+            if local_size <= n_gpus and local_rank < n_gpus:
+                dev_id = local_rank
+                cp.cuda.Device(dev_id).use()
+                local_ok = 1
+        except Exception:
+            local_ok = 0
+
+        if int(self.comm.allreduce(local_ok, op=MPI.MIN)) == 0:
+            self._nccl_unavailable = True
+            return None
+
+        import os
+        import sys
+        import weakref
+
+        cache = getattr(SolverFIT3D, "_nccl_comm_cache", None)
+        if cache is None:
+            cache = {}
+            SolverFIT3D._nccl_comm_cache = cache
+        evicted = getattr(SolverFIT3D, "_nccl_evicted_comms", None)
+        if evicted is None:
+            evicted = {}
+            SolverFIT3D._nccl_evicted_comms = evicted
+
+        def _cuda_context_alive() -> bool:
+            try:
+                return (
+                    cp is not None
+                    and int(cp.cuda.driver.ctxGetCurrent()) != 0
+                )
+            except Exception:
+                return False
+
+        def _destroy_comm_quietly(
+            c_obj, *, from_finalizer: bool = False
+        ) -> None:
+            # Skip ncclCommDestroy when invoked from a weakref finalizer during
+            # interpreter shutdown (sys.is_finalizing()) or after the CUDA
+            # driver context has already been destroyed/unloaded: calling into
+            # the C/CUDA/NCCL runtime without an active context at process exit
+            # can segfault or hang below the Python exception layer.
+            if from_finalizer and (
+                sys.is_finalizing() or not _cuda_context_alive()
+            ):
+                return
+            if c_obj is not None and hasattr(c_obj, "destroy"):
+                try:
+                    c_obj.destroy()
+                except Exception:
+                    pass
+
+        def _release_owner(c_obj, owner_set: set, tok: int) -> None:
+            owner_set.discard(tok)
+            ev_map = getattr(SolverFIT3D, "_nccl_evicted_comms", None)
+            if ev_map is not None and id(c_obj) in ev_map and len(owner_set) == 0:
+                ev_map.pop(id(c_obj), None)
+                _destroy_comm_quietly(c_obj, from_finalizer=True)
+
+        def _unpack_entry(entry):
+            if isinstance(entry, tuple):
+                if len(entry) == 3 and isinstance(entry[1], set):
+                    return entry[0], entry[1], int(entry[2])
+                if len(entry) == 2 and isinstance(entry[1], set):
+                    return entry[0], entry[1], 0
+            return entry, set(), 0
+
+        owner_id = id(self)
+        # Note: comm.py2f() Fortran handles can be reused by the MPI library after
+        # a communicator is freed. A MIN-reduction on key presence proves only that
+        # every rank has *an* entry under key, not that all ranks hold the *same*
+        # collective communicator. Each cache entry therefore also stores a
+        # per-communicator random tag generated at creation; we allreduce both MIN
+        # and MAX of local_tag (-1 when missing) and rebuild if any rank misses
+        # the key or if the tags differ across ranks.
+        key = (int(self.comm.py2f()), int(self.size), int(self.rank), int(dev_id))
+        if key in cache:
+            _, _, cached_tag = _unpack_entry(cache[key])
+            local_tag = int(cached_tag) if int(cached_tag) >= 0 else 0
+        else:
+            local_tag = -1
+        min_tag = int(self.comm.allreduce(local_tag, op=MPI.MIN))
+        max_tag = int(self.comm.allreduce(local_tag, op=MPI.MAX))
+        force_reinit = (min_tag < 0) or (min_tag != max_tag)
+        if force_reinit:
+            old_entry = cache.pop(key, None)
+            if old_entry is not None:
+                if (
+                    isinstance(old_entry, tuple)
+                    and len(old_entry) in (2, 3)
+                    and isinstance(old_entry[1], set)
+                ):
+                    old_comm, old_owners, _ = _unpack_entry(old_entry)
+                    old_owners.discard(owner_id)
+                    if len(old_owners) == 0:
+                        evicted.pop(id(old_comm), None)
+                        _destroy_comm_quietly(old_comm)
+                    else:
+                        evicted[id(old_comm)] = (old_comm, old_owners)
+                else:
+                    _destroy_comm_quietly(old_entry)
+            uid = None
+            comm_tag = 0
+            uid_ok = 1
+            if self.rank == 0:
+                try:
+                    uid = nccl_mod.get_unique_id()
+                    comm_tag = int.from_bytes(os.urandom(7), "little") | 1
+                except Exception:
+                    uid_ok = 0
+            if int(self.comm.allreduce(uid_ok, op=MPI.MIN)) == 0:
+                self._nccl_unavailable = True
+                return None
+            uid, comm_tag = self.comm.bcast((uid, comm_tag), root=0)
+            comm_tag = int(comm_tag)
+            comm_obj = None
+            try:
+                comm_obj = nccl_mod.NcclCommunicator(self.size, uid, self.rank)
+            except Exception as exc:
+                _abort_world(
+                    self.comm,
+                    f"[!] Rank {self.rank}/{self.size} failed during collective "
+                    f"NcclCommunicator initialization: {exc!r}",
+                )
+                self._nccl_unavailable = True
+                return None
+            owners = {owner_id}
+            cache[key] = (comm_obj, owners, comm_tag)
+        else:
+            comm_obj, owners, comm_tag = _unpack_entry(cache[key])
+            owners.add(owner_id)
+            cache[key] = (comm_obj, owners, comm_tag)
+
+        try:
+            weakref.finalize(self, _release_owner, comm_obj, owners, owner_id)
+        except TypeError:
+            pass
+        self._nccl_comm = comm_obj
+        return self._nccl_comm
 
     def _mpi_one_step(self):
         if self.step_0:
@@ -1866,6 +2064,8 @@ class SolverFIT3D(
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        self._last_ghost_exchange_s = 0.0
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self._update_H()
         self._add_magnetic_current()
@@ -1912,6 +2112,8 @@ class SolverFIT3D(
             if self.source_type == "direct" or self.use_conductivity:
                 self.J_old = np.zeros_like(self.J.toarray())
 
+        self._last_ghost_exchange_s = 0.0
+        self._capture_mid_step_H()
         H_n = self._capture_dispersive_H()
         self.H.fromarray(
             self.H.toarray()
@@ -1971,8 +2173,16 @@ class SolverFIT3D(
         self._mpi_communicate(self.E)
 
     def _mpi_communicate(self, field):
+        do_prof = getattr(self, "_profile_mpi", False)
+        if do_prof:
+            if self.use_gpu:
+                cp.cuda.Stream.null.synchronize()
+            t0 = time.perf_counter()
         if self.use_gpu:
             self._mpi_communicate_gpu(field)
+            if do_prof:
+                cp.cuda.Stream.null.synchronize()
+                self._last_ghost_exchange_s += time.perf_counter() - t0
             return
 
         # ghosts lo
@@ -1997,19 +2207,74 @@ class SolverFIT3D(
                     source=self.rank + 1,
                     recvtag=0,
                 )
+        if do_prof:
+            self._last_ghost_exchange_s += time.perf_counter() - t0
 
     def _mpi_communicate_gpu(self, field):
         """
         Ghost-layer exchange of a GPU field, as `_mpi_communicate`.
 
-        Only the exchanged z-layers (contiguous blocks of Nx*Ny samples per
-        component) are copied between device and host, not the whole field.
+        When ``self.particles_comm == "nccl"`` and an NCCL communicator is
+        available, exchanges the contiguous z-boundary planes directly
+        GPU-to-GPU via ``cupy.cuda.nccl`` without host staging. Otherwise falls
+        back to host-staged ``MPI.Sendrecv`` using pinned host buffers
+        (``cupyx.empty_pinned``).
         """
+        if self.size <= 1:
+            return
         nxy = self.Nx * self.Ny
 
         def layer(c, k):
             k = k % self.Nz
             return slice(c * self.N + k * nxy, c * self.N + (k + 1) * nxy)
+
+        dt = field.array.dtype
+        if getattr(self, "particles_comm", "nccl") == "nccl" and dt in (
+            np.float32,
+            np.float64,
+        ):
+            nccl_comm = self._ensure_nccl_comm()
+            if nccl_comm is not None:
+                from cupy.cuda import nccl
+
+                nccl_dt = (
+                    nccl.NCCL_FLOAT64 if dt == np.float64 else nccl.NCCL_FLOAT32
+                )
+                stream_ptr = cp.cuda.Stream.null.ptr
+                nccl.groupStart()
+                try:
+                    for neighbour, send, recv in (
+                        (self.rank - 1, 1, 0),
+                        (self.rank + 1, -2, -1),
+                    ):
+                        if not 0 <= neighbour < self.size:
+                            continue
+                        for c in range(3):
+                            s_v = field.array[layer(c, send)]
+                            r_v = field.array[layer(c, recv)]
+                            nccl_comm.send(
+                                s_v.data.ptr, nxy, nccl_dt, neighbour, stream_ptr
+                            )
+                            nccl_comm.recv(
+                                r_v.data.ptr, nxy, nccl_dt, neighbour, stream_ptr
+                            )
+                finally:
+                    nccl.groupEnd()
+                return
+
+        bufs = self._pinned_field_comm_bufs.get(dt)
+        if bufs is None or bufs[0].shape != (3, nxy):
+            try:
+                import cupyx
+
+                send_h = cupyx.empty_pinned((3, nxy), dtype=dt)
+                recv_h = cupyx.empty_pinned((3, nxy), dtype=dt)
+            except Exception:
+                send_h = np.empty((3, nxy), dtype=dt)
+                recv_h = np.empty((3, nxy), dtype=dt)
+            self._pinned_field_comm_bufs[dt] = (send_h, recv_h)
+        else:
+            send_h, recv_h = bufs
 
         for neighbour, send, recv, tags in (
             (self.rank - 1, 1, 0, (0, 1)),  # ghosts lo
@@ -2018,16 +2283,18 @@ class SolverFIT3D(
             if not 0 <= neighbour < self.size:
                 continue
             for c in range(3):
-                buffer = np.empty(nxy, dtype=field.array.dtype)
-                self.comm.Sendrecv(
-                    field.array[layer(c, send)].get(),
-                    recvbuf=buffer,
-                    dest=neighbour,
-                    sendtag=tags[0],
-                    source=neighbour,
-                    recvtag=tags[1],
-                )
-                field.array[layer(c, recv)] = cp.asarray(buffer)
+                field.array[layer(c, send)].get(out=send_h[c])
+            cp.cuda.Stream.null.synchronize()
+            self.comm.Sendrecv(
+                send_h,
+                recvbuf=recv_h,
+                dest=neighbour,
+                sendtag=tags[0],
+                source=neighbour,
+                recvtag=tags[1],
+            )
+            for c in range(3):
+                field.array[layer(c, recv)].set(recv_h[c])
 
     def mpi_gather(self, field, x=None, y=None, z=None, component=None):
         """

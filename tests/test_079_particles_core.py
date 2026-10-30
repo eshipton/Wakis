@@ -1956,8 +1956,8 @@ def test_cpml_face_absorption_gauss_and_bookkeeping(monkeypatch):
     assert sp.n_particles == 1 and float(sp.z[0]) > 0.085
 
 
-def test_gpu_and_mpi_not_implemented_in_m1():
-    """Deliverable 1: ParticleSolver raises NotImplementedError for use_mpi=True (M3)."""
+def test_mpi_configuration_validation():
+    """ParticleSolver validates grid.use_mpi, shape=1, filter=False, and z-slab geometry under use_mpi=True."""
     grid = GridFIT3D(
         xmin=0.0, xmax=0.04, ymin=0.0, ymax=0.04, zmin=0.0, zmax=0.04, Nx=4, Ny=4, Nz=4, verbose=0
     )
@@ -1965,8 +1965,25 @@ def test_gpu_and_mpi_not_implemented_in_m1():
     sp = Species()
 
     solver.use_mpi = True
-    with pytest.raises(NotImplementedError, match="use_mpi=True"):
+    with pytest.raises(ValueError, match="use_mpi=True"):
         ParticleSolver(solver, species=[sp])
+    grid.use_mpi = True
+    with pytest.raises(ValueError, match="shape=1"):
+        ParticleSolver(solver, species=[sp], shape=2)
+    with pytest.raises(NotImplementedError, match="Binomial current filtering"):
+        ParticleSolver(solver, species=[sp], filter="binomial")
+    solver.size = 3
+    grid._Nz_input = 4
+    with pytest.raises(ValueError, match="divisible by solver.size"):
+        ParticleSolver(solver, species=[sp])
+    solver.size = 4
+    solver.NZ = 4
+    grid._Nz_input = 4
+    with pytest.raises(ValueError, match="at least 2 owned z-cells"):
+        ParticleSolver(solver, species=[sp])
+    solver.size = 1
+    solver.NZ = 4
+    grid.use_mpi = False
     solver.use_mpi = False
 
     # Longitudinal periodic z with use_mpi=True must raise NotImplementedError
