@@ -155,11 +155,11 @@ This work builds on the adjoint inverse-design literature, and in particular on 
 
 </td></tr></table>
 
-**Upstream contributions.** Two fixes merged into CERN's Wakis (PR #109, mixed PEC/PMC masks; PR #110, a CPML + MPI deadlock) and two under review (PR #111, tensor-update initialization; PR #112, the 3D wake-potential accumulator), plus analysis and tests offered on PR #105 and issue #62.
+**Upstream contributions.** Three fixes merged into CERN's Wakis (PR #109, mixed PEC/PMC masks; PR #110, a CPML + MPI deadlock; PR #112, the 3D wake-potential accumulator) and one under review (PR #111, tensor-update initialization), plus analysis and tests offered on PR #105 and issue #62.
 
 ## The tutorial textbook
 
-48 tutorials in nine chapters, from fields on a grid to antennas, silicon photonics, light sources, vacuum
+61 tutorials in nine chapters, from fields on a grid to antennas, silicon photonics, light sources, vacuum
 electronics and inverse design. Each one is a single-source script that generates its notebook and figures,
 reproduces a publication or an exact result, and includes a resolution study. Open any of them in Colab with the
 badge. Full chapter guides: [`tutorials/README.md`](tutorials/README.md); every tutorial, study and planned
@@ -437,13 +437,14 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [ ] Nonlinear plasma wakefields (blowout regime, `wakis.particles`)
 
 **Tutorials** ([tutorials/](tutorials/), Colab notebooks generated from runnable scripts)
-- [x] Tutorial textbook, Chapters 1–9: 48 tutorials, each reproducing a publication or an exact result with a resolution study (see [The tutorial textbook](#the-tutorial-textbook))
+- [x] Tutorial textbook, Chapters 1–9: 61 tutorials, each reproducing a publication or an exact result with a resolution study (see [The tutorial textbook](#the-tutorial-textbook))
 - [x] Visual examples library ([EXAMPLES.md](EXAMPLES.md)): built tutorials, studies and 157 planned examples with literature references
-- [x] Setup schematics, labelled overlays and graded/non-square meshes in Chapters 2–7 (Chapters 1, 8 and 5.6–5.10 in progress)
+- [x] Setup schematics, labelled overlays and graded/non-square meshes in Chapters 2–7 and Tutorials 8.1, 8.2 and 8.4–8.8 (Chapter 1 and Tutorial 8.3 in progress)
 - [ ] Tutorial 3.5: 3D resolution study (staircase vs conformal vs tensor)
 - [x] Laser tutorials: DFB (7.7), microdisk (7.8), BIC laser (7.9) and PCSEL (7.10)
 - [x] Coupled-wave theory for photonic-crystal surface-emitting lasers (`wakis.pcsel_cwt`)
-- [ ] Vacuum electronics: folded-waveguide, helix, metamaterial and FSS slow-wave structures; traveling-wave tube gain; backward-wave oscillator; klystron cavities
+- [x] Vacuum electronics, linear: bunch through a slow-wave structure (8.5), traveling-wave-tube small-signal gain (8.6), metamaterial slow-wave structure with reversed Cherenkov radiation and backward-wave-oscillator start current (8.7), reversed-Cherenkov wakefields in a wagon-wheel metamaterial (8.8)
+- [ ] Vacuum electronics, remaining: folded-waveguide, helix and FSS slow-wave structures; klystron cavities; large-signal tutorials on `wakis.particles`
 - [x] Magnetic antennas on and near ground planes (4.8) and implant antennas in tissue (4.9), on the dispersive-μ feature
 - [x] Toroidal magnetic antennas (4.7): a closed magnetization loop radiating as an axial electric dipole, Marinov compensation, finite-r/R octupole
 - [ ] Grating couplers, polarization devices and (de)multiplexers (Chapter 5 catalogue)
@@ -457,7 +458,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Merged: [PR #109](https://github.com/ImpedanCEI/Wakis/pull/109): combine PEC/PMC face masks for mixed boundary types
 - [x] Merged: [PR #110](https://github.com/ImpedanCEI/Wakis/pull/110): fix a CPML + MPI deadlock
 - [ ] [PR #111](https://github.com/ImpedanCEI/Wakis/pull/111): fix `update_tensors` initialization (open, under review)
-- [ ] [PR #112](https://github.com/ImpedanCEI/Wakis/pull/112): fix the accumulator in the 3D wake-potential integration (`calc_long_WP_3d`) (open, under review)
+- [x] Merged: [PR #112](https://github.com/ImpedanCEI/Wakis/pull/112): fix the accumulator in the 3D wake-potential integration (`calc_long_WP_3d`)
 - [x] Analysis and tests offered on [PR #105](https://github.com/ImpedanCEI/Wakis/pull/105) (high-side PEC and dual-grid metrics) and [issue #62](https://github.com/ImpedanCEI/Wakis/issues/62) (wake integration)
 - [ ] Further fixes: periodic-setup and time-step performance, quiet `verbose=0`, plane-wave gradient on non-uniform meshes
 - [ ] Feature proposals via issues (harmonic inversion, conformal PEC, dispersion-free wake, soft sources, monitors, ports, estimator, dispersive materials)
