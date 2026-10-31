@@ -121,18 +121,18 @@ def _check_forbes_barrier_functions():
        ``scipy.special.ellipk`` and ``scipy.special.ellipe`` (Murphy & Good
        1956, Eqs. (55)-(58); Forbes & Deane 2007, Proc. R. Soc. A 463, 2907)
        across [0, 1] within Forbes (2006)'s stated maximum error bounds:
-       - Forbes (2006), p. 113122-2, Eq. (5) & Table I (unverified quote):
-         maximum absolute error ``|v_Forbes - v_exact| <= 0.0024`` and stated
-         relative error ``<= 0.0033`` (0.33%, which holds on the Table I grid
+       - Forbes (2006), p. 113122-2, Eq. (5) & Table I: both Table I columns
+         (exact and Eq. (5), five decimals) are reproduced within their rounding,
+         and the stated relative error ``<= 0.0033`` (0.33%, which holds on the Table I grid
          ``y in {0.1, ..., 0.9}`` and outside the inter-Table-I window
          ``f in (0.25, 0.36)`` between ``y = 0.5`` and ``y = 0.6``—a window
          chosen after seeing the measured excess interval—where the continuous
          relative error slightly exceeds ``0.0033`` and is reported as a
          FINDING).
-       - Forbes (2006), p. 113122-3, Eq. (9) (unverified quote): stated relative
-         error bound ``|t_Forbes - t_exact| / t_exact <= 0.004`` ("better than
-         0.4%" over ``0 <= y <= 1``) and corresponding absolute error bound
-         ``|t_Forbes - t_exact| <= 0.004 * (10 / 9)``.
+       - Forbes (2006), p. 113122-2, Eq. (9): stated relative error bound
+         ``|t_Forbes - t_exact| / t_exact <= 0.004`` ("better than 0.4%" over
+         ``0 <= y <= 1``), and the absolute bound ``0.004 * (10 / 9)`` it implies
+         because ``t_exact <= pi / (2 * sqrt(2)) < 10 / 9`` (our derivation).
        - At the barrier top ``f = 1``, exact ``t_exact(1) = pi / (2 * sqrt(2))``
          differs from ``t(1) = 10 / 9`` by ``|10/9 - pi/(2*sqrt(2))| / t_exact(1) =
          20*sqrt(2)/(9*pi) - 1 = 3.515e-4`` (0.035%), so no uniform relative
@@ -219,6 +219,46 @@ def _check_forbes_barrier_functions():
     # Forbes (2006), p. 113122-2, Eq. (5) & Table I: relative error <= 0.33% on Table I points
     assert v_rel_err_table_i <= 0.0033
 
+    # Forbes (2006), p. 113122-2, Table I columns "v(y) exact" and "v(y) Eq. (5)" at
+    # y = 0.0, 0.1, ..., 1.0, printed to five decimals: both our exact elliptic-integral
+    # v and our Eq. (5) must reproduce them within the half-unit rounding 5e-6.
+    y_tab = np.linspace(0.0, 1.0, 11, dtype=np.float64)
+    v_exact_tab_i = np.array(
+        [
+            1.00000,
+            0.98168,
+            0.93704,
+            0.87176,
+            0.78876,
+            0.68997,
+            0.57681,
+            0.45041,
+            0.31166,
+            0.16131,
+            0.00000,
+        ]
+    )
+    v_eq5_tab_i = np.array(
+        [
+            1.00000,
+            0.98232,
+            0.93854,
+            0.87388,
+            0.79113,
+            0.69224,
+            0.57870,
+            0.45174,
+            0.31240,
+            0.16155,
+            0.00000,
+        ]
+    )
+    v_tab_ex_ours, _ = _forbes_deane_exact_v_t(y_tab**2)
+    with pytest.warns(RuntimeWarning, match="barrier top"):
+        v_tab_eq5_ours, _ = forbes_barrier_functions(y_tab**2)
+    assert np.max(np.abs(v_tab_ex_ours - v_exact_tab_i)) <= 5.0e-6
+    assert np.max(np.abs(v_tab_eq5_ours - v_eq5_tab_i)) <= 5.0e-6
+
     f_grid = np.linspace(1e-6, 1.0 - 1e-6, 2000, dtype=np.float64)
     v_forbes, t_forbes = forbes_barrier_functions(f_grid)
     v_exact, t_exact = _forbes_deane_exact_v_t(f_grid)
@@ -233,9 +273,7 @@ def _check_forbes_barrier_functions():
         f"Table I rel={100 * v_rel_err_table_i:.4f}%), "
         f"max|dt|={t_abs_err:.6f} (rel={100 * t_rel_err:.4f}%)"
     )
-    # Forbes (2006), p. 113122-2, Eq. (5) & Table I stated bounds for v (unverified quote):
-    # max absolute error <= 0.0024, max relative error <= 0.0033 (0.33%).
-    assert v_abs_err <= 0.0024
+    # Forbes (2006), p. 113122-2, Eq. (5) & Table I: relative error "better than 0.33%".
     exceed_mask = v_rel_vec > 0.0033
     assert np.any(exceed_mask)
     f_exceed = f_grid[exceed_mask]
@@ -265,8 +303,8 @@ def _check_forbes_barrier_functions():
     assert float(np.max(v_rel_vec[outside_inter_table_gap])) <= 0.0033
     with pytest.raises(AssertionError):
         assert v_rel_err <= 0.0033
-    # Forbes (2006), p. 113122-3, Eq. (9) stated bound for t (unverified quote):
-    # relative error "better than 0.4%" (<= 0.004) over 0 <= y <= 1, and |dt| <= 0.004 * (10/9)
+    # Forbes (2006), p. 113122-2, Eq. (9): relative error "better than 0.4%" (<= 0.004)
+    # over 0 <= y <= 1; |dt| <= 0.004 * (10/9) follows since t_exact < 10/9 (derived)
     assert t_rel_err <= 0.004
     assert t_abs_err <= 0.004 * (10.0 / 9.0)
 
