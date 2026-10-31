@@ -14,8 +14,8 @@ Verifies:
   dispersion bound `1 / cos(beta_e * dz) - 1`.
 - (b) The entrance current modulation amplitude `|I1(z_0)|` equals the drive
   amplitude `|rho1_amp| * area * u0` times the predicted midpoint-sampling
-  factor `1 / cos(omega * dt / 2)`, with a residual smaller than that
-  correction.
+  factor `1 / cos(omega * dt / 2)`, with a residual below half that correction
+  (so the uncorrected ratio 1 fails).
 - (c) A code-path mutation that drops `inflow_rho1` fails the amplitude and
   advection checks.
 """
@@ -258,13 +258,15 @@ def test_inflow_rho1_advection_phase_and_entrance_amplitude():
     amp_ratio_0 = float(np.abs(i1_phasor[0]) / i1_drive)
     # Evaluating the drive at the step midpoint t^n instead of averaging the two
     # half-step levels raises the driven amplitude by 1 / cos(omega * dt / 2).
-    # Test that prediction: the residual must be smaller than the modelled
-    # correction itself.
+    # Test that prediction against the alternative "no correction" (ratio 1): the
+    # threshold sits halfway between the two hypotheses, so a ratio of 1 fails.
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
     assert abs(amp_ratio_0 * cos_half - 1.0) <= tol_amp, (
         f"Entrance amplitude ratio {amp_ratio_0:.6f} outside 1/cos(omega*dt/2) +- {tol_amp:.6e}"
     )
+    # the threshold discriminates: the uncorrected ratio 1 is rejected
+    assert abs(cos_half - 1.0) > tol_amp
 
     # Verify that the axial outflow ramp w_axial tapers the current at the exit edge
     assert float(np.abs(i1_phasor[-1])) < 0.02 * i1_drive
@@ -299,7 +301,7 @@ def test_inflow_v1_advection_and_amplitude():
 
     # Entrance velocity perturbation |v1(z_0)| matches v1_amp within CN time-centring bound
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
     v1_ratio_0 = float(np.abs(out["v1_0_phasor"]) / v1_amp)
     assert abs(v1_ratio_0 * cos_half - 1.0) <= tol_amp
 
@@ -335,7 +337,7 @@ def test_mutation_dropping_inflow_drive_fails(monkeypatch):
     dt = out["dt"]
     i1_drive = abs(rho1_amp) * beam.area * beam.u0
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
 
     with pytest.raises(AssertionError, match="Entrance amplitude") as exc_drop:
         amp_ratio_0 = float(np.abs(i1_phasor[0]) / i1_drive)
@@ -369,7 +371,7 @@ def test_mutation_inflow_ghost_coefficient_and_w_perp_eff_fail(monkeypatch):
     dt = out_2x["dt"]
     i1_drive = abs(rho1_amp) * beam_2x.area * beam_2x.u0
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
 
     with pytest.raises(AssertionError, match="Entrance amplitude") as exc_ghost:
         amp_ratio_0 = float(np.abs(out_2x["i1_phasor"][0]) / i1_drive)
@@ -433,7 +435,7 @@ def test_inflow_rho1_negative_u0_sign():
     i1_drive = abs(rho1_amp) * beam.area * abs(beam.u0)
     amp_ratio_in = float(np.abs(i1_phasor[-1]) / i1_drive)
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
     assert abs(amp_ratio_in * cos_half - 1.0) <= tol_amp
 
     # Downstream exit edge k = 0 is tapered by the outflow ramp
@@ -472,7 +474,7 @@ def test_inflow_rho1_with_current_spec():
     dz = out["dz"]
     beta_e = out["beta_e"]
     cos_half = float(np.cos(0.5 * omega * dt))
-    tol_amp = 1.0 / cos_half - 1.0
+    tol_amp = 0.5 * (1.0 / cos_half - 1.0)
 
     # Analytic area_eff = pi * b^2 differs from discrete beam.area (scale != 1 by > 10 * tol_amp)
     expected_area_eff = float(np.pi * b**2)
@@ -523,5 +525,10 @@ def test_inflow_rejected_without_open_drifting_axis():
     u0, gamma0 = relativistic_gamma(voltage=10.0e3)
     with pytest.raises(ValueError, match="periodic"):
         LinearizedBeam(
-            u0=u0, rho0=-1.0e-18, gamma0=gamma0, axis="z", inflow_v1=drive, solver=solver
+            u0=u0,
+            rho0=-1.0e-18,
+            gamma0=gamma0,
+            axis="z",
+            inflow_v1=drive,
+            solver=solver,
         )

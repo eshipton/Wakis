@@ -263,6 +263,142 @@ $$J_{1,s}^{n+1/2}
 which is **algebraically identical** to the staggered Drude ADE update of
 `wakis.plasma.cold_plasma`.
 
+### Driven Inflow Boundary and Gap Modulation
+
+`LinearizedBeam` supports three time-domain drive callbacks for exciting space-charge waves on an open or velocity-modulated beam: `inflow_rho1(t)`, `inflow_v1(t)`, and `gap_modulation(s, t)`.
+
+#### 1. Upstream Ghost Edge and Crank–Nicolson Inflow Terms
+
+On an open (non-periodic) beam axis with $M$ active $E_s$ edges $k \in \{0, \dots, M-1\}$ of lengths $\Delta s_k$ (`ds_line`) across $N_{\text{lines}}$ active transverse lines, the homogeneous spatial derivative matrix $D_s$ (`_build_axial_derivative`) closes the centred difference at the upstream entrance edge $k_{\text{in}}$ (`_k_in`) by setting the exterior ghost edge to zero. When a time-dependent entrance velocity perturbation $v_g = v_{1,\text{in}}(t^n)$ or peak charge-density perturbation $\rho_g = \rho_{1,\text{in}}(t^n)$ is prescribed via `inflow_v1(t)` or `inflow_rho1(t)`, the upstream ghost neighbour is replaced by the driven value instead of zero:
+
+- **Forward drift ($u_0 > 0$, inflow at $s_{\min}$, edge $k_{\text{in}} = 0$)**: The upstream ghost edge is at $k = -1$. Replacing $\psi_{-1} = 0$ by $\psi_g$ in the second-order centred difference at $k = 0$ gives
+  $$(\widetilde{D}_s \psi)_0 = \frac{\psi_1 - \psi_g}{2\Delta s_0} = (D_s \psi)_0 - \frac{\psi_g}{2\Delta s_0}, \qquad (D_s \psi)_0 = \frac{\psi_1}{2\Delta s_0}.$$
+- **Backward drift ($u_0 < 0$, inflow at $s_{\max}$, edge $k_{\text{in}} = M - 1$)**: The upstream ghost edge is at $k = M$ (while outflow is at $k = 0$). Replacing $\psi_M = 0$ by $\psi_g$ in the centred difference at $k = M - 1$ gives
+  $$(\widetilde{D}_s \psi)_{M-1} = \frac{\psi_g - \psi_{M-2}}{2\Delta s_{M-1}} = (D_s \psi)_{M-1} + \frac{\psi_g}{2\Delta s_{M-1}}, \qquad (D_s \psi)_{M-1} = -\frac{\psi_{M-2}}{2\Delta s_{M-1}}.$$
+
+Both drift signs combine into the single identity at $k = k_{\text{in}}$:
+
+$$(\widetilde{D}_s \psi)_{k_{\text{in}}} = (D_s \psi)_{k_{\text{in}}} - \operatorname{sign}(u_0)\,\frac{\psi_g}{2\Delta s_{k_{\text{in}}}}.$$
+
+In `LinearizedBeam._initialize`, the coupling arrays on the $(M, N_{\text{lines}})$ beam grid are precomputed with the axial taper and non-PEC edge mask $w_{\text{ax}} = w_s(s_k)\,\mathbb{1}_{\mathrm{ieps} \ne 0}$ (`w_ax_2d`) and effective transverse dual-cell weight $w_{\perp,\text{eff}}$ (`_w_perp_eff`) as
+
+$$\alpha_E = -\text{coupling\_sign}\,\Delta t\,\frac{e}{m_{\text{eff}}}\,w_{\text{ax}}, \qquad
+  \beta_v = -\Delta t\,\rho_0, \qquad
+  c_v = w_{\text{ax}}\,\rho_0, \qquad
+  c_\rho = w_{\text{ax}}\,u_0,$$
+
+where $m_{\text{eff}} = \gamma_0^p m_e$ ($p = 3$ by default). Compared with $\alpha = e / (\gamma_0^3 m_e)$ in the earlier Crank–Nicolson equations, $\alpha_E$ (`_alpha_E`) absorbs the factor $-\Delta t$ together with `coupling_sign` and the mask $w_{\text{ax}}$ ($\alpha_E = -\Delta t\,\alpha\,w_{\text{ax}}$ for default `coupling_sign = 1` and $p = 3$), so $+\alpha_E E_s^n$ replaces $-\Delta t\,\alpha\,E_s^n$. Substituting the inhomogeneous derivative $\widetilde{D}_s$ acting on the Crank–Nicolson mid-step averages $\bar{v}_1 = \frac{1}{2}(v_1^{n+1/2} + v_1^{n-1/2})$ and $\bar{\rho}_1 = \frac{1}{2}(\rho_1^{n+1/2} + \rho_1^{n-1/2})$ into the coupled step and moving the known ghost values at $t^n$ to the right-hand side of row $k_{\text{in}}$ yields the driven Crank–Nicolson equations solved in `_pre_step`:
+
+$$\left(A_{v,+} v_1^{n+1/2}\right)_{k_{\text{in}}}
+  = \left(A_{v,-} v_1^{n-1/2} + \alpha_E E_s^n\right)_{k_{\text{in}}}
+  + \frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,\left|c_\rho[k_{\text{in}}, :]\right|\,v_g,$$
+
+$$\left(A_+ \rho_1^{n+1/2}\right)_{k_{\text{in}}}
+  = \left(A_- \rho_1^{n-1/2} + \beta_v D_s \bar{v}_1\right)_{k_{\text{in}}}
+  + \operatorname{sign}(u_0)\,\frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,c_v[k_{\text{in}}, :]\,v_g
+  + \frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,\left|c_\rho[k_{\text{in}}, :]\right|\,w_{\perp,\text{eff}}[k_{\text{in}}, :]\,\rho_g.$$
+
+The three ghost source terms at row $k_{\text{in}}$ correspond to the three spatial derivatives in the hyperbolic system:
+
+1. **Velocity advection ($+u_0 \partial_s v_1$ in $A_{v,\pm}$)**: The 1D advection operator $\pm \frac{\Delta t}{2} u_0 D_s$ in $A_{v,\pm}$ (`Mp_v`, `Mm_v`) carries no $w_{\text{ax}}$ mask, so replacing $D_s \bar{v}_1$ by $\widetilde{D}_s \bar{v}_1$ and moving the ghost contribution to the right-hand side gives the unmasked term $\frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,u_0 \operatorname{sign}(u_0)\,v_g = \frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,|u_0|\,v_g$. Weighting $v_g$ by the active axial/PEC mask $w_{\text{ax}}[k_{\text{in}}, :]$ through $|c_\rho[k_{\text{in}}, :]| = w_{\text{ax}}[k_{\text{in}}, :]\,|u_0|$ (which equals $|u_0|$ when $w_{\text{ax}}[k_{\text{in}}, :] = 1$) is a design choice of the code so that masked or PEC edges at $k_{\text{in}}$ are not driven, rather than a consequence of the stencil derivation. This yields the coefficient
+   $$\text{\_inflow\_ghost\_coeff}
+     = \underbrace{\frac{\Delta t}{2\Delta s_{k_{\text{in}}}}}_{\text{\_inflow\_half\_dt\_over\_ds}}\,\left|c_\rho[k_{\text{in}}, :]\right|
+     = 0.5\,\frac{\Delta t}{\Delta s[k_{\text{in}}]}\,\left|c_\rho[k_{\text{in}}, :]\right|$$
+   multiplying $v_g = v_{1,\text{in}}(t^n)$ in `rhs_v[k_in, :]`.
+2. **Density advection ($+u_0 \partial_s \rho_1$ in $A_\pm$)**: Weighting the scalar peak density drive $\rho_g = \rho_{1,\text{in}}(t^n)$ by the transverse profile $w_{\perp,\text{eff}}[k_{\text{in}}, :]$ and axial mask $w_{\text{ax}}[k_{\text{in}}, :]$ gives the upstream ghost charge density $w_{\text{ax}}[k_{\text{in}}, :]\,w_{\perp,\text{eff}}[k_{\text{in}}, :]\,\rho_g$. Moving its advection term $-\Delta t\,u_0 \operatorname{sign}(u_0)/(2\Delta s_{k_{\text{in}}})$ to the right-hand side of the continuity equation gives
+   $$0.5\,\frac{\Delta t}{\Delta s[k_{\text{in}}]}\,\left|c_\rho[k_{\text{in}}, :]\right|\,w_{\perp,\text{eff}}[k_{\text{in}}, :]\,\rho_g
+     = \text{\_inflow\_ghost\_coeff}\;\text{\_w\_perp\_eff}[k_{\text{in}}, :]\;\rho_{1,\text{in}}(t^n)$$
+   in `rhs_r[k_in, :]`.
+3. **Continuity velocity-divergence source ($-\rho_0 \partial_s v_1$ in $-B(v_1^{n+1/2} + v_1^{n-1/2})$)**: On the right-hand side of the continuity equation, the interior term is $\beta_v D_s \bar{v}_1$ where $\beta_v = -\Delta t\,\rho_0$ (`_beta_v`) carries no $w_{\text{ax}}$ factor, so replacing $D_s \bar{v}_1$ by $\widetilde{D}_s \bar{v}_1$ in $\beta_v \widetilde{D}_s \bar{v}_1$ gives $-\beta_v[k_{\text{in}}, :]\,\operatorname{sign}(u_0)\,v_g / (2\Delta s_{k_{\text{in}}}) = \operatorname{sign}(u_0)\,\frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,\rho_0[k_{\text{in}}, :]\,v_g$. The ghost term in `_pre_step` instead uses $c_v = w_{\text{ax}}\,\rho_0$ (`_c_v`), which equals $-\beta_v / \Delta t = \rho_0$ at $k_{\text{in}}$ when $w_{\text{ax}}[k_{\text{in}}, :] = 1$ (an untapered, non-PEC entrance edge), adding
+   $$\operatorname{sign}(u_0)\,\frac{\Delta t}{2\Delta s_{k_{\text{in}}}}\,w_{\text{ax}}[k_{\text{in}}, :]\,\rho_0[k_{\text{in}}, :]\,v_g
+     = \operatorname{sign}(u_0)\,0.5\,\frac{\Delta t}{\Delta s[k_{\text{in}}]}\,c_v[k_{\text{in}}, :]\,v_{1,\text{in}}(t^n)$$
+   to `rhs_r[k_in, :]` (`np.sign(self.u0) * self._inflow_half_dt_over_ds * self._c_v[k_in, :] * v_in`). Unlike the advection terms, $-\rho_0 \partial_s v_1$ contains no factor of $u_0$, so reversing the drift direction flips the sign of this boundary contribution via $\operatorname{sign}(u_0)$. With the $\exp(+i(\omega t - \beta_e s))$ convention ($\partial_s \to -i\beta_e$, $\beta_e = \omega / |u_0|$), $-\rho_0 \partial_s v_1 = +i\beta_e \rho_0 v_1$, so at the entrance edge $k_{\text{in}}$ — one cell $\Delta s_{k_{\text{in}}}$ downstream of the ghost edge — secular ballistic bunching evaluated one cell downstream of the ghost edge adds $u_0 \rho_1(s_{k_{\text{in}}}) \approx +i(\beta_e \Delta s_{k_{\text{in}}})\rho_0 v_1(s_{k_{\text{in}}})$ to $\rho_0 v_1(s_{k_{\text{in}}})$, scaling $|I_1(s_{k_{\text{in}}})|$ by $|1 + i\beta_e \Delta s_{k_{\text{in}}}| = \sqrt{1 + (\beta_e \Delta s_{k_{\text{in}}})^2}$.
+
+When both `inflow_rho1` and `inflow_v1` are `None` (the default), `has_inflow` is `False` and `_pre_step` is bitwise identical to the undriven update.
+
+#### 2. Midpoint Time Level $t^n = n\Delta t$ and Harmonic Amplitude Factor
+
+Inside `_pre_step`, `inflow_rho1(t)` and `inflow_v1(t)` are sampled at integer time level $t^n = n\Delta t$ (`t_step = self._step_count * float(solver.dt)`), which is the temporal midpoint of the half-integer beam step $t^{n-1/2} \to t^{n+1/2}$ and the same time level at which $\mathbf{E}^n$ resides.
+
+For a harmonic drive $g(t) = g_0 e^{i\omega t}$, a boundary value defined on the half-integer beam time grid $t^{n\pm 1/2} = t^n \pm \Delta t / 2$ would enter the Crank–Nicolson trapezoidal spatial average $(\psi^{n-1/2} + \psi^{n+1/2})/2$ through the two-level average
+
+$$\bar{g}^n = \frac{g^{n-1/2} + g^{n+1/2}}{2}
+  = \frac{g_0 e^{i\omega(t^n - \Delta t/2)} + g_0 e^{i\omega(t^n + \Delta t/2)}}{2}
+  = \cos\!\left(\frac{\omega \Delta t}{2}\right) g(t^n).$$
+
+Because `_pre_step` injects the midpoint value $g(t^n) = \bar{g}^n / \cos(\omega \Delta t / 2)$ directly rather than $\bar{g}^n$, the scheme is driven with an effective harmonic amplitude
+
+$$g_{\text{eff}} = \frac{g_0}{\cos(\omega \Delta t / 2)}
+  = g_0 \left[1 + \frac{1}{8}(\omega \Delta t)^2 + O\!\left((\omega \Delta t)^4\right)\right]$$
+
+relative to the Crank–Nicolson two-level average, a second-order $O(\omega^2 \Delta t^2)$ time-centring effect. For the normalized entrance amplitude ratio $r$ (`amp_ratio_0` and `v1_ratio_0`), `tests/test_090_linearized_beam_inflow_drive.py` requires the residual $|r \cos(\omega \Delta t / 2) - 1|$ to be below half the correction $\frac{1}{2}[1 / \cos(\omega \Delta t / 2) - 1]$ (`tol_amp = 0.5 * (1.0 / cos_half - 1.0)`), a threshold halfway between the prediction $1 / \cos(\omega \Delta t / 2)$ and "no correction" (ratio $1$), and asserts that ratio $1$ fails it (`abs(cos_half - 1.0) > tol_amp`); the runtime values can be inspected with `pytest tests/test_090_linearized_beam_inflow_drive.py -s`.
+
+#### 3. Transverse Normalisation, `area_eff`, and Profiled $\rho_0$
+
+The density drive `inflow_rho1(t)` returns the peak AC charge-density perturbation $\rho_{1,\text{in}}(t)$ [C/m$^3$] measured against the peak DC charge density $\rho_{0,\text{peak}}$ (`rho0_peak`, where $\rho_0 = \rho_{0,\text{peak}}\,w_{\perp,\text{eff}}$ for a uniform-density specification). Integrating the convective current density $J_{1,s} = u_0 \rho_1$ over the transverse dual-cell areas $\Delta A_{\perp,\ell}$ (`dA_perp`) at an un-tapered entrance ($w_s(s_{k_{\text{in}}}) = 1$) gives
+
+$$I_1(t) = \sum_{\ell=0}^{N_{\text{lines}}-1} u_0\,\rho_{1,\text{in}}(t)\,w_{\perp,\text{eff}}[k_{\text{in}}, \ell]\,\Delta A_{\perp,\ell}
+  = u_0\,A_{\text{eff}}\,\rho_{1,\text{in}}(t)
+  = \frac{\rho_{1,\text{in}}(t)}{\rho_{0,\text{peak}}}\,I_0,$$
+
+where $I_0 = \rho_{0,\text{peak}}\,u_0\,A_{\text{eff}}$ is the DC beam current.
+
+- **`current=` specification and `area_eff`**: When the DC beam is specified via `current` ($I_0 \ge 0$), `_initialize` evaluates the exact geometric cross-sectional area $A_{\text{eff}}$ (`area_eff`, e.g. $\pi R_b^2$ for a circular beam of `radius` $R_b$, versus the subpixel-quadrature discrete sum `area` $= \sum_\ell w_{\perp,\ell}\,\Delta A_{\perp,\ell}$) and scales the transverse weights by `w_perp_eff = w_perp_lines * (area_eff / area)` so that $\sum_\ell w_{\perp,\text{eff}}[k_{\text{in}}, \ell]\,\Delta A_{\perp,\ell} = A_{\text{eff}}$. Because the density ghost term multiplies `inflow_rho1(t)` by `_w_perp_eff[k_in, :]`, the inflow drive shares this scaled transverse weight and produces entrance current amplitude $|I_1| = |\rho_{1,\text{in}}|\,A_{\text{eff}}\,|u_0| = (|\rho_{1,\text{in}}| / |\rho_{0,\text{peak}}|)\,I_0$.
+- **Limitation for array or callable `rho0`**: When `rho0` is supplied as a spatial array or a callable $\rho_0(x, y, z)$, `_initialize` sets `rho0 = rho_sub * w_perp_lines` and `rho0_peak = min(rho0)`, while `_w_perp_eff` remains equal to the geometric fill-fraction mask `w_perp_lines`. Consequently, `inflow_rho1` and `inflow_v1` follow the transverse mask rather than the $\rho_0(\mathbf{r}_\perp)$ profile, so the local modulation depth $\rho_1 / \rho_0$ varies across the beam lines.
+
+#### 4. External Axial Gap Field (`gap_modulation`)
+
+The optional callback `gap_modulation(s_coords, t)` models an external velocity-modulating gap or input RF cavity (Ramo 1939; Hahn 1939; Gilmour 2011) without meshing the full cavity structure into the electromagnetic grid. At the start of `_pre_step`, it is evaluated on the 1D array of active axial edge midpoints `beam.s_coords` ($s_k$, shape `(M,)`) at the integer time level $t^n = n\Delta t$ — the exact temporal midpoint of the $t^{n-1/2} \to t^{n+1/2}$ velocity step and the same time level as $\mathbf{E}^n$ — and returns an external axial electric field $E_{\text{mod}}(s_k, t^n)$ [V/m] (shape `(M,)` broadcast across all transverse beam lines, or `(M, N_lines)`), which is added directly to the grid-gathered axial field $E_s^n$ before multiplying by $\alpha_E$.
+
+#### 5. Validation Errors (`ValueError`)
+
+`LinearizedBeam` rejects inflow drives when no upstream ghost edge exists:
+- **Stationary beam ($u_0 = 0$)**: Passing `inflow_rho1` or `inflow_v1` with $u_0 = 0$ raises `ValueError("inflow_rho1/inflow_v1 need a drifting beam (u0 != 0)")` in `LinearizedBeam.__init__`, because $D_s = 0$ at $u_0 = 0$.
+- **Periodic or Bloch beam axis without `s_min`/`s_max`**: Attaching a beam with `inflow_rho1` or `inflow_v1` to a solver whose boundary condition along `axis` is `"periodic"` or `"bloch"` when both `s_min` and `s_max` are `None` (`periodic_s == True`) raises `ValueError("inflow_rho1/inflow_v1 need an open beam axis: the beam axis is periodic (set s_min/s_max to open it)")` in `LinearizedBeam._initialize`. Providing `s_min` or `s_max` opens the axial segment (`periodic_s = False`) and restores the upstream ghost boundary.
+
+#### 6. Adjoint Compatibility (`BeamTranspose`)
+
+With `inflow_rho1`, `inflow_v1`, or `gap_modulation` active, the one-step map whose transpose is given in Section 6 is an affine map $x' = U x + b^n$, where the inhomogeneous vector $b^n$ depends only on the external drive callbacks at $t^n$ and is independent of the homogeneous state $x = (\mathbf{H}^{n-1/2}, \mathbf{E}^n, \boldsymbol{\psi}^n, v_1^{n-1/2}, \rho_1^{n-1/2})$. Therefore, the state Jacobian $\partial x' / \partial x = U$ is unchanged and `BeamTranspose` (Section 6) remains the exact Hermitian transpose $U^H$ of the state-transition operator. Gradients with respect to the drive callbacks themselves (`inflow_rho1`, `inflow_v1`, `gap_modulation`) are not provided.
+
+#### 7. Limits and Failure Modes of the Drive
+
+- **Single upstream ghost edge**: `inflow_rho1` and `inflow_v1` act only through the single upstream ghost edge $k_{\text{in}} - \operatorname{sign}(u_0)$ of the second-order centred difference stencil on an open, drifting beam ($u_0 \ne 0$, `periodic_s == False`).
+- **Crank–Nicolson advection dispersion, group velocity, and midpoint sampling**: For pure advection ($\partial_t \psi + u_0 \partial_s \psi = 0$) discretized with Crank–Nicolson in time and the interior centred difference $(D_s \psi)_k = (\psi_{k+1} - \psi_{k-1}) / (2\Delta s)$ on a uniform grid of spacing $\Delta s$ (written $\Delta z$ for `axis="z"` in `tests/test_090_linearized_beam_inflow_drive.py`), substituting a plane wave $\exp(i(\omega t - k_s s))$ gives the exact discrete dispersion relation
+  $$\Omega := \frac{2}{\Delta t}\tan\!\left(\frac{\omega \Delta t}{2}\right) = u_0\,\frac{\sin(k_s \Delta s)}{\Delta s}
+    \implies k_s = \frac{1}{\Delta s}\arcsin\!\left(\frac{\Omega \Delta s}{u_0}\right).$$
+  Expanding $\Omega = \omega[1 + \frac{1}{12}(\omega \Delta t)^2 + O((\omega \Delta t)^4)]$ and $\arcsin(x) = x + \frac{1}{6}x^3 + O(x^5)$ around the continuum electronic wavenumber $\beta_e = \omega / u_0$ (or $\omega / |u_0|$ along the drift direction) yields the relative axial wavenumber error
+  $$\frac{k_s - \beta_e}{\beta_e}
+    = \frac{1}{6}(\beta_e \Delta s)^2 + \frac{1}{12}(\omega \Delta t)^2 + O\!\left((\beta_e \Delta s)^4 + (\omega \Delta t)^4\right).$$
+  A propagating real wavenumber $k_s$ requires $|\Omega \Delta s / u_0| < 1$ ($\Omega \Delta s / u_0 < 1$ for $u_0 > 0, \omega > 0$); otherwise the drive frequency is above the spatial grid cutoff and the mode is evanescent. Because $\omega \Delta t = (u_0 \Delta t / \Delta s)(\beta_e \Delta s)$, the spatial group-velocity factor
+  $$\frac{1}{\cos(\beta_e \Delta s)} - 1 = \frac{1}{2}(\beta_e \Delta s)^2 + O\!\left((\beta_e \Delta s)^4\right)$$
+  is a looser upper bound on $|k_s - \beta_e| / \beta_e$ valid while the advective Courant number satisfies $|u_0|\Delta t / \Delta s \le 2$ ($\frac{1}{6} + \frac{1}{12}(u_0 \Delta t / \Delta s)^2 \le \frac{1}{2}$), which the electromagnetic CFL condition ($c\Delta t / \Delta s \le 1$, $|u_0| < c$) guarantees; `tests/test_090_linearized_beam_inflow_drive.py` uses this looser bound (`tol_disp = 1.0 / np.cos(beta_e * dz) - 1.0`) as its phase tolerance. The Fourier argument assumes uniform axial spacing $\Delta s$. Differentiating the dispersion relation with respect to $k_s$ gives the discrete group velocity
+  $$v_{\text{grp}} = \frac{\partial \omega}{\partial k_s} = u_0 \cos(k_s \Delta s)\cos^2\!\left(\frac{\omega \Delta t}{2}\right),$$
+  while sampling the drive at the step midpoint $t^n = n\Delta t$ scales the driven amplitude by $1 / \cos(\omega \Delta t / 2)$. Coarsely resolved or step-discontinuous drives ($\beta_e \Delta s \gtrsim 1$) suffer phase lag and dispersive trailing ripples; in particular, the centred stencil supports a parasitic $2\Delta s$ odd-even mode ($k_s \Delta s \to \pi$) with negative group velocity $v_{\text{grp}} \approx -u_0 \cos^2(\omega \Delta t / 2)$, excited at the inflow and outflow edges and travelling upstream against the drift.
+- **Profiled $\rho_0(\mathbf{r}_\perp)$**: For an array or callable `rho0`, the inflow drive weights `inflow_rho1(t)` and `inflow_v1(t)` by the geometric fill-fraction mask (`_w_perp_eff`) rather than the spatial $\rho_0(\mathbf{r}_\perp)$ profile, so the relative modulation depth $\rho_1 / \rho_0$ is not uniform across the cross-section.
+- **No gradient with respect to the drive**: `BeamTranspose` differentiates with respect to the electromagnetic and beam states $(\mathbf{E}, \mathbf{H}, v_1, \rho_1)$, not with respect to the inflow or gap drive waveforms.
+
+#### 8. Minimal Usage Snippet
+
+```python
+import numpy as np
+from wakis.beam_fluid import LinearizedBeam
+
+# solver: an open-axis SolverFIT3D; omega [rad/s], E_gap [V/m], s0 and w [m] set by the user
+
+beam = LinearizedBeam(
+    voltage=10.0e3,
+    current=0.05,
+    axis="z",
+    radius=0.8e-3,
+    s_min=0.0,
+    s_max=0.06,
+    inflow_rho1=lambda t: -2.5e-5 * np.sin(omega * t),
+    inflow_v1=lambda t: 1.0e4 * np.sin(omega * t),
+    gap_modulation=lambda s, t: E_gap * np.exp(-(((s - s0) / w) ** 2)) * np.sin(omega * t),
+    solver=solver,
+)
+```
+
 ---
 
 ## 5. Stability and Dispersion Analysis
@@ -427,6 +563,8 @@ strongly focused regime** and breaks down when any of the following conditions i
 | **Trapping and saturation** | Linear growth regime ($P_{\text{RF}} \ll \eta_{\text{sat}} I_0 V_0$) | Electrons drop into the potential troughs of the slow wave and execute synchrotron bounces, saturating gain; requires Lagrangian particle-in-cell (`wakis.particles`, in development). |
 | **Thermal velocity spread** | $\sigma_{v,\parallel} \ll \omega_q / \beta$ | Warm-beam Landau damping and Debye screening ($\lambda_D = v_{\text{th}}/\omega_p$) require kinetic/particle-in-cell modeling. |
 | **Finite magnetic focusing ($B_0$)** | $\omega_c = e B_0 / (\gamma_0 m_e) \gg \omega_p$ | Transverse $\mathbf{E}_\perp, \mathbf{v}_\perp$ motion, Brillouin scalloping, and cyclotron-space-charge modes require 3D fluid or full 3D particle-in-cell modeling. |
+
+- **Driven inflow (`inflow_rho1`, `inflow_v1`) and gap modulation (`gap_modulation`)**: Require an open, drifting beam axis ($u_0 \ne 0$, `periodic_s == False`), small-signal drive amplitudes ($|\rho_{1,\text{in}}| \ll |\rho_{0,\text{peak}}|$, $|v_{1,\text{in}}| \ll |u_0|$), and uniform-grid resolution $\beta_e \Delta s \ll 1$, $\omega \Delta t \ll 1$ below the grid cutoff $|\Omega \Delta s / u_0| < 1$ ($\Omega = (2/\Delta t)\tan(\omega \Delta t / 2)$). For pure advection with Crank–Nicolson in time and centred differences in space on a uniform grid, the exact discrete dispersion relation $\Omega = u_0 \sin(k_s \Delta s) / \Delta s$ ($k_s = \arcsin(\Omega \Delta s / u_0) / \Delta s$) gives $(k_s - \beta_e)/\beta_e = (\beta_e \Delta s)^2 / 6 + (\omega \Delta t)^2 / 12 + O(4)$ — bounded above by the looser group-velocity factor $1 / \cos(\beta_e \Delta s) - 1 = (\beta_e \Delta s)^2 / 2 + O(4)$ (used as the phase tolerance in `test_090`) while the advective Courant number satisfies $|u_0|\Delta t / \Delta s \le 2$, as guaranteed by the electromagnetic CFL — and discrete group velocity $v_{\text{grp}} = u_0 \cos(k_s \Delta s)\cos^2(\omega \Delta t / 2)$, while the centred stencil supports a parasitic $2\Delta s$ odd-even mode ($k_s \Delta s \to \pi$) with negative group velocity excited at the inflow and outflow edges and travelling upstream, and midpoint sampling at $t^n = n\Delta t$ scales the harmonic drive amplitude by $1 / \cos(\omega \Delta t / 2)$. For an array or callable `rho0`, the inflow drive follows the transverse fill-fraction mask (`_w_perp_eff`) rather than the spatial $\rho_0(\mathbf{r}_\perp)$ profile, and `BeamTranspose` does not provide gradients with respect to the drive callbacks (see Section 4, *Driven Inflow Boundary and Gap Modulation*).
 
 ---
 
