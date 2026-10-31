@@ -464,6 +464,10 @@ class _CollectiveMemoryError(RuntimeError, MemoryError):
     """Out-of-memory error raised collectively across all MPI ranks (is both a RuntimeError and a MemoryError)."""
 
 
+class _EnergyTrackingDisabledError(RuntimeError, ValueError):
+    """Raised when energy-balance diagnostics are queried with ``track_energy=False``."""
+
+
 class ParticleSolver:
     """Self-consistent electromagnetic particle-in-cell coupler for :class:`~wakis.SolverFIT3D`.
 
@@ -522,6 +526,25 @@ class ParticleSolver:
         macroparticle slots) so incoming MPI-migrated particles do not trigger
         mid-step buffer reallocations. Defaults to ``0.05`` when
         ``use_mpi=True`` and ``solver.size > 1``, and ``0.0`` otherwise.
+    track_energy : bool, optional
+        If True, allocate discrete FIT energy-balance weight and history buffers
+        and accumulate per-step field work so :meth:`field_work` and
+        :meth:`energy_balance` can be evaluated. Default is ``False`` (zero extra
+        buffer allocations and zero per-step energy-tracking passes, leaving the
+        default time-stepping path bitwise unchanged). When ``track_energy=True``,
+        the memory cost per grid cell is
+        :math:`\\text{cost} = 9 \\times 3 \\times \\text{sizeof}(\\text{float64}) = 27 \\times 8 = 216\\;\\text{bytes/cell}`
+        across the nine ``3 * Nx * Ny * Nz`` ``float64`` edge arrays
+        (``_m_eps_arr``, ``_m_mu_arr``, ``_vol_E_fw``, ``_E_prev_fw``,
+        ``_fw_scratch``, ``_fw_accum_vec``, ``_E_init_fw``, ``_H_prev_init_fw``,
+        ``_H_curr_init_fw``), and ``0`` bytes/cell when ``track_energy=False``.
+
+    Attributes
+    ----------
+    n_particle_steps : int
+        Public counter of completed self-consistent particle steps. Used to seed
+        each :class:`BeamInjector`'s deterministic per-step :class:`numpy.random.SeedSequence`
+        and exposed for checkpoint/restart persistence.
 
     Notes
     -----
@@ -554,8 +577,10 @@ class ParticleSolver:
         profile: bool = False,
         particles_comm: str | None = None,
         capacity_headroom: float | None = None,
+        track_energy: bool = False,
     ):
         self.solver = solver
+        self.track_energy = bool(track_energy)
         self.use_mpi = bool(getattr(solver, "use_mpi", False))
         if self.use_mpi and not bool(getattr(solver.grid, "use_mpi", False)):
             raise ValueError(
@@ -727,6 +752,7 @@ class ParticleSolver:
         self.boundaries = ParticleBoundaries.from_solver(
             solver, collectors=collectors, solid_mask=solid_mask
         )
+        solver._particles_solid_mask = self.boundaries.solid_mask
 
         if self.use_mpi:
             rank = int(solver.rank)
@@ -787,6 +813,28 @@ class ParticleSolver:
             if self.on_gpu or itA_raw.dtype != np.float64
             else itA_raw
         )
+        self._m_eps_arr = None
+        self._m_mu_arr = None
+        self._vol_E_fw = None
+        if self.track_energy:
+            self._E_prev_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._fw_scratch = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._fw_accum_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._init_energy_weights()
+        else:
+            self._E_prev_fw = None
+            self._fw_scratch = None
+            self._fw_accum_vec = None
+            self._E_init_fw = None
+            self._H_prev_init_fw = None
+            self._H_curr_init_fw = None
+        self._fw_pending = False
+        self._fw_dt = 0.0
+        self._has_step0_field_snap = False
+        self._K_particles_0 = 0.0
         self._H_prev = None
         self._d_cfl_error = (
             self.xp.zeros(1, dtype=np.int32) if self.on_gpu else None
@@ -1963,6 +2011,14 @@ class ParticleSolver:
         s._particles_shape_order = self.shape
         s._particle_solver = self
 
+        for inj in self.injectors:
+            local_exc = None
+            try:
+                inj._bind(s)
+            except Exception as exc:  # noqa: BLE001
+                local_exc = exc
+            self._collective_check(local_exc)
+
         local_exc = None
         try:
             if self.capacity_headroom > 0.0:
@@ -2006,6 +2062,20 @@ class ParticleSolver:
         self.reset_gauss_reference()
         local_exc = None
         try:
+            if self.track_energy:
+                if self._E_prev_fw is None:
+                    n_cells = s.Nx * s.Ny * s.Nz
+                    self._E_prev_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._fw_scratch = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._fw_accum_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                self._init_energy_weights()
+                self._fw_accum_vec.fill(0.0)
+            self._fw_pending = False
+            self._fw_dt = 0.0
+            self._has_step0_field_snap = False
             H_arr = s.H.toarray()
             if self.on_gpu:
                 self._H_prev = H_arr.copy()
@@ -2017,11 +2087,160 @@ class ParticleSolver:
         except Exception as exc:
             local_exc = exc
         self._collective_check(local_exc)
+        if self.track_energy:
+            self._K_particles_0 = self.kinetic_energy(synchronised=True)
+        else:
+            self._K_particles_0 = 0.0
 
         if not self._attached:
             s.register_mid_step(self._mid_step_hook)
             self._attached = True
         return self
+
+    def _init_energy_weights(self) -> None:
+        """Compute discrete FIT energy weights ``M_eps``, ``M_mu``, and edge dual-volume ``V_E``."""
+        s = self.solver
+
+        def _to_host_f64(arr_obj):
+            raw = arr_obj.toarray() if hasattr(arr_obj, "toarray") else arr_obj
+            if hasattr(raw, "get"):
+                return np.asarray(raw.get(), dtype=np.float64)
+            return np.asarray(raw, dtype=np.float64)
+
+        s_grid = getattr(s, "grid", None)
+        L_obj = getattr(s_grid, "L", None)
+        if L_obj is None:
+            L_obj = getattr(s, "L", None)
+        tL_obj = getattr(s_grid, "tL", None)
+        if tL_obj is None:
+            tL_obj = getattr(s, "tL", None)
+        iA_obj = getattr(s, "iA", None)
+        if iA_obj is None:
+            iA_obj = getattr(s_grid, "iA", None)
+        itA_obj = getattr(s, "itA", None)
+        if itA_obj is None:
+            itA_obj = getattr(s_grid, "itA", None)
+        ieps_obj = getattr(s, "ieps", None)
+        imu_obj = getattr(s, "imu", None)
+        missing_ops = [
+            name
+            for name, obj in (
+                ("L", L_obj),
+                ("tL", tL_obj),
+                ("iA", iA_obj),
+                ("itA", itA_obj),
+                ("ieps", ieps_obj),
+                ("imu", imu_obj),
+            )
+            if obj is None
+        ]
+        if missing_ops:
+            raise ValueError(
+                "ParticleSolver energy diagnostics require FIT metric and material "
+                f"operators (L, tL, iA, itA, ieps, imu); missing: {', '.join(missing_ops)}."
+            )
+
+        L_h = _to_host_f64(L_obj)
+        tL_h = _to_host_f64(tL_obj)
+        iA_h = _to_host_f64(iA_obj)
+        itA_h = _to_host_f64(itA_obj)
+        ieps_h = _to_host_f64(ieps_obj)
+        imu_h = _to_host_f64(imu_obj)
+
+        act_e = (ieps_h != 0.0) & (itA_h != 0.0) & (L_h != 0.0)
+        m_eps_h = np.where(act_e, L_h / np.where(act_e, ieps_h * itA_h, 1.0), 0.0)
+        act_h = (imu_h != 0.0) & (iA_h != 0.0) & (tL_h != 0.0)
+        m_mu_h = np.where(act_h, tL_h / np.where(act_h, imu_h * iA_h, 1.0), 0.0)
+        vol_E_h = m_eps_h * ieps_h
+
+        if self.use_mpi and int(getattr(s, "size", 1)) > 1:
+            nxy = int(s.Nx * s.Ny)
+            k0, k1 = self._k_own_start, self._k_own_end
+            for arr_h in (m_eps_h, m_mu_h, vol_E_h):
+                v3 = arr_h.reshape((3, s.Nz, nxy))
+                if k0 > 0:
+                    v3[:, :k0, :] = 0.0
+                if k1 < s.Nz:
+                    v3[:, k1:, :] = 0.0
+
+        self._m_eps_arr = (
+            self.xp.asarray(m_eps_h, dtype=np.float64) if self.on_gpu else m_eps_h
+        )
+        self._m_mu_arr = (
+            self.xp.asarray(m_mu_h, dtype=np.float64) if self.on_gpu else m_mu_h
+        )
+        self._vol_E_fw = (
+            self.xp.asarray(vol_E_h, dtype=np.float64) if self.on_gpu else vol_E_h
+        )
+
+    def _step_e_bar_for_work(self, E_prev, E_curr, out) -> None:
+        """Compute time-centred electric field ``0.5 * (E^n + E^{n+1})`` into ``out`` in-place."""
+        self.xp.add(E_prev, E_curr, out=out)
+        out *= 0.5
+
+    def _flush_pending_field_work(self, E_curr) -> None:
+        """Accumulate ``dt * J^{n+1/2} * E_bar^{n+1/2}`` into ``_fw_accum_vec`` in-place."""
+        if not self._fw_pending:
+            return
+        self._step_e_bar_for_work(self._E_prev_fw, E_curr, self._fw_scratch)
+        self._fw_scratch *= self.J_particles
+        self._fw_scratch *= self._fw_dt
+        self._fw_accum_vec += self._fw_scratch
+        self._fw_pending = False
+
+    def _backpush_injected_slice(
+        self,
+        sp: Species,
+        sl: slice,
+        xi_i,
+        eta_i,
+        zeta_i,
+        E_field,
+        B_n_tuple,
+        t_n: float,
+        dt: float,
+    ) -> None:
+        """Back-push newly injected particles ``u(t_n) -> u(t_n - dt/2)`` prior to the step's full momentum push."""
+        s = self.solver
+        xp = self.xp
+        Ex, Ey, Ez, Bx, By, Bz = gather_fields(
+            xi_i,
+            eta_i,
+            zeta_i,
+            E_field,
+            B_n_tuple,
+            s.Nx,
+            s.Ny,
+            s.Nz,
+            order=self.shape,
+            gather=self.gather,
+            periodic=self.boundaries.periodic,
+            xp=xp,
+        )
+        x_s = sp._x[sl]
+        y_s = sp._y[sl]
+        z_s = sp._z[sl]
+        Ex_e, Ey_e, Ez_e = self._eval_ext_field(self.E_ext, x_s, y_s, z_s, t_n)
+        Bx_e, By_e, Bz_e = self._eval_ext_field(self.B_ext, x_s, y_s, z_s, t_n)
+        fn = get_pusher(self.pusher)
+        ux_b, uy_b, uz_b = fn(
+            sp._ux[sl],
+            sp._uy[sl],
+            sp._uz[sl],
+            Ex + Ex_e,
+            Ey + Ey_e,
+            Ez + Ez_e,
+            Bx + Bx_e,
+            By + By_e,
+            Bz + Bz_e,
+            sp.charge,
+            sp.mass,
+            -0.5 * dt,
+            xp=xp,
+        )
+        sp._ux[sl] = ux_b
+        sp._uy[sl] = uy_b
+        sp._uz[sl] = uz_b
 
     def _record_initial_gauss_state(self) -> None:
         """Capture initial background charge ``q_bg = S_tilde d_tilde(0) - q_nodes(0)``."""
@@ -2342,17 +2561,36 @@ class ParticleSolver:
         else:
             B_n_flat = self._compute_centred_B(H_prev, H_curr)
         B_n_tuple = (B_n_flat[:N], B_n_flat[N : 2 * N], B_n_flat[2 * N : 3 * N])
+        if self.track_energy:
+            E_flat = s.E.toarray()
+            if self._fw_pending:
+                self._flush_pending_field_work(E_flat)
+            xp.copyto(self._E_prev_fw, E_flat)
+            self._fw_dt = dt
         if do_profile:
             xp.cuda.Stream.null.synchronize()
             t_pg_acc += time.perf_counter() - t0_b
 
         use_mpi_multi = self.use_mpi and int(getattr(s, "size", 1)) > 1
         self._local_step_exc = None
+        for inj in self.injectors:
+            if inj.emitter_kind is None:
+                local_exc = None
+                try:
+                    inj._bind(s)
+                except Exception as exc:  # noqa: BLE001
+                    local_exc = exc
+                self._collective_check(local_exc)
         Wx_tot = self._Wx_buf
         Wy_tot = self._Wy_buf
         Wz_tot = self._Wz_buf
         try:
             if not self._initialized_half_step:
+                if self.track_energy:
+                    xp.copyto(self._E_init_fw, E_flat)
+                    xp.copyto(self._H_prev_init_fw, H_prev)
+                    xp.copyto(self._H_curr_init_fw, H_curr)
+                    self._has_step0_field_snap = True
                 if (
                     tuple(sp._n_launch_bound for sp in self.species)
                     != self._init_gauss_counts
@@ -2370,14 +2608,26 @@ class ParticleSolver:
 
             for inj in self.injectors:
                 if self.use_mpi and not self._owns_z_coord(inj.z0):
+                    inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)
                     continue
                 n_before = inj.species.n_particles
-                n_inj = inj.inject(t_n, dt)
+                n_inj = inj.inject(t_n, dt, step_index=self.n_particle_steps)
                 if n_inj > 0:
                     sp_inj = inj.species
                     sl_new = slice(n_before, sp_inj.n_particles)
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj._x[sl_new], sp_inj._y[sl_new], sp_inj._z[sl_new]
+                    )
+                    self._backpush_injected_slice(
+                        sp_inj,
+                        sl_new,
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        s.E,
+                        B_n_tuple,
+                        t_n,
+                        dt,
                     )
                     deposit_charge_gpu(
                         xi_i,
@@ -2628,6 +2878,8 @@ class ParticleSolver:
             self._last_deposit_s = 0.0
             self._last_guard_reduce_s = 0.0
             self._last_migrate_s = 0.0
+        if self.track_energy:
+            self._fw_pending = True
         self.n_particle_steps += 1
         self._run_diagnostics(t_n + dt, dt)
 
@@ -2667,16 +2919,35 @@ class ParticleSolver:
         else:
             B_n_flat = self._compute_centred_B(H_prev, H_curr)
         B_n_tuple = (B_n_flat[:N], B_n_flat[N : 2 * N], B_n_flat[2 * N : 3 * N])
+        if self.track_energy:
+            E_flat = s.E.toarray()
+            if self._fw_pending:
+                self._flush_pending_field_work(E_flat)
+            xp.copyto(self._E_prev_fw, E_flat)
+            self._fw_dt = dt
         if do_profile:
             t_pg_acc += time.perf_counter() - t0_b
 
         use_mpi_multi = self.use_mpi and int(getattr(s, "size", 1)) > 1
         self._local_step_exc = None
+        for inj in self.injectors:
+            if inj.emitter_kind is None:
+                local_exc = None
+                try:
+                    inj._bind(s)
+                except Exception as exc:  # noqa: BLE001
+                    local_exc = exc
+                self._collective_check(local_exc)
         Wx_tot = self._Wx_buf
         Wy_tot = self._Wy_buf
         Wz_tot = self._Wz_buf
         try:
             if not self._initialized_half_step:
+                if self.track_energy:
+                    xp.copyto(self._E_init_fw, E_flat)
+                    xp.copyto(self._H_prev_init_fw, H_prev)
+                    xp.copyto(self._H_curr_init_fw, H_curr)
+                    self._has_step0_field_snap = True
                 if (
                     tuple(sp._n_launch_bound for sp in self.species)
                     != self._init_gauss_counts
@@ -2697,14 +2968,26 @@ class ParticleSolver:
             # discrete Gauss's law accounts for charge emitted into the domain.
             for inj in self.injectors:
                 if self.use_mpi and not self._owns_z_coord(inj.z0):
+                    inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)
                     continue
                 n_before = inj.species.n_particles
-                n_inj = inj.inject(t_n, dt)
+                n_inj = inj.inject(t_n, dt, step_index=self.n_particle_steps)
                 if n_inj > 0:
                     sp_inj = inj.species
                     sl_new = slice(n_before, sp_inj.n_particles)
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj.x[sl_new], sp_inj.y[sl_new], sp_inj.z[sl_new]
+                    )
+                    self._backpush_injected_slice(
+                        sp_inj,
+                        sl_new,
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        s.E,
+                        B_n_tuple,
+                        t_n,
+                        dt,
                     )
                     if self._q0_buf is None or self._q0_buf.shape != (
                         Nx,
@@ -3104,6 +3387,8 @@ class ParticleSolver:
             self._last_deposit_s = 0.0
             self._last_guard_reduce_s = 0.0
             self._last_migrate_s = 0.0
+        if self.track_energy:
+            self._fw_pending = True
         self.n_particle_steps += 1
         self._run_diagnostics(t_n + dt, dt)
 
@@ -3133,6 +3418,168 @@ class ParticleSolver:
         for diag in self.diagnostics:
             if getattr(diag, "_always_record", False) or step % diag.every == 0:
                 diag._record(self, t, dt, step)
+
+    def _staggered_field_energy(self, E_arr=None, H_prev=None, H_next=None) -> float:
+        """Return half-step-staggered discrete FIT electromagnetic energy [J].
+
+        Evaluates
+
+        .. math::
+
+            W^n = \\frac{1}{2}\\left(
+                \\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+                + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n+1/2}
+            \\right),
+
+        where :math:`\\mathbf{h}^{n+1/2} = \\mathbf{h}^{n-1/2} - \\Delta t\\,
+        \\mathbf{M}_\\mu^{-1}\\tilde{\\mathbf{L}}\\mathbf{C}\\mathbf{L}\\mathbf{e}^n`.
+        Unlike :meth:`field_energy` (which evaluates the un-staggered quadratic
+        form :math:`\\frac{1}{2}(\\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+        + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n-1/2})` via
+        ``solver.field_energy()``), this staggered bilinear form satisfies the
+        exact discrete Poynting theorem over each leapfrog step. Under MPI
+        (``use_mpi=True`` and ``solver.size > 1``), this method is collective
+        across ``solver.comm`` (via halo communication for :math:`\\mathbf{h}^{n+1/2}`
+        and ``MPI.SUM`` reduction). Convolutional CPML auxiliary :math:`\\boldsymbol{\\psi}`
+        fields are not included in :math:`W^n`.
+        """
+        s = self.solver
+        xp = self.xp
+        if E_arr is None:
+            E_arr = s.E.toarray()
+        if H_prev is None:
+            H_prev = s.H.toarray()
+        if H_next is None:
+            if hasattr(s, "tDsiDmuiDaC"):
+                H_next = H_prev - float(s.dt) * (s.tDsiDmuiDaC * E_arr)
+                if self.use_mpi and int(getattr(s, "size", 1)) > 1:
+                    from ..field import Field
+
+                    H_tmp = Field(s.Nx, s.Ny, s.Nz, use_gpu=s.use_gpu, dtype=s.dtype)
+                    H_tmp.fromarray(H_next)
+                    s._mpi_communicate(H_tmp)
+                    H_next = H_tmp.toarray()
+            else:
+                H_next = H_prev
+        w_e = 0.5 * float(xp.sum(self._m_eps_arr * E_arr * E_arr))
+        w_h = 0.5 * float(xp.sum(self._m_mu_arr * H_prev * H_next))
+        w_tot = w_e + w_h
+        if self.use_mpi and int(getattr(s, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            w_tot = float(s.comm.allreduce(w_tot, op=MPI.SUM))
+        return w_tot
+
+    def field_work(self) -> float:
+        """Cumulative work [J] done by the electromagnetic field on the particle current.
+
+        Returns the discrete time integral accumulated over all completed steps:
+
+        .. math::
+
+            W_{\\text{work}} = \\sum_{m=0}^{n-1} \\Delta t \\sum_{e} V_{E,e}\\, J_e^{m+1/2}
+            \\frac{E_e^m + E_e^{m+1}}{2},
+
+        where :math:`V_{E,e} = L_e \\tilde{A}_e` is the FIT edge dual-cell volume,
+        :math:`J_e^{m+1/2}` is the deposited particle current density on primal
+        edge :math:`e`, and :math:`E_e^m, E_e^{m+1}` are the electric field edge
+        values before and after step :math:`m`'s Ampère–Maxwell update. Under MPI
+        (``use_mpi=True`` and ``solver.size > 1``), this method is collective
+        across ``solver.comm`` (``MPI.SUM`` reduction).
+
+        Returns
+        -------
+        float
+            Cumulative discrete field work [J].
+
+        Raises
+        ------
+        RuntimeError, ValueError
+            If the :class:`ParticleSolver` was initialized with
+            ``track_energy=False`` (the default).
+        """
+        if not self.track_energy:
+            raise _EnergyTrackingDisabledError(
+                "ParticleSolver.field_work() requires track_energy=True."
+            )
+        if self._fw_pending:
+            self._flush_pending_field_work(self.solver.E.toarray())
+        w_loc = float(self.xp.sum(self._fw_accum_vec * self._vol_E_fw))
+        if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
+        return w_loc
+
+    def energy_balance(self) -> dict[str, float]:
+        """Return discrete electromagnetic and particle energy-balance terms [J].
+
+        Notes
+        -----
+        - Under MPI (``use_mpi=True`` and ``solver.size > 1``),
+          :meth:`energy_balance` is a collective operation across ``solver.comm``
+          and must be called by all ranks simultaneously.
+        - ``"W_field"`` uses the half-step-staggered discrete FIT bilinear form
+          :meth:`_staggered_field_energy` rather than the un-staggered
+          :meth:`field_energy` (:math:`\\frac{1}{2}(\\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+          + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n-1/2})`), and
+          does not include convolutional CPML auxiliary :math:`\\boldsymbol{\\psi}`
+          energy terms (which act as an artificial absorber outside the lossless
+          FIT curl identity).
+
+        Returns
+        -------
+        dict of str to float
+            Dictionary containing:
+
+            - ``"W_field"`` : half-step-staggered discrete FIT field energy
+              :math:`\\frac{1}{2}(\\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+              + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n+1/2})` [J]
+              (excluding CPML :math:`\\boldsymbol{\\psi}` auxiliary terms; compare
+              :meth:`field_energy` for the un-staggered quadratic form).
+            - ``"K_particles"`` : synchronised relativistic kinetic energy
+              :math:`K_{\\text{particles}}^n` [J] at :math:`t_n`.
+            - ``"K_injected"`` : cumulative kinetic energy [J] injected by all
+              attached :class:`BeamInjector` instances.
+            - ``"K_absorbed"`` : cumulative kinetic energy [J] absorbed by all
+              boundaries and :class:`Collector` instances.
+            - ``"field_work"`` : cumulative discrete field-to-particle work
+              :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J^{m+1/2} (E^m + E^{m+1})/2` [J].
+            - ``"residual"`` : total energy closure residual
+              :math:`(K_{\\text{injected}} + K_{\\text{particles}}^0 + W_{\\text{field}}^0)
+              - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}` [J].
+
+        Raises
+        ------
+        RuntimeError, ValueError
+            If the :class:`ParticleSolver` was initialized with
+            ``track_energy=False`` (the default).
+        """
+        if not self.track_energy:
+            raise _EnergyTrackingDisabledError(
+                "ParticleSolver.energy_balance() requires track_energy=True."
+            )
+        w_field = self._staggered_field_energy()
+        if self._has_step0_field_snap:
+            w_field_0 = self._staggered_field_energy(
+                self._E_init_fw, self._H_prev_init_fw, self._H_curr_init_fw
+            )
+        else:
+            w_field_0 = w_field
+        k_particles = self.kinetic_energy(synchronised=True)
+        k_injected = self.injected_energy()
+        k_absorbed = self.absorbed_energy()
+        fw = self.field_work()
+        e_init = self._K_particles_0 + w_field_0
+        residual = (k_injected + e_init) - k_absorbed - k_particles - w_field
+        return {
+            "W_field": w_field,
+            "K_particles": k_particles,
+            "K_injected": k_injected,
+            "K_absorbed": k_absorbed,
+            "field_work": fw,
+            "residual": residual,
+        }
 
     def kinetic_energy(self, synchronised: bool = False) -> float:
         """Total relativistic kinetic energy [J] across all species.
@@ -3281,7 +3728,16 @@ class ParticleSolver:
         return e_inj
 
     def field_energy(self) -> float:
-        """Return total electromagnetic field energy [J] from ``solver.field_energy()``."""
+        """Return un-staggered electromagnetic field energy [J] from ``solver.field_energy()``.
+
+        Evaluates :math:`\\frac{1}{2}(\\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+        + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n-1/2})` at the raw
+        leapfrog storage levels. For the half-step-staggered discrete FIT field
+        energy :math:`\\frac{1}{2}(\\mathbf{e}^n \\cdot \\mathbf{M}_\\varepsilon \\mathbf{e}^n
+        + \\mathbf{h}^{n-1/2} \\cdot \\mathbf{M}_\\mu \\mathbf{h}^{n+1/2})` used in the
+        exact discrete Poynting theorem, see :meth:`_staggered_field_energy` and
+        the ``"W_field"`` entry of :meth:`energy_balance`.
+        """
         return float(self.solver.field_energy())
 
     def gauss_residual(self) -> float:

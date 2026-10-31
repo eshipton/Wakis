@@ -23,6 +23,16 @@ from .diagnostics import (
     PlaneCurrentProbe,
     TrackRecorder,
 )
+from .emission import (
+    FowlerNordheimEmitter,
+    SpaceChargeLimitedEmitter,
+    ThermionicEmitter,
+    child_langmuir_current_density,
+    forbes_barrier_functions,
+    fowler_nordheim_current_density,
+    richardson_dushman_current_density,
+    schottky_barrier_lowering,
+)
 from .mapping import LogicalGridMap
 from .pushers import (
     integrate_trajectory,
@@ -51,24 +61,28 @@ from .solver import (
 from .species import Species
 
 __all__ = [
-    "BeamInjector",
     "CHECKPOINT_FORMAT_VERSION",
     "CHECKPOINT_STATE_ITEMS",
     "CHECKPOINT_STATE_KEYS",
     "CPML_PSI_ATTRS",
+    "BeamInjector",
     "Collector",
     "EmittanceProbe",
     "EnergySpectrumMonitor",
+    "FowlerNordheimEmitter",
     "LogicalGridMap",
     "ParticleBoundaries",
     "ParticleCFLError",
     "ParticleSolver",
     "PhaseSpaceMonitor",
     "PlaneCurrentProbe",
+    "SpaceChargeLimitedEmitter",
     "Species",
+    "ThermionicEmitter",
     "TrackRecorder",
     "apply_binomial_filter_3d",
     "bspline_weights_1d",
+    "child_langmuir_current_density",
     "cold_plasma_dispersion_discrete",
     "compute_config_hash",
     "compute_dual_divergence_d",
@@ -76,6 +90,8 @@ __all__ = [
     "deposit_charge",
     "deposit_current_esirkepov",
     "deposit_current_naive",
+    "forbes_barrier_functions",
+    "fowler_nordheim_current_density",
     "gather_fields",
     "gauss_residual",
     "integrate_trajectory",
@@ -86,5 +102,7 @@ __all__ = [
     "push_momentum",
     "push_position",
     "push_vay",
+    "richardson_dushman_current_density",
     "save_checkpoint",
+    "schottky_barrier_lowering",
 ]

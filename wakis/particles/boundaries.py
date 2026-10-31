@@ -17,6 +17,8 @@ Handles:
 
 from __future__ import annotations
 
+from typing import Any, Protocol, runtime_checkable
+
 import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import e as e_charge
@@ -649,17 +651,75 @@ class ParticleBoundaries:
         return float(sum(self.absorbed_energy.values()))
 
 
+@runtime_checkable
+class InjectorProtocol(Protocol):
+    """Protocol for particle injectors and surface emitters attached to :class:`~wakis.particles.ParticleSolver`.
+
+    Every object passed in ``ParticleSolver(..., injectors=[...])`` must provide
+    this interface so the time-stepping hooks and checkpoint subsystem can bind,
+    advance, back-push by :math:`-\\Delta t / 2`, and serialise all injectors
+    uniformly without per-class branching.
+
+    Attributes
+    ----------
+    species : Species
+        Target macroparticle species receiving emitted particles.
+    z0 : float
+        Physical axial coordinate ``z`` [m] of the emitter plane.
+    emitter_kind : {"pec_wall", "interior_sheet"} or None
+        Boundary classification of the emitter plane (``None`` before
+        :meth:`_bind` has been called).
+    injected_charge : float
+        Cumulative physical charge [C] injected on the owning rank.
+    injected_energy : float
+        Cumulative relativistic kinetic energy [J] injected on the owning rank.
+    """
+
+    species: Any
+    z0: float
+    emitter_kind: str | None
+    injected_charge: float
+    injected_energy: float
+
+    def _bind(self, solver) -> Any:
+        """Validate and bind the injector to ``solver`` and record ``emitter_kind``."""
+        ...
+
+    def inject(
+        self,
+        t: float,
+        dt: float,
+        step_index: int | None = None,
+        *,
+        owning: bool = True,
+    ) -> int:
+        """Advance step ``[t, t + dt]`` and return the number of appended macroparticles."""
+        ...
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return a serialisable dictionary of cumulative counters and internal state."""
+        ...
+
+    def load_state_dict(self, state: dict[str, Any]) -> Any:
+        """Restore cumulative counters and internal state from ``state`` in-place."""
+        ...
+
+
 class BeamInjector:
     """Macroparticle emitter on a transverse plane ``z = z0``.
 
     Injects particles from an emitter plane ``z = z0`` and subtracts the
     deposited charge ``q_inj`` from ``solver._particles_q_bg`` at ``z0``. When
-    ``z0`` lies on a PEC boundary face (cathode wall where tangential ``E = 0``),
-    this represents the wall image charge; if ``z0`` is placed inside the vacuum
-    interior, ``-q_inj`` remains at ``z = z0`` as a fixed immobile opposite
+    ``z0`` lies on a planar domain PEC boundary face (``z_min`` or ``z_max``
+    where tangential ``E = 0``), ``emitter_kind == "pec_wall"`` and this
+    represents the wall image charge; if ``z0`` is placed inside the vacuum
+    interior (or on a non-PEC boundary face), ``emitter_kind == "interior_sheet"``
+    and ``-q_inj`` remains at ``z = z0`` as a fixed immobile opposite
     space-charge sheet balancing the emitted beam charge so Gauss's law holds.
-    Uses a fractional charge accumulator (``_charge_accumulator``) so the
-    time-averaged injected current matches ``I(t)`` exactly.
+    Embedded PEC solid cathodes (internal STL or conductor staircase solids at
+    the emitter position) are not supported and raise :class:`ValueError` in
+    :meth:`_bind`. Uses a fractional charge accumulator (``_charge_accumulator``)
+    so the time-averaged injected current matches ``I(t)`` exactly.
 
     Parameters
     ----------
@@ -674,25 +734,43 @@ class BeamInjector:
         ``energy_eV``.
     energy_eV : float, optional
         Initial kinetic energy [eV].
-    profile : {"uniform", "gaussian"}, optional
-        Transverse radial profile. Default is ``"uniform"``.
+    profile : {"uniform", "gaussian", "lattice"}, optional
+        Transverse radial profile. ``"uniform"`` samples a uniform disk of
+        radius ``radius``; ``"gaussian"`` samples a 2D Gaussian with RMS radius
+        ``sigma_r = radius``; ``"lattice"`` places ``n_macro_per_step``
+        macroparticles deterministically on a uniform-area Fibonacci disk
+        lattice of radius ``radius`` (independent of ``dt`` and step index).
+        Default is ``"uniform"``.
     radius : float, optional
-        Disk radius (for ``"uniform"``) or RMS radius ``sigma_r`` (for
-        ``"gaussian"``) [m]. Default is ``1e-3``.
+        Disk radius (for ``"uniform"`` and ``"lattice"``) or RMS radius
+        ``sigma_r`` (for ``"gaussian"``) [m]. Default is ``1e-3``.
     x0, y0 : float, optional
         Transverse beam centre [m]. Default is ``0.0``.
     n_macro_per_step : int, optional
         Number of macroparticles injected per step. Default is 16.
     rise_time : float, optional
-        Linear current ramp duration ``tau_r`` [s] applied when ``current``
+        Current ramp duration ``tau_r`` [s] applied when ``current``
         is a constant float. Default is ``0.0``.
     direction : {+1, -1}, optional
         Propagation direction along ``z``. Default is ``+1``.
     thermal_u : float, optional
         RMS transverse proper velocity ``sigma_{u_x, u_y}`` [m/s]. Default ``0.0``.
     seed : int, optional
-        Deterministic RNG seed. Default is 42.
+        Deterministic RNG seed combined with the solver step index
+        ``n_particle_steps`` via :class:`numpy.random.SeedSequence`.
+        Default is 42.
+    rise_shape : {"linear", "cos2"}, optional
+        Current ramp profile for ``0 <= t < rise_time`` when ``current`` is a
+        constant float: ``"linear"`` gives ``I * (t / tau_r)`` and ``"cos2"``
+        gives ``I * sin^2(pi * t / (2 * tau_r))``. Default is ``"linear"``.
+    velocity_modulation : callable, optional
+        Optional callable ``velocity_modulation(t) -> float`` returning the
+        dimensionless relative axial proper-velocity modulation
+        ``delta = Delta u_z / u_z0`` applied to particles injected at midpoint
+        time ``t + dt / 2`` as ``u_z = u_z0 * (1 + delta)``. Default is ``None``.
     """
+
+    _VALID_Z_BCS = ("pec", "electric", "pmc", "magnetic", "periodic", "cpml")
 
     def __init__(
         self,
@@ -710,23 +788,44 @@ class BeamInjector:
         direction: int = 1,
         thermal_u: float = 0.0,
         seed: int = 42,
+        rise_shape: str = "linear",
+        velocity_modulation=None,
     ):
         self.species = species
         self.z0 = float(z0)
         self.current = current
         self.profile = str(profile).strip().lower()
-        if self.profile not in ("uniform", "gaussian"):
+        if self.profile not in ("uniform", "gaussian", "lattice"):
             raise ValueError(
-                f"Unknown profile={profile!r}; expected 'uniform' or 'gaussian'."
+                f"Unknown profile={profile!r}; expected 'uniform', 'gaussian', or 'lattice'."
             )
         self.radius = float(radius)
         self.x0 = float(x0)
         self.y0 = float(y0)
         self.n_macro_per_step = int(n_macro_per_step)
         self.rise_time = float(rise_time)
+        if self.rise_time < 0.0:
+            raise ValueError(f"rise_time must be >= 0, got {rise_time}.")
+        if callable(self.current) and self.rise_time > 0.0:
+            raise ValueError(
+                "Cannot specify rise_time > 0 when current is callable; "
+                "include the rise profile in the callable instead."
+            )
+        self.rise_shape = str(rise_shape).strip().lower()
+        if self.rise_shape not in ("linear", "cos2"):
+            raise ValueError(
+                f"Unknown rise_shape={rise_shape!r}; expected 'linear' or 'cos2'."
+            )
+        if velocity_modulation is not None and not callable(velocity_modulation):
+            raise ValueError(
+                "velocity_modulation must be a callable f(t) -> float or None."
+            )
+        self.velocity_modulation = velocity_modulation
         self.direction = 1 if int(direction) >= 0 else -1
         self.thermal_u = float(thermal_u)
-        self.rng = np.random.default_rng(seed)
+        self.seed = int(seed)
+        self.step_index = 0
+        self.emitter_kind: str | None = None
 
         if gamma is None and energy_eV is None:
             raise ValueError("Provide either gamma or energy_eV for BeamInjector.")
@@ -746,6 +845,335 @@ class BeamInjector:
         self.injected_energy = 0.0  # [J]
         self.injected_count = 0
 
+    def _bind(self, solver) -> BeamInjector:
+        """Validate ``z0`` against ``solver``'s grid and BCs and record ``emitter_kind``.
+
+        Notes
+        -----
+        Under MPI (``solver.use_mpi=True`` and ``solver.size > 1``), :meth:`_bind`
+        is a collective operation across ``solver.comm`` (broadcasting the
+        global low-``z`` and high-``z`` boundary conditions from ranks ``0`` and
+        ``size - 1`` when not yet cached on ``solver``) and must be called by
+        all ranks simultaneously.
+
+        Parameters
+        ----------
+        solver : SolverFIT3D
+            Electromagnetic FIT solver instance.
+
+        Returns
+        -------
+        BeamInjector
+            ``self`` after recording ``emitter_kind`` as ``"pec_wall"`` or
+            ``"interior_sheet"``.
+
+        Raises
+        ------
+        ValueError
+            If ``z0`` lies outside the physical z-domain, inside a PML/CPML
+            absorbing layer, on a boundary face with outward ``direction``,
+            if any cell under the emitter disk (or Gaussian :math:`3\\sigma`
+            footprint) overlaps an embedded PEC solid cell, or if the solver
+            uses ``"abc"`` or an unknown/unresolved global ``z`` boundary
+            condition.
+        """
+        global_bc_z = getattr(solver, "_global_bc_z", None)
+        if (
+            global_bc_z is None
+            and bool(getattr(solver, "use_mpi", False))
+            and int(getattr(solver, "size", 1)) > 1
+            and getattr(solver, "comm", None) is not None
+        ):
+            comm = solver.comm
+            size = int(solver.size)
+            raw_z_low = comm.bcast(solver.bc_low[2], root=0)
+            raw_z_high = comm.bcast(solver.bc_high[2], root=size - 1)
+            bc_z_low = _parse_bc_face(raw_z_low)
+            bc_z_high = _parse_bc_face(raw_z_high)
+            solver._global_bc_z = (bc_z_low, bc_z_high)
+            global_bc_z = solver._global_bc_z
+
+        for bc_face in (
+            *getattr(solver, "bc_low", ()),
+            *getattr(solver, "bc_high", ()),
+        ):
+            if _parse_bc_face(bc_face) == "abc":
+                raise ValueError(
+                    "BeamInjector does not support 'abc' boundary conditions; "
+                    "use 'pec', 'pmc', 'periodic', or 'cpml' (with z0 outside the PML)."
+                )
+        if bool(getattr(solver, "activate_abc", False)):
+            raise ValueError(
+                "BeamInjector does not support 'abc' boundary conditions; "
+                "use 'pec', 'pmc', 'periodic', or 'cpml' (with z0 outside the PML)."
+            )
+
+        bc_z_low = _parse_bc_face(solver.bc_low[2])
+        bc_z_high = _parse_bc_face(solver.bc_high[2])
+        if (bc_z_low == "mpi" or bc_z_high == "mpi") and global_bc_z is not None:
+            if bc_z_low == "mpi":
+                bc_z_low = _parse_bc_face(global_bc_z[0])
+            if bc_z_high == "mpi":
+                bc_z_high = _parse_bc_face(global_bc_z[1])
+
+        if bc_z_low == "abc" or bc_z_high == "abc":
+            raise ValueError(
+                "BeamInjector does not support 'abc' boundary conditions; "
+                "use 'pec', 'pmc', 'periodic', or 'cpml' (with z0 outside the PML)."
+            )
+        if bc_z_low not in self._VALID_Z_BCS or bc_z_high not in self._VALID_Z_BCS:
+            raise ValueError(
+                "Unknown or unresolved global z boundary condition in BeamInjector._bind: "
+                f"bc_low[2]={bc_z_low!r}, bc_high[2]={bc_z_high!r}."
+            )
+
+        if (
+            bool(getattr(solver, "use_mpi", False))
+            and getattr(solver.grid, "Z_nodes", None) is not None
+        ):
+            z_nodes = np.asarray(solver.grid.Z_nodes, dtype=np.float64)
+            n_phys = int(z_nodes.size - 1)
+        else:
+            periodic_z = bc_z_low == "periodic" and bc_z_high == "periodic"
+            edge_ghost_z = (
+                0
+                if periodic_z
+                else int(getattr(solver.grid, "edge_ghosts", (0, 0, 0))[2])
+            )
+            n_phys = int(solver.Nz) - edge_ghost_z
+            z_nodes = np.asarray(solver.grid.z[: n_phys + 1], dtype=np.float64)
+
+        z_min = float(z_nodes[0])
+        z_max = float(z_nodes[-1])
+        if self.z0 < z_min or self.z0 > z_max:
+            raise ValueError(
+                f"BeamInjector z0={self.z0} is outside the physical z-domain "
+                f"[{z_min}, {z_max}]."
+            )
+
+        if self.z0 == z_min:
+            zeta0 = 0.0
+        elif self.z0 == z_max:
+            zeta0 = float(n_phys)
+        else:
+            k = int(
+                np.clip(
+                    np.searchsorted(z_nodes, self.z0, side="right") - 1,
+                    0,
+                    n_phys - 1,
+                )
+            )
+            zeta0 = float(k) + (self.z0 - float(z_nodes[k])) / float(
+                z_nodes[k + 1] - z_nodes[k]
+            )
+
+        n_pml = int(getattr(solver, "n_pml", 10))
+        if bc_z_low == "cpml" and zeta0 <= float(n_pml):
+            raise ValueError(
+                f"BeamInjector z0={self.z0} (zeta={zeta0:.3f}) lies inside the "
+                f"low-z PML/CPML layer [0, {n_pml}]."
+            )
+        if bc_z_high == "cpml" and zeta0 >= float(n_phys - n_pml):
+            raise ValueError(
+                f"BeamInjector z0={self.z0} (zeta={zeta0:.3f}) lies inside the "
+                f"high-z PML/CPML layer [{n_phys - n_pml}, {n_phys}]."
+            )
+
+        on_low_face = abs(zeta0) <= 1e-12
+        on_high_face = abs(zeta0 - float(n_phys)) <= 1e-12
+        if on_low_face and bc_z_low != "periodic" and self.direction != 1:
+            raise ValueError(
+                f"BeamInjector on low-z boundary z0={self.z0} must emit into the "
+                f"domain with direction=+1, got direction={self.direction}."
+            )
+        if on_high_face and bc_z_high != "periodic" and self.direction != -1:
+            raise ValueError(
+                f"BeamInjector on high-z boundary z0={self.z0} must emit into the "
+                f"domain with direction=-1, got direction={self.direction}."
+            )
+
+        # Reject embedded PEC solid cathodes (internal STL or conductor solids at emitter)
+        ps_att = getattr(solver, "_particle_solver", None)
+        solid_mask = getattr(getattr(ps_att, "boundaries", None), "solid_mask", None)
+        if solid_mask is None and (
+            bool(getattr(solver, "use_stl", False))
+            or bool(getattr(solver, "use_conductors", False))
+        ):
+            ieps_x = solver.ieps.to_matrix("x")
+            ieps_y = solver.ieps.to_matrix("y")
+            ieps_z = solver.ieps.to_matrix("z")
+            solid_mask = (ieps_x == 0.0) & (ieps_y == 0.0) & (ieps_z == 0.0)
+        if solid_mask is not None:
+            sm_h = (
+                solid_mask.get()
+                if hasattr(solid_mask, "get")
+                else np.asarray(solid_mask, dtype=bool)
+            )
+            x_nodes = np.asarray(solver.grid.x, dtype=np.float64)
+            y_nodes = np.asarray(solver.grid.y, dtype=np.float64)
+            z_loc_nodes = np.asarray(solver.grid.z, dtype=np.float64)
+            if z_loc_nodes[0] <= self.z0 <= z_loc_nodes[-1]:
+                nx_c = int(solver.Nx)
+                ny_c = int(solver.Ny)
+                ix0 = int(
+                    np.clip(
+                        np.searchsorted(x_nodes, self.x0, side="right") - 1,
+                        0,
+                        nx_c - 1,
+                    )
+                )
+                iy0 = int(
+                    np.clip(
+                        np.searchsorted(y_nodes, self.y0, side="right") - 1,
+                        0,
+                        ny_c - 1,
+                    )
+                )
+                iz0 = int(
+                    np.clip(
+                        np.searchsorted(z_loc_nodes, self.z0, side="right") - 1,
+                        0,
+                        int(solver.Nz) - 1,
+                    )
+                )
+                r_foot = (
+                    3.0 * self.radius if self.profile == "gaussian" else self.radius
+                )
+                dx_close = (
+                    np.clip(self.x0, x_nodes[:nx_c], x_nodes[1 : nx_c + 1]) - self.x0
+                )
+                dy_close = (
+                    np.clip(self.y0, y_nodes[:ny_c], y_nodes[1 : ny_c + 1]) - self.y0
+                )
+                disk_xy_mask = (
+                    dx_close[:, None] * dx_close[:, None]
+                    + dy_close[None, :] * dy_close[None, :]
+                ) <= r_foot * r_foot
+                disk_xy_mask[ix0, iy0] = True
+                if bool(np.any(sm_h[:nx_c, :ny_c, iz0][disk_xy_mask])):
+                    raise ValueError(
+                        f"BeamInjector emitter at (x0={self.x0}, y0={self.y0}, z0={self.z0}, "
+                        f"radius={self.radius}) overlaps an embedded PEC solid cell; "
+                        "embedded PEC solid cathodes are not supported (place z0 on a "
+                        "planar domain PEC boundary or in vacuum)."
+                    )
+
+        on_low_pec = on_low_face and bc_z_low in ("pec", "electric")
+        on_high_pec = on_high_face and bc_z_high in ("pec", "electric")
+        self.emitter_kind = (
+            "pec_wall" if (on_low_pec or on_high_pec) else "interior_sheet"
+        )
+        return self
+
+    def state_dict(self) -> dict:
+        """Return a serialisable dictionary of mutable injector restart state.
+
+        Returns
+        -------
+        dict
+            Dictionary containing ``injected_charge`` [C], ``injected_energy``
+            [J], ``injected_count``, ``_charge_accumulator`` [real particles],
+            ``step_index``, ``_next_id`` (from ``self.species._next_id``),
+            ``emitter_kind``, and ``seed``.
+        """
+        return {
+            "injected_charge": float(self.injected_charge),
+            "injected_energy": float(self.injected_energy),
+            "injected_count": int(self.injected_count),
+            "_charge_accumulator": float(self._charge_accumulator),
+            "step_index": int(self.step_index),
+            "_next_id": int(getattr(self.species, "_next_id", 0)),
+            "emitter_kind": self.emitter_kind,
+            "seed": int(self.seed),
+        }
+
+    def load_state_dict(self, state: dict) -> BeamInjector:
+        """Restore mutable injector restart state from ``state``.
+
+        Parameters
+        ----------
+        state : dict
+            State dictionary produced by :meth:`state_dict`.
+
+        Returns
+        -------
+        BeamInjector
+            ``self`` after restoring all cumulative counters, accumulator,
+            step index, and species ``_next_id``.
+        """
+        self.injected_charge = float(state["injected_charge"])
+        self.injected_energy = float(state["injected_energy"])
+        self.injected_count = int(state["injected_count"])
+        self._charge_accumulator = float(state["_charge_accumulator"])
+        self.step_index = int(state["step_index"])
+        if "_next_id" in state and hasattr(self.species, "_next_id"):
+            self.species._next_id = int(state["_next_id"])
+        if "emitter_kind" in state:
+            self.emitter_kind = state["emitter_kind"]
+        if "seed" in state:
+            self.seed = int(state["seed"])
+        return self
+
+    def _step_rng(self, step_index: int) -> np.random.Generator:
+        """Return the deterministic per-step RNG for ``(self.seed, step_index)``."""
+        return np.random.default_rng(
+            np.random.SeedSequence([self.seed, int(step_index)])
+        )
+
+    def _plan_step(
+        self,
+        t: float,
+        dt: float,
+        step_index: int | None = None,
+        *,
+        owning: bool = True,
+    ) -> tuple[int, float, float, int]:
+        """Advance step counter and charge accumulator for time step ``[t, t + dt]``.
+
+        Parameters
+        ----------
+        t : float
+            Step start time [s].
+        dt : float
+            Time step size [s].
+        step_index : int or None, optional
+            Solver particle step index ``n_particle_steps`` used to seed the
+            per-step RNG so restarts and injectors rebuilt at step ``k``
+            produce identical particles. Defaults to ``self.step_index``.
+        owning : bool, optional
+            If False (non-owning MPI rank), also advances
+            ``self.species._next_id`` by ``n_macro`` so global particle IDs
+            stay synchronised across ranks.
+
+        Returns
+        -------
+        n_macro : int
+            Number of macroparticles to emit this step (``0`` if no emission).
+        w_macro : float
+            Macro-weight [real particles / macroparticle] for this step.
+        t_mid : float
+            Step midpoint time ``t + 0.5 * dt`` [s].
+        step_idx : int
+            Resolved integer step index used to seed :meth:`_step_rng`.
+        """
+        step_idx = int(self.step_index if step_index is None else step_index)
+        self.step_index = step_idx + 1
+        t_mid = t + 0.5 * dt
+        I_val = self.current_at(t_mid)
+        q_abs = abs(self.species.charge)
+        n_real_step = (I_val * dt) / q_abs + self._charge_accumulator
+
+        n_macro = self.n_macro_per_step
+        if n_macro <= 0 or n_real_step <= 0.0:
+            self._charge_accumulator = n_real_step
+            return 0, 0.0, t_mid, step_idx
+
+        w_macro = n_real_step / n_macro
+        self._charge_accumulator = 0.0
+        if not owning and self.species.track_ids:
+            self.species._next_id += n_macro
+        return n_macro, w_macro, t_mid, step_idx
+
     def current_at(self, t: float) -> float:
         """Evaluate beam current magnitude ``|I(t)|`` [A] at time ``t`` [s]."""
         if callable(self.current):
@@ -753,46 +1181,79 @@ class BeamInjector:
         else:
             val = abs(float(self.current))
             if self.rise_time > 0.0 and t < self.rise_time:
-                val *= max(0.0, t / self.rise_time)
+                if t <= 0.0:
+                    return 0.0
+                if self.rise_shape == "linear":
+                    val *= t / self.rise_time
+                else:
+                    s = float(np.sin(0.5 * np.pi * t / self.rise_time))
+                    val *= s * s
         return val
 
-    def inject(self, t: float, dt: float) -> int:
-        """Inject macroparticles at ``z = z0`` for time step ``[t, t + dt]``."""
-        I_val = self.current_at(t + 0.5 * dt)
-        q_abs = abs(self.species.charge)
-        n_real_step = (I_val * dt) / q_abs + self._charge_accumulator
+    def _batch_kinetic_energy(self, ux, uy, uz, w) -> float:
+        """Return total relativistic kinetic energy [J] of an injected batch."""
+        u2 = ux * ux + uy * uy + uz * uz
+        g = np.sqrt(1.0 + u2 / (c_light * c_light))
+        return float(np.sum(w * self.species.mass * (u2 / (g + 1.0))))
 
-        n_macro = self.n_macro_per_step
-        if n_macro <= 0 or n_real_step <= 0.0:
-            self._charge_accumulator = n_real_step
+    def inject(
+        self,
+        t: float,
+        dt: float,
+        step_index: int | None = None,
+        *,
+        owning: bool = True,
+    ) -> int:
+        """Inject macroparticles at ``z = z0`` for time step ``[t, t + dt]``."""
+        n_macro, w_macro, t_mid, step_idx = self._plan_step(
+            t, dt, step_index=step_index, owning=owning
+        )
+        if not owning or n_macro == 0:
             return 0
 
-        w_macro = n_real_step / n_macro
-        self._charge_accumulator = 0.0
+        rng = self._step_rng(step_idx)
 
         if self.profile == "uniform":
-            r = self.radius * np.sqrt(self.rng.uniform(0.0, 1.0, size=n_macro))
-            phi = self.rng.uniform(0.0, 2.0 * np.pi, size=n_macro)
+            r = self.radius * np.sqrt(rng.uniform(0.0, 1.0, size=n_macro))
+            phi = rng.uniform(0.0, 2.0 * np.pi, size=n_macro)
             x = self.x0 + r * np.cos(phi)
             y = self.y0 + r * np.sin(phi)
+        elif self.profile == "lattice":
+            if n_macro == 1:
+                x = np.full(1, self.x0, dtype=np.float64)
+                y = np.full(1, self.y0, dtype=np.float64)
+            else:
+                k_idx = np.arange(n_macro, dtype=np.float64)
+                r = self.radius * np.sqrt((k_idx + 0.5) / float(n_macro))
+                golden_angle = np.pi * (3.0 - np.sqrt(5.0))
+                phi = golden_angle * k_idx
+                dx = r * np.cos(phi)
+                dy = r * np.sin(phi)
+                dx -= float(np.mean(dx))
+                dy -= float(np.mean(dy))
+                x = self.x0 + dx
+                y = self.y0 + dy
         else:
-            x = self.x0 + self.rng.normal(0.0, self.radius, size=n_macro)
-            y = self.y0 + self.rng.normal(0.0, self.radius, size=n_macro)
+            x = self.x0 + rng.normal(0.0, self.radius, size=n_macro)
+            y = self.y0 + rng.normal(0.0, self.radius, size=n_macro)
 
         z = np.full(n_macro, self.z0, dtype=np.float64)
 
         if self.thermal_u > 0.0:
-            ux = self.rng.normal(0.0, self.thermal_u, size=n_macro)
-            uy = self.rng.normal(0.0, self.thermal_u, size=n_macro)
+            ux = rng.normal(0.0, self.thermal_u, size=n_macro)
+            uy = rng.normal(0.0, self.thermal_u, size=n_macro)
         else:
             ux = np.zeros(n_macro, dtype=np.float64)
             uy = np.zeros(n_macro, dtype=np.float64)
-        uz = np.full(n_macro, self.uz0, dtype=np.float64)
+
+        if self.velocity_modulation is not None:
+            delta_uz = float(self.velocity_modulation(t_mid))
+            uz = np.full(n_macro, self.uz0 * (1.0 + delta_uz), dtype=np.float64)
+        else:
+            uz = np.full(n_macro, self.uz0, dtype=np.float64)
         w = np.full(n_macro, w_macro, dtype=np.float64)
 
-        u2 = ux * ux + uy * uy + uz * uz
-        g = np.sqrt(1.0 + u2 / (c_light * c_light))
-        ke_added = float(np.sum(w * self.species.mass * (u2 / (g + 1.0))))
+        ke_added = self._batch_kinetic_energy(ux, uy, uz, w)
         q_added = float(self.species.charge * np.sum(w))
 
         self.species.add_particles(x=x, y=y, z=z, ux=ux, uy=uy, uz=uz, w=w)

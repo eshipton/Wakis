@@ -5145,7 +5145,7 @@ At the boundary between step $n - 1$ and step $n$, the coupled FIT + particle-in
 - Particle positions $\mathbf{x}_p^n$ are at $t_n$, and relativistic proper velocities $\mathbf{u}_p^{n-1/2} = \gamma_p^{n-1/2}\mathbf{v}_p^{n-1/2}$ are staggered at $t_{n-1/2}$ (once the step-0 half-step back-push $\mathbf{u}^0 \to \mathbf{u}^{-1/2}$ has executed, indicated by `_initialized_half_step = True` and `sp.u_is_synced = False`).
 - Both `solver.J` and `ParticleSolver.J_particles` (plus `ParticleSolver._J_prev` on GPU and `_j_in_solver` on CPU) hold the staggered current density $\mathbf{J}_{\text{particles}}^{n-1/2}$ from step $n - 1$, because `_mid_step_hook` updates `solver.J` by delta ($\mathbf{J}_{\text{solver}} \leftarrow \mathbf{J}_{\text{solver}} - \mathbf{J}_{\text{particles}}^{n-1/2} + \mathbf{J}_{\text{particles}}^{n+1/2}$) so external `CurrentSource` or conductive currents can coexist on the same FIT edges, and under MPI `SolverFIT3D._mpi_one_step` communicates `solver.J` halo planes prior to invoking `_run_mid_step()`.
 
-The module-level tuple `CHECKPOINT_STATE_KEYS` (`CHECKPOINT_STATE_ITEMS`) in `wakis/particles/checkpoint.py` enumerates the 29 inter-step state items saved and restored on every rank:
+The module-level tuple `CHECKPOINT_STATE_KEYS` (`CHECKPOINT_STATE_ITEMS`) in `wakis/particles/checkpoint.py` enumerates the 30 inter-step state items saved and restored on every rank:
 
 | Key in `CHECKPOINT_STATE_KEYS` | `.npz` array key(s) | Object attribute(s) | Physical / numerical role |
 | :--- | :--- | :--- | :--- |
@@ -5172,18 +5172,19 @@ The module-level tuple `CHECKPOINT_STATE_KEYS` (`CHECKPOINT_STATE_ITEMS`) in `wa
 | `"species_next_id"` | `species_next_id` | `sp._next_id` | Monotonic counter for assigning unique IDs to newly injected particles. |
 | `"initialized_half_step"` | `initialized_half_step` | `ps._initialized_half_step` | Leapfrog half-step initialization flag (prevents a duplicate $-0.5\Delta t$ back-push and `_particles_q_bg` reset on restart). |
 | `"species_u_is_synced"` | `species_u_is_synced` | `sp.u_is_synced` | Per-species momentum synchronization flag (`False` when $\mathbf{u}_p^{n-1/2}$ is half-step staggered relative to $\mathbf{x}_p^n$). |
-| `"n_particle_steps"` | `n_particle_steps` | `ps.n_particle_steps` | Integer particle step index $n$, physical time $t_n = n\Delta t$ [s], and cell-sorting schedule counter ($n \bmod \texttt{sort\_every} = 0$). |
+| `"n_particle_steps"` | `n_particle_steps` | `ps.n_particle_steps` | Integer particle step index $n$, physical time $t_n = n\Delta t$ [s], per-step injector RNG seed index, and cell-sorting schedule counter ($n \bmod \texttt{sort\_every} = 0$). |
 | `"solver_nstep"` | `solver_nstep` | `solver.nstep` | Electromagnetic solver step counter `solver.nstep`. |
-| `"injector_rng_state"` | `has_injector_rng_state`, `inj_<i>_rng_json_u8` | `inj.rng.bit_generator.state` | Pseudo-random number generator state for each `BeamInjector` (transverse profile and thermal velocity sampling). |
-| `"injector_counters"` | `inj_<i>_counters_f64`, `inj_<i>_injected_count` | `inj._charge_accumulator`, `inj.injected_charge`, `inj.injected_energy`, `inj.injected_count` | Cumulative injected charge [C], kinetic energy [J], macroparticle count, and fractional charge accumulator per injector. |
+| `"injector_state"` | `has_injector_state`, `inj_<i>_state_json_u8` | `inj.state_dict()` / `inj.load_state_dict()` | Canonical UTF-8 JSON bytes of each `BeamInjector`'s `state_dict()` (`injected_charge` [C], `injected_energy` [J], `injected_count`, `_charge_accumulator` [real particles], `step_index`, `_next_id`, `emitter_kind`, and `seed`). |
 | `"boundary_absorbed"` | `boundary_absorbed_charge`, `boundary_absorbed_energy`, `boundary_absorbed_count` | `ps.boundaries._absorbed_charge`, `_absorbed_energy`, `_absorbed_count` | Cumulative charge [C], kinetic energy [J], and macroparticle count absorbed on each domain boundary face and collector key. |
 | `"collector_state"` | `has_collector_state`, `col_<c>_scalars_f64`, `col_<c>_count`, `col_<c>_history` | `col._absorbed_charge`, `col._absorbed_energy`, `col._absorbed_count`, `col.current_history` | Per-collector absorbed charge [C], kinetic energy [J], macroparticle count, and time series $(t_n, \Delta q_n)$ [s, C]. |
+| `"energy_work_accum"` | `has_energy_work_accum`, `fw_accum_vec`, `fw_E_prev`, `fw_pending`, `fw_dt` | `ps._fw_accum_vec`, `ps._E_prev_fw`, `ps._fw_pending`, `ps._fw_dt` | Cumulative discrete field-to-particle work vector ($3 N_{\text{cells}}$) and pending step-work state when `ps.track_energy=True`. |
+| `"energy_init_snap"` | `has_energy_init_snap`, `energy_has_step0_snap`, `energy_K_particles_0`, `energy_E_init_fw`, `energy_H_prev_init_fw`, `energy_H_curr_init_fw` | `ps._has_step0_field_snap`, `ps._K_particles_0`, `ps._E_init_fw`, `ps._H_prev_init_fw`, `ps._H_curr_init_fw` | Step-0 field and particle kinetic energy reference snapshots ($W_{\text{field}}^0$, $K_{\text{particles}}^0$) for `energy_balance()` closure when `ps.track_energy=True`. |
 
 **Why `SolverFIT3D.save_state` / `load_state` are not used directly.** `SolverFIT3D.save_state` and `load_state` (`wakis/solverFIT3D.py`) write a single HDF5 archive containing only `E`, `H`, and `J`, and under MPI they gather `E`, `H`, and `J` to rank 0 via `mpi_gather_asField` (stripping the 1-cell MPI ghost layers). They omit the 24 CPML convolutional memory arrays (`psiHa_*`, `psiHb_*`, `psiEa_*`, `psiEb_*`), `solver.step_0` (which, if left `True` on a fresh solver after loading a checkpoint at step $n > 0$, triggers `solver._set_ghosts_to_0()` on the first post-restart step and zeroes the upper MPI ghost layer `k = Nz - 1` on interior ranks), `solver.nstep`, and conductive `solver.J_old`. `wakis/particles/checkpoint.py` therefore writes and restores all field, CPML, and solver step flags directly in the per-rank `.npz` archive.
 
 **Why `_H_before_update`, `_H_prev`, and Mur ABC `abc_E_previous` are intra-step scratch rather than inter-step state.** At the start of every `SolverFIT3D.one_step()` call, `SolverFIT3D._capture_mid_step_H()` copies `solver.H.toarray()` ($\mathbf{H}^{n-1/2}$) into `solver._H_before_update` before `_update_H()` advances `solver.H` to $\mathbf{H}^{n+1/2}$. `ParticleSolver._mid_step_hook()` then averages `solver._H_before_update` and `solver.H` to form the time-centred magnetic flux density $\mathbf{B}^n = \frac{1}{2}\mu_0(\mathbf{H}^{n-1/2} + \mathbf{H}^{n+1/2})$. Between completed `one_step()` calls, `_H_before_update` and `_H_prev` are always overwritten from `solver.H` before they are read; on `load_checkpoint`, they are synchronized in-place from the restored `solver.H` buffer just as in `ParticleSolver.attach()`. Likewise, for first-order Mur absorbing boundary conditions (`bc='abc'`), `SolverFIT3D._capture_abc()` (`wakis/boundaries.py`) refills `solver.abc_E_previous` from `solver.E` at the start of every time step prior to `_update_E()`, and `_apply_abc()` consumes that snapshot at the end of the same step; `abc_E_previous` therefore carries no inter-step state across `one_step()` boundaries.
 
-**Note on injector step counter and `_charge_accumulator`.** `BeamInjector` does not maintain an internal step counter; `ParticleSolver._mid_step_hook` computes $t_n = \texttt{n\_particle\_steps} \times \Delta t$ and passes $(t_n, \Delta t)$ into `inj.inject(t_n, dt)`. Similarly, `ParticleSolver` uses `self.n_particle_steps % self.sort_every == 0` as the cell-sorting counter. In `BeamInjector.inject()`, whenever `n_macro_per_step > 0` and $I(t_n + \frac{1}{2}\Delta t) > 0$, all real charge in the step is divided across `n_macro_per_step` variable-weight macroparticles ($w_{\text{macro}} = n_{\text{real}} / n_{\text{macro}}$) and `_charge_accumulator` is reset to `0.0`; `_charge_accumulator` is nevertheless saved and restored as part of `"injector_counters"` for completeness when `n_macro_per_step == 0` or $I = 0$.
+**Injector restart semantics (`BeamInjector.state_dict` / `load_state_dict`).** `BeamInjector` does not store a stateful `BitGenerator`; on each step $n$, transverse profile and thermal velocity draws are seeded deterministically from `np.random.SeedSequence([inj.seed, int(step_index)])`, where `ParticleSolver._mid_step_hook` passes `step_index=self.n_particle_steps` into `inj.inject(t_n, dt, step_index=self.n_particle_steps)` (on non-owning MPI ranks, `inj._plan_step(t_n, dt, step_index=self.n_particle_steps, owning=False)` advances `step_index`, `_charge_accumulator`, and `species._next_id` identically without emitting particles locally). The checkpoint item `"injector_state"` serializes each injector's `state_dict()` (`injected_charge`, `injected_energy`, `injected_count`, `_charge_accumulator`, `step_index`, `_next_id`, `emitter_kind`, and `seed`) as canonical UTF-8 JSON bytes (`inj_<i>_state_json_u8`) and restores it via `inj.load_state_dict()`. Static injector configuration parameters (including `seed`, `emitter_kind`, `rise_shape`, and `velocity_modulation`) are covered by `compute_config_hash(ps)`, and `load_checkpoint` additionally asserts that the saved `seed` and `emitter_kind` in each `inj_<i>_state_json_u8` entry equal the live injector's `seed` and `emitter_kind`.
 
 ##### Checkpoint directory format and integrity verification
 
@@ -5192,14 +5193,14 @@ Calling `ps.save_checkpoint(path)` (or `wakis.particles.save_checkpoint(ps, path
 1. **One uncompressed token-suffixed NumPy archive per rank (`rank_000000-<token>.npz`, `rank_000001-<token>.npz`, $\dots$)**:
    - Before calling `np.savez`, every collected array is checked to ensure `arr.dtype != object and not arr.dtype.hasobject` (`ValueError` otherwise). Rank 0 generates a per-save token `<token>` and broadcasts it across `solver.comm`. Each rank writes to a temporary file `rank_<rank:06d>-<token>.npz.tmp-<token>`, immediately verifies that the written file can be opened with `np.load(..., allow_pickle=False)` and reads its `.npy` member headers (`np.lib.format.read_magic` / `read_array_header_*`) without materializing array payloads multiple times, and computes its SHA-256 digest. **No `pickle` or object arrays are used anywhere.**
    - Native field and particle array dtypes (`float64`, `float32`, etc.) are preserved without silent casting.
-   - Each injector's `rng.bit_generator.state` dictionary (`PCG64` or any NumPy `BitGenerator`) is serialized via UTF-8 JSON into a `uint8` byte array (`inj_<i>_rng_json_u8`), avoiding Python object pickling while preserving the exact 128-bit generator state and increment.
+   - Each injector's `state_dict()` dictionary is serialized via canonical UTF-8 JSON (`json.dumps(..., sort_keys=True)`) into a 1D `uint8` byte array (`inj_<i>_state_json_u8`), avoiding Python object pickling while preserving all cumulative injection tallies, `_charge_accumulator`, `step_index`, `_next_id`, `emitter_kind`, and `seed`.
    - On GPU runs (`ps.on_gpu=True`), device arrays are transferred to host memory only inside `save_checkpoint` and restored in-place into the existing device buffers (`cp.copyto(..., casting="no")`) inside `load_checkpoint`.
 
 2. **A JSON manifest (`manifest.json`) written by rank 0**:
-   - `"format_version"`: integer schema version (`CHECKPOINT_FORMAT_VERSION = 1`).
+   - `"format_version"`: integer schema version (`CHECKPOINT_FORMAT_VERSION = 2`; older format versions raise `ValueError` on load).
    - `"wakis_version"`: package version string (`wakis.__version__`).
    - `"grid_hash"`: 64-character hexadecimal SHA-256 digest (`compute_grid_hash(solver)`) of `(Nx, Ny, Nz, NZ)`, domain bounds `(xmin, xmax, ymin, ymax, zmin, zmax)`, primary node coordinate vectors `x, y, z`, time step `dt`, boundary condition strings `bc_low` and `bc_high`, CPML profile parameters (`activate_cpml`, `n_pml`, `kappa_max`, `alpha_max`, `sigma_factor`, `pml_exp`) and the 24 per-face CPML damping/stretch coefficient arrays (`pml_b_*`, `pml_c_*`, which depend on `sigma_max` and `fmax`), field `dtype`, and material tensors (`ieps`, `imu`, `sigma`, `use_conductivity`, and any solid/STL masks), combined across all MPI ranks via `comm.allgather` when `use_mpi=True`. `grid_hash` and `config_hash` are kept separate so a mismatch error names the specific hash that differed.
-   - `"config_hash"`: 64-character hexadecimal SHA-256 digest (`compute_config_hash(ps)`) of `shape`, `pusher`, `deposit_scheme`, `gather`, `filter`, `sort_every`, `capacity_headroom`, external fields `E_ext` and `B_ext` (constant 3-tuple or callable qualified name plus samples on a fixed 8-point $\times$ 6-time grid), each species' `name`, `charge`, `mass`, `dtype`, and `track_ids`, each injector's parameters (`z0`, `gamma0`, `uz0`, `profile`, `radius`, `x0`, `y0`, `n_macro_per_step`, `rise_time`, `direction`, `thermal_u`, `current` callable qualified name plus 8 time samples across $t \in [0, 100\,\Delta t]$, `weight`), and each collector's `name`, `bounds`, `plane`, and evaluated node boolean `mask` when `col.mask` is a callable. Because `compute_config_hash` invokes user-supplied callables (`E_ext`, `B_ext`, injector `current`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` call, these callables must be cheap to evaluate and free of side effects.
+   - `"config_hash"`: 64-character hexadecimal SHA-256 digest (`compute_config_hash(ps)`) of `shape`, `pusher`, `deposit_scheme`, `gather`, `filter`, `sort_every`, `capacity_headroom`, `track_energy`, external fields `E_ext` and `B_ext` (constant 3-tuple or callable qualified name plus samples on a fixed 8-point $\times$ 6-time grid), each species' `name`, `charge`, `mass`, `dtype`, and `track_ids`, each injector's parameters (`z0`, `gamma0`, `uz0`, `profile`, `radius`, `x0`, `y0`, `n_macro_per_step`, `rise_time`, `rise_shape`, `direction`, `thermal_u`, `seed`, `emitter_kind`, `current` and `velocity_modulation` callable qualified names plus 8 time samples across $t \in [0, 100\,\Delta t]$, `weight`), and each collector's `name`, `bounds`, `plane`, and evaluated node boolean `mask` when `col.mask` is a callable. Because `compute_config_hash` invokes user-supplied callables (`E_ext`, `B_ext`, injector `current` / `velocity_modulation`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` call, these callables must be cheap to evaluate and free of side effects.
    - `"rank_count"`: positive integer number of MPI ranks $S$.
    - `"species_names"`: ordered list of `Species.name` strings.
    - `"injector_names"`: ordered list of canonical injector identifiers (`"<species>:z0=<z0>:<index>"` or custom `inj.name`).
@@ -5214,17 +5215,17 @@ Calling `ps.save_checkpoint(path)` (or `wakis.particles.save_checkpoint(ps, path
 During `load_checkpoint(ps, path)`, `ps.attach()` may run first if `ps` is not yet attached. Verification then proceeds on every rank in strict order before any checkpoint data is copied into solver or particle buffers:
 1. Check `_check_supported_solver_features(solver)` (`NotImplementedError` if unsupported auxiliary state is active) and call `ps.attach()` if `not ps._attached`.
 2. Verify `manifest.json` exists (`FileNotFoundError` if absent) and parses as a JSON object containing all required keys (`ValueError` if malformed).
-3. Verify `manifest["format_version"] == CHECKPOINT_FORMAT_VERSION` (`ValueError` on mismatch) and validate that `manifest["rank_count"]` is a positive integer (`ValueError` on non-integer, boolean, or $< 1$).
+3. Verify `manifest["format_version"] == CHECKPOINT_FORMAT_VERSION` (`ValueError` on mismatch, including older format versions) and validate that `manifest["rank_count"]` is a positive integer (`ValueError` on non-integer, boolean, or $< 1$).
 4. Verify `int(manifest["rank_count"]) == size` (`NotImplementedError` if the current MPI rank count differs from the saved checkpoint).
-5. Verify `manifest["grid_hash"] == compute_grid_hash(solver)` (`ValueError` naming `grid_hash` if grid dimensions, bounds, node coordinates, boundary conditions, CPML parameters or `pml_b_*`/`pml_c_*` coefficient arrays, field `dtype`, materials $\varepsilon/\mu/\sigma$, solid masks, or `dt` differ) and `manifest["config_hash"] == compute_config_hash(ps)` (`ValueError` naming `config_hash` if particle solver settings, `capacity_headroom`, `E_ext`/`B_ext`, species, injectors, or collectors differ).
+5. Verify `manifest["grid_hash"] == compute_grid_hash(solver)` (`ValueError` naming `grid_hash` if grid dimensions, bounds, node coordinates, boundary conditions, CPML parameters or `pml_b_*`/`pml_c_*` coefficient arrays, field `dtype`, materials $\varepsilon/\mu/\sigma$, solid masks, or `dt` differ) and `manifest["config_hash"] == compute_config_hash(ps)` (`ValueError` naming `config_hash` if particle solver settings, `capacity_headroom`, `track_energy`, `E_ext`/`B_ext`, species, injectors, or collectors differ).
 6. Verify `species_names`, `injector_names`, and `collector_names` match the target `ParticleSolver` (`ValueError` on mismatch).
 7. Locate the rank's active `rank_<rank:06d>-<token>.npz` entry in `manifest["files"]`, verify the file exists on disk (`FileNotFoundError` if missing), recompute its SHA-256 digest, and compare against `manifest["files"][rank_filename]` (`ValueError` on mismatch).
-8. Open `rank_<rank:06d>-<token>.npz` with `np.load(..., allow_pickle=False)` and run `_validate_rank_archive(ps, data)` (reading `.npy` member headers via `np.lib.format.read_magic` and `read_array_header_*`) to verify that every required `.npz` key is present with the exact expected shape and native dtype, and that the saved `cpml_*` key set equals the active CPML set on `solver` (`ValueError` on any mismatch, before any solver array is modified).
-9. Copy all validated state arrays in-place via `_copy_into_target` (`np.copyto` / `cp.copyto` with `casting="no"`), preserving CPU buffer views (such as `_Wx_buf`, `_Wy_buf`, `_Wz_buf` into `J_particles`) and existing CPU/GPU array pointers for `E`, `H`, `J`, `J_old`, `_particles_q_bg`, `J_particles`, `_J_prev`, and CPML `psi*` arrays.
+8. Open `rank_<rank:06d>-<token>.npz` with `np.load(..., allow_pickle=False)` and run `_validate_rank_archive(ps, data)` (reading `.npy` member headers via `np.lib.format.read_magic` and `read_array_header_*`) to verify that every required `.npz` key is present with the exact expected shape and native dtype, that the saved `cpml_*` key set equals the active CPML set on `solver`, and that each injector's saved `seed` and `emitter_kind` equal the live injector's (`ValueError` on any mismatch, before any solver array is modified).
+9. Copy all validated state arrays in-place via `_copy_into_target` (`np.copyto` / `cp.copyto` with `casting="no"`) and restore each injector via `inj.load_state_dict()`, preserving CPU buffer views (such as `_Wx_buf`, `_Wy_buf`, `_Wz_buf` into `J_particles`) and existing CPU/GPU array pointers for `E`, `H`, `J`, `J_old`, `_particles_q_bg`, `J_particles`, `_J_prev`, `_fw_accum_vec`, and CPML `psi*` arrays.
 
 ##### Determinism guarantees per backend
 
-- **CPU serial (`use_gpu=0, use_mpi=False`)**: Restarting from a checkpoint in a new Python process is **bitwise identical** (`np.testing.assert_array_equal` with zero tolerance) to an uninterrupted run of $2N$ steps across all primary and dual fields (`E`, `H`, `J`, `J_particles`), all active CPML memory arrays (`psiHa_*`, `psiHb_*`, `psiEa_*`, `psiEb_*`), background charge `_particles_q_bg`, `gauss_residual()`, boundary/injector/collector histories, and all species SoA arrays (`x, y, z, ux, uy, uz, w, id`) both in raw memory slot order and sorted by `id`.
+- **CPU serial (`use_gpu=0, use_mpi=False`)**: Restarting from a checkpoint in a new Python process is **bitwise identical** (`np.testing.assert_array_equal` with zero tolerance) to an uninterrupted run of $2N$ steps across all primary and dual fields (`E`, `H`, `J`, `J_particles`), all active CPML memory arrays (`psiHa_*`, `psiHb_*`, `psiEa_*`, `psiEb_*`), background charge `_particles_q_bg`, `gauss_residual()`, boundary/injector/collector histories, `energy_balance()` terms (`W_field`, `K_particles`, `K_injected`, `K_absorbed`, `field_work`, and `residual` when `track_energy=True`), and all species SoA arrays (`x, y, z, ux, uy, uz, w, id`) both in raw memory slot order and sorted by `id`.
 - **CPU MPI (`use_gpu=0, use_mpi=True`)**: Restarting with the same MPI rank count $S$ is **bitwise identical on every rank** to an uninterrupted $2N$-step MPI run. Because each rank saves and restores its full local field arrays (including the 1-cell MPI ghost layers $k = 0$ and $k = N_z(r) - 1$), restores `solver.step_0 = False` so `_set_ghosts_to_0()` does not re-run at step $N$, and restores its local slab particles in their exact memory slot order, all subsequent point-to-point halo exchanges, deterministic slice additions in `_mpi_sum_guards()`, and particle migrations execute in the identical floating-point order. (In `pytest`, the MPI restart test runs inside a single `mpiexec` launch where a shared `tmp_path` directory created via `_mpi_tmp_dirs` assumes a single node; a two-phase MPI restart across two separate `mpiexec` invocations is a cloud-suite verification check rather than an in-process `pytest` test.)
 - **GPU (`use_gpu=1`)**: **Bitwise equality is not guaranteed on the GPU** because concurrent threads across multiple CUDA warps and thread blocks deposit per-particle current fluxes $\Delta W_{p,e}$ via hardware `atomicAdd(double*, double)` (`deposit_esirkepov_kernel`, `deposit_charge_kernel`, and `boundary_prepare_paths_kernel` in `wakis/particles/gpu_kernels.py`), whose execution order is scheduled by hardware and is non-associative in IEEE-754 `binary64` arithmetic. On the first step after restart from an identical checkpoint state $(\mathbf{E}^N, \mathbf{H}^{N-1/2})$ — comparing the checkpointed run stepped once before restart against a restored solver stepped once after restart, both in-process (`test_gpu_restart`) and in a fresh Python subprocess (`test_gpu_restart_subprocess`) — `gather_and_push_kernel` assigns one thread per particle with no inter-thread atomics so single-step particle positions and velocities match exactly, while the deposited current flux on edge $e$ agrees within Higham's summation error bound [Higham, 2002, Ch. 4, §4.2], $|\widehat{W}_e^{(A)} - \widehat{W}_e^{(B)}| \le 2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}|$ (and in current density, $|\widehat{J}_e^{(A)} - \widehat{J}_e^{(B)}| \le 2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| / (\Delta t\,\tilde{A}_e)$), where $\gamma_n = n u / (1 - n u)$ is defined in [Higham, 2002, Ch. 3, §3.1] with $u = 2^{-53}$ and $n_e = |\mathcal{P}_e|$ is the number of particles contributing to edge $e$. In `test_gpu_restart` and `test_gpu_restart_subprocess`, the uniform-sign identity $\sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| = |\sum_{p \in \mathcal{P}_e} \Delta W_{p,e}|$ holds on edges in the bulk beam subvolume ($\mathbf{u}_p > 0$), and the bound $|\Delta J_e| \le 2\,\gamma_{n_e}\,|J_e^{(A)}| + \text{floor}$ is evaluated per edge $e$ in vectorised form using the per-edge $3\times 3\times 3$ S1 stencil contributor count $n_e$. Over $N_{\text{post}} > 1$ coupled steps, single-step round-off perturbations in $\mathbf{J}$ feed back into $\mathbf{E}$, $\mathbf{H}$, and subsequent particle trajectories, so a single-step summation bound does not strictly bound $N_{\text{post}}$ coupled steps.
 
@@ -5243,7 +5244,7 @@ mpiexec --allow-run-as-root --oversubscribe --timeout 300 -n 2 pytest tests/test
   2. Lumped circuit elements and lumped ports (`lumped_elements` / `lumped_ports` in `wakis/lumped.py`, including `LumpedElement` inductor state arrays `J_L`, `J_old`, and `E_n`, as well as recorded history lists `t_rec`, `V_rec`, `I_L_rec`, and `I_s_rec`);
   3. On-the-fly discrete Fourier transform (DFT) field monitors (`monitors`, including their complex spectral accumulator arrays `_acc`).
   Users must re-create these objects when setting up the post-restart run loop, and their internal accumulators/inductor states restart from zero.
-- **Limits of callable fingerprinting in `config_hash`**: `compute_config_hash` calls user-supplied callables (`E_ext`, `B_ext`, injector `current(t)`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` invocation; these callables must therefore be cheap to evaluate and free of side effects (pure functions that do not mutate external state, advance random number generators, or perform I/O). They are fingerprinted without `pickle` by hashing their qualified function name (`__qualname__`) together with evaluations on a fixed sample set ($8\text{ points} \times 6\text{ times}$ for `E_ext`/`B_ext`, 8 times across $[0, 100\,\Delta t]$ for `current(t)`, and up to an $8\times 8\times 8$ sample grid for `Collector.mask`). If a user modifies a callable or closure while keeping the same qualified name and its output differs only at unsampled times (for example, a delayed pulse active only at $t \gg 100\,\Delta t$) or between the 8 spatial sample points for `E_ext`/`B_ext`, `compute_config_hash` will not detect the change.
+- **Limits of callable fingerprinting in `config_hash`**: `compute_config_hash` calls user-supplied callables (`E_ext`, `B_ext`, injector `current(t)` / `velocity_modulation(t)`, and callable collector `mask`) at every `save_checkpoint` and `load_checkpoint` invocation; these callables must therefore be cheap to evaluate and free of side effects (pure functions that do not mutate external state, advance random number generators, or perform I/O). They are fingerprinted without `pickle` by hashing their qualified function name (`__qualname__`) together with evaluations on a fixed sample set ($8\text{ points} \times 6\text{ times}$ for `E_ext`/`B_ext`, 8 times across $[0, 100\,\Delta t]$ for `current(t)` and `velocity_modulation(t)`, and up to an $8\times 8\times 8$ sample grid for `Collector.mask`). If a user modifies a callable or closure while keeping the same qualified name and its output differs only at unsampled times (for example, a delayed pulse active only at $t \gg 100\,\Delta t$) or between the 8 spatial sample points for `E_ext`/`B_ext`, `compute_config_hash` will not detect the change.
 - **Unsupported solver auxiliary features refuse with `NotImplementedError`**: Both `save_checkpoint` and `load_checkpoint` inspect `solver` via `_check_supported_solver_features(solver)` and raise `NotImplementedError` if any auxiliary field state on `SolverFIT3D` not serialized by P7a is present or active:
   1. Dispersive electric ADE poles (`solver._dispersive_groups` non-empty);
   2. Dispersive magnetic ADE poles (`solver._dispersive_h_groups` non-empty);
@@ -5259,13 +5260,13 @@ mpiexec --allow-run-as-root --oversubscribe --timeout 300 -n 2 pytest tests/test
 - **Per-rank checkpoint file size formula in cells and particles**: Let $N_{\text{cells}}(r) = N_x N_y N_z(r)$ denote the number of local grid cells on rank $r$ (including MPI ghost layers when `use_mpi=True`), let $b_{\text{field}} \in \{4, 8\}\text{ B}$ be the byte width of `solver.dtype`, let $n_{\text{pml}}$ be the CPML thickness in cells, let $n_{\text{cpml},\alpha}(r) \in \{0, 1, 2\}$ be the number of active CPML faces along axis $\alpha \in \{x, y, z\}$ present on rank $r$, let $N_{p,s}(r)$ be the number of active macroparticles of species $s$ on rank $r$, and let $N_{\text{hist},c}$ be the number of recorded `(t, dq)` entries in collector $c$. With `np.savez` (uncompressed IEEE-754 binary `.npy` payloads), the byte size $B_{\text{rank}}(r)$ of `rank_<rank:06d>.npz` is:
   $$B_{\text{rank}}(r) \;=\; B_{\text{fields}}(r) \;+\; B_{\text{CPML}}(r) \;+\; B_{\text{particles}}(r) \;+\; B_{\text{collectors}}(r) \;+\; B_{\text{header}}(r),$$
   where:
-  1. *Primary/dual fields and background charge*: `field_E`, `field_H`, and `field_J` each occupy $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$, `field_J_old` adds $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$ when `use_conductivity=True` ($\mathbb{I}_{\sigma} \in \{0, 1\}$), `J_particles` occupies $24 N_{\text{cells}}(r)\text{ B}$, `J_prev` adds $24 N_{\text{cells}}(r)\text{ B}$ when `on_gpu=True` ($\mathbb{I}_{\text{GPU}} \in \{0, 1\}$), and `q_bg` occupies $8 N_{\text{cells}}(r)\text{ B}$:
-     $$B_{\text{fields}}(r) \;=\; \Bigl(3\,(3 + \mathbb{I}_{\sigma})\,b_{\text{field}} + 32 + 24\,\mathbb{I}_{\text{GPU}}\Bigr)\,N_{\text{cells}}(r)\;\text{bytes} \;=\; \bigl(104 + 24\,\mathbb{I}_{\text{GPU}} + 24\,\mathbb{I}_{\sigma}\bigr)\,N_{\text{cells}}(r)\;\text{bytes}\quad(\text{for }b_{\text{field}}=8).$$
+  1. *Primary/dual fields, background charge, and energy-tracking field buffers*: `field_E`, `field_H`, and `field_J` each occupy $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$, `field_J_old` adds $3 N_{\text{cells}}(r) b_{\text{field}}\text{ B}$ when `use_conductivity=True` ($\mathbb{I}_{\sigma} \in \{0, 1\}$), `J_particles` occupies $24 N_{\text{cells}}(r)\text{ B}$, `J_prev` adds $24 N_{\text{cells}}(r)\text{ B}$ when `on_gpu=True` ($\mathbb{I}_{\text{GPU}} \in \{0, 1\}$), `q_bg` occupies $8 N_{\text{cells}}(r)\text{ B}$, and when `track_energy=True` ($\mathbb{I}_{\text{energy}} \in \{0, 1\}$) the 5 `float64` energy buffers (`fw_accum_vec`, `fw_E_prev`, `energy_E_init_fw`, `energy_H_prev_init_fw`, `energy_H_curr_init_fw`, each of length $3 N_{\text{cells}}(r)$) add $120\,\mathbb{I}_{\text{energy}}\,N_{\text{cells}}(r)\text{ B}$:
+     $$B_{\text{fields}}(r) \;=\; \Bigl(3\,(3 + \mathbb{I}_{\sigma})\,b_{\text{field}} + 32 + 24\,\mathbb{I}_{\text{GPU}} + 120\,\mathbb{I}_{\text{energy}}\Bigr)\,N_{\text{cells}}(r)\;\text{bytes} \;=\; \bigl(104 + 24\,\mathbb{I}_{\text{GPU}} + 24\,\mathbb{I}_{\sigma} + 120\,\mathbb{I}_{\text{energy}}\bigr)\,N_{\text{cells}}(r)\;\text{bytes}\quad(\text{for }b_{\text{field}}=8).$$
   2. *CPML convolutional memory arrays*: Each active CPML face stores 4 arrays (`psiHa`, `psiHb`, `psiEa`, `psiEb`, $4\,b_{\text{field}}\text{ B}$ per CPML cell):
      $$B_{\text{CPML}}(r) \;=\; 4\,b_{\text{field}}\,\Bigl(n_{\text{cpml},x}(r)\,n_{\text{pml}} N_y N_z(r) \;+\; n_{\text{cpml},y}(r)\,N_x n_{\text{pml}} N_z(r) \;+\; n_{\text{cpml},z}(r)\,N_x N_y n_{\text{pml}}\Bigr)\;\text{bytes}.$$
   3. *Species SoA particle buffers*: Only the active prefix `[:n_particles]` (not the preallocated buffer `_capacity`) is written to disk. Each species $s$ stores 7 floating-point component arrays (`x, y, z, ux, uy, uz, w` of element size $b_{\text{float},s} \in \{4, 8\}\text{ B}$) plus one `int64` `id` array ($8\text{ B}$ when `track_ids=True`, $\mathbb{I}_{\text{id},s} \in \{0, 1\}$):
      $$B_{\text{particles}}(r) \;=\; \sum_{s} N_{p,s}(r)\,\bigl(7\,b_{\text{float},s} + 8\,\mathbb{I}_{\text{id},s}\bigr)\;\text{bytes} \;=\; 64\,\sum_{s} N_{p,s}(r)\;\text{bytes}\quad(\text{for }\texttt{float64},\;\texttt{track\_ids=True}).$$
-  4. *Collector histories and per-entry archive headers*: Each collector history array `col_<c>_history` of shape $(N_{\text{hist},c}, 2)$ in `float64` occupies $B_{\text{collectors}}(r) = 16 \sum_c N_{\text{hist},c}\text{ B}$. For an archive with $M_{\text{arrays}}(r) = 19 + \mathbb{I}_{\sigma} + \mathbb{I}_{\text{GPU}} + 4\,\sum_\alpha n_{\text{cpml},\alpha}(r) + \sum_s (8 + \mathbb{I}_{\text{id},s}) + 3\,N_{\text{inj}} + 3\,N_{\text{col}}$ `.npy` entries, each entry $a$ with filename length $L_{\text{name}}(a)$ (including `.npy`) and `.npy` header descriptor length $L_{\text{descr}}(a)$ contributes a 30-byte local ZIP header, a 46-byte central-directory ZIP header, $2\,L_{\text{name}}(a)$ filename bytes, and a 64-byte-aligned `.npy` v1.0 header $H_{\text{npy}}(a) = 64\,\lceil(10 + L_{\text{descr}}(a))/64\rceil\text{ B}$, plus a 22-byte end-of-central-directory record and scalar payload bytes $b_{\text{scalar}}(a)$:
+  4. *Collector histories and per-entry archive headers*: Each collector history array `col_<c>_history` of shape $(N_{\text{hist},c}, 2)$ in `float64` occupies $B_{\text{collectors}}(r) = 16 \sum_c N_{\text{hist},c}\text{ B}$. For an archive with $M_{\text{arrays}}(r) = 21 + \mathbb{I}_{\sigma} + \mathbb{I}_{\text{GPU}} + 9\,\mathbb{I}_{\text{energy}} + 4\,\sum_\alpha n_{\text{cpml},\alpha}(r) + \sum_s (8 + \mathbb{I}_{\text{id},s}) + N_{\text{inj}} + 3\,N_{\text{col}}$ `.npy` entries, each entry $a$ with filename length $L_{\text{name}}(a)$ (including `.npy`) and `.npy` header descriptor length $L_{\text{descr}}(a)$ contributes a 30-byte local ZIP header, a 46-byte central-directory ZIP header, $2\,L_{\text{name}}(a)$ filename bytes, and a 64-byte-aligned `.npy` v1.0 header $H_{\text{npy}}(a) = 64\,\lceil(10 + L_{\text{descr}}(a))/64\rceil\text{ B}$, plus a 22-byte end-of-central-directory record and scalar payload bytes $b_{\text{scalar}}(a)$:
      $$B_{\text{header}}(r) \;=\; 22 \;+\; \sum_{a=1}^{M_{\text{arrays}}(r)} \Bigl(76 + 2\,L_{\text{name}}(a) + 64\,\bigl\lceil(10 + L_{\text{descr}}(a))/64\bigr\rceil + b_{\text{scalar}}(a)\Bigr)\;\text{bytes}.$$
 - **GPU determinism caveats**:
   1. *Concurrent `atomicAdd` warp scheduling (no bitwise equality guarantee)*: In `deposit_esirkepov_kernel`, `deposit_charge_kernel`, and `boundary_prepare_paths_kernel` (`wakis/particles/gpu_kernels.py`), multiple CUDA threads deposit per-particle current flux $\Delta W_{p,e}$ [Esirkepov, 2001] or node charge into shared grid edges/nodes via hardware `atomicAdd(double*, double)`. When multiple warps or thread blocks concurrently update the same grid edge $e$, hardware warp scheduling does not guarantee a fixed associative summation order across runs, so bitwise equality is not guaranteed on the GPU. By Higham's summation bound [Higham, 2002, Ch. 4, §4.2, Eq. 4.4] with $\gamma_n = n u / (1 - n u)$ from [Higham, 2002, Ch. 3, §3.1] and $u = 2^{-53}$, two GPU evaluations of a single step's edge-flux sum over the $n_e$ particles $\mathcal{P}_e$ overlapping edge $e$ can differ by up to $2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}|$ in edge flux (or $2\,\gamma_{n_e - 1} \sum_{p \in \mathcal{P}_e} |\Delta W_{p,e}| / (\Delta t\,\tilde{A}_e)$ in current density $J_e$). This bound applies to a single step; over $N > 1$ coupled steps, round-off differences in $\mathbf{J}$ couple into $\mathbf{E}$, $\mathbf{H}$, and particle positions/velocities, so a one-step summation bound does not bound $N$ coupled steps (any multi-step growth factor is heuristic).
@@ -5534,6 +5535,607 @@ The diagnostic values for both the V5 self-field benchmark and the numerical Che
 - T. Weiland, "A discretization method for the solution of Maxwell's equations for six-component fields", *Electronics and Communication (AEÜ)* **31**, 116–120 (1977).
 - A. Taflove and S. C. Hagness, *Computational Electrodynamics: The Finite-Difference Time-Domain Method*, 3rd ed., Artech House (2005), Ch. 4.
 - C. K. Birdsall and A. B. Langdon, *Plasma Physics via Computer Simulation*, Taylor & Francis / IOP Publishing, Bristol (1991), ISBN 978-0-7503-0117-6.
+
+#### 15. Beam injection and discrete FIT energy balance (`wakis.particles`)
+
+This section documents the planar relativistic `BeamInjector` model (emitter plane classification, rank-independent deterministic sampling, rise-time envelopes, and proper-velocity modulation) and derives the exact discrete electromagnetic energy identity and total particle-field energy closure implemented in `ParticleSolver.field_work()` and `ParticleSolver.energy_balance()`.
+
+##### 1. Injector protocol (`InjectorProtocol`) and planar `BeamInjector` model
+
+All particle injectors and surface emitters attached via `ParticleSolver(..., injectors=[...])` satisfy the runtime-checkable `InjectorProtocol` defined in `wakis/particles/boundaries.py`:
+
+- `species: Species`: target particle species receiving emitted macroparticles;
+- `z0: float`: longitudinal emission plane $z = z_0$ [m];
+- `emitter_kind: Optional[str]`: `"pec_wall"` or `"interior_sheet"` once bound (`None` before `_bind(solver)` runs);
+- `_bind(solver) -> None`: validates the emission plane against the `SolverFIT3D` grid and boundary conditions and sets `emitter_kind`;
+- `inject(t, dt, step_index=None, *, owning=True) -> int`: emits macroparticles on the rank owning $z_0$ (`owning=True`) or advances deterministic step/ID counters without appending particles on non-owning MPI ranks (`owning=False`);
+- `injected_charge: float`, `injected_energy: float`: cumulative emitted charge [C] and kinetic energy [J];
+- `state_dict() -> dict`, `load_state_dict(state) -> None`: checkpoint/restart serialization of cumulative counters, step index, and accumulators.
+
+Both `ParticleSolver._mid_step_hook()` (CPU) and `ParticleSolver._mid_step_hook_gpu()` (GPU) execute every injector in `self.injectors` through this protocol without per-class branches: binding via `inj._bind(s)` when `inj.emitter_kind is None`, invoking `inj.inject(t_n, dt, step_index=self.n_particle_steps)` on the rank that owns `inj.z0` and `inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)` on non-owning MPI ranks, depositing birth nodal counter-charge into `solver._particles_q_bg`, and applying `_backpush_injected_slice()` to shift the newly injected slice by $-\Delta t / 2$ to the leapfrog velocity level $t_{n-1/2}$.
+
+`BeamInjector` emits charged macroparticles of a target `Species` (charge $q$, rest mass $m$) across a transverse plane $z = z_0$ into the computational domain during each coupled time step $[t_n, t_n + \Delta t]$ (`wakis/particles/boundaries.py`).
+
+###### 1.1 Emitter plane validation and `emitter_kind`
+
+When `ParticleSolver.attach()` (or the first coupled step for a late injector appended after `attach()`) binds an injector to a `SolverFIT3D` instance via `BeamInjector._bind(solver)` (which is **collective under MPI** across `solver.comm` and wrapped in `ParticleSolver._collective_check()`):
+
+1. **Physical domain, boundary condition, and direction checks**: Let $[z_{\min}^{\text{phys}}, z_{\max}^{\text{phys}}]$ denote the global physical $z$-extent of the grid (excluding any outer ghost cells recorded in `grid.edge_ghosts`), and let $\zeta_0 \in [0, N_z^{\text{phys}}]$ be the logical $z$-coordinate of $z_0$ obtained via piecewise-linear interpolation on the primal node array. `_bind(solver)` validates that:
+   - $z_0 \in [z_{\min}^{\text{phys}}, z_{\max}^{\text{phys}}]$;
+   - the global longitudinal boundary conditions are known on all ranks: under MPI (`use_mpi=True`), internal slab faces overwrite `solver.bc_low[2]` / `solver.bc_high[2]` with `"mpi"`, so `_bind(solver)` collectively broadcasts the global low-$z$ and high-$z$ boundary types from ranks `0` and `size - 1` via `solver.comm.bcast` (caching `solver._global_bc_z`, never inspecting `solver.logger`) before any rank-local check and raises `ValueError` if either global $z$ boundary type is unknown or unresolved;
+   - neither longitudinal boundary is `"abc"` (first-order absorbing boundary conditions are rejected with `ValueError`);
+   - $z_0$ does not lie within an active low-$z$ ($\zeta_0 \le n_{\text{pml}}$) or high-$z$ ($\zeta_0 \ge N_z^{\text{phys}} - n_{\text{pml}}$) convolutional perfectly matched layer (`bc="cpml"`);
+   - when $z_0$ lies on a domain boundary face, `direction` points into the computational domain ($z_0 = z_{\min}^{\text{phys}}$ requires $\text{direction} = +1$; $z_0 = z_{\max}^{\text{phys}}$ requires $\text{direction} = -1$, so a `pec_wall` at $z_{\max}^{\text{phys}}$ must emit with $\text{direction} = -1$), raising `ValueError` otherwise;
+   - no grid cell under the emitter disk of radius $R = \text{radius}$ (or the Gaussian $3\sigma$ footprint $R = 3\,\text{radius}$ when `profile="gaussian"`) at $z_0$ overlaps an embedded PEC solid cell (`use_stl`, `use_conductors`, or `solid_mask`): embedded solid cathodes are unsupported and rejected with `ValueError`.
+2. **Emitter classification (`self.emitter_kind`)**: To preserve discrete Gauss's law $\tilde{\mathbf{S}}\tilde{\mathbf{d}}^n = \mathbf{q}_{\text{nodes}}^n + \mathbf{q}_{\text{bg}}^n$ when a charge $\Delta q_{\text{inj}}$ is introduced at $z_0$, `ParticleSolver` subtracts the equal-and-opposite charge $-\Delta q_{\text{inj}}$ from the immobile background array `solver._particles_q_bg` at the injection stencil nodes. `_bind(solver)` classifies the physical meaning of this opposite charge into two cases:
+   - `"pec_wall"`: $z_0$ coincides with the lower ($z_0 = z_{\min}^{\text{phys}}$, $\zeta_0 = 0$, $\text{direction} = +1$) or upper ($z_0 = z_{\max}^{\text{phys}}$, $\zeta_0 = N_z^{\text{phys}}$, $\text{direction} = -1$) domain boundary and the corresponding longitudinal boundary condition is PEC (`"pec"` or `"electric"`). Tangential electric fields vanish on the conducting wall, so $-\Delta q_{\text{inj}}$ represents the physical wall image / surface charge drawn from the metallic cathode.
+   - `"interior_sheet"`: $z_0$ lies strictly in the domain interior (or on a non-PEC boundary face with inward `direction`). Here $-\Delta q_{\text{inj}}$ remains at $z = z_0$ as a fixed, immobile neutralizing charge sheet ($\mathbf{v}_{\text{sheet}} = \mathbf{0}$, $\mathbf{J}_{\text{sheet}} = \mathbf{0}$) that balances the mobile beam charge in discrete Gauss's law.
+
+###### 1.2 Rank-independent deterministic injection
+
+To ensure that the injected macroparticle ensemble at step $n$ is bitwise identical across serial runs, MPI domain-decomposed runs (`use_mpi=True`), and when rebuilding the injector within the same run:
+
+1. **Per-step solver-seeded RNG and deterministic transverse profiles**: Rather than maintaining a stateful random number generator on the injector, step $s$ instantiates an independent NumPy `Generator` seeded exclusively by the pair $(\text{seed}, s)$:
+
+```math
+\text{rng}_s = \operatorname{default\_rng}\!\left(\operatorname{SeedSequence}\!\left([\text{seed},\, s]\right)\right),
+```
+
+   where $s = \text{ps.n\_particle\_steps}$ is passed from the solver's public step counter `ParticleSolver.n_particle_steps` (exposed for checkpoint/restart persistence; when `BeamInjector.inject(t, dt)` is called standalone outside `ParticleSolver`, $s$ defaults to `inj.step_index`). Because the stream at step $s$ depends only on $(\text{seed}, s)$ and the deterministic charge accumulator, rebuilding a fresh `BeamInjector` within the same run at step $k$ (keeping the same `ParticleSolver` and `Species`) and restoring its state via `BeamInjector.state_dict()` / `BeamInjector.load_state_dict(state)` (which persist `injected_charge`, `injected_energy`, `injected_count`, `_charge_accumulator`, `step_index`, `species._next_id`, `emitter_kind`, and `seed`) continues bitwise identically to a continuous run from step $0$, including `K_injected` and the `energy_balance()` closure residual. Full simulation restarts across separate solver runs require the checkpoint module to save injector state via `state_dict()` alongside `ParticleSolver`-level state (`n_particle_steps`, `_fw_accum_vec`, the initial $W_{\text{field}}^0$ and $K_{\text{particles}}^0$ snapshots, boundary/collector absorbed energies, and `solver._particles_q_bg`). For $\Delta t$-convergence studies that must eliminate Monte Carlo shot noise across different time steps, `BeamInjector` also supports `profile="lattice"`, which places the $n_{\text{macro}}$ macroparticles on a deterministic uniform-area Fibonacci disk lattice of radius $R = \text{radius}$:
+
+```math
+r_k = R\sqrt{\frac{k + 1/2}{n_{\text{macro}}}}, \qquad
+\theta_k = 2\pi k\,\varphi_{\text{gold}}, \qquad
+\varphi_{\text{gold}} = \frac{3 - \sqrt{5}}{2}, \qquad k = 0, \dots, n_{\text{macro}} - 1,
+```
+
+   centered to zero discrete dipole moment ($\sum_k \Delta x_k = \sum_k \Delta y_k = 0$) for $n_{\text{macro}} > 1$.
+2. **Half-open slab ownership and unified step planning**: On an $S$-rank longitudinal $z$-slab decomposition where rank $r \in \{0, \dots, S-1\}$ owns $[z_{\text{own,min}}(r),\, z_{\text{own,max}}(r)]$, `ParticleSolver._owns_z_coord(inj.z0)` assigns ownership of $z_0$ using the half-open interval
+
+```math
+z_0 \in \begin{cases}
+\bigl[\,z_{\text{own,min}}(r),\; z_{\text{own,max}}(r)\,\bigr), & 0 \le r < S - 1, \\
+\bigl[\,z_{\text{own,min}}(S-1),\; z_{\text{own,max}}(S-1)\,\bigr], & r = S - 1.
+\end{cases}
+```
+
+   Since $z_{\text{own,max}}(r) = z_{\text{own,min}}(r+1)$ at every internal slab interface, any valid $z_0 \in [z_{\min}^{\text{phys}}, z_{\max}^{\text{phys}}]$—including an emitter placed exactly on a slab boundary—is owned by one and only one rank. Both `inject(t_n, dt, step_index=...)` on the owning rank (`owning=True`) and `inject(t_n, dt, step_index=..., owning=False)` on non-owning ranks execute the same `BeamInjector._plan_step()` accumulator path to advance `step_index`, `_charge_accumulator`, and (for non-owning ranks) `species._next_id` in lockstep, so gathered particle arrays sorted by `id` are bitwise identical to a serial run.
+
+###### 1.3 Rise-time envelopes and charge accounting
+
+For a constant nominal current magnitude $I_0 = |\text{current}|$ [A] and rise time $\tau_r = \text{rise\_time} \ge 0$ [s], `current_at(t)` evaluates the instantaneous current at the step midpoint $t_{n+1/2} = t_n + \Delta t / 2$:
+
+- **`rise_shape="linear"` (default)**:
+
+```math
+I(t) = I_0 \min\!\left(\max\!\left(\frac{t}{\tau_r},\, 0\right),\, 1\right), \qquad
+\int_0^T I(t)\,\mathrm{d}t = I_0\left(T - \frac{1}{2}\tau_r\right) \quad (T \ge \tau_r).
+```
+
+- **`rise_shape="cos2"` (smooth turn-on with $I(0) = 0$ and $\mathrm{d}I/\mathrm{d}t|_{t=0,\tau_r} = 0$)**:
+
+```math
+I(t) = \begin{cases}
+0, & t \le 0, \\
+I_0 \sin^2\!\left(\dfrac{\pi t}{2\tau_r}\right), & 0 < t < \tau_r, \\
+I_0, & t \ge \tau_r,
+\end{cases}
+\qquad
+\int_0^T I(t)\,\mathrm{d}t = I_0\left(T - \frac{1}{2}\tau_r\right) \quad (T \ge \tau_r).
+```
+
+Alternatively, `current` may be passed as a custom callable $I(t)$; passing both a callable `current` and `rise_time > 0` raises `ValueError` at construction so that a user-specified `rise_time` is never silently ignored. At each step, the number of real charges to emit is $N_{\text{real}}^{n+1/2} = I(t_{n+1/2})\Delta t / |q| + \mathcal{A}_q$, where $\mathcal{A}_q$ is the fractional-charge accumulator (`_charge_accumulator`). For midpoint step sizes $\Delta t = \tau_r / M$ ($M \in \mathbb{Z}^+$), both the linear ramp and the $\sin^2(\pi t / (2\tau_r))$ envelope integrate symmetrically about $\tau_r / 2$, so the midpoint Riemann sum $\sum_n I(t_{n+1/2})\Delta t$ equals the analytic integral $\int_0^T I(t)\,\mathrm{d}t$ to floating-point round-off.
+
+###### 1.4 Proper-velocity (energy) modulation
+
+For klystron bunching and travelling-wave-tube (TWT) interaction studies, `BeamInjector` accepts an optional `velocity_modulation: callable(t) -> float` (default `None`, which leaves the unmodulated code path bitwise unchanged). When provided, the callable returns the relative longitudinal proper-velocity modulation $\delta(t) = \Delta u_z / u_{z0}$ evaluated at the step midpoint $t_{n+1/2} = t_n + \Delta t / 2$:
+
+```math
+u_z(t_{n+1/2}) = u_{z0}\bigl(1 + \delta(t_{n+1/2})\bigr), \qquad u_{z0} = \text{direction}\cdot \gamma_0 \beta_0 c.
+```
+
+The cumulative `injected_energy` is evaluated directly from the modulated proper velocity $\mathbf{u} = (u_x, u_y, u_z(t_{n+1/2}))$ via the cancellation-free relativistic kinetic energy formula
+
+```math
+\Delta K_{\text{inj}} = \sum_{p=1}^{n_{\text{macro}}} w_p m\,\frac{|\mathbf{u}_p|^2}{\gamma_p + 1}, \qquad \gamma_p = \sqrt{1 + \frac{|\mathbf{u}_p|^2}{c^2}}.
+```
+
+For a sinusoidal modulation $\delta(t) = \delta_0 \sin(\omega t)$ ($\langle \delta \rangle = 0$, $\langle \delta^2 \rangle = \delta_0^2 / 2$) on a cold beam ($u_x = u_y = 0$) over one modulation period $T_{\text{mod}} = 2\pi / \omega$:
+
+1. **Period-averaged proper velocity**: Since $u_z(t)$ is linear in $\delta(t)$, the period average equals $u_{z0}$ identically ($\langle u_z \rangle = u_{z0}$, with zero $\mathcal{O}(\delta_0^2)$ coefficient).
+2. **Period-averaged Lorentz factor and kinetic energy**: Expanding $\gamma(u_z) = \sqrt{1 + u_z^2/c^2}$ in powers of $\delta$ around $u_{z0} = \gamma_0 \beta_0 c$ ($\mathrm{d}\gamma/\mathrm{d}u_z = \beta/c$, $\mathrm{d}^2\gamma/\mathrm{d}u_z^2 = 1/(\gamma^3 c^2)$) gives
+
+```math
+\gamma\bigl(u_{z0}(1 + \delta)\bigr) = \gamma_0 + \gamma_0 \beta_0^2\,\delta + \frac{\beta_0^2}{2\gamma_0}\,\delta^2 + \mathcal{O}(\delta^3),
+\qquad
+\langle \gamma \rangle - \gamma_0 = \frac{\beta_0^2}{4\gamma_0}\,\delta_0^2 + \mathcal{O}(\delta_0^4),
+```
+
+   and the effective proper velocity $u_{\text{eff}}(\langle\gamma\rangle) = c\sqrt{\langle\gamma\rangle^2 - 1}$ associated with the mean injected energy satisfies
+
+```math
+\frac{u_{\text{eff}}(\langle\gamma\rangle) - |u_{z0}|}{|u_{z0}|} = \frac{1}{4\gamma_0^2}\,\delta_0^2 + \mathcal{O}(\delta_0^4).
+```
+
+3. **Period-averaged physical coordinate velocity $v_z = u_z / \gamma$**: Using $\mathrm{d}^2 v_z / \mathrm{d}u_z^2 = -3 u_z / (\gamma^5 c^2)$ yields
+
+```math
+\frac{\langle v_z \rangle - v_{z0}}{v_{z0}} = -\frac{3\beta_0^2}{4\gamma_0^2}\,\delta_0^2 + \mathcal{O}(\delta_0^4).
+```
+
+###### 1.5 Half-step back-push of newly injected particles (correction to released behaviour)
+
+In the initial P1–P3 release (`origin/main`), `BeamInjector.inject(t_n, dt)` appended newly emitted macroparticles at $\mathbf{x}_p^n = (x_p, y_p, z_0)$ with their emission proper velocity $\mathbf{u}_p(t_n) = (u_{x,p}, u_{y,p}, u_z(t_{n+1/2}))$, and the subsequent species loop in `_mid_step_hook` immediately applied a full-step momentum push $+\Delta t$ as though $\mathbf{u}_p(t_n)$ were already at the staggered half-step time level $t_{n-1/2}$.
+
+1. **What changed and why**: In the leapfrog integrator, positions $\mathbf{x}^n$ reside at integer times $t_n$ while proper velocities $\mathbf{u}^{n-1/2}$ reside at half-integer times $t_{n-1/2}$. Pre-existing particles loaded before step 0 are shifted from $t_0$ to $t_{-1/2}$ by `ParticleSolver._initialize_species_half_step()`. To place particles injected at step $n \ge 0$ by **any** injector satisfying `InjectorProtocol` (`BeamInjector` as well as the cathode surface emitters `SpaceChargeLimitedEmitter`, `ThermionicEmitter`, and `FowlerNordheimEmitter`) on the same staggered time level before the species loop advances $\mathbf{u}^{n-1/2} \to \mathbf{u}^{n+1/2}$, `ParticleSolver._backpush_injected_slice()` gathers $\mathbf{E}^n(\mathbf{x}_p^n) + \mathbf{E}_{\text{ext}}(\mathbf{x}_p^n, t_n)$ and $\mathbf{B}^n(\mathbf{x}_p^n) + \mathbf{B}_{\text{ext}}(\mathbf{x}_p^n, t_n)$ at the newly injected slice and applies a $-\Delta t / 2$ momentum back-push $\mathbf{u}_p(t_n) \to \mathbf{u}_p^{n-1/2}$. Following the full-step $+\Delta t$ push in the species loop, the newly injected particle reaches the second-order-accurate half-step velocity $\mathbf{u}_p^{n+1/2}$ after its first step.
+2. **Size of the old error**: Without the $-\Delta t / 2$ back-push, treating $\mathbf{u}_p(t_n)$ as $\mathbf{u}_p^{n-1/2}$ over-accelerates every newly injected particle by $+\Delta t / 2$ during its emission step, introducing a first-step proper-velocity error and single-particle kinetic-energy error of
+
+```math
+\delta\mathbf{u}_p^{n+1/2}
+= \mathbf{u}_{p,\text{old}}^{n+1/2} - \mathbf{u}_{p,\text{exact}}^{n+1/2}
+= \frac{q\,\Delta t}{2m}\Bigl(\mathbf{E}^n(\mathbf{x}_p^n) + \mathbf{v}_p(t_n)\times\mathbf{B}^n(\mathbf{x}_p^n)\Bigr) + \mathcal{O}(\Delta t^2),
+```
+
+```math
+\delta K_p^{n+1/2}
+= m c^2\,\delta\gamma_p^{n+1/2}
+= \frac{1}{2}\,q\,\mathbf{v}_p(t_n)\cdot\mathbf{E}^n(\mathbf{x}_p^n)\,\Delta t + \mathcal{O}(\Delta t^2),
+\qquad \mathbf{v}_p(t_n) = \frac{\mathbf{u}_p(t_n)}{\gamma_p(t_n)}.
+```
+
+   Summed over $N_{\text{steps}} = T / \Delta t$ injection steps with emitted charge per step $q_n = \operatorname{sgn}(q)\,I(t_{n+1/2})\Delta t$, this uncompensated half-step impulse produces a non-vanishing $\mathcal{O}(\Delta t)$ error in the global energy balance residual:
+
+```math
+\delta\mathcal{R}_{\text{energy}}(T)
+= -\frac{\Delta t}{2}\int_0^T \operatorname{sgn}(q)\,I(t)\,\mathbf{v}_0(t)\cdot\mathbf{E}(z_0, t)\,\mathrm{d}t + \mathcal{O}(\Delta t^2).
+```
+
+##### 2. Discrete FIT electromagnetic energy identity and total energy closure
+
+###### 2.1 Derivation of the exact discrete FIT Poynting / energy identity
+
+In `SolverFIT3D`, let $\mathbf{e}^n \in \mathbb{R}^{3N}$ and $\mathbf{h}^{n-1/2} \in \mathbb{R}^{3N}$ denote the vectors of electric-field and magnetic-field components on primal edges and dual edges, respectively. Let $\mathbf{L} = \operatorname{diag}(L_e)$, $\tilde{\mathbf{L}} = \operatorname{diag}(\tilde{L}_f)$, $\mathbf{A} = \operatorname{diag}(A_f) = \operatorname{diag}(\mathrm{iA}_f^{-1})$, and $\tilde{\mathbf{A}} = \operatorname{diag}(\tilde{A}_e) = \operatorname{diag}(\mathrm{itA}_e^{-1})$ be the primal/dual edge length and face area matrices, and let $\boldsymbol{\varepsilon}^{-1} = \operatorname{diag}(\mathrm{ieps}_e)$ and $\boldsymbol{\mu}^{-1} = \operatorname{diag}(\mathrm{imu}_f)$ be the inverse constitutive diagonals. Define the symmetric positive semi-definite diagonal FIT energy weight matrices (zeroed on inactive/ghost edges where $\mathrm{ieps}_e = 0$ or $\mathrm{imu}_f = 0$):
+
+```math
+\mathbf{M}_\varepsilon = \mathbf{L}\,\tilde{\mathbf{A}}\,\boldsymbol{\varepsilon} = \operatorname{diag}\!\left(\frac{L_e}{\mathrm{ieps}_e\,\mathrm{itA}_e}\right), \qquad
+\mathbf{M}_\mu = \tilde{\mathbf{L}}\,\mathbf{A}\,\boldsymbol{\mu} = \operatorname{diag}\!\left(\frac{\tilde{L}_f}{\mathrm{imu}_f\,\mathrm{iA}_f}\right),
+```
+
+and the edge dual-cell volume diagonal $\mathbf{V}_E = \mathbf{M}_\varepsilon\,\boldsymbol{\varepsilon}^{-1} = \mathbf{L}\,\tilde{\mathbf{A}} = \operatorname{diag}(L_e / \mathrm{itA}_e)$. With the topological primal curl matrix $\mathbf{C}$ and dual curl matrix $\tilde{\mathbf{C}} = \mathbf{C}^{\mathsf{H}}$ (`self.C.conj().transpose()` in `SolverFIT3D`), the code matrix operators are
+
+```math
+\mathbf{B}_{\text{curl},H} \equiv \mathbf{tDsiDmuiDaC} = \mathbf{A}^{-1}\boldsymbol{\mu}^{-1}\mathbf{C}\mathbf{L} = \mathbf{M}_\mu^{-1}\tilde{\mathbf{L}}\mathbf{C}\mathbf{L}, \qquad
+\mathbf{B}_{\text{curl},E} \equiv \mathbf{itDaiDepsDstC} = \boldsymbol{\varepsilon}^{-1}\tilde{\mathbf{A}}^{-1}\tilde{\mathbf{C}}\tilde{\mathbf{L}} = \mathbf{M}_\varepsilon^{-1}\mathbf{L}\tilde{\mathbf{C}}\tilde{\mathbf{L}}.
+```
+
+Because `SolverFIT3D` constructs the dual curl as the Hermitian transpose $\tilde{\mathbf{C}} = \mathbf{C}^{\mathsf{H}}$ (to conjugate Floquet–Bloch phase factors when `k_bloch` is nonzero), the algebraic transpose relation $\tilde{\mathbf{C}} = \mathbf{C}^\top$ (equivalently $\tilde{\mathbf{C}}^\top = \mathbf{C}$) holds only for real fields (`dtype=np.float64` with real $\mathbf{C}$). In a lossless real-field domain without CPML auxiliary variables or magnetic currents, one leapfrog FIT step (`solver.one_step()`) updates
+
+```math
+\mathbf{h}^{n+1/2} = \mathbf{h}^{n-1/2} - \Delta t\,\mathbf{M}_\mu^{-1}\tilde{\mathbf{L}}\mathbf{C}\mathbf{L}\mathbf{e}^n,
+```
+
+```math
+\mathbf{e}^{n+1} = \mathbf{e}^n + \Delta t\,\mathbf{M}_\varepsilon^{-1}\!\left(\mathbf{L}\mathbf{C}^\top\tilde{\mathbf{L}}\mathbf{h}^{n+1/2} - \mathbf{V}_E \mathbf{J}^{n+1/2}\right).
+```
+
+Define the **half-step-staggered discrete FIT field energy** at integer time level $n$ (`ParticleSolver._staggered_field_energy()`, returned as `"W_field"` by `ParticleSolver.energy_balance()`):
+
+```math
+W_{\text{field}}^n = \frac{1}{2}\left(\mathbf{e}^n \cdot \mathbf{M}_\varepsilon \mathbf{e}^n + \mathbf{h}^{n-1/2} \cdot \mathbf{M}_\mu \mathbf{h}^{n+1/2}\right).
+```
+
+By contrast, `ParticleSolver.field_energy()` (which delegates to `SolverFIT3D.field_energy()`) evaluates the **un-staggered leapfrog storage quadratic form**
+
+```math
+W_{\text{storage}}^n = \frac{1}{2}\left(\mathbf{e}^n \cdot \mathbf{M}_\varepsilon \mathbf{e}^n + \mathbf{h}^{n-1/2} \cdot \mathbf{M}_\mu \mathbf{h}^{n-1/2}\right),
+```
+
+which differs from $W_{\text{field}}^n$ by $-\frac{1}{2}\Delta t\,\mathbf{h}^{n-1/2}\cdot\tilde{\mathbf{L}}\mathbf{C}\mathbf{L}\mathbf{e}^n = \mathcal{O}(\Delta t)$ and therefore does not telescope exactly over a leapfrog step. Note also that $W_{\text{field}}^n$ does not include convolutional CPML auxiliary $\boldsymbol{\psi}$ terms.
+
+Taking the single-step difference $\Delta W_{\text{field}}^n = W_{\text{field}}^{n+1} - W_{\text{field}}^n$ gives
+
+```math
+\Delta W_{\text{field}}^n
+= \frac{1}{2}\left(\mathbf{e}^{n+1} - \mathbf{e}^n\right) \cdot \mathbf{M}_\varepsilon \left(\mathbf{e}^{n+1} + \mathbf{e}^n\right)
++ \frac{1}{2}\,\mathbf{h}^{n+1/2} \cdot \mathbf{M}_\mu \left(\mathbf{h}^{n+3/2} - \mathbf{h}^{n-1/2}\right).
+```
+
+From the Faraday updates at steps $n$ and $n+1$,
+
+```math
+\mathbf{h}^{n+3/2} - \mathbf{h}^{n-1/2} = \left(\mathbf{h}^{n+3/2} - \mathbf{h}^{n+1/2}\right) + \left(\mathbf{h}^{n+1/2} - \mathbf{h}^{n-1/2}\right)
+= -\Delta t\,\mathbf{M}_\mu^{-1}\tilde{\mathbf{L}}\mathbf{C}\mathbf{L}\left(\mathbf{e}^{n+1} + \mathbf{e}^n\right).
+```
+
+Substituting $\mathbf{M}_\varepsilon(\mathbf{e}^{n+1} - \mathbf{e}^n)$ from the Ampère–Maxwell update and $\mathbf{M}_\mu(\mathbf{h}^{n+3/2} - \mathbf{h}^{n-1/2})$ from the combined Faraday update into $\Delta W_{\text{field}}^n$, and writing $\bar{\mathbf{e}}^{n+1/2} = \frac{1}{2}(\mathbf{e}^n + \mathbf{e}^{n+1})$, yields
+
+```math
+\Delta W_{\text{field}}^n
+= \Delta t\left(\mathbf{L}\bar{\mathbf{e}}^{n+1/2}\right) \cdot \mathbf{C}^\top\!\left(\tilde{\mathbf{L}}\mathbf{h}^{n+1/2}\right)
+- \Delta t\left(\tilde{\mathbf{L}}\mathbf{h}^{n+1/2}\right) \cdot \mathbf{C}\!\left(\mathbf{L}\bar{\mathbf{e}}^{n+1/2}\right)
+- \Delta t\,\mathbf{J}^{n+1/2} \cdot \mathbf{V}_E \bar{\mathbf{e}}^{n+1/2}.
+```
+
+In a closed PEC (or periodic) real-field domain, the transpose identity $(\mathbf{x})\cdot(\mathbf{C}^\top\mathbf{y}) = (\mathbf{y})\cdot(\mathbf{C}\mathbf{x})$ holds identically on the active primal/dual complex, so the two curl inner products cancel explicitly:
+
+```math
+\left(\mathbf{L}\bar{\mathbf{e}}^{n+1/2}\right) \cdot \mathbf{C}^\top\!\left(\tilde{\mathbf{L}}\mathbf{h}^{n+1/2}\right)
+- \left(\tilde{\mathbf{L}}\mathbf{h}^{n+1/2}\right) \cdot \mathbf{C}\!\left(\mathbf{L}\bar{\mathbf{e}}^{n+1/2}\right) = 0.
+```
+
+We thus obtain the **exact discrete FIT field energy identity**:
+
+```math
+\Delta W_{\text{field}}^n = W_{\text{field}}^{n+1} - W_{\text{field}}^n
+= -\Delta t \sum_{e} V_{E,e}\,J_e^{n+1/2}\,\frac{E_e^n + E_e^{n+1}}{2},
+\qquad V_{E,e} = L_e\,\tilde{A}_e,
+```
+
+and summing over steps $m = 0, \dots, n-1$ gives
+
+```math
+\left(W_{\text{field}}^n - W_{\text{field}}^0\right) + W_{\text{work}}^n = 0,
+\qquad
+W_{\text{work}}^n \equiv \sum_{m=0}^{n-1} \Delta t \sum_{e} V_{E,e}\,J_e^{m+1/2}\,\frac{E_e^m + E_e^{m+1}}{2}.
+```
+
+`ParticleSolver.field_work()` returns $W_{\text{work}}^n$ [J]. Energy tracking is **opt-in** via `ParticleSolver(..., track_energy=False)` (default `False`):
+
+- When `track_energy=False` (the default), `ParticleSolver` allocates zero energy-tracking buffers and performs zero extra array passes during `solver.one_step()`, leaving the default time-stepping path bitwise unchanged; calling `field_work()` or `energy_balance()` raises a `RuntimeError`/`ValueError`.
+- When `track_energy=True`, `ParticleSolver` allocates nine $3 N_x N_y N_z$ `float64` edge arrays (`_m_eps_arr`, `_m_mu_arr`, `_vol_E_fw`, `_E_prev_fw`, `_fw_scratch`, `_fw_accum_vec`, `_E_init_fw`, `_H_prev_init_fw`, `_H_curr_init_fw`), with a memory cost per grid cell of
+
+```math
+\text{cost}_{\text{energy}}
+= 9 \times 3 \times \operatorname{sizeof}(\text{float64})
+= 27 \times 8\;\text{bytes/cell}
+= 216\;\text{bytes/cell}.
+```
+
+To preserve the zero-allocation, zero-synchronization GPU fast path during `solver.one_step()`, per-step work is accumulated in-place on device/host edge vectors (`_fw_accum_vec`, `_E_prev_fw`, `_fw_scratch`) and reduced via `xp.sum(_fw_accum_vec * _vol_E_fw)` (followed by `MPI.SUM` when `use_mpi=True`) only when `field_work()` or `energy_balance()` is called. Under MPI (`use_mpi=True` and `solver.size > 1`), both `field_work()` and `energy_balance()` are **collective** across `solver.comm` and must be called simultaneously by all ranks.
+
+###### 2.2 Total particle-field energy closure ($\mathcal{O}(\Delta t^2)$ before absorption, $\mathcal{O}(\Delta t)$ with absorption)
+
+When `track_energy=True`, `ParticleSolver.energy_balance()` returns a dictionary with keys:
+
+- `"W_field"`: half-step-staggered discrete FIT field energy $W_{\text{field}}^n$ [J] (excluding CPML $\boldsymbol{\psi}$ terms; compare `ParticleSolver.field_energy()` for the un-staggered storage energy $W_{\text{storage}}^n$);
+- `"K_particles"`: time-synchronised relativistic particle kinetic energy $K_{\text{particles}}^n = \text{ps.kinetic\_energy(synchronised=True)}$ [J];
+- `"K_injected"`: cumulative injected kinetic energy $K_{\text{injected}}^n = \text{ps.injected\_energy()}$ [J];
+- `"K_absorbed"`: cumulative boundary and collector absorbed kinetic energy $K_{\text{absorbed}}^n = \text{ps.absorbed\_energy()}$ [J];
+- `"field_work"`: cumulative discrete field work $W_{\text{work}}^n = \text{ps.field\_work()}$ [J];
+- `"residual"`: total energy closure residual [J],
+
+```math
+\mathcal{R}_{\text{energy}}^n
+= \left(K_{\text{injected}}^n + K_{\text{particles}}^0 + W_{\text{field}}^0\right)
+- K_{\text{absorbed}}^n - K_{\text{particles}}^n - W_{\text{field}}^n.
+```
+
+When starting from vacuum with no initial particles ($W_{\text{field}}^0 = 0$, $K_{\text{particles}}^0 = 0$), $\mathcal{R}_{\text{energy}}^n = K_{\text{injected}}^n - K_{\text{absorbed}}^n - K_{\text{particles}}^n - W_{\text{field}}^n$. Note that any fixed emitter space-charge sheet $-\mathbf{q}_{\text{inj}}$ recorded in `solver._particles_q_bg` is stationary ($\mathbf{v}_{\text{sheet}} = \mathbf{0}$, $\mathbf{J}_{\text{sheet}} = \mathbf{0}$), so the electromagnetic field performs zero mechanical work on the fixed sheet; all electrostatic potential energy associated with charge separation between the mobile beam and the emitter sheet or PEC wall is contained within $W_{\text{field}}^n = \frac{1}{2}\mathbf{e}^n\cdot\mathbf{M}_\varepsilon\mathbf{e}^n + \frac{1}{2}\mathbf{h}^{n-1/2}\cdot\mathbf{M}_\mu\mathbf{h}^{n+1/2}$.
+
+Because $W_{\text{field}}^n - W_{\text{field}}^0 = -W_{\text{work}}^n$ holds to machine round-off in a closed PEC box, the total closure residual simplifies to the discrepancy between the discrete field work $W_{\text{work}}^n$ (deposited via Esirkepov current along $\mathbf{x}^m \to \mathbf{x}^{m+1}$ paired with $\frac{1}{2}(\mathbf{E}^m + \mathbf{E}^{m+1})$) and the net change in particle kinetic energy $\Delta K^n = K_{\text{particles}}^n + K_{\text{absorbed}}^n - K_{\text{injected}}^n - K_{\text{particles}}^0$ (advanced via the second-order leapfrog pusher using $\mathbf{E}^m(\mathbf{x}^m)$). **Before particle absorption** at boundaries or collectors ($K_{\text{absorbed}}^n = 0$), both `"pec_wall"` and `"interior_sheet"` emitters close the total energy budget at second order in $\Delta t$:
+
+```math
+\mathcal{R}_{\text{energy}}^n = W_{\text{work}}^n - \Delta K^n = \mathcal{O}(\Delta t^2) \qquad (\text{before absorption, } K_{\text{absorbed}}^n = 0).
+```
+
+Halving $\Delta t$ across $0.8, 0.4, 0.2, 0.1$ of the 3D FIT CFL limit at a fixed spatial grid and physical time $T$ before collector impact therefore reduces $|\mathcal{R}_{\text{energy}}|$ at second order in $\Delta t$. Once particles reach an absorbing collector or wall ($K_{\text{absorbed}}^n > 0$), sub-step path truncation of Esirkepov current versus full-step velocity evaluation at absorption reduces the total closure to first order, $\mathcal{R}_{\text{energy}}^n = \mathcal{O}(\Delta t)$ (see Section 3). In the deterministic lattice-beam convergence sweeps (`_run_dt_closure_sweep` in `tests/test_083_particles_beams.py` and `run_dt_convergence` in `examples/020_particles_beam_energy_balance.py`), the parameters are chosen for the following physical and numerical reasons:
+
+- **Transverse grid $16 \times 16 \times 16$ over $L_x = L_y = L_z = 0.08\text{ m}$ ($\Delta x = \Delta y = \Delta z = 0.005\text{ m}$) with beam radius $R = 0.020\text{ m}$**: resolves the beam radius with $R / \Delta x = 4 \ge 4$ cells while leaving a 4-cell ($0.5 L_x - R = 4\Delta x > 2\Delta x$) clearance between the outer lattice ring and the transverse PEC walls so the 4-point cubic B-spline stencil (`shape=3`, support radius $2\Delta x$) remains strictly inside the domain interior (increasing the transverse box from $12 \times 12$ over $0.06\text{ m}$, which left only $2\Delta x$ clearance).
+- **Pre-absorption collector distance and duration ($z_{\text{col}} = 0.075\text{ m}$, $N_{\text{steps,base}} = 8$ at $\text{CFL} = 0.8$)**: per-step displacement satisfies $v_{z0}\Delta t < 0.4\,\Delta z \ll \Delta z$ and total travel $v_{z0} T \approx 3.1\,\Delta z \approx 0.016\text{ m} \ll z_{\text{col}} - z_0$, so the beam does not reach the collector within $T$ ($K_{\text{absorbed}} = 0$).
+- **Default Lorentz factor $\gamma_0 = 1.9$ in `_run_dt_closure_sweep` ($\gamma_0 = 1.8$ in Example 020) is an empirical choice**: at $\gamma_0 = 2.0$, $\beta_0\,\text{CFL}/\sqrt{3}$ is rational on the CFL ladder $(0.8, 0.4, 0.2, 0.1)$, giving $(0.4, 0.2, 0.1, 0.05)$ cells per step, so sheets emitted from the $z = 0$ wall land on B-spline knots, where the shapes are only $C^{p-1}$. The closure residual is then not a smooth function of $\Delta t$ and the strict monotone local-slope criterion fails. $\gamma_0 = 1.9$ (and 1.8 in the example) avoids this commensurability; the criterion is fragile on lattice beams.
+- **Absorbing collector sweep ($z_{\text{col}} = 0.010\text{ m} = 2\Delta z$, $E_0 = 1.0\times 10^4\text{ V/m}$, `shape=2`, $\gamma_0 = 2.0$, $N_{\text{steps,base}} = 10$)**: placing the collector at $2\Delta z$ ensures the beam reaches it within $T$ ($K_{\text{absorbed}} > 0$). $E_0 = 1.0\times 10^4\text{ V/m}$ is an empirical choice: at $2.0\times 10^5\text{ V/m}$ the four-level sweep fails the strict monotone local-slope check. Both values are small perturbations of the beam energy, so that is not the reason; the mechanism is not understood (most likely the collector-impact step shifting between $\Delta t$ levels with the lattice knot positions).
+
+The verification tests and example script can be run with:
+
+```bash
+pytest tests/test_083_particles_beams.py -v
+python examples/020_particles_beam_energy_balance.py --smoke
+```
+
+##### 3. Limits & Failure Modes
+
+- **Macroparticle shot noise of the injector**: `BeamInjector` samples $n_{\text{macro}} = \text{n\_macro\_per\_step}$ random transverse positions $(x_p, y_p)$ (and optional Maxwellian thermal velocities $u_x, u_y$) per time step, each carrying macro-weight $w_p \propto I(t_{n+1/2})\Delta t / (|q|\,n_{\text{macro}})$. Finite $n_{\text{macro}}$ introduces Monte Carlo shot noise of order $\mathcal{O}(n_{\text{macro}}^{-1/2})$ in the transverse charge/current moments and discrete particle-particle fluctuations in the self-fields. In $\Delta t$-convergence studies at fixed $n_{\text{macro}}$ with nonzero beam radius, changing the number of steps $N_{\text{steps}} = T / \Delta t$ draws a different sequence of per-step transverse samples $(\text{seed}, s)$, which imposes a statistical shot-noise floor on $|\mathcal{R}_{\text{energy}}(\Delta t)|$ unless $n_{\text{macro}}$ is chosen large enough that the $\mathcal{O}(\Delta t^2)$ pusher/gather truncation error dominates the sampling variance.
+- **What the energy closure does not cover (CPML, ABC, conductive media, and open boundaries without a Poynting flux monitor)**:
+  1. *CPML and absorbing field boundaries*: The exact identity $\Delta W_{\text{field}}^n + \Delta t\,\mathbf{J}^{n+1/2}\cdot\mathbf{V}_E\bar{\mathbf{e}}^{n+1/2} = 0$ requires conservative curl duality $\tilde{\mathbf{C}}^\top = \mathbf{C}$ with lossless boundary conditions (`bc="pec"`, `"pmc"`, or `"periodic"`). When convolutional perfectly matched layers (`bc="cpml"`) or first-order absorbing boundary conditions (`bc="abc"`) are active, electromagnetic wave energy radiated by the beam is absorbed by the auxiliary CPML $\boldsymbol{\psi}_E, \boldsymbol{\psi}_H$ variables or boundary impedance. `ParticleSolver.energy_balance()` does **not** integrate the outward Poynting flux $\oint_{\partial\Omega} (\mathbf{E}\times\mathbf{H})\cdot\mathrm{d}\mathbf{A}$ across the CPML inner interface or track the energy dissipated inside the CPML auxiliary fields; closing the energy budget on an open/CPML domain requires subtracting the time-integrated Poynting flux through a closed bounding surface monitor surrounding the active region.
+  2. *Ohmic conductivity, time-varying materials, and dispersive/nonlinear media*: Ohmic conduction currents $\sigma\mathbf{E}$ (`solver.sigma`) and dispersive or nonlinear polarization currents are not included in `ParticleSolver.field_work()`, which integrates only the macroparticle current `ps.J_particles`. In addition, the staggered field energy $W_{\text{field}}^n$ (`_staggered_field_energy`) uses static constitutive weights $\mathbf{M}_\varepsilon$ and $\mathbf{M}_\mu$ cached from `solver.ieps` and `solver.imu` at attachment (`_init_energy_weights`), so time-varying material groups break the discrete field energy identity.
+  3. *Sub-step absorption timing at collectors and walls*: When a particle crosses a `Collector` or PEC boundary at fractional step coordinate $\alpha \in [0, 1)$, Esirkepov current deposition is truncated at $\boldsymbol{\xi}_{\text{stop}} = \boldsymbol{\xi}^n + \alpha(\boldsymbol{\xi}^{n+1} - \boldsymbol{\xi}^n)$ (so the field exchanges work with the particle over $\alpha\Delta t$), whereas `absorbed_energy` is evaluated from the half-step velocity $\mathbf{u}^{n+1/2}$ pushed over the full step $\Delta t$ (offset by $(\frac{1}{2} - \alpha)\Delta t$ from the impact instant $t_n + \alpha\Delta t$). For a macroparticle of charge $q$ (or macro-charge $w_p q$) and velocity $\mathbf{v}$ absorbed in an electric field $\mathbf{E}$, this sub-step timing mismatch contributes a per-macroparticle $\mathcal{O}(\Delta t)$ absorption kinetic-energy error bounded by $|\delta K| \lesssim \frac{1}{2}\,|q|\,|\mathbf{v}\cdot\mathbf{E}|\,\Delta t$ for steps in which particles are actively absorbed.
+
+##### References
+
+- T. Weiland, "A discretization method for the solution of Maxwell's equations for six-component fields", *Electronics and Communications (AEÜ)* **31**(3), 116–120 (1977).
+- M. Clemens and T. Weiland, "Discrete electromagnetism with the Finite Integration Technique", *Progress In Electromagnetics Research (PIER)* **32**, 65–87 (2001), [doi:10.2528/PIER00080103](https://doi.org/10.2528/PIER00080103).
+- C. K. Birdsall and A. B. Langdon, *Plasma Physics via Computer Simulation*, Taylor & Francis / IOP Publishing, Bristol (1991), ISBN 978-0-7503-0117-6.
+- T. Zh. Esirkepov, "Exact charge conservation scheme for Particle-in-Cell simulation with an arbitrary form-factor", *Comput. Phys. Commun.* **135**(2), 144–153 (2001), [doi:10.1016/S0010-4655(00)00228-9](https://doi.org/10.1016/S0010-4655(00)00228-9).
+- N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM, Philadelphia (2002), Sec. 3.1, [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027).
+
+#### 16. Cathode surface emission models and the Child–Langmuir diode (`wakis/particles/emission.py`)
+
+`wakis.particles` provides three self-consistent cathode surface emission models in `wakis/particles/emission.py`—`SpaceChargeLimitedEmitter`, `ThermionicEmitter`, and `FowlerNordheimEmitter`—together with their standalone analytical helper functions (`child_langmuir_current_density`, `schottky_barrier_lowering`, `richardson_dushman_current_density`, `forbes_barrier_functions`, and `fowler_nordheim_current_density`). Every surface emitter implements `InjectorProtocol` (`wakis/particles/boundaries.py`—providing `species`, `z0`, `emitter_kind = "pec_wall"`, `_bind(solver)`, `inject(t, dt, step_index=None, *, owning=True) -> int`, `injected_charge`, `injected_energy`, `state_dict()`, and `load_state_dict(state)`) so that cathode emission plugs directly into the electromagnetic particle-in-cell loop and checkpoint/restart pipeline on CPU, GPU, and MPI $z$-slab decompositions.
+
+##### 1. Injector interface, leapfrog time level, and boundary half-cell surface field
+
+1. **Cathode node/dual-cell geometry, `_bind(solver)`, and emission patches**:
+   - The cathode is the lower longitudinal PEC boundary plane $z_0 = z_{\min}$ (`solver.bc_low[2]` in `{"pec", "electric"}`), so `_bind(solver)` classifies every cathode surface emitter as `emitter_kind = "pec_wall"`.
+   - On the staggered FIT grid (`GridFIT3D` / `SolverFIT3D`), the primary longitudinal electric-field component `solver.E[i, j, 0, "z"]` sits at transverse **primal node** $(x_i, y_j)$ for $(i, j) \in [0, \text{solver.Nx} - 1] \times [0, \text{solver.Ny} - 1]$ and spans $[z_{\min}, z_{\min} + \Delta z_0]$. In discrete Gauss's law $\tilde{\mathbf{S}}\tilde{\mathbf{d}} = \mathbf{q}$, each primary edge $E_z[i, j, 0]$ is paired with the transverse **dual face area**
+     ```math
+     \tilde{A}_z[i, j] = \frac{1}{\mathrm{itA}_z[i, j, 0]} = \tilde{L}_x[i]\,\tilde{L}_y[j] \qquad [\text{m}^2],
+     ```
+     which equals $\Delta x_i \Delta y_j$ on interior nodes and $\frac{1}{2}\Delta x_0 \Delta y_j$ (or $\frac{1}{4}\Delta x_0 \Delta y_0$) on non-periodic boundary edges/corners, with $\sum_{i, j} \tilde{A}_z[i, j] = (x_{\max} - x_{\min})(y_{\max} - y_{\min})$.
+   - Emission takes place from the active cathode primal nodes $(i, j)$ whose coordinates $(x_i, y_j)$ lie inside an optional rectangular patch (`x_bounds=(x_min, x_max)`, `y_bounds=(y_min, y_max)`) or circular disk patch (`radius=R`, `center=(x_0, y_0)`). Each active node $(i, j)$ has dual face area $\tilde{A}_z[i, j]$ and emits $M = \text{n\_macro\_per\_cell}$ macroparticles per step at the primal node $(x_i, y_j, z_0)$ so that every emitted macroparticle deposits its full transverse Cloud-in-Cell ($p = 1$) weight onto node $(i, j)$ consistently with the dual-cell Gauss pillbox.
+   - Under MPI longitudinal $z$-slab decomposition (`solver.use_mpi == True`), `ParticleSolver._owns_z_coord(inj.z0)` assigns ownership of $z_0 = z_{\min}^{\text{global}}$ to rank $r = 0$. On each coupled step, rank $0$ calls `inj.inject(t_n, dt, step_index=self.n_particle_steps)` (`owning=True`), while non-owning ranks $r > 0$ call `inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)`, which returns `0` after advancing `step_index` (and `species._next_id` by $N_{\text{emit}} = N_{\text{nodes}} \times M$ within active $[t_{\text{start}}, t_{\text{end}}]$ windows when `species._track_ids` is enabled) to keep counters consistent across ranks. Checkpoint persistence via `state_dict()` / `load_state_dict(state)` saves and restores `injected_charge`, `injected_energy`, `injected_count`, `step_index`, `species._next_id`, `emitter_kind`, and `voltage_source_work`.
+
+2. **Time level of the electric field read by `inject(t, dt)` and $-\Delta t / 2$ leapfrog back-push**:
+   - Within `ParticleSolver._mid_step_hook()` (CPU) and `ParticleSolver._mid_step_hook_gpu()` (GPU) (`wakis/particles/solver.py`), `inj.inject(t_n, dt, step_index=self.n_particle_steps)` executes at the **start** of the mid-step hook on step $n$: after the magnetic field half-step advance $\mathbf{H}^{n-1/2} \to \mathbf{H}^{n+1/2}$, and **before** the field gather at $t_n$, relativistic Boris momentum push $\mathbf{u}^{n-1/2} \to \mathbf{u}^{n+1/2}$, position advance $\mathbf{x}^n \to \mathbf{x}^{n+1}$, boundary absorption, Esirkepov current deposition $\mathbf{J}^{n+1/2}$, and the FIT electric-field update $\mathbf{E}^n \to \mathbf{E}^{n+1}$.
+   - Immediately after `inj.inject(...)` appends newly emitted particles at $z = z_{\min}$ with launch proper velocity $\mathbf{u}_p(t_n) = (0, 0, u_{\text{th}})$, `ParticleSolver` deposits their birth nodal charge into `_particles_q_bg` (`_particles_q_bg -= q_inj_nodes`) to represent the stationary image/counter-charge left behind on the PEC cathode, and then calls `ParticleSolver._backpush_injected_slice(sp, slice(n_before, n_after), dt, t_n)` to shift the newly emitted particles' proper velocities by $-\Delta t / 2$ to the staggered leapfrog level $\mathbf{u}_p^{n-1/2}$ before the species loop advances $\mathbf{u}^{n-1/2} \to \mathbf{u}^{n+1/2}$ and $\mathbf{x}^n \to \mathbf{x}^{n+1}$ over step $n$.
+   - Consequently, both `inj.inject(...)` and `_backpush_injected_slice(...)` read the grid electric field at **integer time level $t_n = n\Delta t$**, i.e. $\mathbf{E}^n$.
+
+3. **Boundary half-cell Gauss pillbox reconstruction of $E_z(z_{\min}^+)$**:
+   - On the staggered FIT grid, `solver.E[i, j, 0, "z"]` resides at the primary edge midpoint $z_{1/2} = z_{\min} + \frac{1}{2}\Delta z_0$ at transverse primal node $(x_i, y_j)$, whereas the cathode surface is at node $k = 0$ ($z = z_{\min}$).
+   - Applying discrete Gauss's law to the boundary dual half-cell pillbox of transverse area $\tilde{A}_z[i, j]$ and longitudinal extent $[z_{\min}, z_{\min} + \frac{1}{2}\Delta z_0]$ enclosing the interior side of cathode node $(i, j, 0)$ gives the jump between the surface normal field $E_z(x_i, y_j, z_{\min}^+)$ immediately inside the vacuum gap and the staggered edge field $E_z[i, j, 0]^n$:
+     ```math
+     \varepsilon_0 \tilde{A}_z[i, j]\left(E_z[i, j, 0]^n - E_z(x_i, y_j, z_{\min}^+)\right) = q_0^n[i, j],
+     ```
+     where $q_0^n[i, j]$ [C] is the linear Cloud-in-Cell ($p = 1$, `shape=1`) space charge assigned to cathode node $(i, j, 0)$ by active particles currently in the first longitudinal cell $\zeta_p \in [0, 1)$, computed via `grid_map.to_logical(x_p, y_p, z_p)` and `bspline_weights_1d(..., order=1, staggered=False)` so that graded transverse and longitudinal meshes are supported:
+     ```math
+     q_0^n[i, j] = \sum_{p:\;\zeta_p \in [0, 1)} q_s w_p\,W_x^{(1)}(\xi_p - i)\,W_y^{(1)}(\eta_p - j)\,(1 - \zeta_p), \qquad
+     E_z(x_i, y_j, z_{\min}^+) = E_z[i, j, 0]^n - \frac{q_0^n[i, j]}{\varepsilon_0 \tilde{A}_z[i, j]}.
+     ```
+     Because the boundary half-cell pillbox derivation uses the two-point CIC nodal partition $1 = (1 - \zeta_p) + \zeta_p$ on $[z_{\min}, z_{\min} + \Delta z_0]$, `_cathode_node_charge()` requires `psolver.shape == 1` and raises `NotImplementedError` if attached to a `ParticleSolver` with `shape != 1`.
+   - For a species of charge $q_s$ (with $q_s = -e < 0$ for electrons), the inward-pulling normal field magnitude that accelerates particles off the cathode into the $+z$ domain is
+     ```math
+     E_n[i, j] = \max\!\left(-\operatorname{sgn}(q_s)\,E_z(x_i, y_j, z_{\min}^+),\; 0\right) \qquad [\text{V/m}].
+     ```
+   - Subtracting the half-cell nodal charge term $q_0^n / (\varepsilon_0 \tilde{A}_z)$ is essential: while an emitted particle sits in $[z_{\min}, z_{\min} + \frac{1}{2}\Delta z_0]$, Esirkepov current deposition has screened $E_z[i, j, 0]$ by only fraction $\zeta_p$, whereas $q_0^n[i, j]$ carries the remaining unscreened fraction $1 - \zeta_p$ on node $k = 0$. Immediately after `SpaceChargeLimitedEmitter.inject(t, dt)`, $q_0[i, j]$ increases by $\varepsilon_0 E_n[i, j] \tilde{A}_z[i, j]$ and drives $E_z(x_i, y_j, z_{\min}^+) \to 0$ on every emitting node to machine round-off (an algebraic identity of the emitter definition), while independently the cathode-plane dual electric flux minus the deposited cathode nodal charge $(\tilde{\mathbf{S}}\tilde{\mathbf{d}})_{i, j, 0} - q_{0,\text{deposit}}[i, j]$ (the residual PEC surface charge computed via `compute_dual_divergence_d` and `deposit_charge`) also vanishes to machine round-off.
+
+4. **Fixed anode-to-cathode voltage enforcement (`maintain_voltage`) and energy balance in DC planar diodes**:
+   - In a pure time-domain electromagnetic FIT solver with PEC plates at $z_{\min}$ and $z_{\max}$ and no external circuit source, transit current $\mathbf{J}_z$ across the gap discharges the initial vacuum electric field $E_z^0 = -V / d$ as an open-circuit parallel-plate capacitor ($\frac{\mathrm{d}V_{\text{gap}}}{\mathrm{d}t} = -\frac{1}{C_{\text{gap}}}\int J_z\,\mathrm{d}A$).
+   - Passing `voltage=V` initializes a uniform longitudinal electric field $E_z = -V / d$ across the gap of length $d = z_{\max} - z_{\min}$ at construction if and only if `solver.E` is currently zero (identically on CPU and GPU). By default, `maintain_voltage=False` so the emitter never alters the interior field evolution automatically.
+   - When `maintain_voltage=True` is explicitly enabled (restricted to planar periodic-transverse diodes with `bc_low/high[0, 1]` in `{"periodic", "bloch"}`, PEC anode `bc_high[2]` in `{"pec", "electric"}`, and no embedded STL solids or solid conductors, raising `ValueError` if `use_stl=True`, `use_conductors=True`, `grid.stl_solids` / `grid.sheets` are present, or any longitudinal gap edge has `ieps_z == 0`), `_enforce_gap_voltage()` models an **ideal external voltage source** holding the area-averaged potential difference
+     ```math
+     V_{\text{curr}} = -\frac{1}{A_{\text{domain}}}\int_{\Omega} E_z\,\mathrm{d}V = V
+     ```
+     by applying a single spatially uniform longitudinal shift $\Delta E_z = -(V - V_{\text{curr}}) / d$ across the entire physical domain. Because $\Delta E_z$ is independent of $(x, y, z)$, it adds identically zero $\nabla \times \mathbf{E}$ and leaves discrete Gauss's law $\tilde{\mathbf{S}}\tilde{\mathbf{d}} = \mathbf{q}$ unchanged at all interior nodes $1 \le k \le N_z - 1$ to machine round-off. At the PEC boundary nodes $k = 0$ (cathode) and $k = N_z$ (anode), $\Delta E_z$ modifies the boundary electric flux by $\pm\varepsilon_0 \Delta E_z \tilde{A}_z$ (representing the surface charge delivered to the plates by the external voltage source); accordingly, when `maintain_voltage=True` is active, `gauss_residual(solver, species)` evaluates discrete Gauss's law on the interior vacuum nodes $1 \le k \le N_z - 2$ (of the `Nz`-sized solver array, a subset of $1 \le k \le N_z - 1$) and does not check the cathode boundary node $k = 0$.
+   - Physically, the shift $\Delta E_z$ over step $\Delta t$ corresponds to an external circuit return current density $J_{\text{ext}} = \varepsilon_0\,\Delta E_z / \Delta t$ and injects electrostatic field energy according to the **algebraic identity**
+     ```math
+     \delta W_{\text{src}} = \frac{1}{2}\varepsilon_0 \int_{\Omega}\left[(E_z + \Delta E_z)^2 - E_z^2\right]\mathrm{d}V = -\varepsilon_0 A_{\text{domain}}\,\Delta E_z\,\frac{V + V_{\text{curr}}}{2} = \Delta W_{\text{field}},
+     ```
+     which equals the exact single-clamp change in gap electrostatic field energy $\Delta W_{\text{field}}$ to machine round-off for any 3D field $E_z(x, y, z)$ (an algebraic identity of the quadratic field energy difference) and is accumulated in `emitter.voltage_source_work` [J]. Over any steady-state window $[t_1, t_2]$ in the V6 planar diode, the total work supplied by the voltage source and injected particle kinetic energy closes against the kinetic energy absorbed at the anode (`absorbed_energy["z_high"]`), the kinetic energy absorbed back at the cathode (`absorbed_energy["z_low"]`), the change in kinetic energy of particles in flight in the gap ($\Delta K_{\text{gap}} = K_{\text{gap}}(t_2) - K_{\text{gap}}(t_1)$), and the change in gap electromagnetic field energy ($\Delta W_{\text{field}} = W_{\text{field}}(t_2) - W_{\text{field}}(t_1)$):
+     ```math
+     \Delta W_{\text{in}} = \Delta W_{\text{src}} + \Delta K_{\text{inj}} = \Delta K_{\text{anode}} + \Delta K_{\text{cathode}} + \Delta K_{\text{gap}} + \Delta W_{\text{field}} + \mathcal{O}\!\left(\frac{\Delta z}{d}\right).
+     ```
+     Note the $\mathcal{O}(\Delta t)$ leapfrog endpoint mismatch at the window boundaries $t_1$ and $t_2$: in-flight particle kinetic energy $K_{\text{gap}}$ is evaluated at half-integer velocity time level $\mathbf{u}^{n+1/2}$, whereas the gap field energy $W_{\text{field}}$ is evaluated at integer electric-field time level $\mathbf{E}^{n+1}$. Across the window, the relative energy-closure residual is bounded at each resolution by the **semi-empirical** first-order bound
+     ```math
+     \frac{|\Delta W_{\text{out}} - \Delta W_{\text{in}}|}{\Delta W_{\text{in}}} \le \frac{\frac{1}{6} + \frac{4}{3}\,\text{CFL}\,(v_{\max}/c)}{N_z},
+     ```
+     built from the sum of two $\mathcal{O}(N_z^{-1})$ estimates: (i) $\frac{1}{6 N_z}$ from the boundary half-cell linear gather clipping $-\frac{1}{8}(|E_z(d)| - |E_z(0)|)\Delta z / V = -\frac{1}{6}/N_z$ between the piecewise-linear `gather_cic` work integral across $[0, d]$ and the clamped potential $V = -\sum_{k=0}^{N_z-1} E_z[k]\Delta z$ (using the Child–Langmuir endpoint fields $|E_z(d)| = \frac{4}{3}V / d$ and $|E_z(0)| = 0$), and (ii) $\frac{4}{3}\,\text{CFL}\,(v_{\max}/c)/N_z$ from the single-step leapfrog anode-crossing overshoot $|E_z(d)|\,v_{\max}\Delta t / V$ with $\Delta t = \text{CFL}\,\Delta z / c$. Across $N_z \in \{12, 24, 48\}$, the energy residual converges with theoretical first-order spatial rate $p_{\text{energy,th}} = 1$ (tested against the empirical three-grid order band $p_{\text{energy}} \in [0.75, 1.40]$).
+   - Under MPI longitudinal $z$-slab decomposition (`use_mpi=True`), `_gap_d`, `_Nz_phys`, and `_dz_vec` represent only the local rank's slab; passing `voltage != None`, `maintain_voltage=True`, or querying `emitter.gap_d` raises `NotImplementedError` on every rank.
+
+##### 2. GPU execution, emitter zero-host-sync design, and zero-weight macroparticle handling
+
+When `solver.use_gpu` or `species.on_gpu` is `True`, all surface emitters operate on CuPy device arrays (`xp = cupy`, requiring **CuPy $\ge 13$** so `cp.add.at` is available for unbuffered scatter-addition in `_cathode_node_charge()`) and **the emitter itself adds no host-device synchronization** (`cp.ndarray.get`, `float(d_arr)`, or host boolean branches) inside `inject(t, dt)`:
+
+1. **Direct device field view**: To avoid the host copy performed by `Field.__getitem__` when indexing a single slice on GPU, `_SurfaceEmitterBase._ez_3d_view()` reshapes the underlying device slice `solver.E.array[2*N : 3*N]` in Fortran order directly on `xp`.
+2. **Fixed-count device injection and solver-side compaction sync**: At every active GPU step, `inject(t, dt)` appends a fixed deterministic count of $N_{\text{emit}} = N_{\text{nodes}} \times M$ macroparticles using preallocated device coordinate/velocity buffers (`_x_emit, _y_emit, _z_emit, _ux_emit, _uy_emit, _uz_emit`) and device-computed weights
+   ```math
+   w_{\text{node}}[i, j] = \frac{|q_{\text{node}}[i, j]|}{|q_s|\,M}.
+   ```
+   Cumulative `injected_charge`, `injected_energy`, and `voltage_source_work` are accumulated in 0-D device arrays wrapped by `_DeviceScalar`, which supports in-place device addition without synchronizing the CUDA stream and converts to a Python `float` only when explicitly inspected on the host. Note that at the solver call site (`wakis/particles/solver.py` ~l.2373), `ParticleSolver._mid_step_hook_gpu()` queries `n_before = inj.species.n_particles` before calling `inj.inject(t_n, dt)`; when boundary absorption on the preceding step sets `species._n_dirty_gpu = True`, reading `species.n_particles` performs a 1-scalar device-to-host sync to resolve the compacted particle count. The emitter itself introduces no additional host syncs.
+3. **Zero-weight macroparticles on CPU vs GPU and boundary compaction behavior**:
+   - **CPU (`on_gpu=False`)**: When every emitting node has zero or retarding field ($w_p = 0$ for all $p$, e.g. $E_z \equiv 0$), `inject(t, dt)` skips `species.add_particles` and returns `0`, leaving `species.n_particles == 0` and preventing zero-weight particle pile-up at $z = z_{\min}$ when $E \equiv 0$.
+   - **GPU (`on_gpu=True`)**: To avoid a device-to-host boolean sync (`cp.any(w_emit > 0)`), `inject(t, dt)` appends all $N_{\text{emit}}$ slots on every active step and assigns $w_p = 0$ on nodes where $E_n[i, j] \le 0$ (so `species.n_particles` increases by $N_{\text{emit}}$ on GPU vs `0` on CPU when all weights are zero, while total emitted charge is identically `0.0` on both). Each zero-weight particle occupies $56\text{ B}$ in the `Species` SoA arrays ($64\text{ B}$ when `track_ids=True`, or $192\text{–}224\text{ B}$ including preallocated GPU scratch buffers) and participates in `gather_and_push_kernel` and `deposit_esirkepov_kernel`, contributing $q_s w_p = 0$ to `Wx, Wy, Wz` and zero electromagnetic self-field.
+   - **Compaction behavior**: The solver's boundary stream compaction (`ParticleBoundaries.apply` on CPU and `compact_scatter_kernel` in `wakis/particles/gpu_kernels.py` on GPU) filters particles strictly by **spatial domain/obstacle absorption** (`keep_mask`) and **does not** automatically drop in-domain particles solely because $w_p = 0$. When the cathode field is strictly retarding ($E_z(z_{\min}^+) > 0$ for electrons) and particles are emitted with $u_z = 0$ at $z = z_{\min}$, the retarding electric half-kick pushes those zero-weight particles toward $z < z_{\min}$ on the following step, where the PEC boundary condition at `z_low` absorbs and compacts them out of `Species` automatically. If the surface field on GPU is identically zero ($E_z \equiv 0$) with $u_z = 0$, zero-weight particles remain stationary at $z = z_{\min}$ and accumulate at $N_{\text{emit}}$ slots per step until pulled inward or explicitly compacted via `species.keep(species.w > 0)`.
+
+##### 3. Physical emission models and derivations
+
+###### 3.1 `SpaceChargeLimitedEmitter` (Gauss-law emission) and the Child–Langmuir law
+
+At each time step, `SpaceChargeLimitedEmitter` emits from each active cathode node $(i, j)$ the charge magnitude that drives the normal electric field immediately outside the cathode surface to zero:
+```math
+|q_{\text{node}}[i, j]| = \begin{cases}
+\varepsilon_0 E_n[i, j]\,\tilde{A}_z[i, j], & E_n[i, j] > 0, \\
+0, & E_n[i, j] \le 0.
+\end{cases}
+```
+Macroparticles are initialized at $(x_i, y_j, z_{\min})$ with proper velocity $\mathbf{u} = (0, 0, u_{\text{th}})$, where `thermal_u` ($u_{\text{th}} \ge 0$, default `0.0`) provides an optional small longitudinal launch velocity.
+
+**Derivation of convergence to space-charge-limited flow** [Child, 1911; Langmuir, 1913]:
+In a 1D planar diode of gap $d$ along $z \in [0, d]$ with cathode potential $\phi(0) = 0$ and anode potential $\phi(d) = V > 0$, injected charge sheets accumulate near $z = 0^+$ until the cathode surface field is fully screened, $E_z(0^+) = -\left.\frac{\mathrm{d}\phi}{\mathrm{d}z}\right|_{z=0^+} = 0$. In the non-relativistic electrostatic steady state ($\frac{\partial}{\partial t} = 0$, $e V \ll m_s c^2$) with cold emission ($v(0) = 0$):
+1. Conservation of single-particle energy gives $\frac{1}{2} m_s v(z)^2 = |q_s|\,\phi(z)$, or $v(z) = \sqrt{\frac{2|q_s|\phi(z)}{m_s}}$.
+2. Steady continuity $\frac{\mathrm{d}J_z}{\mathrm{d}z} = 0$ with current density magnitude $J = |\rho(z)|\,v(z)$ gives the space-charge density $\rho(z) = -\operatorname{sgn}(q_s)\frac{J}{v(z)} = -\operatorname{sgn}(q_s) J \sqrt{\frac{m_s}{2|q_s|\phi(z)}}$.
+3. Substituting $\rho(z)$ into 1D Poisson's equation $\frac{\mathrm{d}^2\phi}{\mathrm{d}z^2} = -\frac{\rho(z)}{\varepsilon_0}$ for electrons ($q_s = -e < 0$, $\rho < 0$) yields
+   ```math
+   \frac{\mathrm{d}^2\phi}{\mathrm{d}z^2} = \frac{J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\,\phi(z)^{-1/2}.
+   ```
+4. Multiplying by $2\frac{\mathrm{d}\phi}{\mathrm{d}z}$ and integrating from $z = 0$ using the Gauss-law space-charge-limited boundary conditions $\phi(0) = 0$ and $\frac{\mathrm{d}\phi}{\mathrm{d}z}(0) = -E_z(0^+) = 0$ gives
+   ```math
+   \left(\frac{\mathrm{d}\phi}{\mathrm{d}z}\right)^2 = \frac{4 J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\,\phi(z)^{1/2}
+   \quad\Longrightarrow\quad
+   \phi^{-1/4}\frac{\mathrm{d}\phi}{\mathrm{d}z} = 2\sqrt{\frac{J}{\varepsilon_0}}\left(\frac{m_s}{2|q_s|}\right)^{1/4}.
+   ```
+5. Integrating a second time from $z = 0$ to $z$ and enforcing $\phi(d) = V$ yields the Child–Langmuir current density `child_langmuir_current_density(voltage, gap)` and steady-state profiles:
+   ```math
+   J_{\text{CL}} = \frac{4\varepsilon_0}{9}\sqrt{\frac{2|q_s|}{m_s}}\,\frac{V^{3/2}}{d^2}, \qquad
+   \phi_{\text{CL}}(z) = V\left(\frac{z}{d}\right)^{4/3}, \qquad
+   \rho_{\text{CL}}(z) = -\frac{4\varepsilon_0 V}{9 d^2}\left(\frac{z}{d}\right)^{-2/3}.
+   ```
+
+**Weakly relativistic correction** [Jory & Trivelpiece, 1969]:
+Because the `ParticleSolver` pusher uses relativistic Boris kinematics $\gamma(z) = 1 + \frac{|q_s|\phi(z)}{m_s c^2} = 1 + u(z)^2/c^2$ with $v(z)/c = \frac{\sqrt{\gamma^2 - 1}}{\gamma} = \sqrt{\frac{2|q_s|\phi}{m_s c^2}}\left(1 - \frac{3}{8}\frac{|q_s|\phi}{m_s c^2} + \mathcal{O}(\theta^2)\right)$ where $\theta = \frac{|q_s| V}{m_s c^2}$, integrating $\frac{\mathrm{d}^2\phi}{\mathrm{d}z^2} = \frac{J}{\varepsilon_0 v(\phi)}$ twice from $z = 0$ to $z = d$ gives the leading weakly relativistic Jory–Trivelpiece correction:
+```math
+\frac{J_{\text{rel}}}{J_{\text{CL}}} = 1 - \frac{3}{28}\,\frac{|q_s|\,V}{m_s c^2} + \mathcal{O}\!\left(\left(\frac{|q_s|\,V}{m_s c^2}\right)^2\right).
+```
+For non-relativistic diode voltages $\theta = |q_s| V / (m_s c^2) \ll 1$ (printed at run time by `pytest tests/test_086_particles_emission.py -v -s`), the relativistic shift $-\frac{3}{28}\theta$ is more than an order of magnitude smaller than the first-order spatial discretization error $\mathcal{O}(\Delta z / d)$ on coarse-to-medium particle-in-cell grids ($N_z \le 48$).
+
+**Two-term $\mathcal{O}((\Delta z / d)^{2/3}) + \mathcal{O}(\Delta z / d)$ spatial convergence model and Richardson extrapolation** [Birdsall & Langdon, 1991, Ch. 16; Watrous et al., 2001]:
+The leading $\mathcal{O}((\Delta z / d)^{2/3})$ current error is **spatial** (not $\Delta t$-driven) and arises from the finite-grid discretization of the singular Child–Langmuir cathode boundary layer ($\phi_{\text{CL}}(z) = V(z/d)^{4/3}$, $E_{z,\text{CL}}(z) = -\frac{4V}{3d}(z/d)^{1/3} \propto z^{1/3}$, $\rho_{\text{CL}}(z) \propto z^{-2/3}$) across the first cell $z \in [0, \Delta z]$:
+1. **(a) $J$ is linearly sensitive to the velocity at the end of the first cell ($z = \Delta z$)**: Treat the flow beyond the first cell ($z \ge \Delta z$) as Child–Langmuir flow with zero entry field and entry kinetic energy $|q_s| V_0 = \frac{1}{2} m_s v_1^2$ (with total kinetic-energy potential $\tilde{\phi} = \phi + V_0$ and $v_{\max} = \sqrt{2|q_s|V / m_s}$). The first integral of Poisson's equation is
+   ```math
+   \left(\frac{\mathrm{d}\phi}{\mathrm{d}z}\right)^2 = \frac{4 J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\left(\tilde{\phi}^{1/2} - V_0^{1/2}\right),
+   ```
+   which integrates across the gap to give
+   ```math
+   \frac{J}{J_{\text{CL}}} \approx 1 + 3\sqrt{\frac{V_0}{V}} = 1 + 3\,\frac{v_1}{v_{\max}}.
+   ```
+   A velocity error $\delta v_1$ at $z = \Delta z$ therefore produces a linear relative current shift $\delta J / J_{\text{CL}} \approx 3\,\delta v_1 / v_{\max}$. In continuum Child–Langmuir flow, $v(\Delta z) / v_{\max} = \sqrt{\phi_{\text{CL}}(\Delta z)/V} = (\Delta z / d)^{2/3}$.
+2. **(b) $\delta v_1 / v_1$ is the same at every spatial resolution**: Near the cathode the electric field follows the power law $E_z(z) \propto z^{1/3}$. Normalized by $E_z(\Delta z)$ in terms of the logical coordinate $\zeta = z / \Delta z \in [0, 1]$, the Cloud-in-Cell gathered field across the first cell has a shape that does not depend on $\Delta z$: $E_{z,\text{gathered}}(\zeta) = (\frac{1}{2} + \zeta)\,E_z[0]$ on $\zeta \in [0, 1/2)$ (because the exterior stencil edge $k = -1$ is masked on the PEC boundary), then linear up to $E_z[1]$ on $\zeta \in [1/2, 1]$, with resolution-independent ratios
+   ```math
+   \frac{E_z[0]}{E_z(\Delta z)} = 2^{-1/3}, \qquad \frac{E_z[1]}{E_z(\Delta z)} = \left(\frac{3}{2}\right)^{1/3}.
+   ```
+   Because this normalized profile is independent of $\Delta z$, the relative exit-velocity error $\delta v_1 / v_1$ is constant across resolutions, giving
+   ```math
+   e_{2/3}(\Delta z) = 3\,\left(\frac{\delta v_1}{v_1}\right)\left(\frac{\Delta z}{d}\right)^{2/3} = a\left(\frac{\Delta z}{d}\right)^{2/3}.
+   ```
+3. **(c) The cathode-field route gives the same order**: Equivalently, a residual first-cell field error $E_c \propto E_z(\Delta z) \propto (\Delta z / d)^{1/3}(V / d)$ enters the first integral $(\mathrm{d}\phi / \mathrm{d}z)^2 - E_c^2 = \frac{4J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\,\phi^{1/2}$ quadratically as $(E_c d / V)^2$, which is again $\mathcal{O}((\Delta z / d)^{2/3})$.
+4. **Limits of the argument**: The spatial order $(\Delta z / d)^{2/3}$ is derived, but the sign and the coefficient $a$ are not: feeding the exact continuum Child–Langmuir field $E_z[0] = 2^{-1/3} E_{\text{CL}}(\Delta z)$ and $E_z[1] = (3/2)^{1/3} E_{\text{CL}}(\Delta z)$ through the piecewise-linear CIC gather yields a first-cell work integral $(\frac{3}{4} 2^{-1/3} + \frac{1}{8}(3/2)^{1/3})|E_{\text{CL}}(\Delta z)|\Delta z < \frac{3}{4}|E_{\text{CL}}(\Delta z)|\Delta z = \phi_{\text{CL}}(\Delta z)$, i.e. a velocity deficit ($\delta v_1 / v_1 < 0$), whereas the measured self-consistent bias is positive ($a > 0$) because the discrete space-charge density and edge fields adjust self-consistently in the first cell. Thus $a$ stays fitted, with $\delta v_1 / v_1 = a / 3$ (both $a$ and $\delta v_1 / v_1$ are printed at run time by `pytest tests/test_086_particles_emission.py -v -s`).
+5. **Effect of the $-\Delta t / 2$ leapfrog back-push on emitted particles and the first-cell velocity error**:
+   - When a cold macroparticle ($u_z(t_n) = 0$) is emitted at the cathode plane $z_p^n = z_{\min} = 0$, the Cloud-in-Cell field gather at $\zeta = 0$ evaluates $E_{z,\text{gathered}}(0) = \frac{1}{2} E_z[0]^n$ (since the exterior edge $k = -1$ is masked on the PEC boundary), corresponding to birth acceleration $a_0 = \frac{q_s E_{z,\text{gathered}}(0)}{m_s} = \frac{|q_s|\,|E_z[0]^n|}{2 m_s} > 0$.
+   - **Without** the $-\Delta t / 2$ back-push (pre-P4a emission behaviour), the newly emitted particle entered the species loop with $u_z^{n-1/2} = 0$ and received a full-step impulse in its first push,
+     ```math
+     u_{z,\text{no-backpush}}^{n+1/2} = \frac{q_s E_{z,\text{gathered}}(0)\,\Delta t}{m_s} = a_0\,\Delta t, \qquad \Delta z_p^{(1),\text{no-backpush}} = a_0\,(\Delta t)^2,
+     ```
+     over-accelerating the particle by $+\frac{1}{2} a_0 \Delta t$ relative to the exact half-step velocity at $t_{n+1/2}$.
+   - **With** `_backpush_injected_slice()` applied to all injectors, the $-\Delta t / 2$ back-push sets $u_z^{n-1/2} = -\frac{1}{2} a_0 \Delta t$ at $z_p^n = 0$, so the subsequent full-step $+\Delta t$ push in the species loop yields the leapfrog-consistent half-step kick and exact constant-acceleration first-step displacement from rest:
+     ```math
+     u_z^{n+1/2} = u_z^{n-1/2} + a_0\,\Delta t = \frac{1}{2}\,a_0\,\Delta t = \frac{q_s E_{z,\text{gathered}}(0)\,\Delta t}{2 m_s}, \qquad \Delta z_p^{(1)} = \frac{1}{2}\,a_0\,(\Delta t)^2.
+     ```
+   - Across the first cell $z \in [0, \Delta z]$, replacing the full-step initial kick $a_0\Delta t$ with the half-step kick $\frac{1}{2} a_0\Delta t$ removes the spurious initial velocity excess $\delta v_0 = -\frac{1}{2} a_0\Delta t$ (equivalent to a half-step trajectory delay $\Delta t / 2$ over the first-cell transit time $t_1 = T(\Delta z / d)^{1/3} = \frac{3d}{v_{\max}}(\Delta z / d)^{1/3}$). Using $|E_z[0]| \sim 2^{-1/3} |E_{\text{CL}}(\Delta z)| = \frac{4}{3} 2^{-1/3} \frac{V}{d}(\Delta z / d)^{1/3}$, $v_{\max}^2 = 2|q_s|V / m_s$, and $\Delta t = \text{CFL}\,\Delta z / c$, the resulting change in the first-cell exit velocity $v_1 = v_{\max}(\Delta z / d)^{2/3}$ scales as
+     ```math
+     \frac{\delta v_{1,\text{backpush}}}{v_1} \sim -\frac{a_0\,\Delta t}{2 v_1} = -\frac{2^{-1/3}}{6}\,\text{CFL}\left(\frac{v_{\max}}{c}\right)\left(\frac{\Delta z}{d}\right)^{2/3} = \mathcal{O}\!\left(n_1^{-1}\right),
+     ```
+     and via $\delta J / J_{\text{CL}} \approx 3\,\delta v_1 / v_{\max} = 3(\delta v_1 / v_1)(\Delta z / d)^{2/3}$ shifts the relative steady current error $e(\Delta z) = (J_{\text{steady}}(\Delta z) - J_{\text{CL}}) / J_{\text{CL}}$ by
+     ```math
+     \Delta e_{\text{backpush}}(\Delta z) = 3\,\frac{\delta v_{1,\text{backpush}}}{v_{\max}} \sim -\frac{2^{-1/3}}{2}\,\text{CFL}\left(\frac{v_{\max}}{c}\right)\left(\frac{\Delta z}{d}\right)^{4/3} = \mathcal{O}\!\left(\text{CFL}\left(\frac{v_{\max}}{c}\right)\left(\frac{\Delta z}{d}\right)^{4/3}\right).
+     ```
+   - Because $\Delta e_{\text{backpush}}(\Delta z)$ enters at higher order $\mathcal{O}((\Delta z / d)^{4/3})$ (decreasing by a factor of $2^{4/3}$ per grid doubling) and is suppressed by $\text{CFL}\,(v_{\max}/c) \ll 1$, the asymptotic leading spatial order $(\Delta z / d)^{2/3}$ is unchanged, while at any finite $N_z$ the steady current $J(N_z)$ is slightly lower (closer to $J_{\text{CL}}$) and the two-term coefficients $(a, b)$ fitted on the finite pair $N_z \in \{12, 24\}$ shift slightly by absorbing the $\mathcal{O}((\Delta z / d)^{4/3})$ change. Writing the change as $\Delta e = c\,h^{4/3}$ with $h = \Delta z / d$ and $x = h^{1/3}$, the two-term basis $\{h^{2/3}, h\} = \{x^2, x^3\}$ fitted at the two grids $x_1, x_2$ absorbs it as $\Delta a = -c\,x_1 x_2$ and $\Delta b = c\,(x_1 + x_2)$ (the unique solution of $\Delta a\,x_i^2 + \Delta b\,x_i^3 = c\,x_i^4$, $i = 1, 2$). For $N_z \in \{12, 24\}$ this gives $\Delta b / \Delta a = -(x_1 + x_2)/(x_1 x_2) \approx -5$: a small $c < 0$ shifts $b$ several times more than $a$, so a visible change in $b$ alone is the expected signature of the back-push, not a change of the leading order.
+
+In addition, the regular first-order spatial field and midpoint quadrature bias across the concave $E_{z,\text{CL}}(z) = -\frac{4 V}{3 d}(z / d)^{1/3}$ profile contributes a linear term $b\,(\Delta z / d)$. Combining both spatial terms yields the physical two-term relative current-error expansion
+```math
+e(\Delta z) = \frac{J_{\text{steady}}(\Delta z) - J_{\text{CL}}}{J_{\text{CL}}} = a\left(\frac{\Delta z}{d}\right)^{2/3} + b\left(\frac{\Delta z}{d}\right) + \mathcal{O}\!\left(\left(\frac{\Delta z}{d}\right)^{4/3}\right).
+```
+Because $e(\Delta z)$ is a sum of $(\Delta z / d)^{2/3}$ and $(\Delta z / d)^1$ terms with $a, b > 0$, the product $N_z\,e(\Delta z) = a\,N_z^{1/3} + b$ is **not** constant but increases with $N_z$, and the effective three-grid convergence order $p_{\text{fit}}$ on a finite mesh triplet lies in the derived physical band
+```math
+p_{\text{fit}} \in \left[\frac{2}{3},\; 1\right].
+```
+Fitting $(a, b)$ on the coarser pair $N_z \in \{12, 24\}$ predicts the finest-grid error $e_{\text{pred}}(48) = a(1/48)^{2/3} + b(1/48) = (2^{-2/3} + 2^{-1})\,e(24) - 2^{-5/3}\,e(12)$, which is verified in `tests/test_086_particles_emission.py` against the measured $e(48)$ within the propagated statistical standard error $\sqrt{\sigma_{e,48}^2 + (2^{-2/3} + 2^{-1})^2\sigma_{e,24}^2 + (2^{-5/3})^2\sigma_{e,12}^2}$. The primary continuum-limit validation is Richardson extrapolation at the fitted order $p = p_{\text{fit}}$:
+```math
+J_{\infty} = J_{48} + \frac{J_{48} - J_{24}}{2^p - 1},
+```
+where $|J_{\infty} - J_{\text{CL}}|$ is asserted to lie within $\text{tol} = |J_{\infty} - J_{\infty,\text{2term}}| + \sigma_{J_{\infty}}$, combining the model spread $|J_{\infty} - J_{\infty,\text{2term}}|$ between the single-$p$ and two-term extrapolations with the per-grid statistical errors `J_stat_err` propagated through the factor $r_p = 1 / (2^p - 1)$ as $\sigma_{J_{\infty}} = \sqrt{(1 + r_p)^2\sigma_{48}^2 + r_p^2\sigma_{24}^2}$ (with each term printed at run time by `pytest tests/test_086_particles_emission.py -v -s`).
+- **Experimental confirmation via fixed-$\Delta z$ CFL halving ($\text{CFL} = 0.95$ vs $\text{CFL} = 0.475$ at $N_z = 24$)**: This experiment confirms that the $a(\Delta z / d)^{2/3}$ term is spatial rather than $\Delta t$-driven. In continuum Child–Langmuir flow, a cold particle follows the cubic trajectory $z(t) = d(t/T)^3$ ($T = 3d / v_{\max}$) and crosses the first cell in time $t_1 = T(\Delta z / d)^{1/3}$, taking $n_1 = t_1 / \Delta t = \frac{3c}{\text{CFL}\,v_{\max}}(d / \Delta z)^{2/3}$ steps; if the $(\Delta z / d)^{2/3}$ error came from $\Delta t$ (as $1/n_1 \propto \text{CFL}\,(\Delta z / d)^{2/3}$), halving $\text{CFL}$ at fixed $\Delta z$ would halve the $a$-term $e(\Delta z) - b(\Delta z / d)$. Running $N_z = 24$ at $\text{CFL} = 0.95$ and $\text{CFL} = 0.475$ in `tests/test_086_particles_emission.py` shows instead that the steady current is identical to 6 digits and $e(\Delta z)$ is invariant within statistical/round-off error (reported as a `FINDING` in the test output), because $z(t) = d(t/T)^3$ is a smooth polynomial in $t$ and $n_1 \gg 1$ time steps already resolve the first-cell crossing at non-relativistic $v_{\max}/c \ll 1$.
+
+Both the anode current diagnostic (calibrated against fixed-current injection via `BeamInjector` at $0.9\,J_{\text{CL}}$, where `absorbed_charge` is zero on every boundary face except `z_high` and $J_{\text{anode}} = 0.9\,J_{\text{CL}}$ within statistical error) and the space-charge-limited diode run for $\ge 8$ space-charge-limited transits ($N_{\text{tr}} = 10$, $T = 3 d / v_{\max}$) with primary averaging window $[n_{\text{steps}} // 2, n_{\text{steps}}]$. Stationarity is verified using **disjoint** windows—asserting that the two disjoint halves $[0.50\,n_{\text{steps}}, 0.75\,n_{\text{steps}})$ and $[0.75\,n_{\text{steps}}, n_{\text{steps}})$ of the primary window agree within $\sqrt{\operatorname{Var}(J_1)/N_1 + \operatorname{Var}(J_2)/N_2 + (J / N_{\text{win}})^2}$, and that the disjoint early window $[0.30\,n_{\text{steps}}, 0.50\,n_{\text{steps}})$ agrees with $[0.50\,n_{\text{steps}}, n_{\text{steps}})$ within their combined uncorrelated standard error (whereas comparing nested suffix windows $[f_w n_{\text{steps}}, n_{\text{steps}})$ for $f_w \in \{0.30, 0.40, 0.50, 0.60, 0.70\}$ directly against $[0.50\,n_{\text{steps}}, n_{\text{steps}})$ via `hypot(err(f_w), err(0.50))` overstates the uncertainty of their difference because nested suffix windows share the tail of the run and are positively correlated).
+
+**Self-correction of multiplicative single-step charge scaling ($s \in (0, 1)$) vs the `drop_pillbox` numerical gather-trap artefact**:
+If a single-step Gauss-law emitter is mutated to emit $|\Delta q^n| = s\,\varepsilon_0 E_n^n \tilde{A}_z$ with a constant factor $s \in (0, 1)$ (e.g. $s = 0.9$), the closed-loop electrostatic boundary condition self-corrects on subsequent steps: in steady state where $|\Delta q^n| / \tilde{A}_z = J\,\Delta t$, the pre-injection surface field equilibrates at $E_n^{\text{steady}} = \frac{J\,\Delta t}{s\,\varepsilon_0} = \frac{J\,\Delta t}{\varepsilon_0} + \frac{1 - s}{s}\frac{J\,\Delta t}{\varepsilon_0}$. The residual unscreened cathode field $E_c = \delta E_n$ relative to the mean diode field $V / d$ is
+```math
+\frac{\delta E_n}{V / d} = \frac{1 - s}{s}\,\frac{J\,\Delta t}{\varepsilon_0 V / d} = \frac{4}{9}\,\frac{1 - s}{s}\,\frac{v_{\max}\Delta t}{d}.
+```
+Integrating 1D Poisson's equation $\frac{\mathrm{d}^2\phi}{\mathrm{d}z^2} = \frac{J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\,\phi^{-1/2}$ with a non-zero cathode surface field $-\frac{\mathrm{d}\phi}{\mathrm{d}z}(0^+) = -E_c$ gives $(\mathrm{d}\phi / \mathrm{d}z)^2 - E_c^2 = \frac{4 J}{\varepsilon_0}\sqrt{\frac{m_s}{2|q_s|}}\,\phi^{1/2}$. Because $E_c = 0$ is an extremum of $(\mathrm{d}\phi / \mathrm{d}z)^2$, the cathode-field perturbation to the steady current $J$ is **quadratic** in $E_c d / V$ (so an earlier linear estimate $\mathcal{O}(\delta E_n d / V)$ over-estimates it):
+```math
+\frac{\Delta J}{J_{\text{CL}}} = \mathcal{O}\!\left(\left(\frac{\delta E_n\,d}{V}\right)^2\right) = \mathcal{O}\!\left(\left(\frac{4}{9}\,\frac{1 - s}{s}\,\frac{v_{\max}\Delta t}{d}\right)^2\right).
+```
+Because $v_{\max}\Delta t / d = \text{CFL}\,(v_{\max}/c)\,\Delta z / d \ll \Delta z / d$ in a non-relativistic electromagnetic particle-in-cell step, a single-step scaling $s \in (0, 1)$ produces a negligible $\mathcal{O}((v_{\max}\Delta t / d)^2)$ shift that is many orders of magnitude smaller than the $\mathcal{O}(\Delta z / d)$ spatial discretization error and therefore cannot discriminate in a convergence-tolerance test. By contrast, omitting the boundary half-cell pillbox term $-q_0 / (\varepsilon_0 \tilde{A}_z)$ in $E_z(z_{\min}^+) = E_z[i, j, 0] - q_0 / (\varepsilon_0 \tilde{A}_z)$ (`drop_pillbox=True`) triggers a **numerical half-cell gather trap (artefact)**: without $-q_0 / (\varepsilon_0 \tilde{A}_z)$, the emitter reads $E_z[0]$ directly as $E_z(z_{\min}^+)$ and over-emits charge sheets on every step until Esirkepov current deposition from sheets inside $\zeta \in [0, 1/2)$ drives $E_z[0]$ near $0$ (and slightly positive/retarding). Once $E_z[0]$ is held near $0$, any charge inside $[0, \Delta z_0 / 2)$ gathers $E_{z,\text{gathered}}(\zeta) = (\frac{1}{2} + \zeta)\,E_z[0] \approx 0$ (or retarding) and never leaves the first half-cell $[0, \Delta z_0 / 2)$, choking the transmitted anode current to $J_{\text{anode}} = 0$ ($\Delta J_{\text{anode}} / J_{\text{CL}} = -1$) as a discretization artefact of the boundary half-cell gather.
+
+![Anode current density vs time and spatial convergence in the V6 planar Child–Langmuir diode](img/particles_child_langmuir_current_vs_time.png)
+
+![Steady electrostatic potential and space-charge density profiles in the V6 planar Child–Langmuir diode](img/particles_child_langmuir_profiles.png)
+
+###### 3.2 `ThermionicEmitter` (Richardson–Dushman with Schottky barrier lowering)
+
+`ThermionicEmitter` models thermal electron emission over a surface potential barrier reduced by the classical image-charge force (`richardson_dushman_current_density` and `schottky_barrier_lowering`) [Richardson, 1916; Dushman, 1923; Schottky, 1914]:
+```math
+J_{\text{RD}}(F, T) = \lambda_R A_0 T^2 \exp\!\left(-\frac{\max(W - \Delta W_S(F),\; 0)}{k_B T}\right),
+```
+where:
+- $T > 0$ [K] is the absolute cathode temperature;
+- $W = e\,\phi_{\text{eV}} > 0$ [J] is the zero-field material work function (`work_function_eV` in [eV]);
+- $A_0 = \frac{4\pi m_e k_B^2 e}{h^3} \approx 1.20173\times 10^6\text{ A m}^{-2}\text{ K}^{-2}$ is the universal Sommerfeld–Richardson constant (`RICHARDSON_A0`);
+- $\lambda_R > 0$ [-] is the material-specific Richardson correction factor (`lambda_R`, default `1.0`);
+- $\Delta W_S(F)$ [J] is the **Schottky barrier lowering** (`schottky_barrier_lowering`): an electron at distance $z > 0$ from a planar PEC surface experiences the attractive image force $F_{\text{img}}(z) = -\frac{e^2}{16\pi\varepsilon_0 z^2}$ and external pulling force $-e F$ ($F = E_n > 0$), giving potential energy $U(z) = W - \frac{e^2}{16\pi\varepsilon_0 z} - e F z$. Maximizing $U(z)$ with respect to $z$ locates the barrier peak at $z_m = \sqrt{\frac{e}{16\pi\varepsilon_0 F}}$ and lowers the barrier maximum by
+  ```math
+  \Delta W_S(F) = W - U(z_m) = \sqrt{\frac{e^3 \max(F, 0)}{4\pi\varepsilon_0}} \qquad [\text{J}].
+  ```
+
+At each step, `ThermionicEmitter` emits charge $|q_{\text{node}}| = J_{\text{RD}}(E_n, T)\,\tilde{A}_z\,\Delta t$ into nodes with pulling field $E_n > 0$, and emits **identically zero** where $E_n \le 0$ (even though the standalone formula `richardson_dushman_current_density(0.0, ...)` evaluates the non-zero zero-field thermal current $J_{\text{RD}}(0, T) > 0$). Consequently, `ThermionicEmitter` does not inject thermal electrons against a retarding surface field and therefore does not model a **virtual cathode** potential minimum ($\phi_{\min} < 0$ at $z_m > 0$ with $E_z(0^+) > 0$). When `space_charge_limit=True`, the single-step emitted charge is capped by the Gauss-law space-charge limit:
+```math
+|q_{\text{node}}[i, j]| = \min\!\left(J_{\text{RD}}(E_n[i, j], T)\,\tilde{A}_z[i, j]\,\Delta t,\; \varepsilon_0 E_n[i, j]\,\tilde{A}_z[i, j]\right).
+```
+
+###### 3.3 `FowlerNordheimEmitter` (Murphy–Good cold field emission with Forbes 2006 barrier functions)
+
+`FowlerNordheimEmitter` models quantum-mechanical cold field emission through a Schottky–Nordheim image-rounded triangular barrier using the zero-temperature Murphy–Good (1956) equation with the Forbes (2006) analytical approximations for the special barrier functions $v(f)$ and $t(f)$ (`fowler_nordheim_current_density` and `forbes_barrier_functions`) [Fowler & Nordheim, 1928; Murphy & Good, 1956; Forbes, 2006].
+
+Given macroscopic pulling normal field $E_n > 0$ [V/m], geometric field-enhancement factor $\beta_{\text{FE}} > 0$ [-] (`beta_fe`, default `1.0`), and work function $\phi_{\text{eV}} = \phi / e > 0$ [eV] (`work_function_eV`), the local barrier field is $F_{\text{loc}} = \beta_{\text{FE}} E_n$ [V/m] and the dimensionless **scaled barrier field** $f$ is the square of the ratio of the Schottky lowering to the work function:
+```math
+f = \frac{e^3 F_{\text{loc}}}{4\pi\varepsilon_0 \phi^2} = \left(\frac{\Delta W_S(F_{\text{loc}})}{e\,\phi_{\text{eV}}}\right)^2 \qquad [-].
+```
+The Murphy–Good emission current density is
+```math
+J_{\text{FN}}(E_n) = \frac{a_{\text{FN}}\,F_{\text{loc}}^2}{\phi_{\text{eV}}\,t(f)^2} \exp\!\left(-\frac{b_{\text{FN}}\,\phi_{\text{eV}}^{3/2}}{F_{\text{loc}}}\,v(f)\right) \qquad [\text{A/m}^2],
+```
+with universal first and second Fowler–Nordheim constants (expressed for $\phi_{\text{eV}}$ in [eV] and $F_{\text{loc}}$ in [V/m]):
+```math
+a_{\text{FN}} = \frac{e^2}{16\pi^2 \hbar} \approx 1.541434\times 10^{-6}\ \text{A eV V}^{-2}, \qquad
+b_{\text{FN}} = \frac{4\sqrt{2 m_e e}}{3\hbar} \approx 6.830890\times 10^{9}\ \text{eV}^{-3/2}\ \text{V m}^{-1},
+```
+and the Forbes (2006) simple good approximations for the principal Schottky–Nordheim barrier function $v(f)$ and pre-exponential function $t(f) = v(f) - \frac{4}{3} f \frac{\mathrm{d}v}{\mathrm{d}f}$:
+```math
+v(f) = 1 - f + \frac{1}{6}\,f \ln f, \qquad
+t(f) = 1 + \frac{f}{9} - \frac{1}{18}\,f \ln f.
+```
+In terms of the complete elliptic integrals of the first and second kinds $K(m)$ and $E(m)$ (`scipy.special.ellipk(m)` and `scipy.special.ellipe(m)` with parameter $m = k^2 = \frac{2s}{1 + s}$ and $s = \sqrt{1 - f}$ for $0 < f \le 1$), the exact Schottky–Nordheim functions are [Murphy & Good, 1956, Eqs. (55)–(58); Forbes & Deane, 2007]:
+```math
+v_{\text{exact}}(f) = \sqrt{\frac{1 + s}{2}}\,\left[E(m) - (1 - s)\,K(m)\right], \qquad
+t_{\text{exact}}(f) = v_{\text{exact}}(f) - \frac{4}{3} f \frac{\mathrm{d}v_{\text{exact}}}{\mathrm{d}f} = \sqrt{\frac{1 + s}{2}}\,E(m).
+```
+Across $f \in [0, 1]$, Forbes (2006), *Appl. Phys. Lett.* **89**, 113122 states the following maximum-error bounds for Eqs. (189)–(190) relative to the exact elliptic-integral functions (note: the page and equation quotes from Forbes 2006 below are marked `(unverified quote)` because the PDF is not yet in `literature/`):
+- For $v(f)$ [Forbes, 2006, p. 113122-2, Eq. (5) & Table I (unverified quote)]: $\max_{f \in [0, 1]} |v(f) - v_{\text{exact}}(f)| \le 0.0024$ ($0.24\%$ of $v(0) = 1$, unverified quote) and $\max |v(f) - v_{\text{exact}}(f)| / v_{\text{exact}}(f) \le 0.0033$ ($0.33\%$, unverified quote).
+  - **Finding on the continuous $v(f)$ relative error**: On the 9-point Table I grid $y = \sqrt{f} \in \{0.1, 0.2, \dots, 0.9\}$ (`f = y^2`), the exact bound $|v(f) - v_{\text{exact}}(f)| / v_{\text{exact}}(f) \le 0.0033$ holds strictly. However, on a dense continuous grid over $f \in (0, 1)$, the relative error slightly exceeds $0.0033$ inside the inter-grid interval between the Table I points $y = 0.5$ ($f = 0.25$) and $y = 0.6$ ($f = 0.36$) (where the reported window $(0.25, 0.36)$ was chosen after seeing the measured excess interval, whilst satisfying $\le 0.0033$ everywhere outside that window); `tests/test_086_particles_emission.py` asserts the exact $0.0033$ bound on the Table I grid and outside $(0.25, 0.36)$ and reports the continuous peak excess as a `FINDING` at run time (indicating that the paper's $0.33\%$ figure was rounded to two significant digits or evaluated on a discrete grid such as Table I).
+- For $t(f)$ [Forbes, 2006, p. 113122-3, Eq. (9) (unverified quote)]: $\max_{f \in [0, 1]} |t(f) - t_{\text{exact}}(f)| / t_{\text{exact}}(f) \le 0.004$ ("better than $0.4\%$", unverified quote) and $\max_{f \in [0, 1]} |t(f) - t_{\text{exact}}(f)| \le 0.004 \times \frac{10}{9}$ (unverified quote).
+The identity $t_{\text{exact}}(f) = v_{\text{exact}}(f) - \frac{4}{3} f \frac{\mathrm{d}v_{\text{exact}}}{\mathrm{d}f}$ is cross-checked in `tests/test_086_particles_emission.py` against a central finite difference of $v_{\text{exact}}(f)$ within the derived Taylor + round-off bound from the Schottky–Nordheim differential equation $f(1 - f)v''(f) = \frac{3}{16}v(f)$ [Forbes & Deane, 2007, p. 2913, Eq. (2.8)].
+
+Key analytical limits and over-the-barrier behavior of `forbes_barrier_functions(f)`:
+- **Triangular-barrier limit ($f \to 0^+$)**: $\lim_{f \to 0^+} (f \ln f) = 0$, so $v(0) = 1$ and $t(0) = 1$ (inputs $f \le 0$ are clamped to $0$), recovering the unrounded Fowler–Nordheim (1928) triangular barrier formula.
+- **Barrier-top limit ($f = 1$) and over-barrier clamping ($f \ge 1$)**: At the critical field $F_{\text{ref}} = \frac{4\pi\varepsilon_0 \phi^2}{e^3}$ where $\Delta W_S(F_{\text{ref}}) = \phi$, the Schottky–Nordheim barrier top drops to the Fermi level and $v(1) = 0$, $t(1) = \frac{10}{9}$, whereas the exact elliptic-integral limit is $t_{\text{exact}}(1) = \frac{\pi}{2\sqrt{2}}$ [Forbes, 2006, p. 113122-1, Eq. (3b) (unverified quote)], giving a non-zero barrier-top relative discrepancy $|10/9 - \pi/(2\sqrt{2})| / (\pi/(2\sqrt{2}))$ that sets a strict lower bound on any uniform relative error bound for $t(f)$ on $[0, 1]$. When any input element satisfies $f \ge 1$, `forbes_barrier_functions(f)` emits a `RuntimeWarning` on host (NumPy/scalar) inputs and clamps $f$ to $[0, 1]$ so that $v(f) = 0$ and $t(f) = 10/9$ (avoiding host synchronization on CuPy device arrays during `FowlerNordheimEmitter.inject`).
+
+As in `ThermionicEmitter`, setting `space_charge_limit=True` caps the emitted charge per node per step by $\varepsilon_0 E_n \tilde{A}_z$.
+
+##### 4. Verification commands
+
+The unit tests, discrete Gauss's law checks, GPU/CPU equivalence checks, MPI multi-rank checks, V6 planar Child–Langmuir diode convergence suite, and Example 023 benchmark are executed via:
+```bash
+pytest tests/test_086_particles_emission.py -v
+mpiexec -n 2 pytest tests/test_086_particles_emission.py -k test_mpi_global_z_features_raise_on_every_rank -v
+python examples/023_particles_child_langmuir_diode.py --smoke
+python examples/023_particles_child_langmuir_diode.py
+```
+
+##### 5. Limits & Failure Modes
+
+- **Two-term $\mathcal{O}((\Delta z / d)^{2/3}) + \mathcal{O}(\Delta z / d)$ cathode boundary-layer bias**: Because `SpaceChargeLimitedEmitter` resolves the singular cathode boundary layer $\rho(z) \propto z^{-2/3}$, $E_z(z) \propto z^{1/3}$ using a single half-cell Gauss pillbox on $[z_{\min}, z_{\min} + \frac{1}{2}\Delta z_0]$ and piecewise-linear CIC field gather, the steady diode current exhibits a positive two-term truncation error $(J_{\text{steady}} - J_{\text{CL}}) / J_{\text{CL}} = a(\Delta z / d)^{2/3} + b(\Delta z / d) + \mathcal{O}((\Delta z / d)^{4/3})$ with effective convergence order $p \in [2/3, 1]$ (so $N_z \cdot \text{err}$ is not constant). Sub-cell analytical Child–Langmuir field weighting in the first cell [Watrous et al., 2001] would be required to achieve second-order $\mathcal{O}(\Delta z^2)$ cathode emission accuracy.
+- **Ideal voltage source clamp (`maintain_voltage`) restricted to 1D periodic-transverse PEC-$z$ planar diodes without embedded conductors**: `maintain_voltage` defaults to `False` and never activates automatically. When `maintain_voltage=True` is explicitly passed, the transverse BCs (`bc_low[0:2]`, `bc_high[0:2]`) must be `"periodic"` or `"bloch"`, the anode BC (`bc_high[2]`) must be `"pec"` or `"electric"`, and no embedded STL solids or solid conductors may be present (`use_stl`, `use_conductors`, `grid.stl_solids`, `grid.sheets`, or internal `ieps_z == 0` raise `ValueError`). The clamp applies a spatially uniform shift $\Delta E_z$ across the entire domain (equivalent to an external circuit return current $J_{\text{ext}} = \varepsilon_0\,\Delta E_z / \Delta t$ with single-clamp work identity $\delta W_{\text{src}} = \Delta W_{\text{field}}$ tracked in `emitter.voltage_source_work`), leaves discrete Gauss's law unchanged at all interior nodes $1 \le k \le N_z - 1$, alters the boundary electric flux at the PEC boundary nodes $k = 0$ (cathode) and $k = N_z$ (anode) (so `gauss_residual` checks interior vacuum nodes $1 \le k \le N_z - 2$ of the `Nz`-sized solver array and does not check the cathode node $k = 0$), and is not a general 3D cavity or non-periodic port boundary condition.
+- **CuPy $\ge 13$ requirement on GPU (`xp.add.at`)**: On multi-node transverse grids (`Nx > 1` or `Ny > 1`), `_cathode_node_charge()` accumulates first-cell CIC nodal charge onto `_q0_grid` via `xp.add.at`. On GPU (`xp = cupy`), `cp.add.at` requires **CuPy $\ge 13.0$**.
+- **MPI global-$z$ features not implemented (`use_mpi=True`)**: Under MPI longitudinal $z$-slab decomposition, `_gap_d`, `_Nz_phys`, and `_dz_vec` on each rank describe only the local slab. Passing `voltage != None`, `maintain_voltage=True`, or accessing `emitter.gap_d` when `solver.use_mpi` is `True` raises `NotImplementedError` on every rank. Local surface emission (`voltage=None, maintain_voltage=False`) is executed by rank $0$ on the global cathode face $z_{\min}$.
+- **Cloud-in-Cell (`shape=1`) restriction on boundary pillbox charge**: The cathode node charge calculation `_cathode_node_charge()` uses the two-node CIC partition $1 - \zeta_p$ on $[z_{\min}, z_{\min} + \Delta z_0]$. If a surface emitter is attached to a `ParticleSolver` configured with higher-order splines (`shape=2` TSC or `shape=3` PCS), `_cathode_node_charge()` raises `NotImplementedError`.
+- **Zero-weight macroparticles when $E \equiv 0$ on GPU vs CPU**: On CPU (`on_gpu=False`), `inject(t, dt)` checks `np.any(w_emit > 0)` and skips `add_particles` (returning `0`) when the surface field is zero or retarding everywhere, preventing zero-weight particle pile-up at $z = z_{\min}$. On GPU (`on_gpu=True`), `inject(t, dt)` appends all $N_{\text{emit}} = N_{\text{nodes}} \times M$ slots without a host sync; if $E_z \equiv 0$ and $u_{\text{th}} = 0$, those zero-weight slots remain stationary at $z = z_{\min}$ ($56\text{–}64\text{ B}$ per particle in `Species`, $192\text{–}224\text{ B}$ including GPU scratch buffers) until pulled inward, pushed into `z_low` by a retarding field, or compacted via `species.keep(species.w > 0)`.
+- **Thermionic zero emission for $E_n \le 0$ (no virtual-cathode potential minimum)**: `ThermionicEmitter` emits only on nodes with pulling surface field $E_n > 0$ and sets $|q_{\text{node}}| = 0$ when $E_n \le 0$. Because thermal electrons are not launched against a retarding surface field with a Maxwell–Boltzmann velocity spread, virtual-cathode potential minima ($\phi_{\min} < 0$ inside the gap with $E_z(0^+) > 0$) are not modelled.
+- **Fowler–Nordheim / Forbes (2006) validity range and $f \ge 1$ clamping**: The Murphy–Good (1956) WKB tunneling integral and the Forbes (2006) algebraic approximations $v(f)$ and $t(f)$ apply to sub-barrier tunneling in $0 \le f < 1$ (where $\max_{f \in [0, 1]} |v - v_{\text{exact}}| \le 0.0024$ (unverified quote) and $\max |v - v_{\text{exact}}| / v_{\text{exact}} \le 0.0033$ [Forbes, 2006, p. 113122-2, Eq. (5) & Table I (unverified quote)]—with a small excess above $0.0033$ on the continuous interval between the Table I points $y = 0.5$ and $y = 0.6$, reported as a `FINDING` by `tests/test_086_particles_emission.py`—and $\max_{f \in [0, 1]} |t - t_{\text{exact}}| / t_{\text{exact}} \le 0.004$ ("better than $0.4\%$", unverified quote) and $\max_{f \in [0, 1]} |t - t_{\text{exact}}| \le 0.004 \times \frac{10}{9}$ [Forbes, 2006, p. 113122-3, Eq. (9) (unverified quote)]). For over-the-barrier fields $f \ge 1$ ($F_{\text{loc}} \ge \frac{4\pi\varepsilon_0 \phi^2}{e^3}$), `forbes_barrier_functions(f)` issues a `RuntimeWarning` on host inputs and clamps $f$ to $[0, 1]$ ($v = 0, t = 10/9$), where physical WKB tunneling ceases to hold.
+- **Planar cathodes on the lower $z$-face only (`z0 = grid.zmin`) and no SEE**: Emission is supported only from the planar PEC boundary $z_0 = z_{\min}$ along $+z$ with uniform work function $\phi$ and $\beta_{\text{FE}}$; curved/embedded STL cathodes and impact-driven secondary electron emission (SEE) are not supported.
+
+##### 6. References
+
+- C. D. Child (1911), "Discharge from hot CaO," *Physical Review (Series I)*, **32**(5), 492–494, doi:10.1103/PhysRevSeriesI.32.492.
+- I. Langmuir (1913), "The effect of space charge and residual gases on thermionic currents in high vacuum," *Physical Review*, **2**(6), 450–486, doi:10.1103/PhysRev.2.450.
+- W. Schottky (1914), "Über den Einfluß von Strukturwirkungen, besonders der Thomsonschen Bildkraft, auf die Elektronenemission der Metalle," *Physikalische Zeitschrift*, **15**, 872–878.
+- O. W. Richardson (1916), *The Emission of Electricity from Hot Bodies*, Longmans, Green and Co., London.
+- S. Dushman (1923), "Electron emission from metals as a function of temperature," *Physical Review*, **21**(6), 623–636, doi:10.1103/PhysRev.21.623.
+- R. H. Fowler and L. Nordheim (1928), "Electron emission in intense electric fields," *Proceedings of the Royal Society of London. Series A*, **119**(781), 173–181, doi:10.1098/rspa.1928.0091.
+- E. L. Murphy and R. H. Good, Jr. (1956), "Thermionic emission, field emission, and the transition region," *Physical Review*, **102**(6), 1464–1473, doi:10.1103/PhysRev.102.1464.
+- H. R. Jory and A. W. Trivelpiece (1969), "Exact relativistic solution for the one-dimensional planar diode," *Journal of Applied Physics*, **40**(10), 3924–3926, doi:10.1063/1.1657117.
+- C. K. Birdsall and A. B. Langdon (1991), *Plasma Physics via Computer Simulation*, Taylor & Francis, New York, Ch. 16.
+- J. J. Watrous, J. W. Luginsland, and G. E. Sasser III (2001), "An improved space-charge-limited emission algorithm for use in particle-in-cell codes," *Physics of Plasmas*, **8**(1), 289–296, doi:10.1063/1.1329152.
+- R. G. Forbes (2006), "Simple good approximations for the special elliptic functions in standard Fowler–Nordheim tunneling theory for a Schottky–Nordheim barrier," *Applied Physics Letters*, **89**(11), 113122, doi:10.1063/1.2354582.
+- R. G. Forbes and J. H. B. Deane (2007), "Reformulation of the standard theory of Fowler–Nordheim tunnelling and cold field electron emission," *Proceedings of the Royal Society A*, **463**(2087), 2907–2927, doi:10.1098/rspa.2007.0030.
 
 #### 🧪 Open-Source Compatibility
 

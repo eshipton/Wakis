@@ -413,9 +413,10 @@ def test_plane_current_probe_charge_conservation_and_mutation(
         Ez_ext = -3.5e7  # accelerates electrons in +z
 
         # Analytically compute trajectory of a particle injected at z0 at step 0
-        # under Boris push in uniform E_z to place z_plane inside the step-2
-        # acceleration window [z^2, z^2 + (v_z^{5/2} - v_z^{3/2}) * dt).
-        uz_half = uz0
+        # under P4a's -dt/2 injection back-push followed by Boris push in uniform E_z
+        # to place z_plane at the midpoint of the step-2 acceleration gap
+        # (z^2, z^2 + (v_z^{5/2} - v_z^{3/2}) * dt].
+        uz_half = uz0 - 0.5 * (-e_charge / m_e) * Ez_ext * dt
         z_pos = z0
         v_prev = uz_half / np.sqrt(1.0 + (uz_half / c_light) ** 2)
         for step_k in range(3):
@@ -526,6 +527,25 @@ def test_plane_current_probe_charge_conservation_and_mutation(
             if s_idx == 5:
                 inj.current = 0.0
             solver.one_step()
+            if s_idx < 5 and not use_wrong_time_level:
+                # Confirm that with P4a's -dt/2 injection back-push followed by the
+                # step's +dt push, z_new - v_z^{n+1/2} * dt equals z^n = z0 for
+                # newly injected particles up to IEEE-754 round-off.
+                if use_gpu:
+                    n_p_cur = sp.n_particles
+                    z_inj_new = sp._z[n_p_cur - 8 : n_p_cur].get()
+                    ux_inj, uy_inj, uz_inj = probe._compute_z_old_vel_gpu(sp, dt)
+                    ux_h = ux_inj[n_p_cur - 8 : n_p_cur].get()
+                    uy_h = uy_inj[n_p_cur - 8 : n_p_cur].get()
+                    uz_h = uz_inj[n_p_cur - 8 : n_p_cur].get()
+                    inv_g_h = 1.0 / np.sqrt(
+                        1.0 + (ux_h * ux_h + uy_h * uy_h + uz_h * uz_h) / (c_light**2)
+                    )
+                    z_old_inj = z_inj_new - (dt * inv_g_h) * uz_h
+                else:
+                    z_step_new, dz_step = probe._compute_z_old_cpu(sp, dt)
+                    z_old_inj = (z_step_new - dz_step)[-8:]
+                assert np.all(np.abs(z_old_inj - z0) <= 4.0 * np.spacing(z0))
         assert placement_calls == 0
 
         res = probe.result()
@@ -542,6 +562,7 @@ def test_plane_current_probe_charge_conservation_and_mutation(
     # Every injected particle crossed z_plane and was absorbed by the collector
     n_tot_macro = 5 * 8
     roundoff_bound = 4.0 * _higham_gamma(n_tot_macro) * abs(q_inj)
+    assert res_exact["total_counts"] == n_tot_macro
     assert abs(res_exact["Q_total"] - q_inj) <= roundoff_bound
     assert abs(res_every3["Q_total"] - res_exact["Q_total"]) <= roundoff_bound
     assert res_cap4["dQ"].size == 4
@@ -571,10 +592,18 @@ def test_plane_current_probe_charge_conservation_and_mutation(
             <= roundoff_bound
         )
 
-    # Mutation check: wrong time level v_z^{n-1/2} must fail the conservation identity
+    # Mutation check: wrong time level v_z^{n-1/2} shifts z_old on step k=2 to
+    # z^2 + (v_z^{5/2} - v_z^{3/2}) * dt > z_plane_target, missing all 40
+    # negatively charged electrons (Q_total_mut == 0, signed error -q_inj_mut > 0
+    # equal to 100% of |q_inj_mut|, exceeding roundoff_bound by > 1e12x).
     res_mut, _, _, q_inj_mut, _ = _run_beam_probe(use_wrong_time_level=True)
     with pytest.raises(AssertionError):
         assert abs(res_mut["Q_total"] - q_inj_mut) <= roundoff_bound
+    mut_charge_error = res_mut["Q_total"] - q_inj_mut
+    assert res_mut["total_counts"] == 0
+    assert res_mut["Q_total"] == 0.0
+    assert mut_charge_error == -q_inj_mut > 0.0
+    assert abs(mut_charge_error) > 1.0e12 * roundoff_bound
 
 
 @pytest.mark.parametrize("use_gpu", [False, True])
@@ -1618,4 +1647,3 @@ def test_mpi_two_ranks_equals_serial_all_monitors(monkeypatch):
     mut_res = m_ps_cnt_mpi.result()
     with pytest.raises(AssertionError):
         assert np.array_equal(ser["ps_cnt"]["hist"], mut_res["hist"])
-

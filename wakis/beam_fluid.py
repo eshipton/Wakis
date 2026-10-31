@@ -49,11 +49,11 @@ import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import e as q_e
 from scipy.constants import epsilon_0 as eps_0
-from scipy.constants import m_e, mu_0
+from scipy.constants import m_e
 from scipy.optimize import brentq
 from scipy.sparse import coo_matrix, csc_matrix, diags, eye
 from scipy.sparse.linalg import splu
-from scipy.special import i0, i1, ive, j0, j1, k0, k1, kve
+from scipy.special import ive, j0, j1, kve
 
 
 def relativistic_gamma(u0=None, *, beta=None, voltage=None):
@@ -203,16 +203,16 @@ def reduction_factor_planar(omega, u0, b, a=np.inf, ky=0.0, relativistic=True):
             coth_val = 1.0 / np.tanh(gap) if np.isfinite(gap) and gap < 50.0 else 1.0
             rhs = tx_val * b * coth_val
             x_root = brentq(
-                lambda x: x * np.tan(x) - rhs, 0.0, 0.5 * np.pi * (1.0 - 1e-12)
+                lambda x, rhs=rhs: x * np.tan(x) - rhs,
+                0.0,
+                0.5 * np.pi * (1.0 - 1e-12),
             )
             T = x_root / b
         out[i] = 1.0 / np.sqrt(1.0 + (T**2 + float(ky) ** 2) / t_val**2)
     return float(out[0]) if scalar else out.reshape(omega_arr.shape)
 
 
-def reduction_factor_cylindrical(
-    omega, u0, r_beam, r_tunnel=np.inf, relativistic=True
-):
+def reduction_factor_cylindrical(omega, u0, r_beam, r_tunnel=np.inf, relativistic=True):
     """
     Plasma-frequency reduction factor ``R(omega)`` of a cylindrical pencil beam.
 
@@ -277,7 +277,9 @@ def reduction_factor_cylindrical(
                 den = ive(0, xt) * kve(0, xb) - scale * kve(0, xt) * ive(0, xb)
                 rhs = xb * (num / den)
             x_root = brentq(
-                lambda x: x * j1(x) / j0(x) - rhs, 0.0, J01 * (1.0 - 1e-12)
+                lambda x, rhs=rhs: x * j1(x) / j0(x) - rhs,
+                0.0,
+                J01 * (1.0 - 1e-12),
             )
             T = x_root / rb
         out[i] = 1.0 / np.sqrt(1.0 + (T / t_val) ** 2)
@@ -408,7 +410,11 @@ def space_charge_wave_dispersion(
     if gamma0 is None:
         _, gamma0 = relativistic_gamma(u0=u0)
     beta_arr = np.asarray(beta, dtype=float)
-    omega_q = np.asarray(R, dtype=float) * float(omega_p) / (float(gamma0) ** (0.5 * float(gamma_power)))
+    omega_q = (
+        np.asarray(R, dtype=float)
+        * float(omega_p)
+        / (float(gamma0) ** (0.5 * float(gamma_power)))
+    )
     omega_0 = beta_arr * float(u0)
     return omega_0 + omega_q, omega_0 - omega_q
 
@@ -563,6 +569,31 @@ class LinearizedBeam:
     coupling_sign : float, optional
         Sign multiplier of the Lorentz force ``-(e / (gamma0^p m_e)) E_s``.
         Default is ``1.0`` (``-1.0`` flips the coupling sign for mutation tests).
+    gap_modulation : callable, optional
+        Optional callable ``gap_modulation(s_coords, t) -> ndarray`` returning an
+        external axial electric field [V/m] added to ``E_s`` at integer time
+        level ``t^n = n * dt``. Default is ``None``.
+    inflow_rho1 : callable, optional
+        Optional callable ``inflow_rho1(t) -> float`` returning the peak AC
+        charge-density perturbation ``rho1_in(t)`` [C/m^3] injected at the
+        inflow boundary (``s_min`` for ``u0 > 0``, ``s_max`` for ``u0 < 0``)
+        through the upstream Crank-Nicolson ghost edge, evaluated at integer
+        time level ``t^n = n * dt`` (the midpoint of the ``t^{n-1/2} -> t^{n+1/2}``
+        beam step) and weighted by the beam transverse mask and axial ramp.
+        ``rho1_in`` is measured against the peak DC density ``rho0_peak``, so
+        the entrance AC current is ``I1 = (rho1_in / rho0_peak) * I0``. For an
+        array or callable ``rho0`` the drive follows the transverse mask, not
+        the ``rho0(x)`` profile, so the modulation depth then varies across
+        the beam lines. The drive does not depend on the beam state, so the
+        transposed step stays exact; gradients with respect to the drive
+        itself are not provided. Requires an open beam axis and ``u0 != 0``.
+        Default is ``None``.
+    inflow_v1 : callable, optional
+        Optional callable ``inflow_v1(t) -> float`` returning the AC velocity
+        perturbation ``v1_in(t)`` [m/s] injected at the inflow boundary through
+        the upstream Crank-Nicolson ghost edge, evaluated at integer time level
+        ``t^n = n * dt`` and weighted like ``inflow_rho1``. Same requirements
+        as ``inflow_rho1``. Default is ``None``.
     solver : SolverFIT3D, optional
         If provided, immediately attaches the beam to ``solver``.
     """
@@ -591,6 +622,8 @@ class LinearizedBeam:
         gamma_power=3.0,
         coupling_sign=1.0,
         gap_modulation=None,
+        inflow_rho1=None,
+        inflow_v1=None,
         solver=None,
     ):
         axis = str(axis)[-1].lower()
@@ -606,6 +639,10 @@ class LinearizedBeam:
         self.gamma_power = float(gamma_power)
         self.coupling_sign = float(coupling_sign)
         self.gap_modulation = gap_modulation
+        self.inflow_rho1 = inflow_rho1
+        self.inflow_v1 = inflow_v1
+        if (inflow_rho1 is not None or inflow_v1 is not None) and self.u0 == 0.0:
+            raise ValueError("inflow_rho1/inflow_v1 need a drifting beam (u0 != 0)")
         self._step_count = 0
         self.nu_b = float(nu_b)
         if self.nu_b < 0:
@@ -613,15 +650,11 @@ class LinearizedBeam:
 
         charge_specs = [x is not None for x in (rho0, omega_p, current)]
         if sum(charge_specs) != 1:
-            raise ValueError(
-                "Specify exactly one of `rho0`, `omega_p`, or `current`."
-            )
+            raise ValueError("Specify exactly one of `rho0`, `omega_p`, or `current`.")
         if rho0 is not None and not callable(rho0):
             rho_arr = np.asarray(rho0, dtype=float)
             if np.any(rho_arr > 0):
-                raise ValueError(
-                    "Electron beam DC charge density `rho0` must be <= 0."
-                )
+                raise ValueError("Electron beam DC charge density `rho0` must be <= 0.")
         if omega_p is not None and float(omega_p) < 0:
             raise ValueError(f"omega_p must be >= 0, got {omega_p}.")
         if current is not None:
@@ -799,6 +832,11 @@ class LinearizedBeam:
         if periodic_axis and self.s_min is None and self.s_max is None:
             k_start, k_stop = 0, Ns
             self.periodic_s = True
+            if self.inflow_rho1 is not None or self.inflow_v1 is not None:
+                raise ValueError(
+                    "inflow_rho1/inflow_v1 need an open beam axis: the beam axis is "
+                    "periodic (set s_min/s_max to open it)"
+                )
         else:
             self.periodic_s = False
             k_min = 0
@@ -810,9 +848,13 @@ class LinearizedBeam:
             if bc_hi in ("cpml", "pml"):
                 k_max = min(k_max, (Ns - 1) - n_pml)
             if self.s_min is not None:
-                k_min = max(k_min, int(np.searchsorted(s_edges, self.s_min, side="left")))
+                k_min = max(
+                    k_min, int(np.searchsorted(s_edges, self.s_min, side="left"))
+                )
             if self.s_max is not None:
-                k_max = min(k_max, int(np.searchsorted(s_edges, self.s_max, side="right")))
+                k_max = min(
+                    k_max, int(np.searchsorted(s_edges, self.s_max, side="right"))
+                )
             if k_max <= k_min:
                 raise ValueError(
                     f"No active E_{self.axis} edges in axial range "
@@ -894,16 +936,20 @@ class LinearizedBeam:
 
         # Determine unperturbed DC charge density rho0 <= 0 [C/m^3]
         self.area = float(np.mean(np.sum(w_perp_lines * self.dA_perp, axis=1)))
+        self.area_eff = self.area
+        w_perp_eff = w_perp_lines
         if self._omega_p_spec is not None:
             self.rho0_peak = -eps_0 * m_e * self._omega_p_spec**2 / q_e
-            rho0_2d = self.rho0_peak * w_perp_lines
+            rho0_2d = self.rho0_peak * w_perp_eff
         elif self._current_spec is not None:
             # Analytic area if circular/sheet inside domain, else discrete area
             area_eff = self._analytic_area(solver, c_ax) or self.area
+            self.area_eff = float(area_eff)
             self.rho0_peak = -self._current_spec / (area_eff * abs(self.u0))
             # Scale w_perp so discrete integral of rho0 u0 dA matches -I0
             scale = area_eff / self.area if self.area > 0 else 1.0
-            rho0_2d = self.rho0_peak * (w_perp_lines * scale)
+            w_perp_eff = w_perp_lines * scale
+            rho0_2d = self.rho0_peak * w_perp_eff
         elif callable(self._rho0_spec):
             X, Y, Z = np.meshgrid(
                 0.5 * (grid.x[: dims[0]] + grid.x[1 : dims[0] + 1])
@@ -929,7 +975,7 @@ class LinearizedBeam:
             rho_arr = np.asarray(self._rho0_spec, dtype=float)
             if rho_arr.ndim == 0:
                 self.rho0_peak = float(rho_arr)
-                rho0_2d = self.rho0_peak * w_perp_lines
+                rho0_2d = self.rho0_peak * w_perp_eff
             else:
                 rho_3d = np.broadcast_to(rho_arr, dims)
                 rho_sub = np.moveaxis(rho_3d[tuple(sl)], c_ax, 0).reshape(M, -1)[
@@ -938,6 +984,7 @@ class LinearizedBeam:
                 rho0_2d = rho_sub * w_perp_lines
                 self.rho0_peak = float(np.min(rho0_2d))
 
+        self._w_perp_eff = w_perp_eff
         self.rho0 = rho0_2d
         self.n0 = -self.rho0 / q_e
 
@@ -946,21 +993,21 @@ class LinearizedBeam:
             c_light
             * solver.dt
             * np.sqrt(
-                np.sum([1.0 / np.min(d) ** 2 for d in (solver.dx, solver.dy, solver.dz)])
+                np.sum(
+                    [1.0 / np.min(d) ** 2 for d in (solver.dx, solver.dy, solver.dz)]
+                )
             )
         )
-        if not self.is_stable(solver.dt, ds=float(np.min(self.ds_line)), courant=courant):
+        if not self.is_stable(
+            solver.dt, ds=float(np.min(self.ds_line)), courant=courant
+        ):
             raise ValueError(
                 f"dt={solver.dt:.3e} s is unstable for LinearizedBeam "
                 f"(omega_p_rel={self.omega_p_rel:.3e} rad/s); reduce `dt` or `cfln`."
             )
 
         # Build 1D axial derivative operator D_s of shape (M, M)
-        op_dtype = (
-            np.complex128
-            if np.iscomplexobj(solver.E.array)
-            else np.float64
-        )
+        op_dtype = np.complex128 if np.iscomplexobj(solver.E.array) else np.float64
         Ds = self._build_axial_derivative(solver, c_ax, op_dtype)
         Im = eye(M, format="csc", dtype=op_dtype)
         dt = float(solver.dt)
@@ -990,6 +1037,12 @@ class LinearizedBeam:
         self._beta_v = (-dt * self.rho0).astype(op_dtype)
         self._c_v = (w_ax_2d * self.rho0).astype(op_dtype)
         self._c_rho = (w_ax_2d * self.u0).astype(op_dtype)
+        k_in = 0 if self.u0 >= 0 else M - 1
+        self._k_in = k_in
+        self._inflow_half_dt_over_ds = 0.5 * dt / float(self.ds_line[k_in])
+        self._inflow_ghost_coeff = self._inflow_half_dt_over_ds * np.abs(
+            self._c_rho[k_in, :]
+        )
 
         xp = solver.E.xp
         self.xp = xp
@@ -1064,8 +1117,7 @@ class LinearizedBeam:
                 m = m.reshape(shape_3d)
             elif m.ndim == 3:
                 pad_3d = [
-                    (0, 1) if m.shape[d] == dims[d] - 1 else (0, 0)
-                    for d in range(3)
+                    (0, 1) if m.shape[d] == dims[d] - 1 else (0, 0) for d in range(3)
                 ]
                 if any(p[1] > 0 for p in pad_3d):
                     m = np.pad(m, pad_3d, mode="constant")
@@ -1121,13 +1173,13 @@ class LinearizedBeam:
             if np.ndim(self.half_thickness) == 0:
                 b = float(self.half_thickness)
                 # Sheet beam across the non-periodic / resolved transverse axis
-                b_periodic = (
-                    dims[b_ax] == 1
-                    or str(solver.bc_low[b_ax]).lower() in ("periodic", "bloch")
+                b_periodic = dims[b_ax] == 1 or str(solver.bc_low[b_ax]).lower() in (
+                    "periodic",
+                    "bloch",
                 )
-                a_periodic = (
-                    dims[a_ax] == 1
-                    or str(solver.bc_low[a_ax]).lower() in ("periodic", "bloch")
+                a_periodic = dims[a_ax] == 1 or str(solver.bc_low[a_ax]).lower() in (
+                    "periodic",
+                    "bloch",
                 )
                 if b_periodic and not a_periodic:
                     wa = interval_overlap(alo, ahi, ca, b)
@@ -1231,9 +1283,9 @@ class LinearizedBeam:
         E_flat = solver.E.array[self.flat_idx]
         E_host = np.asarray(E_flat.get() if hasattr(E_flat, "get") else E_flat)
         E_b = E_host.reshape(self.M, self.N_lines)
+        t_step = self._step_count * float(solver.dt)
         if self.gap_modulation is not None:
-            t = self._step_count * float(solver.dt)
-            e_mod = np.asarray(self.gap_modulation(self.s_coords, t))
+            e_mod = np.asarray(self.gap_modulation(self.s_coords, t_step))
             if e_mod.ndim == 1:
                 e_mod = e_mod[:, None]
             E_b = E_b + e_mod
@@ -1244,11 +1296,34 @@ class LinearizedBeam:
         self.v1_prev = v_old
         self.rho1_prev = rho_old
 
+        has_inflow = (
+            (self.inflow_v1 is not None or self.inflow_rho1 is not None)
+            and not self.periodic_s
+            and self.u0 != 0.0
+        )
+
         rhs_v = self.Mm_v @ v_old + self._alpha_E * E_b
+        if has_inflow and self.inflow_v1 is not None:
+            v_in = np.asarray(self.inflow_v1(t_step))
+            rhs_v[self._k_in, :] += self._inflow_ghost_coeff * v_in
         v_new = self._lu_v.solve(rhs_v)
         v_bar = 0.5 * (v_new + v_old)
 
         rhs_r = self.Mm_r @ rho_old + self._beta_v * (self.Ds @ v_bar)
+        if has_inflow:
+            k_in = self._k_in
+            if self.inflow_v1 is not None:
+                rhs_r[k_in, :] += (
+                    np.sign(self.u0)
+                    * self._inflow_half_dt_over_ds
+                    * self._c_v[k_in, :]
+                    * v_in
+                )
+            if self.inflow_rho1 is not None:
+                rho_in = np.asarray(self.inflow_rho1(t_step))
+                rhs_r[k_in, :] += (
+                    self._inflow_ghost_coeff * self._w_perp_eff[k_in, :] * rho_in
+                )
         rho_new = self._lu_r.solve(rhs_r)
 
         J_new = self._c_v * v_new + self._c_rho * rho_new
@@ -1439,9 +1514,7 @@ class LinearizedBeam:
         return float(np.sum(self.dA_perp[k] * s_int))
 
 
-def _beam_amplification_matrix(
-    dt, q_perp, k_tilde, u0, wp_rel, nu_b=0.0, q_s=None
-):
+def _beam_amplification_matrix(dt, q_perp, k_tilde, u0, wp_rel, nu_b=0.0, q_s=None):
     """
     Single-mode von Neumann amplification matrix of the coupled TM Yee EM +
     Crank-Nicolson beam step for state
@@ -1488,8 +1561,12 @@ class BeamTranspose:
 
     def get_state(self, state):
         xp = self.beam.xp
-        state[self.v_key] = xp.asarray(self.beam.v1.ravel().copy(), dtype=self.beam.dtype)
-        state[self.r_key] = xp.asarray(self.beam.rho1.ravel().copy(), dtype=self.beam.dtype)
+        state[self.v_key] = xp.asarray(
+            self.beam.v1.ravel().copy(), dtype=self.beam.dtype
+        )
+        state[self.r_key] = xp.asarray(
+            self.beam.rho1.ravel().copy(), dtype=self.beam.dtype
+        )
 
     def set_state(self, state, xp):
         v_arr = state[self.v_key]
@@ -1526,4 +1603,3 @@ class BeamTranspose:
         out[self.v_key] = xp.asarray(out_v.ravel(), dtype=b.dtype)
         out[self.r_key] = xp.asarray(out_r.ravel(), dtype=b.dtype)
         out["E"][self.idx] += xp.asarray(delta_E.ravel(), dtype=b.dtype)
-

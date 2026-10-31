@@ -54,7 +54,7 @@ from .._version import __version__ as wakis_version
 if TYPE_CHECKING:
     from .solver import ParticleSolver
 
-CHECKPOINT_FORMAT_VERSION: int = 1
+CHECKPOINT_FORMAT_VERSION: int = 2
 
 CPML_PSI_ATTRS: tuple[str, ...] = (
     "psiHa_z_low",
@@ -128,10 +128,11 @@ CHECKPOINT_STATE_KEYS: tuple[str, ...] = (
     "species_u_is_synced",
     "n_particle_steps",
     "solver_nstep",
-    "injector_rng_state",
-    "injector_counters",
+    "injector_state",
     "boundary_absorbed",
     "collector_state",
+    "energy_work_accum",
+    "energy_init_snap",
 )
 
 CHECKPOINT_STATE_ITEMS: tuple[str, ...] = CHECKPOINT_STATE_KEYS
@@ -344,7 +345,12 @@ def _fingerprint_ext_field(spec, particle_solver: ParticleSolver):
         t_val = float(mult * dt)
         try:
             fx, fy, fz = spec(x_in, y_in, z_in, t_val)
-        except (TypeError, AttributeError, ValueError, NotImplementedError):  # host-only callable given device arrays
+        except (
+            TypeError,
+            AttributeError,
+            ValueError,
+            NotImplementedError,
+        ):  # host-only callable given device arrays
             fx, fy, fz = spec(x_h, y_h, z_h, t_val)
         fx_h = np.broadcast_to(_to_host_f64(fx), (n_pts,))
         fy_h = np.broadcast_to(_to_host_f64(fy), (n_pts,))
@@ -381,7 +387,12 @@ def _fingerprint_collector_mask(mask_fn, particle_solver: ParticleSolver):
             res = mask_fn(xp.asarray(xx), xp.asarray(yy), xp.asarray(zz))
         else:
             res = mask_fn(xx, yy, zz)
-    except (TypeError, AttributeError, ValueError, NotImplementedError):  # host-only callable given device arrays
+    except (
+        TypeError,
+        AttributeError,
+        ValueError,
+        NotImplementedError,
+    ):  # host-only callable given device arrays
         res = mask_fn(xx, yy, zz)
     mask_bool = np.ascontiguousarray(_to_host_array(res), dtype=np.uint8)
     return {
@@ -395,20 +406,21 @@ def compute_config_hash(particle_solver: ParticleSolver) -> str:
     """Compute a deterministic SHA-256 hex digest of the particle solver configuration.
 
     Hashes ``shape``, ``pusher``, ``deposit_scheme``, ``gather``, ``filter``,
-    ``sort_every``, ``capacity_headroom``, ``E_ext``, ``B_ext``, each species'
-    ``name``, ``charge``, ``mass``, ``dtype``, and ``track_ids``, each
-    injector's parameters (``z0``, ``gamma0``, ``uz0``, ``profile``, ``radius``,
-    ``x0``, ``y0``, ``n_macro_per_step``, ``rise_time``, ``direction``,
-    ``thermal_u``, ``current`` qualified name and multi-time samples, and
-    ``weight``), and each collector's ``name``, ``bounds``, ``plane``, and
-    evaluated callable ``mask``. User-supplied callables (``E_ext``, ``B_ext``,
-    injector ``current``, and collector ``mask``) are called at every
-    :func:`save_checkpoint` and :func:`load_checkpoint` invocation and must
-    therefore be cheap to evaluate and free of side effects. Note that
-    user-supplied callables cannot be inspected symbolically without
-    bytecode/closure serialization; two callables with the same ``__qualname__``
-    that differ only outside the sampled points and times will produce the same
-    fingerprint.
+    ``sort_every``, ``capacity_headroom``, ``track_energy``, ``E_ext``, ``B_ext``,
+    each species' ``name``, ``charge``, ``mass``, ``dtype``, and ``track_ids``,
+    each injector's parameters (``z0``, ``gamma0``, ``uz0``, ``profile``,
+    ``radius``, ``x0``, ``y0``, ``n_macro_per_step``, ``rise_time``,
+    ``rise_shape``, ``direction``, ``thermal_u``, ``seed``, ``emitter_kind``,
+    ``current`` and ``velocity_modulation`` qualified names and multi-time
+    samples, and ``weight``), and each collector's ``name``, ``bounds``,
+    ``plane``, and evaluated callable ``mask``. User-supplied callables
+    (``E_ext``, ``B_ext``, injector ``current`` / ``velocity_modulation``, and
+    collector ``mask``) are called at every :func:`save_checkpoint` and
+    :func:`load_checkpoint` invocation and must therefore be cheap to evaluate
+    and free of side effects. Note that user-supplied callables cannot be
+    inspected symbolically without bytecode/closure serialization; two callables
+    with the same ``__qualname__`` that differ only outside the sampled points
+    and times will produce the same fingerprint.
 
     Parameters
     ----------
@@ -421,7 +433,11 @@ def compute_config_hash(particle_solver: ParticleSolver) -> str:
         64-character lowercase hexadecimal SHA-256 digest.
     """
     h = hashlib.sha256()
-    dt = float(particle_solver.solver.dt)
+    s = particle_solver.solver
+    dt = float(s.dt)
+    for inj in particle_solver.injectors:
+        if getattr(inj, "emitter_kind", None) is None and hasattr(inj, "_bind"):
+            inj._bind(s)
     ps_cfg = {
         "shape": int(particle_solver.shape),
         "pusher": str(particle_solver.pusher),
@@ -430,6 +446,7 @@ def compute_config_hash(particle_solver: ParticleSolver) -> str:
         "filter": getattr(particle_solver, "filter", None),
         "sort_every": int(getattr(particle_solver, "sort_every", 0)),
         "capacity_headroom": float(getattr(particle_solver, "capacity_headroom", 0.0)),
+        "track_energy": bool(getattr(particle_solver, "track_energy", False)),
         "E_ext": _fingerprint_ext_field(
             getattr(particle_solver, "E_ext", None), particle_solver
         ),
@@ -448,18 +465,77 @@ def compute_config_hash(particle_solver: ParticleSolver) -> str:
         ],
         "injectors": [
             {
+                "type": type(inj).__qualname__,
                 "species": str(inj.species.name),
                 "z0": float(getattr(inj, "z0", 0.0)),
                 "gamma0": float(getattr(inj, "gamma0", getattr(inj, "gamma", 0.0))),
                 "uz0": float(getattr(inj, "uz0", 0.0)),
                 "profile": str(getattr(inj, "profile", "")),
-                "radius": float(getattr(inj, "radius", 0.0)),
+                "radius": (
+                    None if getattr(inj, "radius", None) is None else float(inj.radius)
+                ),
                 "x0": float(getattr(inj, "x0", 0.0)),
                 "y0": float(getattr(inj, "y0", 0.0)),
                 "n_macro_per_step": int(getattr(inj, "n_macro_per_step", 0)),
+                "n_macro_per_cell": int(getattr(inj, "n_macro_per_cell", 0)),
+                "x_bounds": (
+                    [float(b) for b in inj.x_bounds]
+                    if getattr(inj, "x_bounds", None) is not None
+                    else None
+                ),
+                "y_bounds": (
+                    [float(b) for b in inj.y_bounds]
+                    if getattr(inj, "y_bounds", None) is not None
+                    else None
+                ),
+                "center": (
+                    [float(c) for c in inj.center]
+                    if getattr(inj, "center", None) is not None
+                    else None
+                ),
+                "voltage": (
+                    None
+                    if getattr(inj, "voltage", None) is None
+                    else float(inj.voltage)
+                ),
+                "maintain_voltage": bool(getattr(inj, "_maintain_voltage", False)),
+                "t_start": float(getattr(inj, "t_start", 0.0)),
+                "t_end": (
+                    None
+                    if not np.isfinite(float(getattr(inj, "t_end", float("inf"))))
+                    else float(inj.t_end)
+                ),
+                "temperature": (
+                    None
+                    if getattr(inj, "temperature", None) is None
+                    else float(inj.temperature)
+                ),
+                "work_function_eV": (
+                    None
+                    if getattr(inj, "work_function_eV", None) is None
+                    else float(inj.work_function_eV)
+                ),
+                "lambda_R": (
+                    None
+                    if getattr(inj, "lambda_R", None) is None
+                    else float(inj.lambda_R)
+                ),
+                "beta_fe": (
+                    None
+                    if getattr(inj, "beta_fe", None) is None
+                    else float(inj.beta_fe)
+                ),
+                "space_charge_limit": (
+                    None
+                    if getattr(inj, "space_charge_limit", None) is None
+                    else bool(inj.space_charge_limit)
+                ),
                 "rise_time": float(getattr(inj, "rise_time", 0.0)),
+                "rise_shape": str(getattr(inj, "rise_shape", "linear")),
                 "direction": int(getattr(inj, "direction", 1)),
                 "thermal_u": float(getattr(inj, "thermal_u", 0.0)),
+                "seed": (None if getattr(inj, "seed", None) is None else int(inj.seed)),
+                "emitter_kind": getattr(inj, "emitter_kind", None),
                 "current_qualname": (
                     _callable_qualname(inj.current)
                     if callable(getattr(inj, "current", None))
@@ -471,6 +547,19 @@ def compute_config_hash(particle_solver: ParticleSolver) -> str:
                         for m in (0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 100.0)
                     ]
                     if hasattr(inj, "current_at")
+                    else None
+                ),
+                "velocity_modulation_qualname": (
+                    _callable_qualname(inj.velocity_modulation)
+                    if callable(getattr(inj, "velocity_modulation", None))
+                    else None
+                ),
+                "velocity_modulation_samples": (
+                    [
+                        float(inj.velocity_modulation(m * dt))
+                        for m in (0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 100.0)
+                    ]
+                    if callable(getattr(inj, "velocity_modulation", None))
                     else None
                 ),
                 "weight": (
@@ -602,9 +691,7 @@ def compute_grid_hash(
         mat_field = getattr(solver, mat_name, None)
         if mat_field is not None:
             mat_arr = _to_host_array(mat_field.toarray())
-            h.update(
-                f"mat:{mat_name}:{mat_arr.dtype.str}:{mat_arr.shape}:".encode()
-            )
+            h.update(f"mat:{mat_name}:{mat_arr.dtype.str}:{mat_arr.shape}:".encode())
             h.update(mat_arr.tobytes())
     h.update(
         f"use_cond:{bool(getattr(solver, 'use_conductivity', False))};"
@@ -622,9 +709,7 @@ def compute_grid_hash(
     if bool(getattr(solver, "use_stl", False)):
         stl_solids = getattr(grid, "stl_solids", None)
         stl_materials = getattr(grid, "stl_materials", None)
-        h.update(
-            f"stl_solids:{stl_solids!r};stl_materials:{stl_materials!r};".encode()
-        )
+        h.update(f"stl_solids:{stl_solids!r};stl_materials:{stl_materials!r};".encode())
         pv_grid = getattr(grid, "grid", None)
         cell_data = getattr(pv_grid, "cell_data", None)
         if cell_data is not None:
@@ -804,29 +889,14 @@ def _save_state_item(
         )
         return
 
-    if key == "injector_rng_state":
-        arrays["has_injector_rng_state"] = np.array([1], dtype=np.int64)
+    if key == "injector_state":
+        arrays["has_injector_state"] = np.array([1], dtype=np.int64)
         for idx, inj in enumerate(particle_solver.injectors):
-            st = inj.rng.bit_generator.state
+            st = inj.state_dict()
             raw_bytes = json.dumps(st, sort_keys=True).encode("utf-8")
-            arrays[f"inj_{idx}_rng_json_u8"] = np.frombuffer(
+            arrays[f"inj_{idx}_state_json_u8"] = np.frombuffer(
                 raw_bytes, dtype=np.uint8
             ).copy()
-        return
-
-    if key == "injector_counters":
-        for idx, inj in enumerate(particle_solver.injectors):
-            arrays[f"inj_{idx}_counters_f64"] = np.array(
-                [
-                    float(inj._charge_accumulator),
-                    float(inj.injected_charge),
-                    float(inj.injected_energy),
-                ],
-                dtype=np.float64,
-            )
-            arrays[f"inj_{idx}_injected_count"] = np.array(
-                [int(inj.injected_count)], dtype=np.int64
-            )
         return
 
     if key == "boundary_absorbed":
@@ -860,6 +930,42 @@ def _save_state_item(
             else:
                 hist = np.empty((0, 2), dtype=np.float64)
             arrays[f"col_{idx}_history"] = hist
+        return
+
+    if key == "energy_work_accum":
+        if getattr(particle_solver, "track_energy", False):
+            arrays["has_energy_work_accum"] = np.array([1], dtype=np.int64)
+            arrays["fw_accum_vec"] = _to_host_f64(particle_solver._fw_accum_vec)
+            arrays["fw_E_prev"] = _to_host_f64(particle_solver._E_prev_fw)
+            arrays["fw_pending"] = np.array(
+                [1 if particle_solver._fw_pending else 0], dtype=np.int64
+            )
+            arrays["fw_dt"] = np.array(
+                [float(particle_solver._fw_dt)], dtype=np.float64
+            )
+        else:
+            arrays["has_energy_work_accum"] = np.array([0], dtype=np.int64)
+        return
+
+    if key == "energy_init_snap":
+        if getattr(particle_solver, "track_energy", False):
+            arrays["has_energy_init_snap"] = np.array([1], dtype=np.int64)
+            arrays["energy_has_step0_snap"] = np.array(
+                [1 if particle_solver._has_step0_field_snap else 0],
+                dtype=np.int64,
+            )
+            arrays["energy_K_particles_0"] = np.array(
+                [float(particle_solver._K_particles_0)], dtype=np.float64
+            )
+            arrays["energy_E_init_fw"] = _to_host_f64(particle_solver._E_init_fw)
+            arrays["energy_H_prev_init_fw"] = _to_host_f64(
+                particle_solver._H_prev_init_fw
+            )
+            arrays["energy_H_curr_init_fw"] = _to_host_f64(
+                particle_solver._H_curr_init_fw
+            )
+        else:
+            arrays["has_energy_init_snap"] = np.array([0], dtype=np.int64)
         return
 
     raise KeyError(f"Unknown checkpoint state key: {key!r}")
@@ -1071,27 +1177,45 @@ def _validate_rank_archive(
     if "solver_nstep" in req_set:
         _require_header("solver_nstep", (1,), np.int64)
 
-    if "injector_rng_state" in req_set:
-        _require_header("has_injector_rng_state", (1,), np.int64)
-        for idx in range(len(particle_solver.injectors)):
-            rng_sh, _ = _require_header(f"inj_{idx}_rng_json_u8", None, np.uint8)
-            if len(rng_sh) != 1:
+    if "injector_state" in req_set:
+        _require_header("has_injector_state", (1,), np.int64)
+        base_inj_keys = {
+            "injected_charge",
+            "injected_energy",
+            "injected_count",
+            "step_index",
+            "_next_id",
+            "emitter_kind",
+        }
+        for idx, inj in enumerate(particle_solver.injectors):
+            required_inj_keys = base_inj_keys | set(inj.state_dict().keys())
+            st_sh, _ = _require_header(f"inj_{idx}_state_json_u8", None, np.uint8)
+            if len(st_sh) != 1:
                 raise ValueError(
-                    f"inj_{idx}_rng_json_u8 must be 1D, got shape={rng_sh}."
+                    f"inj_{idx}_state_json_u8 must be 1D, got shape={st_sh}."
                 )
-            rng_u8 = data[f"inj_{idx}_rng_json_u8"]
+            st_u8 = data[f"inj_{idx}_state_json_u8"]
             st_obj = json.loads(
-                bytes(np.asarray(rng_u8, dtype=np.uint8)).decode("utf-8")
+                bytes(np.asarray(st_u8, dtype=np.uint8)).decode("utf-8")
             )
-            if not isinstance(st_obj, dict) or "bit_generator" not in st_obj:
+            if not isinstance(st_obj, dict) or not required_inj_keys.issubset(
+                st_obj.keys()
+            ):
                 raise ValueError(
-                    f"Invalid BitGenerator state in inj_{idx}_rng_json_u8."
+                    f"Invalid injector state_dict in inj_{idx}_state_json_u8."
                 )
-
-    if "injector_counters" in req_set:
-        for idx in range(len(particle_solver.injectors)):
-            _require_header(f"inj_{idx}_counters_f64", (3,), np.float64)
-            _require_header(f"inj_{idx}_injected_count", (1,), np.int64)
+            if getattr(inj, "seed", None) is not None and int(st_obj["seed"]) != int(
+                inj.seed
+            ):
+                raise ValueError(
+                    f"Injector {idx} saved seed={st_obj['seed']!r} does not match "
+                    f"live injector seed={inj.seed!r}."
+                )
+            if st_obj["emitter_kind"] != inj.emitter_kind:
+                raise ValueError(
+                    f"Injector {idx} saved emitter_kind={st_obj['emitter_kind']!r} "
+                    f"does not match live injector emitter_kind={inj.emitter_kind!r}."
+                )
 
     if "boundary_absorbed" in req_set:
         n_bkeys = len(particle_solver.boundaries._absorbed_charge)
@@ -1109,6 +1233,37 @@ def _validate_rank_archive(
                 raise ValueError(
                     f"col_{idx}_history must have shape (N, 2), got {hist_sh}."
                 )
+
+    if "energy_work_accum" in req_set:
+        _require_header("has_energy_work_accum", (1,), np.int64)
+        has_fw_accum = bool(int(data["has_energy_work_accum"][0]))
+        if has_fw_accum != bool(getattr(particle_solver, "track_energy", False)):
+            raise ValueError(
+                f"Checkpoint has_energy_work_accum={has_fw_accum} does not match "
+                f"live solver track_energy={bool(getattr(particle_solver, 'track_energy', False))}."
+            )
+        if has_fw_accum:
+            exp_fw_shape = particle_solver._fw_accum_vec.shape
+            _require_header("fw_accum_vec", exp_fw_shape, np.float64)
+            _require_header("fw_E_prev", exp_fw_shape, np.float64)
+            _require_header("fw_pending", (1,), np.int64)
+            _require_header("fw_dt", (1,), np.float64)
+
+    if "energy_init_snap" in req_set:
+        _require_header("has_energy_init_snap", (1,), np.int64)
+        has_init_snap = bool(int(data["has_energy_init_snap"][0]))
+        if has_init_snap != bool(getattr(particle_solver, "track_energy", False)):
+            raise ValueError(
+                f"Checkpoint has_energy_init_snap={has_init_snap} does not match "
+                f"live solver track_energy={bool(getattr(particle_solver, 'track_energy', False))}."
+            )
+        if has_init_snap:
+            exp_snap_shape = particle_solver._E_init_fw.shape
+            _require_header("energy_has_step0_snap", (1,), np.int64)
+            _require_header("energy_K_particles_0", (1,), np.float64)
+            _require_header("energy_E_init_fw", exp_snap_shape, np.float64)
+            _require_header("energy_H_prev_init_fw", exp_snap_shape, np.float64)
+            _require_header("energy_H_curr_init_fw", exp_snap_shape, np.float64)
 
 
 def _restore_rank_arrays(
@@ -1248,21 +1403,25 @@ def _restore_rank_arrays(
     if "solver_nstep" in files:
         s.nstep = int(data["solver_nstep"][0])
 
-    if "has_injector_rng_state" in files:
+    if "has_injector_state" in files:
         for idx, inj in enumerate(particle_solver.injectors):
-            k_rng = f"inj_{idx}_rng_json_u8"
-            if k_rng in files:
-                raw_bytes = bytes(np.asarray(data[k_rng], dtype=np.uint8))
-                inj.rng.bit_generator.state = json.loads(raw_bytes.decode("utf-8"))
-
-    for idx, inj in enumerate(particle_solver.injectors):
-        k_cnt = f"inj_{idx}_counters_f64"
-        if k_cnt in files:
-            c_f64 = data[k_cnt]
-            inj._charge_accumulator = float(c_f64[0])
-            inj.injected_charge = float(c_f64[1])
-            inj.injected_energy = float(c_f64[2])
-            inj.injected_count = int(data[f"inj_{idx}_injected_count"][0])
+            k_st = f"inj_{idx}_state_json_u8"
+            if k_st in files:
+                raw_bytes = bytes(np.asarray(data[k_st], dtype=np.uint8))
+                st_obj = json.loads(raw_bytes.decode("utf-8"))
+                if getattr(inj, "seed", None) is not None and int(
+                    st_obj["seed"]
+                ) != int(inj.seed):
+                    raise ValueError(
+                        f"Injector {idx} saved seed={st_obj['seed']!r} does not match "
+                        f"live injector seed={inj.seed!r}."
+                    )
+                if st_obj["emitter_kind"] != inj.emitter_kind:
+                    raise ValueError(
+                        f"Injector {idx} saved emitter_kind={st_obj['emitter_kind']!r} "
+                        f"does not match live injector emitter_kind={inj.emitter_kind!r}."
+                    )
+                inj.load_state_dict(st_obj)
 
     if "boundary_absorbed_charge" in files:
         b_keys = list(particle_solver.boundaries._absorbed_charge.keys())
@@ -1291,6 +1450,33 @@ def _restore_rank_arrays(
                 -1, 2
             )
             col.current_history = [(float(row[0]), float(row[1])) for row in hist_arr]
+
+    if (
+        "has_energy_work_accum" in files
+        and bool(int(data["has_energy_work_accum"][0]))
+        and getattr(particle_solver, "track_energy", False)
+    ):
+        _copy_into_target(particle_solver._fw_accum_vec, data["fw_accum_vec"])
+        _copy_into_target(particle_solver._E_prev_fw, data["fw_E_prev"])
+        particle_solver._fw_pending = bool(int(data["fw_pending"][0]))
+        particle_solver._fw_dt = float(data["fw_dt"][0])
+
+    if (
+        "has_energy_init_snap" in files
+        and bool(int(data["has_energy_init_snap"][0]))
+        and getattr(particle_solver, "track_energy", False)
+    ):
+        particle_solver._has_step0_field_snap = bool(
+            int(data["energy_has_step0_snap"][0])
+        )
+        particle_solver._K_particles_0 = float(data["energy_K_particles_0"][0])
+        _copy_into_target(particle_solver._E_init_fw, data["energy_E_init_fw"])
+        _copy_into_target(
+            particle_solver._H_prev_init_fw, data["energy_H_prev_init_fw"]
+        )
+        _copy_into_target(
+            particle_solver._H_curr_init_fw, data["energy_H_curr_init_fw"]
+        )
 
 
 def _cleanup_stale_tmp_files(ckpt_dir: Path) -> None:

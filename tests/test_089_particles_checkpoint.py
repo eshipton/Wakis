@@ -30,9 +30,11 @@ from wakis.particles import (
     BeamInjector,
     Collector,
     ParticleSolver,
+    SpaceChargeLimitedEmitter,
     Species,
     compute_config_hash,
 )
+from wakis.particles.boundaries import InjectorProtocol
 
 
 def _detect_mpi_from_env() -> tuple[int, int]:
@@ -151,6 +153,7 @@ def _build_coupled_case(
     dt_factor: float = 0.45,
     use_gpu: int = 0,
     use_mpi: bool = False,
+    track_energy: bool = True,
 ):
     """Construct the coupled CPML + injector + collector + sort_every test setup.
 
@@ -203,6 +206,14 @@ def _build_coupled_case(
         track_ids=True,
         use_gpu=bool(use_gpu),
     )
+    sp_ion = Species(
+        name="ions",
+        charge=e_charge,
+        mass=1836.15267343 * m_e,
+        capacity=16,
+        track_ids=True,
+        use_gpu=bool(use_gpu),
+    )
 
     col = Collector(
         name="anode_probe",
@@ -227,13 +238,14 @@ def _build_coupled_case(
 
     ps = ParticleSolver(
         solver,
-        species=[sp],
+        species=[sp, sp_ion],
         collectors=[col],
         injectors=[inj],
         shape=1,
         pusher="boris",
         deposit_scheme="esirkepov",
         sort_every=3,
+        track_energy=track_energy,
     )
 
     if seed_initial_state:
@@ -311,6 +323,15 @@ def _build_coupled_case(
             uy=uy_init,
             uz=uz_init,
             w=w_init,
+        )
+        sp_ion.add_particles(
+            x=np.array([-0.005, 0.007], dtype=np.float64),
+            y=np.array([0.004, -0.005], dtype=np.float64),
+            z=np.array([0.055, 0.118], dtype=np.float64),
+            ux=np.array([1.0e5, -1.5e5], dtype=np.float64),
+            uy=np.array([-1.2e5, 0.8e5], dtype=np.float64),
+            uz=np.array([2.0e5, -1.8e5], dtype=np.float64),
+            w=np.array([5.0e2, 6.0e2], dtype=np.float64),
         )
         solver.nstep = 5
 
@@ -413,6 +434,8 @@ def _extract_state_snapshot(ps: ParticleSolver) -> dict:
             }
         )
     snap["collectors"] = col_list
+    snap["injectors"] = [dict(inj.state_dict()) for inj in ps.injectors]
+    snap["energy_balance"] = dict(ps.energy_balance()) if ps.track_energy else None
     return snap
 
 
@@ -499,6 +522,48 @@ def _assert_snapshots_bitwise_equal(
         np.testing.assert_array_equal(col_a["t_trace"], col_b["t_trace"])
         np.testing.assert_array_equal(col_a["i_trace"], col_b["i_trace"])
 
+    assert snap_a.get("injectors") == snap_b.get("injectors"), (
+        f"injector state_dict mismatch: {snap_a.get('injectors')} vs {snap_b.get('injectors')}"
+    )
+    if (
+        snap_a.get("energy_balance") is not None
+        or snap_b.get("energy_balance") is not None
+    ):
+        assert (
+            snap_a.get("energy_balance") is not None
+            and snap_b.get("energy_balance") is not None
+        )
+        for eb_key in (
+            "W_field",
+            "K_particles",
+            "K_injected",
+            "K_absorbed",
+            "field_work",
+            "residual",
+        ):
+            assert (
+                snap_a["energy_balance"][eb_key] == snap_b["energy_balance"][eb_key]
+            ), (
+                f"energy_balance[{eb_key!r}] mismatch: "
+                f"{snap_a['energy_balance'][eb_key]} vs {snap_b['energy_balance'][eb_key]}"
+            )
+
+
+def _step_range_with_accum(
+    solver,
+    ps: ParticleSolver,
+    step_start: int,
+    step_end: int,
+    accum_step: int = 3,
+) -> None:
+    """Step ``solver`` from ``step_start`` to ``step_end``, setting ``n_macro_per_step=0`` on ``accum_step``."""
+    inj = ps.injectors[0]
+    n_macro_orig = int(inj.n_macro_per_step)
+    for step in range(step_start, step_end):
+        inj.n_macro_per_step = 0 if step == accum_step else n_macro_orig
+        solver.one_step()
+    inj.n_macro_per_step = n_macro_orig
+
 
 def run_subprocess_restart_worker(
     ckpt_dir: str,
@@ -534,7 +599,6 @@ def run_subprocess_restart_worker(
         assert not sys.modules["mpi4py.MPI"].Is_initialized(), (
             "Restart subprocess must never initialize MPI"
         )
-    sp0 = snap["species"][0]
     col0 = snap["collectors"][0]
     arrays = {
         "E": snap["E"],
@@ -559,9 +623,7 @@ def run_subprocess_restart_worker(
             [
                 snap["n_particle_steps"],
                 int(snap["initialized_half_step"]),
-                sp0["n_particles"],
-                sp0["next_id"],
-                int(sp0["u_is_synced"]),
+                len(snap["species"]),
                 col0["absorbed_count"],
                 snap["solver_nstep"],
                 int(snap["solver_step_0"]),
@@ -580,12 +642,34 @@ def run_subprocess_restart_worker(
         ),
         "col_t": col0["t_trace"],
         "col_i": col0["i_trace"],
+        "inj_json_u8": np.frombuffer(
+            json.dumps(snap["injectors"], sort_keys=True).encode("utf-8"),
+            dtype=np.uint8,
+        ).copy(),
     }
     if snap["J_prev"] is not None:
         arrays["J_prev"] = snap["J_prev"]
-    for comp in ("x", "y", "z", "ux", "uy", "uz", "w", "id"):
-        arrays[f"sp_{comp}_raw"] = sp0[f"{comp}_raw"]
-        arrays[f"sp_{comp}_sorted"] = sp0[f"{comp}_sorted"]
+    if snap["energy_balance"] is not None:
+        eb = snap["energy_balance"]
+        arrays["eb_vals"] = np.array(
+            [
+                eb["W_field"],
+                eb["K_particles"],
+                eb["K_injected"],
+                eb["K_absorbed"],
+                eb["field_work"],
+                eb["residual"],
+            ],
+            dtype=np.float64,
+        )
+    for idx, sp_d in enumerate(snap["species"]):
+        arrays[f"sp_{idx}_meta_i64"] = np.array(
+            [sp_d["n_particles"], sp_d["next_id"], int(sp_d["u_is_synced"])],
+            dtype=np.int64,
+        )
+        for comp in ("x", "y", "z", "ux", "uy", "uz", "w", "id"):
+            arrays[f"sp_{idx}_{comp}_raw"] = sp_d[f"{comp}_raw"]
+            arrays[f"sp_{idx}_{comp}_sorted"] = sp_d[f"{comp}_sorted"]
     for k, v in snap["cpml"].items():
         arrays[f"cpml_{k}"] = v
     np.savez(out_npz, **arrays)
@@ -601,21 +685,41 @@ def _load_worker_snapshot(out_npz: Path, ref_snap: dict) -> dict:
         b_energy = {k: float(v) for k, v in zip(b_keys, d["b_energy"])}
         b_count = {k: int(v) for k, v in zip(b_keys, d["b_count"])}
         cpml = {k: d[f"cpml_{k}"].copy() for k in ref_snap["cpml"]}
-        sp_entry = {
-            "n_particles": int(s_i64[2]),
-            "next_id": int(s_i64[3]),
-            "u_is_synced": bool(s_i64[4]),
-        }
-        for comp in ("x", "y", "z", "ux", "uy", "uz", "w", "id"):
-            sp_entry[f"{comp}_raw"] = d[f"sp_{comp}_raw"].copy()
-            sp_entry[f"{comp}_sorted"] = d[f"sp_{comp}_sorted"].copy()
+        n_sp = int(s_i64[2])
+        sp_list = []
+        for idx in range(n_sp):
+            meta = d[f"sp_{idx}_meta_i64"]
+            sp_entry = {
+                "n_particles": int(meta[0]),
+                "next_id": int(meta[1]),
+                "u_is_synced": bool(meta[2]),
+            }
+            for comp in ("x", "y", "z", "ux", "uy", "uz", "w", "id"):
+                sp_entry[f"{comp}_raw"] = d[f"sp_{idx}_{comp}_raw"].copy()
+                sp_entry[f"{comp}_sorted"] = d[f"sp_{idx}_{comp}_sorted"].copy()
+            sp_list.append(sp_entry)
         col_entry = {
             "absorbed_charge": float(s_f64[5]),
             "absorbed_energy": float(s_f64[6]),
-            "absorbed_count": int(s_i64[5]),
+            "absorbed_count": int(s_i64[3]),
             "t_trace": d["col_t"].copy(),
             "i_trace": d["col_i"].copy(),
         }
+        injectors = json.loads(
+            bytes(np.asarray(d["inj_json_u8"], dtype=np.uint8)).decode("utf-8")
+        )
+        if "eb_vals" in d.files:
+            eb_v = d["eb_vals"]
+            eb_dict = {
+                "W_field": float(eb_v[0]),
+                "K_particles": float(eb_v[1]),
+                "K_injected": float(eb_v[2]),
+                "K_absorbed": float(eb_v[3]),
+                "field_work": float(eb_v[4]),
+                "residual": float(eb_v[5]),
+            }
+        else:
+            eb_dict = None
         return {
             "E": d["E"].copy(),
             "H": d["H"].copy(),
@@ -623,9 +727,9 @@ def _load_worker_snapshot(out_npz: Path, ref_snap: dict) -> dict:
             "J_old": d["J_old"].copy(),
             "J_particles": d["J_particles"].copy(),
             "J_prev": d["J_prev"].copy() if "J_prev" in d.files else None,
-            "j_in_solver": bool(s_i64[8]),
-            "solver_step_0": bool(s_i64[7]),
-            "solver_nstep": int(s_i64[6]),
+            "j_in_solver": bool(s_i64[6]),
+            "solver_step_0": bool(s_i64[5]),
+            "solver_nstep": int(s_i64[4]),
             "q_bg": d["q_bg"].copy(),
             "gauss_residual": float(s_f64[0]),
             "n_particle_steps": int(s_i64[0]),
@@ -638,8 +742,10 @@ def _load_worker_snapshot(out_npz: Path, ref_snap: dict) -> dict:
             "boundary_absorbed_energy": b_energy,
             "boundary_absorbed_count": b_count,
             "cpml": cpml,
-            "species": [sp_entry],
+            "species": sp_list,
             "collectors": [col_entry],
+            "injectors": injectors,
+            "energy_balance": eb_dict,
         }
 
 
@@ -658,8 +764,7 @@ def test_cpu_bitwise_restart_subprocess(
 
     # Run A: uninterrupted 2N steps
     solver_a, ps_a = _build_coupled_case(seed_initial_state=True)
-    for _ in range(n_total):
-        solver_a.one_step()
+    _step_range_with_accum(solver_a, ps_a, 0, n_total, accum_step=n_half - 1)
     snap_a = _extract_state_snapshot(ps_a)
 
     # Sanity-check that every feature was exercised during the run
@@ -668,22 +773,26 @@ def test_cpu_bitwise_restart_subprocess(
     assert snap_a["injected_charge"] != 0.0
     assert snap_a["absorbed_charge"] != 0.0
     assert snap_a["collectors"][0]["absorbed_count"] > 0
+    assert snap_a["energy_balance"] is not None
+    assert snap_a["energy_balance"]["K_injected"] > 0.0
+    assert snap_a["energy_balance"]["field_work"] != 0.0
 
     # Run B part 1: N steps + save_checkpoint
     ckpt_dir = tmp_path / "ckpt_cpu"
     solver_b1, ps_b1 = _build_coupled_case(seed_initial_state=True)
-    for _ in range(n_half):
-        solver_b1.one_step()
+    _step_range_with_accum(solver_b1, ps_b1, 0, n_half, accum_step=n_half - 1)
+    assert ps_b1.injectors[0]._charge_accumulator > 0.0
     ps_b1.save_checkpoint(ckpt_dir)
 
     # Verify manifest and allow_pickle=False loadability
     manifest = json.loads((ckpt_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["format_version"] == 1
+    assert manifest["format_version"] == 2
     assert manifest["rank_count"] == 1
-    assert manifest["species_names"] == ["electrons"]
+    assert manifest["species_names"] == ["electrons", "ions"]
     assert len(manifest["injector_names"]) == 1
     with np.load(_find_rank_npz(ckpt_dir, 0), allow_pickle=False) as zf:
         assert "field_E" in zf.files
+        assert "inj_0_state_json_u8" in zf.files
 
     # Run B part 2: fresh SolverFIT3D + ParticleSolver in a NEW Python process
     out_npz = tmp_path / "subproc_out.npz"
@@ -705,6 +814,9 @@ def test_cpu_bitwise_restart_subprocess(
 
     snap_sub = _load_worker_snapshot(out_npz, snap_a)
     _assert_snapshots_bitwise_equal(snap_a, snap_sub)
+    assert (
+        snap_sub["energy_balance"]["residual"] == snap_a["energy_balance"]["residual"]
+    )
 
     # Verify in-place restoration preserves existing buffer pointers (SHOULD-FIX 11)
     solver_inp, ps_inp = _build_coupled_case(seed_initial_state=False)
@@ -716,6 +828,7 @@ def test_cpu_bitwise_restart_subprocess(
         "J_old": solver_inp.J_old.__array_interface__["data"][0],
         "q_bg": solver_inp._particles_q_bg.__array_interface__["data"][0],
         "J_particles": ps_inp.J_particles.__array_interface__["data"][0],
+        "fw_accum": ps_inp._fw_accum_vec.__array_interface__["data"][0],
     }
     ps_inp.load_checkpoint(ckpt_dir)
     ptr_after = {
@@ -725,6 +838,7 @@ def test_cpu_bitwise_restart_subprocess(
         "J_old": solver_inp.J_old.__array_interface__["data"][0],
         "q_bg": solver_inp._particles_q_bg.__array_interface__["data"][0],
         "J_particles": ps_inp.J_particles.__array_interface__["data"][0],
+        "fw_accum": ps_inp._fw_accum_vec.__array_interface__["data"][0],
     }
     assert ptr_after == ptr_before, (
         f"In-place restore replaced buffer pointer(s): {ptr_before} vs {ptr_after}"
@@ -749,6 +863,81 @@ def test_cpu_bitwise_restart_subprocess(
     print(f"[mutation test_a_coord] caught AssertionError: {_fmt_exc(exc_info.value)}")
 
 
+@_serial_only
+def test_energy_balance_restart_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With track_energy=True, CPU fresh-process restart yields energy_balance() residual bitwise equal to continuous run."""
+    n_half = 4
+    n_total = 2 * n_half
+
+    solver_a, ps_a = _build_coupled_case(seed_initial_state=True, track_energy=True)
+    _step_range_with_accum(solver_a, ps_a, 0, n_total, accum_step=n_half - 1)
+    eb_a = ps_a.energy_balance()
+    snap_a = _extract_state_snapshot(ps_a)
+
+    ckpt_dir = tmp_path / "ckpt_energy_subproc"
+    solver_b1, ps_b1 = _build_coupled_case(seed_initial_state=True, track_energy=True)
+    _step_range_with_accum(solver_b1, ps_b1, 0, n_half, accum_step=n_half - 1)
+    ps_b1.save_checkpoint(ckpt_dir)
+
+    out_npz = tmp_path / "energy_subproc_out.npz"
+    cmd = [
+        sys.executable,
+        "-c",
+        (
+            "try:\n    import mpi4py\n    mpi4py.rc.initialize = False\n    mpi4py.rc.finalize = False\nexcept ImportError:  # mpi4py is optional\n    pass\n"
+            "import tests.test_089_particles_checkpoint as t; "
+            f"t.run_subprocess_restart_worker({str(ckpt_dir)!r}, {str(out_npz)!r}, {n_half})"
+        ),
+    ]
+    subprocess.run(
+        cmd,
+        check=True,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env=_clean_mpi_subprocess_env(),
+    )
+
+    snap_sub = _load_worker_snapshot(out_npz, snap_a)
+    eb_sub = snap_sub["energy_balance"]
+    assert eb_sub is not None
+    for k in (
+        "W_field",
+        "K_particles",
+        "K_injected",
+        "K_absorbed",
+        "field_work",
+        "residual",
+    ):
+        assert eb_sub[k] == eb_a[k], (
+            f"energy_balance[{k!r}] mismatch: {eb_sub[k]} vs {eb_a[k]}"
+        )
+
+    # Mutation check: perturbing restored _fw_accum_vec or _K_particles_0 on load
+    # must cause the energy_balance() bitwise comparison to fail.
+    orig_restore = ckpt_mod._restore_rank_arrays
+
+    def _mutated_energy_restore(ps_target, data):
+        orig_restore(ps_target, data)
+        ps_target._K_particles_0 += 1.0e-12
+        ps_target._fw_accum_vec[0] += 1.0e-6
+
+    monkeypatch.setattr(ckpt_mod, "_restore_rank_arrays", _mutated_energy_restore)
+    solver_mut, ps_mut = _build_coupled_case(
+        seed_initial_state=False, track_energy=True
+    )
+    ps_mut.load_checkpoint(ckpt_dir)
+    for _ in range(n_half):
+        solver_mut.one_step()
+    eb_mut = ps_mut.energy_balance()
+    with pytest.raises(AssertionError) as exc_info:
+        assert eb_mut["residual"] == eb_a["residual"]
+        assert eb_mut["field_work"] == eb_a["field_work"]
+    print(
+        f"[mutation test_energy_balance_restart] caught AssertionError: {_fmt_exc(exc_info.value)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (d) Coverage mutation parametrized over CHECKPOINT_STATE_KEYS
 # ---------------------------------------------------------------------------
@@ -760,8 +949,7 @@ def cpu_reference_and_half_state():
     n_half = 4
     n_total = 2 * n_half
     solver_a, ps_a = _build_coupled_case(seed_initial_state=True)
-    for _ in range(n_total):
-        solver_a.one_step()
+    _step_range_with_accum(solver_a, ps_a, 0, n_total, accum_step=n_half - 1)
     snap_a = _extract_state_snapshot(ps_a)
     return n_half, snap_a
 
@@ -802,8 +990,7 @@ def test_checkpoint_state_coverage_mutation(
 
     ckpt_dir = tmp_path / f"ckpt_omit_{omitted_key}"
     solver_b1, ps_b1 = _build_coupled_case(seed_initial_state=True)
-    for _ in range(n_half):
-        solver_b1.one_step()
+    _step_range_with_accum(solver_b1, ps_b1, 0, n_half, accum_step=n_half - 1)
     ps_b1.save_checkpoint(ckpt_dir)
 
     solver_b2, ps_b2 = _build_coupled_case(seed_initial_state=False)
@@ -811,6 +998,18 @@ def test_checkpoint_state_coverage_mutation(
     for _ in range(n_half):
         solver_b2.one_step()
     snap_b = _extract_state_snapshot(ps_b2)
+
+    if omitted_key == "injector_state":
+        # Omitting injector_state (accumulator, step_index, counters) must change
+        # post-restart field/particle dynamics as well as K_injected and energy_balance().
+        assert not np.array_equal(snap_a["E"], snap_b["E"])
+        assert (
+            snap_a["energy_balance"]["K_injected"]
+            != snap_b["energy_balance"]["K_injected"]
+        )
+        assert (
+            snap_a["energy_balance"]["residual"] != snap_b["energy_balance"]["residual"]
+        )
 
     with pytest.raises(AssertionError) as exc_info:
         _assert_snapshots_bitwise_equal(snap_a, snap_b)
@@ -1263,15 +1462,69 @@ def test_checkpoint_error_validation(
     with pytest.raises(ValueError, match="Corrupt checkpoint manifest"):
         ps_fresh.load_checkpoint(ckpt_bad_json)
 
-    # 13. Unsupported format_version -> ValueError
-    ckpt_bad_ver = tmp_path / "ckpt_bad_ver"
-    ps.save_checkpoint(ckpt_bad_ver)
-    m_ver_path = ckpt_bad_ver / "manifest.json"
-    m_ver = json.loads(m_ver_path.read_text(encoding="utf-8"))
-    m_ver["format_version"] = 999
-    m_ver_path.write_text(json.dumps(m_ver), encoding="utf-8")
+    # 13. Unsupported format_version (including older format_version=1) -> ValueError
+    for bad_ver in (1, 999):
+        ckpt_bad_ver = tmp_path / f"ckpt_bad_ver_{bad_ver}"
+        ps.save_checkpoint(ckpt_bad_ver)
+        m_ver_path = ckpt_bad_ver / "manifest.json"
+        m_ver = json.loads(m_ver_path.read_text(encoding="utf-8"))
+        m_ver["format_version"] = bad_ver
+        m_ver_path.write_text(json.dumps(m_ver), encoding="utf-8")
+        with pytest.raises(ValueError, match="format_version"):
+            ps_fresh.load_checkpoint(ckpt_bad_ver)
+
+    # Older format_version=1 inside rank .npz archive -> ValueError
+    ckpt_bad_npz_ver = tmp_path / "ckpt_bad_npz_ver_1"
+    ps.save_checkpoint(ckpt_bad_npz_ver)
+    npz_v1 = _find_rank_npz(ckpt_bad_npz_ver, 0)
+    with np.load(npz_v1, allow_pickle=False) as zf_v1:
+        v1_dict = {k: zf_v1[k] for k in zf_v1.files}
+    v1_dict["format_version"] = np.array([1], dtype=np.int64)
+    np.savez(npz_v1, **v1_dict)
+    m_v1_path = ckpt_bad_npz_ver / "manifest.json"
+    m_v1 = json.loads(m_v1_path.read_text(encoding="utf-8"))
+    m_v1["files"][npz_v1.name] = hashlib.sha256(npz_v1.read_bytes()).hexdigest()
+    m_v1_path.write_text(json.dumps(m_v1), encoding="utf-8")
     with pytest.raises(ValueError, match="format_version"):
-        ps_fresh.load_checkpoint(ckpt_bad_ver)
+        ps_fresh.load_checkpoint(ckpt_bad_npz_ver)
+
+    # 14. Injector seed, emitter_kind, rise_shape, velocity_modulation, and
+    #     solver track_energy belong in config_hash; saved seed/emitter_kind
+    #     are also asserted against the live injector on load.
+    _, ps_seed = _build_coupled_case(seed_initial_state=False)
+    ps_seed.injectors[0].seed += 1
+    with pytest.raises(ValueError, match="config_hash"):
+        ps_seed.load_checkpoint(ckpt_dir)
+
+    _, ps_ek = _build_coupled_case(seed_initial_state=False)
+    ps_ek.injectors[0].emitter_kind = "pec_wall"
+    with pytest.raises(ValueError, match="config_hash"):
+        ps_ek.load_checkpoint(ckpt_dir)
+
+    _, ps_rs = _build_coupled_case(seed_initial_state=False)
+    ps_rs.injectors[0].rise_shape = "cos2"
+    with pytest.raises(ValueError, match="config_hash"):
+        ps_rs.load_checkpoint(ckpt_dir)
+
+    _, ps_vm = _build_coupled_case(seed_initial_state=False)
+    ps_vm.injectors[0].velocity_modulation = lambda t: 0.01
+    with pytest.raises(ValueError, match="config_hash"):
+        ps_vm.load_checkpoint(ckpt_dir)
+
+    _, ps_te = _build_coupled_case(seed_initial_state=False, track_energy=False)
+    with pytest.raises(ValueError, match="config_hash"):
+        ps_te.load_checkpoint(ckpt_dir)
+
+    # Even if config_hash is bypassed, _validate_rank_archive / _restore_rank_arrays
+    # assert that saved seed and emitter_kind match the live injector.
+    monkeypatch.setattr(
+        ckpt_mod, "compute_config_hash", lambda _ps: saved_manifest["config_hash"]
+    )
+    with pytest.raises(ValueError, match="seed"):
+        ps_seed.load_checkpoint(ckpt_dir)
+    with pytest.raises(ValueError, match="emitter_kind"):
+        ps_ek.load_checkpoint(ckpt_dir)
+    monkeypatch.setattr(ckpt_mod, "compute_config_hash", compute_config_hash)
 
 
 # ---------------------------------------------------------------------------
@@ -1302,7 +1555,9 @@ def _build_gpu_high_contention_case(
     concurrent multi-block float64 ``atomicAdd`` contention on shared grid
     edges in ``deposit_esirkepov_kernel`` and ``deposit_charge_kernel``.
     """
-    solver, ps = _build_coupled_case(seed_initial_state=False, use_gpu=1)
+    solver, ps = _build_coupled_case(
+        seed_initial_state=False, use_gpu=1, track_energy=False
+    )
     dt_ref = float(solver.dt)
     ps.injectors[0].current = lambda t, dt0=dt_ref: 2.5e-7 * (1.0 + 0.35 * (t / dt0))
     sp = ps.species[0]
@@ -2035,3 +2290,142 @@ def test_mpi_state_coverage_mutation(
         )
     assert any_failed == 1
     comm.Barrier()
+
+
+# ---------------------------------------------------------------------------
+# (i) CPU bitwise restart and state-omission check with SpaceChargeLimitedEmitter
+# ---------------------------------------------------------------------------
+
+
+def _build_scl_emitter_case(*, seed_field: bool = True):
+    """Build a 1D periodic-transverse PEC planar diode with a SpaceChargeLimitedEmitter."""
+    grid = GridFIT3D(-0.01, 0.01, -0.01, 0.01, 0.0, 0.005, 2, 2, 8, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    if seed_field:
+        solver.E[:, :, :8, "z"] = -3.0e5
+    else:
+        solver.E.array[:] = 0.0
+    sp = Species(
+        name="electrons",
+        charge=-e_charge,
+        mass=m_e,
+        capacity=128,
+        track_ids=True,
+    )
+    emitter = SpaceChargeLimitedEmitter(
+        solver,
+        sp,
+        n_macro_per_cell=2,
+        thermal_u=1.5e6,
+        voltage=None,
+        maintain_voltage=True,
+    )
+    col = Collector(name="anode_probe", plane=("z", 0.004, 1))
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[emitter],
+        collectors=[col],
+        shape=1,
+        gather="momentum",
+        sort_every=0,
+        track_energy=True,
+    ).attach()
+    return solver, ps, emitter
+
+
+@_serial_only
+def test_cpu_restart_with_space_charge_limited_emitter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CPU restart with SpaceChargeLimitedEmitter is bitwise identical to an uninterrupted run, and omitting its state fails."""
+    n_half = 4
+    n_total = 2 * n_half
+
+    # Run A: uninterrupted 2N steps
+    solver_a, ps_a, em_a = _build_scl_emitter_case(seed_field=True)
+    assert isinstance(em_a, InjectorProtocol)
+    assert em_a.emitter_kind == "pec_wall"
+    for _ in range(n_total):
+        solver_a.one_step()
+    snap_a = _extract_state_snapshot(ps_a)
+
+    assert float(em_a.injected_charge) < 0.0
+    assert float(em_a.injected_energy) > 0.0
+    assert em_a.injected_count == n_total * em_a.n_emit_per_step
+    assert float(em_a.voltage_source_work) > 0.0
+    assert em_a._V_target is not None
+    assert em_a.step_index == n_total
+    assert snap_a["gauss_residual"] <= 1e-12
+
+    # Run B: N steps -> save_checkpoint -> fresh solver/emitter -> load_checkpoint -> N steps
+    ckpt_dir = tmp_path / "ckpt_scl_emitter"
+    solver_b1, ps_b1, em_b1 = _build_scl_emitter_case(seed_field=True)
+    for _ in range(n_half):
+        solver_b1.one_step()
+    assert float(em_b1.voltage_source_work) > 0.0
+    ps_b1.save_checkpoint(ckpt_dir)
+
+    solver_b2, ps_b2, em_b2 = _build_scl_emitter_case(seed_field=False)
+    ps_b2.load_checkpoint(ckpt_dir)
+    assert em_b2.state_dict() == em_b1.state_dict()
+    for _ in range(n_half):
+        solver_b2.one_step()
+    snap_b = _extract_state_snapshot(ps_b2)
+
+    _assert_snapshots_bitwise_equal(snap_a, snap_b)
+    assert em_b2.state_dict() == em_a.state_dict()
+
+    # Omission check: skipping injector_state on save/load loses cumulative counters,
+    # step_index, and _V_target, causing post-restart fields and snapshots to diverge.
+    orig_save_item = ckpt_mod._save_state_item
+    orig_validate = ckpt_mod._validate_rank_archive
+    remaining_keys = tuple(k for k in CHECKPOINT_STATE_KEYS if k != "injector_state")
+
+    def _skip_injector_state(arrays, key, particle_solver):
+        if key == "injector_state":
+            return
+        orig_save_item(arrays, key, particle_solver)
+
+    def _validate_without_injector_state(
+        particle_solver, data, required_keys=remaining_keys
+    ):
+        return orig_validate(particle_solver, data, required_keys=remaining_keys)
+
+    monkeypatch.setattr(ckpt_mod, "_save_state_item", _skip_injector_state)
+    monkeypatch.setattr(
+        ckpt_mod, "_validate_rank_archive", _validate_without_injector_state
+    )
+
+    ckpt_omit = tmp_path / "ckpt_scl_omit"
+    solver_o1, ps_o1, _ = _build_scl_emitter_case(seed_field=True)
+    for _ in range(n_half):
+        solver_o1.one_step()
+    ps_o1.save_checkpoint(ckpt_omit)
+
+    solver_o2, ps_o2, em_o2 = _build_scl_emitter_case(seed_field=False)
+    ps_o2.load_checkpoint(ckpt_omit)
+    for _ in range(n_half):
+        solver_o2.one_step()
+    snap_omit = _extract_state_snapshot(ps_o2)
+
+    assert em_o2.state_dict() != em_a.state_dict()
+    assert snap_omit["injected_charge"] != snap_a["injected_charge"]
+    assert (
+        snap_omit["energy_balance"]["K_injected"]
+        != snap_a["energy_balance"]["K_injected"]
+    )
+    assert not np.array_equal(snap_omit["E"], snap_a["E"])
+    with pytest.raises(AssertionError) as exc_info:
+        _assert_snapshots_bitwise_equal(snap_a, snap_omit)
+    print(
+        f"[mutation scl_emitter omit=injector_state] caught AssertionError: "
+        f"{_fmt_exc(exc_info.value)}"
+    )
