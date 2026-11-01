@@ -232,14 +232,22 @@ To compare `ParticleSolver` and `LinearizedBeam` without adjustable parameters (
      - $s_{\text{modes}} = \bigl|\beta_{\text{pred}}(\text{all modes}) - \beta_{\text{pred}}(\text{all modes except highest})\bigr|/\beta_{\text{pred}}$ (modal truncation);
      - $s_{\text{sym}} = \bigl|\beta_{\text{pred}}(\Omega_f\text{ in }\tau_{\text{Y}}^2) - \beta_{\text{pred}}(\omega\text{ in }\tau_{\text{Y}}^2)\bigr|/\beta_{\text{pred}}$ (time-symbol ambiguity at the field/beam interface);
      - $s_{\text{round}} = 10^{-12}$.
-   - Every deterministic signed check asserts
+   - For the linear code (`LinearizedBeam` on coarse and fine grids and mutation **M2** with $\rho_0\times 2$), the signed check asserts
      ```math
-     \left|\frac{\beta_{\text{meas}}}{\beta_{\text{pred}}} - 1\right| \le s_{\text{win}} + s_{\text{modes}} + s_{\text{sym}} + s_{\text{round}},
+     \left|\frac{\beta_{q,\text{LB}}}{\beta_{\text{LB,pred}}} - 1\right| \le s_{\text{LB}} = s_{\text{win,LB}} + s_{\text{modes,LB}} + s_{\text{sym,LB}} + s_{\text{round}}.
      ```
-     for `LinearizedBeam` (coarse and fine), the `"sheet_lattice"` particle run (coarse and fine, plus the axial- vs transverse-only refinement grids in `test_axial_vs_transverse_refinement`, `DIAG id=axial_vs_transverse`), and all three mutations (**M1** with $|q/m|\times 2$, **M2** with $\rho_0\times 2$, and **M3** with Fibonacci disk `line_x`), while the cross-code check asserts
-     ```math
-     \left|\frac{\beta_{q,\text{P,lattice}}}{\beta_{q,\text{LB}}} - \frac{\beta_{\text{P,pred}}}{\beta_{\text{LB,pred}}}\right| \le s_{\text{LB}} + s_{\text{part}}.
-     ```
+   - Every check comparing particle measurements with the linear modal prediction uses the $m \to 0$ extrapolated wavenumber $\beta_0$:
+     - **Coarse lattice**: $\beta_0 = \beta_{0,\text{3pt}}$ from the three-point fit through $(m, m/2, m/4)$, asserting $|\beta_{0,\text{3pt}}/\beta_{\text{P,pred}} - 1| \le s_{\text{part}} + (e_R + \sigma_{\text{prop}})/\beta_{\text{P,pred}}$.
+     - **Fine lattice**: $\beta_0 = \bigl(4\beta(m/2) - \beta(m)\bigr)/3$ (`m2_assumed=1`), asserting $|\beta_0/\beta_{\text{P,pred}} - 1| \le s_{\text{part}}$.
+     - **Mutations M1 ($|q/m|\times 2$) and M3 (Fibonacci disk `line_x`)**: each mutated configuration is run at $m$ and $m/2$ with $\beta_{0,\text{mut}} = \bigl(4\beta_{\text{mut}}(m/2) - \beta_{\text{mut}}(m)\bigr)/3$, and the bound adds the two-point remainder scaled from the coarse baseline:
+       ```math
+       \left|\frac{\beta_{0,\text{mut}}}{\beta_{\text{pred,mut}}} - 1\right| \le s_{\text{mut}} + \frac{e_{R,\text{mut}}}{\beta_{\text{pred,mut}}}, \qquad e_{R,\text{mut}} = \left(\frac{e_R}{|\beta(m) - \beta(m/2)|}\right)_{\text{baseline}}\,\bigl|\beta_{\text{mut}}(m) - \beta_{\text{mut}}(m/2)\bigr|.
+       ```
+     - **Cross-code check (coarse and fine)**: uses the respective extrapolated $\beta_0$:
+       ```math
+       \left|\frac{\beta_0}{\beta_{q,\text{LB}}} - \frac{\beta_{\text{P,pred}}}{\beta_{\text{LB,pred}}}\right| \le s_{\text{LB}} + s_{\text{part}}.
+       ```
+     - **8-seed ensemble (`profile="sheet"`)**: `resid_mean` vs $\beta_{\text{P,pred}}$ is report-only; the asserted falsifier is $\bigl|\overline{\beta}_{q,\text{P}} - \beta_{q,\text{P,lattice}}\bigr| \le t_{0.995,7}\,\text{SEM}$ at the same finite $m$ on both sides.
    - To inspect the printed `*CHECK`, `TERMS`, and `DIAG` lines at run time:
      ```bash
      pytest tests/test_087_particles_vs_linearized_beam.py -v -s
