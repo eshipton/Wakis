@@ -14,6 +14,7 @@ time-domain drift runners.
 
 from __future__ import annotations
 
+import gc
 from functools import lru_cache
 from typing import Any
 
@@ -36,8 +37,87 @@ try:
     import cupy as cp
 
     USE_GPU = bool(cp.cuda.is_available())
+    _GPU_BIN_KERNEL = (
+        cp.RawKernel(
+            r"""
+extern "C" __global__ void bin_beam_moments(
+    const int n_p,
+    const int nx,
+    const int nz,
+    const double a,
+    const double dx,
+    const double dz,
+    const double c2,
+    const double gamma0,
+    const double q_over_mc2,
+    const double* __restrict__ xp,
+    const double* __restrict__ zp,
+    const double* __restrict__ uxp,
+    const double* __restrict__ uyp,
+    const double* __restrict__ uzp,
+    const double* __restrict__ wp,
+    const double* __restrict__ phi_nodes,
+    double* __restrict__ out_bins
+) {
+    extern __shared__ double smem[];
+    double* s_w   = smem;
+    double* s_wv  = smem + nz;
+    double* s_wv2 = smem + 2 * nz;
+    double* s_wg  = smem + 3 * nz;
+    double* s_wgp = smem + 4 * nz;
+
+    for (int j = threadIdx.x; j < 5 * nz; j += blockDim.x) {
+        smem[j] = 0.0;
+    }
+    __syncthreads();
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int i = idx; i < n_p; i += stride) {
+        double z = zp[i];
+        int b = (int)floor(z / dz);
+        if (b < 0) b = 0;
+        else if (b >= nz) b = nz - 1;
+        if (b < nz - 1 && z >= (double)(b + 1) * dz) b += 1;
+
+        double ux = uxp[i], uy = uyp[i], uz = uzp[i];
+        double w = wp[i];
+        double gamma = sqrt(1.0 + (ux*ux + uy*uy + uz*uz) / c2);
+        double vz = uz / gamma;
+
+        double xi = (xp[i] + a) / dx;
+        int ix0 = (int)floor(xi);
+        if (ix0 < 0) ix0 = 0;
+        else if (ix0 > nx - 1) ix0 = nx - 1;
+        double wx1 = xi - (double)ix0;
+        if (wx1 < 0.0) wx1 = 0.0;
+        else if (wx1 > 1.0) wx1 = 1.0;
+        double wx0 = 1.0 - wx1;
+        double phi = wx0 * phi_nodes[ix0 * nz + b] + wx1 * phi_nodes[(ix0 + 1) * nz + b];
+        double gamma_pred = gamma0 + q_over_mc2 * phi;
+
+        atomicAdd(&s_w[b], w);
+        atomicAdd(&s_wv[b], w * vz);
+        atomicAdd(&s_wv2[b], w * vz * vz);
+        atomicAdd(&s_wg[b], w * gamma);
+        atomicAdd(&s_wgp[b], w * gamma_pred);
+    }
+    __syncthreads();
+
+    for (int j = threadIdx.x; j < 5 * nz; j += blockDim.x) {
+        atomicAdd(&out_bins[j], smem[j]);
+    }
+}
+""",
+            "bin_beam_moments",
+        )
+        if USE_GPU
+        else None
+    )
 except ImportError:
+    cp = None
     USE_GPU = False
+    _GPU_BIN_KERNEL = None
 
 
 # Physical and geometric parameters for the planar sheet-beam drift tunnel
@@ -47,7 +127,9 @@ BEAM_HALF_THICKNESS_M = 0.8e-3  # Sheet-beam half-thickness b [m]
 PERIODIC_LY_M = 1.0e-3  # Periodic transverse depth Ly [m]
 TUNNEL_LENGTH_M = 0.206  # Drift-tunnel axial length Lz >= 1.6 * lambda_q [m]
 OUTFLOW_RAMP_M = 8.0e-3  # Outflow axial taper length [m]
-EPS_WINDOW = 1.0e-5  # Relative evanescent near-field amplitude allowed at fit-window edge [-]
+EPS_WINDOW = (
+    1.0e-5  # Relative evanescent near-field amplitude allowed at fit-window edge [-]
+)
 RISE_PERIODS = 2.0  # C^1 raised-cosine entrance turn-on ramp duration in RF periods [-]
 DRIVE_FREQ_HZ = 6.5e9  # AC density-modulation frequency f [Hz]
 PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * pi) [Hz]
@@ -1808,17 +1890,27 @@ def run_particle_beam_drift(
         verbose=0,
     )
 
-    sp = Species(name="electron", charge=-e_charge, mass=m_e / qm_scale)
-
-    def current_modulation(t: float) -> float:
-        ramp_t = 0.5 * (1.0 - np.cos(np.pi * min(t / t_rise, 1.0)))
-        return i0_dc * (1.0 + m_mod * ramp_t * np.sin(omega * t))
-
     n_macro = (
         int(n_macro_per_step)
         if n_macro_per_step is not None
         else (16 if nx == COARSE_GRID[0] else 32)
     )
+    n_settle = int(np.ceil(1.01 * lz / (u_dep * dt)))
+    n_dft = 6 * n_spp
+    n_total = n_settle + n_dft
+
+    est_cap = max(int((n_settle + 16) * n_macro), 1024)
+    sp = Species(
+        name="electron",
+        charge=-e_charge,
+        mass=m_e / qm_scale,
+        capacity=est_cap,
+    )
+
+    def current_modulation(t: float) -> float:
+        ramp_t = 0.5 * (1.0 - np.cos(np.pi * min(t / t_rise, 1.0)))
+        return i0_dc * (1.0 + m_mod * ramp_t * np.sin(omega * t))
+
     inj = BeamInjector(
         species=sp,
         z0=0.0,
@@ -1840,10 +1932,6 @@ def run_particle_beam_drift(
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
     ).attach()
 
-    n_settle = int(np.ceil(1.01 * lz / (u_dep * dt)))
-    n_dft = 6 * n_spp
-    n_total = n_settle + n_dft
-
     iz_hist = np.zeros((n_dft, beam_ref.M), dtype=np.float64)
     t_mids = np.zeros(n_dft, dtype=np.float64)
 
@@ -1861,6 +1949,16 @@ def run_particle_beam_drift(
     wg_win = np.zeros((n_dft, nz), dtype=np.float64)
     wgp_win = np.zeros((n_dft, nz), dtype=np.float64)
 
+    use_gpu_bin = bool(
+        USE_GPU and sp.on_gpu and _GPU_BIN_KERNEL is not None and 5 * nz * 8 <= 49152
+    )
+    if use_gpu_bin:
+        out_bins_d = cp.zeros((5, nz), dtype=np.float64)
+        phi_nodes_d = cp.zeros((nx + 1, nz), dtype=np.float64)
+        c2_val = float(c_light**2)
+        q_over_mc2_val = float(e_charge / (sp.mass * c_light**2))
+        smem_bytes = int(5 * nz * 8)
+
     for step in range(n_total):
         solver.one_step()
         if step >= n_settle:
@@ -1871,17 +1969,6 @@ def run_particle_beam_drift(
             j_edges = j_host.reshape(beam_ref.M, beam_ref.N_lines)
             iz_hist[k, :] = np.sum(j_edges * beam_ref.dA_perp, axis=1)
 
-            xp = np.asarray(sp.x.get() if hasattr(sp.x, "get") else sp.x)
-            zp = np.asarray(sp.z.get() if hasattr(sp.z, "get") else sp.z)
-            ux_p = np.asarray(sp.ux.get() if hasattr(sp.ux, "get") else sp.ux)
-            uy_p = np.asarray(sp.uy.get() if hasattr(sp.uy, "get") else sp.uy)
-            uz_p = np.asarray(sp.uz.get() if hasattr(sp.uz, "get") else sp.uz)
-            wp = np.asarray(sp.w.get() if hasattr(sp.w, "get") else sp.w)
-
-            gamma_p = np.sqrt(1.0 + (ux_p**2 + uy_p**2 + uz_p**2) / (c_light**2))
-            vz_p = uz_p / gamma_p
-            bin_idx = np.clip(np.digitize(zp, z_edges) - 1, 0, nz - 1)
-
             # Deposited-field transverse potential phi(x, z) with PEC phi(+-a) = 0
             ex_raw = solver.E[:, :, :, "x"]
             ex_host = np.asarray(ex_raw.get() if hasattr(ex_raw, "get") else ex_raw)
@@ -1890,22 +1977,76 @@ def run_particle_beam_drift(
             phi_nodes[1:, :] = -dx * np.cumsum(ex_cell, axis=0)
             phi_nodes -= x_node_frac * phi_nodes[-1:, :]
 
-            xi_p = (xp + a) / dx
-            ix0 = np.clip(np.floor(xi_p).astype(np.int64), 0, nx - 1)
-            wx1 = np.clip(xi_p - ix0, 0.0, 1.0)
-            wx0 = 1.0 - wx1
-            phi_p = wx0 * phi_nodes[ix0, bin_idx] + wx1 * phi_nodes[ix0 + 1, bin_idx]
-            gamma_pred_p = gamma0 + (e_charge / (sp.mass * c_light**2)) * phi_p
+            if use_gpu_bin:
+                n_p_cur = int(sp.n_particles)
+                out_bins_d.fill(0.0)
+                if n_p_cur > 0:
+                    phi_nodes_d.set(phi_nodes)
+                    n_blocks = min(max((n_p_cur + 255) // 256, 1), 256)
+                    _GPU_BIN_KERNEL(
+                        (n_blocks,),
+                        (256,),
+                        (
+                            n_p_cur,
+                            int(nx),
+                            int(nz),
+                            float(a),
+                            float(dx),
+                            float(dz),
+                            c2_val,
+                            float(gamma0),
+                            q_over_mc2_val,
+                            sp._x,
+                            sp._z,
+                            sp._ux,
+                            sp._uy,
+                            sp._uz,
+                            sp._w,
+                            phi_nodes_d,
+                            out_bins_d,
+                        ),
+                        shared_mem=smem_bytes,
+                    )
+                bins_host = out_bins_d.get()
+                w_k = bins_host[0]
+                wv_k = bins_host[1]
+                w_win[k, :] = w_k
+                wv_win[k, :] = wv_k
+                wv2_win[k, :] = bins_host[2]
+                wg_win[k, :] = bins_host[3]
+                wgp_win[k, :] = bins_host[4]
+            else:
+                xp = np.asarray(sp.x.get() if hasattr(sp.x, "get") else sp.x)
+                zp = np.asarray(sp.z.get() if hasattr(sp.z, "get") else sp.z)
+                ux_p = np.asarray(sp.ux.get() if hasattr(sp.ux, "get") else sp.ux)
+                uy_p = np.asarray(sp.uy.get() if hasattr(sp.uy, "get") else sp.uy)
+                uz_p = np.asarray(sp.uz.get() if hasattr(sp.uz, "get") else sp.uz)
+                wp = np.asarray(sp.w.get() if hasattr(sp.w, "get") else sp.w)
 
-            w_k = np.bincount(bin_idx, weights=wp, minlength=nz)
-            wv_k = np.bincount(bin_idx, weights=wp * vz_p, minlength=nz)
-            w_win[k, :] = w_k
-            wv_win[k, :] = wv_k
-            wv2_win[k, :] = np.bincount(bin_idx, weights=wp * (vz_p**2), minlength=nz)
-            wg_win[k, :] = np.bincount(bin_idx, weights=wp * gamma_p, minlength=nz)
-            wgp_win[k, :] = np.bincount(
-                bin_idx, weights=wp * gamma_pred_p, minlength=nz
-            )
+                gamma_p = np.sqrt(1.0 + (ux_p**2 + uy_p**2 + uz_p**2) / (c_light**2))
+                vz_p = uz_p / gamma_p
+                bin_idx = np.clip(np.digitize(zp, z_edges) - 1, 0, nz - 1)
+
+                xi_p = (xp + a) / dx
+                ix0 = np.clip(np.floor(xi_p).astype(np.int64), 0, nx - 1)
+                wx1 = np.clip(xi_p - ix0, 0.0, 1.0)
+                wx0 = 1.0 - wx1
+                phi_p = (
+                    wx0 * phi_nodes[ix0, bin_idx] + wx1 * phi_nodes[ix0 + 1, bin_idx]
+                )
+                gamma_pred_p = gamma0 + (e_charge / (sp.mass * c_light**2)) * phi_p
+
+                w_k = np.bincount(bin_idx, weights=wp, minlength=nz)
+                wv_k = np.bincount(bin_idx, weights=wp * vz_p, minlength=nz)
+                w_win[k, :] = w_k
+                wv_win[k, :] = wv_k
+                wv2_win[k, :] = np.bincount(
+                    bin_idx, weights=wp * (vz_p**2), minlength=nz
+                )
+                wg_win[k, :] = np.bincount(bin_idx, weights=wp * gamma_p, minlength=nz)
+                wgp_win[k, :] = np.bincount(
+                    bin_idx, weights=wp * gamma_pred_p, minlength=nz
+                )
 
             # Accumulate DC velocity and density profiles over 1 RF period (n_spp steps)
             # at the start of the steady-state window to cancel AC modulation
@@ -1913,6 +2054,13 @@ def run_particle_beam_drift(
                 w_sum_dc += w_k
                 wv_sum_dc += wv_k
                 n_dc_samples += 1
+
+    sp_charge = float(sp.charge)
+    del ps, inj, sp, solver, grid
+    if USE_GPU and cp is not None:
+        gc.collect()
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
 
     iz_dc = np.mean(iz_hist, axis=0)
     iz_ac = iz_hist - iz_dc[None, :]
@@ -1937,7 +2085,7 @@ def run_particle_beam_drift(
     )
 
     area_beam = 2.0 * b * ly
-    rho_dc_profile = (sp.charge * w_mean_cell) / (area_beam * dz)
+    rho_dc_profile = (sp_charge * w_mean_cell) / (area_beam * dz)
 
     z_coords = beam_ref.s_coords
     interior = (z_coords >= 0.2 * lz) & (z_coords <= 0.8 * lz)
@@ -2027,17 +2175,16 @@ def cached_linearized_beam_drift(
 
 
 @lru_cache(maxsize=64)
-def cached_particle_drift(
+def _cached_particle_drift_impl(
     nx: int,
     nz: int,
-    profile: str = "sheet_lattice",
-    seed: int = 42,
-    m_mod: float = MODULATION_INDEX,
-    qm_scale: float = 1.0,
-    n_macro_per_step: int | None = None,
-    gather: str = "galerkin",
+    profile: str,
+    seed: int,
+    m_mod: float,
+    qm_scale: float,
+    n_macro: int,
+    gather: str,
 ) -> dict[str, Any]:
-    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather)``."""
     lb_ref = cached_linearized_beam_drift(
         nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
     )
@@ -2049,8 +2196,37 @@ def cached_particle_drift(
         seed=seed,
         m_mod=m_mod,
         profile=profile,
-        n_macro_per_step=n_macro_per_step,
+        n_macro_per_step=n_macro,
         gather=gather,
+    )
+
+
+def cached_particle_drift(
+    nx: int,
+    nz: int,
+    profile: str = "sheet_lattice",
+    seed: int = 42,
+    m_mod: float = MODULATION_INDEX,
+    qm_scale: float = 1.0,
+    n_macro_per_step: int | None = None,
+    gather: str = "galerkin",
+) -> dict[str, Any]:
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather)``."""
+    n_macro = (
+        int(n_macro_per_step)
+        if n_macro_per_step is not None
+        else (16 if int(nx) == COARSE_GRID[0] else 32)
+    )
+    eff_seed = int(NOISE_SEEDS[0]) if profile == "sheet_lattice" else int(seed)
+    return _cached_particle_drift_impl(
+        int(nx),
+        int(nz),
+        str(profile),
+        eff_seed,
+        float(m_mod),
+        float(qm_scale),
+        n_macro,
+        str(gather),
     )
 
 
@@ -2165,12 +2341,15 @@ def compute_m_extrapolation(
 def measure_empirical_noise(
     grid: tuple[int, int, int] = COARSE_GRID,
     m_mod: float = MODULATION_INDEX,
+    n_macro_per_step: int | None = None,
 ) -> dict[str, Any]:
     """Measure empirical 8-seed ``profile='sheet'`` statistics on ``grid``.
 
     Runs seeds ``42..49`` on ``grid`` at modulation depth ``m_mod`` using
     ``profile='sheet'`` (one seeded uniform draw per stratum per step from
-    ``BeamInjector._step_rng``), fits the two-wave model over ``fit_window(params)``
+    ``BeamInjector._step_rng``) at ``n_macro_per_step = 256`` (coarse) or ``512``
+    (fine) alongside the ``profile='sheet_lattice'`` reference at the same
+    ``n_macro_per_step``, fits the two-wave model over ``fit_window(params)``
     for each seed, and computes the 8-seed mean, standard error of the mean
     ``SEM = std(ddof=1) / sqrt(8)``, and two-sided 99.73% Student-t critical
     value ``t = scipy.stats.t.ppf(0.99865, 7)`` for ``beta_q``, DC depression
@@ -2178,6 +2357,11 @@ def measure_empirical_noise(
     """
     params = compute_analytic_parameters()
     nx, _, nz = grid
+    n_macro = (
+        int(n_macro_per_step)
+        if n_macro_per_step is not None
+        else (256 if nx == COARSE_GRID[0] else 512)
+    )
     lb_res = cached_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
     z_coords = lb_res["z_coords"]
     beta_e = params["beta_e"]
@@ -2185,6 +2369,28 @@ def measure_empirical_noise(
     lam_q = params["lambda_q"]
     z_min, z_max = fit_window(params)
     u0 = params["u0"]
+    b = BEAM_HALF_THICKNESS_M
+
+    k_idx = np.arange(n_macro, dtype=np.float64)
+    x_lat_n = b * (2.0 * (k_idx + 0.5) / float(n_macro) - 1.0)
+    bq_pred_n = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_lat_n)
+    )
+    delta_disc_n = float(compute_discrete_dc_depression(nx, params, line_x=x_lat_n))
+    part_lat_n = cached_particle_drift(
+        nx,
+        nz,
+        profile="sheet_lattice",
+        seed=NOISE_SEEDS[0],
+        m_mod=m_mod,
+        qm_scale=1.0,
+        n_macro_per_step=n_macro,
+    )
+    fit_lat_n = fit_beta_q_from_envelope(
+        z_coords, part_lat_n["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    bq_lat_n = float(fit_lat_n["beta_q"])
+    delta_lat_n = float((u0 - part_lat_n["u_z_mean"]) / u0)
 
     bq_list: list[float] = []
     z0_list: list[float] = []
@@ -2201,6 +2407,7 @@ def measure_empirical_noise(
             seed=seed,
             m_mod=m_mod,
             qm_scale=1.0,
+            n_macro_per_step=n_macro,
         )
         i1 = res["i1_part"]
         i2 = res["i2_part"]
@@ -2252,12 +2459,18 @@ def measure_empirical_noise(
 
     return {
         "seeds": NOISE_SEEDS,
+        "n_macro_per_step": n_macro,
         "tcrit": tcrit,
         "bq_seeds": bq_seeds,
         "bq_mean": bq_mean,
         "bq_std": bq_std,
         "bq_sem": bq_sem,
         "bq_coherent_mean": bq_coherent_mean,
+        "bq_lattice": bq_lat_n,
+        "delta_lattice": delta_lat_n,
+        "bq_pred": bq_pred_n,
+        "delta_disc": delta_disc_n,
+        "part_lattice": part_lat_n,
         "z0_seeds": z0_seeds,
         "z0_mean": z0_mean,
         "z0_std": z0_std,
