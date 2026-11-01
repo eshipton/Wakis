@@ -478,9 +478,10 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     print(format_error_budget(nx, nz, tols), flush=True)
     print(
         f"TERMS grid=coarse s_win={tols['s_win_part']:.6e} "
-        f"s_modes={tols['s_modes_part']:.6e} s_qs={tols['s_qs_part']:.6e} "
+        f"s_modes={tols['s_modes_part']:.6e} s_sym={tols['s_sym_part']:.6e} "
+        f"s_round={tols['s_round']:.6e} "
         f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} "
-        f"s_qs_lb={tols['s_qs_lb']:.6e} "
+        f"s_sym_lb={tols['s_sym_lb']:.6e} "
         f"lambda_1={ev_p[0]:.6f} lambda_2={ev_p[1]:.6f} "
         f"lambda_3={ev_p[2]:.6f} lambda_4={ev_p[3]:.6f} "
         f"lambda_lb_1={ev_lb[0]:.6f} lambda_lb_2={ev_lb[1]:.6f} "
@@ -509,10 +510,10 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
 
     # Step 3 slack-sum identity asserts
     slack_lb_check = (
-        tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_qs_lb"] + tols["s_round"]
+        tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_sym_lb"] + tols["s_round"]
     )
     slack_part_check = (
-        tols["s_win_part"] + tols["s_modes_part"] + tols["s_qs_part"] + tols["s_round"]
+        tols["s_win_part"] + tols["s_modes_part"] + tols["s_sym_part"] + tols["s_round"]
     )
     assert np.isclose(tols["slack_lb"], slack_lb_check, rtol=0.0, atol=1e-15), (
         f"Identity check failed for slack_lb: val={tols['slack_lb']:.16e}, "
@@ -884,9 +885,10 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
         f"TERMS grid=fine s_win={tols_f['s_win_part']:.6e} "
-        f"s_modes={tols_f['s_modes_part']:.6e} s_qs={tols_f['s_qs_part']:.6e} "
+        f"s_modes={tols_f['s_modes_part']:.6e} s_sym={tols_f['s_sym_part']:.6e} "
+        f"s_round={tols_f['s_round']:.6e} "
         f"s_win_lb={tols_f['s_win_lb']:.6e} s_modes_lb={tols_f['s_modes_lb']:.6e} "
-        f"s_qs_lb={tols_f['s_qs_lb']:.6e} "
+        f"s_sym_lb={tols_f['s_sym_lb']:.6e} "
         f"lambda_1={ev_p_f[0]:.6f} lambda_2={ev_p_f[1]:.6f} "
         f"lambda_3={ev_p_f[2]:.6f} lambda_4={ev_p_f[3]:.6f} "
         f"lambda_lb_1={ev_lb_f[0]:.6f} lambda_lb_2={ev_lb_f[1]:.6f} "

@@ -407,7 +407,7 @@ def compute_transverse_modal_operator(
     k_val: float | None = None,
     line_x: np.ndarray | None = None,
     line_w: np.ndarray | None = None,
-    drop_k0: bool = False,
+    use_omega_f: bool = True,
 ) -> dict[str, Any]:
     """Build the discrete transverse modal operator ``G(k)`` and its eigensystem at wavenumber ``k_val``.
 
@@ -428,8 +428,10 @@ def compute_transverse_modal_operator(
         Injected particle line ``x`` coordinates [m] for ``code == "particles"``.
     line_w : np.ndarray, optional
         Unnormalized line charge weights.
-    drop_k0 : bool, optional
-        If ``True``, drops ``(omega / c)**2`` from ``tau_Y(k)**2``.
+    use_omega_f : bool, optional
+        If ``True`` (default) and ``nz`` is not ``None``, uses the leapfrog field
+        time symbol ``Omega_f = (2 / dt) * sin(omega * dt / 2)`` in
+        ``tau_Y(k)**2 = kappa(k)**2 - (Omega_f / c)**2``; otherwise uses ``omega``.
 
     Returns
     -------
@@ -451,11 +453,16 @@ def compute_transverse_modal_operator(
         k_val = float(params["beta_e"])
     if nz is None:
         kappa = float(k_val)
+        omega_tau = float(params["omega"])
     else:
         dz = TUNNEL_LENGTH_M / nz
         kappa = float((2.0 / dz) * np.sin(0.5 * k_val * dz))
-    k0_sq = 0.0 if drop_k0 else float(params["k0"] ** 2)
-    tau_y2 = max(kappa**2 - k0_sq, 1e-12)
+        if use_omega_f:
+            dt_grid, _ = _cached_integer_period_dt(int(nx), int(nz))
+            omega_tau = float((2.0 / dt_grid) * np.sin(0.5 * params["omega"] * dt_grid))
+        else:
+            omega_tau = float(params["omega"])
+    tau_y2 = max(kappa**2 - (omega_tau / c_light) ** 2, 1e-12)
     a_mat = -lap + tau_y2 * np.eye(n_int, dtype=np.float64)
 
     if code == "lb":
@@ -562,7 +569,7 @@ def discrete_modal_prediction(
     line_w: np.ndarray | None = None,
     entrance_profile: np.ndarray | None = None,
     include_shear: bool = True,
-    drop_k0: bool = False,
+    use_omega_f: bool = True,
     drop_highest_mode: bool = False,
     win_shift: float = 0.0,
     omega_p_scale: float = 1.0,
@@ -588,8 +595,10 @@ def discrete_modal_prediction(
     include_shear : bool, optional
         For ``code == "particles"``, include the per-line DC velocity shear
         ``(u_l, gamma_l)`` from Step 1. Default is ``True``.
-    drop_k0 : bool, optional
-        If ``True``, drop ``(omega / c)**2`` from ``tau_Y(k)**2`` (used for ``s_qs``).
+    use_omega_f : bool, optional
+        If ``True`` (default), use the leapfrog field time symbol ``Omega_f`` in
+        ``tau_Y(k)**2 = kappa(k)**2 - (Omega_f / c)**2``; if ``False``, use
+        continuum ``omega`` (for ``s_sym``).
     drop_highest_mode : bool, optional
         If ``True``, omit the highest-order excited transverse mode (used for ``s_modes``).
     win_shift : float, optional
@@ -606,14 +615,11 @@ def discrete_modal_prediction(
         Predicted two-wave fitted ``beta_q`` [rad/m] (or detail dictionary when
         ``return_details=True``).
     """
-    a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
-    ly = PERIODIC_LY_M
     lz = TUNNEL_LENGTH_M
     dz = lz / nz
 
-    grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
-    dt, _ = _integer_period_dt(grid)
+    dt, _ = _cached_integer_period_dt(int(nx), int(nz))
     omega = params["omega"]
     beta_e = params["beta_e"]
 
@@ -625,7 +631,7 @@ def discrete_modal_prediction(
         k_val=beta_e,
         line_x=line_x,
         line_w=line_w,
-        drop_k0=drop_k0,
+        use_omega_f=use_omega_f,
     )
     evals_be = op0["evals"]
     d_vec = op0["d_vec"]
@@ -637,6 +643,8 @@ def discrete_modal_prediction(
             ent_raw = w_eff.copy()
         else:
             ep = np.asarray(entrance_profile, dtype=np.float64)
+            if ep.ndim == 2:
+                ep = ep[0, :]
             if len(ep) == nx - 1:
                 ent_raw = ep[keep_int]
             elif len(ep) == nx + 1:
@@ -670,7 +678,7 @@ def discrete_modal_prediction(
                 params,
                 k_val=k_val,
                 line_w=line_w,
-                drop_k0=drop_k0,
+                use_omega_f=use_omega_f,
             )
             return float(op_k["evals"][j_idx])
 
@@ -738,7 +746,7 @@ def discrete_modal_prediction(
                 k_val=k_val,
                 line_x=line_x,
                 line_w=line_w,
-                drop_k0=drop_k0,
+                use_omega_f=use_omega_f,
             )
             g_tilde = sig_vec[:, None] * op_k["G"]
             m_sym = (s_left[:, None] * g_tilde) * s_right[None, :]
@@ -830,7 +838,7 @@ def prediction_slack(
     entrance_profile: np.ndarray | None = None,
     omega_p_scale: float = 1.0,
 ) -> dict[str, Any]:
-    """Compute the Step 3 parameter-free prediction slack ``s_win + s_modes + s_qs + s_round``."""
+    """Compute the Step 3 parameter-free prediction slack ``s_win + s_modes + s_sym + s_round``."""
     base = discrete_modal_prediction(
         code,
         nx,
@@ -840,7 +848,7 @@ def prediction_slack(
         line_w=line_w,
         entrance_profile=entrance_profile,
         include_shear=True,
-        drop_k0=False,
+        use_omega_f=True,
         drop_highest_mode=False,
         win_shift=0.0,
         omega_p_scale=omega_p_scale,
@@ -898,8 +906,8 @@ def prediction_slack(
     else:
         s_modes = 0.0
 
-    # s_qs: change when (omega / c)^2 is dropped from tau_Y^2
-    bq_qs = float(
+    # s_sym: time-symbol ambiguity |beta_pred(Omega_f in tau_Y^2) - beta_pred(omega in tau_Y^2)| / beta_pred
+    bq_omega_cont = float(
         discrete_modal_prediction(
             code,
             nx,
@@ -909,22 +917,22 @@ def prediction_slack(
             line_w=line_w,
             entrance_profile=entrance_profile,
             include_shear=True,
-            drop_k0=True,
+            use_omega_f=False,
             drop_highest_mode=False,
             win_shift=0.0,
             omega_p_scale=omega_p_scale,
             return_details=False,
         )
     )
-    s_qs = float(abs(bq_pred - bq_qs) / bq_pred)
+    s_sym = float(abs(bq_pred - bq_omega_cont) / bq_pred)
     s_round = 1.0e-12
-    slack = float(s_win + s_modes + s_qs + s_round)
+    slack = float(s_win + s_modes + s_sym + s_round)
 
     res: dict[str, Any] = {
         "bq_pred": bq_pred,
         "s_win": s_win,
         "s_modes": s_modes,
-        "s_qs": s_qs,
+        "s_sym": s_sym,
         "s_round": s_round,
         "slack": slack,
         "evals": base["evals"],
@@ -945,7 +953,7 @@ def prediction_slack(
                 line_w=line_w,
                 entrance_profile=entrance_profile,
                 include_shear=False,
-                drop_k0=False,
+                use_omega_f=True,
                 drop_highest_mode=False,
                 win_shift=0.0,
                 omega_p_scale=omega_p_scale,
@@ -998,7 +1006,7 @@ def _single_grid_budget_terms(
         "bq_pred_lb": float(lb_modal["bq_pred"]),
         "s_win_lb": float(lb_modal["s_win"]),
         "s_modes_lb": float(lb_modal["s_modes"]),
-        "s_qs_lb": float(lb_modal["s_qs"]),
+        "s_sym_lb": float(lb_modal["s_sym"]),
         "s_round": float(lb_modal["s_round"]),
         "slack_lb": float(lb_modal["slack"]),
         "evals_lb": lb_modal["evals"],
@@ -1009,7 +1017,7 @@ def _single_grid_budget_terms(
         "shear_rel": float(part_modal["shear_rel"]),
         "s_win_part": float(part_modal["s_win"]),
         "s_modes_part": float(part_modal["s_modes"]),
-        "s_qs_part": float(part_modal["s_qs"]),
+        "s_sym_part": float(part_modal["s_sym"]),
         "slack_part": float(part_modal["slack"]),
         "evals_part": part_modal["evals"],
         "i1_model_part": part_modal["i1_model"],
@@ -1048,12 +1056,12 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
     lines = [
         f"Modal prediction and slack budget for grid ({nx}, 1, {nz}):",
         f"  bq_pred_lb (Step 2 LB modal prediction)           : {tols['bq_pred_lb']:.6f} rad/m",
-        f"  slack_lb = s_win + s_modes + s_qs + s_round       : {tols['slack_lb']:.6%}",
-        f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_qs={tols['s_qs_lb']:.3e}, s_round={tols['s_round']:.1e})",
+        f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
+        f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",
         f"  LB eigenvalues lambda_1..4(beta_e)                : ({ev_lb[0]:.6f}, {ev_lb[1]:.6f}, {ev_lb[2]:.6f}, {ev_lb[3]:.6f})",
         f"  bq_pred_part (Step 2 Particle modal prediction)   : {tols['bq_pred_part']:.6f} rad/m (unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
-        f"  slack_part = s_win + s_modes + s_qs + s_round     : {tols['slack_part']:.6%}",
-        f"    (s_win={tols['s_win_part']:.3e}, s_modes={tols['s_modes_part']:.3e}, s_qs={tols['s_qs_part']:.3e}, s_round={tols['s_round']:.1e})",
+        f"  slack_part = s_win + s_modes + s_sym + s_round    : {tols['slack_part']:.6%}",
+        f"    (s_win={tols['s_win_part']:.3e}, s_modes={tols['s_modes_part']:.3e}, s_sym={tols['s_sym_part']:.3e}, s_round={tols['s_round']:.1e})",
         f"  Particle eigenvalues lambda_1..4(beta_e)          : ({ev_p[0]:.6f}, {ev_p[1]:.6f}, {ev_p[2]:.6f}, {ev_p[3]:.6f})",
         f"  slack_cross (slack_lb + slack_part)               : {tols['slack_cross']:.6%}",
         f"  delta_th (continuum DC dep, flux/density)         : {tols['delta_th_flux']:.6%} / {tols['delta_th_density']:.6%}",
@@ -1378,6 +1386,20 @@ def _integer_period_dt(grid: GridFIT3D, cfln: float = CFL_NUMBER) -> tuple[float
     n_spp = int(np.ceil(1.0 / (DRIVE_FREQ_HZ * dt_cfl)))
     dt = 1.0 / (DRIVE_FREQ_HZ * n_spp)
     return float(dt), int(n_spp)
+
+
+@lru_cache(maxsize=32)
+def _cached_integer_period_dt(
+    nx: int, nz: int, cfln: float = CFL_NUMBER
+) -> tuple[float, int]:
+    """Cached integer-period ``(dt, n_spp)`` for grid shape ``(nx, 1, nz)``."""
+    a = TUNNEL_HALF_WIDTH_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+    grid = GridFIT3D(
+        -a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, int(nx), 1, int(nz), verbose=0
+    )
+    return _integer_period_dt(grid, cfln=cfln)
 
 
 def run_linearized_beam_drift(
