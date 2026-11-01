@@ -2307,7 +2307,15 @@ def cached_baseline_pair(
 def compute_m_extrapolation(
     nx: int, nz: int, include_m4: bool = True
 ) -> dict[str, Any]:
-    """Compute Step 3 Richardson extrapolation of deterministic lattice ``beta_q(m)`` as ``m -> 0``."""
+    """Compute Step 3 Richardson extrapolation of deterministic lattice ``beta_q(m)`` as ``m -> 0``.
+
+    On the coarse grid (``include_m4=True``), fits ``beta(m) = beta0 + c * m**2 + d * m**4``
+    exactly through the three points ``(m, m/2, m/4)`` with linear Lagrange/Richardson
+    weights ``(1/45, -20/45, 64/45)`` to obtain ``beta0_3pt``, two-point remainder
+    ``e_R = |beta0_3pt - beta0_2pt(m/2, m/4)|`` where
+    ``beta0_2pt(m/2, m/4) = (4 * beta(m/4) - beta(m/2)) / 3``, and propagated
+    Gauss-Newton standard error ``sigma_prop`` across the three single-amplitude fits.
+    """
     params = compute_analytic_parameters()
     tols = derived_tolerances(nx, nz, params)
     bq_pred = float(tols["bq_pred_part"])
@@ -2325,18 +2333,18 @@ def compute_m_extrapolation(
         m_mod=0.5 * MODULATION_INDEX,
         qm_scale=1.0,
     )
-    bq_m = float(
-        fit_beta_q_from_envelope(
-            z_coords, part_m["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
-        )["beta_q"]
+    fit_m = fit_beta_q_from_envelope(
+        z_coords, part_m["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
     )
-    bq_m2 = float(
-        fit_beta_q_from_envelope(
-            z_coords, part_m2["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
-        )["beta_q"]
+    fit_m2 = fit_beta_q_from_envelope(
+        z_coords, part_m2["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
     )
-    bq0 = float((4.0 * bq_m2 - bq_m) / 3.0)
-    resid0 = float(abs(bq0 / bq_pred - 1.0))
+    bq_m = float(fit_m["beta_q"])
+    bq_m2 = float(fit_m2["beta_q"])
+    sigma_m = float(fit_m["sigma_beta_q"])
+    sigma_m2 = float(fit_m2["sigma_beta_q"])
+    beta0_2pt_12 = float((4.0 * bq_m2 - bq_m) / 3.0)
+    sigma_prop_2pt = float(np.hypot(sigma_m / 3.0, 4.0 * sigma_m2 / 3.0))
 
     if include_m4:
         part_m4 = cached_particle_drift(
@@ -2347,48 +2355,98 @@ def compute_m_extrapolation(
             m_mod=0.25 * MODULATION_INDEX,
             qm_scale=1.0,
         )
-        bq_m4 = float(
-            fit_beta_q_from_envelope(
-                z_coords, part_m4["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
-            )["beta_q"]
+        fit_m4 = fit_beta_q_from_envelope(
+            z_coords, part_m4["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
         )
+        bq_m4 = float(fit_m4["beta_q"])
+        sigma_m4 = float(fit_m4["sigma_beta_q"])
         denom = bq_m2 - bq_m4
         q_m = float((bq_m - bq_m2) / denom) if abs(denom) > 1e-30 else float("nan")
         p_m = float(np.log2(q_m)) if q_m > 0.0 else float("nan")
-        m2_law_valid = bool(1.5 <= p_m <= 2.5)
-        bq0_24 = float((4.0 * bq_m4 - bq_m2) / 3.0)
-        e_r = float(abs(bq0 - bq0_24))
-        bound0 = float(slack_part + e_r / bq_pred)
+
+        # Exact 3-point polynomial fit beta(m) = beta0 + c * m^2 + d * m^4 through (m, m/2, m/4)
+        m1 = float(MODULATION_INDEX)
+        m2 = 0.5 * m1
+        m4 = 0.25 * m1
+        vander = np.array(
+            [
+                [1.0, m1**2, m1**4],
+                [1.0, m2**2, m2**4],
+                [1.0, m4**2, m4**4],
+            ],
+            dtype=np.float64,
+        )
+        poly_coef = np.linalg.solve(
+            vander, np.array([bq_m, bq_m2, bq_m4], dtype=np.float64)
+        )
+        beta0_3pt = float((64.0 * bq_m4 - 20.0 * bq_m2 + bq_m) / 45.0)
+        beta0_2pt = float((4.0 * bq_m4 - bq_m2) / 3.0)
+        e_r = float(abs(beta0_3pt - beta0_2pt))
+        sigma_prop = float(
+            np.sqrt(
+                (sigma_m / 45.0) ** 2
+                + (20.0 * sigma_m2 / 45.0) ** 2
+                + (64.0 * sigma_m4 / 45.0) ** 2
+            )
+        )
+        resid0 = float(abs(beta0_3pt / bq_pred - 1.0))
+        bound0 = float(slack_part + (e_r + sigma_prop) / bq_pred)
         return {
             "bq_m": bq_m,
             "bq_m2": bq_m2,
             "bq_m4": bq_m4,
+            "beta_m": bq_m,
+            "beta_m2": bq_m2,
+            "beta_m4": bq_m4,
+            "sigma_m": sigma_m,
+            "sigma_m2": sigma_m2,
+            "sigma_m4": sigma_m4,
             "q_m": q_m,
             "p": p_m,
-            "m2_law_valid": m2_law_valid,
-            "bq0": bq0,
-            "bq0_24": bq0_24,
+            "beta0_3pt": beta0_3pt,
+            "beta0_2pt": beta0_2pt,
+            "beta0_2pt_m_m2": beta0_2pt_12,
+            "beta0": beta0_3pt,
+            "bq0": beta0_3pt,
+            "bq0_24": beta0_2pt,
+            "c_m2": float(poly_coef[1]),
+            "d_m4": float(poly_coef[2]),
             "e_R": e_r,
+            "sigma_prop": sigma_prop,
             "resid0": resid0,
             "bound0": bound0,
             "bq_pred": bq_pred,
             "slack": slack_part,
         }
 
+    resid0_2pt = float(abs(beta0_2pt_12 / bq_pred - 1.0))
     return {
         "bq_m": bq_m,
         "bq_m2": bq_m2,
         "bq_m4": float("nan"),
+        "beta_m": bq_m,
+        "beta_m2": bq_m2,
+        "beta_m4": float("nan"),
+        "sigma_m": sigma_m,
+        "sigma_m2": sigma_m2,
+        "sigma_m4": float("nan"),
         "q_m": float("nan"),
         "p": float("nan"),
-        "m2_law_valid": False,
-        "bq0": bq0,
+        "beta0_3pt": float("nan"),
+        "beta0_2pt": beta0_2pt_12,
+        "beta0_2pt_m_m2": beta0_2pt_12,
+        "beta0": beta0_2pt_12,
+        "bq0": beta0_2pt_12,
         "bq0_24": float("nan"),
+        "c_m2": float("nan"),
+        "d_m4": float("nan"),
         "e_R": float("nan"),
-        "resid0": resid0,
-        "bound0": float("nan"),
+        "sigma_prop": sigma_prop_2pt,
+        "resid0": resid0_2pt,
+        "bound0": slack_part,
         "bq_pred": bq_pred,
         "slack": slack_part,
+        "m2_assumed": 1,
         "label": "m^2 assumed, untested on fine",
     }
 

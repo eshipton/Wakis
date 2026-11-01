@@ -666,11 +666,12 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"slack_lb + slack_part = {slack_cross:.6e} (margin={slack_cross - resid_cross:+.6e})"
     )
 
-    # Step 3: Particle deterministic ("sheet_lattice") Richardson m -> 0 modal prediction check
+    # Step 3: Particle deterministic ("sheet_lattice") 3-point Richardson m -> 0 modal prediction check
     assert extrap_c["resid0"] <= extrap_c["bound0"], (
-        f"Coarse Particle (sheet_lattice) |bq0/bq_pred_modal - 1| = {extrap_c['resid0']:.6e} > "
-        f"slack_part + e_R/bq_pred = {extrap_c['bound0']:.6e} "
+        f"Coarse Particle (sheet_lattice) |beta0_3pt/bq_pred_modal - 1| = {extrap_c['resid0']:.6e} > "
+        f"slack_part + (e_R + sigma_prop)/bq_pred = {extrap_c['bound0']:.6e} "
         f"(slack={slack_part:.6e}, e_R/bq_pred={extrap_c['e_R'] / bq_part_pred:.6e}, "
+        f"sigma_prop/bq_pred={extrap_c['sigma_prop'] / bq_part_pred:.6e}, "
         f"margin={extrap_c['bound0'] - extrap_c['resid0']:+.6e})"
     )
 
@@ -1106,19 +1107,20 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     resid_coh_f = float(abs(noise_f["bq_coherent_mean"] / bq_part_pred_ens_f - 1.0))
     extrap_c = compute_m_extrapolation(nx_c, nz_c, include_m4=True)
     extrap_f = compute_m_extrapolation(nx_f, nz_f, include_m4=False)
-    m2_status_c = (
-        "m2_verified"
-        if extrap_c["m2_law_valid"]
-        else "fallback_p_outside_1.5_2.5_report_bq_m_m2_m4_only"
-    )
     print(
         f"H1CHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_c:.6f} "
+        f"s_win={tols_c['s_win_part']:.6e} s_modes={tols_c['s_modes_part']:.6e} "
+        f"s_sym={tols_c['s_sym_part']:.6e} s_round={tols_c['s_round']:.6e} "
         f"slack={tols_c['slack_part']:.6e} lattice={bq_part_lat_c:.6f} "
         f"resid={resid_lat_c:.6e} resid_lattice={resid_lat_c:.6e} "
+        f"beta_m={extrap_c['bq_m']:.6f} beta_m2={extrap_c['bq_m2']:.6f} beta_m4={extrap_c['bq_m4']:.6f} "
         f"bq_m={extrap_c['bq_m']:.6f} bq_m2={extrap_c['bq_m2']:.6f} bq_m4={extrap_c['bq_m4']:.6f} "
-        f"q_m={extrap_c['q_m']:.6f} p={extrap_c['p']:.6f} m2_law={m2_status_c} "
-        f"bq0={extrap_c['bq0']:.6f} e_R={extrap_c['e_R']:.6e} resid0={extrap_c['resid0']:.6e} "
-        f"bound0={extrap_c['bound0']:.6e} "
+        f"sigma_m={extrap_c['sigma_m']:.6e} sigma_m2={extrap_c['sigma_m2']:.6e} sigma_m4={extrap_c['sigma_m4']:.6e} "
+        f"q_m={extrap_c['q_m']:.6f} p={extrap_c['p']:.6f} "
+        f"beta0_3pt={extrap_c['beta0_3pt']:.6f} beta0_2pt={extrap_c['beta0_2pt']:.6f} "
+        f"beta0={extrap_c['beta0']:.6f} bq0={extrap_c['bq0']:.6f} "
+        f"e_R={extrap_c['e_R']:.6e} sigma_prop={extrap_c['sigma_prop']:.6e} "
+        f"resid0={extrap_c['resid0']:.6e} bound0={extrap_c['bound0']:.6e} "
         f"n_macro_ens={noise_c['n_macro_per_step']} bq_pred_ens={bq_part_pred_ens_c:.6f} "
         f"lattice_ens={bq_part_lat_ens_c:.6f} "
         f"bq_coherent_mean={noise_c['bq_coherent_mean']:.6f} resid_coherent={resid_coh_c:.6e} "
@@ -1130,10 +1132,16 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     )
     print(
         f"H1CHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_f:.6f} "
+        f"s_win={tols_f['s_win_part']:.6e} s_modes={tols_f['s_modes_part']:.6e} "
+        f"s_sym={tols_f['s_sym_part']:.6e} s_round={tols_f['s_round']:.6e} "
         f"slack={tols_f['slack_part']:.6e} lattice={bq_part_lat_f:.6f} "
         f"resid={resid_lat_f:.6e} resid_lattice={resid_lat_f:.6e} "
+        f"beta_m={extrap_f['bq_m']:.6f} beta_m2={extrap_f['bq_m2']:.6f} "
         f"bq_m={extrap_f['bq_m']:.6f} bq_m2={extrap_f['bq_m2']:.6f} "
-        f"bq0={extrap_f['bq0']:.6f} resid0={extrap_f['resid0']:.6e} "
+        f"sigma_m={extrap_f['sigma_m']:.6e} sigma_m2={extrap_f['sigma_m2']:.6e} "
+        f"beta0={extrap_f['beta0']:.6f} bq0={extrap_f['bq0']:.6f} "
+        f"sigma_prop={extrap_f['sigma_prop']:.6e} resid0={extrap_f['resid0']:.6e} "
+        f"bound0={extrap_f['bound0']:.6e} m2_assumed={extrap_f['m2_assumed']} "
         f'extrap_note="{extrap_f["label"]}" '
         f"n_macro_ens={noise_f['n_macro_per_step']} bq_pred_ens={bq_part_pred_ens_f:.6f} "
         f"lattice_ens={bq_part_lat_ens_f:.6f} "
@@ -1445,23 +1453,23 @@ def test_m_scan_linearity():
 
     extrap_c = compute_m_extrapolation(nx, nz, include_m4=True)
     extrap_f = compute_m_extrapolation(FINE_GRID[0], FINE_GRID[2], include_m4=False)
-    m2_status = (
-        "m2_verified"
-        if extrap_c["m2_law_valid"]
-        else "fallback_p_outside_1.5_2.5_report_bq_m_m2_m4_only"
-    )
 
     print(
         f"\nm-scan & Richardson m->0 extrapolation (sheet_lattice, m={MODULATION_INDEX}, m/2={m_half}, m/4={0.25 * MODULATION_INDEX}): "
         f"LB (linear identity): |bq(m)/bq(m/2) - 1|={bq_shift_lb:.3e} "
         f"(bound={tols['eps_dft']:.3e}), I2/I1={i2_ratio_lb_m:.6e} | "
-        f"Part coarse: bq_m={extrap_c['bq_m']:.6f}, bq_m2={extrap_c['bq_m2']:.6f}, bq_m4={extrap_c['bq_m4']:.6f}, "
-        f"q_m={extrap_c['q_m']:.6f}, p={extrap_c['p']:.6f} ({m2_status}), "
-        f"bq0={extrap_c['bq0']:.6f}, e_R={extrap_c['e_R']:.6e}, resid0={extrap_c['resid0']:.6e} "
-        f"(bound0=slack+e_R/bq_pred={extrap_c['bound0']:.6e}), "
+        f"Part coarse: beta_m={extrap_c['bq_m']:.6f}, beta_m2={extrap_c['bq_m2']:.6f}, beta_m4={extrap_c['bq_m4']:.6f}, "
+        f"sigma_m={extrap_c['sigma_m']:.6e}, sigma_m2={extrap_c['sigma_m2']:.6e}, sigma_m4={extrap_c['sigma_m4']:.6e}, "
+        f"q_m={extrap_c['q_m']:.6f} (report-only), p={extrap_c['p']:.6f} (report-only), "
+        f"beta0_3pt={extrap_c['beta0_3pt']:.6f}, beta0_2pt={extrap_c['beta0_2pt']:.6f}, "
+        f"c_m2={extrap_c['c_m2']:+.6e}, d_m4={extrap_c['d_m4']:+.6e}, "
+        f"e_R={extrap_c['e_R']:.6e}, sigma_prop={extrap_c['sigma_prop']:.6e}, "
+        f"slack={extrap_c['slack']:.6e}, resid0={extrap_c['resid0']:.6e} "
+        f"(bound0=slack+(e_R+sigma_prop)/bq_pred={extrap_c['bound0']:.6e}), "
         f"report-only |bq(m)/bq(m/2) - 1|={bq_shift_part:.6e} (slack_part={tols['slack_part']:.6e}) | "
-        f"Part fine: bq_m={extrap_f['bq_m']:.6f}, bq_m2={extrap_f['bq_m2']:.6f}, "
-        f"bq0={extrap_f['bq0']:.6f} ({extrap_f['label']}), resid0={extrap_f['resid0']:.6e} | "
+        f"Part fine: beta_m={extrap_f['bq_m']:.6f}, beta_m2={extrap_f['bq_m2']:.6f}, "
+        f"beta0={extrap_f['beta0']:.6f} (m2_assumed={extrap_f['m2_assumed']}, {extrap_f['label']}), "
+        f"sigma_prop={extrap_f['sigma_prop']:.6e}, resid0={extrap_f['resid0']:.6e} | "
         f"I2/I1 report-only: raw(m)={i2_ratio_part_m:.6e}, raw(m/2)={i2_ratio_part_h:.6e}, "
         f"raw_ratio={i2_raw_scaling:.4f}, bunch(m)={i2_bunch_m:.6e}, "
         f"bunch(m/2)={i2_bunch_h:.6e}, bunch_ratio={i2_bunch_scaling:.4f}",
@@ -1478,12 +1486,12 @@ def test_m_scan_linearity():
         f"eps_dft={tols['eps_dft']:.3e}"
     )
 
-    # Step 3.4: Asserted (coarse) |bq0/bq_pred - 1| <= slack + e_R/bq_pred
-    # (the old |bq(m)/bq(m/2) - 1| check is now report-only above)
+    # Step 3: Asserted (coarse) |beta0_3pt/bq_pred - 1| <= slack + (e_R + sigma_prop)/bq_pred
     assert extrap_c["resid0"] <= extrap_c["bound0"], (
-        f"Coarse Particle Richardson m->0 |bq0/bq_pred - 1| = {extrap_c['resid0']:.6e} > "
-        f"slack_part + e_R/bq_pred = {extrap_c['bound0']:.6e} "
+        f"Coarse Particle Richardson m->0 |beta0_3pt/bq_pred - 1| = {extrap_c['resid0']:.6e} > "
+        f"slack_part + (e_R + sigma_prop)/bq_pred = {extrap_c['bound0']:.6e} "
         f"(slack={tols['slack_part']:.6e}, e_R/bq_pred={extrap_c['e_R'] / extrap_c['bq_pred']:.6e}, "
+        f"sigma_prop/bq_pred={extrap_c['sigma_prop'] / extrap_c['bq_pred']:.6e}, "
         f"margin={extrap_c['bound0'] - extrap_c['resid0']:+.6e})"
     )
 

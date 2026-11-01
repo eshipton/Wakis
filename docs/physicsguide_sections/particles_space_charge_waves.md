@@ -154,16 +154,19 @@ In the Lagrangian particle description (`wakis.particles`), the convective nonli
 \frac{\rho_1(z, t)}{\rho_{\text{dep}}} = m\cos(\beta_q z)\sin(\omega t - \beta_e z), \qquad \frac{v_1(z, t)}{u_{\text{dep}}} = -m\,\frac{\beta_q}{\beta_e}\sin(\beta_q z)\cos(\omega t - \beta_e z).
 ```
 
-Along unperturbed trajectories, the velocity modulation produces an arrival-phase bunching parameter $X(z) \sim \frac{1}{2}m\beta_q z$ in the charge-conservation mapping $I(z, t)\,\mathrm{d}t = I(0, t_0)\,\mathrm{d}t_0$ [Webster, 1939; Paschke, 1957], generating a second-harmonic current ratio $|I_2(z)|/|I_1(0)| \sim X(z)$ and a leading-order quadratic amplitude shift $\beta_q(m) = \beta_0 + c\,m^2$ at third order in the wave amplitude. In `compute_m_extrapolation` (`H1CHECK`) and `test_m_scan_linearity`:
-1. **Quadratic $m^2$ scaling and Richardson extrapolation (`compute_m_extrapolation`)**: The deterministic `"sheet_lattice"` profile is evaluated at $m, m/2, m/4$ on the coarse grid and at $m, m/2$ on the fine grid. On the coarse grid, the ratio
+Along unperturbed trajectories, the velocity modulation produces an arrival-phase bunching parameter $X(z) \sim \frac{1}{2}m\beta_q z$ in the charge-conservation mapping $I(z, t)\,\mathrm{d}t = I(0, t_0)\,\mathrm{d}t_0$ [Webster, 1939; Paschke, 1957], generating a second-harmonic current ratio $|I_2(z)|/|I_1(0)| \sim X(z)$ and an even-in-$m$ nonlinear amplitude shift $\beta_q(m) = \beta_0 + c\,m^2 + d\,m^4 + \mathcal{O}(m^6)$ starting at third order in the wave amplitude. Because every linear modal prediction $\beta_{\text{pred}}$ applies to the $m \to 0$ limit, every particle check against $\beta_{\text{pred}}$ extrapolates $\beta_q(m)$ to $m \to 0$ first (`compute_m_extrapolation`, `H1CHECK`, `test_m_scan_linearity`):
+1. **Three-point Richardson extrapolation on the coarse grid and two-point extrapolation on the fine grid and mutations (`compute_m_extrapolation`)**: The deterministic `"sheet_lattice"` profile is evaluated at $m, m/2, m/4$ on the coarse grid and at $m, m/2$ on the fine grid (and in **M1** and **M3**). On the coarse grid, fitting $\beta_q(m) = \beta_0 + c\,m^2 + d\,m^4$ exactly through $(m, m/2, m/4)$ gives the three-point Richardson extrapolate, two-point remainder $e_R$, and propagated Gauss–Newton standard error $\sigma_{\text{prop}}$:
    ```math
-   q_m = \frac{\beta_q(m) - \beta_q(m/2)}{\beta_q(m/2) - \beta_q(m/4)}, \qquad p = \log_2(q_m),
+   \beta_{0,\text{3pt}} = \frac{64\,\beta_q(m/4) - 20\,\beta_q(m/2) + \beta_q(m)}{45}, \qquad \beta_{0,\text{2pt}}(m/2, m/4) = \frac{4\,\beta_q(m/4) - \beta_q(m/2)}{3},
    ```
-   tests the $m^2$ law ($q_m \simeq 4$, $p \simeq 2$), and Richardson extrapolation to $m \to 0$,
    ```math
-   \beta_0 = \frac{4\,\beta_q(m/2) - \beta_q(m)}{3}, \qquad e_R = \bigl|\beta_0(m, m/2) - \beta_0(m/2, m/4)\bigr|,
+   e_R = \bigl|\beta_{0,\text{3pt}} - \beta_{0,\text{2pt}}(m/2, m/4)\bigr|, \qquad \sigma_{\text{prop}} = \sqrt{\left(\frac{\sigma_m}{45}\right)^2 + \left(\frac{20\,\sigma_{m/2}}{45}\right)^2 + \left(\frac{64\,\sigma_{m/4}}{45}\right)^2},
    ```
-   is checked against the linear modal prediction via the signed assertion $|\beta_0 / \beta_{\text{pred}} - 1| \le s_{\text{part}} + e_R / \beta_{\text{pred}}$ on the coarse grid (with $\beta_0(m, m/2)$ on the fine grid reported with the label `"m^2 assumed, untested on fine"`, and the direct finite-$m$ shift $|\beta_q(m)/\beta_q(m/2) - 1|$ reported as a diagnostic).
+   where $\sigma_m, \sigma_{m/2}, \sigma_{m/4}$ are the Gauss–Newton standard errors $\sigma_{\beta_q}$ of the three single-amplitude variable-projection fits. The coarse-grid assertion checks
+   ```math
+   \left|\frac{\beta_{0,\text{3pt}}}{\beta_{\text{pred}}} - 1\right| \le s_{\text{part}} + \frac{e_R + \sigma_{\text{prop}}}{\beta_{\text{pred}}},
+   ```
+   while the successive difference ratio $q_m = \bigl(\beta_q(m) - \beta_q(m/2)\bigr)/\bigl(\beta_q(m/2) - \beta_q(m/4)\bigr)$ and observed order $p = \log_2(q_m)$ (together with the finite-$m$ shift $|\beta_q(m)/\beta_q(m/2) - 1|$) are reported as report-only diagnostics without an empirical validity band. On the fine grid, the two-point extrapolate $\beta_0 = \bigl(4\beta_q(m/2) - \beta_q(m)\bigr)/3$ (`m2_assumed=1`) is used for both the fine lattice check and the fine cross-code check. In mutations **M1** and **M3**, $\beta_{0,\text{mut}} = \bigl(4\beta_{\text{mut}}(m/2) - \beta_{\text{mut}}(m)\bigr)/3$ is checked against $s_{\text{part,mut}} + e_{R,\text{mut}}/\beta_{\text{pred,mut}}$ with $e_{R,\text{mut}} = \bigl(e_R / |\beta_q(m) - \beta_q(m/2)|\bigr)_{\text{baseline}}\,|\beta_{\text{mut}}(m) - \beta_{\text{mut}}(m/2)|$.
 2. **Exact $m$-invariance in `LinearizedBeam`**: In `LinearizedBeam`, $m$-invariance of $\beta_q$ and $|I_2|/|I_1|$ is verified to round-off as an algebraic **identity** of the linearized fluid equations.
 
 ##### 6. Numerical setup, injection profiles, and exact discrete transverse modal model
