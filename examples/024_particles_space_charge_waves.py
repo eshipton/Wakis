@@ -74,11 +74,11 @@ from examples._space_charge_waves_common import (
     compute_analytic_parameters,
     compute_spatial_spectrum,
     derived_tolerances,
+    discrete_modal_prediction,
     fit_beta_q_from_envelope,
     fit_window,
     format_error_budget,
     measure_empirical_noise,
-    predict_particle_beta_q,
     run_linearized_beam_drift,
     run_particle_beam_drift,
 )
@@ -145,8 +145,12 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     z0_part = fit_part["z0"]
 
     delta_meas_lat = (params["u0"] - part_res["u_z_mean"]) / params["u0"]
-    bq_th_at_delta, bq_part_pred = predict_particle_beta_q(delta_meas_lat, tols)
-    bq_lb_pred = tols["bq_lb_pred"]
+    mod_lb = discrete_modal_prediction("lb", nx, nz, params, return_details=True)
+    mod_part = discrete_modal_prediction(
+        "particles", nx, nz, params, return_details=True
+    )
+    bq_lb_pred = tols["bq_pred_lb"]
+    bq_part_pred = tols["bq_pred_part"]
     resid_lb = abs(bq_lb / bq_lb_pred - 1.0)
     resid_lat = abs(bq_part / bq_part_pred - 1.0)
     resid_cross = abs(bq_part / bq_lb - bq_part_pred / bq_lb_pred)
@@ -173,6 +177,8 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     i1_fit_part = fit_part["a_f"] * np.exp(-1j * fit_part["k_f"] * z_coords) + fit_part[
         "a_s"
     ] * np.exp(-1j * fit_part["k_s"] * z_coords)
+    i1_model_lb = mod_lb["i1_model"]
+    i1_model_part = mod_part["i1_model"]
 
     n_macro = 16 if nx == COARSE_GRID[0] else 32
     metrics = {
@@ -195,26 +201,26 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         "entrance_ratio_linearized_beam": float(np.abs(i1_lb[0]) / params["I1_0"]),
         "entrance_ratio_particles": float(np.abs(i1_part[0]) / params["I1_0"]),
         "bq_th": float(beta_q_th),
-        "bq_lb_pred": float(bq_lb_pred),
+        "bq_pred_lb": float(bq_lb_pred),
         "bq_lb": float(bq_lb),
         "resid_lb": float(resid_lb),
-        "s_lb": float(tols["s_lb"]),
-        "eps_ax": float(tols["eps_ax"]),
-        "eps_x_fit": float(tols["eps_x_fit"]),
-        "eps_z_fit": float(tols["eps_z_fit"]),
-        "eps_cic": float(tols["eps_cic"]),
-        "eps_fit": float(tols["eps_fit"]),
-        "eps_fit_cont": float(tols["eps_fit_cont"]),
-        "eps_fit_grid": float(tols["eps_fit_grid"]),
-        "bq_th_at_delta_meas": float(bq_th_at_delta),
-        "bq_part_pred": float(bq_part_pred),
+        "slack_lb": float(tols["slack_lb"]),
+        "s_win_lb": float(tols["s_win_lb"]),
+        "s_modes_lb": float(tols["s_modes_lb"]),
+        "s_qs_lb": float(tols["s_qs_lb"]),
+        "bq_pred_part": float(bq_part_pred),
         "lattice": float(bq_part),
         "resid_lattice": float(resid_lat),
-        "s_part": float(tols["s_part"]),
+        "slack_part": float(tols["slack_part"]),
+        "s_win_part": float(tols["s_win_part"]),
+        "s_modes_part": float(tols["s_modes_part"]),
+        "s_qs_part": float(tols["s_qs_part"]),
         "resid_cross": float(resid_cross),
-        "s_cross": float(tols["s_cross"]),
+        "slack_cross": float(tols["slack_cross"]),
         "delta_th": float(tols["delta_th"]),
-        "delta_th_disc": float(tols["delta_th_disc"]),
+        "delta_disc_exact": float(tols["delta_disc_exact"]),
+        "delta_disc_flux": float(tols["delta_disc_flux"]),
+        "delta_disc_density": float(tols["delta_disc_density"]),
         "delta_meas_lattice": float(delta_meas_lat),
         "beta_q_linearized_beam_rad_m": float(bq_lb),
         "k_c_linearized_beam_rad_m": float(fit_lb["k_c"]),
@@ -253,6 +259,8 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         "env_analytic_norm": np.abs(np.cos(beta_q_th * (z_coords - z0_part))),
         "env_linearized_beam_norm": np.abs(i1_lb) / params["I1_0"],
         "env_particles_norm": np.abs(i1_part) / params["I1_0"],
+        "env_model_linearized_beam_norm": np.abs(i1_model_lb) / params["I1_0"],
+        "env_model_particles_norm": np.abs(i1_model_part) / params["I1_0"],
         "env_fit_linearized_beam_norm": np.abs(i1_fit_lb) / params["I1_0"],
         "env_fit_particles_norm": np.abs(i1_fit_part) / params["I1_0"],
         "carrier_analytic_norm": np.real(
@@ -305,8 +313,10 @@ def make_figure_envelope(
     )
     st_lb = figstyle.series_style(0, with_marker=False, lw=1.9)
     st_part = figstyle.series_style(1, with_marker=True, markevery=12, ms=4.2)
-    st_fit = figstyle.series_style(2, with_marker=False, lw=1.4)
-    st_fit["linestyle"] = "-."
+    st_mod_lb = figstyle.series_style(2, with_marker=False, lw=1.4)
+    st_mod_lb["linestyle"] = "-."
+    st_mod_part = figstyle.series_style(3, with_marker=False, lw=1.4)
+    st_mod_part["linestyle"] = ":"
     ax_env.plot(
         z_mm,
         curves["env_linearized_beam_norm"],
@@ -321,9 +331,15 @@ def make_figure_envelope(
     )
     ax_env.plot(
         z_mm,
-        curves["env_fit_particles_norm"],
-        label=r"Fitted two-wave $|a_f e^{-i k_f z} + a_s e^{-i k_s z}|$",
-        **st_fit,
+        curves["env_model_linearized_beam_norm"],
+        label=r"$|I_{1,\mathrm{model}}|$ (LinearizedBeam)",
+        **st_mod_lb,
+    )
+    ax_env.plot(
+        z_mm,
+        curves["env_model_particles_norm"],
+        label=r"$|I_{1,\mathrm{model}}|$ (Particles)",
+        **st_mod_part,
     )
     ax_env.axvspan(
         ramp_start_mm,
@@ -518,11 +534,11 @@ def main() -> None:
         f"[Coarse {COARSE_GRID}] "
         f"LB: |I1(0)|/(m*I0)={mc['entrance_ratio_linearized_beam']:.5f}, "
         f"beta_q={mc['beta_q_linearized_beam_rad_m']:.4f} rad/m "
-        f"(pred={mc['bq_lb_pred']:.4f} rad/m, resid={mc['resid_lb']:.4%}, s_lb={mc['s_lb']:.4%}), "
+        f"(pred={mc['bq_pred_lb']:.4f} rad/m, resid={mc['resid_lb']:.4%}, slack={mc['slack_lb']:.4%}), "
         f"z0={mc['z0_linearized_beam_m'] * 1e3:.3f} mm; "
         f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mc['entrance_ratio_particles']:.5f}, "
         f"beta_q={mc['beta_q_particles_rad_m']:.4f} rad/m "
-        f"(pred={mc['bq_part_pred']:.4f} rad/m, resid={mc['resid_lattice']:.4%}, s_part={mc['s_part']:.4%}), "
+        f"(pred={mc['bq_pred_part']:.4f} rad/m, resid={mc['resid_lattice']:.4%}, slack={mc['slack_part']:.4%}), "
         f"z0={mc['z0_particles_m'] * 1e3:.3f} mm"
     )
 
@@ -543,23 +559,24 @@ def main() -> None:
             f"[Fine   {FINE_GRID}] "
             f"LB: |I1(0)|/(m*I0)={mf['entrance_ratio_linearized_beam']:.5f}, "
             f"beta_q={mf['beta_q_linearized_beam_rad_m']:.4f} rad/m "
-            f"(pred={mf['bq_lb_pred']:.4f} rad/m, resid={mf['resid_lb']:.4%}, s_lb={mf['s_lb']:.4%}), "
+            f"(pred={mf['bq_pred_lb']:.4f} rad/m, resid={mf['resid_lb']:.4%}, slack={mf['slack_lb']:.4%}), "
             f"z0={mf['z0_linearized_beam_m'] * 1e3:.3f} mm; "
             f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mf['entrance_ratio_particles']:.5f}, "
             f"beta_q={mf['beta_q_particles_rad_m']:.4f} rad/m "
-            f"(pred={mf['bq_part_pred']:.4f} rad/m, resid={mf['resid_lattice']:.4%}, s_part={mf['s_part']:.4%}), "
+            f"(pred={mf['bq_pred_part']:.4f} rad/m, resid={mf['resid_lattice']:.4%}, slack={mf['slack_part']:.4%}), "
             f"z0={mf['z0_particles_m'] * 1e3:.3f} mm"
         )
         for m_dict, noise in ((mc, noise_c), (mf, noise_f)):
             tcrit = float(noise["tcrit"])
             sem = float(noise["bq_sem"])
             mean_sh = float(noise["bq_mean"])
-            pred_p = float(m_dict["bq_part_pred"])
+            pred_p = float(m_dict["bq_pred_part"])
+            m_dict["bq_coherent_mean"] = float(noise["bq_coherent_mean"])
             m_dict["mean_sheet"] = mean_sh
             m_dict["sem"] = sem
             m_dict["tcrit"] = tcrit
             m_dict["resid_mean"] = float(abs(mean_sh / pred_p - 1.0))
-            m_dict["bound_mean"] = float(m_dict["s_part"] + tcrit * sem / pred_p)
+            m_dict["bound_mean"] = float(m_dict["slack_part"] + tcrit * sem / pred_p)
             m_dict["mean_minus_lattice"] = float(abs(mean_sh - m_dict["lattice"]))
             m_dict["seeds"] = [float(v) for v in noise["bq_seeds"]]
             m_dict["delta_meas_mean"] = float(noise["delta_mean"])
