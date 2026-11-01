@@ -60,55 +60,6 @@ FINE_GRID = (20, 1, 856)  # (Nx, Ny, Nz) 2x refined resolution
 NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical 3-sigma noise
 
 
-class PlanarSheetRng:
-    """Seeded antithetic-stratified RNG mapping `BeamInjector` disk draws to a planar sheet.
-
-    `BeamInjector` with ``profile='uniform'`` samples radial and azimuthal arrays via::
-
-        r = radius * sqrt(rng.uniform(0.0, 1.0, size=n_macro))
-        phi = rng.uniform(0.0, 2.0 * pi, size=n_macro)
-        x = x0 + r * cos(phi)
-        y = y0 + r * sin(phi)
-
-    By returning squared antithetic stratified coordinates ``s**2`` on ``[0, 1]``
-    on odd calls and ``phi in {0, pi}`` on even calls, ``x`` is distributed
-    uniformly across ``[-radius, +radius]`` with one jittered macroparticle per
-    stratum and ``y = y0`` identically, without modifying `BeamInjector`.
-
-    Parameters
-    ----------
-    seed : int, optional
-        Deterministic seed for ``numpy.random.default_rng``. Default is ``42``.
-    """
-
-    def __init__(self, seed: int = 42):
-        self._rng = np.random.default_rng(seed)
-        self._call_count = 0
-
-    def uniform(
-        self, low: float = 0.0, high: float = 1.0, size: int | None = None
-    ) -> np.ndarray:
-        """Return squared stratified radial draws on odd calls and ``{0, pi}`` on even calls."""
-        self._call_count += 1
-        n = int(size)
-        half = n // 2
-        if self._call_count % 2 == 1:
-            u = self._rng.uniform(0.0, 1.0, size=half)
-            idx = np.arange(half, dtype=np.float64)
-            s_pos = (idx + u) / half
-            s_neg = (idx + (1.0 - u)) / half
-            s = np.concatenate([s_pos, s_neg])
-            if n > 2 * half:
-                s = np.concatenate([s, self._rng.uniform(0.0, 1.0, size=n - 2 * half)])
-            return s * s
-        return np.concatenate(
-            [
-                np.zeros(half, dtype=np.float64),
-                np.full(n - half, np.pi, dtype=np.float64),
-            ]
-        )
-
-
 def extract_coherent_bunching_i2_ratio(
     z_coords: np.ndarray,
     i1_phasor: np.ndarray,
@@ -986,6 +937,7 @@ def run_particle_beam_drift(
     seed: int = 42,
     m_mod: float = MODULATION_INDEX,
     e_ext: Any = None,
+    profile: str = "sheet_lattice",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -997,6 +949,14 @@ def run_particle_beam_drift(
     charge density ``rho_DC(z)`` time-averaged over one RF period across the
     settled interior ``z in [0.2 * Lz, 0.8 * Lz]``.
 
+    Profile choice:
+    - Deterministic reference run = ``"sheet_lattice"`` (stratum midpoints, zero
+      transverse shot noise, identical for all seeds). Used for every signed
+      physics check, both mutations of the particle code, the 2-resolution check,
+      and the m-scan.
+    - 8-seed noise set = ``"sheet"`` (one seeded uniform draw per stratum per step
+      from ``_step_rng``).
+
     Parameters
     ----------
     nx, nz : int
@@ -1007,13 +967,17 @@ def run_particle_beam_drift(
         Multiplier on the species charge-to-mass ratio ``|q / m|`` implemented
         by scaling ``mass = m_e / qm_scale`` at fixed ``charge = -e`` and ``gamma = gamma0``.
     seed : int, optional
-        Seed for :class:`PlanarSheetRng`. Default is ``42``.
+        The `BeamInjector` seed (only affects ``profile='sheet'``). Default is ``42``.
     m_mod : float, optional
         Fractional AC density modulation depth ``m``. Default is ``MODULATION_INDEX``.
     e_ext : tuple or callable, optional
         Optional external electric field ``E_ext`` passed to `ParticleSolver`
         (used in the mutation test to cancel the DC transverse self-potential
         shear across the sheet beam). Default is ``None``.
+    profile : str, optional
+        Transverse `BeamInjector` sampling profile (``"sheet_lattice"`` for
+        deterministic stratum midpoints or ``"sheet"`` for seeded stratified
+        draws). Default is ``"sheet_lattice"``.
 
     Returns
     -------
@@ -1057,12 +1021,13 @@ def run_particle_beam_drift(
         z0=0.0,
         current=current_modulation,
         gamma=gamma0,
-        profile="uniform",
+        profile=profile,
         radius=b,
+        x0=0.0,
+        y0=0.0,
         n_macro_per_step=n_macro,
         seed=seed,
     )
-    inj.rng = PlanarSheetRng(seed=seed)
     ps = ParticleSolver(
         solver,
         species=[sp],
@@ -1157,7 +1122,13 @@ def cached_baseline_pair(
     """Cache baseline `(LinearizedBeam, ParticleSolver)` runs for `(nx, nz, m_mod)`."""
     lb_res = run_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
     part_res = run_particle_beam_drift(
-        nx, nz, beam_ref=lb_res["beam"], qm_scale=1.0, seed=NOISE_SEEDS[0], m_mod=m_mod
+        nx,
+        nz,
+        beam_ref=lb_res["beam"],
+        qm_scale=1.0,
+        seed=NOISE_SEEDS[0],
+        m_mod=m_mod,
+        profile="sheet_lattice",
     )
     return lb_res, part_res
 
@@ -1167,17 +1138,17 @@ def measure_empirical_noise(
     grid: tuple[int, int, int] = COARSE_GRID,
     m_mod: float = MODULATION_INDEX,
 ) -> dict[str, Any]:
-    """Measure empirical 8-seed `beta_q` and coherent-bunching `I2` statistics.
+    """Measure empirical 8-seed `beta_q` and coherent-bunching `I2` statistics with `profile='sheet'`.
 
-    Runs seeds ``42..49`` on ``grid`` at modulation depth ``m_mod`` (reusing seed
-    ``42`` from :func:`cached_baseline_pair` and executing the remaining 7 seeds
-    via `ThreadPoolExecutor`), fits ``(beta_q, z0)`` over all 3 standing-wave nulls
-    in ``[0, FIT_WINDOW_LAMBDA_Q * lambda_q]`` for each seed, and extracts the
-    coherent ballistic-bunching second-harmonic ratio ``|I2_bunch| / |I1(0)|``.
+    Runs seeds ``42..49`` on ``grid`` at modulation depth ``m_mod`` using
+    ``profile='sheet'`` (one seeded uniform draw per stratum per step from
+    ``BeamInjector._step_rng``), fits ``(beta_q, z0)`` over all 3 standing-wave
+    nulls in ``[0, FIT_WINDOW_LAMBDA_Q * lambda_q]`` for each seed, and extracts
+    the coherent ballistic-bunching second-harmonic ratio ``|I2_bunch| / |I1(0)|``.
     """
     params = compute_analytic_parameters()
     nx, _, nz = grid
-    lb_res, part_seed0 = cached_baseline_pair(nx, nz, m_mod=m_mod)
+    lb_res, _ = cached_baseline_pair(nx, nz, m_mod=m_mod)
     beam_ref = lb_res["beam"]
     z_coords = lb_res["z_coords"]
     beta_e = params["beta_e"]
@@ -1188,12 +1159,15 @@ def measure_empirical_noise(
     def _run_seed(
         seed: int,
     ) -> tuple[float, float, np.ndarray, np.ndarray, float, np.ndarray]:
-        if seed == NOISE_SEEDS[0]:
-            res = part_seed0
-        else:
-            res = run_particle_beam_drift(
-                nx, nz, beam_ref=beam_ref, qm_scale=1.0, seed=seed, m_mod=m_mod
-            )
+        res = run_particle_beam_drift(
+            nx,
+            nz,
+            beam_ref=beam_ref,
+            qm_scale=1.0,
+            seed=seed,
+            m_mod=m_mod,
+            profile="sheet",
+        )
         i1 = res["i1_part"]
         i2 = res["i2_part"]
         bq_s, z0_s, nulls_s, res_s = fit_beta_q_from_envelope(

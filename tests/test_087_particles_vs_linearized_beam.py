@@ -27,17 +27,27 @@ explicitly in the predicted `LinearizedBeam` wavenumber and error budget.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 from scipy.constants import epsilon_0
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from examples._space_charge_waves_common import (
     BEAM_HALF_THICKNESS_M,
+    CFL_NUMBER,
     COARSE_GRID,
     FINE_GRID,
     FIT_WINDOW_LAMBDA_Q,
+    GUIDE_BZ_TESLA,
     MODULATION_INDEX,
     OUTFLOW_RAMP_M,
+    PERIODIC_LY_M,
     TUNNEL_HALF_WIDTH_M,
     TUNNEL_LENGTH_M,
     cached_baseline_pair,
@@ -51,9 +61,111 @@ from examples._space_charge_waves_common import (
     run_linearized_beam_drift,
     run_particle_beam_drift,
 )
+from wakis import GridFIT3D, SolverFIT3D
 from wakis.beam_fluid import LinearizedBeam
 from wakis.estimate import estimate, preflight
-from wakis.particles import Species
+from wakis.particles import BeamInjector, ParticleSolver, Species
+
+
+def test_injected_sheet_geometry():
+    """Identity (geometry) check for `BeamInjector` `"sheet_lattice"` and `"sheet"` profiles on coarse CPU grid (3 steps)."""
+    params = compute_analytic_parameters()
+    nx, ny, nz = COARSE_GRID
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+    n_macro = 16
+    k_idx = np.arange(n_macro, dtype=np.float64)
+    stratum_lo = -b + 2.0 * b * k_idx / n_macro
+    stratum_hi = -b + 2.0 * b * (k_idx + 1.0) / n_macro
+    x_lattice_expected = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+
+    print()
+    for profile in ("sheet_lattice", "sheet"):
+        grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, ny, nz, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=CFL_NUMBER,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_gpu=False,
+            verbose=0,
+        )
+        sp = Species(name="electron")
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=params["I0"],
+            gamma=params["gamma0"],
+            profile=profile,
+            radius=b,
+            x0=0.0,
+            y0=0.0,
+            n_macro_per_step=n_macro,
+            seed=42,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            shape=1,
+            B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
+        ).attach()
+
+        injected_slices: list[tuple[np.ndarray, np.ndarray]] = []
+        orig_pre_push = ps._mpi_pre_push_hook
+
+        def _capture_injected(species_obj, _orig=orig_pre_push):
+            _orig(species_obj)
+            x_new = np.asarray(species_obj.x[-n_macro:], dtype=np.float64).copy()
+            y_new = np.asarray(species_obj.y[-n_macro:], dtype=np.float64).copy()
+            injected_slices.append((x_new, y_new))
+
+        ps._mpi_pre_push_hook = _capture_injected
+        for _ in range(3):
+            solver.one_step()
+
+        assert len(injected_slices) == 3
+        all_x = np.concatenate([s[0] for s in injected_slices])
+        all_y = np.concatenate([s[1] for s in injected_slices])
+        y_max_abs = float(np.max(np.abs(all_y)))
+        x_min = float(np.min(all_x))
+        x_max = float(np.max(all_x))
+
+        strata_ok = bool(np.all(all_y == 0.0) and np.all(np.abs(all_x) <= b))
+        for x_step, y_step in injected_slices:
+            if not (np.all(y_step == 0.0) and np.all(np.abs(x_step) <= b)):
+                strata_ok = False
+            if profile == "sheet":
+                if not np.all((x_step >= stratum_lo) & (x_step < stratum_hi)):
+                    strata_ok = False
+            else:
+                if not np.all(np.abs(x_step - x_lattice_expected) <= 1e-15 * b):
+                    strata_ok = False
+
+        print(
+            f"INJCHECK profile={profile} n={n_macro} y_max_abs={y_max_abs:.6e} "
+            f"x_min={x_min:.6e} x_max={x_max:.6e} strata_ok={strata_ok}",
+            flush=True,
+        )
+
+        for step_idx, (x_step, y_step) in enumerate(injected_slices):
+            assert np.all(y_step == 0.0), (
+                f"Step {step_idx} ({profile}): max|y|={np.max(np.abs(y_step)):.3e} != 0.0"
+            )
+            assert np.all(np.abs(x_step) <= b), (
+                f"Step {step_idx} ({profile}): max|x|={np.max(np.abs(x_step)):.6e} > b={b:.6e}"
+            )
+            if profile == "sheet":
+                assert np.all((x_step >= stratum_lo) & (x_step < stratum_hi)), (
+                    f"Step {step_idx} (sheet): particles outside strata"
+                )
+            else:
+                max_lat_err = float(np.max(np.abs(x_step - x_lattice_expected)))
+                assert max_lat_err <= 1e-15 * b, (
+                    f"Step {step_idx} (sheet_lattice): max|x - x_lat|={max_lat_err:.3e} > {1e-15 * b:.3e}"
+                )
 
 
 def test_preflight_and_resolution_criteria():
