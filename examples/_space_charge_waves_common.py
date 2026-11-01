@@ -259,14 +259,34 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     beta_q_0 = r_0 * omega_p0 / (gamma0**1.5 * u0)
 
     # Self-consistent 1D planar DC space-charge velocity depression across [-b, b]
+    # via exact per-line relativistic energy conservation:
+    #   phi_l(delta) = phi_l,0 / (1 - delta_bar)
+    #   gamma_l = gamma0 - e * |phi_l| / (m_eff * c^2)
+    #   u_l = c * sqrt(1 - 1 / gamma_l^2)
+    #   delta_bar = 1 - sum_l(w_l * u_l) / (u0 * sum_l(w_l))
     delta0 = (omega_p0**2 * b * (a - (2.0 / 3.0) * b)) / (gamma0**3 * u0**2)
-    delta_u_dc = float(delta0)
-    for _ in range(50):
-        u_try = u0 * (1.0 - delta_u_dc)
-        gamma_try = 1.0 / np.sqrt(1.0 - (u_try / c_light) ** 2)
-        delta_u_dc = float(
-            delta0 * ((1.0 - delta_u_dc) ** -3) * ((gamma0 / gamma_try) ** 3)
-        )
+    mass_eff = m_e / qm_scale
+    n_quad = 1024
+    x_quad = b * (np.arange(n_quad, dtype=np.float64) + 0.5) / n_quad
+    phi_0_quad = (abs(rho0) / (2.0 * epsilon_0)) * (2.0 * a * b - b**2 - x_quad**2)
+    rho_quad = np.ones(n_quad, dtype=np.float64)
+
+    def _solve_continuum_depression(weighting: str) -> float:
+        delta_val = float(delta0)
+        for _ in range(200):
+            phi_l = phi_0_quad / (1.0 - delta_val)
+            gamma_l = gamma0 - e_charge * phi_l / (mass_eff * c_light**2)
+            u_l = c_light * np.sqrt(1.0 - 1.0 / (gamma_l**2))
+            w_l = (rho_quad * u_l) if weighting == "flux" else rho_quad
+            delta_next = 1.0 - float(np.sum(w_l * u_l) / (u0 * np.sum(w_l)))
+            if abs(delta_next - delta_val) < 1e-14:
+                return float(delta_next)
+            delta_val = float(delta_next)
+        return float(delta_val)
+
+    delta_u_dc_flux = _solve_continuum_depression("flux")
+    delta_u_dc_density = _solve_continuum_depression("density")
+    delta_u_dc = float(delta_u_dc_flux)
 
     u_dep = u0 * (1.0 - delta_u_dc)
     gamma_dep = float(1.0 / np.sqrt(1.0 - (u_dep / c_light) ** 2))
@@ -306,6 +326,8 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "beta_q_0": float(beta_q_0),
         "delta0_u_dc": float(delta0),
         "delta_u_dc": float(delta_u_dc),
+        "delta_u_dc_flux": float(delta_u_dc_flux),
+        "delta_u_dc_density": float(delta_u_dc_density),
         "u_dep": float(u_dep),
         "gamma_dep": float(gamma_dep),
         "rho_dep": float(rho_dep),
@@ -364,25 +386,50 @@ def predict_particle_beta_q(
     return bq_th_m, bq_pred
 
 
-def compute_discrete_dc_depression(nx: int, params: dict[str, float]) -> float:
-    """Solve the 1D discrete Poisson problem across ``x`` on ``nx`` cells for ``delta_th,disc``.
+def compute_discrete_dc_depression(
+    nx: int,
+    params: dict[str, float],
+    line_x: np.ndarray | None = None,
+    line_w: np.ndarray | None = None,
+    weighting: str = "flux",
+    return_details: bool = False,
+) -> float | dict[str, Any]:
+    """Solve the 1D discrete Poisson problem across ``x`` on ``nx`` cells for ``delta_disc``.
 
-    Deposits the top-hat sheet ``[-b, b]`` onto the ``nx + 1`` transverse nodes
-    using CIC weights, solves the 3-point discrete Poisson equation with PEC
-    boundary conditions ``phi(+-a) = 0``, takes the CIC particle-weighted mean
-    potential across the sheet, and divides by ``(gamma**3 * m * u**2 / e)``
-    with self-consistent iteration ``delta <- delta0_disc * (1 - delta)**(-3) * (gamma0 / gamma(u))**3``.
+    Deposits the sheet lines across ``[-b, b]`` onto the ``nx + 1`` transverse
+    nodes using CIC weights, solves the 3-point discrete Poisson equation with
+    PEC boundary conditions ``phi(+-a) = 0``, and iterates the exact per-line
+    relativistic energy-conserving fixed point::
+
+        phi_l(delta) = phi_l,0 / (1 - delta_bar)
+        gamma_l = gamma0 - e * |phi_l| / (m_eff * c**2)
+        u_l = c * sqrt(1 - 1 / gamma_l**2)
+        delta_bar = 1 - sum_l(w_l * u_l) / (u0 * sum_l(w_l))
+
+    to ``1e-14`` for both current/flux weighting (``w_l prop rho_l * u_l``) and
+    density weighting (``w_l prop rho_l``).
     """
     a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
     dx = 2.0 * a / nx
     x_nodes = np.linspace(-a, a, nx + 1)
 
-    n_macro = 16 if nx == COARSE_GRID[0] else 32
-    k_idx = np.arange(n_macro, dtype=np.float64)
-    x_sheet = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+    if line_x is None:
+        n_macro = 16 if nx == COARSE_GRID[0] else 32
+        k_idx = np.arange(n_macro, dtype=np.float64)
+        x_sheet = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+    else:
+        x_sheet = np.asarray(line_x, dtype=np.float64)
+        n_macro = len(x_sheet)
+
+    if line_w is None:
+        rho_l = np.full(n_macro, 1.0 / n_macro, dtype=np.float64)
+    else:
+        rho_l = np.asarray(line_w, dtype=np.float64)
+        rho_l = rho_l / np.sum(rho_l)
+
     w_mat = np.maximum(1.0 - np.abs(x_sheet[:, None] - x_nodes[None, :]) / dx, 0.0)
-    w_node = np.sum(w_mat, axis=0) * (2.0 * b / (n_macro * dx))
+    w_node = np.sum(rho_l[:, None] * w_mat, axis=0) * (2.0 * b / dx)
 
     n_int = nx - 1
     lap = (
@@ -399,16 +446,56 @@ def compute_discrete_dc_depression(nx: int, params: dict[str, float]) -> float:
 
     phi_0 = np.zeros(nx + 1, dtype=np.float64)
     phi_0[1:-1] = np.linalg.solve(lap, -rho0 * w_node[1:-1] / epsilon_0)
-    phi_mean_0 = float(np.mean(w_mat @ phi_0))
-    delta0_disc = float(abs(phi_mean_0) / (gamma0**3 * mass_eff * u0**2 / e_charge))
+    phi_l0 = np.abs(w_mat @ phi_0)
+    delta0_disc = float(
+        np.sum(rho_l * phi_l0) / (gamma0**3 * mass_eff * u0**2 / e_charge)
+    )
 
-    delta_disc = delta0_disc
-    for _ in range(50):
-        u_try = u0 * (1.0 - delta_disc)
-        gamma_try = 1.0 / np.sqrt(1.0 - (u_try / c_light) ** 2)
-        delta_disc = float(
-            delta0_disc * ((1.0 - delta_disc) ** -3) * ((gamma0 / gamma_try) ** 3)
+    def _iterate_fixed_point(
+        mode: str,
+    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+        delta_val = float(delta0_disc)
+        u_l = np.full(n_macro, u0 * (1.0 - delta_val), dtype=np.float64)
+        gamma_l = np.full(n_macro, gamma0, dtype=np.float64)
+        phi_l = phi_l0.copy()
+        for _ in range(200):
+            phi_l = phi_l0 / (1.0 - delta_val)
+            gamma_l = gamma0 - e_charge * phi_l / (mass_eff * c_light**2)
+            u_l = c_light * np.sqrt(1.0 - 1.0 / (gamma_l**2))
+            w_l = (rho_l * u_l) if mode == "flux" else rho_l
+            delta_next = 1.0 - float(np.sum(w_l * u_l) / (u0 * np.sum(w_l)))
+            if abs(delta_next - delta_val) < 1e-14:
+                delta_val = float(delta_next)
+                break
+            delta_val = float(delta_next)
+        return float(delta_val), u_l, gamma_l, phi_l
+
+    delta_flux, u_l_flux, gamma_l_flux, phi_l_flux = _iterate_fixed_point("flux")
+    delta_density, u_l_dens, gamma_l_dens, phi_l_dens = _iterate_fixed_point("density")
+
+    if weighting == "flux":
+        delta_disc, u_l, gamma_l, phi_l = delta_flux, u_l_flux, gamma_l_flux, phi_l_flux
+    else:
+        delta_disc, u_l, gamma_l, phi_l = (
+            delta_density,
+            u_l_dens,
+            gamma_l_dens,
+            phi_l_dens,
         )
+
+    if return_details:
+        return {
+            "delta_disc": float(delta_disc),
+            "delta_flux": float(delta_flux),
+            "delta_density": float(delta_density),
+            "weighting": weighting,
+            "u_l": u_l,
+            "gamma_l": gamma_l,
+            "phi_l": phi_l,
+            "rho_l": rho_l,
+            "x_sheet": x_sheet,
+            "w_mat": w_mat,
+        }
     return float(delta_disc)
 
 
@@ -505,7 +592,9 @@ def _single_grid_budget_terms(
     s_cross = float(s_lb + s_part)
 
     # 3. Discrete 1D Poisson DC depression prediction on this grid:
-    delta_th_disc = compute_discrete_dc_depression(nx, params)
+    dep_info = compute_discrete_dc_depression(nx, params, return_details=True)
+    delta_th_disc = float(dep_info["delta_disc"])
+    eps_ac = float(0.5 * (MODULATION_INDEX * beta_q / beta_e) ** 2)
 
     # 4. Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
     tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
@@ -541,7 +630,14 @@ def _single_grid_budget_terms(
         "s_part": s_part,
         "s_cross": s_cross,
         "delta_th": float(params["delta_u_dc"]),
+        "delta_th_flux": float(params["delta_u_dc_flux"]),
+        "delta_th_density": float(params["delta_u_dc_density"]),
         "delta_th_disc": delta_th_disc,
+        "delta_disc_exact": delta_th_disc,
+        "delta_disc_flux": float(dep_info["delta_flux"]),
+        "delta_disc_density": float(dep_info["delta_density"]),
+        "dep_weighting": str(dep_info["weighting"]),
+        "eps_ac": eps_ac,
         "tol_amp_lb": tol_amp_lb,
         "tol_amp_part": tol_amp_part,
         "eps_dft": eps_dft,

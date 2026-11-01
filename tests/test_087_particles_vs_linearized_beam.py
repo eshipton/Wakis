@@ -730,7 +730,11 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     )
     print(
         f"DEPCHECK grid=coarse delta_th={tols_c['delta_th']:.6e} "
-        f"delta_th_disc={tols_c['delta_th_disc']:.6e} "
+        f"delta_disc_exact={tols_c['delta_disc_exact']:.6e} "
+        f"weighting={tols_c['dep_weighting']} "
+        f"delta_disc_flux={tols_c['delta_disc_flux']:.6e} "
+        f"delta_disc_density={tols_c['delta_disc_density']:.6e} "
+        f"eps_ac={tols_c['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_c:.6e} "
         f"delta_meas_mean={noise_c['delta_mean']:.6e} "
         f"sem={noise_c['delta_sem']:.6e}",
@@ -738,7 +742,11 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     )
     print(
         f"DEPCHECK grid=fine delta_th={tols_f['delta_th']:.6e} "
-        f"delta_th_disc={tols_f['delta_th_disc']:.6e} "
+        f"delta_disc_exact={tols_f['delta_disc_exact']:.6e} "
+        f"weighting={tols_f['dep_weighting']} "
+        f"delta_disc_flux={tols_f['delta_disc_flux']:.6e} "
+        f"delta_disc_density={tols_f['delta_disc_density']:.6e} "
+        f"eps_ac={tols_f['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_f:.6e} "
         f"delta_meas_mean={noise_f['delta_mean']:.6e} "
         f"sem={noise_f['delta_sem']:.6e}",
@@ -778,41 +786,6 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"Fine Part DFT leakage {part_f['dirichlet_leak_part']:.3e} > {tols_f['eps_dft']:.3e}"
     )
 
-    # Step 4.3(a): |mean / bq_P,pred - 1| <= s_part + t * SEM / bq_P,pred
-    assert resid_mean_c <= bound_mean_c, (
-        f"Coarse |mean_sheet/bq_P_pred - 1| = {resid_mean_c:.6e} > bound={bound_mean_c:.6e} "
-        f"(margin={bound_mean_c - resid_mean_c:+.6e})"
-    )
-    assert resid_mean_f <= bound_mean_f, (
-        f"Fine |mean_sheet/bq_P_pred - 1| = {resid_mean_f:.6e} > bound={bound_mean_f:.6e} "
-        f"(margin={bound_mean_f - resid_mean_f:+.6e})"
-    )
-
-    # Step 4.3(b): |mean - bq_P,lattice| <= t * SEM (no hidden stochastic bias)
-    bound_lat_c = tcrit_c * noise_c["bq_sem"]
-    bound_lat_f = tcrit_f * noise_f["bq_sem"]
-    assert mean_minus_lat_f <= bound_lat_f, (
-        f"Fine |mean_sheet - lattice| = {mean_minus_lat_f:.6e} > t*SEM = {bound_lat_f:.6e} "
-        f"(margin={bound_lat_f - mean_minus_lat_f:+.6e})"
-    )
-
-    # Step 4.5: DC depression |delta_meas - delta_th_disc| <= t * SEM(delta_meas) + 1e-12
-    for label, noise, tols in (
-        ("fine", noise_f, tols_f),
-        ("coarse", noise_c, tols_c),
-    ):
-        err_dep = abs(noise["delta_mean"] - tols["delta_th_disc"])
-        bound_dep = noise["tcrit"] * noise["delta_sem"] + 1e-12
-        assert err_dep <= bound_dep, (
-            f"{label} DC depression |delta_meas_mean - delta_th_disc| = {err_dep:.6e} > "
-            f"t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
-        )
-
-    assert mean_minus_lat_c <= bound_lat_c, (
-        f"Coarse |mean_sheet - lattice| = {mean_minus_lat_c:.6e} > t*SEM = {bound_lat_c:.6e} "
-        f"(margin={bound_lat_c - mean_minus_lat_c:+.6e})"
-    )
-
     # Fine-grid Step 4.1 (LB), Step 4.4 (cross-code), and Step 4.2 (Particle lattice)
     assert resid_lb_f <= tols_f["s_lb"], (
         f"Fine LB |bq_lb/bq_lb_pred - 1| = {resid_lb_f:.6e} > s_lb = {tols_f['s_lb']:.6e} "
@@ -850,6 +823,54 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             f"{label} sheet entrance |I1(z0)|/I1_0 - 1 = {amp_err_sheet:.6e} > "
             f"bound={amp_bound_sheet:.6e} (margin={amp_bound_sheet - amp_err_sheet:+.6e})"
         )
+
+    # Step 1: Deterministic lattice DC depression |delta_meas,lattice - delta_disc| <= eps_AC + 1e-12
+    for label, delta_lat, tols in (
+        ("coarse", delta_lat_c, tols_c),
+        ("fine", delta_lat_f, tols_f),
+    ):
+        err_dep_lat = abs(delta_lat - tols["delta_disc_exact"])
+        bound_dep_lat = tols["eps_ac"] + 1e-12
+        assert err_dep_lat <= bound_dep_lat, (
+            f"{label} lattice DC depression |delta_meas_lattice - delta_disc_exact| = "
+            f"{err_dep_lat:.6e} > eps_AC + 1e-12 = {bound_dep_lat:.6e} "
+            f"(margin={bound_dep_lat - err_dep_lat:+.6e})"
+        )
+
+    # Step 4.3(a): |mean / bq_P,pred - 1| <= slack + t * SEM / bq_P,pred
+    assert resid_mean_c <= bound_mean_c, (
+        f"Coarse |mean_sheet/bq_P_pred - 1| = {resid_mean_c:.6e} > bound={bound_mean_c:.6e} "
+        f"(margin={bound_mean_c - resid_mean_c:+.6e})"
+    )
+    assert resid_mean_f <= bound_mean_f, (
+        f"Fine |mean_sheet/bq_P_pred - 1| = {resid_mean_f:.6e} > bound={bound_mean_f:.6e} "
+        f"(margin={bound_mean_f - resid_mean_f:+.6e})"
+    )
+
+    # Step 4.3(b): |mean - bq_P,lattice| <= t * SEM (no hidden stochastic bias)
+    bound_lat_c = tcrit_c * noise_c["bq_sem"]
+    bound_lat_f = tcrit_f * noise_f["bq_sem"]
+    assert mean_minus_lat_f <= bound_lat_f, (
+        f"Fine |mean_sheet - lattice| = {mean_minus_lat_f:.6e} > t*SEM = {bound_lat_f:.6e} "
+        f"(margin={bound_lat_f - mean_minus_lat_f:+.6e})"
+    )
+
+    # Step 1 / 4.5: Seeded sheet DC depression |delta_meas_mean - delta_disc| <= t * SEM + 1e-12
+    for label, noise, tols in (
+        ("fine", noise_f, tols_f),
+        ("coarse", noise_c, tols_c),
+    ):
+        err_dep = abs(noise["delta_mean"] - tols["delta_disc_exact"])
+        bound_dep = noise["tcrit"] * noise["delta_sem"] + 1e-12
+        assert err_dep <= bound_dep, (
+            f"{label} DC depression |delta_meas_mean - delta_disc_exact| = {err_dep:.6e} > "
+            f"t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
+        )
+
+    assert mean_minus_lat_c <= bound_lat_c, (
+        f"Coarse |mean_sheet - lattice| = {mean_minus_lat_c:.6e} > t*SEM = {bound_lat_c:.6e} "
+        f"(margin={bound_lat_c - mean_minus_lat_c:+.6e})"
+    )
 
 
 @pytest.mark.slow
