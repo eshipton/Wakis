@@ -33,15 +33,18 @@ edges (``beam.flat_idx``) and dual cross-sectional areas (``beam.dA_perp``):
   fast (``beta_e - beta_q``) and slow (``beta_e + beta_q``) space-charge wave
   doublet straddling the electronic wavenumber ``beta_e = omega / u_dep``.
 
-Saves two publication-style figures in ``docs/img/`` (via `wakis.figstyle`) and
-writes run-time metrics to ``examples/024_particles_space_charge_waves.json``:
-  1. ``docs/img/particles_space_charge_waves_envelope.png``
-  2. ``docs/img/particles_space_charge_waves_spectrum.png``
+Saves two publication-style figures (via `wakis.figstyle`) and writes run-time
+metrics to ``--out-dir`` (defaulting to
+``Path(tempfile.gettempdir()) / "wakis_examples" / "024"``, or copying figures
+to ``DIR`` when ``--publish-figures DIR`` is explicitly passed):
+  1. ``particles_space_charge_waves_envelope.png``
+  2. ``particles_space_charge_waves_spectrum.png``
 
 Usage::
 
     python examples/024_particles_space_charge_waves.py --smoke
-    python examples/024_particles_space_charge_waves.py
+    python examples/024_particles_space_charge_waves.py --out-dir /tmp/wakis_examples/024
+    python examples/024_particles_space_charge_waves.py --publish-figures docs/img
 """
 
 from __future__ import annotations
@@ -49,7 +52,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -84,9 +89,6 @@ from examples._space_charge_waves_common import (
 )
 from wakis import figstyle
 from wakis.estimate import estimate, preflight
-
-IMG_DIR = REPO_ROOT / "docs" / "img"
-JSON_PATH = Path(__file__).resolve().with_suffix(".json")
 
 
 def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
@@ -518,9 +520,23 @@ def main() -> None:
         action="store_true",
         help=f"Run only the coarse resolution {COARSE_GRID} for a fast smoke check.",
     )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path(tempfile.gettempdir()) / "wakis_examples" / "024",
+        help="Output directory for JSON metrics and figures (default: system temp dir).",
+    )
+    parser.add_argument(
+        "--publish-figures",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Optional directory (e.g., docs/img) to also copy generated figures when publishing.",
+    )
     args = parser.parse_args()
 
-    IMG_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
     params = compute_analytic_parameters()
 
     print(
@@ -573,14 +589,14 @@ def main() -> None:
             tcrit = float(noise["tcrit"])
             sem = float(noise["bq_sem"])
             mean_sh = float(noise["bq_mean"])
-            pred_p = float(m_dict["bq_pred_part"])
+            pred_p = float(noise["bq_pred"])
             m_dict["bq_coherent_mean"] = float(noise["bq_coherent_mean"])
             m_dict["mean_sheet"] = mean_sh
             m_dict["sem"] = sem
             m_dict["tcrit"] = tcrit
             m_dict["resid_mean"] = float(abs(mean_sh / pred_p - 1.0))
             m_dict["bound_mean"] = float(m_dict["slack_part"] + tcrit * sem / pred_p)
-            m_dict["mean_minus_lattice"] = float(abs(mean_sh - m_dict["lattice"]))
+            m_dict["mean_minus_lattice"] = float(abs(mean_sh - noise["bq_lattice"]))
             m_dict["seeds"] = [float(v) for v in noise["bq_seeds"]]
             m_dict["delta_meas_mean"] = float(noise["delta_mean"])
             m_dict["delta_sem"] = float(noise["delta_sem"])
@@ -605,10 +621,17 @@ def main() -> None:
         }
         plot_source = fine_out
 
-    fig1_path = IMG_DIR / "particles_space_charge_waves_envelope.png"
-    fig2_path = IMG_DIR / "particles_space_charge_waves_spectrum.png"
+    fig1_path = out_dir / "particles_space_charge_waves_envelope.png"
+    fig2_path = out_dir / "particles_space_charge_waves_spectrum.png"
+    json_path = out_dir / "024_particles_space_charge_waves.json"
     make_figure_envelope(plot_source, params, fig1_path)
     make_figure_spectrum(plot_source, params, fig2_path)
+
+    if args.publish_figures is not None:
+        pub_dir = Path(args.publish_figures).resolve()
+        pub_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(fig1_path, pub_dir / fig1_path.name)
+        shutil.copy2(fig2_path, pub_dir / fig2_path.name)
 
     payload = {
         "mode": "smoke" if args.smoke else "full",
@@ -616,13 +639,13 @@ def main() -> None:
         "analytic": params,
         "resolutions": resolutions_payload,
         "figures": [
-            str(fig1_path.relative_to(REPO_ROOT)),
-            str(fig2_path.relative_to(REPO_ROOT)),
+            str(fig1_path),
+            str(fig2_path),
         ],
     }
-    JSON_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Saved figures to {fig1_path} and {fig2_path}")
-    print(f"Saved metrics to {JSON_PATH}")
+    print(f"Saved metrics to {json_path}")
 
 
 if __name__ == "__main__":
