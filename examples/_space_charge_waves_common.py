@@ -1230,6 +1230,84 @@ def fit_beta_q_from_envelope(
     }
 
 
+def fit_four_wave_reflection(
+    z_coords: np.ndarray,
+    i1_phasor: np.ndarray,
+    beta_q_guess: float,
+    z_min: float | None = None,
+    z_max: float | None = None,
+) -> dict[str, Any]:
+    """Refit complex phasor ``i1_phasor(z)`` with a four-wave forward+backward variable-projection model.
+
+    Adds the reflected/backward ``exp(+i * k_f * z)`` and ``exp(+i * k_s * z)``
+    partner waves to the two-wave forward design matrix on ``[z_min, z_max]``
+    and solves for ``(k_c, beta_q)`` and the four complex wave amplitudes
+    ``(a_f_fwd, a_s_fwd, a_f_bwd, a_s_bwd)``.
+    """
+    fit2 = fit_beta_q_from_envelope(
+        z_coords, i1_phasor, beta_q_guess, z_min=z_min, z_max=z_max
+    )
+    if z_min is None:
+        z_min = float(z_coords[0])
+    if z_max is None:
+        z_max = float(z_coords[-1])
+    mask = (z_coords >= z_min) & (z_coords <= z_max)
+    zm = np.asarray(z_coords[mask], dtype=np.float64)
+    ym = np.asarray(i1_phasor[mask], dtype=np.complex128)
+    ym_energy = float(np.real(np.vdot(ym, ym)))
+
+    def _varpro4(kc_val: float, bq_val: float) -> tuple[np.ndarray, float]:
+        bq_pos = abs(bq_val)
+        kf_val = kc_val - bq_pos
+        ks_val = kc_val + bq_pos
+        design = np.column_stack(
+            [
+                np.exp(-1j * kf_val * zm),
+                np.exp(-1j * ks_val * zm),
+                np.exp(1j * kf_val * zm),
+                np.exp(1j * ks_val * zm),
+            ]
+        )
+        coef, _, _, _ = np.linalg.lstsq(design, ym, rcond=None)
+        res = ym - design @ coef
+        rss_val = float(np.real(np.vdot(res, res)))
+        return coef, rss_val
+
+    opt = minimize(
+        lambda x: _varpro4(float(x[0]), float(x[1]))[1],
+        x0=np.array([fit2["k_c"], fit2["beta_q"]], dtype=np.float64),
+        method="Nelder-Mead",
+        options={
+            "xatol": 1e-10 * beta_q_guess,
+            "fatol": 1e-16 * max(ym_energy, 1e-30),
+            "maxiter": 2000,
+        },
+    )
+    kc4 = float(opt.x[0])
+    bq4 = float(abs(opt.x[1]))
+    coef4, rss4 = _varpro4(kc4, bq4)
+    af_fwd, as_fwd, af_bwd, as_bwd = (
+        complex(coef4[0]),
+        complex(coef4[1]),
+        complex(coef4[2]),
+        complex(coef4[3]),
+    )
+    fwd_norm = float(np.hypot(abs(af_fwd), abs(as_fwd)))
+    bwd_norm = float(np.hypot(abs(af_bwd), abs(as_bwd)))
+
+    return {
+        "beta_q_2": float(fit2["beta_q"]),
+        "beta_q_4": bq4,
+        "k_c_4": kc4,
+        "delta_beta_q": float(bq4 - fit2["beta_q"]),
+        "rel_delta_beta_q": float((bq4 - fit2["beta_q"]) / fit2["beta_q"]),
+        "bwd_over_fwd": float(bwd_norm / max(fwd_norm, 1e-30)),
+        "bwd_f_over_fwd_f": float(abs(af_bwd) / max(abs(af_fwd), 1e-30)),
+        "bwd_s_over_fwd_s": float(abs(as_bwd) / max(abs(as_fwd), 1e-30)),
+        "rss_4": rss4,
+    }
+
+
 def compute_spatial_spectrum(
     z_coords: np.ndarray,
     i1_phasor: np.ndarray,
@@ -1308,6 +1386,7 @@ def run_linearized_beam_drift(
     rho0_scale: float = 1.0,
     m_mod: float = MODULATION_INDEX,
     rho0_profile: Any = None,
+    outflow_ramp_m: float = OUTFLOW_RAMP_M,
 ) -> dict[str, Any]:
     """Run `LinearizedBeam` in the planar drift tunnel using the public `inflow_rho1` API.
 
@@ -1326,6 +1405,8 @@ def run_linearized_beam_drift(
     rho0_profile : callable or array_like, optional
         Optional transverse/3D unperturbed charge density ``rho0`` passed to
         `LinearizedBeam` (used in D3 for the semicircular profile). Default is ``None``.
+    outflow_ramp_m : float, optional
+        Axial length [m] of the outflow sine-squared taper. Default is ``OUTFLOW_RAMP_M``.
 
     Returns
     -------
@@ -1346,7 +1427,7 @@ def run_linearized_beam_drift(
     t_rise = RISE_PERIODS / DRIVE_FREQ_HZ
 
     dz = lz / nz
-    n_ramp = round(OUTFLOW_RAMP_M / dz)
+    n_ramp = round(outflow_ramp_m / dz)
     grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
     dt, n_spp = _integer_period_dt(grid)
     solver = SolverFIT3D(

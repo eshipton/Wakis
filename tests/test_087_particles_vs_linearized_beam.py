@@ -39,6 +39,7 @@ from examples._space_charge_waves_common import (
     FINE_GRID,
     GUIDE_BZ_TESLA,
     MODULATION_INDEX,
+    OUTFLOW_RAMP_M,
     PERIODIC_LY_M,
     TUNNEL_HALF_WIDTH_M,
     TUNNEL_LENGTH_M,
@@ -50,6 +51,7 @@ from examples._space_charge_waves_common import (
     discrete_modal_prediction,
     extract_coherent_bunching_i2_ratio,
     fit_beta_q_from_envelope,
+    fit_four_wave_reflection,
     fit_window,
     format_error_budget,
     measure_empirical_noise,
@@ -777,6 +779,26 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     seeds_c_str = "[" + ",".join(f"{float(v):.6f}" for v in noise_c["bq_seeds"]) + "]"
     seeds_f_str = "[" + ",".join(f"{float(v):.6f}" for v in noise_f["bq_seeds"]) + "]"
 
+    # Step 4: LB outflow reflection check (4-wave refit + 2x OUTFLOW_RAMP_M rerun, window unchanged)
+    f4_c = fit_four_wave_reflection(
+        lb_c["z_coords"], lb_c["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    f4_f = fit_four_wave_reflection(
+        lb_f["z_coords"], lb_f["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    lb_c_2x = run_linearized_beam_drift(nx_c, nz_c, outflow_ramp_m=2.0 * OUTFLOW_RAMP_M)
+    lb_f_2x = run_linearized_beam_drift(nx_f, nz_f, outflow_ramp_m=2.0 * OUTFLOW_RAMP_M)
+    fit_lb_c_2x = fit_beta_q_from_envelope(
+        lb_c_2x["z_coords"], lb_c_2x["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    fit_lb_f_2x = fit_beta_q_from_envelope(
+        lb_f_2x["z_coords"], lb_f_2x["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    dbq_ramp2x_c = float(fit_lb_c_2x["beta_q"] - bq_lb_c)
+    dbq_ramp2x_f = float(fit_lb_f_2x["beta_q"] - bq_lb_f)
+    rel_dbq_ramp2x_c = float(dbq_ramp2x_c / bq_lb_c)
+    rel_dbq_ramp2x_f = float(dbq_ramp2x_f / bq_lb_f)
+
     print(flush=True)
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
@@ -793,6 +815,18 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     print(
         f"LBCHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_lb_pred_f:.6f} "
         f"bq_lb={bq_lb_f:.6f} resid={resid_lb_f:.6e} slack={tols_f['slack_lb']:.6e}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=lb_outflow "
+        f"dbq_4wave_coarse={f4_c['delta_beta_q']:+.6e} rel_4wave_coarse={f4_c['rel_delta_beta_q']:+.6e} "
+        f"bwd_over_fwd_coarse={f4_c['bwd_over_fwd']:.6e} "
+        f"dbq_ramp2x_coarse={dbq_ramp2x_c:+.6e} rel_ramp2x_coarse={rel_dbq_ramp2x_c:+.6e} "
+        f"slack_coarse={tols_c['slack_lb']:.6e} "
+        f"dbq_4wave_fine={f4_f['delta_beta_q']:+.6e} rel_4wave_fine={f4_f['rel_delta_beta_q']:+.6e} "
+        f"bwd_over_fwd_fine={f4_f['bwd_over_fwd']:.6e} "
+        f"dbq_ramp2x_fine={dbq_ramp2x_f:+.6e} rel_ramp2x_fine={rel_dbq_ramp2x_f:+.6e} "
+        f"slack_fine={tols_f['slack_lb']:.6e}",
         flush=True,
     )
     print(
