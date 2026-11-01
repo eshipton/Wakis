@@ -476,14 +476,14 @@ def _single_grid_budget_terms(
     k_hi = 0.99 * np.pi / (2.0 * dz)
     k_minus = float(
         brentq(
-            lambda k: omega_dt_lhs + _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
+            lambda k: omega_dt_lhs - _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
             k_lo,
             k_hi,
         )
     )
     k_plus = float(
         brentq(
-            lambda k: omega_dt_lhs - _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
+            lambda k: omega_dt_lhs + _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
             k_lo,
             k_hi,
         )
@@ -699,9 +699,8 @@ def fit_beta_q_from_envelope(
     p_s = (exp_kc_pos * ym[None, :]) @ exp_bq_pos.T
     g_12 = np.sum(exp_bq_neg**2, axis=1)
     denom = np.maximum(float(n_pts**2) - np.abs(g_12) ** 2, 1e-30)[None, :]
-    num_proj = (
-        float(n_pts) * (np.abs(p_f) ** 2 + np.abs(p_s) ** 2)
-        - 2.0 * np.real(np.conj(p_f) * g_12[None, :] * p_s)
+    num_proj = float(n_pts) * (np.abs(p_f) ** 2 + np.abs(p_s) ** 2) - 2.0 * np.real(
+        np.conj(p_f) * g_12[None, :] * p_s
     )
     rss_grid = ym_energy - num_proj / denom
     idx_kc, idx_bq = np.unravel_index(int(np.argmin(rss_grid)), rss_grid.shape)
@@ -712,9 +711,7 @@ def fit_beta_q_from_envelope(
         bq_pos = abs(bq_val)
         kf_val = kc_val - bq_pos
         ks_val = kc_val + bq_pos
-        design = np.column_stack(
-            [np.exp(-1j * kf_val * zm), np.exp(-1j * ks_val * zm)]
-        )
+        design = np.column_stack([np.exp(-1j * kf_val * zm), np.exp(-1j * ks_val * zm)])
         coef, _, _, _ = np.linalg.lstsq(design, ym, rcond=None)
         res = ym - design @ coef
         rss_val = float(np.real(np.vdot(res, res)))
