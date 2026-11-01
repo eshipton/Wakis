@@ -736,12 +736,13 @@ class BeamInjector:
         [A/m], and each macroparticle has weight ``w = n_real / n``
         (``n = n_macro_per_step``, ``n_real = |I| * dt / |q| + accumulator``)
         just as for the other profiles. In a 2D slab setup (``Ny = 1`` with
-        periodic ``y`` of period ``L_y``), the charge ``|I| * dt`` injected
-        over step ``dt`` occupies the slab volume ``2 * radius * L_y * u0 * dt``
-        (where ``u0 = v_z0 = beta_0 * c`` is the axial drift speed), so the
-        deposited volume number density (charge density per unit charge ``|q|``)
-        is ``(I * dt / |q|) / (2 * radius * L_y * u0 * dt) = I / (2 * radius * L_y * u0)``
-        per unit charge.
+        periodic ``y`` of period ``L_y``), the ``|I| * dt / |q|`` real
+        particles injected over step ``dt`` occupy the slab volume
+        ``2 * radius * L_y * v_z0 * dt``, where ``v_z0 = beta_0 * c`` is the
+        axial drift *speed* (not the momentum per mass ``uz0 = gamma_0 *
+        v_z0``), so the number density is ``n = |I| / (|q| * 2 * radius * L_y
+        * v_z0)`` [m^-3] and the charge density is ``rho = I / (2 * radius *
+        L_y * v_z0)`` [C/m^3].
     gamma : float, optional
         Initial Lorentz factor ``gamma_0 > 1``. Mutually exclusive with
         ``energy_eV``.

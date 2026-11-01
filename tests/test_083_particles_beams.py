@@ -2275,6 +2275,42 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
     ParticleSolver(solver_per_x, sp_per_x_ok, injectors=[inj_per_x_sheet_ok]).attach()
     solver_per_x.one_step()
     assert sp_per_x_ok.n_particles == 8
+    # The strip [0.5e-3, 3.5e-3] straddles the seam at x_max = 2.0e-3: after the step every
+    # particle must have been wrapped into [x_min, x_max).
+    assert bool(np.all((sp_per_x_ok.x >= -2.0e-3) & (sp_per_x_ok.x < 2.0e-3)))
+    # Wrap equivalence: the same seed with x0 shifted by one period (x0 - L_x) draws the same
+    # strata, so the wrapped positions must agree. Round-off bound: x0 + offset and the wrap
+    # subtraction are each one rounding at magnitude <= L_x, so |dx| <= 2 * eps * L_x per coordinate;
+    # a broken wrap would leave a particle off by L_x.
+    _, solver_per_x_shift = _make_box_solver(
+        nx=8,
+        ny=4,
+        nz=8,
+        lx=4.0e-3,
+        ly=1.0e-3,
+        lz=4.0e-3,
+        bc_low=("periodic", "pec", "pec"),
+        bc_high=("periodic", "pec", "pec"),
+    )
+    sp_per_x_shift = Species("e-", charge=-e_charge, mass=m_e)
+    inj_per_x_shift = BeamInjector(
+        sp_per_x_shift,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="sheet",
+        x0=2.0e-3 - 4.0e-3,
+        y0=0.0,
+        radius=1.5e-3,
+        n_macro_per_step=8,
+    )
+    ParticleSolver(solver_per_x_shift, sp_per_x_shift, injectors=[inj_per_x_shift]).attach()
+    solver_per_x_shift.one_step()
+    order_a = np.argsort(sp_per_x_ok.x)
+    order_b = np.argsort(sp_per_x_shift.x)
+    tol_wrap = 2.0 * np.finfo(float).eps * 4.0e-3
+    assert np.max(np.abs(sp_per_x_ok.x[order_a] - sp_per_x_shift.x[order_b])) <= tol_wrap
+    assert np.array_equal(sp_per_x_ok.z[order_a], sp_per_x_shift.z[order_b])
 
     # 2. Non-periodic PEC box (x in [-2.0e-3, 2.0e-3], y in [-0.5e-3, 0.5e-3]):
     #    - Sheet y0 must satisfy y_min < y0 < y_max strictly (y0 on or outside the PEC wall raises).
@@ -2406,8 +2442,8 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
         lz=4.0e-3,
         bc_low=("cpml", "cpml", "pec"),
         bc_high=("cpml", "cpml", "pec"),
+        n_pml=2,
     )
-    solver_cpml_xy.n_pml = 2
     for inj_bad_cpml, axis_match in (
         (
             BeamInjector(
