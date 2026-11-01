@@ -487,9 +487,7 @@ class ParticleBoundaries:
             cross_low = c1 < c_min
             if bool(xp.any(cross_low)):
                 dc = xp.minimum(c1 - c0, -1e-30)
-                a_low = xp.where(
-                    c0 > c_min, xp.clip((c_min - c0) / dc, 0.0, 1.0), 0.0
-                )
+                a_low = xp.where(c0 > c_min, xp.clip((c_min - c0) / dc, 0.0, 1.0), 0.0)
                 better = cross_low & (a_low <= alpha_min)
                 alpha_min = xp.where(better, a_low, alpha_min)
                 hit_code = xp.where(better, 2 * a, hit_code)
@@ -497,9 +495,7 @@ class ParticleBoundaries:
             cross_high = c1 > c_max
             if bool(xp.any(cross_high)):
                 dc = xp.maximum(c1 - c0, 1e-30)
-                a_high = xp.where(
-                    c0 < c_max, xp.clip((c_max - c0) / dc, 0.0, 1.0), 0.0
-                )
+                a_high = xp.where(c0 < c_max, xp.clip((c_max - c0) / dc, 0.0, 1.0), 0.0)
                 better = cross_high & (a_high <= alpha_min)
                 alpha_min = xp.where(better, a_high, alpha_min)
                 hit_code = xp.where(better, 2 * a + 1, hit_code)
@@ -523,18 +519,20 @@ class ParticleBoundaries:
                     (zeta0, zeta1, iz0, iz1),
                 ):
                     di = i1 - i0
-                    face = xp.where(di > 0, i1.astype(np.float64), (i0).astype(np.float64))
+                    face = xp.where(
+                        di > 0, i1.astype(np.float64), (i0).astype(np.float64)
+                    )
                     dc = c1 - c0
                     crossed_axis = in_solid & (di != 0) & (xp.abs(dc) > 1e-30)
                     a_ax = xp.where(
                         crossed_axis,
-                        xp.clip((face - c0) / xp.where(crossed_axis, dc, 1.0), 0.0, 1.0),
+                        xp.clip(
+                            (face - c0) / xp.where(crossed_axis, dc, 1.0), 0.0, 1.0
+                        ),
                         1.0,
                     )
                     a_pec = xp.minimum(a_pec, a_ax)
-                a_pec = xp.where(
-                    (ix0 == ix1) & (iy0 == iy1) & (iz0 == iz1), 0.0, a_pec
-                )
+                a_pec = xp.where((ix0 == ix1) & (iy0 == iy1) & (iz0 == iz1), 0.0, a_pec)
                 better = in_solid & (a_pec <= alpha_min)
                 alpha_min = xp.where(better, a_pec, alpha_min)
                 hit_code = xp.where(better, 6, hit_code)
@@ -734,16 +732,31 @@ class BeamInjector:
         ``energy_eV``.
     energy_eV : float, optional
         Initial kinetic energy [eV].
-    profile : {"uniform", "gaussian", "lattice"}, optional
-        Transverse radial profile. ``"uniform"`` samples a uniform disk of
-        radius ``radius``; ``"gaussian"`` samples a 2D Gaussian with RMS radius
-        ``sigma_r = radius``; ``"lattice"`` places ``n_macro_per_step``
+    profile : {"uniform", "gaussian", "lattice", "sheet", "sheet_lattice"}, optional
+        Transverse profile. ``"uniform"`` samples a uniform disk of radius
+        ``radius``; ``"gaussian"`` samples a 2D Gaussian with RMS radius
+        ``sigma_r = radius`` (unbounded support; Gaussian tails can leave the
+        transverse domain); ``"lattice"`` places ``n_macro_per_step``
         macroparticles deterministically on a uniform-area Fibonacci disk
-        lattice of radius ``radius`` (independent of ``dt`` and step index).
-        Default is ``"uniform"``.
+        lattice of radius ``radius`` (independent of ``dt`` and step index);
+        ``"sheet"`` samples a planar thin strip at ``y = y0`` exactly with
+        ``x`` uniform on ``[x0 - radius, x0 + radius]`` (where ``radius`` is
+        the sheet half-width) using stratified sampling of :meth:`_step_rng`
+        with one uniform draw per equal sub-interval of width
+        ``2 * radius / n`` (``n = n_macro_per_step``), keeping the empirical
+        transverse charge uniform to ``O(1 / n)`` per step and reducing the
+        variance of the per-step sample mean ``x_bar = (1 / n) * sum_k x_k``
+        from ``Var_iid(x_bar) = radius**2 / (3 * n)`` (unstratified i.i.d.
+        draws, each of variance ``(2 * radius)**2 / 12 = radius**2 / 3``) to
+        ``Var_strat(x_bar) = (1 / n**2) * sum_k (2 * radius / n)**2 / 12 = radius**2 / (3 * n**3)``,
+        a variance reduction by a factor of ``n**2``; ``"sheet_lattice"``
+        places ``n_macro_per_step`` macroparticles deterministically at the
+        stratum midpoints ``x_k = x0 + radius * (2 * (k + 0.5) / n - 1)``,
+        ``y_k = y0`` (zero transverse shot noise). Default is ``"uniform"``.
     radius : float, optional
-        Disk radius (for ``"uniform"`` and ``"lattice"``) or RMS radius
-        ``sigma_r`` (for ``"gaussian"``) [m]. Default is ``1e-3``.
+        Disk radius (for ``"uniform"`` and ``"lattice"``), RMS radius
+        ``sigma_r`` (for ``"gaussian"``), or planar sheet half-width along ``x``
+        (for ``"sheet"`` and ``"sheet_lattice"``) [m]. Default is ``1e-3``.
     x0, y0 : float, optional
         Transverse beam centre [m]. Default is ``0.0``.
     n_macro_per_step : int, optional
@@ -795,11 +808,20 @@ class BeamInjector:
         self.z0 = float(z0)
         self.current = current
         self.profile = str(profile).strip().lower()
-        if self.profile not in ("uniform", "gaussian", "lattice"):
+        if self.profile not in (
+            "uniform",
+            "gaussian",
+            "lattice",
+            "sheet",
+            "sheet_lattice",
+        ):
             raise ValueError(
-                f"Unknown profile={profile!r}; expected 'uniform', 'gaussian', or 'lattice'."
+                f"Unknown profile={profile!r}; expected 'uniform', 'gaussian', "
+                "'lattice', 'sheet', or 'sheet_lattice'."
             )
         self.radius = float(radius)
+        if self.radius < 0.0:
+            raise ValueError(f"radius must be >= 0, got {radius}.")
         self.x0 = float(x0)
         self.y0 = float(y0)
         self.n_macro_per_step = int(n_macro_per_step)
@@ -872,9 +894,16 @@ class BeamInjector:
         ValueError
             If ``z0`` lies outside the physical z-domain, inside a PML/CPML
             absorbing layer, on a boundary face with outward ``direction``,
-            if any cell under the emitter disk (or Gaussian :math:`3\\sigma`
-            footprint) overlaps an embedded PEC solid cell, or if the solver
-            uses ``"abc"`` or an unknown/unresolved global ``z`` boundary
+            if the transverse emitter footprint leaves the physical transverse
+            domain ``[xmin, xmax] x [ymin, ymax]`` (``x0 +- radius`` and
+            ``y0 +- radius`` for ``"uniform"`` and ``"lattice"``; ``x0 +- radius``
+            and ``y0`` for ``"sheet"`` and ``"sheet_lattice"``; no bound for
+            ``"gaussian"`` because its support is unbounded), if any cell under
+            the emitter footprint (disk for ``"uniform"`` and ``"lattice"``,
+            :math:`3\\sigma` disk for ``"gaussian"``, or strip
+            ``[x0 - radius, x0 + radius] x {y0}`` for ``"sheet"`` and
+            ``"sheet_lattice"``) overlaps an embedded PEC solid cell, or if the
+            solver uses ``"abc"`` or an unknown/unresolved global ``z`` boundary
             condition.
         """
         global_bc_z = getattr(solver, "_global_bc_z", None)
@@ -992,6 +1021,54 @@ class BeamInjector:
                 f"domain with direction=-1, got direction={self.direction}."
             )
 
+        if self.radius < 0.0:
+            raise ValueError(
+                f"BeamInjector radius must be >= 0, got radius={self.radius}."
+            )
+
+        edge_ghosts = getattr(solver.grid, "edge_ghosts", (0, 0, 0))
+        bc_x_low = _parse_bc_face(solver.bc_low[0])
+        bc_x_high = _parse_bc_face(solver.bc_high[0])
+        periodic_x = bc_x_low == "periodic" and bc_x_high == "periodic"
+        nx_phys = int(solver.Nx) - (0 if periodic_x else int(edge_ghosts[0]))
+        x_phys_nodes = np.asarray(solver.grid.x[: nx_phys + 1], dtype=np.float64)
+        x_min = float(x_phys_nodes[0])
+        x_max = float(x_phys_nodes[-1])
+
+        bc_y_low = _parse_bc_face(solver.bc_low[1])
+        bc_y_high = _parse_bc_face(solver.bc_high[1])
+        periodic_y = bc_y_low == "periodic" and bc_y_high == "periodic"
+        ny_phys = int(solver.Ny) - (0 if periodic_y else int(edge_ghosts[1]))
+        y_phys_nodes = np.asarray(solver.grid.y[: ny_phys + 1], dtype=np.float64)
+        y_min = float(y_phys_nodes[0])
+        y_max = float(y_phys_nodes[-1])
+
+        if self.profile in ("uniform", "lattice", "sheet", "sheet_lattice"):
+            x_lo = self.x0 - self.radius
+            x_hi = self.x0 + self.radius
+            if x_lo < x_min or x_hi > x_max:
+                raise ValueError(
+                    f"BeamInjector (profile={self.profile!r}) x-extent "
+                    f"[{x_lo}, {x_hi}] (x0={self.x0}, radius={self.radius}) "
+                    f"is outside the physical x-domain [{x_min}, {x_max}]."
+                )
+            if self.profile in ("uniform", "lattice"):
+                y_lo = self.y0 - self.radius
+                y_hi = self.y0 + self.radius
+                if y_lo < y_min or y_hi > y_max:
+                    raise ValueError(
+                        f"BeamInjector (profile={self.profile!r}) y-extent "
+                        f"[{y_lo}, {y_hi}] (y0={self.y0}, radius={self.radius}) "
+                        f"is outside the physical y-domain [{y_min}, {y_max}]."
+                    )
+            else:
+                if self.y0 < y_min or self.y0 > y_max:
+                    raise ValueError(
+                        f"BeamInjector (profile={self.profile!r}) y-extent "
+                        f"y0={self.y0} is outside the physical y-domain "
+                        f"[{y_min}, {y_max}]."
+                    )
+
         # Reject embedded PEC solid cathodes (internal STL or conductor solids at emitter)
         ps_att = getattr(solver, "_particle_solver", None)
         solid_mask = getattr(getattr(ps_att, "boundaries", None), "solid_mask", None)
@@ -1003,6 +1080,7 @@ class BeamInjector:
             ieps_y = solver.ieps.to_matrix("y")
             ieps_z = solver.ieps.to_matrix("z")
             solid_mask = (ieps_x == 0.0) & (ieps_y == 0.0) & (ieps_z == 0.0)
+        local_solid_overlap = False
         if solid_mask is not None:
             sm_h = (
                 solid_mask.get()
@@ -1036,27 +1114,45 @@ class BeamInjector:
                         int(solver.Nz) - 1,
                     )
                 )
-                r_foot = (
-                    3.0 * self.radius if self.profile == "gaussian" else self.radius
-                )
                 dx_close = (
                     np.clip(self.x0, x_nodes[:nx_c], x_nodes[1 : nx_c + 1]) - self.x0
                 )
                 dy_close = (
                     np.clip(self.y0, y_nodes[:ny_c], y_nodes[1 : ny_c + 1]) - self.y0
                 )
-                disk_xy_mask = (
-                    dx_close[:, None] * dx_close[:, None]
-                    + dy_close[None, :] * dy_close[None, :]
-                ) <= r_foot * r_foot
-                disk_xy_mask[ix0, iy0] = True
-                if bool(np.any(sm_h[:nx_c, :ny_c, iz0][disk_xy_mask])):
-                    raise ValueError(
-                        f"BeamInjector emitter at (x0={self.x0}, y0={self.y0}, z0={self.z0}, "
-                        f"radius={self.radius}) overlaps an embedded PEC solid cell; "
-                        "embedded PEC solid cathodes are not supported (place z0 on a "
-                        "planar domain PEC boundary or in vacuum)."
+                if self.profile in ("sheet", "sheet_lattice"):
+                    foot_xy_mask = (np.abs(dx_close)[:, None] <= self.radius) & (
+                        np.abs(dy_close)[None, :] <= 0.0
                     )
+                else:
+                    r_foot = (
+                        3.0 * self.radius if self.profile == "gaussian" else self.radius
+                    )
+                    foot_xy_mask = (
+                        dx_close[:, None] * dx_close[:, None]
+                        + dy_close[None, :] * dy_close[None, :]
+                    ) <= r_foot * r_foot
+                foot_xy_mask[ix0, iy0] = True
+                local_solid_overlap = bool(
+                    np.any(sm_h[:nx_c, :ny_c, iz0][foot_xy_mask])
+                )
+        if (
+            bool(getattr(solver, "use_mpi", False))
+            and int(getattr(solver, "size", 1)) > 1
+            and getattr(solver, "comm", None) is not None
+        ):
+            solid_overlap = (
+                int(solver.comm.allreduce(1 if local_solid_overlap else 0)) > 0
+            )
+        else:
+            solid_overlap = local_solid_overlap
+        if solid_overlap:
+            raise ValueError(
+                f"BeamInjector emitter at (x0={self.x0}, y0={self.y0}, z0={self.z0}, "
+                f"radius={self.radius}) overlaps an embedded PEC solid cell; "
+                "embedded PEC solid cathodes are not supported (place z0 on a "
+                "planar domain PEC boundary or in vacuum)."
+            )
 
         on_low_pec = on_low_face and bc_z_low in ("pec", "electric")
         on_high_pec = on_high_face and bc_z_high in ("pec", "electric")
@@ -1233,6 +1329,15 @@ class BeamInjector:
                 dy -= float(np.mean(dy))
                 x = self.x0 + dx
                 y = self.y0 + dy
+        elif self.profile == "sheet":
+            k_idx = np.arange(n_macro, dtype=np.float64)
+            u_strat = rng.uniform(0.0, 1.0, size=n_macro)
+            x = self.x0 + self.radius * (2.0 * (k_idx + u_strat) / float(n_macro) - 1.0)
+            y = np.full(n_macro, self.y0, dtype=np.float64)
+        elif self.profile == "sheet_lattice":
+            k_idx = np.arange(n_macro, dtype=np.float64)
+            x = self.x0 + self.radius * (2.0 * (k_idx + 0.5) / float(n_macro) - 1.0)
+            y = np.full(n_macro, self.y0, dtype=np.float64)
         else:
             x = self.x0 + rng.normal(0.0, self.radius, size=n_macro)
             y = self.y0 + rng.normal(0.0, self.radius, size=n_macro)

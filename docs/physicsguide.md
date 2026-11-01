@@ -5566,7 +5566,8 @@ When `ParticleSolver.attach()` (or the first coupled step for a late injector ap
    - neither longitudinal boundary is `"abc"` (first-order absorbing boundary conditions are rejected with `ValueError`);
    - $z_0$ does not lie within an active low-$z$ ($\zeta_0 \le n_{\text{pml}}$) or high-$z$ ($\zeta_0 \ge N_z^{\text{phys}} - n_{\text{pml}}$) convolutional perfectly matched layer (`bc="cpml"`);
    - when $z_0$ lies on a domain boundary face, `direction` points into the computational domain ($z_0 = z_{\min}^{\text{phys}}$ requires $\text{direction} = +1$; $z_0 = z_{\max}^{\text{phys}}$ requires $\text{direction} = -1$, so a `pec_wall` at $z_{\max}^{\text{phys}}$ must emit with $\text{direction} = -1$), raising `ValueError` otherwise;
-   - no grid cell under the emitter disk of radius $R = \text{radius}$ (or the Gaussian $3\sigma$ footprint $R = 3\,\text{radius}$ when `profile="gaussian"`) at $z_0$ overlaps an embedded PEC solid cell (`use_stl`, `use_conductors`, or `solid_mask`): embedded solid cathodes are unsupported and rejected with `ValueError`.
+   - the transverse emitter footprint lies within the physical transverse domain $[x_{\min}^{\text{phys}}, x_{\max}^{\text{phys}}] \times [y_{\min}^{\text{phys}}, y_{\max}^{\text{phys}}]$ (computed from the grid's physical node extents `grid.x[:nx_phys + 1]` and `grid.y[:ny_phys + 1]`, excluding any outer ghost cell recorded in `grid.edge_ghosts` on non-periodic axes): for `"uniform"` and `"lattice"`, $[x_0 - R, x_0 + R] \subseteq [x_{\min}^{\text{phys}}, x_{\max}^{\text{phys}}]$ and $[y_0 - R, y_0 + R] \subseteq [y_{\min}^{\text{phys}}, y_{\max}^{\text{phys}}]$; for the planar sheet profiles `"sheet"` and `"sheet_lattice"` (where $R = \text{radius}$ is the sheet half-width along $x$), $[x_0 - R, x_0 + R] \subseteq [x_{\min}^{\text{phys}}, x_{\max}^{\text{phys}}]$ and $y_0 \in [y_{\min}^{\text{phys}}, y_{\max}^{\text{phys}}]$ (equality at the domain boundary is permitted, and any violation raises `ValueError` naming the offending extent); for `"gaussian"`, no transverse bound is enforced because the 2D Gaussian has unbounded support, though Gaussian tails beyond $[x_{\min}^{\text{phys}}, x_{\max}^{\text{phys}}] \times [y_{\min}^{\text{phys}}, y_{\max}^{\text{phys}}]$ can leave the domain. Correction (2026-10-31): Previously, `BeamInjector._bind` did not validate the emitter footprint against $[x_{\min}^{\text{phys}}, x_{\max}^{\text{phys}}] \times [y_{\min}^{\text{phys}}, y_{\max}^{\text{phys}}]$, so injection with a footprint extending outside the transverse domain (such as a disk of radius $R > L_y / 2$ on a periodic $y$ axis) was silently allowed;
+   - no grid cell under the emitter footprint at $z_0$—the disk of radius $R = \text{radius}$ for `"uniform"` and `"lattice"`, the Gaussian $3\sigma$ disk $R = 3\,\text{radius}$ for `"gaussian"`, or the 1D strip $[x_0 - R, x_0 + R] \times \{y_0\}$ ($|dx_{\text{close}}| \le R$ and $|dy_{\text{close}}| \le 0$) for `"sheet"` and `"sheet_lattice"`—overlaps an embedded PEC solid cell (`use_stl`, `use_conductors`, or `solid_mask`): embedded solid cathodes are unsupported and rejected with `ValueError`.
 2. **Emitter classification (`self.emitter_kind`)**: To preserve discrete Gauss's law $\tilde{\mathbf{S}}\tilde{\mathbf{d}}^n = \mathbf{q}_{\text{nodes}}^n + \mathbf{q}_{\text{bg}}^n$ when a charge $\Delta q_{\text{inj}}$ is introduced at $z_0$, `ParticleSolver` subtracts the equal-and-opposite charge $-\Delta q_{\text{inj}}$ from the immobile background array `solver._particles_q_bg` at the injection stencil nodes. `_bind(solver)` classifies the physical meaning of this opposite charge into two cases:
    - `"pec_wall"`: $z_0$ coincides with the lower ($z_0 = z_{\min}^{\text{phys}}$, $\zeta_0 = 0$, $\text{direction} = +1$) or upper ($z_0 = z_{\max}^{\text{phys}}$, $\zeta_0 = N_z^{\text{phys}}$, $\text{direction} = -1$) domain boundary and the corresponding longitudinal boundary condition is PEC (`"pec"` or `"electric"`). Tangential electric fields vanish on the conducting wall, so $-\Delta q_{\text{inj}}$ represents the physical wall image / surface charge drawn from the metallic cathode.
    - `"interior_sheet"`: $z_0$ lies strictly in the domain interior (or on a non-PEC boundary face with inward `direction`). Here $-\Delta q_{\text{inj}}$ remains at $z = z_0$ as a fixed, immobile neutralizing charge sheet ($\mathbf{v}_{\text{sheet}} = \mathbf{0}$, $\mathbf{J}_{\text{sheet}} = \mathbf{0}$) that balances the mobile beam charge in discrete Gauss's law.
@@ -5589,7 +5590,25 @@ r_k = R\sqrt{\frac{k + 1/2}{n_{\text{macro}}}}, \qquad
 \varphi_{\text{gold}} = \frac{3 - \sqrt{5}}{2}, \qquad k = 0, \dots, n_{\text{macro}} - 1,
 ```
 
-   centered to zero discrete dipole moment ($\sum_k \Delta x_k = \sum_k \Delta y_k = 0$) for $n_{\text{macro}} > 1$.
+   centered to zero discrete dipole moment ($\sum_k \Delta x_k = \sum_k \Delta y_k = 0$) for $n_{\text{macro}} > 1$. For planar sheet-beam geometries and 2D ($N_y = 1$) studies, `BeamInjector` additionally provides two strip profiles at $y_k = y_0$ with sheet half-width $R = \text{radius}$ along $x$:
+   - **`profile="sheet"` (stratified strip sampling)**: partitions $[x_0 - R, x_0 + R]$ into $n_{\text{macro}}$ equal strata of width $\Delta x_s = 2R / n_{\text{macro}}$ and draws $u_k \sim \mathcal{U}(0, 1)$ independently from $\text{rng}_s$:
+
+```math
+x_k = x_0 + R\!\left(\frac{2(k + u_k)}{n_{\text{macro}}} - 1\right), \qquad y_k = y_0, \qquad k = 0, \dots, n_{\text{macro}} - 1.
+```
+
+     Placing one draw in each stratum keeps the empirical transverse charge density uniform to $\mathcal{O}(1 / n_{\text{macro}})$ per step. Because each within-stratum draw has variance $\operatorname{Var}(x_k) = \Delta x_s^2 / 12 = R^2 / (3 n_{\text{macro}}^2)$ rather than the unstratified i.i.d. uniform variance $\operatorname{Var}_{\text{iid}}(x_k) = (2R)^2 / 12 = R^2 / 3$, the variance of the per-step sample mean $\bar{x} = \frac{1}{n_{\text{macro}}}\sum_{k=0}^{n_{\text{macro}}-1} x_k$ is reduced from $\operatorname{Var}_{\text{iid}}(\bar{x}) = \frac{R^2}{3 n_{\text{macro}}}$ to
+
+```math
+\operatorname{Var}_{\text{strat}}(\bar{x}) = \frac{1}{n_{\text{macro}}^2}\sum_{k=0}^{n_{\text{macro}}-1}\operatorname{Var}(x_k) = \frac{R^2}{3 n_{\text{macro}}^3} = \frac{1}{n_{\text{macro}}^2}\operatorname{Var}_{\text{iid}}(\bar{x}),
+```
+
+     a variance reduction by a factor of $n_{\text{macro}}^2$.
+   - **`profile="sheet_lattice"` (deterministic strip lattice)**: places the $n_{\text{macro}}$ macroparticles deterministically at the stratum midpoints with zero transverse shot noise (the planar sheet analogue of `"lattice"`):
+
+```math
+x_k = x_0 + R\!\left(\frac{2(k + 1/2)}{n_{\text{macro}}} - 1\right), \qquad y_k = y_0, \qquad k = 0, \dots, n_{\text{macro}} - 1.
+```
 2. **Half-open slab ownership and unified step planning**: On an $S$-rank longitudinal $z$-slab decomposition where rank $r \in \{0, \dots, S-1\}$ owns $[z_{\text{own,min}}(r),\, z_{\text{own,max}}(r)]$, `ParticleSolver._owns_z_coord(inj.z0)` assigns ownership of $z_0$ using the half-open interval
 
 ```math
