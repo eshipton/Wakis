@@ -1619,11 +1619,19 @@ def run_particle_beam_drift(
     iz_hist = np.zeros((n_dft, beam_ref.M), dtype=np.float64)
     t_mids = np.zeros(n_dft, dtype=np.float64)
 
+    dx = 2.0 * a / nx
     dz = lz / nz
     z_edges = np.linspace(0.0, lz, nz + 1)
+    x_node_frac = np.arange(nx + 1, dtype=np.float64)[:, None] / float(nx)
     w_sum_dc = np.zeros(nz, dtype=np.float64)
     wv_sum_dc = np.zeros(nz, dtype=np.float64)
     n_dc_samples = 0
+
+    w_win = np.zeros((n_dft, nz), dtype=np.float64)
+    wv_win = np.zeros((n_dft, nz), dtype=np.float64)
+    wv2_win = np.zeros((n_dft, nz), dtype=np.float64)
+    wg_win = np.zeros((n_dft, nz), dtype=np.float64)
+    wgp_win = np.zeros((n_dft, nz), dtype=np.float64)
 
     for step in range(n_total):
         solver.one_step()
@@ -1635,16 +1643,47 @@ def run_particle_beam_drift(
             j_edges = j_host.reshape(beam_ref.M, beam_ref.N_lines)
             iz_hist[k, :] = np.sum(j_edges * beam_ref.dA_perp, axis=1)
 
+            xp = np.asarray(sp.x.get() if hasattr(sp.x, "get") else sp.x)
+            zp = np.asarray(sp.z.get() if hasattr(sp.z, "get") else sp.z)
+            ux_p = np.asarray(sp.ux.get() if hasattr(sp.ux, "get") else sp.ux)
+            uy_p = np.asarray(sp.uy.get() if hasattr(sp.uy, "get") else sp.uy)
+            uz_p = np.asarray(sp.uz.get() if hasattr(sp.uz, "get") else sp.uz)
+            wp = np.asarray(sp.w.get() if hasattr(sp.w, "get") else sp.w)
+
+            gamma_p = np.sqrt(1.0 + (ux_p**2 + uy_p**2 + uz_p**2) / (c_light**2))
+            vz_p = uz_p / gamma_p
+            bin_idx = np.clip(np.digitize(zp, z_edges) - 1, 0, nz - 1)
+
+            # Deposited-field transverse potential phi(x, z) with PEC phi(+-a) = 0
+            ex_raw = solver.E[:, :, :, "x"]
+            ex_host = np.asarray(ex_raw.get() if hasattr(ex_raw, "get") else ex_raw)
+            ex_cell = 0.5 * (ex_host[:nx, 0, :nz] + ex_host[:nx, 0, 1 : nz + 1])
+            phi_nodes = np.zeros((nx + 1, nz), dtype=np.float64)
+            phi_nodes[1:, :] = -dx * np.cumsum(ex_cell, axis=0)
+            phi_nodes -= x_node_frac * phi_nodes[-1:, :]
+
+            xi_p = (xp + a) / dx
+            ix0 = np.clip(np.floor(xi_p).astype(np.int64), 0, nx - 1)
+            wx1 = np.clip(xi_p - ix0, 0.0, 1.0)
+            wx0 = 1.0 - wx1
+            phi_p = wx0 * phi_nodes[ix0, bin_idx] + wx1 * phi_nodes[ix0 + 1, bin_idx]
+            gamma_pred_p = gamma0 + (e_charge / (sp.mass * c_light**2)) * phi_p
+
+            w_k = np.bincount(bin_idx, weights=wp, minlength=nz)
+            wv_k = np.bincount(bin_idx, weights=wp * vz_p, minlength=nz)
+            w_win[k, :] = w_k
+            wv_win[k, :] = wv_k
+            wv2_win[k, :] = np.bincount(bin_idx, weights=wp * (vz_p**2), minlength=nz)
+            wg_win[k, :] = np.bincount(bin_idx, weights=wp * gamma_p, minlength=nz)
+            wgp_win[k, :] = np.bincount(
+                bin_idx, weights=wp * gamma_pred_p, minlength=nz
+            )
+
             # Accumulate DC velocity and density profiles over 1 RF period (n_spp steps)
             # at the start of the steady-state window to cancel AC modulation
             if k < n_spp:
-                zp = np.asarray(sp.z.get() if hasattr(sp.z, "get") else sp.z)
-                uz_p = np.asarray(sp.uz.get() if hasattr(sp.uz, "get") else sp.uz)
-                wp = np.asarray(sp.w.get() if hasattr(sp.w, "get") else sp.w)
-                vz_p = uz_p / np.sqrt(1.0 + (uz_p / c_light) ** 2)
-                bin_idx = np.clip(np.digitize(zp, z_edges) - 1, 0, nz - 1)
-                w_sum_dc += np.bincount(bin_idx, weights=wp, minlength=nz)
-                wv_sum_dc += np.bincount(bin_idx, weights=wp * vz_p, minlength=nz)
+                w_sum_dc += w_k
+                wv_sum_dc += wv_k
                 n_dc_samples += 1
 
     iz_dc = np.mean(iz_hist, axis=0)
@@ -1657,7 +1696,7 @@ def run_particle_beam_drift(
     # Residual DC leakage: dc_leak is a zero-mean algebraic identity; dirichlet_leak
     # tests the integer-n_spp orthogonality |sum(ker1)| * (I0 / I1_0).
     dc_test = np.broadcast_to(iz_dc[None, :], iz_hist.shape)
-    i1_scale = m_mod * i0_dc
+    i1_scale = max(abs(m_mod), MODULATION_INDEX) * i0_dc
     dc_leak = (
         np.max(np.abs(np.dot(ker1, dc_test - np.mean(dc_test, axis=0)))) / i1_scale
     )
@@ -1677,6 +1716,54 @@ def run_particle_beam_drift(
     u_z_mean = float(np.sum(wv_mean_cell[interior]) / np.sum(w_mean_cell[interior]))
     rho_dc_mean = float(np.mean(rho_dc_profile[interior]))
 
+    # Step 5 (A3): Per-z-cell weighted mean and rms of v_z, and mean gamma, over the
+    # DFT window after removing the coherent omega harmonic (a + b*cos(omega*t) + c*sin(omega*t))
+    basis_t = np.column_stack(
+        [np.ones(n_dft), np.cos(omega * t_mids), np.sin(omega * t_mids)]
+    )
+    w_tot_win = np.sum(w_win, axis=0)
+    vz_coh_profile = np.full(nz, u_dep, dtype=np.float64)
+    sigma_vz_profile = np.zeros(nz, dtype=np.float64)
+    gamma_profile = np.full(nz, gamma0, dtype=np.float64)
+    gamma_pred_profile = np.full(nz, gamma0, dtype=np.float64)
+
+    for j in range(nz):
+        wj = w_win[:, j]
+        w_sum_j = float(w_tot_win[j])
+        if w_sum_j <= 0.0:
+            continue
+        wvj = wv_win[:, j]
+        wv2j = wv2_win[:, j]
+        wgj = wg_win[:, j]
+        wgpj = wgp_win[:, j]
+        w_safe = np.maximum(wj, 1e-30)
+        v_bar_j = wvj / w_safe
+        g_bar_j = wgj / w_safe
+
+        xtw = basis_t.T * wj[None, :]
+        gram_j = xtw @ basis_t
+        theta_v = np.linalg.lstsq(gram_j, basis_t.T @ wvj, rcond=None)[0]
+        theta_g = np.linalg.lstsq(gram_j, basis_t.T @ wgj, rcond=None)[0]
+        v_fit_j = basis_t @ theta_v
+        g_fit_j = basis_t @ theta_g
+
+        within_ss = np.sum(np.maximum(wv2j - (wvj**2) / w_safe, 0.0))
+        temp_ss = np.sum(wj * ((v_bar_j - v_fit_j) ** 2))
+        vz_coh_profile[j] = float(np.sum(wj * v_fit_j) / w_sum_j)
+        sigma_vz_profile[j] = float(np.sqrt(max((within_ss + temp_ss) / w_sum_j, 0.0)))
+        gamma_profile[j] = float(np.sum(wj * g_fit_j) / w_sum_j)
+        gamma_pred_profile[j] = float(np.sum(wgpj) / w_sum_j)
+
+    w_int = w_tot_win[interior]
+    w_int_sum = float(np.sum(w_int))
+    vz_mean_coh = float(np.sum(w_int * vz_coh_profile[interior]) / w_int_sum)
+    sigma_vz_mean = float(
+        np.sqrt(np.sum(w_int * (sigma_vz_profile[interior] ** 2)) / w_int_sum)
+    )
+    sigma_vz_over_u = float(sigma_vz_mean / vz_mean_coh)
+    gamma_mean = float(np.sum(w_int * gamma_profile[interior]) / w_int_sum)
+    gamma_pred_mean = float(np.sum(w_int * gamma_pred_profile[interior]) / w_int_sum)
+
     return {
         "i1_part": i1_part,
         "i2_part": i2_part,
@@ -1686,6 +1773,16 @@ def run_particle_beam_drift(
         "rho_dc_mean": rho_dc_mean,
         "u_z_profile": u_z_profile,
         "rho_dc_profile": rho_dc_profile,
+        "vz_mean_coh": vz_mean_coh,
+        "sigma_vz_mean": sigma_vz_mean,
+        "sigma_vz_over_u": sigma_vz_over_u,
+        "gamma_mean": gamma_mean,
+        "gamma_pred_mean": gamma_pred_mean,
+        "gamma_diff_mean": float(gamma_mean - gamma_pred_mean),
+        "vz_coh_profile": vz_coh_profile,
+        "sigma_vz_profile": sigma_vz_profile,
+        "gamma_profile": gamma_profile,
+        "gamma_pred_profile": gamma_pred_profile,
         "dt": dt,
         "n_spp": n_spp,
     }

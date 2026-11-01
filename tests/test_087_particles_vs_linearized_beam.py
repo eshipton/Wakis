@@ -44,6 +44,7 @@ from examples._space_charge_waves_common import (
     TUNNEL_HALF_WIDTH_M,
     TUNNEL_LENGTH_M,
     cached_baseline_pair,
+    cached_particle_drift,
     compute_analytic_parameters,
     compute_spatial_spectrum,
     compute_transverse_modal_operator,
@@ -829,6 +830,37 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"slack_fine={tols_f['slack_lb']:.6e}",
         flush=True,
     )
+    # Step 5 (A1 & A2): Coherent seed-mean fit vs mean of per-seed fits, and synthetic noise pairs
+    bq_coh_c = float(noise_c["bq_coherent_mean"])
+    bq_coh_f = float(noise_f["bq_coherent_mean"])
+    coh_minus_lat_c = float(bq_coh_c - bq_part_lat_c)
+    coh_minus_lat_f = float(bq_coh_f - bq_part_lat_f)
+
+    synth_c_list = []
+    synth_f_list = []
+    i1_seeds_c = noise_c["i1_seeds"]
+    i1_seeds_f = noise_f["i1_seeds"]
+    inv_sqrt2 = 1.0 / np.sqrt(2.0)
+    for idx_pair in range(4):
+        s0 = 2 * idx_pair
+        s1 = 2 * idx_pair + 1
+        i1_syn_c = part_c["i1_part"] + (i1_seeds_c[s0] - i1_seeds_c[s1]) * inv_sqrt2
+        i1_syn_f = part_f["i1_part"] + (i1_seeds_f[s0] - i1_seeds_f[s1]) * inv_sqrt2
+        fit_syn_c = fit_beta_q_from_envelope(
+            lb_c["z_coords"], i1_syn_c, beta_q_th, z_min=z_min, z_max=z_max
+        )
+        fit_syn_f = fit_beta_q_from_envelope(
+            lb_f["z_coords"], i1_syn_f, beta_q_th, z_min=z_min, z_max=z_max
+        )
+        synth_c_list.append(float(fit_syn_c["beta_q"]))
+        synth_f_list.append(float(fit_syn_f["beta_q"]))
+    bq_synth_mean_c = float(np.mean(synth_c_list))
+    bq_synth_mean_f = float(np.mean(synth_f_list))
+    synth_excess_c = float(bq_synth_mean_c - bq_part_lat_c)
+    synth_excess_f = float(bq_synth_mean_f - bq_part_lat_f)
+    synth_c_str = "[" + ",".join(f"{v:.6f}" for v in synth_c_list) + "]"
+    synth_f_str = "[" + ",".join(f"{v:.6f}" for v in synth_f_list) + "]"
+
     print(
         f"H1CHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_c:.6f} "
         f"slack={tols_c['slack_part']:.6e} lattice={bq_part_lat_c:.6f} "
@@ -847,6 +879,30 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"tcrit={tcrit_f:.6f} resid_mean={resid_mean_f:.6e} "
         f"bound_mean={bound_mean_f:.6e} mean_minus_lattice={mean_minus_lat_f:.6e} "
         f"seeds={seeds_f_str}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=A1 bq_coherent_mean_coarse={bq_coh_c:.6f} "
+        f"bq_mean_sheet_coarse={noise_c['bq_mean']:.6f} "
+        f"bq_lattice_coarse={bq_part_lat_c:.6f} "
+        f"coh_minus_lat_coarse={coh_minus_lat_c:+.6e} "
+        f"mean_minus_lat_coarse={noise_c['bq_mean'] - bq_part_lat_c:+.6e} "
+        f"bq_coherent_mean_fine={bq_coh_f:.6f} "
+        f"bq_mean_sheet_fine={noise_f['bq_mean']:.6f} "
+        f"bq_lattice_fine={bq_part_lat_f:.6f} "
+        f"coh_minus_lat_fine={coh_minus_lat_f:+.6e} "
+        f"mean_minus_lat_fine={noise_f['bq_mean'] - bq_part_lat_f:+.6e}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=A2 bq_synth_mean_coarse={bq_synth_mean_c:.6f} "
+        f"synth_excess_coarse={synth_excess_c:+.6e} "
+        f"sheet_excess_coarse={noise_c['bq_mean'] - bq_part_lat_c:+.6e} "
+        f"pairs_coarse={synth_c_str} "
+        f"bq_synth_mean_fine={bq_synth_mean_f:.6f} "
+        f"synth_excess_fine={synth_excess_f:+.6e} "
+        f"sheet_excess_fine={noise_f['bq_mean'] - bq_part_lat_f:+.6e} "
+        f"pairs_fine={synth_f_str}",
         flush=True,
     )
     print(
@@ -1094,12 +1150,13 @@ def test_m_scan_linearity():
 
 @pytest.mark.slow
 def test_optional_diagnostics():
-    """Step 8 optional diagnostics D3, D4, D5, D6 (report-only, coarse grid, `"sheet_lattice"`)."""
+    """Step 5 diagnostics A3-A5 and Step 8 optional diagnostics D3-D6 (report-only, coarse grid)."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
     tols = derived_tolerances(nx, nz, params)
     z_min, z_max = fit_window(params)
     beta_q_th = params["beta_q"]
+    beta_e = params["beta_e"]
 
     lb_base, part_base = cached_baseline_pair(nx, nz)
     z_coords = lb_base["z_coords"]
@@ -1111,6 +1168,187 @@ def test_optional_diagnostics():
     )
     bq_lb_base = fit_lb_base["beta_q"]
     bq_part_base = fit_part_base["beta_q"]
+
+    # Step 5 (A3): Binned v_z mean/rms and gamma vs gamma_pred over DFT window (m=0.015 and m=0)
+    part_sheet42_m = cached_particle_drift(
+        nx, nz, profile="sheet", seed=42, m_mod=MODULATION_INDEX, qm_scale=1.0
+    )
+    fit_sheet42_m = fit_beta_q_from_envelope(
+        z_coords, part_sheet42_m["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    bq_sheet42_m = float(fit_sheet42_m["beta_q"])
+    sigma_v_over_u_hwarm_a3 = float(
+        np.sqrt(max(bq_sheet42_m**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
+    )
+    part_lat_m0 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=42,
+        m_mod=0.0,
+        profile="sheet_lattice",
+    )
+    part_sheet42_m0 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=42,
+        m_mod=0.0,
+        profile="sheet",
+    )
+
+    # Step 5 (A4): Frozen random sheet (_step_rng returns default_rng(self.seed) every step)
+    orig_step_rng = BeamInjector._step_rng
+    BeamInjector._step_rng = lambda self, step_index: np.random.default_rng(self.seed)
+    try:
+        part_froz_42 = run_particle_beam_drift(
+            nx,
+            nz,
+            beam_ref=lb_base["beam"],
+            qm_scale=1.0,
+            seed=42,
+            profile="sheet",
+        )
+        part_froz_43 = run_particle_beam_drift(
+            nx,
+            nz,
+            beam_ref=lb_base["beam"],
+            qm_scale=1.0,
+            seed=43,
+            profile="sheet",
+        )
+    finally:
+        BeamInjector._step_rng = orig_step_rng
+
+    fit_froz_42 = fit_beta_q_from_envelope(
+        z_coords, part_froz_42["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    fit_froz_43 = fit_beta_q_from_envelope(
+        z_coords, part_froz_43["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    bq_froz_42 = float(fit_froz_42["beta_q"])
+    bq_froz_43 = float(fit_froz_43["beta_q"])
+    bq_froz_mean = 0.5 * (bq_froz_42 + bq_froz_43)
+
+    k_idx_16 = np.arange(16, dtype=np.float64)
+    u_strat_42 = np.random.default_rng(42).uniform(0.0, 1.0, size=16)
+    u_strat_43 = np.random.default_rng(43).uniform(0.0, 1.0, size=16)
+    x_froz_42 = BEAM_HALF_THICKNESS_M * (2.0 * (k_idx_16 + u_strat_42) / 16.0 - 1.0)
+    x_froz_43 = BEAM_HALF_THICKNESS_M * (2.0 * (k_idx_16 + u_strat_43) / 16.0 - 1.0)
+    bq_pred_froz_42 = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_froz_42)
+    )
+    bq_pred_froz_43 = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_froz_43)
+    )
+    bq_pred_froz_mean = 0.5 * (bq_pred_froz_42 + bq_pred_froz_43)
+    sigma_v_over_u_froz_mean = 0.5 * (
+        part_froz_42["sigma_vz_over_u"] + part_froz_43["sigma_vz_over_u"]
+    )
+    sigma_v_over_u_hwarm_a4 = float(
+        np.sqrt(max(bq_froz_mean**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
+    )
+    gamma_diff_froz_mean = 0.5 * (
+        part_froz_42["gamma_diff_mean"] + part_froz_43["gamma_diff_mean"]
+    )
+
+    # Step 5 (A5): "sheet" with n_macro_per_step = 16, 64, 256, coarse, seeds 42 and 43
+    part_sheet43_n16 = cached_particle_drift(
+        nx, nz, profile="sheet", seed=43, m_mod=MODULATION_INDEX, qm_scale=1.0
+    )
+    fit_sheet43_n16 = fit_beta_q_from_envelope(
+        z_coords, part_sheet43_n16["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+    )
+    bq_a5_n16 = 0.5 * (bq_sheet42_m + float(fit_sheet43_n16["beta_q"]))
+    sv_a5_n16 = 0.5 * (
+        part_sheet42_m["sigma_vz_over_u"] + part_sheet43_n16["sigma_vz_over_u"]
+    )
+    gdiff_a5_n16 = 0.5 * (
+        part_sheet42_m["gamma_diff_mean"] + part_sheet43_n16["gamma_diff_mean"]
+    )
+    hwarm_a5_n16 = float(
+        np.sqrt(max(bq_a5_n16**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
+    )
+
+    part_s42_n64 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=42,
+        profile="sheet",
+        n_macro_per_step=64,
+    )
+    part_s43_n64 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=43,
+        profile="sheet",
+        n_macro_per_step=64,
+    )
+    bq_s42_n64 = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_s42_n64["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq_s43_n64 = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_s43_n64["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq_a5_n64 = 0.5 * (bq_s42_n64 + bq_s43_n64)
+    sv_a5_n64 = 0.5 * (
+        part_s42_n64["sigma_vz_over_u"] + part_s43_n64["sigma_vz_over_u"]
+    )
+    gdiff_a5_n64 = 0.5 * (
+        part_s42_n64["gamma_diff_mean"] + part_s43_n64["gamma_diff_mean"]
+    )
+    hwarm_a5_n64 = float(
+        np.sqrt(max(bq_a5_n64**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
+    )
+
+    part_s42_n256 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=42,
+        profile="sheet",
+        n_macro_per_step=256,
+    )
+    part_s43_n256 = run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_base["beam"],
+        qm_scale=1.0,
+        seed=43,
+        profile="sheet",
+        n_macro_per_step=256,
+    )
+    bq_s42_n256 = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_s42_n256["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq_s43_n256 = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_s43_n256["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq_a5_n256 = 0.5 * (bq_s42_n256 + bq_s43_n256)
+    sv_a5_n256 = 0.5 * (
+        part_s42_n256["sigma_vz_over_u"] + part_s43_n256["sigma_vz_over_u"]
+    )
+    gdiff_a5_n256 = 0.5 * (
+        part_s42_n256["gamma_diff_mean"] + part_s43_n256["gamma_diff_mean"]
+    )
+    hwarm_a5_n256 = float(
+        np.sqrt(max(bq_a5_n256**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
+    )
 
     # D3: LinearizedBeam with semicircular rho0(x) prop sqrt(1 - x^2/b^2) for |x| < b
     semi_rho0 = _SemicircularRho0(
@@ -1181,6 +1419,49 @@ def test_optional_diagnostics():
     rel_diff_d6 = abs(fit_d6_64["beta_q"] / bq_part_base - 1.0)
 
     print(flush=True)
+    print(
+        f"DIAG id=A3 bq_lat={bq_part_base:.6f} bq_sheet42={bq_sheet42_m:.6f} "
+        f"sigma_v_over_u_hwarm={sigma_v_over_u_hwarm_a3:.6e} "
+        f"sigma_v_over_u_lat_m={part_base['sigma_vz_over_u']:.6e} "
+        f"sigma_v_over_u_sheet42_m={part_sheet42_m['sigma_vz_over_u']:.6e} "
+        f"sigma_v_over_u_lat_m0={part_lat_m0['sigma_vz_over_u']:.6e} "
+        f"sigma_v_over_u_sheet42_m0={part_sheet42_m0['sigma_vz_over_u']:.6e} "
+        f"vz_lat_m={part_base['vz_mean_coh']:.3f} vz_sheet42_m={part_sheet42_m['vz_mean_coh']:.3f} "
+        f"vz_lat_m0={part_lat_m0['vz_mean_coh']:.3f} vz_sheet42_m0={part_sheet42_m0['vz_mean_coh']:.3f} "
+        f"gamma_lat_m={part_base['gamma_mean']:.8f} gamma_pred_lat_m={part_base['gamma_pred_mean']:.8f} "
+        f"gamma_diff_lat_m={part_base['gamma_diff_mean']:+.6e} "
+        f"gamma_sheet42_m={part_sheet42_m['gamma_mean']:.8f} gamma_pred_sheet42_m={part_sheet42_m['gamma_pred_mean']:.8f} "
+        f"gamma_diff_sheet42_m={part_sheet42_m['gamma_diff_mean']:+.6e} "
+        f"gamma_lat_m0={part_lat_m0['gamma_mean']:.8f} gamma_pred_lat_m0={part_lat_m0['gamma_pred_mean']:.8f} "
+        f"gamma_diff_lat_m0={part_lat_m0['gamma_diff_mean']:+.6e} "
+        f"gamma_sheet42_m0={part_sheet42_m0['gamma_mean']:.8f} gamma_pred_sheet42_m0={part_sheet42_m0['gamma_pred_mean']:.8f} "
+        f"gamma_diff_sheet42_m0={part_sheet42_m0['gamma_diff_mean']:+.6e}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=A4 bq_froz_42={bq_froz_42:.6f} bq_pred_42={bq_pred_froz_42:.6f} "
+        f"bq_froz_43={bq_froz_43:.6f} bq_pred_43={bq_pred_froz_43:.6f} "
+        f"bq_froz_mean={bq_froz_mean:.6f} bq_pred_mean={bq_pred_froz_mean:.6f} "
+        f"excess_vs_lat={bq_froz_mean - bq_part_base:+.6e} "
+        f"pred_excess_vs_lat={bq_pred_froz_mean - tols['bq_pred_part']:+.6e} "
+        f"resid_vs_modal={abs(bq_froz_mean / bq_pred_froz_mean - 1.0):.6e} "
+        f"sigma_v_over_u_hwarm={sigma_v_over_u_hwarm_a4:.6e} "
+        f"sigma_v_over_u_meas={sigma_v_over_u_froz_mean:.6e} "
+        f"gamma_diff_froz={gamma_diff_froz_mean:+.6e}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=A5 bq_n16={bq_a5_n16:.6f} excess_n16={bq_a5_n16 - bq_part_base:+.6e} "
+        f"sigma_v_over_u_hwarm_n16={hwarm_a5_n16:.6e} sigma_v_over_u_n16={sv_a5_n16:.6e} "
+        f"sigma_v_sq_n16={sv_a5_n16**2:.6e} gamma_diff_n16={gdiff_a5_n16:+.6e} "
+        f"bq_n64={bq_a5_n64:.6f} excess_n64={bq_a5_n64 - bq_part_base:+.6e} "
+        f"sigma_v_over_u_hwarm_n64={hwarm_a5_n64:.6e} sigma_v_over_u_n64={sv_a5_n64:.6e} "
+        f"sigma_v_sq_n64={sv_a5_n64**2:.6e} gamma_diff_n64={gdiff_a5_n64:+.6e} "
+        f"bq_n256={bq_a5_n256:.6f} excess_n256={bq_a5_n256 - bq_part_base:+.6e} "
+        f"sigma_v_over_u_hwarm_n256={hwarm_a5_n256:.6e} sigma_v_over_u_n256={sv_a5_n256:.6e} "
+        f"sigma_v_sq_n256={sv_a5_n256**2:.6e} gamma_diff_n256={gdiff_a5_n256:+.6e}",
+        flush=True,
+    )
     print(
         f"DIAG id=D3 bq_lb_semi={bq_lb_d3:.6f} shift_lb={shift_lb_d3:.6e} "
         f"shift_part_m3={shift_part_m3:.6e} diff={diff_d3:.6e} slack_cross={tols['slack_cross']:.6e}",
