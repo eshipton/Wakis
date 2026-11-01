@@ -1637,6 +1637,7 @@ def run_particle_beam_drift(
     profile: str = "sheet_lattice",
     cfln: float = CFL_NUMBER,
     n_macro_per_step: int | None = None,
+    gather: str = "galerkin",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -1737,6 +1738,7 @@ def run_particle_beam_drift(
         species=[sp],
         injectors=[inj],
         shape=1,
+        gather=gather,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
     ).attach()
 
@@ -1934,8 +1936,10 @@ def cached_particle_drift(
     seed: int = 42,
     m_mod: float = MODULATION_INDEX,
     qm_scale: float = 1.0,
+    n_macro_per_step: int | None = None,
+    gather: str = "galerkin",
 ) -> dict[str, Any]:
-    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale)``."""
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather)``."""
     lb_ref = cached_linearized_beam_drift(
         nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
     )
@@ -1947,6 +1951,8 @@ def cached_particle_drift(
         seed=seed,
         m_mod=m_mod,
         profile=profile,
+        n_macro_per_step=n_macro_per_step,
+        gather=gather,
     )
 
 

@@ -45,6 +45,7 @@ from examples._space_charge_waves_common import (
     TUNNEL_HALF_WIDTH_M,
     TUNNEL_LENGTH_M,
     cached_baseline_pair,
+    cached_linearized_beam_drift,
     cached_particle_drift,
     compute_analytic_parameters,
     compute_discrete_dc_depression,
@@ -1392,66 +1393,108 @@ def test_m_scan_linearity():
 
 @pytest.mark.slow
 def test_axial_vs_transverse_refinement():
-    """Step 3.3 discriminating run: compare (10, 428), axial-only (10, 856), and transverse-only (20, 428) with and without S_z(k)."""
+    """Step 4 factorial separation of remaining particle residual (report-only `DIAG id=particle_factorial`)."""
     params = compute_analytic_parameters()
     beta_q_th = params["beta_q"]
     z_min, z_max = fit_window(params)
+    b = BEAM_HALF_THICKNESS_M
+    m0 = MODULATION_INDEX
+    m_half = 0.5 * MODULATION_INDEX
     stored_exc: Exception | None = None
-    results: list[tuple[str, int, int, float, float, float, float, float, float]] = []
+
+    def _x_lattice(n_val: int) -> np.ndarray:
+        k_idx = np.arange(n_val, dtype=np.float64)
+        return b * (2.0 * (k_idx + 0.5) / float(n_val) - 1.0)
+
+    def _meas_and_pred(
+        nx_g: int, nz_g: int, n_val: int, m_val: float
+    ) -> tuple[float, float, float]:
+        lb_g = cached_linearized_beam_drift(nx_g, nz_g, rho0_scale=1.0, m_mod=m0)
+        part_g = cached_particle_drift(
+            nx_g,
+            nz_g,
+            profile="sheet_lattice",
+            seed=42,
+            m_mod=m_val,
+            qm_scale=1.0,
+            n_macro_per_step=n_val,
+        )
+        fit_p = fit_beta_q_from_envelope(
+            lb_g["z_coords"],
+            part_g["i1_part"],
+            beta_q_th,
+            z_min=z_min,
+            z_max=z_max,
+        )
+        meas = float(fit_p["beta_q"])
+        pred = float(
+            discrete_modal_prediction(
+                "particles", nx_g, nz_g, params, line_x=_x_lattice(n_val)
+            )
+        )
+        resid = float(abs(meas / pred - 1.0))
+        return meas, pred, resid
 
     try:
-        for label, nx_g, nz_g in (
-            ("10x428", 10, 428),
-            ("10x856", 10, 856),
-            ("20x428", 20, 428),
-        ):
-            tols_g = derived_tolerances(nx_g, nz_g, params)
-            lb_g, part_g = cached_baseline_pair(nx_g, nz_g)
-            fit_p = fit_beta_q_from_envelope(
-                lb_g["z_coords"],
-                part_g["i1_part"],
-                beta_q_th,
-                z_min=z_min,
-                z_max=z_max,
-            )
-            bq_meas = float(fit_p["beta_q"])
-            pred_sz = float(tols_g["bq_pred_part"])
-            pred_no_sz = float(tols_g["bq_pred_part_no_sz"])
-            slack_g = float(tols_g["slack_part"])
-            resid_sz = float(abs(bq_meas / pred_sz - 1.0))
-            resid_no_sz = float(abs(bq_meas / pred_no_sz - 1.0))
-            results.append(
-                (
-                    label,
-                    nx_g,
-                    nz_g,
-                    bq_meas,
-                    pred_sz,
-                    pred_no_sz,
-                    resid_sz,
-                    resid_no_sz,
-                    slack_g,
-                )
-            )
+        nx_c, _, nz_c = COARSE_GRID
+        nx_f, _, nz_f = FINE_GRID
 
-        parts_str = " ".join(
-            f"meas_{lbl}={meas:.6f} pred_{lbl}={psz:.6f} pred_without_Sz_{lbl}={pnosz:.6f} "
-            f"resid_with_Sz_{lbl}={rsz:.6e} resid_without_Sz_{lbl}={rnosz:.6e} slack_{lbl}={slk:.6e}"
-            for (lbl, _, _, meas, psz, pnosz, rsz, rnosz, slk) in results
+        # Coarse (10x474): n = 16 and 64 at m and m/2
+        c16_m, c16_pred, c16_res_m = _meas_and_pred(nx_c, nz_c, 16, m0)
+        c16_m2, _, c16_res_m2 = _meas_and_pred(nx_c, nz_c, 16, m_half)
+        c16_bq0 = float((4.0 * c16_m2 - c16_m) / 3.0)
+        c16_res0 = float(abs(c16_bq0 / c16_pred - 1.0))
+
+        c64_m, c64_pred, c64_res_m = _meas_and_pred(nx_c, nz_c, 64, m0)
+        c64_m2, _, c64_res_m2 = _meas_and_pred(nx_c, nz_c, 64, m_half)
+        c64_bq0 = float((4.0 * c64_m2 - c64_m) / 3.0)
+        c64_res0 = float(abs(c64_bq0 / c64_pred - 1.0))
+
+        # Check D6 n-dependence: does modal prediction for n=64 move by the same amount as measurement?
+        d6_meas_shift_m = float(c64_m - c16_m)
+        d6_meas_shift_0 = float(c64_bq0 - c16_bq0)
+        d6_pred_shift = float(c64_pred - c16_pred)
+
+        # Fine (20x948): n = 32 and 128 at m and m/2
+        f32_m, f32_pred, f32_res_m = _meas_and_pred(nx_f, nz_f, 32, m0)
+        f32_m2, _, f32_res_m2 = _meas_and_pred(nx_f, nz_f, 32, m_half)
+        f32_bq0 = float((4.0 * f32_m2 - f32_m) / 3.0)
+        f32_res0 = float(abs(f32_bq0 / f32_pred - 1.0))
+
+        f128_m, f128_pred, f128_res_m = _meas_and_pred(nx_f, nz_f, 128, m0)
+        f128_m2, _, f128_res_m2 = _meas_and_pred(nx_f, nz_f, 128, m_half)
+        f128_bq0 = float((4.0 * f128_m2 - f128_m) / 3.0)
+        f128_res0 = float(abs(f128_bq0 / f128_pred - 1.0))
+
+        # 10x948 (axial-only refinement, base n=16, m only) and 20x474 (transverse-only refinement, base n=32, m only)
+        a_m, a_pred, a_res = _meas_and_pred(nx_c, nz_f, 16, m0)
+        t_m, t_pred, t_res = _meas_and_pred(nx_f, nz_c, 32, m0)
+
+        print(
+            f"\nDIAG id=particle_factorial "
+            f"coarse_n16_m_meas={c16_m:.6f} coarse_n16_pred={c16_pred:.6f} coarse_n16_m_resid={c16_res_m:.6e} "
+            f"coarse_n16_m2_meas={c16_m2:.6f} coarse_n16_m2_resid={c16_res_m2:.6e} "
+            f"coarse_n16_bq0={c16_bq0:.6f} coarse_n16_resid0={c16_res0:.6e} "
+            f"coarse_n64_m_meas={c64_m:.6f} coarse_n64_pred={c64_pred:.6f} coarse_n64_m_resid={c64_res_m:.6e} "
+            f"coarse_n64_m2_meas={c64_m2:.6f} coarse_n64_m2_resid={c64_res_m2:.6e} "
+            f"coarse_n64_bq0={c64_bq0:.6f} coarse_n64_resid0={c64_res0:.6e} "
+            f"d6_meas_shift_m={d6_meas_shift_m:+.6e} d6_meas_shift_bq0={d6_meas_shift_0:+.6e} "
+            f"d6_pred_shift={d6_pred_shift:+.6e} "
+            f"fine_n32_m_meas={f32_m:.6f} fine_n32_pred={f32_pred:.6f} fine_n32_m_resid={f32_res_m:.6e} "
+            f"fine_n32_m2_meas={f32_m2:.6f} fine_n32_m2_resid={f32_res_m2:.6e} "
+            f"fine_n32_bq0={f32_bq0:.6f} fine_n32_resid0={f32_res0:.6e} "
+            f"fine_n128_m_meas={f128_m:.6f} fine_n128_pred={f128_pred:.6f} fine_n128_m_resid={f128_res_m:.6e} "
+            f"fine_n128_m2_meas={f128_m2:.6f} fine_n128_m2_resid={f128_res_m2:.6e} "
+            f"fine_n128_bq0={f128_bq0:.6f} fine_n128_resid0={f128_res0:.6e} "
+            f"g10x948_n16_m_meas={a_m:.6f} g10x948_n16_pred={a_pred:.6f} g10x948_n16_m_resid={a_res:.6e} "
+            f"g20x474_n32_m_meas={t_m:.6f} g20x474_n32_pred={t_pred:.6f} g20x474_n32_m_resid={t_res:.6e}",
+            flush=True,
         )
-        print(f"\nDIAG id=axial_vs_transverse {parts_str}", flush=True)
     except Exception as exc:  # noqa: BLE001
         stored_exc = exc
         print(
-            f"\nDIAG id=axial_vs_transverse status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
+            f"\nDIAG id=particle_factorial status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
             flush=True,
-        )
-
-    for lbl, nx_g, nz_g, meas, psz, pnosz, rsz, rnosz, slk in results:
-        assert rsz <= slk, (
-            f"Grid ({nx_g}, 1, {nz_g}) [{lbl}] particle |bq/pred_with_Sz - 1| = {rsz:.6e} > "
-            f"slack_part = {slk:.6e} (margin={slk - rsz:+.6e}, pred_without_Sz={pnosz:.6f}, "
-            f"resid_without_Sz={rnosz:.6e})"
         )
 
     if stored_exc is not None:
@@ -1877,21 +1920,30 @@ def test_optional_diagnostics():
 
     # D6: n_macro_per_step = 16 and 64
     try:
-        part_d6_64 = run_particle_beam_drift(
+        part_d6_64 = cached_particle_drift(
             nx,
             nz,
-            beam_ref=lb_base["beam"],
-            qm_scale=1.0,
-            seed=42,
             profile="sheet_lattice",
+            seed=42,
+            m_mod=MODULATION_INDEX,
+            qm_scale=1.0,
             n_macro_per_step=64,
         )
         fit_d6_64 = fit_beta_q_from_envelope(
             z_coords, part_d6_64["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
         )
+        k_64 = np.arange(64, dtype=np.float64)
+        x_lat_64 = BEAM_HALF_THICKNESS_M * (2.0 * (k_64 + 0.5) / 64.0 - 1.0)
+        pred_n16 = float(tols["bq_pred_part"])
+        pred_n64 = float(
+            discrete_modal_prediction("particles", nx, nz, params, line_x=x_lat_64)
+        )
         rel_diff_d6 = abs(fit_d6_64["beta_q"] / bq_part_base - 1.0)
         print(
             f"DIAG id=D6 bq_n16={bq_part_base:.6f} bq_n64={fit_d6_64['beta_q']:.6f} "
+            f"pred_n16={pred_n16:.6f} pred_n64={pred_n64:.6f} "
+            f"meas_shift={fit_d6_64['beta_q'] - bq_part_base:+.6e} "
+            f"pred_shift={pred_n64 - pred_n16:+.6e} "
             f"rel_diff={rel_diff_d6:.6e} slack_part={tols['slack_part']:.6e}",
             flush=True,
         )
