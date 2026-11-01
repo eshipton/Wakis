@@ -1177,6 +1177,7 @@ def _single_grid_budget_terms(
     d_w_common = float(params["d_w_common"])
     d_w = d_w_common
     z_min, z_max = fit_window(params)
+    eps_w_bias = float(EPS_WINDOW * (1.0 / gamma1_disc) / (z_max - z_min))
 
     lb_modal = prediction_slack("lb", nx, nz, params, omega_p_scale=omega_p_scale)
     part_modal = prediction_slack(
@@ -1218,6 +1219,7 @@ def _single_grid_budget_terms(
         "gamma1_disc": gamma1_disc,
         "kappa_dc": kappa_dc,
         "eps_w": float(EPS_WINDOW),
+        "eps_w_bias": eps_w_bias,
         "d_w": d_w,
         "d_w_grid": d_w_grid,
         "d_w_common": d_w_common,
@@ -1278,7 +1280,7 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
     ev_p = tols["evals_part"]
     lines = [
         f"Modal prediction and slack budget for grid ({nx}, 1, {nz}):",
-        f"  gamma1_disc / kappa_dc / d_w_grid / d_w_common    : gamma1_disc={tols['gamma1_disc']:.4f} 1/m, kappa_dc={tols['kappa_dc']:.4f} 1/m, d_w_grid={tols['d_w_grid'] * 1e3:.4f} mm, d_w_common={tols['d_w_common'] * 1e3:.4f} mm, [{tols['z_min'] * 1e3:.4f}, {tols['z_max'] * 1e3:.4f}] mm",
+        f"  gamma1_disc / kappa_dc / d_w_grid / d_w_common    : gamma1_disc={tols['gamma1_disc']:.4f} 1/m, kappa_dc={tols['kappa_dc']:.4f} 1/m, d_w_grid={tols['d_w_grid'] * 1e3:.4f} mm, d_w_common={tols['d_w_common'] * 1e3:.4f} mm, [{tols['z_min'] * 1e3:.4f}, {tols['z_max'] * 1e3:.4f}] mm, eps_w_bias={tols['eps_w_bias']:.6e}",
         f"  bq_pred_lb (Step 2 LB modal prediction)           : {tols['bq_pred_lb']:.6f} rad/m",
         f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
         f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",
