@@ -350,8 +350,13 @@ def compute_discrete_dc_depression(
         u_l = np.full(n_macro, u0 * (1.0 - delta_val), dtype=np.float64)
         gamma_l = np.full(n_macro, gamma0, dtype=np.float64)
         phi_l = phi_l0.copy()
+        phi_cur = np.zeros(nx + 1, dtype=np.float64)
         for _ in range(200):
-            phi_l = phi_l0 / (1.0 - delta_val)
+            # Solve 1D discrete Poisson with actual per-line depressed charge density prop rho_l * (u0 / u_l)
+            rho_dep_l = rho_l * (u0 / u_l)
+            w_node_dep = np.sum(rho_dep_l[:, None] * w_mat, axis=0) * (2.0 * b / dx)
+            phi_cur[1:-1] = np.linalg.solve(lap, -rho0 * w_node_dep[1:-1] / epsilon_0)
+            phi_l = np.abs(w_mat @ phi_cur)
             gamma_l = gamma0 - e_charge * phi_l / (mass_eff * c_light**2)
             u_l = c_light * np.sqrt(1.0 - 1.0 / (gamma_l**2))
             w_l = (rho_l * u_l) if mode == "flux" else rho_l
@@ -647,22 +652,22 @@ def discrete_modal_prediction(
 
     dt, _ = _cached_integer_period_dt(int(nx), int(nz))
     omega = params["omega"]
-    beta_e = params["beta_e"]
-
-    op0 = compute_transverse_modal_operator(
-        code,
-        nx,
-        nz,
-        params,
-        k_val=beta_e,
-        line_x=line_x,
-        line_w=line_w,
-        use_omega_f=use_omega_f,
-    )
-    evals_be = op0["evals"]
-    d_vec = op0["d_vec"]
 
     if code == "lb":
+        # LB has no DC space-charge physics; keep uniform u_dep and beta_e (including D3)
+        beta_e = params["beta_e"]
+        op0 = compute_transverse_modal_operator(
+            "lb",
+            nx,
+            nz,
+            params,
+            k_val=beta_e,
+            line_x=line_x,
+            line_w=line_w,
+            use_omega_f=use_omega_f,
+        )
+        evals_be = op0["evals"]
+        d_vec = op0["d_vec"]
         w_eff = op0["w_perp_eff"]
         keep_int = op0["keep_int"]
         if entrance_profile is None:
@@ -736,24 +741,44 @@ def discrete_modal_prediction(
             c_modes[j] = float(np.dot(d_vec, y_r0[:, j]) * np.dot(y_l0[:, j], entrance))
 
     else:
+        # Step 2: compute discrete DC potential, per-line (u_l, gamma_l) and mean delta
+        # from the actual (line_x, line_w) passed to the prediction; never reuse uniform params["u_dep"].
         dep_info = compute_discrete_dc_depression(
             nx, params, line_x=line_x, line_w=line_w, return_details=True
         )
         u_l = dep_info["u_l"]
         gamma_l = dep_info["gamma_l"]
-        u_bar = float(params["u0"] * (1.0 - dep_info["delta_disc"]))
-        gamma_bar = float(1.0 / np.sqrt(1.0 - (u_bar / c_light) ** 2))
-        omega_p0 = params["omega_p0"] * float(omega_p_scale)
+        delta_disc = float(dep_info["delta_disc"])
         u0 = params["u0"]
+        u_bar = float(u0 * (1.0 - delta_disc))
+        gamma_bar = float(1.0 / np.sqrt(1.0 - (u_bar / c_light) ** 2))
+        beta_e_part = float(omega / u_bar)
+        omega_p0 = params["omega_p0"] * float(omega_p_scale)
         omega_p_dt = (2.0 / dt) * np.sin(0.5 * omega * dt)
 
+        op0 = compute_transverse_modal_operator(
+            "particles",
+            nx,
+            nz,
+            params,
+            k_val=beta_e_part,
+            line_x=line_x,
+            line_w=line_w,
+            use_omega_f=use_omega_f,
+        )
+        evals_be = op0["evals"]
+        d_vec = op0["d_vec"]
+
+        # Per-line plasma frequency squared omega_{p,l}^2 = omega_p0^2 * (u0 / u_l) (density prop 1 / u_l)
+        omega_p_l_sq = (omega_p0**2) * (u0 / u_l)
         if include_shear:
-            sig_vec = (omega_p0**2 * u0) / (gamma_l**3 * u_l**3)
+            sig_vec = omega_p_l_sq / (gamma_l**3 * u_l**2)
             be_vec = omega_p_dt / u_l
         else:
+            omega_p_bar_sq = (omega_p0**2) * (u0 / u_bar)
             sig_vec = np.full(
                 len(u_l),
-                (omega_p0**2 * u0) / (gamma_bar**3 * u_bar**3),
+                omega_p_bar_sq / (gamma_bar**3 * u_bar**2),
                 dtype=np.float64,
             )
             be_vec = np.full(len(u_l), omega_p_dt / u_bar, dtype=np.float64)
@@ -788,7 +813,7 @@ def discrete_modal_prediction(
             qv = qv[:, idx]
             return ev, s_right[:, None] * qv, s_left[:, None] * qv
 
-        ev0, y_r0, y_l0 = _eig_part_at_k(beta_e)
+        ev0, y_r0, y_l0 = _eig_part_at_k(beta_e_part)
         active = ev0 > 1e-12 * ev0[0]
         n_act = int(np.sum(active))
         if entrance_profile is None:

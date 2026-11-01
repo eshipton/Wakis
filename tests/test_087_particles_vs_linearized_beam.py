@@ -47,6 +47,7 @@ from examples._space_charge_waves_common import (
     cached_baseline_pair,
     cached_particle_drift,
     compute_analytic_parameters,
+    compute_discrete_dc_depression,
     compute_spatial_spectrum,
     compute_transverse_modal_operator,
     derived_tolerances,
@@ -836,8 +837,21 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
     slack_m3 = slack_m3_info["slack"]
     resid_m3 = abs(bq_part_m3 / bq_m3_pred - 1.0)
 
+    delta_meas_m3 = float((params["u0"] - part_m3["u_z_mean"]) / params["u0"])
+    delta_disc_m3 = float(compute_discrete_dc_depression(nx, params, line_x=x_fib))
+    delta_disc_uniform = float(tols["delta_disc_exact"])
+    err_dep_m3 = abs(delta_meas_m3 - delta_disc_m3)
+    bound_dep_m3 = float(tols["eps_ac"] + 1.0e-12)
+
     print(
-        f"\nMUTCHECK id=M3 meas={bq_part_m3:.6f} pred_modal={bq_m3_pred:.6f} "
+        f"\nDEPCHECK id=M3 delta_meas_m3={delta_meas_m3:.6e} "
+        f"delta_disc_m3={delta_disc_m3:.6e} "
+        f"delta_disc_uniform={delta_disc_uniform:.6e} "
+        f"eps_ac={tols['eps_ac']:.6e}",
+        flush=True,
+    )
+    print(
+        f"MUTCHECK id=M3 meas={bq_part_m3:.6f} pred_modal={bq_m3_pred:.6f} "
         f"slack={slack_m3:.6e} resid={resid_m3:.6e} bound={slack_m3:.6e} "
         f"resid_vs_sheet={resid_vs_sheet:.6e} baseline_check_failed={baseline_check_failed}",
         flush=True,
@@ -847,6 +861,11 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         assert resid_vs_sheet <= bound_sheet, (
             f"M3 baseline sheet residual {resid_vs_sheet:.6e} exceeds slack_part={bound_sheet:.6e}"
         )
+
+    assert err_dep_m3 <= bound_dep_m3, (
+        f"M3 DC depression |delta_meas_m3 - delta_disc_m3| = {err_dep_m3:.6e} > "
+        f"eps_AC + 1e-12 = {bound_dep_m3:.6e} (margin={bound_dep_m3 - err_dep_m3:+.6e})"
+    )
 
     assert resid_m3 <= slack_m3, (
         f"M3 |bq_part_m3/bq_m3_pred - 1| = {resid_m3:.6e} > slack_m3 = {slack_m3:.6e} "
