@@ -66,26 +66,43 @@ from wakis.estimate import estimate, preflight
 from wakis.particles import BeamInjector, ParticleSolver, Species
 
 
-class _SemicircularRho0:
-    """Callable semicircular transverse charge density `rho0(x, y, z) prop sqrt(1 - x^2/b^2)` with same `I0`."""
+class _CicNodeRho0:
+    """Callable `LinearizedBeam` `rho0(x, y, z)` equal to the CIC node deposit of `line_x` with same `I0`."""
 
-    def __init__(self, rho_dep: float, b: float, a: float, nx: int):
-        self.b = float(b)
+    def __init__(
+        self,
+        rho_dep: float,
+        line_x: np.ndarray,
+        b: float,
+        a: float,
+        nx: int,
+        beam_ref: LinearizedBeam,
+    ):
         dx = 2.0 * float(a) / int(nx)
-        x_nodes = np.linspace(-float(a), float(a), int(nx) + 1)[: int(nx)]
-        in_beam = np.abs(x_nodes) < self.b
-        profile_nodes = np.zeros_like(x_nodes)
-        profile_nodes[in_beam] = np.sqrt(1.0 - (x_nodes[in_beam] / self.b) ** 2)
-        discrete_area_weight = float(dx * np.sum(profile_nodes))
-        self.rho_peak = float((2.0 * self.b * rho_dep) / discrete_area_weight)
+        x_nodes = np.linspace(-float(a), float(a), int(nx) + 1)
+        n_lines = len(line_x)
+        w_mat = np.maximum(1.0 - np.abs(line_x[:, None] - x_nodes[None, :]) / dx, 0.0)
+        self.w_cic_nodes = np.sum(w_mat, axis=0) * (2.0 * float(b) / (n_lines * dx))
+        keep_full = np.asarray(beam_ref.keep_lines, dtype=bool)
+        w_perp_eff = np.asarray(beam_ref._w_perp_eff, dtype=np.float64)
+        self.rho_nodes = np.zeros(int(nx) + 1, dtype=np.float64)
+        # Divide by w_perp_eff on active lines so LinearizedBeam._initialize
+        # (which multiplies callable rho0(X,Y,Z) by w_perp_lines) produces
+        # beam.rho0 = rho_dep * w_cic_nodes on every active node.
+        self.rho_nodes[keep_full] = (
+            float(rho_dep) * self.w_cic_nodes[keep_full] / w_perp_eff
+        )
+        self.x_nodes = x_nodes
+        self.dx = dx
+        self.rho_peak = float(np.max(np.abs(float(rho_dep) * self.w_cic_nodes)))
 
     def __call__(self, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-        rel = np.clip(x / self.b, -1.0, 1.0)
-        return np.where(
-            np.abs(x) < self.b,
-            self.rho_peak * np.sqrt(1.0 - rel**2),
-            0.0,
+        idx = np.clip(
+            np.rint((x - self.x_nodes[0]) / self.dx).astype(np.int64),
+            0,
+            len(self.x_nodes) - 1,
         )
+        return self.rho_nodes[idx]
 
     def __float__(self) -> float:
         return self.rho_peak
@@ -1356,23 +1373,58 @@ def test_optional_diagnostics():
         np.sqrt(max(bq_a5_n256**2 - bq_part_base**2, 0.0)) / (np.sqrt(3.0) * beta_e)
     )
 
-    # D3: LinearizedBeam with semicircular rho0(x) prop sqrt(1 - x^2/b^2) for |x| < b
-    semi_rho0 = _SemicircularRho0(
-        params["rho_dep"], BEAM_HALF_THICKNESS_M, TUNNEL_HALF_WIDTH_M, nx
+    # D3: LinearizedBeam with rho0 on x-nodes equal to the CIC deposit of M3 Fibonacci x-positions
+    x_fib = _fibonacci_disk_x_coords(16, radius=BEAM_HALF_THICKNESS_M, x0=0.0)
+    cic_rho0 = _CicNodeRho0(
+        params["rho_dep"],
+        x_fib,
+        BEAM_HALF_THICKNESS_M,
+        TUNNEL_HALF_WIDTH_M,
+        nx,
+        lb_base["beam"],
     )
-    lb_d3 = run_linearized_beam_drift(nx, nz, rho0_profile=semi_rho0)
+    lb_d3 = run_linearized_beam_drift(nx, nz, rho0_profile=cic_rho0)
     fit_lb_d3 = fit_beta_q_from_envelope(
         z_coords, lb_d3["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
     )
-    bq_lb_d3 = fit_lb_d3["beta_q"]
+    bq_lb_d3 = float(fit_lb_d3["beta_q"])
+    w_ent_lb = np.asarray(lb_base["beam"]._w_perp_eff, dtype=np.float64)
+    bq_lb_d3_pred = float(
+        discrete_modal_prediction(
+            "lb",
+            nx,
+            nz,
+            params,
+            line_w=cic_rho0.w_cic_nodes[1:-1],
+            entrance_profile=w_ent_lb,
+        )
+    )
+    slack_lb_d3 = float(
+        prediction_slack(
+            "lb",
+            nx,
+            nz,
+            params,
+            line_w=cic_rho0.w_cic_nodes[1:-1],
+            entrance_profile=w_ent_lb,
+        )["slack"]
+    )
+    resid_lb_d3 = abs(bq_lb_d3 / bq_lb_d3_pred - 1.0)
     shift_lb_d3 = bq_lb_d3 / bq_lb_base - 1.0
 
     part_m3 = _cached_m3_disk_run(nx, nz)
     fit_part_m3 = fit_beta_q_from_envelope(
         z_coords, part_m3["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
     )
-    shift_part_m3 = fit_part_m3["beta_q"] / bq_part_base - 1.0
-    diff_d3 = abs(shift_lb_d3 - shift_part_m3)
+    bq_part_m3 = float(fit_part_m3["beta_q"])
+    bq_part_m3_pred = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
+    )
+    slack_part_m3 = float(
+        prediction_slack("particles", nx, nz, params, line_x=x_fib)["slack"]
+    )
+    resid_part_m3 = abs(bq_part_m3 / bq_part_m3_pred - 1.0)
+    shift_part_m3 = bq_part_m3 / bq_part_base - 1.0
 
     # D4: ParticleSolver._backpush_injected_slice patched to a no-op
     orig_backpush = ParticleSolver._backpush_injected_slice
@@ -1469,8 +1521,12 @@ def test_optional_diagnostics():
         flush=True,
     )
     print(
-        f"DIAG id=D3 bq_lb_semi={bq_lb_d3:.6f} shift_lb={shift_lb_d3:.6e} "
-        f"shift_part_m3={shift_part_m3:.6e} diff={diff_d3:.6e} slack_cross={tols['slack_cross']:.6e}",
+        f"DIAG id=D3 bq_lb_d3={bq_lb_d3:.6f} bq_lb_d3_pred={bq_lb_d3_pred:.6f} "
+        f"resid_lb_d3={resid_lb_d3:.6e} slack_lb_d3={slack_lb_d3:.6e} "
+        f"shift_lb={shift_lb_d3:.6e} "
+        f"bq_part_m3={bq_part_m3:.6f} bq_part_m3_pred={bq_part_m3_pred:.6f} "
+        f"resid_part_m3={resid_part_m3:.6e} slack_part_m3={slack_part_m3:.6e} "
+        f"shift_part_m3={shift_part_m3:.6e}",
         flush=True,
     )
     print(
