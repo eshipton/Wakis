@@ -962,12 +962,14 @@ def test_injector_mpi_vs_serial_subproc():
         "pytest",
         __file__,
         "-k",
-        "test_injector_mpi_vs_serial_bitwise or test_late_injector_mpi or test_sheet_mpi_vs_serial_bitwise or test_transverse_extent_check_mpi",
+        "test_injector_mpi_vs_serial_bitwise or test_late_injector_mpi or test_sheet_mpi_vs_serial_bitwise or test_transverse_extent_check_mpi or test_bind_rank_local_abc_and_pec_overlap_mpi",
         "-q",
     ]
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
-    res = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+    res = subprocess.run(
+        cmd, env=env, capture_output=True, text=True, check=False, timeout=120
+    )
     assert res.returncode == 0, (
         f"MPI subprocess failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
     )
@@ -1997,16 +1999,16 @@ def test_sheet_profile_stratified_and_mutation(monkeypatch):
 
 @pytestmark_serial
 def test_sheet_lattice_profile_and_symmetry(monkeypatch):
-    """Verify profile='sheet_lattice' matches the midpoint formula bitwise and is symmetric about x0 to round-off."""
+    """Verify profile='sheet_lattice' midpoint formula (identity check) and reflection symmetry about x0 to round-off."""
     x0 = -2.3e-3
     y0 = 1.7e-3
     z0 = 0.0
     radius = 5.5e-3
     dt = 1.0e-11
     eps = float(np.finfo(np.float64).eps)
-    # Round-off bound for (x_k - x0) + (x_{n-1-k} - x0): at most 4 machine-epsilon
-    # steps at scale |x0| + radius.
-    tol_sym = 4.0 * eps * (abs(x0) + radius)
+    # Each dx_k = (x0 + radius * (2*(k+0.5)/n - 1)) - x0 performs 5 rounding ops (/n, -1, *radius, +x0, -x0;
+    # k+0.5 and *2 are exact), so dx_k + dx_{n-1-k} (2*5 + 1 = 11 ops at u = eps/2) is bounded by 5.5*eps*(|x0| + radius).
+    tol_sym = 0.5 * (2 * 5 + 1) * eps * (abs(x0) + radius)
 
     for n_macro in (1, 16, 17):
         sp = Species("e-", charge=-e_charge, mass=m_e)
@@ -2025,6 +2027,7 @@ def test_sheet_lattice_profile_and_symmetry(monkeypatch):
         n_emitted = inj.inject(0.0, dt, step_index=0)
         assert n_emitted == n_macro
 
+        # Identity check against the closed-form stratum-midpoint formula
         k_idx = np.arange(n_macro, dtype=np.float64)
         x_expected = x0 + radius * (2.0 * (k_idx + 0.5) / float(n_macro) - 1.0)
         y_expected = np.full(n_macro, y0, dtype=np.float64)
@@ -2035,24 +2038,14 @@ def test_sheet_lattice_profile_and_symmetry(monkeypatch):
         assert float(np.max(np.abs(dx + dx[::-1]))) <= tol_sym
         assert abs(float(np.mean(dx))) <= tol_sym
 
-    # Mutation check: shifting (k + 0.5) to k breaks both bitwise equality and symmetry about x0.
-    orig_inject = BeamInjector.inject
-
-    def _uncentered_sheet_lattice_inject(
-        self_inj, t_val, dt_val, step_index=None, *, owning=True
-    ):
-        n_em = orig_inject(
-            self_inj, t_val, dt_val, step_index=step_index, owning=owning
-        )
-        if self_inj.profile == "sheet_lattice" and n_em > 0:
-            k_idx = np.arange(n_em, dtype=np.float64)
-            self_inj.species.x[-n_em:] = self_inj.x0 + self_inj.radius * (
-                2.0 * k_idx / float(n_em) - 1.0
-            )
-        return n_em
+    # Mutation check (monkeypatch the real sheet_lattice code path _sheet_lattice_x):
+    # shifting (k + 0.5) -> k breaks both the midpoint formula identity check and reflection symmetry about x0.
+    def _uncentered_sheet_lattice_x(self_inj, n_macro: int) -> np.ndarray:
+        k_idx = np.arange(n_macro, dtype=np.float64)
+        return self_inj.x0 + self_inj.radius * (2.0 * k_idx / float(n_macro) - 1.0)
 
     with monkeypatch.context() as m:
-        m.setattr(BeamInjector, "inject", _uncentered_sheet_lattice_inject)
+        m.setattr(BeamInjector, "_sheet_lattice_x", _uncentered_sheet_lattice_x)
         sp_mut = Species("e-", charge=-e_charge, mass=m_e)
         inj_mut = BeamInjector(
             sp_mut,
@@ -2066,6 +2059,9 @@ def test_sheet_lattice_profile_and_symmetry(monkeypatch):
             n_macro_per_step=16,
         )
         inj_mut.inject(0.0, dt, step_index=0)
+        k_idx_16 = np.arange(16, dtype=np.float64)
+        x_expected_16 = x0 + radius * (2.0 * (k_idx_16 + 0.5) / 16.0 - 1.0)
+        assert not np.array_equal(sp_mut.x[:16], x_expected_16)
         dx_mut = sp_mut.x[:16] - x0
         assert float(np.max(np.abs(dx_mut + dx_mut[::-1]))) > tol_sym
 
@@ -2146,8 +2142,17 @@ def test_sheet_mpi_vs_serial_bitwise():
 
 @pytestmark_serial
 def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
-    """Verify transverse domain extent checks in _bind and strip-vs-disk embedded PEC overlap for sheet profiles."""
-    # 1. 1 mm-wide periodic y axis ([-0.5e-3, 0.5e-3]), 4 mm-wide PEC x axis ([-2.0e-3, 2.0e-3])
+    """Verify periodic/non-periodic/CPML transverse extent rules, strict PEC y0 for sheets, and strip PEC solid overlap."""
+    sp = Species("e-", charge=-e_charge, mass=m_e)
+
+    # 0. Negative radius raises ValueError at construction (__init__)
+    with pytest.raises(ValueError, match="radius must be >= 0"):
+        BeamInjector(sp, z0=0.0, current=0.1, gamma=2.0, radius=-1.0e-4)
+
+    # 1. Periodic y axis on [-0.5e-3, 0.5e-3] (L_y = 1.0e-3), PEC x axis on [-2.0e-3, 2.0e-3]:
+    #    - Periodic y has no edges: y0 = 0.5e-3, radius = 0.3e-3 (2R = 0.6e-3 <= L_y) MUST NOT raise;
+    #      radius = 0.6e-3 (2R = 1.2e-3 > L_y) MUST raise.
+    #    - Sheet y0 on periodic y needs no bound (wraps into [-0.5e-3, 0.5e-3) during coupled steps).
     _, solver_per_y = _make_box_solver(
         nx=8,
         ny=4,
@@ -2158,24 +2163,21 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
         bc_low=("pec", "periodic", "pec"),
         bc_high=("pec", "periodic", "pec"),
     )
-    sp = Species("e-", charge=-e_charge, mass=m_e)
-
-    # Disk/lattice with radius = 0.8 mm > Ly/2 = 0.5 mm on periodic y axis raises ValueError naming y-extent
     for prof_round in ("uniform", "lattice"):
-        inj_disk_over_y = BeamInjector(
+        inj_per_y_bad = BeamInjector(
             sp,
             z0=0.0,
             current=0.1,
             gamma=2.0,
             profile=prof_round,
             x0=0.0,
-            y0=0.0,
-            radius=0.8e-3,
+            y0=0.5e-3,
+            radius=0.6e-3,
         )
         with pytest.raises(ValueError, match="y-extent"):
-            ParticleSolver(solver_per_y, sp, injectors=[inj_disk_over_y]).attach()
+            ParticleSolver(solver_per_y, sp, injectors=[inj_per_y_bad]).attach()
 
-        # Disk/lattice overflowing x-domain [-2.0e-3, 2.0e-3] raises ValueError naming x-extent
+        # Non-periodic x overflow on [-2.0e-3, 2.0e-3] raises ValueError naming x-extent
         inj_disk_over_x = BeamInjector(
             sp,
             z0=0.0,
@@ -2189,9 +2191,106 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
         with pytest.raises(ValueError, match="x-extent"):
             ParticleSolver(solver_per_y, sp, injectors=[inj_disk_over_x]).attach()
 
-    # Sheet/sheet_lattice whose y0 is outside [-0.5e-3, 0.5e-3] raises ValueError naming y-extent
+    sp_per_y_ok = Species("e-", charge=-e_charge, mass=m_e)
+    inj_per_y_disk_ok = BeamInjector(
+        sp_per_y_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="uniform",
+        x0=0.0,
+        y0=0.5e-3,
+        radius=0.3e-3,
+        n_macro_per_step=8,
+    )
+    inj_per_y_lat_ok = BeamInjector(
+        sp_per_y_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="lattice",
+        x0=0.0,
+        y0=0.5e-3,
+        radius=0.3e-3,
+        n_macro_per_step=8,
+    )
+    inj_per_y_sheet_wrap = BeamInjector(
+        sp_per_y_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="sheet",
+        x0=0.0,
+        y0=0.8e-3,
+        radius=2.0e-3,
+        n_macro_per_step=8,
+    )
+    ParticleSolver(
+        solver_per_y,
+        sp_per_y_ok,
+        injectors=[inj_per_y_disk_ok, inj_per_y_lat_ok, inj_per_y_sheet_wrap],
+    ).attach()
+    solver_per_y.one_step()
+    assert sp_per_y_ok.n_particles == 24
+    assert bool(np.all((sp_per_y_ok.y >= -0.5e-3) & (sp_per_y_ok.y < 0.5e-3)))
+
+    # Periodic x axis on [-2.0e-3, 2.0e-3] (L_x = 4.0e-3): 2*radius <= L_x is allowed regardless of x0;
+    # 2*radius > L_x raises ValueError naming x-extent.
+    _, solver_per_x = _make_box_solver(
+        nx=8,
+        ny=4,
+        nz=8,
+        lx=4.0e-3,
+        ly=1.0e-3,
+        lz=4.0e-3,
+        bc_low=("periodic", "pec", "pec"),
+        bc_high=("periodic", "pec", "pec"),
+    )
+    for prof in ("uniform", "sheet", "sheet_lattice"):
+        inj_per_x_bad = BeamInjector(
+            sp,
+            z0=0.0,
+            current=0.1,
+            gamma=2.0,
+            profile=prof,
+            x0=0.0,
+            y0=0.0,
+            radius=2.1e-3,
+        )
+        with pytest.raises(ValueError, match="x-extent"):
+            ParticleSolver(solver_per_x, sp, injectors=[inj_per_x_bad]).attach()
+
+    sp_per_x_ok = Species("e-", charge=-e_charge, mass=m_e)
+    inj_per_x_sheet_ok = BeamInjector(
+        sp_per_x_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="sheet",
+        x0=2.0e-3,
+        y0=0.0,
+        radius=1.5e-3,
+        n_macro_per_step=8,
+    )
+    ParticleSolver(solver_per_x, sp_per_x_ok, injectors=[inj_per_x_sheet_ok]).attach()
+    solver_per_x.one_step()
+    assert sp_per_x_ok.n_particles == 8
+
+    # 2. Non-periodic PEC box (x in [-2.0e-3, 2.0e-3], y in [-0.5e-3, 0.5e-3]):
+    #    - Sheet y0 must satisfy y_min < y0 < y_max strictly (y0 on or outside the PEC wall raises).
+    #    - Disk/lattice and sheet-x endpoints touching the wall do NOT raise and advance at least one step.
+    _, solver_pec_xy = _make_box_solver(
+        nx=8,
+        ny=4,
+        nz=8,
+        lx=4.0e-3,
+        ly=1.0e-3,
+        lz=4.0e-3,
+        bc_low=("pec", "pec", "pec"),
+        bc_high=("pec", "pec", "pec"),
+    )
     for prof_sheet in ("sheet", "sheet_lattice"):
-        for y_bad in (-0.55e-3, 0.55e-3):
+        for y_bad in (-0.55e-3, -0.5e-3, 0.5e-3, 0.55e-3):
             inj_sheet_bad_y = BeamInjector(
                 sp,
                 z0=0.0,
@@ -2203,9 +2302,8 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
                 radius=1.0e-3,
             )
             with pytest.raises(ValueError, match="y-extent"):
-                ParticleSolver(solver_per_y, sp, injectors=[inj_sheet_bad_y]).attach()
+                ParticleSolver(solver_pec_xy, sp, injectors=[inj_sheet_bad_y]).attach()
 
-        # Sheet/sheet_lattice whose x0 +- radius leaves [-2.0e-3, 2.0e-3] raises ValueError naming x-extent
         for x_bad in (-1.2e-3, 1.2e-3):
             inj_sheet_bad_x = BeamInjector(
                 sp,
@@ -2218,13 +2316,11 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
                 radius=1.0e-3,
             )
             with pytest.raises(ValueError, match="x-extent"):
-                ParticleSolver(solver_per_y, sp, injectors=[inj_sheet_bad_x]).attach()
+                ParticleSolver(solver_pec_xy, sp, injectors=[inj_sheet_bad_x]).attach()
 
-    # Footprints touching the boundary exactly do NOT raise:
-    # - Disk touching y = -0.5e-3 and y = +0.5e-3 exactly (radius = 0.5e-3, y0 = 0.0)
-    # - Sheet touching x = -2.0e-3 and x = +2.0e-3 (radius = 2.0e-3 > Ly/2) at y0 = -0.5e-3 or +0.5e-3
+    sp_touch = Species("e-", charge=-e_charge, mass=m_e)
     inj_disk_touch = BeamInjector(
-        sp,
+        sp_touch,
         z0=0.0,
         current=0.1,
         gamma=2.0,
@@ -2232,29 +2328,43 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
         x0=1.5e-3,
         y0=0.0,
         radius=0.5e-3,
+        n_macro_per_step=8,
     )
-    inj_sheet_touch_lo = BeamInjector(
-        sp,
+    inj_lat_touch = BeamInjector(
+        sp_touch,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="lattice",
+        x0=-1.5e-3,
+        y0=0.0,
+        radius=0.5e-3,
+        n_macro_per_step=8,
+    )
+    inj_sheet_touch_x = BeamInjector(
+        sp_touch,
         z0=0.0,
         current=0.1,
         gamma=2.0,
         profile="sheet",
         x0=0.0,
-        y0=-0.5e-3,
+        y0=-0.25e-3,
         radius=2.0e-3,
+        n_macro_per_step=8,
     )
-    inj_sheet_touch_hi = BeamInjector(
-        sp,
+    inj_sheet_lat_touch_x = BeamInjector(
+        sp_touch,
         z0=0.0,
         current=0.1,
         gamma=2.0,
         profile="sheet_lattice",
         x0=0.0,
-        y0=0.5e-3,
+        y0=0.25e-3,
         radius=2.0e-3,
+        n_macro_per_step=8,
     )
     inj_gauss_unbounded = BeamInjector(
-        sp,
+        sp_touch,
         z0=0.0,
         current=0.1,
         gamma=2.0,
@@ -2262,23 +2372,158 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
         x0=0.0,
         y0=0.0,
         radius=0.8e-3,
+        n_macro_per_step=8,
     )
     ParticleSolver(
-        solver_per_y,
-        sp,
+        solver_pec_xy,
+        sp_touch,
         injectors=[
             inj_disk_touch,
-            inj_sheet_touch_lo,
-            inj_sheet_touch_hi,
+            inj_lat_touch,
+            inj_sheet_touch_x,
+            inj_sheet_lat_touch_x,
             inj_gauss_unbounded,
         ],
     ).attach()
+    solver_pec_xy.one_step()
     assert inj_disk_touch.emitter_kind == "interior_sheet"
-    assert inj_sheet_touch_lo.emitter_kind == "interior_sheet"
-    assert inj_sheet_touch_hi.emitter_kind == "interior_sheet"
+    assert inj_lat_touch.emitter_kind == "interior_sheet"
+    assert inj_sheet_touch_x.emitter_kind == "interior_sheet"
+    assert inj_sheet_lat_touch_x.emitter_kind == "interior_sheet"
     assert inj_gauss_unbounded.emitter_kind == "interior_sheet"
+    assert sp_touch.n_particles >= 32
 
-    # 2. Embedded-PEC overlap uses strip footprint [x0 - r, x0 + r] x {y0} for sheet profiles:
+    # 3. Transverse CPML faces: on x or y faces with bc="cpml", the n_pml absorbing cells
+    #    are excluded. Grid is [-3.0e-3, 3.0e-3]^2 with nx=12, ny=12 (dx = dy = 0.5e-3) and
+    #    n_pml = 2, so the low/high CPML layers are [-3.0e-3, -2.0e-3] and [2.0e-3, 3.0e-3],
+    #    leaving interior (-2.0e-3, 2.0e-3).
+    _, solver_cpml_xy = _make_box_solver(
+        nx=12,
+        ny=12,
+        nz=8,
+        lx=6.0e-3,
+        ly=6.0e-3,
+        lz=4.0e-3,
+        bc_low=("cpml", "cpml", "pec"),
+        bc_high=("cpml", "cpml", "pec"),
+    )
+    solver_cpml_xy.n_pml = 2
+    for inj_bad_cpml, axis_match in (
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="uniform",
+                x0=-0.5e-3,
+                y0=0.0,
+                radius=1.6e-3,
+            ),
+            "low-x PML/CPML",
+        ),
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="sheet",
+                x0=0.5e-3,
+                y0=0.0,
+                radius=1.6e-3,
+            ),
+            "high-x PML/CPML",
+        ),
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="lattice",
+                x0=0.0,
+                y0=-0.5e-3,
+                radius=1.6e-3,
+            ),
+            "low-y PML/CPML",
+        ),
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="uniform",
+                x0=0.0,
+                y0=0.5e-3,
+                radius=1.6e-3,
+            ),
+            "high-y PML/CPML",
+        ),
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="sheet",
+                x0=0.0,
+                y0=-2.1e-3,
+                radius=1.0e-3,
+            ),
+            "low-y PML/CPML",
+        ),
+        (
+            BeamInjector(
+                sp,
+                z0=0.0,
+                current=0.1,
+                gamma=2.0,
+                profile="sheet_lattice",
+                x0=0.0,
+                y0=2.0e-3,
+                radius=1.0e-3,
+            ),
+            "high-y PML/CPML",
+        ),
+    ):
+        with pytest.raises(ValueError, match=axis_match):
+            ParticleSolver(solver_cpml_xy, sp, injectors=[inj_bad_cpml]).attach()
+
+    # Footprint just inside the interior edge (-2.0e-3, 2.0e-3) does NOT raise and steps cleanly
+    sp_cpml_ok = Species("e-", charge=-e_charge, mass=m_e)
+    inj_cpml_disk_ok = BeamInjector(
+        sp_cpml_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="uniform",
+        x0=0.0,
+        y0=0.0,
+        radius=1.9e-3,
+        n_macro_per_step=8,
+    )
+    inj_cpml_sheet_ok = BeamInjector(
+        sp_cpml_ok,
+        z0=0.0,
+        current=0.1,
+        gamma=2.0,
+        profile="sheet_lattice",
+        x0=0.0,
+        y0=-1.9e-3,
+        radius=1.9e-3,
+        n_macro_per_step=8,
+    )
+    ParticleSolver(
+        solver_cpml_xy,
+        sp_cpml_ok,
+        injectors=[inj_cpml_disk_ok, inj_cpml_sheet_ok],
+    ).attach()
+    solver_cpml_xy.one_step()
+    assert sp_cpml_ok.n_particles == 16
+
+    # 4. Embedded-PEC overlap uses strip footprint [x0 - r, x0 + r] x {y0} for sheet profiles:
     #    Grid is [-0.02, 0.02]^2 with nx=6, ny=6, nz=10. Place PEC solid at iy=5 (y in [0.0133, 0.02]).
     #    Emitter at x0=0.0, y0=0.003 (iy0=3), radius=0.015:
     #    - "uniform" disk extends to y = 0.018 (into iy=5) and MUST raise ValueError.
@@ -2353,7 +2598,7 @@ def test_transverse_extent_check_and_sheet_pec_footprint(monkeypatch):
     reason="Requires mpiexec -n 2 with mpi4py.",
 )
 def test_transverse_extent_check_mpi():
-    """Verify under mpiexec -n 2 that transverse extent violations in _bind raise ValueError on every rank."""
+    """Verify transverse extent validation under mpiexec -n 2 (evaluates global transverse bounds on every rank; see test_bind_rank_local_abc_and_pec_overlap_mpi for rank-local collectivity)."""
     _, solver_mpi = _make_box_solver(
         nx=8,
         ny=4,
@@ -2367,7 +2612,9 @@ def test_transverse_extent_check_mpi():
     )
     sp = Species("e-", charge=-e_charge, mass=m_e)
 
-    # Disk with radius 0.8 mm > Ly/2 = 0.5 mm on periodic y axis raises on every rank
+    # Note: every MPI rank holds the full transverse (x, y) grid, so these checks
+    # evaluate global transverse data on every rank rather than a rank-local failure.
+    # 1. Disk with 2*radius = 1.2 mm > L_y = 1.0 mm on periodic y axis raises on every rank
     inj_disk_bad = BeamInjector(
         sp,
         z0=-1.0e-3,
@@ -2375,22 +2622,107 @@ def test_transverse_extent_check_mpi():
         gamma=2.0,
         profile="uniform",
         x0=0.0,
-        y0=0.0,
-        radius=0.8e-3,
+        y0=0.5e-3,
+        radius=0.6e-3,
     )
     with pytest.raises(ValueError, match="y-extent"):
         ParticleSolver(solver_mpi, sp, injectors=[inj_disk_bad]).attach()
 
-    # Sheet with y0 outside [-0.5e-3, 0.5e-3] raises on every rank
+    # 2. Sheet overflowing non-periodic x-domain [-2.0e-3, 2.0e-3] raises on every rank
     inj_sheet_bad = BeamInjector(
         sp,
         z0=1.0e-3,
         current=0.1,
         gamma=2.0,
         profile="sheet",
-        x0=0.0,
-        y0=0.6e-3,
+        x0=1.5e-3,
+        y0=0.5e-3,
         radius=1.0e-3,
     )
-    with pytest.raises(ValueError, match="y-extent"):
+    with pytest.raises(ValueError, match="x-extent"):
         ParticleSolver(solver_mpi, sp, injectors=[inj_sheet_bad]).attach()
+
+
+@pytest.mark.skipif(
+    not _HAS_MPI or _MPI_SIZE != 2,
+    reason="Requires mpiexec -n 2 with mpi4py.",
+)
+def test_bind_rank_local_abc_and_pec_overlap_mpi():
+    """Verify under mpiexec -n 2 that rank-local 'abc' on the top rank's z-high face and rank-local PEC overlap raise ValueError on every rank without hanging."""
+    sp = Species("e-", charge=-e_charge, mass=m_e)
+
+    # 1a. Solver initialized with bc_high=("pec", "pec", "abc"), where mpi_initialize sets
+    #     bc_high[2] = "mpi" on rank 0 and leaves bc_high[2] = "abc" only on the top rank (rank 1).
+    _, solver_abc_top = _make_box_solver(
+        nx=8,
+        ny=8,
+        nz=8,
+        lx=0.0625,
+        ly=0.0625,
+        lz=0.0625,
+        bc_low=("pec", "pec", "pec"),
+        bc_high=("pec", "pec", "abc"),
+        use_mpi=True,
+    )
+    inj_abc_top = BeamInjector(sp, z0=-0.015625, current=0.1, gamma=2.0, radius=0.005)
+    with pytest.raises(ValueError, match="abc|peer MPI rank"):
+        ParticleSolver(solver_abc_top, sp, injectors=[inj_abc_top]).attach()
+
+    # 1b. Strictly rank-local 'abc' on the top rank's z-high face when _global_bc_z is already
+    #     cached as ("pec", "pec"), so rank 1 raises in _bind's bc_high loop while rank 0
+    #     completes _bind without raising and learns of the failure via _collective_check.
+    #     (Would deadlock or raise a false PEC-overlap error if _bind contained an inner allreduce.)
+    _, solver_abc_local = _make_box_solver(
+        nx=8,
+        ny=8,
+        nz=8,
+        lx=0.0625,
+        ly=0.0625,
+        lz=0.0625,
+        bc_low=("pec", "pec", "pec"),
+        bc_high=("pec", "pec", "pec"),
+        use_mpi=True,
+    )
+    solver_abc_local._global_bc_z = ("pec", "pec")
+    if _MPI_RANK == _MPI_SIZE - 1:
+        solver_abc_local.bc_high[2] = "abc"
+    inj_abc_local = BeamInjector(sp, z0=-0.015625, current=0.1, gamma=2.0, radius=0.005)
+    with pytest.raises(ValueError, match="abc|peer MPI rank"):
+        ParticleSolver(solver_abc_local, sp, injectors=[inj_abc_local]).attach()
+
+    # 2. Rank-local PEC-overlap case during attach(): emitter at z0 = -0.015625 lies inside
+    #    rank 0's z-slab only (outside rank 1's z-slab), and solid_mask is set on rank 0 only.
+    #    Every rank must raise ValueError via _collective_check.
+    _, solver_pec_mpi = _make_box_solver(
+        nx=8,
+        ny=8,
+        nz=8,
+        lx=0.0625,
+        ly=0.0625,
+        lz=0.0625,
+        bc_low=("pec", "pec", "pec"),
+        bc_high=("pec", "pec", "pec"),
+        use_mpi=True,
+    )
+    solid_rank0 = np.zeros(
+        (solver_pec_mpi.Nx, solver_pec_mpi.Ny, solver_pec_mpi.Nz), dtype=bool
+    )
+    if _MPI_RANK == 0:
+        solid_rank0[4, 4, :] = True
+    inj_pec_overlap = BeamInjector(
+        sp,
+        z0=-0.015625,
+        current=0.1,
+        gamma=2.0,
+        profile="sheet",
+        x0=0.0,
+        y0=0.0,
+        radius=0.010,
+    )
+    with pytest.raises(ValueError, match="embedded PEC solid|peer MPI rank"):
+        ParticleSolver(
+            solver_pec_mpi,
+            sp,
+            injectors=[inj_pec_overlap],
+            solid_mask=solid_rank0,
+        ).attach()
