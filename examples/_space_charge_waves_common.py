@@ -45,8 +45,9 @@ V0_VOLTS = 10.0e3  # DC beam acceleration voltage [V]
 TUNNEL_HALF_WIDTH_M = 2.0e-3  # Parallel-plate tunnel half-width a [m]
 BEAM_HALF_THICKNESS_M = 0.8e-3  # Sheet-beam half-thickness b [m]
 PERIODIC_LY_M = 1.0e-3  # Periodic transverse depth Ly [m]
-TUNNEL_LENGTH_M = 0.186  # Drift-tunnel axial length Lz >= 1.6 * lambda_q [m]
+TUNNEL_LENGTH_M = 0.206  # Drift-tunnel axial length Lz >= 1.6 * lambda_q [m]
 OUTFLOW_RAMP_M = 8.0e-3  # Outflow axial taper length [m]
+EPS_WINDOW = 1.0e-5  # Relative evanescent near-field amplitude allowed at fit-window edge [-]
 RISE_PERIODS = 2.0  # C^1 raised-cosine entrance turn-on ramp duration in RF periods [-]
 DRIVE_FREQ_HZ = 6.5e9  # AC density-modulation frequency f [Hz]
 PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * pi) [Hz]
@@ -54,20 +55,25 @@ MODULATION_INDEX = 0.015  # Fractional AC density modulation depth m [-]
 GUIDE_BZ_TESLA = 50.0  # Strong axial confining magnetic field B_z [T]
 CFL_NUMBER = 0.5  # Courant number cfln [-]
 
-COARSE_GRID = (10, 1, 428)  # (Nx, Ny, Nz) coarse resolution
-FINE_GRID = (20, 1, 856)  # (Nx, Ny, Nz) 2x refined resolution
+COARSE_GRID = (10, 1, 474)  # (Nx, Ny, Nz) coarse resolution
+FINE_GRID = (20, 1, 948)  # (Nx, Ny, Nz) 2x refined resolution
 NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical noise
 
 
-def fit_window(params: dict[str, float]) -> tuple[float, float]:
+def fit_window(
+    params: dict[str, float], outflow_ramp_m: float = OUTFLOW_RAMP_M
+) -> tuple[float, float]:
     """Return the shared axial fit window ``(z_min, z_max)`` [m].
 
-    Excludes ``3 / T1`` at the entrance (evanescent higher-order cathode zone,
-    where ``1 / T1`` is the transverse decay length) and ``3 / T1`` upstream of
-    the outflow taper start ``TUNNEL_LENGTH_M - OUTFLOW_RAMP_M``.
+    Excludes ``d_w = ln(1 / eps_w) / gamma1`` at the entrance (where ``gamma1 =
+    sqrt((pi / (2 * a))**2 - (Omega_f / c)**2)`` is the decay constant of the
+    slowest even TM evanescent mode of the parallel-plate guide at relative
+    amplitude threshold ``eps_w = 1e-5``) and ``d_w`` upstream of the outflow
+    taper start ``z_ramp = TUNNEL_LENGTH_M - outflow_ramp_m``.
     """
-    margin = 3.0 / params["T1"]
-    return float(margin), float((TUNNEL_LENGTH_M - OUTFLOW_RAMP_M) - margin)
+    d_w = float(np.log(1.0 / EPS_WINDOW) / params["gamma1"])
+    z_ramp = float(TUNNEL_LENGTH_M - outflow_ramp_m)
+    return float(d_w), float(z_ramp - d_w)
 
 
 def extract_coherent_bunching_i2_ratio(
@@ -219,6 +225,17 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     beta_rel_dep = u_dep / c_light
     dlnbq_ddelta = float((1.5 + dlnr_dlntau) * (1.0 + (beta_rel_dep * gamma_dep) ** 2))
 
+    # Evanescent near-field decay constant of the slowest even TM parallel-plate mode
+    # gamma1 = sqrt((pi / (2*a))^2 - (Omega_f / c)^2) and DC beam transition
+    # kappa_dc = T1 * sqrt(1 - (omega_p / (u * T1))^2) > gamma1:
+    dt_c, _ = _cached_integer_period_dt(COARSE_GRID[0], COARSE_GRID[2])
+    omega_f = float((2.0 / dt_c) * np.sin(0.5 * omega * dt_c))
+    gamma1 = float(np.sqrt((np.pi / (2.0 * a)) ** 2 - (omega_f / c_light) ** 2))
+    kappa_dc = float(
+        t1_transverse * np.sqrt(1.0 - (omega_p_dep / (u_dep * t1_transverse)) ** 2)
+    )
+    d_w = float(np.log(1.0 / EPS_WINDOW) / gamma1)
+
     return {
         "u0": float(u0),
         "gamma0": float(gamma0),
@@ -235,6 +252,7 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "gamma_dep": float(gamma_dep),
         "rho_dep": float(rho_dep),
         "omega": float(omega),
+        "omega_f": float(omega_f),
         "omega_p": float(omega_p_dep),
         "beta_e": float(beta_e),
         "k0": float(k0),
@@ -246,6 +264,10 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "beta_q": float(beta_q),
         "T1": float(t1_transverse),
         "T2": float(t2_transverse),
+        "gamma1": float(gamma1),
+        "kappa_dc": float(kappa_dc),
+        "eps_w": float(EPS_WINDOW),
+        "d_w": float(d_w),
         "lambda_e": float(2.0 * np.pi / beta_e),
         "lambda_0": float(2.0 * np.pi / k0),
         "lambda_p": float(2.0 * np.pi * u_dep / omega_p_dep),
@@ -1002,9 +1024,17 @@ def _single_grid_budget_terms(
     omega_p_scale: float = 1.0,
 ) -> dict[str, Any]:
     """Compute Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
+    a = TUNNEL_HALF_WIDTH_M
     dz = TUNNEL_LENGTH_M / nz
     beta_e = params["beta_e"]
     beta_q = params["beta_q"] * float(omega_p_scale)
+
+    dt_grid, _ = _cached_integer_period_dt(int(nx), int(nz))
+    omega_f_grid = float((2.0 / dt_grid) * np.sin(0.5 * params["omega"] * dt_grid))
+    gamma1 = float(np.sqrt((np.pi / (2.0 * a)) ** 2 - (omega_f_grid / c_light) ** 2))
+    kappa_dc = float(params["kappa_dc"])
+    d_w = float(np.log(1.0 / EPS_WINDOW) / gamma1)
+    z_min, z_max = fit_window(params)
 
     lb_modal = prediction_slack("lb", nx, nz, params, omega_p_scale=omega_p_scale)
     part_modal = prediction_slack(
@@ -1042,6 +1072,12 @@ def _single_grid_budget_terms(
     tcrit = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
 
     return {
+        "gamma1": gamma1,
+        "kappa_dc": kappa_dc,
+        "eps_w": float(EPS_WINDOW),
+        "d_w": d_w,
+        "z_min": float(z_min),
+        "z_max": float(z_max),
         "bq_pred_lb": float(lb_modal["bq_pred"]),
         "s_win_lb": float(lb_modal["s_win"]),
         "s_modes_lb": float(lb_modal["s_modes"]),
@@ -1097,6 +1133,7 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
     ev_p = tols["evals_part"]
     lines = [
         f"Modal prediction and slack budget for grid ({nx}, 1, {nz}):",
+        f"  gamma1 / kappa_dc / d_w / window                  : gamma1={tols['gamma1']:.4f} 1/m, kappa_dc={tols['kappa_dc']:.4f} 1/m, d_w={tols['d_w'] * 1e3:.4f} mm, [{tols['z_min'] * 1e3:.4f}, {tols['z_max'] * 1e3:.4f}] mm",
         f"  bq_pred_lb (Step 2 LB modal prediction)           : {tols['bq_pred_lb']:.6f} rad/m",
         f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
         f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",

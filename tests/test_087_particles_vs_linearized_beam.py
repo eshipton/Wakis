@@ -36,6 +36,7 @@ from examples._space_charge_waves_common import (
     BEAM_HALF_THICKNESS_M,
     CFL_NUMBER,
     COARSE_GRID,
+    EPS_WINDOW,
     FINE_GRID,
     GUIDE_BZ_TESLA,
     MODULATION_INDEX,
@@ -152,10 +153,13 @@ def test_preflight_and_resolution_criteria():
     params = compute_analytic_parameters(qm_scale=1.0)
     params_mut = compute_analytic_parameters(qm_scale=2.0)
 
-    # Fit window [3/T1, (Lz - L_ramp) - 3/T1] must span at least 1.25 * lambda_q
-    # for both the baseline and the |q/m| x 2 mutation
+    # Fit window [d_w, (Lz - L_ramp) - d_w] with d_w = ln(1/eps_w)/gamma1 must span
+    # at least 1.25 * lambda_q and satisfy kappa_dc > gamma1 for both baseline and |q/m| x 2
     for label, p_cur in (("baseline", params), ("qm_mutation", params_mut)):
-        z_min, z_max = fit_window(p_cur)
+        assert p_cur["kappa_dc"] > p_cur["gamma1"], (
+            f"{label} identity check failed: kappa_dc={p_cur['kappa_dc']:.6f} <= gamma1={p_cur['gamma1']:.6f}"
+        )
+        z_min, z_max = fit_window(p_cur, outflow_ramp_m=OUTFLOW_RAMP_M)
         win_len = z_max - z_min
         min_req = 1.25 * p_cur["lambda_q"]
         assert win_len >= min_req, (
@@ -205,6 +209,19 @@ def test_preflight_and_resolution_criteria():
             cpml=False,
         )
         assert preflight(est_gpu, "g2-standard-16", raise_error=False) == []
+
+    # Step 1.2: assert dz unchanged to 1e-12
+    dz_c = TUNNEL_LENGTH_M / COARSE_GRID[2]
+    dz_f = TUNNEL_LENGTH_M / FINE_GRID[2]
+    dz_prev = 0.186 / 428
+    assert abs(dz_c - 2.0 * dz_f) <= 1.0e-12, (
+        f"|dz_coarse - 2*dz_fine| = {abs(dz_c - 2.0 * dz_f):.6e} m > 1e-12 m"
+    )
+    assert abs(dz_c - dz_prev) <= 1.0e-12, (
+        f"|dz - dz_prev| = {abs(dz_c - dz_prev):.6e} m > 1e-12 m "
+        f"(0.206/474 = {dz_c:.12e} m vs 0.186/428 = {dz_prev:.12e} m; "
+        f"exact dz-preserving length is 0.186*474/428 = {0.186 * 474 / 428:.12f} m)"
+    )
 
 
 def test_injected_sheet_geometry():
@@ -506,7 +523,9 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     print(flush=True)
     print(format_error_budget(nx, nz, tols), flush=True)
     print(
-        f"TERMS grid=coarse s_win={tols['s_win_part']:.6e} "
+        f"TERMS grid=coarse gamma1={tols['gamma1']:.6f} kappa_dc={tols['kappa_dc']:.6f} "
+        f"d_w={tols['d_w']:.6e} z_min={tols['z_min']:.6f} z_max={tols['z_max']:.6f} "
+        f"s_win={tols['s_win_part']:.6e} "
         f"s_modes={tols['s_modes_part']:.6e} s_sym={tols['s_sym_part']:.6e} "
         f"s_round={tols['s_round']:.6e} "
         f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} "
@@ -538,7 +557,10 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         flush=True,
     )
 
-    # Step 3 slack-sum identity asserts
+    # Step 1 & Step 3 identity asserts
+    assert tols["kappa_dc"] > tols["gamma1"], (
+        f"Identity check failed: kappa_dc={tols['kappa_dc']:.6f} <= gamma1={tols['gamma1']:.6f}"
+    )
     slack_lb_check = (
         tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_sym_lb"] + tols["s_round"]
     )
@@ -896,7 +918,9 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     print(flush=True)
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
-        f"TERMS grid=fine s_win={tols_f['s_win_part']:.6e} "
+        f"TERMS grid=fine gamma1={tols_f['gamma1']:.6f} kappa_dc={tols_f['kappa_dc']:.6f} "
+        f"d_w={tols_f['d_w']:.6e} z_min={tols_f['z_min']:.6f} z_max={tols_f['z_max']:.6f} "
+        f"s_win={tols_f['s_win_part']:.6e} "
         f"s_modes={tols_f['s_modes_part']:.6e} s_sym={tols_f['s_sym_part']:.6e} "
         f"s_round={tols_f['s_round']:.6e} "
         f"s_win_lb={tols_f['s_win_lb']:.6e} s_modes_lb={tols_f['s_modes_lb']:.6e} "
@@ -914,47 +938,56 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         flush=True,
     )
 
-    # Step 4: LB outflow reflection check (4-wave refit + 2x OUTFLOW_RAMP_M rerun, window unchanged)
+    # Step 1.3: LB outflow ramp-sensitivity diagnostic (outflow_ramp_m = 8 mm vs 4 mm,
+    # both evaluated on the 8 mm fit window [d_w, Lz - 8 mm - d_w] so both ramps lie >= d_w behind z_max)
     try:
+        z_min_8mm, z_max_8mm = fit_window(params, outflow_ramp_m=8.0e-3)
         f4_c = fit_four_wave_reflection(
-            lb_c["z_coords"], lb_c["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+            lb_c["z_coords"], lb_c["i1_lb"], beta_q_th, z_min=z_min_8mm, z_max=z_max_8mm
         )
         f4_f = fit_four_wave_reflection(
-            lb_f["z_coords"], lb_f["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
+            lb_f["z_coords"], lb_f["i1_lb"], beta_q_th, z_min=z_min_8mm, z_max=z_max_8mm
         )
-        lb_c_2x = run_linearized_beam_drift(
-            nx_c, nz_c, outflow_ramp_m=2.0 * OUTFLOW_RAMP_M
+        lb_c_4mm = run_linearized_beam_drift(nx_c, nz_c, outflow_ramp_m=4.0e-3)
+        lb_f_4mm = run_linearized_beam_drift(nx_f, nz_f, outflow_ramp_m=4.0e-3)
+        fit_lb_c_4mm = fit_beta_q_from_envelope(
+            lb_c_4mm["z_coords"],
+            lb_c_4mm["i1_lb"],
+            beta_q_th,
+            z_min=z_min_8mm,
+            z_max=z_max_8mm,
         )
-        lb_f_2x = run_linearized_beam_drift(
-            nx_f, nz_f, outflow_ramp_m=2.0 * OUTFLOW_RAMP_M
+        fit_lb_f_4mm = fit_beta_q_from_envelope(
+            lb_f_4mm["z_coords"],
+            lb_f_4mm["i1_lb"],
+            beta_q_th,
+            z_min=z_min_8mm,
+            z_max=z_max_8mm,
         )
-        fit_lb_c_2x = fit_beta_q_from_envelope(
-            lb_c_2x["z_coords"], lb_c_2x["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
-        )
-        fit_lb_f_2x = fit_beta_q_from_envelope(
-            lb_f_2x["z_coords"], lb_f_2x["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
-        )
-        dbq_ramp2x_c = float(fit_lb_c_2x["beta_q"] - bq_lb_c)
-        dbq_ramp2x_f = float(fit_lb_f_2x["beta_q"] - bq_lb_f)
-        rel_dbq_ramp2x_c = float(dbq_ramp2x_c / bq_lb_c)
-        rel_dbq_ramp2x_f = float(dbq_ramp2x_f / bq_lb_f)
+        bq_c_4mm = float(fit_lb_c_4mm["beta_q"])
+        bq_f_4mm = float(fit_lb_f_4mm["beta_q"])
+        dbq_ramp_c = float(bq_c_4mm - bq_lb_c)
+        dbq_ramp_f = float(bq_f_4mm - bq_lb_f)
+        rel_dbq_ramp_c = float(dbq_ramp_c / bq_lb_c)
+        rel_dbq_ramp_f = float(dbq_ramp_f / bq_lb_f)
         print(
-            f"DIAG id=lb_outflow "
+            f"DIAG id=lb_ramp "
+            f"bq_8mm_coarse={bq_lb_c:.8f} bq_4mm_coarse={bq_c_4mm:.8f} "
+            f"dbq_coarse={dbq_ramp_c:+.6e} rel_dbq_coarse={rel_dbq_ramp_c:+.6e} "
+            f"bq_8mm_fine={bq_lb_f:.8f} bq_4mm_fine={bq_f_4mm:.8f} "
+            f"dbq_fine={dbq_ramp_f:+.6e} rel_dbq_fine={rel_dbq_ramp_f:+.6e} "
+            f"eps_w={EPS_WINDOW:.1e} z_min={z_min_8mm:.6f} z_max={z_max_8mm:.6f} "
             f"dbq_4wave_coarse={f4_c['delta_beta_q']:+.6e} rel_4wave_coarse={f4_c['rel_delta_beta_q']:+.6e} "
             f"bwd_over_fwd_coarse={f4_c['bwd_over_fwd']:.6e} "
-            f"dbq_ramp2x_coarse={dbq_ramp2x_c:+.6e} rel_ramp2x_coarse={rel_dbq_ramp2x_c:+.6e} "
-            f"slack_coarse={tols_c['slack_lb']:.6e} "
             f"dbq_4wave_fine={f4_f['delta_beta_q']:+.6e} rel_4wave_fine={f4_f['rel_delta_beta_q']:+.6e} "
-            f"bwd_over_fwd_fine={f4_f['bwd_over_fwd']:.6e} "
-            f"dbq_ramp2x_fine={dbq_ramp2x_f:+.6e} rel_ramp2x_fine={rel_dbq_ramp2x_f:+.6e} "
-            f"slack_fine={tols_f['slack_lb']:.6e}",
+            f"bwd_over_fwd_fine={f4_f['bwd_over_fwd']:.6e}",
             flush=True,
         )
     except Exception as exc:  # noqa: BLE001
         if first_exc is None:
             first_exc = exc
         print(
-            f"DIAG id=lb_outflow status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
+            f"DIAG id=lb_ramp status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
             flush=True,
         )
 
@@ -1097,7 +1130,10 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         flush=True,
     )
 
-    # Fine-grid Step 3 amplitude sanity |A| > 0.5 * m * I0 and Step 4.8 DFT leakage
+    # Fine-grid Step 1 & Step 3 amplitude sanity |A| > 0.5 * m * I0 and Step 4.8 DFT leakage
+    assert tols_f["kappa_dc"] > tols_f["gamma1"], (
+        f"Identity check failed: kappa_dc={tols_f['kappa_dc']:.6f} <= gamma1={tols_f['gamma1']:.6f}"
+    )
     min_amp_a = 0.5 * params["I1_0"]
     assert abs(fit_lb_f["A"]) > min_amp_a, (
         f"Fine LB |A|={abs(fit_lb_f['A']):.6e} <= {min_amp_a:.6e}"
