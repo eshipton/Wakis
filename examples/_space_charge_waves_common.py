@@ -1517,10 +1517,17 @@ def fit_lb_parasitic_waves(
     """Fit ``I1(z)`` with the two physical LB modes plus two fixed parasitic odd-even modes.
 
     The centered-difference `LinearizedBeam` advection operator ``sin(k * dz) / dz``
-    supports parasitic branches ``k_{p,+-} = pi / dz - k_{+-}`` at the same ``omega``
-    with negative group velocity. Fixing ``k_{p,+-}`` from the principal discrete
-    modal dispersion adds two linear complex amplitudes ``(a_{p,-}, a_{p,+})`` and no
-    new nonlinear parameters to the variable-projection solve for ``(k_c, beta_q)``.
+    supports parasitic branches ``k_p in (pi / (2 * dz), pi / dz)`` at the same ``omega``
+    with negative group velocity that solve the discrete `LinearizedBeam` dispersion
+    relation::
+
+        Omega_LB -+ omega_{q,1}(k_p) = u_dep * sin(k_p * dz) / dz
+
+    with the fundamental transverse eigenvalue ``lambda_1(k_p)`` (and hence the
+    discrete reduction factor) evaluated at ``k_p`` via `scipy.optimize.brentq`.
+    Fixing ``(kp_minus, kp_plus)`` from these discrete roots adds two linear
+    complex amplitudes ``(a_{p,-}, a_{p,+})`` and no new wavenumber parameters to
+    the variable-projection solve for ``(k_c, beta_q)``.
     """
     beta_q_guess = float(params["beta_q"] * omega_p_scale)
     if z_min is None or z_max is None:
@@ -1533,19 +1540,66 @@ def fit_lb_parasitic_waves(
     fit2 = fit_beta_q_from_envelope(
         z_coords, i1_phasor, beta_q_guess, z_min=z_min, z_max=z_max
     )
-    modal = discrete_modal_prediction(
-        "lb",
-        nx,
-        nz,
-        params,
-        omega_p_scale=omega_p_scale,
-        return_details=True,
-    )
     dz = TUNNEL_LENGTH_M / nz
-    km_modal = float(modal["kc_modes"][0] - modal["bq_modes"][0])
-    kp_modal = float(modal["kc_modes"][0] + modal["bq_modes"][0])
-    kp_minus = float(np.pi / dz - km_modal)
-    kp_plus = float(np.pi / dz - kp_modal)
+    dt, _ = _cached_integer_period_dt(int(nx), int(nz))
+    omega = params["omega"]
+    u_dep = params["u_dep"]
+    gamma_dep = params["gamma_dep"]
+    omega_p_dep = params["omega_p"] * float(omega_p_scale)
+    wp_fac = omega_p_dep / (gamma_dep**1.5)
+    omega_lhs = float((2.0 / dt) * np.tan(0.5 * omega * dt))
+
+    def _omega_q1_lb(k_val: float) -> float:
+        op_k = compute_transverse_modal_operator(
+            "lb",
+            nx,
+            nz,
+            params,
+            k_val=k_val,
+            use_omega_f=True,
+        )
+        return float(wp_fac * np.sqrt(op_k["evals"][0]))
+
+    def _disp_func(k_val: float, branch_sign: float) -> float:
+        return float(
+            omega_lhs
+            + branch_sign * _omega_q1_lb(k_val)
+            - u_dep * np.sin(k_val * dz) / dz
+        )
+
+    def _solve_parasitic_root(branch_sign: float, label: str) -> tuple[float, float]:
+        eps_k = 1.0e-10 / dz
+        k_a = float(0.5 * np.pi / dz + eps_k)
+        k_b = float(np.pi / dz - eps_k)
+        fa = _disp_func(k_a, branch_sign)
+        fb = _disp_func(k_b, branch_sign)
+        if fa * fb > 0.0:
+            k_scan = np.linspace(k_a, k_b, 65)
+            f_scan = np.array([_disp_func(float(kv), branch_sign) for kv in k_scan])
+            sign_changes = np.where(f_scan[:-1] * f_scan[1:] <= 0.0)[0]
+            if len(sign_changes) == 0:
+                raise ValueError(
+                    f"No sign-change bracket for LB parasitic {label} root in open interval "
+                    f"(pi/(2*dz), pi/dz) = ({0.5 * np.pi / dz:.6f}, {np.pi / dz:.6f}) rad/m: "
+                    f"f(k_a)={fa:+.6e}, f(k_b)={fb:+.6e}."
+                )
+            idx0 = int(sign_changes[0])
+            k_a = float(k_scan[idx0])
+            k_b = float(k_scan[idx0 + 1])
+        root_k = float(
+            brentq(
+                lambda kv: _disp_func(float(kv), branch_sign),
+                k_a,
+                k_b,
+                xtol=1e-14,
+                rtol=1e-14,
+            )
+        )
+        rel_resid = float(abs(_disp_func(root_k, branch_sign)) / abs(omega_lhs))
+        return root_k, rel_resid
+
+    kp_minus, disp_resid_minus = _solve_parasitic_root(-1.0, "minus")
+    kp_plus, disp_resid_plus = _solve_parasitic_root(+1.0, "plus")
 
     mask = (z_coords >= z_min) & (z_coords <= z_max)
     zm = np.asarray(z_coords[mask], dtype=np.float64)
@@ -1595,6 +1649,8 @@ def fit_lb_parasitic_waves(
         "k_c_para": kcp,
         "kp_minus": kp_minus,
         "kp_plus": kp_plus,
+        "disp_resid_minus": disp_resid_minus,
+        "disp_resid_plus": disp_resid_plus,
         "delta_beta_q": dbq,
         "rel_delta_beta_q": float(dbq / fit2["beta_q"]),
         "ap_over_afwd": float(para_norm / max(fwd_norm, 1e-30)),

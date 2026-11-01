@@ -810,6 +810,8 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
     print(
         f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred_modal={bq_lb_m2_pred:.6f} "
         f"slack={bound_m2:.6e} resid={resid_m2:.6e} bound={bound_m2:.6e} "
+        f"kp_minus={para_m2['kp_minus']:.6f} kp_plus={para_m2['kp_plus']:.6f} "
+        f"disp_resid_minus={para_m2['disp_resid_minus']:.3e} disp_resid_plus={para_m2['disp_resid_plus']:.3e} "
         f"ap_over_afwd={para_m2['ap_over_afwd']:.6e} dbq_para={para_m2['delta_beta_q']:+.6e} "
         f"rel_dbq_para={para_m2['rel_delta_beta_q']:+.6e} "
         f"baseline_check_failed={baseline_check_failed}",
@@ -1036,7 +1038,7 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             flush=True,
         )
 
-    # Step 5: LB parasitic waves in the fit model (k_{p,+-} = pi/dz - k_{+-} fixed from discrete dispersion)
+    # Step 5: LB parasitic waves in the fit model (k_p in (pi/(2*dz), pi/dz) solved via brentq)
     try:
         para_c = fit_lb_parasitic_waves(
             lb_c["z_coords"],
@@ -1073,12 +1075,20 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         )
         print(
             f"DIAG id=lb_parasitic "
+            f"kp_minus={para_c['kp_minus']:.6f} kp_plus={para_c['kp_plus']:.6f} "
+            f"disp_resid_minus={para_c['disp_resid_minus']:.3e} disp_resid_plus={para_c['disp_resid_plus']:.3e} "
+            f"kp_minus_coarse={para_c['kp_minus']:.6f} kp_plus_coarse={para_c['kp_plus']:.6f} "
+            f"disp_resid_minus_coarse={para_c['disp_resid_minus']:.3e} disp_resid_plus_coarse={para_c['disp_resid_plus']:.3e} "
             f"ap_over_afwd_coarse={para_c['ap_over_afwd']:.6e} "
             f"dbq_coarse={para_c['delta_beta_q']:+.6e} rel_dbq_coarse={para_c['rel_delta_beta_q']:+.6e} "
             f"resid_2wave_coarse={abs(bq_lb_c / tols_c['bq_pred_lb'] - 1.0):.6e} "
+            f"kp_minus_fine={para_f['kp_minus']:.6f} kp_plus_fine={para_f['kp_plus']:.6f} "
+            f"disp_resid_minus_fine={para_f['disp_resid_minus']:.3e} disp_resid_plus_fine={para_f['disp_resid_plus']:.3e} "
             f"ap_over_afwd_fine={para_f['ap_over_afwd']:.6e} "
             f"dbq_fine={para_f['delta_beta_q']:+.6e} rel_dbq_fine={para_f['rel_delta_beta_q']:+.6e} "
             f"resid_2wave_fine={resid_lb_f:.6e} "
+            f"kp_minus_M2={para_m2_c['kp_minus']:.6f} kp_plus_M2={para_m2_c['kp_plus']:.6f} "
+            f"disp_resid_minus_M2={para_m2_c['disp_resid_minus']:.3e} disp_resid_plus_M2={para_m2_c['disp_resid_plus']:.3e} "
             f"ap_over_afwd_M2={para_m2_c['ap_over_afwd']:.6e} "
             f"dbq_M2={para_m2_c['delta_beta_q']:+.6e} rel_dbq_M2={para_m2_c['rel_delta_beta_q']:+.6e} "
             f"estimator=2wave_kept",
