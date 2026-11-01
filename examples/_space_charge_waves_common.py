@@ -22,7 +22,8 @@ import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import e as e_charge
 from scipy.constants import epsilon_0, m_e
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize
+from scipy.stats import t as student_t
 
 from wakis import GridFIT3D, SolverFIT3D
 from wakis.beam_fluid import (
@@ -47,7 +48,6 @@ BEAM_HALF_THICKNESS_M = 0.8e-3  # Sheet-beam half-thickness b [m]
 PERIODIC_LY_M = 1.0e-3  # Periodic transverse depth Ly [m]
 TUNNEL_LENGTH_M = 0.186  # Drift-tunnel axial length Lz >= 1.6 * lambda_q [m]
 OUTFLOW_RAMP_M = 8.0e-3  # Outflow axial taper length [m]
-FIT_WINDOW_LAMBDA_Q = 1.38  # Envelope fit window in units of lambda_q (3 interior nulls) [-]
 RISE_PERIODS = 2.0  # C^1 raised-cosine entrance turn-on ramp duration in RF periods [-]
 DRIVE_FREQ_HZ = 6.5e9  # AC density-modulation frequency f [Hz]
 PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * pi) [Hz]
@@ -57,7 +57,18 @@ CFL_NUMBER = 0.5  # Courant number cfln [-]
 
 COARSE_GRID = (10, 1, 428)  # (Nx, Ny, Nz) coarse resolution
 FINE_GRID = (20, 1, 856)  # (Nx, Ny, Nz) 2x refined resolution
-NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical 3-sigma noise
+NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical noise
+
+
+def fit_window(params: dict[str, float]) -> tuple[float, float]:
+    """Return the shared axial fit window ``(z_min, z_max)`` [m].
+
+    Excludes ``3 / T1`` at the entrance (evanescent higher-order cathode zone,
+    where ``1 / T1`` is the transverse decay length) and ``3 / T1`` upstream of
+    the outflow taper start ``TUNNEL_LENGTH_M - OUTFLOW_RAMP_M``.
+    """
+    margin = 3.0 / params["T1"]
+    return float(margin), float((TUNNEL_LENGTH_M - OUTFLOW_RAMP_M) - margin)
 
 
 def extract_coherent_bunching_i2_ratio(
@@ -97,65 +108,101 @@ def _compute_multimode_fit_shift(
     omega_p_dep: float,
     gamma_dep: float,
     u_dep: float,
+    beta_e: float,
     nx: int | None = None,
     nz: int | None = None,
-) -> tuple[float, float, float]:
-    """Compute fundamental `T1`, second-mode `T2`, and signed multi-mode null shift `eps_fit`.
+) -> tuple[float, float, float, float]:
+    """Compute fundamental `T1`, second-mode `T2`, and signed multi-mode shifts `eps_fit_cont`, `eps_fit_grid`.
 
     A uniform top-hat entrance modulation across ``x in [-b, b]`` excites the
     orthogonal Sturm-Liouville slab eigenmodes ``cos(T_n * x)`` (``n = 1, 2, ...``).
     The weak higher-order modes (``n >= 2``, total power weight ~1%) shift the
-    standing-wave nulls of ``|I1(z)|**2`` upward in ``beta_q`` relative to the
-    pure ``n = 1`` mode. When ``nx`` and ``nz`` are provided, the multi-mode
-    standing-wave envelope is evaluated on the discrete axial grid with
-    transverse modes restricted to those resolved below the Nyquist limit
-    ``T_n * dx < pi`` (on the coarse grid ``T_2 * dx ~ 1.7 rad``, so ``n = 1, 2``
-    are resolved; on the fine grid ``n = 1..4`` are resolved), and fitted over
-    ``[0, FIT_WINDOW_LAMBDA_Q * lambda_q]`` using :func:`fit_beta_q_from_envelope`
-    to obtain the signed correction ``eps_fit = (beta_q_mm - beta_q_1) / beta_q_1``.
+    fitted two-wave ``beta_q`` upward relative to the pure ``n = 1`` mode.
+    Runs :func:`fit_beta_q_from_envelope` over the window ``[3 / T1, (Lz - L_ramp) - 3 / T1]``
+    on the continuum multi-mode model ``sum_n w_n cos(beta_qn * z) * exp(-i * beta_e * z)``
+    both with continuum weights ``w_n`` (``eps_fit_cont``) and with discrete
+    transverse CIC mode weights on the ``nx``-cell grid (``eps_fit_grid``).
     """
     rhs = tau * b / np.tanh(tau * (a - b))
     t_modes = []
     r_modes = []
-    w_modes = []
+    w_cont_list = []
+    w_grid_list = []
     dx = (2.0 * a / nx) if nx is not None else 0.0
+    if nx is not None:
+        x_nodes = np.linspace(-a, a, nx + 1)
+        n_macro = 16 if nx == COARSE_GRID[0] else 32
+        k_idx = np.arange(n_macro, dtype=np.float64)
+        x_lat = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+        w_cic = np.zeros(nx + 1, dtype=np.float64)
+        for xp in x_lat:
+            rel = np.abs(x_nodes - xp) / dx
+            mask = rel < 1.0
+            w_cic[mask] += (1.0 - rel[mask]) * (2.0 * b / n_macro)
+    else:
+        x_nodes = np.empty(0)
+        w_cic = np.empty(0)
+
     for n in range(1, 5):
         lo = (n - 1) * np.pi + 1e-12
         hi = (n - 0.5) * np.pi - 1e-12
         tb_n = float(brentq(lambda x: x * np.tan(x) - rhs, lo, hi))
         t_n = tb_n / b
-        if nx is not None and n >= 2 and (t_n * dx) >= np.pi:
-            continue
         r_n = 1.0 / np.sqrt(1.0 + (t_n / tau) ** 2)
         # Sturm-Liouville norm of phi_n(x) = cos(T_n * x) on the beam support [0, b]
         norm_in = 0.5 * b * (1.0 + np.sin(2.0 * tb_n) / (2.0 * tb_n))
-        overlap = np.sin(tb_n) / t_n
-        w_n = float((overlap**2) / (b * norm_in))
+        overlap_cont = np.sin(tb_n) / t_n
+        w_n_cont = float((overlap_cont**2) / (b * norm_in))
+        if nx is not None and (t_n * dx) < np.pi:
+            overlap_grid = float(0.5 * np.sum(w_cic * np.cos(t_n * x_nodes)))
+            w_n_grid = float((overlap_grid**2) / (b * norm_in))
+        elif nx is None:
+            w_n_grid = w_n_cont
+        else:
+            w_n_grid = 0.0
         t_modes.append(t_n)
         r_modes.append(r_n)
-        w_modes.append(w_n)
+        w_cont_list.append(w_n_cont)
+        w_grid_list.append(w_n_grid)
 
-    w_arr = np.asarray(w_modes, dtype=np.float64)
-    w_arr /= np.sum(w_arr)
+    w_cont = np.asarray(w_cont_list, dtype=np.float64)
+    w_cont /= np.sum(w_cont)
+    w_grid = np.asarray(w_grid_list, dtype=np.float64)
+    w_grid /= np.sum(w_grid)
     bq_modes = (
         np.asarray(r_modes, dtype=np.float64) * omega_p_dep / (gamma_dep**1.5 * u_dep)
     )
     bq_1 = float(bq_modes[0])
-    lam_q = 2.0 * np.pi / bq_1
-    z_max_fit = FIT_WINDOW_LAMBDA_Q * lam_q
+    t1_val = float(t_modes[0])
+    t2_val = float(t_modes[1]) if len(t_modes) > 1 else t1_val
+    margin = 3.0 / t1_val
+    z_min_fit = float(margin)
+    z_max_fit = float((TUNNEL_LENGTH_M - OUTFLOW_RAMP_M) - margin)
 
     if nz is not None:
         dz = TUNNEL_LENGTH_M / nz
         z_eval = (np.arange(nz, dtype=np.float64) + 0.5) * dz
     else:
-        z_eval = np.linspace(0.0, TUNNEL_LENGTH_M, 4001)
-    i1_mm = np.sum(w_arr[:, None] * np.cos(np.outer(bq_modes, z_eval)), axis=0).astype(
-        np.complex128
+        dz = TUNNEL_LENGTH_M / FINE_GRID[2]
+        z_eval = (np.arange(FINE_GRID[2], dtype=np.float64) + 0.5) * dz
+
+    carrier = np.exp(-1j * beta_e * z_eval)
+    cos_modes = np.cos(np.outer(bq_modes, z_eval))
+    i1_mm_cont = np.sum(w_cont[:, None] * cos_modes, axis=0) * carrier
+    fit_cont = fit_beta_q_from_envelope(
+        z_eval, i1_mm_cont, bq_1, z_min=z_min_fit, z_max=z_max_fit
     )
-    bq_mm, _ = fit_beta_q_from_envelope(z_eval, i1_mm, bq_1, z_max=z_max_fit)
-    eps_fit = float((bq_mm - bq_1) / bq_1)
-    t2_val = float(t_modes[1]) if len(t_modes) > 1 else float(t_modes[0])
-    return float(t_modes[0]), t2_val, eps_fit
+    eps_fit_cont = float((fit_cont["beta_q"] - bq_1) / bq_1)
+
+    if nx is None:
+        eps_fit_grid = eps_fit_cont
+    else:
+        i1_mm_grid = np.sum(w_grid[:, None] * cos_modes, axis=0) * carrier
+        fit_grid = fit_beta_q_from_envelope(
+            z_eval, i1_mm_grid, bq_1, z_min=z_min_fit, z_max=z_max_fit
+        )
+        eps_fit_grid = float((fit_grid["beta_q"] - bq_1) / bq_1)
+    return t1_val, t2_val, eps_fit_cont, eps_fit_grid
 
 
 def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
@@ -218,8 +265,8 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     omega_q = r_factor * omega_p_dep / (gamma_dep**1.5)
     beta_q = omega_q / u_dep
 
-    t1_transverse, t2_transverse, eps_fit = _compute_multimode_fit_shift(
-        tau, b, a, omega_p_dep, gamma_dep, u_dep
+    t1_transverse, t2_transverse, eps_fit, _ = _compute_multimode_fit_shift(
+        tau, b, a, omega_p_dep, gamma_dep, u_dep, beta_e
     )
 
     # Logarithmic sensitivity d(ln R)/d(ln tau) from (T1*b)*tan(T1*b) = (tau*b)*coth(tau*(a-b))
@@ -604,22 +651,35 @@ def fit_beta_q_from_envelope(
     z_coords: np.ndarray,
     i1_phasor: np.ndarray,
     beta_q_guess: float,
+    z_min: float | None = None,
     z_max: float | None = None,
-    return_residuals: bool = False,
-) -> tuple[float, float] | tuple[float, float, np.ndarray, np.ndarray]:
-    """Fit ``(beta_q, z0)`` by least squares over all standing-wave nulls of ``|I1(z)|**2``.
+) -> dict[str, Any]:
+    """Fit the complex two-wave model to ``I1(z)`` by variable-projection least squares.
 
-    For an entrance density modulation with effective launch offset ``z0``,
-    ``|I1(z)|**2 = A * cos(2 * beta_q * (z - z0)) + c`` has standing-wave nulls
-    at ``z_m = z0 + (m + 1/2) * pi / beta_q`` (``m = 0, 1, 2, ...``). First obtains
-    a rough period ``pi / beta_q_rough`` and phase ``z0_rough`` via 3-parameter
-    harmonic least squares, then locates each interior null in ``[0, z_max]`` using
-    a local quadratic least-squares fit ``c_2 * dz**2 + c_1 * dz + c_0`` of
-    ``|I1(z)|**2`` around the minimum (with convexity ``c_2 > 0``, vertex-offset
-    outlier check, and linear-lattice prediction for ``m >= 2`` so noisy cells
-    cannot jump the vertex by 2 cells), and fits the linear model
-    ``z_m = z0 + (m + 0.5) * L_half`` (``L_half = pi / beta_q``) by ordinary
-    least squares over all detected nulls in the window.
+    On axial edge midpoints ``z_k`` inside ``[z_min, z_max]``, fits the complex
+    fast/slow space-charge-wave model::
+
+        I1(z) = a_f * exp(-i * k_f * z) + a_s * exp(-i * k_s * z)
+
+    with complex amplitudes ``a_f, a_s`` and real wavenumbers ``k_f < k_s``.
+    This is identical to::
+
+        I1(z) = exp(-i * k_c * z) * [A * cos(beta_q * z) + B * sin(beta_q * z)]
+
+    with ``k_c = (k_f + k_s) / 2``, ``beta_q = (k_s - k_f) / 2``,
+    ``A = a_f + a_s``, and ``B = i * (a_s - a_f)``. The carrier wavenumber
+    ``k_c`` is fitted rather than fixed to ``beta_e`` because `LinearizedBeam`'s
+    numerical carrier differs from ``beta_e`` by ``(beta_e * dz)**2 / 6``, and
+    fixing it would bias ``beta_q``.
+
+    For a given ``(k_c, beta_q)``, ``(a_f, a_s)`` follow from a 2-column complex
+    linear least-squares solve (`numpy.linalg.lstsq` on the complex design matrix
+    ``[exp(-i * k_f * z), exp(-i * k_s * z)]``). The residual sum of squares
+    ``RSS(k_c, beta_q)`` is minimised over a ``201 x 401`` coarse grid with
+    ``k_c`` in ``k_c0 +- 3%`` (``k_c0`` from the unwrapped carrier phase slope
+    via `numpy.polyfit`) and ``beta_q`` in ``[0.5, 1.8] * beta_q_guess``, followed
+    by `scipy.optimize.minimize` (``method="Nelder-Mead"``,
+    ``xatol=1e-10 * beta_q_guess``) starting from the best grid point.
 
     Parameters
     ----------
@@ -629,121 +689,129 @@ def fit_beta_q_from_envelope(
         Complex fundamental axial current phasor ``I1(z)`` [A].
     beta_q_guess : float
         Reference reduced plasma wavenumber [rad/m] centering the initial scan.
-    z_max : float, optional
-        Upper axial limit [m] of the fit window. Defaults to
-        ``FIT_WINDOW_LAMBDA_Q * 2 * pi / beta_q_guess`` (covering 3 interior nulls).
-    return_residuals : bool, optional
-        If ``True``, also return the array of detected null positions ``z_nulls`` [m]
-        and least-squares residuals ``z_nulls - z_fit`` [m]. Default is ``False``.
+    z_min, z_max : float, optional
+        Lower and upper axial bounds [m] of the fit window. If omitted,
+        computed via :func:`fit_window`.
 
     Returns
     -------
-    beta_q_fit : float
-        Fitted reduced plasma wavenumber ``beta_q`` [rad/m].
-    z0_fit : float
-        Fitted effective envelope launch offset ``z0`` [m].
-    z_nulls : np.ndarray, optional
-        Detected standing-wave null coordinates [m] (returned when ``return_residuals=True``).
-    residuals : np.ndarray, optional
-        Least-squares null residuals ``z_m - (z0 + (m + 0.5) * pi / beta_q)`` [m]
-        (returned when ``return_residuals=True``).
+    dict of str to Any
+        Dictionary with keys ``beta_q``, ``k_c``, ``A``, ``B``, ``a_f``, ``a_s``,
+        ``rss``, ``sigma_beta_q`` (from the Gauss-Newton covariance
+        ``s**2 * (J^H J)^(-1)`` with ``s**2 = RSS / (2 * N - 6)``), plus
+        ``k_f``, ``k_s``, ``z0``, ``as_over_af``, and ``b_over_a``.
     """
-    if z_max is None:
-        z_max = FIT_WINDOW_LAMBDA_Q * (2.0 * np.pi / beta_q_guess)
-    mask = z_coords <= z_max
-    zm = z_coords[mask]
-    y = np.abs(i1_phasor[mask]) ** 2
-    dz = float(zm[1] - zm[0])
+    if z_min is None or z_max is None:
+        z_min_def, z_max_def = fit_window(compute_analytic_parameters())
+        if z_min is None:
+            z_min = z_min_def
+        if z_max is None:
+            z_max = z_max_def
 
-    bq_grid = np.linspace(0.50 * beta_q_guess, 1.80 * beta_q_guess, 2601)
-    best_rss = np.inf
-    bq_rough = float(beta_q_guess)
-    z0_rough = 0.0
-    ones = np.ones_like(zm)
-    for bq in bq_grid:
-        x_mat = np.column_stack([np.cos(2.0 * bq * zm), np.sin(2.0 * bq * zm), ones])
-        coef, _, _, _ = np.linalg.lstsq(x_mat, y, rcond=None)
-        res = y - x_mat @ coef
-        rss = float(np.dot(res, res))
-        if rss < best_rss:
-            best_rss = rss
-            bq_rough = float(bq)
-            z0_rough = float(0.5 * np.arctan2(coef[1], coef[0]) / bq)
+    mask = (z_coords >= z_min) & (z_coords <= z_max)
+    zm = np.asarray(z_coords[mask], dtype=np.float64)
+    ym = np.asarray(i1_phasor[mask], dtype=np.complex128)
+    n_pts = len(zm)
 
-    l_half = np.pi / bq_rough
-    nulls: list[float] = []
-    m_indices: list[int] = []
-    for m_idx in range(6):
-        if len(nulls) >= 2:
-            # Linear extrapolation from the already-located nulls prevents drift at m >= 2
-            m_prev = np.asarray(m_indices, dtype=np.float64) + 0.5
-            z_prev = np.asarray(nulls, dtype=np.float64)
-            p_prev, _, _, _ = np.linalg.lstsq(
-                np.column_stack([np.ones_like(m_prev), m_prev]), z_prev, rcond=None
-            )
-            z_center = float(p_prev[0] + (m_idx + 0.5) * p_prev[1])
-            l_half_cur = float(p_prev[1])
-            search_half = 0.14 * l_half_cur
-        else:
-            z_center = z0_rough + (m_idx + 0.5) * l_half
-            l_half_cur = l_half
-            search_half = 0.30 * l_half_cur
+    # Carrier slope k_c0 from unwrapped phase (removing integer-pi standing-wave nodal jumps)
+    phi_u = np.unwrap(np.angle(ym))
+    amp = np.abs(ym)
+    lobe = (amp[:-1] > 0.5 * np.median(amp)) & (amp[1:] > 0.5 * np.median(amp))
+    if np.any(lobe):
+        kc_lobe = -float(
+            np.median(np.angle(ym[1:] * np.conj(ym[:-1]))[lobe] / np.diff(zm)[lobe])
+        )
+        demod = phi_u + kc_lobe * zm
+        demod = demod - np.round((demod - demod[0]) / np.pi) * np.pi
+        phi_carrier = demod - kc_lobe * zm
+    else:
+        phi_carrier = phi_u
+    k_c0 = -float(np.polyfit(zm, phi_carrier, 1)[0])
 
-        if 0.15 * l_half <= z_center <= z_max - 0.06 * l_half:
-            w_mask = np.abs(zm - z_center) <= search_half
-            idxs = np.where(w_mask)[0]
-            if len(idxs) >= 5:
-                # Smooth 3-point moving average to suppress single-cell noise spikes
-                # before centering the local quadratic least-squares fit
-                k_min = int(idxs[np.argmin(y[idxs])])
-                fit_mask = np.abs(zm - zm[k_min]) <= max(0.10 * l_half_cur, 3.5 * dz)
-                fit_idxs = np.where(fit_mask)[0]
-                if len(fit_idxs) >= 5:
-                    z_loc = zm[fit_idxs] - zm[k_min]
-                    y_loc = y[fit_idxs]
-                    q_mat = np.column_stack([z_loc**2, z_loc, np.ones_like(z_loc)])
-                    q_coef, _, _, _ = np.linalg.lstsq(q_mat, y_loc, rcond=None)
-                    c2, c1 = float(q_coef[0]), float(q_coef[1])
-                    if c2 > 0.0:
-                        delta_z = -0.5 * c1 / c2
-                        if abs(delta_z) <= max(0.08 * l_half_cur, 2.5 * dz):
-                            z_v = float(zm[k_min] + delta_z)
-                        else:
-                            z_v = float(zm[k_min])
-                    else:
-                        z_v = float(zm[k_min])
-                else:
-                    z_v = float(zm[k_min])
-                # Outlier check against jumps > 0.08 * L_half from linear lattice for m >= 2
-                if len(nulls) >= 2 and abs(z_v - z_center) > 0.08 * l_half_cur:
-                    w_tight = np.abs(zm - z_center) <= 0.08 * l_half_cur
-                    t_idxs = np.where(w_tight)[0]
-                    if len(t_idxs) >= 3:
-                        z_loc = zm[t_idxs] - z_center
-                        y_loc = y[t_idxs]
-                        q_mat = np.column_stack([z_loc**2, z_loc, np.ones_like(z_loc)])
-                        q_coef, _, _, _ = np.linalg.lstsq(q_mat, y_loc, rcond=None)
-                        c2, c1 = float(q_coef[0]), float(q_coef[1])
-                        if c2 > 0.0 and abs(-0.5 * c1 / c2) <= 0.08 * l_half_cur:
-                            z_v = float(z_center - 0.5 * c1 / c2)
-                nulls.append(z_v)
-                m_indices.append(m_idx)
+    kc_half = max(0.03 * abs(k_c0), 1.0)
+    kc_grid = np.linspace(k_c0 - kc_half, k_c0 + kc_half, 201)
+    bq_grid = np.linspace(0.50 * beta_q_guess, 1.80 * beta_q_guess, 401)
 
-    z_arr = np.asarray(nulls, dtype=np.float64)
-    if len(z_arr) >= 2:
-        m_arr = np.asarray(m_indices, dtype=np.float64) + 0.5
-        design = np.column_stack([np.ones_like(m_arr), m_arr])
-        params_ls, _, _, _ = np.linalg.lstsq(design, z_arr, rcond=None)
-        z0_fit = float(params_ls[0])
-        l_half_fit = float(params_ls[1])
-        bq_fit = float(np.pi / l_half_fit)
-        residuals = z_arr - (z0_fit + m_arr * l_half_fit)
-        if return_residuals:
-            return bq_fit, z0_fit, z_arr, residuals
-        return bq_fit, z0_fit
-    if return_residuals:
-        return bq_rough, z0_rough, z_arr, np.zeros_like(z_arr)
-    return bq_rough, z0_rough
+    # Vectorized 201 x 401 variable-projection coarse grid evaluation
+    # Design columns u_f = exp(-i*(k_c - bq)*z), u_s = exp(-i*(k_c + bq)*z)
+    # have Gram entries <u_f, u_f> = <u_s, u_s> = N and <u_f, u_s> = sum_k exp(-2i*bq*z_k).
+    ym_energy = float(np.real(np.vdot(ym, ym)))
+    exp_kc_pos = np.exp(1j * np.outer(kc_grid, zm))
+    exp_bq_neg = np.exp(-1j * np.outer(bq_grid, zm))
+    exp_bq_pos = np.conj(exp_bq_neg)
+    p_f = (exp_kc_pos * ym[None, :]) @ exp_bq_neg.T
+    p_s = (exp_kc_pos * ym[None, :]) @ exp_bq_pos.T
+    g_12 = np.sum(exp_bq_neg**2, axis=1)
+    denom = np.maximum(float(n_pts**2) - np.abs(g_12) ** 2, 1e-30)[None, :]
+    num_proj = (
+        float(n_pts) * (np.abs(p_f) ** 2 + np.abs(p_s) ** 2)
+        - 2.0 * np.real(np.conj(p_f) * g_12[None, :] * p_s)
+    )
+    rss_grid = ym_energy - num_proj / denom
+    idx_kc, idx_bq = np.unravel_index(int(np.argmin(rss_grid)), rss_grid.shape)
+    kc_init = float(kc_grid[idx_kc])
+    bq_init = float(bq_grid[idx_bq])
+
+    def _varpro_lstsq(kc_val: float, bq_val: float) -> tuple[complex, complex, float]:
+        bq_pos = abs(bq_val)
+        kf_val = kc_val - bq_pos
+        ks_val = kc_val + bq_pos
+        design = np.column_stack(
+            [np.exp(-1j * kf_val * zm), np.exp(-1j * ks_val * zm)]
+        )
+        coef, _, _, _ = np.linalg.lstsq(design, ym, rcond=None)
+        res = ym - design @ coef
+        rss_val = float(np.real(np.vdot(res, res)))
+        return complex(coef[0]), complex(coef[1]), rss_val
+
+    opt = minimize(
+        lambda x: _varpro_lstsq(float(x[0]), float(x[1]))[2],
+        x0=np.array([kc_init, bq_init], dtype=np.float64),
+        method="Nelder-Mead",
+        options={
+            "xatol": 1e-10 * beta_q_guess,
+            "fatol": 1e-16 * max(ym_energy, 1e-30),
+            "maxiter": 2000,
+        },
+    )
+    k_c = float(opt.x[0])
+    beta_q = float(abs(opt.x[1]))
+    a_f, a_s, rss = _varpro_lstsq(k_c, beta_q)
+    a_cap = complex(a_f + a_s)
+    b_cap = complex(1j * (a_s - a_f))
+
+    # Gauss-Newton covariance s^2 * (J^H J)^(-1) with s^2 = RSS / (2*N - 6)
+    # for the 6 real parameters [Re(a_f), Im(a_f), Re(a_s), Im(a_s), k_c, beta_q]
+    u_f = np.exp(-1j * (k_c - beta_q) * zm)
+    u_s = np.exp(-1j * (k_c + beta_q) * zm)
+    f_model = a_f * u_f + a_s * u_s
+    df_dkc = -1j * zm * f_model
+    df_dbq = 1j * zm * (a_f * u_f - a_s * u_s)
+    j_complex = np.column_stack([u_f, 1j * u_f, u_s, 1j * u_s, df_dkc, df_dbq])
+    jtj = np.real(j_complex.conj().T @ j_complex)
+    s2 = rss / max(2 * n_pts - 6, 1)
+    cov = s2 * np.linalg.pinv(jtj)
+    sigma_beta_q = float(np.sqrt(max(cov[5, 5], 0.0)))
+
+    b_over_a = complex(b_cap / a_cap) if abs(a_cap) > 0.0 else 0.0j
+    z0_eff = float(np.arctan(np.real(b_over_a)) / beta_q) if beta_q > 0.0 else 0.0
+    as_over_af = float(abs(a_s) / max(abs(a_f), 1e-30))
+
+    return {
+        "beta_q": beta_q,
+        "k_c": k_c,
+        "A": a_cap,
+        "B": b_cap,
+        "a_f": a_f,
+        "a_s": a_s,
+        "rss": rss,
+        "sigma_beta_q": sigma_beta_q,
+        "k_f": float(k_c - beta_q),
+        "k_s": float(k_c + beta_q),
+        "z0": z0_eff,
+        "as_over_af": as_over_af,
+        "b_over_a": b_over_a,
+    }
 
 
 def compute_spatial_spectrum(

@@ -42,7 +42,6 @@ from examples._space_charge_waves_common import (
     CFL_NUMBER,
     COARSE_GRID,
     FINE_GRID,
-    FIT_WINDOW_LAMBDA_Q,
     GUIDE_BZ_TESLA,
     MODULATION_INDEX,
     OUTFLOW_RAMP_M,
@@ -55,6 +54,7 @@ from examples._space_charge_waves_common import (
     derived_tolerances,
     extract_coherent_bunching_i2_ratio,
     fit_beta_q_from_envelope,
+    fit_window,
     format_error_budget,
     measure_empirical_noise,
     run_linearized_beam_drift,
@@ -168,12 +168,20 @@ def test_injected_sheet_geometry():
 
 
 def test_preflight_and_resolution_criteria():
-    """Verify `wakis.estimate` preflight, resolution rules, and 3-null fit-window margin."""
-    params = compute_analytic_parameters()
-    z_max_fit = FIT_WINDOW_LAMBDA_Q * params["lambda_q"]
+    """Verify `wakis.estimate` preflight, resolution rules, and two-wave fit-window span >= 1.25 * lambda_q."""
+    params = compute_analytic_parameters(qm_scale=1.0)
+    params_mut = compute_analytic_parameters(qm_scale=2.0)
 
-    # Tunnel length must be at least 1.6 * lambda_q so the 3-null fit has redundancy
-    assert TUNNEL_LENGTH_M >= 1.6 * params["lambda_q"]
+    # Fit window [3/T1, (Lz - L_ramp) - 3/T1] must span at least 1.25 * lambda_q
+    # for both the baseline and the |q/m| x 2 mutation
+    for label, p_cur in (("baseline", params), ("qm_mutation", params_mut)):
+        z_min, z_max = fit_window(p_cur)
+        win_len = z_max - z_min
+        min_req = 1.25 * p_cur["lambda_q"]
+        assert win_len >= min_req, (
+            f"{label} fit window z_max - z_min = {win_len:.6f} m < 1.25 * lambda_q = {min_req:.6f} m "
+            f"(margin={win_len - min_req:+.6f} m)"
+        )
 
     for nx, ny, nz in (COARSE_GRID, FINE_GRID):
         dx = 2.0 * TUNNEL_HALF_WIDTH_M / nx
@@ -186,13 +194,6 @@ def test_preflight_and_resolution_criteria():
 
         # >= 4 cells across the full sheet-beam thickness 2 * b
         assert (2.0 * BEAM_HALF_THICKNESS_M) / dx >= 4.0
-
-        # 3-null fit window [0, FIT_WINDOW_LAMBDA_Q * lambda_q] clears the outflow ramp
-        # with >= 2.5 mm (> 5 * dz_c) margin
-        ramp_start_z = TUNNEL_LENGTH_M - OUTFLOW_RAMP_M
-        margin_m = ramp_start_z - z_max_fit
-        assert margin_m >= 2.5e-3
-        assert margin_m >= 5.0 * dz
 
         # Preflight memory estimate must fit within the 2 GB laptop/memguard cap and L4 GPU
         est_cpu = estimate(
