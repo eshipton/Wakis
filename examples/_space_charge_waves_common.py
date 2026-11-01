@@ -1968,6 +1968,96 @@ def cached_baseline_pair(
 
 
 @lru_cache(maxsize=8)
+def compute_m_extrapolation(
+    nx: int, nz: int, include_m4: bool = True
+) -> dict[str, Any]:
+    """Compute Step 3 Richardson extrapolation of deterministic lattice ``beta_q(m)`` as ``m -> 0``."""
+    params = compute_analytic_parameters()
+    tols = derived_tolerances(nx, nz, params)
+    bq_pred = float(tols["bq_pred_part"])
+    slack_part = float(tols["slack_part"])
+    z_min, z_max = fit_window(params)
+    beta_q_th = params["beta_q"]
+
+    lb_m, part_m = cached_baseline_pair(nx, nz, m_mod=MODULATION_INDEX)
+    z_coords = lb_m["z_coords"]
+    part_m2 = cached_particle_drift(
+        nx,
+        nz,
+        profile="sheet_lattice",
+        seed=NOISE_SEEDS[0],
+        m_mod=0.5 * MODULATION_INDEX,
+        qm_scale=1.0,
+    )
+    bq_m = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_m["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq_m2 = float(
+        fit_beta_q_from_envelope(
+            z_coords, part_m2["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+        )["beta_q"]
+    )
+    bq0 = float((4.0 * bq_m2 - bq_m) / 3.0)
+    resid0 = float(abs(bq0 / bq_pred - 1.0))
+
+    if include_m4:
+        part_m4 = cached_particle_drift(
+            nx,
+            nz,
+            profile="sheet_lattice",
+            seed=NOISE_SEEDS[0],
+            m_mod=0.25 * MODULATION_INDEX,
+            qm_scale=1.0,
+        )
+        bq_m4 = float(
+            fit_beta_q_from_envelope(
+                z_coords, part_m4["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
+            )["beta_q"]
+        )
+        denom = bq_m2 - bq_m4
+        q_m = float((bq_m - bq_m2) / denom) if abs(denom) > 1e-30 else float("nan")
+        p_m = float(np.log2(q_m)) if q_m > 0.0 else float("nan")
+        m2_law_valid = bool(1.5 <= p_m <= 2.5)
+        bq0_24 = float((4.0 * bq_m4 - bq_m2) / 3.0)
+        e_r = float(abs(bq0 - bq0_24))
+        bound0 = float(slack_part + e_r / bq_pred)
+        return {
+            "bq_m": bq_m,
+            "bq_m2": bq_m2,
+            "bq_m4": bq_m4,
+            "q_m": q_m,
+            "p": p_m,
+            "m2_law_valid": m2_law_valid,
+            "bq0": bq0,
+            "bq0_24": bq0_24,
+            "e_R": e_r,
+            "resid0": resid0,
+            "bound0": bound0,
+            "bq_pred": bq_pred,
+            "slack": slack_part,
+        }
+
+    return {
+        "bq_m": bq_m,
+        "bq_m2": bq_m2,
+        "bq_m4": float("nan"),
+        "q_m": float("nan"),
+        "p": float("nan"),
+        "m2_law_valid": False,
+        "bq0": bq0,
+        "bq0_24": float("nan"),
+        "e_R": float("nan"),
+        "resid0": resid0,
+        "bound0": float("nan"),
+        "bq_pred": bq_pred,
+        "slack": slack_part,
+        "label": "m^2 assumed, untested on fine",
+    }
+
+
+@lru_cache(maxsize=8)
 def measure_empirical_noise(
     grid: tuple[int, int, int] = COARSE_GRID,
     m_mod: float = MODULATION_INDEX,

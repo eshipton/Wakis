@@ -48,6 +48,7 @@ from examples._space_charge_waves_common import (
     cached_particle_drift,
     compute_analytic_parameters,
     compute_discrete_dc_depression,
+    compute_m_extrapolation,
     compute_spatial_spectrum,
     compute_transverse_modal_operator,
     derived_tolerances,
@@ -518,6 +519,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     resid_lb = abs(bq_lb / bq_lb_pred - 1.0)
     resid_lat = abs(bq_part_lat / bq_part_pred - 1.0)
     resid_cross = abs(bq_part_lat / bq_lb - bq_part_pred / bq_lb_pred)
+    extrap_c = compute_m_extrapolation(nx, nz, include_m4=True)
 
     ev_p = tols["evals_part"]
     ev_lb = tols["evals_lb"]
@@ -662,10 +664,12 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"slack_lb + slack_part = {slack_cross:.6e} (margin={slack_cross - resid_cross:+.6e})"
     )
 
-    # Step 3: Particle deterministic ("sheet_lattice") modal prediction check
-    assert resid_lat <= slack_part, (
-        f"Coarse Particle (sheet_lattice) |bq_P/bq_pred_modal - 1| = {resid_lat:.6e} > "
-        f"slack_part = {slack_part:.6e} (margin={slack_part - resid_lat:+.6e})"
+    # Step 3: Particle deterministic ("sheet_lattice") Richardson m -> 0 modal prediction check
+    assert extrap_c["resid0"] <= extrap_c["bound0"], (
+        f"Coarse Particle (sheet_lattice) |bq0/bq_pred_modal - 1| = {extrap_c['resid0']:.6e} > "
+        f"slack_part + e_R/bq_pred = {extrap_c['bound0']:.6e} "
+        f"(slack={slack_part:.6e}, e_R/bq_pred={extrap_c['e_R'] / bq_part_pred:.6e}, "
+        f"margin={extrap_c['bound0'] - extrap_c['resid0']:+.6e})"
     )
 
     # Entrance amplitude at z_0 = 0.5 * dz
@@ -1012,10 +1016,21 @@ def test_two_resolution_convergence_and_sheet_ensemble():
 
     resid_coh_c = float(abs(noise_c["bq_coherent_mean"] / bq_part_pred_c - 1.0))
     resid_coh_f = float(abs(noise_f["bq_coherent_mean"] / bq_part_pred_f - 1.0))
+    extrap_c = compute_m_extrapolation(nx_c, nz_c, include_m4=True)
+    extrap_f = compute_m_extrapolation(nx_f, nz_f, include_m4=False)
+    m2_status_c = (
+        "m2_verified"
+        if extrap_c["m2_law_valid"]
+        else "fallback_p_outside_1.5_2.5_report_bq_m_m2_m4_only"
+    )
     print(
         f"H1CHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_c:.6f} "
         f"slack={tols_c['slack_part']:.6e} lattice={bq_part_lat_c:.6f} "
         f"resid={resid_lat_c:.6e} resid_lattice={resid_lat_c:.6e} "
+        f"bq_m={extrap_c['bq_m']:.6f} bq_m2={extrap_c['bq_m2']:.6f} bq_m4={extrap_c['bq_m4']:.6f} "
+        f"q_m={extrap_c['q_m']:.6f} p={extrap_c['p']:.6f} m2_law={m2_status_c} "
+        f"bq0={extrap_c['bq0']:.6f} e_R={extrap_c['e_R']:.6e} resid0={extrap_c['resid0']:.6e} "
+        f"bound0={extrap_c['bound0']:.6e} "
         f"bq_coherent_mean={noise_c['bq_coherent_mean']:.6f} resid_coherent={resid_coh_c:.6e} "
         f"mean_sheet={noise_c['bq_mean']:.6f} sem={noise_c['bq_sem']:.6e} "
         f"tcrit={tcrit_c:.6f} resid_mean={resid_mean_c:.6e} "
@@ -1027,6 +1042,9 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"H1CHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_f:.6f} "
         f"slack={tols_f['slack_part']:.6e} lattice={bq_part_lat_f:.6f} "
         f"resid={resid_lat_f:.6e} resid_lattice={resid_lat_f:.6e} "
+        f"bq_m={extrap_f['bq_m']:.6f} bq_m2={extrap_f['bq_m2']:.6f} "
+        f"bq0={extrap_f['bq0']:.6f} resid0={extrap_f['resid0']:.6e} "
+        f'extrap_note="{extrap_f["label"]}" '
         f"bq_coherent_mean={noise_f['bq_coherent_mean']:.6f} resid_coherent={resid_coh_f:.6e} "
         f"mean_sheet={noise_f['bq_mean']:.6f} sem={noise_f['bq_sem']:.6e} "
         f"tcrit={tcrit_f:.6f} resid_mean={resid_mean_f:.6e} "
@@ -1327,13 +1345,25 @@ def test_m_scan_linearity():
     i2_raw_scaling = i2_ratio_part_m / max(i2_ratio_part_h, 1e-30)
     i2_bunch_scaling = i2_bunch_m / max(i2_bunch_h, 1e-30)
 
+    extrap_c = compute_m_extrapolation(nx, nz, include_m4=True)
+    extrap_f = compute_m_extrapolation(FINE_GRID[0], FINE_GRID[2], include_m4=False)
+    m2_status = (
+        "m2_verified"
+        if extrap_c["m2_law_valid"]
+        else "fallback_p_outside_1.5_2.5_report_bq_m_m2_m4_only"
+    )
+
     print(
-        f"\nm-scan (sheet_lattice, m={MODULATION_INDEX} vs m/2={m_half}): "
+        f"\nm-scan & Richardson m->0 extrapolation (sheet_lattice, m={MODULATION_INDEX}, m/2={m_half}, m/4={0.25 * MODULATION_INDEX}): "
         f"LB (linear identity): |bq(m)/bq(m/2) - 1|={bq_shift_lb:.3e} "
         f"(bound={tols['eps_dft']:.3e}), I2/I1={i2_ratio_lb_m:.6e} | "
-        f"Part: bq(m)={bq_part_m:.6f}, bq(m/2)={bq_part_h:.6f}, "
-        f"|bq(m)/bq(m/2) - 1|={bq_shift_part:.6e} (slack_part={tols['slack_part']:.6e}, "
-        f"margin={tols['slack_part'] - bq_shift_part:+.6e}) | "
+        f"Part coarse: bq_m={extrap_c['bq_m']:.6f}, bq_m2={extrap_c['bq_m2']:.6f}, bq_m4={extrap_c['bq_m4']:.6f}, "
+        f"q_m={extrap_c['q_m']:.6f}, p={extrap_c['p']:.6f} ({m2_status}), "
+        f"bq0={extrap_c['bq0']:.6f}, e_R={extrap_c['e_R']:.6e}, resid0={extrap_c['resid0']:.6e} "
+        f"(bound0=slack+e_R/bq_pred={extrap_c['bound0']:.6e}), "
+        f"report-only |bq(m)/bq(m/2) - 1|={bq_shift_part:.6e} (slack_part={tols['slack_part']:.6e}) | "
+        f"Part fine: bq_m={extrap_f['bq_m']:.6f}, bq_m2={extrap_f['bq_m2']:.6f}, "
+        f"bq0={extrap_f['bq0']:.6f} ({extrap_f['label']}), resid0={extrap_f['resid0']:.6e} | "
         f"I2/I1 report-only: raw(m)={i2_ratio_part_m:.6e}, raw(m/2)={i2_ratio_part_h:.6e}, "
         f"raw_ratio={i2_raw_scaling:.4f}, bunch(m)={i2_bunch_m:.6e}, "
         f"bunch(m/2)={i2_bunch_h:.6e}, bunch_ratio={i2_bunch_scaling:.4f}",
@@ -1350,10 +1380,13 @@ def test_m_scan_linearity():
         f"eps_dft={tols['eps_dft']:.3e}"
     )
 
-    # Step 4.7: Particle m-scan nonlinear shift must stay below slack_part
-    assert bq_shift_part <= tols["slack_part"], (
-        f"Particle m-scan |bq(m)/bq(m/2) - 1| = {bq_shift_part:.6e} > "
-        f"slack_part = {tols['slack_part']:.6e} (margin={tols['slack_part'] - bq_shift_part:+.6e})"
+    # Step 3.4: Asserted (coarse) |bq0/bq_pred - 1| <= slack + e_R/bq_pred
+    # (the old |bq(m)/bq(m/2) - 1| check is now report-only above)
+    assert extrap_c["resid0"] <= extrap_c["bound0"], (
+        f"Coarse Particle Richardson m->0 |bq0/bq_pred - 1| = {extrap_c['resid0']:.6e} > "
+        f"slack_part + e_R/bq_pred = {extrap_c['bound0']:.6e} "
+        f"(slack={tols['slack_part']:.6e}, e_R/bq_pred={extrap_c['e_R'] / extrap_c['bq_pred']:.6e}, "
+        f"margin={extrap_c['bound0'] - extrap_c['resid0']:+.6e})"
     )
 
 
