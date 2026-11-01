@@ -14,7 +14,6 @@ time-domain drift runners.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Any
 
@@ -205,21 +204,29 @@ def _compute_multimode_fit_shift(
     return t1_val, t2_val, eps_fit_cont, eps_fit_grid
 
 
+def r_of_tau(
+    tau_val: float, u_dep: float, gamma_dep: float, b: float, a: float
+) -> float:
+    """Evaluate `reduction_factor_planar` at transverse decay wavenumber ``tau_val`` [rad/m]."""
+    omega_eff = float(tau_val * gamma_dep * u_dep)
+    return float(reduction_factor_planar(omega_eff, u_dep, b, a=a))
+
+
 def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
-    """Compute continuum space-charge-wave parameters at the DC-depressed equilibrium.
+    """Compute continuum space-charge-wave parameters at the self-consistent DC-depressed equilibrium.
 
     In an unneutralized planar electron sheet ``x in [-b, b]`` between grounded
     parallel plates at ``x = +-a``, the steady DC space-charge electric field
     ``E_x,DC(x)`` creates a potential trough ``phi_DC(x) < 0`` that slows the
     injected beam from ``u0`` to the cross-section-averaged equilibrium velocity
     ``u_dep = u0 * (1 - delta_u_dc)`` and increases the steady charge density by
-    continuity to ``rho_dep = rho0 * (u0 / u_dep)``, where::
+    continuity to ``rho_dep = rho0 * (u0 / u_dep)``. Starting from::
 
-        delta_u_dc = (omega_p**2 * b * (a - (2 / 3) * b)) / (gamma0**3 * u0**2)
+        delta0 = (omega_p0**2 * b * (a - (2 / 3) * b)) / (gamma0**3 * u0**2)
 
-    Evaluating both `LinearizedBeam` and the analytical planar dispersion
-    relation at the depressed equilibrium ``(u_dep, rho_dep, gamma_dep)`` removes
-    the leading ``O(delta_u_dc)`` DC velocity-depression bias (Option 3(ii)).
+    the self-consistent fractional velocity depression is iterated to convergence::
+
+        delta <- delta0 * (1 - delta)**(-3) * (gamma0 / gamma(u0 * (1 - delta)))**3
 
     Parameters
     ----------
@@ -251,8 +258,16 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     r_0 = float(reduction_factor_planar(omega, u0, b, a=a))
     beta_q_0 = r_0 * omega_p0 / (gamma0**1.5 * u0)
 
-    # Continuum 1D planar DC space-charge velocity depression across [-b, b]
-    delta_u_dc = (omega_p0**2 * b * (a - (2.0 / 3.0) * b)) / (gamma0**3 * u0**2)
+    # Self-consistent 1D planar DC space-charge velocity depression across [-b, b]
+    delta0 = (omega_p0**2 * b * (a - (2.0 / 3.0) * b)) / (gamma0**3 * u0**2)
+    delta_u_dc = float(delta0)
+    for _ in range(50):
+        u_try = u0 * (1.0 - delta_u_dc)
+        gamma_try = 1.0 / np.sqrt(1.0 - (u_try / c_light) ** 2)
+        delta_u_dc = float(
+            delta0 * ((1.0 - delta_u_dc) ** -3) * ((gamma0 / gamma_try) ** 3)
+        )
+
     u_dep = u0 * (1.0 - delta_u_dc)
     gamma_dep = float(1.0 / np.sqrt(1.0 - (u_dep / c_light) ** 2))
     rho_dep = rho0 * (u0 / u_dep)
@@ -265,8 +280,8 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     omega_q = r_factor * omega_p_dep / (gamma_dep**1.5)
     beta_q = omega_q / u_dep
 
-    t1_transverse, t2_transverse, eps_fit, _ = _compute_multimode_fit_shift(
-        tau, b, a, omega_p_dep, gamma_dep, u_dep, beta_e
+    t1_transverse, t2_transverse, eps_fit_cont, eps_fit_grid = (
+        _compute_multimode_fit_shift(tau, b, a, omega_p_dep, gamma_dep, u_dep, beta_e)
     )
 
     # Logarithmic sensitivity d(ln R)/d(ln tau) from (T1*b)*tan(T1*b) = (tau*b)*coth(tau*(a-b))
@@ -289,6 +304,7 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "beta_e_0": float(beta_e_0),
         "R_0": float(r_0),
         "beta_q_0": float(beta_q_0),
+        "delta0_u_dc": float(delta0),
         "delta_u_dc": float(delta_u_dc),
         "u_dep": float(u_dep),
         "gamma_dep": float(gamma_dep),
@@ -305,156 +321,232 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "beta_q": float(beta_q),
         "T1": float(t1_transverse),
         "T2": float(t2_transverse),
-        "eps_fit": float(eps_fit),
+        "eps_fit": float(eps_fit_cont),
+        "eps_fit_cont": float(eps_fit_cont),
+        "eps_fit_grid": float(eps_fit_grid),
         "lambda_e": float(2.0 * np.pi / beta_e),
         "lambda_0": float(2.0 * np.pi / k0),
         "lambda_p": float(2.0 * np.pi * u_dep / omega_p_dep),
         "lambda_q": float(2.0 * np.pi / beta_q),
         "I0": float(i0_dc),
         "I1_0": float(i1_entrance),
+        "qm_scale": float(qm_scale),
     }
 
 
+def compute_beta_q_at_depression(delta_meas: float, qm_scale: float = 1.0) -> float:
+    """Evaluate analytical ``beta_q,th(delta_meas)`` [rad/m] at measured DC depression ``delta_meas``."""
+    u0, _ = relativistic_gamma(voltage=V0_VOLTS)
+    omega = 2.0 * np.pi * DRIVE_FREQ_HZ
+    omega_p0 = 2.0 * np.pi * PLASMA_FREQ_HZ * np.sqrt(qm_scale)
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+
+    u_dep_m = u0 * (1.0 - float(delta_meas))
+    gamma_dep_m = float(1.0 / np.sqrt(1.0 - (u_dep_m / c_light) ** 2))
+    omega_p_dep_m = omega_p0 * np.sqrt(u0 / u_dep_m)
+    r_m = float(reduction_factor_planar(omega, u_dep_m, b, a=a))
+    return float(r_m * omega_p_dep_m / (gamma_dep_m**1.5 * u_dep_m))
+
+
+def predict_particle_beta_q(
+    delta_meas: float, tols: dict[str, float], qm_scale: float = 1.0
+) -> tuple[float, float]:
+    """Return ``(beta_q_th_at_delta_meas, beta_q_part_pred)`` [rad/m] for Step 4.2."""
+    bq_th_m = compute_beta_q_at_depression(delta_meas, qm_scale=qm_scale)
+    bq_pred = float(
+        bq_th_m
+        * (1.0 - tols["eps_cic"])
+        * (1.0 - tols["eps_z_fit"])
+        * (1.0 + tols["eps_x_fit"])
+        * (1.0 + tols["eps_fit"])
+    )
+    return bq_th_m, bq_pred
+
+
+def compute_discrete_dc_depression(nx: int, params: dict[str, float]) -> float:
+    """Solve the 1D discrete Poisson problem across ``x`` on ``nx`` cells for ``delta_th,disc``.
+
+    Deposits the top-hat sheet ``[-b, b]`` onto the ``nx + 1`` transverse nodes
+    using CIC weights, solves the 3-point discrete Poisson equation with PEC
+    boundary conditions ``phi(+-a) = 0``, takes the CIC particle-weighted mean
+    potential across the sheet, and divides by ``(gamma**3 * m * u**2 / e)``
+    with self-consistent iteration ``delta <- delta0_disc * (1 - delta)**(-3) * (gamma0 / gamma(u))**3``.
+    """
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    dx = 2.0 * a / nx
+    x_nodes = np.linspace(-a, a, nx + 1)
+
+    n_macro = 16 if nx == COARSE_GRID[0] else 32
+    k_idx = np.arange(n_macro, dtype=np.float64)
+    x_sheet = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+    w_mat = np.maximum(1.0 - np.abs(x_sheet[:, None] - x_nodes[None, :]) / dx, 0.0)
+    w_node = np.sum(w_mat, axis=0) * (2.0 * b / (n_macro * dx))
+
+    n_int = nx - 1
+    lap = (
+        np.diag(np.full(n_int, -2.0))
+        + np.diag(np.ones(n_int - 1), 1)
+        + np.diag(np.ones(n_int - 1), -1)
+    ) / (dx**2)
+
+    qm_scale = params.get("qm_scale", 1.0)
+    mass_eff = m_e / qm_scale
+    u0 = params["u0"]
+    gamma0 = params["gamma0"]
+    rho0 = abs(params["rho0"])
+
+    phi_0 = np.zeros(nx + 1, dtype=np.float64)
+    phi_0[1:-1] = np.linalg.solve(lap, -rho0 * w_node[1:-1] / epsilon_0)
+    phi_mean_0 = float(np.mean(w_mat @ phi_0))
+    delta0_disc = float(abs(phi_mean_0) / (gamma0**3 * mass_eff * u0**2 / e_charge))
+
+    delta_disc = delta0_disc
+    for _ in range(50):
+        u_try = u0 * (1.0 - delta_disc)
+        gamma_try = 1.0 / np.sqrt(1.0 - (u_try / c_light) ** 2)
+        delta_disc = float(
+            delta0_disc * ((1.0 - delta_disc) ** -3) * ((gamma0 / gamma_try) ** 3)
+        )
+    return float(delta_disc)
+
+
 def _single_grid_budget_terms(
-    nx: int, nz: int, params: dict[str, float], eps_noise: float
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    omega_p_scale: float = 1.0,
 ) -> dict[str, float]:
-    """Compute derived discretization and noise terms for a single grid ``(nx, 1, nz)``."""
+    """Compute derived discretization terms and slacks for grid ``(nx, 1, nz)``."""
     dx = 2.0 * TUNNEL_HALF_WIDTH_M / nx
     dz = TUNNEL_LENGTH_M / nz
     b = BEAM_HALF_THICKNESS_M
     a = TUNNEL_HALF_WIDTH_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+
+    omega = params["omega"]
+    u_dep = params["u_dep"]
+    gamma_dep = params["gamma_dep"]
+    omega_p_dep = params["omega_p"] * float(omega_p_scale)
     beta_e = params["beta_e"]
-    beta_q = params["beta_q"]
+    beta_q = params["beta_q"] * float(omega_p_scale)
+    k0 = params["k0"]
     t1 = params["T1"]
     r_fac = params["R"]
     dlnr_dlntau = params["dlnr_dlntau"]
-    dlnbq_ddelta = params["dlnbq_ddelta"]
-    delta_u_dc = params["delta_u_dc"]
-    gamma_dep = params["gamma_dep"]
 
-    # Relativistic factor d(ln tau)/d(ln k) = k^2 / tau^2 = gamma_dep^2 for tau^2 = k^2 - k0^2
-    dln_tau_dln_k = float(gamma_dep**2)
+    # Integer-period time step dt on (nx, 1, nz)
+    grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
+    dt, _ = _integer_period_dt(grid)
 
-    # 0. Discrete signed multi-mode Sturm-Liouville envelope-fit shift on (nx, 1, nz):
-    #    Evaluated using modes resolved below transverse Nyquist (T_n * dx < pi;
-    #    on coarse grid T_2 * dx ~ 1.7 rad).
-    _, t2, eps_fit = _compute_multimode_fit_shift(
+    # 0. Multi-mode fit shifts eps_fit,cont and eps_fit,grid on (nx, 1, nz)
+    _, t2, eps_fit_cont, eps_fit_grid = _compute_multimode_fit_shift(
         params["tau"],
         b,
         a,
-        params["omega_p"],
+        omega_p_dep,
         gamma_dep,
-        params["u_dep"],
+        u_dep,
+        beta_e,
         nx=nx,
         nz=nz,
     )
+    eps_fit = float(eps_fit_cont)
+    eps_fit_diff = float(abs(eps_fit_grid - eps_fit_cont))
 
-    # Shared SolverFIT3D field-discretization terms (apply to BOTH solvers):
-    # (a) 3-point transverse FIT Laplacian under-estimates T1^2 by -(T1*dx)^2/12;
-    #     from R^2 = tau^2/(tau^2 + T1^2), d(ln R) = -0.5*(1 - R^2)*d(ln T1^2):
+    # Shared SolverFIT3D field-discretization terms:
+    # (a) 3-point transverse FIT Laplacian under-estimates T1^2 by -(T1*dx)^2/12
     eps_x_fit = float(0.5 * (1.0 - r_fac**2) * (t1 * dx) ** 2 / 12.0)
-    # (b) Staggered Yee axial curl-curl operator has symbol (2/dz)*sin(k*dz/2)
-    #     = k*(1 - (k*dz)^2/24), shifting tau and R(tau) downward in both codes
-    #     with d(ln tau)/d(ln k) = gamma_dep^2:
-    eps_z_fit = float(dlnr_dlntau * dln_tau_dln_k * (beta_e * dz) ** 2 / 24.0)
+    # (b) Staggered Yee axial curl-curl symbol acting on the physical carrier beta_e
+    eps_z_fit = float(dlnr_dlntau * (gamma_dep**2) * (beta_e * dz) ** 2 / 24.0)
 
-    # 1. LinearizedBeam Eulerian carrier dispersion + numerical carrier k_car in R(tau)
-    #    + signed multi-mode null shift eps_fit:
-    eps_z_lb = float(1.0 / np.cos(beta_e * dz) - 1.0)
-    eps_tau_lb = float(dlnr_dlntau * dln_tau_dln_k * (beta_e * dz) ** 2 / 6.0)
-    eps_lead_lb_signed = float(eps_z_lb + eps_tau_lb - eps_z_fit + eps_x_fit + eps_fit)
+    # 1. LinearizedBeam exact discrete axial dispersion:
+    #    (2/dt)*tan(omega*dt/2) -+ omega_q(k_+-) = u_dep * sin(k_+- * dz) / dz
+    omega_dt_lhs = (2.0 / dt) * np.tan(0.5 * omega * dt)
 
-    # 2. ParticleSolver transverse CIC deposit/gather smoothing + shared FIT terms
-    #    + signed multi-mode null shift eps_fit:
+    def _omega_q_yee(k_val: float) -> float:
+        kappa = (2.0 / dz) * np.sin(0.5 * k_val * dz)
+        tau_y = float(np.sqrt(max(kappa**2 - k0**2, 1e-12)))
+        r_y = r_of_tau(tau_y, u_dep, gamma_dep, b, a)
+        return float(r_y * omega_p_dep / (gamma_dep**1.5))
+
+    k_lo = 0.5 * beta_e
+    k_hi = 0.99 * np.pi / (2.0 * dz)
+    k_minus = float(
+        brentq(
+            lambda k: omega_dt_lhs + _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
+            k_lo,
+            k_hi,
+        )
+    )
+    k_plus = float(
+        brentq(
+            lambda k: omega_dt_lhs - _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
+            k_lo,
+            k_hi,
+        )
+    )
+    bq_ax_disc = 0.5 * (k_plus - k_minus)
+    eps_ax = float(bq_ax_disc / beta_q - 1.0)
+    bq_lb_pred = float(bq_ax_disc * (1.0 + eps_x_fit) * (1.0 + eps_fit))
+    s_lb = float((abs(eps_ax) + abs(eps_x_fit) + abs(eps_fit)) ** 2 + eps_fit_diff)
+
+    # 2. ParticleSolver deterministic ("sheet_lattice") discretization factors & slack:
     eps_cic = float(1.0 - np.sqrt(1.0 - (2.0 / 3.0) * np.sin(0.5 * t1 * dx) ** 2))
-    eps_lead_part_signed = float(-eps_cic - eps_z_fit + eps_x_fit + eps_fit)
+    part_disc_factor = float(
+        (1.0 - eps_cic) * (1.0 - eps_z_fit) * (1.0 + eps_x_fit) * (1.0 + eps_fit)
+    )
+    s_part = float(
+        (abs(eps_cic) + abs(eps_z_fit) + abs(eps_x_fit) + abs(eps_fit)) ** 2
+        + eps_fit_diff
+    )
+    s_cross = float(s_lb + s_part)
 
-    # 3. DC space-charge depression tolerance and induced beta_q shift budget:
-    dep_tol = float(delta_u_dc**2 + (dx / (2.0 * b)) ** 2 * delta_u_dc)
-    eps_dc_res = float(dlnbq_ddelta * dep_tol)
+    # 3. Discrete 1D Poisson DC depression prediction on this grid:
+    delta_th_disc = compute_discrete_dc_depression(nx, params)
 
-    # 4. Step-edge transverse interface quadrature bound at x = +-b in LinearizedBeam:
-    #    The jump in phi_1''(x) across the top-hat beam edge x = +-b introduces an
-    #    O((dx / (2*b))^2) boundary-cell quadrature error in R^2 = tau^2 / (tau^2 + T1^2):
-    eps_quad_x = float(0.5 * (1.0 - r_fac**2) * (dx / (2.0 * b)) ** 2)
+    # 4. Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
+    tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
+    tol_amp_part = float(tol_amp_lb + 1e-12)
 
-    # 5. Residual DFT leakage after integer-period dt + time-mean subtraction
+    # 5. Residual DFT leakage bound (identity / round-off):
     eps_dft = float(100.0 * np.finfo(np.float64).eps / MODULATION_INDEX)
 
-    # 6. Empirical 3-sigma macroparticle noise measured across 8 seeds on this grid,
-    #    and the 8-seed ensemble mean noise (3*sigma/sqrt(8) and 1*sigma/sqrt(8)):
-    n_seeds = float(len(NOISE_SEEDS))
-    eps_noise_val = float(eps_noise)
-    eps_noise_mean = float(eps_noise_val / np.sqrt(n_seeds))
-    sigma_mean = float(eps_noise_val / (3.0 * np.sqrt(n_seeds)))
-
-    # Slack terms and total bounds: exact sum of constituent magnitudes
-    slack_lb = float(eps_quad_x + eps_dft)
-    slack_part = float(eps_dc_res + eps_dft + eps_noise_val)
-    slack_part_mean = float(eps_dc_res + eps_dft + eps_noise_mean)
-    slack_part_det = float(eps_dc_res + eps_dft)
-    tol_lb = float(abs(eps_lead_lb_signed) + slack_lb)
-    tol_part = float(abs(eps_lead_part_signed) + slack_part)
-    tol_cross = float(tol_lb + tol_part)
-
-    # Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
-    tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
-    tol_amp_part = float(0.5 * (beta_q * dz) ** 2 + 0.5 * (dx / (2.0 * b)) ** 2)
-
-    # Heuristic cross-code launch-offset bound |z0_part - z0_lb|:
-    # half-cell entrance stagger 0.5 * dz plus cathode-sheath depression scale delta_u_dc / beta_q
-    tol_z0 = float(0.5 * dz + delta_u_dc / beta_q)
-
-    # Derived 3-null least-squares residual bounds |z_m - (z0 + (m + 0.5)*pi/beta_q)|:
-    # - LinearizedBeam: half-cell axial sampling 0.5*dz plus multi-mode null shift eps_fit*lambda_q
-    # - ParticleSolver: adds half-beat noise & DC residual displacement 0.5*(eps_noise + eps_dc_res)*lambda_q
-    lam_q = params["lambda_q"]
-    tol_null_res_lb = float(0.5 * dz + abs(eps_fit) * lam_q)
-    tol_null_res_part = float(
-        tol_null_res_lb + 0.5 * (eps_noise_val + eps_dc_res) * lam_q
-    )
-
-    # Second-harmonic bounds over z in [0, lambda_q]:
-    # - LinearizedBeam: C^1 raised-cosine turn-on ramp (N_rise = RISE_PERIODS) spectral tail
-    #   leaking across the N_per = 6-period rectangular DFT window: 1 / ((2*N_rise)^2 * pi * N_per)
-    # - ParticleSolver: order-of-magnitude ballistic bunching estimate X(lambda_q) = pi * m
+    # 6. LinearizedBeam 2*omega C^1 turn-on ramp transient tail:
     n_rise = float(RISE_PERIODS)
     n_per = 6.0
     tol_i2_lb = float(1.0 / ((2.0 * n_rise) ** 2 * np.pi * n_per))
-    tol_i2_part = float(0.5 * MODULATION_INDEX * beta_q * lam_q)
+
+    # 7. Two-sided 99.73% Student-t critical value for 8 seeds (dof = 7):
+    tcrit = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
 
     return {
         "t2_dx": float(t2 * dx),
-        "eps_z_lb": eps_z_lb,
-        "eps_tau_lb": eps_tau_lb,
-        "eps_z_fit": eps_z_fit,
+        "k_minus": k_minus,
+        "k_plus": k_plus,
+        "bq_ax_disc": bq_ax_disc,
+        "eps_ax": eps_ax,
         "eps_x_fit": eps_x_fit,
-        "eps_quad_x": eps_quad_x,
-        "eps_fit": eps_fit,
-        "eps_lead_lb_signed": eps_lead_lb_signed,
+        "eps_z_fit": eps_z_fit,
         "eps_cic": eps_cic,
-        "eps_lead_part_signed": eps_lead_part_signed,
-        "dep_tol": dep_tol,
-        "eps_dc_res": eps_dc_res,
-        "eps_dft": eps_dft,
-        "eps_noise": eps_noise_val,
-        "eps_noise_mean": eps_noise_mean,
-        "sigma_mean": sigma_mean,
-        "slack_lb": slack_lb,
-        "slack_part": slack_part,
-        "slack_part_mean": slack_part_mean,
-        "slack_part_det": slack_part_det,
-        "tol_lb": tol_lb,
-        "tol_part": tol_part,
-        "tol_cross": tol_cross,
+        "eps_fit": eps_fit,
+        "eps_fit_cont": eps_fit_cont,
+        "eps_fit_grid": eps_fit_grid,
+        "eps_fit_diff": eps_fit_diff,
+        "bq_lb_pred": bq_lb_pred,
+        "part_disc_factor": part_disc_factor,
+        "s_lb": s_lb,
+        "s_part": s_part,
+        "s_cross": s_cross,
+        "delta_th": float(params["delta_u_dc"]),
+        "delta_th_disc": delta_th_disc,
         "tol_amp_lb": tol_amp_lb,
         "tol_amp_part": tol_amp_part,
-        "tol_z0": tol_z0,
-        "tol_null_res_lb": tol_null_res_lb,
-        "tol_null_res_part": tol_null_res_part,
+        "eps_dft": eps_dft,
         "tol_i2_lb": tol_i2_lb,
-        "tol_i2_part": tol_i2_part,
-        "tol_i2_ratio": tol_i2_part,
+        "tcrit": tcrit,
     }
 
 
@@ -462,61 +554,9 @@ def derived_tolerances(
     nx: int,
     nz: int,
     params: dict[str, float],
-    eps_noise_coarse: float,
-    eps_noise_fine: float | None = None,
+    omega_p_scale: float = 1.0,
 ) -> dict[str, float]:
-    """Build the error budget and convergence-order bands term by term from analytical derivations.
-
-    Every budget term is computed without ad-hoc multipliers:
-
-    1. **Shared `SolverFIT3D` field operators (`eps_x_fit`, `eps_z_fit`)**:
-       Both solvers couple to the same `SolverFIT3D` grid. From
-       ``R**2 = tau**2 / (tau**2 + T1**2)``, a relative error ``-(T1 * dx)**2 / 12``
-       in the 3-point transverse FIT Laplacian ``T1**2`` shifts ``beta_q`` upward
-       in both codes by ``eps_x_fit = +0.5 * (1 - R**2) * (T1 * dx)**2 / 12``.
-       Simultaneously, the staggered Yee axial curl-curl stencil has symbol
-       ``(2 / dz) * sin(k * dz / 2) = k * (1 - (k * dz)**2 / 24)``, shifting
-       ``R(tau)`` downward in both codes by
-       ``eps_z_fit = (d ln R / d ln tau) * gamma_dep**2 * (beta_e * dz)**2 / 24``.
-    2. **Discrete signed multi-mode envelope-fit shift (`eps_fit`)**:
-       Higher-order Sturm-Liouville slab modes ``n >= 2`` resolved on the grid
-       (``T_n * dx < pi``; on the coarse grid ``T_2 * dx ~ 1.7 rad``) shift the
-       standing-wave nulls upward in ``beta_q`` by ``eps_fit``, which is included
-       directly in ``eps_lead_lb_signed`` and ``eps_lead_part_signed``.
-    3. **Eulerian dispersion of `LinearizedBeam` (`eps_z_lb`, `eps_tau_lb`)**:
-       Centered axial differences ``(f_{k+1} - f_{k-1}) / (2 * dz)`` give a
-       carrier group velocity ``u_g = u_dep * cos(beta_e * dz)``, shifting
-       ``beta_q = omega_q / u_g`` upward by ``eps_z_lb = 1 / cos(beta_e * dz) - 1``.
-       In addition, `SolverFIT3D` sees `LinearizedBeam`'s numerical carrier
-       wavenumber ``k_car = arcsin(beta_e * dz) / dz = beta_e * (1 + (beta_e * dz)**2 / 6)``,
-       which increases ``tau`` and shifts ``R(tau)`` upward by
-       ``eps_tau_lb = (d ln R / d ln tau) * gamma_dep**2 * (beta_e * dz)**2 / 6``.
-       Thus ``eps_lead_lb_signed = +eps_z_lb + eps_tau_lb - eps_z_fit + eps_x_fit + eps_fit``.
-    4. **CIC smoothing in `ParticleSolver` (`eps_cic`)**:
-       Staggered axial CIC gather/Esirkepov deposit has ``kappa_z**2 == 1``
-       (`wakis/particles/solver.py:420`), while nodal transverse CIC
-       deposit/gather (``p = p_g = 1``) attenuates ``T1`` by
-       ``kappa_x**2 = 1 - (2 / 3) * sin(T1 * dx / 2)**2``, shifting ``beta_q``
-       downward by ``eps_cic = 1 - sqrt(1 - (2 / 3) * sin(T1 * dx / 2)**2)``.
-       Combined with the shared field-solver and multi-mode terms,
-       ``eps_lead_part_signed = -eps_cic - eps_z_fit + eps_x_fit + eps_fit``.
-    5. **DC space-charge depression tolerance (`dep_tol`, `eps_dc_res`)**:
-       Higher-order self-consistent density enhancement ``delta_u_dc**2`` plus
-       transverse grid/CIC quadrature ``(dx / (2 * b))**2 * delta_u_dc`` bounds
-       the DC depression residual by ``dep_tol``, which shifts ``beta_q`` by at
-       most ``eps_dc_res = (d ln beta_q / d delta_u) * dep_tol``.
-    6. **Residual DFT leakage (`eps_dft`)**:
-       With ``dt = 1 / (f * N_spp)`` chosen so the 6-period DFT window contains
-       an exact integer number of steps ``6 * N_spp`` and per-edge mean
-       subtraction applied before the DFT, residual DC leakage is bounded by
-       ``eps_dft = 100 * eps_mach / m``.
-    7. **Empirical macroparticle noise (`eps_noise`, `eps_noise_mean`)**:
-       Measured ``3 * sigma / beta_q`` across 8 independent transverse RNG seeds
-       on each grid (`eps_noise_coarse` on `COARSE_GRID`, `eps_noise_fine` on
-       `FINE_GRID`), with 8-seed mean uncertainty ``eps_noise / sqrt(8)``.
-    8. **Derived convergence-order bands**:
-       Computed from the signed predictions ``e_c, e_f`` and slacks ``s_c, s_f``
-       (including 8-seed mean noise ``slack_part_mean`` for `ParticleSolver`).
+    """Build the Step 4 predictions and discretization slacks for grid ``(nx, 1, nz)``.
 
     Parameters
     ----------
@@ -524,125 +564,41 @@ def derived_tolerances(
         Transverse and axial grid cell counts.
     params : dict of str to float
         Output of :func:`compute_analytic_parameters`.
-    eps_noise_coarse : float
-        Empirical ``3 * sigma / beta_q`` measured across 8 seeds on `COARSE_GRID`.
-    eps_noise_fine : float, optional
-        Empirical ``3 * sigma / beta_q`` measured across 8 seeds on `FINE_GRID`.
-        If omitted, defaults to ``eps_noise_coarse`` when ``(nx, nz) == COARSE_GRID[::2]``
-        or the cell-count scaling estimate otherwise.
+    omega_p_scale : float, optional
+        Multiplier on ``omega_p,dep`` for `LinearizedBeam` (``1.0`` for baseline,
+        ``sqrt(2)`` for the M2 ``rho0 * 2`` mutation). Default is ``1.0``.
 
     Returns
     -------
     dict of str to float
-        Dictionary containing every individual budget term, total bounds, and
-        derived convergence-order bands.
+        Dictionary of discrete dispersion predictions, individual epsilon terms,
+        slacks ``s_lb``, ``s_part``, ``s_cross``, discrete DC depression
+        ``delta_th_disc``, entrance amplitude bounds, and DFT round-off bound.
     """
-    if eps_noise_fine is None:
-        eps_noise_fine = float(
-            eps_noise_coarse
-            * np.sqrt(
-                (COARSE_GRID[0] / FINE_GRID[0]) * (COARSE_GRID[2] / FINE_GRID[2])
-            )
-        )
-    eps_noise_this = eps_noise_coarse if nx == COARSE_GRID[0] else eps_noise_fine
-
-    terms = _single_grid_budget_terms(nx, nz, params, eps_noise_this)
-    tc = _single_grid_budget_terms(
-        COARSE_GRID[0], COARSE_GRID[2], params, eps_noise_coarse
-    )
-    tf = _single_grid_budget_terms(FINE_GRID[0], FINE_GRID[2], params, eps_noise_fine)
-
-    # Derived 2-grid convergence-order bands p in log2((|e_c| -+ s_c) / (|e_f| +- s_f))
-    e_lb_c, s_lb_c = abs(tc["eps_lead_lb_signed"]), tc["slack_lb"]
-    e_lb_f, s_lb_f = abs(tf["eps_lead_lb_signed"]), tf["slack_lb"]
-    order_lb_min = float(np.log2((e_lb_c - s_lb_c) / (e_lb_f + s_lb_f)))
-    order_lb_max = float(np.log2((e_lb_c + s_lb_c) / (e_lb_f - s_lb_f)))
-
-    # ParticleSolver 8-seed mean convergence band including 8-seed mean noise slack_part_mean
-    e_part_c, s_part_c = abs(tc["eps_lead_part_signed"]), tc["slack_part_mean"]
-    e_part_f, s_part_f = abs(tf["eps_lead_part_signed"]), tf["slack_part_mean"]
-    num_min = max(e_part_c - s_part_c, 1e-12)
-    den_min = max(e_part_f - s_part_f, 1e-12)
-    order_part_min = float(np.log2(num_min / (e_part_f + s_part_f)))
-    order_part_max = float(np.log2((e_part_c + s_part_c) / den_min))
-
-    # Deterministic-only particle band (without seed noise) for reference
-    order_part_det_min = float(
-        np.log2(
-            (e_part_c - tc["slack_part_det"]) / (e_part_f + tf["slack_part_det"])
-        )
-    )
-    order_part_det_max = float(
-        np.log2(
-            (e_part_c + tc["slack_part_det"])
-            / max(e_part_f - tf["slack_part_det"], 1e-12)
-        )
-    )
-
-    # Cross-code band (uninformative because noise + slacks span nearly three octaves)
-    e_cross_c = abs(tc["eps_lead_part_signed"] - tc["eps_lead_lb_signed"]) / (
-        1.0 + tc["eps_lead_lb_signed"]
-    )
-    e_cross_f = abs(tf["eps_lead_part_signed"] - tf["eps_lead_lb_signed"]) / (
-        1.0 + tf["eps_lead_lb_signed"]
-    )
-    s_cross_c = tc["slack_lb"] + tc["slack_part_mean"]
-    s_cross_f = tf["slack_lb"] + tf["slack_part_mean"]
-    order_cross_min = float(
-        np.log2(max(e_cross_c - s_cross_c, 1e-12) / (e_cross_f + s_cross_f))
-    )
-    order_cross_max = float(
-        np.log2((e_cross_c + s_cross_c) / max(e_cross_f - s_cross_f, 1e-12))
-    )
-
-    terms.update(
-        {
-            "order_lb_min": order_lb_min,
-            "order_lb_max": order_lb_max,
-            "order_part_min": order_part_min,
-            "order_part_max": order_part_max,
-            "order_part_det_min": order_part_det_min,
-            "order_part_det_max": order_part_det_max,
-            "order_cross_min": order_cross_min,
-            "order_cross_max": order_cross_max,
-        }
-    )
-    return terms
+    return _single_grid_budget_terms(nx, nz, params, omega_p_scale=omega_p_scale)
 
 
 def format_error_budget(nx: int, nz: int, tols: dict[str, float]) -> str:
-    """Format every budget term and asserted bound for grid ``(nx, 1, nz)``."""
+    """Format every Step 4 budget term and slack for grid ``(nx, 1, nz)``."""
     lines = [
         f"Error budget for grid ({nx}, 1, {nz}):",
-        f"  eps_z_lb (1/cos(beta_e*dz) - 1)                   : {tols['eps_z_lb']:.6%}",
-        f"  eps_tau_lb (dlnR/dlntau*gamma^2*(beta_e*dz)^2/6)  : {tols['eps_tau_lb']:.6%}",
-        f"  eps_z_fit (dlnR/dlntau*gamma^2*(beta_e*dz)^2/24)  : {tols['eps_z_fit']:.6%}",
-        f"  eps_x_fit (0.5*(1-R^2)*(T1*dx)^2/12)              : {tols['eps_x_fit']:.6%}",
-        f"  eps_fit (discrete signed multi-mode null shift)   : {tols['eps_fit']:+.6%} (T2*dx={tols['t2_dx']:.3f} rad)",
-        f"  eps_lead_lb_signed                                : {tols['eps_lead_lb_signed']:+.6%}",
-        f"  eps_cic (transverse CIC)                          : {tols['eps_cic']:.6%}",
-        f"  eps_lead_part_signed                              : {tols['eps_lead_part_signed']:+.6%}",
-        f"  dep_tol (DC depression bound)                     : {tols['dep_tol']:.6%}",
-        f"  eps_dc_res (dlnbq/ddelta * dep_tol)               : {tols['eps_dc_res']:.6%}",
-        f"  eps_quad_x (0.5*(1-R^2)*(dx/(2b))^2)              : {tols['eps_quad_x']:.6%}",
-        f"  eps_dft (residual DC leakage)                     : {tols['eps_dft']:.6e}",
-        f"  eps_noise (measured 8-seed 3*sigma)               : {tols['eps_noise']:.6%}",
-        f"  eps_noise_mean (measured 3*sigma/sqrt(8))         : {tols['eps_noise_mean']:.6%} (1*sigma/sqrt(8)={tols['sigma_mean']:.6%})",
-        f"  slack_lb (eps_quad_x + eps_dft)                   : {tols['slack_lb']:.6%}",
-        f"  slack_part_mean (eps_dc_res + eps_dft + 3s/sqrt8) : {tols['slack_part_mean']:.6%}",
-        f"  tol_lb (asserted LB bound)                        : {tols['tol_lb']:.6%}",
-        f"  tol_part (asserted single-seed Part bound)        : {tols['tol_part']:.6%}",
-        f"  tol_cross (asserted cross bound)                  : {tols['tol_cross']:.6%}",
-        f"  tol_amp_lb (entrance |I1(0)|)                     : {tols['tol_amp_lb']:.6e}",
-        f"  tol_amp_part (entrance |I1(0)|)                   : {tols['tol_amp_part']:.6e}",
-        f"  tol_z0 (heuristic |z0_part - z0_lb|)              : {tols['tol_z0'] * 1e3:.4f} mm",
-        f"  tol_null_res_lb (derived 3-null residual bound)   : {tols['tol_null_res_lb'] * 1e3:.4f} mm",
-        f"  tol_null_res_part (derived 3-null residual bound) : {tols['tol_null_res_part'] * 1e3:.4f} mm",
-        f"  tol_i2_lb (2*omega ramp transient)                : {tols['tol_i2_lb']:.6%}",
-        f"  tol_i2_part (order-of-magnitude pi*m estimate)    : {tols['tol_i2_part']:.6%}",
-        f"  order_lb band                                     : [{tols['order_lb_min']:.3f}, {tols['order_lb_max']:.3f}]",
-        f"  order_part band (with 8-seed mean noise)          : [{tols['order_part_min']:.3f}, {tols['order_part_max']:.3f}]",
-        f"  order_cross band (uninformative)                  : [{tols['order_cross_min']:.3f}, {tols['order_cross_max']:.3f}]",
+        f"  k_-, k_+ (exact discrete LB branches)             : ({tols['k_minus']:.4f}, {tols['k_plus']:.4f}) rad/m",
+        f"  eps_ax ((k_+ - k_-)/(2*bq_th) - 1)                : {tols['eps_ax']:+.6%}",
+        f"  eps_x_fit (0.5*(1-R^2)*(T1*dx)^2/12)              : {tols['eps_x_fit']:+.6%}",
+        f"  eps_z_fit' (dlnR/dlntau*gamma^2*(beta_e*dz)^2/24) : {tols['eps_z_fit']:+.6%}",
+        f"  eps_cic (transverse CIC)                          : {tols['eps_cic']:+.6%}",
+        f"  eps_fit,cont (continuum multi-mode shift)         : {tols['eps_fit_cont']:+.6%} (T2*dx={tols['t2_dx']:.3f} rad)",
+        f"  eps_fit,grid (discrete CIC multi-mode shift)      : {tols['eps_fit_grid']:+.6%}",
+        f"  |eps_fit,grid - eps_fit,cont|                     : {tols['eps_fit_diff']:.6%}",
+        f"  bq_lb_pred                                        : {tols['bq_lb_pred']:.6f} rad/m",
+        f"  s_lb (LB slack)                                   : {tols['s_lb']:.6%}",
+        f"  s_part (Particle slack)                           : {tols['s_part']:.6%}",
+        f"  s_cross (s_lb + s_part)                           : {tols['s_cross']:.6%}",
+        f"  delta_th (self-consistent continuum DC dep)       : {tols['delta_th']:.6%}",
+        f"  delta_th_disc (1D discrete Poisson CIC DC dep)    : {tols['delta_th_disc']:.6%}",
+        f"  tol_amp_lb (0.5*(bq*dz)^2)                        : {tols['tol_amp_lb']:.6e}",
+        f"  tol_amp_part (tol_amp_lb + 1e-12)                 : {tols['tol_amp_part']:.6e}",
+        f"  eps_dft (100*eps_mach/m)                          : {tols['eps_dft']:.6e}",
     ]
     return "\n".join(lines)
 
@@ -870,11 +826,11 @@ def compute_spatial_spectrum(
     return kz_grid, spectrum, k_fast_peak, k_slow_peak
 
 
-def _integer_period_dt(grid: GridFIT3D) -> tuple[float, int]:
+def _integer_period_dt(grid: GridFIT3D, cfln: float = CFL_NUMBER) -> tuple[float, int]:
     """Choose ``dt <= dt_cfl`` so ``1 / (DRIVE_FREQ_HZ * dt)`` is an exact integer `n_spp`."""
     s_tmp = SolverFIT3D(
         grid,
-        cfln=CFL_NUMBER,
+        cfln=cfln,
         bc_low=["pec", "periodic", "pec"],
         bc_high=["pec", "periodic", "pec"],
         use_gpu=False,
@@ -891,6 +847,7 @@ def run_linearized_beam_drift(
     nz: int,
     rho0_scale: float = 1.0,
     m_mod: float = MODULATION_INDEX,
+    rho0_profile: Any = None,
 ) -> dict[str, Any]:
     """Run `LinearizedBeam` in the planar drift tunnel using the public `inflow_rho1` API.
 
@@ -906,19 +863,22 @@ def run_linearized_beam_drift(
         baseline entrance density modulation ``m * rho_dep * sin(omega * t)``.
     m_mod : float, optional
         Fractional AC density modulation depth ``m``. Default is ``MODULATION_INDEX``.
+    rho0_profile : callable or array_like, optional
+        Optional transverse/3D unperturbed charge density ``rho0`` passed to
+        `LinearizedBeam` (used in D3 for the semicircular profile). Default is ``None``.
 
     Returns
     -------
     dict of str to Any
         Dictionary with keys ``beam``, ``z_coords``, ``i1_lb``, ``i2_lb``,
-        ``dc_leakage_lb``, ``dt``, and ``n_spp``.
+        ``dc_leakage_lb``, ``dirichlet_leak_lb``, ``dt``, and ``n_spp``.
     """
     params = compute_analytic_parameters()
     u_dep = params["u_dep"]
     gamma_dep = params["gamma_dep"]
     omega = params["omega"]
     rho_dep = params["rho_dep"]
-    rho0_val = rho0_scale * rho_dep
+    rho0_val = rho0_profile if rho0_profile is not None else (rho0_scale * rho_dep)
     a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
     ly = PERIODIC_LY_M
@@ -992,6 +952,7 @@ def run_linearized_beam_drift(
         "i1_lb": i1_lb,
         "i2_lb": i2_lb,
         "dc_leakage_lb": float(max(dc_leak, dirichlet_leak)),
+        "dirichlet_leak_lb": dirichlet_leak,
         "dt": dt,
         "n_spp": n_spp,
     }
@@ -1005,6 +966,8 @@ def run_particle_beam_drift(
     seed: int = 42,
     m_mod: float = MODULATION_INDEX,
     profile: str = "sheet_lattice",
+    cfln: float = CFL_NUMBER,
+    n_macro_per_step: int | None = None,
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -1041,13 +1004,18 @@ def run_particle_beam_drift(
         Transverse `BeamInjector` sampling profile (``"sheet_lattice"`` for
         deterministic stratum midpoints or ``"sheet"`` for seeded stratified
         draws). Default is ``"sheet_lattice"``.
+    cfln : float, optional
+        Courant number passed to `SolverFIT3D`. Default is ``CFL_NUMBER``.
+    n_macro_per_step : int, optional
+        Number of macroparticles injected per step. If ``None``, defaults to
+        ``16`` on ``COARSE_GRID`` and ``32`` on ``FINE_GRID``.
 
     Returns
     -------
     dict of str to Any
         Dictionary with keys ``i1_part``, ``i2_part``, ``dc_leakage_part``,
-        ``u_z_mean``, ``rho_dc_mean``, ``u_z_profile``, ``rho_dc_profile``,
-        ``dt``, and ``n_spp``.
+        ``dirichlet_leak_part``, ``u_z_mean``, ``rho_dc_mean``, ``u_z_profile``,
+        ``rho_dc_profile``, ``dt``, and ``n_spp``.
     """
     params = compute_analytic_parameters(qm_scale=qm_scale)
     u_dep = params["u_dep"]
@@ -1061,10 +1029,10 @@ def run_particle_beam_drift(
     t_rise = RISE_PERIODS / DRIVE_FREQ_HZ
 
     grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
-    dt, n_spp = _integer_period_dt(grid)
+    dt, n_spp = _integer_period_dt(grid, cfln=cfln)
     solver = SolverFIT3D(
         grid,
-        cfln=CFL_NUMBER,
+        cfln=cfln,
         dt=dt,
         bc_low=["pec", "periodic", "pec"],
         bc_high=["pec", "periodic", "pec"],
@@ -1078,7 +1046,11 @@ def run_particle_beam_drift(
         ramp_t = 0.5 * (1.0 - np.cos(np.pi * min(t / t_rise, 1.0)))
         return i0_dc * (1.0 + m_mod * ramp_t * np.sin(omega * t))
 
-    n_macro = 16 if nx == COARSE_GRID[0] else 32
+    n_macro = (
+        int(n_macro_per_step)
+        if n_macro_per_step is not None
+        else (16 if nx == COARSE_GRID[0] else 32)
+    )
     inj = BeamInjector(
         species=sp,
         z0=0.0,
@@ -1168,6 +1140,7 @@ def run_particle_beam_drift(
         "i1_part": i1_part,
         "i2_part": i2_part,
         "dc_leakage_part": float(max(dc_leak, dirichlet_leak)),
+        "dirichlet_leak_part": dirichlet_leak,
         "u_z_mean": u_z_mean,
         "rho_dc_mean": rho_dc_mean,
         "u_z_profile": u_z_profile,
@@ -1177,107 +1150,162 @@ def run_particle_beam_drift(
     }
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=16)
+def cached_linearized_beam_drift(
+    nx: int,
+    nz: int,
+    rho0_scale: float = 1.0,
+    m_mod: float = MODULATION_INDEX,
+) -> dict[str, Any]:
+    """Cache `LinearizedBeam` runs by ``(nx, nz, rho0_scale, m_mod)``."""
+    return run_linearized_beam_drift(nx, nz, rho0_scale=rho0_scale, m_mod=m_mod)
+
+
+@lru_cache(maxsize=64)
+def cached_particle_drift(
+    nx: int,
+    nz: int,
+    profile: str = "sheet_lattice",
+    seed: int = 42,
+    m_mod: float = MODULATION_INDEX,
+    qm_scale: float = 1.0,
+) -> dict[str, Any]:
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale)``."""
+    lb_ref = cached_linearized_beam_drift(
+        nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
+    )
+    return run_particle_beam_drift(
+        nx,
+        nz,
+        beam_ref=lb_ref["beam"],
+        qm_scale=qm_scale,
+        seed=seed,
+        m_mod=m_mod,
+        profile=profile,
+    )
+
+
+@lru_cache(maxsize=8)
 def cached_baseline_pair(
     nx: int, nz: int, m_mod: float = MODULATION_INDEX
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Cache baseline `(LinearizedBeam, ParticleSolver)` runs for `(nx, nz, m_mod)`."""
-    lb_res = run_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
-    part_res = run_particle_beam_drift(
+    """Cache deterministic ``("sheet_lattice")`` baseline `(LinearizedBeam, ParticleSolver)` runs."""
+    lb_res = cached_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
+    part_res = cached_particle_drift(
         nx,
         nz,
-        beam_ref=lb_res["beam"],
-        qm_scale=1.0,
+        profile="sheet_lattice",
         seed=NOISE_SEEDS[0],
         m_mod=m_mod,
-        profile="sheet_lattice",
+        qm_scale=1.0,
     )
     return lb_res, part_res
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def measure_empirical_noise(
     grid: tuple[int, int, int] = COARSE_GRID,
     m_mod: float = MODULATION_INDEX,
 ) -> dict[str, Any]:
-    """Measure empirical 8-seed `beta_q` and coherent-bunching `I2` statistics with `profile='sheet'`.
+    """Measure empirical 8-seed ``profile='sheet'`` statistics on ``grid``.
 
     Runs seeds ``42..49`` on ``grid`` at modulation depth ``m_mod`` using
     ``profile='sheet'`` (one seeded uniform draw per stratum per step from
-    ``BeamInjector._step_rng``), fits ``(beta_q, z0)`` over all 3 standing-wave
-    nulls in ``[0, FIT_WINDOW_LAMBDA_Q * lambda_q]`` for each seed, and extracts
-    the coherent ballistic-bunching second-harmonic ratio ``|I2_bunch| / |I1(0)|``.
+    ``BeamInjector._step_rng``), fits the two-wave model over ``fit_window(params)``
+    for each seed, and computes the 8-seed mean, standard error of the mean
+    ``SEM = std(ddof=1) / sqrt(8)``, and two-sided 99.73% Student-t critical
+    value ``t = scipy.stats.t.ppf(0.99865, 7)`` for ``beta_q``, DC depression
+    ``delta_meas``, and entrance amplitude ``|I1(z_0)|``.
     """
     params = compute_analytic_parameters()
     nx, _, nz = grid
-    lb_res, _ = cached_baseline_pair(nx, nz, m_mod=m_mod)
-    beam_ref = lb_res["beam"]
+    lb_res = cached_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
     z_coords = lb_res["z_coords"]
     beta_e = params["beta_e"]
     beta_q_th = params["beta_q"]
     lam_q = params["lambda_q"]
-    z_max_fit = FIT_WINDOW_LAMBDA_Q * lam_q
+    z_min, z_max = fit_window(params)
+    u0 = params["u0"]
 
-    def _run_seed(
-        seed: int,
-    ) -> tuple[float, float, np.ndarray, np.ndarray, float, np.ndarray]:
-        res = run_particle_beam_drift(
+    bq_list: list[float] = []
+    z0_list: list[float] = []
+    delta_list: list[float] = []
+    amp0_list: list[float] = []
+    i2_bunch_list: list[float] = []
+    i1_list: list[np.ndarray] = []
+
+    for seed in NOISE_SEEDS:
+        res = cached_particle_drift(
             nx,
             nz,
-            beam_ref=beam_ref,
-            qm_scale=1.0,
+            profile="sheet",
             seed=seed,
             m_mod=m_mod,
-            profile="sheet",
+            qm_scale=1.0,
         )
         i1 = res["i1_part"]
         i2 = res["i2_part"]
-        bq_s, z0_s, nulls_s, res_s = fit_beta_q_from_envelope(
-            z_coords, i1, beta_q_th, z_max=z_max_fit, return_residuals=True
+        fit_s = fit_beta_q_from_envelope(
+            z_coords, i1, beta_q_th, z_min=z_min, z_max=z_max
         )
         i2_bunch_s = extract_coherent_bunching_i2_ratio(
             z_coords, i1, i2, beta_e, beta_q_th, z_max=lam_q
         )
-        return bq_s, z0_s, nulls_s, res_s, i2_bunch_s, i1
+        bq_list.append(float(fit_s["beta_q"]))
+        z0_list.append(float(fit_s["z0"]))
+        delta_list.append(float((u0 - res["u_z_mean"]) / u0))
+        amp0_list.append(float(np.abs(i1[0])))
+        i2_bunch_list.append(float(i2_bunch_s))
+        i1_list.append(i1)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(_run_seed, NOISE_SEEDS))
+    n_seeds = len(NOISE_SEEDS)
+    tcrit = float(student_t.ppf(0.99865, n_seeds - 1))
 
-    bq_seeds = np.array([r[0] for r in results], dtype=np.float64)
-    z0_seeds = np.array([r[1] for r in results], dtype=np.float64)
-    nulls_seeds = [r[2] for r in results]
-    res_seeds = [r[3] for r in results]
-    i2_bunch_seeds = np.array([r[4] for r in results], dtype=np.float64)
-    i1_mean = np.mean(np.stack([r[5] for r in results], axis=0), axis=0)
+    bq_seeds = np.asarray(bq_list, dtype=np.float64)
+    z0_seeds = np.asarray(z0_list, dtype=np.float64)
+    delta_seeds = np.asarray(delta_list, dtype=np.float64)
+    amp0_seeds = np.asarray(amp0_list, dtype=np.float64)
+    i2_bunch_seeds = np.asarray(i2_bunch_list, dtype=np.float64)
+    i1_mean = np.mean(np.stack(i1_list, axis=0), axis=0)
 
     bq_mean = float(np.mean(bq_seeds))
     bq_std = float(np.std(bq_seeds, ddof=1))
+    bq_sem = float(bq_std / np.sqrt(n_seeds))
+
     z0_mean = float(np.mean(z0_seeds))
     z0_std = float(np.std(z0_seeds, ddof=1))
-    eps_noise = float(3.0 * bq_std / beta_q_th)
-    eps_noise_mean = float(eps_noise / np.sqrt(len(NOISE_SEEDS)))
-    sigma_mean = float(bq_std / (beta_q_th * np.sqrt(len(NOISE_SEEDS))))
+
+    delta_mean = float(np.mean(delta_seeds))
+    delta_std = float(np.std(delta_seeds, ddof=1))
+    delta_sem = float(delta_std / np.sqrt(n_seeds))
+
+    amp0_mean = float(np.mean(amp0_seeds))
+    amp0_std = float(np.std(amp0_seeds, ddof=1))
+    amp0_sem = float(amp0_std / np.sqrt(n_seeds))
 
     i2_bunch_mean = float(np.mean(i2_bunch_seeds))
     i2_bunch_std = float(np.std(i2_bunch_seeds, ddof=1))
-    eps_i2_noise = float(3.0 * i2_bunch_std)
 
     return {
         "seeds": NOISE_SEEDS,
+        "tcrit": tcrit,
         "bq_seeds": bq_seeds,
-        "z0_seeds": z0_seeds,
-        "nulls_seeds": nulls_seeds,
-        "res_seeds": res_seeds,
         "bq_mean": bq_mean,
         "bq_std": bq_std,
+        "bq_sem": bq_sem,
+        "z0_seeds": z0_seeds,
         "z0_mean": z0_mean,
         "z0_std": z0_std,
-        "eps_noise": eps_noise,
-        "eps_noise_mean": eps_noise_mean,
-        "sigma_mean": sigma_mean,
+        "delta_seeds": delta_seeds,
+        "delta_mean": delta_mean,
+        "delta_std": delta_std,
+        "delta_sem": delta_sem,
+        "amp0_seeds": amp0_seeds,
+        "amp0_mean": amp0_mean,
+        "amp0_std": amp0_std,
+        "amp0_sem": amp0_sem,
         "i2_bunch_seeds": i2_bunch_seeds,
         "i2_bunch_mean": i2_bunch_mean,
         "i2_bunch_std": i2_bunch_std,
-        "eps_i2_noise": eps_i2_noise,
         "i1_mean": i1_mean,
     }
