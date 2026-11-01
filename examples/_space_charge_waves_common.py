@@ -936,7 +936,6 @@ def run_particle_beam_drift(
     qm_scale: float = 1.0,
     seed: int = 42,
     m_mod: float = MODULATION_INDEX,
-    e_ext: Any = None,
     profile: str = "sheet_lattice",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
@@ -970,10 +969,6 @@ def run_particle_beam_drift(
         The `BeamInjector` seed (only affects ``profile='sheet'``). Default is ``42``.
     m_mod : float, optional
         Fractional AC density modulation depth ``m``. Default is ``MODULATION_INDEX``.
-    e_ext : tuple or callable, optional
-        Optional external electric field ``E_ext`` passed to `ParticleSolver`
-        (used in the mutation test to cancel the DC transverse self-potential
-        shear across the sheet beam). Default is ``None``.
     profile : str, optional
         Transverse `BeamInjector` sampling profile (``"sheet_lattice"`` for
         deterministic stratum midpoints or ``"sheet"`` for seeded stratified
@@ -1033,7 +1028,6 @@ def run_particle_beam_drift(
         species=[sp],
         injectors=[inj],
         shape=1,
-        E_ext=e_ext,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
     ).attach()
 

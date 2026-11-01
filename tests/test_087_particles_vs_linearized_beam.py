@@ -32,7 +32,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scipy.constants import epsilon_0
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -694,13 +693,7 @@ def test_two_resolution_convergence():
 
 
 def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
-    """Doubling particle species |q/m| matches mutated prediction, z0 cross-code, and fails (a).
-
-    Also tests the transverse-shear beating hypothesis (Item 7) by running the
-    mutated particle case with an analytic external electric field ``E_ext`` that
-    cancels the DC transverse self-force ``E_x,DC(x) + u0 * B_y,DC(x)`` at gather,
-    and reports the resulting null residuals with and without ``E_ext``.
-    """
+    """Doubling particle species |q/m| matches mutated prediction and fails baseline cross-code check."""
     params = compute_analytic_parameters(qm_scale=1.0)
     params_mut = compute_analytic_parameters(qm_scale=2.0)
     noise_c = measure_empirical_noise(COARSE_GRID)
@@ -744,50 +737,6 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         return_residuals=True,
     )
 
-    # Item 7: Test the transverse-shear hypothesis by applying an analytic E_ext(x, y, z, t)
-    # that cancels the 1D planar DC transverse self-force inside the sheet beam [-b, b]:
-    # E_x,ext(x) = -(rho_dep / (gamma_dep^2 * eps_0)) * clip(x, -b, b)
-    b = BEAM_HALF_THICKNESS_M
-    e_cancel_slope = -params_mut["rho_dep"] / (params_mut["gamma_dep"] ** 2 * epsilon_0)
-
-    def _cancel_dc_transverse_self_force(x, y, z, t):
-        ex = e_cancel_slope * np.clip(x, -b, b)
-        zeros = np.zeros_like(ex)
-        return ex, zeros, zeros
-
-    part_mut_cancel = run_particle_beam_drift(
-        nx,
-        nz,
-        beam_ref=lb_res["beam"],
-        qm_scale=1.0,
-        seed=42,
-        e_ext=_cancel_dc_transverse_self_force,
-    )
-    bq_mut_cancel, z0_mut_cancel, nulls_mut_cancel, res_mut_cancel = (
-        fit_beta_q_from_envelope(
-            z_coords,
-            part_mut_cancel["i1_part"],
-            params_mut["beta_q"],
-            z_max=z_max_mut,
-            return_residuals=True,
-        )
-    )
-    # Also evaluate 3-null residuals over [0, lambda_q_base] with and without E_ext
-    _, _, _, res_mut_base_win = fit_beta_q_from_envelope(
-        z_coords,
-        part_mut["i1_part"],
-        params_mut["beta_q"],
-        z_max=params["lambda_q"],
-        return_residuals=True,
-    )
-    _, _, _, res_cancel_base_win = fit_beta_q_from_envelope(
-        z_coords,
-        part_mut_cancel["i1_part"],
-        params_mut["beta_q"],
-        z_max=params["lambda_q"],
-        return_residuals=True,
-    )
-
     # Item 7: No eps_ols_mut; assert mutated beta_q directly against tols_mut["tol_part"]
     # and assert mutated z0 cross-code against tols_mut["tol_z0"].
     bq_part_mut_pred = params_mut["beta_q"] * (1.0 + tols_mut["eps_lead_part_signed"])
@@ -804,16 +753,6 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         f"margin={(tols_mut['tol_z0'] - z0_mut_diff) * 1e3:+.4f} mm), "
         f"nulls={np.round(nulls_part_mut * 1e3, 3).tolist()} mm, "
         f"res={np.round(res_part_mut * 1e3, 4).tolist()} mm"
-    )
-    print(
-        f"Transverse-shear E_ext cancellation test: "
-        f"without E_ext: bq={bq_part_mut:.4f} rad/m, z0={z0_part_mut * 1e3:.3f} mm, "
-        f"res(1.38*lam_q_mut)={np.round(res_part_mut * 1e3, 4).tolist()} mm, "
-        f"res(lam_q_base)={np.round(res_mut_base_win * 1e3, 4).tolist()} mm | "
-        f"with E_ext: bq={bq_mut_cancel:.4f} rad/m, z0={z0_mut_cancel * 1e3:.3f} mm, "
-        f"nulls={np.round(nulls_mut_cancel * 1e3, 3).tolist()} mm, "
-        f"res(1.38*lam_q_mut)={np.round(res_mut_cancel * 1e3, 4).tolist()} mm, "
-        f"res(lam_q_base)={np.round(res_cancel_base_win * 1e3, 4).tolist()} mm"
     )
     assert len(nulls_part_mut) >= 3
     assert len(nulls_lb_mut) >= 3
