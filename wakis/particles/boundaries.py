@@ -728,22 +728,57 @@ class BeamInjector:
     z0 : float
         Axial coordinate of the emitter plane [m].
     current : float or callable
-        Beam current magnitude [A] or callable ``current(t) -> float`` [A].
+        Total beam current magnitude ``I`` [A] or callable ``current(t) -> float``
+        [A] (total current in amperes [A], not linear current density in [A/m]).
+        For the planar strip profiles ``"sheet"`` and ``"sheet_lattice"``, ``I``
+        is the total current carried by the strip of full width ``2 * radius``,
+        so the linear (surface) current density is ``K = I / (2 * radius)``
+        [A/m], and each macroparticle has weight ``w = n_real / n``
+        (``n = n_macro_per_step``, ``n_real = |I| * dt / |q| + accumulator``)
+        just as for the other profiles. In a 2D slab setup (``Ny = 1`` with
+        periodic ``y`` of period ``L_y``), the ``|I| * dt / |q|`` real
+        particles injected over step ``dt`` occupy the slab volume
+        ``2 * radius * L_y * v_z0 * dt``, where ``v_z0 = beta_0 * c`` is the
+        axial drift *speed* (not the momentum per mass ``uz0 = gamma_0 *
+        v_z0``), so the number density is ``n = |I| / (|q| * 2 * radius * L_y
+        * v_z0)`` [m^-3] and the charge density is ``rho = I / (2 * radius *
+        L_y * v_z0)`` [C/m^3].
     gamma : float, optional
         Initial Lorentz factor ``gamma_0 > 1``. Mutually exclusive with
         ``energy_eV``.
     energy_eV : float, optional
         Initial kinetic energy [eV].
-    profile : {"uniform", "gaussian", "lattice"}, optional
-        Transverse radial profile. ``"uniform"`` samples a uniform disk of
-        radius ``radius``; ``"gaussian"`` samples a 2D Gaussian with RMS radius
-        ``sigma_r = radius``; ``"lattice"`` places ``n_macro_per_step``
+    profile : {"uniform", "gaussian", "lattice", "sheet", "sheet_lattice"}, optional
+        Transverse profile. ``"uniform"`` samples a uniform disk of radius
+        ``radius``; ``"gaussian"`` samples a 2D Gaussian with RMS radius
+        ``sigma_r = radius`` (unbounded support; Gaussian tails can leave the
+        transverse domain); ``"lattice"`` places ``n_macro_per_step``
         macroparticles deterministically on a uniform-area Fibonacci disk
-        lattice of radius ``radius`` (independent of ``dt`` and step index).
-        Default is ``"uniform"``.
+        lattice of radius ``radius`` (independent of ``dt`` and step index);
+        ``"sheet"`` samples a planar thin strip at ``y = y0`` exactly with
+        ``x`` uniform on ``[x0 - radius, x0 + radius]`` (where ``radius`` is
+        the sheet half-width) using stratified sampling of :meth:`_step_rng`
+        with one uniform draw per equal sub-interval of width
+        ``2 * radius / n`` (``n = n_macro_per_step``), keeping the empirical
+        transverse charge uniform to ``O(1 / n)`` per step and reducing the
+        variance of the per-step sample mean ``x_bar = (1 / n) * sum_k x_k``
+        from ``Var_iid(x_bar) = radius**2 / (3 * n)`` (unstratified i.i.d.
+        draws, each of variance ``(2 * radius)**2 / 12 = radius**2 / 3``) to
+        ``Var_strat(x_bar) = (1 / n**2) * sum_k (2 * radius / n)**2 / 12 = radius**2 / (3 * n**3)``,
+        a variance reduction by a factor of ``n**2``; ``"sheet_lattice"``
+        places ``n_macro_per_step`` macroparticles deterministically at the
+        stratum midpoints ``x_k = x0 + radius * (2 * (k + 0.5) / n - 1)``,
+        ``y_k = y0`` (zero transverse shot noise). On periodic ``x`` or ``y``
+        axes, coordinates outside ``[min, max)`` wrap periodically across cell
+        indices during field gather and charge/current deposition and are
+        wrapped into ``[min, max)`` at the end of each coupled step by
+        :meth:`ParticleBoundaries.apply_periodic_wrap`. Default is ``"uniform"``.
     radius : float, optional
-        Disk radius (for ``"uniform"`` and ``"lattice"``) or RMS radius
-        ``sigma_r`` (for ``"gaussian"``) [m]. Default is ``1e-3``.
+        Disk radius (for ``"uniform"`` and ``"lattice"``), RMS radius
+        ``sigma_r`` (for ``"gaussian"``), or planar sheet half-width along ``x``
+        (for ``"sheet"`` and ``"sheet_lattice"``) [m]. Must satisfy
+        ``radius >= 0`` (raises :class:`ValueError` in ``__init__`` if negative).
+        Default is ``1e-3``.
     x0, y0 : float, optional
         Transverse beam centre [m]. Default is ``0.0``.
     n_macro_per_step : int, optional
@@ -795,11 +830,20 @@ class BeamInjector:
         self.z0 = float(z0)
         self.current = current
         self.profile = str(profile).strip().lower()
-        if self.profile not in ("uniform", "gaussian", "lattice"):
+        if self.profile not in (
+            "uniform",
+            "gaussian",
+            "lattice",
+            "sheet",
+            "sheet_lattice",
+        ):
             raise ValueError(
-                f"Unknown profile={profile!r}; expected 'uniform', 'gaussian', or 'lattice'."
+                f"Unknown profile={profile!r}; expected 'uniform', 'gaussian', "
+                "'lattice', 'sheet', or 'sheet_lattice'."
             )
         self.radius = float(radius)
+        if self.radius < 0.0:
+            raise ValueError(f"radius must be >= 0, got {radius}.")
         self.x0 = float(x0)
         self.y0 = float(y0)
         self.n_macro_per_step = int(n_macro_per_step)
@@ -872,10 +916,20 @@ class BeamInjector:
         ValueError
             If ``z0`` lies outside the physical z-domain, inside a PML/CPML
             absorbing layer, on a boundary face with outward ``direction``,
-            if any cell under the emitter disk (or Gaussian :math:`3\\sigma`
-            footprint) overlaps an embedded PEC solid cell, or if the solver
-            uses ``"abc"`` or an unknown/unresolved global ``z`` boundary
-            condition.
+            if the transverse emitter footprint leaves a non-periodic physical
+            transverse domain ``[xmin, xmax]`` / ``[ymin, ymax]`` or reaches
+            into a transverse ``"cpml"`` absorbing layer (``x0 +- radius`` and
+            ``y0 +- radius`` for ``"uniform"`` and ``"lattice"``; ``x0 +- radius``
+            and strictly interior ``ymin < y0 < ymax`` for ``"sheet"`` and
+            ``"sheet_lattice"``; on periodic ``x`` or ``y`` axes, ``2 * radius <= L_axis``
+            for disk/lattice and ``2 * radius <= L_x`` with unconstrained ``y0``
+            for sheet profiles; no bound for ``"gaussian"`` because its support
+            is unbounded), if any cell under the emitter footprint (disk for
+            ``"uniform"`` and ``"lattice"``, :math:`3\\sigma` disk for
+            ``"gaussian"``, or strip ``[x0 - radius, x0 + radius] x {y0}`` for
+            ``"sheet"`` and ``"sheet_lattice"``) overlaps an embedded PEC solid
+            cell, or if the solver uses ``"abc"`` or an unknown/unresolved
+            global ``z`` boundary condition.
         """
         global_bc_z = getattr(solver, "_global_bc_z", None)
         if (
@@ -992,6 +1046,129 @@ class BeamInjector:
                 f"domain with direction=-1, got direction={self.direction}."
             )
 
+        edge_ghosts = getattr(solver.grid, "edge_ghosts", (0, 0, 0))
+        bc_x_low = _parse_bc_face(solver.bc_low[0])
+        bc_x_high = _parse_bc_face(solver.bc_high[0])
+        periodic_x = bc_x_low == "periodic" and bc_x_high == "periodic"
+        nx_phys = int(solver.Nx) - (0 if periodic_x else int(edge_ghosts[0]))
+        x_phys_nodes = np.asarray(solver.grid.x[: nx_phys + 1], dtype=np.float64)
+        x_min = float(x_phys_nodes[0])
+        x_max = float(x_phys_nodes[-1])
+
+        bc_y_low = _parse_bc_face(solver.bc_low[1])
+        bc_y_high = _parse_bc_face(solver.bc_high[1])
+        periodic_y = bc_y_low == "periodic" and bc_y_high == "periodic"
+        ny_phys = int(solver.Ny) - (0 if periodic_y else int(edge_ghosts[1]))
+        y_phys_nodes = np.asarray(solver.grid.y[: ny_phys + 1], dtype=np.float64)
+        y_min = float(y_phys_nodes[0])
+        y_max = float(y_phys_nodes[-1])
+
+        if self.profile in ("uniform", "lattice", "sheet", "sheet_lattice"):
+            # On non-periodic, non-CPML faces, disk/lattice and sheet-x endpoints
+            # may touch the domain wall (measure-zero boundary set under continuous
+            # uniform/stratified sampling, and strict interior midpoint nodes for
+            # 'lattice' and 'sheet_lattice'). On a non-periodic y axis, 'sheet' and
+            # 'sheet_lattice' place every particle at y = y0 (measure 1), and
+            # ParticleBoundaries.prepare_step_paths uses strict wall crossing
+            # (c1 < c_min / c1 > c_max), so y0 must lie strictly inside (y_min, y_max).
+            x_lo = self.x0 - self.radius
+            x_hi = self.x0 + self.radius
+            if periodic_x:
+                L_x = x_max - x_min
+                if 2.0 * self.radius > L_x:
+                    raise ValueError(
+                        f"BeamInjector (profile={self.profile!r}) x-extent width "
+                        f"2*radius={2.0 * self.radius} (radius={self.radius}) "
+                        f"exceeds the periodic x-domain period L_x={L_x} "
+                        f"([{x_min}, {x_max}])."
+                    )
+            else:
+                if x_lo < x_min or x_hi > x_max:
+                    raise ValueError(
+                        f"BeamInjector (profile={self.profile!r}) x-extent "
+                        f"[{x_lo}, {x_hi}] (x0={self.x0}, radius={self.radius}) "
+                        f"is outside the physical x-domain [{x_min}, {x_max}]."
+                    )
+                if bc_x_low == "cpml":
+                    x_pml_low = float(x_phys_nodes[min(n_pml, nx_phys)])
+                    if x_lo <= x_pml_low:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) x-extent "
+                            f"[{x_lo}, {x_hi}] (x0={self.x0}, radius={self.radius}) "
+                            f"reaches into the low-x PML/CPML layer "
+                            f"[{x_min}, {x_pml_low}] (n_pml={n_pml})."
+                        )
+                if bc_x_high == "cpml":
+                    x_pml_high = float(x_phys_nodes[max(nx_phys - n_pml, 0)])
+                    if x_hi >= x_pml_high:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) x-extent "
+                            f"[{x_lo}, {x_hi}] (x0={self.x0}, radius={self.radius}) "
+                            f"reaches into the high-x PML/CPML layer "
+                            f"[{x_pml_high}, {x_max}] (n_pml={n_pml})."
+                        )
+
+            if self.profile in ("uniform", "lattice"):
+                y_lo = self.y0 - self.radius
+                y_hi = self.y0 + self.radius
+                if periodic_y:
+                    L_y = y_max - y_min
+                    if 2.0 * self.radius > L_y:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) y-extent width "
+                            f"2*radius={2.0 * self.radius} (radius={self.radius}) "
+                            f"exceeds the periodic y-domain period L_y={L_y} "
+                            f"([{y_min}, {y_max}])."
+                        )
+                else:
+                    if y_lo < y_min or y_hi > y_max:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) y-extent "
+                            f"[{y_lo}, {y_hi}] (y0={self.y0}, radius={self.radius}) "
+                            f"is outside the physical y-domain [{y_min}, {y_max}]."
+                        )
+                    if bc_y_low == "cpml":
+                        y_pml_low = float(y_phys_nodes[min(n_pml, ny_phys)])
+                        if y_lo <= y_pml_low:
+                            raise ValueError(
+                                f"BeamInjector (profile={self.profile!r}) y-extent "
+                                f"[{y_lo}, {y_hi}] (y0={self.y0}, radius={self.radius}) "
+                                f"reaches into the low-y PML/CPML layer "
+                                f"[{y_min}, {y_pml_low}] (n_pml={n_pml})."
+                            )
+                    if bc_y_high == "cpml":
+                        y_pml_high = float(y_phys_nodes[max(ny_phys - n_pml, 0)])
+                        if y_hi >= y_pml_high:
+                            raise ValueError(
+                                f"BeamInjector (profile={self.profile!r}) y-extent "
+                                f"[{y_lo}, {y_hi}] (y0={self.y0}, radius={self.radius}) "
+                                f"reaches into the high-y PML/CPML layer "
+                                f"[{y_pml_high}, {y_max}] (n_pml={n_pml})."
+                            )
+            elif not periodic_y:
+                if self.y0 <= y_min or self.y0 >= y_max:
+                    raise ValueError(
+                        f"BeamInjector (profile={self.profile!r}) y-extent "
+                        f"y0={self.y0} must lie strictly inside the non-periodic "
+                        f"physical y-domain ({y_min}, {y_max})."
+                    )
+                if bc_y_low == "cpml":
+                    y_pml_low = float(y_phys_nodes[min(n_pml, ny_phys)])
+                    if self.y0 <= y_pml_low:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) y-extent "
+                            f"y0={self.y0} lies inside the low-y PML/CPML layer "
+                            f"[{y_min}, {y_pml_low}] (n_pml={n_pml})."
+                        )
+                if bc_y_high == "cpml":
+                    y_pml_high = float(y_phys_nodes[max(ny_phys - n_pml, 0)])
+                    if self.y0 >= y_pml_high:
+                        raise ValueError(
+                            f"BeamInjector (profile={self.profile!r}) y-extent "
+                            f"y0={self.y0} lies inside the high-y PML/CPML layer "
+                            f"[{y_pml_high}, {y_max}] (n_pml={n_pml})."
+                        )
+
         # Reject embedded PEC solid cathodes (internal STL or conductor solids at emitter)
         ps_att = getattr(solver, "_particle_solver", None)
         solid_mask = getattr(getattr(ps_att, "boundaries", None), "solid_mask", None)
@@ -1036,21 +1213,26 @@ class BeamInjector:
                         int(solver.Nz) - 1,
                     )
                 )
-                r_foot = (
-                    3.0 * self.radius if self.profile == "gaussian" else self.radius
-                )
                 dx_close = (
                     np.clip(self.x0, x_nodes[:nx_c], x_nodes[1 : nx_c + 1]) - self.x0
                 )
                 dy_close = (
                     np.clip(self.y0, y_nodes[:ny_c], y_nodes[1 : ny_c + 1]) - self.y0
                 )
-                disk_xy_mask = (
-                    dx_close[:, None] * dx_close[:, None]
-                    + dy_close[None, :] * dy_close[None, :]
-                ) <= r_foot * r_foot
-                disk_xy_mask[ix0, iy0] = True
-                if bool(np.any(sm_h[:nx_c, :ny_c, iz0][disk_xy_mask])):
+                if self.profile in ("sheet", "sheet_lattice"):
+                    foot_xy_mask = (np.abs(dx_close)[:, None] <= self.radius) & (
+                        np.abs(dy_close)[None, :] <= 0.0
+                    )
+                else:
+                    r_foot = (
+                        3.0 * self.radius if self.profile == "gaussian" else self.radius
+                    )
+                    foot_xy_mask = (
+                        dx_close[:, None] * dx_close[:, None]
+                        + dy_close[None, :] * dy_close[None, :]
+                    ) <= r_foot * r_foot
+                foot_xy_mask[ix0, iy0] = True
+                if bool(np.any(sm_h[:nx_c, :ny_c, iz0][foot_xy_mask])):
                     raise ValueError(
                         f"BeamInjector emitter at (x0={self.x0}, y0={self.y0}, z0={self.z0}, "
                         f"radius={self.radius}) overlaps an embedded PEC solid cell; "
@@ -1064,6 +1246,11 @@ class BeamInjector:
             "pec_wall" if (on_low_pec or on_high_pec) else "interior_sheet"
         )
         return self
+
+    def _sheet_lattice_x(self, n_macro: int) -> np.ndarray:
+        """Return deterministic midpoint x-coordinates [m] for ``profile="sheet_lattice"``."""
+        k_idx = np.arange(n_macro, dtype=np.float64)
+        return self.x0 + self.radius * (2.0 * (k_idx + 0.5) / float(n_macro) - 1.0)
 
     def state_dict(self) -> dict:
         """Return a serialisable dictionary of mutable injector restart state.
@@ -1233,6 +1420,14 @@ class BeamInjector:
                 dy -= float(np.mean(dy))
                 x = self.x0 + dx
                 y = self.y0 + dy
+        elif self.profile == "sheet":
+            k_idx = np.arange(n_macro, dtype=np.float64)
+            u_strat = rng.uniform(0.0, 1.0, size=n_macro)
+            x = self.x0 + self.radius * (2.0 * (k_idx + u_strat) / float(n_macro) - 1.0)
+            y = np.full(n_macro, self.y0, dtype=np.float64)
+        elif self.profile == "sheet_lattice":
+            x = self._sheet_lattice_x(n_macro)
+            y = np.full(n_macro, self.y0, dtype=np.float64)
         else:
             x = self.x0 + rng.normal(0.0, self.radius, size=n_macro)
             y = self.y0 + rng.normal(0.0, self.radius, size=n_macro)

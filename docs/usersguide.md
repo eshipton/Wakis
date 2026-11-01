@@ -1608,11 +1608,12 @@ electrons = Species(name="e-", charge=-const.e, mass=const.m_e)
 injector = BeamInjector(
     species=electrons,
     z0=0.0,                             # cathode emitter plane [m]
-    current=5.0,                        # beam current [A]
+    current=5.0,                        # total beam current [A] (not [A/m])
     energy_eV=250.0e3,                  # relativistic kinetic energy [eV]
+    profile="uniform",                  # 'uniform', 'gaussian', 'lattice', 'sheet', or 'sheet_lattice'
     x0=0.01,
     y0=0.01,
-    radius=0.004,                       # beam radius [m]
+    radius=0.004,                       # disk/RMS radius, or sheet half-width along x [m] (>= 0)
     direction=1,                        # +1 along +z
     n_macro_per_step=16,
 )
@@ -1643,6 +1644,8 @@ print("Gauss law relative residual:", gauss_residual(solver, [electrons]))
 print("Charge balance [C]:", ps.injected_charge(), ps.total_charge() + ps.absorbed_charge())
 print("Collector absorbed energy [J]:", collector.absorbed_energy)
 ```
+
+`BeamInjector` supports circular disk (`profile="uniform"` and `"lattice"`, where `radius` is the disk radius), 2D Gaussian (`profile="gaussian"`, where `radius` is the RMS radius $\sigma_r$), and planar strip (`profile="sheet"` for stratified uniform sampling on $[x_0 - \text{radius}, x_0 + \text{radius}]$ at $y = y_0$ and `profile="sheet_lattice"` for deterministic stratum midpoints at $y = y_0$, where `radius` is the sheet half-width along $x$ and `current` is the total strip current in [A]) transverse profiles. Constructing a `BeamInjector` with `radius < 0` raises `ValueError`, and binding via `ParticleSolver.attach()` (or the first step for a late injector) raises `ValueError` if a bounded footprint (`"uniform"`, `"lattice"`, `"sheet"`, `"sheet_lattice"`) leaves a non-periodic physical transverse domain $[x_{\min}, x_{\max}]$ / $[y_{\min}, y_{\max}]$, reaches into a transverse `"cpml"` absorbing layer (`n_pml` cells), exceeds one period ($2\,\text{radius} > L_{\text{axis}}$) on a periodic $x$ or $y$ axis, places a sheet's $y_0$ on a non-periodic $y$ boundary (PEC, PMC or CPML) ($y_{\min} < y_0 < y_{\max}$ is required strictly on non-periodic $y$, while disk/lattice and sheet-$x$ endpoints may touch non-CPML walls and $y_0$ is unconstrained on periodic $y$), or overlaps an embedded PEC solid cell.
 
 ### GPU-Accelerated Execution (`use_gpu=True`)
 
