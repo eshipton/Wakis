@@ -57,6 +57,7 @@ from examples._space_charge_waves_common import (
     extract_coherent_bunching_i2_ratio,
     fit_beta_q_from_envelope,
     fit_four_wave_reflection,
+    fit_lb_parasitic_waves,
     fit_window,
     format_error_budget,
     measure_empirical_noise,
@@ -792,6 +793,16 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
     bq_lb_m2_pred = tols_m2["bq_pred_lb"]
     bound_m2 = tols_m2["slack_lb"]
     resid_m2 = abs(bq_lb_mut / bq_lb_m2_pred - 1.0)
+    para_m2 = fit_lb_parasitic_waves(
+        z_coords,
+        lb_mut["i1_lb"],
+        nx,
+        nz,
+        params,
+        omega_p_scale=float(np.sqrt(2.0)),
+        z_min=z_min,
+        z_max=z_max,
+    )
 
     resid_cross_mut = abs(bq_part / bq_lb_mut - bq_part_base_pred / tols["bq_pred_lb"])
     baseline_check_failed = bool(resid_cross_mut > tols["slack_cross"])
@@ -799,6 +810,8 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
     print(
         f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred_modal={bq_lb_m2_pred:.6f} "
         f"slack={bound_m2:.6e} resid={resid_m2:.6e} bound={bound_m2:.6e} "
+        f"ap_over_afwd={para_m2['ap_over_afwd']:.6e} dbq_para={para_m2['delta_beta_q']:+.6e} "
+        f"rel_dbq_para={para_m2['rel_delta_beta_q']:+.6e} "
         f"baseline_check_failed={baseline_check_failed}",
         flush=True,
     )
@@ -1012,6 +1025,62 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             first_exc = exc
         print(
             f"DIAG id=lb_ramp status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
+            flush=True,
+        )
+
+    # Step 5: LB parasitic waves in the fit model (k_{p,+-} = pi/dz - k_{+-} fixed from discrete dispersion)
+    try:
+        para_c = fit_lb_parasitic_waves(
+            lb_c["z_coords"],
+            lb_c["i1_lb"],
+            nx_c,
+            nz_c,
+            params,
+            omega_p_scale=1.0,
+            z_min=z_min,
+            z_max=z_max,
+        )
+        para_f = fit_lb_parasitic_waves(
+            lb_f["z_coords"],
+            lb_f["i1_lb"],
+            nx_f,
+            nz_f,
+            params,
+            omega_p_scale=1.0,
+            z_min=z_min,
+            z_max=z_max,
+        )
+        lb_m2_c = cached_linearized_beam_drift(
+            nx_c, nz_c, rho0_scale=2.0, m_mod=MODULATION_INDEX
+        )
+        para_m2_c = fit_lb_parasitic_waves(
+            lb_m2_c["z_coords"],
+            lb_m2_c["i1_lb"],
+            nx_c,
+            nz_c,
+            params,
+            omega_p_scale=float(np.sqrt(2.0)),
+            z_min=z_min,
+            z_max=z_max,
+        )
+        print(
+            f"DIAG id=lb_parasitic "
+            f"ap_over_afwd_coarse={para_c['ap_over_afwd']:.6e} "
+            f"dbq_coarse={para_c['delta_beta_q']:+.6e} rel_dbq_coarse={para_c['rel_delta_beta_q']:+.6e} "
+            f"resid_2wave_coarse={abs(bq_lb_c / tols_c['bq_pred_lb'] - 1.0):.6e} "
+            f"ap_over_afwd_fine={para_f['ap_over_afwd']:.6e} "
+            f"dbq_fine={para_f['delta_beta_q']:+.6e} rel_dbq_fine={para_f['rel_delta_beta_q']:+.6e} "
+            f"resid_2wave_fine={resid_lb_f:.6e} "
+            f"ap_over_afwd_M2={para_m2_c['ap_over_afwd']:.6e} "
+            f"dbq_M2={para_m2_c['delta_beta_q']:+.6e} rel_dbq_M2={para_m2_c['rel_delta_beta_q']:+.6e} "
+            f"estimator=2wave_kept",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if first_exc is None:
+            first_exc = exc
+        print(
+            f"DIAG id=lb_parasitic status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
             flush=True,
         )
 

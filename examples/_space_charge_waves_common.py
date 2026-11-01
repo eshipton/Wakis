@@ -1422,6 +1422,104 @@ def fit_four_wave_reflection(
     }
 
 
+def fit_lb_parasitic_waves(
+    z_coords: np.ndarray,
+    i1_phasor: np.ndarray,
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    omega_p_scale: float = 1.0,
+    z_min: float | None = None,
+    z_max: float | None = None,
+) -> dict[str, Any]:
+    """Fit ``I1(z)`` with the two physical LB modes plus two fixed parasitic odd-even modes.
+
+    The centered-difference `LinearizedBeam` advection operator ``sin(k * dz) / dz``
+    supports parasitic branches ``k_{p,+-} = pi / dz - k_{+-}`` at the same ``omega``
+    with negative group velocity. Fixing ``k_{p,+-}`` from the principal discrete
+    modal dispersion adds two linear complex amplitudes ``(a_{p,-}, a_{p,+})`` and no
+    new nonlinear parameters to the variable-projection solve for ``(k_c, beta_q)``.
+    """
+    beta_q_guess = float(params["beta_q"] * omega_p_scale)
+    if z_min is None or z_max is None:
+        z_min_def, z_max_def = fit_window(params)
+        if z_min is None:
+            z_min = z_min_def
+        if z_max is None:
+            z_max = z_max_def
+
+    fit2 = fit_beta_q_from_envelope(
+        z_coords, i1_phasor, beta_q_guess, z_min=z_min, z_max=z_max
+    )
+    modal = discrete_modal_prediction(
+        "lb",
+        nx,
+        nz,
+        params,
+        omega_p_scale=omega_p_scale,
+        return_details=True,
+    )
+    dz = TUNNEL_LENGTH_M / nz
+    km_modal = float(modal["kc_modes"][0] - modal["bq_modes"][0])
+    kp_modal = float(modal["kc_modes"][0] + modal["bq_modes"][0])
+    kp_minus = float(np.pi / dz - km_modal)
+    kp_plus = float(np.pi / dz - kp_modal)
+
+    mask = (z_coords >= z_min) & (z_coords <= z_max)
+    zm = np.asarray(z_coords[mask], dtype=np.float64)
+    ym = np.asarray(i1_phasor[mask], dtype=np.complex128)
+    ym_energy = float(np.real(np.vdot(ym, ym)))
+    u_pm = np.exp(-1j * kp_minus * zm)
+    u_pp = np.exp(-1j * kp_plus * zm)
+
+    def _varpro_para(kc_val: float, bq_val: float) -> tuple[np.ndarray, float]:
+        bq_pos = abs(bq_val)
+        kf_val = kc_val - bq_pos
+        ks_val = kc_val + bq_pos
+        design = np.column_stack(
+            [np.exp(-1j * kf_val * zm), np.exp(-1j * ks_val * zm), u_pm, u_pp]
+        )
+        coef, _, _, _ = np.linalg.lstsq(design, ym, rcond=None)
+        res = ym - design @ coef
+        rss_val = float(np.real(np.vdot(res, res)))
+        return coef, rss_val
+
+    opt = minimize(
+        lambda x: _varpro_para(float(x[0]), float(x[1]))[1],
+        x0=np.array([fit2["k_c"], fit2["beta_q"]], dtype=np.float64),
+        method="Nelder-Mead",
+        options={
+            "xatol": 1e-10 * beta_q_guess,
+            "fatol": 1e-16 * max(ym_energy, 1e-30),
+            "maxiter": 2000,
+        },
+    )
+    kcp = float(opt.x[0])
+    bqp = float(abs(opt.x[1]))
+    coef_p, rssp = _varpro_para(kcp, bqp)
+    af_fwd, as_fwd, ap_m, ap_p = (
+        complex(coef_p[0]),
+        complex(coef_p[1]),
+        complex(coef_p[2]),
+        complex(coef_p[3]),
+    )
+    fwd_norm = float(np.hypot(abs(af_fwd), abs(as_fwd)))
+    para_norm = float(np.hypot(abs(ap_m), abs(ap_p)))
+    dbq = float(bqp - fit2["beta_q"])
+
+    return {
+        "beta_q_2": float(fit2["beta_q"]),
+        "beta_q_para": bqp,
+        "k_c_para": kcp,
+        "kp_minus": kp_minus,
+        "kp_plus": kp_plus,
+        "delta_beta_q": dbq,
+        "rel_delta_beta_q": float(dbq / fit2["beta_q"]),
+        "ap_over_afwd": float(para_norm / max(fwd_norm, 1e-30)),
+        "rss_para": rssp,
+    }
+
+
 def compute_spatial_spectrum(
     z_coords: np.ndarray,
     i1_phasor: np.ndarray,
