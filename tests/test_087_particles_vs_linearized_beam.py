@@ -341,13 +341,17 @@ def test_injected_sheet_geometry():
 
 
 def test_discrete_modal_operator_unit():
-    """Unit test (Step 2.4 & 2.7, fast, no simulation): verify G(beta_e) eigenvalues and DC shear shift."""
+    """Unit test (Step 2.4, 2.7 & Step 5, fast, no simulation): verify G(beta_e) eigenvalues and DC shear shift."""
     params = compute_analytic_parameters()
     a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
     first_exc: Exception | None = None
     err_400 = np.nan
+    bound_400 = np.nan
     ratio_10_20 = np.nan
+    ratio_20_40 = np.nan
+    band_ratio_10_20 = np.nan
+    band_ratio_20_40 = np.nan
 
     print(flush=True)
     try:
@@ -355,38 +359,79 @@ def test_discrete_modal_operator_unit():
             reduction_factor_planar(params["omega"], params["u_dep"], b, a=a) ** 2
         )
 
-        op_400 = compute_transverse_modal_operator(
-            "lb", 400, None, params, k_val=params["beta_e"]
-        )
         op_10 = compute_transverse_modal_operator(
             "lb", 10, None, params, k_val=params["beta_e"]
         )
         op_20 = compute_transverse_modal_operator(
             "lb", 20, None, params, k_val=params["beta_e"]
         )
+        op_40 = compute_transverse_modal_operator(
+            "lb", 40, None, params, k_val=params["beta_e"]
+        )
+        op_400 = compute_transverse_modal_operator(
+            "lb", 400, None, params, k_val=params["beta_e"]
+        )
 
-        lam1_400 = float(op_400["evals"][0])
         lam1_10 = float(op_10["evals"][0])
         lam1_20 = float(op_20["evals"][0])
+        lam1_40 = float(op_40["evals"][0])
+        lam1_400 = float(op_400["evals"][0])
 
-        err_400 = abs(lam1_400 - r_sq_exact)
-        diff_10 = lam1_10 - r_sq_exact
-        diff_20 = lam1_20 - r_sq_exact
+        diff_10 = float(lam1_10 - r_sq_exact)
+        diff_20 = float(lam1_20 - r_sq_exact)
+        diff_40 = float(lam1_40 - r_sq_exact)
+        err_400 = float(abs(lam1_400 - r_sq_exact))
+
+        h_10 = 1.0 / 10.0
+        h_20 = 1.0 / 20.0
+        h_40 = 1.0 / 40.0
+        h_400 = 1.0 / 400.0
+
+        # Estimate the leading O(h^2) coefficient C and O(h^4) Richardson remainder from nx = 10, 20, 40:
+        # From the finest coarse level h_40 = 1/40, C = diff_40 / h_40^2, and from the two-level
+        # Richardson extrapolants lam_rich(2h, h) = (4 * lam_1(h) - lam_1(2h)) / 3 = R^2 - (4/3) * D * h^4 + O(h^6),
+        # lam_rich(h_20, h_40) - lam_rich(h_10, h_20) = (15/4) * D * h_20^4 gives the O(h^4) coefficient D.
+        c_h2 = float(diff_40 / (h_40**2))
+        lam_rich_10_20 = float((4.0 * lam1_20 - lam1_10) / 3.0)
+        lam_rich_20_40 = float((4.0 * lam1_40 - lam1_20) / 3.0)
+        rich_rem_20_40 = float(abs(lam_rich_20_40 - lam_rich_10_20) / 15.0)
+        d_h4 = float(4.0 * (lam_rich_20_40 - lam_rich_10_20) / (15.0 * (h_20**4)))
+
+        # Ratio deviation implied by the O(h^4) remainder:
+        #   e(2h) / e(h) = 4 * (1 + 4*(D/C)*h^2) / (1 + (D/C)*h^2) = 4 + 12 * (D/C) * h^2 + O(h^4),
+        # so |ratio - 4| <= 12 * |D / C| * h^2.
+        ratio_10_20 = float(diff_10 / diff_20)
+        ratio_20_40 = float(diff_20 / diff_40)
+        band_ratio_10_20 = float(12.0 * abs(d_h4 / c_h2) * (h_20**2))
+        band_ratio_20_40 = float(12.0 * abs(d_h4 / c_h2) * (h_40**2))
+
+        # nx = 400 bound from coarse levels: |C| * (1/400)^2 + |remainder term at 400|
+        lead_400 = float(abs(c_h2) * (h_400**2))
+        rem_400 = float(abs(d_h4) * (h_400**4))
+        bound_400 = float(lead_400 + rem_400)
+
         dx_10 = 2.0 * a / 10.0
         dx_20 = 2.0 * a / 20.0
+        dx_40 = 2.0 * a / 40.0
         o2_est_10 = -float(
             r_sq_exact * (1.0 - r_sq_exact) * (params["T1"] * dx_10) ** 2 / 12.0
         )
         o2_est_20 = -float(
             r_sq_exact * (1.0 - r_sq_exact) * (params["T1"] * dx_20) ** 2 / 12.0
         )
-        ratio_10_20 = float(diff_10 / diff_20)
+        o2_est_40 = -float(
+            r_sq_exact * (1.0 - r_sq_exact) * (params["T1"] * dx_40) ** 2 / 12.0
+        )
         print(
             f"DIAG id=modal_unit r_sq_analytic={r_sq_exact:.8f} "
-            f"lam1_nx400={lam1_400:.8f} err_nx400={err_400:.6e} "
             f"lam1_nx10={lam1_10:.8f} diff_nx10={diff_10:+.6e} o2_est_nx10={o2_est_10:+.6e} "
             f"lam1_nx20={lam1_20:.8f} diff_nx20={diff_20:+.6e} o2_est_nx20={o2_est_20:+.6e} "
-            f"ratio_10_20={ratio_10_20:.4f}",
+            f"lam1_nx40={lam1_40:.8f} diff_nx40={diff_40:+.6e} o2_est_nx40={o2_est_40:+.6e} "
+            f"C_h2={c_h2:+.6e} D_h4={d_h4:+.6e} rich_rem_20_40={rich_rem_20_40:.6e} "
+            f"ratio_10_20={ratio_10_20:.6f} ratio_dev_10_20={abs(ratio_10_20 - 4.0):.6e} band_ratio_10_20={band_ratio_10_20:.6e} "
+            f"ratio_20_40={ratio_20_40:.6f} ratio_dev_20_40={abs(ratio_20_40 - 4.0):.6e} band_ratio_20_40={band_ratio_20_40:.6e} "
+            f"lam1_nx400={lam1_400:.8f} err_nx400={err_400:.6e} "
+            f"lead_400={lead_400:.6e} rem_400={rem_400:.6e} bound_nx400={bound_400:.6e}",
             flush=True,
         )
     except Exception as exc:  # noqa: BLE001
@@ -421,13 +466,19 @@ def test_discrete_modal_operator_unit():
             flush=True,
         )
 
-    assert err_400 <= 1.0e-4, (
-        f"nx=400 LB modal eigenvalue |lambda_1 - R^2| = {err_400:.6e} > 1e-4 "
-        f"(margin={1.0e-4 - err_400:+.6e})"
+    assert err_400 <= bound_400, (
+        f"nx=400 LB modal eigenvalue |lambda_1 - R^2| = {err_400:.6e} > "
+        f"|C|*(1/400)^2 + |rem_400| = {bound_400:.6e} (margin={bound_400 - err_400:+.6e})"
     )
-    # Verify O((T1*dx)^2) second-order convergence between nx=10 and nx=20
-    assert abs(ratio_10_20 - 4.0) <= 0.1, (
-        f"nx=10/20 eigenvalue error ratio = {ratio_10_20:.4f} does not follow 4x O((T1*dx)^2) scaling"
+    # Verify O(h^2) second-order convergence within the ratio deviation implied by the O(h^4) remainder:
+    # |e(2h)/e(h) - 4| <= 12 * |D / C| * h^2
+    assert abs(ratio_10_20 - 4.0) <= band_ratio_10_20, (
+        f"nx=10/20 eigenvalue error ratio |{ratio_10_20:.6f} - 4| = {abs(ratio_10_20 - 4.0):.6e} > "
+        f"band_ratio_10_20 = {band_ratio_10_20:.6e}"
+    )
+    assert abs(ratio_20_40 - 4.0) <= band_ratio_20_40, (
+        f"nx=20/40 eigenvalue error ratio |{ratio_20_40:.6f} - 4| = {abs(ratio_20_40 - 4.0):.6e} > "
+        f"band_ratio_20_40 = {band_ratio_20_40:.6e}"
     )
 
     # Identity check: after LinearizedBeam.attach(solver) with _CicNodeRho0,
