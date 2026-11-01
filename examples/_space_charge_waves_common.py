@@ -142,18 +142,43 @@ FINE_GRID = (20, 1, 948)  # (Nx, Ny, Nz) 2x refined resolution
 NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical noise
 
 
+def _grid_gamma1_disc_and_dw(
+    nx: int, nz: int, omega: float
+) -> tuple[float, float, float]:
+    """Compute discrete evanescent decay rate ``gamma1_disc`` [1/m] and window margin ``d_w_grid`` [m].
+
+    On grid ``(nx, 1, nz)`` with ``dx = 2 * a / nx``, ``dz = Lz / nz``, and integer-period
+    time step ``dt``, evaluates::
+
+        lambda_x = (2 / dx)**2 * sin(pi * dx / (4 * a))**2
+        Omega_f = (2 / dt) * sin(omega * dt / 2)
+        gamma1_disc = (2 / dz) * arcsinh((dz / 2) * sqrt(lambda_x - (Omega_f / c)**2))
+        d_w_grid = ln(1 / EPS_WINDOW) / gamma1_disc
+    """
+    a = TUNNEL_HALF_WIDTH_M
+    dx = 2.0 * a / float(nx)
+    dz = TUNNEL_LENGTH_M / float(nz)
+    dt_grid, _ = _cached_integer_period_dt(int(nx), int(nz))
+    omega_f_grid = float((2.0 / dt_grid) * np.sin(0.5 * omega * dt_grid))
+    lambda_x = float(((2.0 / dx) * np.sin(np.pi * dx / (4.0 * a))) ** 2)
+    rad = float(np.sqrt(max(lambda_x - (omega_f_grid / c_light) ** 2, 0.0)))
+    gamma1_disc = float((2.0 / dz) * np.arcsinh(0.5 * dz * rad))
+    d_w_grid = float(np.log(1.0 / EPS_WINDOW) / gamma1_disc)
+    return gamma1_disc, d_w_grid, omega_f_grid
+
+
 def fit_window(
     params: dict[str, float], outflow_ramp_m: float = OUTFLOW_RAMP_M
 ) -> tuple[float, float]:
     """Return the shared axial fit window ``(z_min, z_max)`` [m].
 
-    Excludes ``d_w = ln(1 / eps_w) / gamma1`` at the entrance (where ``gamma1 =
-    sqrt((pi / (2 * a))**2 - (Omega_f / c)**2)`` is the decay constant of the
-    slowest even TM evanescent mode of the parallel-plate guide at relative
-    amplitude threshold ``eps_w = 1e-5``) and ``d_w`` upstream of the outflow
-    taper start ``z_ramp = TUNNEL_LENGTH_M - outflow_ramp_m``.
+    Excludes ``d_w_common = max(d_w_coarse, d_w_fine)`` at the entrance (where
+    ``d_w_grid = ln(1 / eps_w) / gamma1_disc`` is evaluated with the discrete
+    parallel-plate decay constant ``gamma1_disc`` on each grid at relative
+    amplitude threshold ``eps_w = 1e-5``) and ``d_w_common`` upstream of the
+    outflow taper start ``z_ramp = TUNNEL_LENGTH_M - outflow_ramp_m``.
     """
-    d_w = float(np.log(1.0 / EPS_WINDOW) / params["gamma1"])
+    d_w = float(params.get("d_w_common", np.log(1.0 / EPS_WINDOW) / params["gamma1"]))
     z_ramp = float(TUNNEL_LENGTH_M - outflow_ramp_m)
     return float(d_w), float(z_ramp - d_w)
 
@@ -307,16 +332,20 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     beta_rel_dep = u_dep / c_light
     dlnbq_ddelta = float((1.5 + dlnr_dlntau) * (1.0 + (beta_rel_dep * gamma_dep) ** 2))
 
-    # Evanescent near-field decay constant of the slowest even TM parallel-plate mode
-    # gamma1 = sqrt((pi / (2*a))^2 - (Omega_f / c)^2) and DC beam transition
-    # kappa_dc = T1 * sqrt(1 - (omega_p / (u * T1))^2) > gamma1:
-    dt_c, _ = _cached_integer_period_dt(COARSE_GRID[0], COARSE_GRID[2])
-    omega_f = float((2.0 / dt_c) * np.sin(0.5 * omega * dt_c))
-    gamma1 = float(np.sqrt((np.pi / (2.0 * a)) ** 2 - (omega_f / c_light) ** 2))
+    # Discrete evanescent near-field decay constant per grid:
+    #   lambda_x = (2 / dx)^2 * sin^2(pi * dx / (4 * a))
+    #   gamma1_disc = (2 / dz) * arcsinh((dz / 2) * sqrt(lambda_x - (Omega_f / c)^2))
+    # Use the largest d_w (smallest gamma1_disc over coarse and fine grids) as the one common window:
+    gamma1_c, d_w_c, omega_f = _grid_gamma1_disc_and_dw(
+        COARSE_GRID[0], COARSE_GRID[2], omega
+    )
+    gamma1_f, d_w_f, _ = _grid_gamma1_disc_and_dw(FINE_GRID[0], FINE_GRID[2], omega)
+    gamma1 = float(min(gamma1_c, gamma1_f))
+    d_w_common = float(max(d_w_c, d_w_f))
+    d_w = d_w_common
     kappa_dc = float(
         t1_transverse * np.sqrt(1.0 - (omega_p_dep / (u_dep * t1_transverse)) ** 2)
     )
-    d_w = float(np.log(1.0 / EPS_WINDOW) / gamma1)
 
     return {
         "u0": float(u0),
@@ -347,9 +376,14 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "T1": float(t1_transverse),
         "T2": float(t2_transverse),
         "gamma1": float(gamma1),
+        "gamma1_disc_coarse": float(gamma1_c),
+        "gamma1_disc_fine": float(gamma1_f),
         "kappa_dc": float(kappa_dc),
         "eps_w": float(EPS_WINDOW),
         "d_w": float(d_w),
+        "d_w_common": float(d_w_common),
+        "d_w_coarse": float(d_w_c),
+        "d_w_fine": float(d_w_f),
         "lambda_e": float(2.0 * np.pi / beta_e),
         "lambda_0": float(2.0 * np.pi / k0),
         "lambda_p": float(2.0 * np.pi * u_dep / omega_p_dep),
@@ -1131,16 +1165,17 @@ def _single_grid_budget_terms(
     omega_p_scale: float = 1.0,
 ) -> dict[str, Any]:
     """Compute Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
-    a = TUNNEL_HALF_WIDTH_M
     dz = TUNNEL_LENGTH_M / nz
     beta_e = params["beta_e"]
     beta_q = params["beta_q"] * float(omega_p_scale)
 
-    dt_grid, _ = _cached_integer_period_dt(int(nx), int(nz))
-    omega_f_grid = float((2.0 / dt_grid) * np.sin(0.5 * params["omega"] * dt_grid))
-    gamma1 = float(np.sqrt((np.pi / (2.0 * a)) ** 2 - (omega_f_grid / c_light) ** 2))
+    gamma1_disc, d_w_grid, _ = _grid_gamma1_disc_and_dw(
+        int(nx), int(nz), params["omega"]
+    )
+    gamma1 = gamma1_disc
     kappa_dc = float(params["kappa_dc"])
-    d_w = float(np.log(1.0 / EPS_WINDOW) / gamma1)
+    d_w_common = float(params["d_w_common"])
+    d_w = d_w_common
     z_min, z_max = fit_window(params)
 
     lb_modal = prediction_slack("lb", nx, nz, params, omega_p_scale=omega_p_scale)
@@ -1180,9 +1215,12 @@ def _single_grid_budget_terms(
 
     return {
         "gamma1": gamma1,
+        "gamma1_disc": gamma1_disc,
         "kappa_dc": kappa_dc,
         "eps_w": float(EPS_WINDOW),
         "d_w": d_w,
+        "d_w_grid": d_w_grid,
+        "d_w_common": d_w_common,
         "z_min": float(z_min),
         "z_max": float(z_max),
         "bq_pred_lb": float(lb_modal["bq_pred"]),
@@ -1240,7 +1278,7 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
     ev_p = tols["evals_part"]
     lines = [
         f"Modal prediction and slack budget for grid ({nx}, 1, {nz}):",
-        f"  gamma1 / kappa_dc / d_w / window                  : gamma1={tols['gamma1']:.4f} 1/m, kappa_dc={tols['kappa_dc']:.4f} 1/m, d_w={tols['d_w'] * 1e3:.4f} mm, [{tols['z_min'] * 1e3:.4f}, {tols['z_max'] * 1e3:.4f}] mm",
+        f"  gamma1_disc / kappa_dc / d_w_grid / d_w_common    : gamma1_disc={tols['gamma1_disc']:.4f} 1/m, kappa_dc={tols['kappa_dc']:.4f} 1/m, d_w_grid={tols['d_w_grid'] * 1e3:.4f} mm, d_w_common={tols['d_w_common'] * 1e3:.4f} mm, [{tols['z_min'] * 1e3:.4f}, {tols['z_max'] * 1e3:.4f}] mm",
         f"  bq_pred_lb (Step 2 LB modal prediction)           : {tols['bq_pred_lb']:.6f} rad/m",
         f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
         f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",

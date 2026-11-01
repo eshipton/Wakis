@@ -530,8 +530,10 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     print(flush=True)
     print(format_error_budget(nx, nz, tols), flush=True)
     print(
-        f"TERMS grid=coarse gamma1={tols['gamma1']:.6f} kappa_dc={tols['kappa_dc']:.6f} "
-        f"d_w={tols['d_w']:.6e} z_min={tols['z_min']:.6f} z_max={tols['z_max']:.6f} "
+        f"TERMS grid=coarse gamma1={tols['gamma1']:.6f} gamma1_disc={tols['gamma1_disc']:.6f} "
+        f"kappa_dc={tols['kappa_dc']:.6f} d_w={tols['d_w']:.6e} "
+        f"d_w_grid={tols['d_w_grid']:.6e} d_w_common={tols['d_w_common']:.6e} "
+        f"z_min={tols['z_min']:.6f} z_max={tols['z_max']:.6f} "
         f"s_win={tols['s_win_part']:.6e} "
         f"s_modes={tols['s_modes_part']:.6e} s_sym={tols['s_sym_part']:.6e} "
         f"s_round={tols['s_round']:.6e} "
@@ -581,9 +583,9 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         flush=True,
     )
 
-    # Step 1 & Step 3 identity asserts
-    assert tols["kappa_dc"] > tols["gamma1"], (
-        f"Identity check failed: kappa_dc={tols['kappa_dc']:.6f} <= gamma1={tols['gamma1']:.6f}"
+    # Step 1, Step 3 & Step 4 identity asserts (using discrete gamma1_disc)
+    assert tols["kappa_dc"] > tols["gamma1_disc"], (
+        f"Identity check failed: kappa_dc={tols['kappa_dc']:.6f} <= gamma1_disc={tols['gamma1_disc']:.6f}"
     )
     slack_lb_check = (
         tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_sym_lb"] + tols["s_round"]
@@ -1043,8 +1045,10 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     print(flush=True)
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
-        f"TERMS grid=fine gamma1={tols_f['gamma1']:.6f} kappa_dc={tols_f['kappa_dc']:.6f} "
-        f"d_w={tols_f['d_w']:.6e} z_min={tols_f['z_min']:.6f} z_max={tols_f['z_max']:.6f} "
+        f"TERMS grid=fine gamma1={tols_f['gamma1']:.6f} gamma1_disc={tols_f['gamma1_disc']:.6f} "
+        f"kappa_dc={tols_f['kappa_dc']:.6f} d_w={tols_f['d_w']:.6e} "
+        f"d_w_grid={tols_f['d_w_grid']:.6e} d_w_common={tols_f['d_w_common']:.6e} "
+        f"z_min={tols_f['z_min']:.6f} z_max={tols_f['z_max']:.6f} "
         f"s_win={tols_f['s_win_part']:.6e} "
         f"s_modes={tols_f['s_modes_part']:.6e} s_sym={tols_f['s_sym_part']:.6e} "
         f"s_round={tols_f['s_round']:.6e} "
@@ -1361,9 +1365,9 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         flush=True,
     )
 
-    # Fine-grid Step 1 & Step 3 amplitude sanity |A| > 0.5 * m * I0 and Step 4.8 DFT leakage
-    assert tols_f["kappa_dc"] > tols_f["gamma1"], (
-        f"Identity check failed: kappa_dc={tols_f['kappa_dc']:.6f} <= gamma1={tols_f['gamma1']:.6f}"
+    # Fine-grid Step 1, Step 3 & Step 4 amplitude sanity |A| > 0.5 * m * I0 and Step 4.8 DFT leakage
+    assert tols_f["kappa_dc"] > tols_f["gamma1_disc"], (
+        f"Identity check failed: kappa_dc={tols_f['kappa_dc']:.6f} <= gamma1_disc={tols_f['gamma1_disc']:.6f}"
     )
     min_amp_a = 0.5 * params["I1_0"]
     assert abs(fit_lb_f["A"]) > min_amp_a, (
