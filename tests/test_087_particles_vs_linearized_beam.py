@@ -482,6 +482,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"s_round={tols['s_round']:.6e} "
         f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} "
         f"s_sym_lb={tols['s_sym_lb']:.6e} "
+        f"alias_supp={tols['alias_supp']:.6e} "
         f"lambda_1={ev_p[0]:.6f} lambda_2={ev_p[1]:.6f} "
         f"lambda_3={ev_p[2]:.6f} lambda_4={ev_p[3]:.6f} "
         f"lambda_lb_1={ev_lb[0]:.6f} lambda_lb_2={ev_lb[1]:.6f} "
@@ -529,11 +530,15 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"Identity check failed for slack_cross: val={tols['slack_cross']:.16e}, "
         f"expected={tols['slack_lb'] + tols['slack_part']:.16e}"
     )
-    assert np.isclose(
-        tols["tol_amp_part"], tols["tol_amp_lb"] + 1e-12, rtol=0.0, atol=1e-15
-    ), (
+    dz = TUNNEL_LENGTH_M / nz
+    tol_amp_part_check = float(
+        (0.5 * params["beta_e"] * dz) ** 4 / 120.0
+        + (0.5 * params["beta_q"] * dz) ** 4 / 24.0
+        + 1.0e-12
+    )
+    assert np.isclose(tols["tol_amp_part"], tol_amp_part_check, rtol=0.0, atol=1e-15), (
         f"Identity check failed for tol_amp_part: val={tols['tol_amp_part']:.16e}, "
-        f"expected={tols['tol_amp_lb'] + 1e-12:.16e}"
+        f"expected={tol_amp_part_check:.16e}"
     )
 
     # DFT leakage identity (round-off)
@@ -613,14 +618,16 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
 
     # Entrance amplitude at z_0 = 0.5 * dz
     amp_err_lb = float(abs(np.abs(i1_lb[0]) / params["I1_0"] - 1.0))
-    amp_err_part = float(abs(np.abs(i1_part[0]) / params["I1_0"] - 1.0))
+    amp_err_part = float(
+        abs(np.abs(i1_part[0]) / params["I1_0"] - tols["amp_pred_part"])
+    )
     assert amp_err_lb <= tols["tol_amp_lb"], (
         f"LB entrance |I1(z0)|/I1_0 - 1 = {amp_err_lb:.6e} > bound={tols['tol_amp_lb']:.6e} "
         f"(margin={tols['tol_amp_lb'] - amp_err_lb:+.6e})"
     )
     assert amp_err_part <= tols["tol_amp_part"], (
-        f"Part entrance |I1(z0)|/I1_0 - 1 = {amp_err_part:.6e} > bound={tols['tol_amp_part']:.6e} "
-        f"(margin={tols['tol_amp_part'] - amp_err_part:+.6e})"
+        f"Part entrance ||I1(z0)|/I1_0 - sinc(be*dz/2)*cos(bq*dz/2)| = {amp_err_part:.6e} > "
+        f"bound={tols['tol_amp_part']:.6e} (margin={tols['tol_amp_part'] - amp_err_part:+.6e})"
     )
 
 
@@ -889,6 +896,7 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"s_round={tols_f['s_round']:.6e} "
         f"s_win_lb={tols_f['s_win_lb']:.6e} s_modes_lb={tols_f['s_modes_lb']:.6e} "
         f"s_sym_lb={tols_f['s_sym_lb']:.6e} "
+        f"alias_supp={tols_f['alias_supp']:.6e} "
         f"lambda_1={ev_p_f[0]:.6f} lambda_2={ev_p_f[1]:.6f} "
         f"lambda_3={ev_p_f[2]:.6f} lambda_4={ev_p_f[3]:.6f} "
         f"lambda_lb_1={ev_lb_f[0]:.6f} lambda_lb_2={ev_lb_f[1]:.6f} "
@@ -1061,25 +1069,27 @@ def test_two_resolution_convergence_and_sheet_ensemble():
 
     # Fine-grid Step 4.6 entrance amplitude ("sheet_lattice") and 8-seed ("sheet") entrance amplitude
     amp_err_lb_f = float(abs(np.abs(lb_f["i1_lb"][0]) / params["I1_0"] - 1.0))
-    amp_err_part_f = float(abs(np.abs(part_f["i1_part"][0]) / params["I1_0"] - 1.0))
+    amp_err_part_f = float(
+        abs(np.abs(part_f["i1_part"][0]) / params["I1_0"] - tols_f["amp_pred_part"])
+    )
     assert amp_err_lb_f <= tols_f["tol_amp_lb"], (
         f"Fine LB entrance |I1(z0)|/I1_0 - 1 = {amp_err_lb_f:.6e} > {tols_f['tol_amp_lb']:.6e} "
         f"(margin={tols_f['tol_amp_lb'] - amp_err_lb_f:+.6e})"
     )
     assert amp_err_part_f <= tols_f["tol_amp_part"], (
-        f"Fine Part entrance |I1(z0)|/I1_0 - 1 = {amp_err_part_f:.6e} > {tols_f['tol_amp_part']:.6e} "
-        f"(margin={tols_f['tol_amp_part'] - amp_err_part_f:+.6e})"
+        f"Fine Part entrance ||I1(z0)|/I1_0 - sinc(be*dz/2)*cos(bq*dz/2)| = {amp_err_part_f:.6e} > "
+        f"{tols_f['tol_amp_part']:.6e} (margin={tols_f['tol_amp_part'] - amp_err_part_f:+.6e})"
     )
     for label, noise, tols in (
         ("coarse", noise_c, tols_c),
         ("fine", noise_f, tols_f),
     ):
-        amp_err_sheet = abs(noise["amp0_mean"] / params["I1_0"] - 1.0)
+        amp_err_sheet = abs(noise["amp0_mean"] / params["I1_0"] - tols["amp_pred_part"])
         amp_bound_sheet = (
             tols["tol_amp_part"] + noise["tcrit"] * noise["amp0_sem"] / params["I1_0"]
         )
         assert amp_err_sheet <= amp_bound_sheet, (
-            f"{label} sheet entrance |I1(z0)|/I1_0 - 1 = {amp_err_sheet:.6e} > "
+            f"{label} sheet entrance ||I1(z0)|/I1_0 - sinc(be*dz/2)*cos(bq*dz/2)| = {amp_err_sheet:.6e} > "
             f"bound={amp_bound_sheet:.6e} (margin={amp_bound_sheet - amp_err_sheet:+.6e})"
         )
 
@@ -1228,6 +1238,74 @@ def test_m_scan_linearity():
         f"Particle m-scan |bq(m)/bq(m/2) - 1| = {bq_shift_part:.6e} > "
         f"slack_part = {tols['slack_part']:.6e} (margin={tols['slack_part'] - bq_shift_part:+.6e})"
     )
+
+
+@pytest.mark.slow
+def test_axial_vs_transverse_refinement():
+    """Step 3.3 discriminating run: compare (10, 428), axial-only (10, 856), and transverse-only (20, 428) with and without S_z(k)."""
+    params = compute_analytic_parameters()
+    beta_q_th = params["beta_q"]
+    z_min, z_max = fit_window(params)
+    stored_exc: Exception | None = None
+    results: list[tuple[str, int, int, float, float, float, float, float, float]] = []
+
+    try:
+        for label, nx_g, nz_g in (
+            ("10x428", 10, 428),
+            ("10x856", 10, 856),
+            ("20x428", 20, 428),
+        ):
+            tols_g = derived_tolerances(nx_g, nz_g, params)
+            lb_g, part_g = cached_baseline_pair(nx_g, nz_g)
+            fit_p = fit_beta_q_from_envelope(
+                lb_g["z_coords"],
+                part_g["i1_part"],
+                beta_q_th,
+                z_min=z_min,
+                z_max=z_max,
+            )
+            bq_meas = float(fit_p["beta_q"])
+            pred_sz = float(tols_g["bq_pred_part"])
+            pred_no_sz = float(tols_g["bq_pred_part_no_sz"])
+            slack_g = float(tols_g["slack_part"])
+            resid_sz = float(abs(bq_meas / pred_sz - 1.0))
+            resid_no_sz = float(abs(bq_meas / pred_no_sz - 1.0))
+            results.append(
+                (
+                    label,
+                    nx_g,
+                    nz_g,
+                    bq_meas,
+                    pred_sz,
+                    pred_no_sz,
+                    resid_sz,
+                    resid_no_sz,
+                    slack_g,
+                )
+            )
+
+        parts_str = " ".join(
+            f"meas_{lbl}={meas:.6f} pred_{lbl}={psz:.6f} pred_without_Sz_{lbl}={pnosz:.6f} "
+            f"resid_with_Sz_{lbl}={rsz:.6e} resid_without_Sz_{lbl}={rnosz:.6e} slack_{lbl}={slk:.6e}"
+            for (lbl, _, _, meas, psz, pnosz, rsz, rnosz, slk) in results
+        )
+        print(f"\nDIAG id=axial_vs_transverse {parts_str}", flush=True)
+    except Exception as exc:
+        stored_exc = exc
+        print(
+            f"\nDIAG id=axial_vs_transverse status=ERROR type={type(exc).__name__} msg={str(exc)[:200]}",
+            flush=True,
+        )
+
+    for lbl, nx_g, nz_g, meas, psz, pnosz, rsz, rnosz, slk in results:
+        assert rsz <= slk, (
+            f"Grid ({nx_g}, 1, {nz_g}) [{lbl}] particle |bq/pred_with_Sz - 1| = {rsz:.6e} > "
+            f"slack_part = {slk:.6e} (margin={slk - rsz:+.6e}, pred_without_Sz={pnosz:.6f}, "
+            f"resid_without_Sz={rnosz:.6e})"
+        )
+
+    if stored_exc is not None:
+        raise stored_exc
 
 
 @pytest.mark.slow

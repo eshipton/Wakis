@@ -569,6 +569,7 @@ def discrete_modal_prediction(
     line_w: np.ndarray | None = None,
     entrance_profile: np.ndarray | None = None,
     include_shear: bool = True,
+    include_sz: bool = True,
     use_omega_f: bool = True,
     drop_highest_mode: bool = False,
     win_shift: float = 0.0,
@@ -595,6 +596,9 @@ def discrete_modal_prediction(
     include_shear : bool, optional
         For ``code == "particles"``, include the per-line DC velocity shear
         ``(u_l, gamma_l)`` from Step 1. Default is ``True``.
+    include_sz : bool, optional
+        For ``code == "particles"``, include the drifting-beam principal-mode axial
+        shape factor ``S_z(k)**2 = sinc(k * dz / 2)**2`` (Step 3). Default is ``True``.
     use_omega_f : bool, optional
         If ``True`` (default), use the leapfrog field time symbol ``Omega_f`` in
         ``tau_Y(k)**2 = kappa(k)**2 - (Omega_f / c)**2``; if ``False``, use
@@ -748,7 +752,12 @@ def discrete_modal_prediction(
                 line_w=line_w,
                 use_omega_f=use_omega_f,
             )
-            g_tilde = sig_vec[:, None] * op_k["G"]
+            # Drifting-beam axial shape factor S_z(k)^2 = sinc^2(k*dz/2) from
+            # p=1 Esirkepov J_z deposit symbol sinc(k*dz/2) and p_g=0 Galerkin
+            # E_z gather symbol sinc(k*dz/2) (principal m=0 mode; aliases
+            # k_m = k + 2*pi*m/dz are Doppler-detuned by 2*pi*|m|*u_dep/dz >> omega_q).
+            sz_sq = float(np.sinc(0.5 * k_val * dz / np.pi) ** 2) if include_sz else 1.0
+            g_tilde = (sz_sq * sig_vec)[:, None] * op_k["G"]
             m_sym = (s_left[:, None] * g_tilde) * s_right[None, :]
             m_sym = 0.5 * (m_sym + m_sym.T)
             ev, qv = np.linalg.eigh(m_sym)
@@ -953,6 +962,25 @@ def prediction_slack(
                 line_w=line_w,
                 entrance_profile=entrance_profile,
                 include_shear=False,
+                include_sz=True,
+                use_omega_f=True,
+                drop_highest_mode=False,
+                win_shift=0.0,
+                omega_p_scale=omega_p_scale,
+                return_details=False,
+            )
+        )
+        bq_no_sz = float(
+            discrete_modal_prediction(
+                "particles",
+                nx,
+                nz,
+                params,
+                line_x=line_x,
+                line_w=line_w,
+                entrance_profile=entrance_profile,
+                include_shear=True,
+                include_sz=False,
                 use_omega_f=True,
                 drop_highest_mode=False,
                 win_shift=0.0,
@@ -961,6 +989,7 @@ def prediction_slack(
             )
         )
         res["bq_pred_unif"] = bq_unif
+        res["bq_pred_no_sz"] = bq_no_sz
         res["shear_shift"] = float(bq_pred - bq_unif)
         res["shear_rel"] = float(bq_pred / bq_unif - 1.0)
     return res
@@ -982,14 +1011,24 @@ def _single_grid_budget_terms(
         "particles", nx, nz, params, omega_p_scale=omega_p_scale
     )
 
+    # Brillouin alias suppression factor (omega_q * dz / (2 * pi * u_dep))^2 for m != 0:
+    omega_q_eff = params["omega_q"] * float(omega_p_scale)
+    alias_supp = float((omega_q_eff * dz / (2.0 * np.pi * params["u_dep"])) ** 2)
+
     # Discrete 1D Poisson DC depression prediction on this grid (Step 1):
     dep_info = compute_discrete_dc_depression(nx, params, return_details=True)
     delta_th_disc = float(dep_info["delta_disc"])
     eps_ac = float(0.5 * (MODULATION_INDEX * beta_q / beta_e) ** 2)
 
     # Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
+    # For particles, edge-0 current is the flux averaged over a one-cell transit,
+    # giving predicted ratio sinc(beta_e * dz / 2) * cos(beta_q * dz / 2) and bound
+    # from the first neglected Taylor terms (beta_e*dz/2)^4/120 + (beta_q*dz/2)^4/24 + 1e-12.
     tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
-    tol_amp_part = float(tol_amp_lb + 1e-12)
+    be_half = 0.5 * beta_e * dz
+    bq_half = 0.5 * beta_q * dz
+    amp_pred_part = float(np.sinc(be_half / np.pi) * np.cos(bq_half))
+    tol_amp_part = float((be_half**4) / 120.0 + (bq_half**4) / 24.0 + 1.0e-12)
 
     # Residual DFT leakage bound (identity / round-off):
     eps_dft = float(100.0 * np.finfo(np.float64).eps / MODULATION_INDEX)
@@ -1013,6 +1052,7 @@ def _single_grid_budget_terms(
         "i1_model_lb": lb_modal["i1_model"],
         "bq_pred_part": float(part_modal["bq_pred"]),
         "bq_pred_part_unif": float(part_modal["bq_pred_unif"]),
+        "bq_pred_part_no_sz": float(part_modal["bq_pred_no_sz"]),
         "shear_shift": float(part_modal["shear_shift"]),
         "shear_rel": float(part_modal["shear_rel"]),
         "s_win_part": float(part_modal["s_win"]),
@@ -1022,6 +1062,7 @@ def _single_grid_budget_terms(
         "evals_part": part_modal["evals"],
         "i1_model_part": part_modal["i1_model"],
         "slack_cross": float(lb_modal["slack"] + part_modal["slack"]),
+        "alias_supp": alias_supp,
         "delta_th": float(params["delta_u_dc"]),
         "delta_th_flux": float(params["delta_u_dc_flux"]),
         "delta_th_density": float(params["delta_u_dc_density"]),
@@ -1031,6 +1072,7 @@ def _single_grid_budget_terms(
         "delta_disc_density": float(dep_info["delta_density"]),
         "dep_weighting": str(dep_info["weighting"]),
         "eps_ac": eps_ac,
+        "amp_pred_part": amp_pred_part,
         "tol_amp_lb": tol_amp_lb,
         "tol_amp_part": tol_amp_part,
         "eps_dft": eps_dft,
@@ -1059,16 +1101,18 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
         f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
         f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",
         f"  LB eigenvalues lambda_1..4(beta_e)                : ({ev_lb[0]:.6f}, {ev_lb[1]:.6f}, {ev_lb[2]:.6f}, {ev_lb[3]:.6f})",
-        f"  bq_pred_part (Step 2 Particle modal prediction)   : {tols['bq_pred_part']:.6f} rad/m (unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
+        f"  bq_pred_part (Step 2+3 Particle modal prediction) : {tols['bq_pred_part']:.6f} rad/m (no_Sz={tols['bq_pred_part_no_sz']:.6f}, unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
         f"  slack_part = s_win + s_modes + s_sym + s_round    : {tols['slack_part']:.6%}",
         f"    (s_win={tols['s_win_part']:.3e}, s_modes={tols['s_modes_part']:.3e}, s_sym={tols['s_sym_part']:.3e}, s_round={tols['s_round']:.1e})",
         f"  Particle eigenvalues lambda_1..4(beta_e)          : ({ev_p[0]:.6f}, {ev_p[1]:.6f}, {ev_p[2]:.6f}, {ev_p[3]:.6f})",
+        f"  alias_supp ((omega_q*dz/(2*pi*u_dep))^2)          : {tols['alias_supp']:.6e}",
         f"  slack_cross (slack_lb + slack_part)               : {tols['slack_cross']:.6%}",
         f"  delta_th (continuum DC dep, flux/density)         : {tols['delta_th_flux']:.6%} / {tols['delta_th_density']:.6%}",
         f"  delta_disc_exact (1D Poisson DC dep, {tols['dep_weighting']})        : {tols['delta_disc_exact']:.6%} (flux={tols['delta_disc_flux']:.6%}, density={tols['delta_disc_density']:.6%})",
         f"  eps_ac (0.5*(m*bq/be)^2)                          : {tols['eps_ac']:.6e}",
+        f"  amp_pred_part (sinc(be*dz/2)*cos(bq*dz/2))        : {tols['amp_pred_part']:.8f}",
         f"  tol_amp_lb (0.5*(bq*dz)^2)                        : {tols['tol_amp_lb']:.6e}",
-        f"  tol_amp_part (tol_amp_lb + 1e-12)                 : {tols['tol_amp_part']:.6e}",
+        f"  tol_amp_part ((be*dz/2)^4/120+(bq*dz/2)^4/24+1e-12): {tols['tol_amp_part']:.6e}",
         f"  eps_dft (100*eps_mach/m)                          : {tols['eps_dft']:.6e}",
     ]
     return "\n".join(lines)
