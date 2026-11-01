@@ -75,8 +75,10 @@ from examples._space_charge_waves_common import (
     compute_spatial_spectrum,
     derived_tolerances,
     fit_beta_q_from_envelope,
+    fit_window,
     format_error_budget,
     measure_empirical_noise,
+    predict_particle_beta_q,
     run_linearized_beam_drift,
     run_particle_beam_drift,
 )
@@ -88,7 +90,7 @@ JSON_PATH = Path(__file__).resolve().with_suffix(".json")
 
 
 def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
-    """Run both `LinearizedBeam` and `ParticleSolver` on grid ``(nx, 1, nz)``."""
+    """Run both `LinearizedBeam` and `ParticleSolver` (`profile="sheet_lattice"`) on grid ``(nx, 1, nz)``."""
     beta_e = params["beta_e"]
     beta_q_th = params["beta_q"]
     lam_q = params["lambda_q"]
@@ -98,6 +100,8 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 
     dz = lz / nz
     dx = 2.0 * a / nx
+    z_min, z_max = fit_window(params)
+    tols = derived_tolerances(nx, nz, params)
 
     t0_lb = time.perf_counter()
     lb_res = run_linearized_beam_drift(nx, nz, rho0_scale=1.0)
@@ -105,7 +109,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 
     dt = lb_res["dt"]
     n_spp = lb_res["n_spp"]
-    n_settle = int(np.ceil(1.35 * lz / (params["u_dep"] * dt)))
+    n_settle = int(np.ceil(1.01 * lz / (params["u_dep"] * dt)))
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
@@ -114,7 +118,12 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 
     t0_part = time.perf_counter()
     part_res = run_particle_beam_drift(
-        nx, nz, beam_ref=lb_res["beam"], qm_scale=1.0, seed=42
+        nx,
+        nz,
+        beam_ref=lb_res["beam"],
+        qm_scale=1.0,
+        seed=42,
+        profile="sheet_lattice",
     )
     wall_part_s = time.perf_counter() - t0_part
 
@@ -124,12 +133,23 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     i1_part = part_res["i1_part"]
     i2_part = part_res["i2_part"]
 
-    bq_lb, z0_lb, nulls_lb, res_lb = fit_beta_q_from_envelope(
-        z_coords, i1_lb, beta_q_th, z_max=lam_q, return_residuals=True
+    fit_lb = fit_beta_q_from_envelope(
+        z_coords, i1_lb, beta_q_th, z_min=z_min, z_max=z_max
     )
-    bq_part, z0_part, nulls_part, res_part = fit_beta_q_from_envelope(
-        z_coords, i1_part, beta_q_th, z_max=lam_q, return_residuals=True
+    fit_part = fit_beta_q_from_envelope(
+        z_coords, i1_part, beta_q_th, z_min=z_min, z_max=z_max
     )
+    bq_lb = fit_lb["beta_q"]
+    bq_part = fit_part["beta_q"]
+    z0_lb = fit_lb["z0"]
+    z0_part = fit_part["z0"]
+
+    delta_meas_lat = (params["u0"] - part_res["u_z_mean"]) / params["u0"]
+    bq_th_at_delta, bq_part_pred = predict_particle_beta_q(delta_meas_lat, tols)
+    bq_lb_pred = tols["bq_lb_pred"]
+    resid_lb = abs(bq_lb / bq_lb_pred - 1.0)
+    resid_lat = abs(bq_part / bq_part_pred - 1.0)
+    resid_cross = abs(bq_part / bq_lb - bq_part_pred / bq_lb_pred)
 
     kz_grid, spec_lb, k_fast_lb, k_slow_lb = compute_spatial_spectrum(
         z_coords, i1_lb, beta_e, beta_q_th, z_max=lam_q
@@ -147,6 +167,13 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         np.sqrt(np.mean(np.abs(i2_part[active_mask]) ** 2)) / np.abs(i1_part[0])
     )
 
+    i1_fit_lb = fit_lb["a_f"] * np.exp(-1j * fit_lb["k_f"] * z_coords) + fit_lb[
+        "a_s"
+    ] * np.exp(-1j * fit_lb["k_s"] * z_coords)
+    i1_fit_part = fit_part["a_f"] * np.exp(-1j * fit_part["k_f"] * z_coords) + fit_part[
+        "a_s"
+    ] * np.exp(-1j * fit_part["k_s"] * z_coords)
+
     n_macro = 16 if nx == COARSE_GRID[0] else 32
     metrics = {
         "grid_shape": [int(nx), 1, int(nz)],
@@ -157,6 +184,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         "n_steps_total": int(n_total),
         "n_steps_dft": int(n_dft),
         "n_macro_per_step": int(n_macro),
+        "fit_window_m": [float(z_min), float(z_max)],
         "cells_per_lambda_e": float(params["lambda_e"] / dz),
         "cells_per_lambda_0": float(params["lambda_0"] / dz),
         "cells_per_lambda_p": float(params["lambda_p"] / dz),
@@ -166,14 +194,42 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         "wall_time_particles_s": float(wall_part_s),
         "entrance_ratio_linearized_beam": float(np.abs(i1_lb[0]) / params["I1_0"]),
         "entrance_ratio_particles": float(np.abs(i1_part[0]) / params["I1_0"]),
+        "bq_th": float(beta_q_th),
+        "bq_lb_pred": float(bq_lb_pred),
+        "bq_lb": float(bq_lb),
+        "resid_lb": float(resid_lb),
+        "s_lb": float(tols["s_lb"]),
+        "eps_ax": float(tols["eps_ax"]),
+        "eps_x_fit": float(tols["eps_x_fit"]),
+        "eps_z_fit": float(tols["eps_z_fit"]),
+        "eps_cic": float(tols["eps_cic"]),
+        "eps_fit": float(tols["eps_fit"]),
+        "eps_fit_cont": float(tols["eps_fit_cont"]),
+        "eps_fit_grid": float(tols["eps_fit_grid"]),
+        "bq_th_at_delta_meas": float(bq_th_at_delta),
+        "bq_part_pred": float(bq_part_pred),
+        "lattice": float(bq_part),
+        "resid_lattice": float(resid_lat),
+        "s_part": float(tols["s_part"]),
+        "resid_cross": float(resid_cross),
+        "s_cross": float(tols["s_cross"]),
+        "delta_th": float(tols["delta_th"]),
+        "delta_th_disc": float(tols["delta_th_disc"]),
+        "delta_meas_lattice": float(delta_meas_lat),
         "beta_q_linearized_beam_rad_m": float(bq_lb),
+        "k_c_linearized_beam_rad_m": float(fit_lb["k_c"]),
+        "k_f_fit_linearized_beam_rad_m": float(fit_lb["k_f"]),
+        "k_s_fit_linearized_beam_rad_m": float(fit_lb["k_s"]),
+        "sigma_beta_q_linearized_beam_rad_m": float(fit_lb["sigma_beta_q"]),
+        "as_over_af_linearized_beam": float(fit_lb["as_over_af"]),
         "z0_linearized_beam_m": float(z0_lb),
-        "nulls_linearized_beam_m": [float(v) for v in nulls_lb],
-        "null_residuals_linearized_beam_m": [float(v) for v in res_lb],
         "beta_q_particles_rad_m": float(bq_part),
+        "k_c_particles_rad_m": float(fit_part["k_c"]),
+        "k_f_fit_particles_rad_m": float(fit_part["k_f"]),
+        "k_s_fit_particles_rad_m": float(fit_part["k_s"]),
+        "sigma_beta_q_particles_rad_m": float(fit_part["sigma_beta_q"]),
+        "as_over_af_particles": float(fit_part["as_over_af"]),
         "z0_particles_m": float(z0_part),
-        "nulls_particles_m": [float(v) for v in nulls_part],
-        "null_residuals_particles_m": [float(v) for v in res_part],
         "rel_error_linearized_beam_vs_analytic": float((bq_lb - beta_q_th) / beta_q_th),
         "rel_error_particles_vs_analytic": float((bq_part - beta_q_th) / beta_q_th),
         "rel_diff_particles_vs_linearized_beam": float((bq_part - bq_lb) / bq_lb),
@@ -192,9 +248,13 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 
     curves = {
         "z_mm": z_coords * 1e3,
+        "z_min_mm": float(z_min * 1e3),
+        "z_max_mm": float(z_max * 1e3),
         "env_analytic_norm": np.abs(np.cos(beta_q_th * (z_coords - z0_part))),
         "env_linearized_beam_norm": np.abs(i1_lb) / params["I1_0"],
         "env_particles_norm": np.abs(i1_part) / params["I1_0"],
+        "env_fit_linearized_beam_norm": np.abs(i1_fit_lb) / params["I1_0"],
+        "env_fit_particles_norm": np.abs(i1_fit_part) / params["I1_0"],
         "carrier_analytic_norm": np.real(
             np.cos(beta_q_th * (z_coords - z0_part)) * np.exp(-1j * beta_e * z_coords)
         ),
@@ -211,7 +271,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 def make_figure_envelope(
     run_data: dict, params: dict[str, float], out_path: Path
 ) -> None:
-    """Create Figure 1: Axial current envelope ``|I1(z)|`` and modulated carrier wave."""
+    """Create Figure 1: Axial current envelope ``|I1(z)|``, two-wave fit, and modulated carrier wave."""
     fig, axes = figstyle.new_figure(
         width_in=figstyle.FULL_WIDTH_IN,
         height_in=3.4,
@@ -222,11 +282,19 @@ def make_figure_envelope(
     ax_env, ax_car = axes[0], axes[1]
 
     curves = run_data["curves"]
-    metrics = run_data["metrics"]
     z_mm = curves["z_mm"]
+    z_min_mm = curves["z_min_mm"]
+    z_max_mm = curves["z_max_mm"]
     lam_q_mm = params["lambda_q"] * 1e3
     ramp_start_mm = (TUNNEL_LENGTH_M - OUTFLOW_RAMP_M) * 1e3
 
+    ax_env.axvspan(
+        z_min_mm,
+        z_max_mm,
+        color="#e6f2ff",
+        alpha=0.55,
+        label=r"Two-wave fit window $[3/T_1, L_z - L_{\mathrm{ramp}} - 3/T_1]$",
+    )
     ax_env.plot(
         z_mm,
         curves["env_analytic_norm"],
@@ -237,33 +305,25 @@ def make_figure_envelope(
     )
     st_lb = figstyle.series_style(0, with_marker=False, lw=1.9)
     st_part = figstyle.series_style(1, with_marker=True, markevery=12, ms=4.2)
+    st_fit = figstyle.series_style(2, with_marker=False, lw=1.4)
+    st_fit["linestyle"] = "-."
     ax_env.plot(
         z_mm,
         curves["env_linearized_beam_norm"],
-        label=(
-            rf"LinearizedBeam ($\beta_q={metrics['beta_q_linearized_beam_rad_m']:.2f}$ rad/m)"
-        ),
+        label="LinearizedBeam",
         **st_lb,
     )
     ax_env.plot(
         z_mm,
         curves["env_particles_norm"],
-        label=(rf"Particles ($\beta_q={metrics['beta_q_particles_rad_m']:.2f}$ rad/m)"),
+        label="Particles (sheet_lattice)",
         **st_part,
     )
-    ax_env.axvline(
-        0.25 * lam_q_mm,
-        color=figstyle.INK,
-        linestyle=":",
-        linewidth=0.9,
-        alpha=0.7,
-    )
-    ax_env.axvline(
-        0.75 * lam_q_mm,
-        color=figstyle.INK,
-        linestyle=":",
-        linewidth=0.9,
-        alpha=0.7,
+    ax_env.plot(
+        z_mm,
+        curves["env_fit_particles_norm"],
+        label=r"Fitted two-wave $|a_f e^{-i k_f z} + a_s e^{-i k_s z}|$",
+        **st_fit,
     )
     ax_env.axvspan(
         ramp_start_mm,
@@ -317,7 +377,7 @@ def make_figure_envelope(
 def make_figure_spectrum(
     run_data: dict, params: dict[str, float], out_path: Path
 ) -> None:
-    """Create Figure 2: Spatial wavenumber spectrum ``|I1(k_z)|`` with ``beta_e +- beta_q``."""
+    """Create Figure 2: Spatial wavenumber spectrum ``|I1(k_z)|`` with ``k_f`` and ``k_s`` marked."""
     fig, axes = figstyle.new_figure(
         width_in=figstyle.FULL_WIDTH_IN,
         height_in=3.4,
@@ -328,11 +388,14 @@ def make_figure_spectrum(
     ax_k, ax_shift = axes[0], axes[1]
 
     curves = run_data["curves"]
+    metrics = run_data["metrics"]
     kz = curves["kz_rad_m"]
     beta_e = params["beta_e"]
     beta_q = params["beta_q"]
     k_fast = beta_e - beta_q
     k_slow = beta_e + beta_q
+    kf_fit = metrics["k_f_fit_particles_rad_m"]
+    ks_fit = metrics["k_s_fit_particles_rad_m"]
 
     st_lb = figstyle.series_style(0, with_marker=False, lw=1.9)
     st_part = figstyle.series_style(1, with_marker=True, markevery=35, ms=4.2)
@@ -344,14 +407,27 @@ def make_figure_spectrum(
         color=figstyle.INK,
         linestyle="--",
         linewidth=1.2,
-        label=r"Analytic $\beta_e - \beta_q$ (fast)",
+        label=r"Analytic $k_f = \beta_e - \beta_q$",
     )
     ax_k.axvline(
         k_slow,
         color=figstyle.INK,
         linestyle="-.",
         linewidth=1.2,
-        label=r"Analytic $\beta_e + \beta_q$ (slow)",
+        label=r"Analytic $k_s = \beta_e + \beta_q$",
+    )
+    ax_k.axvline(
+        kf_fit,
+        color="#d95f02",
+        linestyle=":",
+        linewidth=1.1,
+        label=r"Fitted $k_f, k_s$ (particles)",
+    )
+    ax_k.axvline(
+        ks_fit,
+        color="#d95f02",
+        linestyle=":",
+        linewidth=1.1,
     )
     ax_k.axvline(
         beta_e,
@@ -362,7 +438,7 @@ def make_figure_spectrum(
     )
     ax_k.set_xlabel(r"Axial wavenumber $k_z$ [rad/m]")
     ax_k.set_ylabel(r"Spatial spectrum $|\hat{I}_1(k_z)| / (m I_0)$")
-    ax_k.set_title(r"(a) Fast and slow space-charge wave peaks")
+    ax_k.set_title(r"(a) Fast ($k_f$) and slow ($k_s$) space-charge wave peaks")
     ax_k.set_xlim(kz[0], kz[-1])
     ax_k.set_ylim(-0.02, 0.62)
     figstyle.spectrum_grid(ax_k)
@@ -386,14 +462,14 @@ def make_figure_spectrum(
         color=figstyle.INK,
         linestyle="--",
         linewidth=1.2,
-        label=r"$\Delta k / \beta_q = -1$",
+        label=r"$(k_f - \beta_e) / \beta_q = -1$",
     )
     ax_shift.axvline(
         +1.0,
         color=figstyle.INK,
         linestyle="-.",
         linewidth=1.2,
-        label=r"$\Delta k / \beta_q = +1$",
+        label=r"$(k_s - \beta_e) / \beta_q = +1$",
     )
     ax_shift.axvline(
         0.0,
@@ -421,7 +497,7 @@ def main() -> None:
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="Run only the coarse resolution (10, 1, 290) for a fast smoke check.",
+        help=f"Run only the coarse resolution {COARSE_GRID} for a fast smoke check.",
     )
     args = parser.parse_args()
 
@@ -442,12 +518,11 @@ def main() -> None:
         f"[Coarse {COARSE_GRID}] "
         f"LB: |I1(0)|/(m*I0)={mc['entrance_ratio_linearized_beam']:.5f}, "
         f"beta_q={mc['beta_q_linearized_beam_rad_m']:.4f} rad/m "
-        f"({mc['rel_error_linearized_beam_vs_analytic']:+.4%}), "
+        f"(pred={mc['bq_lb_pred']:.4f} rad/m, resid={mc['resid_lb']:.4%}, s_lb={mc['s_lb']:.4%}), "
         f"z0={mc['z0_linearized_beam_m'] * 1e3:.3f} mm; "
-        f"Particles: |I1(0)|/(m*I0)={mc['entrance_ratio_particles']:.5f}, "
+        f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mc['entrance_ratio_particles']:.5f}, "
         f"beta_q={mc['beta_q_particles_rad_m']:.4f} rad/m "
-        f"({mc['rel_error_particles_vs_analytic']:+.4%}, "
-        f"vs LB: {mc['rel_diff_particles_vs_linearized_beam']:+.4%}), "
+        f"(pred={mc['bq_part_pred']:.4f} rad/m, resid={mc['resid_lattice']:.4%}, s_part={mc['s_part']:.4%}), "
         f"z0={mc['z0_particles_m'] * 1e3:.3f} mm"
     )
 
@@ -455,13 +530,10 @@ def main() -> None:
     plot_source = coarse_out
 
     if not args.smoke:
-        noise = measure_empirical_noise()
-        tols_c = derived_tolerances(
-            COARSE_GRID[0], COARSE_GRID[2], params, noise["eps_noise"]
-        )
-        tols_f = derived_tolerances(
-            FINE_GRID[0], FINE_GRID[2], params, noise["eps_noise"]
-        )
+        noise_c = measure_empirical_noise(COARSE_GRID)
+        noise_f = measure_empirical_noise(FINE_GRID)
+        tols_c = derived_tolerances(COARSE_GRID[0], COARSE_GRID[2], params)
+        tols_f = derived_tolerances(FINE_GRID[0], FINE_GRID[2], params)
         print(format_error_budget(COARSE_GRID[0], COARSE_GRID[2], tols_c))
         print(format_error_budget(FINE_GRID[0], FINE_GRID[2], tols_f))
 
@@ -471,14 +543,28 @@ def main() -> None:
             f"[Fine   {FINE_GRID}] "
             f"LB: |I1(0)|/(m*I0)={mf['entrance_ratio_linearized_beam']:.5f}, "
             f"beta_q={mf['beta_q_linearized_beam_rad_m']:.4f} rad/m "
-            f"({mf['rel_error_linearized_beam_vs_analytic']:+.4%}), "
+            f"(pred={mf['bq_lb_pred']:.4f} rad/m, resid={mf['resid_lb']:.4%}, s_lb={mf['s_lb']:.4%}), "
             f"z0={mf['z0_linearized_beam_m'] * 1e3:.3f} mm; "
-            f"Particles: |I1(0)|/(m*I0)={mf['entrance_ratio_particles']:.5f}, "
+            f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mf['entrance_ratio_particles']:.5f}, "
             f"beta_q={mf['beta_q_particles_rad_m']:.4f} rad/m "
-            f"({mf['rel_error_particles_vs_analytic']:+.4%}, "
-            f"vs LB: {mf['rel_diff_particles_vs_linearized_beam']:+.4%}), "
+            f"(pred={mf['bq_part_pred']:.4f} rad/m, resid={mf['resid_lattice']:.4%}, s_part={mf['s_part']:.4%}), "
             f"z0={mf['z0_particles_m'] * 1e3:.3f} mm"
         )
+        for m_dict, noise in ((mc, noise_c), (mf, noise_f)):
+            tcrit = float(noise["tcrit"])
+            sem = float(noise["bq_sem"])
+            mean_sh = float(noise["bq_mean"])
+            pred_p = float(m_dict["bq_part_pred"])
+            m_dict["mean_sheet"] = mean_sh
+            m_dict["sem"] = sem
+            m_dict["tcrit"] = tcrit
+            m_dict["resid_mean"] = float(abs(mean_sh / pred_p - 1.0))
+            m_dict["bound_mean"] = float(m_dict["s_part"] + tcrit * sem / pred_p)
+            m_dict["mean_minus_lattice"] = float(abs(mean_sh - m_dict["lattice"]))
+            m_dict["seeds"] = [float(v) for v in noise["bq_seeds"]]
+            m_dict["delta_meas_mean"] = float(noise["delta_mean"])
+            m_dict["delta_sem"] = float(noise["delta_sem"])
+
         r_lb = abs(mc["rel_error_linearized_beam_vs_analytic"]) / abs(
             mf["rel_error_linearized_beam_vs_analytic"]
         )

@@ -82,41 +82,53 @@ subject to $\phi_{\text{DC}}(\pm a) = 0$, $\mathrm{d}\phi_{\text{DC}}/\mathrm{d}
 \phi_{\text{DC}}(x) = \frac{\rho_0}{2\varepsilon_0}\bigl(2 a b - b^2 - x^2\bigr) \quad (|x| \le b), \qquad \langle \phi_{\text{DC}} \rangle_{|x|\le b} = \frac{1}{2b}\int_{-b}^{b} \phi_{\text{DC}}(x)\,\mathrm{d}x = \frac{\rho_0 b}{\varepsilon_0}\left(a - \frac{2}{3}b\right).
 ```
 
-As electrons enter through the grounded plane $z = 0$ ($\phi_{\text{DC}}(x, 0) = 0$) into the interior potential trough, relativistic energy conservation $\bigl(\gamma(x) - \gamma_0\bigr)m_e c^2 = -e\phi_{\text{DC}}(x)$ with $\mathrm{d}\gamma = \gamma_0^3 (u_0/c^2)\,\mathrm{d}u$ reduces the cross-section-averaged axial drift velocity from $u_0$ to $u_{\text{dep}} = u_0(1 - \delta_{u,\text{DC}})$ and increases the steady interior charge density by DC continuity ($J_{0,z} = \rho_{\text{dep}} u_{\text{dep}} = \rho_0 u_0$):
+As electrons enter through the grounded plane $z = 0$ ($\phi_{\text{DC}}(x, 0) = 0$) into the interior potential trough, relativistic energy conservation $\bigl(\gamma(x) - \gamma_0\bigr)m_e c^2 = -e\phi_{\text{DC}}(x)$ with $\mathrm{d}\gamma = \gamma_0^3 (u_0/c^2)\,\mathrm{d}u$ reduces the cross-section-averaged axial drift velocity from $u_0$ to $u_{\text{dep}} = u_0(1 - \delta_{u,\text{DC}})$ and increases the steady interior charge density by DC continuity ($J_{0,z} = \rho_{\text{dep}} u_{\text{dep}} = \rho_0 u_0$). Starting from the leading-order fractional velocity depression
 
 ```math
-\delta_{u,\text{DC}} = \frac{u_0 - u_{\text{dep}}}{u_0} = \frac{-e\langle\phi_{\text{DC}}\rangle_{|x|\le b}}{\gamma_0^3 m_e u_0^2} = \frac{\omega_p^2\,b\left(a - \dfrac{2}{3}b\right)}{\gamma_0^3 u_0^2}, \qquad \rho_{\text{dep}} = \rho_0\,\frac{u_0}{u_{\text{dep}}}, \qquad \omega_{p,\text{dep}} = \omega_p\sqrt{\frac{u_0}{u_{\text{dep}}}}.
+\delta_0 = \frac{-e\langle\phi_{\text{DC}}\rangle_{|x|\le b}}{\gamma_0^3 m_e u_0^2} = \frac{\omega_p^2\,b\left(a - \dfrac{2}{3}b\right)}{\gamma_0^3 u_0^2},
 ```
 
-Because $\beta_q = R(\omega, u, b, a)\,\omega_p / (\gamma^{3/2} u)$ depends on both $u$ and $\rho$, this DC depression shifts $\beta_q$ upward by $\mathcal{O}(2\delta_{u,\text{DC}})$ independently of grid refinement. To compare both codes on the identical physical equilibrium without confounding boundary artifacts, we adopt **Option 3(ii)**: both the analytical reference wavenumber $\beta_{q,\text{dep}}$ and the Eulerian `LinearizedBeam` equilibrium are evaluated at the depressed state $(u_{\text{dep}}, \rho_{\text{dep}}, \gamma_{\text{dep}})$ that the particles experience in the interior of the tunnel, while the particle run directly measures $\langle u_z\rangle(z)$ and $\rho_{\text{DC}}(z)$ over $z \in [0.2 L_z, 0.8 L_z]$ and verifies agreement with $\delta_{u,\text{DC}}$. Neutralization via an external field `E_ext(x)` or `solver._particles_q_bg` (Option 3(i)) is not used because:
-- A 1D transverse `E_ext(x)` only acts during particle field gather (not on `solver.E`) and cannot cancel the 2D axial cathode image-charge sheath field $E_{z,\text{DC}}(x, z) = -\partial_z\phi_{\text{DC}}(x, z)$ near $z = 0$ that decelerates entering electrons along $z$.
-- The solver's fixed background array `solver._particles_q_bg` is used only in the diagnostic `gauss_residual()` check and does not enter Ampère's law $\partial_t \mathbf{E} = c^2\nabla\times\mathbf{B} - \mathbf{J}/\varepsilon_0$; pre-filling discrete macroparticle slices at $t = 0$ with $\mathbf{E}(0) = \mathbf{0}$ imprints a static grid-scale Moiré pattern into $\mathbf{q}_{\text{bg}}$ and impulsively excites undamped PEC cavity modes at $t = 0$.
+the self-consistent continuum depression $\delta_{\text{th}} = \delta_{u,\text{DC}}$ iterates density enhancement ($\rho_{\text{dep}} \propto u_{\text{dep}}^{-1}$), the $u_{\text{dep}}^{-2}$ kinematic factor, and the depressed Lorentz factor $\gamma(u_{\text{dep}})^3$ to convergence:
 
-##### 4. Standing-wave current envelope, effective launch offset $z_0$, and spatial spectrum
+```math
+\delta \leftarrow \delta_0\,(1 - \delta)^{-3}\left(\frac{\gamma_0}{\gamma\bigl(u_0(1 - \delta)\bigr)}\right)^3, \qquad \rho_{\text{dep}} = \rho_0\,\frac{u_0}{u_{\text{dep}}}, \qquad \omega_{p,\text{dep}} = \omega_p\sqrt{\frac{u_0}{u_{\text{dep}}}}.
+```
 
-Suppose the electron beam is driven at the entrance with a pure sinusoidal density modulation at frequency $\omega$:
+On a finite transverse grid of $N_x$ cells ($x_i = -a + i\Delta x$, $\Delta x = 2a/N_x$) with PEC walls at $x = \pm a$, solving the 1D discrete 3-point Poisson equation for the cloud-in-cell (CIC) deposited top-hat sheet charge and taking the particle-weighted mean potential followed by the same fixed-point iteration yields the discrete DC depression prediction $\delta_{\text{th,disc}}$ (`compute_discrete_dc_depression`). To compare both codes on the same physical equilibrium, we adopt **Option 3(ii)**: `LinearizedBeam` is initialized at the depressed continuum state $(u_{\text{dep}}, \rho_{\text{dep}}, \gamma_{\text{dep}})$, while the particle prediction $\beta_{q,\text{P,pred}}$ evaluates the analytical dispersion $\beta_{q,\text{th}}(\delta_{\text{meas}})$ directly at the interior velocity depression $\delta_{\text{meas}}$ measured in that same particle run over $z \in [0.2 L_z, 0.8 L_z]$. Pre-filling `solver._particles_q_bg` (Option 3(i)) is not used because `solver._particles_q_bg` only enters `gauss_residual()` and not Ampère's law $\partial_t \mathbf{E} = c^2\nabla\times\mathbf{B} - \mathbf{J}/\varepsilon_0$.
+
+##### 4. Two-wave variable-projection fit and spatial wavenumber spectrum
+
+Suppose the electron beam is driven at the entrance with a pure sinusoidal density modulation at angular frequency $\omega$:
 
 ```math
 I(0, t) = I_0\bigl(1 + m\sin(\omega t)\bigr), \qquad \rho_1(0, t) = m\rho_{\text{dep}}\sin(\omega t), \qquad v_1(0, t) = 0, \qquad m \ll 1.
 ```
 
-In `LinearizedBeam`, this entrance drive is supplied through the public `inflow_rho1` callable parameter, which injects the upstream ghost-edge density perturbation at $z_{-1} = -\Delta z / 2$ into the Crank–Nicolson continuity step using the library's own `_c_rho` advection coefficient and `_w_perp_eff` transverse profile (`tests/test_090_linearized_beam_inflow_drive.py`). Near the grounded PEC entrance plane $z = 0$, image-charge screening of the transverse electric field $E_x(x, 0, t) = 0$ over the evanescent cathode zone $\ell_{\text{cath}} \sim 1/T_1$ together with weak higher-order slab modes ($n \ge 2$) excited by the uniform top-hat profile introduces a small effective launch offset $z_0$ into the fundamental space-charge standing wave:
+In `LinearizedBeam`, this entrance drive is supplied through the public `inflow_rho1` callable parameter, which injects the upstream ghost-edge density perturbation at $z_{-1} = -\Delta z / 2$ into the Crank–Nicolson continuity step (`tests/test_090_linearized_beam_inflow_drive.py`). Inside the drift tunnel, the fundamental space-charge wave is a superposition of the fast ($k_f$) and slow ($k_s$) waves:
 
 ```math
-I_1(z, \omega) \simeq I_1(0)\cos\!\bigl(\beta_q(z - z_0)\bigr)\,\mathrm{e}^{-\mathrm{i}\beta_e z}, \qquad |I_1(z)|^2 \simeq A\cos\!\bigl(2\beta_q(z - z_0)\bigr) + c.
+I_1(z) = a_f\,\mathrm{e}^{-\mathrm{i} k_f z} + a_s\,\mathrm{e}^{-\mathrm{i} k_s z} \equiv \mathrm{e}^{-\mathrm{i} k_c z}\bigl[A\cos(\beta_q z) + B\sin(\beta_q z)\bigr],
 ```
 
-Consequently:
-1. **Standing-wave envelope and all-nulls least-squares fit**: The squared current envelope $|I_1(z)|^2$ exhibits periodic interference nulls at
-   ```math
-   z_m = z_0 + \left(m + \frac{1}{2}\right)\frac{\pi}{\beta_q}, \qquad m = 0, 1, \dots,
-   ```
-   Fitting $z_m = z_0 + (m + \tfrac{1}{2})L_{\text{half}}$ ($L_{\text{half}} = \pi/\beta_q$) by ordinary least squares over all interior nulls in $[0, z_{\max}]$ determines $\beta_q = \pi/L_{\text{half}}$, the effective launch offset $z_0$, and the per-null residuals $r_m = z_m - \bigl(z_0 + (m + \tfrac{1}{2})L_{\text{half}}\bigr)$ (`fit_beta_q_from_envelope`). Because both solvers experience the grounded PEC entrance boundary condition $E_x(x, 0, t) = 0$ over the evanescent cathode zone $\ell_{\text{cath}} \sim 1/T_1$ and share the same top-hat multi-mode launch profile, their launch offsets agree within the half-cell entrance stagger plus cathode-sheath depression scale, $|z_{0,\text{part}} - z_{0,\text{LB}}| \le \frac{1}{2}\Delta z + \delta_{u,\text{DC}}/\beta_q$.
-2. **Spatial wavenumber spectrum**: The spatial Fourier transform over $z \in [0, \lambda_q]$,
+with complex wave amplitudes $a_f, a_s \in \mathbb{C}$, real wavenumbers $k_f < k_s$, and the exact algebraic identities
+
+```math
+k_c = \frac{k_f + k_s}{2}, \qquad \beta_q = \frac{k_s - k_f}{2}, \qquad A = a_f + a_s, \qquad B = \mathrm{i}(a_s - a_f).
+```
+
+1. **Complex two-wave variable-projection fit (`fit_beta_q_from_envelope`)**:
+   - **Shared fit window (`fit_window`)**: Both solvers are fitted on the primary edge midpoints $z_k = (k + \tfrac{1}{2})\Delta z$ inside the identical interior window
+     ```math
+     z_{\min} = \frac{3}{T_1}, \qquad z_{\max} = (L_z - L_{\text{ramp}}) - \frac{3}{T_1}, \qquad z_{\max} - z_{\min} \ge 1.25\,\lambda_q,
+     ```
+     which excludes three transverse decay lengths $1/T_1$ of the evanescent cathode zone at $z = 0$ and three decay lengths upstream of the outflow taper at $L_z - L_{\text{ramp}}$.
+   - **Fitted carrier $k_c$ and variable projection**: The carrier wavenumber $k_c$ is fitted simultaneously with $\beta_q$ rather than fixed to $\beta_e = \omega/u_{\text{dep}}$ because `LinearizedBeam`'s centered Eulerian advection shifts its numerical carrier by $\simeq \frac{1}{6}(\beta_e\Delta z)^2$, and fixing $k_c = \beta_e$ would bias $\beta_q$. For any trial pair $(k_c, \beta_q)$, the linear parameters $(a_f, a_s)$ follow from a 2-column complex linear least-squares solve (`numpy.linalg.lstsq`) on the design matrix $[\mathrm{e}^{-\mathrm{i} k_f z_k},\,\mathrm{e}^{-\mathrm{i} k_s z_k}]$. Minimizing the complex residual sum of squares $\text{RSS}(k_c, \beta_q) = \sum_k |I_1(z_k) - I_{1,\text{fit}}(z_k)|^2$ on a $201\times 401$ grid over $k_c \in k_{c,0}(1 \pm 0.03)$ (where $k_{c,0}$ is the unwrapped phase slope of $I_1(z)$) and $\beta_q \in [0.5, 1.8]\,\beta_{q,\text{guess}}$ followed by Nelder–Mead polishing (`xatol = 1e-10 * beta_q_guess`) yields $(k_c, \beta_q, A, B, a_f, a_s)$. The fit uncertainty $\sigma_{\beta_q}$ is obtained from the Gauss–Newton covariance $s^2(\mathbf{J}^{\mathsf{H}}\mathbf{J})^{-1}$ with $s^2 = \text{RSS}/(2N - 6)$ ($N$ complex points, $6$ real parameters).
+   - **Amplitude sanity check vs report-only launch phase**: For a pure density modulation, $|a_f| = |a_s|$ and $B/A = \tan(\beta_q z_0)$ where $z_0 = \arctan(\operatorname{Re}(B/A))/\beta_q$ is the effective launch offset induced by cathode image-charge screening and weak higher-order modes. Because no closed-form boundary-layer derivation predicts $z_0$ or $B/A$, $|a_s|/|a_f|$, $B/A$, and $z_0$ are reported as diagnostics without assertion, while $|A| > \frac{1}{2}m I_0$ is asserted to verify that the fit locked onto the driven wave rather than noise.
+2. **Spatial wavenumber spectrum (`compute_spatial_spectrum`)**: The spatial Fourier transform over $z \in [0, \lambda_q]$,
    ```math
    \hat{I}_1(k_z) = \int_0^{\lambda_q} I_1(z, \omega)\,\mathrm{e}^{+\mathrm{i}k_z z}\,\mathrm{d}z,
    ```
-   splits into a symmetric doublet of peaks at $k_{\text{fast}} = \beta_e - \beta_q$ and $k_{\text{slow}} = \beta_e + \beta_q$, separated by a deep null at the carrier wavenumber $k_z = \beta_e$.
+   splits into a doublet of peaks at $k_f = \beta_e - \beta_q$ and $k_s = \beta_e + \beta_q$ separated by a deep null at $k_z = \beta_e$.
 
 ##### 5. Small-signal linearity condition, ballistic bunching, and $m$-scan verification
 
@@ -126,73 +138,82 @@ In the Lagrangian particle description (`wakis.particles`), the convective nonli
 \frac{\rho_1(z, t)}{\rho_{\text{dep}}} = m\cos(\beta_q z)\sin(\omega t - \beta_e z), \qquad \frac{v_1(z, t)}{u_{\text{dep}}} = -m\,\frac{\beta_q}{\beta_e}\sin(\beta_q z)\cos(\omega t - \beta_e z).
 ```
 
-Along unperturbed trajectories $t(z, t_0) \simeq t_0 + z/u_{\text{dep}} - u_{\text{dep}}^{-2}\int_0^z v_1(z', t_0 + z'/u_{\text{dep}})\,\mathrm{d}z'$, the velocity modulation produces an arrival-phase bunching parameter $X(z) \sim \frac{1}{2}m\beta_q z$ in the charge-conservation mapping $I(z, t)\,\mathrm{d}t = I(0, t_0)\,\mathrm{d}t_0$ [Webster, 1939; Paschke, 1957]. Expanding the harmonic series ($2 J_2(X)/J_1(X) \simeq X$ for $X \ll 1$) gives a second-harmonic current ratio scaling linearly with $m$:
+Along unperturbed trajectories, the velocity modulation produces an arrival-phase bunching parameter $X(z) \sim \frac{1}{2}m\beta_q z$ in the charge-conservation mapping $I(z, t)\,\mathrm{d}t = I(0, t_0)\,\mathrm{d}t_0$ [Webster, 1939; Paschke, 1957], generating a second-harmonic current ratio $|I_2(z)|/|I_1(0)| \sim X(z)$. In `test_m_scan_linearity`, running the deterministic `"sheet_lattice"` profile at $m$ and $m/2$ verifies that:
+1. In `ParticleSolver`, the relative nonlinear amplitude shift in $\beta_q$ between $m$ and $m/2$ remains bounded by the discretization slack, $|\beta_q(m)/\beta_q(m/2) - 1| \le s_{\text{part}}$, while the raw and coherent-bunching second-harmonic ratios $|I_2|/|I_1|$ at $m$ and $m/2$ and their ratio are reported as diagnostics.
+2. In `LinearizedBeam`, $m$-invariance of $\beta_q$ and $|I_2|/|I_1|$ is verified to round-off as an algebraic **identity** of the linearized fluid equations.
 
-```math
-\frac{|I_2(z)|}{|I_1(0)|} \sim X(z) \sim \frac{1}{2}\,m\,\beta_q z, \qquad \max_{z \in [0, \lambda_q]} \frac{|I_2(z)|}{|I_1(0)|} \le \frac{1}{2}\,m\,\beta_q\lambda_q = \pi m.
-```
-
-To verify small-signal linearity directly (`test_dc_depression_and_dft_leakage_and_linearity`), the suite runs an $m$-scan at $m$ and $m/2$ and checks that:
-1. The fitted reduced plasma wavenumber $\beta_q$ is invariant between $m$ and $m/2$ within the noise budget $\varepsilon_{\text{noise}}$.
-2. In `ParticleSolver`, $\max_{z \in [0, \lambda_q]} |I_2(z)|/|I_1(0)| \le \pi m$ and the coherent quadrature ballistic-bunching component of $|I_2(z)|/|I_1(0)|$ scales linearly with $m$ (doubling between $m/2$ and $m$).
-3. In `LinearizedBeam` (which is strictly linear in $(\rho_1, v_1)$), the steady-state $2\omega$ response is identically zero; the observed ratio $|I_2|/|I_1(0)|$ is an $m$-independent start-up transient leaking from the $C^1$ raised-cosine turn-on ramp ($N_{\text{rise}} = 3$ RF periods) across the finite $N_{\text{per}} = 6$-period rectangular DFT window, bounded by $\varepsilon_{\text{tr},2\omega} = \bigl[(2 N_{\text{rise}})^2 \pi N_{\text{per}}\bigr]^{-1}$.
-
-##### 6. Numerical setup, boundaries, injection, and term-by-term error budget
+##### 6. Numerical setup, injection profiles, and derived tolerance formulas
 
 To compare `ParticleSolver` and `LinearizedBeam` cleanly (`examples/_space_charge_waves_common.py`, `tests/test_087_particles_vs_linearized_beam.py`, `examples/024_particles_space_charge_waves.py`):
 
-1. **Shared grid, integer-period time step, and DFT mean subtraction**: Both solvers run on the identical `GridFIT3D` ($x \in [-a, a]$ with `bc="pec"`, $y \in [-L_y/2, L_y/2]$ with `ny = 1` and `bc="periodic"`, $z \in [0, L_z]$ with `bc="pec"`). To eliminate spectral leakage of the large DC beam current $I_0 \gg I_1(0)$ into the fundamental DFT at $\omega$, the time step is chosen as $\Delta t = 1/(f N_{\text{spp}})$ with $N_{\text{spp}} = \lceil 1/(f\Delta t_{\text{CFL}})\rceil$ ($\Delta t \le \Delta t_{\text{CFL}}$), so the 6-period DFT window $N_{\text{DFT}} = 6 N_{\text{spp}}$ holds an exact integer number of RF cycles ($\bigl|\sum_n \mathrm{e}^{-\mathrm{i}\omega t^n}\bigr| \sim \epsilon_{\text{mach}}$). In addition, each axial edge's time mean over the $N_{\text{DFT}}$ window is subtracted before evaluating the $1\omega$ and $2\omega$ DFTs, bounding residual DC leakage by $\varepsilon_{\text{DFT}} = 100\,\epsilon_{\text{mach}}/m$.
-2. **Outflow boundary treatment and fit-window margin**: Both runs use identical PEC/periodic field boundary conditions on `SolverFIT3D`. In the particle run, `ParticleBoundaries` absorbs macroparticles reaching $z = L_z$ (`z_high`) via exact ray-cast segment clipping. In the fluid run, `LinearizedBeam` applies a quarter-wave sine taper to the background density and velocity coupling over the final `ramp_cells` cells (`wakis/beam_fluid.py:884`):
-   ```math
-   w_{\text{ax}}(m) = \sin\!\left(\frac{\pi}{2}\,\frac{N_z - m}{N_{\text{ramp}} + 1}\right), \qquad m = N_z - N_{\text{ramp}}, \dots, N_z - 1,
-   ```
-   paired with a one-sided upwind difference at $m = N_z - 1$. The envelope and spectrum fit window $z \in [0, \lambda_q]$ terminates upstream of the outflow ramp $z_{\text{ramp}} = L_z - L_{\text{ramp}}$ with a positive margin $(L_z - L_{\text{ramp}}) - \lambda_q \ge 2.5\text{ mm} > 5\Delta z_{\text{coarse}}$.
-3. **Time-modulated weight injection and 8-seed empirical noise**: Every time step, `BeamInjector.inject` (`wakis/particles/boundaries.py:759`) places `n_macro_per_step` macroparticles on the entrance plane $z = z_0 = 0$ with longitudinal momentum $u_z = \gamma_0 u_0$, $\mathbf{u}_\perp = \mathbf{0}$, and time-modulated charge weight
-   ```math
-   w(t^n) = \frac{|I(t^n)|\,\Delta t}{|q|\,N_{\text{macro}}}.
-   ```
-   Transverse coordinates $x_p \in [-b, b]$, $y_p = 0$ are placed using `BeamInjector` planar sheet profiles (`wakis/particles/boundaries.py`): `profile="sheet_lattice"` (deterministic stratum midpoints $x_k = b(2(k+1/2)/N_{\text{macro}} - 1)$, zero transverse shot noise, identical for all seeds) for the deterministic reference run, signed physics checks, particle mutations, two-resolution check, and $m$-scan; and `profile="sheet"` (one seeded uniform draw per stratum per step from `_step_rng`) for the 8-seed noise ensemble (`measure_empirical_noise`).
-4. **Guide magnetic field and Boris cyclotron step**: The axial guide field $B_{z,\text{ext}} = 50\text{ T}$ freezes out transverse space-charge expansion ($\omega_c / \omega_p \gg 1$). On the coarse and fine grids, the dimensionless cyclotron step is $\omega_c \Delta t \approx 3.5$ (coarse) and $\omega_c \Delta t \approx 1.8$ (fine). Although the explicit Boris rotation aliases the Larmor gyration phase when $\omega_c \Delta t \gtrsim 2$ ($\omega_{\text{eff}}\Delta t = 2\arctan(\omega_c\Delta t/2)$), the Boris push is unconditionally energy-conserving in a uniform magnetic field, reproduces the exact guiding-center $\mathbf{E}\times\mathbf{B}$ drift, and suppresses transverse velocity excursions $\mathbf{v}_\perp$ for a beam injected with $\mathbf{v}_\perp(0) = \mathbf{0}$ whose space-charge wave dynamics are purely longitudinal along $\hat{\mathbf{z}}$ [Birdsall & Langdon, 1991].
-5. **Derived term-by-term error budget and convergence-order bands**: Unlike the Pierce travelling-wave-tube helper (which divides $u_0$ by $\sin(\beta_e\Delta z)/(\beta_e\Delta z)$ to maintain phase synchronism with an external slow-wave circuit), both solvers here use the physical equilibrium velocity $u_{\text{dep}}$, and all operator discretization terms are included explicitly in the error budget (`derived_tolerances`):
-   - *Shared `SolverFIT3D` field operators (`eps_x_fit`, `eps_z_fit` — in BOTH predictions)*: Both codes couple to the same `SolverFIT3D` fields. From $R^2 = \tau^2/(\tau^2 + T_1^2)$, a relative error $-(T_1\Delta x)^2/12$ in the 3-point transverse FIT Laplacian $T_1^2$ shifts $\beta_q$ upward in **both** codes by
+1. **Shared grid, integer-period time step, and DFT mean subtraction**: Both solvers run on the identical `GridFIT3D` ($x \in [-a, a]$ with `bc="pec"`, $y \in [-L_y/2, L_y/2]$ with `ny = 1` and `bc="periodic"`, $z \in [0, L_z]$ with `bc="pec"`). The time step is chosen as $\Delta t = 1/(f N_{\text{spp}})$ with $N_{\text{spp}} = \lceil 1/(f\Delta t_{\text{CFL}})\rceil$ ($\Delta t \le \Delta t_{\text{CFL}}$), so the 6-period DFT window $N_{\text{DFT}} = 6 N_{\text{spp}}$ spans an exact integer number of RF cycles. Per-edge mean subtraction over the $N_{\text{DFT}}$ window eliminates DC current leakage; the integer-$N_{\text{spp}}$ Dirichlet kernel leakage is bounded by the round-off **identity** $\varepsilon_{\text{DFT}} = 100\,\epsilon_{\text{mach}}/m$.
+2. **Transverse sheet injection profiles (`"sheet_lattice"` vs `"sheet"`)**: Every time step, `BeamInjector.inject` (`wakis/particles/boundaries.py`) places $N_{\text{macro}}$ macroparticles on $z = 0$ with $y_p = 0$ exactly, $|x_p| \le b$, longitudinal momentum $u_z = \gamma_0 u_0$, $\mathbf{u}_\perp = \mathbf{0}$, and time-modulated weight $w(t^n) = |I(t^n)|\Delta t / (|q| N_{\text{macro}})$:
+   - **Deterministic reference profile (`profile="sheet_lattice"`)**: Places one macroparticle at the midpoint of each equal-width transverse stratum, $x_k = b\bigl(2(k + \tfrac{1}{2})/N_{\text{macro}} - 1\bigr)$ ($k = 0, \dots, N_{\text{macro}} - 1$). This profile has zero transverse shot noise, is identical for all random seeds, and is used for every signed physics check, both particle mutations, the two-resolution check, and the $m$-scan.
+   - **Seeded stratified profile (`profile="sheet"`)**: Draws one uniform sample per stratum per step, $x_k \in [-b + 2bk/N_{\text{macro}}, -b + 2b(k+1)/N_{\text{macro}})$, from `BeamInjector._step_rng(step_idx)`. Because `seed` only affects `profile="sheet"`, the 8-seed ensemble (`measure_empirical_noise`) calls `run_particle_beam_drift(..., profile="sheet", seed=s)`.
+   - `test_injected_sheet_geometry` directly verifies these geometric invariants as an **identity (geometry) check** after 3 steps on CPU.
+3. **Guide magnetic field**: A strong uniform axial guide field $B_{z,\text{ext}}$ ($\omega_c \gg \omega_p$) freezes out transverse space-charge expansion while leaving longitudinal motion along $\hat{\mathbf{z}}$ unperturbed [Birdsall & Langdon, 1991].
+4. **Derived predictions and tolerances (`derived_tolerances`)**:
+   - **Shared `SolverFIT3D` transverse operator (`eps_x_fit`) and multi-mode fit shift (`eps_fit`)**: From $R^2 = \tau^2/(\tau^2 + T_1^2)$, the 3-point transverse FIT Laplacian under-estimates $T_1^2$ by $-(T_1\Delta x)^2/12$, shifting $\beta_q$ upward in both codes by
      ```math
      \varepsilon_{x,\text{FIT}} = +\frac{1}{2}\bigl(1 - R^2\bigr)\frac{(T_1\Delta x)^2}{12}.
      ```
-     Simultaneously, the staggered Yee axial curl-curl stencil in `SolverFIT3D` evaluates axial derivatives with symbol $\hat{k}_{z,\text{FIT}}(k) = \frac{2}{\Delta z}\sin(k\Delta z/2) = k\bigl(1 - (k\Delta z)^2/24 + \mathcal{O}(\Delta z^4)\bigr)$, reducing the effective axial decay constant $\tau$ in the field Helmholtz equation and shifting $R(\tau)$ downward in **both** codes by
+     Because the top-hat entrance profile excites weak higher-order even slab eigenmodes $\cos(T_n x)$ ($n \ge 2$), running `fit_beta_q_from_envelope` over $[z_{\min}, z_{\max}]$ on the multi-mode superposition $\sum_n w_n\cos(\beta_{q,n} z)\mathrm{e}^{-\mathrm{i}\beta_e z}$ gives a signed relative shift $\varepsilon_{\text{fit}} = \varepsilon_{\text{fit,cont}}$ when $w_n$ are evaluated with continuum overlaps and $\varepsilon_{\text{fit,grid}}$ when $w_n$ are evaluated with the discrete transverse CIC mode weights on the $N_x$-cell grid.
+   - **`LinearizedBeam` deterministic prediction and slack**: On the discrete grid $(\Delta z, \Delta t)$, `LinearizedBeam`'s Crank–Nicolson axial advection coupled to the staggered Yee curl-curl symbol $\kappa(k) = \frac{2}{\Delta z}\sin(k\Delta z/2)$ obeys the exact 1D discrete dispersion relation for the fast ($k_-$) and slow ($k_+$) branches:
      ```math
-     \varepsilon_{z,\text{FIT}} = \frac{\mathrm{d}\ln R}{\mathrm{d}\ln\tau}\,\frac{(\beta_e\Delta z)^2}{24}, \qquad \frac{\mathrm{d}\ln R}{\mathrm{d}\ln\tau} = \bigl(1 - R^2\bigr)\!\left(1 - \frac{1 - 2\tau(a-b)/\sinh(2\tau(a-b))}{1 + 2 T_1 b/\sin(2 T_1 b)}\right).
+     \frac{2}{\Delta t}\tan\!\left(\frac{\omega\Delta t}{2}\right) \mp \omega_q(k_\pm) = u_{\text{dep}}\,\frac{\sin(k_\pm\Delta z)}{\Delta z}, \qquad \omega_q(k) = R\bigl(\tau_{\text{Y}}(k)\bigr)\,\frac{\omega_{p,\text{dep}}}{\gamma_{\text{dep}}^{3/2}}, \qquad \tau_{\text{Y}}(k) = \sqrt{\kappa(k)^2 - \left(\frac{\omega}{c}\right)^2}.
      ```
-   - *Eulerian advection and numerical carrier wavenumber in `LinearizedBeam` (`eps_z_lb`, `eps_tau_lb` — in `LinearizedBeam` only)*: Centered axial differences $(f_{m+1} - f_{m-1})/(2\Delta z)$ have discrete group velocity $u_g = u_{\text{dep}}\cos(\beta_e\Delta z)$, shifting $\beta_{q,\text{LB}} = \omega_q/u_g$ upward by $\varepsilon_{z,\text{LB}} = \frac{1}{\cos(\beta_e\Delta z)} - 1 = \frac{1}{2}(\beta_e\Delta z)^2 + \mathcal{O}(\Delta z^4)$. In addition, `SolverFIT3D` sees `LinearizedBeam`'s numerical carrier wavenumber $k_{\text{car}} = \arcsin(\beta_e\Delta z)/\Delta z = \beta_e\bigl(1 + (\beta_e\Delta z)^2/6 + \mathcal{O}(\Delta z^4)\bigr)$ rather than $\beta_e$, which increases $\tau$ and shifts $R(\tau)$ upward by $\varepsilon_{\tau,\text{LB}} = \frac{\mathrm{d}\ln R}{\mathrm{d}\ln\tau}\frac{(\beta_e\Delta z)^2}{6}$. Combining the `LinearizedBeam`-specific and shared field-solver terms gives the signed leading prediction:
+     Solving both branches by `brentq` gives the predicted `LinearizedBeam` wavenumber and higher-order slack:
      ```math
-     \delta_{\text{LB,lead}} = +\varepsilon_{z,\text{LB}} + \varepsilon_{\tau,\text{LB}} - \varepsilon_{z,\text{FIT}} + \varepsilon_{x,\text{FIT}} > 0.
+     \beta_{q,\text{LB,pred}} = \frac{k_+ - k_-}{2}\,\bigl(1 + \varepsilon_{x,\text{FIT}}\bigr)\bigl(1 + \varepsilon_{\text{fit}}\bigr), \qquad \varepsilon_{\text{ax}} = \frac{k_+ - k_-}{2\beta_{q,\text{th}}} - 1,
      ```
-   - *CIC smoothing in `ParticleSolver` (`eps_cic` — in `ParticleSolver` only)*: Lagrangian particles advect in continuous space with carrier wavenumber $\beta_e$, and staggered axial CIC field gather plus Esirkepov current deposition satisfy $\kappa_z^2(\beta_e\Delta z) \equiv 1$ (`wakis/particles/solver.py:420`), while nodal transverse CIC deposit/gather ($p = p_g = 1$) attenuates $T_1$ by $\kappa_x^2(T_1\Delta x) = 1 - \frac{2}{3}\sin^2(T_1\Delta x/2)$, shifting $\beta_q$ downward by $\varepsilon_{\text{CIC}} = 1 - \sqrt{1 - \frac{2}{3}\sin^2(T_1\Delta x/2)}$. Combining `-eps_cic` with the shared `SolverFIT3D` terms gives the signed leading prediction:
      ```math
-     \delta_{\text{Part,lead}} = -\varepsilon_{\text{CIC}} - \varepsilon_{z,\text{FIT}} + \varepsilon_{x,\text{FIT}} < 0.
+     s_{\text{LB}} = \bigl(|\varepsilon_{\text{ax}}| + |\varepsilon_{x,\text{FIT}}| + |\varepsilon_{\text{fit}}|\bigr)^2 + \bigl|\varepsilon_{\text{fit,grid}} - \varepsilon_{\text{fit,cont}}\bigr|, \qquad \left|\frac{\beta_{q,\text{LB}}}{\beta_{q,\text{LB,pred}}} - 1\right| \le s_{\text{LB}}.
      ```
-   - *DC space-charge depression tolerance (`dep_tol`, `eps_dc_res`)*: Self-consistent quadratic density enhancement $\delta_{u,\text{DC}}^2$ plus transverse grid/CIC quadrature $(\Delta x/(2b))^2\delta_{u,\text{DC}}$ across the beam thickness $2b$ bounds the DC depression difference $|\delta_{u,\text{meas}} - \delta_{u,\text{DC}}|$ and $|\delta_{\rho,\text{meas}} - \delta_{u,\text{DC}}|$ (with $\rho_{\text{DC}}$ measured directly from the deposited particle charge per cell) by $\text{dep\_tol} = \delta_{u,\text{DC}}^2 + (\Delta x/(2b))^2\delta_{u,\text{DC}}$, which shifts $\beta_q$ by at most $\varepsilon_{\text{DC,res}} = (\mathrm{d}\ln\beta_q/\mathrm{d}\delta_u)\,\text{dep\_tol}$.
-   - *Multi-mode envelope-fit shift (`eps_fit`)*, *residual DFT leakage (`eps_dft`)*, and *empirical 8-seed noise (`eps_noise`)*.
-   - *Total asserted bounds*:
+   - **Particle deterministic prediction (`"sheet_lattice"`) and slack**: Lagrangian particles advect in continuous space without Eulerian carrier dispersion, so the staggered Yee axial curl-curl symbol acts on the physical carrier $\beta_e$, reducing $\tau = \beta_e/\gamma_{\text{dep}}$ via $\tau^2 = \beta_e^2 - (\omega/c)^2$ ($\mathrm{d}\ln\tau / \mathrm{d}\ln\beta_e = \gamma_{\text{dep}}^2$) and shifting $R(\tau)$ downward by
      ```math
-     \text{tol}_{\text{LB}} = |\delta_{\text{LB,lead}}| + \varepsilon_{\text{fit}} + \varepsilon_{\text{DFT}}, \qquad \text{tol}_{\text{Part}} = |\delta_{\text{Part,lead}}| + \varepsilon_{\text{DC,res}} + \varepsilon_{\text{fit}} + \varepsilon_{\text{DFT}} + \varepsilon_{\text{noise}}, \qquad \text{tol}_{\text{cross}} = \text{tol}_{\text{LB}} + \text{tol}_{\text{Part}}.
+     \varepsilon'_{z,\text{FIT}} = \frac{\mathrm{d}\ln R}{\mathrm{d}\ln\tau}\,\gamma_{\text{dep}}^2\,\frac{(\beta_e\Delta z)^2}{24},
      ```
-   - *Entrance current amplitude bounds (`tol_amp_lb`, `tol_amp_part`)*: At the first primary edge midpoint $z_0 = \Delta z / 2$, the standing-wave envelope varies from $z = 0$ by $1 - \cos(\beta_q\Delta z) \simeq \frac{1}{2}(\beta_q\Delta z)^2$, while transverse CIC deposition across the beam boundary cells $x = \pm b$ adds the quadrature bound $\frac{1}{2}(\Delta x / (2b))^2$ in the particle run.
-   - *Derived convergence-order bands*: Across the $2\times$ grid refinement from `COARSE_GRID` to `FINE_GRID`, the allowed convergence-order band for each solver and for the cross-code difference is derived directly from the signed leading predictions $e_c, e_f$ and their slacks $s_c, s_f$:
+     while nodal transverse CIC charge/current assignment and field gather attenuate $T_1$ by
      ```math
-     p \in \left[\log_2\!\left(\frac{|e_c| - s_c}{|e_f| + s_f}\right),\; \log_2\!\left(\frac{|e_c| + s_c}{|e_f| - s_f}\right)\right].
+     \varepsilon_{\text{CIC}} = 1 - \sqrt{1 - \frac{2}{3}\sin^2\!\left(\frac{T_1\Delta x}{2}\right)}.
      ```
-     To inspect the printed budget and run the suite:
+     Evaluating $\beta_{q,\text{th}}(\delta_{\text{meas}})$ at the measured interior DC depression $\delta_{\text{meas}}$ of that same run gives the deterministic particle prediction and slack:
+     ```math
+     \beta_{q,\text{P,pred}} = \beta_{q,\text{th}}(\delta_{\text{meas}})\,\bigl(1 - \varepsilon_{\text{CIC}}\bigr)\bigl(1 - \varepsilon'_{z,\text{FIT}}\bigr)\bigl(1 + \varepsilon_{x,\text{FIT}}\bigr)\bigl(1 + \varepsilon_{\text{fit}}\bigr),
+     ```
+     ```math
+     s_{\text{part}} = \bigl(|\varepsilon_{\text{CIC}}| + |\varepsilon'_{z,\text{FIT}}| + |\varepsilon_{x,\text{FIT}}| + |\varepsilon_{\text{fit}}|\bigr)^2 + \bigl|\varepsilon_{\text{fit,grid}} - \varepsilon_{\text{fit,cont}}\bigr|, \qquad \left|\frac{\beta_{q,\text{P,lattice}}}{\beta_{q,\text{P,pred}}} - 1\right| \le s_{\text{part}}.
+     ```
+   - **Particle 8-seed `"sheet"` ensemble**: Over the $N_{\text{seeds}} = 8$ seeded `"sheet"` runs with sample mean $\bar{\beta}_q$, standard error $\text{SEM} = s/\sqrt{8}$ (`ddof=1`), and two-sided $99.73\%$ Student-$t$ critical value $t = t_{0.99865,\,7}$:
+     ```math
+     \left|\frac{\bar{\beta}_q}{\beta_{q,\text{P,pred}}} - 1\right| \le s_{\text{part}} + \frac{t\,\text{SEM}}{\beta_{q,\text{P,pred}}}, \qquad \bigl|\bar{\beta}_q - \beta_{q,\text{P,lattice}}\bigr| \le t\,\text{SEM}.
+     ```
+   - **Cross-code agreement (`"sheet_lattice"`)**:
+     ```math
+     \left|\frac{\beta_{q,\text{P,lattice}}}{\beta_{q,\text{LB}}} - \frac{\beta_{q,\text{P,pred}}}{\beta_{q,\text{LB,pred}}}\right| \le s_{\text{LB}} + s_{\text{part}}.
+     ```
+   - **DC velocity depression (`"sheet"` ensemble vs discrete Poisson)**:
+     ```math
+     \bigl|\bar{\delta}_{\text{meas}} - \delta_{\text{th,disc}}\bigr| \le t\,\text{SEM}(\delta_{\text{meas}}) + 10^{-12}.
+     ```
+   - **Entrance current amplitude at $z_0 = \Delta z / 2$**: Because CIC deposition is exactly charge-conserving across the beam cross-section, the entrance current amplitude at the first primary edge midpoint $z_0 = \Delta z / 2$ is bounded by the standing-wave envelope variation over half a cell:
+     ```math
+     \text{tol}_{\text{amp,LB}} = \frac{1}{2}(\beta_q\Delta z)^2, \qquad \text{tol}_{\text{amp,part}} = \text{tol}_{\text{amp,LB}} + 10^{-12},
+     ```
+     plus $t\,\text{SEM}(|I_1(z_0)|)/(m I_0)$ for the 8-seed `"sheet"` ensemble.
+   - To inspect the printed `*CHECK` metrics and error budgets at run time:
      ```bash
      pytest tests/test_087_particles_vs_linearized_beam.py -v -s
-     python examples/024_particles_space_charge_waves.py
+     python examples/024_particles_space_charge_waves.py --smoke
      ```
 
 ##### 7. Limits & Failure Modes
 
 - **Small-signal linear regime only ($m \ll 1$, $X(z) \ll 1$)**: `LinearizedBeam` linearizes the cold-fluid equations around a time-independent equilibrium and omits the quadratic convective terms $v_1\partial_z v_1$ and $\partial_z(\rho_1 v_1)$. When the modulation index $m$ or drift length $z$ is increased until the bunching parameter $X \sim \mathcal{O}(1)$, fast electrons overtake slow electrons (wave breaking / multi-stream trajectory crossing), generating strong higher harmonics ($2\omega, 3\omega$) and electrostatic trapping in `ParticleSolver` that `LinearizedBeam` cannot represent.
-- **Planar sheet-beam geometry and strong axial magnetic focusing**: The analytical reduction factor `reduction_factor_planar` assumes a 1D planar sheet beam uniform along $y$ (`ny = 1`, `bc="periodic"`) and confined by an axial guide field $B_{z,\text{ext}}$ strong enough ($\omega_c \gg \omega_p$) to freeze out transverse velocity perturbations $\mathbf{v}_\perp$. At weak or zero guide field, transverse space-charge forces cause beam spreading or Brillouin scalloping and couple longitudinal plasma oscillations to transverse cyclotron/diocotron modes; 3D pencil or rectangular beams require `reduction_factor_cylindrical` or `reduction_factor_rectangular` [Branch & Mihran, 1955].
-- **Mildly relativistic operating point and longitudinal mass**: At $V_0 = 10\text{ kV}$ ($\gamma_0 \approx 1.0196$), the longitudinal relativistic mass factor $\gamma_0^{3/2}$ in $\beta_q = R\omega_p/(\gamma_0^{3/2}u_0)$ differs from the transverse factor $\gamma_0^{1/2}$ by $\approx \gamma_0 - 1 \approx 2\%$, which is smaller than the coarse discretization tolerance bounds. Consequently, this $10\text{ kV}$ benchmark validates the coupled space-charge-wave dispersion $\beta_e \pm \beta_q$ and geometric reduction factor $R$, but does **not** independently isolate the $\gamma_0^3 m_e$ relativistic longitudinal mass exponent (which requires a higher-voltage operating point $V_0 \ge 100\text{ kV}$).
-- **What this cross-check does not test — synchronous beam–circuit coupling**: A smooth parallel-plate PEC drift tunnel supports only fast waveguide modes ($v_p > c > u_0$, or cutoff evanescent modes when $f < f_{c,10} = c/(4a)$), which have zero synchronous Pierce interaction impedance ($K_n = 0$). Thus this benchmark tests passive space-charge-wave propagation rather than convective traveling-wave-tube (TWT) gain or backward-wave-oscillator (BWO) interaction.
+- **Planar sheet-beam geometry and strong axial magnetic focusing only**: The analytical reduction factor `reduction_factor_planar` and the `"sheet"` / `"sheet_lattice"` injector profiles assume a 1D planar sheet beam uniform along $y$ (`ny = 1`, `bc="periodic"`) and confined by an axial guide field $B_{z,\text{ext}}$ strong enough ($\omega_c \gg \omega_p$) to freeze out transverse velocity perturbations $\mathbf{v}_\perp$. At weak or zero guide field, transverse space-charge forces cause beam spreading or Brillouin scalloping; 3D pencil or rectangular beams require `reduction_factor_cylindrical` or `reduction_factor_rectangular` [Branch & Mihran, 1955].
+- **Effective launch offset $z_0$ and sine-quadrature amplitude $B$ are not predicted analytically**: Near the grounded PEC cathode plane $z = 0$, image-charge screening of $E_x$ over the evanescent zone $\ell_{\text{cath}} \sim 1/T_1$ and multi-mode excitation produce a small launch offset $z_0 = \arctan(\operatorname{Re}(B/A))/\beta_q$. Because no closed-form cathode boundary-layer derivation exists for $z_0$ or $B/A$, these quantities are reported as diagnostics only and are not asserted.
+- **Two-wave fit window requires $z_{\max} - z_{\min} \ge 1.25\,\lambda_q$**: Separating two closely spaced complex exponentials $k_f = k_c - \beta_q$ and $k_s = k_c + \beta_q$ alongside a free carrier $k_c$ requires the interior fit window $[3/T_1, L_z - L_{\text{ramp}} - 3/T_1]$ to span at least $1.25\,\lambda_q$ (`test_preflight_and_resolution_criteria`). On shorter tunnels where $z_{\max} - z_{\min} \lesssim \lambda_q$, the two wave columns become nearly collinear and the variable-projection estimate of $(k_c, \beta_q)$ becomes ill-conditioned.
+- **Transverse injection profile must match between codes (mutation M3)**: `LinearizedBeam` with `half_thickness=b` represents a uniform top-hat planar slab across $x \in [-b, b]$. If the particle injector instead samples a circular disk profile (such as the Fibonacci disk `"lattice"` profile tested in mutation **M3**, `test_mutation_disk_profile_instead_of_sheet_fails`), its semicircular $x$-marginal $\propto \sqrt{1 - (x/b)^2}$ concentrates charge near $x = 0$, increasing the effective plasma reduction factor $R$ and shifting $\beta_{q,\text{P}}$ significantly above the top-hat sheet prediction $\beta_{q,\text{P,pred}}$ until Step 4.2 fails.
 
 References:
 - S. Ramo, "Space Charge and Field Waves in an Electron Beam", *Phys. Rev.* **56**(3), 276–283 (1939), [doi:10.1103/PhysRev.56.276](https://doi.org/10.1103/PhysRev.56.276).
