@@ -83,15 +83,18 @@ class _CicNodeRho0:
         n_lines = len(line_x)
         w_mat = np.maximum(1.0 - np.abs(line_x[:, None] - x_nodes[None, :]) / dx, 0.0)
         self.w_cic_nodes = np.sum(w_mat, axis=0) * (2.0 * float(b) / (n_lines * dx))
-        keep_full = np.asarray(beam_ref.keep_lines, dtype=bool)
-        w_perp_eff = np.asarray(beam_ref._w_perp_eff, dtype=np.float64)
+        keep_lines = np.asarray(beam_ref.keep_lines, dtype=bool)
+        active_ix = np.flatnonzero(keep_lines)
+        w_perp = np.asarray(beam_ref._w_perp_eff[0, :], dtype=np.float64)
         self.rho_nodes = np.zeros(int(nx) + 1, dtype=np.float64)
-        # Divide by w_perp_eff on active lines so LinearizedBeam._initialize
-        # (which multiplies callable rho0(X,Y,Z) by w_perp_lines) produces
-        # beam.rho0 = rho_dep * w_cic_nodes on every active node.
-        self.rho_nodes[keep_full] = (
-            float(rho_dep) * self.w_cic_nodes[keep_full] / w_perp_eff
+        # Divide by entrance w_perp where w_perp > 0 so LinearizedBeam._initialize
+        # (which evaluates rho0 at grid.x[:Nx] and multiplies by w_perp_lines) produces
+        # beam.rho0[0, :] = rho_dep * w_cic_nodes on every active line.
+        pos = w_perp > 0.0
+        self.rho_nodes[active_ix[pos]] = (
+            float(rho_dep) * self.w_cic_nodes[active_ix[pos]] / w_perp[pos]
         )
+        self.active_ix = active_ix
         self.x_nodes = x_nodes
         self.dx = dx
         self.rho_peak = float(np.max(np.abs(float(rho_dep) * self.w_cic_nodes)))
@@ -378,6 +381,58 @@ def test_discrete_modal_operator_unit():
     assert abs(ratio_10_20 - 4.0) <= 0.1, (
         f"nx=10/20 eigenvalue error ratio = {ratio_10_20:.4f} does not follow 4x O((T1*dx)^2) scaling"
     )
+
+    # Identity check: after LinearizedBeam.attach(solver) with _CicNodeRho0,
+    # beam.rho0[0, :] equals rho_dep * w_cic_nodes on active lines to 1e-12 relative.
+    grid_10 = GridFIT3D(
+        -a,
+        a,
+        -0.5 * PERIODIC_LY_M,
+        0.5 * PERIODIC_LY_M,
+        0.0,
+        TUNNEL_LENGTH_M,
+        10,
+        1,
+        8,
+        verbose=0,
+    )
+    solver_10 = SolverFIT3D(
+        grid_10,
+        cfln=CFL_NUMBER,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_gpu=False,
+        verbose=0,
+    )
+    beam_ref_10 = LinearizedBeam(
+        u0=params["u_dep"],
+        rho0=params["rho_dep"],
+        gamma0=params["gamma_dep"],
+        axis="z",
+        half_thickness=b,
+        solver=solver_10,
+    )
+    cic_rho0 = _CicNodeRho0(
+        params["rho_dep"],
+        _fibonacci_disk_x_coords(16, radius=b),
+        b,
+        a,
+        10,
+        beam_ref_10,
+    )
+    beam_cic = LinearizedBeam(
+        u0=params["u_dep"],
+        rho0=cic_rho0,
+        gamma0=params["gamma_dep"],
+        axis="z",
+        half_thickness=b,
+    ).attach(solver_10)
+    assert np.allclose(
+        beam_cic.rho0[0, :],
+        params["rho_dep"] * cic_rho0.w_cic_nodes[cic_rho0.active_ix],
+        rtol=1e-12,
+        atol=0.0,
+    ), "Identity check failed: beam.rho0[0, :] != rho_dep * w_cic_nodes on active lines"
 
 
 def test_space_charge_wave_envelope_entrance_and_spectrum():
@@ -823,17 +878,19 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     rel_dbq_ramp2x_c = float(dbq_ramp2x_c / bq_lb_c)
     rel_dbq_ramp2x_f = float(dbq_ramp2x_f / bq_lb_f)
 
+    ev_p_f = tols_f["evals_part"]
+    ev_lb_f = tols_f["evals_lb"]
     print(flush=True)
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
-        f"TERMS grid=fine s_win={tols_f['s_win_lb']:.6e} "
-        f"s_modes={tols_f['s_modes_lb']:.6e} s_qs={tols_f['s_qs_lb']:.6e} "
-        f"s_win_part={tols_f['s_win_part']:.6e} "
-        f"s_modes_part={tols_f['s_modes_part']:.6e} s_qs_part={tols_f['s_qs_part']:.6e} "
-        f"lambda_1={tols_f['lambda_1_lb']:.6f} lambda_2={tols_f['lambda_2_lb']:.6f} "
-        f"lambda_3={tols_f['lambda_3_lb']:.6f} lambda_4={tols_f['lambda_4_lb']:.6f} "
-        f"lambda_1_part={tols_f['lambda_1_part']:.6f} lambda_2_part={tols_f['lambda_2_part']:.6f} "
-        f"lambda_3_part={tols_f['lambda_3_part']:.6f} lambda_4_part={tols_f['lambda_4_part']:.6f}",
+        f"TERMS grid=fine s_win={tols_f['s_win_part']:.6e} "
+        f"s_modes={tols_f['s_modes_part']:.6e} s_qs={tols_f['s_qs_part']:.6e} "
+        f"s_win_lb={tols_f['s_win_lb']:.6e} s_modes_lb={tols_f['s_modes_lb']:.6e} "
+        f"s_qs_lb={tols_f['s_qs_lb']:.6e} "
+        f"lambda_1={ev_p_f[0]:.6f} lambda_2={ev_p_f[1]:.6f} "
+        f"lambda_3={ev_p_f[2]:.6f} lambda_4={ev_p_f[3]:.6f} "
+        f"lambda_lb_1={ev_lb_f[0]:.6f} lambda_lb_2={ev_lb_f[1]:.6f} "
+        f"lambda_lb_3={ev_lb_f[2]:.6f} lambda_lb_4={ev_lb_f[3]:.6f}",
         flush=True,
     )
     print(
@@ -1388,7 +1445,7 @@ def test_optional_diagnostics():
         z_coords, lb_d3["i1_lb"], beta_q_th, z_min=z_min, z_max=z_max
     )
     bq_lb_d3 = float(fit_lb_d3["beta_q"])
-    w_ent_lb = np.asarray(lb_base["beam"]._w_perp_eff, dtype=np.float64)
+    w_ent_lb = np.asarray(lb_base["beam"]._w_perp_eff[0, :], dtype=np.float64)
     bq_lb_d3_pred = float(
         discrete_modal_prediction(
             "lb",
