@@ -164,15 +164,27 @@ To compare `ParticleSolver` and `LinearizedBeam` without adjustable parameters (
    - `test_injected_sheet_geometry` directly verifies these geometric invariants as an **identity (geometry) check** after 3 steps on CPU.
 3. **Guide magnetic field**: A strong uniform axial guide field $B_{z,\text{ext}}$ ($\omega_c \gg \omega_p$) freezes out transverse space-charge expansion while leaving longitudinal motion along $\hat{\mathbf{z}}$ unperturbed [Birdsall & Langdon, 1991].
 4. **Exact discrete transverse modal model (`discrete_modal_prediction`)**: Rather than approximating transverse finite-difference and CIC effects at leading order in $(T_1\Delta x)^2$, `discrete_modal_prediction(code, nx, nz, params, ...)` solves the exact discrete transverse operator and multi-mode axial superposition in seven steps:
-   1. **Axial and temporal symbols**:
-      - Staggered Yee field operator along $z$: $\kappa(k) = \frac{2}{\Delta z}\sin(k\Delta z/2)$.
-      - Particles: Esirkepov axial charge-conserving deposit and primal-edge gather with alias-summed axial symbol $\kappa_z^2 = 1$ (`wakis/particles/solver.py`).
-      - `LinearizedBeam`: centered finite-difference derivative $k_s(k) = \sin(k\Delta z)/\Delta z$ in the continuity and advection operators.
-      - Time stepping: Crank–Nicolson symbol $\Omega = \frac{2}{\Delta t}\tan(\omega\Delta t/2)$ for `LinearizedBeam`, and leapfrog symbol $\Omega_p = \frac{2}{\Delta t}\sin(\omega\Delta t/2)$ for particles.
-   2. **Transverse field operator**: On the $N_x - 1$ interior $x$-nodes with PEC boundary conditions at $x = \pm a$, the discrete transverse Helmholtz matrix is
+   1. **Axial and temporal symbols, and the drifting-beam axial shape factor $S_z(k)^2$**:
+      - Staggered Yee field operator along $z$: $\kappa(k) = \frac{2}{\Delta z}\sin(k\Delta z/2)$, and leapfrog field time symbol $\Omega_f = \frac{2}{\Delta t}\sin(\omega\Delta t/2)$.
+      - **Drifting-beam axial shape factor $S_z(k)^2 = \operatorname{sinc}^2(k\Delta z/2)$ (particles)**: Along $z$, the $p = 1$ charge-conserving Esirkepov segment deposit onto primary $z$-edges deposits the $0$-th order piecewise-constant indicator $W_0$ over each sub-step segment $[z^n, z^{n+1}]$, giving the one-way axial deposit symbol $S_{\text{dep}}(k) = \operatorname{sinc}(k\Delta z/2)$ (`sinc^{p}` along the current direction, `wakis/particles/solver.py`). Conversely, the Galerkin primary-edge electric-field gather (`gather_order` $p_g = 0$ along the edge axis $z$) interpolates $E_z$ with the $0$-th order nearest-cell indicator $W_0(z - z_{k+1/2})$, giving the one-way axial gather symbol $S_{\text{gath}}(k) = \operatorname{sinc}^{p_g+1}(k\Delta z/2) = \operatorname{sinc}(k\Delta z/2)$. For a stationary cold plasma where every Brillouin alias $k_m = k + 2\pi m/\Delta z$ ($m \in \mathbb{Z}$) shares the same temporal denominator $\Omega_p^2$, summing over all aliases restores $\sum_m \operatorname{sinc}^2(k_m\Delta z/2) = 1$ (`\kappa_z^2 = 1` in `wakis/particles/solver.py`). For a **drifting** beam, however, the non-principal aliases $m \ne 0$ are Doppler-detuned in the beam frame by $|\omega - k_m u_{\text{dep}}| \simeq 2\pi|m|u_{\text{dep}}/\Delta z \gg \omega_q$, so their contribution to the space-charge response $(\omega - k_m u_{\text{dep}})^{-2}$ is suppressed by the factor
+        ```math
+        \text{alias\_supp} = \left(\frac{\omega_q\Delta z}{2\pi u_{\text{dep}}}\right)^2 \ll 1.
+        ```
+        Consequently, only the principal ($m = 0$) Brillouin zone survives, and the round-trip deposit-and-gather coupling acquires the axial shape factor
+        ```math
+        S_z(k)^2 = S_{\text{dep}}(k)\,S_{\text{gath}}(k) = \operatorname{sinc}^2\!\left(\frac{k\Delta z}{2}\right), \qquad \operatorname{sinc}(\xi) \equiv \frac{\sin\xi}{\xi}.
+        ```
+      - `LinearizedBeam`: centered finite-difference derivative $k_s(k) = \sin(k\Delta z)/\Delta z$ in the continuity and advection operators. Because `J1` and `E_s` are co-located on the same primary $z$-edges, `LinearizedBeam` has no sub-cell axial shape factor ($S_z \equiv 1$).
+      - Beam time stepping: Crank–Nicolson symbol $\Omega = \frac{2}{\Delta t}\tan(\omega\Delta t/2)$ for `LinearizedBeam`, and leapfrog symbol $\Omega_p = \frac{2}{\Delta t}\sin(\omega\Delta t/2)$ for particles.
+   2. **Exact discrete TM transverse field operator (no quasi-static approximation)**: For $E_z$-only motion under infinite axial guide field ($J_x = J_y = 0$, $\partial_y = 0$), combining the discrete curl-curl equation for $E_z$ with exact discrete charge continuity $-\mathrm{i}\Omega_f\rho + \mathrm{i}\kappa(k)J_z = 0$ eliminates $E_x$ and $B_y$ identically to give
       ```math
-      \mathbf{A}(k) = -\mathbf{L}_x + \tau_{\text{Y}}(k)^2\,\mathbf{I}, \qquad \mathbf{L}_x = \frac{\operatorname{tridiag}(1, -2, 1)}{\Delta x^2}, \qquad \tau_{\text{Y}}(k)^2 = \kappa(k)^2 - \left(\frac{\omega}{c}\right)^2.
+      \bigl(\mathbf{L}_x - \tau_{\text{Y}}(k)^2\,\mathbf{I}\bigr) E_z = -\frac{\mathrm{i}\,\tau_{\text{Y}}(k)^2}{\Omega_f\varepsilon_0}\,J_z, \qquad \mathbf{A}(k) = -\mathbf{L}_x + \tau_{\text{Y}}(k)^2\,\mathbf{I},
       ```
+      where on the $N_x - 1$ interior $x$-nodes with PEC boundary conditions at $x = \pm a$,
+      ```math
+      \mathbf{L}_x = \frac{\operatorname{tridiag}(1, -2, 1)}{\Delta x^2}, \qquad \tau_{\text{Y}}(k)^2 = \kappa(k)^2 - \left(\frac{\Omega_f}{c}\right)^2.
+      ```
+      Because this relation is the exact discrete $\mathrm{TM}$ reduction of the staggered Yee system, there is no quasi-static approximation to bound.
    3. **Beam lines and transverse coupling**:
       - `LinearizedBeam`: the beam lines are the active interior $x$-nodes with transverse top-hat weights $\mathbf{w}_{\perp,\text{eff}}$ read directly from a constructed `LinearizedBeam` instance (pointwise $E_z$ gather onto $v_1$ and line-weighted $J_z$ deposit).
       - Particles: the beam lines are the injected particle positions $x_\ell$ (`"sheet_lattice"` midpoints, or any `line_x` array such as the Fibonacci disk positions in **M3**), with coupling matrix $S_{i,\ell} = W_{\text{CIC}}(x_i - x_\ell)\,(2b / N_{\text{lines}})/\Delta x$ and Galerkin ($p = 1$) CIC gather along $x$.
@@ -180,29 +192,35 @@ To compare `ParticleSolver` and `LinearizedBeam` without adjustable parameters (
       ```math
       \mathbf{G}(k) = \frac{\Delta x}{2b}\,\tau_{\text{Y}}(k)^2\,\mathbf{S}^{\mathsf{T}}\,\mathbf{A}(k)^{-1}\,\mathbf{S}\,\mathbf{D}, \qquad \mathbf{G}(k)\,\mathbf{y}_j = \lambda_j(k)\,\mathbf{y}_j,
       ```
-      is normalized so that for a uniform slab as $\Delta x \to 0$, $\lambda_1(k) \to R\bigl(\tau_{\text{Y}}(k)\bigr)^2$ (`test_discrete_modal_operator_unit`, `DIAG id=modal_unit`). The modal plasma frequencies are $\omega_{q,j}(k)^2 = \lambda_j(k)\,\omega_{p,\text{dep}}^2 / \gamma_{\text{dep}}^3$.
+      is normalized so that for a uniform slab as $\Delta x \to 0$, $\lambda_1(k) \to R\bigl(\tau_{\text{Y}}(k)\bigr)^2$ (`test_discrete_modal_operator_unit`, `DIAG id=modal_unit`). Including the axial shape factor, the modal plasma frequencies are
+      ```math
+      \omega_{q,j}(k)^2 = \lambda_j(k)\,\frac{\omega_{p,\text{dep}}^2}{\gamma_{\text{dep}}^3} \quad (\text{LinearizedBeam}), \qquad \omega_{q,j}(k)^2 = \lambda_j(k)\,\frac{\omega_{p,\text{dep}}^2}{\gamma_{\text{dep}}^3}\,S_z(k)^2 \quad (\text{particles}).
+      ```
    5. **Axial dispersion per mode**: For each excited mode $j$, the fast ($k_{-,j}$) and slow ($k_{+,j}$) axial wavenumbers solve
       ```math
       \Omega \mp \omega_{q,j}(k_{\pm,j}) = u_{\text{dep}}\,k_s(k_{\pm,j}) \quad (\text{LinearizedBeam}), \qquad \Omega_p \mp \omega_{q,j}(k_{\pm,j}) = u_{\text{dep}}\,k_{\pm,j} \quad (\text{particles}),
       ```
       giving $\beta_{q,j} = (k_{+,j} - k_{-,j})/2$ and $k_{c,j} = (k_{+,j} + k_{-,j})/2$.
-   6. **Entrance excitation and model envelope fit**: Expanding the entrance density pattern $\mathbf{e}_{\text{in}}$ (`LinearizedBeam`: `inflow_rho1` $\propto \mathbf{w}_{\perp,\text{eff}}$; particles: equal charge per line) in the biorthonormal left and right eigenvectors $(\mathbf{l}_j, \mathbf{y}_j)$ gives the modal current amplitudes $c_j = (\mathbf{1}^{\mathsf{T}}\mathbf{D}\mathbf{y}_j)(\mathbf{l}_j^{\mathsf{T}}\mathbf{e}_{\text{in}})$. Synthesizing
+   6. **Entrance excitation, first-cell entrance amplitude, and model envelope fit**: Expanding the entrance density pattern $\mathbf{e}_{\text{in}}$ (`LinearizedBeam`: `inflow_rho1` $\propto \mathbf{w}_{\perp,\text{eff}}$; particles: equal charge per line) in the biorthonormal left and right eigenvectors $(\mathbf{l}_j, \mathbf{y}_j)$ gives the modal current amplitudes $c_j = (\mathbf{1}^{\mathsf{T}}\mathbf{D}\mathbf{y}_j)(\mathbf{l}_j^{\mathsf{T}}\mathbf{e}_{\text{in}})$. Synthesizing
       ```math
       I_{1,\text{model}}(z_k) = m I_0 \sum_j c_j \cos(\beta_{q,j} z_k)\,\mathrm{e}^{-\mathrm{i} k_{c,j} z_k}
       ```
-      on the primary edge midpoints $z_k$ and fitting $I_{1,\text{model}}(z_k)$ with `fit_beta_q_from_envelope` over $[z_{\min}, z_{\max}]$ yields the parameter-free modal prediction $\beta_{\text{pred}}$.
+      on the primary edge midpoints $z_k$ and fitting $I_{1,\text{model}}(z_k)$ with `fit_beta_q_from_envelope` over $[z_{\min}, z_{\max}]$ yields the parameter-free modal prediction $\beta_{\text{pred}}$. On the first primary edge $z_0 = \Delta z / 2$, `LinearizedBeam` evaluates the point value $\cos(\beta_q\Delta z/2)$ with truncation bound $(\beta_q\Delta z/2)^4/24 + 10^{-12}$, whereas the particle edge-0 current is the Esirkepov flux averaged over a one-cell transit $z \in [0, \Delta z]$:
+      ```math
+      \frac{|I_{1,\text{part}}(z_0)|}{m I_0} = \operatorname{sinc}\!\left(\frac{\beta_e\Delta z}{2}\right)\cos\!\left(\frac{\beta_q\Delta z}{2}\right), \qquad \text{tol}_{\text{amp,part}} = \frac{(\beta_e\Delta z / 2)^4}{120} + \frac{(\beta_q\Delta z / 2)^4}{24} + 10^{-12}.
+      ```
    7. **Particle DC velocity shear (`DIAG id=shear`)**: For particles, replacing the uniform depressed velocity $u_{\text{dep}}$ on each line $\ell$ by the per-line depressed velocity $u_\ell$ and Lorentz factor $\gamma_\ell$ from Step 1 scales the line susceptibility by $\sigma_\ell = (u_{\text{dep}}/u_\ell)^3(\gamma_{\text{dep}}/\gamma_\ell)^3$ with line carrier $\beta_{e,\ell} = \Omega_p / u_\ell$. Iterating $k_{\pm,j}$ on the shear-weighted modal operator $\widetilde{\mathbf{G}}(k) = \operatorname{diag}(\sigma_\ell)\mathbf{G}(k)$ yields the shear-corrected particle prediction (`DIAG id=shear`).
 5. **Parameter-free prediction slack (`prediction_slack`) and signed checks**:
-   - The neglected effects in Step 2 are evaluated explicitly and summed without empirical multipliers or squares:
+   - The remaining model sensitivities are evaluated explicitly and summed without empirical multipliers or squares:
      - $s_{\text{win}} = \max_{\pm}\bigl|\beta_{\text{pred}}(\text{window shifted by }\pm 1/T_1) - \beta_{\text{pred}}\bigr|/\beta_{\text{pred}}$ (sensitivity to the cathode-zone and outflow-ramp window margins);
      - $s_{\text{modes}} = \bigl|\beta_{\text{pred}}(\text{all modes}) - \beta_{\text{pred}}(\text{all modes except highest})\bigr|/\beta_{\text{pred}}$ (modal truncation);
-     - $s_{\text{qs}} = \bigl|\beta_{\text{pred}} - \beta_{\text{pred}}\bigl((\omega/c)^2 \to 0\bigr)\bigr|/\beta_{\text{pred}}$ (quasi-static transverse retardation bound);
+     - $s_{\text{sym}} = \bigl|\beta_{\text{pred}}(\Omega_f\text{ in }\tau_{\text{Y}}^2) - \beta_{\text{pred}}(\omega\text{ in }\tau_{\text{Y}}^2)\bigr|/\beta_{\text{pred}}$ (time-symbol ambiguity at the field/beam interface);
      - $s_{\text{round}} = 10^{-12}$.
    - Every deterministic signed check asserts
      ```math
-     \left|\frac{\beta_{\text{meas}}}{\beta_{\text{pred}}} - 1\right| \le s_{\text{win}} + s_{\text{modes}} + s_{\text{qs}} + s_{\text{round}},
+     \left|\frac{\beta_{\text{meas}}}{\beta_{\text{pred}}} - 1\right| \le s_{\text{win}} + s_{\text{modes}} + s_{\text{sym}} + s_{\text{round}},
      ```
-     for `LinearizedBeam` (coarse and fine), the `"sheet_lattice"` particle run (coarse and fine), and all three mutations (**M1** with $|q/m|\times 2$, **M2** with $\rho_0\times 2$, and **M3** with Fibonacci disk `line_x`), while the cross-code check asserts
+     for `LinearizedBeam` (coarse and fine), the `"sheet_lattice"` particle run (coarse and fine, plus the axial- vs transverse-only refinement grids in `test_axial_vs_transverse_refinement`, `DIAG id=axial_vs_transverse`), and all three mutations (**M1** with $|q/m|\times 2$, **M2** with $\rho_0\times 2$, and **M3** with Fibonacci disk `line_x`), while the cross-code check asserts
      ```math
      \left|\frac{\beta_{q,\text{P,lattice}}}{\beta_{q,\text{LB}}} - \frac{\beta_{\text{P,pred}}}{\beta_{\text{LB,pred}}}\right| \le s_{\text{LB}} + s_{\text{part}}.
      ```
