@@ -45,18 +45,20 @@ from examples._space_charge_waves_common import (
     cached_baseline_pair,
     compute_analytic_parameters,
     compute_spatial_spectrum,
+    compute_transverse_modal_operator,
     derived_tolerances,
+    discrete_modal_prediction,
     extract_coherent_bunching_i2_ratio,
     fit_beta_q_from_envelope,
     fit_window,
     format_error_budget,
     measure_empirical_noise,
-    predict_particle_beta_q,
+    prediction_slack,
     run_linearized_beam_drift,
     run_particle_beam_drift,
 )
 from wakis import GridFIT3D, SolverFIT3D
-from wakis.beam_fluid import LinearizedBeam
+from wakis.beam_fluid import LinearizedBeam, reduction_factor_planar
 from wakis.estimate import estimate, preflight
 from wakis.particles import BeamInjector, ParticleSolver, Species
 
@@ -279,8 +281,80 @@ def test_injected_sheet_geometry():
                 )
 
 
+def test_discrete_modal_operator_unit():
+    """Unit test (Step 2.4 & 2.7, fast, no simulation): verify G(beta_e) eigenvalues and DC shear shift."""
+    params = compute_analytic_parameters()
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    r_sq_exact = float(
+        reduction_factor_planar(params["omega"], params["u_dep"], b, a=a) ** 2
+    )
+
+    op_400 = compute_transverse_modal_operator(
+        "lb", 400, None, params, k_val=params["beta_e"]
+    )
+    op_10 = compute_transverse_modal_operator(
+        "lb", 10, None, params, k_val=params["beta_e"]
+    )
+    op_20 = compute_transverse_modal_operator(
+        "lb", 20, None, params, k_val=params["beta_e"]
+    )
+
+    lam1_400 = float(op_400["evals"][0])
+    lam1_10 = float(op_10["evals"][0])
+    lam1_20 = float(op_20["evals"][0])
+
+    err_400 = abs(lam1_400 - r_sq_exact)
+    diff_10 = lam1_10 - r_sq_exact
+    diff_20 = lam1_20 - r_sq_exact
+    dx_10 = 2.0 * a / 10.0
+    dx_20 = 2.0 * a / 20.0
+    o2_est_10 = -float(
+        r_sq_exact * (1.0 - r_sq_exact) * (params["T1"] * dx_10) ** 2 / 12.0
+    )
+    o2_est_20 = -float(
+        r_sq_exact * (1.0 - r_sq_exact) * (params["T1"] * dx_20) ** 2 / 12.0
+    )
+    ratio_10_20 = float(diff_10 / diff_20)
+
+    nx_c, _, nz_c = COARSE_GRID
+    nx_f, _, nz_f = FINE_GRID
+    tols_c = derived_tolerances(nx_c, nz_c, params)
+    tols_f = derived_tolerances(nx_f, nz_f, params)
+
+    print(flush=True)
+    print(
+        f"DIAG id=modal_unit r_sq_analytic={r_sq_exact:.8f} "
+        f"lam1_nx400={lam1_400:.8f} err_nx400={err_400:.6e} "
+        f"lam1_nx10={lam1_10:.8f} diff_nx10={diff_10:+.6e} o2_est_nx10={o2_est_10:+.6e} "
+        f"lam1_nx20={lam1_20:.8f} diff_nx20={diff_20:+.6e} o2_est_nx20={o2_est_20:+.6e} "
+        f"ratio_10_20={ratio_10_20:.4f}",
+        flush=True,
+    )
+    print(
+        f"DIAG id=shear bq_shear_coarse={tols_c['bq_pred_part']:.6f} "
+        f"bq_unif_coarse={tols_c['bq_pred_part_unif']:.6f} "
+        f"shift_coarse={tols_c['shear_shift']:+.6e} "
+        f"rel_shift_coarse={tols_c['shear_rel']:+.6e} "
+        f"bq_shear_fine={tols_f['bq_pred_part']:.6f} "
+        f"bq_unif_fine={tols_f['bq_pred_part_unif']:.6f} "
+        f"shift_fine={tols_f['shear_shift']:+.6e} "
+        f"rel_shift_fine={tols_f['shear_rel']:+.6e}",
+        flush=True,
+    )
+
+    assert err_400 <= 1.0e-4, (
+        f"nx=400 LB modal eigenvalue |lambda_1 - R^2| = {err_400:.6e} > 1e-4 "
+        f"(margin={1.0e-4 - err_400:+.6e})"
+    )
+    # Verify O((T1*dx)^2) second-order convergence between nx=10 and nx=20
+    assert abs(ratio_10_20 - 4.0) <= 0.1, (
+        f"nx=10/20 eigenvalue error ratio = {ratio_10_20:.4f} does not follow 4x O((T1*dx)^2) scaling"
+    )
+
+
 def test_space_charge_wave_envelope_entrance_and_spectrum():
-    """Verify coarse-grid signed checks 4.1, 4.2, 4.4, 4.6, 4.8, 4.9, and spatial spectrum."""
+    """Verify coarse-grid signed checks (Step 2 & Step 3), entrance amplitude, DFT leakage, and spatial spectrum."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
     tols = derived_tolerances(nx, nz, params)
@@ -305,24 +379,35 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     delta_rho_lat = (abs(part_res["rho_dc_mean"]) - abs(params["rho0"])) / abs(
         params["rho0"]
     )
-    bq_th_at_delta, bq_part_pred = predict_particle_beta_q(delta_meas_lat, tols)
 
-    bq_lb_pred = tols["bq_lb_pred"]
-    s_lb = tols["s_lb"]
-    s_part = tols["s_part"]
-    s_cross = tols["s_cross"]
+    bq_lb_pred = tols["bq_pred_lb"]
+    bq_part_pred = tols["bq_pred_part"]
+    slack_lb = tols["slack_lb"]
+    slack_part = tols["slack_part"]
+    slack_cross = tols["slack_cross"]
 
     resid_lb = abs(bq_lb / bq_lb_pred - 1.0)
     resid_lat = abs(bq_part_lat / bq_part_pred - 1.0)
     resid_cross = abs(bq_part_lat / bq_lb - bq_part_pred / bq_lb_pred)
 
+    ev_p = tols["evals_part"]
+    ev_lb = tols["evals_lb"]
     print(flush=True)
     print(format_error_budget(nx, nz, tols), flush=True)
     print(
-        f"LBCHECK grid=coarse bq_th={beta_q_th:.6f} bq_lb_pred={bq_lb_pred:.6f} "
-        f"bq_lb={bq_lb:.6f} resid={resid_lb:.6e} s_lb={s_lb:.6e} "
-        f"eps_ax={tols['eps_ax']:.6e} eps_x_fit={tols['eps_x_fit']:.6e} "
-        f"eps_fit={tols['eps_fit']:.6e}",
+        f"TERMS grid=coarse s_win={tols['s_win_part']:.6e} "
+        f"s_modes={tols['s_modes_part']:.6e} s_qs={tols['s_qs_part']:.6e} "
+        f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} "
+        f"s_qs_lb={tols['s_qs_lb']:.6e} "
+        f"lambda_1={ev_p[0]:.6f} lambda_2={ev_p[1]:.6f} "
+        f"lambda_3={ev_p[2]:.6f} lambda_4={ev_p[3]:.6f} "
+        f"lambda_lb_1={ev_lb[0]:.6f} lambda_lb_2={ev_lb[1]:.6f} "
+        f"lambda_lb_3={ev_lb[2]:.6f} lambda_lb_4={ev_lb[3]:.6f}",
+        flush=True,
+    )
+    print(
+        f"LBCHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_lb_pred:.6f} "
+        f"bq_lb={bq_lb:.6f} resid={resid_lb:.6e} slack={slack_lb:.6e}",
         flush=True,
     )
     print(
@@ -334,45 +419,32 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"|a_s|/|a_f|={fit_part['as_over_af']:.6f}, B/A={fit_part['b_over_a']:.6f}, "
         f"z0={fit_part['z0'] * 1e3:.4f} mm, sigma_bq={fit_part['sigma_beta_q']:.6e} rad/m, "
         f"delta_meas_lat={delta_meas_lat:.6e} (delta_th={tols['delta_th']:.6e}, "
-        f"delta_th_disc={tols['delta_th_disc']:.6e}, rho_dc_rel={delta_rho_lat:.6e}), "
-        f"bq_th(delta_meas)={bq_th_at_delta:.6f} rad/m, bq_part_pred={bq_part_pred:.6f} rad/m "
-        f"({bq_part_pred / beta_q_th - 1.0:+.4%} vs bq_th), resid_lat={resid_lat:.6e} (s_part={s_part:.6e})",
+        f"delta_disc_exact={tols['delta_disc_exact']:.6e}, rho_dc_rel={delta_rho_lat:.6e}), "
+        f"bq_pred_modal={bq_part_pred:.6f} rad/m "
+        f"({bq_part_pred / beta_q_th - 1.0:+.4%} vs bq_th), resid_lat={resid_lat:.6e} (slack={slack_part:.6e})",
         flush=True,
     )
 
-    # Step 4.9: Budget-sum asserts (identity)
-    bq_lb_pred_check = (
-        0.5
-        * (tols["k_plus"] - tols["k_minus"])
-        * (1.0 + tols["eps_x_fit"])
-        * (1.0 + tols["eps_fit"])
+    # Step 3 slack-sum identity asserts
+    slack_lb_check = (
+        tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_qs_lb"] + tols["s_round"]
     )
-    s_lb_check = (
-        abs(tols["eps_ax"]) + abs(tols["eps_x_fit"]) + abs(tols["eps_fit"])
-    ) ** 2 + abs(tols["eps_fit_grid"] - tols["eps_fit_cont"])
-    s_part_check = (
-        abs(tols["eps_cic"])
-        + abs(tols["eps_z_fit"])
-        + abs(tols["eps_x_fit"])
-        + abs(tols["eps_fit"])
-    ) ** 2 + abs(tols["eps_fit_grid"] - tols["eps_fit_cont"])
-    assert np.isclose(tols["bq_lb_pred"], bq_lb_pred_check, rtol=0.0, atol=1e-15), (
-        f"Identity check failed for bq_lb_pred: val={tols['bq_lb_pred']:.16e}, "
-        f"expected={bq_lb_pred_check:.16e}, diff={abs(tols['bq_lb_pred'] - bq_lb_pred_check):.3e}"
+    slack_part_check = (
+        tols["s_win_part"] + tols["s_modes_part"] + tols["s_qs_part"] + tols["s_round"]
     )
-    assert np.isclose(tols["s_lb"], s_lb_check, rtol=0.0, atol=1e-15), (
-        f"Identity check failed for s_lb: val={tols['s_lb']:.16e}, "
-        f"expected={s_lb_check:.16e}, diff={abs(tols['s_lb'] - s_lb_check):.3e}"
+    assert np.isclose(tols["slack_lb"], slack_lb_check, rtol=0.0, atol=1e-15), (
+        f"Identity check failed for slack_lb: val={tols['slack_lb']:.16e}, "
+        f"expected={slack_lb_check:.16e}"
     )
-    assert np.isclose(tols["s_part"], s_part_check, rtol=0.0, atol=1e-15), (
-        f"Identity check failed for s_part: val={tols['s_part']:.16e}, "
-        f"expected={s_part_check:.16e}, diff={abs(tols['s_part'] - s_part_check):.3e}"
+    assert np.isclose(tols["slack_part"], slack_part_check, rtol=0.0, atol=1e-15), (
+        f"Identity check failed for slack_part: val={tols['slack_part']:.16e}, "
+        f"expected={slack_part_check:.16e}"
     )
     assert np.isclose(
-        tols["s_cross"], tols["s_lb"] + tols["s_part"], rtol=0.0, atol=1e-15
+        tols["slack_cross"], tols["slack_lb"] + tols["slack_part"], rtol=0.0, atol=1e-15
     ), (
-        f"Identity check failed for s_cross: val={tols['s_cross']:.16e}, "
-        f"expected={tols['s_lb'] + tols['s_part']:.16e}"
+        f"Identity check failed for slack_cross: val={tols['slack_cross']:.16e}, "
+        f"expected={tols['slack_lb'] + tols['slack_part']:.16e}"
     )
     assert np.isclose(
         tols["tol_amp_part"], tols["tol_amp_lb"] + 1e-12, rtol=0.0, atol=1e-15
@@ -381,7 +453,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"expected={tols['tol_amp_lb'] + 1e-12:.16e}"
     )
 
-    # Step 4.8: DFT leakage identity (round-off)
+    # DFT leakage identity (round-off)
     assert lb_res["dirichlet_leak_lb"] <= tols["eps_dft"], (
         f"Identity (round-off) DFT leakage LB={lb_res['dirichlet_leak_lb']:.3e} > "
         f"bound={tols['eps_dft']:.3e} (margin={tols['eps_dft'] - lb_res['dirichlet_leak_lb']:+.3e})"
@@ -391,7 +463,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"bound={tols['eps_dft']:.3e} (margin={tols['eps_dft'] - part_res['dirichlet_leak_part']:+.3e})"
     )
 
-    # Step 3: Amplitude sanity check |A| > 0.5 * m * I0
+    # Amplitude sanity check |A| > 0.5 * m * I0
     min_amp_a = 0.5 * params["I1_0"]
     assert abs(fit_lb["A"]) > min_amp_a, (
         f"LB fit |A|={abs(fit_lb['A']):.6e} <= 0.5*m*I0={min_amp_a:.6e} "
@@ -411,8 +483,8 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     tol_spec_k = float(
         beta_q_th / (2.0 * np.pi)
         + delta_k_disp
-        + abs(tols["eps_ax"]) * beta_q_th
-        + s_lb * beta_q_th
+        + abs(bq_lb_pred - beta_q_th)
+        + slack_lb * beta_q_th
     )
 
     for label, phasor in (("LinearizedBeam", i1_lb), ("ParticleSolver", i1_part)):
@@ -438,25 +510,25 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
             f"(margin={tol_spec_k - err_slow:+.4f} rad/m)"
         )
 
-    # Step 4.1: LinearizedBeam deterministic prediction check
-    assert resid_lb <= s_lb, (
-        f"Coarse LB |bq_lb/bq_lb_pred - 1| = {resid_lb:.6e} > s_lb = {s_lb:.6e} "
-        f"(margin={s_lb - resid_lb:+.6e})"
+    # Step 3: LinearizedBeam deterministic modal prediction check
+    assert resid_lb <= slack_lb, (
+        f"Coarse LB |bq_lb/bq_pred_modal - 1| = {resid_lb:.6e} > slack_lb = {slack_lb:.6e} "
+        f"(margin={slack_lb - resid_lb:+.6e})"
     )
 
-    # Step 4.4: Cross-code ("sheet_lattice") check
-    assert resid_cross <= s_cross, (
+    # Step 3: Cross-code ("sheet_lattice") check
+    assert resid_cross <= slack_cross, (
         f"Coarse cross-code |bq_P/bq_LB - bq_P_pred/bq_LB_pred| = {resid_cross:.6e} > "
-        f"s_lb + s_part = {s_cross:.6e} (margin={s_cross - resid_cross:+.6e})"
+        f"slack_lb + slack_part = {slack_cross:.6e} (margin={slack_cross - resid_cross:+.6e})"
     )
 
-    # Step 4.2: Particle deterministic ("sheet_lattice") prediction check
-    assert resid_lat <= s_part, (
-        f"Coarse Particle (sheet_lattice) |bq_P/bq_P_pred - 1| = {resid_lat:.6e} > "
-        f"s_part = {s_part:.6e} (margin={s_part - resid_lat:+.6e})"
+    # Step 3: Particle deterministic ("sheet_lattice") modal prediction check
+    assert resid_lat <= slack_part, (
+        f"Coarse Particle (sheet_lattice) |bq_P/bq_pred_modal - 1| = {resid_lat:.6e} > "
+        f"slack_part = {slack_part:.6e} (margin={slack_part - resid_lat:+.6e})"
     )
 
-    # Step 4.6: Entrance amplitude at z_0 = 0.5 * dz
+    # Entrance amplitude at z_0 = 0.5 * dz
     amp_err_lb = float(abs(np.abs(i1_lb[0]) / params["I1_0"] - 1.0))
     amp_err_part = float(abs(np.abs(i1_part[0]) / params["I1_0"] - 1.0))
     assert amp_err_lb <= tols["tol_amp_lb"], (
@@ -477,7 +549,7 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
     tols = derived_tolerances(nx, nz, params)
     tols_mut = derived_tolerances(nx, nz, params_mut)
 
-    lb_res, part_base = cached_baseline_pair(nx, nz)
+    lb_res, _ = cached_baseline_pair(nx, nz)
     z_coords = lb_res["z_coords"]
     z_min_base, z_max_base = fit_window(params)
     z_min_mut, z_max_mut = fit_window(params_mut)
@@ -486,8 +558,7 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         z_coords, lb_res["i1_lb"], params["beta_q"], z_min=z_min_base, z_max=z_max_base
     )
     bq_lb = fit_lb["beta_q"]
-    delta_meas_base = (params["u0"] - part_base["u_z_mean"]) / params["u0"]
-    _, bq_part_base_pred = predict_particle_beta_q(delta_meas_base, tols, qm_scale=1.0)
+    bq_part_base_pred = tols["bq_pred_part"]
 
     orig_init = Species.__init__
 
@@ -512,32 +583,29 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         z_max=z_max_mut,
     )
     bq_part_mut = fit_mut["beta_q"]
-    delta_meas_mut = (params_mut["u0"] - part_mut["u_z_mean"]) / params_mut["u0"]
-    _, bq_part_mut_pred = predict_particle_beta_q(
-        delta_meas_mut, tols_mut, qm_scale=2.0
-    )
+    bq_part_mut_pred = tols_mut["bq_pred_part"]
     resid_m1 = abs(bq_part_mut / bq_part_mut_pred - 1.0)
-    bound_m1 = tols_mut["s_part"]
+    bound_m1 = tols_mut["slack_part"]
 
     baseline_check_failed = False
     with pytest.raises(AssertionError, match="exceeds"):
         resid_cross_mut = abs(
-            bq_part_mut / bq_lb - bq_part_base_pred / tols["bq_lb_pred"]
+            bq_part_mut / bq_lb - bq_part_base_pred / tols["bq_pred_lb"]
         )
-        assert resid_cross_mut <= tols["s_cross"], (
-            f"M1 cross-code difference {resid_cross_mut:.6e} exceeds {tols['s_cross']:.6e}"
+        assert resid_cross_mut <= tols["slack_cross"], (
+            f"M1 cross-code difference {resid_cross_mut:.6e} exceeds {tols['slack_cross']:.6e}"
         )
     baseline_check_failed = True
 
     print(
-        f"\nMUTCHECK id=M1 meas={bq_part_mut:.6f} pred={bq_part_mut_pred:.6f} "
-        f"resid={resid_m1:.6e} bound={bound_m1:.6e} "
+        f"\nMUTCHECK id=M1 meas={bq_part_mut:.6f} pred_modal={bq_part_mut_pred:.6f} "
+        f"slack={bound_m1:.6e} resid={resid_m1:.6e} bound={bound_m1:.6e} "
         f"baseline_check_failed={baseline_check_failed}",
         flush=True,
     )
 
     assert resid_m1 <= bound_m1, (
-        f"M1 |bq_part_mut/bq_part_mut_pred - 1| = {resid_m1:.6e} > s_part_mut = {bound_m1:.6e} "
+        f"M1 |bq_part_mut/bq_part_mut_pred - 1| = {resid_m1:.6e} > slack_part_mut = {bound_m1:.6e} "
         f"(margin={bound_m1 - resid_m1:+.6e})"
     )
 
@@ -557,8 +625,7 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
         z_coords, part_res["i1_part"], params["beta_q"], z_min=z_min, z_max=z_max
     )
     bq_part = fit_part["beta_q"]
-    delta_meas_base = (params["u0"] - part_res["u_z_mean"]) / params["u0"]
-    _, bq_part_base_pred = predict_particle_beta_q(delta_meas_base, tols)
+    bq_part_base_pred = tols["bq_pred_part"]
 
     orig_lb_init = LinearizedBeam.__init__
 
@@ -577,35 +644,35 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
         z_max=z_max,
     )
     bq_lb_mut = fit_lb_mut["beta_q"]
-    bq_lb_m2_pred = tols_m2["bq_lb_pred"]
-    bound_m2 = tols_m2["s_lb"]
+    bq_lb_m2_pred = tols_m2["bq_pred_lb"]
+    bound_m2 = tols_m2["slack_lb"]
     resid_m2 = abs(bq_lb_mut / bq_lb_m2_pred - 1.0)
 
     baseline_check_failed = False
     with pytest.raises(AssertionError, match="exceeds"):
         resid_cross_mut = abs(
-            bq_part / bq_lb_mut - bq_part_base_pred / tols["bq_lb_pred"]
+            bq_part / bq_lb_mut - bq_part_base_pred / tols["bq_pred_lb"]
         )
-        assert resid_cross_mut <= tols["s_cross"], (
-            f"M2 cross-code difference {resid_cross_mut:.6e} exceeds {tols['s_cross']:.6e}"
+        assert resid_cross_mut <= tols["slack_cross"], (
+            f"M2 cross-code difference {resid_cross_mut:.6e} exceeds {tols['slack_cross']:.6e}"
         )
     baseline_check_failed = True
 
     print(
-        f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred={bq_lb_m2_pred:.6f} "
-        f"resid={resid_m2:.6e} bound={bound_m2:.6e} "
+        f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred_modal={bq_lb_m2_pred:.6f} "
+        f"slack={bound_m2:.6e} resid={resid_m2:.6e} bound={bound_m2:.6e} "
         f"baseline_check_failed={baseline_check_failed}",
         flush=True,
     )
 
     assert resid_m2 <= bound_m2, (
-        f"M2 |bq_lb_mut/bq_lb_m2_pred - 1| = {resid_m2:.6e} > s_lb = {bound_m2:.6e} "
+        f"M2 |bq_lb_mut/bq_lb_m2_pred - 1| = {resid_m2:.6e} > slack_lb = {bound_m2:.6e} "
         f"(margin={bound_m2 - resid_m2:+.6e})"
     )
 
 
 def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
-    """M3: Fibonacci disk x-profile instead of planar sheet increases beta_q and fails Step 4.2."""
+    """M3: Fibonacci disk x-profile matches non-uniform modal prediction and fails baseline sheet check."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
     tols = derived_tolerances(nx, nz, params)
@@ -619,28 +686,36 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         z_coords, part_m3["i1_part"], params["beta_q"], z_min=z_min, z_max=z_max
     )
     bq_part_m3 = fit_m3["beta_q"]
-    delta_meas_m3 = (params["u0"] - part_m3["u_z_mean"]) / params["u0"]
-    _, bq_part_m3_pred = predict_particle_beta_q(delta_meas_m3, tols)
-    resid_m3 = abs(bq_part_m3 / bq_part_m3_pred - 1.0)
-    bound_m3 = tols["s_part"]
+    bq_sheet_pred = tols["bq_pred_part"]
+    resid_vs_sheet = abs(bq_part_m3 / bq_sheet_pred - 1.0)
+    bound_sheet = tols["slack_part"]
 
     baseline_check_failed = False
     with pytest.raises(AssertionError, match="exceeds"):
-        assert resid_m3 <= bound_m3, (
-            f"M3 Step 4.2 residual {resid_m3:.6e} exceeds s_part={bound_m3:.6e}"
+        assert resid_vs_sheet <= bound_sheet, (
+            f"M3 baseline sheet residual {resid_vs_sheet:.6e} exceeds slack_part={bound_sheet:.6e}"
         )
     baseline_check_failed = True
 
+    x_fib = _fibonacci_disk_lattice_x(
+        None, 16, 0.0, BEAM_HALF_THICKNESS_M, BEAM_HALF_THICKNESS_M
+    )
+    pred_m3_info = discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
+    slack_m3_info = prediction_slack("particles", nx, nz, params, line_x=x_fib)
+    bq_m3_pred = pred_m3_info["beta_q_pred"]
+    slack_m3 = slack_m3_info["slack"]
+    resid_m3 = abs(bq_part_m3 / bq_m3_pred - 1.0)
+
     print(
-        f"\nMUTCHECK id=M3 meas={bq_part_m3:.6f} pred={bq_part_m3_pred:.6f} "
-        f"resid={resid_m3:.6e} bound={bound_m3:.6e} "
-        f"baseline_check_failed={baseline_check_failed}",
+        f"\nMUTCHECK id=M3 meas={bq_part_m3:.6f} pred_modal={bq_m3_pred:.6f} "
+        f"slack={slack_m3:.6e} resid={resid_m3:.6e} bound={slack_m3:.6e} "
+        f"resid_vs_sheet={resid_vs_sheet:.6e} baseline_check_failed={baseline_check_failed}",
         flush=True,
     )
 
-    assert bq_part_m3 > bq_part_m3_pred, (
-        f"M3 disk profile beta_q={bq_part_m3:.6f} rad/m not above sheet prediction "
-        f"{bq_part_m3_pred:.6f} rad/m (diff={bq_part_m3 - bq_part_m3_pred:+.6f} rad/m)"
+    assert resid_m3 <= slack_m3, (
+        f"M3 |bq_part_m3/bq_m3_pred - 1| = {resid_m3:.6e} > slack_m3 = {slack_m3:.6e} "
+        f"(margin={slack_m3 - resid_m3:+.6e})"
     )
 
 
@@ -681,20 +756,21 @@ def test_two_resolution_convergence_and_sheet_ensemble():
 
     delta_lat_c = (params["u0"] - part_c["u_z_mean"]) / params["u0"]
     delta_lat_f = (params["u0"] - part_f["u_z_mean"]) / params["u0"]
-    _, bq_part_pred_c = predict_particle_beta_q(delta_lat_c, tols_c)
-    _, bq_part_pred_f = predict_particle_beta_q(delta_lat_f, tols_f)
+    bq_part_pred_c = tols_c["bq_pred_part"]
+    bq_part_pred_f = tols_f["bq_pred_part"]
+    bq_lb_pred_f = tols_f["bq_pred_lb"]
 
-    resid_lb_f = abs(bq_lb_f / tols_f["bq_lb_pred"] - 1.0)
+    resid_lb_f = abs(bq_lb_f / bq_lb_pred_f - 1.0)
     resid_lat_c = abs(bq_part_lat_c / bq_part_pred_c - 1.0)
     resid_lat_f = abs(bq_part_lat_f / bq_part_pred_f - 1.0)
-    resid_cross_f = abs(bq_part_lat_f / bq_lb_f - bq_part_pred_f / tols_f["bq_lb_pred"])
+    resid_cross_f = abs(bq_part_lat_f / bq_lb_f - bq_part_pred_f / bq_lb_pred_f)
 
     tcrit_c = noise_c["tcrit"]
     tcrit_f = noise_f["tcrit"]
     resid_mean_c = abs(noise_c["bq_mean"] / bq_part_pred_c - 1.0)
     resid_mean_f = abs(noise_f["bq_mean"] / bq_part_pred_f - 1.0)
-    bound_mean_c = tols_c["s_part"] + tcrit_c * noise_c["bq_sem"] / bq_part_pred_c
-    bound_mean_f = tols_f["s_part"] + tcrit_f * noise_f["bq_sem"] / bq_part_pred_f
+    bound_mean_c = tols_c["slack_part"] + tcrit_c * noise_c["bq_sem"] / bq_part_pred_c
+    bound_mean_f = tols_f["slack_part"] + tcrit_f * noise_f["bq_sem"] / bq_part_pred_f
     mean_minus_lat_c = abs(noise_c["bq_mean"] - bq_part_lat_c)
     mean_minus_lat_f = abs(noise_f["bq_mean"] - bq_part_lat_f)
 
@@ -704,28 +780,39 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     print(flush=True)
     print(format_error_budget(nx_f, nz_f, tols_f), flush=True)
     print(
-        f"LBCHECK grid=fine bq_th={beta_q_th:.6f} bq_lb_pred={tols_f['bq_lb_pred']:.6f} "
-        f"bq_lb={bq_lb_f:.6f} resid={resid_lb_f:.6e} s_lb={tols_f['s_lb']:.6e} "
-        f"eps_ax={tols_f['eps_ax']:.6e} eps_x_fit={tols_f['eps_x_fit']:.6e} "
-        f"eps_fit={tols_f['eps_fit']:.6e}",
+        f"TERMS grid=fine s_win={tols_f['s_win_lb']:.6e} "
+        f"s_modes={tols_f['s_modes_lb']:.6e} s_qs={tols_f['s_qs_lb']:.6e} "
+        f"s_win_part={tols_f['s_win_part']:.6e} "
+        f"s_modes_part={tols_f['s_modes_part']:.6e} s_qs_part={tols_f['s_qs_part']:.6e} "
+        f"lambda_1={tols_f['lambda_1_lb']:.6f} lambda_2={tols_f['lambda_2_lb']:.6f} "
+        f"lambda_3={tols_f['lambda_3_lb']:.6f} lambda_4={tols_f['lambda_4_lb']:.6f} "
+        f"lambda_1_part={tols_f['lambda_1_part']:.6f} lambda_2_part={tols_f['lambda_2_part']:.6f} "
+        f"lambda_3_part={tols_f['lambda_3_part']:.6f} lambda_4_part={tols_f['lambda_4_part']:.6f}",
         flush=True,
     )
     print(
-        f"H1CHECK grid=coarse bq_th={beta_q_th:.6f} bq_part_pred={bq_part_pred_c:.6f} "
-        f"lattice={bq_part_lat_c:.6f} resid_lattice={resid_lat_c:.6e} "
-        f"s_part={tols_c['s_part']:.6e} mean_sheet={noise_c['bq_mean']:.6f} "
-        f"sem={noise_c['bq_sem']:.6e} tcrit={tcrit_c:.6f} "
-        f"resid_mean={resid_mean_c:.6e} bound_mean={bound_mean_c:.6e} "
-        f"mean_minus_lattice={mean_minus_lat_c:.6e} seeds={seeds_c_str}",
+        f"LBCHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_lb_pred_f:.6f} "
+        f"bq_lb={bq_lb_f:.6f} resid={resid_lb_f:.6e} slack={tols_f['slack_lb']:.6e}",
         flush=True,
     )
     print(
-        f"H1CHECK grid=fine bq_th={beta_q_th:.6f} bq_part_pred={bq_part_pred_f:.6f} "
-        f"lattice={bq_part_lat_f:.6f} resid_lattice={resid_lat_f:.6e} "
-        f"s_part={tols_f['s_part']:.6e} mean_sheet={noise_f['bq_mean']:.6f} "
-        f"sem={noise_f['bq_sem']:.6e} tcrit={tcrit_f:.6f} "
-        f"resid_mean={resid_mean_f:.6e} bound_mean={bound_mean_f:.6e} "
-        f"mean_minus_lattice={mean_minus_lat_f:.6e} seeds={seeds_f_str}",
+        f"H1CHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_c:.6f} "
+        f"slack={tols_c['slack_part']:.6e} lattice={bq_part_lat_c:.6f} "
+        f"resid_lattice={resid_lat_c:.6e} bq_coherent_mean={noise_c['bq_coherent_mean']:.6f} "
+        f"mean_sheet={noise_c['bq_mean']:.6f} sem={noise_c['bq_sem']:.6e} "
+        f"tcrit={tcrit_c:.6f} resid_mean={resid_mean_c:.6e} "
+        f"bound_mean={bound_mean_c:.6e} mean_minus_lattice={mean_minus_lat_c:.6e} "
+        f"seeds={seeds_c_str}",
+        flush=True,
+    )
+    print(
+        f"H1CHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_part_pred_f:.6f} "
+        f"slack={tols_f['slack_part']:.6e} lattice={bq_part_lat_f:.6f} "
+        f"resid_lattice={resid_lat_f:.6e} bq_coherent_mean={noise_f['bq_coherent_mean']:.6f} "
+        f"mean_sheet={noise_f['bq_mean']:.6f} sem={noise_f['bq_sem']:.6e} "
+        f"tcrit={tcrit_f:.6f} resid_mean={resid_mean_f:.6e} "
+        f"bound_mean={bound_mean_f:.6e} mean_minus_lattice={mean_minus_lat_f:.6e} "
+        f"seeds={seeds_f_str}",
         flush=True,
     )
     print(
@@ -786,18 +873,18 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"Fine Part DFT leakage {part_f['dirichlet_leak_part']:.3e} > {tols_f['eps_dft']:.3e}"
     )
 
-    # Fine-grid Step 4.1 (LB), Step 4.4 (cross-code), and Step 4.2 (Particle lattice)
-    assert resid_lb_f <= tols_f["s_lb"], (
-        f"Fine LB |bq_lb/bq_lb_pred - 1| = {resid_lb_f:.6e} > s_lb = {tols_f['s_lb']:.6e} "
-        f"(margin={tols_f['s_lb'] - resid_lb_f:+.6e})"
+    # Fine-grid Step 3 signed checks (LB, cross-code, and Particle lattice)
+    assert resid_lb_f <= tols_f["slack_lb"], (
+        f"Fine LB |bq_lb/bq_lb_pred - 1| = {resid_lb_f:.6e} > slack_lb = {tols_f['slack_lb']:.6e} "
+        f"(margin={tols_f['slack_lb'] - resid_lb_f:+.6e})"
     )
-    assert resid_cross_f <= tols_f["s_cross"], (
+    assert resid_cross_f <= tols_f["slack_cross"], (
         f"Fine cross-code |bq_P/bq_LB - bq_P_pred/bq_LB_pred| = {resid_cross_f:.6e} > "
-        f"s_cross = {tols_f['s_cross']:.6e} (margin={tols_f['s_cross'] - resid_cross_f:+.6e})"
+        f"slack_cross = {tols_f['slack_cross']:.6e} (margin={tols_f['slack_cross'] - resid_cross_f:+.6e})"
     )
-    assert resid_lat_f <= tols_f["s_part"], (
+    assert resid_lat_f <= tols_f["slack_part"], (
         f"Fine Particle (sheet_lattice) |bq_P/bq_P_pred - 1| = {resid_lat_f:.6e} > "
-        f"s_part = {tols_f['s_part']:.6e} (margin={tols_f['s_part'] - resid_lat_f:+.6e})"
+        f"slack_part = {tols_f['slack_part']:.6e} (margin={tols_f['slack_part'] - resid_lat_f:+.6e})"
     )
 
     # Fine-grid Step 4.6 entrance amplitude ("sheet_lattice") and 8-seed ("sheet") entrance amplitude
@@ -946,8 +1033,8 @@ def test_m_scan_linearity():
         f"LB (linear identity): |bq(m)/bq(m/2) - 1|={bq_shift_lb:.3e} "
         f"(bound={tols['eps_dft']:.3e}), I2/I1={i2_ratio_lb_m:.6e} | "
         f"Part: bq(m)={bq_part_m:.6f}, bq(m/2)={bq_part_h:.6f}, "
-        f"|bq(m)/bq(m/2) - 1|={bq_shift_part:.6e} (s_part={tols['s_part']:.6e}, "
-        f"margin={tols['s_part'] - bq_shift_part:+.6e}) | "
+        f"|bq(m)/bq(m/2) - 1|={bq_shift_part:.6e} (slack_part={tols['slack_part']:.6e}, "
+        f"margin={tols['slack_part'] - bq_shift_part:+.6e}) | "
         f"I2/I1 report-only: raw(m)={i2_ratio_part_m:.6e}, raw(m/2)={i2_ratio_part_h:.6e}, "
         f"raw_ratio={i2_raw_scaling:.4f}, bunch(m)={i2_bunch_m:.6e}, "
         f"bunch(m/2)={i2_bunch_h:.6e}, bunch_ratio={i2_bunch_scaling:.4f}",
@@ -964,10 +1051,10 @@ def test_m_scan_linearity():
         f"eps_dft={tols['eps_dft']:.3e}"
     )
 
-    # Step 4.7: Particle m-scan nonlinear shift must stay below s_part
-    assert bq_shift_part <= tols["s_part"], (
+    # Step 4.7: Particle m-scan nonlinear shift must stay below slack_part
+    assert bq_shift_part <= tols["slack_part"], (
         f"Particle m-scan |bq(m)/bq(m/2) - 1| = {bq_shift_part:.6e} > "
-        f"s_part = {tols['s_part']:.6e} (margin={tols['s_part'] - bq_shift_part:+.6e})"
+        f"slack_part = {tols['slack_part']:.6e} (margin={tols['slack_part'] - bq_shift_part:+.6e})"
     )
 
 
@@ -1062,12 +1149,12 @@ def test_optional_diagnostics():
     print(flush=True)
     print(
         f"DIAG id=D3 bq_lb_semi={bq_lb_d3:.6f} shift_lb={shift_lb_d3:.6e} "
-        f"shift_part_m3={shift_part_m3:.6e} diff={diff_d3:.6e} s_cross={tols['s_cross']:.6e}",
+        f"shift_part_m3={shift_part_m3:.6e} diff={diff_d3:.6e} slack_cross={tols['slack_cross']:.6e}",
         flush=True,
     )
     print(
         f"DIAG id=D4 bq_no_backpush={fit_d4['beta_q']:.6f} "
-        f"rel_diff={rel_diff_d4:.6e} s_part={tols['s_part']:.6e}",
+        f"rel_diff={rel_diff_d4:.6e} slack_part={tols['slack_part']:.6e}",
         flush=True,
     )
     print(
@@ -1077,6 +1164,6 @@ def test_optional_diagnostics():
     )
     print(
         f"DIAG id=D6 bq_n16={bq_part_base:.6f} bq_n64={fit_d6_64['beta_q']:.6f} "
-        f"rel_diff={rel_diff_d6:.6e} s_part={tols['s_part']:.6e}",
+        f"rel_diff={rel_diff_d6:.6e} slack_part={tols['slack_part']:.6e}",
         flush=True,
     )

@@ -100,110 +100,6 @@ def extract_coherent_bunching_i2_ratio(
     return float(abs(c_quad) * np.max(np.abs(basis)) / np.abs(i1_phasor[0]))
 
 
-def _compute_multimode_fit_shift(
-    tau: float,
-    b: float,
-    a: float,
-    omega_p_dep: float,
-    gamma_dep: float,
-    u_dep: float,
-    beta_e: float,
-    nx: int | None = None,
-    nz: int | None = None,
-) -> tuple[float, float, float, float]:
-    """Compute fundamental `T1`, second-mode `T2`, and signed multi-mode shifts `eps_fit_cont`, `eps_fit_grid`.
-
-    A uniform top-hat entrance modulation across ``x in [-b, b]`` excites the
-    orthogonal Sturm-Liouville slab eigenmodes ``cos(T_n * x)`` (``n = 1, 2, ...``).
-    The weak higher-order modes (``n >= 2``, total power weight ~1%) shift the
-    fitted two-wave ``beta_q`` upward relative to the pure ``n = 1`` mode.
-    Runs :func:`fit_beta_q_from_envelope` over the window ``[3 / T1, (Lz - L_ramp) - 3 / T1]``
-    on the continuum multi-mode model ``sum_n w_n cos(beta_qn * z) * exp(-i * beta_e * z)``
-    both with continuum weights ``w_n`` (``eps_fit_cont``) and with discrete
-    transverse CIC mode weights on the ``nx``-cell grid (``eps_fit_grid``).
-    """
-    rhs = tau * b / np.tanh(tau * (a - b))
-    t_modes = []
-    r_modes = []
-    w_cont_list = []
-    w_grid_list = []
-    dx = (2.0 * a / nx) if nx is not None else 0.0
-    if nx is not None:
-        x_nodes = np.linspace(-a, a, nx + 1)
-        n_macro = 16 if nx == COARSE_GRID[0] else 32
-        k_idx = np.arange(n_macro, dtype=np.float64)
-        x_lat = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
-        w_cic = np.zeros(nx + 1, dtype=np.float64)
-        for xp in x_lat:
-            rel = np.abs(x_nodes - xp) / dx
-            mask = rel < 1.0
-            w_cic[mask] += (1.0 - rel[mask]) * (2.0 * b / n_macro)
-    else:
-        x_nodes = np.empty(0)
-        w_cic = np.empty(0)
-
-    for n in range(1, 5):
-        lo = (n - 1) * np.pi + 1e-12
-        hi = (n - 0.5) * np.pi - 1e-12
-        tb_n = float(brentq(lambda x: x * np.tan(x) - rhs, lo, hi))
-        t_n = tb_n / b
-        r_n = 1.0 / np.sqrt(1.0 + (t_n / tau) ** 2)
-        # Sturm-Liouville norm of phi_n(x) = cos(T_n * x) on the beam support [0, b]
-        norm_in = 0.5 * b * (1.0 + np.sin(2.0 * tb_n) / (2.0 * tb_n))
-        overlap_cont = np.sin(tb_n) / t_n
-        w_n_cont = float((overlap_cont**2) / (b * norm_in))
-        if nx is not None and (t_n * dx) < np.pi:
-            overlap_grid = float(0.5 * np.sum(w_cic * np.cos(t_n * x_nodes)))
-            w_n_grid = float((overlap_grid**2) / (b * norm_in))
-        elif nx is None:
-            w_n_grid = w_n_cont
-        else:
-            w_n_grid = 0.0
-        t_modes.append(t_n)
-        r_modes.append(r_n)
-        w_cont_list.append(w_n_cont)
-        w_grid_list.append(w_n_grid)
-
-    w_cont = np.asarray(w_cont_list, dtype=np.float64)
-    w_cont /= np.sum(w_cont)
-    w_grid = np.asarray(w_grid_list, dtype=np.float64)
-    w_grid /= np.sum(w_grid)
-    bq_modes = (
-        np.asarray(r_modes, dtype=np.float64) * omega_p_dep / (gamma_dep**1.5 * u_dep)
-    )
-    bq_1 = float(bq_modes[0])
-    t1_val = float(t_modes[0])
-    t2_val = float(t_modes[1]) if len(t_modes) > 1 else t1_val
-    margin = 3.0 / t1_val
-    z_min_fit = float(margin)
-    z_max_fit = float((TUNNEL_LENGTH_M - OUTFLOW_RAMP_M) - margin)
-
-    if nz is not None:
-        dz = TUNNEL_LENGTH_M / nz
-        z_eval = (np.arange(nz, dtype=np.float64) + 0.5) * dz
-    else:
-        dz = TUNNEL_LENGTH_M / FINE_GRID[2]
-        z_eval = (np.arange(FINE_GRID[2], dtype=np.float64) + 0.5) * dz
-
-    carrier = np.exp(-1j * beta_e * z_eval)
-    cos_modes = np.cos(np.outer(bq_modes, z_eval))
-    i1_mm_cont = np.sum(w_cont[:, None] * cos_modes, axis=0) * carrier
-    fit_cont = fit_beta_q_from_envelope(
-        z_eval, i1_mm_cont, bq_1, z_min=z_min_fit, z_max=z_max_fit
-    )
-    eps_fit_cont = float((fit_cont["beta_q"] - bq_1) / bq_1)
-
-    if nx is None:
-        eps_fit_grid = eps_fit_cont
-    else:
-        i1_mm_grid = np.sum(w_grid[:, None] * cos_modes, axis=0) * carrier
-        fit_grid = fit_beta_q_from_envelope(
-            z_eval, i1_mm_grid, bq_1, z_min=z_min_fit, z_max=z_max_fit
-        )
-        eps_fit_grid = float((fit_grid["beta_q"] - bq_1) / bq_1)
-    return t1_val, t2_val, eps_fit_cont, eps_fit_grid
-
-
 def r_of_tau(
     tau_val: float, u_dep: float, gamma_dep: float, b: float, a: float
 ) -> float:
@@ -224,9 +120,14 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
 
         delta0 = (omega_p0**2 * b * (a - (2 / 3) * b)) / (gamma0**3 * u0**2)
 
-    the self-consistent fractional velocity depression is iterated to convergence::
+    the per-line relativistic energy-conserving fixed point::
 
-        delta <- delta0 * (1 - delta)**(-3) * (gamma0 / gamma(u0 * (1 - delta)))**3
+        phi_l(delta) = phi_l,0 / (1 - delta_bar)
+        gamma_l = gamma0 - e * |phi_l| / (m_eff * c**2)
+        u_l = c * sqrt(1 - 1 / gamma_l**2)
+        delta_bar = 1 - sum_l(w_l * u_l) / (u0 * sum_l(w_l))
+
+    is iterated to ``1e-14``.
 
     Parameters
     ----------
@@ -238,8 +139,7 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     -------
     dict of str to float
         Dictionary of nominal and DC-depressed analytical wavenumbers,
-        wavelengths, currents, transverse eigenvalues, and multi-mode fit shift
-        in SI units.
+        wavelengths, currents, and transverse eigenvalues in SI units.
     """
     u0, gamma0 = relativistic_gamma(voltage=V0_VOLTS)
     omega = 2.0 * np.pi * DRIVE_FREQ_HZ
@@ -300,12 +200,15 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
     omega_q = r_factor * omega_p_dep / (gamma_dep**1.5)
     beta_q = omega_q / u_dep
 
-    t1_transverse, t2_transverse, eps_fit_cont, eps_fit_grid = (
-        _compute_multimode_fit_shift(tau, b, a, omega_p_dep, gamma_dep, u_dep, beta_e)
+    rhs_trans = tau * b / np.tanh(tau * (a - b))
+    tb1 = float(brentq(lambda x: x * np.tan(x) - rhs_trans, 1e-12, 0.5 * np.pi - 1e-12))
+    tb2 = float(
+        brentq(lambda x: x * np.tan(x) - rhs_trans, np.pi + 1e-12, 1.5 * np.pi - 1e-12)
     )
+    t1_transverse = float(tb1 / b)
+    t2_transverse = float(tb2 / b)
 
     # Logarithmic sensitivity d(ln R)/d(ln tau) from (T1*b)*tan(T1*b) = (tau*b)*coth(tau*(a-b))
-    tb1 = t1_transverse * b
     tau_g = tau * (a - b)
     dln_t1_dln_tau = (1.0 - 2.0 * tau_g / np.sinh(2.0 * tau_g)) / (
         1.0 + 2.0 * tb1 / np.sin(2.0 * tb1)
@@ -343,9 +246,6 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "beta_q": float(beta_q),
         "T1": float(t1_transverse),
         "T2": float(t2_transverse),
-        "eps_fit": float(eps_fit_cont),
-        "eps_fit_cont": float(eps_fit_cont),
-        "eps_fit_grid": float(eps_fit_grid),
         "lambda_e": float(2.0 * np.pi / beta_e),
         "lambda_0": float(2.0 * np.pi / k0),
         "lambda_p": float(2.0 * np.pi * u_dep / omega_p_dep),
@@ -354,36 +254,6 @@ def compute_analytic_parameters(qm_scale: float = 1.0) -> dict[str, float]:
         "I1_0": float(i1_entrance),
         "qm_scale": float(qm_scale),
     }
-
-
-def compute_beta_q_at_depression(delta_meas: float, qm_scale: float = 1.0) -> float:
-    """Evaluate analytical ``beta_q,th(delta_meas)`` [rad/m] at measured DC depression ``delta_meas``."""
-    u0, _ = relativistic_gamma(voltage=V0_VOLTS)
-    omega = 2.0 * np.pi * DRIVE_FREQ_HZ
-    omega_p0 = 2.0 * np.pi * PLASMA_FREQ_HZ * np.sqrt(qm_scale)
-    a = TUNNEL_HALF_WIDTH_M
-    b = BEAM_HALF_THICKNESS_M
-
-    u_dep_m = u0 * (1.0 - float(delta_meas))
-    gamma_dep_m = float(1.0 / np.sqrt(1.0 - (u_dep_m / c_light) ** 2))
-    omega_p_dep_m = omega_p0 * np.sqrt(u0 / u_dep_m)
-    r_m = float(reduction_factor_planar(omega, u_dep_m, b, a=a))
-    return float(r_m * omega_p_dep_m / (gamma_dep_m**1.5 * u_dep_m))
-
-
-def predict_particle_beta_q(
-    delta_meas: float, tols: dict[str, float], qm_scale: float = 1.0
-) -> tuple[float, float]:
-    """Return ``(beta_q_th_at_delta_meas, beta_q_part_pred)`` [rad/m] for Step 4.2."""
-    bq_th_m = compute_beta_q_at_depression(delta_meas, qm_scale=qm_scale)
-    bq_pred = float(
-        bq_th_m
-        * (1.0 - tols["eps_cic"])
-        * (1.0 - tols["eps_z_fit"])
-        * (1.0 + tols["eps_x_fit"])
-        * (1.0 + tols["eps_fit"])
-    )
-    return bq_th_m, bq_pred
 
 
 def compute_discrete_dc_depression(
@@ -499,136 +369,651 @@ def compute_discrete_dc_depression(
     return float(delta_disc)
 
 
+@lru_cache(maxsize=16)
+def _lb_top_hat_weights(nx: int) -> tuple[np.ndarray, np.ndarray]:
+    """Read `_w_perp_eff` and interior `keep_lines` from a constructed `LinearizedBeam` on `nx` cells."""
+    params = compute_analytic_parameters()
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+    grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, int(nx), 1, 8, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=CFL_NUMBER,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_gpu=False,
+        verbose=0,
+    )
+    beam = LinearizedBeam(
+        u0=params["u_dep"],
+        rho0=params["rho_dep"],
+        gamma0=params["gamma_dep"],
+        axis="z",
+        half_thickness=b,
+        solver=solver,
+    )
+    w_eff = np.asarray(beam._w_perp_eff[0], dtype=np.float64).copy()
+    keep_int = np.asarray(beam.keep_lines[1:-1], dtype=bool).copy()
+    return w_eff, keep_int
+
+
+def compute_transverse_modal_operator(
+    code: str,
+    nx: int,
+    nz: int | None,
+    params: dict[str, float],
+    k_val: float | None = None,
+    line_x: np.ndarray | None = None,
+    line_w: np.ndarray | None = None,
+    drop_k0: bool = False,
+) -> dict[str, Any]:
+    """Build the discrete transverse modal operator ``G(k)`` and its eigensystem at wavenumber ``k_val``.
+
+    Parameters
+    ----------
+    code : {"lb", "particles"}
+        Model selector (`LinearizedBeam` node lines or `ParticleSolver` CIC lines).
+    nx : int
+        Transverse cell count across ``[-a, a]``.
+    nz : int or None
+        Axial cell count across ``[0, Lz]``. If ``None``, evaluates the continuum
+        axial symbol ``kappa(k) = k``; otherwise ``kappa(k) = (2 / dz) * sin(k * dz / 2)``.
+    params : dict of str to float
+        Output of :func:`compute_analytic_parameters`.
+    k_val : float, optional
+        Axial wavenumber [rad/m]. Defaults to ``params["beta_e"]``.
+    line_x : np.ndarray, optional
+        Injected particle line ``x`` coordinates [m] for ``code == "particles"``.
+    line_w : np.ndarray, optional
+        Unnormalized line charge weights.
+    drop_k0 : bool, optional
+        If ``True``, drops ``(omega / c)**2`` from ``tau_Y(k)**2``.
+
+    Returns
+    -------
+    dict of str to Any
+        Dictionary with ``evals``, ``y_right``, ``y_left``, ``d_vec``, ``G``,
+        ``lap``, ``dx``, ``w_perp_eff``, and ``keep_int``.
+    """
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    dx = 2.0 * a / nx
+    n_int = nx - 1
+    lap = (
+        np.diag(np.full(n_int, -2.0))
+        + np.diag(np.ones(n_int - 1), 1)
+        + np.diag(np.ones(n_int - 1), -1)
+    ) / (dx**2)
+
+    if k_val is None:
+        k_val = float(params["beta_e"])
+    if nz is None:
+        kappa = float(k_val)
+    else:
+        dz = TUNNEL_LENGTH_M / nz
+        kappa = float((2.0 / dz) * np.sin(0.5 * k_val * dz))
+    k0_sq = 0.0 if drop_k0 else float(params["k0"] ** 2)
+    tau_y2 = max(kappa**2 - k0_sq, 1e-12)
+    a_mat = -lap + tau_y2 * np.eye(n_int, dtype=np.float64)
+
+    if code == "lb":
+        w_eff, keep_int = _lb_top_hat_weights(nx)
+        if line_w is None:
+            w_line = w_eff.copy()
+        else:
+            lw = np.asarray(line_w, dtype=np.float64)
+            if len(lw) == n_int:
+                w_line = lw[keep_int]
+            elif len(lw) == nx + 1:
+                w_line = lw[1:-1][keep_int]
+            else:
+                w_line = lw.copy()
+        d_vec = w_line * dx / (2.0 * b)
+        d_vec = d_vec / np.sum(d_vec)
+        d_mat = np.diag(d_vec)
+
+        # In LinearizedBeam, E_z gather on active lines is I and J_z deposit is
+        # (2*b/dx)*D = diag(w_line); in the w_perp_eff-scaled basis where
+        # S = diag(w_perp_eff) and D_s = (2*b/dx)*diag(d_vec / w_perp_eff^2),
+        # G(k) = tau_Y(k)^2 * S^T A(k)^{-1} S D_s is similarity-equivalent to
+        # G_lb(k) = (2*b/dx) * tau_Y(k)^2 * A_sub(k)^{-1} D.
+        a_inv_sub = np.linalg.inv(a_mat)[np.ix_(keep_int, keep_int)]
+        g_mat = (2.0 * b / dx) * tau_y2 * (a_inv_sub @ d_mat)
+        s_left = np.sqrt(d_vec)
+        s_right = 1.0 / np.sqrt(d_vec)
+        m_sym = (s_left[:, None] * g_mat) * s_right[None, :]
+        m_sym = 0.5 * (m_sym + m_sym.T)
+        evals, qvecs = np.linalg.eigh(m_sym)
+        order = np.argsort(evals)[::-1]
+        evals = np.maximum(evals[order], 0.0)
+        qvecs = qvecs[:, order]
+        y_right = s_right[:, None] * qvecs
+        y_left = s_left[:, None] * qvecs
+        return {
+            "evals": evals,
+            "y_right": y_right,
+            "y_left": y_left,
+            "d_vec": d_vec,
+            "G": g_mat,
+            "lap": lap,
+            "dx": dx,
+            "w_perp_eff": w_eff,
+            "w_line": w_line,
+            "keep_int": keep_int,
+        }
+
+    if code == "particles":
+        if line_x is None:
+            n_macro = 16 if nx == COARSE_GRID[0] else 32
+            k_idx = np.arange(n_macro, dtype=np.float64)
+            x_p = b * (2.0 * (k_idx + 0.5) / n_macro - 1.0)
+        else:
+            x_p = np.asarray(line_x, dtype=np.float64)
+            n_macro = len(x_p)
+
+        if line_w is None:
+            d_vec = np.full(n_macro, 1.0 / n_macro, dtype=np.float64)
+        else:
+            d_vec = np.asarray(line_w, dtype=np.float64)
+            d_vec = d_vec / np.sum(d_vec)
+        d_mat = np.diag(d_vec)
+
+        x_int = np.linspace(-a, a, nx + 1)[1:-1]
+        w_cic = np.maximum(1.0 - np.abs(x_int[:, None] - x_p[None, :]) / dx, 0.0)
+        s_mat = w_cic * ((2.0 * b / n_macro) / dx)
+        g_mat = (
+            (n_macro**2 * dx / (2.0 * b))
+            * tau_y2
+            * (s_mat.T @ np.linalg.solve(a_mat, s_mat) @ d_mat)
+        )
+        s_left = np.sqrt(d_vec)
+        s_right = 1.0 / np.sqrt(d_vec)
+        m_sym = (s_left[:, None] * g_mat) * s_right[None, :]
+        m_sym = 0.5 * (m_sym + m_sym.T)
+        evals, qvecs = np.linalg.eigh(m_sym)
+        order = np.argsort(evals)[::-1]
+        evals = np.maximum(evals[order], 0.0)
+        qvecs = qvecs[:, order]
+        y_right = s_right[:, None] * qvecs
+        y_left = s_left[:, None] * qvecs
+        return {
+            "evals": evals,
+            "y_right": y_right,
+            "y_left": y_left,
+            "d_vec": d_vec,
+            "G": g_mat,
+            "S": s_mat,
+            "lap": lap,
+            "dx": dx,
+            "line_x": x_p,
+        }
+
+    raise ValueError(f"Unknown code={code!r}; expected 'lb' or 'particles'.")
+
+
+def discrete_modal_prediction(
+    code: str,
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    line_x: np.ndarray | None = None,
+    line_w: np.ndarray | None = None,
+    entrance_profile: np.ndarray | None = None,
+    include_shear: bool = True,
+    drop_k0: bool = False,
+    drop_highest_mode: bool = False,
+    win_shift: float = 0.0,
+    omega_p_scale: float = 1.0,
+    return_details: bool = False,
+) -> float | dict[str, Any]:
+    """Compute the Step 2 exact discrete transverse modal prediction ``beta_q,pred`` [rad/m].
+
+    Parameters
+    ----------
+    code : {"lb", "particles"}
+        Code selector (`"lb"` for `LinearizedBeam`, `"particles"` for `ParticleSolver`).
+    nx, nz : int
+        Transverse and axial cell counts.
+    params : dict of str to float
+        Output of :func:`compute_analytic_parameters`.
+    line_x : np.ndarray, optional
+        Injected particle line ``x`` positions [m] (for ``code == "particles"``).
+    line_w : np.ndarray, optional
+        Line charge weights (for non-uniform profiles such as D3).
+    entrance_profile : np.ndarray, optional
+        Entrance modulation profile across lines (defaults to ``_w_perp_eff`` for
+        `LinearizedBeam` and uniform charge per line for `ParticleSolver`).
+    include_shear : bool, optional
+        For ``code == "particles"``, include the per-line DC velocity shear
+        ``(u_l, gamma_l)`` from Step 1. Default is ``True``.
+    drop_k0 : bool, optional
+        If ``True``, drop ``(omega / c)**2`` from ``tau_Y(k)**2`` (used for ``s_qs``).
+    drop_highest_mode : bool, optional
+        If ``True``, omit the highest-order excited transverse mode (used for ``s_modes``).
+    win_shift : float, optional
+        Shift [m] applied to both bounds of ``fit_window(params)`` (used for ``s_win``).
+    omega_p_scale : float, optional
+        Multiplier on ``omega_p`` (``sqrt(2)`` for M2). Default is ``1.0``.
+    return_details : bool, optional
+        If ``True``, return a dictionary with modal eigenvalues, wavenumbers,
+        weights, and synthesized ``I1_model(z)``. Default is ``False``.
+
+    Returns
+    -------
+    float or dict of str to Any
+        Predicted two-wave fitted ``beta_q`` [rad/m] (or detail dictionary when
+        ``return_details=True``).
+    """
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+    dz = lz / nz
+
+    grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
+    dt, _ = _integer_period_dt(grid)
+    omega = params["omega"]
+    beta_e = params["beta_e"]
+
+    op0 = compute_transverse_modal_operator(
+        code,
+        nx,
+        nz,
+        params,
+        k_val=beta_e,
+        line_x=line_x,
+        line_w=line_w,
+        drop_k0=drop_k0,
+    )
+    evals_be = op0["evals"]
+    d_vec = op0["d_vec"]
+
+    if code == "lb":
+        w_eff = op0["w_perp_eff"]
+        keep_int = op0["keep_int"]
+        if entrance_profile is None:
+            ent_raw = w_eff.copy()
+        else:
+            ep = np.asarray(entrance_profile, dtype=np.float64)
+            if len(ep) == nx - 1:
+                ent_raw = ep[keep_int]
+            elif len(ep) == nx + 1:
+                ent_raw = ep[1:-1][keep_int]
+            else:
+                ent_raw = ep.copy()
+        ent_norm = ent_raw * (2.0 * b / (dx_lb := op0["dx"])) / np.sum(ent_raw)
+        entrance = ent_norm / np.maximum(d_vec * (2.0 * b / dx_lb), 1e-30)
+
+        u_dep = params["u_dep"]
+        gamma_dep = params["gamma_dep"]
+        omega_p_dep = params["omega_p"] * float(omega_p_scale)
+        wp_fac = omega_p_dep / (gamma_dep**1.5)
+        omega_lhs = (2.0 / dt) * np.tan(0.5 * omega * dt)
+        k_lo = 0.5 * beta_e
+        k_hi = 0.99 * np.pi / (2.0 * dz)
+
+        active = evals_be > 1e-12 * evals_be[0]
+        n_act = int(np.sum(active))
+        y_r0 = op0["y_right"][:, :n_act]
+        y_l0 = op0["y_left"][:, :n_act]
+        bq_modes = np.zeros(n_act, dtype=np.float64)
+        kc_modes = np.zeros(n_act, dtype=np.float64)
+        c_modes = np.zeros(n_act, dtype=np.float64)
+
+        def _lam_j_lb(k_val: float, j_idx: int) -> float:
+            op_k = compute_transverse_modal_operator(
+                "lb",
+                nx,
+                nz,
+                params,
+                k_val=k_val,
+                line_w=line_w,
+                drop_k0=drop_k0,
+            )
+            return float(op_k["evals"][j_idx])
+
+        for j in range(n_act):
+            km = float(
+                brentq(
+                    lambda k, jj=j: (
+                        omega_lhs
+                        - wp_fac * np.sqrt(_lam_j_lb(k, jj))
+                        - u_dep * np.sin(k * dz) / dz
+                    ),
+                    k_lo,
+                    k_hi,
+                )
+            )
+            kp = float(
+                brentq(
+                    lambda k, jj=j: (
+                        omega_lhs
+                        + wp_fac * np.sqrt(_lam_j_lb(k, jj))
+                        - u_dep * np.sin(k * dz) / dz
+                    ),
+                    k_lo,
+                    k_hi,
+                )
+            )
+            bq_modes[j] = 0.5 * (kp - km)
+            kc_modes[j] = 0.5 * (kp + km)
+            c_modes[j] = float(np.dot(d_vec, y_r0[:, j]) * np.dot(y_l0[:, j], entrance))
+
+    else:
+        dep_info = compute_discrete_dc_depression(
+            nx, params, line_x=line_x, line_w=line_w, return_details=True
+        )
+        u_l = dep_info["u_l"]
+        gamma_l = dep_info["gamma_l"]
+        u_bar = float(params["u0"] * (1.0 - dep_info["delta_disc"]))
+        gamma_bar = float(1.0 / np.sqrt(1.0 - (u_bar / c_light) ** 2))
+        omega_p0 = params["omega_p0"] * float(omega_p_scale)
+        u0 = params["u0"]
+        omega_p_dt = (2.0 / dt) * np.sin(0.5 * omega * dt)
+
+        if include_shear:
+            sig_vec = (omega_p0**2 * u0) / (gamma_l**3 * u_l**3)
+            be_vec = omega_p_dt / u_l
+        else:
+            sig_vec = np.full(
+                len(u_l),
+                (omega_p0**2 * u0) / (gamma_bar**3 * u_bar**3),
+                dtype=np.float64,
+            )
+            be_vec = np.full(len(u_l), omega_p_dt / u_bar, dtype=np.float64)
+
+        s_left = np.sqrt(d_vec / sig_vec)
+        s_right = np.sqrt(sig_vec / d_vec)
+
+        def _eig_part_at_k(
+            k_val: float,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            op_k = compute_transverse_modal_operator(
+                "particles",
+                nx,
+                nz,
+                params,
+                k_val=k_val,
+                line_x=line_x,
+                line_w=line_w,
+                drop_k0=drop_k0,
+            )
+            g_tilde = sig_vec[:, None] * op_k["G"]
+            m_sym = (s_left[:, None] * g_tilde) * s_right[None, :]
+            m_sym = 0.5 * (m_sym + m_sym.T)
+            ev, qv = np.linalg.eigh(m_sym)
+            idx = np.argsort(ev)[::-1]
+            ev = np.maximum(ev[idx], 0.0)
+            qv = qv[:, idx]
+            return ev, s_right[:, None] * qv, s_left[:, None] * qv
+
+        ev0, y_r0, y_l0 = _eig_part_at_k(beta_e)
+        active = ev0 > 1e-12 * ev0[0]
+        n_act = int(np.sum(active))
+        if entrance_profile is None:
+            entrance = np.ones(len(d_vec), dtype=np.float64)
+        else:
+            ep = np.asarray(entrance_profile, dtype=np.float64)
+            ep_norm = ep / np.sum(ep)
+            entrance = ep_norm / np.maximum(d_vec, 1e-30)
+
+        bq_modes = np.zeros(n_act, dtype=np.float64)
+        kc_modes = np.zeros(n_act, dtype=np.float64)
+        c_modes = np.zeros(n_act, dtype=np.float64)
+
+        for j in range(n_act):
+            yj = y_r0[:, j]
+            lj = y_l0[:, j]
+            be_j = float(np.sum((lj * yj) * be_vec))
+            bq_init = float(np.sqrt(ev0[j]))
+            km = be_j - bq_init
+            kp = be_j + bq_init
+            for _ in range(12):
+                evm, _, _ = _eig_part_at_k(km)
+                evp, _, _ = _eig_part_at_k(kp)
+                km_next = be_j - float(np.sqrt(evm[j]))
+                kp_next = be_j + float(np.sqrt(evp[j]))
+                if abs(km_next - km) < 1e-13 and abs(kp_next - kp) < 1e-13:
+                    km, kp = km_next, kp_next
+                    break
+                km, kp = km_next, kp_next
+            bq_modes[j] = 0.5 * (kp - km)
+            kc_modes[j] = 0.5 * (kp + km)
+            c_modes[j] = float(np.dot(d_vec, yj) * np.dot(lj, entrance))
+
+    c_use = c_modes.copy()
+    if drop_highest_mode:
+        excited = np.where(np.abs(c_use) > 1e-12)[0]
+        if len(excited) > 1:
+            c_use[int(excited[-1])] = 0.0
+
+    z_eval = (np.arange(nz, dtype=np.float64) + 0.5) * dz
+    i1_model = params["I1_0"] * np.sum(
+        c_use[:, None]
+        * np.cos(np.outer(bq_modes, z_eval))
+        * np.exp(-1j * np.outer(kc_modes, z_eval)),
+        axis=0,
+    )
+    z_min, z_max = fit_window(params)
+    fit_res = fit_beta_q_from_envelope(
+        z_eval,
+        i1_model,
+        float(bq_modes[0]),
+        z_min=z_min + float(win_shift),
+        z_max=z_max + float(win_shift),
+    )
+    bq_pred = float(fit_res["beta_q"])
+
+    if return_details:
+        return {
+            "beta_q": bq_pred,
+            "evals": evals_be,
+            "bq_modes": bq_modes,
+            "kc_modes": kc_modes,
+            "c_modes": c_modes,
+            "z_coords": z_eval,
+            "i1_model": i1_model,
+            "fit": fit_res,
+        }
+    return bq_pred
+
+
+def prediction_slack(
+    code: str,
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    line_x: np.ndarray | None = None,
+    line_w: np.ndarray | None = None,
+    entrance_profile: np.ndarray | None = None,
+    omega_p_scale: float = 1.0,
+) -> dict[str, Any]:
+    """Compute the Step 3 parameter-free prediction slack ``s_win + s_modes + s_qs + s_round``."""
+    base = discrete_modal_prediction(
+        code,
+        nx,
+        nz,
+        params,
+        line_x=line_x,
+        line_w=line_w,
+        entrance_profile=entrance_profile,
+        include_shear=True,
+        drop_k0=False,
+        drop_highest_mode=False,
+        win_shift=0.0,
+        omega_p_scale=omega_p_scale,
+        return_details=True,
+    )
+    bq_pred = float(base["beta_q"])
+    z_eval = base["z_coords"]
+    i1_model = base["i1_model"]
+    bq_modes = base["bq_modes"]
+    kc_modes = base["kc_modes"]
+    c_modes = base["c_modes"]
+    z_min, z_max = fit_window(params)
+    shift_m = 1.0 / params["T1"]
+
+    # s_win: maximum sensitivity to shifting the fit window by +-1/T1
+    bq_win_plus = float(
+        fit_beta_q_from_envelope(
+            z_eval,
+            i1_model,
+            float(bq_modes[0]),
+            z_min=z_min + shift_m,
+            z_max=z_max + shift_m,
+        )["beta_q"]
+    )
+    bq_win_minus = float(
+        fit_beta_q_from_envelope(
+            z_eval,
+            i1_model,
+            float(bq_modes[0]),
+            z_min=z_min - shift_m,
+            z_max=z_max - shift_m,
+        )["beta_q"]
+    )
+    s_win = float(
+        max(abs(bq_win_plus - bq_pred), abs(bq_win_minus - bq_pred)) / bq_pred
+    )
+
+    # s_modes: change when dropping the highest excited transverse mode
+    c_trunc = c_modes.copy()
+    excited = np.where(np.abs(c_trunc) > 1e-12)[0]
+    if len(excited) > 1:
+        c_trunc[int(excited[-1])] = 0.0
+        i1_trunc = params["I1_0"] * np.sum(
+            c_trunc[:, None]
+            * np.cos(np.outer(bq_modes, z_eval))
+            * np.exp(-1j * np.outer(kc_modes, z_eval)),
+            axis=0,
+        )
+        bq_no_high = float(
+            fit_beta_q_from_envelope(
+                z_eval, i1_trunc, float(bq_modes[0]), z_min=z_min, z_max=z_max
+            )["beta_q"]
+        )
+        s_modes = float(abs(bq_pred - bq_no_high) / bq_pred)
+    else:
+        s_modes = 0.0
+
+    # s_qs: change when (omega / c)^2 is dropped from tau_Y^2
+    bq_qs = float(
+        discrete_modal_prediction(
+            code,
+            nx,
+            nz,
+            params,
+            line_x=line_x,
+            line_w=line_w,
+            entrance_profile=entrance_profile,
+            include_shear=True,
+            drop_k0=True,
+            drop_highest_mode=False,
+            win_shift=0.0,
+            omega_p_scale=omega_p_scale,
+            return_details=False,
+        )
+    )
+    s_qs = float(abs(bq_pred - bq_qs) / bq_pred)
+    s_round = 1.0e-12
+    slack = float(s_win + s_modes + s_qs + s_round)
+
+    res: dict[str, Any] = {
+        "bq_pred": bq_pred,
+        "s_win": s_win,
+        "s_modes": s_modes,
+        "s_qs": s_qs,
+        "s_round": s_round,
+        "slack": slack,
+        "evals": base["evals"],
+        "bq_modes": bq_modes,
+        "kc_modes": kc_modes,
+        "c_modes": c_modes,
+        "z_coords": z_eval,
+        "i1_model": i1_model,
+    }
+    if code == "particles":
+        bq_unif = float(
+            discrete_modal_prediction(
+                "particles",
+                nx,
+                nz,
+                params,
+                line_x=line_x,
+                line_w=line_w,
+                entrance_profile=entrance_profile,
+                include_shear=False,
+                drop_k0=False,
+                drop_highest_mode=False,
+                win_shift=0.0,
+                omega_p_scale=omega_p_scale,
+                return_details=False,
+            )
+        )
+        res["bq_pred_unif"] = bq_unif
+        res["shear_shift"] = float(bq_pred - bq_unif)
+        res["shear_rel"] = float(bq_pred / bq_unif - 1.0)
+    return res
+
+
 def _single_grid_budget_terms(
     nx: int,
     nz: int,
     params: dict[str, float],
     omega_p_scale: float = 1.0,
-) -> dict[str, float]:
-    """Compute derived discretization terms and slacks for grid ``(nx, 1, nz)``."""
-    dx = 2.0 * TUNNEL_HALF_WIDTH_M / nx
+) -> dict[str, Any]:
+    """Compute Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
     dz = TUNNEL_LENGTH_M / nz
-    b = BEAM_HALF_THICKNESS_M
-    a = TUNNEL_HALF_WIDTH_M
-    ly = PERIODIC_LY_M
-    lz = TUNNEL_LENGTH_M
-
-    omega = params["omega"]
-    u_dep = params["u_dep"]
-    gamma_dep = params["gamma_dep"]
-    omega_p_dep = params["omega_p"] * float(omega_p_scale)
     beta_e = params["beta_e"]
     beta_q = params["beta_q"] * float(omega_p_scale)
-    k0 = params["k0"]
-    t1 = params["T1"]
-    r_fac = params["R"]
-    dlnr_dlntau = params["dlnr_dlntau"]
 
-    # Integer-period time step dt on (nx, 1, nz)
-    grid = GridFIT3D(-a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, 1, nz, verbose=0)
-    dt, _ = _integer_period_dt(grid)
-
-    # 0. Multi-mode fit shifts eps_fit,cont and eps_fit,grid on (nx, 1, nz)
-    _, t2, eps_fit_cont, eps_fit_grid = _compute_multimode_fit_shift(
-        params["tau"],
-        b,
-        a,
-        omega_p_dep,
-        gamma_dep,
-        u_dep,
-        beta_e,
-        nx=nx,
-        nz=nz,
+    lb_modal = prediction_slack("lb", nx, nz, params, omega_p_scale=omega_p_scale)
+    part_modal = prediction_slack(
+        "particles", nx, nz, params, omega_p_scale=omega_p_scale
     )
-    eps_fit = float(eps_fit_cont)
-    eps_fit_diff = float(abs(eps_fit_grid - eps_fit_cont))
 
-    # Shared SolverFIT3D field-discretization terms:
-    # (a) 3-point transverse FIT Laplacian under-estimates T1^2 by -(T1*dx)^2/12
-    eps_x_fit = float(0.5 * (1.0 - r_fac**2) * (t1 * dx) ** 2 / 12.0)
-    # (b) Staggered Yee axial curl-curl symbol acting on the physical carrier beta_e
-    eps_z_fit = float(dlnr_dlntau * (gamma_dep**2) * (beta_e * dz) ** 2 / 24.0)
-
-    # 1. LinearizedBeam exact discrete axial dispersion:
-    #    (2/dt)*tan(omega*dt/2) -+ omega_q(k_+-) = u_dep * sin(k_+- * dz) / dz
-    omega_dt_lhs = (2.0 / dt) * np.tan(0.5 * omega * dt)
-
-    def _omega_q_yee(k_val: float) -> float:
-        kappa = (2.0 / dz) * np.sin(0.5 * k_val * dz)
-        tau_y = float(np.sqrt(max(kappa**2 - k0**2, 1e-12)))
-        r_y = r_of_tau(tau_y, u_dep, gamma_dep, b, a)
-        return float(r_y * omega_p_dep / (gamma_dep**1.5))
-
-    k_lo = 0.5 * beta_e
-    k_hi = 0.99 * np.pi / (2.0 * dz)
-    k_minus = float(
-        brentq(
-            lambda k: omega_dt_lhs - _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
-            k_lo,
-            k_hi,
-        )
-    )
-    k_plus = float(
-        brentq(
-            lambda k: omega_dt_lhs + _omega_q_yee(k) - u_dep * np.sin(k * dz) / dz,
-            k_lo,
-            k_hi,
-        )
-    )
-    bq_ax_disc = 0.5 * (k_plus - k_minus)
-    eps_ax = float(bq_ax_disc / beta_q - 1.0)
-    bq_lb_pred = float(bq_ax_disc * (1.0 + eps_x_fit) * (1.0 + eps_fit))
-    s_lb = float((abs(eps_ax) + abs(eps_x_fit) + abs(eps_fit)) ** 2 + eps_fit_diff)
-
-    # 2. ParticleSolver deterministic ("sheet_lattice") discretization factors & slack:
-    eps_cic = float(1.0 - np.sqrt(1.0 - (2.0 / 3.0) * np.sin(0.5 * t1 * dx) ** 2))
-    part_disc_factor = float(
-        (1.0 - eps_cic) * (1.0 - eps_z_fit) * (1.0 + eps_x_fit) * (1.0 + eps_fit)
-    )
-    s_part = float(
-        (abs(eps_cic) + abs(eps_z_fit) + abs(eps_x_fit) + abs(eps_fit)) ** 2
-        + eps_fit_diff
-    )
-    s_cross = float(s_lb + s_part)
-
-    # 3. Discrete 1D Poisson DC depression prediction on this grid:
+    # Discrete 1D Poisson DC depression prediction on this grid (Step 1):
     dep_info = compute_discrete_dc_depression(nx, params, return_details=True)
     delta_th_disc = float(dep_info["delta_disc"])
     eps_ac = float(0.5 * (MODULATION_INDEX * beta_q / beta_e) ** 2)
 
-    # 4. Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
+    # Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
     tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
     tol_amp_part = float(tol_amp_lb + 1e-12)
 
-    # 5. Residual DFT leakage bound (identity / round-off):
+    # Residual DFT leakage bound (identity / round-off):
     eps_dft = float(100.0 * np.finfo(np.float64).eps / MODULATION_INDEX)
 
-    # 6. LinearizedBeam 2*omega C^1 turn-on ramp transient tail:
+    # LinearizedBeam 2*omega C^1 turn-on ramp transient tail:
     n_rise = float(RISE_PERIODS)
     n_per = 6.0
     tol_i2_lb = float(1.0 / ((2.0 * n_rise) ** 2 * np.pi * n_per))
 
-    # 7. Two-sided 99.73% Student-t critical value for 8 seeds (dof = 7):
+    # Two-sided 99.73% Student-t critical value for 8 seeds (dof = 7):
     tcrit = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
 
     return {
-        "t2_dx": float(t2 * dx),
-        "k_minus": k_minus,
-        "k_plus": k_plus,
-        "bq_ax_disc": bq_ax_disc,
-        "eps_ax": eps_ax,
-        "eps_x_fit": eps_x_fit,
-        "eps_z_fit": eps_z_fit,
-        "eps_cic": eps_cic,
-        "eps_fit": eps_fit,
-        "eps_fit_cont": eps_fit_cont,
-        "eps_fit_grid": eps_fit_grid,
-        "eps_fit_diff": eps_fit_diff,
-        "bq_lb_pred": bq_lb_pred,
-        "part_disc_factor": part_disc_factor,
-        "s_lb": s_lb,
-        "s_part": s_part,
-        "s_cross": s_cross,
+        "bq_pred_lb": float(lb_modal["bq_pred"]),
+        "s_win_lb": float(lb_modal["s_win"]),
+        "s_modes_lb": float(lb_modal["s_modes"]),
+        "s_qs_lb": float(lb_modal["s_qs"]),
+        "s_round": float(lb_modal["s_round"]),
+        "slack_lb": float(lb_modal["slack"]),
+        "evals_lb": lb_modal["evals"],
+        "i1_model_lb": lb_modal["i1_model"],
+        "bq_pred_part": float(part_modal["bq_pred"]),
+        "bq_pred_part_unif": float(part_modal["bq_pred_unif"]),
+        "shear_shift": float(part_modal["shear_shift"]),
+        "shear_rel": float(part_modal["shear_rel"]),
+        "s_win_part": float(part_modal["s_win"]),
+        "s_modes_part": float(part_modal["s_modes"]),
+        "s_qs_part": float(part_modal["s_qs"]),
+        "slack_part": float(part_modal["slack"]),
+        "evals_part": part_modal["evals"],
+        "i1_model_part": part_modal["i1_model"],
+        "slack_cross": float(lb_modal["slack"] + part_modal["slack"]),
         "delta_th": float(params["delta_u_dc"]),
         "delta_th_flux": float(params["delta_u_dc_flux"]),
         "delta_th_density": float(params["delta_u_dc_density"]),
@@ -651,47 +1036,29 @@ def derived_tolerances(
     nz: int,
     params: dict[str, float],
     omega_p_scale: float = 1.0,
-) -> dict[str, float]:
-    """Build the Step 4 predictions and discretization slacks for grid ``(nx, 1, nz)``.
-
-    Parameters
-    ----------
-    nx, nz : int
-        Transverse and axial grid cell counts.
-    params : dict of str to float
-        Output of :func:`compute_analytic_parameters`.
-    omega_p_scale : float, optional
-        Multiplier on ``omega_p,dep`` for `LinearizedBeam` (``1.0`` for baseline,
-        ``sqrt(2)`` for the M2 ``rho0 * 2`` mutation). Default is ``1.0``.
-
-    Returns
-    -------
-    dict of str to float
-        Dictionary of discrete dispersion predictions, individual epsilon terms,
-        slacks ``s_lb``, ``s_part``, ``s_cross``, discrete DC depression
-        ``delta_th_disc``, entrance amplitude bounds, and DFT round-off bound.
-    """
+) -> dict[str, Any]:
+    """Build the Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
     return _single_grid_budget_terms(nx, nz, params, omega_p_scale=omega_p_scale)
 
 
-def format_error_budget(nx: int, nz: int, tols: dict[str, float]) -> str:
-    """Format every Step 4 budget term and slack for grid ``(nx, 1, nz)``."""
+def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
+    """Format every Step 2 modal prediction and Step 3 slack term for grid ``(nx, 1, nz)``."""
+    ev_lb = tols["evals_lb"]
+    ev_p = tols["evals_part"]
     lines = [
-        f"Error budget for grid ({nx}, 1, {nz}):",
-        f"  k_-, k_+ (exact discrete LB branches)             : ({tols['k_minus']:.4f}, {tols['k_plus']:.4f}) rad/m",
-        f"  eps_ax ((k_+ - k_-)/(2*bq_th) - 1)                : {tols['eps_ax']:+.6%}",
-        f"  eps_x_fit (0.5*(1-R^2)*(T1*dx)^2/12)              : {tols['eps_x_fit']:+.6%}",
-        f"  eps_z_fit' (dlnR/dlntau*gamma^2*(beta_e*dz)^2/24) : {tols['eps_z_fit']:+.6%}",
-        f"  eps_cic (transverse CIC)                          : {tols['eps_cic']:+.6%}",
-        f"  eps_fit,cont (continuum multi-mode shift)         : {tols['eps_fit_cont']:+.6%} (T2*dx={tols['t2_dx']:.3f} rad)",
-        f"  eps_fit,grid (discrete CIC multi-mode shift)      : {tols['eps_fit_grid']:+.6%}",
-        f"  |eps_fit,grid - eps_fit,cont|                     : {tols['eps_fit_diff']:.6%}",
-        f"  bq_lb_pred                                        : {tols['bq_lb_pred']:.6f} rad/m",
-        f"  s_lb (LB slack)                                   : {tols['s_lb']:.6%}",
-        f"  s_part (Particle slack)                           : {tols['s_part']:.6%}",
-        f"  s_cross (s_lb + s_part)                           : {tols['s_cross']:.6%}",
-        f"  delta_th (self-consistent continuum DC dep)       : {tols['delta_th']:.6%}",
-        f"  delta_th_disc (1D discrete Poisson CIC DC dep)    : {tols['delta_th_disc']:.6%}",
+        f"Modal prediction and slack budget for grid ({nx}, 1, {nz}):",
+        f"  bq_pred_lb (Step 2 LB modal prediction)           : {tols['bq_pred_lb']:.6f} rad/m",
+        f"  slack_lb = s_win + s_modes + s_qs + s_round       : {tols['slack_lb']:.6%}",
+        f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_qs={tols['s_qs_lb']:.3e}, s_round={tols['s_round']:.1e})",
+        f"  LB eigenvalues lambda_1..4(beta_e)                : ({ev_lb[0]:.6f}, {ev_lb[1]:.6f}, {ev_lb[2]:.6f}, {ev_lb[3]:.6f})",
+        f"  bq_pred_part (Step 2 Particle modal prediction)   : {tols['bq_pred_part']:.6f} rad/m (unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
+        f"  slack_part = s_win + s_modes + s_qs + s_round     : {tols['slack_part']:.6%}",
+        f"    (s_win={tols['s_win_part']:.3e}, s_modes={tols['s_modes_part']:.3e}, s_qs={tols['s_qs_part']:.3e}, s_round={tols['s_round']:.1e})",
+        f"  Particle eigenvalues lambda_1..4(beta_e)          : ({ev_p[0]:.6f}, {ev_p[1]:.6f}, {ev_p[2]:.6f}, {ev_p[3]:.6f})",
+        f"  slack_cross (slack_lb + slack_part)               : {tols['slack_cross']:.6%}",
+        f"  delta_th (continuum DC dep, flux/density)         : {tols['delta_th_flux']:.6%} / {tols['delta_th_density']:.6%}",
+        f"  delta_disc_exact (1D Poisson DC dep, {tols['dep_weighting']})        : {tols['delta_disc_exact']:.6%} (flux={tols['delta_disc_flux']:.6%}, density={tols['delta_disc_density']:.6%})",
+        f"  eps_ac (0.5*(m*bq/be)^2)                          : {tols['eps_ac']:.6e}",
         f"  tol_amp_lb (0.5*(bq*dz)^2)                        : {tols['tol_amp_lb']:.6e}",
         f"  tol_amp_part (tol_amp_lb + 1e-12)                 : {tols['tol_amp_part']:.6e}",
         f"  eps_dft (100*eps_mach/m)                          : {tols['eps_dft']:.6e}",
@@ -1359,7 +1726,12 @@ def measure_empirical_noise(
     delta_seeds = np.asarray(delta_list, dtype=np.float64)
     amp0_seeds = np.asarray(amp0_list, dtype=np.float64)
     i2_bunch_seeds = np.asarray(i2_bunch_list, dtype=np.float64)
-    i1_mean = np.mean(np.stack(i1_list, axis=0), axis=0)
+    i1_seeds = np.stack(i1_list, axis=0)
+    i1_mean = np.mean(i1_seeds, axis=0)
+    fit_coherent = fit_beta_q_from_envelope(
+        z_coords, i1_mean, beta_q_th, z_min=z_min, z_max=z_max
+    )
+    bq_coherent_mean = float(fit_coherent["beta_q"])
 
     bq_mean = float(np.mean(bq_seeds))
     bq_std = float(np.std(bq_seeds, ddof=1))
@@ -1386,6 +1758,7 @@ def measure_empirical_noise(
         "bq_mean": bq_mean,
         "bq_std": bq_std,
         "bq_sem": bq_sem,
+        "bq_coherent_mean": bq_coherent_mean,
         "z0_seeds": z0_seeds,
         "z0_mean": z0_mean,
         "z0_std": z0_std,
@@ -1400,5 +1773,6 @@ def measure_empirical_noise(
         "i2_bunch_seeds": i2_bunch_seeds,
         "i2_bunch_mean": i2_bunch_mean,
         "i2_bunch_std": i2_bunch_std,
+        "i1_seeds": i1_seeds,
         "i1_mean": i1_mean,
     }
