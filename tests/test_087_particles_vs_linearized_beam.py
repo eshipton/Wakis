@@ -91,14 +91,21 @@ class _SemicircularRho0:
         return self.rho_peak
 
 
-def _fibonacci_disk_lattice_x(self: BeamInjector, n_macro: int) -> np.ndarray:
-    """Return Fibonacci disk x-coordinates (semicircular marginal) for M3."""
+def _fibonacci_disk_x_coords(
+    n_macro: int, radius: float = BEAM_HALF_THICKNESS_M, x0: float = 0.0
+) -> np.ndarray:
+    """Return Fibonacci disk x-coordinates (semicircular marginal) for M3 and D3."""
     k_idx = np.arange(n_macro, dtype=np.float64)
-    r_k = self.radius * np.sqrt((k_idx + 0.5) / float(n_macro))
+    r_k = float(radius) * np.sqrt((k_idx + 0.5) / float(n_macro))
     phi_k = k_idx * np.pi * (3.0 - np.sqrt(5.0))
     dx_k = r_k * np.cos(phi_k)
     dx_k -= float(np.mean(dx_k))
-    return self.x0 + dx_k
+    return float(x0) + dx_k
+
+
+def _fibonacci_disk_lattice_x(self: BeamInjector, n_macro: int) -> np.ndarray:
+    """Method replacement for `BeamInjector._sheet_lattice_x` in M3."""
+    return _fibonacci_disk_x_coords(n_macro, radius=self.radius, x0=self.x0)
 
 
 @lru_cache(maxsize=4)
@@ -700,12 +707,11 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         )
     baseline_check_failed = True
 
-    x_fib = _fibonacci_disk_lattice_x(
-        None, 16, 0.0, BEAM_HALF_THICKNESS_M, BEAM_HALF_THICKNESS_M
+    x_fib = _fibonacci_disk_x_coords(16, radius=BEAM_HALF_THICKNESS_M, x0=0.0)
+    bq_m3_pred = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
     )
-    pred_m3_info = discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
     slack_m3_info = prediction_slack("particles", nx, nz, params, line_x=x_fib)
-    bq_m3_pred = pred_m3_info["beta_q_pred"]
     slack_m3 = slack_m3_info["slack"]
     resid_m3 = abs(bq_part_m3 / bq_m3_pred - 1.0)
 

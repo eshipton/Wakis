@@ -1738,7 +1738,6 @@ def run_particle_beam_drift(
         wgpj = wgp_win[:, j]
         w_safe = np.maximum(wj, 1e-30)
         v_bar_j = wvj / w_safe
-        g_bar_j = wgj / w_safe
 
         xtw = basis_t.T * wj[None, :]
         gram_j = xtw @ basis_t
