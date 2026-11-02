@@ -279,7 +279,7 @@ For $u = 5.78\times 10^7\;\text{m/s}$ and $\Delta z = 0.186/428\;\text{m}$, this
    ```math
    k\Delta z = \frac{2\pi u}{c + u}
    ```
-   depends only on $u/c$ and is independent of $\Delta z$ (`studies/p5b-mscan/README.md` Section 3; $k\Delta z = 1.015$ in `studies/p5b-mscan/README.md` Section 4). Refining $\Delta z$ simply shifts $k$ and $f$ upward proportionally to $1/\Delta z$ without changing the alias coupling strength on the grid (`studies/p5b-mscan/README.md` Section 3).
+   depends only on $u/c$ and is independent of $\Delta z$ (`studies/p5b-mscan/README.md` Section 3; $k\Delta z = 1.015$ in `studies/p5b-mscan/README.md` Section 4). Refining $\Delta z$ only shifts $k$ and $f$ upward in proportion to $1/\Delta z$; the crossing does not leave the grid's resolved band.
 3. **Measured settle-factor scan with `shape = 1` (`studies/p5b-mscan/README.md` Section 3)**: On the coarse grid $(10, 1, 474)$ (`sheet_lattice`, $16$ macroparticles/step, $q/m \times 1$), increasing the settle factor grows the $m = 0$ current fluctuation across the 6-period DFT window and biases the fitted $\beta_q$ at $m = 0.015$ (`studies/p5b-mscan/README.md` Section 3):
 
    | settle factor | $\beta_q$ rel. residual | $m = 0$ rms first $\to$ last sixth [A] |

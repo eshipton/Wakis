@@ -774,7 +774,9 @@ def compute_transverse_modal_operator(
             d_vec = d_vec / np.sum(d_vec)
         d_mat = np.diag(d_vec)
 
-        w_p = transverse_weight_matrix(x_p, nx, shape)[:, 1:-1].T
+        # contiguous copy: a transposed view changes the BLAS summation order (ulp-level G change
+        # that rotates the coarse grid's null-space eigenvectors and broke p = 1 bit-identity)
+        w_p = np.ascontiguousarray(transverse_weight_matrix(x_p, nx, shape)[:, 1:-1].T)
         s_mat = w_p * ((2.0 * b / n_macro) / dx)
         g_mat = (
             (n_macro**2 * dx / (2.0 * b))
