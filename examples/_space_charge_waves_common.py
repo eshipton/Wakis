@@ -32,6 +32,7 @@ from wakis.beam_fluid import (
     relativistic_gamma,
 )
 from wakis.particles import BeamInjector, ParticleSolver, Species
+from wakis.particles.shapes import bspline_weights_1d
 
 try:
     import cupy as cp
@@ -44,13 +45,11 @@ extern "C" __global__ void bin_beam_moments(
     const int n_p,
     const int nx,
     const int nz,
-    const double a,
-    const double dx,
     const double dz,
     const double c2,
     const double gamma0,
     const double q_over_mc2,
-    const double* __restrict__ xp,
+    const double* __restrict__ w_mat,
     const double* __restrict__ zp,
     const double* __restrict__ uxp,
     const double* __restrict__ uyp,
@@ -85,15 +84,11 @@ extern "C" __global__ void bin_beam_moments(
         double gamma = sqrt(1.0 + (ux*ux + uy*uy + uz*uz) / c2);
         double vz = uz / gamma;
 
-        double xi = (xp[i] + a) / dx;
-        int ix0 = (int)floor(xi);
-        if (ix0 < 0) ix0 = 0;
-        else if (ix0 > nx - 1) ix0 = nx - 1;
-        double wx1 = xi - (double)ix0;
-        if (wx1 < 0.0) wx1 = 0.0;
-        else if (wx1 > 1.0) wx1 = 1.0;
-        double wx0 = 1.0 - wx1;
-        double phi = wx0 * phi_nodes[ix0 * nz + b] + wx1 * phi_nodes[(ix0 + 1) * nz + b];
+        const double* w_row = w_mat + i * (nx + 1);
+        double phi = 0.0;
+        for (int ix = 1; ix < nx; ++ix) {
+            phi += w_row[ix] * phi_nodes[ix * nz + b];
+        }
         double gamma_pred = gamma0 + q_over_mc2 * phi;
 
         atomicAdd(&s_w[b], w);
@@ -125,7 +120,9 @@ V0_VOLTS = 10.0e3  # DC beam acceleration voltage [V]
 TUNNEL_HALF_WIDTH_M = 2.0e-3  # Parallel-plate tunnel half-width a [m]
 BEAM_HALF_THICKNESS_M = 0.8e-3  # Sheet-beam half-thickness b [m]
 PERIODIC_LY_M = 1.0e-3  # Periodic transverse depth Ly [m]
-TUNNEL_LENGTH_M = 0.186 * 474 / 428  # Lz ~ 0.206 m >= 1.6 * lambda_q, keeps dz = 0.186/428 exactly [m]
+TUNNEL_LENGTH_M = (
+    0.186 * 474 / 428
+)  # Lz ~ 0.206 m >= 1.6 * lambda_q, keeps dz = 0.186/428 exactly [m]
 OUTFLOW_RAMP_M = 8.0e-3  # Outflow axial taper length [m]
 EPS_WINDOW = (
     1.0e-5  # Relative evanescent near-field amplitude allowed at fit-window edge [-]
@@ -136,13 +133,70 @@ PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * p
 MODULATION_INDEX = 0.015  # Fractional AC density modulation depth m [-]
 GUIDE_BZ_TESLA = 50.0  # Strong axial confining magnetic field B_z [T]
 CFL_NUMBER = 0.5  # Courant number cfln [-]
-PARTICLE_SHAPE = 1  # B-spline shape order p of the particle runs [-]
+PARTICLE_SHAPE = 2  # B-spline shape order p of the particle runs [-]
 PARTICLE_FILTER = None  # current filter of the particle runs (None or "binomial")
 SETTLE_FACTOR = None  # override: settle = SETTLE_FACTOR * Lz / (u_dep * dt); None = derived settle_steps() [-]
 
 COARSE_GRID = (10, 1, 474)  # (Nx, Ny, Nz) coarse resolution
 FINE_GRID = (20, 1, 948)  # (Nx, Ny, Nz) 2x refined resolution
 NOISE_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)  # 8 seeds for empirical noise
+
+
+def transverse_weight_matrix(
+    x_lines: np.ndarray, nx: int, p: int = PARTICLE_SHAPE
+) -> np.ndarray:
+    """Evaluate order-``p`` primal B-spline transverse weights on ``[-a, a]`` with PEC walls.
+
+    Both the Esirkepov ``J_z`` (and ``rho``) deposit and the Galerkin ``E_z`` gather
+    on ``z``-edges at transverse primal ``x``-nodes use the order-``p`` nodal
+    B-spline ``bspline_weights_1d(xi, p, staggered=False)`` with
+    ``xi = (x + a) / dx``. Weights landing on PEC wall nodes ``x = +-a``
+    (indices ``0`` and ``nx``) or outside ``(-a, a)`` are dropped because
+    ``E_z(+-a) = 0``, matching ``_wrap_or_mask_1d`` for non-periodic axes.
+
+    Parameters
+    ----------
+    x_lines : np.ndarray
+        Transverse line or particle ``x`` positions [m] of shape ``(n_lines,)``.
+    nx : int
+        Transverse cell count across ``[-a, a]``.
+    p : int, optional
+        B-spline shape order ``p`` in ``{1, 2, 3}``. Default is ``PARTICLE_SHAPE``.
+
+    Returns
+    -------
+    np.ndarray
+        Weight matrix of shape ``(len(x_lines), nx + 1)`` with zeros in columns
+        ``0`` and ``nx``.
+    """
+    xp_mod = cp if (cp is not None and isinstance(x_lines, cp.ndarray)) else np
+    a = TUNNEL_HALF_WIDTH_M
+    dx = 2.0 * a / float(nx)
+    x_arr = xp_mod.asarray(x_lines, dtype=xp_mod.float64)
+    xi = (x_arr + a) / dx
+    i0, weights = bspline_weights_1d(xi, int(p), staggered=False, xp=xp_mod)
+    n_lines = len(x_arr)
+    w_mat = xp_mod.zeros((n_lines, int(nx) + 1), dtype=xp_mod.float64)
+    if n_lines == 0:
+        return w_mat
+    x_nodes = xp_mod.linspace(-a, a, int(nx) + 1) if int(p) == 1 else None
+    rows = xp_mod.arange(n_lines, dtype=xp_mod.int64)
+    for offset, w_m in enumerate(weights):
+        node_idx = i0 + offset
+        valid = (node_idx >= 1) & (node_idx < int(nx))
+        if int(p) == 1:
+            # Evaluate W_1(|x - x_node| / dx) via bspline_weights_1d from the node-relative
+            # distance so p=1 avoids integer-offset (xi - i0) cancellation and matches the
+            # node-coordinate formula bit-for-bit.
+            dist_norm = xp_mod.minimum(
+                xp_mod.abs(x_arr[valid] - x_nodes[node_idx[valid]]) / dx, 1.0
+            )
+            _, w_node_1d = bspline_weights_1d(dist_norm, 1, staggered=False, xp=xp_mod)
+            w_val = xp_mod.where(dist_norm < 1.0, w_node_1d[0], 0.0)
+        else:
+            w_val = w_m[valid]
+        w_mat[rows[valid], node_idx[valid]] += w_val
+    return w_mat
 
 
 def _grid_gamma1_disc_and_dw(
@@ -171,7 +225,13 @@ def _grid_gamma1_disc_and_dw(
 
 
 def settle_steps(
-    code: str, nx: int, nz: int, params: dict[str, float], dt: float, omega_p_scale: float = 1.0
+    code: str,
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    dt: float,
+    omega_p_scale: float = 1.0,
+    shape: int = PARTICLE_SHAPE,
 ) -> int:
     """Number of steps before the DFT window so that no turn-on transient remains in the tunnel.
 
@@ -192,7 +252,13 @@ def settle_steps(
     if SETTLE_FACTOR is not None:
         return int(np.ceil(SETTLE_FACTOR * TUNNEL_LENGTH_M / (params["u_dep"] * dt)))
     det = discrete_modal_prediction(
-        code, nx, nz, params, omega_p_scale=omega_p_scale, return_details=True
+        code,
+        nx,
+        nz,
+        params,
+        omega_p_scale=omega_p_scale,
+        return_details=True,
+        shape=shape,
     )
     k_slow = float(np.max(det["kc_modes"] + det["bq_modes"]))
     v_min = float(params["omega"] / k_slow)
@@ -435,13 +501,14 @@ def compute_discrete_dc_depression(
     line_w: np.ndarray | None = None,
     weighting: str = "flux",
     return_details: bool = False,
+    shape: int = PARTICLE_SHAPE,
 ) -> float | dict[str, Any]:
     """Solve the 1D discrete Poisson problem across ``x`` on ``nx`` cells for ``delta_disc``.
 
     Deposits the sheet lines across ``[-b, b]`` onto the ``nx + 1`` transverse
-    nodes using CIC weights, solves the 3-point discrete Poisson equation with
-    PEC boundary conditions ``phi(+-a) = 0``, and iterates the exact per-line
-    relativistic energy-conserving fixed point::
+    nodes using order-``shape`` B-spline weights, solves the 3-point discrete
+    Poisson equation with PEC boundary conditions ``phi(+-a) = 0``, and iterates
+    the exact per-line relativistic energy-conserving fixed point::
 
         phi_l(delta) = phi_l,0 / (1 - delta_bar)
         gamma_l = gamma0 - e * |phi_l| / (m_eff * c**2)
@@ -454,7 +521,6 @@ def compute_discrete_dc_depression(
     a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
     dx = 2.0 * a / nx
-    x_nodes = np.linspace(-a, a, nx + 1)
 
     if line_x is None:
         n_macro = 16 if nx == COARSE_GRID[0] else 32
@@ -470,7 +536,7 @@ def compute_discrete_dc_depression(
         rho_l = np.asarray(line_w, dtype=np.float64)
         rho_l = rho_l / np.sum(rho_l)
 
-    w_mat = np.maximum(1.0 - np.abs(x_sheet[:, None] - x_nodes[None, :]) / dx, 0.0)
+    w_mat = transverse_weight_matrix(x_sheet, nx, shape)
     w_node = np.sum(rho_l[:, None] * w_mat, axis=0) * (2.0 * b / dx)
 
     n_int = nx - 1
@@ -585,13 +651,14 @@ def compute_transverse_modal_operator(
     line_x: np.ndarray | None = None,
     line_w: np.ndarray | None = None,
     use_omega_f: bool = True,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Build the discrete transverse modal operator ``G(k)`` and its eigensystem at wavenumber ``k_val``.
 
     Parameters
     ----------
     code : {"lb", "particles"}
-        Model selector (`LinearizedBeam` node lines or `ParticleSolver` CIC lines).
+        Model selector (`LinearizedBeam` node lines or `ParticleSolver` order-``shape`` lines).
     nx : int
         Transverse cell count across ``[-a, a]``.
     nz : int or None
@@ -609,6 +676,9 @@ def compute_transverse_modal_operator(
         If ``True`` (default) and ``nz`` is not ``None``, uses the leapfrog field
         time symbol ``Omega_f = (2 / dt) * sin(omega * dt / 2)`` in
         ``tau_Y(k)**2 = kappa(k)**2 - (Omega_f / c)**2``; otherwise uses ``omega``.
+    shape : int, optional
+        B-spline particle shape order ``p`` in ``{1, 2, 3}`` for ``code == "particles"``.
+        Default is ``PARTICLE_SHAPE``.
 
     Returns
     -------
@@ -704,9 +774,8 @@ def compute_transverse_modal_operator(
             d_vec = d_vec / np.sum(d_vec)
         d_mat = np.diag(d_vec)
 
-        x_int = np.linspace(-a, a, nx + 1)[1:-1]
-        w_cic = np.maximum(1.0 - np.abs(x_int[:, None] - x_p[None, :]) / dx, 0.0)
-        s_mat = w_cic * ((2.0 * b / n_macro) / dx)
+        w_p = transverse_weight_matrix(x_p, nx, shape)[:, 1:-1].T
+        s_mat = w_p * ((2.0 * b / n_macro) / dx)
         g_mat = (
             (n_macro**2 * dx / (2.0 * b))
             * tau_y2
@@ -752,6 +821,7 @@ def discrete_modal_prediction(
     win_shift: float = 0.0,
     omega_p_scale: float = 1.0,
     return_details: bool = False,
+    shape: int = PARTICLE_SHAPE,
 ) -> float | dict[str, Any]:
     """Compute the Step 2 exact discrete transverse modal prediction ``beta_q,pred`` [rad/m].
 
@@ -775,7 +845,7 @@ def discrete_modal_prediction(
         ``(u_l, gamma_l)`` from Step 1. Default is ``True``.
     include_sz : bool, optional
         For ``code == "particles"``, include the drifting-beam principal-mode axial
-        shape factor ``S_z(k)**2 = sinc(k * dz / 2)**2`` (Step 3). Default is ``True``.
+        shape factor ``S_z(k)**2 = sinc(k * dz / 2)**(2 * p)`` (Step 3). Default is ``True``.
     use_omega_f : bool, optional
         If ``True`` (default), use the leapfrog field time symbol ``Omega_f`` in
         ``tau_Y(k)**2 = kappa(k)**2 - (Omega_f / c)**2``; if ``False``, use
@@ -789,6 +859,9 @@ def discrete_modal_prediction(
     return_details : bool, optional
         If ``True``, return a dictionary with modal eigenvalues, wavenumbers,
         weights, and synthesized ``I1_model(z)``. Default is ``False``.
+    shape : int, optional
+        B-spline particle shape order ``p`` in ``{1, 2, 3}`` for ``code == "particles"``.
+        Default is ``PARTICLE_SHAPE``.
 
     Returns
     -------
@@ -894,7 +967,12 @@ def discrete_modal_prediction(
         # Step 2: compute discrete DC potential, per-line (u_l, gamma_l) and mean delta
         # from the actual (line_x, line_w) passed to the prediction; never reuse uniform params["u_dep"].
         dep_info = compute_discrete_dc_depression(
-            nx, params, line_x=line_x, line_w=line_w, return_details=True
+            nx,
+            params,
+            line_x=line_x,
+            line_w=line_w,
+            return_details=True,
+            shape=shape,
         )
         u_l = dep_info["u_l"]
         gamma_l = dep_info["gamma_l"]
@@ -915,6 +993,7 @@ def discrete_modal_prediction(
             line_x=line_x,
             line_w=line_w,
             use_omega_f=use_omega_f,
+            shape=shape,
         )
         evals_be = op0["evals"]
         d_vec = op0["d_vec"]
@@ -948,12 +1027,17 @@ def discrete_modal_prediction(
                 line_x=line_x,
                 line_w=line_w,
                 use_omega_f=use_omega_f,
+                shape=shape,
             )
-            # Drifting-beam axial shape factor S_z(k)^2 = sinc^2(k*dz/2) from
-            # p=1 Esirkepov J_z deposit symbol sinc(k*dz/2) and p_g=0 Galerkin
-            # E_z gather symbol sinc(k*dz/2) (principal m=0 mode; aliases
+            # Drifting-beam axial shape factor S_z(k)^2 = sinc^(2p)(k*dz/2) from
+            # order-p Esirkepov J_z deposit symbol sinc^p(k*dz/2) and order-(p-1)
+            # Galerkin E_z gather symbol sinc^p(k*dz/2) (principal m=0 mode; aliases
             # k_m = k + 2*pi*m/dz are Doppler-detuned by 2*pi*|m|*u_dep/dz >> omega_q).
-            sz_sq = float(np.sinc(0.5 * k_val * dz / np.pi) ** 2) if include_sz else 1.0
+            sz_sq = (
+                float(np.sinc(0.5 * k_val * dz / np.pi) ** (2 * int(shape)))
+                if include_sz
+                else 1.0
+            )
             g_tilde = (sz_sq * sig_vec)[:, None] * op_k["G"]
             m_sym = (s_left[:, None] * g_tilde) * s_right[None, :]
             m_sym = 0.5 * (m_sym + m_sym.T)
@@ -1043,6 +1127,7 @@ def prediction_slack(
     line_w: np.ndarray | None = None,
     entrance_profile: np.ndarray | None = None,
     omega_p_scale: float = 1.0,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Compute the Step 3 parameter-free prediction slack ``s_win + s_modes + s_sym + s_round``."""
     base = discrete_modal_prediction(
@@ -1059,6 +1144,7 @@ def prediction_slack(
         win_shift=0.0,
         omega_p_scale=omega_p_scale,
         return_details=True,
+        shape=shape,
     )
     bq_pred = float(base["beta_q"])
     z_eval = base["z_coords"]
@@ -1128,6 +1214,7 @@ def prediction_slack(
             win_shift=0.0,
             omega_p_scale=omega_p_scale,
             return_details=False,
+            shape=shape,
         )
     )
     s_sym = float(abs(bq_pred - bq_omega_cont) / bq_pred)
@@ -1165,6 +1252,7 @@ def prediction_slack(
                 win_shift=0.0,
                 omega_p_scale=omega_p_scale,
                 return_details=False,
+                shape=shape,
             )
         )
         bq_no_sz = float(
@@ -1183,6 +1271,7 @@ def prediction_slack(
                 win_shift=0.0,
                 omega_p_scale=omega_p_scale,
                 return_details=False,
+                shape=shape,
             )
         )
         res["bq_pred_unif"] = bq_unif
@@ -1197,6 +1286,7 @@ def _single_grid_budget_terms(
     nz: int,
     params: dict[str, float],
     omega_p_scale: float = 1.0,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Compute Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
     dz = TUNNEL_LENGTH_M / nz
@@ -1215,7 +1305,7 @@ def _single_grid_budget_terms(
 
     lb_modal = prediction_slack("lb", nx, nz, params, omega_p_scale=omega_p_scale)
     part_modal = prediction_slack(
-        "particles", nx, nz, params, omega_p_scale=omega_p_scale
+        "particles", nx, nz, params, omega_p_scale=omega_p_scale, shape=shape
     )
 
     # Brillouin alias suppression factor (omega_q * dz / (2 * pi * u_dep))^2 for m != 0:
@@ -1223,18 +1313,20 @@ def _single_grid_budget_terms(
     alias_supp = float((omega_q_eff * dz / (2.0 * np.pi * params["u_dep"])) ** 2)
 
     # Discrete 1D Poisson DC depression prediction on this grid (Step 1):
-    dep_info = compute_discrete_dc_depression(nx, params, return_details=True)
+    dep_info = compute_discrete_dc_depression(
+        nx, params, return_details=True, shape=shape
+    )
     delta_th_disc = float(dep_info["delta_disc"])
     eps_ac = float(0.5 * (MODULATION_INDEX * beta_q / beta_e) ** 2)
 
     # Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
-    # For particles, edge-0 current is the flux averaged over a one-cell transit,
-    # giving predicted ratio sinc(beta_e * dz / 2) * cos(beta_q * dz / 2) and bound
-    # from the first neglected Taylor terms (beta_e*dz/2)^4/120 + (beta_q*dz/2)^4/24 + 1e-12.
+    # For particles, edge-0 current is the order-p Esirkepov flux averaged over a
+    # one-cell transit, giving predicted ratio sinc^p(beta_e * dz / 2) * cos(beta_q * dz / 2)
+    # and bound from the first neglected Taylor terms (beta_e*dz/2)^4/120 + (beta_q*dz/2)^4/24 + 1e-12.
     tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
     be_half = 0.5 * beta_e * dz
     bq_half = 0.5 * beta_q * dz
-    amp_pred_part = float(np.sinc(be_half / np.pi) * np.cos(bq_half))
+    amp_pred_part = float((np.sinc(be_half / np.pi) ** int(shape)) * np.cos(bq_half))
     tol_amp_part = float((be_half**4) / 120.0 + (bq_half**4) / 24.0 + 1.0e-12)
 
     # Residual DFT leakage bound (identity / round-off):
@@ -1303,9 +1395,12 @@ def derived_tolerances(
     nz: int,
     params: dict[str, float],
     omega_p_scale: float = 1.0,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Build the Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
-    return _single_grid_budget_terms(nx, nz, params, omega_p_scale=omega_p_scale)
+    return _single_grid_budget_terms(
+        nx, nz, params, omega_p_scale=omega_p_scale, shape=shape
+    )
 
 
 def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
@@ -1328,7 +1423,7 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
         f"  delta_th (continuum DC dep, flux/density)         : {tols['delta_th_flux']:.6%} / {tols['delta_th_density']:.6%}",
         f"  delta_disc_exact (1D Poisson DC dep, {tols['dep_weighting']})        : {tols['delta_disc_exact']:.6%} (flux={tols['delta_disc_flux']:.6%}, density={tols['delta_disc_density']:.6%})",
         f"  eps_ac (0.5*(m*bq/be)^2)                          : {tols['eps_ac']:.6e}",
-        f"  amp_pred_part (sinc(be*dz/2)*cos(bq*dz/2))        : {tols['amp_pred_part']:.8f}",
+        f"  amp_pred_part (sinc(be*dz/2)^p*cos(bq*dz/2))      : {tols['amp_pred_part']:.8f}",
         f"  tol_amp_lb (0.5*(bq*dz)^2)                        : {tols['tol_amp_lb']:.6e}",
         f"  tol_amp_part ((be*dz/2)^4/120+(bq*dz/2)^4/24+1e-12): {tols['tol_amp_part']:.6e}",
         f"  eps_dft (100*eps_mach/m)                          : {tols['eps_dft']:.6e}",
@@ -1895,7 +1990,12 @@ def run_linearized_beam_drift(
 
     # M2-type runs scale rho0, hence omega_p by sqrt(rho0_scale); the settle bound must use it
     n_settle = settle_steps(
-        "lb", nx, nz, params, dt, omega_p_scale=float(np.sqrt(rho0_scale)) if rho0_profile is None else 1.0
+        "lb",
+        nx,
+        nz,
+        params,
+        dt,
+        omega_p_scale=float(np.sqrt(rho0_scale)) if rho0_profile is None else 1.0,
     )
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
@@ -1951,6 +2051,7 @@ def run_particle_beam_drift(
     cfln: float = CFL_NUMBER,
     n_macro_per_step: int | None = None,
     gather: str = "galerkin",
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -1992,6 +2093,11 @@ def run_particle_beam_drift(
     n_macro_per_step : int, optional
         Number of macroparticles injected per step. If ``None``, defaults to
         ``16`` on ``COARSE_GRID`` and ``32`` on ``FINE_GRID``.
+    gather : str, optional
+        Field gather mode passed to `ParticleSolver`. Default is ``"galerkin"``.
+    shape : int, optional
+        B-spline particle shape order ``p`` in ``{1, 2, 3}`` passed to
+        `ParticleSolver`. Default is ``PARTICLE_SHAPE``.
 
     Returns
     -------
@@ -2028,7 +2134,7 @@ def run_particle_beam_drift(
         if n_macro_per_step is not None
         else (16 if nx == COARSE_GRID[0] else 32)
     )
-    n_settle = settle_steps("particles", nx, nz, params, dt)
+    n_settle = settle_steps("particles", nx, nz, params, dt, shape=shape)
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
@@ -2060,7 +2166,7 @@ def run_particle_beam_drift(
         solver,
         species=[sp],
         injectors=[inj],
-        shape=PARTICLE_SHAPE,
+        shape=int(shape),
         filter=PARTICLE_FILTER,
         gather=gather,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
@@ -2116,6 +2222,7 @@ def run_particle_beam_drift(
                 out_bins_d.fill(0.0)
                 if n_p_cur > 0:
                     phi_nodes_d.set(phi_nodes)
+                    w_mat_d = transverse_weight_matrix(sp._x[:n_p_cur], nx, shape)
                     n_blocks = min(max((n_p_cur + 255) // 256, 1), 256)
                     _GPU_BIN_KERNEL(
                         (n_blocks,),
@@ -2124,13 +2231,11 @@ def run_particle_beam_drift(
                             n_p_cur,
                             int(nx),
                             int(nz),
-                            float(a),
-                            float(dx),
                             float(dz),
                             c2_val,
                             float(gamma0),
                             q_over_mc2_val,
-                            sp._x,
+                            w_mat_d,
                             sp._z,
                             sp._ux,
                             sp._uy,
@@ -2161,13 +2266,8 @@ def run_particle_beam_drift(
                 vz_p = uz_p / gamma_p
                 bin_idx = np.clip(np.digitize(zp, z_edges) - 1, 0, nz - 1)
 
-                xi_p = (xp + a) / dx
-                ix0 = np.clip(np.floor(xi_p).astype(np.int64), 0, nx - 1)
-                wx1 = np.clip(xi_p - ix0, 0.0, 1.0)
-                wx0 = 1.0 - wx1
-                phi_p = (
-                    wx0 * phi_nodes[ix0, bin_idx] + wx1 * phi_nodes[ix0 + 1, bin_idx]
-                )
+                w_mat_p = transverse_weight_matrix(xp, nx, shape)
+                phi_p = np.sum(w_mat_p * phi_nodes[:, bin_idx].T, axis=1)
                 gamma_pred_p = gamma0 + (e_charge / (sp.mass * c_light**2)) * phi_p
 
                 w_k = np.bincount(bin_idx, weights=wp, minlength=nz)
@@ -2295,7 +2395,9 @@ def run_particle_beam_drift(
         "dt": dt,
         "n_spp": n_spp,
         "n_settle": n_settle,
-        "iz_hist_dec": iz_hist[:, ::8].copy(),  # I_z(t, z) on every 8th axial edge, DFT window [A]
+        "iz_hist_dec": iz_hist[
+            :, ::8
+        ].copy(),  # I_z(t, z) on every 8th axial edge, DFT window [A]
     }
 
 
@@ -2320,6 +2422,7 @@ def _cached_particle_drift_impl(
     qm_scale: float,
     n_macro: int,
     gather: str,
+    shape: int,
 ) -> dict[str, Any]:
     lb_ref = cached_linearized_beam_drift(
         nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
@@ -2334,6 +2437,7 @@ def _cached_particle_drift_impl(
         profile=profile,
         n_macro_per_step=n_macro,
         gather=gather,
+        shape=shape,
     )
 
 
@@ -2346,8 +2450,9 @@ def cached_particle_drift(
     qm_scale: float = 1.0,
     n_macro_per_step: int | None = None,
     gather: str = "galerkin",
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
-    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather)``."""
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather, shape)``."""
     n_macro = (
         int(n_macro_per_step)
         if n_macro_per_step is not None
@@ -2363,12 +2468,16 @@ def cached_particle_drift(
         float(qm_scale),
         n_macro,
         str(gather),
+        int(shape),
     )
 
 
 @lru_cache(maxsize=8)
 def cached_baseline_pair(
-    nx: int, nz: int, m_mod: float = MODULATION_INDEX
+    nx: int,
+    nz: int,
+    m_mod: float = MODULATION_INDEX,
+    shape: int = PARTICLE_SHAPE,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Cache deterministic ``("sheet_lattice")`` baseline `(LinearizedBeam, ParticleSolver)` runs."""
     lb_res = cached_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=m_mod)
@@ -2379,13 +2488,17 @@ def cached_baseline_pair(
         seed=NOISE_SEEDS[0],
         m_mod=m_mod,
         qm_scale=1.0,
+        shape=int(shape),
     )
     return lb_res, part_res
 
 
 @lru_cache(maxsize=8)
 def compute_m_extrapolation(
-    nx: int, nz: int, include_m4: bool = True
+    nx: int,
+    nz: int,
+    include_m4: bool = True,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Compute Step 3 Richardson extrapolation of deterministic lattice ``beta_q(m)`` as ``m -> 0``.
 
@@ -2397,13 +2510,15 @@ def compute_m_extrapolation(
     Gauss-Newton standard error ``sigma_prop`` across the three single-amplitude fits.
     """
     params = compute_analytic_parameters()
-    tols = derived_tolerances(nx, nz, params)
+    tols = derived_tolerances(nx, nz, params, shape=shape)
     bq_pred = float(tols["bq_pred_part"])
     slack_part = float(tols["slack_part"])
     z_min, z_max = fit_window(params)
     beta_q_th = params["beta_q"]
 
-    lb_m, part_m = cached_baseline_pair(nx, nz, m_mod=MODULATION_INDEX)
+    lb_m, part_m = cached_baseline_pair(
+        nx, nz, m_mod=MODULATION_INDEX, shape=int(shape)
+    )
     z_coords = lb_m["z_coords"]
     part_m2 = cached_particle_drift(
         nx,
@@ -2412,6 +2527,7 @@ def compute_m_extrapolation(
         seed=NOISE_SEEDS[0],
         m_mod=0.5 * MODULATION_INDEX,
         qm_scale=1.0,
+        shape=int(shape),
     )
     fit_m = fit_beta_q_from_envelope(
         z_coords, part_m["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
@@ -2434,6 +2550,7 @@ def compute_m_extrapolation(
             seed=NOISE_SEEDS[0],
             m_mod=0.25 * MODULATION_INDEX,
             qm_scale=1.0,
+            shape=int(shape),
         )
         fit_m4 = fit_beta_q_from_envelope(
             z_coords, part_m4["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
@@ -2536,6 +2653,7 @@ def measure_empirical_noise(
     grid: tuple[int, int, int] = COARSE_GRID,
     m_mod: float = MODULATION_INDEX,
     n_macro_per_step: int | None = None,
+    shape: int = PARTICLE_SHAPE,
 ) -> dict[str, Any]:
     """Measure empirical 8-seed ``profile='sheet'`` statistics on ``grid``.
 
@@ -2568,9 +2686,13 @@ def measure_empirical_noise(
     k_idx = np.arange(n_macro, dtype=np.float64)
     x_lat_n = b * (2.0 * (k_idx + 0.5) / float(n_macro) - 1.0)
     bq_pred_n = float(
-        discrete_modal_prediction("particles", nx, nz, params, line_x=x_lat_n)
+        discrete_modal_prediction(
+            "particles", nx, nz, params, line_x=x_lat_n, shape=int(shape)
+        )
     )
-    delta_disc_n = float(compute_discrete_dc_depression(nx, params, line_x=x_lat_n))
+    delta_disc_n = float(
+        compute_discrete_dc_depression(nx, params, line_x=x_lat_n, shape=int(shape))
+    )
     part_lat_n = cached_particle_drift(
         nx,
         nz,
@@ -2579,6 +2701,7 @@ def measure_empirical_noise(
         m_mod=m_mod,
         qm_scale=1.0,
         n_macro_per_step=n_macro,
+        shape=int(shape),
     )
     fit_lat_n = fit_beta_q_from_envelope(
         z_coords, part_lat_n["i1_part"], beta_q_th, z_min=z_min, z_max=z_max
@@ -2602,6 +2725,7 @@ def measure_empirical_noise(
             m_mod=m_mod,
             qm_scale=1.0,
             n_macro_per_step=n_macro,
+            shape=int(shape),
         )
         i1 = res["i1_part"]
         i2 = res["i2_part"]
