@@ -2291,6 +2291,8 @@ def run_particle_beam_drift(
         "gamma_pred_profile": gamma_pred_profile,
         "dt": dt,
         "n_spp": n_spp,
+        "n_settle": n_settle,
+        "iz_hist_dec": iz_hist[:, ::8].copy(),  # I_z(t, z) on every 8th axial edge, DFT window [A]
     }
 
 

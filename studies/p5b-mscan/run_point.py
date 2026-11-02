@@ -62,7 +62,8 @@ def main():
         tols = C.derived_tolerances(nx, nz, params)
         rec.update(bq_pred_part=float(tols["bq_pred_part"]), slack_part=float(tols["slack_part"]))
     np.savez(os.path.join(a.out, tag + ".npz"), z=z, i1_part=part["i1_part"], i2_part=part["i2_part"],
-             u_z_profile=part["u_z_profile"], rho_dc_profile=part["rho_dc_profile"])
+             u_z_profile=part["u_z_profile"], rho_dc_profile=part["rho_dc_profile"],
+             iz_hist_dec=part["iz_hist_dec"].astype(np.float32), n_settle=part["n_settle"])
     with open(os.path.join(a.out, tag + ".json"), "w") as f:
         json.dump(rec, f, indent=1)
     print(json.dumps(rec))

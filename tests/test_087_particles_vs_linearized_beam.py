@@ -751,7 +751,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     )
 
 
-def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
+def test_mutation_double_particle_charge_to_mass_fails():
     """M1: Doubling particle species |q/m| matches mutated prediction after m->0 extrapolation and fails baseline cross-code check."""
     params = compute_analytic_parameters(qm_scale=1.0)
     params_mut = compute_analytic_parameters(qm_scale=2.0)
@@ -771,18 +771,13 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
     bq_lb = fit_lb["beta_q"]
     bq_part_base_pred = tols["bq_pred_part"]
 
-    orig_init = Species.__init__
-
-    def _mutated_species_init(self, name, charge, mass, *args, **kwargs):
-        # Double |q / m| by halving the inertial mass while preserving charge -e
-        orig_init(self, name, charge, 0.5 * mass, *args, **kwargs)
-
-    monkeypatch.setattr(Species, "__init__", _mutated_species_init)
+    # Double |q/m| through the harness (mass = m_e / 2 at charge -e), so the run derives its
+    # settle time and DC state from the mutated parameters, exactly as the prediction does.
     part_mut = run_particle_beam_drift(
         nx,
         nz,
         beam_ref=lb_res["beam"],
-        qm_scale=1.0,
+        qm_scale=2.0,
         seed=42,
         m_mod=MODULATION_INDEX,
         profile="sheet_lattice",
@@ -791,7 +786,7 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         nx,
         nz,
         beam_ref=lb_res["beam"],
-        qm_scale=1.0,
+        qm_scale=2.0,
         seed=42,
         m_mod=0.5 * MODULATION_INDEX,
         profile="sheet_lattice",
@@ -824,7 +819,9 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
     e_r_m1 = float((e_r_base / max(dbq_base, 1e-30)) * dbq_m1)
     e_r_m1_rel = float(e_r_m1 / bq_part_mut_pred)
     resid_m1 = abs(beta0_m1 / bq_part_mut_pred - 1.0)
-    bound_m1 = float(slack_m1 + e_r_m1_rel)
+    # Same noise class as the baseline bound0: propagated fit standard error of the 2-point estimate
+    sigma_prop_m1 = float(np.hypot(fit_mut["sigma_beta_q"] / 3.0, 4.0 * fit_mut_m2["sigma_beta_q"] / 3.0))
+    bound_m1 = float(slack_m1 + (e_r_m1 + sigma_prop_m1) / bq_part_mut_pred)
 
     resid_cross_mut = abs(beta0_m1 / bq_lb - bq_part_base_pred / tols["bq_pred_lb"])
     baseline_check_failed = bool(resid_cross_mut > tols["slack_cross"])
@@ -836,7 +833,7 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
         f"s_sym={tols_mut['s_sym_part']:.6e} s_round={tols_mut['s_round']:.6e} "
         f"slack={slack_m1:.6e} e_R_base={e_r_base:.6e} dbq_base={dbq_base:.6e} "
         f"dbq_mut={dbq_m1:.6e} e_R_mut={e_r_m1:.6e} e_R_mut_rel={e_r_m1_rel:.6e} "
-        f"resid={resid_m1:.6e} bound={bound_m1:.6e} "
+        f"sigma_prop={sigma_prop_m1:.6e} resid={resid_m1:.6e} bound={bound_m1:.6e} "
         f"baseline_check_failed={baseline_check_failed}",
         flush=True,
     )
@@ -848,7 +845,7 @@ def test_mutation_double_particle_charge_to_mass_fails(monkeypatch):
 
     assert resid_m1 <= bound_m1, (
         f"M1 |beta0_mut/bq_part_mut_pred - 1| = {resid_m1:.6e} > "
-        f"slack + e_R_mut/bq_pred = {bound_m1:.6e} (margin={bound_m1 - resid_m1:+.6e})"
+        f"slack + (e_R_mut + sigma_prop)/bq_pred = {bound_m1:.6e} (margin={bound_m1 - resid_m1:+.6e})"
     )
 
 
