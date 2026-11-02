@@ -12,9 +12,15 @@ smooth parallel-plate PEC drift tunnel twice on identical grids, time steps,
 and boundary conditions:
 
 1. **Relativistic macroparticles (`wakis.particles`)**:
-   `ParticleSolver` coupled to `SolverFIT3D` with a cathode `BeamInjector` at
-   ``z = 0`` emitting a modulated current ``I(t) = I0 * (1 + m * sin(omega * t))``
-   (``m << 1``) in a strong axial confining magnetic field ``B_ext``.
+   `ParticleSolver` (`shape=PARTICLE_SHAPE`, default quadratic B-spline ``shape=2``)
+   coupled to `SolverFIT3D` with a cathode `BeamInjector` at ``z = 0`` emitting a
+   modulated current ``I(t) = I0 * (1 + m * sin(omega * t))`` (``m << 1``) in a
+   strong axial confining magnetic field ``B_ext``. Quadratic B-spline shape
+   ``shape=2`` suppresses the ``m = -1`` aliased backward-wave numerical Cherenkov
+   instability present with ``shape=1`` (`studies/p5b-mscan/README.md` Sections 3–4),
+   at a coarse-grid runtime cost of ``3806 s`` for ``shape=2`` vs ``1928 s`` for
+   ``shape=1`` and ``7218 s`` for ``shape=3`` at settle factor ``1.5``
+   (`studies/p5b-mscan/README.md` Section 4).
 2. **Eulerian linearized cold-fluid beam (`wakis.beam_fluid`)**:
    `LinearizedBeam` evaluated at the DC space-charge-depressed equilibrium
    ``(u_dep, rho_dep, gamma_dep)`` (Option 3(ii)) and driven through the public
@@ -73,6 +79,7 @@ from examples._space_charge_waves_common import (
     COARSE_GRID,
     FINE_GRID,
     OUTFLOW_RAMP_M,
+    PARTICLE_SHAPE,
     TUNNEL_HALF_WIDTH_M,
     TUNNEL_LENGTH_M,
     USE_GPU,
@@ -86,13 +93,19 @@ from examples._space_charge_waves_common import (
     measure_empirical_noise,
     run_linearized_beam_drift,
     run_particle_beam_drift,
+    settle_steps,
 )
 from wakis import figstyle
 from wakis.estimate import estimate, preflight
 
 
-def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
-    """Run both `LinearizedBeam` and `ParticleSolver` (`profile="sheet_lattice"`) on grid ``(nx, 1, nz)``."""
+def run_resolution_pair(
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    shape: int = PARTICLE_SHAPE,
+) -> dict:
+    """Run both `LinearizedBeam` and `ParticleSolver` (`profile="sheet_lattice"`, `shape=PARTICLE_SHAPE`) on grid ``(nx, 1, nz)``."""
     beta_e = params["beta_e"]
     beta_q_th = params["beta_q"]
     lam_q = params["lambda_q"]
@@ -103,7 +116,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     dz = lz / nz
     dx = 2.0 * a / nx
     z_min, z_max = fit_window(params)
-    tols = derived_tolerances(nx, nz, params)
+    tols = derived_tolerances(nx, nz, params, shape=shape)
 
     t0_lb = time.perf_counter()
     lb_res = run_linearized_beam_drift(nx, nz, rho0_scale=1.0)
@@ -111,7 +124,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
 
     dt = lb_res["dt"]
     n_spp = lb_res["n_spp"]
-    n_settle = int(np.ceil(1.01 * lz / (params["u_dep"] * dt)))
+    n_settle = settle_steps("particles", nx, nz, params, dt, shape=shape)
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
@@ -126,6 +139,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
         qm_scale=1.0,
         seed=42,
         profile="sheet_lattice",
+        shape=shape,
     )
     wall_part_s = time.perf_counter() - t0_part
 
@@ -147,9 +161,11 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     z0_part = fit_part["z0"]
 
     delta_meas_lat = (params["u0"] - part_res["u_z_mean"]) / params["u0"]
-    mod_lb = discrete_modal_prediction("lb", nx, nz, params, return_details=True)
+    mod_lb = discrete_modal_prediction(
+        "lb", nx, nz, params, return_details=True, shape=shape
+    )
     mod_part = discrete_modal_prediction(
-        "particles", nx, nz, params, return_details=True
+        "particles", nx, nz, params, return_details=True, shape=shape
     )
     bq_lb_pred = tols["bq_pred_lb"]
     bq_part_pred = tols["bq_pred_part"]
@@ -185,6 +201,7 @@ def run_resolution_pair(nx: int, nz: int, params: dict[str, float]) -> dict:
     n_macro = 16 if nx == COARSE_GRID[0] else 32
     metrics = {
         "grid_shape": [int(nx), 1, int(nz)],
+        "particle_shape": int(shape),
         "dx_m": float(dx),
         "dz_m": float(dz),
         "dt_s": float(dt),
@@ -513,12 +530,21 @@ def make_figure_spectrum(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Cross-validate wakis.particles against LinearizedBeam on space-charge waves."
+        description=(
+            "Cross-validate wakis.particles (shape=2 B-spline) against LinearizedBeam "
+            "on space-charge waves (studies/p5b-mscan/README.md Section 4: shape=2 "
+            "run time 3806 s vs 1928 s for shape=1 and 7218 s for shape=3 on coarse "
+            "grid at settle factor 1.5)."
+        )
     )
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help=f"Run only the coarse resolution {COARSE_GRID} for a fast smoke check.",
+        help=(
+            f"Run only the coarse resolution {COARSE_GRID} with shape={PARTICLE_SHAPE} "
+            "for a single-grid check (studies/p5b-mscan/README.md Section 4: 3806 s "
+            "for shape=2 vs 1928 s for shape=1 at settle factor 1.5)."
+        ),
     )
     parser.add_argument(
         "--out-dir",
@@ -540,14 +566,17 @@ def main() -> None:
     params = compute_analytic_parameters()
 
     print(
-        f"Depressed analytic parameters: R={params['R']:.6f}, "
+        f"Depressed analytic parameters (particle shape={PARTICLE_SHAPE}): "
+        f"R={params['R']:.6f}, "
         f"beta_e={params['beta_e']:.2f} rad/m, "
         f"beta_q={params['beta_q']:.4f} rad/m (undepressed {params['beta_q_0']:.4f} rad/m), "
         f"delta_u_dc={params['delta_u_dc']:.4%}, "
         f"lambda_q={params['lambda_q'] * 1e3:.2f} mm"
     )
 
-    coarse_out = run_resolution_pair(COARSE_GRID[0], COARSE_GRID[2], params)
+    coarse_out = run_resolution_pair(
+        COARSE_GRID[0], COARSE_GRID[2], params, shape=PARTICLE_SHAPE
+    )
     mc = coarse_out["metrics"]
     print(
         f"[Coarse {COARSE_GRID}] "
@@ -555,7 +584,7 @@ def main() -> None:
         f"beta_q={mc['beta_q_linearized_beam_rad_m']:.4f} rad/m "
         f"(pred={mc['bq_pred_lb']:.4f} rad/m, resid={mc['resid_lb']:.4%}, slack={mc['slack_lb']:.4%}), "
         f"z0={mc['z0_linearized_beam_m'] * 1e3:.3f} mm; "
-        f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mc['entrance_ratio_particles']:.5f}, "
+        f"Particles (sheet_lattice, shape={PARTICLE_SHAPE}): |I1(0)|/(m*I0)={mc['entrance_ratio_particles']:.5f}, "
         f"beta_q={mc['beta_q_particles_rad_m']:.4f} rad/m "
         f"(pred={mc['bq_pred_part']:.4f} rad/m, resid={mc['resid_lattice']:.4%}, slack={mc['slack_part']:.4%}), "
         f"z0={mc['z0_particles_m'] * 1e3:.3f} mm"
@@ -565,14 +594,20 @@ def main() -> None:
     plot_source = coarse_out
 
     if not args.smoke:
-        noise_c = measure_empirical_noise(COARSE_GRID)
-        noise_f = measure_empirical_noise(FINE_GRID)
-        tols_c = derived_tolerances(COARSE_GRID[0], COARSE_GRID[2], params)
-        tols_f = derived_tolerances(FINE_GRID[0], FINE_GRID[2], params)
+        noise_c = measure_empirical_noise(COARSE_GRID, shape=PARTICLE_SHAPE)
+        noise_f = measure_empirical_noise(FINE_GRID, shape=PARTICLE_SHAPE)
+        tols_c = derived_tolerances(
+            COARSE_GRID[0], COARSE_GRID[2], params, shape=PARTICLE_SHAPE
+        )
+        tols_f = derived_tolerances(
+            FINE_GRID[0], FINE_GRID[2], params, shape=PARTICLE_SHAPE
+        )
         print(format_error_budget(COARSE_GRID[0], COARSE_GRID[2], tols_c))
         print(format_error_budget(FINE_GRID[0], FINE_GRID[2], tols_f))
 
-        fine_out = run_resolution_pair(FINE_GRID[0], FINE_GRID[2], params)
+        fine_out = run_resolution_pair(
+            FINE_GRID[0], FINE_GRID[2], params, shape=PARTICLE_SHAPE
+        )
         mf = fine_out["metrics"]
         print(
             f"[Fine   {FINE_GRID}] "
@@ -580,7 +615,7 @@ def main() -> None:
             f"beta_q={mf['beta_q_linearized_beam_rad_m']:.4f} rad/m "
             f"(pred={mf['bq_pred_lb']:.4f} rad/m, resid={mf['resid_lb']:.4%}, slack={mf['slack_lb']:.4%}), "
             f"z0={mf['z0_linearized_beam_m'] * 1e3:.3f} mm; "
-            f"Particles (sheet_lattice): |I1(0)|/(m*I0)={mf['entrance_ratio_particles']:.5f}, "
+            f"Particles (sheet_lattice, shape={PARTICLE_SHAPE}): |I1(0)|/(m*I0)={mf['entrance_ratio_particles']:.5f}, "
             f"beta_q={mf['beta_q_particles_rad_m']:.4f} rad/m "
             f"(pred={mf['bq_pred_part']:.4f} rad/m, resid={mf['resid_lattice']:.4%}, slack={mf['slack_part']:.4%}), "
             f"z0={mf['z0_particles_m'] * 1e3:.3f} mm"
