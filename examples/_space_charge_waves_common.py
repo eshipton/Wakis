@@ -125,7 +125,7 @@ V0_VOLTS = 10.0e3  # DC beam acceleration voltage [V]
 TUNNEL_HALF_WIDTH_M = 2.0e-3  # Parallel-plate tunnel half-width a [m]
 BEAM_HALF_THICKNESS_M = 0.8e-3  # Sheet-beam half-thickness b [m]
 PERIODIC_LY_M = 1.0e-3  # Periodic transverse depth Ly [m]
-TUNNEL_LENGTH_M = 0.206  # Drift-tunnel axial length Lz >= 1.6 * lambda_q [m]
+TUNNEL_LENGTH_M = 0.186 * 474 / 428  # Lz ~ 0.206 m >= 1.6 * lambda_q, keeps dz = 0.186/428 exactly [m]
 OUTFLOW_RAMP_M = 8.0e-3  # Outflow axial taper length [m]
 EPS_WINDOW = (
     1.0e-5  # Relative evanescent near-field amplitude allowed at fit-window edge [-]

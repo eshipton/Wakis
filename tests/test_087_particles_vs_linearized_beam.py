@@ -224,7 +224,7 @@ def test_preflight_and_resolution_criteria():
     )
     assert abs(dz_c - dz_prev) <= 1.0e-12, (
         f"|dz - dz_prev| = {abs(dz_c - dz_prev):.6e} m > 1e-12 m "
-        f"(0.206/474 = {dz_c:.12e} m vs 0.186/428 = {dz_prev:.12e} m; "
+        f"(Lz/474 = {dz_c:.12e} m vs 0.186/428 = {dz_prev:.12e} m; "
         f"exact dz-preserving length is 0.186*474/428 = {0.186 * 474 / 428:.12f} m)"
     )
 
