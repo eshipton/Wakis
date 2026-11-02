@@ -30,15 +30,19 @@ def main():
     ap.add_argument("--n-macro", type=int, default=16)
     ap.add_argument("--settle-factor", type=float, default=None,
                     help="override n_settle = factor * Lz / (u_dep dt) (default: library 1.01)")
+    ap.add_argument("--shape", type=int, default=1)
+    ap.add_argument("--filter", default=None)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    tag = f"m{a.m:.6f}_qm{a.qm:g}_nm{a.n_macro}" + (f"_sf{a.settle_factor:g}" if a.settle_factor else "")
+    tag = f"m{a.m:.6f}_qm{a.qm:g}_nm{a.n_macro}" + (f"_sf{a.settle_factor:g}" if a.settle_factor else "") + f"_p{a.shape}" + (f"_{a.filter}" if a.filter else "")
 
     nx, _, nz = C.COARSE_GRID
     params = C.compute_analytic_parameters(qm_scale=a.qm)
     t0 = time.time()
     lb = C.cached_linearized_beam_drift(nx, nz, rho0_scale=1.0, m_mod=C.MODULATION_INDEX)
+    C.PARTICLE_SHAPE = a.shape
+    C.PARTICLE_FILTER = a.filter
     if a.settle_factor:
         C.SETTLE_FACTOR = a.settle_factor
     part = C.run_particle_beam_drift(

@@ -136,6 +136,8 @@ PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * p
 MODULATION_INDEX = 0.015  # Fractional AC density modulation depth m [-]
 GUIDE_BZ_TESLA = 50.0  # Strong axial confining magnetic field B_z [T]
 CFL_NUMBER = 0.5  # Courant number cfln [-]
+PARTICLE_SHAPE = 1  # B-spline shape order p of the particle runs [-]
+PARTICLE_FILTER = None  # current filter of the particle runs (None or "binomial")
 SETTLE_FACTOR = None  # override: settle = SETTLE_FACTOR * Lz / (u_dep * dt); None = derived settle_steps() [-]
 
 COARSE_GRID = (10, 1, 474)  # (Nx, Ny, Nz) coarse resolution
@@ -2058,7 +2060,8 @@ def run_particle_beam_drift(
         solver,
         species=[sp],
         injectors=[inj],
-        shape=1,
+        shape=PARTICLE_SHAPE,
+        filter=PARTICLE_FILTER,
         gather=gather,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
     ).attach()
