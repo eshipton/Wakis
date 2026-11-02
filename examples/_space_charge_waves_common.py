@@ -136,7 +136,7 @@ PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * p
 MODULATION_INDEX = 0.015  # Fractional AC density modulation depth m [-]
 GUIDE_BZ_TESLA = 50.0  # Strong axial confining magnetic field B_z [T]
 CFL_NUMBER = 0.5  # Courant number cfln [-]
-SETTLE_FACTOR = 1.01  # particle-run settle time in units of Lz / (u_dep * dt) [-]
+SETTLE_FACTOR = None  # override: settle = SETTLE_FACTOR * Lz / (u_dep * dt); None = derived settle_steps() [-]
 
 COARSE_GRID = (10, 1, 474)  # (Nx, Ny, Nz) coarse resolution
 FINE_GRID = (20, 1, 948)  # (Nx, Ny, Nz) 2x refined resolution
@@ -166,6 +166,37 @@ def _grid_gamma1_disc_and_dw(
     gamma1_disc = float((2.0 / dz) * np.arcsinh(0.5 * dz * rad))
     d_w_grid = float(np.log(1.0 / EPS_WINDOW) / gamma1_disc)
     return gamma1_disc, d_w_grid, omega_f_grid
+
+
+def settle_steps(
+    code: str, nx: int, nz: int, params: dict[str, float], dt: float, omega_p_scale: float = 1.0
+) -> int:
+    """Number of steps before the DFT window so that no turn-on transient remains in the tunnel.
+
+    The C^1 entrance ramp (duration ``t_rise``) launches transient space-charge waves. For the
+    slab dispersion ``omega = k u -/+ omega_q R(k)`` with ``R(k) = k / sqrt(k**2 + kappa**2)``
+    (``k R'(k) <= R``), the group velocity obeys ``v_g = u -/+ omega_q R'(k) >= omega / k_s``,
+    the slow-wave phase velocity. The last transient therefore leaves ``z = Lz + d_w`` (one
+    evanescent window ``d_w`` past the exit) no later than
+    ``t_settle = t_rise + (Lz + d_w) / v_min`` with ``v_min = omega / max_j(k_c,j + beta_q,j)``
+    taken over the excited modes of :func:`discrete_modal_prediction`.
+
+    Returns
+    -------
+    int
+        ``ceil(t_settle / dt)``, or ``ceil(SETTLE_FACTOR * Lz / (u_dep * dt))`` when the
+        module-level ``SETTLE_FACTOR`` override is set.
+    """
+    if SETTLE_FACTOR is not None:
+        return int(np.ceil(SETTLE_FACTOR * TUNNEL_LENGTH_M / (params["u_dep"] * dt)))
+    det = discrete_modal_prediction(
+        code, nx, nz, params, omega_p_scale=omega_p_scale, return_details=True
+    )
+    k_slow = float(np.max(det["kc_modes"] + det["bq_modes"]))
+    v_min = float(params["omega"] / k_slow)
+    d_w, _ = fit_window(params)
+    t_settle = RISE_PERIODS / DRIVE_FREQ_HZ + (TUNNEL_LENGTH_M + d_w) / v_min
+    return int(np.ceil(t_settle / dt))
 
 
 def fit_window(
@@ -1860,7 +1891,10 @@ def run_linearized_beam_drift(
         solver=solver,
     )
 
-    n_settle = int(np.ceil(1.01 * lz / (u_dep * dt)))
+    # M2-type runs scale rho0, hence omega_p by sqrt(rho0_scale); the settle bound must use it
+    n_settle = settle_steps(
+        "lb", nx, nz, params, dt, omega_p_scale=float(np.sqrt(rho0_scale)) if rho0_profile is None else 1.0
+    )
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
@@ -1992,7 +2026,7 @@ def run_particle_beam_drift(
         if n_macro_per_step is not None
         else (16 if nx == COARSE_GRID[0] else 32)
     )
-    n_settle = int(np.ceil(SETTLE_FACTOR * lz / (u_dep * dt)))
+    n_settle = settle_steps("particles", nx, nz, params, dt)
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
