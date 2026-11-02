@@ -136,6 +136,7 @@ PLASMA_FREQ_HZ = 0.90e9  # Unreduced injection plasma frequency omega_p / (2 * p
 MODULATION_INDEX = 0.015  # Fractional AC density modulation depth m [-]
 GUIDE_BZ_TESLA = 50.0  # Strong axial confining magnetic field B_z [T]
 CFL_NUMBER = 0.5  # Courant number cfln [-]
+SETTLE_FACTOR = 1.01  # particle-run settle time in units of Lz / (u_dep * dt) [-]
 
 COARSE_GRID = (10, 1, 474)  # (Nx, Ny, Nz) coarse resolution
 FINE_GRID = (20, 1, 948)  # (Nx, Ny, Nz) 2x refined resolution
@@ -1991,7 +1992,7 @@ def run_particle_beam_drift(
         if n_macro_per_step is not None
         else (16 if nx == COARSE_GRID[0] else 32)
     )
-    n_settle = int(np.ceil(1.01 * lz / (u_dep * dt)))
+    n_settle = int(np.ceil(SETTLE_FACTOR * lz / (u_dep * dt)))
     n_dft = 6 * n_spp
     n_total = n_settle + n_dft
 
