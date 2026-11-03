@@ -740,6 +740,79 @@ __device__ __forceinline__ void deposit_charge_point_dev(
     }
 }
 
+__device__ __forceinline__ void deposit_pec_wall_absorb_point_dev(
+    double xi, double eta, double zeta, double qw,
+    int hit_code,
+    double* __restrict__ q_bg_flat,
+    double* __restrict__ Wx_out,
+    double* __restrict__ Wy_out,
+    double* __restrict__ Wz_out,
+    int Nx, int Ny, int Nz,
+    int order, int per_x, int per_y, int per_z,
+    double c_max_axis, int enable_closure
+) {
+    double wx[4], wy[4], wz[4];
+    int ix0 = bspline_1d_dev(xi, order, 0, wx);
+    int iy0 = bspline_1d_dev(eta, order, 0, wy);
+    int iz0 = bspline_1d_dev(zeta, order, 0, wz);
+
+    int n_nod = order + 1;
+    int stride_y = Nx;
+    int stride_z = Nx * Ny;
+
+    int ix_list[4], vx_list[4];
+    int iy_list[4], vy_list[4];
+    int iz_list[4], vz_list[4];
+
+    for (int m = 0; m < n_nod; ++m) {
+        ix_list[m] = wrap_or_mask_dev(ix0 + m, Nx, per_x, vx_list[m]);
+        iy_list[m] = wrap_or_mask_dev(iy0 + m, Ny, per_y, vy_list[m]);
+        iz_list[m] = wrap_or_mask_dev(iz0 + m, Nz, per_z, vz_list[m]);
+    }
+
+    int axis = hit_code >> 1;
+    int is_high = hit_code & 1;
+    int n_ax = (axis == 0) ? Nx : ((axis == 1) ? Ny : Nz);
+    int k_w = is_high ? min(max((int)(c_max_axis + 0.5), 0), n_ax - 1) : 0;
+    double* W_n = (axis == 0) ? Wx_out : ((axis == 1) ? Wy_out : Wz_out);
+    int stride_a = (axis == 0) ? 1 : ((axis == 1) ? stride_y : stride_z);
+
+    for (int oz = 0; oz < n_nod; ++oz) {
+        if (!vz_list[oz]) continue;
+        for (int oy = 0; oy < n_nod; ++oy) {
+            if (!vy_list[oy]) continue;
+            for (int ox = 0; ox < n_nod; ++ox) {
+                if (!vx_list[ox]) continue;
+                double val = qw * wx[ox] * wy[oy] * wz[oz];
+                if (val == 0.0) continue;
+
+                int ix = ix_list[ox];
+                int iy = iy_list[oy];
+                int iz = iz_list[oz];
+                int k_a = (axis == 0) ? ix : ((axis == 1) ? iy : iz);
+                int base_perp = (axis == 0)
+                    ? (iy * stride_y + iz * stride_z)
+                    : ((axis == 1) ? (ix + iz * stride_z) : (ix + iy * stride_y));
+
+                if (q_bg_flat != nullptr) {
+                    atomicAdd(&q_bg_flat[base_perp + k_w * stride_a], val);
+                }
+                if (enable_closure && W_n != nullptr) {
+                    if (!is_high) {
+                        for (int e = 0; e < k_a && e < n_ax - 1; ++e) {
+                            atomicAdd(&W_n[base_perp + e * stride_a], -val);
+                        }
+                    } else {
+                        for (int e = k_a; e < k_w; ++e) {
+                            atomicAdd(&W_n[base_perp + e * stride_a], val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 __global__ void deposit_charge_kernel(
     const double* __restrict__ xi,
     const double* __restrict__ eta,
@@ -801,7 +874,12 @@ __global__ void boundary_prepare_paths_kernel(
     double* __restrict__ d_absorbed_energy,
     unsigned long long* __restrict__ d_absorbed_count,
     const int* __restrict__ d_n_particles,
-    int n_launch
+    int n_launch,
+    int pec_face_mask,
+    int enable_closure,
+    double* __restrict__ Wx_out,
+    double* __restrict__ Wy_out,
+    double* __restrict__ Wz_out
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n_launch) return;
@@ -975,7 +1053,15 @@ __global__ void boundary_prepare_paths_kernel(
         atomicAdd(&d_absorbed_count[hit_code], 1ULL);
     }
 
-    if (q_bg_flat != nullptr) {
+    if (hit_code >= 0 && hit_code < 6 && ((pec_face_mask >> hit_code) & 1)) {
+        deposit_pec_wall_absorb_point_dev(
+            dep_x, dep_y, dep_z, qw,
+            hit_code,
+            q_bg_flat, Wx_out, Wy_out, Wz_out,
+            Nx, Ny, Nz, order, per_x, per_y, per_z,
+            cmax_arr[hit_code >> 1], enable_closure
+        );
+    } else if (q_bg_flat != nullptr) {
         deposit_charge_point_dev(
             dep_x, dep_y, dep_z, qw,
             q_bg_flat, Nx, Ny, Nz, order, per_x, per_y, per_z
@@ -1672,6 +1758,10 @@ def launch_boundary_prepare_paths_gpu(
     species,
     order: int,
     q_bg_nodes=None,
+    Wx_out=None,
+    Wy_out=None,
+    Wz_out=None,
+    enable_closure: bool = True,
 ):
     """Launch ``boundary_prepare_paths_kernel`` on the GPU without host sync."""
     n_launch = species._n_launch_bound
@@ -1692,6 +1782,13 @@ def launch_boundary_prepare_paths_gpu(
         q_bg_ptr = q_bg_nodes.reshape(-1, order="F")
     else:
         q_bg_ptr = 0
+
+    pec_face_mask = 0
+    for a in range(3):
+        if boundaries.bc_low[a] in ("pec", "electric"):
+            pec_face_mask |= 1 << (2 * a)
+        if boundaries.bc_high[a] in ("pec", "electric"):
+            pec_face_mask |= 1 << (2 * a + 1)
 
     d_n_ptr = species._d_n_particles if species._n_dirty_gpu else 0
     gmap = boundaries.grid_map
@@ -1747,6 +1844,11 @@ def launch_boundary_prepare_paths_gpu(
             boundaries._d_absorbed_count,
             d_n_ptr,
             np.int32(n_launch),
+            np.int32(pec_face_mask),
+            np.int32(1 if enable_closure else 0),
+            0 if Wx_out is None else Wx_out,
+            0 if Wy_out is None else Wy_out,
+            0 if Wz_out is None else Wz_out,
         ),
     )
     boundaries._gpu_stats_dirty = True

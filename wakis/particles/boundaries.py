@@ -300,6 +300,7 @@ class ParticleBoundaries:
             self._absorbed_count[col.name] = 0
 
         self._gpu_stats_dirty = False
+        self._last_hit_code = None
         self._d_absorbed_charge = None
         self._d_absorbed_energy = None
         self._d_absorbed_count = None
@@ -464,6 +465,7 @@ class ParticleBoundaries:
         xp = self.xp
         n_p = species.n_particles
         if n_p == 0:
+            self._last_hit_code = xp.zeros(0, dtype=np.int64)
             empty_b = xp.zeros(0, dtype=bool)
             return xi1, eta1, zeta1, empty_b
 
@@ -547,6 +549,7 @@ class ParticleBoundaries:
             alpha_min = xp.where(better, c_alpha, alpha_min)
             hit_code = xp.where(better, 7 + c_idx, hit_code)
 
+        self._last_hit_code = hit_code
         absorbed = hit_code >= 0
         if not bool(xp.any(absorbed)):
             return xi1, eta1, zeta1, ~absorbed
