@@ -22,6 +22,11 @@ Covers:
    only on the wall node plane ``k_w = 0``, with total equal to
    ``-injected_charge`` (for ``p = 1``) and ``-sum(q_vis)`` (for ``p = 1, 2, 3``)
    to ``<= 1e-12`` relative.
+5. Energy-balance wall-closure work ``wall_closure_work()`` / ``"W_wall_closure"``:
+   identically zero for ``p = 1`` with injection at ``zeta = 0``; nonzero for
+   ``p = 2`` with the energy residual including ``W_wall_closure`` at least 10x
+   smaller than without it; mutation check monkeypatching ``wall_closure_work``
+   to ``0.0`` causes the ``p = 2`` ``dt``-convergence check to fail.
 """
 
 from __future__ import annotations
@@ -335,3 +340,116 @@ def test_pec_wall_absorption_all_six_faces(order: int, face: str):
     assert ps.boundaries.absorbed_count[face] == 1
     print(f"[absorb face={face}, p={order}] max_gauss_res={max_res:.3e}")
     assert max_res <= 1e-12
+
+
+def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
+    """Test 5: Verify ``wall_closure_work`` / ``W_wall_closure`` in ``energy_balance()``.
+
+    Covers:
+    (a) For ``p = 1`` with injection at ``zeta = 0``, ``W_wall_closure == 0.0`` exactly.
+    (b) For ``p = 2``, ``W_wall_closure`` is nonzero and the energy residual with the
+        term is at least 10x smaller than the residual without it.
+    (c) Mutation: monkeypatching ``ParticleSolver.wall_closure_work`` to return ``0.0``
+        causes the ``test_083`` dt-convergence check for ``p = 2`` to fail with
+        ``AssertionError``.
+    """
+    from tests.test_083_particles_beams import (
+        _assert_richardson_order,
+        _run_dt_closure_sweep,
+    )
+
+    # (a) p = 1 with injection at zeta = 0 (z0 = 0.0) -> W_wall_closure == 0.0 exactly
+    nx, ny, nz = 6, 1, 20
+    grid_p1 = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.04, nx, ny, nz, verbose=0)
+    solver_p1 = SolverFIT3D(
+        grid_p1,
+        cfln=0.5,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp_p1 = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj_p1 = BeamInjector(
+        species=sp_p1,
+        z0=0.0,
+        current=0.25,
+        gamma=2.0,
+        profile="sheet_lattice",
+        radius=0.008,
+        n_macro_per_step=16,
+        seed=42,
+    )
+    ps_p1 = ParticleSolver(
+        solver_p1,
+        species=[sp_p1],
+        injectors=[inj_p1],
+        pusher="boris",
+        shape=1,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+    for _ in range(8):
+        solver_p1.one_step()
+    eb_p1 = ps_p1.energy_balance()
+    assert ps_p1.wall_closure_work() == 0.0
+    assert eb_p1["W_wall_closure"] == 0.0
+    print(
+        f"[energy p=1, zeta=0] W_wall_closure={eb_p1['W_wall_closure']:.6e}, "
+        f"residual={eb_p1['residual']:.6e}"
+    )
+
+    # (b) p = 2: closure work is nonzero and residual with term is >= 10x smaller than without
+    dts_pre, _, ebs_pre, kinds_pre = _run_dt_closure_sweep(
+        z0=0.0,
+        z_col=0.075,
+        n_steps_base=8,
+        cfl_factors=(0.4, 0.2),
+        shape=2,
+    )
+    assert all(k == "pec_wall" for k in kinds_pre)
+    for dt_val, eb in zip(dts_pre, ebs_pre):
+        w_cl = eb["W_wall_closure"]
+        res_with = abs(eb["residual"])
+        res_without = abs(eb["residual"] + w_cl)
+        print(
+            f"[energy p=2, dt={dt_val:.3e}] W_wall_closure={w_cl:.6e}, "
+            f"res_with={res_with:.6e}, res_without={res_without:.6e}, "
+            f"ratio={res_without / res_with:.2f}x"
+        )
+        assert w_cl != 0.0
+        assert res_with * 10.0 <= res_without
+
+    # Verify the p = 2 dt-convergence check from test_083 passes when wall_closure_work is active
+    dts_p2, ress_p2, ebs_p2, _ = _run_dt_closure_sweep(
+        z0=0.0,
+        z_col=0.010,
+        n_steps_base=10,
+        cfl_factors=(0.8, 0.4, 0.2, 0.1),
+        init_cavity_ez=1.0e4,
+        shape=2,
+        gamma=2.0,
+    )
+    print(f"[energy p=2 sweep] ress_with={ress_p2}")
+    assert all(eb["W_wall_closure"] != 0.0 for eb in ebs_p2)
+    assert np.all(ress_p2 > 0.0)
+    assert np.all(np.diff(ress_p2) < 0.0)
+    _assert_richardson_order(dts_p2, ress_p2, order=1.0)
+
+    # (c) Mutation: monkeypatch wall_closure_work -> 0.0 and show test_083 dt-convergence fails for p = 2
+    with monkeypatch.context() as m:
+        m.setattr(ParticleSolver, "wall_closure_work", lambda self_ps: 0.0)
+        dts_mut, ress_mut, _, _ = _run_dt_closure_sweep(
+            z0=0.0,
+            z_col=0.010,
+            n_steps_base=10,
+            cfl_factors=(0.8, 0.4, 0.2, 0.1),
+            init_cavity_ez=1.0e4,
+            shape=2,
+            gamma=2.0,
+        )
+        print(f"[mutation wall_closure_work=0, p=2] ress_mut={ress_mut}")
+        with pytest.raises(AssertionError):
+            assert np.all(ress_mut > 0.0)
+            assert np.all(np.diff(ress_mut) < 0.0)
+            _assert_richardson_order(dts_mut, ress_mut, order=1.0)
