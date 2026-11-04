@@ -540,6 +540,7 @@ def _assert_snapshots_bitwise_equal(
             "K_absorbed",
             "field_work",
             "W_wall_closure",
+            "K_wall_kick",
             "residual",
         ):
             assert (
@@ -661,6 +662,7 @@ def run_subprocess_restart_worker(
                 eb["field_work"],
                 eb["residual"],
                 eb["W_wall_closure"],
+                eb["K_wall_kick"],
             ],
             dtype=np.float64,
         )
@@ -720,6 +722,7 @@ def _load_worker_snapshot(out_npz: Path, ref_snap: dict) -> dict:
                 "field_work": float(eb_v[4]),
                 "residual": float(eb_v[5]),
                 "W_wall_closure": float(eb_v[6]),
+                "K_wall_kick": float(eb_v[7]),
             }
         else:
             eb_dict = None

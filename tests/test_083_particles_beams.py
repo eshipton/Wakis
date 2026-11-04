@@ -1583,6 +1583,7 @@ def _run_dt_closure_sweep(
                 - eb["K_particles"]
                 - eb["W_field"]
                 - eb["W_wall_closure"]
+                + eb["K_wall_kick"]
             )
             e_ref_scale = max(abs(eb["K_injected"]), abs(eb["W_field"]))
             assert abs(eb["residual"] - expected_res) <= (

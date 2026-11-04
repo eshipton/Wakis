@@ -39,8 +39,23 @@ Covers:
 6. Checkpoint persistence of ``W_wall_closure`` across restart, plus a
    ``RuntimeWarning`` when loading an older checkpoint archive that lacks
    ``cl_work_vec`` while PEC wall closure is active.
-7. CPU vs GPU agreement of ``_particles_q_bg``, ``J_particles``, and
-   ``W_wall_closure`` to ``<= 1e-12`` relative for ``p = 2`` (skipped without CuPy).
+7. CPU vs GPU agreement of ``_particles_q_bg``, ``J_particles``,
+   ``W_wall_closure``, and ``K_wall_kick`` to ``<= 1e-12`` relative for ``p = 2``
+   (skipped without CuPy).
+8. PEC-wall birth kick (``_apply_pec_wall_birth_kick``, ``wall_kick_energy()``,
+   ``"K_wall_kick"``):
+   - Test A: skipped for ``p = 1`` (``K_wall_kick == 0.0`` and bitwise-identical
+     momenta to ``_ENABLE_PEC_WALL_KICK = False``).
+   - Test B: discrete identity ``sum_i dK_i == sum_e dW_e E_n[e] dl_e`` to
+     ``<= 1e-12`` relative for ``p = 2`` and ``p = 3`` on ``low`` and ``high``
+     faces of a graded grid, plus ``ValueError`` when ``gamma' < 1``.
+   - Test C: static uniform vacuum field ``E_z = E0`` trajectory energy test
+     for ``p = 2`` and ``p = 3`` comparing leapfrog-synchronised particle energy
+     at ``z ~ 5 * dz`` against ``K_inj + q * E0 * z`` (error ``<= 1 %`` of
+     ``|q * E0 * w_1 * dz|`` with the kick, ``>= 50 %`` without).
+   - Test D: energy-balance residual with ``K_wall_kick`` for ``p = 2`` is at
+     least 10x smaller than with ``K_wall_kick`` dropped, and checkpoint archive
+     persistence / legacy warning for ``wall_kick``.
 """
 
 from __future__ import annotations
@@ -918,8 +933,16 @@ def test_wall_closure_work_survives_checkpoint_restart(tmp_path, monkeypatch):
         f"mutated={eb_mut['W_wall_closure']:.6e}; residual ref={eb_ref['residual']:.6e} "
         f"restart={eb_rs['residual']:.6e} mutated={eb_mut['residual']:.6e}"
     )
-    for key in ("W_wall_closure", "residual", "field_work", "W_field", "K_particles"):
+    for key in (
+        "W_wall_closure",
+        "K_wall_kick",
+        "residual",
+        "field_work",
+        "W_field",
+        "K_particles",
+    ):
         assert eb_rs[key] == eb_ref[key], key
+    assert eb_ref["K_wall_kick"] != 0.0
     assert eb_mut["W_wall_closure"] != eb_ref["W_wall_closure"]
     assert eb_mut["residual"] != eb_ref["residual"]
 
@@ -1085,3 +1108,453 @@ def test_interior_mpi_rank_has_pec_domain_wall_from_global_bc():
     assert ps._compute_has_pec_domain_wall() is True
     solver._global_bc_z = ("periodic", "periodic")
     assert ps._compute_has_pec_domain_wall() is False
+
+
+def test_pec_wall_birth_kick_p1_skipped_and_bitwise_equal(monkeypatch):
+    """Test A: For ``p = 1``, the PEC-wall birth kick is skipped:
+    ``K_wall_kick == 0.0`` exactly and particle momenta after ``N`` steps are
+    bitwise equal to a run with ``_ENABLE_PEC_WALL_KICK = False``.
+
+    Mutation check: for ``p = 2`` in the identical setup, ``K_wall_kick != 0.0``
+    and particle momenta differ when ``_ENABLE_PEC_WALL_KICK`` is toggled.
+    """
+
+    def _run(shape: int, enable_kick: bool):
+        grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.04, 6, 1, 20, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        solver.E.from_matrix(
+            np.full((solver.Nx, solver.Ny, solver.Nz), -2.0e4, dtype=np.float64), "z"
+        )
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=0.25,
+            gamma=2.0,
+            profile="sheet_lattice",
+            radius=0.008,
+            n_macro_per_step=16,
+            seed=42,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=shape,
+            gather="galerkin",
+            track_energy=True,
+        ).attach()
+        with monkeypatch.context() as m:
+            m.setattr(solver_mod, "_ENABLE_PEC_WALL_KICK", enable_kick)
+            for _ in range(8):
+                solver.one_step()
+        return ps, sp
+
+    ps_p1_on, sp_p1_on = _run(shape=1, enable_kick=True)
+    _ps_p1_off, sp_p1_off = _run(shape=1, enable_kick=False)
+    eb_p1 = ps_p1_on.energy_balance()
+    assert ps_p1_on.wall_kick_energy() == 0.0
+    assert eb_p1["K_wall_kick"] == 0.0
+    assert np.array_equal(sp_p1_on.ux, sp_p1_off.ux)
+    assert np.array_equal(sp_p1_on.uy, sp_p1_off.uy)
+    assert np.array_equal(sp_p1_on.uz, sp_p1_off.uz)
+
+    # Mutation check: p = 2 in the identical setup produces a nonzero kick and changes uz
+    ps_p2_on, sp_p2_on = _run(shape=2, enable_kick=True)
+    _, sp_p2_off = _run(shape=2, enable_kick=False)
+    assert ps_p2_on.wall_kick_energy() != 0.0
+    assert not np.array_equal(sp_p2_on.uz, sp_p2_off.uz)
+
+
+@pytest.mark.parametrize("side", ["low", "high"])
+@pytest.mark.parametrize("order", [2, 3])
+def test_pec_wall_birth_kick_closure_work_identity(order: int, side: str, monkeypatch):
+    """Test B: For ``p = 2`` and ``p = 3``, at a PEC-wall injection step,
+    ``sum_i dK_i`` equals the closure work ``sum_e dW_e E_n[e] dl_e`` computed
+    independently in the test to ``<= 1e-12`` relative (including on a graded grid).
+
+    Also checks that a retarding wall field strong enough to drive ``gamma' < 1``
+    raises ``ValueError``, and that mutating the birth-kick potential breaks the
+    identity.
+    """
+    nx, ny, nz = 6, 4, 16
+    x_nodes = np.linspace(-0.03, 0.03, nx + 1)
+    y_nodes = np.linspace(-0.02, 0.02, ny + 1)
+    s_grid = np.linspace(0.0, 1.0, nz + 1)
+    z_nodes = 0.04 * (0.75 * s_grid + 0.25 * s_grid * s_grid)
+    zmin, zmax = float(z_nodes[0]), float(z_nodes[-1])
+
+    grid = GridFIT3D(
+        x=x_nodes,
+        y=y_nodes,
+        z=z_nodes,
+        verbose=0,
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+
+    # Non-uniform birth electric field E_z(x, y, z) on primal z-edges
+    Nx, Ny, Nz = solver.Nx, solver.Ny, solver.Nz
+    ix = np.arange(Nx, dtype=np.float64)[:, None, None]
+    iy = np.arange(Ny, dtype=np.float64)[None, :, None]
+    iz = np.arange(Nz, dtype=np.float64)[None, None, :]
+    Ez_birth = (-3.5e4 if side == "low" else 3.5e4) * (
+        1.0 + 0.15 * np.cos(0.7 * ix + 0.4 * iy) + 0.25 * (iz / float(Nz))
+    )
+    solver.E.from_matrix(Ez_birth, "z")
+
+    z0 = zmin if side == "low" else zmax
+    direction = 1 if side == "low" else -1
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj = BeamInjector(
+        species=sp,
+        z0=z0,
+        direction=direction,
+        current=0.35,
+        gamma=2.2,
+        profile="lattice",
+        radius=0.008,
+        n_macro_per_step=16,
+        seed=314,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=order,
+        gather="galerkin",
+        track_energy=True,
+    ).attach()
+
+    solver.one_step()
+    sum_dK = ps.wall_kick_energy()
+
+    # Independent computation of q_inj_nodes, dW_e, and sum_e dW_e * E_n[e] * dl_e
+    # at the exact birth positions (x_i, y_i, z0) and birth field Ez_birth:
+    sp_ref = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj_ref = BeamInjector(
+        species=sp_ref,
+        z0=z0,
+        direction=direction,
+        current=0.35,
+        gamma=2.2,
+        profile="lattice",
+        radius=0.008,
+        n_macro_per_step=16,
+        seed=314,
+    )
+    inj_ref.inject(0.0, float(solver.dt), step_index=0)
+    xi_b, eta_b, zeta_b = ps.grid_map.to_logical(sp_ref.x, sp_ref.y, sp_ref.z)
+    q_inj_indep = np.zeros((Nx, Ny, Nz), dtype=np.float64, order="F")
+    deposit_charge(
+        xi_b,
+        eta_b,
+        zeta_b,
+        sp.charge * sp.w,
+        Nx,
+        Ny,
+        Nz,
+        order=order,
+        periodic=ps.boundaries.periodic,
+        q_nodes=q_inj_indep,
+    )
+    dW_indep = _pec_wall_closure_1d(
+        q_inj_indep, axis=2, side=side, event="inject", xp=np
+    )
+    dl_z = np.asarray(grid.L[:, :, :, "z"], dtype=np.float64)
+    closure_work_indep = float(np.sum(dW_indep * Ez_birth * dl_z))
+    rel_err = abs(sum_dK - closure_work_indep) / abs(closure_work_indep)
+    print(
+        f"[identity p={order}, side={side}] sum_dK={sum_dK:.15e}, "
+        f"closure_work={closure_work_indep:.15e}, rel_err={rel_err:.3e}"
+    )
+    assert sum_dK != 0.0
+    assert rel_err <= 1e-12
+
+    # Mutation check 1: disabling the birth kick breaks the identity (rel_err == 1.0)
+    with monkeypatch.context() as m:
+        m.setattr(solver_mod, "_ENABLE_PEC_WALL_KICK", False)
+        solver_m = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        solver_m.E.from_matrix(Ez_birth, "z")
+        sp_m = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj_m = BeamInjector(
+            species=sp_m,
+            z0=z0,
+            direction=direction,
+            current=0.35,
+            gamma=2.2,
+            profile="lattice",
+            radius=0.008,
+            n_macro_per_step=16,
+            seed=314,
+        )
+        ps_m = ParticleSolver(
+            solver_m,
+            species=[sp_m],
+            injectors=[inj_m],
+            pusher="boris",
+            shape=order,
+            gather="galerkin",
+        ).attach()
+        solver_m.one_step()
+        assert (
+            abs(ps_m.wall_kick_energy() - closure_work_indep) / abs(closure_work_indep)
+            > 0.5
+        )
+
+    # Mutation check 2: an opposing field that drives gamma' < 1 raises ValueError
+    if side == "low" and order == 2:
+        solver_bad = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        # Electron (q < 0) at z_low with gamma = 1.001 (~511 eV):
+        # Psi_1 = E_z[0] * dz > 0 makes dK = q * w_1 * Psi_1 < 0; a large +Ez drives gamma' < 1
+        solver_bad.E.from_matrix(np.full((Nx, Ny, Nz), 5.0e9, dtype=np.float64), "z")
+        sp_bad = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj_bad = BeamInjector(
+            species=sp_bad,
+            z0=zmin,
+            direction=1,
+            current=0.1,
+            gamma=1.001,
+            profile="lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=1,
+        )
+        ParticleSolver(
+            solver_bad,
+            species=[sp_bad],
+            injectors=[inj_bad],
+            pusher="boris",
+            shape=2,
+            gather="galerkin",
+        ).attach()
+        with pytest.raises(ValueError, match="gamma' < 1"):
+            solver_bad.one_step()
+
+
+@pytest.mark.parametrize("order,w1_birth", [(2, 1.0 / 8.0), (3, 1.0 / 6.0)])
+def test_pec_wall_birth_kick_static_uniform_field_physics(
+    order: int, w1_birth: float, monkeypatch
+):
+    """Test C: Static uniform electric field ``E_z = E0`` in vacuum with PEC
+    ``z``-walls and periodic ``x``/``y``.
+
+    Injects a single test electron from the ``z``-low PEC wall with ``p = 2``
+    (``w_1 = 1/8``) and ``p = 3`` (``w_1 = 1/6``) using a negligible beam
+    current ``I_0 = 1e-12 A`` on step 0 only so that the macroparticle charge is
+    ``|Q_p| = I_0 * dt ~ 3.3e-25 C`` and the self-field work over the transit
+    ``z <= L_z`` satisfies the analytical bound
+    ``|W_self| <= Q_p^2 * L_z / (eps_0 * L_x * L_y) < 1e-12 * w_0 * |q * E0 * w_1 * dz|``.
+    Compares the leapfrog-synchronised single-particle kinetic energy at height
+    ``z ~ 5 * dz`` against ``K(z) = K_inj + q * E0 * z``:
+    - With the birth kick: error ``<= 1 %`` of ``|q * E0 * w_1 * dz|``.
+    - With ``_ENABLE_PEC_WALL_KICK = False``: error ``>= 50 %`` of ``|q * E0 * w_1 * dz|``.
+    """
+    from scipy.constants import epsilon_0
+
+    nx, ny, nz = 1, 1, 20
+    lx, ly, lz = 0.01, 0.01, 0.04
+    dz = lz / float(nz)
+    E0 = -1.0e5  # [V/m], accelerates electrons (q = -e) in +z
+    gamma0 = 2.0
+    I0 = 1.0e-12  # [A]
+
+    def _run(enable_kick: bool):
+        grid = GridFIT3D(
+            -0.5 * lx, 0.5 * lx, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, ny, nz, verbose=0
+        )
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.05,
+            bc_low=["periodic", "periodic", "pec"],
+            bc_high=["periodic", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        solver.E.from_matrix(
+            np.full((solver.Nx, solver.Ny, solver.Nz), E0, dtype=np.float64), "z"
+        )
+        dt = float(solver.dt)
+
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=lambda t: I0 if t < 0.75 * dt else 0.0,
+            gamma=gamma0,
+            profile="lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=7,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=order,
+            gather="galerkin",
+            track_energy=True,
+        ).attach()
+
+        beta0 = float(np.sqrt(1.0 - 1.0 / (gamma0 * gamma0)))
+        vz0 = beta0 * c_light
+        z_target = 5.0 * dz
+        n_steps = int(np.ceil(z_target / (vz0 * dt)))
+
+        max_h = 0.0
+        with monkeypatch.context() as m:
+            m.setattr(solver_mod, "_ENABLE_PEC_WALL_KICK", enable_kick)
+            for _ in range(n_steps):
+                solver.one_step()
+                max_h = max(max_h, float(np.max(np.abs(solver.H.toarray()))))
+
+        assert sp.n_particles == 1
+        w0 = float(sp.w[0])
+        z_final = float(sp.z[0])
+        assert z_final >= 4.5 * dz
+        k_inj_1p = float(ps.injected_energy()) / w0
+        k_num_1p = float(ps.kinetic_energy(synchronised=True)) / w0
+        k_exact_1p = k_inj_1p + (-e_charge) * E0 * z_final
+        return abs(k_num_1p - k_exact_1p), max_h, w0, z_final
+
+    err_with, max_h_with, w0, z_with = _run(enable_kick=True)
+    err_without, max_h_without, _, _z_without = _run(enable_kick=False)
+
+    scale = abs((-e_charge) * E0 * w1_birth * dz)
+    # Verify negligible self-field work bound: |W_self| / w0 <= q^2 * w0 * L_z / (eps_0 * L_x * L_y)
+    self_field_work_1p_bound = (e_charge * e_charge * w0 * lz) / (epsilon_0 * lx * ly)
+    assert self_field_work_1p_bound <= 1e-12 * scale
+    assert max_h_with <= 1e-18
+    assert max_h_without <= 1e-18
+
+    rel_with = err_with / scale
+    rel_without = err_without / scale
+    print(
+        f"[physics p={order}] z={z_with / dz:.2f}*dz, |q*E0*w1*dz|={scale:.6e} J, "
+        f"self_field_bound={self_field_work_1p_bound:.3e} J, max|H|={max_h_with:.3e}, "
+        f"err_with={err_with:.6e} J ({100.0 * rel_with:.4f}% of |q*E0*w1*dz|), "
+        f"err_without={err_without:.6e} J ({100.0 * rel_without:.4f}% of |q*E0*w1*dz|)"
+    )
+    assert rel_with <= 0.01
+    assert rel_without >= 0.50
+
+
+def test_pec_wall_birth_kick_energy_residual_p2(monkeypatch):
+    """Test D: Energy residual with ``K_wall_kick`` for ``p = 2`` (reusing the
+    existing energy test setup) is at least 10x smaller than with ``K_wall_kick``
+    dropped, and monkeypatching ``wall_kick_energy`` to ``0.0`` breaks monotonic
+    decrease and Richardson ``dt``-convergence.
+    """
+    from tests.test_083_particles_beams import (
+        _assert_richardson_order,
+        _passes_richardson_order,
+        _run_dt_closure_sweep,
+    )
+
+    dts_pre, _, ebs_pre, kinds_pre = _run_dt_closure_sweep(
+        z0=0.0,
+        z_col=0.075,
+        n_steps_base=8,
+        cfl_factors=(0.4, 0.2),
+        shape=2,
+    )
+    assert all(k == "pec_wall" for k in kinds_pre)
+    for dt_val, eb in zip(dts_pre, ebs_pre):
+        k_kick = eb["K_wall_kick"]
+        res_with = abs(eb["residual"])
+        res_without = abs(eb["residual"] - k_kick)
+        ratio = res_without / res_with
+        print(
+            f"[kick energy p=2, dt={dt_val:.3e}] K_wall_kick={k_kick:.6e}, "
+            f"res_with={res_with:.6e}, res_without={res_without:.6e}, "
+            f"ratio={ratio:.2f}x"
+        )
+        assert k_kick != 0.0
+        assert res_with * 10.0 <= res_without
+
+    # Mutation check: dropping wall_kick_energy -> 0.0 breaks dt-convergence on the p=2 sweep
+    dts_p2, ress_p2, ebs_p2, _ = _run_dt_closure_sweep(
+        z0=0.0,
+        z_col=0.010,
+        n_steps_base=10,
+        cfl_factors=(0.8, 0.4, 0.2, 0.1),
+        init_cavity_ez=1.0e4,
+        shape=2,
+        gamma=2.0,
+    )
+    assert all(eb["K_wall_kick"] != 0.0 for eb in ebs_p2)
+    assert np.all(np.diff(ress_p2) < 0.0)
+    _assert_richardson_order(dts_p2, ress_p2, order=1.0)
+
+    with monkeypatch.context() as m:
+        m.setattr(ParticleSolver, "wall_kick_energy", lambda self_ps: 0.0)
+        _, ress_mut, _, _ = _run_dt_closure_sweep(
+            z0=0.0,
+            z_col=0.010,
+            n_steps_base=10,
+            cfl_factors=(0.8, 0.4, 0.2, 0.1),
+            init_cavity_ez=1.0e4,
+            shape=2,
+            gamma=2.0,
+        )
+        print(f"[mutation wall_kick_energy=0, p=2] ress_mut={ress_mut}")
+        assert np.all(ress_mut > 3.0 * ress_p2[-1])
+        assert not _passes_richardson_order(dts_p2, ress_mut, order=1.0)
+
+
+def test_old_checkpoint_without_wall_kick_warns(tmp_path):
+    """Loading a checkpoint that lacks ``wall_kick`` when PEC-wall birth kick is
+    active (``shape >= 2`` and ``pec_wall`` injector) emits a ``RuntimeWarning``
+    and restarts ``K_wall_kick`` from zero.
+    """
+    ckpt_dir = tmp_path / "ck_legacy_kick"
+    solver, ps = _build_p2_energy_case()
+    for _ in range(4):
+        solver.one_step()
+    assert ps.wall_kick_energy() != 0.0
+    ps.save_checkpoint(str(ckpt_dir))
+
+    manifest_path = ckpt_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rank_fname = next(iter(manifest["files"].keys()))
+    rank_npz = ckpt_dir / rank_fname
+    with np.load(rank_npz, allow_pickle=False) as data:
+        arrays = {k: data[k] for k in data.files if k != "wall_kick"}
+    np.savez(rank_npz, **arrays)
+    manifest["files"][rank_fname] = hashlib.sha256(rank_npz.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    _s2, ps2 = _build_p2_energy_case()
+    with pytest.warns(RuntimeWarning, match="K_wall_kick"):
+        ps2.load_checkpoint(str(ckpt_dir))
+    assert ps2.wall_kick_energy() == 0.0
