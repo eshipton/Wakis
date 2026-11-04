@@ -242,15 +242,15 @@ class ParticleBoundaries:
 
         # Effective active logical bounds [xi_min, xi_max] per axis.
         # On CPML faces, particles are absorbed at the CPML inner face.
-        # When GridFIT3D(boundary_at_domain_edge=True) appends an inert ghost
-        # cell beyond max on non-periodic axes, edge_ghosts[a] == 1 and the
-        # physical upper boundary lies at node index counts[a] - 1.
+        # On any non-periodic axis, the high-side boundary node in SolverFIT3D
+        # sits at node index counts[a] - 1 (both when boundary_at_domain_edge=True
+        # appends a ghost cell beyond max and when boundary_at_domain_edge=False
+        # uses the last cell as a ghost layer).
         counts = (grid_map.Nx, grid_map.Ny, grid_map.Nz)
-        edge_ghosts = getattr(grid_map, "edge_ghosts", (0, 0, 0))
         xi_min = []
         xi_max = []
         for a in range(3):
-            n_phys = counts[a] - (0 if self.periodic[a] else int(edge_ghosts[a]))
+            n_phys = counts[a] - (0 if self.periodic[a] else 1)
             if self.bc_low[a] == "mpi":
                 low = -1.0e30
             elif self.bc_low[a] == "cpml":
@@ -301,6 +301,7 @@ class ParticleBoundaries:
 
         self._gpu_stats_dirty = False
         self._last_hit_code = None
+        self._last_pec_d_count = 0
         self._d_absorbed_charge = None
         self._d_absorbed_energy = None
         self._d_absorbed_count = None
@@ -320,6 +321,7 @@ class ParticleBoundaries:
             self._d_absorbed_charge = self.xp.zeros(n_slots, dtype=np.float64)
             self._d_absorbed_energy = self.xp.zeros(n_slots, dtype=np.float64)
             self._d_absorbed_count = self.xp.zeros(n_slots, dtype=np.uint64)
+            self._last_pec_d_count = 0
 
         if self.solid_mask is None:
             self._solid_mask_src = None
@@ -348,6 +350,21 @@ class ParticleBoundaries:
             self._col_types_gpu = self.xp.asarray(types_h, dtype=np.int32)
             self._col_params_gpu = self.xp.asarray(params_h, dtype=np.float64)
 
+    def _poll_pec_wall_absorbed_gpu(self) -> bool:
+        """Return True if any particle was absorbed on a PEC domain wall since the last check."""
+        if self._d_absorbed_count is None:
+            return False
+        c_h = self._d_absorbed_count[:6].get()
+        total = 0
+        for a in range(3):
+            if self.bc_low[a] in ("pec", "electric"):
+                total += int(c_h[2 * a])
+            if self.bc_high[a] in ("pec", "electric"):
+                total += int(c_h[2 * a + 1])
+        absorbed = total > self._last_pec_d_count
+        self._last_pec_d_count = total
+        return absorbed
+
     def _sync_gpu_stats(self) -> None:
         """Flush device-side absorbed charge/energy/count accumulators to host dicts."""
         if not self._gpu_stats_dirty or self._d_absorbed_charge is None:
@@ -358,6 +375,7 @@ class ParticleBoundaries:
         self._d_absorbed_charge.fill(0.0)
         self._d_absorbed_energy.fill(0.0)
         self._d_absorbed_count.fill(0)
+        self._last_pec_d_count = 0
         self._gpu_stats_dirty = False
 
         for code_idx, name in enumerate(self.FACE_NAMES):

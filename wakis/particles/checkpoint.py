@@ -1449,6 +1449,7 @@ def _restore_rank_arrays(
             particle_solver.boundaries._d_absorbed_charge.fill(0.0)
             particle_solver.boundaries._d_absorbed_energy.fill(0.0)
             particle_solver.boundaries._d_absorbed_count.fill(0)
+            particle_solver.boundaries._last_pec_d_count = 0
             particle_solver.boundaries._gpu_stats_dirty = False
 
     if "has_collector_state" in files:
@@ -1479,6 +1480,28 @@ def _restore_rank_arrays(
             particle_solver._cl_work_vec.fill(0.0)
             particle_solver._J_cl.fill(0.0)
             particle_solver._cl_pending = False
+            from .solver import _ENABLE_PEC_WALL_CLOSURE
+
+            closure_active = bool(
+                _ENABLE_PEC_WALL_CLOSURE
+                and (
+                    particle_solver._has_pec_domain_wall
+                    or any(
+                        getattr(inj, "emitter_kind", None) == "pec_wall"
+                        for inj in particle_solver.injectors
+                    )
+                )
+            )
+            if closure_active:
+                import warnings
+
+                warnings.warn(
+                    "Checkpoint archive lacks 'cl_work_vec'; W_wall_closure restarts "
+                    "from zero, so the energy_balance() residual is offset by the "
+                    "pre-restart PEC wall-closure work.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         particle_solver._W_cl.fill(0.0)
         particle_solver._cl_step_active = False
 
@@ -1897,6 +1920,10 @@ def load_checkpoint(
         local_exc = exc
     _checkpoint_collective_check(particle_solver, local_exc)
 
+    particle_solver._has_pec_domain_wall = (
+        particle_solver._compute_has_pec_domain_wall()
+    )
+
     local_exc = None
     try:
         assert rank_file is not None
@@ -1904,6 +1931,8 @@ def load_checkpoint(
             with np.load(rank_file, allow_pickle=False) as data:
                 _validate_rank_archive(particle_solver, data)
                 _restore_rank_arrays(particle_solver, data)
+        except Warning:
+            raise
         except Exception as exc:
             raise ValueError(f"Corrupt checkpoint archive {rank_file}: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - any local failure must reach the collective check so no rank hangs

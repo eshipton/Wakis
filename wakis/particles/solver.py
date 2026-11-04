@@ -253,9 +253,10 @@ def _interior_vacuum_node_mask(solver, include_wall_planes: bool = False):
     solver : SolverFIT3D
         Electromagnetic FIT solver instance.
     include_wall_planes : bool, optional
-        If False (default), skip a B-spline stencil margin next to CPML inner
-        faces. If True, evaluate all vacuum nodes except the domain wall nodes
-        themselves and CPML nodes.
+        If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+        next to CPML inner faces; non-CPML faces (such as PEC domain walls)
+        already evaluate all interior vacuum node planes ``1..N-1`` by default.
+        If True, shrink the CPML margin to ``1`` node.
     """
     xp = getattr(solver.E, "xp", np)
     Nx, Ny, Nz = solver.Nx, solver.Ny, solver.Nz
@@ -263,7 +264,6 @@ def _interior_vacuum_node_mask(solver, include_wall_planes: bool = False):
 
     bc_low = getattr(solver, "bc_low", ("periodic", "periodic", "periodic"))
     bc_high = getattr(solver, "bc_high", ("periodic", "periodic", "periodic"))
-    edge_ghosts = getattr(getattr(solver, "grid", None), "edge_ghosts", (0, 0, 0))
     n_pml = int(getattr(solver, "n_pml", 10))
     shape_order = int(getattr(solver, "_particles_shape_order", 1))
     pad = 1 if include_wall_planes else ((shape_order + 1) // 2 + 1)
@@ -275,7 +275,9 @@ def _interior_vacuum_node_mask(solver, include_wall_planes: bool = False):
         if is_per:
             continue
 
-        n_phys = n_ax - int(edge_ghosts[ax])
+        # On any non-periodic axis, SolverFIT3D places the high-side boundary
+        # node at index n_ax - 1 (both when boundary_at_domain_edge=True and False).
+        n_phys = n_ax - 1
         i_start = (n_pml + pad) if low_s in ("pml", "cpml") else 1
         if high_s == "mpi":
             i_end = n_ax - 1
@@ -392,9 +394,10 @@ def gauss_residual(
         B-spline shape order ``p``. Defaults to ``solver._particles_shape_order``
         if attached, else ``1``.
     include_wall_planes : bool, optional
-        If False (default), evaluate strictly interior vacuum nodes (skipping
-        the stencil margin next to CPML inner interfaces). If True, evaluate
-        all vacuum nodes except the domain wall nodes themselves and CPML nodes.
+        If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+        next to CPML inner interfaces; non-CPML faces (such as PEC domain walls)
+        already evaluate all interior vacuum node planes ``1..N-1`` by default.
+        If True, shrink the CPML margin to ``1`` node.
 
     Returns
     -------
@@ -863,10 +866,7 @@ class ParticleSolver:
         self.boundaries = ParticleBoundaries.from_solver(
             solver, collectors=collectors, solid_mask=solid_mask
         )
-        self._has_pec_domain_wall = any(
-            b in ("pec", "electric")
-            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
-        )
+        self._has_pec_domain_wall = self._compute_has_pec_domain_wall()
         solver._particles_solid_mask = self.boundaries.solid_mask
 
         if self.use_mpi:
@@ -2189,10 +2189,7 @@ class ParticleSolver:
         self._collective_check(local_exc)
 
         self.reset_gauss_reference()
-        self._has_pec_domain_wall = any(
-            b in ("pec", "electric")
-            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
-        )
+        self._has_pec_domain_wall = self._compute_has_pec_domain_wall()
         local_exc = None
         try:
             if self.track_energy:
@@ -2436,22 +2433,82 @@ class ParticleSolver:
         sp._uy[sl] = uy_b
         sp._uz[sl] = uz_b
 
+    def _compute_has_pec_domain_wall(self) -> bool:
+        """Return True on all MPI ranks if any global domain boundary face is PEC."""
+        s = self.solver
+        has_pec = any(
+            b in ("pec", "electric")
+            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
+        )
+        global_bc_z = getattr(s, "_global_bc_z", None)
+        if global_bc_z is not None:
+            has_pec = has_pec or any(
+                str(b).strip().lower() in ("pec", "electric") for b in global_bc_z
+            )
+        if self.use_mpi and int(getattr(s, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            has_pec = bool(s.comm.allreduce(bool(has_pec), op=MPI.LOR))
+        return bool(has_pec)
+
     def _pec_wall_node_index(self, axis: int, side: str) -> int:
         """Return the logical primal node index ``k_w`` of the domain wall on ``(axis, side)``."""
         if side == "low":
             return round(self.boundaries.xi_min[axis])
-        return round(self.boundaries.xi_max[axis])
+        n_ax = (self.solver.Nx, self.solver.Ny, self.solver.Nz)[axis]
+        return min(round(self.boundaries.xi_max[axis]), n_ax - 1)
 
     def _injector_pec_wall_face(self, inj) -> tuple[int, str]:
-        """Return ``(axis, side)`` for a ``pec_wall`` injector."""
-        axis = int(getattr(inj, "axis", 2))
+        """Return ``(axis, side)`` for a ``pec_wall`` injector.
+
+        Raises
+        ------
+        ValueError
+            If the injector axis, side, direction, or plane coordinate does not
+            correspond to a domain boundary wall emitting into the domain.
+        """
+        raw_axis = getattr(inj, "axis", 2)
+        if isinstance(raw_axis, bool) or int(raw_axis) not in (0, 1, 2):
+            raise ValueError(
+                f"Unsupported pec_wall injector axis={raw_axis!r}; expected 0, 1, or 2."
+            )
+        axis = int(raw_axis)
         side = getattr(inj, "side", None)
-        if side in ("low", "high"):
+        if side is not None:
+            if side not in ("low", "high"):
+                raise ValueError(
+                    f"Unsupported pec_wall injector side={side!r}; expected 'low' or 'high'."
+                )
             return axis, str(side)
-        z0 = float(getattr(inj, "z0", self.grid_map.zmin))
+        if axis != 2 or not hasattr(inj, "z0"):
+            raise ValueError(
+                "pec_wall injector without an explicit side='low'/'high' is only "
+                f"supported for z-axis injectors with z0; got axis={axis!r}."
+            )
+        z0 = float(inj.z0)
         z_lo = float(getattr(self.solver.grid, "zmin", self.grid_map.zmin))
         z_hi = float(getattr(self.solver.grid, "zmax", self.grid_map.zmax))
-        return (2, "low") if abs(z0 - z_lo) <= abs(z0 - z_hi) else (2, "high")
+        span = max(abs(z_hi - z_lo), 1.0)
+        tol = 1e-12 * span
+        direction = getattr(inj, "direction", None)
+        if abs(z0 - z_lo) <= tol:
+            if direction is not None and int(direction) != 1:
+                raise ValueError(
+                    f"pec_wall injector at zmin={z_lo:g} must emit into the domain "
+                    f"(direction=+1); got direction={direction!r}."
+                )
+            return (2, "low")
+        if abs(z0 - z_hi) <= tol:
+            if direction is not None and int(direction) != -1:
+                raise ValueError(
+                    f"pec_wall injector at zmax={z_hi:g} must emit into the domain "
+                    f"(direction=-1); got direction={direction!r}."
+                )
+            return (2, "high")
+        raise ValueError(
+            f"pec_wall injector z0={z0:g} does not lie on zmin={z_lo:g} or zmax={z_hi:g}; "
+            "use emitter_kind='interior_sheet' for interior emission planes."
+        )
 
     def _check_mpi_pec_wall_closure(
         self, q_vis, axis: int, side: str, k_w: int
@@ -2501,10 +2558,13 @@ class ParticleSolver:
         k_w = self._pec_wall_node_index(axis, side)
         self._check_mpi_pec_wall_closure(q_vis, axis, side, k_w)
 
-        q_wall = xp.sum(q_vis, axis=axis)
         sl_wall = [slice(None), slice(None), slice(None)]
         sl_wall[axis] = k_w
         sl_wall_t = tuple(sl_wall)
+        # B-spline symmetry at the wall node k_w implies the masked exterior
+        # ghost weight equals the interior tail weight sum_{k != k_w} q_vis[k],
+        # so the full particle charge at the wall is 2 * sum(q_vis) - q_vis[k_w].
+        q_wall = 2.0 * xp.sum(q_vis, axis=axis) - q_vis[sl_wall_t]
         if event == "inject":
             q_bg[sl_wall_t] -= q_wall
         else:
@@ -3138,7 +3198,11 @@ class ParticleSolver:
                                     W_cl_out=self._W_cl if use_cl_gpu else None,
                                 )
                             )
-                            if use_cl_gpu and self._has_pec_domain_wall:
+                            if (
+                                use_cl_gpu
+                                and self._has_pec_domain_wall
+                                and self.boundaries._poll_pec_wall_absorbed_gpu()
+                            ):
                                 self._cl_step_active = True
                         else:
                             n_act = sp.n_particles
@@ -4219,7 +4283,16 @@ class ParticleSolver:
         return float(self.solver.field_energy())
 
     def gauss_residual(self, include_wall_planes: bool = False) -> float:
-        """Return relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``."""
+        """Return relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``.
+
+        Parameters
+        ----------
+        include_wall_planes : bool, optional
+            If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+            next to CPML inner interfaces; non-CPML faces (such as PEC domain walls)
+            already evaluate all interior vacuum node planes ``1..N-1`` by default.
+            If True, shrink the CPML margin to ``1`` node.
+        """
         return gauss_residual(
             self.solver,
             self.species,

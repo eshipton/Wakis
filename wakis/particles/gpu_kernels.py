@@ -797,7 +797,8 @@ __device__ __forceinline__ void deposit_pec_wall_absorb_point_dev(
                     : ((axis == 1) ? (ix + iz * stride_z) : (ix + iy * stride_y));
 
                 if (q_bg_flat != nullptr) {
-                    atomicAdd(&q_bg_flat[base_perp + k_w * stride_a], val);
+                    double q_wall_val = (k_a == k_w) ? val : (2.0 * val);
+                    atomicAdd(&q_bg_flat[base_perp + k_w * stride_a], q_wall_val);
                 }
                 if (enable_closure && W_n != nullptr) {
                     if (!is_high) {
