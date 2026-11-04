@@ -660,6 +660,7 @@ def run_subprocess_restart_worker(
                 eb["K_absorbed"],
                 eb["field_work"],
                 eb["residual"],
+                eb["W_wall_closure"],
             ],
             dtype=np.float64,
         )
@@ -718,6 +719,7 @@ def _load_worker_snapshot(out_npz: Path, ref_snap: dict) -> dict:
                 "K_absorbed": float(eb_v[3]),
                 "field_work": float(eb_v[4]),
                 "residual": float(eb_v[5]),
+                "W_wall_closure": float(eb_v[6]),
             }
         else:
             eb_dict = None
