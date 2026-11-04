@@ -747,6 +747,7 @@ __device__ __forceinline__ void deposit_pec_wall_absorb_point_dev(
     double* __restrict__ Wx_out,
     double* __restrict__ Wy_out,
     double* __restrict__ Wz_out,
+    double* __restrict__ W_cl_out,
     int Nx, int Ny, int Nz,
     int order, int per_x, int per_y, int per_z,
     double c_max_axis, int enable_closure
@@ -775,6 +776,7 @@ __device__ __forceinline__ void deposit_pec_wall_absorb_point_dev(
     int n_ax = (axis == 0) ? Nx : ((axis == 1) ? Ny : Nz);
     int k_w = is_high ? min(max((int)(c_max_axis + 0.5), 0), n_ax - 1) : 0;
     double* W_n = (axis == 0) ? Wx_out : ((axis == 1) ? Wy_out : Wz_out);
+    double* W_cl_n = (W_cl_out != nullptr) ? (W_cl_out + axis * (stride_z * Nz)) : nullptr;
     int stride_a = (axis == 0) ? 1 : ((axis == 1) ? stride_y : stride_z);
 
     for (int oz = 0; oz < n_nod; ++oz) {
@@ -800,11 +802,19 @@ __device__ __forceinline__ void deposit_pec_wall_absorb_point_dev(
                 if (enable_closure && W_n != nullptr) {
                     if (!is_high) {
                         for (int e = 0; e < k_a && e < n_ax - 1; ++e) {
-                            atomicAdd(&W_n[base_perp + e * stride_a], -val);
+                            int idx_e = base_perp + e * stride_a;
+                            atomicAdd(&W_n[idx_e], -val);
+                            if (W_cl_n != nullptr) {
+                                atomicAdd(&W_cl_n[idx_e], -val);
+                            }
                         }
                     } else {
                         for (int e = k_a; e < k_w; ++e) {
-                            atomicAdd(&W_n[base_perp + e * stride_a], val);
+                            int idx_e = base_perp + e * stride_a;
+                            atomicAdd(&W_n[idx_e], val);
+                            if (W_cl_n != nullptr) {
+                                atomicAdd(&W_cl_n[idx_e], val);
+                            }
                         }
                     }
                 }
@@ -879,7 +889,8 @@ __global__ void boundary_prepare_paths_kernel(
     int enable_closure,
     double* __restrict__ Wx_out,
     double* __restrict__ Wy_out,
-    double* __restrict__ Wz_out
+    double* __restrict__ Wz_out,
+    double* __restrict__ W_cl_out
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n_launch) return;
@@ -1057,7 +1068,7 @@ __global__ void boundary_prepare_paths_kernel(
         deposit_pec_wall_absorb_point_dev(
             dep_x, dep_y, dep_z, qw,
             hit_code,
-            q_bg_flat, Wx_out, Wy_out, Wz_out,
+            q_bg_flat, Wx_out, Wy_out, Wz_out, W_cl_out,
             Nx, Ny, Nz, order, per_x, per_y, per_z,
             cmax_arr[hit_code >> 1], enable_closure
         );
@@ -1762,6 +1773,7 @@ def launch_boundary_prepare_paths_gpu(
     Wy_out=None,
     Wz_out=None,
     enable_closure: bool = True,
+    W_cl_out=None,
 ):
     """Launch ``boundary_prepare_paths_kernel`` on the GPU without host sync."""
     n_launch = species._n_launch_bound
@@ -1849,6 +1861,7 @@ def launch_boundary_prepare_paths_gpu(
             0 if Wx_out is None else Wx_out,
             0 if Wy_out is None else Wy_out,
             0 if Wz_out is None else Wz_out,
+            0 if W_cl_out is None else W_cl_out,
         ),
     )
     boundaries._gpu_stats_dirty = True

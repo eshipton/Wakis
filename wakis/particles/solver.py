@@ -863,6 +863,10 @@ class ParticleSolver:
         self.boundaries = ParticleBoundaries.from_solver(
             solver, collectors=collectors, solid_mask=solid_mask
         )
+        self._has_pec_domain_wall = any(
+            b in ("pec", "electric")
+            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
+        )
         solver._particles_solid_mask = self.boundaries.solid_mask
 
         if self.use_mpi:
@@ -931,6 +935,9 @@ class ParticleSolver:
             self._E_prev_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._fw_scratch = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._fw_accum_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._W_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._J_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._cl_work_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
@@ -939,10 +946,15 @@ class ParticleSolver:
             self._E_prev_fw = None
             self._fw_scratch = None
             self._fw_accum_vec = None
+            self._W_cl = None
+            self._J_cl = None
+            self._cl_work_vec = None
             self._E_init_fw = None
             self._H_prev_init_fw = None
             self._H_curr_init_fw = None
         self._fw_pending = False
+        self._cl_pending = False
+        self._cl_step_active = False
         self._fw_dt = 0.0
         self._has_step0_field_snap = False
         self._K_particles_0 = 0.0
@@ -1232,9 +1244,11 @@ class ParticleSolver:
         """Add low guard-layer current ``src`` (from rank ``r + 1``'s plane ``0``) into owned plane ``dst``."""
         dst += src
 
-    def _pack_second_high_guard_plane(self, send_hi, N: int, nxy: int) -> None:
+    def _pack_second_high_guard_plane(
+        self, send_hi, N: int, nxy: int, *, use_w_buf: bool = True
+    ) -> None:
         """Pack the second high guard plane ``k = k_own_end + 1`` into ``send_hi[:, 1, :]``."""
-        if self._Wx_buf.size >= N + nxy:
+        if use_w_buf and self._Wx_buf.size >= N + nxy:
             send_hi[0, 1, :] = self._Wx_buf[N : N + nxy]
             send_hi[1, 1, :] = self._Wy_buf[N : N + nxy]
             send_hi[2, 1, :] = self._Wz_buf[N : N + nxy]
@@ -1299,7 +1313,9 @@ class ParticleSolver:
         if rank < size - 1:
             send_hi = self._cpu_guard_send_hi
             send_hi[:, 0, :] = view[:, k_own_end, :]
-            self._pack_second_high_guard_plane(send_hi, N, nxy)
+            self._pack_second_high_guard_plane(
+                send_hi, N, nxy, use_w_buf=(buf is self.J_particles)
+            )
             recv_from_hi = self._cpu_guard_recv_hi
 
         reqs = []
@@ -1363,7 +1379,9 @@ class ParticleSolver:
             self._d_guard_send_lo[...] = view[:, 0, :]
         if rank < size - 1:
             self._d_guard_send_hi[:, 0, :] = view[:, k_own_end, :]
-            self._pack_second_high_guard_plane(self._d_guard_send_hi, N, nxy)
+            self._pack_second_high_guard_plane(
+                self._d_guard_send_hi, N, nxy, use_w_buf=(buf is self.J_particles)
+            )
 
         if nccl_comm is not None:
             from cupy.cuda import nccl
@@ -2171,6 +2189,10 @@ class ParticleSolver:
         self._collective_check(local_exc)
 
         self.reset_gauss_reference()
+        self._has_pec_domain_wall = any(
+            b in ("pec", "electric")
+            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
+        )
         local_exc = None
         try:
             if self.track_energy:
@@ -2182,9 +2204,19 @@ class ParticleSolver:
                     self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
                     self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
                     self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                if self._W_cl is None:
+                    n_cells = s.Nx * s.Ny * s.Nz
+                    self._W_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._J_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._cl_work_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
                 self._init_energy_weights()
                 self._fw_accum_vec.fill(0.0)
+                self._W_cl.fill(0.0)
+                self._J_cl.fill(0.0)
+                self._cl_work_vec.fill(0.0)
             self._fw_pending = False
+            self._cl_pending = False
+            self._cl_step_active = False
             self._fw_dt = 0.0
             self._has_step0_field_snap = False
             H_arr = s.H.toarray()
@@ -2290,14 +2322,65 @@ class ParticleSolver:
         out *= 0.5
 
     def _flush_pending_field_work(self, E_curr) -> None:
-        """Accumulate ``dt * J^{n+1/2} * E_bar^{n+1/2}`` into ``_fw_accum_vec`` in-place."""
+        """Accumulate ``dt * J^{n+1/2} * E_bar^{n+1/2}`` into ``_fw_accum_vec`` (and ``_cl_work_vec``) in-place."""
         if not self._fw_pending:
             return
         self._step_e_bar_for_work(self._E_prev_fw, E_curr, self._fw_scratch)
+        if self._cl_pending:
+            self._cl_work_vec += (self._fw_scratch * self._J_cl) * self._fw_dt
+            self._cl_pending = False
         self._fw_scratch *= self.J_particles
         self._fw_scratch *= self._fw_dt
         self._fw_accum_vec += self._fw_scratch
         self._fw_pending = False
+
+    def _finalize_closure_current(self, dt: float) -> None:
+        """Finalize per-step PEC wall-closure current ``_J_cl`` from ``_W_cl``."""
+        s = self.solver
+        use_mpi_multi = self.use_mpi and int(getattr(s, "size", 1)) > 1
+        if use_mpi_multi:
+            active = bool(
+                _ENABLE_PEC_WALL_CLOSURE
+                and (
+                    self._has_pec_domain_wall
+                    or any(inj.emitter_kind == "pec_wall" for inj in self.injectors)
+                )
+            )
+        else:
+            active = self._cl_step_active
+        if not active:
+            self._cl_pending = False
+            return
+
+        xp = self.xp
+        Nx, Ny, Nz = s.Nx, s.Ny, s.Nz
+        N = Nx * Ny * Nz
+        if use_mpi_multi:
+            self._mpi_sum_guards(self._W_cl)
+
+        if self.filter:
+            if self.use_mpi:
+                raise NotImplementedError(
+                    "Binomial current filtering is not supported with use_mpi=True."
+                )
+            Wx_cl, Wy_cl, Wz_cl = apply_binomial_filter_3d(
+                self._W_cl[:N],
+                self._W_cl[N : 2 * N],
+                self._W_cl[2 * N : 3 * N],
+                Nx,
+                Ny,
+                Nz,
+                periodic=self.boundaries.periodic,
+                compensate=(self.filter != "uncompensated"),
+                xp=xp,
+            )
+            self._W_cl[:N] = Wx_cl
+            self._W_cl[N : 2 * N] = Wy_cl
+            self._W_cl[2 * N : 3 * N] = Wz_cl
+
+        xp.multiply(self._W_cl, self._itA_arr, out=self._J_cl)
+        self._J_cl *= 1.0 / dt
+        self._cl_pending = True
 
     def _backpush_injected_slice(
         self,
@@ -2430,12 +2513,14 @@ class ParticleSolver:
         if not _ENABLE_PEC_WALL_CLOSURE:
             return
 
-        dW_n = _pec_wall_closure_1d(
-            q_vis, axis, side, k_w=k_w, event=event, xp=xp
-        )
+        dW_n = _pec_wall_closure_1d(q_vis, axis, side, k_w=k_w, event=event, xp=xp)
         W_n = W_tuple[axis]
         N = q_vis.size
-        W_n[:N] += dW_n.ravel(order="F")
+        dW_flat = dW_n.ravel(order="F")
+        W_n[:N] += dW_flat
+        if self.track_energy and self._W_cl is not None:
+            self._W_cl[axis * N : (axis + 1) * N] += dW_flat
+            self._cl_step_active = True
 
     def _record_absorbed_particles(
         self,
@@ -2900,6 +2985,9 @@ class ParticleSolver:
             Wx_tot.fill(0.0)
             Wy_tot.fill(0.0)
             Wz_tot.fill(0.0)
+            if self.track_energy:
+                self._W_cl.fill(0.0)
+                self._cl_step_active = False
             if do_profile:
                 xp.cuda.Stream.null.synchronize()
                 t_dep_acc += time.perf_counter() - t0_zero
@@ -3032,6 +3120,11 @@ class ParticleSolver:
                             zeta1_dep = sp._zeta1_scratch
                             keep_mask_i32 = None
                         elif not has_custom_mask_col:
+                            use_cl_gpu = bool(
+                                self.track_energy
+                                and _ENABLE_PEC_WALL_CLOSURE
+                                and self._W_cl is not None
+                            )
                             xi1_dep, eta1_dep, zeta1_dep, keep_mask_i32 = (
                                 launch_boundary_prepare_paths_gpu(
                                     self.boundaries,
@@ -3042,8 +3135,11 @@ class ParticleSolver:
                                     Wy_out=Wy_tot,
                                     Wz_out=Wz_tot,
                                     enable_closure=_ENABLE_PEC_WALL_CLOSURE,
+                                    W_cl_out=self._W_cl if use_cl_gpu else None,
                                 )
                             )
+                            if use_cl_gpu and self._has_pec_domain_wall:
+                                self._cl_step_active = True
                         else:
                             n_act = sp.n_particles
                             xi1_dep, eta1_dep, zeta1_dep, keep_mask_b = (
@@ -3192,6 +3288,8 @@ class ParticleSolver:
             1.0 / dt,
             N,
         )
+        if self.track_energy:
+            self._finalize_closure_current(dt)
         if do_profile:
             xp.cuda.Stream.null.synchronize()
             t_dep_acc += time.perf_counter() - t_fin0
@@ -3296,6 +3394,9 @@ class ParticleSolver:
             Wx_tot.fill(0.0)
             Wy_tot.fill(0.0)
             Wz_tot.fill(0.0)
+            if self.track_energy:
+                self._W_cl.fill(0.0)
+                self._cl_step_active = False
             if do_profile:
                 t_dep_acc += time.perf_counter() - t0_zero
 
@@ -3690,6 +3791,8 @@ class ParticleSolver:
         self.J_particles *= inv_dt
         s.J.array += self.J_particles
         self._j_in_solver = True
+        if self.track_energy:
+            self._finalize_closure_current(dt)
         if do_profile:
             t_dep_acc += time.perf_counter() - t_fin0
             self._last_push_gather_s = t_pg_acc
@@ -3825,6 +3928,51 @@ class ParticleSolver:
             w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
         return w_loc
 
+    def wall_closure_work(self) -> float:
+        """Cumulative work [J] done by the electromagnetic field on PEC wall-closure currents.
+
+        Returns the discrete time integral accumulated over all completed steps:
+
+        .. math::
+
+            W_{\\text{wall\\_closure}} = \\sum_{m=0}^{n-1} \\Delta t \\sum_{e} V_{E,e}\\,
+            J_{\\text{cl},e}^{m+1/2} \\frac{E_e^m + E_e^{m+1}}{2},
+
+        where :math:`V_{E,e} = L_e \\tilde{A}_e` is the FIT edge dual-cell volume
+        and :math:`J_{\\text{cl},e}^{m+1/2} = W_{\\text{cl},e}^{m+1/2} / (\\Delta t\\, \\tilde{A}_e)`
+        is the PEC wall-closure current density on primal edge :math:`e`. By this
+        sign convention, :math:`W_{\\text{wall\\_closure}} > 0` means the
+        electromagnetic field did positive work on the wall-closure current
+        (energy delivered from the field to the wall/emitter), and
+        :math:`W_{\\text{wall\\_closure}} < 0` means the wall-closure current
+        delivered energy to the field. Under MPI (``use_mpi=True`` and
+        ``solver.size > 1``), this method is collective across ``solver.comm``
+        (``MPI.SUM`` reduction).
+
+        Returns
+        -------
+        float
+            Cumulative discrete wall-closure field work [J].
+
+        Raises
+        ------
+        RuntimeError, ValueError
+            If the :class:`ParticleSolver` was initialized with
+            ``track_energy=False`` (the default).
+        """
+        if not self.track_energy:
+            raise _EnergyTrackingDisabledError(
+                "ParticleSolver.wall_closure_work() requires track_energy=True."
+            )
+        if self._fw_pending:
+            self._flush_pending_field_work(self.solver.E.toarray())
+        w_loc = float(self.xp.sum(self._cl_work_vec * self._vol_E_fw))
+        if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
+        return w_loc
+
     def energy_balance(self) -> dict[str, float]:
         """Return discrete electromagnetic and particle energy-balance terms [J].
 
@@ -3840,6 +3988,12 @@ class ParticleSolver:
           does not include convolutional CPML auxiliary :math:`\\boldsymbol{\\psi}`
           energy terms (which act as an artificial absorber outside the lossless
           FIT curl identity).
+        - ``"W_wall_closure"`` (:meth:`wall_closure_work`) uses the same sign
+          convention as ``"field_work"``: positive when the electromagnetic field
+          does positive work on the PEC wall-closure current (delivering energy
+          from the field to the wall/emitter without accelerating particles), so
+          it is subtracted alongside ``"W_field"`` and ``"K_particles"`` in
+          ``"residual"``.
 
         Returns
         -------
@@ -3859,9 +4013,15 @@ class ParticleSolver:
               boundaries and :class:`Collector` instances.
             - ``"field_work"`` : cumulative discrete field-to-particle work
               :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J^{m+1/2} (E^m + E^{m+1})/2` [J].
+            - ``"W_wall_closure"`` : cumulative work done by the electromagnetic
+              field on the PEC wall-closure current
+              :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J_{\\text{cl}}^{m+1/2} (E^m + E^{m+1})/2`
+              [J] (positive when energy is delivered from the field to the
+              wall/emitter).
             - ``"residual"`` : total energy closure residual
               :math:`(K_{\\text{injected}} + K_{\\text{particles}}^0 + W_{\\text{field}}^0)
-              - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}` [J].
+              - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}
+              - W_{\\text{wall\\_closure}}` [J].
 
         Raises
         ------
@@ -3884,14 +4044,18 @@ class ParticleSolver:
         k_injected = self.injected_energy()
         k_absorbed = self.absorbed_energy()
         fw = self.field_work()
+        w_wall_cl = self.wall_closure_work()
         e_init = self._K_particles_0 + w_field_0
-        residual = (k_injected + e_init) - k_absorbed - k_particles - w_field
+        residual = (
+            (k_injected + e_init) - k_absorbed - k_particles - w_field - w_wall_cl
+        )
         return {
             "W_field": w_field,
             "K_particles": k_particles,
             "K_injected": k_injected,
             "K_absorbed": k_absorbed,
             "field_work": fw,
+            "W_wall_closure": w_wall_cl,
             "residual": residual,
         }
 
@@ -4074,3 +4238,9 @@ class ParticleSolver:
         from .checkpoint import load_checkpoint
 
         load_checkpoint(self, path)
+        if self.track_energy and self._cl_work_vec is not None:
+            self._W_cl.fill(0.0)
+            self._J_cl.fill(0.0)
+            self._cl_work_vec.fill(0.0)
+            self._cl_pending = False
+            self._cl_step_active = False
