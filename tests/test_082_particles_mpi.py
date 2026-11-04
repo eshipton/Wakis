@@ -1118,7 +1118,7 @@ def test_mpi_mutations_fail(mutation, monkeypatch):
         monkeypatch.setattr(
             ps,
             "_pack_second_high_guard_plane",
-            lambda send_hi, N, nxy: send_hi[:, 1, :].fill(0.0),
+            lambda send_hi, N, nxy, **_kw: send_hi[:, 1, :].fill(0.0),
         )
     elif mutation == "skip_low_guard":
         monkeypatch.setattr(
@@ -2783,7 +2783,7 @@ def test_multi_gpu_mutations_fail(mutation, monkeypatch):
         monkeypatch.setattr(
             ps,
             "_pack_second_high_guard_plane",
-            lambda send_hi, N, nxy: send_hi[:, 1, :].fill(0.0),
+            lambda send_hi, N, nxy, **_kw: send_hi[:, 1, :].fill(0.0),
         )
     elif mutation == "skip_low_guard":
         monkeypatch.setattr(
@@ -3006,40 +3006,15 @@ def test_pec_z_wall_closure_3ranks_energy_residual():
     do not hang in _finalize_closure_current, and match the 1-rank energy residual
     to <= 1e-12 relative.
     """
-    import shutil
-    import subprocess
-    import sys
-
     comm = MPI.COMM_WORLD
     size = comm.Get_size()
     rank = comm.Get_rank()
     if size < 3:
-        if shutil.which("mpiexec") is None:
-            pytest.skip("Requires >= 3 MPI ranks or mpiexec in PATH")
-        if rank == 0:
-            cmd = [
-                "mpiexec",
-                "--allow-run-as-root",
-                "--oversubscribe",
-                "-n",
-                "3",
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                __file__,
-                "-k",
-                "test_pec_z_wall_closure_3ranks_energy_residual",
-            ]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=60, check=False
-            )
-            assert proc.returncode == 0, (
-                f"3-rank mpiexec subprocess failed (rc={proc.returncode}):\n"
-                f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-            )
-        comm.Barrier()
-        return
+        # A nested ``mpiexec`` from inside an MPI rank is not reliable (inherited
+        # OMPI environment; a failing rank 0 would leave peers in a barrier), so
+        # this test runs only when the suite itself is launched with >= 3 ranks:
+        #   mpiexec -n 3 python -m pytest tests/test_082_particles_mpi.py -k 3ranks
+        pytest.skip("Requires mpiexec -n >= 3")
 
     with _hang_guard(20.0):
         eb_mpi, gauss_mpi = _run_pec_z_interior_sheet_energy(use_mpi=True)
