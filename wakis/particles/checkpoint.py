@@ -943,6 +943,13 @@ def _save_state_item(
             arrays["fw_dt"] = np.array(
                 [float(particle_solver._fw_dt)], dtype=np.float64
             )
+            # PEC wall-closure work (energy_balance "W_wall_closure"): persisted with the
+            # field-work accumulator so the energy residual is continuous across restarts.
+            arrays["cl_work_vec"] = _to_host_f64(particle_solver._cl_work_vec)
+            arrays["cl_J"] = _to_host_f64(particle_solver._J_cl)
+            arrays["cl_pending"] = np.array(
+                [1 if particle_solver._cl_pending else 0], dtype=np.int64
+            )
         else:
             arrays["has_energy_work_accum"] = np.array([0], dtype=np.int64)
         return
@@ -1248,6 +1255,10 @@ def _validate_rank_archive(
             _require_header("fw_E_prev", exp_fw_shape, np.float64)
             _require_header("fw_pending", (1,), np.int64)
             _require_header("fw_dt", (1,), np.float64)
+            if "cl_work_vec" in files:  # optional: absent in pre-wall-closure checkpoints
+                _require_header("cl_work_vec", exp_fw_shape, np.float64)
+                _require_header("cl_J", exp_fw_shape, np.float64)
+                _require_header("cl_pending", (1,), np.int64)
 
     if "energy_init_snap" in req_set:
         _require_header("has_energy_init_snap", (1,), np.int64)
@@ -1460,6 +1471,16 @@ def _restore_rank_arrays(
         _copy_into_target(particle_solver._E_prev_fw, data["fw_E_prev"])
         particle_solver._fw_pending = bool(int(data["fw_pending"][0]))
         particle_solver._fw_dt = float(data["fw_dt"][0])
+        if "cl_work_vec" in files:
+            _copy_into_target(particle_solver._cl_work_vec, data["cl_work_vec"])
+            _copy_into_target(particle_solver._J_cl, data["cl_J"])
+            particle_solver._cl_pending = bool(int(data["cl_pending"][0]))
+        else:  # checkpoint written before the wall-closure term existed
+            particle_solver._cl_work_vec.fill(0.0)
+            particle_solver._J_cl.fill(0.0)
+            particle_solver._cl_pending = False
+        particle_solver._W_cl.fill(0.0)
+        particle_solver._cl_step_active = False
 
     if (
         "has_energy_init_snap" in files

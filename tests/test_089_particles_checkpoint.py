@@ -539,6 +539,7 @@ def _assert_snapshots_bitwise_equal(
             "K_injected",
             "K_absorbed",
             "field_work",
+            "W_wall_closure",
             "residual",
         ):
             assert (

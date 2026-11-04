@@ -453,3 +453,83 @@ def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
             assert np.all(ress_mut > 0.0)
             assert np.all(np.diff(ress_mut) < 0.0)
             _assert_richardson_order(dts_mut, ress_mut, order=1.0)
+
+
+def _build_p2_energy_case():
+    """p = 2 pec_wall injection with energy tracking (closure work nonzero from step 1)."""
+    grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.04, 6, 1, 20, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj = BeamInjector(
+        species=sp,
+        z0=0.0,
+        current=0.25,
+        gamma=2.0,
+        profile="sheet_lattice",
+        radius=0.008,
+        n_macro_per_step=16,
+        seed=42,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=2,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+    return solver, ps
+
+
+def test_wall_closure_work_survives_checkpoint_restart(tmp_path, monkeypatch):
+    """Test 6: ``W_wall_closure`` and the residual are bitwise continuous across a restart.
+
+    Mutation: a restore that drops the saved closure-work accumulator must break equality.
+    """
+    import wakis.particles.checkpoint as ckpt_mod
+
+    n_a, n_b = 6, 6
+    solver, ps = _build_p2_energy_case()
+    for _ in range(n_a):
+        solver.one_step()
+    ps.save_checkpoint(str(tmp_path / "ck"))
+    for _ in range(n_b):
+        solver.one_step()
+    eb_ref = ps.energy_balance()
+    assert eb_ref["W_wall_closure"] != 0.0
+
+    def _restart(mutate: bool):
+        s2, ps2 = _build_p2_energy_case()
+        orig = ckpt_mod._restore_rank_arrays
+
+        def _restore(ps_t, data):
+            orig(ps_t, data)
+            if mutate:
+                ps_t._cl_work_vec.fill(0.0)
+
+        monkeypatch.setattr(ckpt_mod, "_restore_rank_arrays", _restore)
+        ps2.load_checkpoint(str(tmp_path / "ck"))
+        monkeypatch.setattr(ckpt_mod, "_restore_rank_arrays", orig)
+        for _ in range(n_b):
+            s2.one_step()
+        return ps2.energy_balance()
+
+    eb_rs = _restart(False)
+    eb_mut = _restart(True)
+    print(
+        f"[restart p=2] W_cl ref={eb_ref['W_wall_closure']:.6e} restart={eb_rs['W_wall_closure']:.6e} "
+        f"mutated={eb_mut['W_wall_closure']:.6e}; residual ref={eb_ref['residual']:.6e} "
+        f"restart={eb_rs['residual']:.6e} mutated={eb_mut['residual']:.6e}"
+    )
+    for key in ("W_wall_closure", "residual", "field_work", "W_field", "K_particles"):
+        assert eb_rs[key] == eb_ref[key], key
+    assert eb_mut["W_wall_closure"] != eb_ref["W_wall_closure"]
+    assert eb_mut["residual"] != eb_ref["residual"]

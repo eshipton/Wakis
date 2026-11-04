@@ -4238,9 +4238,3 @@ class ParticleSolver:
         from .checkpoint import load_checkpoint
 
         load_checkpoint(self, path)
-        if self.track_energy and self._cl_work_vec is not None:
-            self._W_cl.fill(0.0)
-            self._J_cl.fill(0.0)
-            self._cl_work_vec.fill(0.0)
-            self._cl_pending = False
-            self._cl_step_active = False
