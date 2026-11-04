@@ -12,24 +12,41 @@ Covers:
    ``p = 1, 2, 3``, ``gauss_residual(..., include_wall_planes=True) <= 1e-12`` at
    every recorded step through transit and after absorption. Also covers
    absorption on all six PEC domain faces (``x_low``, ``x_high``, ``y_low``,
-   ``y_high``, ``z_low``, ``z_high``).
+   ``y_high``, ``z_low``, ``z_high``) and both ``GridFIT3D`` boundary layouts
+   (``boundary_at_domain_edge=True`` and ``False``), as well as high-face
+   injection (``z0 = zmax``, ``direction = -1``) and ``_injector_pec_wall_face``
+   orientation validation.
 2. Mutation check: monkeypatching the wall-closure current off for ``p = 2``
    causes ``gauss_residual(..., include_wall_planes=True)`` to exceed ``1e-2``
    (analytically ``1/8 = 0.125`` relative at ``k = 1`` after step 1).
-3. ``p = 1`` wall-closure current at ``zeta = 0`` (and ``zeta = Nz``) is
+3. Algebraic identity check of the ``_pec_wall_closure_1d`` helper: for ``p = 1``
+   at ``zeta = 0`` (and ``zeta = Nz``), the wall-closure edge charge flux is
    identically zero (``atol = 0``).
 4. ``_particles_q_bg`` after PEC-wall injection of ``N`` particles is nonzero
-   only on the wall node plane ``k_w = 0``, with total equal to
-   ``-injected_charge`` (for ``p = 1``) and ``-sum(q_vis)`` (for ``p = 1, 2, 3``)
-   to ``<= 1e-12`` relative.
+   only on the wall node plane ``k_w = 0`` with total equal to
+   ``-injected_charge`` for ``p = 1, 2, 3`` to ``<= 1e-12`` relative; both the
+   whole-domain Gauss sum ``sum(S_tilde d_tilde) == sum(q_nodes + q_bg)`` and
+   the wall-node identity ``(S_tilde d_tilde)[k_w] == (q_nodes + q_bg)[k_w]``
+   hold through injection, transit, and absorption to ``<= 1e-12`` relative
+   while leaving ``E``, ``J_particles``, and particle trajectories bit-identical.
 5. Energy-balance wall-closure work ``wall_closure_work()`` / ``"W_wall_closure"``:
    identically zero for ``p = 1`` with injection at ``zeta = 0``; nonzero for
    ``p = 2`` with the energy residual including ``W_wall_closure`` at least 10x
-   smaller than without it; mutation check monkeypatching ``wall_closure_work``
-   to ``0.0`` causes the ``p = 2`` ``dt``-convergence check to fail.
+   smaller than without it; mesh-refinement check showing
+   ``|W_wall_closure| / K_injected`` decreases as ``h -> h/2``; mutation check
+   monkeypatching ``wall_closure_work`` to ``0.0`` breaks monotonic decrease and
+   Richardson ``dt``-convergence for ``p = 2``.
+6. Checkpoint persistence of ``W_wall_closure`` across restart, plus a
+   ``RuntimeWarning`` when loading an older checkpoint archive that lacks
+   ``cl_work_vec`` while PEC wall closure is active.
+7. CPU vs GPU agreement of ``_particles_q_bg``, ``J_particles``, and
+   ``W_wall_closure`` to ``<= 1e-12`` relative for ``p = 2`` (skipped without CuPy).
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
 
 import numpy as np
 import pytest
@@ -46,7 +63,7 @@ from wakis.particles import (
     deposit_charge,
     gauss_residual,
 )
-from wakis.particles.solver import _pec_wall_closure_1d
+from wakis.particles.solver import _pec_wall_closure_1d, compute_dual_divergence_d
 from wakis.solverFIT3D import SolverFIT3D
 
 
@@ -117,7 +134,7 @@ def _run_z_wall_to_wall_transit(
 @pytest.mark.parametrize("n_macro", [1, 16])
 def test_pec_wall_injection_transit_and_absorption_gauss(order: int, n_macro: int):
     """Test 1: Single macroparticle and 16-particle sheet satisfy Gauss's law <= 1e-12
-    with ``include_wall_planes=True`` at every step from PEC z-low birth through
+    on all interior vacuum planes at every step from PEC z-low birth through
     PEC z-high absorption for ``p = 1, 2, 3``.
     """
     _solver, ps, sp, inj, history = _run_z_wall_to_wall_transit(
@@ -137,8 +154,7 @@ def test_pec_wall_injection_transit_and_absorption_gauss(order: int, n_macro: in
         f"max_transit={max_res:.3e}, post_absorb={final_res:.3e}"
     )
     assert max_res <= 1e-12, (
-        f"Gauss residual with include_wall_planes=True exceeded 1e-12 for "
-        f"p={order}, N={n_macro}: max={max_res:.3e}"
+        f"Gauss residual exceeded 1e-12 for p={order}, N={n_macro}: max={max_res:.3e}"
     )
     assert ps.gauss_residual(include_wall_planes=True) <= 1e-12
 
@@ -152,11 +168,14 @@ def test_pec_wall_closure_mutation_fails(monkeypatch):
     with monkeypatch.context() as m:
         m.setattr(solver_mod, "_ENABLE_PEC_WALL_CLOSURE", False)
         _, _, _, _, history_flag = _run_z_wall_to_wall_transit(order=2, n_macro=1)
+        step1_res_flag = history_flag[0][1]
         max_res_flag = max(r for _, r in history_flag)
-        print(f"[mutation flag=False, p=2, N=1] max_res={max_res_flag:.6e}")
+        print(
+            f"[mutation flag=False, p=2, N=1] step1_res={step1_res_flag:.6e}, "
+            f"max_res={max_res_flag:.6e}"
+        )
+        assert step1_res_flag > 1e-2
         assert max_res_flag > 1e-2
-        with pytest.raises(AssertionError):
-            assert max_res_flag <= 1e-12
 
     # Mutation B: patch _pec_wall_closure_1d helper to return zeros while keeping
     # wall-node-only _particles_q_bg bookkeeping
@@ -179,9 +198,13 @@ def test_pec_wall_closure_mutation_fails(monkeypatch):
         assert max_res_zero > 1e-2
 
 
-def test_p1_closure_at_wall_is_identically_zero():
-    """Test 3: For ``p = 1`` at ``zeta = 0`` (and ``zeta = Nz``), the wall-closure
-    current is identically zero (``atol = 0``).
+def test_pec_wall_closure_1d_helper_p1_identity():
+    """Test 3: Algebraic identity check of ``_pec_wall_closure_1d`` for ``p = 1``.
+
+    Because a ``p = 1`` (CIC) particle on the wall plane ``zeta = 0`` (or
+    ``zeta = Nz``) has zero B-spline weight on interior vacuum nodes ``k != k_w``,
+    the helper ``_pec_wall_closure_1d`` returns an identically zero array
+    (``atol = 0``).
     """
     nx, ny, nz = 6, 4, 12
     q_vis_low = np.zeros((nx, ny, nz + 1), dtype=np.float64, order="F")
@@ -233,8 +256,7 @@ def test_p1_closure_at_wall_is_identically_zero():
 def test_q_bg_after_pec_wall_injection_on_wall_plane_only(order: int):
     """Test 4: After injecting ``N`` particles at a PEC wall, ``_particles_q_bg``
     is nonzero only on the wall node plane ``k_w = 0``, with total equal to
-    ``-injected_charge`` (for ``p = 1``) and ``-sum(q_vis)`` (for ``p = 1, 2, 3``,
-    where ``sum(q_vis) = (1 - w_{-1}) * injected_charge``) to ``<= 1e-12`` relative.
+    ``-injected_charge`` for ``p = 1, 2, 3`` to ``<= 1e-12`` relative.
     """
     nx, ny, nz = 6, 1, 20
     grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.02, nx, ny, nz, verbose=0)
@@ -275,11 +297,8 @@ def test_q_bg_after_pec_wall_injection_on_wall_plane_only(order: int):
     assert np.all(q_bg[:, :, 1:] == 0.0)
     assert np.any(q_bg[:, :, 0] != 0.0)
 
-    # At zeta = 0, the B-spline weight on the exterior ghost node k = -1 is
-    # 0 (p = 1), 1/8 (p = 2), 1/6 (p = 3), so sum(q_vis) = (1 - w_{-1}) * q_inj.
-    w_ghost = {1: 0.0, 2: 0.125, 3: 1.0 / 6.0}[order]
     q_inj = float(inj.injected_charge)
-    expected_q_bg_total = -(1.0 - w_ghost) * q_inj
+    expected_q_bg_total = -q_inj
     actual_q_bg_total = float(np.sum(q_bg[:, :, 0]))
     rel_err = abs(actual_q_bg_total - expected_q_bg_total) / abs(expected_q_bg_total)
     print(
@@ -287,9 +306,173 @@ def test_q_bg_after_pec_wall_injection_on_wall_plane_only(order: int):
         f"expected={expected_q_bg_total:.6e}, rel_err={rel_err:.3e}"
     )
     assert rel_err <= 1e-12
-    if order == 1:
-        assert abs(actual_q_bg_total - (-q_inj)) / abs(q_inj) <= 1e-12
     assert ps.gauss_residual(include_wall_planes=True) <= 1e-12
+
+
+@pytest.mark.parametrize("order", [1, 2, 3])
+def test_whole_domain_and_wall_node_gauss_identity_and_field_invariance(
+    order: int, monkeypatch
+):
+    """Verify whole-domain ``sum(S_tilde d_tilde) == sum(q_nodes + q_bg)`` and
+    wall-node ``(S_tilde d_tilde)[k_w] == (q_nodes + q_bg)[k_w]`` through
+    injection, transit, and absorption for ``p = 1, 2, 3``, and assert that
+    ``E``, ``J_particles``, and particle dynamics are bit-identical to the
+    unmodified ``W``/``J`` deposition.
+    """
+
+    def _run_case(use_legacy_q_bg: bool, m_ctx=None):
+        nx, ny, nz = 1, 1, 40
+        grid = GridFIT3D(-0.005, 0.005, -0.005, 0.005, 0.0, 0.04, nx, ny, nz, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["periodic", "periodic", "pec"],
+            bc_high=["periodic", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        gamma0 = 2.5
+        beta0 = float(np.sqrt(1.0 - 1.0 / (gamma0 * gamma0)))
+        vz0 = beta0 * c_light
+        dt = float(solver.dt)
+        t_inject_end = 0.75 * dt
+
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=lambda t: 0.2 if t <= t_inject_end else 0.0,
+            gamma=gamma0,
+            profile="sheet_lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=1234,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=order,
+            gather="momentum",
+        ).attach()
+
+        if use_legacy_q_bg:
+            orig_apply = ParticleSolver._apply_pec_wall_event
+
+            def _legacy_apply(self_ps, q_vis, axis, side, *, event, W_tuple, q_bg):
+                orig_apply(
+                    self_ps,
+                    q_vis,
+                    axis,
+                    side,
+                    event=event,
+                    W_tuple=W_tuple,
+                    q_bg=q_bg,
+                )
+                k_w = self_ps._pec_wall_node_index(axis, side)
+                sl_w = [slice(None), slice(None), slice(None)]
+                sl_w[axis] = k_w
+                sl_w_t = tuple(sl_w)
+                q_ghost = self_ps.xp.sum(q_vis, axis=axis) - q_vis[sl_w_t]
+                if event == "inject":
+                    q_bg[sl_w_t] += q_ghost
+                else:
+                    q_bg[sl_w_t] -= q_ghost
+
+            m_ctx.setattr(ParticleSolver, "_apply_pec_wall_event", _legacy_apply)
+
+        def _measure_residuals():
+            div_d = np.asarray(compute_dual_divergence_d(solver))
+            q_nodes = np.zeros((solver.Nx, solver.Ny, solver.Nz), order="F")
+            if sp.n_particles > 0:
+                xi, eta, zeta = ps.grid_map.to_logical(sp.x, sp.y, sp.z)
+                deposit_charge(
+                    xi,
+                    eta,
+                    zeta,
+                    sp.charge * sp.w,
+                    solver.Nx,
+                    solver.Ny,
+                    solver.Nz,
+                    order=order,
+                    periodic=ps.boundaries.periodic,
+                    q_nodes=q_nodes,
+                )
+            q_tot = q_nodes + np.asarray(solver._particles_q_bg)
+            q_ref = abs(float(inj.injected_charge))
+            whole_rel = abs(float(np.sum(div_d) - np.sum(q_tot))) / q_ref
+            wall_lo_rel = abs(float(div_d[0, 0, 0] - q_tot[0, 0, 0])) / q_ref
+            wall_hi_rel = (
+                abs(float(div_d[0, 0, solver.Nz - 1] - q_tot[0, 0, solver.Nz - 1]))
+                / q_ref
+            )
+            return {
+                "whole": whole_rel,
+                "wall_lo": wall_lo_rel,
+                "wall_hi": wall_hi_rel,
+            }
+
+        n_transit_steps = int(np.ceil(0.04 / (vz0 * dt))) + 12
+        snaps = {}
+        e_mid = None
+        j_mid = None
+        z_mid = None
+        uz_mid = None
+        for step in range(1, n_transit_steps + 1):
+            solver.one_step()
+            if step == 3:
+                snaps["post_inject"] = _measure_residuals()
+            elif step == 20:
+                snaps["mid_transit"] = _measure_residuals()
+                e_mid = solver.E.toarray().copy()
+                j_mid = ps.J_particles.copy()
+                z_mid = sp.z.copy()
+                uz_mid = sp.uz.copy()
+        snaps["post_absorb"] = _measure_residuals()
+        return (
+            snaps,
+            solver.E.toarray().copy(),
+            ps.J_particles.copy(),
+            e_mid,
+            j_mid,
+            z_mid,
+            uz_mid,
+        )
+
+    with monkeypatch.context() as m_ctx:
+        snaps_old, e_old_end, j_old_end, e_old_mid, j_old_mid, z_old_mid, uz_old_mid = (
+            _run_case(use_legacy_q_bg=True, m_ctx=m_ctx)
+        )
+    snaps_new, e_new_end, j_new_end, e_new_mid, j_new_mid, z_new_mid, uz_new_mid = (
+        _run_case(use_legacy_q_bg=False)
+    )
+
+    for stage in ("post_inject", "mid_transit", "post_absorb"):
+        o = snaps_old[stage]
+        n = snaps_new[stage]
+        print(
+            f"[p={order} {stage}] BEFORE whole={o['whole']:.3e} kw0={o['wall_lo']:.3e} "
+            f"kwN={o['wall_hi']:.3e} | AFTER whole={n['whole']:.3e} "
+            f"kw0={n['wall_lo']:.3e} kwN={n['wall_hi']:.3e}"
+        )
+        assert n["whole"] <= 1e-12
+        assert n["wall_lo"] <= 1e-12
+        assert n["wall_hi"] <= 1e-12
+        if order >= 2 and stage in ("post_inject", "mid_transit"):
+            assert o["whole"] > 0.1
+            assert o["wall_lo"] > 0.1
+        if order >= 2 and stage == "post_absorb":
+            assert o["wall_lo"] > 0.1
+            assert o["wall_hi"] > 0.1
+
+    # Bit-identical E, J_particles, and particle trajectories at mid-transit and end:
+    assert np.array_equal(e_new_mid, e_old_mid)
+    assert np.array_equal(j_new_mid, j_old_mid)
+    assert np.array_equal(z_new_mid, z_old_mid)
+    assert np.array_equal(uz_new_mid, uz_old_mid)
+    assert np.array_equal(e_new_end, e_old_end)
+    assert np.array_equal(j_new_end, j_old_end)
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -342,6 +525,152 @@ def test_pec_wall_absorption_all_six_faces(order: int, face: str):
     assert max_res <= 1e-12
 
 
+@pytest.mark.parametrize("boundary_at_domain_edge", [True, False])
+@pytest.mark.parametrize("order", [1, 2])
+def test_pec_wall_absorption_z_high_grid_layouts(
+    boundary_at_domain_edge: bool, order: int
+):
+    """Verify PEC ``z_high`` absorption with ``boundary_at_domain_edge=True`` and ``False``
+    for ``p = 1, 2`` raises no ``IndexError`` and satisfies Gauss's law ``<= 1e-12``.
+    """
+    grid = GridFIT3D(
+        0.0,
+        0.06,
+        0.0,
+        0.06,
+        0.0,
+        0.10,
+        6,
+        6,
+        20,
+        boundary_at_domain_edge=boundary_at_domain_edge,
+        verbose=0,
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.4,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    z_wall_hi = float(grid.z[solver.Nz - 1])
+    sp.add_particles(
+        x=np.array([0.025]),
+        y=np.array([0.035]),
+        z=np.array([z_wall_hi - 2.2 * float(grid.dz[0])]),
+        ux=np.array([0.0]),
+        uy=np.array([0.0]),
+        uz=np.array([1.2 * c_light]),
+        w=np.array([1.0e8]),
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        pusher="boris",
+        shape=order,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+
+    assert ps._pec_wall_node_index(2, "high") == solver.Nz - 1
+    max_res = 0.0
+    for _ in range(25):
+        solver.one_step()
+        max_res = max(max_res, ps.gauss_residual(include_wall_planes=True))
+
+    assert sp.n_particles == 0
+    assert ps.boundaries.absorbed_count["z_high"] == 1
+    print(
+        f"[z_high layout boundary_at_domain_edge={boundary_at_domain_edge}, p={order}] "
+        f"max_gauss_res={max_res:.3e}"
+    )
+    assert max_res <= 1e-12
+
+
+@pytest.mark.parametrize("order", [1, 2, 3])
+def test_pec_wall_high_face_injection_and_orientation_validation(order: int):
+    """Verify ``BeamInjector`` emitting toward ``-z`` from ``z = zmax`` (``z_high``
+    PEC wall) satisfies Gauss's law ``<= 1e-12`` through transit and ``z_low``
+    absorption, and that ``_injector_pec_wall_face`` raises ``ValueError`` for
+    unsupported orientations.
+    """
+    nx, ny, nz = 6, 1, 24
+    zmin, zmax = 0.0, 0.024
+    grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, zmin, zmax, nx, ny, nz, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    gamma0 = 2.5
+    beta0 = float(np.sqrt(1.0 - 1.0 / (gamma0 * gamma0)))
+    vz0 = beta0 * c_light
+    dt = float(solver.dt)
+    t_inject_end = 0.75 * dt
+
+    inj = BeamInjector(
+        species=sp,
+        z0=zmax,
+        current=lambda t: 0.2 if t <= t_inject_end else 0.0,
+        gamma=gamma0,
+        direction=-1,
+        profile="sheet_lattice",
+        radius=0.008,
+        n_macro_per_step=8,
+        seed=321,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=order,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+
+    assert ps._injector_pec_wall_face(inj) == (2, "high")
+    n_steps = int(np.ceil((zmax - zmin) / (vz0 * dt))) + 10
+    max_res = 0.0
+    for _ in range(n_steps):
+        solver.one_step()
+        max_res = max(max_res, ps.gauss_residual(include_wall_planes=True))
+
+    assert inj.emitter_kind == "pec_wall"
+    assert inj.injected_count == 8
+    assert sp.n_particles == 0
+    assert ps.boundaries.absorbed_count["z_low"] == 8
+    print(f"[high-face inject p={order}] max_gauss_res={max_res:.3e}")
+    assert max_res <= 1e-12
+
+    if order == 1:
+
+        class _DummyInj:
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+
+        with pytest.raises(ValueError, match="axis"):
+            ps._injector_pec_wall_face(_DummyInj(axis=0, z0=0.0))
+        with pytest.raises(ValueError, match="axis"):
+            ps._injector_pec_wall_face(_DummyInj(axis=5, side="low"))
+        with pytest.raises(ValueError, match="side"):
+            ps._injector_pec_wall_face(_DummyInj(axis=2, side="middle"))
+        with pytest.raises(ValueError, match="direction"):
+            ps._injector_pec_wall_face(_DummyInj(axis=2, z0=zmin, direction=-1))
+        with pytest.raises(ValueError, match="direction"):
+            ps._injector_pec_wall_face(_DummyInj(axis=2, z0=zmax, direction=1))
+        with pytest.raises(ValueError, match="z0"):
+            ps._injector_pec_wall_face(
+                _DummyInj(axis=2, z0=0.5 * (zmin + zmax), direction=1)
+            )
+
+
 def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
     """Test 5: Verify ``wall_closure_work`` / ``W_wall_closure`` in ``energy_balance()``.
 
@@ -350,11 +679,11 @@ def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
     (b) For ``p = 2``, ``W_wall_closure`` is nonzero and the energy residual with the
         term is at least 10x smaller than the residual without it.
     (c) Mutation: monkeypatching ``ParticleSolver.wall_closure_work`` to return ``0.0``
-        causes the ``test_083`` dt-convergence check for ``p = 2`` to fail with
-        ``AssertionError``.
+        destroys monotonic decrease and Richardson ``dt``-convergence for ``p = 2``.
     """
     from tests.test_083_particles_beams import (
         _assert_richardson_order,
+        _passes_richardson_order,
         _run_dt_closure_sweep,
     )
 
@@ -436,7 +765,8 @@ def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
     assert np.all(np.diff(ress_p2) < 0.0)
     _assert_richardson_order(dts_p2, ress_p2, order=1.0)
 
-    # (c) Mutation: monkeypatch wall_closure_work -> 0.0 and show test_083 dt-convergence fails for p = 2
+    # (c) Mutation: monkeypatch wall_closure_work -> 0.0 and verify that the
+    # mutated residuals are neither monotonically decreasing nor Richardson-convergent
     with monkeypatch.context() as m:
         m.setattr(ParticleSolver, "wall_closure_work", lambda self_ps: 0.0)
         dts_mut, ress_mut, _, _ = _run_dt_closure_sweep(
@@ -449,10 +779,69 @@ def test_wall_closure_work_p1_zero_p2_residual_and_mutation(monkeypatch):
             gamma=2.0,
         )
         print(f"[mutation wall_closure_work=0, p=2] ress_mut={ress_mut}")
-        with pytest.raises(AssertionError):
-            assert np.all(ress_mut > 0.0)
-            assert np.all(np.diff(ress_mut) < 0.0)
-            _assert_richardson_order(dts_mut, ress_mut, order=1.0)
+        assert not np.all(np.diff(ress_mut) < 0.0)
+        assert not _passes_richardson_order(dts_mut, ress_mut, order=1.0)
+
+
+def test_wall_closure_work_mesh_refinement_p2():
+    """Verify ``|W_wall_closure| / K_injected`` decreases under mesh refinement
+    ``h -> h / 2`` at fixed physical box, physics, and physical time ``T`` for ``p = 2``.
+    """
+    ratios = []
+    hs = []
+    for scale in (1, 2):
+        nx, ny, nz = 1, 1, 20 * scale
+        grid = GridFIT3D(-0.005, 0.005, -0.005, 0.005, 0.0, 0.04, nx, ny, nz, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.4,
+            bc_low=["periodic", "periodic", "pec"],
+            bc_high=["periodic", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        if scale == 1:
+            dt_coarse = float(solver.dt)
+        else:
+            solver.dt = 0.5 * dt_coarse
+
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=0.25,
+            gamma=2.0,
+            profile="sheet_lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=42,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=2,
+            gather="momentum",
+            track_energy=True,
+        ).attach()
+
+        n_steps = 20 * scale
+        for _ in range(n_steps):
+            solver.one_step()
+        eb = ps.energy_balance()
+        ratio = abs(eb["W_wall_closure"]) / eb["K_injected"]
+        dz = float(grid.dz[0])
+        hs.append(dz)
+        ratios.append(ratio)
+
+    order_obs = float(np.log2(ratios[0] / ratios[1]))
+    print(
+        f"[refinement p=2] h={hs[0]:.4e} -> |W_cl|/K_inj={ratios[0]:.6e}; "
+        f"h/2={hs[1]:.4e} -> |W_cl|/K_inj={ratios[1]:.6e}; "
+        f"observed_order={order_obs:.3f}"
+    )
+    assert ratios[1] < ratios[0]
 
 
 def _build_p2_energy_case():
@@ -533,3 +922,166 @@ def test_wall_closure_work_survives_checkpoint_restart(tmp_path, monkeypatch):
         assert eb_rs[key] == eb_ref[key], key
     assert eb_mut["W_wall_closure"] != eb_ref["W_wall_closure"]
     assert eb_mut["residual"] != eb_ref["residual"]
+
+
+def test_old_checkpoint_without_cl_work_vec_warns(tmp_path):
+    """Loading a checkpoint that lacks ``cl_work_vec`` when ``track_energy=True``
+    and PEC wall closure is active emits a ``RuntimeWarning`` and restarts
+    ``W_wall_closure`` from zero.
+    """
+    ckpt_dir = tmp_path / "ck_legacy"
+    solver, ps = _build_p2_energy_case()
+    for _ in range(4):
+        solver.one_step()
+    w_cl_before = ps.wall_closure_work()
+    assert w_cl_before != 0.0
+    ps.save_checkpoint(str(ckpt_dir))
+
+    manifest_path = ckpt_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rank_fname = next(iter(manifest["files"].keys()))
+    rank_npz = ckpt_dir / rank_fname
+    with np.load(rank_npz, allow_pickle=False) as data:
+        arrays = {
+            k: data[k]
+            for k in data.files
+            if k not in ("cl_work_vec", "cl_J", "cl_pending")
+        }
+    np.savez(rank_npz, **arrays)
+    manifest["files"][rank_fname] = hashlib.sha256(rank_npz.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    _s2, ps2 = _build_p2_energy_case()
+    with pytest.warns(RuntimeWarning, match="W_wall_closure"):
+        ps2.load_checkpoint(str(ckpt_dir))
+    assert ps2.wall_closure_work() == 0.0
+
+
+def test_pec_wall_closure_cpu_vs_gpu_p2():
+    """Compare CPU and GPU after injection, transit, and absorption for ``p = 2``:
+    ``_particles_q_bg``, ``J_particles``, and ``W_wall_closure`` agree to ``<= 1e-12`` relative.
+    """
+    cp = pytest.importorskip("cupy")
+    try:
+        if cp.cuda.runtime.getDeviceCount() < 1:
+            pytest.skip("No CUDA GPU device available")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"CUDA runtime unavailable: {exc}")
+
+    def _run(use_gpu: bool):
+        nx, ny, nz = 6, 1, 24
+        zmin, zmax = 0.0, 0.024
+        grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, zmin, zmax, nx, ny, nz, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            use_gpu=use_gpu,
+            verbose=0,
+        )
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        gamma0 = 2.5
+        beta0 = float(np.sqrt(1.0 - 1.0 / (gamma0 * gamma0)))
+        vz0 = beta0 * c_light
+        dt = float(solver.dt)
+        t_inject_end = 1.75 * dt
+
+        inj = BeamInjector(
+            species=sp,
+            z0=zmin,
+            current=lambda t: 0.25 if t <= t_inject_end else 0.0,
+            gamma=gamma0,
+            profile="sheet_lattice",
+            radius=0.008,
+            n_macro_per_step=16,
+            seed=777,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=2,
+            gather="momentum",
+            track_energy=True,
+        ).attach()
+
+        n_steps = int(np.ceil((zmax - zmin) / (vz0 * dt))) + 8
+        j_accum = np.zeros(3 * solver.N, dtype=np.float64)
+        for _ in range(n_steps):
+            solver.one_step()
+            j_step = (
+                cp.asnumpy(ps.J_particles)
+                if hasattr(ps.J_particles, "get")
+                else np.asarray(ps.J_particles)
+            )
+            j_accum += np.abs(j_step)
+
+        q_bg = (
+            cp.asnumpy(solver._particles_q_bg)
+            if hasattr(solver._particles_q_bg, "get")
+            else np.asarray(solver._particles_q_bg).copy()
+        )
+        j_final = (
+            cp.asnumpy(ps.J_particles)
+            if hasattr(ps.J_particles, "get")
+            else np.asarray(ps.J_particles).copy()
+        )
+        eb = ps.energy_balance()
+        return (
+            q_bg,
+            j_accum,
+            j_final,
+            eb["W_wall_closure"],
+            ps.boundaries.absorbed_count["z_high"],
+        )
+
+    q_bg_cpu, j_acc_cpu, j_fin_cpu, w_cl_cpu, n_abs_cpu = _run(False)
+    q_bg_gpu, j_acc_gpu, j_fin_gpu, w_cl_gpu, n_abs_gpu = _run(True)
+
+    assert n_abs_cpu == 32
+    assert n_abs_gpu == 32
+    q_bg_rel = float(np.linalg.norm(q_bg_cpu - q_bg_gpu) / np.linalg.norm(q_bg_cpu))
+    j_acc_rel = float(np.linalg.norm(j_acc_cpu - j_acc_gpu) / np.linalg.norm(j_acc_cpu))
+    j_fin_diff = float(np.max(np.abs(j_fin_cpu - j_fin_gpu)))
+    w_cl_rel = abs(w_cl_cpu - w_cl_gpu) / abs(w_cl_cpu)
+    print(
+        f"[CPU vs GPU p=2] q_bg_rel={q_bg_rel:.3e}, j_acc_rel={j_acc_rel:.3e}, "
+        f"j_fin_diff={j_fin_diff:.3e}, w_cl_rel={w_cl_rel:.3e}"
+    )
+    assert q_bg_rel <= 1e-12
+    assert j_acc_rel <= 1e-12
+    assert j_fin_diff <= 1e-12
+    assert w_cl_rel <= 1e-12
+
+
+def test_interior_mpi_rank_has_pec_domain_wall_from_global_bc():
+    """Verify ``_compute_has_pec_domain_wall`` returns ``True`` on an interior MPI
+    rank whose local ``bc_low``/``bc_high`` on ``z`` are ``'mpi'`` while
+    ``solver._global_bc_z`` is ``('pec', 'pec')`` and ``x``/``y`` are periodic.
+    """
+    grid = GridFIT3D(-0.03, 0.03, -0.03, 0.03, 0.0, 0.04, 6, 6, 12, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.45,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    ps = ParticleSolver(
+        solver, species=[sp], pusher="boris", shape=1, track_energy=True
+    ).attach()
+    assert ps._has_pec_domain_wall is True
+
+    # Simulate an interior rank (0 < rank < size - 1) where z faces are "mpi"
+    # and only solver._global_bc_z records the global ("pec", "pec") z walls:
+    ps.boundaries.bc_low = ("periodic", "periodic", "mpi")
+    ps.boundaries.bc_high = ("periodic", "periodic", "mpi")
+    solver._global_bc_z = ("pec", "pec")
+    assert ps._compute_has_pec_domain_wall() is True
+    solver._global_bc_z = ("periodic", "periodic")
+    assert ps._compute_has_pec_domain_wall() is False

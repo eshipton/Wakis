@@ -2960,3 +2960,98 @@ def test_gpu_mpi_device_sharing_and_interior_ranks():
     _assert_v2_matches_reference(par_mpi, ser_cpu, bound=bound)
 
 
+def _run_pec_z_interior_sheet_energy(use_mpi: bool) -> tuple[dict[str, float], float]:
+    """Run coupled steps with PEC z faces, periodic x/y, track_energy=True, and an interior_sheet injector."""
+    grid = GridFIT3D(
+        -0.03, 0.03, -0.03, 0.03, 0.0, 0.12, 6, 6, 12, use_mpi=use_mpi, verbose=0
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.45,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "pec"],
+        use_mpi=use_mpi,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj = BeamInjector(
+        species=sp,
+        z0=0.06,
+        current=0.25,
+        gamma=2.2,
+        profile="sheet_lattice",
+        radius=0.012,
+        n_macro_per_step=16,
+        seed=1234,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=1,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+    assert inj.emitter_kind == "interior_sheet"
+    assert ps._has_pec_domain_wall is True
+    for _ in range(10):
+        solver.one_step()
+    return ps.energy_balance(), ps.gauss_residual()
+
+
+def test_pec_z_wall_closure_3ranks_energy_residual():
+    """Verify with >= 3 MPI ranks, PEC z faces, periodic x/y, track_energy=True,
+    and an interior_sheet injector that interior ranks agree on _has_pec_domain_wall,
+    do not hang in _finalize_closure_current, and match the 1-rank energy residual
+    to <= 1e-12 relative.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+    if size < 3:
+        if shutil.which("mpiexec") is None:
+            pytest.skip("Requires >= 3 MPI ranks or mpiexec in PATH")
+        if rank == 0:
+            cmd = [
+                "mpiexec",
+                "--allow-run-as-root",
+                "--oversubscribe",
+                "-n",
+                "3",
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                __file__,
+                "-k",
+                "test_pec_z_wall_closure_3ranks_energy_residual",
+            ]
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=60, check=False
+            )
+            assert proc.returncode == 0, (
+                f"3-rank mpiexec subprocess failed (rc={proc.returncode}):\n"
+                f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+            )
+        comm.Barrier()
+        return
+
+    with _hang_guard(20.0):
+        eb_mpi, gauss_mpi = _run_pec_z_interior_sheet_energy(use_mpi=True)
+    assert gauss_mpi <= 1.0e-12
+
+    if rank == 0:
+        eb_ser, gauss_ser = _run_pec_z_interior_sheet_energy(use_mpi=False)
+        assert gauss_ser <= 1.0e-12
+        rel_res = abs(eb_mpi["residual"] - eb_ser["residual"]) / abs(eb_ser["residual"])
+        print(
+            f"[MPI {size} ranks vs 1 rank] res_mpi={eb_mpi['residual']:.12e}, "
+            f"res_ser={eb_ser['residual']:.12e}, rel_diff={rel_res:.3e}"
+        )
+        assert rel_res <= 1.0e-12
+
