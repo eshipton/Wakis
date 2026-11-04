@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+from scipy.constants import c as c_light
 from scipy.constants import mu_0
 
 from .boundaries import Collector, ParticleBoundaries
@@ -34,6 +35,8 @@ from .mapping import LogicalGridMap
 from .pushers import get_pusher, push_momentum, push_position
 from .shapes import (
     ParticleCFLError,
+    _gather_component_3d,
+    bspline_weights_1d,
     deposit_charge,
     deposit_current_esirkepov,
     deposit_current_naive,
@@ -43,6 +46,7 @@ from .species import Species
 
 _CPU_CHUNK = 65536
 _ENABLE_PEC_WALL_CLOSURE: bool = True
+_ENABLE_PEC_WALL_KICK: bool = True
 
 
 def _pec_wall_closure_1d(
@@ -958,6 +962,7 @@ class ParticleSolver:
         self._fw_dt = 0.0
         self._has_step0_field_snap = False
         self._K_particles_0 = 0.0
+        self._K_wall_kick = 0.0
         self._H_prev = None
         self._d_cfl_error = (
             self.xp.zeros(1, dtype=np.int32) if self.on_gpu else None
@@ -2231,6 +2236,7 @@ class ParticleSolver:
             self._K_particles_0 = self.kinetic_energy(synchronised=True)
         else:
             self._K_particles_0 = 0.0
+        self._K_wall_kick = 0.0
 
         if not self._attached:
             s.register_mid_step(self._mid_step_hook)
@@ -2581,6 +2587,123 @@ class ParticleSolver:
         if self.track_energy and self._W_cl is not None:
             self._W_cl[axis * N : (axis + 1) * N] += dW_flat
             self._cl_step_active = True
+
+    def _apply_pec_wall_birth_kick(
+        self,
+        sp_inj: Species,
+        sl_new: slice,
+        xi_i,
+        eta_i,
+        zeta_i,
+        E_field,
+        axis: int,
+        side: str,
+    ) -> None:
+        """Apply the PEC-wall birth kick for ``shape >= 2`` and accumulate ``_K_wall_kick``.
+
+        For shape order :math:`p \\ge 2`, builds the node potential integral
+        :math:`\\Psi` of the normal electric field :math:`E_n^n` from the PEC
+        wall node :math:`k_w` along ``axis`` over the stencil reach
+        :math:`k_w \\dots k_w \\pm (p + 1)` (:math:`\\Psi[k_w] = 0`), gathers
+        :math:`\\mathrm{d}K_i = q_i w_i \\sum_{\\text{nodes}} W^{(p)}(\\mathbf{x}_i)\\,\\Psi_{\\text{node}}`,
+        and updates each injected particle's birth momentum at constant direction
+        via :math:`\\gamma'_i = \\gamma_i + \\mathrm{d}K_i / (w_i m c^2)`.
+        """
+        if self.shape < 2 or not _ENABLE_PEC_WALL_KICK:
+            return
+        s = self.solver
+        xp = self.xp
+        Nx, Ny, Nz = int(s.Nx), int(s.Ny), int(s.Nz)
+        N = Nx * Ny * Nz
+        E_arr = E_field.toarray() if hasattr(E_field, "toarray") else E_field
+        E_n = E_arr[axis * N : (axis + 1) * N].reshape((Nx, Ny, Nz), order="F")
+        k_w = self._pec_wall_node_index(axis, side)
+        n_ax = int(E_n.shape[axis])
+        dl = self.grid_map._deltas[axis]
+
+        Psi = xp.zeros((Nx, Ny, Nz), dtype=np.float64, order="F")
+        dl_shape = [1, 1, 1]
+        if side == "low":
+            k_stop = min(n_ax, k_w + self.shape + 2)
+            if k_stop > k_w + 1:
+                sl_edges = [slice(None), slice(None), slice(None)]
+                sl_nodes = [slice(None), slice(None), slice(None)]
+                sl_edges[axis] = slice(k_w, k_stop - 1)
+                sl_nodes[axis] = slice(k_w + 1, k_stop)
+                dl_shape[axis] = k_stop - 1 - k_w
+                dl_sub = dl[k_w : k_stop - 1].reshape(tuple(dl_shape))
+                Psi[tuple(sl_nodes)] = xp.cumsum(
+                    E_n[tuple(sl_edges)] * dl_sub, axis=axis
+                )
+        elif side == "high":
+            k_start = max(0, k_w - (self.shape + 1))
+            if k_w > k_start:
+                sl_edges = [slice(None), slice(None), slice(None)]
+                sl_nodes = [slice(None), slice(None), slice(None)]
+                sl_edges[axis] = slice(k_start, k_w)
+                sl_nodes[axis] = slice(k_start, k_w)
+                dl_shape[axis] = k_w - k_start
+                dl_sub = dl[k_start:k_w].reshape(tuple(dl_shape))
+                Psi[tuple(sl_nodes)] = -xp.flip(
+                    xp.cumsum(
+                        xp.flip(E_n[tuple(sl_edges)] * dl_sub, axis=axis),
+                        axis=axis,
+                    ),
+                    axis=axis,
+                )
+        else:
+            raise ValueError(f"Unsupported side={side!r}; expected 'low' or 'high'.")
+
+        ix_nod, wx_nod = bspline_weights_1d(
+            xi_i, self.shape, staggered=False, xp=xp
+        )
+        iy_nod, wy_nod = bspline_weights_1d(
+            eta_i, self.shape, staggered=False, xp=xp
+        )
+        iz_nod, wz_nod = bspline_weights_1d(
+            zeta_i, self.shape, staggered=False, xp=xp
+        )
+        psi_p = _gather_component_3d(
+            Psi.ravel(order="F"),
+            Nx,
+            Ny,
+            Nz,
+            ix_nod,
+            wx_nod,
+            iy_nod,
+            wy_nod,
+            iz_nod,
+            wz_nod,
+            self.boundaries.periodic,
+            xp,
+        )
+
+        w_sl = sp_inj._w[sl_new]
+        dK = (sp_inj.charge * w_sl) * psi_p
+        ux_sl = sp_inj._ux[sl_new]
+        uy_sl = sp_inj._uy[sl_new]
+        uz_sl = sp_inj._uz[sl_new]
+        u2 = ux_sl * ux_sl + uy_sl * uy_sl + uz_sl * uz_sl
+        gamma = xp.sqrt(1.0 + u2 / (c_light * c_light))
+        mc2 = float(sp_inj.mass) * (c_light * c_light)
+        w_mc2 = w_sl * mc2
+        dgamma = xp.where(w_sl != 0.0, dK / xp.where(w_sl != 0.0, w_mc2, 1.0), 0.0)
+        gamma_prime = gamma + dgamma
+        if bool(xp.any(gamma_prime < 1.0)):
+            raise ValueError(
+                "PEC-wall birth kick resulted in gamma' < 1 (particle cannot leave the wall)."
+            )
+        denom = xp.sqrt(gamma * gamma - 1.0)
+        scale = xp.where(
+            denom > 0.0,
+            xp.sqrt(gamma_prime * gamma_prime - 1.0)
+            / xp.where(denom > 0.0, denom, 1.0),
+            1.0,
+        )
+        sp_inj._ux[sl_new] = ux_sl * scale
+        sp_inj._uy[sl_new] = uy_sl * scale
+        sp_inj._uz[sl_new] = uz_sl * scale
+        self._K_wall_kick += float(xp.sum(dK))
 
     def _record_absorbed_particles(
         self,
@@ -3064,17 +3187,6 @@ class ParticleSolver:
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj._x[sl_new], sp_inj._y[sl_new], sp_inj._z[sl_new]
                     )
-                    self._backpush_injected_slice(
-                        sp_inj,
-                        sl_new,
-                        xi_i,
-                        eta_i,
-                        zeta_i,
-                        s.E,
-                        B_n_tuple,
-                        t_n,
-                        dt,
-                    )
                     if self._q0_buf is None or self._q0_buf.shape != (
                         Nx,
                         Ny,
@@ -3108,8 +3220,29 @@ class ParticleSolver:
                             W_tuple=(Wx_tot, Wy_tot, Wz_tot),
                             q_bg=s._particles_q_bg,
                         )
+                        self._apply_pec_wall_birth_kick(
+                            sp_inj,
+                            sl_new,
+                            xi_i,
+                            eta_i,
+                            zeta_i,
+                            s.E,
+                            axis=axis_inj,
+                            side=side_inj,
+                        )
                     else:
                         s._particles_q_bg -= q_inj_nodes
+                    self._backpush_injected_slice(
+                        sp_inj,
+                        sl_new,
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        s.E,
+                        B_n_tuple,
+                        t_n,
+                        dt,
+                    )
                     s._particles_q_scale_ref = abs(inj.injected_charge)
                     for col in self.boundaries.collectors:
                         col.current_history.append((float(t_n + dt), 0.0))
@@ -3479,17 +3612,6 @@ class ParticleSolver:
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj.x[sl_new], sp_inj.y[sl_new], sp_inj.z[sl_new]
                     )
-                    self._backpush_injected_slice(
-                        sp_inj,
-                        sl_new,
-                        xi_i,
-                        eta_i,
-                        zeta_i,
-                        s.E,
-                        B_n_tuple,
-                        t_n,
-                        dt,
-                    )
                     if self._q0_buf is None or self._q0_buf.shape != (
                         Nx,
                         Ny,
@@ -3523,8 +3645,29 @@ class ParticleSolver:
                             W_tuple=(Wx_tot, Wy_tot, Wz_tot),
                             q_bg=s._particles_q_bg,
                         )
+                        self._apply_pec_wall_birth_kick(
+                            sp_inj,
+                            sl_new,
+                            xi_i,
+                            eta_i,
+                            zeta_i,
+                            s.E,
+                            axis=axis_inj,
+                            side=side_inj,
+                        )
                     else:
                         s._particles_q_bg -= q_inj_nodes
+                    self._backpush_injected_slice(
+                        sp_inj,
+                        sl_new,
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        s.E,
+                        B_n_tuple,
+                        t_n,
+                        dt,
+                    )
                     if getattr(s, "_particles_q_scale_ref", 0.0) == 0.0:
                         s._particles_q_scale_ref = abs(inj.injected_charge)
         except Exception as exc:
@@ -4037,6 +4180,40 @@ class ParticleSolver:
             w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
         return w_loc
 
+    def wall_kick_energy(self) -> float:
+        """Cumulative kinetic-energy change [J] applied at PEC-wall birth kicks.
+
+        Returns the sum over all completed PEC-wall injection events (for shape
+        order :math:`p \\ge 2`) of
+
+        .. math::
+
+            K_{\\text{wall\\_kick}} = \\sum_{\\text{events}} \\sum_{i} \\Delta K_i,
+            \\qquad
+            \\Delta K_i = q_i w_i \\sum_{\\mathbf{k}} W^{(p)}(\\mathbf{x}_i - \\mathbf{x}_{\\mathbf{k}})\\, \\Psi_{\\mathbf{k}},
+
+        where :math:`\\Psi_{\\mathbf{k}}` is the discrete line integral of the
+        normal electric field :math:`E_n^m` from the PEC wall node to node
+        :math:`\\mathbf{k}` at birth step :math:`m`. By this sign convention,
+        :math:`K_{\\text{wall\\_kick}} > 0` when the birth kick increases the
+        injected particles' kinetic energy relative to ``"K_injected"``, and
+        :math:`K_{\\text{wall\\_kick}} < 0` when the birth kick reduces it
+        (paying the electrostatic work against the wall-normal field at birth).
+        Under MPI (``use_mpi=True`` and ``solver.size > 1``), this method is
+        collective across ``solver.comm`` (``MPI.SUM`` reduction).
+
+        Returns
+        -------
+        float
+            Cumulative PEC-wall birth-kick kinetic energy change [J].
+        """
+        k_loc = float(self._K_wall_kick)
+        if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            k_loc = float(self.solver.comm.allreduce(k_loc, op=MPI.SUM))
+        return k_loc
+
     def energy_balance(self) -> dict[str, float]:
         """Return discrete electromagnetic and particle energy-balance terms [J].
 
@@ -4055,9 +4232,15 @@ class ParticleSolver:
         - ``"W_wall_closure"`` (:meth:`wall_closure_work`) uses the same sign
           convention as ``"field_work"``: positive when the electromagnetic field
           does positive work on the PEC wall-closure current (delivering energy
-          from the field to the wall/emitter without accelerating particles), so
-          it is subtracted alongside ``"W_field"`` and ``"K_particles"`` in
-          ``"residual"``.
+          from the field to the wall/emitter), so it is subtracted alongside
+          ``"W_field"`` and ``"K_particles"`` in ``"residual"``.
+        - ``"K_wall_kick"`` (:meth:`wall_kick_energy`) is the cumulative kinetic
+          energy change :math:`\\sum \\Delta K_i` applied to newly injected
+          macroparticles at PEC-wall emitters for shape order :math:`p \\ge 2`
+          (positive when the birth kick adds kinetic energy to the particles
+          beyond the pre-kick ``"K_injected"``, negative when the particle pays
+          work against the wall-normal electric field at birth), so it is added
+          to ``"K_injected"`` in ``"residual"``.
 
         Returns
         -------
@@ -4071,8 +4254,8 @@ class ParticleSolver:
               :meth:`field_energy` for the un-staggered quadratic form).
             - ``"K_particles"`` : synchronised relativistic kinetic energy
               :math:`K_{\\text{particles}}^n` [J] at :math:`t_n`.
-            - ``"K_injected"`` : cumulative kinetic energy [J] injected by all
-              attached :class:`BeamInjector` instances.
+            - ``"K_injected"`` : cumulative pre-kick kinetic energy [J] injected
+              by all attached :class:`BeamInjector` instances.
             - ``"K_absorbed"`` : cumulative kinetic energy [J] absorbed by all
               boundaries and :class:`Collector` instances.
             - ``"field_work"`` : cumulative discrete field-to-particle work
@@ -4082,10 +4265,13 @@ class ParticleSolver:
               :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J_{\\text{cl}}^{m+1/2} (E^m + E^{m+1})/2`
               [J] (positive when energy is delivered from the field to the
               wall/emitter).
+            - ``"K_wall_kick"`` : cumulative kinetic-energy change
+              :math:`\\sum \\Delta K_i` [J] applied at PEC-wall birth kicks for
+              shape order :math:`p \\ge 2`.
             - ``"residual"`` : total energy closure residual
               :math:`(K_{\\text{injected}} + K_{\\text{particles}}^0 + W_{\\text{field}}^0)
               - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}
-              - W_{\\text{wall\\_closure}}` [J].
+              - W_{\\text{wall\\_closure}} + K_{\\text{wall\\_kick}}` [J].
 
         Raises
         ------
@@ -4109,9 +4295,15 @@ class ParticleSolver:
         k_absorbed = self.absorbed_energy()
         fw = self.field_work()
         w_wall_cl = self.wall_closure_work()
+        k_wall_kick = self.wall_kick_energy()
         e_init = self._K_particles_0 + w_field_0
         residual = (
-            (k_injected + e_init) - k_absorbed - k_particles - w_field - w_wall_cl
+            (k_injected + e_init)
+            - k_absorbed
+            - k_particles
+            - w_field
+            - w_wall_cl
+            + k_wall_kick
         )
         return {
             "W_field": w_field,
@@ -4120,6 +4312,7 @@ class ParticleSolver:
             "K_absorbed": k_absorbed,
             "field_work": fw,
             "W_wall_closure": w_wall_cl,
+            "K_wall_kick": k_wall_kick,
             "residual": residual,
         }
 

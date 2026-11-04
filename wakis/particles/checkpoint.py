@@ -933,6 +933,9 @@ def _save_state_item(
         return
 
     if key == "energy_work_accum":
+        arrays["wall_kick"] = np.array(
+            [float(particle_solver._K_wall_kick)], dtype=np.float64
+        )
         if getattr(particle_solver, "track_energy", False):
             arrays["has_energy_work_accum"] = np.array([1], dtype=np.int64)
             arrays["fw_accum_vec"] = _to_host_f64(particle_solver._fw_accum_vec)
@@ -1249,6 +1252,8 @@ def _validate_rank_archive(
                 f"Checkpoint has_energy_work_accum={has_fw_accum} does not match "
                 f"live solver track_energy={bool(getattr(particle_solver, 'track_energy', False))}."
             )
+        if "wall_kick" in files:  # optional: absent in pre-wall-kick checkpoints
+            _require_header("wall_kick", (1,), np.float64)
         if has_fw_accum:
             exp_fw_shape = particle_solver._fw_accum_vec.shape
             _require_header("fw_accum_vec", exp_fw_shape, np.float64)
@@ -1462,6 +1467,31 @@ def _restore_rank_arrays(
                 -1, 2
             )
             col.current_history = [(float(row[0]), float(row[1])) for row in hist_arr]
+
+    if "wall_kick" in files:
+        particle_solver._K_wall_kick = float(data["wall_kick"][0])
+    elif "has_energy_work_accum" in files:
+        particle_solver._K_wall_kick = 0.0
+        from .solver import _ENABLE_PEC_WALL_KICK
+
+        kick_active = bool(
+            _ENABLE_PEC_WALL_KICK
+            and int(getattr(particle_solver, "shape", 1)) >= 2
+            and any(
+                getattr(inj, "emitter_kind", None) == "pec_wall"
+                for inj in particle_solver.injectors
+            )
+        )
+        if kick_active:
+            import warnings
+
+            warnings.warn(
+                "Checkpoint archive lacks 'wall_kick'; K_wall_kick restarts "
+                "from zero, so the energy_balance() residual is offset by the "
+                "pre-restart PEC wall-kick energy.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     if (
         "has_energy_work_accum" in files
