@@ -15,7 +15,12 @@ time-domain drift runners.
 from __future__ import annotations
 
 import gc
+import hashlib
+import os
+import pickle
+import tempfile
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -2403,6 +2408,348 @@ def run_particle_beam_drift(
     }
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SCW_FINGERPRINT_FILES: list[Path] = sorted(
+    [
+        *_REPO_ROOT.glob("wakis/particles/*.py"),
+        *(
+            p
+            for p in (
+                _REPO_ROOT / "wakis" / "solverFIT3D.py",
+                _REPO_ROOT / "wakis" / "gridFIT3D.py",
+                Path(__file__).resolve(),
+            )
+            if p.is_file()
+        ),
+    ],
+    key=lambda p: str(p),
+)
+_BEAM_REBUILD_TAG = "__scw_linearized_beam_v1__"
+_BEAM_STATE_ATTRS = (
+    "M",
+    "N_lines",
+    "k_indices",
+    "s_coords",
+    "ds_line",
+    "keep_lines",
+    "flat_idx_2d",
+    "flat_idx_host",
+    "dA_perp",
+    "dV",
+    "n_ramp",
+    "w_axial",
+    "area",
+    "area_eff",
+    "rho0_peak",
+    "_w_perp_eff",
+    "rho0",
+    "n0",
+    "v1",
+    "rho1",
+    "v1_prev",
+    "rho1_prev",
+    "J1",
+    "_step_count",
+)
+
+
+def scw_source_fingerprint() -> str:
+    """Return SHA-256 hex digest over the bytes of all fingerprinted SCW source files."""
+    h = hashlib.sha256()
+    for path in sorted(_SCW_FINGERPRINT_FILES, key=lambda p: str(p)):
+        h.update(Path(path).read_bytes())
+    return h.hexdigest()
+
+
+def _normalise_scw_func_and_args(
+    func_name: str, args: tuple[Any, ...] | list[Any] | dict[str, Any]
+) -> tuple[str, tuple[int | float | str, ...]]:
+    """Normalise function name and argument sequence/dict to canonical `(func, args_tuple)`."""
+    if func_name in ("cached_linearized_beam_drift", "lb"):
+        canon_func = "cached_linearized_beam_drift"
+        if isinstance(args, dict):
+            nx = int(args["nx"])
+            nz = int(args["nz"])
+            rho0_scale = float(args.get("rho0_scale", 1.0))
+            m_mod = float(args.get("m_mod", MODULATION_INDEX))
+        else:
+            seq = list(args)
+            nx = int(seq[0])
+            nz = int(seq[1])
+            rho0_scale = float(seq[2]) if len(seq) > 2 else 1.0
+            m_mod = float(seq[3]) if len(seq) > 3 else float(MODULATION_INDEX)
+        return canon_func, (nx, nz, rho0_scale, m_mod)
+
+    if func_name in (
+        "_cached_particle_drift_impl",
+        "cached_particle_drift",
+        "particle",
+    ):
+        canon_func = "_cached_particle_drift_impl"
+        if isinstance(args, dict):
+            nx = int(args["nx"])
+            nz = int(args["nz"])
+            profile = str(args.get("profile", "sheet_lattice"))
+            raw_seed = int(args.get("seed", NOISE_SEEDS[0]))
+            eff_seed = int(NOISE_SEEDS[0]) if profile == "sheet_lattice" else raw_seed
+            m_mod = float(args.get("m_mod", MODULATION_INDEX))
+            qm_scale = float(args.get("qm_scale", 1.0))
+            n_macro_raw = args.get("n_macro", args.get("n_macro_per_step"))
+            n_macro = (
+                int(n_macro_raw)
+                if n_macro_raw is not None
+                else (16 if nx == COARSE_GRID[0] else 32)
+            )
+            gather = str(args.get("gather", "galerkin"))
+            shape = int(args.get("shape", PARTICLE_SHAPE))
+        else:
+            seq = list(args)
+            nx = int(seq[0])
+            nz = int(seq[1])
+            profile = str(seq[2]) if len(seq) > 2 else "sheet_lattice"
+            raw_seed = int(seq[3]) if len(seq) > 3 else int(NOISE_SEEDS[0])
+            eff_seed = int(NOISE_SEEDS[0]) if profile == "sheet_lattice" else raw_seed
+            m_mod = float(seq[4]) if len(seq) > 4 else float(MODULATION_INDEX)
+            qm_scale = float(seq[5]) if len(seq) > 5 else 1.0
+            n_macro_raw = seq[6] if len(seq) > 6 else None
+            n_macro = (
+                int(n_macro_raw)
+                if n_macro_raw is not None
+                else (16 if nx == COARSE_GRID[0] else 32)
+            )
+            gather = str(seq[7]) if len(seq) > 7 else "galerkin"
+            shape = int(seq[8]) if len(seq) > 8 else int(PARTICLE_SHAPE)
+        return canon_func, (
+            nx,
+            nz,
+            profile,
+            eff_seed,
+            m_mod,
+            qm_scale,
+            n_macro,
+            gather,
+            shape,
+        )
+
+    canon_func = str(func_name)
+    raw_items = list(args.values()) if isinstance(args, dict) else list(args)
+    norm_items: list[int | float | str] = []
+    for item in raw_items:
+        if isinstance(item, (bool, int, np.integer)):
+            norm_items.append(int(item))
+        elif isinstance(item, (float, np.floating)):
+            norm_items.append(float(item))
+        else:
+            norm_items.append(str(item))
+    return canon_func, tuple(norm_items)
+
+
+def scw_cache_key(
+    func_name: str, args: tuple[Any, ...] | list[Any] | dict[str, Any]
+) -> str:
+    """Compute SHA-256 cache key from function name, normalised argument tuple, and source fingerprint."""
+    canon_func, norm_args = _normalise_scw_func_and_args(func_name, args)
+    arg_repr = "(" + ", ".join(repr(v) for v in norm_args) + ")"
+    fp = scw_source_fingerprint()
+    h = hashlib.sha256()
+    h.update(f"{canon_func}:{arg_repr}:{fp}".encode())
+    return h.hexdigest()
+
+
+def _build_reference_linearized_beam(
+    nx: int,
+    nz: int,
+    rho0_scale: float = 1.0,
+    m_mod: float = MODULATION_INDEX,
+    outflow_ramp_m: float = OUTFLOW_RAMP_M,
+) -> LinearizedBeam:
+    """Rebuild a deterministic `LinearizedBeam` on grid ``(nx, 1, nz)``."""
+    params = compute_analytic_parameters()
+    u_dep = params["u_dep"]
+    gamma_dep = params["gamma_dep"]
+    omega = params["omega"]
+    rho_dep = params["rho_dep"]
+    rho0_val = float(rho0_scale) * rho_dep
+    a = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    ly = PERIODIC_LY_M
+    lz = TUNNEL_LENGTH_M
+    t_rise = RISE_PERIODS / DRIVE_FREQ_HZ
+
+    dz = lz / int(nz)
+    n_ramp = round(float(outflow_ramp_m) / dz)
+    grid = GridFIT3D(
+        -a, a, -0.5 * ly, 0.5 * ly, 0.0, lz, int(nx), 1, int(nz), verbose=0
+    )
+    dt, _ = _integer_period_dt(grid)
+    solver = SolverFIT3D(
+        grid,
+        cfln=CFL_NUMBER,
+        dt=dt,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_gpu=USE_GPU,
+        verbose=0,
+    )
+
+    def inflow_rho1(t: float) -> float:
+        ramp_t = 0.5 * (1.0 - np.cos(np.pi * min(t / t_rise, 1.0)))
+        return float(m_mod * ramp_t * rho_dep * np.sin(omega * t))
+
+    return LinearizedBeam(
+        u0=u_dep,
+        rho0=rho0_val,
+        gamma0=gamma_dep,
+        axis="z",
+        half_thickness=b,
+        ramp_cells=n_ramp,
+        inflow_rho1=inflow_rho1,
+        solver=solver,
+    )
+
+
+def _to_host_copy(val: Any) -> Any:
+    if hasattr(val, "get"):
+        return np.asarray(val.get()).copy()
+    if isinstance(val, np.ndarray):
+        return val.copy()
+    return val
+
+
+def _is_picklable(val: Any) -> bool:
+    try:
+        pickle.dumps(val, protocol=5)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _serialize_scw_result(
+    res: dict[str, Any], norm_args: tuple[Any, ...]
+) -> dict[str, Any]:
+    """Prepare simulation result dictionary for protocol-5 pickling."""
+    payload: dict[str, Any] = {}
+    for k, v in res.items():
+        if k == "beam":
+            if isinstance(v, LinearizedBeam):
+                solver_ref = getattr(v, "_solver", None)
+                grid_nx = (
+                    int(solver_ref.Nx) if solver_ref is not None else int(norm_args[0])
+                )
+                grid_nz = (
+                    int(solver_ref.Nz) if solver_ref is not None else int(norm_args[1])
+                )
+                rho0_scale = float(norm_args[2]) if len(norm_args) > 2 else 1.0
+                m_mod = float(norm_args[3]) if len(norm_args) > 3 else MODULATION_INDEX
+                state = {
+                    attr: _to_host_copy(getattr(v, attr))
+                    for attr in _BEAM_STATE_ATTRS
+                    if hasattr(v, attr)
+                }
+                payload[k] = {
+                    "__tag__": _BEAM_REBUILD_TAG,
+                    "grid_nx": grid_nx,
+                    "grid_nz": grid_nz,
+                    "rho0_scale": rho0_scale,
+                    "m_mod": m_mod,
+                    "state": state,
+                }
+            elif _is_picklable(v):
+                payload[k] = v
+            else:
+                state = {
+                    attr: _to_host_copy(attr_val)
+                    for attr, attr_val in getattr(v, "__dict__", {}).items()
+                    if _is_picklable(_to_host_copy(attr_val))
+                }
+                payload[k] = {
+                    "__tag__": _BEAM_REBUILD_TAG,
+                    "grid_nx": int(norm_args[0]),
+                    "grid_nz": int(norm_args[1]),
+                    "rho0_scale": float(norm_args[2]) if len(norm_args) > 2 else 1.0,
+                    "m_mod": (
+                        float(norm_args[3]) if len(norm_args) > 3 else MODULATION_INDEX
+                    ),
+                    "state": state,
+                }
+        else:
+            payload[k] = _to_host_copy(v)
+    return payload
+
+
+def _deserialize_scw_result(payload: dict[str, Any]) -> dict[str, Any]:
+    """Restore simulation result dictionary from pickled payload, rebuilding `beam` if present."""
+    out: dict[str, Any] = {}
+    for k, v in payload.items():
+        if (
+            k == "beam"
+            and isinstance(v, dict)
+            and v.get("__tag__") == _BEAM_REBUILD_TAG
+        ):
+            beam = _build_reference_linearized_beam(
+                int(v["grid_nx"]),
+                int(v["grid_nz"]),
+                rho0_scale=float(v["rho0_scale"]),
+                m_mod=float(v["m_mod"]),
+            )
+            for attr, attr_val in v["state"].items():
+                setattr(beam, attr, _to_host_copy(attr_val))
+            if hasattr(beam, "flat_idx_host"):
+                beam.flat_idx = beam.xp.asarray(beam.flat_idx_host)
+                beam.J_old = beam.xp.zeros(beam.flat_idx_host.size, dtype=beam.dtype)
+            out[k] = beam
+        else:
+            out[k] = _to_host_copy(v)
+    return out
+
+
+def _scw_disk_cached_call(
+    canon_func: str,
+    norm_args: tuple[int | float | str, ...],
+    compute_fn: Any,
+) -> dict[str, Any]:
+    """Execute `compute_fn()` with optional disk cache (`CEM_SCW_CACHE_DIR`) and strict mode (`CEM_SCW_CACHE_STRICT=1`)."""
+    cache_dir = os.environ.get("CEM_SCW_CACHE_DIR", "")
+    strict = os.environ.get("CEM_SCW_CACHE_STRICT", "") == "1"
+    if not cache_dir and not strict:
+        return compute_fn()
+
+    key = scw_cache_key(canon_func, norm_args)
+    if cache_dir:
+        cache_dir_path = Path(cache_dir)
+        target_path = cache_dir_path / f"{canon_func}-{key}.pkl"
+        if target_path.is_file():
+            with open(target_path, "rb") as f:
+                payload = pickle.load(f)
+            return _deserialize_scw_result(payload)
+
+    if strict:
+        raise RuntimeError(
+            f"SCW disk cache miss for {canon_func}{norm_args!r} (key={key})"
+        )
+
+    res = compute_fn()
+    if cache_dir:
+        cache_dir_path = Path(cache_dir)
+        cache_dir_path.mkdir(parents=True, exist_ok=True)
+        target_path = cache_dir_path / f"{canon_func}-{key}.pkl"
+        payload = _serialize_scw_result(res, norm_args)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=f".{canon_func}-{key}.",
+            suffix=".tmp",
+            dir=str(cache_dir_path),
+        )
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump(payload, f, protocol=5)
+            os.replace(tmp_path, target_path)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
+    return res
+
+
 @lru_cache(maxsize=16)
 def cached_linearized_beam_drift(
     nx: int,
@@ -2411,7 +2758,12 @@ def cached_linearized_beam_drift(
     m_mod: float = MODULATION_INDEX,
 ) -> dict[str, Any]:
     """Cache `LinearizedBeam` runs by ``(nx, nz, rho0_scale, m_mod)``."""
-    return run_linearized_beam_drift(nx, nz, rho0_scale=rho0_scale, m_mod=m_mod)
+    norm_args = (int(nx), int(nz), float(rho0_scale), float(m_mod))
+    return _scw_disk_cached_call(
+        "cached_linearized_beam_drift",
+        norm_args,
+        lambda: run_linearized_beam_drift(nx, nz, rho0_scale=rho0_scale, m_mod=m_mod),
+    )
 
 
 @lru_cache(maxsize=64)
@@ -2426,21 +2778,36 @@ def _cached_particle_drift_impl(
     gather: str,
     shape: int,
 ) -> dict[str, Any]:
-    lb_ref = cached_linearized_beam_drift(
-        nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
+    norm_args = (
+        int(nx),
+        int(nz),
+        str(profile),
+        int(seed),
+        float(m_mod),
+        float(qm_scale),
+        int(n_macro),
+        str(gather),
+        int(shape),
     )
-    return run_particle_beam_drift(
-        nx,
-        nz,
-        beam_ref=lb_ref["beam"],
-        qm_scale=qm_scale,
-        seed=seed,
-        m_mod=m_mod,
-        profile=profile,
-        n_macro_per_step=n_macro,
-        gather=gather,
-        shape=shape,
-    )
+
+    def _run() -> dict[str, Any]:
+        lb_ref = cached_linearized_beam_drift(
+            nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
+        )
+        return run_particle_beam_drift(
+            nx,
+            nz,
+            beam_ref=lb_ref["beam"],
+            qm_scale=qm_scale,
+            seed=seed,
+            m_mod=m_mod,
+            profile=profile,
+            n_macro_per_step=n_macro,
+            gather=gather,
+            shape=shape,
+        )
+
+    return _scw_disk_cached_call("_cached_particle_drift_impl", norm_args, _run)
 
 
 def cached_particle_drift(
