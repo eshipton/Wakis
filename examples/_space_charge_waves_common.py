@@ -2047,6 +2047,80 @@ def run_linearized_beam_drift(
     }
 
 
+def _particle_current_lines(
+    beam_ref: LinearizedBeam,
+    solver: SolverFIT3D,
+    mode: str = "all",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(flat_idx_2d, dA_perp)`` of shapes ``(M, L)`` for particle current integration.
+
+    Uses the same axial slice ``beam_ref.k_indices``, flat-index formula
+    ``flat_3d``, and dual-area extraction ``tA_all`` as
+    ``LinearizedBeam._initialize``.
+
+    Parameters
+    ----------
+    beam_ref : LinearizedBeam
+        Reference `LinearizedBeam` on the same grid providing ``axis``,
+        ``k_indices``, ``flat_idx_2d``, and ``dA_perp``.
+    solver : SolverFIT3D
+        Electromagnetic FIT solver providing ``grid``, ``ieps``, and grid dimensions.
+    mode : {"all", "lb_keep"}, optional
+        Transverse line selection mode:
+        - ``"lb_keep"``: return ``(beam_ref.flat_idx_2d, beam_ref.dA_perp)``
+          (restricted to `LinearizedBeam` top-hat ``keep_lines``).
+        - ``"all"``: include every transverse ``E_s`` line that has at least one
+          edge with ``ieps != 0`` across ``beam_ref.k_indices`` (without the
+          top-hat ``w_perp > 0`` filter). Default is ``"all"``.
+
+    Returns
+    -------
+    flat_idx_2d : np.ndarray
+        2D integer array of flat ``E_s``/``J_s`` indices of shape ``(M, L)``.
+    dA_perp : np.ndarray
+        2D float array of dual facet areas [m^2] of shape ``(M, L)``.
+    """
+    if mode == "lb_keep":
+        return beam_ref.flat_idx_2d, beam_ref.dA_perp
+    if mode != "all":
+        raise ValueError(
+            f"Unknown meas_lines mode={mode!r}; expected 'all' or 'lb_keep'."
+        )
+
+    grid = solver.grid
+    c_ax = "xyz".index(beam_ref.axis)
+    dims = (solver.Nx, solver.Ny, solver.Nz)
+    k_indices = np.asarray(beam_ref.k_indices, dtype=int)
+    M = k_indices.size
+    sl: list[Any] = [slice(None), slice(None), slice(None)]
+    sl[c_ax] = k_indices
+
+    tA_all = np.where(grid.itA.toarray() != 0, 1.0 / grid.itA.toarray(), 0.0)
+    ieps_host = np.asarray(
+        solver.ieps.array.get() if solver.use_gpu else solver.ieps.array
+    )
+
+    I, J, K = np.meshgrid(
+        np.arange(dims[0]), np.arange(dims[1]), np.arange(dims[2]), indexing="ij"
+    )
+    N = solver.N
+    flat_3d = c_ax * N + I + dims[0] * J + dims[0] * dims[1] * K
+    flat_sub = np.moveaxis(flat_3d[tuple(sl)], c_ax, 0).reshape(M, -1)
+    ieps_sub = ieps_host[flat_sub]
+
+    keep_lines = np.any(ieps_sub != 0, axis=0)
+    if not np.any(keep_lines):
+        raise ValueError("Beam cross-section contains no non-PEC E edges.")
+
+    flat_idx_2d = flat_sub[:, keep_lines]
+    dA_perp = np.moveaxis(
+        tA_all[c_ax * N : (c_ax + 1) * N].reshape(dims, order="F")[tuple(sl)],
+        c_ax,
+        0,
+    ).reshape(M, -1)[:, keep_lines]
+    return flat_idx_2d, dA_perp
+
+
 def run_particle_beam_drift(
     nx: int,
     nz: int,
@@ -2059,13 +2133,20 @@ def run_particle_beam_drift(
     n_macro_per_step: int | None = None,
     gather: str = "galerkin",
     shape: int = PARTICLE_SHAPE,
+    meas_lines: str = "all",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
-    Integrates the Esirkepov-deposited particle current density ``ps.J_particles``
-    over the exact same primal ``E_z`` edges (``beam_ref.flat_idx``) and dual
-    areas (``beam_ref.dA_perp``) used by `LinearizedBeam.axial_current`, with
-    identical integer-period ``dt`` and time-mean subtraction before the DFT.
+    By default (``meas_lines="all"``), integrates the Esirkepov-deposited
+    particle current density ``ps.J_particles`` over all non-PEC transverse
+    primal ``E_z`` lines across ``beam_ref.k_indices`` using the same flat-index
+    and dual-area (``dA_perp``) conventions as `LinearizedBeam.axial_current`,
+    with identical integer-period ``dt`` and time-mean subtraction before the
+    DFT. Summing over all non-PEC transverse lines measures the total beam
+    current ``I(z)`` because higher-order B-spline transverse deposits
+    (``shape >= 2``) place part of the particle current on lines outside the
+    `LinearizedBeam` top-hat ``keep_lines`` mask that
+    :func:`discrete_modal_prediction` (``"particles"`` branch) includes.
     Also measures the interior DC velocity ``<u_z>(z)`` and deposited particle
     charge density ``rho_DC(z)`` time-averaged over one RF period across the
     settled interior ``z in [0.2 * Lz, 0.8 * Lz]``.
@@ -2083,7 +2164,9 @@ def run_particle_beam_drift(
     nx, nz : int
         Transverse and axial cell counts.
     beam_ref : LinearizedBeam
-        Reference `LinearizedBeam` on the same grid providing ``flat_idx`` and ``dA_perp``.
+        Reference `LinearizedBeam` on the same grid providing ``axis``,
+        ``k_indices``, ``M``, ``s_coords``, and (for ``meas_lines="lb_keep"``)
+        ``flat_idx_2d`` and ``dA_perp``.
     qm_scale : float, optional
         Multiplier on the species charge-to-mass ratio ``|q / m|`` implemented
         by scaling ``mass = m_e / qm_scale`` at fixed ``charge = -e`` and ``gamma = gamma0``.
@@ -2105,6 +2188,11 @@ def run_particle_beam_drift(
     shape : int, optional
         B-spline particle shape order ``p`` in ``{1, 2, 3}`` passed to
         `ParticleSolver`. Default is ``PARTICLE_SHAPE``.
+    meas_lines : {"all", "lb_keep"}, optional
+        Transverse line set passed to :func:`_particle_current_lines` for the
+        ``iz_hist`` cross-section current sum (``"all"`` for all non-PEC
+        transverse lines or ``"lb_keep"`` for ``beam_ref.keep_lines`` only).
+        Default is ``"all"``.
 
     Returns
     -------
@@ -2113,6 +2201,10 @@ def run_particle_beam_drift(
         ``dirichlet_leak_part``, ``u_z_mean``, ``rho_dc_mean``, ``u_z_profile``,
         ``rho_dc_profile``, ``dt``, and ``n_spp``.
     """
+    if meas_lines not in ("all", "lb_keep"):
+        raise ValueError(
+            f"Unknown meas_lines={meas_lines!r}; expected 'all' or 'lb_keep'."
+        )
     params = compute_analytic_parameters(qm_scale=qm_scale)
     u_dep = params["u_dep"]
     gamma0 = params["gamma0"]
@@ -2179,6 +2271,10 @@ def run_particle_beam_drift(
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
     ).attach()
 
+    meas_flat_idx_2d, meas_dA_perp = _particle_current_lines(
+        beam_ref, solver, meas_lines
+    )
+    meas_flat_idx = solver.E.xp.asarray(meas_flat_idx_2d.ravel())
     iz_hist = np.zeros((n_dft, beam_ref.M), dtype=np.float64)
     t_mids = np.zeros(n_dft, dtype=np.float64)
 
@@ -2211,10 +2307,10 @@ def run_particle_beam_drift(
         if step >= n_settle:
             k = step - n_settle
             t_mids[k] = (step + 0.5) * dt
-            j_raw = ps.J_particles[beam_ref.flat_idx]
+            j_raw = ps.J_particles[meas_flat_idx]
             j_host = np.asarray(j_raw.get() if hasattr(j_raw, "get") else j_raw)
-            j_edges = j_host.reshape(beam_ref.M, beam_ref.N_lines)
-            iz_hist[k, :] = np.sum(j_edges * beam_ref.dA_perp, axis=1)
+            j_edges = j_host.reshape(meas_flat_idx_2d.shape)
+            iz_hist[k, :] = np.sum(j_edges * meas_dA_perp, axis=1)
 
             # Deposited-field transverse potential phi(x, z) with PEC phi(+-a) = 0
             ex_raw = solver.E[:, :, :, "x"]
