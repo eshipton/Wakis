@@ -1348,6 +1348,48 @@ def _charge_tail_fraction(zeta: np.ndarray | float, k: int, p: int) -> np.ndarra
     return np.sum(_cardinal_bspline(zeta_arr[..., None] - m_nodes, int(p)), axis=-1)
 
 
+def _entrance_edge_transfer_complex(
+    p: int,
+    k: int,
+    dz: float,
+    dt: float,
+    omega: float,
+    u: float,
+    wall: bool = True,
+    z0_offset_cells: float = 0.0,
+) -> complex:
+    """Compute the complex discrete-time order-``p`` Esirkepov current transfer sum on edge ``k`` [-]."""
+    p_int = int(p)
+    k_int = int(k)
+    dz_f = float(dz)
+    dt_f = float(dt)
+    omega_f = float(omega)
+    u_f = float(u)
+    offset_f = float(z0_offset_cells)
+    if p_int not in (1, 2, 3):
+        raise ValueError(f"Unsupported B-spline degree p={p!r}; expected 1, 2, or 3.")
+
+    z0_base = 0.0 if wall else -float(k_int + p_int + 3) * dz_f
+    z0 = z0_base if offset_f == 0.0 else (z0_base + offset_f * dz_f)
+    z_end = float(k_int + p_int + 2) * dz_f
+    step_z = u_f * dt_f
+    n_steps = int(np.ceil((z_end - z0) / step_z))
+    while (z0 + step_z * n_steps) / dz_f < float(k_int + p_int + 2):
+        n_steps += 1
+
+    j_nodes = np.arange(n_steps + 1, dtype=np.float64)
+    zeta_j = (z0 + step_z * j_nodes) / dz_f
+    ck_j = _charge_tail_fraction(zeta_j, k_int, p_int)
+    dc_j = ck_j[1:] - ck_j[:-1]
+    if wall:
+        dc_j[0] += float(_charge_tail_fraction(0.0, k_int, p_int))
+    j_idx = np.arange(n_steps, dtype=np.float64)
+    h_sum = np.sum(dc_j * np.exp(-1j * omega_f * dt_f * j_idx))
+    if offset_f != 0.0:
+        h_sum = h_sum * np.exp(-1j * (omega_f * dz_f / u_f) * offset_f)
+    return complex(h_sum)
+
+
 def entrance_edge_transfer(
     p: int,
     k: int,
@@ -1356,6 +1398,7 @@ def entrance_edge_transfer(
     omega: float,
     u: float,
     wall: bool = True,
+    z0_offset_cells: float = 0.0,
 ) -> float:
     """Compute the discrete-time order-``p`` Esirkepov current transfer amplitude ``H_k`` on edge ``k`` [-].
 
@@ -1389,37 +1432,29 @@ def entrance_edge_transfer(
         If ``True`` (default), start at ``z_0 = 0`` and add the PEC wall birth
         closure ``C_k(0)`` to ``dC_0``. If ``False``, start far upstream at
         ``z_0 = -(k + p + 3) * dz`` without closure (bulk kernel).
+    z0_offset_cells : float, optional
+        Sub-step start-phase offset ``zeta_0`` in cell units [cells] added to
+        ``z_0 / dz`` for bulk phase-alias sampling. Default is ``0.0``.
 
     Returns
     -------
     float
         Transfer amplitude ``H_k`` [-].
     """
-    p_int = int(p)
-    k_int = int(k)
-    dz_f = float(dz)
-    dt_f = float(dt)
-    omega_f = float(omega)
-    u_f = float(u)
-    if p_int not in (1, 2, 3):
-        raise ValueError(f"Unsupported B-spline degree p={p!r}; expected 1, 2, or 3.")
-
-    z0 = 0.0 if wall else -float(k_int + p_int + 3) * dz_f
-    z_end = float(k_int + p_int + 2) * dz_f
-    step_z = u_f * dt_f
-    n_steps = int(np.ceil((z_end - z0) / step_z))
-    while (z0 + step_z * n_steps) / dz_f < float(k_int + p_int + 2):
-        n_steps += 1
-
-    j_nodes = np.arange(n_steps + 1, dtype=np.float64)
-    zeta_j = (z0 + step_z * j_nodes) / dz_f
-    ck_j = _charge_tail_fraction(zeta_j, k_int, p_int)
-    dc_j = ck_j[1:] - ck_j[:-1]
-    if wall:
-        dc_j[0] += float(_charge_tail_fraction(0.0, k_int, p_int))
-    j_idx = np.arange(n_steps, dtype=np.float64)
-    h_k = np.abs(np.sum(dc_j * np.exp(-1j * omega_f * dt_f * j_idx)))
-    return float(h_k)
+    return float(
+        np.abs(
+            _entrance_edge_transfer_complex(
+                p=p,
+                k=k,
+                dz=dz,
+                dt=dt,
+                omega=omega,
+                u=u,
+                wall=wall,
+                z0_offset_cells=z0_offset_cells,
+            )
+        )
+    )
 
 
 def _single_grid_budget_terms(
