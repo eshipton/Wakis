@@ -973,9 +973,13 @@ def test_shape1_identity_and_wall_stencil_bounds():
         )
 
         tols_p1 = derived_tolerances(nx, nz, params, shape=1)
-        be_half = 0.5 * params["beta_e"] * dz
+        from examples._space_charge_waves_common import entrance_edge_transfer
+
         bq_half = 0.5 * params["beta_q"] * dz
-        amp_pred_ref = float(np.sinc(be_half / np.pi) * np.cos(bq_half))
+        h0_ref = entrance_edge_transfer(
+            1, 0, dz, dt_grid, params["omega"], params["u_dep"], wall=True
+        )
+        amp_pred_ref = float(h0_ref * np.cos(bq_half))
         _, _, _ = _grid_gamma1_disc_and_dw(int(nx), int(nz), params["omega"])
         tcrit_ref = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
         np.testing.assert_allclose(
@@ -1105,9 +1109,14 @@ def test_shape2_modal_prediction_and_sz_symbol():
         np.testing.assert_allclose(bq_ratio_meas, bq_Ratio_pred, rtol=0.0, atol=1e-13)
 
         tols_p = derived_tolerances(nx, nz, params, shape=p)
-        be_half = 0.5 * params["beta_e"] * dz
+        from examples._space_charge_waves_common import entrance_edge_transfer
+
+        dt_p, _ = _cached_integer_period_dt(int(nx), int(nz))
         bq_half = 0.5 * params["beta_q"] * dz
-        amp_expected = float((np.sinc(be_half / np.pi) ** p) * np.cos(bq_half))
+        h0_p = entrance_edge_transfer(
+            p, 0, dz, dt_p, params["omega"], params["u_dep"], wall=True
+        )
+        amp_expected = float(h0_p * np.cos(bq_half))
         np.testing.assert_allclose(
             tols_p["amp_pred_part"], amp_expected, rtol=0.0, atol=1e-15
         )
@@ -1292,9 +1301,16 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"expected={tols['slack_lb'] + tols['slack_part']:.16e}"
     )
     dz = TUNNEL_LENGTH_M / nz
+    from scipy.constants import c as c_light
+
+    v_inj = float(c_light * np.sqrt(1.0 - 1.0 / (params["gamma0"] ** 2)))
     tol_amp_part_check = float(
-        (0.5 * params["beta_e"] * dz) ** 4 / 120.0
-        + (0.5 * params["beta_q"] * dz) ** 4 / 24.0
+        2.0
+        * (v_inj / params["u_dep"] - 1.0)
+        * PARTICLE_SHAPE
+        * (params["beta_e"] * dz) ** 2
+        / 24.0
+        + (1.0 - np.cos(0.5 * params["beta_q"] * dz))
         + 1.0e-12
     )
     assert np.isclose(tols["tol_amp_part"], tol_amp_part_check, rtol=0.0, atol=1e-15), (
