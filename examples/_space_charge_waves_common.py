@@ -1288,12 +1288,147 @@ def prediction_slack(
     return res
 
 
+def _cardinal_bspline(d: np.ndarray | float, p: int) -> np.ndarray:
+    """Evaluate the centred cardinal B-spline ``W_p(d)`` of degree ``p`` at cell offset ``d`` [-].
+
+    Parameters
+    ----------
+    d : np.ndarray or float
+        Cell-normalised coordinate offset ``d = (z - z_m) / dz`` [-].
+    p : int
+        B-spline degree ``p`` in ``{1, 2, 3}`` [-].
+
+    Returns
+    -------
+    np.ndarray
+        Centred cardinal B-spline value ``W_p(d)`` [-].
+    """
+    p_int = int(p)
+    abs_d = np.abs(np.asarray(d, dtype=np.float64))
+    if p_int == 1:
+        return np.where(abs_d < 1.0, 1.0 - abs_d, 0.0)
+    if p_int == 2:
+        return np.where(
+            abs_d <= 0.5,
+            0.75 - abs_d * abs_d,
+            np.where(abs_d < 1.5, 0.5 * (1.5 - abs_d) ** 2, 0.0),
+        )
+    if p_int == 3:
+        return np.where(
+            abs_d <= 1.0,
+            (4.0 - 6.0 * abs_d * abs_d + 3.0 * (abs_d**3)) / 6.0,
+            np.where(abs_d < 2.0, ((2.0 - abs_d) ** 3) / 6.0, 0.0),
+        )
+    raise ValueError(f"Unsupported B-spline degree p={p!r}; expected 1, 2, or 3.")
+
+
+def _charge_tail_fraction(zeta: np.ndarray | float, k: int, p: int) -> np.ndarray:
+    """Evaluate ``C_k(zeta) = sum_{m >= k + 1} W_p(zeta - m)`` at cell coordinate ``zeta = z / dz`` [-].
+
+    Parameters
+    ----------
+    zeta : np.ndarray or float
+        Particle axial position in cell units ``z / dz`` [-].
+    k : int
+        Axial ``E_z`` edge index ``k`` (spanning between node ``k`` and ``k + 1``) [-].
+    p : int
+        B-spline degree ``p`` in ``{1, 2, 3}`` [-].
+
+    Returns
+    -------
+    np.ndarray
+        Charge fraction ``C_k(zeta)`` deposited on primal nodes ``m >= k + 1`` [-].
+    """
+    zeta_arr = np.asarray(zeta, dtype=np.float64)
+    m_min = int(k) + 1
+    m_max = int(np.floor(float(np.max(zeta_arr)) + 0.5 * (int(p) + 1))) + 1
+    if m_max < m_min:
+        return np.zeros_like(zeta_arr, dtype=np.float64)
+    m_nodes = np.arange(m_min, m_max + 1, dtype=np.float64)
+    return np.sum(_cardinal_bspline(zeta_arr[..., None] - m_nodes, int(p)), axis=-1)
+
+
+def entrance_edge_transfer(
+    p: int,
+    k: int,
+    dz: float,
+    dt: float,
+    omega: float,
+    u: float,
+    wall: bool = True,
+) -> float:
+    """Compute the discrete-time order-``p`` Esirkepov current transfer amplitude ``H_k`` on edge ``k`` [-].
+
+    Evaluates the exact discrete-time unperturbed (no-plasma) transfer modulus::
+
+        C_k(zeta) = sum_{m >= k + 1} W_p(zeta - m)
+        dC_j = C_k(z_{j + 1} / dz) - C_k(z_j / dz),   j = 0 .. n - 1
+        dC_0 += C_k(0)                                (when wall=True)
+        H_k = | sum_{j = 0}^{n - 1} dC_j * exp(-i * omega * dt * j) |
+
+    for a particle moving at uniform velocity ``u`` along ``z_j = z_0 + u * dt * j``
+    up to ``z_n / dz >= k + p + 2``, starting at ``z_0 = 0`` with PEC birth closure
+    when ``wall=True`` or far upstream at ``z_0 = -(k + p + 3) * dz`` without
+    closure when ``wall=False``.
+
+    Parameters
+    ----------
+    p : int
+        B-spline shape order ``p`` in ``{1, 2, 3}`` [-].
+    k : int
+        Axial ``E_z`` edge index ``k`` [-].
+    dz : float
+        Axial cell size [m].
+    dt : float
+        Time step [s].
+    omega : float
+        Angular modulation frequency [rad/s].
+    u : float
+        Uniform axial drift velocity [m/s].
+    wall : bool, optional
+        If ``True`` (default), start at ``z_0 = 0`` and add the PEC wall birth
+        closure ``C_k(0)`` to ``dC_0``. If ``False``, start far upstream at
+        ``z_0 = -(k + p + 3) * dz`` without closure (bulk kernel).
+
+    Returns
+    -------
+    float
+        Transfer amplitude ``H_k`` [-].
+    """
+    p_int = int(p)
+    k_int = int(k)
+    dz_f = float(dz)
+    dt_f = float(dt)
+    omega_f = float(omega)
+    u_f = float(u)
+    if p_int not in (1, 2, 3):
+        raise ValueError(f"Unsupported B-spline degree p={p!r}; expected 1, 2, or 3.")
+
+    z0 = 0.0 if wall else -float(k_int + p_int + 3) * dz_f
+    z_end = float(k_int + p_int + 2) * dz_f
+    step_z = u_f * dt_f
+    n_steps = int(np.ceil((z_end - z0) / step_z))
+    while (z0 + step_z * n_steps) / dz_f < float(k_int + p_int + 2):
+        n_steps += 1
+
+    j_nodes = np.arange(n_steps + 1, dtype=np.float64)
+    zeta_j = (z0 + step_z * j_nodes) / dz_f
+    ck_j = _charge_tail_fraction(zeta_j, k_int, p_int)
+    dc_j = ck_j[1:] - ck_j[:-1]
+    if wall:
+        dc_j[0] += float(_charge_tail_fraction(0.0, k_int, p_int))
+    j_idx = np.arange(n_steps, dtype=np.float64)
+    h_k = np.abs(np.sum(dc_j * np.exp(-1j * omega_f * dt_f * j_idx)))
+    return float(h_k)
+
+
 def _single_grid_budget_terms(
     nx: int,
     nz: int,
     params: dict[str, float],
     omega_p_scale: float = 1.0,
     shape: int = PARTICLE_SHAPE,
+    cfln: float = CFL_NUMBER,
 ) -> dict[str, Any]:
     """Compute Step 2 modal predictions and Step 3 slacks for grid ``(nx, 1, nz)``."""
     dz = TUNNEL_LENGTH_M / nz
@@ -1326,15 +1461,29 @@ def _single_grid_budget_terms(
     delta_th_disc = float(dep_info["delta_disc"])
     eps_ac = float(0.5 * (MODULATION_INDEX * beta_q / beta_e) ** 2)
 
-    # Entrance amplitude bounds at first primal edge midpoint z_0 = 0.5 * dz:
-    # For particles, edge-0 current is the order-p Esirkepov flux averaged over a
-    # one-cell transit, giving predicted ratio sinc^p(beta_e * dz / 2) * cos(beta_q * dz / 2)
-    # and bound from the first neglected Taylor terms (beta_e*dz/2)^4/120 + (beta_q*dz/2)^4/24 + 1e-12.
+    # Entrance amplitude prediction and bound at first primal edge k = 0 (midpoint z_0 = 0.5 * dz):
+    # At the PEC entrance wall z = 0, the order-p edge-0 kernel is truncated at z < 0 and
+    # closed by the birth closure C_0(0), giving H_0 * cos(beta_q * dz / 2) with analytic bound
+    # 2 * (v_inj / u_dep - 1) * p * (beta_e * dz)^2 / 24 + (1 - cos(beta_q * dz / 2)) + 1e-12.
     tol_amp_lb = float(0.5 * (beta_q * dz) ** 2)
-    be_half = 0.5 * beta_e * dz
     bq_half = 0.5 * beta_q * dz
-    amp_pred_part = float((np.sinc(be_half / np.pi) ** int(shape)) * np.cos(bq_half))
-    tol_amp_part = float((be_half**4) / 120.0 + (bq_half**4) / 24.0 + 1.0e-12)
+    dt_grid, _ = _cached_integer_period_dt(int(nx), int(nz), cfln=float(cfln))
+    h0_part = entrance_edge_transfer(
+        int(shape),
+        0,
+        dz,
+        dt_grid,
+        params["omega"],
+        params["u_dep"],
+        wall=True,
+    )
+    v_inj = float(c_light * np.sqrt(1.0 - 1.0 / (params["gamma0"] ** 2)))
+    amp_pred_part = float(h0_part * np.cos(bq_half))
+    tol_amp_part = float(
+        2.0 * (v_inj / params["u_dep"] - 1.0) * int(shape) * ((beta_e * dz) ** 2) / 24.0
+        + (1.0 - np.cos(bq_half))
+        + 1.0e-12
+    )
 
     # Residual DFT leakage bound (identity / round-off):
     eps_dft = float(100.0 * np.finfo(np.float64).eps / MODULATION_INDEX)
