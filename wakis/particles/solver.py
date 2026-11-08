@@ -4267,7 +4267,15 @@ class ParticleSolver:
         -------
         float
             Cumulative PEC-wall birth-kick kinetic energy change [J].
+
+        Raises
+        ------
+        ValueError
+            If any birth kick since the last periodic check produced
+            :math:`\\gamma' < 1` (deferred device flag, see
+            :meth:`_check_wall_kick_error`).
         """
+        self._check_wall_kick_error(periodic=False)
         k_loc = float(self._K_wall_kick)
         if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
             from mpi4py import MPI

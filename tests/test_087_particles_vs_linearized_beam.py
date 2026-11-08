@@ -2575,6 +2575,29 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             noise["delta_sem"],
         )
 
+    # Seeded-ensemble DC depression at finite m. The seeded runs carry the same deterministic O(m^2)
+    # AC velocity shift as the lattice run; it is measured from the lattice pair,
+    # shift_m = delta_lat(m) - delta0_lat, and subtracted (not bounded by eps_AC, which is only a scale).
+    # Bound: t * hypot(SEM, SEM_propagated) + 1e-12 (seed scatter of the ensemble mean and of the
+    # lattice-pair extrapolation, each treated as independent with the ensemble SEM).
+    for label, d_lat, d0_lat, sem_prop_dep, noise in (
+        ("fine", delta_lat_f, delta0_lat_f, sem_prop_dep_f, noise_f),
+        ("coarse", delta_lat_c, delta0_lat_c, sem_prop_dep_c, noise_c),
+    ):
+        shift_m = float(d_lat - d0_lat)
+        err_ens = abs(noise["delta_mean"] - shift_m - noise["delta_disc_charge"])
+        bound_ens = float(noise["tcrit"] * np.hypot(noise["delta_sem"], sem_prop_dep) + 1e-12)
+        print(
+            f"DEPENS grid={label} delta_mean={noise['delta_mean']:.6e} shift_m={shift_m:.6e} "
+            f"delta_disc_charge_ens={noise['delta_disc_charge']:.6e} err={err_ens:.6e} bound={bound_ens:.6e}",
+            flush=True,
+        )
+        assert err_ens <= bound_ens, (
+            f"{label} seeded charge-weighted DC depression "
+            f"|delta_meas_mean - shift_m - delta_disc_charge_ens| = {err_ens:.6e} > "
+            f"t*hypot(SEM, SEM_prop) + 1e-12 = {bound_ens:.6e} (margin={bound_ens - err_ens:+.6e})"
+        )
+
     assert mean_minus_lat_c <= bound_lat_c, (
         f"Coarse |mean_sheet - lattice| = {mean_minus_lat_c:.6e} > t*SEM = {bound_lat_c:.6e} "
         f"(margin={bound_lat_c - mean_minus_lat_c:+.6e})"
