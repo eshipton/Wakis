@@ -1594,7 +1594,9 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
     resid_m3 = abs(beta0_m3 / bq_m3_pred - 1.0)
 
     delta_meas_m3 = float((params["u0"] - part_m3["u_z_mean"]) / params["u0"])
-    delta_disc_m3 = float(compute_discrete_dc_depression(nx, params, line_x=x_fib))
+    delta_disc_m3 = float(
+        compute_discrete_dc_depression(nx, params, line_x=x_fib, weighting="charge")
+    )
     delta_disc_uniform = float(tols["delta_disc_exact"])
     err_dep_m3 = abs(delta_meas_m3 - delta_disc_m3)
     bound_dep_m3 = float(tols["eps_ac"] + 1.0e-12)
@@ -1602,7 +1604,9 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
     print(
         f"\nDEPCHECK id=M3 delta_meas_m3={delta_meas_m3:.6e} "
         f"delta_disc_m3={delta_disc_m3:.6e} "
+        f"delta_disc_charge_m3={delta_disc_m3:.6e} "
         f"delta_disc_uniform={delta_disc_uniform:.6e} "
+        f"delta_disc_charge_uniform={tols['delta_disc_charge']:.6e} "
         f"eps_ac={tols['eps_ac']:.6e}",
         flush=True,
     )
@@ -1624,7 +1628,7 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         )
 
     assert err_dep_m3 <= bound_dep_m3, (
-        f"M3 DC depression |delta_meas_m3 - delta_disc_m3| = {err_dep_m3:.6e} > "
+        f"M3 charge-weighted DC depression |delta_meas_m3 - delta_disc_m3| = {err_dep_m3:.6e} > "
         f"eps_AC + 1e-12 = {bound_dep_m3:.6e} (margin={bound_dep_m3 - err_dep_m3:+.6e})"
     )
 
@@ -1991,9 +1995,11 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"weighting={tols_c['dep_weighting']} "
         f"delta_disc_flux={tols_c['delta_disc_flux']:.6e} "
         f"delta_disc_density={tols_c['delta_disc_density']:.6e} "
+        f"delta_disc_charge={tols_c['delta_disc_charge']:.6e} "
         f"eps_ac={tols_c['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_c:.6e} "
         f"delta_disc_ens={noise_c['delta_disc']:.6e} "
+        f"delta_disc_charge_ens={noise_c['delta_disc_charge']:.6e} "
         f"delta_meas_lattice_ens={noise_c['delta_lattice']:.6e} "
         f"delta_meas_mean={noise_c['delta_mean']:.6e} "
         f"sem={noise_c['delta_sem']:.6e}",
@@ -2005,9 +2011,11 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"weighting={tols_f['dep_weighting']} "
         f"delta_disc_flux={tols_f['delta_disc_flux']:.6e} "
         f"delta_disc_density={tols_f['delta_disc_density']:.6e} "
+        f"delta_disc_charge={tols_f['delta_disc_charge']:.6e} "
         f"eps_ac={tols_f['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_f:.6e} "
         f"delta_disc_ens={noise_f['delta_disc']:.6e} "
+        f"delta_disc_charge_ens={noise_f['delta_disc_charge']:.6e} "
         f"delta_meas_lattice_ens={noise_f['delta_lattice']:.6e} "
         f"delta_meas_mean={noise_f['delta_mean']:.6e} "
         f"sem={noise_f['delta_sem']:.6e}",
@@ -2090,15 +2098,15 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             f"bound={amp_bound_sheet:.6e} (margin={amp_bound_sheet - amp_err_sheet:+.6e})"
         )
 
-    # Step 1: Deterministic lattice DC depression |delta_meas,lattice - delta_disc| <= eps_AC + 1e-12
+    # Step 1: Deterministic lattice DC depression |delta_meas,lattice - delta_disc_charge| <= eps_AC + 1e-12
     for label, delta_lat, tols in (
         ("coarse", delta_lat_c, tols_c),
         ("fine", delta_lat_f, tols_f),
     ):
-        err_dep_lat = abs(delta_lat - tols["delta_disc_exact"])
+        err_dep_lat = abs(delta_lat - tols["delta_disc_charge"])
         bound_dep_lat = tols["eps_ac"] + 1e-12
         assert err_dep_lat <= bound_dep_lat, (
-            f"{label} lattice DC depression |delta_meas_lattice - delta_disc_exact| = "
+            f"{label} lattice charge-weighted DC depression |delta_meas_lattice - delta_disc_charge| = "
             f"{err_dep_lat:.6e} > eps_AC + 1e-12 = {bound_dep_lat:.6e} "
             f"(margin={bound_dep_lat - err_dep_lat:+.6e})"
         )
@@ -2112,15 +2120,15 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"(margin={bound_lat_f - mean_minus_lat_f:+.6e})"
     )
 
-    # Step 1 / 4.5: Seeded sheet DC depression |delta_meas_mean - delta_disc| <= t * SEM + 1e-12
+    # Step 1 / 4.5: Seeded sheet DC depression |delta_meas_mean - delta_disc_charge| <= t * SEM + 1e-12
     for label, noise in (
         ("fine", noise_f),
         ("coarse", noise_c),
     ):
-        err_dep = abs(noise["delta_mean"] - noise["delta_disc"])
+        err_dep = abs(noise["delta_mean"] - noise["delta_disc_charge"])
         bound_dep = noise["tcrit"] * noise["delta_sem"] + 1e-12
         assert err_dep <= bound_dep, (
-            f"{label} DC depression |delta_meas_mean - delta_disc_ens| = {err_dep:.6e} > "
+            f"{label} charge-weighted DC depression |delta_meas_mean - delta_disc_charge_ens| = {err_dep:.6e} > "
             f"t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
         )
 
