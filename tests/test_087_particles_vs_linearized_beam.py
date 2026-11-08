@@ -547,7 +547,7 @@ def test_discrete_modal_operator_unit():
         raise first_exc
 
 
-def test_shape1_identity_and_wall_stencil_bounds():
+def test_shape1_identity_and_wall_stencil_bounds(monkeypatch):
     """Verify p=1 path matches head 7100c420 formulas (rtol=0, atol=1e-15) and no p<=3 stencil reaches a wall node."""
     from scipy.constants import c as c_light
     from scipy.constants import e as e_charge
@@ -984,9 +984,37 @@ def test_shape1_identity_and_wall_stencil_bounds():
         amp_pred_ref = float(h0_ref * np.cos(bq_half))
         _, _, _ = _grid_gamma1_disc_and_dw(int(nx), int(nz), params["omega"])
         tcrit_ref = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
+        bq_ref_p1 = float(_ref_modal_pred_part(nx, nz, params))
+        bq_modal_p1 = float(
+            discrete_modal_prediction(
+                "particles", nx, nz, params, shape=1, method="modal"
+            )
+        )
+        np.testing.assert_allclose(
+            bq_modal_p1,
+            bq_ref_p1,
+            rtol=0.0,
+            atol=1e-15,
+        )
+        bq_ms_p1 = float(
+            discrete_modal_prediction(
+                "particles", nx, nz, params, shape=1, method="multistream"
+            )
+        )
+        diff_ms_vs_ref_p1 = float(bq_ms_p1 - bq_ref_p1)
+        print(
+            f"P1_METHOD_DIFF nx={nx} nz={nz} bq_modal_ref={bq_ref_p1:.12f} "
+            f"bq_modal={bq_modal_p1:.12f} bq_multistream={bq_ms_p1:.12f} "
+            f"diff={diff_ms_vs_ref_p1:+.6e}",
+            flush=True,
+        )
+        assert bq_ms_p1 != bq_ref_p1, (
+            f"nx={nx}, nz={nz}: method='multistream' at p=1 ({bq_ms_p1:.12f}) "
+            f"must differ from _ref_modal_pred_part ({bq_ref_p1:.12f})"
+        )
         np.testing.assert_allclose(
             tols_p1["bq_pred_part"],
-            discrete_modal_prediction("particles", nx, nz, params, shape=1),
+            bq_ms_p1,
             rtol=0.0,
             atol=1e-15,
         )
@@ -1040,6 +1068,67 @@ def test_shape1_identity_and_wall_stencil_bounds():
         np.testing.assert_allclose(
             cic_p1.w_cic_nodes, w_cic_nodes_ref, rtol=0.0, atol=1e-15
         )
+
+    # Real code mutations via monkeypatch verifying both p=1 checks can fail
+    import examples._space_charge_waves_common as scw_mod
+
+    nx_c, _, nz_c = COARSE_GRID
+    bq_ref_c = float(_ref_modal_pred_part(nx_c, nz_c, params))
+    orig_op = scw_mod.compute_transverse_modal_operator
+
+    def _op_scaled_g(*args, **kwargs):
+        res = dict(orig_op(*args, **kwargs))
+        res["G"] = 2.0 * res["G"]
+        return res
+
+    with monkeypatch.context() as mp:
+        mp.setattr(scw_mod, "compute_transverse_modal_operator", _op_scaled_g)
+        with pytest.raises(AssertionError):
+            np.testing.assert_allclose(
+                float(
+                    discrete_modal_prediction(
+                        "particles", nx_c, nz_c, params, shape=1, method="modal"
+                    )
+                ),
+                bq_ref_c,
+                rtol=0.0,
+                atol=1e-15,
+            )
+
+    orig_ms = scw_mod.multistream_waves
+
+    def _ms_collapse_to_modal(nx_a, nz_a, params_a, **kw):
+        ms_res = dict(orig_ms(nx_a, nz_a, params_a, **kw))
+        k_w = np.concatenate(
+            [
+                pred_ref["kc_modes"] - pred_ref["bq_modes"],
+                pred_ref["kc_modes"] + pred_ref["bq_modes"],
+            ]
+        )
+        o_w = 0.5 * np.concatenate([pred_ref["c_modes"], pred_ref["c_modes"]]).astype(
+            np.complex128
+        )
+        ms_res["k_waves"] = k_w
+        ms_res["o_waves"] = o_w
+        ms_res["x_waves"] = np.zeros(
+            (ms_res["x_waves"].shape[0], len(k_w)), dtype=np.complex128
+        )
+        return ms_res
+
+    with monkeypatch.context() as mp:
+        mp.setattr(scw_mod, "multistream_waves", _ms_collapse_to_modal)
+        with pytest.raises(AssertionError):
+            bq_ms_mut = float(
+                discrete_modal_prediction(
+                    "particles",
+                    FINE_GRID[0],
+                    FINE_GRID[2],
+                    params,
+                    shape=1,
+                    method="multistream",
+                )
+            )
+            assert bq_ms_mut != float(pred_ref["beta_q"])
 
 
 def test_shape2_modal_prediction_and_sz_symbol():
