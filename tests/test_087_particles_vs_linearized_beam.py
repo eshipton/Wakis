@@ -164,6 +164,84 @@ def _cached_m3_disk_run(
         BeamInjector._sheet_lattice_x = orig_sheet_lat
 
 
+def _assert_beta0_within_bound(
+    beta0: float,
+    bq_pred: float,
+    bound: float,
+    label: str,
+) -> float:
+    """Assert relative error ``|beta0 / bq_pred - 1| <= bound`` and return the residual."""
+    resid = float(abs(float(beta0) / float(bq_pred) - 1.0))
+    assert resid <= float(bound), (
+        f"{label} |beta0/bq_pred - 1| = {resid:.6e} > bound = {float(bound):.6e} "
+        f"(margin={float(bound) - resid:+.6e})"
+    )
+    return resid
+
+
+def _check_beta0_negative_controls(
+    case_id: str,
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    beta0: float,
+    bound: float,
+    *,
+    expected_failures: tuple[str, ...],
+    line_x: np.ndarray | None = None,
+    shape: int = PARTICLE_SHAPE,
+) -> dict[str, dict[str, float | str]]:
+    """Evaluate prediction-only negative controls against measured ``beta0`` and ``bound``.
+
+    For each alternative prediction variant (``method="modal"``,
+    ``wall_image="dirichlet"``, ``wall_image="none"``), computes its relative
+    residual against ``beta0`` using the unchanged ``bound``. Variants listed in
+    ``expected_failures`` are asserted to fail via ``pytest.raises(AssertionError)``
+    around :func:`_assert_beta0_within_bound`; variants that do not exceed the
+    existing ``bound`` are not asserted and are printed as ``NOT-SEPARATED``.
+    """
+    variants: tuple[tuple[str, dict[str, str]], ...] = (
+        ("modal", {"method": "modal"}),
+        ("dirichlet", {"method": "multistream", "wall_image": "dirichlet"}),
+        ("none", {"method": "multistream", "wall_image": "none"}),
+    )
+    out: dict[str, dict[str, float | str]] = {}
+    for var_name, var_kw in variants:
+        bq_var = float(
+            discrete_modal_prediction(
+                "particles",
+                int(nx),
+                int(nz),
+                params,
+                line_x=line_x,
+                shape=int(shape),
+                **var_kw,
+            )
+        )
+        resid_var = float(abs(float(beta0) / bq_var - 1.0))
+        if var_name in expected_failures:
+            with pytest.raises(AssertionError):
+                _assert_beta0_within_bound(
+                    beta0, bq_var, bound, f"{case_id}:{var_name}"
+                )
+            status = "FAIL"
+        else:
+            status = "NOT-SEPARATED"
+        print(
+            f"NEGCTRL id={case_id} variant={var_name} beta0={float(beta0):.6f} "
+            f"bq_pred={bq_var:.6f} resid={resid_var:.6e} bound={float(bound):.6e} "
+            f"status={status}",
+            flush=True,
+        )
+        out[var_name] = {
+            "bq_pred": bq_var,
+            "resid": resid_var,
+            "bound": float(bound),
+            "status": status,
+        }
+    return out
+
+
 def test_preflight_and_resolution_criteria():
     """Verify `wakis.estimate` preflight, resolution rules, and two-wave fit-window span >= 1.25 * lambda_q."""
     params = compute_analytic_parameters(qm_scale=1.0)
@@ -1215,7 +1293,7 @@ def test_shape2_modal_prediction_and_sz_symbol():
         )
 
 
-def test_mutation_shape1_vs_shape2_prediction_exceeds_slack():
+def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
     """Mutation check: shape=1 modal prediction vs shape=2 modal prediction differs by more than slack_part on coarse grid."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
@@ -1243,6 +1321,106 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack():
         assert rel_diff_vs_p1 <= slack_p1, (
             f"shape=2 vs shape=1 relative difference {rel_diff_vs_p1:.6e} exceeds slack_p1={slack_p1:.6e}"
         )
+
+    # Prediction-only negative-control checks (Item 1) on fine, M1, and M3 using the
+    # referee-quoted measured beta0 values (.gemini-inputs/referee-input.md, d20-design.md)
+    nx_f, _, nz_f = FINE_GRID
+    tols_f = derived_tolerances(nx_f, nz_f, params)
+    beta0_f_ref = 54.362241
+    bound_f_ref = float(tols_f["slack_part"])
+    _assert_beta0_within_bound(
+        beta0_f_ref, float(tols_f["bq_pred_part"]), bound_f_ref, "fine"
+    )
+    neg_f = _check_beta0_negative_controls(
+        "fine",
+        nx_f,
+        nz_f,
+        params,
+        beta0_f_ref,
+        bound_f_ref,
+        expected_failures=("dirichlet", "none"),
+    )
+    assert neg_f["modal"]["status"] == "NOT-SEPARATED"
+    assert neg_f["dirichlet"]["status"] == "FAIL"
+    assert neg_f["none"]["status"] == "FAIL"
+
+    params_m1 = compute_analytic_parameters(qm_scale=2.0)
+    tols_m1 = derived_tolerances(nx, nz, params_m1)
+    beta0_m1_ref = 77.116590
+    bound_m1_ref = 1.90e-4
+    _assert_beta0_within_bound(
+        beta0_m1_ref, float(tols_m1["bq_pred_part"]), bound_m1_ref, "M1"
+    )
+    neg_m1 = _check_beta0_negative_controls(
+        "M1",
+        nx,
+        nz,
+        params_m1,
+        beta0_m1_ref,
+        bound_m1_ref,
+        expected_failures=("modal",),
+    )
+    assert neg_m1["modal"]["status"] == "FAIL"
+    assert neg_m1["dirichlet"]["status"] == "NOT-SEPARATED"
+    assert neg_m1["none"]["status"] == "NOT-SEPARATED"
+
+    x_fib = _fibonacci_disk_x_coords(16, radius=BEAM_HALF_THICKNESS_M, x0=0.0)
+    bq_m3_pred_ref = float(
+        discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
+    )
+    beta0_m3_ref = 55.191143
+    bound_m3_ref = 5.9e-5
+    _assert_beta0_within_bound(beta0_m3_ref, bq_m3_pred_ref, bound_m3_ref, "M3")
+    neg_m3 = _check_beta0_negative_controls(
+        "M3",
+        nx,
+        nz,
+        params,
+        beta0_m3_ref,
+        bound_m3_ref,
+        expected_failures=("modal", "dirichlet", "none"),
+        line_x=x_fib,
+    )
+    assert neg_m3["modal"]["status"] == "FAIL"
+    assert neg_m3["dirichlet"]["status"] == "FAIL"
+    assert neg_m3["none"]["status"] == "FAIL"
+
+    # Real code mutations via monkeypatch verifying both _assert_beta0_within_bound
+    # and _check_beta0_negative_controls fail when the underlying model code is mutated
+    import examples._space_charge_waves_common as scw_mod
+
+    orig_wall_corr = scw_mod._multistream_wall_correction
+
+    def _negated_wall_corr(*args, **kwargs):
+        return -orig_wall_corr(*args, **kwargs)
+
+    def _ignored_wall_image(*args, **kwargs):
+        kwargs = dict(kwargs, wall_image="neumann")
+        return orig_wall_corr(*args, **kwargs)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(scw_mod, "_multistream_wall_correction", _negated_wall_corr)
+        bq_mut_m3 = float(
+            discrete_modal_prediction("particles", nx, nz, params, line_x=x_fib)
+        )
+        with pytest.raises(AssertionError):
+            _assert_beta0_within_bound(
+                beta0_m3_ref, bq_mut_m3, bound_m3_ref, "M3_mutated_wall"
+            )
+
+    with monkeypatch.context() as mp:
+        mp.setattr(scw_mod, "_multistream_wall_correction", _ignored_wall_image)
+        with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+            _check_beta0_negative_controls(
+                "M3",
+                nx,
+                nz,
+                params,
+                beta0_m3_ref,
+                bound_m3_ref,
+                expected_failures=("modal", "dirichlet", "none"),
+                line_x=x_fib,
+            )
 
 
 @pytest.mark.slow
@@ -1563,9 +1741,15 @@ def test_mutation_double_particle_charge_to_mass_fails():
             f"M1 cross-code difference {resid_cross_mut:.6e} exceeds {tols['slack_cross']:.6e}"
         )
 
-    assert resid_m1 <= bound_m1, (
-        f"M1 |beta0_mut/bq_part_mut_pred - 1| = {resid_m1:.6e} > "
-        f"slack + (e_R_mut + sigma_prop)/bq_pred = {bound_m1:.6e} (margin={bound_m1 - resid_m1:+.6e})"
+    _assert_beta0_within_bound(beta0_m1, bq_part_mut_pred, bound_m1, "M1")
+    _check_beta0_negative_controls(
+        "M1",
+        nx,
+        nz,
+        params_mut,
+        beta0_m1,
+        bound_m1,
+        expected_failures=("modal",),
     )
 
 
@@ -1725,9 +1909,16 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         f"eps_AC + 1e-12 = {bound_dep_m3:.6e} (margin={bound_dep_m3 - err_dep_m3:+.6e})"
     )
 
-    assert resid_m3 <= bound_m3, (
-        f"M3 |beta0_m3/bq_m3_pred - 1| = {resid_m3:.6e} > "
-        f"slack_m3 + e_R_mut/bq_pred = {bound_m3:.6e} (margin={bound_m3 - resid_m3:+.6e})"
+    _assert_beta0_within_bound(beta0_m3, bq_m3_pred, bound_m3, "M3")
+    _check_beta0_negative_controls(
+        "M3",
+        nx,
+        nz,
+        params,
+        beta0_m3,
+        bound_m3,
+        expected_failures=("modal", "dirichlet", "none"),
+        line_x=x_fib,
     )
 
 
@@ -2160,9 +2351,11 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"Fine cross-code |beta0_P/bq_LB - bq_P_pred/bq_LB_pred| = {resid_cross_f:.6e} > "
         f"slack_cross = {tols_f['slack_cross']:.6e} (margin={tols_f['slack_cross'] - resid_cross_f:+.6e})"
     )
-    assert resid0_f <= tols_f["slack_part"], (
-        f"Fine Particle (sheet_lattice, m->0) |beta0_P/bq_P_pred - 1| = {resid0_f:.6e} > "
-        f"slack_part = {tols_f['slack_part']:.6e} (margin={tols_f['slack_part'] - resid0_f:+.6e})"
+    _assert_beta0_within_bound(
+        beta0_f,
+        bq_part_pred_f,
+        tols_f["slack_part"],
+        "Fine Particle (sheet_lattice, m->0)",
     )
 
     # Fine-grid Step 4.6 entrance amplitude ("sheet_lattice") and 8-seed ("sheet") entrance amplitude
@@ -2177,6 +2370,15 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     assert amp_err_part_f <= tols_f["tol_amp_part"], (
         f"Fine Part entrance ||I1(z0)|/I1_0 - sinc(be*dz/2)*cos(bq*dz/2)| = {amp_err_part_f:.6e} > "
         f"{tols_f['tol_amp_part']:.6e} (margin={tols_f['tol_amp_part'] - amp_err_part_f:+.6e})"
+    )
+    _check_beta0_negative_controls(
+        "fine",
+        nx_f,
+        nz_f,
+        params,
+        beta0_f,
+        tols_f["slack_part"],
+        expected_failures=("dirichlet", "none"),
     )
     for label, noise, tols in (
         ("coarse", noise_c, tols_c),
