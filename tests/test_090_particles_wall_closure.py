@@ -1558,3 +1558,662 @@ def test_old_checkpoint_without_wall_kick_warns(tmp_path):
     with pytest.warns(RuntimeWarning, match="K_wall_kick"):
         ps2.load_checkpoint(str(ckpt_dir))
     assert ps2.wall_kick_energy() == 0.0
+
+
+def _legacy_birth_kick_full_psi_and_scale_only(
+    self_ps,
+    sp_inj: Species,
+    sl_new: slice,
+    xi_i,
+    eta_i,
+    zeta_i,
+    E_field,
+    axis: int,
+    side: str,
+) -> None:
+    """Pre-fix reference implementation of ``_apply_pec_wall_birth_kick`` (full-grid ``Psi`` and ``scale=1`` at ``|u|=0``)."""
+    from wakis.particles.shapes import _gather_component_3d, bspline_weights_1d
+
+    if self_ps.shape < 2 or not solver_mod._ENABLE_PEC_WALL_KICK:
+        return
+    s = self_ps.solver
+    xp = self_ps.xp
+    Nx, Ny, Nz = int(s.Nx), int(s.Ny), int(s.Nz)
+    N = Nx * Ny * Nz
+    E_arr = E_field.toarray() if hasattr(E_field, "toarray") else E_field
+    E_n = E_arr[axis * N : (axis + 1) * N].reshape((Nx, Ny, Nz), order="F")
+    k_w = self_ps._pec_wall_node_index(axis, side)
+    n_ax = int(E_n.shape[axis])
+    dl = self_ps.grid_map._deltas[axis]
+
+    Psi = xp.zeros((Nx, Ny, Nz), dtype=np.float64, order="F")
+    dl_shape = [1, 1, 1]
+    if side == "low":
+        k_stop = min(n_ax, k_w + self_ps.shape + 2)
+        if k_stop > k_w + 1:
+            sl_edges = [slice(None), slice(None), slice(None)]
+            sl_nodes = [slice(None), slice(None), slice(None)]
+            sl_edges[axis] = slice(k_w, k_stop - 1)
+            sl_nodes[axis] = slice(k_w + 1, k_stop)
+            dl_shape[axis] = k_stop - 1 - k_w
+            dl_sub = dl[k_w : k_stop - 1].reshape(tuple(dl_shape))
+            Psi[tuple(sl_nodes)] = xp.cumsum(E_n[tuple(sl_edges)] * dl_sub, axis=axis)
+    elif side == "high":
+        k_start = max(0, k_w - (self_ps.shape + 1))
+        if k_w > k_start:
+            sl_edges = [slice(None), slice(None), slice(None)]
+            sl_nodes = [slice(None), slice(None), slice(None)]
+            sl_edges[axis] = slice(k_start, k_w)
+            sl_nodes[axis] = slice(k_start, k_w)
+            dl_shape[axis] = k_w - k_start
+            dl_sub = dl[k_start:k_w].reshape(tuple(dl_shape))
+            Psi[tuple(sl_nodes)] = -xp.flip(
+                xp.cumsum(
+                    xp.flip(E_n[tuple(sl_edges)] * dl_sub, axis=axis),
+                    axis=axis,
+                ),
+                axis=axis,
+            )
+    else:
+        raise ValueError(f"Unsupported side={side!r}; expected 'low' or 'high'.")
+
+    ix_nod, wx_nod = bspline_weights_1d(xi_i, self_ps.shape, staggered=False, xp=xp)
+    iy_nod, wy_nod = bspline_weights_1d(eta_i, self_ps.shape, staggered=False, xp=xp)
+    iz_nod, wz_nod = bspline_weights_1d(zeta_i, self_ps.shape, staggered=False, xp=xp)
+    psi_p = _gather_component_3d(
+        Psi.ravel(order="F"),
+        Nx,
+        Ny,
+        Nz,
+        ix_nod,
+        wx_nod,
+        iy_nod,
+        wy_nod,
+        iz_nod,
+        wz_nod,
+        self_ps.boundaries.periodic,
+        xp,
+    )
+
+    w_sl = sp_inj._w[sl_new]
+    dK = (sp_inj.charge * w_sl) * psi_p
+    ux_sl = sp_inj._ux[sl_new]
+    uy_sl = sp_inj._uy[sl_new]
+    uz_sl = sp_inj._uz[sl_new]
+    u2 = ux_sl * ux_sl + uy_sl * uy_sl + uz_sl * uz_sl
+    gamma = xp.sqrt(1.0 + u2 / (c_light * c_light))
+    mc2 = float(sp_inj.mass) * (c_light * c_light)
+    w_mc2 = w_sl * mc2
+    dgamma = xp.where(w_sl != 0.0, dK / xp.where(w_sl != 0.0, w_mc2, 1.0), 0.0)
+    gamma_prime = gamma + dgamma
+    if bool(xp.any(gamma_prime < 1.0)):
+        raise ValueError(
+            "PEC-wall birth kick resulted in gamma' < 1 (particle cannot leave the wall)."
+        )
+    denom = xp.sqrt(gamma * gamma - 1.0)
+    scale = xp.where(
+        denom > 0.0,
+        xp.sqrt(gamma_prime * gamma_prime - 1.0) / xp.where(denom > 0.0, denom, 1.0),
+        1.0,
+    )
+    sp_inj._ux[sl_new] = ux_sl * scale
+    sp_inj._uy[sl_new] = uy_sl * scale
+    sp_inj._uz[sl_new] = uz_sl * scale
+    self_ps._K_wall_kick += float(xp.sum(dK))
+
+
+def test_pec_wall_birth_kick_at_rest_energy_balance_and_retarding_raises(monkeypatch):
+    """Test Item 5: Particles born at rest (``|u| = 0``) at a PEC wall with ``shape = 2``
+    receive the birth kick along the inward wall normal (``|u'| / c = sqrt(gamma'^2 - 1)``),
+    satisfying ``energy_balance()`` and single-particle trajectory energy to the same
+    tolerances as the moving-particle tests while failing under the pre-fix mutation
+    (``scale = 1`` at ``|u| = 0``), and raising ``ValueError`` when ``gamma' < 1``.
+    """
+    from scipy.constants import epsilon_0
+
+    # 1. Direct inward-normal momentum check on both low and high z PEC walls at |u| = 0:
+    for side in ("low", "high"):
+        grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.04, 6, 1, 20, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        # Accelerating field for electrons (q = -e): Ez < 0 at z_low, Ez > 0 at z_high
+        Ez0 = -2.0e5 if side == "low" else 2.0e5
+        solver.E.from_matrix(
+            np.full((solver.Nx, solver.Ny, solver.Nz), Ez0, dtype=np.float64), "z"
+        )
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        z0 = 0.0 if side == "low" else 0.04
+        sp.add_particles(
+            x=np.array([0.0]),
+            y=np.array([0.0]),
+            z=np.array([z0]),
+            ux=np.array([0.0]),
+            uy=np.array([0.0]),
+            uz=np.array([0.0]),
+            w=np.array([1.0e8]),
+        )
+        ps = ParticleSolver(
+            solver, species=[sp], pusher="boris", shape=2, gather="galerkin"
+        ).attach()
+        xi_i, eta_i, zeta_i = ps.grid_map.to_logical(sp.x, sp.y, sp.z)
+        ps._apply_pec_wall_birth_kick(
+            sp, slice(0, 1), xi_i, eta_i, zeta_i, solver.E, axis=2, side=side
+        )
+        dz = 0.04 / 20.0
+        dK_exact = (-e_charge) * 1.0e8 * (1.0 / 8.0) * (-abs(Ez0) * dz)
+        gamma_p = 1.0 + dK_exact / (1.0e8 * m_e * c_light * c_light)
+        u_expected = (1.0 if side == "low" else -1.0) * (
+            c_light * np.sqrt(gamma_p * gamma_p - 1.0)
+        )
+        assert float(sp.ux[0]) == 0.0
+        assert float(sp.uy[0]) == 0.0
+        assert np.isclose(float(sp.uz[0]), u_expected, rtol=1e-14, atol=0.0)
+        assert np.isclose(ps.wall_kick_energy(), dK_exact, rtol=1e-14, atol=0.0)
+
+        # Retarding field (opposite sign of Ez0) for a particle born at rest drives
+        # gamma' < 1 and must raise ValueError:
+        solver_ret = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        solver_ret.E.from_matrix(
+            np.full(
+                (solver_ret.Nx, solver_ret.Ny, solver_ret.Nz), -Ez0, dtype=np.float64
+            ),
+            "z",
+        )
+        sp_ret = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj_ret = BeamInjector(
+            species=sp_ret,
+            z0=z0,
+            direction=1 if side == "low" else -1,
+            current=0.1,
+            gamma=2.0,
+            velocity_modulation=lambda t: -1.0,
+            profile="lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=1,
+        )
+        ParticleSolver(
+            solver_ret,
+            species=[sp_ret],
+            injectors=[inj_ret],
+            pusher="boris",
+            shape=2,
+            gather="galerkin",
+        ).attach()
+        with pytest.raises(ValueError, match="gamma' < 1"):
+            solver_ret.one_step()
+
+    # 2. Self-consistent coupled energy_balance() for particles born at rest at a PEC wall
+    #    (shape = 2), compared against the moving-particle case at cfl = (0.4, 0.2):
+    def _run_energy_case(at_rest: bool, cfl: float, use_legacy_kick: bool = False):
+        nx, ny, nz = 16, 16, 16
+        lx, ly, lz = 0.08, 0.08, 0.08
+        radius = 0.020
+        grid_ref = GridFIT3D(
+            -0.5 * lx, 0.5 * lx, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, ny, nz, verbose=0
+        )
+        s_ref = SolverFIT3D(
+            grid_ref,
+            cfln=0.8,
+            bc_low=["pec", "pec", "pec"],
+            bc_high=["pec", "pec", "pec"],
+            verbose=0,
+        )
+        t_total = 8.0 * float(s_ref.dt)
+
+        grid = GridFIT3D(
+            -0.5 * lx, 0.5 * lx, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, ny, nz, verbose=0
+        )
+        solver = SolverFIT3D(
+            grid,
+            cfln=cfl,
+            bc_low=["pec", "pec", "pec"],
+            bc_high=["pec", "pec", "pec"],
+            verbose=0,
+        )
+        Ez_init = np.zeros((solver.Nx, solver.Ny, solver.Nz), dtype=np.float64)
+        Ez_init[1:-1, 1:-1, :] = -1.0e5
+        solver.E.from_matrix(Ez_init, "z")
+        n_steps = round(t_total / float(solver.dt))
+        solver.dt = t_total / float(n_steps)
+
+        sp = Species("e-", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            sp,
+            z0=0.0,
+            current=0.5,
+            gamma=1.9,
+            velocity_modulation=(lambda t: -1.0) if at_rest else None,
+            profile="lattice",
+            radius=radius,
+            n_macro_per_step=16,
+            rise_time=0.5 * t_total,
+            rise_shape="cos2",
+            seed=42,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            shape=2,
+            track_energy=True,
+        ).attach()
+        with monkeypatch.context() as m:
+            if use_legacy_kick:
+                m.setattr(
+                    ParticleSolver,
+                    "_apply_pec_wall_birth_kick",
+                    _legacy_birth_kick_full_psi_and_scale_only,
+                )
+            for _ in range(n_steps):
+                solver.one_step()
+        w_field_0 = ps._staggered_field_energy(
+            ps._E_init_fw, ps._H_prev_init_fw, ps._H_curr_init_fw
+        )
+        return ps.energy_balance(), w_field_0
+
+    for cfl_val in (0.4, 0.2):
+        eb_rest, wf0_rest = _run_energy_case(at_rest=True, cfl=cfl_val)
+        eb_mov, _ = _run_energy_case(at_rest=False, cfl=cfl_val)
+        eb_mut, _ = _run_energy_case(at_rest=True, cfl=cfl_val, use_legacy_kick=True)
+
+        assert eb_rest["K_injected"] == 0.0
+        assert eb_rest["K_particles"] > 0.0
+        assert eb_rest["K_wall_kick"] > 0.0
+        assert eb_rest["W_wall_closure"] > 0.0
+
+        # Exact algebraic bookkeeping identity (same 4 * eps * e_ref_scale bound as test_083):
+        expected_res = (
+            (eb_rest["K_injected"] + wf0_rest)
+            - eb_rest["K_absorbed"]
+            - eb_rest["K_particles"]
+            - eb_rest["W_field"]
+            - eb_rest["W_wall_closure"]
+            + eb_rest["K_wall_kick"]
+        )
+        e_ref_scale = max(abs(eb_rest["W_field"]), abs(eb_rest["K_wall_kick"]))
+        assert abs(eb_rest["residual"] - expected_res) <= (
+            4.0 * np.finfo(np.float64).eps * e_ref_scale
+        )
+
+        # Closes to the same >= 10x tolerance as the moving-particle energy tests
+        # (and with residual no larger than the moving case at the same dt):
+        res_rest = abs(eb_rest["residual"])
+        res_mov = abs(eb_mov["residual"])
+        res_without_kick = abs(eb_rest["residual"] - eb_rest["K_wall_kick"])
+        res_without_cl = abs(eb_rest["residual"] + eb_rest["W_wall_closure"])
+        assert res_rest * 10.0 <= res_without_kick
+        assert res_rest * 10.0 <= res_without_cl
+        assert res_rest <= res_mov
+
+        # Mutation check: pre-fix code path (scale = 1 when |u| = 0) fails closure:
+        res_mut = abs(eb_mut["residual"])
+        res_mut_without_kick = abs(eb_mut["residual"] - eb_mut["K_wall_kick"])
+        assert res_mut * 10.0 > res_mut_without_kick
+        assert res_mut > res_mov
+
+    # 3. Single-particle static uniform field trajectory energy test from rest (shape = 2),
+    #    matching Test C's <= 1 % tolerance with the kick and >= 50 % error under mutation:
+    nx, ny, nz = 1, 1, 20
+    lx, ly, lz = 0.01, 0.01, 0.04
+    dz = lz / float(nz)
+    E0 = -5.0e6
+    I0 = 1.0e-12
+
+    def _run_static_rest(use_legacy_kick: bool):
+        grid = GridFIT3D(
+            -0.5 * lx, 0.5 * lx, -0.5 * ly, 0.5 * ly, 0.0, lz, nx, ny, nz, verbose=0
+        )
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.2,
+            bc_low=["periodic", "periodic", "pec"],
+            bc_high=["periodic", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        solver.E.from_matrix(
+            np.full((solver.Nx, solver.Ny, solver.Nz), E0, dtype=np.float64), "z"
+        )
+        dt = float(solver.dt)
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0,
+            current=lambda t: I0 if t < 0.75 * dt else 0.0,
+            gamma=2.0,
+            velocity_modulation=lambda t: -1.0,
+            profile="lattice",
+            radius=0.001,
+            n_macro_per_step=1,
+            seed=7,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=2,
+            gather="galerkin",
+            track_energy=True,
+        ).attach()
+        with monkeypatch.context() as m:
+            if use_legacy_kick:
+                m.setattr(
+                    ParticleSolver,
+                    "_apply_pec_wall_birth_kick",
+                    _legacy_birth_kick_full_psi_and_scale_only,
+                )
+            for _ in range(45):
+                solver.one_step()
+        w0 = float(sp.w[0])
+        z_final = float(sp.z[0])
+        k_inj_1p = float(ps.injected_energy()) / w0
+        k_num_1p = float(ps.kinetic_energy(synchronised=True)) / w0
+        k_exact_1p = k_inj_1p + (-e_charge) * E0 * z_final
+        return abs(k_num_1p - k_exact_1p), w0, z_final
+
+    err_with, w0, z_with = _run_static_rest(use_legacy_kick=False)
+    err_mut, _, _ = _run_static_rest(use_legacy_kick=True)
+    scale = abs((-e_charge) * E0 * (1.0 / 8.0) * dz)
+    self_field_work_1p_bound = (e_charge * e_charge * w0 * lz) / (epsilon_0 * lx * ly)
+    assert self_field_work_1p_bound <= 1e-12 * scale
+    assert z_with >= dz
+    assert err_with / scale <= 0.01
+    assert err_mut / scale >= 0.50
+
+
+@pytest.mark.parametrize("side", ["low", "high"])
+@pytest.mark.parametrize("order", [2, 3])
+def test_pec_wall_birth_kick_moving_particles_bitwise_unchanged(
+    order: int, side: str, monkeypatch
+):
+    """Test Item 5: For moving particles (``|u| > 0``, including oblique 3D momenta),
+    the post-kick momenta ``(ux, uy, uz)`` and ``wall_kick_energy()`` are bitwise
+    identical to the pre-fix constant-direction scaling formula.
+    """
+    nx, ny, nz = 6, 4, 16
+    x_nodes = np.linspace(-0.03, 0.03, nx + 1)
+    y_nodes = np.linspace(-0.02, 0.02, ny + 1)
+    s_grid = np.linspace(0.0, 1.0, nz + 1)
+    z_nodes = 0.04 * (0.75 * s_grid + 0.25 * s_grid * s_grid)
+    z0 = float(z_nodes[0]) if side == "low" else float(z_nodes[-1])
+    direction = 1 if side == "low" else -1
+
+    def _run(use_legacy: bool, force_normal_only: bool = False):
+        grid = GridFIT3D(x=x_nodes, y=y_nodes, z=z_nodes, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        Nx, Ny, Nz = solver.Nx, solver.Ny, solver.Nz
+        ix = np.arange(Nx, dtype=np.float64)[:, None, None]
+        iy = np.arange(Ny, dtype=np.float64)[None, :, None]
+        iz = np.arange(Nz, dtype=np.float64)[None, None, :]
+        Ez_birth = (-4.0e4 if side == "low" else 4.0e4) * (
+            1.0 + 0.2 * np.cos(0.6 * ix + 0.5 * iy) + 0.15 * (iz / float(Nz))
+        )
+        solver.E.from_matrix(Ez_birth, "z")
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=z0,
+            direction=direction,
+            current=0.3,
+            gamma=2.1,
+            thermal_u=0.05 * c_light,
+            profile="lattice",
+            radius=0.008,
+            n_macro_per_step=16,
+            seed=2026,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=order,
+            gather="galerkin",
+            track_energy=True,
+        ).attach()
+
+        orig_kick = ParticleSolver._apply_pec_wall_birth_kick
+
+        def _corrupted_moving_kick(
+            self_ps, sp_inj, sl_new, xi_i, eta_i, zeta_i, E_field, axis, side
+        ):
+            orig_kick(self_ps, sp_inj, sl_new, xi_i, eta_i, zeta_i, E_field, axis, side)
+            # Corrupt moving path by zeroing transverse momentum as if born at rest:
+            sp_inj._ux[sl_new] = 0.0
+
+        with monkeypatch.context() as m:
+            if use_legacy:
+                m.setattr(
+                    ParticleSolver,
+                    "_apply_pec_wall_birth_kick",
+                    _legacy_birth_kick_full_psi_and_scale_only,
+                )
+            elif force_normal_only:
+                m.setattr(
+                    ParticleSolver,
+                    "_apply_pec_wall_birth_kick",
+                    _corrupted_moving_kick,
+                )
+            for _ in range(4):
+                solver.one_step()
+        return (
+            sp.ux.copy(),
+            sp.uy.copy(),
+            sp.uz.copy(),
+            ps.wall_kick_energy(),
+            solver.E.toarray().copy(),
+        )
+
+    ux_new, uy_new, uz_new, kick_new, e_new = _run(use_legacy=False)
+    ux_ref, uy_ref, uz_ref, kick_ref, e_ref = _run(use_legacy=True)
+    ux_mut, _, _, _, _ = _run(use_legacy=False, force_normal_only=True)
+
+    assert np.array_equal(ux_new, ux_ref)
+    assert np.array_equal(uy_new, uy_ref)
+    assert np.array_equal(uz_new, uz_ref)
+    assert kick_new == kick_ref
+    assert np.array_equal(e_new, e_ref)
+    assert not np.array_equal(ux_new, ux_mut)
+
+
+def test_pec_wall_birth_kick_device_accumulators_and_slab_gather_bitwise_cpu(
+    monkeypatch,
+):
+    """Test Item 10: Verify ``_K_wall_kick`` is accumulated as a 0-D device scalar,
+    ``_d_wall_kick_error`` is accumulated as a 0-D boolean device flag checked
+    periodically every ``_wall_kick_check_every`` steps (or via
+    ``_check_wall_kick_error()``), ``_apply_pec_wall_birth_kick`` gathers ``Psi``
+    from a wall-stencil slab rather than a full ``(Nx, Ny, Nz)`` grid, and CPU
+    results are bitwise identical to the full-grid gather.
+    """
+    from wakis.particles.shapes import _gather_component_3d as orig_gather_3d
+
+    # 1. Verify slab-only gather dimensions, 0-D ndarray accumulators, and bitwise
+    #    CPU equivalence against the full-grid Psi gather:
+    gathered_shapes: list[tuple[int, int, int]] = []
+
+    def _spy_gather_3d(
+        field_flat, Nx, Ny, Nz, ix0, wx, iy0, wy, iz0, wz, periodic, xp=np
+    ):
+        gathered_shapes.append((int(Nx), int(Ny), int(Nz)))
+        return orig_gather_3d(
+            field_flat, Nx, Ny, Nz, ix0, wx, iy0, wy, iz0, wz, periodic, xp=xp
+        )
+
+    def _run_sim(side: str, use_legacy: bool, truncate_slab: bool = False):
+        grid = GridFIT3D(-0.03, 0.03, -0.02, 0.02, 0.0, 0.04, 6, 4, 24, verbose=0)
+        solver = SolverFIT3D(
+            grid,
+            cfln=0.5,
+            bc_low=["pec", "periodic", "pec"],
+            bc_high=["pec", "periodic", "pec"],
+            use_stl=False,
+            verbose=0,
+        )
+        ez_val = -3.0e4 if side == "low" else 3.0e4
+        solver.E.from_matrix(
+            np.full((solver.Nx, solver.Ny, solver.Nz), ez_val, dtype=np.float64), "z"
+        )
+        sp = Species(name="electron", charge=-e_charge, mass=m_e)
+        inj = BeamInjector(
+            species=sp,
+            z0=0.0 if side == "low" else 0.04,
+            direction=1 if side == "low" else -1,
+            current=0.25,
+            gamma=2.0,
+            profile="lattice",
+            radius=0.008,
+            n_macro_per_step=8,
+            seed=77,
+        )
+        ps = ParticleSolver(
+            solver,
+            species=[sp],
+            injectors=[inj],
+            pusher="boris",
+            shape=3,
+            gather="galerkin",
+            track_energy=True,
+        ).attach()
+
+        with monkeypatch.context() as m:
+            if use_legacy:
+                m.setattr(
+                    ParticleSolver,
+                    "_apply_pec_wall_birth_kick",
+                    _legacy_birth_kick_full_psi_and_scale_only,
+                )
+            elif truncate_slab:
+                m.setattr(
+                    solver_mod,
+                    "_gather_component_3d",
+                    lambda f, nx_s, ny_s, nz_s, ix0, wx, iy0, wy, iz0, wz, per, xp=np: (
+                        orig_gather_3d(
+                            f,
+                            nx_s,
+                            ny_s,
+                            1,
+                            ix0,
+                            wx,
+                            iy0,
+                            wy,
+                            iz0,
+                            wz,
+                            per,
+                            xp=xp,
+                        )
+                    ),
+                )
+            else:
+                m.setattr(solver_mod, "_gather_component_3d", _spy_gather_3d)
+            for _ in range(6):
+                solver.one_step()
+        return ps, sp, solver
+
+    for side in ("low", "high"):
+        gathered_shapes.clear()
+        ps_new, sp_new, s_new = _run_sim(side, use_legacy=False)
+        ps_ref, sp_ref, s_ref = _run_sim(side, use_legacy=True)
+        ps_mut, sp_mut, _ = _run_sim(side, use_legacy=False, truncate_slab=True)
+
+        # Slab gather along z has Nz_slab == shape + 2 == 5 << solver.Nz (25):
+        assert len(gathered_shapes) == 6
+        assert all(sh == (s_new.Nx, s_new.Ny, 5) for sh in gathered_shapes)
+
+        # _K_wall_kick and _d_wall_kick_error are 0-D device scalars (np.ndarray on CPU):
+        assert isinstance(ps_new._K_wall_kick, np.ndarray)
+        assert ps_new._K_wall_kick.ndim == 0
+        assert isinstance(ps_new._d_wall_kick_error, np.ndarray)
+        assert ps_new._d_wall_kick_error.ndim == 0
+        assert ps_new._d_wall_kick_error.dtype == np.bool_
+        assert not bool(ps_new._d_wall_kick_error)
+
+        # Bitwise identical on CPU to the full-grid Psi gather:
+        assert np.array_equal(sp_new.x, sp_ref.x)
+        assert np.array_equal(sp_new.y, sp_ref.y)
+        assert np.array_equal(sp_new.z, sp_ref.z)
+        assert np.array_equal(sp_new.ux, sp_ref.ux)
+        assert np.array_equal(sp_new.uy, sp_ref.uy)
+        assert np.array_equal(sp_new.uz, sp_ref.uz)
+        assert np.array_equal(s_new.E.toarray(), s_ref.E.toarray())
+        assert np.array_equal(ps_new.J_particles, ps_ref.J_particles)
+        assert ps_new.wall_kick_energy() == ps_ref.wall_kick_energy()
+        assert ps_new.energy_balance() == ps_ref.energy_balance()
+
+        # Mutation check: truncating the slab to 1 plane breaks bitwise equality:
+        assert ps_mut.wall_kick_energy() != ps_new.wall_kick_energy()
+        assert not np.array_equal(sp_new.uz, sp_mut.uz)
+
+    # 2. Deferred periodic check of _d_wall_kick_error every _wall_kick_check_every steps:
+    grid = GridFIT3D(-0.03, 0.03, -0.005, 0.005, 0.0, 0.04, 6, 1, 20, verbose=0)
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["pec", "periodic", "pec"],
+        bc_high=["pec", "periodic", "pec"],
+        use_stl=False,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj = BeamInjector(
+        species=sp,
+        z0=0.0,
+        current=0.1,
+        gamma=1.001,
+        profile="lattice",
+        radius=0.001,
+        n_macro_per_step=1,
+        seed=1,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=2,
+        gather="galerkin",
+    ).attach()
+    ps._wall_kick_check_every = 4
+
+    # Step 0 (0 % 4 == 0) with valid field succeeds:
+    solver.one_step()
+    assert not bool(ps._d_wall_kick_error)
+
+    # Step 1 (1 % 4 != 0) with retarding field sets _d_wall_kick_error on device
+    # without raising during steps 1, 2, 3, then raises on step 4 (4 % 4 == 0):
+    solver.E.from_matrix(
+        np.full((solver.Nx, solver.Ny, solver.Nz), 5.0e9, dtype=np.float64), "z"
+    )
+    solver.one_step()  # step 1
+    assert bool(ps._d_wall_kick_error)
+    solver.E.from_matrix(
+        np.zeros((solver.Nx, solver.Ny, solver.Nz), dtype=np.float64), "z"
+    )
+    solver.one_step()  # step 2
+    solver.one_step()  # step 3
+    assert bool(ps._d_wall_kick_error)
+    with pytest.raises(ValueError, match="gamma' < 1"):
+        solver.one_step()  # step 4 (4 % 4 == 0)
+    assert not bool(ps._d_wall_kick_error)
