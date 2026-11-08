@@ -520,9 +520,48 @@ def compute_discrete_dc_depression(
         u_l = c * sqrt(1 - 1 / gamma_l**2)
         delta_bar = 1 - sum_l(w_l * u_l) / (u0 * sum_l(w_l))
 
-    to ``1e-14`` for both current/flux weighting (``w_l prop rho_l * u_l``) and
-    density weighting (``w_l prop rho_l``).
+    to ``1e-14`` for current/flux weighting (``w_l = rho_l * u_l``), injected-fraction
+    density weighting (``w_l = rho_l``), and steady-state line-charge weighting
+    (``w_l = rho_l / u_l``, giving the harmonic mean
+    ``1 - delta_charge = sum_l(rho_l) / (u0 * sum_l(rho_l / u_l))``).
+
+    Parameters
+    ----------
+    nx : int
+        Transverse cell count across ``[-a, a]`` [-].
+    params : dict of str to float
+        Output of :func:`compute_analytic_parameters`.
+    line_x : np.ndarray, optional
+        Injected particle line ``x`` coordinates [m].
+    line_w : np.ndarray, optional
+        Injected current weights ``rho_l`` across lines [-].
+    weighting : {"flux", "density", "charge"}, optional
+        Line weighting mode for ``delta_disc``: ``"flux"`` (``w_l = rho_l * u_l``,
+        default), ``"density"`` (``w_l = rho_l``), or ``"charge"``
+        (``w_l = rho_l / u_l``).
+    return_details : bool, optional
+        If ``True``, return a dictionary with ``delta_disc``, ``delta_flux``,
+        ``delta_density``, ``delta_charge``, and per-line profiles. Default is ``False``.
+    shape : int, optional
+        B-spline particle shape order ``p`` in ``{1, 2, 3}`` [-]. Default is
+        ``PARTICLE_SHAPE``.
+
+    Returns
+    -------
+    float or dict of str to Any
+        Discrete DC relative velocity depression ``delta_disc`` [-] (or detail
+        dictionary when ``return_details=True``).
+
+    Raises
+    ------
+    ValueError
+        If ``weighting`` is not one of ``{"flux", "density", "charge"}``.
     """
+    if weighting not in ("flux", "density", "charge"):
+        raise ValueError(
+            f"Unknown weighting={weighting!r}; expected 'flux', 'density', or 'charge'."
+        )
+
     a = TUNNEL_HALF_WIDTH_M
     b = BEAM_HALF_THICKNESS_M
     dx = 2.0 * a / nx
@@ -580,7 +619,12 @@ def compute_discrete_dc_depression(
             phi_l = np.abs(w_mat @ phi_cur)
             gamma_l = gamma0 - e_charge * phi_l / (mass_eff * c_light**2)
             u_l = c_light * np.sqrt(1.0 - 1.0 / (gamma_l**2))
-            w_l = (rho_l * u_l) if mode == "flux" else rho_l
+            if mode == "flux":
+                w_l = rho_l * u_l
+            elif mode == "density":
+                w_l = rho_l
+            else:
+                w_l = rho_l / u_l
             delta_next = 1.0 - float(np.sum(w_l * u_l) / (u0 * np.sum(w_l)))
             if abs(delta_next - delta_val) < 1e-14:
                 delta_val = float(delta_next)
@@ -590,15 +634,23 @@ def compute_discrete_dc_depression(
 
     delta_flux, u_l_flux, gamma_l_flux, phi_l_flux = _iterate_fixed_point("flux")
     delta_density, u_l_dens, gamma_l_dens, phi_l_dens = _iterate_fixed_point("density")
+    delta_charge, u_l_chg, gamma_l_chg, phi_l_chg = _iterate_fixed_point("charge")
 
     if weighting == "flux":
         delta_disc, u_l, gamma_l, phi_l = delta_flux, u_l_flux, gamma_l_flux, phi_l_flux
-    else:
+    elif weighting == "density":
         delta_disc, u_l, gamma_l, phi_l = (
             delta_density,
             u_l_dens,
             gamma_l_dens,
             phi_l_dens,
+        )
+    else:
+        delta_disc, u_l, gamma_l, phi_l = (
+            delta_charge,
+            u_l_chg,
+            gamma_l_chg,
+            phi_l_chg,
         )
 
     if return_details:
@@ -606,6 +658,7 @@ def compute_discrete_dc_depression(
             "delta_disc": float(delta_disc),
             "delta_flux": float(delta_flux),
             "delta_density": float(delta_density),
+            "delta_charge": float(delta_charge),
             "weighting": weighting,
             "u_l": u_l,
             "gamma_l": gamma_l,
@@ -1570,6 +1623,7 @@ def _single_grid_budget_terms(
         "delta_disc_exact": delta_th_disc,
         "delta_disc_flux": float(dep_info["delta_flux"]),
         "delta_disc_density": float(dep_info["delta_density"]),
+        "delta_disc_charge": float(dep_info["delta_charge"]),
         "dep_weighting": str(dep_info["weighting"]),
         "eps_ac": eps_ac,
         "amp_pred_part": amp_pred_part,
@@ -3342,6 +3396,11 @@ def measure_empirical_noise(
     delta_disc_n = float(
         compute_discrete_dc_depression(nx, params, line_x=x_lat_n, shape=int(shape))
     )
+    delta_disc_charge_n = float(
+        compute_discrete_dc_depression(
+            nx, params, line_x=x_lat_n, weighting="charge", shape=int(shape)
+        )
+    )
     part_lat_n = cached_particle_drift(
         nx,
         nz,
@@ -3437,6 +3496,7 @@ def measure_empirical_noise(
         "delta_lattice": delta_lat_n,
         "bq_pred": bq_pred_n,
         "delta_disc": delta_disc_n,
+        "delta_disc_charge": delta_disc_charge_n,
         "part_lattice": part_lat_n,
         "z0_seeds": z0_seeds,
         "z0_mean": z0_mean,
