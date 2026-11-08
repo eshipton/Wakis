@@ -535,6 +535,7 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
         omega_p_scale: float = 1.0,
         return_details: bool = False,
         shape: int = scw.PARTICLE_SHAPE,
+        method: str = "multistream",
     ) -> float | dict[str, Any]:
         bq = float(params["beta_q"] * omega_p_scale) * (1.0 + 1e-9)
         if not return_details:
