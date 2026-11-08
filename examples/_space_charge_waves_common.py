@@ -866,6 +866,585 @@ def compute_transverse_modal_operator(
     raise ValueError(f"Unknown code={code!r}; expected 'lb' or 'particles'.")
 
 
+def _even_subspace_basis(n_lines: int) -> np.ndarray:
+    """Build the orthonormal mirror-even line basis ``P`` of shape ``(N, N // 2)`` [-]."""
+    h = int(n_lines) // 2
+    p_mat = np.zeros((int(n_lines), h), dtype=np.float64)
+    inv_sqrt2 = 1.0 / np.sqrt(2.0)
+    for j in range(h):
+        p_mat[j, j] = inv_sqrt2
+        p_mat[int(n_lines) - 1 - j, j] = inv_sqrt2
+    return p_mat
+
+
+def _multistream_dc_entrance_phase(
+    nx: int,
+    dz: float,
+    dt: float,
+    params: dict[str, float],
+    dep_info: dict[str, Any],
+    discrete: bool = True,
+) -> np.ndarray:
+    """Compute the per-line ballistic DC entrance phase ``theta_l`` [rad].
+
+    Near the ``z = 0`` PEC entrance wall (Dirichlet ``phi(x, 0) = 0``), each transverse
+    eigenmode ``(lambda_m, e_m)`` of ``-Delta_x`` relaxes toward its bulk depressed
+    potential ``phi_{m,inf}`` as ``phi_m(z) = phi_{m,inf} * (1 - exp(-q_m * z))``, where
+    ``q_m = -ln(r_m) / dz`` with ``r_m + 1 / r_m = 2 + lambda_m * dz**2`` (or
+    ``q_m = sqrt(lambda_m)`` when ``discrete=False``). Energy conservation
+    ``gamma_l(z) = gamma0 - e * phi_l(z) / (m * c**2)`` determines ``u_l(z)`` and the
+    accumulated ballistic transit phase relative to the bulk stream velocity ``u_l``::
+
+        theta_l = int_0^infty (Omega / u_l(z) - Omega / u_l) dz,
+        Omega = (2 / dt) * sin(omega * dt / 2).
+
+    Parameters
+    ----------
+    nx : int
+        Transverse cell count across ``[-a, a]`` [-].
+    dz : float
+        Axial cell size [m].
+    dt : float
+        Time step [s].
+    params : dict of str to float
+        Output of :func:`compute_analytic_parameters`.
+    dep_info : dict of str to Any
+        Output of :func:`compute_discrete_dc_depression` with ``return_details=True``.
+    discrete : bool, optional
+        If ``True`` (default), use the discrete axial decay rate ``q_m = -ln(r_m) / dz``;
+        if ``False``, use continuum ``sqrt(lambda_m)``.
+
+    Returns
+    -------
+    np.ndarray
+        Per-line ballistic entrance phase ``theta_l`` [rad] of shape ``(N,)``.
+    """
+    a_half = TUNNEL_HALF_WIDTH_M
+    b = BEAM_HALF_THICKNESS_M
+    dx = 2.0 * a_half / nx
+    n_int = nx - 1
+    lap = (
+        np.diag(np.full(n_int, -2.0))
+        + np.diag(np.ones(n_int - 1), 1)
+        + np.diag(np.ones(n_int - 1), -1)
+    ) / dx**2
+    rho_l = dep_info["rho_l"]
+    w_mat = dep_info["w_mat"]
+    u_l = dep_info["u_l"]
+    u0 = params["u0"]
+    w_node = np.sum((rho_l * u0 / u_l)[:, None] * w_mat, axis=0) * (2.0 * b / dx)
+    phi_int = np.linalg.solve(lap, -abs(params["rho0"]) * w_node[1:-1] / epsilon_0)
+    lam, e_vecs = np.linalg.eigh(-lap)
+    coef = e_vecs.T @ phi_int
+    if discrete:
+        rr = 1.0 + 0.5 * lam * dz**2
+        q_modes = -np.log(rr - np.sqrt(rr**2 - 1.0)) / dz
+    else:
+        q_modes = np.sqrt(lam)
+    zz = np.linspace(0.0, 30.0 / float(np.min(q_modes)), 20001)
+    phi_z = (e_vecs * coef[None, :]) @ (1.0 - np.exp(-np.outer(q_modes, zz)))
+    phi_lz = np.abs(w_mat[:, 1:-1] @ phi_z)
+    mass = m_e / params.get("qm_scale", 1.0)
+    gamma_lz = params["gamma0"] - e_charge * phi_lz / (mass * c_light**2)
+    u_lz = c_light * np.sqrt(1.0 - 1.0 / gamma_lz**2)
+    om_dt = (2.0 / dt) * np.sin(0.5 * params["omega"] * dt)
+    integrand = om_dt / u_lz - (om_dt / u_lz[:, -1])[:, None]
+    return np.trapezoid(integrand, zz, axis=1)
+
+
+def _multistream_wall_correction(
+    op0: dict[str, Any],
+    dz: float,
+    dt: float,
+    omega: float,
+    sig_vec: np.ndarray,
+    d_vec: np.ndarray,
+    k_waves: np.ndarray,
+    x_waves: np.ndarray,
+    a_waves: np.ndarray,
+    p_basis: np.ndarray,
+    shape: int = PARTICLE_SHAPE,
+    use_omega_f: bool = True,
+    include_sz: bool = True,
+    discrete: bool = True,
+) -> np.ndarray:
+    """Compute the first-order (Born) PEC-wall near-field wave amplitude shift ``wall_da`` [-].
+
+    At ``z = 0``, the PEC wall enforces ``E_x(x, 0) = 0``, corresponding to a Neumann
+    (even) image continuation of ``J_z`` across ``z = 0`` rather than the unbounded
+    spatial harmonic continuation assumed by the bulk symbol ``G(k)``. The resulting
+    evanescent discrepancy field ``Delta F(z) = sum_m f_m * exp(-q_m * z)`` drives the
+    beam lines and produces an asymptotic wave-amplitude shift::
+
+        Delta a_n = sum_m (R (-sigma * f_m))_n / (q_m - i * k_n),
+        R = V_e^{-1} [0; I] P^T,   V_e = [P^T X; P^T X diag(-i * k_n)].
+    """
+    s_mat = op0["S"]
+    d_mat = np.diag(d_vec)
+    n_lines = len(d_vec)
+    b = BEAM_HALF_THICKNESS_M
+    dx = op0["dx"]
+    c_scale = n_lines**2 * dx / (2.0 * b)
+    lam, e_vecs = np.linalg.eigh(op0["lap"] * -1.0)
+    om_tau = (2.0 / dt) * np.sin(0.5 * omega * dt) if use_omega_f else float(omega)
+    k0sq = (om_tau / c_light) ** 2
+    s2 = lam - k0sq
+    p_left = s_mat.T @ e_vecs
+    p_right = e_vecs.T @ s_mat @ d_mat
+    pr = p_basis.T
+    px = pr @ x_waves
+    v_mat = np.vstack([px, px * (-1j * k_waves)[None, :]])
+    h_sub = pr.shape[0]
+    r_mat = (
+        np.linalg.solve(v_mat, np.vstack([np.zeros((h_sub, h_sub)), np.eye(h_sub)]))
+        @ pr
+    )
+    da = np.zeros(len(k_waves), dtype=np.complex128)
+    p_int = int(shape)
+    for m in range(len(lam)):
+        sm = np.sqrt(s2[m])
+        if discrete:
+            rr = 1.0 + 0.5 * s2[m] * dz**2
+            rho = rr - np.sqrt(rr**2 - 1.0)
+            qm = -np.log(rho) / dz
+            h_m = lam[m] * rho * dz**2 / (1.0 - rho**2)
+            amp = (
+                h_m
+                * np.sqrt(rho)
+                * (
+                    np.exp(-0.5j * k_waves * dz)
+                    / (1.0 - rho * np.exp(-1j * k_waves * dz))
+                    - np.exp(0.5j * k_waves * dz)
+                    / (1.0 - rho * np.exp(1j * k_waves * dz))
+                )
+            )
+        else:
+            qm = sm
+            amp = lam[m] / (2.0 * sm) * (-2j * k_waves) / (sm**2 + k_waves**2)
+        if include_sz:
+            amp = amp * (np.sinc(0.5 * k_waves * dz / np.pi) ** p_int)
+            gq = (np.sinh(0.5 * qm * dz) / (0.5 * qm * dz)) ** p_int
+        else:
+            gq = 1.0
+        fvec = (
+            -c_scale
+            * gq
+            * p_left[:, m]
+            * np.sum(a_waves * (p_right[m] @ x_waves) * amp)
+        )
+        drive = -sig_vec * fvec
+        da += (r_mat @ drive) / (qm - 1j * k_waves)
+    return da
+
+
+def multistream_waves(
+    nx: int,
+    nz: int,
+    params: dict[str, float],
+    *,
+    line_x: np.ndarray | None = None,
+    line_w: np.ndarray | None = None,
+    shape: int = PARTICLE_SHAPE,
+    use_omega_f: bool = True,
+    include_sz: bool = True,
+    include_shear: bool = True,
+    omega_p_scale: float = 1.0,
+    wall_image: str = "neumann",
+    dc_entrance: bool = True,
+    entrance_profile: np.ndarray | None = None,
+    freeze_g: bool = False,
+    subspace: str | None = None,
+    observable_sinc: bool | None = None,
+) -> dict[str, Any]:
+    """Solve the exact per-line cold multistream boundary-value problem for ``I_1(z)``.
+
+    Governing Equations
+    -------------------
+    Each macro-particle stream ``l = 0, ..., N - 1`` at transverse position ``x_l`` with
+    DC velocity ``u_l``, Lorentz factor ``gamma_l``, and normalized charge weight ``d_l``
+    satisfies the linearized cold-stream equation of motion and continuity equation at
+    discrete leapfrog frequency ``Omega = (2 / dt) * sin(omega * dt / 2)``::
+
+        (d/dz + i * beta_l) v_{1,l}(z) = (q / (m * gamma_l**3 * u_l)) * E_{z,l}(z),
+        (d/dz + i * beta_l) i_{1,l}(z) = -i * (Omega / u_l**2) * I_{0,l} * v_{1,l}(z),
+
+    where ``beta_l = Omega / u_l`` [rad/m]. Eliminating ``v_{1,l}`` for spatial harmonic
+    ``i_1(z) = X * exp(-i * k * z)`` yields the ``N``-line nonlinear eigenvalue problem::
+
+        T(k) X = [diag((k - beta_l)**2) - M(k)] X = 0,
+        M(k) = S_z(k)**2 * diag(sigma_l) * G(k),
+        sigma_l = (omega_p_scale * omega_p0)**2 * (u0 / u_l) / (gamma_l**3 * u_l**2),
+        S_z(k)**2 = sinc(k * dz / 2)**(2 * p).
+
+    At the ``z = 0`` entrance plane, pure density modulation with ``v_{1,l}(0) = 0`` and
+    DC entrance transit phase ``theta_l`` imposes the ``2 * N`` matching conditions across
+    the ``2 * N`` fast/slow multistream waves ``(k_n, X_n)``::
+
+        sum_n a_n * X_{l,n} = e_l * exp(-i * theta_l),
+        sum_n a_n * (k_n - beta_l) * X_{l,n} = 0,
+
+    followed by the first-order (Born) PEC-wall near-field correction ``a <- a + wall_da``
+    from the ``z = 0`` image continuation of ``J_z`` and the deposited-current observable
+    symbol ``o_n = a_n * sinc(k_n * dz / 2)**p * (d^T X_n)`` [-].
+
+    Limits & Failure Modes
+    ----------------------
+    - **Linear in modulation index ``m``**: solves the ``m -> 0`` linearized multistream
+      equations; quadratic harmonic generation and ``O(m**2)`` ballistic bunching shifts at
+      finite ``m`` are not included.
+    - **Discrete-particle alias/Doppler terms not modelled**: retains only the principal
+      ``m = 0`` axial spatial harmonic ``S_z(k)**2``; higher Brillouin zone aliases
+      ``k_m = k + 2 * pi * m / dz`` are Doppler-detuned and omitted.
+    - **PEC-wall near-field term is first order**: the ``z = 0`` wall correction uses the
+      first-order Born approximation in the evanescent image field and models the first
+      cell through Fourier/modal symbols rather than the cut near-wall Yee stencil.
+    - **Thin-region DC entrance phase**: ``theta_l`` integrates the 1D modal potential rise
+      along unperturbed trajectories and ignores near-wall density depletion.
+
+    Parameters
+    ----------
+    nx, nz : int
+        Transverse and axial cell counts [-].
+    params : dict of str to float
+        Output of :func:`compute_analytic_parameters`.
+    line_x : np.ndarray, optional
+        Injected particle line ``x`` positions [m] of shape ``(N,)``.
+    line_w : np.ndarray, optional
+        Line charge weights [-] of shape ``(N,)``.
+    shape : int, optional
+        B-spline particle shape order ``p`` in ``{1, 2, 3}`` [-]. Default is ``PARTICLE_SHAPE``.
+    use_omega_f : bool, optional
+        If ``True`` (default), use ``Omega_f = (2 / dt) * sin(omega * dt / 2)`` in the
+        transverse Green's operator and wall kernel; if ``False``, use ``omega``.
+    include_sz : bool, optional
+        If ``True`` (default), include the axial B-spline shape factor ``S_z(k)**2``.
+    include_shear : bool, optional
+        If ``True`` (default), use per-line depressed ``(u_l, gamma_l)``; if ``False``,
+        use uniform ``(u_bar, gamma_bar)``.
+    omega_p_scale : float, optional
+        Multiplier on ``omega_p0`` [-]. Default is ``1.0``.
+    wall_image : {"neumann", "none", "dirichlet"}, optional
+        PEC entrance wall near-field treatment: ``"neumann"`` (default physical even ``J_z``
+        image), ``"none"`` (no wall correction), or ``"dirichlet"`` (flipped-sign control).
+    dc_entrance : bool, optional
+        If ``True`` (default), include the per-line DC entrance transit phase ``theta_l``.
+    entrance_profile : np.ndarray, optional
+        Entrance modulation profile across lines [-].
+    freeze_g : bool, optional
+        If ``True``, freeze ``G(k)`` and ``S_z(k)**2`` at ``k_ref = omega / u_bar``.
+        Default is ``False``.
+    subspace : {"even", "full"} or None, optional
+        Force ``"even"`` mirror subspace or ``"full"`` line space. Default ``None``
+        selects ``"even"`` when lines, weights, ``beta_l``, and entrance profile are mirror
+        symmetric, and ``"full"`` otherwise.
+    observable_sinc : bool or None, optional
+        Override whether the observable symbol ``sinc(k_n * dz / 2)**p`` is applied in
+        ``o_waves``. When ``None`` (default), enabled iff ``include_sz and not freeze_g``.
+
+    Returns
+    -------
+    dict of str to Any
+        Dictionary with keys ``k_waves`` (``(n,)`` [rad/m]), ``x_waves`` (``(N, n)`` [-]),
+        ``a_waves`` (``(n,)`` [-]), ``o_waves`` (``(n,)`` [-], ``I_1 / I_{1,0}`` per wave),
+        ``root_resid`` (``(n,)`` [-]), ``match_resid`` (float [-]), ``wall_da`` (``(n,)`` [-]),
+        ``theta_l`` (``(N,)`` [rad]), and ``subspace`` (``"even"`` or ``"full"``).
+    """
+    if wall_image not in ("neumann", "none", "dirichlet"):
+        raise ValueError(
+            f"Unknown wall_image={wall_image!r}; expected 'neumann', 'none', or 'dirichlet'."
+        )
+    if subspace not in (None, "even", "full"):
+        raise ValueError(
+            f"Unknown subspace={subspace!r}; expected None, 'even', or 'full'."
+        )
+
+    dz = TUNNEL_LENGTH_M / nz
+    dt, _ = _cached_integer_period_dt(int(nx), int(nz))
+    omega = params["omega"]
+
+    dep_info = compute_discrete_dc_depression(
+        nx,
+        params,
+        line_x=line_x,
+        line_w=line_w,
+        return_details=True,
+        shape=shape,
+    )
+    u_l = dep_info["u_l"]
+    gamma_l = dep_info["gamma_l"]
+    delta_disc = float(dep_info["delta_disc"])
+    u0 = params["u0"]
+    u_bar = float(u0 * (1.0 - delta_disc))
+    gamma_bar = float(1.0 / np.sqrt(1.0 - (u_bar / c_light) ** 2))
+    k_ref = float(omega / u_bar)
+    omega_p0 = params["omega_p0"] * float(omega_p_scale)
+    omega_p_dt = (2.0 / dt) * np.sin(0.5 * omega * dt)
+
+    op0 = compute_transverse_modal_operator(
+        "particles",
+        nx,
+        nz,
+        params,
+        k_val=k_ref,
+        line_x=line_x,
+        line_w=line_w,
+        use_omega_f=use_omega_f,
+        shape=shape,
+    )
+    d_vec = op0["d_vec"]
+    lx = op0["line_x"]
+    n_lines = len(d_vec)
+
+    omega_p_l_sq = (omega_p0**2) * (u0 / u_l)
+    if include_shear:
+        sig_vec = omega_p_l_sq / (gamma_l**3 * u_l**2)
+        be_vec = omega_p_dt / u_l
+    else:
+        omega_p_bar_sq = (omega_p0**2) * (u0 / u_bar)
+        sig_vec = np.full(
+            n_lines,
+            omega_p_bar_sq / (gamma_bar**3 * u_bar**2),
+            dtype=np.float64,
+        )
+        be_vec = np.full(n_lines, omega_p_dt / u_bar, dtype=np.float64)
+
+    if entrance_profile is None:
+        e_base = np.ones(n_lines, dtype=np.float64)
+    else:
+        ep = np.asarray(entrance_profile, dtype=np.float64)
+        ep_norm = ep / np.sum(ep)
+        e_base = ep_norm / np.maximum(d_vec, 1.0e-30)
+
+    is_symmetric = (
+        (n_lines % 2 == 0)
+        and np.allclose(lx, -lx[::-1], atol=1.0e-12 * BEAM_HALF_THICKNESS_M)
+        and np.allclose(
+            be_vec, be_vec[::-1], rtol=0.0, atol=1.0e-9 * float(np.max(be_vec))
+        )
+        and np.allclose(d_vec, d_vec[::-1], rtol=1.0e-12)
+        and np.allclose(e_base, e_base[::-1], rtol=1.0e-12, atol=1.0e-12)
+    )
+    if subspace is None:
+        subspace_use = "even" if is_symmetric else "full"
+    else:
+        subspace_use = subspace
+
+    p_basis = (
+        _even_subspace_basis(n_lines)
+        if subspace_use == "even"
+        else np.eye(n_lines, dtype=np.float64)
+    )
+    be_sub = p_basis.T @ np.diag(be_vec) @ p_basis
+    h_sub = p_basis.shape[1]
+    b = BEAM_HALF_THICKNESS_M
+    dx = op0["dx"]
+    lap = op0["lap"]
+    s_mat = op0["S"]
+    d_mat = np.diag(d_vec)
+    eye_int = np.eye(nx - 1, dtype=np.float64)
+    g_scale = (n_lines**2 * dx) / (2.0 * b)
+    omega_tau = float(omega_p_dt) if use_omega_f else float(omega)
+
+    def _m_mat(k_val: float) -> np.ndarray:
+        kk = k_ref if freeze_g else float(np.real(k_val))
+        kappa = float((2.0 / dz) * np.sin(0.5 * kk * dz))
+        tau_y2 = max(kappa**2 - (omega_tau / c_light) ** 2, 1.0e-12)
+        a_mat = -lap + tau_y2 * eye_int
+        g_mat = g_scale * tau_y2 * (s_mat.T @ np.linalg.solve(a_mat, s_mat) @ d_mat)
+        sz_sq = (
+            float(np.sinc(0.5 * kk * dz / np.pi) ** (2 * int(shape)))
+            if include_sz
+            else 1.0
+        )
+        return (sz_sq * sig_vec)[:, None] * g_mat
+
+    def _t_sub(k_val: complex) -> np.ndarray:
+        return (
+            p_basis.T
+            @ (np.diag((k_val - be_vec) ** 2) - _m_mat(float(np.real(k_val))))
+            @ p_basis
+        )
+
+    fd_h = 1.0e-3
+
+    def _dt_sub(k_val: complex) -> np.ndarray:
+        kr = float(np.real(k_val))
+        dm = (_m_mat(kr + fd_h) - _m_mat(kr - fd_h)) / (2.0 * fd_h)
+        return p_basis.T @ (2.0 * np.diag(k_val - be_vec) - dm) @ p_basis
+
+    def _qep_sub(m_full: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        m_sub = p_basis.T @ m_full @ p_basis
+        a0_mat = be_sub @ be_sub - m_sub
+        a1_mat = -2.0 * be_sub
+        comp = np.block([[np.zeros((h_sub, h_sub)), np.eye(h_sub)], [-a0_mat, -a1_mat]])
+        kr_vals, v_vecs = np.linalg.eig(comp)
+        return kr_vals, v_vecs[:h_sub, :]
+
+    m_ref_sub = p_basis.T @ _m_mat(k_ref) @ p_basis
+    a0_init = be_sub @ be_sub - m_ref_sub
+    a1_init = -2.0 * be_sub
+    comp_init = np.block(
+        [[np.zeros((h_sub, h_sub)), np.eye(h_sub)], [-a0_init, -a1_init]]
+    )
+    k0_seeds = np.linalg.eigvals(comp_init)
+
+    ks_list: list[complex] = []
+    w_list: list[np.ndarray] = []
+    res_list: list[float] = []
+    if not freeze_g and include_shear:
+        for k_seed in k0_seeds:
+            k_cur = complex(k_seed)
+            for _ in range(30):
+                t_cur = _t_sub(k_cur)
+                u_svd, _, vh_svd = np.linalg.svd(t_cur)
+                x_vec, y_vec = vh_svd[-1].conj(), u_svd[:, -1]
+                denom = y_vec.conj() @ _dt_sub(k_cur) @ x_vec
+                if abs(denom) == 0.0:
+                    break
+                dk = -(y_vec.conj() @ t_cur @ x_vec) / denom
+                k_cur = k_cur + dk
+                if abs(dk) < 1.0e-13 * abs(k_cur):
+                    break
+            _, sv_end, vh_end = np.linalg.svd(_t_sub(k_cur))
+            ks_list.append(k_cur)
+            w_list.append(vh_end[-1].conj())
+            res_list.append(float(sv_end[-1] / sv_end[0]))
+
+        k_waves = np.asarray(ks_list, dtype=np.complex128)
+        w_sub = np.asarray(w_list, dtype=np.complex128).T
+        root_resid = np.asarray(res_list, dtype=np.float64)
+        dk_mat = np.abs(k_waves[:, None] - k_waves[None, :]) + np.eye(len(k_waves))
+        min_dk = float(np.min(dk_mat))
+    else:
+        k_waves = np.empty(0, dtype=np.complex128)
+        w_sub = np.empty((h_sub, 0), dtype=np.complex128)
+        root_resid = np.array([1.0], dtype=np.float64)
+        dk_mat = np.zeros((1, 1), dtype=np.float64)
+        min_dk = 0.0
+
+    # Fallback to successive substitution when Newton has degenerate roots or fails residual check
+    if (
+        float(np.max(root_resid)) >= 1.0e-12
+        or min_dk <= 1.0e-8
+        or freeze_g
+        or not include_shear
+    ):
+        k0_s, w0_s = _qep_sub(_m_mat(k_ref))
+        has_newton = len(k_waves) == len(k0_s)
+        ks_fb: list[complex] = []
+        w_fb: list[np.ndarray] = []
+        res_fb: list[float] = []
+        for idx, kn in enumerate(k0_s):
+            if (
+                has_newton
+                and root_resid[idx] < 1.0e-12
+                and float(np.min(dk_mat[idx])) > 1.0e-8
+            ):
+                ks_fb.append(complex(k_waves[idx]))
+                w_fb.append(w_sub[:, idx])
+                res_fb.append(float(root_resid[idx]))
+                continue
+            k_cur = complex(kn)
+            w_cur = w0_s[:, idx] / np.linalg.norm(w0_s[:, idx])
+            t_init = _t_sub(k_cur)
+            _, sv_init, _ = np.linalg.svd(t_init)
+            if not freeze_g and not (
+                len(sv_init) > 1 and sv_init[-2] < 1.0e-10 * sv_init[0]
+            ):
+                for _ in range(40):
+                    kr_all, w_all = _qep_sub(_m_mat(float(np.real(k_cur))))
+                    w_all_norm = w_all / np.linalg.norm(w_all, axis=0)[None, :]
+                    ov = np.abs(w_all_norm.conj().T @ w_cur)
+                    valid = np.where(ov > 0.5)[0]
+                    if len(valid) == 0:
+                        valid = np.arange(len(kr_all))
+                    i_best = int(valid[np.argmin(np.abs(kr_all[valid] - k_cur))])
+                    dk_abs = abs(kr_all[i_best] - k_cur)
+                    k_cur = complex(kr_all[i_best])
+                    w_cur = w_all_norm[:, i_best]
+                    if dk_abs < 1.0e-13 * abs(k_cur):
+                        break
+            t_fin = _t_sub(k_cur)
+            _, sv_fin, _ = np.linalg.svd(t_fin)
+            vec_res = float(np.linalg.norm(t_fin @ w_cur) / sv_fin[0])
+            ks_fb.append(k_cur)
+            w_fb.append(w_cur)
+            res_fb.append(max(float(sv_fin[-1] / sv_fin[0]), vec_res))
+        k_waves = np.asarray(ks_fb, dtype=np.complex128)
+        w_sub = np.asarray(w_fb, dtype=np.complex128).T
+        root_resid = np.asarray(res_fb, dtype=np.float64)
+
+    x_waves = p_basis @ w_sub
+
+    if dc_entrance:
+        theta_l = _multistream_dc_entrance_phase(
+            nx=nx, dz=dz, dt=dt, params=params, dep_info=dep_info, discrete=True
+        )
+        e_vec = e_base.astype(np.complex128) * np.exp(-1j * theta_l)
+    else:
+        theta_l = np.zeros(n_lines, dtype=np.float64)
+        e_vec = e_base.astype(np.complex128)
+
+    dk_grid = k_waves[None, :] - be_vec[:, None]
+    pr = p_basis.T
+    a_match = np.vstack([pr @ x_waves, pr @ (x_waves * (-1j * dk_grid))])
+    rhs_match = np.concatenate([pr @ e_vec, np.zeros(pr.shape[0], dtype=np.complex128)])
+    try:
+        a0 = np.linalg.solve(a_match, rhs_match)
+    except np.linalg.LinAlgError:
+        a0 = np.linalg.lstsq(a_match, rhs_match, rcond=None)[0]
+
+    r_i1 = float(np.linalg.norm(x_waves @ a0 - e_vec) / np.linalg.norm(e_vec))
+    r_v1 = float(
+        np.linalg.norm((x_waves * dk_grid) @ a0)
+        / (np.linalg.norm(be_vec) * np.linalg.norm(e_vec))
+    )
+    match_resid = float(max(r_i1, r_v1))
+
+    if wall_image == "none":
+        wall_da = np.zeros_like(a0)
+    else:
+        da_neumann = _multistream_wall_correction(
+            op0=op0,
+            dz=dz,
+            dt=dt,
+            omega=omega,
+            sig_vec=sig_vec,
+            d_vec=d_vec,
+            k_waves=k_waves,
+            x_waves=x_waves,
+            a_waves=a0,
+            p_basis=p_basis,
+            shape=shape,
+            use_omega_f=use_omega_f,
+            include_sz=include_sz,
+            discrete=True,
+        )
+        wall_da = da_neumann if wall_image == "neumann" else -da_neumann
+
+    a_waves = a0 + wall_da
+    use_obs_sinc = (
+        bool(include_sz and not freeze_g)
+        if observable_sinc is None
+        else bool(observable_sinc)
+    )
+    o_waves = a_waves * (d_vec @ x_waves)
+    if use_obs_sinc:
+        o_waves = o_waves * (np.sinc(0.5 * k_waves * dz / np.pi) ** int(shape))
+
+    return {
+        "k_waves": k_waves,
+        "x_waves": x_waves,
+        "a_waves": a_waves,
+        "o_waves": o_waves,
+        "root_resid": root_resid,
+        "match_resid": match_resid,
+        "wall_da": wall_da,
+        "theta_l": theta_l,
+        "subspace": subspace_use,
+    }
+
+
 def discrete_modal_prediction(
     code: str,
     nx: int,
@@ -882,23 +1461,51 @@ def discrete_modal_prediction(
     omega_p_scale: float = 1.0,
     return_details: bool = False,
     shape: int = PARTICLE_SHAPE,
+    method: str = "multistream",
+    wall_image: str = "neumann",
+    dc_entrance: bool = True,
+    freeze_g: bool = False,
 ) -> float | dict[str, Any]:
-    """Compute the Step 2 exact discrete transverse modal prediction ``beta_q,pred`` [rad/m].
+    """Compute the Step 2 discrete space-charge wave prediction ``beta_q,pred`` [rad/m].
+
+    For ``code == "particles"``, ``method="multistream"`` (default, Decision D20) solves
+    the exact ``N``-line coupled multistream boundary-value problem via
+    :func:`multistream_waves`:
+
+    1. Roots ``(k_n, X_n)`` of ``[diag((k - beta_l)**2) - S_z(k)**2 diag(sigma_l) G(k)] X = 0``;
+    2. Entrance matching ``sum_n a_n X_n = e * exp(-i * theta_l)`` and
+       ``sum_n a_n (k_n - beta_l) X_{l,n} = 0``;
+    3. First-order (Born) PEC-wall near-field correction ``a <- a + wall_da`` and
+       deposited-current observable ``I_1(z) = I_{1,0} sum_n o_n exp(-i * k_n * z)`` with
+       ``o_n = a_n * sinc(k_n * dz / 2)**p * (d^T X_n)``.
+
+    Passing ``method="modal"`` evaluates the legacy uncoupled cos-form modal synthesis
+    ``I_1(z) = I_{1,0} sum_j c_j cos(beta_{q,j} * z) exp(-i * k_{c,j} * z)``. For
+    ``code == "lb"``, the `LinearizedBeam` modal dispersion is always used.
+
+    Limits & Failure Modes
+    ----------------------
+    - **Linear in modulation index ``m``**: predicts the ``m -> 0`` linear wave number
+      ``beta_0``; ``O(m**2)`` nonlinear bunching shifts are bounded separately by ``eps_ac``.
+    - **Discrete-particle alias/Doppler terms not modelled**: retains only the principal
+      ``m = 0`` axial spatial harmonic ``S_z(k)**2``.
+    - **PEC-wall near-field term is first order**: the ``z = 0`` wall correction in
+      ``method="multistream"`` is first-order (Born) in the evanescent image field.
 
     Parameters
     ----------
     code : {"lb", "particles"}
         Code selector (`"lb"` for `LinearizedBeam`, `"particles"` for `ParticleSolver`).
     nx, nz : int
-        Transverse and axial cell counts.
+        Transverse and axial cell counts [-].
     params : dict of str to float
         Output of :func:`compute_analytic_parameters`.
     line_x : np.ndarray, optional
         Injected particle line ``x`` positions [m] (for ``code == "particles"``).
     line_w : np.ndarray, optional
-        Line charge weights (for non-uniform profiles such as D3).
+        Line charge weights [-] (for non-uniform profiles such as D3).
     entrance_profile : np.ndarray, optional
-        Entrance modulation profile across lines (defaults to ``_w_perp_eff`` for
+        Entrance modulation profile across lines [-] (defaults to ``_w_perp_eff`` for
         `LinearizedBeam` and uniform charge per line for `ParticleSolver`).
     include_shear : bool, optional
         For ``code == "particles"``, include the per-line DC velocity shear
@@ -915,13 +1522,24 @@ def discrete_modal_prediction(
     win_shift : float, optional
         Shift [m] applied to both bounds of ``fit_window(params)`` (used for ``s_win``).
     omega_p_scale : float, optional
-        Multiplier on ``omega_p`` (``sqrt(2)`` for M2). Default is ``1.0``.
+        Multiplier on ``omega_p`` (``sqrt(2)`` for M2) [-]. Default is ``1.0``.
     return_details : bool, optional
         If ``True``, return a dictionary with modal eigenvalues, wavenumbers,
-        weights, and synthesized ``I1_model(z)``. Default is ``False``.
+        weights, multistream waves, and synthesized ``I1_model(z)``. Default is ``False``.
     shape : int, optional
         B-spline particle shape order ``p`` in ``{1, 2, 3}`` for ``code == "particles"``.
         Default is ``PARTICLE_SHAPE``.
+    method : {"multistream", "modal"}, optional
+        Prediction method for ``code == "particles"``. Default is ``"multistream"``.
+    wall_image : {"neumann", "none", "dirichlet"}, optional
+        PEC wall near-field treatment passed to :func:`multistream_waves` when
+        ``method == "multistream"``. Default is ``"neumann"``.
+    dc_entrance : bool, optional
+        Whether to include the DC entrance transit phase ``theta_l`` in
+        :func:`multistream_waves` when ``method == "multistream"``. Default is ``True``.
+    freeze_g : bool, optional
+        If ``True``, freeze ``G(k)`` at ``k_ref = omega / u_bar`` for ``code == "particles"``.
+        Default is ``False``.
 
     Returns
     -------
@@ -929,12 +1547,18 @@ def discrete_modal_prediction(
         Predicted two-wave fitted ``beta_q`` [rad/m] (or detail dictionary when
         ``return_details=True``).
     """
+    if method not in ("multistream", "modal"):
+        raise ValueError(
+            f"Unknown method={method!r}; expected 'multistream' or 'modal'."
+        )
     b = BEAM_HALF_THICKNESS_M
     lz = TUNNEL_LENGTH_M
     dz = lz / nz
 
     dt, _ = _cached_integer_period_dt(int(nx), int(nz))
     omega = params["omega"]
+    ms_info: dict[str, Any] | None = None
+    mode_assign: np.ndarray | None = None
 
     if code == "lb":
         # LB has no DC space-charge physics; keep uniform u_dep and beta_e (including D3)
@@ -1128,32 +1752,64 @@ def discrete_modal_prediction(
             bq_init = float(np.sqrt(ev0[j]))
             km = be_j - bq_init
             kp = be_j + bq_init
-            for _ in range(12):
-                evm, _, _ = _eig_part_at_k(km)
-                evp, _, _ = _eig_part_at_k(kp)
-                km_next = be_j - float(np.sqrt(evm[j]))
-                kp_next = be_j + float(np.sqrt(evp[j]))
-                if abs(km_next - km) < 1e-13 and abs(kp_next - kp) < 1e-13:
+            if not freeze_g:
+                for _ in range(12):
+                    evm, _, _ = _eig_part_at_k(km)
+                    evp, _, _ = _eig_part_at_k(kp)
+                    km_next = be_j - float(np.sqrt(evm[j]))
+                    kp_next = be_j + float(np.sqrt(evp[j]))
+                    if abs(km_next - km) < 1e-13 and abs(kp_next - kp) < 1e-13:
+                        km, kp = km_next, kp_next
+                        break
                     km, kp = km_next, kp_next
-                    break
-                km, kp = km_next, kp_next
             bq_modes[j] = 0.5 * (kp - km)
             kc_modes[j] = 0.5 * (kp + km)
             c_modes[j] = float(np.dot(d_vec, yj) * np.dot(lj, entrance))
 
-    c_use = c_modes.copy()
-    if drop_highest_mode:
-        excited = np.where(np.abs(c_use) > 1e-12)[0]
-        if len(excited) > 1:
-            c_use[int(excited[-1])] = 0.0
+        if method == "multistream":
+            ms_info = multistream_waves(
+                nx,
+                nz,
+                params,
+                line_x=line_x,
+                line_w=line_w,
+                shape=shape,
+                use_omega_f=use_omega_f,
+                include_sz=include_sz,
+                include_shear=include_shear,
+                omega_p_scale=omega_p_scale,
+                wall_image=wall_image,
+                dc_entrance=dc_entrance,
+                entrance_profile=entrance_profile,
+                freeze_g=freeze_g,
+            )
+            # Assign each wave to the transverse mode j at k_ref with maximal |y_left,j^T X_n|
+            overlaps = np.abs(y_l0.T @ ms_info["x_waves"])
+            mode_assign = np.argmax(overlaps, axis=0)
 
     z_eval = (np.arange(nz, dtype=np.float64) + 0.5) * dz
-    i1_model = params["I1_0"] * np.sum(
-        c_use[:, None]
-        * np.cos(np.outer(bq_modes, z_eval))
-        * np.exp(-1j * np.outer(kc_modes, z_eval)),
-        axis=0,
-    )
+    if code == "particles" and method == "multistream" and ms_info is not None:
+        o_use = ms_info["o_waves"].copy()
+        if drop_highest_mode and mode_assign is not None:
+            excited = np.where(np.abs(c_modes) > 1e-12)[0]
+            if len(excited) > 1:
+                o_use[mode_assign == int(excited[-1])] = 0.0
+        i1_model = (
+            params["I1_0"] * np.exp(-1j * np.outer(z_eval, ms_info["k_waves"])) @ o_use
+        )
+    else:
+        c_use = c_modes.copy()
+        if drop_highest_mode:
+            excited = np.where(np.abs(c_use) > 1e-12)[0]
+            if len(excited) > 1:
+                c_use[int(excited[-1])] = 0.0
+        i1_model = params["I1_0"] * np.sum(
+            c_use[:, None]
+            * np.cos(np.outer(bq_modes, z_eval))
+            * np.exp(-1j * np.outer(kc_modes, z_eval)),
+            axis=0,
+        )
+
     z_min, z_max = fit_window(params)
     fit_res = fit_beta_q_from_envelope(
         z_eval,
@@ -1165,7 +1821,7 @@ def discrete_modal_prediction(
     bq_pred = float(fit_res["beta_q"])
 
     if return_details:
-        return {
+        det: dict[str, Any] = {
             "beta_q": bq_pred,
             "evals": evals_be,
             "bq_modes": bq_modes,
@@ -1175,6 +1831,20 @@ def discrete_modal_prediction(
             "i1_model": i1_model,
             "fit": fit_res,
         }
+        if ms_info is not None:
+            det.update(
+                k_waves=ms_info["k_waves"],
+                x_waves=ms_info["x_waves"],
+                a_waves=ms_info["a_waves"],
+                o_waves=ms_info["o_waves"],
+                root_resid=ms_info["root_resid"],
+                match_resid=ms_info["match_resid"],
+                wall_da=ms_info["wall_da"],
+                theta_l=ms_info["theta_l"],
+                subspace=ms_info["subspace"],
+                mode_assign=mode_assign,
+            )
+        return det
     return bq_pred
 
 
@@ -1188,6 +1858,7 @@ def prediction_slack(
     entrance_profile: np.ndarray | None = None,
     omega_p_scale: float = 1.0,
     shape: int = PARTICLE_SHAPE,
+    method: str = "multistream",
 ) -> dict[str, Any]:
     """Compute the Step 3 parameter-free prediction slack ``s_win + s_modes + s_sym + s_round``."""
     base = discrete_modal_prediction(
@@ -1205,6 +1876,7 @@ def prediction_slack(
         omega_p_scale=omega_p_scale,
         return_details=True,
         shape=shape,
+        method=method,
     )
     bq_pred = float(base["beta_q"])
     z_eval = base["z_coords"]
@@ -1242,13 +1914,22 @@ def prediction_slack(
     c_trunc = c_modes.copy()
     excited = np.where(np.abs(c_trunc) > 1e-12)[0]
     if len(excited) > 1:
-        c_trunc[int(excited[-1])] = 0.0
-        i1_trunc = params["I1_0"] * np.sum(
-            c_trunc[:, None]
-            * np.cos(np.outer(bq_modes, z_eval))
-            * np.exp(-1j * np.outer(kc_modes, z_eval)),
-            axis=0,
-        )
+        if code == "particles" and method == "multistream":
+            o_trunc = base["o_waves"].copy()
+            o_trunc[base["mode_assign"] == int(excited[-1])] = 0.0
+            i1_trunc = (
+                params["I1_0"]
+                * np.exp(-1j * np.outer(z_eval, base["k_waves"]))
+                @ o_trunc
+            )
+        else:
+            c_trunc[int(excited[-1])] = 0.0
+            i1_trunc = params["I1_0"] * np.sum(
+                c_trunc[:, None]
+                * np.cos(np.outer(bq_modes, z_eval))
+                * np.exp(-1j * np.outer(kc_modes, z_eval)),
+                axis=0,
+            )
         bq_no_high = float(
             fit_beta_q_from_envelope(
                 z_eval, i1_trunc, float(bq_modes[0]), z_min=z_min, z_max=z_max
@@ -1275,6 +1956,7 @@ def prediction_slack(
             omega_p_scale=omega_p_scale,
             return_details=False,
             shape=shape,
+            method=method,
         )
     )
     s_sym = float(abs(bq_pred - bq_omega_cont) / bq_pred)
@@ -1313,6 +1995,7 @@ def prediction_slack(
                 omega_p_scale=omega_p_scale,
                 return_details=False,
                 shape=shape,
+                method=method,
             )
         )
         bq_no_sz = float(
@@ -1332,6 +2015,7 @@ def prediction_slack(
                 omega_p_scale=omega_p_scale,
                 return_details=False,
                 shape=shape,
+                method=method,
             )
         )
         res["bq_pred_unif"] = bq_unif

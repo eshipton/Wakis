@@ -921,7 +921,7 @@ def test_shape1_identity_and_wall_stencil_bounds():
         # Compare discrete modal prediction
         pred_ref = _ref_modal_pred_part(nx, nz, params, return_details=True)
         pred_p1 = discrete_modal_prediction(
-            "particles", nx, nz, params, return_details=True, shape=1
+            "particles", nx, nz, params, return_details=True, shape=1, method="modal"
         )
         for key in (
             "beta_q",
@@ -946,7 +946,9 @@ def test_shape1_identity_and_wall_stencil_bounds():
         assert settle_p1 == settle_ref
 
         # Compare prediction_slack and derived_tolerances
-        slack_p1 = prediction_slack("particles", nx, nz, params, shape=1)
+        slack_p1 = prediction_slack(
+            "particles", nx, nz, params, shape=1, method="modal"
+        )
         bq_unif_ref = float(
             _ref_modal_pred_part(nx, nz, params, include_shear=False, include_sz=True)
         )
@@ -983,7 +985,10 @@ def test_shape1_identity_and_wall_stencil_bounds():
         _, _, _ = _grid_gamma1_disc_and_dw(int(nx), int(nz), params["omega"])
         tcrit_ref = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
         np.testing.assert_allclose(
-            tols_p1["bq_pred_part"], pred_ref["beta_q"], rtol=0.0, atol=1e-15
+            tols_p1["bq_pred_part"],
+            discrete_modal_prediction("particles", nx, nz, params, shape=1),
+            rtol=0.0,
+            atol=1e-15,
         )
         np.testing.assert_allclose(
             tols_p1["delta_disc_exact"], dep_ref["delta_disc"], rtol=0.0, atol=1e-15
@@ -1055,7 +1060,6 @@ def test_shape2_modal_prediction_and_sz_symbol():
 
     # Verify the axial symbol S_z(k)^2 = sinc(k * dz / 2)^(2p) independently for p = 1, 2, 3
     for p in (1, 2, 3):
-
         # When include_shear=False, G_tilde(k) = S_z(k)^2 * sigma_bar * G(k), so the ratio of
         # fundamental mode wavenumbers (or eigenvalues before the k-iteration) with include_sz=True
         # vs include_sz=False isolates S_z(k)^2. Check both the direct operator relation and the
