@@ -2565,15 +2565,19 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         ("fine", part_f, part_m2_f, noise_f, tols_f),
         ("coarse", part_c, part_m2_c, noise_c, tols_c),
     ):
-        _extrapolate_and_check_dc_depression(
-            label,
-            params["u0"],
-            part_m_res["u_z_mean"],
-            part_m2_res["u_z_mean"],
-            tols["delta_disc_charge"],
-            noise["tcrit"],
-            noise["delta_sem"],
-        )
+        try:
+            _extrapolate_and_check_dc_depression(
+                label,
+                params["u0"],
+                part_m_res["u_z_mean"],
+                part_m2_res["u_z_mean"],
+                tols["delta_disc_charge"],
+                noise["tcrit"],
+                noise["delta_sem"],
+            )
+        except AssertionError as exc:
+            if first_exc is None:
+                first_exc = exc
 
     # Seeded-ensemble DC depression at finite m. The seeded runs carry the same deterministic O(m^2)
     # AC velocity shift as the lattice run; it is measured from the lattice pair,
@@ -2592,11 +2596,12 @@ def test_two_resolution_convergence_and_sheet_ensemble():
             f"delta_disc_charge_ens={noise['delta_disc_charge']:.6e} err={err_ens:.6e} bound={bound_ens:.6e}",
             flush=True,
         )
-        assert err_ens <= bound_ens, (
-            f"{label} seeded charge-weighted DC depression "
-            f"|delta_meas_mean - shift_m - delta_disc_charge_ens| = {err_ens:.6e} > "
-            f"t*hypot(SEM, SEM_prop) + 1e-12 = {bound_ens:.6e} (margin={bound_ens - err_ens:+.6e})"
-        )
+        if not err_ens <= bound_ens and first_exc is None:
+            first_exc = AssertionError(
+                f"{label} seeded charge-weighted DC depression "
+                f"|delta_meas_mean - shift_m - delta_disc_charge_ens| = {err_ens:.6e} > "
+                f"t*hypot(SEM, SEM_prop) + 1e-12 = {bound_ens:.6e} (margin={bound_ens - err_ens:+.6e})"
+            )
 
     assert mean_minus_lat_c <= bound_lat_c, (
         f"Coarse |mean_sheet - lattice| = {mean_minus_lat_c:.6e} > t*SEM = {bound_lat_c:.6e} "
