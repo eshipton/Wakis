@@ -1037,6 +1037,36 @@ def _multistream_wall_correction(
     return da
 
 
+def _multistream_leapfrog_omega(
+    omega: float, dt: float, use_omega_f: bool = True
+) -> float:
+    """Return the leapfrog angular frequency symbol ``Omega_f = (2 / dt) * sin(omega * dt / 2)`` [rad/s]."""
+    if not use_omega_f:
+        return float(omega)
+    return float((2.0 / dt) * np.sin(0.5 * omega * dt))
+
+
+def _multistream_entrance_dk(k_waves: np.ndarray, be_vec: np.ndarray) -> np.ndarray:
+    """Return the per-line, per-wave Doppler shift ``k_n - beta_l`` [rad/m] for ``v_1(0) = 0`` matching."""
+    return k_waves[None, :] - be_vec[:, None]
+
+
+def _multistream_observable_weights(
+    a_waves: np.ndarray,
+    d_vec: np.ndarray,
+    x_waves: np.ndarray,
+    k_waves: np.ndarray,
+    dz: float,
+    shape: int,
+    use_obs_sinc: bool,
+) -> np.ndarray:
+    """Compute the per-wave deposited-current observable weights ``o_n`` [-]."""
+    o_waves = a_waves * (d_vec @ x_waves)
+    if use_obs_sinc:
+        o_waves = o_waves * (np.sinc(0.5 * k_waves * dz / np.pi) ** int(shape))
+    return o_waves
+
+
 def multistream_waves(
     nx: int,
     nz: int,
@@ -1076,6 +1106,17 @@ def multistream_waves(
         sigma_l = (omega_p_scale * omega_p0)**2 * (u0 / u_l) / (gamma_l**3 * u_l**2),
         S_z(k)**2 = sinc(k * dz / 2)**(2 * p).
 
+    In the active subspace of dimension ``h_sub``, each root ``k_n`` is required to
+    satisfy the quadratic-pencil backward-error bound derived from IEEE-754 ``float64``
+    machine precision ``eps_mach = np.finfo(np.float64).eps`` and the relative condition
+    ratio ``kappa_T(k_n)`` of ``T(k)``::
+
+        root_resid[n] = sigma_min(T(k_n)) / sigma_max(T(k_n)) <= root_tol[n],
+        root_tol[n] = h_sub * eps_mach * kappa_T(k_n),
+        kappa_T(k_n) = (|k_n| + max_l(beta_l))**2 / sigma_max(T(k_n)),
+
+    with pairwise root separation ``|k_n - k_m| > root_k_tol = 1e-13 * max_n(|k_n|)``.
+
     At the ``z = 0`` entrance plane, pure density modulation with ``v_{1,l}(0) = 0`` and
     DC entrance transit phase ``theta_l`` imposes the ``2 * N`` matching conditions across
     the ``2 * N`` fast/slow multistream waves ``(k_n, X_n)``::
@@ -1083,9 +1124,11 @@ def multistream_waves(
         sum_n a_n * X_{l,n} = e_l * exp(-i * theta_l),
         sum_n a_n * (k_n - beta_l) * X_{l,n} = 0,
 
-    followed by the first-order (Born) PEC-wall near-field correction ``a <- a + wall_da``
-    from the ``z = 0`` image continuation of ``J_z`` and the deposited-current observable
-    symbol ``o_n = a_n * sinc(k_n * dz / 2)**p * (d^T X_n)`` [-].
+    solved directly via :func:`numpy.linalg.solve` (with relative residual
+    ``match_resid <= 1e-12``), followed by the first-order (Born) PEC-wall near-field
+    correction ``a <- a + wall_da`` from the ``z = 0`` image continuation of ``J_z`` and
+    the deposited-current observable symbol
+    ``o_n = a_n * sinc(k_n * dz / 2)**p * (d^T X_n)`` [-].
 
     Limits & Failure Modes
     ----------------------
@@ -1095,6 +1138,11 @@ def multistream_waves(
     - **Discrete-particle alias/Doppler terms not modelled**: retains only the principal
       ``m = 0`` axial spatial harmonic ``S_z(k)**2``; higher Brillouin zone aliases
       ``k_m = k + 2 * pi * m / dz`` are Doppler-detuned and omitted.
+    - **Complex ballistic band evaluated at ``Re(k)``**: for weakly unstable complex
+      ballistic roots near ``beta_bar`` (``|Im(k)| <= 0.184`` rad/m for ``q/m = 1`` and
+      ``<= 0.426`` rad/m for ``q/m = 2``), ``M(k)`` and ``root_resid`` are evaluated at
+      ``Re(k)``; dropping the complex ballistic band changes fitted ``beta_q`` by
+      ``<= 4.8e-6`` relative.
     - **PEC-wall near-field term is first order**: the ``z = 0`` wall correction uses the
       first-order Born approximation in the evanescent image field and models the first
       cell through Fourier/modal symbols rather than the cut near-wall Yee stencil.
@@ -1146,8 +1194,17 @@ def multistream_waves(
     dict of str to Any
         Dictionary with keys ``k_waves`` (``(n,)`` [rad/m]), ``x_waves`` (``(N, n)`` [-]),
         ``a_waves`` (``(n,)`` [-]), ``o_waves`` (``(n,)`` [-], ``I_1 / I_{1,0}`` per wave),
-        ``root_resid`` (``(n,)`` [-]), ``match_resid`` (float [-]), ``wall_da`` (``(n,)`` [-]),
-        ``theta_l`` (``(N,)`` [rad]), and ``subspace`` (``"even"`` or ``"full"``).
+        ``root_resid`` (``(n,)`` [-]), ``root_tol`` (``(n,)`` [-]),
+        ``root_k_tol`` (float [rad/m]), ``match_resid`` (float [-]),
+        ``wall_da`` (``(n,)`` [-]), ``theta_l`` (``(N,)`` [rad]), and
+        ``subspace`` (``"even"`` or ``"full"``).
+
+    Raises
+    ------
+    RuntimeError
+        If ``tau_y2 <= 1e-12`` m^-2, any root residual exceeds ``root_tol``, two roots
+        coincide within ``root_k_tol``, the entrance matching system is singular, or
+        ``match_resid > 1e-12``.
     """
     if wall_image not in ("neumann", "none", "dirichlet"):
         raise ValueError(
@@ -1178,7 +1235,7 @@ def multistream_waves(
     gamma_bar = float(1.0 / np.sqrt(1.0 - (u_bar / c_light) ** 2))
     k_ref = float(omega / u_bar)
     omega_p0 = params["omega_p0"] * float(omega_p_scale)
-    omega_p_dt = (2.0 / dt) * np.sin(0.5 * omega * dt)
+    omega_p_dt = _multistream_leapfrog_omega(omega, dt, use_omega_f=True)
 
     op0 = compute_transverse_modal_operator(
         "particles",
@@ -1235,7 +1292,9 @@ def multistream_waves(
         else np.eye(n_lines, dtype=np.float64)
     )
     be_sub = p_basis.T @ np.diag(be_vec) @ p_basis
+    be_max = float(np.max(be_vec))
     h_sub = p_basis.shape[1]
+    eps_mach = float(np.finfo(np.float64).eps)
     b = BEAM_HALF_THICKNESS_M
     dx = op0["dx"]
     lap = op0["lap"]
@@ -1243,12 +1302,18 @@ def multistream_waves(
     d_mat = np.diag(d_vec)
     eye_int = np.eye(nx - 1, dtype=np.float64)
     g_scale = (n_lines**2 * dx) / (2.0 * b)
-    omega_tau = float(omega_p_dt) if use_omega_f else float(omega)
+    omega_tau = _multistream_leapfrog_omega(omega, dt, use_omega_f=use_omega_f)
 
     def _m_mat(k_val: float) -> np.ndarray:
         kk = k_ref if freeze_g else float(np.real(k_val))
         kappa = float((2.0 / dz) * np.sin(0.5 * kk * dz))
-        tau_y2 = max(kappa**2 - (omega_tau / c_light) ** 2, 1.0e-12)
+        tau_y2 = kappa**2 - (omega_tau / c_light) ** 2
+        if tau_y2 <= 1.0e-12:
+            raise RuntimeError(
+                f"multistream_waves: transverse decay parameter tau_y2={tau_y2:.6e} m^-2 "
+                f"<= 1.0e-12 m^-2 at k={kk:.6e} rad/m "
+                f"(kappa^2={kappa**2:.6e}, (omega_tau/c)^2={(omega_tau / c_light) ** 2:.6e})."
+            )
         a_mat = -lap + tau_y2 * eye_int
         g_mat = g_scale * tau_y2 * (s_mat.T @ np.linalg.solve(a_mat, s_mat) @ d_mat)
         sz_sq = (
@@ -1264,6 +1329,10 @@ def multistream_waves(
             @ (np.diag((k_val - be_vec) ** 2) - _m_mat(float(np.real(k_val))))
             @ p_basis
         )
+
+    def _root_tol_at(k_val: complex, sv_max: float) -> float:
+        kappa_t = ((abs(k_val) + be_max) ** 2) / sv_max
+        return float(h_sub * eps_mach * kappa_t)
 
     fd_h = 1.0e-3
 
@@ -1291,6 +1360,7 @@ def multistream_waves(
     ks_list: list[complex] = []
     w_list: list[np.ndarray] = []
     res_list: list[float] = []
+    tol_list: list[float] = []
     if not freeze_g and include_shear:
         for k_seed in k0_seeds:
             k_cur = complex(k_seed)
@@ -1309,22 +1379,25 @@ def multistream_waves(
             ks_list.append(k_cur)
             w_list.append(vh_end[-1].conj())
             res_list.append(float(sv_end[-1] / sv_end[0]))
+            tol_list.append(_root_tol_at(k_cur, float(sv_end[0])))
 
         k_waves = np.asarray(ks_list, dtype=np.complex128)
         w_sub = np.asarray(w_list, dtype=np.complex128).T
         root_resid = np.asarray(res_list, dtype=np.float64)
+        root_tol = np.asarray(tol_list, dtype=np.float64)
         dk_mat = np.abs(k_waves[:, None] - k_waves[None, :]) + np.eye(len(k_waves))
         min_dk = float(np.min(dk_mat))
     else:
         k_waves = np.empty(0, dtype=np.complex128)
         w_sub = np.empty((h_sub, 0), dtype=np.complex128)
         root_resid = np.array([1.0], dtype=np.float64)
+        root_tol = np.array([0.0], dtype=np.float64)
         dk_mat = np.zeros((1, 1), dtype=np.float64)
         min_dk = 0.0
 
     # Fallback to successive substitution when Newton has degenerate roots or fails residual check
     if (
-        float(np.max(root_resid)) >= 1.0e-12
+        bool(np.any(root_resid > root_tol))
         or min_dk <= 1.0e-8
         or freeze_g
         or not include_shear
@@ -1334,15 +1407,17 @@ def multistream_waves(
         ks_fb: list[complex] = []
         w_fb: list[np.ndarray] = []
         res_fb: list[float] = []
+        tol_fb: list[float] = []
         for idx, kn in enumerate(k0_s):
             if (
                 has_newton
-                and root_resid[idx] < 1.0e-12
+                and root_resid[idx] <= root_tol[idx]
                 and float(np.min(dk_mat[idx])) > 1.0e-8
             ):
                 ks_fb.append(complex(k_waves[idx]))
                 w_fb.append(w_sub[:, idx])
                 res_fb.append(float(root_resid[idx]))
+                tol_fb.append(float(root_tol[idx]))
                 continue
             k_cur = complex(kn)
             w_cur = w0_s[:, idx] / np.linalg.norm(w0_s[:, idx])
@@ -1370,9 +1445,32 @@ def multistream_waves(
             ks_fb.append(k_cur)
             w_fb.append(w_cur)
             res_fb.append(max(float(sv_fin[-1] / sv_fin[0]), vec_res))
+            tol_fb.append(_root_tol_at(k_cur, float(sv_fin[0])))
         k_waves = np.asarray(ks_fb, dtype=np.complex128)
         w_sub = np.asarray(w_fb, dtype=np.complex128).T
         root_resid = np.asarray(res_fb, dtype=np.float64)
+        root_tol = np.asarray(tol_fb, dtype=np.float64)
+
+    bad_idx = int(np.argmax(root_resid / root_tol))
+    if root_resid[bad_idx] > root_tol[bad_idx]:
+        raise RuntimeError(
+            f"multistream_waves: root {bad_idx} at k={k_waves[bad_idx]:.6e} rad/m "
+            f"has relative residual {root_resid[bad_idx]:.3e} > threshold "
+            f"{root_tol[bad_idx]:.3e} (h_sub={h_sub}, eps_mach={eps_mach:.3e}, "
+            f"kappa_T={root_tol[bad_idx] / (h_sub * eps_mach):.3e})."
+        )
+
+    root_k_tol = float(1.0e-13 * float(np.max(np.abs(k_waves))))
+    dk_final = np.abs(k_waves[:, None] - k_waves[None, :])
+    np.fill_diagonal(dk_final, np.inf)
+    min_dk_final = float(np.min(dk_final))
+    if min_dk_final <= root_k_tol:
+        i_coinc, j_coinc = np.unravel_index(int(np.argmin(dk_final)), dk_final.shape)
+        raise RuntimeError(
+            f"multistream_waves: roots {i_coinc} and {j_coinc} coincide with "
+            f"|dk|={min_dk_final:.3e} rad/m <= root tolerance {root_k_tol:.3e} rad/m "
+            f"(k[{i_coinc}]={k_waves[i_coinc]:.6e}, k[{j_coinc}]={k_waves[j_coinc]:.6e})."
+        )
 
     x_waves = p_basis @ w_sub
 
@@ -1385,14 +1483,17 @@ def multistream_waves(
         theta_l = np.zeros(n_lines, dtype=np.float64)
         e_vec = e_base.astype(np.complex128)
 
-    dk_grid = k_waves[None, :] - be_vec[:, None]
+    dk_grid = _multistream_entrance_dk(k_waves, be_vec)
     pr = p_basis.T
     a_match = np.vstack([pr @ x_waves, pr @ (x_waves * (-1j * dk_grid))])
     rhs_match = np.concatenate([pr @ e_vec, np.zeros(pr.shape[0], dtype=np.complex128)])
     try:
         a0 = np.linalg.solve(a_match, rhs_match)
-    except np.linalg.LinAlgError:
-        a0 = np.linalg.lstsq(a_match, rhs_match, rcond=None)[0]
+    except np.linalg.LinAlgError as exc:
+        raise RuntimeError(
+            f"multistream_waves: singular entrance matching system of shape "
+            f"{a_match.shape} (min_dk={min_dk_final:.3e} rad/m)."
+        ) from exc
 
     r_i1 = float(np.linalg.norm(x_waves @ a0 - e_vec) / np.linalg.norm(e_vec))
     r_v1 = float(
@@ -1400,6 +1501,12 @@ def multistream_waves(
         / (np.linalg.norm(be_vec) * np.linalg.norm(e_vec))
     )
     match_resid = float(max(r_i1, r_v1))
+    match_tol = 1.0e-12
+    if match_resid > match_tol:
+        raise RuntimeError(
+            f"multistream_waves: entrance matching residual match_resid={match_resid:.3e} "
+            f"(r_i1={r_i1:.3e}, r_v1={r_v1:.3e}) exceeds threshold {match_tol:.3e}."
+        )
 
     if wall_image == "none":
         wall_da = np.zeros_like(a0)
@@ -1428,9 +1535,15 @@ def multistream_waves(
         if observable_sinc is None
         else bool(observable_sinc)
     )
-    o_waves = a_waves * (d_vec @ x_waves)
-    if use_obs_sinc:
-        o_waves = o_waves * (np.sinc(0.5 * k_waves * dz / np.pi) ** int(shape))
+    o_waves = _multistream_observable_weights(
+        a_waves=a_waves,
+        d_vec=d_vec,
+        x_waves=x_waves,
+        k_waves=k_waves,
+        dz=dz,
+        shape=int(shape),
+        use_obs_sinc=use_obs_sinc,
+    )
 
     return {
         "k_waves": k_waves,
@@ -1438,6 +1551,8 @@ def multistream_waves(
         "a_waves": a_waves,
         "o_waves": o_waves,
         "root_resid": root_resid,
+        "root_tol": root_tol,
+        "root_k_tol": root_k_tol,
         "match_resid": match_resid,
         "wall_da": wall_da,
         "theta_l": theta_l,
@@ -1838,6 +1953,8 @@ def discrete_modal_prediction(
                 a_waves=ms_info["a_waves"],
                 o_waves=ms_info["o_waves"],
                 root_resid=ms_info["root_resid"],
+                root_tol=ms_info["root_tol"],
+                root_k_tol=ms_info["root_k_tol"],
                 match_resid=ms_info["match_resid"],
                 wall_da=ms_info["wall_da"],
                 theta_l=ms_info["theta_l"],
@@ -1978,6 +2095,11 @@ def prediction_slack(
         "i1_model": i1_model,
     }
     if code == "particles":
+        if "root_resid" in base:
+            res["root_resid"] = base["root_resid"]
+            res["root_tol"] = base["root_tol"]
+            res["root_k_tol"] = base["root_k_tol"]
+            res["match_resid"] = float(base["match_resid"])
         bq_unif = float(
             discrete_modal_prediction(
                 "particles",
@@ -2298,6 +2420,9 @@ def _single_grid_budget_terms(
         "slack_part": float(part_modal["slack"]),
         "evals_part": part_modal["evals"],
         "i1_model_part": part_modal["i1_model"],
+        "root_resid_part": part_modal.get("root_resid"),
+        "root_tol_part": part_modal.get("root_tol"),
+        "match_resid_part": part_modal.get("match_resid"),
         "slack_cross": float(lb_modal["slack"] + part_modal["slack"]),
         "alias_supp": alias_supp,
         "delta_th": float(params["delta_u_dc"]),
@@ -2343,7 +2468,7 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
         f"  slack_lb = s_win + s_modes + s_sym + s_round      : {tols['slack_lb']:.6%}",
         f"    (s_win={tols['s_win_lb']:.3e}, s_modes={tols['s_modes_lb']:.3e}, s_sym={tols['s_sym_lb']:.3e}, s_round={tols['s_round']:.1e})",
         f"  LB eigenvalues lambda_1..4(beta_e)                : ({ev_lb[0]:.6f}, {ev_lb[1]:.6f}, {ev_lb[2]:.6f}, {ev_lb[3]:.6f})",
-        f"  bq_pred_part (Step 2+3 Particle modal prediction) : {tols['bq_pred_part']:.6f} rad/m (no_Sz={tols['bq_pred_part_no_sz']:.6f}, unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
+        f"  bq_pred_part (D20 Particle multistream prediction): {tols['bq_pred_part']:.6f} rad/m (no_Sz={tols['bq_pred_part_no_sz']:.6f}, unif={tols['bq_pred_part_unif']:.6f}, shear={tols['shear_shift']:+.6e})",
         f"  slack_part = s_win + s_modes + s_sym + s_round    : {tols['slack_part']:.6%}",
         f"    (s_win={tols['s_win_part']:.3e}, s_modes={tols['s_modes_part']:.3e}, s_sym={tols['s_sym_part']:.3e}, s_round={tols['s_round']:.1e})",
         f"  Particle eigenvalues lambda_1..4(beta_e)          : ({ev_p[0]:.6f}, {ev_p[1]:.6f}, {ev_p[2]:.6f}, {ev_p[3]:.6f})",
@@ -2352,9 +2477,9 @@ def format_error_budget(nx: int, nz: int, tols: dict[str, Any]) -> str:
         f"  delta_th (continuum DC dep, flux/density)         : {tols['delta_th_flux']:.6%} / {tols['delta_th_density']:.6%}",
         f"  delta_disc_exact (1D Poisson DC dep, {tols['dep_weighting']})        : {tols['delta_disc_exact']:.6%} (flux={tols['delta_disc_flux']:.6%}, density={tols['delta_disc_density']:.6%})",
         f"  eps_ac (0.5*(m*bq/be)^2)                          : {tols['eps_ac']:.6e}",
-        f"  amp_pred_part (sinc(be*dz/2)^p*cos(bq*dz/2))      : {tols['amp_pred_part']:.8f}",
+        f"  amp_pred_part (H_0(wall)*cos(bq*dz/2))            : {tols['amp_pred_part']:.8f}",
         f"  tol_amp_lb (0.5*(bq*dz)^2)                        : {tols['tol_amp_lb']:.6e}",
-        f"  tol_amp_part ((be*dz/2)^4/120+(bq*dz/2)^4/24+1e-12): {tols['tol_amp_part']:.6e}",
+        f"  tol_amp_part (2*(v_inj/u_dep-1)*p*(be*dz)^2/24+(1-cos(bq*dz/2))+1e-12): {tols['tol_amp_part']:.6e}",
         f"  eps_dft (100*eps_mach/m)                          : {tols['eps_dft']:.6e}",
     ]
     return "\n".join(lines)
