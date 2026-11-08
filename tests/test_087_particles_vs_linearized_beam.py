@@ -242,6 +242,57 @@ def _check_beta0_negative_controls(
     return out
 
 
+def _extrapolate_and_check_dc_depression(
+    label: str,
+    u0: float,
+    u_z_mean_m: float,
+    u_z_mean_m2: float,
+    delta_disc_charge: float,
+    tcrit: float,
+    delta_sem: float,
+) -> dict[str, float]:
+    """Richardson-extrapolate ``delta(m)`` to ``m -> 0`` from ``(m, m/2)`` lattice runs and assert bound.
+
+    Because no ``m/2`` 8-seed ensemble or ``n_macro = 256/512`` lattice run is
+    present in the cached call graph of
+    ``test_two_resolution_convergence_and_sheet_ensemble``, ``delta(m)`` and
+    ``delta(m/2)`` are taken from the cached baseline ``"sheet_lattice"`` runs
+    at ``m`` and ``m/2`` (``n_macro = 16`` on coarse, ``32`` on fine) and
+    compared against ``delta_disc_charge`` with bound
+    ``t * SEM_propagated + 1e-12``, where
+    ``SEM_propagated = hypot(SEM / 3, 4 * SEM / 3)``.
+    """
+    delta_m = float((float(u0) - float(u_z_mean_m)) / float(u0))
+    delta_m2 = float((float(u0) - float(u_z_mean_m2)) / float(u0))
+    delta0 = float((4.0 * delta_m2 - delta_m) / 3.0)
+    sem_prop = float(np.hypot(float(delta_sem) / 3.0, 4.0 * float(delta_sem) / 3.0))
+    err_dep0 = float(abs(delta0 - float(delta_disc_charge)))
+    bound_dep0 = float(float(tcrit) * sem_prop + 1.0e-12)
+    print(
+        f"DEPEXTRAP grid={label} source=lattice_only "
+        f"delta_m={delta_m:.6e} delta_m2={delta_m2:.6e} delta0={delta0:.6e} "
+        f"delta_disc_charge={float(delta_disc_charge):.6e} "
+        f"err_dep0={err_dep0:.6e} sem={float(delta_sem):.6e} "
+        f"sem_prop={sem_prop:.6e} tcrit={float(tcrit):.6f} bound_dep0={bound_dep0:.6e}",
+        flush=True,
+    )
+    assert err_dep0 <= bound_dep0, (
+        f"{label} m->0 extrapolated charge-weighted DC depression (lattice runs only) "
+        f"|delta0 - delta_disc_charge| = {err_dep0:.6e} > "
+        f"t*SEM_propagated + 1e-12 = {bound_dep0:.6e} "
+        f"(delta_m={delta_m:.6e}, delta_m2={delta_m2:.6e}, delta0={delta0:.6e}, "
+        f"margin={bound_dep0 - err_dep0:+.6e})"
+    )
+    return {
+        "delta_m": delta_m,
+        "delta_m2": delta_m2,
+        "delta0": delta0,
+        "sem_prop": sem_prop,
+        "err_dep0": err_dep0,
+        "bound_dep0": bound_dep0,
+    }
+
+
 def test_preflight_and_resolution_criteria():
     """Verify `wakis.estimate` preflight, resolution rules, and two-wave fit-window span >= 1.25 * lambda_q."""
     params = compute_analytic_parameters(qm_scale=1.0)
@@ -1390,13 +1441,14 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
     import examples._space_charge_waves_common as scw_mod
 
     orig_wall_corr = scw_mod._multistream_wall_correction
+    orig_ms_waves = scw_mod.multistream_waves
 
     def _negated_wall_corr(*args, **kwargs):
         return -orig_wall_corr(*args, **kwargs)
 
     def _ignored_wall_image(*args, **kwargs):
         kwargs = dict(kwargs, wall_image="neumann")
-        return orig_wall_corr(*args, **kwargs)
+        return orig_ms_waves(*args, **kwargs)
 
     with monkeypatch.context() as mp:
         mp.setattr(scw_mod, "_multistream_wall_correction", _negated_wall_corr)
@@ -1409,7 +1461,7 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
             )
 
     with monkeypatch.context() as mp:
-        mp.setattr(scw_mod, "_multistream_wall_correction", _ignored_wall_image)
+        mp.setattr(scw_mod, "multistream_waves", _ignored_wall_image)
         with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
             _check_beta0_negative_controls(
                 "M3",
@@ -1420,6 +1472,57 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
                 bound_m3_ref,
                 expected_failures=("modal", "dirichlet", "none"),
                 line_x=x_fib,
+            )
+
+    # Item 9: Richardson extrapolation of delta to m -> 0 from (m, m/2) lattice runs
+    # cancels the O(m^2) AC velocity shift and fails when compute_discrete_dc_depression
+    # is mutated via monkeypatch to omit charge weighting.
+    from scipy.stats import t as student_t
+
+    from examples._space_charge_waves_common import NOISE_SEEDS
+
+    tcrit_dep = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
+    sem_dep = 5.0e-8
+    delta_chg_c = float(compute_discrete_dc_depression(nx, params, weighting="charge"))
+    # Finite-m O(m^2) shift of +4.3e-7 (referee item 9) exceeds t * SEM_propagated (~2.4e-7),
+    # but cancels in delta0 = (4 * delta(m/2) - delta(m)) / 3
+    shift_m = 4.3e-7
+    shift_m2 = 0.25 * shift_m
+    uz_m = float(params["u0"] * (1.0 - (delta_chg_c + shift_m)))
+    uz_m2 = float(params["u0"] * (1.0 - (delta_chg_c + shift_m2)))
+    dep_ext = _extrapolate_and_check_dc_depression(
+        "coarse",
+        params["u0"],
+        uz_m,
+        uz_m2,
+        delta_chg_c,
+        tcrit_dep,
+        sem_dep,
+    )
+    assert abs(dep_ext["delta0"] - delta_chg_c) <= 1.0e-15
+
+    orig_dc_dep = scw_mod.compute_discrete_dc_depression
+
+    def _dc_dep_flux_for_charge(nx_a, params_a, **kw):
+        kw = dict(kw, weighting="flux")
+        res = orig_dc_dep(nx_a, params_a, **kw)
+        if isinstance(res, dict):
+            res = dict(res)
+            res["delta_charge"] = res["delta_flux"]
+        return res
+
+    with monkeypatch.context() as mp:
+        mp.setattr(scw_mod, "compute_discrete_dc_depression", _dc_dep_flux_for_charge)
+        tols_mut_dep = derived_tolerances(nx, nz, params)
+        with pytest.raises(AssertionError):
+            _extrapolate_and_check_dc_depression(
+                "coarse",
+                params["u0"],
+                uz_m,
+                uz_m2,
+                tols_mut_dep["delta_disc_charge"],
+                tcrit_dep,
+                sem_dep,
             )
 
 
@@ -1968,6 +2071,34 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     resid_lat_f = abs(bq_part_lat_f / bq_part_pred_f - 1.0)
     extrap_c = compute_m_extrapolation(nx_c, nz_c, include_m4=True)
     extrap_f = compute_m_extrapolation(nx_f, nz_f, include_m4=False)
+    # Reuse the cached m/2 lattice runs already evaluated by compute_m_extrapolation
+    # (no m/2 8-seed ensemble or n_macro = 256/512 lattice run is in the cached call graph)
+    part_m2_c = cached_particle_drift(
+        nx_c,
+        nz_c,
+        profile="sheet_lattice",
+        seed=42,
+        m_mod=0.5 * MODULATION_INDEX,
+        qm_scale=1.0,
+    )
+    part_m2_f = cached_particle_drift(
+        nx_f,
+        nz_f,
+        profile="sheet_lattice",
+        seed=42,
+        m_mod=0.5 * MODULATION_INDEX,
+        qm_scale=1.0,
+    )
+    delta_lat_m2_c = float((params["u0"] - part_m2_c["u_z_mean"]) / params["u0"])
+    delta_lat_m2_f = float((params["u0"] - part_m2_f["u_z_mean"]) / params["u0"])
+    delta0_lat_c = float((4.0 * delta_lat_m2_c - delta_lat_c) / 3.0)
+    delta0_lat_f = float((4.0 * delta_lat_m2_f - delta_lat_f) / 3.0)
+    sem_prop_dep_c = float(
+        np.hypot(noise_c["delta_sem"] / 3.0, 4.0 * noise_c["delta_sem"] / 3.0)
+    )
+    sem_prop_dep_f = float(
+        np.hypot(noise_f["delta_sem"] / 3.0, 4.0 * noise_f["delta_sem"] / 3.0)
+    )
     beta0_f = float(extrap_f["beta0"])
     resid0_f = float(extrap_f["resid0"])
     resid_cross_f = abs(beta0_f / bq_lb_f - bq_part_pred_f / bq_lb_pred_f)
@@ -2282,11 +2413,16 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"delta_disc_charge={tols_c['delta_disc_charge']:.6e} "
         f"eps_ac={tols_c['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_c:.6e} "
+        f"delta_m={delta_lat_c:.6e} "
+        f"delta_m2={delta_lat_m2_c:.6e} "
+        f"delta0={delta0_lat_c:.6e} "
+        f"delta0_source=lattice_only "
         f"delta_disc_ens={noise_c['delta_disc']:.6e} "
         f"delta_disc_charge_ens={noise_c['delta_disc_charge']:.6e} "
         f"delta_meas_lattice_ens={noise_c['delta_lattice']:.6e} "
         f"delta_meas_mean={noise_c['delta_mean']:.6e} "
-        f"sem={noise_c['delta_sem']:.6e}",
+        f"sem={noise_c['delta_sem']:.6e} "
+        f"sem_prop={sem_prop_dep_c:.6e}",
         flush=True,
     )
     print(
@@ -2298,11 +2434,16 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"delta_disc_charge={tols_f['delta_disc_charge']:.6e} "
         f"eps_ac={tols_f['eps_ac']:.6e} "
         f"delta_meas_lattice={delta_lat_f:.6e} "
+        f"delta_m={delta_lat_f:.6e} "
+        f"delta_m2={delta_lat_m2_f:.6e} "
+        f"delta0={delta0_lat_f:.6e} "
+        f"delta0_source=lattice_only "
         f"delta_disc_ens={noise_f['delta_disc']:.6e} "
         f"delta_disc_charge_ens={noise_f['delta_disc_charge']:.6e} "
         f"delta_meas_lattice_ens={noise_f['delta_lattice']:.6e} "
         f"delta_meas_mean={noise_f['delta_mean']:.6e} "
-        f"sem={noise_f['delta_sem']:.6e}",
+        f"sem={noise_f['delta_sem']:.6e} "
+        f"sem_prop={sem_prop_dep_f:.6e}",
         flush=True,
     )
 
@@ -2415,19 +2556,23 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"(margin={bound_lat_f - mean_minus_lat_f:+.6e})"
     )
 
-    # Step 1 / 4.5: Seeded sheet DC depression
-    # |delta_meas_mean - delta_disc_charge| <= eps_AC + t * SEM + 1e-12. The seeded runs carry the same
-    # deterministic O(m^2) AC velocity shift as the lattice run (bounded by eps_AC = (m beta_q / beta_e)^2 / 2,
-    # as in the lattice check above); t * SEM covers only the seed scatter.
-    for label, noise, tols in (
-        ("fine", noise_f, tols_f),
-        ("coarse", noise_c, tols_c),
+    # Step 1 / 4.5: Richardson-extrapolated m -> 0 DC depression from the cached m and m/2 runs.
+    # Because no m/2 8-seed ensemble or n_macro = 256/512 lattice run is available from cached calls
+    # the test already makes, delta(m) and delta(m/2) use the cached baseline lattice runs only
+    # (part_c/part_m2_c on coarse, part_f/part_m2_f on fine) and are compared with delta_disc_charge
+    # with bound t * SEM_propagated + 1e-12, where SEM_propagated = hypot(SEM / 3, 4 * SEM / 3).
+    for label, part_m_res, part_m2_res, noise, tols in (
+        ("fine", part_f, part_m2_f, noise_f, tols_f),
+        ("coarse", part_c, part_m2_c, noise_c, tols_c),
     ):
-        err_dep = abs(noise["delta_mean"] - noise["delta_disc_charge"])
-        bound_dep = tols["eps_ac"] + noise["tcrit"] * noise["delta_sem"] + 1e-12
-        assert err_dep <= bound_dep, (
-            f"{label} charge-weighted DC depression |delta_meas_mean - delta_disc_charge_ens| = {err_dep:.6e} > "
-            f"eps_AC + t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
+        _extrapolate_and_check_dc_depression(
+            label,
+            params["u0"],
+            part_m_res["u_z_mean"],
+            part_m2_res["u_z_mean"],
+            tols["delta_disc_charge"],
+            noise["tcrit"],
+            noise["delta_sem"],
         )
 
     assert mean_minus_lat_c <= bound_lat_c, (
