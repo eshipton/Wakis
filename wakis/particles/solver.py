@@ -2588,6 +2588,28 @@ class ParticleSolver:
             self._W_cl[axis * N : (axis + 1) * N] += dW_flat
             self._cl_step_active = True
 
+    def _check_wall_kick_error(self, *, periodic: bool = False) -> None:
+        """Synchronise and check the device-side PEC-wall birth-kick flag ``_d_wall_kick_error``.
+
+        When ``periodic=True``, the device flag is synchronised to the host only
+        when ``self.n_particle_steps % check_every == 0`` (where ``check_every``
+        defaults to ``64`` and may be overridden via ``self._wall_kick_check_every``)
+        to avoid a per-step device-to-host synchronisation on GPU. When
+        ``periodic=False``, the flag is synchronised and checked unconditionally.
+        """
+        err_flag = getattr(self, "_d_wall_kick_error", None)
+        if err_flag is None:
+            return
+        if periodic:
+            check_every = int(getattr(self, "_wall_kick_check_every", 64))
+            if check_every <= 0 or (self.n_particle_steps % check_every) != 0:
+                return
+        if bool(err_flag):
+            err_flag.fill(False)
+            raise ValueError(
+                "PEC-wall birth kick resulted in gamma' < 1 (particle cannot leave the wall)."
+            )
+
     def _apply_pec_wall_birth_kick(
         self,
         sp_inj: Species,
@@ -2603,11 +2625,26 @@ class ParticleSolver:
 
         For shape order :math:`p \\ge 2`, builds the node potential integral
         :math:`\\Psi` of the normal electric field :math:`E_n^n` from the PEC
-        wall node :math:`k_w` along ``axis`` over the stencil reach
+        wall node :math:`k_w` along ``axis`` on the wall stencil slab
         :math:`k_w \\dots k_w \\pm (p + 1)` (:math:`\\Psi[k_w] = 0`), gathers
         :math:`\\mathrm{d}K_i = q_i w_i \\sum_{\\text{nodes}} W^{(p)}(\\mathbf{x}_i)\\,\\Psi_{\\text{node}}`,
-        and updates each injected particle's birth momentum at constant direction
-        via :math:`\\gamma'_i = \\gamma_i + \\mathrm{d}K_i / (w_i m c^2)`.
+        and updates each injected particle's birth momentum via
+        :math:`\\gamma'_i = \\gamma_i + \\mathrm{d}K_i / (w_i m c^2)`:
+
+        - For moving particles (:math:`|\\mathbf{u}_i| > 0`), scales
+          :math:`\\mathbf{u}_i` at constant direction so that
+          :math:`|\\mathbf{u}'_i| / c = \\sqrt{\\gamma_i'^2 - 1}`.
+        - For particles born at rest (:math:`|\\mathbf{u}_i| = 0`), applies the
+          kick along the inward wall normal (:math:`+\\hat{\\mathbf{n}}` on
+          ``side="low"``, :math:`-\\hat{\\mathbf{n}}` on ``side="high"``) with
+          :math:`|\\mathbf{u}'_i| / c = \\sqrt{\\gamma_i'^2 - 1}`.
+
+        To avoid per-step device-to-host synchronisations on GPU, ``_K_wall_kick``
+        is accumulated as a 0-D device scalar (synchronised only when read, e.g.
+        in :meth:`wall_kick_energy`), and the :math:`\\gamma'_i < 1` condition is
+        OR-accumulated into the 0-D device flag ``_d_wall_kick_error`` and
+        checked via :meth:`_check_wall_kick_error` every
+        ``_wall_kick_check_every`` steps (default ``64``, including step ``0``).
         """
         if self.shape < 2 or not _ENABLE_PEC_WALL_KICK:
             return
@@ -2621,30 +2658,38 @@ class ParticleSolver:
         n_ax = int(E_n.shape[axis])
         dl = self.grid_map._deltas[axis]
 
-        Psi = xp.zeros((Nx, Ny, Nz), dtype=np.float64, order="F")
+        slab_shape = [Nx, Ny, Nz]
         dl_shape = [1, 1, 1]
         if side == "low":
+            k_slab_start = k_w
             k_stop = min(n_ax, k_w + self.shape + 2)
+            n_slab = max(1, k_stop - k_w)
+            slab_shape[axis] = n_slab
+            Psi_slab = xp.zeros(tuple(slab_shape), dtype=np.float64, order="F")
             if k_stop > k_w + 1:
                 sl_edges = [slice(None), slice(None), slice(None)]
                 sl_nodes = [slice(None), slice(None), slice(None)]
                 sl_edges[axis] = slice(k_w, k_stop - 1)
-                sl_nodes[axis] = slice(k_w + 1, k_stop)
+                sl_nodes[axis] = slice(1, n_slab)
                 dl_shape[axis] = k_stop - 1 - k_w
                 dl_sub = dl[k_w : k_stop - 1].reshape(tuple(dl_shape))
-                Psi[tuple(sl_nodes)] = xp.cumsum(
+                Psi_slab[tuple(sl_nodes)] = xp.cumsum(
                     E_n[tuple(sl_edges)] * dl_sub, axis=axis
                 )
         elif side == "high":
             k_start = max(0, k_w - (self.shape + 1))
+            k_slab_start = k_start
+            n_slab = max(1, k_w - k_start + 1)
+            slab_shape[axis] = n_slab
+            Psi_slab = xp.zeros(tuple(slab_shape), dtype=np.float64, order="F")
             if k_w > k_start:
                 sl_edges = [slice(None), slice(None), slice(None)]
                 sl_nodes = [slice(None), slice(None), slice(None)]
                 sl_edges[axis] = slice(k_start, k_w)
-                sl_nodes[axis] = slice(k_start, k_w)
+                sl_nodes[axis] = slice(0, k_w - k_start)
                 dl_shape[axis] = k_w - k_start
                 dl_sub = dl[k_start:k_w].reshape(tuple(dl_shape))
-                Psi[tuple(sl_nodes)] = -xp.flip(
+                Psi_slab[tuple(sl_nodes)] = -xp.flip(
                     xp.cumsum(
                         xp.flip(E_n[tuple(sl_edges)] * dl_sub, axis=axis),
                         axis=axis,
@@ -2654,27 +2699,26 @@ class ParticleSolver:
         else:
             raise ValueError(f"Unsupported side={side!r}; expected 'low' or 'high'.")
 
-        ix_nod, wx_nod = bspline_weights_1d(
-            xi_i, self.shape, staggered=False, xp=xp
-        )
-        iy_nod, wy_nod = bspline_weights_1d(
-            eta_i, self.shape, staggered=False, xp=xp
-        )
-        iz_nod, wz_nod = bspline_weights_1d(
-            zeta_i, self.shape, staggered=False, xp=xp
-        )
+        ix_nod, wx_nod = bspline_weights_1d(xi_i, self.shape, staggered=False, xp=xp)
+        iy_nod, wy_nod = bspline_weights_1d(eta_i, self.shape, staggered=False, xp=xp)
+        iz_nod, wz_nod = bspline_weights_1d(zeta_i, self.shape, staggered=False, xp=xp)
+        i_nod = [ix_nod, iy_nod, iz_nod]
+        if k_slab_start != 0:
+            i_nod[axis] = i_nod[axis] - k_slab_start
+        periodic_slab = list(self.boundaries.periodic)
+        periodic_slab[axis] = False
         psi_p = _gather_component_3d(
-            Psi.ravel(order="F"),
-            Nx,
-            Ny,
-            Nz,
-            ix_nod,
+            Psi_slab.ravel(order="F"),
+            slab_shape[0],
+            slab_shape[1],
+            slab_shape[2],
+            i_nod[0],
             wx_nod,
-            iy_nod,
+            i_nod[1],
             wy_nod,
-            iz_nod,
+            i_nod[2],
             wz_nod,
-            self.boundaries.periodic,
+            tuple(periodic_slab),
             xp,
         )
 
@@ -2689,21 +2733,38 @@ class ParticleSolver:
         w_mc2 = w_sl * mc2
         dgamma = xp.where(w_sl != 0.0, dK / xp.where(w_sl != 0.0, w_mc2, 1.0), 0.0)
         gamma_prime = gamma + dgamma
-        if bool(xp.any(gamma_prime < 1.0)):
-            raise ValueError(
-                "PEC-wall birth kick resulted in gamma' < 1 (particle cannot leave the wall)."
-            )
+        err_flag = getattr(self, "_d_wall_kick_error", None)
+        if not isinstance(err_flag, xp.ndarray):
+            err_flag = xp.zeros((), dtype=bool)
+            self._d_wall_kick_error = err_flag
+        err_flag |= xp.any(gamma_prime < 1.0)
+        self._check_wall_kick_error(periodic=True)
         denom = xp.sqrt(gamma * gamma - 1.0)
+        u_prime_over_c = xp.sqrt(xp.maximum(gamma_prime * gamma_prime - 1.0, 0.0))
         scale = xp.where(
             denom > 0.0,
-            xp.sqrt(gamma_prime * gamma_prime - 1.0)
-            / xp.where(denom > 0.0, denom, 1.0),
+            u_prime_over_c / xp.where(denom > 0.0, denom, 1.0),
             1.0,
         )
-        sp_inj._ux[sl_new] = ux_sl * scale
-        sp_inj._uy[sl_new] = uy_sl * scale
-        sp_inj._uz[sl_new] = uz_sl * scale
-        self._K_wall_kick += float(xp.sum(dK))
+        inward_sign = 1.0 if side == "low" else -1.0
+        u_rest_n = (inward_sign * c_light) * u_prime_over_c
+        ux_new = ux_sl * scale
+        uy_new = uy_sl * scale
+        uz_new = uz_sl * scale
+        if axis == 0:
+            ux_new = xp.where(denom > 0.0, ux_new, u_rest_n)
+        elif axis == 1:
+            uy_new = xp.where(denom > 0.0, uy_new, u_rest_n)
+        else:
+            uz_new = xp.where(denom > 0.0, uz_new, u_rest_n)
+        sp_inj._ux[sl_new] = ux_new
+        sp_inj._uy[sl_new] = uy_new
+        sp_inj._uz[sl_new] = uz_new
+        if not isinstance(self._K_wall_kick, xp.ndarray):
+            k_arr = xp.zeros((), dtype=np.float64)
+            k_arr += self._K_wall_kick
+            self._K_wall_kick = k_arr
+        self._K_wall_kick += xp.sum(dK)
 
     def _record_absorbed_particles(
         self,
