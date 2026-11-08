@@ -2120,16 +2120,19 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         f"(margin={bound_lat_f - mean_minus_lat_f:+.6e})"
     )
 
-    # Step 1 / 4.5: Seeded sheet DC depression |delta_meas_mean - delta_disc_charge| <= t * SEM + 1e-12
-    for label, noise in (
-        ("fine", noise_f),
-        ("coarse", noise_c),
+    # Step 1 / 4.5: Seeded sheet DC depression
+    # |delta_meas_mean - delta_disc_charge| <= eps_AC + t * SEM + 1e-12. The seeded runs carry the same
+    # deterministic O(m^2) AC velocity shift as the lattice run (bounded by eps_AC = (m beta_q / beta_e)^2 / 2,
+    # as in the lattice check above); t * SEM covers only the seed scatter.
+    for label, noise, tols in (
+        ("fine", noise_f, tols_f),
+        ("coarse", noise_c, tols_c),
     ):
         err_dep = abs(noise["delta_mean"] - noise["delta_disc_charge"])
-        bound_dep = noise["tcrit"] * noise["delta_sem"] + 1e-12
+        bound_dep = tols["eps_ac"] + noise["tcrit"] * noise["delta_sem"] + 1e-12
         assert err_dep <= bound_dep, (
             f"{label} charge-weighted DC depression |delta_meas_mean - delta_disc_charge_ens| = {err_dep:.6e} > "
-            f"t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
+            f"eps_AC + t*SEM + 1e-12 = {bound_dep:.6e} (margin={bound_dep - err_dep:+.6e})"
         )
 
     assert mean_minus_lat_c <= bound_lat_c, (
