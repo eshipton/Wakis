@@ -3,7 +3,7 @@
 Usage: python studies/p5b-dcdep/variants.py --grid coarse --variant {base,nokick,noclosure,halfcfl}
   nokick    : wakis.particles.solver._ENABLE_PEC_WALL_KICK = False
   noclosure : wakis.particles.solver._ENABLE_PEC_WALL_CLOSURE = False
-  halfcfl   : examples._space_charge_waves_common.CFL_NUMBER halved (dt / 2, same physics)
+  halfcfl   : _space_charge_waves_common.CFL_NUMBER halved (dt / 2, same physics)
 The DCDEC line's gamma_diff_mean / per_line.gamma_diff is the quantity to compare across variants.
 """
 
@@ -14,6 +14,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "examples"))
 
 
 def main() -> int:
@@ -21,7 +22,7 @@ def main() -> int:
     ap.add_argument("--grid", required=True, choices=("coarse", "fine"))
     ap.add_argument("--variant", required=True, choices=("base", "nokick", "noclosure", "halfcfl"))
     a = ap.parse_args()
-    import examples._space_charge_waves_common as scw
+    import _space_charge_waves_common as scw  # same module object dc_decomp imports
     import wakis.particles.solver as ps
 
     if a.variant == "nokick":
