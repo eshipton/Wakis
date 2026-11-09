@@ -1434,30 +1434,52 @@ def test_energy_balance_field_identity_and_mutation(monkeypatch):
 # across the sweep (strictly separating order p from adjacent integer orders p +/- 1)
 # without self-calibrating against degraded data.
 _MAX_LOCAL_SLOPE_SPREAD = 0.5
+# Fixed bounds on the finest local slopes and leading-coefficient convergence:
+# - _MAX_FINEST_SLOPE_ERROR = 0.1 requires |s_k - p| <= 0.1 on the finest two intervals
+#   (convergence order within 5 % at p = 2).
+# - _MAX_LEADING_COEFF_REL_PTP = 0.05 requires ptp(R_k / dt_k^p) / mean(R_k / dt_k^p) <= 0.05
+#   across the finest three points. A first-order contamination c1 * dt with
+#   c1 * dt_finest >= 0.2 * c2 * dt_finest^2 on a 2x halving ladder gives
+#   ptp(R_k / dt_k^2) / mean(R_k / dt_k^2) >= 9 / 67 = 0.134328 > 0.05, breaking (e)
+#   (verified numerically in test_richardson_criteria_synthetic).
+_MAX_FINEST_SLOPE_ERROR = 0.1
+_MAX_LEADING_COEFF_REL_PTP = 0.05
 
 
 def _assert_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) -> None:
     """Verify Richardson remainder convergence criteria for R(dt) = c_p * dt^p * (1 + O(dt))."""
     local_slopes = np.diff(np.log(ress)) / np.diff(np.log(dts))
     slope_errors = np.abs(local_slopes - order)
-    # (a) Local slopes approach p monotonically as dt is halved.
+    # (a) |s_k - p| decreases as dt is halved.
     assert np.all(np.diff(slope_errors) < 0.0), (
-        f"Local slopes {local_slopes} do not approach order {order} monotonically."
+        f"Local slope errors {slope_errors} (local slopes {local_slopes}) do not "
+        f"decrease monotonically toward order {order}."
     )
-    assert bool(
-        np.all(np.diff(local_slopes) < 0.0) or np.all(np.diff(local_slopes) > 0.0)
-    )
-    # (b) Richardson remainder bound on a 2x halving ladder: |s_finest - p| <= |s_finest - s_prev|.
-    assert abs(local_slopes[-1] - order) <= abs(local_slopes[-1] - local_slopes[-2]), (
-        f"|s_finest - {order}| = {abs(local_slopes[-1] - order):.6f} exceeds "
-        f"|s_finest - s_prev| = {abs(local_slopes[-1] - local_slopes[-2]):.6f}."
-    )
-    # (c) Fixed cap <= 0.5 on the spread of local slopes across the sweep.
-    assert float(np.ptp(local_slopes)) <= _MAX_LOCAL_SLOPE_SPREAD, (
-        f"Local slope spread {float(np.ptp(local_slopes)):.6f} exceeds fixed cap {_MAX_LOCAL_SLOPE_SPREAD}."
+    # (c) Fixed cap <= 0.5 on the spread of local slopes across the sweep and global fit.
+    slope_spread = float(np.ptp(local_slopes))
+    assert slope_spread <= _MAX_LOCAL_SLOPE_SPREAD, (
+        f"Local slope spread {slope_spread:.6f} (local slopes {local_slopes}) "
+        f"exceeds fixed cap {_MAX_LOCAL_SLOPE_SPREAD}."
     )
     slope = float(np.polyfit(np.log(dts), np.log(ress), 1)[0])
-    assert abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD
+    assert abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD, (
+        f"Global fitted slope {slope:.6f} differs from order {order} by "
+        f"{abs(slope - order):.6f} > {_MAX_LOCAL_SLOPE_SPREAD}."
+    )
+    # (d) Max over the finest two local slopes of |s_k - p| <= 0.1.
+    finest_two_err = float(np.max(slope_errors[-2:]))
+    assert finest_two_err <= _MAX_FINEST_SLOPE_ERROR, (
+        f"Max |s_k - {order}| over finest two local slopes {local_slopes[-2:]} is "
+        f"{finest_two_err:.6f} > {_MAX_FINEST_SLOPE_ERROR}."
+    )
+    # (e) Convergence of the leading coefficient over the finest three points:
+    #     ptp(R_k / dt_k^p) / mean(R_k / dt_k^p) <= 0.05.
+    scaled_finest = ress[-3:] / (dts[-3:] ** order)
+    rel_ptp = float(np.ptp(scaled_finest) / np.mean(scaled_finest))
+    assert rel_ptp <= _MAX_LEADING_COEFF_REL_PTP, (
+        f"Leading-coefficient relative ptp over finest three points {scaled_finest} "
+        f"is {rel_ptp:.6f} > {_MAX_LEADING_COEFF_REL_PTP}."
+    )
 
 
 def _passes_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) -> bool:
@@ -1466,14 +1488,66 @@ def _passes_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) ->
         return False
     local_slopes = np.diff(np.log(ress)) / np.diff(np.log(dts))
     slope_errors = np.abs(local_slopes - order)
-    mono = bool(np.all(np.diff(slope_errors) < 0.0)) and bool(
-        np.all(np.diff(local_slopes) < 0.0) or np.all(np.diff(local_slopes) > 0.0)
-    )
-    rem_ok = bool(
-        abs(local_slopes[-1] - order) <= abs(local_slopes[-1] - local_slopes[-2])
-    )
+    err_decreasing = bool(np.all(np.diff(slope_errors) < 0.0))
     spread_ok = bool(float(np.ptp(local_slopes)) <= _MAX_LOCAL_SLOPE_SPREAD)
-    return mono and rem_ok and spread_ok
+    slope = float(np.polyfit(np.log(dts), np.log(ress), 1)[0])
+    fit_ok = bool(abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD)
+    finest_slope_ok = bool(float(np.max(slope_errors[-2:])) <= _MAX_FINEST_SLOPE_ERROR)
+    scaled_finest = ress[-3:] / (dts[-3:] ** order)
+    coeff_ok = bool(
+        float(np.ptp(scaled_finest) / np.mean(scaled_finest))
+        <= _MAX_LEADING_COEFF_REL_PTP
+    )
+    return err_decreasing and spread_ok and fit_ok and finest_slope_ok and coeff_ok
+
+
+@pytestmark_serial
+def test_richardson_criteria_synthetic():
+    """Verify Richardson criteria on synthetic non-monotone 2nd-order, 1st-order-contaminated, and pure 1st-order ladders."""
+    dts = np.array([8.0, 4.0, 2.0, 1.0], dtype=np.float64) * 8.0e-4
+    c2 = 1.0
+
+    # (i) R = c2 * dt^2 * (1 -/+ 30 * dt +/- 4000 * dt^2) with mixed-sign higher terms
+    #     produces non-monotone local slopes that still converge to order 2 and must pass.
+    for label, sign in (("neg_dt_pos_dt2", 1.0), ("pos_dt_neg_dt2", -1.0)):
+        ress_pass = c2 * (dts**2) * (1.0 + sign * (-30.0 * dts + 4000.0 * (dts**2)))
+        slopes_pass = np.diff(np.log(ress_pass)) / np.diff(np.log(dts))
+        print(f"[synthetic pass {label}] slopes={slopes_pass}")
+        assert not (
+            np.all(np.diff(slopes_pass) < 0.0) or np.all(np.diff(slopes_pass) > 0.0)
+        )
+        assert _passes_richardson_order(dts, ress_pass, order=2.0)
+        _assert_richardson_order(dts, ress_pass, order=2.0)
+
+    # (ii) Adding first-order contamination c1 * dt with c1 * dt_finest = 0.2 * c2 * dt_finest^2 must fail.
+    dt_finest = float(dts[-1])
+    c1 = 0.2 * c2 * dt_finest
+    for label, ress_base in (
+        ("pure_c2_plus_c1", c2 * (dts**2)),
+        (
+            "mixed_plus_c1",
+            c2 * (dts**2) * (1.0 - 30.0 * dts + 4000.0 * (dts**2)),
+        ),
+    ):
+        ress_contam = ress_base + c1 * dts
+        slopes_contam = np.diff(np.log(ress_contam)) / np.diff(np.log(dts))
+        scaled_contam = (ress_contam / (dts**2))[-3:]
+        rel_ptp_contam = float(np.ptp(scaled_contam) / np.mean(scaled_contam))
+        print(
+            f"[synthetic contam {label}] slopes={slopes_contam}, rel_ptp={rel_ptp_contam:.6f}"
+        )
+        assert rel_ptp_contam > _MAX_LEADING_COEFF_REL_PTP
+        assert not _passes_richardson_order(dts, ress_contam, order=2.0)
+        with pytest.raises(AssertionError):
+            _assert_richardson_order(dts, ress_contam, order=2.0)
+
+    # (iii) Pure first-order residual ladder must fail order=2.0.
+    ress_first = dts * (1.0 + 5.0 * dts)
+    slopes_first = np.diff(np.log(ress_first)) / np.diff(np.log(dts))
+    print(f"[synthetic pure 1st] slopes={slopes_first}")
+    assert not _passes_richardson_order(dts, ress_first, order=2.0)
+    with pytest.raises(AssertionError):
+        _assert_richardson_order(dts, ress_first, order=2.0)
 
 
 def _run_dt_closure_sweep(
