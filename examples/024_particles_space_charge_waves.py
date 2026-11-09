@@ -4,8 +4,8 @@
 # ########################################### #
 
 """
-Example 024 — Space-Charge Waves: Cross-Validation of Particle-in-Cell Against LinearizedBeam
-=============================================================================================
+Example 024 — Space-Charge Waves: Cross-Validation of Particles Against LinearizedBeam
+======================================================================================
 
 Propagates the same density-modulated planar sheet electron beam through a
 smooth parallel-plate PEC drift tunnel twice on identical grids, time steps,
