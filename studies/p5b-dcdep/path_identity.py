@@ -107,7 +107,8 @@ def gather_node_potential_3d(
     """
     solver = ps.solver
     shape = int(ps.shape)
-    xi, eta, zeta = ps.grid_map.to_logical(x, y, z)
+    # grid_map returns device arrays on GPU; the gather below runs on host numpy.
+    xi, eta, zeta = (_to_host(v) for v in ps.grid_map.to_logical(x, y, z))
     ix0, wx = bspline_weights_1d(xi, shape, staggered=False, xp=np)
     iy0, wy = bspline_weights_1d(eta, shape, staggered=False, xp=np)
     iz0, wz = bspline_weights_1d(zeta, shape, staggered=False, xp=np)
@@ -117,7 +118,7 @@ def gather_node_potential_3d(
         False,
     )
     return _gather_component_3d(
-        phi_nodes.ravel(order="F"),
+        _to_host(phi_nodes).ravel(order="F"),
         int(solver.Nx),
         int(solver.Ny),
         int(solver.Nz),
@@ -557,10 +558,13 @@ def track_transit_identity(
                         excess_raw = gamma_raw - gamma0 + q_over_mc2 * phi_val
 
                         # Synchronise u^{m-1/2} -> u^m by +0.5 * dt at x^m
-                        xi_p, eta_p, zeta_p = ps.grid_map.to_logical(
-                            x_sub[k_p : k_p + 1],
-                            y_sub[k_p : k_p + 1],
-                            z_sub[k_p : k_p + 1],
+                        xi_p, eta_p, zeta_p = (
+                            _to_host(v)
+                            for v in ps.grid_map.to_logical(
+                                x_sub[k_p : k_p + 1],
+                                y_sub[k_p : k_p + 1],
+                                z_sub[k_p : k_p + 1],
+                            )
                         )
                         ex_h = _to_host(solver.E.to_matrix("x"))
                         ey_h = _to_host(solver.E.to_matrix("y"))
@@ -998,6 +1002,23 @@ def run_production_grid(
     for _ in range(n_settle):
         solver.one_step()
 
+    # First two axial E_z edges at the z = 0 wall (inputs of the zeta = 0.5 kink term).
+    ez_wall = _to_host(solver.E.to_matrix("z"))
+    print(
+        "WALLEZ "
+        + json.dumps(
+            {
+                "x_nodes": _to_host(solver.grid.x[: nx + 1]).tolist(),
+                "ez0": ez_wall[:, 0, 0].tolist(),
+                "ez1": ez_wall[:, 0, 1].tolist(),
+                "ez2": ez_wall[:, 0, 2].tolist(),
+                "dz": float(lz / nz),
+                "dt": float(dt),
+                "u0": float(u0),
+            }
+        ),
+        flush=True,
+    )
     # Same interior cells as run_particle_beam_drift and dc_decomp.py: z in [0.2 Lz, 0.8 Lz].
     z_window = (0.2 * lz, 0.8 * lz)
     part_a = analyze_static_potentials_and_curl(
