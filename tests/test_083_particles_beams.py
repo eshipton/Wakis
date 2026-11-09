@@ -1911,8 +1911,8 @@ def test_energy_balance_gpu_matches_cpu(monkeypatch):
 
 @pytestmark_serial
 @pytest.mark.slow
-def test_example_020_smoke(tmp_path):
-    """Verify examples/020_particles_beam_energy_balance.py --smoke executes and writes JSON and figures."""
+def test_example_020_smoke(tmp_path, monkeypatch):
+    """Verify examples/020_particles_beam_energy_balance.py --smoke executes, writes JSON and figures, and fails Richardson order 2 under closure-work mutations."""
     import importlib.util
     import json
     from pathlib import Path
@@ -1953,6 +1953,41 @@ def test_example_020_smoke(tmp_path):
         order=2.0,
     )
     assert payload["time_balance"]["final"]["K_injected_J"] > 0.0
+
+    # Mutation 1 (mis-centred closure work): accumulate _cl_work_vec using E^n (_E_prev_fw)
+    # instead of the midpoint E-bar, introducing an O(dt) centering error.
+    orig_flush = ParticleSolver._flush_pending_field_work
+
+    def _miscentred_closure_flush(self_ps, E_curr):
+        if not self_ps._fw_pending:
+            return
+        if self_ps._cl_pending:
+            self_ps._cl_work_vec += (
+                self_ps._E_prev_fw * self_ps._J_cl
+            ) * self_ps._fw_dt
+            self_ps._cl_pending = False
+        return orig_flush(self_ps, E_curr)
+
+    with monkeypatch.context() as m:
+        m.setattr(
+            ParticleSolver, "_flush_pending_field_work", _miscentred_closure_flush
+        )
+        conv_mis = mod.run_dt_convergence(smoke=True)
+        assert not _passes_richardson_order(
+            np.asarray(conv_mis["dt_s"], dtype=np.float64),
+            np.asarray(conv_mis["abs_residual_J"], dtype=np.float64),
+            order=2.0,
+        )
+
+    # Mutation 2 (dropped closure work): zero out ParticleSolver.wall_closure_work.
+    with monkeypatch.context() as m:
+        m.setattr(ParticleSolver, "wall_closure_work", lambda self_ps: 0.0)
+        conv_drop = mod.run_dt_convergence(smoke=True)
+        assert not _passes_richardson_order(
+            np.asarray(conv_drop["dt_s"], dtype=np.float64),
+            np.asarray(conv_drop["abs_residual_J"], dtype=np.float64),
+            order=2.0,
+        )
 
 
 # ---------------------------------------------------------------------------
