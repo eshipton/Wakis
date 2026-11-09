@@ -157,6 +157,9 @@ def test_run_particle_beam_drift_invalid_meas_lines_raises(
         )
         m.setattr(scw, "_integer_period_dt", lambda grid, cfln=scw.CFL_NUMBER: (dt, 1))
         m.setattr(scw, "settle_steps", lambda *a, **kw: 0)
+        # Bitwise equality below needs a deterministic summation order: GPU current deposition
+        # is not order-deterministic (1 of 3 A100 runs differed in the last bit), so run on CPU.
+        m.setattr(scw, "USE_GPU", False)
         res_all = scw.run_particle_beam_drift(10, 8, beam_ref=beam_ref)
         res_keep = scw.run_particle_beam_drift(
             10, 8, beam_ref=beam_ref, meas_lines="lb_keep"
