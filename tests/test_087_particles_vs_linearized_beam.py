@@ -242,6 +242,67 @@ def _check_beta0_negative_controls(
     return out
 
 
+def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) -> dict:
+    """Derived bound on the DC-depression shift from the pusher's first-cell entrance error [-].
+
+    Every macroparticle is born on the ``z = 0`` PEC wall at the start of a step with the same
+    ``u0``, so all of them cross the first cell at the same step phase and make the same
+    O(dzeta^2) energy error (``studies/p5b-dcdep``: single_particle.py and the per-cell
+    remainder profile of path_identity.py put it in cell 0). Per line ``l``, with
+    ``dzeta = v0 dt / dz`` and ``|q| / (m c^2)``:
+
+    1. slope jump of the masked-ghost order-2 gather at ``zeta = 1/2``: trapezoid error
+       ``(|q| dz / mc^2) * theta (1 - theta) / 2 * dzeta^2 * |2 E0 - E1|``, maximised over the
+       crossing phase ``theta`` (``theta (1 - theta) <= 1/4``);
+    2. half-step synchronisation at the birth point: ``|int (E - E(z_m)) dz| <= (h^2 / 8) max|E'|``
+       over ``h = v0 dt`` with ``E' = E0 / dz`` in the first cell.
+
+    ``E0``, ``E1`` are the first two wall ``E_z`` edges of the discrete 2D (x, z) Poisson problem
+    for a z-uniform beam with the model's deposited line weights, evaluated for both the injected
+    (``rho_l``) and the depressed (``rho_l u0 / u_l``) density; the larger bound is used (the
+    settled runs lie between the two: path_identity WALLEZ). The per-line ``Delta gamma`` bound is
+    mapped to ``delta`` through the model's charge-weighted harmonic mean.
+    """
+    from scipy.constants import c as c_light
+    from scipy.constants import e as e_charge
+    from scipy.constants import epsilon_0, m_e
+
+    det = compute_discrete_dc_depression(
+        nx, params, weighting="charge", return_details=True, shape=PARTICLE_SHAPE
+    )
+    a, b = TUNNEL_HALF_WIDTH_M, BEAM_HALF_THICKNESS_M
+    dx, dz = 2.0 * a / nx, TUNNEL_LENGTH_M / nz
+    n = nx - 1
+    lap = (np.diag(np.full(n, -2.0)) + np.diag(np.ones(n - 1), 1) + np.diag(np.ones(n - 1), -1)) / dx**2
+    kap2, vecs = np.linalg.eigh(-lap)
+    mu = kap2 * dz**2
+    lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0  # discrete axial decay per cell, root < 1
+    w_mat = det["w_mat"]
+    ez_cases = []
+    for rho_case in (det["rho_l"], det["rho_l"] * params["u0"] / det["u_l"]):
+        src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
+        phi_inf = np.linalg.solve(lap, abs(params["rho0"]) * src[1:-1] / epsilon_0)
+        phi_k = (vecs * (vecs.T @ phi_inf)) @ (1.0 - lam[:, None] ** np.arange(3)[None, :])
+        ez = np.zeros((nx + 1, 2))
+        ez[1:-1] = (phi_k[:, 1:] - phi_k[:, :-1]) / dz
+        ez_cases.append(ez)
+    e0_l = np.max([np.abs(w_mat @ ez[:, 0]) for ez in ez_cases], axis=0)
+    jump_l = np.max(
+        [np.abs(w_mat @ (2.0 * ea[:, 0] - eb[:, 1])) for ea in ez_cases for eb in ez_cases], axis=0
+    )
+    v0 = params["u0"] / params["gamma0"]
+    dzeta = v0 * float(dt) / dz
+    qm = e_charge * params.get("qm_scale", 1.0) / (m_e * c_light**2)
+    dgamma_l = qm * dz * dzeta**2 * (jump_l / 8.0 + e0_l / 8.0)
+
+    def _delta(gam):
+        u = c_light * np.sqrt(gam**2 - 1.0)
+        return 1.0 - np.sum(det["rho_l"]) / (params["u0"] * np.sum(det["rho_l"] / u))
+
+    bound = float(abs(_delta(det["gamma_l"] + dgamma_l) - _delta(det["gamma_l"])))
+    return {"bound_delta": bound, "dgamma_l": dgamma_l, "dzeta": float(dzeta), "e0_l": e0_l, "jump_l": jump_l}
+
+
 def _extrapolate_and_check_dc_depression(
     label: str,
     u0: float,
@@ -250,6 +311,7 @@ def _extrapolate_and_check_dc_depression(
     delta_disc_charge: float,
     tcrit: float,
     delta_sem: float,
+    entrance_bound: float,
 ) -> dict[str, float]:
     """Richardson-extrapolate ``delta(m)`` to ``m -> 0`` from ``(m, m/2)`` lattice runs and assert bound.
 
@@ -260,26 +322,29 @@ def _extrapolate_and_check_dc_depression(
     at ``m`` and ``m/2`` (``n_macro = 16`` on coarse, ``32`` on fine) and
     compared against ``delta_disc_charge`` with bound
     ``t * SEM_propagated + 1e-12``, where
-    ``SEM_propagated = hypot(SEM / 3, 4 * SEM / 3)``.
+    ``SEM_propagated = hypot(SEM / 3, 4 * SEM / 3)``, plus ``entrance_bound`` from
+    :func:`_entrance_first_cell_delta_bound` (m-independent, so it passes through the
+    Richardson combination with coefficient 1).
     """
     delta_m = float((float(u0) - float(u_z_mean_m)) / float(u0))
     delta_m2 = float((float(u0) - float(u_z_mean_m2)) / float(u0))
     delta0 = float((4.0 * delta_m2 - delta_m) / 3.0)
     sem_prop = float(np.hypot(float(delta_sem) / 3.0, 4.0 * float(delta_sem) / 3.0))
     err_dep0 = float(abs(delta0 - float(delta_disc_charge)))
-    bound_dep0 = float(float(tcrit) * sem_prop + 1.0e-12)
+    bound_dep0 = float(float(tcrit) * sem_prop + float(entrance_bound) + 1.0e-12)
     print(
         f"DEPEXTRAP grid={label} source=lattice_only "
         f"delta_m={delta_m:.6e} delta_m2={delta_m2:.6e} delta0={delta0:.6e} "
         f"delta_disc_charge={float(delta_disc_charge):.6e} "
         f"err_dep0={err_dep0:.6e} sem={float(delta_sem):.6e} "
-        f"sem_prop={sem_prop:.6e} tcrit={float(tcrit):.6f} bound_dep0={bound_dep0:.6e}",
+        f"sem_prop={sem_prop:.6e} tcrit={float(tcrit):.6f} entrance_bound={float(entrance_bound):.6e} "
+        f"bound_dep0={bound_dep0:.6e}",
         flush=True,
     )
     assert err_dep0 <= bound_dep0, (
         f"{label} m->0 extrapolated charge-weighted DC depression (lattice runs only) "
         f"|delta0 - delta_disc_charge| = {err_dep0:.6e} > "
-        f"t*SEM_propagated + 1e-12 = {bound_dep0:.6e} "
+        f"t*SEM_propagated + entrance_bound + 1e-12 = {bound_dep0:.6e} "
         f"(delta_m={delta_m:.6e}, delta_m2={delta_m2:.6e}, delta0={delta0:.6e}, "
         f"margin={bound_dep0 - err_dep0:+.6e})"
     )
@@ -1498,8 +1563,34 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
         delta_chg_c,
         tcrit_dep,
         sem_dep,
+        0.0,
     )
     assert abs(dep_ext["delta0"] - delta_chg_c) <= 1.0e-15
+
+    # The derived first-cell entrance term at the production dt must be resolvable against a
+    # 1 % rho0 error in the model (the full-bound check must still be able to fail).
+    from examples._space_charge_waves_common import _integer_period_dt
+
+    dt_c, _ = _integer_period_dt(
+        GridFIT3D(
+            -TUNNEL_HALF_WIDTH_M, TUNNEL_HALF_WIDTH_M, -0.5 * PERIODIC_LY_M, 0.5 * PERIODIC_LY_M,
+            0.0, TUNNEL_LENGTH_M, nx, 1, nz, verbose=0,
+        ),
+        cfln=CFL_NUMBER,
+    )
+    entr = _entrance_first_cell_delta_bound(nx, nz, dt_c, params)
+    assert entr["bound_delta"] > 0.0
+    params_rho = dict(params, rho0=1.01 * params["rho0"])
+    delta_chg_rho = float(compute_discrete_dc_depression(nx, params_rho, weighting="charge"))
+    print(
+        f"NEGCTRL_DEP rho0x1.01 shift={abs(delta_chg_rho - delta_chg_c):.6e} "
+        f"entrance_bound={entr['bound_delta']:.6e} dzeta={entr['dzeta']:.6f}",
+        flush=True,
+    )
+    with pytest.raises(AssertionError):
+        _extrapolate_and_check_dc_depression(
+            "coarse", params["u0"], uz_m, uz_m2, delta_chg_rho, tcrit_dep, sem_dep, entr["bound_delta"]
+        )
 
     orig_dc_dep = scw_mod.compute_discrete_dc_depression
 
@@ -1523,6 +1614,7 @@ def test_mutation_shape1_vs_shape2_prediction_exceeds_slack(monkeypatch):
                 tols_mut_dep["delta_disc_charge"],
                 tcrit_dep,
                 sem_dep,
+                0.0,
             )
 
 
@@ -2561,6 +2653,13 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     # the test already makes, delta(m) and delta(m/2) use the cached baseline lattice runs only
     # (part_c/part_m2_c on coarse, part_f/part_m2_f on fine) and are compared with delta_disc_charge
     # with bound t * SEM_propagated + 1e-12, where SEM_propagated = hypot(SEM / 3, 4 * SEM / 3).
+    # Derived first-cell entrance term (m-independent; enters both delta checks once).
+    entrance_bounds = {
+        "fine": _entrance_first_cell_delta_bound(FINE_GRID[0], FINE_GRID[2], part_f["dt"], params)["bound_delta"],
+        "coarse": _entrance_first_cell_delta_bound(COARSE_GRID[0], COARSE_GRID[2], part_c["dt"], params)[
+            "bound_delta"
+        ],
+    }
     for label, part_m_res, part_m2_res, noise, tols in (
         ("fine", part_f, part_m2_f, noise_f, tols_f),
         ("coarse", part_c, part_m2_c, noise_c, tols_c),
@@ -2574,6 +2673,7 @@ def test_two_resolution_convergence_and_sheet_ensemble():
                 tols["delta_disc_charge"],
                 noise["tcrit"],
                 noise["delta_sem"],
+                entrance_bounds[label],
             )
         except AssertionError as exc:
             if first_exc is None:
@@ -2590,17 +2690,20 @@ def test_two_resolution_convergence_and_sheet_ensemble():
     ):
         shift_m = float(d_lat - d0_lat)
         err_ens = abs(noise["delta_mean"] - shift_m - noise["delta_disc_charge"])
-        bound_ens = float(noise["tcrit"] * np.hypot(noise["delta_sem"], sem_prop_dep) + 1e-12)
+        bound_ens = float(
+            noise["tcrit"] * np.hypot(noise["delta_sem"], sem_prop_dep) + entrance_bounds[label] + 1e-12
+        )
         print(
             f"DEPENS grid={label} delta_mean={noise['delta_mean']:.6e} shift_m={shift_m:.6e} "
-            f"delta_disc_charge_ens={noise['delta_disc_charge']:.6e} err={err_ens:.6e} bound={bound_ens:.6e}",
+            f"delta_disc_charge_ens={noise['delta_disc_charge']:.6e} err={err_ens:.6e} "
+            f"entrance_bound={entrance_bounds[label]:.6e} bound={bound_ens:.6e}",
             flush=True,
         )
         if not err_ens <= bound_ens and first_exc is None:
             first_exc = AssertionError(
                 f"{label} seeded charge-weighted DC depression "
                 f"|delta_meas_mean - shift_m - delta_disc_charge_ens| = {err_ens:.6e} > "
-                f"t*hypot(SEM, SEM_prop) + 1e-12 = {bound_ens:.6e} (margin={bound_ens - err_ens:+.6e})"
+                f"t*hypot(SEM, SEM_prop) + entrance_bound + 1e-12 = {bound_ens:.6e} (margin={bound_ens - err_ens:+.6e})"
             )
 
     assert mean_minus_lat_c <= bound_lat_c, (
