@@ -503,6 +503,8 @@ def track_transit_identity(
     phi_prev_nodes: np.ndarray | None = None
 
     fn_pusher = get_pusher(ps.pusher)
+    dz_cell = float(lz) / float(nz)
+    r_cell_sum = np.zeros((n_lines, nz), dtype=np.float64)
     B_ext = (0.0, 0.0, float(s.GUIDE_BZ_TESLA))
 
     for step_rel in range(n_transit):
@@ -542,11 +544,23 @@ def track_transit_identity(
                     phi_prev_nodes, ps, x_sub, y_sub, z_sub
                 )
                 d_phi = phi_m - phi_m_prev
+                # Per-step remainder r_m = Delta(gamma(u^{m-1/2}) + q Phi^m(x^m)/mc^2) - q dPhi_m/mc^2,
+                # binned by the axial cell of x^m (where along z the energy error accrues).
+                u2_sub = ux_h[slot_arr] ** 2 + uy_h[slot_arr] ** 2 + uz_h[slot_arr] ** 2
+                ex_now = np.sqrt(1.0 + u2_sub / (c_light * c_light)) - gamma0 + q_over_mc2 * phi_m
+                iz_sub = np.clip(np.floor(z_sub / dz_cell).astype(np.int64), 0, nz - 1)
 
                 for k_p, pid in enumerate(valid_pids):
                     rec = tracked[pid]
                     rec["sum_dphi_over_mc2"] += float(q_over_mc2 * d_phi[k_p])
                     rec["n_accum_steps"] += 1
+                    if not rec["completed"]:
+                        if rec["prev_excess"] is None:
+                            rec["first_excess"] = float(ex_now[k_p])
+                        else:
+                            r_m = float(ex_now[k_p] - rec["prev_excess"] - q_over_mc2 * d_phi[k_p])
+                            r_cell_sum[rec["line_idx"], iz_sub[k_p]] += r_m
+                        rec["prev_excess"] = float(ex_now[k_p])
                     z_cur = float(z_sub[k_p])
                     if z_cur >= z_eval_target or step_rel == n_transit - 1:
                         slot_i = int(slot_arr[k_p])
@@ -652,6 +666,8 @@ def track_transit_identity(
                     "residual_raw": 0.0,
                     "residual_sync": 0.0,
                     "completed": False,
+                    "prev_excess": None,
+                    "first_excess": 0.0,
                 }
 
         phi_prev_nodes = phi_curr_nodes
@@ -687,6 +703,25 @@ def track_transit_identity(
                 float(np.mean([r["gamma_excess_sync"] for r in line_recs]))
             )
 
+    n_per_line = np.array(
+        [max(1, sum(1 for r in records_list if r["line_idx"] == l and r["completed"])) for l in range(n_lines)],
+        dtype=np.float64,
+    )
+    r_prof = r_cell_sum / n_per_line[:, None]  # mean per-particle remainder accrued in each axial cell
+    print(
+        "RPROF "
+        + json.dumps(
+            {
+                "first_excess_mean": float(np.mean([r["first_excess"] for r in records_list if r["completed"]])),
+                "r_cells_0_7_line_mean": r_prof[:, :8].mean(axis=0).tolist(),
+                "r_cell0_per_line": r_prof[:, 0].tolist(),
+                "r_cell1_per_line": r_prof[:, 1].tolist(),
+                "r_rest_per_line": r_prof[:, 2:].sum(axis=1).tolist(),
+                "r_cum_line_mean": np.cumsum(r_prof.mean(axis=0)).tolist(),
+            }
+        ),
+        flush=True,
+    )
     return {
         "n_tracked_particles": len(records_list),
         "n_completed_particles": sum(1 for r in records_list if r["completed"]),
