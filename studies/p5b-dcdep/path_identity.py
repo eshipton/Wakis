@@ -998,10 +998,8 @@ def run_production_grid(
     for _ in range(n_settle):
         solver.one_step()
 
-    z_window = (
-        float(s.FIT_WINDOW_FRAC[0] * lz),
-        float(s.FIT_WINDOW_FRAC[1] * lz),
-    )
+    # Same interior cells as run_particle_beam_drift and dc_decomp.py: z in [0.2 Lz, 0.8 Lz].
+    z_window = (0.2 * lz, 0.8 * lz)
     part_a = analyze_static_potentials_and_curl(
         solver, ps, nx, ny, nz, a, ly, lz, x_sheet, z_window
     )
