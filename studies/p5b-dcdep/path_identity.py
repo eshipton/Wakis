@@ -546,7 +546,32 @@ def track_transit_identity(
                 d_phi = phi_m - phi_m_prev
                 # Per-step remainder r_m = Delta(gamma(u^{m-1/2}) + q Phi^m(x^m)/mc^2) - q dPhi_m/mc^2,
                 # binned by the axial cell of x^m (where along z the energy error accrues).
-                u2_sub = ux_h[slot_arr] ** 2 + uy_h[slot_arr] ** 2 + uz_h[slot_arr] ** 2
+                # Synchronised u^m (half push by +dt/2 at x^m, as for the eval record) so the
+                # O(dt) half-step offset of gamma(u^{m-1/2}) does not swamp the profile.
+                from scipy.constants import mu_0 as _mu0
+
+                xi_a, eta_a, zeta_a = (_to_host(v) for v in ps.grid_map.to_logical(x_sub, y_sub, z_sub))
+                E_all = (
+                    _to_host(solver.E.to_matrix("x")).ravel(order="F"),
+                    _to_host(solver.E.to_matrix("y")).ravel(order="F"),
+                    ez_curr.ravel(order="F"),
+                )
+                B_all = tuple(
+                    (_mu0 * _to_host(solver.H.to_matrix(c_))).ravel(order="F") for c_ in ("x", "y", "z")
+                )
+                g6 = gather_fields(
+                    xi_a, eta_a, zeta_a, E_all, B_all,
+                    int(solver.Nx), int(solver.Ny), int(solver.Nz),
+                    order=int(ps.shape), gather=ps.gather,
+                    periodic=ps.boundaries.periodic, xp=np,
+                )
+                uxs, uys, uzs = fn_pusher(
+                    ux_h[slot_arr], uy_h[slot_arr], uz_h[slot_arr],
+                    g6[0], g6[1], g6[2],
+                    g6[3] + B_ext[0], g6[4] + B_ext[1], g6[5] + B_ext[2],
+                    q, m_mass, 0.5 * dt, xp=np,
+                )
+                u2_sub = uxs**2 + uys**2 + uzs**2
                 ex_now = np.sqrt(1.0 + u2_sub / (c_light * c_light)) - gamma0 + q_over_mc2 * phi_m
                 iz_sub = np.clip(np.floor(z_sub / dz_cell).astype(np.int64), 0, nz - 1)
 
@@ -713,7 +738,7 @@ def track_transit_identity(
         + json.dumps(
             {
                 "first_excess_mean": float(np.mean([r["first_excess"] for r in records_list if r["completed"]])),
-                "r_cells_0_7_line_mean": r_prof[:, :8].mean(axis=0).tolist(),
+                "r_cells_0_63_line_mean": r_prof[:, :64].mean(axis=0).tolist(),
                 "r_cell0_per_line": r_prof[:, 0].tolist(),
                 "r_cell1_per_line": r_prof[:, 1].tolist(),
                 "r_rest_per_line": r_prof[:, 2:].sum(axis=1).tolist(),
