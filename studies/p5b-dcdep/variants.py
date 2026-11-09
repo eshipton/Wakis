@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "examples"))
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--grid", required=True, choices=("coarse", "fine"))
-    ap.add_argument("--variant", required=True, choices=("base", "nokick", "noclosure", "halfcfl"))
+    ap.add_argument("--variant", required=True, choices=("base", "nokick", "noclosure", "halfcfl", "settle2"))
     a = ap.parse_args()
     import _space_charge_waves_common as scw  # same module object dc_decomp imports
     import wakis.particles.solver as ps
@@ -31,6 +31,9 @@ def main() -> int:
         ps._ENABLE_PEC_WALL_CLOSURE = False
     elif a.variant == "halfcfl":
         scw.CFL_NUMBER = 0.5 * scw.CFL_NUMBER
+    elif a.variant == "settle2":
+        _orig_settle = scw.settle_steps
+        scw.settle_steps = lambda *aa, **kw: 2 * int(_orig_settle(*aa, **kw))
     print(f"VARIANT {a.variant} grid={a.grid} kick={ps._ENABLE_PEC_WALL_KICK} "
           f"closure={ps._ENABLE_PEC_WALL_CLOSURE} cfl={scw.CFL_NUMBER}", flush=True)
     spec = importlib.util.spec_from_file_location("dc_decomp", pathlib.Path(__file__).with_name("dc_decomp.py"))
