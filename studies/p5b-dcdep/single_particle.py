@@ -62,6 +62,9 @@ from wakis.particles.shapes import (
 )
 
 
+WALL_STENCIL = "masked"  # ParticleSolver wall_stencil (CLI --wall-stencil)
+
+
 def gather_node_scalar(
     node_arr: np.ndarray,
     ps: ParticleSolver,
@@ -100,8 +103,9 @@ def gather_node_scalar(
         bool(ps.boundaries.periodic[1]),
         False,
     )
-    return _gather_component_3d(
-        node_arr.ravel(order="F"),
+    flat = node_arr.ravel(order="F")
+    out = _gather_component_3d(
+        flat,
         int(solver.Nx),
         int(solver.Ny),
         int(solver.Nz),
@@ -114,6 +118,19 @@ def gather_node_scalar(
         periodic,
         np,
     )
+    wi = getattr(ps, "_wall_images", None)
+    if wi is not None:
+        # wall_stencil="image": odd potential images (sign (-1)^{|S|}).
+        for S, idx, wall in wi.image_sets(([xi], [eta], [zeta]), xp=np):
+            m = wi._mirror((xi, eta, zeta), S, idx, wall)
+            jx, vx = bspline_weights_1d(m[0], shape, staggered=False, xp=np)
+            jy, vy = bspline_weights_1d(m[1], shape, staggered=False, xp=np)
+            jz, vz = bspline_weights_1d(m[2], shape, staggered=False, xp=np)
+            out[idx] += ((-1.0) ** len(S)) * _gather_component_3d(
+                flat, int(solver.Nx), int(solver.Ny), int(solver.Nz),
+                jx, vx, jy, vy, jz, vz, periodic, np,
+            )
+    return out
 
 
 def build_prescribed_potential_and_edges(
@@ -328,6 +345,10 @@ def eval_particle_excess(
         periodic=ps.boundaries.periodic,
         xp=np,
     )
+    corr = ps._image_field(xi, eta, zeta, solver.E, B_zero)
+    if corr is not None:
+        Ex_g, Ey_g, Ez_g = Ex_g + corr[0], Ey_g + corr[1], Ez_g + corr[2]
+        Bx_g, By_g, Bz_g = Bx_g + corr[3], By_g + corr[4], Bz_g + corr[5]
     fn = get_pusher(ps.pusher)
     ux_s, uy_s, uz_s = fn(
         sp.ux[:1],
@@ -432,12 +453,16 @@ def run_single_particle_case(
             shape=int(s.PARTICLE_SHAPE),
             gather="galerkin",
             track_energy=True,
+            wall_stencil=WALL_STENCIL,
         ).attach()
 
         dz = float(s.TUNNEL_LENGTH_M / s.COARSE_GRID[2])
         psi_birth, dgamma_kick_pred, dK_kick_pred_J = compute_predicted_birth_kick(
             ps, ez_mat, dz, x_inj, float(sp.charge), float(sp.mass), w=1.0
         )
+        if WALL_STENCIL == "image":
+            # Image stencil: no birth kick (the odd image makes sum_k W_k Psi_k vanish).
+            psi_birth, dgamma_kick_pred, dK_kick_pred_J = 0.0, 0.0, 0.0
 
         # Verify birth state at z = 0 before any push
         phi_birth_gat = float(
@@ -545,7 +570,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Axial sheath decay length L in [m] (default: tunnel half-width a).",
     )
+    parser.add_argument(
+        "--wall-stencil",
+        choices=("masked", "image"),
+        default="masked",
+        help="ParticleSolver wall_stencil (default: masked, the released behaviour).",
+    )
     args = parser.parse_args(argv)
+    global WALL_STENCIL
+    WALL_STENCIL = str(args.wall_stencil)
+    print(f"WALL_STENCIL {WALL_STENCIL}", flush=True)
 
     dt_divs = [int(tok.strip()) for tok in args.dt_divs.split(",") if tok.strip()]
     nx, _ny, nz = s.COARSE_GRID
@@ -656,13 +690,14 @@ def main(argv: list[str] | None = None) -> int:
         # Analytical knot-jump prediction at zeta = 0.5
         d_zeta = float(r_on["zeta_after_kink"] - r_on["zeta_before_kink"])
         theta = float((r_on["zeta_after_kink"] - 0.5) / d_zeta)
+        jump_field = (2.0 * ez0_gat - ez1_gat) if WALL_STENCIL == "masked" else (ez0_gat - ez1_gat)
         kink_jump_pred = float(
             (e_charge * dz / (m_e * c_light * c_light))
             * 0.5
             * theta
             * (1.0 - theta)
             * (d_zeta**2)
-            * (2.0 * ez0_gat - ez1_gat)
+            * jump_field
         )
 
         # Kick-disabled checks:
@@ -725,6 +760,14 @@ def main(argv: list[str] | None = None) -> int:
         for idx in range(len(records) - 1):
             r0 = records[idx]
             r1 = records[idx + 1]
+            if WALL_STENCIL == "image":
+                # Constant gathered E_z in the first half cell: the pre-knot excess is round-off.
+                print(
+                    f"PREKNOT dt/{r0['dt_div']}: |excess_before_kink_sync| = "
+                    f"{abs(r0['excess_before_kink_sync']):.3e}; knot jump {r0['kink_jump_sync']:+.6e} "
+                    f"(pred {r0['kink_jump_pred']:+.6e})"
+                )
+                continue
             ratio_pre = r0["excess_before_kink_sync"] / r1["excess_before_kink_sync"]
             ratio_smooth = (
                 r0["excess_smooth_interior_sync"] / r1["excess_smooth_interior_sync"]
@@ -741,6 +784,11 @@ def main(argv: list[str] | None = None) -> int:
                     f"Pre-kink O(dt^2) scaling ratio out of [3.8, 4.2]: {ratio_pre:.4f}"
                 )
 
+    if WALL_STENCIL == "image":
+        if any(abs(r["birth_excess_kick_off"]) > 0.0 or r["wall_kick_energy_J"] != 0.0 for r in records):
+            raise AssertionError("image stencil: nonzero birth potential or birth kick")
+        print("SELF_CHECK PASS (image): zero birth potential and zero birth kick.")
+        return 0
     # Mutation check: perturbing the predicted birth kick by 1e-6 relative MUST fail
     # the 1e-12 relative check.
     mutated_pred = records[0]["pred_birth_kick_dgamma"] * (1.0 + 1e-6)

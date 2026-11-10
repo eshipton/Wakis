@@ -75,6 +75,9 @@ GRID_MAP: dict[str, tuple[int, int, int]] = {
 }
 
 
+WALL_STENCIL = "masked"  # ParticleSolver wall_stencil of the production run (CLI --wall-stencil)
+
+
 def _to_host(arr) -> np.ndarray:
     """Return a host ``numpy.ndarray`` copy of ``arr``."""
     if hasattr(arr, "get"):
@@ -117,8 +120,9 @@ def gather_node_potential_3d(
         bool(ps.boundaries.periodic[1]),
         False,
     )
-    return _gather_component_3d(
-        _to_host(phi_nodes).ravel(order="F"),
+    phi_flat = _to_host(phi_nodes).ravel(order="F")
+    out = _gather_component_3d(
+        phi_flat,
         int(solver.Nx),
         int(solver.Ny),
         int(solver.Nz),
@@ -131,6 +135,45 @@ def gather_node_potential_3d(
         periodic,
         np,
     )
+    wi = getattr(ps, "_wall_images", None)
+    if wi is not None:
+        # wall_stencil="image": the potential whose gradient is the image gather is odd across
+        # each PEC face (phi_{-k} = -phi_k), sign (-1)^{|S|} for the set S of reflected axes.
+        for S, idx, wall in wi.image_sets(([xi], [eta], [zeta]), xp=np):
+            m = wi._mirror((xi, eta, zeta), S, idx, wall)
+            jx, vx = bspline_weights_1d(m[0], shape, staggered=False, xp=np)
+            jy, vy = bspline_weights_1d(m[1], shape, staggered=False, xp=np)
+            jz, vz = bspline_weights_1d(m[2], shape, staggered=False, xp=np)
+            out[idx] += ((-1.0) ** len(S)) * _gather_component_3d(
+                phi_flat,
+                int(solver.Nx),
+                int(solver.Ny),
+                int(solver.Nz),
+                jx,
+                vx,
+                jy,
+                vy,
+                jz,
+                vz,
+                periodic,
+                np,
+            )
+    return out
+
+
+def _with_image_field(ps, xi, eta, zeta, E_all, B_all, g6):
+    """Add the ``wall_stencil="image"`` part of the gather (host arrays) to ``g6``."""
+    wi = getattr(ps, "_wall_images", None)
+    if wi is None:
+        return g6
+    solver = ps.solver
+    corr = wi.field_correction(
+        xi, eta, zeta, E_all, B_all, int(solver.Nx), int(solver.Ny), int(solver.Nz),
+        ps.gather, ps.boundaries.periodic, xp=np,
+    )
+    if corr is None:
+        return g6
+    return tuple(a + b for a, b in zip(g6, corr))
 
 
 def build_axial_node_potential(
@@ -565,6 +608,7 @@ def track_transit_identity(
                     order=int(ps.shape), gather=ps.gather,
                     periodic=ps.boundaries.periodic, xp=np,
                 )
+                g6 = _with_image_field(ps, xi_a, eta_a, zeta_a, E_all, B_all, g6)
                 uxs, uys, uzs = fn_pusher(
                     ux_h[slot_arr], uy_h[slot_arr], uz_h[slot_arr],
                     g6[0], g6[1], g6[2],
@@ -635,6 +679,10 @@ def track_transit_identity(
                             gather=ps.gather,
                             periodic=ps.boundaries.periodic,
                             xp=np,
+                        )
+                        Ex_g, Ey_g, Ez_g, Bx_g, By_g, Bz_g = _with_image_field(
+                            ps, xi_p, eta_p, zeta_p, E_tup_h, B_tup_h,
+                            (Ex_g, Ey_g, Ez_g, Bx_g, By_g, Bz_g),
                         )
                         ux_s, uy_s, uz_s = fn_pusher(
                             ux_h[slot_i : slot_i + 1],
@@ -1057,6 +1105,7 @@ def run_production_grid(
         filter=s.PARTICLE_FILTER,
         gather="galerkin",
         track_energy=False,
+        wall_stencil=WALL_STENCIL,
     ).attach()
 
     for _ in range(n_settle):
@@ -1141,7 +1190,16 @@ def main(argv: list[str] | None = None) -> int:
         default=3.0,
         help="Number of transits to settle before analysis (default: 3.0).",
     )
+    parser.add_argument(
+        "--wall-stencil",
+        choices=("masked", "image"),
+        default="masked",
+        help="ParticleSolver wall_stencil for the production run (default: masked).",
+    )
     args = parser.parse_args(argv)
+    global WALL_STENCIL
+    WALL_STENCIL = str(args.wall_stencil)
+    print(f"WALL_STENCIL {WALL_STENCIL}", flush=True)
 
     run_synthetic_self_check()
     if args.self_check_only:

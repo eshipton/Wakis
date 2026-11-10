@@ -3181,6 +3181,7 @@ def run_particle_beam_drift(
     gather: str = "galerkin",
     shape: int = PARTICLE_SHAPE,
     meas_lines: str = "all",
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -3240,6 +3241,10 @@ def run_particle_beam_drift(
         ``iz_hist`` cross-section current sum (``"all"`` for all non-PEC
         transverse lines or ``"lb_keep"`` for ``beam_ref.keep_lines`` only).
         Default is ``"all"``.
+    wall_stencil : {"masked", "image"}, optional
+        ``ParticleSolver`` treatment of the shape stencil at the PEC walls (default
+        ``"masked"``, the released behaviour; ``"image"`` folds it back with the PEC image
+        symmetry, see :mod:`wakis.particles.wall_images`).
 
     Returns
     -------
@@ -3316,6 +3321,7 @@ def run_particle_beam_drift(
         filter=PARTICLE_FILTER,
         gather=gather,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
+        wall_stencil=wall_stencil,
     ).attach()
 
     meas_flat_idx_2d, meas_dA_perp = _particle_current_lines(
