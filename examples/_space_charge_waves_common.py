@@ -3651,6 +3651,7 @@ def _normalise_scw_func_and_args(
             )
             gather = str(args.get("gather", "galerkin"))
             shape = int(args.get("shape", PARTICLE_SHAPE))
+            wall_stencil = str(args.get("wall_stencil", "masked"))
         else:
             seq = list(args)
             nx = int(seq[0])
@@ -3668,7 +3669,8 @@ def _normalise_scw_func_and_args(
             )
             gather = str(seq[7]) if len(seq) > 7 else "galerkin"
             shape = int(seq[8]) if len(seq) > 8 else int(PARTICLE_SHAPE)
-        return canon_func, (
+            wall_stencil = str(seq[9]) if len(seq) > 9 else "masked"
+        key_tuple = (
             nx,
             nz,
             profile,
@@ -3679,6 +3681,10 @@ def _normalise_scw_func_and_args(
             gather,
             shape,
         )
+        # The default wall stencil keeps the historical 9-tuple key.
+        if wall_stencil != "masked":
+            key_tuple = (*key_tuple, wall_stencil)
+        return canon_func, key_tuple
 
     canon_func = str(func_name)
     raw_items = list(args.values()) if isinstance(args, dict) else list(args)
@@ -3926,6 +3932,7 @@ def _cached_particle_drift_impl(
     n_macro: int,
     gather: str,
     shape: int,
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
     norm_args = (
         int(nx),
@@ -3938,6 +3945,8 @@ def _cached_particle_drift_impl(
         str(gather),
         int(shape),
     )
+    if str(wall_stencil) != "masked":
+        norm_args = (*norm_args, str(wall_stencil))
 
     def _run() -> dict[str, Any]:
         lb_ref = cached_linearized_beam_drift(
@@ -3954,6 +3963,7 @@ def _cached_particle_drift_impl(
             n_macro_per_step=n_macro,
             gather=gather,
             shape=shape,
+            wall_stencil=wall_stencil,
         )
 
     return _scw_disk_cached_call("_cached_particle_drift_impl", norm_args, _run)
@@ -3969,8 +3979,13 @@ def cached_particle_drift(
     n_macro_per_step: int | None = None,
     gather: str = "galerkin",
     shape: int = PARTICLE_SHAPE,
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
-    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather, shape)``."""
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather, shape)``.
+
+    ``wall_stencil="image"`` appends the stencil to the key; the default ``"masked"`` keeps the
+    historical 9-element key.
+    """
     n_macro = (
         int(n_macro_per_step)
         if n_macro_per_step is not None
@@ -3987,6 +4002,7 @@ def cached_particle_drift(
         n_macro,
         str(gather),
         int(shape),
+        str(wall_stencil),
     )
 
 
