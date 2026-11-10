@@ -1322,6 +1322,92 @@ def test_mpi_minimal_nz_two_per_rank_and_validation():
         assert float(np.max(np.abs(e_par - e_ser))) / e_norm <= bound
 
 
+def _gauss_cpml_top_slab_case(use_mpi: bool, n_pml: int, nz: int):
+    """PEC z_low / CPML z_high box with periodic x, y and a few particles near z_low."""
+    grid = GridFIT3D(
+        0.0, 0.04, 0.0, 0.04, 0.0, 0.01 * nz, 4, 4, nz, use_mpi=use_mpi, verbose=0
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "cpml"],
+        n_pml=n_pml,
+        use_mpi=use_mpi,
+        verbose=0,
+    )
+    sp = Species(name="e", charge=-e_charge, mass=m_e, capacity=16)
+    sp.add_particles(
+        x=np.array([0.012, 0.027, 0.031]),
+        y=np.array([0.017, 0.008, 0.029]),
+        z=np.array([0.013, 0.016, 0.021]),
+        w=np.array([1.0e4, 2.0e4, 1.5e4]),
+    )
+    ps = ParticleSolver(solver, species=[sp], shape=1)
+    ps.attach()
+    return solver, ps
+
+
+def test_mpi_gauss_residual_top_slab_inside_cpml_matches_serial():
+    """Top z-slab entirely inside the CPML: ``gauss_residual`` completes on every rank and equals serial.
+
+    With ``NZ = size * n_pml`` the last slab boundary lands on the CPML
+    interface, so the top rank owns no interior vacuum node. Before the fix that
+    rank raised ``ValueError`` alone while the other ranks waited in the
+    residual's ``MPI.MAX`` reductions (the 4-rank ``test_mpi_cpu_bitwise_restart``
+    hang). The vacuum mask must also apply the CPML stencil margin on the global
+    z index: a field perturbation whose divergence lands only on the first
+    margin node (global ``NZ - n_pml - pad + 1``, owned by rank ``size - 2``)
+    must not change the residual, as in the serial run.
+    """
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+    n_pml = 4
+    nz = size * n_pml
+
+    def _perturb_ez(solver, k0: int) -> None:
+        # Global Ez perturbation on two z-edge planes: edge (1 -> 2) in the
+        # vacuum interior (amplitude 1) and edge (g_m -> g_m + 1), whose
+        # divergence lands on margin node g_m and on the CPML interface node
+        # g_m + 1 (amplitude 50). Both nodes are excluded from the serial mask.
+        rng = np.random.default_rng(2468)
+        pattern = rng.normal(size=(4, 4))
+        pad = (1 + 1) // 2 + 1
+        g_m = nz - n_pml - pad + 1
+        for g_edge, amp in ((1, 1.0), (g_m, 50.0)):
+            k = g_edge - k0
+            if 0 <= k < solver.Nz:
+                for i in range(4):
+                    for j in range(4):
+                        solver.E[i, j, k, "z"] = amp * pattern[i, j]
+
+    solver_m, ps_m = _gauss_cpml_top_slab_case(True, n_pml, nz)
+    k0 = rank * (nz // size) - (1 if rank > 0 else 0)
+    _perturb_ez(solver_m, k0)
+
+    local_exc = None
+    res_mpi = None
+    try:
+        res_mpi = float(ps_m.gauss_residual())
+    except Exception as exc:  # noqa: BLE001 - reported collectively below
+        local_exc = exc
+        # Release the ranks still waiting in the residual's two MAX reductions so
+        # the failure is reported instead of hanging the job.
+        comm.allreduce(0.0, op=MPI.MAX)
+        comm.allreduce(0.0, op=MPI.MAX)
+    errs = comm.allgather(None if local_exc is None else repr(local_exc))
+    assert all(e is None for e in errs), f"gauss_residual raised on some ranks: {errs}"
+    assert len(set(comm.allgather(res_mpi))) == 1
+
+    solver_s, ps_s = _gauss_cpml_top_slab_case(False, n_pml, nz)
+    _perturb_ez(solver_s, 0)
+    res_ser = float(ps_s.gauss_residual())
+    # The interior perturbation must register (so the comparison is not 0 == 0)
+    assert res_ser > 1.0e-6
+    np.testing.assert_allclose(res_mpi, res_ser, rtol=1.0e-12, atol=0.0)
+
+
 def test_mpi_gather_as_grid_graded():
     """``grid.mpi_gather_asGrid()`` preserves custom graded node coordinates on rank 0."""
     comm = MPI.COMM_WORLD

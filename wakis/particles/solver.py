@@ -272,11 +272,51 @@ def _interior_vacuum_node_mask(solver, include_wall_planes: bool = False):
     shape_order = int(getattr(solver, "_particles_shape_order", 1))
     pad = 1 if include_wall_planes else ((shape_order + 1) // 2 + 1)
 
+    # Under MPI z-slab decomposition the CPML and wall margins are defined on the
+    # global z node index (as in a serial run), not on each slab: a margin can
+    # straddle a slab face, and a slab can lie entirely inside the CPML.
+    # ``_particles_bc_z_global = (bc_z_low, bc_z_high, n_pml)`` is set
+    # collectively in ``ParticleSolver.__init__``.
+    bc_z_glob = getattr(solver, "_particles_bc_z_global", None)
+    mpi_z = (
+        bc_z_glob is not None
+        and bool(getattr(solver, "use_mpi", False))
+        and int(getattr(solver, "size", 1)) > 1
+    )
+
     for ax, n_ax in enumerate((Nx, Ny, Nz)):
         low_s = str(bc_low[ax]).strip().lower()
         high_s = str(bc_high[ax]).strip().lower()
         is_per = low_s in ("periodic", "bloch") and high_s in ("periodic", "bloch")
         if is_per:
+            continue
+
+        if ax == 2 and mpi_z:
+            rank = int(solver.rank)
+            size = int(solver.size)
+            nz_glob = int(solver.NZ)
+            nz_own = nz_glob // size
+            k0 = rank * nz_own - (1 if rank > 0 else 0)  # global index of local node 0
+            # Global node count as in the serial solver (NZ, plus the appended
+            # edge ghost when boundary_at_domain_edge=True); the high boundary
+            # node sits at global index n_glob - 1.
+            n_glob = int(getattr(solver.grid, "NZ_samples", nz_glob + 1))
+            n_phys_g = n_glob - 1
+            g_low, g_high = (str(b).strip().lower() for b in bc_z_glob[:2])
+            n_pml_g = int(bc_z_glob[2])
+            g_start = (n_pml_g + pad) if g_low in ("pml", "cpml") else 1
+            g_end = (
+                n_phys_g - n_pml_g - pad + 1
+                if g_high in ("pml", "cpml")
+                else n_phys_g
+            )
+            k_glob = xp.arange(n_ax) + k0
+            keep = (k_glob >= g_start) & (k_glob < g_end)
+            if rank > 0:
+                keep[0] = False  # low MPI ghost node (owned by rank - 1)
+            if rank < size - 1:
+                keep[n_ax - 1] = False  # high MPI ghost node (owned by rank + 1)
+            mask &= keep[None, None, :]
             continue
 
         # On any non-periodic axis, SolverFIT3D places the high-side boundary
@@ -480,7 +520,18 @@ def gauss_residual(
         vac_mask = _interior_vacuum_node_mask(solver, include_wall_planes=True)
     else:
         vac_mask = _interior_vacuum_node_mask(solver)
-    if not bool(xp.any(vac_mask)):
+    use_mpi_multi = getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1
+    has_vac = bool(xp.any(vac_mask))
+    if use_mpi_multi:
+        # A z-slab can lie entirely inside the CPML (e.g. the top rank when the
+        # slab boundary lands on the CPML interface). Such a rank contributes
+        # no residual nodes; only a domain with no vacuum node on any rank is an
+        # error, and it must be raised on every rank so no rank is left waiting
+        # in the MAX reductions below.
+        from mpi4py import MPI
+
+        has_vac = bool(solver.comm.allreduce(has_vac, op=MPI.LOR))
+    if not has_vac:
         raise ValueError(
             "gauss_residual: no interior vacuum nodes outside the CPML and the shape-stencil "
             "margin; enlarge the domain (the residual on CPML nodes is not a conservation check)."
@@ -496,9 +547,7 @@ def gauss_residual(
     )
     q_ref = float(getattr(solver, "_particles_q_scale_ref", 0.0))
     denom = max(q_scale, q_ref, 1e-30)
-    if getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1:
-        from mpi4py import MPI
-
+    if use_mpi_multi:
         max_res = float(solver.comm.allreduce(max_res, op=MPI.MAX))
         denom = float(solver.comm.allreduce(denom, op=MPI.MAX))
     return max_res / denom
@@ -820,6 +869,23 @@ class ParticleSolver:
                     f"z-cells per MPI rank (solver.NZ // solver.size >= 2) so the "
                     f"two high Esirkepov guard planes land inside the neighbour's "
                     f"owned slab, got NZ={nz_global} and size={mpi_size}."
+                )
+            if mpi_size > 1 and getattr(solver, "comm", None) is not None:
+                # Global z boundary conditions (each rank's solver only keeps "mpi"
+                # on its internal faces): the Gauss-residual vacuum mask needs them
+                # to place the CPML/wall margins on the global node index.
+                # solver.n_pml exists only on ranks that own a (C)PML face, so the
+                # thickness is reduced from the ranks that have it.
+                from mpi4py import MPI
+
+                solver._particles_bc_z_global = (
+                    str(solver.comm.bcast(solver.bc_low[2], root=0)),
+                    str(solver.comm.bcast(solver.bc_high[2], root=mpi_size - 1)),
+                    int(
+                        solver.comm.allreduce(
+                            int(getattr(solver, "n_pml", 0) or 0), op=MPI.MAX
+                        )
+                    ),
                 )
 
         if isinstance(species, Species):
