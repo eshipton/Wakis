@@ -3952,6 +3952,7 @@ def _cached_particle_drift_impl(
         lb_ref = cached_linearized_beam_drift(
             nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
         )
+        extra = {} if str(wall_stencil) == "masked" else {"wall_stencil": str(wall_stencil)}
         return run_particle_beam_drift(
             nx,
             nz,
@@ -3963,7 +3964,7 @@ def _cached_particle_drift_impl(
             n_macro_per_step=n_macro,
             gather=gather,
             shape=shape,
-            wall_stencil=wall_stencil,
+            **extra,
         )
 
     return _scw_disk_cached_call("_cached_particle_drift_impl", norm_args, _run)
