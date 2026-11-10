@@ -1576,3 +1576,189 @@ def test_production_discrete_wall_term_vs_exact_half_line(
 
     for nx, nz, qm in ((10, 474, 1.0), (20, 948, 1.0), (10, 474, 2.0)):
         _check_discrete_halfline_on_grid(nx, nz, qm)
+
+
+# --------------------------------------------------------------------------------------
+# Decision D21: exact discrete first-pass prediction of the LinearizedBeam beta_q
+# --------------------------------------------------------------------------------------
+
+import examples._lb_modal_prediction as lbp  # noqa: E402
+
+
+def _td_one_step_mismatch(phasor: dict[str, Any], nx: int, nz: int) -> dict[str, float]:
+    """Load ``Re(phasor * z^{-1/2})`` (``E`` at ``Re(E_hat)``) into a PEC-run solver, take one TD step, return rel. errors."""
+    params = compute_analytic_parameters()
+    solver, beam, dt = lbp._build_cpu_beam(nx, nz)
+    omega = params["omega"]
+    zh = np.exp(0.5j * omega * dt)
+    e_hat = phasor["e_hat"]
+    h_hat = -dt * (solver.tDsiDmuiDaC @ e_hat) / (zh - 1.0 / zh)
+    solver.E.fromarray(np.real(e_hat).copy())
+    solver.H.fromarray(np.real(h_hat / zh).copy())
+    j_old = np.real(phasor["j1"] / zh).ravel()
+    j_arr = np.zeros_like(solver.E.toarray())
+    j_arr[beam.flat_idx_host] = j_old
+    solver.J.fromarray(j_arr.copy())
+    beam.J_old = j_old.copy()
+    beam.v1 = np.real(phasor["v1"] / zh).copy()
+    beam.rho1 = np.real(phasor["rho1"] / zh).copy()
+    m_mod, rho_dep = scw.MODULATION_INDEX, params["rho_dep"]
+    beam.inflow_rho1 = lambda t: m_mod * rho_dep * np.sin(omega * t)
+    beam._step_count = 0
+    solver.step_0 = False
+    solver.one_step()
+
+    def rel(a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+    return {
+        "E": rel(solver.E.toarray(), np.real(e_hat * zh * zh)),
+        "H": rel(solver.H.toarray(), np.real(h_hat * zh)),
+        "v1": rel(beam.v1, np.real(phasor["v1"] * zh)),
+        "rho1": rel(beam.rho1, np.real(phasor["rho1"] * zh)),
+        "J1": rel(beam.J1, np.real(phasor["j1"] * zh)),
+    }
+
+
+def test_d21_phasor_is_exact_fixed_point_of_td_step():
+    """D21: the time-harmonic solve reproduces itself under one `SolverFIT3D` + `LinearizedBeam` step.
+
+    Bound 1e-12 relative (round-off of one sparse step; measured ~2e-15). Negative control:
+    the phasor of a wrong entrance wall (PMC at ``z = 0``) is *not* a fixed point of the
+    PEC run's step.
+    """
+    nx, _, nz = COARSE_GRID
+    ph = lbp.lb_exact_phasor(nx, nz)
+    mis = _td_one_step_mismatch(ph, nx, nz)
+    print(f"\nD21 fixed point (coarse, exact scheme): {mis}", flush=True)
+    for key, val in mis.items():
+        assert val <= 1e-12, f"D21 fixed point: {key} rel error {val:.3e} > 1e-12"
+
+    ph_pmc = lbp.lb_exact_phasor(nx, nz, bc_z_low="pmc")
+    mis_pmc = _td_one_step_mismatch(ph_pmc, nx, nz)
+    print(
+        f"D21 fixed point negative control (PMC phasor, PEC step): {mis_pmc}",
+        flush=True,
+    )
+    assert max(mis_pmc.values()) > 1e-6, (
+        f"Wrong-wall phasor passed the fixed-point check: {mis_pmc}"
+    )
+
+
+@pytest.mark.parametrize("grid", [(10, 474), (20, 948)])
+def test_d21_slack_terms_validity_and_controls_separate(grid):
+    """D21 slack identity, first-pass validity, and separation of every wrong variant.
+
+    1. ``slack == s_fp + s_tail + s_front + s_round`` (identity, 1e-15) and the
+       first-pass construction is converged far below the tail term (``s_fp < s_tail``).
+    2. ``first_pass_valid`` holds for the production DFT window and fails for a window
+       ending at 1.5x the settle time (where the TD scan sees the outflow reflection).
+    3. The legacy cos-form prediction, legacy with the ``1/c_h`` CN root, the no-wall and
+       PMC-wall first-pass variants and the multi-bounce steady state all differ from the
+       D21 prediction by more than its slack, so the TD check can tell them apart.
+    """
+    nx, nz = grid
+    params = compute_analytic_parameters()
+    d21 = lbp.lb_first_pass_prediction(nx, nz)
+    total = d21["s_fp"] + d21["s_tail"] + d21["s_front"] + d21["s_round"]
+    assert abs(d21["slack"] - total) <= 1e-15, "D21 slack identity"
+    assert d21["s_fp"] < d21["s_tail"], (
+        f"first-pass construction not converged: s_fp={d21['s_fp']:.3e} >= s_tail={d21['s_tail']:.3e}"
+    )
+    assert d21["first_pass_valid"] and d21["t_end"] < d21["t_reach0"], (
+        f"production window not first-pass: t_end={d21['t_end']:.4e} t_reach0={d21['t_reach0']:.4e}"
+    )
+    dt = _cached_integer_period_dt(nx, nz)[0]
+    n_spp = int(round(1.0 / (scw.DRIVE_FREQ_HZ * dt)))
+    t_end_late = (round(1.5 * d21["n_settle"]) + 6 * n_spp) * dt
+    z_ramp = TUNNEL_LENGTH_M - scw.OUTFLOW_RAMP_M
+    z_front_late = z_ramp - d21["v_para_max"] * (
+        t_end_late - z_ramp / d21["v_phys_max"]
+    )
+    assert z_front_late <= 0.0, (
+        f"1.5x settle window should be invalid (front reached the entrance): z_front={z_front_late:.4e}"
+    )
+
+    dec = lbp.lb_error_decomposition(nx, nz)
+    assert (
+        abs(dec["d_symbol"] + dec["d_amplitude"] + dec["d_wall"] - dec["d_total"])
+        <= 1e-14
+    )
+    z_min, z_max = fit_window(params)
+    pmc = lbp.lb_first_pass_phasor(nx, nz, bc_z_low="pmc")
+    bq_pmc = fit_beta_q_from_envelope(
+        pmc["z_coords"], pmc["i1"], params["beta_q"], z_min=z_min, z_max=z_max
+    )["beta_q"]
+    controls = {
+        "legacy_cos_form": dec["bq_legacy"],
+        "legacy_with_1/c_h": dec["bq_legacy_ch"],
+        "no_entrance_wall": dec["bq_fp_nowall"],
+        "pmc_entrance_wall": bq_pmc,
+        "multibounce_steady": dec["bq_exact_steady"],
+    }
+    print(
+        f"\nD21 grid={grid} bq_pred={d21['bq_pred']:.7f} slack={d21['slack']:.3e} "
+        f"(s_fp={d21['s_fp']:.2e} s_tail={d21['s_tail']:.2e} s_front={d21['s_front']:.2e}) "
+        f"decomposition: symbol={dec['d_symbol']:+.3e} amplitude={dec['d_amplitude']:+.3e} "
+        f"wall={dec['d_wall']:+.3e} total={dec['d_total']:+.3e} multibounce={dec['d_multibounce']:+.3e}",
+        flush=True,
+    )
+    for name, bq_c in controls.items():
+        sep = abs(bq_c / d21["bq_pred"] - 1.0)
+        print(
+            f"  control {name}: bq={bq_c:.7f} |bq/bq_pred-1|={sep:.3e} (slack {d21['slack']:.3e})"
+        )
+        assert sep > d21["slack"], (
+            f"control {name} indistinguishable from D21: {sep:.3e} <= slack"
+        )
+
+
+def test_d21_front_bound_holds_against_full_nonlinear_fit():
+    """``s_front`` (Gauss-Newton, ramp envelope, 2x steady parasitic amplitude) bounds the full fit.
+
+    For ramp fronts at several end positions and phases inside the admissible range, the
+    *nonlinear* two-wave fit shift ``|d beta| / beta`` stays below ``s_front``. Negative
+    control: a front 10x larger than the derived amplitude bound exceeds it.
+    """
+    params = compute_analytic_parameters()
+    z_min, z_max = fit_window(params)
+    for nx, nz in ((10, 474), (20, 948)):
+        d21 = lbp.lb_first_pass_prediction(nx, nz)
+        z, i1 = d21["z_coords"], d21["i1_fp"]
+        b0 = d21["bq_pred"]
+        para = lbp.parasitic_band(lbp.lb_exact_phasor(nx, nz)["i1"])
+        z_lo = max(z_min, d21["z_front_min"])
+        worst = 0.0
+        for z_e in np.linspace(z_lo, z_max, 5):
+            for ph in (0.0, 0.5 * np.pi, np.pi, 1.5 * np.pi):
+                w = np.clip((z - z_e) / d21["l_front"], 0.0, 1.0)
+                d = 2.0 * para * w * np.exp(1j * ph)
+                b = fit_beta_q_from_envelope(
+                    z, i1 + d, params["beta_q"], z_min=z_min, z_max=z_max
+                )["beta_q"]
+                worst = max(worst, abs(b / b0 - 1.0))
+        print(
+            f"\nD21 front bound ({nx}x{nz}): worst full-fit shift {worst:.3e} <= s_front {d21['s_front']:.3e}"
+        )
+        assert worst <= d21["s_front"], (
+            f"full-fit front shift {worst:.3e} exceeds s_front {d21['s_front']:.3e}"
+        )
+        z_e = z_lo + 0.5 * (z_max - z_lo)
+        w = np.clip((z - z_e) / d21["l_front"], 0.0, 1.0)
+        big = max(
+            abs(
+                fit_beta_q_from_envelope(
+                    z,
+                    i1 + 20.0 * para * w * np.exp(1j * ph),
+                    params["beta_q"],
+                    z_min=z_min,
+                    z_max=z_max,
+                )["beta_q"]
+                / b0
+                - 1.0
+            )
+            for ph in (0.0, 0.5 * np.pi)
+        )
+        assert big > d21["s_front"], (
+            f"negative control: 10x front shift {big:.3e} should exceed s_front {d21['s_front']:.3e}"
+        )
