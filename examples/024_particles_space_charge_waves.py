@@ -298,16 +298,43 @@ def run_resolution_pair(
     return {"metrics": metrics, "curves": curves}
 
 
+PLOT_DATA_NAME = "024_plot_data.npz"
+
+
+def save_plot_data(run_data: dict, params: dict[str, float], path: Path) -> None:
+    """Save the plotted curves, metrics and analytic parameters so figures can be re-rendered."""
+    arrays = {f"curve__{k}": np.asarray(v) for k, v in run_data["curves"].items()}
+    np.savez_compressed(
+        path,
+        metrics_json=np.array(json.dumps(run_data["metrics"], default=float)),
+        params_json=np.array(json.dumps(params, default=float)),
+        **arrays,
+    )
+
+
+def load_plot_data(path: Path) -> tuple[dict, dict[str, float]]:
+    """Load data written by :func:`save_plot_data`; returns ``(run_data, params)``."""
+    with np.load(path, allow_pickle=False) as data:
+        curves = {}
+        for key in data.files:
+            if key.startswith("curve__"):
+                val = data[key]
+                curves[key[len("curve__"):]] = float(val) if val.ndim == 0 else val
+        metrics = json.loads(str(data["metrics_json"]))
+        params = json.loads(str(data["params_json"]))
+    return {"metrics": metrics, "curves": curves}, params
+
+
 def make_figure_envelope(
     run_data: dict, params: dict[str, float], out_path: Path
 ) -> None:
     """Create Figure 1: Axial current envelope ``|I1(z)|``, two-wave fit, and modulated carrier wave."""
     fig, axes = figstyle.new_figure(
         width_in=figstyle.FULL_WIDTH_IN,
-        height_in=3.4,
-        nrows=1,
-        ncols=2,
-        gridspec_kw={"wspace": 0.34},
+        height_in=7.8,
+        nrows=2,
+        ncols=1,
+        gridspec_kw={"hspace": 0.95},
     )
     ax_env, ax_car = axes[0], axes[1]
 
@@ -376,7 +403,7 @@ def make_figure_envelope(
     ax_env.set_xlim(0.0, TUNNEL_LENGTH_M * 1e3)
     ax_env.set_ylim(-0.04, 1.18)
     figstyle.spectrum_grid(ax_env)
-    figstyle.place_legend_below(ax_env, ncol=2, y_offset=-0.24, fontsize=8.0)
+    figstyle.place_legend_below(ax_env, ncol=2, y_offset=-0.2, fontsize=8.0)
 
     ax_car.plot(
         z_mm,
@@ -406,7 +433,7 @@ def make_figure_envelope(
     ax_car.set_xlim(0.0, lam_q_mm)
     ax_car.set_ylim(-1.20, 1.20)
     figstyle.spectrum_grid(ax_car)
-    figstyle.place_legend_below(ax_car, ncol=2, y_offset=-0.24, fontsize=8.0)
+    figstyle.place_legend_below(ax_car, ncol=3, y_offset=-0.2, fontsize=8.0)
 
     figstyle.save(fig, out_path, auto_legend_below=False)
     matplotlib.pyplot.close(fig)
@@ -418,10 +445,10 @@ def make_figure_spectrum(
     """Create Figure 2: Spatial wavenumber spectrum ``|I1(k_z)|`` with ``k_f`` and ``k_s`` marked."""
     fig, axes = figstyle.new_figure(
         width_in=figstyle.FULL_WIDTH_IN,
-        height_in=3.4,
-        nrows=1,
-        ncols=2,
-        gridspec_kw={"wspace": 0.34},
+        height_in=7.8,
+        nrows=2,
+        ncols=1,
+        gridspec_kw={"hspace": 0.95},
     )
     ax_k, ax_shift = axes[0], axes[1]
 
@@ -480,7 +507,7 @@ def make_figure_spectrum(
     ax_k.set_xlim(kz[0], kz[-1])
     ax_k.set_ylim(-0.02, 0.62)
     figstyle.spectrum_grid(ax_k)
-    figstyle.place_legend_below(ax_k, ncol=2, y_offset=-0.24, fontsize=8.0)
+    figstyle.place_legend_below(ax_k, ncol=3, y_offset=-0.2, fontsize=8.0)
 
     norm_shift = (kz - beta_e) / beta_q
     ax_shift.plot(
@@ -518,11 +545,11 @@ def make_figure_spectrum(
     )
     ax_shift.set_xlabel(r"Normalized beat shift $(k_z - \beta_e) / \beta_q$")
     ax_shift.set_ylabel(r"Spatial spectrum $|\hat{I}_1(k_z)| / (m I_0)$")
-    ax_shift.set_title(r"(b) Doublet splitting in normalized $\beta_q$ units")
+    ax_shift.set_title(r"(b) Same spectrum against $(k_z - \beta_e)/\beta_q$")
     ax_shift.set_xlim(-3.5, 3.5)
     ax_shift.set_ylim(-0.02, 0.62)
     figstyle.spectrum_grid(ax_shift)
-    figstyle.place_legend_below(ax_shift, ncol=2, y_offset=-0.24, fontsize=8.0)
+    figstyle.place_legend_below(ax_shift, ncol=3, y_offset=-0.2, fontsize=8.0)
 
     figstyle.save(fig, out_path, auto_legend_below=False)
     matplotlib.pyplot.close(fig)
@@ -559,10 +586,26 @@ def main() -> None:
         metavar="DIR",
         help="Optional directory (e.g., docs/img) to also copy generated figures when publishing.",
     )
+    parser.add_argument(
+        "--replot",
+        type=Path,
+        default=None,
+        metavar="NPZ",
+        help=(
+            f"Re-render both figures from a saved {PLOT_DATA_NAME} (written by a full or "
+            "smoke run) into --out-dir without running any simulation."
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.replot is not None:
+        run_data, params = load_plot_data(Path(args.replot))
+        make_figure_envelope(run_data, params, out_dir / "particles_space_charge_waves_envelope.png")
+        make_figure_spectrum(run_data, params, out_dir / "particles_space_charge_waves_spectrum.png")
+        print(f"Re-rendered figures from {args.replot} into {out_dir}")
+        return
     params = compute_analytic_parameters()
 
     print(
@@ -659,6 +702,7 @@ def main() -> None:
     fig1_path = out_dir / "particles_space_charge_waves_envelope.png"
     fig2_path = out_dir / "particles_space_charge_waves_spectrum.png"
     json_path = out_dir / "024_particles_space_charge_waves.json"
+    save_plot_data(plot_source, params, out_dir / PLOT_DATA_NAME)
     make_figure_envelope(plot_source, params, fig1_path)
     make_figure_spectrum(plot_source, params, fig2_path)
 
