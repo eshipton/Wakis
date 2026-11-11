@@ -3181,6 +3181,7 @@ def run_particle_beam_drift(
     gather: str = "galerkin",
     shape: int = PARTICLE_SHAPE,
     meas_lines: str = "all",
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
     """Run `ParticleSolver` + `BeamInjector` on the identical drift-tunnel grid.
 
@@ -3240,6 +3241,10 @@ def run_particle_beam_drift(
         ``iz_hist`` cross-section current sum (``"all"`` for all non-PEC
         transverse lines or ``"lb_keep"`` for ``beam_ref.keep_lines`` only).
         Default is ``"all"``.
+    wall_stencil : {"masked", "image"}, optional
+        ``ParticleSolver`` treatment of the shape stencil at the PEC walls (default
+        ``"masked"``, the released behaviour; ``"image"`` folds it back with the PEC image
+        symmetry, see :mod:`wakis.particles.wall_images`).
 
     Returns
     -------
@@ -3316,6 +3321,7 @@ def run_particle_beam_drift(
         filter=PARTICLE_FILTER,
         gather=gather,
         B_ext=(0.0, 0.0, GUIDE_BZ_TESLA),
+        wall_stencil=wall_stencil,
     ).attach()
 
     meas_flat_idx_2d, meas_dA_perp = _particle_current_lines(
@@ -3645,6 +3651,7 @@ def _normalise_scw_func_and_args(
             )
             gather = str(args.get("gather", "galerkin"))
             shape = int(args.get("shape", PARTICLE_SHAPE))
+            wall_stencil = str(args.get("wall_stencil", "masked"))
         else:
             seq = list(args)
             nx = int(seq[0])
@@ -3662,7 +3669,8 @@ def _normalise_scw_func_and_args(
             )
             gather = str(seq[7]) if len(seq) > 7 else "galerkin"
             shape = int(seq[8]) if len(seq) > 8 else int(PARTICLE_SHAPE)
-        return canon_func, (
+            wall_stencil = str(seq[9]) if len(seq) > 9 else "masked"
+        key_tuple = (
             nx,
             nz,
             profile,
@@ -3673,6 +3681,10 @@ def _normalise_scw_func_and_args(
             gather,
             shape,
         )
+        # The default wall stencil keeps the historical 9-tuple key.
+        if wall_stencil != "masked":
+            key_tuple = (*key_tuple, wall_stencil)
+        return canon_func, key_tuple
 
     canon_func = str(func_name)
     raw_items = list(args.values()) if isinstance(args, dict) else list(args)
@@ -3920,6 +3932,7 @@ def _cached_particle_drift_impl(
     n_macro: int,
     gather: str,
     shape: int,
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
     norm_args = (
         int(nx),
@@ -3932,11 +3945,14 @@ def _cached_particle_drift_impl(
         str(gather),
         int(shape),
     )
+    if str(wall_stencil) != "masked":
+        norm_args = (*norm_args, str(wall_stencil))
 
     def _run() -> dict[str, Any]:
         lb_ref = cached_linearized_beam_drift(
             nx, nz, rho0_scale=1.0, m_mod=MODULATION_INDEX
         )
+        extra = {} if str(wall_stencil) == "masked" else {"wall_stencil": str(wall_stencil)}
         return run_particle_beam_drift(
             nx,
             nz,
@@ -3948,6 +3964,7 @@ def _cached_particle_drift_impl(
             n_macro_per_step=n_macro,
             gather=gather,
             shape=shape,
+            **extra,
         )
 
     return _scw_disk_cached_call("_cached_particle_drift_impl", norm_args, _run)
@@ -3963,8 +3980,13 @@ def cached_particle_drift(
     n_macro_per_step: int | None = None,
     gather: str = "galerkin",
     shape: int = PARTICLE_SHAPE,
+    wall_stencil: str = "masked",
 ) -> dict[str, Any]:
-    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather, shape)``."""
+    """Cache `ParticleSolver` runs by ``(nx, nz, profile, seed, m_mod, qm_scale, n_macro_per_step, gather, shape)``.
+
+    ``wall_stencil="image"`` appends the stencil to the key; the default ``"masked"`` keeps the
+    historical 9-element key.
+    """
     n_macro = (
         int(n_macro_per_step)
         if n_macro_per_step is not None
@@ -3981,6 +4003,7 @@ def cached_particle_drift(
         n_macro,
         str(gather),
         int(shape),
+        str(wall_stencil),
     )
 
 

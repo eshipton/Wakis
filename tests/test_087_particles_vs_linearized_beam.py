@@ -344,6 +344,75 @@ def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) 
     return {"bound_delta": bound, "dgamma_l": dgamma_l, "dzeta": float(dzeta), "e0_l": e0_l, "jump_l": jump_l}
 
 
+def _entrance_image_delta_bound(
+    nx: int, nz: int, dt: float, params: dict, n_edges: int = 400
+) -> dict:
+    """Derived bound on the DC-depression shift of wall-born particles, ``wall_stencil="image"`` [-].
+
+    With the image stencil the order-2 Galerkin gather of ``E_z`` in the first half cell is the
+    constant ``E0`` (normal field even across the PEC face), so the birth half-step and the first
+    leapfrog steps are exact, and every knot ``zeta = k + 1/2`` of the piecewise-linear gather
+    jumps by a difference of the edge fields: ``E1 - E0`` at ``k = 0`` (first difference, O(dz))
+    and ``E_{k+1} - 2 E_k + E_{k-1}`` for ``k >= 1``. The leapfrog energy gain is the trapezoid
+    rule on the step positions, exact on linear pieces; a knot with slope jump ``J`` crossed at
+    phase ``theta`` adds ``(|q| dz / m c^2) theta (1 - theta) / 2 dzeta^2 |J|``. Bound per line
+    with ``theta (1 - theta) <= 1/4`` at every knot (all particles share one birth phase, so the
+    errors are coherent):
+
+        ``Delta gamma_l <= (|q| dz / m c^2) dzeta^2 / 8 * (|E1 - E0| + sum_k |E_{k+1} - 2 E_k + E_{k-1}|)``
+
+    with the line-gathered edge fields of the discrete 2D (x, z) Poisson problem for a z-uniform
+    beam (axial decay ``lambda_m^k`` per transverse mode, ``n_edges`` edges), maximised over the
+    injected and the depressed density as in :func:`_entrance_first_cell_delta_bound`. Mapped to
+    ``delta`` through the charge-weighted harmonic mean. Unlike the masked bound this includes the
+    interior knots: they are of the same O(dz^2) order as the first-cell term here.
+    """
+    from scipy.constants import c as c_light
+    from scipy.constants import e as e_charge
+    from scipy.constants import epsilon_0, m_e
+
+    det = compute_discrete_dc_depression(
+        nx, params, weighting="charge", return_details=True, shape=PARTICLE_SHAPE
+    )
+    a, b = TUNNEL_HALF_WIDTH_M, BEAM_HALF_THICKNESS_M
+    dx, dz = 2.0 * a / nx, TUNNEL_LENGTH_M / nz
+    n = nx - 1
+    lap = (np.diag(np.full(n, -2.0)) + np.diag(np.ones(n - 1), 1) + np.diag(np.ones(n - 1), -1)) / dx**2
+    kap2, vecs = np.linalg.eigh(-lap)
+    mu = kap2 * dz**2
+    lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0
+    w_mat = det["w_mat"]
+    first_c, inter_c = [], []
+    for rho_case in (det["rho_l"], det["rho_l"] * params["u0"] / det["u_l"]):
+        src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
+        phi_inf = np.linalg.solve(lap, abs(params["rho0"]) * src[1:-1] / epsilon_0)
+        phi_k = (vecs * (vecs.T @ phi_inf)) @ (1.0 - lam[:, None] ** np.arange(n_edges + 1)[None, :])
+        ez = np.zeros((nx + 1, n_edges))
+        ez[1:-1] = (phi_k[:, 1:] - phi_k[:, :-1]) / dz
+        ez_l = w_mat @ ez
+        first_c.append(np.abs(ez_l[:, 1] - ez_l[:, 0]))
+        inter_c.append(np.sum(np.abs(ez_l[:, 2:] - 2.0 * ez_l[:, 1:-1] + ez_l[:, :-2]), axis=1))
+    first_l = np.max(first_c, axis=0)
+    inter_l = np.max(inter_c, axis=0)
+    v0 = params["u0"] / params["gamma0"]
+    dzeta = v0 * float(dt) / dz
+    qm = e_charge * params.get("qm_scale", 1.0) / (m_e * c_light**2)
+    dgamma_l = qm * dz * dzeta**2 * (first_l + inter_l) / 8.0
+
+    def _delta(gam):
+        u = c_light * np.sqrt(gam**2 - 1.0)
+        return 1.0 - np.sum(det["rho_l"]) / (params["u0"] * np.sum(det["rho_l"] / u))
+
+    bound = float(abs(_delta(det["gamma_l"] + dgamma_l) - _delta(det["gamma_l"])))
+    return {
+        "bound_delta": bound,
+        "dgamma_l": dgamma_l,
+        "dzeta": float(dzeta),
+        "first_l": first_l,
+        "interior_l": inter_l,
+    }
+
+
 def _extrapolate_and_check_dc_depression(
     label: str,
     u0: float,
@@ -2270,6 +2339,124 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         expected_failures=("modal", "dirichlet", "none"),
         line_x=x_fib,
     )
+
+
+def test_image_entrance_bound_resolves_charge_vs_flux_weighting():
+    """Derived ``wall_stencil="image"`` entrance bound vs the masked one, and what it can resolve.
+
+    Fast (no particle runs): with the image bound the DEPEXTRAP check must reject (i) a 1 % rho0
+    error and (ii) the flux-weighted model ``delta_flux`` in place of ``delta_charge`` for an
+    exact charge-weighted measurement, on both grids, at the synthetic SEM of the fast test; with
+    the masked bound (ii) passes (the masked check cannot tell the two weightings apart).
+    """
+    from scipy.stats import t as student_t
+
+    from examples._space_charge_waves_common import NOISE_SEEDS, _integer_period_dt
+
+    params = compute_analytic_parameters()
+    tcrit = float(student_t.ppf(0.99865, len(NOISE_SEEDS) - 1))
+    sem = 5.0e-8
+    for label, (nx, _ny, nz) in (("coarse", COARSE_GRID), ("fine", FINE_GRID)):
+        dt, _ = _integer_period_dt(
+            GridFIT3D(
+                -TUNNEL_HALF_WIDTH_M, TUNNEL_HALF_WIDTH_M, -0.5 * PERIODIC_LY_M, 0.5 * PERIODIC_LY_M,
+                0.0, TUNNEL_LENGTH_M, nx, 1, nz, verbose=0,
+            ),
+            cfln=CFL_NUMBER,
+        )
+        b_img = _entrance_image_delta_bound(nx, nz, dt, params)
+        b_msk = _entrance_first_cell_delta_bound(nx, nz, dt, params)
+        det = compute_discrete_dc_depression(
+            nx, params, weighting="charge", return_details=True, shape=PARTICLE_SHAPE
+        )
+        d_chg, d_flx = float(det["delta_charge"]), float(det["delta_flux"])
+        print(
+            f"IMGBOUND grid={label} image={b_img['bound_delta']:.4e} masked={b_msk['bound_delta']:.4e} "
+            f"ratio={b_msk['bound_delta'] / b_img['bound_delta']:.2f} |flux-charge|={abs(d_flx - d_chg):.4e} "
+            f"dzeta={b_img['dzeta']:.5f}",
+            flush=True,
+        )
+        assert b_img["bound_delta"] > 0.0
+        assert b_img["bound_delta"] < b_msk["bound_delta"] / 3.0
+        u_meas = params["u0"] * (1.0 - d_chg)  # exact charge-weighted measurement at m and m/2
+        # passes against the right model
+        _extrapolate_and_check_dc_depression(
+            label, params["u0"], u_meas, u_meas, d_chg, tcrit, sem, b_img["bound_delta"]
+        )
+        # (i) 1 % rho0 error in the model is rejected
+        d_rho = float(
+            compute_discrete_dc_depression(nx, dict(params, rho0=1.01 * params["rho0"]), weighting="charge")
+        )
+        with pytest.raises(AssertionError):
+            _extrapolate_and_check_dc_depression(
+                label, params["u0"], u_meas, u_meas, d_rho, tcrit, sem, b_img["bound_delta"]
+            )
+        # (ii) flux weighting is rejected with the image bound ...
+        with pytest.raises(AssertionError):
+            _extrapolate_and_check_dc_depression(
+                label, params["u0"], u_meas, u_meas, d_flx, tcrit, sem, b_img["bound_delta"]
+            )
+        # ... but not with the masked bound
+        _extrapolate_and_check_dc_depression(
+            label, params["u0"], u_meas, u_meas, d_flx, tcrit, sem, b_msk["bound_delta"]
+        )
+
+
+@pytest.mark.slow
+def test_dc_depression_image_wall_stencil():
+    """DEPEXTRAP with ``wall_stencil="image"``: m -> 0 charge-weighted DC depression vs the model.
+
+    Lattice runs at m and m/2 on both grids with the image wall stencil (4 cached runs); bound
+    ``t * SEM_propagated + _entrance_image_delta_bound``, with ``t`` and the seed SEM of the
+    (masked) 8-seed ensembles. The flux-weighted model must fail the same check (``DEPIMG_FLUX``);
+    a 1 % rho0 model error must fail too.
+    """
+    params = compute_analytic_parameters()
+    first_exc = None
+    for label, (nx, _ny, nz) in (("coarse", COARSE_GRID), ("fine", FINE_GRID)):
+        runs = {
+            mf: cached_particle_drift(
+                nx, nz, profile="sheet_lattice", seed=42, m_mod=mf * MODULATION_INDEX,
+                qm_scale=1.0, wall_stencil="image",
+            )
+            for mf in (1.0, 0.5)
+        }
+        noise = measure_empirical_noise((nx, 1, nz))
+        bnd = _entrance_image_delta_bound(nx, nz, runs[1.0]["dt"], params)["bound_delta"]
+        det = compute_discrete_dc_depression(
+            nx, params, weighting="charge", return_details=True, shape=PARTICLE_SHAPE
+        )
+        d_flx = float(det["delta_flux"])
+        tols = derived_tolerances(nx, nz, params)
+        try:
+            res = _extrapolate_and_check_dc_depression(
+                label + "_image", params["u0"], runs[1.0]["u_z_mean"], runs[0.5]["u_z_mean"],
+                tols["delta_disc_charge"], noise["tcrit"], noise["delta_sem"], bnd,
+            )
+            gap_flux = abs(res["delta0"] - d_flx)
+            print(
+                f"DEPIMG_FLUX grid={label} |delta0 - delta_flux|={gap_flux:.6e} "
+                f"bound={res['bound_dep0']:.6e} resolved={gap_flux > res['bound_dep0']}",
+                flush=True,
+            )
+            with pytest.raises(AssertionError):
+                _extrapolate_and_check_dc_depression(
+                    label + "_image_flux", params["u0"], runs[1.0]["u_z_mean"], runs[0.5]["u_z_mean"],
+                    d_flx, noise["tcrit"], noise["delta_sem"], bnd,
+                )
+            d_rho = float(
+                compute_discrete_dc_depression(nx, dict(params, rho0=1.01 * params["rho0"]), weighting="charge")
+            )
+            with pytest.raises(AssertionError):
+                _extrapolate_and_check_dc_depression(
+                    label + "_image_rho", params["u0"], runs[1.0]["u_z_mean"], runs[0.5]["u_z_mean"],
+                    d_rho, noise["tcrit"], noise["delta_sem"], bnd,
+                )
+        except (AssertionError, pytest.fail.Exception) as exc:
+            if first_exc is None:
+                first_exc = exc
+    if first_exc is not None:
+        raise first_exc
 
 
 @pytest.mark.slow

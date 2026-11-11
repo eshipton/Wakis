@@ -500,6 +500,11 @@ def gauss_residual(
             q_nodes=q_nodes,
             xp=xp,
         )
+        wi = getattr(ps_att, "_wall_images", None) if ps_att is not None else None
+        if wi is not None:
+            wi.deposit_charge(
+                xi, eta, zeta, qw, solver.Nx, solver.Ny, solver.Nz, periodic, q_nodes, xp=xp
+            )
 
     if getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1:
         _mpi_sum_node_guards(solver, q_nodes)
@@ -745,6 +750,7 @@ class ParticleSolver:
         particles_comm: str | None = None,
         capacity_headroom: float | None = None,
         track_energy: bool = False,
+        wall_stencil: str = "masked",
     ):
         self.solver = solver
         self.track_energy = bool(track_energy)
@@ -938,6 +944,32 @@ class ParticleSolver:
         )
         self._has_pec_domain_wall = self._compute_has_pec_domain_wall()
         solver._particles_solid_mask = self.boundaries.solid_mask
+
+        ws_norm = str(wall_stencil).strip().lower()
+        if ws_norm not in ("masked", "image"):
+            raise ValueError(
+                f"Unknown wall_stencil={wall_stencil!r}; expected 'masked' or 'image'."
+            )
+        self.wall_stencil = ws_norm
+        self._wall_images = None
+        if ws_norm == "image":
+            if self.use_mpi and int(getattr(solver, "size", 1)) > 1:
+                raise NotImplementedError(
+                    "wall_stencil='image' is not implemented with MPI domain decomposition."
+                )
+            if self.deposit_scheme != "esirkepov":
+                raise ValueError("wall_stencil='image' requires deposit_scheme='esirkepov'.")
+            from .wall_images import WallImages
+
+            wi = WallImages(
+                tuple(float(v) for v in self.boundaries.xi_min),
+                tuple(float(v) for v in self.boundaries.xi_max),
+                self.boundaries.periodic,
+                self.boundaries.bc_low,
+                self.boundaries.bc_high,
+                self.shape,
+            )
+            self._wall_images = wi if wi.active else None
 
         if self.use_mpi:
             rank = int(solver.rank)
@@ -2480,6 +2512,10 @@ class ParticleSolver:
             periodic=self.boundaries.periodic,
             xp=xp,
         )
+        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+            (Ex, Ey, Ez, Bx, By, Bz),
+            self._image_field(xi_i, eta_i, zeta_i, E_field, B_n_tuple),
+        )
         x_s = sp._x[sl]
         y_s = sp._y[sl]
         z_s = sp._z[sl]
@@ -2714,6 +2750,10 @@ class ParticleSolver:
         """
         if self.shape < 2 or not _ENABLE_PEC_WALL_KICK:
             return
+        if self._wall_images is not None:
+            # Image stencil: the effective potential sum_k W_k Psi_k of a particle on the wall
+            # is identically zero (odd image), so the D17 kick vanishes.
+            return
         s = self.solver
         xp = self.xp
         Nx, Ny, Nz = int(s.Nx), int(s.Ny), int(s.Nz)
@@ -2866,6 +2906,13 @@ class ParticleSolver:
                 q_nodes=q_abs_nodes,
                 xp=xp,
             )
+            self._image_charge(
+                xi1_dep[absorbed_mask],
+                eta1_dep[absorbed_mask],
+                zeta1_dep[absorbed_mask],
+                qw[absorbed_mask],
+                q_abs_nodes,
+            )
             q_bg += q_abs_nodes
             return
 
@@ -2899,6 +2946,13 @@ class ParticleSolver:
                 q_nodes=q_abs_nodes,
                 xp=xp,
             )
+            self._image_charge(
+                xi1_dep[face_mask],
+                eta1_dep[face_mask],
+                zeta1_dep[face_mask],
+                qw[face_mask],
+                q_abs_nodes,
+            )
             self._apply_pec_wall_event(
                 q_abs_nodes,
                 axis=axis_f,
@@ -2922,6 +2976,13 @@ class ParticleSolver:
                 periodic=self.boundaries.periodic,
                 q_nodes=q_abs_nodes,
                 xp=xp,
+            )
+            self._image_charge(
+                xi1_dep[rem_mask],
+                eta1_dep[rem_mask],
+                zeta1_dep[rem_mask],
+                qw[rem_mask],
+                q_abs_nodes,
             )
             q_bg += q_abs_nodes
 
@@ -2974,6 +3035,15 @@ class ParticleSolver:
                         d_n_particles=sp._d_n_particles if sp._n_dirty_gpu else None,
                         n_launch=n_l,
                     )
+                    if self._wall_images is not None:
+                        n_act = int(sp.n_particles)
+                        self._image_charge(
+                            xi[:n_act],
+                            eta[:n_act],
+                            zeta[:n_act],
+                            sp.charge * sp._w[:n_act],
+                            q0,
+                        )
                 else:
                     xi, eta, zeta = self.grid_map.to_logical(sp.x, sp.y, sp.z)
                     deposit_charge(
@@ -2989,6 +3059,7 @@ class ParticleSolver:
                         q_nodes=q0,
                         xp=xp,
                     )
+                    self._image_charge(xi, eta, zeta, sp.charge * sp.w, q0)
         except Exception as exc:
             local_exc = exc
         self._collective_check(local_exc)
@@ -3063,6 +3134,87 @@ class ParticleSolver:
         arr = np.asarray(spec, dtype=np.float64).ravel()
         return (float(arr[0]), float(arr[1]), float(arr[2])), None
 
+    def _image_field(self, xi, eta, zeta, E_field, B_tuple):
+        """Image-stencil part of the gathered ``(E, B)`` at logical positions, or ``None``.
+
+        Non-``None`` only with ``wall_stencil="image"`` and particles within the stencil margin
+        of a planar PEC domain face (see :mod:`wakis.particles.wall_images`).
+        """
+        wi = self._wall_images
+        if wi is None:
+            return None
+        s = self.solver
+        return wi.field_correction(
+            xi,
+            eta,
+            zeta,
+            E_field,
+            B_tuple,
+            s.Nx,
+            s.Ny,
+            s.Nz,
+            self.gather,
+            self.boundaries.periodic,
+            xp=self.xp,
+        )
+
+    def _image_charge(self, xi, eta, zeta, qw, q_nodes) -> None:
+        """Add the image charges [C] of particles at logical ``(xi, eta, zeta)`` to ``q_nodes``."""
+        wi = self._wall_images
+        if wi is None:
+            return
+        s = self.solver
+        wi.deposit_charge(
+            xi,
+            eta,
+            zeta,
+            qw,
+            s.Nx,
+            s.Ny,
+            s.Nz,
+            self.boundaries.periodic,
+            q_nodes,
+            xp=self.xp,
+        )
+
+    @staticmethod
+    def _add_image_field(fields6, corr):
+        """Return ``fields6 + corr`` component-wise (``fields6`` unchanged if ``corr`` is None)."""
+        if corr is None:
+            return tuple(fields6)
+        return tuple(f + c for f, c in zip(fields6, corr))
+
+    def _gpu_ext_arrays_with_images(self, sp, n_l, E_arr, B_arr, E_flat, B_flat):
+        """Merge the image-stencil field into the per-particle external-field arrays (GPU)."""
+        if self._wall_images is None:
+            return E_arr, B_arr
+        xp = self.xp
+        s = self.solver
+        N = s.Nx * s.Ny * s.Nz
+        n_act = min(int(sp.n_particles), int(n_l))
+        if n_act == 0:
+            return E_arr, B_arr
+        xi, eta, zeta = self.grid_map.to_logical(
+            sp._x[:n_act], sp._y[:n_act], sp._z[:n_act]
+        )
+        corr = self._image_field(
+            xi,
+            eta,
+            zeta,
+            (E_flat[:N], E_flat[N : 2 * N], E_flat[2 * N : 3 * N]),
+            (B_flat[:N], B_flat[N : 2 * N], B_flat[2 * N : 3 * N]),
+        )
+        if corr is None:
+            return E_arr, B_arr
+        full = []
+        for c in corr:
+            a = xp.zeros(int(n_l), dtype=np.float64)
+            a[:n_act] = c
+            full.append(a)
+        E_new = tuple(full[:3]) if E_arr is None else tuple(a + b for a, b in zip(E_arr, full[:3]))
+        B_new = tuple(full[3:]) if B_arr is None else tuple(a + b for a, b in zip(B_arr, full[3:]))
+        return E_new, B_new
+
     def _initialize_species_half_step(self, sp: Species, B_n_tuple, t_n: float) -> None:
         """Back-push ``u^0 -> u^{-1/2}`` by ``-dt / 2`` on step 0 if ``sp.u_is_synced``."""
         if not sp.u_is_synced:
@@ -3080,6 +3232,9 @@ class ParticleSolver:
             )
             B_uni, B_arr = self._ext_field_args_gpu(
                 self.B_ext, sp._x[:n_l], sp._y[:n_l], sp._z[:n_l], t_n
+            )
+            E_arr, B_arr = self._gpu_ext_arrays_with_images(
+                sp, n_l, E_arr, B_arr, s.E.toarray(), self._B_n_buf
             )
             launch_gather_and_push_gpu(
                 sp,
@@ -3121,6 +3276,10 @@ class ParticleSolver:
                     periodic=self.boundaries.periodic,
                     xp=self.xp,
                 )
+                Ex_c, Ey_c, Ez_c, Bx_c, By_c, Bz_c = self._add_image_field(
+                    (Ex_c, Ey_c, Ez_c, Bx_c, By_c, Bz_c),
+                    self._image_field(xi_c, eta_c, zeta_c, s.E, B_n_tuple),
+                )
                 Ex_e, Ey_e, Ez_e = self._eval_ext_field(self.E_ext, x_c, y_c, z_c, t_n)
                 Bx_e, By_e, Bz_e = self._eval_ext_field(self.B_ext, x_c, y_c, z_c, t_n)
                 ux_c, uy_c, uz_c = fn(
@@ -3158,6 +3317,10 @@ class ParticleSolver:
             gather=self.gather,
             periodic=self.boundaries.periodic,
             xp=self.xp,
+        )
+        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+            (Ex, Ey, Ez, Bx, By, Bz),
+            self._image_field(xi0, eta0, zeta0, s.E, B_n_tuple),
         )
         Ex_e, Ey_e, Ez_e = self._eval_ext_field(self.E_ext, sp.x, sp.y, sp.z, t_n)
         Bx_e, By_e, Bz_e = self._eval_ext_field(self.B_ext, sp.x, sp.y, sp.z, t_n)
@@ -3337,6 +3500,13 @@ class ParticleSolver:
                         periodic=self.boundaries.periodic,
                         q_nodes=q_inj_nodes,
                     )
+                    self._image_charge(
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        sp_inj.charge * sp_inj._w[sl_new],
+                        q_inj_nodes,
+                    )
                     if inj.emitter_kind == "pec_wall":
                         axis_inj, side_inj = self._injector_pec_wall_face(inj)
                         self._apply_pec_wall_event(
@@ -3412,6 +3582,9 @@ class ParticleSolver:
                         B_uni, B_arr = self._ext_field_args_gpu(
                             self.B_ext, sp._x[:n_l], sp._y[:n_l], sp._z[:n_l], t_n
                         )
+                        E_arr, B_arr = self._gpu_ext_arrays_with_images(
+                            sp, n_l, E_arr, B_arr, E_flat, B_n_flat
+                        )
 
                         launch_gather_and_push_gpu(
                             sp,
@@ -3439,7 +3612,7 @@ class ParticleSolver:
                             eta1_dep = sp._eta1_scratch
                             zeta1_dep = sp._zeta1_scratch
                             keep_mask_i32 = None
-                        elif not has_custom_mask_col:
+                        elif not has_custom_mask_col and self._wall_images is None:
                             use_cl_gpu = bool(
                                 self.track_energy
                                 and _ENABLE_PEC_WALL_CLOSURE
@@ -3523,6 +3696,23 @@ class ParticleSolver:
                                 n_launch=n_l,
                                 d_cfl_error=self._d_cfl_error,
                             )
+                            if self._wall_images is not None:
+                                n_act = int(sp.n_particles)
+                                self._wall_images.deposit_current(
+                                    sp._xi0_scratch[:n_act],
+                                    sp._eta0_scratch[:n_act],
+                                    sp._zeta0_scratch[:n_act],
+                                    xi1_dep[:n_act],
+                                    eta1_dep[:n_act],
+                                    zeta1_dep[:n_act],
+                                    sp.charge * sp._w[:n_act],
+                                    Nx,
+                                    Ny,
+                                    self._Nz_dep,
+                                    self.boundaries.periodic,
+                                    (Wx_tot, Wy_tot, Wz_tot),
+                                    xp=xp,
+                                )
                         else:
                             n_act = sp.n_particles
                             Wx_n, Wy_n, Wz_n = deposit_current_naive(
@@ -3762,6 +3952,13 @@ class ParticleSolver:
                         q_nodes=q_inj_nodes,
                         xp=xp,
                     )
+                    self._image_charge(
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        sp_inj.charge * sp_inj.w[sl_new],
+                        q_inj_nodes,
+                    )
                     if inj.emitter_kind == "pec_wall":
                         axis_inj, side_inj = self._injector_pec_wall_face(inj)
                         self._apply_pec_wall_event(
@@ -3960,6 +4157,10 @@ class ParticleSolver:
                             periodic=self.boundaries.periodic,
                             xp=xp,
                         )
+                        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+                            (Ex, Ey, Ez, Bx, By, Bz),
+                            self._image_field(xi0, eta0, zeta0, s.E, B_n_tuple),
+                        )
                         Ex_e, Ey_e, Ez_e = self._eval_ext_field(
                             self.E_ext, x0, y0, z0, t_n
                         )
@@ -4027,6 +4228,22 @@ class ParticleSolver:
                                 Wz_out=Wz_tot,
                                 xp=xp,
                             )
+                            if self._wall_images is not None:
+                                self._wall_images.deposit_current(
+                                    xi0,
+                                    eta0,
+                                    zeta0,
+                                    xi1_dep,
+                                    eta1_dep,
+                                    zeta1_dep,
+                                    qw,
+                                    Nx,
+                                    Ny,
+                                    self._Nz_dep,
+                                    self.boundaries.periodic,
+                                    (Wx_tot, Wy_tot, Wz_tot),
+                                    xp=xp,
+                                )
                         else:
                             Wx_n, Wy_n, Wz_n = deposit_current_naive(
                                 xi0,
