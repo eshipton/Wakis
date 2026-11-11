@@ -320,3 +320,51 @@ Self-check results:
   - `tiny_tracked_completed = 12`
   - `tiny_mean_sum_dphi_over_mc2 = 1.765432e-04` vs `tiny_mean_gamma_excess_sync = 1.761968e-04`.
 
+
+---
+
+## Removing the First-Cell Entrance Error: Image Wall Stencil (`wall_stencil="image"`, 2026-11-10)
+
+### Options evaluated from first principles
+
+The leapfrog energy gain in a static field is the trapezoid rule of the gathered field $E_g$ on the
+step positions $z^n$; it is exact on linear pieces of $E_g$, and a slope jump $J$ crossed at phase
+$\theta$ adds $(|q|\Delta z/mc^2)\,\tfrac12\theta(1-\theta)\Delta\zeta^2|J|$.
+
+- **Staggered birth phases (rejected).** $\theta(1-\theta) \ge 0$ for every phase, so spreading the
+  births uniformly over the step does not cancel the error: it replaces the coherent coefficient
+  $\tfrac12\theta(1-\theta)$ by its mean $1/12$ (coarse: $0.042 \to 0.083$, i.e. 2x worse; fine:
+  $0.112 \to 0.083$). Only $\theta \to 0$ (a step landing exactly on $\zeta = 1/2$) removes it, which
+  cannot hold for modulated or self-consistent beams.
+- **Image (mirrored-ghost) stencil (implemented, opt-in).** Fold the out-of-domain stencil back with
+  the PEC image symmetry (charge odd; normal $E$ even, tangential $E$ odd; $B_n$ odd, $B_t$ even),
+  i.e. deposit the real and the image path with the standard masked Esirkepov deposit (Gauss exact
+  per path) and gather with its transpose. A particle on the wall then has zero visible charge and
+  zero effective potential, so the D17 closure current and birth kick vanish identically (no
+  re-derivation needed: both are zero). The first-half-cell gather becomes $E_g = E_0$ (constant,
+  so the birth half step is exact) and the knot at $\zeta = 1/2$ jumps by $E_1 - E_0$ instead of
+  $E_1 - 2E_0$: the coherent error becomes second order in $\Delta z$.
+
+### Prediction vs measurement
+
+| quantity | coarse masked | coarse image | fine masked | fine image |
+| --- | --- | --- | --- | --- |
+| frozen-field knot jump (`single_particle.py`, dt) | 1.773e-8 (pred 1.772e-8) | 2.914e-9 (pred 2.915e-9) | — | — |
+| static 1D model cell-0 excess (`wall_gather_model.py`) | 2.65e-8 | 6.2e-9 | 3.82e-8 | 5.7e-9 |
+| settled beam RPROF cell 0 (`path_identity.py`) | 3.105e-8 | 1.253e-8 | 3.894e-8 | 6.45e-9 |
+| settled beam total excess (RPROF cum) | +8.96e-9 | -9.78e-9 | +3.450e-8 | +1.08e-9 |
+| static model total excess at zeta = 6 | +1.30e-8 | -7.3e-9 | +3.59e-8 | +3.4e-9 |
+| m -> 0 delta0 - delta_disc_charge (`dc_image.py`) | -2.676e-7 | +2.438e-7 | -8.800e-7 | -5.18e-8 |
+| delta0 - delta_disc_flux | +1.130e-6 | +1.641e-6 | +6.01e-7 | +1.429e-6 |
+| derived entrance bound in delta | 3.62e-6 | 9.60e-7 | 2.05e-6 | 3.31e-7 |
+
+The masked runs reproduce the earlier `p5b-path5` RPROF and DEPEXTRAP gaps to all printed digits
+(default path unchanged). On the fine grid the image stencil removes the entrance term (gap 17x
+smaller, total excess 32x smaller). On the coarse grid the first-cell remainder falls 2.5x
+(predicted 4.3x) and the remaining near-wall leapfrog error (cells 1-5, the same in both stencils,
+O(dt^2); interior knots of the near-wall field) now dominates with the opposite sign, so the gap
+magnitude is unchanged (+2.4e-7 vs -2.7e-7) but lies inside the 3.8x tighter derived bound. The
+coarse cell-0 remainder is 2x above the static-model prediction (open: non-static settled field or
+the coarse knot-phase sequence; the fine grid agrees to 13 %).
+
+Jobs: `fce-dc-{coarse,fine}-m{10,05}-{image,masked}*`, `fce-path-{coarse,fine}-{image,masked}*`.
