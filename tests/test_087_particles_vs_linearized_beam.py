@@ -69,6 +69,10 @@ from examples._space_charge_waves_common import (
     settle_steps,
     transverse_weight_matrix,
 )
+from examples._lb_modal_prediction import (
+    lb_first_pass_phasor,
+    lb_first_pass_prediction,
+)
 from wakis import GridFIT3D, SolverFIT3D
 from wakis.beam_fluid import LinearizedBeam, reduction_factor_planar
 from wakis.estimate import estimate, preflight
@@ -119,6 +123,43 @@ class _CicNodeRho0:
 
     def __float__(self) -> float:
         return self.rho_peak
+
+
+def _d21_tolerances(
+    nx: int,
+    nz: int,
+    params: dict,
+    omega_p_scale: float = 1.0,
+    **kwargs,
+) -> dict:
+    """`derived_tolerances` with the LinearizedBeam entries replaced by the D21 first-pass prediction.
+
+    ``bq_pred_lb`` / ``slack_lb`` become the exact discrete first-pass prediction of
+    `examples._lb_modal_prediction.lb_first_pass_prediction` and its derived slack
+    ``s_fp + s_tail + s_front + s_round``; ``slack_cross = slack_lb + slack_part``. The
+    legacy cos-form values stay available as ``bq_pred_lb_legacy`` / ``slack_lb_legacy``.
+    """
+    tols = dict(
+        derived_tolerances(nx, nz, params, omega_p_scale=omega_p_scale, **kwargs)
+    )
+    d21 = lb_first_pass_prediction(
+        int(nx), int(nz), rho0_scale=float(omega_p_scale) ** 2
+    )
+    assert d21["first_pass_valid"], (
+        f"D21 first-pass prediction invalid on ({nx}, {nz}): z_front_min = "
+        f"{d21['z_front_min']:.4e} m <= 0 (t_end = {d21['t_end']:.4e} s, "
+        f"t_reach0 = {d21['t_reach0']:.4e} s)"
+    )
+    tols["bq_pred_lb_legacy"] = tols["bq_pred_lb"]
+    tols["slack_lb_legacy"] = tols["slack_lb"]
+    tols["bq_pred_lb"] = float(d21["bq_pred"])
+    tols["s_fp_lb"] = float(d21["s_fp"])
+    tols["s_tail_lb"] = float(d21["s_tail"])
+    tols["s_front_lb"] = float(d21["s_front"])
+    tols["s_round_lb"] = float(d21["s_round"])
+    tols["slack_lb"] = float(d21["slack"])
+    tols["slack_cross"] = float(d21["slack"] + tols["slack_part"])
+    return tols
 
 
 def _fibonacci_disk_x_coords(
@@ -1623,7 +1664,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
     """Verify coarse-grid signed checks (Step 2 & Step 3), entrance amplitude, DFT leakage, and spatial spectrum."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
-    tols = derived_tolerances(nx, nz, params)
+    tols = _d21_tolerances(nx, nz, params)
     z_min, z_max = fit_window(params)
     beta_q_th = params["beta_q"]
 
@@ -1681,10 +1722,13 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         flush=True,
     )
     print(
-        f"LBCHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_modal={bq_lb_pred:.6f} "
+        f"LBCHECK grid=coarse bq_th={beta_q_th:.6f} bq_pred_d21={bq_lb_pred:.6f} "
         f"bq_lb={bq_lb:.6f} resid={resid_lb:.6e} "
-        f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} "
-        f"s_sym_lb={tols['s_sym_lb']:.6e} s_round={tols['s_round']:.6e} slack={slack_lb:.6e}",
+        f"s_fp_lb={tols['s_fp_lb']:.6e} s_tail_lb={tols['s_tail_lb']:.6e} "
+        f"s_front_lb={tols['s_front_lb']:.6e} s_round={tols['s_round_lb']:.6e} "
+        f"slack={slack_lb:.6e} bq_pred_legacy={tols['bq_pred_lb_legacy']:.6f} "
+        f"resid_legacy={abs(bq_lb / tols['bq_pred_lb_legacy'] - 1.0):.6e} "
+        f"slack_legacy={tols['slack_lb_legacy']:.6e}",
         flush=True,
     )
     print(
@@ -1692,7 +1736,8 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"beta_m4={extrap_c['bq_m4']:.6f} beta0={beta0_c:.6f} bq_lb={bq_lb:.6f} "
         f"bq_pred_part={bq_part_pred:.6f} bq_pred_lb={bq_lb_pred:.6f} "
         f"resid_cross={resid_cross:.6e} "
-        f"s_win_lb={tols['s_win_lb']:.6e} s_modes_lb={tols['s_modes_lb']:.6e} s_sym_lb={tols['s_sym_lb']:.6e} "
+        f"s_fp_lb={tols['s_fp_lb']:.6e} s_tail_lb={tols['s_tail_lb']:.6e} "
+        f"s_front_lb={tols['s_front_lb']:.6e} "
         f"s_win_part={tols['s_win_part']:.6e} s_modes_part={tols['s_modes_part']:.6e} s_sym_part={tols['s_sym_part']:.6e} "
         f"s_round={tols['s_round']:.6e} slack_lb={slack_lb:.6e} slack_part={slack_part:.6e} "
         f"slack_cross={slack_cross:.6e} e_R={extrap_c['e_R']:.6e} sigma_prop={extrap_c['sigma_prop']:.6e} "
@@ -1747,7 +1792,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
         f"Identity check failed: kappa_dc={tols['kappa_dc']:.6f} <= gamma1_disc={tols['gamma1_disc']:.6f}"
     )
     slack_lb_check = (
-        tols["s_win_lb"] + tols["s_modes_lb"] + tols["s_sym_lb"] + tols["s_round"]
+        tols["s_fp_lb"] + tols["s_tail_lb"] + tols["s_front_lb"] + tols["s_round_lb"]
     )
     slack_part_check = (
         tols["s_win_part"] + tols["s_modes_part"] + tols["s_sym_part"] + tols["s_round"]
@@ -1807,7 +1852,7 @@ def test_space_charge_wave_envelope_entrance_and_spectrum():
 
     # Step 3: LinearizedBeam deterministic modal prediction check
     assert resid_lb <= slack_lb, (
-        f"Coarse LB |bq_lb/bq_pred_modal - 1| = {resid_lb:.6e} > slack_lb = {slack_lb:.6e} "
+        f"Coarse LB |bq_lb/bq_pred_d21 - 1| = {resid_lb:.6e} > slack_lb = {slack_lb:.6e} "
         f"(margin={slack_lb - resid_lb:+.6e})"
     )
 
@@ -1847,7 +1892,7 @@ def test_mutation_double_particle_charge_to_mass_fails():
     params = compute_analytic_parameters(qm_scale=1.0)
     params_mut = compute_analytic_parameters(qm_scale=2.0)
     nx, _, nz = COARSE_GRID
-    tols = derived_tolerances(nx, nz, params)
+    tols = _d21_tolerances(nx, nz, params)
     tols_mut = derived_tolerances(nx, nz, params_mut)
     extrap_base = compute_m_extrapolation(nx, nz, include_m4=True)
 
@@ -1953,8 +1998,8 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
     """M2: Doubling `LinearizedBeam.rho0` matches `omega_p,dep * sqrt(2)` prediction and fails cross-code check."""
     params = compute_analytic_parameters()
     nx, _, nz = COARSE_GRID
-    tols = derived_tolerances(nx, nz, params)
-    tols_m2 = derived_tolerances(nx, nz, params, omega_p_scale=float(np.sqrt(2.0)))
+    tols = _d21_tolerances(nx, nz, params)
+    tols_m2 = _d21_tolerances(nx, nz, params, omega_p_scale=float(np.sqrt(2.0)))
 
     lb_res, _ = cached_baseline_pair(nx, nz)
     z_coords = lb_res["z_coords"]
@@ -2001,7 +2046,7 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
     baseline_check_failed = bool(resid_cross_mut > tols["slack_cross"])
 
     print(
-        f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred_modal={bq_lb_m2_pred:.6f} "
+        f"\nMUTCHECK id=M2 meas={bq_lb_mut:.6f} pred_d21={bq_lb_m2_pred:.6f} "
         f"slack={bound_m2:.6e} resid={resid_m2:.6e} bound={bound_m2:.6e} "
         f"kp_minus={para_m2['kp_minus']:.6f} kp_plus={para_m2['kp_plus']:.6f} "
         f"disp_resid_minus={para_m2['disp_resid_minus']:.3e} disp_resid_plus={para_m2['disp_resid_plus']:.3e} "
@@ -2020,6 +2065,116 @@ def test_mutation_linearized_beam_rho0_off_by_2x_fails(monkeypatch):
         f"M2 |bq_lb_mut/bq_lb_m2_pred - 1| = {resid_m2:.6e} > slack_lb = {bound_m2:.6e} "
         f"(margin={bound_m2 - resid_m2:+.6e})"
     )
+
+
+def _lb_d21_check(bq_meas: float, bq_pred: float, slack: float, label: str) -> float:
+    """Signed D21 LinearizedBeam check ``|bq_meas / bq_pred - 1| <= slack``; returns the residual."""
+    resid = abs(bq_meas / bq_pred - 1.0)
+    assert resid <= slack, (
+        f"{label}: |bq_lb/bq_pred - 1| = {resid:.6e} > D21 slack {slack:.6e} "
+        f"(margin={slack - resid:+.6e})"
+    )
+    return resid
+
+
+@pytest.mark.slow
+def test_lb_d21_first_pass_prediction_and_negative_controls():
+    """D21: the LinearizedBeam run matches its exact discrete first-pass prediction on both grids.
+
+    LB-only (CPU, ~2 min). Per grid: ``first_pass_valid`` for the production window,
+    ``|bq_lb / bq_D21 - 1| <= slack_D21`` (``s_fp + s_tail + s_front + s_round``), and the
+    same check *fails* for the legacy cos-form prediction, legacy + CN ``1/c_h`` roots, the
+    first-pass solve without the entrance wall or with a PMC wall, and the multi-bounce
+    steady state of the exact scheme.
+    """
+    params = compute_analytic_parameters()
+    z_min, z_max = fit_window(params)
+    for nx, _, nz in (COARSE_GRID, FINE_GRID):
+        lb = cached_linearized_beam_drift(nx, nz)
+        bq_lb = float(
+            fit_beta_q_from_envelope(
+                lb["z_coords"], lb["i1_lb"], params["beta_q"], z_min=z_min, z_max=z_max
+            )["beta_q"]
+        )
+        d21 = lb_first_pass_prediction(nx, nz)
+        assert d21["first_pass_valid"], f"({nx},{nz}) DFT window not first-pass"
+        resid = _lb_d21_check(bq_lb, d21["bq_pred"], d21["slack"], f"D21 ({nx},{nz})")
+        print(
+            f"\nLBD21 grid=({nx},{nz}) bq_lb={bq_lb:.7f} bq_pred={d21['bq_pred']:.7f} "
+            f"resid={resid:.3e} slack={d21['slack']:.3e} (s_fp={d21['s_fp']:.2e} "
+            f"s_tail={d21['s_tail']:.2e} s_front={d21['s_front']:.2e}) "
+            f"z_front_min={d21['z_front_min']:.4f} t_end/t_reach0={d21['t_end'] / d21['t_reach0']:.4f}",
+            flush=True,
+        )
+        nb = round(0.02 / (TUNNEL_LENGTH_M / nz))
+        variants = {
+            "legacy_cos_form": float(discrete_modal_prediction("lb", nx, nz, params)),
+            "legacy_with_1/c_h": float(
+                discrete_modal_prediction(
+                    "lb", nx, nz, params, omega_p_scale=1.0 / d21["c_half"]
+                )
+            ),
+            "multibounce_steady": float(d21["bq_exact_steady"]),
+        }
+        for name, kw in (
+            ("no_entrance_wall", {"entrance_gap_cells": nb}),
+            ("pmc_entrance_wall", {"bc_z_low": "pmc"}),
+        ):
+            ph = lb_first_pass_phasor(nx, nz, **kw)
+            variants[name] = float(
+                fit_beta_q_from_envelope(
+                    ph["z_coords"], ph["i1"], params["beta_q"], z_min=z_min, z_max=z_max
+                )["beta_q"]
+            )
+        for name, bq_v in variants.items():
+            print(
+                f"  control {name}: bq_pred={bq_v:.7f} resid={abs(bq_lb / bq_v - 1.0):.3e}",
+                flush=True,
+            )
+            with pytest.raises(AssertionError, match="D21 slack"):
+                _lb_d21_check(bq_lb, bq_v, d21["slack"], f"control {name} ({nx},{nz})")
+
+
+@pytest.mark.slow
+def test_lb_d21_rho0_doubled_matches_own_prediction_and_fails_baseline(monkeypatch):
+    """D21 M2 (LB only): doubled ``rho0`` matches ``lb_first_pass_prediction(rho0_scale=2)`` and fails the baseline one."""
+    params = compute_analytic_parameters()
+    nx, _, nz = COARSE_GRID
+    z_min, z_max = fit_window(params)
+    d21_base = lb_first_pass_prediction(nx, nz)
+    d21_m2 = lb_first_pass_prediction(nx, nz, rho0_scale=2.0)
+    assert d21_m2["first_pass_valid"]
+
+    orig_lb_init = LinearizedBeam.__init__
+
+    def _mutated_lb_init(self, *args, **kwargs):
+        if "rho0" in kwargs and kwargs["rho0"] is not None:
+            kwargs = dict(kwargs, rho0=2.0 * kwargs["rho0"])
+        orig_lb_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(LinearizedBeam, "__init__", _mutated_lb_init)
+    lb_mut = run_linearized_beam_drift(nx, nz, rho0_scale=1.0)
+    bq_mut = float(
+        fit_beta_q_from_envelope(
+            lb_mut["z_coords"],
+            lb_mut["i1_lb"],
+            float(np.sqrt(2.0) * params["beta_q"]),
+            z_min=z_min,
+            z_max=z_max,
+        )["beta_q"]
+    )
+    resid = _lb_d21_check(
+        bq_mut, d21_m2["bq_pred"], d21_m2["slack"], "D21 M2 own prediction"
+    )
+    print(
+        f"\nLBD21 M2 bq_mut={bq_mut:.7f} bq_pred_m2={d21_m2['bq_pred']:.7f} resid={resid:.3e} "
+        f"slack={d21_m2['slack']:.3e} baseline_pred={d21_base['bq_pred']:.7f}",
+        flush=True,
+    )
+    with pytest.raises(AssertionError, match="D21 slack"):
+        _lb_d21_check(
+            bq_mut, d21_base["bq_pred"], d21_base["slack"], "D21 M2 vs baseline"
+        )
 
 
 @pytest.mark.slow
@@ -2126,8 +2281,8 @@ def test_two_resolution_convergence_and_sheet_ensemble():
 
     nx_c, _, nz_c = COARSE_GRID
     nx_f, _, nz_f = FINE_GRID
-    tols_c = derived_tolerances(nx_c, nz_c, params)
-    tols_f = derived_tolerances(nx_f, nz_f, params)
+    tols_c = _d21_tolerances(nx_c, nz_c, params)
+    tols_f = _d21_tolerances(nx_f, nz_f, params)
 
     lb_c, part_c = cached_baseline_pair(nx_c, nz_c)
     lb_f, part_f = cached_baseline_pair(nx_f, nz_f)
@@ -2240,8 +2395,13 @@ def test_two_resolution_convergence_and_sheet_ensemble():
         flush=True,
     )
     print(
-        f"LBCHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_modal={bq_lb_pred_f:.6f} "
-        f"bq_lb={bq_lb_f:.6f} resid={resid_lb_f:.6e} slack={tols_f['slack_lb']:.6e}",
+        f"LBCHECK grid=fine bq_th={beta_q_th:.6f} bq_pred_d21={bq_lb_pred_f:.6f} "
+        f"bq_lb={bq_lb_f:.6f} resid={resid_lb_f:.6e} slack={tols_f['slack_lb']:.6e} "
+        f"(s_fp={tols_f['s_fp_lb']:.3e} s_tail={tols_f['s_tail_lb']:.3e} "
+        f"s_front={tols_f['s_front_lb']:.3e}) "
+        f"bq_pred_legacy={tols_f['bq_pred_lb_legacy']:.6f} "
+        f"resid_legacy={abs(bq_lb_f / tols_f['bq_pred_lb_legacy'] - 1.0):.6e} "
+        f"slack_legacy={tols_f['slack_lb_legacy']:.6e}",
         flush=True,
     )
 
