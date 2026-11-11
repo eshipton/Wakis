@@ -77,8 +77,13 @@ class _PointCollector:
         n_macro_per_step: int | None = None,
         gather: str = "galerkin",
         shape: int = PARTICLE_SHAPE,
+        wall_stencil: str = "masked",
     ) -> None:
-        """Record a `cached_particle_drift` simulation point and its linearized-beam dependency."""
+        """Record a `cached_particle_drift` simulation point and its linearized-beam dependency.
+
+        ``wall_stencil="image"`` points carry the stencil in ``args``; masked points keep the
+        historical nine-field args so their listing is unchanged.
+        """
         nx_i = int(nx)
         nz_i = int(nz)
         # _cached_particle_drift_impl always fetches the baseline linearized-beam reference first
@@ -99,22 +104,23 @@ class _PointCollector:
             n_macro,
             str(gather),
             int(shape),
+            str(wall_stencil),
         )
         if key not in self._particle_points:
-            self._particle_points[key] = {
-                "func": "particle",
-                "args": {
-                    "nx": key[0],
-                    "nz": key[1],
-                    "profile": key[2],
-                    "seed": key[3],
-                    "m_mod": key[4],
-                    "qm_scale": key[5],
-                    "n_macro": key[6],
-                    "gather": key[7],
-                    "shape": key[8],
-                },
+            args = {
+                "nx": key[0],
+                "nz": key[1],
+                "profile": key[2],
+                "seed": key[3],
+                "m_mod": key[4],
+                "qm_scale": key[5],
+                "n_macro": key[6],
+                "gather": key[7],
+                "shape": key[8],
             }
+            if key[9] != "masked":
+                args["wall_stencil"] = key[9]
+            self._particle_points[key] = {"func": "particle", "args": args}
 
     def add_baseline_pair(
         self,
@@ -391,12 +397,30 @@ def _points_test_optional_diagnostics(c: _PointCollector) -> None:
     )
 
 
+def _points_test_dc_depression_image_wall_stencil(c: _PointCollector) -> None:
+    """Image-wall lattice runs at m and m/2 plus the masked 8-seed noise ensembles, both grids."""
+    for grid in (COARSE_GRID, FINE_GRID):
+        nx, _, nz = grid
+        for mf in (1.0, 0.5):
+            c.add_particle(
+                nx,
+                nz,
+                profile="sheet_lattice",
+                seed=42,
+                m_mod=mf * MODULATION_INDEX,
+                qm_scale=1.0,
+                wall_stencil="image",
+            )
+        c.add_empirical_noise(grid)
+
+
 TEST_ENUMERATORS: dict[str, Callable[[_PointCollector], None]] = {
     "test_two_resolution_convergence_and_sheet_ensemble": (
         _points_test_two_resolution_convergence_and_sheet_ensemble
     ),
     "test_axial_vs_transverse_refinement": _points_test_axial_vs_transverse_refinement,
     "test_optional_diagnostics": _points_test_optional_diagnostics,
+    "test_dc_depression_image_wall_stencil": _points_test_dc_depression_image_wall_stencil,
 }
 
 
@@ -446,6 +470,7 @@ def run_point(test_names: Sequence[str], index: int) -> tuple[str, float]:
             int(args["n_macro"]),
             str(args["gather"]),
             int(args["shape"]),
+            str(args.get("wall_stencil", "masked")),
         )
     else:
         raise ValueError(f"Unsupported point func {func!r}")

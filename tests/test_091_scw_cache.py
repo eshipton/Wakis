@@ -153,6 +153,7 @@ def _make_fake_simulators() -> tuple[Any, Any, dict[str, int], list[dict[str, An
         n_macro_per_step: int | None = None,
         gather: str = "galerkin",
         shape: int = scw.PARTICLE_SHAPE,
+        wall_stencil: str = "masked",
         *,
         _from_cached: bool = False,
     ) -> dict[str, Any]:
@@ -178,6 +179,11 @@ def _make_fake_simulators() -> tuple[Any, Any, dict[str, int], list[dict[str, An
                         "n_macro": n_macro,
                         "gather": str(gather),
                         "shape": int(shape),
+                        **(
+                            {"wall_stencil": str(wall_stencil)}
+                            if wall_stencil != "masked"
+                            else {}
+                        ),
                     },
                 }
             )
@@ -428,7 +434,7 @@ def test_unset_env_performs_no_file_io(monkeypatch):
 
 
 def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
-    """Verify `scw_points.py list` matches the recorded call graph of the three slow tests and passes strict replay."""
+    """Verify `scw_points.py list` matches the recorded call graph of the four slow tests and passes strict replay."""
     _clear_all_scw_lru_caches()
     monkeypatch.delenv("CEM_SCW_CACHE_DIR", raising=False)
     monkeypatch.delenv("CEM_SCW_CACHE_STRICT", raising=False)
@@ -576,6 +582,10 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
             t087.test_axial_vs_transverse_refinement,
         ),
         ("test_optional_diagnostics", t087.test_optional_diagnostics),
+        (
+            "test_dc_depression_image_wall_stencil",
+            t087.test_dc_depression_image_wall_stencil,
+        ),
     ]
 
     def _point_set(
@@ -589,7 +599,7 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
         recorded.clear()
         try:
             tfun()
-        except AssertionError:
+        except (AssertionError, pytest.fail.Exception):
             pass
         rec_set = _point_set(recorded)
         list_pts = scw_points.list_points([tname])
@@ -606,7 +616,7 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
             f"missing={rec_set - list_set}, extra={list_set - rec_set}"
         )
 
-    # 2. Check combined CLI `list` output and dependency ordering across all three tests
+    # 2. Check combined CLI `list` output and dependency ordering across all four tests
     all_names = [tname for tname, _ in test_funcs]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -619,7 +629,7 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
     for _, tfun in test_funcs:
         try:
             tfun()
-        except AssertionError:
+        except (AssertionError, pytest.fail.Exception):
             pass
     rec_all_set = _point_set(recorded)
     cli_all_set = _point_set(cli_pts)
@@ -665,7 +675,7 @@ def test_enumeration_completeness_and_strict_replay(tmp_path, monkeypatch):
     for _, tfun in test_funcs:
         try:
             tfun()
-        except AssertionError:
+        except (AssertionError, pytest.fail.Exception):
             pass
     # Zero cached-wrapper simulator calls during strict replay
     assert len(recorded) == 0
