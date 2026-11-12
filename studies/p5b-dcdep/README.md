@@ -364,7 +364,131 @@ smaller, total excess 32x smaller). On the coarse grid the first-cell remainder 
 (predicted 4.3x) and the remaining near-wall leapfrog error (cells 1-5, the same in both stencils,
 O(dt^2); interior knots of the near-wall field) now dominates with the opposite sign, so the gap
 magnitude is unchanged (+2.4e-7 vs -2.7e-7) but lies inside the 3.8x tighter derived bound. The
-coarse cell-0 remainder is 2x above the static-model prediction (open: non-static settled field or
-the coarse knot-phase sequence; the fine grid agrees to 13 %).
+coarse cell-0 remainder looked 2x above the static-model prediction. This is resolved below: it is a
+bookkeeping term of the RPROF diagnostic in the ringing settled field, and the corrected cell 0 is
+5.87e-9 vs the model's 6.26e-9.
 
 Jobs: `fce-dc-{coarse,fine}-m{10,05}-{image,masked}*`, `fce-path-{coarse,fine}-{image,masked}*`.
+
+## Image-mode cell-0 "2x" resolved: RPROF bookkeeping term in a ringing settled field (2026-11-11)
+
+### Question
+
+With `wall_stencil="image"` the coarse RPROF cell-0 remainder (1.253e-8) was 2x the static 1D
+wall-gather model (6.2e-9), while the fine grid agreed to 13 %. Is the model missing a term?
+
+### Diagnosis (derived)
+
+The settled m = 0 beam is not static: the lossless PEC box keeps ringing after the beam turn-on
+(the tracked particles' `sum_dPhi/mc2` per transit is 1.6e-5 to 2.2e-5 coarse and changes by
+~4e-6 from one birth sample to the next). RPROF removes the field's time change with
+`(q/mc^2)[Phi^m(x^m) - Phi^{m-1}(x^m)]`, a difference centred at `m - 1/2`. The synchronised
+`gamma^m`, though, uses `E^m` at `x^m`. To first order in `dt`, with `v = u/gamma`:
+
+- `gamma^m - gamma^{m-1} = (q/mc^2)(v dt/2)[E^m(x^m) + E^{m-1}(x^{m-1})]`;
+- `Phi^{m-1}(x^m) - Phi^{m-1}(x^{m-1}) = -(v dt/2)[E^{m-1}(x^m) + E^{m-1}(x^{m-1})]`;
+- so each step leaves the bookkeeping term
+  `r_diag_m = (q/mc^2)(dt/2) v^{m-1/2} . [E_g^m(x^m) - E_g^{m-1}(x^m)]`.
+
+This term is zero in a static field and first order in `dt` in a ringing one. Its per-cell sum is
+`(q/mc^2)(dt dz/2) dE_z/dt`, so it depends on the ringing phase each sample sees, i.e. on its
+birth step. It is part of the diagnostic, not of the particle energy. `path_identity.py` now
+accumulates it (`r_diag_cells_0_63_line_mean`) and subtracts it
+(`r_corr_cells_0_63_line_mean`). The synthetic self-check has a field ramped in time, where
+RPROF is pure bookkeeping, and asserts that `|r - r_diag| < 5 % |r|`. Measured: r = -3.456e-7,
+r_diag = -3.493e-7 (1.1 %). Mutating the `dt/2` to `dt` makes the self-check fail
+(r_diag = -6.985e-7).
+
+### Pre-registered predictions and falsifiers
+
+1. After the correction, the cell profile matches the static model (`wall_gather_model.py`,
+   which now also prints the RPROF-binned profile `rprof_cells_0_11_mean`, converged to zeta = 64).
+2. The corrected profile does not depend on the birth phase of the samples. The raw profile does.
+   Falsifier: shift every birth by half a sample stride (`--birth-offset`), or use 12 samples.
+
+Coarse image, cells 0-8 [1e-9]. Model = static model, depressed (injected) density:
+
+| run (job) | births | cell 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | cum 0-63 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| raw, `img0-pc-img` | 0, 624, 1248 | +12.5 | -12.4 | -7.28 | +6.97 | -1.44 | -11.9 | +5.67 | +4.07 | -6.88 | -10.4 |
+| raw, `img0-pc-img-off` | 312, 936, 1560 | +3.35 | +6.56 | -4.69 | -12.4 | +4.78 | +4.61 | -8.21 | -5.08 | +9.80 | -11.0 |
+| raw, `img0-pc-img-n12` | 0..1716 (12) | +10.2 | -3.92 | -6.60 | -1.32 | +0.84 | -3.73 | -1.24 | +0.41 | +0.03 | -10.7 |
+| corrected, `img0-pc-img` | | +5.87 | -3.67 | -3.60 | -2.58 | -1.75 | -1.17 | -0.79 | -0.51 | -0.32 | -8.97 |
+| corrected, `img0-pc-img-off` | | +5.87 | -3.67 | -3.60 | -2.57 | -1.75 | -1.18 | -0.79 | -0.52 | -0.33 | -9.25 |
+| corrected, `img0-pc-img-n12` | | +5.87 | -3.67 | -3.60 | -2.57 | -1.75 | -1.18 | -0.79 | -0.51 | -0.32 | -9.10 |
+| static model | | +6.26 | -4.55 | -3.60 | -2.57 | -1.76 | -1.19 | -0.79 | -0.51 | -0.33 | -9.62 (-9.48) |
+
+Other configurations (cell 0 and cum 0-63 [1e-9]; corrected vs model):
+
+| run (job) | raw cell 0 | r_diag cell 0 | corrected cell 0 | model cell 0 | corrected cum | model cum (zeta 64) |
+| --- | --- | --- | --- | --- | --- | --- |
+| coarse masked `img0-pc-msk` | 31.0 | 4.81 | 26.2 | 26.8 (26.5) | +11.1 | +10.9 (+10.8) |
+| fine image `img0-pf-img` | 6.45 | 1.03 | 5.42 | 5.77 (5.71) | +1.71 | +2.03 (+2.01) |
+| fine image `img0-pf-img-off` (births +605) | 4.64 | -0.79 | 5.42 | 5.77 (5.71) | +1.69 | +2.03 (+2.01) |
+
+Both predictions hold. Shifting the births moves raw cell 0 from 12.5e-9 to 3.35e-9 (and raw
+cell 3 from +7.0e-9 to -12.4e-9). The corrected cells agree across the three coarse sample sets to
+<= 1e-11, and so do the two fine sets. In cells 2-8 the corrected profile matches the model to
+~1 % on both grids and in both stencils.
+
+The earlier "2x" in coarse cell 0 was therefore r_diag (+6.66e-9 of the raw-minus-model
++6.3e-9). Its sign flip in cells 1-5 ("near-wall leapfrog error dominates") was also mostly
+r_diag. It was not a term missing from the model.
+
+### What remains (small, open)
+
+After the correction the near-wall cells still differ slightly from the model:
+- coarse image: cell 0 is 6 % low and cell 1 is 0.9e-9 less negative;
+- fine image: cell 0 is 6 % low;
+- coarse masked: cell 0 is 2 % low and cell 1 is 0.55e-9 less negative.
+
+The signs fit the near-wall deposit deficit that the z-uniform model leaves out. For a z-uniform
+stream, node 1 receives a fraction 1 - 1/48 of the interior node charge with masked ghosts, and
+1 - 2/48 with the image path subtracted. That moves part of the slope jump from the knot at
+zeta = 1/2 to the knot at 3/2. This has not been modelled or tested, so it is a lead and not a
+result. It is <= 1e-9 in gamma, i.e. <= 3e-8 in delta.
+
+### The m -> 0 gap is the static model carried to convergence
+
+`dDelta/dgamma = -26.6` (charge-weighted harmonic mean, both grids). The earlier table quoted the
+model at zeta = 6, which is not converged: the interior knot tail still adds -2.2e-9 coarse.
+Carried to zeta = 64, the parameter-free static model predicts all four measured gaps (DCIMG /
+DEPEXTRAP, jobs `fce-dc-*`) to 3-8 %, including the image-mode sign flip on the coarse grid:
+
+| | model Delta-delta, zeta 64, depressed (injected) | measured delta0 - delta_disc_charge |
+| --- | --- | --- |
+| coarse masked | -2.89e-7 (-2.88e-7) | -2.676e-7 |
+| coarse image | +2.56e-7 (+2.52e-7) | +2.438e-7 |
+| fine masked | -9.26e-7 (-9.17e-7) | -8.80e-7 |
+| fine image | -5.39e-8 (-5.35e-8) | -5.18e-8 |
+
+The coarse sign flip is static, not dynamic. In image mode the first-cell knot (+6.3e-9 in gamma)
+is smaller than the interior knots it telescopes with (sum -15.9e-9). In masked mode the
+first-cell knot (+2.7e-8) dominates.
+
+### Tightened derived bound (`_entrance_image_delta_bound`)
+
+The gather slope is zero before the first knot (image ghost `E_{-1} = E_0`) and zero once the
+field has decayed, so the knot jumps telescope: `J_0 + sum_{k>=1} J_k = 0`. Checked numerically:
+the residual is <= 1.2e-15 relative on both grids and both densities. The sum of the positive
+jumps P therefore equals the sum of the negative jumps N. With `0 <= theta(1-theta) <= 1/4` the
+coherent signed error lies in `[-N/4, P/4]` times `(|q| dz/mc^2) dzeta^2/2`. The bound is
+therefore `max(P, N)/8 = sum|J|/16`, half the previous `sum|J|/8`. That earlier bound let the
+first-cell and interior errors add, but they have opposite signs.
+
+New bounds in delta: 4.80e-7 coarse (was 9.60e-7) and 1.66e-7 fine (was 3.31e-7). The measured
+gaps (2.44e-7, 5.18e-8) and the converged model predictions (2.56e-7, 5.39e-8) lie inside them.
+
+The fast test `test_image_entrance_bound_resolves_charge_vs_flux_weighting` now asserts
+`bound = 0.5 * bound_abs_sum`. It also checks that a synthetic gap of
+`t SEM_prop + 0.75 bound_abs_sum` passes the old check and fails the new one. Reverting the
+bound to `sum|J|/8` makes the test fail. The slow `test_dc_depression_image_wall_stencil` passes with the tightened bound (job
+`img0-t087img`, exit 0, 2 passed, 3 h 26 min):
+- coarse: err_dep0 = 2.438e-7 <= 5.32e-7 (t SEM_prop = 5.2e-8);
+- fine: err_dep0 = 5.18e-8 <= 1.76e-7 (t SEM_prop = 1.0e-8).
+
+The flux-weighted model and the 1 % rho0 model still fail, now by 3.1x (coarse) and 8.1x (fine)
+the bound.
+
+Jobs: `img0-pc-img`, `img0-pc-img-off`, `img0-pc-img-n12`, `img0-pc-msk`, `img0-pf-img`,
+`img0-pf-img-off` (path_identity, A100, us-west4), `img0-t087img` (slow test).

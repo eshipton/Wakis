@@ -484,6 +484,7 @@ def track_transit_identity(
     n_transit: int,
     z_eval_target: float,
     n_samples_per_line: int = 3,
+    birth_offset: int = 0,
 ) -> dict:
     """Perform Part (b): track ``n_samples_per_line`` particles per line for one transit.
 
@@ -525,6 +526,25 @@ def track_transit_identity(
         evaluated in [m].
     n_samples_per_line : int, optional
         Number of tracked particles per lattice line. Default is ``3``.
+    birth_offset : int, optional
+        Steps added to every tracked birth step (shifts the phase of residual field
+        oscillations seen by the samples). Default is ``0``.
+
+    Notes
+    -----
+    The per-step remainder ``r_m`` of the ``RPROF`` record subtracts
+    ``(q / m c^2) [Phi^m(x^m) - Phi^{m-1}(x^m)]``, a time difference centred at ``m - 1/2``,
+    while the synchronised ``gamma^m`` uses ``E^m`` at ``x^m``. Expanding both to first order in
+    ``dt`` (2026-11-11 derivation in ``studies/p5b-dcdep/README.md``) leaves the bookkeeping term
+
+    .. math::
+
+        r^{\mathrm{diag}}_m = \frac{q}{m c^2}\,\frac{\Delta t}{2}\,
+        \mathbf{v}^{m-1/2}\cdot\bigl[\mathbf{E}_g^m(\mathbf{x}^m) - \mathbf{E}_g^{m-1}(\mathbf{x}^m)\bigr],
+
+    which vanishes in a static field but not in a ringing one. It is accumulated per cell
+    (``r_diag_cells_0_63_line_mean``) and subtracted in ``r_corr_cells_0_63_line_mean``, the
+    quantity comparable with the static model of ``wall_gather_model.py``.
 
     Returns
     -------
@@ -539,7 +559,7 @@ def track_transit_identity(
 
     # Space the 3 birth steps so all 3 batches reach z_eval_target within n_transit steps
     birth_stride = max(1, int(n_transit // max(4 * n_samples_per_line, 6)))
-    birth_steps = [k * birth_stride for k in range(n_samples_per_line)]
+    birth_steps = [int(birth_offset) + k * birth_stride for k in range(n_samples_per_line)]
 
     # Map pid -> tracking record
     tracked: dict[int, dict] = {}
@@ -548,6 +568,8 @@ def track_transit_identity(
     fn_pusher = get_pusher(ps.pusher)
     dz_cell = float(lz) / float(nz)
     r_cell_sum = np.zeros((n_lines, nz), dtype=np.float64)
+    r_diag_cell_sum = np.zeros((n_lines, nz), dtype=np.float64)
+    E_prev: tuple | None = None
     B_ext = (0.0, 0.0, float(s.GUIDE_BZ_TESLA))
 
     for step_rel in range(n_transit):
@@ -609,6 +631,24 @@ def track_transit_identity(
                     periodic=ps.boundaries.periodic, xp=np,
                 )
                 g6 = _with_image_field(ps, xi_a, eta_a, zeta_a, E_all, B_all, g6)
+                # Bookkeeping term of the m-1/2-centred dPhi subtraction (see Notes):
+                # (q/mc^2) (dt/2) v^{m-1/2} . [E_g^m(x^m) - E_g^{m-1}(x^m)] (gather is linear).
+                r_diag_sub = np.zeros(slot_arr.size)
+                if E_prev is not None:
+                    dE_all = tuple(a_ - b_ for a_, b_ in zip(E_all, E_prev))
+                    zB = tuple(np.zeros_like(b_) for b_ in B_all)
+                    gd = gather_fields(
+                        xi_a, eta_a, zeta_a, dE_all, zB,
+                        int(solver.Nx), int(solver.Ny), int(solver.Nz),
+                        order=int(ps.shape), gather=ps.gather,
+                        periodic=ps.boundaries.periodic, xp=np,
+                    )
+                    gd = _with_image_field(ps, xi_a, eta_a, zeta_a, dE_all, zB, gd)
+                    ux_m, uy_m, uz_m = ux_h[slot_arr], uy_h[slot_arr], uz_h[slot_arr]
+                    g_half = np.sqrt(1.0 + (ux_m**2 + uy_m**2 + uz_m**2) / (c_light * c_light))
+                    r_diag_sub = (
+                        q_over_mc2 * 0.5 * dt * (ux_m * gd[0] + uy_m * gd[1] + uz_m * gd[2]) / g_half
+                    )
                 uxs, uys, uzs = fn_pusher(
                     ux_h[slot_arr], uy_h[slot_arr], uz_h[slot_arr],
                     g6[0], g6[1], g6[2],
@@ -629,6 +669,7 @@ def track_transit_identity(
                         else:
                             r_m = float(ex_now[k_p] - rec["prev_excess"] - q_over_mc2 * d_phi[k_p])
                             r_cell_sum[rec["line_idx"], iz_sub[k_p]] += r_m
+                            r_diag_cell_sum[rec["line_idx"], iz_sub[k_p]] += float(r_diag_sub[k_p])
                         rec["prev_excess"] = float(ex_now[k_p])
                     z_cur = float(z_sub[k_p])
                     if z_cur >= z_eval_target or step_rel == n_transit - 1:
@@ -712,6 +753,9 @@ def track_transit_identity(
                         rec["residual_sync"] = excess_sync - rec["sum_dphi_over_mc2"]
                         rec["completed"] = True
 
+        E_prev = tuple(  # copies: on CPU to_matrix may alias the field buffer
+            np.array(_to_host(solver.E.to_matrix(c_)), copy=True).ravel(order="F") for c_ in ("x", "y", "z")
+        )
         solver.one_step()
         n_after = int(beam.n_particles)
 
@@ -781,6 +825,8 @@ def track_transit_identity(
         dtype=np.float64,
     )
     r_prof = r_cell_sum / n_per_line[:, None]  # mean per-particle remainder accrued in each axial cell
+    r_diag = r_diag_cell_sum / n_per_line[:, None]
+    r_corr = r_prof - r_diag
     print(
         "RPROF "
         + json.dumps(
@@ -791,6 +837,11 @@ def track_transit_identity(
                 "r_cell1_per_line": r_prof[:, 1].tolist(),
                 "r_rest_per_line": r_prof[:, 2:].sum(axis=1).tolist(),
                 "r_cum_line_mean": np.cumsum(r_prof.mean(axis=0)).tolist(),
+                "r_diag_cells_0_63_line_mean": r_diag[:, :64].mean(axis=0).tolist(),
+                "r_corr_cells_0_63_line_mean": r_corr[:, :64].mean(axis=0).tolist(),
+                "r_corr_cum_line_mean": np.cumsum(r_corr.mean(axis=0)).tolist(),
+                "n_samples_per_line": int(n_samples_per_line),
+                "birth_steps": [int(b_) for b_ in birth_steps],
             }
         ),
         flush=True,
@@ -804,6 +855,8 @@ def track_transit_identity(
         "overall_mean_sum_dphi_over_mc2": float(np.mean(per_line_mean_sum_dphi)),
         "overall_mean_gamma_excess_raw": float(np.mean(per_line_mean_excess_raw)),
         "overall_mean_gamma_excess_sync": float(np.mean(per_line_mean_excess_sync)),
+        "r_total_line_mean": float(r_prof.sum(axis=1).mean()),
+        "r_diag_total_line_mean": float(r_diag.sum(axis=1).mean()),
     }
 
 
@@ -997,8 +1050,20 @@ def run_synthetic_self_check() -> dict:
             f"got {part_b_tiny['n_completed_particles']}"
         )
 
+    # In the time-ramped (non-static) tiny field the RPROF remainder is the bookkeeping term of the
+    # m-1/2-centred dPhi subtraction: r_diag must account for it (fails if the dt/2 factor or the
+    # E^m - E^{m-1} difference is wrong: e.g. a factor 1 instead of 1/2 leaves |r - r_diag| = |r|).
+    r_tot = float(part_b_tiny["r_total_line_mean"])
+    r_diag_tot = float(part_b_tiny["r_diag_total_line_mean"])
+    if not abs(r_tot - r_diag_tot) < 0.05 * abs(r_tot):
+        raise AssertionError(
+            f"r_diag does not account for the ramped-field remainder: r={r_tot:.4e} r_diag={r_diag_tot:.4e}"
+        )
+
     summary = {
         "status": "PASS",
+        "tiny_r_total": r_tot,
+        "tiny_r_diag_total": r_diag_tot,
         "tiny_grid": [nx, ny, nz],
         "Ny": res_clean["Ny"],
         "bc_y": res_clean["bc_y"],
@@ -1021,6 +1086,8 @@ def run_production_grid(
     *,
     use_gpu: bool,
     settle_transits: float = 3.0,
+    n_samples_per_line: int = 3,
+    birth_offset: int = 0,
 ) -> dict:
     """Run Part (a) and Part (b) on a settled ``m = 0`` beam for ``grid_name``.
 
@@ -1146,7 +1213,8 @@ def run_production_grid(
         x_sheet,
         n_transit,
         z_eval_target=0.5 * lz,
-        n_samples_per_line=3,
+        n_samples_per_line=int(n_samples_per_line),
+        birth_offset=int(birth_offset),
     )
 
     out = {
@@ -1196,6 +1264,18 @@ def main(argv: list[str] | None = None) -> int:
         default="masked",
         help="ParticleSolver wall_stencil for the production run (default: masked).",
     )
+    parser.add_argument(
+        "--n-samples",
+        type=int,
+        default=3,
+        help="Tracked particles per lattice line in Part (b) (default: 3).",
+    )
+    parser.add_argument(
+        "--birth-offset",
+        type=int,
+        default=0,
+        help="Steps added to every tracked birth step in Part (b) (default: 0).",
+    )
     args = parser.parse_args(argv)
     global WALL_STENCIL
     WALL_STENCIL = str(args.wall_stencil)
@@ -1212,6 +1292,8 @@ def main(argv: list[str] | None = None) -> int:
             g_name,
             use_gpu=use_gpu,
             settle_transits=float(args.settle_transits),
+            n_samples_per_line=int(args.n_samples),
+            birth_offset=int(args.birth_offset),
         )
     return 0
 
