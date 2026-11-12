@@ -54,7 +54,7 @@ for _p in (_REPO_ROOT, os.path.join(_REPO_ROOT, "examples")):
 
 import _space_charge_waves_common as s  # noqa: E402
 
-N_EDGES = 64  # axial E_z edges kept in the static profile [-]
+N_EDGES = 128  # axial E_z edges kept in the static profile [-] (covers zeta_far = 64)
 
 
 def wall_field_profiles(nx: int, nz: int, params: dict, n_edges: int = N_EDGES):
@@ -104,6 +104,16 @@ def wall_field_profiles(nx: int, nz: int, params: dict, n_edges: int = N_EDGES):
 def _nodal_w2(d):
     """Quadratic nodal B-spline weights for offset ``d in [-1/2, 1/2)`` from the nearest node."""
     return 0.5 * (0.5 - d) ** 2, 0.75 - d * d, 0.5 * (0.5 + d) ** 2
+
+
+def _delta_shift(det: dict, params: dict, dgamma_l: np.ndarray) -> float:
+    """``delta(gamma_l + dgamma_l) - delta(gamma_l)`` with the model's charge-weighted harmonic mean."""
+
+    def _d(gam):
+        u = c_light * np.sqrt(gam**2 - 1.0)
+        return 1.0 - np.sum(det["rho_l"]) / (params["u0"] * np.sum(det["rho_l"] / u))
+
+    return float(_d(det["gamma_l"] + dgamma_l) - _d(det["gamma_l"]))
 
 
 def make_gather(ez_line: np.ndarray, phi_line: np.ndarray, scheme: str):
@@ -190,7 +200,23 @@ def kink_prediction(ez_line, dz, dzeta, theta, qm_abs_mc2, scheme):
     return qm_abs_mc2 * dz * 0.5 * theta * (1.0 - theta) * dzeta**2 * abs(jump), abs(jump)
 
 
-def run_grid(label: str, nx: int, nz: int, zeta_eval: float = 6.0) -> list[dict]:
+def cell_profile(zeta: np.ndarray, excess: np.ndarray, n_cells: int) -> np.ndarray:
+    """Per-cell remainder binned like ``path_identity.py`` ``RPROF`` [-].
+
+    Step ``m >= 1`` adds ``excess[m] - excess[m - 1]`` to the cell ``floor(zeta[m])`` of its end
+    position; the first record (``m = 0``) is not binned, as in ``RPROF``.
+    """
+    out = np.zeros(n_cells)
+    k = np.floor(zeta[1:]).astype(int)
+    d = np.diff(excess)
+    ok = k < n_cells
+    np.add.at(out, k[ok], d[ok])
+    return out
+
+
+def run_grid(
+    label: str, nx: int, nz: int, zeta_eval: float = 6.0, zeta_far: float = 64.0, n_cells: int = 64
+) -> list[dict]:
     params = s.compute_analytic_parameters(qm_scale=1.0)
     dt, _ = s._cached_integer_period_dt(int(nx), int(nz))
     dz = s.TUNNEL_LENGTH_M / nz
@@ -199,18 +225,21 @@ def run_grid(label: str, nx: int, nz: int, zeta_eval: float = 6.0) -> list[dict]
     q_abs_mc2 = e_charge / (m_e * c_light**2)
     v0 = params["u0"] / gamma0
     dzeta = v0 * dt / dz
-    n_steps = int(np.ceil((zeta_eval + 1.0) / dzeta))
+    n_steps = int(np.ceil((max(zeta_eval, zeta_far) + 1.0) / dzeta))
     profiles, det = wall_field_profiles(nx, nz, params)
     recs = []
     for case, ez_l, phi_l in profiles:
         for scheme in ("masked", "image"):
             ex_eval, ex_cell0, ex_cell01, kinks, thetas, jumps, e0s = [], [], [], [], [], [], []
+            prof, ex_far = [], []
             for li in range(ez_l.shape[0]):
                 e_g, phi_g = make_gather(ez_l[li], phi_l[li], scheme)
                 tr = track_line(e_g, phi_g, dz, dt, gamma0, qm, n_steps, scheme)
                 zt, exc = tr["zeta"], tr["excess"]
                 i_eval = int(np.searchsorted(zt, zeta_eval))
                 ex_eval.append(float(exc[i_eval]))
+                ex_far.append(float(exc[int(np.searchsorted(zt, zeta_far))]))
+                prof.append(cell_profile(zt, exc, n_cells))
                 # remainder accrued while the particle is in cell 0 / cells 0-1 (by end position)
                 i1 = int(np.searchsorted(zt, 1.0))
                 i2 = int(np.searchsorted(zt, 2.0))
@@ -237,6 +266,12 @@ def run_grid(label: str, nx: int, nz: int, zeta_eval: float = 6.0) -> list[dict]
                 "jump_mean_V_per_m": float(np.mean(jumps)),
                 "e0_mean_V_per_m": float(np.mean(e0s)),
                 "excess_at_zeta_eval_per_line": ex_eval,
+                "zeta_far": zeta_far,
+                "excess_far_mean": float(np.mean(ex_far)),
+                # charge-weighted harmonic-mean delta shift of a per-line gamma excess [-]
+                "delta_shift_far": _delta_shift(det, params, np.asarray(ex_far)),
+                "rprof_cells_0_11_mean": np.mean(prof, axis=0)[:12].tolist(),
+                "rprof_cum_far_mean": float(np.mean(prof, axis=0).sum()),
             }
             recs.append(rec)
             print("WGM " + json.dumps(rec), flush=True)
