@@ -355,11 +355,20 @@ def _entrance_image_delta_bound(
     jumps by a difference of the edge fields: ``E1 - E0`` at ``k = 0`` (first difference, O(dz))
     and ``E_{k+1} - 2 E_k + E_{k-1}`` for ``k >= 1``. The leapfrog energy gain is the trapezoid
     rule on the step positions, exact on linear pieces; a knot with slope jump ``J`` crossed at
-    phase ``theta`` adds ``(|q| dz / m c^2) theta (1 - theta) / 2 dzeta^2 |J|``. Bound per line
-    with ``theta (1 - theta) <= 1/4`` at every knot (all particles share one birth phase, so the
-    errors are coherent):
+    phase ``theta`` adds ``(|q| dz / m c^2) theta (1 - theta) / 2 dzeta^2 J`` (signed). All
+    particles share one birth phase, so the errors are coherent; with
+    ``0 <= theta (1 - theta) <= 1/4`` at every knot the signed sum lies between
+    ``-(1/4) N`` and ``(1/4) P``, ``P`` (``N``) the sum of the positive (negative) jumps. The
+    gather slope is zero before the first knot (image ghost ``E_{-1} = E_0``) and after the field
+    has decayed, so the jumps telescope to zero: ``J_0 + sum_{k>=1} J_k = 0``, i.e. ``P = N`` and
 
-        ``Delta gamma_l <= (|q| dz / m c^2) dzeta^2 / 8 * (|E1 - E0| + sum_k |E_{k+1} - 2 E_k + E_{k-1}|)``
+        ``|Delta gamma_l| <= (|q| dz / m c^2) dzeta^2 / 8 * max(P, N)
+                          = (|q| dz / m c^2) dzeta^2 / 16 * (|E1 - E0| + sum_k |E_{k+1} - 2 E_k + E_{k-1}|)``
+
+    (2026-11-11, ``studies/p5b-dcdep/README.md``: half the earlier ``sum |J| / 8`` bound, which
+    treated the first-cell and the interior knots as if they could add; they cannot, the
+    first-cell jump ``E1 - E0`` has the opposite sign of the interior second differences it
+    telescopes with). ``bound_delta_abs_sum`` keeps the earlier form for comparison.
 
     with the line-gathered edge fields of the discrete 2D (x, z) Poisson problem for a z-uniform
     beam (axial decay ``lambda_m^k`` per transverse mode, ``n_edges`` edges), maximised over the
@@ -382,7 +391,7 @@ def _entrance_image_delta_bound(
     mu = kap2 * dz**2
     lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0
     w_mat = det["w_mat"]
-    first_c, inter_c = [], []
+    first_c, inter_c, pn_c = [], [], []
     for rho_case in (det["rho_l"], det["rho_l"] * params["u0"] / det["u_l"]):
         src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
         phi_inf = np.linalg.solve(lap, abs(params["rho0"]) * src[1:-1] / epsilon_0)
@@ -392,20 +401,28 @@ def _entrance_image_delta_bound(
         ez_l = w_mat @ ez
         first_c.append(np.abs(ez_l[:, 1] - ez_l[:, 0]))
         inter_c.append(np.sum(np.abs(ez_l[:, 2:] - 2.0 * ez_l[:, 1:-1] + ez_l[:, :-2]), axis=1))
+        jumps = np.concatenate(
+            [(ez_l[:, 1] - ez_l[:, 0])[:, None], ez_l[:, 2:] - 2.0 * ez_l[:, 1:-1] + ez_l[:, :-2]], axis=1
+        )
+        pn_c.append(np.maximum(np.clip(jumps, 0.0, None).sum(axis=1), np.clip(-jumps, 0.0, None).sum(axis=1)))
     first_l = np.max(first_c, axis=0)
     inter_l = np.max(inter_c, axis=0)
+    pn_l = np.max(pn_c, axis=0)
     v0 = params["u0"] / params["gamma0"]
     dzeta = v0 * float(dt) / dz
     qm = e_charge * params.get("qm_scale", 1.0) / (m_e * c_light**2)
-    dgamma_l = qm * dz * dzeta**2 * (first_l + inter_l) / 8.0
+    dgamma_l = qm * dz * dzeta**2 * pn_l / 8.0
+    dgamma_abs_sum_l = qm * dz * dzeta**2 * (first_l + inter_l) / 8.0
 
     def _delta(gam):
         u = c_light * np.sqrt(gam**2 - 1.0)
         return 1.0 - np.sum(det["rho_l"]) / (params["u0"] * np.sum(det["rho_l"] / u))
 
     bound = float(abs(_delta(det["gamma_l"] + dgamma_l) - _delta(det["gamma_l"])))
+    bound_abs_sum = float(abs(_delta(det["gamma_l"] + dgamma_abs_sum_l) - _delta(det["gamma_l"])))
     return {
         "bound_delta": bound,
+        "bound_delta_abs_sum": bound_abs_sum,
         "dgamma_l": dgamma_l,
         "dzeta": float(dzeta),
         "first_l": first_l,
@@ -2378,6 +2395,9 @@ def test_image_entrance_bound_resolves_charge_vs_flux_weighting():
         )
         assert b_img["bound_delta"] > 0.0
         assert b_img["bound_delta"] < b_msk["bound_delta"] / 3.0
+        # P = N (telescoping): the signed-jump bound is half the sum-of-|J| bound; fails if the
+        # first-cell and interior knots were allowed to add (bound_delta == bound_delta_abs_sum).
+        assert b_img["bound_delta"] == pytest.approx(0.5 * b_img["bound_delta_abs_sum"], rel=1e-6)
         u_meas = params["u0"] * (1.0 - d_chg)  # exact charge-weighted measurement at m and m/2
         # passes against the right model
         _extrapolate_and_check_dc_depression(
@@ -2400,6 +2420,18 @@ def test_image_entrance_bound_resolves_charge_vs_flux_weighting():
         _extrapolate_and_check_dc_depression(
             label, params["u0"], u_meas, u_meas, d_flx, tcrit, sem, b_msk["bound_delta"]
         )
+        # (iii) a gap between the signed-jump and the sum-of-|J| bounds is accepted by the
+        # earlier bound and rejected by the tightened one.
+        noise_b = tcrit * float(np.hypot(sem / 3.0, 4.0 * sem / 3.0))
+        gap_mid = noise_b + 0.75 * b_img["bound_delta_abs_sum"]
+        u_gap = params["u0"] * (1.0 - (d_chg + gap_mid))
+        _extrapolate_and_check_dc_depression(
+            label, params["u0"], u_gap, u_gap, d_chg, tcrit, sem, b_img["bound_delta_abs_sum"]
+        )
+        with pytest.raises(AssertionError):
+            _extrapolate_and_check_dc_depression(
+                label, params["u0"], u_gap, u_gap, d_chg, tcrit, sem, b_img["bound_delta"]
+            )
 
 
 @pytest.mark.slow

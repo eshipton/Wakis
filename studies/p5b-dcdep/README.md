@@ -482,8 +482,13 @@ gaps (2.44e-7, 5.18e-8) and the converged model predictions (2.56e-7, 5.39e-8) l
 The fast test `test_image_entrance_bound_resolves_charge_vs_flux_weighting` now asserts
 `bound = 0.5 * bound_abs_sum`. It also checks that a synthetic gap of
 `t SEM_prop + 0.75 bound_abs_sum` passes the old check and fails the new one. Reverting the
-bound to `sum|J|/8` makes the test fail. The slow `test_dc_depression_image_wall_stencil` was
-rerun with the tightened bound (job `img0-t087img`).
+bound to `sum|J|/8` makes the test fail. The slow `test_dc_depression_image_wall_stencil` passes with the tightened bound (job
+`img0-t087img`, exit 0, 2 passed, 3 h 26 min):
+- coarse: err_dep0 = 2.438e-7 <= 5.32e-7 (t SEM_prop = 5.2e-8);
+- fine: err_dep0 = 5.18e-8 <= 1.76e-7 (t SEM_prop = 1.0e-8).
+
+The flux-weighted model and the 1 % rho0 model still fail, now by 3.1x (coarse) and 8.1x (fine)
+the bound.
 
 Jobs: `img0-pc-img`, `img0-pc-img-off`, `img0-pc-img-n12`, `img0-pc-msk`, `img0-pf-img`,
 `img0-pf-img-off` (path_identity, A100, us-west4), `img0-t087img` (slow test).
