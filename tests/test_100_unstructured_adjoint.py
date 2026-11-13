@@ -548,3 +548,10 @@ def test_jax_custom_vjp(meshes):
     F, g = sim.value_and_grad(rho, objective)
     np.testing.assert_allclose(float(val), F, rtol=1e-13)
     np.testing.assert_allclose(np.asarray(g_jax), g, rtol=1e-12, atol=1e-12 * np.abs(g).max())
+
+
+def test_inverse_namespace_exports():
+    import wakis.inverse as inv
+
+    assert inv.UnstructuredAdjointSimulation is UnstructuredAdjointSimulation
+    assert inv.CellMaterialGrid is CellMaterialGrid
