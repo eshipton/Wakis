@@ -283,6 +283,33 @@ def _check_beta0_negative_controls(
     return out
 
 
+def _node1_deposit_deficit(dzeta: float, wall_stencil: str) -> float:
+    """Steady charge deficit ``1 - c_1`` of the first interior node next to the emitter wall [-].
+
+    One sheet of macroparticles is born on the ``z = 0`` PEC wall every step. ``E^{n+1}`` holds
+    the sheets born at steps ``n, n - 1, ...`` at ``zeta_j = j dzeta`` with ``j >= 1`` (the sheet
+    born at ``n + 1`` enters through the next step's closure current and Esirkepov move), and the
+    Esirkepov deposit is exact on every interior node, so per interior node charge
+
+        ``c_1 = dzeta * sum_{j >= 1} [W2(j dzeta - 1) - s W2(-j dzeta - 1)]``
+
+    with ``s = 0`` (masked) or ``s = 1`` (image path subtracted). Euler-Maclaurin:
+    ``1 - c_1 = 1/48 + dzeta/16 - dzeta^2/24 + O(dzeta^3)`` (masked) and ``2/48 + O(dzeta^3)``
+    (image). Nodes ``k >= 2`` are complete to < 1e-5 (B-spline sampling aliasing) and node 0 is
+    the PEC node. Confirmed against the field's Gauss-law node charge to 6e-6 on both grids,
+    both stencils and two CFL numbers (``studies/p5b-dcdep/near_wall_charge.py``, jobs ``nwq-*``).
+    """
+    j = np.arange(1, int(np.ceil(4.0 / dzeta)) + 1, dtype=np.float64)
+    zj = j * float(dzeta)
+
+    def w2(d):
+        d = np.abs(d)
+        return np.where(d < 0.5, 0.75 - d * d, np.where(d < 1.5, 0.5 * (1.5 - d) ** 2, 0.0))
+
+    s_img = {"masked": 0.0, "image": 1.0}[wall_stencil]
+    return float(1.0 - dzeta * np.sum(w2(zj - 1.0) - s_img * w2(-zj - 1.0)))
+
+
 def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) -> dict:
     """Derived bound on the DC-depression shift from the pusher's first-cell entrance error [-].
 
@@ -299,10 +326,17 @@ def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) 
        over ``h = v0 dt`` with ``E' = E0 / dz`` in the first cell.
 
     ``E0``, ``E1`` are the first two wall ``E_z`` edges of the discrete 2D (x, z) Poisson problem
-    for a z-uniform beam with the model's deposited line weights, evaluated for both the injected
-    (``rho_l``) and the depressed (``rho_l u0 / u_l``) density; the larger bound is used (the
-    settled runs lie between the two: path_identity WALLEZ). The per-line ``Delta gamma`` bound is
-    mapped to ``delta`` through the model's charge-weighted harmonic mean.
+    for a beam with the model's deposited line weights that is z-uniform except for the derived
+    node-1 deposit deficit :func:`_node1_deposit_deficit` (2026-11-12; it moves the corrected
+    per-cell remainder of cells 0-1 onto the measurement to <= 1 %), evaluated for both the
+    injected (``rho_l``) and the depressed (``rho_l u0 / u_l``) density; the larger bound is used.
+    Density choice: the self-consistent axial profile ``rho_l u0 / v_l(z)`` rises from the
+    injected to the depressed density, so it lies between the two z-uniform cases at every node,
+    and its bound is 0.2-1.9 % below the depressed one on both grids and both stencils
+    (``studies/p5b-dcdep/wall_gather_model.py``, ``density="selfconsistent"``); the max over the
+    two z-uniform cases is therefore the conservative choice. ``dzeta = v0 dt / dz`` with
+    ``v0 = params["u0"]``, the injection speed. The per-line ``Delta gamma`` bound is mapped to
+    ``delta`` through the model's charge-weighted harmonic mean.
     """
     from scipy.constants import c as c_light
     from scipy.constants import e as e_charge
@@ -319,11 +353,21 @@ def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) 
     mu = kap2 * dz**2
     lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0  # discrete axial decay per cell, root < 1
     w_mat = det["w_mat"]
+    # params["u0"] is the injection *speed* v0 = c sqrt(1 - 1/gamma0^2) [m/s], not gamma0 v0:
+    # dividing by gamma0 again would make dzeta 1.9 % and the bound 3.9 % too small.
+    v0 = float(params["u0"])
+    dzeta = v0 * float(dt) / dz
+    d1 = _node1_deposit_deficit(dzeta, "masked")
+    kk = np.arange(3)[None, :]
+    # node-1 deficit d1 as a point correction: on the half line with phi_0 = 0 a source change
+    # r at node 1 gives psi_k = -r lambda^k per mode, r = d1 mu phi_inf,m, so
+    # phi_k = phi_inf (1 - lambda^k - d1 mu lambda^k) for k >= 1, phi_0 = 0 (PEC node).
+    axial = 1.0 - lam[:, None] ** kk - d1 * mu[:, None] * lam[:, None] ** kk * (kk >= 1)
     ez_cases = []
     for rho_case in (det["rho_l"], det["rho_l"] * params["u0"] / det["u_l"]):
         src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
         phi_inf = np.linalg.solve(lap, abs(params["rho0"]) * src[1:-1] / epsilon_0)
-        phi_k = (vecs * (vecs.T @ phi_inf)) @ (1.0 - lam[:, None] ** np.arange(3)[None, :])
+        phi_k = (vecs * (vecs.T @ phi_inf)) @ axial
         ez = np.zeros((nx + 1, 2))
         ez[1:-1] = (phi_k[:, 1:] - phi_k[:, :-1]) / dz
         ez_cases.append(ez)
@@ -331,8 +375,6 @@ def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) 
     jump_l = np.max(
         [np.abs(w_mat @ (2.0 * ea[:, 0] - eb[:, 1])) for ea in ez_cases for eb in ez_cases], axis=0
     )
-    v0 = params["u0"] / params["gamma0"]
-    dzeta = v0 * float(dt) / dz
     qm = e_charge * params.get("qm_scale", 1.0) / (m_e * c_light**2)
     dgamma_l = qm * dz * dzeta**2 * (jump_l / 8.0 + e0_l / 8.0)
 
@@ -341,7 +383,14 @@ def _entrance_first_cell_delta_bound(nx: int, nz: int, dt: float, params: dict) 
         return 1.0 - np.sum(det["rho_l"]) / (params["u0"] * np.sum(det["rho_l"] / u))
 
     bound = float(abs(_delta(det["gamma_l"] + dgamma_l) - _delta(det["gamma_l"])))
-    return {"bound_delta": bound, "dgamma_l": dgamma_l, "dzeta": float(dzeta), "e0_l": e0_l, "jump_l": jump_l}
+    return {
+        "bound_delta": bound,
+        "dgamma_l": dgamma_l,
+        "dzeta": float(dzeta),
+        "e0_l": e0_l,
+        "jump_l": jump_l,
+        "deficit1": d1,
+    }
 
 
 def _entrance_image_delta_bound(
@@ -370,9 +419,12 @@ def _entrance_image_delta_bound(
     first-cell jump ``E1 - E0`` has the opposite sign of the interior second differences it
     telescopes with). ``bound_delta_abs_sum`` keeps the earlier form for comparison.
 
-    with the line-gathered edge fields of the discrete 2D (x, z) Poisson problem for a z-uniform
-    beam (axial decay ``lambda_m^k`` per transverse mode, ``n_edges`` edges), maximised over the
-    injected and the depressed density as in :func:`_entrance_first_cell_delta_bound`. Mapped to
+    with the line-gathered edge fields of the discrete 2D (x, z) Poisson problem for a beam that is
+    z-uniform except for the image-stencil node-1 deposit deficit ``2/48 + O(dzeta^3)``
+    (:func:`_node1_deposit_deficit`; axial decay ``lambda_m^k`` per transverse mode, ``n_edges``
+    edges), maximised over the injected and the depressed density (conservative against the
+    self-consistent axial density, see :func:`_entrance_first_cell_delta_bound`), with
+    ``dzeta = params["u0"] dt / dz`` (``params["u0"]`` is the injection speed). Mapped to
     ``delta`` through the charge-weighted harmonic mean. Unlike the masked bound this includes the
     interior knots: they are of the same O(dz^2) order as the first-cell term here.
     """
@@ -391,11 +443,16 @@ def _entrance_image_delta_bound(
     mu = kap2 * dz**2
     lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0
     w_mat = det["w_mat"]
+    v0 = float(params["u0"])  # injection speed [m/s] (params["u0"] is v0, not gamma0 v0)
+    dzeta = v0 * float(dt) / dz
+    d1 = _node1_deposit_deficit(dzeta, "image")
+    kk = np.arange(n_edges + 1)[None, :]
+    axial = 1.0 - lam[:, None] ** kk - d1 * mu[:, None] * lam[:, None] ** kk * (kk >= 1)  # see masked helper
     first_c, inter_c, pn_c = [], [], []
     for rho_case in (det["rho_l"], det["rho_l"] * params["u0"] / det["u_l"]):
         src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
         phi_inf = np.linalg.solve(lap, abs(params["rho0"]) * src[1:-1] / epsilon_0)
-        phi_k = (vecs * (vecs.T @ phi_inf)) @ (1.0 - lam[:, None] ** np.arange(n_edges + 1)[None, :])
+        phi_k = (vecs * (vecs.T @ phi_inf)) @ axial
         ez = np.zeros((nx + 1, n_edges))
         ez[1:-1] = (phi_k[:, 1:] - phi_k[:, :-1]) / dz
         ez_l = w_mat @ ez
@@ -408,8 +465,6 @@ def _entrance_image_delta_bound(
     first_l = np.max(first_c, axis=0)
     inter_l = np.max(inter_c, axis=0)
     pn_l = np.max(pn_c, axis=0)
-    v0 = params["u0"] / params["gamma0"]
-    dzeta = v0 * float(dt) / dz
     qm = e_charge * params.get("qm_scale", 1.0) / (m_e * c_light**2)
     dgamma_l = qm * dz * dzeta**2 * pn_l / 8.0
     dgamma_abs_sum_l = qm * dz * dzeta**2 * (first_l + inter_l) / 8.0
@@ -427,6 +482,7 @@ def _entrance_image_delta_bound(
         "dzeta": float(dzeta),
         "first_l": first_l,
         "interior_l": inter_l,
+        "deficit1": d1,
     }
 
 
@@ -2356,6 +2412,52 @@ def test_mutation_disk_profile_instead_of_sheet_fails(monkeypatch):
         expected_failures=("modal", "dirichlet", "none"),
         line_x=x_fib,
     )
+
+
+def test_entrance_bounds_dzeta_and_node1_deficit():
+    """Fast: both entrance bounds use ``dzeta = v0 dt / dz`` with the injection speed, and the
+    derived node-1 deposit deficit.
+
+    ``v0`` is recomputed independently from ``gamma0`` (``c sqrt(1 - 1/gamma0^2)``, the speed the
+    ``BeamInjector`` gives a particle born with ``gamma = gamma0``); dividing ``params["u0"]`` by
+    ``gamma0`` again makes ``dzeta`` 1.9 % low and fails. The deficit is checked against its
+    Euler-Maclaurin expansion (masked ``1/48 + dzeta/16 - dzeta^2/24``, image ``2/48``, both
+    ``+ O(dzeta^3)``, tolerance ``2 dzeta^3``); counting the newborn sheet (``j >= 0``, masked
+    deficit lower by ``dzeta/8``) or dropping the image path fails by > 15x the tolerance.
+    """
+    from scipy.constants import c as c_light
+
+    from examples._space_charge_waves_common import _integer_period_dt
+
+    params = compute_analytic_parameters()
+    g0 = float(params["gamma0"])
+    v0_ref = c_light * np.sqrt(1.0 - 1.0 / g0**2)
+    for nx, _ny, nz in (COARSE_GRID, FINE_GRID):
+        dt, _ = _integer_period_dt(
+            GridFIT3D(
+                -TUNNEL_HALF_WIDTH_M, TUNNEL_HALF_WIDTH_M, -0.5 * PERIODIC_LY_M, 0.5 * PERIODIC_LY_M,
+                0.0, TUNNEL_LENGTH_M, nx, 1, nz, verbose=0,
+            ),
+            cfln=CFL_NUMBER,
+        )
+        dzeta_ref = v0_ref * float(dt) / (TUNNEL_LENGTH_M / nz)
+        b_msk = _entrance_first_cell_delta_bound(nx, nz, dt, params)
+        b_img = _entrance_image_delta_bound(nx, nz, dt, params)
+        print(
+            f"DZETA nx={nx} ref={dzeta_ref:.6f} masked={b_msk['dzeta']:.6f} image={b_img['dzeta']:.6f} "
+            f"d1_masked={b_msk['deficit1']:.6f} d1_image={b_img['deficit1']:.6f} "
+            f"bound_masked={b_msk['bound_delta']:.4e} bound_image={b_img['bound_delta']:.4e}",
+            flush=True,
+        )
+        for b in (b_msk, b_img):
+            assert b["dzeta"] == pytest.approx(dzeta_ref, rel=1e-9), (
+                f"entrance bound dzeta {b['dzeta']:.6f} != v0 dt / dz = {dzeta_ref:.6f}"
+            )
+        tol = 2.0 * dzeta_ref**3
+        d1_msk_em = 1.0 / 48.0 + dzeta_ref / 16.0 - dzeta_ref**2 / 24.0
+        assert abs(b_msk["deficit1"] - d1_msk_em) < tol
+        assert abs(b_img["deficit1"] - 2.0 / 48.0) < tol
+        assert abs(_node1_deposit_deficit(dzeta_ref, "masked") - b_msk["deficit1"]) < 1e-15
 
 
 def test_image_entrance_bound_resolves_charge_vs_flux_weighting():
