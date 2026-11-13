@@ -258,7 +258,14 @@ Each configuration is checked three ways:
 
 ## 9. Worked example
 
-`studies/unstructured-adjoint/shadow_focus.py` (Cloud Batch) focuses a line source into the shadow of a PEC cylinder, using a dielectric annulus meshed with conforming triangles. See the study README and `docs/figures.md`.
+`studies/unstructured-adjoint/shadow_focus.py` (Cloud Batch) focuses a line source into the shadow of a PEC cylinder, using a dielectric annulus meshed with conforming triangles. The mesh has 20172 nodes and 15429 design triangles; the run takes 3763 steps.
+
+* Optimization: 68 L-BFGS-B evaluations with β-continuation, 795 s on one n2-standard-4.
+* Result: the focus intensity is raised from the bare shadow (−17.2 dB relative to free space) to J/J0 = 1392 window-converged, i.e. 14.2 dB above free space.
+* Gradient: adjoint vs FD on 12 triangles agree to the FD round-off floor (1–3e-10 absolute).
+* Memory: the checkpointed gradient is bitwise equal to the stored one.
+
+See the study README and `docs/figures.md`.
 
 ## References
 
