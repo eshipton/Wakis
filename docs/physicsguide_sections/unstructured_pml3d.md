@@ -136,7 +136,10 @@ is off, the ball energy falls to 2.8e-10 of its peak with at most 5.2e-8 of the 
 R² = 1e-4); in a PEC ball the same energy form is conserved to 1e-17. Over 1e5 steps (CFS α > 0) the field
 stays at 1.6e-7 of its peak without growth (last-10 % / 40–50 % maximum ratio 0.98).
 
-STABILITY_STUDY_PLACEHOLDER
+**Late time** (study, 3 × 1e5 steps, ball 5 h + 10 layers): no growth in any variant. With α = 0 a slowly
+decaying quasi-static field stays in the layer (3.7e-6 of peak at the end). With α = ω0/10 (with or without
+κ_max = 5) the field is flat at 1.3e-7 of peak and the interior energy is 1.9e-14 of peak. The flat residual sits
+on interior edges near the source and is not a PML effect (open question).
 
 ## 5. Limits & Failure Modes
 

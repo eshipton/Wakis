@@ -58,7 +58,22 @@ waves in a shell r0 < r < r1, meshed by `wakis.unstructured.pml3d.ball_with_pml_
 
 ## Late-time behaviour (`stability.json`, Cloud Batch `pml3d-stab-v1`)
 
-STABILITY_PLACEHOLDER
+Three runs of 1e5 steps each (ball radius 5 h + 10 layers, 40 k tetrahedra; ~25 min each on n2-standard-4;
+Cloud Batch `pml3d-stab-v2`, exit 0; the first attempt `pml3d-stab-v1` failed in code shipping, exit 4, and never ran):
+
+| layer | max\|e\| / peak at 2 %, 25 %, 100 % of the run | growth (max last 10 % / max 40–50 %) | interior energy at end / peak |
+|---|---|---|---|
+| α = 0, κ = 1 | 1.2e-4, 1.1e-5, 3.7e-6 (slowly decaying quasi-static field held in the layer) | 0.51 | 1.5e-10 |
+| α = ω0/10 | 1.3e-7 flat | 0.98 | 1.9e-14 |
+| κ_max = 5, α = ω0/10 | 1.3e-7 flat | 0.99 | 1.9e-14 |
+
+None of the runs grows. With α = 0 the layer keeps a quasi-static field (the 1/(iω) pole) that decays only slowly.
+Some of that field leaks back: the interior energy climbs from 1e-12 to 2e-9 of the peak around ct ≈ 1400 h
+before it decays. CFS α > 0 lets it relax within a few hundred steps; what remains is a flat 1.3e-7 residual on edges near the
+source, which is not curl-free. It is not a PML effect: the field is bounded and lives in the interior. Its
+nature (a weakly radiating local mode of the tetrahedral mesh?) is open.
+
+![](../../docs/img/unstructured_pml3d_late_time.png)
 
 ## Tests (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, Cloud Batch `pml3d-test-v3`)
 
