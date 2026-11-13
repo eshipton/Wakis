@@ -933,6 +933,9 @@ def _save_state_item(
         return
 
     if key == "energy_work_accum":
+        arrays["wall_kick"] = np.array(
+            [float(particle_solver._K_wall_kick)], dtype=np.float64
+        )
         if getattr(particle_solver, "track_energy", False):
             arrays["has_energy_work_accum"] = np.array([1], dtype=np.int64)
             arrays["fw_accum_vec"] = _to_host_f64(particle_solver._fw_accum_vec)
@@ -942,6 +945,13 @@ def _save_state_item(
             )
             arrays["fw_dt"] = np.array(
                 [float(particle_solver._fw_dt)], dtype=np.float64
+            )
+            # PEC wall-closure work (energy_balance "W_wall_closure"): persisted with the
+            # field-work accumulator so the energy residual is continuous across restarts.
+            arrays["cl_work_vec"] = _to_host_f64(particle_solver._cl_work_vec)
+            arrays["cl_J"] = _to_host_f64(particle_solver._J_cl)
+            arrays["cl_pending"] = np.array(
+                [1 if particle_solver._cl_pending else 0], dtype=np.int64
             )
         else:
             arrays["has_energy_work_accum"] = np.array([0], dtype=np.int64)
@@ -1242,12 +1252,18 @@ def _validate_rank_archive(
                 f"Checkpoint has_energy_work_accum={has_fw_accum} does not match "
                 f"live solver track_energy={bool(getattr(particle_solver, 'track_energy', False))}."
             )
+        if "wall_kick" in files:  # optional: absent in pre-wall-kick checkpoints
+            _require_header("wall_kick", (1,), np.float64)
         if has_fw_accum:
             exp_fw_shape = particle_solver._fw_accum_vec.shape
             _require_header("fw_accum_vec", exp_fw_shape, np.float64)
             _require_header("fw_E_prev", exp_fw_shape, np.float64)
             _require_header("fw_pending", (1,), np.int64)
             _require_header("fw_dt", (1,), np.float64)
+            if "cl_work_vec" in files:  # optional: absent in pre-wall-closure checkpoints
+                _require_header("cl_work_vec", exp_fw_shape, np.float64)
+                _require_header("cl_J", exp_fw_shape, np.float64)
+                _require_header("cl_pending", (1,), np.int64)
 
     if "energy_init_snap" in req_set:
         _require_header("has_energy_init_snap", (1,), np.int64)
@@ -1438,6 +1454,7 @@ def _restore_rank_arrays(
             particle_solver.boundaries._d_absorbed_charge.fill(0.0)
             particle_solver.boundaries._d_absorbed_energy.fill(0.0)
             particle_solver.boundaries._d_absorbed_count.fill(0)
+            particle_solver.boundaries._last_pec_d_count = 0
             particle_solver.boundaries._gpu_stats_dirty = False
 
     if "has_collector_state" in files:
@@ -1451,6 +1468,31 @@ def _restore_rank_arrays(
             )
             col.current_history = [(float(row[0]), float(row[1])) for row in hist_arr]
 
+    if "wall_kick" in files:
+        particle_solver._K_wall_kick = float(data["wall_kick"][0])
+    elif "has_energy_work_accum" in files:
+        particle_solver._K_wall_kick = 0.0
+        from .solver import _ENABLE_PEC_WALL_KICK
+
+        kick_active = bool(
+            _ENABLE_PEC_WALL_KICK
+            and int(getattr(particle_solver, "shape", 1)) >= 2
+            and any(
+                getattr(inj, "emitter_kind", None) == "pec_wall"
+                for inj in particle_solver.injectors
+            )
+        )
+        if kick_active:
+            import warnings
+
+            warnings.warn(
+                "Checkpoint archive lacks 'wall_kick'; K_wall_kick restarts "
+                "from zero, so the energy_balance() residual is offset by the "
+                "pre-restart PEC wall-kick energy.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
     if (
         "has_energy_work_accum" in files
         and bool(int(data["has_energy_work_accum"][0]))
@@ -1460,6 +1502,38 @@ def _restore_rank_arrays(
         _copy_into_target(particle_solver._E_prev_fw, data["fw_E_prev"])
         particle_solver._fw_pending = bool(int(data["fw_pending"][0]))
         particle_solver._fw_dt = float(data["fw_dt"][0])
+        if "cl_work_vec" in files:
+            _copy_into_target(particle_solver._cl_work_vec, data["cl_work_vec"])
+            _copy_into_target(particle_solver._J_cl, data["cl_J"])
+            particle_solver._cl_pending = bool(int(data["cl_pending"][0]))
+        else:  # checkpoint written before the wall-closure term existed
+            particle_solver._cl_work_vec.fill(0.0)
+            particle_solver._J_cl.fill(0.0)
+            particle_solver._cl_pending = False
+            from .solver import _ENABLE_PEC_WALL_CLOSURE
+
+            closure_active = bool(
+                _ENABLE_PEC_WALL_CLOSURE
+                and (
+                    particle_solver._has_pec_domain_wall
+                    or any(
+                        getattr(inj, "emitter_kind", None) == "pec_wall"
+                        for inj in particle_solver.injectors
+                    )
+                )
+            )
+            if closure_active:
+                import warnings
+
+                warnings.warn(
+                    "Checkpoint archive lacks 'cl_work_vec'; W_wall_closure restarts "
+                    "from zero, so the energy_balance() residual is offset by the "
+                    "pre-restart PEC wall-closure work.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        particle_solver._W_cl.fill(0.0)
+        particle_solver._cl_step_active = False
 
     if (
         "has_energy_init_snap" in files
@@ -1876,6 +1950,10 @@ def load_checkpoint(
         local_exc = exc
     _checkpoint_collective_check(particle_solver, local_exc)
 
+    particle_solver._has_pec_domain_wall = (
+        particle_solver._compute_has_pec_domain_wall()
+    )
+
     local_exc = None
     try:
         assert rank_file is not None
@@ -1883,6 +1961,8 @@ def load_checkpoint(
             with np.load(rank_file, allow_pickle=False) as data:
                 _validate_rank_archive(particle_solver, data)
                 _restore_rank_arrays(particle_solver, data)
+        except Warning:
+            raise
         except Exception as exc:
             raise ValueError(f"Corrupt checkpoint archive {rank_file}: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - any local failure must reach the collective check so no rank hangs

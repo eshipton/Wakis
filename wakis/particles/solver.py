@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+from scipy.constants import c as c_light
 from scipy.constants import mu_0
 
 from .boundaries import Collector, ParticleBoundaries
@@ -34,6 +35,8 @@ from .mapping import LogicalGridMap
 from .pushers import get_pusher, push_momentum, push_position
 from .shapes import (
     ParticleCFLError,
+    _gather_component_3d,
+    bspline_weights_1d,
     deposit_charge,
     deposit_current_esirkepov,
     deposit_current_naive,
@@ -42,6 +45,96 @@ from .shapes import (
 from .species import Species
 
 _CPU_CHUNK = 65536
+_ENABLE_PEC_WALL_CLOSURE: bool = True
+_ENABLE_PEC_WALL_KICK: bool = True
+
+
+def _pec_wall_closure_1d(
+    q_vis,
+    axis: int,
+    side: str,
+    k_w: int | None = None,
+    *,
+    event: str = "inject",
+    xp=np,
+):
+    """Compute the 1D normal-axis PEC wall-closure edge charge flux ``dW_n`` [C].
+
+    Moves all visible stencil charge ``q_vis`` of a particle creation or
+    absorption event on a PEC domain wall onto the wall node ``k_w`` along
+    normal ``axis`` via a 1D telescoping cumulative sum applied column by
+    column in the two transverse indices:
+
+    - Low face (``k_w = 0``), injection:
+      ``dW_n[k] = +sum_{k' > k} q_vis[k']`` for ``k >= 0``
+      (and ``-sum_{k' > k} q_vis[k']`` for absorption).
+    - High face (``k_w = N_n``), absorption:
+      ``dW_n[k] = +sum_{k' <= k} q_vis[k']`` for ``0 <= k < k_w``
+      (and ``-sum_{k' <= k} q_vis[k']`` for injection).
+
+    Parameters
+    ----------
+    q_vis : ndarray of float, shape (Nx, Ny, Nz)
+        Order-``p`` nodal charge deposit of the event's particles [C].
+    axis : {0, 1, 2}
+        Wall normal axis index (``0`` for ``x``, ``1`` for ``y``, ``2`` for ``z``).
+    side : {"low", "high"}
+        Domain face side along ``axis``.
+    k_w : int or None, optional
+        Wall node index along ``axis`` (``0`` for ``"low"``, ``N_n`` for
+        ``"high"``). Defaults to ``0`` for ``"low"`` and
+        ``q_vis.shape[axis] - 1`` for ``"high"``.
+    event : {"inject", "absorb"}, optional
+        Event type (``"inject"`` or ``"absorb"``). Default is ``"inject"``.
+    xp : module, optional
+        Array module (``numpy`` or ``cupy``). Default is ``numpy``.
+
+    Returns
+    -------
+    dW_n : ndarray of float, shape (Nx, Ny, Nz)
+        Normal-axis edge charge flux increment [C] to add to ``W_n``.
+    """
+    if axis not in (0, 1, 2):
+        raise ValueError(f"Unsupported axis={axis!r}; expected 0, 1, or 2.")
+    if side not in ("low", "high"):
+        raise ValueError(f"Unsupported side={side!r}; expected 'low' or 'high'.")
+    if event not in ("inject", "absorb"):
+        raise ValueError(
+            f"Unsupported event={event!r}; expected 'inject' or 'absorb'."
+        )
+
+    dW_n = xp.zeros_like(q_vis)
+    if not _ENABLE_PEC_WALL_CLOSURE:
+        return dW_n
+
+    n_ax = int(q_vis.shape[axis])
+    if side == "low":
+        k_wall = 0 if k_w is None else int(k_w)
+        if k_wall != 0:
+            raise ValueError(f"Low-face wall node index k_w must be 0, got {k_wall}.")
+        if n_ax > 1:
+            sl_src = [slice(None), slice(None), slice(None)]
+            sl_dst = [slice(None), slice(None), slice(None)]
+            sl_src[axis] = slice(1, n_ax)
+            sl_dst[axis] = slice(0, n_ax - 1)
+            tail = xp.flip(
+                xp.cumsum(xp.flip(q_vis[tuple(sl_src)], axis=axis), axis=axis),
+                axis=axis,
+            )
+            dW_n[tuple(sl_dst)] = tail if event == "inject" else (0.0 - tail)
+        return dW_n
+
+    k_wall = (n_ax - 1) if k_w is None else int(k_w)
+    if k_wall < 0 or k_wall >= n_ax:
+        raise ValueError(
+            f"High-face wall node index k_w={k_wall} out of bounds for size {n_ax}."
+        )
+    if k_wall > 0:
+        sl_head = [slice(None), slice(None), slice(None)]
+        sl_head[axis] = slice(0, k_wall)
+        head = xp.cumsum(q_vis[tuple(sl_head)], axis=axis)
+        dW_n[tuple(sl_head)] = head if event == "absorb" else (0.0 - head)
+    return dW_n
 
 
 def _cpu_chunk_ranges(n_p: int):
@@ -156,18 +249,40 @@ def compute_dual_divergence_d(solver):
     return div_x + div_y + div_z
 
 
-def _interior_vacuum_node_mask(solver):
-    """Boolean mask of primal nodes ``(i, j, k)`` strictly in the active vacuum region."""
+def _interior_vacuum_node_mask(solver, include_wall_planes: bool = False):
+    """Boolean mask of primal nodes ``(i, j, k)`` strictly in the active vacuum region.
+
+    Parameters
+    ----------
+    solver : SolverFIT3D
+        Electromagnetic FIT solver instance.
+    include_wall_planes : bool, optional
+        If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+        next to CPML inner faces; non-CPML faces (such as PEC domain walls)
+        already evaluate all interior vacuum node planes ``1..N-1`` by default.
+        If True, shrink the CPML margin to ``1`` node.
+    """
     xp = getattr(solver.E, "xp", np)
     Nx, Ny, Nz = solver.Nx, solver.Ny, solver.Nz
     mask = xp.ones((Nx, Ny, Nz), dtype=bool)
 
     bc_low = getattr(solver, "bc_low", ("periodic", "periodic", "periodic"))
     bc_high = getattr(solver, "bc_high", ("periodic", "periodic", "periodic"))
-    edge_ghosts = getattr(getattr(solver, "grid", None), "edge_ghosts", (0, 0, 0))
     n_pml = int(getattr(solver, "n_pml", 10))
     shape_order = int(getattr(solver, "_particles_shape_order", 1))
-    pad = (shape_order + 1) // 2 + 1
+    pad = 1 if include_wall_planes else ((shape_order + 1) // 2 + 1)
+
+    # Under MPI z-slab decomposition the CPML and wall margins are defined on the
+    # global z node index (as in a serial run), not on each slab: a margin can
+    # straddle a slab face, and a slab can lie entirely inside the CPML.
+    # ``_particles_bc_z_global = (bc_z_low, bc_z_high, n_pml)`` is set
+    # collectively in ``ParticleSolver.__init__``.
+    bc_z_glob = getattr(solver, "_particles_bc_z_global", None)
+    mpi_z = (
+        bc_z_glob is not None
+        and bool(getattr(solver, "use_mpi", False))
+        and int(getattr(solver, "size", 1)) > 1
+    )
 
     for ax, n_ax in enumerate((Nx, Ny, Nz)):
         low_s = str(bc_low[ax]).strip().lower()
@@ -176,7 +291,37 @@ def _interior_vacuum_node_mask(solver):
         if is_per:
             continue
 
-        n_phys = n_ax - int(edge_ghosts[ax])
+        if ax == 2 and mpi_z:
+            rank = int(solver.rank)
+            size = int(solver.size)
+            nz_glob = int(solver.NZ)
+            nz_own = nz_glob // size
+            k0 = rank * nz_own - (1 if rank > 0 else 0)  # global index of local node 0
+            # Global node count as in the serial solver (NZ, plus the appended
+            # edge ghost when boundary_at_domain_edge=True); the high boundary
+            # node sits at global index n_glob - 1.
+            n_glob = int(getattr(solver.grid, "NZ_samples", nz_glob + 1))
+            n_phys_g = n_glob - 1
+            g_low, g_high = (str(b).strip().lower() for b in bc_z_glob[:2])
+            n_pml_g = int(bc_z_glob[2])
+            g_start = (n_pml_g + pad) if g_low in ("pml", "cpml") else 1
+            g_end = (
+                n_phys_g - n_pml_g - pad + 1
+                if g_high in ("pml", "cpml")
+                else n_phys_g
+            )
+            k_glob = xp.arange(n_ax) + k0
+            keep = (k_glob >= g_start) & (k_glob < g_end)
+            if rank > 0:
+                keep[0] = False  # low MPI ghost node (owned by rank - 1)
+            if rank < size - 1:
+                keep[n_ax - 1] = False  # high MPI ghost node (owned by rank + 1)
+            mask &= keep[None, None, :]
+            continue
+
+        # On any non-periodic axis, SolverFIT3D places the high-side boundary
+        # node at index n_ax - 1 (both when boundary_at_domain_edge=True and False).
+        n_phys = n_ax - 1
         i_start = (n_pml + pad) if low_s in ("pml", "cpml") else 1
         if high_s == "mpi":
             i_end = n_ax - 1
@@ -268,7 +413,12 @@ def _mpi_sum_node_guards(solver, q_nodes) -> None:
             q_nodes[...] = solver.E.xp.asarray(q_h)
 
 
-def gauss_residual(solver, species, order: int | None = None) -> float:
+def gauss_residual(
+    solver,
+    species,
+    order: int | None = None,
+    include_wall_planes: bool = False,
+) -> float:
     """Compute the relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``.
 
     Evaluates ``S_tilde (eps E A_tilde) - (q_nodes + q_bg)`` on all interior
@@ -287,6 +437,11 @@ def gauss_residual(solver, species, order: int | None = None) -> float:
     order : int, optional
         B-spline shape order ``p``. Defaults to ``solver._particles_shape_order``
         if attached, else ``1``.
+    include_wall_planes : bool, optional
+        If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+        next to CPML inner interfaces; non-CPML faces (such as PEC domain walls)
+        already evaluate all interior vacuum node planes ``1..N-1`` by default.
+        If True, shrink the CPML margin to ``1`` node.
 
     Returns
     -------
@@ -345,6 +500,11 @@ def gauss_residual(solver, species, order: int | None = None) -> float:
             q_nodes=q_nodes,
             xp=xp,
         )
+        wi = getattr(ps_att, "_wall_images", None) if ps_att is not None else None
+        if wi is not None:
+            wi.deposit_charge(
+                xi, eta, zeta, qw, solver.Nx, solver.Ny, solver.Nz, periodic, q_nodes, xp=xp
+            )
 
     if getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1:
         _mpi_sum_node_guards(solver, q_nodes)
@@ -361,8 +521,22 @@ def gauss_residual(solver, species, order: int | None = None) -> float:
     else:
         q_tot = q_nodes[:, :, : solver.Nz]
 
-    vac_mask = _interior_vacuum_node_mask(solver)
-    if not bool(xp.any(vac_mask)):
+    if include_wall_planes:
+        vac_mask = _interior_vacuum_node_mask(solver, include_wall_planes=True)
+    else:
+        vac_mask = _interior_vacuum_node_mask(solver)
+    use_mpi_multi = getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1
+    has_vac = bool(xp.any(vac_mask))
+    if use_mpi_multi:
+        # A z-slab can lie entirely inside the CPML (e.g. the top rank when the
+        # slab boundary lands on the CPML interface). Such a rank contributes
+        # no residual nodes; only a domain with no vacuum node on any rank is an
+        # error, and it must be raised on every rank so no rank is left waiting
+        # in the MAX reductions below.
+        from mpi4py import MPI
+
+        has_vac = bool(solver.comm.allreduce(has_vac, op=MPI.LOR))
+    if not has_vac:
         raise ValueError(
             "gauss_residual: no interior vacuum nodes outside the CPML and the shape-stencil "
             "margin; enlarge the domain (the residual on CPML nodes is not a conservation check)."
@@ -378,9 +552,7 @@ def gauss_residual(solver, species, order: int | None = None) -> float:
     )
     q_ref = float(getattr(solver, "_particles_q_scale_ref", 0.0))
     denom = max(q_scale, q_ref, 1e-30)
-    if getattr(solver, "use_mpi", False) and getattr(solver, "size", 1) > 1:
-        from mpi4py import MPI
-
+    if use_mpi_multi:
         max_res = float(solver.comm.allreduce(max_res, op=MPI.MAX))
         denom = float(solver.comm.allreduce(denom, op=MPI.MAX))
     return max_res / denom
@@ -578,6 +750,7 @@ class ParticleSolver:
         particles_comm: str | None = None,
         capacity_headroom: float | None = None,
         track_energy: bool = False,
+        wall_stencil: str = "masked",
     ):
         self.solver = solver
         self.track_energy = bool(track_energy)
@@ -703,6 +876,23 @@ class ParticleSolver:
                     f"two high Esirkepov guard planes land inside the neighbour's "
                     f"owned slab, got NZ={nz_global} and size={mpi_size}."
                 )
+            if mpi_size > 1 and getattr(solver, "comm", None) is not None:
+                # Global z boundary conditions (each rank's solver only keeps "mpi"
+                # on its internal faces): the Gauss-residual vacuum mask needs them
+                # to place the CPML/wall margins on the global node index.
+                # solver.n_pml exists only on ranks that own a (C)PML face, so the
+                # thickness is reduced from the ranks that have it.
+                from mpi4py import MPI
+
+                solver._particles_bc_z_global = (
+                    str(solver.comm.bcast(solver.bc_low[2], root=0)),
+                    str(solver.comm.bcast(solver.bc_high[2], root=mpi_size - 1)),
+                    int(
+                        solver.comm.allreduce(
+                            int(getattr(solver, "n_pml", 0) or 0), op=MPI.MAX
+                        )
+                    ),
+                )
 
         if isinstance(species, Species):
             self.species = [species]
@@ -752,7 +942,34 @@ class ParticleSolver:
         self.boundaries = ParticleBoundaries.from_solver(
             solver, collectors=collectors, solid_mask=solid_mask
         )
+        self._has_pec_domain_wall = self._compute_has_pec_domain_wall()
         solver._particles_solid_mask = self.boundaries.solid_mask
+
+        ws_norm = str(wall_stencil).strip().lower()
+        if ws_norm not in ("masked", "image"):
+            raise ValueError(
+                f"Unknown wall_stencil={wall_stencil!r}; expected 'masked' or 'image'."
+            )
+        self.wall_stencil = ws_norm
+        self._wall_images = None
+        if ws_norm == "image":
+            if self.use_mpi and int(getattr(solver, "size", 1)) > 1:
+                raise NotImplementedError(
+                    "wall_stencil='image' is not implemented with MPI domain decomposition."
+                )
+            if self.deposit_scheme != "esirkepov":
+                raise ValueError("wall_stencil='image' requires deposit_scheme='esirkepov'.")
+            from .wall_images import WallImages
+
+            wi = WallImages(
+                tuple(float(v) for v in self.boundaries.xi_min),
+                tuple(float(v) for v in self.boundaries.xi_max),
+                self.boundaries.periodic,
+                self.boundaries.bc_low,
+                self.boundaries.bc_high,
+                self.shape,
+            )
+            self._wall_images = wi if wi.active else None
 
         if self.use_mpi:
             rank = int(solver.rank)
@@ -820,6 +1037,9 @@ class ParticleSolver:
             self._E_prev_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._fw_scratch = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._fw_accum_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._W_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._J_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+            self._cl_work_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
             self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
@@ -828,13 +1048,19 @@ class ParticleSolver:
             self._E_prev_fw = None
             self._fw_scratch = None
             self._fw_accum_vec = None
+            self._W_cl = None
+            self._J_cl = None
+            self._cl_work_vec = None
             self._E_init_fw = None
             self._H_prev_init_fw = None
             self._H_curr_init_fw = None
         self._fw_pending = False
+        self._cl_pending = False
+        self._cl_step_active = False
         self._fw_dt = 0.0
         self._has_step0_field_snap = False
         self._K_particles_0 = 0.0
+        self._K_wall_kick = 0.0
         self._H_prev = None
         self._d_cfl_error = (
             self.xp.zeros(1, dtype=np.int32) if self.on_gpu else None
@@ -1121,9 +1347,11 @@ class ParticleSolver:
         """Add low guard-layer current ``src`` (from rank ``r + 1``'s plane ``0``) into owned plane ``dst``."""
         dst += src
 
-    def _pack_second_high_guard_plane(self, send_hi, N: int, nxy: int) -> None:
+    def _pack_second_high_guard_plane(
+        self, send_hi, N: int, nxy: int, *, use_w_buf: bool = True
+    ) -> None:
         """Pack the second high guard plane ``k = k_own_end + 1`` into ``send_hi[:, 1, :]``."""
-        if self._Wx_buf.size >= N + nxy:
+        if use_w_buf and self._Wx_buf.size >= N + nxy:
             send_hi[0, 1, :] = self._Wx_buf[N : N + nxy]
             send_hi[1, 1, :] = self._Wy_buf[N : N + nxy]
             send_hi[2, 1, :] = self._Wz_buf[N : N + nxy]
@@ -1188,7 +1416,9 @@ class ParticleSolver:
         if rank < size - 1:
             send_hi = self._cpu_guard_send_hi
             send_hi[:, 0, :] = view[:, k_own_end, :]
-            self._pack_second_high_guard_plane(send_hi, N, nxy)
+            self._pack_second_high_guard_plane(
+                send_hi, N, nxy, use_w_buf=(buf is self.J_particles)
+            )
             recv_from_hi = self._cpu_guard_recv_hi
 
         reqs = []
@@ -1252,7 +1482,9 @@ class ParticleSolver:
             self._d_guard_send_lo[...] = view[:, 0, :]
         if rank < size - 1:
             self._d_guard_send_hi[:, 0, :] = view[:, k_own_end, :]
-            self._pack_second_high_guard_plane(self._d_guard_send_hi, N, nxy)
+            self._pack_second_high_guard_plane(
+                self._d_guard_send_hi, N, nxy, use_w_buf=(buf is self.J_particles)
+            )
 
         if nccl_comm is not None:
             from cupy.cuda import nccl
@@ -2060,6 +2292,7 @@ class ParticleSolver:
         self._collective_check(local_exc)
 
         self.reset_gauss_reference()
+        self._has_pec_domain_wall = self._compute_has_pec_domain_wall()
         local_exc = None
         try:
             if self.track_energy:
@@ -2071,9 +2304,19 @@ class ParticleSolver:
                     self._E_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
                     self._H_prev_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
                     self._H_curr_init_fw = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                if self._W_cl is None:
+                    n_cells = s.Nx * s.Ny * s.Nz
+                    self._W_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._J_cl = self.xp.zeros(3 * n_cells, dtype=np.float64)
+                    self._cl_work_vec = self.xp.zeros(3 * n_cells, dtype=np.float64)
                 self._init_energy_weights()
                 self._fw_accum_vec.fill(0.0)
+                self._W_cl.fill(0.0)
+                self._J_cl.fill(0.0)
+                self._cl_work_vec.fill(0.0)
             self._fw_pending = False
+            self._cl_pending = False
+            self._cl_step_active = False
             self._fw_dt = 0.0
             self._has_step0_field_snap = False
             H_arr = s.H.toarray()
@@ -2091,6 +2334,7 @@ class ParticleSolver:
             self._K_particles_0 = self.kinetic_energy(synchronised=True)
         else:
             self._K_particles_0 = 0.0
+        self._K_wall_kick = 0.0
 
         if not self._attached:
             s.register_mid_step(self._mid_step_hook)
@@ -2179,14 +2423,65 @@ class ParticleSolver:
         out *= 0.5
 
     def _flush_pending_field_work(self, E_curr) -> None:
-        """Accumulate ``dt * J^{n+1/2} * E_bar^{n+1/2}`` into ``_fw_accum_vec`` in-place."""
+        """Accumulate ``dt * J^{n+1/2} * E_bar^{n+1/2}`` into ``_fw_accum_vec`` (and ``_cl_work_vec``) in-place."""
         if not self._fw_pending:
             return
         self._step_e_bar_for_work(self._E_prev_fw, E_curr, self._fw_scratch)
+        if self._cl_pending:
+            self._cl_work_vec += (self._fw_scratch * self._J_cl) * self._fw_dt
+            self._cl_pending = False
         self._fw_scratch *= self.J_particles
         self._fw_scratch *= self._fw_dt
         self._fw_accum_vec += self._fw_scratch
         self._fw_pending = False
+
+    def _finalize_closure_current(self, dt: float) -> None:
+        """Finalize per-step PEC wall-closure current ``_J_cl`` from ``_W_cl``."""
+        s = self.solver
+        use_mpi_multi = self.use_mpi and int(getattr(s, "size", 1)) > 1
+        if use_mpi_multi:
+            active = bool(
+                _ENABLE_PEC_WALL_CLOSURE
+                and (
+                    self._has_pec_domain_wall
+                    or any(inj.emitter_kind == "pec_wall" for inj in self.injectors)
+                )
+            )
+        else:
+            active = self._cl_step_active
+        if not active:
+            self._cl_pending = False
+            return
+
+        xp = self.xp
+        Nx, Ny, Nz = s.Nx, s.Ny, s.Nz
+        N = Nx * Ny * Nz
+        if use_mpi_multi:
+            self._mpi_sum_guards(self._W_cl)
+
+        if self.filter:
+            if self.use_mpi:
+                raise NotImplementedError(
+                    "Binomial current filtering is not supported with use_mpi=True."
+                )
+            Wx_cl, Wy_cl, Wz_cl = apply_binomial_filter_3d(
+                self._W_cl[:N],
+                self._W_cl[N : 2 * N],
+                self._W_cl[2 * N : 3 * N],
+                Nx,
+                Ny,
+                Nz,
+                periodic=self.boundaries.periodic,
+                compensate=(self.filter != "uncompensated"),
+                xp=xp,
+            )
+            self._W_cl[:N] = Wx_cl
+            self._W_cl[N : 2 * N] = Wy_cl
+            self._W_cl[2 * N : 3 * N] = Wz_cl
+
+        xp.multiply(self._W_cl, self._itA_arr, out=self._J_cl)
+        self._J_cl *= 1.0 / dt
+        self._cl_pending = True
 
     def _backpush_injected_slice(
         self,
@@ -2217,6 +2512,10 @@ class ParticleSolver:
             periodic=self.boundaries.periodic,
             xp=xp,
         )
+        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+            (Ex, Ey, Ez, Bx, By, Bz),
+            self._image_field(xi_i, eta_i, zeta_i, E_field, B_n_tuple),
+        )
         x_s = sp._x[sl]
         y_s = sp._y[sl]
         z_s = sp._z[sl]
@@ -2241,6 +2540,451 @@ class ParticleSolver:
         sp._ux[sl] = ux_b
         sp._uy[sl] = uy_b
         sp._uz[sl] = uz_b
+
+    def _compute_has_pec_domain_wall(self) -> bool:
+        """Return True on all MPI ranks if any global domain boundary face is PEC."""
+        s = self.solver
+        has_pec = any(
+            b in ("pec", "electric")
+            for b in (*self.boundaries.bc_low, *self.boundaries.bc_high)
+        )
+        global_bc_z = getattr(s, "_global_bc_z", None)
+        if global_bc_z is not None:
+            has_pec = has_pec or any(
+                str(b).strip().lower() in ("pec", "electric") for b in global_bc_z
+            )
+        if self.use_mpi and int(getattr(s, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            has_pec = bool(s.comm.allreduce(bool(has_pec), op=MPI.LOR))
+        return bool(has_pec)
+
+    def _pec_wall_node_index(self, axis: int, side: str) -> int:
+        """Return the logical primal node index ``k_w`` of the domain wall on ``(axis, side)``."""
+        if side == "low":
+            return round(self.boundaries.xi_min[axis])
+        n_ax = (self.solver.Nx, self.solver.Ny, self.solver.Nz)[axis]
+        return min(round(self.boundaries.xi_max[axis]), n_ax - 1)
+
+    def _injector_pec_wall_face(self, inj) -> tuple[int, str]:
+        """Return ``(axis, side)`` for a ``pec_wall`` injector.
+
+        Raises
+        ------
+        ValueError
+            If the injector axis, side, direction, or plane coordinate does not
+            correspond to a domain boundary wall emitting into the domain.
+        """
+        raw_axis = getattr(inj, "axis", 2)
+        if isinstance(raw_axis, bool) or int(raw_axis) not in (0, 1, 2):
+            raise ValueError(
+                f"Unsupported pec_wall injector axis={raw_axis!r}; expected 0, 1, or 2."
+            )
+        axis = int(raw_axis)
+        side = getattr(inj, "side", None)
+        if side is not None:
+            if side not in ("low", "high"):
+                raise ValueError(
+                    f"Unsupported pec_wall injector side={side!r}; expected 'low' or 'high'."
+                )
+            return axis, str(side)
+        if axis != 2 or not hasattr(inj, "z0"):
+            raise ValueError(
+                "pec_wall injector without an explicit side='low'/'high' is only "
+                f"supported for z-axis injectors with z0; got axis={axis!r}."
+            )
+        z0 = float(inj.z0)
+        z_lo = float(getattr(self.solver.grid, "zmin", self.grid_map.zmin))
+        z_hi = float(getattr(self.solver.grid, "zmax", self.grid_map.zmax))
+        span = max(abs(z_hi - z_lo), 1.0)
+        tol = 1e-12 * span
+        direction = getattr(inj, "direction", None)
+        if abs(z0 - z_lo) <= tol:
+            if direction is not None and int(direction) != 1:
+                raise ValueError(
+                    f"pec_wall injector at zmin={z_lo:g} must emit into the domain "
+                    f"(direction=+1); got direction={direction!r}."
+                )
+            return (2, "low")
+        if abs(z0 - z_hi) <= tol:
+            if direction is not None and int(direction) != -1:
+                raise ValueError(
+                    f"pec_wall injector at zmax={z_hi:g} must emit into the domain "
+                    f"(direction=-1); got direction={direction!r}."
+                )
+            return (2, "high")
+        raise ValueError(
+            f"pec_wall injector z0={z0:g} does not lie on zmin={z_lo:g} or zmax={z_hi:g}; "
+            "use emitter_kind='interior_sheet' for interior emission planes."
+        )
+
+    def _check_mpi_pec_wall_closure(
+        self, q_vis, axis: int, side: str, k_w: int
+    ) -> None:
+        """Validate that a PEC wall closure on ``axis == 2`` lies within this rank's slab and guard layers."""
+        s = self.solver
+        if not self.use_mpi or int(getattr(s, "size", 1)) <= 1 or axis != 2:
+            return
+        rank = int(s.rank)
+        size = int(s.size)
+        xp = self.xp
+        if side == "low":
+            if rank != 0:
+                raise RuntimeError(
+                    f"PEC low-z wall closure executed on non-owning MPI rank {rank}."
+                )
+            k_lim = int(self._k_own_end) + 2
+            if k_lim < q_vis.shape[2] and bool(xp.any(q_vis[:, :, k_lim:] != 0.0)):
+                raise ValueError(
+                    "PEC low-z wall closure stencil extends beyond the MPI guard layers "
+                    f"(owned slab ends at k={self._k_own_end}, shape={self.shape})."
+                )
+        else:
+            if rank != size - 1:
+                raise RuntimeError(
+                    f"PEC high-z wall closure executed on non-owning MPI rank {rank}."
+                )
+            if int(self._k_own_start) > 1 and bool(
+                xp.any(q_vis[:, :, : int(self._k_own_start) - 1] != 0.0)
+            ):
+                raise ValueError(
+                    "PEC high-z wall closure stencil extends beyond the low MPI guard layer."
+                )
+
+    def _apply_pec_wall_event(
+        self,
+        q_vis,
+        axis: int,
+        side: str,
+        *,
+        event: str,
+        W_tuple: tuple,
+        q_bg,
+    ) -> None:
+        """Apply PEC wall-closure current to ``W_tuple[axis]`` and record surface charge on ``k_w`` in ``q_bg``."""
+        xp = self.xp
+        k_w = self._pec_wall_node_index(axis, side)
+        self._check_mpi_pec_wall_closure(q_vis, axis, side, k_w)
+
+        sl_wall = [slice(None), slice(None), slice(None)]
+        sl_wall[axis] = k_w
+        sl_wall_t = tuple(sl_wall)
+        # B-spline symmetry at the wall node k_w implies the masked exterior
+        # ghost weight equals the interior tail weight sum_{k != k_w} q_vis[k],
+        # so the full particle charge at the wall is 2 * sum(q_vis) - q_vis[k_w].
+        q_wall = 2.0 * xp.sum(q_vis, axis=axis) - q_vis[sl_wall_t]
+        if event == "inject":
+            q_bg[sl_wall_t] -= q_wall
+        else:
+            q_bg[sl_wall_t] += q_wall
+
+        if not _ENABLE_PEC_WALL_CLOSURE:
+            return
+
+        dW_n = _pec_wall_closure_1d(q_vis, axis, side, k_w=k_w, event=event, xp=xp)
+        W_n = W_tuple[axis]
+        N = q_vis.size
+        dW_flat = dW_n.ravel(order="F")
+        W_n[:N] += dW_flat
+        if self.track_energy and self._W_cl is not None:
+            self._W_cl[axis * N : (axis + 1) * N] += dW_flat
+            self._cl_step_active = True
+
+    def _check_wall_kick_error(self, *, periodic: bool = False) -> None:
+        """Synchronise and check the device-side PEC-wall birth-kick flag ``_d_wall_kick_error``.
+
+        When ``periodic=True``, the device flag is synchronised to the host only
+        when ``self.n_particle_steps % check_every == 0`` (where ``check_every``
+        defaults to ``64`` and may be overridden via ``self._wall_kick_check_every``)
+        to avoid a per-step device-to-host synchronisation on GPU. When
+        ``periodic=False``, the flag is synchronised and checked unconditionally.
+        """
+        err_flag = getattr(self, "_d_wall_kick_error", None)
+        if err_flag is None:
+            return
+        if periodic:
+            check_every = int(getattr(self, "_wall_kick_check_every", 64))
+            if check_every <= 0 or (self.n_particle_steps % check_every) != 0:
+                return
+        if bool(err_flag):
+            err_flag.fill(False)
+            raise ValueError(
+                "PEC-wall birth kick resulted in gamma' < 1 (particle cannot leave the wall)."
+            )
+
+    def _apply_pec_wall_birth_kick(
+        self,
+        sp_inj: Species,
+        sl_new: slice,
+        xi_i,
+        eta_i,
+        zeta_i,
+        E_field,
+        axis: int,
+        side: str,
+    ) -> None:
+        """Apply the PEC-wall birth kick for ``shape >= 2`` and accumulate ``_K_wall_kick``.
+
+        For shape order :math:`p \\ge 2`, builds the node potential integral
+        :math:`\\Psi` of the normal electric field :math:`E_n^n` from the PEC
+        wall node :math:`k_w` along ``axis`` on the wall stencil slab
+        :math:`k_w \\dots k_w \\pm (p + 1)` (:math:`\\Psi[k_w] = 0`), gathers
+        :math:`\\mathrm{d}K_i = q_i w_i \\sum_{\\text{nodes}} W^{(p)}(\\mathbf{x}_i)\\,\\Psi_{\\text{node}}`,
+        and updates each injected particle's birth momentum via
+        :math:`\\gamma'_i = \\gamma_i + \\mathrm{d}K_i / (w_i m c^2)`:
+
+        - For moving particles (:math:`|\\mathbf{u}_i| > 0`), scales
+          :math:`\\mathbf{u}_i` at constant direction so that
+          :math:`|\\mathbf{u}'_i| / c = \\sqrt{\\gamma_i'^2 - 1}`.
+        - For particles born at rest (:math:`|\\mathbf{u}_i| = 0`), applies the
+          kick along the inward wall normal (:math:`+\\hat{\\mathbf{n}}` on
+          ``side="low"``, :math:`-\\hat{\\mathbf{n}}` on ``side="high"``) with
+          :math:`|\\mathbf{u}'_i| / c = \\sqrt{\\gamma_i'^2 - 1}`.
+
+        To avoid per-step device-to-host synchronisations on GPU, ``_K_wall_kick``
+        is accumulated as a 0-D device scalar (synchronised only when read, e.g.
+        in :meth:`wall_kick_energy`), and the :math:`\\gamma'_i < 1` condition is
+        OR-accumulated into the 0-D device flag ``_d_wall_kick_error`` and
+        checked via :meth:`_check_wall_kick_error` every
+        ``_wall_kick_check_every`` steps (default ``64``, including step ``0``).
+        """
+        if self.shape < 2 or not _ENABLE_PEC_WALL_KICK:
+            return
+        if self._wall_images is not None:
+            # Image stencil: the effective potential sum_k W_k Psi_k of a particle on the wall
+            # is identically zero (odd image), so the D17 kick vanishes.
+            return
+        s = self.solver
+        xp = self.xp
+        Nx, Ny, Nz = int(s.Nx), int(s.Ny), int(s.Nz)
+        N = Nx * Ny * Nz
+        E_arr = E_field.toarray() if hasattr(E_field, "toarray") else E_field
+        E_n = E_arr[axis * N : (axis + 1) * N].reshape((Nx, Ny, Nz), order="F")
+        k_w = self._pec_wall_node_index(axis, side)
+        n_ax = int(E_n.shape[axis])
+        dl = self.grid_map._deltas[axis]
+
+        slab_shape = [Nx, Ny, Nz]
+        dl_shape = [1, 1, 1]
+        if side == "low":
+            k_slab_start = k_w
+            k_stop = min(n_ax, k_w + self.shape + 2)
+            n_slab = max(1, k_stop - k_w)
+            slab_shape[axis] = n_slab
+            Psi_slab = xp.zeros(tuple(slab_shape), dtype=np.float64, order="F")
+            if k_stop > k_w + 1:
+                sl_edges = [slice(None), slice(None), slice(None)]
+                sl_nodes = [slice(None), slice(None), slice(None)]
+                sl_edges[axis] = slice(k_w, k_stop - 1)
+                sl_nodes[axis] = slice(1, n_slab)
+                dl_shape[axis] = k_stop - 1 - k_w
+                dl_sub = dl[k_w : k_stop - 1].reshape(tuple(dl_shape))
+                Psi_slab[tuple(sl_nodes)] = xp.cumsum(
+                    E_n[tuple(sl_edges)] * dl_sub, axis=axis
+                )
+        elif side == "high":
+            k_start = max(0, k_w - (self.shape + 1))
+            k_slab_start = k_start
+            n_slab = max(1, k_w - k_start + 1)
+            slab_shape[axis] = n_slab
+            Psi_slab = xp.zeros(tuple(slab_shape), dtype=np.float64, order="F")
+            if k_w > k_start:
+                sl_edges = [slice(None), slice(None), slice(None)]
+                sl_nodes = [slice(None), slice(None), slice(None)]
+                sl_edges[axis] = slice(k_start, k_w)
+                sl_nodes[axis] = slice(0, k_w - k_start)
+                dl_shape[axis] = k_w - k_start
+                dl_sub = dl[k_start:k_w].reshape(tuple(dl_shape))
+                Psi_slab[tuple(sl_nodes)] = -xp.flip(
+                    xp.cumsum(
+                        xp.flip(E_n[tuple(sl_edges)] * dl_sub, axis=axis),
+                        axis=axis,
+                    ),
+                    axis=axis,
+                )
+        else:
+            raise ValueError(f"Unsupported side={side!r}; expected 'low' or 'high'.")
+
+        ix_nod, wx_nod = bspline_weights_1d(xi_i, self.shape, staggered=False, xp=xp)
+        iy_nod, wy_nod = bspline_weights_1d(eta_i, self.shape, staggered=False, xp=xp)
+        iz_nod, wz_nod = bspline_weights_1d(zeta_i, self.shape, staggered=False, xp=xp)
+        i_nod = [ix_nod, iy_nod, iz_nod]
+        if k_slab_start != 0:
+            i_nod[axis] = i_nod[axis] - k_slab_start
+        periodic_slab = list(self.boundaries.periodic)
+        periodic_slab[axis] = False
+        psi_p = _gather_component_3d(
+            Psi_slab.ravel(order="F"),
+            slab_shape[0],
+            slab_shape[1],
+            slab_shape[2],
+            i_nod[0],
+            wx_nod,
+            i_nod[1],
+            wy_nod,
+            i_nod[2],
+            wz_nod,
+            tuple(periodic_slab),
+            xp,
+        )
+
+        w_sl = sp_inj._w[sl_new]
+        dK = (sp_inj.charge * w_sl) * psi_p
+        ux_sl = sp_inj._ux[sl_new]
+        uy_sl = sp_inj._uy[sl_new]
+        uz_sl = sp_inj._uz[sl_new]
+        u2 = ux_sl * ux_sl + uy_sl * uy_sl + uz_sl * uz_sl
+        gamma = xp.sqrt(1.0 + u2 / (c_light * c_light))
+        mc2 = float(sp_inj.mass) * (c_light * c_light)
+        w_mc2 = w_sl * mc2
+        dgamma = xp.where(w_sl != 0.0, dK / xp.where(w_sl != 0.0, w_mc2, 1.0), 0.0)
+        gamma_prime = gamma + dgamma
+        err_flag = getattr(self, "_d_wall_kick_error", None)
+        if not isinstance(err_flag, xp.ndarray):
+            err_flag = xp.zeros((), dtype=bool)
+            self._d_wall_kick_error = err_flag
+        err_flag |= xp.any(gamma_prime < 1.0)
+        self._check_wall_kick_error(periodic=True)
+        denom = xp.sqrt(gamma * gamma - 1.0)
+        u_prime_over_c = xp.sqrt(xp.maximum(gamma_prime * gamma_prime - 1.0, 0.0))
+        scale = xp.where(
+            denom > 0.0,
+            u_prime_over_c / xp.where(denom > 0.0, denom, 1.0),
+            1.0,
+        )
+        inward_sign = 1.0 if side == "low" else -1.0
+        u_rest_n = (inward_sign * c_light) * u_prime_over_c
+        ux_new = ux_sl * scale
+        uy_new = uy_sl * scale
+        uz_new = uz_sl * scale
+        if axis == 0:
+            ux_new = xp.where(denom > 0.0, ux_new, u_rest_n)
+        elif axis == 1:
+            uy_new = xp.where(denom > 0.0, uy_new, u_rest_n)
+        else:
+            uz_new = xp.where(denom > 0.0, uz_new, u_rest_n)
+        sp_inj._ux[sl_new] = ux_new
+        sp_inj._uy[sl_new] = uy_new
+        sp_inj._uz[sl_new] = uz_new
+        if not isinstance(self._K_wall_kick, xp.ndarray):
+            k_arr = xp.zeros((), dtype=np.float64)
+            k_arr += self._K_wall_kick
+            self._K_wall_kick = k_arr
+        self._K_wall_kick += xp.sum(dK)
+
+    def _record_absorbed_particles(
+        self,
+        xi1_dep,
+        eta1_dep,
+        zeta1_dep,
+        qw,
+        absorbed_mask,
+        hit_code,
+        W_tuple: tuple,
+        q_bg,
+    ) -> None:
+        """Record absorbed particle charge in ``q_bg`` and apply PEC wall closure for PEC domain faces."""
+        s = self.solver
+        xp = self.xp
+        Nx, Ny, Nz = s.Nx, s.Ny, s.Nz
+        if self._q0_buf is None or self._q0_buf.shape != (Nx, Ny, Nz):
+            self._q0_buf = xp.zeros((Nx, Ny, Nz), dtype=np.float64, order="F")
+        q_abs_nodes = self._q0_buf
+
+        if hit_code is None or hit_code.shape != absorbed_mask.shape:
+            q_abs_nodes.fill(0.0)
+            deposit_charge(
+                xi1_dep[absorbed_mask],
+                eta1_dep[absorbed_mask],
+                zeta1_dep[absorbed_mask],
+                qw[absorbed_mask],
+                Nx,
+                Ny,
+                Nz,
+                order=self.shape,
+                periodic=self.boundaries.periodic,
+                q_nodes=q_abs_nodes,
+                xp=xp,
+            )
+            self._image_charge(
+                xi1_dep[absorbed_mask],
+                eta1_dep[absorbed_mask],
+                zeta1_dep[absorbed_mask],
+                qw[absorbed_mask],
+                q_abs_nodes,
+            )
+            q_bg += q_abs_nodes
+            return
+
+        rem_mask = absorbed_mask.copy()
+        faces = (
+            (0, "low", 0, self.boundaries.bc_low[0]),
+            (0, "high", 1, self.boundaries.bc_high[0]),
+            (1, "low", 2, self.boundaries.bc_low[1]),
+            (1, "high", 3, self.boundaries.bc_high[1]),
+            (2, "low", 4, self.boundaries.bc_low[2]),
+            (2, "high", 5, self.boundaries.bc_high[2]),
+        )
+        for axis_f, side_f, code_f, bc_f in faces:
+            if bc_f not in ("pec", "electric"):
+                continue
+            face_mask = rem_mask & (hit_code == code_f)
+            if not bool(xp.any(face_mask)):
+                continue
+            rem_mask = rem_mask & ~face_mask
+            q_abs_nodes.fill(0.0)
+            deposit_charge(
+                xi1_dep[face_mask],
+                eta1_dep[face_mask],
+                zeta1_dep[face_mask],
+                qw[face_mask],
+                Nx,
+                Ny,
+                Nz,
+                order=self.shape,
+                periodic=self.boundaries.periodic,
+                q_nodes=q_abs_nodes,
+                xp=xp,
+            )
+            self._image_charge(
+                xi1_dep[face_mask],
+                eta1_dep[face_mask],
+                zeta1_dep[face_mask],
+                qw[face_mask],
+                q_abs_nodes,
+            )
+            self._apply_pec_wall_event(
+                q_abs_nodes,
+                axis=axis_f,
+                side=side_f,
+                event="absorb",
+                W_tuple=W_tuple,
+                q_bg=q_bg,
+            )
+
+        if bool(xp.any(rem_mask)):
+            q_abs_nodes.fill(0.0)
+            deposit_charge(
+                xi1_dep[rem_mask],
+                eta1_dep[rem_mask],
+                zeta1_dep[rem_mask],
+                qw[rem_mask],
+                Nx,
+                Ny,
+                Nz,
+                order=self.shape,
+                periodic=self.boundaries.periodic,
+                q_nodes=q_abs_nodes,
+                xp=xp,
+            )
+            self._image_charge(
+                xi1_dep[rem_mask],
+                eta1_dep[rem_mask],
+                zeta1_dep[rem_mask],
+                qw[rem_mask],
+                q_abs_nodes,
+            )
+            q_bg += q_abs_nodes
 
     def _record_initial_gauss_state(self) -> None:
         """Capture initial background charge ``q_bg = S_tilde d_tilde(0) - q_nodes(0)``."""
@@ -2291,6 +3035,15 @@ class ParticleSolver:
                         d_n_particles=sp._d_n_particles if sp._n_dirty_gpu else None,
                         n_launch=n_l,
                     )
+                    if self._wall_images is not None:
+                        n_act = int(sp.n_particles)
+                        self._image_charge(
+                            xi[:n_act],
+                            eta[:n_act],
+                            zeta[:n_act],
+                            sp.charge * sp._w[:n_act],
+                            q0,
+                        )
                 else:
                     xi, eta, zeta = self.grid_map.to_logical(sp.x, sp.y, sp.z)
                     deposit_charge(
@@ -2306,6 +3059,7 @@ class ParticleSolver:
                         q_nodes=q0,
                         xp=xp,
                     )
+                    self._image_charge(xi, eta, zeta, sp.charge * sp.w, q0)
         except Exception as exc:
             local_exc = exc
         self._collective_check(local_exc)
@@ -2380,6 +3134,87 @@ class ParticleSolver:
         arr = np.asarray(spec, dtype=np.float64).ravel()
         return (float(arr[0]), float(arr[1]), float(arr[2])), None
 
+    def _image_field(self, xi, eta, zeta, E_field, B_tuple):
+        """Image-stencil part of the gathered ``(E, B)`` at logical positions, or ``None``.
+
+        Non-``None`` only with ``wall_stencil="image"`` and particles within the stencil margin
+        of a planar PEC domain face (see :mod:`wakis.particles.wall_images`).
+        """
+        wi = self._wall_images
+        if wi is None:
+            return None
+        s = self.solver
+        return wi.field_correction(
+            xi,
+            eta,
+            zeta,
+            E_field,
+            B_tuple,
+            s.Nx,
+            s.Ny,
+            s.Nz,
+            self.gather,
+            self.boundaries.periodic,
+            xp=self.xp,
+        )
+
+    def _image_charge(self, xi, eta, zeta, qw, q_nodes) -> None:
+        """Add the image charges [C] of particles at logical ``(xi, eta, zeta)`` to ``q_nodes``."""
+        wi = self._wall_images
+        if wi is None:
+            return
+        s = self.solver
+        wi.deposit_charge(
+            xi,
+            eta,
+            zeta,
+            qw,
+            s.Nx,
+            s.Ny,
+            s.Nz,
+            self.boundaries.periodic,
+            q_nodes,
+            xp=self.xp,
+        )
+
+    @staticmethod
+    def _add_image_field(fields6, corr):
+        """Return ``fields6 + corr`` component-wise (``fields6`` unchanged if ``corr`` is None)."""
+        if corr is None:
+            return tuple(fields6)
+        return tuple(f + c for f, c in zip(fields6, corr))
+
+    def _gpu_ext_arrays_with_images(self, sp, n_l, E_arr, B_arr, E_flat, B_flat):
+        """Merge the image-stencil field into the per-particle external-field arrays (GPU)."""
+        if self._wall_images is None:
+            return E_arr, B_arr
+        xp = self.xp
+        s = self.solver
+        N = s.Nx * s.Ny * s.Nz
+        n_act = min(int(sp.n_particles), int(n_l))
+        if n_act == 0:
+            return E_arr, B_arr
+        xi, eta, zeta = self.grid_map.to_logical(
+            sp._x[:n_act], sp._y[:n_act], sp._z[:n_act]
+        )
+        corr = self._image_field(
+            xi,
+            eta,
+            zeta,
+            (E_flat[:N], E_flat[N : 2 * N], E_flat[2 * N : 3 * N]),
+            (B_flat[:N], B_flat[N : 2 * N], B_flat[2 * N : 3 * N]),
+        )
+        if corr is None:
+            return E_arr, B_arr
+        full = []
+        for c in corr:
+            a = xp.zeros(int(n_l), dtype=np.float64)
+            a[:n_act] = c
+            full.append(a)
+        E_new = tuple(full[:3]) if E_arr is None else tuple(a + b for a, b in zip(E_arr, full[:3]))
+        B_new = tuple(full[3:]) if B_arr is None else tuple(a + b for a, b in zip(B_arr, full[3:]))
+        return E_new, B_new
+
     def _initialize_species_half_step(self, sp: Species, B_n_tuple, t_n: float) -> None:
         """Back-push ``u^0 -> u^{-1/2}`` by ``-dt / 2`` on step 0 if ``sp.u_is_synced``."""
         if not sp.u_is_synced:
@@ -2397,6 +3232,9 @@ class ParticleSolver:
             )
             B_uni, B_arr = self._ext_field_args_gpu(
                 self.B_ext, sp._x[:n_l], sp._y[:n_l], sp._z[:n_l], t_n
+            )
+            E_arr, B_arr = self._gpu_ext_arrays_with_images(
+                sp, n_l, E_arr, B_arr, s.E.toarray(), self._B_n_buf
             )
             launch_gather_and_push_gpu(
                 sp,
@@ -2438,6 +3276,10 @@ class ParticleSolver:
                     periodic=self.boundaries.periodic,
                     xp=self.xp,
                 )
+                Ex_c, Ey_c, Ez_c, Bx_c, By_c, Bz_c = self._add_image_field(
+                    (Ex_c, Ey_c, Ez_c, Bx_c, By_c, Bz_c),
+                    self._image_field(xi_c, eta_c, zeta_c, s.E, B_n_tuple),
+                )
                 Ex_e, Ey_e, Ez_e = self._eval_ext_field(self.E_ext, x_c, y_c, z_c, t_n)
                 Bx_e, By_e, Bz_e = self._eval_ext_field(self.B_ext, x_c, y_c, z_c, t_n)
                 ux_c, uy_c, uz_c = fn(
@@ -2475,6 +3317,10 @@ class ParticleSolver:
             gather=self.gather,
             periodic=self.boundaries.periodic,
             xp=self.xp,
+        )
+        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+            (Ex, Ey, Ez, Bx, By, Bz),
+            self._image_field(xi0, eta0, zeta0, s.E, B_n_tuple),
         )
         Ex_e, Ey_e, Ez_e = self._eval_ext_field(self.E_ext, sp.x, sp.y, sp.z, t_n)
         Bx_e, By_e, Bz_e = self._eval_ext_field(self.B_ext, sp.x, sp.y, sp.z, t_n)
@@ -2606,6 +3452,19 @@ class ParticleSolver:
                     self._initialize_species_half_step(sp, B_n_tuple, t_n)
                 self._initialized_half_step = True
 
+            if do_profile:
+                xp.cuda.Stream.null.synchronize()
+                t0_zero = time.perf_counter()
+            Wx_tot.fill(0.0)
+            Wy_tot.fill(0.0)
+            Wz_tot.fill(0.0)
+            if self.track_energy:
+                self._W_cl.fill(0.0)
+                self._cl_step_active = False
+            if do_profile:
+                xp.cuda.Stream.null.synchronize()
+                t_dep_acc += time.perf_counter() - t0_zero
+
             for inj in self.injectors:
                 if self.use_mpi and not self._owns_z_coord(inj.z0):
                     inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)
@@ -2618,6 +3477,58 @@ class ParticleSolver:
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj._x[sl_new], sp_inj._y[sl_new], sp_inj._z[sl_new]
                     )
+                    if self._q0_buf is None or self._q0_buf.shape != (
+                        Nx,
+                        Ny,
+                        Nz,
+                    ):
+                        self._q0_buf = xp.zeros(
+                            (Nx, Ny, Nz), dtype=np.float64, order="F"
+                        )
+                    q_inj_nodes = self._q0_buf
+                    q_inj_nodes.fill(0.0)
+                    deposit_charge_gpu(
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        sp_inj._w[sl_new],
+                        sp_inj.charge,
+                        Nx,
+                        Ny,
+                        Nz,
+                        order=self.shape,
+                        periodic=self.boundaries.periodic,
+                        q_nodes=q_inj_nodes,
+                    )
+                    self._image_charge(
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        sp_inj.charge * sp_inj._w[sl_new],
+                        q_inj_nodes,
+                    )
+                    if inj.emitter_kind == "pec_wall":
+                        axis_inj, side_inj = self._injector_pec_wall_face(inj)
+                        self._apply_pec_wall_event(
+                            q_inj_nodes,
+                            axis=axis_inj,
+                            side=side_inj,
+                            event="inject",
+                            W_tuple=(Wx_tot, Wy_tot, Wz_tot),
+                            q_bg=s._particles_q_bg,
+                        )
+                        self._apply_pec_wall_birth_kick(
+                            sp_inj,
+                            sl_new,
+                            xi_i,
+                            eta_i,
+                            zeta_i,
+                            s.E,
+                            axis=axis_inj,
+                            side=side_inj,
+                        )
+                    else:
+                        s._particles_q_bg -= q_inj_nodes
                     self._backpush_injected_slice(
                         sp_inj,
                         sl_new,
@@ -2629,32 +3540,9 @@ class ParticleSolver:
                         t_n,
                         dt,
                     )
-                    deposit_charge_gpu(
-                        xi_i,
-                        eta_i,
-                        zeta_i,
-                        sp_inj._w[sl_new],
-                        -sp_inj.charge,
-                        Nx,
-                        Ny,
-                        Nz,
-                        order=self.shape,
-                        periodic=self.boundaries.periodic,
-                        q_nodes=s._particles_q_bg,
-                    )
                     s._particles_q_scale_ref = abs(inj.injected_charge)
                     for col in self.boundaries.collectors:
                         col.current_history.append((float(t_n + dt), 0.0))
-
-            if do_profile:
-                xp.cuda.Stream.null.synchronize()
-                t0_zero = time.perf_counter()
-            Wx_tot.fill(0.0)
-            Wy_tot.fill(0.0)
-            Wz_tot.fill(0.0)
-            if do_profile:
-                xp.cuda.Stream.null.synchronize()
-                t_dep_acc += time.perf_counter() - t0_zero
         except Exception as exc:
             if not (use_mpi_multi and self._enable_step_status_piggyback):
                 raise
@@ -2694,6 +3582,9 @@ class ParticleSolver:
                         B_uni, B_arr = self._ext_field_args_gpu(
                             self.B_ext, sp._x[:n_l], sp._y[:n_l], sp._z[:n_l], t_n
                         )
+                        E_arr, B_arr = self._gpu_ext_arrays_with_images(
+                            sp, n_l, E_arr, B_arr, E_flat, B_n_flat
+                        )
 
                         launch_gather_and_push_gpu(
                             sp,
@@ -2721,15 +3612,31 @@ class ParticleSolver:
                             eta1_dep = sp._eta1_scratch
                             zeta1_dep = sp._zeta1_scratch
                             keep_mask_i32 = None
-                        elif not has_custom_mask_col:
+                        elif not has_custom_mask_col and self._wall_images is None:
+                            use_cl_gpu = bool(
+                                self.track_energy
+                                and _ENABLE_PEC_WALL_CLOSURE
+                                and self._W_cl is not None
+                            )
                             xi1_dep, eta1_dep, zeta1_dep, keep_mask_i32 = (
                                 launch_boundary_prepare_paths_gpu(
                                     self.boundaries,
                                     sp,
                                     order=self.shape,
                                     q_bg_nodes=s._particles_q_bg,
+                                    Wx_out=Wx_tot,
+                                    Wy_out=Wy_tot,
+                                    Wz_out=Wz_tot,
+                                    enable_closure=_ENABLE_PEC_WALL_CLOSURE,
+                                    W_cl_out=self._W_cl if use_cl_gpu else None,
                                 )
                             )
+                            if (
+                                use_cl_gpu
+                                and self._has_pec_domain_wall
+                                and self.boundaries._poll_pec_wall_absorbed_gpu()
+                            ):
+                                self._cl_step_active = True
                         else:
                             n_act = sp.n_particles
                             xi1_dep, eta1_dep, zeta1_dep, keep_mask_b = (
@@ -2747,6 +3654,18 @@ class ParticleSolver:
                                     t=t_n + dt,
                                 )
                             )
+                            absorbed_b = ~keep_mask_b
+                            if bool(xp.any(absorbed_b)):
+                                self._record_absorbed_particles(
+                                    xi1_dep,
+                                    eta1_dep,
+                                    zeta1_dep,
+                                    sp.charge * sp._w[:n_act],
+                                    absorbed_b,
+                                    getattr(self.boundaries, "_last_hit_code", None),
+                                    (Wx_tot, Wy_tot, Wz_tot),
+                                    s._particles_q_bg,
+                                )
                             sp._keep_mask_scratch[:n_act] = keep_mask_b.astype(
                                 np.int32
                             )
@@ -2777,6 +3696,23 @@ class ParticleSolver:
                                 n_launch=n_l,
                                 d_cfl_error=self._d_cfl_error,
                             )
+                            if self._wall_images is not None:
+                                n_act = int(sp.n_particles)
+                                self._wall_images.deposit_current(
+                                    sp._xi0_scratch[:n_act],
+                                    sp._eta0_scratch[:n_act],
+                                    sp._zeta0_scratch[:n_act],
+                                    xi1_dep[:n_act],
+                                    eta1_dep[:n_act],
+                                    zeta1_dep[:n_act],
+                                    sp.charge * sp._w[:n_act],
+                                    Nx,
+                                    Ny,
+                                    self._Nz_dep,
+                                    self.boundaries.periodic,
+                                    (Wx_tot, Wy_tot, Wz_tot),
+                                    xp=xp,
+                                )
                         else:
                             n_act = sp.n_particles
                             Wx_n, Wy_n, Wz_n = deposit_current_naive(
@@ -2866,6 +3802,8 @@ class ParticleSolver:
             1.0 / dt,
             N,
         )
+        if self.track_energy:
+            self._finalize_closure_current(dt)
         if do_profile:
             xp.cuda.Stream.null.synchronize()
             t_dep_acc += time.perf_counter() - t_fin0
@@ -2963,9 +3901,22 @@ class ParticleSolver:
                     self._initialize_species_half_step(sp, B_n_tuple, t_n)
                 self._initialized_half_step = True
 
-            # Inject new macroparticles at emitter planes before the step advance.
-            # Record the equal-and-opposite emitter image charge in _particles_q_bg so
-            # discrete Gauss's law accounts for charge emitted into the domain.
+            if do_profile:
+                t0_zero = time.perf_counter()
+            if self._j_in_solver:
+                s.J.array -= self.J_particles
+            Wx_tot.fill(0.0)
+            Wy_tot.fill(0.0)
+            Wz_tot.fill(0.0)
+            if self.track_energy:
+                self._W_cl.fill(0.0)
+                self._cl_step_active = False
+            if do_profile:
+                t_dep_acc += time.perf_counter() - t0_zero
+
+            # Inject new macroparticles at emitter planes after W_tot is zeroed so
+            # PEC-wall injectors can add the normal-axis wall-closure current directly
+            # into W_tot for this step.
             for inj in self.injectors:
                 if self.use_mpi and not self._owns_z_coord(inj.z0):
                     inj.inject(t_n, dt, step_index=self.n_particle_steps, owning=False)
@@ -2977,17 +3928,6 @@ class ParticleSolver:
                     sl_new = slice(n_before, sp_inj.n_particles)
                     xi_i, eta_i, zeta_i = self.grid_map.to_logical(
                         sp_inj.x[sl_new], sp_inj.y[sl_new], sp_inj.z[sl_new]
-                    )
-                    self._backpush_injected_slice(
-                        sp_inj,
-                        sl_new,
-                        xi_i,
-                        eta_i,
-                        zeta_i,
-                        s.E,
-                        B_n_tuple,
-                        t_n,
-                        dt,
                     )
                     if self._q0_buf is None or self._q0_buf.shape != (
                         Nx,
@@ -3012,25 +3952,48 @@ class ParticleSolver:
                         q_nodes=q_inj_nodes,
                         xp=xp,
                     )
-                    # Record fixed opposite charge -q_inj in _particles_q_bg at the
-                    # injection plane z0. When z0 lies on a PEC boundary face (e.g.
-                    # zmin with bc="pec"), this represents the physical wall image
-                    # charge where tangential E = 0; if z0 lies inside the vacuum
-                    # interior, -q_inj remains at z0 as a fixed immobile space-charge
-                    # sheet balancing the emitted beam charge.
-                    s._particles_q_bg -= q_inj_nodes
+                    self._image_charge(
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        sp_inj.charge * sp_inj.w[sl_new],
+                        q_inj_nodes,
+                    )
+                    if inj.emitter_kind == "pec_wall":
+                        axis_inj, side_inj = self._injector_pec_wall_face(inj)
+                        self._apply_pec_wall_event(
+                            q_inj_nodes,
+                            axis=axis_inj,
+                            side=side_inj,
+                            event="inject",
+                            W_tuple=(Wx_tot, Wy_tot, Wz_tot),
+                            q_bg=s._particles_q_bg,
+                        )
+                        self._apply_pec_wall_birth_kick(
+                            sp_inj,
+                            sl_new,
+                            xi_i,
+                            eta_i,
+                            zeta_i,
+                            s.E,
+                            axis=axis_inj,
+                            side=side_inj,
+                        )
+                    else:
+                        s._particles_q_bg -= q_inj_nodes
+                    self._backpush_injected_slice(
+                        sp_inj,
+                        sl_new,
+                        xi_i,
+                        eta_i,
+                        zeta_i,
+                        s.E,
+                        B_n_tuple,
+                        t_n,
+                        dt,
+                    )
                     if getattr(s, "_particles_q_scale_ref", 0.0) == 0.0:
                         s._particles_q_scale_ref = abs(inj.injected_charge)
-
-            if do_profile:
-                t0_zero = time.perf_counter()
-            if self._j_in_solver:
-                s.J.array -= self.J_particles
-            Wx_tot.fill(0.0)
-            Wy_tot.fill(0.0)
-            Wz_tot.fill(0.0)
-            if do_profile:
-                t_dep_acc += time.perf_counter() - t0_zero
         except Exception as exc:
             if not (use_mpi_multi and self._enable_step_status_piggyback):
                 raise
@@ -3194,6 +4157,10 @@ class ParticleSolver:
                             periodic=self.boundaries.periodic,
                             xp=xp,
                         )
+                        Ex, Ey, Ez, Bx, By, Bz = self._add_image_field(
+                            (Ex, Ey, Ez, Bx, By, Bz),
+                            self._image_field(xi0, eta0, zeta0, s.E, B_n_tuple),
+                        )
                         Ex_e, Ey_e, Ez_e = self._eval_ext_field(
                             self.E_ext, x0, y0, z0, t_n
                         )
@@ -3261,6 +4228,22 @@ class ParticleSolver:
                                 Wz_out=Wz_tot,
                                 xp=xp,
                             )
+                            if self._wall_images is not None:
+                                self._wall_images.deposit_current(
+                                    xi0,
+                                    eta0,
+                                    zeta0,
+                                    xi1_dep,
+                                    eta1_dep,
+                                    zeta1_dep,
+                                    qw,
+                                    Nx,
+                                    Ny,
+                                    self._Nz_dep,
+                                    self.boundaries.periodic,
+                                    (Wx_tot, Wy_tot, Wz_tot),
+                                    xp=xp,
+                                )
                         else:
                             Wx_n, Wy_n, Wz_n = deposit_current_naive(
                                 xi0,
@@ -3282,37 +4265,20 @@ class ParticleSolver:
                             Wz_tot += Wz_n
 
                         # 6. Remove absorbed particles (recording their deposited surface
-                        # charge at the absorption point in _particles_q_bg). Because the
-                        # Esirkepov path stops at xi1_dep and the particle is removed from
-                        # the active list, adding +q_abs to _particles_q_bg represents the
-                        # collected charge remaining as fixed space charge at the wall or
-                        # collector surface.
+                        # charge at the absorption point in _particles_q_bg, and adding the
+                        # normal-axis PEC wall-closure current when absorbed on a PEC domain wall).
                         absorbed_mask = ~keep_mask
                         if bool(xp.any(absorbed_mask)):
-                            if self._q0_buf is None or self._q0_buf.shape != (
-                                Nx,
-                                Ny,
-                                Nz,
-                            ):
-                                self._q0_buf = xp.zeros(
-                                    (Nx, Ny, Nz), dtype=np.float64, order="F"
-                                )
-                            q_abs_nodes = self._q0_buf
-                            q_abs_nodes.fill(0.0)
-                            deposit_charge(
-                                xi1_dep[absorbed_mask],
-                                eta1_dep[absorbed_mask],
-                                zeta1_dep[absorbed_mask],
-                                qw[absorbed_mask],
-                                Nx,
-                                Ny,
-                                Nz,
-                                order=self.shape,
-                                periodic=self.boundaries.periodic,
-                                q_nodes=q_abs_nodes,
-                                xp=xp,
+                            self._record_absorbed_particles(
+                                xi1_dep,
+                                eta1_dep,
+                                zeta1_dep,
+                                qw,
+                                absorbed_mask,
+                                getattr(self.boundaries, "_last_hit_code", None),
+                                (Wx_tot, Wy_tot, Wz_tot),
+                                s._particles_q_bg,
                             )
-                            s._particles_q_bg += q_abs_nodes
                         sp.keep(keep_mask)
                         self.boundaries.apply_periodic_wrap(sp)
                 except Exception as exc:
@@ -3376,6 +4342,8 @@ class ParticleSolver:
         self.J_particles *= inv_dt
         s.J.array += self.J_particles
         self._j_in_solver = True
+        if self.track_energy:
+            self._finalize_closure_current(dt)
         if do_profile:
             t_dep_acc += time.perf_counter() - t_fin0
             self._last_push_gather_s = t_pg_acc
@@ -3511,6 +4479,93 @@ class ParticleSolver:
             w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
         return w_loc
 
+    def wall_closure_work(self) -> float:
+        """Cumulative work [J] done by the electromagnetic field on PEC wall-closure currents.
+
+        Returns the discrete time integral accumulated over all completed steps:
+
+        .. math::
+
+            W_{\\text{wall\\_closure}} = \\sum_{m=0}^{n-1} \\Delta t \\sum_{e} V_{E,e}\\,
+            J_{\\text{cl},e}^{m+1/2} \\frac{E_e^m + E_e^{m+1}}{2},
+
+        where :math:`V_{E,e} = L_e \\tilde{A}_e` is the FIT edge dual-cell volume
+        and :math:`J_{\\text{cl},e}^{m+1/2} = W_{\\text{cl},e}^{m+1/2} / (\\Delta t\\, \\tilde{A}_e)`
+        is the PEC wall-closure current density on primal edge :math:`e`. By this
+        sign convention, :math:`W_{\\text{wall\\_closure}} > 0` means the
+        electromagnetic field did positive work on the wall-closure current
+        (energy delivered from the field to the wall/emitter), and
+        :math:`W_{\\text{wall\\_closure}} < 0` means the wall-closure current
+        delivered energy to the field. Under MPI (``use_mpi=True`` and
+        ``solver.size > 1``), this method is collective across ``solver.comm``
+        (``MPI.SUM`` reduction).
+
+        Returns
+        -------
+        float
+            Cumulative discrete wall-closure field work [J].
+
+        Raises
+        ------
+        RuntimeError, ValueError
+            If the :class:`ParticleSolver` was initialized with
+            ``track_energy=False`` (the default).
+        """
+        if not self.track_energy:
+            raise _EnergyTrackingDisabledError(
+                "ParticleSolver.wall_closure_work() requires track_energy=True."
+            )
+        if self._fw_pending:
+            self._flush_pending_field_work(self.solver.E.toarray())
+        w_loc = float(self.xp.sum(self._cl_work_vec * self._vol_E_fw))
+        if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            w_loc = float(self.solver.comm.allreduce(w_loc, op=MPI.SUM))
+        return w_loc
+
+    def wall_kick_energy(self) -> float:
+        """Cumulative kinetic-energy change [J] applied at PEC-wall birth kicks.
+
+        Returns the sum over all completed PEC-wall injection events (for shape
+        order :math:`p \\ge 2`) of
+
+        .. math::
+
+            K_{\\text{wall\\_kick}} = \\sum_{\\text{events}} \\sum_{i} \\Delta K_i,
+            \\qquad
+            \\Delta K_i = q_i w_i \\sum_{\\mathbf{k}} W^{(p)}(\\mathbf{x}_i - \\mathbf{x}_{\\mathbf{k}})\\, \\Psi_{\\mathbf{k}},
+
+        where :math:`\\Psi_{\\mathbf{k}}` is the discrete line integral of the
+        normal electric field :math:`E_n^m` from the PEC wall node to node
+        :math:`\\mathbf{k}` at birth step :math:`m`. By this sign convention,
+        :math:`K_{\\text{wall\\_kick}} > 0` when the birth kick increases the
+        injected particles' kinetic energy relative to ``"K_injected"``, and
+        :math:`K_{\\text{wall\\_kick}} < 0` when the birth kick reduces it
+        (paying the electrostatic work against the wall-normal field at birth).
+        Under MPI (``use_mpi=True`` and ``solver.size > 1``), this method is
+        collective across ``solver.comm`` (``MPI.SUM`` reduction).
+
+        Returns
+        -------
+        float
+            Cumulative PEC-wall birth-kick kinetic energy change [J].
+
+        Raises
+        ------
+        ValueError
+            If any birth kick since the last periodic check produced
+            :math:`\\gamma' < 1` (deferred device flag, see
+            :meth:`_check_wall_kick_error`).
+        """
+        self._check_wall_kick_error(periodic=False)
+        k_loc = float(self._K_wall_kick)
+        if self.use_mpi and int(getattr(self.solver, "size", 1)) > 1:
+            from mpi4py import MPI
+
+            k_loc = float(self.solver.comm.allreduce(k_loc, op=MPI.SUM))
+        return k_loc
+
     def energy_balance(self) -> dict[str, float]:
         """Return discrete electromagnetic and particle energy-balance terms [J].
 
@@ -3526,6 +4581,18 @@ class ParticleSolver:
           does not include convolutional CPML auxiliary :math:`\\boldsymbol{\\psi}`
           energy terms (which act as an artificial absorber outside the lossless
           FIT curl identity).
+        - ``"W_wall_closure"`` (:meth:`wall_closure_work`) uses the same sign
+          convention as ``"field_work"``: positive when the electromagnetic field
+          does positive work on the PEC wall-closure current (delivering energy
+          from the field to the wall/emitter), so it is subtracted alongside
+          ``"W_field"`` and ``"K_particles"`` in ``"residual"``.
+        - ``"K_wall_kick"`` (:meth:`wall_kick_energy`) is the cumulative kinetic
+          energy change :math:`\\sum \\Delta K_i` applied to newly injected
+          macroparticles at PEC-wall emitters for shape order :math:`p \\ge 2`
+          (positive when the birth kick adds kinetic energy to the particles
+          beyond the pre-kick ``"K_injected"``, negative when the particle pays
+          work against the wall-normal electric field at birth), so it is added
+          to ``"K_injected"`` in ``"residual"``.
 
         Returns
         -------
@@ -3539,15 +4606,24 @@ class ParticleSolver:
               :meth:`field_energy` for the un-staggered quadratic form).
             - ``"K_particles"`` : synchronised relativistic kinetic energy
               :math:`K_{\\text{particles}}^n` [J] at :math:`t_n`.
-            - ``"K_injected"`` : cumulative kinetic energy [J] injected by all
-              attached :class:`BeamInjector` instances.
+            - ``"K_injected"`` : cumulative pre-kick kinetic energy [J] injected
+              by all attached :class:`BeamInjector` instances.
             - ``"K_absorbed"`` : cumulative kinetic energy [J] absorbed by all
               boundaries and :class:`Collector` instances.
             - ``"field_work"`` : cumulative discrete field-to-particle work
               :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J^{m+1/2} (E^m + E^{m+1})/2` [J].
+            - ``"W_wall_closure"`` : cumulative work done by the electromagnetic
+              field on the PEC wall-closure current
+              :math:`\\sum \\Delta t \\sum_{\\text{edges}} V_E J_{\\text{cl}}^{m+1/2} (E^m + E^{m+1})/2`
+              [J] (positive when energy is delivered from the field to the
+              wall/emitter).
+            - ``"K_wall_kick"`` : cumulative kinetic-energy change
+              :math:`\\sum \\Delta K_i` [J] applied at PEC-wall birth kicks for
+              shape order :math:`p \\ge 2`.
             - ``"residual"`` : total energy closure residual
               :math:`(K_{\\text{injected}} + K_{\\text{particles}}^0 + W_{\\text{field}}^0)
-              - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}` [J].
+              - K_{\\text{absorbed}} - K_{\\text{particles}} - W_{\\text{field}}
+              - W_{\\text{wall\\_closure}} + K_{\\text{wall\\_kick}}` [J].
 
         Raises
         ------
@@ -3570,14 +4646,25 @@ class ParticleSolver:
         k_injected = self.injected_energy()
         k_absorbed = self.absorbed_energy()
         fw = self.field_work()
+        w_wall_cl = self.wall_closure_work()
+        k_wall_kick = self.wall_kick_energy()
         e_init = self._K_particles_0 + w_field_0
-        residual = (k_injected + e_init) - k_absorbed - k_particles - w_field
+        residual = (
+            (k_injected + e_init)
+            - k_absorbed
+            - k_particles
+            - w_field
+            - w_wall_cl
+            + k_wall_kick
+        )
         return {
             "W_field": w_field,
             "K_particles": k_particles,
             "K_injected": k_injected,
             "K_absorbed": k_absorbed,
             "field_work": fw,
+            "W_wall_closure": w_wall_cl,
+            "K_wall_kick": k_wall_kick,
             "residual": residual,
         }
 
@@ -3740,9 +4827,23 @@ class ParticleSolver:
         """
         return float(self.solver.field_energy())
 
-    def gauss_residual(self) -> float:
-        """Return relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``."""
-        return gauss_residual(self.solver, self.species, order=self.shape)
+    def gauss_residual(self, include_wall_planes: bool = False) -> float:
+        """Return relative discrete Gauss's law residual ``max|S_tilde d_tilde - q| / max|q|``.
+
+        Parameters
+        ----------
+        include_wall_planes : bool, optional
+            If False (default), skip a B-spline stencil margin ``(p + 1) // 2 + 1``
+            next to CPML inner interfaces; non-CPML faces (such as PEC domain walls)
+            already evaluate all interior vacuum node planes ``1..N-1`` by default.
+            If True, shrink the CPML margin to ``1`` node.
+        """
+        return gauss_residual(
+            self.solver,
+            self.species,
+            order=self.shape,
+            include_wall_planes=include_wall_planes,
+        )
 
     def save_checkpoint(self, path):
         """Save coupled electromagnetic field and particle state to ``path``."""

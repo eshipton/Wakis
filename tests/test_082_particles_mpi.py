@@ -1118,7 +1118,7 @@ def test_mpi_mutations_fail(mutation, monkeypatch):
         monkeypatch.setattr(
             ps,
             "_pack_second_high_guard_plane",
-            lambda send_hi, N, nxy: send_hi[:, 1, :].fill(0.0),
+            lambda send_hi, N, nxy, **_kw: send_hi[:, 1, :].fill(0.0),
         )
     elif mutation == "skip_low_guard":
         monkeypatch.setattr(
@@ -1320,6 +1320,92 @@ def test_mpi_minimal_nz_two_per_rank_and_validation():
             float(np.max(np.abs(_field_comp_host(ser["E"], cn)))) for cn in "xyz"
         )
         assert float(np.max(np.abs(e_par - e_ser))) / e_norm <= bound
+
+
+def _gauss_cpml_top_slab_case(use_mpi: bool, n_pml: int, nz: int):
+    """PEC z_low / CPML z_high box with periodic x, y and a few particles near z_low."""
+    grid = GridFIT3D(
+        0.0, 0.04, 0.0, 0.04, 0.0, 0.01 * nz, 4, 4, nz, use_mpi=use_mpi, verbose=0
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.5,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "cpml"],
+        n_pml=n_pml,
+        use_mpi=use_mpi,
+        verbose=0,
+    )
+    sp = Species(name="e", charge=-e_charge, mass=m_e, capacity=16)
+    sp.add_particles(
+        x=np.array([0.012, 0.027, 0.031]),
+        y=np.array([0.017, 0.008, 0.029]),
+        z=np.array([0.013, 0.016, 0.021]),
+        w=np.array([1.0e4, 2.0e4, 1.5e4]),
+    )
+    ps = ParticleSolver(solver, species=[sp], shape=1)
+    ps.attach()
+    return solver, ps
+
+
+def test_mpi_gauss_residual_top_slab_inside_cpml_matches_serial():
+    """Top z-slab entirely inside the CPML: ``gauss_residual`` completes on every rank and equals serial.
+
+    With ``NZ = size * n_pml`` the last slab boundary lands on the CPML
+    interface, so the top rank owns no interior vacuum node. Before the fix that
+    rank raised ``ValueError`` alone while the other ranks waited in the
+    residual's ``MPI.MAX`` reductions (the 4-rank ``test_mpi_cpu_bitwise_restart``
+    hang). The vacuum mask must also apply the CPML stencil margin on the global
+    z index: a field perturbation whose divergence lands only on the first
+    margin node (global ``NZ - n_pml - pad + 1``, owned by rank ``size - 2``)
+    must not change the residual, as in the serial run.
+    """
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+    n_pml = 4
+    nz = size * n_pml
+
+    def _perturb_ez(solver, k0: int) -> None:
+        # Global Ez perturbation on two z-edge planes: edge (1 -> 2) in the
+        # vacuum interior (amplitude 1) and edge (g_m -> g_m + 1), whose
+        # divergence lands on margin node g_m and on the CPML interface node
+        # g_m + 1 (amplitude 50). Both nodes are excluded from the serial mask.
+        rng = np.random.default_rng(2468)
+        pattern = rng.normal(size=(4, 4))
+        pad = (1 + 1) // 2 + 1
+        g_m = nz - n_pml - pad + 1
+        for g_edge, amp in ((1, 1.0), (g_m, 50.0)):
+            k = g_edge - k0
+            if 0 <= k < solver.Nz:
+                for i in range(4):
+                    for j in range(4):
+                        solver.E[i, j, k, "z"] = amp * pattern[i, j]
+
+    solver_m, ps_m = _gauss_cpml_top_slab_case(True, n_pml, nz)
+    k0 = rank * (nz // size) - (1 if rank > 0 else 0)
+    _perturb_ez(solver_m, k0)
+
+    local_exc = None
+    res_mpi = None
+    try:
+        res_mpi = float(ps_m.gauss_residual())
+    except Exception as exc:  # noqa: BLE001 - reported collectively below
+        local_exc = exc
+        # Release the ranks still waiting in the residual's two MAX reductions so
+        # the failure is reported instead of hanging the job.
+        comm.allreduce(0.0, op=MPI.MAX)
+        comm.allreduce(0.0, op=MPI.MAX)
+    errs = comm.allgather(None if local_exc is None else repr(local_exc))
+    assert all(e is None for e in errs), f"gauss_residual raised on some ranks: {errs}"
+    assert len(set(comm.allgather(res_mpi))) == 1
+
+    solver_s, ps_s = _gauss_cpml_top_slab_case(False, n_pml, nz)
+    _perturb_ez(solver_s, 0)
+    res_ser = float(ps_s.gauss_residual())
+    # The interior perturbation must register (so the comparison is not 0 == 0)
+    assert res_ser > 1.0e-6
+    np.testing.assert_allclose(res_mpi, res_ser, rtol=1.0e-12, atol=0.0)
 
 
 def test_mpi_gather_as_grid_graded():
@@ -1546,9 +1632,14 @@ def test_mpi_single_rank_cfl_error_raises_on_all_ranks_and_nccl_collective_fallb
         #    and fall back to pinned-host MPI without hanging.
         solver2._nccl_comm = None
         solver2._nccl_unavailable = False
+        try:
+            import cupy as cp
+            from cupy.cuda import nccl
+        except ImportError:
+            # Parts 1-2 (CPU collective error paths) have been asserted above;
+            # part 3 needs CuPy/NCCL and runs in the GPU MPI suite.
+            return
         solver2.use_gpu = True
-        import cupy as cp
-        from cupy.cuda import nccl
 
         orig_get_uid = nccl.get_unique_id
 
@@ -2783,7 +2874,7 @@ def test_multi_gpu_mutations_fail(mutation, monkeypatch):
         monkeypatch.setattr(
             ps,
             "_pack_second_high_guard_plane",
-            lambda send_hi, N, nxy: send_hi[:, 1, :].fill(0.0),
+            lambda send_hi, N, nxy, **_kw: send_hi[:, 1, :].fill(0.0),
         )
     elif mutation == "skip_low_guard":
         monkeypatch.setattr(
@@ -2959,4 +3050,82 @@ def test_gpu_mpi_device_sharing_and_interior_ranks():
     assert ratio <= 1.0
     _assert_v2_matches_reference(par_mpi, ser_cpu, bound=bound)
 
+
+def _run_pec_z_interior_sheet_energy(use_mpi: bool) -> tuple[dict[str, float], float]:
+    """Run coupled steps with PEC z faces, periodic x/y, track_energy=True, and an interior_sheet injector."""
+    grid = GridFIT3D(
+        -0.03, 0.03, -0.03, 0.03, 0.0, 0.12, 6, 6, 12, use_mpi=use_mpi, verbose=0
+    )
+    solver = SolverFIT3D(
+        grid,
+        cfln=0.45,
+        bc_low=["periodic", "periodic", "pec"],
+        bc_high=["periodic", "periodic", "pec"],
+        use_mpi=use_mpi,
+        verbose=0,
+    )
+    sp = Species(name="electron", charge=-e_charge, mass=m_e)
+    inj = BeamInjector(
+        species=sp,
+        z0=0.06,
+        current=0.25,
+        gamma=2.2,
+        profile="sheet_lattice",
+        radius=0.012,
+        n_macro_per_step=16,
+        seed=1234,
+    )
+    ps = ParticleSolver(
+        solver,
+        species=[sp],
+        injectors=[inj],
+        pusher="boris",
+        shape=1,
+        gather="momentum",
+        track_energy=True,
+    ).attach()
+    assert inj.emitter_kind == "interior_sheet"
+    assert ps._has_pec_domain_wall is True
+    for _ in range(10):
+        solver.one_step()
+    return ps.energy_balance(), ps.gauss_residual()
+
+
+def test_pec_z_wall_closure_3ranks_energy_residual():
+    """Verify with >= 3 MPI ranks, PEC z faces, periodic x/y, track_energy=True,
+    and an interior_sheet injector that interior ranks agree on _has_pec_domain_wall,
+    do not hang in _finalize_closure_current, and match the 1-rank energy residual
+    to <= 1e-12 relative.
+    """
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+    if size < 3:
+        # A nested ``mpiexec`` from inside an MPI rank is not reliable (inherited
+        # OMPI environment; a failing rank 0 would leave peers in a barrier), so
+        # this test runs only when the suite itself is launched with >= 3 ranks:
+        #   mpiexec -n 3 python -m pytest tests/test_082_particles_mpi.py -k 3ranks
+        pytest.skip("Requires mpiexec -n >= 3")
+
+    with _hang_guard(20.0):
+        eb_mpi, gauss_mpi = _run_pec_z_interior_sheet_energy(use_mpi=True)
+    assert gauss_mpi <= 1.0e-12
+
+    if rank == 0:
+        eb_ser, gauss_ser = _run_pec_z_interior_sheet_energy(use_mpi=False)
+        assert gauss_ser <= 1.0e-12
+        # The residual itself is round-off (it closes to ~1e-11 J), so compare the
+        # MPI-vs-serial difference against the energy scale the round-off acts on:
+        # the largest balance term.
+        e_scale = max(
+            abs(eb_ser[k])
+            for k in ("K_injected", "K_particles", "W_field", "field_work")
+        )
+        rel_res = abs(eb_mpi["residual"] - eb_ser["residual"]) / e_scale
+        print(
+            f"[MPI {size} ranks vs 1 rank] res_mpi={eb_mpi['residual']:.12e}, "
+            f"res_ser={eb_ser['residual']:.12e}, e_scale={e_scale:.6e}, "
+            f"rel_diff={rel_res:.3e}"
+        )
+        assert rel_res <= 1.0e-12
 

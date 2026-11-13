@@ -1434,30 +1434,42 @@ def test_energy_balance_field_identity_and_mutation(monkeypatch):
 # across the sweep (strictly separating order p from adjacent integer orders p +/- 1)
 # without self-calibrating against degraded data.
 _MAX_LOCAL_SLOPE_SPREAD = 0.5
+# Fixed bound on the finest local slopes: _MAX_FINEST_SLOPE_ERROR = 0.1 requires |s_k - p| <= 0.1 on
+# the finest two intervals (convergence order within 5 % at p = 2). A first-order contamination
+# c1 * dt with c1 * dt_finest = 0.2 * c2 * dt_finest^2 gives a finest slope of log2(4 * 1.1 / 1.2) = 1.874
+# and breaks it (verified in test_richardson_criteria_synthetic). A separate cap on the spread of
+# R_k / dt_k^p over the finest three points adds nothing: on a 2x ladder that ratio spans
+# 2^((s_-2 - p) + (s_-1 - p)), so (d) already bounds it by 2^(2 * 0.1) - 1 ~= 0.149, and any tighter
+# cap would reject converging ladders that approach p from one side (e.g. slopes 2.166, 2.061, 2.022).
+_MAX_FINEST_SLOPE_ERROR = 0.1
 
 
 def _assert_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) -> None:
     """Verify Richardson remainder convergence criteria for R(dt) = c_p * dt^p * (1 + O(dt))."""
     local_slopes = np.diff(np.log(ress)) / np.diff(np.log(dts))
     slope_errors = np.abs(local_slopes - order)
-    # (a) Local slopes approach p monotonically as dt is halved.
+    # (a) |s_k - p| decreases as dt is halved.
     assert np.all(np.diff(slope_errors) < 0.0), (
-        f"Local slopes {local_slopes} do not approach order {order} monotonically."
+        f"Local slope errors {slope_errors} (local slopes {local_slopes}) do not "
+        f"decrease monotonically toward order {order}."
     )
-    assert bool(
-        np.all(np.diff(local_slopes) < 0.0) or np.all(np.diff(local_slopes) > 0.0)
-    )
-    # (b) Richardson remainder bound on a 2x halving ladder: |s_finest - p| <= |s_finest - s_prev|.
-    assert abs(local_slopes[-1] - order) <= abs(local_slopes[-1] - local_slopes[-2]), (
-        f"|s_finest - {order}| = {abs(local_slopes[-1] - order):.6f} exceeds "
-        f"|s_finest - s_prev| = {abs(local_slopes[-1] - local_slopes[-2]):.6f}."
-    )
-    # (c) Fixed cap <= 0.5 on the spread of local slopes across the sweep.
-    assert float(np.ptp(local_slopes)) <= _MAX_LOCAL_SLOPE_SPREAD, (
-        f"Local slope spread {float(np.ptp(local_slopes)):.6f} exceeds fixed cap {_MAX_LOCAL_SLOPE_SPREAD}."
+    # (c) Fixed cap <= 0.5 on the spread of local slopes across the sweep and global fit.
+    slope_spread = float(np.ptp(local_slopes))
+    assert slope_spread <= _MAX_LOCAL_SLOPE_SPREAD, (
+        f"Local slope spread {slope_spread:.6f} (local slopes {local_slopes}) "
+        f"exceeds fixed cap {_MAX_LOCAL_SLOPE_SPREAD}."
     )
     slope = float(np.polyfit(np.log(dts), np.log(ress), 1)[0])
-    assert abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD
+    assert abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD, (
+        f"Global fitted slope {slope:.6f} differs from order {order} by "
+        f"{abs(slope - order):.6f} > {_MAX_LOCAL_SLOPE_SPREAD}."
+    )
+    # (d) Max over the finest two local slopes of |s_k - p| <= 0.1.
+    finest_two_err = float(np.max(slope_errors[-2:]))
+    assert finest_two_err <= _MAX_FINEST_SLOPE_ERROR, (
+        f"Max |s_k - {order}| over finest two local slopes {local_slopes[-2:]} is "
+        f"{finest_two_err:.6f} > {_MAX_FINEST_SLOPE_ERROR}."
+    )
 
 
 def _passes_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) -> bool:
@@ -1466,14 +1478,61 @@ def _passes_richardson_order(dts: np.ndarray, ress: np.ndarray, order: float) ->
         return False
     local_slopes = np.diff(np.log(ress)) / np.diff(np.log(dts))
     slope_errors = np.abs(local_slopes - order)
-    mono = bool(np.all(np.diff(slope_errors) < 0.0)) and bool(
-        np.all(np.diff(local_slopes) < 0.0) or np.all(np.diff(local_slopes) > 0.0)
-    )
-    rem_ok = bool(
-        abs(local_slopes[-1] - order) <= abs(local_slopes[-1] - local_slopes[-2])
-    )
+    err_decreasing = bool(np.all(np.diff(slope_errors) < 0.0))
     spread_ok = bool(float(np.ptp(local_slopes)) <= _MAX_LOCAL_SLOPE_SPREAD)
-    return mono and rem_ok and spread_ok
+    slope = float(np.polyfit(np.log(dts), np.log(ress), 1)[0])
+    fit_ok = bool(abs(slope - order) <= _MAX_LOCAL_SLOPE_SPREAD)
+    finest_slope_ok = bool(float(np.max(slope_errors[-2:])) <= _MAX_FINEST_SLOPE_ERROR)
+    return err_decreasing and spread_ok and fit_ok and finest_slope_ok
+
+
+@pytestmark_serial
+def test_richardson_criteria_synthetic():
+    """Verify Richardson criteria on synthetic non-monotone 2nd-order, 1st-order-contaminated, and pure 1st-order ladders."""
+    dts = np.array([8.0, 4.0, 2.0, 1.0], dtype=np.float64) * 8.0e-4
+    c2 = 1.0
+
+    # (i) R = c2 * dt^2 * (1 -/+ 30 * dt +/- 4000 * dt^2) with mixed-sign higher terms
+    #     produces non-monotone local slopes that still converge to order 2 and must pass.
+    for label, sign in (("neg_dt_pos_dt2", 1.0), ("pos_dt_neg_dt2", -1.0)):
+        ress_pass = c2 * (dts**2) * (1.0 + sign * (-30.0 * dts + 4000.0 * (dts**2)))
+        slopes_pass = np.diff(np.log(ress_pass)) / np.diff(np.log(dts))
+        print(f"[synthetic pass {label}] slopes={slopes_pass}")
+        assert not (
+            np.all(np.diff(slopes_pass) < 0.0) or np.all(np.diff(slopes_pass) > 0.0)
+        )
+        assert _passes_richardson_order(dts, ress_pass, order=2.0)
+        _assert_richardson_order(dts, ress_pass, order=2.0)
+
+    # (ii) Adding first-order contamination c1 * dt with c1 * dt_finest = 0.2 * c2 * dt_finest^2 must fail.
+    dt_finest = float(dts[-1])
+    c1 = 0.2 * c2 * dt_finest
+    for label, ress_base in (
+        ("pure_c2_plus_c1", c2 * (dts**2)),
+        (
+            "mixed_plus_c1",
+            c2 * (dts**2) * (1.0 - 30.0 * dts + 4000.0 * (dts**2)),
+        ),
+    ):
+        ress_contam = ress_base + c1 * dts
+        slopes_contam = np.diff(np.log(ress_contam)) / np.diff(np.log(dts))
+        scaled_contam = (ress_contam / (dts**2))[-3:]
+        rel_ptp_contam = float(np.ptp(scaled_contam) / np.mean(scaled_contam))
+        print(
+            f"[synthetic contam {label}] slopes={slopes_contam}, rel_ptp={rel_ptp_contam:.6f}"
+        )
+        assert float(np.max(np.abs(slopes_contam[-2:] - 2.0))) > _MAX_FINEST_SLOPE_ERROR
+        assert not _passes_richardson_order(dts, ress_contam, order=2.0)
+        with pytest.raises(AssertionError):
+            _assert_richardson_order(dts, ress_contam, order=2.0)
+
+    # (iii) Pure first-order residual ladder must fail order=2.0.
+    ress_first = dts * (1.0 + 5.0 * dts)
+    slopes_first = np.diff(np.log(ress_first)) / np.diff(np.log(dts))
+    print(f"[synthetic pure 1st] slopes={slopes_first}")
+    assert not _passes_richardson_order(dts, ress_first, order=2.0)
+    with pytest.raises(AssertionError):
+        _assert_richardson_order(dts, ress_first, order=2.0)
 
 
 def _run_dt_closure_sweep(
@@ -1578,7 +1637,12 @@ def _run_dt_closure_sweep(
             # Exact algebraic definition identity for eb["residual"] when starting from vacuum
             # (K_particles(0) = 0, W_field(0) = 0), scaled by the physical injected energy:
             expected_res = (
-                eb["K_injected"] - eb["K_absorbed"] - eb["K_particles"] - eb["W_field"]
+                eb["K_injected"]
+                - eb["K_absorbed"]
+                - eb["K_particles"]
+                - eb["W_field"]
+                - eb["W_wall_closure"]
+                + eb["K_wall_kick"]
             )
             e_ref_scale = max(abs(eb["K_injected"]), abs(eb["W_field"]))
             assert abs(eb["residual"] - expected_res) <= (
@@ -1832,8 +1896,8 @@ def test_energy_balance_gpu_matches_cpu(monkeypatch):
 
 @pytestmark_serial
 @pytest.mark.slow
-def test_example_020_smoke(tmp_path):
-    """Verify examples/020_particles_beam_energy_balance.py --smoke executes and writes JSON and figures."""
+def test_example_020_smoke(tmp_path, monkeypatch):
+    """Verify examples/020_particles_beam_energy_balance.py --smoke executes, writes JSON and figures, and fails Richardson order 2 under closure-work mutations."""
     import importlib.util
     import json
     from pathlib import Path
@@ -1874,6 +1938,41 @@ def test_example_020_smoke(tmp_path):
         order=2.0,
     )
     assert payload["time_balance"]["final"]["K_injected_J"] > 0.0
+
+    # Mutation 1 (mis-centred closure work): accumulate _cl_work_vec using E^n (_E_prev_fw)
+    # instead of the midpoint E-bar, introducing an O(dt) centering error.
+    orig_flush = ParticleSolver._flush_pending_field_work
+
+    def _miscentred_closure_flush(self_ps, E_curr):
+        if not self_ps._fw_pending:
+            return
+        if self_ps._cl_pending:
+            self_ps._cl_work_vec += (
+                self_ps._E_prev_fw * self_ps._J_cl
+            ) * self_ps._fw_dt
+            self_ps._cl_pending = False
+        return orig_flush(self_ps, E_curr)
+
+    with monkeypatch.context() as m:
+        m.setattr(
+            ParticleSolver, "_flush_pending_field_work", _miscentred_closure_flush
+        )
+        conv_mis = mod.run_dt_convergence(smoke=True)
+        assert not _passes_richardson_order(
+            np.asarray(conv_mis["dt_s"], dtype=np.float64),
+            np.asarray(conv_mis["abs_residual_J"], dtype=np.float64),
+            order=2.0,
+        )
+
+    # Mutation 2 (dropped closure work): zero out ParticleSolver.wall_closure_work.
+    with monkeypatch.context() as m:
+        m.setattr(ParticleSolver, "wall_closure_work", lambda self_ps: 0.0)
+        conv_drop = mod.run_dt_convergence(smoke=True)
+        assert not _passes_richardson_order(
+            np.asarray(conv_drop["dt_s"], dtype=np.float64),
+            np.asarray(conv_drop["abs_residual_J"], dtype=np.float64),
+            order=2.0,
+        )
 
 
 # ---------------------------------------------------------------------------
