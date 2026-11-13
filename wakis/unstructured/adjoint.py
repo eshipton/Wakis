@@ -288,6 +288,10 @@ class UnstructuredAdjointStepper:
             self.pml = None
             self.lts = None
             self.massless = s.massless.size > 0
+        if self.dim == 2 and s.plane_wave is not None and s.dispersive:
+            raise NotImplementedError(
+                "dispersive plane wave (dispersive_planewave patches the solver ADEs)"
+            )
         self.live = ~s.pec_cells
         self.base_eps = np.array(s.eps_r, dtype=float)
         self.design_cells = None
@@ -490,6 +494,8 @@ class UnstructuredAdjointStepper:
                 node_src += w * f(t_half)
             else:
                 edge_src += w * f(t_half)
+        if s.plane_wave is not None and s.pol == "TM":
+            node_src += s._pw_values(n + 1) - s._pw_values(n)
         return node_src, edge_src
 
     # ------------------------------------------------------------ 2D helpers

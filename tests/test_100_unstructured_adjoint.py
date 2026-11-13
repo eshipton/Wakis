@@ -12,7 +12,7 @@ What is checked, and how each check can fail:
   inner product is dominated by the largest coefficients and can hide a
   wrong O(1) block.) Round-off bound: both sides sum the same products in a
   different order, error <~ sqrt(n) eps_mach ~ 1e-14 for n <~ 8000 dofs;
-  measured max 2.8e-17 over all 20 configurations; threshold 1e-14.
+  measured max 2.8e-17 over all 22 configurations; threshold 1e-14.
   Mutations (a transposed ADE/PML term dropped, the untransposed LTS
   polynomial, the Schur complement dropped, unsigned or replaced by its
   diagonal, the Whitney M_1 solve skipped) give 7e-6 ... 0.2 (> 1e-6).
@@ -140,6 +140,7 @@ def _config(name, meshes):
     if "pml" in name:
         mesh, bc = pml_mesh, "pec"
         kw["pml"] = dict(r0=1.0, r1=1.36)
+    pw = "pw" in name
     if "lts" in name:
         mesh, mats, src, design = lts_mesh, {0: [4.0, 1.0]}, [0.0, 0.85], (0.1, 0.32)
         kw["lts"] = dict(p=2)
@@ -150,7 +151,10 @@ def _config(name, meshes):
         if "lts" in k and dt is not None:  # dt is the coarse LTS step
             k["lts"], dt = dict(k["lts"], dt=dt), None
         s = UnstructuredFIT2D(mesh, mats, polarization=pol, bc=bc, dt=dt, **k)
-        s.add_point_source(src, pulse)
+        if pw:  # scattered-field plane wave (non-dispersive scatterer)
+            s.add_plane_wave(pulse, direction=(1.0, 0.3))
+        else:
+            s.add_point_source(src, pulse)
         return s
 
     mon = CellDFTMonitor([0.8 * F0, F0], points=[[-0.5, 0.2], [0.3, -0.55]])
@@ -160,7 +164,7 @@ def _config(name, meshes):
 CONFIGS_2D = [
     f"{p} {f}"
     for p in ("TM", "TE")
-    for f in ("pec", "pmc", "abc", "disp", "absorber", "pml", "pml disp", "lts")
+    for f in ("pec", "pmc", "abc", "disp", "absorber", "pml", "pml disp", "lts", "pw")
 ]
 CONFIGS_3D = ["3D pec", "3D abc", "3D disp", "3D whitney"]
 CONFIGS = CONFIGS_2D + CONFIGS_3D
@@ -452,6 +456,14 @@ def test_dft_matches_solver_recorder(name, meshes):
 
 # ---------------------------------------------------------------- design map
 def test_design_checks(disk, ball):
+    s = UnstructuredFIT2D(disk, {0: _mat()}, bc="abc")
+    s.add_plane_wave(pulse)
+    with pytest.raises(NotImplementedError, match="dispersive plane wave"):
+        UnstructuredAdjointStepper(s)
+    s = UnstructuredFIT2D(disk, {0: [2.0, 1.0]}, bc="abc")
+    s.add_plane_wave(pulse)
+    with pytest.raises(NotImplementedError, match="plane-wave"):
+        UnstructuredAdjointStepper(s, np.flatnonzero(disk.cell_tags == 1)[:3])
     cen = disk.nodes[disk.cells].mean(1)
     outer = np.flatnonzero(np.hypot(*cen.T) > 0.97)
     s = UnstructuredFIT2D(disk, {0: [2.0, 1.0]}, bc="abc")
