@@ -94,7 +94,9 @@ def closed_solver(mutate=None, cfl=0.99, dt=None):
 
     pec = Box(((0.42, 0.55), (0.35, 0.45), (0.25, 0.35)))
     pmc = Box(((0.75, 0.85), (0.1, 0.2), (0.0, 0.1)))
-    return SubgridFIT3D(m, eps_r=eps, mu_r=mu, pec=pec, pmc=pmc, cfl=cfl, dt=dt, mutate=mutate)
+    return SubgridFIT3D(
+        m, eps_r=eps, mu_r=mu, pec=pec, pmc=pmc, cfl=cfl, dt=dt, mutate=mutate
+    )
 
 
 def energy_run(s, steps, seed=0):
@@ -113,7 +115,9 @@ def test_without_patch_equals_solverfit3d():
     y = np.array([0, 0.12, 0.2, 0.33, 0.4])
     z = np.array([0, 0.1, 0.22, 0.3])
     g = GridFIT3D(x=x, y=y, z=z, verbose=0)
-    sv = SolverFIT3D(g, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0, bg=[2.0, 1.5, 0.0])
+    sv = SolverFIT3D(
+        g, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0, bg=[2.0, 1.5, 0.0]
+    )
     A = (sv.itDaiDepsDstC @ sv.tDsiDmuiDaC).toarray()
     w_ref = np.sort(la.eigvals(A).real)
     w_ref = w_ref[w_ref > 1e-8 * w_ref.max()]
@@ -212,7 +216,9 @@ def test_cavity_mutations(ratio):
 def test_cavity_second_order_fine(ratio, nested, Ns):
     # the nested box sits one coarse cell inside the first patch: N >= 16
     e = [cavity_error(N, ratio, nested=nested) for N in Ns]
-    orders = np.log(np.array(e[:-1]) / np.array(e[1:])) / np.log(np.array(Ns[1:]) / np.array(Ns[:-1]))
+    orders = np.log(np.array(e[:-1]) / np.array(e[1:])) / np.log(
+        np.array(Ns[1:]) / np.array(Ns[:-1])
+    )
     assert np.all((orders > 1.8) & (orders < 2.2)), orders
 
 
@@ -242,7 +248,10 @@ def test_s_polarisation_equals_2d_tm(theta):
 @pytest.mark.parametrize("pol", ["s", "p"])
 @pytest.mark.parametrize("theta", [0, 30, 60])
 def test_reflection_second_order(ratio, pol, theta):
-    r10, r20 = bloch_reflection_3d(10, theta, ratio, pol), bloch_reflection_3d(20, theta, ratio, pol)
+    r10, r20 = (
+        bloch_reflection_3d(10, theta, ratio, pol),
+        bloch_reflection_3d(20, theta, ratio, pol),
+    )
     assert 1.8 < np.log2(r10 / r20) < 2.25, (r10, r20)
 
 

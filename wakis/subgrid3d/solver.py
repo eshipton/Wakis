@@ -45,7 +45,12 @@ class Box:
     def __call__(self, X, Y, Z):
         b = self.b
         return (
-            (X > b[0, 0]) & (X < b[0, 1]) & (Y > b[1, 0]) & (Y < b[1, 1]) & (Z > b[2, 0]) & (Z < b[2, 1])
+            (X > b[0, 0])
+            & (X < b[0, 1])
+            & (Y > b[1, 0])
+            & (Y < b[1, 1])
+            & (Z > b[2, 0])
+            & (Z < b[2, 1])
         )
 
 
@@ -159,7 +164,9 @@ class SubgridFIT3D:
         self.m_all = m_all
         self.W_all = W_all
 
-        rows, cols, vals, hanging = M.hanging_rows(mutate=mutate if mutate != "inject" else None)
+        rows, cols, vals, hanging = M.hanging_rows(
+            mutate=mutate if mutate != "inject" else None
+        )
         dead = pec_side | pec_edge | ((np.abs(m_all) == 0) & ~hanging)
         hang_pec = hanging & pec_edge
         if np.any(hang_pec):
@@ -181,14 +188,21 @@ class SubgridFIT3D:
         col_of[self.free_edges] = np.arange(self.n_free)
         keep = hanging[rows] & free[cols]
         rows, cols, vals = rows[keep], cols[keep], vals[keep]
-        cplx = any(blk.complex for blk in M.blocks) or np.iscomplexobj(m_all) or np.iscomplexobj(W_all)
+        cplx = (
+            any(blk.complex for blk in M.blocks)
+            or np.iscomplexobj(m_all)
+            or np.iscomplexobj(W_all)
+        )
         self.dtype = complex if cplx else float
         if not any(blk.complex for blk in M.blocks):
             vals = vals.real
         P = sp.csr_matrix(
             (
                 np.concatenate([np.ones(self.n_free), vals]),
-                (np.concatenate([self.free_edges, rows]), np.concatenate([np.arange(self.n_free), col_of[cols]])),
+                (
+                    np.concatenate([self.free_edges, rows]),
+                    np.concatenate([np.arange(self.n_free), col_of[cols]]),
+                ),
             ),
             shape=(nE, self.n_free),
         )
@@ -269,7 +283,8 @@ class SubgridFIT3D:
     def energy(self, e_n, e_np1, b_half):
         """Discrete energy 1/2 b.W b + 1/2 e^n.D e^{n+1} [J]."""
         return float(
-            0.5 * np.real(np.vdot(b_half, self.W * b_half)) + 0.5 * np.real(np.vdot(e_n, self.D * e_np1))
+            0.5 * np.real(np.vdot(b_half, self.W * b_half))
+            + 0.5 * np.real(np.vdot(e_n, self.D * e_np1))
         )
 
     def divergence(self, b=None):
@@ -334,7 +349,9 @@ class SubgridFIT3D:
         """All-edge index of the edge of direction `component` nearest `point`
         in the finest block containing it."""
         bi = self.mesh.finest_block(point)
-        sel = np.flatnonzero((self.edge_block == bi) & (self.edge_dir == component) & ~self.dead)
+        sel = np.flatnonzero(
+            (self.edge_block == bi) & (self.edge_dir == component) & ~self.dead
+        )
         d = np.linalg.norm(self.edge_mid[sel] - np.asarray(point, float), axis=1)
         return int(sel[np.argmin(d)])
 
@@ -472,5 +489,7 @@ def _lanczos_max(K, W, D):
     dtype = np.result_type(K.dtype, np.asarray(W).dtype, np.asarray(D).dtype)
     op = sla.LinearOperator((n, n), matvec=mv, dtype=dtype)
     v0 = np.random.default_rng(1).standard_normal(n).astype(dtype)
-    lam = sla.eigsh(op, k=1, which="LA", tol=1e-12, v0=v0, return_eigenvectors=False, ncv=min(n, 40))
+    lam = sla.eigsh(
+        op, k=1, which="LA", tol=1e-12, v0=v0, return_eigenvectors=False, ncv=min(n, 40)
+    )
     return float(np.real(lam[0]))

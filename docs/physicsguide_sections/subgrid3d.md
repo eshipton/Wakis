@@ -130,7 +130,7 @@ i.e. $|R_\perp|N^2\to\frac{\pi^2}{4}(1-r^{-2})$ for $N=2\pi/(k_tH)$ coarse cells
 
 * `CartesianBlock` (`wakis/subgrid3d/block.py`): the dense block. It provides the index maps with Bloch wrap, `curl()`, `divergence()`, per-cell edge/face metric weights and the geometry. `SubgridMesh3D` (`mesh.py`): the patches, side classification, balance checks and the trace rows (`hanging_rows`). `SubgridFIT3D` (`solver.py`): materials, $\mathbf P_e$, $\mathbf K$, $\mathbf W$, $\mathbf D$, the Lanczos CFL, `one_step`/`run`, `linear_step`/`linear_step_T`, sources, probes with DFT, energy, divergence and the interface flux balance. `interface.py`: the Bloch column and the 1D closed form.
 * `SubgridMesh3D(grid)` accepts a `GridFIT3D` and drops its domain-edge ghost cells. The per-block operators are FIT's own: they reproduce `SolverFIT3D` exactly without a patch (Section 4). They are rebuilt compactly rather than taken from `SolverFIT3D`, for two reasons. Wakis's ghost layout ($3(N_x+1)(N_y+1)(N_z+1)$ samples, with PEC enforced by zero inverse masses) would put dead samples on every block surface. And hanging edges need masses from the fine side only, which `SolverFIT3D`'s dual lengths do not provide inside a domain.
-* This milestone steps the assembled global CSR matrices $\mathbf K$ and $\mathbf K^H$: block-diagonal curls times $\mathbf P_e$, i.e. identity plus thin surface couplings. Splitting them into per-block dense kernels plus surface operators is the GPU milestone. The measured cost is $\approx 2$–$4$ ns per unknown-step on one core.
+* This milestone steps the assembled global CSR matrices $\mathbf K$ and $\mathbf K^H$: block-diagonal curls times $\mathbf P_e$, i.e. identity plus thin surface couplings. Splitting them into per-block dense kernels plus surface operators is the GPU milestone. The measured cost is 3–8 ns per unknown-step on one core (§9b).
 
 #### 9. Verification (`tests/test_097_subgrid3d.py`)
 
@@ -150,19 +150,52 @@ The fast tests run on CPU in under 30 s. The slow ones ($N=32$ cavities, $N=20/4
 | adjoint gradient vs central difference (source on a hanging edge, 60 steps) | $2.4\times10^{-14}$ | $10^{-8}$ ($J$ quadratic, so the central difference is exact up to cancellation round-off) | covered by the dot-product mutation |
 | time-domain probe + DFT, lowest mode vs eigenvalue through $\tilde\omega$ | $2.6\times10^{-7}$ | $10^{-5}$ (Hann + parabolic peak, bin $=1.7\times10^{-3}f$) | – |
 
-STUDY_RESULTS_PLACEHOLDER
+#### 9b. Study results (`studies/subgrid3d/`, Cloud Batch jobs `sg3d-study-a-2`, `-b-2`, `-c-2`)
+
+![3D interface reflection](../img/subgrid3d_reflection.png)
+
+**Reflection.**
+- At normal incidence, the 3D column matches the closed form of §7 to $3.2\times10^{-7}$ (absolute) for $N=8$–$40$, s and p, 2:1 and 3:1.
+- For s-polarisation, the 3D scheme equals 2D TM to $1.5\times10^{-10}$ (relative) at every $N$ and angle.
+- The observed order between $N=28$ and $40$ is 1.99–2.02 for $\theta=0$–$60°$, and 1.86 (s) / 2.09 (p) at 75°.
+- 2:1, $N=10$: s-polarisation 2.0 / 0.8 / 2.7 / 8.4 % at 0 / 30 / 60 / 75°; p-polarisation 2.0 / 1.2 / 0.9 / 5.3 %. At $N=40$: s 0.12 / 0.045 / 0.17 / 0.68 %.
+- 3:1 is about 18 % above 2:1.
+- Mutations at 60° (2:1, s): the wrong fraction stays at 18–22 %, and the missing transverse term grows from 61 % to 95 % as $N$ goes from 8 to 40. Injection ($\mathbf P_e^T$ replaced) is not monotone in $N$, falling from 9.7 % to 1.7 %.
+- The measurement floor (no patch) is $<10^{-5}$ at $\theta\le30°$ and grows toward grazing incidence (at most $6\times10^{-4}$, at 75° and $N=8$).
+
+![3D cavity convergence](../img/subgrid3d_cavity_convergence.png)
+
+**Cavity.** The maximum error over the 6 lowest modes converges at order 1.99 for the uniform coarse grid and for the 2:1 and 3:1 patches, and at 1.98 for the nested 2:1+2:1 patch, at $N=8$–$32$. The patched errors are 4–6 % above the coarse grid's at every $N$: the interface's own $O(h^2)$ term, in an empty cavity where refinement brings no benefit. With the wrong fraction, the observed order drops to 0.27 overall and to 0.08 for the last pair.
+
+![3D cost at equal accuracy](../img/subgrid3d_cost.png)
+
+**Cost at equal accuracy** (loaded cavity, part C). The uniform arms converge at the observed order $p=1.46$; the finest and the previous triple of arms give the same $p$ to $3\times10^{-3}$. This is the field singularity at the edges and corners of the dielectric cube. The reference is therefore the 3-point power-law extrapolation, $f^*=190.716$ MHz; the $h^2/h^4$ Richardson value 190.648 MHz would understate the errors. Against the uniform `SolverFIT3D` discretisation at equal error of $f_1$ (log-log interpolation along the uniform curve):
+
+| arm | coarse $H$ [m] | unknowns | error | fewer unknowns | less work |
+|---|---|---|---|---|---|
+| 3:1 | 0.1 | 21 771 | $8.7\times10^{-3}$ | 1.74× | 1.42× |
+| 3:1 | 0.05 | 176 496 | $2.9\times10^{-3}$ | 2.06× | 1.74× |
+| 3:1 | 0.0333 | 598 455 | $1.5\times10^{-3}$ | 2.25× | 1.95× |
+| 2:1 | 0.1 | 7 881 | $1.3\times10^{-2}$ | 1.93× | 1.82× |
+| 2:1 | 0.05 | 63 966 | $4.6\times10^{-3}$ | 2.17× | 2.03× |
+| 2:1 | 0.025 | 515 868 | $1.6\times10^{-3}$ | 2.35× | 2.22× |
+
+Work is unknowns × steps to the same physical time, at $0.95\,\Delta t_\max$ for every arm. The work gain is smaller than the unknown gain because the global step is set by the fine cells. 2:1 beats 3:1 here: its step is larger, and the cube ($n=3$) needs no more than about 2× refinement at this accuracy.
+
+Per step, `SubgridFIT3D.one_step` costs the same as `SolverFIT3D.one_step` on the same uniform grid (n2-standard-8, one thread, serial). At $h=0.02$ m (60 000 cells), the two take 2.85 ms and 2.84 ms; at $h=0.05$ m, 0.149 ms and 0.151 ms. The work ratios above are therefore also wall-clock ratios. Absolute speed is about 8 ns per unknown-step on that VM and 3.4 ns on an Apple-silicon laptop core.
+
 
 #### 10. Limits & Failure Modes
 
-* **Interface reflection.** It is second order but not zero. At normal incidence it equals the impedance mismatch of the two Yee grids, $\approx(k_tH)^2(1-r^{-2})/16$, i.e. 2.0 % at $N=10$ and 0.47 % at $N=20$ (2:1). Oblique s-polarisation is larger (2.7 % at 60°, $N=10$), and p-polarisation is smaller at 60° (0.9 %). Keep $\gtrsim10$ coarse cells per local wavelength, and keep strong near fields a few fine cells away from level jumps.
+* **Interface reflection.** It is second order but not zero. At normal incidence it equals the impedance mismatch of the two Yee grids, $\approx(k_tH)^2(1-r^{-2})/16$, i.e. 2.0 % at $N=10$ and 0.47 % at $N=20$ (2:1). Oblique s-polarisation is larger (2.7 % at 60° and 8.4 % at 75°, $N=10$), and p-polarisation is smaller at 60° (0.9 %); the order drops slightly toward grazing incidence (1.86 at 75°, s). Keep $\gtrsim10$ coarse cells per local wavelength, and keep strong near fields a few fine cells away from level jumps.
 * **Global time step.** Every block takes the step of the finest cells (bound in §5). Subgridding then saves unknowns but not steps. Two-level LTS per patch level is the next milestone.
 * **Ratios and balance.** Only $r=2,3$ are implemented and tested. Children must stay one parent cell from the parent's interfaces and from siblings, and unbalanced meshes are rejected rather than repaired. Adjacent sibling boxes must be merged into one box.
 * **Materials.** Isotropic $\varepsilon$, $\mu$ are sampled at cell centres, with a diagonal Hodge. This is exact only for interfaces aligned with the grid of the block that owns the cell; oblique or curved interfaces are staircased, first order in $h$. Conformal or tensor averaging inside patches is not implemented. Material interfaces may cross patch interfaces (tested). PEC may cross an interface only if it is aligned with coarse cells there (checked).
 * **Boundaries.** PEC, PMC (natural) and Bloch-periodic outer walls are supported. There is no CPML: patches must stay away from any absorber, and the Bloch column uses complex stretching in the frequency domain only. No lossy media, no dispersive ADE, no TF/SF, no lumped ports.
 * **Sources and probes.** Soft edge currents and nearest-edge point probes only (no interpolation). A probe on a hanging edge reads the trace value.
 * **Not covered by the energy proof.** Anything non-symmetric. The `inject` mutation shows that a restriction other than $\mathbf P_e^T$ drifts even at half the CFL limit.
-* **Performance.** Global CSR on one core, about 2–4 ns per unknown-step (similar per step to `SolverFIT3D` on the same uniform grid). There are no per-block kernels, no GPU and no MPI. The leading extra cost of a patch is its surface, about $6r^2$ hanging edges per coarse face.
-* **Accuracy relative to the coarse grid.** In the empty cavity with a patch, the error is about 4 % *larger* than on the coarse grid alone ($2.25\times10^{-2}$ vs $2.17\times10^{-2}$ at $N=8$). The interface's $O(h^2)$ contribution is of the same order as the coarse-grid error. Refinement pays only where the field needs it, as in the loaded cavity of §9.
+* **Performance.** Global CSR on one core, 3–8 ns per unknown-step depending on the machine, the same per step as `SolverFIT3D` on the same uniform grid. There are no per-block kernels, no GPU and no MPI. The leading extra cost of a patch is its surface, about $6r^2$ hanging edges per coarse face.
+* **Accuracy relative to the coarse grid.** In the empty cavity with a patch, the error is about 4 % *larger* than on the coarse grid alone ($2.25\times10^{-2}$ vs $2.17\times10^{-2}$ at $N=8$). The interface's $O(h^2)$ contribution is of the same order as the coarse-grid error. Refinement pays only where the field needs it, as in the loaded cavity of §9b, where it saves 1.4–2.2× work at equal accuracy. That gain is modest because the global step is set by the fine cells.
 
 #### 11. Next milestones
 

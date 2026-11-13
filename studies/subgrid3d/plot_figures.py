@@ -18,8 +18,17 @@ import numpy as np  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG = os.path.join(HERE, "..", "..", "docs", "img")
-COL = {0: "#0072B2", 15: "#56B4E9", 30: "#009E73", 45: "#E69F00", 60: "#D55E00", 75: "#CC79A7"}
-plt.rcParams.update({"font.size": 9, "axes.grid": True, "grid.alpha": 0.3, "savefig.dpi": 200})
+COL = {
+    0: "#0072B2",
+    15: "#56B4E9",
+    30: "#009E73",
+    45: "#E69F00",
+    60: "#D55E00",
+    75: "#CC79A7",
+}
+plt.rcParams.update(
+    {"font.size": 9, "axes.grid": True, "grid.alpha": 0.3, "savefig.dpi": 200}
+)
 
 
 def order_guide(ax, x, y0, p, label):
@@ -44,7 +53,11 @@ def fig_reflection(res, summ):
                 N, v = zip(*pts3)
                 ax.loglog(N, v, "s--", ms=3, mfc="none", color=COL.get(th, "k"), lw=0.8,
                           label=f"{th}° (3:1)")  # fmt: skip
-        fl = sorted((r["N"], r["R"]) for r in R if r["kind"] == "floor" and r["pol"] == pol and r["theta"] == 30)
+        fl = sorted(
+            (r["N"], r["R"])
+            for r in R
+            if r["kind"] == "floor" and r["pol"] == pol and r["theta"] == 30
+        )
         if fl:
             N, v = zip(*fl)
             ax.loglog(N, v, "x", color="0.5", label="floor (no patch)")
@@ -56,7 +69,9 @@ def fig_reflection(res, summ):
             order_guide(ax, N, 1.6 * v[0], 2, "$N^{-2}$")
         ax.set_xlabel("coarse cells per wavelength $N$")
         ax.set_ylabel("$|R|$")
-        ax.set_title(f"({'a' if pol == 's' else 'b'}) {pol}-pol., 2:1 (solid), 3:1 (dashed)")
+        ax.set_title(
+            f"({'a' if pol == 's' else 'b'}) {pol}-pol., 2:1 (solid), 3:1 (dashed)"
+        )
         ax.legend(fontsize=6.5, ncol=2)
     ax = axs[2]
     for N, mk in ((10, "o"), (20, "s")):
@@ -66,7 +81,11 @@ def fig_reflection(res, summ):
             if pts:
                 t, v = zip(*pts)
                 ax.semilogy(t, v, mk + ls, ms=3.5, label=f"3D {pol}, N={N}")
-        pts = sorted((r["theta"], r["R"]) for r in R if r["kind"] == "2d" and r["ratio"] == 2 and r["N"] == N)
+        pts = sorted(
+            (r["theta"], r["R"])
+            for r in R
+            if r["kind"] == "2d" and r["ratio"] == 2 and r["N"] == N
+        )
         if pts:
             t, v = zip(*pts)
             ax.semilogy(t, v, "k" + mk, mfc="none", ms=7, label=f"2D TM, N={N}")
@@ -90,7 +109,9 @@ def fig_reflection(res, summ):
                              if r["kind"] == "3d" and r["ratio"] == ratio and r["pol"] == pol and r["theta"] == th)  # fmt: skip
                 if len(pts) >= 2:
                     (n0, v0), (n1, v1) = pts[-2], pts[-1]
-                    orders[f"{pol}_r{ratio}_th{th}"] = float(np.log(v0 / v1) / np.log(n1 / n0))
+                    orders[f"{pol}_r{ratio}_th{th}"] = float(
+                        np.log(v0 / v1) / np.log(n1 / n0)
+                    )
     eq = [abs(a["R"] / b["R"] - 1) for a in R if a["kind"] == "3d_eqsrc" for b in R
           if b["kind"] == "2d" and b["N"] == a["N"] and b["theta"] == a["theta"] and b["ratio"] == a["ratio"]]  # fmt: skip
     d1 = [abs(r["R"] - r["R1d"]) for r in R if r["kind"] == "3d" and r["theta"] == 0]
@@ -149,6 +170,24 @@ def fig_cost(res, summ):
         fstar = float(np.linalg.solve(A, fs[-3:])[0])
     else:  # --quick
         fstar = fstar2
+    # The uniform arms converge at order ~1.46 (dielectric cube edges and
+    # corners), so the reference is the 3-point power-law extrapolation
+    # f = f* + C h^p of the three finest uniform arms; the h^2 variants are
+    # kept for comparison.
+    from scipy.optimize import brentq
+
+    def powerlaw(hh, ff):
+        (h1, h2, h3), (a, b, c) = hh, ff
+
+        def g(p):
+            return (a - b) / (b - c) - (h1**p - h2**p) / (h2**p - h3**p)
+
+        p = brentq(g, 0.3, 4.0)
+        return float(c - (a - b) / (h1**p - h2**p) * h3**p), float(p)
+
+    fstar_h2h4 = fstar
+    fstar, p_obs = powerlaw(hs[-3:], fs[-3:]) if len(hs) >= 3 else (fstar, 2.0)
+    p_prev = powerlaw(hs[-4:-1], fs[-4:-1])[1] if len(hs) >= 4 else None
     err = lambda r: abs(r["f_semi_probes"][0] / fstar - 1)  # noqa: E731
     T = {round(t["h"], 6): t for t in res.get("timing", [])}
     fig, axs = plt.subplots(1, 2, figsize=(9, 3.6))
@@ -170,7 +209,9 @@ def fig_cost(res, summ):
                           "unknowns": r["unknowns"], "n_steps": r["n_steps"], "dt": r["dt"],
                           "work": r["unknowns"] * r["n_steps"], "err": err(r),
                           "run_s": r["run_s"], "s_per_step": r["s_per_step"]})  # fmt: skip
-    for ax, xl in zip(axs, ("unknowns (edges + faces)", "work: unknowns × steps (same physical time)")):
+    for ax, xl in zip(
+        axs, ("unknowns (edges + faces)", "work: unknowns × steps (same physical time)")
+    ):
         ax.set_xlabel(xl)
         ax.set_ylabel("rel. error of $f_1$ (semi-discrete)")
         ax.legend(fontsize=7)
@@ -198,7 +239,8 @@ def fig_cost(res, summ):
         eq.append({**t, "uniform_unknowns_at_equal_err": uu, "uniform_work_at_equal_err": uw,
                    "unknown_ratio": None if uu is None else uu / t["unknowns"],
                    "work_ratio": None if uw is None else uw / t["work"]})  # fmt: skip
-    summ["cost"] = {"f_star_richardson_h2h4": fstar, "f_star_richardson_h2_last2": fstar2,
+    summ["cost"] = {"f_star_powerlaw": fstar, "observed_order_finest3": p_obs,
+                    "observed_order_previous3": p_prev, "f_star_richardson_h2h4": fstar_h2h4, "f_star_richardson_h2_last2": fstar2,
                     "uniform_orders": [float(np.log(abs(fs[i] - fstar) / abs(fs[i + 1] - fstar)) /
                                              np.log(hs[i] / hs[i + 1])) for i in range(len(hs) - 1)],
                     "arms": table, "equal_accuracy": eq, "timing": list(T.values()),
@@ -206,9 +248,12 @@ def fig_cost(res, summ):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "results.json")
-    with open(path) as f:
-        res = json.load(f)
+    paths = sys.argv[1:] or [os.path.join(HERE, f"results_{p}.json") for p in "ABC"]
+    res = {}
+    for path in paths:
+        if os.path.exists(path):
+            with open(path) as f:
+                res.update({k: v for k, v in json.load(f).items() if k != "meta"})
     os.makedirs(IMG, exist_ok=True)
     summ = {}
     if "reflection" in res:
@@ -219,7 +264,11 @@ def main():
         fig_cost(res, summ)
     with open(os.path.join(HERE, "summary.json"), "w") as f:
         json.dump(summ, f, indent=1)
-    print(json.dumps({k: v for k, v in summ.items() if k != "reflection"}, indent=1)[:4000])
+    print(
+        json.dumps({k: v for k, v in summ.items() if k != "reflection"}, indent=1)[
+            :6000
+        ]
+    )
 
 
 if __name__ == "__main__":

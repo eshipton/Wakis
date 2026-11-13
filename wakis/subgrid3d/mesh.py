@@ -41,7 +41,7 @@ class Patch:
         self.ratio = int(ratio)
         if self.ratio not in (2, 3):
             raise ValueError("ratio must be 2 or 3")
-        if any(h <= l for l, h in zip(self.lo, self.hi)):
+        if any(hi <= lo for lo, hi in zip(self.lo, self.hi)):
             raise ValueError("empty patch")
 
 
@@ -162,7 +162,9 @@ class SubgridMesh3D:
                 s = []
                 for side, at_bound in ((0, p.lo[a] == 0), (1, p.hi[a] == pb.nc[a])):
                     if pb.periodic[a] and at_bound:
-                        raise ValueError("a patch touching a periodic seam must span the axis")
+                        raise ValueError(
+                            "a patch touching a periodic seam must span the axis"
+                        )
                     if at_bound:
                         if psides[a][side] == "interface":
                             raise ValueError(
@@ -173,16 +175,25 @@ class SubgridMesh3D:
                     else:
                         s.append("interface")
                 sd.append(tuple(s))
-            nodes = [_subdivide(pb.nodes[a][p.lo[a] : p.hi[a] + 1], p.ratio) for a in range(3)]
+            nodes = [
+                _subdivide(pb.nodes[a][p.lo[a] : p.hi[a] + 1], p.ratio)
+                for a in range(3)
+            ]
             self.blocks.append(CartesianBlock(*nodes, periodic=per, phase=ph))
             self.parent.append(p.parent)
             self.level.append(self.level[p.parent] + 1)
             self.sides.append(sd)
         self._check_siblings()
         self.n_blocks = len(self.blocks)
-        self.edge_off = np.concatenate([[0], np.cumsum([b.n_edges for b in self.blocks])])
-        self.face_off = np.concatenate([[0], np.cumsum([b.n_faces for b in self.blocks])])
-        self.cell_off = np.concatenate([[0], np.cumsum([b.n_cells for b in self.blocks])])
+        self.edge_off = np.concatenate(
+            [[0], np.cumsum([b.n_edges for b in self.blocks])]
+        )
+        self.face_off = np.concatenate(
+            [[0], np.cumsum([b.n_faces for b in self.blocks])]
+        )
+        self.cell_off = np.concatenate(
+            [[0], np.cumsum([b.n_cells for b in self.blocks])]
+        )
         self.n_edges = int(self.edge_off[-1])
         self.n_faces = int(self.face_off[-1])
         self.n_cells = int(self.cell_off[-1])
@@ -197,7 +208,9 @@ class SubgridMesh3D:
                     continue
                 gap = [max(q.lo[a] - p.hi[a], p.lo[a] - q.hi[a]) for a in range(3)]
                 if max(gap) < 1:
-                    raise ValueError("sibling patches must be at least one parent cell apart")
+                    raise ValueError(
+                        "sibling patches must be at least one parent cell apart"
+                    )
 
     def _active_cells(self):
         self.active = []
@@ -266,10 +279,14 @@ class SubgridMesh3D:
                 b, c = [ax for ax in range(3) if ax != a]
                 both = (rem[b] != 0) & (rem[c] != 0)
                 if np.any(both):
-                    raise RuntimeError("hanging edge not on a coarse face (internal error)")
+                    raise RuntimeError(
+                        "hanging edge not on a coarse face (internal error)"
+                    )
                 g = self.edge_off[bi] + e0 + loc
                 # term on the lower parallel coarse edge
-                t = np.where(rem[b] != 0, rem[b] / r, np.where(rem[c] != 0, rem[c] / r, 0.0))
+                t = np.where(
+                    rem[b] != 0, rem[b] / r, np.where(rem[c] != 0, rem[c] / r, 0.0)
+                )
                 w0 = (1.0 - t) / r
                 w1 = t / r
                 if mutate == "fraction":

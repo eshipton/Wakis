@@ -43,13 +43,17 @@ class CartesianBlock:
         Bloch phase per axis (ignored on non-periodic axes).
     """
 
-    def __init__(self, xn, yn, zn, periodic=(False, False, False), phase=(1.0, 1.0, 1.0)):
+    def __init__(
+        self, xn, yn, zn, periodic=(False, False, False), phase=(1.0, 1.0, 1.0)
+    ):
         self.nodes = [np.asarray(v, float) for v in (xn, yn, zn)]
         for v in self.nodes:
             if v.ndim != 1 or len(v) < 2 or np.any(np.diff(v) <= 0):
                 raise ValueError("node arrays must be 1D and strictly increasing")
         self.periodic = tuple(bool(p) for p in periodic)
-        self.phase = tuple(complex(p) if per else 1.0 for p, per in zip(phase, self.periodic))
+        self.phase = tuple(
+            complex(p) if per else 1.0 for p, per in zip(phase, self.periodic)
+        )
         self.h = [np.diff(v) for v in self.nodes]
         self.nc = tuple(len(h) for h in self.h)
         self.nn = tuple(n if per else n + 1 for n, per in zip(self.nc, self.periodic))
@@ -80,7 +84,11 @@ class CartesianBlock:
             return idx, np.ones(idx.shape, complex if self.complex else float)
         n = self.nn[axis]
         q = np.floor_divide(idx, n)
-        ph = np.power(self.phase[axis], q.astype(float)) if self.complex else np.ones(idx.shape)
+        ph = (
+            np.power(self.phase[axis], q.astype(float))
+            if self.complex
+            else np.ones(idx.shape)
+        )
         return idx - q * n, ph
 
     def edge_index(self, a, i, j, k):
@@ -149,7 +157,9 @@ class CartesianBlock:
 
     def cell_centres(self):
         ijk = self.cell_grid()
-        return [0.5 * (self.nodes[a][ijk[a]] + self.nodes[a][ijk[a] + 1]) for a in range(3)]
+        return [
+            0.5 * (self.nodes[a][ijk[a]] + self.nodes[a][ijk[a] + 1]) for a in range(3)
+        ]
 
     # -------------------------------------------------------------- operators
     def curl(self):
@@ -160,7 +170,12 @@ class CartesianBlock:
             b, c = (a + 1) % 3, (a + 2) % 3
             ijk = self.face_grid(a)
             f, _ = self.face_index(a, *ijk)
-            for comp, shift, sign in ((b, None, 1.0), (c, b, 1.0), (b, c, -1.0), (c, None, -1.0)):
+            for comp, shift, sign in (
+                (b, None, 1.0),
+                (c, b, 1.0),
+                (b, c, -1.0),
+                (c, None, -1.0),
+            ):
                 q = [x.copy() for x in ijk]
                 if shift is not None:
                     q[shift] = q[shift] + 1
@@ -243,4 +258,7 @@ class CartesianBlock:
         return np.concatenate(cs), np.concatenate(fs), np.concatenate(ws)
 
     def contains(self, p):
-        return all(self.nodes[a][0] - 1e-15 <= p[a] <= self.nodes[a][-1] + 1e-15 for a in range(3))
+        return all(
+            self.nodes[a][0] - 1e-15 <= p[a] <= self.nodes[a][-1] + 1e-15
+            for a in range(3)
+        )

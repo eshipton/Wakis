@@ -106,7 +106,9 @@ def bloch_reflection_3d(cells_per_wavelength, theta_deg, ratio=2, pol="s", phi_d
     sx2 = (kt * H / 2) ** 2 - np.sin(ky * H / 2) ** 2 - np.sin(kz * H / 2) ** 2
     kx = 2 / H * np.arcsin(np.sqrt(sx2))
     phase = (1.0, np.exp(-1j * ky * 2 * H), np.exp(-1j * kz * 2 * H))
-    mesh = SubgridMesh3D(x, yz, yz, bc=[("pec", "pec"), "periodic", "periodic"], phase=phase)
+    mesh = SubgridMesh3D(
+        x, yz, yz, bc=[("pec", "pec"), "periodic", "periodic"], phase=phase
+    )
     if refine:
         mesh.add_patch((n_coarse // 2, 0, 0), (n_coarse, 2, 2), ratio=ratio)
     T = n_abs * H
@@ -123,12 +125,16 @@ def bloch_reflection_3d(cells_per_wavelength, theta_deg, ratio=2, pol="s", phi_d
         s = sx(cen[:, 0])
         return np.where(normal == 0, s, 1 / s)
 
-    s = SubgridFIT3D(mesh, dt=dt, mutate=mutate, edge_scale=edge_scale, face_scale=face_scale)
+    s = SubgridFIT3D(
+        mesh, dt=dt, mutate=mutate, edge_scale=edge_scale, face_scale=face_scale
+    )
     A = (s.KH @ sp.diags(s.W) @ s.K - wt**2 * sp.diags(s.D)).tocsc()
     xs = T + 5 * H
     comp = 2 if pol == "s" else 1
     em = s.edge_mid
-    src = np.flatnonzero((s.edge_block == 0) & (s.edge_dir == comp) & np.isclose(em[:, 0], xs))
+    src = np.flatnonzero(
+        (s.edge_block == 0) & (s.edge_dir == comp) & np.isclose(em[:, 0], xs)
+    )
     i_all = np.zeros(mesh.n_edges, complex)
     if bloch_source:
         i_all[src] = np.exp(-1j * (ky * em[src, 1] + kz * em[src, 2]))

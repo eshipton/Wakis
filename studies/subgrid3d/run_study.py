@@ -22,7 +22,7 @@ C. Cost at equal accuracy: PEC box 1.0 x 0.8 x 0.6 m with a dielectric cube
    SubgridFIT3D.one_step on the same machine.
 
 Usage: python studies/subgrid3d/run_study.py [--quick] [--parts ABC]
-Writes studies/subgrid3d/results.json.
+Writes --out (default studies/subgrid3d/results.json); the committed runs are results_A/B/C.json (one Batch job per part).
 """
 
 import argparse
@@ -99,7 +99,13 @@ def exact_modes(k):
             for m in range(10):
                 nz = (i > 0) + (j > 0) + (m > 0)
                 if nz >= 2:
-                    f = C0 / 2 * np.sqrt((i / A_CAV) ** 2 + (j / B_CAV) ** 2 + (m / D_CAV) ** 2)
+                    f = (
+                        C0
+                        / 2
+                        * np.sqrt(
+                            (i / A_CAV) ** 2 + (j / B_CAV) ** 2 + (m / D_CAV) ** 2
+                        )
+                    )
                     out += [f] * (2 if nz == 3 else 1)
     return np.sort(out)[:k]
 
@@ -126,7 +132,7 @@ def task_cavity(args):
 
 
 def jobs_cavity(quick):
-    Ns = [8, 16] if quick else [8, 12, 16, 24, 32]
+    Ns = [8, 16] if quick else [8, 16, 24, 32]  # patch bounds on coarse nodes
     jobs = []
     for N in Ns:
         for arm in ("uniform", "r2", "r3", "nested", "fraction"):
@@ -146,7 +152,14 @@ N_PERIODS = 300
 
 def eps_cube(X, Y, Z):
     c = CUBE
-    inside = (X > c[0][0]) & (X < c[0][1]) & (Y > c[1][0]) & (Y < c[1][1]) & (Z > c[2][0]) & (Z < c[2][1])
+    inside = (
+        (X > c[0][0])
+        & (X < c[0][1])
+        & (Y > c[1][0])
+        & (Y < c[1][1])
+        & (Z > c[2][0])
+        & (Z < c[2][1])
+    )
     return np.where(inside, EPS_CUBE, 1.0)
 
 
@@ -179,7 +192,12 @@ def task_loaded(args):
     tau = 2.0 / f0
     # two off-symmetric sources inside the cube, one probe inside, one outside
     for p, comp in (((0.41, 0.33, 0.37), 2), ((0.47, 0.29, 0.31), 0)):
-        s.add_current(p, comp, lambda t, tau=tau: np.exp(-(((t - 4 * tau) / tau) ** 2)) * np.sin(2 * np.pi * f0 * t))
+        s.add_current(
+            p,
+            comp,
+            lambda t, tau=tau: np.exp(-(((t - 4 * tau) / tau) ** 2))
+            * np.sin(2 * np.pi * f0 * t),
+        )
     s.add_probe((0.37, 0.41, 0.33), 2)
     s.add_probe((0.52, 0.27, 0.44), 1)
     n_steps = int(np.ceil(N_PERIODS / f_guess / s.dt))
@@ -203,7 +221,15 @@ def jobs_loaded(quick, f_guess):
         sg = [(0.1, 3), (0.1, 2)]
     else:
         uni = [0.1, 0.05, 0.1 / 3, 0.025, 0.02, 0.05 / 3, 0.0125]
-        sg = [(0.1, 3), (0.05, 3), (0.1 / 3, 3), (0.1, 2), (0.05, 2), (0.1 / 3, 2), (0.025, 2)]
+        sg = [
+            (0.1, 3),
+            (0.05, 3),
+            (0.1 / 3, 3),
+            (0.1, 2),
+            (0.05, 2),
+            (0.1 / 3, 2),
+            (0.025, 2),
+        ]
     return [(h, 1, f_guess) for h in uni] + [(h, r, f_guess) for h, r in sg]
 
 
@@ -220,7 +246,9 @@ def timing_serial(h_list, n_steps=60):
     for h in h_list:
         axes = [np.linspace(0, L, int(round(L / h)) + 1) for L in BOX]
         g = GridFIT3D(x=axes[0], y=axes[1], z=axes[2], verbose=0)
-        sv = SolverFIT3D(g, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0, cfln=0.95)
+        sv = SolverFIT3D(
+            g, bc_low=["pec"] * 3, bc_high=["pec"] * 3, verbose=0, cfln=0.95
+        )
         rng = np.random.default_rng(0)
         sv.E.fromarray(rng.standard_normal(sv.E.toarray().shape))
         sv.one_step()
@@ -243,6 +271,11 @@ def timing_serial(h_list, n_steps=60):
     return out
 
 
+def _save(res, path):
+    with open(path, "w") as f:
+        json.dump(res, f, indent=1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
@@ -260,17 +293,24 @@ def main():
     t0 = time.time()
     with Pool(nproc) as pool:
         if "A" in a.parts:
-            res["reflection"] = pool.map(task_reflection, jobs_reflection(a.quick), chunksize=1)
+            res["reflection"] = pool.map(
+                task_reflection, jobs_reflection(a.quick), chunksize=1
+            )
             print(f"A done {time.time() - t0:.0f} s", flush=True)
+            _save(res, a.out)
         if "B" in a.parts:
             res["cavity"] = pool.map(task_cavity, jobs_cavity(a.quick), chunksize=1)
             print(f"B done {time.time() - t0:.0f} s", flush=True)
+            _save(res, a.out)
         if "C" in a.parts:
             f1, f4 = guess_f1()
-            jobs = sorted(jobs_loaded(a.quick, f1), key=lambda j: j[0])  # largest last? small h first
+            jobs = sorted(
+                jobs_loaded(a.quick, f1), key=lambda j: j[0]
+            )  # largest last? small h first
             res["loaded_guess"] = {"f1_h0.05": f1, "f_lowest4_h0.05": f4}
             res["loaded"] = pool.map(task_loaded, jobs, chunksize=1)
             print(f"C done {time.time() - t0:.0f} s", flush=True)
+            _save(res, a.out)
     if "C" in a.parts:
         hs = [0.1, 0.05] if a.quick else [0.1, 0.05, 0.1 / 3, 0.025, 0.02]
         res["timing"] = timing_serial(hs)
