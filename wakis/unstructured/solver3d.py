@@ -256,7 +256,11 @@ class UnstructuredFIT3D:
 
                 n = self.free.size
                 op = LinearOperator((n, n), matvec=mv, dtype=float)
-                lam = eigsh(op, k=1, which="LA", return_eigenvectors=False, tol=1e-4)[0]
+                # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
+                v0 = np.random.default_rng(0).standard_normal(n)
+                lam = eigsh(
+                    op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
+                )[0]
             else:
                 lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
         else:
