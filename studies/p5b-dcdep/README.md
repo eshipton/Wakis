@@ -608,13 +608,33 @@ The hypothesis holds: the remaining near-wall difference was the node-1 deposit 
 (1/48 + dzeta/16 masked, 2/48 image), not a missing dynamic term. With it, cells 0-1 match to
 <= 1 % (the residual is bracketed by the treatment of the axial density rise).
 
-Effect on the derived bounds of `test_087` (not changed): putting the deficit into the 2D Poisson
-fields of `_entrance_first_cell_delta_bound` / `_entrance_image_delta_bound` changes them by -1.1 %
-(coarse masked), -5.6 % (coarse image), -0.6 % (fine masked), -5.1 % (fine image). This is not
-material against the measured margins (gap / bound <= 0.51) or the rejections (flux model 3.1x,
-8.1x the bound), so the helpers were left as they are. Found while checking: both helpers set
-`v0 = params["u0"] / params["gamma0"]`, but `params["u0"]` is already the speed, so their `dzeta`
-is 1.9 % low and the bounds 3.9 % low (stricter than derived). Correcting it together with the
-deficit would change the bounds by +2.8 % / -1.8 % / +3.3 % / -1.3 % (coarse masked / coarse
-image / fine masked / fine image); because two of these widen a tolerance, it is left for a
-decision rather than changed here.
+Bounds updated (2026-11-12, branch `fix/dcdep-bound-v0`, approved): both `test_087` helpers now
+(1) take `dzeta = v0 dt / dz` with `v0 = params["u0"]`, which is already the injection speed (the
+earlier `params["u0"] / gamma0` made `dzeta` 1.9 % low and the bounds 3.9 % too strict), and (2)
+include the node-1 deficit `d1` in the 2D wall Poisson fields in closed form: a source change at
+node 1 on the half line with `phi_0 = 0` gives `phi_k = phi_inf (1 - lambda^k - d1 mu lambda^k)`
+for `k >= 1` per transverse mode (checked against a direct tridiagonal solve to all digits and
+against `wall_gather_model.py`'s numerical solve to 4 digits). The max over the injected and
+depressed z-uniform densities is kept: the self-consistent axial density gives 0.2-1.9 % smaller
+bounds on all four configurations, so it is not the conservative choice.
+
+| bound in delta | old | new | change |
+| --- | --- | --- | --- |
+| coarse masked | 3.62e-6 | 3.73e-6 | +2.8 % |
+| coarse image | 4.80e-7 | 4.71e-7 | -1.8 % |
+| fine masked | 2.05e-6 | 2.12e-6 | +3.3 % |
+| fine image | 1.66e-7 | 1.63e-7 | -1.3 % |
+
+The masked bounds widen because the `v0` correction (+3.9 %) outweighs the deficit (-1.1 %,
+-0.6 %); this is a correction of a derived term, not a fitted widening. The new fast test
+`test_entrance_bounds_dzeta_and_node1_deficit` recomputes `v0` from `gamma0`, checks the deficit
+against its Euler-Maclaurin expansion within `2 dzeta^3`, and fails under each of four mutations
+(`u0/gamma0` in either helper, newborn sheet counted `j >= 0`, image path dropped).
+
+Validation (Batch): fast suite `bv0-fast` (test_087 `-m 'not slow'`, test_091, test_096; exit 0,
+28 passed, 1 skipped). Slow, A100 us-west4, 50-point SCW cache: `bv0-slow-msk`
+(`test_two_resolution_convergence_and_sheet_ensemble`, strict cache, exit 0, 1 passed):
+coarse err_dep0 = 2.676e-7 <= 3.78e-6, fine 8.80e-7 <= 2.13e-6. `bv0-slow-img`
+(`test_dc_depression_image_wall_stencil`, exit 0, 1 passed): coarse 2.438e-7 <= 5.23e-7, fine
+5.18e-8 <= 1.74e-7; the flux-weighted model still fails (1.64e-6, 1.43e-6; 3.1x and 8.2x the
+bound) and so does the 1 % rho0 model (1.05e-4, 1.07e-4).
