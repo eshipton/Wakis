@@ -492,3 +492,129 @@ the bound.
 
 Jobs: `img0-pc-img`, `img0-pc-img-off`, `img0-pc-img-n12`, `img0-pc-msk`, `img0-pf-img`,
 `img0-pf-img-off` (path_identity, A100, us-west4), `img0-t087img` (slow test).
+
+## Near-wall cells 0-1: the node-1 deposit deficit (2026-11-12)
+
+### Question
+
+After the `r_diag` correction the corrected per-cell remainder matched the static model to ~1 % in
+cells 2-8, but cell 0 was 6 % low (image, both grids) and 2 % low (masked coarse), and cell 1 was
+0.55-0.9e-9 less negative than the model. The lead was that the model assumes a z-uniform beam
+charge, while the charge actually deposited next to the wall is smaller.
+
+### Derivation: steady near-wall node charge of a wall-born order-2 stream
+
+Every step one sheet of macroparticles (same `u0`, same weight) is born at `z = 0`. Order of the
+step (`ParticleSolver._mid_step_hook`): inject -> closure current (masked) into this step's `W` ->
+birth kick -> back-push -> push all -> Esirkepov deposit -> `E` update. So `E^{n+1}` contains the
+sheets born at steps `n, n-1, ...` at `zeta_j = j dzeta`, `j >= 1` (`dzeta = v0 dt / dz`, with
+`v0 = params["u0"]`, the injection *speed*); the sheet born at `n+1` is not yet in it. Esirkepov
+is charge-conserving on every visible node, so the field's node charge for `k >= 1` is the
+deposit of these positions, in units of the line charge per cell `(I / v0) dz`:
+
+`c_k = dzeta * sum_{j>=1} [W2(j dzeta - k) - s W2(-j dzeta - k)]`, `s = 0` masked, `s = 1` image.
+
+Node 1 is the only node whose stencil reaches `z < 0` (support `[-1/2, 5/2]`); the missing piece is
+`int_{-1/2}^{0} W2(zeta - 1) dzeta = int_0^{1/2} t^2/2 dt = 1/48`. Euler-Maclaurin on the half line
+(`f(0) = W2(-1) = 1/8`, `f'(0) = +1/2`) gives
+
+- masked: `c_1 = 1 - 1/48 - dzeta/16 + dzeta^2/24 + O(dzeta^3)` (`j >= 0` would give `+dzeta/16`);
+- image: the image path removes another `1/48 - dzeta/16 - dzeta^2/24`, so `c_1 = 1 - 2/48 + O(dzeta^3)`:
+  the `dzeta` terms cancel because a sheet on the wall has zero net (real minus image) charge;
+- `c_k = 1` for `k >= 2` up to B-spline sampling aliasing (`< 1e-5`).
+
+Exact sums (`deposit_node_profile`): coarse (`dzeta = 0.06328`) `c_1 = 0.975044` masked,
+`0.957997` image; fine (`dzeta = 0.06528`) `0.974911`, `0.957978`. Node 0 is the PEC node; its
+charge is wall surface charge and does not enter the interior field.
+
+The birth closure and kick add nothing on interior nodes: the closure current only moves the
+newborn sheet's visible charge from the wall node to its deposit at `zeta = 0`, which is already
+the `j = 0` term that `E^{n+1}` does not contain.
+
+### Model with the deficit
+
+`wall_gather_model.py` now solves the 2D (x, z) discrete Poisson problem with a z-dependent source
+(transverse eigenmodes, one tridiagonal axial solve per mode, `psi = 0` 64 cells beyond the kept
+edges) and runs three variants per scheme: `uniform` (old model, unchanged numbers), `discrete`
+(node charge `c_k`), and `discrete` + `selfconsistent` (line density `rho_l c_k u0 / v_l(z_k)`,
+`v_l` from energy conservation in the line-gathered potential, fixed-point iteration), which
+rises from the injected to the depressed density over the wall decay length. No parameter is
+fitted. Side fix: the script's `dzeta` used `params["u0"] / gamma0`, but `params["u0"]` is the
+speed; this affected only the printed `kink_pred`/`dzeta` fields and `n_steps`, not the tracked
+excess.
+
+Corrected RPROF cells 0-1 [1e-9] (measured: jobs `img0-pc-img`, `img0-pc-msk`, `img0-pf-img`;
+the birth-shifted sets `img0-pc-img-off`, `img0-pf-img-off` agree to 3e-12):
+
+| config | measured cell 0 | uniform, depressed (old) | discrete, depressed | discrete, self-consistent | measured cell 1 | old | discrete, dep. | discrete, s.c. |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| coarse image | 5.870 | 6.264 (+6.7 %) | 5.920 (+0.9 %) | 5.855 (-0.3 %) | -3.668 | -4.553 | -3.722 | -3.702 |
+| coarse masked | 26.242 | 26.747 (+1.9 %) | 26.399 (+0.6 %) | 26.025 (-0.8 %) | -3.992 | -4.540 | -4.049 | -4.025 |
+| fine image | 5.422 | 5.768 (+6.4 %) | 5.477 (+1.0 %) | 5.415 (-0.1 %) | -0.042 | -0.054 | -0.043 | -0.041 |
+
+With the depressed density the deficit removes 84-87 % of the image cell-0 gap and 69 % of the
+masked one, and 90-94 % of the cell-1 gaps; with the self-consistent density it removes 102-104 %
+(image) and 143 % (masked) of the cell-0 gap and 94-96 % of the cell-1 gaps. What is left
+(<= 1 % in cell 0, <= 6e-11 in cell 1) lies between the z-uniform depressed density and the
+self-consistent density profile, i.e. at the level of the axial density rise, which the
+measurement does not resolve better than either variant (the self-consistent variant is 2-3e-11
+too small in cells 6-8, the depressed variant fits there).
+
+m -> 0 gap in delta (model at zeta = 64 vs measured `delta0 - delta_disc_charge`, jobs `fce-dc-*`;
+measurement uncertainty `t SEM_prop` = 5.2e-8 coarse, 1.0e-8 fine):
+
+| config | measured | old model | discrete, dep. | discrete, s.c. |
+| --- | --- | --- | --- | --- |
+| coarse masked | -2.676e-7 | -2.893e-7 | -2.918e-7 | -2.886e-7 |
+| coarse image | +2.438e-7 | +2.559e-7 | +2.451e-7 | +2.401e-7 |
+| fine masked | -8.80e-7 | -9.263e-7 | -9.178e-7 | -9.038e-7 |
+| fine image | -5.18e-8 | -5.386e-8 | -4.610e-8 | -4.590e-8 |
+
+All variants agree with the measured gaps within `t SEM_prop`; the delta gaps cannot separate the
+variants (the fine-image change, 0.8e-8, is below its 1.0e-8 uncertainty). The per-cell profile
+(precision ~1e-11) can, and it selects the deficit. The corrected cum 0-63 agrees with it too
+(fine image: measured +1.705e-9, deficit +1.73e-9, old +2.03e-9).
+
+### Falsifier: the field's own near-wall node charge (`near_wall_charge.py`)
+
+Pre-registered: Gauss's law on the field (`compute_dual_divergence_d`, summed over interior x
+nodes, normalised by the mean of planes 10-25) gives `1 - c_1` above; in masked mode it moves with
+`dzeta` as `dzeta/16` (halving the CFL number gives `0.022852` coarse), in image mode it does not
+(to `O(dzeta^3)`); the alternative `j >= 0` (newborn sheet counted in `E^{n+1}`) gives a masked
+deficit smaller by `dzeta/8`. `qm_scale = 1e-3` removes the space-charge velocity change, so the
+axial density is otherwise flat. 40 / dzeta steps, CPU, jobs `nwq-{c,f}-{mas,ima}` (exit 0).
+
+| grid, stencil, CFL | dzeta | measured 1 - c_1 | derived | `j >= 0` alternative |
+| --- | --- | --- | --- | --- |
+| coarse masked, 0.5 | 0.06328 | 0.024963 | 0.024956 | 0.017046 |
+| coarse masked, 0.25 | 0.03164 | 0.022858 | 0.022852 | 0.018896 |
+| coarse image, 0.5 | 0.06328 | 0.042009 | 0.042003 | 0.042003 |
+| coarse image, 0.25 | 0.03164 | 0.041756 | 0.041749 | 0.041749 |
+| fine masked, 0.5 | 0.06528 | 0.025095 | 0.025089 | 0.016929 |
+| fine masked, 0.25 | 0.03264 | 0.022925 | 0.022919 | 0.018839 |
+| fine image, 0.5 | 0.06528 | 0.042028 | 0.042022 | 0.042022 |
+| fine image, 0.25 | 0.03264 | 0.041762 | 0.041756 | 0.041756 |
+
+All eight agree to 6e-6 (the far-plane normalisation scatter is 1.4-8e-6); the `j >= 0`
+alternative is off by 300-1400x that. Planes 2-7 are 1 to 1e-5. The field charge equals an
+independent deposit of the particle positions (real minus image) to <= 5e-14 relative on planes
+1-25, so the closure current and birth kick add no interior charge. With `qm_scale = 1` the same
+runs show the additional density rise towards the depressed value (planes 2-6 at 0.9952-0.9992
+of the far mean, not settled), the axial profile the `selfconsistent` variant models.
+
+### Conclusion and bounds
+
+The hypothesis holds: the remaining near-wall difference was the node-1 deposit deficit
+(1/48 + dzeta/16 masked, 2/48 image), not a missing dynamic term. With it, cells 0-1 match to
+<= 1 % (the residual is bracketed by the treatment of the axial density rise).
+
+Effect on the derived bounds of `test_087` (not changed): putting the deficit into the 2D Poisson
+fields of `_entrance_first_cell_delta_bound` / `_entrance_image_delta_bound` changes them by -1.1 %
+(coarse masked), -5.6 % (coarse image), -0.6 % (fine masked), -5.1 % (fine image). This is not
+material against the measured margins (gap / bound <= 0.51) or the rejections (flux model 3.1x,
+8.1x the bound), so the helpers were left as they are. Found while checking: both helpers set
+`v0 = params["u0"] / params["gamma0"]`, but `params["u0"]` is already the speed, so their `dzeta`
+is 1.9 % low and the bounds 3.9 % low (stricter than derived). Correcting it together with the
+deficit would change the bounds by +2.8 % / -1.8 % / +3.3 % / -1.3 % (coarse masked / coarse
+image / fine masked / fine image); because two of these widen a tolerance, it is left for a
+decision rather than changed here.

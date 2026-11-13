@@ -46,6 +46,7 @@ import numpy as np
 from scipy.constants import c as c_light
 from scipy.constants import e as e_charge
 from scipy.constants import epsilon_0, m_e
+from scipy.linalg import solve_banded
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 for _p in (_REPO_ROOT, os.path.join(_REPO_ROOT, "examples")):
@@ -57,16 +58,73 @@ import _space_charge_waves_common as s  # noqa: E402
 N_EDGES = 128  # axial E_z edges kept in the static profile [-] (covers zeta_far = 64)
 
 
-def wall_field_profiles(nx: int, nz: int, params: dict, n_edges: int = N_EDGES):
-    """Return the model's per-line wall E_z edge profiles for the two density cases.
+def deposit_node_profile(scheme: str, dzeta: float, n_nodes: int = 8) -> np.ndarray:
+    """Steady-state near-wall node charge of a wall-born order-2 stream, per interior node charge.
+
+    Every step one sheet of macroparticles is born at ``z = 0``. Its birth charge reaches the
+    grid through the closure current (masked) or is zero (image), and the field at ``E^{n+1}``
+    sees the sheets born at steps ``n, n - 1, ...`` at ``zeta_j = j * dzeta``, ``j >= 1``; the
+    sheet born at ``n + 1`` is not yet part of ``E^{n+1}`` (its closure current and first
+    Esirkepov move are in the step ``n+1 -> n+2`` current). The steady node charge in units of the
+    line charge per cell ``(I / v) dz`` is therefore
+
+    ``c_k = dzeta * sum_{j >= 1} [W2(j dzeta - k) - s W2(-j dzeta - k)]``,
+
+    with ``s = 0`` (masked: the ghost node ``k = -1`` is dropped, nodes ``k >= 1`` are exact by
+    Esirkepov charge conservation) or ``s = 1`` (image path subtracted). Euler-Maclaurin on the
+    half line gives ``c_1 = 1 - 1/48 - dzeta/16 + dzeta^2/24 + O(dzeta^3)`` (masked) and
+    ``c_1 = 1 - 2/48 + O(dzeta^3)`` (image: the ``dzeta`` terms of the real and image sums
+    cancel), ``c_k = 1`` up to sampling aliasing for ``k >= 2``.
 
     Returns
     -------
-    list of (str, numpy.ndarray)
-        ``(case, ez_l)`` with ``ez_l`` of shape ``(n_lines, n_edges)`` in [V/m]: the line-gathered
-        ``E_z`` on edges ``k = 0 .. n_edges - 1`` (edge ``k`` at ``z = (k + 1/2) dz``).
     numpy.ndarray
-        Line-gathered node potential ``phi_l`` of shape ``(n_lines, n_edges + 1)`` per case [V].
+        ``c_k`` for ``k = 0 .. n_nodes - 1`` [-] (``c_0`` is the wall node, which carries the PEC
+        surface charge and does not enter the interior field).
+    """
+
+    def w2(d):
+        d = np.abs(d)
+        return np.where(d < 0.5, 0.75 - d * d, np.where(d < 1.5, 0.5 * (1.5 - d) ** 2, 0.0))
+
+    j = np.arange(1, int(np.ceil((n_nodes + 2.0) / dzeta)) + 1, dtype=np.float64)
+    zj = j * dzeta
+    sgn = {"masked": 0.0, "image": 1.0}[scheme]
+    k = np.arange(n_nodes, dtype=np.float64)[:, None]
+    return dzeta * np.sum(w2(zj[None, :] - k) - sgn * w2(-zj[None, :] - k), axis=1)
+
+
+def wall_field_profiles(
+    nx: int,
+    nz: int,
+    params: dict,
+    n_edges: int = N_EDGES,
+    deposit: str = "uniform",
+    scheme: str = "image",
+    dzeta: float | None = None,
+    density: str = "both",
+    n_iter: int = 30,
+):
+    """Return the model's per-line wall E_z edge profiles for the density cases.
+
+    Parameters
+    ----------
+    deposit : {"uniform", "discrete"}
+        ``"uniform"``: z-uniform node charge (the original model). ``"discrete"``: the near-wall
+        node charge of :func:`deposit_node_profile` for ``scheme`` and ``dzeta`` (nodes 1-7;
+        aliasing beyond is < 1e-4 and dropped).
+    density : {"both", "selfconsistent"}
+        ``"both"``: the z-uniform injected and depressed density cases. ``"selfconsistent"``:
+        the line density follows ``rho_l u0 / v_l(z_k)`` with ``v_l`` from energy conservation
+        in the line-gathered node potential (fixed-point iteration), which tends to the depressed
+        case far from the wall.
+
+    Returns
+    -------
+    list of (str, numpy.ndarray, numpy.ndarray)
+        ``(case, ez_l, phi_l)``: line-gathered ``E_z`` on edges ``k = 0 .. n_edges - 1`` (edge
+        ``k`` at ``z = (k + 1/2) dz``) [V/m] and line-gathered node potential on nodes
+        ``0 .. n_edges`` [V].
     dict
         Model details of ``compute_discrete_dc_depression``.
     """
@@ -83,19 +141,60 @@ def wall_field_profiles(nx: int, nz: int, params: dict, n_edges: int = N_EDGES):
     mu = kap2 * dz**2
     lam = (2.0 + mu - np.sqrt(mu * (mu + 4.0))) / 2.0
     w_mat = det["w_mat"]
+    n_pad = n_edges + 64  # nodes 1..n_pad solved; psi(n_pad + 1) = 0 (lambda^64 < 1e-9)
+    if deposit == "uniform":
+        c_k = np.ones(n_pad + 1)
+    elif deposit == "discrete":
+        c_k = np.ones(n_pad + 1)
+        c_k[1:8] = deposit_node_profile(scheme, float(dzeta), 8)[1:8]
+    else:
+        raise ValueError(deposit)
+    gam0 = float(params["gamma0"])
+    qm_mc2 = -e_charge / (m_e * c_light**2)
+
+    def _solve(rho_lk):
+        """Node potential [V] on x-nodes 0..nx, z-nodes 0..n_pad for line densities rho_lk."""
+        src = np.einsum("lk,lx->xk", rho_lk, w_mat) * (2.0 * b / dx)  # (nx+1, n_pad+1)
+        s_int = src[1:-1, 1:]  # interior x, z-nodes 1..n_pad
+        s_inf = s_int[:, -1]
+        phi_inf = np.linalg.solve(lap, -float(params["rho0"]) * s_inf / epsilon_0)
+        kk = np.arange(n_pad + 1)
+        phi_m = (vecs.T @ phi_inf)[:, None] * (1.0 - lam[:, None] ** kk[None, :])
+        rhs_m = vecs.T @ (-float(params["rho0"]) * (s_int - s_inf[:, None]) / epsilon_0)
+        for m in range(n):
+            ab = np.zeros((3, n_pad))
+            ab[0, 1:] = 1.0
+            ab[2, :-1] = 1.0
+            ab[1, :] = -(2.0 + mu[m])
+            phi_m[m, 1:] += solve_banded((1, 1), ab, dz**2 * rhs_m[m])
+        phi_nodes = np.zeros((nx + 1, n_pad + 1))
+        phi_nodes[1:-1] = vecs @ phi_m
+        return phi_nodes
+
+    rho_l = det["rho_l"]
+    cases = []
+    if density == "both":
+        cases = [
+            ("injected", rho_l[:, None] * c_k[None, :]),
+            ("depressed", (rho_l * params["u0"] / det["u_l"])[:, None] * c_k[None, :]),
+        ]
+    elif density == "selfconsistent":
+        rho_lk = rho_l[:, None] * c_k[None, :]
+        for _ in range(n_iter):
+            phi_l_k = w_mat @ _solve(rho_lk)
+            gam = gam0 + qm_mc2 * phi_l_k  # electrons: phi < 0 lowers gamma
+            v = c_light * np.sqrt(1.0 - 1.0 / gam**2)
+            rho_new = rho_l[:, None] * c_k[None, :] * float(params["u0"]) / v
+            if np.max(np.abs(rho_new - rho_lk)) < 1e-15 * np.max(np.abs(rho_lk)):
+                rho_lk = rho_new
+                break
+            rho_lk = rho_new
+        cases = [("selfconsistent", rho_lk)]
+    else:
+        raise ValueError(density)
     out = []
-    for case, rho_case in (
-        ("injected", det["rho_l"]),
-        ("depressed", det["rho_l"] * params["u0"] / det["u_l"]),
-    ):
-        src = np.sum(rho_case[:, None] * w_mat, axis=0) * (2.0 * b / dx)
-        # Poisson: lap(phi) = -rho / eps0 with the signed beam density (electrons: phi < 0).
-        phi_inf = np.linalg.solve(lap, -float(params["rho0"]) * src[1:-1] / epsilon_0)
-        phi_k = (vecs * (vecs.T @ phi_inf)) @ (
-            1.0 - lam[:, None] ** np.arange(n_edges + 1)[None, :]
-        )
-        phi_nodes = np.zeros((nx + 1, n_edges + 1))
-        phi_nodes[1:-1] = phi_k
+    for case, rho_lk in cases:
+        phi_nodes = _solve(rho_lk)[:, : n_edges + 1]
         ez = -(phi_nodes[:, 1:] - phi_nodes[:, :-1]) / dz
         out.append((case, w_mat @ ez, w_mat @ phi_nodes))
     return out, det
@@ -214,8 +313,22 @@ def cell_profile(zeta: np.ndarray, excess: np.ndarray, n_cells: int) -> np.ndarr
     return out
 
 
+VARIANTS = (
+    ("uniform", "both"),  # original model: z-uniform charge, injected / depressed density
+    ("discrete", "both"),  # derived near-wall node deficit (deposit_node_profile)
+    ("discrete", "selfconsistent"),  # deficit + axial density rho u0 / v(z)
+    ("uniform", "selfconsistent"),
+)
+
+
 def run_grid(
-    label: str, nx: int, nz: int, zeta_eval: float = 6.0, zeta_far: float = 64.0, n_cells: int = 64
+    label: str,
+    nx: int,
+    nz: int,
+    zeta_eval: float = 6.0,
+    zeta_far: float = 64.0,
+    n_cells: int = 64,
+    variants_wanted=VARIANTS,
 ) -> list[dict]:
     params = s.compute_analytic_parameters(qm_scale=1.0)
     dt, _ = s._cached_integer_period_dt(int(nx), int(nz))
@@ -223,73 +336,86 @@ def run_grid(
     gamma0 = float(params["gamma0"])
     qm = -e_charge / m_e
     q_abs_mc2 = e_charge / (m_e * c_light**2)
-    v0 = params["u0"] / gamma0
+    v0 = float(params["u0"])  # injection speed [m/s] (params["u0"] is v0, not gamma0 v0)
     dzeta = v0 * dt / dz
     n_steps = int(np.ceil((max(zeta_eval, zeta_far) + 1.0) / dzeta))
-    profiles, det = wall_field_profiles(nx, nz, params)
+    variants = []
+    for scheme in ("masked", "image"):
+        for deposit, density in variants_wanted:
+            profiles, det = wall_field_profiles(
+                nx, nz, params, deposit=deposit, scheme=scheme, dzeta=dzeta, density=density
+            )
+            for case, ez_l, phi_l in profiles:
+                variants.append((scheme, deposit, case, ez_l, phi_l))
     recs = []
-    for case, ez_l, phi_l in profiles:
-        for scheme in ("masked", "image"):
-            ex_eval, ex_cell0, ex_cell01, kinks, thetas, jumps, e0s = [], [], [], [], [], [], []
-            prof, ex_far = [], []
-            for li in range(ez_l.shape[0]):
-                e_g, phi_g = make_gather(ez_l[li], phi_l[li], scheme)
-                tr = track_line(e_g, phi_g, dz, dt, gamma0, qm, n_steps, scheme)
-                zt, exc = tr["zeta"], tr["excess"]
-                i_eval = int(np.searchsorted(zt, zeta_eval))
-                ex_eval.append(float(exc[i_eval]))
-                ex_far.append(float(exc[int(np.searchsorted(zt, zeta_far))]))
-                prof.append(cell_profile(zt, exc, n_cells))
-                # remainder accrued while the particle is in cell 0 / cells 0-1 (by end position)
-                i1 = int(np.searchsorted(zt, 1.0))
-                i2 = int(np.searchsorted(zt, 2.0))
-                ex_cell0.append(float(exc[i1 - 1]))
-                ex_cell01.append(float(exc[i2 - 1]))
-                kp, jp = kink_prediction(ez_l[li], dz, dzeta, tr["theta"], q_abs_mc2, scheme)
-                kinks.append(float(kp))
-                jumps.append(float(jp))
-                thetas.append(tr["theta"])
-                e0s.append(float(abs(ez_l[li][0])))
-            rec = {
-                "grid": label,
-                "case": case,
-                "scheme": scheme,
-                "dzeta": float(dzeta),
-                "theta_mean": float(np.mean(thetas)),
-                "theta_min": float(np.min(thetas)),
-                "theta_max": float(np.max(thetas)),
-                "excess_cell0_mean": float(np.mean(ex_cell0)),
-                "excess_cells01_mean": float(np.mean(ex_cell01)),
-                "excess_at_zeta_eval_mean": float(np.mean(ex_eval)),
-                "zeta_eval": zeta_eval,
-                "kink_pred_mean": float(np.mean(kinks)),
-                "jump_mean_V_per_m": float(np.mean(jumps)),
-                "e0_mean_V_per_m": float(np.mean(e0s)),
-                "excess_at_zeta_eval_per_line": ex_eval,
-                "zeta_far": zeta_far,
-                "excess_far_mean": float(np.mean(ex_far)),
-                # charge-weighted harmonic-mean delta shift of a per-line gamma excess [-]
-                "delta_shift_far": _delta_shift(det, params, np.asarray(ex_far)),
-                "rprof_cells_0_11_mean": np.mean(prof, axis=0)[:12].tolist(),
-                "rprof_cum_far_mean": float(np.mean(prof, axis=0).sum()),
-            }
-            recs.append(rec)
-            print("WGM " + json.dumps(rec), flush=True)
+    for scheme, deposit, case, ez_l, phi_l in variants:
+        ex_eval, ex_cell0, ex_cell01, kinks, thetas, jumps, e0s = [], [], [], [], [], [], []
+        prof, ex_far = [], []
+        for li in range(ez_l.shape[0]):
+            e_g, phi_g = make_gather(ez_l[li], phi_l[li], scheme)
+            tr = track_line(e_g, phi_g, dz, dt, gamma0, qm, n_steps, scheme)
+            zt, exc = tr["zeta"], tr["excess"]
+            i_eval = int(np.searchsorted(zt, zeta_eval))
+            ex_eval.append(float(exc[i_eval]))
+            ex_far.append(float(exc[int(np.searchsorted(zt, zeta_far))]))
+            prof.append(cell_profile(zt, exc, n_cells))
+            # remainder accrued while the particle is in cell 0 / cells 0-1 (by end position)
+            i1 = int(np.searchsorted(zt, 1.0))
+            i2 = int(np.searchsorted(zt, 2.0))
+            ex_cell0.append(float(exc[i1 - 1]))
+            ex_cell01.append(float(exc[i2 - 1]))
+            kp, jp = kink_prediction(ez_l[li], dz, dzeta, tr["theta"], q_abs_mc2, scheme)
+            kinks.append(float(kp))
+            jumps.append(float(jp))
+            thetas.append(tr["theta"])
+            e0s.append(float(abs(ez_l[li][0])))
+        rec = {
+            "grid": label,
+            "case": case,
+            "scheme": scheme,
+            "deposit": deposit,
+            "dzeta": float(dzeta),
+            "theta_mean": float(np.mean(thetas)),
+            "theta_min": float(np.min(thetas)),
+            "theta_max": float(np.max(thetas)),
+            "excess_cell0_mean": float(np.mean(ex_cell0)),
+            "excess_cells01_mean": float(np.mean(ex_cell01)),
+            "excess_at_zeta_eval_mean": float(np.mean(ex_eval)),
+            "zeta_eval": zeta_eval,
+            "kink_pred_mean": float(np.mean(kinks)),
+            "jump_mean_V_per_m": float(np.mean(jumps)),
+            "e0_mean_V_per_m": float(np.mean(e0s)),
+            "excess_at_zeta_eval_per_line": ex_eval,
+            "zeta_far": zeta_far,
+            "excess_far_mean": float(np.mean(ex_far)),
+            # charge-weighted harmonic-mean delta shift of a per-line gamma excess [-]
+            "delta_shift_far": _delta_shift(det, params, np.asarray(ex_far)),
+            "rprof_cells_0_11_mean": np.mean(prof, axis=0)[:12].tolist(),
+            "rprof_cum_far_mean": float(np.mean(prof, axis=0).sum()),
+        }
+        recs.append(rec)
+        print("WGM " + json.dumps(rec), flush=True)
     return recs
 
 
 def main() -> int:
-    out = {}
     for label, (nx, _ny, nz) in (("coarse", s.COARSE_GRID), ("fine", s.FINE_GRID)):
-        out[label] = run_grid(label, nx, nz)
-    for label in out:
-        by = {(r["case"], r["scheme"]): r for r in out[label]}
-        for case in ("injected", "depressed"):
-            m_ = by[(case, "masked")]["excess_at_zeta_eval_mean"]
-            i_ = by[(case, "image")]["excess_at_zeta_eval_mean"]
+        params = s.compute_analytic_parameters(qm_scale=1.0)
+        dt, _ = s._cached_integer_period_dt(int(nx), int(nz))
+        dzeta = float(params["u0"]) * dt / (s.TUNNEL_LENGTH_M / nz)
+        for scheme in ("masked", "image"):
+            c = deposit_node_profile(scheme, dzeta, 4)
             print(
-                f"WGM_SUMMARY grid={label} case={case} masked={m_:+.4e} image={i_:+.4e} "
-                f"ratio={m_ / i_ if i_ else float('inf'):.2f}",
+                f"WGM_DEPOSIT grid={label} scheme={scheme} dzeta={dzeta:.6f} "
+                f"c1={c[1]:.6f} c2={c[2]:.6f} c3={c[3]:.6f} deficit1={1.0 - c[1]:.6f}",
+                flush=True,
+            )
+        for r in run_grid(label, nx, nz):
+            cells = " ".join(f"{1e9 * v:+.3f}" for v in r["rprof_cells_0_11_mean"][:9])
+            print(
+                f"WGM_SUMMARY grid={label} scheme={r['scheme']} deposit={r['deposit']} "
+                f"case={r['case']} cells0-8[1e-9]= {cells} cum={1e9 * r['rprof_cum_far_mean']:+.3f} "
+                f"ddelta_far={r['delta_shift_far']:+.4e}",
                 flush=True,
             )
     return 0
