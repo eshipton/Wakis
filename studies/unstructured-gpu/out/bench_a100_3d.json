@@ -1,0 +1,515 @@
+[
+ {
+  "dim": 3,
+  "h": 0.25,
+  "n_cells": 2116,
+  "n_unknowns": 6542,
+  "n_massless": 54,
+  "t_mesh_s": 0.35782186800000204,
+  "t_setup_s": 0.01411508300000719,
+  "est_host_bytes": 210000000.0,
+  "t_device_setup_s": 0.5277418169999919,
+  "gpu_s_per_step": 3.5353115960024554e-05,
+  "gpu_steps": 33020,
+  "dev_pool_bytes": 454656,
+  "dev_pool_total_bytes": 455168,
+  "dev_stepper_bytes": 450400,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 16.215039766393602,
+   "curl_h + capacitive update (1 kernel)": 12.989440262317657,
+   "sources": 15.831039836630225,
+   "monitors": 3.752960031852126
+  },
+  "cpu_s_per_step": 0.00015867302333333555,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 629145600,
+  "agree_rel": 6.533563401579812e-16,
+  "gpu_mon_s_per_step": 9.761885650924095e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 18.877440253272653,
+   "curl_h + capacitive update (1 kernel)": 14.41792004276067,
+   "sources": 18.969600312411785,
+   "monitors": 65.53599938750267
+  },
+  "cpu_mon_s_per_step": 0.0002345990700001721,
+  "gpu_ns_per_unknown_step": 5.40402261694047,
+  "cpu_ns_per_unknown_step": 24.254512891063218,
+  "gpu_mon_ns_per_unknown_step": 14.921867396704515,
+  "cpu_mon_ns_per_unknown_step": 35.860450932462875,
+  "cart": [
+   {
+    "N": 10,
+    "n_unknowns": 7986,
+    "s_per_step": 0.0001767417709969828,
+    "n_steps": 6620,
+    "fused": false,
+    "ns_per_unknown_step": 22.1314514145984
+   },
+   {
+    "N": 10,
+    "n_unknowns": 7986,
+    "s_per_step": 2.8639745033355567e-05,
+    "n_steps": 40923,
+    "fused": true,
+    "ns_per_unknown_step": 3.5862440562679145
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.16,
+  "n_cells": 9306,
+  "n_unknowns": 28688,
+  "n_massless": 492,
+  "t_mesh_s": 1.149489549000009,
+  "t_setup_s": 0.03178269700003966,
+  "est_host_bytes": 220000000.0,
+  "t_device_setup_s": 0.2612137219999795,
+  "gpu_s_per_step": 3.682004040180125e-05,
+  "gpu_steps": 31558,
+  "dev_pool_bytes": 2131456,
+  "dev_pool_total_bytes": 2131968,
+  "dev_stepper_bytes": 2127496,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 17.56672017276287,
+   "curl_h + capacitive update (1 kernel)": 12.61056027840823,
+   "sources": 16.363519812002778,
+   "monitors": 3.594240047968924
+  },
+  "cpu_s_per_step": 0.0004842571433332902,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 596131840,
+  "agree_rel": 6.859524414335021e-16,
+  "gpu_mon_s_per_step": 9.853127688483863e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 19.875839510932565,
+   "curl_h + capacitive update (1 kernel)": 13.859839988872409,
+   "sources": 18.513920307159424,
+   "monitors": 64.71167922019958
+  },
+  "cpu_mon_s_per_step": 0.0006380478500000209,
+  "gpu_ns_per_unknown_step": 1.2834648773634012,
+  "cpu_ns_per_unknown_step": 16.88012908997805,
+  "gpu_mon_ns_per_unknown_step": 3.434581598049311,
+  "cpu_mon_ns_per_unknown_step": 22.240931748466984,
+  "cart": [
+   {
+    "N": 17,
+    "n_unknowns": 34992,
+    "s_per_step": 0.0001726213763870352,
+    "n_steps": 6759,
+    "fused": false,
+    "ns_per_unknown_step": 4.933166906351029
+   },
+   {
+    "N": 17,
+    "n_unknowns": 34992,
+    "s_per_step": 2.8764299636010313e-05,
+    "n_steps": 41210,
+    "fused": true,
+    "ns_per_unknown_step": 0.8220250238914699
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.11,
+  "n_cells": 31058,
+  "n_unknowns": 96493,
+  "n_massless": 1221,
+  "t_mesh_s": 3.536905761000014,
+  "t_setup_s": 0.11302662199994984,
+  "est_host_bytes": 270000000.0,
+  "t_device_setup_s": 0.26509493000003204,
+  "gpu_s_per_step": 3.561602708422832e-05,
+  "gpu_steps": 32602,
+  "dev_pool_bytes": 7164928,
+  "dev_pool_total_bytes": 7165440,
+  "dev_stepper_bytes": 7160124,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 17.94560031965375,
+   "curl_h + capacitive update (1 kernel)": 11.494400040246546,
+   "sources": 16.465919809415936,
+   "monitors": 3.22048009140417
+  },
+  "cpu_s_per_step": 0.001386767409999834,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 632336384,
+  "agree_rel": 9.886185075575905e-16,
+  "gpu_mon_s_per_step": 9.723879602441734e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 20.725759491324425,
+   "curl_h + capacitive update (1 kernel)": 12.584960283711553,
+   "sources": 18.498560218140483,
+   "monitors": 64.41471938043833
+  },
+  "cpu_mon_s_per_step": 0.0018007007199997815,
+  "gpu_ns_per_unknown_step": 0.3691047753124923,
+  "cpu_ns_per_unknown_step": 14.371689241704932,
+  "gpu_mon_ns_per_unknown_step": 1.0077290168656516,
+  "cpu_mon_ns_per_unknown_step": 18.661464769462878,
+  "cart": [
+   {
+    "N": 25,
+    "n_unknowns": 105456,
+    "s_per_step": 0.0001762432077459586,
+    "n_steps": 6739,
+    "fused": false,
+    "ns_per_unknown_step": 1.6712487458841467
+   },
+   {
+    "N": 25,
+    "n_unknowns": 105456,
+    "s_per_step": 2.8370377566559053e-05,
+    "n_steps": 40716,
+    "fused": true,
+    "ns_per_unknown_step": 0.2690257317417601
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.08,
+  "n_cells": 84441,
+  "n_unknowns": 263456,
+  "n_massless": 2696,
+  "t_mesh_s": 9.900084238000034,
+  "t_setup_s": 0.2366172779999829,
+  "est_host_bytes": 400000000.0,
+  "t_device_setup_s": 0.29668670799998154,
+  "gpu_s_per_step": 3.670186384169952e-05,
+  "gpu_steps": 31434,
+  "dev_pool_bytes": 19632640,
+  "dev_pool_total_bytes": 19633152,
+  "dev_stepper_bytes": 19627576,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 22.727680122479796,
+   "curl_h + capacitive update (1 kernel)": 11.673600114881992,
+   "sources": 12.840960226021707,
+   "monitors": 3.246080088429153
+  },
+  "cpu_s_per_step": 0.003606935389999914,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 742068224,
+  "agree_rel": 3.1655322632545006e-16,
+  "gpu_mon_s_per_step": 9.895500075319818e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 27.550719901919365,
+   "curl_h + capacitive update (1 kernel)": 12.922880155965686,
+   "sources": 12.344320099800825,
+   "monitors": 66.50367960333824
+  },
+  "cpu_mon_s_per_step": 0.005275487330000033,
+  "gpu_ns_per_unknown_step": 0.13930927305394267,
+  "cpu_ns_per_unknown_step": 13.69084549222608,
+  "gpu_mon_ns_per_unknown_step": 0.3756035191956083,
+  "cpu_mon_ns_per_unknown_step": 20.024168475950567,
+  "cart": [
+   {
+    "N": 35,
+    "n_unknowns": 279936,
+    "s_per_step": 0.00017549088659026132,
+    "n_steps": 6719,
+    "fused": false,
+    "ns_per_unknown_step": 0.6268964570125362
+   },
+   {
+    "N": 35,
+    "n_unknowns": 279936,
+    "s_per_step": 2.9083236884829964e-05,
+    "n_steps": 39420,
+    "fused": true,
+    "ns_per_unknown_step": 0.10389245000582263
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.06,
+  "n_cells": 208957,
+  "n_unknowns": 654698,
+  "n_massless": 4777,
+  "t_mesh_s": 37.94010477799998,
+  "t_setup_s": 0.634621591000041,
+  "est_host_bytes": 700000000.0,
+  "t_device_setup_s": 0.3650050989999727,
+  "gpu_s_per_step": 7.159081886768876e-05,
+  "gpu_steps": 16038,
+  "dev_pool_bytes": 48550912,
+  "dev_pool_total_bytes": 48551424,
+  "dev_stepper_bytes": 48547360,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 50.72895897552371,
+   "curl_h + capacitive update (1 kernel)": 32.1843197196722,
+   "sources": 6.691840153653175,
+   "monitors": 3.2512000878341496
+  },
+  "cpu_s_per_step": 0.0091883008100001,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 989409280,
+  "agree_rel": 3.0726902103612313e-16,
+  "gpu_mon_s_per_step": 9.693242599211867e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 58.01984088495374,
+   "curl_h + capacitive update (1 kernel)": 32.5171198323369,
+   "sources": 6.958080122713,
+   "monitors": 27.110400209203362
+  },
+  "cpu_mon_s_per_step": 0.014316234279999663,
+  "gpu_ns_per_unknown_step": 0.1093493776790043,
+  "cpu_ns_per_unknown_step": 14.034410995604231,
+  "gpu_mon_ns_per_unknown_step": 0.14805670094015663,
+  "cpu_mon_ns_per_unknown_step": 21.8669283853008,
+  "cart": [
+   {
+    "N": 48,
+    "n_unknowns": 705894,
+    "s_per_step": 0.00017578180987285377,
+    "n_steps": 6685,
+    "fused": false,
+    "ns_per_unknown_step": 0.24902012182119948
+   },
+   {
+    "N": 48,
+    "n_unknowns": 705894,
+    "s_per_step": 4.6117538956758053e-05,
+    "n_steps": 25785,
+    "fused": true,
+    "ns_per_unknown_step": 0.06533210220905412
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.045,
+  "n_cells": 508843,
+  "n_unknowns": 1598262,
+  "n_massless": 9041,
+  "t_mesh_s": 66.57870304600004,
+  "t_setup_s": 2.1455955939999853,
+  "est_host_bytes": 1420000000.0,
+  "t_device_setup_s": 0.5120514110000158,
+  "gpu_s_per_step": 0.0001694780375997586,
+  "gpu_steps": 6516,
+  "dev_pool_bytes": 118405632,
+  "dev_pool_total_bytes": 118406144,
+  "dev_stepper_bytes": 118400768,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 101.95455722510815,
+   "curl_h + capacitive update (1 kernel)": 76.64128229022026,
+   "sources": 6.86592013342306,
+   "monitors": 3.2819200842641294
+  },
+  "cpu_s_per_step": 0.025140192725000076,
+  "cpu_steps": 120,
+  "host_peak_rss_bytes": 1655885824,
+  "agree_rel": 3.3002083443598652e-16,
+  "gpu_mon_s_per_step": 0.00021869090274215044,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 113.35168085992336,
+   "curl_h + capacitive update (1 kernel)": 76.45696308463812,
+   "sources": 7.203840094152838,
+   "monitors": 42.43455924093723
+  },
+  "cpu_mon_s_per_step": 0.03685214550909099,
+  "gpu_ns_per_unknown_step": 0.1060389583183224,
+  "cpu_ns_per_unknown_step": 15.729706847187806,
+  "gpu_mon_ns_per_unknown_step": 0.13683044628612234,
+  "cpu_mon_ns_per_unknown_step": 23.05763730170084,
+  "cart": [
+   {
+    "N": 64,
+    "n_unknowns": 1647750,
+    "s_per_step": 0.0002852090885869622,
+    "n_steps": 3680,
+    "fused": false,
+    "ns_per_unknown_step": 0.1730900249351917
+   },
+   {
+    "N": 64,
+    "n_unknowns": 1647750,
+    "s_per_step": 0.00011131472217043196,
+    "n_steps": 10726,
+    "fused": true,
+    "ns_per_unknown_step": 0.06755558924013472
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.035,
+  "n_cells": 1102182,
+  "n_unknowns": 3468817,
+  "n_massless": 14760,
+  "t_mesh_s": 326.45650985599997,
+  "t_setup_s": 3.6604337960000066,
+  "est_host_bytes": 2850000000.0,
+  "t_device_setup_s": 0.8065734819999761,
+  "gpu_s_per_step": 0.0003488816309928762,
+  "gpu_steps": 3233,
+  "dev_pool_bytes": 256505344,
+  "dev_pool_total_bytes": 256505856,
+  "dev_stepper_bytes": 256499112,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 200.96511706709862,
+   "curl_h + capacitive update (1 kernel)": 154.97727900743484,
+   "sources": 6.88128013163805,
+   "monitors": 3.261440086644143
+  },
+  "cpu_s_per_step": 0.061354879836736306,
+  "cpu_steps": 49,
+  "host_peak_rss_bytes": 3081437184,
+  "agree_rel": 8.224525220035916e-16,
+  "gpu_mon_s_per_step": 0.00045962318998766084,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 211.30752079188824,
+   "curl_h + capacitive update (1 kernel)": 154.65984001755714,
+   "sources": 6.645760159008205,
+   "monitors": 108.0422393232584
+  },
+  "cpu_mon_s_per_step": 0.09516126713636326,
+  "gpu_ns_per_unknown_step": 0.10057654554647195,
+  "cpu_ns_per_unknown_step": 17.68755164562913,
+  "gpu_mon_ns_per_unknown_step": 0.13250142339237292,
+  "cpu_mon_ns_per_unknown_step": 27.433348930301964,
+  "cart": [
+   {
+    "N": 83,
+    "n_unknowns": 3556224,
+    "s_per_step": 0.0005563094052953289,
+    "n_steps": 1964,
+    "fused": false,
+    "ns_per_unknown_step": 0.15643261090846047
+   },
+   {
+    "N": 83,
+    "n_unknowns": 3556224,
+    "s_per_step": 0.0002452621477761926,
+    "n_steps": 4879,
+    "fused": true,
+    "ns_per_unknown_step": 0.06896701326356061
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.028,
+  "n_cells": 2178378,
+  "n_unknowns": 6864798,
+  "n_massless": 22930,
+  "t_mesh_s": 309.58611206499995,
+  "t_setup_s": 7.704224350000004,
+  "est_host_bytes": 5430000000.0,
+  "t_device_setup_s": 1.3350339769999664,
+  "gpu_s_per_step": 0.0006595795079179276,
+  "gpu_steps": 1705,
+  "dev_pool_bytes": 506894336,
+  "dev_pool_total_bytes": 506894848,
+  "dev_stepper_bytes": 506891192,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 378.30143839120865,
+   "curl_h + capacitive update (1 kernel)": 291.60447731614113,
+   "sources": 6.988800119142979,
+   "monitors": 3.246080088429153
+  },
+  "cpu_s_per_step": 0.13201689782609402,
+  "cpu_steps": 23,
+  "host_peak_rss_bytes": 5623894016,
+  "agree_rel": 5.026896615570549e-16,
+  "gpu_mon_s_per_step": 0.0008842153445840272,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 387.05663725733757,
+   "curl_h + capacitive update (1 kernel)": 291.0771192610264,
+   "sources": 6.732800148893148,
+   "monitors": 217.72800244390965
+  },
+  "cpu_mon_s_per_step": 0.19854079454545503,
+  "gpu_ns_per_unknown_step": 0.09608141534797202,
+  "cpu_ns_per_unknown_step": 19.230995263967564,
+  "gpu_mon_ns_per_unknown_step": 0.12880427721020007,
+  "cpu_mon_ns_per_unknown_step": 28.921578543965175,
+  "cart": [
+   {
+    "N": 105,
+    "n_unknowns": 7146096,
+    "s_per_step": 0.0010363894113805912,
+    "n_steps": 1072,
+    "fused": false,
+    "ns_per_unknown_step": 0.14502875575427357
+   },
+   {
+    "N": 105,
+    "n_unknowns": 7146096,
+    "s_per_step": 0.0004822834474849163,
+    "n_steps": 2485,
+    "fused": true,
+    "ns_per_unknown_step": 0.06748908039927204
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ },
+ {
+  "dim": 3,
+  "h": 0.022,
+  "n_cells": 4540794,
+  "n_unknowns": 14325274,
+  "n_massless": 36943,
+  "t_mesh_s": 671.0849084869999,
+  "t_setup_s": 17.339469678000114,
+  "est_host_bytes": 11100000000.0,
+  "t_device_setup_s": 2.4630742639999426,
+  "gpu_s_per_step": 0.0013357279679333276,
+  "gpu_steps": 842,
+  "dev_pool_bytes": 1056455168,
+  "dev_pool_total_bytes": 1056455680,
+  "dev_stepper_bytes": 1056449280,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 756.64894759655,
+   "curl_h + capacitive update (1 kernel)": 592.4556720256805,
+   "sources": 6.937600125093013,
+   "monitors": 3.246080088429153
+  },
+  "cpu_s_per_step": 0.2750373297272662,
+  "cpu_steps": 11,
+  "host_peak_rss_bytes": 11312005120,
+  "agree_rel": 3.3546070993733935e-16,
+  "gpu_mon_s_per_step": 0.0017961335111110765,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 769.7254431247711,
+   "curl_h + capacitive update (1 kernel)": 590.9708869457245,
+   "sources": 7.198720094747841,
+   "monitors": 454.5382434129715
+  },
+  "cpu_mon_s_per_step": 0.41853718779998417,
+  "gpu_ns_per_unknown_step": 0.09324275179192576,
+  "cpu_ns_per_unknown_step": 19.199446358042866,
+  "gpu_mon_ns_per_unknown_step": 0.12538214006315526,
+  "cpu_mon_ns_per_unknown_step": 29.216696853406376,
+  "cart": [
+   {
+    "N": 134,
+    "n_unknowns": 14762250,
+    "s_per_step": 0.002021386027422315,
+    "n_steps": 547,
+    "fused": false,
+    "ns_per_unknown_step": 0.13692939947652388
+   },
+   {
+    "N": 134,
+    "n_unknowns": 14762250,
+    "s_per_step": 0.0009875122115383334,
+    "n_steps": 1196,
+    "fused": true,
+    "ns_per_unknown_step": 0.06689442405719544
+   }
+  ],
+  "gpu_name": "NVIDIA A100-SXM4-40GB"
+ }
+]

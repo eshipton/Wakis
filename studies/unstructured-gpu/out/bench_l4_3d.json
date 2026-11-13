@@ -1,0 +1,515 @@
+[
+ {
+  "dim": 3,
+  "h": 0.25,
+  "n_cells": 2116,
+  "n_unknowns": 6542,
+  "n_massless": 54,
+  "t_mesh_s": 0.3703111380000337,
+  "t_setup_s": 0.014472073999968416,
+  "est_host_bytes": 210000000.0,
+  "t_device_setup_s": 0.4041842620000011,
+  "gpu_s_per_step": 3.6898216471759495e-05,
+  "gpu_steps": 32152,
+  "dev_pool_bytes": 454656,
+  "dev_pool_total_bytes": 455168,
+  "dev_stepper_bytes": 450400,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 15.365599934011698,
+   "curl_h + capacitive update (1 kernel)": 13.133120061829686,
+   "sources": 18.606400415301323,
+   "monitors": 2.0854399976087734
+  },
+  "cpu_s_per_step": 0.00015982411333330523,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 575426560,
+  "agree_rel": 6.549697204384055e-16,
+  "gpu_mon_s_per_step": 9.96330184028364e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 17.577600236982107,
+   "curl_h + capacitive update (1 kernel)": 14.126879991963506,
+   "sources": 20.653439462184906,
+   "monitors": 65.18415933474898
+  },
+  "cpu_mon_s_per_step": 0.00023640818999979274,
+  "gpu_ns_per_unknown_step": 5.640204291005731,
+  "cpu_ns_per_unknown_step": 24.43046672780575,
+  "gpu_mon_ns_per_unknown_step": 15.229749067997004,
+  "cpu_mon_ns_per_unknown_step": 36.136990217027325,
+  "cart": [
+   {
+    "N": 10,
+    "n_unknowns": 7986,
+    "s_per_step": 0.00017942813362392625,
+    "n_steps": 6653,
+    "fused": false,
+    "ns_per_unknown_step": 22.467835414966974
+   },
+   {
+    "N": 10,
+    "n_unknowns": 7986,
+    "s_per_step": 2.935768494904355e-05,
+    "n_steps": 39838,
+    "fused": true,
+    "ns_per_unknown_step": 3.6761438704036498
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.16,
+  "n_cells": 9306,
+  "n_unknowns": 28688,
+  "n_massless": 492,
+  "t_mesh_s": 1.172245524999994,
+  "t_setup_s": 0.03273338400003922,
+  "est_host_bytes": 220000000.0,
+  "t_device_setup_s": 0.13927363599998444,
+  "gpu_s_per_step": 3.603613256981508e-05,
+  "gpu_steps": 31870,
+  "dev_pool_bytes": 2131456,
+  "dev_pool_total_bytes": 2131968,
+  "dev_stepper_bytes": 2127496,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 16.39007981866598,
+   "curl_h + capacitive update (1 kernel)": 13.829279956407845,
+   "sources": 15.921599804423748,
+   "monitors": 2.0273599959909916
+  },
+  "cpu_s_per_step": 0.0004982337066667242,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 541622272,
+  "agree_rel": 6.996214651978691e-16,
+  "gpu_mon_s_per_step": 9.873657150097156e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 18.728320375084877,
+   "curl_h + capacitive update (1 kernel)": 14.711520071141422,
+   "sources": 18.36448036134243,
+   "monitors": 63.95360002294183
+  },
+  "cpu_mon_s_per_step": 0.0006407584200002248,
+  "gpu_ns_per_unknown_step": 1.256139590414636,
+  "cpu_ns_per_unknown_step": 17.36732106339669,
+  "gpu_mon_ns_per_unknown_step": 3.4417377126663258,
+  "cpu_mon_ns_per_unknown_step": 22.3354162019041,
+  "cart": [
+   {
+    "N": 17,
+    "n_unknowns": 34992,
+    "s_per_step": 0.000174904073619632,
+    "n_steps": 6846,
+    "fused": false,
+    "ns_per_unknown_step": 4.998401738101052
+   },
+   {
+    "N": 17,
+    "n_unknowns": 34992,
+    "s_per_step": 2.928252480711318e-05,
+    "n_steps": 39142,
+    "fused": true,
+    "ns_per_unknown_step": 0.8368348424529373
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.11,
+  "n_cells": 31058,
+  "n_unknowns": 96493,
+  "n_massless": 1221,
+  "t_mesh_s": 3.5632459430000267,
+  "t_setup_s": 0.11375229199995829,
+  "est_host_bytes": 270000000.0,
+  "t_device_setup_s": 0.1423243600000319,
+  "gpu_s_per_step": 3.545841382463076e-05,
+  "gpu_steps": 32811,
+  "dev_pool_bytes": 7164928,
+  "dev_pool_total_bytes": 7165440,
+  "dev_stepper_bytes": 7160124,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 20.84047954529524,
+   "curl_h + capacitive update (1 kernel)": 14.330240078270435,
+   "sources": 9.355520107783377,
+   "monitors": 2.026719996938482
+  },
+  "cpu_s_per_step": 0.0014159511600000012,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 578965504,
+  "agree_rel": 8.994118267779679e-16,
+  "gpu_mon_s_per_step": 9.675373916989639e-05,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 23.81440027616918,
+   "curl_h + capacitive update (1 kernel)": 15.954079790972173,
+   "sources": 12.403040062636137,
+   "monitors": 65.30128037557006
+  },
+  "cpu_mon_s_per_step": 0.0018315214500000821,
+  "gpu_ns_per_unknown_step": 0.3674713587994026,
+  "cpu_ns_per_unknown_step": 14.674133460458284,
+  "gpu_mon_ns_per_unknown_step": 1.0027021563211465,
+  "cpu_mon_ns_per_unknown_step": 18.980873742137586,
+  "cart": [
+   {
+    "N": 25,
+    "n_unknowns": 105456,
+    "s_per_step": 0.0001743603672082708,
+    "n_steps": 6770,
+    "fused": false,
+    "ns_per_unknown_step": 1.6533944698098808
+   },
+   {
+    "N": 25,
+    "n_unknowns": 105456,
+    "s_per_step": 2.8864278071838783e-05,
+    "n_steps": 40619,
+    "fused": true,
+    "ns_per_unknown_step": 0.27370920641631374
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.08,
+  "n_cells": 84441,
+  "n_unknowns": 263456,
+  "n_massless": 2696,
+  "t_mesh_s": 10.205691166999998,
+  "t_setup_s": 0.23962181100000635,
+  "est_host_bytes": 400000000.0,
+  "t_device_setup_s": 0.1775048200000242,
+  "gpu_s_per_step": 5.0179829769593336e-05,
+  "gpu_steps": 22916,
+  "dev_pool_bytes": 19632640,
+  "dev_pool_total_bytes": 19633152,
+  "dev_stepper_bytes": 19627576,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 33.61680002883077,
+   "curl_h + capacitive update (1 kernel)": 30.536959627643228,
+   "sources": 3.6684800346847624,
+   "monitors": 1.997119995648973
+  },
+  "cpu_s_per_step": 0.003528055889999943,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 685002752,
+  "agree_rel": 2.602281085882436e-16,
+  "gpu_mon_s_per_step": 0.00010123626170985068,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 35.38224069401622,
+   "curl_h + capacitive update (1 kernel)": 29.331840565428138,
+   "sources": 3.7862400303129107,
+   "monitors": 51.26448089256883
+  },
+  "cpu_mon_s_per_step": 0.005039130249999743,
+  "gpu_ns_per_unknown_step": 0.19046759143687497,
+  "cpu_ns_per_unknown_step": 13.39144255587249,
+  "gpu_mon_ns_per_unknown_step": 0.3842625019352403,
+  "cpu_mon_ns_per_unknown_step": 19.12702785284732,
+  "cart": [
+   {
+    "N": 35,
+    "n_unknowns": 279936,
+    "s_per_step": 0.00017920694943072965,
+    "n_steps": 6763,
+    "fused": false,
+    "ns_per_unknown_step": 0.6401711442284295
+   },
+   {
+    "N": 35,
+    "n_unknowns": 279936,
+    "s_per_step": 2.915877130523011e-05,
+    "n_steps": 39380,
+    "fused": true,
+    "ns_per_unknown_step": 0.10416227746781447
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.06,
+  "n_cells": 208957,
+  "n_unknowns": 654698,
+  "n_massless": 4777,
+  "t_mesh_s": 38.04772290100004,
+  "t_setup_s": 0.8327812509999717,
+  "est_host_bytes": 700000000.0,
+  "t_device_setup_s": 0.23980492199996206,
+  "gpu_s_per_step": 0.0001337916775599149,
+  "gpu_steps": 9180,
+  "dev_pool_bytes": 48550912,
+  "dev_pool_total_bytes": 48551424,
+  "dev_stepper_bytes": 48547360,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 74.18864239007235,
+   "curl_h + capacitive update (1 kernel)": 77.36863877624273,
+   "sources": 3.955040008295327,
+   "monitors": 1.9455999974161386
+  },
+  "cpu_s_per_step": 0.009384377883333362,
+  "cpu_steps": 300,
+  "host_peak_rss_bytes": 932585472,
+  "agree_rel": 3.7437695642511513e-16,
+  "gpu_mon_s_per_step": 0.0002735602816933071,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 123.9131173118949,
+   "curl_h + capacitive update (1 kernel)": 106.02879863232374,
+   "sources": 4.198879976756871,
+   "monitors": 59.88960113376379
+  },
+  "cpu_mon_s_per_step": 0.014201051500000403,
+  "gpu_ns_per_unknown_step": 0.20435632545068858,
+  "cpu_ns_per_unknown_step": 14.333903392607526,
+  "gpu_mon_ns_per_unknown_step": 0.41784193886846616,
+  "cpu_mon_ns_per_unknown_step": 21.690995695725974,
+  "cart": [
+   {
+    "N": 48,
+    "n_unknowns": 705894,
+    "s_per_step": 0.00017179895962687793,
+    "n_steps": 6861,
+    "fused": false,
+    "ns_per_unknown_step": 0.24337784373698873
+   },
+   {
+    "N": 48,
+    "n_unknowns": 705894,
+    "s_per_step": 5.5023800333471166e-05,
+    "n_steps": 21591,
+    "fused": true,
+    "ns_per_unknown_step": 0.07794909764563966
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.045,
+  "n_cells": 508843,
+  "n_unknowns": 1598262,
+  "n_massless": 9041,
+  "t_mesh_s": 67.410454619,
+  "t_setup_s": 2.1441378470000245,
+  "est_host_bytes": 1420000000.0,
+  "t_device_setup_s": 0.3828165909999939,
+  "gpu_s_per_step": 0.0005751586212414943,
+  "gpu_steps": 2062,
+  "dev_pool_bytes": 118405632,
+  "dev_pool_total_bytes": 118406144,
+  "dev_stepper_bytes": 118400768,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 312.5273557007313,
+   "curl_h + capacitive update (1 kernel)": 275.05056619644165,
+   "sources": 4.290399965830147,
+   "monitors": 1.9863999972585589
+  },
+  "cpu_s_per_step": 0.024927883669421166,
+  "cpu_steps": 121,
+  "host_peak_rss_bytes": 1647861760,
+  "agree_rel": 3.510768038959505e-16,
+  "gpu_mon_s_per_step": 0.0007914743973684249,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 387.9446393251419,
+   "curl_h + capacitive update (1 kernel)": 283.60192835330963,
+   "sources": 4.264959967695177,
+   "monitors": 131.05711996555328
+  },
+  "cpu_mon_s_per_step": 0.037609676944444774,
+  "gpu_ns_per_unknown_step": 0.3598650416774561,
+  "cpu_ns_per_unknown_step": 15.596869392766122,
+  "gpu_mon_ns_per_unknown_step": 0.4952094195872922,
+  "cpu_mon_ns_per_unknown_step": 23.531609300881065,
+  "cart": [
+   {
+    "N": 64,
+    "n_unknowns": 1647750,
+    "s_per_step": 0.00038560901372049607,
+    "n_steps": 3134,
+    "fused": false,
+    "ns_per_unknown_step": 0.23402155285722717
+   },
+   {
+    "N": 64,
+    "n_unknowns": 1647750,
+    "s_per_step": 0.00044722584204631434,
+    "n_steps": 2678,
+    "fused": true,
+    "ns_per_unknown_step": 0.27141607770979476
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.035,
+  "n_cells": 1102182,
+  "n_unknowns": 3468817,
+  "n_massless": 14760,
+  "t_mesh_s": 338.103929463,
+  "t_setup_s": 3.676892457000008,
+  "est_host_bytes": 2850000000.0,
+  "t_device_setup_s": 0.682981691000009,
+  "gpu_s_per_step": 0.0013172102566078952,
+  "gpu_steps": 908,
+  "dev_pool_bytes": 256505344,
+  "dev_pool_total_bytes": 256505856,
+  "dev_stepper_bytes": 256499112,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 698.0875170230865,
+   "curl_h + capacitive update (1 kernel)": 632.678709924221,
+   "sources": 4.506559937726706,
+   "monitors": 1.867199995322153
+  },
+  "cpu_s_per_step": 0.06066406813999947,
+  "cpu_steps": 50,
+  "host_peak_rss_bytes": 3067469824,
+  "agree_rel": 8.373456739080653e-16,
+  "gpu_mon_s_per_step": 0.001831387437308722,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 811.2771287560463,
+   "curl_h + capacitive update (1 kernel)": 632.8724709153175,
+   "sources": 4.341919959988445,
+   "monitors": 402.22831666469574
+  },
+  "cpu_mon_s_per_step": 0.09606816014285782,
+  "gpu_ns_per_unknown_step": 0.37972895560875514,
+  "cpu_ns_per_unknown_step": 17.48840257067452,
+  "gpu_mon_ns_per_unknown_step": 0.5279573518316827,
+  "cpu_mon_ns_per_unknown_step": 27.694790512978294,
+  "cart": [
+   {
+    "N": 83,
+    "n_unknowns": 3556224,
+    "s_per_step": 0.001156307671814639,
+    "n_steps": 1036,
+    "fused": false,
+    "ns_per_unknown_step": 0.3251504044218359
+   },
+   {
+    "N": 83,
+    "n_unknowns": 3556224,
+    "s_per_step": 0.001141565850476105,
+    "n_steps": 1050,
+    "fused": true,
+    "ns_per_unknown_step": 0.321005046497663
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.028,
+  "n_cells": 2178378,
+  "n_unknowns": 6864798,
+  "n_massless": 22930,
+  "t_mesh_s": 315.520122841,
+  "t_setup_s": 7.61554401300009,
+  "est_host_bytes": 5430000000.0,
+  "t_device_setup_s": 1.2404416940000829,
+  "gpu_s_per_step": 0.002620245734065715,
+  "gpu_steps": 455,
+  "dev_pool_bytes": 506894336,
+  "dev_pool_total_bytes": 506894848,
+  "dev_stepper_bytes": 506891192,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 1390.4366141557693,
+   "curl_h + capacitive update (1 kernel)": 1242.6189148426056,
+   "sources": 4.367039958015084,
+   "monitors": 1.935359996277839
+  },
+  "cpu_s_per_step": 0.13048100213043892,
+  "cpu_steps": 23,
+  "host_peak_rss_bytes": 5627437056,
+  "agree_rel": 4.515571561264878e-16,
+  "gpu_mon_s_per_step": 0.0038634735161292245,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 1507.4652981758118,
+   "curl_h + capacitive update (1 kernel)": 1241.865155696869,
+   "sources": 4.42399995168671,
+   "monitors": 1126.712476015091
+  },
+  "cpu_mon_s_per_step": 0.19722188263637525,
+  "gpu_ns_per_unknown_step": 0.38169305696478106,
+  "cpu_ns_per_unknown_step": 19.007260247197213,
+  "gpu_mon_ns_per_unknown_step": 0.5627949309111826,
+  "cpu_mon_ns_per_unknown_step": 28.72945170948588,
+  "cart": [
+   {
+    "N": 105,
+    "n_unknowns": 7146096,
+    "s_per_step": 0.0032284992803231997,
+    "n_steps": 371,
+    "fused": false,
+    "ns_per_unknown_step": 0.45178504183587787
+   },
+   {
+    "N": 105,
+    "n_unknowns": 7146096,
+    "s_per_step": 0.0025484071765959015,
+    "n_steps": 470,
+    "fused": true,
+    "ns_per_unknown_step": 0.3566153010813039
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ },
+ {
+  "dim": 3,
+  "h": 0.022,
+  "n_cells": 4540794,
+  "n_unknowns": 14325274,
+  "n_massless": 36943,
+  "t_mesh_s": 674.2203826080001,
+  "t_setup_s": 17.367078109999966,
+  "est_host_bytes": 11100000000.0,
+  "t_device_setup_s": 2.3560135049999644,
+  "gpu_s_per_step": 0.00543946293548334,
+  "gpu_steps": 217,
+  "dev_pool_bytes": 1056455168,
+  "dev_pool_total_bytes": 1056455680,
+  "dev_stepper_bytes": 1056449280,
+  "breakdown_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 2898.113273382187,
+   "curl_h + capacitive update (1 kernel)": 2557.578191757202,
+   "sources": 4.495679945684969,
+   "monitors": 1.9137599953683093
+  },
+  "cpu_s_per_step": 0.2824547835454558,
+  "cpu_steps": 11,
+  "host_peak_rss_bytes": 11312021504,
+  "agree_rel": 3.671125574714989e-16,
+  "gpu_mon_s_per_step": 0.008121996816327031,
+  "breakdown_mon_us": {
+   "curl_e + flux update + Hodge (1 kernel)": 3026.916284561157,
+   "curl_h + capacitive update (1 kernel)": 2557.0652306079865,
+   "sources": 4.445119944866747,
+   "monitors": 2555.869104862213
+  },
+  "cpu_mon_s_per_step": 0.43094964599999913,
+  "gpu_ns_per_unknown_step": 0.37971091760502035,
+  "cpu_ns_per_unknown_step": 19.71723427736571,
+  "gpu_mon_ns_per_unknown_step": 0.5669697358896613,
+  "cpu_mon_ns_per_unknown_step": 30.08316950865995,
+  "cart": [
+   {
+    "N": 134,
+    "n_unknowns": 14762250,
+    "s_per_step": 0.0074445832173909285,
+    "n_steps": 161,
+    "fused": false,
+    "ns_per_unknown_step": 0.5042986819347273
+   },
+   {
+    "N": 134,
+    "n_unknowns": 14762250,
+    "s_per_step": 0.005299178190265577,
+    "n_steps": 226,
+    "fused": true,
+    "ns_per_unknown_step": 0.35896819185866496
+   }
+  ],
+  "gpu_name": "NVIDIA L4"
+ }
+]

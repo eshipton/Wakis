@@ -35,7 +35,7 @@ try:
 
     cp.cuda.runtime.getDeviceCount()
     HAVE_GPU = True
-except Exception:  # noqa: BLE001
+except Exception:
     cp, HAVE_GPU = None, False
 
 BACKENDS = [pytest.param(np, id="numpy")] + [
@@ -249,11 +249,13 @@ def _mutate(dev, s, what):
         f["kn"], f["sn"] = f["sn"] * 0 + 1.0, f["sn"] * 0
     elif what == "te_ade_den":
         dev.te_groups[0]["den"] *= 1.001
+    elif what == "cap_a1":  # fused SpMV + capacitive kernel (no ADE groups)
+        dev.a1 = dev.a1 * (1 + 1e-3)
 
 
 MUTATIONS = [("3d_abc_massless_dispersive", "drop_massless"), ("tm_abc_lossy_dispersive", "ade_zeta"),
              ("3d_pmc_drude", "ade_zeta"), ("tm_lts", "lts_buffer"), ("tm_pml", "pml_swap"),
-             ("te_abc_dispersive", "te_ade_den")]  # fmt: skip
+             ("te_abc_dispersive", "te_ade_den"), ("3d_pec", "cap_a1"), ("tm_pec", "cap_a1")]  # fmt: skip
 
 
 @pytest.mark.parametrize("xp", BACKENDS)

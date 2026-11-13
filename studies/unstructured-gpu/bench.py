@@ -17,8 +17,8 @@ Every size runs in its own subprocess (clean peak RSS and device pool). Per size
   enqueued without synchronisation, one sync at the end (>= 1 s).
 * ``gpu_mon`` / ``cpu_mon``: the same with one probe and a 3-frequency DFT
   of all node / edge dofs (monitor cost).
-* ``breakdown``: per-kernel device time (CUDA events around each operation
-  of the 3D / TM step, 200 steps).
+* ``breakdown``: per-kernel device time (CUDA events around each launch of
+  the fused 3D / TM step, 200 steps, a sync after every step).
 * ``agree``: relative energy-norm difference GPU vs CPU after 50 equal steps.
 * ``mem``: host peak RSS (ru_maxrss), device pool bytes after the warm-up,
   `DeviceStepper.device_bytes`, and `estimate_memory`.
@@ -55,7 +55,12 @@ def _pulse(f0):
 def build(dim, h):
     from scipy.constants import c
 
-    from wakis.unstructured import UnstructuredFIT2D, UnstructuredFIT3D, ball_mesh, disk_mesh
+    from wakis.unstructured import (
+        UnstructuredFIT2D,
+        UnstructuredFIT3D,
+        ball_mesh,
+        disk_mesh,
+    )
 
     t0 = time.perf_counter()
     if dim == 3:
@@ -113,45 +118,34 @@ def time_gpu(dev, t_min=1.0, n_min=50):
 
 
 def breakdown(dev, n=200):
-    """Device time per operation (CUDA events), 3D or 2D TM step without groups."""
+    """Device time per operation of the fused 3D / 2D-TM step (CUDA events), [us/step]."""
     import cupy as cp
 
     S, dt, m = dev.S, dev.dt, dev.m
-    names = ["curl_e (SpMV)", "b/v update", "Hodge (M_nu b)", "curl_h (SpMV)", "sources",
-             "capacitive update", "monitors"]  # fmt: skip
+    names = ["curl_e + flux update + Hodge (1 kernel)", "curl_h + capacitive update (1 kernel)",
+             "sources", "monitors"]  # fmt: skip
+    A = dev.Ceff if dev.kind == "3d" else dev.G
+    AT = dev.CfT if dev.kind == "3d" else dev.GT
+    w = dev.Mnu if dev.kind == "3d" else dev.stiff
+    flux = S["b"] if dev.kind == "3d" else S["v"]
     acc = np.zeros(len(names))
     ev = [cp.cuda.Event() for _ in range(len(names) + 1)]
     for _ in range(n):
         t_half = (dev.n + 0.5) * dt
         u = S["u"]
         ev[0].record()
-        if dev.kind == "3d":
-            y = dev.Ceff @ u
-            ev[1].record()
-            dev._axpy(S["b"], m * dt, y)
-            ev[2].record()
-            h = dev.Mnu * S["b"]
-            ev[3].record()
-            r = dev.CfT @ h
-        else:
-            y = dev._grad(u)
-            ev[1].record()
-            dev._axpy(S["v"], m * dt, y)
-            ev[2].record()
-            h = dev.stiff * S["v"]
-            ev[3].record()
-            r = dev.GT @ h
-        ev[4].record()
-        dev._add_sources(r, "node", t_half, m)
-        ev[5].record()
-        dev._cap_step(r)
-        ev[6].record()
+        A.flux(u, flux, dev._h, w, m * dt)
+        ev[1].record()
+        AT.cap(dev._h, u, dev.a1, dev.den, dt)
+        ev[2].record()
+        dev._add_sources_cap(t_half, m * dt)
+        ev[3].record()
         dev.n += 1
         dev._record(dev.n * dt)
-        ev[7].record()
-        ev[7].synchronize()
+        ev[4].record()
+        ev[4].synchronize()
         acc += [cp.cuda.get_elapsed_time(ev[i], ev[i + 1]) for i in range(len(names))]
-    return dict(zip(names, (acc / n * 1e3).tolist()))  # us per step
+    return dict(zip(names, (acc / n * 1e3).tolist()))
 
 
 def agree(s, n=50):

@@ -17,8 +17,11 @@ it there::
     g.to_host()                   # fields, probe samples and DFTs -> s
 
 Each step is the arithmetic of the solver's `one_step` (same operators, same
-order of the elementwise updates) as sparse mat-vecs (cuSPARSE) and
-elementwise kernels:
+order of the elementwise updates) as sparse mat-vecs (own 4-lane sub-warp
+CSR kernels) and elementwise kernels. The plain 3D / 2D-TM step is two
+fused kernels: ``b += -dt C_eff e; h = M_nu b`` and
+``e = (a1 e + dt C_f^T h) / den``; the other paths use one kernel per
+array operation:
 
 * 3D: ``b += -dt C_eff e``, ``r = C_f^T (M_nu b) - j``, capacitive update.
   The massless-edge elimination ``e_s = -K_ss^-1 K_sf e`` is folded into
@@ -120,6 +123,116 @@ def massless_schur_operator(solver):
     return Kinv, S, kappa_max, int(sizes.max(initial=0))
 
 
+# ---------------------------------------------------------------- CUDA kernels
+# Sub-warp CSR kernels: LANES threads per row, shuffle reduction. Each row is
+# a sum of its products in some order (covered by gamma_m like cuSPARSE).
+_CUDA_SRC = r"""
+#define LANES 4
+__device__ __forceinline__ double row_dot(const int* __restrict__ ip, const int* __restrict__ ix,
+        const double* __restrict__ a, const double* __restrict__ x, int row, int lane, int n) {
+    double s = 0.0;
+    if (row < n) {
+        int k1 = ip[row + 1];
+        for (int k = ip[row] + lane; k < k1; k += LANES) s += a[k] * x[ix[k]];
+    }
+    for (int o = LANES / 2; o > 0; o /= 2) s += __shfl_down_sync(0xffffffffu, s, o, LANES);
+    return s;
+}
+extern "C" __global__ void uns_spmv(const int* ip, const int* ix, const double* a,
+        const double* x, double* y, int n) {
+    int t = blockIdx.x * blockDim.x + threadIdx.x, row = t / LANES, lane = t % LANES;
+    double s = row_dot(ip, ix, a, x, row, lane, n);
+    if (row < n && lane == 0) y[row] = s;
+}
+// b <- b + c (A x);  h <- w b      (flux update and Hodge in one pass)
+extern "C" __global__ void uns_spmv_flux(const int* ip, const int* ix, const double* a,
+        const double* x, double* b, double* h, const double* w, double c, int n) {
+    int t = blockIdx.x * blockDim.x + threadIdx.x, row = t / LANES, lane = t % LANES;
+    double s = row_dot(ip, ix, a, x, row, lane, n);
+    if (row < n && lane == 0) { double bn = b[row] + c * s; b[row] = bn; h[row] = w[row] * bn; }
+}
+// u <- (a1 u + dt (A h)) / den     (curl and capacitive update in one pass)
+extern "C" __global__ void uns_spmv_cap(const int* ip, const int* ix, const double* a,
+        const double* h, double* u, const double* a1, const double* den, double dt, int n) {
+    int t = blockIdx.x * blockDim.x + threadIdx.x, row = t / LANES, lane = t % LANES;
+    double s = row_dot(ip, ix, a, h, row, lane, n);
+    if (row < n && lane == 0) u[row] = (a1[row] * u[row] + dt * s) / den[row];
+}
+// y[idx[i]] += c w[i]   (unique indices: sparse sources)
+extern "C" __global__ void uns_scatter_axpy(const long long* idx, const double* w, double* y,
+        double c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[idx[i]] += c * w[i];
+}
+// ph[k] = exp(-2 pi i f_k t), argument rounded as (-2 pi f) t like the host
+extern "C" __global__ void uns_phase(const double* f, double m2pi, double t, double* ph, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) { double s, c; sincos((m2pi * f[i]) * t, &s, &c); ph[2 * i] = c; ph[2 * i + 1] = s; }
+}
+"""
+_MODULE = None
+_LANES, _BLOCK = 4, 256
+
+
+def _cuda(name):
+    global _MODULE
+    if _MODULE is None:
+        import cupy as cp
+
+        _MODULE = cp.RawModule(code=_CUDA_SRC, options=("--std=c++14",))
+    return _MODULE.get_function(name)
+
+
+def _grid_rows(n):
+    return ((n * _LANES + _BLOCK - 1) // _BLOCK,)
+
+
+class _DevCSR:
+    """CSR matrix on the device with one-launch SpMV kernels (``A @ x``)."""
+
+    def __init__(self, A_host):
+        import cupy as cp
+
+        self.shape = A_host.shape
+        self.indptr = cp.asarray(A_host.indptr.astype(np.int32))
+        self.indices = cp.asarray(A_host.indices.astype(np.int32))
+        self.data = cp.asarray(A_host.data.astype(np.float64))
+        self.n = np.int32(A_host.shape[0])
+
+    def __matmul__(self, x):
+        import cupy as cp
+
+        y = cp.empty(self.shape[0])
+        self.spmv_into(x, y)
+        return y
+
+    def spmv_into(self, x, y):
+        if self.n:
+            _cuda("uns_spmv")(_grid_rows(int(self.n)), (_BLOCK,),
+                              (self.indptr, self.indices, self.data, x, y, self.n))  # fmt: skip
+
+    def flux(self, x, b, h, w, c):
+        """b += c (A x); h = w b."""
+        if self.n:
+            _cuda("uns_spmv_flux")(_grid_rows(int(self.n)), (_BLOCK,),
+                                   (self.indptr, self.indices, self.data, x, b, h, w,
+                                    np.float64(c), self.n))  # fmt: skip
+
+    def cap(self, h, u, a1, den, dt):
+        """u = (a1 u + dt (A h)) / den."""
+        if self.n:
+            _cuda("uns_spmv_cap")(_grid_rows(int(self.n)), (_BLOCK,),
+                                  (self.indptr, self.indices, self.data, h, u, a1, den,
+                                   np.float64(dt), self.n))  # fmt: skip
+
+
+def _scatter_axpy(y, idx, w, c):
+    n = int(idx.size)
+    if n:
+        _cuda("uns_scatter_axpy")(((n + 255) // 256,), (256,), (idx, w, y, np.float64(c), np.int32(n)))
+
+
+
 class DeviceStepper:
     """
     Advance an unstructured FIT solver on the GPU (or with another array module).
@@ -177,6 +290,14 @@ class DeviceStepper:
         self._build_sources(solver)
         self._build_recorder(solver)
         self._kernels()
+        self._fast = self._gpu and not self.absolute
+        if self._fast:
+            nh = self.Mnu.size if self.kind == "3d" else self.stiff.size
+            self._h = self.xp.zeros(nh)
+            if getattr(self, "groups", None) is not None:
+                for src in self.sources:  # w / den for the fused capacitive update
+                    den = self.den if src["dense"] else self.den[src["idx"]]
+                    src["wd"] = src["w"] / den
 
     # ------------------------------------------------------------ helpers
     def _f(self, x):
@@ -197,7 +318,7 @@ class DeviceStepper:
         if self.absolute:
             A.data = np.abs(A.data)
         if self._gpu:
-            return self._csp.csr_matrix(A)
+            return self._csp.csr_matrix(A) if self.absolute else _DevCSR(A)
         return A
 
     def _state(self, name, x):
@@ -272,7 +393,7 @@ class DeviceStepper:
             if self.absolute:
                 # |C_f| + (1 + kappa) |C_s| |K_ss^-1| |K_sf|: rounding of the
                 # product and of the host LU solve (forward error <= kappa u)
-                A = lambda M: abs(sp.csr_matrix(M))  # noqa: E731
+                A = lambda M: abs(sp.csr_matrix(M))
                 Ceff = A(s.Cf) + (1 + kap) * (A(Cs) @ A(Kinv) @ A(s._Ksf))
                 self.depth += _max_row_nnz(Kinv) + _max_row_nnz(s._Ksf) + _max_row_nnz(Cs)
             elif fuse_massless:
@@ -418,7 +539,8 @@ class DeviceStepper:
             self.probes.append(dict(P=P, buf=self.xp.zeros((256, rec["P"].shape[0])), k=0))
         for rec in s.recorder.dfts:
             self.dfts.append(dict(freqs=self.xp.asarray(rec["freqs"]),
-                                  data=self.xp.asarray(rec["data"]).astype(complex)))  # fmt: skip
+                                  data=self.xp.asarray(rec["data"]).astype(complex),
+                                  ph=self.xp.zeros(np.size(rec["freqs"]), complex)))  # fmt: skip
 
     # ------------------------------------------------------------ pieces
     def _amp(self, f, t):
@@ -433,9 +555,21 @@ class DeviceStepper:
             a = c * self._amp(src["f"], t)
             if src["dense"]:
                 self._axpy(y, a, src["w"])
+            elif self._k_axpy is not None:
+                _scatter_axpy(y, src["idx"], src["w"], a)
             else:
                 idx = src["idx"]
                 y[idx] = y[idx] + a * src["w"]
+
+    def _add_sources_cap(self, t, c):
+        """u += c f(t) w / den: the sources of the fused capacitive update."""
+        u = self.S["u"]
+        for src in self.sources:
+            a = c * self._amp(src["f"], t)
+            if src["dense"]:
+                self._axpy(u, a, src["wd"])
+            else:
+                _scatter_axpy(u, src["idx"], src["wd"], a)
 
     def _cap_step(self, r):
         """`CapacitiveUpdate.step` in place on S['u'] (r: curl - source)."""
@@ -551,6 +685,17 @@ class DeviceStepper:
     def _step_3d(self, t_half):
         S, m, dt = self.S, self.m, self.dt
         u, b = S["u"], S["b"]
+        if self._fast and self._fused:
+            # two launches: b += -dt C_eff u, h = M_nu b; u = (a1 u + dt C_f^T h) / den
+            self.Ceff.flux(u, b, self._h, self.Mnu, m * dt)
+            if not self.groups:
+                self.CfT.cap(self._h, u, self.a1, self.den, dt)
+                self._add_sources_cap(t_half, m * dt)
+                return
+            r = self.CfT @ self._h
+            self._add_sources(r, "node", t_half, m)
+            self._cap_step(r)
+            return
         if self._fused:
             self._axpy(b, m * dt, self.Ceff @ u)
         else:
@@ -564,6 +709,20 @@ class DeviceStepper:
     def _step_tm(self, t_half):
         S, m, dt = self.S, self.m, self.dt
         u, v = S["u"], S["v"]
+        if self._fast and not self.absorb and self.lts is None:
+            self.G.flux(u, v, self._h, self.stiff, m * dt)  # v -= dt G u; h = stiff v
+            if not self.groups and self.pml is None and self.pw is None:
+                self.GT.cap(self._h, u, self.a1, self.den, dt)
+                self._add_sources_cap(t_half, m * dt)
+                return
+            h = self._h
+            if self.pml is not None:
+                P = self.pml
+                h[P["sp"]] = P["st_sp"] * self._cfs(P["fs"], v[P["sp"]])
+                h[P["ch"]] = P["st_ch"] * self._cfs(P["fc"], v[P["ch"]])
+            r = self.GT @ h
+            self._finish_tm(r, t_half)
+            return
         g = self._grad(u)
         if self.absorb:
             v[...] = (self.e_num * v + m * dt * g) / self.e_den
@@ -577,13 +736,17 @@ class DeviceStepper:
             h[P["sp"]] = P["st_sp"] * self._cfs(P["fs"], v[P["sp"]])
             h[P["ch"]] = P["st_ch"] * self._cfs(P["fc"], v[P["ch"]])
             r = self.GT @ h
+        self._finish_tm(r, t_half)
+
+    def _finish_tm(self, r, t_half):
+        S, m, dt = self.S, self.m, self.dt
         self._add_sources(r, "node", t_half, m)
         if self.pw is not None:
             r += m * (self._pw_values(self.n + 1) + m * self._pw_values(self.n))
         self._cap_step(r)
         if self.pml is not None:
             S["pml_q"] = S["pml_q"] + dt * r[self.pml["nodes"]]
-            self._pml_nodes(u)
+            self._pml_nodes(S["u"])
 
     def _step_te(self, t_half):
         S, m, dt = self.S, self.m, self.dt
@@ -648,13 +811,22 @@ class DeviceStepper:
         u = self.S["u"]
         for pr in self.probes:
             self._reserve(pr, pr["k"] + 1)
-            pr["buf"][pr["k"]] = pr["P"] @ u
+            if self._fast:
+                pr["P"].spmv_into(u, pr["buf"][pr["k"]])
+            else:
+                pr["buf"][pr["k"]] = pr["P"] @ u
             pr["k"] += 1
         for d in self.dfts:
-            ph = self.xp.exp(-2j * np.pi * d["freqs"] * t)
-            if self._gpu:
+            if self._fast:
+                nf = int(d["freqs"].size)
+                _cuda("uns_phase")(((nf + 127) // 128,), (128,),
+                                   (d["freqs"], np.float64(-2 * np.pi), np.float64(t), d["ph"], np.int32(nf)))  # fmt: skip
+                self._k_dft(d["ph"][:, None], u[None], self.dt, d["data"])
+            elif self._gpu:
+                ph = self.xp.exp(-2j * np.pi * d["freqs"] * t)
                 self._k_dft(ph[:, None], u[None], self.dt, d["data"])
             else:
+                ph = self.xp.exp(-2j * np.pi * d["freqs"] * t)
                 d["data"] += ph[:, None] * u[None] * self.dt
 
     def probe_signal(self, i=0):
