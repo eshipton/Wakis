@@ -98,6 +98,18 @@ the step stays two SpMVs. Expected: memory-bound, ~2.1 kB/tet on the host
 
 ## 5. MPI partitioning
 
+**Status (2026-11-13): done (time loop)** — `wakis.unstructured.mpi`
+(`DistributedFIT` under MPI, `LocalCluster` in one process; physics guide
+`docs/physicsguide_sections/unstructured_mpi.md`, tests
+`tests/test_103_unstructured_mpi.py`, study `studies/unstructured-mpi/`).
+3D Voronoi (massless edges via the local fused C_eff, PEC, materials,
+ABC, dispersive ADEs), 3D spherical PML (stage by stage), 2D TM/TE;
+bitwise equal to the serial step; exact distributed transpose. Open:
+distributed set-up (the serial solver is built on the root), overlap of
+communication, multi-node and multi-GPU (NCCL) runs, Whitney Hodge.
+
+Original plan:
+
 Partition the cells (METIS/`pymetis` or a simple recursive coordinate
 bisection, BSD-licensed alternatives only), own edges/faces by the lowest
 rank of their cells, and exchange halo voltages and fluxes after each half
