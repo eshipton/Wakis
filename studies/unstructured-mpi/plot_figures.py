@@ -3,11 +3,11 @@ Figures of the unstructured-MPI study (reads out/correctness.json and out/scalin
 
   python studies/unstructured-mpi/plot_figures.py
 
-Writes into docs/figures/unstructured_mpi/:
-  mpi_correctness.png    distributed vs serial difference vs the round-off bound; partitions
-  mpi_strong_scaling.png speedup / efficiency vs ranks against the serial SciPy baseline
-  mpi_weak_scaling.png   time per step at fixed cells per rank
-  mpi_comm_volume.png    halo volume per step vs partition surface (cut facets)
+Writes into docs/img/:
+  unstructured_mpi_correctness.png    distributed vs serial difference vs the round-off bound; partitions
+  unstructured_mpi_strong_scaling.png speedup / efficiency vs ranks against the serial SciPy baseline
+  unstructured_mpi_weak_scaling.png   time per step at fixed cells per rank
+  unstructured_mpi_comm_volume.png    halo volume per step vs partition surface (cut facets)
 """
 
 import json
@@ -21,7 +21,7 @@ import numpy as np  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-FIG = ROOT / "docs" / "figures" / "unstructured_mpi"
+FIG = ROOT / "docs" / "img"
 plt.rcParams.update({"font.size": 10, "axes.grid": True, "grid.alpha": 0.3})
 
 
@@ -63,7 +63,7 @@ def correctness():
         a.set_title(f"{meth.upper()}, 8 parts: {st['cut_facets']} cut faces,\n"
                     f"imbalance {st['imbalance']:.3f} (cells with |z| < h/2)", fontsize=9)  # fmt: skip
     fig.tight_layout()
-    fig.savefig(FIG / "mpi_correctness.png", dpi=150)
+    fig.savefig(FIG / "unstructured_mpi_correctness.png", dpi=150)
     plt.close(fig)
 
 
@@ -83,12 +83,15 @@ def strong(res):
     t = np.array([r["t_step"] for r in dist])
     fig, ax = plt.subplots(1, 2, figsize=(11, 4.3))
     a = ax[0]
-    a.loglog(P, t0 / t, "o-", label="DistributedFIT (P ranks)")
+    a.loglog(P, t0 / t, "o-", label="vs serial one_step (LU elimination)")
+    fused = [r for r in rs if r["P"] == -1]
+    if fused:
+        a.loglog(P, fused[0]["t_step"] / t, "s--", label="vs serial fused step (same arithmetic)")
     a.loglog(P, P, "k--", lw=1, label="ideal (P)")
     a.axvline(16, color="0.5", lw=0.8, ls=":")
     a.text(16, a.get_ylim()[0] * 1.3, " 16 physical cores", fontsize=8, color="0.4")
     a.set_xlabel("ranks P")
-    a.set_ylabel("speedup over serial SciPy one_step")
+    a.set_ylabel("speedup of DistributedFIT (P ranks)")
     a.set_title(f"strong scaling, {dist[0]['n_cells']:,} tets "
                 f"(serial {t0 * 1e3:.1f} ms/step)")  # fmt: skip
     a.legend(fontsize=8)
@@ -105,7 +108,7 @@ def strong(res):
     a.set_ylabel("time per step [ms]")
     a.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(FIG / "mpi_strong_scaling.png", dpi=150)
+    fig.savefig(FIG / "unstructured_mpi_strong_scaling.png", dpi=150)
     plt.close(fig)
 
 
@@ -113,17 +116,21 @@ def weak(res):
     rs = [r for r in res if r["study"] == "weak"]
     dist = sorted([r for r in rs if r["P"] >= 1], key=lambda r: r["P"])
     base = {round(r["h"], 6): r for r in rs if r["P"] == 0}
+    basef = {round(r["h"], 6): r for r in rs if r["P"] == -1}
     if not dist:
         return
     P = np.array([r["P"] for r in dist])
     t = np.array([r["t_step"] for r in dist]) * 1e3
     tb = np.array([base[round(r["h"], 6)]["t_step"] * 1e3 if round(r["h"], 6) in base else np.nan
                    for r in dist])  # fmt: skip
+    tf = np.array([basef[round(r["h"], 6)]["t_step"] * 1e3 if round(r["h"], 6) in basef else np.nan
+                   for r in dist])  # fmt: skip
     cells = np.array([r["n_cells"] for r in dist])
     fig, ax = plt.subplots(1, 2, figsize=(11, 4.3))
     a = ax[0]
     a.semilogx(P, t, "o-", label="DistributedFIT, P ranks")
-    a.semilogx(P, tb, "s--", label="serial SciPy one_step, same mesh")
+    a.semilogx(P, tb, "s--", label="serial one_step (LU elimination), same mesh")
+    a.semilogx(P, tf, "^:", label="serial fused step, same mesh")
     a.set_xlabel("ranks P (mesh grows with P)")
     a.set_ylabel("time per step [ms]")
     a.set_yscale("log")
@@ -131,14 +138,14 @@ def weak(res):
     a.legend(fontsize=8)
     a = ax[1]
     a.semilogx(P, t[0] / t, "o-", label="weak efficiency t(1)/t(P)")
-    a.semilogx(P, (tb / t) / P, "s--", label="speedup / P vs serial")
+    a.semilogx(P, (tf / t) / P, "^:", label="speedup / P vs serial fused step")
     a.axvline(16, color="0.5", lw=0.8, ls=":")
     a.set_ylim(0, 1.15)
     a.set_xlabel("ranks P")
     a.set_ylabel("efficiency")
     a.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(FIG / "mpi_weak_scaling.png", dpi=150)
+    fig.savefig(FIG / "unstructured_mpi_weak_scaling.png", dpi=150)
     plt.close(fig)
 
 
@@ -180,7 +187,7 @@ def comm(res):
         a.legend(loc="upper left", fontsize=8)
         a2.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    fig.savefig(FIG / "mpi_comm_volume.png", dpi=150)
+    fig.savefig(FIG / "unstructured_mpi_comm_volume.png", dpi=150)
     plt.close(fig)
 
 

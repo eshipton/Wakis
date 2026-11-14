@@ -147,9 +147,11 @@ def partition_cells(mesh, n_parts, method="auto"):
         import pymetis
 
         A = cell_adjacency(mesh)
-        _, parts = pymetis.part_graph(
-            n_parts, xadj=A.indptr.astype(np.int64), adjncy=A.indices.astype(np.int64)
-        )
+        xadj, adjncy = A.indptr.astype(np.int64), A.indices.astype(np.int64)
+        if hasattr(pymetis, "CSRAdjacency"):
+            _, parts = pymetis.part_graph(n_parts, adjacency=pymetis.CSRAdjacency(xadj, adjncy))
+        else:
+            _, parts = pymetis.part_graph(n_parts, xadj=xadj, adjncy=adjncy)
         parts = np.asarray(parts, dtype=np.int64)
     elif method in ("rcb", "rib"):
         cent = mesh.nodes[mesh.cells].mean(1)

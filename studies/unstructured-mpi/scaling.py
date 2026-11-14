@@ -14,10 +14,12 @@ prints one JSON line). Per configuration:
   scattered (``mode="scatter"``).
 * ``P = 0`` is the **baseline**: the same solver's serial `one_step`
   (SciPy CSR SpMV, one process, OMP/MKL/OPENBLAS threads = 1) on the same
-  mesh. ``P >= 1`` is `DistributedFIT` with P ranks (P = 1: no halo, the
+  mesh. ``P = -1``: the serial *fused* host step (`DeviceStepper(xp=numpy)`,
+  C_eff instead of the per-step LU solve; the arithmetic of every rank).
+  ``P >= 1`` is `DistributedFIT` with P ranks (P = 1: no halo, the
   distributed code path's own overhead).
-* timing: 5 warm-up steps, barrier, then steps until >= `--seconds` (at
-  least 20 steps); the wall time per step is the max over ranks. Each rank
+* timing: 5 warm-up steps, a 20-step calibration, then n >= 20 steps
+  (about `--seconds`; n broadcast from rank 0 so all ranks agree); the wall time per step is the max over ranks. Each rank
   also accumulates its compute and exchange (Isend/Irecv/Waitall) time.
 * communication: halo doubles received per step on each rank (sum over the
   u and b vectors), bytes sent per step, partition surface (cut facets) and
@@ -64,17 +66,27 @@ def build(h):
     return s
 
 
-def _time_steps(step, seconds, sync=lambda: None):
+def _time_steps(step, seconds, sync=lambda: None, agree=lambda n: n):
+    """
+    Wall time of n steps, n chosen from a 20-step calibration.
+
+    Under MPI every rank must take the same number of steps (each step
+    exchanges halos with the neighbours): `agree` makes the root's choice
+    collective. (A per-rank stopping test deadlocked at 32 ranks.)
+    """
     for _ in range(5):
         step()
     sync()
     t0 = time.perf_counter()
-    n = 0
-    while True:
+    for _ in range(20):
         step()
-        n += 1
-        if n >= 20 and time.perf_counter() - t0 >= seconds:
-            break
+    sync()
+    t_cal = (time.perf_counter() - t0) / 20
+    n = agree(max(20, int(np.ceil(seconds / max(t_cal, 1e-9)))))
+    sync()
+    t0 = time.perf_counter()
+    for _ in range(n):
+        step()
     sync()
     return n, time.perf_counter() - t0
 
@@ -83,6 +95,14 @@ def one(cfg):
     P, h = int(cfg["P"]), float(cfg["h"])
     seconds = float(cfg.get("seconds", 4.0))
     method = cfg.get("method", "auto")
+    if P == -1:  # serial fused host step (same C_eff arithmetic as the ranks)
+        from wakis.unstructured.gpu import DeviceStepper
+
+        s = build(h)
+        dev = DeviceStepper(s, xp=np)
+        n, wall = _time_steps(dev.step, seconds)
+        return dict(cfg, n_cells=s.mesh.n_cells, n_unknowns=int(s.free.size + s.mesh.n_faces),
+                    n_massless=int(s.massless.size), steps=n, t_step=wall / n)  # fmt: skip
     if P == 0:  # serial SciPy baseline
         from wakis.unstructured import estimate_memory
 
@@ -123,12 +143,13 @@ def one(cfg):
     comm.Barrier()
     info["t_distribute"] = time.perf_counter() - t1
     del s
-    n, wall = _time_steps(d.step, seconds, comm.Barrier)
+    agree = lambda n: comm.bcast(n, root=0)  # noqa: E731
+    n, wall = _time_steps(d.step, seconds, comm.Barrier, agree)
     # timers include the warm-up: rescale to the timed steps
     d.t = {"compute": 0.0, "exchange": 0.0}
     d.bytes_sent = 0
-    n2, wall2 = _time_steps(d.step, seconds, comm.Barrier)
-    tot = n2 + 5
+    n2, wall2 = _time_steps(d.step, seconds, comm.Barrier, agree)
+    tot = n2 + 25
     loc = dict(
         compute=d.t["compute"] / tot,
         exchange=d.t["exchange"] / tot,
@@ -160,12 +181,13 @@ def one(cfg):
 def suite(name, h_strong, h_weak1, ps):
     cfgs = []
     if name in ("strong", "all"):
-        cfgs += [dict(study="strong", P=0, h=h_strong)]
+        cfgs += [dict(study="strong", P=0, h=h_strong), dict(study="strong", P=-1, h=h_strong)]
         cfgs += [dict(study="strong", P=p, h=h_strong) for p in ps]
     if name in ("weak", "all"):
         for p in ps:
             hp = h_weak1 / p ** (1 / 3)
-            cfgs += [dict(study="weak", P=0, h=hp), dict(study="weak", P=p, h=hp)]
+            cfgs += [dict(study="weak", P=0, h=hp), dict(study="weak", P=-1, h=hp),
+                     dict(study="weak", P=p, h=hp)]  # fmt: skip
     if name in ("partitioners", "all"):
         for p in (8, 16):
             for m in ("metis", "rcb", "rib"):
@@ -203,10 +225,14 @@ def main():
         P = cfg["P"]
         cmd = [sys.executable, __file__, "--one", json.dumps(cfg)]
         if P >= 1:
-            cmd = ["mpiexec", "--oversubscribe", "--bind-to", "core" if P <= 16 else "hwthread",
-                   "-n", str(P)] + cmd  # fmt: skip
+            bind = ["--bind-to", "core"] if P <= 16 else ["--use-hwthread-cpus", "--bind-to", "hwthread"]
+            cmd = ["mpiexec", "--oversubscribe"] + bind + ["-n", str(P)] + cmd
         t0 = time.perf_counter()
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        except subprocess.TimeoutExpired as e:
+            print("TIMEOUT", cfg, (e.stdout or b"")[-2000:], flush=True)
+            continue
         line = [x for x in p.stdout.splitlines() if x.startswith("RESULT ")]
         if p.returncode or not line:
             print("FAILED", cfg, p.returncode, p.stdout[-2000:], p.stderr[-4000:], flush=True)
