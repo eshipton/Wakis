@@ -65,9 +65,17 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         lts_kw = dict(lts_kw or {})
         if lts and max(self.mesh.level) > 0:
             if dt is None:
+                from .lts import is_stable
+
                 probe = SubgridLTS(self, self.dt_max, nu=nu, **lts_kw)
-                hi = 1.1 * float(np.prod(probe.ratios)) * self.dt_max
-                dt_lts, hist = lts_dt_max(self, hi, rtol=dt_rtol, nu=nu, **lts_kw)
+                P = float(np.prod(probe.ratios))
+                # bracket around P x the global limit (the coarse limit up to the
+                # damping floor, physics guide 9c); fall back to the global limit
+                lo = 0.85 * P * self.dt_max
+                if not is_stable(SubgridLTS(self, lo, nu=nu, **lts_kw))[0]:
+                    lo = self.dt_max
+                dt_lts, hist = lts_dt_max(self, 1.05 * P * self.dt_max, dt_lo=lo,
+                                          rtol=dt_rtol, nu=nu, **lts_kw)  # fmt: skip
                 self.lts_info.update(dt_max=dt_lts, bisection=hist)
                 dt = cfl * dt_lts
             self.dt = float(dt)
@@ -242,13 +250,13 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         val = val.item() if hasattr(val, "item") else val
         return float(0.5 * np.real(val))
 
-    def stability_ratio(self, **kw):
+    def stability_ratio(self, tol=1e-6, **kw):
         """Lanczos ``rho = dt/2 sqrt(lambda_max(D^-1 S_0))`` (stable iff < 1)."""
         if self.lts is None:
             return 0.5 * self.dt * np.sqrt(self.lambda_max)
         self.lts.to_backend("numpy")
         try:
-            return stability_ratio(self.lts, **kw)
+            return stability_ratio(self.lts, tol=tol, **kw)
         finally:
             self.lts.to_backend(self.backend)
 

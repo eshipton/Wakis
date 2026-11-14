@@ -43,6 +43,7 @@ import numpy as np  # noqa: E402
 
 from wakis.subgrid3d import SubgridLTSFIT3D, SubgridMesh3D  # noqa: E402
 
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 BOX = (1.0, 0.8, 0.6)
@@ -125,6 +126,8 @@ def task_cost(args):
         info["bisection"] = [[float(a) for a in row] for row in info["bisection"]]
         out["lts"] = info
         out["rho"] = float(s.stability_ratio())
+    print(f"done {case} {kind} H={h_coarse:.4f} r={ratio} setup {setup:.0f} s run {run_s:.0f} s",
+          flush=True)  # fmt: skip
     return out
 
 

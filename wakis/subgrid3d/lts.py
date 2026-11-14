@@ -437,10 +437,17 @@ def level_margins(lts, tol=1e-8):
     return out
 
 
-def is_stable(lts):
-    """``(stable, rho, margins)``: ``rho < 1`` and every margin ``<= 1``."""
-    marg = level_margins(lts)
-    rho = stability_ratio(lts)
+def is_stable(lts, tol=1e-5):
+    """
+    ``(stable, rho, margins)``: ``rho < 1`` and every margin ``<= 1``.
+
+    Lanczos tolerance `tol` (relative, on the eigenvalue): only the side of 1
+    matters. Below the limit many fine modes sit on the damping plateau
+    ``rho ~ sqrt(2 + 2/T_p(delta))/2`` (a dense cluster) and a tight
+    tolerance costs 10-100x more iterations (measured).
+    """
+    marg = level_margins(lts, tol=tol)
+    rho = stability_ratio(lts, tol=tol)
     return (rho < 1.0 and max(marg, default=0.0) <= 1.0), rho, marg
 
 

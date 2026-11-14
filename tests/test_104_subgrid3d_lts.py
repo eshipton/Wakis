@@ -134,7 +134,7 @@ def test_stiffness_hermitian_and_criterion_matches_dense():
         sc = 1 / np.sqrt(D)
         lam = la.eigvalsh(sc[:, None] * (0.5 * (A + A.T)) * sc[None, :])
         dense_ok = lam.min() > -1e-12 * lam.max() and L.dt / 2 * np.sqrt(lam.max()) < 1
-        ok, rho, marg = is_stable(L)
+        ok, rho, marg = is_stable(L, tol=1e-12)
         assert ok == stable and dense_ok == stable
         assert abs(rho - L.dt / 2 * np.sqrt(lam.max())) < 1e-8
 
