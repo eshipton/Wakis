@@ -186,10 +186,13 @@ def _improve_task(args):
     from wakis.unstructured.quality import element_stability
 
     t0 = time.perf_counter()
-    if variant == "ours":
-        m, info = make_mesh(case, cpw, "none", improve=dict(n_sweeps=10))
-    else:
-        m, info = make_mesh(case, cpw, variant)
+    try:
+        if variant == "ours":
+            m, info = make_mesh(case, cpw, "none", improve=dict(n_sweeps=10))
+        else:
+            m, info = make_mesh(case, cpw, variant)
+    except Exception as err:  # e.g. degenerate tets from an optimizer: record it
+        return dict(case=case, cpw=cpw, variant=variant, n_tets=0, error=repr(err))
     t_mesh = time.perf_counter() - t0
     d = m.diagnostics()
     out = dict(case=case, cpw=cpw, variant=variant, n_tets=m.n_cells, t_mesh=t_mesh,
