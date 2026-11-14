@@ -29,7 +29,20 @@ _JAX_NAMES = (
 )
 
 
+# Exact adjoint of the unstructured FIT solvers (wakis.unstructured.adjoint)
+_UNSTRUCTURED_NAMES = (
+    "UnstructuredAdjointSimulation",
+    "UnstructuredAdjointStepper",
+    "CellMaterialGrid",
+    "CellDFTMonitor",
+)
+
+
 def __getattr__(name):
+    if name in _UNSTRUCTURED_NAMES:
+        from ..unstructured import adjoint
+
+        return getattr(adjoint, name)
     if name in _JAX_NAMES:
         from . import jax_tools
 

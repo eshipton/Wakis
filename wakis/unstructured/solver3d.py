@@ -144,6 +144,11 @@ class UnstructuredFIT3D:
         Timestep [s] (default ``cfl`` x stability limit).
     cfl : float, optional
         Fraction of the stability limit 2 / sqrt(lambda_max).
+    pml : dict, optional
+        Spherical CFS-PML in the layered shell r0 < r < r1 of a
+        `spherical_shell_mesh` (keys ``r0``, ``r1``, ``order``, ``R``,
+        ``sigma_max``, ``kappa_max``, ``alpha``, ``center``), backed by the
+        PEC/PMC outer wall; see `wakis.unstructured.pml3d.PML3D`.
 
     Attributes
     ----------
@@ -162,6 +167,7 @@ class UnstructuredFIT3D:
         massless_tol=1e-2,
         dt=None,
         cfl=0.95,
+        pml=None,
     ):
         if mesh.dim != 3:
             raise ValueError("UnstructuredFIT3D needs a tetrahedral mesh")
@@ -250,7 +256,11 @@ class UnstructuredFIT3D:
 
                 n = self.free.size
                 op = LinearOperator((n, n), matvec=mv, dtype=float)
-                lam = eigsh(op, k=1, which="LA", return_eigenvectors=False, tol=1e-4)[0]
+                # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
+                v0 = np.random.default_rng(0).standard_normal(n)
+                lam = eigsh(
+                    op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
+                )[0]
             else:
                 lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
         else:
@@ -277,6 +287,13 @@ class UnstructuredFIT3D:
             self._update = CapacitiveUpdate(self.cap, self.cond, groups, self.dt)
         self.sources = []
         self.recorder = Recorder()
+        self._pml = None
+        if pml is not None:
+            if bc == "abc":
+                raise ValueError("pml: use bc='pec'/'pmc' behind the layer")
+            from .pml3d import PML3D
+
+            self._pml = PML3D(self, pml)
         self.reset()
 
     # ------------------------------------------------------------ state
@@ -291,6 +308,8 @@ class UnstructuredFIT3D:
             rec["samples"] = []
         for rec in self.recorder.dfts:
             rec["data"][:] = 0
+        if getattr(self, "_pml", None) is not None:
+            self._pml.reset()
 
     @property
     def e(self):
@@ -400,6 +419,11 @@ class UnstructuredFIT3D:
         src = np.zeros(self.free.size)
         for w, f in self.sources:
             src += w * f(t_half)
+        if self._pml is not None:
+            self._pml.step(src)
+            self.n += 1
+            self.recorder.record(self.u, self.n * dt, dt)
+            return
         e_s = self._massless_voltages(self.u) if self.massless.size else None
         self.b -= dt * (self.Cf @ self.u)
         if e_s is not None:

@@ -211,7 +211,7 @@ def stability_ratio(K, mass, lts, tol=1e-8, return_mode=False):
         return s * (K @ lts.apply(s * z))
 
     op = LinearOperator((n, n), matvec=mv, dtype=float)
-    lam, vec = eigsh(op, k=1, which="LA", tol=tol)
+    lam, vec = eigsh(op, k=1, which="LA", tol=tol, v0=np.random.default_rng(0).standard_normal(n))
     rho = 0.5 * lts.dt * np.sqrt(max(lam[0], 0.0))
     return (rho, vec[:, 0] ** 2) if return_mode else rho
 

@@ -400,14 +400,16 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Cartesian subgridding with nested 2:1/3:1 patches (`wakis.subgrid`): symmetric hanging-node interface (energy-conserving, second order, exact transposed step), sub-pixel averaging, PML, scattered-field plane waves, Drude/Lorentz ADE, LTS; benchmark arm `subgrid-2to1` ([studies/mie-cylinder-subgrid](studies/mie-cylinder-subgrid), [studies/subgrid-benchmarks](studies/subgrid-benchmarks))
 - [x] Mesh-override boxes on graded tensor-product meshes (`PhotonicCircuit(mesh_overrides=...)`)
 - [x] Subgridding backend for the photonics kit (shapes, mode ports, monitors, LTS) and a graded-vs-subgrid cost study ([studies/subgrid-vs-graded-bragg](studies/subgrid-vs-graded-bragg))
-- [ ] Cartesian subgridding in 3D (`SolverFIT3D` octree blocks; plan in the physics guide)
+- [x] Cartesian subgridding in 3D, core (`wakis.subgrid3d`): nested 2:1/3:1 refined blocks with a hanging-edge Nédélec trace, energy-conserving with an exact transpose, second-order cavity and interface-reflection convergence; 1.4–2.2× less work than a uniform grid at equal accuracy ([studies/subgrid3d](studies/subgrid3d))
+- [ ] 3D subgridding, remaining: local time stepping per level, CPML and conformal/dispersive media in patches, GPU block kernels, MPI
 - [x] Curvilinear (body-fitted O-grid, nonorthogonal) time-domain FIT in 2D with radial PML, dispersive media and multi-block O-grid/Cartesian meshes (`wakis.curvilinear`): 1.2–1.6× fewer unknowns than graded triangles on the Mie cylinder at 1 %, 4.5× fewer than uniform triangles on a plasmonic Au cylinder at 0.1 %, 3–8× worse than graded triangles on dimer gaps ([studies/mie-cylinder-nfit](studies/mie-cylinder-nfit))
 - [ ] Curvilinear FIT in 3D (curvilinear hexahedra for beam pipes and cavities)
 - [x] High-order DGTD on curved triangles (`wakis.highorder`, [studies/highorder-mie](studies/highorder-mie))
 - [ ] High-order Cartesian (2,4) scheme
 - [x] Extruded prism 3D FIT (`PrismFIT3D`: triangles × z layers, diagonal Voronoi Hodge, z PML, GPU; `tests/test_050_prism_fit.py`; studies `prism-cavity` (2.9–5.6× less work than graded conformal Cartesian at 0.1–0.05 %), `prism-ring` (Si micro-ring vs a BOR reference), `prism-dipole` (B4, negative result))
 - [x] Quadtree squares + conforming triangle band (`wakis.unstructured.subtri`, two-level LTS; `tests/test_subtri*.py`; [studies/subtri-hybrid](studies/subtri-hybrid): B1 5–7× less work, B3 wins vs FIT/FDTD arms, B2 negative result)
-- [ ] Unstructured FIT phase 2, remainder: ports, GPU, MPI, CAD/gmsh workflow
+- [x] Unstructured FIT phase 2: spherical CFS-PML for tetrahedra (10 layers: 4.5e-4 normal, ≤ 2e-3 oblique; [studies/unstructured-pml3d](studies/unstructured-pml3d)), GPU path for 2D/3D (52–206× a 1-core SciPy run; [studies/unstructured-gpu](studies/unstructured-gpu)), exact adjoint with per-cell permittivity design and JAX ([studies/unstructured-adjoint](studies/unstructured-adjoint))
+- [ ] Unstructured FIT phase 2, remainder: ports, MPI, CAD/gmsh workflow, 3D mesh quality, hybrid Cartesian–tetrahedral coupling
 - [ ] Adaptive refinement
 
 **Inverse design**

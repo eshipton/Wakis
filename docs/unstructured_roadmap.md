@@ -78,6 +78,15 @@ with `C` and `C^T` swapped in role (time-reversed, transposed): exactly what
 
 ## 4. GPU (CuPy)
 
+**Status (2026-11-13): done** — `wakis.unstructured.gpu.DeviceStepper`
+(physics guide `docs/physicsguide_sections/unstructured_gpu.md`, tests
+`tests/test_099_unstructured_gpu.py`, study `studies/unstructured-gpu/`).
+Measured: 233 B/tet on the device (not ~1 kB), 0.093 ns (A100) / 0.380 ns
+(L4) per unknown-step at 4.5e6 tets. Open: dof reordering for gather
+locality, fused kernels for ADE / PML / LTS / TE paths, CUDA graphs.
+
+Original plan:
+
 All operators are `scipy.sparse` CSR matrices and diagonal vectors: port
 `one_step` to `cupyx.scipy.sparse` (two SpMVs, elementwise updates, the
 ADE groups with gather/scatter by `idx`). The massless-edge solve becomes a
