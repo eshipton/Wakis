@@ -106,9 +106,12 @@ layered pillbox and muon cavity at cpw 10 and 20 (gmsh Delaunay output) and `bal
   median of 0.215, rate 8.5× the median). Below the threshold the solver eliminates the edge; the next one
   sets dt. On the coarse pillbox the worst edges are chords between boundary nodes whose dual-face ring has at
   most one interior node — fixed boundary nodes are why boundary sliding matters (Section 4).
-* **The worst element by dt is not the worst by shape.** The element with the smallest $\Delta t_T$ had radius
-  ratio 0.68 and minimum dihedral 42° on the pillbox (worst in the mesh: 0.31 and 14°); classical quality
-  measures do not predict the Voronoi-FIT step.
+* **The worst element by dt is not the worst by shape (Voronoi).** On the cpw 20 pillbox the five elements
+  with the smallest $\Delta t_T$ have radius ratios 0.71–0.81, and the worst-shaped sliver (radius ratio
+  0.007) ranks 11th by $\Delta t_T$; on the cpw 20 muon mesh the worst-shaped element (0.022) ranks 8218th.
+  Classical quality measures do not predict the Voronoi-FIT step; the edge rates do. For the Whitney Hodge it
+  is the other way round: the element carrying most of the fastest mode's energy is a sliver (radius ratio
+  0.01 on the pillbox, 0.14 on the muon cavity), as expected from consistent mass matrices.
 * **Whitney FIT: dt is a collective property.** The consistent mass couples neighbouring edges, the fastest
   mode is mostly spread out (0–56 % of its energy on the worst 1 %, 92 % on the muon cpw 20) and the element
   bound is 1.2–1.5× pessimistic; its step is larger than Voronoi's on the same mesh (pillbox cpw 10:

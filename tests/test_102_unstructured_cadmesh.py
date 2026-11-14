@@ -366,7 +366,7 @@ def test_mesh_stl_body_in_box():
     from wakis.unstructured.cad import mesh_stl
 
     raw = meshio.read("tests/stl/003_sphere.stl")
-    P, T = raw.points * 1e-3, raw.cells_dict["triangle"]
+    P, T = raw.points.astype(float) * 1e-3, raw.cells_dict["triangle"]
     v_stl = abs(np.einsum("ij,ij->i", P[T[:, 0]], np.cross(P[T[:, 1]], P[T[:, 2]])).sum() / 6)
     m, info = mesh_stl("tests/stl/003_sphere.stl", [4, 1], f_max=3e9, cpw=10,
                        padding=15, scale=1e-3)  # fmt: skip
@@ -374,7 +374,8 @@ def test_mesh_stl_body_in_box():
     h, R = info.sizes["body"], 25e-3
     assert 0 < 1 - vb / v_stl < h**2 / (2 * R**2)
     lo, hi = P.min(0) - 15e-3, P.max(0) + 15e-3
-    np.testing.assert_allclose(m.cell_volume.sum(), np.prod(hi - lo), rtol=1e-9)
+    # STL coordinates are float32 (relative rounding 6e-8 per bound)
+    np.testing.assert_allclose(m.cell_volume.sum(), np.prod(hi - lo), rtol=1e-6)
 
 
 def test_improve_dt_repairs_non_delaunay_faces():

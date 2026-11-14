@@ -64,18 +64,18 @@ def fig_setup():
     w = st["worst"][0]
     cw = m.nodes[m.cells[w]].mean(0) * 1e3
     ax[0].annotate("worst element\n(dt_T = %.2f dt)" % (st["dt_T"][w] / st["dt_max"]),
-                   xy=(cw[0], cw[2]), xytext=(0, 75), fontsize=8,
+                   xy=(cw[0], cw[2]), xytext=(-40, -75), fontsize=8,
                    arrowprops=dict(arrowstyle="->", lw=0.8))  # fmt: skip
     ax[0].text(-185, 55, "Be window (dropped: PEC)", fontsize=8)
     ax[0].text(-185, -65, "Be window (dropped: PEC)", fontsize=8)
     ax[0].text(120, 0, "Cu wall\n(dropped: PEC)", fontsize=8, ha="center")
     ax[0].set_aspect("equal")
-    ax[0].set_ylim(-80, 80)
+    ax[0].set_ylim(-95, 80)
     ax[0].set_xlabel("x [mm]")
     ax[0].set_ylabel("z [mm]")
     fig.colorbar(sc, ax=ax[0], shrink=0.7, label=r"$\log_{10}(\Delta t_T/\Delta t_{\max})$")
-    ax[0].set_title("(a) muon-cavity STEP, vacuum cells, cpw 15: %d tets, cut y = 0"
-                    % m.n_cells, fontsize=9)  # fmt: skip
+    ax[0].set_title("(a) muon-cavity STEP, vacuum cells, cpw 15:\n%d tets, cut y = 0"
+                    % m.n_cells, fontsize=9, pad=12)  # fmt: skip
     # (b) layered pillbox: material tags
     m2, info2 = make_mesh("layered", 15, "none")
     e2, sel2 = _slice_edges(m2)
@@ -92,26 +92,26 @@ def fig_setup():
     ax[1].set_xlabel("x [mm]")
     ax[1].set_ylabel("z [mm]")
     ax[1].set_title("(b) layered pillbox STEP, cpw 15 in the dielectric", fontsize=9)
-    # (c) element dt vs radius ratio (pillbox cpw 20, Voronoi), top-mode energy
-    b = [r for r in _load("bounds") if r["case"] == "pillbox" and r["cpw"] == 20]
+    # (c) element dt vs radius ratio (pillbox cpw 20); elements carrying the dt-limiting mode
+    b = [r for r in _load("bounds") if r["case"] == "pillbox" and r["cpw"] == 20
+         and "dt_T_over_dt" in r]  # fmt: skip
     for r in b:
-        if "dt_T_over_dt" not in r:
-            continue
         x = np.array(r["radius_ratio"])
         y = np.array(r["dt_T_over_dt"])
         E = np.array(r["energy"])
-        mk = "o" if r["hodge"] == "voronoi" else "^"
-        o = np.argsort(E)
-        ax[2].scatter(x[o], y[o], c=np.log10(np.maximum(E[o], 1e-12)), s=4 if mk == "o" else 3,
-                      marker=mk, cmap="magma_r", vmin=-8, vmax=0, alpha=0.8,
-                      label=f"{r['hodge']} Hodge")  # fmt: skip
+        vor = r["hodge"] == "voronoi"
+        ax[2].scatter(x, y, s=2, color="#4C72B0" if vor else "#DD8452", alpha=0.08,
+                      marker="o" if vor else "^", rasterized=True)  # fmt: skip
+        top = np.argsort(E)[::-1][: max(1, len(E) // 200)]
+        ax[2].scatter(x[top], y[top], s=22 if vor else 18, marker="o" if vor else "^",
+                      facecolor="#4C72B0" if vor else "#DD8452", edgecolor="k", lw=0.4,
+                      label=f"{r['hodge']}: 0.5 % elements with most energy of the fastest mode")  # fmt: skip
     ax[2].axhline(1, color="k", lw=0.8)
     ax[2].set_yscale("log")
     ax[2].set_xlabel("radius ratio 3 r_in / R")
     ax[2].set_ylabel(r"$\Delta t_T / \Delta t_{\max}$ (element bound / global)")
-    ax[2].set_title("(c) pillbox cpw 20: element step vs shape;\ncolour = log10 energy of the dt-limiting mode",
-                    fontsize=9)  # fmt: skip
-    ax[2].legend(fontsize=7, loc="upper left", markerscale=3)
+    ax[2].set_title("(c) pillbox cpw 20: element step vs shape\n(faint: all elements)", fontsize=9)
+    ax[2].legend(fontsize=6.5, loc="upper left")
     fig.tight_layout()
     fig.savefig(os.path.join(IMG, "unstructured_cadmesh_setup.png"), dpi=170)
     plt.close(fig)
@@ -151,7 +151,7 @@ def fig_bounds():
     ax[1].set_title("(b) localization of the dt-limiting mode", fontsize=9)
     for a in ax:
         a.set_xticks(range(len(uniq)))
-        a.set_xticklabels(uniq, fontsize=7)
+        a.set_xticklabels(uniq, fontsize=6.5, rotation=30)
         a.legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(IMG, "unstructured_cadmesh_bounds.png"), dpi=170)
@@ -201,10 +201,13 @@ def fig_improve():
     ax[2].set_ylabel("wall time per simulated ns / baseline")
     ax[2].axhline(1, color="k", lw=0.8)
     ax[2].set_title("(c) serial cost of a fixed simulated time, cpw 20", fontsize=9)
-    for a in ax:
+    for a in ax[:2]:
         a.set_xticks(xt)
         a.set_xticklabels(xl, fontsize=7)
         a.set_xlabel("case / cells per wavelength")
+    ax[2].set_xticks([ci * 4 + 1 for ci in range(3)])
+    ax[2].set_xticklabels(cases)
+    ax[2].set_xlabel("case (blue: Delaunay, green: + improve_dt)")
     ax[0].legend(fontsize=7, loc="upper left")
     fig.tight_layout()
     fig.savefig(os.path.join(IMG, "unstructured_cadmesh_improve.png"), dpi=170)
