@@ -141,14 +141,17 @@ def _bounds_task(args):
         h = float(case.split("_")[1])
         m, mats = ball_mesh([0.5, 1.0], h), {0: [4.0, 1.0], 1: [1.0, 1.0]}
     else:
-        m, info = make_mesh(case, cpw)
+        try:
+            m, info = make_mesh(case, cpw)
+        except Exception as err:
+            return dict(case=case, cpw=cpw, hodge=hodge, error=repr(err))
         mats = info.materials
     s = UnstructuredFIT3D(m, mats, hodge=hodge)
     st = element_stability(s)
     loc = top_mode_localization(s, st)
     rep = stability_report(s, st)
     q = tet_quality(m)
-    out = dict(case=case, cpw=cpw, hodge=hodge, **rep,
+    out = dict(case=case, cpw=cpw, **rep,
                lam_max=st["lam_max"], lam_bound=st["lam_bound"],
                lam_lower=st["lam_lower"], share_worst=loc["share_worst"],
                rank_of_peak=loc["rank_of_peak"])  # fmt: skip
@@ -173,6 +176,9 @@ def part_bounds(n_procs):
         res = p.map(_bounds_task, tasks)
     _dump("bounds", res)
     for r in res:
+        if "error" in r:
+            print(r)
+            continue
         print(r["case"], r["cpw"], r["hodge"], "tight %.3f lower %.4f share1%% %.3f"
               % (r["tightness"], np.sqrt(r["lam_lower"] / r["lam_max"]),
                  r["share_worst"]["0.01"] if "0.01" in r["share_worst"]
