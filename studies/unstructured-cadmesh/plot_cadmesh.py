@@ -118,7 +118,7 @@ def fig_setup():
 
 
 def fig_bounds():
-    b = _load("bounds")
+    b = [r for r in _load("bounds") if "error" not in r]
     fig, ax = plt.subplots(1, 2, figsize=(11, 3.8))
     labels = []
     for i, r in enumerate(b):
@@ -179,9 +179,8 @@ def fig_improve():
                 ax[0].bar(x, r["courant_h"], width=0.2, color=COL[v], label=lab)
                 base = next(q for q in rs if q["case"] == case and q["cpw"] == cpw
                             and q["variant"] == "none")  # fmt: skip
-                # wall time per simulated time, relative to the baseline
-                rel = (r["t_step"] / r["dt_max"]) / (base["t_step"] / base["dt_max"])
-                ax[2].bar(x, rel, width=0.2, color=COL[v], label=lab)
+                if "dt_max" not in base:
+                    continue
                 if "err" in r:
                     ax[1].bar(x, np.sqrt(np.mean(np.square(r["err"]))), width=0.2,
                               color=COL[v], label=lab)  # fmt: skip
@@ -190,9 +189,18 @@ def fig_improve():
     ax[1].set_yscale("log")
     ax[1].set_ylabel("rms relative frequency error")
     ax[1].set_title("(b) accuracy vs analytic (pillbox: 5 modes; layered: TM01)", fontsize=9)
+    tm = _load("timing")
+    for ci, case in enumerate(cases):
+        b = next(t for t in tm if t["case"] == case and t["variant"] == "none")
+        for vi, v in enumerate(("none", "ours")):
+            t = next(t for t in tm if t["case"] == case and t["variant"] == v)
+            ax[2].bar(ci * 4 + 1 + (vi - 0.5) * 0.4, t["t_per_ns"] / b["t_per_ns"], width=0.4,
+                      color=COL[v])  # fmt: skip
+            ax[2].text(ci * 4 + 1 + (vi - 0.5) * 0.4, t["t_per_ns"] / b["t_per_ns"] + 0.02,
+                       "%.2f" % (t["t_per_ns"] / b["t_per_ns"]), ha="center", fontsize=7)  # fmt: skip
     ax[2].set_ylabel("wall time per simulated ns / baseline")
     ax[2].axhline(1, color="k", lw=0.8)
-    ax[2].set_title("(c) cost to simulate a fixed time (1 core)", fontsize=9)
+    ax[2].set_title("(c) serial cost of a fixed simulated time, cpw 20", fontsize=9)
     for a in ax:
         a.set_xticks(xt)
         a.set_xticklabels(xl, fontsize=7)

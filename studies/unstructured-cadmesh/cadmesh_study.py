@@ -243,6 +243,35 @@ def part_improve(n_procs):
               "err", np.round(r.get("err", [np.nan]), 5)[:3], r.get("error", ""))  # fmt: skip
 
 
+# ------------------------------------------------------------------ part: timing
+def part_timing():
+    """
+    Serial wall time per step and per simulated ns, baseline vs improve_dt
+    (one process, one BLAS thread, interleaved repetitions: the improve part
+    times its arms while 8 workers share the machine, which is too noisy).
+    """
+    from wakis.unstructured import UnstructuredFIT3D
+
+    out = []
+    for case in ("pillbox", "layered", "muon"):
+        solvers = {}
+        for v in ("none", "ours"):
+            imp = dict(n_sweeps=10) if v == "ours" else None
+            m, info = make_mesh(case, 20, "none", improve=imp)
+            solvers[v] = UnstructuredFIT3D(m, info.materials)
+        ts = {v: [] for v in solvers}
+        for _ in range(5):
+            for v, s in solvers.items():
+                ts[v].append(step_time(s, 300))
+        for v, s in solvers.items():
+            t = float(np.median(ts[v]))
+            out.append(dict(case=case, variant=v, t_step=t, dt=s.dt_max,
+                            t_per_ns=t / s.dt_max * 1e-9, n_free=int(s.free.size),
+                            n_massless=int(s.massless.size), spread=float(np.ptp(ts[v]) / t)))  # fmt: skip
+            print(out[-1])
+    _dump("timing", out)
+
+
 # ------------------------------------------------------------------ part: muon tet
 def _muon_eig_task(args):
     cpw, variant, hodge = args
@@ -404,6 +433,8 @@ if __name__ == "__main__":
         part_bounds(int(arg or os.cpu_count()))
     elif part == "improve":
         part_improve(int(arg or os.cpu_count()))
+    elif part == "timing":
+        part_timing()
     elif part == "muon_tet":
         part_muon_tet(int(arg or os.cpu_count()))
     elif part == "muon_cart":

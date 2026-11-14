@@ -100,7 +100,36 @@ STUDY_RESULTS_MUON
 
 ## 6. Limits & Failure Modes
 
-LIMITS
+* **Non-Delaunay meshes are unstable with the Voronoi Hodge, silently.** A face with a negative assembled dual
+  length makes $K$ indefinite; the leapfrog then grows exponentially at *any* $\Delta t$ (measured: NaN after
+  500 steps on a curvature-refined muon-cavity mesh with 170 such faces). Eigenmode solves do not notice
+  (shift-invert finds the positive modes). gmsh's shape optimizers, curvature refinement
+  (`curvature_points`) and boundary recovery all produce such faces. Check
+  `stability_report(solver)["n_negative_faces"] == 0` before a Voronoi time-domain run; otherwise run
+  `improve_dt` (it removes them first, but not all: faces whose nodes are all on CAD curves or corners cannot
+  be repaired without topological flips) or use `hodge="whitney"` (stable on any mesh).
+* **Connectivity is fixed.** `improve_dt` only moves nodes. Slivers that need edge/face flips (sliver exudation,
+  Cheng et al. 2000) or nodes on CAD curves and corners stay as they are; the dt gain saturates after
+  5–10 sweeps (Section 4).
+* **The gain partly comes from eliminating more edges.** The objective ignores edges below
+  `massless_tol * L^2` (the solver eliminates them), so moves that push an edge below the threshold are
+  accepted: massless edges grow by 20–45 %. The accuracy cost is measured (Section 4: equal or better
+  resonance errors), and the per-step cost of the Schur solve is included in the wall-time comparison, but a
+  much larger `massless_tol` *does* cost accuracy (pillbox cpw 10: TM010 error −0.41 %, +0.36 %, +5.4 % at
+  1e-2, 3e-2, 1e-1).
+* **Sliding changes the polyhedral geometry at O(h²).** Nodes on curved CAD surfaces are projected back onto
+  the exact surface; the chord error of the polyhedral boundary is unchanged in order but not identical
+  (muon cpw 10: meshed volume −2.64 % → −2.75 % of the CAD volume). Interface clipping of the dual areas is
+  re-applied on the final mesh but ignored inside the local search.
+* **Element bound tightness is measured, not guaranteed, for Whitney.** The Voronoi bracket within $\sqrt 6$ is
+  derived; the Whitney bound was 1.19–1.54× on our meshes with no proven factor.
+* **Scope.** PEC/PMC outer boundaries only in the stability analysis (ABC conductances and the PML are not in the
+  element matrices; lossy terms do not change the lossless leapfrog limit but the PML lowers dt, see the PML
+  section). Material-interface edges use the clipped assembled masses. The STL path needs a watertight surface;
+  remeshed STL bodies are inscribed in the STL (volume deficit $\le h^2/(2R^2)$ on a sphere of radius $R$).
+* **gmsh is GPL** and optional: without it `mesh_cad`/`mesh_stl` raise ImportError with alternatives
+  (`read_mesh` with meshio, or the pure-Python `ball_mesh`/`disk_mesh`); `quality` and `improve` need only
+  NumPy/SciPy.
 
 ## References
 
