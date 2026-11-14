@@ -97,6 +97,7 @@ class SubgridCPML:
                     continue
                 depth = (lo[d] + t - u) if side == 0 else (u - (hi[d] - t))
                 x = np.clip(depth / t, 0.0, 1.0)
+                x[x < 1e-9] = 0.0  # node lines on the layer's inner face: no loss
                 smax = -(order + 1) * np.log(R0) * C0 / (2 * t)
                 out = out + smax * x**order
             return out

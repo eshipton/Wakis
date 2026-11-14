@@ -37,13 +37,7 @@ import scipy.linalg as la
 from scipy.constants import c as C0
 
 from wakis.subgrid3d import Box, SubgridLTS, SubgridLTSFIT3D, SubgridMesh3D
-from wakis.subgrid3d.lts import (
-    is_stable,
-    level_margins,
-    lts_dt_max,
-    positivity_limit,
-    stability_ratio,
-)
+from wakis.subgrid3d.lts import is_stable, lts_dt_max
 
 EPS = np.finfo(float).eps
 A_CAV, B_CAV, D_CAV = 1.0, 0.75, 0.5
@@ -97,11 +91,18 @@ def closed_materials():
 
 
 def damping_floor(lts):
-    """min_l sqrt(x_+(p_l, nu_l)) / (2 p_l): fine substep fraction allowed by r_l >= 0."""
+    """
+    min_l sqrt(2 delta_l / beta_l) / (2 p_l): the fraction of its own Yee
+    limit a level-l mode may use. At ``x = 2 delta / beta`` the argument of
+    T_p reaches ``-delta``: r_l changes sign there for even p (positivity)
+    and x r(x) reaches 4 for odd p (rho).
+    """
+    from wakis.unstructured.lts import chebyshev_coefficients
+
     out = []
     for d in lts.levels[1:]:
-        xp_ = positivity_limit(d.p, d.nu)
-        out.append(1.0 if not np.isfinite(xp_) else np.sqrt(xp_) / (2 * d.p))
+        delta, beta, _, _, _ = chebyshev_coefficients(d.p, d.nu)
+        out.append(np.sqrt(2 * delta / beta) / (2 * d.p))
     return min(out)
 
 
