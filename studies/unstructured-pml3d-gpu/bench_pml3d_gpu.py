@@ -118,12 +118,18 @@ def plot():
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
     style = {"ball_abc": ("s", "ball, Silver-Müller"), "shell_abc": ("^", f"ball + {S['layers']} vacuum layers, Silver-Müller"),
              "shell_pml": ("o", f"ball + {S['layers']}-layer CFS-PML")}  # fmt: skip
-    for kind, (mk, lab) in style.items():
+    from matplotlib.ticker import NullFormatter
+
+    for i, (kind, (mk, lab)) in enumerate(style.items()):
         R = [r for r in S["runs"] if r["kind"] == kind]
         n = [r["n_cells"] for r in R]
-        axs[0].loglog(n, [r["device_cell_steps_per_s"] for r in R], mk + "-", label=f"{lab} ({S['gpu']})")
-        axs[0].loglog(n, [r["host_cell_steps_per_s"] for r in R], mk + "--", mfc="none", label=f"{lab} (host SciPy, 1 thread)")
-        axs[1].semilogx(n, [r["speedup"] for r in R], mk + "-", label=lab)
+        col = f"C{i}"
+        axs[0].loglog(n, [r["device_cell_steps_per_s"] for r in R], mk + "-", color=col, label=f"{lab} ({S['gpu']})")
+        axs[0].loglog(n, [r["host_cell_steps_per_s"] for r in R], mk + "--", color=col, mfc="none",
+                      label=f"{lab} (host SciPy, 1 thread)")  # fmt: skip
+        axs[1].semilogx(n, [r["speedup"] for r in R], mk + "-", color=col, label=lab)
+    for ax in axs:
+        ax.xaxis.set_minor_formatter(NullFormatter())
     axs[0].set_xlabel("tetrahedra")
     axs[0].set_ylabel("cell-steps per second")
     axs[0].legend(fontsize=6)

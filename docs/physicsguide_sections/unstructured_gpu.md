@@ -136,11 +136,54 @@ All timings use unsynchronised step loops of at least 1 s after 20 warm-up steps
 
 ![Per-launch breakdown of the fused step](../img/unstructured_gpu_breakdown.png)
 
+##### 5. The 3D spherical CFS-PML on the device
+
+With `pml=` the host step is already four fixed sparse stages on the extended state
+$`\mathbf x = [\mathbf u, \mathbf b, \mathbf z]`$ (`pml3d.PML3D`; $`\mathbf z`$: PML dual fluxes and filter memories),
+$`\mathbf x' = S_4(S_3S_2S_1\mathbf x + B\mathbf j)`$. `DeviceStepper` copies the four CSR matrices and runs them with
+the 4-lane CSR kernel into two ping-pong buffers; `u`, `b`, `z` are views of one device vector, so probes, DFTs and
+`get_state` work unchanged. Each source is folded once into $`B\mathbf w_k`$; the stretched massless elimination and
+the capacitive update are inside $`S_1`$ and $`S_3`$. `to_host()` hands the whole extended state back (`PML3D.x`), so
+the host solver can continue.
+
+**Bound.** The derivation of §2 carries over with two additions. (i) The local error of the chained SpMVs: the rounding
+of stage $`k`$ propagates through the absolute values of the later stages, $`|\delta| \le
+\gamma_{\sum_k m_k}|S_4||S_3||S_2||S_1||\mathbf x| + \dots`$ (Higham 2002, Lemma 3.3 and §3.5), so the depth is
+$`m = 12 + \sum_k \max\text{row-nnz}(S_k) + 2`$ (164 on the test ball), and the absolute twin uses $`|S_k|`$ and
+$`|B||\mathbf w|`$. (ii) The norm includes the filter states: $`\mathbf d`$ with $`1/C`$, edge-filter voltages with $`C`$,
+face-filter currents with $`1/M_\nu`$, and each integral $`P`$ with the weight of its filtered variable times
+$`\sigma_n^2`$ ($`P_x`$) or $`\sigma_d^2`$ ($`P_y`$), as in 2D. $`K`$ is `empirical_amplification` over random states in
+that norm (11.9 with κ = 2, α > 0 on the numpy path; 48–268 with α = 0, where $`P`$ is a pure integrator): a lower
+estimate, not a theorem.
+
+**Validation** (`tests/test_102_unstructured_pml3d_gpu.py`, ball 1 m, h = 0.25 m, 4 layers, two dipoles, two probes,
+2-frequency DFT, 300 steps; NVIDIA L4, Batch `pmlgpu-v1`). State difference incl. $`\mathbf z`$
+$`\|d\|_W/\|x\|_W`$ = 1.5e-15 (CFS) and 2.7e-15 (α = 0), $`d/\varepsilon_N`$ = 5.1e-6 and 2.1e-6; every probe sample
+≤ 1.1e-6 of its bound, every DFT ≤ 2.0e-7. Mutations: face-filter stage × (1 + 1e-3) gives $`d/\varepsilon_N`$ = 5e8;
+the source added to $`\mathbf u`$ without $`B`$ gives 1.3e9. No host synchronisation in a step (spin-kernel test).
+The full `test_099` suite still passes on the L4 (66 passed with test_102 in the same job).
+
+**Throughput** (`studies/unstructured-pml3d-gpu/bench_pml3d_gpu.py`, L4 on g2-standard-8, host SciPy 1 thread on the same
+VM; balls 8–20 h, 10 layers of dr = h):
+
+| ball | tets (shell) | ball + 10 vacuum layers, Silver–Müller: L4 µs/step | + 10-layer CFS-PML: L4 µs/step | PML / vacuum (L4) | PML / vacuum (host) | L4 vs host (PML) |
+|---|---|---|---|---|---|---|
+| 8 h | 7.8e4 | 53 | 720 | 13.6 | 6.2 | 30× |
+| 12 h | 2.0e5 | 131 | 1872 | 14.3 | 6.4 | 32× |
+| 16 h | 4.1e5 | 485 | 3494 | 7.2 | 5.8 | 35× |
+| 20 h | 7.3e5 | 877 | 5783 | 6.6 | 5.0 | 35× |
+
+The PML step costs 5–14× the vacuum step on the same cells, because the extended state is 3.6–5.1× longer (four
+memories per stage × two cascaded filters per PML edge and face, all layers of the shell) and the stage matrices are
+generic CSR (1.45 kB of device memory per tetrahedron at 7.3e5 tets, against 0.24 kB without the PML). At small sizes
+the plain step is launch-bound (53 µs), so the ratio is largest there. Fusing each cascade into one elementwise kernel
+(the filters are diagonal per dof) would remove most of the PML traffic; not done.
+
 ##### Limits & Failure Modes
 
 * **The bound is first order and worst case.** It neglects $`O(u^2)`$ terms and assumes $`K`$ bounds the propagation. For the PML and LTS, $`K`$ is a random-state estimate (a lower estimate of $`\sup\|A^k\|_W`$), not a theorem. For dispersive ADEs, $`K`$ assumes the augmented passive energy does not grow, which is checked numerically only for lossless fields.
 * **PML auxiliaries integrate.** With $`\alpha = 0`$ (the default) the CFS filter states $`P = \int x\,\mathrm dt`$ are marginally stable. A perturbation of $`P`$ persists and drives the fields, so the estimated $`K`$ is $`10^3`$ on the 300-step test cases instead of 6.24, and it grows with $`N`$. This is the discrete counterpart of the known late-time linear growth of PML auxiliaries [Bécache & Joly, 2002]. CPU and GPU runs with a PML can drift apart linearly in time at the round-off level; a positive $`\alpha`$ removes it.
-* **Not on the device:** `hodge="whitney"` (needs a sparse solve per step), plane waves combined with dispersive media (`dispersive_planewave` patches the host step), and K_ss blocks larger than 64 massless edges. `to_host()` returns fields, probes and DFTs but not the ADE/PML auxiliary states, so to continue a run after `to_host()`, keep stepping the same `DeviceStepper`. Only float64 is supported.
+* **Not on the device:** `hodge="whitney"` (needs a sparse solve per step), plane waves combined with dispersive media (`dispersive_planewave` patches the host step), and K_ss blocks larger than 64 massless edges. `to_host()` returns fields, probes and DFTs but not the ADE or 2D PML auxiliary states (the 3D PML extended state is returned), so to continue a run after `to_host()`, keep stepping the same `DeviceStepper`. Only float64 is supported.
 * **Launch latency at small sizes.** The plain 3D / 2D-TM step is 2 fused kernels plus one per source and per monitor, about 36 µs per step on an L4 or A100 below about 2e5 unknowns, where the GPU waits on the host. With ADE groups, the PML, LTS, the plane wave or 2D TE, the step falls back to one kernel per array operation (still on the device, with the CSR kernels for every SpMV), several times more launches. The step is not captured in a CUDA graph, because the source amplitudes are host scalars that change every step.
 * **Gather-bound SpMV.** At large sizes the step reaches about 50 % (A100) to 65 % (L4) of peak bandwidth on the operator footprint. Reordering the dofs (RCM / space-filling curve) for gather locality has not been tried; the Cartesian fused step stays 1.05–1.4× faster at the largest size and up to 2.6× faster at mid sizes, at equal unknowns.
 * **Device memory.** $`C_{\mathrm{eff}}`$ and $`C_f^T`$ are stored as separate CSR matrices (the transpose is explicit for cuSPARSE speed), and the massless fold adds the fill of $`C_sK_{ss}^{-1}K_{sf}`$. A DFT stores $`n_f\times n_{\mathrm{dof}}`$ complex values.
