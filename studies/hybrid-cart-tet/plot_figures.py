@@ -1,12 +1,12 @@
 """
 Figures of the hybrid Cartesian / tetrahedral FIT study.
 
-Reads results_{A,B,C*,D}.json and builds (Agg backend):
+Reads results_{A,B,C,D,E}*.json and builds (Agg backend):
 
 * fig_hybrid_mesh.png       setup: xz cut through the PEC-sphere hybrid mesh
                             and the triangulated patch face over the Cartesian
                             squares (hanging edges highlighted);
-* fig_hybrid_waveguide.png  TE10 |R| of a vacuum patch vs cells per a;
+* fig_hybrid_waveguide.png  TE10 |R| envelope over patch lengths vs cells per a,\n                            and |R| vs patch length;
 * fig_hybrid_cavity.png     PEC-cavity resonance errors vs h;
 * fig_hybrid_sphere.png     PEC-sphere scattered-field error vs N and vs
                             the number of unknowns (equal-cost view);
@@ -40,10 +40,12 @@ COL = {"cartesian": "0.2", "staircase": "0.2", "kuhn": "C0", "kuhn_r1": "C0", "k
 
 
 def load(part):
-    out = []
+    """All results of a part (several Batch jobs), one entry per (N, kind)."""
+    out = {}
     for p in sorted(glob.glob(os.path.join(HERE, f"results_{part}*.json"))):
-        out += json.load(open(p))["results"]
-    return out
+        for r in json.load(open(p))["results"]:
+            out[(r["N"], r.get("kind"))] = r
+    return [out[k] for k in sorted(out, key=lambda k: (k[0], str(k[1])))]
 
 
 def guide(ax, x, y0, order, label):
@@ -52,31 +54,39 @@ def guide(ax, x, y0, order, label):
 
 
 def fig_waveguide():
-    R = load("A")
-    if not R:
+    A, E = load("A"), load("E")
+    if not E:
         return
-    fig, ax = plt.subplots(figsize=(5.6, 4.0))
-    labels = {"floor": "no patch (fit/absorber floor)", "kuhn_r1": "Kuhn patch, h_t = h",
-              "kuhn_r2": "Kuhn patch, h_t = h/2", "delaunay_r1": "Delaunay patch, h_t ~ h",
-              "delaunay_r2": "Delaunay patch, h_t ~ h/2",
-              "kuhn_nearest": "mutation: nearest-edge trace",
-              "kuhn_inject": "mutation: injected trace"}  # fmt: skip
-    for kind, lab in labels.items():
-        rows = sorted([r for r in R if r["kind"] == kind], key=lambda r: r["N"])
-        if not rows:
-            continue
-        N = [r["N"] for r in rows]
-        ls = "--" if "kuhn_" in kind and kind not in ("kuhn_r1", "kuhn_r2") else "-"
-        ax.loglog(N, [r["R"] for r in rows], "o" + ls, color=COL[kind], label=lab, ms=4)
-    rows = sorted([r for r in R if r["kind"] == "kuhn_r1"], key=lambda r: r["N"])
-    if rows:
-        guide(ax, [r["N"] for r in rows], rows[0]["R"] * 1.6, 2, "$h^2$")
+    fig, axs = plt.subplots(1, 2, figsize=(10.5, 4.0))
+    ax = axs[0]
+    labels = {"kuhn": "Kuhn patch, $h_t = h$", "delaunay": "Delaunay patch, $h_t \\approx h$",
+              "kuhn_nearest": "mutation: nearest-edge trace"}  # fmt: skip
+    for base, lab in labels.items():
+        Ns = sorted({r["N"] for r in E if r["base"] == base})
+        env = [max(r["R"] for r in E if r["base"] == base and r["N"] == N) for N in Ns]
+        ax.loglog(Ns, env, "o-" if base != "kuhn_nearest" else "s--", color=COL[base], label=lab, ms=4)
+        if base == "kuhn":
+            guide(ax, Ns, env[0] * 1.5, 2, "$h^2$")
+    fl = sorted([r for r in A if r["kind"] == "floor"], key=lambda r: r["N"])
+    if fl:
+        ax.loglog([r["N"] for r in fl], [r["R"] for r in fl], "x:", color=COL["floor"],
+                  label="no patch: fit/absorber floor")  # fmt: skip
     ax.set_xlabel("Cartesian cells per broad wall $a$ (h = a/N)")
-    ax.set_ylabel("TE$_{10}$ reflection $|R|$ of the vacuum patch")
-    ax.set_title("Interface reflection, PEC guide, $\\lambda = 1.4a$", fontsize=10)
-    ax.set_xticks([8, 12, 16, 20])
-    ax.set_xticklabels(["8", "12", "16", "20"])
+    ax.set_ylabel("envelope $\\max_L |R(L)|$")
+    ax.set_title("(a) TE$_{10}$ reflection of a vacuum patch, $\\lambda = 1.4a$", fontsize=10)
+    Ns = sorted({r["N"] for r in E})
+    ax.set_xticks(Ns)
+    ax.set_xticklabels([str(n) for n in Ns])
     ax.legend(fontsize=7, loc="lower left")
+    ax = axs[1]
+    for i, N in enumerate(Ns):
+        rows = sorted([r for r in E if r["base"] == "kuhn" and r["N"] == N], key=lambda r: r["L"])
+        ax.semilogy([r["L"] for r in rows], [r["R"] for r in rows], "o-", ms=3,
+                    color=plt.cm.viridis(i / max(1, len(Ns) - 1)), label=f"N = {N}")  # fmt: skip
+    ax.set_xlabel("patch length L along the guide [a]")
+    ax.set_ylabel("$|R|$ (Kuhn patch)")
+    ax.set_title("(b) front/back interference: zero near $L = \\lambda_g/2 = 0.98a$", fontsize=10)
+    ax.legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(FIG, "fig_hybrid_waveguide.png"))
     plt.close(fig)
@@ -234,11 +244,13 @@ def fig_mesh_and_field():
     ax.add_patch(plt.Rectangle((-B, -B), 2 * B, 2 * B, fill=False, ec="C3", lw=1.6, zorder=4))
     ax.annotate("PEC sphere\n$ka = 2$", (0, 0), color="w", ha="center", va="center", zorder=5,
                 fontsize=8)  # fmt: skip
-    ax.text(-B + 0.01, B + 0.02, "interface (box of whole Cartesian cells)", color="C3", fontsize=8)
+    ax.text(-B, B + 0.04, "interface (box of whole Cartesian cells)", color="C3", fontsize=8,
+            bbox=dict(fc="white", ec="none", pad=1), zorder=6)  # fmt: skip
     ax.text(v[0] + 0.02, v[-1] - 0.08, "complex-stretched absorber", fontsize=8)
-    ax.annotate("", xy=(0.15, v[0] + 0.12), xytext=(-0.15, v[0] + 0.12),
-                arrowprops=dict(arrowstyle="->", color="C2"))  # fmt: skip
-    ax.text(0.17, v[0] + 0.1, "$\\mathbf{E}_i = \\hat x e^{ikz}$ (along +z)", fontsize=8, color="C2")
+    ax.annotate("", xy=(v[0] + 0.12, v[0] + 0.45), xytext=(v[0] + 0.12, v[0] + 0.1),
+                arrowprops=dict(arrowstyle="->", color="C2", lw=1.5))  # fmt: skip
+    ax.text(v[0] + 0.16, v[0] + 0.2, "$\\mathbf{k} \\parallel +z$,\n$\\mathbf{E}_i = \\hat x e^{ikz}$",
+            fontsize=8, color="C2", bbox=dict(fc="0.9", ec="none", pad=1))  # fmt: skip
     ax.set_aspect("equal")
     ax.set_xlim(v[0], v[-1])
     ax.set_ylim(v[0], v[-1])
@@ -252,18 +264,19 @@ def fig_mesh_and_field():
     F = X[tm.faces[bf]]
     on = np.all(np.abs(F[:, :, 0] + B) < 1e-9, axis=1)
     tri = [f[:, 1:] for f in F[on]]
-    ax.add_collection(PolyCollection(tri, facecolors="C0", alpha=0.08, edgecolors="C0", lw=0.5))
+    ax.add_collection(PolyCollection(tri, facecolors="#dbe9f6", edgecolors="C0", lw=0.9))
     vb = v[(v >= -B - 1e-9) & (v <= B + 1e-9)]
     sq = [[(x, vb[0]), (x, vb[-1])] for x in vb] + [[(vb[0], z), (vb[-1], z)] for z in vb]
-    ax.add_collection(LineCollection(sq, colors="k", lw=1.4))
+    ax.add_collection(LineCollection(sq, colors="k", lw=2.0))
     ax.set_aspect("equal")
-    ax.set_xlim(vb[0] - 0.02, vb[-1] + 0.02)
-    ax.set_ylim(vb[0] - 0.02, vb[-1] + 0.02)
+    # zoom on a corner of the face: 4 x 4 squares
+    ax.set_xlim(vb[0] - 0.01, vb[4] + 0.01)
+    ax.set_ylim(vb[0] - 0.01, vb[4] + 0.01)
     ax.set_xlabel("y [m]")
     ax.set_ylabel("z [m]")
-    ax.set_title("(b) patch face x = -B: Cartesian squares (black) carry the\n"
-                 "free edges; every triangle edge (blue) is hanging on the\n"
-                 "Nedelec trace of its square", fontsize=9)  # fmt: skip
+    ax.set_title("(b) patch face x = -B (corner, 4 x 4 squares): squares (black)\n"
+                 "carry the free edges; every triangle edge (blue) hangs on\n"
+                 "the Nedelec trace of its square", fontsize=9)  # fmt: skip
     fig.tight_layout()
     fig.savefig(os.path.join(FIG, "fig_hybrid_mesh.png"))
     plt.close(fig)

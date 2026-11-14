@@ -21,6 +21,10 @@ D. Time domain on the sphere geometry in a closed PEC box (no absorber):
    lambda bounds (Cartesian, tetrahedral, composite), dt ratio to the pure
    Cartesian grid, wall time per step (LU and Chebyshev mass solves; same
    machine, 1 thread) and the energy history over 20000 steps.
+E. The front and back faces of the patch reflect with opposite signs, so
+   |R| at one patch length oscillates with N (accidental cancellations).
+   E sweeps the length L in {0.25, ..., 1.5} a and reports, per N, the
+   envelope max_L |R(L)| ~ 2 |r| of a single interface.
 
 Usage: python studies/hybrid-cart-tet/run_study.py --parts A [--quick] [--procs N]
 Writes studies/hybrid-cart-tet/results_<part>.json.
@@ -143,6 +147,16 @@ def task_D(args):
     return out
 
 
+def task_E(args):
+    N, kind, L = args
+    t0 = time.time()
+    kw = {"kuhn": dict(patch="kuhn"), "delaunay": dict(patch="delaunay"),
+          "kuhn_nearest": dict(patch="kuhn", mutate="nearest")}[kind]  # fmt: skip
+    R = waveguide_reflection(N, patch_length=L, **kw)
+    return {"N": N, "kind": f"{kind}_L{L}", "base": kind, "L": L, "R": R,
+            "time_s": time.time() - t0}  # fmt: skip
+
+
 PARTS = {
     "A": (task_A, [(N, k) for N in (8, 12, 16, 20)
                    for k in ("floor", "kuhn_r1", "kuhn_r2", "delaunay_r1", "delaunay_r2",
@@ -151,6 +165,8 @@ PARTS = {
     "C": (task_C, [(N, k) for N in (8, 10, 12, 16) for k in ("staircase", "hybrid", "hybrid_fine", "tet")]
           + [(20, "staircase"), (20, "hybrid"), (24, "staircase")]),
     "D": (task_D, [(10,), (16,)]),
+    "E": (task_E, [(N, k, L) for N in (8, 12, 16, 20, 24) for k in ("kuhn", "delaunay", "kuhn_nearest")
+                   for L in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)]),
 }  # fmt: skip
 
 
