@@ -22,7 +22,7 @@ python studies/hybrid-cart-tet/plot_figures.py   # N = 10 solve for the mesh/fie
 | A | `w2hyb-a`, `w2hyb-a2`, `w2hyb-a4` | n2-highmem-16 | `results_A.json`, `results_A_8-12-16.json`, `results_A_ext.json` |
 | B | `w2hyb-b` | n2-standard-16 | `results_B.json` |
 | C | `w2hyb-c4`, `w2hyb-c5` | n2-highmem-16 / -32 | `results_C_8-10-12.json`, `results_C_16-20-24.json` |
-| D | `w2hyb-d2`, `w2hyb-d3` | n2-highmem-8 | `results_D_10.json`, `results_D_16.json` |
+| D | `w2hyb-d2`; `w2hyb-d3` (N = 16, still running at hand-off) | n2-highmem-8 | `results_D_10.json`; `results_D_16.json` (pending) |
 | E, F | `w2hyb-e` (cross-checked by `w2hyb-e3`), `w2hyb-f` | n2-highmem-32 | `results_E.json`, `results_E_fine.json` |
 | figures | `w2hyb-fig3` | n2-highmem-8 | `figures/fig_hybrid_*.png` |
 
@@ -35,3 +35,5 @@ The first C and D jobs (`w2hyb-c1`/`-c2`/`-c3`, `w2hyb-d`) were stopped: their d
 * **PEC sphere, ka = 2, far zone.** Hybrid 6.6 % at 67k unknowns against 20 % for the staircase at 502k. At about equal unknowns the error is 12× lower (2.4 % against 29 %). All-tetrahedral meshes need 1.4–1.5× more unknowns than the hybrid at equal error.
 * **Open.** The TE₁₀ interface reflection flattens at about $10^{-4}$ (Kuhn) and $2$–$3\times10^{-4}$ (Delaunay) beyond 20 cells per guide width.
 * **Open.** Time-domain work: $\Delta t$ is 5.8× smaller than the Cartesian step and each step costs about 200× more per unknown (consistent-mass solve).
+
+Note: `bin/batch-run --fetch JOB WT` unpacks the whole study directory, scripts included, as shipped at submission time. Fetch into a scratch directory and copy only `results_*.json` and `figures/*.png`.

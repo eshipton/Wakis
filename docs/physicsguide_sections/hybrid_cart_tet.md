@@ -159,7 +159,7 @@ The front and back faces of the patch reflect with opposite signs, so $|R|$ at o
 * The cost per step is 74 ms (LU) or 91 ms (Chebyshev, degree 204) for 33 600 unknowns, against 0.20 ms for the 15 000-unknown Cartesian grid: 2.2–2.7 µs against 13 ns per unknown-step on one core. The consistent-mass solve on the 24 000-row coupled block dominates.
 * `mass_tol=1e-4` cuts the Chebyshev degree 3.8× and the step time 3.4× (measured on the test mesh). The scheme stays exactly energy conserving for the modified mass, and the $\mathbf M$-energy stays within $1.1\times10^{-6}$.
 
-D16_PLACEHOLDER
+The same measurement at $N=16$ (Batch job `w2hyb-d3`, `results_D_16.json`) was still running when this section was written. It adds the $N$-dependence of the $\Delta t$ ratio and of the cost.
 
 #### 8. Limits & Failure Modes
 
