@@ -27,7 +27,7 @@ discretisation error cancels exactly). All runs share one dt.
   tangential filters swapped, the auxiliary (convolution) term of the
   denominators dropped. Omitting the tangential stretch s_t (planar stretch
   on a sphere) stays below -40 dB here (-47 dB) but must reflect > 10x more
-  than the correct layer (measured 35-40x).
+  than the correct layer (measured 100x).
 * Energy: after the source is off, the ball energy (leapfrog-conserved form)
   falls below 1e-8 of its peak and never rises by more than R^2 = 1e-4 of the
   peak (the energy a -40 dB reflection can return); in a PEC ball the same

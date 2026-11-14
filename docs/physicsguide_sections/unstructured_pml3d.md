@@ -190,15 +190,15 @@ reflection a user sees; the transition is. Remedies to try (open): choose dr to 
 (the minimum near dr = h suggests a matched value close to h), a graded transition layer of tetrahedra whose
 quality approaches the prisms, or extruding the shell from a smoothed (centroidal) surface triangulation.
 
-**Tests** (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, centre wavelength 12 h): 10 layers 7.5e-5–1.3e-4
-normal, 5.9e-4–1.8e-3 oblique; Silver–Müller 0.064–0.92; PEC 0.17–2.0. Layers 3 / 6 / 12: 1.6e-2 / 2.4e-4 / 2.5e-5
+**Tests** (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, centre wavelength 12 h): 10 layers 3.0e-5–4.5e-5
+normal, 2.5e-4–6.8e-4 oblique (with the per-chord massless decision: 7.5e-5–1.3e-4 and 5.9e-4–1.8e-3); Silver–Müller 0.064–0.92; PEC 0.17–2.0. Layers 3 / 6 / 12: 1.6e-2 / 2.4e-4 / 2.5e-5
 (ratio 12/6 = 0.10; with the per-chord massless decision it was 0.57, the test requires < 0.25). The floor test
 (`test_floor_was_the_reference_shell`): per chord, the vacuum reference differs from a 20-layer PML by 1.1e-4 = the
 floor; per column by 3.9e-6. The backing echo is 3.2e-8 (R = 1e-8) and 2.7e-4 with R = 1e-3 (mutation, must exceed
 1e-5). `test_massless_decision_is_per_column`: 4 massless chords on every ring (per chord: 4 → 29). Mutations: negative
 σ blows up (1e87); radial/tangential filters swapped 1.3–1.8; auxiliary term dropped 0.69–0.93; s_t omitted
-3.0e-3–4.5e-3 (still −47 dB: a planar stretch on the sphere only adds a curvature error; the test requires > 10× the
-correct layer); α < 0 grows by 1e18 in 1e4 steps. After the source is off, the ball energy falls to 2.8e-10 of its
+3.0e-3–4.5e-3 (still −47 dB: a planar stretch on the sphere only adds a curvature error; 100× the correct layer,
+the test requires > 10×); α < 0 grows by 1e18 in 1e4 steps. After the source is off, the ball energy falls to 2.8e-10 of its
 peak with at most 5.2e-8 of the peak of transient rise (bound R² = 1e-4); in a PEC ball the same energy form is
 conserved to 1e-17. Over 1e5 steps (CFS α > 0) the field stays at 1.6e-7 of its peak without growth (last-10 % /
 40–50 % maximum ratio 0.98).

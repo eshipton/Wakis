@@ -153,15 +153,16 @@ $`m = 12 + \sum_k \max\text{row-nnz}(S_k) + 2`$ (164 on the test ball), and the 
 $`|B||\mathbf w|`$. (ii) The norm includes the filter states: $`\mathbf d`$ with $`1/C`$, edge-filter voltages with $`C`$,
 face-filter currents with $`1/M_\nu`$, and each integral $`P`$ with the weight of its filtered variable times
 $`\sigma_n^2`$ ($`P_x`$) or $`\sigma_d^2`$ ($`P_y`$), as in 2D. $`K`$ is `empirical_amplification` over random states in
-that norm (11.9 with κ = 2, α > 0 on the numpy path; 48–268 with α = 0, where $`P`$ is a pure integrator): a lower
+that norm (11.7 with κ = 2, α > 0; 40.7 with α = 0, where $`P`$ is a pure integrator): a lower
 estimate, not a theorem.
 
 **Validation** (`tests/test_102_unstructured_pml3d_gpu.py`, ball 1 m, h = 0.25 m, 4 layers, two dipoles, two probes,
-2-frequency DFT, 300 steps; NVIDIA L4, Batch `pmlgpu-v1`). State difference incl. $`\mathbf z`$
-$`\|d\|_W/\|x\|_W`$ = 1.5e-15 (CFS) and 2.7e-15 (α = 0), $`d/\varepsilon_N`$ = 5.1e-6 and 2.1e-6; every probe sample
-≤ 1.1e-6 of its bound, every DFT ≤ 2.0e-7. Mutations: face-filter stage × (1 + 1e-3) gives $`d/\varepsilon_N`$ = 5e8;
-the source added to $`\mathbf u`$ without $`B`$ gives 1.3e9. No host synchronisation in a step (spin-kernel test).
-The full `test_099` suite still passes on the L4 (66 passed with test_102 in the same job).
+2-frequency DFT, 300 steps; NVIDIA L4, Batch `pmlgpu-test-v2`, 19 passed with test_101). State difference incl.
+$`\mathbf z`$: $`\|d\|_W/\|x\|_W`$ = 8.6e-16 (CFS, K = 11.7) and 9.4e-16 (α = 0, K = 40.7), $`d/\varepsilon_N`$ = 1.5e-5
+and 4.4e-6; every probe sample ≤ 6.7e-6 of its bound, every DFT ≤ 3.6e-6; the numpy path gives the same to two
+digits. Mutations: face-filter stage × (1 + 1e-3) gives $`d/\varepsilon_N`$ = 9.3e8; the source added to $`\mathbf u`$
+without $`B`$ gives 4.7e8. No host synchronisation in a step (spin-kernel test). The `test_099` suite still passes on the
+L4 (Batch `pmlgpu-v1`, together with an earlier weighting of the filter states).
 
 **Throughput** (`studies/unstructured-pml3d-gpu/bench_pml3d_gpu.py`, L4 on g2-standard-8, host SciPy 1 thread on the same
 VM; balls 8–20 h, 10 layers of dr = h):
