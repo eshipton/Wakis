@@ -39,7 +39,13 @@ waves in a shell r0 < r < r1, meshed by `wakis.unstructured.pml3d.ball_with_pml_
 | PML, 10 layers, α = ω0/10 | 4.6e-4 | 5.2e-4 | 6.8e-5–1.8e-3 |
 
 * **Against the target.** 10 layers beat the −40 dB target by 27 dB at normal incidence and by ≥ 14 dB obliquely.
-  They are 300–500× better than first-order Silver–Müller on the same ball.
+  They are 300–500× better than first-order Silver–Müller on the same ball (for the PML layer alone against the
+  same-shell reference; see the 2026-11-17 correction below for the reference-shell floor and the tet → prism
+  transition reflection).
+* **Correction (2026-11-17; `pml3d_floor.py`, `pml3d_transition.py`, `docs/physicsguide_sections/unstructured_pml3d.md` §4–4.2).**
+  The 4.5e-4 floor at N = 10–16 above was the vacuum reference shell (fixed: 3.0e-4 / 7.0e-5 / 1.7e-5 at 10/16/24
+  layers), and the tet → prism transition reflects 1.3–2.3e-2 (16/8 cells/λ), so the whole open boundary is ~1.7×
+  better than first-order Silver–Müller at study resolution; the 300–500× applies to the layer alone.
 * **Layer count.** The reflection falls steeply from N = 4 to 10, by 40× in a factor 2.5 of N. This regime is
   dominated by the per-cell discretisation of the grading: σ_max dr / c = 9.2 at N = 4 and 3.7 at N = 10. I did
   not derive a closed-form exponent, and the N⁻² guess I started from is not supported by the data.

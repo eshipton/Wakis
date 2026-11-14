@@ -156,8 +156,8 @@ $`\sigma_n^2`$ ($`P_x`$) or $`\sigma_d^2`$ ($`P_y`$), as in 2D. $`K`$ is `empiri
 that norm (11.7 with κ = 2, α > 0; 40.7 with α = 0, where $`P`$ is a pure integrator): a lower
 estimate, not a theorem.
 
-**Validation** (`tests/test_102_unstructured_pml3d_gpu.py`, ball 1 m, h = 0.25 m, 4 layers, two dipoles, two probes,
-2-frequency DFT, 300 steps; NVIDIA L4, Batch `pmlgpu-test-v2`, 19 passed with test_101). State difference incl.
+**Validation** (`tests/test_107_unstructured_pml3d_gpu.py`, ball 1 m, h = 0.25 m, 4 layers, two dipoles, two probes,
+2-frequency DFT, 300 steps; NVIDIA L4, Batch `pmlgpu-test-v2`, 19 passed with `test_106`). State difference incl.
 $`\mathbf z`$: $`\|d\|_W/\|x\|_W`$ = 8.6e-16 (CFS, K = 11.7) and 9.4e-16 (α = 0, K = 40.7), $`d/\varepsilon_N`$ = 1.5e-5
 and 4.4e-6; every probe sample ≤ 6.7e-6 of its bound, every DFT ≤ 3.6e-6; the numpy path gives the same to two
 digits. Mutations: face-filter stage × (1 + 1e-3) gives $`d/\varepsilon_N`$ = 9.3e8; the source added to $`\mathbf u`$

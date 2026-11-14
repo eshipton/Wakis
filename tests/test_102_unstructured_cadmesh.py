@@ -229,6 +229,43 @@ def test_edge_rates_give_lambda_lower(ball):
     np.testing.assert_allclose(r, s.K.diagonal() / s.cap, rtol=1e-10)
 
 
+def test_non_delaunay_faces_rejected_by_default():
+    """
+    With Voronoi Hodge, faces with negative dual length make K indefinite.
+    Moving one interior node of a Delaunay ball mesh creates one such face:
+    (a) default UnstructuredFIT3D raises ValueError naming the count and the
+    remedies (`improve_dt`, `hodge='whitney'`), (b) allow_negative_faces=True
+    warns with the same message, and (c) the Delaunay mesh (and the mesh
+    repaired by improve_dt) does not raise.
+    """
+    m = ball_mesh([1.0], 0.35)
+    s_del = UnstructuredFIT3D(m)
+    assert element_stability(s_del)["n_negative_faces"] == 0
+
+    inner = np.setdiff1d(np.arange(m.n_nodes), m.boundary_nodes)
+    X = m.nodes.copy()
+    X[inner[0], 0] += 0.07
+    m_bad = SimplexMesh(X, m.cells, m.cell_tags)
+
+    with pytest.raises(
+        ValueError,
+        match=r"1 faces with negative dual length.*improve_dt.*hodge='whitney'",
+    ):
+        UnstructuredFIT3D(m_bad)
+
+    with pytest.warns(
+        UserWarning,
+        match=r"1 faces with negative dual length.*improve_dt.*hodge='whitney'",
+    ):
+        s_warn = UnstructuredFIT3D(m_bad, allow_negative_faces=True)
+    assert element_stability(s_warn)["n_negative_faces"] == 1
+
+    m_repaired, _ = improve_dt(m_bad)
+    s_rep = UnstructuredFIT3D(m_repaired)
+    assert element_stability(s_rep)["n_negative_faces"] == 0
+    UnstructuredFIT3D(m_bad, hodge="whitney")
+
+
 # ----------------------------------------------------------------- gmsh (optional)
 A_PB, L_PB = 0.1, 0.1
 

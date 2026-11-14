@@ -189,14 +189,15 @@ tests, but not equal), for a 1.5–1.8× larger step. Time-domain ring-downs on 
 
 ## 6. Limits & Failure Modes
 
-* **Non-Delaunay meshes are unstable with the Voronoi Hodge, silently.** A face with a negative assembled dual
+* **Non-Delaunay meshes are unstable with the Voronoi Hodge.** A face with a negative assembled dual
   length makes $K$ indefinite; the leapfrog then grows exponentially at *any* $\Delta t$ (measured: NaN after
   500 steps on a curvature-refined muon-cavity mesh with 170 such faces). Eigenmode solves do not notice
   (shift-invert finds the positive modes). gmsh's shape optimizers, curvature refinement
-  (`curvature_points`) and boundary recovery all produce such faces. Check
-  `stability_report(solver)["n_negative_faces"] == 0` before a Voronoi time-domain run; otherwise run
-  `improve_dt` (it removes them first, but not all: faces whose nodes are all on CAD curves or corners cannot
-  be repaired without topological flips) or use `hodge="whitney"` (stable on any mesh).
+  (`curvature_points`) and boundary recovery all produce such faces. `UnstructuredFIT3D` (`hodge="voronoi"`)
+  counts faces with negative dual length that couple free edges and raises `ValueError` by default
+  (`allow_negative_faces=True` emits a warning instead; `stability_report(solver)["n_negative_faces"]` reports
+  the same count): run `improve_dt` (it removes them first, but not all: faces whose nodes are all on CAD curves
+  or corners cannot be repaired without topological flips) or use `hodge="whitney"` (stable on any mesh).
 * **Connectivity is fixed.** `improve_dt` only moves nodes. Slivers that need edge/face flips (sliver exudation,
   Cheng et al. 2000) or nodes on CAD curves and corners stay as they are; the dt gain saturates after
   5–10 sweeps (Section 4).
