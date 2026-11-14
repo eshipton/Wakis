@@ -1849,6 +1849,8 @@ At equal unknowns the honeycomb (hexagonal primal) has half the semi-discrete er
 - **Fast structured path:** not used. A NumPy stencil update on squares costs 3.3–4.5 ns per unknown-step against 4.9–6.3 ns for the sparse incidence update on the same grid (1.4–1.5×, three n2 machines; 1.5× on a laptop). It would apply only to the square part of a hybrid run, beside the source, DFT and PML costs, so the expected gain is ≈ 1.2×. That did not justify a second code path with interface bookkeeping (decision recorded).
 - **Gap refinement:** `gap_cells` fixes the cells across a gap, independent of the bulk h. A convergence ladder must scale it, otherwise the gap error stalls (B3, 2 nm gap: 1.1 % then 2.9 %).
 
+**Extension to 3D.** Hexahedra and tetrahedra cannot share faces, so the 3D hybrid `wakis.hybrid` (milestone 1: a tetrahedral box patch in the Cartesian grid) couples them through hanging tetrahedral edges on the Nédélec trace of the Cartesian squares; see [`physicsguide_sections/hybrid_cart_tet.md`](physicsguide_sections/hybrid_cart_tet.md).
+
 References:
 - T. Rylander and A. Bondeson, "Stable FEM-FDTD hybrid method for Maxwell's equations", *Comput. Phys. Commun.* **125**, 75–82 (2000).
 - H. Egger and B. Radu, "A Yee-like finite element scheme for Maxwell's equations on hybrid grids", arXiv:2209.10432 (2022).
