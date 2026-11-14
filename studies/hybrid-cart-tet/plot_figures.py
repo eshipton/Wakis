@@ -65,7 +65,14 @@ def fig_waveguide():
     for base, lab in labels.items():
         Ns = sorted({r["N"] for r in E if r["base"] == base})
         env = [max(r["R"] for r in E if r["base"] == base and r["N"] == N) for N in Ns]
-        ax.loglog(Ns, env, "o-" if base != "kuhn_nearest" else "s--", color=COL[base], label=lab, ms=4)
+        ax.loglog(
+            Ns,
+            env,
+            "o-" if base != "kuhn_nearest" else "s--",
+            color=COL[base],
+            label=lab,
+            ms=4,
+        )
         if base == "kuhn":
             guide(ax, Ns, env[0] * 1.5, 2, "$h^2$")
     fl = sorted([r for r in A if r["kind"] == "floor"], key=lambda r: r["N"])
@@ -74,7 +81,9 @@ def fig_waveguide():
                   label="no patch: fit/absorber floor")  # fmt: skip
     ax.set_xlabel("Cartesian cells per broad wall $a$ (h = a/N)")
     ax.set_ylabel("envelope $\\max_L |R(L)|$")
-    ax.set_title("(a) TE$_{10}$ reflection of a vacuum patch, $\\lambda = 1.4a$", fontsize=10)
+    ax.set_title(
+        "(a) TE$_{10}$ reflection of a vacuum patch, $\\lambda = 1.4a$", fontsize=10
+    )
     Ns = sorted({r["N"] for r in E})
     ax.set_xticks(Ns)
     ax.set_xticklabels([str(n) for n in Ns])
@@ -82,12 +91,16 @@ def fig_waveguide():
     ax.legend(fontsize=7, loc="lower left")
     ax = axs[1]
     for i, N in enumerate(Ns):
-        rows = sorted([r for r in E if r["base"] == "kuhn" and r["N"] == N], key=lambda r: r["L"])
+        rows = sorted(
+            [r for r in E if r["base"] == "kuhn" and r["N"] == N], key=lambda r: r["L"]
+        )
         ax.semilogy([r["L"] for r in rows], [r["R"] for r in rows], "o-", ms=3,
                     color=plt.cm.viridis(i / max(1, len(Ns) - 1)), label=f"N = {N}")  # fmt: skip
     ax.set_xlabel("patch length L along the guide [a]")
     ax.set_ylabel("$|R|$ (Kuhn patch)")
-    ax.set_title("(b) front/back interference: zero near $L = \\lambda_g/2 = 0.98a$", fontsize=10)
+    ax.set_title(
+        "(b) front/back interference: zero near $L = \\lambda_g/2 = 0.98a$", fontsize=10
+    )
     ax.legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(FIG, "fig_hybrid_waveguide.png"))
@@ -107,7 +120,9 @@ def fig_cavity():
         erms = [np.sqrt(np.mean(np.square(r["rel_err"]))) for r in rows]
         axs[0].loglog(h, e1, "o-", color=COL[kind], label=lab, ms=4)
         axs[1].loglog(h, erms, "o-", color=COL[kind], label=lab, ms=4)
-    for ax, t in zip(axs, ("lowest mode, (m, n, p) = (1, 1, 0)", "rms over the 6 lowest modes")):
+    for ax, t in zip(
+        axs, ("lowest mode, (m, n, p) = (1, 1, 0)", "rms over the 6 lowest modes")
+    ):
         rows = sorted([r for r in R if r["kind"] == "cartesian"], key=lambda r: r["N"])
         h = np.array([1.0 / r["N"] for r in rows])
         y0 = abs(rows[0]["rel_err"][0]) * 1.5
@@ -116,7 +131,9 @@ def fig_cavity():
         ax.set_ylabel("relative frequency error")
         ax.set_title(t, fontsize=10)
         ax.legend(fontsize=8)
-    fig.suptitle("PEC cavity 1 x 0.75 x 0.5 m with a vacuum tetrahedral patch", fontsize=10)
+    fig.suptitle(
+        "PEC cavity 1 x 0.75 x 0.5 m with a vacuum tetrahedral patch", fontsize=10
+    )
     fig.tight_layout()
     fig.savefig(os.path.join(FIG, "fig_hybrid_cavity.png"))
     plt.close(fig)
@@ -135,8 +152,12 @@ def fig_sphere():
         if not rows:
             continue
         N = [r["N"] for r in rows]
-        axs[0].loglog(N, [r["err_near"] for r in rows], "o-", color=COL[kind], label=lab, ms=4)
-        axs[1].loglog(N, [r["err_far"] for r in rows], "o-", color=COL[kind], label=lab, ms=4)
+        axs[0].loglog(
+            N, [r["err_near"] for r in rows], "o-", color=COL[kind], label=lab, ms=4
+        )
+        axs[1].loglog(
+            N, [r["err_far"] for r in rows], "o-", color=COL[kind], label=lab, ms=4
+        )
         axs[2].loglog([r["n_free"] for r in rows], [r["err_far"] for r in rows], "o-",
                       color=COL[kind], label=lab, ms=4)  # fmt: skip
     axs[0].set_title("near zone: $a + h < |r|$, inside the patch box", fontsize=9)
@@ -233,7 +254,9 @@ def fig_mesh_and_field():
     # ---------------- mesh figure
     fig, axs = plt.subplots(1, 2, figsize=(11, 5.2))
     ax = axs[0]
-    ax.add_patch(plt.Rectangle((v[0], v[0]), v[-1] - v[0], v[-1] - v[0], color="0.9", zorder=0))
+    ax.add_patch(
+        plt.Rectangle((v[0], v[0]), v[-1] - v[0], v[-1] - v[0], color="0.9", zorder=0)
+    )
     ax.add_patch(plt.Rectangle((-Lp, -Lp), 2 * Lp, 2 * Lp, color="white", zorder=0))
     segs = []
     for x in v:
@@ -243,9 +266,13 @@ def fig_mesh_and_field():
             segs += [[(x, -B), (x, B)], [(-B, x), (B, x)]]
     ax.add_collection(LineCollection(segs, colors="0.55", lw=0.5))
     polys = _tet_plane_cut(tm, 1, 1e-4)
-    ax.add_collection(PolyCollection(polys, facecolors="none", edgecolors="C0", lw=0.35))
+    ax.add_collection(
+        PolyCollection(polys, facecolors="none", edgecolors="C0", lw=0.35)
+    )
     ax.add_patch(plt.Circle((0, 0), a, fill=True, color="0.25", zorder=3))
-    ax.add_patch(plt.Rectangle((-B, -B), 2 * B, 2 * B, fill=False, ec="C3", lw=1.6, zorder=4))
+    ax.add_patch(
+        plt.Rectangle((-B, -B), 2 * B, 2 * B, fill=False, ec="C3", lw=1.6, zorder=4)
+    )
     ax.annotate("PEC sphere\n$ka = 2$", (0, 0), color="w", ha="center", va="center", zorder=5,
                 fontsize=8)  # fmt: skip
     ax.text(-B, B + 0.04, "interface (box of whole Cartesian cells)", color="C3", fontsize=8,
@@ -260,7 +287,10 @@ def fig_mesh_and_field():
     ax.set_ylim(v[0], v[-1])
     ax.set_xlabel("x [m]  (wavelength 1 m)")
     ax.set_ylabel("z [m]")
-    ax.set_title(f"(a) cut y = 0: Cartesian h = $\\lambda$/{N} + {tm.n_cells} tetrahedra", fontsize=9)
+    ax.set_title(
+        f"(a) cut y = 0: Cartesian h = $\\lambda$/{N} + {tm.n_cells} tetrahedra",
+        fontsize=9,
+    )
     # ---------------- face detail: x = -B
     ax = axs[1]
     X = tm.nodes
@@ -268,9 +298,13 @@ def fig_mesh_and_field():
     F = X[tm.faces[bf]]
     on = np.all(np.abs(F[:, :, 0] + B) < 1e-9, axis=1)
     tri = [f[:, 1:] for f in F[on]]
-    ax.add_collection(PolyCollection(tri, facecolors="#dbe9f6", edgecolors="C0", lw=0.9))
+    ax.add_collection(
+        PolyCollection(tri, facecolors="#dbe9f6", edgecolors="C0", lw=0.9)
+    )
     vb = v[(v >= -B - 1e-9) & (v <= B + 1e-9)]
-    sq = [[(x, vb[0]), (x, vb[-1])] for x in vb] + [[(vb[0], z), (vb[-1], z)] for z in vb]
+    sq = [[(x, vb[0]), (x, vb[-1])] for x in vb] + [
+        [(vb[0], z), (vb[-1], z)] for z in vb
+    ]
     ax.add_collection(LineCollection(sq, colors="k", lw=2.0))
     ax.set_aspect("equal")
     # zoom on a corner of the face: 4 x 4 squares
@@ -295,14 +329,18 @@ def fig_mesh_and_field():
     if inbox.any():
         cell, W = tm.whitney_edge(pts[inbox])
         et = e_all[s.nEc :]
-        ex[np.flatnonzero(inbox)] = np.einsum("nk,nk->n", W[:, :, 0], et[tm.cell_edges[cell]])
+        ex[np.flatnonzero(inbox)] = np.einsum(
+            "nk,nk->n", W[:, :, 0], et[tm.cell_edges[cell]]
+        )
     # Cartesian: x-edges in the plane y = 0, bilinear in (x-node shift) -> nearest edge value / h
     blk = s.block
     out_box = ~np.all(np.abs(pts) <= B + 1e-9, axis=1)
     ec = e_all[: blk.edge_off[1]].reshape(blk.edge_shape[0])
     j0 = int(np.argmin(np.abs(blk.nodes[1])))
     ix = np.clip(np.searchsorted(blk.nodes[0], pts[out_box, 0]) - 1, 0, blk.nc[0] - 1)
-    kz = np.clip(np.round((pts[out_box, 2] - blk.nodes[2][0]) / h).astype(int), 0, blk.nn[2] - 1)
+    kz = np.clip(
+        np.round((pts[out_box, 2] - blk.nodes[2][0]) / h).astype(int), 0, blk.nn[2] - 1
+    )
     ex[out_box] = ec[ix, j0, kz] / h
     ref = pec_sphere_field(pts, k, a)[:, 0]
     ref[np.linalg.norm(pts, axis=1) < a] = np.nan
@@ -319,8 +357,15 @@ def fig_mesh_and_field():
         ax.set_title(t, fontsize=10)
         ax.set_xlabel("x [m]")
         ax.set_ylabel("z [m]")
-        fig.colorbar(im, ax=ax, label="Re $E_{x,s}$ [V/m]" if "|" not in t else "[V/m]", shrink=0.85)
-    fig.suptitle("PEC sphere ka = 2: scattered field on y = 0 (unit incident field)", fontsize=10)
+        fig.colorbar(
+            im,
+            ax=ax,
+            label="Re $E_{x,s}$ [V/m]" if "|" not in t else "[V/m]",
+            shrink=0.85,
+        )
+    fig.suptitle(
+        "PEC sphere ka = 2: scattered field on y = 0 (unit incident field)", fontsize=10
+    )
     fig.tight_layout()
     fig.savefig(os.path.join(FIG, "fig_hybrid_field.png"))
     plt.close(fig)

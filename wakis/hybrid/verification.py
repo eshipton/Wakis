@@ -49,7 +49,9 @@ def stretch_functions(lo_phys, hi_phys, T, sigma0=8.0, axes=(0, 1, 2)):
     def S(X):
         out = np.ones(X.shape, complex)
         for a in axes:
-            d = np.maximum(lo_phys[a] - X[:, a], 0) + np.maximum(X[:, a] - hi_phys[a], 0)
+            d = np.maximum(lo_phys[a] - X[:, a], 0) + np.maximum(
+                X[:, a] - hi_phys[a], 0
+            )
             out[:, a] = 1 + 1j * sigma0 * (d / T) ** 3
         return out
 
@@ -111,14 +113,18 @@ def waveguide_reflection(cells_per_a, patch="kuhn", r=1, h_tet=None, wavelength_
     yn = h * np.arange(N + 1)
     zn = h * np.arange(N // 2 + 1)
     T = 2.0 * A
-    es, fs = stretch_functions([T, -1, -1], [xn[-1] - T, 9, 9], T, sigma0=6.0, axes=(0,))
+    es, fs = stretch_functions(
+        [T, -1, -1], [xn[-1] - T, 9, 9], T, sigma0=6.0, axes=(0,)
+    )
     box = None
     tm = None
     if patch is not None:
         i0 = int(round(5.5 * N))
         i1 = i0 + max(1, int(round(patch_length * N)))
         box = ((i0, i1), (1, N - 1), (1, N // 2 - 1))
-        tm = _tet_patch(patch, xn[i0 : i1 + 1], yn[1:N], zn[1 : N // 2], h_tet or h, r=r)
+        tm = _tet_patch(
+            patch, xn[i0 : i1 + 1], yn[1:N], zn[1 : N // 2], h_tet or h, r=r
+        )
     s = HybridFIT3D(xn, yn, zn, box=box, tet_mesh=tm, edge_scale=es, face_scale=fs,
                     mutate=mutate)  # fmt: skip
     lam = wavelength_a * A

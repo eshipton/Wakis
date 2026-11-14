@@ -66,8 +66,8 @@ def kuhn_box_mesh(xs, ys, zs, r=1, tag=0):
     n = [len(v) for v in g]
     X, Y, Z = np.meshgrid(*g, indexing="ij")
     nodes = np.stack([X.ravel(), Y.ravel(), Z.ravel()], 1)
-    I, J, K = np.meshgrid(*[np.arange(m - 1) for m in n], indexing="ij")
-    base = np.stack([I.ravel(), J.ravel(), K.ravel()], 1)
+    ii, jj, kk = np.meshgrid(*[np.arange(m - 1) for m in n], indexing="ij")
+    base = np.stack([ii.ravel(), jj.ravel(), kk.ravel()], 1)
     unit = np.eye(3, dtype=int)
     tets = []
     from itertools import permutations
@@ -76,9 +76,7 @@ def kuhn_box_mesh(xs, ys, zs, r=1, tag=0):
         c = [base]
         for a in p:
             c.append(c[-1] + unit[a])
-        tets.append(
-            np.stack([np.ravel_multi_index(tuple(q.T), n) for q in c], 1)
-        )
+        tets.append(np.stack([np.ravel_multi_index(tuple(q.T), n) for q in c], 1))
     tets = np.concatenate(tets)
     return SimplexMesh(nodes, tets, np.full(len(tets), tag))
 
@@ -100,14 +98,14 @@ def _box_lattice_surface(g, rng, jitter=0.15):
     """
     g2 = [refine_lines(v, 2) for v in g]
     X, Y, Z = np.meshgrid(*g2, indexing="ij")
-    I = np.meshgrid(*[np.arange(len(v)) for v in g2], indexing="ij")
+    idx = np.meshgrid(*[np.arange(len(v)) for v in g2], indexing="ij")
     on = np.zeros(X.shape, bool)
     centre = np.zeros(X.shape, bool)
     for a, A in enumerate((X, Y, Z)):
-        face = (I[a] == 0) | (I[a] == len(g2[a]) - 1)
+        face = (idx[a] == 0) | (idx[a] == len(g2[a]) - 1)
         on |= face
         b, c = (a + 1) % 3, (a + 2) % 3
-        centre |= face & (I[b] % 2 == 1) & (I[c] % 2 == 1)
+        centre |= face & (idx[b] % 2 == 1) & (idx[c] % 2 == 1)
     keep = on & ~centre
     pts = [np.stack([X[keep], Y[keep], Z[keep]], 1)]
     for a in range(3):
@@ -203,10 +201,19 @@ def _resolve_flat(tet, nodes, vtol):
             if np.linalg.norm(nrm) < 1e-14 * np.linalg.norm(X[1] - X[0]) ** 2:
                 nrm = np.cross(X[1] - X[0], X[3] - X[0])
             diag = None
-            for (i1, i2), (i3, i4) in (((0, 1), (2, 3)), ((0, 2), (1, 3)), ((0, 3), (1, 2))):
+            for (i1, i2), (i3, i4) in (
+                ((0, 1), (2, 3)),
+                ((0, 2), (1, 3)),
+                ((0, 3), (1, 2)),
+            ):
+
                 def side(u, v, w):
                     return np.dot(np.cross(X[v] - X[u], X[w] - X[u]), nrm)
-                if side(i1, i2, i3) * side(i1, i2, i4) < 0 and side(i3, i4, i1) * side(i3, i4, i2) < 0:
+
+                if (
+                    side(i1, i2, i3) * side(i1, i2, i4) < 0
+                    and side(i3, i4, i1) * side(i3, i4, i2) < 0
+                ):
                     diag = ((q[i1], q[i2]), (q[i3], q[i4]))
             if diag is None:
                 raise RuntimeError("flat tetrahedron that is not a convex quad")
@@ -300,7 +307,9 @@ def delaunay_box_mesh(xs, ys, zs, h, r=1, sphere=None, sphere_tag=1, hole=True,
         sphere = (c, R)
     pts = pts[keep]
     nodes = np.vstack([surf, sph_pts, pts])
-    kind = np.r_[np.ones(len(surf), int), np.full(len(sph_pts), 2), np.zeros(len(pts), int)]
+    kind = np.r_[
+        np.ones(len(surf), int), np.full(len(sph_pts), 2), np.zeros(len(pts), int)
+    ]
     for _ in range(smooth):
         nodes = _odt_box(nodes, kind, lo, hi, sphere, gap)
     if sphere is not None:
@@ -386,5 +395,7 @@ def box_surface_check(mesh, xs, ys, zs, allow_other=False, tol=1e-9):
                 Fb[on_a, :, b] <= v1[:, None] + tol
             )
             if not inside.all():
-                raise ValueError("a box-surface triangle straddles two Cartesian squares")
+                raise ValueError(
+                    "a box-surface triangle straddles two Cartesian squares"
+                )
     return bf[on_box]

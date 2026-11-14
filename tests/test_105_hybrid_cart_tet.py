@@ -27,7 +27,6 @@ derived order (2) with the margin stated at each assertion.
 
 import numpy as np
 import pytest
-import scipy.sparse as sp
 
 from wakis.hybrid import HybridFIT3D, box_trace, delaunay_box_mesh, kuhn_box_mesh
 from wakis.hybrid.mie_pec import pec_sphere_field, plane_wave_line_integrals
@@ -52,7 +51,15 @@ def meshes():
 def _phi(X):
     """Potential vanishing on the PEC walls of the 1 x 0.8 x 0.6 cavity."""
     x, y, z = X[:, 0], X[:, 1], X[:, 2]
-    return (np.sin(3 * x) + y**2 * z + 0.3 * x * y + 1) * x * (1 - x) * y * (0.8 - y) * z * (0.6 - z)
+    return (
+        (np.sin(3 * x) + y**2 * z + 0.3 * x * y + 1)
+        * x
+        * (1 - x)
+        * y
+        * (0.8 - y)
+        * z
+        * (0.6 - z)
+    )
 
 
 def _gradient_voltages(s, tm):
@@ -73,8 +80,12 @@ def _gradient_voltages(s, tm):
         for pl in (lo[a], hi[a]):
             on = np.abs(X[:, a] - pl) < 1e-12
             u, v = X[on, b], X[on, c]
-            ib = np.clip(np.searchsorted(lines[b], u, "right") - 1, 0, len(lines[b]) - 2)
-            ic = np.clip(np.searchsorted(lines[c], v, "right") - 1, 0, len(lines[c]) - 2)
+            ib = np.clip(
+                np.searchsorted(lines[b], u, "right") - 1, 0, len(lines[b]) - 2
+            )
+            ic = np.clip(
+                np.searchsorted(lines[c], v, "right") - 1, 0, len(lines[c]) - 2
+            )
             u0, u1 = lines[b][ib], lines[b][ib + 1]
             v0, v1 = lines[c][ic], lines[c][ic + 1]
             tu, tv = (u - u0) / (u1 - u0), (v - v0) / (v1 - v0)
@@ -102,7 +113,9 @@ def test_de_rham_and_trace_mutations(meshes, kind):
         if mut is None:
             # hanging edges reproduce the potential differences exactly
             hang = s.nEc + s.tet_hanging
-            assert np.abs((s.P @ ef)[hang] - e_all[hang]).max() < 1e-13 * np.abs(ef).max()
+            assert (
+                np.abs((s.P @ ef)[hang] - e_all[hang]).max() < 1e-13 * np.abs(ef).max()
+            )
     assert res[None] < 1e-13  # measured ~1e-15
     assert res["nearest"] > 1e-3 and res["inject"] > 1e-3  # measured 0.04-0.29
 
@@ -130,7 +143,13 @@ def test_trace_line_integral_of_nedelec_field():
     ref = np.trapezoid(Ex * (q - p)[0, 0] + Ey * (q - p)[0, 1], t)
     assert abs(got - ref) < 1e-12 * max(1.0, abs(ref))
     with pytest.raises(ValueError):  # straddles two squares
-        box_trace(blk, lo, hi, np.array([[0.42, 0.31, ZN[2]]]), np.array([[0.55, 0.38, ZN[2]]]))
+        box_trace(
+            blk,
+            lo,
+            hi,
+            np.array([[0.42, 0.31, ZN[2]]]),
+            np.array([[0.55, 0.38, ZN[2]]]),
+        )
 
 
 @pytest.mark.parametrize("kind", ["kuhn", "delaunay"])
@@ -158,7 +177,9 @@ def test_energy_conservation(meshes, kind, solver):
     rng = np.random.default_rng(1)
     drift = {}
     for mut in (None, "asym"):
-        s = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mutate=mut, mass_solver=solver)
+        s = HybridFIT3D(
+            XN, YN, ZN, box=BOX, tet_mesh=tm, mutate=mut, mass_solver=solver
+        )
         s.e = rng.standard_normal(s.n_free)
         s.b = rng.standard_normal(s.n_faces) * 1e-9
         E = s.run(200, energy=True)
@@ -271,7 +292,13 @@ def test_patch_must_refine_the_squares():
     with pytest.raises(ValueError):
         HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm)
     with pytest.raises(ValueError):  # box touching the outer wall
-        HybridFIT3D(XN, YN, ZN, box=((0, 4), (2, 6), (2, 4)), tet_mesh=kuhn_box_mesh(XN[0:5], *LINES[1:]))
+        HybridFIT3D(
+            XN,
+            YN,
+            ZN,
+            box=((0, 4), (2, 6), (2, 4)),
+            tet_mesh=kuhn_box_mesh(XN[0:5], *LINES[1:]),
+        )
 
 
 def test_loose_chebyshev_tolerance_keeps_stability(meshes):
@@ -285,7 +312,9 @@ def test_loose_chebyshev_tolerance_keeps_stability(meshes):
     assert s.msolver.degree < 0.35 * ref.msolver.degree
     rng = np.random.default_rng(4)
     x, y = rng.standard_normal(s.n_free), rng.standard_normal(s.n_free)
-    sym = abs(s.msolver.solve(x) @ y - x @ s.msolver.solve(y)) / abs(x @ s.msolver.solve(y))
+    sym = abs(s.msolver.solve(x) @ y - x @ s.msolver.solve(y)) / abs(
+        x @ s.msolver.solve(y)
+    )
     assert sym < 1e-13
     s.e = rng.standard_normal(s.n_free)
     s.b = rng.standard_normal(s.n_faces) * 1e-9

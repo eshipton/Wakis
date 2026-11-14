@@ -56,7 +56,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _rss_mb():
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1e6 if platform.system() == "Darwin" else 1e3)
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (
+        1e6 if platform.system() == "Darwin" else 1e3
+    )
 
 
 def task_A(args):
@@ -201,7 +203,10 @@ def main():
             json.dump({"meta": meta, "results": res}, f, indent=1)
         print(part, "done in", meta["wall_s"], "s ->", path, flush=True)
         for r in res:
-            print({k: v for k, v in r.items() if k not in ("energy", "f", "f_exact")}, flush=True)
+            print(
+                {k: v for k, v in r.items() if k not in ("energy", "f", "f_exact")},
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

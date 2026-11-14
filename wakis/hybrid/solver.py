@@ -103,18 +103,18 @@ def box_trace(block, lo, hi, p, q, mutate=None, tol=1e-9):
         b, c = (a + 1) % 3, (a + 2) % 3
         for na in (lo[a], hi[a]):
             pl = nodes[a][na]
-            sel = (
-                ~done
-                & (np.abs(p[:, a] - pl) < tol)
-                & (np.abs(q[:, a] - pl) < tol)
-            )
+            sel = ~done & (np.abs(p[:, a] - pl) < tol) & (np.abs(q[:, a] - pl) < tol)
             if not sel.any():
                 continue
             done |= sel
             idx = np.flatnonzero(sel)
             m = 0.5 * (p[idx] + q[idx])
-            ib = np.clip(np.searchsorted(nodes[b], m[:, b], "right") - 1, lo[b], hi[b] - 1)
-            ic = np.clip(np.searchsorted(nodes[c], m[:, c], "right") - 1, lo[c], hi[c] - 1)
+            ib = np.clip(
+                np.searchsorted(nodes[b], m[:, b], "right") - 1, lo[b], hi[b] - 1
+            )
+            ic = np.clip(
+                np.searchsorted(nodes[c], m[:, c], "right") - 1, lo[c], hi[c] - 1
+            )
             u0, u1 = nodes[b][ib], nodes[b][ib + 1]
             v0, v1 = nodes[c][ic], nodes[c][ic + 1]
             for X in (p[idx], q[idx]):
@@ -124,7 +124,9 @@ def box_trace(block, lo, hi, p, q, mutate=None, tol=1e-9):
                     or np.any(X[:, c] < v0 - tol)
                     or np.any(X[:, c] > v1 + tol)
                 ):
-                    raise ValueError("a box-surface edge straddles two Cartesian squares")
+                    raise ValueError(
+                        "a box-surface edge straddles two Cartesian squares"
+                    )
             hu, hv = u1 - u0, v1 - v0
             du = q[idx, b] - p[idx, b]
             dv = q[idx, c] - p[idx, c]
@@ -217,7 +219,9 @@ class MassSolver:
         self.Sm = Sm
         rng = np.random.default_rng(3)
         v0 = rng.standard_normal(Sm.shape[0])
-        hi = sla.eigsh(Sm, k=1, which="LA", tol=1e-6, v0=v0, return_eigenvectors=False)[0]
+        hi = sla.eigsh(Sm, k=1, which="LA", tol=1e-6, v0=v0, return_eigenvectors=False)[
+            0
+        ]
         lo = sla.eigsh(Sm, k=1, which="SA", tol=1e-6, v0=v0, maxiter=50000,
                        return_eigenvectors=False)[0]  # fmt: skip
         if lo <= 0:
@@ -380,7 +384,9 @@ class HybridFIT3D:
             )
             eps_t, mu_t, sig_t, pec_t, disp = cell_materials(tm, materials)
             if np.any(sig_t != 0) or disp:
-                raise NotImplementedError("lossy/dispersive tetrahedra: not in milestone 1")
+                raise NotImplementedError(
+                    "lossy/dispersive tetrahedra: not in milestone 1"
+                )
             live = (~pec_t).astype(float)
             M1, M2 = whitney_mass_matrices(tm, eps_t, mu_t, live)
             self.M1, self.M2 = M1.tocsr(), M2.tocsr()
@@ -410,7 +416,9 @@ class HybridFIT3D:
             )  # fmt: skip
             hr = self.tet_hanging[hr]
             if mutate == "asym":
-                ar, ac, av = box_trace(blk, lo, hi, p[on_box], q[on_box], mutate="inject")
+                ar, ac, av = box_trace(
+                    blk, lo, hi, p[on_box], q[on_box], mutate="inject"
+                )
                 ar = self.tet_hanging[ar]
         else:
             nEt = 0
@@ -483,7 +491,9 @@ class HybridFIT3D:
     @property
     def msolver(self):
         if self._msolver is None:
-            self._msolver = MassSolver(self.M, method=self.mass_solver, tol=self.mass_tol)
+            self._msolver = MassSolver(
+                self.M, method=self.mass_solver, tol=self.mass_tol
+            )
         return self._msolver
 
     @property
@@ -604,7 +614,9 @@ class HybridFIT3D:
         Cartesian edge of direction `component` (0/1/2 = x/y/z)."""
         k = self.cartesian_edge(point, component)
         row = self.P[k]
-        self.sources.append((row.indices.copy(), row.data.copy(), waveform, float(amplitude)))
+        self.sources.append(
+            (row.indices.copy(), row.data.copy(), waveform, float(amplitude))
+        )
         return k
 
     def add_probe(self, point, component):
@@ -715,7 +727,9 @@ class HybridFIT3D:
 
     def free_points(self):
         """Midpoints of the free edges [m] (Cartesian, then tetrahedral)."""
-        mids = [self.edge_mid] + ([self.tet.edge_midpoint] if self.tet is not None else [])
+        mids = [self.edge_mid] + (
+            [self.tet.edge_midpoint] if self.tet is not None else []
+        )
         return np.vstack(mids)[self.free_edges]
 
     def eigenfrequencies(self, k, f_lo, f_hi):
