@@ -375,3 +375,22 @@ def test_mesh_stl_body_in_box():
     assert 0 < 1 - vb / v_stl < h**2 / (2 * R**2)
     lo, hi = P.min(0) - 15e-3, P.max(0) + 15e-3
     np.testing.assert_allclose(m.cell_volume.sum(), np.prod(hi - lo), rtol=1e-9)
+
+
+def test_improve_dt_repairs_non_delaunay_faces():
+    """
+    Faces with a negative dual length make K indefinite (exponential growth at
+    any dt). On a Delaunay ball with interior nodes moved at random (some
+    faces become non-Delaunay), the lexicographic objective of `improve_dt`
+    removes most of them (fewer than half remain) before reducing rates.
+    """
+    m = ball_mesh([1.0], 0.3)
+    rng = np.random.default_rng(5)
+    X = m.nodes.copy()
+    inner = np.ones(m.n_nodes, bool)
+    inner[m.boundary_nodes] = False
+    X[inner] += 0.08 * m.edge_length.mean() * rng.standard_normal((inner.sum(), 3))
+    m2 = SimplexMesh(X, m.cells, m.cell_tags)
+    new, hist = improve_dt(m2, n_sweeps=8)
+    assert hist[0]["negative_faces"] > 5
+    assert hist[-1]["negative_faces"] < hist[0]["negative_faces"] / 2, hist

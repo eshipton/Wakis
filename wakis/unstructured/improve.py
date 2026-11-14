@@ -27,8 +27,10 @@ stay fixed, so the geometry and the material regions are unchanged; the
 connectivity is kept) to minimize the largest edge rate in their
 neighbourhood: greedy min-max local search over the optimal-Delaunay (ODT)
 point of the node (Chen & Xu 2004) and random trial points, accepting a move
-only if the largest rate among the edges it touches decreases and no face
-gets a negative dual length or tetrahedron a non-positive volume. Every
+lexicographically better: first fewer faces with a negative dual length
+around the node (non-Delaunay faces make K indefinite, an instability no
+time step cures), then a smaller largest rate among the edges it touches;
+tetrahedra must keep a positive volume. Every
 quantity a move changes lives on the edges of the tetrahedra around the
 node, so each trial costs O(1) and the search is exact for the unclipped
 dual measures (material-interface clipping is re-applied when the mesh is
@@ -287,12 +289,13 @@ class _State:
         r = np.where(Aeps > 0, r, np.inf)
         r = np.where(free[None], r, 0.0)
         ok = (vol > 1e-3 * self.vol_ref).all(1)
-        ok &= ~((H < 0) & self.face_free[F][None]).any(1)
-        payload = (T, E, F, A, h, area, vol, Aeps, H, Af, Le, Kd)
+        # faces with a negative dual length that couple free edges (K indefinite)
+        n_neg = ((H < 0) & self.face_free[F][None]).sum(1)
+        payload = (T, E, F, A, h, area, vol, Aeps, H, Af, Le, Kd, n_neg)
         return r.max(1), ok, payload
 
     def accept(self, n, y, j, payload):
-        T, E, F, A, h, area, vol, Aeps, H, Af, Le, Kd = payload
+        T, E, F, A, h, area, vol, Aeps, H, Af, Le, Kd, _ = payload
         self.X[n] = y
         self.A_eT[T] = A[j]
         self.h_fT[T] = h[j]
@@ -424,12 +427,20 @@ def improve_dt(
             r = np.where(st.Aeps < massless_tol * st.L**2, 0.0, r)
         return r
 
+    def neg_faces():
+        return np.flatnonzero((st.H < 0) & st.face_free)
+
     history = []
     r = objective_rates()
-    history.append(dict(max_rate=float(r[free].max()), moved=0, targets=0))
+    history.append(dict(max_rate=float(r[free].max()), moved=0, targets=0,
+                        negative_faces=int(neg_faces().size)))  # fmt: skip
     for sweep in range(int(n_sweeps)):
         thr = np.quantile(r[free & np.isfinite(r)], target_quantile)
         bad = np.flatnonzero(r > thr)
+        # edges of the non-Delaunay faces are targets too (they make K indefinite)
+        nf = neg_faces()
+        if nf.size:
+            bad = np.union1d(bad, st.face_edges[nf].ravel())
         # nodes of the tetrahedra around the bad edges
         ec = sp.csr_matrix(
             (np.ones(mesh.cell_edges.size), (mesh.cell_edges.ravel(),
@@ -443,6 +454,8 @@ def improve_dt(
         worst = np.zeros(mesh.n_nodes)
         np.maximum.at(worst, edges[bad, 0], np.minimum(r[bad], 1e300))
         np.maximum.at(worst, edges[bad, 1], np.minimum(r[bad], 1e300))
+        if nf.size:
+            worst[mesh.faces[nf].ravel()] = np.inf
         nodes = nodes[np.argsort(-worst[nodes], kind="stable")]
         moved = 0
         for n in nodes:
@@ -466,18 +479,25 @@ def improve_dt(
                 rr = np.where(Aeps < massless_tol * Le**2, 0.0, rr)
                 rr = np.where(free[E][None], rr, 0.0)
                 obj = rr.max(1)
+            n_neg = np.where(ok, payload[12], np.iinfo(np.int64).max)
             obj = np.where(ok, obj, np.inf)
-            j = int(np.argmin(obj))
-            if j > 0 and obj[j] < obj[0] * (1 - 1e-9):
+            # lexicographic: fewer non-Delaunay faces first, then the largest rate
+            j = int(np.lexsort((obj, n_neg))[0])
+            better = n_neg[j] < n_neg[0] or (
+                n_neg[j] == n_neg[0] and obj[j] < obj[0] * (1 - 1e-9)
+            )
+            if j > 0 and better:
                 st.accept(n, Y[j], j, payload)
                 moved += 1
         r = objective_rates()
         history.append(
-            dict(max_rate=float(r[free].max()), moved=moved, targets=int(nodes.size))
-        )
+            dict(max_rate=float(r[free].max()), moved=moved, targets=int(nodes.size),
+                 negative_faces=int(neg_faces().size))
+        )  # fmt: skip
         if verbose:
             print(f"sweep {sweep}: max rate {history[-1]['max_rate']:.4e}, "
-                  f"moved {moved}/{nodes.size}")  # fmt: skip
+                  f"moved {moved}/{nodes.size}, negative faces "
+                  f"{history[-1]['negative_faces']}")  # fmt: skip
         if moved == 0:
             break
     new = SimplexMesh(st.X, mesh.cells, mesh.cell_tags)

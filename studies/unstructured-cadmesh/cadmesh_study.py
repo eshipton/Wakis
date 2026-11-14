@@ -248,7 +248,7 @@ def _muon_eig_task(args):
     from wakis.unstructured import UnstructuredFIT3D
 
     imp = dict(n_sweeps=10) if variant == "ours" else None
-    m, info = make_mesh("muon", cpw, "none", improve=imp, curvature=48)
+    m, info = make_mesh("muon", cpw, "none", improve=imp)
     s = UnstructuredFIT3D(m, info.materials, hodge=hodge)
     t = time.perf_counter()
     f, _ = s.eigenmodes(4, f_target=F_TARGET["muon"])
@@ -274,8 +274,13 @@ def _muon_td_task(args):
     from wakis.unstructured import UnstructuredFIT3D
 
     imp = dict(n_sweeps=10) if variant == "ours" else None
-    m, info = make_mesh("muon", cpw, "none", improve=imp, curvature=48)
+    m, info = make_mesh("muon", cpw, "none", improve=imp)
     s = UnstructuredFIT3D(m, info.materials)
+    from wakis.unstructured.quality import element_matrices
+
+    n_neg = element_matrices(s)[3]
+    if n_neg:  # K indefinite: the leapfrog diverges at any dt
+        return dict(cpw=cpw, variant=variant, n_tets=m.n_cells, n_negative_faces=n_neg)
     amp, t_end = _gauss_pulse(0.9e9, 0.5e9)
     s.add_point_dipole([0.031, 0.022, 0.011], [0.2, 0.3, 1.0], amp)
     probe = s.add_probe([[-0.043, 0.017, -0.013]], 2)
@@ -310,11 +315,16 @@ def part_muon_tet(n_procs):
     with Pool(n_procs) as p:
         r_eig = p.map_async(_muon_eig_task, eig)
         r_td = p.map_async(_muon_td_task, td)
-        res = dict(eig=r_eig.get(), td=r_td.get())
+        res = dict(eig=r_eig.get())
+        _dump("muon_tet", res)
+        res["td"] = r_td.get()
     _dump("muon_tet", res)
     for r in res["eig"]:
         print("eig", r["cpw"], r["variant"], r["hodge"], r["n_tets"], np.round(np.array(r["f"]) / 1e9, 5))
     for r in res["td"]:
+        if "f_space" not in r:
+            print("td", r)
+            continue
         print("td", r["cpw"], r["variant"], r["n_tets"], "dt %.3e wall/ns %.2f" % (r["dt"], r["wall_per_ns"]),
               np.round(np.array(r["f_space"]) / 1e9, 5))  # fmt: skip
 

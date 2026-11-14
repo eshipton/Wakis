@@ -51,7 +51,7 @@ def fig_setup():
 
     fig, ax = plt.subplots(1, 3, figsize=(13, 4.2), gridspec_kw=dict(width_ratios=[1.6, 1, 1.1]))
     # (a) muon cavity, cut y = 0, coloured by element time step
-    m, info = make_mesh("muon", 15, "none", curvature=48)
+    m, info = make_mesh("muon", 15, "none")
     s = UnstructuredFIT3D(m, info.materials)
     st = element_stability(s)
     e, sel = _slice_edges(m)
