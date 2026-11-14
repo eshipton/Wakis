@@ -43,50 +43,18 @@ waves in a shell r0 < r < r1, meshed by `wakis.unstructured.pml3d.ball_with_pml_
 * **Layer count.** The reflection falls steeply from N = 4 to 10, by 40× in a factor 2.5 of N. This regime is
   dominated by the per-cell discretisation of the grading: σ_max dr / c = 9.2 at N = 4 and 3.7 at N = 10. I did
   not derive a closed-form exponent, and the N⁻² guess I started from is not supported by the data.
-* **Floor.** From N = 10 to 16 the normal-incidence reflection did not change (4.5e-4).
-  **Correction (2026-11-13):** this README said the floor was "a property of the layer, not of the reference".
-  That was wrong. The floor was the error of the vacuum-shell reference itself: the solver's massless-edge test made
-  more shell chords massless at larger radii, so the reference shell reflected inside the window. See "Floor
-  diagnosis" below; after the fix the 10 / 16 / 24-layer reflections are 3.0e-4 / 7.0e-5 / 1.7e-5.
+* **Floor.** From N = 10 to 16 the normal-incidence reflection does not change (4.5e-4). The maxima of the
+  difference occur when the wave that crossed the whole layer and reflected off its PEC backing returns. The
+  floor is therefore a property of the layer, not of the reference; its exact origin is open. The candidate is
+  the quasi-static near-field content of the pulse (p(t) has a DC part, which a PML does not attenuate) reaching
+  the PEC backing. At large ψ in the oblique case the path crosses the whole ball, and the reference's coarse
+  outer layers may add to the floor.
 * **CFS parameters.** κ_max = 5 and α > 0 change propagating-wave absorption by less than about 30 %, as in 2D.
 * **Reference vs the exact dipole Green's function.** 14–59 % (field `ref_vs_exact`). This is the error of the
   point-dipole source model and of the interior discretisation at 7 h from a point source at 16 cells per
   wavelength. A Whitney point dipole puts its charge on one tetrahedron, which gives O(h/r) multipoles in the near
   field; on a lattice node the error was 2.4×. This error is why the identical-mesh reference is needed; it
   cancels in the reflection.
-
-## Floor diagnosis (`pml3d_floor.py`, 2026-11-13)
-
-Four hypotheses for the 4.5e-4 floor, each with a run that can reject it (24 runs per variant, one dt, the
-window of the study above; baselines: the vacuum-shell reference `ref40` and thick 24- and 32-layer PMLs whose backing
-echo is outside the window). Cloud Batch `pmlfloor-v1` (first 12 cases), `pmlfloor-v2` (all cases, massless decision
-per chord, files `floor_*_before.*`), `pmlfloor-v3` (per column, `floor_*_fixed.*`); n2-highmem-16/32, exit 0.
-
-| hypothesis | test | result (normal incidence, worst probe) |
-|---|---|---|
-| backing echo | (E_PEC − E_PMC)/2 behind 10 / 16 layers | 1.1e-7 / 3.2e-8: rejected |
-| design R not reached | R = 1e-12 | vs ref40 unchanged (4.6e-4); after the fix *worse* (4.0e-4 at 10 layers): rejected |
-| grading discretisation | 10 h at dr = h/2 vs 24 h at dr = h/2 | not the floor; sets the 10-layer value after the fix (7.3e-5 vs 3.0e-4 at dr = h) |
-| reference reflects | ref40 vs PML32 | **4.6e-4 = the floor**; PML16 vs PML32 = 7.9e-5: confirmed |
-
-**Mechanism.** The solver calls an edge massless when its dual area is below `massless_tol · L²`. Along one radial
-column of shell chords the dual area grows as r·dr and L² as r², so the test value falls as dr/r and more chords turn
-massless further out (4 per ring at r = 5 h, 29 at r = 33 h on the 4 h test ball): the vacuum shell is a radially
-inhomogeneous discrete medium and reflects. The difference ref40 − PML32 starts when the wave returns from r ≈ 16 h.
-`spherical_shell_mesh` now makes one decision per column (`mesh.massless_area_factor`); dt is unchanged.
-
-| (after the fix) | normal | oblique (worst of 6 probes) |
-|---|---|---|
-| PML 10 / 16 / 24 layers vs ref40 | 3.0e-4 / 7.0e-5 / 1.7e-5 | 2.0e-3 / 3.9e-4 / 7.4e-5 |
-| ref40 vs PML32 (reference error) | 6.1e-6 (was 4.6e-4) | 2.2e-5 (was 1.5e-3) |
-| 10 h layer at dr = h/2 vs 24 h at dr = h/2 | 7.3e-5 | 4.9e-4 |
-
-**Not measured by this reference.** Thick PMLs on shells with other radial spacings differ from the dr = h shell by
-0.6 % (dr = 0.75 h), 1.0 % (h/2) and 2.0 % (1.5 h) at normal incidence: the tetrahedra → prism transition at r0
-reflects at the 1e-2 level and cancels in every identical-shell comparison. `pml3d_transition.py` measures it.
-
-![](../../docs/img/unstructured_pml3d_floor_layers.png)
-![](../../docs/img/unstructured_pml3d_floor_mechanism.png)
 
 ## Late-time behaviour (`stability.json`, Cloud Batch `pml3d-stab-v1`)
 
@@ -117,8 +85,4 @@ See the module docstring; the measured values are listed in the physics guide se
 python pml3d_reflection.py run 8        # 18 runs, ~3 min on 8 cores (Cloud Batch)
 python pml3d_reflection.py stability    # 3 x 1e5 steps
 python pml3d_reflection.py plot
-FLOOR_TAG=_before python pml3d_floor.py run 30   # per-chord massless decision (as before the fix)
-FLOOR_TAG=_fixed python pml3d_floor.py run 30    # per-column decision (default)
-python pml3d_floor.py plot
-python pml3d_transition.py run 7 && python pml3d_transition.py plot
 ```

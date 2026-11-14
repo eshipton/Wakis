@@ -25,7 +25,7 @@ max_t |E_X - E_B| / max_t |E_B| per probe, for baselines B = ref40 and the
 
 Usage
 -----
-    FLOOR_TAG=_fixed python pml3d_floor.py run [n_procs]   # floor_fixed.json, floor_raw_fixed.npz
+    python pml3d_floor.py run [n_procs]   # floor.json, floor_signals.npz
     python pml3d_floor.py plot            # docs/img/unstructured_pml3d_floor*.png
 """
 
@@ -127,6 +127,7 @@ def run(n_procs=1):
     sig = {(lab, kind): s for lab, kind, s, _, _ in res}
     meta = {(lab, kind): (nc, w) for lab, kind, _, nc, w in res}
     out = dict(dt=dt, h=H, RB=RB, window_layers=N_WINDOW, cases={})
+    npz = {}
     for kind in ("normal", "oblique"):
         _, _, probes, angles = R.geometry(kind)
         ent = dict(probes=probes.tolist(), angles_deg=list(map(float, angles)), runs={})
@@ -140,6 +141,7 @@ def run(n_procs=1):
                 diff = np.linalg.norm(X - B, axis=-1)  # (n_t, n_probe)
                 Rt = diff.max(0) / nb
                 ent["runs"].setdefault(lab, {})[f"vs_{base}"] = Rt.tolist()
+                npz[f"{kind}__{lab}__{base}"] = diff / nb
         for lab in CASES:
             ent["runs"].setdefault(lab, {})["n_cells"], ent["runs"][lab]["wall_s"] = meta[(lab, kind)]
         # backing echo: (PEC - PMC) / 2
@@ -147,6 +149,8 @@ def run(n_procs=1):
             diff = np.linalg.norm(sig[(f"pml{n}", kind)] - sig[(f"pml{n}_pmc", kind)], axis=-1) / 2
             nb = np.linalg.norm(sig[("pml32", kind)], axis=-1).max(0)
             ent[f"backing_echo_pml{n}"] = (diff.max(0) / nb).tolist()
+            npz[f"{kind}__backing{n}"] = diff / nb
+        npz[f"{kind}__t"] = (np.arange(sig[("pml32", kind)].shape[0]) + 1) * dt
         out["cases"][kind] = ent
         print(kind)
         for lab, e in ent["runs"].items():
@@ -154,27 +158,8 @@ def run(n_procs=1):
         print("  backing echo 10 / 16:", ent["backing_echo_pml10"], ent["backing_echo_pml16"])
     with open(os.path.join(HERE, f"floor{TAG}.json"), "w") as f:
         json.dump(out, f, indent=1)
-    np.savez_compressed(os.path.join(HERE, f"floor_raw{TAG}.npz"), **{f"{k}__{lab}": v for (lab, k), v in sig.items()})
-
-
-def _massless_per_ring():
-    """Massless chords per shell ring, per chord vs per column (small mesh:
-    ball 4 h + 30 layers, the geometry of tests/test_098)."""
-    from wakis.unstructured import UnstructuredFIT3D
-    from wakis.unstructured.pml3d import ball_with_pml_mesh
-
-    m, cfg = ball_with_pml_mesh(4.0, H, 6, n_extra=24)
-    rn = np.linalg.norm(m.nodes, axis=1)
-    ra, rb = rn[m.edges].T
-    radii = m.shell_radii[1:-1]
-    out = {}
-    for name in ("per column", "per chord"):
-        if name == "per chord":
-            m.massless_area_factor = np.ones(m.n_edges)
-        ml = np.zeros(m.n_edges, bool)
-        ml[UnstructuredFIT3D(m, bc="pec").massless] = True
-        out[name] = [int(ml[(np.abs(ra - r) < 1e-6) & (np.abs(rb - r) < 1e-6)].sum()) for r in radii]
-    return radii, out
+    np.savez_compressed(os.path.join(HERE, f"floor_signals{TAG}.npz"), **npz)
+    np.savez_compressed(os.path.join(HERE, f"floor_raw{TAG}.npz"), **{f"{k}__{l}": v for (l, k), v in sig.items()})
 
 
 def plot():
@@ -184,74 +169,56 @@ def plot():
     import matplotlib.pyplot as plt
 
     out_img = os.path.join(HERE, "..", "..", "docs", "img")
-    S = {k: json.load(open(os.path.join(HERE, f"floor_{k}.json"))) for k in ("before", "fixed")}
-    Z = {k: np.load(os.path.join(HERE, f"floor_raw_{k}.npz")) for k in ("before", "fixed")}
+    S = json.load(open(os.path.join(HERE, "floor.json")))
+    Z = np.load(os.path.join(HERE, "floor_signals.npz"))
 
-    # 1. reflection vs layers, before / after the per-column massless decision
-    fig, axs = plt.subplots(1, 2, figsize=(11, 5.6), constrained_layout=True)
-    Ns = [4, 6, 10, 16, 24, 32]
+    # 1. reflection vs layers against the two baselines
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
+    Ns = [4, 6, 10, 16, 24]
     for ax, kind in zip(axs, ("normal", "oblique")):
-        for k, ls, mk in (("before", "--", "s"), ("fixed", "-", "o")):
-            e = S[k]["cases"][kind]["runs"]
-            y = [max(e[f"pml{n}"]["vs_ref40"]) if n != 32 else max(e["ref40"]["vs_pml32"]) for n in Ns[:-1]]
-            ax.loglog(Ns[:-1], y, mk + ls, color="C0" if k == "fixed" else "0.5",
-                      label=("massless per column (fixed)" if k == "fixed" else "massless per chord (before)")
-                      + ": PML vs vacuum-shell ref40")  # fmt: skip
-            ref_err = max(e["ref40"]["vs_pml32"])
-            ax.axhline(ref_err, color="C3" if k == "fixed" else "0.6", lw=1, ls=":" if k == "fixed" else "-.",
-                       label=f"ref40 vs PML32 ({k}): {ref_err:.1e}")  # fmt: skip
-        e = S["fixed"]["cases"][kind]["runs"]
-        ax.loglog([10, 16], [max(e["pml10_R12"]["vs_ref40"]), max(e["pml16_R12"]["vs_ref40"])], "^", color="C4",
-                  ms=7, label=r"$R_{design}=10^{-12}$ (fixed)")  # fmt: skip
-        ax.loglog([10], [max(e["pml10_half"]["vs_half_thick"])], "v", color="C2", ms=7,
-                  label="10 h at dr = h/2 vs 24 h at dr = h/2 (fixed)")  # fmt: skip
-        ax.loglog([10, 16], [max(S["fixed"]["cases"][kind][f"backing_echo_pml{n}"]) for n in (10, 16)], "x",
-                  color="k", ms=8, label=r"backing echo $|E_{PEC}-E_{PMC}|/2$")  # fmt: skip
-        ax.set_xlabel("PML layers N (dr = h, $R_{design} = 10^{-8}$, m = 3)")
-        ax.set_ylabel(r"$\max_t |E_N - E_{ref}| / \max_t |E_{ref}|$ (worst probe)")
-        ax.set_title(f"{kind} incidence (ball {RB:g} h)")
-        ax.set_ylim(1e-8, 0.1)
-        ax.set_xticks(Ns[:-1], [str(n) for n in Ns[:-1]])
-        ax.minorticks_off()
+        e = S["cases"][kind]["runs"]
+        for base, mk, name in (("ref40", "s--", "vs vacuum-shell reference (ref40)"),
+                               ("pml32", "o-", "vs 32-layer PML (no echo in window)")):  # fmt: skip
+            y = [max(e[f"pml{n}"][f"vs_{base}"]) for n in Ns if f"vs_{base}" in e[f"pml{n}"]]
+            ax.loglog(Ns[: len(y)], y, mk, label=name)
+        y_ref = max(e["ref40"]["vs_pml32"])
+        ax.axhline(y_ref, color="C3", lw=1, ls=":", label=f"ref40 vs PML32: {y_ref:.1e}")
+        ax.loglog([10], [max(e["pml10_half"]["vs_pml32"])], "v", color="C2", ms=8, label="10 h, dr = h/2 (20 layers)")
+        ax.loglog([10, 16], [max(e["pml10_R12"]["vs_pml32"]), max(e["pml16_R12"]["vs_pml32"])], "^", color="C4",
+                  ms=8, label=r"$R_{design}=10^{-12}$")  # fmt: skip
+        ax.loglog([10, 16], [max(S["cases"][kind][f"backing_echo_pml{n}"]) for n in (10, 16)], "x", color="k",
+                  ms=8, label="backing echo |E_PEC - E_PMC| / 2")  # fmt: skip
+        ax.set_xlabel("PML layers N (dr = h unless noted)")
+        ax.set_ylabel(r"$\max_t |E_N - E_B| / \max_t |E_B|$ (worst probe)")
+        ax.set_title(f"{kind} incidence")
         ax.grid(alpha=0.3, which="both")
-    h, lab = axs[0].get_legend_handles_labels()
-    fig.legend(h, lab, loc="outside lower center", ncol=3, fontsize=7)
-    fig.suptitle("Tetrahedral spherical PML: the 4.5e-4 floor was the reference shell")
+    axs[0].legend(fontsize=7)
+    fig.suptitle(f"Tetrahedral spherical PML: the 4.5e-4 floor is the reference (ball {RB:g} h)")
     fig.savefig(os.path.join(out_img, "unstructured_pml3d_floor_layers.png"), dpi=150)
     plt.close(fig)
 
-    # 2. (a) time-resolved reference error, (b) massless chords per ring
-    fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
-    dt = S["fixed"]["dt"]
+    # 2. time-resolved differences (normal incidence, probe 2)
+    t = Z["normal__t"] * C0 / H
     ip = 2
-    for k, col in (("before", "0.5"), ("fixed", "C0")):
-        z = Z[k]
-        nb = np.linalg.norm(z["normal__pml32"], axis=-1)[:, ip].max()
-        t = (np.arange(z["normal__pml32"].shape[0]) + 1) * dt * C0 / H
-        d = np.linalg.norm(z["normal__ref40"] - z["normal__pml32"], axis=-1)[:, ip] / nb
-        axs[0].semilogy(t, np.maximum(d, 1e-12), color=col, lw=1.2, label=f"ref40 - PML32 ({k})")
-        d = np.linalg.norm(z["normal__pml10"] - z["normal__pml32"], axis=-1)[:, ip] / nb
-        axs[0].semilogy(t, np.maximum(d, 1e-12), color=col, lw=0.8, ls="--", label=f"PML10 - PML32 ({k})")
+    fig, ax = plt.subplots(figsize=(8, 4.2), constrained_layout=True)
+    for key, lab in (("normal__ref40__pml32", "ref40 - PML32 (reference error)"),
+                     ("normal__pml10__ref40", "PML10 - ref40"),
+                     ("normal__pml10__pml32", "PML10 - PML32"),
+                     ("normal__pml16__pml32", "PML16 - PML32"),
+                     ("normal__backing10", "backing echo, 10 layers")):  # fmt: skip
+        ax.semilogy(t, np.maximum(Z[key][:, ip], 1e-12), lw=1, label=lab)
     T0 = R.T0 * C0 / H
     rp = RB - 1.0
-    for r, name in ((RB, "$r_0$"), (RB + 10, "$r_0$ + 10 h")):
-        axs[0].axvline(T0 + 2 * r - rp, color="0.5", lw=0.7, ls=":")
-        axs[0].text(T0 + 2 * r - rp, 2e-11, " echo from " + name, rotation=90, fontsize=7, color="0.3", va="bottom")
-    axs[0].set_ylim(1e-11, 1e-2)
-    axs[0].set_xlabel("time  c t / h")
-    axs[0].set_ylabel(r"$|E_X - E_{PML32}|(t)\,/\,\max_t |E_{PML32}|$")
-    axs[0].set_title(f"normal incidence, probe r = {rp:g} h, θ = 30°")
-    axs[0].legend(fontsize=7)
-    radii, cnt = _massless_per_ring()
-    for name, mk in (("per chord", "s--"), ("per column", "o-")):
-        axs[1].plot(radii, cnt[name], mk, ms=3, label=f"massless decision {name}")
-    axs[1].set_xlabel("ring radius r / h (ball 4 h, 30 layers of dr = h)")
-    axs[1].set_ylabel("massless chords on the ring")
-    axs[1].set_title(r"area < tol $L^2$: area $\propto r\,dr$, $L^2 \propto r^2$")
-    axs[1].legend(fontsize=8)
-    for ax in axs:
-        ax.grid(alpha=0.3, which="both")
-    fig.savefig(os.path.join(out_img, "unstructured_pml3d_floor_mechanism.png"), dpi=150)
+    for r, name in ((RB, "$r_0$"), (RB + 10, "$r_1$ (10)"), (RB + 16, "$r_1$ (16)")):
+        ax.axvline(T0 + 2 * r - rp, color="0.5", lw=0.7, ls="--")
+        ax.text(T0 + 2 * r - rp, 2e-11, " echo " + name, rotation=90, fontsize=7, color="0.3", va="bottom")
+    ax.set_ylim(1e-11, 2)
+    ax.set_xlabel("time  c t / h")
+    ax.set_ylabel(r"$|E_X - E_B|(t) / \max_t |E_B|$")
+    ax.set_title(f"Normal incidence, probe at r = {rp:g} h, θ = 30°: arrival times of the differences")
+    ax.legend(fontsize=7, loc="upper left")
+    ax.grid(alpha=0.3, which="both")
+    fig.savefig(os.path.join(out_img, "unstructured_pml3d_floor_time.png"), dpi=150)
     plt.close(fig)
 
 

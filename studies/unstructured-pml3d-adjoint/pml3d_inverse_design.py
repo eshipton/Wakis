@@ -181,15 +181,17 @@ def plot():
     g = Z["grid"]
     ext = [g[0], g[-1], g[0], g[-1]]
     fig, axs = plt.subplots(2, 2, figsize=(9.5, 8.2), constrained_layout=True)
-    vmax = np.nanmax(np.abs(Z["E_final"]))
+    from matplotlib.colors import LogNorm
+
+    Ef = np.abs(Z["E_final"])
+    norm = LogNorm(vmin=np.nanpercentile(Ef, 2), vmax=np.nanpercentile(Ef, 99))  # clip the source singularity
     for col, key in enumerate(("start", "final")):
         im = axs[0, col].imshow(Z[f"eps_{key}"], origin="lower", extent=ext, cmap="viridis", vmin=1, vmax=S["eps_max"])
         axs[0, col].set_title(f"{key} design: $\\varepsilon_r$ on z = 0")
         fig.colorbar(im, ax=axs[0, col], shrink=0.8, label=r"$\varepsilon_r$")
-        im = axs[1, col].imshow(np.real(Z[f"E_{key}"]), origin="lower", extent=ext, cmap="RdBu_r",
-                                vmin=-vmax, vmax=vmax)  # fmt: skip
-        axs[1, col].set_title(f"{key}: Re $\\hat E_z(f_0)$ on z = 0")
-        fig.colorbar(im, ax=axs[1, col], shrink=0.8, label=r"Re $\hat E_z$ [V s/m]")
+        im = axs[1, col].imshow(np.abs(Z[f"E_{key}"]), origin="lower", extent=ext, cmap="magma", norm=norm)
+        axs[1, col].set_title(f"{key}: $|\\hat E_z(f_0)|$ on z = 0 (log)")
+        fig.colorbar(im, ax=axs[1, col], shrink=0.8, label=r"$|\hat E_z|$ [V s/m]")
         for ax in axs[:, col]:
             ax.plot([-X_SRC], [0], "k*", ms=10)
             ax.plot([X_TGT], [0], "wo", mec="k", ms=7)

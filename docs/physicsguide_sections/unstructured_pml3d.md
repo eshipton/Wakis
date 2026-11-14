@@ -158,7 +158,33 @@ layer-count curve has no floor down to 1.7e-5.
 **What the identical-mesh reference does not measure.** The transition from the unstructured ball to the prism shell
 cancels in test − reference. Shells with other dr change the field in the ball by 0.6 % (dr = 0.75 h), 1.0 %
 (dr = h/2) and 2.0 % (dr = 1.5 h) relative to dr = h (thick PMLs, `pml3d_floor.py`), so the transition reflects at the
-1e-2 level, far above the PML. Its absolute size is measured in §4.2.
+1e-2 level, far above the PML. Its absolute size is measured in §4.2: 2.3 % at dr = h and 8 cells per wavelength.
+
+### 4.2 The tetrahedra → prism transition dominates the truncation
+
+`studies/unstructured-pml3d/pml3d_transition.py` (Cloud Batch `pmltrans-v1`, n2-highmem-16) calibrates the echo of
+the boundary against a bare PEC wall at r0 (discrete |R| = 1): dipole near the centre of a 12 h ball, probes at
+r = 1.5 h, derivative-of-Gaussian pulse with centre wavelength 8 h, so the echo from r0 arrives after the direct pulse
+(gate 23–46 h/c, the direct field has fallen to 1e-5 of its peak when the gate opens). Every shell carries a 24 h
+thick PML (its own reflection < 1e-4). Worst of three probes, echo / PEC echo:
+
+| boundary at r0 = 12 h | reflection |
+|---|---|
+| first-order Silver–Müller | 0.079 |
+| prism shell dr = h/2 + PML | 0.068 |
+| dr = 0.75 h | 0.045 |
+| **dr = h** | **0.023** |
+| dr = 1.25 h | 0.12 |
+| dr = 1.5 h | 0.26 |
+
+So at 8 cells per wavelength the total reflection of the PML truncation is 2.3 % (−33 dB) at the best spacing dr = h,
+about 3.4× below Silver–Müller and two orders of magnitude above the PML's own reflection. It comes from the change
+of discrete medium at r0: the unstructured Delaunay ball and the layered frustum prisms have different numerical
+dispersion (a discrete impedance step), and the step depends on the prism aspect ratio dr / h. The PML reflections
+of §4 are real (the layer reflects that much relative to the same shell continued in vacuum), but they are not the
+reflection a user sees; the transition is. Remedies to try (open): choose dr to match the ball's radial dispersion
+(the minimum near dr = h suggests a matched value close to h), a graded transition layer of tetrahedra whose
+quality approaches the prisms, or extruding the shell from a smoothed (centroidal) surface triangulation.
 
 **Tests** (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, centre wavelength 12 h): 10 layers 7.5e-5–1.3e-4
 normal, 5.9e-4–1.8e-3 oblique; Silver–Müller 0.064–0.92; PEC 0.17–2.0. Layers 3 / 6 / 12: 1.6e-2 / 2.4e-4 / 2.5e-5

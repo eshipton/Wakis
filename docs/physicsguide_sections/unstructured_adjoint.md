@@ -298,6 +298,20 @@ Each configuration is checked three ways:
 
 See the study README and `docs/figures.md`.
 
+**3D, open domain** (`studies/unstructured-pml3d-adjoint/pml3d_inverse_design.py`, Cloud Batch `pmladj-demo-v1`,
+n2-highmem-8, 1448 s). A z-dipole at x = −0.85 λ radiates a 3-period Gaussian-modulated sine at f0; a spherical design
+region (radius 0.45 λ, 761 tetrahedra, ε_r ∈ [1, 4], cone filter 1.5 h) sits between it and a target point at
+x = +0.85 λ. The tetrahedral ball (radius 1.2 λ, h = λ/6, 51 223 cells including the shell) is truncated by an 8-layer
+spherical CFS-PML (κ_max = 2, α = ω0/10); 1319 steps. Objective: $`|\hat E_z(\mathbf x_t, f_0)|^2`$ over the window.
+
+* Gradient on the full problem: adjoint vs central FD on 3 random cells, relative difference 2e-9 – 1.4e-7 (the
+  largest on the smallest gradient component, at the FD round-off term).
+* 40 projected-Adam iterations: 11.36× the vacuum value, against 7.71× for the start (uniform ρ = 0.5) and 5.17× for
+  the solid ε_r = 4 sphere (named baselines, same mesh and window), i.e. 1.47× the start and 2.2× the solid sphere.
+* Not done here: binarisation (no projection continuation), a window-length check of the objective, and a
+  resolution check (h = λ/6 is ~3 cells per wavelength in ε_r = 4; this is a demonstration of the gradient machinery,
+  not a converged device).
+
 ## References
 
 - M. B. Giles and N. A. Pierce, "An introduction to the adjoint approach to design", *Flow, Turbulence and Combustion* **65**, 393–415 (2000).

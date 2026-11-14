@@ -30,12 +30,14 @@ import numpy as np
 from scipy.constants import c as C0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-H, RB = 1.0, 12.0
-LAM0 = 8.0
+H = 1.0
+RB = float(os.environ.get("TRANS_RB", 12.0))
+LAM0 = float(os.environ.get("TRANS_LAM", 8.0))
+TAG = os.environ.get("TRANS_TAG", "")  # "" (lambda 8 h) or e.g. "_lam16"
 TAU = LAM0 / (np.pi * C0)
 T0 = 4 * TAU
 RP = 1.5
-DRS = [0.5, 0.75, 1.0, 1.25, 1.5]
+DRS = [float(x) for x in os.environ.get("TRANS_DRS", "0.5,0.75,1.0,1.25,1.5").split(",")]
 THICK = 24.0
 
 
@@ -114,9 +116,9 @@ def run(n_procs=7):
         R = np.linalg.norm(sig[g], axis=-1).max(0) / pec
         out["R"][lab] = R.tolist()
         print(lab, np.round(R, 5))
-    with open(os.path.join(HERE, "transition.json"), "w") as f:
+    with open(os.path.join(HERE, f"transition{TAG}.json"), "w") as f:
         json.dump(out, f, indent=1)
-    np.savez_compressed(os.path.join(HERE, "transition_signals.npz"), t=t, **res)
+    np.savez_compressed(os.path.join(HERE, f"transition_signals{TAG}.npz"), t=t, **res)
 
 
 def plot():
