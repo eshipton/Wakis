@@ -111,8 +111,13 @@ def task_D(args):
                            sphere=((0, 0, 0), a), hole=True)  # fmt: skip
     cart = HybridFIT3D(v, v, v, pec=lambda X, Y, Z: X**2 + Y**2 + Z**2 < a**2)
     out["dt_cart_staircase"] = cart.dt_max
-    for solver in ("lu", "chebyshev"):
-        s = HybridFIT3D(v, v, v, box=((i0, i1),) * 3, tet_mesh=tm, mass_solver=solver)
+    # LU of the 3D consistent-mass block fills badly; only on the small case
+    variants = (("lu", 1e-16), ("chebyshev", 1e-16), ("cheb_tol1e-4", 1e-4))
+    if N > 10:
+        variants = variants[1:]
+    for solver, tol in variants:
+        s = HybridFIT3D(v, v, v, box=((i0, i1),) * 3, tet_mesh=tm,
+                        mass_solver="lu" if solver == "lu" else "chebyshev", mass_tol=tol)  # fmt: skip
         lc, lt = s.block_lambda_bounds()
         out[f"{solver}"] = {
             "lambda_cart": lc, "lambda_tet": lt, "lambda": s.lambda_max,
@@ -144,7 +149,7 @@ PARTS = {
                              "kuhn_nearest", "kuhn_inject")]),
     "B": (task_B, [(N, k) for N in (8, 12, 16, 24, 32) for k in ("cartesian", "kuhn", "delaunay")]),
     "C": (task_C, [(N, k) for N in (8, 10, 12, 16) for k in ("staircase", "hybrid", "hybrid_fine", "tet")]
-          + [(20, "staircase")]),
+          + [(20, "staircase"), (20, "hybrid"), (24, "staircase")]),
     "D": (task_D, [(10,), (16,)]),
 }  # fmt: skip
 

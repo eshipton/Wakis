@@ -695,7 +695,17 @@ class HybridFIT3D:
             Kd = self.Cf @ Q
             Afd = self.KT @ (self.W @ Kd) - omega**2 * (self.P.T @ (self.M_all @ Q))
             b = b - Afd @ val
-        return sla.spsolve(A, b, permc_spec="MMD_AT_PLUS_A")
+        perm = _nested_dissection(A, self.free_points())
+        lu = sla.splu(A[perm][:, perm].tocsc(), permc_spec="NATURAL", diag_pivot_thresh=0.0,
+                      options=dict(SymmetricMode=True))  # fmt: skip
+        x = np.empty(self.n_free, complex)
+        x[perm] = lu.solve(b[perm])
+        return x
+
+    def free_points(self):
+        """Midpoints of the free edges [m] (Cartesian, then tetrahedral)."""
+        mids = [self.edge_mid] + ([self.tet.edge_midpoint] if self.tet is not None else [])
+        return np.vstack(mids)[self.free_edges]
 
     def eigenfrequencies(self, k, f_lo, f_hi):
         """
@@ -714,6 +724,48 @@ class HybridFIT3D:
                         return_eigenvectors=False)  # fmt: skip
         lam = np.sort(lam[(lam > wl**2) & (lam < wh**2)])
         return (np.sqrt(lam) / (2 * np.pi))[:k]
+
+
+def _nested_dissection(A, X, leaf=128):
+    """
+    Geometric nested-dissection ordering of the unknowns at points X.
+
+    Recursive median bisection along the longest extent; the separator is
+    the part of the left half coupled to the right half (graph of A + A^T)
+    and is ordered last. For 3D meshes this cuts the LU fill several times
+    below COLAMD (measured 10.6M vs 27.7M entries on a 21k-unknown
+    staircase sphere; COLAMD exceeded 1.8 GB on a 33k hybrid case where
+    this ordering needs 25.7M entries).
+    """
+    n = A.shape[0]
+    G = (abs(A) + abs(A.T)).tocsr()
+    G.data[:] = 1.0
+    out = []
+    stack = [np.arange(n)]
+    # iterative post-order: children first, then separator
+    todo = []
+    while stack:
+        idx = stack.pop()
+        if len(idx) <= leaf:
+            todo.append(("leaf", idx))
+            continue
+        P = X[idx]
+        ax = int(np.argmax(P.max(0) - P.min(0)))
+        med = np.median(P[:, ax])
+        left, right = idx[P[:, ax] <= med], idx[P[:, ax] > med]
+        if not len(left) or not len(right):
+            todo.append(("leaf", idx))
+            continue
+        inR = np.zeros(n)
+        inR[right] = 1.0
+        touch = (G[left] @ inR) > 0
+        todo.append(("sep", left[touch]))
+        stack += [right, left[~touch]]
+    for kind, idx in reversed(todo):
+        out.append(idx)
+    perm = np.concatenate(out)
+    assert perm.size == n
+    return perm
 
 
 def _gen_lanczos_max(K, W, M, msolver):
