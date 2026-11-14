@@ -146,6 +146,8 @@ def waveguide_reflection(cells_per_a, patch="kuhn", r=1, h_tet=None, wavelength_
     Mfit = np.stack([np.exp(1j * kx * X), np.exp(-1j * kx * X)], 1)
     (a_inc, b_ref), *_ = np.linalg.lstsq(Mfit, amp[win], rcond=None)
     R = float(abs(b_ref / a_inc))
+    if s.last_residual > 1e-9:
+        raise RuntimeError(f"frequency solve residual {s.last_residual:.1e}")
     return (R, s) if return_solver else R
 
 
@@ -275,7 +277,7 @@ def pec_sphere_scattering(cells_per_wavelength, method="hybrid", ka=2.0, h_tet=N
     near = (rr > a + h) & (rinf < B)
     far = (rinf > B + 0.25 * h) & (rinf < B + ng * h - 0.25 * h)
     out = {"n_free": int(s.n_free), "n_tets": int(tm.n_cells) if tm is not None else 0,
-           "h": h, "a": a, "B": B}  # fmt: skip
+           "h": h, "a": a, "B": B, "residual": s.last_residual}  # fmt: skip
 
     def field(X):
         return pec_sphere_field(X, k, a, "scattered")

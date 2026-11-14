@@ -700,6 +700,17 @@ class HybridFIT3D:
                       options=dict(SymmetricMode=True))  # fmt: skip
         x = np.empty(self.n_free, complex)
         x[perm] = lu.solve(b[perm])
+        # the factorization does not pivot (symmetric ND order kept): check
+        # the residual and refine (two steps at most)
+        nb = np.linalg.norm(b)
+        for _ in range(2):
+            r = b - A @ x
+            self.last_residual = float(np.linalg.norm(r) / nb) if nb else 0.0
+            if self.last_residual < 1e-12:
+                break
+            dx = np.empty_like(x)
+            dx[perm] = lu.solve(r[perm])
+            x += dx
         return x
 
     def free_points(self):
