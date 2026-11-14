@@ -10,11 +10,18 @@
 non-uniform tensor grid; hanging edges on coarse faces take the Nedelec
 trace of the coarse face (prolongation ``P_e``, restriction ``P_e^T``).
 `SubgridFIT3D` runs the energy-conserving leapfrog on it with an exactly
-transposable step. See ``docs/physicsguide_sections/subgrid3d.md``.
+transposable step. `SubgridLTSFIT3D` adds multi-level local time stepping
+(`SubgridLTS`), a CFS-CPML on the outer walls (`SubgridCPML`) and dense
+per-block curl kernels on NumPy or CuPy (`gpu.BlockOps`).
+See ``docs/physicsguide_sections/subgrid3d.md``.
 """
 
 from .block import CartesianBlock
+from .lts import SubgridLTS
 from .mesh import Patch, SubgridMesh3D
+from .pml import SubgridCPML
 from .solver import Box, SubgridFIT3D
+from .stepper import SubgridLTSFIT3D
 
-__all__ = ["CartesianBlock", "Patch", "SubgridMesh3D", "SubgridFIT3D", "Box"]
+__all__ = ["CartesianBlock", "Patch", "SubgridMesh3D", "SubgridFIT3D", "Box",
+           "SubgridLTS", "SubgridCPML", "SubgridLTSFIT3D"]  # fmt: skip
