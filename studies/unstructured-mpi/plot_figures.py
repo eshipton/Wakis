@@ -35,13 +35,16 @@ def correctness():
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.4), gridspec_kw={"width_ratios": [1.3, 1, 1]})
     a = ax[0]
     a.semilogy(n, m["eps"], "k-", lw=2, label=r"derived bound $\varepsilon_n$ (agreement_bound)")
-    a.semilogy(n, np.maximum(m["d_serial_lu"], 1e-300), "C0-", label="4 ranks vs serial (LU elimination)")
-    a.semilogy(n, m["d_mutation"], "C3--", label="4 ranks, one halo entry dropped (mutation)")
+    pos = lambda v: np.where(np.asarray(v) > 0, v, np.nan)  # noqa: E731  (zeros: before the pulse)
+    a.semilogy(n, pos(m["d_serial_lu"]), "C0-", label="4 ranks vs serial (LU elimination)")
+    a.semilogy(n, pos(m["d_mutation"]), "C3--", label="4 ranks, one halo entry dropped (mutation)")
     a.semilogy(n, m["norm"], "0.6", lw=1, label=r"$\|x_n\|_W$ (state norm)")
     a.text(0.02, 0.03, "4 ranks vs fused host step: 0 (bitwise) at every step\n"
            "plain mesh (no massless edges) vs one_step: 0 (bitwise)",
            transform=a.transAxes, fontsize=8.5, va="bottom",
            bbox=dict(fc="w", ec="0.7"))  # fmt: skip
+    lo = np.nanmin(pos(m["d_serial_lu"]))
+    a.set_ylim(lo / 10, 10 * max(m["norm"]))
     a.set_xlabel("time step n")
     a.set_ylabel(r"energy-norm difference $\|d_n\|_W$ [$\sqrt{\mathrm{J}}$]")
     a.set_title(f"3D, {m['n_cells']} tets, {m['n_massless']} massless edges, Debye + ABC")
@@ -73,37 +76,55 @@ def _load():
 
 
 def strong(res):
-    rs = [r for r in res if r["study"] == "strong"]
-    base = [r for r in rs if r["P"] == 0]
-    dist = sorted([r for r in rs if r["P"] >= 1], key=lambda r: r["P"])
-    if not base or not dist:
+    """
+    Two Batch VMs (same machine type) contribute: w2-mpi-scaling-1 (P = 1..16
+    and the LU baseline) and w2-mpi-scaling-2 (fused baseline, P = 32 and the
+    partitioner runs at P = 8, 16). Speed-ups are only formed within one VM.
+    """
+    vm1 = [r for r in res if r.get("batch_job") == "w2-mpi-scaling-1" and r["study"] == "strong"]
+    vm2 = [r for r in res if r.get("batch_job") == "w2-mpi-scaling-2"
+           and r["study"] in ("strong", "partitioners") and abs(r["h"] - 0.03) < 1e-9]  # fmt: skip
+    b1 = [r for r in vm1 if r["P"] == 0]
+    b2 = [r for r in vm2 if r["P"] == -1]
+    d1 = sorted([r for r in vm1 if r["P"] >= 1], key=lambda r: r["P"])
+    d2 = sorted([r for r in vm2 if r["P"] >= 1], key=lambda r: r["P"])
+    if not (b1 and d1):
         return
-    t0 = base[0]["t_step"]
-    P = np.array([r["P"] for r in dist])
-    t = np.array([r["t_step"] for r in dist])
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.3))
+    fig, ax = plt.subplots(1, 2, figsize=(11, 4.4))
     a = ax[0]
-    a.loglog(P, t0 / t, "o-", label="vs serial one_step (LU elimination)")
-    fused = [r for r in rs if r["P"] == -1]
-    if fused:
-        a.loglog(P, fused[0]["t_step"] / t, "s--", label="vs serial fused step (same arithmetic)")
-    a.loglog(P, P, "k--", lw=1, label="ideal (P)")
+    P1 = np.array([r["P"] for r in d1])
+    t1 = np.array([r["t_step"] for r in d1])
+    a.loglog(P1, b1[0]["t_step"] / t1, "o-",
+             label=f"VM 1: vs serial one_step, LU ({b1[0]['t_step'] * 1e3:.1f} ms)")  # fmt: skip
+    if b2 and d2:
+        P2 = np.array([r["P"] for r in d2])
+        t2 = np.array([r["t_step"] for r in d2])
+        mk = {"metis": "s", "rcb": "D", "rib": "^", None: "*"}
+        for r, p_, tt in zip(d2, P2, t2):
+            a.loglog(p_, b2[0]["t_step"] / tt, mk.get(r.get("method")), color="C1", ms=7, ls="")
+        a.plot([], [], "s", color="C1",
+               label=f"VM 2: vs serial fused step ({b2[0]['t_step'] * 1e3:.1f} ms)\n"
+                     "(METIS s, RCB D, RIB ^, auto *)")  # fmt: skip
+    a.loglog([1, 32], [1, 32], "k--", lw=1, label="ideal (P)")
     a.axvline(16, color="0.5", lw=0.8, ls=":")
-    a.text(16, a.get_ylim()[0] * 1.3, " 16 physical cores", fontsize=8, color="0.4")
+    a.text(16.5, 1.1, "16 physical cores;\n32 = hyperthreads", fontsize=7.5, color="0.4")
     a.set_xlabel("ranks P")
-    a.set_ylabel("speedup of DistributedFIT (P ranks)")
-    a.set_title(f"strong scaling, {dist[0]['n_cells']:,} tets "
-                f"(serial {t0 * 1e3:.1f} ms/step)")  # fmt: skip
-    a.legend(fontsize=8)
+    a.set_ylabel("speed-up (same-VM baseline)")
+    a.set_title(f"strong scaling, {d1[0]['n_cells']:,} tets, n2-standard-32", fontsize=10)
+    a.legend(fontsize=7.5, loc="upper left")
     a = ax[1]
-    comp = np.array([r["t_compute_max"] for r in dist]) * 1e3
-    exch = np.array([r["t_exchange_max"] for r in dist]) * 1e3
-    x = np.arange(P.size)
+    dd = d1 + [r for r in d2 if r["study"] == "strong"]
+    P = [r["P"] for r in dd]
+    comp = np.array([r["t_compute_max"] for r in dd]) * 1e3
+    exch = np.array([r["t_exchange_max"] for r in dd]) * 1e3
+    t = np.array([r["t_step"] for r in dd]) * 1e3
+    x = np.arange(len(dd))
     a.bar(x, comp, label="compute (max over ranks)")
     a.bar(x, exch, bottom=comp, label="halo exchange incl. wait (max)")
-    a.plot(x, t * 1e3, "kx", label="wall time per step")
-    a.set_xticks(x, [str(p) for p in P])
+    a.plot(x, t, "kx", label="wall time per step")
+    a.set_xticks(x, [f"{p}" + ("\n(VM 2)" if r in d2 else "") for p, r in zip(P, dd)])
     a.set_yscale("log")
+    a.set_ylim(0.5, 1.5 * max(comp + exch))
     a.set_xlabel("ranks P")
     a.set_ylabel("time per step [ms]")
     a.legend(fontsize=8)
@@ -162,7 +183,7 @@ def comm(res):
             continue
         cut = np.array([r["partition"]["cut_facets"] for r in sel])
         halo = np.array([r["halo_total"] for r in sel])
-        a.loglog(cut, halo, mk[meth], ls="", label=f"{meth} ({sel[0]['study']})")
+        a.loglog(cut, halo, mk[meth], ls="", label=f"{meth} ({sel[0]['study']})" + (", = METIS" if meth == "auto" else ""))
     allc = np.array([r["partition"]["cut_facets"] for r in rs], float)
     allh = np.array([r["halo_total"] for r in rs], float)
     k = np.sum(allc * allh) / np.sum(allc**2)

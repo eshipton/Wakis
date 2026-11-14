@@ -146,15 +146,54 @@ The measured numbers are in §8.
 
 ##### 8. Validation and measurements
 
-**Tests** (`tests/test_103_unstructured_mpi.py`; serial pytest runs the in-process `LocalCluster`, and `mpiexec -n 2`/`-n 4` runs the real `DistributedFIT` in both `scatter` and `replicated` modes). The results are given in the report table below (Batch jobs `w2-mpi-tests-*`).
+**Tests** (`tests/test_103_unstructured_mpi.py`). A serial pytest runs the in-process `LocalCluster`; `mpiexec -n 2` and `-n 4` run the real `DistributedFIT` in both `scatter` and `replicated` modes. Batch job `w2-mpi-tests-1` (n2-standard-8, with `pymetis`): 39 passed and 22 skipped serially (the skipped ones are the MPI-only tests); 22 passed per rank with 2 ranks and with 4 ranks.
 
-* Bitwise equality with `one_step` (fields, every probe, DFT) for 3D PEC without massless edges, 3D PML, 2D TM (PEC; ABC with conductivity and a Drude–Lorentz medium; Debye medium with an absorber) and 2D TE (ABC with an absorber), for 2, 3 and 4 parts with RCB and RIB.
-* Massless edges (Debye–Lorentz with ABC; a PEC ball with a lossy shell): bitwise equal to the fused host `DeviceStepper`, and different from the LU `one_step` by $`0 < \|d\|_W \le \varepsilon_N`$.
-* Energy `Allreduce` within $`2\gamma_n W`$.
-* Mutation: one halo entry is never refreshed (3D, massless, PML, TM, TE). The relative difference must exceed $`10^{-6}`$; round-off would be about $`10^{-15}`$.
-* Transpose: the dot-product identity holds within the bound above. One coefficient of one rank's transpose is perturbed by $`10^{-3}`$, which must exceed $`10\times`$ the bound. The transpose is bitwise equal to the serial adjoint.
+* **Bitwise equality with `one_step`** (fields, every probe, DFT) on 2, 3 and 4 parts with RCB and RIB:
+  * 3D PEC without massless edges;
+  * 3D PML;
+  * 2D TM: PEC; ABC with conductivity and a Drude–Lorentz medium; a Debye medium with an absorber;
+  * 2D TE: ABC with an absorber.
+* **Massless edges** (Debye–Lorentz with ABC; a PEC ball with a lossy shell): bitwise equal to the fused host `DeviceStepper`. Against the LU `one_step` the difference is non-zero and within the bound.
+* **Energy:** the `Allreduce` agrees with the serial sum within $`2\gamma_n W`$.
+* **Mutation:** one halo entry is never refreshed (3D, massless, PML, TM, TE). The relative difference must exceed $`10^{-6}`$; round-off would be about $`10^{-15}`$.
+* **Transpose:** the dot-product identity holds within the bound of §6. The measured residual is about $`10^{-18}`$ of $`|\mathbf y|^T|F||\mathbf x|`$, against a worst-case bound of $`10^{-12}`$ to $`10^{-11}`$. Perturbing one coefficient of one rank's transpose by $`10^{-3}`$ gives $`4\times10^{2}`$ to $`6\times10^{5}`$ times the bound. The transpose is bitwise equal to the serial adjoint.
 
-**Study** (`studies/unstructured-mpi/`): `correctness.py` gives the per-step difference against the bound (figure `unstructured_mpi_correctness.png`), and `scaling.py` the strong and weak scaling and communication volume on one n2-standard-32 VM (figures `unstructured_mpi_*_scaling.png`, `unstructured_mpi_comm_volume.png`). The baseline is the same mesh stepped by the serial SciPy `one_step` in one process with one thread.
+**Correctness study** (`studies/unstructured-mpi/correctness.py`; Batch job `w2-mpi-scaling-1`; figure `unstructured_mpi_correctness.png`). The mesh has 3,555 tetrahedra and 248 massless edges, with a Debye medium and ABC, run on 4 ranks for 400 steps.
+
+* Against the fused host step: 0 at every step. A plain mesh without massless edges against `one_step` is also bitwise equal.
+* Against the LU `one_step`: at most $`5.6\times10^{-6}\,\varepsilon_n`$.
+* Drop-one-halo-entry mutation: $`1.3\times10^{5}\,\varepsilon_N`$ at step 400.
+
+**Scaling study** (`studies/unstructured-mpi/scaling.py`; figures `unstructured_mpi_strong_scaling.png`, `unstructured_mpi_weak_scaling.png`, `unstructured_mpi_comm_volume.png`). Everything runs on one n2-standard-32 VM: 2 sockets × 8 cores × 2 hyperthreads, i.e. **16 physical cores**. So 32 ranks run on hyperthreads, two ranks per core. The mesh is `ball_mesh([0.5, 1.0], h)` with eps_r = 3 inside, PEC outside, massless edges eliminated, and one dipole; OMP threads = 1.
+
+There are two serial baselines on the same mesh:
+
+* `one_step`, which uses the per-step LU solve for the massless edges;
+* the **fused serial step** (`DeviceStepper(xp=numpy)`), which does the same arithmetic as the ranks. **This is the fair baseline.**
+
+The study ran on two VMs of the same machine type:
+
+* `w2-mpi-scaling-1`: P = 1–16 and the LU baseline;
+* `w2-mpi-scaling-2`: the fused baseline, P = 32, the partitioner runs at P = 8 and 16, and all of the weak scaling.
+
+The run-to-run and VM-to-VM variance is large:
+
+* The METIS partition at P = 16 gives an identical halo on both VMs, yet took 9.58 ms/step on VM 1 and 6.4–6.7 ms on VM 2.
+* P = 8 took 13.7 ms on VM 1 and 9.7–10.3 ms on VM 2.
+
+Speed-up ratios are therefore formed only within one VM.
+
+* **Strong scaling, 1,764,494 tetrahedra (19,938 massless edges).**
+  * VM 2: the fused serial step takes 58.53 ms/step. 32 ranks take **6.33 ms (9.2×)**, 16 ranks 6.40–6.66 ms (8.8–9.1×) and 8 ranks 9.71–10.30 ms (5.7–6.0×).
+  * VM 1: the LU `one_step` takes 102.8 ms/step. 1/2/4/8/16 ranks take 83.9/61.5/24.0/13.7/9.58 ms. These are speed-ups over the LU step, which does more arithmetic than the ranks, so they are not equal-work ratios.
+  * The halo exchange including the wait is 1.5 ms of the 6.33 ms at 32 ranks. 1.47 ms of the 9.58 ms at 16 ranks (VM 1).
+* **Weak scaling, about 84–94k tetrahedra per rank** (VM 2): 1.96 ms at 1 rank, 3.76 at 2, 2.95 at 4, 3.64 at 8, **5.72 at 16** and **12.24 at 32**. That is a weak efficiency $`t(1)/t(P)`$ of about 34 % at 16 ranks and 16 % at 32 ranks on one node.
+  * Measured: the per-rank *compute* time, at the same per-rank work, grows from 1.95 ms to 5.28 ms at 16 ranks. The exchange is 1.41 ms. So most of the loss is in the local SpMVs, not in the communication.
+  * Likely cause (hypothesis, not measured): the ranks share the memory bandwidth of the node, and the time-domain FIT step is bandwidth bound. A measurement of the per-rank DRAM throughput, or a multi-node run, would test it.
+  * The 2-rank point (3.76 ms) is above the 4-rank point. The single run per configuration does not resolve this.
+* **Communication volume:** over all runs the halo is 3.2–4.1 doubles received per step per cut face (fit 3.75). It is proportional to the partition surface, as derived in §7.
+* **Partitioners:** METIS, RCB and RIB are within ±5 % of each other in time per step at 8 and 16 ranks (8: 10.09 / 9.71 / 10.30 ms; 16: 6.66 / 6.61 / 6.40 ms). This holds even though METIS cuts 8–22 % fewer faces (P = 8: 37.3k / 40.5k / 43.3k; P = 16: 54.5k / 64.4k / 69.5k). On one node the halo is not the bottleneck.
+* **Set-up** (serial build of mesh and solver on the root): about 232 s for 1.76 million tetrahedra. It is not distributed.
 
 ##### Limits & Failure Modes
 
