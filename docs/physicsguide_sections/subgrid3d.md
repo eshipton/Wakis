@@ -185,6 +185,131 @@ Work is unknowns × steps to the same physical time, at $0.95\,\Delta t_\max$ fo
 Per step, `SubgridFIT3D.one_step` costs the same as `SolverFIT3D.one_step` on the same uniform grid (n2-standard-8, one thread, serial). At $h=0.02$ m (60 000 cells), the two take 2.85 ms and 2.84 ms; at $h=0.05$ m, 0.149 ms and 0.151 ms. The work ratios above are therefore also wall-clock ratios. Absolute speed is about 8 ns per unknown-step on that VM and 3.4 ns on an Apple-silicon laptop core.
 
 
+#### 9c. Local time stepping per refinement level (wave 2, `wakis/subgrid3d/lts.py`)
+
+**Second-order form.** Eliminating $\mathbf b$ from the leapfrog of §4 gives, source-free,
+$\mathbf e^{n+1}-2\mathbf e^n+\mathbf e^{n-1}=-\Delta t^2\mathbf A\mathbf e^n$ with $\mathbf A=\mathbf D^{-1}\mathbf S$, $\mathbf S=\mathbf K^H\mathbf W\mathbf K$ (Hermitian, $\succeq0$).
+
+**Levels.** Level $l$ ($0$ = root) owns the set $F_l$ of free edges of the blocks of depth $\ge l$, plus the coarse parents of the hanging edges of those blocks (their row of $\mathbf S$ contains the fine faces through $\mathbf P_e^T$, see "Partition" below). The sets are nested, $F_L\subset\dots\subset F_1\subset F_0$, and the one-face buffer $C_l$ of $F_l$ (edges that share a face with it) is forced into $F_{l-1}$. Level $l$ takes $p_l$ substeps of level $l-1$ (default: its patch ratio), $\tau_0=\Delta t$, $\tau_l=\tau_{l-1}/p_l$.
+
+**Recursion.** With $\mathbf P_l$ the 0/1 projector on $F_l$ and $r_l$ the damped leapfrog–Chebyshev polynomial of degree $p_l-1$ of the unstructured LTS ("Local time stepping (LTS) for the unstructured leapfrog" in the physics guide; $r(0)=1$, damping $\nu_l$),
+
+```math
+\mathbf B_L=\mathbf A,\qquad \mathbf B_{l-1}=\mathbf B_l\,r_l(\mathbf X_l),\qquad \mathbf X_l=\tau_{l-1}^2\,\mathbf P_l\mathbf B_l ,
+```
+
+so $\mathbf B_0=\mathbf A\mathbf R_0$, $\mathbf R_0=r_L(\mathbf X_L)\cdots r_1(\mathbf X_1)$ (applied right to left). For $L=1$ this is the two-level Diaz–Grote LTS [Diaz & Grote, 2009] with the damped polynomial of [Carle, Hochbruck & Sturm, 2020]. For $L>1$, level $l$'s substeps use the LTS operator of the finer levels, as in multi-level LTS [Diaz & Grote, 2015], but the *coarse* force also uses $\mathbf B_l$ rather than $\mathbf A$. This is what makes the induction below close. The first-order form is the ordinary leapfrog with $\mathbf e^n$ replaced by $\mathbf z=\mathbf R_0\mathbf e^n$ in Faraday's law:
+
+```math
+\mathbf b^{n+1/2}=\mathbf b^{n-1/2}-\Delta t\,\mathbf K\mathbf R_0\mathbf e^n,\qquad
+\mathbf D(\mathbf e^{n+1}-\mathbf e^n)=\Delta t\,(\mathbf K^H\mathbf W\mathbf b^{n+1/2}-\mathbf P_e^H\mathbf i^{n+1/2}).
+```
+
+**Hermitian stiffness (proof by induction).** Let $\mathbf S_l=\mathbf D\mathbf B_l$. $\mathbf S_L=\mathbf S$ is Hermitian. If $\mathbf S_l$ is, then $\mathbf S_{l-1}=\sum_jc_j\tau_{l-1}^{2j}\,\mathbf S_l(\mathbf P_l\mathbf D^{-1}\mathbf S_l)^j$, and each term is a palindrome of Hermitian $\mathbf S_l$ and real diagonal $\mathbf P_l\mathbf D^{-1}$, hence Hermitian. So the scheme is a leapfrog with the Hermitian stiffness $\mathbf S_0=\mathbf S\mathbf R_0$. Multiplying by $(\mathbf e^{n+1}-\mathbf e^{n-1})^H\mathbf D$ telescopes into the conserved
+
+```math
+E^{n+1/2}=\tfrac12\Big[\mathbf w^H\big(\mathbf D-\tfrac{\Delta t^2}{4}\mathbf S_0\big)\mathbf w+\bar{\mathbf y}^H\mathbf S_0\bar{\mathbf y}\Big],\qquad \mathbf w=\tfrac{\mathbf e^{n+1}-\mathbf e^n}{\Delta t},\ \bar{\mathbf y}=\tfrac{\mathbf e^{n+1}+\mathbf e^n}{2}
+```
+
+(`SubgridLTSFIT3D.modified_energy`). It is a norm, and the scheme is stable, iff (i) $\mathbf S_0\succeq0$ and (ii) $\rho=\tfrac{\Delta t}2\sqrt{\lambda_\max(\mathbf D^{-1}\mathbf S_0)}<1$. Note that $\mathbf D\mathbf R_0$ itself is *not* Hermitian ($\mathbf P_l\mathbf S\neq\mathbf S\mathbf P_l$), so there is no first-order energy of the form $\tfrac12\mathbf b\cdot\mathbf W\mathbf b+\tfrac12\mathbf e^n\cdot\mathbf G\mathbf e^{n+1}$; the conserved quantity is the second-order one above.
+
+**Positivity, level by level.** In $\mathbf D$-scaled form, $\hat{\mathbf S}_{l-1}=\hat{\mathbf S}_l^{1/2}\,r_l(\mathbf Y_l)\,\hat{\mathbf S}_l^{1/2}$ with $\mathbf Y_l=\tau_{l-1}^2\hat{\mathbf S}_l^{1/2}\mathbf P_l\hat{\mathbf S}_l^{1/2}$, whose nonzero spectrum is that of $\tau_{l-1}^2\mathbf P_l\hat{\mathbf S}_l\mathbf P_l$. Hence $\mathbf S_0\succeq0$ if, for every level, $\tau_{l-1}^2\mu_l\le x_+(p_l,\nu_l)$, where $\mu_l=\lambda_\max$ of the $F_l$ rows and columns of $\mathbf D^{-1/2}\mathbf S_l\mathbf D^{-1/2}$ (Lanczos, `lts.level_margins`) and $x_+$ is the first sign change of $r_l$:
+
+```math
+x_+=\frac{2\delta}{\beta}\ \ (p\ \text{even: }T_p(\delta-\beta x)=T_p(-\delta)=T_p(\delta)),\qquad x_+=\infty\ \ (p\ \text{odd}).
+```
+
+For odd $p$ the same point $x=2\delta/\beta$ is where $x\,r(x)$ reaches 4, so it limits (ii) instead. Without (i), $\rho<1$ alone is *not* sufficient. Measured: at $2\times$ the global limit (single 2:1 patch, $N=8$), $\rho=0.997$ but $\lambda_\min(\mathbf D^{-1}\mathbf S_0)=-0.099\,\lambda_\max$, and the run diverges. Both are checked; `lts.lts_dt_max` bisects $\Delta t$ on (i) and (ii) together.
+
+**Nested levels need increasing damping (derived).** The top of level $l+1$'s spectrum, seen at level $l$'s step, is $\tau_{l-1}^2\lambda=p_l^2\,\max x\,r_{l+1}(x)=p_l^2\,\big(2+2/T_{p_{l+1}}(\delta_{l+1})\big)$. For $p_l=2$, $x_+(2,\delta_l)=16\delta_l^2/(2\delta_l^2-1)=4\big(2+2/T_2(\delta_l)\big)$, so the level-$l$ margin is $\big(2+2/T_{p_{l+1}}(\delta_{l+1})\big)/\big(2+2/T_2(\delta_l)\big)$. This is *exactly* 1 for $p_{l+1}=2$ and $\nu_{l+1}=\nu_l$, whatever $\Delta t$: equal damping is marginal (measured: margin $1.0000$–$1.003$ from $3\times$ to $4\times$ the global step, with $\lambda_\min<0$ beyond round-off). Since $T_p(1+\nu/p^2)\approx1+\nu$, the condition is $\nu_{l+1}>\nu_l$. The default is $\nu_l=l\,\nu$, $\nu=0.05$.
+
+**Stability limit = coarse-grid limit (derived floor, measured).** A level-$l$ mode with $\tau_{l-1}^2\lambda=x$ is admissible up to $x=2\delta_l/\beta_l$, i.e. up to the fraction $\sqrt{2\delta_l/\beta_l}/(2p_l)$ of its own Yee limit at the substep $\tau_l$. With the substep ratio equal to the refinement ratio, a level's own limit is the coarse step. So
+
+```math
+\frac{\Delta t_\max^\mathrm{LTS}}{\Delta t_\max^\mathrm{coarse}}\;\gtrsim\;\min_l\frac{\sqrt{2\delta_l/\beta_l}}{2p_l}=0.988\ (p=2,\nu=0.05),\quad 0.977\ (p=2,\nu=0.10),\quad 0.984\ (p=3,\nu=0.05),
+```
+
+and the coarse modes away from the patches keep the coarse limit. Measured (Lanczos bisection, cavity $1\times0.75\times0.5$ m, $N=16$; `test_lts_limit_equals_coarse_grid_limit`): one 2:1 patch, **0.993** × the uniform coarse grid's limit (floor 0.988) and $1.98\times$ the global limit; nested 2:1 + 2:1, **0.980** × the coarse limit (floor 0.977) and $3.91\times$ the global limit. On the graded test mesh with a 2:1 patch and a nested 3:1 patch, $P=6$, the LTS step is $5.82\times$ the global step.
+
+**Partition.** The coarse free edges that carry hanging edges belong to the fine level: their effective stiffness includes the fine faces of the trace. Leaving them at level 0 (`interface_parents=False`) lowers the limit to 0.919 × the coarse limit ($N=16$), below the floor (test mutation).
+
+**Consistency and order.** $r_l(0)=1$ gives $\mathbf R_0=\mathbf I+O(\Delta t^2)$, so $\mathbf B_0=\mathbf A+O(\Delta t^2)$ and the scheme stays second order; the eigenfrequencies converge at order 2 (tests).
+
+**Transpose.** $\mathbf R_0^T=r_1(\mathbf X_1^T)\cdots r_L(\mathbf X_L^T)$ with $\mathbf X_l^T=\tau_{l-1}^2\mathbf R_l^T\mathbf A^T\mathbf P_l$, evaluated with the same three-term recurrence (`SubgridLTS.apply_T`, full-length vectors). The step's transpose is that of §6 with $\bar{\mathbf e}^n\mathrel{+}=\mathbf R_0^T(-\Delta t\,\mathbf K^T\bar{\mathbf b})$ (`step_vec_T`).
+
+**Cost.** $\mathbf R_0\mathbf e$ touches only $F_l$, their faces $\Phi_l$ and buffers. The off-$F_l$ part of the recurrence is the closed form $D_k(\delta)\mathbf y$, as in 2D. Level-$l$ rows are applied $(p_l-1)\prod_{m<l}p_m$ times per coarse step, so level-$l$ edges are updated $\prod_{m\le l}p_m$ times in total, the multi-level count. Compared with the global step, LTS saves exactly the coarse region's extra steps. The work ratio is
+
+```math
+\frac{\text{global}}{\text{LTS}}\approx\frac{P\,(N_0+N_1)}{N_0+P\,N_1},\qquad P=\prod_lp_l,
+```
+
+with $N_0$ the coarse and $N_1$ the fine unknowns. This tends to $P$ only when the patch is a small part of the unknowns. Where the patch holds most of them, as in the wave-1 cost problem (§9b, 74 % of the unknowns in the 2:1 patch), the gain is at most ~1.1.
+
+#### 9d. CPML on the outer walls (`wakis/subgrid3d/pml.py`)
+
+Each nonzero of the face–edge incidence $\mathbf C$ has one derivative axis $d=3-a-b$ (face normal $a$, edge direction $b$), so $\mathbf K=\sum_d\mathbf K^{(d)}$ with $\mathbf K^{(d)}=\mathbf C^{(d)}\mathbf P_e$. Hanging edges keep their parents' direction, so the split also holds across interfaces. Complex stretching $\partial_d\to s_d^{-1}\partial_d$, $s_d=1+\sigma_d/(\alpha+i\omega)$ (rates in s$^{-1}$, $\kappa=1$), in recursive-convolution form [Roden & Gedney, 2000]:
+
+```math
+\boldsymbol\psi_d\leftarrow b_d\boldsymbol\psi_d+a_d\mathbf K^{(d)}\mathbf z,\quad
+\mathbf b\leftarrow\mathbf b-\Delta t\big(\mathbf K\mathbf z+\textstyle\sum_d\boldsymbol\psi_d\big),\quad
+\boldsymbol\phi_d\leftarrow b_d\boldsymbol\phi_d+a_d\mathbf K^{(d)H}\mathbf W\mathbf b,\quad
+\mathbf e\leftarrow\mathbf e+\Delta t\,\mathbf D^{-1}\big(\mathbf K^H\mathbf W\mathbf b+\textstyle\sum_d\boldsymbol\phi_d-\mathbf P_e^H\mathbf i\big),
+```
+
+with $b_d=e^{-(\sigma_d+\alpha)\Delta t}$ and $a_d=\sigma_d(b_d-1)/(\sigma_d+\alpha)$, evaluated at the face centre (for $\boldsymbol\psi$) or the edge midpoint (for $\boldsymbol\phi$) along $d$. The grading is $\sigma=\sigma_\max u^m$ with $\sigma_\max=-(m+1)\ln R_0\,c/(2d)$; the default is $m=3$, $R_0=10^{-6}$. The step is linear, and `step_vec_T` is its exact transpose (dot-product test). With LTS, the layer is stepped at the coarse $\Delta t$, and $F_1$, its buffer and $\Phi_1$ must lie outside the layer (checked). The loss is not part of the LTS energy proof.
+
+**Patches inside the layer: an instability (measured).** A 2:1 patch that reaches into an $x$-layer makes the CPML with $\alpha=0$ grow exponentially, from random initial fields, at a rate of about $3.5\times10^8\,\mathrm{s^{-1}}$ (≈1 % of $\sigma_\max$). The growth persists at Courant 0.2, so it is a property of the semi-discrete system, not a CFL effect. Switching off either the $\boldsymbol\psi$ or the $\boldsymbol\phi$ terms in the fine block does not remove it. The same layer is stable without the patch, and so is the same patch next to a layer along another axis. A CFS shift larger than the growth rate suppresses it (§9e). By default, `SubgridCPML` refuses patches inside the layer (`allow_patches=True` overrides).
+
+#### 9e. Block kernels and GPU (`wakis/subgrid3d/gpu.py`)
+
+`BlockOps` evaluates $\mathbf K\mathbf e=\mathbf C\mathbf P_e\mathbf e$ in two stages: first the trace, $\mathbf e_\text{all}[\text{free}]=\mathbf e$ and $\mathbf e_\text{all}[\text{hanging}]=\mathbf P_h\mathbf e$ (at most 2 nonzeros per row); then, per block, the FIT curl as four shifted views of the dense edge arrays. $\mathbf K^H\mathbf y$ is the transposed slicing followed by the $\mathbf P_h^T$ scatter. The state keeps $\mathbf b$ on all faces with $\mathbf W_\text{all}$, which is zero on faces of inactive cells and on PMC faces. The same code runs on NumPy and CuPy (`backend='cupy'`). The LTS level operators ($\mathbf K_{\Phi_l F_l}$, $\mathbf K_{\Phi_lC_l}$, $\mathbf K^H_{F_l\Phi_l}$) and the CPML rows are CSR on the device. Bloch-periodic blocks and complex fields use the CSR path.
+
+**Round-off bound (derived).** The CSR and block paths compute the same exact map $\mathbf G$ with different addition orders. Each step therefore adds a perturbation $\boldsymbol\delta_n$ with $|\boldsymbol\delta_n|\lesssim u\,(m_K+m_{K^H})\,|\mathbf x_n|$ component-wise, where $u=2^{-53}$ and $m$ is the largest number of terms in a row. $\mathbf G$ preserves the modified energy, which is equivalent to the Euclidean norm of the scaled state within $\kappa_E=\sqrt{(1+\rho)/(1-\rho)}$. Summing the propagated perturbations gives
+
+```math
+\frac{\|\mathbf x^\mathrm{GPU}_N-\mathbf x^\mathrm{CPU}_N\|}{\|\mathbf x_N\|}\;\le\;N\,u\,(m_K+m_{K^H})\,\kappa_E ,
+```
+
+which is linear in $N$ (worst case; random rounding gives $\sqrt N$).
+
+
+**CPML results** (`studies/subgrid3d/run_study_lts.py` part F, Batch job `sg3d-lts-study-f`). Setup: box of $20^3$ coarse cells ($H=4$ cm), layers of 4–12 cells, a derivative-of-Gaussian current pulse (1 GHz). Probe signals are compared with a closed reference 3.7× larger, time-gated before its walls echo. The error measure is max |open − reference| / max |reference| at a probe 2.5 cells from the layer:
+
+| layer [cells] | 4 | 6 | 8 | 12 |
+|---|---|---|---|---|
+| no patch | $2.1\times10^{-2}$ | $1.8\times10^{-3}$ | $2.0\times10^{-4}$ | $1.6\times10^{-5}$ |
+| 2:1 patch one coarse cell from the layer, global $\Delta t$ | $1.1\times10^{-2}$ | $7.3\times10^{-4}$ | $8.4\times10^{-5}$ | $1.6\times10^{-5}$ |
+| same, LTS | $2.1\times10^{-2}$ | $1.9\times10^{-3}$ | $1.6\times10^{-4}$ | $1.6\times10^{-5}$ |
+| patch through the layer, CFS $\alpha/2\pi=1$ GHz | $1.2\times10^{-1}$ | $4.5\times10^{-2}$ | $3.6\times10^{-2}$ | $1.7\times10^{-2}$ |
+
+A patch next to the layer costs nothing in absorption, with global steps or LTS. The patch-through-layer row shows that the CFS shift needed for stability (below) also ruins the absorption of a 1 GHz pulse.
+
+Late-time growth with a patch inside the layer (random initial fields, 20 000 steps): $\alpha/2\pi=0$ and 0.1 GHz overflow within 100–250 ns; 0.3 GHz grows by $10^9$ in 740 ns; 1 GHz stays within a factor 1.6 but is not monotone; 3 GHz is flat. A CFS shift therefore removes the instability only at a cost in low-frequency absorption. Patches inside the layer stay refused by default.
+
+Without patches in the layer, the plain CPML ($\alpha=0$) still shows the known slow late-time drift of non-CFS layers. The field energy of random initial fields, whose static part never leaves, creeps up by 8 % between 6 000 and 18 000 steps. $\alpha/2\pi=10$ MHz removes the drift (test). For long runs, use a small CFS shift.
+
+![CPML with patches](../img/subgrid3d_lts_cpml.png)
+
+#### 9f. Wave-2 verification (`tests/test_104_subgrid3d_lts.py`)
+
+The whole file runs in 106 s on one n2-standard-8 (Batch `sg3d-lts-t3`; 13 tests, the GPU test is skipped there and passes on an L4, `sg3d-lts-gpu1`). The measured values below come from `studies/subgrid3d/verify_numbers_lts.py` (Batch `sg3d-lts-nums`). Every row has a mutation that was run and seen to fail.
+
+| check | measured | tolerance (origin) | mutation → result |
+|---|---|---|---|
+| fast $\mathbf R_0$ ($F_l$ + buffer) = full-length recursion; = sparse matrix (2:1 + nested 3:1) | $2.3\times10^{-16}$; $1.7\times10^{-15}$ | $10^{-13}$ (round-off) | buffer closed form ×1.1: $7.3\times10^{-4}$ |
+| $\mathbf S_0$ Hermitian; criterion (i)+(ii) vs dense spectrum at 0.99 / 1.02 × the bisected limit | agree on both sides | exact decision | – (the 1.02 side *is* the failing case) |
+| $\Delta t_\max^\mathrm{LTS}/\Delta t_\max^\mathrm{coarse}$, single 2:1 / nested 2:1+2:1 ($N=16$) | 0.993 / 0.980 | $\ge$ floor 0.988 / 0.977 (derived), $\le1.05$ | parents of hanging edges outside $F_1$: 0.919 < floor |
+| modified energy, 4000 coarse steps at 0.99 × the LTS limit, 2:1 + nested 3:1, graded, ε/μ/PEC/PMC ($\Delta t=5.82\times$ global) | $6.0\times10^{-15}$ | $50\epsilon\sqrt n=7.0\times10^{-13}$ | 1.03 × the limit: overflow; parents outside $F_1$: blows up |
+| dot product of `step_vec_T` (LTS; LTS + CPML, CSR; LTS + CPML, block) | $4.6, 2.7, 4.6\times10^{-18}$ | $10^{-15}$ | $\mathbf R_0$ for $\mathbf R_0^T$: $1.2\times10^{-7}$; CPML $a$ ×1.1 in the transpose: $8.1\times10^{-8}$ |
+| cavity, 6 lowest modes, time-discrete LTS frequencies, $N=8\to16$, 2:1 | errors $1.45\times10^{-2}\to3.74\times10^{-3}$, order 1.96 | $[1.8,2.2]$ | $r(0)=1.05$: order −0.16, error $2.4\times10^{-2}$ |
+| time-domain probe + DFT = LTS eigenvalue through $\sin(\omega\Delta t/2)=\tfrac{\Delta t}2\sqrt\lambda$ | $<10^{-5}$ | $10^{-5}$ (Hann, as wave 1) | – |
+| CPML residual energy after the pulse (6 cells, patch one cell away), global / LTS | $5.8\times10^{-9}$ / $8.8\times10^{-9}$ | $10^{-6}$ | $\sigma=0$: $3.3\times10^{-3}$ / $4.9\times10^{-3}$ |
+| CPML late time, random fields, $\alpha/2\pi=10$ MHz | energy falls, then flat to $10^{-3}$ | $10^{-3}$ | $\alpha=0$: +8 %; patch in layer, $\alpha=0$: $>10^3$ |
+| block kernels = CSR: $\mathbf K$, $\mathbf K^H$; state after 500 LTS steps | $\le4\epsilon$, $\le8\epsilon$; $7.9\times10^{-14}$ | bound $Nu(m_K+m_{K^H})\kappa_E=3.0\times10^{-11}$ | hanging rows dropped: $>10^{-3}$ |
+| GPU (CuPy, L4) = CPU, 500 LTS steps | passes | same bound | – (same mutation as above) |
+
+<!--W2COST-->
+
 #### 10. Limits & Failure Modes
 
 * **Interface reflection.** It is second order but not zero. At normal incidence it equals the impedance mismatch of the two Yee grids, $\approx(k_tH)^2(1-r^{-2})/16$, i.e. 2.0 % at $N=10$ and 0.47 % at $N=20$ (2:1). Oblique s-polarisation is larger (2.7 % at 60° and 8.4 % at 75°, $N=10$), and p-polarisation is smaller at 60° (0.9 %); the order drops slightly toward grazing incidence (1.86 at 75°, s). Keep $\gtrsim10$ coarse cells per local wavelength, and keep strong near fields a few fine cells away from level jumps.
