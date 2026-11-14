@@ -355,9 +355,11 @@ def test_read_mesh_roundtrip(tmp_path):
 def test_mesh_stl_body_in_box():
     """
     A closed STL sphere (tests/stl/003_sphere.stl, mm) meshed inside a padding
-    box: the body region reproduces the STL enclosed volume (the remeshed
-    surface lies on the STL facets: difference << the 1 % tolerance) and the
-    box region fills the rest.
+    box: the body is remeshed at h = 5 mm with its nodes on the STL sphere
+    (R = 25 mm), so it is inscribed: the volume deficit is at most the cap
+    volume under every triangle, 3 r_c^2 / (2 R^2) with circumradius
+    r_c = h / sqrt(3), i.e. h^2 / (2 R^2) = 2 % (measured 1.3 %); the box
+    region fills the rest exactly.
     """
     pytest.importorskip("gmsh")
     meshio = pytest.importorskip("meshio")
@@ -369,6 +371,7 @@ def test_mesh_stl_body_in_box():
     m, info = mesh_stl("tests/stl/003_sphere.stl", [4, 1], f_max=3e9, cpw=10,
                        padding=15, scale=1e-3)  # fmt: skip
     vb = m.cell_volume[m.cell_tags == 0].sum()
-    assert abs(vb / v_stl - 1) < 1e-2
+    h, R = info.sizes["body"], 25e-3
+    assert 0 < 1 - vb / v_stl < h**2 / (2 * R**2)
     lo, hi = P.min(0) - 15e-3, P.max(0) + 15e-3
     np.testing.assert_allclose(m.cell_volume.sum(), np.prod(hi - lo), rtol=1e-9)

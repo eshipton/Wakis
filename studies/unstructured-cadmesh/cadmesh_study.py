@@ -74,8 +74,10 @@ def _layered_step():
         gmsh.model.occ.addCylinder(0, 0, 0, 0, 0, T_LAY, A_PB)
         gmsh.model.occ.addCylinder(0, 0, T_LAY, 0, 0, L_PB - T_LAY, A_PB)
         gmsh.model.occ.synchronize()
-        gmsh.write(path)
+        tmp = path + f".{os.getpid()}.step"
+        gmsh.write(tmp)
         gmsh.finalize()
+        os.replace(tmp, path)  # atomic: workers never see a partial file
     return path
 
 
@@ -163,6 +165,7 @@ def _bounds_task(args):
 def part_bounds(n_procs):
     from multiprocessing import Pool
 
+    _layered_step()  # write the STEP once, before the workers start
     tasks = [(c, cpw, hd) for c in ("pillbox", "layered", "muon") for cpw in (10, 20)
              for hd in ("voronoi", "whitney")]  # fmt: skip
     tasks += [(f"ball_{h}", 0, hd) for h in (0.25, 0.15) for hd in ("voronoi", "whitney")]
@@ -217,6 +220,7 @@ def _improve_task(args):
 def part_improve(n_procs):
     from multiprocessing import Pool
 
+    _layered_step()  # write the STEP once, before the workers start
     tasks = [(c, cpw, v) for c in ("pillbox", "layered", "muon") for cpw in (10, 15, 20)
              for v in ("none", "gmsh", "netgen", "ours")]  # fmt: skip
     with Pool(n_procs) as p:
@@ -281,6 +285,7 @@ def _muon_td_task(args):
     # remove the leapfrog time dispersion: spatial (dt -> 0) frequency
     f_space = 2 / s.dt * np.sin(np.pi * f * s.dt) / (2 * np.pi)
     return dict(cpw=cpw, variant=variant, n_tets=m.n_cells, dt=s.dt, n_steps=n,
+                h_mean=float(m.edge_length.mean()),
                 wall=wall, wall_per_ns=wall / ((t_end + t_rec) * 1e9),
                 f=f.tolist(), f_space=f_space.tolist(),
                 amp=np.abs(np.asarray(res.amplitude)).tolist())  # fmt: skip
