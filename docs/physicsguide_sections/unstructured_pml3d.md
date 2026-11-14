@@ -158,7 +158,7 @@ layer-count curve has no floor down to 1.7e-5.
 **What the identical-mesh reference does not measure.** The transition from the unstructured ball to the prism shell
 cancels in test − reference. Shells with other dr change the field in the ball by 0.6 % (dr = 0.75 h), 1.0 %
 (dr = h/2) and 2.0 % (dr = 1.5 h) relative to dr = h (thick PMLs, `pml3d_floor.py`), so the transition reflects at the
-1e-2 level, far above the PML. Its absolute size is measured in §4.2: 2.3 % at dr = h and 8 cells per wavelength.
+1e-2 level, far above the PML. Its absolute size is measured in §4.2: 2.3 % at dr = h and 8 cells per wavelength, 1.3 % at 16.
 
 ### 4.2 The tetrahedra → prism transition dominates the truncation
 
@@ -176,6 +176,10 @@ thick PML (its own reflection < 1e-4). Worst of three probes, echo / PEC echo:
 | **dr = h** | **0.023** |
 | dr = 1.25 h | 0.12 |
 | dr = 1.5 h | 0.26 |
+
+At the study's resolution (centre wavelength 16 h, ball 20 h, probes 1.5 h from the centre, dr = h only; Batch
+`pmltrans-lam16`, `transition_lam16.json`) the transition reflects **1.3e-2** (−38 dB) and Silver–Müller 2.2e-2:
+halving kh only halved the transition (2.3e-2 → 1.3e-2), i.e. it behaves as O(kh), not O((kh)²).
 
 So at 8 cells per wavelength the total reflection of the PML truncation is 2.3 % (−33 dB) at the best spacing dr = h,
 about 3.4× below Silver–Müller and two orders of magnitude above the PML's own reflection. It comes from the change
