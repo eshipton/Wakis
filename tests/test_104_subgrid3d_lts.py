@@ -201,7 +201,7 @@ def _dot(s, mutate=None):
     return abs(fx @ y - (x @ xb + i @ ib)) / scale
 
 
-def _open_box(patch=True, lts=True, kernels="csr", pml=True, R0=1e-6, **kw):
+def _open_box(patch=True, lts=True, kernels="csr", pml=True, R0=1e-6, alpha_hz=0.0, **kw):
     H, n = 0.04, 24
     x = np.arange(n + 1) * H
     m = SubgridMesh3D(x, x, x)
@@ -209,7 +209,8 @@ def _open_box(patch=True, lts=True, kernels="csr", pml=True, R0=1e-6, **kw):
         m.add_box(((0.4, 0.68), (0.4, 0.6), (0.4, 0.6)), ratio=2)
     th = [(6 * H, 6 * H)] * 3
     return SubgridLTSFIT3D(m, lts=lts, kernels=kernels, dt_rtol=1e-2,
-                           pml=dict(thickness=th, R0=R0) if pml else None, **kw)  # fmt: skip
+                           pml=dict(thickness=th, R0=R0, alpha_hz=alpha_hz) if pml else None,
+                           **kw)  # fmt: skip
 
 
 def test_dot_product_lts_cpml():
@@ -288,13 +289,35 @@ def test_cpml_absorbs_with_patch_near_layer(lts):
     assert _residual(_open_box(lts=lts, R0=1.0)) > 1e-3
 
 
+def _field_energy(s):
+    e, b = s.e_host(), s.b_faces()
+    return 0.5 * np.sum(b * s.W * b) + 0.5 * np.sum(e * s.D * e)
+
+
 def test_cpml_late_time_stability_and_refusals():
-    s = _open_box(lts=False)
+    """Random initial fields: the layer absorbs the dynamic part, the static
+    (gradient) part stays, so the field energy may only fall. (The max norm
+    is no criterion: it fluctuates as the energy redistributes.) With
+    alpha = 0 the energy of these random fields creeps up late (measured
+    +8 % from 6000 to 18000 steps, the known DC drift of the non-CFS CPML);
+    a CFS shift alpha/2pi = 10 MHz removes it."""
+    s = _open_box(lts=False, alpha_hz=1e7)
     rng = np.random.default_rng(4)
     s.e[:] = rng.standard_normal(s.n_free)
-    a0 = np.abs(s.e).max()
-    s.run(6000)
-    assert np.abs(s.e).max() <= a0
+    s.one_step()
+    E0 = _field_energy(s)
+    s.run(3000)
+    E1 = _field_energy(s)
+    s.run(3000)
+    E2 = _field_energy(s)
+    assert E1 < E0 and E2 <= E1 * (1 + 1e-3), (E0, E1, E2)
+    # mutation: no CFS shift -> the late drift is visible (measured +8 %)
+    s = _open_box(lts=False)
+    s.e[:] = np.random.default_rng(4).standard_normal(s.n_free)
+    s.run(3001)
+    E1 = _field_energy(s)
+    s.run(3000)
+    assert _field_energy(s) > E1 * (1 + 1e-3)
     # refusals
     H, n = 0.04, 24
     x = np.arange(n + 1) * H
@@ -308,10 +331,12 @@ def test_cpml_late_time_stability_and_refusals():
     # mutation (documented failure mode): patch inside the layer, no CFS shift
     s = SubgridLTSFIT3D(m, lts=False, pml=dict(thickness=th, allow_patches=True))
     s.e[:] = rng.standard_normal(s.n_free)
-    a0 = np.abs(s.e).max()
+    s.one_step()
+    E0 = _field_energy(s)
     with np.errstate(all="ignore"):
         s.run(1500)
-    assert not np.isfinite(np.abs(s.e).max()) or np.abs(s.e).max() > 1e3 * a0
+        E1 = _field_energy(s)
+    assert not np.isfinite(E1) or E1 > 1e3 * E0
 
 
 # ---------------------------------------------------------- block / GPU

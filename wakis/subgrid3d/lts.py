@@ -46,6 +46,8 @@ of ``A`` on ``F_l`` (columns ``F_l`` and its one-face buffer ``C_l``)
 ``p_1 ... p_l`` times in total, exactly the multi-level count.
 """
 
+import time
+
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as sla
@@ -442,7 +444,7 @@ def is_stable(lts):
     return (rho < 1.0 and max(marg, default=0.0) <= 1.0), rho, marg
 
 
-def lts_dt_max(solver, dt_hi, dt_lo=None, rtol=2e-3, **kw):
+def lts_dt_max(solver, dt_hi, dt_lo=None, rtol=2e-3, verbose=False, **kw):
     """
     Largest coarse step with ``rho < 1`` and ``S_0 >= 0`` (bisection on the
     Lanczos ratio and the level positivity margins, `is_stable`).
@@ -472,8 +474,12 @@ def lts_dt_max(solver, dt_hi, dt_lo=None, rtol=2e-3, **kw):
         return hi, hist
     while hi / lo - 1 > rtol:
         mid = np.sqrt(lo * hi)
+        t0 = time.perf_counter()
         ok, r, m = is_stable(SubgridLTS(solver, mid, **kw))
         hist.append((mid, r, max(m, default=0.0)))
+        if verbose:
+            print(f"lts_dt_max: dt={mid:.4e} rho={r:.5f} margin={max(m, default=0.0):.5f} "
+                  f"{time.perf_counter() - t0:.1f} s", flush=True)  # fmt: skip
         if ok:
             lo = mid
         else:
