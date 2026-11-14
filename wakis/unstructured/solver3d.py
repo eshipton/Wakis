@@ -210,7 +210,7 @@ class UnstructuredFIT3D:
         if hodge == "voronoi":
             # Nearly degenerate Voronoi faces, also after material weighting
             # (signed per-cell parts can cancel at material interfaces)
-            small = massless_tol * L**2
+            small = massless_tol * L**2 / getattr(mesh, "massless_area_factor", 1.0)
             massless = ((area < small) | (cap * L / eps_0 < small)) & ~fixed
             self.massless = np.flatnonzero(massless)
             self.free = np.flatnonzero(~fixed & ~massless)

@@ -288,6 +288,12 @@ class UnstructuredAdjointStepper:
             self.pml = None
             self.lts = None
             self.massless = s.massless.size > 0
+            # spherical CFS-PML (pml3d.PML3D): the step is S4 S3 S2 S1 on the
+            # extended state [u, b, z]; S3 is rebuilt for every permittivity
+            self.pml3 = getattr(s, "_pml", None)
+            if self.pml3 is not None:
+                L = self.pml3.layout
+                self._nz = L.n - s.free.size - self.mesh.n_faces
         if self.dim == 2 and s.plane_wave is not None and s.dispersive:
             raise NotImplementedError(
                 "dispersive plane wave (dispersive_planewave patches the solver ADEs)"
@@ -333,6 +339,12 @@ class UnstructuredAdjointStepper:
             if np.any(self.cap <= 0):
                 raise ValueError("non-positive capacitance on a free edge")
             self.cu = _Capacitive(self.cap, s.cond, self._groups(), s.dt)
+            if getattr(self, "pml3", None) is not None:
+                p = self.pml3
+                S1, S2, _, S4 = p.stages
+                S3, B = p.ampere_stage(self.cu.a1, self.cu.den)
+                self._pstages, self._pB = (S1, S2, S3, S4), B
+                self._pstagesT = tuple(S.T.tocsr() for S in self._pstages)
         else:
             from .solver3d import whitney_mass_matrices
 
@@ -367,6 +379,11 @@ class UnstructuredAdjointStepper:
             bed[mesh.boundary_edges] = True
             if np.any(bed[mesh.cell_edges[cells]]):
                 raise ValueError("design cells must not touch the outer boundary")
+            if getattr(self, "pml3", None) is not None:
+                pe = np.zeros(mesh.n_edges, bool)
+                pe[self.pml3.e_pml] = True
+                if np.any(pe[mesh.cell_edges[cells]]):
+                    raise ValueError("design cells inside the PML")
         pos = -np.ones(mesh.n_nodes if self.dim == 2 else mesh.n_edges, int)
         pos[s.free] = np.arange(s.free.size)
         if self.kind == "cap":
@@ -468,6 +485,8 @@ class UnstructuredAdjointStepper:
             out = [("u", s.free.size), ("b", self.mesh.n_faces)]
             if self.kind == "cap":
                 out += self.cu.keys("cu")
+            if self.pml3 is not None:
+                out += [("z", self._nz)]  # PML flux d and filter memories
         return out
 
     def zero_state(self):
@@ -662,7 +681,30 @@ class UnstructuredAdjointStepper:
         s = self.solver
         return -(s._Ksf.T @ s._Kss.solve(esb, trans="T"))
 
+    def _step3d_pml(self, x, x1, src):
+        """`PML3D.apply` on [u, b, z] with this permittivity's S3 (bitwise)."""
+        S1, S2, S3, S4 = self._pstages
+        xe = np.concatenate([x["u"], x["b"], x["z"]])
+        y = S3 @ (S2 @ (S1 @ xe)) + self._pB @ src
+        y = S4 @ y
+        nu, nf = x["u"].size, x["b"].size
+        x1["u"], x1["b"], x1["z"] = y[:nu], y[nu : nu + nf], y[nu + nf :]
+        return x1["u"]
+
+    def _step3d_pml_T(self, xb1, xb):
+        """(S4 S3 S2 S1)^T; returns the adjoint of u after S3 (design sens)."""
+        T1, T2, T3, T4 = self._pstagesT
+        le = np.concatenate([xb1["u"], xb1["b"], xb1["z"]])
+        y = T4 @ le
+        nu, nf = xb1["u"].size, xb1["b"].size
+        sens_full = y[:nu].copy()
+        z = T1 @ (T2 @ (T3 @ y))
+        xb["u"], xb["b"], xb["z"] = z[:nu], z[nu : nu + nf], z[nu + nf :]
+        return sens_full
+
     def _step3d(self, x, x1, src):
+        if self.pml3 is not None:
+            return self._step3d_pml(x, x1, src)
         s, dt = self.solver, self.dt
         u, b = x["u"], x["b"]
         e_s = self._massless(u) if self.massless else None
@@ -777,6 +819,9 @@ class UnstructuredAdjointStepper:
         return None if self.design_cells is None else volb[self.dofs]
 
     def _step3d_T(self, xb1, xb):
+        if self.pml3 is not None:
+            sens_full = self._step3d_pml_T(xb1, xb)
+            return None if self.design_cells is None else sens_full[self.dofs]
         s, dt = self.solver, self.dt
         u1b, b1b = xb1["u"], xb1["b"]
         if self.kind == "cap":
