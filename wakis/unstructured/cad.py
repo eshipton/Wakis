@@ -221,6 +221,34 @@ def _collect(gmsh, vol_region, names, scale, return_tags=False):
     return mesh
 
 
+def _min_volume_ratio(gmsh):
+    """Smallest |volume| / largest |volume| of the current gmsh tetrahedra."""
+    tags, coords, _ = gmsh.model.mesh.getNodes()
+    order = np.argsort(tags)
+    X = coords.reshape(-1, 3)[order]
+    _, _, en = gmsh.model.mesh.getElements(3)
+    if not en:
+        return 1.0
+    con = np.searchsorted(tags[order], np.concatenate(en).astype(np.int64)).reshape(-1, 4)
+    P = X[con]
+    v = np.abs(np.linalg.det(P[:, 1:] - P[:, :1]))
+    return float(v.min() / v.max())
+
+
+def _remove_slivers(gmsh, optimize, tol):
+    """
+    Delaunay output can contain flat slivers (four nearly coplanar nodes, e.g.
+    on a planar interface; zero volume on some platforms). With
+    ``optimize=None`` run gmsh's optimizer on those elements only
+    (``Mesh.OptimizeThreshold`` 0.01): the rest of the mesh stays Delaunay.
+    """
+    if optimize not in (None, "none") or _min_volume_ratio(gmsh) >= tol:
+        return False
+    gmsh.option.setNumber("Mesh.OptimizeThreshold", 0.01)
+    gmsh.model.mesh.optimize("")
+    return True
+
+
 def cad_projector(gmsh, node_tags, scale):
     """
     Sliding rule onto the CAD surfaces for `improve_dt` (gmsh must be live).
@@ -292,6 +320,7 @@ def mesh_cad(
     improve=None,
     filename=None,
     max_tets=2e6,
+    sliver_tol=1e-6,
     verbose=False,
 ):
     """
@@ -345,6 +374,11 @@ def mesh_cad(
     max_tets : float or None
         Refuse to mesh (MemoryError) when the estimated number of tetrahedra
         (`estimate_n_tets` per region, before meshing) exceeds this.
+    sliver_tol : float
+        With ``optimize=None``: if a tetrahedron has |volume| below
+        ``sliver_tol`` x the largest, gmsh's optimizer is applied to the
+        slivers only (``info.slivers_optimized``); a few faces may then lose
+        the Delaunay property, which ``improve`` repairs.
     verbose : bool
         gmsh terminal output.
 
@@ -404,6 +438,7 @@ def mesh_cad(
                 3, [v for v, n in vol_region.items() if n == k], names.index(k) + 1, k
             )
         gmsh.model.mesh.generate(3)
+        slivers = _remove_slivers(gmsh, optimize, sliver_tol)
         if filename is not None:
             gmsh.write(str(filename))
         mesh, ntags = _collect(gmsh, vol_region, names, scale, return_tags=True)
@@ -419,6 +454,7 @@ def mesh_cad(
         gmsh.finalize()
     info = CADMeshInfo(
         improve_history=history,
+        slivers_optimized=slivers,
         region_tags={k: i for i, k in enumerate(names)},
         materials={i: materials[k] for i, k in enumerate(names)},
         sizes=sizes,

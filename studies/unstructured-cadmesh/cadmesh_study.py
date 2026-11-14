@@ -204,7 +204,8 @@ def _improve_task(args):
     out = dict(case=case, cpw=cpw, variant=variant, n_tets=m.n_cells, t_mesh=t_mesh,
                negative_dual_area=d["negative_dual_area"],
                negative_dual_length=d["negative_dual_length"],
-               volume=float(m.cell_volume.sum()), h_mean=float(m.edge_length.mean()))  # fmt: skip
+               volume=float(m.cell_volume.sum()), h_mean=float(m.edge_length.mean()),
+               slivers_optimized=bool(info.get("slivers_optimized")))  # fmt: skip
     try:
         s = UnstructuredFIT3D(m, info.materials)
     except ValueError as err:  # non-Delaunay: voronoi refused
