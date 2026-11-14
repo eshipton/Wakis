@@ -25,6 +25,7 @@ E. The front and back faces of the patch reflect with opposite signs, so
    |R| at one patch length oscillates with N (accidental cancellations).
    E sweeps the length L in {0.25, ..., 1.5} a and reports, per N, the
    envelope max_L |R(L)| ~ 2 |r| of a single interface.
+F. E continued to N in {28, 32, 40} (Kuhn and Delaunay) for the asymptotic order.
 
 Usage: python studies/hybrid-cart-tet/run_study.py --parts A [--quick] [--procs N]
 Writes studies/hybrid-cart-tet/results_<part>.json.
@@ -167,6 +168,8 @@ PARTS = {
     "D": (task_D, [(10,), (16,)]),
     "E": (task_E, [(N, k, L) for N in (8, 12, 16, 20, 24) for k in ("kuhn", "delaunay", "kuhn_nearest")
                    for L in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)]),
+    "F": (task_E, [(N, k, L) for N in (28, 32, 40) for k in ("kuhn", "delaunay")
+                   for L in (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)]),
 }  # fmt: skip
 
 
@@ -192,7 +195,8 @@ def main():
         meta = {"machine": platform.node(), "cpus": os.cpu_count(), "procs": args.procs,
                 "wall_s": time.time() - t0}  # fmt: skip
         suffix = f"_{args.only.replace(',', '-')}" if args.only else ""
-        path = os.path.join(HERE, f"results_{part}{suffix}.json")
+        name = "E_fine" if part == "F" else part
+        path = os.path.join(HERE, f"results_{name}{suffix}.json")
         with open(path, "w") as f:
             json.dump({"meta": meta, "results": res}, f, indent=1)
         print(part, "done in", meta["wall_s"], "s ->", path, flush=True)
