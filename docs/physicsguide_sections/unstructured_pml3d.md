@@ -109,32 +109,69 @@ Joly 2002 show the split Bérenger PML can be weakly ill-posed; CFS removes the 
 ## 4. Results
 
 **Study** (`studies/unstructured-pml3d/`, ball radius 8 h, dr = h, centre wavelength 16 h, λ = 10–32 h; reflection
-= field difference to an identical-interior reference with 40 extra vacuum layers; all runs one dt):
+= field difference to an identical-interior reference with 40 extra vacuum layers; all runs one dt). The PML rows are
+from `pml3d_floor.py` after the per-column massless fix of §4.1 (Cloud Batch `pmlfloor-v3`); the PEC and
+Silver–Müller rows are unchanged from `pml3d_reflection.py`:
 
-| boundary | normal incidence (worst probe, time domain) | oblique 48–61° (time domain) |
+| boundary | normal incidence (worst probe, time domain) | oblique 48–61° (time domain, worst probe) |
 |---|---|---|
 | PEC wall at r0 | 0.81–1.9 | 0.69–10.7 |
 | first-order Silver–Müller at r0 (same ball) | 0.14–0.22 | 0.46–0.66 |
-| PML 4 / 6 layers | 1.9e-2 / 1.4e-3 | ≤ 7.2e-2 / ≤ 1.5e-2 |
-| **PML 10 layers** | **4.5e-4 (−67 dB)** | **≤ 2.0e-3 (−54 dB)** |
-| PML 16 layers | 4.6e-4 | ≤ 1.5e-3 |
+| PML 4 / 6 layers | 1.9e-2 / 1.4e-3 | 7.2e-2 / 1.5e-2 |
+| **PML 10 layers** | **3.0e-4 (−70 dB)** | **2.0e-3 (−54 dB)** |
+| PML 16 / 24 layers | 7.0e-5 / 1.7e-5 | 3.9e-4 / 7.4e-5 |
+| reference error (ref40 vs a 32-layer PML) | 6.1e-6 | 2.2e-5 |
 
-The 10-layer layer meets the −40 dB target with ≥ 14 dB margin and is 300–500× better than Silver–Müller. The
-fall from N = 4 to 10 is steep (discretised grading, σ_max dr / c = 9.2 → 3.7); from 10 to 16 the normal-incidence
-value saturates at ≈ 4.5e-4. That floor arrives with the round trip through the whole layer; its origin (candidate:
-quasi-static near-field content of the pulse reaching the PEC backing) is open. κ_max = 5, α = ω0/10 change
-propagating-wave absorption by < 30 %. The reference itself differs from the exact dipole field by 14–59 % at
-7 h from the point source (Whitney point-dipole multipoles and interior dispersion), which is why the
+Before the fix the normal-incidence values were 4.5e-4 (10), 4.6e-4 (16) and 4.6e-4 (24 layers): a floor. It is gone;
+the reflection now falls as roughly $N^{-3.1}$ (10 → 16) to $N^{-3.4}$ (16 → 24) at fixed dr. The 10-layer value is set
+by the discretised grading: the same 10 h thick layer with dr = h/2 (20 layers) reflects 7.3e-5, 4.1× less
+($\approx dr^2$), measured against a 24 h thick dr = h/2 layer. A design reflection $R = 10^{-12}$ (larger
+$\sigma_{max}$) is *worse* (4.0e-4 at 10, 9.8e-5 at 16 layers): the layer is grading-limited, not design-limited. κ_max = 5,
+α = ω0/10 change propagating-wave absorption by < 30 %. The reference itself differs from the exact dipole field by
+14–59 % at 7 h from the point source (Whitney point-dipole multipoles and interior dispersion), which is why the
 identical-mesh reference is used.
 
-**Tests** (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, centre wavelength 12 h):
-10 layers 7.5e-5–1.3e-4 normal, 5.9e-4–1.8e-3 oblique; Silver–Müller 0.064–0.92; PEC 0.17–2.0. Layers 3 / 6 / 12:
-1.6e-2 / 2.3e-4 / 1.3e-4. Mutations: negative σ blows up (1e87); radial/tangential filters swapped 1.3–1.8; auxiliary
-term dropped 0.69–0.93; s_t omitted 3.0e-3–4.5e-3 (still −47 dB: a planar stretch on the sphere only adds a
-curvature error; the test requires > 10× the correct layer); α < 0 grows by 1e18 in 1e4 steps. After the source
-is off, the ball energy falls to 2.8e-10 of its peak with at most 5.2e-8 of the peak of transient rise (bound
-R² = 1e-4); in a PEC ball the same energy form is conserved to 1e-17. Over 1e5 steps (CFS α > 0) the field
-stays at 1.6e-7 of its peak without growth (last-10 % / 40–50 % maximum ratio 0.98).
+### 4.1 The 4.5e-4 "floor" was the reference
+
+The floor of the first study (10 and 16 layers both 4.5e-4) was tested against four hypotheses
+(`studies/unstructured-pml3d/pml3d_floor.py`, 24 runs per variant, same dt and window):
+
+| hypothesis | prediction | measured (normal incidence, before the fix) | verdict |
+|---|---|---|---|
+| backing echo (quasi-static content reaching the PEC wall) | $(E_{PEC}-E_{PMC})/2$ ≈ floor | 1.1e-7 (10 layers), 3.2e-8 (16) | rejected (4000× below) |
+| design reflection not reached | $R=10^{-12}$ lowers it | unchanged vs ref40 (4.6e-4) | rejected |
+| grading discretisation | dr = h/2 lowers it | 4.5e-4 → see the fixed column above | not the floor |
+| **reference shell reflects** | all PMLs agree far below the floor; ref40 differs from a thick PML by ≈ floor | ref40 vs PML32 = **4.6e-4**; PML16 vs PML32 = 7.9e-5 | **confirmed** |
+
+The difference ref40 − PML32 is zero until the wave returns from r ≈ 16 h and then grows (figure
+`unstructured_pml3d_floor_mechanism.png`): the vacuum shell of the reference is not a homogeneous discrete medium.
+The cause is the massless-edge test of the solver, `area < massless_tol · L²`. For the chord of one surface edge at
+radius r of the shell, the dual area grows as $r\,dr$ and $L^2$ as $r^2$, so the test value falls as $dr/r$: on the
+4 h test ball, 4 chords per ring are massless at r = 5 h and 29 at r = 33 h. Each change of the massless set changes
+the discrete medium; the shell reflects at the rings where it happens. The fix (`_column_massless_factor`,
+`mesh.massless_area_factor`) makes the decision once per radial column, with the value of the column's chord on the
+first shell sphere. Along a column the chord's capacitance and the stiffness of its faces both scale as $1/dr$
+(angular sizes fixed), so the local stiffness-to-capacitance ratio does not depend on r and keeping a column does not
+lower dt (checked: dt_max unchanged to 1e-15). With the fix the reference error falls 75× (4.6e-4 → 6.1e-6) and the
+layer-count curve has no floor down to 1.7e-5.
+
+**What the identical-mesh reference does not measure.** The transition from the unstructured ball to the prism shell
+cancels in test − reference. Shells with other dr change the field in the ball by 0.6 % (dr = 0.75 h), 1.0 %
+(dr = h/2) and 2.0 % (dr = 1.5 h) relative to dr = h (thick PMLs, `pml3d_floor.py`), so the transition reflects at the
+1e-2 level, far above the PML. Its absolute size is measured in §4.2.
+
+**Tests** (`tests/test_098_unstructured_pml3d.py`, ball radius 4 h, centre wavelength 12 h): 10 layers 7.5e-5–1.3e-4
+normal, 5.9e-4–1.8e-3 oblique; Silver–Müller 0.064–0.92; PEC 0.17–2.0. Layers 3 / 6 / 12: 1.6e-2 / 2.4e-4 / 2.5e-5
+(ratio 12/6 = 0.10; with the per-chord massless decision it was 0.57, the test requires < 0.25). The floor test
+(`test_floor_was_the_reference_shell`): per chord, the vacuum reference differs from a 20-layer PML by 1.1e-4 = the
+floor; per column by 3.9e-6. The backing echo is 3.2e-8 (R = 1e-8) and 2.7e-4 with R = 1e-3 (mutation, must exceed
+1e-5). `test_massless_decision_is_per_column`: 4 massless chords on every ring (per chord: 4 → 29). Mutations: negative
+σ blows up (1e87); radial/tangential filters swapped 1.3–1.8; auxiliary term dropped 0.69–0.93; s_t omitted
+3.0e-3–4.5e-3 (still −47 dB: a planar stretch on the sphere only adds a curvature error; the test requires > 10× the
+correct layer); α < 0 grows by 1e18 in 1e4 steps. After the source is off, the ball energy falls to 2.8e-10 of its
+peak with at most 5.2e-8 of the peak of transient rise (bound R² = 1e-4); in a PEC ball the same energy form is
+conserved to 1e-17. Over 1e5 steps (CFS α > 0) the field stays at 1.6e-7 of its peak without growth (last-10 % /
+40–50 % maximum ratio 0.98).
 
 **Late time** (study, 3 × 1e5 steps, ball 5 h + 10 layers): no growth in any variant. With α = 0 a slowly
 decaying quasi-static field stays in the layer (3.7e-6 of peak at the end). With α = ω0/10 (with or without
@@ -164,8 +201,12 @@ on interior edges near the source and is not a PML effect (open question).
 * **Massless chords.** Handled exactly, but with large blocks of coupled massless edges (> 200 in one connected
   component) the sparse inverse is refused.
 * **Stability** is shown empirically, not proved.
-* **Adjoint.** `step_T` covers the PML step; wiring it into the solver-level adjoint (another agent's milestone) is
-  the next step.
+* **Mesh transition.** The reflection numbers are relative to the same shell mesh; the tetrahedra → prism transition
+  at r0 reflects separately and depends on dr (§4.2). It is the dominant reflection of the whole truncation.
+* **Massless decision per column.** `spherical_shell_mesh` sets `mesh.massless_area_factor`; a shell built by other
+  means (or a mesh edited afterwards) falls back to the per-edge decision and its vacuum layers reflect at ~1e-4.
+* **Adjoint and GPU.** `UnstructuredAdjointStepper` replays and transposes the PML step (physics guide "Unstructured
+  adjoint" §2.8); `DeviceStepper` runs it on the GPU ("Unstructured FIT on the GPU" §5).
 
 ## References
 

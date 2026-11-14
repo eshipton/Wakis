@@ -32,6 +32,10 @@ discretisation error cancels exactly). All runs share one dt.
   falls below 1e-8 of its peak and never rises by more than R^2 = 1e-4 of the
   peak (the energy a -40 dB reflection can return); in a PEC ball the same
   energy is conserved to round-off (control of the energy form).
+* Floor: the ~1e-4 reflection reported against the vacuum-shell
+  reference is that reference's error (a 20-layer PML baseline halves it;
+  the reference differs from that baseline by the floor itself); the
+  backing-wall echo (E_PEC - E_PMC) / 2 is < 1e-5 (mutation R = 1e-3: > 1e-5).
 * Long run (slow): 1e5 steps with CFS alpha > 0, no late-time growth (the
   late residual stays < 1e-6 of the peak); mutation alpha < 0 must fail it.
 """
@@ -306,6 +310,94 @@ def test_reflection_falls_with_layers():
     r = {n: _reflection("normal", "pml", n).max() for n in (3, 6, 12)}
     print("max reflection vs layers", r)
     assert r[3] > r[6] > r[12]
+    # No saturation from 6 to 12 layers. With the reference floor (massless
+    # decision per chord) the ratio was 0.57 (1.3e-4 / 2.3e-4); a grading-
+    # limited layer keeps falling (measured 0.10). 0.25 separates the two.
+    assert r[12] < 0.25 * r[6]
+
+
+# ------------------------------------------------------------------ the floor
+N_THICK = 20  # baseline layer whose backing echo is outside the window
+
+
+@functools.lru_cache(None)
+def _sig(n_layers, bc="pec", per_chord=False, n_extra=0, n_pml=None, **opts):
+    """Normal-incidence probe signals. per_chord=True restores the massless
+    decision per chord (before the fix): more chords of a radial column turn
+    massless at larger r."""
+    m, cfg = ball_with_pml_mesh(RB, H, n_layers if n_pml is None else n_pml, n_extra=n_extra)
+    if per_chord:
+        m.massless_area_factor = np.ones(m.n_edges)
+    s = UnstructuredFIT3D(m, bc=bc, dt=_dt(), pml=dict(cfg, **opts))
+    return _signals(s, "normal")
+
+
+def _rel(a, b):
+    return np.linalg.norm(a - b, axis=-1).max(0) / np.linalg.norm(b, axis=-1).max(0)
+
+
+def test_massless_decision_is_per_column():
+    m, cfg = ball_with_pml_mesh(RB, H, N_REF, n_extra=N_EXTRA)  # fresh (mutated below)
+    rn = np.linalg.norm(m.nodes, axis=1)
+    ra, rb = rn[m.edges].T
+    radii = m.shell_radii[1:-1]  # inner rings of the shell (the last is PEC)
+
+    def per_ring():
+        ml = np.zeros(m.n_edges, bool)
+        ml[UnstructuredFIT3D(m, bc="pec").massless] = True
+        return [int(ml[(np.abs(ra - r) < 1e-6) & (np.abs(rb - r) < 1e-6)].sum()) for r in radii]
+
+    c1 = per_ring()
+    print("massless chords per ring", c1)
+    assert len(set(c1)) == 1
+    # mutation: the per-chord decision lets the count grow with r
+    m.massless_area_factor = np.ones(m.n_edges)
+    c2 = per_ring()
+    print("per-chord decision", c2)
+    assert c2[-1] > 2 * c2[0]
+
+
+def test_floor_was_the_reference_shell():
+    """
+    The ~1e-4 "floor" of the reflection against the vacuum-shell reference
+    (10 and 12 layers equal) was the reference's own error: with a massless
+    decision per chord, the number of massless chords of a radial column grows
+    with r, so the vacuum shell is a radially inhomogeneous discrete medium
+    and reflects into the window. Falsifiable checks (a 20-layer PML, whose
+    backing echo is outside the window and whose shell echo is attenuated,
+    is the baseline): per chord, the vacuum reference differs from that
+    baseline by about the floor; per column (default) by < 1/10 of that, and
+    the 12-layer reflection measured against the vacuum reference falls by
+    more than 2x. Both fail if the floor were a property of the PML.
+    """
+    out = {}
+    for pc in (True, False):
+        vac = _sig(N_REF, per_chord=pc, n_extra=N_EXTRA, n_pml=N_REF)
+        thick = _sig(N_THICK, per_chord=pc)
+        r12 = _sig(12, per_chord=pc)
+        out[pc] = dict(ref_err=_rel(vac, thick).max(), r12_vac=_rel(r12, vac).max(),
+                       r12_thick=_rel(r12, thick).max())  # fmt: skip
+        print("per chord" if pc else "per column", out[pc])
+    assert out[True]["ref_err"] > 0.5 * out[True]["r12_vac"]  # the floor is the reference
+    assert out[False]["ref_err"] < 0.1 * out[True]["ref_err"]
+    assert out[False]["r12_vac"] < 0.5 * out[True]["r12_vac"]
+
+
+@pytest.mark.parametrize("R", [1e-8, 1e-3])
+def test_backing_echo_far_below_floor(R):
+    """
+    The wave reflected by the wall behind the layer flips sign with the wall
+    type, so (E_PEC - E_PMC) / 2 is the backing echo. With the design
+    R = 1e-8 it is < 1e-5 of the peak (>= 10x below the 1e-4 floor: the floor
+    is not the backing echo); with R = 1e-3 (mutation) it must exceed 1e-5.
+    """
+    e = np.linalg.norm(_sig(10, "pec", R=R) - _sig(10, "pmc", R=R), axis=-1).max(0) / 2
+    e = (e / np.linalg.norm(_sig(N_THICK), axis=-1).max(0)).max()
+    print("R", R, "backing echo", e)
+    if R == 1e-8:
+        assert e < 1e-5
+    else:
+        assert e > 1e-5
 
 
 @pytest.mark.parametrize(

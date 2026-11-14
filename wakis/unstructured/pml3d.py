@@ -194,7 +194,50 @@ def spherical_shell_mesh(mesh, radii, tag=None, center=(0.0, 0.0, 0.0), rtol=1e-
     out.n_snapped = _snap_degenerate_duals(out, rtol)
     out.shell_radii = np.r_[r0, radii]
     out.shell_center = c
+    out.massless_area_factor = _column_massless_factor(out, bf, gid, radii.size)
     return out
+
+
+def _column_massless_factor(mesh, bf, gid, n_layers):
+    """
+    Make the massless decision of the shell chords the same along every
+    radial column.
+
+    The solver calls an edge massless when its dual area is below
+    ``massless_tol * L^2``. For the chord of one surface edge at radius r
+    the dual area grows as r dr and L^2 as r^2, so the ratio falls as dr / r
+    and more chords of the same column turn massless the further out they
+    are: the discrete medium of the shell changes with r and reflects
+    (studies/unstructured-pml3d, the vacuum-shell reference floor). The
+    returned factor f (``mesh.massless_area_factor``, used by
+    `UnstructuredFIT3D` as ``small = massless_tol L^2 / f``) rescales every
+    shell chord so that its test value equals that of its column's chord
+    on the first shell sphere r_1. The decision is then made once per column;
+    the local stiffness / capacitance ratio of a chord is independent of r
+    along a column (both scale as 1 / dr), so keeping a column does not
+    lower the stable dt.
+    """
+    E = mesh.edges
+    nn = mesh.n_nodes
+    keys = np.minimum(E[:, 0], E[:, 1]) * nn + np.maximum(E[:, 0], E[:, 1])
+    order = np.argsort(keys)
+    pairs = np.unique(np.sort(np.concatenate([bf[:, [0, 1]], bf[:, [1, 2]], bf[:, [0, 2]]]), axis=1), axis=0)
+    area, L = mesh.dual_measure(), mesh.edge_length
+    factor = np.ones(mesh.n_edges)
+    ref = None
+    for j in range(1, n_layers + 1):
+        a, b = gid(j, pairs[:, 0]), gid(j, pairs[:, 1])
+        k = np.minimum(a, b) * nn + np.maximum(a, b)
+        pos = np.searchsorted(keys, k, sorter=order)
+        idx = order[pos]
+        if not np.array_equal(keys[idx], k):
+            raise RuntimeError("shell chord lookup failed")
+        q = area[idx] / L[idx] ** 2
+        if ref is None:
+            ref = q
+        ok = q > 0
+        factor[idx[ok]] = ref[ok] / q[ok]
+    return factor
 
 
 def ball_with_pml_mesh(radius, h, n_layers, dr=None, n_extra=0, **ball_kw):
@@ -561,16 +604,9 @@ class PML3D:
         keep_f = np.ones(nf)
         keep_f[f_pml] = 0
         H = _D(Mnu * keep_f) @ Sb + _sel(f_pml, nf).T @ _sel(self.ff.out, n)
-        R = (s.Cf.T @ H).tocsr()  # r = C^T h - src
+        self._R = (s.Cf.T @ H).tocsr()  # r = C^T h - src
         upd = s._update
-        a1, den = upd.a1, upd.den
-        U3 = _D(a1 / den) @ Su + _D(dt / den) @ R
-        D3 = Sd + dt * _sel(self.ue, nu) @ R
-        S3 = _stage(n, [(L["u"], U3), (L["d"], D3)])
-        # source: r -= src -> u -= dt src / den, d -= dt src[ue]
-        self.B = (
-            _sel(L["u"], n).T @ _D(-dt / den) + _sel(L["d"], n).T @ (-dt * _sel(self.ue, nu))
-        ).tocsr()
+        S3, self.B = self.ampere_stage(upd.a1, upd.den)
         # S4: edge filters, input d / M_eps; output -> u of the PML edges
         x_e = _D(1 / s.cap[self.ue]) @ Sd
         ups = self.fe.updates(x_e, n)
@@ -578,6 +614,30 @@ class PML3D:
         S4u = _stage(n, [(L["u"][self.ue], _sel(self.fe.out, n))])
         self.stages = [S1, S2, S3, (S4u @ S4).tocsr()]
         self.x = np.zeros(n)
+
+    def ampere_stage(self, a1, den):
+        """
+        Stage S3 (Ampere) and the source matrix B for capacitive coefficients
+        a1 = C0 - G dt / 2, den = C0 + G dt / 2 of the free edges.
+
+        Outside the layer u <- (a1 u + dt r) / den, r = C^T h - src; PML
+        edges accumulate d <- d + dt r (their u rows are overwritten by S4).
+        Called once by the constructor and by the adjoint for every design
+        (the coefficients of the non-PML edges depend on the permittivity);
+        the same inputs give the same matrices bit for bit.
+        """
+        s, L, dt = self.solver, self.layout, self.solver.dt
+        n, nu = L.n, s.free.size
+        Su, Sd = _sel(L["u"], n), _sel(L["d"], n)
+        R = self._R
+        U3 = _D(a1 / den) @ Su + _D(dt / den) @ R
+        D3 = Sd + dt * _sel(self.ue, nu) @ R
+        S3 = _stage(n, [(L["u"], U3), (L["d"], D3)])
+        # source: r -= src -> u -= dt src / den, d -= dt src[ue]
+        B = (
+            _sel(L["u"], n).T @ _D(-dt / den) + _sel(L["d"], n).T @ (-dt * _sel(self.ue, nu))
+        ).tocsr()
+        return S3, B
 
     # ------------------------------------------------------------ state
     def reset(self):

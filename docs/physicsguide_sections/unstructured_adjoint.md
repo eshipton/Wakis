@@ -166,6 +166,33 @@ This is the transposed Schur complement: one extra $`\mathbf K_{ss}`$ solve per 
 
 **Whitney Hodge**: $`\mathbf u' = \mathbf u + \Delta t\,\mathbf M_1^{-1}\mathbf r`$ transposes to $`\mathbf w = \mathbf M_1^{-T}\bar{\mathbf u}'`$, $`\bar{\mathbf r} = \Delta t\,\mathbf w`$: one extra $`\mathbf M_1`$ solve per adjoint step, with the same LU factors.
 
+### 2.8 3D spherical CFS-PML
+
+With `pml=` (`pml3d.PML3D`, physics guide "Spherical CFS-PML for tetrahedral FIT") the 3D step is four fixed sparse
+stages on the extended state $`\mathbf x = [\mathbf u, \mathbf b, \mathbf z]`$, where $`\mathbf z`$ holds the dual
+fluxes $`\mathbf d`$ of the PML edges and the memories $`(P_x, P_y, x_0, y_0)`$ of the two cascaded filters of every
+PML edge and face:
+
+```math
+\mathbf x^{n+1} = S_4\big(S_3 S_2 S_1\mathbf x^n + B\,\mathbf j^{n+1/2}\big),\qquad
+\bar{\mathbf x}^{n} = S_1^TS_2^TS_3^TS_4^T\,\bar{\mathbf x}^{n+1}.
+```
+
+$`S_1`$ (Faraday with the *stretched* massless elimination), $`S_2`$ (face filters) and $`S_4`$ (edge filters) depend on
+the mesh, $`\Delta t`$ and the PML profile only. $`S_3`$ (Ampère) and $`B`$ contain $`a_1/\mathrm{den}`$ and
+$`\Delta t/\mathrm{den}`$ of the non-PML edges, which depend on $`\varepsilon`$; `PML3D.ampere_stage(a1, den)` rebuilds
+them for every design (same inputs, same matrices bit for bit, so the replay of the base design equals the solver's
+`one_step` exactly). Design cells may not touch a PML edge (checked), so the design dofs are rows of $`S_3`$ that $`S_4`$
+leaves untouched. Their update is the capacitive one, $`u' = (a_1u + \Delta t\,r)/\mathrm{den}`$, and the sensitivity
+is that of §3 with the adjoint of $`u'`$ taken *between* $`S_4^T`$ and $`S_3^T`$:
+
+```math
+\frac{\partial F}{\partial C_{0,k}} = \sum_n \big(S_4^T\bar{\mathbf x}^{n+1}\big)_{u_k}\,\frac{u_k^n - u_k^{n+1}}{\mathrm{den}_k}.
+```
+
+The transposed stages are stored once per design as CSR (`S.T.tocsr()`), so a reverse step costs the same four SpMVs as
+a forward step.
+
 ## 3. Design sensitivities
 
 The design variables are the relative permittivities $`\varepsilon_T`$ of the design cells. Each enters exactly one fixed sparse linear (or inverse-linear) map.
@@ -247,9 +274,13 @@ Each configuration is checked three ways:
 * **Frozen discrete choices.** $`\Delta t`$, the LTS partition, the massless set and the 3D interface clipping of the dual areas (`_clip_interface_dual_areas`, which attributes a tag's clipped area to one tetrahedron of that tag) are those of the template solver. The gradient is exact for that discrete model. A fresh solver built at another $`\varepsilon`$ could choose differently, for example by flipping an edge across `massless_tol`.
 * **Non-deterministic $`\Delta t`$ in 3D.** With massless edges, `UnstructuredFIT3D` computes $`\lambda_\max`$ by an unseeded `eigsh`. Two builds of the same mesh then give $`\Delta t`$ values that differ at the Lanczos tolerance (observed: gradients differing by 1.3e-11 relative between two builds). Build the solver once and pass `dt` explicitly, as the tests do. A seeded start vector, as in `_core.max_eigenvalue`, would fix it.
 * **Whitney Hodge**: there is no dispersive or lossy support (the solver ignores `cond` with Whitney). Each adjoint step costs one extra $`\mathbf M_1`$ solve, and each `set_eps` refactorizes $`\mathbf M_1`$.
+* **3D PML.** The design must stay inside $`r\le r_0`$ and must not share an edge with the layer; the PML profile,
+  $`\Delta t`$ and the stretched massless elimination are frozen (they do not depend on $`\varepsilon`$). Dispersive
+  materials with the PML are not supported by the solver itself. The extended state is large (4 memories × 2 cascaded filters per PML edge and face, plus $`\mathbf d`$:
+  4.9× the field dofs $`(\mathbf u, \mathbf b)`$ for the test ball of radius 4 h with 4 layers), which sets the
+  `checkpoint` snapshot size (`store` keeps only the design rows).
 * **Not covered:**
-  * the 3D PML (other branch);
-  * the GPU path;
+  * the GPU path of the adjoint (the forward PML step runs on the device: `DeviceStepper`);
   * `PolygonFIT2D`, `SubTriFIT2D` and `PrismFIT3D`;
   * shape derivatives (node motion);
   * permeability design.
