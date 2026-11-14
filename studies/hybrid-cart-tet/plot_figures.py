@@ -25,6 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import NullFormatter  # noqa: E402
 import numpy as np  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,6 +78,7 @@ def fig_waveguide():
     Ns = sorted({r["N"] for r in E})
     ax.set_xticks(Ns)
     ax.set_xticklabels([str(n) for n in Ns])
+    ax.xaxis.set_minor_formatter(NullFormatter())
     ax.legend(fontsize=7, loc="lower left")
     ax = axs[1]
     for i, N in enumerate(Ns):
@@ -142,9 +144,11 @@ def fig_sphere():
     axs[2].set_title("far-zone error vs unknowns (equal cost)", fontsize=9)
     for ax in axs[:2]:
         ax.set_xlabel("Cartesian cells per wavelength N")
-        ax.set_xticks([8, 10, 12, 16, 20])
-        ax.set_xticklabels(["8", "10", "12", "16", "20"])
+        ax.set_xticks([8, 10, 12, 16, 20, 24])
+        ax.set_xticklabels(["8", "10", "12", "16", "20", "24"])
+        ax.xaxis.set_minor_formatter(NullFormatter())
     axs[2].set_xlabel("number of unknowns (free edges)")
+    axs[2].xaxis.set_minor_formatter(NullFormatter())
     for ax in axs:
         ax.set_ylabel("relative L2 error of $e_s$")
     axs[0].legend(fontsize=7)
