@@ -272,3 +272,26 @@ def test_patch_must_refine_the_squares():
         HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm)
     with pytest.raises(ValueError):  # box touching the outer wall
         HybridFIT3D(XN, YN, ZN, box=((0, 4), (2, 6), (2, 4)), tet_mesh=kuhn_box_mesh(XN[0:5], *LINES[1:]))
+
+
+def test_loose_chebyshev_tolerance_keeps_stability(meshes):
+    """mass_tol = 1e-4: the degree drops ~4x, the step stays exactly
+    transposable, and the M-energy stays within ~mass_tol of its start
+    (it is exactly conserved for the modified SPD mass)."""
+    tm = meshes["delaunay"]
+    ref = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass_solver="chebyshev")
+    s = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass_solver="chebyshev",
+                    mass_tol=1e-4, dt=ref.dt)  # fmt: skip
+    assert s.msolver.degree < 0.35 * ref.msolver.degree
+    rng = np.random.default_rng(4)
+    x, y = rng.standard_normal(s.n_free), rng.standard_normal(s.n_free)
+    sym = abs(s.msolver.solve(x) @ y - x @ s.msolver.solve(y)) / abs(x @ s.msolver.solve(y))
+    assert sym < 1e-13
+    s.e = rng.standard_normal(s.n_free)
+    s.b = rng.standard_normal(s.n_faces) * 1e-9
+    E = s.run(400, energy=True)
+    dev = np.abs(E / E[0] - 1)
+    # |e^n.(M - M~) e^{n+1}| <= mass_tol |e^n|_M |e^{n+1}|_M <= 2 mass_tol E: bound 2e-4
+    # (measured 1.1e-6)
+    assert dev.max() < 2e-4
+    assert dev[200:].max() < 3 * dev[:200].max() + 1e-12  # no secular growth

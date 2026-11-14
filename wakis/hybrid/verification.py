@@ -73,7 +73,7 @@ def _tet_patch(kind, xs, ys, zs, h, r=1, **kw):
 
 
 def waveguide_reflection(cells_per_a, patch="kuhn", r=1, h_tet=None, wavelength_a=1.4,
-                         mutate=None, return_solver=False):  # fmt: skip
+                         mutate=None, return_solver=False, patch_length=0.5):  # fmt: skip
     """
     |R| of the TE10 mode at a vacuum tetrahedral patch in a PEC guide.
 
@@ -95,6 +95,8 @@ def waveguide_reflection(cells_per_a, patch="kuhn", r=1, h_tet=None, wavelength_
     wavelength_a : float
         Free-space wavelength in units of a (TE10 only: between 1 and 2).
     mutate : passed to `HybridFIT3D`.
+    patch_length : float
+        Patch length along the guide in units of a (rounded to cells).
 
     Returns
     -------
@@ -113,7 +115,8 @@ def waveguide_reflection(cells_per_a, patch="kuhn", r=1, h_tet=None, wavelength_
     box = None
     tm = None
     if patch is not None:
-        i0, i1 = int(round(5.5 * N)), int(round(6.0 * N))
+        i0 = int(round(5.5 * N))
+        i1 = i0 + max(1, int(round(patch_length * N)))
         box = ((i0, i1), (1, N - 1), (1, N // 2 - 1))
         tm = _tet_patch(patch, xn[i0 : i1 + 1], yn[1:N], zn[1 : N // 2], h_tet or h, r=r)
     s = HybridFIT3D(xn, yn, zn, box=box, tet_mesh=tm, edge_scale=es, face_scale=fs,

@@ -288,6 +288,14 @@ class HybridFIT3D:
     mass_solver : {'auto', 'lu', 'chebyshev'}
         Solver of the coupled (tetrahedral + interface) mass block, see
         `MassSolver`.
+    mass_tol : float
+        Chebyshev tolerance. Any value < 1 keeps the scheme exactly linear,
+        transposable and energy conserving, for the SPD mass
+        ``M~ = (Chebyshev operator)^-1`` with ``|M~ - M| <= mass_tol M``
+        (spectral sense); `energy` evaluates with ``M``, so it then
+        oscillates within ``~mass_tol`` without drift. A looser tolerance
+        cuts the polynomial degree (cost per step) proportionally to
+        ``log(2 / mass_tol)``.
     mutate : {None, 'nearest', 'inject', 'scale', 'asym'}
         Deliberately wrong couplings for the verification tests: 'nearest',
         'inject' and 'scale' alter the trace (`box_trace`; still energy
@@ -298,7 +306,7 @@ class HybridFIT3D:
 
     def __init__(self, xn, yn, zn, box=None, tet_mesh=None, materials=None, eps_r=None,
                  mu_r=None, pec=None, outer_bc="pec", edge_scale=None, face_scale=None,
-                 dt=None, cfl=0.95, mutate=None, mass_solver="auto"):  # fmt: skip
+                 dt=None, cfl=0.95, mutate=None, mass_solver="auto", mass_tol=1e-16):  # fmt: skip
         if outer_bc not in ("pec", "pmc"):
             raise ValueError("outer_bc must be 'pec' or 'pmc'")
         if (box is None) != (tet_mesh is None):
@@ -306,6 +314,7 @@ class HybridFIT3D:
         self.block = blk = CartesianBlock(xn, yn, zn)
         self.mutate = mutate
         self.mass_solver = mass_solver
+        self.mass_tol = mass_tol
         nc = blk.nc
         # ---------------------------------------------------- Cartesian part
         active = np.ones(nc, bool)
@@ -474,7 +483,7 @@ class HybridFIT3D:
     @property
     def msolver(self):
         if self._msolver is None:
-            self._msolver = MassSolver(self.M, method=self.mass_solver)
+            self._msolver = MassSolver(self.M, method=self.mass_solver, tol=self.mass_tol)
         return self._msolver
 
     @property
