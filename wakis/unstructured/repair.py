@@ -11,12 +11,20 @@ of the two tetrahedra sharing f, and its material-weighted signed length H_f is
 negative when f violates the local Delaunay condition, making the curl-curl
 matrix indefinite. Local bistellar flips (2-3, 3-2, 4-4 in the interior and 2-2 on
 planar boundaries) replace non-Delaunay simplices inside a single material tag;
-stuck interior faces (B. Joe, Comput. Aided Geom. Design 8 (1991) 123-142 (DOI to be
-checked); H. Edelsbrunner and N. R. Shah, Algorithmica 15 (1996) 223-241 (DOI to be
-checked)) are resolved by inserting a Steiner node at the tet-pair circumcentre.
+coplanar diagonal flips also apply across a planar material interface when
+adjacent coplanar interface triangles separate the same pair of material tags
+and share one opposite apex on each side, preserving the interface plane and
+per-tag volumes. Because topological flips keep vertex coordinates fixed and
+only alter interior single-tag connectivity or strictly coplanar triangle
+pairs, smooth surface-sliding locks used during node-movement sweeps are not
+applied as topological edge locks. Stuck interior or interface faces (B. Joe,
+Comput. Aided Geom. Design 8 (1991) 123-142 (DOI to be checked);
+H. Edelsbrunner and N. R. Shah, Algorithmica 15 (1996) 223-241 (DOI to be
+checked)) are resolved by inserting a Steiner node at the tet-pair
+circumcentre or by bisecting an edge of the offending face while preserving
+each cell's material tag.
 """
 
-import copy
 from collections import deque
 
 import numpy as np
@@ -117,6 +125,7 @@ class _RepairState:
                 self.edge_map.setdefault(e, set()).add(cid)
 
         self.next_cid = mesh.n_cells
+        self.min_vol = 1e-11 * float(vol_all.max()) if vol_all.size else 0.0
         self.bnd_edges = set()
         for f, entries in self.face_map.items():
             if len(entries) == 1:
@@ -124,6 +133,8 @@ class _RepairState:
                 self.bnd_edges.add(_sedge(a, b))
                 self.bnd_edges.add(_sedge(a, c))
                 self.bnd_edges.add(_sedge(b, c))
+        self.neg_set = {f for f in self.face_map if self.is_neg_face(f)}
+        self._undo_log = None
 
     def edge_free(self, e, bnd_edges=None):
         cids = self.edge_map.get(e)
@@ -174,8 +185,10 @@ class _RepairState:
     ):
         """Check signed dual lengths on the flip cavity before committing."""
         old_set = set(old_cids)
-        w = self.tag_inv_mu[tag]
-        is_pec = self.tag_pec[tag]
+        if isinstance(tag, (int, np.integer)):
+            tags_new = [int(tag)] * len(new_tets)
+        else:
+            tags_new = [int(t) for t in tag]
 
         # Collect old faces touched by old_cids
         old_faces = set()
@@ -188,10 +201,14 @@ class _RepairState:
 
         # Build new face contributions from new_tets
         new_contrib = {}
+        new_face_tags = {}
         for idx, tet in enumerate(new_tets):
+            t_idx = tags_new[idx]
+            w_idx = self.tag_inv_mu[t_idx]
             for k, (i0, i1, i2) in enumerate(_LOC_F):
                 f = _sface(tet[i0], tet[i1], tet[i2])
-                new_contrib.setdefault(f, []).append(w * float(h_new[idx, k]))
+                new_contrib.setdefault(f, []).append(w_idx * float(h_new[idx, k]))
+                new_face_tags.setdefault(f, []).append(t_idx)
 
         # Updated boundary edges if 2-2 flip
         if removed_bnd_edges or added_bnd_edges:
@@ -208,11 +225,9 @@ class _RepairState:
             for c in cids:
                 if self.pec_cell[c]:
                     return False
-            if is_pec:
-                # Check if any new tet has edge e
-                for tet in new_tets:
-                    if e[0] in tet and e[1] in tet:
-                        return False
+            for idx, tet in enumerate(new_tets):
+                if self.tag_pec[tags_new[idx]] and e[0] in tet and e[1] in tet:
+                    return False
             return True
 
         def face_free_after(f):
@@ -245,7 +260,8 @@ class _RepairState:
             else:
                 # Cavity boundary face shared with an external tet
                 ext_cid = ext_entries[0][0]
-                if self.tags[ext_cid] != tag and is_neg and not self.is_neg_face(f):
+                t_int = new_face_tags[f][0]
+                if self.tags[ext_cid] != t_int and is_neg and not self.is_neg_face(f):
                     # Never make a non-negative interface face negative
                     return False
             if is_neg:
@@ -272,15 +288,25 @@ class _RepairState:
     def replace_cells(
         self, old_cids, new_tets, h_new, vol_new, tag, removed_bnd=(), added_bnd=()
     ):
+        if isinstance(tag, (int, np.integer)):
+            tags_new = [int(tag)] * len(new_tets)
+        else:
+            tags_new = [int(t) for t in tag]
+
+        touched_faces = set()
+        old_records = []
         for cid in old_cids:
             tet = self.cells.pop(cid)
-            self.tags.pop(cid)
-            self.vol.pop(cid)
-            self.h.pop(cid)
+            t_old = self.tags.pop(cid)
+            v_old = self.vol.pop(cid)
+            h_old = self.h.pop(cid)
             self.inv_mu.pop(cid)
             self.pec_cell.pop(cid)
+            if self._undo_log is not None:
+                old_records.append((cid, tet, t_old, v_old, h_old))
             for k, (i0, i1, i2) in enumerate(_LOC_F):
                 f = _sface(tet[i0], tet[i1], tet[i2])
+                touched_faces.add(f)
                 lst = self.face_map.get(f)
                 if lst is not None:
                     lst[:] = [item for item in lst if item[0] != cid]
@@ -294,32 +320,111 @@ class _RepairState:
                     if not s:
                         del self.edge_map[e]
 
-        for e in removed_bnd:
+        actual_removed_bnd = [e for e in removed_bnd if e in self.bnd_edges]
+        actual_added_bnd = [e for e in added_bnd if e not in self.bnd_edges]
+        for e in actual_removed_bnd:
             self.bnd_edges.discard(e)
-        for e in added_bnd:
+        for e in actual_added_bnd:
             self.bnd_edges.add(e)
 
         new_cids = []
-        w = self.tag_inv_mu[tag]
-        is_pec = self.tag_pec[tag]
         for idx, tet in enumerate(new_tets):
+            t_idx = tags_new[idx]
             cid = self.next_cid
             self.next_cid += 1
             tet_t = tuple(int(v) for v in tet)
             self.cells[cid] = tet_t
-            self.tags[cid] = int(tag)
+            self.tags[cid] = t_idx
             self.vol[cid] = float(vol_new[idx])
             self.h[cid] = h_new[idx].copy()
-            self.inv_mu[cid] = w
-            self.pec_cell[cid] = is_pec
+            self.inv_mu[cid] = self.tag_inv_mu[t_idx]
+            self.pec_cell[cid] = self.tag_pec[t_idx]
             for k, (i0, i1, i2) in enumerate(_LOC_F):
                 f = _sface(tet_t[i0], tet_t[i1], tet_t[i2])
+                touched_faces.add(f)
                 self.face_map.setdefault(f, []).append((cid, k))
             for i0, i1 in LOC_E:
                 e = _sedge(tet_t[i0], tet_t[i1])
                 self.edge_map.setdefault(e, set()).add(cid)
             new_cids.append(cid)
+
+        for f in touched_faces:
+            if self.is_neg_face(f):
+                self.neg_set.add(f)
+            else:
+                self.neg_set.discard(f)
+
+        if self._undo_log is not None:
+            self._undo_log.append(
+                (old_records, new_cids, actual_removed_bnd, actual_added_bnd)
+            )
         return new_cids
+
+    def checkpoint(self):
+        if self._undo_log is None:
+            self._undo_log = []
+        return (self.X.shape[0], self.next_cid, len(self._undo_log))
+
+    def rollback(self, cp):
+        n_nodes0, next_cid0, log_len = cp
+        while len(self._undo_log) > log_len:
+            old_records, new_cids, actual_removed_bnd, actual_added_bnd = (
+                self._undo_log.pop()
+            )
+            touched_faces = set()
+            for cid in new_cids:
+                tet = self.cells.pop(cid)
+                self.tags.pop(cid)
+                self.vol.pop(cid)
+                self.h.pop(cid)
+                self.inv_mu.pop(cid)
+                self.pec_cell.pop(cid)
+                for k, (i0, i1, i2) in enumerate(_LOC_F):
+                    f = _sface(tet[i0], tet[i1], tet[i2])
+                    touched_faces.add(f)
+                    lst = self.face_map.get(f)
+                    if lst is not None:
+                        lst[:] = [item for item in lst if item[0] != cid]
+                        if not lst:
+                            del self.face_map[f]
+                for i0, i1 in LOC_E:
+                    e = _sedge(tet[i0], tet[i1])
+                    s = self.edge_map.get(e)
+                    if s is not None:
+                        s.discard(cid)
+                        if not s:
+                            del self.edge_map[e]
+
+            for e in actual_added_bnd:
+                self.bnd_edges.discard(e)
+            for e in actual_removed_bnd:
+                self.bnd_edges.add(e)
+
+            for cid, tet_t, t_old, v_old, h_old in old_records:
+                self.cells[cid] = tet_t
+                self.tags[cid] = t_old
+                self.vol[cid] = v_old
+                self.h[cid] = h_old
+                self.inv_mu[cid] = self.tag_inv_mu[t_old]
+                self.pec_cell[cid] = self.tag_pec[t_old]
+                for k, (i0, i1, i2) in enumerate(_LOC_F):
+                    f = _sface(tet_t[i0], tet_t[i1], tet_t[i2])
+                    touched_faces.add(f)
+                    self.face_map.setdefault(f, []).append((cid, k))
+                for i0, i1 in LOC_E:
+                    e = _sedge(tet_t[i0], tet_t[i1])
+                    self.edge_map.setdefault(e, set()).add(cid)
+
+            for f in touched_faces:
+                if self.is_neg_face(f):
+                    self.neg_set.add(f)
+                else:
+                    self.neg_set.discard(f)
+
+        self.X = self.X[:n_nodes0]
+        self.next_cid = next_cid0
+        if log_len == 0:
+            self._undo_log = None
 
     def cells_faces(self, cids):
         faces = set()
@@ -378,9 +483,9 @@ def _flip_23(state, f, locked, target_face=None, check_delaunay=True):
     P = state.X[np.asarray(new_tets, dtype=np.int64)]
     vol_old = state.vol[c1] + state.vol[c2]
     vol_new = _tet_volumes(P)
+    min_v = max(state.min_vol, 1e-9 * vol_old)
     if not (
-        np.all(vol_new > 1e-14 * vol_old)
-        and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+        np.all(vol_new > min_v) and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
     ):
         return False, "volume"
     _, h_new, _, vol_new = tet_partials(P)
@@ -440,9 +545,9 @@ def _flip_32(state, edge, locked, target_face=None, check_delaunay=True):
     P = state.X[np.asarray(new_tets, dtype=np.int64)]
     vol_old = sum(state.vol[c] for c in cids)
     vol_new = _tet_volumes(P)
+    min_v = max(state.min_vol, 1e-9 * vol_old)
     if not (
-        np.all(vol_new > 1e-14 * vol_old)
-        and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+        np.all(vol_new > min_v) and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
     ):
         return False, "volume"
     _, h_new, _, vol_new = tet_partials(P)
@@ -522,9 +627,9 @@ def _flip_44(state, edge, locked, target_face=None, check_delaunay=True):
 
         P = state.X[np.asarray(new_tets, dtype=np.int64)]
         vol_new = _tet_volumes(P)
+        min_v = max(state.min_vol, 1e-9 * vol_old)
         if not (
-            np.all(vol_new > 1e-14 * vol_old)
-            and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+            np.all(vol_new > min_v) and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
         ):
             last_reason = "volume"
             continue
@@ -538,7 +643,7 @@ def _flip_44(state, edge, locked, target_face=None, check_delaunay=True):
             state.X[np.asarray([ta0, ta1, tb0, tb1], dtype=np.int64)]
         )
         if (
-            np.any(v_ab_split <= 1e-14 * vol_old)
+            np.any(v_ab_split <= min_v)
             or abs(v_ab_split.sum() - vol_old) > 1e-12 * vol_old
         ):
             last_reason = "volume"
@@ -559,37 +664,160 @@ def _flip_44(state, edge, locked, target_face=None, check_delaunay=True):
 
 
 def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
-    """Bistellar 2-2 flip on a coplanar boundary edge shared by two tetrahedra."""
-    if edge not in state.bnd_edges:
-        return False, "boundary"
+    """Bistellar coplanar diagonal flip on a boundary or planar interface edge."""
     cids = list(state.edge_map.get(edge, ()))
-    if len(cids) != 2:
-        return False, "topology"
+    a, b = edge
 
-    c1, c2 = cids
-    tag = state.tags[c1]
-    if state.tags[c2] != tag:
+    if edge in state.bnd_edges:
+        if len(cids) != 2:
+            return False, "topology"
+        c1, c2 = cids
+        tag = state.tags[c1]
+        if state.tags[c2] != tag:
+            return False, "interface"
+
+        rem1 = set(state.cells[c1]) - {a, b}
+        rem2 = set(state.cells[c2]) - {a, b}
+        common = rem1 & rem2
+        if len(common) != 1:
+            return False, "topology"
+        p = next(iter(common))
+        c = next(iter(rem1 - {p}))
+        d = next(iter(rem2 - {p}))
+
+        fb1 = _sface(a, b, c)
+        fb2 = _sface(a, b, d)
+        if (
+            len(state.face_map.get(fb1, ())) != 1
+            or len(state.face_map.get(fb2, ())) != 1
+        ):
+            return False, "boundary"
+
+        if (
+            (locked[a] and locked[b])
+            or all(locked[v] for v in fb1)
+            or all(locked[v] for v in fb2)
+        ):
+            return False, "locked"
+
+        cd_edge = _sedge(c, d)
+        if cd_edge in state.edge_map:
+            return False, "topology"
+        for nf in (_sface(a, c, d), _sface(b, c, d), _sface(c, d, p)):
+            if nf in state.face_map:
+                return False, "topology"
+
+        # Coplanarity and planar polygon area preservation to 1e-12 relative
+        xa, xb, xc, xd = state.X[a], state.X[b], state.X[c], state.X[d]
+        n1 = np.cross(xb - xa, xc - xa)
+        n2 = np.cross(xd - xa, xb - xa)
+        a1 = float(np.linalg.norm(n1))
+        a2 = float(np.linalg.norm(n2))
+        if a1 <= 0.0 or a2 <= 0.0:
+            return False, "boundary"
+        u1 = n1 / a1
+        u2 = n2 / a2
+        if float(np.dot(u1, u2)) < 1.0 - 1e-12:
+            return False, "boundary"
+
+        n1_new = np.cross(xa - xc, xd - xc)
+        n2_new = np.cross(xb - xd, xc - xd)
+        a1_new = float(np.linalg.norm(n1_new))
+        a2_new = float(np.linalg.norm(n2_new))
+        if a1_new <= 0.0 or a2_new <= 0.0:
+            return False, "boundary"
+        u1_new = n1_new / a1_new
+        u2_new = n2_new / a2_new
+        if (
+            float(np.dot(u1_new, u1)) < 1.0 - 1e-12
+            or float(np.dot(u2_new, u1)) < 1.0 - 1e-12
+        ):
+            return False, "boundary"
+
+        area_old = 0.5 * (a1 + a2)
+        area_new = 0.5 * (a1_new + a2_new)
+        if abs(area_new - area_old) > 1e-12 * area_old:
+            return False, "boundary"
+
+        t0 = _orient_tet(state.X, c, d, p, a)
+        t1 = (t0[0], t0[2], t0[1], int(b))
+        new_tets = [t0, t1]
+        P = state.X[np.asarray(new_tets, dtype=np.int64)]
+        vol_old = state.vol[c1] + state.vol[c2]
+        vol_new = _tet_volumes(P)
+        min_v = max(state.min_vol, 1e-9 * vol_old)
+        if not (
+            np.all(vol_new > min_v) and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+        ):
+            return False, "volume"
+        _, h_new, _, vol_new = tet_partials(P)
+
+        tf = _sface(a, b, p) if target_face is None else target_face
+        if check_delaunay and not state.evaluate_cavity(
+            (c1, c2),
+            new_tets,
+            h_new,
+            tag,
+            target_face=tf,
+            removed_bnd_edges=(edge,),
+            added_bnd_edges=(cd_edge,),
+        ):
+            return False, "delaunay"
+
+        new_cids = state.replace_cells(
+            (c1, c2),
+            new_tets,
+            h_new,
+            vol_new,
+            tag,
+            removed_bnd=(edge,),
+            added_bnd=(cd_edge,),
+        )
+        return True, new_cids
+
+    # Coplanar 2-2 flip on an interior material-interface edge shared by 4 tets
+    # (2 in tag t1 sharing apex p1, 2 in tag t2 sharing apex p2)
+    if len(cids) != 4:
+        return False, "boundary"
+    tags_set = {state.tags[c] for c in cids}
+    if len(tags_set) != 2:
+        return False, "boundary"
+    t1, t2 = sorted(tags_set)
+    cids1 = [c for c in cids if state.tags[c] == t1]
+    cids2 = [c for c in cids if state.tags[c] == t2]
+    if len(cids1) != 2 or len(cids2) != 2:
         return False, "interface"
 
-    a, b = edge
-    rem1 = set(state.cells[c1]) - {a, b}
-    rem2 = set(state.cells[c2]) - {a, b}
-    common = rem1 & rem2
-    if len(common) != 1:
+    rem1a = set(state.cells[cids1[0]]) - {a, b}
+    rem1b = set(state.cells[cids1[1]]) - {a, b}
+    common1 = rem1a & rem1b
+    if len(common1) != 1:
         return False, "topology"
-    p = next(iter(common))
-    c = next(iter(rem1 - {p}))
-    d = next(iter(rem2 - {p}))
+    p1 = next(iter(common1))
+    c = next(iter(rem1a - {p1}))
+    d = next(iter(rem1b - {p1}))
+
+    rem2a = set(state.cells[cids2[0]]) - {a, b}
+    rem2b = set(state.cells[cids2[1]]) - {a, b}
+    common2 = rem2a & rem2b
+    if len(common2) != 1:
+        return False, "topology"
+    p2 = next(iter(common2))
+    if (rem2a - {p2}) | (rem2b - {p2}) != {c, d} or p1 == p2:
+        return False, "interface"
 
     fb1 = _sface(a, b, c)
     fb2 = _sface(a, b, d)
-    if len(state.face_map.get(fb1, ())) != 1 or len(state.face_map.get(fb2, ())) != 1:
-        return False, "boundary"
+    if len(state.face_map.get(fb1, ())) != 2 or len(state.face_map.get(fb2, ())) != 2:
+        return False, "topology"
+    if (
+        len(state.face_map.get(_sface(a, b, p1), ())) != 2
+        or len(state.face_map.get(_sface(a, b, p2), ())) != 2
+    ):
+        return False, "topology"
 
     if (
         (locked[a] and locked[b])
-        or (locked[a] and locked[b] and locked[c])
-        or (locked[a] and locked[b] and locked[d])
         or all(locked[v] for v in fb1)
         or all(locked[v] for v in fb2)
     ):
@@ -598,11 +826,15 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
     cd_edge = _sedge(c, d)
     if cd_edge in state.edge_map:
         return False, "topology"
-    for nf in (_sface(a, c, d), _sface(b, c, d), _sface(c, d, p)):
+    for nf in (
+        _sface(a, c, d),
+        _sface(b, c, d),
+        _sface(c, d, p1),
+        _sface(c, d, p2),
+    ):
         if nf in state.face_map:
             return False, "topology"
 
-    # Coplanarity and planar polygon area preservation to 1e-12 relative
     xa, xb, xc, xd = state.X[a], state.X[b], state.X[c], state.X[d]
     n1 = np.cross(xb - xa, xc - xa)
     n2 = np.cross(xd - xa, xb - xa)
@@ -634,58 +866,53 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
     if abs(area_new - area_old) > 1e-12 * area_old:
         return False, "boundary"
 
-    t0 = _orient_tet(state.X, c, d, p, a)
-    t1 = (t0[0], t0[2], t0[1], int(b))
-    new_tets = [t0, t1]
+    t1_0 = _orient_tet(state.X, c, d, p1, a)
+    t1_1 = (t1_0[0], t1_0[2], t1_0[1], int(b))
+    t2_0 = _orient_tet(state.X, c, d, p2, a)
+    t2_1 = (t2_0[0], t2_0[2], t2_0[1], int(b))
+    new_tets = [t1_0, t1_1, t2_0, t2_1]
+    tags_new = [t1, t1, t2, t2]
+
     P = state.X[np.asarray(new_tets, dtype=np.int64)]
-    vol_old = state.vol[c1] + state.vol[c2]
+    vol_old1 = state.vol[cids1[0]] + state.vol[cids1[1]]
+    vol_old2 = state.vol[cids2[0]] + state.vol[cids2[1]]
     vol_new = _tet_volumes(P)
+    min_v1 = max(state.min_vol, 1e-9 * vol_old1)
+    min_v2 = max(state.min_vol, 1e-9 * vol_old2)
     if not (
-        np.all(vol_new > 1e-14 * vol_old)
-        and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+        np.all(vol_new[:2] > min_v1)
+        and abs(vol_new[:2].sum() - vol_old1) <= 1e-12 * vol_old1
+        and np.all(vol_new[2:] > min_v2)
+        and abs(vol_new[2:].sum() - vol_old2) <= 1e-12 * vol_old2
     ):
         return False, "volume"
     _, h_new, _, vol_new = tet_partials(P)
 
-    tf = _sface(a, b, p) if target_face is None else target_face
+    old_all = cids1 + cids2
+    tf = fb1 if target_face is None else target_face
     if check_delaunay and not state.evaluate_cavity(
-        (c1, c2),
-        new_tets,
-        h_new,
-        tag,
-        target_face=tf,
-        removed_bnd_edges=(edge,),
-        added_bnd_edges=(cd_edge,),
+        old_all, new_tets, h_new, tags_new, target_face=tf
     ):
         return False, "delaunay"
 
-    new_cids = state.replace_cells(
-        (c1, c2),
-        new_tets,
-        h_new,
-        vol_new,
-        tag,
-        removed_bnd=(edge,),
-        added_bnd=(cd_edge,),
-    )
+    new_cids = state.replace_cells(old_all, new_tets, h_new, vol_new, tags_new)
     return True, new_cids
 
 
 def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
     """
-    Insert a Steiner node for a stuck interior face f shared by two same-tag tets.
+    Insert a Steiner node for a stuck face f while preserving material tags.
 
     Places the node at the circumcentre of the offending tet pair (or pulled
-    toward the host centroid into the strict positive-volume kernel) using either
-    a 1-4 split of one of the two incident tetrahedra or a 2-6 split of the pair.
+    toward the host centroid into the strict positive-volume kernel) or bisects
+    an edge of f, assigning each resulting tetrahedron its parent cell's tag.
     """
     entries = state.face_map.get(f)
     if not entries or len(entries) != 2:
         return False, "boundary"
     (c1, k1), (c2, k2) = entries
-    tag = state.tags[c1]
-    if state.tags[c2] != tag:
-        return False, "interface"
+    tag1 = state.tags[c1]
+    tag2 = state.tags[c2]
 
     tet1 = state.cells[c1]
     tet2 = state.cells[c2]
@@ -695,16 +922,81 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
     if _orient_tet(state.X, u, v, w, d) != (u, v, w, d):
         v, w = w, v
 
+    s_idx = state.X.shape[0]
+
+    if mode in ("edge", "bnd_edge"):
+        f_edges = sorted(
+            (_sedge(u, v), _sedge(u, w), _sedge(v, w)),
+            key=lambda ed: -float(np.linalg.norm(state.X[ed[1]] - state.X[ed[0]])),
+        )
+        ed = f_edges[host % 3]
+        if mode == "edge" and ed in state.bnd_edges:
+            return False, "boundary"
+        if mode == "bnd_edge" and ed not in state.bnd_edges:
+            return False, "boundary"
+        cids = list(state.edge_map.get(ed, ()))
+        if not cids:
+            return False, "topology"
+        a, b = ed
+        pt = (1.0 - alpha) * state.X[a] + alpha * state.X[b]
+        X_try = np.vstack([state.X, pt[None, :]])
+        new_tets = []
+        tags_new = []
+        for cid in cids:
+            tet = state.cells[cid]
+            rem = [x for x in tet if x != a and x != b]
+            if len(rem) != 2:
+                return False, "topology"
+            p, q = rem
+            t_a = _orient_tet(X_try, a, s_idx, p, q)
+            t_b = _orient_tet(X_try, s_idx, b, p, q)
+            P_ab = X_try[np.asarray([t_a, t_b], dtype=np.int64)]
+            v_ab = _tet_volumes(P_ab)
+            v_old = state.vol[cid]
+            min_v = max(state.min_vol, 1e-6 * v_old)
+            if not (np.all(v_ab > min_v) and abs(v_ab.sum() - v_old) <= 1e-12 * v_old):
+                return False, "volume"
+            new_tets.extend([t_a, t_b])
+            tags_new.extend([state.tags[cid], state.tags[cid]])
+        P = X_try[np.asarray(new_tets, dtype=np.int64)]
+        _, h_new, _, vol_new = tet_partials(P)
+        state.X = X_try
+        removed_bnd = ()
+        added_bnd = ()
+        if ed in state.bnd_edges:
+            removed_bnd = (ed,)
+            added_bnd_list = [_sedge(a, s_idx), _sedge(s_idx, b)]
+            for cid in cids:
+                for x in state.cells[cid]:
+                    if (
+                        x != a
+                        and x != b
+                        and len(state.face_map.get(_sface(a, b, x), ())) == 1
+                    ):
+                        added_bnd_list.append(_sedge(s_idx, x))
+            added_bnd = tuple(added_bnd_list)
+        new_cids = state.replace_cells(
+            cids,
+            new_tets,
+            h_new,
+            vol_new,
+            tags_new,
+            removed_bnd=removed_bnd,
+            added_bnd=added_bnd,
+        )
+        return True, new_cids
+
     P12 = state.X[np.asarray([tet1, tet2], dtype=np.int64)]
     cc = _tet_circumcentre(P12)
     c_pair = 0.5 * (cc[0] + cc[1])
-    s_idx = state.X.shape[0]
 
     if mode == "1-4":
         cid = c1 if host == 0 else c2
+        tag_cid = state.tags[cid]
         v0, v1, v2, v3 = state.cells[cid]
         c_tet = state.X[np.asarray([v0, v1, v2, v3], dtype=np.int64)].mean(axis=0)
-        pt = (1.0 - alpha) * c_pair + alpha * c_tet
+        c_ref = c_pair if tag1 == tag2 else cc[host]
+        pt = (1.0 - alpha) * c_ref + alpha * c_tet
         X_try = np.vstack([state.X, pt[None, :]])
         new_tets = [
             _orient_tet(X_try, v0, v1, v2, s_idx),
@@ -715,18 +1007,26 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
         P = X_try[np.asarray(new_tets, dtype=np.int64)]
         vol_old = state.vol[cid]
         vol_new = _tet_volumes(P)
-        if (
-            np.all(vol_new > 1e-12 * vol_old)
-            and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
-        ):
+        min_v = max(state.min_vol, 1e-6 * vol_old)
+        if np.all(vol_new > min_v) and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old:
             _, h_new, _, vol_new = tet_partials(P)
             state.X = X_try
-            new_cids = state.replace_cells((cid,), new_tets, h_new, vol_new, tag)
+            new_cids = state.replace_cells((cid,), new_tets, h_new, vol_new, tag_cid)
             return True, new_cids
         return False, "volume"
 
     c_face = (state.X[u] + state.X[v] + state.X[w]) / 3.0
-    vol_old = state.vol[c1] + state.vol[c2]
+    if tag1 != tag2:
+        # Project c_pair onto the interface plane (u, v, w) to preserve per-tag volumes
+        n_vec = np.cross(state.X[v] - state.X[u], state.X[w] - state.X[u])
+        n_norm = float(np.linalg.norm(n_vec))
+        if n_norm <= 0.0:
+            return False, "volume"
+        n_unit = n_vec / n_norm
+        c_ref = c_pair - float(np.dot(c_pair - state.X[u], n_unit)) * n_unit
+    else:
+        c_ref = c_pair
+
     new_tets = [
         (u, v, s_idx, d),
         (v, w, s_idx, d),
@@ -735,17 +1035,24 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
         (w, v, s_idx, e),
         (v, u, s_idx, e),
     ]
-    pt = (1.0 - alpha) * c_pair + alpha * c_face
+    tags_new = [tag1, tag1, tag1, tag2, tag2, tag2]
+    pt = (1.0 - alpha) * c_ref + alpha * c_face
     X_try = np.vstack([state.X, pt[None, :]])
     P = X_try[np.asarray(new_tets, dtype=np.int64)]
+    vol_old1 = state.vol[c1]
+    vol_old2 = state.vol[c2]
     vol_new = _tet_volumes(P)
+    min_v1 = max(state.min_vol, 1e-6 * vol_old1)
+    min_v2 = max(state.min_vol, 1e-6 * vol_old2)
     if (
-        np.all(vol_new > 1e-12 * vol_old)
-        and abs(vol_new.sum() - vol_old) <= 1e-12 * vol_old
+        np.all(vol_new[:3] > min_v1)
+        and abs(vol_new[:3].sum() - vol_old1) <= 1e-12 * vol_old1
+        and np.all(vol_new[3:] > min_v2)
+        and abs(vol_new[3:].sum() - vol_old2) <= 1e-12 * vol_old2
     ):
         _, h_new, _, vol_new = tet_partials(P)
         state.X = X_try
-        new_cids = state.replace_cells((c1, c2), new_tets, h_new, vol_new, tag)
+        new_cids = state.replace_cells((c1, c2), new_tets, h_new, vol_new, tags_new)
         return True, new_cids
 
     return False, "volume"
@@ -785,7 +1092,9 @@ def _try_flips_for_face(state, f, locked, enabled_set, flips_count, refused_coun
                 return res
             if res in ("interface", "locked", "volume", "delaunay"):
                 reasons.append(res)
-        if "2-2" in enabled_set and ed in state.bnd_edges:
+        if "2-2" in enabled_set and (
+            ed in state.bnd_edges or len(state.edge_map.get(ed, ())) == 4
+        ):
             ok, res = _flip_22(state, ed, locked, target_face=f, check_delaunay=True)
             if ok:
                 flips_count["2-2"] += 1
@@ -840,7 +1149,7 @@ def _try_flips_for_face(state, f, locked, enabled_set, flips_count, refused_coun
 
     if "2-2" in enabled_set:
         for ed in cand_edges:
-            if ed in state.bnd_edges:
+            if ed in state.bnd_edges or len(state.edge_map.get(ed, ())) == 4:
                 ok, res = _flip_22(
                     state, ed, locked, target_face=f, check_delaunay=True
                 )
@@ -953,57 +1262,110 @@ def flip_to_delaunay(
                     queue.append(nf)
                     in_queue.add(nf)
 
-    # Steiner fallback for stuck interior faces when all flip types are enabled
+    # Steiner fallback for stuck faces when all flip types are enabled
     if steiner and all_flips_enabled and total_flips < limit:
-        stuck_faces = [f for f in list(state.face_map.keys()) if state.is_neg_face(f)]
-        for f in stuck_faces:
-            if total_flips >= limit or not state.is_neg_face(f):
-                continue
-            cur_neg = sum(1 for g in state.face_map if state.is_neg_face(g))
-            best = None
-            candidates = [
-                ("1-4", h, a) for a in (0.0, 0.25, 0.5, 0.75) for h in (0, 1)
-            ] + [("2-6", 0, a) for a in (0.0, 0.25, 0.5, 0.75)]
-            for mode, host, alpha in candidates:
-                st_try = copy.deepcopy(state)
-                ok, _ = _insert_steiner(st_try, f, mode=mode, host=host, alpha=alpha)
-                if not ok:
+        for _pass in range(6):
+            stuck_faces = sorted(state.neg_set)
+            if not stuck_faces:
+                break
+            progress = False
+            for f in stuck_faces:
+                if total_flips >= limit or not state.is_neg_face(f):
                     continue
-                flips_try = dict(flips_count)
-                refused_try = dict(refused_count)
-                locked_try = np.append(locked_arr, False)
-                t_flips = total_flips
-                q_try = deque(nf for nf in st_try.face_map if st_try.is_neg_face(nf))
-                in_q_try = set(q_try)
-                while q_try and t_flips < limit:
-                    qf = q_try.popleft()
-                    in_q_try.discard(qf)
-                    if not st_try.is_neg_face(qf):
+                cur_neg = len(state.neg_set)
+                best_cand = None
+                best_neg = cur_neg
+                cell_splits = [
+                    ("1-4", h, a)
+                    for a in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0)
+                    for h in (0, 1)
+                ] + [("2-6", 0, a) for a in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0)]
+                edge_splits = [
+                    ("edge", h, a) for a in (0.5, 0.4, 0.6) for h in (0, 1, 2)
+                ] + [("bnd_edge", h, a) for a in (0.5, 0.4, 0.6) for h in (0, 1, 2)]
+                if state.is_interface_face(f):
+                    candidates = edge_splits + cell_splits
+                else:
+                    candidates = cell_splits + edge_splits
+                for mode, host, alpha in candidates:
+                    cp = state.checkpoint()
+                    ok, nc0 = _insert_steiner(
+                        state, f, mode=mode, host=host, alpha=alpha
+                    )
+                    if not ok:
+                        state.rollback(cp)
                         continue
-                    new_cids = _try_flips_for_face(
-                        st_try, qf, locked_try, enabled_set, flips_try, refused_try
+                    flips_try = dict(flips_count)
+                    refused_try = dict(refused_count)
+                    locked_try = np.append(locked_arr, False)
+                    t_flips = total_flips
+                    q_try = deque(
+                        nf for nf in state.cells_faces(nc0) if state.is_neg_face(nf)
                     )
-                    if new_cids is not None:
-                        t_flips += 1
-                        for nf in st_try.cells_faces(new_cids):
-                            if st_try.is_neg_face(nf) and nf not in in_q_try:
-                                q_try.append(nf)
-                                in_q_try.add(nf)
-                neg_try = sum(1 for g in st_try.face_map if st_try.is_neg_face(g))
-                if neg_try < cur_neg and (best is None or neg_try < best[0]):
-                    best = (
-                        neg_try,
-                        st_try,
-                        flips_try,
-                        refused_try,
-                        locked_try,
-                        t_flips,
+                    in_q_try = set(q_try)
+                    for nf in sorted(state.neg_set):
+                        if nf not in in_q_try:
+                            q_try.append(nf)
+                            in_q_try.add(nf)
+                    while q_try and t_flips < limit:
+                        qf = q_try.popleft()
+                        in_q_try.discard(qf)
+                        if not state.is_neg_face(qf):
+                            continue
+                        new_cids = _try_flips_for_face(
+                            state, qf, locked_try, enabled_set, flips_try, refused_try
+                        )
+                        if new_cids is not None:
+                            t_flips += 1
+                            for nf in state.cells_faces(new_cids):
+                                if state.is_neg_face(nf) and nf not in in_q_try:
+                                    q_try.append(nf)
+                                    in_q_try.add(nf)
+                    neg_try = len(state.neg_set)
+                    state.rollback(cp)
+                    if neg_try < best_neg:
+                        best_neg = neg_try
+                        best_cand = (mode, host, alpha)
+                        if neg_try == 0:
+                            break
+                if best_cand is not None:
+                    mode, host, alpha = best_cand
+                    _, nc0 = _insert_steiner(
+                        state, f, mode=mode, host=host, alpha=alpha
                     )
-                    if neg_try == 0:
-                        break
-            if best is not None:
-                _, state, flips_count, refused_count, locked_arr, total_flips = best
-                steiner_count += 1
+                    locked_arr = np.append(locked_arr, False)
+                    steiner_count += 1
+                    progress = True
+                    q_try = deque(
+                        nf for nf in state.cells_faces(nc0) if state.is_neg_face(nf)
+                    )
+                    in_q_try = set(q_try)
+                    for nf in sorted(state.neg_set):
+                        if nf not in in_q_try:
+                            q_try.append(nf)
+                            in_q_try.add(nf)
+                    while q_try and total_flips < limit:
+                        qf = q_try.popleft()
+                        in_q_try.discard(qf)
+                        if not state.is_neg_face(qf):
+                            continue
+                        new_cids = _try_flips_for_face(
+                            state,
+                            qf,
+                            locked_arr,
+                            enabled_set,
+                            flips_count,
+                            refused_count,
+                        )
+                        if new_cids is not None:
+                            total_flips += 1
+                            for nf in state.cells_faces(new_cids):
+                                if state.is_neg_face(nf) and nf not in in_q_try:
+                                    q_try.append(nf)
+                                    in_q_try.add(nf)
+            if not progress:
+                break
+        state._undo_log = None
 
     if total_flips == 0 and steiner_count == 0:
         new_mesh = mesh

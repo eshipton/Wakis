@@ -19,7 +19,13 @@ from scipy.constants import c
 from wakis.unstructured import SimplexMesh, UnstructuredFIT3D, ball_mesh
 from wakis.unstructured.analytic import layered_pillbox_tm0, sphere_in_cavity
 from wakis.unstructured.cad import region_sizes, size_from_cpw
-from wakis.unstructured.improve import edge_rates, improve_dt, tet_partials
+from wakis.unstructured.improve import (
+    edge_rates,
+    improve_dt,
+    movable_nodes,
+    neg_faces,
+    tet_partials,
+)
 from wakis.unstructured.quality import (
     _element_lambda,
     dihedral_angles,
@@ -336,11 +342,53 @@ def test_step_layered_pillbox(tmp_path):
         assert abs(vd - 1) < 2e-2
         assert info.sizes["vac"] == pytest.approx(2 * info.sizes["diel"])
         if imp is None:
+            nf_init = neg_faces(m, info.materials)
+            locked_init = ~movable_nodes(m)
+            bnd_init = {int(fi) for fi in m.boundary_faces}
+            fc_init = m.D.T.tocsr()
+            init_info = []
+            for fi in nf_init:
+                cids = fc_init.indices[fc_init.indptr[fi] : fc_init.indptr[fi + 1]]
+                ftags = [int(m.cell_tags[c]) for c in cids]
+                fverts = [int(v) for v in m.faces[fi]]
+                init_info.append(
+                    {
+                        "face": int(fi),
+                        "tags": ftags,
+                        "interface": len(set(ftags)) > 1,
+                        "boundary": int(fi) in bnd_init,
+                        "touches_locked": bool(locked_init[fverts].any()),
+                    }
+                )
+            print(f"layered_pillbox initial negative faces: {init_info}")
             m, history = improve_dt(m, info.materials, n_sweeps=0, repair=True)
         else:
             history = info.improve_history
         assert "repair" in history[-1]
-        assert history[-1]["repair"]["negative_faces_after"] == 0
+        rep = history[-1]["repair"]
+        locked_after = ~movable_nodes(m)
+        bnd_after = {int(fi) for fi in m.boundary_faces}
+        fc_after = m.D.T.tocsr()
+        stuck_info = []
+        for fi in rep["stuck"]:
+            cids = fc_after.indices[fc_after.indptr[fi] : fc_after.indptr[fi + 1]]
+            ftags = [int(m.cell_tags[c]) for c in cids]
+            fverts = [int(v) for v in m.faces[fi]]
+            stuck_info.append(
+                {
+                    "face": int(fi),
+                    "tags": ftags,
+                    "interface": len(set(ftags)) > 1,
+                    "boundary": int(fi) in bnd_after,
+                    "touches_locked": bool(locked_after[fverts].any()),
+                }
+            )
+        print(
+            f"layered_pillbox repair (improve={imp}): "
+            f"stuck={stuck_info} refused={rep['refused']} "
+            f"flips={rep['flips']} steiner={rep['steiner_nodes']}"
+        )
+        assert rep["negative_faces_after"] == 0
         s = UnstructuredFIT3D(m, info.materials)
         f, _ = s.eigenmodes(1, f_target=0.6 * fx)
         out[imp] = (f[0] / fx - 1, s.dt_max)

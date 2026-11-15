@@ -446,3 +446,108 @@ def test_improve_dt_repair_integration():
     assert hist_true[-1]["repair"]["negative_faces_after"] == 0
     assert neg_faces(m_true, materials=materials, bc=bc).size == 0
     UnstructuredFIT3D(m_true, materials=materials, bc=bc)
+
+
+def _make_two_layer_unequal_box(seed=0):
+    """Build a conforming two-material mesh with unequal layer mesh sizes."""
+    rng = np.random.default_rng(seed)
+    n_if = 5
+    grid_if = np.linspace(0.0, 0.1, n_if)
+    pts_if = []
+    for x in grid_if:
+        for y in grid_if:
+            p = np.array([x, y, 0.03])
+            if 0.0 < x < 0.1:
+                p[0] += rng.uniform(-0.004, 0.004)
+            if 0.0 < y < 0.1:
+                p[1] += rng.uniform(-0.004, 0.004)
+            pts_if.append(p)
+    pts_if = np.array(pts_if)
+
+    pts0 = list(pts_if)
+    for x in np.linspace(0.0, 0.1, 7):
+        for y in np.linspace(0.0, 0.1, 7):
+            for z in (0.0, 0.01, 0.02):
+                p = np.array([x, y, z])
+                if 0.0 < x < 0.1:
+                    p[0] += rng.uniform(-0.003, 0.003)
+                if 0.0 < y < 0.1:
+                    p[1] += rng.uniform(-0.003, 0.003)
+                if 0.0 < z < 0.03:
+                    p[2] += rng.uniform(-0.002, 0.002)
+                pts0.append(p)
+    pts0 = np.array(pts0)
+    tets0 = Delaunay(pts0).simplices
+    v0 = np.abs(np.linalg.det(pts0[tets0[:, 1:]] - pts0[tets0[:, :1]])) / 6.0
+    tets0 = tets0[v0 > 1e-6 * v0.max()]
+
+    pts1 = list(pts_if)
+    for x in np.linspace(0.0, 0.1, 4):
+        for y in np.linspace(0.0, 0.1, 4):
+            for z in (0.055, 0.08, 0.10):
+                p = np.array([x, y, z])
+                if 0.0 < x < 0.1:
+                    p[0] += rng.uniform(-0.005, 0.005)
+                if 0.0 < y < 0.1:
+                    p[1] += rng.uniform(-0.005, 0.005)
+                if 0.03 < z < 0.10:
+                    p[2] += rng.uniform(-0.004, 0.004)
+                pts1.append(p)
+    pts1 = np.array(pts1)
+    tets1 = Delaunay(pts1).simplices
+    v1 = np.abs(np.linalg.det(pts1[tets1[:, 1:]] - pts1[tets1[:, :1]])) / 6.0
+    tets1 = tets1[v1 > 1e-6 * v1.max()]
+
+    n_shared = len(pts_if)
+    offset = len(pts0) - n_shared
+    tets1_mapped = np.where(tets1 < n_shared, tets1, tets1 + offset)
+    X = np.vstack([pts0, pts1[n_shared:]])
+    cells = np.vstack([tets0, tets1_mapped])
+    tags = np.concatenate(
+        [np.zeros(len(tets0), dtype=int), np.ones(len(tets1), dtype=int)]
+    )
+    return SimplexMesh(X, cells, tags)
+
+
+def test_layered_interface_unequal_mesh_sizes_repair():
+    """
+    Verify that a conforming two-material mesh whose layers are meshed at
+    different characteristic sizes and meet on a planar interface has its
+    negative dual-length interface faces repaired by `improve_dt(repair=True)`
+    while conserving per-tag volumes. A failure means interface diagonal flips
+    or interface-preserving Steiner splits left negative faces stuck.
+    """
+    mesh = _make_two_layer_unequal_box(seed=0)
+    assert mesh.n_cells < 2000
+    materials = {0: [4.0, 1.0], 1: [1.0, 1.0]}
+
+    nf_before = neg_faces(mesh, materials=materials)
+    assert nf_before.size >= 3
+
+    # Mutation check: without coplanar 2-2 flips and Steiner splits, the
+    # interface faces between separately Delaunay layers remain stuck
+    _, rep_restricted = flip_to_delaunay(
+        mesh,
+        materials=materials,
+        enabled_flips=("2-3", "3-2", "4-4"),
+        steiner=False,
+    )
+    assert rep_restricted["negative_faces_after"] == nf_before.size
+    assert rep_restricted["refused"].get("interface", 0) > 0
+
+    vol_diel_0 = float(mesh.cell_volume[mesh.cell_tags == 0].sum())
+    vol_vac_0 = float(mesh.cell_volume[mesh.cell_tags == 1].sum())
+
+    repaired, history = improve_dt(mesh, materials=materials, n_sweeps=0, repair=True)
+    rep = history[-1]["repair"]
+    assert rep["negative_faces_before"] == nf_before.size
+    assert rep["negative_faces_after"] == 0
+    assert rep["stuck"] == []
+    assert neg_faces(repaired, materials=materials).size == 0
+
+    vol_diel_1 = float(repaired.cell_volume[repaired.cell_tags == 0].sum())
+    vol_vac_1 = float(repaired.cell_volume[repaired.cell_tags == 1].sum())
+    assert abs(vol_diel_1 - vol_diel_0) <= 1e-12 * vol_diel_0
+    assert abs(vol_vac_1 - vol_vac_0) <= 1e-12 * vol_vac_0
+
+    UnstructuredFIT3D(repaired, materials=materials)

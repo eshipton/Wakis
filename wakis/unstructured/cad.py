@@ -229,7 +229,9 @@ def _min_volume_ratio(gmsh):
     _, _, en = gmsh.model.mesh.getElements(3)
     if not en:
         return 1.0
-    con = np.searchsorted(tags[order], np.concatenate(en).astype(np.int64)).reshape(-1, 4)
+    con = np.searchsorted(tags[order], np.concatenate(en).astype(np.int64)).reshape(
+        -1, 4
+    )
     P = X[con]
     v = np.abs(np.linalg.det(P[:, 1:] - P[:, :1]))
     return float(v.min() / v.max())
@@ -264,6 +266,8 @@ def cad_projector(gmsh, node_tags, scale):
             surf_of[int(t)] = s
 
     def project(n, Y):
+        if n >= len(node_tags):
+            return None
         s = surf_of.get(int(node_tags[n]))
         if s is None:
             return None
@@ -299,9 +303,7 @@ def _match_regions(gmsh, regions, cad_names=None):
             raise ValueError(f"region {name!r} matched no CAD volume")
         for v in hit:
             if v in out and out[v] != name:
-                raise ValueError(
-                    f"volume {v} matched regions {out[v]!r} and {name!r}"
-                )
+                raise ValueError(f"volume {v} matched regions {out[v]!r} and {name!r}")
             out[v] = name
     return out
 
@@ -557,9 +559,7 @@ def mesh_stl(
         gmsh.option.setNumber("General.Terminal", int(verbose))
         gmsh.model.add("wakis_stl")
         gmsh.merge(str(stl_file))
-        gmsh.model.mesh.classifySurfaces(
-            np.deg2rad(feature_angle), True, True, np.pi
-        )
+        gmsh.model.mesh.classifySurfaces(np.deg2rad(feature_angle), True, True, np.pi)
         gmsh.model.mesh.createGeometry()
         geo = gmsh.model.geo
         surf = [t for _, t in gmsh.model.getEntities(2)]
@@ -579,7 +579,10 @@ def mesh_stl(
         )
         _set_size_fields(
             gmsh,
-            [([v for v, n in vol_region.items() if n == k], sizes[k] / scale) for k in names],
+            [
+                ([v for v, n in vol_region.items() if n == k], sizes[k] / scale)
+                for k in names
+            ],
         )
         _configure(gmsh, None, optimize)
         gmsh.model.mesh.generate(3)
