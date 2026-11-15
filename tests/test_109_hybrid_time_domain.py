@@ -448,3 +448,35 @@ def test_measure_cartesian_solverfit3d():
     ) as exc_info:
         _assert_cartesian_unknown_counts(out_mut, nh, s_cart)
     print(f"Observed mutation failure: {exc_info.value}")
+
+
+def _assert_merged_study_has_n20(data):
+    ns = sorted({int(r["N"]) for r in data["table"]})
+    assert ns == [10, 16, 20], f"merged table Ns={ns} != [10, 16, 20]"
+    assert len(data["table"]) == 15
+    assert "N=20" in data["cartesian_solverfit3d"]
+
+
+def test_plot_mixed_study_merge():
+    """`load_merged_study` in `studies/hybrid-cart-tet/plot_mixed_study.py`
+    merges `results_mixed_study.json` and `results_mixed_study_N20.json` by key
+    `table` (`N in {10, 16, 20}`), broken by `mutate='drop_extra'`."""
+    plot_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "studies",
+        "hybrid-cart-tet",
+        "plot_mixed_study.py",
+    )
+    spec = importlib.util.spec_from_file_location("plot_mixed_study", plot_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    merged = mod.load_merged_study()
+    _assert_merged_study_has_n20(merged)
+
+    mutated = mod.load_merged_study(mutate="drop_extra")
+    with pytest.raises(
+        AssertionError, match=r"merged table Ns=\[10, 16\] != \[10, 16, 20\]"
+    ) as exc_info:
+        _assert_merged_study_has_n20(mutated)
+    print(f"Observed mutation failure: {exc_info.value}")
