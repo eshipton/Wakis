@@ -46,6 +46,7 @@ from scipy.constants import mu_0 as MU0
 from ..subgrid3d.block import CartesianBlock
 from ..unstructured._core import cell_materials
 from ..unstructured.solver3d import whitney_mass_matrices
+from .mass_mixed import mixed_partition, mixed_tet_mass
 from .mesh import box_surface_check
 
 __all__ = ["HybridFIT3D", "box_trace", "MassSolver"]
@@ -300,23 +301,33 @@ class HybridFIT3D:
         oscillates within ``~mass_tol`` without drift. A looser tolerance
         cuts the polynomial degree (cost per step) proportionally to
         ``log(2 / mass_tol)``.
-    mutate : {None, 'nearest', 'inject', 'scale', 'asym'}
+    mutate : {None, 'nearest', 'inject', 'scale', 'asym', 'lump_all'}
         Deliberately wrong couplings for the verification tests: 'nearest',
         'inject' and 'scale' alter the trace (`box_trace`; still energy
         conserving, inconsistent);
         'asym' uses the 'inject' trace only in the e-update (K^T replaced by a
-        different matrix: not energy conserving, not transposable).
+        different matrix: not energy conserving, not transposable);
+        'lump_all' lumps every tetrahedral edge when ``mass='mixed'``.
+    mass : {'consistent', 'mixed'}
+        Tetrahedral edge mass: full consistent Whitney 1-form mass
+        (``'consistent'``, default) or Voronoi diagonal Hodge on interior
+        well-centred edges and consistent Whitney block elsewhere
+        (``'mixed'``; `mixed_partition`).
     """
 
     def __init__(self, xn, yn, zn, box=None, tet_mesh=None, materials=None, eps_r=None,
                  mu_r=None, pec=None, outer_bc="pec", edge_scale=None, face_scale=None,
-                 dt=None, cfl=0.95, mutate=None, mass_solver="auto", mass_tol=1e-16):  # fmt: skip
+                 dt=None, cfl=0.95, mutate=None, mass_solver="auto", mass_tol=1e-16,
+                 mass="consistent"):  # fmt: skip
         if outer_bc not in ("pec", "pmc"):
             raise ValueError("outer_bc must be 'pec' or 'pmc'")
+        if mass not in ("consistent", "mixed"):
+            raise ValueError("mass must be 'consistent' or 'mixed'")
         if (box is None) != (tet_mesh is None):
             raise ValueError("give both box and tet_mesh, or neither")
         self.block = blk = CartesianBlock(xn, yn, zn)
         self.mutate = mutate
+        self.mass = mass
         self.mass_solver = mass_solver
         self.mass_tol = mass_tol
         nc = blk.nc
@@ -410,6 +421,17 @@ class HybridFIT3D:
             self.tet_hanging = np.flatnonzero(on_box)
             self.tet_fixed = np.flatnonzero(fixed)
             free_t = ~on_box & ~fixed
+            if mass == "mixed":
+                self.lump_mask, self.dv = mixed_partition(
+                    tm,
+                    eps_t,
+                    live=live,
+                    bf_box=bf_box,
+                    on_box=on_box,
+                    fixed=fixed,
+                    mutate=mutate if mutate == "lump_all" else None,
+                )
+                self.M1 = mixed_tet_mass(self.M1, self.lump_mask, self.dv)
             hr, hc, hv = box_trace(
                 blk, lo, hi, p[on_box], q[on_box],
                 mutate=mutate if mutate in ("nearest", "inject", "scale") else None,
