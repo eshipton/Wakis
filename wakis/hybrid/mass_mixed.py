@@ -89,9 +89,11 @@ def mixed_partition(
         Mask of fixed (PEC) tetrahedral edges.
     margin : float, optional
         Relative margin passed to `well_centred_tets`.
-    mutate : {None, 'lump_all'}, optional
-        Verification mutation: ``'lump_all'`` lumps every tetrahedral edge
-        including non-well-centred and box-surface ones.
+    mutate : {None, 'lump_all', 'ignore_wellcentred'}, optional
+        Verification mutations: ``'lump_all'`` lumps every tetrahedral edge
+        including non-well-centred and box-surface ones;
+        ``'ignore_wellcentred'`` follows the standard partition path with the
+        `well_centred_tets` filter omitted.
 
     Returns
     -------
@@ -128,8 +130,10 @@ def mixed_partition(
         fixed |= ~touched
     if mutate == "lump_all":
         lump_mask = np.ones(n_edges, bool)
-    elif mutate is None:
-        wc = well_centred_tets(tet_mesh, margin=margin) & (live > 0)
+    elif mutate in (None, "ignore_wellcentred"):
+        wc = live > 0
+        if mutate is None:
+            wc = well_centred_tets(tet_mesh, margin=margin) & wc
         box_nodes = np.zeros(tet_mesh.n_nodes, bool)
         box_nodes[tet_mesh.faces[bf_box].ravel()] = True
         box_faces = np.zeros(tet_mesh.n_faces, bool)
@@ -142,7 +146,7 @@ def mixed_partition(
         bad_edge[tet_mesh.cell_edges[~safe_tet].ravel()] = True
         lump_mask = ~on_box & ~fixed & ~bad_edge
     else:
-        raise ValueError("mutate must be None or 'lump_all'")
+        raise ValueError("mutate must be None, 'lump_all', or 'ignore_wellcentred'")
     dual_area = tet_mesh.dual_measure(eps_t * live)
     dv = EPS0 * dual_area[lump_mask] / tet_mesh.edge_length[lump_mask]
     if mutate is None and np.any(dv <= 0):

@@ -16,11 +16,13 @@ Verification checks and mutations:
 3. Exact leapfrog energy conservation with ``mass="mixed"`` over 200 steps
    (relative peak-to-peak drift ``< 1e-14``, measured ``4e-16`` to ``6e-16``),
    broken by ``mutate="asym"``.
-4. Mutation check (`test_lump_all_mutation`): ``mutate="lump_all"`` lumps every
-   tetrahedral edge including non-well-centred ones, failing by non-positive
-   Voronoi diagonal ``D_V`` on the Kuhn and Delaunay test meshes (and raising
-   ``RuntimeError`` in `MassSolver` on Kuhn) and violating the cavity
-   eigenfrequency accuracy bound.
+4. Mutation checks (`test_lump_all_mutation`, `test_delaunay_wellcentred_mutation`):
+   ``mutate="lump_all"`` lumps every tetrahedral edge including non-well-centred
+   ones, failing by non-positive Voronoi diagonal ``D_V`` on the Kuhn and
+   Delaunay test meshes (and raising ``RuntimeError`` in `MassSolver` on Kuhn);
+   ``mutate="ignore_wellcentred"`` omits the `well_centred_tets` filter along the
+   standard partition path and lumps additional non-well-centred interior edges
+   on the Delaunay test mesh.
 5. Eigenfrequency agreement (`test_cavity_eigenfrequency_mixed`): on the PEC
    cavity from `wakis.hybrid.verification.cavity_modes`, the lowest mode
    satisfies ``|f_mixed - f_consistent| <= |f_consistent - f_analytic|``.
@@ -36,6 +38,7 @@ from wakis.hybrid import (
     delaunay_box_mesh,
     kuhn_box_mesh,
     mixed_partition,
+    well_centred_tets,
 )
 from wakis.hybrid.verification import cavity_modes
 
@@ -203,6 +206,34 @@ def test_lump_all_mutation(meshes):
 
     with pytest.raises(ValueError):
         mixed_partition(meshes["delaunay"], mutate="unknown")
+
+
+def test_delaunay_wellcentred_mutation(meshes):
+    """mutate='ignore_wellcentred' omits the well_centred_tets filter in
+    mixed_partition on the Delaunay test mesh and either yields a non-positive
+    dv or changes the lumped edge set.
+    # measured by this test on meshes['delaunay']: adds 85 lumped edges (327 vs 242)
+    """
+    tm = meshes["delaunay"]
+    lump_ref, _ = mixed_partition(tm)
+    wc = well_centred_tets(tm)
+    try:
+        lump_mut, dv_mut = mixed_partition(tm, mutate="ignore_wellcentred")
+    except RuntimeError:
+        return
+    added_mask = lump_mut & ~lump_ref
+    added = int(added_mask.sum())
+    print(
+        f"ignore_wellcentred added {added} lumped edges "
+        f"({int(lump_mut.sum())} vs {int(lump_ref.sum())})"
+    )
+    non_wc_edges = np.zeros(tm.n_edges, bool)
+    non_wc_edges[tm.cell_edges[~wc].ravel()] = True
+    assert np.any(dv_mut <= 0) or (
+        added > 0
+        and not np.array_equal(lump_mut, lump_ref)
+        and np.all(non_wc_edges[added_mask])
+    )
 
 
 def test_cavity_eigenfrequency_mixed():
