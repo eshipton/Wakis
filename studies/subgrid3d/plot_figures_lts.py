@@ -215,6 +215,17 @@ def _style(r):
 
 
 def plot_cost(cases, path):
+    if isinstance(cases, dict):
+        rows, _ = analyse_cost(cases)
+        cases = [("large patch: $\\varepsilon_r=9$ cube, 0.3 m", rows)]
+    elif cases and isinstance(cases[0], dict):
+        cases = [("large patch: $\\varepsilon_r=9$ cube, 0.3 m", cases)]
+    else:
+        cases = [
+            (name, rows)
+            for name, rows in cases
+            if "small" not in name and all(r.get("case") != "small" for r in rows)
+        ][:1]
     fig, axs = plt.subplots(
         len(cases), 2, figsize=(11, 4.3 * len(cases)), squeeze=False
     )
@@ -240,7 +251,7 @@ def plot_cost(cases, path):
             ax.set_xlabel(xlabel)
             ax.set_ylabel("relative error of $f_1$ (spatial, semi-discrete)")
             ax.grid(True, which="both", alpha=0.3)
-            ax.set_title(f"({'abcd'[2 * row + col]}) {name}")
+            ax.set_title(f"({'ab'[col]}) {name}")
             if row == 0 and col == 0:
                 ax.legend(fontsize=8, loc="lower left")
     fig.tight_layout()
