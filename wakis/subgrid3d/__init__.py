@@ -18,10 +18,18 @@ See ``docs/physicsguide_sections/subgrid3d.md``.
 
 from .block import CartesianBlock
 from .lts import SubgridLTS
+from .media import (
+    dispersive_dt_max,
+    dispersive_eigenfrequencies,
+    dispersive_energy,
+    dispersive_pencil,
+)
 from .mesh import Patch, SubgridMesh3D
 from .pml import SubgridCPML
 from .solver import Box, SubgridFIT3D
 from .stepper import SubgridLTSFIT3D
 
 __all__ = ["CartesianBlock", "Patch", "SubgridMesh3D", "SubgridFIT3D", "Box",
-           "SubgridLTS", "SubgridCPML", "SubgridLTSFIT3D"]  # fmt: skip
+           "SubgridLTS", "SubgridCPML", "SubgridLTSFIT3D",
+           "dispersive_pencil", "dispersive_dt_max", "dispersive_eigenfrequencies",
+           "dispersive_energy"]  # fmt: skip
