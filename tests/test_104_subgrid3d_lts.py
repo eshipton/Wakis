@@ -11,33 +11,43 @@ Every check has a mutation that was run and seen to fail
 * S_0 = K^H W K R_0 is Hermitian; the stability criterion (Lanczos rho < 1
   and the level positivity margins <= 1) agrees with the dense spectrum on
   both sides of the bisected limit;
-* the LTS limit equals the coarse-grid limit up to the damping floor
-  min_l sqrt(x_+(p_l, nu_l)) / (2 p_l) (mutation: coarse parents of hanging
-  edges left out of F_1 -> below the floor);
-* the modified energy is conserved to round-off over 4000 coarse steps at
-  0.99 of the LTS limit with nested 2:1 and 3:1 patches, eps/mu/PEC/PMC
-  (mutations: 1.03 x the limit; parents left out of F_1);
-* the step transpose passes the dot-product test with LTS and CPML
-  (mutation: R_0 in place of R_0^T);
+* the LTS limit satisfies the global-limit relation
+  dt_lts / dt_global = (prod_{m<L} p_m) sqrt(x_adm,L) / 2 to 2e-3 when the
+  global top mode lies in F_L (mutation: coarse parents of hanging edges left
+  out of F_1 -> below the floor; coarse-limit floor check kept as xfail on
+  3:1 and nested 2:1+3:1);
+* the modified energy semi-norm is conserved to round-off over 4000 coarse
+  steps at 0.99 of the LTS limit with nested 2:1 and 3:1 patches,
+  eps/mu/PEC/PMC (mutations: 1.03 x the limit and parents left out of F_1
+  rejected at init; mutate="inject" breaks energy conservation);
+* the step transpose passes the dot-product test with LTS and CPML on both
+  the open L=1 box and closed_mesh (mutation: R_0 in place of R_0^T);
 * cavity resonances with LTS converge at order 2 (mutation: r(0) = 1.05);
 * time-domain probe + DFT = the LTS eigenvalue through the leapfrog
-  dispersion;
+  dispersion (mutation: mutate="consistency" in run() breaks agreement);
 * CPML: residual energy after the pulse leaves <= 1e-6 with a patch one
   coarse cell from the layer, global and LTS steps (mutation: sigma = 0);
   late-time stable (mutation: a patch inside the layer without a CFS shift
   grows); refusals for patches / LTS fine edges in the layer;
 * block kernels = CSR operators to round-off, and runs agree within the
-  derived round-off bound (mutation: hanging rows dropped); GPU (CuPy) =
-  CPU within the same bound (skipped without CuPy).
+  empirical 2-norm round-off tolerance (mutation: hanging rows dropped);
+  GPU (CuPy) and CPU block backends = CPU within the same tolerance.
 """
 
 import numpy as np
 import pytest
 import scipy.linalg as la
 from scipy.constants import c as C0
+from scipy.optimize import brentq
 
 from wakis.subgrid3d import Box, SubgridLTS, SubgridLTSFIT3D, SubgridMesh3D
-from wakis.subgrid3d.lts import is_stable, lts_dt_max
+from wakis.subgrid3d.lts import (
+    is_stable,
+    lts_dt_max,
+    positivity_limit,
+    stability_polynomial,
+)
+from wakis.unstructured.lts import chebyshev_coefficients
 
 EPS = np.finfo(float).eps
 A_CAV, B_CAV, D_CAV = 1.0, 0.75, 0.5
@@ -56,7 +66,7 @@ def exact_modes(k, a=A_CAV, b=B_CAV, d=D_CAV):
     return np.sort(out)[:k]
 
 
-def cavity_mesh(N, patch=True, nested=False, ratio=2):
+def cavity_mesh(N, patch=True, nested=False, ratio=2, nested_ratio=2):
     m = SubgridMesh3D(
         np.linspace(0, A_CAV, N + 1),
         np.linspace(0, B_CAV, 3 * N // 4 + 1),
@@ -66,7 +76,8 @@ def cavity_mesh(N, patch=True, nested=False, ratio=2):
         p = m.add_box(PATCH, ratio=ratio)
         if nested:
             q = 1.0 / N
-            m.add_box(tuple((lo + q, hi - q) for lo, hi in PATCH), ratio=2, parent=p)
+            r2 = nested if not isinstance(nested, bool) else nested_ratio
+            m.add_box(tuple((lo + q, hi - q) for lo, hi in PATCH), ratio=r2, parent=p)
     return m
 
 
@@ -97,13 +108,37 @@ def damping_floor(lts):
     T_p reaches ``-delta``: r_l changes sign there for even p (positivity)
     and x r(x) reaches 4 for odd p (rho).
     """
-    from wakis.unstructured.lts import chebyshev_coefficients
-
     out = []
     for d in lts.levels[1:]:
         delta, beta, _, _, _ = chebyshev_coefficients(d.p, d.nu)
         out.append(np.sqrt(2 * delta / beta) / (2 * d.p))
     return min(out)
+
+
+def global_limit_ratio(lts):
+    """
+    Predicted ``dt_max^LTS / dt_max^global = (prod_{m < L} p_m) sqrt(x_adm,L) / 2``
+    when the global top mode lies in ``F_L``. ``x_adm,L = 2 delta_L / beta_L``
+    unless an odd ``p_L`` nested under an even ``p_{L-1}`` exceeds
+    ``x_+(p_{L-1}, nu_{L-1})`` at level ``L - 1``, in which case ``x_adm,L`` is
+    cut where ``p_{L-1}^2 x r_L(x) = x_+(p_{L-1}, nu_{L-1})``.
+    """
+    dL = lts.levels[lts.L]
+    x_adm = 2 * dL.delta / dL.beta
+    if lts.L >= 2:
+        d_prev = lts.levels[lts.L - 1]
+        xp_prev = positivity_limit(d_prev.p, d_prev.nu)
+        if np.isfinite(xp_prev):
+            target = xp_prev / (d_prev.p**2)
+            if stability_polynomial(x_adm, dL.p, dL.nu) > target:
+                x_lo = dL.delta / dL.beta
+                x_adm = brentq(
+                    lambda x: stability_polynomial(x, dL.p, dL.nu) - target,
+                    x_lo,
+                    x_adm,
+                )
+    p_prev = float(np.prod(lts.ratios[:-1]))
+    return p_prev * np.sqrt(x_adm) / 2.0
 
 
 # ------------------------------------------------------------- operator
@@ -123,11 +158,27 @@ def test_fast_operator_equals_reference_and_matrix():
     assert np.abs(L.apply(e) - full).max() / sc > 1e-6  # measured 7e-4
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError)
+def test_fast_operator_dT_mutation():
+    e8 = _lts_error(8)
+    s = SubgridLTSFIT3D(cavity_mesh(8), lts=True, cfl=0.95, dt_rtol=1e-2)
+    for d in s.lts.levels[1:]:
+        d.T = 1.01 * d.T
+    rng = np.random.default_rng(0)
+    e = rng.standard_normal(s.n_free)
+    full = s.lts.apply_full(e)
+    assert np.abs(s.lts.apply(e) - full).max() / np.abs(full).max() < 1e-13
+    ex = exact_modes(6)
+    e8_mut = float(np.abs(s.lts_eigenfrequencies(6, ex[0]) / ex - 1).max())
+    print(f"d.T*1.01 N=8 cavity error: {e8:.6e} -> {e8_mut:.6e} ({e8_mut / e8:.4f}x)")
+    assert e8_mut > 5 * e8
+
+
 def test_stiffness_hermitian_and_criterion_matches_dense():
     s = SubgridLTSFIT3D(cavity_mesh(8), lts=False)
-    dt_max, _ = lts_dt_max(s, 2.2 * s.dt_max, rtol=1e-3)
+    dt_lts, _ = lts_dt_max(s, 2.2 * s.dt_max, rtol=1e-4)
     for f, stable in ((0.99, True), (1.02, False)):
-        L = SubgridLTS(s, f * dt_max)
+        L = SubgridLTS(s, f * dt_lts)
         S0, D = L.stiffness()
         A = S0.toarray()
         assert np.abs(A - A.T).max() < 1e-13 * np.abs(A).max()
@@ -137,20 +188,47 @@ def test_stiffness_hermitian_and_criterion_matches_dense():
         ok, rho, marg = is_stable(L, tol=1e-12)
         assert ok == stable and dense_ok == stable
         assert abs(rho - L.dt / 2 * np.sqrt(lam.max())) < 1e-8
+    with pytest.raises(ValueError, match="unstable"):
+        SubgridLTSFIT3D(cavity_mesh(8), lts=True, dt=1.0001 * dt_lts)
+    with pytest.raises(ValueError, match="unstable"):
+        lts_dt_max(s, 2.2 * s.dt_max, dt_lo=1.02 * dt_lts)
 
 
-@pytest.mark.parametrize("nested", [False, True])
-def test_lts_limit_equals_coarse_grid_limit(nested):
+@pytest.mark.parametrize(
+    "nested,ratio,nested_ratio",
+    [
+        (False, 2, 2),
+        pytest.param(
+            False, 3, 2, marks=pytest.mark.xfail(strict=True, raises=AssertionError)
+        ),
+        (True, 2, 2),
+        pytest.param(
+            True, 2, 3, marks=pytest.mark.xfail(strict=True, raises=AssertionError)
+        ),
+    ],
+)
+def test_lts_limit_equals_coarse_grid_limit(nested, ratio, nested_ratio):
     s0 = SubgridLTSFIT3D(cavity_mesh(16, patch=False), lts=False)
-    s = SubgridLTSFIT3D(cavity_mesh(16, nested=nested), lts=True)
-    ratio = s.lts_info["dt_max"] / s0.dt_max
+    s = SubgridLTSFIT3D(
+        cavity_mesh(16, nested=nested, ratio=ratio, nested_ratio=nested_ratio),
+        lts=True,
+    )
+    r_coarse = s.lts_info["dt_max"] / s0.dt_max
+    r_global = s.lts_info["dt_max"] / s.dt_max
+    pred = global_limit_ratio(s.lts)
     floor = damping_floor(s.lts) * (1 - 2e-3)
-    assert floor <= ratio <= 1.05, (ratio, floor)
-    assert s.lts_info["dt_max"] / s.dt_max > (3.8 if nested else 1.9)
+    print(
+        f"ratios={s.lts.ratios}: dt_lts/dt_global={r_global:.4f} (pred={pred:.4f}), "
+        f"dt_lts/dt_coarse={r_coarse:.4f} (floor={floor:.4f})"
+    )
+    if abs(r_global / pred - 1) >= 2e-3:
+        raise RuntimeError(f"global-limit relation failed: {r_global} vs {pred}")
     # mutation: parents of hanging edges outside F_1 -> limit below the floor
-    if not nested:
+    if not nested and ratio == 2:
         dt_mut, _ = lts_dt_max(s, 2.2 * s.dt_max, interface_parents=False)
-        assert dt_mut / s0.dt_max < floor
+        if dt_mut / s0.dt_max >= floor:
+            raise RuntimeError("interface_parents=False mutation did not fail")
+    assert floor <= r_coarse <= 1.05, (r_coarse, floor)
 
 
 # ---------------------------------------------------------------- energy
@@ -162,20 +240,20 @@ def test_modified_energy_conserved_nested_2_3():
     drift = np.abs(E / E[0] - 1).max()
     assert drift < 50 * EPS * np.sqrt(len(E)), drift
     dt_ok = s.dt
-    # mutation 1: 3 % above the limit
-    m = SubgridLTSFIT3D(closed_mesh(), lts=True, dt=1.03 * s.lts_info["dt_max"],
+    # stability enforcement rejects 3 % above the limit and interface_parents=False
+    with pytest.raises(ValueError, match="unstable"):
+        SubgridLTSFIT3D(closed_mesh(), lts=True, dt=1.03 * s.lts_info["dt_max"],
                         **closed_materials())  # fmt: skip
-    m.e[:] = np.random.default_rng(1).standard_normal(m.n_free)
-    with np.errstate(all="ignore"):
-        Em = m.run(4000, energy=True)
-    assert not np.all(np.isfinite(Em)) or np.abs(Em / Em[0] - 1).max() > 1e-3
-    # mutation 2: coarse parents of hanging edges left out of F_1
-    m = SubgridLTSFIT3D(closed_mesh(), lts=True, dt=dt_ok,
+    with pytest.raises(ValueError, match="unstable"):
+        SubgridLTSFIT3D(closed_mesh(), lts=True, dt=dt_ok,
                         lts_kw=dict(interface_parents=False), **closed_materials())  # fmt: skip
+    # mutation: non-Hermitian S_0 (inject restriction) breaks energy conservation
+    m = SubgridLTSFIT3D(closed_mesh(), lts=False, dt=0.5 * s.dt_max, mutate="inject",
+                        **closed_materials())  # fmt: skip
+    m.lts = SubgridLTS(m, m.dt)
     m.e[:] = np.random.default_rng(1).standard_normal(m.n_free)
-    with np.errstate(all="ignore"):
-        m.run(4000)
-    assert not np.all(np.isfinite(m.e)) or np.abs(m.e).max() > 1e3
+    Em = m.run(500, energy=True)
+    assert np.abs(Em / Em[0] - 1).max() > 1e-2
 
 
 # ------------------------------------------------------------- transpose
@@ -214,8 +292,11 @@ def _open_box(patch=True, lts=True, kernels="csr", pml=True, R0=1e-6, alpha_hz=0
 
 
 def test_dot_product_lts_cpml():
-    s = SubgridLTSFIT3D(closed_mesh(), lts=True, dt=1.0e-10, **closed_materials())
-    assert _dot(s) < 1e-15
+    s_closed = SubgridLTSFIT3D(
+        closed_mesh(), lts=True, dt=1.0e-10, **closed_materials()
+    )
+    assert _dot(s_closed) < 1e-15
+    assert _dot(s_closed, mutate="R") > 1e-10
     s = _open_box(dt=7.0e-11)
     assert s.lts is not None and s.cpml is not None
     assert _dot(s) < 1e-15
@@ -224,6 +305,8 @@ def test_dot_product_lts_cpml():
     # mutations (measured ~1e-7 against ~1e-18)
     assert _dot(_open_box(dt=7.0e-11), mutate="R") > 1e-10
     assert _dot(_open_box(dt=7.0e-11), mutate="pml") > 1e-10
+    with pytest.raises(NotImplementedError):
+        s_closed.material_gradient()
 
 
 # ------------------------------------------------------------ convergence
@@ -243,14 +326,8 @@ def test_lts_cavity_converges_second_order():
     assert np.log2(m8 / m16) < 1.0 and m16 > 5 * e16
 
 
-def test_time_domain_matches_lts_eigenvalue():
-    s = SubgridLTSFIT3D(cavity_mesh(8), lts=True, cfl=0.95, dt_rtol=1e-2)
-    f1 = s.lts_eigenfrequencies(1, exact_modes(1)[0])[0]
-    tau = 2.0 / f1
-    s.add_current((0.41, 0.33, 0.27), 2,
-                  lambda t: np.exp(-(((t - 4 * tau) / tau) ** 2)) * np.sin(2 * np.pi * f1 * t))  # fmt: skip
-    s.add_probe((0.37, 0.41, 0.23), 2)
-    n = int(np.ceil(300 / f1 / s.dt))
+def _td_peak_frequency(s, f1, n):
+    s.reset()
     s.run(n)
     v = np.array(s.probes[0]["values"])
     pad = 16 * len(v)
@@ -259,8 +336,23 @@ def test_time_domain_matches_lts_eigenvalue():
     sel = np.flatnonzero(np.abs(f / f1 - 1) < 0.1)
     i = sel[np.argmax(X[sel])]
     y0, y1, y2 = X[i - 1], X[i], X[i + 1]
-    fp = f[i] + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) * (f[1] - f[0])
+    return float(f[i] + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) * (f[1] - f[0]))
+
+
+def test_time_domain_matches_lts_eigenvalue():
+    s = SubgridLTSFIT3D(cavity_mesh(8), lts=True, cfl=0.95, dt_rtol=1e-2)
+    f1 = s.lts_eigenfrequencies(1, exact_modes(1)[0])[0]
+    tau = 2.0 / f1
+    s.add_current((0.41, 0.33, 0.27), 2,
+                  lambda t: np.exp(-(((t - 4 * tau) / tau) ** 2)) * np.sin(2 * np.pi * f1 * t))  # fmt: skip
+    s.add_probe((0.37, 0.41, 0.23), 2)
+    n = int(np.ceil(300 / f1 / s.dt))
+    fp = _td_peak_frequency(s, f1, n)
     assert abs(fp / f1 - 1) < 1e-5
+    # mutation: inconsistent polynomial r_1(0) = 1.05 used only in run()
+    s.lts = SubgridLTS(s, s.dt, mutate="consistency")
+    fp_mut = _td_peak_frequency(s, f1, n)
+    assert abs(fp_mut / f1 - 1) > 1e-4
 
 
 # ------------------------------------------------------------------ CPML
@@ -340,16 +432,55 @@ def test_cpml_late_time_stability_and_refusals():
 
 
 # ---------------------------------------------------------- block / GPU
-def _roundoff_bound(s, n_steps):
-    """n u (m_K + m_KH) kappa_E, kappa_E = sqrt((1 + rho)/(1 - rho))."""
+def _empirical_roundoff_tol(s, n_steps):
+    """Empirical tolerance ``n u (m_K + m_KH) kappa_E`` on the relative 2-norm
+    difference between block and CSR steps (``kappa_E = sqrt((1 + rho)/(1 - rho))``)."""
     mK = np.diff(s.K.indptr).max()
     mKH = np.diff(s.KH.tocsr().indptr).max()
     rho = min(s.stability_ratio(), 0.999)
     return n_steps * EPS / 2 * (mK + mKH) * np.sqrt((1 + rho) / (1 - rho))
 
 
+_roundoff_bound = _empirical_roundoff_tol
+
+
 def _rel(a, b):
-    return np.abs(a - b).max() / np.abs(b).max()
+    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+
+def test_lts_propagator_norm_exceeds_kappa_e():
+    """On cavity_mesh(8) at cfl=0.95, max_k ||G_s^k||_2 in the (W^1/2 b, D^1/2 e)
+    Euclidean norm is ~13.57 > kappa_E = 12.82 (LTS has no first-order energy)."""
+    s = SubgridLTSFIT3D(cavity_mesh(8), lts=True, cfl=0.95)
+    rho = s.stability_ratio(tol=1e-12)
+    kappa_E = float(np.sqrt((1 + rho) / (1 - rho)))
+    R0 = s.lts.matrix().toarray()
+    sqW = np.sqrt(s.W)
+    sqD = np.sqrt(s.D)
+    Khat = sqW[:, None] * s.K.toarray() / sqD[None, :]
+    Rhat = sqD[:, None] * R0 / sqD[None, :]
+    _, sv, Vt = la.svd(Khat, full_matrices=False)
+    rk = int(np.sum(sv > 1e-12 * sv[0]))
+    V = Vt[:rk, :].T
+    Sig = sv[:rk]
+    M = Sig[:, None] * (V.T @ Rhat @ V)
+    dt = s.dt
+    Gs = np.block(
+        [
+            [np.eye(rk), -dt * M],
+            [dt * np.diag(Sig), np.eye(rk) - dt**2 * (Sig[:, None] * M)],
+        ]
+    )
+    Gk = np.eye(2 * rk)
+    norms = []
+    for _ in range(15):
+        Gk = Gk @ Gs
+        norms.append(float(la.norm(Gk, 2)))
+    g_max = max(norms)
+    print(
+        f"cavity_mesh(8) cfl=0.95: max_k ||G_s^k||_2 = {g_max:.4f}, kappa_E = {kappa_E:.4f}"
+    )
+    assert g_max > kappa_E and g_max < 2 * kappa_E
 
 
 def test_block_kernels_equal_csr():
@@ -365,9 +496,9 @@ def test_block_kernels_equal_csr():
     for s in (sc, sb):
         s.e[:] = e
         s.run(n)
-    bound = _roundoff_bound(sc, n)
+    tol = _empirical_roundoff_tol(sc, n)
     err = _rel(sb.e, sc.e)
-    assert err < bound, (err, bound)
+    assert err < tol, (err, tol)
     # mutation: block kernels without the hanging rows of P_e
     sb.reset()
     sb.e[:] = e
@@ -379,24 +510,27 @@ def test_block_kernels_equal_csr():
     assert _rel(sb.e, sc.e) > 1e-3
 
 
-def test_gpu_equals_cpu():
-    cp = pytest.importorskip("cupy")
-    try:
-        cp.cuda.runtime.getDeviceCount()
-    except Exception:
-        pytest.skip("no CUDA device")
+@pytest.mark.parametrize("backend", ["numpy", "cupy"])
+def test_gpu_equals_cpu(backend):
+    if backend == "cupy":
+        cp = pytest.importorskip("cupy")
+        try:
+            cp.cuda.runtime.getDeviceCount()
+        except Exception:
+            pytest.skip("no CUDA device")
     kw = closed_materials()
     sc = SubgridLTSFIT3D(closed_mesh(), lts=True, cfl=0.95, kernels="csr", **kw)
     sg = SubgridLTSFIT3D(closed_mesh(), lts=True, dt=sc.dt, kernels="block",
-                         backend="cupy", **kw)  # fmt: skip
+                         backend=backend, **kw)  # fmt: skip
     e = np.random.default_rng(6).standard_normal(sc.n_free)
     n = 500
     sc.e[:] = e
-    sg.e[:] = cp.asarray(e)
+    sg.e[:] = sg.xp.asarray(e)
     sc.run(n)
     sg.run(n)
+    sg.synchronize()
     err = _rel(sg.e_host(), sc.e)
-    bound = _roundoff_bound(sc, n)
-    assert err < bound, (err, bound)
+    tol = _empirical_roundoff_tol(sc, n)
+    assert err < tol, (err, tol)
     E0 = sg.modified_energy(sg.e, sg.e)  # smoke: energy on device
     assert np.isfinite(E0)

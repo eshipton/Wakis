@@ -32,7 +32,9 @@ Properties (derived in the physics guide, "Local time stepping"):
   sum_j c_j S_l (P_l D^-1 S_l)^j``), so the scheme is an ordinary leapfrog
   with the Hermitian stiffness ``S_0 = S R_0`` and conserves
   ``E = 1/2 [w^H (D - dt^2/4 S_0) w + ybar^H S_0 ybar]``
-  (``w = (e^{n+1} - e^n)/dt``, ``ybar = (e^{n+1} + e^n)/2``); it is stable
+  (``w = (e^{n+1} - e^n)/dt``, ``ybar = (e^{n+1} + e^n)/2``), a semi-norm
+  (zero on ``ker S_0`` and ``ker(K^H W)``) that stays conserved for any ``dt``
+  (becoming indefinite when unstable); the scheme is stable
   iff ``S_0 >= 0`` and ``rho = dt/2 sqrt(lambda_max(D^-1 S_0)) < 1``,
   measured by Lanczos (`stability_ratio`).
 * Off ``F_1`` and its buffer ``R_0 e = e``; ``r(0) = 1`` makes the scheme
@@ -191,7 +193,8 @@ class SubgridLTS:
             if np.any(d.iF < 0) or np.any(d.iC < 0):
                 raise RuntimeError("LTS levels not nested (internal error)")
             d.nu = nus[lv - 1]
-            (d.delta, d.beta, d.T, d.kappa, d.out) = chebyshev_coefficients(d.p, d.nu)
+            nu_eff = max(d.nu, 0.15) if mutate == "consistency" else d.nu
+            (d.delta, d.beta, d.T, d.kappa, d.out) = chebyshev_coefficients(d.p, nu_eff)
             if mutate == "consistency":
                 d.out = 1.05 * d.out
             self.levels.append(d)
@@ -439,7 +442,9 @@ def level_margins(lts, tol=1e-8):
 
 def is_stable(lts, tol=1e-5):
     """
-    ``(stable, rho, margins)``: ``rho < 1`` and every margin ``<= 1``.
+    ``(stable, rho, margins)``: ``rho < 1 - g`` and every margin ``<= 1 - g``
+    with ``g = 10 * tol`` (Ritz values are lower bounds on ``lambda_max``, so
+    every Lanczos estimation error points toward "stable").
 
     Lanczos tolerance `tol` (relative, on the eigenvalue): only the side of 1
     matters. Below the limit many fine modes sit on the damping plateau
@@ -448,7 +453,8 @@ def is_stable(lts, tol=1e-5):
     """
     marg = level_margins(lts, tol=tol)
     rho = stability_ratio(lts, tol=tol)
-    return (rho < 1.0 and max(marg, default=0.0) <= 1.0), rho, marg
+    g = 10 * tol
+    return (rho < 1.0 - g and max(marg, default=0.0) <= 1.0 - g), rho, marg
 
 
 def lts_dt_max(solver, dt_hi, dt_lo=None, rtol=2e-3, verbose=False, **kw):
@@ -479,6 +485,12 @@ def lts_dt_max(solver, dt_hi, dt_lo=None, rtol=2e-3, verbose=False, **kw):
     hist.append((hi, r, max(m, default=0.0)))
     if ok:
         return hi, hist
+    ok_lo, r_lo, m_lo = is_stable(SubgridLTS(solver, lo, **kw))
+    if not ok_lo:
+        raise ValueError(
+            f"LTS lower bracket dt={lo:.4e} s is unstable "
+            f"(rho={r_lo:.6f}, max margin={max(m_lo, default=0.0):.6f})"
+        )
     while hi / lo - 1 > rtol:
         mid = np.sqrt(lo * hi)
         t0 = time.perf_counter()

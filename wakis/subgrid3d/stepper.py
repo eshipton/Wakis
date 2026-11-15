@@ -64,13 +64,12 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         self.lts_info = {}
         lts_kw = dict(lts_kw or {})
         if lts and max(self.mesh.level) > 0:
-            if dt is None:
-                from .lts import is_stable
+            from .lts import is_stable
 
+            if dt is None:
                 probe = SubgridLTS(self, self.dt_max, nu=nu, **lts_kw)
                 P = float(np.prod(probe.ratios))
-                # bracket around P x the global limit (the coarse limit up to the
-                # damping floor, physics guide 9c); fall back to the global limit
+                # bracket around P x the global limit; fall back to the global limit
                 lo = 0.85 * P * self.dt_max
                 if not is_stable(SubgridLTS(self, lo, nu=nu, **lts_kw))[0]:
                     lo = self.dt_max
@@ -80,6 +79,12 @@ class SubgridLTSFIT3D(SubgridFIT3D):
                 dt = cfl * dt_lts
             self.dt = float(dt)
             self.lts = SubgridLTS(self, self.dt, nu=nu, **lts_kw)
+            ok, rho, marg = is_stable(self.lts, tol=1e-10)
+            if not ok:
+                raise ValueError(
+                    f"LTS step dt={self.dt:.4e} s is unstable "
+                    f"(rho={rho:.6f}, margins={marg})"
+                )
             self.lts_info.update(self.lts.summary())
         self.cpml = None
         if pml:
@@ -338,6 +343,13 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         ebar = eb1 + (zbar if self.lts is None else self.lts.apply_T(zbar))
         ibar = -(self.P.conj() @ ge)
         return np.concatenate([b1bar, ebar] + psib + phib), ibar
+
+    def material_gradient(self, *args, **kw):
+        if self.lts is not None:
+            raise NotImplementedError(
+                "material gradient is not implemented with LTS (R_0 depends on eps and mu)"
+            )
+        raise NotImplementedError("material gradient is not implemented")
 
     def _K_T(self, y):
         """``K^T y`` (bilinear transpose of `_Kz`)."""
