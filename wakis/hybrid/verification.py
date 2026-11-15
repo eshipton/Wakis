@@ -25,6 +25,7 @@ from scipy.constants import c as C0
 
 from .mesh import delaunay_box_mesh, kuhn_box_mesh
 from .mie_pec import pec_sphere_field, plane_wave_line_integrals, segment_line_integrals
+from .patch_quality import smooth_patch
 from .solver import HybridFIT3D
 
 __all__ = [
@@ -198,7 +199,8 @@ def cavity_modes(cells_per_m, patch="kuhn", r=1, n_modes=6, dims=(1.0, 0.75, 0.5
 
 def pec_sphere_scattering(cells_per_wavelength, method="hybrid", ka=2.0, h_tet=None,
                           r=1, gap=0.25, T=0.6, sigma0=8.0, box_margin=0.12,
-                          return_solver=False):  # fmt: skip
+                          return_solver=False, mass="consistent", smooth=False,
+                          mutate=None):  # fmt: skip
     """
     Plane wave ``x_hat exp(i k z)`` on a PEC sphere (vacuum, wavelength 1 m).
 
@@ -217,6 +219,16 @@ def pec_sphere_scattering(cells_per_wavelength, method="hybrid", ka=2.0, h_tet=N
         Tetrahedral target edge [m] (default h).
     gap, T : float
         Physical margin beyond the box and absorber thickness [wavelengths].
+    mass : {'consistent', 'mixed'}, default 'consistent'
+        Tetrahedral 1-form mass formulation passed to `HybridFIT3D`
+        (``method='hybrid'`` only).
+    smooth : bool or {'ignore'}, default False
+        If ``True`` (``method='hybrid'`` only), apply `smooth_patch` to the
+        tetrahedral patch mesh before building `HybridFIT3D`. ``'ignore'`` is a
+        verification-only mutation flag that skips `smooth_patch`.
+    mutate : {None, 'ignore_smooth'}, optional
+        Verification-only mutation flag; ``'ignore_smooth'`` causes
+        ``smooth=True`` to skip `smooth_patch`.
 
     Returns
     -------
@@ -226,6 +238,18 @@ def pec_sphere_scattering(cells_per_wavelength, method="hybrid", ka=2.0, h_tet=N
         ``err_far``: same on edges with ``B + h/4 < |x|_inf < B + gap - h/4``;
         ``n_free``, ``n_tets``.
     """
+    if mass not in ("consistent", "mixed"):
+        raise ValueError(f"mass must be 'consistent' or 'mixed', got {mass!r}")
+    if smooth not in (False, True, "ignore"):
+        raise ValueError(f"smooth must be bool or 'ignore', got {smooth!r}")
+    if mutate not in (None, "ignore_smooth"):
+        raise ValueError(f"unknown mutate={mutate!r}")
+    if (
+        mass != "consistent" or smooth is not False or mutate is not None
+    ) and method != "hybrid":
+        raise ValueError(
+            "mass and smooth options are supported for method='hybrid' only"
+        )
     N = int(cells_per_wavelength)
     h = 1.0 / N
     k = 2 * np.pi
@@ -255,8 +279,10 @@ def pec_sphere_scattering(cells_per_wavelength, method="hybrid", ka=2.0, h_tet=N
         box = ((i0, i1),) * 3
         tm = delaunay_box_mesh(v[i0 : i1 + 1], v[i0 : i1 + 1], v[i0 : i1 + 1], h=ht,
                                r=r, sphere=((0.0, 0.0, 0.0), a), hole=True)  # fmt: skip
+        if smooth and smooth != "ignore" and mutate != "ignore_smooth":
+            tm = smooth_patch(tm)
     s = HybridFIT3D(v, v, v, box=box, tet_mesh=tm, pec=pec, edge_scale=es,
-                    face_scale=fs)  # fmt: skip
+                    face_scale=fs, mass=mass)  # fmt: skip
     # all-edge end points
     mid, L, d = s.edge_mid, s.edge_len, s.edge_dir
     ar = np.arange(len(d))

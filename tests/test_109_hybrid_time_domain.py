@@ -34,7 +34,11 @@ Verification checks and mutations:
    (c) the smoothed mesh passes `box_surface_check`;
    (d) ``mutate="move_boundary"`` moves box-surface nodes and fails test (a);
    (e) `HybridFIT3D(..., mass="mixed")` on the smoothed mesh preserves exact
-   transposition (`_assert_dot_product`).
+   transposition (`_assert_dot_product`);
+   (f) `pec_sphere_scattering` supports ``mass="mixed"`` and ``smooth=True``
+   (``method="hybrid"`` only), raises ``ValueError`` on ``mass="bogus"``, and
+   its smoothed-mesh check fails under the verification-only mutation that
+   makes ``smooth`` ignore `smooth_patch`.
 """
 
 import numpy as np
@@ -55,7 +59,7 @@ from wakis.hybrid import (
     well_centred_tets,
     worst_normalised_volume,
 )
-from wakis.hybrid.verification import cavity_modes
+from wakis.hybrid.verification import cavity_modes, pec_sphere_scattering
 
 H = 0.1
 XN = np.arange(0, 1.0 + 1e-9, H)
@@ -338,3 +342,49 @@ def test_dot_product_mixed_smoothed(meshes, solver):
     double-precision round-off on the smoothed Delaunay mesh with mass='mixed'."""
     tm_s = smooth_patch(meshes["delaunay"])
     _assert_dot_product(tm_s, solver)
+
+
+def _assert_pec_sphere_smoothed_differs(out_unsmoothed, out_smoothed):
+    assert np.isfinite(out_smoothed["err_near"])
+    assert np.isfinite(out_smoothed["err_far"])
+    nodes_in = out_unsmoothed["solver"].tet.nodes
+    nodes_sm = out_smoothed["solver"].tet.nodes
+    max_diff = float(np.abs(nodes_sm - nodes_in).max())
+    assert not np.array_equal(nodes_sm, nodes_in), (
+        f"smoothed mesh does not differ from input mesh: max_node_diff={max_diff:.3e}"
+    )
+
+
+def test_pec_sphere_scattering_mass_and_smooth():
+    """`pec_sphere_scattering` supports `mass='mixed'` and `smooth=True` on
+    `method='hybrid'`, raises `ValueError` on `mass='bogus'`, and fails the
+    smoothed-mesh difference check when `smooth` ignores `smooth_patch`."""
+    kw = dict(ka=1.0, gap=0.25, T=0.25, box_margin=0.05)
+    with pytest.raises(ValueError, match="mass must be"):
+        pec_sphere_scattering(4, mass="bogus", **kw)
+    with pytest.raises(ValueError, match="method='hybrid' only"):
+        pec_sphere_scattering(4, method="staircase", mass="mixed", **kw)
+    with pytest.raises(ValueError, match="method='hybrid' only"):
+        pec_sphere_scattering(4, method="staircase", smooth=True, **kw)
+
+    out_mix = pec_sphere_scattering(4, mass="mixed", return_solver=True, **kw)
+    assert out_mix["solver"].mass == "mixed"
+    assert np.isfinite(out_mix["err_near"]) and out_mix["err_near"] > 0
+    assert np.isfinite(out_mix["err_far"]) and out_mix["err_far"] > 0
+
+    out_sm = pec_sphere_scattering(
+        4, mass="consistent", smooth=True, return_solver=True, **kw
+    )
+    assert out_sm["solver"].mass == "consistent"
+    _assert_pec_sphere_smoothed_differs(out_mix, out_sm)
+
+    # Mutation check: make smooth ignore the smoothing (verification-only flag)
+    out_mut = pec_sphere_scattering(
+        4, mass="consistent", smooth="ignore", return_solver=True, **kw
+    )
+    with pytest.raises(
+        AssertionError,
+        match=r"smoothed mesh does not differ from input mesh: max_node_diff=0\.000e\+00",
+    ) as exc_info:
+        _assert_pec_sphere_smoothed_differs(out_mix, out_mut)
+    print(f"Observed mutation failure: {exc_info.value}")
