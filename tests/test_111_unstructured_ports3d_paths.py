@@ -31,12 +31,14 @@ What is checked, and how each check can fail:
   gradient bitwise (`assert_array_equal`) with zero replay mismatches.
 """
 
+import json
 import os
 import sys
 
 import numpy as np
 import pytest
 
+from wakis.unstructured import mpi as M
 from wakis.unstructured.adjoint import (
     CellDFTMonitor,
     CellMaterialGrid,
@@ -53,6 +55,7 @@ from wakis.unstructured.ports3d import (
     PortDFTMonitor,
     PortPlane,
     attach_ports,
+    dtft,
     edge_path,
     extrude_section,
     power_waves,
@@ -548,3 +551,400 @@ def test_general_port_face_area_mutation_fails() -> None:
     # and the 2-level order collapses to 0.0130, failing the accuracy check.
     with pytest.raises(AssertionError):
         _assert_wr90_general_accuracy(mut_gen, mut_fit["coarse2_order_p"])
+
+
+# ---------------------------------------------------------------------------
+# Distributed tetrahedral ports under MPI (`wakis.unstructured.mpi`).
+# Skipped unless mpi4py is present and MPI.COMM_WORLD.Get_size() >= 2.
+# ---------------------------------------------------------------------------
+try:
+    from mpi4py import MPI
+
+    _SIZE = MPI.COMM_WORLD.Get_size()
+except ImportError:  # pragma: no cover
+    MPI, _SIZE = None, 1
+
+mpi = pytest.mark.skipif(_SIZE < 2, reason="needs mpiexec -n >= 2")
+MPI_NT = 60
+
+
+def _build_wr90_port_factories():
+    """Standalone factory builder matching `ported_wr90` for CLI / pytest use."""
+    h = A_WG / 4
+    nodes, tris, tags = rectangle_section(A_WG, B_WG, h, wall=h / 2, seed=1)
+    z = np.linspace(0.0, 12e-3, 5)
+    m = extrude_section(nodes, tris, tags, z)
+    zc = m.nodes[m.cells].mean(1)[:, 2]
+    tg = m.cell_tags.copy()
+    tg[(zc > z[2]) & (zc < z[3]) & (tg == 1)] = 2
+    m = SimplexMesh(m.nodes, m.cells, tg)
+    _snap_degenerate_duals(m)
+    mats = {0: "pec", 2: [2.2, 1.0]}
+    eps_layers = np.array([1.0, 1.0, 2.2, 1.0])
+
+    s0 = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6)
+    dt = s0.dt
+    planes0 = [PortPlane(s0, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+    kc, phi0 = planes0[0].te_modes(1)
+    phi1 = planes0[1].te_modes(1)[1][:, 0]
+    phis = [phi0[:, 0], phi1]
+    kc = kc[0]
+    line = ExtrudedLine(z, eps_layers, 1.0, kc, dt)
+    e_lp, s_lp = edge_path(s0, (A_WG / 2, 0.0, z[2]), (A_WG / 2, B_WG, z[2]))
+
+    def Y(f):
+        return np.real(line.port_admittance(f) / line.cos_half(f))
+
+    def make_modal():
+        s = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6, dt=dt)
+        planes = [PortPlane(s, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+        ports = [
+            ModalPort(planes[0], phis[0], Y, f0=F0, i_src=_pulse(), name="p1"),
+            ModalPort(planes[1], phis[1], Y, f0=F0, name="p2"),
+        ]
+        attach_ports(s, ports)
+        return s
+
+    def make_mixed():
+        s = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6, dt=dt)
+        planes = [PortPlane(s, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+        ports = [
+            ModalPort(planes[0], phis[0], Y, f0=F0, i_src=_pulse(), name="p1"),
+            ModalPort(planes[1], phis[1], Y, f0=F0, name="p2"),
+            LumpedPort(s, e_lp, s_lp, R=50.0, name="lp"),
+        ]
+        attach_ports(s, ports)
+        return s
+
+    design_cells = np.flatnonzero((zc > z[1]) & (zc < z[2]) & (m.cell_tags == 1))
+    return m, make_modal, make_mixed, design_cells, z
+
+
+def _make_mpi_port_case(ported_wr90, kind):
+    """
+    Build a port-bearing WR-90 solver (`kind` in {"modal", "lumped", "mixed"})
+    with interior E/H probes and a running multi-frequency field DFT.
+
+    In the `"lumped"` case, port `lp1` runs horizontally across `x in [0, A_WG]`
+    at `y = B_WG / 2, z = z[1]`, so its 4 free edges are split `[2, 2]` across
+    ranks `[0, 1]` on 2 RCB ranks and `[2, 0, 2, 0]` across ranks `[0, 2]` on
+    4 RCB ranks.
+    """
+    m, make_modal, make_mixed, _, z = ported_wr90
+    if kind == "modal":
+        s = make_modal()
+    elif kind == "mixed":
+        s = make_mixed()
+    elif kind == "lumped":
+        mats = {0: "pec", 2: [2.2, 1.0]}
+        s0 = make_modal()
+        s = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6, dt=s0.dt)
+        e1, s1 = edge_path(s, (0.0, B_WG / 2, z[1]), (A_WG, B_WG / 2, z[1]))
+        e2, s2 = edge_path(s, (A_WG / 2, 0.0, z[3]), (A_WG / 2, B_WG, z[3]))
+        attach_ports(
+            s,
+            [
+                LumpedPort(s, e1, s1, R=50.0, v_src=_pulse(), name="lp1"),
+                LumpedPort(s, e2, s2, R=50.0, name="lp2"),
+            ],
+        )
+    else:  # pragma: no cover
+        raise ValueError(f"Unknown port case kind {kind!r}")
+    s.add_probe(
+        [
+            [A_WG * 0.45, B_WG * 0.5, 0.5 * (z[1] + z[2])],
+            [A_WG * 0.55, B_WG * 0.5, 0.5 * (z[2] + z[3])],
+        ],
+        1,
+    )
+    s.add_probe([[A_WG * 0.35, B_WG * 0.4, 0.5 * (z[0] + z[1])]], 0)
+    s.add_dft(FREQS)
+    return s
+
+
+def _probe_spectra(sig, dt):
+    arr = np.atleast_2d(sig.T).T
+    t = np.arange(arr.shape[0]) * dt
+    return np.column_stack([dtft(arr[:, j], t, FREQS) for j in range(arr.shape[1])])
+
+
+def _assert_port_run_bitwise(s_ref, g, probes, dft, psigs, pspecs):
+    """Assert bitwise equality (`assert_array_equal`) on state, probes, DFTs, and ports."""
+    np.testing.assert_array_equal(g["u"], s_ref.u)
+    np.testing.assert_array_equal(g["f"], s_ref.b)
+    for i, rec in enumerate(s_ref.recorder.probes):
+        sig_ref = s_ref.probe_signal(rec)
+        np.testing.assert_array_equal(probes[i], sig_ref)
+        np.testing.assert_array_equal(
+            _probe_spectra(probes[i], s_ref.dt),
+            _probe_spectra(sig_ref, s_ref.dt),
+        )
+    np.testing.assert_array_equal(dft, s_ref.recorder.dfts[0]["data"])
+    for k, p in enumerate(s_ref.ports.ports):
+        t_ref, V_ref, Is_ref, I_ref = p.signals()
+        t_d, V_d, Is_d, I_d = psigs[k]
+        np.testing.assert_array_equal(t_d, t_ref)
+        np.testing.assert_array_equal(V_d, V_ref)
+        np.testing.assert_array_equal(Is_d, Is_ref)
+        np.testing.assert_array_equal(I_d, I_ref)
+        Vf_ref, If_ref = p.spectra(FREQS)
+        Vf_d, If_d = pspecs[k]
+        np.testing.assert_array_equal(Vf_d, Vf_ref)
+        np.testing.assert_array_equal(If_d, If_ref)
+        Y_ref = p.reference_admittance(FREQS)
+        a_ref, b_ref = power_waves(Vf_ref, If_ref, Y_ref)
+        a_d, b_d = power_waves(Vf_d, If_d, Y_ref)
+        np.testing.assert_array_equal(a_d, a_ref)
+        np.testing.assert_array_equal(b_d, b_ref)
+
+
+@mpi
+@pytest.mark.parametrize("kind", ["modal", "lumped", "mixed"])
+@pytest.mark.parametrize("mode", ["scatter", "replicated"])
+def test_mpi_ports_bitwise_serial(ported_wr90, kind, mode):
+    """
+    `DistributedFIT` with modal, lumped, and mixed ports reproduces `s.run`
+    bitwise (`assert_array_equal`) on final state `(u, b)`, probe signals and
+    probe DTFT spectra, running field DFTs, port time records `(t, V, Is, I)`,
+    port DTFT spectra `(V(f), I(f))`, and power waves `(a(f), b(f))`.
+    """
+    comm = MPI.COMM_WORLD
+    s = _make_mpi_port_case(ported_wr90, kind)
+    d = M.DistributedFIT(
+        s if (mode == "replicated" or comm.rank == 0) else None,
+        comm,
+        partitioner="rcb",
+        mode=mode,
+    )
+    d.run(MPI_NT)
+    g = d.gather_state()
+    probes = [d.probe_signal(i) for i in range(len(s.recorder.probes))]
+    dft = d.dft_data(0)
+    psigs = [d.port_signals(k) for k in range(len(s.ports.ports))]
+    pspecs = [d.port_spectra(FREQS, k) for k in range(len(s.ports.ports))]
+    if comm.rank != 0:
+        return
+    s.run(MPI_NT)
+    _assert_port_run_bitwise(s, g, probes, dft, psigs, pspecs)
+
+
+@mpi
+@pytest.mark.parametrize("kind", ["modal", "lumped", "mixed"])
+@pytest.mark.parametrize("mutation", ["drop_port_rank", "swap_port_order"])
+def test_mpi_ports_mutation_fails(ported_wr90, kind, mutation):
+    """
+    Both port-reduction mutations must fail the bitwise check (`assert_array_equal`):
+    * `drop_port_rank`: omits the highest rank owning port edges from the
+      port inner-product reduction, causing O(1) error in `u` and port spectra.
+    * `swap_port_order`: reduces per-rank scalar partial sums `W_own^T u_own`
+      in reverse rank order instead of serial free-edge order, shifting the
+      IEEE-754 summation order by ~10^-16 to 10^-14 and failing bitwise equality.
+    """
+    comm = MPI.COMM_WORLD
+    s = _make_mpi_port_case(ported_wr90, kind)
+    d = M.DistributedFIT(
+        s, comm, partitioner="rcb", mode="replicated", _mutation=mutation
+    )
+    d.run(MPI_NT)
+    g = d.gather_state()
+    probes = [d.probe_signal(i) for i in range(len(s.recorder.probes))]
+    dft = d.dft_data(0)
+    psigs = [d.port_signals(k) for k in range(len(s.ports.ports))]
+    pspecs = [d.port_spectra(FREQS, k) for k in range(len(s.ports.ports))]
+    if comm.rank != 0:
+        return
+    s.run(MPI_NT)
+    with pytest.raises(AssertionError):
+        _assert_port_run_bitwise(s, g, probes, dft, psigs, pspecs)
+    du = float(np.abs(g["u"] - s.u).max())
+    dV = float(
+        max(
+            np.abs(pspecs[k][0] - p.spectra(FREQS)[0]).max()
+            for k, p in enumerate(s.ports.ports)
+        )
+    )
+    assert du > 0.0 and dV > 0.0
+    if mutation == "drop_port_rank":
+        assert du > 1e-3 * float(np.abs(s.u).max())
+
+
+@mpi
+def test_mpi_ports_transpose_bitwise(ported_wr90):
+    """
+    `DistributedFIT.apply` and `DistributedFIT.apply_T` with ports reproduce
+    `UnstructuredAdjointStepper.linear_step` and `linear_step_T` bitwise
+    (`assert_array_equal`) and satisfy `<y, L x> == <L^T y, x>` to machine
+    precision.
+    """
+    comm = MPI.COMM_WORLD
+    s = _make_mpi_port_case(ported_wr90, "mixed")
+    d = M.DistributedFIT(s, comm, partitioner="rib", mode="replicated")
+    st = UnstructuredAdjointStepper(s)
+    rng = np.random.default_rng(11)
+    x, y = _balanced_states(st, rng)
+    Fx = d.apply({"u": x["u"], "f": x["b"]})
+    FTy = d.apply_T({"u": y["u"], "f": y["b"]})
+    if comm.rank != 0:
+        return
+    fwd = st.linear_step(x)
+    adj = st.linear_step_T(y)
+    np.testing.assert_array_equal(Fx["u"], fwd["u"])
+    np.testing.assert_array_equal(Fx["f"], fwd["b"])
+    np.testing.assert_array_equal(FTy["u"], adj["u"])
+    np.testing.assert_array_equal(FTy["f"], adj["b"])
+    lhs = float(y["u"] @ Fx["u"] + y["b"] @ Fx["f"])
+    rhs = float(x["u"] @ FTy["u"] + x["b"] @ FTy["f"])
+    assert abs(lhs - rhs) / (abs(lhs) + abs(rhs)) <= DOT_TOL
+
+
+def _eval_port_case_metrics(ported_wr90, kind, n_parts, comm=None):
+    """Evaluate bitwise and mutation metrics for `(kind, n_parts)` via `DistributedFIT` or `LocalCluster`."""
+    use_mpi = comm is not None and comm.Get_size() == n_parts
+    rank = comm.Get_rank() if use_mpi else 0
+
+    s_ok = _make_mpi_port_case(ported_wr90, kind)
+    if use_mpi:
+        d_ok = M.DistributedFIT(s_ok, comm, partitioner="rcb", mode="replicated")
+        d_ok.run(MPI_NT)
+        g_ok = d_ok.gather_state()
+        probe0_ok = d_ok.probe_signal(0)
+        Vspec_ok = [
+            d_ok.port_spectra(FREQS, k)[0] for k in range(len(s_ok.ports.ports))
+        ]
+    else:
+        cl_ok = M.LocalCluster(s_ok, n_parts=n_parts, partitioner="rcb")
+        cl_ok.run(MPI_NT)
+        g_ok = cl_ok.gather_state()
+        probe0_ok = cl_ok.probe_signal(0)
+        Vspec_ok = [
+            cl_ok.port_spectra(FREQS, k)[0] for k in range(len(s_ok.ports.ports))
+        ]
+
+    mut_runs = {}
+    for mut in ("drop_port_rank", "swap_port_order"):
+        s_m = _make_mpi_port_case(ported_wr90, kind)
+        if use_mpi:
+            d_m = M.DistributedFIT(
+                s_m, comm, partitioner="rcb", mode="replicated", _mutation=mut
+            )
+            d_m.run(MPI_NT)
+            g_m = d_m.gather_state()
+            probe0_m = d_m.probe_signal(0)
+            Vspec_m = [
+                d_m.port_spectra(FREQS, k)[0] for k in range(len(s_m.ports.ports))
+            ]
+        else:
+            cl_m = M.LocalCluster(
+                s_m, n_parts=n_parts, partitioner="rcb", _mutation=mut
+            )
+            cl_m.run(MPI_NT)
+            g_m = cl_m.gather_state()
+            probe0_m = cl_m.probe_signal(0)
+            Vspec_m = [
+                cl_m.port_spectra(FREQS, k)[0] for k in range(len(s_m.ports.ports))
+            ]
+        mut_runs[mut] = (g_m, probe0_m, Vspec_m)
+
+    if rank != 0:
+        return None
+
+    s_ref = _make_mpi_port_case(ported_wr90, kind)
+    s_ref.run(MPI_NT)
+    u_norm = float(np.abs(s_ref.u).max())
+    b_norm = float(np.abs(s_ref.b).max())
+    probe0_ref = s_ref.probe_signal(s_ref.recorder.probes[0])
+    pspec0_ref = _probe_spectra(probe0_ref, s_ref.dt)
+    Vspec_ref = [p.spectra(FREQS)[0] for p in s_ref.ports.ports]
+    pspec0_ok = _probe_spectra(probe0_ok, s_ref.dt)
+
+    cl_part = M.LocalCluster(
+        _make_mpi_port_case(ported_wr90, kind), n_parts=n_parts, partitioner="rcb"
+    )
+    port_edge_counts = [
+        [int(r.ports["W_own"].getcol(k).nnz) for r in cl_part.ranks]
+        for k in range(len(s_ref.ports.ports))
+    ]
+
+    rec = {
+        "n_free_edges": int(s_ref.u.size),
+        "n_massless_edges": int(s_ref.massless.size),
+        "port_edge_counts_per_rank": port_edge_counts,
+        "u_max": u_norm,
+        "b_max": b_norm,
+        "V0_spec_max": float(np.abs(Vspec_ref[0]).max()),
+        "probe0_spec_max": float(np.abs(pspec0_ref).max()),
+        "bitwise_max_du": float(np.abs(g_ok["u"] - s_ref.u).max()),
+        "bitwise_max_db": float(np.abs(g_ok["f"] - s_ref.b).max()),
+        "bitwise_max_dprobe_spec": float(np.abs(pspec0_ok - pspec0_ref).max()),
+        "bitwise_max_dV_spec": float(
+            max(np.abs(Vspec_ok[k] - Vspec_ref[k]).max() for k in range(len(Vspec_ref)))
+        ),
+        "mutations": {},
+    }
+    for mut, (g_m, probe0_m, Vspec_m) in mut_runs.items():
+        pspec0_m = _probe_spectra(probe0_m, s_ref.dt)
+        rec["mutations"][mut] = {
+            "max_du": float(np.abs(g_m["u"] - s_ref.u).max()),
+            "rel_du": float(np.abs(g_m["u"] - s_ref.u).max() / u_norm),
+            "max_db": float(np.abs(g_m["f"] - s_ref.b).max()),
+            "max_dprobe_spec": float(np.abs(pspec0_m - pspec0_ref).max()),
+            "max_dV_spec": float(
+                max(
+                    np.abs(Vspec_m[k] - Vspec_ref[k]).max()
+                    for k in range(len(Vspec_ref))
+                )
+            ),
+        }
+    return rec
+
+
+def compute_mpi_ports_summary(
+    ported_wr90=None, out_path="out/mpi_ports.json", comm=None
+):
+    """
+    Compute and write `out/mpi_ports.json` with deterministic verification and
+    mutation metrics for `n_parts in (2, 4)` across `modal`, `lumped`, and
+    `mixed` port cases.
+    """
+    if ported_wr90 is None:
+        ported_wr90 = _build_wr90_port_factories()
+    rank = comm.Get_rank() if comm is not None else 0
+    summary = {
+        "nt": MPI_NT,
+        "freqs_hz": [float(f) for f in FREQS],
+        "cases": {},
+    }
+    for n_parts in (2, 4):
+        p_key = f"ranks_{n_parts}"
+        if rank == 0:
+            summary["cases"][p_key] = {}
+        for kind in ("modal", "lumped", "mixed"):
+            if comm is not None and comm.Get_size() == n_parts:
+                rec = _eval_port_case_metrics(ported_wr90, kind, n_parts, comm=comm)
+            elif rank == 0:
+                rec = _eval_port_case_metrics(ported_wr90, kind, n_parts, comm=None)
+            else:
+                rec = None
+            if rank == 0:
+                summary["cases"][p_key][kind] = rec
+
+    if rank == 0 and out_path:
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(summary, fh, indent=2, sort_keys=True)
+    return summary if rank == 0 else None
+
+
+@mpi
+def test_mpi_ports_write_json_summary(ported_wr90):
+    """Write and print `out/mpi_ports.json` during the MPI verify step."""
+    comm = MPI.COMM_WORLD
+    summary = compute_mpi_ports_summary(
+        ported_wr90, out_path="out/mpi_ports.json", comm=comm
+    )
+    if comm.rank == 0:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    print(json.dumps(compute_mpi_ports_summary(), indent=2, sort_keys=True))

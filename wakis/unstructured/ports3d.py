@@ -490,6 +490,17 @@ class _Port:
         return dtft(V, t, freqs), dtft(I, t, freqs)
 
 
+class _NortonSource:
+    """Picklable Norton current wrapper ``I_s(t) = v_src(t) / R`` for `LumpedPort`."""
+
+    def __init__(self, v_src, R):
+        self.v_src = v_src
+        self.R = R
+
+    def __call__(self, t):
+        return self.v_src(t) / self.R
+
+
 class LumpedPort(_Port):
     """
     Discrete port on an edge path: a resistor R (internal resistance) in
@@ -513,7 +524,7 @@ class LumpedPort(_Port):
             raise ValueError("R must be > 0")
         w = np.zeros(solver.mesh.n_edges)
         np.add.at(w, np.asarray(edges), np.asarray(signs, float))
-        src = None if v_src is None else (lambda t, f=v_src, R=R: f(t) / R)
+        src = None if v_src is None else _NortonSource(v_src, R)
         super().__init__(w, 1.0 / R, src, name)
         self.R = R
         self.edges = np.asarray(edges)
