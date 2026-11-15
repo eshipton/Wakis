@@ -303,7 +303,11 @@ def test_step_layered_pillbox(tmp_path):
     (counted in the dielectric) |error| < 1.5e-2: four times the empty
     pillbox error at the same cpw, since the vacuum region is twice as
     coarse (second order). The improved mesh raises dt by > 20 % at
-    |error| <= 2 x baseline.
+    |error| <= 2 x baseline, and `improve_dt(..., repair=True)` removes all
+    negative dual-length faces so `UnstructuredFIT3D` constructs without
+    `allow_negative_faces=True`. A failure indicates broken CAD region tagging,
+    broken topological repair on the material interface, or degraded eigenmode
+    accuracy / time step.
     """
     gmsh = pytest.importorskip("gmsh")
     from wakis.unstructured.cad import mesh_cad
@@ -331,15 +335,13 @@ def test_step_layered_pillbox(tmp_path):
         vd = m.cell_volume[m.cell_tags == 0].sum() / (np.pi * a**2 * t)
         assert abs(vd - 1) < 2e-2
         assert info.sizes["vac"] == pytest.approx(2 * info.sizes["diel"])
-        # The unimproved gmsh mesh of this two-material geometry is not
-        # Delaunay (2-7 faces with negative dual length at cpw 10-20): the
-        # Voronoi time stepping is unstable at any dt, so the solver refuses
-        # it unless allowed. improve_dt must remove those faces.
         if imp is None:
-            with pytest.warns(UserWarning, match="negative dual length"):
-                s = UnstructuredFIT3D(m, info.materials, allow_negative_faces=True)
+            m, history = improve_dt(m, info.materials, n_sweeps=0, repair=True)
         else:
-            s = UnstructuredFIT3D(m, info.materials)
+            history = info.improve_history
+        assert "repair" in history[-1]
+        assert history[-1]["repair"]["negative_faces_after"] == 0
+        s = UnstructuredFIT3D(m, info.materials)
         f, _ = s.eigenmodes(1, f_target=0.6 * fx)
         out[imp] = (f[0] / fx - 1, s.dt_max)
     e0, dt0 = out[None]
@@ -412,7 +414,9 @@ def test_mesh_stl_body_in_box():
 
     raw = meshio.read("tests/stl/003_sphere.stl")
     P, T = raw.points.astype(float) * 1e-3, raw.cells_dict["triangle"]
-    v_stl = abs(np.einsum("ij,ij->i", P[T[:, 0]], np.cross(P[T[:, 1]], P[T[:, 2]])).sum() / 6)
+    v_stl = abs(
+        np.einsum("ij,ij->i", P[T[:, 0]], np.cross(P[T[:, 1]], P[T[:, 2]])).sum() / 6
+    )
     m, info = mesh_stl("tests/stl/003_sphere.stl", [4, 1], f_max=3e9, cpw=10,
                        padding=15, scale=1e-3)  # fmt: skip
     vb = m.cell_volume[m.cell_tags == 0].sum()

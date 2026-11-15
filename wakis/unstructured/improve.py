@@ -48,6 +48,7 @@ from .mesh import SimplexMesh
 __all__ = [
     "tet_partials",
     "edge_rates",
+    "neg_faces",
     "movable_nodes",
     "constraint_faces",
     "planar_projector",
@@ -156,7 +157,8 @@ def planar_projector(mesh, tol=1e-9):
     fid = np.flatnonzero(cf)
     rows = mesh.faces[fid].ravel()
     nf = sp.csr_matrix(
-        (np.ones(rows.size), (rows, np.repeat(fid, 3))), shape=(mesh.n_nodes, mesh.n_faces)
+        (np.ones(rows.size), (rows, np.repeat(fid, 3))),
+        shape=(mesh.n_nodes, mesh.n_faces),
     ).tocsr()
     normal = mesh.face_normal
     plane = {}
@@ -245,7 +247,9 @@ class _State:
 
         Returns (max_rate (m,), ok (m,), payload) for the m trial points.
         """
-        T = self.node_cells.indices[self.node_cells.indptr[n] : self.node_cells.indptr[n + 1]]
+        T = self.node_cells.indices[
+            self.node_cells.indptr[n] : self.node_cells.indptr[n + 1]
+        ]
         E = np.unique(self.ce[T].ravel())
         F = np.unique(self.cf[T].ravel())
         m, nt = len(Y), len(T)
@@ -307,13 +311,41 @@ class _State:
         self.Kd[E] = Kd[j]
 
     def odt_point(self, n):
-        T = self.node_cells.indices[self.node_cells.indptr[n] : self.node_cells.indptr[n + 1]]
+        T = self.node_cells.indices[
+            self.node_cells.indptr[n] : self.node_cells.indptr[n + 1]
+        ]
         P = self.X[self.cells[T]]
         E = P[:, 1:] - P[:, :1]
         rhs = 0.5 * np.einsum("nij,nij->ni", E, E)
         cT = P[:, 0] + np.linalg.solve(E, rhs[..., None])[..., 0]
         w = np.abs(self.vol[T])
         return (w[:, None] * cT).sum(0) / w.sum()
+
+    def neg_faces(self):
+        return np.flatnonzero((self.H < 0) & self.face_free)
+
+
+def neg_faces(mesh, materials=None, bc="pec"):
+    """
+    Indices of faces with negative dual length that couple free edges.
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+    materials : dict, optional
+        As for `UnstructuredFIT3D`.
+    bc : {"pec", "pmc", "abc"}
+        Outer boundary condition.
+
+    Returns
+    -------
+    ndarray of int
+        Indices of faces with ``H_f < 0`` coupling at least one free edge.
+    """
+    eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
+    live = (~pec).astype(float)
+    free = _default_free(mesh, pec, bc)
+    return _State(mesh, eps_r, mu_r, live, free).neg_faces()
 
 
 def edge_rates(mesh, materials=None, free=None):
@@ -358,6 +390,7 @@ def improve_dt(
     massless_tol=1e-2,
     project="planar",
     verbose=False,
+    repair=True,
 ):
     """
     Relocate interior nodes to lower the largest edge rates (raise dt).
@@ -365,7 +398,7 @@ def improve_dt(
     Parameters
     ----------
     mesh : SimplexMesh
-        Tetrahedral mesh (connectivity is kept).
+        Tetrahedral mesh (connectivity is kept when ``repair=False``).
     materials : dict, optional
         ``{tag: material}`` as for `UnstructuredFIT3D`.
     bc : {"pec", "pmc", "abc"}
@@ -396,29 +429,33 @@ def improve_dt(
         `planar_projector`; None keeps every constrained node fixed;
         `mesh_cad` passes a projector onto the CAD surfaces.
     verbose : bool
+    repair : bool, optional
+        If True (default), run `flip_to_delaunay` before and after node
+        smoothing using ``locked = ~movable`` and append a ``"repair"``
+        entry to ``history``. When False, only node relocation is run.
 
     Returns
     -------
     new_mesh : SimplexMesh
-        Same cells and tags, moved interior nodes.
+        Improved tetrahedral mesh.
     history : list of dict
         Per sweep: ``max_rate`` (largest free-edge rate, unclipped),
-        ``moved`` (accepted moves), ``targets``.
+        ``moved`` (accepted moves), ``targets``, ``negative_faces``, and
+        when ``repair=True`` an extra entry with key ``"repair"``.
     """
+    mesh0 = mesh
     rng = np.random.default_rng(seed)
     eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
     live = (~pec).astype(float)
     free = _default_free(mesh, pec, bc)
     st = _State(mesh, eps_r, mu_r, live, free)
     interior = movable_nodes(mesh)
-    if project == "planar":
-        project = planar_projector(mesh)
+    proj = planar_projector(mesh) if project == "planar" else project
     movable = interior.copy()
-    if project is not None:
+    if proj is not None:
         for n in np.flatnonzero(~interior):
-            if project(n, mesh.nodes[n : n + 1]) is not None:
+            if proj(n, mesh.nodes[n : n + 1]) is not None:
                 movable[n] = True
-    edges = mesh.edges
 
     def objective_rates():
         r = st.rates()
@@ -427,18 +464,39 @@ def improve_dt(
             r = np.where(st.Aeps < massless_tol * st.L**2, 0.0, r)
         return r
 
-    def neg_faces():
-        return np.flatnonzero((st.H < 0) & st.face_free)
+    r0 = objective_rates()
+    init_max_rate = float(r0[free].max())
+    init_neg = int(st.neg_faces().size)
 
+    if repair:
+        from .repair import flip_to_delaunay
+
+        mesh, rep1 = flip_to_delaunay(
+            mesh, materials=materials, locked=~movable, bc=bc, verbose=verbose
+        )
+        if sum(rep1["flips"].values()) > 0 or rep1["steiner_nodes"] > 0:
+            eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
+            live = (~pec).astype(float)
+            free = _default_free(mesh, pec, bc)
+            st = _State(mesh, eps_r, mu_r, live, free)
+            interior = movable_nodes(mesh)
+            proj = planar_projector(mesh) if project == "planar" else project
+            movable = interior.copy()
+            if proj is not None:
+                for n in np.flatnonzero(~interior):
+                    if proj(n, mesh.nodes[n : n + 1]) is not None:
+                        movable[n] = True
+
+    edges = mesh.edges
     history = []
     r = objective_rates()
-    history.append(dict(max_rate=float(r[free].max()), moved=0, targets=0,
-                        negative_faces=int(neg_faces().size)))  # fmt: skip
+    history.append(dict(max_rate=init_max_rate, moved=0, targets=0,
+                        negative_faces=init_neg))  # fmt: skip
     for sweep in range(int(n_sweeps)):
         thr = np.quantile(r[free & np.isfinite(r)], target_quantile)
         bad = np.flatnonzero(r > thr)
         # edges of the non-Delaunay faces are targets too (they make K indefinite)
-        nf = neg_faces()
+        nf = st.neg_faces()
         if nf.size:
             bad = np.union1d(bad, st.face_edges[nf].ravel())
         # nodes of the tetrahedra around the bad edges
@@ -460,7 +518,9 @@ def improve_dt(
         moved = 0
         for n in nodes:
             x0 = st.X[n]
-            T = st.node_cells.indices[st.node_cells.indptr[n] : st.node_cells.indptr[n + 1]]
+            T = st.node_cells.indices[
+                st.node_cells.indptr[n] : st.node_cells.indptr[n + 1]
+            ]
             Eall = np.unique(st.ce[T].ravel())
             hloc = st.L[Eall].mean()
             y_odt = st.odt_point(n)
@@ -469,7 +529,7 @@ def improve_dt(
             rad = step * hloc * rng.random(n_random) ** (1 / 3)
             Y = np.vstack([x0, y_odt, 0.5 * (x0 + y_odt), x0 + d * rad[:, None]])
             if not interior[n]:
-                Y = np.vstack([x0, project(n, Y[1:])])
+                Y = np.vstack([x0, proj(n, Y[1:])])
             obj, ok, payload = st.trial(n, Y)
             if massless_tol is not None:
                 E, Aeps, Le, Kd = payload[1], payload[7], payload[10], payload[11]
@@ -492,7 +552,7 @@ def improve_dt(
         r = objective_rates()
         history.append(
             dict(max_rate=float(r[free].max()), moved=moved, targets=int(nodes.size),
-                 negative_faces=int(neg_faces().size))
+                 negative_faces=int(st.neg_faces().size))
         )  # fmt: skip
         if verbose:
             print(f"sweep {sweep}: max rate {history[-1]['max_rate']:.4e}, "
@@ -501,7 +561,41 @@ def improve_dt(
         if moved == 0:
             break
     new = SimplexMesh(st.X, mesh.cells, mesh.cell_tags)
+    if repair:
+        new, rep2 = flip_to_delaunay(
+            new, materials=materials, locked=~movable, bc=bc, verbose=verbose
+        )
+        if sum(rep2["flips"].values()) > 0 or rep2["steiner_nodes"] > 0:
+            eps_r, mu_r, _, pec, _ = cell_materials(new, materials)
+            live = (~pec).astype(float)
+            free = _default_free(new, pec, bc)
+            st = _State(new, eps_r, mu_r, live, free)
+            r = objective_rates()
+        rep = {
+            "flips": {
+                k: int(rep1["flips"].get(k, 0) + rep2["flips"].get(k, 0))
+                for k in ("2-3", "3-2", "4-4", "2-2")
+            },
+            "steiner_nodes": int(rep1["steiner_nodes"] + rep2["steiner_nodes"]),
+            "refused": {
+                k: int(rep1["refused"].get(k, 0) + rep2["refused"].get(k, 0))
+                for k in set(rep1["refused"]) | set(rep2["refused"])
+            },
+            "negative_faces_before": int(rep1["negative_faces_before"]),
+            "negative_faces_after": int(rep2["negative_faces_after"]),
+            "stuck": list(rep2["stuck"]),
+        }
+        history.append(
+            dict(
+                max_rate=float(r[free].max()),
+                moved=0,
+                targets=0,
+                negative_faces=int(rep["negative_faces_after"]),
+                repair=dict(rep),
+                **rep,
+            )
+        )
     for attr in ("region_names", "surface_groups"):
-        if hasattr(mesh, attr):
-            setattr(new, attr, getattr(mesh, attr))
+        if hasattr(mesh0, attr):
+            setattr(new, attr, getattr(mesh0, attr))
     return new, history
