@@ -753,3 +753,47 @@ def test_interface_22_only_case():
     assert if_fids_1.size == 2
     assert if_bnd_1 == if_bnd_0
     assert abs(if_area_1 - if_area_0) <= 1e-12 * if_area_0
+
+
+def test_repair_study_guard_negative_count():
+    """
+    Verify that `repair_study.guard_negative_count(solver)` uses the solver
+    guard criterion `int(np.sum((s.Mnu_diag < 0) & (np.abs(s.Cf).sum(1).A1 > 0)))`
+    and satisfies `0 <= n_neg <= n_faces`, and that `_eval_solver` records
+    `n_faces`, `guard_bypassed`, `limit_element`, `limit_radius_ratio`, and
+    `limit_min_dihedral`.
+    Mutation check: the previous buggy count `int(neg_faces(mesh, materials).sum())`
+    sums face indices and exceeds `n_faces` on `_build_interior_case()`.
+    """
+    import pathlib
+    import sys
+
+    study_dir = str(
+        pathlib.Path(__file__).resolve().parent.parent
+        / "studies"
+        / "unstructured-cadmesh"
+    )
+    if study_dir not in sys.path:
+        sys.path.insert(0, study_dir)
+    import repair_study
+
+    mesh, materials, bc, expected_neg, _ = _build_interior_case()
+    n_faces = int(mesh.faces.shape[0])
+    # Mutation check: summing face indices does not equal the negative-face count
+    assert int(neg_faces(mesh, materials, bc=bc).sum()) > expected_neg
+
+    solver = UnstructuredFIT3D(
+        mesh, materials=materials, bc=bc, allow_negative_faces=True
+    )
+    cnt = repair_study.guard_negative_count(solver)
+    assert cnt == expected_neg
+    assert 0 < cnt <= n_faces
+
+    res = repair_study._eval_solver("layered", mesh, materials, 1.0e9)
+    srep = stability_report(solver)
+    assert res["n_faces"] == n_faces
+    assert res["n_negative_faces"] == expected_neg
+    assert res["guard_bypassed"] is True
+    assert res["limit_element"] == srep["worst_element"]
+    assert np.isclose(res["limit_radius_ratio"], srep["worst_radius_ratio"])
+    assert np.isclose(res["limit_min_dihedral"], srep["worst_min_dihedral"])

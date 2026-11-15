@@ -323,6 +323,11 @@ connectivity without moving existing vertices:
   configurations where 2-3, 3-2, 4-4, and 2-2 flips are geometrically blocked, but it never bisects a boundary edge
   whose endpoints are both locked and does not guarantee removal of negative faces constrained by curved boundaries,
   small dihedral angles, or locked CAD features; any remaining offending faces are returned in `report["stuck"]`.
+* **Layered pillbox xfail (`test_step_layered_pillbox_repair_complete`).** Interior faces next to locked CAD-curve
+  edges remain stuck after repair: the only fixing flips remove a locked curve edge, and the Steiner split at the
+  circumcentre commits no insertion (open question: Steiner follow-up in `open_questions.md`).
+* **Repair can lower `dt_max`.** In measured gmsh cases the limiting element after repair has a smaller radius ratio;
+  the measured values are in `studies/unstructured-cadmesh/results/repair.json` (key `dt_gain_vs_repair_false`).
 
 ## References
 

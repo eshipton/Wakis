@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 
+import numpy as np
 from cadmesh_study import (
     C0,
     F_TARGET,
@@ -33,8 +34,13 @@ from cadmesh_study import (
 from plot_cadmesh import muon_reference, nearest
 
 from wakis.unstructured import UnstructuredFIT3D
-from wakis.unstructured.improve import neg_faces
+from wakis.unstructured.quality import stability_report
 from wakis.unstructured.repair import flip_to_delaunay
+
+
+def guard_negative_count(solver):
+    """Count faces with negative dual length coupling free edges (solver guard criterion)."""
+    return int(np.sum((solver.Mnu_diag < 0) & (np.abs(solver.Cf).sum(1).A1 > 0)))
 
 
 def reference_f0(case, mesh=None, materials=None):
@@ -55,17 +61,30 @@ def reference_f0(case, mesh=None, materials=None):
 
 def _eval_solver(case, mesh, materials, f_ref):
     """Evaluate stability step and lowest eigenmode on `mesh`."""
-    n_neg = int(neg_faces(mesh, materials).sum())
-    s = UnstructuredFIT3D(mesh, materials, allow_negative_faces=(n_neg > 0))
+    n_faces = int(mesh.faces.shape[0])
+    s = UnstructuredFIT3D(mesh, materials, allow_negative_faces=True)
+    n_neg = guard_negative_count(s)
+    assert 0 <= n_neg <= n_faces, (
+        f"Negative face count {n_neg} exceeds n_faces {n_faces}"
+    )
+    srep = stability_report(s)
+    w = int(srep["worst_element"])
+    w_edges = mesh.edge_length[mesh.cell_edges[w]]
     f, _ = s.eigenmodes(N_MODES[case], f_target=F_TARGET[case])
     f0 = float(nearest(f, f_ref))
     return {
         "n_tets": int(mesh.n_cells),
         "n_nodes": int(mesh.n_nodes),
+        "n_faces": n_faces,
         "n_negative_faces": n_neg,
+        "guard_bypassed": True,
         "voronoi_valid": bool(n_neg == 0),
         "dt_max": float(s.dt_max),
         "courant_h": float(s.dt_max * C0 / mesh.edge_length.mean()),
+        "limit_element": w,
+        "limit_radius_ratio": float(srep["worst_radius_ratio"]),
+        "limit_min_dihedral": float(srep["worst_min_dihedral"]),
+        "limit_edge_length": float(w_edges.mean()),
         "f0_hz": f0,
         "f_all_hz": [float(x) for x in f],
         "lowest_freq_err": float(f0 / f_ref - 1.0),
@@ -84,6 +103,9 @@ def run_case(case, cpw=10, optimize="none", n_sweeps=10):
     # Pure topological flip repair without node smoothing
     m_flip, flip_rep = flip_to_delaunay(m_before, mats)
     flip_only = _eval_solver(case, m_flip, mats, f_ref)
+    flip_rep = dict(flip_rep)
+    flip_rep["negative_faces_before"] = before["n_negative_faces"]
+    flip_rep["negative_faces_after"] = flip_only["n_negative_faces"]
     flip_only["repair_report"] = flip_rep
 
     # Node smoothing without topological repair (repair=False baseline)
@@ -105,7 +127,14 @@ def run_case(case, cpw=10, optimize="none", n_sweeps=10):
     after_repair = _eval_solver(case, m_rep, mats, f_ref)
     repair_entry = {}
     if info_rep.improve_history and "repair" in info_rep.improve_history[-1]:
-        repair_entry = info_rep.improve_history[-1]["repair"]
+        repair_entry = dict(info_rep.improve_history[-1]["repair"])
+        repair_entry["negative_faces_before"] = before["n_negative_faces"]
+        repair_entry["negative_faces_after"] = after_repair["n_negative_faces"]
+
+    assert before["n_negative_faces"] <= before["n_faces"]
+    assert flip_only["n_negative_faces"] <= flip_only["n_faces"]
+    assert after_no_repair["n_negative_faces"] <= after_no_repair["n_faces"]
+    assert after_repair["n_negative_faces"] <= after_repair["n_faces"]
 
     dt_gain_vs_no_repair = float(after_repair["dt_max"] / after_no_repair["dt_max"])
     dt_gain_vs_before = float(after_repair["dt_max"] / before["dt_max"])
@@ -116,9 +145,14 @@ def run_case(case, cpw=10, optimize="none", n_sweeps=10):
         "optimize": optimize,
         "n_sweeps": int(n_sweeps),
         "f_ref_hz": f_ref,
+        "guard_bypassed": True,
+        "n_faces_before": before["n_faces"],
         "negative_faces_before": before["n_negative_faces"],
+        "n_faces_flip_only": flip_only["n_faces"],
         "negative_faces_flip_only": flip_only["n_negative_faces"],
+        "n_faces_after_repair_false": after_no_repair["n_faces"],
         "negative_faces_after_repair_false": after_no_repair["n_negative_faces"],
+        "n_faces_after_repair_true": after_repair["n_faces"],
         "negative_faces_after_repair_true": after_repair["n_negative_faces"],
         "dt_max_before": before["dt_max"],
         "dt_max_flip_only": flip_only["dt_max"],
@@ -126,6 +160,10 @@ def run_case(case, cpw=10, optimize="none", n_sweeps=10):
         "dt_max_repair_true": after_repair["dt_max"],
         "dt_gain_vs_repair_false": dt_gain_vs_no_repair,
         "dt_gain_vs_before": dt_gain_vs_before,
+        "limit_element": after_repair["limit_element"],
+        "limit_radius_ratio": after_repair["limit_radius_ratio"],
+        "limit_min_dihedral": after_repair["limit_min_dihedral"],
+        "limit_edge_length": after_repair["limit_edge_length"],
         "lowest_freq_err_before": before["lowest_freq_err"],
         "lowest_freq_err_repair_false": after_no_repair["lowest_freq_err"],
         "lowest_freq_err_repair_true": after_repair["lowest_freq_err"],
@@ -171,17 +209,22 @@ def main():
         json.dump(payload, f, indent=2, default=float)
 
     header = (
-        f"{'case':<10} {'opt':<6} {'neg_before':>10} {'neg_rep=F':>10} "
-        f"{'neg_rep=T':>10} {'dt_gain(T/F)':>13} {'err_rep=F':>12} {'err_rep=T':>12}"
+        f"{'case':<10} {'opt':<6} {'neg/faces_before':>16} {'neg/faces_rep=F':>16} "
+        f"{'neg/faces_rep=T':>16} {'dt_gain(T/F)':>13} {'err_rep=F':>12} {'err_rep=T':>12}"
     )
     print(header)
     print("-" * len(header))
     for r in records:
+        b_str = f"{r['negative_faces_before']}/{r['n_faces_before']}"
+        f_str = f"{r['negative_faces_after_repair_false']}/{r['n_faces_after_repair_false']}"
+        t_str = (
+            f"{r['negative_faces_after_repair_true']}/{r['n_faces_after_repair_true']}"
+        )
         print(
             f"{r['case']:<10} {r['optimize']:<6} "
-            f"{r['negative_faces_before']:>10d} "
-            f"{r['negative_faces_after_repair_false']:>10d} "
-            f"{r['negative_faces_after_repair_true']:>10d} "
+            f"{b_str:>16} "
+            f"{f_str:>16} "
+            f"{t_str:>16} "
             f"{r['dt_gain_vs_repair_false']:>13.4f} "
             f"{r['lowest_freq_err_repair_false']:>+12.5e} "
             f"{r['lowest_freq_err_repair_true']:>+12.5e}"

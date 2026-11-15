@@ -34,26 +34,46 @@ def _label(rec):
 
 
 def plot_negative_faces(records):
-    """Bar chart of negative dual-length faces and topological flip counts."""
+    """Bar chart of negative dual-length faces (fraction of faces) and topological flip counts."""
     labels = [_label(r) for r in records]
     x = np.arange(len(records))
-    w = 0.25
+    w = 0.20
 
-    neg_before = [r["negative_faces_before"] for r in records]
-    neg_false = [r["negative_faces_after_repair_false"] for r in records]
-    neg_true = [r["negative_faces_after_repair_true"] for r in records]
+    neg_before = [r["negative_faces_before"] / r["n_faces_before"] for r in records]
+    neg_flip = [r["negative_faces_flip_only"] / r["n_faces_flip_only"] for r in records]
+    neg_false = [
+        r["negative_faces_after_repair_false"] / r["n_faces_after_repair_false"]
+        for r in records
+    ]
+    neg_true = [
+        r["negative_faces_after_repair_true"] / r["n_faces_after_repair_true"]
+        for r in records
+    ]
 
     fig, ax = plt.subplots(1, 2, figsize=(10.5, 4.0))
-    ax[0].bar(x - w, neg_before, width=w, color="#4C72B0", label="Before improve_dt")
     ax[0].bar(
-        x,
+        x - 1.5 * w,
+        neg_before,
+        width=w,
+        color="#4C72B0",
+        label="Before improve_dt",
+    )
+    ax[0].bar(
+        x - 0.5 * w,
+        neg_flip,
+        width=w,
+        color="#8172B3",
+        label="flip_to_delaunay only",
+    )
+    ax[0].bar(
+        x + 0.5 * w,
         neg_false,
         width=w,
         color="#DD8452",
         label="improve_dt(repair=False)",
     )
     ax[0].bar(
-        x + w,
+        x + 1.5 * w,
         neg_true,
         width=w,
         color="#55A868",
@@ -62,7 +82,7 @@ def plot_negative_faces(records):
     ax[0].set_xticks(x)
     ax[0].set_xticklabels(labels, fontsize=8)
     ax[0].set_xlabel("CAD geometry (cpw = 10) [-]")
-    ax[0].set_ylabel("Negative dual-length faces [count]")
+    ax[0].set_ylabel("Negative dual-length faces [fraction of faces]")
     ax[0].set_title("(a) Non-Delaunay faces before and after repair", fontsize=9)
     ax[0].legend(fontsize=7.5)
 
@@ -92,40 +112,48 @@ def plot_negative_faces(records):
 
 
 def plot_dt_and_frequency(records):
-    """Bar chart of stable time step [ps] and lowest eigenfrequency error [-]."""
+    """Bar chart of dt gain (repair=True / repair=False) and lowest eigenfrequency error [-]."""
     labels = [_label(r) for r in records]
     x = np.arange(len(records))
     w = 0.25
 
-    dt_before_ps = [r["dt_max_before"] * 1e12 for r in records]
-    dt_false_ps = [r["dt_max_repair_false"] * 1e12 for r in records]
-    dt_true_ps = [r["dt_max_repair_true"] * 1e12 for r in records]
+    dt_gain = [r["dt_gain_vs_repair_false"] for r in records]
+    limit_rr = [r.get("limit_radius_ratio") for r in records]
+    limit_el = [r.get("limit_element") for r in records]
+    limit_dih = [r.get("limit_min_dihedral") for r in records]
 
     err_before = [abs(r["lowest_freq_err_before"]) for r in records]
     err_false = [abs(r["lowest_freq_err_repair_false"]) for r in records]
     err_true = [abs(r["lowest_freq_err_repair_true"]) for r in records]
 
     fig, ax = plt.subplots(1, 2, figsize=(10.5, 4.0))
-    ax[0].bar(x - w, dt_before_ps, width=w, color="#4C72B0", label="Before improve_dt")
-    ax[0].bar(
+    bars = ax[0].bar(
         x,
-        dt_false_ps,
-        width=w,
-        color="#DD8452",
-        label="improve_dt(repair=False)",
-    )
-    ax[0].bar(
-        x + w,
-        dt_true_ps,
-        width=w,
+        dt_gain,
+        width=0.45,
         color="#55A868",
-        label="improve_dt(repair=True)",
+        label="dt gain (repair=True / repair=False)",
     )
+    ax[0].axhline(1.0, color="#333333", linestyle="--", linewidth=0.8)
+    for b, rr, el, dih in zip(bars, limit_rr, limit_el, limit_dih):
+        if rr is not None:
+            note = f"rr={rr:.2f}"
+            if el is not None and dih is not None:
+                note = f"T{el}: rr={rr:.2f}"
+            ax[0].annotate(
+                note,
+                (b.get_x() + b.get_width() / 2.0, b.get_height()),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+            )
     ax[0].set_xticks(x)
     ax[0].set_xticklabels(labels, fontsize=8)
     ax[0].set_xlabel("CAD geometry (cpw = 10) [-]")
-    ax[0].set_ylabel(r"Maximum stable step $\Delta t_{\max}$ [ps]")
-    ax[0].set_title("(a) Stable leapfrog time step", fontsize=9)
+    ax[0].set_ylabel("Time-step ratio [dt gain (repair=True / repair=False)]")
+    ax[0].set_title("(a) Time-step ratio vs node smoothing alone", fontsize=9)
     ax[0].legend(fontsize=7.5)
 
     ax[1].bar(x - w, err_before, width=w, color="#4C72B0", label="Before improve_dt")
