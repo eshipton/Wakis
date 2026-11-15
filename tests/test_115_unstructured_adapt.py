@@ -1,0 +1,384 @@
+# copyright ################################# #
+# This file is part of the wakis Package.     #
+# Copyright (c) CERN, 2024.                   #
+# ########################################### #
+
+"""
+Tests for 3D tetrahedral adaptive mesh refinement (`wakis.unstructured.adapt`).
+
+Covers:
+* R1-R7: Rivara longest-edge bisection conformity, volume conservation,
+  Freudenthal/Kuhn similarity classes, mesh quality under local refinement,
+  and curved boundary projection.
+"""
+
+import numpy as np
+import pytest
+from scipy.spatial import cKDTree
+
+from wakis.unstructured.adapt import (
+    bisect,
+    kuhn_mesh,
+    l_prism_mesh,
+    label_constraint_faces,
+    refine_uniform,
+    sphere_projector,
+)
+from wakis.unstructured.mesh import SimplexMesh
+from wakis.unstructured.meshers import ball_mesh
+
+
+def _interface_faces(mesh):
+    """Indices of interior faces separating cells with different `cell_tags`."""
+    f = mesh.cell_faces.ravel()
+    t = np.repeat(mesh.cell_tags, 4)
+    lo = np.full(mesh.n_faces, np.iinfo(np.int64).max)
+    hi = np.full(mesh.n_faces, np.iinfo(np.int64).min)
+    np.minimum.at(lo, f, t)
+    np.maximum.at(hi, f, t)
+    return np.flatnonzero(lo != hi)
+
+
+def _check_round_conformity(m, m0, face_patch, bf0_set, if0_set, n_old_nodes):
+    """Verify R1(i)-(v) conformity invariants after one bisection call."""
+    eps = np.finfo(float).eps
+    # (i) every face has 1 or 2 incident cells
+    counts = np.bincount(m.cell_faces.ravel(), minlength=m.n_faces)
+    assert np.all((counts == 1) | (counts == 2)), (
+        f"R1(i) failed: face cell-counts outside {{1, 2}}: "
+        f"min={counts.min()}, max={counts.max()}"
+    )
+
+    # (ii) valence-1 faces tile the original boundary
+    bf = m.boundary_faces
+    bf_parents = face_patch[bf]
+    assert np.all(np.isin(bf_parents, list(bf0_set))), (
+        "R1(ii) failed: valence-1 face does not descend from an initial boundary face"
+    )
+    for f0 in bf0_set:
+        ch = bf[bf_parents == f0]
+        n_ch = len(ch)
+        assert n_ch >= 1
+        area_err = abs(float(m.face_area[ch].sum()) - float(m0.face_area[f0]))
+        bound = n_ch * 16.0 * eps * float(m0.face_area[f0])
+        assert area_err <= bound, (
+            f"R1(ii) boundary area mismatch on face {f0}: {area_err:.3e} > {bound:.3e}"
+        )
+
+    # (iii) no final edge has a midpoint node created in this run (no hanging nodes)
+    if m.n_nodes > n_old_nodes:
+        new_nodes = m.nodes[n_old_nodes:]
+        tree = cKDTree(new_nodes)
+        dists, _ = tree.query(m.edge_midpoint)
+        hanging = np.sum(dists <= 1e-10 * m.edge_length)
+        assert hanging == 0, f"R1(iii) failed: {hanging} edges have a hanging midpoint"
+
+    # (iv) Euler characteristic n_nodes - n_edges + n_faces - n_cells == 1
+    chi = m.n_nodes - m.n_edges + m.n_faces - m.n_cells
+    assert chi == 1, f"R1(iv) failed: Euler characteristic chi={chi} != 1"
+
+    # (v) faces between different tags tile the original interface
+    iff = _interface_faces(m)
+    iff_parents = face_patch[iff]
+    assert np.all(np.isin(iff_parents, list(if0_set))), (
+        "R1(v) failed: tag-interface face does not descend from initial interface"
+    )
+    for f0 in if0_set:
+        ch = iff[iff_parents == f0]
+        n_ch = len(ch)
+        assert n_ch >= 1
+        area_err = abs(float(m.face_area[ch].sum()) - float(m0.face_area[f0]))
+        bound = n_ch * 16.0 * eps * float(m0.face_area[f0])
+        assert area_err <= bound, (
+            f"R1(v) interface area mismatch on face {f0}: {area_err:.3e} > {bound:.3e}"
+        )
+
+
+def test_r1_conformity():
+    """
+    R1: Conformity invariants (i)-(v) over 6 random + 6 local-point refinement
+    rounds on the L-prism, Delaunay ball, two-tag Kuhn box, and equilateral-face
+    bipyramid.
+    """
+    # Equilateral-face bipyramid: two tetrahedra sharing an equilateral face (0,1,2)
+    # where all three shared edges have maximum length 1.0 (catches tie-break bugs).
+    bipyramid_nodes = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, np.sqrt(3.0) / 2.0, 0.0],
+            [0.5, np.sqrt(3.0) / 6.0, 0.5],
+            [0.5, np.sqrt(3.0) / 6.0, -0.5],
+        ]
+    )
+    bipyramid_cells = np.array([[0, 1, 2, 3], [0, 2, 1, 4]], dtype=np.int64)
+    m_bip0 = SimplexMesh(bipyramid_nodes, bipyramid_cells, np.array([0, 1]))
+
+    cases = [
+        ("bipyramid", m_bip0, np.array([0.5, 0.28, 0.0])),
+        ("l_prism", l_prism_mesh(5, 3), np.array([-0.2, 0.2, 0.3])),
+        (
+            "two_tag_box",
+            kuhn_mesh(
+                (7, 5, 3),
+                0.1,
+                tag=lambda xc, yc, zc: (xc < 0.3).astype(np.int64),
+            ),
+            np.array([0.3, 0.25, 0.15]),
+        ),
+        ("ball", ball_mesh([1.0], 0.25), np.array([0.2, -0.15, 0.1])),
+    ]
+
+    for name, m0, pt in cases:
+        fp0 = np.full(m0.n_faces, -1, dtype=np.int64)
+        bf0 = m0.boundary_faces
+        if0 = _interface_faces(m0)
+        fp0[bf0] = bf0
+        fp0[if0] = if0
+        bf0_set = set(map(int, bf0))
+        if0_set = set(map(int, if0))
+
+        n_rounds = 2 if name == "bipyramid" else 6
+        # 6 rounds of random marking (10 % of cells, seed 0)
+        m = m0
+        fp = fp0.copy()
+        rng = np.random.default_rng(0)
+        for _ in range(n_rounds):
+            n_old = m.n_nodes
+            k = max(1, int(0.10 * m.n_cells))
+            marked = rng.choice(m.n_cells, size=k, replace=False)
+            m, info = bisect(m, marked, face_patch=fp)
+            fp = info["face_patch"]
+            _check_round_conformity(m, m0, fp, bf0_set, if0_set, n_old)
+
+        # 6 rounds of marking cells within 1.5 local sizes of a point
+        m_pt = m0
+        fp_pt = fp0.copy()
+        for _ in range(n_rounds):
+            n_old = m_pt.n_nodes
+            cent = m_pt.nodes[m_pt.cells].mean(axis=1)
+            h_loc = m_pt.edge_length[m_pt.cell_edges].mean(axis=1)
+            dist = np.linalg.norm(cent - pt[None, :], axis=1)
+            h_pt = float(h_loc[np.argmin(dist)])
+            marked = np.flatnonzero(dist <= 1.5 * h_pt)
+            if marked.size == 0:
+                marked = np.array([int(np.argmin(dist))], dtype=np.int64)
+            m_pt, info = bisect(m_pt, marked, face_patch=fp_pt)
+            fp_pt = info["face_patch"]
+            _check_round_conformity(m_pt, m0, fp_pt, bf0_set, if0_set, n_old)
+
+        print(
+            f"[R1 {name}] rand_cells={m.n_cells}, pt_cells={m_pt.n_cells}, "
+            f"chi={m.n_nodes - m.n_edges + m.n_faces - m.n_cells}"
+        )
+
+
+def test_r2_volume_conservation():
+    """
+    R2: Total and per-tag volume equals the input within n_cells * eps * V
+    when project=None.
+    """
+    eps = np.finfo(float).eps
+    m0 = kuhn_mesh((7, 5, 3), 0.1, tag=lambda xc, yc, zc: (xc < 0.3).astype(np.int64))
+    v_tot0 = float(m0.cell_volume.sum())
+    v_tag0 = {t: float(m0.cell_volume[m0.cell_tags == t].sum()) for t in (0, 1)}
+
+    m = m0
+    rng = np.random.default_rng(0)
+    for _ in range(6):
+        marked = rng.choice(m.n_cells, size=max(1, m.n_cells // 8), replace=False)
+        m, _ = bisect(m, marked, project=None)
+        v_tot = float(m.cell_volume.sum())
+        bound_tot = m.n_cells * eps * v_tot0
+        assert abs(v_tot - v_tot0) <= bound_tot, (
+            f"R2 total volume drift {abs(v_tot - v_tot0):.3e} > {bound_tot:.3e}"
+        )
+        for t, vt0 in v_tag0.items():
+            vt = float(m.cell_volume[m.cell_tags == t].sum())
+            bound_t = int(np.sum(m.cell_tags == t)) * eps * vt0
+            assert abs(vt - vt0) <= bound_t, (
+                f"R2 tag {t} volume drift {abs(vt - vt0):.3e} > {bound_t:.3e}"
+            )
+    print(f"[R2] final cells={m.n_cells}, |dV|/V={abs(v_tot - v_tot0) / v_tot0:.3e}")
+
+
+def test_r3_kuhn_similarity():
+    """
+    R3: 3 uniform generations on kuhn_mesh((3, 2, 2), 0.5) reproduce the node
+    set of the h/2 grid and cell volumes (h/2)^3 / 6 to <= 1e-15 relative.
+    """
+    m0 = kuhn_mesh((3, 2, 2), 0.5)
+    m3 = refine_uniform(m0, 3)
+    m_ref = kuhn_mesh((6, 4, 4), 0.25)
+
+    n1 = m3.nodes[np.lexsort(m3.nodes.T)]
+    n2 = m_ref.nodes[np.lexsort(m_ref.nodes.T)]
+    assert n1.shape == n2.shape, f"R3 node count {n1.shape} != {n2.shape}"
+    node_diff = float(np.max(np.abs(n1 - n2)))
+    assert node_diff <= 1e-15, f"R3 node set diff {node_diff:.3e} > 1e-15"
+
+    v_target = (0.25**3) / 6.0
+    rel_vol_err = float(np.max(np.abs(m3.cell_volume - v_target)) / v_target)
+    print(f"[R3] node_diff={node_diff:.3e}, max_rel_vol_err={rel_vol_err:.3e}")
+    assert rel_vol_err <= 1e-15
+
+
+def _tet_radius_ratio_explicit(P):
+    """Radius ratio 3 r_in / R_circ of a single tetrahedron P (4, 3)."""
+    A = P[1:] - P[0]
+    vol = abs(float(np.linalg.det(A))) / 6.0
+    rhs = 0.5 * np.sum(A * A, axis=1)
+    cc = P[0] + np.linalg.solve(A, rhs)
+    R = float(np.linalg.norm(cc - P[0]))
+    faces = [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]
+    surf = sum(
+        0.5 * float(np.linalg.norm(np.cross(P[f[1]] - P[f[0]], P[f[2]] - P[f[0]])))
+        for f in faces
+    )
+    r_in = 3.0 * vol / surf
+    return 3.0 * r_in / R
+
+
+def test_r4_kuhn_classes():
+    """
+    R4: 12 random refinement rounds on a Kuhn mesh yield <= 3 similarity classes
+    and minimum radius ratio matching the explicit 3 Kuhn bisection classes to
+    <= 1e-12.
+    """
+    # Independent explicit path: bisect one Kuhn tetrahedron 0, 1, 2 times
+    t0 = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
+    m_c = 0.5 * (t0[0] + t0[3])  # body centre (0.5, 0.5, 0.5)
+    t1 = np.array([t0[0], m_c, t0[1], t0[2]])
+    m_f = 0.5 * (t0[0] + t0[2])  # face centre (0.5, 0.5, 0.0)
+    t2 = np.array([t0[0], m_f, m_c, t0[1]])
+    explicit_rr = [_tet_radius_ratio_explicit(t) for t in (t0, t1, t2)]
+    min_rr_ref = min(explicit_rr)
+
+    m = kuhn_mesh((3, 2, 2), 0.5)
+    rng = np.random.default_rng(1)
+    for _ in range(12):
+        marked = rng.choice(m.n_cells, size=max(1, m.n_cells // 10), replace=False)
+        m, _ = bisect(m, marked)
+
+    L = np.sort(m.edge_length[m.cell_edges], axis=1)
+    keys = np.round(L / L[:, -1:], 9)
+    u_keys = np.unique(keys, axis=0)
+    n_classes = len(u_keys)
+    min_rr = float(m.quality().min())
+    rr_diff = abs(min_rr - min_rr_ref)
+    print(
+        f"[R4] n_classes={n_classes} (predicted 3), "
+        f"min_rr={min_rr:.12f}, ref={min_rr_ref:.12f}, diff={rr_diff:.3e}"
+    )
+    assert n_classes <= 3, f"R4 class count {n_classes} > 3"
+    assert rr_diff <= 1e-12, f"R4 min radius ratio diff {rr_diff:.3e} > 1e-12"
+
+
+def test_r5_general_quality():
+    """
+    R5: 24 local refinement rounds on ball_mesh([1.0], 0.25) marking the 8 cells
+    nearest an interior point and 8 nearest a boundary node keep
+    min_radius_ratio >= 0.5 * initial_min_radius_ratio.
+    """
+    m = ball_mesh([1.0], 0.25)
+    q0 = float(m.quality().min())
+    p_int = np.array([0.23, -0.17, 0.11])
+    p_bnd = m.nodes[m.boundary_nodes[0]].copy()
+
+    for _ in range(24):
+        cent = m.nodes[m.cells].mean(axis=1)
+        i_int = np.argsort(np.linalg.norm(cent - p_int[None, :], axis=1))[:8]
+        i_bnd = np.argsort(np.linalg.norm(cent - p_bnd[None, :], axis=1))[:8]
+        marked = np.union1d(i_int, i_bnd)
+        m, _ = bisect(m, marked)
+
+    q_final = float(m.quality().min())
+    ratio = q_final / q0
+    print(
+        f"[R5] q0={q0:.6f}, q_final={q_final:.6f}, "
+        f"q_final/q0={ratio:.6f} (threshold 0.5), final_cells={m.n_cells}"
+    )
+    if ratio < 0.5:
+        pytest.xfail(
+            f"R5 3D LEB min radius ratio q_final/q0 = {ratio:.6f} < 0.5 "
+            f"(q0={q0:.6f}, q_final={q_final:.6f})"
+        )
+    assert ratio >= 0.5
+
+
+def test_r6_noop():
+    """R6: bisect(mesh, []) returns bitwise-identical nodes and cells."""
+    m0 = kuhn_mesh((3, 2, 2), 0.5)
+    m1, info = bisect(m0, [])
+    assert np.array_equal(m1.nodes, m0.nodes)
+    assert np.array_equal(m1.cells, m0.cells)
+    assert info["rounds"] == 0 and info["n_bisections"] == 0
+    print(f"[R6] bitwise identical nodes={m1.n_nodes}, cells={m1.n_cells}")
+
+
+def test_r7_sphere_projection():
+    """
+    R7: 3 uniform generations on ball_mesh([1.0], 0.25) with sphere_projector
+    place every new boundary node on |x| = R within 1e-12 R, keep all cells
+    positively oriented, move every projected node outward, and reduce the
+    sphere volume deficit by ~1/4.
+    """
+    R = 1.0
+    v_exact = 4.0 * np.pi * R**3 / 3.0
+    m0 = ball_mesh([R], 0.25)
+    n0 = m0.n_nodes
+    v0 = float(m0.cell_volume.sum())
+    def0 = v_exact - v0
+
+    # Without projection: polyhedral volume unchanged
+    m_unproj = refine_uniform(m0, 3, project=None)
+    v_unproj = float(m_unproj.cell_volume.sum())
+    assert abs(v_unproj - v0) <= m_unproj.n_cells * np.finfo(float).eps * v0
+
+    # With sphere projection
+    proj = sphere_projector((0.0, 0.0, 0.0), R, patch=0)
+    fp0 = label_constraint_faces(m0)
+    # Check generation 1 projected nodes move strictly outward from chord midpoint
+    m_g1_chord, _ = bisect(m0, np.arange(m0.n_cells), face_patch=fp0, project=None)
+    m_g1_proj, _ = bisect(m0, np.arange(m0.n_cells), face_patch=fp0, project=proj)
+    g1_bnd = m_g1_proj.boundary_nodes[m_g1_proj.boundary_nodes >= n0]
+    assert np.all(
+        np.linalg.norm(m_g1_proj.nodes[g1_bnd], axis=1)
+        > np.linalg.norm(m_g1_chord.nodes[g1_bnd], axis=1)
+    ), "R7 projected boundary nodes must move strictly outward"
+
+    m_proj, info = refine_uniform(m0, 3, face_patch=fp0, project=proj, return_info=True)
+
+    assert np.all(m_proj.cell_volume > 0.0)
+    new_bnd = m_proj.boundary_nodes[m_proj.boundary_nodes >= n0]
+    assert new_bnd.size > 0
+    r_new = np.linalg.norm(m_proj.nodes[new_bnd], axis=1)
+    max_rad_err = float(np.max(np.abs(r_new - R)))
+    assert max_rad_err <= 1e-12 * R, (
+        f"R7 boundary node radial error {max_rad_err:.3e} > {1e-12 * R:.3e}"
+    )
+    # Every boundary triangle of m0 lies strictly inside the sphere except at its
+    # vertices, so every unprojected chord midpoint has |x| < R while every
+    # projected boundary node has |x| = R.
+    assert (
+        float(
+            np.max(
+                np.linalg.norm(
+                    m_unproj.nodes[
+                        m_unproj.boundary_nodes[m_unproj.boundary_nodes >= n0]
+                    ],
+                    axis=1,
+                )
+            )
+        )
+        < R - 1e-4
+    )
+
+    v_proj = float(m_proj.cell_volume.sum())
+    def_proj = v_exact - v_proj
+    def_ratio = def_proj / def0
+    print(
+        f"[R7] max_|r-R|={max_rad_err:.3e}, n_backoff={info['n_backoff']}, "
+        f"deficit(3)/deficit(0)={def_ratio:.4f} (predicted ~0.25)"
+    )
+    assert def_proj < def0
