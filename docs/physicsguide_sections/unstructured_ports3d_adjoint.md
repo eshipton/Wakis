@@ -236,38 +236,28 @@ an interior 50 $\Omega$ lumped port path):
   with two modal ports, one lumped port, and massless edges active. `PortDFTMonitor` matches `_Port.spectra` and
   `power_waves` scattering columns at 9, 10, and 11 GHz to $< 10^{-14}$ relative.
 * **Dot-product identity (`test_adjoint_forward_bitwise_and_dot_product`):**
-  For random energy-scaled states $x, y$:
-  * Blockwise scale-invariant error: $1.378\times 10^{-17} \le 10^{-15}$.
-  * Multi-step relative error $|\langle y, L^k x\rangle - \langle (L^T)^k y, x\rangle| / (|\langle y, L^k x\rangle| + |\langle (L^T)^k y, x\rangle|)$:
-    $2.072\times 10^{-16}$ ($k = 1$), $3.144\times 10^{-16}$ ($k = 5$), and $3.760\times 10^{-16}$ ($k = 10$), all $\le 10^{-15}$.
+  For random energy-scaled states $x, y$ the blockwise scale-invariant error and the multi-step relative error
+  $|\langle y, L^k x\rangle - \langle (L^T)^k y, x\rangle| / (|\langle y, L^k x\rangle| + |\langle (L^T)^k y, x\rangle|)$
+  for $k \in \{1, 5, 10\}$ are asserted to be $\le 10^{-15}$. The demo script reproduces this on the 960-tetrahedron
+  WR-90 mesh with $k = 1, 5, 10$ errors of $7.281\times 10^{-16}$, $3.003\times 10^{-16}$ and $7.080\times 10^{-16}$
+  (`dot_k1`, `dot_k5`, `dot_k10` in `out/adjoint_wr90_match.json`, Batch job `w3p-a-demo`).
 * **Scattering-objective gradient vs central FD (`test_adjoint_gradient_s21_s11_vs_finite_differences`):**
-  For $F(\rho) = \sum_{f \in \{9, 10, 11\text{ GHz}\}} (|S_{21}(f)|^2 - 0.5|S_{11}(f)|^2)$ with $h = 10^{-3}$ across 4
-  sampled design tetrahedra spanning the cross-section:
-
-| Design cell | $g_{\text{adj},k}$ | $\operatorname{FD}_k(h)$ | $|g_{\text{adj},k} - \operatorname{FD}_k(h)|$ | $\tau_k(h) = |\operatorname{FD}(2h)-\operatorname{FD}(h)|/3$ | Relative error |
-|---|---|---|---|---|---|
-| 11 | $-6.317103\times 10^{-3}$ | $-6.317102\times 10^{-3}$ | $4.869\times 10^{-10}$ | $4.869\times 10^{-10}$ | $7.707\times 10^{-8}$ |
-| 4 | $-2.568791\times 10^{-3}$ | $-2.568791\times 10^{-3}$ | $2.356\times 10^{-11}$ | $2.355\times 10^{-11}$ | $9.172\times 10^{-9}$ |
-| 1 | $-3.589886\times 10^{-3}$ | $-3.589886\times 10^{-3}$ | $1.603\times 10^{-11}$ | $1.621\times 10^{-11}$ | $4.465\times 10^{-9}$ |
-| 23 | $-4.364126\times 10^{-3}$ | $-4.364125\times 10^{-3}$ | $2.282\times 10^{-10}$ | $2.283\times 10^{-10}$ | $5.229\times 10^{-8}$ |
-
+  For $F(\rho) = \sum_{f} (|S_{21}(f)|^2 - 0.5|S_{11}(f)|^2)$ over 9, 10 and 11 GHz with $h = 10^{-3}$ on four sampled
+  design tetrahedra, the adjoint gradient must agree with $\operatorname{FD}_k(h)$ within the Richardson bound
+  $1.5\,\tau_k(h) + r_k(h)$ (definitions in Section 5); the measured maximum over the six matching-study cells is in the next subsection.
 * **Binomial checkpointing (`test_adjoint_gradient_s21_s11_vs_finite_differences`):**
   `sim.vjp(G_cot, memory="checkpoint", snaps=12)` matches `sim.vjp(G_cot, memory="full")` bitwise
   (`assert_array_equal`) with `stepper.replays == 0`.
 * **Interior `CellDFTMonitor` with modal + lumped ports (`test_adjoint_cell_dft_monitor_with_lumped_and_modal_ports`):**
   Matches central finite differences within $1.5\,\tau_k(h) + r_k(h)$ on all sampled cells.
-* **Mutations (`test_adjoint_dot_product_mutations_fail`, `test_adjoint_gradient_mutations_fail`):**
-  * Dropping the port term in `linear_step_T` (`pre_step_T = id`, `post_step_T = 0`) raises the $k=1$ dot-product
-    error from $2.072\times 10^{-16}$ to $1.278\times 10^{-3}$ (blockwise $4.120\times 10^{-4}$) and produces a
-    $4.194\times 10^{-1}$ ($41.9\%$) relative error in the $|S_{21}|^2 - 0.5|S_{11}|^2$ gradient. When injected directly
-    into the unmutated test suite, `test_adjoint_forward_bitwise_and_dot_product` fails with
-    `AssertionError: assert np.float64(0.002099648422757077) <= 1e-15` and
-    `test_adjoint_gradient_s21_s11_vs_finite_differences` fails with
-    `AssertionError: assert 0.0026497043580277473 <= ((1.5 * 4.869114370957087e-10) + 2.4470659161869384e-11)`.
-  * Flipping the port sign in `linear_step_T` raises the $k=1$ dot-product error to $3.291\times 10^{-3}$ ($k=3$:
-    $1.037\times 10^{-2}$).
-  * Omitting the half-step time-centering in the reverse pass (`mon.half_step = False` in `vjp`) raises the relative
-    gradient error to $3.631\times 10^{-2}$ ($3.63\%$, exceeding the truncation bound by $> 2.5\times 10^5$).
+* **Mutations (`test_adjoint_dot_product_mutations_fail`, `test_adjoint_gradient_mutations_fail`):** each mutation
+  was run and the named test failed:
+  * Dropping the port term in `linear_step_T` (`pre_step_T = id`, `post_step_T = 0`) breaks the dot-product bound and
+    the gradient bound. On the matching-study mesh it raises the dot-product error to $1.664\times 10^{-2}$
+    (`dot_mut_drop`) and the maximum FD relative error to $53.14$ (`fd_mut_drop_max_rel_err`).
+  * Flipping the port sign in `linear_step_T` raises the dot-product error to $4.055\times 10^{-2}$ (`dot_mut_flip`).
+  * Sampling the port monitor at integer steps instead of the half-step $t_{n+1/2}$ centring (`half_step=False`) raises
+    the maximum FD relative error to $6.575\times 10^{-2}$ (`fd_mut_half_max_rel_err`).
 
 ### WR-90 Permittivity-Matching Study (`studies/unstructured-ports3d/adjoint_wr90_match.py`)
 
@@ -282,10 +272,10 @@ maximise $F(\rho) = |S_{21}(f_0)|^2 - |S_{11}(f_0)|^2$ at $f_0 = 10\text{ GHz}$.
   $7.080\times 10^{-16}$ ($k = 10$); dropping the port term in $L^T$ gives $1.664\times 10^{-2}$ and flipping its sign
   gives $4.055\times 10^{-2}$.
 * **Adjoint vs central FD ($h = 10^{-3}$) across 6 design tetrahedra (2 per matching layer):** maximum relative error
-  $2.551\times 10^{-7}$ (down to $4.783\times 10^{-9}$ on cell 60, where $|g_{\text{adj}} - \operatorname{FD}(h)| = 1.685\times 10^{-10}$
-  matches $\tau(h) = 1.676\times 10^{-10}$). Dropping the port transpose gives up to $53.14$ relative error; using an
-  integer-step $t_{n+1}$ monitor in `vjp` gives $6.575\times 10^{-2}$ relative error.
-* **L-BFGS-B optimisation (6 iterations, wall time 4.87 s):**
+  $2.551\times 10^{-7}$ (`fd_max_rel_err`). Dropping the port transpose gives up to $53.14$ relative error
+  (`fd_mut_drop_max_rel_err`); using an integer-step $t_{n+1}$ monitor in `vjp` gives $6.575\times 10^{-2}$ relative
+  error (`fd_mut_half_max_rel_err`).
+* **L-BFGS-B optimisation (6 iterations, wall time 5.05 s (`wall_s`)):**
   * Unmatched initial state ($\rho = 0$, $\varepsilon_r = 1$ in layers 1–3): $|S_{11}(f_0)| = -8.342\text{ dB}$
     ($0.3827$), $|S_{21}(f_0)|^2 = 0.8223$, objective $F = 0.6758$.
   * Optimised 6-iteration state: $|S_{11}(f_0)| = -37.235\text{ dB}$ ($0.01375$, a $28.89\text{ dB}$ return-loss

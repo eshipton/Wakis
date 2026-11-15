@@ -31,6 +31,9 @@ What is checked, and how each check can fail:
   gradient bitwise (`assert_array_equal`) with zero replay mismatches.
 """
 
+import os
+import sys
+
 import numpy as np
 import pytest
 
@@ -410,3 +413,138 @@ def test_adjoint_gradient_cell_dft_and_checkpoint(ported_wr90):
     np.testing.assert_array_equal(g_ck, g)
     assert ck.memory_stats["recompute_steps"] > 0
     assert ck._rung.mismatches == 0
+
+
+# ---------------------------------------------------------------------------
+# General (non-extruded) tetrahedral meshes: accuracy, from W3-4 part D.
+# Numbers are read from studies/unstructured-ports3d/out/general_mesh_accuracy.json
+# (Batch job w3p-d-accuracy); the block below quotes them.
+# ---------------------------------------------------------------------------
+
+_STUDY_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "studies", "unstructured-ports3d")
+)
+if _STUDY_DIR not in sys.path:
+    sys.path.insert(0, _STUDY_DIR)
+
+import general_mesh_accuracy as gma
+
+
+@pytest.fixture(scope="module")
+def wr90_coarse2_results() -> dict:
+    """Evaluate the 2 coarsest WR-90 resolutions (h_div = 4, 6) for general and extruded."""
+    gen = [gma.evaluate_guide_case("wr90", "general", d) for d in gma.WR90_H_DIVS[:2]]
+    ext = [gma.evaluate_guide_case("wr90", "extruded", d) for d in gma.WR90_H_DIVS[:2]]
+    s11_fit = gma.fit_convergence_order(
+        [r["h_m"] for r in gen], [r["s11_floor"] for r in gen]
+    )
+    phase_fit = gma.fit_convergence_order(
+        [r["h_m"] for r in gen], [r["s21_phase_err_rad"] for r in gen]
+    )
+    return {
+        "general": gen,
+        "extruded": ext,
+        "s11_order_p": s11_fit["coarse2_order_p"],
+        "phase_order_p": phase_fit["coarse2_order_p"],
+    }
+
+
+@pytest.fixture(scope="module")
+def coax_coarse2_results() -> dict:
+    """Evaluate the 2 coarsest coaxial resolutions (nr = 2, 3) for general and extruded."""
+    gen = [gma.evaluate_guide_case("coax", "general", nr) for nr in gma.COAX_NRS[:2]]
+    ext = [gma.evaluate_guide_case("coax", "extruded", nr) for nr in gma.COAX_NRS[:2]]
+    s11_fit = gma.fit_convergence_order(
+        [r["h_m"] for r in gen], [r["s11_floor"] for r in gen]
+    )
+    phase_fit = gma.fit_convergence_order(
+        [r["h_m"] for r in gen], [r["s21_phase_err_rad"] for r in gen]
+    )
+    return {
+        "general": gen,
+        "extruded": ext,
+        "s11_order_p": s11_fit["coarse2_order_p"],
+        "phase_order_p": phase_fit["coarse2_order_p"],
+    }
+
+
+def _assert_wr90_general_accuracy(gen_records: list[dict], s11_order_p: float) -> None:
+    """Check WR-90 general-mesh reflection floor and convergence order window."""
+    # From general_mesh_accuracy.json:
+    # wr90_general_s11: order_p = 1.7695, log_rms_residual = 0.0257,
+    # delta_p_2level = 0.1795, study_min_order_p = 1.5900, max floor = 2.3467e-02.
+    assert gen_records[0]["s11_floor"] <= 2.3467e-02 * (1.0 + 0.0257)
+    assert gen_records[1]["s11_floor"] < gen_records[0]["s11_floor"]
+    assert s11_order_p >= 1.5900
+
+
+def test_general_wr90_order_and_extruded_baseline(wr90_coarse2_results: dict) -> None:
+    """WR-90 general mesh shows O((kh)^2) phase convergence and extruded baseline is exact."""
+    gen = wr90_coarse2_results["general"]
+    ext = wr90_coarse2_results["extruded"]
+
+    # S21 phase error 2-level order (2.0685) meets theory order 2.0 minus
+    # delta_p_2level = 0.1236 (from log_rms_residual = 0.0177): bound = 1.8764.
+    assert wr90_coarse2_results["phase_order_p"] >= 1.8764
+
+    # |S11| floor decreases with h and matches the 4-level study window (>= 1.5900).
+    _assert_wr90_general_accuracy(gen, wr90_coarse2_results["s11_order_p"])
+
+    # Extruded baseline (extrude_section) at equal cpw (5.25 and 7.87) has
+    # machine-precision reflection floor <= 1.8851e-12.
+    for r_gen, r_ext in zip(gen, ext):
+        assert r_gen["cpw"] == pytest.approx(r_ext["cpw"], rel=1e-12)
+        assert r_ext["s11_floor"] <= 1.8851e-12
+        assert r_gen["s11_floor"] > r_ext["s11_floor"]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Pre-asymptotic WR-90 general-mesh |S11| 2-level order at cpw 5.25->7.87 "
+        "is 1.7716 (4-level study fit 1.7695), below strict asymptotic theory "
+        "bound 2.0 - 0.1795 = 1.8205"
+    ),
+)
+def test_general_wr90_s11_strict_theory_order(wr90_coarse2_results: dict) -> None:
+    """Strict asymptotic theory order check (p >= 2.0 - 0.1795 = 1.8205) for coarse WR-90 |S11|."""
+    assert wr90_coarse2_results["s11_order_p"] >= 1.8205
+
+
+def test_general_coax_order_and_extruded_baseline(coax_coarse2_results: dict) -> None:
+    """Coaxial TEM general mesh meets convergence windows and extruded baseline is exact."""
+    gen = coax_coarse2_results["general"]
+    ext = coax_coarse2_results["extruded"]
+
+    # S21 phase error 2-level order (1.7634) meets theory order 2.0 minus
+    # delta_p_2level = 0.3219 (from log_rms_residual = 0.0461): bound = 1.6781.
+    assert coax_coarse2_results["phase_order_p"] >= 1.6781
+
+    # |S11| floor decreases from 5.9155e-04 to 2.8971e-04 (2-level order 1.7606),
+    # inside the 4-level study window (order_p = 1.9224, delta_p_2level = 0.2067,
+    # study_min_order_p = 1.7157; 4-level order 1.9224 >= theory_min_order_p = 1.7933).
+    assert gen[0]["s11_floor"] <= 5.9155e-04 * (1.0 + 0.0296)
+    assert gen[1]["s11_floor"] < gen[0]["s11_floor"]
+    assert coax_coarse2_results["s11_order_p"] >= 1.7157
+
+    # Extruded baseline (extrude_section) at equal cpw (23.06 and 34.59) has
+    # machine-precision reflection floor <= 5.5024e-14.
+    for r_gen, r_ext in zip(gen, ext):
+        assert r_gen["cpw"] == pytest.approx(r_ext["cpw"], rel=1e-12)
+        assert r_ext["s11_floor"] <= 5.5024e-14
+        assert r_gen["s11_floor"] > r_ext["s11_floor"]
+
+
+def test_general_port_face_area_mutation_fails() -> None:
+    """Halving the port-face dual area weights (port_face_scale=0.5) breaks matching and order."""
+    mut_gen = [
+        gma.evaluate_guide_case("wr90", "general", d, port_face_scale=0.5)
+        for d in gma.WR90_H_DIVS[:2]
+    ]
+    mut_fit = gma.fit_convergence_order(
+        [r["h_m"] for r in mut_gen], [r["s11_floor"] for r in mut_gen]
+    )
+    # With port_face_scale = 0.5, |S11| jumps to 8.6769e-01 and 8.6313e-01
+    # and the 2-level order collapses to 0.0130, failing the accuracy check.
+    with pytest.raises(AssertionError):
+        _assert_wr90_general_accuracy(mut_gen, mut_fit["coarse2_order_p"])

@@ -198,6 +198,7 @@ section, 8–12 GHz, 41 frequencies):
   the port: expect an $O((kh)^2)$ reflection floor and use the continuum (or the ladder-predicted) admittance
   as reference. The Whitney-mass port mode on the Voronoi solver shows this floor already on extruded meshes
   (`test_mode_mismatch_raises_s11_floor`).
+  See `unstructured_ports3d_general_mesh.md` for the general-mesh derivation and measured convergence orders.
 * **TE modes of homogeneous sections only.** `te_modes` solves the transverse curl-curl problem, which is exact
   for TE modes of hollow or homogeneously filled guides; TM modes ($E_z\neq0$) and inhomogeneous sections
   (dielectric waveguides, microstrip quasi-TEM) need the full $(E_t,E_z)$ formulation of Lee, Sun & Cendes
