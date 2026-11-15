@@ -326,3 +326,51 @@ def rod_cavity_hybrid(a, b, eps, height, n_modes=10, kmax=None, p_max=3, n_max=8
             ]  # fmt: skip
             roots += rs * (1 if n == 0 else 2)
     return np.sort(roots)[:n_modes]
+
+
+def layered_pillbox_tm0(a, d, t, eps, n_modes=1, p_max=4):
+    """
+    Wavenumbers of the TM_0np modes of a PEC pillbox (radius a, length d)
+    filled with a dielectric layer (eps) for 0 < z < t and vacuum above.
+
+    TM to z with H_phi = J1(k_r r) psi(z), k_r = j_{0,n} / a. In layer i,
+    psi'' + kz_i^2 psi = 0 with kz_i^2 = eps_i k^2 - k_r^2; the PEC end walls
+    need E_r ~ psi' / eps_i = 0, and H_phi (psi) and E_r (psi' / eps_i) are
+    continuous at z = t. With psi = cos(kz_1 z) below and B cos(kz_2 (d - z))
+    above this gives the transverse-resonance condition
+
+        g(kz_1^2, t) / eps + g(kz_2^2, d - t) = 0,
+        g(q, l) = sqrt(q) tan(sqrt(q) l)       (q > 0)
+                = -sqrt(-q) tanh(sqrt(-q) l)   (q < 0),
+
+    real and continuous through q = 0. eps = 1 gives the empty pillbox
+    (TM_010: k = j_01 / a, the root at kz = 0).
+
+    Parameters
+    ----------
+    a, d, t : float
+        Radius, length and layer thickness [m].
+    eps : float
+        Relative permittivity of the layer.
+    n_modes : int
+        Number of roots returned (radial order n = 1 only).
+
+    Returns
+    -------
+    k : ndarray
+        Vacuum wavenumbers [1/m], ascending.
+    """
+    from scipy.special import jn_zeros
+
+    kr = jn_zeros(0, 1)[0] / a
+
+    def g(q, length):
+        s = np.sqrt(abs(q))
+        return s * np.tan(s * length) if q >= 0 else -s * np.tanh(s * length)
+
+    def f(k):
+        return g(eps * k**2 - kr**2, t) / eps + g(k**2 - kr**2, d - t)
+
+    kmin = kr / np.sqrt(max(eps, 1.0)) * (1 + 1e-9)
+    kmax = np.sqrt(kr**2 + ((p_max + 1) * np.pi / min(t, d - t)) ** 2)
+    return np.array(_roots(f, kmax, n_scan=20000, kmin=kmin)[:n_modes])

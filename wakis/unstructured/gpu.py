@@ -276,6 +276,7 @@ class DeviceStepper:
         self.dt = float(solver.dt)
         self.n = int(solver.n)
         self.S = {}
+        self.pml3 = None
         self.depth = 12
         self._use_sources = sources
         self._gpu = xp.__name__ == "cupy"
@@ -291,7 +292,9 @@ class DeviceStepper:
         self._build_recorder(solver)
         self._kernels()
         self._fast = self._gpu and not self.absolute
-        if self._fast:
+        if self._fast and self.pml3 is not None:
+            self._buf = (self.xp.zeros(self._X.size), self.xp.zeros(self._X.size))
+        elif self._fast:
             nh = self.Mnu.size if self.kind == "3d" else self.stiff.size
             self._h = self.xp.zeros(nh)
             if getattr(self, "groups", None) is not None:
@@ -380,9 +383,69 @@ class DeviceStepper:
             self.groups.append(dg)
             self.depth += 4 * (len(g["lorentz"]) + len(g["debye"])) + 4
 
+    def _build_pml3d(self, s):
+        """
+        Spherical CFS-PML (`pml3d.PML3D`): the step is four fixed sparse
+        stages on the extended state x = [u, b, z], x <- S4 (S3 S2 S1 x + B j).
+        u, b and z are views of one device vector; the sources are folded
+        into B w per source at setup. The fused massless elimination and the
+        capacitive update are inside the stage matrices already.
+        """
+        p = s._pml
+        self.kind = "3d"
+        self.pml3 = p
+        self.groups = None
+        self.kappa_massless, self.massless_block = 1.0, 0
+        self.P = [self._mat(S) for S in p.stages]
+        # local error of the four chained SpMVs (Higham Lemma 3.3 / 3.7: the
+        # rounding of each stage propagates through |S_k|; depths add) plus
+        # the source add
+        self.depth += sum(_max_row_nnz(S) for S in p.stages) + 2
+        nu, nf = s.free.size, s.mesh.n_faces
+        self._split = (nu, nu + nf)
+        self._X = self.xp.array(np.asarray(p.x, dtype=float), copy=True)
+        self._views()
+        # energy-type weights: u (C), b (M_nu), z: d (1/C), edge-filter
+        # voltages (C), face-filter currents (1/M_nu); a filter integral P
+        # enters the output as sigma P, so its weight is that of the filtered
+        # variable times sigma^2 (sigma_n for P[x], sigma_d for P[y]; as 2D)
+        L = p.layout
+        wz = np.zeros(L.n)
+        wz[L["u"]], wz[L["b"]] = s.cap, s.Mnu_diag
+        cap_e = s.cap[p.ue]
+        wz[L["d"]] = 1 / cap_e
+        Mf = np.asarray(s.Mnu_diag)[p.f_pml]
+        for cas, w in ((p.fe, cap_e), (p.ff, 1 / Mf)):
+            for (_, sn, _, sd), sl in zip(cas.coeffs, cas.slots):
+                wz[sl["x0"]], wz[sl["y0"]] = w, w
+                wz[sl["Px"]] = w * np.asarray(sn, float) ** 2
+                wz[sl["Py"]] = w * np.asarray(sd, float) ** 2
+        self._w = {"u": wz[:nu], "b": wz[nu : nu + nf], "z": wz[nu + nf :]}
+
+    def _views(self):
+        a, b = self._split
+        self.S = {"u": self._X[:a], "b": self._X[a:b], "z": self._X[b:]}
+
+    def _step_pml3d(self, t_half):
+        P1, P2, P3, P4 = self.P
+        X = self._X
+        if self._fast:
+            a, b = self._buf
+            P1.spmv_into(X, a)
+            P2.spmv_into(a, b)
+            P3.spmv_into(b, a)
+            self._add_sources(a, "node", t_half, 1.0)
+            P4.spmv_into(a, X)
+            return
+        y = P3 @ (P2 @ (P1 @ X))
+        self._add_sources(y, "node", t_half, 1.0)
+        X[...] = P4 @ y
+
     def _build_3d(self, s, fuse_massless):
         if s.hodge != "voronoi":
             raise NotImplementedError("DeviceStepper: hodge='whitney' (sparse solve per step)")
+        if getattr(s, "_pml", None) is not None:
+            return self._build_pml3d(s)
         self.kind = "3d"
         Cs, Ceff = s.Cs, s.Cf
         self.kappa_massless, self.massless_block = 1.0, 0
@@ -522,6 +585,11 @@ class DeviceStepper:
             else:
                 (w, f), kind = src, "node"
             w = np.asarray(w, dtype=float)
+            if self.pml3 is not None:  # x += B (w f(t)): fold B into the weights
+                B = self.pml3.B
+                # absolute twin: |B| |w| bounds the rounding of B w and of the
+                # host's B (sum_k w_k f_k)
+                w = abs(B) @ np.abs(w) if self.absolute else B @ w
             nz = np.flatnonzero(w)
             dense = nz.size > 0.25 * w.size
             self.sources.append(
@@ -778,7 +846,9 @@ class DeviceStepper:
     def step(self):
         """One leapfrog step (the solver's `one_step`)."""
         t_half = (self.n + 0.5) * self.dt
-        if self.kind == "3d":
+        if self.pml3 is not None:
+            self._step_pml3d(t_half)
+        elif self.kind == "3d":
             self._step_3d(t_half)
         elif self.pol == "TM":
             self._step_tm(t_half)
@@ -851,6 +921,10 @@ class DeviceStepper:
         return {k: self._host(v) for k, v in self.S.items()}
 
     def set_state(self, state):
+        if self.pml3 is not None:
+            for k, v in state.items():
+                self.S[k][...] = self.xp.asarray(np.asarray(v, dtype=float))
+            return
         for k, v in state.items():
             self.S[k] = self.xp.array(np.asarray(v, dtype=float), copy=True)
 
@@ -868,6 +942,9 @@ class DeviceStepper:
         else:
             s.v = st["v"]
         s.n = self.n
+        if self.pml3 is not None:
+            self.pml3.x = self._host(self._X)
+            s.u, s.b = self.pml3.x[: self._split[0]].copy(), self.pml3.x[self._split[0] : self._split[1]].copy()
         for rec, pr in zip(s.recorder.probes, self.probes):
             rec["samples"] = list(self._host(pr["buf"][: pr["k"]]))
         for rec, d in zip(s.recorder.dfts, self.dfts):
@@ -880,6 +957,8 @@ class DeviceStepper:
         array module's memory: device for CuPy)."""
         skip = {"solver", "_w", "xp", "_csp", "S"}
         tot = sum(_nbytes(v, self.xp) for k, v in self.__dict__.items() if k not in skip)
+        if self.pml3 is not None:  # S holds views of _X
+            return tot
         return tot + sum(_nbytes(v, self.xp) for v in self.S.values())
 
 

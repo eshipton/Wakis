@@ -26,6 +26,8 @@ matrices by the consistent Whitney-form mass matrices (non-diagonal, positive
 definite on any mesh), the fallback for non-Delaunay meshes.
 """
 
+import warnings
+
 import numpy as np
 import scipy.sparse as sp
 from scipy.constants import epsilon_0 as eps_0
@@ -149,6 +151,10 @@ class UnstructuredFIT3D:
         `spherical_shell_mesh` (keys ``r0``, ``r1``, ``order``, ``R``,
         ``sigma_max``, ``kappa_max``, ``alpha``, ``center``), backed by the
         PEC/PMC outer wall; see `wakis.unstructured.pml3d.PML3D`.
+    allow_negative_faces : bool, optional
+        With ``hodge="voronoi"``, faces whose dual edge length is negative
+        make K indefinite so time stepping diverges at any ``dt``; by default
+        ``False`` raises ``ValueError``, whereas ``True`` emits a warning.
 
     Attributes
     ----------
@@ -168,6 +174,7 @@ class UnstructuredFIT3D:
         dt=None,
         cfl=0.95,
         pml=None,
+        allow_negative_faces=False,
     ):
         if mesh.dim != 3:
             raise ValueError("UnstructuredFIT3D needs a tetrahedral mesh")
@@ -210,7 +217,7 @@ class UnstructuredFIT3D:
         if hodge == "voronoi":
             # Nearly degenerate Voronoi faces, also after material weighting
             # (signed per-cell parts can cancel at material interfaces)
-            small = massless_tol * L**2
+            small = massless_tol * L**2 / getattr(mesh, "massless_area_factor", 1.0)
             massless = ((area < small) | (cap * L / eps_0 < small)) & ~fixed
             self.massless = np.flatnonzero(massless)
             self.free = np.flatnonzero(~fixed & ~massless)
@@ -230,6 +237,15 @@ class UnstructuredFIT3D:
                     f"{np.sum(self.cap <= 0)} edges with non-positive dual area: "
                     "the mesh is not Delaunay; use hodge='whitney'"
                 )
+            n_neg = int(np.sum((self.Mnu_diag < 0) & (np.abs(self.Cf).sum(1).A1 > 0)))
+            if n_neg:
+                msg = (
+                    f"{n_neg} faces with negative dual length: the mesh is not "
+                    "Delaunay (K is indefinite); run improve_dt or use hodge='whitney'"
+                )
+                if not allow_negative_faces:
+                    raise ValueError(msg)
+                warnings.warn(msg, stacklevel=2)
             Kss = (self.Cs.T @ self.Mnu @ self.Cs).tocsc()
             self._Kss = splu(Kss) if self.massless.size else None
         else:
