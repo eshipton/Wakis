@@ -344,13 +344,6 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         ibar = -(self.P.conj() @ ge)
         return np.concatenate([b1bar, ebar] + psib + phib), ibar
 
-    def material_gradient(self, *args, **kw):
-        if self.lts is not None:
-            raise NotImplementedError(
-                "material gradient is not implemented with LTS (R_0 depends on eps and mu)"
-            )
-        raise NotImplementedError("material gradient is not implemented")
-
     def _K_T(self, y):
         """``K^T y`` (bilinear transpose of `_Kz`)."""
         if self.ops is not None:
