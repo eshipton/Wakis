@@ -5,8 +5,9 @@
 
 """
 Plot the PEC-sphere equal-accuracy and cost-per-unknown-step study from
-`studies/hybrid-cart-tet/results_mixed_study.json` and
-`studies/hybrid-cart-tet/results_mixed_study_N20.json` (written by
+`studies/hybrid-cart-tet/results_mixed_study.json`,
+`studies/hybrid-cart-tet/results_mixed_study_N20.json`, and
+`studies/hybrid-cart-tet/results_mixed_study_N24.json` (written by
 `studies/hybrid-cart-tet/run_mixed_study.py` and merged by key `table`).
 
 Writes two PNGs under `studies/hybrid-cart-tet/figures/`:
@@ -35,7 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIG_DIR = os.path.join(HERE, "figures")
 DEFAULT_JSON = os.path.join(HERE, "results_mixed_study.json")
 DEFAULT_JSON_N20 = os.path.join(HERE, "results_mixed_study_N20.json")
-DEFAULT_JSONS = (DEFAULT_JSON, DEFAULT_JSON_N20)
+DEFAULT_JSON_N24 = os.path.join(HERE, "results_mixed_study_N24.json")
+DEFAULT_JSONS = (DEFAULT_JSON, DEFAULT_JSON_N20, DEFAULT_JSON_N24)
 
 plt.rcParams.update(
     {
@@ -53,37 +55,107 @@ VARIANT_STYLE = {
         "color": "C0",
         "marker": "o",
         "ls": "-",
+        "ms": 7.0,
+        "mfc": "white",
+        "mew": 1.8,
+        "zorder": 4,
     },
     "mixed": {
         "label": "hybrid, mixed mass",
         "color": "C1",
         "marker": "s",
         "ls": "--",
+        "ms": 6.0,
+        "mfc": "C1",
+        "mew": 1.2,
+        "zorder": 3,
     },
     "mixed_smoothed": {
         "label": "hybrid, mixed mass + smooth_patch",
         "color": "C2",
         "marker": "^",
         "ls": "-",
+        "ms": 6.2,
+        "mfc": "C2",
+        "mew": 1.2,
+        "zorder": 5,
     },
     "consistent_smoothed": {
         "label": "hybrid, consistent mass + smooth_patch",
         "color": "C4",
         "marker": "v",
         "ls": "-.",
+        "ms": 6.0,
+        "mfc": "C4",
+        "mew": 1.2,
+        "zorder": 3,
     },
     "staircase": {
         "label": "Cartesian staircase (HybridFIT3D)",
         "color": "0.25",
         "marker": "D",
         "ls": ":",
+        "ms": 5.5,
+        "mfc": "0.25",
+        "mew": 1.2,
+        "zorder": 3,
     },
     "tet": {
         "label": "all-tetrahedral physical region",
         "color": "C3",
         "marker": "P",
         "ls": "-.",
+        "ms": 6.8,
+        "mfc": "C3",
+        "mew": 1.2,
+        "zorder": 3,
     },
+}
+
+TTS_ANNOT_OFFSETS = {
+    ("consistent", 10): ((7, 4), "left", "bottom", False),
+    ("consistent", 16): ((8, 3), "left", "bottom", False),
+    ("consistent", 20): ((20, 2), "left", "bottom", True),
+    ("consistent", 24): ((-8, 6), "right", "bottom", False),
+    ("mixed", 10): ((-6, -9), "right", "top", False),
+    ("mixed", 16): ((-1, -16), "center", "top", True),
+    ("mixed", 20): ((1, 12), "center", "bottom", True),
+    ("mixed", 24): ((-8, -6), "right", "top", False),
+    ("mixed_smoothed", 10): ((7, -8), "left", "top", False),
+    ("mixed_smoothed", 16): ((-8, -4), "right", "center", False),
+    ("mixed_smoothed", 20): ((-3, 15), "center", "bottom", True),
+    ("mixed_smoothed", 24): ((-15, -12), "right", "top", True),
+    ("staircase", 10): ((-7, -9), "right", "top", False),
+    ("staircase", 16): ((7, 3), "left", "bottom", False),
+    ("staircase", 20): ((-8, -3), "right", "center", False),
+    ("staircase", 24): ((-7, 6), "right", "bottom", False),
+    ("tet", 10): ((7, 4), "left", "bottom", False),
+    ("tet", 16): ((8, -5), "left", "top", False),
+    ("tet", 20): ((5, 13), "left", "bottom", True),
+    ("tet", 24): ((8, -2), "left", "center", False),
+}
+
+COST_ANNOT_OFFSETS = {
+    ("consistent", 10): ((-7, 6), "right", "bottom"),
+    ("consistent", 16): ((7, 4), "left", "bottom"),
+    ("consistent", 20): ((7, 4), "left", "bottom"),
+    ("consistent", 24): ((8, -2), "left", "center"),
+    ("mixed", 10): ((-7, 1), "right", "center"),
+    ("mixed", 16): ((-7, 4), "right", "bottom"),
+    ("mixed", 20): ((-8, -8), "right", "top"),
+    ("mixed", 24): ((7, -9), "left", "top"),
+    ("mixed_smoothed", 10): ((7, -8), "left", "top"),
+    ("mixed_smoothed", 16): ((0, -12), "center", "top"),
+    ("mixed_smoothed", 20): ((-8, 5), "right", "bottom"),
+    ("mixed_smoothed", 24): ((7, 5), "left", "bottom"),
+    ("staircase", 10): ((-2, 7), "center", "bottom"),
+    ("staircase", 16): ((-2, 7), "center", "bottom"),
+    ("staircase", 20): ((-2, 7), "center", "bottom"),
+    ("staircase", 24): ((-2, 7), "center", "bottom"),
+    ("tet", 10): ((-7, 5), "right", "bottom"),
+    ("tet", 16): ((8, -2), "left", "center"),
+    ("tet", 20): ((-7, 6), "right", "bottom"),
+    ("tet", 24): ((-7, 5), "right", "bottom"),
 }
 
 
@@ -117,15 +189,15 @@ def merge_study_data(datasets, mutate=None):
 
 
 def load_merged_study(paths=None, mutate=None):
-    """Load and merge ``results_mixed_study.json`` and ``results_mixed_study_N20.json``."""
+    """Load and merge ``results_mixed_study*.json`` files."""
     if paths is None:
         paths = [p for p in DEFAULT_JSONS if os.path.exists(p)]
     elif isinstance(paths, str):
         paths = [paths]
-        if os.path.abspath(paths[0]) == os.path.abspath(
-            DEFAULT_JSON
-        ) and os.path.exists(DEFAULT_JSON_N20):
-            paths.append(DEFAULT_JSON_N20)
+        if os.path.abspath(paths[0]) == os.path.abspath(DEFAULT_JSON):
+            for extra in DEFAULT_JSONS[1:]:
+                if os.path.exists(extra):
+                    paths.append(extra)
     datasets = []
     for p in paths:
         with open(p) as f:
@@ -164,19 +236,43 @@ def plot_tts_vs_error(data, out_path):
             linestyle=st["ls"],
             color=st["color"],
             label=st["label"],
-            ms=6,
+            ms=st.get("ms", 6),
+            mfc=st.get("mfc", st["color"]),
+            mew=st.get("mew", 1.2),
             lw=1.6,
+            zorder=st.get("zorder", 3),
         )
         for r in rows:
+            n_val = int(r["N"])
+            xytext, ha, va, use_arrow = TTS_ANNOT_OFFSETS.get(
+                (v, n_val), ((5, 4), "left", "bottom", False)
+            )
+            arrowprops = (
+                {
+                    "arrowstyle": "-",
+                    "color": st["color"],
+                    "lw": 0.6,
+                    "alpha": 0.7,
+                    "shrinkA": 0,
+                    "shrinkB": 3,
+                }
+                if use_arrow
+                else None
+            )
             ax.annotate(
-                f"N={r['N']}",
+                f"N={n_val}",
                 (r["far_zone_error"], r["time_to_solution_s"]),
                 textcoords="offset points",
-                xytext=(5, 4),
-                fontsize=8,
+                xytext=xytext,
+                ha=ha,
+                va=va,
+                fontsize=7.5,
                 color=st["color"],
+                arrowprops=arrowprops,
+                zorder=6,
             )
 
+    ax.margins(x=0.14, y=0.12)
     ax.set_xlabel(
         "Far-zone relative $L_2$ error "
         "$\\|\\mathbf{e}_{\\mathrm{num}} - \\mathbf{e}_{\\mathrm{ref}}\\|_2"
@@ -190,7 +286,7 @@ def plot_tts_vs_error(data, out_path):
         "PEC sphere ($ka = 2$): one-period time to solution vs far-zone Mie error",
         fontsize=10,
     )
-    ax.legend(fontsize=8, loc="best")
+    ax.legend(fontsize=8, loc="lower left")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -231,17 +327,27 @@ def plot_cost_per_unknown_step(data, out_path):
             linestyle=st["ls"],
             color=st["color"],
             label=st["label"],
-            ms=6,
+            ms=st.get("ms", 6),
+            mfc=st.get("mfc", st["color"]),
+            mew=st.get("mew", 1.2),
             lw=1.6,
+            zorder=st.get("zorder", 3),
         )
         for r in rows:
+            n_val = int(r["N"])
+            xytext, ha, va = COST_ANNOT_OFFSETS.get(
+                (v, n_val), ((5, 4), "left", "bottom")
+            )
             ax.annotate(
-                f"N={r['N']}",
+                f"N={n_val}",
                 (r["n_unknowns"], r["cost_per_unknown_step_s"]),
                 textcoords="offset points",
-                xytext=(5, 4),
-                fontsize=8,
+                xytext=xytext,
+                ha=ha,
+                va=va,
+                fontsize=7.5,
                 color=st["color"],
+                zorder=6,
             )
 
     cart_pts = []
@@ -287,11 +393,15 @@ def plot_cost_per_unknown_step(data, out_path):
                 f"N={N}",
                 (u, c),
                 textcoords="offset points",
-                xytext=(5, -10),
-                fontsize=8,
+                xytext=(3, -7),
+                ha="center",
+                va="top",
+                fontsize=7.5,
                 color="0.35",
+                zorder=6,
             )
 
+    ax.margins(x=0.12, y=0.14)
     ax.set_xlabel(
         "Number of unknowns $n_{\\mathrm{unknowns}} = n_{\\mathrm{free}} + n_{\\mathrm{faces}}$ [dimensionless]"
     )
@@ -300,7 +410,7 @@ def plot_cost_per_unknown_step(data, out_path):
         "PEC sphere time-domain benchmark (200 steps, 1 core): cost per unknown-step vs unknowns",
         fontsize=10,
     )
-    ax.legend(fontsize=8, loc="best")
+    ax.legend(fontsize=8, loc="lower right", bbox_to_anchor=(0.98, 0.17))
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -313,8 +423,9 @@ def main():
         nargs="*",
         default=None,
         help=(
-            "Paths to study JSON files (default: results_mixed_study.json and "
-            "results_mixed_study_N20.json merged by key 'table')."
+            "Paths to study JSON files (default: results_mixed_study.json, "
+            "results_mixed_study_N20.json, and results_mixed_study_N24.json "
+            "merged by key 'table')."
         ),
     )
     ap.add_argument(

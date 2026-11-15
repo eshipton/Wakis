@@ -399,7 +399,7 @@ def plot_convergence(json_path=None, out_path=None):
             ax.set_xlabel("Mesh spacing h [m]")
             ax.set_ylabel(ylabel)
             ax.set_title(title, fontsize=9.5)
-            figstyle.place_legend_below(ax, ncol=2, y_offset=-0.22)
+            figstyle.place_legend_below(ax, ncol=1, y_offset=-0.22)
 
         figstyle.save(fig, out_path, close=True, auto_legend_below=False)
 

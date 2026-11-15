@@ -349,8 +349,9 @@ def plot_gpu(rows, path):
                   color=st["c"], label=st["label"] + ", block kernels")  # fmt: skip
     ax.set_xlabel("GPU time to $T$ on one L4 [s]")
     ax.set_ylabel("relative error of $f_1$ (spatial, semi-discrete)")
+    ax.set_ylim(1.25e-3, 4.5e-2)
     ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=7)
+    ax.legend(fontsize=7, loc="upper right")
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -361,8 +362,7 @@ def main():
     summary = {}
     cases = []
     rowsD = None
-    for part, name in (("D", "large patch: $\\varepsilon_r=9$ cube, 0.3 m"),
-                       ("E", "small patch: $\\varepsilon_r=9$ cube, 0.1 m")):  # fmt: skip
+    for part, name in (("D", "large patch: $\\varepsilon_r=9$ cube, 0.3 m"),):
         res = load(part)
         if res is None:
             continue
@@ -387,8 +387,6 @@ def main():
         summary["gpu"] = g
         summary["gpu_vs_cpu"] = resG["gpu_vs_cpu"]
         plot_gpu(g, os.path.join(IMG, "subgrid3d_lts_gpu.png"))
-    with open(os.path.join(HERE, "summary_lts.json"), "w") as f:
-        json.dump(summary, f, indent=1)
     print(json.dumps(summary, indent=1)[:6000])
 
 
