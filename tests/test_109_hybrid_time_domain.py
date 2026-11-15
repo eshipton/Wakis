@@ -14,8 +14,7 @@ Verification checks and mutations:
    for both LU and Chebyshev mass solves, broken by a non-symmetric mass
    perturbation.
 3. Exact leapfrog energy conservation with ``mass="mixed"`` over 200 steps
-   (relative peak-to-peak drift ``< 1e-14``, measured ``4e-16`` to ``6e-16``),
-   broken by ``mutate="asym"``.
+   (relative peak-to-peak drift ``< 1e-14``), broken by ``mutate="asym"``.
 4. Mutation checks (`test_lump_all_mutation`, `test_delaunay_wellcentred_mutation`):
    ``mutate="lump_all"`` lumps every tetrahedral edge including non-well-centred
    ones, failing by non-positive Voronoi diagonal ``D_V`` on the Kuhn and
@@ -26,6 +25,16 @@ Verification checks and mutations:
 5. Eigenfrequency agreement (`test_cavity_eigenfrequency_mixed`): on the PEC
    cavity from `wakis.hybrid.verification.cavity_modes`, the lowest mode
    satisfies ``|f_mixed - f_consistent| <= |f_consistent - f_analytic|``.
+6. Interior patch smoothing (`smooth_patch` in `wakis.hybrid.patch_quality`):
+   (a) box-boundary and PEC-sphere nodes are unchanged with exact equality;
+   (b) all tetrahedra keep positive volume and the worst normalised volume is
+   monotonically non-decreasing across sweeps (exact comparison), while the
+   Jacobi-scaled consistent-block spectrum ratio ``lam_hi / lam_lo`` drops on
+   the test Delaunay mesh;
+   (c) the smoothed mesh passes `box_surface_check`;
+   (d) ``mutate="move_boundary"`` moves box-surface nodes and fails test (a);
+   (e) `HybridFIT3D(..., mass="mixed")` on the smoothed mesh preserves exact
+   transposition (`_assert_dot_product`).
 """
 
 import numpy as np
@@ -35,10 +44,16 @@ import scipy.sparse.linalg as sla
 
 from wakis.hybrid import (
     HybridFIT3D,
+    box_surface_check,
+    consistent_spectrum_ratio,
     delaunay_box_mesh,
+    fixed_patch_nodes,
     kuhn_box_mesh,
     mixed_partition,
+    normalised_tet_volume,
+    smooth_patch,
     well_centred_tets,
+    worst_normalised_volume,
 )
 from wakis.hybrid.verification import cavity_modes
 
@@ -71,13 +86,12 @@ def test_mixed_mass_spd(meshes):
     assert (s_def.M - s_cons.M).nnz == 0
 
     s = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass="mixed", dt=1.0)
-    # measured: 242 lumped edges out of 5873 on the test Delaunay mesh
+    # results_mixed.json (key 'test_delaunay'): 242 lumped edges out of 5873
     assert s.lump_mask.sum() > 0
     assert np.all(s.dv > 0)
 
     sym_m1 = sp.linalg.norm(s.M1 - s.M1.T) / sp.linalg.norm(s.M1)
     sym_m = sp.linalg.norm(s.msolver.M - s.msolver.M.T) / sp.linalg.norm(s.msolver.M)
-    # measured: sym_m1 = 4.66e-17, sym_m = 1.07e-17
     assert sym_m1 < 10 * EPS
     assert sym_m < 10 * EPS
 
@@ -102,17 +116,11 @@ def test_mixed_mass_spd(meshes):
     lam_max_m = sla.eigsh(
         s.msolver.M, k=1, which="LA", tol=1e-9, v0=vm, return_eigenvectors=False
     )[0]
-    # measured: lam_min_m1 = 1.79e-15 (lam_max_m1 = 4.12e-12),
-    #           lam_min_m  = 1.79e-15 (lam_max_m  = 2.65e-12)
     assert lam_min_m1 > 1e6 * EPS * lam_max_m1
     assert lam_min_m > 1e6 * EPS * lam_max_m
 
 
-@pytest.mark.parametrize("solver", ["lu", "chebyshev"])
-def test_dot_product_mixed(meshes, solver):
-    """With mass='mixed', <K x, y> - <x, K^T y> and <step(x), y> - <x, step_T(y)>
-    hold to double-precision round-off; non-symmetric perturbations break it."""
-    tm = meshes["delaunay"]
+def _assert_dot_product(tm, solver):
     s = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass="mixed", mass_solver=solver)
     assert (s.K.T - s.KT).nnz == 0
 
@@ -123,7 +131,6 @@ def test_dot_product_mixed(meshes, solver):
     kty = s.KT @ y
     cond_k = np.abs(kx) @ np.abs(y) + np.abs(x) @ np.abs(kty)
     rel_k = abs(kx @ y - x @ kty) / cond_k
-    # measured: 8.80e-17 (< EPS = 2.22e-16: pure inner-product summation order)
     assert rel_k < 5 * EPS
 
     b, e = rng.standard_normal(s.n_faces), rng.standard_normal(s.n_free)
@@ -137,7 +144,6 @@ def test_dot_product_mixed(meshes, solver):
         rhs = b @ tb + e @ te + i_all @ ti
         return abs(lhs - rhs) / (abs(lhs) + abs(rhs))
 
-    # measured: 4.39e-16 (lu), 1.32e-15 (chebyshev)
     assert mismatch(s) < 10 * EPS
     M = s.M.tolil()
     S = s.msolver.S
@@ -148,6 +154,13 @@ def test_dot_product_mixed(meshes, solver):
         assert mismatch(s) > 1e-8
     else:
         assert mismatch(s) < 10 * EPS
+
+
+@pytest.mark.parametrize("solver", ["lu", "chebyshev"])
+def test_dot_product_mixed(meshes, solver):
+    """With mass='mixed', <K x, y> - <x, K^T y> and <step(x), y> - <x, step_T(y)>
+    hold to double-precision round-off; non-symmetric perturbations break it."""
+    _assert_dot_product(meshes["delaunay"], solver)
 
 
 @pytest.mark.parametrize(
@@ -180,21 +193,17 @@ def test_energy_drift_mixed(meshes, kind, solver):
         s.b = rng.standard_normal(s.n_faces) * 1e-9
         E = s.run(200, energy=True)
         drift[mut] = np.ptp(E) / np.abs(E).mean()
-    # measured: 3.97e-16 to 5.88e-16
     assert drift[None] < 1e-14
     assert drift["asym"] > 1e-4
 
 
 def test_lump_all_mutation(meshes):
-    """mutate='lump_all' lumps non-well-centred edges and fails both by
-    non-positive D_V on the test meshes and by violating the cavity
-    eigenfrequency bound."""
+    """mutate='lump_all' lumps non-well-centred edges and fails by
+    non-positive D_V on the test meshes."""
     for kind in ("kuhn", "delaunay"):
         tm = meshes[kind]
         lump_mask, dv = mixed_partition(tm, mutate="lump_all")
         assert lump_mask.all()
-        # measured: min(dv) = -1.23e-28 (869 edges <= 0) on kuhn,
-        #           min(dv) = -7.84e-30 (1 edge <= 0) on delaunay
         assert np.any(dv <= 0)
         s = HybridFIT3D(
             XN, YN, ZN, box=BOX, tet_mesh=tm, mass="mixed", mutate="lump_all", dt=1.0
@@ -212,7 +221,7 @@ def test_delaunay_wellcentred_mutation(meshes):
     """mutate='ignore_wellcentred' omits the well_centred_tets filter in
     mixed_partition on the Delaunay test mesh and either yields a non-positive
     dv or changes the lumped edge set.
-    # measured by this test on meshes['delaunay']: adds 85 lumped edges (327 vs 242)
+    # printed by pytest -s (w3hyb-m2 run.log): adds 85 lumped edges (327 vs 242)
     """
     tm = meshes["delaunay"]
     lump_ref, _ = mixed_partition(tm)
@@ -247,7 +256,87 @@ def test_cavity_eigenfrequency_mixed():
     f_mix = s_mix.eigenfrequencies(3, 0.9 * f_ex[0], 1.15 * f_ex[-1])
     diff_mix_cons = abs(f_mix[0] - f_cons[0])
     diff_cons_ex = abs(f_cons[0] - f_ex[0])
-    # measured at N=16: |f_mixed - f_consistent| = 5.10e5 Hz (2.04e-3 rel),
-    #                   |f_consistent - f_analytic| = 6.20e5 Hz (2.48e-3 rel),
-    #                   ratio = 0.822 <= 1.0
+    # results_mixed.json (key 'cavity_N16'):
+    # diff_mixed_consistent = 509548.66 Hz, diff_consistent_analytic = 620262.44 Hz,
+    # ratio = 0.8215 <= 1.0
     assert diff_mix_cons <= diff_cons_ex, (f_mix[0], f_cons[0], f_ex[0])
+
+
+def _assert_boundary_and_sphere_fixed(tm, tm_smoothed, lines, allow_other=False):
+    fixed = fixed_patch_nodes(tm)
+    assert np.array_equal(tm_smoothed.cells, tm.cells)
+    assert np.array_equal(tm_smoothed.cell_tags, tm.cell_tags)
+    assert np.array_equal(tm_smoothed.nodes[fixed], tm.nodes[fixed]), (
+        f"boundary/sphere nodes moved: max diff "
+        f"{np.abs(tm_smoothed.nodes[fixed] - tm.nodes[fixed]).max():.3e}"
+    )
+    assert not np.array_equal(tm_smoothed.nodes[~fixed], tm.nodes[~fixed])
+    bf = box_surface_check(tm_smoothed, *lines, allow_other=allow_other)
+    assert len(bf) > 0
+
+
+def test_smooth_patch_boundary_and_box_check(meshes):
+    """Tests (a), (c), (d): boundary and PEC-sphere nodes stay exactly fixed,
+    smoothed meshes pass `box_surface_check`, and `mutate='move_boundary'`
+    fails test (a)."""
+    tm = meshes["delaunay"]
+    tm_s = smooth_patch(tm)
+    _assert_boundary_and_sphere_fixed(tm, tm_s, LINES, allow_other=False)
+
+    # Mesh with a PEC sphere hole: both box-surface and sphere-surface nodes fixed
+    sv = np.linspace(-0.25, 0.25, 6)
+    tm_sph = delaunay_box_mesh(
+        sv, sv, sv, h=0.08, sphere=((0.0, 0.0, 0.0), 0.08), hole=True, seed=0
+    )
+    tm_sph_s = smooth_patch(tm_sph)
+    _assert_boundary_and_sphere_fixed(tm_sph, tm_sph_s, (sv, sv, sv), allow_other=True)
+    r_nodes = np.linalg.norm(tm_sph.nodes, axis=1)
+    on_sphere = np.isclose(r_nodes, 0.08, atol=1e-6)
+    assert on_sphere.any()
+    assert np.array_equal(tm_sph_s.nodes[on_sphere], tm_sph.nodes[on_sphere])
+
+    # Test (d): mutate='move_boundary' moves boundary nodes and must fail test (a)
+    tm_mut = smooth_patch(tm, mutate="move_boundary")
+    with pytest.raises(AssertionError, match="boundary/sphere nodes moved"):
+        _assert_boundary_and_sphere_fixed(tm, tm_mut, LINES, allow_other=False)
+    with pytest.raises(ValueError):
+        box_surface_check(tm_mut, *LINES)
+
+
+def test_smooth_patch_monotone_volume_and_spectrum(meshes):
+    """Test (b): all tetrahedra keep positive volume, the worst normalised
+    volume is monotonically non-decreasing across sweeps (exact comparison),
+    and the Jacobi-scaled consistent-block spectrum ratio drops on the test
+    Delaunay mesh."""
+    tm = meshes["delaunay"]
+    w_prev = worst_normalised_volume(tm)
+    for k in range(1, 7):
+        tm_k = smooth_patch(tm, n_sweeps=k)
+        assert np.all(tm_k.cell_volume > 0)
+        assert np.all(normalised_tet_volume(tm_k) > 0)
+        w_cur = worst_normalised_volume(tm_k)
+        assert w_cur >= w_prev
+        w_prev = w_cur
+    assert w_prev > worst_normalised_volume(tm)
+
+    hist = tm_k.smooth_history
+    for k in range(len(hist) - 1):
+        assert hist[k + 1] >= hist[k]
+
+    ratio_before = consistent_spectrum_ratio(tm)
+    ratio_after = consistent_spectrum_ratio(tm_k)
+    assert ratio_after < ratio_before
+
+    tm_spec = smooth_patch(tm, objective="spectrum", n_sweeps=3)
+    assert np.all(tm_spec.cell_volume > 0)
+    for k in range(len(tm_spec.smooth_history) - 1):
+        assert tm_spec.smooth_history[k + 1] >= tm_spec.smooth_history[k]
+    assert consistent_spectrum_ratio(tm_spec) < ratio_before
+
+
+@pytest.mark.parametrize("solver", ["lu", "chebyshev"])
+def test_dot_product_mixed_smoothed(meshes, solver):
+    """Test (e): exact transposition (`_assert_dot_product`) holds to
+    double-precision round-off on the smoothed Delaunay mesh with mass='mixed'."""
+    tm_s = smooth_patch(meshes["delaunay"])
+    _assert_dot_product(tm_s, solver)
