@@ -38,8 +38,15 @@ Verification checks and mutations:
    (f) `pec_sphere_scattering` supports ``mass="mixed"`` and ``smooth=True``
    (``method="hybrid"`` only), raises ``ValueError`` on ``mass="bogus"``, and
    its smoothed-mesh check fails under the verification-only mutation that
-   makes ``smooth`` ignore `smooth_patch`.
+   makes ``smooth`` ignore `smooth_patch`;
+   (g) `measure_cartesian_solverfit3d` in `studies/hybrid-cart-tet/run_mixed_study.py`
+   computes finite positive `cost_per_unknown_step_s` after the `step_0`
+   warm-up step (`_attrcleanup`) and matches the closed-form / `HybridFIT3D`
+   free-edge and face counts, broken by `mutate="ignore_pec_walls"`.
 """
+
+import importlib.util
+import os
 
 import numpy as np
 import pytest
@@ -387,4 +394,57 @@ def test_pec_sphere_scattering_mass_and_smooth():
         match=r"smoothed mesh does not differ from input mesh: max_node_diff=0\.000e\+00",
     ) as exc_info:
         _assert_pec_sphere_smoothed_differs(out_mix, out_mut)
+    print(f"Observed mutation failure: {exc_info.value}")
+
+
+def _assert_cartesian_unknown_counts(out, nh, s_cart):
+    expected_free = 3 * (2 * nh) * (2 * nh - 1) ** 2
+    expected_faces = 3 * (2 * nh) ** 2 * (2 * nh + 1)
+    assert out["cart_n_free_edges"] == expected_free == s_cart.n_free, (
+        f"cart_n_free_edges={out['cart_n_free_edges']} != expected {expected_free}"
+    )
+    assert out["cart_n_faces"] == expected_faces == s_cart.n_faces
+    assert out["cart_n_unknowns"] == expected_free + expected_faces
+
+
+def test_measure_cartesian_solverfit3d():
+    """Regression test for `measure_cartesian_solverfit3d`: after the warm-up
+    `one_step()` (`_attrcleanup`), it derives the PEC wall edge mask from the
+    public grid geometry, matches `HybridFIT3D` free-edge/face counts, and
+    returns a finite positive `cost_per_unknown_step_s`."""
+    study_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "studies",
+        "hybrid-cart-tet",
+        "run_mixed_study.py",
+    )
+    spec = importlib.util.spec_from_file_location("run_mixed_study", study_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    nh = 2
+    h = 0.25
+    v = h * np.arange(-nh, nh + 1)
+    s_cart = HybridFIT3D(v, v, v, dt=1.0)
+
+    out = mod.measure_cartesian_solverfit3d(v, n_steps=3)
+    _assert_cartesian_unknown_counts(out, nh, s_cart)
+    assert np.isfinite(out["cost_per_unknown_step_s"])
+    assert out["cost_per_unknown_step_s"] > 0
+    assert np.isfinite(out["cart_cost_per_unknown_step_s"])
+    assert out["cart_cost_per_unknown_step_s"] > 0
+    assert out["cost_per_unknown_step_s"] == out["cart_cost_per_unknown_step_s"]
+    assert np.isfinite(out["cart_s_per_step"]) and out["cart_s_per_step"] > 0
+    assert np.isfinite(out["cart_dt"]) and out["cart_dt"] > 0
+    assert (
+        np.isfinite(out["cart_time_to_solution_s"])
+        and out["cart_time_to_solution_s"] > 0
+    )
+
+    # Mutation check: omitting the PEC outer-wall mask overcounts free edges
+    out_mut = mod.measure_cartesian_solverfit3d(v, n_steps=1, mutate="ignore_pec_walls")
+    with pytest.raises(
+        AssertionError, match=r"cart_n_free_edges=300 != expected 108"
+    ) as exc_info:
+        _assert_cartesian_unknown_counts(out_mut, nh, s_cart)
     print(f"Observed mutation failure: {exc_info.value}")

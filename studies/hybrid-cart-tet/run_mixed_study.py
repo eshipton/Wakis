@@ -33,6 +33,7 @@ if ROOT not in sys.path:
 import numpy as np
 from scipy.constants import c as C0
 
+from wakis.field import Field
 from wakis.gridFIT3D import GridFIT3D
 from wakis.hybrid import HybridFIT3D, delaunay_box_mesh, smooth_patch
 from wakis.hybrid.verification import pec_sphere_scattering
@@ -53,9 +54,9 @@ FAR_ZONE_NORM = (
 CART_UNKNOWNS_DEFINITION = (
     "cart_n_unknowns = cart_n_free_edges + cart_n_faces, where "
     "cart_n_free_edges = 3*(2*nh)*(2*nh-1)^2 is the number of active primary "
-    "electric edges with BC != 0 and ieps > 0, and "
+    "electric edges off the PEC outer walls with ieps > 0, and "
     "cart_n_faces = 3*(2*nh)^2*(2*nh+1) is the number of active primary "
-    "magnetic faces with imu > 0 and iDa > 0 on the (2*nh)^3 Cartesian grid "
+    "magnetic faces with imu > 0 and grid.iA > 0 on the (2*nh)^3 Cartesian grid "
     "with node lines v = h * arange(-nh, nh + 1); cart_n_padded = 6*Nx*Ny*Nz "
     "is the padded 3D array storage length."
 )
@@ -95,8 +96,10 @@ def _source_pulse():
     return pulse
 
 
-def measure_cartesian_solverfit3d(v, n_steps=200):
+def measure_cartesian_solverfit3d(v, n_steps=200, mutate=None):
     """Benchmark `SolverFIT3D` on the same Cartesian node lines `v`."""
+    if mutate not in (None, "ignore_pec_walls"):
+        raise ValueError(f"Unsupported mutate={mutate!r}")
     with contextlib.redirect_stdout(sys.stderr):
         grid = GridFIT3D(
             float(v[0]),
@@ -119,19 +122,41 @@ def measure_cartesian_solverfit3d(v, n_steps=200):
         # Warm-up step to complete step_0 matrix assembly before wall-clock timing
         solver.one_step()
 
-    bc_diag = solver.BC.toarray().ravel() != 0
+    # SolverFIT3D._attrcleanup() (wakis/solverFIT3D.py) deletes the temporary
+    # self.BC and self.iDa attributes during step_0 (the warm-up one_step()
+    # call), and SolverFIT3D exposes no persistent attribute or method for the
+    # PEC boundary edge mask. Derive the PEC outer-wall tangential edge mask
+    # from the public grid geometry (solver.Nx, solver.Ny, solver.Nz) and use
+    # grid.iA for the primary inverse face areas: with
+    # GridFIT3D(boundary_at_domain_edge=True), transverse node indices 0 (low
+    # wall, v[0]) and -1 (high wall, v[-1], before the isolated edge-ghost cell
+    # where solver.ieps == 0) are the tangential PEC boundary planes.
+    pec_wall_edges = Field(solver.Nx, solver.Ny, solver.Nz, dtype=np.int8)
+    if mutate != "ignore_pec_walls":
+        for d in ("x", "y", "z"):
+            if d != "x":
+                pec_wall_edges[0, :, :, d] = 1
+                pec_wall_edges[-1, :, :, d] = 1
+            if d != "y":
+                pec_wall_edges[:, 0, :, d] = 1
+                pec_wall_edges[:, -1, :, d] = 1
+            if d != "z":
+                pec_wall_edges[:, :, 0, d] = 1
+                pec_wall_edges[:, :, -1, d] = 1
+
+    not_pec_wall = pec_wall_edges.toarray().ravel() == 0
     ieps_diag = solver.ieps.toarray().ravel() > 0
     imu_diag = solver.imu.toarray().ravel() > 0
-    ida_diag = solver.iDa.diagonal() > 0
+    ia_diag = grid.iA.toarray().ravel() > 0
 
-    cart_n_free_edges = int((bc_diag & ieps_diag).sum())
-    cart_n_faces = int((imu_diag & ida_diag).sum())
+    cart_n_free_edges = int((not_pec_wall & ieps_diag).sum())
+    cart_n_faces = int((imu_diag & ia_diag).sum())
     cart_n_unknowns = int(cart_n_free_edges + cart_n_faces)
     cart_n_padded = int(6 * solver.N)
 
     pulse = _source_pulse()
     nh = (len(v) - 1) // 2
-    ix_src, iy_src, iz_src = 2, nh, nh
+    ix_src, iy_src, iz_src = min(2, nh), nh, nh
 
     t0 = time.perf_counter()
     for step in range(n_steps):
@@ -153,6 +178,7 @@ def measure_cartesian_solverfit3d(v, n_steps=200):
         "cart_dt": cart_dt,
         "cart_s_per_step": cart_s_per_step,
         "cart_cost_per_unknown_step_s": cart_cost_per_unknown_step_s,
+        "cost_per_unknown_step_s": cart_cost_per_unknown_step_s,
         "cart_steps": cart_steps,
         "cart_time_to_solution_s": cart_time_to_solution_s,
     }
@@ -319,7 +345,19 @@ def find_equal_accuracy_pairs(table, rel_tol=0.02):
     return pairs
 
 
-def run_study(ns=(10, 16), variants=None, n_steps=200, gap=0.2, T=0.5):
+def run_study(
+    ns=(10, 16),
+    variants=None,
+    n_steps=200,
+    gap=0.2,
+    T=0.5,
+    quick=False,
+):
+    if quick:
+        if tuple(ns) == (10, 16):
+            ns = (10,)
+        if n_steps == 200:
+            n_steps = 5
     if variants is None:
         variants = (
             "consistent",
@@ -395,7 +433,9 @@ def run_study(ns=(10, 16), variants=None, n_steps=200, gap=0.2, T=0.5):
         results_by_n[f"N={N}"] = per_n
 
     return {
+        "quick": bool(quick),
         "meta": {
+            "quick": bool(quick),
             "machine": platform.node(),
             "cpus": os.cpu_count(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
@@ -422,7 +462,7 @@ def run_study(ns=(10, 16), variants=None, n_steps=200, gap=0.2, T=0.5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ns", type=int, nargs="*", default=[10, 16])
+    ap.add_argument("--ns", type=int, nargs="*", default=None)
     ap.add_argument(
         "--variants",
         nargs="*",
@@ -434,16 +474,24 @@ def main():
             "tet",
         ],
     )
-    ap.add_argument("--n-steps", type=int, default=200)
+    ap.add_argument("--n-steps", type=int, default=None)
     ap.add_argument("--gap", type=float, default=0.2)
     ap.add_argument("--T", type=float, default=0.5)
+    ap.add_argument(
+        "--quick",
+        action="store_true",
+        help="Smoke-test run with N = 10 only and n_steps = 5.",
+    )
     args = ap.parse_args()
+    ns = args.ns if args.ns is not None else ([10] if args.quick else [10, 16])
+    n_steps = args.n_steps if args.n_steps is not None else (5 if args.quick else 200)
     out = run_study(
-        ns=args.ns,
+        ns=ns,
         variants=args.variants,
-        n_steps=args.n_steps,
+        n_steps=n_steps,
         gap=args.gap,
         T=args.T,
+        quick=args.quick,
     )
     print(json.dumps(out, indent=2), flush=True)
 
