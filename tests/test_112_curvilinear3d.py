@@ -591,3 +591,281 @@ def test_cavity_te101_orthogonal():
     s_mut = CurvilinearFIT3D(block_868, eps_r=1.05)
     w_mut = s_mut.cavity_frequencies(k=2)[0]
     assert abs(w_mut - omega_yee_868) / omega_yee_868 > 1e-2
+
+
+# -------------------------------------------------------------------- test 8
+def test_mapping_cylinder_corner_jacobian():
+    """
+    Minimum corner Jacobian of the elliptic cube-to-disk cylinder mapping
+    ``x = a u sqrt(1 - v^2 / 2)``, ``y = a v sqrt(1 - u^2 / 2)``, ``z = z``.
+
+    Derivation:
+    The continuous Jacobian determinant is
+        J_cont(u, v) = a^2 * (1 - (u^2 + v^2) / 2) / sqrt((1 - u^2 / 2)(1 - v^2 / 2)),
+    which equals ``0.0`` at the four corners ``(u, v) = (+-1, +-1)`` where the
+    adjacent sides of ``[-1, 1]^2`` meet smoothly along the circle ``r = a``
+    with interior angle ``pi``. On a finite ``Nx x Ny x Nz`` grid with
+    ``du = 2 / Nx``, ``dv = 2 / Ny``, ``dz = L / Nz``, the trilinear corner
+    Jacobian at ``(u, v) = (+-1, +-1)`` is given by the secant-chord triple
+    product
+        J_corner,min = a^2 * dz * (du * dv / 2 - delta(du) * delta(dv)),
+    where ``delta(h) = sqrt(1 - (1 - h)^2 / 2) - 1 / sqrt(2)``.
+    Measured values on ``a = 1.0 m, L = 1.2 m``:
+    - ``N = 4``: ``J_corner,min = 2.186269665969e-02 m^3`` (rel_diff ``9.522e-16``)
+    - ``N = 6``: ``J_corner,min = 4.999381340485e-03 m^3`` (rel_diff ``3.470e-16``)
+    - ``N = 8``: ``J_corner,min = 1.718682124227e-03 m^3`` (rel_diff ``1.514e-15``)
+    """
+    from wakis.curvilinear.mappings3d import (
+        cylinder_continuous_jacobian,
+        cylinder_corner_jacobian_analytic,
+        cylinder_nodes,
+        min_normalised_corner_det,
+    )
+
+    a, length = 1.0, 1.2
+    for su in (-1.0, 1.0):
+        for sv in (-1.0, 1.0):
+            j_c = cylinder_continuous_jacobian(su, sv, a=a)
+            assert j_c == 0.0
+    assert np.isclose(
+        cylinder_continuous_jacobian(0.0, 0.0, a=a), a * a, rtol=0.0, atol=1e-15
+    )
+
+    for n in (4, 6, 8):
+        X = cylinder_nodes(n, n, n, a=a, length=length)
+        # All lateral boundary nodes lie on x^2 + y^2 = a^2
+        for bnd_slice in (X[0, :, :], X[-1, :, :], X[:, 0, :], X[:, -1, :]):
+            r_bnd = np.hypot(bnd_slice[..., 0], bnd_slice[..., 1])
+            assert np.allclose(r_bnd, a, rtol=0.0, atol=1e-14)
+
+        block = HexBlock3D(X)
+        j_min_meas = float(np.min(block.corner_jacobians))
+        j_min_pred = cylinder_corner_jacobian_analytic(n, n, n, a=a, length=length)
+        rel_diff = abs(j_min_meas - j_min_pred) / j_min_pred
+        min_det = min_normalised_corner_det(block)
+        print(
+            f"[test_mapping_cylinder_corner_jacobian] N={n}: "
+            f"j_min_meas={j_min_meas:.12e}, j_min_pred={j_min_pred:.12e}, "
+            f"rel_diff={rel_diff:.3e}, min_normalised_det={min_det:.6e}"
+        )
+        assert j_min_meas > 0.0
+        assert rel_diff <= 1e-14
+
+    # Mutation check: perturbing the corner coordinate breaks the analytic match
+    X_mut = cylinder_nodes(8, 8, 8, a=a, length=length)
+    X_mut[0, 0, :, 0] *= 0.98
+    j_mut = float(np.min(HexBlock3D(X_mut).corner_jacobians))
+    j_ref = cylinder_corner_jacobian_analytic(8, 8, 8, a=a, length=length)
+    assert abs(j_mut - j_ref) / j_ref > 1e-2
+
+
+# -------------------------------------------------------------------- test 9
+def test_perturbed_box_order_small():
+    """
+    Convergence of the fundamental ``TE101`` cavity frequency on a smoothly
+    perturbed box ``[0, a] x [0, b] x [0, d]`` (``a = 1.0 m, b = 0.7 m, d = 0.8 m``)
+    with interior displacement ``dx_i = amp * h_i * sin(pi x/a) sin(pi y/b) sin(pi z/d)``
+    at amplitude ``amp = 0.3`` from ``4 x 3 x 4`` to ``8 x 6 x 8`` cells.
+
+    Measured values:
+    - ``omega_analytic = 1.50765688e+09 rad/s``
+    - ``4 x 3 x 4``: ``omega_h = 1.48137014e+09 rad/s``, ``rel_error = 1.743549e-02``
+    - ``8 x 6 x 8``: ``omega_h = 1.50088898e+09 rad/s``, ``rel_error = 4.489016e-03``
+    - Observed order ``log2(err_434 / err_868) = 1.957555 >= 1.8``.
+    """
+    from wakis.curvilinear.mappings3d import (
+        box_te101_omega,
+        min_normalised_corner_det,
+        perturbed_box_nodes,
+    )
+
+    a, b, d, amp = 1.0, 0.7, 0.8, 0.3
+    omega_ana = box_te101_omega(a=a, d=d)
+
+    X_434 = perturbed_box_nodes(4, 3, 4, a=a, b=b, d=d, amp=amp)
+    X_868 = perturbed_box_nodes(8, 6, 8, a=a, b=b, d=d, amp=amp)
+
+    # Boundary nodes must remain fixed on the 6 rectangular walls
+    for X_grid, (nx, ny, nz) in ((X_434, (4, 3, 4)), (X_868, (8, 6, 8))):
+        assert np.allclose(X_grid[0, :, :, 0], 0.0, rtol=0.0, atol=1e-15)
+        assert np.allclose(X_grid[-1, :, :, 0], a, rtol=0.0, atol=1e-15)
+        assert np.allclose(X_grid[:, 0, :, 1], 0.0, rtol=0.0, atol=1e-15)
+        assert np.allclose(X_grid[:, -1, :, 1], b, rtol=0.0, atol=1e-15)
+        assert np.allclose(X_grid[:, :, 0, 2], 0.0, rtol=0.0, atol=1e-15)
+        assert np.allclose(X_grid[:, :, -1, 2], d, rtol=0.0, atol=1e-15)
+
+    # At the center node (4, 3, 4) of the 8x6x8 grid, sin(pi/2)^3 == 1
+    assert np.allclose(
+        X_868[4, 3, 4] - np.array([0.5 * a, 0.5 * b, 0.5 * d]),
+        np.array([amp * a / 8.0, amp * b / 6.0, amp * d / 8.0]),
+        rtol=0.0,
+        atol=1e-15,
+    )
+
+    blk_434 = HexBlock3D(X_434)
+    blk_868 = HexBlock3D(X_868)
+    w_434 = float(CurvilinearFIT3D(blk_434).cavity_frequencies(k=2)[0])
+    w_868 = float(CurvilinearFIT3D(blk_868).cavity_frequencies(k=2)[0])
+    err_434 = abs(w_434 - omega_ana) / omega_ana
+    err_868 = abs(w_868 - omega_ana) / omega_ana
+    order = float(np.log2(err_434 / err_868))
+
+    print(
+        f"[test_perturbed_box_order_small] omega_ana={omega_ana:.8e}, "
+        f"w_434={w_434:.8e} (err={err_434:.6e}, min_det={min_normalised_corner_det(blk_434):.6e}), "
+        f"w_868={w_868:.8e} (err={err_868:.6e}, min_det={min_normalised_corner_det(blk_868):.6e}), "
+        f"order={order:.6f}"
+    )
+    assert err_868 < err_434
+    assert order >= 1.8
+
+    # Mutation check: displacing the outer wall ruins convergence to omega_ana
+    X_868_mut = X_868.copy()
+    X_868_mut[-1, :, :, 0] += 0.05 * a
+    w_868_mut = float(
+        CurvilinearFIT3D(HexBlock3D(X_868_mut)).cavity_frequencies(k=2)[0]
+    )
+    assert abs(w_868_mut - omega_ana) / omega_ana > err_434
+
+
+# -------------------------------------------------------------------- test 10
+def test_cylinder_tm010_coarse():
+    """
+    Coarse-mesh ``TM010`` resonance on the circular cylinder (``a = 1.0 m``,
+    ``L = 1.2 m``) compared with ``omega_ana = c * x_01 / a``.
+
+    Measured values across two refinement levels ``N = 4`` and ``N = 8`` (and
+    intermediate ``N = 6``):
+    - ``omega_analytic = 7.20948565e+08 rad/s``
+    - ``4 x 4 x 4``: ``omega_4 = 6.66164437e+08 rad/s``, ``rel_err_4 = 7.598895e-02``
+    - ``6 x 6 x 6``: ``omega_6 = 6.95843079e+08 rad/s``, ``rel_err_6 = 3.482285e-02``
+    - ``8 x 8 x 8``: ``omega_8 = 7.06542605e+08 rad/s``, ``rel_err_8 = 1.998195e-02``
+    - Observed two-level order: ``p = log2(rel_err_4 / rel_err_8) = 1.927092 >= 1.8``.
+
+    Tolerance justification from measured order:
+    With asymptotic convergence order ``p >= 1.8``, halving the mesh spacing
+    from ``N = 4`` to ``N = 8`` reduces the discretisation error by at least
+    ``2^1.8``, giving the derived upper bound ``tol_8 = rel_err_4 * 2^(-1.8) = 2.182210e-02``,
+    and the two-level power-law interpolant ``rel_err_4 * (4 / 6)^p = 3.478615e-02``
+    predicts ``rel_err_6`` to within ``2e-3`` relative difference.
+    """
+    from wakis.curvilinear.mappings3d import cylinder_nodes, cylinder_tm010_omega
+
+    a, length = 1.0, 1.2
+    omega_ana = cylinder_tm010_omega(a=a)
+
+    w_4 = float(
+        CurvilinearFIT3D(
+            HexBlock3D(cylinder_nodes(4, 4, 4, a=a, length=length))
+        ).cavity_frequencies(k=2)[0]
+    )
+    w_6 = float(
+        CurvilinearFIT3D(
+            HexBlock3D(cylinder_nodes(6, 6, 6, a=a, length=length))
+        ).cavity_frequencies(k=2)[0]
+    )
+    w_8 = float(
+        CurvilinearFIT3D(
+            HexBlock3D(cylinder_nodes(8, 8, 8, a=a, length=length))
+        ).cavity_frequencies(k=2)[0]
+    )
+
+    err_4 = abs(w_4 - omega_ana) / omega_ana
+    err_6 = abs(w_6 - omega_ana) / omega_ana
+    err_8 = abs(w_8 - omega_ana) / omega_ana
+    order_4_8 = float(np.log2(err_4 / err_8))
+    tol_8 = float(err_4 * (0.5**1.8))
+    pred_err_6 = float(err_4 * ((4.0 / 6.0) ** order_4_8))
+
+    print(
+        f"[test_cylinder_tm010_coarse] omega_ana={omega_ana:.8e}, "
+        f"w_4={w_4:.8e} (err_4={err_4:.6e}), "
+        f"w_6={w_6:.8e} (err_6={err_6:.6e}, pred_err_6={pred_err_6:.6e}), "
+        f"w_8={w_8:.8e} (err_8={err_8:.6e}, tol_8={tol_8:.6e}), "
+        f"order_4_8={order_4_8:.6f}"
+    )
+    assert err_8 < err_6 < err_4
+    assert order_4_8 >= 1.8
+    assert err_8 <= tol_8
+    assert abs(err_6 - pred_err_6) / pred_err_6 <= 2e-3
+
+    # Mutation check: perturbing cylinder radius violates tol_8
+    w_8_mut = float(
+        CurvilinearFIT3D(
+            HexBlock3D(cylinder_nodes(8, 8, 8, a=1.06 * a, length=length))
+        ).cavity_frequencies(k=2)[0]
+    )
+    assert abs(w_8_mut - omega_ana) / omega_ana > tol_8
+
+
+# -------------------------------------------------------------------- test 11
+def test_sphere_lowest_roots():
+    """
+    Verify that the spherical Bessel root finder reproduces the lowest ``l = 1``
+    roots of ``d/dx[x j_1(x)] = 0`` and ``j_1(x) = 0`` to characteristic
+    equation residual ``<= 1e-10``, and that the 3D elliptic cube-to-ball
+    mapping ``sphere_nodes`` maps all 6 boundary faces onto ``r = a`` with
+    positive corner Jacobians.
+
+    Measured values:
+    - ``x_d_xj1 = 2.743707269992269``, ``|d/dx[x j_1(x)]| = 2.220e-16 <= 1e-10``
+    - ``x_j1 = 4.493409457909064``, ``|j_1(x)| = 6.177e-18 <= 1e-10``
+    """
+    from scipy.special import spherical_jn
+
+    from wakis.curvilinear.mappings3d import (
+        min_normalised_corner_det,
+        sphere_bessel_residual,
+        sphere_lowest_omegas,
+        sphere_lowest_roots,
+        sphere_nodes,
+        sphere_riccati_bessel_deriv_residual,
+    )
+
+    x1, x2 = sphere_lowest_roots(l=1)
+    res1 = abs(float(spherical_jn(1, x1) + x1 * spherical_jn(1, x1, derivative=True)))
+    res2 = abs(float(spherical_jn(1, x2)))
+    assert np.isclose(
+        res1,
+        abs(float(sphere_riccati_bessel_deriv_residual(x1, l=1))),
+        rtol=0.0,
+        atol=1e-15,
+    )
+    assert np.isclose(
+        res2, abs(float(sphere_bessel_residual(x2, l=1))), rtol=0.0, atol=1e-15
+    )
+
+    a = 1.0
+    w1, w2 = sphere_lowest_omegas(a=a, l=1)
+    assert np.isclose(w1, C0 * x1 / a, rtol=0.0, atol=1e-6)
+    assert np.isclose(w2, C0 * x2 / a, rtol=0.0, atol=1e-6)
+
+    X_sph = sphere_nodes(6, 6, 6, a=a)
+    for face in (
+        X_sph[0, :, :],
+        X_sph[-1, :, :],
+        X_sph[:, 0, :],
+        X_sph[:, -1, :],
+        X_sph[:, :, 0],
+        X_sph[:, :, -1],
+    ):
+        r_face = np.linalg.norm(face, axis=-1)
+        assert np.allclose(r_face, a, rtol=0.0, atol=1e-14)
+
+    blk_sph = HexBlock3D(X_sph)
+    min_jac_sph = float(np.min(blk_sph.corner_jacobians))
+    min_det_sph = min_normalised_corner_det(blk_sph)
+    print(
+        f"[test_sphere_lowest_roots] x1={x1:.15f} (res1={res1:.3e}), "
+        f"x2={x2:.15f} (res2={res2:.3e}), "
+        f"sphere_6x6x6_min_jac={min_jac_sph:.6e}, min_norm_det={min_det_sph:.6e}"
+    )
+    assert 2.0 < x1 < np.pi < x2 < 2.0 * np.pi
+    assert res1 <= 1e-10
+    assert res2 <= 1e-10
+    assert min_jac_sph > 0.0
+    assert 0.0 < min_det_sph < 1.0
+
+    # Mutation check: perturbing the roots makes the residuals exceed 1e-4
+    assert abs(float(sphere_riccati_bessel_deriv_residual(x1 + 1e-3, l=1))) > 1e-4
+    assert abs(float(sphere_bessel_residual(x2 + 1e-3, l=1))) > 1e-4
