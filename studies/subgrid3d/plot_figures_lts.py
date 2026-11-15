@@ -71,11 +71,17 @@ def analyse_cost(res):
     rows = res["cost"]
     tim = {(t["kind"], round(t["h_coarse"], 6), t["ratio"]): t for t in res.get("timing", [])}
     uni = [r for r in rows if r["kind"] == "uniform"]
-    fstar, order = power_law_ref([r["h_fine"] for r in uni],
-                                 [np.mean(r["f_semi_probes"]) for r in uni])  # fmt: skip
+    fn = np.mean
+    try:
+        fstar, order = power_law_ref([r["h_fine"] for r in uni],
+                                     [fn(r["f_semi_probes"]) for r in uni])  # fmt: skip
+    except ValueError:
+        fn = lambda v: v[0]
+        fstar, order = power_law_ref([r["h_fine"] for r in uni],
+                                     [fn(r["f_semi_probes"]) for r in uni])  # fmt: skip
     for r in rows:
-        r["err_td"] = abs(np.mean(r["f_td_probes"]) / fstar - 1)
-        r["err_semi"] = abs(np.mean(r["f_semi_probes"]) / fstar - 1)
+        r["err_td"] = abs(fn(r["f_td_probes"]) / fstar - 1)
+        r["err_semi"] = abs(fn(r["f_semi_probes"]) / fstar - 1)
         t = tim.get((r["kind"], round(r["h_coarse"], 6), r["ratio"]))
         r["s_per_step"] = t["s_per_step"] if t else None
         r["wall"] = r["s_per_step"] * r["n_steps"] if t else None
@@ -258,8 +264,8 @@ def main():
                               "max": max(g["max_e"]), "steps": len(g["max_e"]) * g["every"]}
                              for g in resF["growth"]]  # fmt: skip
         plot_cpml(resF, os.path.join(IMG, "subgrid3d_lts_cpml.png"))
-    resG = load("G")
-    if resG is not None and rowsD is not None:
+    resG = load("G") or load("D")
+    if resG and "gpu" in resG and "gpu_vs_cpu" in resG and rowsD is not None:
         g = analyse_gpu(resG, rowsD)
         summary["gpu"] = g
         summary["gpu_vs_cpu"] = resG["gpu_vs_cpu"]

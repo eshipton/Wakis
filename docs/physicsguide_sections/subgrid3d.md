@@ -272,6 +272,36 @@ with $b_d=e^{-(\sigma_d+\alpha)\Delta t}$ and $a_d=\sigma_d(b_d-1)/(\sigma_d+\al
 
 which is linear in $N$ (worst case; random rounding gives $\sqrt N$).
 
+**GPU timing (wave 2, Batch `sg3d-lts-cost-d`, `g2-standard-8` with one L4).** Baseline: `SolverFIT3D` on the same uniform grid with `use_gpu=True` (both default CSR and `fused=True` kernels), compared against `SubgridLTSFIT3D` with `backend='cupy'` (`kernels='block'` and `kernels='csr'`) on the large-patch loaded-cavity arms of §9g (`summary_lts.json` keys `gpu` and `gpu_vs_cpu`, 200 timed steps after warm-up). On the 2:1 LTS arm at $H=0.05$ m ($n_\text{free}=29\,294$, $\rho=0.988$, $m_K=6$, $m_{K^H}=17$), after `n_steps = 200` steps the relative $L_\infty$ difference between the CuPy `block` state and the CPU state is `rel_err` $=1.73\times10^{-14}$, below the derived bound `bound` $=6.68\times10^{-12}$.
+
+| arm | coarse $H$ [m] | fine $h$ [m] | `SolverFIT3D` CSR [ms/step] | `SolverFIT3D` fused [ms/step] | subgrid `block` [ms/step] | subgrid `csr` [ms/step] | `SolverFIT3D` CSR / fused to $T$ [s] | subgrid `block` / `csr` to $T$ [s] |
+|---|---|---|---|---|---|---|---|---|
+| uniform | 0.1 | 0.1 | 0.179 | 0.0291 | 0.829 | 0.259 | 1.56 / 0.253 | 6.93 / 2.17 |
+| uniform | 0.05 | 0.05 | 0.179 | 0.0291 | 0.839 | 0.260 | 3.11 / 0.507 | 14.4 / 4.47 |
+| uniform | 0.0333 | 0.0333 | 0.185 | 0.0293 | 0.828 | 0.257 | 4.83 / 0.764 | 21.5 / 6.68 |
+| uniform | 0.025 | 0.025 | 0.177 | 0.0296 | 0.840 | 0.258 | 6.14 / 1.03 | 29.1 / 8.96 |
+| uniform | 0.02 | 0.02 | 0.176 | 0.0331 | 0.825 | 0.258 | 7.65 / 1.44 | 35.8 / 11.2 |
+| uniform | 0.0167 | 0.0167 | 0.178 | 0.0511 | 0.832 | 0.260 | 9.28 / 2.67 | 43.3 / 13.5 |
+| uniform | 0.0125 | 0.0125 | 0.341 | 0.416 | 0.834 | 0.564 | 23.7 / 29.0 | 58.0 / 39.2 |
+| global 2:1 | 0.1 | 0.05 | – | – | 1.79 | 0.259 | – | 28.8 / 4.17 |
+| lts 2:1 | 0.1 | 0.05 | – | – | 2.55 | 1.01 | – | 21.2 / 8.36 |
+| global 2:1 | 0.05 | 0.025 | – | – | 1.79 | 0.259 | – | 60.8 / 8.83 |
+| lts 2:1 | 0.05 | 0.025 | – | – | 2.56 | 1.02 | – | 44.1 / 17.6 |
+| global 2:1 | 0.0333 | 0.0167 | – | – | 1.81 | 0.260 | – | 93.4 / 13.4 |
+| lts 2:1 | 0.0333 | 0.0167 | – | – | 2.61 | 1.03 | – | 68.4 / 26.9 |
+| global 2:1 | 0.025 | 0.0125 | – | – | 1.81 | 0.260 | – | 125 / 18.0 |
+| lts 2:1 | 0.025 | 0.0125 | – | – | 2.54 | 1.03 | – | 89.0 / 36.0 |
+| global 3:1 | 0.1 | 0.0333 | – | – | 1.79 | 0.262 | – | 45.0 / 6.59 |
+| lts 3:1 | 0.1 | 0.0333 | – | – | 3.06 | 1.40 | – | 26.0 / 11.9 |
+| global 3:1 | 0.05 | 0.0167 | – | – | 1.78 | 0.302 | – | 92.1 / 15.6 |
+| lts 3:1 | 0.05 | 0.0167 | – | – | 2.95 | 1.40 | – | 51.6 / 24.4 |
+| global 3:1 | 0.0333 | 0.0111 | – | – | 1.85 | 0.258 | – | 144 / 20.1 |
+| lts 3:1 | 0.0333 | 0.0111 | – | – | 2.92 | 1.39 | – | 76.9 / 36.6 |
+
+At these grid sizes ($\le 1.46\times10^6$ unknowns), both subgrid GPU paths are launch-latency bound on the L4 and slower per step than `SolverFIT3D(..., use_gpu=True)` on the same uniform grid: `subgrid_block` issues separate CuPy slice kernels per block and axis ($\approx 0.83$ ms/step per block, plus the LTS recursion), and `subgrid_csr` takes $0.257$–$0.564$ ms/step on uniform grids and $1.01$–$1.40$ ms/step with LTS.
+
+![GPU time to T on one L4](../img/subgrid3d_lts_gpu.png)
+
 
 **CPML results** (`studies/subgrid3d/run_study_lts.py` part F, Batch job `sg3d-lts-study-f`). Setup: box of $20^3$ coarse cells ($H=4$ cm), layers of 4–12 cells, a derivative-of-Gaussian current pulse (1 GHz). Probe signals are compared with a closed reference 3.7× larger, time-gated before its walls echo. The error measure is max |open − reference| / max |reference| at a probe 2.5 cells from the layer:
 
@@ -308,7 +338,47 @@ The whole file runs in 106 s on one n2-standard-8 (Batch `sg3d-lts-t3`; 13 tests
 | block kernels = CSR: $\mathbf K$, $\mathbf K^H$; state after 500 LTS steps | $\le4\epsilon$, $\le8\epsilon$; $7.9\times10^{-14}$ | bound $Nu(m_K+m_{K^H})\kappa_E=3.0\times10^{-11}$ | hanging rows dropped: $>10^{-3}$ |
 | GPU (CuPy, L4) = CPU, 500 LTS steps | passes | same bound | – (same mutation as above) |
 
-<!--W2COST-->
+#### 9g. Cost at equal accuracy (wave 2, Batch `sg3d-lts-cost-d`, `sg3d-lts-cost-e`)
+
+![Wave-2 cost at equal accuracy](../img/subgrid3d_lts_cost.png)
+
+Three arms are compared on the $1.0\times0.8\times0.6$ m PEC cavity with an $\varepsilon_r=9$ dielectric cube (`studies/subgrid3d/run_study_lts.py` parts D and E; `summary_lts.json` keys `cost_D` and `cost_E`): (i) the uniform `SolverFIT3D` grid at cell size $h$, (ii) the wave-1 global-$\Delta t$ subgrid (`SubgridFIT3D`, coarse $H=rh$ with an $r$:1 patch), and (iii) the LTS subgrid (`SubgridLTSFIT3D` on the same composite mesh), each run at $0.95$ of its own $\Delta t_\max$. In every LTS row of `results_D.json` and `results_E.json`, $\Delta t / \Delta t_\max^\mathrm{LTS} = 0.95$ ($\Delta t / (0.95\,\Delta t_\max^\mathrm{LTS}) = 1.0$) against the bisected `lts.dt_max`. In the table below, `work_gain_*` and `wall_gain_*` have the **uniform fine grid (`SolverFIT3D` discretisation)** as baseline (log-log interpolation along the uniform curve at equal `err_td` or `err_semi`), whereas $\Delta t / \Delta t_{\text{global},\max}$ (`dt_lts_over_global`) has the **global-$\Delta t$ subgrid** stability limit `dt_global_max` on the same composite mesh as baseline (where the global-$\Delta t$ subgrid runs at $0.95\,\Delta t_{\text{global},\max}$):
+
+**Part D — large patch** ($\varepsilon_r=9$ cube of side $0.3$ m, patch = cube + $0.1$ m; 300 periods; reference $f^*=190.717$ MHz, observed order $1.46$):
+
+| arm | coarse $H$ [m] | fine $h$ [m] | unknowns | work | $\Delta t/\Delta t_{\text{global},\max}$ | `err_td` | `work_gain_td` (vs uniform) | `wall_gain_td` (vs uniform) | `err_semi` | `work_gain_semi` (vs uniform) | `wall_gain_semi` (vs uniform) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| global 3:1 | 0.1 | 0.0333 | 21 771 | $5.47\times10^{8}$ | 0.95 | $8.43\times10^{-3}$ | 1.36× | 1.22× | $8.66\times10^{-3}$ | 1.42× | 1.26× |
+| lts 3:1 | 0.1 | 0.0333 | 21 771 | $5.26\times10^{8}$ | 2.81 | $8.09\times10^{-3}$ | 1.59× | 1.01× | $1.01\times10^{-2}$ | 0.95× | 0.61× |
+| global 3:1 | 0.05 | 0.0167 | 176 496 | $9.12\times10^{9}$ | 0.95 | $2.86\times10^{-3}$ | 1.71× | 1.99× | $2.92\times10^{-3}$ | 1.74× | 2.04× |
+| lts 3:1 | 0.05 | 0.0167 | 176 496 | $8.72\times10^{9}$ | 2.81 | $2.77\times10^{-3}$ | 1.96× | 1.49× | $3.26\times10^{-3}$ | 1.35× | 0.96× |
+| global 3:1 | 0.0333 | 0.0111 | 598 455 | $4.66\times10^{10}$ | 0.95 | $1.52\times10^{-3}$ | 1.93× | 2.23× | $1.55\times10^{-3}$ | 1.95× | 2.27× |
+| lts 3:1 | 0.0333 | 0.0111 | 598 455 | $4.45\times10^{10}$ | 2.81 | $1.48\times10^{-3}$ | 2.18× | 1.93× | $1.70\times10^{-3}$ | 1.59× | 1.30× |
+| global 2:1 | 0.1 | 0.05 | 7 881 | $1.27\times10^{8}$ | 0.95 | $1.27\times10^{-2}$ | 1.78× | 1.70× | $1.32\times10^{-2}$ | 1.82× | 1.73× |
+| lts 2:1 | 0.1 | 0.05 | 7 881 | $1.18\times10^{8}$ | 1.84 | $1.24\times10^{-2}$ | 2.04× | 1.17× | $1.45\times10^{-2}$ | 1.49× | 0.90× |
+| global 2:1 | 0.05 | 0.025 | 63 966 | $2.18\times10^{9}$ | 0.95 | $4.52\times10^{-3}$ | 2.00× | 1.91× | $4.65\times10^{-3}$ | 2.02× | 1.93× |
+| lts 2:1 | 0.05 | 0.025 | 63 966 | $1.95\times10^{9}$ | 1.88 | $4.44\times10^{-3}$ | 2.35× | 1.51× | $4.94\times10^{-3}$ | 1.91× | 1.22× |
+| global 2:1 | 0.0333 | 0.0167 | 217 035 | $1.12\times10^{10}$ | 0.95 | $2.46\times10^{-3}$ | 2.12× | 2.41× | $2.51\times10^{-3}$ | 2.14× | 2.44× |
+| lts 2:1 | 0.0333 | 0.0167 | 217 035 | $9.97\times10^{9}$ | 1.88 | $2.42\times10^{-3}$ | 2.49× | 1.70× | $2.64\times10^{-3}$ | 2.10× | 1.44× |
+| global 2:1 | 0.025 | 0.0125 | 515 868 | $3.57\times10^{10}$ | 0.95 | $1.60\times10^{-3}$ | 2.21× | 2.55× | $1.63\times10^{-3}$ | 2.22× | 2.57× |
+| lts 2:1 | 0.025 | 0.0125 | 515 868 | $3.16\times10^{10}$ | 1.88 | $1.58\times10^{-3}$ | 2.58× | 2.13× | $1.70\times10^{-3}$ | 2.23× | 1.77× |
+
+**Part E — small patch** ($\varepsilon_r=9$ cube of side $0.1$ m, patch = cube + $0.05$ m, $0.8\%$ of the box volume; 200 periods; reference $f^*=237.549$ MHz, observed order $1.11$):
+
+| arm | coarse $H$ [m] | fine $h$ [m] | unknowns | work | $\Delta t/\Delta t_{\text{global},\max}$ | `err_td` | `work_gain_td` (vs uniform) | `wall_gain_td` (vs uniform) | `err_semi` | `work_gain_semi` (vs uniform) | `wall_gain_semi` (vs uniform) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| global 3:1 | 0.05 | 0.0167 | 32 056 | $8.57\times10^{8}$ | 0.95 | $2.25\times10^{-3}$ | 0.87× | 0.85× | $2.34\times10^{-3}$ | 1.30× | 1.28× |
+| lts 3:1 | 0.05 | 0.0167 | 32 056 | $4.86\times10^{8}$ | 2.77 | $1.63\times10^{-3}$ | 4.56× | 3.25× | $2.41\times10^{-3}$ | 2.09× | 1.48× |
+| global 3:1 | 0.025 | 0.00833 | 260 176 | $1.43\times10^{10}$ | 0.95 | $7.74\times10^{-4}$ | 1.92× | 2.38× | $7.96\times10^{-4}$ | 2.38× | 3.07× |
+| lts 3:1 | 0.025 | 0.00833 | 260 176 | $7.94\times10^{9}$ | 2.81 | $6.20\times10^{-4}$ | 8.41× | 8.64× | $8.11\times10^{-4}$ | 3.99× | 3.66× |
+| global 2:1 | 0.05 | 0.025 | 24 988 | $4.27\times10^{8}$ | 0.95 | $2.58\times10^{-3}$ | 1.09× | 1.09× | $2.81\times10^{-3}$ | 1.49× | 1.50× |
+| lts 2:1 | 0.05 | 0.025 | 24 988 | $2.61\times10^{8}$ | 1.77 | $2.08\times10^{-3}$ | 3.68× | 2.67× | $2.87\times10^{-3}$ | 2.29× | 1.66× |
+| global 2:1 | 0.025 | 0.0125 | 202 744 | $7.34\times10^{9}$ | 0.95 | $9.48\times10^{-4}$ | 1.77× | 2.17× | $9.98\times10^{-4}$ | 2.04× | 2.57× |
+| lts 2:1 | 0.025 | 0.0125 | 202 744 | $4.22\times10^{9}$ | 1.86 | $8.17\times10^{-4}$ | 5.24× | 5.42× | $1.01\times10^{-3}$ | 3.42× | 3.29× |
+| global 2:1 | 0.0125 | 0.00625 | 1 634 032 | $1.20\times10^{11}$ | 0.95 | $4.28\times10^{-4}$ | 2.26× | 2.41× | $4.40\times10^{-4}$ | 2.44×* | 2.61× |
+| lts 2:1 | 0.0125 | 0.00625 | 1 634 032 | $6.83\times10^{10}$ | 1.88 | $3.95\times10^{-4}$ | 5.35×* | 4.93× | $4.43\times10^{-4}$ | 4.18×* | 3.85× |
+
+(*`in_range = false`: error lies slightly below the finest uniform point $h=0.00833$ m, where `err_td` $=4.26\times10^{-4}$ and `err_semi` $=4.48\times10^{-4}$, so the uniform baseline is log-log extrapolated along the last segment.)
 
 #### 10. Limits & Failure Modes
 
@@ -319,13 +389,12 @@ The whole file runs in 106 s on one n2-standard-8 (Batch `sg3d-lts-t3`; 13 tests
 * **Boundaries.** PEC, PMC (natural) and Bloch-periodic outer walls are supported, and CPML on the outer walls is implemented (§9d). Patches inside the CPML layer are refused by default (`allow_patches=True` overrides), and the CFS shift needed for stability costs low-frequency absorption (§9d). No lossy media, no dispersive ADE, no TF/SF, no lumped ports.
 * **Sources and probes.** Soft edge currents and nearest-edge point probes only (no interpolation). A probe on a hanging edge reads the trace value.
 * **Not covered by the energy proof.** Anything non-symmetric. The `inject` mutation shows that a restriction other than $\mathbf P_e^T$ drifts even at half the CFL limit.
-* **Performance.** Global CSR on one core takes 3–8 ns per unknown-step depending on the machine, the same per step as `SolverFIT3D` on the same uniform grid; per-block dense kernels (`BlockOps`) and CuPy GPU kernels (`backend='cupy'`) are implemented (§9e). There is no MPI. The leading extra cost of a patch is its surface, about $6r^2$ hanging edges per coarse face.
-* **Accuracy relative to the coarse grid.** In the empty cavity with a patch, the error is about 4 % *larger* than on the coarse grid alone ($2.25\times10^{-2}$ vs $2.17\times10^{-2}$ at $N=8$). The interface's $O(h^2)$ contribution is of the same order as the coarse-grid error. Refinement pays only where the field needs it, as in the loaded cavity of §9b, where it saves 1.4–2.2× work at equal accuracy. That gain is modest because the global step is set by the fine cells.
+* **Performance.** Global CSR on one core takes 3–8 ns per unknown-step depending on the machine, the same per step as `SolverFIT3D` on the same uniform grid; per-block dense kernels (`BlockOps`) and CuPy GPU kernels (`backend='cupy'`) are implemented (§9e). On one L4 GPU (§9e), the subgrid CuPy kernels are slower than `SolverFIT3D(..., use_gpu=True)` on the same uniform grid: per step, `subgrid_block` takes $0.825$–$0.840$ ms on uniform grids ($1.78$–$3.06$ ms with a patch) and `subgrid_csr` takes $0.257$–$0.564$ ms ($0.258$–$1.40$ ms with a patch), against $0.176$–$0.341$ ms for `SolverFIT3D` CSR and $0.0291$–$0.416$ ms for `SolverFIT3D` fused kernels. There is no MPI. The leading extra cost of a patch is its surface, about $6r^2$ hanging edges per coarse face.
+* **Accuracy relative to the coarse grid.** In the empty cavity with a patch, the error is about 4 % *larger* than on the coarse grid alone ($2.25\times10^{-2}$ vs $2.17\times10^{-2}$ at $N=8$). The interface's $O(h^2)$ contribution is of the same order as the coarse-grid error. Refinement pays only where the field needs it, as in the loaded cavity of §9b and §9g, where global-$\Delta t$ subgridding saves 1.4–2.2× work on the large patch and LTS saves up to 5.35× (2:1) and 8.41× (3:1) time-domain work on the small patch (`work_gain_semi` up to 4.18× and 3.99×) at equal accuracy.
 
 #### 11. Next milestones
 
 Patches inside the CPML layer (needs a stable formulation; §9d); CPML on the coarse frame with an adjoint; conformal/tensor material averaging inside patches; dispersive ADE media; lumped ports and mode sources across patches; MPI ownership of whole blocks.
-The wave-2 cost study (§9f) is still pending.
 
 References:
 - J.-C. Nédélec, "Mixed finite elements in $\mathbb R^3$", *Numer. Math.* **35**(3), 315–341 (1980), doi:10.1007/BF01396415.
