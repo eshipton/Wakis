@@ -36,6 +36,7 @@ from wakis.unstructured.repair import (
     _flip_22,
     _flip_23,
     _flip_32,
+    _orient_tet,
     _RepairState,
     _sface,
     flip_to_delaunay,
@@ -551,3 +552,150 @@ def test_layered_interface_unequal_mesh_sizes_repair():
     assert abs(vol_vac_1 - vol_vac_0) <= 1e-12 * vol_vac_0
 
     UnstructuredFIT3D(repaired, materials=materials)
+
+
+def test_locked_curve_edge_is_not_flipped_away():
+    """
+    Verify that a 3-2 flip removing an interior edge whose two endpoints are
+    both locked is refused by `flip_to_delaunay(..., locked=mask)` and that
+    `improve_dt(..., repair=True)` forwards `locked=~movable` so the locked
+    edge survives both repair passes.
+    Mutation check: passing `locked=None` in `improve_dt` allows `_flip_32`
+    to remove edge (0, 1) and makes this test fail.
+    """
+    X = np.array(
+        [
+            [0.0, 0.0, -1.5],
+            [0.0, 0.0, 1.5],
+            [1.0, 0.0, 0.0],
+            [-0.5, np.sqrt(3.0) / 2.0, 0.0],
+            [-0.5, -np.sqrt(3.0) / 2.0, 0.0],
+        ],
+        dtype=float,
+    )
+    cells = np.array(
+        [
+            _orient_tet(X, 0, 1, 2, 3),
+            _orient_tet(X, 0, 1, 3, 4),
+            _orient_tet(X, 0, 1, 4, 2),
+        ],
+        dtype=np.int64,
+    )
+    mesh = SimplexMesh(X, cells)
+    assert neg_faces(mesh).size > 0
+
+    def _has_edge(m, u, v):
+        target = (min(u, v), max(u, v))
+        return any((int(e[0]), int(e[1])) == target for e in m.edges)
+
+    assert _has_edge(mesh, 0, 1)
+
+    mask = np.array([True, True, False, False, False], dtype=bool)
+    repaired, rep = flip_to_delaunay(mesh, locked=mask)
+    assert _has_edge(repaired, 0, 1)
+    assert rep["refused"].get("locked", 0) > 0
+
+    improved, history = improve_dt(
+        mesh,
+        n_sweeps=1,
+        repair=True,
+        project=lambda n, y: None if mask[n] else y,
+    )
+    assert _has_edge(improved, 0, 1)
+    assert history[-1]["repair"]["refused"].get("locked", 0) > 0
+
+
+def test_interface_22_only_case():
+    """
+    Verify that a conforming two-material mesh with a planar interface at z = 0
+    and exactly one negative interface face is repaired solely by a coplanar
+    interface 2-2 flip across z = 0, conserving per-tag volumes and the
+    interface triangle union boundary and area to 1e-12 relative tolerance.
+    Mutation check: making the interface branch of `_flip_22` return
+    `(False, "mutant")` leaves the negative faces unrepaired and makes this
+    test fail.
+    """
+    # Nodes 0, 1, 2, 3 lie on the planar interface z = 0 forming a convex quad
+    # split along the non-Delaunay diagonal (0, 1); apex 4 is in tag 0 (z > 0)
+    # and apex 5 is in tag 1 (z < 0).
+    X = np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [-0.9, 0.10, 0.0],
+            [-0.9, -0.35, 0.0],
+            [-0.9, -0.90, 0.60],
+            [-0.9, -0.90, -0.60],
+        ],
+        dtype=float,
+    )
+    cells = np.array(
+        [
+            _orient_tet(X, 0, 1, 2, 4),
+            _orient_tet(X, 0, 1, 3, 4),
+            _orient_tet(X, 0, 1, 2, 5),
+            _orient_tet(X, 0, 1, 3, 5),
+        ],
+        dtype=np.int64,
+    )
+    tags = np.array([0, 0, 1, 1], dtype=np.int64)
+    materials = {0: [4.0, 1.0], 1: [1.0, 1.0]}
+    mesh = SimplexMesh(X, cells, tags)
+
+    def _interface_info(m):
+        f = m.cell_faces.ravel()
+        t = np.repeat(m.cell_tags, 4)
+        lo = np.full(m.n_faces, np.iinfo(np.int64).max)
+        hi = np.full(m.n_faces, np.iinfo(np.int64).min)
+        np.minimum.at(lo, f, t)
+        np.maximum.at(hi, f, t)
+        if_fids = np.flatnonzero(lo != hi)
+        edge_counts = {}
+        area = 0.0
+        for fid in if_fids:
+            tri = tuple(int(v) for v in m.faces[fid])
+            p0, p1, p2 = m.nodes[list(tri)]
+            area += 0.5 * float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+            for u, v in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[0], tri[2])):
+                e = (min(u, v), max(u, v))
+                edge_counts[e] = edge_counts.get(e, 0) + 1
+        bnd_edges = {e for e, cnt in edge_counts.items() if cnt == 1}
+        return if_fids, bnd_edges, area
+
+    nf_before = neg_faces(mesh, materials=materials)
+    if_fids_0, if_bnd_0, if_area_0 = _interface_info(mesh)
+    neg_if_0 = np.intersect1d(nf_before, if_fids_0)
+    print(
+        f"interface_22_only config: n_neg={nf_before.size}, "
+        f"if_faces={if_fids_0.tolist()}, neg_if_faces={neg_if_0.tolist()}, "
+        f"if_bnd={sorted(if_bnd_0)}, if_area={if_area_0:.12f}"
+    )
+    assert if_fids_0.size == 2
+    assert neg_if_0.size == 1
+
+    # Without "2-2" and with steiner=False, no flip can repair the mesh
+    _, rep_no22 = flip_to_delaunay(
+        mesh,
+        materials=materials,
+        enabled_flips=("2-3", "3-2", "4-4"),
+        steiner=False,
+    )
+    assert rep_no22["negative_faces_after"] == nf_before.size
+
+    vol_tag0_before = float(mesh.cell_volume[mesh.cell_tags == 0].sum())
+    vol_tag1_before = float(mesh.cell_volume[mesh.cell_tags == 1].sum())
+
+    repaired, rep = flip_to_delaunay(mesh, materials=materials)
+    assert rep["negative_faces_after"] == 0
+    assert rep["flips"]["2-2"] == 1
+    assert neg_faces(repaired, materials=materials).size == 0
+
+    vol_tag0_after = float(repaired.cell_volume[repaired.cell_tags == 0].sum())
+    vol_tag1_after = float(repaired.cell_volume[repaired.cell_tags == 1].sum())
+    assert abs(vol_tag0_after - vol_tag0_before) <= 1e-12 * vol_tag0_before
+    assert abs(vol_tag1_after - vol_tag1_before) <= 1e-12 * vol_tag1_before
+
+    if_fids_1, if_bnd_1, if_area_1 = _interface_info(repaired)
+    assert if_fids_1.size == 2
+    assert if_bnd_1 == if_bnd_0
+    assert abs(if_area_1 - if_area_0) <= 1e-12 * if_area_0

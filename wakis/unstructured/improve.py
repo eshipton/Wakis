@@ -472,7 +472,7 @@ def improve_dt(
         from .repair import flip_to_delaunay
 
         mesh, rep1 = flip_to_delaunay(
-            mesh, materials=materials, locked=None, bc=bc, verbose=verbose
+            mesh, materials=materials, locked=~movable, bc=bc, verbose=verbose
         )
         if sum(rep1["flips"].values()) > 0 or rep1["steiner_nodes"] > 0:
             eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
@@ -563,7 +563,7 @@ def improve_dt(
     new = SimplexMesh(st.X, mesh.cells, mesh.cell_tags)
     if repair:
         new, rep2 = flip_to_delaunay(
-            new, materials=materials, locked=None, bc=bc, verbose=verbose
+            new, materials=materials, locked=~movable, bc=bc, verbose=verbose
         )
         if sum(rep2["flips"].values()) > 0 or rep2["steiner_nodes"] > 0:
             eps_r, mu_r, _, pec, _ = cell_materials(new, materials)

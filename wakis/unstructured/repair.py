@@ -14,15 +14,15 @@ planar boundaries) replace non-Delaunay simplices inside a single material tag;
 coplanar diagonal flips also apply across a planar material interface when
 adjacent coplanar interface triangles separate the same pair of material tags
 and share one opposite apex on each side, preserving the interface plane and
-per-tag volumes. Because topological flips keep vertex coordinates fixed and
-only alter interior single-tag connectivity or strictly coplanar triangle
-pairs, smooth surface-sliding locks used during node-movement sweeps are not
-applied as topological edge locks. Stuck interior or interface faces (B. Joe,
-Comput. Aided Geom. Design 8 (1991) 123-142 (DOI to be checked);
-H. Edelsbrunner and N. R. Shah, Algorithmica 15 (1996) 223-241 (DOI to be
-checked)) are resolved by inserting a Steiner node at the tet-pair
-circumcentre or by bisecting an edge of the offending face while preserving
-each cell's material tag.
+per-tag volumes. Flips that would remove an edge whose two endpoints are both
+locked (e.g. on fixed CAD curves or corners) are refused. Stuck interior or
+interface faces (B. Joe, Construction of three-dimensional Delaunay
+triangulations using local transformations, Computer Aided Geometric Design
+8(2), 123-142 (1991), DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and
+N. R. Shah, Incremental topological flipping works for regular triangulations,
+Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867) are resolved by
+inserting a Steiner node at the tet-pair circumcentre or by bisecting an
+unlocked edge of the offending face while preserving each cell's material tag.
 """
 
 from collections import deque
@@ -899,7 +899,7 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
     return True, new_cids
 
 
-def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
+def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0, locked=None):
     """
     Insert a Steiner node for a stuck face f while preserving material tags.
 
@@ -938,6 +938,15 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0):
         if not cids:
             return False, "topology"
         a, b = ed
+        if (
+            tag1 == tag2
+            and locked is not None
+            and a < len(locked)
+            and b < len(locked)
+            and locked[a]
+            and locked[b]
+        ):
+            return False, "locked"
         pt = (1.0 - alpha) * state.X[a] + alpha * state.X[b]
         X_try = np.vstack([state.X, pt[None, :]])
         new_tets = []
@@ -1290,7 +1299,12 @@ def flip_to_delaunay(
                 for mode, host, alpha in candidates:
                     cp = state.checkpoint()
                     ok, nc0 = _insert_steiner(
-                        state, f, mode=mode, host=host, alpha=alpha
+                        state,
+                        f,
+                        mode=mode,
+                        host=host,
+                        alpha=alpha,
+                        locked=locked_arr,
                     )
                     if not ok:
                         state.rollback(cp)
@@ -1331,7 +1345,12 @@ def flip_to_delaunay(
                 if best_cand is not None:
                     mode, host, alpha = best_cand
                     _, nc0 = _insert_steiner(
-                        state, f, mode=mode, host=host, alpha=alpha
+                        state,
+                        f,
+                        mode=mode,
+                        host=host,
+                        alpha=alpha,
+                        locked=locked_arr,
                     )
                     locked_arr = np.append(locked_arr, False)
                     steiner_count += 1

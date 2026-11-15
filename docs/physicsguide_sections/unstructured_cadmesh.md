@@ -152,8 +152,8 @@ material interface and local sliver optimization (`Mesh.OptimizeThreshold`) can 
 unoptimized baseline mesh, while gmsh's and Netgen's tetrahedral shape optimizers maximize element aspect ratios
 without preserving the local Delaunay circumsphere condition, producing negative dual lengths, an indefinite
 curl-curl matrix $K$, and diverging time-domain leapfrog runs; topological flip repair (`flip_to_delaunay`,
-invoked before and after node relocation when `improve_dt(..., repair=True)`) restores local Delaunayhood
-(measured values: see studies/unstructured-cadmesh/results/repair.json). The number of eliminated (massless) edges changes by −9 % to +29 %; the per-step work
+invoked before and after node relocation when `improve_dt(..., repair=True)`) restores local Delaunayhood.
+The number of eliminated (massless) edges is reported in the study outputs (measured values: see studies/unstructured-cadmesh/results/repair.json); the per-step work
 is the same sparse products plus a Schur solve on those edges. Serial wall time per simulated ns
 (`cadmesh_study.py timing`, one process, one BLAS thread, median of 5 interleaved repetitions, Batch `cadmesh-timing-1`) at cpw 20: pillbox
 0.126 → 0.080 s/ns (1.58× faster), layered 0.697 → 0.403 s/ns (1.73×), muon 0.061 → 0.044 s/ns (1.38×); the
@@ -204,7 +204,7 @@ tests, but not equal), for a 1.5–1.8× larger step. Time-domain ring-downs on 
   5–10 sweeps (Section 4).
 * **The gain partly comes from eliminating more edges.** The objective ignores edges below
   `massless_tol * L^2` (the solver eliminates them), so moves that push an edge below the threshold are
-  accepted: the number of massless edges changes by −9 % to +29 %. The accuracy cost is measured (Section 4: equal or better
+  accepted (measured values: see studies/unstructured-cadmesh/results/repair.json). The accuracy cost is measured (Section 4: equal or better
   resonance errors), and the per-step cost of the Schur solve is included in the wall-time comparison, but a
   much larger `massless_tol` *does* cost accuracy (pillbox cpw 10: TM010 error −0.41 %, +0.36 %, +5.4 % at
   1e-2, 3e-2, 1e-1).
@@ -258,19 +258,25 @@ connectivity without moving existing vertices:
 * **4-4 flip (`_flip_44`):** when an interior edge $(a, b)$ of degree four is surrounded by four tetrahedra over an
   equatorial cycle $(c, d, e, p)$, replaces them by four tetrahedra sharing the alternative equatorial diagonal
   $(c, e)$ or $(d, p)$ (equivalent to a 2-3 flip followed by a 3-2 flip across a coplanar four-node quad).
-* **Boundary 2-2 flip (`_flip_22`):** when two boundary-adjacent tetrahedra $(a, c, d, p)$ and $(b, c, d, p)$ share
-  an interior face $(c, d, p)$ and their outer faces $(a, b, c)$ and $(a, b, d)$ lie on a common plane of
-  $\partial\Omega$ sharing the boundary edge $(a, b)$, flips the boundary diagonal from $(a, b)$ to $(c, d)$ to
-  form $(c, d, a, p)$ and $(c, d, b, p)$, accepted only when the two boundary triangles are coplanar and their
-  union area and outward unit normals are preserved to relative tolerance $10^{-12}$.
+* **Boundary and coplanar-interface 2-2 flip (`_flip_22`):** when two boundary-adjacent tetrahedra $(a, c, d, p)$
+  and $(b, c, d, p)$ share an interior face $(c, d, p)$ and their outer faces $(a, b, c)$ and $(a, b, d)$ lie on a
+  common plane of $\partial\Omega$ sharing the boundary edge $(a, b)$, flips the boundary diagonal from $(a, b)$ to
+  $(c, d)$ to form $(c, d, a, p)$ and $(c, d, b, p)$, accepted only when the two boundary triangles are coplanar and
+  their union area and outward unit normals are preserved to relative tolerance $10^{-12}$. Likewise, when two
+  coplanar interface triangles $(a, b, c)$ and $(a, b, d)$ separating distinct `cell_tags` are shared by an
+  octahedral four-tetrahedron bipyramid $(a, b, c, p)$, $(a, b, d, p)$ on one side and $(a, b, c, q)$, $(a, b, d, q)$
+  on the other, flips the interface diagonal $(a, b) \to (c, d)$ into $(c, d, a, p)$, $(c, d, b, p)$ and
+  $(c, d, a, q)$, $(c, d, b, q)$ while preserving per-tag volumes and the interface triangle union to relative
+  tolerance $10^{-12}$.
 
 **Locked-node and material-interface rules:**
-1. *Material interfaces:* a flip is allowed only if all tetrahedra involved have the same `cell_tags` value; newly
-   created tetrahedra inherit that tag. Interface faces separating distinct `cell_tags` are never removed or
-   flipped across, preserving both total volume and per-tag volume to relative tolerance $10^{-12}$.
+1. *Material interfaces:* 2-3, 3-2, and 4-4 flips are allowed only if all tetrahedra involved have the same
+   `cell_tags` value; across distinct `cell_tags`, only the coplanar four-tetrahedron interface 2-2 flip and
+   interface-preserving Steiner edge splits are allowed, preserving both total volume and per-tag volume to relative
+   tolerance $10^{-12}$.
 2. *Locked CAD nodes (`locked`):* given an optional boolean mask `locked` over mesh vertices (`True` on fixed CAD
-   curves or corners, or `~movable` inside `improve_dt`), any flip that removes an edge whose two endpoints are
-   both locked (`refused["locked_edge"]`) or a boundary face whose three vertices are all locked
+   curves or corners, or `~movable` inside `improve_dt`), any flip or Steiner edge bisection that removes an edge
+   whose two endpoints are both locked (`refused["locked"]`) or a boundary face whose three vertices are all locked
    (`refused["locked_boundary_face"]`) is refused.
 
 ### Algorithm
@@ -280,14 +286,13 @@ connectivity without moving existing vertices:
 1. Initialize a queue with all faces satisfying $H_f < -10^{-14}\,\bar{h}/\mu_0$.
 2. Pop a face $f$ from the queue; if $f$ is still present in the current mesh and has $H_f < 0$, evaluate candidate
    flips in `enabled_flips` (`_flip_23` on $f$, `_flip_32` and `_flip_44` on the edges of $f$, and `_flip_22` when
-   $f$ is incident to a coplanar boundary triangle pair).
+   $f$ is part of a coplanar boundary or interface triangle pair).
 3. Accept a candidate flip only when every replacement tetrahedron has strictly positive volume, total and per-tag
    volumes are conserved, and the flip strictly decreases the count of negative faces on the modified cavity (or
    keeps it zero while increasing the minimum signed dual length). Re-enqueue all faces of the newly created
    tetrahedra.
-4. If negative interior faces remain after the queue empties and `steiner=True`, `_insert_steiner` inserts an
-   interior Steiner node along the segment from the circumcentre of the offending same-tag tetrahedron pair toward
-   the host centroid (via a 1-4 or 2-6 split) and cascades local flips, committing the split only if the global
+4. If negative faces remain after the queue empties and `steiner=True`, `_insert_steiner` inserts a Steiner node
+   (in the interior or along an unlocked edge, followed by local flips), committing the split only if the global
    negative-face count strictly decreases.
 5. When `improve_dt(..., repair=True)` (the default), `improve_dt` runs `flip_to_delaunay` $\to$ time-step-driven
    node smoothing $\to$ `flip_to_delaunay` with `locked = ~movable` and appends a `"repair"` report dictionary to
@@ -298,21 +303,26 @@ connectivity without moving existing vertices:
 * **Stuck faces (`report["stuck"]`).** In three dimensions, a non-Delaunay interior face $f = (c, d, e)$ shared by
   $(a, c, d, e)$ and $(b, c, d, e)$ is geometrically non-flippable by a 2-3 move when the segment $ab$ passes
   outside triangle $(c, d, e)$ (the five-vertex polyhedron is non-convex), and a 3-2 flip is unavailable unless the
-  reflex edge on the boundary of the pair has degree three in the mesh (Joe 1991; Edelsbrunner and Shah 1996).
+  reflex edge on the boundary of the pair has degree three in the mesh (B. Joe, Construction of three-dimensional
+  Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
+  DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for
+  regular triangulations, Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867).
 * **Locked curves and material interfaces.** Flips that would remove an edge with both endpoints marked `locked` or
-  remove a triangle on a material interface (`cell_tags` jump) or non-planar boundary are refused by construction.
-  When all vertices of a boundary-adjacent or interface-adjacent sliver are locked by CAD curves or corners, neither
+  alter a non-planar material interface (`cell_tags` jump) or non-planar boundary are refused by construction.
+  When all edges of a boundary-adjacent or interface-adjacent sliver are locked by CAD curves or corners, neither
   flips nor node relocation can alter its faces.
 * **3D flip-sequence non-termination risk.** Unlike two-dimensional Lawson flips, unconstrained three-dimensional
-  local flips can cycle indefinitely if non-improving flips are permitted (Joe 1991; Edelsbrunner and Shah 1996).
+  local flips can cycle indefinitely if non-improving flips are permitted (B. Joe, Construction of three-dimensional
+  Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
+  DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for
+  regular triangulations, Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867).
   `flip_to_delaunay` avoids cycles by requiring strict local improvement in the negative-face count (or minimum
   dual length at zero negative faces) on every flip and by enforcing `max_flips`.
-* **What the Steiner step does and does not guarantee.** `_insert_steiner` operates only on interior same-tag
-  tetrahedra and commits an insertion only when the split followed by local flips strictly reduces the global count
-  of negative faces. It resolves isolated interior non-convex configurations where 2-3, 3-2, and 4-4 flips are
-  geometrically blocked, but it never inserts nodes on $\partial\Omega$ or on material interfaces and does not
-  guarantee removal of negative faces constrained by curved boundaries, small dihedral angles, or locked CAD
-  features; any remaining offending faces are returned in `report["stuck"]`.
+* **What the Steiner step does and does not guarantee.** `_insert_steiner` commits an insertion only when the split
+  followed by local flips strictly reduces the global count of negative faces. It resolves isolated non-convex
+  configurations where 2-3, 3-2, 4-4, and 2-2 flips are geometrically blocked, but it never bisects an edge whose
+  endpoints are both locked and does not guarantee removal of negative faces constrained by curved boundaries,
+  small dihedral angles, or locked CAD features; any remaining offending faces are returned in `report["stuck"]`.
 
 ## References
 
@@ -327,7 +337,7 @@ connectivity without moving existing vertices:
   post-processing facilities", Int. J. Numer. Meth. Eng. 79(11), 1309–1331 (2009), doi:10.1002/nme.2579.
 - S.-W. Cheng, T. K. Dey, H. Edelsbrunner, M. A. Facello and S.-H. Teng, "Sliver exudation", J. ACM 47(5),
   883–904 (2000).
-- B. Joe, "Construction of three-dimensional Delaunay triangulations using local transformations", Comput. Aided
-  Geom. Des. 8(2), 123–142 (1991) (DOI to be checked).
-- H. Edelsbrunner and N. R. Shah, "Incremental topological flipping works for regular triangulations",
-  Algorithmica 15(3), 223–241 (1996) (DOI to be checked).
+- B. Joe, Construction of three-dimensional Delaunay triangulations using local transformations,
+  Computer Aided Geometric Design 8(2), 123-142 (1991), DOI 10.1016/0167-8396(91)90038-d
+- H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for regular triangulations,
+  Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867
