@@ -144,7 +144,14 @@ def plot_tts_vs_error(data, out_path):
 
     fig, ax = plt.subplots(figsize=(6.8, 4.6))
     for v in variants:
-        rows = sorted([r for r in table if r["variant"] == v], key=lambda r: r["N"])
+        rows = sorted(
+            [
+                r
+                for r in table
+                if r["variant"] == v and r.get("time_to_solution_s") is not None
+            ],
+            key=lambda r: r["N"],
+        )
         if not rows:
             continue
         st = VARIANT_STYLE.get(v, {"label": v, "color": "C5", "marker": "o", "ls": "-"})
@@ -201,7 +208,14 @@ def plot_cost_per_unknown_step(data, out_path):
     fig, ax = plt.subplots(figsize=(7.4, 4.6))
     all_unk = []
     for idx, v in enumerate(variants):
-        rows = sorted([r for r in table if r["variant"] == v], key=lambda r: r["N"])
+        rows = sorted(
+            [
+                r
+                for r in table
+                if r["variant"] == v and r.get("cost_per_unknown_step_s") is not None
+            ],
+            key=lambda r: r["N"],
+        )
         if not rows:
             continue
         st = VARIANT_STYLE.get(

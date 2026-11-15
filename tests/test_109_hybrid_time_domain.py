@@ -61,6 +61,7 @@ from wakis.hybrid import (
     fixed_patch_nodes,
     kuhn_box_mesh,
     mixed_partition,
+    mixed_tet_mass,
     normalised_tet_volume,
     smooth_patch,
     well_centred_tets,
@@ -480,3 +481,168 @@ def test_plot_mixed_study_merge():
     ) as exc_info:
         _assert_merged_study_has_n20(mutated)
     print(f"Observed mutation failure: {exc_info.value}")
+
+
+def _assert_lump_threshold_subset_and_ratio(
+    lump_ref, dv_ref, lump_thr, dv_thr, m1_diag, ratio_min
+):
+    assert np.all(lump_thr <= lump_ref), "thresholded lumped set is not a subset"
+    assert 0 < int(lump_thr.sum()) < int(lump_ref.sum())
+    assert np.all(dv_thr > 0)
+    ratios = dv_thr / m1_diag[lump_thr]
+    assert np.all(ratios >= ratio_min), (
+        f"min ratio {ratios.min():.4f} < threshold {ratio_min}"
+    )
+
+
+def test_lump_min_ratio_subset_and_spd(meshes):
+    """Default `lump_min_ratio=None` is bit-identical to the unthresholded mixed
+    mass; a positive threshold gives a subset of the default lumped set, keeps
+    `M1` and `M` SPD, and restores `dt_max` on `test_delaunay`."""
+    tm = meshes["delaunay"]
+    with pytest.raises(ValueError, match="non-negative"):
+        mixed_partition(tm, lump_min_ratio=-0.1)
+
+    s_cons = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass="consistent")
+    m1_diag = s_cons.M1.diagonal()
+
+    lump_def, dv_def = mixed_partition(tm)
+    lump_none, dv_none = mixed_partition(tm, lump_min_ratio=None, M1=s_cons.M1)
+    assert np.array_equal(lump_def, lump_none)
+    assert np.array_equal(dv_def, dv_none)
+
+    m1_ref = mixed_tet_mass(s_cons.M1, lump_def, dv_def)
+    m_all_ref = sp.block_diag([sp.diags(s_cons.m_c), m1_ref], format="csr")
+    m_ref = (s_cons.P.T @ m_all_ref @ s_cons.P).tocsr()
+
+    s_mix_def = HybridFIT3D(XN, YN, ZN, box=BOX, tet_mesh=tm, mass="mixed")
+    s_mix_none = HybridFIT3D(
+        XN, YN, ZN, box=BOX, tet_mesh=tm, mass="mixed", mass_lump_min_ratio=None
+    )
+    for sol in (s_mix_def, s_mix_none):
+        assert (sol.M - m_ref).nnz == 0
+        assert np.array_equal(sol.M.indptr, m_ref.indptr)
+        assert np.array_equal(sol.M.indices, m_ref.indices)
+        assert np.array_equal(sol.M.data, m_ref.data)
+
+    prev_mask = lump_def
+    rng = np.random.default_rng(7)
+    v1 = rng.standard_normal(s_cons.M1.shape[0])
+    vm = rng.standard_normal(s_cons.M.shape[0])
+    for r_min in (0.25, 0.5, 1.0):
+        s_r = HybridFIT3D(
+            XN,
+            YN,
+            ZN,
+            box=BOX,
+            tet_mesh=tm,
+            mass="mixed",
+            mass_lump_min_ratio=r_min,
+        )
+        _assert_lump_threshold_subset_and_ratio(
+            lump_def, dv_def, s_r.lump_mask, s_r.dv, m1_diag, r_min
+        )
+        assert np.all(s_r.lump_mask <= prev_mask)
+        prev_mask = s_r.lump_mask
+
+        sym_m1 = sp.linalg.norm(s_r.M1 - s_r.M1.T) / sp.linalg.norm(s_r.M1)
+        sym_m = sp.linalg.norm(s_r.M - s_r.M.T) / sp.linalg.norm(s_r.M)
+        assert sym_m1 < 10 * EPS
+        assert sym_m < 10 * EPS
+
+        lam_min_m1 = sla.eigsh(
+            s_r.M1,
+            k=1,
+            which="SA",
+            tol=1e-9,
+            v0=v1,
+            maxiter=50000,
+            return_eigenvectors=False,
+        )[0]
+        lam_max_m1 = sla.eigsh(
+            s_r.M1, k=1, which="LA", tol=1e-9, v0=v1, return_eigenvectors=False
+        )[0]
+        lam_min_m = sla.eigsh(
+            s_r.M,
+            k=1,
+            which="SA",
+            tol=1e-9,
+            v0=vm,
+            maxiter=50000,
+            return_eigenvectors=False,
+        )[0]
+        lam_max_m = sla.eigsh(
+            s_r.M, k=1, which="LA", tol=1e-9, v0=vm, return_eigenvectors=False
+        )[0]
+        assert lam_min_m1 > 1e6 * EPS * lam_max_m1
+        assert lam_min_m > 1e6 * EPS * lam_max_m
+        assert abs(s_r.dt_max - s_cons.dt_max) / s_cons.dt_max < 1e-6
+
+    # Mutation check: keeping edges below the threshold instead of above fails
+    bad_keep = dv_def < 0.25 * m1_diag[lump_def]
+    lump_bad = np.zeros_like(lump_def)
+    lump_bad[np.flatnonzero(lump_def)[bad_keep]] = True
+    with pytest.raises(AssertionError, match="min ratio"):
+        _assert_lump_threshold_subset_and_ratio(
+            lump_def, dv_def, lump_bad, dv_def[bad_keep], m1_diag, 0.25
+        )
+
+
+def _assert_lu_guard_record(rec, lu_max_rows):
+    assert rec["mass_solver"] == "lu"
+    if rec["coupled_block"] > lu_max_rows:
+        assert rec["s_per_step"] is None
+        assert rec["time_to_solution_s"] is None
+        assert rec["reason"] is not None and str(lu_max_rows) in rec["reason"]
+    else:
+        assert rec["s_per_step"] is not None and rec["s_per_step"] > 0
+        assert rec["time_to_solution_s"] is not None and rec["time_to_solution_s"] > 0
+        assert rec["cheb_degree"] == 0
+        assert rec["reason"] is None
+
+
+def test_run_mixed_study_lu_and_guard():
+    """`run_mixed_study.py --mass-solver lu` times variants with LU when
+    `coupled_block <= lu_max_rows` and skips LU (printing `None`/`null` with
+    reason) when `coupled_block > lu_max_rows`."""
+    study_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "studies",
+        "hybrid-cart-tet",
+        "run_mixed_study.py",
+    )
+    spec = importlib.util.spec_from_file_location("run_mixed_study", study_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    out_lu = mod.run_study(
+        ns=(4,),
+        variants=("consistent", "staircase"),
+        n_steps=2,
+        gap=0.25,
+        T=0.25,
+        mass_solver="lu",
+    )
+    assert out_lu["mass_solver"] == "lu"
+    assert out_lu["meta"]["mass_solver"] == "lu"
+    rec_cons = out_lu["results"]["N=4"]["consistent"]
+    _assert_lu_guard_record(rec_cons, mod.LU_MAX_COUPLED_BLOCK)
+
+    out_skip = mod.run_study(
+        ns=(4,),
+        variants=("consistent",),
+        n_steps=2,
+        gap=0.25,
+        T=0.25,
+        mass_solver="lu",
+        lu_max_rows=10,
+    )
+    rec_skip = out_skip["results"]["N=4"]["consistent"]
+    assert rec_skip["coupled_block"] > 10
+    _assert_lu_guard_record(rec_skip, 10)
+    assert "N=4.consistent" in out_skip["lu_skipped"]
+
+    # Mutation check: an unskipped record when coupled_block > lu_max_rows fails
+    rec_mut = dict(rec_skip, s_per_step=0.01, time_to_solution_s=1.0, reason=None)
+    with pytest.raises(AssertionError):
+        _assert_lu_guard_record(rec_mut, 10)

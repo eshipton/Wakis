@@ -31,6 +31,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.constants import c as C0
 
 from wakis.field import Field
@@ -42,6 +43,7 @@ from wakis.solverFIT3D import SolverFIT3D
 WAVELENGTH_M = 1.0
 KA_SPHERE = 2.0
 T_PHYS_S = float(WAVELENGTH_M / C0)
+LU_MAX_COUPLED_BLOCK = 60000
 
 FAR_ZONE_NORM = (
     "relative L2 norm ||e_num - e_ref||_2 / ||e_ref||_2 of scattered edge "
@@ -184,7 +186,35 @@ def measure_cartesian_solverfit3d(v, n_steps=200, mutate=None):
     }
 
 
-def _build_td_solver(N, variant, v, nb, nh, a, tm_hybrid, tm_hybrid_smooth):
+def _coupled_block_size(M):
+    M = sp.csr_matrix(M)
+    d = M.diagonal()
+    off = M - sp.diags(d)
+    off.eliminate_zeros()
+    return int((np.diff(off.tocsr().indptr) > 0).sum())
+
+
+def _lu_skip_reason(coupled_block, lu_max_rows=LU_MAX_COUPLED_BLOCK):
+    return (
+        f"Skipped SuperLU mass factorization (mass_solver='lu'): coupled_block = "
+        f"{int(coupled_block)} exceeds the {int(lu_max_rows)}-row guard because 3D "
+        f"consistent-mass sparse LU fill-in (4.7e7 factor entries already at 26000 "
+        f"rows) makes factorization memory- and time-prohibitive."
+    )
+
+
+def _build_td_solver(
+    N,
+    variant,
+    v,
+    nb,
+    nh,
+    a,
+    tm_hybrid,
+    tm_hybrid_smooth,
+    mass_solver="chebyshev",
+    dt=None,
+):
     spec = VARIANT_SPECS[variant]
     method = spec["method"]
     mass = spec["mass"]
@@ -201,14 +231,15 @@ def _build_td_solver(N, variant, v, nb, nh, a, tm_hybrid, tm_hybrid_smooth):
             box=box,
             tet_mesh=tm,
             mass=mass,
-            mass_solver="chebyshev",
+            mass_solver=mass_solver,
+            dt=dt,
         )
     if method == "staircase":
 
         def pec(X, Y, Z):
             return X**2 + Y**2 + Z**2 < a**2
 
-        return HybridFIT3D(v, v, v, pec=pec, mass_solver="chebyshev")
+        return HybridFIT3D(v, v, v, pec=pec, mass_solver=mass_solver, dt=dt)
     if method == "tet":
         h = 1.0 / N
         i0, i1 = 1, 2 * nh - 1
@@ -228,7 +259,8 @@ def _build_td_solver(N, variant, v, nb, nh, a, tm_hybrid, tm_hybrid_smooth):
             box=box_tet,
             tet_mesh=tm_tet,
             mass="consistent",
-            mass_solver="chebyshev",
+            mass_solver=mass_solver,
+            dt=dt,
         )
     raise ValueError(f"Unsupported method={method!r}")
 
@@ -246,7 +278,13 @@ def measure_variant(
     n_steps=200,
     gap=0.2,
     T=0.5,
+    mass_solver="chebyshev",
+    lu_max_rows=LU_MAX_COUPLED_BLOCK,
 ):
+    if mass_solver not in ("chebyshev", "lu"):
+        raise ValueError(
+            f"mass_solver must be 'chebyshev' or 'lu', got {mass_solver!r}"
+        )
     spec = VARIANT_SPECS[variant]
     fd = pec_sphere_scattering(
         N,
@@ -258,31 +296,56 @@ def measure_variant(
         smooth=spec["smooth"],
     )
 
-    s = _build_td_solver(N, variant, v, nb, nh, a, tm_hybrid, tm_hybrid_smooth)
-    ms = s.msolver
-    h = 1.0 / N
-    s.add_current((-nh * h + 2 * h, 0.1, 0.05), 2, _source_pulse())
-
-    t0 = time.perf_counter()
-    s.run(n_steps)
-    s_per_step = float((time.perf_counter() - t0) / n_steps)
-
+    s = _build_td_solver(
+        N,
+        variant,
+        v,
+        nb,
+        nh,
+        a,
+        tm_hybrid,
+        tm_hybrid_smooth,
+        mass_solver=mass_solver,
+        dt=1.0,
+    )
     n_free = int(s.n_free)
     n_faces = int(s.n_faces)
     n_unknowns = int(n_free + n_faces)
-    dt = float(s.dt)
-    dt_max = float(s.dt_max)
-    cheb_degree = int(ms.degree)
-    coupled_block = int(ms.S.size)
-    cost_per_unknown_step_s = float(s_per_step / n_unknowns)
-    steps = int(np.ceil(T_PHYS_S / dt))
-    time_to_solution_s = float(steps * s_per_step)
+    coupled_block = _coupled_block_size(s.M)
 
-    return {
+    if mass_solver == "lu" and coupled_block > lu_max_rows:
+        dt = None
+        dt_max = None
+        cheb_degree = None
+        s_per_step = None
+        cost_per_unknown_step_s = None
+        steps = None
+        time_to_solution_s = None
+        reason = _lu_skip_reason(coupled_block, lu_max_rows=lu_max_rows)
+    else:
+        dt_max = float(s.dt_max)
+        dt = float(0.95 * dt_max)
+        s.dt = dt
+        ms = s.msolver
+        h = 1.0 / N
+        s.add_current((-nh * h + 2 * h, 0.1, 0.05), 2, _source_pulse())
+
+        t0 = time.perf_counter()
+        s.run(n_steps)
+        s_per_step = float((time.perf_counter() - t0) / n_steps)
+
+        cheb_degree = int(ms.degree)
+        cost_per_unknown_step_s = float(s_per_step / n_unknowns)
+        steps = int(np.ceil(T_PHYS_S / dt))
+        time_to_solution_s = float(steps * s_per_step)
+        reason = None
+
+    rec = {
         "N": int(N),
         "variant": variant,
         "method": spec["method"],
         "mass": spec["mass"],
+        "mass_solver": mass_solver,
         "smooth": bool(spec["smooth"]),
         "far_zone_error": float(fd["err_far"]),
         "err_far": float(fd["err_far"]),
@@ -309,6 +372,11 @@ def measure_variant(
         "steps": steps,
         "time_to_solution_s": time_to_solution_s,
     }
+    if mass_solver == "lu":
+        rec["lu_max_coupled_block"] = int(lu_max_rows)
+        rec["lu_skipped_reason"] = reason
+        rec["reason"] = reason
+    return rec
 
 
 def find_equal_accuracy_pairs(table, rel_tol=0.02):
@@ -352,7 +420,13 @@ def run_study(
     gap=0.2,
     T=0.5,
     quick=False,
+    mass_solver="chebyshev",
+    lu_max_rows=LU_MAX_COUPLED_BLOCK,
 ):
+    if mass_solver not in ("chebyshev", "lu"):
+        raise ValueError(
+            f"mass_solver must be 'chebyshev' or 'lu', got {mass_solver!r}"
+        )
     if quick:
         if tuple(ns) == (10, 16):
             ns = (10,)
@@ -373,6 +447,7 @@ def run_study(
     results_by_n = {}
     cartesian_refs = {}
     table = []
+    lu_skipped = {}
 
     for N in ns:
         N = int(N)
@@ -411,31 +486,44 @@ def run_study(
                 n_steps=n_steps,
                 gap=gap,
                 T=T,
+                mass_solver=mass_solver,
+                lu_max_rows=lu_max_rows,
             )
             per_n[variant] = rec
-            table.append(
-                {
-                    "variant": variant,
-                    "N": int(N),
-                    "far_zone_error": rec["far_zone_error"],
-                    "time_to_solution_s": rec["time_to_solution_s"],
-                    "n_unknowns": rec["n_unknowns"],
-                    "dt": rec["dt"],
-                    "dt_max": rec["dt_max"],
-                    "cheb_degree": rec["cheb_degree"],
-                    "coupled_block": rec["coupled_block"],
-                    "s_per_step": rec["s_per_step"],
-                    "cost_per_unknown_step_s": rec["cost_per_unknown_step_s"],
-                    "cart_cost_per_unknown_step_s": rec["cart_cost_per_unknown_step_s"],
-                    "steps": rec["steps"],
-                }
-            )
+            row = {
+                "variant": variant,
+                "N": int(N),
+                "mass_solver": mass_solver,
+                "far_zone_error": rec["far_zone_error"],
+                "time_to_solution_s": rec["time_to_solution_s"],
+                "n_unknowns": rec["n_unknowns"],
+                "dt": rec["dt"],
+                "dt_max": rec["dt_max"],
+                "cheb_degree": rec["cheb_degree"],
+                "coupled_block": rec["coupled_block"],
+                "s_per_step": rec["s_per_step"],
+                "cost_per_unknown_step_s": rec["cost_per_unknown_step_s"],
+                "cart_cost_per_unknown_step_s": rec["cart_cost_per_unknown_step_s"],
+                "steps": rec["steps"],
+            }
+            if mass_solver == "lu":
+                row["lu_skipped_reason"] = rec["lu_skipped_reason"]
+                row["reason"] = rec["reason"]
+                if rec["reason"] is not None:
+                    lu_skipped[f"N={N}.{variant}"] = {
+                        "coupled_block": rec["coupled_block"],
+                        "lu_max_coupled_block": int(lu_max_rows),
+                        "reason": rec["reason"],
+                    }
+            table.append(row)
         results_by_n[f"N={N}"] = per_n
 
-    return {
+    out = {
         "quick": bool(quick),
+        "mass_solver": mass_solver,
         "meta": {
             "quick": bool(quick),
+            "mass_solver": mass_solver,
             "machine": platform.node(),
             "cpus": os.cpu_count(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
@@ -458,6 +546,10 @@ def run_study(
         "table": table,
         "equal_accuracy_pairs": find_equal_accuracy_pairs(table),
     }
+    if mass_solver == "lu":
+        out["lu_max_coupled_block"] = int(lu_max_rows)
+        out["lu_skipped"] = lu_skipped
+    return out
 
 
 def main():
@@ -478,6 +570,12 @@ def main():
     ap.add_argument("--gap", type=float, default=0.2)
     ap.add_argument("--T", type=float, default=0.5)
     ap.add_argument(
+        "--mass-solver",
+        choices=["chebyshev", "lu"],
+        default="chebyshev",
+        help="Solver for the coupled mass block ('chebyshev' or 'lu').",
+    )
+    ap.add_argument(
         "--quick",
         action="store_true",
         help="Smoke-test run with N = 10 only and n_steps = 5.",
@@ -492,6 +590,7 @@ def main():
         gap=args.gap,
         T=args.T,
         quick=args.quick,
+        mass_solver=args.mass_solver,
     )
     print(json.dumps(out, indent=2), flush=True)
 

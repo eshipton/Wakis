@@ -25,6 +25,8 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.constants import epsilon_0 as EPS0
 
+from ..unstructured.solver3d import whitney_mass_matrices
+
 __all__ = ["mixed_partition", "mixed_tet_mass", "well_centred_tets"]
 
 
@@ -69,6 +71,8 @@ def mixed_partition(
     fixed=None,
     margin=1e-2,
     mutate=None,
+    lump_min_ratio=None,
+    M1=None,
 ):
     """
     Partition the tetrahedral edges into lumped (``L``) and consistent (``C``).
@@ -94,6 +98,13 @@ def mixed_partition(
         including non-well-centred and box-surface ones;
         ``'ignore_wellcentred'`` follows the standard partition path with the
         `well_centred_tets` filter omitted.
+    lump_min_ratio : float or None, optional
+        When not ``None``, an edge ``e`` is lumped only if
+        ``D_V[e] >= lump_min_ratio * M1[e, e]`` (default ``None`` preserves
+        the unthresholded partition bit-for-bit).
+    M1 : spmatrix, optional
+        Consistent Whitney 1-form mass matrix [F]; computed if omitted when
+        `lump_min_ratio` is not ``None``.
 
     Returns
     -------
@@ -148,6 +159,18 @@ def mixed_partition(
     else:
         raise ValueError("mutate must be None, 'lump_all', or 'ignore_wellcentred'")
     dual_area = tet_mesh.dual_measure(eps_t * live)
+    if lump_min_ratio is not None:
+        lump_min_ratio = float(lump_min_ratio)
+        if lump_min_ratio < 0:
+            raise ValueError("lump_min_ratio must be non-negative")
+        if M1 is None:
+            M1, _ = whitney_mass_matrices(tet_mesh, eps_t, np.ones(n_cells), live)
+        m1_diag = M1.diagonal()
+        dv_cand = EPS0 * dual_area[lump_mask] / tet_mesh.edge_length[lump_mask]
+        keep = dv_cand >= lump_min_ratio * m1_diag[lump_mask]
+        idx = np.flatnonzero(lump_mask)
+        lump_mask = np.zeros(n_edges, bool)
+        lump_mask[idx[keep]] = True
     dv = EPS0 * dual_area[lump_mask] / tet_mesh.edge_length[lump_mask]
     if mutate is None and np.any(dv <= 0):
         raise RuntimeError("non-positive Voronoi dual mass on a well-centred edge")

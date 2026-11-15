@@ -313,12 +313,16 @@ class HybridFIT3D:
         (``'consistent'``, default) or Voronoi diagonal Hodge on interior
         well-centred edges and consistent Whitney block elsewhere
         (``'mixed'``; `mixed_partition`).
+    mass_lump_min_ratio : float or None, optional
+        Optional lower threshold on ``D_V[e] / M1[e, e]`` passed as
+        ``lump_min_ratio`` to `mixed_partition` when ``mass='mixed'``
+        (default ``None``).
     """
 
     def __init__(self, xn, yn, zn, box=None, tet_mesh=None, materials=None, eps_r=None,
                  mu_r=None, pec=None, outer_bc="pec", edge_scale=None, face_scale=None,
                  dt=None, cfl=0.95, mutate=None, mass_solver="auto", mass_tol=1e-16,
-                 mass="consistent"):  # fmt: skip
+                 mass="consistent", mass_lump_min_ratio=None):  # fmt: skip
         if outer_bc not in ("pec", "pmc"):
             raise ValueError("outer_bc must be 'pec' or 'pmc'")
         if mass not in ("consistent", "mixed"):
@@ -328,6 +332,7 @@ class HybridFIT3D:
         self.block = blk = CartesianBlock(xn, yn, zn)
         self.mutate = mutate
         self.mass = mass
+        self.mass_lump_min_ratio = mass_lump_min_ratio
         self.mass_solver = mass_solver
         self.mass_tol = mass_tol
         nc = blk.nc
@@ -430,6 +435,8 @@ class HybridFIT3D:
                     on_box=on_box,
                     fixed=fixed,
                     mutate=mutate if mutate == "lump_all" else None,
+                    lump_min_ratio=mass_lump_min_ratio,
+                    M1=self.M1,
                 )
                 self.M1 = mixed_tet_mass(self.M1, self.lump_mask, self.dv)
             hr, hc, hv = box_trace(
@@ -815,12 +822,16 @@ def _nested_dissection(A, X, leaf=128):
     return perm
 
 
-def _gen_lanczos_max(K, W, M, msolver):
+def _gen_lanczos_max(K, W, M, msolver, return_eigenvector=False):
     n = K.shape[1]
     KT = K.T.tocsr()
     A = sla.LinearOperator((n, n), matvec=lambda x: KT @ (W @ (K @ x)), dtype=float)
     Minv = sla.LinearOperator((n, n), matvec=msolver.solve, dtype=float)
     v0 = np.random.default_rng(1).standard_normal(n)
+    if return_eigenvector:
+        lam, vecs = sla.eigsh(A, k=1, M=M, Minv=Minv, which="LA", tol=1e-10, v0=v0,
+                              ncv=min(n, 40), return_eigenvectors=True)  # fmt: skip
+        return float(lam[0]), vecs[:, 0]
     lam = sla.eigsh(A, k=1, M=M, Minv=Minv, which="LA", tol=1e-10, v0=v0,
                     ncv=min(n, 40), return_eigenvectors=False)  # fmt: skip
     return float(lam[0])
