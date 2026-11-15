@@ -275,9 +275,9 @@ connectivity without moving existing vertices:
    interface-preserving Steiner edge splits are allowed, preserving both total volume and per-tag volume to relative
    tolerance $10^{-12}$.
 2. *Locked CAD nodes (`locked`):* given an optional boolean mask `locked` over mesh vertices (`True` on fixed CAD
-   curves or corners, or `~movable` inside `improve_dt`), any flip or Steiner edge bisection that removes an edge
-   whose two endpoints are both locked (`refused["locked"]`) or a boundary face whose three vertices are all locked
-   (`refused["locked_boundary_face"]`) is refused.
+   curves or corners, or `~movable` inside `improve_dt`), a flip is refused when it removes a boundary edge or
+   boundary face whose nodes are all locked (`refused["locked"]`), and likewise for Steiner boundary-edge bisection;
+   interior edges and interior faces are never refused by `locked`.
 
 ### Algorithm
 
@@ -292,8 +292,8 @@ connectivity without moving existing vertices:
    keeps it zero while increasing the minimum signed dual length). Re-enqueue all faces of the newly created
    tetrahedra.
 4. If negative faces remain after the queue empties and `steiner=True`, `_insert_steiner` inserts a Steiner node
-   (in the interior or along an unlocked edge, followed by local flips), committing the split only if the global
-   negative-face count strictly decreases.
+   (in the interior, along an interior edge, or along a boundary edge whose endpoints are not both locked, followed by
+   local flips), committing the split only if the global negative-face count strictly decreases.
 5. When `improve_dt(..., repair=True)` (the default), `improve_dt` runs `flip_to_delaunay` $\to$ time-step-driven
    node smoothing $\to$ `flip_to_delaunay` with `locked = ~movable` and appends a `"repair"` report dictionary to
    `history`. Setting `repair=False` runs node smoothing alone.
@@ -307,10 +307,10 @@ connectivity without moving existing vertices:
   Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
   DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for
   regular triangulations, Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867).
-* **Locked curves and material interfaces.** Flips that would remove an edge with both endpoints marked `locked` or
-  alter a non-planar material interface (`cell_tags` jump) or non-planar boundary are refused by construction.
-  When all edges of a boundary-adjacent or interface-adjacent sliver are locked by CAD curves or corners, neither
-  flips nor node relocation can alter its faces.
+* **Locked curves and material interfaces.** A flip is refused when it removes a boundary edge or boundary face whose
+  nodes are all locked, or when it would alter a non-planar material interface (`cell_tags` jump) or non-planar
+  boundary. When all boundary edges of a boundary-adjacent sliver are locked by CAD curves or corners, neither
+  boundary flips nor node relocation can alter its boundary faces.
 * **3D flip-sequence non-termination risk.** Unlike two-dimensional Lawson flips, unconstrained three-dimensional
   local flips can cycle indefinitely if non-improving flips are permitted (B. Joe, Construction of three-dimensional
   Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
@@ -320,8 +320,8 @@ connectivity without moving existing vertices:
   dual length at zero negative faces) on every flip and by enforcing `max_flips`.
 * **What the Steiner step does and does not guarantee.** `_insert_steiner` commits an insertion only when the split
   followed by local flips strictly reduces the global count of negative faces. It resolves isolated non-convex
-  configurations where 2-3, 3-2, 4-4, and 2-2 flips are geometrically blocked, but it never bisects an edge whose
-  endpoints are both locked and does not guarantee removal of negative faces constrained by curved boundaries,
+  configurations where 2-3, 3-2, 4-4, and 2-2 flips are geometrically blocked, but it never bisects a boundary edge
+  whose endpoints are both locked and does not guarantee removal of negative faces constrained by curved boundaries,
   small dihedral angles, or locked CAD features; any remaining offending faces are returned in `report["stuck"]`.
 
 ## References

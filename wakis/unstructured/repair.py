@@ -14,15 +14,16 @@ planar boundaries) replace non-Delaunay simplices inside a single material tag;
 coplanar diagonal flips also apply across a planar material interface when
 adjacent coplanar interface triangles separate the same pair of material tags
 and share one opposite apex on each side, preserving the interface plane and
-per-tag volumes. Flips that would remove an edge whose two endpoints are both
-locked (e.g. on fixed CAD curves or corners) are refused. Stuck interior or
+per-tag volumes. A flip is refused when it removes a boundary edge or boundary
+face whose nodes are all locked (e.g. on fixed CAD curves or corners); interior
+edges and interior faces are never refused by `locked`. Stuck interior or
 interface faces (B. Joe, Construction of three-dimensional Delaunay
 triangulations using local transformations, Computer Aided Geometric Design
 8(2), 123-142 (1991), DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and
 N. R. Shah, Incremental topological flipping works for regular triangulations,
 Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867) are resolved by
-inserting a Steiner node at the tet-pair circumcentre or by bisecting an
-unlocked edge of the offending face while preserving each cell's material tag.
+inserting a Steiner node at the tet-pair circumcentre or by bisecting an edge
+of the offending face while preserving each cell's material tag.
 """
 
 from collections import deque
@@ -446,6 +447,26 @@ class _RepairState:
         return new_mesh
 
 
+def _is_locked_removal(state, locked, edges=(), faces=()):
+    """Return True when a flip removes a boundary edge or boundary face whose nodes are all locked."""
+    if locked is None:
+        return False
+    n = len(locked)
+    for a, b in edges:
+        if (
+            _sedge(a, b) in state.bnd_edges
+            and a < n
+            and b < n
+            and locked[a]
+            and locked[b]
+        ):
+            return True
+    for f in faces:
+        if len(state.face_map.get(f, ())) == 1 and all(v < n and locked[v] for v in f):
+            return True
+    return False
+
+
 def _flip_23(state, f, locked, target_face=None, check_delaunay=True):
     """Bistellar 2-3 flip replacing interior face f with a transverse edge."""
     entries = state.face_map.get(f)
@@ -455,6 +476,8 @@ def _flip_23(state, f, locked, target_face=None, check_delaunay=True):
     tag = state.tags[c1]
     if state.tags[c2] != tag:
         return False, "interface"
+    if _is_locked_removal(state, locked, faces=(f,)):
+        return False, "locked"
 
     tet1 = state.cells[c1]
     tet2 = state.cells[c2]
@@ -514,7 +537,7 @@ def _flip_32(state, edge, locked, target_face=None, check_delaunay=True):
     tag = next(iter(tags))
 
     a, b = edge
-    if locked[a] and locked[b]:
+    if _is_locked_removal(state, locked, edges=(edge,)):
         return False, "locked"
 
     other_verts = set()
@@ -575,7 +598,7 @@ def _flip_44(state, edge, locked, target_face=None, check_delaunay=True):
     tag = next(iter(tags))
 
     a, b = edge
-    if locked[a] and locked[b]:
+    if _is_locked_removal(state, locked, edges=(edge,)):
         return False, "locked"
 
     # Extract the 4-cycle of link edges around (a, b)
@@ -693,11 +716,7 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
         ):
             return False, "boundary"
 
-        if (
-            (locked[a] and locked[b])
-            or all(locked[v] for v in fb1)
-            or all(locked[v] for v in fb2)
-        ):
+        if _is_locked_removal(state, locked, edges=(edge,), faces=(fb1, fb2)):
             return False, "locked"
 
         cd_edge = _sedge(c, d)
@@ -816,11 +835,7 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
     ):
         return False, "topology"
 
-    if (
-        (locked[a] and locked[b])
-        or all(locked[v] for v in fb1)
-        or all(locked[v] for v in fb2)
-    ):
+    if _is_locked_removal(state, locked, edges=(edge,), faces=(fb1, fb2)):
         return False, "locked"
 
     cd_edge = _sedge(c, d)
@@ -938,14 +953,7 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0, locked=None):
         if not cids:
             return False, "topology"
         a, b = ed
-        if (
-            tag1 == tag2
-            and locked is not None
-            and a < len(locked)
-            and b < len(locked)
-            and locked[a]
-            and locked[b]
-        ):
+        if tag1 == tag2 and _is_locked_removal(state, locked, edges=(ed,)):
             return False, "locked"
         pt = (1.0 - alpha) * state.X[a] + alpha * state.X[b]
         X_try = np.vstack([state.X, pt[None, :]])
@@ -1197,9 +1205,8 @@ def flip_to_delaunay(
     materials : dict, optional
         ``{tag: material}`` mapping as for `UnstructuredFIT3D`.
     locked : ndarray of bool (n_nodes,), optional
-        True for nodes on locked CAD curves or surfaces. A flip is refused if
-        it removes an edge whose two endpoints are both locked, or a boundary
-        face whose three nodes are all locked.
+        True for nodes on locked CAD curves or surfaces. A flip is refused when
+        it removes a boundary edge or boundary face whose nodes are all locked.
     bc : {"pec", "pmc", "abc"}, optional
         Outer boundary condition used to identify free edges (default ``"pec"``).
     steiner : bool, optional

@@ -373,12 +373,12 @@ def test_repaired_mesh_1e4_steps_gaussian_stability():
 
 def test_locked_nodes_refuse_flips_and_steiner_fallback():
     """
-    Verify that locking the endpoints of an edge refuses a 3-2 flip with reason
-    ``"locked"``, and that `steiner=True` repairs a stuck interior face by
-    inserting a Steiner node and re-flipping. A failure means locked-node
-    constraints or Steiner insertion are not respected.
+    Verify that locking the endpoints of a boundary edge refuses a 2-2 flip
+    with reason ``"locked"``, and that `steiner=True` repairs a stuck interior
+    face by inserting a Steiner node and re-flipping. A failure means
+    locked-node constraints or Steiner insertion are not respected.
     """
-    mesh, _, bc, expected_neg, _ = _build_interface_case()
+    mesh, _, bc, expected_neg, _ = _build_boundary_case()
     all_locked = np.ones(mesh.n_nodes, dtype=bool)
     _, rep_locked = flip_to_delaunay(mesh, bc=bc, locked=all_locked, steiner=False)
     assert rep_locked["refused"].get("locked", 0) > 0
@@ -556,12 +556,67 @@ def test_layered_interface_unequal_mesh_sizes_repair():
 
 def test_locked_curve_edge_is_not_flipped_away():
     """
-    Verify that a 3-2 flip removing an interior edge whose two endpoints are
-    both locked is refused by `flip_to_delaunay(..., locked=mask)` and that
-    `improve_dt(..., repair=True)` forwards `locked=~movable` so the locked
-    edge survives both repair passes.
-    Mutation check: passing `locked=None` in `improve_dt` allows `_flip_32`
-    to remove edge (0, 1) and makes this test fail.
+    Verify that a 2-2 flip removing a boundary edge (a CAD-curve edge) whose
+    two endpoints are both locked is refused by `flip_to_delaunay(..., locked=mask)`
+    and that `improve_dt(..., repair=True)` forwards `locked=~movable` so the
+    locked boundary edge survives both repair passes.
+    Mutation check: passing `locked=None` in `improve_dt` allows `_flip_22`
+    to remove boundary edge (0, 1) and makes this test fail.
+    """
+    X = np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.4, 0.0],
+            [0.0, -0.4, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.0, 0.0, 1.5],
+        ],
+        dtype=float,
+    )
+    cells = np.array(
+        [
+            _orient_tet(X, 0, 1, 2, 4),
+            _orient_tet(X, 0, 1, 3, 4),
+            _orient_tet(X, 0, 2, 4, 5),
+            _orient_tet(X, 2, 1, 4, 5),
+            _orient_tet(X, 1, 3, 4, 5),
+            _orient_tet(X, 3, 0, 4, 5),
+        ],
+        dtype=np.int64,
+    )
+    mesh = SimplexMesh(X, cells)
+    assert neg_faces(mesh).size > 0
+    assert (0, 1) in _RepairState(mesh, None, "pec").bnd_edges
+
+    def _has_edge(m, u, v):
+        target = (min(u, v), max(u, v))
+        return any((int(e[0]), int(e[1])) == target for e in m.edges)
+
+    assert _has_edge(mesh, 0, 1)
+
+    mask = np.array([True, True, False, False, False, False], dtype=bool)
+    repaired, rep = flip_to_delaunay(mesh, locked=mask)
+    assert _has_edge(repaired, 0, 1)
+    assert rep["refused"].get("locked", 0) > 0
+
+    improved, history = improve_dt(
+        mesh,
+        n_sweeps=1,
+        repair=True,
+        project=lambda n, y: None if mask[n] else y,
+    )
+    assert _has_edge(improved, 0, 1)
+    assert history[-1]["repair"]["refused"].get("locked", 0) > 0
+
+
+def test_interior_chord_between_locked_nodes_is_flippable():
+    """
+    Verify that an interior non-Delaunay face touching two locked (surface)
+    nodes is repaired when the flip removes an interior edge between the two
+    locked nodes, leaving zero negative faces and `refused["locked"] == 0`.
+    Mutation check: the old rule (refuse any edge with both ends locked)
+    refuses the 3-2 flip on interior edge (0, 1) and makes this test fail.
     """
     X = np.array(
         [
@@ -583,26 +638,25 @@ def test_locked_curve_edge_is_not_flipped_away():
     )
     mesh = SimplexMesh(X, cells)
     assert neg_faces(mesh).size > 0
-
-    def _has_edge(m, u, v):
-        target = (min(u, v), max(u, v))
-        return any((int(e[0]), int(e[1])) == target for e in m.edges)
-
-    assert _has_edge(mesh, 0, 1)
+    assert (0, 1) not in _RepairState(mesh, None, "pec").bnd_edges
 
     mask = np.array([True, True, False, False, False], dtype=bool)
     repaired, rep = flip_to_delaunay(mesh, locked=mask)
-    assert _has_edge(repaired, 0, 1)
-    assert rep["refused"].get("locked", 0) > 0
+    assert rep["negative_faces_after"] == 0
+    assert neg_faces(repaired).size == 0
+    assert rep["refused"].get("locked", 0) == 0
+    assert rep["flips"]["3-2"] == 1
 
     improved, history = improve_dt(
         mesh,
-        n_sweeps=1,
+        bc="pmc",
+        n_sweeps=0,
         repair=True,
         project=lambda n, y: None if mask[n] else y,
     )
-    assert _has_edge(improved, 0, 1)
-    assert history[-1]["repair"]["refused"].get("locked", 0) > 0
+    assert history[-1]["repair"]["negative_faces_after"] == 0
+    assert history[-1]["repair"]["refused"].get("locked", 0) == 0
+    assert neg_faces(improved, bc="pmc").size == 0
 
 
 def test_interface_22_only_case():
