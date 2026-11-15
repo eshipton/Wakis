@@ -146,8 +146,10 @@ CFL 0.95). Batch `cadmesh-study-4`, `results/improve.json`:
 | muon 15 | 0.120 | 0.073 | 0.082 | **0.180** | 1.50 | | 212 / 493 |
 | muon 20 | 0.132 | 0.058 | 0.076 | **0.200** | 1.52 | | 269 / 679 |
 
-The time step grows by 1.43–1.73× over the unoptimized Delaunay mesh at equal or better resonance accuracy on
-the two analytic cases. Both gmsh optimizers are worse than doing nothing for Voronoi FIT: they never raise dt
+The time step grows by 1.47–1.73× (pillbox) and 1.50–1.52× (muon cavity) over the unoptimized Delaunay mesh,
+at equal or better resonance accuracy on the pillbox. On the layered pillbox the unoptimized mesh is not Delaunay
+(next sentences), so it cannot run in the time domain at any dt; the 1.43–1.66× there is relative to a nominal
+$\Delta t$ the baseline cannot use, and `improve_dt` is what makes the mesh runnable at all. Both gmsh optimizers are worse than doing nothing for Voronoi FIT: they never raise dt
 (Netgen roughly halves it) and leave tens to thousands of non-Delaunay faces, i.e. an indefinite $K$ and a
 diverging time-domain run. The layered pillbox's Delaunay output itself has 2–7 non-Delaunay faces (planar
 interface) and, at cpw 15–20 on the Batch VMs, flat zero-volume slivers on the interface plane; `mesh_cad` then

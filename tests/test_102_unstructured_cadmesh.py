@@ -331,7 +331,15 @@ def test_step_layered_pillbox(tmp_path):
         vd = m.cell_volume[m.cell_tags == 0].sum() / (np.pi * a**2 * t)
         assert abs(vd - 1) < 2e-2
         assert info.sizes["vac"] == pytest.approx(2 * info.sizes["diel"])
-        s = UnstructuredFIT3D(m, info.materials)
+        # The unimproved gmsh mesh of this two-material geometry is not
+        # Delaunay (2-7 faces with negative dual length at cpw 10-20): the
+        # Voronoi time stepping is unstable at any dt, so the solver refuses
+        # it unless allowed. improve_dt must remove those faces.
+        if imp is None:
+            with pytest.warns(UserWarning, match="negative dual length"):
+                s = UnstructuredFIT3D(m, info.materials, allow_negative_faces=True)
+        else:
+            s = UnstructuredFIT3D(m, info.materials)
         f, _ = s.eigenmodes(1, f_target=0.6 * fx)
         out[imp] = (f[0] / fx - 1, s.dt_max)
     e0, dt0 = out[None]
