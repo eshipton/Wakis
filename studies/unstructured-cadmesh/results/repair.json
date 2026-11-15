@@ -1,0 +1,996 @@
+{
+  "git_commit": "04f235440794d46af6ef062d5247349bef710acd",
+  "command": "repair_study.py",
+  "cpw": 10,
+  "cases": [
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 1147425278.3521006,
+      "negative_faces_before": 0,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.2929273992791468e-11,
+      "dt_max_flip_only": 1.2929273992791468e-11,
+      "dt_max_repair_false": 1.9328332040604302e-11,
+      "dt_max_repair_true": 1.9328332040604302e-11,
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_before": 1.4949278707667992,
+      "lowest_freq_err_before": -0.003753093084130632,
+      "lowest_freq_err_repair_false": -0.0027791293145932316,
+      "lowest_freq_err_repair_true": -0.0027791293145934537,
+      "before": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.1315644,
+          1735344794.474917,
+          1811317795.1990032,
+          1820001692.3382971
+        ],
+        "lowest_freq_err": -0.003753093084130632
+      },
+      "flip_only": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "f0_hz": 1143118884.4753602,
+        "f_all_hz": [
+          1143118884.4753602,
+          1733560667.1315644,
+          1735344794.474917,
+          1811317795.1990027,
+          1820001692.3382967
+        ],
+        "lowest_freq_err": -0.003753093084131076,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.9328332040604302e-11,
+        "courant_h": 0.23537487590394476,
+        "f0_hz": 1144236435.124727,
+        "f_all_hz": [
+          1144236435.124727,
+          1731845448.6184127,
+          1735383299.4583027,
+          1812782386.0241125,
+          1821921158.2203963
+        ],
+        "lowest_freq_err": -0.0027791293145932316
+      },
+      "after_repair_true": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.9328332040604302e-11,
+        "courant_h": 0.23537487590394476,
+        "f0_hz": 1144236435.1247268,
+        "f_all_hz": [
+          1144236435.1247268,
+          1731845448.6184125,
+          1735383299.4583023,
+          1812782386.024112,
+          1821921158.2203953
+        ],
+        "lowest_freq_err": -0.0027791293145934537
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 0,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 0,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 12.093879794000003
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 936518201.5981728,
+      "negative_faces_before": 1823,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 6.915464663076031e-12,
+      "dt_max_flip_only": 6.915464679987743e-12,
+      "dt_max_repair_false": 9.902452630867067e-12,
+      "dt_max_repair_true": 1.011986926351032e-11,
+      "dt_gain_vs_repair_false": 1.0219558366747992,
+      "dt_gain_vs_before": 1.4633679378832882,
+      "lowest_freq_err_before": -0.005654947693487733,
+      "lowest_freq_err_repair_false": -0.004989966567225612,
+      "lowest_freq_err_repair_true": -0.004677417536587569,
+      "before": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_negative_faces": 1823,
+        "voronoi_valid": false,
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "f0_hz": 931222240.154136,
+        "f_all_hz": [
+          931222240.154136
+        ],
+        "lowest_freq_err": -0.005654947693487733
+      },
+      "flip_only": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 6.915464679987743e-12,
+        "courant_h": 0.1405312603774546,
+        "f0_hz": 931223489.3796129,
+        "f_all_hz": [
+          931223489.3796129
+        ],
+        "lowest_freq_err": -0.005653613789379008,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "refused": {
+            "boundary": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 9.902452630867067e-12,
+        "courant_h": 0.20057713042157316,
+        "f0_hz": 931845007.0825996,
+        "f_all_hz": [
+          931845007.0825996
+        ],
+        "lowest_freq_err": -0.004989966567225612
+      },
+      "after_repair_true": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.011986926351032e-11,
+        "courant_h": 0.20500911214998882,
+        "f0_hz": 932137714.938684,
+        "f_all_hz": [
+          932137714.938684
+        ],
+        "lowest_freq_err": -0.004677417536587569
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 4,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 2,
+        "refused": {
+          "boundary": 3
+        },
+        "negative_faces_before": 2,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 52.29065144100001
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 704156915.7639738,
+      "negative_faces_before": 0,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.543640843719826e-11,
+      "dt_max_flip_only": 1.543640843719826e-11,
+      "dt_max_repair_false": 2.3358870495103412e-11,
+      "dt_max_repair_true": 2.3358870495103412e-11,
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_before": 1.5132322126702613,
+      "lowest_freq_err_before": 0.019426287867287284,
+      "lowest_freq_err_repair_false": 0.021130956633760967,
+      "lowest_freq_err_repair_true": 0.021130956633760967,
+      "before": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.029897,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287284
+      },
+      "flip_only": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.0298965,
+          1077611362.5290146,
+          1435421566.384075
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 2.3358870495103412e-11,
+        "courant_h": 0.2055496554514844,
+        "f0_hz": 719036425.0143453,
+        "f_all_hz": [
+          719036425.0143453,
+          1076418245.4262679,
+          1078974718.3942401,
+          1439122601.3046162
+        ],
+        "lowest_freq_err": 0.021130956633760967
+      },
+      "after_repair_true": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 2.3358870495103412e-11,
+        "courant_h": 0.2055496554514844,
+        "f0_hz": 719036425.0143453,
+        "f_all_hz": [
+          719036425.0143453,
+          1076418245.426268,
+          1078974718.3942401,
+          1439122601.3046162
+        ],
+        "lowest_freq_err": 0.021130956633760967
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 0,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 0,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 9.415557847999992
+    }
+  ],
+  "all_runs": [
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 1147425278.3521006,
+      "negative_faces_before": 0,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.2929273992791468e-11,
+      "dt_max_flip_only": 1.2929273992791468e-11,
+      "dt_max_repair_false": 1.9328332040604302e-11,
+      "dt_max_repair_true": 1.9328332040604302e-11,
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_before": 1.4949278707667992,
+      "lowest_freq_err_before": -0.003753093084130632,
+      "lowest_freq_err_repair_false": -0.0027791293145932316,
+      "lowest_freq_err_repair_true": -0.0027791293145934537,
+      "before": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.1315644,
+          1735344794.474917,
+          1811317795.1990032,
+          1820001692.3382971
+        ],
+        "lowest_freq_err": -0.003753093084130632
+      },
+      "flip_only": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "f0_hz": 1143118884.4753602,
+        "f_all_hz": [
+          1143118884.4753602,
+          1733560667.1315644,
+          1735344794.474917,
+          1811317795.1990027,
+          1820001692.3382967
+        ],
+        "lowest_freq_err": -0.003753093084131076,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.9328332040604302e-11,
+        "courant_h": 0.23537487590394476,
+        "f0_hz": 1144236435.124727,
+        "f_all_hz": [
+          1144236435.124727,
+          1731845448.6184127,
+          1735383299.4583027,
+          1812782386.0241125,
+          1821921158.2203963
+        ],
+        "lowest_freq_err": -0.0027791293145932316
+      },
+      "after_repair_true": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.9328332040604302e-11,
+        "courant_h": 0.23537487590394476,
+        "f0_hz": 1144236435.1247268,
+        "f_all_hz": [
+          1144236435.1247268,
+          1731845448.6184125,
+          1735383299.4583023,
+          1812782386.024112,
+          1821921158.2203953
+        ],
+        "lowest_freq_err": -0.0027791293145934537
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 0,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 0,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 12.093879794000003
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 936518201.5981728,
+      "negative_faces_before": 1823,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 6.915464663076031e-12,
+      "dt_max_flip_only": 6.915464679987743e-12,
+      "dt_max_repair_false": 9.902452630867067e-12,
+      "dt_max_repair_true": 1.011986926351032e-11,
+      "dt_gain_vs_repair_false": 1.0219558366747992,
+      "dt_gain_vs_before": 1.4633679378832882,
+      "lowest_freq_err_before": -0.005654947693487733,
+      "lowest_freq_err_repair_false": -0.004989966567225612,
+      "lowest_freq_err_repair_true": -0.004677417536587569,
+      "before": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_negative_faces": 1823,
+        "voronoi_valid": false,
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "f0_hz": 931222240.154136,
+        "f_all_hz": [
+          931222240.154136
+        ],
+        "lowest_freq_err": -0.005654947693487733
+      },
+      "flip_only": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 6.915464679987743e-12,
+        "courant_h": 0.1405312603774546,
+        "f0_hz": 931223489.3796129,
+        "f_all_hz": [
+          931223489.3796129
+        ],
+        "lowest_freq_err": -0.005653613789379008,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "refused": {
+            "boundary": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 9.902452630867067e-12,
+        "courant_h": 0.20057713042157316,
+        "f0_hz": 931845007.0825996,
+        "f_all_hz": [
+          931845007.0825996
+        ],
+        "lowest_freq_err": -0.004989966567225612
+      },
+      "after_repair_true": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.011986926351032e-11,
+        "courant_h": 0.20500911214998882,
+        "f0_hz": 932137714.938684,
+        "f_all_hz": [
+          932137714.938684
+        ],
+        "lowest_freq_err": -0.004677417536587569
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 4,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 2,
+        "refused": {
+          "boundary": 3
+        },
+        "negative_faces_before": 2,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 52.29065144100001
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 10,
+      "f_ref_hz": 704156915.7639738,
+      "negative_faces_before": 0,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.543640843719826e-11,
+      "dt_max_flip_only": 1.543640843719826e-11,
+      "dt_max_repair_false": 2.3358870495103412e-11,
+      "dt_max_repair_true": 2.3358870495103412e-11,
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_before": 1.5132322126702613,
+      "lowest_freq_err_before": 0.019426287867287284,
+      "lowest_freq_err_repair_false": 0.021130956633760967,
+      "lowest_freq_err_repair_true": 0.021130956633760967,
+      "before": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.029897,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287284
+      },
+      "flip_only": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.0298965,
+          1077611362.5290146,
+          1435421566.384075
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 2.3358870495103412e-11,
+        "courant_h": 0.2055496554514844,
+        "f0_hz": 719036425.0143453,
+        "f_all_hz": [
+          719036425.0143453,
+          1076418245.4262679,
+          1078974718.3942401,
+          1439122601.3046162
+        ],
+        "lowest_freq_err": 0.021130956633760967
+      },
+      "after_repair_true": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 2.3358870495103412e-11,
+        "courant_h": 0.2055496554514844,
+        "f0_hz": 719036425.0143453,
+        "f_all_hz": [
+          719036425.0143453,
+          1076418245.426268,
+          1078974718.3942401,
+          1439122601.3046162
+        ],
+        "lowest_freq_err": 0.021130956633760967
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 0,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 0,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 9.415557847999992
+    },
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 10,
+      "f_ref_hz": 1147425278.3521006,
+      "negative_faces_before": 99917,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 0,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.2929274620562055e-11,
+      "dt_max_flip_only": 1.2929273391520276e-11,
+      "dt_max_repair_false": 1.8534256428749474e-11,
+      "dt_max_repair_true": 1.8337620295072845e-11,
+      "dt_gain_vs_repair_false": 0.989390665094521,
+      "dt_gain_vs_before": 1.418302328106608,
+      "lowest_freq_err_before": -0.004012102288849628,
+      "lowest_freq_err_repair_false": -0.003378092870006677,
+      "lowest_freq_err_repair_true": -0.002434653935113329,
+      "before": {
+        "n_tets": 2066,
+        "n_nodes": 556,
+        "n_negative_faces": 99917,
+        "voronoi_valid": false,
+        "dt_max": 1.2929274620562055e-11,
+        "courant_h": 0.15903354656044097,
+        "f0_hz": 1142821690.7665403,
+        "f_all_hz": [
+          1142821690.7665403,
+          1733076292.63394,
+          1735296525.3575768,
+          1810737306.7294695,
+          1819581426.3617272
+        ],
+        "lowest_freq_err": -0.004012102288849628
+      },
+      "flip_only": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.2929273391520276e-11,
+        "courant_h": 0.158269677970626,
+        "f0_hz": 1143053579.8396509,
+        "f_all_hz": [
+          1143053579.8396509,
+          1733630452.7577968,
+          1735500419.3874822,
+          1811209701.3446288,
+          1819987037.2518852
+        ],
+        "lowest_freq_err": -0.003810007148115302,
+        "repair_report": {
+          "flips": {
+            "2-3": 51,
+            "3-2": 2,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 55,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 2066,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.8534256428749474e-11,
+        "courant_h": 0.2269240347736566,
+        "f0_hz": 1143549169.200434,
+        "f_all_hz": [
+          1143549169.200434,
+          1734356480.8255234,
+          1736902091.8350804,
+          1813436950.2182698,
+          1823677358.6458905
+        ],
+        "lowest_freq_err": -0.003378092870006677
+      },
+      "after_repair_true": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.8337620295072845e-11,
+        "courant_h": 0.223535488025453,
+        "f0_hz": 1144631694.8829122,
+        "f_all_hz": [
+          1144631694.8829122,
+          1733560149.3508983,
+          1735695083.5080411,
+          1812404667.7247305,
+          1822298868.566704
+        ],
+        "lowest_freq_err": -0.002434653935113329
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 51,
+          "3-2": 2,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 55,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 12.752111110000016
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 10,
+      "f_ref_hz": 936518201.5981728,
+      "negative_faces_before": 1904428,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 33001,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 6.7570283362350706e-12,
+      "dt_max_flip_only": 6.915464661232565e-12,
+      "dt_max_repair_false": 1.0349216646348216e-11,
+      "dt_max_repair_true": 9.777005891451387e-12,
+      "dt_gain_vs_repair_false": 0.9447097520082607,
+      "dt_gain_vs_before": 1.4469387140233614,
+      "lowest_freq_err_before": -0.006083009778566795,
+      "lowest_freq_err_repair_false": -0.005256637567755851,
+      "lowest_freq_err_repair_true": -0.004918498227151513,
+      "before": {
+        "n_tets": 8196,
+        "n_nodes": 1830,
+        "n_negative_faces": 1904428,
+        "voronoi_valid": false,
+        "dt_max": 6.7570283362350706e-12,
+        "courant_h": 0.1381184631021752,
+        "f0_hz": 930821352.2200453,
+        "f_all_hz": [
+          930821352.2200453
+        ],
+        "lowest_freq_err": -0.006083009778566795
+      },
+      "flip_only": {
+        "n_tets": 8371,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 6.915464661232565e-12,
+        "courant_h": 0.14052151727383821,
+        "f0_hz": 931223829.4866965,
+        "f_all_hz": [
+          931223829.4866965
+        ],
+        "lowest_freq_err": -0.005653250628168682,
+        "repair_report": {
+          "flips": {
+            "2-3": 185,
+            "3-2": 14,
+            "4-4": 14,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "refused": {
+            "boundary": 3
+          },
+          "negative_faces_before": 233,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 8196,
+        "n_nodes": 1830,
+        "n_negative_faces": 33001,
+        "voronoi_valid": false,
+        "dt_max": 1.0349216646348216e-11,
+        "courant_h": 0.2106772922526414,
+        "f0_hz": 931595264.8367647,
+        "f_all_hz": [
+          931595264.8367647
+        ],
+        "lowest_freq_err": -0.005256637567755851
+      },
+      "after_repair_true": {
+        "n_tets": 8371,
+        "n_nodes": 1832,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 9.777005891451387e-12,
+        "courant_h": 0.1980126974858596,
+        "f0_hz": 931911938.483917,
+        "f_all_hz": [
+          931911938.483917
+        ],
+        "lowest_freq_err": -0.004918498227151513
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 185,
+          "3-2": 14,
+          "4-4": 14,
+          "2-2": 0
+        },
+        "steiner_nodes": 2,
+        "refused": {
+          "boundary": 3
+        },
+        "negative_faces_before": 233,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 55.78382776800001
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 10,
+      "f_ref_hz": 704156915.7639738,
+      "negative_faces_before": 93486,
+      "negative_faces_flip_only": 0,
+      "negative_faces_after_repair_false": 2464,
+      "negative_faces_after_repair_true": 0,
+      "dt_max_before": 1.5436408436808046e-11,
+      "dt_max_flip_only": 1.5436408437198262e-11,
+      "dt_max_repair_false": 2.2169777363715732e-11,
+      "dt_max_repair_true": 2.335887049510343e-11,
+      "dt_gain_vs_repair_false": 1.0536357723345402,
+      "dt_gain_vs_before": 1.5132322127085152,
+      "lowest_freq_err_before": 0.01802354810091278,
+      "lowest_freq_err_repair_false": 0.02153527702300173,
+      "lowest_freq_err_repair_true": 0.021130956633761633,
+      "before": {
+        "n_tets": 1810,
+        "n_nodes": 504,
+        "n_negative_faces": 93486,
+        "voronoi_valid": false,
+        "dt_max": 1.5436408436808046e-11,
+        "courant_h": 0.13669612771270867,
+        "f0_hz": 716848321.8058362,
+        "f_all_hz": [
+          716848321.8058362,
+          1073368114.4473039,
+          1076023985.6212547,
+          1434460539.1927683
+        ],
+        "lowest_freq_err": 0.01802354810091278
+      },
+      "flip_only": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 1.5436408437198262e-11,
+        "courant_h": 0.13603534162032171,
+        "f0_hz": 717836070.7133464,
+        "f_all_hz": [
+          717836070.7133464,
+          1074277809.0298972,
+          1077611362.5290143,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.01942628786728795,
+        "repair_report": {
+          "flips": {
+            "2-3": 38,
+            "3-2": 2,
+            "4-4": 3,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "refused": {},
+          "negative_faces_before": 47,
+          "negative_faces_after": 0,
+          "stuck": []
+        }
+      },
+      "after_repair_false": {
+        "n_tets": 1810,
+        "n_nodes": 504,
+        "n_negative_faces": 2464,
+        "voronoi_valid": false,
+        "dt_max": 2.2169777363715732e-11,
+        "courant_h": 0.19592545638799758,
+        "f0_hz": 719321130.0126135,
+        "f_all_hz": [
+          719321130.0126135,
+          1076531200.9735267,
+          1079402680.1228814,
+          1437329970.234648
+        ],
+        "lowest_freq_err": 0.02153527702300173
+      },
+      "after_repair_true": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "dt_max": 2.335887049510343e-11,
+        "courant_h": 0.2055496554514846,
+        "f0_hz": 719036425.0143456,
+        "f_all_hz": [
+          719036425.0143456,
+          1076418245.4262683,
+          1078974718.3942397,
+          1439122601.304616
+        ],
+        "lowest_freq_err": 0.021130956633761633
+      },
+      "repair_report": {
+        "flips": {
+          "2-3": 38,
+          "3-2": 2,
+          "4-4": 3,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "refused": {},
+        "negative_faces_before": 47,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "wall_s": 10.166230780000006
+    }
+  ]
+}
