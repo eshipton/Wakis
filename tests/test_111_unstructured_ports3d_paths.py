@@ -948,3 +948,419 @@ def test_mpi_ports_write_json_summary(ported_wr90):
 
 if __name__ == "__main__":
     print(json.dumps(compute_mpi_ports_summary(), indent=2, sort_keys=True))
+
+
+# ---------------------------------------------------------------------------
+# GPU port path (`wakis.unstructured.gpu.DeviceStepper` with `PortSet`).
+# Numbers are printed and written to out/gpu_ports.json by running this file.
+# ---------------------------------------------------------------------------
+
+from wakis.unstructured import gpu as G
+
+try:
+    import cupy as cp
+
+    cp.cuda.runtime.getDeviceCount()
+    HAVE_GPU = True
+except Exception:
+    cp, HAVE_GPU = None, False
+
+N_GPU_STEPS = 120
+
+
+def _make_ported_gpu_case(ported_wr90, kind="mixed"):
+    _, make_modal, make_mixed, _, z = ported_wr90
+    s = make_modal() if kind == "modal" else make_mixed()
+    s.add_probe([[A_WG * 0.45, B_WG * 0.5, 0.5 * (z[2] + z[3])]], 1)
+    s.add_dft(FREQS)
+    return s
+
+
+def _compare_ported_device(s, dev, n_steps, bound=None):
+    bound = bound or G.agreement_bound(s, n_steps)
+    dev.run(n_steps)
+    s.run(n_steps)
+    W = bound["weights"]
+    st = dev.get_state()
+    d = float(
+        np.sqrt(
+            np.sum(W["u"] * (st["u"] - s.u) ** 2)
+            + np.sum(W["b"] * (st["b"] - s.b) ** 2)
+        )
+    )
+    pr_ratio = float(
+        np.max(
+            np.abs(dev.probe_signal(0) - s.probe_signal(s.recorder.probes[0]))
+            / np.maximum(bound["probe"][0], 1e-300)
+        )
+    )
+    D = dev.dft_data(0) - s.recorder.dfts[0]["data"]
+    dft_ratio = float(
+        np.max(np.sqrt((W["u"] * np.abs(D) ** 2).sum(1)) / bound["dft"][0])
+    )
+    V_dev, Is_dev = dev.port_signals()
+    V_cpu = np.column_stack([p.V for p in s.ports.ports])
+    Is_cpu = np.column_stack([p.Is for p in s.ports.ports])
+    port_d_max = float(np.max(np.abs(V_dev - V_cpu)))
+    port_ratio = float(
+        np.max(np.abs(V_dev - V_cpu) / np.maximum(bound["port"], 1e-300))
+    )
+    return dict(
+        d=d,
+        eps=float(bound["eps"][-1]),
+        norm=float(bound["norm"].max()),
+        probe_ratio=pr_ratio,
+        dft_ratio=dft_ratio,
+        port_d_max=port_d_max,
+        port_ratio=port_ratio,
+        Is_equal=bool(np.array_equal(Is_dev, Is_cpu)),
+        bound=bound,
+    )
+
+
+@pytest.mark.skipif(not HAVE_GPU, reason="needs CuPy and a GPU")
+@pytest.mark.parametrize("kind", ["modal", "mixed"])
+def test_gpu_ports_match_cpu_within_roundoff_bound(ported_wr90, kind):
+    """
+    `DeviceStepper` on a ported 3D tetrahedral solver (TE10 modal ports and
+    interior 50 Ohm lumped port, with massless edges, probe and DFT) agrees
+    with CPU `UnstructuredFIT3D.run` within the derived round-off bound of
+    `agreement_bound` for state, probe, DFT, and recorded half-step port
+    voltages V^{n+1/2}, and `to_host()` reproduces `_Port.spectra` and
+    Kurokawa power-wave S-parameters to round-off.
+    """
+    s = _make_ported_gpu_case(ported_wr90, kind)
+    bound = G.agreement_bound(s, N_GPU_STEPS)
+    dev = G.DeviceStepper(s, xp=cp)
+    r = _compare_ported_device(s, dev, N_GPU_STEPS, bound=bound)
+    print(
+        f"gpu_ports {kind}: ||d||/||x||={r['d'] / r['norm']:.3e}, "
+        f"eps/||x||={r['eps'] / r['norm']:.3e}, d/eps={r['d'] / r['eps']:.3e}, "
+        f"port_ratio={r['port_ratio']:.3e}, K={bound['K']:.2f}, m={bound['depth']}"
+    )
+    assert r["norm"] > 0 and np.isfinite(r["d"])
+    assert r["eps"] / r["norm"] < 1e-7, "bound is vacuous"
+    assert r["d"] <= r["eps"], f"||d|| = {r['d']:.3e} > eps = {r['eps']:.3e}"
+    assert r["probe_ratio"] <= 1.0
+    assert r["dft_ratio"] <= 1.0
+    assert r["port_ratio"] <= 1.0
+    assert r["Is_equal"]
+
+    # to_host() transfers port V and I_s so _Port.spectra and power_waves work directly
+    s_gpu = _make_ported_gpu_case(ported_wr90, kind)
+    dev_h = G.DeviceStepper(s_gpu, xp=cp)
+    dev_h.run(N_GPU_STEPS)
+    dev_h.to_host()
+    V_gpu = np.column_stack([p.spectra(FREQS)[0] for p in s_gpu.ports.ports])
+    I_gpu = np.column_stack([p.spectra(FREQS)[1] for p in s_gpu.ports.ports])
+    Y_ref = np.column_stack([p.reference_admittance(FREQS) for p in s_gpu.ports.ports])
+    a_gpu, b_gpu = power_waves(V_gpu, I_gpu, Y_ref)
+    S_gpu = b_gpu / a_gpu[:, [0]]
+
+    V_cpu = np.column_stack([p.spectra(FREQS)[0] for p in s.ports.ports])
+    I_cpu = np.column_stack([p.spectra(FREQS)[1] for p in s.ports.ports])
+    a_cpu, b_cpu = power_waves(V_cpu, I_cpu, Y_ref)
+    S_cpu = b_cpu / a_cpu[:, [0]]
+    np.testing.assert_allclose(
+        S_gpu, S_cpu, rtol=1e-13, atol=1e-14 * np.abs(S_cpu).max()
+    )
+
+
+@pytest.mark.skipif(not HAVE_GPU, reason="needs CuPy and a GPU")
+def test_gpu_ports_mutations_exceed_bound(ported_wr90):
+    """
+    Mutating the device port update (dropping the port step on device, dropping
+    the Woodbury post-step, zeroing the explicit half-step conductance, scaling
+    S^-1 by 1 + 1e-3, or flipping the conductance sign) must exceed the derived
+    round-off bound eps_N by more than 100x.
+    """
+    s_ref = _make_ported_gpu_case(ported_wr90, "mixed")
+    bound = G.agreement_bound(s_ref, N_GPU_STEPS)
+    s_ref.run(N_GPU_STEPS)
+    W = bound["weights"]
+    eps_N = float(bound["eps"][-1])
+
+    for mut in (
+        "drop_port_step",
+        "drop_port_post",
+        "zero_port_pre_g",
+        "scale_port_sinv_1e-3",
+        "flip_port_pre_conductance",
+    ):
+        s_m = _make_ported_gpu_case(ported_wr90, "mixed")
+        dev = G.DeviceStepper(s_m, xp=cp)
+        if mut == "drop_port_step":
+            dev.ports = None
+        elif mut == "drop_port_post":
+            dev._port_post = lambda u: None
+        elif mut == "zero_port_pre_g":
+            dev.ports["gh"] = dev.ports["gh"] * 0.0
+        elif mut == "scale_port_sinv_1e-3":
+            dev.ports["Sinv"] = dev.ports["Sinv"] * (1.0 + 1e-3)
+        elif mut == "flip_port_pre_conductance":
+            dev.ports["gh"] = -dev.ports["gh"]
+        dev.run(N_GPU_STEPS)
+        st = dev.get_state()
+        d = float(
+            np.sqrt(
+                np.sum(W["u"] * (st["u"] - s_ref.u) ** 2)
+                + np.sum(W["b"] * (st["b"] - s_ref.b) ** 2)
+            )
+        )
+        print(f"gpu port mutation {mut}: d/eps = {d / eps_N:.3e}")
+        assert not np.isfinite(d) or d > 100.0 * eps_N
+
+
+@pytest.mark.skipif(not HAVE_GPU, reason="needs CuPy and a GPU")
+def test_gpu_ports_step_does_not_synchronize(ported_wr90, monkeypatch):
+    """
+    `DeviceStepper.step` with tetrahedral modal + lumped ports enqueues kernels
+    without synchronizing the CUDA stream (a 100 ms device spin kernel is still
+    running when 3 ported steps return), whereas a device-to-host read inside
+    `_port_post` is caught by the detector.
+    """
+    spin = cp.RawKernel(
+        r"""
+extern "C" __global__ void _spin_port(long long ns) {
+    long long t0, t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0)); t = t0;
+    while (t - t0 < ns) { asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); }
+}""",
+        "_spin_port",
+    )
+    s = _make_ported_gpu_case(ported_wr90, "mixed")
+    dev = G.DeviceStepper(s, xp=cp)
+    dev.run(5)
+    dev.prepare(50)
+    for pr in dev.probes:
+        dev._reserve(pr, pr["k"] + 50)
+    cp.cuda.Stream.null.synchronize()
+
+    def enqueue(n):
+        ev = cp.cuda.Event()
+        spin((1,), (1,), (np.int64(100_000_000),))
+        ev.record()
+        for _ in range(n):
+            dev.step()
+        done = ev.done
+        cp.cuda.Stream.null.synchronize()
+        return bool(done)
+
+    assert not enqueue(3), "DeviceStepper.step with ports synchronized the stream"
+    orig = G.DeviceStepper._port_post
+
+    def bad_post(self, u):
+        float(u[0])
+        return orig(self, u)
+
+    monkeypatch.setattr(G.DeviceStepper, "_port_post", bad_post)
+    assert enqueue(1), "the sync detector missed a device-to-host read in _port_post"
+
+
+def _export_gpu_ports_json():
+    """Run the GPU port benchmarks and mutations, write out/gpu_ports.json and print it."""
+    import json
+
+    h = A_WG / 4
+    nodes, tris, tags = rectangle_section(A_WG, B_WG, h, wall=h / 2, seed=1)
+    z = np.linspace(0.0, 12e-3, 5)
+    m = extrude_section(nodes, tris, tags, z)
+    zc = m.nodes[m.cells].mean(1)[:, 2]
+    tg = m.cell_tags.copy()
+    tg[(zc > z[2]) & (zc < z[3]) & (tg == 1)] = 2
+    m = SimplexMesh(m.nodes, m.cells, tg)
+    _snap_degenerate_duals(m)
+    mats = {0: "pec", 2: [2.2, 1.0]}
+    eps_layers = np.array([1.0, 1.0, 2.2, 1.0])
+
+    s0 = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6)
+    dt = s0.dt
+    planes0 = [PortPlane(s0, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+    kc, phi0 = planes0[0].te_modes(1)
+    phi1 = planes0[1].te_modes(1)[1][:, 0]
+    phis = [phi0[:, 0], phi1]
+    kc = float(kc[0])
+    line = ExtrudedLine(z, eps_layers, 1.0, kc, dt)
+    e_lp, s_lp = edge_path(s0, (A_WG / 2, 0.0, z[2]), (A_WG / 2, B_WG, z[2]))
+
+    def Y(f):
+        return np.real(line.port_admittance(f) / line.cos_half(f))
+
+    def make_modal():
+        s = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6, dt=dt)
+        planes = [PortPlane(s, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+        ports = [
+            ModalPort(planes[0], phis[0], Y, f0=F0, i_src=_pulse(), name="p1"),
+            ModalPort(planes[1], phis[1], Y, f0=F0, name="p2"),
+        ]
+        attach_ports(s, ports)
+        return s
+
+    def make_mixed():
+        s = UnstructuredFIT3D(m, mats, bc="pmc", massless_tol=1e-6, dt=dt)
+        planes = [PortPlane(s, (0, 0, zz), (0, 0, 1)) for zz in (z[0], z[-1])]
+        ports = [
+            ModalPort(planes[0], phis[0], Y, f0=F0, i_src=_pulse(), name="p1"),
+            ModalPort(planes[1], phis[1], Y, f0=F0, name="p2"),
+            LumpedPort(s, e_lp, s_lp, R=50.0, name="lp"),
+        ]
+        attach_ports(s, ports)
+        return s
+
+    fx = (m, make_modal, make_mixed, np.array([], int), z)
+    gpu_name = cp.cuda.runtime.getDeviceProperties(0)["name"].decode()
+
+    cases_out = {}
+    for kind in ("modal", "mixed"):
+        s_info = _make_ported_gpu_case(fx, kind)
+        ps = s_info.ports
+        WT_nnz = G._max_row_nnz(ps.W.T)
+        W_nnz = G._max_row_nnz(ps.W)
+        np_ = len(ps.ports)
+        port_depth_delta = 2 * WT_nnz + 2 * W_nnz + np_ + 6
+        bound = G.agreement_bound(s_info, N_GPU_STEPS)
+
+        # Subspace empirical amplification (b0 in ker(C_s^T M_nu))
+        ke_sub = 1.0
+        for seed in range(4):
+            st_e = G.DeviceStepper(
+                _make_ported_gpu_case(fx, kind), xp=np, sources=False
+            )
+            W_e = st_e.weights()
+            rng = np.random.default_rng(seed)
+            u0 = rng.standard_normal(W_e["u"].shape) / np.sqrt(W_e["u"])
+            b0 = rng.standard_normal(W_e["b"].shape) / np.sqrt(
+                np.where(W_e["b"] > 0, W_e["b"], np.inf)
+            )
+            b0 -= s_info.Cs @ s_info._Kss.solve(s_info.Cs.T @ (s_info.Mnu @ b0))
+            st_e.set_state({"u": u0, "b": b0})
+            n0 = G._wnorm(st_e.get_state(), W_e, ["u", "b"])
+            for _ in range(N_GPU_STEPS):
+                st_e.step()
+                ke_sub = max(ke_sub, G._wnorm(st_e.get_state(), W_e, ["u", "b"]) / n0)
+
+        backends_out = {}
+        for bname, xp_mod in (("cupy", cp), ("numpy", np)):
+            s_run = _make_ported_gpu_case(fx, kind)
+            dev = G.DeviceStepper(s_run, xp=xp_mod)
+            r = _compare_ported_device(s_run, dev, N_GPU_STEPS, bound=bound)
+
+            s_th = _make_ported_gpu_case(fx, kind)
+            dev_th = G.DeviceStepper(s_th, xp=xp_mod)
+            dev_th.run(N_GPU_STEPS)
+            dev_th.to_host()
+            V_dev = np.column_stack([p.spectra(FREQS)[0] for p in s_th.ports.ports])
+            I_dev = np.column_stack([p.spectra(FREQS)[1] for p in s_th.ports.ports])
+            Y_ref = np.column_stack(
+                [p.reference_admittance(FREQS) for p in s_th.ports.ports]
+            )
+            a_dev, b_dev = power_waves(V_dev, I_dev, Y_ref)
+            S_dev = b_dev / a_dev[:, [0]]
+
+            V_cpu = np.column_stack([p.spectra(FREQS)[0] for p in s_run.ports.ports])
+            I_cpu = np.column_stack([p.spectra(FREQS)[1] for p in s_run.ports.ports])
+            a_cpu, b_cpu = power_waves(V_cpu, I_cpu, Y_ref)
+            S_cpu = b_cpu / a_cpu[:, [0]]
+            s_rel_err = float(np.max(np.abs(S_dev - S_cpu)) / np.max(np.abs(S_cpu)))
+
+            backends_out[bname] = {
+                "d_W": r["d"],
+                "eps_N": r["eps"],
+                "norm_max": r["norm"],
+                "d_over_norm": r["d"] / r["norm"],
+                "eps_over_norm": r["eps"] / r["norm"],
+                "d_over_eps": r["d"] / r["eps"],
+                "probe_ratio_max": r["probe_ratio"],
+                "dft_ratio_max": r["dft_ratio"],
+                "port_V_diff_max": r["port_d_max"],
+                "port_V_bound_max": float(bound["port"].max()),
+                "port_ratio_max": r["port_ratio"],
+                "s_param_rel_err": s_rel_err,
+                "Is_equal": r["Is_equal"],
+            }
+
+        dev_meta = G.DeviceStepper(_make_ported_gpu_case(fx, kind), xp=cp)
+        cases_out[kind] = {
+            "n_ports": np_,
+            "n_port_edges": int(dev_meta.ports["rows"].size),
+            "max_row_nnz_WT": WT_nnz,
+            "max_row_nnz_W": W_nnz,
+            "port_depth_delta": port_depth_delta,
+            "total_depth": int(bound["depth"]),
+            "gamma_m": float(bound["gamma"]),
+            "K_theory": float(bound["K"]),
+            "K_empirical_subspace": float(ke_sub),
+            "kappa_massless": float(dev_meta.kappa_massless),
+            "massless_block": int(dev_meta.massless_block),
+            "backends": backends_out,
+        }
+
+    # Mutations on mixed case
+    s_ref = _make_ported_gpu_case(fx, "mixed")
+    bound_mix = G.agreement_bound(s_ref, N_GPU_STEPS)
+    s_ref.run(N_GPU_STEPS)
+    W_mix = bound_mix["weights"]
+    eps_mix = float(bound_mix["eps"][-1])
+    mutations_out = {}
+    for mut in (
+        "drop_port_step",
+        "drop_port_post",
+        "zero_port_pre_g",
+        "scale_port_sinv_1e-3",
+        "flip_port_pre_conductance",
+    ):
+        s_m = _make_ported_gpu_case(fx, "mixed")
+        dev = G.DeviceStepper(s_m, xp=cp)
+        if mut == "drop_port_step":
+            dev.ports = None
+        elif mut == "drop_port_post":
+            dev._port_post = lambda u: None
+        elif mut == "zero_port_pre_g":
+            dev.ports["gh"] = dev.ports["gh"] * 0.0
+        elif mut == "scale_port_sinv_1e-3":
+            dev.ports["Sinv"] = dev.ports["Sinv"] * (1.0 + 1e-3)
+        elif mut == "flip_port_pre_conductance":
+            dev.ports["gh"] = -dev.ports["gh"]
+        dev.run(N_GPU_STEPS)
+        st = dev.get_state()
+        d_m = float(
+            np.sqrt(
+                np.sum(W_mix["u"] * (st["u"] - s_ref.u) ** 2)
+                + np.sum(W_mix["b"] * (st["b"] - s_ref.b) ** 2)
+            )
+        )
+        mutations_out[mut] = {
+            "d_W": d_m,
+            "d_over_eps": d_m / eps_mix,
+        }
+
+    out = {
+        "gpu_name": gpu_name,
+        "mesh": {
+            "a_m": A_WG,
+            "b_m": B_WG,
+            "h_m": h,
+            "length_m": float(z[-1]),
+            "n_layers": int(z.size - 1),
+            "n_cells": int(m.n_cells),
+            "n_faces": int(m.n_faces),
+            "n_free_edges": int(s0.free.size),
+            "n_massless_edges": int(s0.massless.size),
+            "dt_s": float(dt),
+            "courant": float(s0.courant),
+            "n_steps": N_GPU_STEPS,
+            "freqs_hz": [float(f) for f in FREQS],
+        },
+        "cases": cases_out,
+        "mutations": mutations_out,
+    }
+    out_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "out", "gpu_ports.json")
+    )
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=2)
+    print(json.dumps(out, indent=2))
+
+
+if __name__ == "__main__":
+    _export_gpu_ports_json()
