@@ -84,9 +84,7 @@ def cell_adjacency(mesh):
     f, c = f[o], c[o]
     same = f[1:] == f[:-1]
     a, b = c[:-1][same], c[1:][same]
-    A = sp.csr_matrix(
-        (np.ones(2 * a.size), (np.r_[a, b], np.r_[b, a])), shape=(nc, nc)
-    )
+    A = sp.csr_matrix((np.ones(2 * a.size), (np.r_[a, b], np.r_[b, a])), shape=(nc, nc))
     A.data[:] = 1.0
     A.sort_indices()
     return A
@@ -149,7 +147,9 @@ def partition_cells(mesh, n_parts, method="auto"):
         A = cell_adjacency(mesh)
         xadj, adjncy = A.indptr.astype(np.int64), A.indices.astype(np.int64)
         if hasattr(pymetis, "CSRAdjacency"):
-            _, parts = pymetis.part_graph(n_parts, adjacency=pymetis.CSRAdjacency(xadj, adjncy))
+            _, parts = pymetis.part_graph(
+                n_parts, adjacency=pymetis.CSRAdjacency(xadj, adjncy)
+            )
         else:
             _, parts = pymetis.part_graph(n_parts, xadj=xadj, adjncy=adjncy)
         parts = np.asarray(parts, dtype=np.int64)
@@ -293,7 +293,9 @@ def _local(A, rows, lookup, n_loc):
 def _solver_kind(s):
     if s.mesh.dim == 3:
         if s.hodge != "voronoi":
-            raise NotImplementedError("MPI: hodge='whitney' needs a global solve per step")
+            raise NotImplementedError(
+                "MPI: hodge='whitney' needs a global solve per step"
+            )
         return "pml3d" if s._pml is not None else "3d"
     if s._pml is not None or s.lts is not None or s.plane_wave is not None:
         raise NotImplementedError("MPI: 2D PML / LTS / plane wave")
@@ -326,7 +328,8 @@ def _slice_capacitive(up, own, pos_own, owner_u, rank):
                 "idx": pos_own[g["idx"][sel]],
                 "c": g["c"][sel].copy(),
                 "lorentz": [
-                    (a, x, z, p[sel].copy(), q[sel].copy()) for a, x, z, p, q in g["lorentz"]
+                    (a, x, z, p[sel].copy(), q[sel].copy())
+                    for a, x, z, p, q in g["lorentz"]
                 ],
                 "debye": [(k, b, p[sel].copy()) for k, b, p in g["debye"]],
             }
@@ -408,24 +411,102 @@ def build_pieces(solver, n_parts, parts=None, partitioner="auto", ranks=None,
     return _field_pieces(s, common, owner_u, owner_f, ranks, _mutation), parts
 
 
+def _port_pieces(ps, owner_u, own_u, n_parts, mutation):
+    """Per-rank port operators and deterministic serial-edge-order reduction map."""
+    I_port = np.unique(ps.W.indices)
+    W_port = ps.W[I_port, :].tocsc()
+    WT_port = _ref_csr(W_port.T)
+    dinv_port = np.asarray(ps.dinv[I_port], float).copy()
+    den_port = np.asarray(ps.base.den[I_port], float).copy()
+    port_owner = owner_u[I_port]
+    port_pos = [np.flatnonzero(port_owner == r) for r in range(n_parts)]
+    non_empty = [r for r in range(n_parts) if port_pos[r].size > 0]
+    drop_rank = None
+    if mutation == "drop_port_rank" and non_empty:
+        drop_rank = next((r for r in non_empty if r > 0), non_empty[0])
+    swap_order = mutation == "swap_port_order"
+    srcs = [p.src for p in ps.ports]
+    V0 = [list(p.V) for p in ps.ports]
+    Is0 = [list(p.Is) for p in ps.ports]
+    out = []
+    for r in range(n_parts):
+        su_own = own_u[r]
+        pos_own = np.full(owner_u.size, -1, dtype=np.int64)
+        pos_own[su_own] = np.arange(su_own.size)
+        loc_idx = pos_own[I_port[port_pos[r]]]
+        W_own = ps.W[su_own, :].tocsc()
+        WT_own = _ref_csr(W_own.T)
+        out.append(
+            dict(
+                n_ports=len(ps.ports),
+                n_port_edges=int(I_port.size),
+                I_port=I_port,
+                port_pos=port_pos,
+                loc_idx=loc_idx,
+                W_port=W_port,
+                WT_port=WT_port,
+                dinv_port=dinv_port,
+                den_port=den_port,
+                W_own=W_own,
+                WT_own=WT_own,
+                dinv_own=np.asarray(ps.dinv[su_own], float).copy(),
+                g=np.asarray(ps.g, float).copy(),
+                Sinv=np.asarray(ps._Sinv, float).copy(),
+                srcs=srcs,
+                V0=[list(v) for v in V0],
+                Is0=[list(v) for v in Is0],
+                drop_rank=drop_rank,
+                swap_order=swap_order,
+            )
+        )
+    return out
+
+
 def _field_pieces(s, common, owner_u, owner_f, ranks, mutation):
     kind, n_parts = common["kind"], common["n_parts"]
     ops, wf, mass = _field_ops(s, kind)
+    ps = getattr(s, "ports", None)
     own_u = [np.flatnonzero(owner_u == r) for r in range(n_parts)]
     own_f = [np.flatnonzero(owner_f == r) for r in range(n_parts)]
     probes = [sp.csr_matrix(rec["P"]) for rec in s.recorder.probes]
     probe_owner = [_probe_owner(P, owner_u) for P in probes]
+    has_port_massless = ps is not None and kind == "3d" and s.massless.size > 0
+    if has_port_massless:
+        from scipy.sparse.csgraph import connected_components
+
+        Kss = (s.Cs.T @ s.Mnu @ s.Cs).tocsc()
+        _, comp = connected_components(Kss, directed=False)
+        Cs = _ref_csr(s.Cs)
+        CsT = _ref_csr(s.Cs.T)
+        Ksf = _ref_csr(s._Ksf)
+        KsfT = _ref_csr(s._Ksf.T)
+        s_sub = [
+            np.flatnonzero(np.isin(comp, np.unique(comp[_cols(Cs, own_f[r])])))
+            for r in range(n_parts)
+        ]
+        s_sub_T = [
+            np.flatnonzero(np.isin(comp, np.unique(comp[_cols(KsfT, own_u[r])])))
+            for r in range(n_parts)
+        ]
     # u is read by A (flux rows), B (transpose) and the probes; f by B^T and A^T
     needs_u, needs_f = [], []
     for r in range(n_parts):
         cu = [_cols(ops["A"], own_f[r]), _cols(ops["B"], own_f[r])]
+        if has_port_massless and s_sub[r].size:
+            cu.append(_cols(Ksf, s_sub[r]))
         cu += [_cols(P, np.flatnonzero(po == r)) for P, po in zip(probes, probe_owner)]
         needs_u.append(np.unique(np.concatenate(cu)))
-        needs_f.append(np.unique(np.r_[_cols(ops["BT"], own_u[r]), _cols(ops["AT"], own_u[r])]))
+        cf = [_cols(ops["BT"], own_u[r]), _cols(ops["AT"], own_u[r])]
+        if has_port_massless and s_sub_T[r].size:
+            cf.append(_cols(CsT, s_sub_T[r]))
+        needs_f.append(np.unique(np.concatenate(cf)))
     sp_u = _build_spaces(owner_u, needs_u, n_parts, tag=11)
     sp_f = _build_spaces(owner_f, needs_f, n_parts, tag=12)
     if mutation == "drop_halo":
         _drop_halo_entry(sp_u, 1 if n_parts > 1 else 0)
+    port_pcs = (
+        _port_pieces(ps, owner_u, own_u, n_parts, mutation) if ps is not None else None
+    )
     out = [None] * n_parts
     for r in ranks:
         su, sf = sp_u[r], sp_f[r]
@@ -439,6 +520,18 @@ def _field_pieces(s, common, owner_u, owner_f, ranks, mutation):
         pc["B"] = _local(ops["B"], sf.owned, lu, su.n)
         pc["BT"] = _local(ops["BT"], su.owned, lf, sf.n)
         pc["AT"] = _local(ops["AT"], su.owned, lf, sf.n)
+        if has_port_massless:
+            sr, srT = s_sub[r], s_sub_T[r]
+            ls = np.full(s.massless.size, -1, dtype=np.int64)
+            ls[sr] = np.arange(sr.size)
+            pc["Cs"] = _local(Cs, sf.owned, ls, sr.size)
+            pc["Ksf"] = _local(Ksf, sr, lu, su.n)
+            pc["Kss"] = Kss[sr][:, sr].tocsc()
+            lsT = np.full(s.massless.size, -1, dtype=np.int64)
+            lsT[srT] = np.arange(srT.size)
+            pc["CsT"] = _local(CsT, srT, lf, sf.n)
+            pc["KsfT"] = _local(KsfT, su.owned, lsT, srT.size)
+            pc["Kss_T"] = Kss[srT][:, srT].tocsc()
         pc["wf"] = wf[np.r_[sf.owned, sf.halo]]
         pc["mass"] = mass[su.owned]
         pc["u0"] = u0[np.r_[su.owned, su.halo]]
@@ -446,10 +539,12 @@ def _field_pieces(s, common, owner_u, owner_f, ranks, mutation):
         for p in su.dropped:
             pc["u0"][p] = 0.0
         if kind in ("3d", "tm"):
-            pc["cap"] = _slice_capacitive(s._update, su.owned, pos_own, owner_u, r)
+            base_up = ps.base if ps is not None else s._update
+            pc["cap"] = _slice_capacitive(base_up, su.owned, pos_own, owner_u, r)
         else:
             pc["a"] = (s.mass - s.loss * s.dt / 2)[su.owned]
             pc["bb"] = (s.mass + s.loss * s.dt / 2)[su.owned]
+        pc["ports"] = None if port_pcs is None else port_pcs[r]
         pc["ce"] = None
         if kind in ("tm", "te") and s._absorber is not None:
             pc["ce"] = (0.5 * s.dt * s.edge_rate)[sf.owned]
@@ -467,7 +562,9 @@ def _field_pieces(s, common, owner_u, owner_f, ranks, mutation):
             rows = np.flatnonzero(po == r)
             pc["probes"].append((rows, _local(P, rows, lu, su.n)))
         pc["dfts"] = [np.asarray(rec["freqs"], float) for rec in s.recorder.dfts]
-        pc["dft0"] = [np.asarray(rec["data"])[:, su.owned].copy() for rec in s.recorder.dfts]
+        pc["dft0"] = [
+            np.asarray(rec["data"])[:, su.owned].copy() for rec in s.recorder.dfts
+        ]
         out[r] = pc
     return out
 
@@ -515,9 +612,13 @@ def _pml_pieces(s, common, owner_u, owner_f, ranks, mutation):
     probe_owner = [_probe_owner(P, own_x) for P in probes]
     spaces = {}
     for k, M in enumerate(S):
-        spaces[f"s{k}"] = _build_spaces(own_x, [_cols(M, o) for o in owned], n_parts, 20 + k)
+        spaces[f"s{k}"] = _build_spaces(
+            own_x, [_cols(M, o) for o in owned], n_parts, 20 + k
+        )
     for k, M in enumerate(ST):
-        spaces[f"t{k}"] = _build_spaces(own_x, [_cols(M, o) for o in owned], n_parts, 30 + k)
+        spaces[f"t{k}"] = _build_spaces(
+            own_x, [_cols(M, o) for o in owned], n_parts, 30 + k
+        )
     need_p = [
         np.unique(np.concatenate([np.zeros(0, np.int64)] + [
             _cols(P, np.flatnonzero(po == r)) for P, po in zip(probes, probe_owner)]))
@@ -554,7 +655,9 @@ def _pml_pieces(s, common, owner_u, owner_f, ranks, mutation):
         pc["BT"] = _local(BT, own_u[r], lx, own.size)
         pc["x0"] = x0[own].copy()
         pc["mass"] = np.asarray(s.cap, float)[own_u[r]]
-        pc["Mnu"] = np.asarray(s.Mnu_diag, float)[own[(own >= nu) & (own < nu + mesh.n_faces)] - nu]
+        pc["Mnu"] = np.asarray(s.Mnu_diag, float)[
+            own[(own >= nu) & (own < nu + mesh.n_faces)] - nu
+        ]
         sp0 = pc["spaces"]["s0"]
         pc["dropped0"] = list(sp0.dropped)
         srcs = []
@@ -568,7 +671,9 @@ def _pml_pieces(s, common, owner_u, owner_f, ranks, mutation):
             rows = np.flatnonzero(po == r)
             pc["probes"].append((rows, _local(P, rows, lp, spp.n)))
         pc["dfts"] = [np.asarray(rec["freqs"], float) for rec in s.recorder.dfts]
-        pc["dft0"] = [np.asarray(rec["data"])[:, own_u[r]].copy() for rec in s.recorder.dfts]
+        pc["dft0"] = [
+            np.asarray(rec["data"])[:, own_u[r]].copy() for rec in s.recorder.dfts
+        ]
         out[r] = pc
     return out
 
@@ -614,6 +719,8 @@ class _FieldRank(_Rank):
     """3D Voronoi / 2D TM / 2D TE leapfrog on [owned | halo] vectors."""
 
     def __init__(self, pc):
+        from scipy.sparse.linalg import splu
+
         super().__init__(pc)
         self.su, self.sf = self.spaces["u"], self.spaces["f"]
         self.buf["u"] = pc["u0"].copy()
@@ -621,13 +728,47 @@ class _FieldRank(_Rank):
         self.buf["ru"] = np.zeros(self.su.n)  # transpose: r-bar on u
         self.buf["rf"] = np.zeros(self.sf.n)  # transpose: b-bar on f
         self.cap = pc.get("cap")
+        self.ports = pc.get("ports")
+        self._kss = (
+            splu(pc["Kss"])
+            if pc.get("Kss") is not None and pc["Kss"].shape[0]
+            else None
+        )
+        self._kss_T = (
+            splu(pc["Kss_T"])
+            if pc.get("Kss_T") is not None and pc["Kss_T"].shape[0]
+            else None
+        )
         nu, nf = self.su.n_own, self.sf.n_own
         self._nu, self._nf = nu, nf
-        if self.kind in ("3d", "tm"):
+        if self.ports is not None:
+            self.port_V = [list(v) for v in self.ports["V0"]]
+            self.port_Is = [list(v) for v in self.ports["Is0"]]
+            self._port_vec = {}
+            self.program = [
+                self._flux,
+                ("f", "f"),
+                ("port", "u_n"),
+                self._port_pre,
+                ("port", "u_star"),
+                self._port_post,
+                ("u", "u"),
+                self._rec,
+            ]
+            self.program_T = [
+                ("port", "u_T"),
+                self._t1,
+                ("u", "ru"),
+                self._t2,
+                ("f", "rf"),
+                self._t3,
+            ]
+        elif self.kind in ("3d", "tm"):
             self.program = [self._flux, ("f", "f"), self._ampere, ("u", "u"), self._rec]
+            self.program_T = [self._t1, ("u", "ru"), self._t2, ("f", "rf"), self._t3]
         else:
             self.program = [self._te_h, ("u", "u"), self._te_d, ("f", "f"), self._rec]
-        self.program_T = [self._t1, ("u", "ru"), self._t2, ("f", "rf"), self._t3]
+            self.program_T = [self._t1, ("u", "ru"), self._t2, ("f", "rf"), self._t3]
 
     def _n_src(self, kind):
         return self._nu if kind == "node" else self._nf
@@ -635,7 +776,12 @@ class _FieldRank(_Rank):
     def _flux(self):
         pc, dt = self.pc, self.dt
         u, b, nf = self.buf["u"], self.buf["f"], self._nf
-        if pc["ce"] is None:
+        if pc.get("Cs") is not None:
+            es = -self._kss.solve(pc["Ksf"] @ u) if self._kss is not None else None
+            b[:nf] -= dt * (pc["B"] @ u)
+            if es is not None:
+                b[:nf] -= dt * (pc["Cs"] @ es)
+        elif pc["ce"] is None:
             b[:nf] -= dt * (pc["A"] @ u)
         else:
             ce = pc["ce"]
@@ -647,11 +793,33 @@ class _FieldRank(_Rank):
         r = pc["BT"] @ (pc["wf"] * b) - self._src("node")
         u[: self._nu] = self.cap.step(u[: self._nu], r)
 
+    def _port_pre(self):
+        pc, p = self.pc, self.ports
+        u, b = self.buf["u"], self.buf["f"]
+        r = pc["BT"] @ (pc["wf"] * b) - self._src("node")
+        Vn, Is = self._port_vec["u_n"], self._port_vec["Is"]
+        rhs = r + p["W_own"] @ (Is - 0.5 * p["g"] * Vn)
+        u[: self._nu] = self.cap.step(u[: self._nu], rhs)
+
+    def _port_post(self):
+        p = self.ports
+        V_star, V_new = self._port_vec["u_star"], self._port_vec["u_new"]
+        alpha = p["Sinv"] @ (0.5 * p["g"] * V_star)
+        self.buf["u"][: self._nu] -= p["dinv_own"] * (p["W_own"] @ alpha)
+        if self.use_sources:
+            Vavg = 0.5 * (self._port_vec["u_n"] + V_new)
+            Is = self._port_vec["Is"]
+            for k in range(p["n_ports"]):
+                self.port_V[k].append(Vavg[k])
+                self.port_Is[k].append(Is[k])
+
     def _te_h(self):
         pc, dt, nu = self.pc, self.dt, self._nu
         u, v = self.buf["u"], self.buf["f"]
         vol = pc["wf"] * v
-        u[:nu] = (pc["a"] * u[:nu] - dt * (pc["BT"] @ vol + self._src("node"))) / pc["bb"]
+        u[:nu] = (pc["a"] * u[:nu] - dt * (pc["BT"] @ vol + self._src("node"))) / pc[
+            "bb"
+        ]
 
     def _te_d(self):
         pc, dt, nf = self.pc, self.dt, self._nf
@@ -668,7 +836,10 @@ class _FieldRank(_Rank):
 
     # -------------------------------------------------- state
     def state(self):
-        return {"u": self.buf["u"][: self._nu].copy(), "f": self.buf["f"][: self._nf].copy()}
+        return {
+            "u": self.buf["u"][: self._nu].copy(),
+            "f": self.buf["f"][: self._nf].copy(),
+        }
 
     def owned_index(self):
         return {"u": self.su.owned, "f": self.sf.owned}
@@ -698,6 +869,14 @@ class _FieldRank(_Rank):
             raise NotImplementedError("MPI transpose: 2D TE")
         if self.cap.groups:
             raise NotImplementedError("MPI transpose with dispersive media")
+        if self.ports is not None:
+            p = self.ports
+            z, wy = self._port_vec["z_T"], self._port_vec["wy_T"]
+            u_star = self._lam["u"] - p["W_own"] @ (0.5 * p["g"] * (p["Sinv"].T @ z))
+            acc = u_star / self.cap.den
+            self._ub = self.cap.a1 * acc + (-(p["W_own"] @ (0.5 * p["g"] * wy)))
+            self.buf["ru"][: self._nu] = self.cap.dt * acc
+            return
         acc = self._lam["u"] / self.cap.den
         self._ub = np.zeros(self._nu)
         self._ub += self.cap.a1 * acc
@@ -712,7 +891,13 @@ class _FieldRank(_Rank):
         pc, dt = self.pc, self.dt
         bt = self.buf["rf"]
         if self.kind == "3d":
-            ub = self._ub - dt * (pc["AT"] @ bt)
+            if pc.get("CsT") is not None:
+                ub = self._ub - dt * (pc["BT"] @ bt)
+                if self._kss_T is not None:
+                    esb = -dt * (pc["CsT"] @ bt)
+                    ub = ub + (-(pc["KsfT"] @ self._kss_T.solve(esb, trans="T")))
+            else:
+                ub = self._ub - dt * (pc["AT"] @ bt)
             fb = bt[: self._nf].copy()
         elif pc["ce"] is None:
             ub = self._ub - pc["AT"] @ (dt * bt)
@@ -805,6 +990,97 @@ def _make_rank(pc):
     return _StageRank(pc) if pc["kind"] == "pml3d" else _FieldRank(pc)
 
 
+def _port_local_payload(r, stage):
+    """Per-rank owned port-edge slice (or partial sum under `swap_order`)."""
+    p = r.ports
+    if stage in ("u_n", "u_star"):
+        u_own = r.buf["u"][: r._nu]
+        if p["swap_order"]:
+            s_r = p["WT_own"] @ u_own
+            return s_r if stage == "u_n" else (s_r, u_own[p["loc_idx"]].copy())
+        return u_own[p["loc_idx"]].copy()
+    if stage == "u_T":
+        return r._lam["u"][p["loc_idx"]].copy()
+    raise ValueError(f"unknown port reduction stage {stage!r}")
+
+
+def _assemble_serial_port_vector(p, parts):
+    """Reassemble owned port-edge slices in increasing serial free-edge order."""
+    u_port = np.zeros(p["n_port_edges"], dtype=float)
+    for q, u_q in enumerate(parts):
+        if q != p["drop_rank"] and u_q.size:
+            u_port[p["port_pos"][q]] = u_q
+    return u_port
+
+
+def _combine_port_reduction(p, stage, parts, n, dt, use_sources):
+    """
+    Combine per-rank port contributions in the serial free-edge order `I_port`.
+
+    In the serial solver, `W.T @ u` is a CSR matrix-vector product whose rows
+    accumulate `w[p, i] * u[i]` in strictly increasing free-edge index order
+    `0 <= i_0 < i_1 < ... < i_{m-1}`. Placing each rank's owned port-edge
+    values into `u_port[port_pos[q]]` and evaluating `WT_port @ u_port`
+    executes the identical sequence of IEEE-754 operations regardless of the
+    number of ranks or the partition.
+    """
+    if stage == "u_n":
+        if p["swap_order"]:
+            Vn = np.zeros(p["n_ports"], dtype=float)
+            for s_q in reversed(parts):
+                Vn = Vn + s_q
+        else:
+            Vn = p["WT_port"] @ _assemble_serial_port_vector(p, parts)
+        if use_sources:
+            t_half = (n + 0.5) * dt
+            Is = np.array(
+                [0.0 if fn is None else float(fn(t_half)) for fn in p["srcs"]],
+                dtype=float,
+            )
+        else:
+            Is = np.zeros(p["n_ports"], dtype=float)
+        return Vn, Is
+    if stage == "u_star":
+        if p["swap_order"]:
+            V_star = np.zeros(p["n_ports"], dtype=float)
+            for s_q, _ in reversed(parts):
+                V_star = V_star + s_q
+            alpha = p["Sinv"] @ (0.5 * p["g"] * V_star)
+            u_port_star = _assemble_serial_port_vector(p, [u_q for _, u_q in parts])
+            u_port_new = u_port_star - p["dinv_port"] * (p["W_port"] @ alpha)
+            V_new = np.zeros(p["n_ports"], dtype=float)
+            for q in reversed(range(len(parts))):
+                pos_q = p["port_pos"][q]
+                if pos_q.size:
+                    V_new = V_new + (p["WT_port"][:, pos_q] @ u_port_new[pos_q])
+            return V_star, V_new
+        u_port_star = _assemble_serial_port_vector(p, parts)
+        V_star = p["WT_port"] @ u_port_star
+        alpha = p["Sinv"] @ (0.5 * p["g"] * V_star)
+        u_port_new = u_port_star - p["dinv_port"] * (p["W_port"] @ alpha)
+        if p["drop_rank"] is not None:
+            u_port_new[p["port_pos"][p["drop_rank"]]] = 0.0
+        V_new = p["WT_port"] @ u_port_new
+        return V_star, V_new
+    if stage == "u_T":
+        ub_port = _assemble_serial_port_vector(p, parts)
+        z = p["WT_port"] @ (p["dinv_port"] * ub_port)
+        u_star_port = ub_port - p["W_port"] @ (0.5 * p["g"] * (p["Sinv"].T @ z))
+        rb_port = dt * (u_star_port / p["den_port"])
+        wy = p["WT_port"] @ rb_port
+        return z, wy
+    raise ValueError(f"unknown port reduction stage {stage!r}")
+
+
+def _apply_port_reduction(r, stage, res):
+    if stage == "u_n":
+        r._port_vec["u_n"], r._port_vec["Is"] = res
+    elif stage == "u_star":
+        r._port_vec["u_star"], r._port_vec["u_new"] = res
+    elif stage == "u_T":
+        r._port_vec["z_T"], r._port_vec["wy_T"] = res
+
+
 # ================================================================ drivers
 class _Driver:
     """Common API of `LocalCluster` and `DistributedFIT`."""
@@ -846,6 +1122,30 @@ class _Driver:
             r.owned_index(), **({"src": r.spaces["s0"].owned[: r._nu]}
                                 if r.kind == "pml3d" else {})))  # fmt: skip
 
+    def port_signals(self, k=0):
+        """
+        Port ``k`` signals ``(t, V, I_s, I)`` at the half steps [s, V, A, A],
+        matching ``solver.ports.ports[k].signals()``.
+        """
+        r = self.ranks[0] if hasattr(self, "ranks") else self.r
+        p = getattr(r, "ports", None)
+        if p is None:
+            raise ValueError("solver has no attached ports")
+        V = np.asarray(r.port_V[k], dtype=float)
+        Is = np.asarray(r.port_Is[k], dtype=float)
+        t = (np.arange(V.size) + 0.5) * r.dt
+        return t, V, Is, Is - p["g"][k] * V
+
+    def port_spectra(self, freqs, k=0):
+        """
+        DTFT ``(V(f), I(f))`` [V s, A s] of port ``k`` at ``freqs`` [Hz],
+        matching ``solver.ports.ports[k].spectra(freqs)``.
+        """
+        from .ports3d import dtft
+
+        t, V, _, I = self.port_signals(k)
+        return dtft(V, t, freqs), dtft(I, t, freqs)
+
 
 class LocalCluster(_Driver):
     """
@@ -884,11 +1184,22 @@ class LocalCluster(_Driver):
             r.n, r.samples, r.dft = n, s, d
 
     def _exchange(self, key, bkey):
+        if key == "port":
+            r0 = self.ranks[0]
+            parts = [_port_local_payload(r, bkey) for r in self.ranks]
+            res = _combine_port_reduction(
+                r0.ports, bkey, parts, r0.n, r0.dt, r0.use_sources
+            )
+            for r in self.ranks:
+                _apply_port_reduction(r, bkey, res)
+            return
         for r in self.ranks:
             sp_r = r.spaces[key]
             for q, pos in sp_r.recv.items():
                 src = self.ranks[q]
-                r.buf[bkey][sp_r.n_own + pos] = src.buf[bkey][src.spaces[key].send[r.rank]]
+                r.buf[bkey][sp_r.n_own + pos] = src.buf[bkey][
+                    src.spaces[key].send[r.rank]
+                ]
 
     def _run_program(self, name):
         prog0 = getattr(self.ranks[0], name)
@@ -983,15 +1294,27 @@ class DistributedFIT(_Driver):
         self.n_parts = P
         if mode == "replicated":
             if parts is None:
-                parts = (partition_cells(solver.mesh, P, partitioner) if me == root else None)
+                parts = (
+                    partition_cells(solver.mesh, P, partitioner) if me == root else None
+                )
                 parts = comm.bcast(parts, root=root)
-            pieces, self.parts = build_pieces(solver, P, parts, ranks=[me], _mutation=_mutation)
+            pieces, self.parts = build_pieces(
+                solver, P, parts, ranks=[me], _mutation=_mutation
+            )
             pc = pieces[me]
         elif mode == "scatter":
-            pieces = None
+            pieces, root_srcs = None, None
             if me == root:
-                pieces, _ = build_pieces(solver, P, parts, partitioner, _mutation=_mutation)
+                pieces, _ = build_pieces(
+                    solver, P, parts, partitioner, _mutation=_mutation
+                )
+                if pieces[root].get("ports") is not None:
+                    root_srcs = pieces[root]["ports"]["srcs"]
+                    for pc_q in pieces:
+                        pc_q["ports"]["srcs"] = None
             pc = comm.scatter(pieces, root=root)
+            if me == root and root_srcs is not None:
+                pc["ports"]["srcs"] = root_srcs
             self.parts = pc["parts"]
         else:
             raise ValueError("mode must be 'scatter' or 'replicated'")
@@ -1013,6 +1336,22 @@ class DistributedFIT(_Driver):
         self.r.n, self.r.samples, self.r.dft = saved[0]
 
     def _exchange(self, key, bkey):
+        if key == "port":
+            part = _port_local_payload(self.r, bkey)
+            parts = self.comm.gather(part, root=self.root)
+            res = None
+            if self.comm.Get_rank() == self.root:
+                res = _combine_port_reduction(
+                    self.r.ports,
+                    bkey,
+                    parts,
+                    self.r.n,
+                    self.r.dt,
+                    self.r.use_sources,
+                )
+            res = self.comm.bcast(res, root=self.root)
+            _apply_port_reduction(self.r, bkey, res)
+            return
         MPI = self._MPI
         sp_ = self.r.spaces[key]
         buf = self.r.buf[bkey]

@@ -264,6 +264,8 @@ def cad_projector(gmsh, node_tags, scale):
             surf_of[int(t)] = s
 
     def project(n, Y):
+        if n >= len(node_tags):
+            return None
         s = surf_of.get(int(node_tags[n]))
         if s is None:
             return None

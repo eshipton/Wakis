@@ -109,7 +109,9 @@ def massless_schur_operator(solver):
         idx = np.stack([order[starts[c] : starts[c] + k] for c in comps])  # (nb, k)
         blocks = Kss[idx.ravel()][:, idx.ravel()].toarray()
         nb = comps.size
-        B = np.stack([blocks[i * k : (i + 1) * k, i * k : (i + 1) * k] for i in range(nb)])
+        B = np.stack(
+            [blocks[i * k : (i + 1) * k, i * k : (i + 1) * k] for i in range(nb)]
+        )
         inv = np.linalg.inv(B)
         kappa_max = max(kappa_max, float(np.linalg.cond(B).max()))
         rows.append(np.repeat(idx, k, axis=1).ravel())
@@ -163,6 +165,35 @@ extern "C" __global__ void uns_scatter_axpy(const long long* idx, const double* 
         double c, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) y[idx[i]] += c * w[i];
+}
+// y[rows[row]] += d[row] * (A x)_row   (sparse port scatter)
+extern "C" __global__ void uns_spmv_scatter(const int* ip, const int* ix, const double* a,
+        const int* rows, const double* d, const double* x, double* y, int n) {
+    int t = blockIdx.x * blockDim.x + threadIdx.x, row = t / LANES, lane = t % LANES;
+    double s = row_dot(ip, ix, a, x, row, lane, n);
+    if (row < n && lane == 0) y[rows[row]] += d[row] * s;
+}
+// c_pre[i] = is_row[i] - gh[i] * vn[i];  buf_row[n + i] = is_row[i]
+extern "C" __global__ void uns_port_pre(const double* is_row, const double* gh,
+        const double* vn, double* c_pre, double* buf_row, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) { double s = is_row[i]; c_pre[i] = s - gh[i] * vn[i]; buf_row[n + i] = s; }
+}
+// alpha[i] = sum_j Sinv[i, j] * (gh[j] * vs[j])
+extern "C" __global__ void uns_port_post(const double* Sinv, const double* gh,
+        const double* vs, double* alpha, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        double s = 0.0;
+        for (int j = 0; j < n; ++j) s += Sinv[i * n + j] * (gh[j] * vs[j]);
+        alpha[i] = s;
+    }
+}
+// buf_row[i] = 0.5 * (vn[i] + v_new[i])
+extern "C" __global__ void uns_port_avg(const double* vn, const double* v_new,
+        double* buf_row, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) buf_row[i] = 0.5 * (vn[i] + v_new[i]);
 }
 // ph[k] = exp(-2 pi i f_k t), argument rounded as (-2 pi f) t like the host
 extern "C" __global__ void uns_phase(const double* f, double m2pi, double t, double* ph, int n) {
@@ -225,12 +256,19 @@ class _DevCSR:
                                   (self.indptr, self.indices, self.data, h, u, a1, den,
                                    np.float64(dt), self.n))  # fmt: skip
 
+    def spmv_scatter(self, x, y, rows, d):
+        """y[rows] += d * (A x)."""
+        if self.n:
+            _cuda("uns_spmv_scatter")(_grid_rows(int(self.n)), (_BLOCK,),
+                                      (self.indptr, self.indices, self.data, rows, d, x, y, self.n))  # fmt: skip
+
 
 def _scatter_axpy(y, idx, w, c):
     n = int(idx.size)
     if n:
-        _cuda("uns_scatter_axpy")(((n + 255) // 256,), (256,), (idx, w, y, np.float64(c), np.int32(n)))
-
+        _cuda("uns_scatter_axpy")(
+            ((n + 255) // 256,), (256,), (idx, w, y, np.float64(c), np.int32(n))
+        )
 
 
 class DeviceStepper:
@@ -266,7 +304,9 @@ class DeviceStepper:
         state component in one step (the m of gamma_m).
     """
 
-    def __init__(self, solver, xp=None, absolute=False, fuse_massless=True, sources=True):
+    def __init__(
+        self, solver, xp=None, absolute=False, fuse_massless=True, sources=True
+    ):
         if xp is None:
             import cupy as xp
         self.xp = xp
@@ -277,6 +317,7 @@ class DeviceStepper:
         self.n = int(solver.n)
         self.S = {}
         self.pml3 = None
+        self.ports = None
         self.depth = 12
         self._use_sources = sources
         self._gpu = xp.__name__ == "cupy"
@@ -297,6 +338,8 @@ class DeviceStepper:
         elif self._fast:
             nh = self.Mnu.size if self.kind == "3d" else self.stiff.size
             self._h = self.xp.zeros(nh)
+            if self.kind == "3d" and (self.groups or self.ports is not None):
+                self._r = self.xp.zeros(solver.free.size)
             if getattr(self, "groups", None) is not None:
                 for src in self.sources:  # w / den for the fused capacitive update
                     den = self.den if src["dense"] else self.den[src["idx"]]
@@ -366,18 +409,32 @@ class DeviceStepper:
         self.a1, self.den = self._f(up.a1), self._f(up.den)
         self.groups = []
         for gi, g in enumerate(up.groups):
-            dg = {"idx": self._i(g["idx"]), "c": self._f(g["c"]), "lorentz": [], "debye": []}
+            dg = {
+                "idx": self._i(g["idx"]),
+                "c": self._f(g["c"]),
+                "lorentz": [],
+                "debye": [],
+            }
             for k, (alpha, xi, zeta, p, p_old) in enumerate(g["lorentz"]):
                 dg["lorentz"].append(
-                    dict(alpha=self._c(alpha), xi=self._c(xi), zeta=self._c(zeta),
-                         p=f"g{gi}_L{k}_p", q=f"g{gi}_L{k}_q")  # fmt: skip
+                    dict(
+                        alpha=self._c(alpha),
+                        xi=self._c(xi),
+                        zeta=self._c(zeta),
+                        p=f"g{gi}_L{k}_p",
+                        q=f"g{gi}_L{k}_q",
+                    )  # fmt: skip
                 )
                 self._state(f"g{gi}_L{k}_p", p)
                 self._state(f"g{gi}_L{k}_q", p_old)
             for k, (kappa, beta, p) in enumerate(g["debye"]):
                 dg["debye"].append(
-                    dict(kappa=self._c(kappa), beta=self._c(beta),
-                         km1=self._c(kappa - 1), p=f"g{gi}_D{k}_p")  # fmt: skip
+                    dict(
+                        kappa=self._c(kappa),
+                        beta=self._c(beta),
+                        km1=self._c(kappa - 1),
+                        p=f"g{gi}_D{k}_p",
+                    )  # fmt: skip
                 )
                 self._state(f"g{gi}_D{k}_p", p)
             self.groups.append(dg)
@@ -443,7 +500,9 @@ class DeviceStepper:
 
     def _build_3d(self, s, fuse_massless):
         if s.hodge != "voronoi":
-            raise NotImplementedError("DeviceStepper: hodge='whitney' (sparse solve per step)")
+            raise NotImplementedError(
+                "DeviceStepper: hodge='whitney' (sparse solve per step)"
+            )
         if getattr(s, "_pml", None) is not None:
             return self._build_pml3d(s)
         self.kind = "3d"
@@ -458,18 +517,25 @@ class DeviceStepper:
                 # product and of the host LU solve (forward error <= kappa u)
                 A = lambda M: abs(sp.csr_matrix(M))
                 Ceff = A(s.Cf) + (1 + kap) * (A(Cs) @ A(Kinv) @ A(s._Ksf))
-                self.depth += _max_row_nnz(Kinv) + _max_row_nnz(s._Ksf) + _max_row_nnz(Cs)
+                self.depth += (
+                    _max_row_nnz(Kinv) + _max_row_nnz(s._Ksf) + _max_row_nnz(Cs)
+                )
             elif fuse_massless:
                 Ceff = (s.Cf - Cs @ Sop).tocsr()
             else:
                 self._fused = False
-                self.Cs, self.Kinv, self.Ksf = self._mat(Cs), self._mat(Kinv), self._mat(s._Ksf)
+                self.Cs, self.Kinv, self.Ksf = (
+                    self._mat(Cs),
+                    self._mat(Kinv),
+                    self._mat(s._Ksf),
+                )
             self.depth += 4 * nb  # block inverse vs LU
         self.Ceff = self._mat(Ceff if self._fused or self.absolute else s.Cf)
         self.CfT = self._mat(s.Cf.T)
         self.Mnu = self._f(s.Mnu_diag)
         self.depth += _max_row_nnz(Ceff) + _max_row_nnz(s.Cf.T)
         self._build_capacitive(s._update)
+        self._build_ports(s)
         self._state("u", s.u)
         self._state("b", s.b)
         self._w = {"u": s.cap, "b": s.Mnu_diag}
@@ -478,6 +544,56 @@ class DeviceStepper:
                 self._w[f"g{gi}_L{k}_p"] = self._w[f"g{gi}_L{k}_q"] = g["c"]
             for k in range(len(g["debye"])):
                 self._w[f"g{gi}_D{k}_p"] = g["c"]
+
+    def _build_ports(self, s):
+        ps = getattr(s, "ports", None)
+        if ps is None:
+            return
+        W = sp.csr_matrix(ps.W, dtype=float, copy=True)
+        W.sort_indices()
+        WT = sp.csr_matrix(ps.W.T, dtype=float, copy=True)
+        WT.sort_indices()
+        np_ = len(ps.ports)
+        rows = np.flatnonzero(np.diff(W.indptr) > 0)
+        self.ports = dict(
+            ps=ps, np=np_, n=np.int32(np_),
+            grid=((np_ + 255) // 256,), block=(min(256, max(1, np_)),),
+            WT=self._mat(WT), W=self._mat(W),
+            gh=self._f(0.5 * ps.g), Sinv=self._f(ps._Sinv), dinv=self._f(ps.dinv),
+            Vn=self.xp.zeros(np_), Vs=self.xp.zeros(np_),
+            c_pre=self.xp.zeros(np_), alpha=self.xp.zeros(np_),
+            buf=None if self.absolute else self.xp.zeros((256, 2 * np_)),
+            k=0, Is=None, top=-1,
+        )  # fmt: skip
+        if self._gpu and not self.absolute:
+            self.ports["W_sub"] = _DevCSR(W[rows])
+            self.ports["rows"] = self.xp.asarray(rows.astype(np.int32))
+            self.ports["ones"] = self.xp.ones(rows.size, dtype=np.float64)
+            self.ports["mdinv"] = self.xp.asarray(-ps.dinv[rows], dtype=np.float64)
+        self.depth += 2 * _max_row_nnz(WT) + 2 * _max_row_nnz(W) + np_ + 6
+        self._port_table(self.n + 256)
+
+    def _port_table(self, top):
+        """(Re)build the port source table up to step index `top` (host -> device)."""
+        P = self.ports
+        ps = P["ps"]
+        n_max = max(2 * (P["top"] + 1), top + 1 + 4096)
+        if not self._use_sources or all(p.src is None for p in ps.ports):
+            Is = np.zeros((n_max, P["np"]))
+        else:
+            t = (np.arange(n_max) + 0.5) * self.dt
+            Is = np.column_stack(
+                [
+                    np.zeros(n_max)
+                    if p.src is None
+                    else np.asarray([float(p.src(tt)) for tt in t], dtype=float)
+                    for p in ps.ports
+                ]
+            )
+            if self.absolute:
+                Is = np.abs(Is)
+        P["Is"] = self.xp.asarray(Is)
+        P["top"] = n_max - 1
 
     def _build_2d(self, s):
         self.kind = "2d"
@@ -520,7 +636,9 @@ class DeviceStepper:
             n_e = s.mesh.n_edges
             for gi, g in enumerate(s._te_groups):
                 nseg = g["e"].size
-                H = sp.csr_matrix((g["h"], (g["e"], np.arange(nseg))), shape=(n_e, nseg))
+                H = sp.csr_matrix(
+                    (g["h"], (g["e"], np.arange(nseg))), shape=(n_e, nseg)
+                )
                 dg = dict(e=self._i(g["e"]), H=self._mat(H), Le0=self._f(g["L"] * eps_0),
                           den=self._c(g["eps_inf"] + g["beta"]), E=f"te{gi}_E",
                           lorentz=[], debye=[])  # fmt: skip
@@ -529,25 +647,36 @@ class DeviceStepper:
                 self._w[f"te{gi}_E"] = g["eps_inf"] * wseg
                 for k, (alpha, xi, zeta, p, p_old) in enumerate(g["lorentz"]):
                     dg["lorentz"].append(
-                        dict(alpha=self._c(alpha), xi=self._c(xi), zeta=self._c(zeta),
-                             p=f"te{gi}_L{k}_p", q=f"te{gi}_L{k}_q")  # fmt: skip
+                        dict(
+                            alpha=self._c(alpha),
+                            xi=self._c(xi),
+                            zeta=self._c(zeta),
+                            p=f"te{gi}_L{k}_p",
+                            q=f"te{gi}_L{k}_q",
+                        )  # fmt: skip
                     )
                     self._state(f"te{gi}_L{k}_p", p)
                     self._state(f"te{gi}_L{k}_q", p_old)
                     self._w[f"te{gi}_L{k}_p"] = self._w[f"te{gi}_L{k}_q"] = wseg
                 for k, (kappa, beta, p) in enumerate(g["debye"]):
                     dg["debye"].append(
-                        dict(kappa=self._c(kappa), beta=self._c(beta), p=f"te{gi}_D{k}_p")
+                        dict(
+                            kappa=self._c(kappa), beta=self._c(beta), p=f"te{gi}_D{k}_p"
+                        )
                     )
                     self._state(f"te{gi}_D{k}_p", p)
                     self._w[f"te{gi}_D{k}_p"] = wseg
                 self.te_groups.append(dg)
-                self.depth += _max_row_nnz(H) + 4 * (len(g["lorentz"]) + len(g["debye"])) + 6
+                self.depth += (
+                    _max_row_nnz(H) + 4 * (len(g["lorentz"]) + len(g["debye"])) + 6
+                )
         # plane wave (scattered field)
         self.pw = None
         if s.plane_wave is not None:
             if s.dispersive:
-                raise NotImplementedError("DeviceStepper: plane wave with dispersive media")
+                raise NotImplementedError(
+                    "DeviceStepper: plane wave with dispersive media"
+                )
             self.pw = dict(W=self._mat(s._pw_W), sub=s._pw_sub, nj=s._pw_W.shape[1],
                            s=s.plane_wave["s"], S=None, top=-1)  # fmt: skip
             self.depth += 2 * _max_row_nnz(s._pw_W) + 4
@@ -593,8 +722,13 @@ class DeviceStepper:
             nz = np.flatnonzero(w)
             dense = nz.size > 0.25 * w.size
             self.sources.append(
-                dict(kind=kind, f=f, dense=dense,
-                     w=self._f(w) if dense else self._f(w[nz]), idx=None if dense else self._i(nz))  # fmt: skip
+                dict(
+                    kind=kind,
+                    f=f,
+                    dense=dense,
+                    w=self._f(w) if dense else self._f(w[nz]),
+                    idx=None if dense else self._i(nz),
+                )  # fmt: skip
             )
             self.depth += 2
 
@@ -604,7 +738,9 @@ class DeviceStepper:
             return
         for rec in s.recorder.probes:
             P = self._mat(rec["P"])
-            self.probes.append(dict(P=P, buf=self.xp.zeros((256, rec["P"].shape[0])), k=0))
+            self.probes.append(
+                dict(P=P, buf=self.xp.zeros((256, rec["P"].shape[0])), k=0)
+            )
         for rec in s.recorder.dfts:
             self.dfts.append(dict(freqs=self.xp.asarray(rec["freqs"]),
                                   data=self.xp.asarray(rec["data"]).astype(complex),
@@ -681,7 +817,9 @@ class DeviceStepper:
         d_old, d = self.xp.zeros(yF.shape), yF
         for k in range(1, L["p"]):
             Xd = L["dt2"] * (L["AFF"] @ d + L["kappa"][k] * gC)
-            d_new = L["delta2"] * d + m * (L["beta2"] * Xd) + L["T2"][k] * yF + m * d_old
+            d_new = (
+                L["delta2"] * d + m * (L["beta2"] * Xd) + L["T2"][k] * yF + m * d_old
+            )
             d_old, d = d, d_new
         corr = L["out"] * d + m * yF
         return g + L["GF"] @ corr
@@ -706,24 +844,83 @@ class DeviceStepper:
         pw["top"] = n_max - 1
 
     def prepare(self, n_steps):
-        """Precompute host-side tables for the next `n_steps` (plane wave)."""
+        """Precompute host-side tables for the next `n_steps` (plane wave, ports)."""
         if getattr(self, "pw", None) is not None:
             top = self.pw["sub"] * (self.n + n_steps + 1)
             if self.pw["S"] is None or self.pw["top"] < top:
                 self._pw_table(top)
+        if getattr(self, "ports", None) is not None:
+            top = self.n + n_steps + 1
+            if self.ports["Is"] is None or self.ports["top"] < top:
+                self._port_table(top)
+            if not self.absolute:
+                self._reserve(self.ports, self.ports["k"] + n_steps)
+
+    def _port_pre(self, u, r):
+        """Add explicit half-step port current W (I_s - g/2 W^T u) to r."""
+        P = self.ports
+        if self.n > P["top"]:
+            self._port_table(self.n)
+        Is = P["Is"][self.n]
+        if self._fast:
+            self._reserve(P, P["k"] + 1)
+            P["WT"].spmv_into(u, P["Vn"])
+            _cuda("uns_port_pre")(
+                P["grid"], P["block"],
+                (Is, P["gh"], P["Vn"], P["c_pre"], P["buf"][P["k"]], P["n"]),
+            )  # fmt: skip
+            P["W_sub"].spmv_scatter(P["c_pre"], r, P["rows"], P["ones"])
+            return
+        Vn = P["WT"] @ u
+        P["Vn"] = Vn
+        c_pre = Is + self.m * (P["gh"] * Vn)
+        r += P["W"] @ c_pre
+        if not self.absolute:
+            self._reserve(P, P["k"] + 1)
+            P["buf"][P["k"], P["np"] :] = Is
+
+    def _port_post(self, u):
+        """Apply Woodbury rank-P implicit conductance solve to u in place."""
+        P = self.ports
+        if self._fast:
+            P["WT"].spmv_into(u, P["Vs"])
+            _cuda("uns_port_post")(
+                P["grid"], P["block"],
+                (P["Sinv"], P["gh"], P["Vs"], P["alpha"], P["n"]),
+            )  # fmt: skip
+            P["W_sub"].spmv_scatter(P["alpha"], u, P["rows"], P["mdinv"])
+            P["WT"].spmv_into(u, P["Vs"])
+            _cuda("uns_port_avg")(
+                P["grid"], P["block"],
+                (P["Vn"], P["Vs"], P["buf"][P["k"]], P["n"]),
+            )  # fmt: skip
+            P["k"] += 1
+            return
+        Vs = P["WT"] @ u
+        alpha = P["Sinv"] @ (P["gh"] * Vs)
+        u += self.m * (P["dinv"] * (P["W"] @ alpha))
+        if not self.absolute:
+            P["buf"][P["k"], : P["np"]] = 0.5 * (P["Vn"] + (P["WT"] @ u))
+            P["k"] += 1
 
     def _cfs(self, F, x):
         """`_CFSRatio.__call__` on the device state of filter F."""
         S, k, m = self.S, F["key"], self.m
         Px = F["c1"] * S[k + "_Px"] + F["c2"] * (x + S[k + "_x0"])
-        y = (F["kn"] * x + F["sn"] * Px + m * (F["sd"] * (F["c1"] * S[k + "_Py"] + F["c2"] * S[k + "_y0"]))) / F["den"]
+        y = (
+            F["kn"] * x
+            + F["sn"] * Px
+            + m * (F["sd"] * (F["c1"] * S[k + "_Py"] + F["c2"] * S[k + "_y0"]))
+        ) / F["den"]
         S[k + "_Py"] = F["c1"] * S[k + "_Py"] + F["c2"] * (y + S[k + "_y0"])
         S[k + "_Px"], S[k + "_x0"], S[k + "_y0"] = Px, x, y
         return y
 
     def _pml_nodes(self, u1):
         P, S = self.pml, self.S
-        u1[P["nodes"]] = self._cfs(P["fn2"], self._cfs(P["fn1"], S["pml_q"] / P["massN"]))
+        u1[P["nodes"]] = self._cfs(
+            P["fn2"], self._cfs(P["fn1"], S["pml_q"] / P["massN"])
+        )
 
     def _te_voltage(self, v):
         vol = self.stiff * v
@@ -756,13 +953,18 @@ class DeviceStepper:
         if self._fast and self._fused:
             # two launches: b += -dt C_eff u, h = M_nu b; u = (a1 u + dt C_f^T h) / den
             self.Ceff.flux(u, b, self._h, self.Mnu, m * dt)
-            if not self.groups:
+            if not self.groups and self.ports is None:
                 self.CfT.cap(self._h, u, self.a1, self.den, dt)
                 self._add_sources_cap(t_half, m * dt)
                 return
-            r = self.CfT @ self._h
+            r = self._r
+            self.CfT.spmv_into(self._h, r)
             self._add_sources(r, "node", t_half, m)
+            if self.ports is not None:
+                self._port_pre(u, r)
             self._cap_step(r)
+            if self.ports is not None:
+                self._port_post(u)
             return
         if self._fused:
             self._axpy(b, m * dt, self.Ceff @ u)
@@ -772,7 +974,11 @@ class DeviceStepper:
             self._axpy(b, m * dt, self.Cs @ e_s)
         r = self.CfT @ (self.Mnu * b)
         self._add_sources(r, "node", t_half, m)
+        if self.ports is not None:
+            self._port_pre(u, r)
         self._cap_step(r)
+        if self.ports is not None:
+            self._port_post(u)
 
     def _step_tm(self, t_half):
         S, m, dt = self.S, self.m, self.dt
@@ -904,6 +1110,13 @@ class DeviceStepper:
         pr = self.probes[i]
         return self._host(pr["buf"][: pr["k"]])
 
+    def port_signals(self):
+        """Recorded half-step port (V, I_s), each (n_steps, n_ports), host."""
+        P = self.ports
+        np_ = P["np"]
+        rec = self._host(P["buf"][: P["k"]])
+        return rec[:, :np_], rec[:, np_:]
+
     def dft_data(self, i=0):
         """Accumulated DFT `i`, (n_freqs, n_dofs), host."""
         return self._host(self.dfts[i]["data"])
@@ -933,7 +1146,7 @@ class DeviceStepper:
         return {k: np.asarray(v, dtype=float) for k, v in self._w.items()}
 
     def to_host(self):
-        """Copy fields, step counter, probe samples and DFTs back into the solver."""
+        """Copy fields, step counter, probe samples, port signals and DFTs back into the solver."""
         s = self.solver
         st = self.get_state()
         s.u = st["u"]
@@ -944,11 +1157,19 @@ class DeviceStepper:
         s.n = self.n
         if self.pml3 is not None:
             self.pml3.x = self._host(self._X)
-            s.u, s.b = self.pml3.x[: self._split[0]].copy(), self.pml3.x[self._split[0] : self._split[1]].copy()
+            s.u, s.b = (
+                self.pml3.x[: self._split[0]].copy(),
+                self.pml3.x[self._split[0] : self._split[1]].copy(),
+            )
         for rec, pr in zip(s.recorder.probes, self.probes):
             rec["samples"] = list(self._host(pr["buf"][: pr["k"]]))
         for rec, d in zip(s.recorder.dfts, self.dfts):
             rec["data"] = self._host(d["data"])
+        if self.ports is not None:
+            V, Is = self.port_signals()
+            for j, p in enumerate(s.ports.ports):
+                p.V = list(V[:, j])
+                p.Is = list(Is[:, j])
         return s
 
     # ------------------------------------------------------------ memory
@@ -956,7 +1177,9 @@ class DeviceStepper:
         """Bytes of the arrays and sparse operators held by this stepper (the
         array module's memory: device for CuPy)."""
         skip = {"solver", "_w", "xp", "_csp", "S"}
-        tot = sum(_nbytes(v, self.xp) for k, v in self.__dict__.items() if k not in skip)
+        tot = sum(
+            _nbytes(v, self.xp) for k, v in self.__dict__.items() if k not in skip
+        )
         if self.pml3 is not None:  # S holds views of _X
             return tot
         return tot + sum(_nbytes(v, self.xp) for v in self.S.values())
@@ -986,7 +1209,11 @@ def theory_amplification(solver):
     sqrt((1 + rho) / (1 - rho)), rho = dt / 2 sqrt(lambda_max) (the Courant
     number; the LTS stability ratio with LTS).
     """
-    rho = solver.lts_info["rho"] if getattr(solver, "lts", None) is not None else solver.courant
+    rho = (
+        solver.lts_info["rho"]
+        if getattr(solver, "lts", None) is not None
+        else solver.courant
+    )
     return float(np.sqrt((1 + rho) / (1 - rho)))
 
 
@@ -1054,15 +1281,24 @@ def agreement_bound(solver, n_steps, K=None, probes=True):
     gm = gamma(ref.depth)
     if K is None:
         K = theory_amplification(solver)
-        if getattr(solver, "_pml", None) is not None or getattr(solver, "lts", None) is not None:
+        if (
+            getattr(solver, "_pml", None) is not None
+            or getattr(solver, "lts", None) is not None
+        ):
             K = max(K, empirical_amplification(solver, n_steps))
     ref.prepare(n_steps)
     twin.prepare(n_steps)
     eps, norm, unorm = np.zeros(n_steps), np.zeros(n_steps), np.zeros(n_steps)
     acc = 0.0
-    Pabs = [abs(sp.csr_matrix(r["P"])) for r in solver.recorder.probes] if probes else []
+    Pabs = (
+        [abs(sp.csr_matrix(r["P"])) for r in solver.recorder.probes] if probes else []
+    )
     Pw = [P @ (1 / np.sqrt(W["u"])) for P in Pabs]
     probe_b = [np.zeros((n_steps, P.shape[0])) for P in Pabs]
+    ps = getattr(solver, "ports", None)
+    WTabs = abs(sp.csr_matrix(ps.W.T)) if (probes and ps is not None) else None
+    WTv = WTabs @ (1 / np.sqrt(W["u"])) if WTabs is not None else None
+    port_b = np.zeros((n_steps, len(ps.ports))) if WTabs is not None else None
     dft_b = []
     for n in range(n_steps):
         x = ref.get_state()
@@ -1078,6 +1314,11 @@ def agreement_bound(solver, n_steps, K=None, probes=True):
         for P, Pv, out in zip(Pabs, Pw, probe_b):
             # |P| |d| <= eps_n |P| W^-1/2, plus both probe SpMVs (gamma_k)
             out[n] = eps[n] * Pv + 2 * gamma(_max_row_nnz(P)) * (P @ np.abs(xn["u"]))
+        if WTabs is not None:
+            ep = eps[n - 1] if n else 0.0
+            port_b[n] = 0.5 * (ep + eps[n]) * WTv + gamma(_max_row_nnz(WTabs) + 1) * (
+                WTabs @ (np.abs(x["u"]) + np.abs(xn["u"]))
+            )
     dt = solver.dt
     for rec in solver.recorder.dfts:
         # sum_n dt [ ||d_n|| + (|delta phi| + gamma_3) ||u_n|| ] + 2 gamma_N sum |terms|
@@ -1085,7 +1326,10 @@ def agreement_bound(solver, n_steps, K=None, probes=True):
         # sin/cos/exp within 2 ulp each (CUDA C Programming Guide, App. "Mathematical
         # Functions"), the host libm within 1 ulp
         c_phi = 8 * UNIT_ROUNDOFF + gamma(3)
-        b = dt * (eps.sum() + c_phi * unorm.sum()) + 2 * gamma(n_steps) * dt * unorm.sum()
+        b = (
+            dt * (eps.sum() + c_phi * unorm.sum())
+            + 2 * gamma(n_steps) * dt * unorm.sum()
+        )
         dft_b.append(np.full(np.size(rec["freqs"]), b))
     return dict(eps=eps, K=K, depth=ref.depth, gamma=gm, norm=norm, probe=probe_b,
-                dft=dft_b, weights=W)  # fmt: skip
+                port=port_b, dft=dft_b, weights=W)  # fmt: skip

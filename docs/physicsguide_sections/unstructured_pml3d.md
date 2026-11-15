@@ -177,9 +177,32 @@ thick PML (its own reflection < 1e-4). Worst of three probes, echo / PEC echo:
 | dr = 1.25 h | 0.12 |
 | dr = 1.5 h | 0.26 |
 
-At the study's resolution (centre wavelength 16 h, ball 20 h, probes 1.5 h from the centre, dr = h only; Batch
-`pmltrans-lam16`, `transition_lam16.json`) the transition reflects **1.3e-2** (−38 dB) and Silver–Müller 2.2e-2:
-halving kh only halved the transition (2.3e-2 → 1.3e-2), i.e. it behaves as O(kh), not O((kh)²).
+Updated 2026-11-14: an earlier version stated O(kh) from two resolutions; a third resolution does not support it.
+
+Worst-probe transition reflection at dr = h, with RB chosen so that the echo gate is valid (RB / λ = 1.5 at 8 cells/λ,
+1.25 at 16 and 24 cells/λ; Batch jobs `pmlrb12`, `pmltrans-lam16`, `pmlrb30lam24`, run logs in `runs/JOB/run.log`):
+
+| cells per wavelength (λ, RB) | transition | Silver–Müller |
+|---|---|---|
+| 8 (8 h, 12 h) | 2.34e-2 | 7.9e-2 |
+| 16 (16 h, 20 h) | 1.26e-2 | 2.19e-2 |
+| 24 (24 h, 30 h) | 6.99e-3 | 1.79e-2 |
+
+Local orders p in (kh)^p between neighbouring rows: 0.89 (8 → 16) and 1.46 (16 → 24). The order is not yet constant,
+so the earlier two-point claim of an O(kh) law is withdrawn, and the values at 8–16 cells/λ are pre-asymptotic. The rows
+are not an equal-geometry sweep (RB / λ differs). Doubling RB at 8 cells/λ (`pmlrb24`) raised the transition from 2.34e-2
+to 2.71e-2, so the ball-faceting sagitta h²/(8 r0) is not the source.
+
+A jittered planar analogue (`studies/unstructured-pml3d/pml3d_planar_diag.py ball-like`, Batch `pmldiag2planar`), with
+the same prism assembly, gives 2.05e-2 at h = 1 (dr = h), the same coarse level, and becomes second order at finer h:
+local orders 3.0 (h 0.5 → 0.25) and 2.2 (h 0.25 → 0.125); the four-resolution fit is p = 2.16 with log residual 0.32
+(a poor fit). The regular planar channel gives p = 2.11.
+
+Candidates refuted so far: (i) dual inconsistency at r0: the interface dual areas match the circumcentric Voronoi dual to
+7.9e-15 (planar) and 1.1e-13 (ball) (Batch `w3pml-diag`); (ii) faceting sagitta (see above); (iii) negative assembled
+duals: the active prism duals have no negative entries at h = 1 or 0.5, with minimum relative size 2.6e-3 and 5.5e-4,
+scaling as h² (Batch `pmldiag2duals`); the negative per-cell partial duals cancel in assembly. (iv) The dr sensitivity of
+the planar analogue shrinks with resolution: dr 1.25 / dr 1 is 2.7 at h = 1 and 1.00 at h = 0.125.
 
 So at 8 cells per wavelength the total reflection of the PML truncation is 2.3 % (−33 dB) at the best spacing dr = h,
 about 3.4× below Silver–Müller and two orders of magnitude above the PML's own reflection. It comes from the change
@@ -231,6 +254,9 @@ on interior edges near the source and is not a PML effect (open question).
 * **Massless chords.** Handled exactly, but with large blocks of coupled massless edges (> 200 in one connected
   component) the sparse inverse is refused.
 * **Stability** is shown empirically, not proved.
+* **Transition order is not yet established.** The worst-probe reflection at dr = h has local orders 0.89 and 1.46 at
+  8–24 cells/λ (§4.2); the planar jittered analogue is second order at finer h. Do not quote a convergence order from
+  the 8–16 cells/λ values.
 * **Mesh transition.** The reflection numbers are relative to the same shell mesh; the tetrahedra → prism transition
   at r0 reflects separately and depends on dr (§4.2). It is the dominant reflection of the whole truncation.
 * **Massless decision per column.** `spherical_shell_mesh` sets `mesh.massless_area_factor`; a shell built by other

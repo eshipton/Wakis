@@ -1,0 +1,1047 @@
+{
+  "command_line": "studies/curvilinear3d/study_hexmesh.py",
+  "git_commit": "78d0eb33cdf6a8d6091deae8b82452688066ce11",
+  "complete": true,
+  "parameters": {
+    "butterfly_disk": {
+      "a_m": 1.0,
+      "length_m": 1.2,
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "modes": [
+        "TM010",
+        "TE111"
+      ]
+    },
+    "cubed_sphere": {
+      "a_m": 1.0,
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "modes": [
+        "TE_l1",
+        "TM_l1"
+      ],
+      "tm_l1_definition": "Lowest l=1 TM root j_1(x_{1,1}) = 0 (x_{1,1} = 4.493409457909064, sphere_lowest_omegas(a=1.0, l=1)[1], corresponding to _select_sphere_tm_l1 omegas[8]); mode selected as nearest positive discrete eigenvalue (> 1e3 rad/s)."
+    }
+  },
+  "records": [
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "CurvilinearFIT3D",
+      "n": 4,
+      "n_cart": null,
+      "n_unknowns": 748,
+      "n_unknowns_hex": 748,
+      "h": 0.25,
+      "omega_disc": 726300647.8272907,
+      "omega_ana": 720948565.0028365,
+      "rel_err": 0.007423668045491056,
+      "wall_s": 0.10254045800138556
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "CurvilinearFIT3D",
+      "n": 6,
+      "n_cart": null,
+      "n_unknowns": 2754,
+      "n_unknowns_hex": 2754,
+      "h": 0.16666666666666666,
+      "omega_disc": 723828466.1020936,
+      "omega_ana": 720948565.0028365,
+      "rel_err": 0.003994599946593667,
+      "wall_s": 0.7234318889986753
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "CurvilinearFIT3D",
+      "n": 8,
+      "n_cart": null,
+      "n_unknowns": 6808,
+      "n_unknowns_hex": 6808,
+      "h": 0.125,
+      "omega_disc": 722706354.849973,
+      "omega_ana": 720948565.0028365,
+      "rel_err": 0.0024381626269407747,
+      "wall_s": 3.523810233999029
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "CurvilinearFIT3D",
+      "n": 12,
+      "n_cart": null,
+      "n_unknowns": 23940,
+      "n_unknowns_hex": 23940,
+      "h": 0.08333333333333333,
+      "omega_disc": 721785388.459699,
+      "omega_ana": 720948565.0028365,
+      "rel_err": 0.0011607256016374435,
+      "wall_s": 50.60919675900004
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D staircase",
+      "n": 4,
+      "n_cart": 7,
+      "n_unknowns": 725,
+      "n_unknowns_hex": 748,
+      "h": 0.2857142857142857,
+      "omega_disc": 667189491.1990296,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.07456714169837537,
+      "wall_s": 0.2306516949993238
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D staircase",
+      "n": 6,
+      "n_cart": 11,
+      "n_unknowns": 3085,
+      "n_unknowns_hex": 2754,
+      "h": 0.18181818181818182,
+      "omega_disc": 673012070.7304301,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.0664908657834942,
+      "wall_s": 0.3963664270013396
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D staircase",
+      "n": 8,
+      "n_cart": 14,
+      "n_unknowns": 6448,
+      "n_unknowns_hex": 6808,
+      "h": 0.14285714285714285,
+      "omega_disc": 678971996.7929336,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.05822408178277979,
+      "wall_s": 1.1624028799997177
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D staircase",
+      "n": 12,
+      "n_cart": 22,
+      "n_unknowns": 25764,
+      "n_unknowns_hex": 23940,
+      "h": 0.09090909090909091,
+      "omega_disc": 684478247.3287636,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.0505865736398676,
+      "wall_s": 14.24637253400033
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D conformal",
+      "n": 4,
+      "n_cart": 7,
+      "n_unknowns": 680,
+      "n_unknowns_hex": 748,
+      "h": 0.2857142857142857,
+      "omega_disc": 711684810.7405175,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.012849396908477822,
+      "wall_s": 0.3073219699999754
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D conformal",
+      "n": 6,
+      "n_cart": 11,
+      "n_unknowns": 2928,
+      "n_unknowns_hex": 2754,
+      "h": 0.18181818181818182,
+      "omega_disc": 717337949.5660479,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.005008145673713011,
+      "wall_s": 0.5350373399996897
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D conformal",
+      "n": 8,
+      "n_cart": 14,
+      "n_unknowns": 6138,
+      "n_unknowns_hex": 6808,
+      "h": 0.14285714285714285,
+      "omega_disc": 718751097.7995162,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.0030480221613474177,
+      "wall_s": 1.2249995959991793
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D conformal",
+      "n": 12,
+      "n_cart": 22,
+      "n_unknowns": 24754,
+      "n_unknowns_hex": 23940,
+      "h": 0.09090909090909091,
+      "omega_disc": 720108858.3584889,
+      "omega_ana": 720948565.0028365,
+      "rel_err": -0.0011647247600031561,
+      "wall_s": 13.990467179000916
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "CurvilinearFIT3D",
+      "n": 4,
+      "n_cart": null,
+      "n_unknowns": 748,
+      "n_unknowns_hex": 748,
+      "h": 0.25,
+      "omega_disc": 947603759.6975139,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.012415024684535233,
+      "wall_s": 0.10254045800138556
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "CurvilinearFIT3D",
+      "n": 6,
+      "n_cart": null,
+      "n_unknowns": 2754,
+      "n_unknowns_hex": 2754,
+      "h": 0.16666666666666666,
+      "omega_disc": 954627364.054909,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.005095081021439419,
+      "wall_s": 0.7234318889986753
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "CurvilinearFIT3D",
+      "n": 8,
+      "n_cart": null,
+      "n_unknowns": 6808,
+      "n_unknowns_hex": 6808,
+      "h": 0.125,
+      "omega_disc": 956878156.1761664,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.002749323674273749,
+      "wall_s": 3.523810233999029
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "CurvilinearFIT3D",
+      "n": 12,
+      "n_cart": null,
+      "n_unknowns": 23940,
+      "n_unknowns_hex": 23940,
+      "h": 0.08333333333333333,
+      "omega_disc": 958392809.059959,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.001170764687414787,
+      "wall_s": 50.60919675900004
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D staircase",
+      "n": 4,
+      "n_cart": 7,
+      "n_unknowns": 725,
+      "n_unknowns_hex": 748,
+      "h": 0.2857142857142857,
+      "omega_disc": 948724987.7238009,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.011246489902637491,
+      "wall_s": 0.2306516949993238
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D staircase",
+      "n": 6,
+      "n_cart": 11,
+      "n_unknowns": 3085,
+      "n_unknowns_hex": 2754,
+      "h": 0.18181818181818182,
+      "omega_disc": 1000143646.9034517,
+      "omega_ana": 959516176.7166622,
+      "rel_err": 0.042341620884195366,
+      "wall_s": 0.3963664270013396
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D staircase",
+      "n": 8,
+      "n_cart": 14,
+      "n_unknowns": 6448,
+      "n_unknowns_hex": 6808,
+      "h": 0.14285714285714285,
+      "omega_disc": 918367263.7273605,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.04288506435619234,
+      "wall_s": 1.1624028799997177
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D staircase",
+      "n": 12,
+      "n_cart": 22,
+      "n_unknowns": 25764,
+      "n_unknowns_hex": 23940,
+      "h": 0.09090909090909091,
+      "omega_disc": 926989731.7951239,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.033898797863772805,
+      "wall_s": 14.24637253400033
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D conformal",
+      "n": 4,
+      "n_cart": 7,
+      "n_unknowns": 680,
+      "n_unknowns_hex": 748,
+      "h": 0.2857142857142857,
+      "omega_disc": 951002289.013712,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.00887310491427411,
+      "wall_s": 0.3073219699999754
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D conformal",
+      "n": 6,
+      "n_cart": 11,
+      "n_unknowns": 2928,
+      "n_unknowns_hex": 2754,
+      "h": 0.18181818181818182,
+      "omega_disc": 956564103.9143147,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.003076626401911248,
+      "wall_s": 0.5350373399996897
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D conformal",
+      "n": 8,
+      "n_cart": 14,
+      "n_unknowns": 6138,
+      "n_unknowns_hex": 6808,
+      "h": 0.14285714285714285,
+      "omega_disc": 957580288.3889233,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.002017567160111084,
+      "wall_s": 1.2249995959991793
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D conformal",
+      "n": 12,
+      "n_cart": 22,
+      "n_unknowns": 24754,
+      "n_unknowns_hex": 23940,
+      "h": 0.09090909090909091,
+      "omega_disc": 958733314.138018,
+      "omega_ana": 959516176.7166622,
+      "rel_err": -0.0008158930486435455,
+      "wall_s": 13.990467179000916
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 6,
+      "n_cart": null,
+      "n_unknowns": 4350,
+      "n_unknowns_hex": 4350,
+      "h": 0.16666666666666666,
+      "omega_disc": 836867301.6584923,
+      "omega_ana": 822542746.503452,
+      "rel_err": 0.017414967448114587,
+      "wall_s": 2.609569783000552
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 8,
+      "n_cart": null,
+      "n_unknowns": 10408,
+      "n_unknowns_hex": 10408,
+      "h": 0.125,
+      "omega_disc": 831011728.5065583,
+      "omega_ana": 822542746.503452,
+      "rel_err": 0.01029609955118705,
+      "wall_s": 14.776672486001189
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 12,
+      "n_cart": null,
+      "n_unknowns": 35484,
+      "n_unknowns_hex": 35484,
+      "h": 0.08333333333333333,
+      "omega_disc": 826467130.8487298,
+      "omega_ana": 822542746.503452,
+      "rel_err": 0.004771040000000093,
+      "wall_s": 107.0
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 16,
+      "n_cart": null,
+      "n_unknowns": 84560,
+      "n_unknowns_hex": 84560,
+      "h": 0.0625,
+      "omega_disc": 824781789.2911663,
+      "omega_ana": 822542746.503452,
+      "rel_err": 0.0027220990000000754,
+      "wall_s": 976.57
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 6,
+      "n_cart": 13,
+      "n_unknowns": 4221,
+      "n_unknowns_hex": 4350,
+      "h": 0.15384615384615385,
+      "omega_disc": 914897996.1587164,
+      "omega_ana": 822542746.503452,
+      "rel_err": 0.11228018245599702,
+      "wall_s": 0.6302401039993129
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 8,
+      "n_cart": 18,
+      "n_unknowns": 10896,
+      "n_unknowns_hex": 10408,
+      "h": 0.1111111111111111,
+      "omega_disc": 731905353.5307279,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.1101917114435872,
+      "wall_s": 2.8131249520010897
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 12,
+      "n_cart": 27,
+      "n_unknowns": 35103,
+      "n_unknowns_hex": 35484,
+      "h": 0.07407407407407407,
+      "omega_disc": 756774263.59862,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.07995752583608234,
+      "wall_s": 26.82788884599904
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 16,
+      "n_cart": 36,
+      "n_unknowns": 82290,
+      "n_unknowns_hex": 84560,
+      "h": 0.05555555555555555,
+      "omega_disc": 769156180.771162,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.0649043055321209,
+      "wall_s": 368.53
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 6,
+      "n_cart": 14,
+      "n_unknowns": 4530,
+      "n_unknowns_hex": 4350,
+      "h": 0.14285714285714285,
+      "omega_disc": 820608884.8859248,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.0023510773461291614,
+      "wall_s": 1.288478632000988
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 8,
+      "n_cart": 18,
+      "n_unknowns": 9654,
+      "n_unknowns_hex": 10408,
+      "h": 0.1111111111111111,
+      "omega_disc": 819666946.395536,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.00349623180088906,
+      "wall_s": 2.714353117000428
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 12,
+      "n_cart": 28,
+      "n_unknowns": 36204,
+      "n_unknowns_hex": 35484,
+      "h": 0.07142857142857142,
+      "omega_disc": 821872202.2880709,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.0008152089581136586,
+      "wall_s": 36.885429189000206
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 16,
+      "n_cart": 37,
+      "n_unknowns": 82212,
+      "n_unknowns_hex": 84560,
+      "h": 0.05405405405405406,
+      "omega_disc": 821740764.36848,
+      "omega_ana": 822542746.503452,
+      "rel_err": -0.0009750035951093402,
+      "wall_s": 134.94
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 6,
+      "n_cart": null,
+      "n_unknowns": 4350,
+      "n_unknowns_hex": 4350,
+      "h": 0.16666666666666666,
+      "omega_disc": 1393902504.490484,
+      "omega_ana": 1347090266.187006,
+      "rel_err": 0.034750632142849604,
+      "wall_s": 2.609569783000552
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 8,
+      "n_cart": null,
+      "n_unknowns": 10408,
+      "n_unknowns_hex": 10408,
+      "h": 0.125,
+      "omega_disc": 1374036486.05185,
+      "omega_ana": 1347090266.187006,
+      "rel_err": 0.020003277093758876,
+      "wall_s": 14.776672486001189
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 12,
+      "n_cart": null,
+      "n_unknowns": 35484,
+      "n_unknowns_hex": 35484,
+      "h": 0.08333333333333333,
+      "omega_disc": 1359297680.3516989,
+      "omega_ana": 1347090266.187006,
+      "rel_err": 0.009062060999999995,
+      "wall_s": 107.0
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "CurvilinearFIT3D",
+      "n": 16,
+      "n_cart": null,
+      "n_unknowns": 84560,
+      "n_unknowns_hex": 84560,
+      "h": 0.0625,
+      "omega_disc": 1354010966.6771665,
+      "omega_ana": 1347090266.187006,
+      "rel_err": 0.005137517999999949,
+      "wall_s": 976.57
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 6,
+      "n_cart": 13,
+      "n_unknowns": 4221,
+      "n_unknowns_hex": 4350,
+      "h": 0.15384615384615385,
+      "omega_disc": 1343789249.5985243,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.002450479133685174,
+      "wall_s": 0.6302401039993129
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 8,
+      "n_cart": 18,
+      "n_unknowns": 10896,
+      "n_unknowns_hex": 10408,
+      "h": 0.1111111111111111,
+      "omega_disc": 1272831332.0588427,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.05512543293654425,
+      "wall_s": 2.8131249520010897
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 12,
+      "n_cart": 27,
+      "n_unknowns": 35103,
+      "n_unknowns_hex": 35484,
+      "h": 0.07407407407407407,
+      "omega_disc": 1321795726.9389853,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.01877716726408979,
+      "wall_s": 26.82788884599904
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D staircase",
+      "n": 16,
+      "n_cart": 36,
+      "n_unknowns": 82290,
+      "n_unknowns_hex": 84560,
+      "h": 0.05555555555555555,
+      "omega_disc": 1272210883.416603,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.055586017247643,
+      "wall_s": 368.53
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 6,
+      "n_cart": 14,
+      "n_unknowns": 4530,
+      "n_unknowns_hex": 4350,
+      "h": 0.14285714285714285,
+      "omega_disc": 1335320504.3361194,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.008737173852648624,
+      "wall_s": 1.288478632000988
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 8,
+      "n_cart": 18,
+      "n_unknowns": 9654,
+      "n_unknowns_hex": 10408,
+      "h": 0.1111111111111111,
+      "omega_disc": 1353832565.4815311,
+      "omega_ana": 1347090266.187006,
+      "rel_err": 0.005005083522434989,
+      "wall_s": 2.714353117000428
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 12,
+      "n_cart": 28,
+      "n_unknowns": 36204,
+      "n_unknowns_hex": 35484,
+      "h": 0.07142857142857142,
+      "omega_disc": 1346863515.5459683,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.0001683262411802065,
+      "wall_s": 36.885429189000206
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D conformal",
+      "n": 16,
+      "n_cart": 37,
+      "n_unknowns": 82212,
+      "n_unknowns_hex": 84560,
+      "h": 0.05405405405405406,
+      "omega_disc": 1345541796.471409,
+      "omega_ana": 1347090266.187006,
+      "rel_err": -0.001149492171730942,
+      "wall_s": 134.94
+    }
+  ],
+  "orders": [
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "CurvilinearFIT3D",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "order_ls": 1.6908018441606047,
+      "order_two_level": 1.8304889640029203,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": null,
+        "n_unknowns": 23940,
+        "rel_err": 0.0011607256016374435,
+        "abs_rel_err": 0.0011607256016374435,
+        "wall_s": 50.60919675900004,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D staircase",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        7,
+        11,
+        14,
+        22
+      ],
+      "order_ls": 0.3478273588581315,
+      "order_two_level": 0.3111006095276582,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": 22,
+        "n_unknowns": 25764,
+        "rel_err": -0.0505865736398676,
+        "abs_rel_err": 0.0505865736398676,
+        "wall_s": 14.24637253400033,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TM010",
+      "method": "SolverFIT3D conformal",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        7,
+        11,
+        14,
+        22
+      ],
+      "order_ls": 2.094946289051638,
+      "order_two_level": 2.128406570150035,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": 22,
+        "n_unknowns": 24754,
+        "rel_err": -0.0011647247600031561,
+        "abs_rel_err": 0.0011647247600031561,
+        "wall_s": 13.990467179000916,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "CurvilinearFIT3D",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "order_ls": 2.1489914247424173,
+      "order_two_level": 2.1054779151766376,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": null,
+        "n_unknowns": 23940,
+        "rel_err": -0.001170764687414787,
+        "abs_rel_err": 0.001170764687414787,
+        "wall_s": 50.60919675900004,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D staircase",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        7,
+        11,
+        14,
+        22
+      ],
+      "order_ls": -0.9248184132752811,
+      "order_two_level": 0.5202473494060965,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": 22,
+        "n_unknowns": 25764,
+        "rel_err": -0.033898797863772805,
+        "abs_rel_err": 0.033898797863772805,
+        "wall_s": 14.24637253400033,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "butterfly_disk",
+      "mode": "TE111",
+      "method": "SolverFIT3D conformal",
+      "resolutions": [
+        4,
+        6,
+        8,
+        12
+      ],
+      "n_cart_list": [
+        7,
+        11,
+        14,
+        22
+      ],
+      "order_ls": 2.0698338203312736,
+      "order_two_level": 2.003084531490634,
+      "equal_wall_time": {
+        "n": 12,
+        "n_cart": 22,
+        "n_unknowns": 24754,
+        "rel_err": -0.0008158930486435455,
+        "abs_rel_err": 0.0008158930486435455,
+        "wall_s": 13.990467179000916,
+        "target_wall_s": 50.60919675900004
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "CurvilinearFIT3D",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "order_ls": 1.8929140595022305,
+      "order_two_level": 1.950629150503026,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": null,
+        "n_unknowns": 84560,
+        "rel_err": 0.0027220990000000754,
+        "abs_rel_err": 0.0027220990000000754,
+        "wall_s": 976.57,
+        "target_wall_s": 976.57
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D staircase",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        13,
+        18,
+        27,
+        36
+      ],
+      "order_ls": 0.5693694896962959,
+      "order_two_level": 0.7250420658027326,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": 36,
+        "n_unknowns": 82290,
+        "rel_err": -0.0649043055321209,
+        "abs_rel_err": 0.0649043055321209,
+        "wall_s": 368.53,
+        "target_wall_s": 976.57
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TE_l1",
+      "method": "SolverFIT3D conformal",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        14,
+        18,
+        28,
+        37
+      ],
+      "order_ls": 1.3171693597843441,
+      "order_two_level": -0.642224901978253,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": 37,
+        "n_unknowns": 82212,
+        "rel_err": -0.0009750035951093402,
+        "abs_rel_err": 0.0009750035951093402,
+        "wall_s": 134.94,
+        "target_wall_s": 976.57
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "CurvilinearFIT3D",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "order_ls": 1.94954979622029,
+      "order_two_level": 1.9727558597084465,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": null,
+        "n_unknowns": 84560,
+        "rel_err": 0.005137517999999949,
+        "abs_rel_err": 0.005137517999999949,
+        "wall_s": 976.57,
+        "target_wall_s": 976.57
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D staircase",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        13,
+        18,
+        27,
+        36
+      ],
+      "order_ls": -2.3126692144399787,
+      "order_two_level": -3.7725328086377656,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": 36,
+        "n_unknowns": 82290,
+        "rel_err": -0.055586017247643,
+        "abs_rel_err": 0.055586017247643,
+        "wall_s": 368.53,
+        "target_wall_s": 976.57
+      }
+    },
+    {
+      "geometry": "cubed_sphere",
+      "mode": "TM_l1",
+      "method": "SolverFIT3D conformal",
+      "resolutions": [
+        6,
+        8,
+        12,
+        16
+      ],
+      "n_cart_list": [
+        14,
+        18,
+        28,
+        37
+      ],
+      "order_ls": 3.013822269637033,
+      "order_two_level": -6.893000153177828,
+      "equal_wall_time": {
+        "n": 16,
+        "n_cart": 37,
+        "n_unknowns": 82212,
+        "rel_err": -0.001149492171730942,
+        "abs_rel_err": 0.001149492171730942,
+        "wall_s": 134.94,
+        "target_wall_s": 976.57
+      }
+    }
+  ]
+}

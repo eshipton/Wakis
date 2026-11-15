@@ -147,14 +147,13 @@ CFL 0.95). Batch `cadmesh-study-4`, `results/improve.json`:
 | muon 20 | 0.132 | 0.058 | 0.076 | **0.200** | 1.52 | | 269 / 679 |
 
 The time step grows by 1.47–1.73× (pillbox) and 1.50–1.52× (muon cavity) over the unoptimized Delaunay mesh,
-at equal or better resonance accuracy on the pillbox. On the layered pillbox the unoptimized mesh is not Delaunay
-(next sentences), so it cannot run in the time domain at any dt; the 1.43–1.66× there is relative to a nominal
-$\Delta t$ the baseline cannot use, and `improve_dt` is what makes the mesh runnable at all. Both gmsh optimizers are worse than doing nothing for Voronoi FIT: they never raise dt
-(Netgen roughly halves it) and leave tens to thousands of non-Delaunay faces, i.e. an indefinite $K$ and a
-diverging time-domain run. The layered pillbox's Delaunay output itself has 2–7 non-Delaunay faces (planar
-interface) and, at cpw 15–20 on the Batch VMs, flat zero-volume slivers on the interface plane; `mesh_cad` then
-optimizes only those slivers (`Mesh.OptimizeThreshold` 0.01) and `improve_dt` removes every remaining negative
-face on all nine meshes. The number of eliminated (massless) edges changes by −9 % to +29 %; the per-step work
+at equal or better resonance accuracy on the pillbox. On the layered pillbox, boundary recovery across the planar
+material interface and local sliver optimization (`Mesh.OptimizeThreshold`) can leave non-Delaunay faces in the
+unoptimized baseline mesh, while gmsh's and Netgen's tetrahedral shape optimizers maximize element aspect ratios
+without preserving the local Delaunay circumsphere condition, producing negative dual lengths, an indefinite
+curl-curl matrix $K$, and diverging time-domain leapfrog runs; topological flip repair (`flip_to_delaunay`,
+invoked before and after node relocation when `improve_dt(..., repair=True)`) restores local Delaunayhood.
+The number of eliminated (massless) edges is reported in the study outputs (measured values: see studies/unstructured-cadmesh/results/repair.json); the per-step work
 is the same sparse products plus a Schur solve on those edges. Serial wall time per simulated ns
 (`cadmesh_study.py timing`, one process, one BLAS thread, median of 5 interleaved repetitions, Batch `cadmesh-timing-1`) at cpw 20: pillbox
 0.126 → 0.080 s/ns (1.58× faster), layered 0.697 → 0.403 s/ns (1.73×), muon 0.061 → 0.044 s/ns (1.38×); the
@@ -205,7 +204,7 @@ tests, but not equal), for a 1.5–1.8× larger step. Time-domain ring-downs on 
   5–10 sweeps (Section 4).
 * **The gain partly comes from eliminating more edges.** The objective ignores edges below
   `massless_tol * L^2` (the solver eliminates them), so moves that push an edge below the threshold are
-  accepted: the number of massless edges changes by −9 % to +29 %. The accuracy cost is measured (Section 4: equal or better
+  accepted (measured values: see studies/unstructured-cadmesh/results/repair.json). The accuracy cost is measured (Section 4: equal or better
   resonance errors), and the per-step cost of the Schur solve is included in the wall-time comparison, but a
   much larger `massless_tol` *does* cost accuracy (pillbox cpw 10: TM010 error −0.41 %, +0.36 %, +5.4 % at
   1e-2, 3e-2, 1e-1).
@@ -223,6 +222,128 @@ tests, but not equal), for a 1.5–1.8× larger step. Time-domain ring-downs on 
   (`read_mesh` with meshio, or the pure-Python `ball_mesh`/`disk_mesh`); `quality` and `improve` need only
   NumPy/SciPy.
 
+## Topological repair of non-Delaunay meshes
+
+### Derivation and signed dual-length criterion
+
+In the orthogonal Voronoi Finite Integration Technique, the diagonal magnetic-reluctivity Hodge entry on primal
+face $f$ is assembled from the signed orthogonal distances between the circumcentres $\mathbf{c}_T$ of its incident
+tetrahedra $T \ni f$ and the face circumcentre $\mathbf{c}_f$:
+
+$$H_f = \sum_{T \ni f} \frac{h_{f,T}}{\mu_T}, \qquad h_{f,T} = (\mathbf{c}_T - \mathbf{c}_f)\cdot\mathbf{n}_{f,T},$$
+
+where $\mathbf{n}_{f,T}$ is the unit normal to $f$ pointing into $T$ (`tet_partials` in
+`wakis.unstructured._core`). For an interior face $f = T_1 \cap T_2$ within a homogeneous region
+($\mu_{T_1} = \mu_{T_2}$), $h_{f,T_1} + h_{f,T_2}$ is the signed length of the Voronoi dual edge joining
+$\mathbf{c}_{T_1}$ and $\mathbf{c}_{T_2}$ along $\mathbf{n}_f$; $H_f < 0$ occurs if and only if the pair
+$(T_1, T_2)$ violates the local Delaunay empty-circumsphere condition (each apex lies strictly inside the
+circumsphere of the adjacent tetrahedron). On a domain boundary face $f \subset \partial\Omega$ carrying at least
+one free primal edge (`bc="pec"` or `bc="pmc"`), $H_f = h_{f,T}/\mu_T < 0$ when $\mathbf{c}_T$ lies on the exterior
+side of $f$. Whenever $H_f < 0$ on a face that couples free edges, the curl-curl matrix
+$K = C^T M_{\mu^{-1}} C$ ceases to be positive semi-definite and explicit leapfrog time stepping is unconditionally
+unstable (`UnstructuredFIT3D` raises `ValueError` unless `allow_negative_faces=True`).
+
+Continuous node relocation (`improve_dt` with `repair=False`) cannot always eliminate faces with $H_f < 0$ when
+their vertices are constrained to CAD curves, corners, or material interfaces, or when the local tetrahedral
+connectivity locks a sliver. Topological flips (`flip_to_delaunay` in `wakis.unstructured.repair`) change the local
+connectivity without moving existing vertices:
+
+* **2-3 flip (`_flip_23`):** replaces two interior tetrahedra $(a, c, d, e)$ and $(b, c, d, e)$ sharing the
+  non-Delaunay face $(c, d, e)$ by the three tetrahedra $(a, b, c, d)$, $(a, b, d, e)$, and $(a, b, e, c)$ sharing
+  the edge $(a, b)$, valid when the segment $ab$ pierces the interior of triangle $(c, d, e)$ so all three
+  replacement tetrahedra have strictly positive signed volume.
+* **3-2 flip (`_flip_32`):** the topological inverse of the 2-3 flip; when an interior edge $(a, b)$ of degree
+  three is surrounded by $(a, b, c, d)$, $(a, b, d, e)$, and $(a, b, e, c)$, replaces the three tetrahedra by the
+  two tetrahedra $(a, c, d, e)$ and $(b, c, d, e)$ sharing face $(c, d, e)$.
+* **4-4 flip (`_flip_44`):** when an interior edge $(a, b)$ of degree four is surrounded by four tetrahedra over an
+  equatorial cycle $(c, d, e, p)$, replaces them by four tetrahedra sharing the alternative equatorial diagonal
+  $(c, e)$ or $(d, p)$ (equivalent to a 2-3 flip followed by a 3-2 flip across a coplanar four-node quad).
+* **Boundary and coplanar-interface 2-2 flip (`_flip_22`):** when two boundary-adjacent tetrahedra $(a, c, d, p)$
+  and $(b, c, d, p)$ share an interior face $(c, d, p)$ and their outer faces $(a, b, c)$ and $(a, b, d)$ lie on a
+  common plane of $\partial\Omega$ sharing the boundary edge $(a, b)$, flips the boundary diagonal from $(a, b)$ to
+  $(c, d)$ to form $(c, d, a, p)$ and $(c, d, b, p)$, accepted only when the two boundary triangles are coplanar and
+  their union area and outward unit normals are preserved to relative tolerance $10^{-12}$. Likewise, when two
+  coplanar interface triangles $(a, b, c)$ and $(a, b, d)$ separating distinct `cell_tags` are shared by an
+  octahedral four-tetrahedron bipyramid $(a, b, c, p)$, $(a, b, d, p)$ on one side and $(a, b, c, q)$, $(a, b, d, q)$
+  on the other, flips the interface diagonal $(a, b) \to (c, d)$ into $(c, d, a, p)$, $(c, d, b, p)$ and
+  $(c, d, a, q)$, $(c, d, b, q)$ while preserving per-tag volumes and the interface triangle union to relative
+  tolerance $10^{-12}$.
+
+**Locked-node and material-interface rules:**
+1. *Material interfaces:* 2-3, 3-2, and 4-4 flips are allowed only if all tetrahedra involved have the same
+   `cell_tags` value; across distinct `cell_tags`, only the coplanar four-tetrahedron interface 2-2 flip and
+   interface-preserving Steiner edge splits are allowed, preserving both total volume and per-tag volume to relative
+   tolerance $10^{-12}$.
+2. *Locked CAD nodes (`locked`):* given an optional boolean mask `locked` over mesh vertices (`True` on fixed CAD
+   curves or corners, or `~movable` inside `improve_dt`), a flip is refused when it removes a boundary edge or
+   boundary face whose nodes are all locked (`refused["locked"]`), and likewise for Steiner boundary-edge bisection;
+   interior edges and interior faces are never refused by `locked`.
+
+### Algorithm
+
+`flip_to_delaunay(mesh, materials=None, locked=None, bc="pec", steiner=True, max_flips=None, verbose=False, enabled_flips=("2-3", "3-2", "4-4", "2-2"))` uses the shared `neg_faces` criterion from `wakis.unstructured.improve` (the same signed dual-length computation used by `improve._State` and `stability_report` in `wakis.unstructured.quality`):
+
+1. Initialize a queue with all faces satisfying $H_f < -10^{-14}\,\bar{h}/\mu_0$.
+2. Pop a face $f$ from the queue; if $f$ is still present in the current mesh and has $H_f < 0$, evaluate candidate
+   flips in `enabled_flips` (`_flip_23` on $f$, `_flip_32` and `_flip_44` on the edges of $f$, and `_flip_22` when
+   $f$ is part of a coplanar boundary or interface triangle pair).
+3. Accept a candidate flip only when every replacement tetrahedron has strictly positive volume, total and per-tag
+   volumes are conserved, and the flip strictly decreases the count of negative faces on the modified cavity (or
+   keeps it zero while increasing the minimum signed dual length). Re-enqueue all faces of the newly created
+   tetrahedra.
+4. If negative faces remain after the queue empties and `steiner=True`, `_insert_steiner` inserts a Steiner node
+   (in the interior, along an interior edge, or along a boundary edge whose endpoints are not both locked, followed by
+   local flips), committing the split only if the global negative-face count strictly decreases.
+5. When `improve_dt(..., repair=True)` (the default), `improve_dt` runs `flip_to_delaunay` $\to$ time-step-driven
+   node smoothing $\to$ `flip_to_delaunay` with `locked = ~movable` and appends a `"repair"` report dictionary to
+   `history`. Setting `repair=False` runs node smoothing alone.
+
+### Limits & Failure Modes
+
+* **Stuck faces (`report["stuck"]`).** In three dimensions, a non-Delaunay interior face $f = (c, d, e)$ shared by
+  $(a, c, d, e)$ and $(b, c, d, e)$ is geometrically non-flippable by a 2-3 move when the segment $ab$ passes
+  outside triangle $(c, d, e)$ (the five-vertex polyhedron is non-convex), and a 3-2 flip is unavailable unless the
+  reflex edge on the boundary of the pair has degree three in the mesh (B. Joe, Construction of three-dimensional
+  Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
+  DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for
+  regular triangulations, Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867).
+* **Locked curves and material interfaces.** A flip is refused when it removes a boundary edge or boundary face whose
+  nodes are all locked, or when it would alter a non-planar material interface (`cell_tags` jump) or non-planar
+  boundary. When all boundary edges of a boundary-adjacent sliver are locked by CAD curves or corners, neither
+  boundary flips nor node relocation can alter its boundary faces.
+* **3D flip-sequence non-termination risk.** Unlike two-dimensional Lawson flips, unconstrained three-dimensional
+  local flips can cycle indefinitely if non-improving flips are permitted (B. Joe, Construction of three-dimensional
+  Delaunay triangulations using local transformations, Computer Aided Geometric Design 8(2), 123-142 (1991),
+  DOI 10.1016/0167-8396(91)90038-d; H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for
+  regular triangulations, Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867).
+  `flip_to_delaunay` avoids cycles by requiring strict local improvement in the negative-face count (or minimum
+  dual length at zero negative faces) on every flip and by enforcing `max_flips`.
+* **What the Steiner step does and does not guarantee.** `_insert_steiner` commits an insertion only when the split
+  followed by local flips strictly reduces the global count of negative faces. It resolves isolated non-convex
+  configurations where 2-3, 3-2, 4-4, and 2-2 flips are geometrically blocked, but it never bisects a boundary edge
+  whose endpoints are both locked and does not guarantee removal of negative faces constrained by curved boundaries,
+  small dihedral angles, or locked CAD features; any remaining offending faces are returned in `report["stuck"]`.
+* **Layered pillbox xfail (`test_step_layered_pillbox_repair_complete`).** Interior faces next to locked CAD-curve
+  edges remain stuck after repair: the only fixing flips remove a locked curve edge, and the Steiner split at the
+  circumcentre commits no insertion (open question: Steiner follow-up in `open_questions.md`).
+* **Repair can lower `dt_max`.** In measured gmsh cases the limiting element after repair has a smaller radius ratio;
+  the measured values are in `studies/unstructured-cadmesh/results/repair.json` (key `dt_gain_vs_repair_false`).
+
+### Measured results (cpw 10)
+
+Source: `studies/unstructured-cadmesh/results/repair.json` (commit 6d17729b78, produced by `repair_study.py` on Cloud Batch). Negative-face counts use the solver guard criterion (`Mnu_diag < 0` on faces coupled to free edges) and are shown as negative / total faces.
+
+| case | gmsh optimizer | negative / faces before | after repair=False | after repair=True | dt gain (T/F) | lowest-mode error (F) | lowest-mode error (T) | limiting radius ratio (T) |
+|---|---|---|---|---|---|---|---|---|
+| pillbox | none | 0 / 4633 | 0 / 4633 | 0 / 4633 | 1.0000 | -2.779e-03 | -2.779e-03 | 0.842 |
+| layered | none | 2 / 17651 | 0 / 17651 | 0 / 17669 | 1.0220 | -4.990e-03 | -4.677e-03 | 0.821 |
+| muon | none | 0 / 4064 | 0 / 4064 | 0 / 4064 | 1.0000 | +2.113e-02 | +2.113e-02 | 0.738 |
+| pillbox | gmsh | 48 / 4531 | 0 / 4531 | 0 / 4629 | 0.9894 | -3.378e-03 | -2.435e-03 | 0.744 |
+| layered | gmsh | 218 / 17315 | 4 / 17315 | 0 / 17667 | 0.9447 | -5.257e-03 | -4.918e-03 | 0.758 |
+| muon | gmsh | 39 / 3992 | 1 / 3992 | 0 / 4064 | 1.0536 | +2.154e-02 | +2.113e-02 | 0.738 |
+
+In the study, `repair=True` leaves 0 negative faces in all six runs. The layered pillbox test (`test_step_layered_pillbox_repair_complete`, xfail) still leaves 2 interior faces next to locked CAD-curve edges on its own mesh; the study's layered `none` row reaches 0 on its mesh, and this difference is not yet diagnosed (open question: Steiner follow-up). Repair can lower dt_max: the gmsh-optimizer rows have dt gain below 1, so the limiting element after repair has a smaller radius ratio. No claim that repair raises dt in general is made.
+
 ## References
 
 - L. Chen and J. Xu, "Optimal Delaunay triangulations", J. Comput. Math. 22(2), 299–308 (2004).
@@ -236,3 +357,7 @@ tests, but not equal), for a 1.5–1.8× larger step. Time-domain ring-downs on 
   post-processing facilities", Int. J. Numer. Meth. Eng. 79(11), 1309–1331 (2009), doi:10.1002/nme.2579.
 - S.-W. Cheng, T. K. Dey, H. Edelsbrunner, M. A. Facello and S.-H. Teng, "Sliver exudation", J. ACM 47(5),
   883–904 (2000).
+- B. Joe, Construction of three-dimensional Delaunay triangulations using local transformations,
+  Computer Aided Geometric Design 8(2), 123-142 (1991), DOI 10.1016/0167-8396(91)90038-d
+- H. Edelsbrunner and N. R. Shah, Incremental topological flipping works for regular triangulations,
+  Algorithmica 15(3), 223-241 (1996), DOI 10.1007/BF01975867

@@ -89,7 +89,9 @@ class _Capacitive:
         out = []
         for gi, g in enumerate(self.groups):
             n = g["idx"].size
-            out += [(f"{pre}{gi}L{k}{s}", n) for k in range(len(g["lorentz"])) for s in "po"]
+            out += [
+                (f"{pre}{gi}L{k}{s}", n) for k in range(len(g["lorentz"])) for s in "po"
+            ]
             out += [(f"{pre}{gi}D{k}", n) for k in range(len(g["debye"]))]
         return out
 
@@ -294,6 +296,9 @@ class UnstructuredAdjointStepper:
             if self.pml3 is not None:
                 L = self.pml3.layout
                 self._nz = L.n - s.free.size - self.mesh.n_faces
+            from .ports3d import port_adjoint_helper
+
+            self.ports = port_adjoint_helper(s)
         if self.dim == 2 and s.plane_wave is not None and s.dispersive:
             raise NotImplementedError(
                 "dispersive plane wave (dispersive_planewave patches the solver ADEs)"
@@ -309,7 +314,8 @@ class UnstructuredAdjointStepper:
     def _groups(self):
         s = self.solver
         return [
-            (mat, g["idx"], g["c"]) for (mat, _), g in zip(s.dispersive, s._update.groups)
+            (mat, g["idx"], g["c"])
+            for (mat, _), g in zip(s.dispersive, s._update.groups)
         ]
 
     def set_eps(self, eps):
@@ -339,6 +345,8 @@ class UnstructuredAdjointStepper:
             if np.any(self.cap <= 0):
                 raise ValueError("non-positive capacitance on a free edge")
             self.cu = _Capacitive(self.cap, s.cond, self._groups(), s.dt)
+            if getattr(self, "ports", None) is not None:
+                self.ports.set_den(self.cu.den)
             if getattr(self, "pml3", None) is not None:
                 p = self.pml3
                 S1, S2, _, S4 = p.stages
@@ -409,9 +417,12 @@ class UnstructuredAdjointStepper:
             if self.pml is not None:
                 if self.kind == "cap" and np.isin(self.dofs, self.pml.nodes).any():
                     raise ValueError("design cells inside the PML")
-                if self.kind == "stiff" and np.isin(
-                    self.dofs, np.r_[self.pml.spokes, self.pml.chords]
-                ).any():
+                if (
+                    self.kind == "stiff"
+                    and np.isin(
+                        self.dofs, np.r_[self.pml.spokes, self.pml.chords]
+                    ).any()
+                ):
                     raise ValueError("design cells inside the PML")
             if self.lts is not None:
                 F = self.lts.F
@@ -475,7 +486,11 @@ class UnstructuredAdjointStepper:
                 for gi, g in enumerate(s._te_groups):
                     n = g["e"].size
                     out += [(f"te{gi}E", n)]
-                    out += [(f"te{gi}L{k}{c}", n) for k in range(len(g["lorentz"])) for c in "po"]
+                    out += [
+                        (f"te{gi}L{k}{c}", n)
+                        for k in range(len(g["lorentz"]))
+                        for c in "po"
+                    ]
                     out += [(f"te{gi}D{k}", n) for k in range(len(g["debye"]))]
             if self.pml is not None:
                 out += [("q", self.pml.nodes.size)]
@@ -578,7 +593,10 @@ class UnstructuredAdjointStepper:
 
     def _pml_nodes_T(self, yb, xb1, xb):
         mass = self.mass[self.pml.nodes]
-        return self._f["fn1"].transpose(self._f["fn2"].transpose(yb, xb1, xb), xb1, xb) / mass
+        return (
+            self._f["fn1"].transpose(self._f["fn2"].transpose(yb, xb1, xb), xb1, xb)
+            / mass
+        )
 
     # ------------------------------------------------------------ forward step
     def step(self, x, n, sources=True, want_row=False):
@@ -600,7 +618,7 @@ class UnstructuredAdjointStepper:
         x1 = {}
         row = None
         if self.dim == 3:
-            u1 = self._step3d(x, x1, src)
+            u1 = self._step3d(x, x1, src, n if sources else None)
             if want_row and self.design_cells is not None:
                 if self.kind == "cap":
                     row = ((x["u"] - u1) / self.cu.den)[self.dofs]
@@ -702,7 +720,7 @@ class UnstructuredAdjointStepper:
         xb["u"], xb["b"], xb["z"] = z[:nu], z[nu : nu + nf], z[nu + nf :]
         return sens_full
 
-    def _step3d(self, x, x1, src):
+    def _step3d(self, x, x1, src, n=None):
         if self.pml3 is not None:
             return self._step3d_pml(x, x1, src)
         s, dt = self.solver, self.dt
@@ -712,12 +730,24 @@ class UnstructuredAdjointStepper:
         if e_s is not None:
             b1 = b1 - dt * (s.Cs @ e_s)
         r = s.Cf.T @ (s.Mnu @ b1) - src
+        if self.ports is not None:
+            r = self.ports.pre_step(u, r, n)
         if self.kind == "cap":
             u1 = self.cu.forward(u, r, x, x1, "cu")
         else:
             u1 = u + dt * self._M1.solve(r)
+        if self.ports is not None:
+            u1 = self.ports.post_step(u1)
         x1["u"], x1["b"] = u1, b1
         return u1
+
+    def linear_step(self, x):
+        """Source-free linear step x -> A x on a state dict."""
+        return self.step(x, 0, sources=False)[0]
+
+    def linear_step_T(self, xb1):
+        """Exact transpose x_b -> A^T x_b of `linear_step` on a state dict."""
+        return self.step_T(xb1)[0]
 
     # ------------------------------------------------------------ transpose
     def step_T(self, xb1):
@@ -824,6 +854,8 @@ class UnstructuredAdjointStepper:
             return None if self.design_cells is None else sens_full[self.dofs]
         s, dt = self.solver, self.dt
         u1b, b1b = xb1["u"], xb1["b"]
+        if self.ports is not None:
+            u1b = self.ports.pre_step_T(u1b)
         if self.kind == "cap":
             ub, rb, sens_full = self.cu.transpose(u1b, xb1, xb, "cu")
         else:
@@ -831,6 +863,8 @@ class UnstructuredAdjointStepper:
             ub = np.array(u1b, copy=True)
             rb = dt * w
             sens_full = w
+        if self.ports is not None:
+            ub = ub + self.ports.post_step_T(rb)
         b1b_tot = b1b + s.Mnu.T @ (s.Cf @ rb)
         xb["b"] = b1b_tot
         ub = ub - dt * (s.Cf.T @ b1b_tot)
@@ -1072,8 +1106,12 @@ class UnstructuredAdjointSimulation:
             for k, m in self.monitors.items()
         }
 
-    def _phase(self, freqs, n):
-        return np.exp(-2j * np.pi * freqs * ((n + 1) * self.stepper.dt)) * self.stepper.dt
+    def _phase(self, freqs, n, m=None):
+        if m is not None and hasattr(m, "phase"):
+            return m.phase(n, self.stepper.dt, self.Nt)
+        return (
+            np.exp(-2j * np.pi * freqs * ((n + 1) * self.stepper.dt)) * self.stepper.dt
+        )
 
     def _make_rung(self, advance):
         st = self.stepper
@@ -1106,7 +1144,7 @@ class UnstructuredAdjointSimulation:
             self._x, row = st.step(self._x, n, want_row=rung.wants_row(n))
             u = self._x["u"]
             for k, m in self.monitors.items():
-                out[k] += np.outer(self._phase(m.freqs, n), self._W[k] @ u)
+                out[k] += np.outer(self._phase(m.freqs, n, m), self._W[k] @ u)
             rung.after_step(n, row)
         rung.finish()
         self._rung = rung
@@ -1123,13 +1161,13 @@ class UnstructuredAdjointSimulation:
         taps = []
         for k, comps in cotangents.items():
             G = np.asarray(comps["dft"], dtype=complex)
-            taps.append((self.monitors[k].freqs, self._W[k].T.tocsr(), G))
+            taps.append((self.monitors[k], self._W[k].T.tocsr(), G))
         lam = st.zero_state()
         g = st.design_gradient_init()
         get_row = self._rung.reader()
         for n in reversed(range(self.Nt)):
-            for freqs, WT, G in taps:
-                w = np.conj(self._phase(freqs, n))
+            for m, WT, G in taps:
+                w = np.conj(self._phase(m.freqs, n, m))
                 lam["u"] = lam["u"] + WT @ np.real(w @ G)
             lam, sens = st.step_T(lam)
             st.accumulate(g, sens, get_row(n))

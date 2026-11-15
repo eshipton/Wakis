@@ -107,6 +107,10 @@ def energy_run(s, steps, seed=0):
     return E
 
 
+def _sci(x, n=1):
+    return f"{float(x):.{n}e}".replace("e-0", "e-").replace("e+0", "e+")
+
+
 # --------------------------------------------------------------- reuse check
 def test_without_patch_equals_solverfit3d():
     from wakis import GridFIT3D, SolverFIT3D
@@ -126,8 +130,10 @@ def test_without_patch_equals_solverfit3d():
     w = la.eigh(K.toarray(), np.diag(D), eigvals_only=True)
     w = w[w > 1e-8 * w.max()]
     assert len(w) == len(w_ref)
+    err = float(np.abs(w / w_ref - 1).max())
+    print(f"without_patch_vs_solverfit3d: err={_sci(err, 0)} ({_sci(err)})")
     # measured 8e-15; dense eigensolver round-off
-    assert np.abs(w / w_ref - 1).max() < 1e-12
+    assert err < 1e-12
 
 
 # ------------------------------------------------------ energy and stability
@@ -135,9 +141,11 @@ def test_energy_conserved_nested_patches():
     s = closed_solver()
     assert s.mesh.n_blocks == 3
     E = energy_run(s, 10_000)
-    drift = np.abs(E / E[0] - 1).max()
+    drift = float(np.abs(E / E[0] - 1).max())
+    tol = float(50 * np.finfo(float).eps * np.sqrt(len(E)))
+    print(f"energy_nested_10000: drift={_sci(drift)} < tol={_sci(tol)}")
     # measured 4e-16; bound: random walk of O(eps) per step, 50 eps sqrt(n)
-    assert drift < 50 * np.finfo(float).eps * np.sqrt(len(E)), drift
+    assert drift < tol, drift
 
 
 def test_cfl_bound_and_blowup():
@@ -148,12 +156,17 @@ def test_cfl_bound_and_blowup():
     assert lam <= bounds.max() * (1 + 1e-10)
     # ... <= the Yee bound c^2 sum 4/h^2 of the finest vacuum cells
     hf = [np.min(h) for h in s.mesh.blocks[-1].h]
-    assert lam <= C0**2 * sum(4 / h**2 for h in hf) * (1 + 1e-10)
+    yee = C0**2 * sum(4 / h**2 for h in hf)
+    assert lam <= yee * (1 + 1e-10)
     # stable just below the limit (energy test), unstable 2 % above
     dtm = s.dt_max
     s_hi = closed_solver(dt=1.02 * dtm)
     with np.errstate(all="ignore"):
         E = energy_run(s_hi, 1500)
+    print(
+        f"cfl_bound: lam={_sci(lam, 2)}, max_block={_sci(bounds.max(), 2)}, "
+        f"yee={_sci(yee, 2)}; 1.02*dt_max blows up"
+    )
     assert not np.isfinite(E[-1]) or abs(E[-1]) > 1e6 * abs(E[0])
 
 
@@ -161,8 +174,10 @@ def test_mutation_injection_breaks_energy():
     s = closed_solver()
     s_inj = closed_solver(mutate="inject", dt=0.5 * s.dt_max)
     E = energy_run(s_inj, 4000)
+    drift = float(np.abs(E / E[0] - 1).max())
+    print(f"mutation_injection_energy: drift={drift:.2f}")
     # correct operator: < 1e-13 (test above); injection drifts by O(1)
-    assert np.abs(E / E[0] - 1).max() > 0.1
+    assert drift > 0.1
 
 
 # --------------------------------------------------------------- divergence
@@ -179,25 +194,40 @@ def _driven(mutate=None):
 def test_divergence_free_and_flux_balance():
     s = _driven()
     bmax = np.abs(s.b).max()
-    assert np.abs(s.divergence()).max() < 1e-13 * bmax
-    assert np.abs(s.interface_flux_mismatch()).max() < 1e-13 * bmax
+    div_err = float(np.abs(s.divergence()).max() / bmax)
+    flux_err = float(np.abs(s.interface_flux_mismatch()).max() / bmax)
+    print(f"div_and_flux: div={_sci(div_err)}, flux={_sci(flux_err)}")
+    assert div_err < 1e-13
+    assert flux_err < 1e-13
 
 
 def test_mutations_flux_balance():
     s = _driven("fraction")
-    assert np.abs(s.interface_flux_mismatch()).max() > 1e-2 * np.abs(s.b).max()
+    f_err = float(np.abs(s.interface_flux_mismatch()).max() / np.abs(s.b).max())
+    assert f_err > 1e-2
     assert np.abs(s.divergence()).max() < 1e-13 * np.abs(s.b).max()  # per cell still 0
     # derived: face-interior fine edges cancel in the sum over sub-faces, so the
     # missing transverse term leaves the flux balance intact (other tests catch it)
     s = _driven("missing_transverse")
-    assert np.abs(s.interface_flux_mismatch()).max() < 1e-13 * np.abs(s.b).max()
+    mt_err = float(np.abs(s.interface_flux_mismatch()).max() / np.abs(s.b).max())
+    print(f"mutations_flux: fraction={f_err:.2f}, missing_transverse={_sci(mt_err)}")
+    assert mt_err < 1e-13
 
 
 # ------------------------------------------------------------ cavity modes
 @pytest.mark.parametrize("ratio", [2, 3])
 def test_cavity_second_order(ratio):
     e8, e16 = cavity_error(8, ratio), cavity_error(16, ratio)
-    order = np.log2(e8 / e16)
+    order = float(np.log2(e8 / e16))
+    extra = (
+        f", coarse_e8={_sci(cavity_error(8, ratio, patch=False), 2)}"
+        if ratio == 2
+        else ""
+    )
+    print(
+        f"cavity_order (r={ratio}): e8={_sci(e8, 2)}, e16={_sci(e16, 2)}, "
+        f"order={order:.2f}{extra}"
+    )
     assert 1.8 < order < 2.2, order  # measured 1.98 (2:1 and 3:1)
 
 
@@ -205,9 +235,15 @@ def test_cavity_second_order(ratio):
 def test_cavity_mutations(ratio):
     good = cavity_error(16, ratio)
     f8, f16 = cavity_error(8, ratio, "fraction"), cavity_error(16, ratio, "fraction")
-    assert np.log2(f8 / f16) < 1.0  # measured 0.40
+    f_order = float(np.log2(f8 / f16))
+    mt16 = float(cavity_error(16, ratio, "missing_transverse"))
+    print(
+        f"cavity_mutations (r={ratio}): fraction_order={f_order:.2f}, "
+        f"missing_transverse={mt16:.2f}"
+    )
+    assert f_order < 1.0  # measured 0.40
     assert f16 > 5 * good
-    assert cavity_error(16, ratio, "missing_transverse") > 0.1  # measured 0.53-0.58
+    assert mt16 > 0.1  # measured 0.53-0.58
 
 
 @pytest.mark.slow
@@ -227,11 +263,18 @@ def test_cavity_second_order_fine(ratio, nested, Ns):
 @pytest.mark.parametrize("pol", ["s", "p"])
 def test_normal_incidence_equals_1d_exact(ratio, pol):
     floor = bloch_reflection_3d(10, 0, ratio, pol, refine=False)
+    diffs = []
     for N in (10, 20):
         R = bloch_reflection_3d(N, 0, ratio, pol)
-        assert abs(R - reflection_1d_exact(N, ratio)) < floor, (N, R)
+        d = abs(R - reflection_1d_exact(N, ratio))
+        diffs.append(d)
+        assert d < floor, (N, R)
     # mutation: missing transverse term (normal incidence still sees it)
     Rm = bloch_reflection_3d(10, 0, ratio, pol, mutate="missing_transverse")
+    print(
+        f"normal_incidence (r={ratio}, {pol}): max_diff={_sci(max(diffs))}, "
+        f"floor={_sci(floor)}, missing_transverse={_sci(Rm)}"
+    )
     assert Rm > 10 * reflection_1d_exact(10, ratio)
 
 
@@ -241,7 +284,9 @@ def test_s_polarisation_equals_2d_tm(theta):
 
     r3 = bloch_reflection_3d(10, theta, 2, "s", bloch_source=False)
     r2 = bloch_reflection(10, theta, 2, "TM")
-    assert abs(r3 / r2 - 1) < 1e-9  # measured 1.6e-12
+    err = abs(r3 / r2 - 1)
+    print(f"s_vs_2d_tm (theta={theta}): rel_diff={_sci(err)}")
+    assert err < 1e-9  # measured 1.6e-12
 
 
 @pytest.mark.parametrize("ratio", [2, 3])
@@ -252,7 +297,9 @@ def test_reflection_second_order(ratio, pol, theta):
         bloch_reflection_3d(10, theta, ratio, pol),
         bloch_reflection_3d(20, theta, ratio, pol),
     )
-    assert 1.8 < np.log2(r10 / r20) < 2.25, (r10, r20)
+    order = float(np.log2(r10 / r20))
+    print(f"reflection_order (r={ratio}, {pol}, th={theta}): order={order:.2f}")
+    assert 1.8 < order < 2.25, (r10, r20)
 
 
 @pytest.mark.parametrize("mutate", ["fraction", "missing_transverse"])
@@ -260,7 +307,11 @@ def test_reflection_mutations(mutate):
     r10 = bloch_reflection_3d(10, 60, 2, "s", mutate=mutate)
     r20 = bloch_reflection_3d(20, 60, 2, "s", mutate=mutate)
     good = bloch_reflection_3d(20, 60, 2, "s")
-    assert np.log2(r10 / r20) < 1.0  # no convergence
+    order = float(np.log2(r10 / r20))
+    print(
+        f"reflection_mutation ({mutate}): order={order:.2f}, r20/good={r20 / good:.1f}x"
+    )
+    assert order < 1.0  # no convergence
     assert r20 > 10 * good
 
 
@@ -288,17 +339,24 @@ def test_dot_product_transpose():
     gy = s.linear_step_T(*y)
     lhs = fx[0] @ y[0] + fx[1] @ y[1]
     rhs = x[0] @ gy[0] + x[1] @ gy[1] + x[2] @ gy[2]
-    assert abs(lhs - rhs) < 1e-14 * abs(lhs)  # measured ~1e-16
+    err_field = abs(lhs - rhs) / abs(lhs)
+    assert err_field < 1e-14  # measured ~1e-16
     # source part alone (its scale is far below the field part above), and the
     # mutation: a source transpose that ignores the hanging rows of P_e
     i_src = np.zeros(s.mesh.n_edges)
     i_src[s.hanging] = rng.standard_normal(s.hanging.sum())
     fs = s.linear_step(0 * x[0], 0 * x[1], i_src)
     lhs = fs[0] @ y[0] + fs[1] @ y[1]
-    assert abs(lhs - i_src @ gy[2]) < 1e-14 * abs(lhs)
+    err_src = abs(lhs - i_src @ gy[2]) / abs(lhs)
+    assert err_src < 1e-14
     ib_bad = gy[2].copy()
     ib_bad[s.hanging] = 0.0
-    assert abs(lhs - i_src @ ib_bad) > 0.5 * abs(lhs)
+    err_bad = abs(lhs - i_src @ ib_bad) / abs(lhs)
+    print(
+        f"dot_product_transpose: fields={_sci(err_field)}, source={_sci(err_src)}, "
+        f"no_hanging={err_bad:.1f}"
+    )
+    assert err_bad > 0.5
 
 
 def test_adjoint_gradient_matches_finite_differences():
@@ -329,7 +387,9 @@ def test_adjoint_gradient_matches_finite_differences():
         grad += wave[n] * (ib @ shape)
     d = 1e-3
     fd = (J(0.7 + d)[0] - J(0.7 - d)[0]) / (2 * d)  # exact for a quadratic J
-    assert abs(grad / fd - 1) < 1e-8
+    err = abs(grad / fd - 1)
+    print(f"adjoint_vs_fd: rel_err={_sci(err)}")
+    assert err < 1e-8
 
 
 # ------------------------------------------------------- time-domain run
@@ -355,6 +415,8 @@ def test_time_domain_resonance_probe_dft():
     i = int(np.argmax(X))
     y0, y1, y2 = X[i - 1], X[i], X[i + 1]
     fpk = fs[i] + 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) * (fs[1] - fs[0])
+    err = abs(fpk / ftd - 1)
+    print(f"td_probe_dft: rel_err={_sci(err)}")
     # Hann + parabolic peak of an isolated line: bias << 1 % of a bin
     # (bin = 1.7e-3 f); measured 2.6e-7
-    assert abs(fpk / ftd - 1) < 1e-5
+    assert err < 1e-5
