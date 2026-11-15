@@ -23,8 +23,12 @@ and ``_column_massless_factor`` assembly functions.
 Usage
 -----
     python studies/unstructured-pml3d/pml3d_planar_diag.py run
+    python studies/unstructured-pml3d/pml3d_planar_diag.py ball-like [--smoke]
+    python studies/unstructured-pml3d/pml3d_planar_diag.py shell-duals [--smoke]
 """
 
+import ctypes
+import gc
 import json
 import os
 import sys
@@ -819,9 +823,672 @@ def run():
     print(json.dumps(out, indent=2))
 
 
+def _make_jittered_cross_section(seed=7, amp=0.2):
+    """Build a jittered (obtuse-prone) unit cross-section on ``[0, 2]^2``.
+
+    Applies a deterministic uniform jitter of amplitude ``amp`` per coordinate
+    (using ``np.random.default_rng(seed)``) to the interior nodes of ``_U2D``
+    while keeping boundary nodes on the channel walls, then drops interior 2D
+    nodes whose non-PEC boundary edges have non-positive circumcentric dual
+    length (the 2D analogue of ``build_tet_channel``).
+
+    Parameters
+    ----------
+    seed : int, optional
+        Seed for ``np.random.default_rng``. Default is ``7``.
+    amp : float, optional
+        Dimensionless jitter half-amplitude in units of ``h``. Default is ``0.2``.
+
+    Returns
+    -------
+    pts2 : ndarray, shape (n_pts, 2)
+        Dimensionless ``(y / h, z / h)`` coordinates on ``[0, 2] x [0, 2]``.
+    off_interior : ndarray, shape (n_pts, 3)
+        Deterministic dimensionless 3D node offsets for regular interior slab
+        layers when paired with the jittered cross-section (variant ``I``).
+    """
+    u2d = _U2D.copy()
+    in_y = (u2d[:, 0] > 1e-6) & (u2d[:, 0] < 2.0 - 1e-6)
+    in_z = (u2d[:, 1] > 1e-6) & (u2d[:, 1] < 2.0 - 1e-6)
+    in_2d = in_y & in_z
+    rng = np.random.default_rng(seed)
+    u2d_if = u2d.copy()
+    u2d_if[in_2d] += rng.uniform(-amp, amp, (int(in_2d.sum()), 2))
+    bnd_2d = u2d_if[~in_2d]
+    inner_2d = u2d_if[in_2d]
+    while True:
+        pts2 = np.vstack([bnd_2d, inner_2d])
+        tri = Delaunay(pts2).simplices
+        m2 = SimplexMesh(pts2, tri)
+        be = m2.boundary_edges
+        ec = m2.nodes[m2.edges[be]].mean(1)
+        not_y_pec = ~(np.isclose(ec[:, 0], 0.0) | np.isclose(ec[:, 0], 2.0))
+        s_be = m2.dual_length()[be]
+        bad_be = be[not_y_pec & (s_be <= 1e-5)]
+        if bad_be.size == 0:
+            break
+        p_e = m2.dual_edge_partial.tocsr()
+        drop = set()
+        for e in bad_be:
+            c = p_e.getrow(int(e)).indices[0]
+            for v in m2.cells[c]:
+                if v >= len(bnd_2d):
+                    drop.add(int(v - len(bnd_2d)))
+        if not drop:
+            break
+        keep = np.ones(len(inner_2d), bool)
+        keep[list(drop)] = False
+        inner_2d = inner_2d[keep]
+
+    in_y2 = (pts2[:, 0] > 1e-6) & (pts2[:, 0] < 2.0 - 1e-6)
+    in_z2 = (pts2[:, 1] > 1e-6) & (pts2[:, 1] < 2.0 - 1e-6)
+    rng_off = np.random.default_rng(789)
+    off = np.zeros((len(pts2), 3))
+    off[in_y2 | in_z2, 0] = rng_off.uniform(-0.22, 0.22, int((in_y2 | in_z2).sum()))
+    off[in_y2, 1] = rng_off.uniform(-0.10, 0.10, int(in_y2.sum()))
+    off[in_z2, 2] = rng_off.uniform(-0.08, 0.08, int(in_z2.sum()))
+    return pts2, off
+
+
+_U2D_JIT, _OFF_JIT = _make_jittered_cross_section(seed=7, amp=0.2)
+
+
+def build_tet_channel_variant(nx, h, variant="R", seed=7, jitter_amp=0.2):
+    """Build a 3D Delaunay tetrahedral channel for variants ``R``, ``T``, or ``I``.
+
+    Parameters
+    ----------
+    nx : int
+        Number of axial cells of size ``h`` along ``x``.
+    h : float
+        Target mesh step [m].
+    variant : {"R", "T", "I"}, optional
+        Channel variant:
+        - ``"R"``: regular tets + regular interface (delegates to
+          ``build_tet_channel``).
+        - ``"T"``: jittered tets in ``0 < x < nx*h`` (``default_rng(seed)``,
+          amplitude ``jitter_amp * h`` per coordinate, boundary points kept on
+          their planes) + regular interface at ``x = nx*h``.
+        - ``"I"``: regular tets in ``0 < x < nx*h`` + jittered (obtuse-prone)
+          cross-section at ``x = nx*h``.
+    seed : int, optional
+        Seed for ``np.random.default_rng``. Default is ``7``.
+    jitter_amp : float, optional
+        Dimensionless jitter half-amplitude in units of ``h``. Default is ``0.2``.
+
+    Returns
+    -------
+    mesh : SimplexMesh
+        Delaunay tetrahedral channel mesh with positive circumcentric duals.
+    """
+    if variant == "R":
+        return build_tet_channel(nx, h)
+    if variant not in ("T", "I"):
+        raise ValueError(f"Unknown variant {variant!r}; expected 'R', 'T', or 'I'.")
+
+    ly = lz = 2.0 * h
+    lx = nx * h
+    u2d = _U2D if variant == "T" else _U2D_JIT
+    pts2d = u2d * h
+    in_y = (u2d[:, 0] > 1e-6) & (u2d[:, 0] < 2.0 - 1e-6)
+    in_z = (u2d[:, 1] > 1e-6) & (u2d[:, 1] < 2.0 - 1e-6)
+    rng = np.random.default_rng(seed)
+    amp_m = jitter_amp * h
+    layers = []
+    for i in range(nx + 1):
+        p = np.c_[np.full(len(pts2d), i * h), pts2d]
+        if 0 < i < nx:
+            if variant == "T":
+                off = np.zeros((len(pts2d), 3))
+                off[in_y | in_z, 0] = rng.uniform(
+                    -amp_m, amp_m, int((in_y | in_z).sum())
+                )
+                off[in_y, 1] = rng.uniform(-amp_m, amp_m, int(in_y.sum()))
+                off[in_z, 2] = rng.uniform(-amp_m, amp_m, int(in_z.sum()))
+                p = p + off
+            else:
+                p = p + _OFF_JIT * h
+        layers.append(p)
+    all_pts = np.vstack(layers)
+    on_bnd = (
+        np.isclose(all_pts[:, 0], 0.0)
+        | np.isclose(all_pts[:, 0], lx)
+        | np.isclose(all_pts[:, 1], 0.0)
+        | np.isclose(all_pts[:, 1], ly)
+        | np.isclose(all_pts[:, 2], 0.0)
+        | np.isclose(all_pts[:, 2], lz)
+    )
+    bnd_pts = all_pts[on_bnd]
+    inner_pts = all_pts[~on_bnd]
+    while True:
+        pts = np.vstack([bnd_pts, inner_pts])
+        tet = Delaunay(pts).simplices
+        p_tet = pts[tet]
+        vol = np.abs(np.linalg.det(p_tet[:, 1:] - p_tet[:, :1])) / 6.0
+        tet = tet[vol > 1e-10 * h**3]
+        mesh = SimplexMesh(pts, tet)
+        bf = mesh.boundary_faces
+        fc = mesh.nodes[mesh.faces[bf]].mean(1)
+        not_y_pec = ~(np.isclose(fc[:, 1], 0.0) | np.isclose(fc[:, 1], ly))
+        s_bf = np.asarray(mesh.dual_edge_partial[bf].sum(1)).ravel()
+        bad_bf = bf[not_y_pec & (s_bf <= 1e-5 * h)]
+        if bad_bf.size == 0:
+            break
+        p_f = mesh.dual_edge_partial.tocsr()
+        drop = set()
+        for f in bad_bf:
+            c = p_f.getrow(int(f)).indices[0]
+            for v in mesh.cells[c]:
+                if v >= len(bnd_pts):
+                    drop.add(int(v - len(bnd_pts)))
+        if not drop:
+            break
+        keep = np.ones(len(inner_pts), bool)
+        keep[list(drop)] = False
+        inner_pts = inner_pts[keep]
+    _snap_degenerate_duals(mesh)
+    return mesh
+
+
+def run_ball_like(smoke=False):
+    """Execute Task A (jittered planar analogue under ball conditions) and print JSON.
+
+    Parameters
+    ----------
+    smoke : bool, optional
+        If ``True``, run only the coarsest resolution ``h = 1.0`` and a single
+        radial spacing ``dr = 1.0 * h`` for fast verification.
+    """
+    t_wall_start = time.time()
+    lam0 = 8.0
+    k0 = 2.0 * np.pi / lam0
+    tau = lam0 / (np.pi * C0)
+    t0 = 4.0 * tau
+    x0 = 12.0
+    xp = 1.5
+    thick = 24.0
+    a_gate = t0 + (2.0 * x0 - 2.0 * xp) / C0 - 3.5 * tau
+    b_gate = t0 + (2.0 * x0 + 2.0 * xp) / C0 + 3.5 * tau
+    min_shell_len_for_gate = 0.5 * (C0 * (b_gate - t0) + 3.5 * C0 * tau + xp) - x0
+
+    def pulse_amp(t):
+        x = (t - t0) / tau
+        return -x * np.exp(-(x**2))
+
+    resolutions_h = (1.0,) if smoke else (1.0, 0.5, 0.25, 0.125)
+    dr_factors = (1.0,) if smoke else (0.75, 1.0, 1.25, 1.5)
+    variants = (
+        ("T", "jittered tets + regular interface [ball-like case]"),
+        ("I", "regular tets + jittered interface [bisection]"),
+        ("R", "regular tets + regular interface [baseline reproduction]"),
+    )
+
+    tri_reg = Delaunay(_U2D).simplices
+    m2_reg = SimplexMesh(_U2D, tri_reg).diagnostics()
+    tri_jit = Delaunay(_U2D_JIT).simplices
+    m2_jit = SimplexMesh(_U2D_JIT, tri_jit).diagnostics()
+
+    variant_results = {}
+    max_cells_observed = 0
+
+    for var_code, var_desc in variants:
+        t_var = time.time()
+        per_dr = {
+            f: {"dr_over_h": float(f), "cases": [], "R_per_resolution": []}
+            for f in dr_factors
+        }
+        khs = [float(k0 * h) for h in resolutions_h]
+
+        for h in resolutions_h:
+            nx = round(x0 / h)
+            ly = 2.0 * h
+            th = build_tet_channel_variant(nx, h, variant=var_code)
+            mr = build_tet_channel_variant(2 * nx + 3, h, variant=var_code)
+            s_ref = UnstructuredFIT3D(
+                attach_y_pec_caps(mr, ly, h, pert_mode="none"),
+                materials={0: [1.0, 1.0], 1: "pec"},
+                bc="pmc",
+                massless_tol=1e-6,
+            )
+            probe_pt = np.array([[xp, 1.0 * h, 1.0 * h]])
+            p_r = whitney_probe(s_ref.mesh, probe_pt)
+            em_r = s_ref.mesh.edge_midpoint
+            on_src_r = np.abs(em_r[:, 0]) < 1e-6 * h
+            w_r = np.where(
+                on_src_r,
+                s_ref.mesh.dual_measure() * s_ref.mesh.edge_tangent[:, 1],
+                0.0,
+            ) / (4.0 * h**2)
+            s_ref.sources.append((w_r[s_ref.free], pulse_amp))
+            ref_cache = {}
+
+            for factor in dr_factors:
+                dr = factor * h
+                n_layers = round(thick / dr)
+                x_levels = x0 + dr * np.arange(1, n_layers + 1)
+                mt = planar_shell_mesh(th, x_levels)
+                max_cells_observed = max(max_cells_observed, int(mt.n_cells))
+
+                s_u = UnstructuredFIT3D(
+                    attach_y_pec_caps(mt, ly, h, pert_mode="none"),
+                    materials={0: [1.0, 1.0], 1: "pec"},
+                    bc="pmc",
+                    massless_tol=1e-6,
+                )
+                dt = 0.9 * min(s_u.dt_max, s_ref.dt_max)
+                s_u.dt = dt
+                s_u._update.dt = dt
+                em_u = s_u.mesh.edge_midpoint
+                on_src_u = np.abs(em_u[:, 0]) < 1e-6 * h
+                w_u = np.where(
+                    on_src_u,
+                    s_u.mesh.dual_measure() * s_u.mesh.edge_tangent[:, 1],
+                    0.0,
+                ) / (4.0 * h**2)
+                s_u.sources.append((w_u[s_u.free], pulse_amp))
+                p_u = whitney_probe(s_u.mesh, probe_pt)
+
+                n_steps = round(b_gate / dt)
+                sig_u = np.empty((n_steps, 3))
+                for k in range(n_steps):
+                    s_u.one_step()
+                    sig_u[k] = p_u @ s_u.e
+
+                if dt not in ref_cache:
+                    s_ref.reset()
+                    s_ref.dt = dt
+                    s_ref._update.dt = dt
+                    sig_r = np.empty((n_steps, 3))
+                    for k in range(n_steps):
+                        s_ref.one_step()
+                        sig_r[k] = p_r @ s_ref.e
+                    ref_cache[dt] = sig_r
+                sig_r = ref_cache[dt]
+
+                t = (np.arange(n_steps) + 1) * dt
+                g = (t > a_gate) & (t < b_gate)
+                inc_peak = float(np.linalg.norm(sig_r[~g], axis=-1).max())
+                echo_u = float(np.linalg.norm(sig_u[g] - sig_r[g], axis=-1).max())
+                r_val = float(echo_u / inc_peak)
+
+                per_dr[factor]["R_per_resolution"].append(r_val)
+                per_dr[factor]["cases"].append(
+                    {
+                        "h": float(h),
+                        "kh": float(k0 * h),
+                        "dr": float(dr),
+                        "dr_over_h": float(factor),
+                        "n_prism_layers": int(n_layers),
+                        "n_tet_cells": int(th.n_cells),
+                        "n_prism_cells": int(mt.n_cells - th.n_cells),
+                        "n_total_cells": int(mt.n_cells),
+                        "n_reference_cells": int(mr.n_cells),
+                        "dt": float(dt),
+                        "n_steps": int(n_steps),
+                        "R": r_val,
+                    }
+                )
+
+        dr_summary = {}
+        for factor in dr_factors:
+            rs = per_dr[factor]["R_per_resolution"]
+            if len(khs) >= 2:
+                p_fit, res_fit = _fit_power_law(khs, rs)
+                p_coarse, _ = _fit_power_law(khs[:2], rs[:2])
+            else:
+                p_fit, res_fit, p_coarse = None, None, None
+            per_dr[factor]["fit_order_p"] = p_fit
+            per_dr[factor]["fit_log_residual"] = res_fit
+            per_dr[factor]["fit_order_p_coarse_h1_to_h0p5"] = p_coarse
+            dr_summary[f"dr_{factor:g}h"] = per_dr[factor]
+
+        variant_results[var_code] = {
+            "description": var_desc,
+            "elapsed_s": float(time.time() - t_var),
+            "by_dr": dr_summary,
+        }
+
+    out = {
+        "task": "A_ball_like_planar_analogue",
+        "smoke": bool(smoke),
+        "jitter_spec": {
+            "rng": "numpy.random.default_rng(seed=7)",
+            "amplitude_over_h": 0.2,
+            "regular_cross_section_2d_diagnostics": m2_reg,
+            "jittered_cross_section_2d_diagnostics": m2_jit,
+        },
+        "channel_and_gate": {
+            "lam0_m": lam0,
+            "k0_rad_per_m": float(k0),
+            "x0_m": x0,
+            "xp_m": xp,
+            "shell_thick_m": thick,
+            "shell_thick_note": (
+                f"THICK = {thick:.1f} m (24 h at h = 1.0, n_layers = round({thick:.1f} / dr)), "
+                f"keeping physical shell length {thick:.1f} m > {min_shell_len_for_gate:.2f} m "
+                f"required by the time gate across all resolutions while keeping "
+                f"finest-resolution cell count at <= {max_cells_observed} (< 2e6)."
+            ),
+            "min_shell_len_for_gate_m": float(min_shell_len_for_gate),
+            "gate_s": [float(a_gate), float(b_gate)],
+            "gate_ct_m": [float(C0 * a_gate), float(C0 * b_gate)],
+            "resolutions_h": [float(h) for h in resolutions_h],
+            "dr_factors": [float(f) for f in dr_factors],
+            "max_cell_count": int(max_cells_observed),
+        },
+        "variants": variant_results,
+        "elapsed_s": float(time.time() - t_wall_start),
+    }
+    print(json.dumps(out, indent=2))
+
+
+def _dual_entity_stats(values):
+    """Compute Task B summary metrics for a 1D array of signed dual measures."""
+    v = np.asarray(values, float)
+    n = int(v.size)
+    if n == 0:
+        return {
+            "n_entities": 0,
+            "n_negative": 0,
+            "n_small_lt_1e3_median": 0,
+            "min_signed_over_median": 0.0,
+            "median": 0.0,
+            "min_signed": 0.0,
+        }
+    med = float(np.median(v))
+    min_val = float(v.min())
+    n_neg = int(np.sum(v < 0.0))
+    if med > 0.0:
+        n_small = int(np.sum(np.abs(v) < 1e-3 * med))
+        min_rel = float(min_val / med)
+    else:
+        n_small = int(np.sum(np.abs(v) == 0.0))
+        min_rel = 0.0
+    return {
+        "n_entities": n,
+        "n_negative": n_neg,
+        "n_small_lt_1e3_median": n_small,
+        "min_signed_over_median": min_rel,
+        "median": med,
+        "min_signed": min_val,
+    }
+
+
+def _trim_heap():
+    """Return unused heap pages to the OS after freeing large intermediate meshes."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        pass
+
+
+class _ShellBaseProxy:
+    """Lightweight mesh proxy holding the boundary skin of ``ball_mesh`` for ``spherical_shell_mesh``."""
+
+
+def run_shell_duals(smoke=False):
+    """Execute Task B (signed dual lengths/areas of the ball prism shell) and print JSON.
+
+    Uses ``spherical_shell_mesh(ball_mesh([12.0], h), radii)`` and the exact
+    solver dual formulas ``SimplexMesh.dual_measure`` and
+    ``SimplexMesh.dual_length`` (after ``_snap_degenerate_duals``). At
+    ``h = 0.5``, evaluates the radial layers in overlapping slabs via
+    ``spherical_shell_mesh`` so that peak resident memory stays well below the
+    2000 MB ``memguard`` cap while producing bit-for-bit identical dual
+    measures on every shell edge and face (including the ``r = r0`` interface).
+
+    Parameters
+    ----------
+    smoke : bool, optional
+        If ``True``, run only the coarsest resolution ``h = 1.0`` and a single
+        radial spacing ``dr = 1.0 * h`` for fast verification.
+    """
+    t_wall_start = time.time()
+    r0 = 12.0
+    resolutions_h = (1.0,) if smoke else (1.0, 0.5)
+    dr_factors = (1.0,) if smoke else (0.75, 1.0, 1.25, 1.5)
+    cases_out = []
+
+    for h in resolutions_h:
+        t_ball = time.time()
+        ball = ball_mesh([r0], h)
+        n_ball_cells = int(ball.n_cells)
+        bf0 = ball.faces[ball.boundary_faces].copy()
+        bn0 = np.unique(bf0)
+        n_surface_faces = len(bf0)
+        n_surface_nodes = len(bn0)
+
+        # Extract the boundary-touching tet skin of ball_mesh([12.0], h): every
+        # tetrahedron of the ball that shares at least one vertex with the
+        # r = r0 boundary surface is retained so interface duals at r = r0 are
+        # bit-for-bit identical to building the full interior + shell at once.
+        touch = np.any(np.isin(ball.cells, bn0), axis=1)
+        used = np.zeros(ball.n_nodes, bool)
+        used[ball.cells[touch].ravel()] = True
+        remap = np.cumsum(used) - 1
+
+        skin_nodes = ball.nodes[used].copy()
+        skin_cells = remap[ball.cells[touch]].copy()
+        skin_tags = ball.cell_tags[touch].copy()
+        skin_faces = remap[bf0].copy()
+        r0_nodes = ball.nodes[bn0].copy()
+        r0_faces = np.searchsorted(bn0, bf0).copy()
+        del ball, bf0, bn0, touch, used, remap
+        _trim_heap()
+        ball_build_s = float(time.time() - t_ball)
+
+        for factor in dr_factors:
+            t_case = time.time()
+            dr = factor * h
+            n_layers = round(24.0 * h / dr)
+            radii = r0 + dr * np.arange(1, n_layers + 1)
+            tol = 1e-5 * h
+            all_r = np.r_[r0, radii]
+            step = 24 if h >= 1.0 else 6
+
+            ae_all_list, lf_all_list = [], []
+            ae_int_ch_list, ae_sh_ch_list, ae_sp_list, ae_dg_list = [], [], [], []
+            lf_int_sf_list, lf_sh_sf_list, lf_sd_list, lf_in_list = [], [], [], []
+            int_e_tet_part, int_e_pri_part = None, None
+            int_f_tet_part, int_f_pri_part = None, None
+            cde_neg_cnt, cde_tot_cnt, cde_min = 0, 0, np.inf
+            cda_neg_cnt, cda_tot_cnt, cda_min = 0, 0, np.inf
+
+            for i0 in range(0, len(radii), step):
+                i1 = min(i0 + step, len(radii))
+                is_last = i1 == len(radii)
+                base = _ShellBaseProxy()
+                if i0 == 0:
+                    base.nodes = skin_nodes
+                    base.cells = skin_cells
+                    base.cell_tags = skin_tags
+                    base.faces = skin_faces
+                    base.boundary_faces = np.arange(len(skin_faces))
+                    sub_radii = radii[0 : (i1 if is_last else i1 + 1)]
+                    r_lo = r0 - tol
+                    n_base_cells = len(skin_cells)
+                else:
+                    base.nodes = r0_nodes
+                    base.cells = np.zeros((0, 4), dtype=np.int64)
+                    base.cell_tags = np.zeros(0, dtype=np.int64)
+                    base.faces = r0_faces
+                    base.boundary_faces = np.arange(len(r0_faces))
+                    sub_radii = all_r[i0 - 1 : (i1 + 1 if is_last else i1 + 2)]
+                    r_lo = all_r[i0] - tol
+                    n_base_cells = len(skin_faces) * 3
+                base.n_nodes = len(base.nodes)
+                base.n_cells = len(base.cells)
+                base.n_faces = len(base.faces)
+                r_hi = all_r[i1] + tol
+
+                m = spherical_shell_mesh(base, sub_radii, tag=0)
+                rn = np.linalg.norm(m.nodes, axis=1)
+                re = rn[m.edges]
+                rf = rn[m.faces]
+
+                if is_last:
+                    sel_e = (re.min(1) >= r_lo) & (re.max(1) <= r_hi)
+                    sel_f = (rf.min(1) >= r_lo) & (rf.max(1) <= r_hi)
+                else:
+                    sel_e = (
+                        (re.min(1) >= r_lo)
+                        & (re.max(1) <= r_hi)
+                        & (re.min(1) < all_r[i1] - tol)
+                    )
+                    sel_f = (
+                        (rf.min(1) >= r_lo)
+                        & (rf.max(1) <= r_hi)
+                        & (rf.min(1) < all_r[i1] - tol)
+                    )
+
+                ae = m.dual_measure()
+                lf = m.dual_length()
+
+                mid = m.edge_midpoint
+                rmid = np.linalg.norm(mid, axis=1)
+                cos_e = np.abs(np.einsum("ij,ij->i", m.edge_tangent, mid)) / np.maximum(
+                    rmid, 1e-30
+                )
+                is_chord = sel_e & (np.abs(re[:, 0] - re[:, 1]) < tol)
+                is_int_chord = is_chord & (np.abs(re[:, 0] - r0) < tol)
+                is_sh_chord = is_chord & ~is_int_chord
+                is_spoke = sel_e & (cos_e > 1.0 - 1e-7)
+                is_diag = sel_e & ~is_chord & ~is_spoke
+
+                fc = m.nodes[m.faces].mean(1)
+                cos_f = np.abs(np.einsum("ij,ij->i", m.face_normal, fc)) / np.maximum(
+                    np.linalg.norm(fc, axis=1), 1e-30
+                )
+                is_sph = sel_f & (rf.max(1) - rf.min(1) < tol)
+                is_int_sph = is_sph & (np.abs(rf[:, 0] - r0) < tol)
+                is_sh_sph = is_sph & ~is_int_sph
+                is_side = sel_f & ~is_sph & (cos_f < 1e-7)
+                is_inner = sel_f & ~is_sph & ~is_side
+
+                ae_all_list.append(ae[sel_e])
+                lf_all_list.append(lf[sel_f])
+                ae_int_ch_list.append(ae[is_int_chord])
+                ae_sh_ch_list.append(ae[is_sh_chord])
+                ae_sp_list.append(ae[is_spoke])
+                ae_dg_list.append(ae[is_diag])
+                lf_int_sf_list.append(lf[is_int_sph])
+                lf_sh_sf_list.append(lf[is_sh_sph])
+                lf_sd_list.append(lf[is_side])
+                lf_in_list.append(lf[is_inner])
+
+                if i0 == 0:
+                    n_tet_c = len(skin_cells)
+                    w_tet = np.r_[np.ones(n_tet_c), np.zeros(m.n_cells - n_tet_c)]
+                    w_pri = np.r_[np.zeros(n_tet_c), np.ones(m.n_cells - n_tet_c)]
+                    int_e_tet_part = m.dual_measure(w_tet)[is_int_chord]
+                    int_e_pri_part = m.dual_measure(w_pri)[is_int_chord]
+                    int_f_tet_part = m.dual_length(w_tet)[is_int_sph]
+                    int_f_pri_part = m.dual_length(w_pri)[is_int_sph]
+
+                n_keep_pri = (i1 - i0) * n_surface_faces * 3
+                c_slice = slice(n_base_cells, n_base_cells + n_keep_pri)
+                cde = m.cell_dual_edge[c_slice].ravel()
+                cda = m.cell_dual_area[c_slice].ravel()
+                cde_neg_cnt += int(np.sum(cde < -1e-12 * h))
+                cde_tot_cnt += int(cde.size)
+                cde_min = min(cde_min, float(cde.min()))
+                cda_neg_cnt += int(np.sum(cda < -1e-12 * h**2))
+                cda_tot_cnt += int(cda.size)
+                cda_min = min(cda_min, float(cda.min()))
+
+                del m
+                _trim_heap()
+
+            ae_all = np.concatenate(ae_all_list)
+            lf_all = np.concatenate(lf_all_list)
+            ae_int_ch = np.concatenate(ae_int_ch_list)
+            ae_sh_ch = np.concatenate(ae_sh_ch_list)
+            ae_sp = np.concatenate(ae_sp_list)
+            ae_dg = np.concatenate(ae_dg_list)
+            lf_int_sf = np.concatenate(lf_int_sf_list)
+            lf_sh_sf = np.concatenate(lf_sh_sf_list)
+            lf_sd = np.concatenate(lf_sd_list)
+            lf_in = np.concatenate(lf_in_list)
+            ae_active = np.concatenate([ae_int_ch, ae_sh_ch, ae_sp])
+            lf_active = np.concatenate([lf_int_sf, lf_sh_sf, lf_sd])
+
+            cases_out.append(
+                {
+                    "h": float(h),
+                    "r0_m": float(r0),
+                    "r0_over_h": float(r0 / h),
+                    "dr_m": float(dr),
+                    "dr_over_h": float(factor),
+                    "n_layers": int(n_layers),
+                    "r_max_m": float(radii[-1]),
+                    "n_ball_tet_cells": n_ball_cells,
+                    "n_prism_tet_cells": int(n_layers * n_surface_faces * 3),
+                    "n_total_mesh_cells": int(
+                        n_ball_cells + n_layers * n_surface_faces * 3
+                    ),
+                    "n_surface_nodes": n_surface_nodes,
+                    "n_surface_faces": n_surface_faces,
+                    "edges_all": _dual_entity_stats(ae_all),
+                    "edges_active_chords_and_spokes": _dual_entity_stats(ae_active),
+                    "faces_all": _dual_entity_stats(lf_all),
+                    "faces_active_sphere_and_side": _dual_entity_stats(lf_active),
+                    "by_kind": {
+                        "interface_chords": _dual_entity_stats(ae_int_ch),
+                        "shell_chords": _dual_entity_stats(ae_sh_ch),
+                        "spokes": _dual_entity_stats(ae_sp),
+                        "quad_diagonals_snapped": _dual_entity_stats(ae_dg),
+                        "interface_sphere_faces": _dual_entity_stats(lf_int_sf),
+                        "shell_sphere_faces": _dual_entity_stats(lf_sh_sf),
+                        "side_faces": _dual_entity_stats(lf_sd),
+                        "inner_prism_faces_snapped": _dual_entity_stats(lf_in),
+                    },
+                    "interface_partial_duals": {
+                        "edge_area_tet_side": _dual_entity_stats(int_e_tet_part),
+                        "edge_area_prism_side": _dual_entity_stats(int_e_pri_part),
+                        "face_length_tet_side": _dual_entity_stats(int_f_tet_part),
+                        "face_length_prism_side": _dual_entity_stats(int_f_pri_part),
+                    },
+                    "prism_cell_partial_duals": {
+                        "cell_dual_edge_n_total": cde_tot_cnt,
+                        "cell_dual_edge_n_negative": cde_neg_cnt,
+                        "cell_dual_edge_min_m": cde_min,
+                        "cell_dual_area_n_total": cda_tot_cnt,
+                        "cell_dual_area_n_negative": cda_neg_cnt,
+                        "cell_dual_area_min_m2": cda_min,
+                    },
+                    "ball_build_s": ball_build_s,
+                    "case_elapsed_s": float(time.time() - t_case),
+                }
+            )
+
+        del skin_nodes, skin_cells, skin_tags, skin_faces, r0_nodes, r0_faces
+        _trim_heap()
+
+    out = {
+        "task": "B_spherical_shell_signed_duals",
+        "smoke": bool(smoke),
+        "formula_source": (
+            "wakis.unstructured.pml3d.spherical_shell_mesh (_split_prisms, "
+            "_snap_degenerate_duals) and wakis.unstructured.mesh.SimplexMesh "
+            "(dual_measure, dual_length, cell_dual_edge, cell_dual_area)."
+        ),
+        "cases": cases_out,
+        "elapsed_s": float(time.time() - t_wall_start),
+    }
+    print(json.dumps(out, indent=2))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    smoke_flag = "--smoke" in sys.argv[2:]
     if cmd == "run":
         run()
+    elif cmd == "ball-like":
+        run_ball_like(smoke=smoke_flag)
+    elif cmd == "shell-duals":
+        run_shell_duals(smoke=smoke_flag)
     else:
-        raise SystemExit(f"Unknown command {cmd!r}; expected 'run'.")
+        raise SystemExit(
+            f"Unknown command {cmd!r}; expected 'run', 'ball-like', or 'shell-duals'."
+        )
