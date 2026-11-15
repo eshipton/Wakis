@@ -30,13 +30,7 @@ Generators:
 import numpy as np
 import scipy.sparse as sp
 
-__all__ = [
-    "QuadMesh",
-    "ogrid_mesh",
-    "ogrid_cartesian_mesh",
-    "boxed_cylinders_mesh",
-    "radial_nodes",
-]
+__all__ = ["QuadMesh", "ogrid_mesh", "ogrid_cartesian_mesh", "boxed_cylinders_mesh", "radial_nodes"]
 
 
 class QuadMesh:
@@ -68,9 +62,7 @@ class QuadMesh:
         )
         self.is_polar = ~np.isnan(self.polar[:, 0])
         self.polar_center = (
-            np.zeros((nc, 2))
-            if polar_center is None
-            else np.asarray(polar_center, float)
+            np.zeros((nc, 2)) if polar_center is None else np.asarray(polar_center, float)
         )
         sides = np.stack([self.cells, np.roll(self.cells, -1, axis=1)], -1)
         key = np.sort(sides.reshape(-1, 2), axis=1)
@@ -89,13 +81,12 @@ class QuadMesh:
         self.boundary_nodes = np.unique(self.edges[self.boundary_edges])
         P = self.nodes[self.cells]
         self.cell_area = 0.5 * np.sum(
-            P[..., 0] * np.roll(P[..., 1], -1, 1)
-            - np.roll(P[..., 0], -1, 1) * P[..., 1],
+            P[..., 0] * np.roll(P[..., 1], -1, 1) - np.roll(P[..., 0], -1, 1) * P[..., 1],
             axis=1,
         )
         pa = self.polar[self.is_polar]
-        self.cell_area[self.is_polar] = (
-            0.5 * (pa[:, 1] ** 2 - pa[:, 0] ** 2) * (pa[:, 3] - pa[:, 2])
+        self.cell_area[self.is_polar] = 0.5 * (pa[:, 1] ** 2 - pa[:, 0] ** 2) * (
+            pa[:, 3] - pa[:, 2]
         )
         if np.any(self.cell_area <= 0):
             raise ValueError(f"{np.sum(self.cell_area <= 0)} inverted cells")
@@ -246,9 +237,7 @@ def _smooth(nodes, cells, movable, n_iter):
     e = np.concatenate([cells[:, [k, (k + 1) % 4]] for k in range(4)])
     e = np.unique(np.sort(e, 1), axis=0)
     n = len(nodes)
-    A = sp.csr_matrix(
-        (np.ones(2 * len(e)), (e.T.ravel(), e[:, ::-1].T.ravel())), (n, n)
-    )
+    A = sp.csr_matrix((np.ones(2 * len(e)), (e.T.ravel(), e[:, ::-1].T.ravel())), (n, n))
     deg = np.asarray(A.sum(1)).ravel()
     x = nodes.copy()
     for _ in range(n_iter):
@@ -484,9 +473,7 @@ def boxed_cylinders_mesh(centers, a, radii_in, n_theta, half_box, m_tr, x_outer,
     pc = np.concatenate(cen_rows)
     # Cartesian block outside the boxes' rectangle
     X0, Y0 = centers[-1] + half_box, half_box
-    xin = np.unique(
-        np.concatenate([cx + np.linspace(-half_box, half_box, n + 1) for cx in centers])
-    )
+    xin = np.unique(np.concatenate([cx + np.linspace(-half_box, half_box, n + 1) for cx in centers]))
     yin = np.linspace(-half_box, half_box, n + 1)
     xo, yo = np.asarray(x_outer), np.asarray(y_outer)
     xs = np.concatenate([-xo[::-1], xin, xo]) if centers[0] == -centers[-1] else None
@@ -497,9 +484,7 @@ def boxed_cylinders_mesh(centers, a, radii_in, n_theta, half_box, m_tr, x_outer,
     nx, ny = len(xs), len(ys)
     idx = np.arange(nx * ny).reshape(nx, ny)
     c4 = np.stack([idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]], -1)
-    CX, CY = np.meshgrid(
-        0.5 * (xs[:-1] + xs[1:]), 0.5 * (ys[:-1] + ys[1:]), indexing="ij"
-    )
+    CX, CY = np.meshgrid(0.5 * (xs[:-1] + xs[1:]), 0.5 * (ys[:-1] + ys[1:]), indexing="ij")
     out = (np.abs(CX) > X0) | (np.abs(CY) > Y0)
     cart = c4[out]
     allnodes = np.concatenate([nodes, np.stack([X.ravel(), Y.ravel()], 1)])
@@ -519,13 +504,7 @@ def boxed_cylinders_mesh(centers, a, radii_in, n_theta, half_box, m_tr, x_outer,
     # tags: inside a cylinder
     is_pol = ~np.isnan(pol_all[:, 0])
     cen = nodes[cells].mean(1)
-    d = (
-        np.min(
-            np.abs(cen[:, None, 0] - centers[None, :]) ** 2 + cen[:, None, 1] ** 2,
-            axis=1,
-        )
-        ** 0.5
-    )
+    d = np.min(np.abs(cen[:, None, 0] - centers[None, :]) ** 2 + cen[:, None, 1] ** 2, axis=1) ** 0.5
     rmid = 0.5 * (pol_all[:, 0] + pol_all[:, 1])
     inside = np.where(is_pol, rmid < a, d < a)
     mesh = QuadMesh(nodes, cells, inside.astype(np.int64), pol_all, polar_center=pc)

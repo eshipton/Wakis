@@ -138,9 +138,8 @@ def hodge_components(mesh):
             w.append(L[k] * h[k])
             cell.append(pc)
             rr, tt = pts[k]
-            point.append(
-                np.stack([rr * np.cos(tt), rr * np.sin(tt)], 1) + mesh.polar_center[pc]
-            )
+            point.append(np.stack([rr * np.cos(tt), rr * np.sin(tt)], 1)
+                         + mesh.polar_center[pc])
             direc.append(Nhat[e])
             nrow += pc.size
     R = sp.csr_matrix(
@@ -288,7 +287,7 @@ class CurvilinearFIT2D:
         sb = np.zeros(mesh.n_nodes)
         if pml is not None:
             sa, sb = self._setup_pml(pml)
-        self._psi_coef = self.mass * sa[self.free] * sb[self.free]
+        self._psi_coef = (self.mass * sa[self.free] * sb[self.free])
         node_cond = loss[self.free] + self.mass * (sa + sb)[self.free]
         self._psi_idx = np.flatnonzero(self._psi_coef)
 
@@ -303,9 +302,7 @@ class CurvilinearFIT2D:
         self.dt = cfl * self.dt_max if dt is None else float(dt)
         self.courant = self.dt * np.sqrt(lam) / 2
         if dispersive:
-            check_dispersive_stability(
-                [m for m, _ in dispersive], self.dt, self.courant
-            )
+            check_dispersive_stability([m for m, _ in dispersive], self.dt, self.courant)
 
         # ---------------- node update (with dispersion for TM)
         groups = []
@@ -353,10 +350,9 @@ class CurvilinearFIT2D:
 
             sa, sb = sig(r_n), sbar(r_n)
             rmid = np.hypot(*mid.T)
-            radial = (
-                np.abs(np.einsum("ij,ij->i", t, mid))
-                > 0.9 * np.linalg.norm(t, axis=1) * rmid
-            )
+            radial = np.abs(np.einsum("ij,ij->i", t, mid)) > 0.9 * np.linalg.norm(
+                t, axis=1
+            ) * rmid
             r_e = np.where(radial, rmid, np.hypot(*X[mesh.edges[:, 0]].T))
             s_par = np.where(radial, sig(r_e), sbar(r_e))
             s_perp = np.where(radial, sbar(r_e), sig(r_e))
@@ -376,9 +372,7 @@ class CurvilinearFIT2D:
         e = np.flatnonzero((s_par > 0) | (s_perp > 0))
         Wc = self.W[e].tocoo()
         if np.any(Wc.col != e[Wc.row]):
-            raise ValueError(
-                "PML edges must have a diagonal Hodge (polar or rectangular cells)"
-            )
+            raise ValueError("PML edges must have a diagonal Hodge (polar or rectangular cells)")
         c = np.asarray(self.W[e, e]).ravel()
         self._pml = dict(e=e, c=c, s_par=s_par[e], s_perp=s_perp[e])
         return sa, sb
@@ -423,9 +417,7 @@ class CurvilinearFIT2D:
         (latest step n -> n+1). Positive for dt below the stability limit.
         """
         if self.pol == "TM":
-            return 0.5 * self.v @ (self.W @ self.v) + 0.5 * self.mass @ (
-                self.u * self.u_old
-            )
+            return 0.5 * self.v @ (self.W @ self.v) + 0.5 * self.mass @ (self.u * self.u_old)
         d = self._d_prev
         return 0.5 * d @ (self.W @ d) + 0.5 * self.mass @ (self.u * self.u_old)
 
@@ -473,11 +465,7 @@ class CurvilinearFIT2D:
         on_b[mesh.boundary_nodes] = True
         if np.any(on_b[mesh.cells[scat].ravel()]):
             raise ValueError("the scatterer must not touch the outer boundary")
-        s0 = (
-            float((mesh.nodes[mesh.cells[scat].ravel()] @ k).min())
-            if scat.any()
-            else 0.0
-        )
+        s0 = float((mesh.nodes[mesh.cells[scat].ravel()] @ k).min()) if scat.any() else 0.0
         pw = dict(s=src_time, k=k, amp=float(amplitude), eps_b=eps_b, s0=s0,
                   v=1 / np.sqrt(mu_0 * eps_0 * eps_b), eta=np.sqrt(mu_0 / (eps_0 * eps_b)))  # fmt: skip
         if self.pol == "TM":
@@ -491,11 +479,7 @@ class CurvilinearFIT2D:
             hc = self.hc
             p = np.array([-k[1], k[0]])  # E_inc direction z x k
             q = np.flatnonzero(scat[hc["cell"]] & ~disp_cell[hc["cell"]])
-            coef = (
-                -hc["w"][q]
-                * (1 - eps_b / self.eps_r[hc["cell"][q]])
-                * (hc["direction"][q] @ p)
-            )
+            coef = -hc["w"][q] * (1 - eps_b / self.eps_r[hc["cell"][q]]) * (hc["direction"][q] @ p)
             pw.update(RT=hc["R"][q].T.tocsr(), coef=coef, pos=hc["point"][q] @ k)
             for g in self._te_groups:
                 g["pw_proj"] = hc["direction"][g["q"]] @ p
@@ -506,9 +490,7 @@ class CurvilinearFIT2D:
         # at 10 cells per wavelength).
         allpos = [pw["pos"]] + [g["pw_pos"] for g in self._te_groups]
         allpos = np.concatenate(allpos) if len(allpos) else np.zeros(1)
-        L = np.linalg.norm(
-            mesh.nodes[mesh.edges[:, 1]] - mesh.nodes[mesh.edges[:, 0]], axis=1
-        )
+        L = np.linalg.norm(mesh.nodes[mesh.edges[:, 1]] - mesh.nodes[mesh.edges[:, 0]], axis=1)
         dx = L.min() / 16
         x0 = allpos.min() - dx
         nx = int(np.ceil((allpos.max() + dx - x0) / dx)) + 1
@@ -526,9 +508,7 @@ class CurvilinearFIT2D:
         if self.pol == "TM":
             pw["I"] = interp(pw["pos"])
         else:
-            pw["GQ"] = (
-                self.G.T @ pw["RT"] @ sp.diags(pw["coef"]) @ interp(pw["pos"])
-            ).tocsr()
+            pw["GQ"] = (self.G.T @ pw["RT"] @ sp.diags(pw["coef"]) @ interp(pw["pos"])).tocsr()
             for g in self._te_groups:
                 g["I"] = (sp.diags(g["pw_proj"]) @ interp(g["pw_pos"])).tocsr()
         self.plane_wave = pw
@@ -582,9 +562,7 @@ class CurvilinearFIT2D:
             dt = self.dt
             a, b = 0.5 * dt * P["s_par"], 0.5 * dt * P["s_perp"]
             de = d[e]
-            P["h"] = (
-                (1 - a) * P["h"] + P["c"] * ((1 + b) * de - (1 - b) * self._d_prev[e])
-            ) / (1 + a)
+            P["h"] = ((1 - a) * P["h"] + P["c"] * ((1 + b) * de - (1 - b) * self._d_prev[e])) / (1 + a)
             r += P["GeT"] @ (P["h"] - P["c"] * de)
         return r
 
