@@ -23,16 +23,21 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._core import cell_materials
 from .improve import constraint_faces
 from .mesh import SimplexMesh
 
 __all__ = [
     "bisect",
+    "dorfler_mark",
     "kuhn_mesh",
     "l_prism_mesh",
     "label_constraint_faces",
     "refine_uniform",
+    "residual_indicator",
     "sphere_projector",
+    "whitney_fields",
+    "zz_curl_indicator",
 ]
 
 # Local edge pairs of a tetrahedron (matching SimplexMesh._local_edges)
@@ -642,3 +647,308 @@ def refine_uniform(mesh, generations=3, return_info=False, **kw):
     if return_info:
         return mesh, agg_info
     return mesh
+
+
+# Exact P1 mass matrices on a tetrahedron (divide by V) and triangle (divide by A)
+_P1_TET_MASS = (np.ones((4, 4)) + np.eye(4)) / 20.0
+_P1_TRI_MASS = (np.ones((3, 3)) + np.eye(3)) / 12.0
+
+
+def _local_edge_signs(cells):
+    """Orientation signs +1 if cells[:, a] < cells[:, b] else -1 for local edges."""
+    return np.stack(
+        [np.where(cells[:, a] < cells[:, b], 1.0, -1.0) for a, b in _LOC_E], axis=1
+    )
+
+
+def whitney_fields(mesh, e):
+    """
+    Reconstruct the linear Whitney 1-form field and constant curl on each cell.
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        3D tetrahedral mesh.
+    e : array_like, shape (n_edges,)
+        Oriented edge voltages [V].
+
+    Returns
+    -------
+    U : ndarray, shape (n_cells, 4, 3)
+        Electric field values at the 4 local vertices of each tetrahedron [V/m].
+    B : ndarray, shape (n_cells, 3)
+        Constant curl ``curl u_h`` on each tetrahedron [V/m^2].
+    """
+    if mesh.dim != 3:
+        raise ValueError("whitney_fields requires a 3D tetrahedral mesh")
+    e_arr = np.asarray(e, dtype=float)
+    grad = mesh.barycentric_gradients()  # (nc, 4, 3)
+    sgn = _local_edge_signs(mesh.cells)  # (nc, 6)
+    ep = sgn * e_arr[mesh.cell_edges]  # (nc, 6)
+
+    U = np.zeros((mesh.n_cells, 4, 3), dtype=float)
+    B = np.zeros((mesh.n_cells, 3), dtype=float)
+    for p, (a, b) in enumerate(_LOC_E):
+        w = ep[:, p, None]
+        U[:, a, :] += w * grad[:, b, :]
+        U[:, b, :] -= w * grad[:, a, :]
+        B += 2.0 * w * np.cross(grad[:, a, :], grad[:, b, :])
+    return U, B
+
+
+def _res_element_term(h_T, mu_T, lam_h, eps_T, u_l2_T):
+    """Element residual contribution h_T^2 * mu_T * ||lam_h * eps_T * u_h||_T^2."""
+    return (h_T**2) * mu_T * ((lam_h * eps_T) ** 2) * u_l2_T
+
+
+def _res_face_jump_weight(h_F, mu_F, lam_h, eps_F):
+    """Weights (h_F * mu_F, h_F * lam_h / eps_F) of the tangential and normal jumps."""
+    return h_F * mu_F, h_F * (lam_h / eps_F)
+
+
+def residual_indicator(mesh, e, k2_per_m2, materials=None, bc="pec"):
+    """
+    Coefficient-weighted residual a-posteriori error indicator for the Maxwell
+    eigenproblem.
+
+    Normalises ``e`` internally so that ``(eps_r u_h, u_h) = 1`` and evaluates
+    for each tetrahedron ``T``::
+
+        eta_T^2 = h_T^2 mu_T || lam_h eps_T u_h ||_T^2
+                + sum_{F in dT, int} 1/2 h_F [ mu_F ||[n x mu^-1 curl u_h]||_F^2
+                                             + (lam_h / eps_F) ||[eps u_h . n]||_F^2 ]
+                + sum_{F in dT, PMC} h_F mu_T || n x mu_T^-1 curl u_h ||_F^2
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        3D tetrahedral mesh.
+    e : array_like, shape (n_edges,)
+        Eigenmode edge voltages [V].
+    k2_per_m2 : float
+        Discrete eigenvalue ``lambda_h = k_h^2`` [1/m^2].
+    materials : dict, optional
+        ``{tag: material}`` mapping as in `UnstructuredFIT3D`.
+    bc : {"pec", "pmc", "abc"}, optional
+        Outer boundary condition (default ``"pec"``; ``"abc"`` raises
+        `NotImplementedError`).
+
+    Returns
+    -------
+    eta2 : ndarray, shape (n_cells,)
+        Per-tetrahedron squared error indicator ``eta_T^2`` [1/m^2].
+    """
+    if bc == "abc":
+        raise NotImplementedError("residual_indicator does not support lossy bc='abc'")
+    if bc not in ("pec", "pmc"):
+        raise ValueError("bc must be 'pec', 'pmc' or 'abc'")
+
+    eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
+    live = ~pec
+    live_f = live.astype(float)
+    lam_h = float(k2_per_m2)
+
+    U, B = whitney_fields(mesh, e)
+    # Exact element L2 integral ||u_h||_T^2 with the tetrahedral P1 mass matrix
+    u_l2_T = mesh.cell_volume * np.einsum("nik,ij,njk->n", U, _P1_TET_MASS, U)
+    norm_sq = float(np.sum(eps_r * live_f * u_l2_T))
+    if norm_sq <= 0.0:
+        raise ValueError("eigenmode has zero electric energy norm")
+    inv_norm = 1.0 / np.sqrt(norm_sq)
+    U = U * inv_norm
+    B = B * inv_norm
+    u_l2_T = u_l2_T / norm_sq
+
+    h_T = mesh.edge_length[mesh.cell_edges].max(axis=1)
+    h_F = mesh.edge_length[mesh.face_edges].max(axis=1)
+
+    eta2 = live_f * _res_element_term(h_T, mu_r, lam_h, eps_r, u_l2_T)
+
+    # Sort cell-face incidences to pair interior faces and locate boundary faces
+    nc = mesh.n_cells
+    nf = mesh.n_faces
+    f_all = mesh.cell_faces.ravel()
+    c_all = np.repeat(np.arange(nc, dtype=np.int64), 4)
+    k_all = np.tile(np.arange(4, dtype=np.int64), nc)
+    order = np.argsort(f_all, kind="stable")
+    f_sorted = f_all[order]
+    c_sorted = c_all[order]
+    k_sorted = k_all[order]
+    counts = np.bincount(f_all, minlength=nf)
+
+    # Interior faces (valence 2) where both cells are non-PEC
+    m2 = counts[f_sorted] == 2
+    f_int = f_sorted[m2][0::2]
+    c0 = c_sorted[m2][0::2]
+    k0 = k_sorted[m2][0::2]
+    c1 = c_sorted[m2][1::2]
+    k1 = k_sorted[m2][1::2]
+
+    both_live = live[c0] & live[c1]
+    if np.any(both_live):
+        f_int = f_int[both_live]
+        c0, k0 = c0[both_live], k0[both_live]
+        c1, k1 = c1[both_live], k1[both_live]
+
+        n_f = mesh.face_normal[f_int]
+        A_f = mesh.face_area[f_int]
+
+        # Tangential curl jump: [n x mu^-1 curl u_h] is constant on each face
+        H0 = B[c0] / mu_r[c0, None]
+        H1 = B[c1] / mu_r[c1, None]
+        jmp_H_tan = np.cross(n_f, H0 - H1)
+        curl_jump_sq = A_f * np.einsum("fi,fi->f", jmp_H_tan, jmp_H_tan)
+
+        # Normal displacement jump: [eps u_h . n] is linear on F; match vertices by global node ID
+        lv0 = _LOC_F[k0]  # (n_int, 3)
+        gv0 = mesh.cells[c0[:, None], lv0]
+        lv0_sorted = np.take_along_axis(lv0, np.argsort(gv0, axis=1), axis=1)
+
+        lv1 = _LOC_F[k1]
+        gv1 = mesh.cells[c1[:, None], lv1]
+        lv1_sorted = np.take_along_axis(lv1, np.argsort(gv1, axis=1), axis=1)
+
+        U0 = U[c0[:, None], lv0_sorted]  # (n_int, 3, 3)
+        U1 = U[c1[:, None], lv1_sorted]
+        dn0 = eps_r[c0, None] * np.einsum("fvi,fi->fv", U0, n_f)
+        dn1 = eps_r[c1, None] * np.einsum("fvi,fi->fv", U1, n_f)
+        jmp_dn = dn0 - dn1
+        div_jump_sq = A_f * np.einsum("fi,ij,fj->f", jmp_dn, _P1_TRI_MASS, jmp_dn)
+
+        mu_F = 0.5 * (mu_r[c0] + mu_r[c1])
+        eps_F = 0.5 * (eps_r[c0] + eps_r[c1])
+        w_curl, w_div = _res_face_jump_weight(h_F[f_int], mu_F, lam_h, eps_F)
+        contrib = 0.5 * (w_curl * curl_jump_sq + w_div * div_jump_sq)
+        np.add.at(eta2, c0, contrib)
+        np.add.at(eta2, c1, contrib)
+
+    # Outer PMC boundary faces (valence 1)
+    if bc == "pmc":
+        m1 = counts[f_sorted] == 1
+        f_bnd = f_sorted[m1]
+        c_bnd = c_sorted[m1]
+        live_bnd = live[c_bnd]
+        if np.any(live_bnd):
+            f_bnd = f_bnd[live_bnd]
+            c_bnd = c_bnd[live_bnd]
+            n_f = mesh.face_normal[f_bnd]
+            A_f = mesh.face_area[f_bnd]
+            H_b = B[c_bnd] / mu_r[c_bnd, None]
+            n_cross_H = np.cross(n_f, H_b)
+            pmc_sq = A_f * np.einsum("fi,fi->f", n_cross_H, n_cross_H)
+            w_pmc, _ = _res_face_jump_weight(
+                h_F[f_bnd], mu_r[c_bnd], lam_h, eps_r[c_bnd]
+            )
+            np.add.at(eta2, c_bnd, w_pmc * pmc_sq)
+
+    eta2[pec] = 0.0
+    return eta2
+
+
+def _zz_recover_curl(mesh, B, live):
+    """
+    Volume-weighted nodal curl recovery per material tag (never across tags).
+
+    Returns vertex values `R_verts` of shape `(n_cells, 4, 3)`.
+    """
+    R_verts = np.zeros((mesh.n_cells, 4, 3), dtype=float)
+    u_tags, tag_inv = np.unique(mesh.cell_tags, return_inverse=True)
+    for ti in range(len(u_tags)):
+        sel = live & (tag_inv == ti)
+        if not np.any(sel):
+            continue
+        c_sel = np.flatnonzero(sel)
+        v_sel = mesh.cell_volume[c_sel]
+        vb_sel = v_sel[:, None] * B[c_sel]
+        num = np.zeros((mesh.n_nodes, 3), dtype=float)
+        den = np.zeros(mesh.n_nodes, dtype=float)
+        for k in range(4):
+            nk = mesh.cells[c_sel, k]
+            np.add.at(num, nk, vb_sel)
+            np.add.at(den, nk, v_sel)
+        R_node = num / np.maximum(den[:, None], 1e-300)
+        R_verts[c_sel] = R_node[mesh.cells[c_sel]]
+    return R_verts
+
+
+def zz_curl_indicator(mesh, e, materials=None):
+    """
+    Zienkiewicz-Zhu recovery error indicator on ``curl u_h``.
+
+    Recovers a continuous piecewise-linear curl ``R`` inside each material tag
+    by volume-weighted nodal averaging of ``B_T = curl u_h`` (never averaging
+    across material tags) and integrates ``int_T mu_T^-1 |R - B_T|^2 dV``
+    exactly with the P1 mass matrix for ``u_h`` normalised to
+    ``(eps_r u_h, u_h) = 1``.
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        3D tetrahedral mesh.
+    e : array_like, shape (n_edges,)
+        Eigenmode edge voltages [V].
+    materials : dict, optional
+        ``{tag: material}`` mapping as in `UnstructuredFIT3D`.
+
+    Returns
+    -------
+    eta2_zz : ndarray, shape (n_cells,)
+        Per-tetrahedron squared ZZ curl indicator [1/m^2].
+    """
+    eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
+    live = ~pec
+    live_f = live.astype(float)
+
+    U, B = whitney_fields(mesh, e)
+    u_l2_T = mesh.cell_volume * np.einsum("nik,ij,njk->n", U, _P1_TET_MASS, U)
+    norm_sq = float(np.sum(eps_r * live_f * u_l2_T))
+    if norm_sq <= 0.0:
+        raise ValueError("eigenmode has zero electric energy norm")
+    B = B / np.sqrt(norm_sq)
+
+    R_verts = _zz_recover_curl(mesh, B, live)
+    diff = R_verts - B[:, None, :]
+    eta2 = (
+        (live_f / mu_r)
+        * mesh.cell_volume
+        * np.einsum("nik,ij,njk->n", diff, _P1_TET_MASS, diff)
+    )
+    eta2[pec] = 0.0
+    return eta2
+
+
+def _dorfler_order(eta2):
+    """Sort cell indices by descending error indicator (stable)."""
+    return np.argsort(-eta2, kind="stable")
+
+
+def dorfler_mark(eta2, theta=0.5):
+    """
+    Dörfler bulk marking: smallest set ``M`` with
+    ``sum_{T in M} eta_T^2 >= theta * sum_T eta_T^2``.
+
+    Parameters
+    ----------
+    eta2 : array_like, shape (n_cells,)
+        Per-cell squared error indicators ``eta_T^2`` [1/m^2].
+    theta : float, optional
+        Bulk marking fraction in ``(0, 1]`` (default 0.5).
+
+    Returns
+    -------
+    ndarray of int
+        Indices of marked cells (ordered by descending ``eta_T^2``).
+    """
+    theta = float(theta)
+    if not (0.0 < theta <= 1.0):
+        raise ValueError("theta must be in (0, 1]")
+    eta2_arr = np.asarray(eta2, dtype=float)
+    tot = float(np.sum(eta2_arr))
+    if eta2_arr.size == 0 or tot <= 0.0:
+        return np.empty(0, dtype=np.int64)
+    order = _dorfler_order(eta2_arr)
+    csum = np.cumsum(eta2_arr[order])
+    target = theta * tot
+    k = int(np.searchsorted(csum, target, side="left")) + 1
+    k = min(k, eta2_arr.size)
+    return order[:k]

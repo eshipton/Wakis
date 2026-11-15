@@ -374,3 +374,100 @@ def layered_pillbox_tm0(a, d, t, eps, n_modes=1, p_max=4):
     kmin = kr / np.sqrt(max(eps, 1.0)) * (1 + 1e-9)
     kmax = np.sqrt(kr**2 + ((p_max + 1) * np.pi / min(t, d - t)) ** 2)
     return np.array(_roots(f, kmax, n_scan=20000, kmin=kmin)[:n_modes])
+
+
+L_SHAPE_SCAN_BRACKET = (8.0, 11.5)
+
+
+def l_shape_dirichlet_eigenvalue(n_terms=24, n_boundary=240, n_interior=200, seed=0):
+    """
+    First Dirichlet eigenvalue of the L-shaped domain
+    ``L = (-1, 1)^2 \\ [0, 1] x [-1, 0]`` [m^2] by the method of particular
+    solutions in subspace-angle form (Fox, Henrici & Moler 1967;
+    Betcke & Trefethen 2005).
+
+    Uses the corner-singular Fourier-Bessel basis
+    ``J_{2j/3}(sqrt(lam) r) sin(2 j theta / 3)``, ``j = 1 .. n_terms``, in polar
+    coordinates ``(r, theta)`` centred at the re-entrant corner ``(0, 0)`` with
+    ``theta in [0, 3 pi / 2]`` measured from the positive ``x`` re-entrant side
+    through the domain. Boundary collocation points lie on the four outer sides
+    not adjacent to the re-entrant corner; interior points stabilize the column
+    space via the thin QR factorization of ``[A_boundary; A_interior]``.
+
+    Parameters
+    ----------
+    n_terms : int, optional
+        Number of singular Fourier-Bessel basis functions (default 24).
+    n_boundary : int, optional
+        Number of collocation points on the four non-re-entrant boundary sides
+        (default 240).
+    n_interior : int, optional
+        Number of interior points for subspace stabilization (default 200).
+    seed : int, optional
+        Random seed for interior point sampling (default 0).
+
+    Returns
+    -------
+    lam : float
+        First Dirichlet eigenvalue ``k^2`` [1/m^2].
+    sigma_min : float
+        Smallest singular value of the boundary rows of ``Q`` at ``lam`` [-].
+    """
+    from scipy.optimize import minimize_scalar
+
+    n_terms = int(n_terms)
+    n_boundary = int(n_boundary)
+    n_interior = int(n_interior)
+
+    # Boundary points along the 4 non-re-entrant sides of length 1, 2, 2, 1 (total 6 m)
+    s = (np.arange(n_boundary, dtype=float) + 0.5) * (6.0 / n_boundary)
+    bx = np.empty(n_boundary, dtype=float)
+    by = np.empty(n_boundary, dtype=float)
+    m0 = s < 1.0
+    bx[m0], by[m0] = 1.0, s[m0]
+    m1 = (s >= 1.0) & (s < 3.0)
+    bx[m1], by[m1] = 1.0 - (s[m1] - 1.0), 1.0
+    m2 = (s >= 3.0) & (s < 5.0)
+    bx[m2], by[m2] = -1.0, 1.0 - (s[m2] - 3.0)
+    m3 = s >= 5.0
+    bx[m3], by[m3] = -1.0 + (s[m3] - 5.0), -1.0
+
+    rng = np.random.default_rng(seed)
+    ix, iy = [], []
+    while len(ix) < n_interior:
+        pts = rng.uniform(-1.0, 1.0, size=(2 * n_interior, 2))
+        ok = ~((pts[:, 0] >= 0.0) & (pts[:, 1] <= 0.0)) & (
+            np.hypot(pts[:, 0], pts[:, 1]) > 1e-3
+        )
+        pts = pts[ok]
+        ix.extend(pts[:, 0].tolist())
+        iy.extend(pts[:, 1].tolist())
+    ix = np.asarray(ix[:n_interior], dtype=float)
+    iy = np.asarray(iy[:n_interior], dtype=float)
+
+    x = np.concatenate([bx, ix])
+    y = np.concatenate([by, iy])
+    r = np.hypot(x, y)
+    theta = np.mod(np.arctan2(y, x), 2.0 * np.pi)
+    orders = (2.0 / 3.0) * np.arange(1, n_terms + 1, dtype=float)
+    sin_part = np.sin(theta[:, None] * orders[None, :])
+
+    def sigma(lam):
+        k = np.sqrt(lam)
+        A = jv(orders[None, :], k * r[:, None]) * sin_part
+        Q, _ = np.linalg.qr(A, mode="reduced")
+        return float(np.linalg.svd(Q[:n_boundary], compute_uv=False)[-1])
+
+    lam_lo, lam_hi = L_SHAPE_SCAN_BRACKET
+    grid = np.linspace(lam_lo, lam_hi, 71)
+    vals = np.array([sigma(l) for l in grid])
+    imin = int(np.argmin(vals))
+    if imin == 0 or imin == len(grid) - 1:
+        raise RuntimeError("MPS coarse scan minimum lies on the bracket boundary")
+    res = minimize_scalar(
+        sigma,
+        bounds=(float(grid[imin - 1]), float(grid[imin + 1])),
+        method="bounded",
+        options={"xatol": 1e-13},
+    )
+    return float(res.x), float(res.fun)

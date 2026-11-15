@@ -14,18 +14,30 @@ Covers:
 
 import numpy as np
 import pytest
+from scipy.constants import c as C0
 from scipy.spatial import cKDTree
+from scipy.special import roots_legendre
 
 from wakis.unstructured.adapt import (
     bisect,
+    dorfler_mark,
     kuhn_mesh,
     l_prism_mesh,
     label_constraint_faces,
     refine_uniform,
+    residual_indicator,
     sphere_projector,
+    whitney_fields,
+    zz_curl_indicator,
 )
+from wakis.unstructured.analytic import (
+    L_SHAPE_SCAN_BRACKET,
+    l_shape_dirichlet_eigenvalue,
+)
+from wakis.unstructured.estimate import estimate_memory
 from wakis.unstructured.mesh import SimplexMesh
 from wakis.unstructured.meshers import ball_mesh
+from wakis.unstructured.solver3d import UnstructuredFIT3D
 
 
 def _interface_faces(mesh):
@@ -382,3 +394,338 @@ def test_r7_sphere_projection():
         f"deficit(3)/deficit(0)={def_ratio:.4f} (predicted ~0.25)"
     )
     assert def_proj < def0
+
+
+# ---------------------------------------------------------------------------
+# S1-S5 & E2-E5: Whitney fields, error indicators, Dörfler marking, MPS
+# ---------------------------------------------------------------------------
+
+
+def _duffy_tet_rule(n_1d=6):
+    """Duffy-collapsed n_1d x n_1d x n_1d Gauss-Legendre rule on a tetrahedron."""
+    x, w = roots_legendre(n_1d)
+    t = 0.5 * (x + 1.0)
+    wt = 0.5 * w
+    t1, t2, t3 = np.meshgrid(t, t, t, indexing="ij")
+    w1, w2, w3 = np.meshgrid(wt, wt, wt, indexing="ij")
+    t1, t2, t3 = t1.ravel(), t2.ravel(), t3.ravel()
+    weights = 6.0 * (w1 * w2 * w3).ravel() * ((1.0 - t1) ** 2) * (1.0 - t2)
+    l1 = t1
+    l2 = (1.0 - t1) * t2
+    l3 = (1.0 - t1) * (1.0 - t2) * t3
+    l0 = 1.0 - l1 - l2 - l3
+    bary = np.stack([l0, l1, l2, l3], axis=1)
+    return bary, weights
+
+
+def _box_tm110_errors(mesh, e, a=0.7, b=0.5, d=0.3, n_1d=6):
+    """
+    Evaluate ||u - u_h||^2 and ||curl(u - u_h)||^2 on the PEC box (a, b, d)
+    using a Duffy-collapsed Gauss rule, with u_h normalised so (u_h, u_h) = 1.
+    """
+    U, B = whitney_fields(mesh, e)
+    p1_m = (np.ones((4, 4)) + np.eye(4)) / 20.0
+    norm_sq = float(np.sum(mesh.cell_volume * np.einsum("nik,ij,njk->n", U, p1_m, U)))
+    inv_norm = 1.0 / np.sqrt(norm_sq)
+    U = U * inv_norm
+    B = B * inv_norm
+
+    bary, W = _duffy_tet_rule(n_1d)
+    norm_c = 2.0 / np.sqrt(a * b * d)
+    nc = mesh.n_cells
+    chunk = 2048
+
+    # First pass: determine sign of u so (u, u_h) > 0
+    dot_u = 0.0
+    for i0 in range(0, nc, chunk):
+        sl = slice(i0, min(nc, i0 + chunk))
+        X_c = mesh.nodes[mesh.cells[sl]]
+        pts = np.einsum("qk,nki->nqi", bary, X_c)
+        uh_z = np.einsum("qk,nk->nq", bary, U[sl, :, 2])
+        uz = norm_c * np.sin(np.pi * pts[..., 0] / a) * np.sin(np.pi * pts[..., 1] / b)
+        dot_u += float(np.sum(mesh.cell_volume[sl, None] * W[None, :] * uz * uh_z))
+    sgn = 1.0 if dot_u >= 0.0 else -1.0
+
+    err_u2 = 0.0
+    err_cu2 = 0.0
+    for i0 in range(0, nc, chunk):
+        sl = slice(i0, min(nc, i0 + chunk))
+        X_c = mesh.nodes[mesh.cells[sl]]
+        pts = np.einsum("qk,nki->nqi", bary, X_c)
+        uh_q = np.einsum("qk,nki->nqi", bary, U[sl])
+        px, py = pts[..., 0], pts[..., 1]
+        sx = np.sin(np.pi * px / a)
+        cx = np.cos(np.pi * px / a)
+        sy = np.sin(np.pi * py / b)
+        cy = np.cos(np.pi * py / b)
+
+        du_x = -uh_q[..., 0]
+        du_y = -uh_q[..., 1]
+        du_z = sgn * norm_c * sx * sy - uh_q[..., 2]
+        dcu_x = sgn * norm_c * (np.pi / b) * sx * cy - B[sl, None, 0]
+        dcu_y = -sgn * norm_c * (np.pi / a) * cx * sy - B[sl, None, 1]
+        dcu_z = -B[sl, None, 2]
+
+        vw = mesh.cell_volume[sl, None] * W[None, :]
+        err_u2 += float(np.sum(vw * (du_x**2 + du_y**2 + du_z**2)))
+        err_cu2 += float(np.sum(vw * (dcu_x**2 + dcu_y**2 + dcu_z**2)))
+
+    return err_u2, err_cu2
+
+
+@pytest.fixture(scope="module")
+def box_l0_l1_solves():
+    """Solve box (0.7, 0.5, 0.3) m TM110 eigenproblem at L0 (gen 0) and L1 (gen 3)."""
+    a, b, d = 0.7, 0.5, 0.3
+    k2_exact = float(np.pi**2 * (1.0 / a**2 + 1.0 / b**2))
+    f_exact = float(np.sqrt(k2_exact) * C0 / (2.0 * np.pi))
+    m0 = kuhn_mesh((7, 5, 3), 0.1)
+    m1 = refine_uniform(m0, 3)
+    out = {
+        "a": a,
+        "b": b,
+        "d": d,
+        "k2_exact": k2_exact,
+        "f_exact": f_exact,
+        "levels": {},
+    }
+    for label, m in (("L0", m0), ("L1", m1)):
+        sol = UnstructuredFIT3D(m, bc="pec", hodge="whitney")
+        freqs, E = sol.eigenmodes(n_modes=2, f_target=0.8 * f_exact)
+        out["levels"][label] = {
+            "mesh": m,
+            "f_hz": float(freqs[0]),
+            "f_next_hz": float(freqs[1]),
+            "kh2": float((2.0 * np.pi * freqs[0] / C0) ** 2),
+            "e": E[:, 0].copy(),
+        }
+    return out
+
+
+def test_s1_stokes():
+    """
+    S1: For random edge voltages e on the two-tag box, B_T . n_f A_f == (C e)_f
+    for all cells and faces to <= 1e-12 relative.
+    """
+    m = kuhn_mesh((7, 5, 3), 0.1, tag=lambda xc, yc, zc: (xc < 0.3).astype(np.int64))
+    rng = np.random.default_rng(0)
+    e = rng.standard_normal(m.n_edges)
+    _, B = whitney_fields(m, e)
+    ce = m.C @ e
+    nf_cell = m.face_normal[m.cell_faces]  # (nc, 4, 3)
+    af_cell = m.face_area[m.cell_faces]  # (nc, 4)
+    flux_b = np.einsum("ci,cfi->cf", B, nf_cell) * af_cell
+    flux_ce = ce[m.cell_faces]
+    rel_err = float(np.max(np.abs(flux_b - flux_ce)) / np.max(np.abs(flux_ce)))
+    print(f"[S1] max relative Stokes discrepancy = {rel_err:.3e}")
+    assert rel_err <= 1e-12
+
+
+def test_s2_galerkin_identity(box_l0_l1_solves):
+    """
+    S2: Galerkin eigenvalue identity k_h^2 - k^2 = ||curl(u - u_h)||^2 - k^2 ||u - u_h||^2
+    on the box TM110 mode at L0 and L1 using a Duffy-collapsed 6x6x6 Gauss rule.
+    """
+    k2_exact = box_l0_l1_solves["k2_exact"]
+    for label in ("L0", "L1"):
+        lv = box_l0_l1_solves["levels"][label]
+        m, e, kh2 = lv["mesh"], lv["e"], lv["kh2"]
+        err_u2_6, err_cu2_6 = _box_tm110_errors(m, e, n_1d=6)
+        err_u2_5, err_cu2_5 = _box_tm110_errors(m, e, n_1d=5)
+        rhs_6 = err_cu2_6 - k2_exact * err_u2_6
+        rhs_5 = err_cu2_5 - k2_exact * err_u2_5
+        lhs = kh2 - k2_exact
+        quad_bound = abs(rhs_6 - rhs_5)
+        eigsh_tol = 1e-10
+        bound = 10.0 * (eigsh_tol * kh2 + quad_bound)
+        diff = abs(lhs - rhs_6)
+        print(
+            f"[S2 {label}] lhs={lhs:.6e}, rhs={rhs_6:.6e}, "
+            f"|lhs-rhs|={diff:.3e} <= bound={bound:.3e} (quad_bound={quad_bound:.3e})"
+        )
+        assert diff <= bound
+
+
+def test_s3_scale_invariance():
+    """
+    S3: Scaling coordinates by s = 1e-3 and k^2 by s^-2 scales both indicators
+    eta^2 cellwise by s^-2 to <= 1e-12 relative.
+    """
+    s = 1e-3
+    m = kuhn_mesh((7, 5, 3), 0.1, tag=lambda xc, yc, zc: (xc < 0.3).astype(np.int64))
+    m_scaled = SimplexMesh(m.nodes * s, m.cells, m.cell_tags)
+    rng = np.random.default_rng(1)
+    e = rng.standard_normal(m.n_edges)
+    k2 = 55.0
+    mats = {0: [1.0, 1.0], 1: [2.2, 1.4]}
+
+    for bc in ("pec", "pmc"):
+        eta_res = residual_indicator(m, e, k2, materials=mats, bc=bc)
+        eta_res_s = residual_indicator(m_scaled, e, k2 / (s**2), materials=mats, bc=bc)
+        rel_res = float(np.max(np.abs(eta_res_s * (s**2) - eta_res)) / np.max(eta_res))
+        print(f"[S3 bc={bc}] residual scale rel_err = {rel_res:.3e}")
+        assert rel_res <= 1e-12
+
+    eta_zz = zz_curl_indicator(m, e, materials=mats)
+    eta_zz_s = zz_curl_indicator(m_scaled, e, materials=mats)
+    rel_zz = float(np.max(np.abs(eta_zz_s * (s**2) - eta_zz)) / np.max(eta_zz))
+    print(f"[S3] ZZ scale rel_err = {rel_zz:.3e}")
+    assert rel_zz <= 1e-12
+
+
+def test_s4_material_homogeneity():
+    """
+    S4: Filling the box uniformly with [eps_r, mu_r] = [2.5, 1.7] and scaling
+    k^2 by 1 / (2.5 * 1.7) scales both eta^2 indicators by 1 / (2.5 * 1.7)
+    cellwise to <= 1e-12 relative.
+    """
+    a_eps, b_mu = 2.5, 1.7
+    ab = a_eps * b_mu
+    m = kuhn_mesh((7, 5, 3), 0.1)
+    rng = np.random.default_rng(3)
+    e = rng.standard_normal(m.n_edges)
+    k2 = 60.0
+    mats = {0: [a_eps, b_mu]}
+
+    for bc in ("pec", "pmc"):
+        eta_vac = residual_indicator(m, e, k2, materials=None, bc=bc)
+        eta_mat = residual_indicator(m, e, k2 / ab, materials=mats, bc=bc)
+        rel_res = float(np.max(np.abs(eta_mat * ab - eta_vac)) / np.max(eta_vac))
+        print(f"[S4 bc={bc}] residual homogeneity rel_err = {rel_res:.3e}")
+        assert rel_res <= 1e-12
+
+    zz_vac = zz_curl_indicator(m, e, materials=None)
+    zz_mat = zz_curl_indicator(m, e, materials=mats)
+    rel_zz = float(np.max(np.abs(zz_mat * ab - zz_vac)) / np.max(zz_vac))
+    print(f"[S4] ZZ homogeneity rel_err = {rel_zz:.3e}")
+    assert rel_zz <= 1e-12
+
+
+def test_s5_dorfler_mark():
+    """
+    S5: For random eta2 (seed 2, n = 1013), dorfler_mark reaches theta,
+    dropping its smallest member falls strictly below theta, and all marked
+    entries are >= all unmarked entries.
+    """
+    rng = np.random.default_rng(2)
+    eta2 = rng.uniform(0.01, 10.0, size=1013)
+    theta = 0.5
+    tot = float(eta2.sum())
+    marked = dorfler_mark(eta2, theta=theta)
+
+    sum_m = float(eta2[marked].sum())
+    min_pos = int(np.argmin(eta2[marked]))
+    sum_without_min = sum_m - float(eta2[marked[min_pos]])
+
+    unmarked = np.setdiff1d(np.arange(len(eta2)), marked)
+    min_marked = float(eta2[marked].min())
+    max_unmarked = float(eta2[unmarked].max())
+    print(
+        f"[S5] n_marked={len(marked)}/{len(eta2)}, "
+        f"sum_m/tot={sum_m / tot:.6f} >= {theta}, "
+        f"without_min/tot={sum_without_min / tot:.6f} < {theta}, "
+        f"min_marked={min_marked:.4f} >= max_unmarked={max_unmarked:.4f}"
+    )
+    assert sum_m >= theta * tot
+    assert sum_without_min < theta * tot
+    assert min_marked >= max_unmarked
+
+
+def test_e2_e3_e4_box_effectivity_fast(box_l0_l1_solves):
+    """
+    E2, E3 (fast), E4: On box (0.7, 0.5, 0.3) m TM110 at L0 and L1:
+    * theta_res = eta / |||u - u_h||| in [1, 20];
+    * theta_ZZ = eta_ZZ / ||curl(u - u_h)|| in [0.5, 2];
+    * reliability |k_h^2 - k^2| <= eta^2.
+    """
+    k2_exact = box_l0_l1_solves["k2_exact"]
+    for label in ("L0", "L1"):
+        lv = box_l0_l1_solves["levels"][label]
+        m, e, kh2 = lv["mesh"], lv["e"], lv["kh2"]
+        err_u2, err_cu2 = _box_tm110_errors(m, e, n_1d=6)
+        energy_err = float(np.sqrt(err_cu2 + kh2 * err_u2))
+        curl_err = float(np.sqrt(err_cu2))
+
+        eta2_res = float(residual_indicator(m, e, kh2, bc="pec").sum())
+        eta2_zz = float(zz_curl_indicator(m, e).sum())
+        theta_res = float(np.sqrt(eta2_res) / energy_err)
+        theta_zz = float(np.sqrt(eta2_zz) / curl_err)
+        eig_err = abs(kh2 - k2_exact)
+
+        print(
+            f"[E2/E3/E4 {label}] f0={lv['f_hz'] * 1e-9:.6f} GHz, "
+            f"f1={lv['f_next_hz'] * 1e-9:.6f} GHz, "
+            f"theta_res={theta_res:.4f} in [1, 20], "
+            f"theta_ZZ={theta_zz:.4f} in [0.5, 2], "
+            f"|kh2-k2|={eig_err:.4e} <= eta2={eta2_res:.4e}"
+        )
+        assert 1.0 <= theta_res <= 20.0
+        assert 0.5 <= theta_zz <= 2.0
+        assert eig_err <= eta2_res
+
+
+@pytest.mark.slow
+def test_e3_box_effectivity_slow(box_l0_l1_solves):
+    """
+    E3 (slow): Box TM110 at L2 (6 uniform generations, 40320 cells):
+    theta_res in [1, 20], theta_ZZ in [0.5, 2], and consecutive-level ratios
+    theta(L2) / theta(L1) in [0.8, 1.25] for both indicators.
+    """
+    f_exact = box_l0_l1_solves["f_exact"]
+    lv1 = box_l0_l1_solves["levels"]["L1"]
+    m1, e1, kh2_1 = lv1["mesh"], lv1["e"], lv1["kh2"]
+    err_u2_1, err_cu2_1 = _box_tm110_errors(m1, e1, n_1d=6)
+    theta_res_1 = float(
+        np.sqrt(residual_indicator(m1, e1, kh2_1, bc="pec").sum())
+        / np.sqrt(err_cu2_1 + kh2_1 * err_u2_1)
+    )
+    theta_zz_1 = float(np.sqrt(zz_curl_indicator(m1, e1).sum()) / np.sqrt(err_cu2_1))
+
+    m2 = refine_uniform(m1, 3)
+    mem_est = estimate_memory(m2, eigen=True)
+    if mem_est > 2.0e9:
+        pytest.skip(f"L2 estimated memory {mem_est / 1e9:.2f} GB exceeds 2.0 GB budget")
+
+    sol2 = UnstructuredFIT3D(m2, bc="pec", hodge="whitney")
+    freqs2, E2 = sol2.eigenmodes(n_modes=2, f_target=0.8 * f_exact)
+    kh2_2 = float((2.0 * np.pi * freqs2[0] / C0) ** 2)
+    e2 = E2[:, 0]
+    err_u2_2, err_cu2_2 = _box_tm110_errors(m2, e2, n_1d=6)
+    theta_res_2 = float(
+        np.sqrt(residual_indicator(m2, e2, kh2_2, bc="pec").sum())
+        / np.sqrt(err_cu2_2 + kh2_2 * err_u2_2)
+    )
+    theta_zz_2 = float(np.sqrt(zz_curl_indicator(m2, e2).sum()) / np.sqrt(err_cu2_2))
+
+    ratio_res = theta_res_2 / theta_res_1
+    ratio_zz = theta_zz_2 / theta_zz_1
+    print(
+        f"[E3 slow L2] cells={m2.n_cells}, f0={freqs2[0] * 1e-9:.6f} GHz, "
+        f"f1={freqs2[1] * 1e-9:.6f} GHz, "
+        f"theta_res(L2)={theta_res_2:.4f}, ratio_res(L2/L1)={ratio_res:.4f}, "
+        f"theta_ZZ(L2)={theta_zz_2:.4f}, ratio_ZZ(L2/L1)={ratio_zz:.4f}"
+    )
+    assert 1.0 <= theta_res_2 <= 20.0
+    assert 0.5 <= theta_zz_2 <= 2.0
+    assert 0.8 <= ratio_res <= 1.25
+    assert 0.8 <= ratio_zz <= 1.25
+
+
+def test_e5_mps_reference():
+    """
+    E5: Method of particular solutions reference eigenvalue for the L-shape
+    agrees to <= 1e-7 relative between n_terms=24 and n_terms=32 and lies
+    strictly inside the scan bracket.
+    """
+    lam24, sig24 = l_shape_dirichlet_eigenvalue(n_terms=24)
+    lam32, sig32 = l_shape_dirichlet_eigenvalue(n_terms=32)
+    rel_diff = abs(lam24 - lam32) / lam32
+    lo, hi = L_SHAPE_SCAN_BRACKET
+    print(
+        f"[E5] lam24={lam24:.10f} (sigma={sig24:.3e}), "
+        f"lam32={lam32:.10f} (sigma={sig32:.3e}), "
+        f"rel_diff={rel_diff:.3e}, bracket=({lo}, {hi})"
+    )
+    assert lo < lam24 < hi
+    assert lo < lam32 < hi
+    assert rel_diff <= 1e-7
