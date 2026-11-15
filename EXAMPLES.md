@@ -623,6 +623,7 @@ Reproducible numerical-method studies in [`studies/`](studies/) (each containing
 - [`studies/p5b-mscan/`](studies/p5b-mscan/) — Modulation-depth scan, settle time and the aliased numerical-Cherenkov instability that biased the particle β_q with linear shapes; motivates the quadratic shape of example 024.
 - [`studies/p5b-proj/`](studies/p5b-proj/) — Falsifier for the measurement-projection hypothesis of the V7 β_q residual (top-hat vs full-width observable lines).
 - [`studies/p5b-shear/`](studies/p5b-shear/) — Falsifier F-b1: velocity-shear term vs mode-3 leakage in the four-wave fit of the first-harmonic current.
+- [`studies/unstructured-lts3d/`](studies/unstructured-lts3d/) — Multi-level damped-Chebyshev local time stepping on 3D tetrahedral meshes (`wakis.unstructured.lts3d`, script [`studies/unstructured-lts3d/run_study.py`](studies/unstructured-lts3d/run_study.py), plotter [`studies/unstructured-lts3d/plot_figures.py`](studies/unstructured-lts3d/plot_figures.py), derivation [`docs/physicsguide_sections/unstructured_lts3d.md`](docs/physicsguide_sections/unstructured_lts3d.md)): energy-conserving local time stepping for `UnstructuredFIT3D` with both diagonal Voronoi Hodge (including per-component massless-edge Schur elimination) and consistent sparse Whitney Hodge (via the symmetric principal-submatrix inverse $Q_l = E_l M_{ll}^{-1} E_l^T$), Lanczos stability certification, spherical CFS-PML compatibility, and an exact local discrete transpose in `UnstructuredAdjointStepper`.
 
 ---
 

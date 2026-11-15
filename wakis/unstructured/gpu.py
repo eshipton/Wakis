@@ -499,6 +499,8 @@ class DeviceStepper:
         X[...] = P4 @ y
 
     def _build_3d(self, s, fuse_massless):
+        if getattr(s, "lts", None) is not None:
+            raise NotImplementedError("DeviceStepper: 3D LTS is not supported on GPU")
         if s.hodge != "voronoi":
             raise NotImplementedError(
                 "DeviceStepper: hodge='whitney' (sparse solve per step)"
