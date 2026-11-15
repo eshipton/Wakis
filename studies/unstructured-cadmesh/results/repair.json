@@ -1,5 +1,5 @@
 {
-  "git_commit": "38c65329c9ec243fe6570a34a6e4ab9d186c56c8",
+  "git_commit": "6d17729b78a3c5ecfa449cfcf028e6839ef8da7f",
   "command": "repair_study.py",
   "cpw": 10,
   "cases": [
@@ -9,9 +9,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 1147425278.3521006,
+      "guard_bypassed": true,
+      "n_faces_before": 4633,
       "negative_faces_before": 0,
+      "n_faces_flip_only": 4633,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 4633,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 4633,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.2929273992791468e-11,
       "dt_max_flip_only": 1.2929273992791468e-11,
@@ -19,40 +24,56 @@
       "dt_max_repair_true": 1.9328332040604302e-11,
       "dt_gain_vs_repair_false": 1.0,
       "dt_gain_vs_before": 1.4949278707667992,
-      "lowest_freq_err_before": -0.003753093084131076,
-      "lowest_freq_err_repair_false": -0.0027791293145934537,
+      "limit_element": 30,
+      "limit_radius_ratio": 0.8415327451555762,
+      "limit_min_dihedral": 40.7691560747985,
+      "limit_edge_length": 0.030032877187043852,
+      "lowest_freq_err_before": -0.003753093084130632,
+      "lowest_freq_err_repair_false": -0.0027791293145932316,
       "lowest_freq_err_repair_true": -0.0027791293145934537,
       "before": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.2929273992791468e-11,
         "courant_h": 0.15821046287702933,
-        "f0_hz": 1143118884.4753602,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
         "f_all_hz": [
-          1143118884.4753602,
+          1143118884.4753606,
           1733560667.131564,
-          1735344794.4749167,
-          1811317795.1990032,
-          1820001692.338297
+          1735344794.4749174,
+          1811317795.1990027,
+          1820001692.3382971
         ],
-        "lowest_freq_err": -0.003753093084131076
+        "lowest_freq_err": -0.003753093084130632
       },
       "flip_only": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.2929273992791468e-11,
         "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
         "f0_hz": 1143118884.4753606,
         "f_all_hz": [
           1143118884.4753606,
-          1733560667.1315641,
-          1735344794.474917,
-          1811317795.1990027,
-          1820001692.3382967
+          1733560667.1315644,
+          1735344794.4749174,
+          1811317795.1990032,
+          1820001692.338296
         ],
         "lowest_freq_err": -0.003753093084130632,
         "repair_report": {
@@ -72,34 +93,46 @@
       "after_repair_false": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.9328332040604302e-11,
         "courant_h": 0.23537487590394476,
-        "f0_hz": 1144236435.1247268,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1144236435.124727,
         "f_all_hz": [
-          1144236435.1247268,
-          1731845448.6184127,
-          1735383299.4583018,
-          1812782386.024112,
-          1821921158.2203963
+          1144236435.124727,
+          1731845448.6184123,
+          1735383299.458302,
+          1812782386.0241125,
+          1821921158.2203965
         ],
-        "lowest_freq_err": -0.0027791293145934537
+        "lowest_freq_err": -0.0027791293145932316
       },
       "after_repair_true": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.9328332040604302e-11,
         "courant_h": 0.23537487590394476,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
         "f0_hz": 1144236435.1247268,
         "f_all_hz": [
           1144236435.1247268,
-          1731845448.6184118,
-          1735383299.4583023,
-          1812782386.0241125,
-          1821921158.2203963
+          1731845448.6184125,
+          1735383299.4583018,
+          1812782386.0241117,
+          1821921158.2203968
         ],
         "lowest_freq_err": -0.0027791293145934537
       },
@@ -116,7 +149,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 11.42059540000001
+      "wall_s": 11.708271690999993
     },
     {
       "case": "layered",
@@ -124,9 +157,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 936518201.5981728,
-      "negative_faces_before": 1823,
+      "guard_bypassed": true,
+      "n_faces_before": 17651,
+      "negative_faces_before": 2,
+      "n_faces_flip_only": 17669,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 17651,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 17669,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 6.915464663076031e-12,
       "dt_max_flip_only": 6.915464679987743e-12,
@@ -134,34 +172,50 @@
       "dt_max_repair_true": 1.011986926351032e-11,
       "dt_gain_vs_repair_false": 1.0219558366747992,
       "dt_gain_vs_before": 1.4633679378832882,
-      "lowest_freq_err_before": -0.005654947693488066,
-      "lowest_freq_err_repair_false": -0.004989966567226167,
-      "lowest_freq_err_repair_true": -0.004677417536587569,
+      "limit_element": 7890,
+      "limit_radius_ratio": 0.8210203202925582,
+      "limit_min_dihedral": 44.22313323399114,
+      "limit_edge_length": 0.0133690692949405,
+      "lowest_freq_err_before": -0.0056549476934874,
+      "lowest_freq_err_repair_false": -0.004989966567224835,
+      "lowest_freq_err_repair_true": -0.004677417536587791,
       "before": {
         "n_tets": 8364,
         "n_nodes": 1830,
-        "n_negative_faces": 1823,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 6.915464663076031e-12,
         "courant_h": 0.14049157999349562,
-        "f0_hz": 931222240.1541356,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541362,
         "f_all_hz": [
-          931222240.1541356
+          931222240.1541362
         ],
-        "lowest_freq_err": -0.005654947693488066
+        "lowest_freq_err": -0.0056549476934874
       },
       "flip_only": {
         "n_tets": 8372,
         "n_nodes": 1832,
+        "n_faces": 17669,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 6.915464679987743e-12,
         "courant_h": 0.1405312603774546,
-        "f0_hz": 931223489.3796126,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931223489.3796128,
         "f_all_hz": [
-          931223489.3796126
+          931223489.3796128
         ],
-        "lowest_freq_err": -0.0056536137893793414,
+        "lowest_freq_err": -0.005653613789379119,
         "repair_report": {
           "flips": {
             "2-3": 4,
@@ -181,28 +235,40 @@
       "after_repair_false": {
         "n_tets": 8364,
         "n_nodes": 1830,
+        "n_faces": 17651,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 9.902452630867067e-12,
         "courant_h": 0.20057713042157316,
-        "f0_hz": 931845007.0825992,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.7867572243819452,
+        "limit_min_dihedral": 40.720494148044814,
+        "limit_edge_length": 0.013400361047458802,
+        "f0_hz": 931845007.0826004,
         "f_all_hz": [
-          931845007.0825992
+          931845007.0826004
         ],
-        "lowest_freq_err": -0.004989966567226167
+        "lowest_freq_err": -0.004989966567224835
       },
       "after_repair_true": {
         "n_tets": 8372,
         "n_nodes": 1832,
+        "n_faces": 17669,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.011986926351032e-11,
         "courant_h": 0.20500911214998882,
-        "f0_hz": 932137714.938684,
+        "limit_element": 7890,
+        "limit_radius_ratio": 0.8210203202925582,
+        "limit_min_dihedral": 44.22313323399114,
+        "limit_edge_length": 0.0133690692949405,
+        "f0_hz": 932137714.9386839,
         "f_all_hz": [
-          932137714.938684
+          932137714.9386839
         ],
-        "lowest_freq_err": -0.004677417536587569
+        "lowest_freq_err": -0.004677417536587791
       },
       "repair_report": {
         "flips": {
@@ -219,7 +285,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 48.748569417
+      "wall_s": 50.31013802400001
     },
     {
       "case": "muon",
@@ -227,9 +293,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 704156915.7639738,
+      "guard_bypassed": true,
+      "n_faces_before": 4064,
       "negative_faces_before": 0,
+      "n_faces_flip_only": 4064,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 4064,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 4064,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.543640843719826e-11,
       "dt_max_flip_only": 1.543640843719826e-11,
@@ -237,21 +308,31 @@
       "dt_max_repair_true": 2.3358870495103412e-11,
       "dt_gain_vs_repair_false": 1.0,
       "dt_gain_vs_before": 1.5132322126702613,
+      "limit_element": 1109,
+      "limit_radius_ratio": 0.7379178667524141,
+      "limit_min_dihedral": 35.54433169664245,
+      "limit_edge_length": 0.03987481425043598,
       "lowest_freq_err_before": 0.019426287867287284,
       "lowest_freq_err_repair_false": 0.021130956633760967,
-      "lowest_freq_err_repair_true": 0.021130956633760967,
+      "lowest_freq_err_repair_true": 0.02113095663376141,
       "before": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.543640843719826e-11,
         "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
         "f0_hz": 717836070.7133459,
         "f_all_hz": [
           717836070.7133459,
           1074277809.029897,
-          1077611362.5290143,
+          1077611362.529014,
           1435421566.384075
         ],
         "lowest_freq_err": 0.019426287867287284
@@ -259,16 +340,22 @@
       "flip_only": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.543640843719826e-11,
         "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
         "f0_hz": 717836070.7133459,
         "f_all_hz": [
           717836070.7133459,
-          1074277809.0298972,
+          1074277809.029897,
           1077611362.529014,
-          1435421566.3840752
+          1435421566.384075
         ],
         "lowest_freq_err": 0.019426287867287284,
         "repair_report": {
@@ -288,34 +375,46 @@
       "after_repair_false": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 2.3358870495103412e-11,
         "courant_h": 0.2055496554514844,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
         "f0_hz": 719036425.0143453,
         "f_all_hz": [
           719036425.0143453,
-          1076418245.4262679,
-          1078974718.3942404,
-          1439122601.304616
+          1076418245.4262676,
+          1078974718.3942401,
+          1439122601.3046157
         ],
         "lowest_freq_err": 0.021130956633760967
       },
       "after_repair_true": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 2.3358870495103412e-11,
         "courant_h": 0.2055496554514844,
-        "f0_hz": 719036425.0143453,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 719036425.0143455,
         "f_all_hz": [
-          719036425.0143453,
+          719036425.0143455,
           1076418245.4262679,
           1078974718.3942401,
           1439122601.3046162
         ],
-        "lowest_freq_err": 0.021130956633760967
+        "lowest_freq_err": 0.02113095663376141
       },
       "repair_report": {
         "flips": {
@@ -330,7 +429,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 8.817489550000005
+      "wall_s": 9.084199686999995
     }
   ],
   "all_runs": [
@@ -340,9 +439,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 1147425278.3521006,
+      "guard_bypassed": true,
+      "n_faces_before": 4633,
       "negative_faces_before": 0,
+      "n_faces_flip_only": 4633,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 4633,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 4633,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.2929273992791468e-11,
       "dt_max_flip_only": 1.2929273992791468e-11,
@@ -350,40 +454,56 @@
       "dt_max_repair_true": 1.9328332040604302e-11,
       "dt_gain_vs_repair_false": 1.0,
       "dt_gain_vs_before": 1.4949278707667992,
-      "lowest_freq_err_before": -0.003753093084131076,
-      "lowest_freq_err_repair_false": -0.0027791293145934537,
+      "limit_element": 30,
+      "limit_radius_ratio": 0.8415327451555762,
+      "limit_min_dihedral": 40.7691560747985,
+      "limit_edge_length": 0.030032877187043852,
+      "lowest_freq_err_before": -0.003753093084130632,
+      "lowest_freq_err_repair_false": -0.0027791293145932316,
       "lowest_freq_err_repair_true": -0.0027791293145934537,
       "before": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.2929273992791468e-11,
         "courant_h": 0.15821046287702933,
-        "f0_hz": 1143118884.4753602,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
         "f_all_hz": [
-          1143118884.4753602,
+          1143118884.4753606,
           1733560667.131564,
-          1735344794.4749167,
-          1811317795.1990032,
-          1820001692.338297
+          1735344794.4749174,
+          1811317795.1990027,
+          1820001692.3382971
         ],
-        "lowest_freq_err": -0.003753093084131076
+        "lowest_freq_err": -0.003753093084130632
       },
       "flip_only": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.2929273992791468e-11,
         "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
         "f0_hz": 1143118884.4753606,
         "f_all_hz": [
           1143118884.4753606,
-          1733560667.1315641,
-          1735344794.474917,
-          1811317795.1990027,
-          1820001692.3382967
+          1733560667.1315644,
+          1735344794.4749174,
+          1811317795.1990032,
+          1820001692.338296
         ],
         "lowest_freq_err": -0.003753093084130632,
         "repair_report": {
@@ -403,34 +523,46 @@
       "after_repair_false": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.9328332040604302e-11,
         "courant_h": 0.23537487590394476,
-        "f0_hz": 1144236435.1247268,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1144236435.124727,
         "f_all_hz": [
-          1144236435.1247268,
-          1731845448.6184127,
-          1735383299.4583018,
-          1812782386.024112,
-          1821921158.2203963
+          1144236435.124727,
+          1731845448.6184123,
+          1735383299.458302,
+          1812782386.0241125,
+          1821921158.2203965
         ],
-        "lowest_freq_err": -0.0027791293145934537
+        "lowest_freq_err": -0.0027791293145932316
       },
       "after_repair_true": {
         "n_tets": 2117,
         "n_nodes": 556,
+        "n_faces": 4633,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.9328332040604302e-11,
         "courant_h": 0.23537487590394476,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
         "f0_hz": 1144236435.1247268,
         "f_all_hz": [
           1144236435.1247268,
-          1731845448.6184118,
-          1735383299.4583023,
-          1812782386.0241125,
-          1821921158.2203963
+          1731845448.6184125,
+          1735383299.4583018,
+          1812782386.0241117,
+          1821921158.2203968
         ],
         "lowest_freq_err": -0.0027791293145934537
       },
@@ -447,7 +579,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 11.42059540000001
+      "wall_s": 11.708271690999993
     },
     {
       "case": "layered",
@@ -455,9 +587,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 936518201.5981728,
-      "negative_faces_before": 1823,
+      "guard_bypassed": true,
+      "n_faces_before": 17651,
+      "negative_faces_before": 2,
+      "n_faces_flip_only": 17669,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 17651,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 17669,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 6.915464663076031e-12,
       "dt_max_flip_only": 6.915464679987743e-12,
@@ -465,34 +602,50 @@
       "dt_max_repair_true": 1.011986926351032e-11,
       "dt_gain_vs_repair_false": 1.0219558366747992,
       "dt_gain_vs_before": 1.4633679378832882,
-      "lowest_freq_err_before": -0.005654947693488066,
-      "lowest_freq_err_repair_false": -0.004989966567226167,
-      "lowest_freq_err_repair_true": -0.004677417536587569,
+      "limit_element": 7890,
+      "limit_radius_ratio": 0.8210203202925582,
+      "limit_min_dihedral": 44.22313323399114,
+      "limit_edge_length": 0.0133690692949405,
+      "lowest_freq_err_before": -0.0056549476934874,
+      "lowest_freq_err_repair_false": -0.004989966567224835,
+      "lowest_freq_err_repair_true": -0.004677417536587791,
       "before": {
         "n_tets": 8364,
         "n_nodes": 1830,
-        "n_negative_faces": 1823,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 6.915464663076031e-12,
         "courant_h": 0.14049157999349562,
-        "f0_hz": 931222240.1541356,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541362,
         "f_all_hz": [
-          931222240.1541356
+          931222240.1541362
         ],
-        "lowest_freq_err": -0.005654947693488066
+        "lowest_freq_err": -0.0056549476934874
       },
       "flip_only": {
         "n_tets": 8372,
         "n_nodes": 1832,
+        "n_faces": 17669,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 6.915464679987743e-12,
         "courant_h": 0.1405312603774546,
-        "f0_hz": 931223489.3796126,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931223489.3796128,
         "f_all_hz": [
-          931223489.3796126
+          931223489.3796128
         ],
-        "lowest_freq_err": -0.0056536137893793414,
+        "lowest_freq_err": -0.005653613789379119,
         "repair_report": {
           "flips": {
             "2-3": 4,
@@ -512,28 +665,40 @@
       "after_repair_false": {
         "n_tets": 8364,
         "n_nodes": 1830,
+        "n_faces": 17651,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 9.902452630867067e-12,
         "courant_h": 0.20057713042157316,
-        "f0_hz": 931845007.0825992,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.7867572243819452,
+        "limit_min_dihedral": 40.720494148044814,
+        "limit_edge_length": 0.013400361047458802,
+        "f0_hz": 931845007.0826004,
         "f_all_hz": [
-          931845007.0825992
+          931845007.0826004
         ],
-        "lowest_freq_err": -0.004989966567226167
+        "lowest_freq_err": -0.004989966567224835
       },
       "after_repair_true": {
         "n_tets": 8372,
         "n_nodes": 1832,
+        "n_faces": 17669,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.011986926351032e-11,
         "courant_h": 0.20500911214998882,
-        "f0_hz": 932137714.938684,
+        "limit_element": 7890,
+        "limit_radius_ratio": 0.8210203202925582,
+        "limit_min_dihedral": 44.22313323399114,
+        "limit_edge_length": 0.0133690692949405,
+        "f0_hz": 932137714.9386839,
         "f_all_hz": [
-          932137714.938684
+          932137714.9386839
         ],
-        "lowest_freq_err": -0.004677417536587569
+        "lowest_freq_err": -0.004677417536587791
       },
       "repair_report": {
         "flips": {
@@ -550,7 +715,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 48.748569417
+      "wall_s": 50.31013802400001
     },
     {
       "case": "muon",
@@ -558,9 +723,14 @@
       "optimize": "none",
       "n_sweeps": 10,
       "f_ref_hz": 704156915.7639738,
+      "guard_bypassed": true,
+      "n_faces_before": 4064,
       "negative_faces_before": 0,
+      "n_faces_flip_only": 4064,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 4064,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 4064,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.543640843719826e-11,
       "dt_max_flip_only": 1.543640843719826e-11,
@@ -568,21 +738,31 @@
       "dt_max_repair_true": 2.3358870495103412e-11,
       "dt_gain_vs_repair_false": 1.0,
       "dt_gain_vs_before": 1.5132322126702613,
+      "limit_element": 1109,
+      "limit_radius_ratio": 0.7379178667524141,
+      "limit_min_dihedral": 35.54433169664245,
+      "limit_edge_length": 0.03987481425043598,
       "lowest_freq_err_before": 0.019426287867287284,
       "lowest_freq_err_repair_false": 0.021130956633760967,
-      "lowest_freq_err_repair_true": 0.021130956633760967,
+      "lowest_freq_err_repair_true": 0.02113095663376141,
       "before": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.543640843719826e-11,
         "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
         "f0_hz": 717836070.7133459,
         "f_all_hz": [
           717836070.7133459,
           1074277809.029897,
-          1077611362.5290143,
+          1077611362.529014,
           1435421566.384075
         ],
         "lowest_freq_err": 0.019426287867287284
@@ -590,16 +770,22 @@
       "flip_only": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.543640843719826e-11,
         "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
         "f0_hz": 717836070.7133459,
         "f_all_hz": [
           717836070.7133459,
-          1074277809.0298972,
+          1074277809.029897,
           1077611362.529014,
-          1435421566.3840752
+          1435421566.384075
         ],
         "lowest_freq_err": 0.019426287867287284,
         "repair_report": {
@@ -619,34 +805,46 @@
       "after_repair_false": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 2.3358870495103412e-11,
         "courant_h": 0.2055496554514844,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
         "f0_hz": 719036425.0143453,
         "f_all_hz": [
           719036425.0143453,
-          1076418245.4262679,
-          1078974718.3942404,
-          1439122601.304616
+          1076418245.4262676,
+          1078974718.3942401,
+          1439122601.3046157
         ],
         "lowest_freq_err": 0.021130956633760967
       },
       "after_repair_true": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 2.3358870495103412e-11,
         "courant_h": 0.2055496554514844,
-        "f0_hz": 719036425.0143453,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 719036425.0143455,
         "f_all_hz": [
-          719036425.0143453,
+          719036425.0143455,
           1076418245.4262679,
           1078974718.3942401,
           1439122601.3046162
         ],
-        "lowest_freq_err": 0.021130956633760967
+        "lowest_freq_err": 0.02113095663376141
       },
       "repair_report": {
         "flips": {
@@ -661,7 +859,7 @@
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 8.817489550000005
+      "wall_s": 9.084199686999995
     },
     {
       "case": "pillbox",
@@ -669,9 +867,14 @@
       "optimize": "gmsh",
       "n_sweeps": 10,
       "f_ref_hz": 1147425278.3521006,
-      "negative_faces_before": 99917,
+      "guard_bypassed": true,
+      "n_faces_before": 4531,
+      "negative_faces_before": 48,
+      "n_faces_flip_only": 4629,
       "negative_faces_flip_only": 0,
+      "n_faces_after_repair_false": 4531,
       "negative_faces_after_repair_false": 0,
+      "n_faces_after_repair_true": 4629,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.2929274620562055e-11,
       "dt_max_flip_only": 1.2929273391520276e-11,
@@ -679,42 +882,58 @@
       "dt_max_repair_true": 1.8337620295072845e-11,
       "dt_gain_vs_repair_false": 0.989390665094521,
       "dt_gain_vs_before": 1.418302328106608,
+      "limit_element": 912,
+      "limit_radius_ratio": 0.7439642955531812,
+      "limit_min_dihedral": 39.968392859421854,
+      "limit_edge_length": 0.026299694600389112,
       "lowest_freq_err_before": -0.004012102288849739,
       "lowest_freq_err_repair_false": -0.003378092870006455,
       "lowest_freq_err_repair_true": -0.002434653935113329,
       "before": {
         "n_tets": 2066,
         "n_nodes": 556,
-        "n_negative_faces": 99917,
+        "n_faces": 4531,
+        "n_negative_faces": 48,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 1.2929274620562055e-11,
         "courant_h": 0.15903354656044097,
+        "limit_element": 671,
+        "limit_radius_ratio": 0.8694456558800651,
+        "limit_min_dihedral": 41.26133278095743,
+        "limit_edge_length": 0.027692807769643862,
         "f0_hz": 1142821690.76654,
         "f_all_hz": [
           1142821690.76654,
-          1733076292.633939,
-          1735296525.3575773,
-          1810737306.7294698,
-          1819581426.3617258
+          1733076292.6339393,
+          1735296525.357577,
+          1810737306.7294695,
+          1819581426.3617268
         ],
         "lowest_freq_err": -0.004012102288849739
       },
       "flip_only": {
         "n_tets": 2115,
         "n_nodes": 556,
+        "n_faces": 4629,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.2929273391520276e-11,
         "courant_h": 0.158269677970626,
-        "f0_hz": 1143053579.8396506,
+        "limit_element": 922,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143053579.839651,
         "f_all_hz": [
-          1143053579.8396506,
-          1733630452.7577963,
-          1735500419.3874822,
-          1811209701.3446288,
-          1819987037.2518852
+          1143053579.839651,
+          1733630452.757796,
+          1735500419.387483,
+          1811209701.344629,
+          1819987037.251885
         ],
-        "lowest_freq_err": -0.003810007148115524,
+        "lowest_freq_err": -0.003810007148115191,
         "repair_report": {
           "flips": {
             "2-3": 51,
@@ -724,7 +943,7 @@
           },
           "steiner_nodes": 0,
           "refused": {},
-          "negative_faces_before": 55,
+          "negative_faces_before": 48,
           "negative_faces_after": 0,
           "stuck": []
         }
@@ -732,33 +951,45 @@
       "after_repair_false": {
         "n_tets": 2066,
         "n_nodes": 556,
+        "n_faces": 4531,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.8534256428749474e-11,
         "courant_h": 0.2269240347736566,
+        "limit_element": 940,
+        "limit_radius_ratio": 0.6632980515922527,
+        "limit_min_dihedral": 49.255267506821994,
+        "limit_edge_length": 0.022395298117005368,
         "f0_hz": 1143549169.2004342,
         "f_all_hz": [
           1143549169.2004342,
           1734356480.8255234,
-          1736902091.8350804,
-          1813436950.2182705,
-          1823677358.6458912
+          1736902091.8350801,
+          1813436950.2182703,
+          1823677358.6458914
         ],
         "lowest_freq_err": -0.003378092870006455
       },
       "after_repair_true": {
         "n_tets": 2115,
         "n_nodes": 556,
+        "n_faces": 4629,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.8337620295072845e-11,
         "courant_h": 0.223535488025453,
+        "limit_element": 912,
+        "limit_radius_ratio": 0.7439642955531812,
+        "limit_min_dihedral": 39.968392859421854,
+        "limit_edge_length": 0.026299694600389112,
         "f0_hz": 1144631694.8829122,
         "f_all_hz": [
           1144631694.8829122,
-          1733560149.3508985,
-          1735695083.5080397,
-          1812404667.7247305,
+          1733560149.3508983,
+          1735695083.5080404,
+          1812404667.7247307,
           1822298868.566704
         ],
         "lowest_freq_err": -0.002434653935113329
@@ -772,11 +1003,11 @@
         },
         "steiner_nodes": 0,
         "refused": {},
-        "negative_faces_before": 55,
+        "negative_faces_before": 48,
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 11.86618816699999
+      "wall_s": 12.270099963000007
     },
     {
       "case": "layered",
@@ -784,9 +1015,14 @@
       "optimize": "gmsh",
       "n_sweeps": 10,
       "f_ref_hz": 936518201.5981728,
-      "negative_faces_before": 1904428,
+      "guard_bypassed": true,
+      "n_faces_before": 17315,
+      "negative_faces_before": 218,
+      "n_faces_flip_only": 17667,
       "negative_faces_flip_only": 0,
-      "negative_faces_after_repair_false": 33001,
+      "n_faces_after_repair_false": 17315,
+      "negative_faces_after_repair_false": 4,
+      "n_faces_after_repair_true": 17667,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 6.7570283362350706e-12,
       "dt_max_flip_only": 6.915464661232565e-12,
@@ -794,34 +1030,50 @@
       "dt_max_repair_true": 9.777005891451387e-12,
       "dt_gain_vs_repair_false": 0.9447097520082607,
       "dt_gain_vs_before": 1.4469387140233614,
-      "lowest_freq_err_before": -0.00608300977856846,
-      "lowest_freq_err_repair_false": -0.005256637567753408,
-      "lowest_freq_err_repair_true": -0.004918498227152068,
+      "limit_element": 7291,
+      "limit_radius_ratio": 0.7575962362648736,
+      "limit_min_dihedral": 37.12028963390196,
+      "limit_edge_length": 0.013293998326450167,
+      "lowest_freq_err_before": -0.006083009778567683,
+      "lowest_freq_err_repair_false": -0.005256637567752742,
+      "lowest_freq_err_repair_true": -0.004918498227152512,
       "before": {
         "n_tets": 8196,
         "n_nodes": 1830,
-        "n_negative_faces": 1904428,
+        "n_faces": 17315,
+        "n_negative_faces": 218,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 6.7570283362350706e-12,
         "courant_h": 0.1381184631021752,
-        "f0_hz": 930821352.2200438,
+        "limit_element": 8015,
+        "limit_radius_ratio": 0.45388085399241435,
+        "limit_min_dihedral": 37.01703269634936,
+        "limit_edge_length": 0.01264946923183957,
+        "f0_hz": 930821352.2200445,
         "f_all_hz": [
-          930821352.2200438
+          930821352.2200445
         ],
-        "lowest_freq_err": -0.00608300977856846
+        "lowest_freq_err": -0.006083009778567683
       },
       "flip_only": {
         "n_tets": 8371,
         "n_nodes": 1832,
+        "n_faces": 17667,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 6.915464661232565e-12,
         "courant_h": 0.14052151727383821,
-        "f0_hz": 931223829.486697,
+        "limit_element": 6177,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931223829.486698,
         "f_all_hz": [
-          931223829.486697
+          931223829.486698
         ],
-        "lowest_freq_err": -0.005653250628168238,
+        "lowest_freq_err": -0.005653250628167017,
         "repair_report": {
           "flips": {
             "2-3": 185,
@@ -833,7 +1085,7 @@
           "refused": {
             "boundary": 3
           },
-          "negative_faces_before": 233,
+          "negative_faces_before": 218,
           "negative_faces_after": 0,
           "stuck": []
         }
@@ -841,28 +1093,40 @@
       "after_repair_false": {
         "n_tets": 8196,
         "n_nodes": 1830,
-        "n_negative_faces": 33001,
+        "n_faces": 17315,
+        "n_negative_faces": 4,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 1.0349216646348216e-11,
         "courant_h": 0.2106772922526414,
-        "f0_hz": 931595264.836767,
+        "limit_element": 6651,
+        "limit_radius_ratio": 0.7766177977227282,
+        "limit_min_dihedral": 46.91807115762141,
+        "limit_edge_length": 0.018011629218533103,
+        "f0_hz": 931595264.8367676,
         "f_all_hz": [
-          931595264.836767
+          931595264.8367676
         ],
-        "lowest_freq_err": -0.005256637567753408
+        "lowest_freq_err": -0.005256637567752742
       },
       "after_repair_true": {
         "n_tets": 8371,
         "n_nodes": 1832,
+        "n_faces": 17667,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 9.777005891451387e-12,
         "courant_h": 0.1980126974858596,
-        "f0_hz": 931911938.4839165,
+        "limit_element": 7291,
+        "limit_radius_ratio": 0.7575962362648736,
+        "limit_min_dihedral": 37.12028963390196,
+        "limit_edge_length": 0.013293998326450167,
+        "f0_hz": 931911938.4839162,
         "f_all_hz": [
-          931911938.4839165
+          931911938.4839162
         ],
-        "lowest_freq_err": -0.004918498227152068
+        "lowest_freq_err": -0.004918498227152512
       },
       "repair_report": {
         "flips": {
@@ -875,11 +1139,11 @@
         "refused": {
           "boundary": 3
         },
-        "negative_faces_before": 233,
+        "negative_faces_before": 218,
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 52.236173520999984
+      "wall_s": 53.94910126800002
     },
     {
       "case": "muon",
@@ -887,9 +1151,14 @@
       "optimize": "gmsh",
       "n_sweeps": 10,
       "f_ref_hz": 704156915.7639738,
-      "negative_faces_before": 93486,
+      "guard_bypassed": true,
+      "n_faces_before": 3992,
+      "negative_faces_before": 39,
+      "n_faces_flip_only": 4064,
       "negative_faces_flip_only": 0,
-      "negative_faces_after_repair_false": 2464,
+      "n_faces_after_repair_false": 3992,
+      "negative_faces_after_repair_false": 1,
+      "n_faces_after_repair_true": 4064,
       "negative_faces_after_repair_true": 0,
       "dt_max_before": 1.5436408436808046e-11,
       "dt_max_flip_only": 1.5436408437198262e-11,
@@ -897,38 +1166,54 @@
       "dt_max_repair_true": 2.335887049510343e-11,
       "dt_gain_vs_repair_false": 1.0536357723345402,
       "dt_gain_vs_before": 1.5132322127085152,
-      "lowest_freq_err_before": 0.018023548100912334,
-      "lowest_freq_err_repair_false": 0.02153527702300151,
-      "lowest_freq_err_repair_true": 0.02113095663376141,
+      "limit_element": 1010,
+      "limit_radius_ratio": 0.7379178667524141,
+      "limit_min_dihedral": 35.54433169664245,
+      "limit_edge_length": 0.03987481425043598,
+      "lowest_freq_err_before": 0.01802354810091278,
+      "lowest_freq_err_repair_false": 0.021535277023001287,
+      "lowest_freq_err_repair_true": 0.021130956633761633,
       "before": {
         "n_tets": 1810,
         "n_nodes": 504,
-        "n_negative_faces": 93486,
+        "n_faces": 3992,
+        "n_negative_faces": 39,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 1.5436408436808046e-11,
         "courant_h": 0.13669612771270867,
-        "f0_hz": 716848321.805836,
+        "limit_element": 1349,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 716848321.8058362,
         "f_all_hz": [
-          716848321.805836,
-          1073368114.4473037,
+          716848321.8058362,
+          1073368114.4473039,
           1076023985.6212547,
-          1434460539.1927683
+          1434460539.1927688
         ],
-        "lowest_freq_err": 0.018023548100912334
+        "lowest_freq_err": 0.01802354810091278
       },
       "flip_only": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 1.5436408437198262e-11,
         "courant_h": 0.13603534162032171,
+        "limit_element": 1301,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
         "f0_hz": 717836070.7133462,
         "f_all_hz": [
           717836070.7133462,
           1074277809.029897,
           1077611362.5290143,
-          1435421566.3840752
+          1435421566.384075
         ],
         "lowest_freq_err": 0.019426287867287728,
         "repair_report": {
@@ -940,7 +1225,7 @@
           },
           "steiner_nodes": 0,
           "refused": {},
-          "negative_faces_before": 47,
+          "negative_faces_before": 39,
           "negative_faces_after": 0,
           "stuck": []
         }
@@ -948,34 +1233,46 @@
       "after_repair_false": {
         "n_tets": 1810,
         "n_nodes": 504,
-        "n_negative_faces": 2464,
+        "n_faces": 3992,
+        "n_negative_faces": 1,
+        "guard_bypassed": true,
         "voronoi_valid": false,
         "dt_max": 2.2169777363715732e-11,
         "courant_h": 0.19592545638799758,
-        "f0_hz": 719321130.0126133,
+        "limit_element": 90,
+        "limit_radius_ratio": 0.7245530939346174,
+        "limit_min_dihedral": 52.34822729091832,
+        "limit_edge_length": 0.03986789145698331,
+        "f0_hz": 719321130.0126132,
         "f_all_hz": [
-          719321130.0126133,
+          719321130.0126132,
           1076531200.9735265,
-          1079402680.1228814,
-          1437329970.2346478
+          1079402680.1228817,
+          1437329970.234648
         ],
-        "lowest_freq_err": 0.02153527702300151
+        "lowest_freq_err": 0.021535277023001287
       },
       "after_repair_true": {
         "n_tets": 1846,
         "n_nodes": 504,
+        "n_faces": 4064,
         "n_negative_faces": 0,
+        "guard_bypassed": true,
         "voronoi_valid": true,
         "dt_max": 2.335887049510343e-11,
         "courant_h": 0.2055496554514846,
-        "f0_hz": 719036425.0143455,
+        "limit_element": 1010,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 719036425.0143456,
         "f_all_hz": [
-          719036425.0143455,
-          1076418245.4262683,
-          1078974718.39424,
-          1439122601.304616
+          719036425.0143456,
+          1076418245.4262679,
+          1078974718.3942401,
+          1439122601.3046162
         ],
-        "lowest_freq_err": 0.02113095663376141
+        "lowest_freq_err": 0.021130956633761633
       },
       "repair_report": {
         "flips": {
@@ -986,11 +1283,11 @@
         },
         "steiner_nodes": 0,
         "refused": {},
-        "negative_faces_before": 47,
+        "negative_faces_before": 39,
         "negative_faces_after": 0,
         "stuck": []
       },
-      "wall_s": 9.463875350999984
+      "wall_s": 9.84610561400001
     }
   ]
 }

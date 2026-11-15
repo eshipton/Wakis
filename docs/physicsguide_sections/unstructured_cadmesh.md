@@ -329,6 +329,21 @@ connectivity without moving existing vertices:
 * **Repair can lower `dt_max`.** In measured gmsh cases the limiting element after repair has a smaller radius ratio;
   the measured values are in `studies/unstructured-cadmesh/results/repair.json` (key `dt_gain_vs_repair_false`).
 
+### Measured results (cpw 10)
+
+Source: `studies/unstructured-cadmesh/results/repair.json` (commit 6d17729b78, produced by `repair_study.py` on Cloud Batch). Negative-face counts use the solver guard criterion (`Mnu_diag < 0` on faces coupled to free edges) and are shown as negative / total faces.
+
+| case | gmsh optimizer | negative / faces before | after repair=False | after repair=True | dt gain (T/F) | lowest-mode error (F) | lowest-mode error (T) | limiting radius ratio (T) |
+|---|---|---|---|---|---|---|---|---|
+| pillbox | none | 0 / 4633 | 0 / 4633 | 0 / 4633 | 1.0000 | -2.779e-03 | -2.779e-03 | 0.842 |
+| layered | none | 2 / 17651 | 0 / 17651 | 0 / 17669 | 1.0220 | -4.990e-03 | -4.677e-03 | 0.821 |
+| muon | none | 0 / 4064 | 0 / 4064 | 0 / 4064 | 1.0000 | +2.113e-02 | +2.113e-02 | 0.738 |
+| pillbox | gmsh | 48 / 4531 | 0 / 4531 | 0 / 4629 | 0.9894 | -3.378e-03 | -2.435e-03 | 0.744 |
+| layered | gmsh | 218 / 17315 | 4 / 17315 | 0 / 17667 | 0.9447 | -5.257e-03 | -4.918e-03 | 0.758 |
+| muon | gmsh | 39 / 3992 | 1 / 3992 | 0 / 4064 | 1.0536 | +2.154e-02 | +2.113e-02 | 0.738 |
+
+In the study, `repair=True` leaves 0 negative faces in all six runs. The layered pillbox test (`test_step_layered_pillbox_repair_complete`, xfail) still leaves 2 interior faces next to locked CAD-curve edges on its own mesh; the study's layered `none` row reaches 0 on its mesh, and this difference is not yet diagnosed (open question: Steiner follow-up). Repair can lower dt_max: the gmsh-optimizer rows have dt gain below 1, so the limiting element after repair has a smaller radius ratio. No claim that repair raises dt in general is made.
+
 ## References
 
 - L. Chen and J. Xu, "Optimal Delaunay triangulations", J. Comput. Math. 22(2), 299–308 (2004).
