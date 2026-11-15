@@ -122,6 +122,11 @@ class HexBlock3D:
 
         self.face_areas, self.face_centroids = self._compute_face_geometry()
         self.A_f = self.face_areas
+        (
+            self.wall_node_normals,
+            self.node_wall_count,
+            self.node_normals,
+        ) = self._compute_node_wall_normals()
 
         self.dual_face_pieces, self.dual_face_areas = self._compute_dual_faces()
         self.S_e = self.dual_face_areas
@@ -303,6 +308,51 @@ class HexBlock3D:
             areas.append(af.reshape(-1, 3))
             cens.append(gf.reshape(-1, 3))
         return np.concatenate(areas, axis=0), np.concatenate(cens, axis=0)
+
+    def _compute_node_wall_normals(self):
+        """Area-weighted unit outward node normals for each of the 6 block walls,
+        incident wall count per node, and combined unit node normal."""
+        wall_normals = np.zeros((3, 2) + self.nn + (3,), dtype=float)
+        wall_count = np.zeros(self.nn, dtype=int)
+        total_area_normal = np.zeros(self.nn + (3,), dtype=float)
+
+        for a in range(3):
+            b, c = (a + 1) % 3, (a + 2) % 3
+            fg = self.face_grid(a)
+            for side in (0, 1):
+                idx_a = 0 if side == 0 else self.nc[a]
+                sgn = -1.0 if side == 0 else 1.0
+                mask = fg[a] == idx_a
+                f_idx = self.face_index(a, *fg)[mask]
+                af = sgn * self.face_areas[f_idx]
+                ib = fg[b][mask]
+                ic = fg[c][mask]
+
+                n_sum = np.zeros(self.nn + (3,), dtype=float)
+                for db in (0, 1):
+                    for dc in (0, 1):
+                        idx = [None, None, None]
+                        idx[a] = idx_a
+                        idx[b] = ib + db
+                        idx[c] = ic + dc
+                        np.add.at(n_sum, tuple(idx), af)
+
+                total_area_normal += n_sum
+                norm = np.linalg.norm(n_sum, axis=-1, keepdims=True)
+                valid = norm[..., 0] > 0.0
+                wall_normals[a, side, valid] = n_sum[valid] / norm[valid]
+
+                sl = [slice(None), slice(None), slice(None)]
+                sl[a] = idx_a
+                wall_count[tuple(sl)] += 1
+
+        total_norm = np.linalg.norm(total_area_normal, axis=-1, keepdims=True)
+        node_normals = np.zeros(self.nn + (3,), dtype=float)
+        valid_total = total_norm[..., 0] > 0.0
+        node_normals[valid_total] = (
+            total_area_normal[valid_total] / total_norm[valid_total]
+        )
+        return wall_normals, wall_count, node_normals
 
     def _compute_dual_faces(self):
         """Per-hex dual face quadrilateral pieces [m^2] and assembled whole dual

@@ -164,12 +164,14 @@ def test_orthogonal_hodges_equal_yee():
 
     W_nu_u = s_uni.hodge_magnetic()
     W_eps_full_u = s_uni.hodge_electric(restricted=False)
+    unk = block.unknown_edges
     off_nu_u = (W_nu_u - sp.diags(W_nu_u.diagonal())).nnz
     off_eps_u = (W_eps_full_u - sp.diags(W_eps_full_u.diagonal())).nnz
     err_nu_uni = np.max(np.abs(W_nu_u.diagonal() - w_nu_yee_uni) / w_nu_yee_uni)
     err_eps_uni = np.max(
-        np.abs(W_eps_full_u.diagonal() - w_eps_yee_uni) / w_eps_yee_uni
+        np.abs(W_eps_full_u.diagonal()[unk] - w_eps_yee_uni[unk]) / w_eps_yee_uni[unk]
     )
+    assert np.all(W_eps_full_u.diagonal()[block.boundary_edge_mask] == 0.0)
 
     # 2) Random per-hex eps_r and mu_r
     eps_r = rng.uniform(1.1, 4.5, size=(nx, ny, nz))
@@ -252,7 +254,10 @@ def test_orthogonal_hodges_equal_yee():
         )
     )
     err_nu = np.max(np.abs(W_nu.diagonal() - w_nu_yee) / w_nu_yee)
-    err_eps_full = np.max(np.abs(W_eps_full.diagonal() - w_eps_yee) / w_eps_yee)
+    err_eps_full = np.max(
+        np.abs(W_eps_full.diagonal()[unk] - w_eps_yee[unk]) / w_eps_yee[unk]
+    )
+    assert np.all(W_eps_full.diagonal()[block.boundary_edge_mask] == 0.0)
     err_eps_rest = np.max(
         np.abs(W_eps_rest.diagonal() - w_eps_yee[block.unknown_edges])
         / w_eps_yee[block.unknown_edges]
@@ -669,9 +674,9 @@ def test_perturbed_box_order_small():
 
     Measured values:
     - ``omega_analytic = 1.50765688e+09 rad/s``
-    - ``4 x 3 x 4``: ``omega_h = 1.48137014e+09 rad/s``, ``rel_error = 1.743549e-02``
-    - ``8 x 6 x 8``: ``omega_h = 1.50088898e+09 rad/s``, ``rel_error = 4.489016e-03``
-    - Observed order ``log2(err_434 / err_868) = 1.957555 >= 1.8``.
+    - ``4 x 3 x 4``: ``omega_h = 1.46978569e+09 rad/s``, ``rel_error = 2.511923e-02``
+    - ``8 x 6 x 8``: ``omega_h = 1.49818392e+09 rad/s``, ``rel_error = 6.283230e-03``
+    - Observed order ``log2(err_434 / err_868) = 1.999214 >= 1.8``.
     """
     from wakis.curvilinear.mappings3d import (
         box_te101_omega,
@@ -869,3 +874,318 @@ def test_sphere_lowest_roots():
     # Mutation check: perturbing the roots makes the residuals exceed 1e-4
     assert abs(float(sphere_riccati_bessel_deriv_residual(x1 + 1e-3, l=1))) > 1e-4
     assert abs(float(sphere_bessel_residual(x2 + 1e-3, l=1))) > 1e-4
+
+
+def _check_wall_octant_reconstructions(solver, rng):
+    """Evaluate max relative ||D_c x n|| / ||D_c||, max relative |S_e . D_c - d_e| / |d_e|
+    on free edges at 1-wall octants, and magnetic wall normal ratios |B_c . n_wall| / ||B_c||."""
+    blk = solver.block
+    ijk = blk.cell_grid()
+    Nx, Ny, Nz = blk.nc
+    S_e = blk.dual_face_areas
+    A_f = blk.face_areas
+    bnd_e = blk.boundary_edge_mask
+
+    d_full = np.zeros(blk.n_edges, dtype=float)
+    d_full[blk.unknown_edges] = rng.uniform(0.5, 2.0, size=blk.n_unknown_edges) * (
+        2 * rng.integers(0, 2, size=blk.n_unknown_edges) - 1
+    )
+
+    b_vec = rng.uniform(0.5, 2.0, size=blk.n_faces) * (
+        2 * rng.integers(0, 2, size=blk.n_faces) - 1
+    )
+    for ax in range(3):
+        fg = blk.face_grid(ax)
+        on_wall = (fg[ax] == 0) | (fg[ax] == blk.nc[ax])
+        b_vec[blk.face_index(ax, *fg)[on_wall]] = 0.0
+
+    max_d_cross = 0.0
+    max_d_flux_err = 0.0
+    max_sharp_d = 0.0
+    max_b_face_ratio = 0.0
+    max_b_node_ratio = 0.0
+
+    for a in (0, 1):
+        for b in (0, 1):
+            for c in (0, 1):
+                ip = (ijk[0] + a).ravel()
+                jp = (ijk[1] + b).ravel()
+                kp = (ijk[2] + c).ravel()
+
+                e0 = blk.edge_index(0, ijk[0], ijk[1] + b, ijk[2] + c).ravel()
+                e1 = blk.edge_index(1, ijk[0] + a, ijk[1], ijk[2] + c).ravel()
+                e2 = blk.edge_index(2, ijk[0] + a, ijk[1] + b, ijk[2]).ravel()
+                e_loc = np.stack([e0, e1, e2], axis=1)
+
+                f0 = blk.face_index(0, ijk[0] + a, ijk[1], ijk[2]).ravel()
+                f1 = blk.face_index(1, ijk[0], ijk[1] + b, ijk[2]).ravel()
+                f2 = blk.face_index(2, ijk[0], ijk[1], ijk[2] + c).ravel()
+                f_loc = np.stack([f0, f1, f2], axis=1)
+
+                Q_c = solver._Q_c[a, b, c]
+                d_loc = d_full[e_loc]
+                D_c = np.einsum("nij,nj->ni", Q_c, d_loc)
+
+                R_c = solver._R_c[a, b, c]
+                b_loc = b_vec[f_loc]
+                B_c = np.einsum("nij,nj->ni", R_c, b_loc)
+                B_norm = np.linalg.norm(B_c, axis=1)
+
+                w0 = (ip == 0) | (ip == Nx)
+                w1 = (jp == 0) | (jp == Ny)
+                w2 = (kp == 0) | (kp == Nz)
+                n_w = w0.astype(int) + w1.astype(int) + w2.astype(int)
+
+                sharp = n_w >= 2
+                if np.any(sharp):
+                    max_sharp_d = max(
+                        max_sharp_d,
+                        float(np.max(np.linalg.norm(D_c[sharp], axis=1))),
+                    )
+
+                wall1 = n_w == 1
+                if np.any(wall1):
+                    n_vec = blk.node_normals[ip[wall1], jp[wall1], kp[wall1]]
+                    D_w = D_c[wall1]
+                    D_norm = np.linalg.norm(D_w, axis=1)
+                    cross_rel = np.linalg.norm(np.cross(D_w, n_vec), axis=1) / D_norm
+                    max_d_cross = max(max_d_cross, float(np.max(cross_rel)))
+
+                    e_w = e_loc[wall1]
+                    is_free = ~bnd_e[e_w]
+                    S_w = S_e[e_w]
+                    d_w = d_loc[wall1]
+                    d_rec = np.einsum("mqi,mi->mq", S_w, D_w)
+                    flux_err = np.abs(d_rec[is_free] - d_w[is_free]) / np.abs(
+                        d_w[is_free]
+                    )
+                    max_d_flux_err = max(max_d_flux_err, float(np.max(flux_err)))
+
+                    for ax, wm in ((0, w0), (1, w1), (2, w2)):
+                        m = wall1 & wm
+                        if not np.any(m):
+                            continue
+                        fw = f_loc[m, ax]
+                        n_f = A_f[fw] / np.linalg.norm(A_f[fw], axis=1, keepdims=True)
+                        r_f = np.abs(np.sum(B_c[m] * n_f, axis=1)) / B_norm[m]
+                        max_b_face_ratio = max(max_b_face_ratio, float(np.max(r_f)))
+
+                        n_nd = blk.node_normals[ip[m], jp[m], kp[m]]
+                        r_nd = np.abs(np.sum(B_c[m] * n_nd, axis=1)) / B_norm[m]
+                        max_b_node_ratio = max(max_b_node_ratio, float(np.max(r_nd)))
+
+    return (
+        max_d_cross,
+        max_d_flux_err,
+        max_sharp_d,
+        max_b_face_ratio,
+        max_b_node_ratio,
+    )
+
+
+# -------------------------------------------------------------------- test 12
+def test_pec_constraint_wall_octants():
+    """
+    On the sphere (N = 6) and the perturbed box (6 x 5 x 4), for each wall
+    octant with one wall normal ``n``, the constrained reconstruction ``D_c``
+    satisfies ``||D_c x n|| / ||D_c|| <= 1e-12`` and ``|S_e . D_c - d_e| / |d_e| <= 1e-12``
+    for the free edge of that octant, while sharp-edge/corner octants satisfy
+    ``D_c = 0``. Also checks the magnetic wall normal ratio ``|B_c . n_wall| / ||B_c||``
+    from ``R_c b`` with wall face ``b = 0`` and degenerate wall-octant detection.
+    """
+    from wakis.curvilinear.mappings3d import perturbed_box_nodes, sphere_nodes
+
+    rng = np.random.default_rng(2026)
+    blk_sph = HexBlock3D(sphere_nodes(6, 6, 6, a=1.0))
+    blk_box = HexBlock3D(perturbed_box_nodes(6, 5, 4, a=1.0, b=0.7, d=0.8, amp=0.3))
+
+    s_sph = CurvilinearFIT3D(blk_sph)
+    s_box = CurvilinearFIT3D(blk_box)
+    assert s_sph.n_wall_octants == 600 and s_sph.n_sharp_octants == 128
+
+    (
+        sph_d_cross,
+        sph_d_flux,
+        sph_sharp,
+        sph_b_face,
+        sph_b_node,
+    ) = _check_wall_octant_reconstructions(s_sph, rng)
+    (
+        box_d_cross,
+        box_d_flux,
+        box_sharp,
+        box_b_face,
+        box_b_node,
+    ) = _check_wall_octant_reconstructions(s_box, rng)
+
+    print(
+        f"[test_pec_constraint_wall_octants] sphere_6: "
+        f"max_d_cross={sph_d_cross:.3e}, max_d_flux_err={sph_d_flux:.3e}, "
+        f"max_sharp_d={sph_sharp:.3e}, max_b_face_ratio={sph_b_face:.3e}, "
+        f"max_b_node_ratio={sph_b_node:.6e}; "
+        f"pbox_654: max_d_cross={box_d_cross:.3e}, max_d_flux_err={box_d_flux:.3e}, "
+        f"max_sharp_d={box_sharp:.3e}, max_b_face_ratio={box_b_face:.3e}, "
+        f"max_b_node_ratio={box_b_node:.3e}"
+    )
+    assert sph_d_cross <= 1e-12
+    assert sph_d_flux <= 1e-12
+    assert sph_sharp == 0.0
+    assert sph_b_face <= 1e-12
+
+    assert box_d_cross <= 1e-12
+    assert box_d_flux <= 1e-12
+    assert box_sharp == 0.0
+    assert box_b_face <= 1e-12
+    assert box_b_node <= 1e-12
+
+    # Degenerate wall octant check: if S_e . n == 0 on the free edge of a wall octant,
+    # CurvilinearFIT3D raises ValueError reporting the node.
+    blk_deg = HexBlock3D(perturbed_box_nodes(3, 3, 3))
+    blk_deg.node_normals[0, 1, 1] = np.array([0.0, 0.0, 0.0])
+    with pytest.raises(ValueError, match="degenerate wall octant"):
+        CurvilinearFIT3D(blk_deg)
+
+
+# -------------------------------------------------------------------- test 13
+def test_pec_orthogonal_box_equals_yee():
+    """
+    On an orthogonal Cartesian box, ``W_eps`` and ``Q_eps_sqrt`` assembled with
+    ``_pec_reconstruction='constrained'`` equal those from ``'drop_only'`` to
+    machine round-off (relative difference ``<= 1e-14``).
+    """
+    from wakis.curvilinear.mappings3d import perturbed_box_nodes
+
+    rng = np.random.default_rng(42)
+    nx, ny, nz = 6, 5, 4
+    hx = rng.uniform(0.08, 0.25, size=nx)
+    hy = rng.uniform(0.09, 0.22, size=ny)
+    hz = rng.uniform(0.07, 0.20, size=nz)
+    x = np.concatenate([[0.0], np.cumsum(hx)])
+    y = np.concatenate([[0.0], np.cumsum(hy)])
+    z = np.concatenate([[0.0], np.cumsum(hz)])
+    block = HexBlock3D.cartesian(x, y, z)
+    eps_r = rng.uniform(1.1, 4.5, size=(nx, ny, nz))
+
+    s_new = CurvilinearFIT3D(block, eps_r=eps_r, _pec_reconstruction="constrained")
+    s_old = CurvilinearFIT3D(block, eps_r=eps_r, _pec_reconstruction="drop_only")
+
+    w_abs_diff = float(np.max(np.abs((s_new.W_eps - s_old.W_eps).data), initial=0.0))
+    w_rel_diff = w_abs_diff / float(np.max(np.abs(s_old.W_eps.data)))
+
+    q_abs_diff = float(
+        np.max(np.abs((s_new.Q_eps_sqrt - s_old.Q_eps_sqrt).data), initial=0.0)
+    )
+    q_rel_diff = q_abs_diff / float(np.max(np.abs(s_old.Q_eps_sqrt.data)))
+
+    # Factored form consistency: Q_eps_sqrt.T @ Q_eps_sqrt == W_eps
+    w_fact = (s_new.Q_eps_sqrt.T @ s_new.Q_eps_sqrt).tocsr()
+    fact_rel_diff = float(
+        np.max(np.abs((w_fact - s_new.W_eps).data), initial=0.0)
+    ) / float(np.max(np.abs(s_new.W_eps.data)))
+
+    print(
+        f"[test_pec_orthogonal_box_equals_yee] "
+        f"W_eps: max_abs_diff={w_abs_diff:.6e}, max_rel_diff={w_rel_diff:.6e}; "
+        f"Q_eps_sqrt: max_abs_diff={q_abs_diff:.6e}, max_rel_diff={q_rel_diff:.6e}; "
+        f"factored_rel_diff={fact_rel_diff:.6e}"
+    )
+    assert w_rel_diff <= 1e-14
+    assert q_rel_diff <= 1e-14
+    assert fact_rel_diff <= 1e-14
+
+    # Mutation check: on a non-orthogonal mesh, constrained and drop_only differ
+    blk_skew = HexBlock3D(perturbed_box_nodes(4, 3, 4, amp=0.25))
+    s_skew_new = CurvilinearFIT3D(blk_skew, _pec_reconstruction="constrained")
+    s_skew_old = CurvilinearFIT3D(blk_skew, _pec_reconstruction="drop_only")
+    skew_rel_diff = float(
+        np.max(np.abs((s_skew_new.W_eps - s_skew_old.W_eps).data), initial=0.0)
+    ) / float(np.max(np.abs(s_skew_old.W_eps.data)))
+    assert skew_rel_diff > 1e-2
+
+
+# -------------------------------------------------------------------- test 14
+def test_sphere_te_l1_pec_fix_drift():
+    """
+    Lowest ``l = 1`` PEC sphere resonance ``omega_d_xj1 = c * 2.74370727 / a``
+    at ``N = 6, 8, 12`` with ``_pec_reconstruction='constrained'``.
+
+    Measured values:
+    - ``omega_ana = 8.22542747e+08 rad/s``
+    - ``N = 6``: ``omega_disc = 7.92092331e+08 rad/s``, ``rel_err = -3.701986e-02``
+    - ``N = 8``: ``omega_disc = 8.05499931e+08 rad/s``, ``rel_err = -2.071967e-02``
+    - ``N = 12``: ``omega_disc = 8.15070403e+08 rad/s``, ``rel_err = -9.084444e-03``
+    The sequence ``|rel_err(N)|`` decreases monotonically across both refinement
+    steps (whereas ``'drop_only'`` increases from ``5.693e-03`` at ``N = 6`` to
+    ``1.038e-02`` at ``N = 8`` and ``1.970e-02`` at ``N = 12``).
+    """
+    from wakis.curvilinear.mappings3d import sphere_lowest_omegas, sphere_nodes
+
+    omega_ana, _ = sphere_lowest_omegas(a=1.0, l=1)
+    ns = (6, 8, 12)
+    omegas_disc = []
+    rel_errs = []
+
+    for n in ns:
+        blk = HexBlock3D(sphere_nodes(n, n, n, a=1.0))
+        solver = CurvilinearFIT3D(blk, _pec_reconstruction="constrained")
+        w_disc = float(solver.cavity_frequencies(k=4)[0])
+        assert np.isfinite(w_disc) and w_disc > 0.0
+        omegas_disc.append(w_disc)
+        rel_errs.append((w_disc - omega_ana) / omega_ana)
+
+    abs_errs = [abs(e) for e in rel_errs]
+    print(
+        f"[test_sphere_te_l1_pec_fix_drift] omega_ana={omega_ana:.8e}, "
+        f"omegas_disc={omegas_disc}, rel_errs={rel_errs}, abs_errs={abs_errs}"
+    )
+    assert abs_errs[1] < abs_errs[0]
+    assert abs_errs[2] < abs_errs[1]
+
+    # Mutation check: drop_only exhibits upward frequency drift between N=8 and N=12
+    err_drop_8 = abs(
+        float(
+            CurvilinearFIT3D(
+                HexBlock3D(sphere_nodes(8, 8, 8, a=1.0)),
+                _pec_reconstruction="drop_only",
+            ).cavity_frequencies(k=4)[0]
+            - omega_ana
+        )
+        / omega_ana
+    )
+    err_drop_12 = abs(
+        float(
+            CurvilinearFIT3D(
+                HexBlock3D(sphere_nodes(12, 12, 12, a=1.0)),
+                _pec_reconstruction="drop_only",
+            ).cavity_frequencies(k=4)[0]
+            - omega_ana
+        )
+        / omega_ana
+    )
+    assert err_drop_12 > err_drop_8
+
+
+# -------------------------------------------------------------------- test 15
+def test_pec_drop_only_is_not_pec():
+    """
+    Baseline mutation check: on the sphere at ``N = 6`` with
+    ``_pec_reconstruction='drop_only'``, the reconstructed ``D_c`` at wall
+    octants has a non-zero tangential component ``||D_c x n|| / ||D_c|| = 9.294193e-01 > 1e-2``
+    (violating the ``<= 1e-12`` PEC constraint of ``test_pec_constraint_wall_octants``).
+    """
+    from wakis.curvilinear.mappings3d import sphere_nodes
+
+    rng = np.random.default_rng(2026)
+    blk = HexBlock3D(sphere_nodes(6, 6, 6, a=1.0))
+    solver_drop = CurvilinearFIT3D(blk, _pec_reconstruction="drop_only")
+    max_d_cross, _, max_sharp_d, _, _ = _check_wall_octant_reconstructions(
+        solver_drop, rng
+    )
+    print(
+        f"[test_pec_drop_only_is_not_pec] sphere_6 drop_only: "
+        f"max_d_cross={max_d_cross:.6e}, max_sharp_d={max_sharp_d:.6e}"
+    )
+    assert max_d_cross > 1e-2
+
+    with pytest.raises(ValueError, match="_pec_reconstruction"):
+        CurvilinearFIT3D(blk, _pec_reconstruction="invalid")
