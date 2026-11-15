@@ -152,8 +152,9 @@ The ported step $x^n=(u^n,b^{n-1/2}, I_s^{n+1/2})\mapsto(u^{n+1},b^{n+1/2})$ is 
 `PortSet.linear_step` / `linear_step_T` implement it and its exact transpose ($A=D_++\tfrac{\Delta t}{2}WgW^T$ is
 symmetric, so the Woodbury solve is its own transpose; the massless elimination contributes
 $\Delta t\,K_{sf}^TK_{ss}^{-T}C_s^T\bar b$). Dot-product test to $10^{-15}$; a reverse-mode gradient of
-$J=\sum_n (V_2^{n+1/2})^2$ with respect to the source samples matches central differences. The ported step is
-not yet wired into `UnstructuredAdjointStepper` (material gradients with ports).
+$J=\sum_n (V_2^{n+1/2})^2$ with respect to the source samples matches central differences. Material-permittivity
+gradients through `UnstructuredAdjointStepper` (`linear_step` / `linear_step_T`) with ports are provided by
+`PortAdjointHelper` and `PortDFTMonitor`; see `docs/physicsguide_sections/unstructured_ports3d_adjoint.md`.
 
 ## 6. Verification
 
@@ -216,8 +217,10 @@ section, 8–12 GHz, 41 frequencies):
   reactance is part of the discrete model (and of $S_{11}$), so a lumped port is validated against the same
   discrete equations (frequency-domain solve) and against the DC limit $Z_{in}\to R_L$, not against
   transmission-line theory.
-* **Adjoint**: only the source-sample gradient is exercised; port conductances and material gradients through
-  `UnstructuredAdjointStepper` with ports are open.
+* **Adjoint**: interior material-permittivity gradients with ports are supported via `PortAdjointHelper` and
+  `PortDFTMonitor` in `UnstructuredAdjointStepper` (`docs/physicsguide_sections/unstructured_ports3d_adjoint.md`);
+  sensitivities with respect to the boundary port conductances $g_p$ or port mode shapes $w_p$ (when design cells
+  touch a port plane) remain open.
 
 ## References
 
