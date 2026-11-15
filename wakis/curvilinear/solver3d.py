@@ -90,18 +90,21 @@ from scipy.constants import epsilon_0 as eps_0
 from scipy.constants import mu_0
 from scipy.sparse.linalg import LinearOperator, eigs, eigsh
 
+from .hexmesh import _CORNER_VTK, HexMesh
 from .mesh3d import HexBlock3D
 
 __all__ = ["CurvilinearFIT3D"]
 
 
-def _cell_property(val, shape, name):
+def _cell_property(val, shape, n_cells, name):
     """Broadcast a scalar or array material property to ``shape`` and validate."""
     if val is None:
         return np.ones(shape, dtype=float)
     arr = np.asarray(val, dtype=float)
     if arr.ndim == 0:
         arr = np.full(shape, float(arr), dtype=float)
+    elif arr.shape == (n_cells,) and shape != (n_cells,):
+        arr = arr.reshape(shape)
     elif arr.shape != shape:
         raise ValueError(f"{name} must have shape {shape}, got {arr.shape}")
     if not np.all(np.isfinite(arr)) or np.any(arr <= 0.0):
@@ -145,31 +148,56 @@ class CurvilinearFIT3D:
         W_eps_override=None,
         _pec_reconstruction="constrained",
     ):
-        if not isinstance(block, HexBlock3D):
-            raise TypeError("block must be a HexBlock3D instance")
+        if isinstance(block, HexBlock3D):
+            self._is_block = True
+            self.block = block
+            self.mesh = HexMesh.from_block(block)
+            self.mesh.node_normals = block.node_normals.reshape(-1, 3)
+        elif isinstance(block, HexMesh):
+            self._is_block = False
+            self.mesh = block
+            self.block = block
+        else:
+            raise TypeError("block must be a HexBlock3D or HexMesh instance")
+
         if _pec_reconstruction not in ("constrained", "drop_only"):
             raise ValueError(
                 "_pec_reconstruction must be 'constrained' or 'drop_only', "
                 f"got {_pec_reconstruction!r}"
             )
-        self.block = block
         self._pec_reconstruction = _pec_reconstruction
-        self.eps_r = _cell_property(eps_r, block.nc, "eps_r")
-        self.mu_r = _cell_property(mu_r, block.nc, "mu_r")
+        self.eps_r = _cell_property(eps_r, block.nc, self.mesh.n_cells, "eps_r")
+        self.mu_r = _cell_property(mu_r, block.nc, self.mesh.n_cells, "mu_r")
         self.eps = eps_0 * self.eps_r
         self.mu = mu_0 * self.mu_r
 
-        self.n_faces = block.n_faces
-        self.n_edges = block.n_edges
+        self.n_faces = self.mesh.n_faces
+        self.n_edges = self.mesh.n_edges
         self.unknown_edges = block.unknown_edges
         self.n_unknown_edges = block.n_unknown_edges
 
-        self.C = block.curl()
+        C_msh = self.mesh.curl()
+        W_nu_msh, R_nu_sqrt_msh = self._assemble_hodge_magnetic()
+        W_eps_full_msh, Q_eps_sqrt_full_msh = self._assemble_hodge_electric()
+
+        if self._is_block:
+            pf = self.mesh.block_face_perm
+            pe = self.mesh.block_edge_perm
+            self.C = C_msh[pf, :][:, pe].tocsr()
+            self.W_nu = W_nu_msh[pf, :][:, pf].tocsr()
+            self._R_nu_sqrt = R_nu_sqrt_msh[:, pf].tocsr()
+            self.W_eps_full = W_eps_full_msh[pe, :][:, pe].tocsr()
+            self._Q_eps_sqrt_full = Q_eps_sqrt_full_msh[:, pe].tocsr()
+        else:
+            self.C = C_msh
+            self.W_nu = W_nu_msh
+            self._R_nu_sqrt = R_nu_sqrt_msh
+            self.W_eps_full = W_eps_full_msh
+            self._Q_eps_sqrt_full = Q_eps_sqrt_full_msh
+
         self.C_u = self.C[:, self.unknown_edges].tocsr()
         self.C_u_T = self.C_u.T.tocsr()
 
-        self.W_nu, self._R_nu_sqrt = self._assemble_hodge_magnetic()
-        self.W_eps_full, self._Q_eps_sqrt_full = self._assemble_hodge_electric()
         self.W_eps_u = self.W_eps_full[self.unknown_edges, :][
             :, self.unknown_edges
         ].tocsr()
@@ -213,27 +241,31 @@ class CurvilinearFIT3D:
     def _assemble_hodge_magnetic(self):
         """Assemble the symmetric PSD magnetic Hodge ``W_nu`` (``n_faces x n_faces``)
         and its factored square-root ``R_nu_sqrt``."""
-        blk = self.block
-        ijk = blk.cell_grid()
-        nc = blk.n_cells
-        weight = (blk.corner_volumes / self.mu).ravel()
+        msh = self.mesh
+        nc = msh.n_cells
+        weight = (msh.corner_volumes / self.mu.ravel()).ravel()
         sqrt_w = np.sqrt(weight)
 
         rows, cols, vals = [], [], []
         r_rows, r_cols, r_vals = [], [], []
-        A_f = blk.face_areas
+        A_f = msh.face_areas
         R_c_all = np.empty((2, 2, 2, nc, 3, 3), dtype=float)
 
         corner_id = 0
         for a in (0, 1):
             for b in (0, 1):
                 for c in (0, 1):
-                    f0 = blk.face_index(0, ijk[0] + a, ijk[1], ijk[2]).ravel()
-                    f1 = blk.face_index(1, ijk[0], ijk[1] + b, ijk[2]).ravel()
-                    f2 = blk.face_index(2, ijk[0], ijk[1], ijk[2] + c).ravel()
+                    f0 = msh.hex_faces[:, 0, a]
+                    f1 = msh.hex_faces[:, 1, b]
+                    f2 = msh.hex_faces[:, 2, c]
                     f_loc = np.stack([f0, f1, f2], axis=1)  # (nc, 3)
 
-                    M_c = A_f[f_loc]  # (nc, 3, 3), row m is A_{f_m}^T
+                    s0 = msh.hex_face_signs[:, 0, a]
+                    s1 = msh.hex_face_signs[:, 1, b]
+                    s2 = msh.hex_face_signs[:, 2, c]
+                    s_loc = np.stack([s0, s1, s2], axis=1)  # (nc, 3)
+
+                    M_c = s_loc[:, :, None] * A_f[f_loc]  # (nc, 3, 3)
                     det = np.linalg.det(M_c)
                     scale = np.prod(np.linalg.norm(M_c, axis=2), axis=1)
                     if (
@@ -245,7 +277,7 @@ class CurvilinearFIT3D:
                             "singular corner face matrix M_c in magnetic Hodge"
                         )
 
-                    R_c = np.linalg.inv(M_c)  # (nc, 3, 3)
+                    R_c = np.linalg.inv(M_c) * s_loc[:, None, :]  # (nc, 3, 3)
                     R_c_all[a, b, c] = R_c
                     W_loc = weight[:, None, None] * np.einsum("nji,njk->nik", R_c, R_c)
                     for p in range(3):
@@ -281,17 +313,15 @@ class CurvilinearFIT3D:
     def _assemble_hodge_electric(self):
         """Assemble the symmetric PSD electric Hodge ``W_eps`` (``n_edges x n_edges``)
         and its factored square-root ``Q_eps_sqrt``."""
-        blk = self.block
-        ijk = blk.cell_grid()
-        nc = blk.n_cells
-        Nx, Ny, Nz = blk.nc
-        weight = (blk.corner_volumes / self.eps).ravel()
+        msh = self.mesh
+        nc = msh.n_cells
+        weight = (msh.corner_volumes / self.eps.ravel()).ravel()
         sqrt_w = np.sqrt(weight)
 
         rows, cols, vals = [], [], []
         q_rows, q_cols, q_vals = [], [], []
-        S_e = blk.dual_face_areas
-        bnd_e = blk.boundary_edge_mask
+        S_e = msh.dual_face_areas
+        bnd_e = msh.boundary_edge_mask
         Q_c_all = np.empty((2, 2, 2, nc, 3, 3), dtype=float)
         n_wall_octants = 0
         n_sharp_octants = 0
@@ -300,16 +330,19 @@ class CurvilinearFIT3D:
         for a in (0, 1):
             for b in (0, 1):
                 for c in (0, 1):
-                    ip = (ijk[0] + a).ravel()
-                    jp = (ijk[1] + b).ravel()
-                    kp = (ijk[2] + c).ravel()
+                    c_nodes = msh.hexes[:, _CORNER_VTK[a, b, c]]
 
-                    e0 = blk.edge_index(0, ijk[0], ijk[1] + b, ijk[2] + c).ravel()
-                    e1 = blk.edge_index(1, ijk[0] + a, ijk[1], ijk[2] + c).ravel()
-                    e2 = blk.edge_index(2, ijk[0] + a, ijk[1] + b, ijk[2]).ravel()
+                    e0 = msh.hex_edges[:, 0, b, c]
+                    e1 = msh.hex_edges[:, 1, c, a]
+                    e2 = msh.hex_edges[:, 2, a, b]
                     e_loc = np.stack([e0, e1, e2], axis=1)  # (nc, 3)
 
-                    N_c = S_e[e_loc]  # (nc, 3, 3), row m is S_{e_m}^T
+                    s0 = msh.hex_edge_signs[:, 0, b, c]
+                    s1 = msh.hex_edge_signs[:, 1, c, a]
+                    s2 = msh.hex_edge_signs[:, 2, a, b]
+                    s_loc = np.stack([s0, s1, s2], axis=1)  # (nc, 3)
+
+                    N_c = s_loc[:, :, None] * S_e[e_loc]  # (nc, 3, 3)
                     det = np.linalg.det(N_c)
                     scale = np.prod(np.linalg.norm(N_c, axis=2), axis=1)
                     if (
@@ -321,49 +354,14 @@ class CurvilinearFIT3D:
                             "singular corner dual-face matrix N_c in electric Hodge"
                         )
 
-                    Q_c = np.linalg.inv(N_c)  # (nc, 3, 3)
+                    Q_c = np.linalg.inv(N_c) * s_loc[:, None, :]  # (nc, 3, 3)
 
-                    w0 = (ip == 0) | (ip == Nx)
-                    w1 = (jp == 0) | (jp == Ny)
-                    w2 = (kp == 0) | (kp == Nz)
-                    n_w = w0.astype(int) + w1.astype(int) + w2.astype(int)
-                    on_bnd = n_w >= 1
-
+                    on_bnd = msh.boundary_node_mask[c_nodes]
                     if np.any(on_bnd):
                         bnd_idx = np.flatnonzero(on_bnd)
-                        parallel_mask = np.ones(bnd_idx.size, dtype=bool)
-                        n_dir = np.zeros((bnd_idx.size, 3), dtype=float)
-                        has_ref = np.zeros(bnd_idx.size, dtype=bool)
-
-                        p_coords = (ip[bnd_idx], jp[bnd_idx], kp[bnd_idx])
-                        for ax, n_max in ((0, Nx), (1, Ny), (2, Nz)):
-                            for side, s_val in ((0, 0), (1, n_max)):
-                                hit = p_coords[ax] == s_val
-                                if not np.any(hit):
-                                    continue
-                                n_k = blk.wall_node_normals[
-                                    ax,
-                                    side,
-                                    p_coords[0][hit],
-                                    p_coords[1][hit],
-                                    p_coords[2][hit],
-                                ]
-                                first = ~has_ref[hit]
-                                if np.any(first):
-                                    hit_first = np.flatnonzero(hit)[first]
-                                    n_dir[hit_first] = n_k[first]
-                                    has_ref[hit_first] = True
-                                rest = has_ref[hit] & (~first)
-                                if np.any(rest):
-                                    hit_rest = np.flatnonzero(hit)[rest]
-                                    cross_norm = np.linalg.norm(
-                                        np.cross(n_dir[hit_rest], n_k[rest]),
-                                        axis=1,
-                                    )
-                                    parallel_mask[hit_rest] &= cross_norm <= 1e-12
-
-                        wall_oct = bnd_idx[parallel_mask]
-                        sharp_oct = bnd_idx[~parallel_mask]
+                        is_sharp = msh.effective_sharp_nodes[c_nodes[bnd_idx]]
+                        wall_oct = bnd_idx[~is_sharp]
+                        sharp_oct = bnd_idx[is_sharp]
                         n_wall_octants += int(wall_oct.size)
                         n_sharp_octants += int(sharp_oct.size)
 
@@ -371,12 +369,10 @@ class CurvilinearFIT3D:
                             if sharp_oct.size > 0:
                                 Q_c[sharp_oct] = 0.0
                             if wall_oct.size > 0:
-                                n_vec = blk.node_normals[
-                                    ip[wall_oct], jp[wall_oct], kp[wall_oct]
-                                ]
+                                n_vec = msh.node_normals[c_nodes[wall_oct]]
                                 is_free = ~bnd_e[e_loc[wall_oct]]  # (n_wall, 3)
                                 n_free = np.sum(is_free, axis=1)
-                                S_sub = N_c[wall_oct]  # (n_wall, 3, 3)
+                                S_sub = S_e[e_loc[wall_oct]]  # (n_wall, 3, 3)
                                 sn = np.einsum("mqj,mj->mq", S_sub, n_vec) * is_free
                                 denom = np.sum(sn * sn, axis=1)
                                 s_scale = np.sum(
@@ -393,7 +389,7 @@ class CurvilinearFIT3D:
                                     b_i = wall_oct[int(np.flatnonzero(bad)[0])]
                                     raise ValueError(
                                         "degenerate wall octant in electric Hodge at node "
-                                        f"({int(ip[b_i])}, {int(jp[b_i])}, {int(kp[b_i])})"
+                                        f"{int(c_nodes[b_i])}"
                                     )
                                 Q_c[wall_oct] = (
                                     n_vec[:, :, None] * sn[:, None, :]

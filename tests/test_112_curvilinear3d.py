@@ -1189,3 +1189,648 @@ def test_pec_drop_only_is_not_pec():
 
     with pytest.raises(ValueError, match="_pec_reconstruction"):
         CurvilinearFIT3D(blk, _pec_reconstruction="invalid")
+
+
+# -------------------------------------------------------------------- test 16
+def test_hexmesh_block_equivalence():
+    """
+    Exact bit-for-bit operator equality (``np.array_equal``, ``max_abs_diff == 0.0``)
+    between the generic `HexMesh` path and the structured `HexBlock3D` path on
+    ``perturbed_box_nodes(6, 6, 6, amp=0.25)`` and ``sphere_nodes(6, 6, 6, a=1.0)``.
+
+    Index permutation mapping:
+    - Each structured edge ``e_blk`` in ``HexBlock3D`` (ordered by family
+      ``(ex, ey, ez)`` and C-order ``(i, j, k)``) connects global node pair
+      ``(u, v)`` with ``u < v``. In ``HexMesh``, edges are ordered
+      lexicographically by ``(u, v)``, giving the explicit bijection
+      ``e_msh = perm_e[e_blk]``.
+    - Each structured face ``f_blk`` in ``HexBlock3D`` (ordered by family
+      ``(fx, fy, fz)`` and C-order ``(i, j, k)``) has sorted 4-tuple of corner
+      node indices ``(n0, n1, n2, n3)``. In ``HexMesh``, faces are ordered
+      lexicographically by ``(n0, n1, n2, n3)``, giving the explicit bijection
+      ``f_msh = perm_f[f_blk]``.
+    """
+    from wakis.curvilinear.hexmesh import HexMesh
+    from wakis.curvilinear.mappings3d import perturbed_box_nodes, sphere_nodes
+
+    cases = [
+        ("perturbed_box_6", perturbed_box_nodes(6, 6, 6, amp=0.25)),
+        ("sphere_6", sphere_nodes(6, 6, 6, a=1.0)),
+    ]
+
+    for name, X in cases:
+        blk = HexBlock3D(X)
+        s_blk = CurvilinearFIT3D(blk)
+
+        msh_from_blk = HexMesh.from_block(blk)
+        msh = HexMesh(
+            msh_from_blk.nodes,
+            msh_from_blk.hexes,
+            boundary_patch=msh_from_blk.boundary_patch,
+            sharp_nodes=msh_from_blk.sharp_nodes,
+        )
+        s_msh = CurvilinearFIT3D(msh)
+
+        # Build explicit edge permutation perm_e: block edge -> HexMesh edge
+        blk_edge_pairs = []
+        for a in range(3):
+            da = int(a == 0)
+            db = int(a == 1)
+            dc = int(a == 2)
+            ii, jj, kk = np.meshgrid(
+                np.arange(blk.Nx + 1 - da),
+                np.arange(blk.Ny + 1 - db),
+                np.arange(blk.Nz + 1 - dc),
+                indexing="ij",
+            )
+            u = np.ravel_multi_index((ii, jj, kk), blk.nn).ravel()
+            v = np.ravel_multi_index((ii + da, jj + db, kk + dc), blk.nn).ravel()
+            blk_edge_pairs.append(np.stack([u, v], axis=-1))
+        blk_edges = np.concatenate(blk_edge_pairs, axis=0)
+        assert np.all(blk_edges[:, 0] < blk_edges[:, 1])
+
+        order_e = np.lexsort((blk_edges[:, 1], blk_edges[:, 0]))
+        perm_e = np.empty(blk.n_edges, dtype=np.int64)
+        perm_e[order_e] = np.arange(blk.n_edges, dtype=np.int64)
+        inv_perm_e = order_e
+
+        # Assert perm_e is a bijection and maps blk_edges to msh.edges
+        assert np.array_equal(np.sort(perm_e), np.arange(blk.n_edges))
+        assert np.array_equal(msh.edges[perm_e], blk_edges)
+
+        # Build explicit face permutation perm_f: block face -> HexMesh face
+        blk_face_quads = []
+        for a in range(3):
+            b, c = (a + 1) % 3, (a + 2) % 3
+            ranges = [
+                np.arange(blk.Nx + (1 if a == 0 else 0)),
+                np.arange(blk.Ny + (1 if a == 1 else 0)),
+                np.arange(blk.Nz + (1 if a == 2 else 0)),
+            ]
+            ii, jj, kk = np.meshgrid(*ranges, indexing="ij")
+            corners = []
+            for db, dc in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                di = db * int(b == 0) + dc * int(c == 0)
+                dj = db * int(b == 1) + dc * int(c == 1)
+                dk = db * int(b == 2) + dc * int(c == 2)
+                corners.append(
+                    np.ravel_multi_index((ii + di, jj + dj, kk + dk), blk.nn).ravel()
+                )
+            blk_face_quads.append(np.stack(corners, axis=-1))
+        blk_faces = np.concatenate(blk_face_quads, axis=0)
+        blk_faces_sorted = np.sort(blk_faces, axis=1)
+
+        order_f = np.lexsort(
+            (
+                blk_faces_sorted[:, 3],
+                blk_faces_sorted[:, 2],
+                blk_faces_sorted[:, 1],
+                blk_faces_sorted[:, 0],
+            )
+        )
+        perm_f = np.empty(blk.n_faces, dtype=np.int64)
+        perm_f[order_f] = np.arange(blk.n_faces, dtype=np.int64)
+
+        # Assert perm_f is a bijection and maps blk_faces to msh.faces
+        assert np.array_equal(np.sort(perm_f), np.arange(blk.n_faces))
+        assert np.array_equal(msh.faces[perm_f], blk_faces)
+
+        # Unknown edge permutation induced by perm_e
+        unk_in_msh = perm_e[blk.unknown_edges]
+        perm_u = np.searchsorted(msh.unknown_edges, unk_in_msh)
+        assert np.array_equal(np.sort(perm_u), np.arange(blk.n_unknown_edges))
+        assert np.array_equal(msh.unknown_edges[perm_u], unk_in_msh)
+
+        # Compare boundary_edge_mask and unknown_edges
+        assert np.array_equal(
+            msh.boundary_edge_mask[perm_e], blk.boundary_edge_mask
+        )
+        assert np.array_equal(
+            np.sort(inv_perm_e[msh.unknown_edges]), blk.unknown_edges
+        )
+
+        # Compare operators after applying explicit permutations
+        C_mapped = s_msh.C[perm_f, :][:, perm_e].toarray()
+        C_ref = s_blk.C.toarray()
+        diff_C = float(np.max(np.abs(C_mapped - C_ref)))
+
+        W_nu_mapped = s_msh.W_nu[perm_f, :][:, perm_f].toarray()
+        W_nu_ref = s_blk.W_nu.toarray()
+        diff_W_nu = float(np.max(np.abs(W_nu_mapped - W_nu_ref)))
+
+        W_eps_full_mapped = s_msh.W_eps_full[perm_e, :][:, perm_e].toarray()
+        W_eps_full_ref = s_blk.W_eps_full.toarray()
+        diff_W_eps_full = float(np.max(np.abs(W_eps_full_mapped - W_eps_full_ref)))
+
+        W_eps_mapped = s_msh.W_eps[perm_u, :][:, perm_u].toarray()
+        W_eps_ref = s_blk.W_eps.toarray()
+        diff_W_eps = float(np.max(np.abs(W_eps_mapped - W_eps_ref)))
+
+        Q_eps_mapped = s_msh.Q_eps_sqrt[:, perm_u].toarray()
+        Q_eps_ref = s_blk.Q_eps_sqrt.toarray()
+        diff_Q_eps = float(np.max(np.abs(Q_eps_mapped - Q_eps_ref)))
+
+        max_abs_diff = max(
+            diff_C, diff_W_nu, diff_W_eps_full, diff_W_eps, diff_Q_eps
+        )
+        print(
+            f"[test_hexmesh_block_equivalence] {name}: "
+            f"max_abs_diff={max_abs_diff:.6e} "
+            f"(C={diff_C:.6e}, W_nu={diff_W_nu:.6e}, "
+            f"W_eps_full={diff_W_eps_full:.6e}, W_eps={diff_W_eps:.6e}, "
+            f"Q_eps_sqrt={diff_Q_eps:.6e}), "
+            f"n_wall_octants={s_msh.n_wall_octants}, "
+            f"n_sharp_octants={s_msh.n_sharp_octants}"
+        )
+        assert max_abs_diff == 0.0
+        assert np.array_equal(C_mapped, C_ref)
+        assert np.array_equal(W_nu_mapped, W_nu_ref)
+        assert np.array_equal(W_eps_full_mapped, W_eps_full_ref)
+        assert np.array_equal(W_eps_mapped, W_eps_ref)
+        assert np.array_equal(Q_eps_mapped, Q_eps_ref)
+        assert s_msh.n_wall_octants == s_blk.n_wall_octants
+        assert s_msh.n_sharp_octants == s_blk.n_sharp_octants
+
+        # Mutation check: swapping two unknown edges breaks operator equality
+        perm_u_bad = perm_u.copy()
+        perm_u_bad[0], perm_u_bad[1] = perm_u_bad[1], perm_u_bad[0]
+        assert not np.array_equal(
+            s_msh.W_eps[perm_u_bad, :][:, perm_u_bad].toarray(),
+            W_eps_ref,
+        )
+
+
+# -------------------------------------------------------------------- test 17
+def test_hexmesh_conformity_and_orientation():
+    """
+    Conformity, boundary Euler characteristic ``V_b - E_b + F_b = 2``, positive
+    corner Jacobians, discrete ``C @ G == 0`` identity on a random node field
+    (relative residual ``<= 1e-14``), and both required mutation checks:
+    1) Flipping one face orientation via ``_flip_face_sign=k`` breaks ``C @ G == 0``.
+    2) Ignoring generator ``sharp_nodes`` via ``_ignore_sharp_nodes=True``
+       changes ``n_sharp_octants`` from the generator sharp octant count
+       (``64 -> 112`` on ``butterfly_disk(4)`` and ``24 -> 168`` on
+       ``cubed_sphere_ball(4)``).
+    """
+    from wakis.curvilinear.hexmesh import HexMesh
+    from wakis.curvilinear.mappings3d import (
+        butterfly_disk_nodes,
+        cubed_sphere_ball_nodes,
+    )
+
+    rng = np.random.default_rng(2026)
+    cases = [
+        ("butterfly_disk_4", butterfly_disk_nodes(4, 4, 4, a=1.0, length=1.2), 64),
+        ("cubed_sphere_4", cubed_sphere_ball_nodes(4, a=1.0), 24),
+    ]
+
+    for name, msh, expected_sharp_octants in cases:
+        # 1) Positive corner Jacobians and cell volumes
+        assert np.all(msh.corner_jacobians > 0.0)
+        assert np.all(msh.cell_volumes > 0.0)
+
+        # 2) Conforming face counts and boundary Euler characteristic V_b - E_b + F_b == 2
+        f_b = int(np.sum(msh.boundary_face_mask))
+        e_b = int(np.sum(msh.boundary_edge_mask))
+        v_b = int(np.sum(msh.boundary_node_mask))
+        euler_char = v_b - e_b + f_b
+        assert e_b == 2 * f_b
+        assert euler_char == 2
+
+        # 3) Global orientation consistency: C @ (G @ phi) == 0 for random node potential
+        phi = rng.standard_normal(msh.n_nodes)
+        G = msh.gradient()
+        C = msh.curl()
+        g = G @ phi
+        cg = C @ g
+        rel_curl_grad = float(np.linalg.norm(cg)) / (
+            float(sp.linalg.norm(C)) * float(np.linalg.norm(g))
+        )
+
+        # Interior gradient check: C_u @ (G_u @ phi_int) == 0
+        G_u = msh.gradient_unknown()
+        C_u = C[:, msh.unknown_edges]
+        phi_int = rng.standard_normal(G_u.shape[1])
+        gu = G_u @ phi_int
+        c_gu = C_u @ gu
+        rel_curl_grad_u = float(np.linalg.norm(c_gu)) / (
+            float(sp.linalg.norm(C_u)) * float(np.linalg.norm(gu))
+        )
+
+        # 4) Mutation 1: flipping one face orientation sign breaks C @ G == 0
+        msh_flip = HexMesh(msh, _flip_face_sign=0)
+        cg_flip = msh_flip.curl() @ (msh_flip.gradient() @ phi)
+        rel_curl_grad_flip = float(np.linalg.norm(cg_flip)) / (
+            float(sp.linalg.norm(msh_flip.curl())) * float(np.linalg.norm(g))
+        )
+
+        # 5) Sharp octant count matches generator sharp_nodes octants;
+        #    Mutation 2: _ignore_sharp_nodes=True changes n_sharp_octants
+        gen_sharp_octants = int(np.sum(msh.node_octant_counts[msh.sharp_nodes]))
+        msh_ignore = HexMesh(msh, _ignore_sharp_nodes=True)
+
+        print(
+            f"[test_hexmesh_conformity_and_orientation] {name}: "
+            f"V_b={v_b}, E_b={e_b}, F_b={f_b}, euler={euler_char}, "
+            f"rel_curl_grad={rel_curl_grad:.3e}, rel_curl_grad_u={rel_curl_grad_u:.3e}, "
+            f"flip_face_mutation_rel={rel_curl_grad_flip:.3e}, "
+            f"n_sharp_octants={msh.n_sharp_octants} (gen={gen_sharp_octants}), "
+            f"n_wall_octants={msh.n_wall_octants}, "
+            f"ignore_sharp_mutation_octants={msh_ignore.n_sharp_octants}"
+        )
+        assert rel_curl_grad <= 1e-14
+        assert rel_curl_grad_u <= 1e-14
+        assert rel_curl_grad_flip > 1e-5
+        assert msh.n_sharp_octants == gen_sharp_octants == expected_sharp_octants
+        assert msh_ignore.n_sharp_octants != msh.n_sharp_octants
+
+    # Validation checks on invalid hexes (reporting offending hex index)
+    msh0 = cases[0][1]
+    bad_nodes = msh0.nodes.copy()
+    bad_nodes[0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        HexMesh(bad_nodes, msh0.hexes)
+
+    dup_hexes = np.vstack([msh0.hexes, msh0.hexes[0:1]])
+    with pytest.raises(ValueError, match=f"duplicate hex at index {msh0.n_cells}"):
+        HexMesh(msh0.nodes, dup_hexes)
+
+    inv_hexes = msh0.hexes.copy()
+    inv_hexes[3] = inv_hexes[3, [0, 3, 2, 1, 4, 7, 6, 5]]
+    with pytest.raises(ValueError, match="hex index 3"):
+        HexMesh(msh0.nodes, inv_hexes)
+
+
+# -------------------------------------------------------------------- test 18
+def test_butterfly_disk_volume():
+    """
+    Volume convergence of `butterfly_disk_nodes(n, n, n, a=1.0, length=1.2)`
+    toward the exact cylinder volume ``pi * a^2 * length = 3.76991118 m^3``.
+
+    Discretisation error bound:
+    The outer boundary of the 4 arc blocks inscribes ``4 * n`` straight chords
+    around the circle of circumference ``2 * pi * a``. Each chord subtends
+    ``delta_theta = pi / (2 * n)`` with relative circular-segment area deficit
+    ``(delta_theta)^2 / 6 = pi^2 / (24 * n^2) = 0.41123 / n^2``, yielding the
+    second-order bound ``|V_h - V_exact| / V_exact <= 0.45 / n^2``.
+
+    Measured relative errors:
+    - ``n = 4``: ``-2.550464e-02``
+    - ``n = 6``: ``-1.138407e-02``
+    - ``n = 8``: ``-6.413149e-03``
+    - ``n = 12``: ``-2.853343e-03``
+    - ``n = 16``: ``-1.605607e-03``
+    """
+    from wakis.curvilinear.mappings3d import butterfly_disk_nodes
+
+    a, length = 1.0, 1.2
+    v_exact = float(np.pi * a**2 * length)
+    ns = (4, 6, 8, 12, 16)
+    rel_errs = []
+    abs_errs = []
+
+    for n in ns:
+        msh = butterfly_disk_nodes(n, n, n, a=a, length=length)
+        v_num = msh.total_volume()
+        rel_err = (v_num - v_exact) / v_exact
+        rel_errs.append(rel_err)
+        abs_errs.append(abs(rel_err))
+
+    rates = [
+        float(np.log(abs_errs[k] / abs_errs[k + 1]) / np.log(ns[k + 1] / ns[k]))
+        for k in range(len(ns) - 1)
+    ]
+    print(
+        f"[test_butterfly_disk_volume] v_exact={v_exact:.8f}, "
+        f"ns={ns}, rel_errs={[f'{e:.6e}' for e in rel_errs]}, "
+        f"rates={[round(r, 4) for r in rates]}"
+    )
+    for k in range(len(ns) - 1):
+        assert abs_errs[k + 1] < abs_errs[k]
+        assert rates[k] >= 1.95
+    for n, err in zip(ns, abs_errs):
+        assert err <= 0.45 / (n**2)
+
+
+# -------------------------------------------------------------------- test 19
+def test_cubed_sphere_volume():
+    """
+    Volume convergence of `cubed_sphere_ball_nodes(n, a=1.0)` toward the exact
+    ball volume ``(4 / 3) * pi * a^3 = 4.18879020 m^3``.
+
+    Discretisation error bound:
+    The 6 outer gnomonic shells discretise the sphere surface into ``6 * n^2``
+    bilinear quads inscribed in ``r = a`` with angular step ``h ~ pi / (2 * n)``,
+    giving a second-order radial sagitta volume deficit bounded by
+    ``|V_h - V_exact| / V_exact <= 1.25 / n^2``.
+
+    Measured relative errors:
+    - ``n = 4``: ``-7.116182e-02``
+    - ``n = 6``: ``-3.283533e-02``
+    - ``n = 8``: ``-1.872036e-02``
+    - ``n = 12``: ``-8.401734e-03``
+    - ``n = 16``: ``-4.742270e-03``
+    """
+    from wakis.curvilinear.mappings3d import cubed_sphere_ball_nodes
+
+    a = 1.0
+    v_exact = float((4.0 / 3.0) * np.pi * a**3)
+    ns = (4, 6, 8, 12, 16)
+    rel_errs = []
+    abs_errs = []
+
+    for n in ns:
+        msh = cubed_sphere_ball_nodes(n, a=a)
+        v_num = msh.total_volume()
+        rel_err = (v_num - v_exact) / v_exact
+        rel_errs.append(rel_err)
+        abs_errs.append(abs(rel_err))
+
+    rates = [
+        float(np.log(abs_errs[k] / abs_errs[k + 1]) / np.log(ns[k + 1] / ns[k]))
+        for k in range(len(ns) - 1)
+    ]
+    print(
+        f"[test_cubed_sphere_volume] v_exact={v_exact:.8f}, "
+        f"ns={ns}, rel_errs={[f'{e:.6e}' for e in rel_errs]}, "
+        f"rates={[round(r, 4) for r in rates]}"
+    )
+    for k in range(len(ns) - 1):
+        assert abs_errs[k + 1] < abs_errs[k]
+        assert rates[k] >= 1.90
+    for n, err in zip(ns, abs_errs):
+        assert err <= 1.25 / (n**2)
+
+
+# -------------------------------------------------------------------- test 20
+def test_mesh_quality_bounded():
+    """
+    `mesh_quality(mesh)` across ``n = 6, 8, 12, 16`` for both
+    `butterfly_disk_nodes` and `cubed_sphere_ball_nodes`:
+    - ``min_scaled_jacobian > 0`` (``0.707107`` on butterfly disk, ``0.577350``
+      on cubed-sphere ball, independent of ``n``);
+    - ``max_corner_cond`` at ``n = 16`` is not larger than at ``n = 6``
+      (butterfly disk: ``4.492163 <= 4.517838``; cubed-sphere ball:
+      ``3.336057 <= 3.347598``).
+    """
+    from wakis.curvilinear.hexmesh import mesh_quality
+    from wakis.curvilinear.mappings3d import (
+        butterfly_disk_nodes,
+        cubed_sphere_ball_nodes,
+    )
+
+    ns = (6, 8, 12, 16)
+    generators = [
+        ("butterfly_disk", lambda n: butterfly_disk_nodes(n, n, n, a=1.0, length=1.2)),
+        ("cubed_sphere", lambda n: cubed_sphere_ball_nodes(n, a=1.0)),
+    ]
+
+    for name, gen in generators:
+        qualities = {}
+        for n in ns:
+            q = mesh_quality(gen(n))
+            qualities[n] = q
+            print(
+                f"[test_mesh_quality_bounded] {name} n={n}: "
+                f"min_scaled_jacobian={q['min_scaled_jacobian']:.6f}, "
+                f"max_corner_cond={q['max_corner_cond']:.6f} "
+                f"(mag={q['max_cond_magnetic']:.6f}, elec={q['max_cond_electric']:.6f}), "
+                f"n_hex={q['n_hex']}, n_nodes={q['n_nodes']}, "
+                f"n_sharp_octants={q['n_sharp_octants']}, "
+                f"n_wall_octants={q['n_wall_octants']}"
+            )
+            assert q["min_scaled_jacobian"] > 0.5
+
+        assert qualities[16]["max_corner_cond"] <= qualities[6]["max_corner_cond"]
+
+
+# -------------------------------------------------------------------- test 21
+def test_dot_product_generic_mesh():
+    """
+    Exact transpose identity ``<y, S x> == <S^T y, x>`` to ``<= 1e-14`` relative
+    error on both `butterfly_disk_nodes(3, 3, 3)` and `cubed_sphere_ball_nodes(2)`.
+    """
+    from wakis.curvilinear.mappings3d import (
+        C0,
+        butterfly_disk_nodes,
+        cubed_sphere_ball_nodes,
+    )
+
+    eta_inv = 1.0 / (C0 * 4.0 * np.pi * 1e-7)
+    cases = [
+        ("butterfly_disk_3", butterfly_disk_nodes(3, 3, 3, a=1.0, length=1.2)),
+        ("cubed_sphere_2", cubed_sphere_ball_nodes(2, a=1.0)),
+    ]
+
+    for name, msh in cases:
+        rng = np.random.default_rng(7)
+        solver = CurvilinearFIT3D(msh)
+        dt = 0.7 * solver.max_stable_dt()
+
+        b = rng.standard_normal(solver.n_faces)
+        d = rng.standard_normal(solver.n_unknown_edges) * eta_inv
+        yb = rng.standard_normal(solver.n_faces)
+        yd = rng.standard_normal(solver.n_unknown_edges) * eta_inv
+
+        sb, sd = solver.step(b, d, dt=dt)
+        tb, td = solver.transpose_step(yb, yd, dt=dt)
+        lhs_step = float(yb @ sb + yd @ sd)
+        rhs_step = float(tb @ b + td @ d)
+        denom_step = float(
+            np.sqrt(yb @ yb + yd @ yd) * np.sqrt(sb @ sb + sd @ sd)
+        )
+        rel_step = abs(lhs_step - rhs_step) / denom_step
+
+        W_eps = solver.W_eps_u
+        we_d = W_eps @ d
+        wt_yd = W_eps.T @ yd
+        rel_weps = abs(float(yd @ we_d) - float(wt_yd @ d)) / (
+            float(np.linalg.norm(yd)) * float(np.linalg.norm(we_d))
+        )
+
+        W_nu = solver.W_nu
+        wn_b = W_nu @ b
+        wt_yb = W_nu.T @ yb
+        rel_wnu = abs(float(yb @ wn_b) - float(wt_yb @ b)) / (
+            float(np.linalg.norm(yb)) * float(np.linalg.norm(wn_b))
+        )
+
+        C_u = solver.C_u
+        c_d = C_u @ d
+        ct_yb = C_u.T @ yb
+        rel_curl = abs(float(yb @ c_d) - float(ct_yb @ d)) / (
+            float(np.linalg.norm(yb)) * float(np.linalg.norm(c_d))
+        )
+
+        # Mutation check: un-reversed transpose sub-steps fail
+        d_bad = yd - dt * (W_eps.T @ (C_u.T @ yb))
+        b_bad = yb + dt * (W_nu.T @ (C_u @ d_bad))
+        rel_bad = abs(lhs_step - float(b_bad @ b + d_bad @ d)) / denom_step
+
+        print(
+            f"[test_dot_product_generic_mesh] {name}: "
+            f"rel_step={rel_step:.3e}, rel_weps={rel_weps:.3e}, "
+            f"rel_wnu={rel_wnu:.3e}, rel_curl={rel_curl:.3e}, "
+            f"rel_bad_mutation={rel_bad:.3e}"
+        )
+        assert rel_step <= 1e-14
+        assert rel_weps <= 1e-14
+        assert rel_wnu <= 1e-14
+        assert rel_curl <= 1e-14
+        assert rel_bad > 1e-3
+
+
+# -------------------------------------------------------------------- test 22
+def test_energy_generic_mesh():
+    """
+    Discrete leapfrog energy conservation over ``10000`` steps at
+    ``0.5 * max_stable_dt()`` (relative drift ``<= 1e-13``) on
+    `butterfly_disk_nodes(3, 3, 3)` and `cubed_sphere_ball_nodes(2)`.
+    """
+    from wakis.curvilinear.mappings3d import (
+        butterfly_disk_nodes,
+        cubed_sphere_ball_nodes,
+    )
+
+    cases = [
+        ("butterfly_disk_3", butterfly_disk_nodes(3, 3, 3, a=1.0, length=1.2)),
+        ("cubed_sphere_2", cubed_sphere_ball_nodes(2, a=1.0)),
+    ]
+
+    for name, msh in cases:
+        rng = np.random.default_rng(123)
+        solver = CurvilinearFIT3D(msh)
+        dt = 0.5 * solver.max_stable_dt()
+
+        b0 = rng.standard_normal(solver.n_faces)
+        d0_raw = rng.standard_normal(solver.n_unknown_edges)
+        d0 = d0_raw * np.sqrt(
+            (b0 @ (solver.W_nu @ b0)) / (d0_raw @ (solver.W_eps_u @ d0_raw))
+        )
+        b, d = b0.copy(), d0.copy()
+        e0 = solver.energy(b, d, dt=dt)
+        assert e0 > 0.0
+
+        n_steps = 10000
+        max_drift = 0.0
+        for step_idx in range(n_steps):
+            b, d = solver.step(b, d, dt=dt)
+            if (step_idx + 1) % 100 == 0 or step_idx == n_steps - 1:
+                en = solver.energy(b, d, dt=dt)
+                max_drift = max(max_drift, abs(en - e0) / abs(e0))
+
+        # Mutation check: an asymmetric Hodge fails to conserve energy
+        W_asym = solver.W_eps_u + 0.25 * sp.triu(solver.W_eps_u, 1)
+        s_mut = CurvilinearFIT3D(msh, W_eps_override=W_asym)
+        bm, dm = b0.copy(), d0.copy()
+        em0 = s_mut.energy(bm, dm, dt=dt)
+        mut_drift = 0.0
+        for _ in range(500):
+            bm, dm = s_mut.step(bm, dm, dt=dt)
+            em = s_mut.energy(bm, dm, dt=dt)
+            mut_drift = max(mut_drift, abs(em - em0) / abs(em0))
+
+        print(
+            f"[test_energy_generic_mesh] {name}: "
+            f"max_rel_energy_drift={max_drift:.3e} (over {n_steps} steps), "
+            f"asymmetric_mutation_drift={mut_drift:.3e}"
+        )
+        assert max_drift <= 1e-13
+        assert mut_drift > 1e-3
+
+
+# -------------------------------------------------------------------- test 23
+def test_stability_generic_mesh():
+    """
+    Lanczos stability bound on `butterfly_disk_nodes(3, 3, 3)` and
+    `cubed_sphere_ball_nodes(2)`: ``10000`` steps at ``0.95 * max_stable_dt()``
+    stay bounded (``max E <= 1.01 E0``); at ``1.05 * max_stable_dt()`` energy
+    grows by at least ``10x``.
+    """
+    from wakis.curvilinear.mappings3d import (
+        butterfly_disk_nodes,
+        cubed_sphere_ball_nodes,
+    )
+
+    cases = [
+        ("butterfly_disk_3", butterfly_disk_nodes(3, 3, 3, a=1.0, length=1.2)),
+        ("cubed_sphere_2", cubed_sphere_ball_nodes(2, a=1.0)),
+    ]
+
+    for name, msh in cases:
+        rng = np.random.default_rng(99)
+        solver = CurvilinearFIT3D(msh)
+        dt_max = solver.max_stable_dt()
+
+        b0 = rng.standard_normal(solver.n_faces)
+        d0 = rng.standard_normal(solver.n_unknown_edges)
+        scale = np.sqrt((b0 @ (solver.W_nu @ b0)) / (d0 @ (solver.W_eps_u @ d0)))
+        d0 = d0 * scale
+
+        dt_sub = 0.95 * dt_max
+        b, d = b0.copy(), d0.copy()
+        e0_sub = solver.energy(b, d, dt=dt_sub)
+        max_sub_ratio = 1.0
+        for step_idx in range(10000):
+            b, d = solver.step(b, d, dt=dt_sub)
+            if (step_idx + 1) % 100 == 0:
+                en = solver.energy(b, d, dt=dt_sub)
+                max_sub_ratio = max(max_sub_ratio, en / e0_sub)
+
+        dt_sup = 1.05 * dt_max
+        bu, du = b0.copy(), d0.copy()
+        e0_sup = solver.energy(bu, du, dt=0.0)
+        max_sup_ratio = 1.0
+        for _ in range(10000):
+            bu, du = solver.step(bu, du, dt=dt_sup)
+            en_u = solver.energy(bu, du, dt=0.0)
+            max_sup_ratio = max(max_sup_ratio, en_u / e0_sup)
+            if max_sup_ratio >= 100.0:
+                break
+
+        print(
+            f"[test_stability_generic_mesh] {name}: dt_max={dt_max:.4e} s, "
+            f"max_sub_ratio={max_sub_ratio:.6f}, max_sup_ratio={max_sup_ratio:.3e}"
+        )
+        assert max_sub_ratio <= 1.01
+        assert max_sup_ratio >= 10.0
+
+
+# -------------------------------------------------------------------- test 24
+def test_cavity_butterfly_cylinder_tm010():
+    """
+    Lowest ``TM010`` cavity frequency on the 5-block butterfly cylinder
+    `butterfly_disk_nodes(n, n, n, a=1.0, length=1.2)` at coarse ``n = 4, 6``
+    compared against ``omega_TM010 = c * j_01 / a = 7.20948565e+08 rad/s``.
+
+    Measured values:
+    - ``n = 4``: ``omega_disc = 7.26300648e+08 rad/s``, ``rel_err = +7.423668e-03``
+    - ``n = 6``: ``omega_disc = 7.23828466e+08 rad/s``, ``rel_err = +3.994600e-03``
+    """
+    from wakis.curvilinear.mappings3d import (
+        butterfly_disk_nodes,
+        cylinder_tm010_omega,
+    )
+
+    omega_ana = cylinder_tm010_omega(a=1.0)
+    ns = (4, 6)
+    omegas_disc = []
+    rel_errs = []
+
+    for n in ns:
+        msh = butterfly_disk_nodes(n, n, n, a=1.0, length=1.2)
+        solver = CurvilinearFIT3D(msh)
+        w = solver.cavity_frequencies(k=4)
+        w = w[w > 1e3]
+        w_disc = float(w[np.argmin(np.abs(w - omega_ana))])
+        omegas_disc.append(w_disc)
+        rel_errs.append((w_disc - omega_ana) / omega_ana)
+
+    print(
+        f"[test_cavity_butterfly_cylinder_tm010] omega_ana={omega_ana:.8e}, "
+        f"omegas_disc={omegas_disc}, rel_errs={[f'{e:.6e}' for e in rel_errs]}"
+    )
+    assert abs(rel_errs[1]) < abs(rel_errs[0])
+    assert abs(rel_errs[0]) < 1.0e-2
+    assert abs(rel_errs[1]) < 5.0e-3
+

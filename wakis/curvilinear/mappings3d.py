@@ -157,6 +157,8 @@ from scipy.special import jn_zeros, jnp_zeros, spherical_jn
 
 __all__ = [
     "box_te101_omega",
+    "butterfly_disk_nodes",
+    "cubed_sphere_ball_nodes",
     "cylinder_continuous_jacobian",
     "cylinder_corner_jacobian_analytic",
     "cylinder_nodes",
@@ -584,3 +586,382 @@ def sphere_lowest_omegas(a=1.0, l=1):
         raise ValueError("sphere radius a must be positive")
     x1, x2 = sphere_lowest_roots(l=l)
     return float(C0 * x1 / a), float(C0 * x2 / a)
+
+
+def butterfly_disk_nodes(n_core, n_arc=None, nz=None, a=1.0, length=1.2):
+    """
+    Generate a 5-block butterfly (O-grid) conforming hexahedral mesh of a
+    circular cylinder of radius ``a`` [m] and axial length ``length`` [m].
+
+    Transfinite blend derivation
+    ----------------------------
+    The 2D cross-section of radius ``a`` [m] is partitioned into a central
+    Cartesian square core ``[-b, b]^2`` of half-width
+    ``b = alpha * a / sqrt(2)`` [m] (with ``alpha = 0.65``) and four
+    surrounding curved blocks (East ``+x``, North ``+y``, West ``-x``, South
+    ``-y``) whose outer arc corners lie at ``(+-a / sqrt(2), +-a / sqrt(2))`` [m]
+    on the circle ``r = a`` along the four rays ``theta = +-pi/4, +-3*pi/4``.
+
+    For each curved block ``m in {0, 1, 2, 3}`` with azimuthal logical
+    coordinate ``s in [-1, 1]`` and radial blend coordinate ``t in [0, 1]``,
+    the inner curve ``x_in,m(s)`` [m] is the corresponding side of the square
+    ``[-b, b]^2`` (e.g. ``x_in,0(s) = (b, b * s)`` [m] on the East block) and
+    the outer curve is the circular arc of radius ``a`` [m],
+    ``x_out,m(s) = (a * cos(theta_m(s)), a * sin(theta_m(s)))`` [m] with
+    ``theta_m(s) = m * pi / 2 + (pi / 4) * s`` [rad]. Transfinite linear
+    blending in ``t`` extruded along ``z in [0, length]`` [m] gives
+
+    .. math::
+
+        \\mathbf{x}_m(s, t, z) = (1 - t) \\, \\mathbf{x}_{\\text{in}, m}(s)
+            + t \\, \\mathbf{x}_{\\text{out}, m}(s) + (0, 0, z) \\quad [\\text{m}].
+
+    Along the four inter-block seams ``s = +-1``, adjacent curved blocks share
+    the straight radial line segment connecting ``(+-b, +-b, z)`` to
+    ``(+-a / sqrt(2), +-a / sqrt(2), z)``, avoiding any centre singularity or
+    boundary secant degeneracy (minimum scaled corner Jacobian
+    ``1 / sqrt(2)`` independent of resolution).
+
+    Boundary patches ``0..3`` label the four curved lateral arc walls and
+    patches ``4, 5`` label the bottom (``z = 0``) and top (``z = length``) flat
+    end caps. ``sharp_nodes`` marks only the top and bottom circular rims
+    ``(r = a, z in {0, length})`` where the lateral wall meets the end caps at
+    ``90`` degrees; the four axial arc junctions on ``r = a`` are smooth.
+
+    Parameters
+    ----------
+    n_core : int
+        Number of cells along each side of the central square core.
+    n_arc : int, optional
+        Number of radial cells in each of the 4 curved arc blocks (defaults to
+        ``n_core``).
+    nz : int, optional
+        Number of axial cells along ``z`` (defaults to ``n_core``).
+    a : float, optional
+        Cylinder radius [m] (default 1.0).
+    length : float, optional
+        Cylinder axial length [m] (default 1.2).
+
+    Returns
+    -------
+    HexMesh
+        Conforming hexahedral mesh (also unpackable as
+        ``nodes, hexes, boundary_patch, sharp_nodes``).
+    """
+    from .hexmesh import HexMesh
+
+    if n_arc is None:
+        n_arc = n_core
+    if nz is None:
+        nz = n_core
+    n_core, n_arc, nz = _validate_counts(n_core, n_arc, nz)
+    a, length = float(a), float(length)
+    if a <= 0.0 or length <= 0.0:
+        raise ValueError("cylinder radius a and length must be positive")
+
+    alpha = 0.65
+    b = alpha * a / np.sqrt(2.0)
+
+    u = np.linspace(-1.0, 1.0, n_core + 1)
+    U, V = np.meshgrid(u, u, indexing="ij")
+    xy_core = np.stack([b * U, b * V], axis=-1).reshape(-1, 2)
+    core_idx = np.arange((n_core + 1) ** 2, dtype=np.int64).reshape(
+        n_core + 1, n_core + 1
+    )
+
+    ring0_idx = np.concatenate(
+        [
+            core_idx[n_core, :n_core],
+            core_idx[n_core:0:-1, n_core],
+            core_idx[0, n_core:0:-1],
+            core_idx[:n_core, 0],
+        ]
+    )
+    xy_in = xy_core[ring0_idx]
+
+    s_seg = np.linspace(-1.0, 1.0, n_core + 1)[:-1]
+    thetas = np.concatenate(
+        [
+            0.25 * np.pi * s_seg,
+            0.5 * np.pi + 0.25 * np.pi * s_seg,
+            np.pi + 0.25 * np.pi * s_seg,
+            -0.5 * np.pi + 0.25 * np.pi * s_seg,
+        ]
+    )
+    xy_out = a * np.stack([np.cos(thetas), np.sin(thetas)], axis=-1)
+
+    n_perim = 4 * n_core
+    xy_rings = []
+    ring_idx_list = [ring0_idx]
+    next_id = int(xy_core.shape[0])
+    for r in range(1, n_arc + 1):
+        t = r / n_arc
+        xy_rings.append((1.0 - t) * xy_in + t * xy_out)
+        ring_idx_list.append(
+            np.arange(next_id, next_id + n_perim, dtype=np.int64)
+        )
+        next_id += n_perim
+
+    xy_2d = np.concatenate([xy_core] + xy_rings, axis=0)
+    n_2d = int(xy_2d.shape[0])
+
+    q_core = np.stack(
+        [
+            core_idx[:-1, :-1].ravel(),
+            core_idx[1:, :-1].ravel(),
+            core_idx[1:, 1:].ravel(),
+            core_idx[:-1, 1:].ravel(),
+        ],
+        axis=-1,
+    )
+
+    q_arcs = []
+    q_arc_sec = []
+    for r in range(n_arc):
+        r0 = ring_idx_list[r]
+        r1 = ring_idx_list[r + 1]
+        for p in range(n_perim):
+            pn = (p + 1) % n_perim
+            q_arcs.append([r0[p], r1[p], r1[pn], r0[pn]])
+            q_arc_sec.append((r == n_arc - 1, p // n_core))
+    q_arcs = np.asarray(q_arcs, dtype=np.int64)
+    quads_2d = np.concatenate([q_core, q_arcs], axis=0)
+    n_q2d = int(quads_2d.shape[0])
+    n_core_q = int(q_core.shape[0])
+
+    z = np.linspace(0.0, length, nz + 1)
+    nodes = np.empty(((nz + 1) * n_2d, 3), dtype=float)
+    for k in range(nz + 1):
+        nodes[k * n_2d : (k + 1) * n_2d, :2] = xy_2d
+        nodes[k * n_2d : (k + 1) * n_2d, 2] = z[k]
+
+    hexes = np.empty((nz * n_q2d, 8), dtype=np.int64)
+    local_patch = np.full((nz * n_q2d, 3, 2), -1, dtype=np.int64)
+    for k in range(nz):
+        h0 = k * n_q2d
+        h1 = (k + 1) * n_q2d
+        hexes[h0:h1, :4] = quads_2d + k * n_2d
+        hexes[h0:h1, 4:] = quads_2d + (k + 1) * n_2d
+        if k == 0:
+            local_patch[h0:h1, 2, 0] = 4
+        if k == nz - 1:
+            local_patch[h0:h1, 2, 1] = 5
+        for idx_a, (is_outer, sec) in enumerate(q_arc_sec):
+            if is_outer:
+                local_patch[h0 + n_core_q + idx_a, 0, 1] = sec
+
+    sharp_nodes = np.zeros((nz + 1) * n_2d, dtype=bool)
+    outer_ring_2d = ring_idx_list[-1]
+    sharp_nodes[outer_ring_2d] = True
+    sharp_nodes[nz * n_2d + outer_ring_2d] = True
+
+    return HexMesh(
+        nodes, hexes, boundary_patch=local_patch, sharp_nodes=sharp_nodes
+    )
+
+
+def cubed_sphere_ball_nodes(n, a=1.0):
+    """
+    Generate a 7-block cubed-sphere conforming hexahedral mesh of a ball of
+    radius ``a`` [m] consisting of an ``n x n x n`` Cartesian cube core and
+    six ``n x n x n`` radially blended gnomonic shells.
+
+    Equidistant gnomonic projection and radial blend derivation
+    -----------------------------------------------------------
+    Let ``b = alpha * a / sqrt(3)`` [m] (with ``alpha = 0.56``) be the
+    half-width of the inner Cartesian cube core ``[-b, b]^3``. Each of the six
+    cube faces ``m in {0, ..., 5}`` (``+x, -x, +y, -y, +z, -z``) is
+    parameterised by uniform logical coordinates ``(u, v) in [-1, 1]^2`` with
+    cube-surface point ``p_m(u, v) in [-1, 1]^3`` satisfying
+    ``max_i |p_{m, i}| = 1``.
+
+    Under the equidistant gnomonic projection, ``p_m(u, v)`` is projected
+    radially onto the sphere of radius ``a`` [m]:
+
+    .. math::
+
+        \\mathbf{x}_{\\text{in}, m}(u, v) = b \\, \\mathbf{p}_m(u, v) \\; [\\text{m}], \\qquad
+        \\mathbf{x}_{\\text{out}, m}(u, v)
+        = a \\, \\frac{\\mathbf{p}_m(u, v)}{\\|\\mathbf{p}_m(u, v)\\|}
+        = \\frac{a}{\\sqrt{1 + u^2 + v^2}} \\, \\mathbf{p}_m(u, v) \\; [\\text{m}].
+
+    Because ``x_in,m(u, v)`` and ``x_out,m(u, v)`` are strictly collinear along
+    the ray ``p_m(u, v)`` for every ``(u, v) in [-1, 1]^2``, linear radial
+    blending in ``t in [0, 1]`` yields
+
+    .. math::
+
+        \\mathbf{x}_m(u, v, t)
+        = \\left[(1 - t) \\, b + t \\, \\frac{a}{\\sqrt{1 + u^2 + v^2}}\\right]
+          \\mathbf{p}_m(u, v) \\quad [\\text{m}],
+
+    whose radial edges remain straight rays through the origin and whose
+    minimum scaled corner Jacobian equals ``1 / sqrt(3)`` at the eight inner
+    cube corners ``(|u|, |v|, t) = (1, 1, 0)`` for all ``n`` (with non-growing
+    corner reconstruction condition number as ``n`` increases, unlike the
+    equiangular gnomonic projection where ``sec^2(pi u / 4)`` stretches the
+    inner-to-outer transverse aspect ratio with ``n``).
+
+    The outermost shell layer (``t = 1``) forms the spherical boundary with
+    ``boundary_patch`` labels ``0..5`` for the six shells. Only the 8
+    cube-corner nodes on ``r = a`` (where three shells meet at ``120`` degrees)
+    are marked in ``sharp_nodes`` (24 sharp octants); the 12 cube-edge seams
+    between shells are smooth.
+
+    Parameters
+    ----------
+    n : int
+        Number of cells along each cube edge and along the radial shell
+        direction.
+    a : float, optional
+        Sphere radius [m] (default 1.0).
+
+    Returns
+    -------
+    HexMesh
+        Conforming hexahedral mesh (also unpackable as
+        ``nodes, hexes, boundary_patch, sharp_nodes``).
+    """
+    from .hexmesh import HexMesh
+
+    n, _, _ = _validate_counts(n, n, n)
+    a = float(a)
+    if a <= 0.0:
+        raise ValueError("sphere radius a must be positive")
+
+    alpha = 0.56
+    b = alpha * a / np.sqrt(3.0)
+
+    u = np.linspace(-1.0, 1.0, n + 1)
+    U, V, W = np.meshgrid(u, u, u, indexing="ij")
+    xyz_core = b * np.stack([U, V, W], axis=-1).reshape(-1, 3)
+    core_idx = np.arange((n + 1) ** 3, dtype=np.int64).reshape(
+        n + 1, n + 1, n + 1
+    )
+
+    h_core = np.stack(
+        [
+            core_idx[:-1, :-1, :-1].ravel(),
+            core_idx[1:, :-1, :-1].ravel(),
+            core_idx[1:, 1:, :-1].ravel(),
+            core_idx[:-1, 1:, :-1].ravel(),
+            core_idx[:-1, :-1, 1:].ravel(),
+            core_idx[1:, :-1, 1:].ravel(),
+            core_idx[1:, 1:, 1:].ravel(),
+            core_idx[:-1, 1:, 1:].ravel(),
+        ],
+        axis=-1,
+    )
+
+    is_surf = np.zeros((n + 1, n + 1, n + 1), dtype=bool)
+    is_surf[0, :, :] = is_surf[-1, :, :] = True
+    is_surf[:, 0, :] = is_surf[:, -1, :] = True
+    is_surf[:, :, 0] = is_surf[:, :, -1] = True
+    surf_core_ids = core_idx[is_surf]
+    n_surf = int(surf_core_ids.size)
+    surf_map = -np.ones((n + 1) ** 3, dtype=np.int64)
+    surf_map[surf_core_ids] = np.arange(n_surf, dtype=np.int64)
+
+    p_surf = xyz_core[surf_core_ids] / b
+    p_norm = np.linalg.norm(p_surf, axis=1, keepdims=True)
+    xyz_out = a * (p_surf / p_norm)
+    xyz_in = xyz_core[surf_core_ids]
+
+    shell_layers = []
+    layer_idx = [surf_core_ids]
+    next_id = int(xyz_core.shape[0])
+    for r in range(1, n + 1):
+        t = r / n
+        shell_layers.append((1.0 - t) * xyz_in + t * xyz_out)
+        layer_idx.append(np.arange(next_id, next_id + n_surf, dtype=np.int64))
+        next_id += n_surf
+
+    nodes = np.concatenate([xyz_core] + shell_layers, axis=0)
+
+    specs = [
+        (
+            0,
+            core_idx[n, :-1, :-1],
+            core_idx[n, 1:, :-1],
+            core_idx[n, 1:, 1:],
+            core_idx[n, :-1, 1:],
+        ),
+        (
+            1,
+            core_idx[0, :-1, :-1],
+            core_idx[0, :-1, 1:],
+            core_idx[0, 1:, 1:],
+            core_idx[0, 1:, :-1],
+        ),
+        (
+            2,
+            core_idx[:-1, n, :-1],
+            core_idx[:-1, n, 1:],
+            core_idx[1:, n, 1:],
+            core_idx[1:, n, :-1],
+        ),
+        (
+            3,
+            core_idx[:-1, 0, :-1],
+            core_idx[1:, 0, :-1],
+            core_idx[1:, 0, 1:],
+            core_idx[:-1, 0, 1:],
+        ),
+        (
+            4,
+            core_idx[:-1, :-1, n],
+            core_idx[1:, :-1, n],
+            core_idx[1:, 1:, n],
+            core_idx[:-1, 1:, n],
+        ),
+        (
+            5,
+            core_idx[:-1, :-1, 0],
+            core_idx[:-1, 1:, 0],
+            core_idx[1:, 1:, 0],
+            core_idx[1:, :-1, 0],
+        ),
+    ]
+    face_quads = []
+    face_patches = []
+    for p_id, c0, c1, c2, c3 in specs:
+        q = np.stack(
+            [
+                surf_map[c0.ravel()],
+                surf_map[c1.ravel()],
+                surf_map[c2.ravel()],
+                surf_map[c3.ravel()],
+            ],
+            axis=-1,
+        )
+        face_quads.append(q)
+        face_patches.append(np.full(q.shape[0], p_id, dtype=np.int64))
+    face_quads = np.concatenate(face_quads, axis=0)
+    face_patches = np.concatenate(face_patches, axis=0)
+    n_fq = int(face_quads.shape[0])
+
+    h_shells = np.empty((n * n_fq, 8), dtype=np.int64)
+    for r in range(n):
+        L0 = layer_idx[r]
+        L1 = layer_idx[r + 1]
+        s0 = r * n_fq
+        s1 = (r + 1) * n_fq
+        h_shells[s0:s1, :4] = L0[face_quads]
+        h_shells[s0:s1, 4:] = L1[face_quads]
+
+    hexes = np.concatenate([h_core, h_shells], axis=0)
+    local_patch = np.full((hexes.shape[0], 3, 2), -1, dtype=np.int64)
+    outer_start = h_core.shape[0] + (n - 1) * n_fq
+    local_patch[outer_start:, 2, 1] = face_patches
+
+    is_corner_surf = (
+        (np.abs(p_surf[:, 0]) == 1.0)
+        & (np.abs(p_surf[:, 1]) == 1.0)
+        & (np.abs(p_surf[:, 2]) == 1.0)
+    )
+    sharp_nodes = np.zeros(nodes.shape[0], dtype=bool)
+    sharp_nodes[layer_idx[-1][is_corner_surf]] = True
+
+    return HexMesh(
+        nodes, hexes, boundary_patch=local_patch, sharp_nodes=sharp_nodes
+    )
