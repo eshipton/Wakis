@@ -220,9 +220,7 @@ def test_lump_all_mutation(meshes):
 def test_delaunay_wellcentred_mutation(meshes):
     """mutate='ignore_wellcentred' omits the well_centred_tets filter in
     mixed_partition on the Delaunay test mesh and either yields a non-positive
-    dv or changes the lumped edge set.
-    # printed by pytest -s (w3hyb-m2 run.log): adds 85 lumped edges (327 vs 242)
-    """
+    dv or changes the lumped edge set beyond n_tet_edges_lumped = 242."""
     tm = meshes["delaunay"]
     lump_ref, _ = mixed_partition(tm)
     wc = well_centred_tets(tm)

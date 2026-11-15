@@ -91,6 +91,11 @@ def _measure_pair(xn, yn, zn, box, tm, extra=None, smooth=False):
         out[mass] = block
     out["n_tet_edges_lumped"] = out["mixed"]["n_lumped"]
     out["lump_fraction"] = out["mixed"]["lump_fraction"]
+    s_cart = HybridFIT3D(xn, yn, zn)
+    dt_cart = float(s_cart.dt)
+    out["dt_cartesian_same_h"] = dt_cart
+    out["dt_consistent_over_cartesian"] = float(out["consistent"]["dt"] / dt_cart)
+    out["dt_mixed_over_cartesian"] = float(out["mixed"]["dt"] / dt_cart)
     if smooth:
         tm_smooth = smooth_patch(tm)
         for mass in ("consistent", "mixed"):
@@ -123,16 +128,38 @@ def measure_cavity_n16(smooth=False):
     f_mix = solvers["mixed"].eigenfrequencies(3, 0.9 * f_ex[0], 1.15 * f_ex[-1])
     diff_mc = float(abs(f_mix[0] - f_cons[0]))
     diff_ca = float(abs(f_cons[0] - f_ex[0]))
+    f_a1 = float(f_ex[0])
+    f_c1 = float(f_cons[0])
+    f_m1 = float(f_mix[0])
     out.update(
         {
-            "f_analytic_1": float(f_ex[0]),
-            "f_consistent_1": float(f_cons[0]),
-            "f_mixed_1": float(f_mix[0]),
+            "f_analytic_1": f_a1,
+            "f_consistent_1": f_c1,
+            "f_mixed_1": f_m1,
             "diff_mixed_consistent": diff_mc,
             "diff_consistent_analytic": diff_ca,
             "ratio": float(diff_mc / diff_ca),
+            "err_consistent_1": float(abs(f_c1 - f_a1) / f_a1),
+            "err_mixed_1": float(abs(f_m1 - f_a1) / f_a1),
         }
     )
+    if smooth:
+        f_cons_s = solvers["consistent_smoothed"].eigenfrequencies(
+            3, 0.9 * f_ex[0], 1.15 * f_ex[-1]
+        )
+        f_mix_s = solvers["mixed_smoothed"].eigenfrequencies(
+            3, 0.9 * f_ex[0], 1.15 * f_ex[-1]
+        )
+        f_cs1 = float(f_cons_s[0])
+        f_ms1 = float(f_mix_s[0])
+        out.update(
+            {
+                "f_consistent_smoothed_1": f_cs1,
+                "f_mixed_smoothed_1": f_ms1,
+                "err_consistent_smoothed_1": float(abs(f_cs1 - f_a1) / f_a1),
+                "err_mixed_smoothed_1": float(abs(f_ms1 - f_a1) / f_a1),
+            }
+        )
     return out
 
 
