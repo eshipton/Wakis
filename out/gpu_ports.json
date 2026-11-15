@@ -1,0 +1,136 @@
+{
+  "gpu_name": "NVIDIA L4",
+  "mesh": {
+    "a_m": 0.02286,
+    "b_m": 0.01016,
+    "h_m": 0.005715,
+    "length_m": 0.012,
+    "n_layers": 4,
+    "n_cells": 480,
+    "n_faces": 1048,
+    "n_free_edges": 102,
+    "n_massless_edges": 72,
+    "dt_s": 2.6633910332038584e-12,
+    "courant": 0.95,
+    "n_steps": 120,
+    "freqs_hz": [
+      9000000000.0,
+      10000000000.0,
+      11000000000.0
+    ]
+  },
+  "cases": {
+    "modal": {
+      "n_ports": 2,
+      "n_port_edges": 36,
+      "max_row_nnz_WT": 18,
+      "max_row_nnz_W": 1,
+      "port_depth_delta": 46,
+      "total_depth": 75,
+      "gamma_m": 8.326672684688743e-15,
+      "K_theory": 6.244997998398396,
+      "K_empirical_subspace": 1.2208834974107532,
+      "kappa_massless": 1.0,
+      "massless_block": 1,
+      "backends": {
+        "cupy": {
+          "d_W": 4.58288900155743e-20,
+          "eps_N": 2.61450145742459e-16,
+          "norm_max": 4.21592947652901e-05,
+          "d_over_norm": 1.087041191526415e-15,
+          "eps_over_norm": 6.201482904256545e-12,
+          "d_over_eps": 0.00017528729955544937,
+          "probe_ratio_max": 3.265080770886727e-05,
+          "dft_ratio_max": 6.473931161397714e-05,
+          "port_V_diff_max": 2.842170943040401e-14,
+          "port_V_bound_max": 6.812803470511678e-09,
+          "port_ratio_max": 0.00026349957093292777,
+          "s_param_rel_err": 2.40410238552588e-16,
+          "Is_equal": true
+        },
+        "numpy": {
+          "d_W": 4.511888690939918e-20,
+          "eps_N": 2.61450145742459e-16,
+          "norm_max": 4.21592947652901e-05,
+          "d_over_norm": 1.0702002289313844e-15,
+          "eps_over_norm": 6.201482904256545e-12,
+          "d_over_eps": 0.00017257166478630868,
+          "probe_ratio_max": 2.2948378227370486e-05,
+          "dft_ratio_max": 6.153191962841792e-05,
+          "port_V_diff_max": 2.842170943040401e-14,
+          "port_V_bound_max": 6.812803470511678e-09,
+          "port_ratio_max": 0.00016957625291306124,
+          "s_param_rel_err": 2.40410238552588e-16,
+          "Is_equal": true
+        }
+      }
+    },
+    "mixed": {
+      "n_ports": 3,
+      "n_port_edges": 38,
+      "max_row_nnz_WT": 18,
+      "max_row_nnz_W": 1,
+      "port_depth_delta": 47,
+      "total_depth": 76,
+      "gamma_m": 8.43769498715126e-15,
+      "K_theory": 6.244997998398396,
+      "K_empirical_subspace": 1.2108878389782365,
+      "kappa_massless": 1.0,
+      "massless_block": 1,
+      "backends": {
+        "cupy": {
+          "d_W": 3.6519014567960126e-20,
+          "eps_N": 2.668888789185571e-16,
+          "norm_max": 4.189949405011458e-05,
+          "d_over_norm": 8.71586051236823e-16,
+          "eps_over_norm": 6.369739897081818e-12,
+          "d_over_eps": 0.00013683228284346814,
+          "probe_ratio_max": 1.246181896203555e-05,
+          "dft_ratio_max": 4.7972076041746e-05,
+          "port_V_diff_max": 2.842170943040401e-14,
+          "port_V_bound_max": 6.964011757443707e-09,
+          "port_ratio_max": 0.00026006458397534644,
+          "s_param_rel_err": 3.486717057550281e-16,
+          "Is_equal": true
+        },
+        "numpy": {
+          "d_W": 3.1986999697788935e-20,
+          "eps_N": 2.668888789185571e-16,
+          "norm_max": 4.189949405011458e-05,
+          "d_over_norm": 7.634220990718971e-16,
+          "eps_over_norm": 6.369739897081818e-12,
+          "d_over_eps": 0.00011985137720013422,
+          "probe_ratio_max": 1.8692728443053324e-05,
+          "dft_ratio_max": 4.421033303586172e-05,
+          "port_V_diff_max": 2.842170943040401e-14,
+          "port_V_bound_max": 6.964011757443707e-09,
+          "port_ratio_max": 0.00016735068110871885,
+          "s_param_rel_err": 3.534811978569751e-16,
+          "Is_equal": true
+        }
+      }
+    }
+  },
+  "mutations": {
+    "drop_port_step": {
+      "d_W": 4.189949405011459e-05,
+      "d_over_eps": 156992281656.29373
+    },
+    "drop_port_post": {
+      "d_W": 1.4910414464823111e-05,
+      "d_over_eps": 55867500081.834145
+    },
+    "zero_port_pre_g": {
+      "d_W": 4.935358342323128e-05,
+      "d_over_eps": 184921843215.10022
+    },
+    "scale_port_sinv_1e-3": {
+      "d_W": 1.3602889935410036e-08,
+      "d_over_eps": 50968365.52549291
+    },
+    "flip_port_pre_conductance": {
+      "d_W": 9.736461240393318e+49,
+      "d_over_eps": 3.648132990721005e+65
+    }
+  }
+}

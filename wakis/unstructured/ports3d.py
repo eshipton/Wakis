@@ -55,6 +55,9 @@ __all__ = [
     "LumpedPort",
     "ModalPort",
     "PortSet",
+    "PortAdjointHelper",
+    "PortDFTMonitor",
+    "port_adjoint_helper",
     "attach_ports",
     "dtft",
     "power_waves",
@@ -172,11 +175,11 @@ def extrude_section(nodes2d, tris2d, tags2d, z, rtol=1e-9, massless_rtol=0.0):
     tris2d = np.asarray(tris2d, int)
     z = np.asarray(z, float)
     n, nz = len(nodes2d), len(z)
-    nodes = np.column_stack(
-        [np.tile(nodes2d, (nz, 1)), np.repeat(z, n)]
-    )
+    nodes = np.column_stack([np.tile(nodes2d, (nz, 1)), np.repeat(z, n)])
     key = np.arange(len(nodes))
-    tets = [_split_prisms(tris2d + k * n, tris2d + (k + 1) * n, key) for k in range(nz - 1)]
+    tets = [
+        _split_prisms(tris2d + k * n, tris2d + (k + 1) * n, key) for k in range(nz - 1)
+    ]
     tags = np.repeat(np.tile(np.asarray(tags2d, int), nz - 1), 3)
     # _split_prisms returns 3 consecutive tets per prism
     mesh = SimplexMesh(nodes, np.vstack(tets), tags)
@@ -487,6 +490,17 @@ class _Port:
         return dtft(V, t, freqs), dtft(I, t, freqs)
 
 
+class _NortonSource:
+    """Picklable Norton current wrapper ``I_s(t) = v_src(t) / R`` for `LumpedPort`."""
+
+    def __init__(self, v_src, R):
+        self.v_src = v_src
+        self.R = R
+
+    def __call__(self, t):
+        return self.v_src(t) / self.R
+
+
 class LumpedPort(_Port):
     """
     Discrete port on an edge path: a resistor R (internal resistance) in
@@ -510,7 +524,7 @@ class LumpedPort(_Port):
             raise ValueError("R must be > 0")
         w = np.zeros(solver.mesh.n_edges)
         np.add.at(w, np.asarray(edges), np.asarray(signs, float))
-        src = None if v_src is None else (lambda t, f=v_src, R=R: f(t) / R)
+        src = None if v_src is None else _NortonSource(v_src, R)
         super().__init__(w, 1.0 / R, src, name)
         self.R = R
         self.edges = np.asarray(edges)
@@ -544,8 +558,17 @@ class ModalPort(_Port):
         Physical volts per unit modal amplitude (TEM ports).
     """
 
-    def __init__(self, plane, phi, y_ref, g=None, f0=None, i_src=None, name=None,
-                 voltage_scale=1.0):
+    def __init__(
+        self,
+        plane,
+        phi,
+        y_ref,
+        g=None,
+        f0=None,
+        i_src=None,
+        name=None,
+        voltage_scale=1.0,
+    ):
         # Massless (zero-capacitance) edges cannot carry the port current;
         # the Voronoi port Hodge is already zero there, a Whitney one is not
         w = plane.to_global(np.where(plane.free, plane.M @ phi, 0.0))
@@ -590,9 +613,15 @@ class PortSet:
         for p in self.ports:
             nz = np.flatnonzero(p.w_global)
             if np.any(pos[nz] < 0):
-                raise ValueError(f"port {p.name!r} touches non-free (PEC or massless) edges")
-            cols.append(sp.csc_matrix((p.w_global[nz], (pos[nz], np.zeros(nz.size, int))),
-                                      shape=(solver.free.size, 1)))
+                raise ValueError(
+                    f"port {p.name!r} touches non-free (PEC or massless) edges"
+                )
+            cols.append(
+                sp.csc_matrix(
+                    (p.w_global[nz], (pos[nz], np.zeros(nz.size, int))),
+                    shape=(solver.free.size, 1),
+                )
+            )
             p._dt = solver.dt
         for g in self.base.groups:
             hit = np.zeros(solver.free.size, bool)
@@ -718,7 +747,7 @@ class PortSet:
         nf, ns = s.free.size, s.massless.size
         Cfull = sp.hstack([s.Cf, s.Cs]).tocsr()
         K = (Cfull.T @ s.Mnu @ Cfull).tocsc()
-        WgW = (self.W @ sp.diags(self.g) @ self.W.T)
+        WgW = self.W @ sp.diags(self.g) @ self.W.T
         out = []
         for f in np.atleast_1d(freqs):
             w = 2 * np.pi * f
@@ -740,6 +769,215 @@ def attach_ports(solver, ports):
     solver._update = ps
     solver.ports = ps
     return ps
+
+
+# =============================================================== adjoint
+class PortAdjointHelper:
+    """
+    Port-conductance and source hooks for `UnstructuredAdjointStepper`.
+
+    Wraps a `PortSet` attached to an `UnstructuredFIT3D` solver so that the
+    forward step (`step` / `linear_step`) and the transposed step (`step_T` /
+    `linear_step_T`) include the rank-P trapezoidal port admittance
+    ``(dt / 2) W diag(g) W^T`` and its exact Woodbury inverse.
+
+    Parameters
+    ----------
+    port_set : PortSet
+        Attached port set on the solver.
+    """
+
+    def __init__(self, port_set):
+        self.port_set = port_set
+        self.ports = port_set.ports
+        self.W = port_set.W
+        self.g = port_set.g
+        self.dt = port_set.dt
+        self.dinv = port_set.dinv
+        self.Q = port_set.Q
+        self.S = port_set.S
+        self._Sinv = port_set._Sinv
+
+    def set_den(self, den):
+        """Update Woodbury factors for per-edge denominator ``den`` [F]."""
+        if np.array_equal(den, self.port_set.base.den):
+            self.dinv = self.port_set.dinv
+            self.Q = self.port_set.Q
+            self.S = self.port_set.S
+            self._Sinv = self.port_set._Sinv
+            return
+        self.dinv = self.dt / den
+        self.Q = (self.W.T @ sp.diags(self.dinv) @ self.W).toarray()
+        self.S = np.eye(len(self.ports)) + 0.5 * self.g[:, None] * self.Q
+        self._Sinv = np.linalg.inv(self.S)
+
+    def sources(self, n):
+        """Impressed port currents I_s^{n+1/2} [A] at step ``n``."""
+        t = (n + 0.5) * self.dt
+        return np.array([p.source(t) for p in self.ports])
+
+    def pre_step(self, u, r, n=None, Is=None):
+        """Add the explicit half-step port current ``W (I_s - g/2 W^T u)`` to ``r`` [A]."""
+        Vn = self.W.T @ u
+        if Is is None and n is not None:
+            Is = self.sources(n)
+        term = (
+            -0.5 * self.g * Vn
+            if Is is None
+            else (np.asarray(Is, float) - 0.5 * self.g * Vn)
+        )
+        return r + self.W @ term
+
+    def post_step(self, u_star):
+        """Apply the Woodbury rank-P implicit conductance solve to ``u_star`` [V]."""
+        alpha = self._Sinv @ (0.5 * self.g * (self.W.T @ u_star))
+        return u_star - self.dinv * (self.W @ alpha)
+
+    def pre_step_T(self, u1b):
+        """Transpose of `post_step` on the outgoing voltage adjoint ``u1b``."""
+        z = self.W.T @ (self.dinv * u1b)
+        return u1b - self.W @ (0.5 * self.g * (self._Sinv.T @ z))
+
+    def post_step_T(self, rb):
+        """Transpose of the explicit ``-W (g/2 W^T u)`` term of `pre_step`."""
+        return -(self.W @ (0.5 * self.g * (self.W.T @ rb)))
+
+    def source_T(self, rb):
+        """Adjoint ``dF / dI_s^{n+1/2}`` from the curl/source adjoint ``rb``."""
+        return self.W.T @ rb
+
+
+def port_adjoint_helper(solver):
+    """Return a `PortAdjointHelper` if `solver` has ports attached, else ``None``."""
+    ps = getattr(solver, "ports", None)
+    if ps is None and isinstance(getattr(solver, "_update", None), PortSet):
+        ps = solver._update
+    return None if ps is None else PortAdjointHelper(ps)
+
+
+class PortDFTMonitor:
+    """
+    Half-step DFT monitor of port voltages V_p^{n+1/2} = w_p^T (u^n + u^{n+1}) / 2.
+
+    Matches `_Port.spectra(freqs)` (sample times t_{n+1/2} = (n + 1/2) dt,
+    time convention exp(+i w t) of `dtft`) when used in
+    `UnstructuredAdjointSimulation`. Because u^0 = 0, regrouping the
+    trapezoidal sum by u^{n+1} gives the exact per-step phase weight
+
+        phi(f, n)    = cos(pi f dt) dt exp(-2 pi i f (n+1) dt)   (0 <= n < Nt - 1)
+        phi(f, Nt-1) = (dt / 2) exp(-2 pi i f (Nt - 1/2) dt)     (n = Nt - 1)
+
+    Parameters
+    ----------
+    freqs : array_like
+        Frequencies [Hz].
+    ports : sequence of int, optional
+        Port indices to monitor (default: all ports of the solver).
+    half_step : bool, optional
+        If True (default), use the half-step trapezoidal weights matching
+        `PortSet.step`. If False, use integer-step t_{n+1} weights (omits
+        half-step centering).
+    """
+
+    def __init__(self, freqs, ports=None, half_step=True):
+        self.freqs = np.atleast_1d(np.asarray(freqs, dtype=float))
+        self.ports = (
+            None if ports is None else np.atleast_1d(np.asarray(ports, dtype=int))
+        )
+        self.half_step = bool(half_step)
+
+    def weights(self, solver):
+        ps = getattr(solver, "ports", None)
+        if ps is None:
+            raise ValueError("solver has no attached ports")
+        WT = ps.W.T.tocsr()
+        return WT if self.ports is None else WT[self.ports]
+
+    def phase(self, n, dt, Nt):
+        if not self.half_step:
+            return np.exp(-2j * np.pi * self.freqs * ((n + 1) * dt)) * dt
+        if n < Nt - 1:
+            return (
+                np.cos(np.pi * self.freqs * dt)
+                * np.exp(-2j * np.pi * self.freqs * ((n + 1) * dt))
+                * dt
+            )
+        return 0.5 * np.exp(-2j * np.pi * self.freqs * ((n + 0.5) * dt)) * dt
+
+    def spectra(self, V_dft, solver, Nt):
+        """
+        Return (V, I, Y) at `self.freqs` from monitor DFT output ``V_dft``.
+
+        Parameters
+        ----------
+        V_dft : ndarray (n_freqs, n_mon_ports)
+            Port voltage phasors [V s] from `UnstructuredAdjointSimulation.forward`.
+        solver : UnstructuredFIT3D
+            Solver with attached `PortSet`.
+        Nt : int
+            Number of time steps.
+
+        Returns
+        -------
+        V, I : ndarray (n_freqs, n_mon_ports) complex
+            Port voltage [V s] and structure-inward current [A s] phasors.
+        Y : ndarray (n_freqs, n_mon_ports) float
+            Reference admittances [S].
+        """
+        ps = solver.ports
+        idx = np.arange(len(ps.ports)) if self.ports is None else self.ports
+        t = (np.arange(Nt) + 0.5) * solver.dt
+        Is = np.column_stack(
+            [dtft([ps.ports[k].source(tt) for tt in t], t, self.freqs) for k in idx]
+        )
+        g = ps.g[idx][None, :]
+        Y = np.column_stack([ps.ports[k].reference_admittance(self.freqs) for k in idx])
+        V = np.asarray(V_dft, complex)
+        return V, Is - g * V, np.real(Y)
+
+    def s_column(self, V_dft, solver, Nt, excite=0):
+        """
+        Scattering column S[:, p] = b[:, p] / a[:, excite] and its VJP map.
+
+        Parameters
+        ----------
+        V_dft : ndarray (n_freqs, n_mon_ports)
+            Port voltage phasors [V s] from `UnstructuredAdjointSimulation.forward`.
+        solver : UnstructuredFIT3D
+            Solver with attached `PortSet`.
+        Nt : int
+            Number of time steps.
+        excite : int, optional
+            Index (within monitored ports) of the excited port.
+
+        Returns
+        -------
+        S : ndarray (n_freqs, n_mon_ports) complex
+            Scattering parameters S_{p, excite}(f).
+        vjp_fn : callable
+            ``vjp_fn(G_S) -> G_V`` mapping cotangents ``dF/dRe S + 1j dF/dIm S``
+            to voltage cotangents ``dF/dRe V + 1j dF/dIm V``.
+        """
+        ps = solver.ports
+        idx = np.arange(len(ps.ports)) if self.ports is None else self.ports
+        V, I, Y = self.spectra(V_dft, solver, Nt)
+        a, b = power_waves(V, I, Y)
+        a_exc = a[:, excite]
+        S = b / a_exc[:, None]
+        g = ps.g[idx][None, :]
+        rY = np.sqrt(Y)
+        cb = (Y + g) / (2.0 * rY)
+        ca_exc = (Y[:, excite] - g[:, excite]) / (2.0 * rY[:, excite])
+
+        def vjp_fn(G_S):
+            G_S = np.asarray(G_S, complex)
+            G_V = np.conj(cb / a_exc[:, None]) * G_S
+            G_V[:, excite] -= np.sum(
+                np.conj(S * (ca_exc / a_exc)[:, None]) * G_S, axis=1
+            )
+            return G_V
+
+        return S, vjp_fn
 
 
 # =============================================================== S-parameters
