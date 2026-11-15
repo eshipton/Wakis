@@ -715,3 +715,177 @@ def test_d6_slab_resonances_slow():
         assert 1.8 <= o <= 2.2
     for o in res["ord_lor_mut"] + res["ord_dru_mut"]:
         assert o < 1.5
+
+
+# ===================================================================== Part 2
+def test_c1_subpixel_node_planes_control():
+    """C1: Control test with dielectric boxes strictly on node planes across a
+    graded coarse grid and nested 2:1 + 3:1 patches: subpixel masses equal
+    staircase masses to machine precision; count_weights mutation differs by O(grading)."""
+    mesh, pec, pmc = _closed_nested_mesh()
+    # Node planes of _closed_nested_mesh:
+    # x = [0, 0.1, 0.2, 0.3, 0.42, 0.55, 0.65, 0.75, 0.85, 1.0]
+    # y = 0.0, 0.1, ..., 0.8; z = 0.0, 0.1, ..., 0.6
+    eps_boxes = [
+        Box(((0.1, 0.75), (0.1, 0.6), (0.1, 0.5)), value=4.0),
+        Box(((0.3, 0.55), (0.2, 0.5), (0.2, 0.4)), value=2.5),
+    ]
+
+    def eps_callable(X, Y, Z):
+        out = np.ones_like(X, dtype=float)
+        m1 = (
+            (X >= 0.1) & (X <= 0.75) & (Y >= 0.1) & (Y <= 0.6) & (Z >= 0.1) & (Z <= 0.5)
+        )
+        out[m1] = 4.0
+        m2 = (
+            (X >= 0.3) & (X <= 0.55) & (Y >= 0.2) & (Y <= 0.5) & (Z >= 0.2) & (Z <= 0.4)
+        )
+        out[m2] = 2.5
+        return out
+
+    s_st = SubgridFIT3D(
+        mesh,
+        eps_r=eps_boxes,
+        pec=pec,
+        pmc=pmc,
+        averaging="staircase",
+        dt=1e-11,
+        check_stability=False,
+    )
+    s_sub_box = SubgridFIT3D(
+        mesh,
+        eps_r=eps_boxes,
+        pec=pec,
+        pmc=pmc,
+        averaging="subpixel",
+        dt=1e-11,
+        check_stability=False,
+    )
+    s_sub_fn = SubgridFIT3D(
+        mesh,
+        eps_r=eps_callable,
+        pec=pec,
+        pmc=pmc,
+        averaging="subpixel",
+        n_sub=4,
+        dt=1e-11,
+        check_stability=False,
+    )
+    s_mut = SubgridFIT3D(
+        mesh,
+        eps_r=eps_boxes,
+        pec=pec,
+        pmc=pmc,
+        averaging="subpixel",
+        mutate="count_weights",
+        dt=1e-11,
+        check_stability=False,
+    )
+
+    rel_err_box = float(np.max(np.abs(s_sub_box.D / s_st.D - 1.0)))
+    rel_err_fn = float(np.max(np.abs(s_sub_fn.D / s_st.D - 1.0)))
+    rel_err_mut = float(np.max(np.abs(s_mut.D / s_st.D - 1.0)))
+
+    print(
+        f"NUMBERS test_c1_subpixel_node_planes_control: "
+        f"rel_err_box={rel_err_box:.3e} rel_err_callable={rel_err_fn:.3e} "
+        f"mut_count_weights={rel_err_mut:.3e}"
+    )
+    assert rel_err_box <= 1e-15
+    assert rel_err_fn <= 1e-15
+    assert rel_err_mut >= 1e-3
+
+
+def _run_c2_subpixel_slab(nz_list):
+    """Run C2 subpixel vs staircase vs swap_projection slab convergence on `nz_list`."""
+    a, b, c = 1.0, 0.7, 0.9
+    r = 0.361
+    z_s = (
+        r * c
+    )  # 0.3249 m: not on coarse or 2:1 fine node planes for N_z in {9,13,17,21,27}
+    f_ref, lbl = _shoot_1d_slab_modes(
+        a, b, c, z_s, lambda _w: 4.0, n_modes=4, f_min=100e6, f_max=260e6
+    )
+    slab = Box(((-0.1, a + 0.1), (-0.1, b + 0.1), (-0.1, z_s)), value=4.0)
+
+    err_sub, err_st, err_mut = [], [], []
+    for nz in nz_list:
+        nx = max(6, int(round(nz * 6 / 9)))
+        ny = max(6, int(round(nz * 6 / 9)))
+        x = np.linspace(0.0, a, nx + 1)
+        y = np.linspace(0.0, b, ny + 1)
+        z = np.linspace(0.0, c, nz + 1)
+        mesh = SubgridMesh3D(x, y, z)
+        k1 = max(1, int(np.floor(r * nz)) - 1)
+        k2 = min(nz - 1, int(np.ceil(r * nz)) + 1)
+        mesh.add_patch((1, 1, k1), (nx // 2 + 1, ny // 2 + 1, k2), ratio=2)
+
+        f_sub = SubgridFIT3D(
+            mesh, eps_r=slab, averaging="subpixel", dt=1e-11, check_stability=False
+        ).eigenfrequencies(4, f_ref[0])
+        f_st = SubgridFIT3D(
+            mesh, eps_r=slab, averaging="staircase", dt=1e-11, check_stability=False
+        ).eigenfrequencies(4, f_ref[0])
+        f_mut = SubgridFIT3D(
+            mesh,
+            eps_r=slab,
+            averaging="subpixel",
+            mutate="swap_projection",
+            dt=1e-11,
+            check_stability=False,
+        ).eigenfrequencies(4, f_ref[0])
+
+        err_sub.append(float(np.mean(np.abs(f_sub - f_ref) / f_ref)))
+        err_st.append(float(np.mean(np.abs(f_st - f_ref) / f_ref)))
+        err_mut.append(float(np.mean(np.abs(f_mut - f_ref) / f_ref)))
+
+    pairwise_sub = [
+        float(np.log(err_sub[i] / err_sub[i + 1]) / np.log(nz_list[i + 1] / nz_list[i]))
+        for i in range(len(nz_list) - 1)
+    ]
+    ls_sub = float(-np.polyfit(np.log(nz_list), np.log(err_sub), 1)[0])
+    ls_mut = float(-np.polyfit(np.log(nz_list), np.log(err_mut), 1)[0])
+    return dict(
+        modes=lbl,
+        err_sub=err_sub,
+        err_st=err_st,
+        err_mut=err_mut,
+        pairwise_sub=pairwise_sub,
+        ls_sub=ls_sub,
+        ls_mut=ls_mut,
+    )
+
+
+def test_c2_subpixel_slab_convergence_fast():
+    """C2 (fast, N_z in {9, 13, 17}): eps=4 slab not on node planes crossing a 2:1 patch."""
+    res = _run_c2_subpixel_slab([9, 13, 17])
+    pw_str = ",".join(f"{o:.3f}" for o in res["pairwise_sub"])
+    sub_str = ",".join(f"{e:.3e}" for e in res["err_sub"])
+    st_str = ",".join(f"{e:.3e}" for e in res["err_st"])
+    print(
+        f"NUMBERS test_c2_subpixel_slab_convergence_fast: "
+        f"modes={','.join(res['modes'])} err_sub={sub_str} err_st={st_str} "
+        f"pairwise_ord={pw_str} ls_ord_sub={res['ls_sub']:.3f} ls_ord_mut={res['ls_mut']:.3f}"
+    )
+    for es, est in zip(res["err_sub"], res["err_st"]):
+        assert es < est
+    assert res["ls_sub"] >= 1.7
+    assert res["ls_mut"] < 1.5
+
+
+@pytest.mark.slow
+def test_c2_subpixel_slab_convergence_slow():
+    """C2 (slow, N_z in {9, 13, 17, 21, 27}): 5-level subpixel slab convergence."""
+    res = _run_c2_subpixel_slab([9, 13, 17, 21, 27])
+    pw_str = ",".join(f"{o:.3f}" for o in res["pairwise_sub"])
+    sub_str = ",".join(f"{e:.3e}" for e in res["err_sub"])
+    st_str = ",".join(f"{e:.3e}" for e in res["err_st"])
+    print(
+        f"NUMBERS test_c2_subpixel_slab_convergence_slow: "
+        f"modes={','.join(res['modes'])} err_sub={sub_str} err_st={st_str} "
+        f"pairwise_ord={pw_str} ls_ord_sub={res['ls_sub']:.3f} ls_ord_mut={res['ls_mut']:.3f}"
+    )
+    for es, est in zip(res["err_sub"], res["err_st"]):
+        assert es < est
+    assert res["ls_sub"] >= 1.7
+    assert res["ls_mut"] < 1.5
