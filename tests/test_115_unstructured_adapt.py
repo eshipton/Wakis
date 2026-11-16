@@ -819,6 +819,44 @@ def _loglog_interp(x_target, x_arr, y_arr):
     return float(np.exp(np.interp(np.log(x_t), lx, ly)))
 
 
+def _refuse_sign_change_point(history, idx):
+    """Return True if `rel_err_signed` changed sign at `idx` vs `idx - 1`."""
+    if idx <= 0:
+        return False
+    s_cur = np.sign(float(history[idx]["rel_err_signed"]))
+    s_prev = np.sign(float(history[idx - 1]["rel_err_signed"]))
+    return bool(s_cur == 0.0 or s_prev == 0.0 or s_cur != s_prev)
+
+
+def _pick_same_sign_point(history):
+    """
+    Return the last `(idx, rec)` where `rel_err_signed` did not change sign
+    since the previous iteration.
+    """
+    for idx in range(len(history) - 1, -1, -1):
+        if not _refuse_sign_change_point(history, idx):
+            return idx, history[idx]
+    raise ValueError("No valid comparison point found in history")
+
+
+def test_a1_a3_sign_change_guard():
+    """
+    Verify that the A1/A3 comparison guard refuses iterations where
+    `rel_err_signed` changed sign since the previous iteration.
+    """
+    hist = [
+        {"n_dofs": 1000, "rel_err_signed": 1.2e-2},
+        {"n_dofs": 25903, "rel_err_signed": 9.47753e-7},
+        {"n_dofs": 37799, "rel_err_signed": -2.71369e-4},
+    ]
+    assert not _refuse_sign_change_point(hist, 0)
+    assert not _refuse_sign_change_point(hist, 1)
+    assert _refuse_sign_change_point(hist, 2)
+    idx, rec = _pick_same_sign_point(hist)
+    assert idx == 1 and rec["n_dofs"] == 25903
+    print(f"[A1/A3 guard] refused it=2 (-2.714e-04 after +9.478e-07), picked it={idx}")
+
+
 @pytest.fixture(scope="module")
 def l_prism_loop_runs():
     """
@@ -897,8 +935,9 @@ def test_a1_adaptive_vs_uniform_and_random(l_prism_loop_runs):
     """
     A1: On l_prism_mesh(5, 3), residual Dörfler (theta=0.5) beats uniform
     refinement at its final DOFs (log-log interpolated), beats random marking
-    with the same per-iteration mark counts, and keeps every iteration's f_h
-    within the gap to the second mode.
+    with the same per-iteration mark counts (both in guarded eigenvalue error
+    and in energy error |||e|||^2), and keeps every iteration's f_h within the
+    gap to the second mode.
     """
     k2_ref = l_prism_loop_runs["k2_ref"]
     f_ref_hz = float(np.sqrt(k2_ref) * C0 / (2.0 * np.pi))
@@ -907,22 +946,44 @@ def test_a1_adaptive_vs_uniform_and_random(l_prism_loop_runs):
     res_rand = l_prism_loop_runs["rand"]
     assert isinstance(res_adapt, AdaptResult)
 
+    for arm_name, res in (
+        ("unif", res_unif),
+        ("adapt", res_adapt),
+        ("rand", res_rand),
+    ):
+        flips = [
+            i
+            for i in range(1, len(res.history))
+            if _refuse_sign_change_point(res.history, i)
+        ]
+        assert not flips, (
+            f"A1 unexpected sign change in rel_err_signed on {arm_name} at {flips}"
+        )
+
     u_dofs = [h["n_dofs"] for h in res_unif.history]
     u_errs = [abs(h["rel_err_signed"]) for h in res_unif.history]
+    u_en2 = [h["energy_err2_per_m2"] for h in res_unif.history]
     a_dofs = [h["n_dofs"] for h in res_adapt.history]
     a_errs = [abs(h["rel_err_signed"]) for h in res_adapt.history]
-    r_dofs = [h["n_dofs"] for h in res_rand.history]
-    r_errs = [abs(h["rel_err_signed"]) for h in res_rand.history]
+    a_en2 = [h["energy_err2_per_m2"] for h in res_adapt.history]
 
-    # (a) At adaptive run's final dofs: err_adapt < err_unif (interpolated)
-    d_adapt_final = a_dofs[-1]
-    err_adapt_final = a_errs[-1]
+    # (a) At adaptive run's guarded comparison point: err_adapt < err_unif
+    idx_adapt, h_adapt = _pick_same_sign_point(res_adapt.history)
+    assert idx_adapt == len(res_adapt.history) - 1
+    d_adapt_final = h_adapt["n_dofs"]
+    err_adapt_final = abs(h_adapt["rel_err_signed"])
     err_unif_at_adapt = _loglog_interp(d_adapt_final, u_dofs, u_errs)
+    en2_adapt_final = h_adapt["energy_err2_per_m2"]
+    en2_unif_at_adapt = _loglog_interp(d_adapt_final, u_dofs, u_en2)
 
-    # (b) At random run's final dofs: err_random > err_adapt (interpolated)
-    d_rand_final = r_dofs[-1]
-    err_rand_final = r_errs[-1]
+    # (b) At random run's guarded comparison point: err_random > err_adapt
+    idx_rand, h_rand = _pick_same_sign_point(res_rand.history)
+    assert idx_rand == len(res_rand.history) - 1
+    d_rand_final = h_rand["n_dofs"]
+    err_rand_final = abs(h_rand["rel_err_signed"])
     err_adapt_at_rand = _loglog_interp(d_rand_final, a_dofs, a_errs)
+    en2_rand_final = h_rand["energy_err2_per_m2"]
+    en2_adapt_at_rand = _loglog_interp(d_rand_final, a_dofs, a_en2)
 
     # (c) Mode identity: every iteration's f_h within the gap to the second mode
     max_shift_over_gap = 0.0
@@ -947,13 +1008,19 @@ def test_a1_adaptive_vs_uniform_and_random(l_prism_loop_runs):
         f"max_|f-f_ref|/gap={max_shift_over_gap:.4f}; "
         f"at adapt_final_dofs={d_adapt_final}: "
         f"err_adapt={err_adapt_final:.4e} < err_unif_interp={err_unif_at_adapt:.4e} "
-        f"(ratio={err_unif_at_adapt / err_adapt_final:.3f}); "
+        f"(ratio={err_unif_at_adapt / err_adapt_final:.3f}), "
+        f"en2_adapt={en2_adapt_final:.4e} < en2_unif_interp={en2_unif_at_adapt:.4e} "
+        f"(ratio={en2_unif_at_adapt / en2_adapt_final:.3f}); "
         f"at rand_final_dofs={d_rand_final}: "
         f"err_rand={err_rand_final:.4e} > err_adapt_interp={err_adapt_at_rand:.4e} "
-        f"(ratio={err_rand_final / err_adapt_at_rand:.3f})"
+        f"(ratio={err_rand_final / err_adapt_at_rand:.3f}), "
+        f"en2_rand={en2_rand_final:.4e} > en2_adapt_interp={en2_adapt_at_rand:.4e} "
+        f"(ratio={en2_rand_final / en2_adapt_at_rand:.3f})"
     )
     assert err_adapt_final < err_unif_at_adapt
+    assert en2_adapt_final < en2_unif_at_adapt
     assert err_rand_final > err_adapt_at_rand
+    assert en2_rand_final > en2_adapt_at_rand
 
 
 @pytest.mark.slow
@@ -1110,24 +1177,57 @@ def test_a2_prime_energy_and_indicator_slopes(l_prism_loop_runs):
 @pytest.mark.slow
 def test_a3_zz_adaptive_vs_uniform(l_prism_loop_runs):
     """
-    A3: ZZ-driven Dörfler adaptivity beats uniform refinement at its final DOFs
-    (log-log interpolated).
+    A3: ZZ-driven Dörfler adaptivity refuses comparison points where
+    `rel_err_signed` changed sign since the previous iteration (it=10 flips
+    from +9.478e-7 at it=9 to -2.714e-4 at it=10) and beats uniform refinement
+    in the sign-free energy error |||e|||^2 (and curl error ||curl e||^2) at
+    its final DOFs (log-log interpolated).
     """
     res_unif = l_prism_loop_runs["unif"]
     res_zz = l_prism_loop_runs["zz"]
 
     u_dofs = [h["n_dofs"] for h in res_unif.history]
-    u_errs = [abs(h["rel_err_signed"]) for h in res_unif.history]
-    d_zz_final = res_zz.history[-1]["n_dofs"]
-    err_zz_final = abs(res_zz.history[-1]["rel_err_signed"])
-    err_unif_at_zz = _loglog_interp(d_zz_final, u_dofs, u_errs)
+    u_en2 = [h["energy_err2_per_m2"] for h in res_unif.history]
+    u_curl2 = [h["curl_err2_per_m2"] for h in res_unif.history]
+
+    flips = [
+        i
+        for i in range(1, len(res_zz.history))
+        if _refuse_sign_change_point(res_zz.history, i)
+    ]
+    assert (len(res_zz.history) - 1) in flips, (
+        "Expected ZZ final iteration to be flagged by the sign-change guard"
+    )
+    idx_same_sign, h_same_sign = _pick_same_sign_point(res_zz.history)
+    assert idx_same_sign == len(res_zz.history) - 2
+
+    h_final = res_zz.history[-1]
+    d_zz_final = h_final["n_dofs"]
+    en2_zz_final = h_final["energy_err2_per_m2"]
+    en2_unif_at_zz = _loglog_interp(d_zz_final, u_dofs, u_en2)
+    curl2_zz_final = h_final["curl_err2_per_m2"]
+    curl2_unif_at_zz = _loglog_interp(d_zz_final, u_dofs, u_curl2)
+
+    d_zz_same = h_same_sign["n_dofs"]
+    en2_zz_same = h_same_sign["energy_err2_per_m2"]
+    en2_unif_at_same = _loglog_interp(d_zz_same, u_dofs, u_en2)
 
     print(
-        f"[A3] zz_final_dofs={d_zz_final}: "
-        f"err_zz={err_zz_final:.4e} < err_unif_interp={err_unif_at_zz:.4e} "
-        f"(ratio={err_unif_at_zz / err_zz_final:.3f})"
+        f"[A3] zz sign_change_iters={flips} "
+        f"(it={idx_same_sign} rel_err_signed={h_same_sign['rel_err_signed']:+.4e} -> "
+        f"it={len(res_zz.history) - 1} rel_err_signed={h_final['rel_err_signed']:+.4e} refused); "
+        f"at zz_final_dofs={d_zz_final}: "
+        f"en2_zz={en2_zz_final:.4e} < en2_unif_interp={en2_unif_at_zz:.4e} "
+        f"(ratio={en2_unif_at_zz / en2_zz_final:.3f}), "
+        f"curl2_zz={curl2_zz_final:.4e} < curl2_unif_interp={curl2_unif_at_zz:.4e} "
+        f"(ratio={curl2_unif_at_zz / curl2_zz_final:.3f}); "
+        f"at last_same_sign it={idx_same_sign} (dofs={d_zz_same}): "
+        f"en2_zz={en2_zz_same:.4e} < en2_unif_interp={en2_unif_at_same:.4e} "
+        f"(ratio={en2_unif_at_same / en2_zz_same:.3f})"
     )
-    assert err_zz_final < err_unif_at_zz
+    assert en2_zz_final < en2_unif_at_zz
+    assert curl2_zz_final < curl2_unif_at_zz
+    assert en2_zz_same < en2_unif_at_same
 
 
 @pytest.mark.slow

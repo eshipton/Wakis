@@ -42,6 +42,32 @@ def _loglog_interp_with_bracket(
     return val, bracket
 
 
+def _pick_same_sign_history_entry(
+    hist: list[dict], dof_min: float, dof_max: float
+) -> tuple[dict | None, list[int]]:
+    """
+    Pick the last history entry inside ``[dof_min, dof_max]`` that did not
+    undergo a sign change in ``rel_err_signed`` since the previous iteration
+    and shares the initial error sign.
+    """
+    refused: list[int] = []
+    if not hist:
+        return None, refused
+    s0 = float(np.sign(float(hist[0]["rel_err_signed"])))
+    valid_inside: list[dict] = []
+    for i, h in enumerate(hist):
+        s_cur = float(np.sign(float(h["rel_err_signed"])))
+        flipped = i > 0 and (
+            s_cur * float(np.sign(float(hist[i - 1]["rel_err_signed"]))) <= 0.0
+        )
+        if flipped or s_cur != s0:
+            refused.append(int(h.get("iteration", i)))
+            continue
+        if dof_min <= float(h["n_dofs"]) <= dof_max:
+            valid_inside.append(h)
+    return (valid_inside[-1] if valid_inside else None), refused
+
+
 def _compute_equal_dof_ratios(arms: dict) -> dict:
     out = {"vs_uniform": {}, "vs_residual": {}}
     if "uniform" not in arms:
@@ -59,11 +85,9 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
         hist = arm.get("history", [])
         if not hist:
             continue
-        # Find the last iteration whose n_dofs lies inside [u_dofs[0], u_dofs[-1]]
-        inside = [h for h in hist if u_dofs[0] <= float(h["n_dofs"]) <= u_dofs[-1]]
-        if not inside:
+        h_pick, refused = _pick_same_sign_history_entry(hist, u_dofs[0], u_dofs[-1])
+        if h_pick is None:
             continue
-        h_pick = inside[-1]
         d_target = float(h_pick["n_dofs"])
         e_arm = abs(float(h_pick["rel_err_signed"]))
         e_unif, bracket = _loglog_interp_with_bracket(u_dofs, u_err, d_target)
@@ -74,6 +98,7 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
             "uniform_interp_abs_rel_err": e_unif,
             "ratio_uniform_over_arm": float(e_unif / max(e_arm, 1e-30)),
             "uniform_dof_bracket": [int(bracket[0]), int(bracket[1])],
+            "sign_change_refused_iterations": refused,
         }
 
     if "residual" in arms:
@@ -84,10 +109,9 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
             if name not in arms:
                 continue
             hist = arms[name].get("history", [])
-            inside = [h for h in hist if r_dofs[0] <= float(h["n_dofs"]) <= r_dofs[-1]]
-            if not inside:
+            h_pick, refused = _pick_same_sign_history_entry(hist, r_dofs[0], r_dofs[-1])
+            if h_pick is None:
                 continue
-            h_pick = inside[-1]
             d_target = float(h_pick["n_dofs"])
             e_arm = abs(float(h_pick["rel_err_signed"]))
             e_res, bracket = _loglog_interp_with_bracket(r_dofs, r_err, d_target)
@@ -98,6 +122,7 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
                 "residual_interp_abs_rel_err": e_res,
                 "ratio_arm_over_residual": float(e_arm / max(e_res, 1e-30)),
                 "residual_dof_bracket": [int(bracket[0]), int(bracket[1])],
+                "sign_change_refused_iterations": refused,
             }
     return out
 

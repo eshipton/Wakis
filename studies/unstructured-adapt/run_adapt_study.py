@@ -172,12 +172,8 @@ def build_meta(quick: bool) -> dict:
 
 
 def compute_mps_reference() -> dict:
-    lam24, sig24 = l_shape_dirichlet_eigenvalue(
-        n_terms=24, n_boundary=160, n_interior=80, seed=0
-    )
-    lam32, sig32 = l_shape_dirichlet_eigenvalue(
-        n_terms=32, n_boundary=160, n_interior=80, seed=0
-    )
+    lam24, sig24, _ = l_shape_dirichlet_eigenvalue(n_terms=24, seed=0)
+    lam32, sig32, _ = l_shape_dirichlet_eigenvalue(n_terms=32, seed=0)
     f_ref_hz = float(np.sqrt(lam24) * C0 / (2.0 * np.pi))
     return {
         "n_terms": 24,
