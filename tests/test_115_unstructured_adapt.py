@@ -740,11 +740,17 @@ def test_e5_mps_reference():
     grad_rel_diff = float(
         np.max(np.hypot(gx24 - gx32, gy24 - gy32)) / np.max(np.hypot(gx32, gy32))
     )
+    # Check that psi vanishes on the non-reentrant outer boundary where A_B c = Q_B R c ~ 0
+    s_b = np.linspace(-0.9, 0.9, 19)
+    xb = np.concatenate([np.full_like(s_b, -1.0), s_b])
+    yb = np.concatenate([s_b, np.full_like(s_b, 1.0)])
+    psi_bdry, _, _ = l_shape_dirichlet_field(xb, yb, lam32, coeffs32)
+    bdry_rel = float(np.max(np.abs(psi_bdry)) / np.max(np.abs(psi32)))
     print(
         f"[E5] lam24={lam24:.10f} (sigma={sig24:.3e}, c0={coeffs24[0]:.6f}), "
         f"lam32={lam32:.10f} (sigma={sig32:.3e}, c0={coeffs32[0]:.6f}), "
         f"rel_diff={rel_diff:.3e}, field_rel_diff={field_rel_diff:.3e}, "
-        f"grad_rel_diff={grad_rel_diff:.3e}, bracket=({lo}, {hi})"
+        f"grad_rel_diff={grad_rel_diff:.3e}, bdry_rel={bdry_rel:.3e}, bracket=({lo}, {hi})"
     )
     assert lo < lam24 < hi
     assert lo < lam32 < hi
@@ -753,6 +759,7 @@ def test_e5_mps_reference():
     assert coeffs32.shape == (32,) and coeffs32[0] > 0.0
     assert field_rel_diff <= 1e-5
     assert grad_rel_diff <= 1e-5
+    assert bdry_rel <= 1e-6
 
 
 # ---------------------------------------------------------------------------

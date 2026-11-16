@@ -2,7 +2,7 @@
 
 Code: `wakis/unstructured/adapt.py` (Kuhn/L-prism meshes, Rivara longest-edge bisection, boundary projection,
 Whitney field reconstruction, residual and Zienkiewicz–Zhu error indicators, Dörfler marking, adaptive eigenmode loop,
-Voronoi export), `wakis/unstructured/analytic.py::l_shape_dirichlet_eigenvalue`,
+Voronoi export), `wakis/unstructured/analytic.py` (`l_shape_dirichlet_eigenvalue`, `l_shape_dirichlet_field`),
 `wakis/unstructured/solver3d.py::UnstructuredFIT3D`.
 Tests: `tests/test_115_unstructured_adapt.py`.
 Mutation audit: `studies/unstructured-adapt/run_mutations.py`.
@@ -107,17 +107,22 @@ $\nabla \times \mathbf{u} \in H^{\alpha - \epsilon}(\Omega) = H^{2/3 - \epsilon}
   so isotropic adaptive refinement around this edge singularity recovers the optimal 3D smooth convergence rate
   $|k_h^2 - k^2| \propto N^{-2/3}$ [Boffi & Gastaldi, 2019].
 
-* **Reference eigenvalue by the Method of Particular Solutions (MPS)**: `l_shape_dirichlet_eigenvalue` in
-  `wakis/unstructured/analytic.py` computes $\lambda_{D,1}(L)$ via the subspace-angle formulation of Betcke & Trefethen
-  [Fox, Henrici & Moler, 1967; Betcke & Trefethen, 2005] using the Fourier–Bessel basis
-  $J_{2j/3}(\sqrt{\lambda}\,r)\sin(2j\theta/3)$ ($j = 1, \dots, n_{\mathrm{terms}}$) in polar coordinates around the
-  re-entrant corner. Collocating $n_{\mathrm{boundary}} = 160$ non-corner boundary points and
-  $n_{\mathrm{interior}} = 80$ interior points (seed 0), QR-factorizing $[\mathbf{A}_B; \mathbf{A}_I]$, and minimizing
-  the smallest singular value $\sigma_{\min}(\lambda)$ of the boundary rows of $\mathbf{Q}$ yields (`test_e5_mps_reference`):
-  $\lambda_{24} = 9.6397238519\,\mathrm{m}^{-2}$ ($\sigma_{\min} = 1.915 \times 10^{-6}$) at $n_{\mathrm{terms}} = 24$
-  and $\lambda_{32} = 9.6397239608\,\mathrm{m}^{-2}$ ($\sigma_{\min} = 1.452 \times 10^{-7}$) at $n_{\mathrm{terms}} = 32$,
-  agreeing to a relative difference of $1.129 \times 10^{-8}$ (more than $10^4\times$ below the finest FEM error in our
-  study).
+* **Reference eigenvalue and eigenfunction by the Method of Particular Solutions (MPS)**:
+  `l_shape_dirichlet_eigenvalue` in `wakis/unstructured/analytic.py` computes $\lambda_{D,1}(L)$ and the expansion
+  coefficient vector $\mathbf{c} = \mathbf{R}^{-1}\mathbf{v}_{\min}$ (sign-normalised so $c_0 > 0$) via the
+  subspace-angle formulation of Betcke & Trefethen [Fox, Henrici & Moler, 1967; Betcke & Trefethen, 2005] using the
+  Fourier–Bessel basis $J_{2j/3}(\sqrt{\lambda}\,r)\sin(2j\theta/3)$ ($j = 1, \dots, n_{\mathrm{terms}}$) in polar
+  coordinates around the re-entrant corner, and `l_shape_dirichlet_field` reconstructs the reference mode
+  $\mathbf{u}(x, y, z) = \psi(x, y)\,\hat{\mathbf{z}}$ and $\nabla\psi(x, y)$ (giving
+  $\nabla \times \mathbf{u} = \nabla\psi \times \hat{\mathbf{z}}$). Collocating $n_{\mathrm{boundary}} = 240$ non-corner
+  boundary points and $n_{\mathrm{interior}} = 200$ interior points (seed 0), QR-factorizing
+  $[\mathbf{A}_B; \mathbf{A}_I] = \mathbf{Q}\mathbf{R}$, minimizing the smallest singular value $\sigma_{\min}(\lambda)$
+  of the boundary rows $\mathbf{Q}_B$, and mapping the corresponding right singular vector through $\mathbf{R}^{-1}$
+  yields (`test_e5_mps_reference`): $\lambda_{24} = 9.6397238519\,\mathrm{m}^{-2}$ ($\sigma_{\min} = 1.915 \times 10^{-6}$,
+  $c_0 = 0.245462$) at $n_{\mathrm{terms}} = 24$ and $\lambda_{32} = 9.6397239608\,\mathrm{m}^{-2}$
+  ($\sigma_{\min} = 1.452 \times 10^{-7}$, $c_0 = 0.245462$) at $n_{\mathrm{terms}} = 32$, agreeing to a relative
+  eigenvalue difference of $1.129 \times 10^{-8}$, relative interior field difference $2.860 \times 10^{-8}$, relative
+  gradient difference $2.149 \times 10^{-7}$, and outer-boundary residual $1.006 \times 10^{-7}$.
 
 ## 3. Rivara longest-edge bisection (LEB) and boundary projection
 
@@ -364,13 +369,14 @@ which targets the curl semi-norm error $\|\mu_r^{-1/2} \nabla \times (\mathbf{u}
      `eta2_zz_per_m2`), regardless of which `estimator` (`"residual"` or `"zz"`) drives marking.
   4. Stopping criteria `n_dofs >= max_dofs`, `it + 1 >= max_iter`, or `next_dofs > max_dofs` after `bisect` set
      `stop_reason` to `"max_dofs"` or `"max_iter"`.
-* **Constructor stability bypass (`stability=False`)**: By default, `UnstructuredFIT3D.__init__` computes an LU
-  factorization of $\mathbf{M}_1$ and runs a Lanczos iteration (`max_eigenvalue`) to determine the explicit leapfrog
-  Courant limit $\Delta t_{\max}$. On the quick L-prism adaptive study (`1,350` to `5,384` tetrahedra), this constructor
-  step accounted for `29.7 %`–`33.7 %` of the per-iteration wall time (exceeding the 25 % threshold of §4.5). Adding the
-  opt-in keyword `stability=True` to `UnstructuredFIT3D.__init__` and passing `stability=False` inside `adapt_eigen`
-  leaves `lambda_max`, `dt_max`, and `courant` as `nan` (lazily factoring `_M1` in `one_step` if time stepping is ever
-  called later) and reduces `t_solver_build_s` at `10,800` tetrahedra from `1.642 s` to `0.081 s`.
+* **Constructor stability bypass (`stability=False`) and `one_step` guard**: By default, `UnstructuredFIT3D.__init__`
+  computes an LU factorization of $\mathbf{M}_1$ and runs a Lanczos iteration (`max_eigenvalue`) to determine the
+  explicit leapfrog Courant limit $\Delta t_{\max}$, which is unneeded in frequency-domain eigenmode loops. Passing
+  `stability=False` inside `adapt_eigen` skips this constructor step and leaves `lambda_max`, `dt_max`, and `courant` as
+  `nan` (along with `dt = nan` when `dt=None`). If `one_step` is called on a solver whose `self.dt` is not a positive
+  finite number (e.g. `stability=False` and `dt=None`), `UnstructuredFIT3D.one_step` raises a `ValueError` instead of
+  advancing silently with `nan` (`test_solver3d_stability_false_dt_none_raises`); when a positive finite `dt` is
+  supplied with `stability=False`, `_M1` is factored lazily on the first `one_step` call.
 
 ## 6. Hodge choice (D1) and `voronoi_export`
 
@@ -398,34 +404,38 @@ returning `(repaired_mesh, report)` with `negative_faces_before`, `negative_face
 
 | Test ID | Test function | Physical / mathematical property verified | Measured values printed by pytest |
 | --- | --- | --- | --- |
-| R1 | `test_r1_conformity` | Face valence $\in \{1, 2\}$, boundary and two-tag interface area conservation to $16\,n_{\mathrm{child}}\epsilon A$, no hanging midpoints, Euler characteristic $V - E + F - C = 1$ across 12 rounds on `l_prism_mesh(5,3)`, `ball_mesh([1.0], 0.25)`, and two-tag `kuhn_mesh((7,5,3), 0.1)` | `PASSEDs` across all $3 \times 12 = 36$ refinement steps |
-| R2 | `test_r2_volume_conservation` | Total and per-tag polyhedral volume conserved to $n_{\mathrm{cells}}\epsilon V$ with `project=None` | Drift $\le 1.469 \times 10^{-14}\,\mathrm{m}^3$ |
-| R3 | `test_r3_kuhn_similarity` | 3 uniform LEB generations on `kuhn_mesh((3,2,2), 0.5)` match the exact $h/2$ grid nodes and volume $(h/2)^3 / 6$ to $10^{-15}$ | Exact node set $(175, 3)$, max rel. vol. diff $< 10^{-15}$ |
-| R4 | `test_r4_kuhn_classes` | 12 random marking rounds (seed 1) on a Kuhn mesh produce $\le 3$ similarity classes matching the 3 analytical bisection classes of one Kuhn tet | 3 classes; $\min q = 0.713863241219$ matches analytical to $< 10^{-12}$ |
-| R5 | `test_r5_general_quality` | 24 localized refinement rounds on `ball_mesh([1.0], 0.25)` keep $\min q \ge \tfrac{1}{2} q_0$ | $q_0 = 0.092597$, $q_{\mathrm{final}} = 0.054922$, $q_{\mathrm{final}}/q_0 = 0.593131$ at $6\,479$ cells |
-| R6 | `test_r6_noop` | `bisect(mesh, [])` returns bitwise-identical nodes and cells | Bitwise equal |
-| R7 | `test_r7_sphere_projection` | `sphere_projector` on `ball_mesh([1.0], 0.25)` places all new boundary nodes on $\|\mathbf{x}\| = R$ to $10^{-12}R$, moves nodes strictly outward, shrinks volume deficit by $\sim 1/4$ | $\max|\|\mathbf{x}\|-R| = 2.220 \times 10^{-16}\,\mathrm{m}$, `n_backoff = 0`, $\mathrm{deficit}(3)/\mathrm{deficit}(0) = 0.1732$ |
-| S1 | `test_s1_stokes` | Cellwise Stokes identity $\mathbf{B}_T \cdot \mathbf{n}_f A_f = (\mathbf{C}\mathbf{e})_f$ for random $\mathbf{e}$ | Max rel. diff $\le 10^{-12}$ |
-| S2 | `test_s2_galerkin_identity` | Galerkin identity (Section 4.2) on box $\mathrm{TM}_{110}$ at L0 and L1 with $6\times 6\times 6$ Duffy Gauss quadrature | Residual within $10\times$ solver + quadrature bound ($\le 8.71 \times 10^{-8}\,\mathrm{m}^{-2}$) |
-| S3 | `test_s3_scale_invariance` | Cellwise scale invariance $\eta_T^2(s\Omega, s^{-2}k^2)\cdot s^2 = \eta_T^2(\Omega, k^2)$ for $s = 10^{-3}$ (residual and ZZ) | Max rel. diff $\le 10^{-12}$ |
-| S4 | `test_s4_material_homogeneity` | Uniform dielectric/magnetic scaling $[\varepsilon_r, \mu_r] = [2.5, 1.7]$ scales $\eta^2$ by $(2.5 \times 1.7)^{-1}$ | Max rel. diff $\le 10^{-12}$ |
-| S5 | `test_s5_dorfler_mark` | Minimal cardinality and descending order of `dorfler_mark` (seed 2, $n = 1013$) | Exact threshold bracketing verified |
-| E2–E4 | `test_e2_e3_e4_box_effectivity_fast`, `test_e3_box_effectivity_slow` | Box $(0.7, 0.5, 0.3)\,\mathrm{m}$ $\mathrm{TM}_{110}$ effectivity bands $\theta_{\mathrm{res}} \in [1, 20]$, $\theta_{\mathrm{ZZ}} \in [0.5, 2]$, level ratio $\theta(\mathrm{L2})/\theta(\mathrm{L1}) \in [0.8, 1.25]$, reliability $|k_h^2 - k^2| \le \eta_{\mathrm{res}}^2$ | L0: $\theta_{\mathrm{res}} = 6.1800$, $\theta_{\mathrm{ZZ}} = 1.0827$; L1: $\theta_{\mathrm{res}} = 5.8285$, $\theta_{\mathrm{ZZ}} = 1.0349$; L2 ($40\,320$ cells): $\theta_{\mathrm{res}} = 5.8310$ (ratio $1.0004$), $\theta_{\mathrm{ZZ}} = 1.0126$ (ratio $0.9784$) |
-| E5 | `test_e5_mps_reference` | MPS reference convergence ($n_{\mathrm{terms}} = 24$ vs $32$) and interior minimizer check | $\lambda_{24} = 9.6397238519$, $\lambda_{32} = 9.6397239608$, rel. diff $1.129 \times 10^{-8}$ |
-| A1 | `test_a1_adaptive_vs_uniform_and_random` | L-prism residual Dörfler ($\theta = 0.5$) beats uniform and random marking at equal DOFs (log–log interpolation) and preserves mode gap | At $41\,817$ DOFs: $\mathrm{err}_{\mathrm{adapt}} = 2.2222 \times 10^{-3} < \mathrm{err}_{\mathrm{unif}} = 3.8015 \times 10^{-3}$ (ratio $1.711$); at $41\,601$ DOFs: $\mathrm{err}_{\mathrm{rand}} = 3.8042 \times 10^{-3} > \mathrm{err}_{\mathrm{adapt}} = 2.2281 \times 10^{-3}$ (ratio $1.707$) |
-| A2 | `test_a2_convergence_slopes` | Pre-registered slope check $\mathrm{slope}_{\mathrm{adapt}} \le \mathrm{slope}_{\mathrm{unif}} - 0.1$ at $N \le 4.9 \times 10^4$ DOFs | Strict `xfail`: $\mathrm{slope}_{\mathrm{adapt}}(\text{it } 5..9) = -0.3756$, $\mathrm{slope}_{\mathrm{unif}}(\text{gen } 2..5) = -0.4347$ (target $\le -0.5347$) |
-| A3 | `test_a3_zz_adaptive_vs_uniform` | ZZ Dörfler ($\theta = 0.5$) beats uniform at equal DOFs | At $37\,799$ DOFs: $\mathrm{err}_{\mathrm{ZZ}} = 2.7137 \times 10^{-4} < \mathrm{err}_{\mathrm{unif}} = 3.9206 \times 10^{-3}$ (ratio $14.448$) |
+| R1 | `test_r1_conformity` | Face valence $\in \{1, 2\}$, boundary and two-tag interface area conservation to $16\,n_{\mathrm{child}}\epsilon A$, no hanging midpoints, Euler characteristic $V - E + F - C = 1$ across 12 rounds on bipyramid, `l_prism_mesh(5,3)`, two-tag `kuhn_mesh((7,5,3), 0.1)`, and `ball_mesh([1.0], 0.25)` | Bipyramid: `rand_cells=6, pt_cells=8, chi=1`; L-prism: `rand_cells=21136, pt_cells=3018, chi=1`; two-tag box: `rand_cells=9640, pt_cells=2314, chi=1`; ball: `rand_cells=119509, pt_cells=4649, chi=1` |
+| R2 | `test_r2_volume_conservation` | Total and per-tag polyhedral volume conserved to $n_{\mathrm{cells}}\epsilon V$ with `project=None` | `final cells = 12654`, `\|dV\|/V = 1.322e-16` |
+| R3 | `test_r3_kuhn_similarity` | 3 uniform LEB generations on `kuhn_mesh((3,2,2), 0.5)` match the exact $h/2$ grid nodes and volume $(h/2)^3 / 6$ to $10^{-15}$ | `node_diff = 0.000e+00`, `max_rel_vol_err = 4.996e-16` |
+| R4 | `test_r4_kuhn_classes` | 12 random marking rounds (seed 1) on a Kuhn mesh produce $\le 3$ similarity classes matching the 3 analytical bisection classes of one Kuhn tet | `n_classes = 3`, `min_rr = 0.640754482034`, `ref = 0.640754482034`, `diff = 5.551e-16` |
+| R5 | `test_r5_general_quality` | 24 localized refinement rounds on `ball_mesh([1.0], 0.25)` keep $\min q \ge \tfrac{1}{2} q_0$ | $q_0 = 0.092597$, $q_{\mathrm{final}} = 0.054922$, $q_{\mathrm{final}}/q_0 = 0.593131$ at `final_cells = 6479` |
+| R6 | `test_r6_noop` | `bisect(mesh, [])` returns bitwise-identical nodes and cells | `bitwise identical nodes = 36, cells = 72` |
+| R7 | `test_r7_sphere_projection` | `sphere_projector` on `ball_mesh([1.0], 0.25)` places all new boundary nodes on $\|\mathbf{x}\| = R$ to $10^{-12}R$, moves nodes strictly outward, shrinks volume deficit by $\sim 1/4$ | $\max\|\|\mathbf{x}\|-R\| = 2.220 \times 10^{-16}\,\mathrm{m}$, `n_backoff = 0`, $\mathrm{deficit}(3)/\mathrm{deficit}(0) = 0.1732$ |
+| S1 | `test_s1_stokes` | Cellwise Stokes identity $\mathbf{B}_T \cdot \mathbf{n}_f A_f = (\mathbf{C}\mathbf{e})_f$ for random $\mathbf{e}$ | `max relative Stokes discrepancy = 3.356e-16` |
+| S2 | `test_s2_galerkin_identity` | Galerkin identity (Section 4.2) on box $\mathrm{TM}_{110}$ at L0 and L1 with $6\times 6\times 6$ Duffy Gauss quadrature | L0: `\|lhs-rhs\| = 6.735e-11 <= bound = 1.020e-07` (`quad_bound = 4.270e-09`); L1: `\|lhs-rhs\| = 7.076e-11 <= bound = 5.970e-08` (`quad_bound = 1.660e-11`) |
+| S3 | `test_s3_scale_invariance` | Cellwise scale invariance $\eta_T^2(s\Omega, s^{-2}k^2)\cdot s^2 = \eta_T^2(\Omega, k^2)$ for $s = 10^{-3}$ (residual and ZZ) | `bc=pec`: $8.146 \times 10^{-16}$; `bc=pmc`: $1.164 \times 10^{-15}$; ZZ: $1.786 \times 10^{-15}$ |
+| S4 | `test_s4_material_homogeneity` | Uniform dielectric/magnetic scaling $[\varepsilon_r, \mu_r] = [2.5, 1.7]$ scales $\eta^2$ by $(2.5 \times 1.7)^{-1}$ | `bc=pec`: $3.655 \times 10^{-16}$; `bc=pmc`: $2.982 \times 10^{-16}$; ZZ: $3.849 \times 10^{-16}$ |
+| S5 | `test_s5_dorfler_mark` | Minimal cardinality and descending order of `dorfler_mark` (seed 2, $n = 1013$) | `n_marked = 299/1013`, `sum_m/tot = 0.501146 >= 0.5`, `without_min/tot = 0.499774 < 0.5`, `min_marked = 7.0092 >= max_unmarked = 7.0067` |
+| E2–E4 | `test_e2_e3_e4_box_effectivity_fast`, `test_e3_box_effectivity_slow` | Box $(0.7, 0.5, 0.3)\,\mathrm{m}$ $\mathrm{TM}_{110}$ effectivity bands $\theta_{\mathrm{res}} \in [1, 20]$, $\theta_{\mathrm{ZZ}} \in [0.5, 2]$, level ratio $\theta(\mathrm{L2})/\theta(\mathrm{L1}) \in [0.8, 1.25]$, reliability $\|k_h^2 - k^2\| \le \eta_{\mathrm{res}}^2$ | L0: $\theta_{\mathrm{res}} = 6.1800$, $\theta_{\mathrm{ZZ}} = 1.0827$, $\|k_h^2-k^2\| = 2.7195 \times 10^{-1} \le \eta^2 = 2.1653 \times 10^2$; L1: $\theta_{\mathrm{res}} = 5.8285$, $\theta_{\mathrm{ZZ}} = 1.0349$, $\|k_h^2-k^2\| = 8.9893 \times 10^{-2} \le \eta^2 = 4.7241 \times 10^1$; L2 ($40\,320$ cells): $\theta_{\mathrm{res}} = 5.8310$ (ratio $1.0004$), $\theta_{\mathrm{ZZ}} = 1.0126$ (ratio $0.9784$) |
+| E5 | `test_e5_mps_reference` | MPS eigenvalue, coefficient vector $\mathbf{c} = \mathbf{R}^{-1}\mathbf{v}_{\min}$, interior field/gradient convergence ($n_{\mathrm{terms}} = 24$ vs $32$), and outer-boundary vanishing | $\lambda_{24} = 9.6397238519$ ($\sigma = 1.915 \times 10^{-6}$, $c_0 = 0.245462$), $\lambda_{32} = 9.6397239608$ ($\sigma = 1.452 \times 10^{-7}$, $c_0 = 0.245462$), `rel_diff = 1.129e-08`, `field_rel_diff = 2.860e-08`, `grad_rel_diff = 2.149e-07`, `bdry_rel = 1.006e-07` |
+| Guard | `test_a1_a3_sign_change_guard` | `_refuse_sign_change_point` and `_pick_same_sign_point` reject iterations where `rel_err_signed` flipped sign since the previous step | `refused it=2 (-2.714e-04 after +9.478e-07), picked it=1` |
+| A1 | `test_a1_adaptive_vs_uniform_and_random` | L-prism residual Dörfler ($\theta = 0.5$) beats uniform and random marking at equal DOFs (both in guarded eigenvalue error and in energy error $\|\|\|\mathbf{e}\|\|\|^2$) and preserves mode gap | `mode0 = 0.149079 GHz`, `mode1 = 0.185345 GHz`, `max_\|f-f_ref\|/gap = 0.0252`; at $41\,817$ DOFs: $\mathrm{err}_{\mathrm{adapt}} = 2.2222 \times 10^{-3} < \mathrm{err}_{\mathrm{unif}} = 3.8015 \times 10^{-3}$ (ratio $1.711$), $\mathrm{en2}_{\mathrm{adapt}} = 6.6307 \times 10^{-2} < \mathrm{en2}_{\mathrm{unif}} = 8.5593 \times 10^{-2}$ (ratio $1.291$); at $41\,601$ DOFs: $\mathrm{err}_{\mathrm{rand}} = 3.8042 \times 10^{-3} > \mathrm{err}_{\mathrm{adapt}} = 2.2281 \times 10^{-3}$ (ratio $1.707$), $\mathrm{en2}_{\mathrm{rand}} = 1.0756 \times 10^{-1} > \mathrm{en2}_{\mathrm{adapt}} = 6.6592 \times 10^{-2}$ (ratio $1.615$) |
+| A2 | `test_a2_eigenvalue_convergence_slopes` | Eigenvalue-measure variant ($\log\|k_h^2 - k^2\|/k^2$ vs $\log N$): pre-registered slope check $\mathrm{slope}_{\mathrm{adapt}} \le \mathrm{slope}_{\mathrm{unif}} - 0.1$ at $N \le 4.9 \times 10^4$ DOFs | Strict `xfail`: Kuhn 4-gen window slopes $(-0.2721, -0.2846, -0.4347)$; $\mathrm{slope}_{\mathrm{adapt}}(\text{it } 5..9) = -0.3756$, $\mathrm{slope}_{\mathrm{unif}}(\text{gen } 2..5) = -0.4347$ (target $\le -0.5347$) |
+| A2′ | `test_a2_prime_energy_and_indicator_slopes` | Decisive experiment on energy error $\|\|\|\mathbf{e}\|\|\|^2 = \|\nabla\times\mathbf{e}\|^2 + k^2\|\mathbf{e}\|^2$ and indicator $\eta^2$ against the MPS field: verifies strict monotone decay of both error components and tests pre-registered slopes ($P_1 = -4/9$, $P_2 = -2/3$, $\mathrm{slope}_{\mathrm{adapt}} \le \mathrm{slope}_{\mathrm{unif}} - 0.1$) | Strict `xfail`: $\|\|\|\mathbf{e}\|\|\|^2$ slopes $\mathrm{slope}_{\mathrm{adapt}}(\text{it } 5..9) = -0.6629$ ($P_2 = -0.6667$), $\mathrm{slope}_{\mathrm{unif}}(\text{gen } 2..5) = -0.5632$ ($P_1 = -0.4444$), `diff = -0.0997` (target $\le -0.6632$); $\eta^2$ slopes $\mathrm{slope}_{\mathrm{adapt}} = -0.6549$, $\mathrm{slope}_{\mathrm{unif}} = -0.5888$, `diff = -0.0661` (target $\le -0.6888$) |
+| A3 | `test_a3_zz_adaptive_vs_uniform` | ZZ Dörfler ($\theta = 0.5$) refuses sign-change points in `rel_err_signed` (`it = [5, 6, 10]`) and beats uniform refinement in the sign-free energy and curl norms | `it=9` (`+9.4775e-07`) $\to$ `it=10` (`-2.7137e-04`) refused; at $37\,799$ DOFs (`it=10`): $\mathrm{en2}_{\mathrm{ZZ}} = 8.2442 \times 10^{-2} < \mathrm{en2}_{\mathrm{unif}} = 9.4281 \times 10^{-2}$ (ratio $1.144$), $\mathrm{curl2}_{\mathrm{ZZ}} = 3.9832 \times 10^{-2} < \mathrm{curl2}_{\mathrm{unif}} = 6.6001 \times 10^{-2}$ (ratio $1.657$); at last same-sign `it=9` ($25\,903$ DOFs): $\mathrm{en2}_{\mathrm{ZZ}} = 1.0570 \times 10^{-1} < \mathrm{en2}_{\mathrm{unif}} = 1.3536 \times 10^{-1}$ (ratio $1.281$) |
 | A4 | `test_a4_voronoi_export` | `voronoi_export` on final adaptive mesh reports negative faces before/after and time-step rate | Cells $37\,020 \to 44\,781$, $\mathrm{neg\_before} = 13\,470$, $\mathrm{neg\_after} = 285$, $\Delta t_{\mathrm{rate}} = 1.7354 \times 10^{-11}\,\mathrm{s}$ (Voronoi guard refuses $451$ negative dual lengths) |
+| dt guard | `test_solver3d_stability_false_dt_none_raises` | `UnstructuredFIT3D(mesh, stability=False, dt=None).one_step()` raises `ValueError` for both `hodge="voronoi"` and `hodge="whitney"` | `PASSED` for `voronoi` and `whitney` |
 
 ### 7.2 Mutation audit (`studies/unstructured-adapt/run_mutations.py`)
 
-`run_mutations.py` monkeypatches private helpers of `wakis.unstructured.adapt` at call time and runs the target tests in
-`tests/test_115_unstructured_adapt.py` in-process. All 11 mutations are killed:
+`run_mutations.py` monkeypatches helpers of `wakis.unstructured.adapt`, `wakis.unstructured.analytic`, and
+`wakis.unstructured.solver3d` at call time and runs the target tests in `tests/test_115_unstructured_adapt.py`
+in-process. All 13 mutations are killed:
 
 | Mutation | Patched helper | Predicted failure mechanism | Observed failure in `run_mutations.py` |
 | --- | --- | --- | --- |
-| MU1 | `_find_nonconforming_cells` | Disable closure (single bisection round) $\to$ hanging midpoints and unclosed interior faces | `test_r1_conformity`: KILLED at R1(ii) (`valence-1 face does not descend from an initial boundary face`) |
-| MU2 | `_pick_bisect_edge` | Tie-break by local edge index $0..5$ instead of global node IDs $\to$ adjacent cells cut shared Kuhn faces by different diagonals | `test_r1_conformity`: KILLED at R1(ii) (`valence-1 face does not descend from an initial boundary face`) |
+| MU1 | `_find_nonconforming_cells` | Disable closure (single bisection round): predicted to fail at R1(iii)/(iv) (hanging midpoints), but killed earlier by R1(ii) face conformity | `test_r1_conformity`: KILLED by R1(ii), not (iii)/(iv) (`valence-1 face does not descend from an initial boundary face`) |
+| MU2 | `_pick_bisect_edge` | Tie-break by local edge index $0..5$ instead of global node IDs: predicted to fail at R1(iii)/(iv), but killed earlier by R1(ii) face conformity | `test_r1_conformity`: KILLED by R1(ii), not (iii)/(iv) (`valence-1 face does not descend from an initial boundary face`) |
 | MU3 | `_pick_bisect_edge` | Bisect shortest local edge instead of longest $\to$ breaks Freudenthal lattice and Maubach similarity bound | `test_r3_kuhn_similarity`: KILLED (`node count (234, 3) != (175, 3)`); `test_r4_kuhn_classes`: KILLED (`class count 7400 > 3`) |
 | MU4 | `_split_cells` | Drop second child tetrahedron of each bisection $\to$ loses half the parent volume | `test_r2_volume_conservation`: KILLED (`total volume drift 2.750e-02 > 1.469e-14`) |
 | MU5 | `_apply_projector` | Identity boundary projector (leave new boundary nodes on chord midpoints, radial sagitta $\sim L^2/(8R)$) | `test_r7_sphere_projection`: KILLED (`projected boundary nodes must move strictly outward`) |
@@ -435,6 +445,8 @@ returning `(repaired_mesh, report)` with `negative_faces_before`, `negative_face
 | MU10 | `_res_element_term` | Drop $\mu_T$ factor in element residual $\to$ breaks material homogeneity by factor $\mu_r = 1.7$ | `test_s4_material_homogeneity`: KILLED (`9.424e-04 <= 1e-12`) |
 | MU11 | `_zz_recover_curl` | Skip nodal averaging ($\mathbf{R} = \mathbf{B}_T$, $\eta_{\mathrm{ZZ}} = 0$) | `test_e2_e3_e4_box_effectivity_fast`: KILLED (`assert 0.5 <= 0.0`) |
 | MU12 | `_dorfler_order` | Sort $\eta_T^2$ ascending instead of descending in `dorfler_mark` | `test_s5_dorfler_mark`: KILLED (`2555.11 < 0.5 * 5107.96`) |
+| MU13 | `_mps_solve_coeffs` | Return right singular vector $\mathbf{v}_{\min}$ without mapping through $\mathbf{R}^{-1}$ in `l_shape_dirichlet_eigenvalue` | `test_e5_mps_reference`: KILLED (`assert 0.12463634531996126 <= 1e-06`) |
+| MU14 | `UnstructuredFIT3D.one_step` | Bypass positive-finite `dt` check in `one_step` when `stability=False` and `dt=None` | `test_solver3d_stability_false_dt_none_raises`: KILLED (`Failed: DID NOT RAISE ValueError`) |
 
 Note on MU1 and MU2: in `test_r1_conformity`, check (ii) verifies that every valence-1 face in `mesh.faces` descends
 from an initial boundary face before checks (iii) and (iv) run. When closure is disabled (MU1) or two tetrahedra split a
@@ -464,20 +476,59 @@ The full convergence study (`studies/unstructured-adapt/run_adapt_study.py`, mer
    `arms.theta07`).
 
 Cross-arm quantities in `results/adapt_study.json`:
-* **Equal-DOF error ratios** (`equal_dof_ratios.vs_uniform.<arm>.ratio_uniform_over_arm` and
+* **Equal-DOF error ratios and sign-change guard** (`equal_dof_ratios.vs_uniform.<arm>.ratio_uniform_over_arm` and
   `equal_dof_ratios.vs_residual.<arm>.ratio_arm_over_residual`), computed by log–log interpolation within the recorded
-  `uniform_dof_bracket` (never extrapolated; Prediction P3). In the 5-generation verification run (`test_a1`, `test_a3`
-  up to $N = 49\,006$ DOFs), residual adaptivity achieves a $1.711\times$ lower eigenvalue error than uniform refinement
-  at $41\,817$ DOFs (and beats random marking by $1.707\times$ at $41\,601$ DOFs), while ZZ adaptivity achieves a
-  $14.448\times$ lower error at $37\,799$ DOFs.
-* **Pre-asymptotic slope behaviour (`test_a2_convergence_slopes`)**: Over iterations $5..9$ ($N \le 41\,817$ DOFs), the
-  residual adaptive curve has least-squares slope `-0.3756` against `-0.4347` for uniform generations $2..5$, so the
-  pre-registered threshold $\mathrm{slope}_{\mathrm{adapt}} \le \mathrm{slope}_{\mathrm{unif}} - 0.1$ is marked
-  `xfail(strict=True)` at 5-generation scale: single-generation LEB steps alternate across the 3 Kuhn similarity classes
-  and localized refinement shifts the balance between positive curl error and negative mass error in the Babuška–Osborn
-  identity (Section 4.2). Full-scale slopes up to $2.5 \times 10^5$ DOFs are recorded in
-  `arms.<arm>.slope_fit` (with sign-change detection in `arms.<arm>.sign_change_detected` and
-  `arms.<arm>.slope_fit.sign_change_in_requested_range`).
+  `uniform_dof_bracket` (never extrapolated; Prediction P3), with a guard (`_pick_same_sign_history_entry`,
+  `_refuse_sign_change_point` in `test_a1_a3_sign_change_guard`) that refuses comparison points where `rel_err_signed`
+  changed sign since the previous iteration. In the 5-generation verification run (`test_a1`, `test_a3` up to
+  $N = 49\,006$ DOFs):
+  - Residual adaptivity (`theta=0.5`, no sign changes) achieves a $1.711\times$ lower relative eigenvalue error than
+    uniform refinement at $41\,817$ DOFs ($2.2222 \times 10^{-3}$ vs $3.8015 \times 10^{-3}$) and a $1.291\times$ lower
+    squared energy error $|||\mathbf{e}|||^2$ ($6.6307 \times 10^{-2}$ vs $8.5593 \times 10^{-2}\,\mathrm{m}^{-2}$), while
+    beating random marking at $41\,601$ DOFs by $1.707\times$ in eigenvalue error ($2.2281 \times 10^{-3}$ vs
+    $3.8042 \times 10^{-3}$) and $1.615\times$ in $|||\mathbf{e}|||^2$ ($6.6592 \times 10^{-2}$ vs
+    $1.0756 \times 10^{-1}\,\mathrm{m}^{-2}$).
+  - On the ZZ arm (`test_a3_zz_adaptive_vs_uniform`), because $\eta_{\mathrm{ZZ}}$ refines only the curl semi-norm
+    $\|\nabla \times \mathbf{e}\|^2$, $\|\nabla \times \mathbf{e}\|^2$ crosses below $k^2\|\mathbf{e}\|^2$ and
+    `rel_err_signed` changes sign at iterations $[5, 6, 10]$ (from $+9.4775 \times 10^{-7}$ at `it=9` to
+    $-2.7137 \times 10^{-4}$ at `it=10`); `it=10` is therefore refused as an eigenvalue-error comparison point. In the
+    sign-free norms at `it=10` ($37\,799$ DOFs), ZZ adaptivity achieves $|||\mathbf{e}|||^2 = 8.2442 \times 10^{-2}\,\mathrm{m}^{-2}$
+    vs $9.4281 \times 10^{-2}\,\mathrm{m}^{-2}$ for uniform refinement (ratio $1.144\times$) and
+    $\|\nabla \times \mathbf{e}\|^2 = 3.9832 \times 10^{-2}\,\mathrm{m}^{-2}$ vs $6.6001 \times 10^{-2}\,\mathrm{m}^{-2}$
+    (ratio $1.657\times$); at the last same-sign point `it=9` ($25\,903$ DOFs), $|||\mathbf{e}|||^2 = 1.0570 \times 10^{-1}\,\mathrm{m}^{-2}$
+    vs $1.3536 \times 10^{-1}\,\mathrm{m}^{-2}$ for uniform refinement (ratio $1.281\times$).
+* **Eigenvalue-cancellation diagnosis (`A2`) and decisive energy-norm experiment (`A2′`)**:
+  - In the eigenvalue-measure variant (`test_a2_eigenvalue_convergence_slopes`), the error
+    $k_h^2 - k^2 = \|\nabla \times \mathbf{e}\|^2 - k^2 \|\mathbf{e}\|^2$ is the difference of two positive
+    $\mathcal{O}(h^2)$ / $\mathcal{O}(h^{2\alpha})$ terms with different spatial distributions ($\|\nabla \times \mathbf{e}\|^2$
+    concentrated at the $r^{-1/3}$ re-entrant edge, $k^2\|\mathbf{e}\|^2$ spread across the smooth bulk). On the uniform
+    arm between generation 1 ($2\,768$ DOFs) and generation 2 ($5\,738$ DOFs), $\|\nabla \times \mathbf{e}\|^2$ drops
+    from $2.92824 \times 10^{-1}$ to $1.68512 \times 10^{-1}\,\mathrm{m}^{-2}$ while $k^2\|\mathbf{e}\|^2$ drops faster
+    from $2.20239 \times 10^{-1}$ to $7.95520 \times 10^{-2}\,\mathrm{m}^{-2}$, causing `rel_err_signed` to *rise* from
+    $+7.72137 \times 10^{-3}$ to $+9.33934 \times 10^{-3}$; consecutive 4-generation uniform eigenvalue slopes also depend
+    on the 3-generation Kuhn-cycle phase (`(-0.2721, -0.2846, -0.4347)` for generations `0..3`, `1..4`, `2..5`). On the
+    residual-adaptive arm, localized refinement near the singularity reduces $\|\nabla \times \mathbf{e}\|^2$ faster than
+    the bulk $k^2\|\mathbf{e}\|^2$ at iterations $2 \to 3$ (`rel_err_signed`: $+7.38663 \times 10^{-3} \to +1.00005 \times 10^{-2}$)
+    and $7 \to 8$ ($+2.66490 \times 10^{-3} \to +2.67689 \times 10^{-3}$), flattening the last-half eigenvalue slope to
+    `-0.3756` vs `-0.4347` for uniform generations `2..5` (strict `xfail` against `<= -0.5347`).
+  - The decisive experiment `A2′` (`test_a2_prime_energy_and_indicator_slopes`) integrates $\|\nabla \times \mathbf{e}\|_T^2$
+    and $k^2\|\mathbf{e}\|_T^2$ directly against the MPS reference field (`l_shape_dirichlet_field`) with
+    `_duffy_tet_rule(6)`. Both $\|\nabla \times \mathbf{e}\|^2$ and $k^2\|\mathbf{e}\|^2$—and hence the non-cancelling
+    energy error $|||\mathbf{e}|||^2 = \|\nabla \times \mathbf{e}\|^2 + k^2\|\mathbf{e}\|^2$ and the residual indicator
+    $\eta^2$—decrease **strictly monotonically** at every iteration of both the uniform arm
+    ($|||\mathbf{e}|||^2: 7.27147 \times 10^{-1} \to 7.35376 \times 10^{-2}\,\mathrm{m}^{-2}$,
+    $\eta^2: 2.53768 \times 10^{1} \to 2.00896\,\mathrm{m}^{-2}$) and the residual-adaptive arm
+    ($|||\mathbf{e}|||^2: 7.27147 \times 10^{-1} \to 6.63072 \times 10^{-2}\,\mathrm{m}^{-2}$,
+    $\eta^2: 2.53768 \times 10^{1} \to 2.00835\,\mathrm{m}^{-2}$), proving that the `A2` non-monotonicity was entirely
+    Babuška–Osborn cancellation. Over the last half of the adaptive run (`it=5..9`, $8\,386 \to 41\,817$ DOFs), the
+    adaptive energy-error slope is `slope_adapt_energy = -0.6629` and the indicator slope is `slope_adapt_eta2 = -0.6549`,
+    recovering the pre-registered optimal 3D rate $P_2 = -2/3 = -0.6667$ to within `0.0038` and `0.0118`. Over uniform
+    generations `2..5` ($5\,738 \to 49\,006$ DOFs), however, the uniform arm is still in the pre-asymptotic transition
+    between smooth bulk decay ($-2/3 = -0.6667$) and corner-singular decay ($P_1 = -4/9 = -0.4444$), with
+    `slope_unif_energy = -0.5632` and `slope_unif_eta2 = -0.5888`. Because the resulting 5-generation slope gap is
+    `slope_adapt - slope_unif = -0.0997` on $|||\mathbf{e}|||^2$ (target `<= -0.6632`) and `-0.0661` on $\eta^2$
+    (target `<= -0.6888`) vs the pre-registered `-0.1000` margin, `test_a2_prime_energy_and_indicator_slopes` is kept as
+    `xfail(strict=True)` with the exact printed slopes.
 * **Wall-time comparison** (`time_to_error.<arm>.adapt_cum_wall_s` vs
   `time_to_error.<arm>.uniform_finest_single_solve_s`, with Rule 8 resolution status in
   `time_to_error.<arm>.resolution_status` against $2 \times \mathrm{final\_solve\_se\_s}$).

@@ -483,10 +483,15 @@ def l_shape_dirichlet_eigenvalue(n_terms=24, n_boundary=240, n_interior=200, see
     A = jv(orders[None, :], k * r[:, None]) * sin_part
     Q, R = np.linalg.qr(A, mode="reduced")
     _, s_vals, vt = np.linalg.svd(Q[:n_boundary], full_matrices=False)
-    coeffs = np.linalg.solve(R, vt[-1])
+    coeffs = _mps_solve_coeffs(R, vt[-1])
     if coeffs[0] < 0.0:
         coeffs = -coeffs
     return lam, float(s_vals[-1]), coeffs
+
+
+def _mps_solve_coeffs(R, v):
+    """Map the right singular vector ``v`` of ``Q_B`` back to Fourier-Bessel coefficients via ``R``."""
+    return np.linalg.solve(R, v)
 
 
 def l_shape_dirichlet_field(x, y, lam, coeffs):

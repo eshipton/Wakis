@@ -24,7 +24,7 @@ import sys
 import numpy as np
 import pytest
 
-from wakis.unstructured import adapt
+from wakis.unstructured import adapt, analytic, solver3d
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TEST_FILE = os.path.join(ROOT, "tests", "test_115_unstructured_adapt.py")
@@ -125,83 +125,110 @@ def _mu12_ascending_dorfler(eta2):
     return np.argsort(eta2, kind="stable")
 
 
+def _mu13_unmapped_mps_coeffs(R, v):
+    """MU13: Return the right singular vector v without mapping through R^-1."""
+    return np.asarray(v, dtype=float).copy()
+
+
+_ORIG_ONE_STEP = solver3d.UnstructuredFIT3D.one_step
+
+
+def _mu14_unconditional_one_step(self):
+    """MU14: Bypass the positive-finite dt check in UnstructuredFIT3D.one_step."""
+    self.n += 1
+
+
 MUTATIONS = [
     (
         "MU1",
-        "_find_nonconforming_cells",
+        (adapt, "_find_nonconforming_cells"),
         _mu1_no_closure,
         ["test_r1_conformity"],
-        "hanging midpoints -> R1(iii)/(iv) fail",
+        "predicted R1(iii)/(iv); killed earlier at R1(ii) face conformity",
     ),
     (
         "MU2",
-        "_pick_bisect_edge",
+        (adapt, "_pick_bisect_edge"),
         _mu2_local_tiebreak,
         ["test_r1_conformity"],
-        "shared face cut by different edges -> R1 fails",
+        "predicted R1(iii)/(iv); killed earlier at R1(ii) face conformity",
     ),
     (
         "MU3",
-        "_pick_bisect_edge",
+        (adapt, "_pick_bisect_edge"),
         _mu3_shortest_edge,
         ["test_r3_kuhn_similarity", "test_r4_kuhn_classes"],
         "R3 node set / volume and R4 class count fail",
     ),
     (
         "MU4",
-        "_split_cells",
+        (adapt, "_split_cells"),
         _mu4_drop_second_child,
         ["test_r2_volume_conservation"],
         "R2 volume conservation fails by half parent volume",
     ),
     (
         "MU5",
-        "_apply_projector",
+        (adapt, "_apply_projector"),
         _mu5_identity_projector,
         ["test_r7_sphere_projection"],
         "R7 radial error ~ L^2/(8R) >> 1e-12 R fails",
     ),
     (
         "MU7",
-        "_local_edge_signs",
+        (adapt, "_local_edge_signs"),
         _mu7_flip_edge0_sign,
         ["test_s1_stokes", "test_s2_galerkin_identity"],
         "S1 Stokes and S2 Galerkin identity fail by O(1)",
     ),
     (
         "MU8",
-        "_res_face_jump_weight",
+        (adapt, "_res_face_jump_weight"),
         _mu8_lam_h_squared_normal_jump,
         ["test_s3_scale_invariance"],
         "S3 scale invariance fails by s^-2",
     ),
     (
         "MU9",
-        "_res_face_jump_weight",
+        (adapt, "_res_face_jump_weight"),
         _mu9_drop_h_f,
         ["test_s3_scale_invariance"],
         "S3 scale invariance fails by s^-1",
     ),
     (
         "MU10",
-        "_res_element_term",
+        (adapt, "_res_element_term"),
         _mu10_drop_mu_t_element,
         ["test_s4_material_homogeneity"],
         "S4 material homogeneity fails by factor mu_r=1.7",
     ),
     (
         "MU11",
-        "_zz_recover_curl",
+        (adapt, "_zz_recover_curl"),
         _mu11_no_zz_averaging,
         ["test_e2_e3_e4_box_effectivity_fast"],
         "eta_ZZ = 0 -> E3 fast band [0.5, 2] fails",
     ),
     (
         "MU12",
-        "_dorfler_order",
+        (adapt, "_dorfler_order"),
         _mu12_ascending_dorfler,
         ["test_s5_dorfler_mark"],
         "S5 Dorfler smallest-set / largest-values check fails",
+    ),
+    (
+        "MU13",
+        (analytic, "_mps_solve_coeffs"),
+        _mu13_unmapped_mps_coeffs,
+        ["test_e5_mps_reference"],
+        "unmapped right singular vector -> E5 field/Green check fails",
+    ),
+    (
+        "MU14",
+        (solver3d.UnstructuredFIT3D, "one_step"),
+        _mu14_unconditional_one_step,
+        ["test_solver3d_stability_false_dt_none_raises"],
+        "ValueError not raised when stability=False and dt=None",
     ),
 ]
 
@@ -224,11 +251,11 @@ def main() -> int:
     rows = []
     all_caught = True
 
-    for mu_id, attr_name, patch_fn, tests, predicted in MUTATIONS:
+    for mu_id, (target_obj, attr_name), patch_fn, tests, predicted in MUTATIONS:
         global _MU3_SPLIT_CODES
         _MU3_SPLIT_CODES = np.empty(0, dtype=np.int64)
-        orig_fn = getattr(adapt, attr_name)
-        setattr(adapt, attr_name, patch_fn)
+        orig_fn = getattr(target_obj, attr_name)
+        setattr(target_obj, attr_name, patch_fn)
         if mu_id == "MU3":
             adapt._find_nonconforming_cells = _mu3_track_nonconforming
         observed_parts = []
@@ -257,7 +284,7 @@ def main() -> int:
                     reason = _extract_failure_summary(out)
                     observed_parts.append(f"{tname}: KILLED ({reason})")
         finally:
-            setattr(adapt, attr_name, orig_fn)
+            setattr(target_obj, attr_name, orig_fn)
             if mu_id == "MU3":
                 adapt._find_nonconforming_cells = _ORIG_FIND_NONCONFORMING
             _MU3_SPLIT_CODES = np.empty(0, dtype=np.int64)
