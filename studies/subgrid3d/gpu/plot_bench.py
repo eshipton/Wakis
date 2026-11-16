@@ -11,9 +11,9 @@ Generates two figures in `--out DIR`:
 
 1. `subgrid3d_gpu_ms_per_step.png`:
    * Left panel: uniform PEC loaded-cavity grid (`H = 0.1 ... 0.0125 m`),
-     ms/step vs unknowns for `SolverFIT3D` (CSR and fused), `SubgridLTSFIT3D`
-     (`csr` and `block` on CuPy), and `FusedSubgridStepper` (direct and CUDA
-     graph).
+     ms/step vs unknowns for `SolverFIT3D` (CSR per-step Python, fused
+     per-step Python, and fused CUDA graph), `SubgridLTSFIT3D` (`csr` and
+     `block` on CuPy), and `FusedSubgridStepper` (direct and CUDA graph).
    * Right panel: 2:1 and 3:1 subgrid loaded-cavity meshes (global `dt` and
      LTS), ms/step vs unknowns for `csr`, `block`, `fused (direct)` and
      `fused (graph)`.
@@ -63,8 +63,19 @@ def plot_ms_per_step(data, out_dir):
     if uni:
         u_dof = [r["unknowns"] for r in uni]
         arms_uni = [
-            ("fit3d_csr_ms", "SolverFIT3D (CSR)", "s--", "#7f7f7f"),
-            ("fit3d_fused_ms", "SolverFIT3D (fused)", "o-", "#1f77b4"),
+            ("fit3d_csr_ms", "SolverFIT3D (CSR, per-step Python)", "s--", "#7f7f7f"),
+            (
+                "fit3d_fused_ms",
+                "SolverFIT3D (fused, per-step Python)",
+                "o--",
+                "#1f77b4",
+            ),
+            (
+                "fit3d_fused_graph_ms",
+                "SolverFIT3D (fused, CUDA graph)",
+                "o-",
+                "#9467bd",
+            ),
             ("subgrid_block_ms", "Subgrid block (CuPy)", "^--", "#d62728"),
             ("subgrid_csr_ms", "Subgrid CSR (CuPy)", "v--", "#ff7f0e"),
             ("subgrid_fused_direct_ms", "Subgrid fused (direct)", "d-", "#2ca02c"),

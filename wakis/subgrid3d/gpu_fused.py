@@ -11,8 +11,8 @@ The CuPy `BlockOps` path (`wakis/subgrid3d/gpu.py`) issues separate slice
 kernels per block and axis in `curl_all` and `curl_T_all`, separate sparse
 products for `Ph`, `PhT`, the LTS level operators and the CPML rows, and
 allocates temporaries per step. On an NVIDIA L4 this makes the subgrid step
-launch-latency bound (~0.83 ms/step on uniform grids and ~1.8-3.1 ms/step
-with a patch and LTS).
+launch-latency bound (0.8201-0.8249 ms/step on uniform grids and
+1.8215-2.8940 ms/step with a patch and LTS).
 
 This module fuses the subgrid step into a handful of zero-allocation device
 kernels compiled with ``--fmad=false``:
@@ -1279,9 +1279,12 @@ class FusedSubgridStepper:
 
     def run(self, n_steps, energy=False):
         """
-        Advance `n_steps` coarse steps on the device (using `GraphRunner` when
-        `graph_chunk > 1` and `energy=False`). Returns the modified-energy
-        history as a 1D NumPy array when `energy=True`.
+        Advance `n_steps` coarse steps on the device.
+
+        Uses `GraphRunner` when `graph_chunk > 1` and `energy=False`. Passing
+        `energy=True` bypasses the CUDA-graph replay path and runs the
+        per-step Python loop to evaluate `modified_energy(e^n, e^{n+1})` after
+        each step, returning the history as a 1D NumPy array [J/s^2].
         """
         n_steps = int(n_steps)
         self._check_solver_resync()

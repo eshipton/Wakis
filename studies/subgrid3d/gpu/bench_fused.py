@@ -11,8 +11,9 @@ and `docs/physicsguide_sections/subgrid3d_gpu.md`:
 
 * Uniform PEC box `1.0 x 0.8 x 0.6 m` loaded with an `eps_r = 9` dielectric
   cube (`studies/subgrid3d/run_study_lts.py` part D, `H = 0.1 ... 0.0125 m`):
-  - `SolverFIT3D(use_gpu=True, fused=False)` (`fit3d_csr`)
-  - `SolverFIT3D(use_gpu=True, fused=True)` (`fit3d_fused`)
+  - `SolverFIT3D(use_gpu=True, fused=False)` (`fit3d_csr`, per-step Python)
+  - `SolverFIT3D(use_gpu=True, fused=True)` (`fit3d_fused`, per-step Python `one_step()`)
+  - `SolverFIT3D(use_gpu=True, fused=True)` with `FusedLoop(..., chunk=64)` (`fit3d_fused_graph`, CUDA graph)
   - `SubgridLTSFIT3D(kernels="csr", backend="cupy")` (`subgrid_csr`)
   - `SubgridLTSFIT3D(kernels="block", backend="cupy")` (`subgrid_block`)
   - `FusedSubgridStepper(solver, graph_chunk=0)` (`subgrid_fused_direct`)
@@ -50,6 +51,7 @@ import cupy as cp
 from run_study_lts import BOX, make_solver, solver_axes
 
 from wakis import GridFIT3D, SolverFIT3D
+from wakis.gpu_fused import FusedLoop
 from wakis.subgrid3d.gpu_fused import FusedSubgridStepper
 
 T_PHYS = 10.0e-9
@@ -159,24 +161,37 @@ def bench_row(kind, h_coarse, ratio, copy_bw_gb_s, n_steps=200):
         "n_steps": int(n_steps),
     }
 
-    # 1. SolverFIT3D baselines on uniform meshes
+    # 1. SolverFIT3D baselines on uniform meshes (same grid and dt):
+    #    CSR (per-step Python), fused (per-step Python), and fused (CUDA graph, chunk=64)
     if kind == "uniform":
         axes = solver_axes("big", "uniform", h_coarse, 1)
-        for fused in (False, True):
-            key = "fit3d_fused" if fused else "fit3d_csr"
+        for key, fused, use_graph in (
+            ("fit3d_csr", False, False),
+            ("fit3d_fused", True, False),
+            ("fit3d_fused_graph", True, True),
+        ):
             g = GridFIT3D(x=axes[0], y=axes[1], z=axes[2], verbose=0)
             sv = SolverFIT3D(
                 g,
                 bc_low=["pec"] * 3,
                 bc_high=["pec"] * 3,
                 verbose=0,
+                dt=dt,
                 cfln=0.95,
                 use_gpu=True,
                 fused=fused,
             )
-            ms = _time_callable(
-                lambda k, sv=sv: [sv.one_step() for _ in range(k)], 20, n_steps
-            )
+            if use_graph:
+                sv.one_step()
+                loop = FusedLoop(sv, [], [], 64 + n_steps + 2, chunk=64)
+                ms = _time_callable(
+                    lambda k, loop=loop: loop.run(1, 1 + k), 64, n_steps
+                )
+                del loop
+            else:
+                ms = _time_callable(
+                    lambda k, sv=sv: [sv.one_step() for _ in range(k)], 20, n_steps
+                )
             row[f"{key}_ms"] = ms
             row[f"{key}_ns_per_dof"] = ms * 1e6 / unknowns
             row[f"{key}_time_T_s"] = (T_PHYS / float(sv.dt)) * ms * 1e-3
@@ -220,9 +235,25 @@ def bench_row(kind, h_coarse, ratio, copy_bw_gb_s, n_steps=200):
     del s_cpu
     cp.get_default_memory_pool().free_all_blocks()
 
+    row["speedup_vs_block"] = float(
+        row["subgrid_block_ms"] / row["subgrid_fused_graph_ms"]
+    )
+    row["speedup_vs_csr"] = float(row["subgrid_csr_ms"] / row["subgrid_fused_graph_ms"])
+    if kind == "uniform":
+        row["ratio_direct_vs_fit3d_py"] = float(
+            row["subgrid_fused_direct_ms"] / row["fit3d_fused_ms"]
+        )
+        row["ratio_graph_vs_fit3d_graph"] = float(
+            row["subgrid_fused_graph_ms"] / row["fit3d_fused_graph_ms"]
+        )
+
     tag = f"{kind}_H{h_coarse:.4f}_r{ratio}"
     extra = (
-        f" fit3d_csr_ms={row['fit3d_csr_ms']:.4f} fit3d_fused_ms={row['fit3d_fused_ms']:.4f}"
+        f" fit3d_csr_ms={row['fit3d_csr_ms']:.4f}"
+        f" fit3d_fused_ms={row['fit3d_fused_ms']:.4f}"
+        f" fit3d_fused_graph_ms={row['fit3d_fused_graph_ms']:.4f}"
+        f" ratio_direct_vs_fit3d_py={row['ratio_direct_vs_fit3d_py']:.2f}"
+        f" ratio_graph_vs_fit3d_graph={row['ratio_graph_vs_fit3d_graph']:.2f}"
         if kind == "uniform"
         else ""
     )
@@ -235,7 +266,9 @@ def bench_row(kind, h_coarse, ratio, copy_bw_gb_s, n_steps=200):
         f"subgrid_csr_ms={row['subgrid_csr_ms']:.4f} "
         f"subgrid_block_ms={row['subgrid_block_ms']:.4f} "
         f"subgrid_fused_direct_ms={row['subgrid_fused_direct_ms']:.4f} "
-        f"subgrid_fused_graph_ms={row['subgrid_fused_graph_ms']:.4f}"
+        f"subgrid_fused_graph_ms={row['subgrid_fused_graph_ms']:.4f} "
+        f"speedup_vs_block={row['speedup_vs_block']:.1f} "
+        f"speedup_vs_csr={row['speedup_vs_csr']:.1f}"
         f"{extra}",
         flush=True,
     )
@@ -270,7 +303,8 @@ def main():
     copy_bw_gb_s, copy_bytes, copy_ms = measure_copy_bandwidth()
     print(
         f"NUMBERS bench_fused: gpu={gpu_name.replace(' ', '_')} "
-        f"copy_bw_gb_s={copy_bw_gb_s:.2f} copy_bytes={copy_bytes} copy_ms={copy_ms:.4f}",
+        f"copy_bw_gb_s={copy_bw_gb_s:.2f} copy_bytes={copy_bytes} "
+        f"copy_ms={copy_ms:.4f} graph_chunk=64 steps={args.steps}",
         flush=True,
     )
 

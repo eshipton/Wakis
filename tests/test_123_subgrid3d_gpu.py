@@ -38,6 +38,7 @@ Checks G1-G6 (Brief W4-3c, docs/physicsguide_sections/subgrid3d_gpu.md):
   Bloch-periodic blocks, complex fields) raise `NotImplementedError`.
 """
 
+import gc
 import os
 import types
 
@@ -464,7 +465,7 @@ def test_g3_gpu_500_steps():
     assert err_kappa > 100 * tol_lts and err_kappa > 1e-3, (err_kappa, tol_lts)
 
     print(
-        f"NUMBERS test_g3_gpu_500_steps: state_ulp={max_state_ulp} "
+        f"NUMBERS test_g3_gpu_500_steps: n_steps={n_steps} state_ulp={max_state_ulp} "
         f"probe_ulp={max_probe_ulp} dft_ulp={max_dft_ulp} "
         f"tol_closed_global={tols['closed_global']:.3e} "
         f"tol_closed_lts={tol_lts:.3e} "
@@ -485,6 +486,8 @@ def test_g4_graph_and_zero_alloc():
     """G4 (GPU): CUDA-graph replay == direct kernel launches bit for bit, and
     CuPy memory pool `used_bytes()` stays strictly constant over 100 steps."""
     cp = _require_gpu()
+    gc.collect()
+    cp.get_default_memory_pool().free_all_blocks()
     wf = lambda t: (
         np.exp(-(((t - 2.0e-9) / 0.5e-9) ** 2)) * np.sin(2 * np.pi * 4.0e8 * t)
     )
@@ -506,23 +509,29 @@ def test_g4_graph_and_zero_alloc():
         s.add_probe((0.6, 0.4, 0.3), 2, freqs=freqs)
         s.add_probe((0.25, 0.5, 0.35), 1, freqs=freqs)
 
-    fg = FusedSubgridStepper(s_graph, graph_chunk=32)
-    fd = FusedSubgridStepper(s_direct, graph_chunk=0)
+    graph_chunk = 32
+    direct_chunk = 0
+    warmup_steps = 32
+    alloc_steps = 100
+    total_steps = warmup_steps + alloc_steps
+
+    fg = FusedSubgridStepper(s_graph, graph_chunk=graph_chunk)
+    fd = FusedSubgridStepper(s_direct, graph_chunk=direct_chunk)
 
     # Warm up graph capture, then measure memory pool across 100 steps
-    fg.run(32)
+    fg.run(warmup_steps)
     fg.synchronize()
     pool = cp.get_default_memory_pool()
     used_before = int(pool.used_bytes())
-    fg.run(100)
+    fg.run(alloc_steps)
     fg.synchronize()
     used_after = int(pool.used_bytes())
     used_delta = used_after - used_before
     assert used_delta == 0, (
-        f"expected 0 bytes allocated during 100 steps, got {used_delta}"
+        f"expected 0 bytes allocated during {alloc_steps} steps, got {used_delta}"
     )
 
-    fd.run(132)
+    fd.run(total_steps)
     fd.synchronize()
 
     assert np.array_equal(fg.state_host(), fd.state_host())
@@ -532,8 +541,21 @@ def test_g4_graph_and_zero_alloc():
     assert np.array_equal(fg.dft_data(1), fd.dft_data(1))
 
     ulp_state = _max_ulp(fg.state_host(), fd.state_host())
+    ulp_probe = max(
+        _max_ulp(fg.probe_signal(0), fd.probe_signal(0)),
+        _max_ulp(fg.probe_signal(1), fd.probe_signal(1)),
+    )
+    ulp_dft = max(
+        _max_ulp(fg.dft_data(0).real, fd.dft_data(0).real),
+        _max_ulp(fg.dft_data(0).imag, fd.dft_data(0).imag),
+        _max_ulp(fg.dft_data(1).real, fd.dft_data(1).real),
+        _max_ulp(fg.dft_data(1).imag, fd.dft_data(1).imag),
+    )
     print(
-        f"NUMBERS test_g4_graph_and_zero_alloc: graph_vs_direct_ulp={ulp_state} "
+        f"NUMBERS test_g4_graph_and_zero_alloc: graph_chunk={graph_chunk} "
+        f"direct_chunk={direct_chunk} warmup_steps={warmup_steps} "
+        f"alloc_steps={alloc_steps} steps={total_steps} "
+        f"graph_vs_direct_ulp={ulp_state} probe_ulp={ulp_probe} dft_ulp={ulp_dft} "
         f"used_bytes_before={used_before} used_bytes_after={used_after} "
         f"used_bytes_delta={used_delta}"
     )
