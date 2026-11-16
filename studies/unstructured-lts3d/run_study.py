@@ -13,6 +13,7 @@ With `--quick`, runs a lightweight smoke configuration on tiny meshes and writes
 """
 
 import argparse
+import glob
 import json
 import os
 import platform
@@ -484,8 +485,13 @@ def _equal_error_gain(records, case, base_arm, target_arm):
     return {"status": status, "median_gain": med_g, "range": [lo_g, hi_g]}
 
 
-def run_accuracy(quick=False, n_procs=1):
-    """Part `accuracy`: evaluate accuracy and work across cases and arms."""
+def run_accuracy(quick=False, n_procs=1, shard=None, nshards=None, merge=False):
+    """Part `accuracy`: evaluate accuracy and work across cases and arms.
+
+    ``shard``/``nshards`` run tasks[shard::nshards] only and write the raw records to
+    ``accuracy_shard{shard}.json`` (fan-out on Cloud Batch); ``merge=True`` loads all shard
+    files instead of computing and then performs the comparisons.
+    """
     if quick:
         sizes_box = [0.24, 0.18]
         seeds = [1]
@@ -524,11 +530,28 @@ def run_accuracy(quick=False, n_procs=1):
             for arm in ("GW", "LW-element", "LW-edge_rate"):
                 tasks.append(("C4_pillbox_gmsh", cpw, 1, arm, quick))
 
-    if n_procs > 1 and not quick:
-        with Pool(n_procs) as pool:
-            records = pool.map(_eval_arm_task, tasks)
+    if merge:
+        records = []
+        shard_files = sorted(glob.glob(os.path.join(RES, "accuracy_shard*.json")))
+        for f in shard_files:
+            with open(f, encoding="utf-8") as fh:
+                records.extend(json.load(fh)["records"])
+        if len(records) != len(tasks):
+            raise RuntimeError(
+                f"merge: {len(records)} records in {len(shard_files)} shard files, "
+                f"expected {len(tasks)} tasks"
+            )
     else:
-        records = [_eval_arm_task(t) for t in tasks]
+        if shard is not None:
+            tasks = tasks[shard::nshards]
+        if n_procs > 1 and not quick:
+            with Pool(n_procs) as pool:
+                records = pool.map(_eval_arm_task, tasks)
+        else:
+            records = [_eval_arm_task(t) for t in tasks]
+        if shard is not None:
+            _dump(f"accuracy_shard{shard}", {"env": _env_metadata(), "records": records})
+            return {"records": records, "comparisons": {}}
 
     # Attach break-even simulated time [ns] against arm G on the same (case, size, seed)
     g_map = {(r["case"], r["size"], r["seed"]): r for r in records if r["arm"] == "G"}
@@ -737,6 +760,11 @@ def main():
     )
     parser.add_argument("--quick", action="store_true", help="Run tiny smoke checks")
     parser.add_argument("--procs", type=int, default=1, help="Worker processes")
+    parser.add_argument("--shard", type=int, default=None, help="Accuracy shard index")
+    parser.add_argument("--nshards", type=int, default=None, help="Number of shards")
+    parser.add_argument(
+        "--merge", action="store_true", help="Merge accuracy shard files"
+    )
     args = parser.parse_args()
 
     summary = {"env": _env_metadata(), "quick": bool(args.quick)}
@@ -745,7 +773,13 @@ def main():
     if args.part in ("all", "bounds"):
         summary["bounds"] = run_bounds(quick=args.quick)["bounds"]
     if args.part in ("all", "accuracy"):
-        acc = run_accuracy(quick=args.quick, n_procs=args.procs)
+        acc = run_accuracy(
+            quick=args.quick,
+            n_procs=args.procs,
+            shard=args.shard,
+            nshards=args.nshards,
+            merge=args.merge,
+        )
         summary["comparisons"] = acc["comparisons"]
     if args.part in ("all", "timing"):
         summary["timing"] = run_timing(quick=args.quick)["timing"]
