@@ -1215,3 +1215,9 @@ def test_work_accounting(hodge):
         f"test_work_accounting[{hodge}]: full={w['full']}, "
         f"per_level={w['per_level']}, total={w['total']}"
     )
+
+
+def test_lts_requires_stability():
+    """`stability=False` (eigen-only loops in adapt.py) skips the operators LTS certifies from."""
+    with pytest.raises(ValueError, match="lts requires stability=True"):
+        UnstructuredFIT3D(_small_box(), lts=2, stability=False)
