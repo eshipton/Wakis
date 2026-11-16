@@ -997,12 +997,111 @@ def _compute_t1_t2_metrics(mesh, mats, locked, fcp):
     }
 
 
+class _CylinderCadModelStub:
+    """OpenCASCADE-equivalent cylinder CAD model stub for `CadSplitProjector` without gmsh."""
+
+    def __init__(self, X, R, H, tol=1e-7):
+        self.X = np.asarray(X, dtype=float)
+        self.R = float(R)
+        self.H = float(H)
+        self.tol = float(tol)
+        self.mesh = self
+
+    def getEntities(self, dim):
+        return [(1, 1), (1, 2)] if int(dim) == 1 else [(2, 1), (2, 2), (2, 3)]
+
+    def getNodes(self, dim, tag, includeBoundary=True):
+        X = self.X
+        r = np.hypot(X[:, 0], X[:, 1])
+        z = X[:, 2]
+        on_r = np.abs(r - self.R) <= self.tol
+        on_z0 = np.abs(z) <= self.tol
+        on_zh = np.abs(z - self.H) <= self.tol
+        if int(dim) == 1:
+            mask = (on_r & on_z0) if int(tag) == 1 else (on_r & on_zh)
+        else:
+            if int(tag) == 1:
+                mask = on_r & (z >= -self.tol) & (z <= self.H + self.tol)
+                if not includeBoundary:
+                    mask = mask & (~on_z0) & (~on_zh)
+            elif int(tag) == 2:
+                mask = on_z0 & (r <= self.R + self.tol)
+                if not includeBoundary:
+                    mask = mask & (~on_r)
+            else:
+                mask = on_zh & (r <= self.R + self.tol)
+                if not includeBoundary:
+                    mask = mask & (~on_r)
+        idx = np.where(mask)[0] + 1
+        return idx, X[idx - 1].ravel(), None
+
+    def getClosestPoint(self, dim, tag, x_cad):
+        x, y, z = float(x_cad[0]), float(x_cad[1]), float(x_cad[2])
+        r = max(float(np.hypot(x, y)), 1e-30)
+        if int(dim) == 1:
+            z_t = 0.0 if int(tag) == 1 else self.H
+            return [self.R * x / r, self.R * y / r, z_t], [0.0]
+        if int(tag) == 1:
+            return [self.R * x / r, self.R * y / r, float(np.clip(z, 0.0, self.H))], [
+                0.0,
+                0.0,
+            ]
+        z_t = 0.0 if int(tag) == 2 else self.H
+        if r > self.R:
+            return [self.R * x / r, self.R * y / r, z_t], [0.0, 0.0]
+        return [x, y, z_t], [0.0, 0.0]
+
+
+class _CylinderGmshStub:
+    """Wrapper holding `.model` for `cad_projector` / `CadSplitProjector`."""
+
+    def __init__(self, X, R, H):
+        self.model = _CylinderCadModelStub(X, R, H)
+
+
+def _load_recorded_repair_suite():
+    """Load the 6-case CAD repair suite from `results/repair.json`."""
+    rep_json_path = os.path.join(HERE, "results", "repair.json")
+    if not os.path.exists(rep_json_path):
+        return []
+    with open(rep_json_path) as f:
+        rep_data = json.load(f)
+    out = []
+    for r in rep_data.get("all_runs", rep_data.get("cases", [])):
+        out.append(
+            {
+                "case": r["case"],
+                "cpw": int(r["cpw"]),
+                "optimize": r["optimize"],
+                "before_neg": int(r["before"]["n_negative_faces"]),
+                "flip_only_neg": int(r["flip_only"]["n_negative_faces"]),
+                "flip_only_steiner": int(
+                    r["flip_only"]["repair_report"].get("steiner_nodes", 0)
+                ),
+                "repair_false_neg": int(r["after_repair_false"]["n_negative_faces"]),
+                "repair_true_neg": int(r["after_repair_true"]["n_negative_faces"]),
+                "repair_true_steiner": int(r["repair_report"].get("steiner_nodes", 0)),
+                "dt_max_before_s": float(r["before"]["dt_max"]),
+                "dt_max_flip_only_s": float(r["flip_only"]["dt_max"]),
+                "dt_max_repair_false_s": float(r["after_repair_false"]["dt_max"]),
+                "dt_max_repair_true_s": float(r["after_repair_true"]["dt_max"]),
+                "dt_gain_vs_repair_false": float(r["dt_gain_vs_repair_false"]),
+                "dt_gain_vs_before": float(r["dt_gain_vs_before"]),
+            }
+        )
+    return out
+
+
 def run_synthetic_fallback():
     """
     Gmsh-free fallback for `--quick` when gmsh shared libraries are unavailable:
-    runs the synthetic 13-node cylinder rim mesh (a = 0.1 m, H = 0.03 m) and
-    combines it with the recorded wave-3 `results/repair.json` P3/P4 diagnostics.
+    runs the synthetic 13-node cylinder rim mesh (a = 0.1 m, H = 0.03 m) across
+    all repair paths (`repair=False`, `wave-3 flips`, `w4 auto`,
+    `w4 CAD projector`, and `analytic`) and combines it with the recorded
+    wave-3 `results/repair.json` P3/P4 diagnostics.
     """
+    from wakis.unstructured.cad import cad_projector
+
     mesh, mats, _idx_p = _build_synthetic_rim_mesh(n_rim=13, R=A_PB, H=T_LAY)
     locked = ~movable_nodes(mesh)
     f_ref = _pillbox_exact_f0()
@@ -1044,12 +1143,64 @@ def run_synthetic_fallback():
         time.perf_counter() - t0,
     )
 
+    gmsh_stub = _CylinderGmshStub(mesh.nodes, A_PB, T_LAY)
+    node_tags = np.arange(1, mesh.n_nodes + 1)
+    cad_proj = cad_projector(gmsh_stub, node_tags, scale=1.0)
+
+    t0 = time.perf_counter()
+    m_v4_0, hist_v4_0 = improve_dt(
+        mesh, mats, n_sweeps=0, project=cad_proj, repair=True, split_project="auto"
+    )
+    v4_0_ev = _eval_variant(
+        "pillbox",
+        mesh,
+        m_v4_0,
+        mats,
+        f_ref,
+        hist_v4_0[-1]["repair"],
+        time.perf_counter() - t0,
+    )
+
+    cad_proj_6 = cad_projector(gmsh_stub, node_tags, scale=1.0)
+    t0 = time.perf_counter()
+    m_v4_6, hist_v4_6 = improve_dt(
+        mesh, mats, n_sweeps=6, project=cad_proj_6, repair=True, split_project="auto"
+    )
+    v4_6_ev = _eval_variant(
+        "pillbox",
+        mesh,
+        m_v4_6,
+        mats,
+        f_ref,
+        hist_v4_6[-1]["repair"],
+        time.perf_counter() - t0,
+    )
+
+    t0 = time.perf_counter()
+    m_v5, hist_v5 = improve_dt(
+        mesh,
+        mats,
+        n_sweeps=0,
+        repair=True,
+        split_project=_analytic_pillbox_projector(mesh),
+    )
+    v5_ev = _eval_variant(
+        "pillbox",
+        mesh,
+        m_v5,
+        mats,
+        f_ref,
+        hist_v5[-1]["repair"],
+        time.perf_counter() - t0,
+    )
+
     fcp = feature_curve_projector(mesh, locked=locked)
     t1_t2 = _compute_t1_t2_metrics(mesh, mats, locked, fcp)
     zoom = _extract_zoom_example(
         mesh, mats, locked, feature_curve_projector(mesh, locked=locked), R=A_PB
     )
     recorded_layered = _load_recorded_w3_layered()
+    recorded_suite = _load_recorded_repair_suite()
     stuck_w3 = _inspect_stuck_faces(
         m_v2, hist_v2[-1]["repair"]["stuck"], ~movable_nodes(m_v2)
     )
@@ -1106,10 +1257,17 @@ def run_synthetic_fallback():
                 "variant_i_repair_false": v1_ev,
                 "variant_ii_wave3_repair": v2_ev,
                 "variant_iii_steiner_repair": v3_ev,
+                "variant_iv_cad_projector": v4_0_ev,
+                "variant_iv_cad_projector_sweeps6": v4_6_ev,
+                "variant_v_analytic_projector": v5_ev,
                 "dt_gain_vs_repair_false": float(v3_ev["dt_max"] / v1_ev["dt_max"]),
                 "dt_gain_vs_wave3_repair": float(v3_ev["dt_max"] / v2_ev["dt_max"]),
+                "dt_gain_cad_sweeps6_vs_repair_false": float(
+                    v4_6_ev["dt_max"] / v1_ev["dt_max"]
+                ),
             }
         ],
+        "recorded_repair_suite": recorded_suite,
         "zoom_example": zoom,
     }
 
@@ -1315,13 +1473,20 @@ def main():
     except (ImportError, OSError):
         gmsh_mod = None
 
-    if args.quick:
+    if args.quick or gmsh_mod is None:
         syn_payload = run_synthetic_fallback()
         if gmsh_mod is None:
             payload = syn_payload
             payload["git_commit"] = _git_commit()
             payload["command"] = " ".join(sys.argv)
             payload["mode"] = "quick_synthetic_fallback"
+            out_path = args.out or (
+                None if args.quick else os.path.join(HERE, "results", "steiner.json")
+            )
+            if out_path is not None:
+                os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+                with open(out_path, "w") as f:
+                    json.dump(payload, f, indent=2, default=float)
             _print_summary(payload)
             print(json.dumps(payload, indent=2, default=float))
             return
@@ -1348,12 +1513,13 @@ def main():
                 "synthetic_fallback": syn_payload,
                 "zoom_example": syn_payload["zoom_example"],
             }
+            if args.out is not None:
+                os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+                with open(args.out, "w") as f:
+                    json.dump(payload, f, indent=2, default=float)
             _print_summary(payload)
             print(json.dumps(payload, indent=2, default=float))
         return
-
-    if gmsh_mod is None:
-        raise RuntimeError("Full steiner_study.py requires gmsh.")
 
     out_path = args.out or os.path.join(HERE, "results", "steiner.json")
     with tempfile.TemporaryDirectory() as tmpdir:
