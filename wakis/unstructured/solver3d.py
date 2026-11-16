@@ -465,14 +465,15 @@ class UnstructuredFIT3D:
             self.n += 1
             self.recorder.record(self.u, self.n * dt, dt)
             return
-        if self.lts is not None and (
-            self.ports is not None
-            or (
-                self.hodge == "voronoi"
-                and not isinstance(self._update, CapacitiveUpdate)
-            )
-        ):
-            raise NotImplementedError("3D LTS does not support lumped ports")
+        if self.lts is not None:
+            if self.ports is not None:
+                raise NotImplementedError("3D LTS does not support lumped ports")
+            if self.hodge == "voronoi" and not isinstance(
+                self._update, CapacitiveUpdate
+            ):
+                raise NotImplementedError(
+                    "3D LTS with hodge='voronoi' requires a CapacitiveUpdate"
+                )
         z = self.u if self.lts is None else self.lts.apply(self.u)
         e_s = self._massless_voltages(z) if self.massless.size else None
         self.b -= dt * (self.Cf @ z)
