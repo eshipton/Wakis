@@ -143,6 +143,12 @@ def run_spectrum_summary():
     smax = s_nop.cpml.sigma_max
     re_nop = float(eigvals(cpml_generator(s_nop).toarray()).real.max() / smax)
 
+    s_nop_a0 = _build(None, "fine", alpha_hz=0.0)
+    re_nop_a0 = float(eigvals(cpml_generator(s_nop_a0).toarray()).real.max() / smax)
+
+    s_near_a0 = _build(((1, 3), (1, 4), (1, 4)), "fine", alpha_hz=0.0)
+    re_near_a0 = float(eigvals(cpml_generator(s_near_a0).toarray()).real.max() / smax)
+
     s_into_fine = _build(((3, 6), (1, 4), (1, 4)), "fine")
     re_into_fine = float(
         eigvals(cpml_generator(s_into_fine).toarray()).real.max() / smax
@@ -158,14 +164,33 @@ def run_spectrum_summary():
     s_thru_c1 = _build(((3, 7), (1, 4), (1, 4)), "coarse_cell")
     re_thru_c1 = float(eigvals(cpml_generator(s_thru_c1).toarray()).real.max() / smax)
 
+    s_thru_c1_a0 = _build(((3, 7), (1, 4), (1, 4)), "coarse_cell", alpha_hz=0.0)
+    re_thru_c1_a0 = float(
+        eigvals(cpml_generator(s_thru_c1_a0).toarray()).real.max() / smax
+    )
+
+    s_thru_a1g = _build(((3, 7), (1, 4), (1, 4)), "coarse_cell", alpha_hz=1.0e9)
+    re_thru_a1g = float(eigvals(cpml_generator(s_thru_a1g).toarray()).real.max() / smax)
+
     return {
         "sigma_max": float(smax),
+        "n_state": {
+            "nopatch": int(s_nop.n_state),
+            "patch_near": int(s_near_a0.n_state),
+            "patch_through": int(s_thru_fine.n_state),
+        },
         "re_over_smax": {
             "nopatch": re_nop,
             "patch_into_fine": re_into_fine,
             "patch_into_coarse_cell": re_into_c1,
             "patch_through_fine": float(diag_tf["re_over_sigma_max"]),
             "patch_through_coarse_cell": re_thru_c1,
+        },
+        "reflection_variants_re_over_smax": {
+            "nopatch": re_nop_a0,
+            "patch_near": re_near_a0,
+            "patch_through_c1_alpha0": re_thru_c1_a0,
+            "patch_through_alpha1GHz": re_thru_a1g,
         },
         "diagnosis_fine": {
             "lambda_re": float(diag_tf["lambda_max"].real),
@@ -213,6 +238,11 @@ def main():
             cpml_rows.append(run_reflection_row(n_int, n_pml, v))
 
     spec = run_spectrum_summary()
+    refl_re = spec["reflection_variants_re_over_smax"]
+    for r in cpml_rows:
+        re_val = float(refl_re[r["variant"]])
+        r["re_over_smax"] = re_val
+        r["spectrally_stable"] = bool(re_val <= 1e-6)
     wall_s = time.time() - t0
 
     res = {
@@ -230,14 +260,23 @@ def main():
 
     by_var = {(r["n_pml"], r["variant"]): r["err"] for r in cpml_rows}
     n_hi = thick[-1]
+    nst = spec["n_state"]
     print(
         f"NUMBERS run_cpml_patches: quick={a.quick} n_pml={n_hi} "
+        f"sigma_max={spec['sigma_max']:.3e} "
+        f"n_state_nopatch={nst['nopatch']} n_state_near={nst['patch_near']} n_state_through={nst['patch_through']} "
         f"err_nopatch={by_var[(n_hi, 'nopatch')]:.3e} "
         f"err_near={by_var[(n_hi, 'patch_near')]:.3e} "
         f"err_through_c1_a0={by_var[(n_hi, 'patch_through_c1_alpha0')]:.3e} "
         f"err_through_a1GHz={by_var[(n_hi, 'patch_through_alpha1GHz')]:.3e} "
+        f"re_nopatch={refl_re['nopatch']:.3e} "
+        f"re_near={refl_re['patch_near']:.3e} "
+        f"re_through_c1_a0={refl_re['patch_through_c1_alpha0']:.3e} "
+        f"re_through_a1GHz={refl_re['patch_through_alpha1GHz']:.3e} "
         f"re_into_fine={spec['re_over_smax']['patch_into_fine']:.3e} "
         f"re_into_c1={spec['re_over_smax']['patch_into_coarse_cell']:.3e} "
+        f"re_through_fine={spec['re_over_smax']['patch_through_fine']:.3e} "
+        f"re_through_c1={spec['re_over_smax']['patch_through_coarse_cell']:.3e} "
         f"wall_s={wall_s:.2f}"
     )
 

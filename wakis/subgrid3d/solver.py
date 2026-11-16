@@ -326,6 +326,10 @@ class SubgridFIT3D:
 
     def energy(self, e_n, e_np1, b_half):
         """Discrete energy 1/2 b.W b + 1/2 e^n.D e^{n+1} [J]."""
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "energy() does not include dispersive poles; use dispersive_energy()"
+            )
         return float(
             0.5 * np.real(np.vdot(b_half, self.W * b_half))
             + 0.5 * np.real(np.vdot(e_n, self.D * e_np1))
@@ -481,6 +485,10 @@ class SubgridFIT3D:
         One step as a linear map of (b^{n-1/2}, e^n, i^{n+1/2} on all edges).
         Returns (b^{n+1/2}, e^{n+1}).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "linear_step() does not include dispersive poles; use SubgridLTSFIT3D.step_vec()"
+            )
         dt = self.dt
         b1 = b - dt * (self.K @ e)
         rhs = self.KH @ (self.W * b1)
@@ -493,6 +501,10 @@ class SubgridFIT3D:
         Exact transpose of `linear_step`: returns (bb, eb, ib_all) with
         <step(x), y> = <x, step_T(y)> (bilinear, no conjugation).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "linear_step_T() does not include dispersive poles; use SubgridLTSFIT3D.step_vec_T()"
+            )
         dt = self.dt
         g = self.Dinv * eb1
         bt = bb1 + dt * self.W * (self.KH.T @ g)
@@ -510,6 +522,10 @@ class SubgridFIT3D:
         The `k` lowest resonance frequencies above ``0.5 f_guess`` [Hz] of
         the semi-discrete operator (shift-invert Lanczos).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "eigenfrequencies() does not include dispersive poles; use dispersive_eigenfrequencies()"
+            )
         A, D = self.stiffness()
         sigma = (2 * np.pi * 0.5 * f_guess) ** 2
         # extra vectors: ARPACK can miss copies of (near-)degenerate modes

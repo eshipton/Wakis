@@ -8,6 +8,12 @@ Verification of 3D subgrid dispersive (Drude/Lorentz ADE) and conformal
 (subpixel) media inside patches (`wakis.subgrid3d.media`).
 """
 
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import numpy as np
 import pytest
 import scipy.linalg as la
@@ -91,6 +97,16 @@ def test_d1_homogeneous_lorentz_mass_identity():
     )
     assert rel_err <= 1e-14
     assert rel_err_mut >= 0.1
+
+    # Dispersive guards on methods that do not include auxiliary poles
+    with pytest.raises(NotImplementedError, match="linear_step"):
+        solver.linear_step(solver.b, solver.e)
+    with pytest.raises(NotImplementedError, match="linear_step_T"):
+        solver.linear_step_T(solver.b, solver.e)
+    with pytest.raises(NotImplementedError, match="energy"):
+        solver.energy(solver.e, solver.e, solver.b)
+    with pytest.raises(NotImplementedError, match="eigenfrequencies"):
+        solver.eigenfrequencies(2, 180e6)
 
 
 def test_d2_homogeneous_lorentz_cavity_mode_and_perturbation():
@@ -319,13 +335,14 @@ def test_d3_lossless_and_damped_stability_and_energy():
 
 
 def test_d4_lanczos_dt_max_vs_dense_and_drude_identity():
-    """D4: dispersive_dt_max (Lanczos) vs dense eigh on a tiny patched mesh,
-    and homogeneous Drude cavity vs courant^2 + (omega_p dt / 2)^2 = eps_inf."""
-    x = np.linspace(0.0, 1.0, 5)
-    y = np.linspace(0.0, 0.7, 4)
-    z = np.linspace(0.0, 0.9, 4)
+    """D4: dispersive_dt_max (Lanczos) vs dense eigvalsh on a patched mesh with
+    n_pencil > 40 (non-trivial Krylov subspace), and homogeneous Drude cavity
+    vs (dt / dt_vac)^2 + (omega_p dt / 2)^2 = eps_inf."""
+    x = np.linspace(0.0, 1.0, 7)
+    y = np.linspace(0.0, 0.7, 6)
+    z = np.linspace(0.0, 0.9, 6)
     mesh = SubgridMesh3D(x, y, z)
-    mesh.add_patch((1, 1, 1), (3, 2, 2), ratio=2)
+    mesh.add_patch((1, 1, 1), (4, 3, 3), ratio=2)
     mat_lor = DispersiveMaterial(
         eps_inf=1.7, poles=[Lorentz(1.3, 2 * np.pi * 310e6, 0.0)]
     )
@@ -338,7 +355,11 @@ def test_d4_lanczos_dt_max_vs_dense_and_drude_identity():
     dt_lanczos = dispersive_dt_max(solver, tol=1e-13)
 
     K_mat, M_vec, _ = dispersive_pencil(solver)
-    lam_dense = la.eigvalsh(K_mat.toarray(), np.diag(M_vec))
+    n_pencil = int(M_vec.size)
+    assert n_pencil > 40
+    inv_sqM = 1.0 / np.sqrt(M_vec)
+    A_sym = (K_mat.toarray() * inv_sqM[:, None]) * inv_sqM[None, :]
+    lam_dense = la.eigvalsh(A_sym)
     dt_dense = float(2.0 / np.sqrt(np.max(lam_dense)))
     rel_err_dense = abs(dt_lanczos - dt_dense) / dt_dense
 
@@ -358,15 +379,19 @@ def test_d4_lanczos_dt_max_vs_dense_and_drude_identity():
     courant_sq_plus = (dt_dru / dt_vac) ** 2 + (0.5 * omega_p * dt_dru) ** 2
     rel_err_drude = abs(dt_dru - dt_formula) / dt_formula
     rel_err_id = abs(courant_sq_plus - eps_inf) / eps_inf
+    # Mutation check: high-frequency dt_max (ignoring the Drude pole) overestimates dt_max
+    rel_err_nopole = abs(s_dru.dt_max - dt_formula) / dt_formula
 
     print(
         f"NUMBERS test_d4_lanczos_dt_max_vs_dense_and_drude_identity: "
+        f"n_free={solver.n_free} n_pencil={n_pencil} "
         f"rel_err_dense={rel_err_dense:.3e} rel_err_drude={rel_err_drude:.3e} "
-        f"rel_err_identity={rel_err_id:.3e}"
+        f"rel_err_identity={rel_err_id:.3e} mut_nopole={rel_err_nopole:.3e}"
     )
     assert rel_err_dense <= 1e-10
     assert rel_err_drude <= 1e-10
     assert rel_err_id <= 1e-10
+    assert rel_err_nopole >= 1e-3
 
 
 def _dot_defect(s):
@@ -538,9 +563,12 @@ def _analytic_empty_box_modes(a, b, c, n_modes=6):
 
 
 def _run_d6_slab_convergence(nz_list):
-    """Run D6 Lorentz and Drude slab convergence across `nz_list`."""
+    """Run D6 Lorentz and Drude slab convergence across `nz_list` on the 3 lowest
+    fundamental modes (TE_10, TE_01, TM_11), which have (m, n) <= (1, 1) and
+    electric-field anti-nodes on the central patch column."""
     a, b, c = 0.38, 0.31, 0.90
     z_s = 0.30
+    n_modes = 3
 
     # 1. Validate 1D shooting reference on the empty box against analytic box modes
     f_1d_vac, lbl_vac = _shoot_1d_slab_modes(
@@ -550,7 +578,7 @@ def _run_d6_slab_convergence(nz_list):
     vac_1d_err = float(np.max(np.abs(f_1d_vac - f_ana_vac) / f_ana_vac))
     assert vac_1d_err <= 1e-11
 
-    # 2. Lorentz slab (f0 = 520 MHz > lowest 6 cavity modes -> all 6 sit on lower polariton branch)
+    # 2. Lorentz slab (f0 = 520 MHz > lowest cavity modes -> lower polariton branch)
     f0_lor = 520e6
     w0_lor = 2 * np.pi * f0_lor
     mat_lor = DispersiveMaterial(eps_inf=1.0, poles=[Lorentz(6.0, w0_lor, 0.0)])
@@ -561,7 +589,7 @@ def _run_d6_slab_convergence(nz_list):
         c,
         z_s,
         lambda w: 1.0 + s_lor / (w0_lor**2 - w**2),
-        n_modes=6,
+        n_modes=n_modes,
         f_min=160e6,
         f_max=420e6,
     )
@@ -575,14 +603,14 @@ def _run_d6_slab_convergence(nz_list):
         c,
         z_s,
         lambda w: 1.0 - (wp_dru / w) ** 2,
-        n_modes=6,
+        n_modes=n_modes,
         f_min=400e6,
         f_max=750e6,
     )
 
     slab_box = Box(((-0.1, a + 0.1), (-0.1, b + 0.1), (-0.1, z_s)))
 
-    err_lor_1d, err_lor_fine, err_lor_mut = [], [], []
+    err_lor_1d, err_lor_fine, err_lor_mut, err_lor_mut_fine = [], [], [], []
     err_dru_1d, err_dru_fine, err_dru_mut = [], [], []
 
     for nz in nz_list:
@@ -604,11 +632,11 @@ def _run_d6_slab_convergence(nz_list):
         slv_lp = SubgridFIT3D(
             mesh_p, dispersive=[(slab_box, mat_lor)], dt=1e-11, check_stability=False
         )
-        f_lp = dispersive_eigenfrequencies(slv_lp, 6, f_ref_lor[0])
+        f_lp = dispersive_eigenfrequencies(slv_lp, n_modes, f_ref_lor[0])
         slv_lf = SubgridFIT3D(
             mesh_f, dispersive=[(slab_box, mat_lor)], dt=1e-11, check_stability=False
         )
-        f_lf = dispersive_eigenfrequencies(slv_lf, 6, f_ref_lor[0])
+        f_lf = dispersive_eigenfrequencies(slv_lf, n_modes, f_ref_lor[0])
         slv_lm = SubgridFIT3D(
             mesh_p,
             dispersive=[(slab_box, mat_lor)],
@@ -616,22 +644,23 @@ def _run_d6_slab_convergence(nz_list):
             check_stability=False,
             mutate="lump_no_rowsum",
         )
-        f_lm = dispersive_eigenfrequencies(slv_lm, 6, f_ref_lor[0])
+        f_lm = dispersive_eigenfrequencies(slv_lm, n_modes, f_ref_lor[0])
 
         err_lor_1d.append(float(np.mean(np.abs(f_lp - f_ref_lor) / f_ref_lor)))
         err_lor_fine.append(float(np.mean(np.abs(f_lp - f_lf) / f_lf)))
         err_lor_mut.append(float(np.mean(np.abs(f_lm - f_ref_lor) / f_ref_lor)))
+        err_lor_mut_fine.append(float(np.mean(np.abs(f_lm - f_lf) / f_lf)))
 
-        # Drude (shift above the bulk longitudinal plasma frequency fp = 252 MHz)
+        # Drude (shift above the bulk longitudinal plasma frequency fp = 380 MHz)
         f_guess_dru = 1.85 * f_ref_dru[0]
         slv_dp = SubgridFIT3D(
             mesh_p, dispersive=[(slab_box, mat_dru)], dt=1e-11, check_stability=False
         )
-        f_dp = dispersive_eigenfrequencies(slv_dp, 6, f_guess_dru)
+        f_dp = dispersive_eigenfrequencies(slv_dp, n_modes, f_guess_dru)
         slv_df = SubgridFIT3D(
             mesh_f, dispersive=[(slab_box, mat_dru)], dt=1e-11, check_stability=False
         )
-        f_df = dispersive_eigenfrequencies(slv_df, 6, f_guess_dru)
+        f_df = dispersive_eigenfrequencies(slv_df, n_modes, f_guess_dru)
         slv_dm = SubgridFIT3D(
             mesh_p,
             dispersive=[(slab_box, mat_dru)],
@@ -639,7 +668,7 @@ def _run_d6_slab_convergence(nz_list):
             check_stability=False,
             mutate="lump_no_rowsum",
         )
-        f_dm = dispersive_eigenfrequencies(slv_dm, 6, f_guess_dru)
+        f_dm = dispersive_eigenfrequencies(slv_dm, n_modes, f_guess_dru)
 
         err_dru_1d.append(float(np.mean(np.abs(f_dp - f_ref_dru) / f_ref_dru)))
         err_dru_fine.append(float(np.mean(np.abs(f_dp - f_df) / f_df)))
@@ -659,12 +688,14 @@ def _run_d6_slab_convergence(nz_list):
         err_lor_1d=err_lor_1d,
         err_lor_fine=err_lor_fine,
         err_lor_mut=err_lor_mut,
+        err_lor_mut_fine=err_lor_mut_fine,
         err_dru_1d=err_dru_1d,
         err_dru_fine=err_dru_fine,
         err_dru_mut=err_dru_mut,
         ord_lor_1d=_orders(err_lor_1d),
         ord_lor_fine=_orders(err_lor_fine),
         ord_lor_mut=_orders(err_lor_mut),
+        ord_lor_mut_fine=_orders(err_lor_mut_fine),
         ord_dru_1d=_orders(err_dru_1d),
         ord_dru_fine=_orders(err_dru_fine),
         ord_dru_mut=_orders(err_dru_mut),
@@ -680,17 +711,18 @@ def test_d6_slab_resonances_fast():
         f"lor_modes={','.join(res['lbl_lor'])} dru_modes={','.join(res['lbl_dru'])} "
         f"lor_err_1d={res['err_lor_1d'][0]:.3e}->{res['err_lor_1d'][1]:.3e} "
         f"lor_ord_1d={res['ord_lor_1d'][0]:.3f} lor_ord_fine={res['ord_lor_fine'][0]:.3f} "
-        f"lor_mut_ord={res['ord_lor_mut'][0]:.3f} "
+        f"lor_mut_ord={res['ord_lor_mut'][0]:.3f} lor_mut_ord_fine={res['ord_lor_mut_fine'][0]:.3f} "
         f"dru_err_1d={res['err_dru_1d'][0]:.3e}->{res['err_dru_1d'][1]:.3e} "
         f"dru_ord_1d={res['ord_dru_1d'][0]:.3f} dru_ord_fine={res['ord_dru_fine'][0]:.3f} "
         f"dru_mut_ord={res['ord_dru_mut'][0]:.3f}"
     )
     assert 1.8 <= res["ord_lor_1d"][0] <= 2.2
     assert 1.8 <= res["ord_lor_fine"][0] <= 2.2
-    assert res["ord_lor_mut"][0] < 1.5
+    assert res["ord_lor_mut"][0] < 1.35
+    assert res["ord_lor_mut_fine"][0] < 1.35
     assert 1.8 <= res["ord_dru_1d"][0] <= 2.2
     assert 1.8 <= res["ord_dru_fine"][0] <= 2.2
-    assert res["ord_dru_mut"][0] < 1.5
+    assert res["ord_dru_mut"][0] < 1.35
 
 
 @pytest.mark.slow
@@ -702,6 +734,7 @@ def test_d6_slab_resonances_slow():
         f"lor_ord_1d={res['ord_lor_1d'][0]:.3f},{res['ord_lor_1d'][1]:.3f} "
         f"lor_ord_fine={res['ord_lor_fine'][0]:.3f},{res['ord_lor_fine'][1]:.3f} "
         f"lor_mut_ord={res['ord_lor_mut'][0]:.3f},{res['ord_lor_mut'][1]:.3f} "
+        f"lor_mut_ord_fine={res['ord_lor_mut_fine'][0]:.3f},{res['ord_lor_mut_fine'][1]:.3f} "
         f"dru_ord_1d={res['ord_dru_1d'][0]:.3f},{res['ord_dru_1d'][1]:.3f} "
         f"dru_ord_fine={res['ord_dru_fine'][0]:.3f},{res['ord_dru_fine'][1]:.3f} "
         f"dru_mut_ord={res['ord_dru_mut'][0]:.3f},{res['ord_dru_mut'][1]:.3f}"
@@ -713,8 +746,8 @@ def test_d6_slab_resonances_slow():
         + res["ord_dru_fine"]
     ):
         assert 1.8 <= o <= 2.2
-    for o in res["ord_lor_mut"] + res["ord_dru_mut"]:
-        assert o < 1.5
+    for o in res["ord_lor_mut"] + res["ord_lor_mut_fine"] + res["ord_dru_mut"]:
+        assert o < 1.35
 
 
 # ===================================================================== Part 2

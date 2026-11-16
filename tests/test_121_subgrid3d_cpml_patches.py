@@ -10,13 +10,14 @@ the absorbing layer (`wakis.subgrid3d.pml`):
     limit of ``step_vec``, no-patch control spectrum, and eigenvector
     localisation of the ``sigma_sampling="fine"`` interface instability;
   - Hypothesis C1 (`sigma_sampling="coarse_cell"` and `"coarse_cell_dual"`):
-    eliminates the ~0.5% ``sigma_max`` low-frequency interface instability for
-    patches reaching 1--2 cells into a 4-cell layer or spanning the waveguide,
-    and preserves exact ``step_vec_T`` adjoint accuracy (<= 1e-15);
+    eliminates the ``5.443e-03 sigma_max`` low-frequency interface instability
+    for patches reaching 1--2 cells into a 4-cell layer or spanning the
+    waveguide, and preserves exact ``step_vec_T`` adjoint accuracy (<= 1e-15);
   - T1 full spectrum check across 2:1 and 3:1 patches reaching into and through
     layers along x, y, z and a two-layer corner at ``alpha / (2 pi) = 10 MHz``
-    (strict xfail per Part 3 step 5 due to residual ~1e-4 ``sigma_max`` grazing
-    cutoff coupling when a 3D patch reaches the deepest backing cells).
+    (strict xfail per Part 3 step 5 due to residual ``1.883e-04..4.111e-04
+    sigma_max`` grazing cutoff coupling in ``x_into_3to1`` and
+    ``x/y/z_through_2to1``).
 """
 
 import numpy as np
@@ -214,6 +215,7 @@ def test_cpml_generator_diagnosis_and_nopatch_control():
     b1 = diag["block_energy_share"][1]
     print(
         f"NUMBERS test_cpml_generator_diagnosis_and_nopatch_control: "
+        f"sigma_max={smax:.3e} n_state_nop={s_nop_10m.n_state} n_state_fine={s_fine.n_state} "
         f"fd_err={err_fd1:.3e} nop_re_10m={nop_re_10m:.3e} nop_re_0={nop_re_0:.3e} "
         f"fine_re_10m={diag['re_over_sigma_max']:.3e} fine_re_0={fine_re_0:.3e} "
         f"fine_lam_re={diag['lambda_max'].real:.3e} fine_freq_hz={diag['freq_hz']:.3e} "
@@ -230,12 +232,16 @@ def test_cpml_generator_diagnosis_and_nopatch_control():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Part 3 step 5: C1 ('coarse_cell') eliminates the ~5.4e-3 sigma_max "
-        "interface instability for patches reaching 1-2 cells into a 4-cell "
-        "layer (6.35e-9 sigma_max <= 1e-6), but 3D patches reaching the deepest "
-        "backing cells or corners retain ~1.8e-5..4.4e-4 sigma_max > 1e-6 due "
-        "to non-commuting transverse curl on side-wall faces and grazing cutoff "
-        "coupling; requires Candidate C2 (uniaxial Hodge-mass lumping)."
+        "Part 3 step 5: C1 ('coarse_cell') eliminates the 5.443e-03 sigma_max "
+        "interface instability for patches reaching into a 4-cell layer "
+        "(x_into_2to1: 5.380e-09, y_into_2to1: 6.361e-09, z_into_2to1: 5.622e-09 "
+        "<= 1e-6), x_through_3to1 (1.582e-09 <= 1e-6), and corner_xy_2to1 "
+        "(4.222e-09 <= 1e-6), but 3D patches coupling a cutoff step into the "
+        "deepest backing cells (x_into_3to1: 1.883e-04; x_through_2to1, "
+        "y_through_2to1, z_through_2to1: 4.111e-04) retain 1.883e-04..4.111e-04 "
+        "sigma_max > 1e-6 at 1.953e+09 Hz due to non-commuting transverse curl "
+        "on side-wall faces and grazing cutoff coupling; requires Candidate C2 "
+        "(uniaxial Hodge-mass lumping)."
     ),
 )
 def test_t1_cpml_patches_spectrum():
@@ -265,6 +271,7 @@ def test_t1_cpml_patches_spectrum():
     re_c1_10m = {}
     re_c1_0 = {}
     re_fine_10m = {}
+    freq_c1_10m = {}
 
     for name, dims, patch_cells, ratio, layer_axes in cases:
         s_10m = _make_cpml_solver(
@@ -276,9 +283,10 @@ def test_t1_cpml_patches_spectrum():
             sigma_sampling="coarse_cell",
         )
         smax = s_10m.cpml.sigma_max
-        re_c1_10m[name] = float(
-            eigvals(cpml_generator(s_10m).toarray()).real.max() / smax
-        )
+        vals_10m = eigvals(cpml_generator(s_10m).toarray())
+        idx_10m = int(np.argmax(vals_10m.real))
+        re_c1_10m[name] = float(vals_10m[idx_10m].real / smax)
+        freq_c1_10m[name] = float(abs(vals_10m[idx_10m].imag) / (2 * np.pi))
 
         s_0 = _make_cpml_solver(
             dims=dims,
@@ -306,19 +314,26 @@ def test_t1_cpml_patches_spectrum():
     nop_10m = re_c1_10m["nopatch_x"]
     nop_0 = re_c1_0["nopatch_x"]
     patched_names = [c[0] for c in cases if c[2] is not None]
-    max_c1_10m = max(re_c1_10m[k] for k in patched_names)
+    worst_name = max(patched_names, key=lambda k: re_c1_10m[k])
+    max_c1_10m = re_c1_10m[worst_name]
+    c1_max_freq_hz = freq_c1_10m[worst_name]
     max_c1_0 = max(re_c1_0[k] for k in patched_names)
+    failing_c1_10m = {k: re_c1_10m[k] for k in patched_names if re_c1_10m[k] > 1e-6}
+    min_fail_c1_10m = min(failing_c1_10m.values())
     max_fine_10m = max(re_fine_10m[k] for k in patched_names)
     min_fine_10m = min(re_fine_10m[k] for k in patched_names)
 
     summary_10m = ",".join(f"{k}:{re_c1_10m[k]:.3e}" for k in patched_names)
+    summary_fail = ",".join(f"{k}:{v:.3e}" for k, v in failing_c1_10m.items())
     summary_0 = ",".join(f"{k}:{re_c1_0[k]:.3e}" for k in patched_names)
     summary_fine = ",".join(f"{k}:{re_fine_10m[k]:.3e}" for k in patched_names)
     print(
         f"NUMBERS test_t1_cpml_patches_spectrum: "
         f"nop_10m={nop_10m:.3e} nop_0={nop_0:.3e} "
-        f"max_c1_10m={max_c1_10m:.3e} max_c1_0={max_c1_0:.3e} "
+        f"min_fail_c1_10m={min_fail_c1_10m:.3e} max_c1_10m={max_c1_10m:.3e} "
+        f"c1_max_freq_hz={c1_max_freq_hz:.3e} max_c1_0={max_c1_0:.3e} "
         f"min_fine_10m={min_fine_10m:.3e} max_fine_10m={max_fine_10m:.3e} "
+        f"fail_c1_10m=[{summary_fail}] "
         f"c1_10m=[{summary_10m}] c1_0=[{summary_0}] fine_10m=[{summary_fine}]"
     )
 

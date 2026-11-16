@@ -42,7 +42,12 @@ def plot_reflection(data, out_dir):
     variants = [
         ("nopatch", "No patch", "o-", "C0"),
         ("patch_near", "Patch 1 cell away", "s--", "C1"),
-        ("patch_through_c1_alpha0", "Patch through (C1, $\\alpha=0$)", "^-", "C2"),
+        (
+            "patch_through_c1_alpha0",
+            "Patch through (C1, $\\alpha=0$, late-time unstable)",
+            "^-",
+            "C2",
+        ),
         (
             "patch_through_alpha1GHz",
             "Patch through ($\\alpha/2\\pi=1$ GHz)",
