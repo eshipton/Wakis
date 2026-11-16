@@ -444,8 +444,20 @@ class UnstructuredFIT3D:
 
     # ------------------------------------------------------------ stepping
     def one_step(self):
-        """One leapfrog step: b to n+1/2, then e to n+1 (sources at n+1/2)."""
+        """
+        One leapfrog step: b to n+1/2, then e to n+1 (sources at n+1/2).
+
+        Raises
+        ------
+        ValueError
+            If ``self.dt`` is not a positive finite number (for instance when
+            constructed with ``stability=False`` and ``dt=None``).
+        """
         dt = self.dt
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError(
+                "one_step requires a positive finite dt (pass dt=... or stability=True)"
+            )
         t_half = (self.n + 0.5) * dt
         src = np.zeros(self.free.size)
         for w, f in self.sources:

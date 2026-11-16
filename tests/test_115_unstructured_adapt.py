@@ -1250,3 +1250,38 @@ def test_a4_voronoi_export(l_prism_loop_runs):
     assert "negative_faces_before" in rep
     assert "negative_faces_after" in rep
     assert "dt_max_s" in rep
+
+
+def test_solver3d_stability_false_dt_none_raises():
+    """
+    With stability=False and dt=None, UnstructuredFIT3D.one_step raises
+    ValueError instead of stepping silently with dt=nan.
+    """
+    mesh = kuhn_mesh((2, 2, 2), 0.1)
+    for hodge in ("voronoi", "whitney"):
+        solver_nan = UnstructuredFIT3D(
+            mesh,
+            bc="pec",
+            hodge=hodge,
+            allow_negative_faces=True,
+            stability=False,
+        )
+        assert np.isnan(solver_nan.dt)
+        with pytest.raises(ValueError, match="positive finite dt"):
+            solver_nan.one_step()
+
+        solver_ok = UnstructuredFIT3D(
+            mesh,
+            bc="pec",
+            hodge=hodge,
+            allow_negative_faces=True,
+            stability=False,
+            dt=1.0e-12,
+        )
+        solver_ok.one_step()
+        assert solver_ok.n == 1
+        assert np.all(np.isfinite(solver_ok.u))
+        assert np.all(np.isfinite(solver_ok.b))
+    print(
+        "[solver3d dt guard] stability=False, dt=None raises ValueError for voronoi and whitney"
+    )
