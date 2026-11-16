@@ -21,13 +21,21 @@ Provides:
 
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
+
 import numpy as np
+from scipy.constants import c as C0
 
 from ._core import cell_materials
-from .improve import constraint_faces
+from .estimate import estimate_memory
+from .improve import constraint_faces, improve_dt, neg_faces
 from .mesh import SimplexMesh
+from .solver3d import UnstructuredFIT3D
 
 __all__ = [
+    "AdaptResult",
+    "adapt_eigen",
     "bisect",
     "dorfler_mark",
     "kuhn_mesh",
@@ -36,6 +44,7 @@ __all__ = [
     "refine_uniform",
     "residual_indicator",
     "sphere_projector",
+    "voronoi_export",
     "whitney_fields",
     "zz_curl_indicator",
 ]
@@ -952,3 +961,438 @@ def dorfler_mark(eta2, theta=0.5):
     k = int(np.searchsorted(csum, target, side="left")) + 1
     k = min(k, eta2_arr.size)
     return order[:k]
+
+
+@dataclass
+class AdaptResult:
+    """
+    Result of an adaptive cavity eigenmode refinement run (`adapt_eigen`).
+
+    Attributes
+    ----------
+    mesh : SimplexMesh
+        Final solved tetrahedral mesh.
+    e : ndarray, shape (n_edges,)
+        Final eigenmode edge voltages [V].
+    f_hz : float
+        Final eigenfrequency [Hz].
+    history : list of dict
+        Per-iteration diagnostics, error indicators, mesh metrics, and wall times.
+    stop_reason : {"max_iter", "max_dofs", "memory"}
+        Criterion that terminated the loop.
+    """
+
+    mesh: SimplexMesh
+    e: np.ndarray
+    f_hz: float
+    history: list[dict]
+    stop_reason: str
+
+
+def _count_free_edges(mesh, materials=None, bc="pec"):
+    """Count free (non-fixed) edge degrees of freedom for Whitney FIT."""
+    _, _, _, pec, _ = cell_materials(mesh, materials)
+    fixed = np.zeros(mesh.n_edges, dtype=bool)
+    fixed[mesh.cell_edges[pec].ravel()] = True
+    if bc == "pec":
+        fixed[mesh.boundary_edges] = True
+    touched = np.zeros(mesh.n_edges, dtype=bool)
+    touched[mesh.cell_edges[~pec].ravel()] = True
+    fixed |= ~touched
+    return int(np.sum(~fixed))
+
+
+def adapt_eigen(
+    mesh,
+    materials=None,
+    bc="pec",
+    f_target_hz=None,
+    mode=0,
+    estimator="residual",
+    marking="dorfler",
+    theta=0.5,
+    max_iter=20,
+    max_dofs=None,
+    max_memory_bytes=None,
+    face_patch=None,
+    project=None,
+    mark_counts=None,
+    seed=0,
+    k2_ref_per_m2=None,
+    callback=None,
+    verbose=False,
+):
+    """
+    Adaptive tetrahedral mesh refinement loop for a cavity eigenmode.
+
+    Solves with ``hodge="whitney"`` at each iteration, computes both residual
+    and ZZ error indicators, marks tetrahedra, and refines via longest-edge
+    bisection (`bisect`).
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        Initial 3D tetrahedral mesh.
+    materials : dict, optional
+        ``{tag: material}`` mapping as in `UnstructuredFIT3D`.
+    bc : {"pec", "pmc"}, optional
+        Outer boundary condition (default ``"pec"``).
+    f_target_hz : float, optional
+        Shift-invert target frequency [Hz].
+    mode : int, optional
+        Mode index (0-based, ascending frequency) selected at iteration 0;
+        subsequent iterations track the mode closest in frequency to the
+        previous ``f_hz``.
+    estimator : {"residual", "zz"}, optional
+        Error indicator driving Dörfler marking (default ``"residual"``).
+    marking : {"dorfler", "uniform", "random"} or callable, optional
+        Marking strategy: ``"dorfler"`` (`dorfler_mark`), ``"uniform"`` (one
+        bisection generation per iteration), ``"random"`` (`mark_counts[it]`
+        uniformly random cells with `seed`), or ``marking(mesh, eta2, it)``.
+    theta : float, optional
+        Dörfler bulk fraction in ``(0, 1]`` (default 0.5).
+    max_iter : int, optional
+        Maximum number of solve iterations (default 20).
+    max_dofs : int, optional
+        Stop when the free-edge DOF count reaches or when the next refined mesh
+        would exceed `max_dofs`.
+    max_memory_bytes : float, optional
+        Stop when `estimate_memory(mesh, eigen=True)` exceeds this budget [bytes].
+    face_patch : ndarray of int, optional
+        Constraint-face patch labels (default from `label_constraint_faces`).
+    project : callable, optional
+        Boundary/interface node projector passed to `bisect`.
+    mark_counts : sequence of int, optional
+        Per-iteration cell counts required when ``marking="random"``.
+    seed : int, optional
+        Random seed for ``marking="random"`` (default 0).
+    k2_ref_per_m2 : float, optional
+        Reference eigenvalue ``k^2`` [1/m^2] for ``rel_err_signed``.
+    callback : callable, optional
+        Optional ``callback(it, mesh, e, record)`` called after each iteration.
+    verbose : bool, optional
+        If True, print per-iteration progress to stdout.
+
+    Returns
+    -------
+    AdaptResult
+    """
+    if estimator not in ("residual", "zz"):
+        raise ValueError("estimator must be 'residual' or 'zz'")
+    if not (marking in ("dorfler", "uniform", "random") or callable(marking)):
+        raise ValueError(
+            "marking must be 'dorfler', 'uniform', 'random', or a callable"
+        )
+    if marking == "random" and mark_counts is None:
+        raise ValueError("mark_counts is required when marking='random'")
+    max_iter = int(max_iter)
+    if max_iter <= 0:
+        raise ValueError("max_iter must be positive")
+    mode = int(mode)
+    if mode < 0:
+        raise ValueError("mode must be non-negative")
+
+    if f_target_hz is None:
+        if k2_ref_per_m2 is not None:
+            f_target_hz = 0.8 * (C0 / (2.0 * np.pi)) * np.sqrt(float(k2_ref_per_m2))
+        else:
+            span = np.ptp(mesh.nodes, axis=0)
+            k_est = np.pi / float(np.max(span))
+            f_target_hz = 0.5 * (C0 / (2.0 * np.pi)) * k_est
+    else:
+        f_target_hz = float(f_target_hz)
+
+    cur_mesh = mesh
+    cur_fp = (
+        label_constraint_faces(cur_mesh)
+        if face_patch is None
+        else np.asarray(face_patch, dtype=np.int64).copy()
+    )
+    rng = np.random.default_rng(seed)
+    history = []
+    stop_reason = "max_iter"
+    prev_f_hz = None
+    last_mesh = cur_mesh
+    last_e = np.zeros(cur_mesh.n_edges, dtype=float)
+    last_f_hz = float("nan")
+    n_modes_solve = max(mode + 2, 2)
+
+    for it in range(max_iter):
+        if cur_mesh.n_cells > 20000 or max_memory_bytes is not None:
+            mem_est = estimate_memory(cur_mesh, eigen=True)
+            if max_memory_bytes is not None and mem_est > float(max_memory_bytes):
+                if verbose:
+                    print(
+                        f"[adapt_eigen] stopping before it={it}: estimated memory "
+                        f"{mem_est / 1e9:.2f} GB exceeds budget "
+                        f"{float(max_memory_bytes) / 1e9:.2f} GB"
+                    )
+                stop_reason = "memory"
+                break
+
+        t_iter0 = time.perf_counter()
+
+        t0 = time.perf_counter()
+        min_rr = float(cur_mesh.quality().min())
+        h_min_m = float(cur_mesh.edge_length.min())
+        h_max_m = float(cur_mesh.edge_length.max())
+        _ = cur_mesh.C
+        _ = cur_mesh.G
+        t_mesh_s = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        sol = UnstructuredFIT3D(
+            cur_mesh, materials=materials, bc=bc, hodge="whitney", stability=False
+        )
+        t_solver_build_s = time.perf_counter() - t0
+        n_dofs = int(sol.free.size)
+
+        t0 = time.perf_counter()
+        freqs, E = sol.eigenmodes(n_modes=n_modes_solve, f_target=f_target_hz)
+        t_eigen_s = time.perf_counter() - t0
+
+        if it == 0:
+            m_idx = mode
+        else:
+            m_idx = int(np.argmin(np.abs(freqs - prev_f_hz)))
+        f_hz = float(freqs[m_idx])
+        e_vec = E[:, m_idx].copy()
+        prev_f_hz = f_hz
+        other_idx = [j for j in range(len(freqs)) if j != m_idx]
+        f_second_hz = (
+            float(freqs[other_idx[int(np.argmin(np.abs(freqs[other_idx] - f_hz)))]])
+            if other_idx
+            else float("nan")
+        )
+
+        t0 = time.perf_counter()
+        k2 = float((2.0 * np.pi * f_hz / C0) ** 2)
+        eta2_res_cells = residual_indicator(
+            cur_mesh, e_vec, k2, materials=materials, bc=bc
+        )
+        eta2_zz_cells = zz_curl_indicator(cur_mesh, e_vec, materials=materials)
+        eta2_per_m2 = float(np.sum(eta2_res_cells))
+        eta2_zz_per_m2 = float(np.sum(eta2_zz_cells))
+        t_estimate_s = time.perf_counter() - t0
+
+        last_mesh = cur_mesh
+        last_e = e_vec
+        last_f_hz = f_hz
+
+        # Check if we should stop without further refinement
+        at_max_dofs = max_dofs is not None and n_dofs >= int(max_dofs)
+        at_max_iter = (it + 1) >= max_iter
+        at_end_counts = (
+            marking == "random"
+            and mark_counts is not None
+            and (it >= len(mark_counts) or int(mark_counts[it]) <= 0)
+        )
+        if at_max_dofs or at_max_iter or at_end_counts:
+            rec = {
+                "n_cells": int(cur_mesh.n_cells),
+                "n_dofs": int(n_dofs),
+                "f_hz": float(f_hz),
+                "f_second_hz": float(f_second_hz),
+                "k2_per_m2": float(k2),
+                "eta2_per_m2": float(eta2_per_m2),
+                "eta2_zz_per_m2": float(eta2_zz_per_m2),
+                "n_marked": 0,
+                "n_bisections": 0,
+                "closure_rounds": 0,
+                "min_radius_ratio": float(min_rr),
+                "h_min_m": float(h_min_m),
+                "h_max_m": float(h_max_m),
+                "t_mesh_s": float(t_mesh_s),
+                "t_solver_build_s": float(t_solver_build_s),
+                "t_eigen_s": float(t_eigen_s),
+                "t_estimate_s": float(t_estimate_s),
+                "t_mark_s": 0.0,
+                "t_refine_s": 0.0,
+                "t_total_s": float(time.perf_counter() - t_iter0),
+            }
+            if k2_ref_per_m2 is not None:
+                rec["rel_err_signed"] = float(
+                    (k2 - float(k2_ref_per_m2)) / float(k2_ref_per_m2)
+                )
+            history.append(rec)
+            if callback is not None:
+                callback(it, cur_mesh, e_vec, rec)
+            if verbose:
+                print(
+                    f"[adapt_eigen] it={it} cells={cur_mesh.n_cells} dofs={n_dofs} "
+                    f"f={f_hz * 1e-9:.6f} GHz k2={k2:.6f} (stop)"
+                )
+            stop_reason = "max_dofs" if at_max_dofs else "max_iter"
+            break
+
+        # Mark cells for refinement
+        t0 = time.perf_counter()
+        eta2_drive = eta2_res_cells if estimator == "residual" else eta2_zz_cells
+        if marking == "dorfler":
+            marked = dorfler_mark(eta2_drive, theta=theta)
+        elif marking == "uniform":
+            marked = np.arange(cur_mesh.n_cells, dtype=np.int64)
+        elif marking == "random":
+            k_mark = min(int(mark_counts[it]), cur_mesh.n_cells)
+            marked = rng.choice(cur_mesh.n_cells, size=k_mark, replace=False)
+        else:
+            marked = np.asarray(marking(cur_mesh, eta2_drive, it), dtype=np.int64)
+        t_mark_s = time.perf_counter() - t0
+        n_marked = len(marked)
+
+        # Refine via longest-edge bisection
+        t0 = time.perf_counter()
+        next_mesh, info = bisect(cur_mesh, marked, face_patch=cur_fp, project=project)
+        t_refine_s = time.perf_counter() - t0
+        n_bisections = int(info["n_bisections"])
+        closure_rounds = int(info["rounds"])
+
+        rec = {
+            "n_cells": int(cur_mesh.n_cells),
+            "n_dofs": int(n_dofs),
+            "f_hz": float(f_hz),
+            "f_second_hz": float(f_second_hz),
+            "k2_per_m2": float(k2),
+            "eta2_per_m2": float(eta2_per_m2),
+            "eta2_zz_per_m2": float(eta2_zz_per_m2),
+            "n_marked": int(n_marked),
+            "n_bisections": int(n_bisections),
+            "closure_rounds": int(closure_rounds),
+            "min_radius_ratio": float(min_rr),
+            "h_min_m": float(h_min_m),
+            "h_max_m": float(h_max_m),
+            "t_mesh_s": float(t_mesh_s),
+            "t_solver_build_s": float(t_solver_build_s),
+            "t_eigen_s": float(t_eigen_s),
+            "t_estimate_s": float(t_estimate_s),
+            "t_mark_s": float(t_mark_s),
+            "t_refine_s": float(t_refine_s),
+            "t_total_s": float(time.perf_counter() - t_iter0),
+        }
+        if k2_ref_per_m2 is not None:
+            rec["rel_err_signed"] = float(
+                (k2 - float(k2_ref_per_m2)) / float(k2_ref_per_m2)
+            )
+        history.append(rec)
+        if callback is not None:
+            callback(it, cur_mesh, e_vec, rec)
+        if verbose:
+            print(
+                f"[adapt_eigen] it={it} cells={cur_mesh.n_cells} dofs={n_dofs} "
+                f"f={f_hz * 1e-9:.6f} GHz k2={k2:.6f} marked={n_marked} "
+                f"bisect={n_bisections} t={rec['t_total_s']:.2f}s"
+            )
+
+        if max_dofs is not None:
+            next_dofs = _count_free_edges(next_mesh, materials=materials, bc=bc)
+            if next_dofs > int(max_dofs):
+                if verbose:
+                    print(
+                        f"[adapt_eigen] stopping after it={it}: next_dofs={next_dofs} "
+                        f"> max_dofs={int(max_dofs)}"
+                    )
+                stop_reason = "max_dofs"
+                break
+
+        if next_mesh.n_cells > 20000 or max_memory_bytes is not None:
+            mem_next = estimate_memory(next_mesh, eigen=True)
+            if max_memory_bytes is not None and mem_next > float(max_memory_bytes):
+                if verbose:
+                    print(
+                        f"[adapt_eigen] stopping after it={it}: next estimated memory "
+                        f"{mem_next / 1e9:.2f} GB exceeds budget "
+                        f"{float(max_memory_bytes) / 1e9:.2f} GB"
+                    )
+                stop_reason = "memory"
+                break
+
+        cur_mesh = next_mesh
+        cur_fp = info["face_patch"]
+
+    return AdaptResult(
+        mesh=last_mesh,
+        e=last_e,
+        f_hz=last_f_hz,
+        history=history,
+        stop_reason=stop_reason,
+    )
+
+
+def voronoi_export(mesh, materials=None, bc="pec", **improve_kw):
+    """
+    Export an adapted tetrahedral mesh for explicit Voronoi-Hodge time stepping.
+
+    Counts negative-dual-length faces before and after calling
+    `improve_dt(mesh, materials, bc=bc, repair=True, **improve_kw)`, then builds
+    `UnstructuredFIT3D(..., hodge="voronoi")` and reports ``dt_max_s`` (or the
+    solver guard's `ValueError` message when residual negative faces remain).
+
+    Parameters
+    ----------
+    mesh : SimplexMesh
+        Input 3D tetrahedral mesh.
+    materials : dict, optional
+        ``{tag: material}`` mapping as in `UnstructuredFIT3D`.
+    bc : {"pec", "pmc", "abc"}, optional
+        Outer boundary condition (default ``"pec"``).
+    **improve_kw
+        Additional keyword arguments forwarded to `improve_dt` (plus optional
+        ``steiner`` and ``max_flips`` forwarded to `flip_to_delaunay`).
+
+    Returns
+    -------
+    new_mesh : SimplexMesh
+        Repaired and node-relocated mesh.
+    report : dict
+        ``negative_faces_before``, ``negative_faces_after``, ``dt_max_s``,
+        ``dt_rate_s``, ``error``, and ``history``.
+    """
+    from . import repair as _repair_mod
+
+    neg_before = len(neg_faces(mesh, materials=materials, bc=bc))
+    repair_flag = bool(improve_kw.pop("repair", True))
+    steiner_flag = bool(improve_kw.pop("steiner", False))
+    max_flips = improve_kw.pop("max_flips", None)
+
+    orig_ftd = _repair_mod.flip_to_delaunay
+    if not steiner_flag or max_flips is not None:
+
+        def _ftd_wrapper(*args, **kwargs):
+            kwargs.setdefault("steiner", steiner_flag)
+            if max_flips is not None:
+                kwargs.setdefault("max_flips", max_flips)
+            return orig_ftd(*args, **kwargs)
+
+        _repair_mod.flip_to_delaunay = _ftd_wrapper
+    try:
+        new_mesh, hist = improve_dt(
+            mesh, materials=materials, bc=bc, repair=repair_flag, **improve_kw
+        )
+    finally:
+        _repair_mod.flip_to_delaunay = orig_ftd
+
+    neg_after = len(neg_faces(new_mesh, materials=materials, bc=bc))
+    max_rate = float(hist[-1]["max_rate"]) if hist else float("nan")
+    dt_rate_s = (
+        float(2.0 / np.sqrt(max_rate))
+        if np.isfinite(max_rate) and max_rate > 0.0
+        else float("nan")
+    )
+
+    dt_max_s = float("nan")
+    err_msg = None
+    try:
+        sol = UnstructuredFIT3D(new_mesh, materials=materials, bc=bc, hodge="voronoi")
+        dt_max_s = float(sol.dt_max)
+    except (ValueError, RuntimeError) as exc:
+        err_msg = str(exc)
+
+    report = {
+        "negative_faces_before": neg_before,
+        "negative_faces_after": neg_after,
+        "dt_max_s": dt_max_s,
+        "dt_rate_s": dt_rate_s,
+        "error": err_msg,
+        "history": hist,
+    }
+    return new_mesh, report

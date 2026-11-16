@@ -10,6 +10,11 @@ Covers:
 * R1-R7: Rivara longest-edge bisection conformity, volume conservation,
   Freudenthal/Kuhn similarity classes, mesh quality under local refinement,
   and curved boundary projection.
+* S1-S5 & E2-E5: Whitney 1-form field reconstruction, Galerkin eigenvalue
+  identity, residual and ZZ error indicators, Dörfler bulk marking, and
+  method-of-particular-solutions L-shape reference eigenvalue.
+* A1-A4: Adaptive cavity eigenmode refinement loop (`adapt_eigen`) and
+  Voronoi-Hodge export (`voronoi_export`) on the re-entrant L-prism.
 """
 
 import numpy as np
@@ -19,6 +24,8 @@ from scipy.spatial import cKDTree
 from scipy.special import roots_legendre
 
 from wakis.unstructured.adapt import (
+    AdaptResult,
+    adapt_eigen,
     bisect,
     dorfler_mark,
     kuhn_mesh,
@@ -27,6 +34,7 @@ from wakis.unstructured.adapt import (
     refine_uniform,
     residual_indicator,
     sphere_projector,
+    voronoi_export,
     whitney_fields,
     zz_curl_indicator,
 )
@@ -729,3 +737,227 @@ def test_e5_mps_reference():
     assert lo < lam24 < hi
     assert lo < lam32 < hi
     assert rel_diff <= 1e-7
+
+
+# ---------------------------------------------------------------------------
+# A1-A4: Adaptive refinement loop and Voronoi export on the L-prism (slow)
+# ---------------------------------------------------------------------------
+
+
+def _loglog_interp(x_target, x_arr, y_arr):
+    """Log-log linear interpolation (never extrapolation)."""
+    x_arr = np.asarray(x_arr, dtype=float)
+    y_arr = np.asarray(y_arr, dtype=float)
+    x_t = float(x_target)
+    assert x_arr[0] <= x_t <= x_arr[-1], (
+        f"x_target={x_t} outside interpolation range [{x_arr[0]}, {x_arr[-1]}]"
+    )
+    order = np.argsort(x_arr)
+    lx = np.log(x_arr[order])
+    ly = np.log(y_arr[order])
+    return float(np.exp(np.interp(np.log(x_t), lx, ly)))
+
+
+@pytest.fixture(scope="module")
+def l_prism_loop_runs():
+    """
+    Run uniform (gen 0..5), residual Dörfler, random (residual counts, seed 0),
+    and ZZ Dörfler arms once on l_prism_mesh(5, 3).
+    """
+    k2_ref, sigma_ref = l_shape_dirichlet_eigenvalue(n_terms=32)
+    m0 = l_prism_mesh(5, 3)
+
+    res_unif = adapt_eigen(
+        m0,
+        bc="pec",
+        marking="uniform",
+        max_iter=6,
+        k2_ref_per_m2=k2_ref,
+    )
+    dofs_unif_5 = int(res_unif.history[-1]["n_dofs"])
+
+    res_adapt = adapt_eigen(
+        m0,
+        bc="pec",
+        estimator="residual",
+        marking="dorfler",
+        theta=0.5,
+        max_dofs=dofs_unif_5,
+        k2_ref_per_m2=k2_ref,
+    )
+    mark_counts = [h["n_marked"] for h in res_adapt.history]
+
+    res_rand = adapt_eigen(
+        m0,
+        bc="pec",
+        marking="random",
+        mark_counts=mark_counts,
+        seed=0,
+        max_dofs=dofs_unif_5,
+        k2_ref_per_m2=k2_ref,
+    )
+
+    res_zz = adapt_eigen(
+        m0,
+        bc="pec",
+        estimator="zz",
+        marking="dorfler",
+        theta=0.5,
+        max_dofs=dofs_unif_5,
+        k2_ref_per_m2=k2_ref,
+    )
+
+    return {
+        "k2_ref": k2_ref,
+        "sigma_ref": sigma_ref,
+        "unif": res_unif,
+        "adapt": res_adapt,
+        "rand": res_rand,
+        "zz": res_zz,
+    }
+
+
+@pytest.mark.slow
+def test_a1_adaptive_vs_uniform_and_random(l_prism_loop_runs):
+    """
+    A1: On l_prism_mesh(5, 3), residual Dörfler (theta=0.5) beats uniform
+    refinement at its final DOFs (log-log interpolated), beats random marking
+    with the same per-iteration mark counts, and keeps every iteration's f_h
+    within the gap to the second mode.
+    """
+    k2_ref = l_prism_loop_runs["k2_ref"]
+    f_ref_hz = float(np.sqrt(k2_ref) * C0 / (2.0 * np.pi))
+    res_unif = l_prism_loop_runs["unif"]
+    res_adapt = l_prism_loop_runs["adapt"]
+    res_rand = l_prism_loop_runs["rand"]
+    assert isinstance(res_adapt, AdaptResult)
+
+    u_dofs = [h["n_dofs"] for h in res_unif.history]
+    u_errs = [abs(h["rel_err_signed"]) for h in res_unif.history]
+    a_dofs = [h["n_dofs"] for h in res_adapt.history]
+    a_errs = [abs(h["rel_err_signed"]) for h in res_adapt.history]
+    r_dofs = [h["n_dofs"] for h in res_rand.history]
+    r_errs = [abs(h["rel_err_signed"]) for h in res_rand.history]
+
+    # (a) At adaptive run's final dofs: err_adapt < err_unif (interpolated)
+    d_adapt_final = a_dofs[-1]
+    err_adapt_final = a_errs[-1]
+    err_unif_at_adapt = _loglog_interp(d_adapt_final, u_dofs, u_errs)
+
+    # (b) At random run's final dofs: err_random > err_adapt (interpolated)
+    d_rand_final = r_dofs[-1]
+    err_rand_final = r_errs[-1]
+    err_adapt_at_rand = _loglog_interp(d_rand_final, a_dofs, a_errs)
+
+    # (c) Mode identity: every iteration's f_h within the gap to the second mode
+    max_shift_over_gap = 0.0
+    for arm_name, res in (
+        ("unif", res_unif),
+        ("adapt", res_adapt),
+        ("rand", res_rand),
+    ):
+        for it, h in enumerate(res.history):
+            gap_hz = abs(h["f_second_hz"] - f_ref_hz)
+            shift_hz = abs(h["f_hz"] - f_ref_hz)
+            max_shift_over_gap = max(max_shift_over_gap, shift_hz / gap_hz)
+            assert shift_hz < 0.5 * gap_hz, (
+                f"A1(c) mode tracking drift on {arm_name} it={it}: "
+                f"|f_h - f_ref|={shift_hz:.4e} >= 0.5 * gap={0.5 * gap_hz:.4e}"
+            )
+
+    h0 = res_adapt.history[0]
+    print(
+        f"[A1] mode0={h0['f_hz'] * 1e-9:.6f} GHz, "
+        f"mode1={h0['f_second_hz'] * 1e-9:.6f} GHz, "
+        f"max_|f-f_ref|/gap={max_shift_over_gap:.4f}; "
+        f"at adapt_final_dofs={d_adapt_final}: "
+        f"err_adapt={err_adapt_final:.4e} < err_unif_interp={err_unif_at_adapt:.4e} "
+        f"(ratio={err_unif_at_adapt / err_adapt_final:.3f}); "
+        f"at rand_final_dofs={d_rand_final}: "
+        f"err_rand={err_rand_final:.4e} > err_adapt_interp={err_adapt_at_rand:.4e} "
+        f"(ratio={err_rand_final / err_adapt_at_rand:.3f})"
+    )
+    assert err_adapt_final < err_unif_at_adapt
+    assert err_rand_final > err_adapt_at_rand
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "A2 pre-registered slope gap on L-prism up to 41817 DOFs: "
+        "last-half adaptive slope (-0.3756, after initial steep drop from "
+        "1.000e-2 at it=3 to 4.228e-3 at it=5) is not <= uniform gen 2..5 "
+        "slope (-0.4347) - 0.1 = -0.5347"
+    ),
+)
+def test_a2_convergence_slopes(l_prism_loop_runs):
+    """
+    A2: Least-squares slope of log|err| vs log N over the last half of the
+    adaptive iterations <= (least-squares slope over uniform generations 2..5) - 0.1.
+    """
+    res_unif = l_prism_loop_runs["unif"]
+    res_adapt = l_prism_loop_runs["adapt"]
+
+    u_slice = res_unif.history[2:6]
+    u_dofs = np.array([h["n_dofs"] for h in u_slice], dtype=float)
+    u_errs = np.array([abs(h["rel_err_signed"]) for h in u_slice], dtype=float)
+    slope_unif = float(np.polyfit(np.log(u_dofs), np.log(u_errs), 1)[0])
+
+    half_idx = len(res_adapt.history) // 2
+    a_slice = res_adapt.history[half_idx:]
+    a_dofs = np.array([h["n_dofs"] for h in a_slice], dtype=float)
+    a_errs = np.array([abs(h["rel_err_signed"]) for h in a_slice], dtype=float)
+    slope_adapt = float(np.polyfit(np.log(a_dofs), np.log(a_errs), 1)[0])
+
+    print(
+        f"[A2] slope_adapt(it={half_idx}..{len(res_adapt.history) - 1})={slope_adapt:.4f}, "
+        f"slope_unif(gen 2..5)={slope_unif:.4f}, "
+        f"target <= {slope_unif - 0.1:.4f}"
+    )
+    assert slope_adapt <= slope_unif - 0.1
+
+
+@pytest.mark.slow
+def test_a3_zz_adaptive_vs_uniform(l_prism_loop_runs):
+    """
+    A3: ZZ-driven Dörfler adaptivity beats uniform refinement at its final DOFs
+    (log-log interpolated).
+    """
+    res_unif = l_prism_loop_runs["unif"]
+    res_zz = l_prism_loop_runs["zz"]
+
+    u_dofs = [h["n_dofs"] for h in res_unif.history]
+    u_errs = [abs(h["rel_err_signed"]) for h in res_unif.history]
+    d_zz_final = res_zz.history[-1]["n_dofs"]
+    err_zz_final = abs(res_zz.history[-1]["rel_err_signed"])
+    err_unif_at_zz = _loglog_interp(d_zz_final, u_dofs, u_errs)
+
+    print(
+        f"[A3] zz_final_dofs={d_zz_final}: "
+        f"err_zz={err_zz_final:.4e} < err_unif_interp={err_unif_at_zz:.4e} "
+        f"(ratio={err_unif_at_zz / err_zz_final:.3f})"
+    )
+    assert err_zz_final < err_unif_at_zz
+
+
+@pytest.mark.slow
+def test_a4_voronoi_export(l_prism_loop_runs):
+    """
+    A4: voronoi_export runs on the final adaptive mesh and reports negative
+    faces before/after and dt_max (or the solver guard error message).
+    """
+    res_adapt = l_prism_loop_runs["adapt"]
+    m_exp, rep = voronoi_export(res_adapt.mesh, bc="pec", n_sweeps=2)
+    assert m_exp.n_cells > 0
+    print(
+        f"[A4] cells={res_adapt.mesh.n_cells}->{m_exp.n_cells}, "
+        f"neg_before={rep['negative_faces_before']}, "
+        f"neg_after={rep['negative_faces_after']}, "
+        f"dt_max_s={rep['dt_max_s']:.4e}, "
+        f"dt_rate_s={rep['dt_rate_s']:.4e}, "
+        f"error={rep['error']}"
+    )
+    assert "negative_faces_before" in rep
+    assert "negative_faces_after" in rep
+    assert "dt_max_s" in rep

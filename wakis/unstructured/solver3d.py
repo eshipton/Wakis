@@ -155,6 +155,11 @@ class UnstructuredFIT3D:
         With ``hodge="voronoi"``, faces whose dual edge length is negative
         make K indefinite so time stepping diverges at any ``dt``; by default
         ``False`` raises ``ValueError``, whereas ``True`` emits a warning.
+    stability : bool, optional
+        If ``True`` (default), compute ``lambda_max`` and ``dt_max`` in the
+        constructor. Set ``False`` in eigenmode-only loops to skip the
+        Lanczos stability solve (leaves ``lambda_max``, ``dt_max`` and
+        ``courant`` as ``nan``).
 
     Attributes
     ----------
@@ -175,6 +180,7 @@ class UnstructuredFIT3D:
         cfl=0.95,
         pml=None,
         allow_negative_faces=False,
+        stability=True,
     ):
         if mesh.dim != 3:
             raise ValueError("UnstructuredFIT3D needs a tetrahedral mesh")
@@ -253,47 +259,56 @@ class UnstructuredFIT3D:
             self.Mnu = M2.tocsr()
             M1f = M1[self.free][:, self.free].tocsc()
             self.M1 = M1f
-            self._M1 = splu(M1f)
+            self._M1 = splu(M1f) if stability else None
             self.cap = M1f.diagonal()
         self.cond = cond[self.free]
 
         # Stability limit
         Kf = (self.Cf.T @ self.Mnu @ self.Cf).tocsr()
         self.K = Kf
-        if hodge == "voronoi":
-            if self.massless.size:
-                Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
-                self._Ksf = Ksf
-                minv = 1 / np.sqrt(self.cap)
+        if stability:
+            if hodge == "voronoi":
+                if self.massless.size:
+                    Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
+                    self._Ksf = Ksf
+                    minv = 1 / np.sqrt(self.cap)
 
-                def mv(x):
-                    y = minv * x
-                    return minv * (Kf @ y - Ksf.T @ self._Kss.solve(Ksf @ y))
+                    def mv(x):
+                        y = minv * x
+                        return minv * (Kf @ y - Ksf.T @ self._Kss.solve(Ksf @ y))
 
-                n = self.free.size
-                op = LinearOperator((n, n), matvec=mv, dtype=float)
-                # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
-                v0 = np.random.default_rng(0).standard_normal(n)
-                lam = eigsh(
-                    op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
-                )[0]
+                    n = self.free.size
+                    op = LinearOperator((n, n), matvec=mv, dtype=float)
+                    # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
+                    v0 = np.random.default_rng(0).standard_normal(n)
+                    lam = eigsh(
+                        op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
+                    )[0]
+                else:
+                    lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
             else:
-                lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
+                lam = max_eigenvalue(Kf, M_solve=self._M1.solve)
+            self.lambda_max = lam
+            self.dt_max = 2 / np.sqrt(lam)
+            self.dt = cfl * self.dt_max if dt is None else float(dt)
+            self.courant = self.dt * np.sqrt(lam) / 2
         else:
-            lam = max_eigenvalue(Kf, M_solve=self._M1.solve)
-        self.lambda_max = lam
-        self.dt_max = 2 / np.sqrt(lam)
-        self.dt = cfl * self.dt_max if dt is None else float(dt)
-        self.courant = self.dt * np.sqrt(lam) / 2
+            if hodge == "voronoi" and self.massless.size:
+                self._Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
+            self.lambda_max = np.nan
+            self.dt_max = np.nan
+            self.dt = np.nan if dt is None else float(dt)
+            self.courant = np.nan
         self.h_mean = L.mean()
 
         groups = []
         if dispersive:
             if hodge != "voronoi":
                 raise NotImplementedError("dispersive materials need hodge='voronoi'")
-            check_dispersive_stability(
-                [m for m, _ in dispersive], self.dt, self.courant
-            )
+            if stability:
+                check_dispersive_stability(
+                    [m for m, _ in dispersive], self.dt, self.courant
+                )
             for mat, sel in dispersive:
                 c = eps_0 * mesh.dual_measure(sel * live) / L
                 cf = c[self.free]
@@ -448,6 +463,8 @@ class UnstructuredFIT3D:
         if self.hodge == "voronoi":
             self.u = self._update.step(self.u, r)
         else:
+            if self._M1 is None:
+                self._M1 = splu(self.M1)
             self.u = self.u + dt * self._M1.solve(r)
         self.n += 1
         self.recorder.record(self.u, self.n * dt, dt)
