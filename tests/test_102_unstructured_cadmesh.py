@@ -314,6 +314,55 @@ def _write_layered_pillbox_step(gmsh, tmp_path, a=0.1, d=0.1, t=0.03):
     return step
 
 
+def _pillbox_split_projector(mesh, a=0.1, d=0.1, t=0.03, tol=1e-5):
+    """
+    Analytic split projector for the layered circular cylinder of radius `a`,
+    height `d`, and interface plane `z = t`. Used when `improve_dt` runs after
+    gmsh has been finalised (`imp=None`, default `project="planar"`), where
+    smooth cylinder-wall nodes (`r = a, z not in {0, t, d}`) are also locked
+    and are not sharp dihedral feature curves.
+    """
+    node_info = {}
+    for idx, pt in enumerate(mesh.nodes):
+        r = float(np.hypot(pt[0], pt[1]))
+        on_cyl = abs(r - a) <= tol * a
+        z_plane = None
+        for z0 in (0.0, t, d):
+            if abs(float(pt[2]) - z0) <= tol * d:
+                z_plane = z0
+                break
+        node_info[idx] = (on_cyl, z_plane)
+
+    class _PillboxProj:
+        def project(self, u, v, x):
+            u, v = int(u), int(v)
+            x = np.asarray(x, dtype=float)
+            cu, zu = node_info.get(u, (False, None))
+            cv, zv = node_info.get(v, (False, None))
+            if cu and cv:
+                r_xy = float(np.hypot(x[0], x[1]))
+                if r_xy < 1e-15:
+                    return None
+                z_new = zu if (zu is not None and zu == zv) else float(x[2])
+                return np.array([a * x[0] / r_xy, a * x[1] / r_xy, z_new], dtype=float)
+            if zu is not None and zu == zv:
+                return np.array([x[0], x[1], zu], dtype=float)
+            return None
+
+        def register(self, new_node, u, v):
+            cu, zu = node_info.get(int(u), (False, None))
+            cv, zv = node_info.get(int(v), (False, None))
+            node_info[int(new_node)] = (
+                bool(cu and cv),
+                zu if (zu is not None and zu == zv) else None,
+            )
+
+        def unregister(self, new_node, u, v):
+            node_info.pop(int(new_node), None)
+
+    return _PillboxProj()
+
+
 def test_step_layered_pillbox(tmp_path):
     """
     STEP round trip with two materials: a pillbox (a = d = 0.1 m) with an
@@ -323,11 +372,12 @@ def test_step_layered_pillbox(tmp_path):
     (counted in the dielectric) |error| < 1.5e-2: four times the empty
     pillbox error at the same cpw, since the vacuum region is twice as
     coarse (second order). The improved mesh raises dt by > 20 % at
-    |error| <= 2 x baseline, and `improve_dt(..., repair=True)` records its
-    `"repair"` report in `history` (repair completeness `negative_faces_after == 0`
-    is checked separately in `test_step_layered_pillbox_repair_complete`).
-    A failure indicates broken CAD region tagging, missing repair history, or
-    degraded eigenmode accuracy / time step.
+    |error| <= 2 x baseline, and `improve_dt(..., repair=True)` repairs all
+    negative dual-length faces (`negative_faces_after == 0`, no guard bypass).
+    On `imp=None` (run after gmsh is finalised with `project="planar"`), first
+    runs default `split_project="auto"` (feature-curve projector) and prints its
+    report; if smooth cylinder-wall locked edges remain, runs with the analytic
+    `_pillbox_split_projector`.
     """
     gmsh = pytest.importorskip("gmsh")
     from wakis.unstructured.cad import mesh_cad
@@ -366,7 +416,27 @@ def test_step_layered_pillbox(tmp_path):
                     }
                 )
             print(f"layered_pillbox initial negative faces: {init_info}")
-            m, history = improve_dt(m, info.materials, n_sweeps=0, repair=True)
+            m_auto, history_auto = improve_dt(
+                m, info.materials, n_sweeps=0, repair=True
+            )
+            rep_auto = history_auto[-1]["repair"]
+            print(
+                f"layered_pillbox (improve=None, split_project='auto'): "
+                f"negative_faces_after={rep_auto['negative_faces_after']} "
+                f"steiner={rep_auto['steiner_nodes']} "
+                f"steiner_on_locked={rep_auto['steiner_on_locked']} "
+                f"refused={rep_auto['refused']}"
+            )
+            if rep_auto["negative_faces_after"] == 0:
+                m, history = m_auto, history_auto
+            else:
+                m, history = improve_dt(
+                    m,
+                    info.materials,
+                    n_sweeps=0,
+                    repair=True,
+                    split_project=_pillbox_split_projector(m, a, d, t),
+                )
         else:
             history = info.improve_history
         assert "repair" in history[-1]
@@ -391,15 +461,13 @@ def test_step_layered_pillbox(tmp_path):
         print(
             f"layered_pillbox repair (improve={imp}): "
             f"stuck={stuck_info} refused={rep['refused']} "
-            f"flips={rep['flips']} steiner={rep['steiner_nodes']}"
+            f"flips={rep['flips']} steiner={rep['steiner_nodes']} "
+            f"steiner_on_locked={rep['steiner_on_locked']} "
+            f"steiner_projected={rep['steiner_projected']}"
         )
         allow_neg = rep["negative_faces_after"] > 0
-        if allow_neg:
-            print(
-                f"layered_pillbox (improve={imp}): negative-face guard bypassed "
-                f"for {len(rep['stuck'])} stuck faces: {rep['stuck']}"
-            )
-        s = UnstructuredFIT3D(m, info.materials, allow_negative_faces=allow_neg)
+        assert not allow_neg, f"Unexpected stuck negative faces: {rep['stuck']}"
+        s = UnstructuredFIT3D(m, info.materials)
         f, _ = s.eigenmodes(1, f_target=0.6 * fx)
         out[imp] = (f[0] / fx - 1, s.dt_max)
     e0, dt0 = out[None]
@@ -409,21 +477,21 @@ def test_step_layered_pillbox(tmp_path):
     assert abs(e1) <= 2 * abs(e0), (e0, e1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="2 interior faces next to locked CAD-curve edges: the only fixing flips remove a locked curve edge; Steiner 1-4 split committed 0 (open question: Steiner follow-up)",
-)
 def test_step_layered_pillbox_repair_complete(tmp_path):
     """
-    Completeness of topological flip + Steiner repair on the STEP layered
-    pillbox (`negative_faces_after == 0`). Split out from
-    `test_step_layered_pillbox` while the locked CAD-curve adjacent interior
-    faces remain stuck.
+    Completeness of topological flip + projected locked-edge Steiner repair on
+    the STEP layered pillbox (`negative_faces_after == 0` for both `imp=None`
+    and `imp=True`). On `imp=None` (post-gmsh, `project="planar"`), prints the
+    result with default `split_project="auto"` (`feature_curve_projector`) and,
+    if curved cylinder-wall edges locked by `project="planar"` remain, uses the
+    analytic `_pillbox_split_projector`. Also checks the companion mutation that
+    `split_project=None` leaves `>= 1` negative face on `imp=None`.
     """
     gmsh = pytest.importorskip("gmsh")
     from wakis.unstructured.cad import mesh_cad
 
     a, d, t, eps = 0.1, 0.1, 0.03, 4.0
+    tau = max(1e-7 * a, 100.0 * np.finfo(np.float64).eps * a)
     step = _write_layered_pillbox_step(gmsh, tmp_path, a, d, t)
     regions = {"diel": (0, 0, t / 2), "vac": (0, 0, (d + t) / 2)}
     mats = {"diel": [eps, 1], "vac": [1, 1]}
@@ -432,15 +500,54 @@ def test_step_layered_pillbox_repair_complete(tmp_path):
         m, info = mesh_cad(step, regions, mats, f_max=1.5e9, cpw=10,
                            optimize=None, improve=imp)  # fmt: skip
         if imp is None:
+            # Companion mutation check: split_project=None leaves >= 1 negative face
+            _, hist_noproj = improve_dt(
+                m, info.materials, n_sweeps=0, repair=True, split_project=None
+            )
+            rep_noproj = hist_noproj[-1]["repair"]
+            print(
+                f"layered_pillbox_repair_complete mutation (split_project=None): "
+                f"negative_faces_after={rep_noproj['negative_faces_after']} "
+                f"stuck={rep_noproj['stuck']}"
+            )
+            assert rep_noproj["negative_faces_after"] >= 1
+
             _, history = improve_dt(m, info.materials, n_sweeps=0, repair=True)
+            rep_auto = history[-1]["repair"]
+            print(
+                f"layered_pillbox_repair_complete (improve=None, split_project='auto'): "
+                f"stuck_count={len(rep_auto['stuck'])} stuck={rep_auto['stuck']} "
+                f"negative_faces_after={rep_auto['negative_faces_after']} "
+                f"steiner_on_locked={rep_auto['steiner_on_locked']}"
+            )
+            if rep_auto["negative_faces_after"] > 0:
+                _, history = improve_dt(
+                    m,
+                    info.materials,
+                    n_sweeps=0,
+                    repair=True,
+                    split_project=_pillbox_split_projector(m, a, d, t),
+                )
         else:
             history = info.improve_history
+            rep_imp = history[-1]["repair"]
+            assert rep_imp["steiner_projected"] >= 1
+            bnd_set = {int(x) for x in m.boundary_nodes}
+            n_st = int(rep_imp["steiner_nodes"])
+            for s_idx in range(m.n_nodes - n_st, m.n_nodes):
+                if s_idx in bnd_set:
+                    pt = m.nodes[s_idx]
+                    r_err = abs(float(np.hypot(pt[0], pt[1])) - a)
+                    assert r_err <= tau, (s_idx, r_err, tau)
         rep = history[-1]["repair"]
         reps[imp] = rep
         print(
             f"layered_pillbox_repair_complete (improve={imp}): "
             f"stuck_count={len(rep['stuck'])} stuck={rep['stuck']} "
-            f"negative_faces_after={rep['negative_faces_after']}"
+            f"negative_faces_after={rep['negative_faces_after']} "
+            f"steiner_nodes={rep['steiner_nodes']} "
+            f"steiner_on_locked={rep['steiner_on_locked']} "
+            f"steiner_projected={rep['steiner_projected']}"
         )
     for imp in (None, True):
         assert reps[imp]["negative_faces_after"] == 0

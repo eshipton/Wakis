@@ -797,3 +797,80 @@ def test_repair_study_guard_negative_count():
     assert res["limit_element"] == srep["worst_element"]
     assert np.isclose(res["limit_radius_ratio"], srep["worst_radius_ratio"])
     assert np.isclose(res["limit_min_dihedral"], srep["worst_min_dihedral"])
+
+
+def test_encroached_locked_edge_no_projector_falls_through_to_cell_steiner():
+    """
+    When a negative face ``f = (0, 1, 2)`` has a locked boundary edge ``(0, 1)``
+    that is encroached by vertex ``2``, and every locked-edge split is refused
+    with ``"no_projector"`` (as with ``feature_curve_projector`` when the
+    incident locked boundary edges are not part of a curved feature rim),
+    ``flip_to_delaunay`` must fall through to the wave-3 cell/unlocked Steiner
+    candidates rather than leaving the face stuck.
+
+    Mutation check: with ``steiner=False`` no flip is valid because edge
+    ``(0, 1)`` is locked and vertex ``2`` lies outside the reflex boundary
+    quad, leaving ``negative_faces_after == 1``.
+    """
+    from wakis.unstructured.steiner import (
+        feature_curve_projector,
+        is_edge_encroached,
+    )
+
+    X = np.array(
+        [
+            [0.0, 0.0, 0.0],  # 0 (locked)
+            [1.0, 0.0, 0.0],  # 1 (locked)
+            [0.5, 0.35, 0.0],  # 2 (encroaches locked edge (0, 1))
+            [0.5, 0.20, 0.30],  # 3 (top apex)
+            [0.5, 0.20, -0.30],  # 4 (bottom apex)
+            [1.3, 0.6, 0.0],  # 5 (carries edge (3, 4), blocking 2-3 flip on (0, 1, 2))
+        ],
+        dtype=np.float64,
+    )
+    cells = np.array(
+        [
+            [0, 1, 2, 3],
+            [0, 2, 1, 4],
+            [1, 5, 3, 4],
+            [1, 2, 5, 3],
+            [1, 5, 2, 4],
+        ],
+        dtype=np.int64,
+    )
+    mesh = SimplexMesh(X, cells)
+    locked = np.array([True, True, False, False, False, False], dtype=bool)
+
+    state = _RepairState(mesh, None, "pec")
+    assert (0, 1, 2) in state.neg_set
+    assert (
+        is_edge_encroached(state.X, state.cells, (0, 1), state.edge_map[(0, 1)]) is True
+    )
+
+    proj = feature_curve_projector(mesh, locked=locked)
+    assert proj(0, 1, 0.5 * (X[0] + X[1])) is None
+
+    # Mutation check: flips alone cannot repair f=(0, 1, 2)
+    _, rep_no_steiner = flip_to_delaunay(
+        mesh, locked=locked, steiner=False, split_projector=proj
+    )
+    assert rep_no_steiner["negative_faces_after"] == 1
+
+    # With Steiner enabled and feature_curve_projector returning None on (0, 1),
+    # flip_to_delaunay records refused["no_projector"] >= 1 and falls through to
+    # cell Steiner (1-4 + 2-3 flip), repairing the mesh to 0 negative faces.
+    vol_before = float(mesh.cell_volume.sum())
+    repaired, rep = flip_to_delaunay(
+        mesh, locked=locked, steiner=True, split_projector=proj
+    )
+    assert rep["negative_faces_before"] == 1
+    assert rep["refused"].get("no_projector", 0) >= 1
+    assert rep["negative_faces_after"] == 0
+    assert rep["steiner_nodes"] == 1
+    assert rep["steiner_on_locked"] == 0
+    assert neg_faces(repaired).size == 0
+    assert abs(float(repaired.cell_volume.sum()) - vol_before) <= 1e-12 * vol_before
+    repaired_edges = {
+        (min(int(e[0]), int(e[1])), max(int(e[0]), int(e[1]))) for e in repaired.edges
+    }
+    assert (0, 1) in repaired_edges

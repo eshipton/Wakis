@@ -391,6 +391,7 @@ def improve_dt(
     project="planar",
     verbose=False,
     repair=True,
+    split_project="auto",
 ):
     """
     Relocate interior nodes to lower the largest edge rates (raise dt).
@@ -433,6 +434,11 @@ def improve_dt(
         If True (default), run `flip_to_delaunay` before and after node
         smoothing using ``locked = ~movable`` and append a ``"repair"``
         entry to ``history``. When False, only node relocation is run.
+    split_project : "auto", SplitProjector, callable, or None, optional
+        Split projector forwarded to `flip_to_delaunay` when ``repair=True``.
+        When ``"auto"`` (default), uses ``getattr(project, "split", None)`` if
+        present (e.g. `CadSplitProjector` attached by `cad_projector`), and
+        otherwise falls back to `feature_curve_projector(mesh, ~movable)`.
 
     Returns
     -------
@@ -444,6 +450,7 @@ def improve_dt(
         when ``repair=True`` an extra entry with key ``"repair"``.
     """
     mesh0 = mesh
+    n_orig = mesh0.n_nodes
     rng = np.random.default_rng(seed)
     eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
     live = (~pec).astype(float)
@@ -456,6 +463,17 @@ def improve_dt(
         for n in np.flatnonzero(~interior):
             if proj(n, mesh.nodes[n : n + 1]) is not None:
                 movable[n] = True
+    movable0 = movable.copy()
+
+    def _resolve_split_projector(cur_mesh, cur_locked):
+        if split_project == "auto":
+            sp = getattr(proj, "split", None)
+            if sp is not None:
+                return sp
+            from .steiner import feature_curve_projector
+
+            return feature_curve_projector(cur_mesh, locked=cur_locked)
+        return split_project
 
     def objective_rates():
         r = st.rates()
@@ -471,8 +489,14 @@ def improve_dt(
     if repair:
         from .repair import flip_to_delaunay
 
+        sp1 = _resolve_split_projector(mesh, ~movable)
         mesh, rep1 = flip_to_delaunay(
-            mesh, materials=materials, locked=~movable, bc=bc, verbose=verbose
+            mesh,
+            materials=materials,
+            locked=~movable,
+            bc=bc,
+            verbose=verbose,
+            split_projector=sp1,
         )
         if sum(rep1["flips"].values()) > 0 or rep1["steiner_nodes"] > 0:
             eps_r, mu_r, _, pec, _ = cell_materials(mesh, materials)
@@ -480,12 +504,19 @@ def improve_dt(
             free = _default_free(mesh, pec, bc)
             st = _State(mesh, eps_r, mu_r, live, free)
             interior = movable_nodes(mesh)
-            proj = planar_projector(mesh) if project == "planar" else project
-            movable = interior.copy()
-            if proj is not None:
+            if project == "planar":
+                proj = planar_projector(mesh)
+                movable = interior.copy()
                 for n in np.flatnonzero(~interior):
                     if proj(n, mesh.nodes[n : n + 1]) is not None:
                         movable[n] = True
+            else:
+                movable = interior.copy()
+                movable[:n_orig] = movable0
+                if proj is not None and hasattr(proj, "split"):
+                    for n in np.flatnonzero(~interior):
+                        if n >= n_orig and proj(n, mesh.nodes[n : n + 1]) is not None:
+                            movable[n] = True
 
     edges = mesh.edges
     history = []
@@ -562,8 +593,14 @@ def improve_dt(
             break
     new = SimplexMesh(st.X, mesh.cells, mesh.cell_tags)
     if repair:
+        sp2 = _resolve_split_projector(new, ~movable)
         new, rep2 = flip_to_delaunay(
-            new, materials=materials, locked=~movable, bc=bc, verbose=verbose
+            new,
+            materials=materials,
+            locked=~movable,
+            bc=bc,
+            verbose=verbose,
+            split_projector=sp2,
         )
         if sum(rep2["flips"].values()) > 0 or rep2["steiner_nodes"] > 0:
             eps_r, mu_r, _, pec, _ = cell_materials(new, materials)
@@ -577,6 +614,12 @@ def improve_dt(
                 for k in ("2-3", "3-2", "4-4", "2-2")
             },
             "steiner_nodes": int(rep1["steiner_nodes"] + rep2["steiner_nodes"]),
+            "steiner_on_locked": int(
+                rep1.get("steiner_on_locked", 0) + rep2.get("steiner_on_locked", 0)
+            ),
+            "steiner_projected": int(
+                rep1.get("steiner_projected", 0) + rep2.get("steiner_projected", 0)
+            ),
             "refused": {
                 k: int(rep1["refused"].get(k, 0) + rep2["refused"].get(k, 0))
                 for k in set(rep1["refused"]) | set(rep2["refused"])
