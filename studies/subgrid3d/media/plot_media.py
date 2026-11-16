@@ -8,16 +8,27 @@ Plot figures for the 3D subgrid dispersive and subpixel media study
 (`studies/subgrid3d/media/run_media.py`).
 
 Produces:
+  - `subgrid3d_media_slab_convergence.png`:
+    (a) Setup schematic: dispersive / conformal slab crossing a 2:1 subgrid
+        patch in the (x, z) cross-section (y = b/2), showing coarse cells (H),
+        2:1 fine cells (h = H/2), hanging-edge patch boundary, and slab 0 < z < z_s.
+    (b) Dispersive ADE convergence vs fine cell step h_z [m] for Lorentz and
+        lossless Drude slabs crossing the 2:1 patch vs the 1D shooting reference
+        and vs uniform fine `SubgridFIT3D` (without patch, == `SolverFIT3D`),
+        plus the `mutate="lump_no_rowsum"` mutation and O(h^2) guide.
+    (c) Subpixel Kottke vs staircase vs `mutate="swap_projection"` relative
+        frequency error vs fine cell step h_z [m] for a non-node-plane
+        dielectric slab (eps_r = 4, z_s = 0.361 c) crossing a 2:1 patch.
   - `subgrid3d_media_dispersive_cube.png`:
-    (a) Localized Lorentz & Drude cube: resonance error vs state unknowns [1]
+    (a) Localized Lorentz & Drude cube: resonance error vs state unknowns [DOF]
     (b) Localized Lorentz & Drude cube: resonance error vs work per ns [DOF/ns]
-    (c) Honest panel (over-patched exterior-limited cavity): resonance error
-        vs work per ns [DOF/ns] where the 2:1 patch does not beat the uniform
-        baseline (`SubgridFIT3D` without patch at fine h).
+    (c) Honest panel (exterior-limited cavity, patch interface on dielectric
+        jump): resonance error vs work per ns [DOF/ns] where the 2:1 patch does
+        not beat the uniform fine baseline (`SubgridFIT3D` == `SolverFIT3D`).
   - `subgrid3d_media_subpixel_sphere.png`:
     (a) Dielectric sphere (eps_r = 4) inside a 2:1 patch: mean relative
         resonance error vs fine cell step h [m] for staircase and subpixel
-        (`n_sub = 2, 4, ...`).
+        (`n_sub = 2, 4, 6`, moment normal vs exact radial normal).
     (b) Per-mode relative frequency error vs coarse grid count N_x [cells].
 
 Usage
@@ -32,8 +43,9 @@ import os
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.patches import Rectangle
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.abspath(os.path.join(HERE, "..", "..", "..", "docs", "img"))
@@ -53,26 +65,306 @@ def _load_results(in_dir):
     )
 
 
+def plot_slab_convergence(slab, out_dir):
+    d6 = slab["d6_dispersive"]
+    c2 = slab["c2_subpixel"]
+    fig, axes = plt.subplots(1, 3, figsize=(14.4, 4.5), constrained_layout=True)
+
+    # Panel (a): Labelled (x, z) setup & mesh schematic at N_z = 9
+    ax = axes[0]
+    a, _b, c = d6["box_m"]
+    z_s = d6["z_s_m"]
+    (xp0, xp1), _yp, (zp0, zp1) = d6["patch_bounds_m"]
+    nx0, nz0 = 3, 9
+    xs = np.linspace(0.0, a, nx0 + 1)
+    zs = np.linspace(0.0, c, nz0 + 1)
+
+    # Vacuum region and dispersive/dielectric slab region
+    ax.add_patch(
+        Rectangle(
+            (0.0, z_s),
+            a,
+            c - z_s,
+            facecolor="#f4f6f9",
+            edgecolor="none",
+            zorder=1,
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (0.0, 0.0),
+            a,
+            z_s,
+            facecolor="#d0e4f7",
+            edgecolor="none",
+            alpha=0.85,
+            zorder=1,
+            label="Dispersive / dielectric slab ($0 < z < z_s$)",
+        )
+    )
+
+    # Coarse grid lines (step H)
+    for xv in xs:
+        ax.plot([xv, xv], [0.0, c], color="#7f7f7f", lw=0.9, zorder=2)
+    for zv in zs:
+        ax.plot([0.0, a], [zv, zv], color="#7f7f7f", lw=0.9, zorder=2)
+
+    # 2:1 fine subgrid patch lines (step h = H / 2)
+    xf_p = np.linspace(xp0, xp1, 2 * 1 + 1)
+    zf_p = np.linspace(zp0, zp1, 2 * 4 + 1)
+    for xv in xf_p:
+        ax.plot([xv, xv], [zp0, zp1], color="#1f77b4", lw=1.1, zorder=3)
+    for zv in zf_p:
+        ax.plot([xp0, xp1], [zv, zv], color="#1f77b4", lw=1.1, zorder=3)
+
+    # Highlight hanging-edge 2:1 patch boundary
+    ax.add_patch(
+        Rectangle(
+            (xp0, zp0),
+            xp1 - xp0,
+            zp1 - zp0,
+            facecolor="none",
+            edgecolor="#d62728",
+            lw=2.0,
+            ls="-",
+            zorder=4,
+            label="2:1 patch interface ($M_k = |P|^T(m_{p,k}\\circ|P|\\mathbf{1})$)",
+        )
+    )
+
+    # Material interface z = z_s (D6 on node plane z_s=0.30 m; C2 off-plane z_s=0.361 c)
+    ax.axhline(
+        z_s,
+        color="#0b559f",
+        lw=1.8,
+        ls="--",
+        zorder=5,
+        label=f"D6 slab top $z_s = {z_s:.2f}$ m",
+    )
+    z_s_c2_scaled = c2["r_frac"] * c
+    ax.axhline(
+        z_s_c2_scaled,
+        color="#2ca02c",
+        lw=1.6,
+        ls="-.",
+        zorder=5,
+        label=f"C2 sub-cell cut $z_s = {c2['r_frac']:.3f}\\,c$",
+    )
+
+    # Outer PEC cavity boundary
+    ax.add_patch(
+        Rectangle(
+            (0.0, 0.0),
+            a,
+            c,
+            facecolor="none",
+            edgecolor="#111111",
+            lw=2.0,
+            zorder=6,
+        )
+    )
+    ax.text(
+        0.5 * a,
+        0.045,
+        "Slab $\\varepsilon(\\omega)$ or $\\varepsilon_r=4$",
+        ha="center",
+        va="bottom",
+        fontsize=8.2,
+        fontweight="bold",
+        color="#08306b",
+        zorder=7,
+    )
+    ax.text(
+        0.5 * a,
+        0.34,
+        "2:1 fine patch\n($h_z = H_z / 2$)",
+        ha="center",
+        va="center",
+        fontsize=8.0,
+        color="#1f77b4",
+        bbox={
+            "boxstyle": "round,pad=0.2",
+            "fc": "white",
+            "ec": "#1f77b4",
+            "alpha": 0.88,
+        },
+        zorder=7,
+    )
+    ax.text(
+        0.5 * a,
+        0.56,
+        "Coarse vacuum ($H_z = c / N_z$)",
+        ha="center",
+        va="center",
+        fontsize=8.2,
+        color="#333333",
+        zorder=7,
+    )
+    ax.set_xlim(-0.02 * a, 1.02 * a)
+    ax.set_ylim(-0.02 * c, 1.02 * c)
+    ax.set_xlabel("Transverse coordinate $x$ [m]")
+    ax.set_ylabel("Axial coordinate $z$ [m]")
+    ax.set_title("(a) Setup: slab crossing 2:1 patch ($x$–$z$ cut)")
+    ax.legend(fontsize=7.1, loc="upper right", framealpha=0.92)
+
+    # Panel (b): D6 convergence vs h_z for Lorentz and Drude slabs
+    ax = axes[1]
+    hz_d6 = np.array(d6["hz_fine_m"], float)
+    ax.loglog(
+        hz_d6,
+        d6["err_lor_1d"],
+        "o-",
+        color="#1f77b4",
+        lw=1.8,
+        label=f"Lorentz 2:1 patch vs 1D shooting (slope={d6['ls_ord_lor_1d']:.2f})",
+    )
+    ax.loglog(
+        hz_d6,
+        d6["err_lor_fine"],
+        "s--",
+        color="#1f77b4",
+        lw=1.5,
+        alpha=0.85,
+        label=f"Lorentz 2:1 patch vs uniform fine SubgridFIT3D (slope={d6['ls_ord_lor_fine']:.2f})",
+    )
+    ax.loglog(
+        hz_d6,
+        d6["err_dru_1d"],
+        "^-",
+        color="#d62728",
+        lw=1.8,
+        label=f"Drude 2:1 patch vs 1D shooting (slope={d6['ls_ord_dru_1d']:.2f})",
+    )
+    ax.loglog(
+        hz_d6,
+        d6["err_dru_fine"],
+        "v--",
+        color="#d62728",
+        lw=1.5,
+        alpha=0.85,
+        label=f"Drude 2:1 patch vs uniform fine SubgridFIT3D (slope={d6['ls_ord_dru_fine']:.2f})",
+    )
+    ax.loglog(
+        hz_d6,
+        d6["err_lor_mut"],
+        "x:",
+        color="#1f77b4",
+        lw=1.3,
+        alpha=0.75,
+        label="Lorentz unlumped mutation (lump_no_rowsum)",
+    )
+    ax.loglog(
+        hz_d6,
+        d6["err_dru_mut"],
+        "+:",
+        color="#d62728",
+        lw=1.3,
+        alpha=0.75,
+        label="Drude unlumped mutation (lump_no_rowsum)",
+    )
+    # O(h^2) and O(h) guides
+    h_ref = hz_d6
+    ax.loglog(
+        h_ref,
+        0.75 * d6["err_dru_1d"][-1] * (h_ref / h_ref[-1]) ** 2.0,
+        "k--",
+        lw=1.1,
+        alpha=0.6,
+        label="$\\mathcal{O}(h_z^2)$ guide",
+    )
+    ax.loglog(
+        h_ref,
+        1.15 * d6["err_lor_mut"][-1] * (h_ref / h_ref[-1]) ** 1.0,
+        "k:",
+        lw=1.0,
+        alpha=0.5,
+        label="$\\mathcal{O}(h_z)$ guide",
+    )
+    ax.set_xlabel("Fine patch axial cell step $h_z = H_z / 2$ [m]")
+    ax.set_ylabel("Mean relative frequency error (3 modes) [1]")
+    ax.set_title("(b) Drude & Lorentz slab convergence across 2:1 patch")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=6.9, loc="best")
+
+    # Panel (c): C2 subpixel vs staircase error vs h_z for eps_r = 4 non-node-plane slab
+    ax = axes[2]
+    hz_c2 = np.array(c2["hz_fine_m"], float)
+    ax.loglog(
+        hz_c2,
+        c2["err_sub"],
+        "^-",
+        color="#1f77b4",
+        lw=1.8,
+        label=f"Subpixel Kottke (averaging='subpixel', slope={c2['ls_sub']:.2f})",
+    )
+    ax.loglog(
+        hz_c2,
+        c2["err_st"],
+        "o-",
+        color="#7f7f7f",
+        lw=1.6,
+        label=f"Staircase (averaging='staircase', slope={c2['ls_st']:.2f})",
+    )
+    ax.loglog(
+        hz_c2,
+        c2["err_mut"],
+        "d--",
+        color="#ff7f0e",
+        lw=1.5,
+        label=f"Swapped projection (swap_projection, slope={c2['ls_mut']:.2f})",
+    )
+    ax.loglog(
+        hz_c2,
+        0.75 * c2["err_sub"][-1] * (hz_c2 / hz_c2[-1]) ** 2.0,
+        "k--",
+        lw=1.1,
+        alpha=0.6,
+        label="$\\mathcal{O}(h_z^2)$ guide",
+    )
+    ax.loglog(
+        hz_c2,
+        1.1 * c2["err_st"][-1] * (hz_c2 / hz_c2[-1]) ** 1.0,
+        "k:",
+        lw=1.0,
+        alpha=0.5,
+        label="$\\mathcal{O}(h_z)$ guide",
+    )
+    ax.set_xlabel("Fine patch axial cell step $h_z = H_z / 2$ [m]")
+    ax.set_ylabel(
+        "Mean relative frequency error $|f - f_{\\mathrm{1D}}| / f_{\\mathrm{1D}}$ [1]"
+    )
+    ax.set_title(
+        "(c) Subpixel vs staircase slab ($\\varepsilon_r = 4$, $z_s = 0.361\\,c$)"
+    )
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=7.3, loc="best")
+
+    out_path = os.path.join(out_dir, "subgrid3d_media_slab_convergence.png")
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    return out_path
+
+
 def plot_dispersive_cube(disp, out_dir):
     rows = disp["rows"]
     fig, axes = plt.subplots(1, 3, figsize=(14.0, 4.3), constrained_layout=True)
 
     arm_styles = {
-        "uniform_fine": dict(
-            marker="o",
-            ls="-",
-            label="Uniform fine h (SubgridFIT3D == SolverFIT3D)",
-        ),
-        "patch_r2": dict(
-            marker="s",
-            ls="--",
-            label="2:1 patch over cube (fine h)",
-        ),
-        "uniform_coarse": dict(
-            marker="^",
-            ls=":",
-            label="Uniform coarse H = 2h",
-        ),
+        "uniform_fine": {
+            "marker": "o",
+            "ls": "-",
+            "label": "Uniform fine h (SubgridFIT3D == SolverFIT3D)",
+        },
+        "patch_r2": {
+            "marker": "s",
+            "ls": "--",
+            "label": "2:1 patch over cube (fine h)",
+        },
+        "uniform_coarse": {
+            "marker": "^",
+            "ls": ":",
+            "label": "Uniform coarse H = 2h",
+        },
     }
     model_colors = {"lorentz": "#1f77b4", "drude": "#d62728"}
 
@@ -105,7 +397,7 @@ def plot_dispersive_cube(disp, out_dir):
             )
     ax.set_xlabel("State unknowns $n_{\\mathrm{state}}$ [DOF]")
     ax.set_ylabel("Relative frequency error $|f_1 - f_*| / f_*$ [1]")
-    ax.set_title("(a) Localized cube (5.6% vol.): error vs unknowns")
+    ax.set_title("(a) Localized cube (3.3% vol.): error vs unknowns")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(fontsize=7.2, loc="best")
 
@@ -172,7 +464,7 @@ def plot_dispersive_cube(disp, out_dir):
             )
     ax.set_xlabel("Work per nanosecond $n_{\\mathrm{state}} / \\Delta t$ [DOF / ns]")
     ax.set_ylabel("Relative frequency error $|f_1 - f_*| / f_*$ [1]")
-    ax.set_title("(c) Honest regime (53% patch, exterior-dominated)")
+    ax.set_title("(c) Honest regime (20% block on jump)")
     ax.grid(True, which="both", alpha=0.3)
 
     out_path = os.path.join(out_dir, "subgrid3d_media_dispersive_cube.png")
@@ -187,36 +479,36 @@ def plot_subpixel_sphere(sphere, out_dir):
     fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.4), constrained_layout=True)
 
     style_map = {
-        "staircase": dict(
-            color="#7f7f7f",
-            marker="o",
-            ls="-",
-            label=f"Staircase (n_sub=1, slope={orders['staircase']:.2f})",
-        ),
-        "subpixel_nsub2_momentN": dict(
-            color="#ff7f0e",
-            marker="s",
-            ls="--",
-            label="Subpixel Kottke (n_sub=2, moment normal)",
-        ),
-        "subpixel_nsub4_momentN": dict(
-            color="#1f77b4",
-            marker="^",
-            ls="-",
-            label="Subpixel Kottke (n_sub=4, moment normal)",
-        ),
-        "subpixel_nsub6_momentN": dict(
-            color="#2ca02c",
-            marker="v",
-            ls="-.",
-            label="Subpixel Kottke (n_sub=6, moment normal)",
-        ),
-        "subpixel_nsub4_exactN": dict(
-            color="#9467bd",
-            marker="d",
-            ls=":",
-            label="Subpixel Kottke (n_sub=4, exact radial normal)",
-        ),
+        "staircase": {
+            "color": "#7f7f7f",
+            "marker": "o",
+            "ls": "-",
+            "label": f"Staircase (n_sub=1, slope={orders['staircase']:.2f})",
+        },
+        "subpixel_nsub2_momentN": {
+            "color": "#ff7f0e",
+            "marker": "s",
+            "ls": "--",
+            "label": "Subpixel Kottke (n_sub=2, moment normal)",
+        },
+        "subpixel_nsub4_momentN": {
+            "color": "#1f77b4",
+            "marker": "^",
+            "ls": "-",
+            "label": "Subpixel Kottke (n_sub=4, moment normal)",
+        },
+        "subpixel_nsub6_momentN": {
+            "color": "#2ca02c",
+            "marker": "v",
+            "ls": "-.",
+            "label": "Subpixel Kottke (n_sub=6, moment normal)",
+        },
+        "subpixel_nsub4_exactN": {
+            "color": "#9467bd",
+            "marker": "d",
+            "ls": ":",
+            "label": "Subpixel Kottke (n_sub=4, exact radial normal)",
+        },
     }
 
     # Panel (a): Mean relative error across 4 modes vs fine cell step h [m]
@@ -318,9 +610,12 @@ def main():
 
     data = _load_results(args.in_dir)
     os.makedirs(args.out_dir, exist_ok=True)
-    p1 = plot_dispersive_cube(data["dispersive"], args.out_dir)
-    p2 = plot_subpixel_sphere(data["sphere"], args.out_dir)
-    print(f"Wrote {p1} and {p2}")
+    written = []
+    if "slab" in data:
+        written.append(plot_slab_convergence(data["slab"], args.out_dir))
+    written.append(plot_dispersive_cube(data["dispersive"], args.out_dir))
+    written.append(plot_subpixel_sphere(data["sphere"], args.out_dir))
+    print("Wrote " + ", ".join(written))
 
 
 if __name__ == "__main__":
