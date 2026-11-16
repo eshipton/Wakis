@@ -41,6 +41,7 @@ from wakis.unstructured.adapt import (
 from wakis.unstructured.analytic import (
     L_SHAPE_SCAN_BRACKET,
     l_shape_dirichlet_eigenvalue,
+    l_shape_dirichlet_field,
 )
 from wakis.unstructured.estimate import estimate_memory
 from wakis.unstructured.mesh import SimplexMesh
@@ -721,27 +722,87 @@ def test_e3_box_effectivity_slow(box_l0_l1_solves):
 
 def test_e5_mps_reference():
     """
-    E5: Method of particular solutions reference eigenvalue for the L-shape
-    agrees to <= 1e-7 relative between n_terms=24 and n_terms=32 and lies
-    strictly inside the scan bracket.
+    E5: Method of particular solutions reference eigenvalue and eigenfunction
+    for the L-shape agree to <= 1e-7 relative between n_terms=24 and n_terms=32
+    and lie strictly inside the scan bracket.
     """
-    lam24, sig24 = l_shape_dirichlet_eigenvalue(n_terms=24)
-    lam32, sig32 = l_shape_dirichlet_eigenvalue(n_terms=32)
+    lam24, sig24, coeffs24 = l_shape_dirichlet_eigenvalue(n_terms=24)
+    lam32, sig32, coeffs32 = l_shape_dirichlet_eigenvalue(n_terms=32)
     rel_diff = abs(lam24 - lam32) / lam32
     lo, hi = L_SHAPE_SCAN_BRACKET
+
+    # Verify reconstructed field u = psi z_hat and grad psi on interior points
+    pts_x = np.array([-0.5, -0.3, 0.4, -0.7])
+    pts_y = np.array([0.4, -0.4, 0.5, 0.2])
+    psi24, gx24, gy24 = l_shape_dirichlet_field(pts_x, pts_y, lam24, coeffs24)
+    psi32, gx32, gy32 = l_shape_dirichlet_field(pts_x, pts_y, lam32, coeffs32)
+    field_rel_diff = float(np.max(np.abs(psi24 - psi32)) / np.max(np.abs(psi32)))
+    grad_rel_diff = float(
+        np.max(np.hypot(gx24 - gx32, gy24 - gy32)) / np.max(np.hypot(gx32, gy32))
+    )
     print(
-        f"[E5] lam24={lam24:.10f} (sigma={sig24:.3e}), "
-        f"lam32={lam32:.10f} (sigma={sig32:.3e}), "
-        f"rel_diff={rel_diff:.3e}, bracket=({lo}, {hi})"
+        f"[E5] lam24={lam24:.10f} (sigma={sig24:.3e}, c0={coeffs24[0]:.6f}), "
+        f"lam32={lam32:.10f} (sigma={sig32:.3e}, c0={coeffs32[0]:.6f}), "
+        f"rel_diff={rel_diff:.3e}, field_rel_diff={field_rel_diff:.3e}, "
+        f"grad_rel_diff={grad_rel_diff:.3e}, bracket=({lo}, {hi})"
     )
     assert lo < lam24 < hi
     assert lo < lam32 < hi
     assert rel_diff <= 1e-7
+    assert coeffs24.shape == (24,) and coeffs24[0] > 0.0
+    assert coeffs32.shape == (32,) and coeffs32[0] > 0.0
+    assert field_rel_diff <= 1e-5
+    assert grad_rel_diff <= 1e-5
 
 
 # ---------------------------------------------------------------------------
 # A1-A4: Adaptive refinement loop and Voronoi export on the L-prism (slow)
 # ---------------------------------------------------------------------------
+
+
+def _l_prism_mps_errors(mesh, e, lam, coeffs, n_1d=6):
+    """
+    Compute per-tetrahedron ||curl(u - u_h)||_T^2 and k^2 ||u - u_h||_T^2 [1/m^2]
+    on the L-prism against the MPS reference field u = psi(x, y) z_hat and
+    curl u = grad psi x z_hat = (dpsi/dy, -dpsi/dx, 0) using `_duffy_tet_rule`,
+    with both u and u_h normalised to unit L^2(Omega) norm and sign-aligned.
+    """
+    U, B = whitney_fields(mesh, e)
+    p1_m = (np.ones((4, 4)) + np.eye(4)) / 20.0
+    u_l2_T = mesh.cell_volume * np.einsum("nik,ij,njk->n", U, p1_m, U)
+    inv_norm_uh = 1.0 / np.sqrt(float(np.sum(u_l2_T)))
+    U = U * inv_norm_uh
+    B = B * inv_norm_uh
+    u_l2_T = u_l2_T * (inv_norm_uh**2)
+
+    bary, W = _duffy_tet_rule(n_1d)
+    nc = mesh.n_cells
+    chunk = 256
+    I_psi2 = np.empty(nc, dtype=float)
+    I_psi_uh = np.empty(nc, dtype=float)
+    I_g2 = np.empty(nc, dtype=float)
+    I_curl = np.empty(nc, dtype=float)
+
+    for i0 in range(0, nc, chunk):
+        sl = slice(i0, min(nc, i0 + chunk))
+        X_xy = mesh.nodes[mesh.cells[sl], :2]
+        pts_xy = np.einsum("qk,nki->nqi", bary, X_xy)
+        psi, gx, gy = l_shape_dirichlet_field(
+            pts_xy[..., 0], pts_xy[..., 1], lam, coeffs
+        )
+        uh_z = np.einsum("qk,nk->nq", bary, U[sl, :, 2])
+        vw = mesh.cell_volume[sl, None] * W[None, :]
+        I_psi2[sl] = np.sum(vw * (psi**2), axis=1)
+        I_psi_uh[sl] = np.sum(vw * psi * uh_z, axis=1)
+        I_g2[sl] = np.sum(vw * (gx**2 + gy**2), axis=1)
+        I_curl[sl] = np.sum(vw * (gy * B[sl, None, 0] - gx * B[sl, None, 1]), axis=1)
+
+    I_B2 = mesh.cell_volume * np.sum(B**2, axis=1)
+    sgn = 1.0 if float(np.sum(I_psi_uh)) >= 0.0 else -1.0
+    alpha = sgn / np.sqrt(float(np.sum(I_psi2)))
+    cell_curl_e2 = (alpha**2) * I_g2 - 2.0 * alpha * I_curl + I_B2
+    cell_k2_e2 = float(lam) * ((alpha**2) * I_psi2 - 2.0 * alpha * I_psi_uh + u_l2_T)
+    return cell_curl_e2, cell_k2_e2
 
 
 def _loglog_interp(x_target, x_arr, y_arr):
@@ -762,10 +823,19 @@ def _loglog_interp(x_target, x_arr, y_arr):
 def l_prism_loop_runs():
     """
     Run uniform (gen 0..5), residual Dörfler, random (residual counts, seed 0),
-    and ZZ Dörfler arms once on l_prism_mesh(5, 3).
+    and ZZ Dörfler arms once on l_prism_mesh(5, 3), recording per-iteration
+    MPS curl and L2 error components.
     """
-    k2_ref, sigma_ref = l_shape_dirichlet_eigenvalue(n_terms=32)
+    k2_ref, sigma_ref, coeffs_ref = l_shape_dirichlet_eigenvalue(n_terms=32)
     m0 = l_prism_mesh(5, 3)
+
+    def _record_mps_errors(_it, mesh, e_vec, rec):
+        cell_curl_e2, cell_k2_e2 = _l_prism_mps_errors(mesh, e_vec, k2_ref, coeffs_ref)
+        curl_e2 = float(np.sum(cell_curl_e2))
+        k2_e2 = float(np.sum(cell_k2_e2))
+        rec["curl_err2_per_m2"] = curl_e2
+        rec["k2_l2_err2_per_m2"] = k2_e2
+        rec["energy_err2_per_m2"] = curl_e2 + k2_e2
 
     res_unif = adapt_eigen(
         m0,
@@ -773,6 +843,7 @@ def l_prism_loop_runs():
         marking="uniform",
         max_iter=6,
         k2_ref_per_m2=k2_ref,
+        callback=_record_mps_errors,
     )
     dofs_unif_5 = int(res_unif.history[-1]["n_dofs"])
 
@@ -784,6 +855,7 @@ def l_prism_loop_runs():
         theta=0.5,
         max_dofs=dofs_unif_5,
         k2_ref_per_m2=k2_ref,
+        callback=_record_mps_errors,
     )
     mark_counts = [h["n_marked"] for h in res_adapt.history]
 
@@ -795,6 +867,7 @@ def l_prism_loop_runs():
         seed=0,
         max_dofs=dofs_unif_5,
         k2_ref_per_m2=k2_ref,
+        callback=_record_mps_errors,
     )
 
     res_zz = adapt_eigen(
@@ -805,11 +878,13 @@ def l_prism_loop_runs():
         theta=0.5,
         max_dofs=dofs_unif_5,
         k2_ref_per_m2=k2_ref,
+        callback=_record_mps_errors,
     )
 
     return {
         "k2_ref": k2_ref,
         "sigma_ref": sigma_ref,
+        "coeffs_ref": coeffs_ref,
         "unif": res_unif,
         "adapt": res_adapt,
         "rand": res_rand,
@@ -885,19 +960,33 @@ def test_a1_adaptive_vs_uniform_and_random(l_prism_loop_runs):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "A2 pre-registered slope gap on L-prism up to 41817 DOFs: "
-        "last-half adaptive slope (-0.3756, after initial steep drop from "
-        "1.000e-2 at it=3 to 4.228e-3 at it=5) is not <= uniform gen 2..5 "
-        "slope (-0.4347) - 0.1 = -0.5347"
+        "A2 (eigenvalue-measure variant |k_h^2 - k^2|/k^2) pre-registered slope "
+        "gap on L-prism up to 41817 DOFs: last-half adaptive slope (-0.3756, "
+        "polluted by ||curl e||^2 - k^2 ||e||^2 cancellation at it=7->8) is not "
+        "<= uniform gen 2..5 slope (-0.4347) - 0.1 = -0.5347"
     ),
 )
-def test_a2_convergence_slopes(l_prism_loop_runs):
+def test_a2_eigenvalue_convergence_slopes(l_prism_loop_runs):
     """
-    A2: Least-squares slope of log|err| vs log N over the last half of the
-    adaptive iterations <= (least-squares slope over uniform generations 2..5) - 0.1.
+    A2 (eigenvalue-measure variant): Least-squares slope of log|k_h^2 - k^2|/k^2
+    vs log N over the last half of the adaptive iterations <= (least-squares
+    slope over uniform generations 2..5) - 0.1.
     """
     res_unif = l_prism_loop_runs["unif"]
     res_adapt = l_prism_loop_runs["adapt"]
+
+    u_dofs_all = np.array([h["n_dofs"] for h in res_unif.history], dtype=float)
+    u_errs_all = np.array(
+        [abs(h["rel_err_signed"]) for h in res_unif.history], dtype=float
+    )
+    kuhn_slopes = [
+        float(
+            np.polyfit(np.log(u_dofs_all[g : g + 4]), np.log(u_errs_all[g : g + 4]), 1)[
+                0
+            ]
+        )
+        for g in (0, 1, 2)
+    ]
 
     u_slice = res_unif.history[2:6]
     u_dofs = np.array([h["n_dofs"] for h in u_slice], dtype=float)
@@ -911,11 +1000,111 @@ def test_a2_convergence_slopes(l_prism_loop_runs):
     slope_adapt = float(np.polyfit(np.log(a_dofs), np.log(a_errs), 1)[0])
 
     print(
-        f"[A2] slope_adapt(it={half_idx}..{len(res_adapt.history) - 1})={slope_adapt:.4f}, "
+        f"[A2 eigenvalue] unif_kuhn_window_slopes(0..3, 1..4, 2..5)="
+        f"({kuhn_slopes[0]:.4f}, {kuhn_slopes[1]:.4f}, {kuhn_slopes[2]:.4f}); "
+        f"slope_adapt(it={half_idx}..{len(res_adapt.history) - 1})={slope_adapt:.4f}, "
         f"slope_unif(gen 2..5)={slope_unif:.4f}, "
         f"target <= {slope_unif - 0.1:.4f}"
     )
     assert slope_adapt <= slope_unif - 0.1
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "A2' (energy error |||e|||^2 and indicator eta^2) pre-registered slope "
+        "check on L-prism up to 41817 DOFs: adaptive reaches slope_adapt_energy="
+        "-0.6629 and slope_adapt_eta2=-0.6549 (matching -2/3 = -0.6667 to within "
+        "0.012), while uniform gen 2..5 is still pre-asymptotic at "
+        "slope_unif_energy=-0.5632 and slope_unif_eta2=-0.5888 (vs asymptotic "
+        "-4/9 = -0.4444), leaving slope_adapt - slope_unif = -0.0997 on |||e|||^2 "
+        "and -0.0661 on eta^2 vs the -0.1000 gap threshold"
+    ),
+)
+def test_a2_prime_energy_and_indicator_slopes(l_prism_loop_runs):
+    """
+    A2' (decisive experiment): Print per-iteration ||curl e||^2 and k^2 ||e||^2
+    for uniform and adaptive arms to show the Babuška-Osborn cancellation
+    k_h^2 - k^2 = ||curl e||^2 - k^2 ||e||^2, verify monotone decay of both
+    error components, and test the pre-registered slopes (uniform -4/9,
+    adaptive -2/3, and slope_adapt <= slope_unif - 0.1) on the non-cancelling
+    energy error |||e|||^2 = ||curl e||^2 + k^2 ||e||^2 and on eta^2.
+    """
+    k2_ref = l_prism_loop_runs["k2_ref"]
+    res_unif = l_prism_loop_runs["unif"]
+    res_adapt = l_prism_loop_runs["adapt"]
+    res_zz = l_prism_loop_runs["zz"]
+
+    for arm_label, res in (
+        ("unif", res_unif),
+        ("adapt", res_adapt),
+        ("zz", res_zz),
+    ):
+        for it, h in enumerate(res.history):
+            c_e2 = h["curl_err2_per_m2"]
+            k2_e2 = h["k2_l2_err2_per_m2"]
+            en_e2 = h["energy_err2_per_m2"]
+            bo_diff = c_e2 - k2_e2
+            eig_diff = h["k2_per_m2"] - k2_ref
+            print(
+                f"[A2' {arm_label} it={it}] dofs={h['n_dofs']} "
+                f"curl_err2={c_e2:.5e} k2_err2={k2_e2:.5e} "
+                f"curl_minus_k2={bo_diff:+.5e} kh2_minus_k2={eig_diff:+.5e} "
+                f"energy_err2={en_e2:.5e} eta2={h['eta2_per_m2']:.5e} "
+                f"rel_err_signed={h['rel_err_signed']:+.5e}"
+            )
+
+    # Both ||curl e||^2 and k^2 ||e||^2 (and hence |||e|||^2 and eta^2) decrease
+    # strictly monotonically at every step of uniform and residual-adaptive arms,
+    # even where |k_h^2 - k^2| rises (unif gen 1->2, adapt it 2->3 and 7->8).
+    for arm_label, res in (("unif", res_unif), ("adapt", res_adapt)):
+        for key in (
+            "curl_err2_per_m2",
+            "k2_l2_err2_per_m2",
+            "energy_err2_per_m2",
+            "eta2_per_m2",
+        ):
+            vals = [h[key] for h in res.history]
+            assert all(vals[i + 1] < vals[i] for i in range(len(vals) - 1)), (
+                f"A2' non-monotone {key} on {arm_label}: {vals}"
+            )
+
+    u_slice = res_unif.history[2:6]
+    u_dofs = np.array([h["n_dofs"] for h in u_slice], dtype=float)
+    u_en = np.array([h["energy_err2_per_m2"] for h in u_slice], dtype=float)
+    u_eta = np.array([h["eta2_per_m2"] for h in u_slice], dtype=float)
+    slope_unif_energy = float(np.polyfit(np.log(u_dofs), np.log(u_en), 1)[0])
+    slope_unif_eta2 = float(np.polyfit(np.log(u_dofs), np.log(u_eta), 1)[0])
+
+    half_idx = len(res_adapt.history) // 2
+    a_slice = res_adapt.history[half_idx:]
+    a_dofs = np.array([h["n_dofs"] for h in a_slice], dtype=float)
+    a_en = np.array([h["energy_err2_per_m2"] for h in a_slice], dtype=float)
+    a_eta = np.array([h["eta2_per_m2"] for h in a_slice], dtype=float)
+    slope_adapt_energy = float(np.polyfit(np.log(a_dofs), np.log(a_en), 1)[0])
+    slope_adapt_eta2 = float(np.polyfit(np.log(a_dofs), np.log(a_eta), 1)[0])
+
+    rate_p1 = -4.0 / 9.0
+    rate_p2 = -2.0 / 3.0
+    print(
+        f"[A2' slopes] energy |||e|||^2: "
+        f"slope_adapt(it={half_idx}..{len(res_adapt.history) - 1})={slope_adapt_energy:.4f} "
+        f"(P2={rate_p2:.4f}), "
+        f"slope_unif(gen 2..5)={slope_unif_energy:.4f} (P1={rate_p1:.4f}), "
+        f"diff={slope_adapt_energy - slope_unif_energy:.4f}, "
+        f"target <= {slope_unif_energy - 0.1:.4f}; "
+        f"indicator eta^2: "
+        f"slope_adapt(it={half_idx}..{len(res_adapt.history) - 1})={slope_adapt_eta2:.4f} "
+        f"(P2={rate_p2:.4f}), "
+        f"slope_unif(gen 2..5)={slope_unif_eta2:.4f} (P1={rate_p1:.4f}), "
+        f"diff={slope_adapt_eta2 - slope_unif_eta2:.4f}, "
+        f"target <= {slope_unif_eta2 - 0.1:.4f}"
+    )
+    assert slope_adapt_energy <= slope_unif_energy - 0.1
+    assert slope_adapt_eta2 <= slope_unif_eta2 - 0.1
+    assert slope_adapt_energy <= rate_p2
+    assert slope_adapt_eta2 <= rate_p2
 
 
 @pytest.mark.slow
