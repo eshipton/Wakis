@@ -670,14 +670,24 @@ def test_perturbed_box_order_small():
     Convergence of the fundamental ``TE101`` cavity frequency on a smoothly
     perturbed box ``[0, a] x [0, b] x [0, d]`` (``a = 1.0 m, b = 0.7 m, d = 0.8 m``)
     with interior displacement ``dx_i = amp * h_i * sin(pi x/a) sin(pi y/b) sin(pi z/d)``
-    at amplitude ``amp = 0.3`` from ``4 x 3 x 4`` to ``8 x 6 x 8`` cells.
+    at amplitude ``amp = 0.3``.
+
+    Computes the canonical W4-B definition **D** (least-squares slope of
+    ``ln |e|`` vs ``ln n`` on family ``F1`` ``(n, n, n)`` for
+    ``n in {6, 8, 12, 16}``, ``amp = 0.3`` cell mode) via
+    ``studies.curvilinear3d.perturbed_box_order.compute_d_order``, together with
+    the legacy two-level ``F2`` ``k = 1 -> 2`` (``4 x 3 x 4 -> 8 x 6 x 8``)
+    estimator.
 
     Measured values:
     - ``omega_analytic = 1.50765688e+09 rad/s``
-    - ``4 x 3 x 4``: ``omega_h = 1.46978569e+09 rad/s``, ``rel_error = 2.511923e-02``
-    - ``8 x 6 x 8``: ``omega_h = 1.49818392e+09 rad/s``, ``rel_error = 6.283230e-03``
-    - Observed order ``log2(err_434 / err_868) = 1.999214 >= 1.8``.
+    - ``D (F1 n in {6, 8, 12, 16}) = 1.974416 >= 1.8``
+      (errors ``-1.106566e-02, -6.283780e-03, -2.823016e-03, -1.595393e-03``;
+      under ``_pec_reconstruction="drop_only"``: ``D_drop_only = 1.795576 < 1.8``)
+    - Legacy two-level ``F2 k=1->2``: ``4 x 3 x 4`` ``rel_error = 2.511923e-02``,
+      ``8 x 6 x 8`` ``rel_error = 6.283230e-03``, ``order = 1.999214 >= 1.8``.
     """
+    from studies.curvilinear3d.perturbed_box_order import compute_d_order
     from wakis.curvilinear.mappings3d import (
         box_te101_omega,
         min_normalised_corner_det,
@@ -715,13 +725,18 @@ def test_perturbed_box_order_small():
     err_868 = abs(w_868 - omega_ana) / omega_ana
     order = float(np.log2(err_434 / err_868))
 
+    d_order, d_ns, d_signed_errs = compute_d_order(a=a, b=b, d=d, amp=amp)
+
     print(
         f"[test_perturbed_box_order_small] omega_ana={omega_ana:.8e}, "
-        f"w_434={w_434:.8e} (err={err_434:.6e}, min_det={min_normalised_corner_det(blk_434):.6e}), "
-        f"w_868={w_868:.8e} (err={err_868:.6e}, min_det={min_normalised_corner_det(blk_868):.6e}), "
-        f"order={order:.6f}"
+        f"D={d_order:.6f} (ns={d_ns}, errs={[f'{e:+.6e}' for e in d_signed_errs]}), "
+        f"legacy two-level F2 k=1->2={order:.6f} "
+        f"(w_434={w_434:.8e}, err={err_434:.6e}, min_det={min_normalised_corner_det(blk_434):.6e}; "
+        f"w_868={w_868:.8e}, err={err_868:.6e}, min_det={min_normalised_corner_det(blk_868):.6e})"
     )
     assert err_868 < err_434
+    assert np.all(np.diff(np.abs(d_signed_errs)) < 0.0)
+    assert d_order >= 1.8
     assert order >= 1.8
 
     # Mutation check: displacing the outer wall ruins convergence to omega_ana
@@ -876,7 +891,7 @@ def test_sphere_lowest_roots():
     assert abs(float(sphere_bessel_residual(x2 + 1e-3, l=1))) > 1e-4
 
 
-def _check_wall_octant_reconstructions(solver, rng):
+def _check_wall_octant_reconstructions(solver, rng, return_g=False):
     """Evaluate max relative ||D_c x n|| / ||D_c||, max relative |S_e . D_c - d_e| / |d_e|
     on free edges at 1-wall octants, and magnetic wall normal ratios |B_c . n_wall| / ||B_c||."""
     blk = solver.block
@@ -904,6 +919,8 @@ def _check_wall_octant_reconstructions(solver, rng):
     max_sharp_d = 0.0
     max_b_face_ratio = 0.0
     max_b_node_ratio = 0.0
+    max_g = 0.0
+    max_b_node_excess = -np.inf
 
     for a in (0, 1):
         for b in (0, 1):
@@ -972,8 +989,23 @@ def _check_wall_octant_reconstructions(solver, rng):
 
                         n_nd = blk.node_normals[ip[m], jp[m], kp[m]]
                         r_nd = np.abs(np.sum(B_c[m] * n_nd, axis=1)) / B_norm[m]
+                        g = np.linalg.norm(np.cross(n_nd, n_f), axis=1)
                         max_b_node_ratio = max(max_b_node_ratio, float(np.max(r_nd)))
+                        max_g = max(max_g, float(np.max(g)))
+                        max_b_node_excess = max(
+                            max_b_node_excess, float(np.max(r_nd - g))
+                        )
 
+    if return_g:
+        return (
+            max_d_cross,
+            max_d_flux_err,
+            max_sharp_d,
+            max_b_face_ratio,
+            max_b_node_ratio,
+            max_g,
+            max_b_node_excess,
+        )
     return (
         max_d_cross,
         max_d_flux_err,
@@ -990,8 +1022,10 @@ def test_pec_constraint_wall_octants():
     octant with one wall normal ``n``, the constrained reconstruction ``D_c``
     satisfies ``||D_c x n|| / ||D_c|| <= 1e-12`` and ``|S_e . D_c - d_e| / |d_e| <= 1e-12``
     for the free edge of that octant, while sharp-edge/corner octants satisfy
-    ``D_c = 0``. Also checks the magnetic wall normal ratio ``|B_c . n_wall| / ||B_c||``
-    from ``R_c b`` with wall face ``b = 0`` and degenerate wall-octant detection.
+    ``D_c = 0``. Also checks the magnetic wall normal ratio ``|B_c . n_f| / ||B_c|| <= 1e-12``
+    and the node-normal facet-angle identity ``m1 = |B_c . n_v| / ||B_c|| <= g + 1e-12``
+    where ``g = ||n_v x n_f||`` from ``R_c b`` with wall face ``b = 0``, as well as
+    degenerate wall-octant detection.
     """
     from wakis.curvilinear.mappings3d import perturbed_box_nodes, sphere_nodes
 
@@ -1009,33 +1043,43 @@ def test_pec_constraint_wall_octants():
         sph_sharp,
         sph_b_face,
         sph_b_node,
-    ) = _check_wall_octant_reconstructions(s_sph, rng)
+        sph_g,
+        sph_b_excess,
+    ) = _check_wall_octant_reconstructions(s_sph, rng, return_g=True)
     (
         box_d_cross,
         box_d_flux,
         box_sharp,
         box_b_face,
         box_b_node,
-    ) = _check_wall_octant_reconstructions(s_box, rng)
+        box_g,
+        box_b_excess,
+    ) = _check_wall_octant_reconstructions(s_box, rng, return_g=True)
 
     print(
         f"[test_pec_constraint_wall_octants] sphere_6: "
         f"max_d_cross={sph_d_cross:.3e}, max_d_flux_err={sph_d_flux:.3e}, "
         f"max_sharp_d={sph_sharp:.3e}, max_b_face_ratio={sph_b_face:.3e}, "
-        f"max_b_node_ratio={sph_b_node:.6e}; "
+        f"max_b_node_ratio={sph_b_node:.6e}, max_g={sph_g:.6e}, "
+        f"max_b_node_excess={sph_b_excess:.3e}; "
         f"pbox_654: max_d_cross={box_d_cross:.3e}, max_d_flux_err={box_d_flux:.3e}, "
         f"max_sharp_d={box_sharp:.3e}, max_b_face_ratio={box_b_face:.3e}, "
-        f"max_b_node_ratio={box_b_node:.3e}"
+        f"max_b_node_ratio={box_b_node:.3e}, max_g={box_g:.3e}, "
+        f"max_b_node_excess={box_b_excess:.3e}"
     )
     assert sph_d_cross <= 1e-12
     assert sph_d_flux <= 1e-12
     assert sph_sharp == 0.0
     assert sph_b_face <= 1e-12
+    assert sph_b_excess <= 1e-12
+    assert sph_b_node <= sph_g + 1e-12
 
     assert box_d_cross <= 1e-12
     assert box_d_flux <= 1e-12
     assert box_sharp == 0.0
     assert box_b_face <= 1e-12
+    assert box_b_excess <= 1e-12
+    assert box_b_node <= box_g + 1e-12
     assert box_b_node <= 1e-12
 
     # Degenerate wall octant check: if S_e . n == 0 on the free edge of a wall octant,

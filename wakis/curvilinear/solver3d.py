@@ -623,7 +623,7 @@ class CurvilinearFIT3D:
         self._dt_max = 2.0 / np.sqrt(lam)
         return self._dt_max
 
-    def cavity_frequencies(self, k=6):
+    def cavity_frequencies(self, k=6, return_vectors=False):
         """
         Lowest ``k`` positive discrete cavity resonant angular frequencies
         ``omega_h`` [rad/s], sorted in ascending order.
@@ -648,11 +648,18 @@ class CurvilinearFIT3D:
         ----------
         k : int, optional
             Number of lowest resonant angular frequencies to return (default 6).
+        return_vectors : bool, optional
+            If True, also return the corresponding unknown-edge electric flux
+            eigenvectors ``d`` of shape ``(n_unknown_edges, k)`` [C] sorted in
+            the same order as ``omega_h``. Default is False.
 
         Returns
         -------
-        ndarray of shape (k,)
+        omega_h : ndarray of shape (k,)
             Sorted angular frequencies ``omega_h`` [rad/s].
+        vecs : ndarray of shape (n_unknown_edges, k), optional
+            Unknown-edge electric flux eigenvectors ``d`` [C], returned only
+            when ``return_vectors=True``.
         """
         k = int(k)
         if k < 1 or k >= self.n_unknown_edges:
@@ -671,14 +678,28 @@ class CurvilinearFIT3D:
 
         rng = np.random.default_rng(0)
         v0 = rng.standard_normal(self.n_unknown_edges)
-        w2 = eigsh(
+        if not return_vectors:
+            w2 = eigsh(
+                H,
+                k=k,
+                M=self.W_eps_u,
+                sigma=0.0,
+                which="LM",
+                v0=v0,
+                return_eigenvectors=False,
+            )
+            w2 = np.sort(np.maximum(w2.real, 0.0))
+            return np.sqrt(w2[:k])
+
+        w2, vecs = eigsh(
             H,
             k=k,
             M=self.W_eps_u,
             sigma=0.0,
             which="LM",
             v0=v0,
-            return_eigenvectors=False,
+            return_eigenvectors=True,
         )
-        w2 = np.sort(np.maximum(w2.real, 0.0))
-        return np.sqrt(w2[:k])
+        order = np.argsort(w2.real)[:k]
+        omegas = np.sqrt(np.maximum(w2.real[order], 0.0))
+        return omegas, vecs[:, order].real
