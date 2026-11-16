@@ -22,6 +22,7 @@ and unstable eigenvector localisation for ``plot_cpml_patches.py``.
 """
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -34,6 +35,41 @@ from wakis.subgrid3d import SubgridLTSFIT3D, SubgridMesh3D
 from wakis.subgrid3d.pml import cpml_generator, diagnose_cpml_eigenvector
 
 H_F = 0.04
+
+
+def _make_cpml_solver(
+    dims=(8, 5, 5),
+    patch_cells=None,
+    ratio=2,
+    layer_axes=((0, 1, 4),),
+    alpha_hz=10.0e6,
+    sigma_sampling="fine",
+    R0=1e-6,
+    order=3.0,
+    H=H_F,
+    dt=None,
+):
+    axes = [np.linspace(0.0, n * H, n + 1) for n in dims]
+    m = SubgridMesh3D(*axes)
+    if patch_cells is not None:
+        bounds = tuple((lo * H, hi * H) for lo, hi in patch_cells)
+        m.add_box(bounds, ratio=ratio)
+    th = np.zeros((3, 2))
+    for d, side, n_cells in layer_axes:
+        th[d, side] = n_cells * H
+    return SubgridLTSFIT3D(
+        m,
+        lts=False,
+        dt=dt,
+        pml={
+            "thickness": th,
+            "R0": R0,
+            "order": order,
+            "alpha_hz": alpha_hz,
+            "allow_patches": True,
+            "sigma_sampling": sigma_sampling,
+        },
+    )
 
 
 def _box_f(n_int, n_pml, n_ext, patch, through, dt, pml_kw=None):
@@ -54,9 +90,12 @@ def _box_f(n_int, n_pml, n_ext, patch, through, dt, pml_kw=None):
         )
     pml = None
     if n_pml and n_ext == 0:
-        pml = dict(thickness=[(n_pml * H_F, n_pml * H_F)] * 3, R0=1e-6)
+        pml = {"thickness": [(n_pml * H_F, n_pml * H_F)] * 3, "R0": 1e-6}
         pml.update(pml_kw or {})
     return SubgridLTSFIT3D(m, lts=False, dt=dt, pml=pml)
+
+
+_REF_CACHE = {}
 
 
 def run_reflection_row(n_int, n_pml, variant):
@@ -65,12 +104,20 @@ def run_reflection_row(n_int, n_pml, variant):
     through = variant in ("patch_through_c1_alpha0", "patch_through_alpha1GHz")
     pml_kw = None
     if variant == "patch_through_c1_alpha0":
-        pml_kw = dict(allow_patches=True, sigma_sampling="coarse_cell", alpha_hz=0.0)
+        pml_kw = {
+            "allow_patches": True,
+            "sigma_sampling": "coarse_cell",
+            "alpha_hz": 0.0,
+        }
     elif variant == "patch_through_alpha1GHz":
-        pml_kw = dict(allow_patches=True, sigma_sampling="coarse_cell", alpha_hz=1.0e9)
+        pml_kw = {
+            "allow_patches": True,
+            "sigma_sampling": "coarse_cell",
+            "alpha_hz": 1.0e9,
+        }
 
     s_open = _box_f(n_int, n_pml, 0, patch, through, None, pml_kw)
-    dt = s_open.dt
+    dt = float(s_open.dt)
     f0 = 1.0e9
     tau = 0.5 / f0
     src_pt = (0.3 * L, 0.5 * L, 0.5 * L)
@@ -80,26 +127,51 @@ def run_reflection_row(n_int, n_pml, variant):
     ]
     # Time gate before wall reflection from the 3.7x closed reference arrives
     t_end = 4.5e-9 if n_int < 20 else 8.0e-9
-    ext_cells = 3 * n_int // 2 + n_pml
-    sigs = []
-    for ext in (0, ext_cells):
-        s = (
-            s_open
-            if ext == 0
-            else _box_f(n_int, n_pml, ext, patch, through, dt, pml_kw)
-        )
-        s.reset()
-        s.sources, s.probes = [], []
-        s.add_current(
+    pad_cells = max(n_pml + 10, round(1.35 * n_int))
+    ext_cells = pad_cells - n_pml
+
+    s_open.reset()
+    s_open.sources, s_open.probes = [], []
+    s_open.add_current(
+        src_pt,
+        2,
+        lambda t: -(t - 4 * tau) / tau * np.exp(-(((t - 4 * tau) / tau) ** 2)),
+    )
+    for p in prb:
+        s_open.add_probe(p, 2)
+    s_open.run(int(t_end / dt))
+    sig_open_arr = np.array([p["values"] for p in s_open.probes])
+    del s_open
+    gc.collect()
+
+    ref_key = (
+        n_int,
+        pad_cells,
+        patch,
+        through,
+        n_pml if through else 0,
+        round(dt * 1e18, 6),
+    )
+    if ref_key not in _REF_CACHE:
+        s_ref = _box_f(n_int, n_pml, ext_cells, patch, through, dt, pml_kw)
+        s_ref.reset()
+        s_ref.sources, s_ref.probes = [], []
+        s_ref.add_current(
             src_pt,
             2,
             lambda t: -(t - 4 * tau) / tau * np.exp(-(((t - 4 * tau) / tau) ** 2)),
         )
         for p in prb:
-            s.add_probe(p, 2)
-        s.run(int(t_end / dt))
-        sigs.append(np.array([p["values"] for p in s.probes]))
-    err = np.abs(sigs[0] - sigs[1]).max(axis=1) / (np.abs(sigs[1]).max(axis=1) + 1e-30)
+            s_ref.add_probe(p, 2)
+        s_ref.run(int(t_end / dt))
+        _REF_CACHE[ref_key] = np.array([p["values"] for p in s_ref.probes])
+        del s_ref
+        gc.collect()
+    sig_ref_arr = _REF_CACHE[ref_key]
+
+    err = np.abs(sig_open_arr - sig_ref_arr).max(axis=1) / (
+        np.abs(sig_ref_arr).max(axis=1) + 1e-30
+    )
     return {
         "n_int": int(n_int),
         "n_pml": int(n_pml),
@@ -108,15 +180,16 @@ def run_reflection_row(n_int, n_pml, variant):
         "dt": float(dt),
         "err_probes": [float(x) for x in err],
         "err": float(err.max()),
-        "t": (np.arange(sigs[0].shape[1]) * dt).tolist(),
-        "sig_open": sigs[0][0].tolist(),
-        "sig_ref": sigs[1][0].tolist(),
+        "t": (np.arange(sig_open_arr.shape[1]) * dt).tolist(),
+        "sig_open": sig_open_arr[0].tolist(),
+        "sig_ref": sig_ref_arr[0].tolist(),
     }
 
 
 def run_spectrum_summary():
     """Compute semi-discrete generator spectrum and eigenvector diagnosis on
-    an 8 x 5 x 5 coarse mesh with a 4-cell +x CPML layer."""
+    an 8 x 5 x 5 coarse mesh with a 4-cell +x CPML layer and across the T1
+    geometry matrix of `tests/test_121_subgrid3d_cpml_patches.py`."""
     dims = (8, 5, 5)
     axes = [np.linspace(0.0, n * H_F, n + 1) for n in dims]
     th = np.zeros((3, 2))
@@ -129,14 +202,14 @@ def run_spectrum_summary():
         return SubgridLTSFIT3D(
             m,
             lts=False,
-            pml=dict(
-                thickness=th,
-                R0=1e-6,
-                order=3.0,
-                alpha_hz=alpha_hz,
-                allow_patches=True,
-                sigma_sampling=sampling,
-            ),
+            pml={
+                "thickness": th,
+                "R0": 1e-6,
+                "order": 3.0,
+                "alpha_hz": alpha_hz,
+                "allow_patches": True,
+                "sigma_sampling": sampling,
+            },
         )
 
     s_nop = _build(None, "fine")
@@ -172,6 +245,81 @@ def run_spectrum_summary():
     s_thru_a1g = _build(((3, 7), (1, 4), (1, 4)), "coarse_cell", alpha_hz=1.0e9)
     re_thru_a1g = float(eigvals(cpml_generator(s_thru_a1g).toarray()).real.max() / smax)
 
+    # Full T1 geometry spectrum matrix (plus tube_2to1)
+    t1_cases = [
+        ("nopatch_x", (6, 4, 4), None, 2, ((0, 1, 3),)),
+        ("x_into_2to1", (7, 5, 5), ((3, 5), (1, 4), (1, 4)), 2, ((0, 1, 4),)),
+        ("y_into_2to1", (5, 7, 5), ((1, 4), (3, 5), (1, 4)), 2, ((1, 1, 4),)),
+        ("z_into_2to1", (5, 5, 7), ((1, 4), (1, 4), (3, 5)), 2, ((2, 1, 4),)),
+        ("tube_2to1", (6, 4, 4), ((0, 6), (1, 3), (1, 3)), 2, ((0, 1, 3),)),
+        ("x_through_3to1", (5, 3, 3), ((2, 5), (1, 2), (1, 2)), 3, ((0, 1, 3),)),
+        (
+            "corner_xy_2to1",
+            (5, 5, 4),
+            ((2, 5), (2, 5), (1, 3)),
+            2,
+            ((0, 1, 3), (1, 1, 3)),
+        ),
+        ("x_into_3to1", (5, 3, 3), ((1, 3), (1, 2), (1, 2)), 3, ((0, 1, 3),)),
+        ("x_through_2to1", (6, 4, 4), ((2, 6), (1, 3), (1, 3)), 2, ((0, 1, 3),)),
+        ("y_through_2to1", (4, 6, 4), ((1, 3), (2, 6), (1, 3)), 2, ((1, 1, 3),)),
+        ("z_through_2to1", (4, 4, 6), ((1, 3), (1, 3), (2, 6)), 2, ((2, 1, 3),)),
+    ]
+    t1_rows = []
+    for name, c_dims, patch_cells, ratio, layer_axes in t1_cases:
+        s_10m = _make_cpml_solver(
+            dims=c_dims,
+            patch_cells=patch_cells,
+            ratio=ratio,
+            layer_axes=layer_axes,
+            alpha_hz=10.0e6,
+            sigma_sampling="coarse_cell",
+        )
+        sm_c = float(s_10m.cpml.sigma_max)
+        vals_10m = eigvals(cpml_generator(s_10m).toarray())
+        idx_10m = int(np.argmax(vals_10m.real))
+        re_c1_10m = float(vals_10m[idx_10m].real / sm_c)
+        freq_c1_10m = float(abs(vals_10m[idx_10m].imag) / (2 * np.pi))
+
+        s_0 = _make_cpml_solver(
+            dims=c_dims,
+            patch_cells=patch_cells,
+            ratio=ratio,
+            layer_axes=layer_axes,
+            alpha_hz=0.0,
+            sigma_sampling="coarse_cell",
+        )
+        re_c1_0 = float(eigvals(cpml_generator(s_0).toarray()).real.max() / sm_c)
+
+        if patch_cells is not None:
+            s_f = _make_cpml_solver(
+                dims=c_dims,
+                patch_cells=patch_cells,
+                ratio=ratio,
+                layer_axes=layer_axes,
+                alpha_hz=10.0e6,
+                sigma_sampling="fine",
+            )
+            re_fine_10m = float(
+                eigvals(cpml_generator(s_f).toarray()).real.max() / sm_c
+            )
+        else:
+            re_fine_10m = re_c1_10m
+
+        t1_rows.append(
+            {
+                "geometry": name,
+                "ratio": int(ratio),
+                "re_c1_10m": re_c1_10m,
+                "re_c1_0": re_c1_0,
+                "re_fine_10m": re_fine_10m,
+                "freq_c1_10m_hz": freq_c1_10m,
+                "stable_c1_10m": bool(re_c1_10m <= 1e-6),
+                "stable_fine_10m": bool(re_fine_10m <= 1e-6),
+            }
+        )
+        gc.collect()
+
     return {
         "sigma_max": float(smax),
         "n_state": {
@@ -192,6 +340,7 @@ def run_spectrum_summary():
             "patch_through_c1_alpha0": re_thru_c1_a0,
             "patch_through_alpha1GHz": re_thru_a1g,
         },
+        "t1_geometries": t1_rows,
         "diagnosis_fine": {
             "lambda_re": float(diag_tf["lambda_max"].real),
             "lambda_im": float(diag_tf["lambda_max"].imag),
@@ -213,9 +362,8 @@ def main():
 
     out_dir = os.path.abspath(a.out)
     if a.quick and (
-        out_dir.endswith(os.sep + "results")
+        out_dir.endswith((os.sep + "results", os.sep + "img"))
         or (os.sep + "results" + os.sep) in out_dir
-        or out_dir.endswith(os.sep + "img")
     ):
         raise ValueError("--quick must not write into results/ or docs/img/")
     os.makedirs(out_dir, exist_ok=True)
