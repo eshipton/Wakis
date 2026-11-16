@@ -25,6 +25,11 @@ Covers:
 """
 
 import copy
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import numpy as np
 import pytest
@@ -313,6 +318,7 @@ def test_m2_m3_local_cluster_bitwise_energy_and_mutations(case_suite):
     max_energy_rel = 0.0
     max_energy_ratio_to_bound = 0.0
     energy_by_case = {}
+    energy_by_case_p = {}
 
     for cid in ("a", "b", "c", "d", "e"):
         s0, ref = case_suite[cid]
@@ -324,6 +330,7 @@ def test_m2_m3_local_cluster_bitwise_energy_and_mutations(case_suite):
         case_max_de = 0.0
 
         for n_parts in (2, 3, 4):
+            p_max_de = 0.0
             for method in ("rcb", "blocks"):
                 lc = SubgridLocalCluster(s0, n_parts=n_parts, method=method)
                 assert lc.exchange_counts_per_step() == expected_exchanges[cid]
@@ -343,9 +350,11 @@ def test_m2_m3_local_cluster_bitwise_energy_and_mutations(case_suite):
                 dE = abs(lc.energy() - E_ref)
                 assert dE <= e_bound, (cid, n_parts, method, dE, e_bound)
                 rel_e = dE / E_ref
+                p_max_de = max(p_max_de, rel_e)
                 case_max_de = max(case_max_de, rel_e)
                 max_energy_rel = max(max_energy_rel, rel_e)
                 max_energy_ratio_to_bound = max(max_energy_ratio_to_bound, dE / e_bound)
+            energy_by_case_p[(cid, n_parts)] = p_max_de
         energy_by_case[cid] = (case_max_de, 2.0 * gamma(n_terms + 2))
 
     # Mutation 1: _mutation="drop_halo" on cases (a)-(e) with n_parts=3, method="rcb"
@@ -398,7 +407,11 @@ def test_m2_m3_local_cluster_bitwise_energy_and_mutations(case_suite):
         f"case_a_bound={energy_by_case['a'][1]:.2e} "
         f"case_b_rel={energy_by_case['b'][0]:.2e} "
         f"case_c_rel={energy_by_case['c'][0]:.2e} "
+        f"case_c_p2_rel={energy_by_case_p[('c', 2)]:.2e} "
+        f"case_c_p4_rel={energy_by_case_p[('c', 4)]:.2e} "
         f"case_c_bound={energy_by_case['c'][1]:.2e} "
+        f"case_d_rel={energy_by_case['d'][0]:.2e} "
+        f"case_d_bound={energy_by_case['d'][1]:.2e} "
         f"case_e_rel={energy_by_case['e'][0]:.2e} "
         f"case_e_bound={energy_by_case['e'][1]:.2e}"
     )

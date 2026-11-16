@@ -251,9 +251,11 @@ def test_m4_distributed_mpi_bitwise_and_mutations(mpi_cases):
     me = comm.Get_rank()
     P = comm.Get_size()
     max_energy_rel = 0.0
+    case_energy_rel = {}
 
     for cid in ("a", "b", "c", "d", "e"):
         s0, ref = suite[cid]
+        c_rel = 0.0
         for mode in ("replicated", "scatter"):
             for method in ("rcb", "blocks") if mode == "replicated" else ("rcb",):
                 s_arg = s0 if (mode == "replicated" or me == 0) else None
@@ -295,13 +297,16 @@ def test_m4_distributed_mpi_bitwise_and_mutations(mpi_cases):
                         n_terms = int(s0.n_free + s0.n_faces)
                         bound = 2.0 * gamma(n_terms + 2) * ref["energy"]
                         dE = abs(E_mpi - ref["energy"])
-                        max_energy_rel = max(max_energy_rel, dE / ref["energy"])
+                        rel_e = dE / ref["energy"]
+                        c_rel = max(c_rel, rel_e)
+                        max_energy_rel = max(max_energy_rel, rel_e)
                         if dE > bound:
                             ok, msg = (
                                 False,
                                 f"{cid} {mode} {method}: energy dE={dE} > {bound}",
                             )
                 _collective_assert(comm, ok, msg)
+        case_energy_rel[cid] = c_rel
 
     # Mutations under real MPI: drop_halo on (a)-(d) and skip_lts_exchange on (b)
     drop_rels = {}
@@ -343,6 +348,11 @@ def test_m4_distributed_mpi_bitwise_and_mutations(mpi_cases):
             f"NUMBERS test_m4_distributed_mpi_p{P}: "
             f"P={P} max_field_diff=0.0 max_probe_diff=0.0 max_dft_diff=0.0 "
             f"max_energy_rel={max_energy_rel:.2e} "
+            f"case_a_rel={case_energy_rel['a']:.2e} "
+            f"case_b_rel={case_energy_rel['b']:.2e} "
+            f"case_c_rel={case_energy_rel['c']:.2e} "
+            f"case_d_rel={case_energy_rel['d']:.2e} "
+            f"case_e_rel={case_energy_rel['e']:.2e} "
             f"drop_halo_a={drop_rels['a']:.2e} "
             f"drop_halo_b={drop_rels['b']:.2e} "
             f"drop_halo_c={drop_rels['c']:.2e} "
