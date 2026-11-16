@@ -33,16 +33,30 @@ Usage:
 """
 
 import argparse
+import gc
 import json
 import os
 import sys
 import time
+import types
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
 os.environ.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
+
+# Avoid loading CuPy/CUDA and unrelated top-level wakis dependencies on CPU MPI ranks
+sys.modules.setdefault("cupy", None)
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+for _pkg_name, _rel in [
+    ("wakis", "wakis"),
+    ("wakis.unstructured", os.path.join("wakis", "unstructured")),
+]:
+    if _pkg_name not in sys.modules:
+        _mod = types.ModuleType(_pkg_name)
+        _mod.__path__ = [os.path.join(REPO_ROOT, _rel)]
+        sys.modules[_pkg_name] = _mod
 
 import numpy as np
 from mpi4py import MPI
@@ -342,6 +356,7 @@ def main():
                             n_bench=n_bench,
                         )
                         comm_sub.Free()
+                        gc.collect()
                         if me == 0 and row is not None:
                             if P == 1:
                                 p1_s_per_step = row["s_per_step"]
@@ -355,6 +370,8 @@ def main():
                                 f"Bitwise check failed for {case} {kind} {method} P={P}"
                             )
                     world.Barrier()
+            del s0, ref
+            gc.collect()
 
     if me == 0:
         os.makedirs(args.out, exist_ok=True)

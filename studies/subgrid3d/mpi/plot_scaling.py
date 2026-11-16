@@ -88,16 +88,38 @@ def plot_correctness(data, out_dir):
             f_diff,
             marker=mk,
             color=colors[(case, kind)],
-            lw=1.0,
+            lw=1.2,
             ls="--",
-            alpha=0.7,
+            alpha=0.8,
+            label=f"max|Δfield| {lbl} (= 0)"
+            if (case, kind) == ("big", "global")
+            else None,
         )
     ax.axhline(2.0**-52, color="k", ls=":", lw=1.0, label="2u (machine eps)")
-    ax.set_xlabel("MPI ranks P")
-    ax.set_ylabel("Relative difference vs serial")
-    ax.set_title("20-step bitwise field (dashed=0) & energy")
+    ax.annotate(
+        "Bitwise equality across all P, cases & partitions:\n"
+        "max|e_MPI - e_serial| = 0, max|b_MPI - b_serial| = 0\n"
+        "(exact 0 plotted at floor 10⁻²⁰)",
+        xy=(ps[len(ps) // 2], 1e-20),
+        xytext=(1.15, 2e-19),
+        fontsize=7.3,
+        fontweight="bold",
+        color="#111111",
+        bbox={
+            "boxstyle": "round,pad=0.25",
+            "fc": "#eef8ee",
+            "ec": "#2ca02c",
+            "lw": 1.1,
+        },
+        arrowprops={"arrowstyle": "->", "color": "#2ca02c", "lw": 1.2},
+    )
+    ax.set_ylim(3e-21, 1e-13)
+    ax.set_xticks([1, 2, 4, 8])
+    ax.set_xlabel("MPI ranks P [ranks]")
+    ax.set_ylabel("Difference vs serial SubgridLTSFIT3D(csr) [1]")
+    ax.set_title("(a) Bitwise equality (max diff = 0) & energy", fontsize=10.0)
     ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=7.5, loc="upper left")
+    ax.legend(fontsize=7.1, loc="upper left")
 
     # Panel 2: Weighted work imbalance (rcb vs blocks)
     ax = axes[1]
@@ -117,9 +139,10 @@ def plot_correctness(data, out_dir):
                     label=f"{case} {kind} ({method})",
                 )
     ax.axhline(1.0, color="k", ls=":", lw=1.0)
-    ax.set_xlabel("MPI ranks P")
-    ax.set_ylabel("Weighted work imbalance (max / mean)")
-    ax.set_title("Work balance: weighted RCB vs whole-block")
+    ax.set_xticks([1, 2, 4, 8])
+    ax.set_xlabel("MPI ranks P [ranks]")
+    ax.set_ylabel("Weighted work imbalance max / mean [1]")
+    ax.set_title("(b) Work balance: weighted RCB vs whole-block", fontsize=10.0)
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=7.0, ncol=2)
 
@@ -139,9 +162,10 @@ def plot_correctness(data, out_dir):
             lw=1.6,
             label=f"{case} {kind}",
         )
-    ax.set_xlabel("MPI ranks P")
-    ax.set_ylabel("Total halo unknowns across ranks")
-    ax.set_title("Halo footprint vs MPI ranks P (RCB)")
+    ax.set_xticks([1, 2, 4, 8])
+    ax.set_xlabel("MPI ranks P [ranks]")
+    ax.set_ylabel("Total halo unknowns across ranks [DOF]")
+    ax.set_title("(c) Halo footprint vs MPI ranks P (RCB)", fontsize=10.0)
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8.0)
 
@@ -187,6 +211,14 @@ def plot_scaling(data, out_dir):
 
             if method == "rcb":
                 s_base = sub[0]["serial_steps_per_s"]
+                ax_top.axhline(
+                    s_base,
+                    color=color,
+                    ls="-.",
+                    lw=1.0,
+                    alpha=0.55,
+                    label=f"serial SubgridLTSFIT3D(csr) {kind} ({s_base:.1f}/s)",
+                )
                 ax_top.loglog(
                     p_arr,
                     s_base * p_arr,
@@ -194,22 +226,34 @@ def plot_scaling(data, out_dir):
                     ls=":",
                     lw=1.1,
                     alpha=0.7,
-                    label=f"ideal {kind} (from serial)",
+                    label=f"ideal {kind} (P × serial)",
                 )
 
         if p_all:
             ax_bot.plot(p_arr, p_arr, color="k", ls=":", lw=1.2, label="ideal linear")
-        ax_top.set_xlabel("MPI ranks P")
+            ax_bot.axhline(
+                1.0,
+                color="#555555",
+                ls="-.",
+                lw=1.0,
+                alpha=0.6,
+                label="serial SubgridLTSFIT3D(csr) (1.0×)",
+            )
+            ax_top.set_xticks(p_all)
+            ax_top.set_xticklabels([str(p) for p in p_all])
+            ax_top.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+            ax_bot.set_xticks(p_all)
+        ax_top.set_xlabel("MPI ranks P [ranks]")
         ax_top.set_ylabel("Throughput [coarse steps / s]")
-        ax_top.set_title(f"{title_tag}: throughput")
+        ax_top.set_title(f"{title_tag}: throughput (8 cores)", fontsize=10.0)
         ax_top.grid(True, which="both", alpha=0.3)
-        ax_top.legend(fontsize=7.5)
+        ax_top.legend(fontsize=6.8)
 
-        ax_bot.set_xlabel("MPI ranks P")
-        ax_bot.set_ylabel("Speedup vs serial SubgridLTSFIT3D(csr)")
-        ax_bot.set_title(f"{title_tag}: strong-scaling speedup")
+        ax_bot.set_xlabel("MPI ranks P [ranks]")
+        ax_bot.set_ylabel("Speedup vs serial SubgridLTSFIT3D(csr) [1]")
+        ax_bot.set_title(f"{title_tag}: speedup vs serial (P=16 TBD)", fontsize=10.0)
         ax_bot.grid(True, alpha=0.3)
-        ax_bot.legend(fontsize=7.5)
+        ax_bot.legend(fontsize=7.0)
 
     out_path = os.path.join(out_dir, "subgrid3d_mpi_scaling.png")
     fig.savefig(out_path, dpi=160)
