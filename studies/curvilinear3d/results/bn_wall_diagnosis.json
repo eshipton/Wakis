@@ -1,6 +1,6 @@
 {
   "quick": false,
-  "wall_seconds": 40.89420421199998,
+  "wall_seconds": 32.573202893,
   "identity_holds_globally": true,
   "max_m0_globally": 2.384279100620222e-16,
   "max_m1_minus_g_globally": 0.0,
@@ -1743,12 +1743,12 @@
         },
         "m3": {
           "TE_lowest": {
-            "omega_mean_rad_s": 818393057.5944694,
+            "omega_mean_rad_s": 818393057.5944699,
             "per_class": {
               "smooth_wall": {
                 "n_nodes": 1350,
-                "max_m3_nv": 0.0060915098264075485,
-                "max_m3_exact": 0.005777039763848475,
+                "max_m3_nv": 0.006091509826407607,
+                "max_m3_exact": 0.005777039763848551,
                 "max_m3_nv_location": {
                   "node": 560,
                   "class": "smooth_wall",
@@ -1777,8 +1777,8 @@
               },
               "sharp_smooth_seam": {
                 "n_nodes": 180,
-                "max_m3_nv": 0.004796795689649125,
-                "max_m3_exact": 0.020729252318986882,
+                "max_m3_nv": 0.004796795689649243,
+                "max_m3_exact": 0.020729252318986938,
                 "max_m3_nv_location": {
                   "node": 4657,
                   "class": "sharp_smooth_seam",
@@ -1831,8 +1831,8 @@
             },
             "all_boundary_nodes": {
               "n_nodes": 1538,
-              "max_m3_nv": 0.0060915098264075485,
-              "max_m3_exact": 0.020729252318986882,
+              "max_m3_nv": 0.006091509826407607,
+              "max_m3_exact": 0.020729252318986938,
               "max_m3_nv_location": {
                 "node": 560,
                 "class": "smooth_wall",
@@ -1854,12 +1854,12 @@
             }
           },
           "TM_lowest": {
-            "omega_mean_rad_s": 1334060871.2505426,
+            "omega_mean_rad_s": 1334060871.2505429,
             "per_class": {
               "smooth_wall": {
                 "n_nodes": 1350,
-                "max_m3_nv": 0.005343456414114883,
-                "max_m3_exact": 0.0052089733408107915,
+                "max_m3_nv": 0.005343456414114534,
+                "max_m3_exact": 0.0052089733408098885,
                 "max_m3_nv_location": {
                   "node": 4350,
                   "class": "smooth_wall",
@@ -1888,8 +1888,8 @@
               },
               "sharp_smooth_seam": {
                 "n_nodes": 180,
-                "max_m3_nv": 0.0022143912345419466,
-                "max_m3_exact": 0.009733639054918844,
+                "max_m3_nv": 0.0022143912345417944,
+                "max_m3_exact": 0.009733639054927981,
                 "max_m3_nv_location": {
                   "node": 577,
                   "class": "sharp_smooth_seam",
@@ -1942,8 +1942,8 @@
             },
             "all_boundary_nodes": {
               "n_nodes": 1538,
-              "max_m3_nv": 0.005343456414114883,
-              "max_m3_exact": 0.009733639054918844,
+              "max_m3_nv": 0.005343456414114534,
+              "max_m3_exact": 0.009733639054927981,
               "max_m3_nv_location": {
                 "node": 4350,
                 "class": "smooth_wall",
@@ -2004,33 +2004,33 @@
             0.9463265162853048,
             0.9594562037709286
           ],
-          "TM_lowest_m3_nv_ls_order": 0.7228119979820766,
+          "TM_lowest_m3_nv_ls_order": 0.7228119979821119,
           "TM_lowest_m3_nv_local_orders": [
             -0.6551846818456719,
             2.0225798017556738,
             -0.1069630596119603,
-            2.6428058757964434
+            2.6428058757966704
           ],
-          "TM_lowest_m3_exact_ls_order": 0.6949544776290854,
+          "TM_lowest_m3_exact_ls_order": 0.694954477629181,
           "TM_lowest_m3_exact_local_orders": [
             -0.8247676317276552,
             1.9193819295943157,
             -0.030106436811601016,
-            2.712651090181586
+            2.712651090182188
           ],
-          "TE_lowest_m3_nv_ls_order": 0.899351379278524,
+          "TE_lowest_m3_nv_ls_order": 0.8993513792785185,
           "TE_lowest_m3_nv_local_orders": [
             0.24245288310603094,
             1.2025540761660178,
             0.5621467762454219,
-            2.171205491438917
+            2.1712054914388843
           ],
-          "TE_lowest_m3_exact_ls_order": 0.8053651716452107,
+          "TE_lowest_m3_exact_ls_order": 0.8053651716452028,
           "TE_lowest_m3_exact_local_orders": [
             -0.10601903568675886,
             0.9789737553563829,
             0.5051712811824226,
-            2.578168300976295
+            2.5781683009762486
           ]
         },
         "smooth_seam": {
@@ -2092,33 +2092,33 @@
             0.968276002135813,
             0.9737543068901939
           ],
-          "TM_lowest_m3_nv_ls_order": 1.4399631439233678,
+          "TM_lowest_m3_nv_ls_order": 1.4399631439234042,
           "TM_lowest_m3_nv_local_orders": [
             1.4411998915354842,
             2.920950546173961,
             1.2861861041951483,
-            -0.49513105186492945
+            -0.4951310518646905
           ],
-          "TM_lowest_m3_exact_ls_order": 0.4029820932419013,
+          "TM_lowest_m3_exact_ls_order": 0.402982093241379,
           "TM_lowest_m3_exact_local_orders": [
             -0.22120064453101296,
             -0.0360939421167417,
             0.06742614923904793,
-            2.761364501193374
+            2.761364501190111
           ],
-          "TE_lowest_m3_nv_ls_order": 1.0087414039691518,
+          "TE_lowest_m3_nv_ls_order": 1.008741403969138,
           "TE_lowest_m3_nv_local_orders": [
             1.4411998915354711,
             2.9209505461739704,
             1.2721382758512692,
-            -3.162223552679875
+            -3.162223552679961
           ],
-          "TE_lowest_m3_exact_ls_order": -0.018788462621552097,
+          "TE_lowest_m3_exact_ls_order": -0.018788462621554303,
           "TE_lowest_m3_exact_local_orders": [
             -0.22120064453099694,
             -0.03609394211675545,
             0.053378320895222174,
-            0.15340871960310676
+            0.1534087196030975
           ]
         },
         "physical_sharp_edge": {
@@ -3164,12 +3164,12 @@
         },
         "m3": {
           "TE_lowest": {
-            "omega_mean_rad_s": 831011728.506591,
+            "omega_mean_rad_s": 831011728.5065904,
             "per_class": {
               "smooth_wall": {
                 "n_nodes": 294,
-                "max_m3_nv": 0.0020182384684462123,
-                "max_m3_exact": 0.0210626788528427,
+                "max_m3_nv": 0.002018238468446189,
+                "max_m3_exact": 0.021062678852842708,
                 "max_m3_nv_location": {
                   "node": 3519,
                   "class": "smooth_wall",
@@ -3191,13 +3191,13 @@
               },
               "smooth_seam": {
                 "n_nodes": 84,
-                "max_m3_nv": 0.0015612211812191237,
-                "max_m3_exact": 0.00690849307208343,
+                "max_m3_nv": 0.0015612211812191471,
+                "max_m3_exact": 0.006908493072083457,
                 "max_m3_nv_location": {
-                  "node": 3704,
+                  "node": 3512,
                   "class": "smooth_seam",
                   "coords": [
-                    0.4685212856658182,
+                    -0.4685212856658182,
                     -0.6246950475544243,
                     -0.6246950475544243
                   ]
@@ -3228,32 +3228,32 @@
               },
               "corner": {
                 "n_nodes": 8,
-                "max_m3_nv": 7.036442624612384e-17,
-                "max_m3_exact": 5.769508029028398e-17,
+                "max_m3_nv": 1.0976073694868671e-16,
+                "max_m3_exact": 8.085745981321809e-17,
                 "max_m3_nv_location": {
-                  "node": 3816,
+                  "node": 3744,
                   "class": "corner",
                   "coords": [
                     0.5773502691896258,
-                    0.5773502691896258,
+                    -0.5773502691896258,
                     0.5773502691896258
                   ]
                 },
                 "max_m3_exact_location": {
-                  "node": 3808,
+                  "node": 3744,
                   "class": "corner",
                   "coords": [
                     0.5773502691896258,
-                    0.5773502691896258,
-                    -0.5773502691896258
+                    -0.5773502691896258,
+                    0.5773502691896258
                   ]
                 }
               }
             },
             "all_boundary_nodes": {
               "n_nodes": 386,
-              "max_m3_nv": 0.0020182384684462123,
-              "max_m3_exact": 0.0210626788528427,
+              "max_m3_nv": 0.002018238468446189,
+              "max_m3_exact": 0.021062678852842708,
               "max_m3_nv_location": {
                 "node": 3519,
                 "class": "smooth_wall",
@@ -3275,12 +3275,12 @@
             }
           },
           "TM_lowest": {
-            "omega_mean_rad_s": 1374036486.051852,
+            "omega_mean_rad_s": 1374036486.0518515,
             "per_class": {
               "smooth_wall": {
                 "n_nodes": 294,
-                "max_m3_nv": 0.0006394800934758359,
-                "max_m3_exact": 0.006505728941423765,
+                "max_m3_nv": 0.0006394800934789298,
+                "max_m3_exact": 0.006505728941429664,
                 "max_m3_nv_location": {
                   "node": 3746,
                   "class": "smooth_wall",
@@ -3302,8 +3302,8 @@
               },
               "smooth_seam": {
                 "n_nodes": 84,
-                "max_m3_nv": 0.0004715657970238856,
-                "max_m3_exact": 0.00208670563848429,
+                "max_m3_nv": 0.00047156579702412667,
+                "max_m3_exact": 0.0020867056384852602,
                 "max_m3_nv_location": {
                   "node": 3809,
                   "class": "smooth_seam",
@@ -3339,22 +3339,22 @@
               },
               "corner": {
                 "n_nodes": 8,
-                "max_m3_nv": 3.0751553300184145e-17,
-                "max_m3_exact": 3.052790267162265e-17,
+                "max_m3_nv": 3.052790267162325e-17,
+                "max_m3_exact": 3.052790267162325e-17,
                 "max_m3_nv_location": {
-                  "node": 3431,
+                  "node": 3736,
                   "class": "corner",
                   "coords": [
-                    -0.5773502691896258,
+                    0.5773502691896258,
                     -0.5773502691896258,
                     -0.5773502691896258
                   ]
                 },
                 "max_m3_exact_location": {
-                  "node": 3431,
+                  "node": 3736,
                   "class": "corner",
                   "coords": [
-                    -0.5773502691896258,
+                    0.5773502691896258,
                     -0.5773502691896258,
                     -0.5773502691896258
                   ]
@@ -3363,8 +3363,8 @@
             },
             "all_boundary_nodes": {
               "n_nodes": 386,
-              "max_m3_nv": 0.0006394800934758359,
-              "max_m3_exact": 0.006505728941423765,
+              "max_m3_nv": 0.0006394800934789298,
+              "max_m3_exact": 0.006505728941429664,
               "max_m3_nv_location": {
                 "node": 3746,
                 "class": "smooth_wall",
@@ -3417,25 +3417,25 @@
             0.8058196340453457,
             0.8905212430480509
           ],
-          "TM_lowest_m3_nv_ls_order": 3.018801619424069,
+          "TM_lowest_m3_nv_ls_order": 3.0188016194175487,
           "TM_lowest_m3_nv_local_orders": [
             3.706028160494035,
-            1.933896758705007
+            1.9338967586881899
           ],
-          "TM_lowest_m3_exact_ls_order": 2.975449806289574,
+          "TM_lowest_m3_exact_ls_order": 2.9754498062883528,
           "TM_lowest_m3_exact_local_orders": [
             3.627190023550651,
-            1.9465661887683845
+            1.9465661887652328
           ],
-          "TE_lowest_m3_nv_ls_order": 1.7714458539178466,
+          "TE_lowest_m3_nv_ls_order": 1.771445853917861,
           "TE_lowest_m3_nv_local_orders": [
             1.6834193386682341,
-            1.9104107927832459
+            1.910410792783286
           ],
           "TE_lowest_m3_exact_ls_order": 1.942976799719158,
           "TE_lowest_m3_exact_local_orders": [
             1.963025137878079,
-            1.911327062379146
+            1.911327062379145
           ]
         },
         "smooth_seam": {
@@ -3449,25 +3449,25 @@
             1.108156505508475,
             1.1062571693076397
           ],
-          "TM_lowest_m3_nv_ls_order": 2.8116334037960584,
+          "TM_lowest_m3_nv_ls_order": 2.8116334037953705,
           "TM_lowest_m3_nv_local_orders": [
             3.571761710341706,
-            1.6116406135618961
+            1.6116406135601193
           ],
-          "TM_lowest_m3_exact_ls_order": 2.1908471947516843,
+          "TM_lowest_m3_exact_ls_order": 2.190847194751058,
           "TM_lowest_m3_exact_local_orders": [
             5.093145023047805,
-            -2.390927275527796
+            -2.390927275529412
           ],
-          "TE_lowest_m3_nv_ls_order": 1.3991257340514525,
+          "TE_lowest_m3_nv_ls_order": 1.3991257340514343,
           "TE_lowest_m3_nv_local_orders": [
             1.2744696523082886,
-            1.5959167206026947
+            1.5959167206026423
           ],
-          "TE_lowest_m3_exact_ls_order": 0.7783395250070965,
+          "TE_lowest_m3_exact_ls_order": 0.7783395250070894,
           "TE_lowest_m3_exact_local_orders": [
             2.795852965014318,
-            -2.4066511684868437
+            -2.406651168486857
           ]
         },
         "sharp_smooth_seam": {
@@ -3545,25 +3545,25 @@
             1.3077757218315855,
             1.2134230217875068
           ],
-          "TM_lowest_m3_nv_ls_order": -1.507624701256307,
+          "TM_lowest_m3_nv_ls_order": -1.4977850807282747,
           "TM_lowest_m3_nv_local_orders": [
             -1.8905110317875102,
-            -0.9031730157182987
+            -0.8777998680336085
           ],
-          "TM_lowest_m3_exact_ls_order": -1.5769239485002995,
+          "TM_lowest_m3_exact_ls_order": -1.576923948500336,
           "TM_lowest_m3_exact_local_orders": [
             -3.096256971415931,
-            0.8216035866059971
+            0.8216035866059291
           ],
-          "TE_lowest_m3_nv_ls_order": 0.534155058902552,
+          "TE_lowest_m3_nv_ls_order": -0.06518784094499597,
           "TE_lowest_m3_nv_local_orders": [
             -0.217144238639128,
-            1.7202097454529144
+            0.17470137261628366
           ],
-          "TE_lowest_m3_exact_ls_order": 0.6402922007468043,
+          "TE_lowest_m3_exact_ls_order": 0.1853193356996289,
           "TE_lowest_m3_exact_local_orders": [
             -1.492196874403586,
-            4.006791636957337
+            2.8335661386279494
           ]
         }
       }
