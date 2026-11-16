@@ -33,6 +33,11 @@ import numpy as np
 from ._core import cell_materials
 from .improve import LOC_E, _default_free, _State, tet_partials
 from .mesh import SimplexMesh
+from .steiner import (
+    candidate_edges_for_face,
+    normalize_split_projector,
+    split_edge_steiner,
+)
 
 __all__ = ["flip_to_delaunay"]
 
@@ -1185,6 +1190,40 @@ def _try_flips_for_face(state, f, locked, enabled_set, flips_count, refused_coun
     return None
 
 
+def _run_flip_queue(
+    state,
+    seed_cids,
+    locked_arr,
+    enabled_set,
+    flips_count,
+    refused_count,
+    total_flips,
+    limit,
+):
+    """Drain the flip repair queue seeded by `seed_cids` and current negative faces."""
+    q = deque(nf for nf in state.cells_faces(seed_cids) if state.is_neg_face(nf))
+    in_q = set(q)
+    for nf in sorted(state.neg_set):
+        if nf not in in_q:
+            q.append(nf)
+            in_q.add(nf)
+    while q and total_flips < limit:
+        qf = q.popleft()
+        in_q.discard(qf)
+        if not state.is_neg_face(qf):
+            continue
+        new_cids = _try_flips_for_face(
+            state, qf, locked_arr, enabled_set, flips_count, refused_count
+        )
+        if new_cids is not None:
+            total_flips += 1
+            for nf in state.cells_faces(new_cids):
+                if state.is_neg_face(nf) and nf not in in_q:
+                    q.append(nf)
+                    in_q.add(nf)
+    return total_flips
+
+
 def flip_to_delaunay(
     mesh,
     materials=None,
@@ -1194,6 +1233,10 @@ def flip_to_delaunay(
     max_flips=None,
     verbose=False,
     enabled_flips=("2-3", "3-2", "4-4", "2-2"),
+    split_projector=None,
+    max_steiner=None,
+    max_steiner_depth=2,
+    min_edge_ratio=0.2,
 ):
     """
     Topological flip repair of non-Delaunay faces for the Voronoi FIT Hodge.
@@ -1210,21 +1253,43 @@ def flip_to_delaunay(
     bc : {"pec", "pmc", "abc"}, optional
         Outer boundary condition used to identify free edges (default ``"pec"``).
     steiner : bool, optional
-        If True (default), insert a Steiner node at the circumcentre of a stuck
-        interior tet pair and re-flip.
+        If True (default), resolve stuck non-Delaunay faces by splitting
+        encroached locked or unlocked edges (with projection onto curved CAD
+        features when `split_projector` is provided) or by inserting a
+        circumcentre Steiner node and re-flipping.
     max_flips : int, optional
         Maximum number of topological flips to perform (default: ``10 * n_cells``).
     verbose : bool, optional
         If True, print a one-line summary of flips and negative faces.
     enabled_flips : tuple of str, optional
         Subset of ``("2-3", "3-2", "4-4", "2-2")`` enabled during repair.
+    split_projector : SplitProjector, callable, or None, optional
+        Split projector ``P`` mapping ``(a, b, m) -> ndarray(3) | None`` for
+        locked CAD-curve edges and curved boundary/interface edges, with optional
+        ``P.register(new_node, a, b)`` to record subdivided edges. When ``None``
+        (default), locked edges and non-coplanar boundary/interface edges cannot
+        be split.
+    max_steiner : int, optional
+        Maximum number of Steiner nodes to commit (default:
+        ``max(32, 4 * max(neg_before, 1))``).
+    max_steiner_depth : int, optional
+        Maximum nested edge-split depth per trial before rolling back
+        (default ``2``).
+    min_edge_ratio : float, optional
+        Minimum allowed sub-edge length relative to the original parent edge
+        being split (default ``0.2``). Prevents a cascade of edge splits from
+        creating arbitrarily short edges that would degrade the explicit leapfrog
+        CFL time step :math:`\\Delta t_{\\max}`.
 
     Returns
     -------
     new_mesh : SimplexMesh
-        Repaired tetrahedral mesh preserving total and per-tag volumes.
+        Repaired tetrahedral mesh preserving per-tag volumes on interior and
+        planar splits, and satisfying the exact boundary-flux volume identity on
+        projected curved-boundary splits.
     report : dict
-        Dictionary with keys ``"flips"``, ``"steiner_nodes"``, ``"refused"``,
+        Dictionary with keys ``"flips"``, ``"steiner_nodes"``,
+        ``"steiner_on_locked"``, ``"steiner_projected"``, ``"refused"``,
         ``"negative_faces_before"``, ``"negative_faces_after"``, and ``"stuck"``.
     """
     if locked is None:
@@ -1234,21 +1299,29 @@ def flip_to_delaunay(
         if locked_arr.shape != (mesh.n_nodes,):
             raise ValueError("locked must be a boolean array of shape (n_nodes,)")
 
+    proj = normalize_split_projector(split_projector)
     enabled_set = set(enabled_flips)
     all_flips_enabled = enabled_set >= {"2-3", "3-2", "4-4", "2-2"}
     limit = int(10 * mesh.n_cells) if max_flips is None else int(max_flips)
 
     flips_count = {"2-3": 0, "3-2": 0, "4-4": 0, "2-2": 0}
-    refused_count = {}
+    refused_count = {"no_projector": 0}
     steiner_count = 0
+    steiner_on_locked = 0
+    steiner_projected = 0
 
     state = _RepairState(mesh, materials, bc)
     neg_before = state.initial_neg_count
+    max_steiner_cap = (
+        max(32, 4 * max(neg_before, 1)) if max_steiner is None else int(max_steiner)
+    )
 
     if neg_before == 0 or limit <= 0:
         report = {
             "flips": flips_count,
             "steiner_nodes": 0,
+            "steiner_on_locked": 0,
+            "steiner_projected": 0,
             "refused": refused_count,
             "negative_faces_before": neg_before,
             "negative_faces_after": neg_before,
@@ -1278,117 +1351,266 @@ def flip_to_delaunay(
                     queue.append(nf)
                     in_queue.add(nf)
 
+    def _try_edge_candidates(edge_list, best_neg, best_cand):
+        for ed, _is_loc, _is_enc, ed_len in edge_list:
+            for alpha in (0.5, 0.4, 0.6):
+                cp = state.checkpoint()
+                ok, info = split_edge_steiner(
+                    state,
+                    ed,
+                    locked=locked_arr,
+                    split_projector=proj,
+                    alpha=alpha,
+                    min_edge_ratio=min_edge_ratio,
+                    orig_edge_len=ed_len,
+                )
+                if not ok:
+                    state.rollback(cp)
+                    if alpha == 0.5 and info in (
+                        "no_projector",
+                        "locked",
+                        "min_edge",
+                        "volume",
+                    ):
+                        refused_count[info] = refused_count.get(info, 0) + 1
+                    continue
+
+                flips_try = dict(flips_count)
+                refused_try = dict(refused_count)
+                locked_try = np.append(locked_arr, info["locked_new"])
+                t_flips = _run_flip_queue(
+                    state,
+                    info["new_cids"],
+                    locked_try,
+                    enabled_set,
+                    flips_try,
+                    refused_try,
+                    total_flips,
+                    limit,
+                )
+                neg_try = len(state.neg_set)
+                if neg_try < best_neg:
+                    best_neg = neg_try
+                    best_cand = ("edge_steiner", [(ed, alpha, ed_len)])
+                elif (
+                    alpha == 0.5
+                    and int(max_steiner_depth) >= 2
+                    and steiner_count + 2 <= max_steiner_cap
+                ):
+                    if proj is not None:
+                        proj.register(info["new_node"], ed[0], ed[1])
+                    for sub_ed in info["sub_edges"]:
+                        cp2 = state.checkpoint()
+                        ok2, info2 = split_edge_steiner(
+                            state,
+                            sub_ed,
+                            locked=locked_try,
+                            split_projector=proj,
+                            alpha=0.5,
+                            min_edge_ratio=min_edge_ratio,
+                            orig_edge_len=ed_len,
+                        )
+                        if not ok2:
+                            state.rollback(cp2)
+                            if info2 in ("no_projector", "locked", "min_edge"):
+                                refused_count[info2] = refused_count.get(info2, 0) + 1
+                            continue
+                        flips_try2 = dict(flips_try)
+                        refused_try2 = dict(refused_try)
+                        locked_try2 = np.append(locked_try, info2["locked_new"])
+                        _run_flip_queue(
+                            state,
+                            info2["new_cids"],
+                            locked_try2,
+                            enabled_set,
+                            flips_try2,
+                            refused_try2,
+                            t_flips,
+                            limit,
+                        )
+                        neg_try2 = len(state.neg_set)
+                        state.rollback(cp2)
+                        if neg_try2 < best_neg:
+                            best_neg = neg_try2
+                            best_cand = (
+                                "edge_steiner",
+                                [(ed, alpha, ed_len), (sub_ed, 0.5, ed_len)],
+                            )
+                            if neg_try2 == 0:
+                                break
+                    if proj is not None:
+                        proj.unregister(info["new_node"], ed[0], ed[1])
+                state.rollback(cp)
+                if best_neg == 0:
+                    return best_neg, best_cand
+        return best_neg, best_cand
+
+    def _try_cell_candidates(cell_splits, best_neg, best_cand, f):
+        for mode, host, alpha in cell_splits:
+            cp = state.checkpoint()
+            ok, nc0 = _insert_steiner(
+                state,
+                f,
+                mode=mode,
+                host=host,
+                alpha=alpha,
+                locked=locked_arr,
+            )
+            if not ok:
+                state.rollback(cp)
+                continue
+            flips_try = dict(flips_count)
+            refused_try = dict(refused_count)
+            locked_try = np.append(locked_arr, False)
+            _run_flip_queue(
+                state,
+                nc0,
+                locked_try,
+                enabled_set,
+                flips_try,
+                refused_try,
+                total_flips,
+                limit,
+            )
+            neg_try = len(state.neg_set)
+            state.rollback(cp)
+            if neg_try < best_neg:
+                best_neg = neg_try
+                best_cand = ("cell_steiner", (mode, host, alpha))
+                if neg_try == 0:
+                    return best_neg, best_cand
+        return best_neg, best_cand
+
     # Steiner fallback for stuck faces when all flip types are enabled
-    if steiner and all_flips_enabled and total_flips < limit:
+    if (
+        steiner
+        and all_flips_enabled
+        and total_flips < limit
+        and steiner_count < max_steiner_cap
+    ):
         for _pass in range(6):
             stuck_faces = sorted(state.neg_set)
-            if not stuck_faces:
+            if not stuck_faces or steiner_count >= max_steiner_cap:
                 break
             progress = False
             for f in stuck_faces:
-                if total_flips >= limit or not state.is_neg_face(f):
+                if (
+                    total_flips >= limit
+                    or steiner_count >= max_steiner_cap
+                    or not state.is_neg_face(f)
+                ):
                     continue
                 cur_neg = len(state.neg_set)
                 best_cand = None
                 best_neg = cur_neg
+
+                cand_edges = candidate_edges_for_face(state, f, locked_arr)
+                locked_edges = [it for it in cand_edges if it[1]]
+                unlocked_edges = [it for it in cand_edges if not it[1]]
+                f_edge_set = {
+                    _sedge(f[0], f[1]),
+                    _sedge(f[0], f[2]),
+                    _sedge(f[1], f[2]),
+                }
+                # In Ruppert/Shewchuk Delaunay refinement, when a constrained
+                # (locked) edge of f is encroached by an opposite vertex of its
+                # edge star, the encroached constrained segment must be split
+                # rather than inserting an off-segment Steiner point next to it.
+                has_encroached_locked_on_f = any(
+                    is_loc and is_enc and ed in f_edge_set
+                    for ed, is_loc, is_enc, _ in locked_edges
+                )
+
                 cell_splits = [
                     ("1-4", h, a)
                     for a in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0)
                     for h in (0, 1)
                 ] + [("2-6", 0, a) for a in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0)]
-                edge_splits = [
-                    ("edge", h, a) for a in (0.5, 0.4, 0.6) for h in (0, 1, 2)
-                ] + [("bnd_edge", h, a) for a in (0.5, 0.4, 0.6) for h in (0, 1, 2)]
-                if state.is_interface_face(f):
-                    candidates = edge_splits + cell_splits
-                else:
-                    candidates = cell_splits + edge_splits
-                for mode, host, alpha in candidates:
-                    cp = state.checkpoint()
-                    ok, nc0 = _insert_steiner(
-                        state,
-                        f,
-                        mode=mode,
-                        host=host,
-                        alpha=alpha,
-                        locked=locked_arr,
+
+                # 1. Always try locked candidate edges first (ordered: f then
+                #    incident tets; encroached first, then length descending)
+                if locked_edges:
+                    best_neg, best_cand = _try_edge_candidates(
+                        locked_edges, best_neg, best_cand
                     )
-                    if not ok:
-                        state.rollback(cp)
-                        continue
-                    flips_try = dict(flips_count)
-                    refused_try = dict(refused_count)
-                    locked_try = np.append(locked_arr, False)
-                    t_flips = total_flips
-                    q_try = deque(
-                        nf for nf in state.cells_faces(nc0) if state.is_neg_face(nf)
-                    )
-                    in_q_try = set(q_try)
-                    for nf in sorted(state.neg_set):
-                        if nf not in in_q_try:
-                            q_try.append(nf)
-                            in_q_try.add(nf)
-                    while q_try and t_flips < limit:
-                        qf = q_try.popleft()
-                        in_q_try.discard(qf)
-                        if not state.is_neg_face(qf):
-                            continue
-                        new_cids = _try_flips_for_face(
-                            state, qf, locked_try, enabled_set, flips_try, refused_try
+
+                # 2. If f does not have an unsplit encroached locked edge, try
+                #    unlocked edge splits and circumcentre cell splits
+                if best_neg > 0 and not has_encroached_locked_on_f:
+                    if state.is_interface_face(f):
+                        best_neg, best_cand = _try_edge_candidates(
+                            unlocked_edges, best_neg, best_cand
                         )
-                        if new_cids is not None:
-                            t_flips += 1
-                            for nf in state.cells_faces(new_cids):
-                                if state.is_neg_face(nf) and nf not in in_q_try:
-                                    q_try.append(nf)
-                                    in_q_try.add(nf)
-                    neg_try = len(state.neg_set)
-                    state.rollback(cp)
-                    if neg_try < best_neg:
-                        best_neg = neg_try
-                        best_cand = (mode, host, alpha)
-                        if neg_try == 0:
-                            break
+                        if best_neg > 0:
+                            best_neg, best_cand = _try_cell_candidates(
+                                cell_splits, best_neg, best_cand, f
+                            )
+                    else:
+                        best_neg, best_cand = _try_cell_candidates(
+                            cell_splits, best_neg, best_cand, f
+                        )
+                        if best_neg > 0:
+                            best_neg, best_cand = _try_edge_candidates(
+                                unlocked_edges, best_neg, best_cand
+                            )
+
                 if best_cand is not None:
-                    mode, host, alpha = best_cand
-                    _, nc0 = _insert_steiner(
-                        state,
-                        f,
-                        mode=mode,
-                        host=host,
-                        alpha=alpha,
-                        locked=locked_arr,
-                    )
-                    locked_arr = np.append(locked_arr, False)
-                    steiner_count += 1
-                    progress = True
-                    q_try = deque(
-                        nf for nf in state.cells_faces(nc0) if state.is_neg_face(nf)
-                    )
-                    in_q_try = set(q_try)
-                    for nf in sorted(state.neg_set):
-                        if nf not in in_q_try:
-                            q_try.append(nf)
-                            in_q_try.add(nf)
-                    while q_try and total_flips < limit:
-                        qf = q_try.popleft()
-                        in_q_try.discard(qf)
-                        if not state.is_neg_face(qf):
-                            continue
-                        new_cids = _try_flips_for_face(
+                    kind, payload = best_cand
+                    if kind == "edge_steiner":
+                        for ed, alpha, ed_len in payload:
+                            ok_c, info_c = split_edge_steiner(
+                                state,
+                                ed,
+                                locked=locked_arr,
+                                split_projector=proj,
+                                alpha=alpha,
+                                min_edge_ratio=min_edge_ratio,
+                                orig_edge_len=ed_len,
+                            )
+                            if not ok_c:
+                                break
+                            locked_arr = np.append(locked_arr, info_c["locked_new"])
+                            if proj is not None:
+                                proj.register(info_c["new_node"], ed[0], ed[1])
+                            steiner_count += 1
+                            if info_c["on_locked"]:
+                                steiner_on_locked += 1
+                            if info_c["projected"]:
+                                steiner_projected += 1
+                            total_flips = _run_flip_queue(
+                                state,
+                                info_c["new_cids"],
+                                locked_arr,
+                                enabled_set,
+                                flips_count,
+                                refused_count,
+                                total_flips,
+                                limit,
+                            )
+                        progress = True
+                    else:
+                        mode, host, alpha = payload
+                        _, nc0 = _insert_steiner(
                             state,
-                            qf,
+                            f,
+                            mode=mode,
+                            host=host,
+                            alpha=alpha,
+                            locked=locked_arr,
+                        )
+                        locked_arr = np.append(locked_arr, False)
+                        steiner_count += 1
+                        progress = True
+                        total_flips = _run_flip_queue(
+                            state,
+                            nc0,
                             locked_arr,
                             enabled_set,
                             flips_count,
                             refused_count,
+                            total_flips,
+                            limit,
                         )
-                        if new_cids is not None:
-                            total_flips += 1
-                            for nf in state.cells_faces(new_cids):
-                                if state.is_neg_face(nf) and nf not in in_q_try:
-                                    q_try.append(nf)
-                                    in_q_try.add(nf)
             if not progress:
                 break
         state._undo_log = None
@@ -1402,6 +1624,8 @@ def flip_to_delaunay(
     report = {
         "flips": flips_count,
         "steiner_nodes": int(steiner_count),
+        "steiner_on_locked": int(steiner_on_locked),
+        "steiner_projected": int(steiner_projected),
         "refused": refused_count,
         "negative_faces_before": int(neg_before),
         "negative_faces_after": int(stuck_idx.size),

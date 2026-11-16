@@ -47,6 +47,7 @@ __all__ = [
     "CADMeshInfo",
     "estimate_n_tets",
     "cad_projector",
+    "CadSplitProjector",
 ]
 
 
@@ -249,6 +250,98 @@ def _remove_slivers(gmsh, optimize, tol):
     return True
 
 
+class CadSplitProjector:
+    """
+    Split projector onto CAD curves and surfaces for `flip_to_delaunay` (gmsh must be live).
+
+    Each mesh node is classified by the CAD curves (dim 1) and CAD surfaces
+    (dim 2) containing it via ``gmsh.model.mesh.getNodes(dim, tag, includeBoundary=True)``.
+    An edge ``(a, b)`` is classified by the common curve (preferred) or common
+    surface shared by ``a`` and ``b``, and its trial split point is projected
+    with ``gmsh.model.getClosestPoint(dim, tag, ...)``.
+
+    Parameters
+    ----------
+    gmsh : module
+        Active gmsh module with a populated OpenCASCADE model and mesh.
+    node_tags : array_like of int
+        Gmsh 1-based node tags indexed by 0-based `SimplexMesh` node index.
+    scale : float, optional
+        Coordinate scale factor from CAD units to metres. Default is ``1.0``.
+    """
+
+    def __init__(self, gmsh, node_tags, scale=1.0):
+        self.gmsh = gmsh
+        self.scale = float(scale)
+        tag_to_idx = {int(t): int(i) for i, t in enumerate(node_tags)}
+        self.curves_of = {}
+        self.surfs_of = {}
+
+        for _, c in gmsh.model.getEntities(1):
+            nt, _, _ = gmsh.model.mesh.getNodes(1, int(c), includeBoundary=True)
+            for t in nt:
+                idx = tag_to_idx.get(int(t))
+                if idx is not None:
+                    self.curves_of.setdefault(idx, set()).add(int(c))
+
+        for _, s in gmsh.model.getEntities(2):
+            nt, _, _ = gmsh.model.mesh.getNodes(2, int(s), includeBoundary=True)
+            for t in nt:
+                idx = tag_to_idx.get(int(t))
+                if idx is not None:
+                    self.surfs_of.setdefault(idx, set()).add(int(s))
+
+    def _closest_on_entities(self, dim, tags, x_cad):
+        best_pt = None
+        best_d2 = np.inf
+        for tag in sorted(tags):
+            out, _ = self.gmsh.model.getClosestPoint(int(dim), int(tag), x_cad)
+            pt = np.asarray(out, dtype=float).reshape(3)
+            d2 = float(np.sum((pt - x_cad) ** 2))
+            if d2 < best_d2:
+                best_d2 = d2
+                best_pt = pt
+        return best_pt
+
+    def project(self, a, b, x):
+        """Project split point `x` [m] of edge `(a, b)` onto the common CAD curve or surface."""
+        ia, ib = int(a), int(b)
+        x_cad = (np.asarray(x, dtype=float).reshape(3) / self.scale).tolist()
+
+        common_c = self.curves_of.get(ia, set()) & self.curves_of.get(ib, set())
+        if common_c:
+            pt = self._closest_on_entities(1, common_c, x_cad)
+            return pt * self.scale if pt is not None else None
+
+        common_s = self.surfs_of.get(ia, set()) & self.surfs_of.get(ib, set())
+        if common_s:
+            pt = self._closest_on_entities(2, common_s, x_cad)
+            return pt * self.scale if pt is not None else None
+
+        return None
+
+    def __call__(self, a, b, x):
+        return self.project(a, b, x)
+
+    def register(self, new_node, a, b):
+        """Record the CAD curves/surfaces inherited by `new_node` from parent edge `(a, b)`."""
+        inew, ia, ib = int(new_node), int(a), int(b)
+        common_c = self.curves_of.get(ia, set()) & self.curves_of.get(ib, set())
+        common_s = self.surfs_of.get(ia, set()) & self.surfs_of.get(ib, set())
+        if common_c:
+            self.curves_of[inew] = set(common_c)
+            if common_s:
+                self.surfs_of[inew] = set(common_s)
+        elif common_s:
+            self.surfs_of[inew] = set(common_s)
+
+    def unregister(self, new_node, a, b):
+        """Undo a previous `register(new_node, a, b)` call during trial rollback."""
+        inew = int(new_node)
+        self.curves_of.pop(inew, None)
+        self.surfs_of.pop(inew, None)
+
+
 def cad_projector(gmsh, node_tags, scale):
     """
     Sliding rule onto the CAD surfaces for `improve_dt` (gmsh must be live).
@@ -256,6 +349,8 @@ def cad_projector(gmsh, node_tags, scale):
     Nodes classified on a CAD surface (dim 2) slide on it (closest-point
     projection with the OpenCASCADE kernel); nodes on CAD curves and points
     stay fixed; volume nodes are free (the projector is not called for them).
+    Attaches a `CadSplitProjector` instance as ``project.split`` for Steiner
+    edge splitting on locked CAD curves and curved surfaces.
     """
     surf_of = {}
     for _, s in gmsh.model.getEntities(2):
@@ -263,10 +358,16 @@ def cad_projector(gmsh, node_tags, scale):
         for t in nt:
             surf_of[int(t)] = s
 
+    split_proj = CadSplitProjector(gmsh, node_tags, scale)
+
     def project(n, Y):
         if n >= len(node_tags):
-            return None
-        s = surf_of.get(int(node_tags[n]))
+            if int(n) in split_proj.curves_of:
+                return None
+            s_set = split_proj.surfs_of.get(int(n))
+            s = next(iter(s_set)) if s_set and len(s_set) == 1 else None
+        else:
+            s = surf_of.get(int(node_tags[n]))
         if s is None:
             return None
         Y = np.atleast_2d(Y)
@@ -274,6 +375,7 @@ def cad_projector(gmsh, node_tags, scale):
         return np.asarray(out).reshape(-1, 3) * scale
 
     project.n_sliding = len(surf_of)
+    project.split = split_proj
     return project
 
 
