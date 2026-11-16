@@ -921,11 +921,12 @@ def _flip_22(state, edge, locked, target_face=None, check_delaunay=True):
 
 def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0, locked=None):
     """
-    Insert a Steiner node for a stuck face f while preserving material tags.
+    Insert a cell Steiner node for a stuck face f while preserving material tags.
 
     Places the node at the circumcentre of the offending tet pair (or pulled
-    toward the host centroid into the strict positive-volume kernel) or bisects
-    an edge of f, assigning each resulting tetrahedron its parent cell's tag.
+    toward the host centroid into the strict positive-volume kernel) via a 1-4
+    or 2-6 cell split, assigning each resulting tetrahedron its parent cell's
+    tag. Edge splits are handled separately by ``split_edge_steiner``.
     """
     entries = state.face_map.get(f)
     if not entries or len(entries) != 2:
@@ -943,71 +944,6 @@ def _insert_steiner(state, f, mode="1-4", host=0, alpha=0.0, locked=None):
         v, w = w, v
 
     s_idx = state.X.shape[0]
-
-    if mode in ("edge", "bnd_edge"):
-        f_edges = sorted(
-            (_sedge(u, v), _sedge(u, w), _sedge(v, w)),
-            key=lambda ed: -float(np.linalg.norm(state.X[ed[1]] - state.X[ed[0]])),
-        )
-        ed = f_edges[host % 3]
-        if mode == "edge" and ed in state.bnd_edges:
-            return False, "boundary"
-        if mode == "bnd_edge" and ed not in state.bnd_edges:
-            return False, "boundary"
-        cids = list(state.edge_map.get(ed, ()))
-        if not cids:
-            return False, "topology"
-        a, b = ed
-        if tag1 == tag2 and _is_locked_removal(state, locked, edges=(ed,)):
-            return False, "locked"
-        pt = (1.0 - alpha) * state.X[a] + alpha * state.X[b]
-        X_try = np.vstack([state.X, pt[None, :]])
-        new_tets = []
-        tags_new = []
-        for cid in cids:
-            tet = state.cells[cid]
-            rem = [x for x in tet if x != a and x != b]
-            if len(rem) != 2:
-                return False, "topology"
-            p, q = rem
-            t_a = _orient_tet(X_try, a, s_idx, p, q)
-            t_b = _orient_tet(X_try, s_idx, b, p, q)
-            P_ab = X_try[np.asarray([t_a, t_b], dtype=np.int64)]
-            v_ab = _tet_volumes(P_ab)
-            v_old = state.vol[cid]
-            min_v = max(state.min_vol, 1e-6 * v_old)
-            if not (np.all(v_ab > min_v) and abs(v_ab.sum() - v_old) <= 1e-12 * v_old):
-                return False, "volume"
-            new_tets.extend([t_a, t_b])
-            tags_new.extend([state.tags[cid], state.tags[cid]])
-        P = X_try[np.asarray(new_tets, dtype=np.int64)]
-        _, h_new, _, vol_new = tet_partials(P)
-        state.X = X_try
-        removed_bnd = ()
-        added_bnd = ()
-        if ed in state.bnd_edges:
-            removed_bnd = (ed,)
-            added_bnd_list = [_sedge(a, s_idx), _sedge(s_idx, b)]
-            for cid in cids:
-                for x in state.cells[cid]:
-                    if (
-                        x != a
-                        and x != b
-                        and len(state.face_map.get(_sface(a, b, x), ())) == 1
-                    ):
-                        added_bnd_list.append(_sedge(s_idx, x))
-            added_bnd = tuple(added_bnd_list)
-        new_cids = state.replace_cells(
-            cids,
-            new_tets,
-            h_new,
-            vol_new,
-            tags_new,
-            removed_bnd=removed_bnd,
-            added_bnd=added_bnd,
-        )
-        return True, new_cids
-
     P12 = state.X[np.asarray([tet1, tet2], dtype=np.int64)]
     cc = _tet_circumcentre(P12)
     c_pair = 0.5 * (cc[0] + cc[1])
@@ -1352,6 +1288,7 @@ def flip_to_delaunay(
                     in_queue.add(nf)
 
     def _try_edge_candidates(edge_list, best_neg, best_cand):
+        all_no_projector = bool(edge_list)
         for ed, _is_loc, _is_enc, ed_len in edge_list:
             for alpha in (0.5, 0.4, 0.6):
                 cp = state.checkpoint()
@@ -1366,6 +1303,8 @@ def flip_to_delaunay(
                 )
                 if not ok:
                     state.rollback(cp)
+                    if info != "no_projector":
+                        all_no_projector = False
                     if alpha == 0.5 and info in (
                         "no_projector",
                         "locked",
@@ -1374,6 +1313,7 @@ def flip_to_delaunay(
                     ):
                         refused_count[info] = refused_count.get(info, 0) + 1
                     continue
+                all_no_projector = False
 
                 flips_try = dict(flips_count)
                 refused_try = dict(refused_count)
@@ -1442,8 +1382,8 @@ def flip_to_delaunay(
                         proj.unregister(info["new_node"], ed[0], ed[1])
                 state.rollback(cp)
                 if best_neg == 0:
-                    return best_neg, best_cand
-        return best_neg, best_cand
+                    return best_neg, best_cand, all_no_projector
+        return best_neg, best_cand, all_no_projector
 
     def _try_cell_candidates(cell_splits, best_neg, best_cand, f):
         for mode, host, alpha in cell_splits:
@@ -1528,17 +1468,22 @@ def flip_to_delaunay(
                 ] + [("2-6", 0, a) for a in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0)]
 
                 # 1. Always try locked candidate edges first (ordered: f then
-                #    incident tets; encroached first, then length descending)
+                #    incident tets; encroached first, then length descending).
+                #    When every locked-edge split is refused with no_projector
+                #    and best_neg did not improve, fall through to the wave-3
+                #    cell/unlocked candidates.
                 if locked_edges:
-                    best_neg, best_cand = _try_edge_candidates(
+                    best_neg, best_cand, all_locked_no_proj = _try_edge_candidates(
                         locked_edges, best_neg, best_cand
                     )
+                    if all_locked_no_proj and best_neg == cur_neg:
+                        has_encroached_locked_on_f = False
 
                 # 2. If f does not have an unsplit encroached locked edge, try
                 #    unlocked edge splits and circumcentre cell splits
                 if best_neg > 0 and not has_encroached_locked_on_f:
                     if state.is_interface_face(f):
-                        best_neg, best_cand = _try_edge_candidates(
+                        best_neg, best_cand, _ = _try_edge_candidates(
                             unlocked_edges, best_neg, best_cand
                         )
                         if best_neg > 0:
@@ -1550,7 +1495,7 @@ def flip_to_delaunay(
                             cell_splits, best_neg, best_cand, f
                         )
                         if best_neg > 0:
-                            best_neg, best_cand = _try_edge_candidates(
+                            best_neg, best_cand, _ = _try_edge_candidates(
                                 unlocked_edges, best_neg, best_cand
                             )
 

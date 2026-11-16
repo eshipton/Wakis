@@ -491,6 +491,7 @@ def test_step_layered_pillbox_repair_complete(tmp_path):
     from wakis.unstructured.cad import mesh_cad
 
     a, d, t, eps = 0.1, 0.1, 0.03, 4.0
+    tau = max(1e-7 * a, 100.0 * np.finfo(np.float64).eps * a)
     step = _write_layered_pillbox_step(gmsh, tmp_path, a, d, t)
     regions = {"diel": (0, 0, t / 2), "vac": (0, 0, (d + t) / 2)}
     mats = {"diel": [eps, 1], "vac": [1, 1]}
@@ -529,6 +530,15 @@ def test_step_layered_pillbox_repair_complete(tmp_path):
                 )
         else:
             history = info.improve_history
+            rep_imp = history[-1]["repair"]
+            assert rep_imp["steiner_projected"] >= 1
+            bnd_set = {int(x) for x in m.boundary_nodes}
+            n_st = int(rep_imp["steiner_nodes"])
+            for s_idx in range(m.n_nodes - n_st, m.n_nodes):
+                if s_idx in bnd_set:
+                    pt = m.nodes[s_idx]
+                    r_err = abs(float(np.hypot(pt[0], pt[1])) - a)
+                    assert r_err <= tau, (s_idx, r_err, tau)
         rep = history[-1]["repair"]
         reps[imp] = rep
         print(

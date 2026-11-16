@@ -659,7 +659,38 @@ def test_t5_layered_pillbox_geometry_and_stability_gmsh(tmp_path):
         pt = m_rep.nodes[s_idx]
         if s_idx in bnd_nodes_rep:
             surf_err = _analytic_surface_distance(pt, a, t, d)
-            print(f"T5 Steiner node {s_idx}: surf_err={surf_err:.3e}, tau={tau:.3e}")
+            r_err = abs(float(np.hypot(pt[0], pt[1])) - a)
+            print(
+                f"T5 Steiner node {s_idx}: surf_err={surf_err:.3e}, "
+                f"r_err={r_err:.3e}, tau={tau:.3e}"
+            )
+            assert surf_err <= tau
+            assert r_err <= tau
+
+    # Also check imp=True (mesh_cad + CadSplitProjector surface projection)
+    m_imp, info_imp = mesh_cad(
+        step,
+        regions,
+        mats,
+        f_max=1.5e9,
+        cpw=10,
+        optimize=None,
+        improve=True,
+    )
+    rep_imp = info_imp.improve_history[-1]["repair"]
+    assert rep_imp["negative_faces_after"] == 0
+    assert rep_imp["steiner_projected"] >= 1
+    bnd_nodes_imp = {int(x) for x in m_imp.boundary_nodes}
+    for s_idx in range(m_raw.n_nodes, m_imp.n_nodes):
+        if s_idx in bnd_nodes_imp:
+            pt = m_imp.nodes[s_idx]
+            r_err = abs(float(np.hypot(pt[0], pt[1])) - a)
+            surf_err = _analytic_surface_distance(pt, a, t, d)
+            print(
+                f"T5 imp=True Steiner node {s_idx}: surf_err={surf_err:.3e}, "
+                f"r_err={r_err:.3e}, tau={tau:.3e}"
+            )
+            assert r_err <= tau
             assert surf_err <= tau
 
     v1_diel = float(m_rep.cell_volume[m_rep.cell_tags == 0].sum())

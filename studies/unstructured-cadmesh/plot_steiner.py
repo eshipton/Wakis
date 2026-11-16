@@ -35,7 +35,14 @@ plt.rcParams.update({"font.size": 9, "axes.grid": True, "grid.alpha": 0.3})
 
 def _load_data(res_path):
     with open(res_path) as f:
-        return json.load(f)
+        text = f.read()
+    marker = "END SUMMARY"
+    if marker in text:
+        text = text.split(marker, 1)[1]
+    brace = text.find("{")
+    if brace > 0:
+        text = text[brace:]
+    return json.loads(text)
 
 
 def _label(rec):

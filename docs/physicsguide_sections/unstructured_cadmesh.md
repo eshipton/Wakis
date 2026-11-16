@@ -291,9 +291,11 @@ connectivity without moving existing vertices:
    volumes are conserved, and the flip strictly decreases the count of negative faces on the modified cavity (or
    keeps it zero while increasing the minimum signed dual length). Re-enqueue all faces of the newly created
    tetrahedra.
-4. If negative faces remain after the queue empties and `steiner=True`, `_insert_steiner` inserts a Steiner node
-   (in the interior, along an interior edge, or along a boundary edge whose endpoints are not both locked, followed by
-   local flips), committing the split only if the global negative-face count strictly decreases.
+4. If negative faces remain after the queue empties and `steiner=True`, `flip_to_delaunay` trials edge splits via
+   `split_edge_steiner` and cell-circumcentre splits (`1-4` or `2-6`) via `_insert_steiner` (falling through to
+   cell/unlocked candidates when every locked-edge split is refused with `"no_projector"` and the negative-face count
+   did not improve), followed by local flips, committing a candidate only if the global negative-face count strictly
+   decreases.
 5. When `improve_dt(..., repair=True)` (the default), `improve_dt` runs `flip_to_delaunay` $\to$ time-step-driven
    node smoothing $\to$ `flip_to_delaunay` with `locked = ~movable` and appends a `"repair"` report dictionary to
    `history`. Setting `repair=False` runs node smoothing alone.
@@ -326,15 +328,22 @@ connectivity without moving existing vertices:
   the split is refused (`report["refused"]["no_projector"]`), and any remaining offending faces are returned in
   `report["stuck"]`.
 * **Layered pillbox diagnosis (`test_step_layered_pillbox_repair_complete`).** On the STEP layered pillbox at
-  $\mathrm{cpw}=10$ ($8364$ tetrahedra, $1830$ nodes, $17651$ faces, $2$ initial negative faces), the wave-3
-  `imp=None` path ran `improve_dt(..., n_sweeps=0, repair=True)` after `gmsh` was finalized with default
-  `project="planar"`, which locked every curved cylinder-wall and rim-circle node ($r = a$) and refused all fixing
-  flips and locked-edge splits (`2` stuck faces). By contrast, `repair_study.py`'s `flip_only` path called
-  `flip_to_delaunay(m, mats)` with `locked=None`, and its `improve=True` path used `cad_projector` (which left smooth
-  cylinder-wall nodes unlocked), so both committed $2$ unprojected chord Steiner nodes on boundary edges (`1832` nodes,
-  `8372` tetrahedra, `refused={"boundary": 3}`). Projected locked-edge splitting (`CadSplitProjector` inside
-  `mesh_cad`, `feature_curve_projector` post-gmsh) repairs the rim-adjacent negative faces while keeping every boundary
-  Steiner node on the CAD geometry and refusing unprojected chord splits on curved boundaries (`"no_projector"`).
+  $\mathrm{cpw}=10$ ($8364$ tetrahedra, $1830$ nodes, $17651$ faces, $2$ initial negative faces; recorded in
+  `studies/unstructured-cadmesh/results/repair.json`), the wave-3 `imp=None` path ran
+  `improve_dt(..., n_sweeps=0, repair=True)` after `gmsh` was finalized with default `project="planar"`, which locked
+  every curved cylinder-wall and rim-circle node ($r = a$) and refused all fixing flips and locked-edge splits (`2`
+  stuck faces, `refused={"locked": 4}`). With post-gmsh default `split_project="auto"` (`feature_curve_projector`),
+  `imp=None` still leaves `2` stuck faces (`refused={"no_projector": 16, "locked": 4}`) because the blocking locked
+  edges on those two faces are smooth curved cylinder-wall edges ($r = a$), not sharp rim curves; `imp=None` reaches
+  `0` negative faces only when supplied with an analytic pillbox projector (`_pillbox_split_projector` in
+  `test_step_layered_pillbox_repair_complete`, committing $2$ projected Steiner nodes on locked cylinder-wall edges:
+  `steiner_nodes = 2`, `steiner_on_locked = 2`, `steiner_projected = 2`). By contrast, `imp=True` (`mesh_cad` +
+  `CadSplitProjector`) runs while `gmsh` is live so smooth cylinder-wall nodes are unlocked (`dim=2`) and reaches `0`
+  negative faces via CAD surface projection (`steiner_nodes = 2`, `steiner_on_locked = 0`, `steiner_projected = 2`),
+  with every boundary Steiner node within $\tau$ of $r = a$. In the recorded wave-3
+  `studies/unstructured-cadmesh/results/repair.json`, `repair_study.py`'s `flip_only` path (`locked=None`) and
+  `improve=True` path (`n_sweeps=10`, `cad_projector`) reached `0` negative faces by committing $2$ unprojected chord
+  Steiner nodes on cylinder-wall boundary edges (`1832` nodes, `8372` tetrahedra, `refused={"boundary": 3}`).
 * **Repair can lower `dt_max`.** In measured gmsh cases the limiting element after repair has a smaller radius ratio;
   the measured values are in `studies/unstructured-cadmesh/results/repair.json` (key `dt_gain_vs_repair_false`).
 
@@ -386,13 +395,14 @@ recursive splits:
   used when `improve_dt(..., split_project="auto")` runs without a live `gmsh` model. A boundary or material-interface
   edge is classified as a sharp feature edge when both endpoints are locked and either (i) the dihedral angle between
   its two incident boundary faces is $\ge 45^\circ$ ($\mathbf{n}_1 \cdot \mathbf{n}_2 \le \cos 45^\circ = 1/\sqrt{2}$,
-  which separates $90^\circ$ cylinder rims from smooth curved-wall facet transitions of $2\pi/N \approx 18^\circ$–$36^\circ$
-  at $\mathrm{cpw} \ge 10$) or (ii) $\ge 3$ boundary/interface faces meet at the edge (a multi-material triple line such
-  as the dielectric-vacuum rim circle $r = a, z = t$). Feature edges are chained across degree-2 vertices whose
-  unit tangents satisfy $\hat{\mathbf{t}}_1 \cdot \hat{\mathbf{t}}_2 > \cos 45^\circ$. For an edge $(a, b)$ with a chain
-  neighbour $c \in \{p, q\}$, `circle_from_3pts` fits the unique 3D circle through $(\mathbf{x}_a, \mathbf{x}_b, \mathbf{x}_c)$
-  (or falls back to the straight chord when collinear within $10^{-10}$) and projects the midpoint $\mathbf{m}$ onto the
-  circular arc:
+  which separates $90^\circ$ cylinder rims from smooth curved-wall facet transitions of $\sim h/R \approx 5.7^\circ$ at
+  $\mathrm{cpw} = 10$, specifically $5.73^\circ$ for $h = 0.01\text{ m}$ and $R = 0.1\text{ m}$) or (ii) $\ge 3$
+  boundary/interface faces meet at the edge (a multi-material triple line such as the dielectric-vacuum rim circle
+  $r = a, z = t$). Feature edges are chained across degree-2 vertices whose unit tangents satisfy
+  $\hat{\mathbf{t}}_1 \cdot \hat{\mathbf{t}}_2 > \cos 45^\circ$. For an edge $(a, b)$ with a chain neighbour
+  $c \in \{p, q\}$, `circle_from_3pts` fits the unique 3D circle through $(\mathbf{x}_a, \mathbf{x}_b, \mathbf{x}_c)$
+  (or falls back to the straight chord when collinear within `collinear_tol = 1e-12`, i.e., $10^{-12}$) and projects
+  the midpoint $\mathbf{m}$ onto the circular arc:
   $$\mathbf{p} = \mathbf{c}_{\mathrm{circ}} + R\,\frac{\mathbf{m} - \mathbf{c}_{\mathrm{circ}}}{\|\mathbf{m} - \mathbf{c}_{\mathrm{circ}}\|}.$$
   Because the circumcentre $\mathbf{c}_{\mathrm{circ}}$ is obtained by inverting the $2 \times 2$ Gram matrix of two
   chords of length $\ge L_{\min}$ spanning a small sagitta $\sim L_{\min}^2 / (8R)$, the condition number of the
@@ -411,15 +421,17 @@ cylinder rim in `test_t1_synthetic_rim_locked_edge_steiner`).
 
 #### Exact boundary-flux volume identity for projected splits
 
-In `split_edge_steiner`, every tetrahedron $T = (a, b, x, y)$ in the edge star $\mathcal{S}(e)$ is split into two child
-tetrahedra $(a, p, x, y)$ and $(p, b, x, y)$ inheriting $T$'s material tag, with both child volumes required to exceed
-$\max(\mathrm{min\_vol}, 10^{-6} V_T)$. When $\mathbf{p} = \mathbf{m}$ lies on the chord $(a, b)$,
-$V(a, m, x, y) + V(m, b, x, y) = V(a, b, x, y)$ holds per tetrahedron. When $\mathbf{p}$ is projected off the chord
-onto a curved CAD boundary ($\mathbf{p} \ne \mathbf{m}$), individual tetrahedron volumes change, but the net volume
-change over the sub-star $\mathcal{S}_t(e) = \{T \in \mathcal{S}(e) : \mathrm{tag}(T) = t\}$ of each material tag $t$
-obeys an exact divergence identity (`star_volume_change_identity` in `wakis.unstructured.steiner`). For each $T = (a, b, x, y) \in \mathcal{S}_t(e)$:
+In `split_edge_steiner`, every positively oriented tetrahedron $T = (a, b, p, q)$ in the edge star $\mathcal{S}(e)$ is
+split into two child tetrahedra $T_a = (a, s, p, q)$ and $T_b = (s, b, p, q)$ at $\mathbf{x}_s = \mathbf{p}$ inheriting
+$T$'s material tag, with both child volumes required to exceed $\max(\mathrm{min\_vol}, 10^{-6} V_T)$. When
+$\mathbf{p} = \mathbf{m}$ lies on the chord $(a, b)$, $V(T_a) + V(T_b) = V(T)$ holds per tetrahedron. When $\mathbf{p}$
+is projected off the chord onto a curved CAD boundary ($\mathbf{p} \ne \mathbf{m}$), individual tetrahedron volumes
+change, but the net volume change over the sub-star $\mathcal{S}_t(e) = \{T \in \mathcal{S}(e) : \mathrm{tag}(T) = t\}$
+of each material tag $t$ obeys an exact divergence identity (`star_volume_change_identity` in
+`wakis.unstructured.steiner`). Because $(\mathbf{p} - \mathbf{x}_a) - (\mathbf{p} - \mathbf{x}_b) = \mathbf{x}_b - \mathbf{x}_a$,
+for each $T = (a, b, p, q) \in \mathcal{S}_t(e)$ the signed volume change is `(1/6) det(x_b − x_a, x_q − x_p, p − m)`:
 
-$$\Delta V_T = V(a, p, x, y) + V(p, b, x, y) - V(a, b, x, y) = \frac{1}{6}\det(\mathbf{x}_b - \mathbf{x}_a,\; \mathbf{x}_x - \mathbf{x}_a,\; \mathbf{x}_y - \mathbf{x}_a)\big|_{\mathbf{m}}^{\mathbf{p}}.$$
+$$\Delta V_T = V(T_a) + V(T_b) - V(T) = \frac{1}{6}\det(\mathbf{x}_b - \mathbf{x}_a,\; \mathbf{x}_q - \mathbf{x}_p,\; \mathbf{p} - \mathbf{m}).$$
 
 Decomposing $T$ relative to the chord midpoint $\mathbf{m}$ shows that shifting the split vertex by $\mathbf{p} - \mathbf{m}$
 sweeps out signed tetrahedra over the two triangular faces $F_x = (a, b, x)$ and $F_y = (a, b, y)$ incident to $e$.
@@ -444,32 +456,31 @@ triangles $F \subset \partial\Omega \cap \partial\mathcal{S}(e)$ for the total v
   coupling at least one free, non-massless edge), and commits a trial split (plus local flip queue) only when the
   global negative-face count strictly decreases.
 * **Caps (`max_steiner`, `max_steiner_depth`, `min_edge_ratio`):** `max_steiner` defaults to
-  $\max(8, 2 \times \text{initial negative faces})$, bounding the total number of committed Steiner nodes;
+  `max(32, 4 * max(neg_before, 1))`, bounding the total number of committed Steiner nodes;
   `max_steiner_depth=2` allows at most one nested sub-edge bisection inside a checkpointed trial before rolling back;
   and `min_edge_ratio=0.2` refuses any split whose sub-edge is shorter than $0.2\,L_0$ (`refused["min_edge"]`), preventing
   arbitrarily short edges that would collapse the explicit CFL limit $\Delta t_{\max} \propto L_{\min}$.
 
 #### Limits & Failure Modes (Steiner curve refinement)
 
-1. **Acute input angles $< 60^\circ$ between locked curves:** in 3D Delaunay refinement, two constrained segments or
-   surfaces meeting at an acute angle below $60^\circ$ can trigger mutually encroaching ping-pong splits that do not
-   terminate without protective collars (Shewchuk 1998; Cheng, Dey & Shewchuk 2012, Ch. 6 and Ch. 10). Here,
-   refinement is strictly bounded by `max_steiner`, `max_steiner_depth=2`, the strict decrease requirement on
-   `len(state.neg_set)`, and the sub-edge floor `min_edge_ratio=0.2`; if an acute corner exhausts these caps, the
-   remaining face stays in `report["stuck"]`.
+1. **Acute CAD input angles $< 90^\circ$:** in 3D Delaunay refinement, constrained segments or facets meeting at acute
+   CAD angles $< 90^\circ$ can trigger mutually encroaching ping-pong splits that do not terminate without protective
+   collars (Shewchuk 1998; Cheng, Dey & Shewchuk 2012, Ch. 6 and Ch. 10). Here, refinement is strictly bounded by
+   `max_steiner`, `max_steiner_depth=2`, the strict decrease requirement on `len(state.neg_set)`, and the sub-edge floor
+   `min_edge_ratio=0.2`; if an acute corner exhausts these caps, the remaining face stays in `report["stuck"]`.
 2. **Splitting an edge halves its length and can lower $\Delta t_{\max}$:** bisecting a locked boundary edge of length
    $L$ creates two sub-edges of length $\approx L/2$, which can increase the local Courant eigenvalue and reduce
-   $\Delta t_{\max}$ (on the synthetic 13-node cylinder rim in `steiner_study.py --quick`,
-   $\Delta t_{\max}$ is $1.6814 \times 10^{-12}\text{ s}$ after the locked-rim split vs $1.6877 \times 10^{-12}\text{ s}$
-   without locked-edge splitting, a ratio `dt_gain_vs_wave3_repair` of $0.9963$; on the full gmsh benchmark suite in
-   `results/repair.json`, `dt_gain_vs_repair_false` ranges from $0.9447$ to $1.0536$).
+   $\Delta t_{\max}$ (on the full gmsh benchmark suite in `studies/unstructured-cadmesh/results/repair.json`,
+   `dt_gain_vs_repair_false` ranges from $0.9447$ to $1.0536$).
 3. **Post-gmsh feature-curve limitation without an explicit projector:** when `improve_dt` is called after `gmsh` has
    been finalized (`split_project="auto"` without `CadSplitProjector`), `feature_curve_projector` reconstructs only sharp
    feature curves with dihedral angle $\ge 45^\circ$ (or multi-material triple junctions). Smooth curved-surface edges
-   whose endpoints happen to be locked by `planar_projector` (such as axial/diagonal edges on a circular cylinder wall)
-   are not sharp feature curves and are refused with `report["refused"]["no_projector"]`. Consequently,
+   whose endpoints happen to be locked by `planar_projector` (such as curved cylinder-wall edges on the layered pillbox,
+   where `imp=None` with default `split_project="auto"` leaves `2` stuck faces with `refused={"no_projector": 16, "locked": 4}`)
+   are not sharp feature curves and are refused with `report["refused"]["no_projector"]`. Consequently, `imp=None` on
+   the layered pillbox reaches `0` negative faces only with an analytic pillbox projector, whereas
    `mesh_cad(..., improve=True)` (which runs while `gmsh` is live and passes `CadSplitProjector` covering both 1D curves
-   and 2D surfaces) is the recommended CAD path.
+   and 2D surfaces) reaches `0` negative faces via surface projection (`steiner_on_locked = 0`, `steiner_projected = 2`).
 4. **3-point circle accuracy on general 3D splines:** `FeatureCurveProjector` fits a local 3-point circle (`circle_from_3pts`),
    which is exact to floating-point conditioning $\mathcal{O}(\varepsilon_{\mathrm{mach}}(R/L_{\min})^2 R)$ only for
    circular arcs and straight lines; on general non-circular 3D splines with non-constant curvature $\kappa'(s) \ne 0$,
@@ -489,7 +500,7 @@ Source: `studies/unstructured-cadmesh/results/repair.json` (commit 6d17729b78, p
 | layered | gmsh | 218 / 17315 | 4 / 17315 | 0 / 17667 | 0.9447 | -5.257e-03 | -4.918e-03 | 0.758 |
 | muon | gmsh | 39 / 3992 | 1 / 3992 | 0 / 4064 | 1.0536 | +2.154e-02 | +2.113e-02 | 0.738 |
 
-In the study, `repair=True` leaves 0 negative faces in all six runs. Step A0 diagnosis (`studies/unstructured-cadmesh/steiner_study.py --quick`) explains why the wave-3 `layered` (`none`) study rows reached 0 while `test_step_layered_pillbox_repair_complete` (`imp=None`) left 2 stuck faces: in `test_step_layered_pillbox_repair_complete`, `imp=None` ran `improve_dt(..., n_sweeps=0, repair=True)` after `gmsh` was finalized using default `project="planar"`, which locked every node on the curved cylinder wall ($r = a$) and rim circles and refused all boundary-edge splits (`"locked"`), whereas `repair_study.py`'s `flip_only` path passed `locked=None` and its `improve=True` path used `cad_projector` (unlocking smooth cylinder-wall surface nodes and running `n_sweeps=10`), committing 2 unprojected chord Steiner splits (`1832` nodes, `8372` tetrahedra, `refused={"boundary": 3}`). With projected locked-edge Steiner splitting (`CadSplitProjector` and `feature_curve_projector`), encroached locked CAD curves are split on the curve while unprojected chord splits on curved boundaries are refused (`"no_projector"`). Repair can lower dt_max: the gmsh-optimizer rows have dt gain below 1, so the limiting element after repair has a smaller radius ratio. No claim that repair raises dt in general is made.
+In the study, `repair=True` leaves 0 negative faces in all six runs. Step A0 diagnosis (`studies/unstructured-cadmesh/steiner_study.py --quick`) and `studies/unstructured-cadmesh/results/repair.json` explain why the wave-3 `layered` (`none`, $8364$ tetrahedra, $1830$ nodes, $17651$ faces, $2$ initial negative faces) study rows reached 0 while `test_step_layered_pillbox_repair_complete` (`imp=None`) left 2 stuck faces: in `test_step_layered_pillbox_repair_complete`, `imp=None` ran `improve_dt(..., n_sweeps=0, repair=True)` after `gmsh` was finalized using default `project="planar"`, which locked every node on the curved cylinder wall ($r = a$) and rim circles and refused all boundary-edge splits (`"locked": 4`). Post-gmsh default `split_project="auto"` (`feature_curve_projector`) still leaves `2` stuck faces (`refused={"no_projector": 16, "locked": 4}`) because the blocking locked edges on those faces are curved cylinder-wall edges rather than sharp rim curves, so `imp=None` reaches `0` negative faces only with an analytic pillbox projector (`_pillbox_split_projector` in the test, `steiner_on_locked = 2`, `steiner_projected = 2`). By contrast, in wave-3 (`studies/unstructured-cadmesh/results/repair.json`), `repair_study.py`'s `flip_only` path passed `locked=None` and its `improve=True` path used `cad_projector` (unlocking smooth cylinder-wall surface nodes and running `n_sweeps=10`), committing 2 unprojected chord Steiner splits (`1832` nodes, `8372` tetrahedra, `refused={"boundary": 3}`), whereas in wave-4 `imp=True` (`mesh_cad` + `CadSplitProjector`) reaches `0` negative faces via CAD surface projection (`steiner_on_locked = 0`, `steiner_projected = 2`) and refuses unprojected chord splits on curved boundaries (`"no_projector"`). Repair can lower `dt_max`: the gmsh-optimizer rows have dt gain below 1, so the limiting element after repair has a smaller radius ratio. No claim that repair raises dt in general is made.
 
 ## References
 

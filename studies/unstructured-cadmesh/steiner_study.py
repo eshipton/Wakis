@@ -30,16 +30,20 @@ import time
 import numpy as np
 from scipy.constants import c as C0
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-if HERE not in sys.path:
-    sys.path.insert(0, HERE)
-
 from wakis.unstructured import SimplexMesh, UnstructuredFIT3D
 from wakis.unstructured.analytic import layered_pillbox_tm0
 from wakis.unstructured.improve import improve_dt, movable_nodes, neg_faces
 from wakis.unstructured.quality import stability_report
 from wakis.unstructured.repair import _RepairState, _sedge, flip_to_delaunay
-from wakis.unstructured.steiner import feature_curve_projector
+from wakis.unstructured.steiner import (
+    FeatureCurveProjector,
+    feature_curve_projector,
+    split_edge_steiner,
+)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
 A_PB = 0.1
 D_PB = 0.1
@@ -246,6 +250,36 @@ def _inspect_stuck_faces(mesh, stuck_fids, locked):
     return details
 
 
+def _edge_class_bucket(loc):
+    if loc.startswith("rim_circle"):
+        return "rim_circle"
+    if loc == "cylinder_wall":
+        return "cylinder_wall"
+    if loc.startswith("plane"):
+        return "plane"
+    return "interior_or_mixed"
+
+
+def _summarize_stuck_edge_classes(stuck_faces):
+    """Count edge classes (rim_circle, cylinder_wall, plane, interior_or_mixed) on stuck faces."""
+    buckets = ("rim_circle", "cylinder_wall", "plane", "interior_or_mixed")
+    face_locked = {k: 0 for k in buckets}
+    tet_locked = {k: 0 for k in buckets}
+    all_face = {k: 0 for k in buckets}
+    for sf in stuck_faces:
+        for r in sf.get("face_locked_edges", []):
+            face_locked[_edge_class_bucket(r["location"])] += 1
+        for r in sf.get("tet_locked_edges", []):
+            tet_locked[_edge_class_bucket(r["location"])] += 1
+        for r in sf.get("all_face_edges", []):
+            all_face[_edge_class_bucket(r["location"])] += 1
+    return {
+        "face_locked_edges": face_locked,
+        "tet_locked_edges": tet_locked,
+        "all_face_edges": all_face,
+    }
+
+
 def _inspect_steiner_nodes(mesh_before, mesh_after, locked_after):
     """Report every committed Steiner node and its distance to the analytic pillbox surfaces."""
     n0 = int(mesh_before.n_nodes)
@@ -399,6 +433,73 @@ def _write_layered_step_in_dir(gmsh, directory):
     return step_path
 
 
+def _path_diag_record(
+    mesh_before, mesh_after, solver_after, guard_before, rep, locked_after
+):
+    """Build uniform Step A0 diagnostic record for one repair path."""
+    stuck_faces = _inspect_stuck_faces(mesh_after, rep.get("stuck", []), locked_after)
+    steiner_details = _inspect_steiner_nodes(mesh_before, mesh_after, locked_after)
+    bnd_dists = [d["dist_to_cad_m"] for d in steiner_details if d["on_boundary"]]
+    all_dists = [d["dist_to_cad_m"] for d in steiner_details]
+    rad_errs = [d["radial_err_from_a_m"] for d in steiner_details if d["on_boundary"]]
+    return {
+        "n_tets": int(mesh_after.n_cells),
+        "n_nodes": int(mesh_after.n_nodes),
+        "n_faces": int(mesh_after.faces.shape[0]),
+        "guard_negative_before": int(guard_before),
+        "guard_negative_after": int(guard_negative_count(solver_after)),
+        "steiner_nodes": int(rep.get("steiner_nodes", 0)),
+        "steiner_on_locked": int(rep.get("steiner_on_locked", 0)),
+        "steiner_projected": int(rep.get("steiner_projected", 0)),
+        "max_steiner_dist_to_cad_m": float(max(bnd_dists)) if bnd_dists else 0.0,
+        "max_all_steiner_dist_to_cad_m": float(max(all_dists)) if all_dists else 0.0,
+        "max_steiner_radial_err_m": float(max(rad_errs)) if rad_errs else 0.0,
+        "repair_report": rep,
+        "stuck_faces": stuck_faces,
+        "stuck_edge_classes": _summarize_stuck_edge_classes(stuck_faces),
+        "steiner_nodes_detail": steiner_details,
+    }
+
+
+def _load_recorded_w3_layered():
+    """Load recorded wave-3 layered pillbox (cpw=10, optimize='none') from results/repair.json."""
+    rep_json_path = os.path.join(HERE, "results", "repair.json")
+    if not os.path.exists(rep_json_path):
+        return {}
+    with open(rep_json_path) as f:
+        rep_data = json.load(f)
+    gains = [
+        float(r["dt_gain_vs_repair_false"])
+        for r in rep_data.get("all_runs", rep_data.get("cases", []))
+        if "dt_gain_vs_repair_false" in r
+    ]
+    for rec in rep_data.get("cases", []):
+        if rec.get("case") == "layered" and rec.get("optimize") == "none":
+            return {
+                "n_tets_before": int(rec["before"]["n_tets"]),
+                "n_nodes_before": int(rec["before"]["n_nodes"]),
+                "n_faces_before": int(rec["before"]["n_faces"]),
+                "negative_faces_before": int(rec["before"]["n_negative_faces"]),
+                "P3_flip_only_n_tets_after": int(rec["flip_only"]["n_tets"]),
+                "P3_flip_only_n_nodes_after": int(rec["flip_only"]["n_nodes"]),
+                "P3_flip_only_n_faces_after": int(rec["flip_only"]["n_faces"]),
+                "P3_flip_only": rec["flip_only"]["repair_report"],
+                "P4_improve_sweeps10_n_tets_after": int(
+                    rec["after_repair_true"]["n_tets"]
+                ),
+                "P4_improve_sweeps10_n_nodes_after": int(
+                    rec["after_repair_true"]["n_nodes"]
+                ),
+                "P4_improve_sweeps10_n_faces_after": int(
+                    rec["after_repair_true"]["n_faces"]
+                ),
+                "P4_improve_sweeps10": rec["repair_report"],
+                "suite_dt_gain_vs_repair_false_min": min(gains) if gains else None,
+                "suite_dt_gain_vs_repair_false_max": max(gains) if gains else None,
+            }
+    return {}
+
+
 def diagnose_four_paths_gmsh(gmsh, step_path):
     """
     Run Step A0 diagnosis on the four layered-pillbox paths (P1-P4) with gmsh.
@@ -432,6 +533,10 @@ def diagnose_four_paths_gmsh(gmsh, step_path):
         m_raw, info_raw.materials, n_sweeps=0, repair=True, split_project="auto"
     )
     rep_p1_auto = hist_p1_auto[-1]["repair"]
+    s_p1_auto = UnstructuredFIT3D(
+        m_p1_auto, info_raw.materials, allow_negative_faces=True
+    )
+    locked_p1_auto = ~movable_nodes(m_p1_auto)
     if rep_p1_auto["negative_faces_after"] > 0:
         m_p1_new, hist_p1_new = improve_dt(
             m_raw,
@@ -482,6 +587,13 @@ def diagnose_four_paths_gmsh(gmsh, step_path):
         m_raw, info_raw.materials, locked=None, split_projector=None
     )
     s_p3 = UnstructuredFIT3D(m_p3, info_raw.materials, allow_negative_faces=True)
+    m_p3_w3, rep_p3_w3 = flip_to_delaunay(
+        m_raw,
+        info_raw.materials,
+        locked=None,
+        split_projector=lambda a, b, x: np.asarray(x, dtype=float),
+    )
+    s_p3_w3 = UnstructuredFIT3D(m_p3_w3, info_raw.materials, allow_negative_faces=True)
 
     # Path P4: repair_study.py improve (n_sweeps=10, cad_projector)
     m_p4_w3, info_p4_w3 = mesh_cad(
@@ -512,6 +624,36 @@ def diagnose_four_paths_gmsh(gmsh, step_path):
         m_p4_new, info_p4_new.materials, allow_negative_faces=True
     )
 
+    p1_w3_rec = _path_diag_record(
+        m_raw, m_p1_w3, s_p1_w3, guard_before, rep_p1_w3, locked_p1_w3
+    )
+    p1_auto_rec = _path_diag_record(
+        m_raw, m_p1_auto, s_p1_auto, guard_before, rep_p1_auto, locked_p1_auto
+    )
+    p1_new_rec = _path_diag_record(
+        m_raw, m_p1_new, s_p1_new, guard_before, rep_p1_new, locked_p1_new
+    )
+    p2_w3_rec = _path_diag_record(
+        m_raw, m_p2_w3, s_p2_w3, guard_before, rep_p2_w3, ~movable_nodes(m_p2_w3)
+    )
+    p2_new_rec = _path_diag_record(
+        m_raw, m_p2_new, s_p2_new, guard_before, rep_p2_new, ~movable_nodes(m_p2_new)
+    )
+    p3_rec = _path_diag_record(
+        m_raw, m_p3, s_p3, guard_before, rep_p3, ~movable_nodes(m_p3)
+    )
+    p3_w3_rec = _path_diag_record(
+        m_raw, m_p3_w3, s_p3_w3, guard_before, rep_p3_w3, ~movable_nodes(m_p3_w3)
+    )
+    p3_rec["wave3_unprojected_chord"] = p3_w3_rec
+    p4_w3_rec = _path_diag_record(
+        m_raw, m_p4_w3, s_p4_w3, guard_before, rep_p4_w3, ~movable_nodes(m_p4_w3)
+    )
+    p4_new_rec = _path_diag_record(
+        m_raw, m_p4_new, s_p4_new, guard_before, rep_p4_new, ~movable_nodes(m_p4_new)
+    )
+    recorded_w3 = _load_recorded_w3_layered()
+
     return {
         "gmsh_available": True,
         "initial_mesh": {
@@ -520,106 +662,45 @@ def diagnose_four_paths_gmsh(gmsh, step_path):
             "n_faces": int(m_raw.faces.shape[0]),
             "guard_negative_before": guard_before,
             "initial_negative_faces": initial_stuck,
+            "initial_edge_classes": _summarize_stuck_edge_classes(initial_stuck),
         },
         "P1_test_imp_none": {
-            "wave3_split_project_none": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p1_w3),
-                "repair_report": rep_p1_w3,
-                "stuck_faces": _inspect_stuck_faces(
-                    m_p1_w3, rep_p1_w3["stuck"], locked_p1_w3
-                ),
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p1_w3, locked_p1_w3
-                ),
-            },
-            "w4_split_project_auto": {
-                "repair_report": rep_p1_auto,
-            },
-            "w4_repaired": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p1_new),
-                "repair_report": rep_p1_new,
-                "stuck_faces": _inspect_stuck_faces(
-                    m_p1_new, rep_p1_new["stuck"], locked_p1_new
-                ),
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p1_new, locked_p1_new
-                ),
-            },
+            "wave3_split_project_none": p1_w3_rec,
+            "w4_split_project_auto": p1_auto_rec,
+            "w4_repaired": p1_new_rec,
         },
         "P2_test_imp_true": {
-            "wave3_split_project_none": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p2_w3),
-                "repair_report": rep_p2_w3,
-                "stuck_faces": _inspect_stuck_faces(
-                    m_p2_w3, rep_p2_w3["stuck"], ~movable_nodes(m_p2_w3)
-                ),
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p2_w3, ~movable_nodes(m_p2_w3)
-                ),
-            },
-            "w4_split_project_auto": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p2_new),
-                "repair_report": rep_p2_new,
-                "stuck_faces": _inspect_stuck_faces(
-                    m_p2_new, rep_p2_new["stuck"], ~movable_nodes(m_p2_new)
-                ),
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p2_new, ~movable_nodes(m_p2_new)
-                ),
-            },
+            "wave3_split_project_none": p2_w3_rec,
+            "w4_split_project_auto": p2_new_rec,
         },
-        "P3_study_flip_only_unlocked": {
-            "guard_negative_before": guard_before,
-            "guard_negative_after": guard_negative_count(s_p3),
-            "repair_report": rep_p3,
-            "steiner_nodes_detail": _inspect_steiner_nodes(
-                m_raw, m_p3, ~movable_nodes(m_p3)
-            ),
-        },
+        "P3_study_flip_only_unlocked": p3_rec,
         "P4_study_improve_sweeps10": {
-            "wave3_split_project_none": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p4_w3),
-                "repair_report": rep_p4_w3,
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p4_w3, ~movable_nodes(m_p4_w3)
-                ),
-            },
-            "w4_split_project_auto": {
-                "guard_negative_before": guard_before,
-                "guard_negative_after": guard_negative_count(s_p4_new),
-                "repair_report": rep_p4_new,
-                "steiner_nodes_detail": _inspect_steiner_nodes(
-                    m_raw, m_p4_new, ~movable_nodes(m_p4_new)
-                ),
-            },
+            "wave3_split_project_none": p4_w3_rec,
+            "w4_split_project_auto": p4_new_rec,
         },
+        "recorded_w3_layered_cpw10": recorded_w3,
         "explanation": (
-            "1. P1 (test imp=None) runs improve_dt(n_sweeps=0, repair=True) after gmsh "
-            "is finalized, using default project='planar'. planar_projector locks every "
-            "node on the curved cylinder wall (r=a) as well as the rim circles (r=a, "
-            "z in {0, t, d}). In wave-3 (split_projector=None), all fixing flips and "
-            "boundary-edge Steiner splits on the 2 negative faces are refused with "
-            "'locked', leaving 2 stuck faces. "
-            "2. P3 (repair_study.py flip-only) calls flip_to_delaunay(m, mats) with "
-            "locked=None (no nodes locked), so wave-3 bnd_edge Steiner mode split 2 "
-            "boundary edges at their chord midpoints (steiner_nodes=2, flips={'2-3': 4}, "
-            "refused={'boundary': 3}) to reach 0 negative faces, placing Steiner nodes "
-            "on the chord off the curved cylinder wall (a geometry error). "
-            "3. P2 (imp=True, n_sweeps=6) and P4 (study improve, n_sweeps=10) run inside "
-            "mesh_cad with cad_projector, which lets smooth cylinder-wall surface nodes "
-            "(dim=2) slide (locked=False) and locks only the 1D CAD rim circles (dim=1). "
-            "In wave-3, any cylinder-wall boundary edge with a dim=2 endpoint had "
-            "locked[a] and locked[b] == False, allowing unprojected chord splits in rep1 "
-            "(and in P4, 10 sweeps of CAD-surface smoothing also relocated cylinder-wall "
-            "nodes to 0 negative faces even with repair=False). With CadSplitProjector "
-            "and feature_curve_projector, locked rim and curved-wall edges are split "
-            "and projected onto the CAD curve/surface (dist <= tau) while unprojected "
-            "chord splits on curved boundaries are refused with 'no_projector'."
+            f"1. P1 (test imp=None) runs improve_dt(n_sweeps=0, repair=True) after gmsh "
+            f"is finalized, using default project='planar'. planar_projector locks every "
+            f"node on the curved cylinder wall (r=a) as well as the rim circles. "
+            f"In wave-3 (split_project=None), all fixing flips and boundary-edge splits "
+            f"are refused ({rep_p1_w3['refused']}), leaving {rep_p1_w3['negative_faces_after']} "
+            f"stuck faces. With post-gmsh default split_project='auto' (feature_curve_projector), "
+            f"the blocking edges on the stuck faces are curved cylinder-wall edges rather "
+            f"than sharp rim curves, leaving {rep_p1_auto['negative_faces_after']} stuck faces "
+            f"(refused={rep_p1_auto['refused']}); imp=None reaches "
+            f"{rep_p1_new['negative_faces_after']} negative faces only with an analytic "
+            f"pillbox projector (steiner_nodes={rep_p1_new['steiner_nodes']}, "
+            f"steiner_on_locked={rep_p1_new['steiner_on_locked']}, "
+            f"steiner_projected={rep_p1_new['steiner_projected']}). "
+            f"2. P2 (imp=True, mesh_cad + CadSplitProjector) reaches "
+            f"{rep_p2_new['negative_faces_after']} negative faces via CAD surface projection "
+            f"(steiner_nodes={rep_p2_new['steiner_nodes']}, "
+            f"steiner_on_locked={rep_p2_new['steiner_on_locked']}, "
+            f"steiner_projected={rep_p2_new['steiner_projected']}). "
+            f"3. In recorded wave-3 results/repair.json, P3 (flip_only with locked=None) "
+            f"and P4 (improve with cad_projector) reached 0 via unprojected chord splits "
+            f"({recorded_w3.get('P3_flip_only', {})})."
         ),
     }
 
@@ -842,6 +923,80 @@ def run_case_gmsh(gmsh, case, cpw=10, optimize="none", n_sweeps=6, step_dir=None
     }
 
 
+def _compute_t1_t2_metrics(mesh, mats, locked, fcp):
+    """Compute T1 (rim split sagitta and volume identity) and T2 (31-node circle conditioning) metrics."""
+    st_vol = _RepairState(mesh, mats, "pec")
+    ed01 = (0, 1)
+    m_pt = 0.5 * (mesh.nodes[0] + mesh.nodes[1])
+    ok_sp, info_sp = split_edge_steiner(
+        st_vol,
+        ed01,
+        locked=locked,
+        split_projector=_analytic_pillbox_projector(mesh),
+    )
+    st_vol_fcp = _RepairState(mesh, mats, "pec")
+    ok_fcp, info_fcp = split_edge_steiner(
+        st_vol_fcp, ed01, locked=locked, split_projector=fcp
+    )
+    if ok_sp:
+        pt_new = st_vol.X[info_sp["new_node"]]
+        sagitta_m = float(np.linalg.norm(pt_new - m_pt))
+        vol_rel_err = float(info_sp["volume_identity_err"])
+    else:
+        sagitta_m = 0.0
+        vol_rel_err = 0.0
+    vol_rel_err_fcp = float(info_fcp["volume_identity_err"]) if ok_fcp else 0.0
+
+    n_c = 31
+    rng_c = np.random.default_rng(17)
+    angles = np.linspace(0.0, 2.0 * np.pi, n_c, endpoint=False) + rng_c.uniform(
+        -0.03, 0.03, n_c
+    )
+    pts_circle = np.column_stack(
+        [A_PB * np.cos(angles), A_PB * np.sin(angles), np.full(n_c, 0.03)]
+    )
+    edges_circle = [(i, (i + 1) % n_c) for i in range(n_c)]
+    fcp_c = FeatureCurveProjector(pts_circle, edges_circle)
+    l_min = min(
+        float(np.linalg.norm(pts_circle[b] - pts_circle[a])) for a, b in edges_circle
+    )
+    eps_mach = float(np.finfo(np.float64).eps)
+    circle_bound = 100.0 * eps_mach * ((A_PB / l_min) ** 2) * A_PB
+    circle_max_err = 0.0
+    for a, b in edges_circle:
+        mid = 0.5 * (pts_circle[a] + pts_circle[b])
+        p_proj = fcp_c.project(a, b, mid)
+        r_err = abs(float(np.hypot(p_proj[0], p_proj[1])) - A_PB)
+        z_err = abs(float(p_proj[2]) - 0.03)
+        circle_max_err = max(circle_max_err, r_err, z_err)
+
+    n_line = 7
+    s_vals = np.sort(rng_c.uniform(0.0, 1.0, n_line))
+    p_start = np.array([0.01, -0.02, 0.005])
+    d_vec = np.array([0.12, 0.07, -0.04])
+    d_unit = d_vec / np.linalg.norm(d_vec)
+    pts_line = p_start[None, :] + s_vals[:, None] * d_vec[None, :]
+    edges_line = [(i, i + 1) for i in range(n_line - 1)]
+    fcp_line = FeatureCurveProjector(pts_line, edges_line)
+    line_err = 0.0
+    for i in range(1, n_line - 2):
+        mid = 0.5 * (pts_line[i] + pts_line[i + 1])
+        p_proj = fcp_line.project(i, i + 1, mid)
+        diff = p_proj - p_start
+        perp = diff - np.dot(diff, d_unit) * d_unit
+        line_err = max(line_err, float(np.linalg.norm(perp)))
+    return {
+        "t1_sagitta_m": sagitta_m,
+        "t1_vol_identity_rel_err": vol_rel_err,
+        "t1_vol_identity_rel_err_fcp": vol_rel_err_fcp,
+        "t2_n_circle": n_c,
+        "t2_L_min_m": l_min,
+        "t2_circle_max_err_m": circle_max_err,
+        "t2_circle_bound_m": circle_bound,
+        "t2_line_err_m": line_err,
+    }
+
+
 def run_synthetic_fallback():
     """
     Gmsh-free fallback for `--quick` when gmsh shared libraries are unavailable:
@@ -890,61 +1045,54 @@ def run_synthetic_fallback():
     )
 
     fcp = feature_curve_projector(mesh, locked=locked)
-    zoom = _extract_zoom_example(mesh, mats, locked, fcp, R=A_PB)
-
-    # Load recorded P3/P4 wave-3 numbers from results/repair.json if present
-    rep_json_path = os.path.join(HERE, "results", "repair.json")
-    recorded_layered = {}
-    if os.path.exists(rep_json_path):
-        with open(rep_json_path) as f:
-            rep_data = json.load(f)
-        for rec in rep_data.get("cases", []):
-            if rec.get("case") == "layered" and rec.get("optimize") == "none":
-                recorded_layered = {
-                    "n_tets_before": rec["before"]["n_tets"],
-                    "n_nodes_before": rec["before"]["n_nodes"],
-                    "n_faces_before": rec["before"]["n_faces"],
-                    "negative_faces_before": rec["before"]["n_negative_faces"],
-                    "P3_flip_only": rec["flip_only"]["repair_report"],
-                    "P4_improve_sweeps10": rec["repair_report"],
-                }
-                break
+    t1_t2 = _compute_t1_t2_metrics(mesh, mats, locked, fcp)
+    zoom = _extract_zoom_example(
+        mesh, mats, locked, feature_curve_projector(mesh, locked=locked), R=A_PB
+    )
+    recorded_layered = _load_recorded_w3_layered()
+    stuck_w3 = _inspect_stuck_faces(
+        m_v2, hist_v2[-1]["repair"]["stuck"], ~movable_nodes(m_v2)
+    )
 
     return {
         "gmsh_available": False,
         "diagnosis_a0": {
             "synthetic_rim_mesh": {
+                "n_tets_before": before_ev["n_tets"],
+                "n_nodes_before": before_ev["n_nodes"],
+                "n_faces_before": before_ev["n_faces"],
                 "guard_negative_before": before_ev["n_negative_faces"],
                 "wave3_guard_negative_after": v2_ev["n_negative_faces"],
+                "wave3_n_tets_after": v2_ev["n_tets"],
+                "wave3_n_nodes_after": v2_ev["n_nodes"],
                 "w4_guard_negative_after": v3_ev["n_negative_faces"],
-                "stuck_faces_wave3": _inspect_stuck_faces(
-                    m_v2, hist_v2[-1]["repair"]["stuck"], ~movable_nodes(m_v2)
-                ),
+                "w4_n_tets_after": v3_ev["n_tets"],
+                "w4_n_nodes_after": v3_ev["n_nodes"],
+                "stuck_faces_wave3": stuck_w3,
+                "stuck_edge_classes_wave3": _summarize_stuck_edge_classes(stuck_w3),
                 "w4_repair_report": hist_v3[-1]["repair"],
                 "w4_steiner_nodes_detail": v3_ev["steiner_nodes_detail"],
+                "w4_max_steiner_dist_to_cad_m": v3_ev["max_steiner_dist_to_cad_m"],
             },
+            "t1_t2_metrics": t1_t2,
             "recorded_w3_layered_cpw10": recorded_layered,
             "explanation": (
                 "1. P1 (test imp=None) runs improve_dt(n_sweeps=0, repair=True) after gmsh "
                 "is finalized with default project='planar', which locks every cylinder-wall "
                 "and rim-circle node (r=a). In wave-3 (split_projector=None), all fixing flips "
-                "and boundary-edge Steiner splits on the 2 negative faces are refused with "
-                "'locked', leaving 2 stuck faces. "
+                "and boundary-edge Steiner splits on the negative faces are refused with "
+                "'locked'. "
                 "2. P3 (repair_study.py flip-only) calls flip_to_delaunay(m, mats) with "
-                "locked=None (no nodes locked), so wave-3 bnd_edge Steiner mode split 2 "
-                "boundary edges at their chord midpoints (steiner_nodes=2, flips={'2-3': 4}, "
-                "refused={'boundary': 3}) to reach 0 negative faces, placing Steiner nodes "
-                "on the chord off the curved cylinder wall (a geometry error). "
-                "3. P2 (imp=True, n_sweeps=6) and P4 (study improve, n_sweeps=10) run inside "
-                "mesh_cad with cad_projector, which lets smooth cylinder-wall surface nodes "
-                "(dim=2) slide (locked=False) and locks only the 1D CAD rim circles (dim=1). "
-                "In wave-3, any cylinder-wall boundary edge with a dim=2 endpoint had "
-                "locked[a] and locked[b] == False, allowing unprojected chord splits in rep1 "
-                "(and in P4, 10 sweeps of CAD-surface smoothing also relocated cylinder-wall "
-                "nodes to 0 negative faces). With CadSplitProjector and feature_curve_projector, "
-                "locked rim and curved-wall edges are split and projected onto the CAD "
-                "curve/surface while unprojected chord splits on curved boundaries are "
-                "refused with 'no_projector'."
+                "locked=None (no nodes locked), so wave-3 bnd_edge Steiner mode split "
+                "boundary edges at their chord midpoints "
+                f"(recorded in results/repair.json: {recorded_layered.get('P3_flip_only', {})}), "
+                "placing Steiner nodes on the chord off the curved cylinder wall. "
+                "3. P2 (imp=True) and P4 (study improve) run inside mesh_cad with "
+                "cad_projector, which lets smooth cylinder-wall surface nodes slide "
+                "(locked=False) and locks only the 1D CAD rim circles. With CadSplitProjector "
+                "and feature_curve_projector, locked rim and curved-wall edges are split "
+                "and projected onto the CAD curve/surface while unprojected chord splits on "
+                "curved boundaries are refused with 'no_projector'."
             ),
         },
         "cases": [
@@ -966,12 +1114,191 @@ def run_synthetic_fallback():
     }
 
 
+def _print_summary(payload):
+    """Print deterministic SUMMARY ... END SUMMARY block before JSON output in --quick mode."""
+    h_diel = float(C0 / (F_MAX_PB * np.sqrt(EPS_LAY) * 10.0))
+    h_vac = float(C0 / (F_MAX_PB * 1.0 * 10.0))
+    facet_turn_rad = float(h_diel / A_PB)
+    facet_turn_deg = float(np.degrees(facet_turn_rad))
+    tau_m = float(max(1e-7 * A_PB, 100.0 * np.finfo(np.float64).eps * A_PB))
+
+    print("SUMMARY")
+    print(f"mode: {payload.get('mode')}")
+    print(f"gmsh_available: {payload.get('gmsh_available')}")
+    print(
+        f"pillbox_params: a_m={A_PB}, d_m={D_PB}, t_m={T_LAY}, eps_r={EPS_LAY}, "
+        f"f_max_hz={F_MAX_PB:.3e}, cpw=10, h_diel_m={h_diel:.4f}, h_vac_m={h_vac:.4f}, "
+        f"facet_turn_rad={facet_turn_rad:.4f}, facet_turn_deg={facet_turn_deg:.2f} (~5.7 deg), "
+        f"tau_m={tau_m:.3e}"
+    )
+    print(
+        "algorithm_params: max_steiner_default='max(32, 4*max(neg_before, 1))', "
+        "max_steiner_depth=2, min_edge_ratio=0.2, collinear_tol=1e-12, "
+        "termination_cad_angle_limit_deg=90"
+    )
+
+    diag = payload.get("diagnosis_a0", {})
+    if payload.get("gmsh_available"):
+        init = diag.get("initial_mesh", {})
+        print(
+            f"A0_initial_mesh: n_tets={init.get('n_tets')}, n_nodes={init.get('n_nodes')}, "
+            f"n_faces={init.get('n_faces')}, guard_negative_before={init.get('guard_negative_before')}, "
+            f"initial_edge_classes={init.get('initial_edge_classes')}"
+        )
+        p1 = diag.get("P1_test_imp_none", {})
+        p2 = diag.get("P2_test_imp_true", {})
+        p3 = diag.get("P3_study_flip_only_unlocked", {})
+        p4 = diag.get("P4_study_improve_sweeps10", {})
+        path_items = [
+            ("P1_wave3_split_project_none", p1.get("wave3_split_project_none", {})),
+            ("P1_w4_split_project_auto", p1.get("w4_split_project_auto", {})),
+            ("P1_w4_analytic_projector", p1.get("w4_repaired", {})),
+            ("P2_wave3_split_project_none", p2.get("wave3_split_project_none", {})),
+            ("P2_w4_split_project_auto", p2.get("w4_split_project_auto", {})),
+            ("P3_wave3_unprojected_chord", p3.get("wave3_unprojected_chord", {})),
+            ("P3_study_flip_only_unlocked", p3),
+            ("P4_wave3_split_project_none", p4.get("wave3_split_project_none", {})),
+            ("P4_w4_split_project_auto", p4.get("w4_split_project_auto", {})),
+        ]
+        for label, rec in path_items:
+            rep = rec.get("repair_report", {})
+            print(
+                f"A0_{label}: guard_before={rec.get('guard_negative_before')}, "
+                f"guard_after={rec.get('guard_negative_after')}, "
+                f"n_tets={rec.get('n_tets')}, n_nodes={rec.get('n_nodes')}, "
+                f"n_faces={rec.get('n_faces')}, "
+                f"steiner_nodes={rec.get('steiner_nodes')}, "
+                f"steiner_on_locked={rec.get('steiner_on_locked')}, "
+                f"steiner_projected={rec.get('steiner_projected')}, "
+                f"max_steiner_dist_to_cad_m={rec.get('max_steiner_dist_to_cad_m', 0.0):.3e}, "
+                f"max_steiner_radial_err_m={rec.get('max_steiner_radial_err_m', 0.0):.3e}, "
+                f"flips={rep.get('flips')}, refused={rep.get('refused')}, "
+                f"stuck={rep.get('stuck')}, "
+                f"stuck_edge_classes={rec.get('stuck_edge_classes')}"
+            )
+
+        lay = payload.get("layered_cpw10", {})
+        if lay:
+            for vkey in (
+                "before",
+                "pure_wave3_repair",
+                "pure_steiner_repair",
+                "variant_i_repair_false",
+                "variant_ii_wave3_repair",
+                "variant_iii_steiner_repair",
+            ):
+                v = lay.get(vkey, {})
+                if v:
+                    print(
+                        f"layered_cpw10_{vkey}: n_tets={v.get('n_tets')}, "
+                        f"n_nodes={v.get('n_nodes')}, n_faces={v.get('n_faces')}, "
+                        f"n_negative_faces={v.get('n_negative_faces')}, "
+                        f"steiner_nodes={v.get('steiner_nodes')}, "
+                        f"steiner_on_locked={v.get('steiner_on_locked')}, "
+                        f"steiner_projected={v.get('steiner_projected')}, "
+                        f"max_steiner_dist_to_cad_m={v.get('max_steiner_dist_to_cad_m', 0.0):.3e}, "
+                        f"dt_max={v.get('dt_max', 0.0):.4e}, "
+                        f"lowest_freq_err={v.get('lowest_freq_err', 0.0):+.3e}"
+                    )
+            print(
+                f"layered_cpw10_gains: "
+                f"dt_gain_vs_repair_false={lay.get('dt_gain_vs_repair_false', 0.0):.4f}, "
+                f"dt_gain_vs_wave3_repair={lay.get('dt_gain_vs_wave3_repair', 0.0):.4f}, "
+                f"pure_dt_gain_vs_wave3={lay.get('pure_dt_gain_vs_wave3', 0.0):.4f}"
+            )
+
+    syn_payload = payload.get("synthetic_fallback") or payload
+    syn_diag = syn_payload.get("diagnosis_a0", {})
+    rec_w3 = diag.get("recorded_w3_layered_cpw10") or syn_diag.get(
+        "recorded_w3_layered_cpw10", {}
+    )
+    if rec_w3:
+        print(
+            f"recorded_repair_json_layered_cpw10: "
+            f"n_tets_before={rec_w3.get('n_tets_before')}, "
+            f"n_nodes_before={rec_w3.get('n_nodes_before')}, "
+            f"n_faces_before={rec_w3.get('n_faces_before')}, "
+            f"negative_faces_before={rec_w3.get('negative_faces_before')}, "
+            f"P3_flip_only_n_tets_after={rec_w3.get('P3_flip_only_n_tets_after')}, "
+            f"P3_flip_only_n_nodes_after={rec_w3.get('P3_flip_only_n_nodes_after')}, "
+            f"P3_flip_only_n_faces_after={rec_w3.get('P3_flip_only_n_faces_after')}, "
+            f"P3_flip_only_report={rec_w3.get('P3_flip_only')}, "
+            f"P4_improve_sweeps10_n_tets_after={rec_w3.get('P4_improve_sweeps10_n_tets_after')}, "
+            f"P4_improve_sweeps10_n_nodes_after={rec_w3.get('P4_improve_sweeps10_n_nodes_after')}, "
+            f"P4_improve_sweeps10_report={rec_w3.get('P4_improve_sweeps10')}, "
+            f"suite_dt_gain_vs_repair_false_range=[{rec_w3.get('suite_dt_gain_vs_repair_false_min', 0.0):.4f}, "
+            f"{rec_w3.get('suite_dt_gain_vs_repair_false_max', 0.0):.4f}]"
+        )
+
+    syn_mesh_diag = syn_diag.get("synthetic_rim_mesh", {})
+    if syn_mesh_diag:
+        print(
+            f"synthetic_rim_A0: guard_before={syn_mesh_diag.get('guard_negative_before')}, "
+            f"wave3_guard_after={syn_mesh_diag.get('wave3_guard_negative_after')}, "
+            f"w4_guard_after={syn_mesh_diag.get('w4_guard_negative_after')}, "
+            f"n_tets_before={syn_mesh_diag.get('n_tets_before')}, "
+            f"n_nodes_before={syn_mesh_diag.get('n_nodes_before')}, "
+            f"n_faces_before={syn_mesh_diag.get('n_faces_before')}, "
+            f"w4_n_tets_after={syn_mesh_diag.get('w4_n_tets_after')}, "
+            f"w4_n_nodes_after={syn_mesh_diag.get('w4_n_nodes_after')}, "
+            f"w4_max_steiner_dist_to_cad_m={syn_mesh_diag.get('w4_max_steiner_dist_to_cad_m', 0.0):.3e}, "
+            f"stuck_edge_classes_wave3={syn_mesh_diag.get('stuck_edge_classes_wave3')}, "
+            f"w4_repair_report={syn_mesh_diag.get('w4_repair_report')}"
+        )
+
+    syn_cases = syn_payload.get("cases", [])
+    for sc in syn_cases:
+        if sc.get("case") == "synthetic_rim_cylinder":
+            v1 = sc["variant_i_repair_false"]
+            v2 = sc["variant_ii_wave3_repair"]
+            v3 = sc["variant_iii_steiner_repair"]
+            print(
+                f"synthetic_rim_cylinder: "
+                f"before_n_tets={sc['before']['n_tets']}, "
+                f"before_n_nodes={sc['before']['n_nodes']}, "
+                f"before_n_faces={sc['before']['n_faces']}, "
+                f"before_neg={sc['before']['n_negative_faces']}, "
+                f"v1_repair_false_neg={v1['n_negative_faces']} (allow_negative_faces=True), "
+                f"v1_dt_max_s={v1['dt_max']:.4e}, "
+                f"v2_wave3_neg={v2['n_negative_faces']} (allow_negative_faces=True), "
+                f"v2_refused={v2['repair_report'].get('refused')}, "
+                f"v2_dt_max_s={v2['dt_max']:.4e}, "
+                f"v3_steiner_n_tets={v3['n_tets']}, "
+                f"v3_steiner_n_nodes={v3['n_nodes']}, "
+                f"v3_steiner_n_faces={v3['n_faces']}, "
+                f"v3_steiner_neg={v3['n_negative_faces']}, "
+                f"v3_steiner_nodes={v3['steiner_nodes']}, "
+                f"v3_steiner_on_locked={v3['steiner_on_locked']}, "
+                f"v3_steiner_projected={v3['steiner_projected']}, "
+                f"v3_flips={v3['repair_report'].get('flips')}, "
+                f"v3_max_steiner_dist_to_cad_m={v3['max_steiner_dist_to_cad_m']:.3e}, "
+                f"v3_dt_max_s={v3['dt_max']:.4e}, "
+                f"dt_gain_vs_repair_false={sc['dt_gain_vs_repair_false']:.4f}, "
+                f"dt_gain_vs_wave3_repair={sc['dt_gain_vs_wave3_repair']:.4f}"
+            )
+
+    t12 = syn_diag.get("t1_t2_metrics", {})
+    if t12:
+        print(
+            f"t1_t2_verification: "
+            f"t1_sagitta_m={t12['t1_sagitta_m']:.6e}, "
+            f"t1_vol_identity_rel_err={t12['t1_vol_identity_rel_err']:.3e}, "
+            f"t1_vol_identity_rel_err_fcp={t12.get('t1_vol_identity_rel_err_fcp', 0.0):.3e}, "
+            f"t2_n_circle={t12['t2_n_circle']}, "
+            f"t2_L_min_m={t12['t2_L_min_m']:.4e}, "
+            f"t2_circle_max_err_m={t12['t2_circle_max_err_m']:.3e}, "
+            f"t2_circle_bound_m={t12['t2_circle_bound_m']:.3e}, "
+            f"t2_line_err_m={t12['t2_line_err_m']:.3e}"
+        )
+    print("END SUMMARY")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Run Step A0 diagnosis and layered pillbox at cpw=10 in a temp dir; print JSON to stdout.",
+        help="Run Step A0 diagnosis and layered pillbox at cpw=10 in a temp dir; print SUMMARY and JSON to stdout.",
     )
     parser.add_argument(
         "--out",
@@ -989,11 +1316,13 @@ def main():
         gmsh_mod = None
 
     if args.quick:
+        syn_payload = run_synthetic_fallback()
         if gmsh_mod is None:
-            payload = run_synthetic_fallback()
+            payload = syn_payload
             payload["git_commit"] = _git_commit()
             payload["command"] = " ".join(sys.argv)
             payload["mode"] = "quick_synthetic_fallback"
+            _print_summary(payload)
             print(json.dumps(payload, indent=2, default=float))
             return
 
@@ -1008,16 +1337,6 @@ def main():
                 n_sweeps=6,
                 step_dir=tmpdir,
             )
-            # Extract zoom example on the synthetic rim mesh (always has a clean 2-tet rim zoom)
-            syn_mesh, syn_mats, _ = _build_synthetic_rim_mesh()
-            syn_locked = ~movable_nodes(syn_mesh)
-            zoom = _extract_zoom_example(
-                syn_mesh,
-                syn_mats,
-                syn_locked,
-                feature_curve_projector(syn_mesh, locked=syn_locked),
-                R=A_PB,
-            )
             payload = {
                 "git_commit": _git_commit(),
                 "command": " ".join(sys.argv),
@@ -1026,8 +1345,10 @@ def main():
                 "diagnosis_a0": diag,
                 "layered_cpw10": layered_rec,
                 "cases": [layered_rec],
-                "zoom_example": zoom,
+                "synthetic_fallback": syn_payload,
+                "zoom_example": syn_payload["zoom_example"],
             }
+            _print_summary(payload)
             print(json.dumps(payload, indent=2, default=float))
         return
 
