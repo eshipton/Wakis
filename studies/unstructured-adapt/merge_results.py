@@ -112,9 +112,13 @@ def _compute_time_to_error(arms: dict) -> dict:
 
     finest_u = u_hist[-1]
     target_err = abs(float(finest_u["rel_err_signed"]))
-    u_single_s = float(u_arm.get("final_solve_mean_s", finest_u["t_total_s"]))
+    u_single_s = float(
+        u_arm["final_solve_mean_s"]
+        if "final_solve_mean_s" in u_arm
+        else finest_u["t_total_s"]
+    )
     u_cum_s = float(finest_u["cum_wall_s"])
-    u_se_s = float(u_arm.get("final_solve_se_s", 0.0))
+    u_se_s = float(u_arm["final_solve_se_s"]) if "final_solve_se_s" in u_arm else None
 
     comparisons = {}
     for name, arm in arms.items():
@@ -137,7 +141,7 @@ def _compute_time_to_error(arms: dict) -> dict:
         # Rule 8: a time difference within 2 SE is UNRESOLVED
         status = (
             "UNRESOLVED"
-            if (u_se_s > 0.0 and diff_vs_se(t_adapt_cum, u_single_s, u_se_s))
+            if (u_se_s is not None and diff_vs_se(t_adapt_cum, u_single_s, u_se_s))
             else "RESOLVED"
         )
         comparisons[name] = {

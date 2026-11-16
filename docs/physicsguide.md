@@ -1697,6 +1697,8 @@ The unstructured mesh is second order in both polarizations. Where $`\mathbf E`$
 
 **Limitations.** No PML yet (first-order absorbing boundary only). No GPU or MPI. The 3D time step is about 4 times below the Cartesian Yee step at equal lattice spacing. Dispersive eigenmodes exist only in 2D TE; 3D dispersive cases run in the time domain. Polyhedral PEC walls stay inscribed. The eigensolver uses SuperLU, whose fill-in limits it to about $`10^5`$ tetrahedra.
 
+**Adaptive mesh refinement.** A-posteriori error indicators, Dörfler bulk marking and Rivara longest-edge bisection for 3D tetrahedral cavity eigenmodes (`wakis.unstructured.adapt`) are derived and verified in [`physicsguide_sections/unstructured_adapt.md`](physicsguide_sections/unstructured_adapt.md).
+
 References:
 - M. Clemens and T. Weiland, "Discrete electromagnetism with the Finite Integration Technique", *Progress In Electromagnetics Research* **32**, 65–87 (2001).
 - U. van Rienen and T. Weiland, "Triangular discretization method for the evaluation of RF-fields in cylindrically symmetric cavities", *IEEE Trans. Magn.* **21**(6), 2317–2320 (1985).

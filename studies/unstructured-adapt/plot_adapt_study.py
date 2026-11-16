@@ -69,7 +69,7 @@ def plot_convergence(data: dict, outdir: str) -> str:
             continue
         dofs = np.array([float(h["n_dofs"]) for h in hist])
         err = np.array([max(abs(float(h["rel_err_signed"])), 1e-16) for h in hist])
-        label, s_idx = ARM_META.get(name, (name, 0))
+        label, s_idx = ARM_META[name]
         st = figstyle.series_style(s_idx)
         if name in ("random1", "random2"):
             st["alpha"] = 0.5
@@ -124,7 +124,7 @@ def plot_convergence(data: dict, outdir: str) -> str:
         if not hist:
             continue
         err = np.array([max(abs(float(h["rel_err_signed"])), 1e-16) for h in hist])
-        _, s_idx = ARM_META.get(name, (name, 0))
+        _, s_idx = ARM_META[name]
         st = figstyle.series_style(s_idx)
         if name == "uniform":
             t_single = np.array([float(h["t_total_s"]) for h in hist])
@@ -146,8 +146,8 @@ def plot_convergence(data: dict, outdir: str) -> str:
 
     p6 = data.get("p6_voronoi_export", {})
     if p6 and "residual_final" in p6 and "uniform_closest_error" in p6:
-        dt_ratio = p6.get("dt_ratio_adapt_over_uniform", np.nan)
-        wr_ratio = p6.get("work_rate_ratio_adapt_over_uniform", np.nan)
+        dt_ratio = float(p6["dt_ratio_adapt_over_uniform"])
+        wr_ratio = float(p6["work_rate_ratio_adapt_over_uniform"])
         txt = f"P6 step ratio: {dt_ratio:.2f}\n(N/dt) ratio: {wr_ratio:.2f}"
         ax_time.text(
             0.04,
@@ -322,7 +322,7 @@ def plot_effectivity(data: dict, outdir: str) -> str:
     figstyle.panel_label(ax_box, "(a)")
 
     # Panel (b): L-prism eigenvalue effectivity eta^2 / |k_h^2 - k^2|
-    for idx, name in enumerate(("uniform", "residual", "zz")):
+    for name in ("uniform", "residual", "zz"):
         if name not in arms:
             continue
         hist = arms[name].get("history", [])
@@ -338,7 +338,7 @@ def plot_effectivity(data: dict, outdir: str) -> str:
                 for h in hist
             ]
         )
-        label, s_idx = ARM_META.get(name, (name, idx))
+        label, s_idx = ARM_META[name]
         ax_lprism.loglog(dofs, eig_eff, label=label, **figstyle.series_style(s_idx))
 
     ax_lprism.xaxis.set_minor_formatter(NullFormatter())

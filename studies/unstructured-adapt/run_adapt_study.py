@@ -344,12 +344,12 @@ def fit_log_slope(history: list[dict], i_start: int, i_end: int) -> dict:
     Flags any sign change in `rel_err_signed` and refuses to fit across a sign change.
     """
     sub = history[i_start : i_end + 1]
-    signs = [np.sign(h.get("rel_err_signed", 0.0)) for h in sub]
+    signs = [np.sign(h["rel_err_signed"]) for h in sub]
     nonzero_signs = [s for s in signs if s != 0]
     sign_change = len(set(nonzero_signs)) > 1
 
     # Detect all sign change pairs across the full history
-    full_signs = [np.sign(h.get("rel_err_signed", 0.0)) for h in history]
+    full_signs = [np.sign(h["rel_err_signed"]) for h in history]
     sign_flip_iters = [
         i for i in range(1, len(full_signs)) if full_signs[i] * full_signs[i - 1] < 0
     ]
@@ -504,7 +504,7 @@ def _load_or_default_mark_counts(outdir: str, quick: bool) -> list[int]:
         with open(res_path, encoding="utf-8") as fh:
             data = json.load(fh)
         hist = data.get("arms", {}).get("residual", {}).get("history", [])
-        counts = [int(h["n_marked"]) for h in hist if int(h.get("n_marked", 0)) > 0]
+        counts = [int(h["n_marked"]) for h in hist if int(h["n_marked"]) > 0]
         if counts:
             return counts
     return list(DEFAULT_RESIDUAL_MARK_COUNTS)
