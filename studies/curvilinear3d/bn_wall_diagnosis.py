@@ -20,9 +20,15 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import numpy as np
 
+from studies.curvilinear3d.perturbed_box_order import fit_order, local_orders
 from wakis.curvilinear import CurvilinearFIT3D, HexBlock3D
 from wakis.curvilinear.hexmesh import _CORNER_VTK, _LOCAL_FACE_VTK
 from wakis.curvilinear.mappings3d import (
@@ -47,63 +53,6 @@ SPHERE_NS_FULL = (4, 6, 8, 12, 16)
 SPHERE_NS_QUICK = (4, 6, 8, 12)
 HEXMESH_NS_FULL = (4, 6, 8)
 HEXMESH_NS_QUICK = (4, 6)
-
-
-def fit_order(ns, values):
-    """
-    Least-squares convergence order ``p`` in ``|v(n)| ~ C n^{-p}``.
-
-    Parameters
-    ----------
-    ns : sequence of float
-        Resolution parameter values ``n``.
-    values : sequence of float
-        Positive error or residual magnitudes.
-
-    Returns
-    -------
-    float
-        Estimated algebraic decay rate ``-d(ln |v|) / d(ln n)``, or ``nan``
-        if fewer than two positive finite values are available.
-    """
-    ns_arr = np.asarray(ns, dtype=float)
-    val_arr = np.abs(np.asarray(values, dtype=float))
-    mask = np.isfinite(val_arr) & (val_arr > 0.0) & (ns_arr > 0.0)
-    if np.count_nonzero(mask) < 2:
-        return float("nan")
-    log_n = np.log(ns_arr[mask])
-    log_v = np.log(val_arr[mask])
-    slope, _ = np.polyfit(log_n, log_v, 1)
-    return float(-slope)
-
-
-def local_orders(ns, values):
-    """
-    Two-point local convergence orders between consecutive resolutions.
-
-    Parameters
-    ----------
-    ns : sequence of float
-        Resolution parameter values ``n``.
-    values : sequence of float
-        Error or residual magnitudes at each resolution.
-
-    Returns
-    -------
-    list of float
-        Local orders ``-ln(|v_{k+1}| / |v_k|) / ln(n_{k+1} / n_k)``.
-    """
-    ns_arr = np.asarray(ns, dtype=float)
-    val_arr = np.abs(np.asarray(values, dtype=float))
-    out = []
-    for k in range(len(ns_arr) - 1):
-        v0, v1 = val_arr[k], val_arr[k + 1]
-        n0, n1 = ns_arr[k], ns_arr[k + 1]
-        if v0 > 0.0 and v1 > 0.0 and n0 > 0.0 and n1 > 0.0 and n1 != n0:
-            out.append(float(-np.log(v1 / v0) / np.log(n1 / n0)))
-        else:
-            out.append(float("nan"))
-    return out
 
 
 def _build_local_boundary_patch_grid(msh):
@@ -858,7 +807,7 @@ def run_diagnosis(quick=False):
     }
 
 
-def _print_summary(data, stream=sys.stderr):
+def _print_summary(data, stream=sys.stdout):
     print(
         f"=== W4-B Part 1: Wall B.n Diagnosis (quick={data['quick']}) ===",
         file=stream,
@@ -897,7 +846,8 @@ def _print_summary(data, stream=sys.stderr):
                 f"wall_oct={r['n_wall_octants']:4d}, "
                 f"sharp_oct={r['n_sharp_octants']:3d}): "
                 f"1-wall m0={ow['max_m0']:.3e} m1={ow['max_m1']:.6e} "
-                f"g={ow['max_g']:.6e} m1/g={ow['max_m1_over_g']:.6f} | "
+                f"g={ow['max_g']:.6e} m1/g={ow['max_m1_over_g']:.6f} "
+                f"m1-g={ow['max_m1_minus_g']:+.3e} | "
                 f"smooth_wall TM m3(nv/ex)={tm_sw['max_m3_nv']:.4e}/"
                 f"{tm_sw['max_m3_exact']:.4e} "
                 f"TE m3(nv/ex)={te_sw['max_m3_nv']:.4e}/"
@@ -907,7 +857,8 @@ def _print_summary(data, stream=sys.stderr):
     box_ow = data["perturbed_box_control"]["octants"]["one_wall_octants"]
     print(
         f"\n[perturbed_box_nodes(6,5,4)] 1-wall m0={box_ow['max_m0']:.3e} "
-        f"m1={box_ow['max_m1']:.3e} g={box_ow['max_g']:.3e}",
+        f"m1={box_ow['max_m1']:.3e} g={box_ow['max_g']:.3e} "
+        f"m1-g={box_ow['max_m1_minus_g']:+.3e}",
         file=stream,
     )
     mut = data["mutations_sphere_n6"]
@@ -934,22 +885,19 @@ def main(argv=None):
         "--out",
         type=str,
         default=None,
-        help="Optional output JSON path (defaults to stdout).",
+        help="Optional output JSON path.",
     )
     args = parser.parse_args(argv)
 
     data = run_diagnosis(quick=args.quick)
-    payload = json.dumps(data, indent=2)
+    _print_summary(data, stream=sys.stdout)
     if args.out:
+        payload = json.dumps(data, indent=2)
         out_dir = os.path.dirname(os.path.abspath(args.out))
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(payload + "\n")
-        _print_summary(data, stream=sys.stdout)
-    else:
-        _print_summary(data, stream=sys.stderr)
-        print(payload)
 
 
 if __name__ == "__main__":

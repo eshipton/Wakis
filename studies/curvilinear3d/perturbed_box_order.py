@@ -22,6 +22,11 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import numpy as np
 from scipy.constants import c as C0
@@ -338,6 +343,8 @@ def _summarize_family(
     e_dist_arr = e_pert_arr - e_zero_arr
 
     yee_rel_mismatches = []
+    omegas_num_list = []
+    omegas_yee_list = []
     if omegas_zero is not None:
         for c_item, w_num in zip(counts, omegas_zero):
             nx = (
@@ -347,6 +354,8 @@ def _summarize_family(
                 int(c_item) if isinstance(c_item, (int, np.integer)) else int(c_item[2])
             )
             w_yee = yee_te101_omega(nx, nz, a=a, d=d)
+            omegas_num_list.append(float(w_num))
+            omegas_yee_list.append(float(w_yee))
             yee_rel_mismatches.append(float(abs(w_num - w_yee) / w_yee))
 
     return {
@@ -362,6 +371,8 @@ def _summarize_family(
         "abs_errors_amp": [float(abs(x)) for x in e_pert_arr],
         "signed_errors_yee_amp0": [float(x) for x in e_zero_arr],
         "signed_errors_dist": [float(x) for x in e_dist_arr],
+        "omegas_num_amp0": omegas_num_list,
+        "omegas_yee_amp0": omegas_yee_list,
         "sign_yee": (
             "negative"
             if np.all(e_zero_arr < 0.0)
@@ -436,6 +447,9 @@ def run_perturbed_box_study(quick=False, a=1.0, b=0.7, d=0.8, amp=0.3):
         "D_ls_order_amp": float(d_order),
         "ls_order_yee_amp0": fit_order(F1_STUDY_WINDOW, e_win_zero),
         "ls_order_dist": fit_order(F1_STUDY_WINDOW, e_win_dist),
+        "ls_order_amp_6_8_12": fit_order(F1_STUDY_WINDOW[:3], e_win_pert[:3]),
+        "ls_order_yee_amp0_6_8_12": fit_order(F1_STUDY_WINDOW[:3], e_win_zero[:3]),
+        "ls_order_dist_6_8_12": fit_order(F1_STUDY_WINDOW[:3], e_win_dist[:3]),
         "two_level_6_to_12_amp": two_level_order(6, e_win_pert[0], 12, e_win_pert[2]),
         "two_level_8_to_16_amp": two_level_order(8, e_win_pert[1], 16, e_win_pert[3]),
         "local_orders_amp": local_orders(F1_STUDY_WINDOW, e_win_pert),
@@ -544,6 +558,9 @@ def run_perturbed_box_study(quick=False, a=1.0, b=0.7, d=0.8, amp=0.3):
             "ns": list(F1_STUDY_WINDOW),
             "D_drop_only_ls_order_amp": float(d_drop_only),
             "ls_order_dist": fit_order(F1_STUDY_WINDOW, e_win_drop_dist),
+            "ls_order_amp_6_8_12": fit_order(F1_STUDY_WINDOW[:3], e_win_drop[:3]),
+            "ls_order_dist_6_8_12": fit_order(F1_STUDY_WINDOW[:3], e_win_drop_dist[:3]),
+            "n6_e_dist_ratio_vs_constrained": float(e_win_drop_dist[0] / e_win_dist[0]),
             "local_orders_amp": local_orders(F1_STUDY_WINDOW, e_win_drop),
             "local_orders_dist": local_orders(F1_STUDY_WINDOW, e_win_drop_dist),
             "signed_errors_amp": [float(x) for x in e_win_drop],
@@ -555,21 +572,28 @@ def run_perturbed_box_study(quick=False, a=1.0, b=0.7, d=0.8, amp=0.3):
     }
 
 
-def _print_summary(data, stream=sys.stderr):
+def _print_summary(data, stream=sys.stdout):
     print(
         f"=== W4-B Part 2: Perturbed-Box Order Study (quick={data['quick']}) ===",
         file=stream,
     )
     print(
-        f"D (LS slope on F1 n in {{6, 8, 12, 16}}, amp=0.3 cell mode) = {data['D']:.6f}",
+        f"omega_analytic = {data['omega_analytic_rad_s']:.8e} rad/s",
+        file=stream,
+    )
+    d_val = data["D"]
+    d_drop = data["D_drop_only"]
+    leg_val = data["legacy_two_level_F2_k1_to_2"]
+    print(
+        f"D (LS slope on F1 n in {{6, 8, 12, 16}}, amp=0.3 cell mode) = {d_val:.6f}",
         file=stream,
     )
     print(
-        f"D_drop_only (pre-PEC-fix study JSON definition) = {data['D_drop_only']:.6f}",
+        f"D_drop_only (pre-PEC-fix study JSON definition) = {d_drop:.6f}",
         file=stream,
     )
     print(
-        f"legacy two-level F2 k=1->2 = {data['legacy_two_level_F2_k1_to_2']:.6f} "
+        f"legacy two-level F2 k=1->2 = {leg_val:.6f} "
         f"(drop_only: {data['legacy_two_level_F2_k1_to_2_drop_only']:.6f})",
         file=stream,
     )
@@ -577,21 +601,45 @@ def _print_summary(data, stream=sys.stderr):
         f"F1 two-level n=4->8 = {data['F1_two_level_n4_to_8']:.6f}",
         file=stream,
     )
+    print(
+        f"Reconciliation breakdown: legacy - D_drop_only = {leg_val - d_drop:.6f} "
+        f"(PEC fix D - D_drop_only = {d_val - d_drop:.6f}, "
+        f"family/window legacy - D = {leg_val - d_val:.6f})",
+        file=stream,
+    )
     w = data["F1_study_window_6_8_12_16"]
     wd = data["F1_study_window_drop_only"]
     print(
         f"F1 window {{6,8,12,16}} (constrained): order(e)={w['D_ls_order_amp']:.6f}, "
         f"order(e_Yee)={w['ls_order_yee_amp0']:.6f}, "
-        f"order(e_dist)={w['ls_order_dist']:.6f}, "
+        f"order(e_dist)={w['ls_order_dist']:.6f} "
+        f"(on {{6,8,12}}: order(e)={w['ls_order_amp_6_8_12']:.6f}, "
+        f"order(e_Yee)={w['ls_order_yee_amp0_6_8_12']:.6f}, "
+        f"order(e_dist)={w['ls_order_dist_6_8_12']:.6f}), "
         f"local_orders(e)={[round(x, 4) for x in w['local_orders_amp']]}",
         file=stream,
     )
     print(
         f"F1 window {{6,8,12,16}} (drop_only)  : order(e)={wd['D_drop_only_ls_order_amp']:.6f}, "
-        f"order(e_dist)={wd['ls_order_dist']:.6f}, "
+        f"order(e_dist)={wd['ls_order_dist']:.6f} "
+        f"(on {{6,8,12}}: order(e)={wd['ls_order_amp_6_8_12']:.6f}, "
+        f"order(e_dist)={wd['ls_order_dist_6_8_12']:.6f}), "
         f"local_orders(e)={[round(x, 4) for x in wd['local_orders_amp']]}",
         file=stream,
     )
+    for n_val, ep_c, ed_c, ep_d, ed_d in zip(
+        w["ns"],
+        w["signed_errors_amp"],
+        w["signed_errors_dist"],
+        wd["signed_errors_amp"],
+        wd["signed_errors_dist"],
+    ):
+        ratio = ed_d / ed_c
+        print(
+            f"  F1 window N={n_val:2d}: constrained e={ep_c:+.6e} e_dist={ed_c:+.6e} | "
+            f"drop_only e={ep_d:+.6e} e_dist={ed_d:+.6e} (ratio={ratio:.2f}x)",
+            file=stream,
+        )
     for key in ("F1", "F2", "F3"):
         sec = data[key]
         print(
@@ -609,14 +657,23 @@ def _print_summary(data, stream=sys.stderr):
             f"  local_orders(dist) = {[round(x, 6) for x in sec['local_orders_dist']]}",
             file=stream,
         )
-        for n_val, ep, ey, ed in zip(
-            sec["ns"],
-            sec["signed_errors_amp"],
-            sec["signed_errors_yee_amp0"],
-            sec["signed_errors_dist"],
+        has_yee = bool(sec.get("omegas_num_amp0"))
+        for idx, (n_val, ep, ey, ed) in enumerate(
+            zip(
+                sec["ns"],
+                sec["signed_errors_amp"],
+                sec["signed_errors_yee_amp0"],
+                sec["signed_errors_dist"],
+            )
         ):
+            extra = ""
+            if has_yee:
+                wn = sec["omegas_num_amp0"][idx]
+                wy = sec["omegas_yee_amp0"][idx]
+                rm = sec["yee_analytic_rel_mismatch"][idx]
+                extra = f"  w_num(0)={wn:.12e}  w_yee(0)={wy:.12e}  yee_rel_mismatch={rm:.3e}"
             print(
-                f"  N={n_val:2d}: e(amp)={ep:+.6e}  e_Yee(0)={ey:+.6e}  e_dist={ed:+.6e}",
+                f"  N={n_val:2d}: e(amp)={ep:+.6e}  e_Yee(0)={ey:+.6e}  e_dist={ed:+.6e}{extra}",
                 file=stream,
             )
 
@@ -634,22 +691,19 @@ def main(argv=None):
         "--out",
         type=str,
         default=None,
-        help="Optional output JSON path (defaults to stdout).",
+        help="Optional output JSON path.",
     )
     args = parser.parse_args(argv)
 
     data = run_perturbed_box_study(quick=args.quick)
-    payload = json.dumps(data, indent=2)
+    _print_summary(data, stream=sys.stdout)
     if args.out:
+        payload = json.dumps(data, indent=2)
         out_dir = os.path.dirname(os.path.abspath(args.out))
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(payload + "\n")
-        _print_summary(data, stream=sys.stdout)
-    else:
-        _print_summary(data, stream=sys.stderr)
-        print(payload)
 
 
 if __name__ == "__main__":

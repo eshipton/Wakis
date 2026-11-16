@@ -63,7 +63,12 @@ def test_wall_bn_facet_node_angle_identity():
         = ||B_c|| \\, (m_0 + g),
 
     hence ``m1 <= g + 1e-12`` on every 1-wall octant (and on multi-wall octants
-    where ``B_c`` is orthogonal to all incident wall faces of ``h``).
+    where ``B_c`` is orthogonal to all incident wall faces of ``h``). Because
+    ``m1 <= m0 + g`` is a Cauchy-Schwarz inequality that holds identically for
+    any non-zero vector ``B_c``, it carries no test content beyond ``m0 = 0``
+    (``m0 <= 1e-12``); physical evidence for ``B . n -> 0`` on curved walls is
+    provided by the decay of the node-averaged eigenmode residual ``m3`` with
+    ``n`` in :func:`test_wall_bn_cavity_eigenmode_m3_decay`.
 
     Mutations (derived before execution)
     ------------------------------------
@@ -285,17 +290,44 @@ def test_perturbed_box_error_decomposition():
     """
     Verify the perturbed-box ``TE101`` error decomposition
     ``e(amp) = e_Yee + e_dist`` on ``F1`` ``n in {6, 8, 12}`` at ``amp = 0.3``:
-    - ``e_Yee = e(amp=0) < 0`` (second-order Yee grid dispersion);
-    - ``e_dist = e(amp) - e(amp=0) > 0`` (mesh-distortion shift of opposite sign,
-      so ``|e(amp)| < |e(amp=0)|`` at every ``n``);
-    - Under the default ``pec_reconstruction="constrained"``, ``e_dist`` decays
-      faster than third order (``LS order > 3.0``), so ``e(amp)`` converges at
-      second order (``LS order > 1.95``).
-    - Mutation: switching to ``pec_reconstruction="drop_only"`` increases
-      ``e_dist`` at ``n = 6`` by more than ``9x`` (from ``3.184109e-04`` to
-      ``3.228137e-03``) due to unconstrained boundary dual-face skew, reducing
-      the four-point ``F1`` ``{6, 8, 12, 16}`` LS order from ``D = 1.974416``
-      to ``D_drop_only = 1.795576 < 1.8``.
+
+    Derivation of convergence-order bounds
+    --------------------------------------
+    1. Distortion error ``e_dist = e(amp) - e(0) = O(h^3)`` (``ord_dist >= 3.0``):
+       In ``"cell"`` mode (``perturbed_box_nodes``), the smooth interior node
+       displacement ``dx_i(x) = amp * h_i * sin(pi x/a) sin(pi y/b) sin(pi z/d)``
+       scales with the local cell size ``h_i = L_i / n = O(h)`` and vanishes on
+       ``dOmega``. Differentiating ``x -> x + dx(x)`` yields a smooth metric
+       (Jacobian) perturbation ``dJ(x) = grad(dx) = O(amp * h) = O(h)``. Because
+       the continuum ``TE101`` eigenvalue is invariant under a boundary-fixing
+       diffeomorphism, the discrete shift ``e_dist(n)`` arises from the ``O(h^2)``
+       second-order corner Hodge truncation error acting on the ``O(h)`` metric
+       perturbation, giving ``e_dist(n) = O(h) * O(h^2) = O(h^3) = O(n^{-3})``
+       and hence ``ord_dist >= 3.0`` (measured ``ord_dist = 3.404419``, local
+       orders ``[3.1308, 3.5777]``).
+    2. Total error ``e(amp) = e_Yee + e_dist = O(h^2)`` (``ord_pert >= 1.95``):
+       On the unperturbed isotropic grid ``F1`` (``h_x = a/n``, ``h_z = d/n``),
+       Eq. (3.3) gives the closed-form semi-discrete Yee dispersion error
+       ``e_Yee(n) = sin(pi/(2n)) / (pi/(2n)) - 1 = -(pi^2 / 24) n^{-2} + O(n^{-4}) < 0``
+       with second-order rate ``ord_zero = 1.996362`` on ``n in {6, 8, 12}``.
+       Since ``0 < e_dist(n) = O(n^{-3})`` has opposite sign to ``e_Yee(n) < 0``
+       with relative ratio ``delta(n) = e_dist(n) / |e_Yee(n)| = O(n^{-1})``
+       (``delta(6) = 2.7970e-02``, ``delta(12) = 1.0628e-02``), expanding
+       ``ln|e(amp, n)| = ln|e_Yee(n)| - delta(n) + O(delta(n)^2)`` shifts the
+       effective log-log slope over ``[n_min, n_max] = [6, 12]`` from ``ord_zero``
+       by ``-(delta(6) - delta(12)) / ln(12 / 6) = -0.0250`` (and at most
+       ``-delta(6) / ln(12 / 6) = -0.0404``), yielding ``ord_pert >= 2.0 - 0.05 = 1.95``
+       (measured ``ord_pert = 1.970955``).
+
+    Mutation check (``pec_reconstruction="drop_only"``)
+    ---------------------------------------------------
+    Switching to ``pec_reconstruction="drop_only"`` leaves unconstrained boundary
+    dual-face skew in the ``O(h)`` boundary cell layer, which strictly increases
+    ``e_dist`` on ``ns = [6, 8, 12]`` (at ``n = 6``, ``e_dist`` rises from
+    ``+3.184109e-04`` to ``+3.228137e-03``, a printed ``10.14x`` ratio) and
+    degrades the orders to ``ord_dist_drop = 2.750425 < 3.0`` and
+    ``ord_pert_drop = 1.782195 < 1.95`` (and four-point ``F1`` ``{6, 8, 12, 16}``
+    slope ``D_drop_only = 1.795576 < 1.8`` vs ``D = 1.974416``).
     """
     ns = [6, 8, 12]
     e_pert = te101_errors(ns, amp=0.3, amp_mode="cell")
@@ -318,16 +350,24 @@ def test_perturbed_box_error_decomposition():
     assert np.all(e_dist > 0.0)
     assert np.all(np.abs(e_pert) < np.abs(e_zero))
     assert np.all(np.diff(np.abs(e_dist)) < 0.0)
-    assert ord_dist > 3.0
-    assert ord_pert > 1.95
+    assert ord_dist >= 3.0
+    assert ord_pert >= 1.95
 
-    # Mutation check: drop_only PEC reconstruction inflates e_dist at n=6 by > 9x
-    e_drop_6 = float(
-        te101_errors([6], amp=0.3, amp_mode="cell", pec_reconstruction="drop_only")[0]
-    )
-    e_dist_drop_6 = e_drop_6 - float(e_zero[0])
+    # Mutation check: drop_only PEC reconstruction increases e_dist and breaks
+    # the derived O(h^3) distortion and O(h^2) total convergence order bounds.
+    # The empirical n=6 inflation ratio (10.14x) is printed as a diagnostic.
+    e_drop = te101_errors(ns, amp=0.3, amp_mode="cell", pec_reconstruction="drop_only")
+    e_dist_drop = e_drop - e_zero
+    ord_pert_drop = fit_order(ns, e_drop)
+    ord_dist_drop = fit_order(ns, e_dist_drop)
+    e_dist_drop_6 = float(e_dist_drop[0])
     print(
-        f"[test_perturbed_box_error_decomposition] n=6 e_dist constrained={e_dist[0]:+.6e} "
-        f"vs drop_only={e_dist_drop_6:+.6e} (ratio={e_dist_drop_6 / e_dist[0]:.2f}x)"
+        f"[test_perturbed_box_error_decomposition] drop_only ns={ns}: "
+        f"e_pert_drop={[f'{x:+.6e}' for x in e_drop]} (LS={ord_pert_drop:.6f}), "
+        f"e_dist_drop={[f'{x:+.6e}' for x in e_dist_drop]} (LS={ord_dist_drop:.6f}), "
+        f"n=6 e_dist constrained={e_dist[0]:+.6e} vs drop_only={e_dist_drop_6:+.6e} "
+        f"(ratio={e_dist_drop_6 / e_dist[0]:.2f}x)"
     )
-    assert e_dist_drop_6 > 9.0 * float(e_dist[0])
+    assert np.all(e_dist_drop > e_dist)
+    assert ord_dist_drop < 3.0
+    assert ord_pert_drop < 1.95

@@ -1346,8 +1346,12 @@ def test_hexmesh_block_equivalence():
         assert np.array_equal(msh.unknown_edges[perm_u], unk_in_msh)
 
         # Compare boundary_edge_mask and unknown_edges
-        assert np.array_equal(msh.boundary_edge_mask[perm_e], blk.boundary_edge_mask)
-        assert np.array_equal(np.sort(inv_perm_e[msh.unknown_edges]), blk.unknown_edges)
+        assert np.array_equal(
+            msh.boundary_edge_mask[perm_e], blk.boundary_edge_mask
+        )
+        assert np.array_equal(
+            np.sort(inv_perm_e[msh.unknown_edges]), blk.unknown_edges
+        )
 
         # Compare operators after applying explicit permutations
         C_mapped = s_msh.C[perm_f, :][:, perm_e].toarray()
@@ -1370,7 +1374,9 @@ def test_hexmesh_block_equivalence():
         Q_eps_ref = s_blk.Q_eps_sqrt.toarray()
         diff_Q_eps = float(np.max(np.abs(Q_eps_mapped - Q_eps_ref)))
 
-        max_abs_diff = max(diff_C, diff_W_nu, diff_W_eps_full, diff_W_eps, diff_Q_eps)
+        max_abs_diff = max(
+            diff_C, diff_W_nu, diff_W_eps_full, diff_W_eps, diff_Q_eps
+        )
         print(
             f"[test_hexmesh_block_equivalence] {name}: "
             f"max_abs_diff={max_abs_diff:.6e} "
@@ -1674,7 +1680,9 @@ def test_dot_product_generic_mesh():
         tb, td = solver.transpose_step(yb, yd, dt=dt)
         lhs_step = float(yb @ sb + yd @ sd)
         rhs_step = float(tb @ b + td @ d)
-        denom_step = float(np.sqrt(yb @ yb + yd @ yd) * np.sqrt(sb @ sb + sd @ sd))
+        denom_step = float(
+            np.sqrt(yb @ yb + yd @ yd) * np.sqrt(sb @ sb + sd @ sd)
+        )
         rel_step = abs(lhs_step - rhs_step) / denom_step
 
         W_eps = solver.W_eps_u
@@ -1869,3 +1877,4 @@ def test_cavity_butterfly_cylinder_tm010():
     assert abs(rel_errs[1]) < abs(rel_errs[0])
     assert abs(rel_errs[0]) < 1.0e-2
     assert abs(rel_errs[1]) < 5.0e-3
+
